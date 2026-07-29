@@ -78,17 +78,125 @@ std::optional<bool> isStoreOp(Operation *dstOp) {
   return std::nullopt;
 }
 
+static bool isRegBasedArch(Operation *op);
+
+static bool hasSameSource(Value valA, Value valB) {
+  auto maybeMmadA = traceDefOp<hivm::MmadL1Op>(valA);
+  auto maybeMmadB = traceDefOp<hivm::MmadL1Op>(valB);
+
+  auto isMatchedEmptyOrAllocOp = [](Value valA, Value valB) {
+    LDBG("Begin to find matched dst for scf.if \n  -" << valA << "\n  -"
+                                                      << valB);
+    auto maybeTensorA = traceDefOp<tensor::EmptyOp>(valA);
+    auto maybeTensorB = traceDefOp<tensor::EmptyOp>(valB);
+    if (maybeTensorA.has_value() && maybeTensorB.has_value() &&
+        (maybeTensorA.value() == maybeTensorB.value()))
+      return true;
+
+    auto maybeAllocA = traceDefOp<memref::AllocOp>(valA);
+    auto maybeAllocB = traceDefOp<memref::AllocOp>(valB);
+    if (maybeAllocA.has_value() && maybeAllocB.has_value() &&
+        (maybeAllocA.value() == maybeAllocB.value()))
+      return true;
+
+    if (maybeAllocA.has_value()) {
+      auto alloc = cast<memref::AllocOp>(maybeAllocA.value());
+      hivm::AddressSpace addrSpace{hivm::AddressSpace::Zero};
+      if (auto memSpaceAttr = alloc.getType().getMemorySpace()) {
+        addrSpace = dyn_cast<AddressSpaceAttr>(memSpaceAttr).getAddressSpace();
+      }
+      return (addrSpace == hivm::AddressSpace::L0C && maybeTensorB.has_value());
+    }
+
+    if (maybeAllocB.has_value()) {
+      auto alloc = cast<memref::AllocOp>(maybeAllocB.value());
+      hivm::AddressSpace addrSpace{hivm::AddressSpace::Zero};
+      if (auto memSpaceAttr = alloc.getType().getMemorySpace()) {
+        addrSpace = dyn_cast<AddressSpaceAttr>(memSpaceAttr).getAddressSpace();
+      }
+      return (addrSpace == hivm::AddressSpace::L0C && maybeTensorA.has_value());
+    }
+    LDBG("There is no matched dst for scf.if \n");
+    return false;
+  };
+  if (maybeMmadA.has_value() && maybeMmadB.has_value()) {
+    auto mmadA = cast<hivm::MmadL1Op>(maybeMmadA.value());
+    auto mmadB = cast<hivm::MmadL1Op>(maybeMmadB.value());
+    return isMatchedEmptyOrAllocOp(mmadA.getC(), mmadB.getC());
+  }
+
+  if (maybeMmadA.has_value()) {
+    auto mmadA = cast<hivm::MmadL1Op>(maybeMmadA.value());
+    return isMatchedEmptyOrAllocOp(mmadA.getC(), valB);
+  }
+
+  if (maybeMmadB.has_value()) {
+    auto mmadB = cast<hivm::MmadL1Op>(maybeMmadB.value());
+    return isMatchedEmptyOrAllocOp(valA, mmadB.getC());
+  }
+  return false;
+}
+
+static bool isMixKernel(scf::IfOp ifOp, Value val) {
+  if (ifOp.getElseRegion().empty())
+    return true;
+
+  if (auto idx =
+          findIdx(llvm::to_vector(ifOp.thenYield().getOperands()), val)) {
+    if (idx.has_value()) {
+      auto elseValue = ifOp.elseYield().getOperands()[idx.value()];
+      return !hasSameSource(val, elseValue);
+    }
+  }
+
+  if (auto idx =
+          findIdx(llvm::to_vector(ifOp.elseYield().getOperands()), val)) {
+    if (idx.has_value()) {
+      auto thenValue = ifOp.thenYield().getOperands()[idx.value()];
+      return !hasSameSource(val, thenValue);
+    }
+  }
+
+  return true;
+}
+
+static bool needYieldOut(Operation *user, Value val) {
+  if (isa<scf::ForOp>(user->getParentOp()))
+    return true;
+  if (auto ifOp = dyn_cast<scf::IfOp>(user->getParentOp()))
+    return !isMixKernel(ifOp, val);
+  return false;
+}
+
 Operation *getInsertPoint(Operation *op, int &resultIndx) {
   auto users = op->getResult(resultIndx).getUsers();
   std::set<scf::YieldOp> yieldOperands;
-  for (auto *user : users) {
-    // TODO: add auto tracedDownUser = traceDown(user) and use tracedDownUser to
-    // judge
-    auto forOp = user->getParentOfType<scf::ForOp>();
-    if (!isa<scf::YieldOp>(user) || !forOp) {
-      continue;
-    } else {
-      yieldOperands.emplace(user);
+
+  if (isRegBasedArch(op)) {
+    int32_t count = 0;
+
+    for (auto *user : users) {
+      if (!isa<hivm::DebugOp>(user))
+        count++;
+      if (!isa<scf::YieldOp>(user) ||
+          !needYieldOut(user, op->getResult(resultIndx))) {
+        continue;
+      } else {
+        yieldOperands.emplace(user);
+      }
+    }
+    if (count > 1)
+      return op;
+  } else {
+    for (auto *user : users) {
+      // TODO: add auto tracedDownUser = traceDown(user) and use tracedDownUser to
+      // judge
+      auto forOp = user->getParentOfType<scf::ForOp>();
+      if (!isa<scf::YieldOp>(user) || !forOp) {
+        continue;
+      } else {
+        yieldOperands.emplace(user);
+      }
     }
   }
 
@@ -1073,20 +1181,79 @@ void eraseInlinableQuantScaleMarkOps(Operation *op) {
 }
 
 void InlineFixpipe::runOnOperation() {
-  RewritePatternSet patterns(&getContext());
-  populateInlineFixpipePatterns(patterns, inlineQuantScale);
+  MLIRContext *ctx = &getContext();
 
-  if (failed(applyPatternsGreedily(getOperation(), std::move(patterns)))) {
-    signalPassFailure();
-    return;
-  }
-  RewritePatternSet insertFixpipeForDevicePrintPattern(&getContext());
-  MLIRContext *ctx = insertFixpipeForDevicePrintPattern.getContext();
-  insertFixpipeForDevicePrintPattern.add<InsertFixpipeForDevicePrint>(ctx);
-  if (failed(applyPatternsGreedily(
-          getOperation(), std::move(insertFixpipeForDevicePrintPattern)))) {
-    signalPassFailure();
-    return;
+  if (isRegBasedArch(getOperation())) {
+    // Reg-based (Ascend950) path: run patterns in separate greedy passes.
+    // This matches the original two-pass InsertFixpipe + InlineFixpipe
+    // reference behavior where insertion completes before inlining begins,
+    // preventing inlining patterns from consuming fixpipes that were just
+    // inserted.
+
+    // Step 1: InsertFixpipeForIterArgMMAD runs first to set
+    // fixpipe_for_mmad_result_already_inserted on scf.for before insertion
+    // patterns fire.
+    {
+      RewritePatternSet iterArgMMAPatterns(ctx);
+      iterArgMMAPatterns.add<InsertFixpipeForIterArgMMAD>(ctx);
+      (void)applyPatternsGreedily(getOperation(),
+                                  std::move(iterArgMMAPatterns));
+    }
+
+    // Step 2: Insert fixpipes after mmadL1/batchMmadL1/conv ops.
+    {
+      RewritePatternSet insertPatterns(ctx);
+      insertPatterns.add<InsertFixpipeOpPattern<hivm::MmadL1Op>>(ctx);
+      insertPatterns.add<InsertFixpipeOpPattern<hivm::BatchMmadL1Op>>(ctx);
+      insertPatterns.add<InsertFixpipeForConvOpPattern<hivm::Conv1DL1Op>>(ctx);
+      insertPatterns.add<InsertFixpipeForConvOpPattern<hivm::Conv2DL1Op>>(ctx);
+      insertPatterns.add<InsertFixpipeForConvOpPattern<hivm::Conv3DL1Op>>(ctx);
+      if (failed(applyPatternsGreedily(getOperation(),
+                                       std::move(insertPatterns)))) {
+        signalPassFailure();
+        return;
+      }
+    }
+
+    // Step 3: Inline downstream ops (vcast, vrelu, store, transpose, quant
+    // scale, extract/insert slice swap, yield hoisting) into fixpipes.
+    {
+      RewritePatternSet inlinePatterns(ctx);
+      inlinePatterns.add<InlineFixpipeOpPattern>(ctx, inlineQuantScale);
+      if (failed(applyPatternsGreedily(getOperation(),
+                                       std::move(inlinePatterns)))) {
+        signalPassFailure();
+        return;
+      }
+    }
+
+    // Step 4: Insert fixpipes for device print (debug).
+    {
+      RewritePatternSet devicePrintPatterns(ctx);
+      devicePrintPatterns.add<InsertFixpipeForDevicePrint>(ctx);
+      if (failed(applyPatternsGreedily(
+              getOperation(), std::move(devicePrintPatterns)))) {
+        signalPassFailure();
+        return;
+      }
+    }
+  } else {
+    // Non-reg-based path: original combined greedy run (insertion + inlining
+    // together in one pass).
+    RewritePatternSet patterns(ctx);
+    populateInlineFixpipePatterns(patterns, inlineQuantScale);
+
+    if (failed(applyPatternsGreedily(getOperation(), std::move(patterns)))) {
+      signalPassFailure();
+      return;
+    }
+    RewritePatternSet devicePrintPatterns(ctx);
+    devicePrintPatterns.add<InsertFixpipeForDevicePrint>(ctx);
+    if (failed(applyPatternsGreedily(
+            getOperation(), std::move(devicePrintPatterns)))) {
+      signalPassFailure();
+      return;
+    }
   }
 
   eraseInlinableQuantScaleMarkOps(getOperation());
