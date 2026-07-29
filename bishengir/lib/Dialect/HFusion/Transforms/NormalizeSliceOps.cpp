@@ -656,9 +656,10 @@ public:
     RewritePatternSet patterns(&getContext());
     patterns.add<NormalizeExtractSliceToDeinterleaveOp>(patterns.getContext());
     patterns.add<NormalizeInsertSliceOpToInterleaveOp>(patterns.getContext());
-    patterns.add<FoldInsertSliceToConcat>(patterns.getContext(),
-                                          this->skipAlignedSlice);
     if (!archIsRegbased) {
+      patterns.add<FoldInsertSliceToConcat>(patterns.getContext(),
+                                            this->skipAlignedSlice);
+
       patterns.add<NormalizeExtractSliceOp>(patterns.getContext());
     }
     if (failed(applyPatternsGreedily(getOperation(), std::move(patterns)))) {
