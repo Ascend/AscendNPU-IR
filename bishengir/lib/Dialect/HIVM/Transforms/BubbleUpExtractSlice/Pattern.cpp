@@ -190,8 +190,9 @@ createNewChildOpAfterBubbledUp(RewriterBase &rewriter, size_t tilingDim,
     return failure();
 
   rewriter.setInsertionPointToStart(containingLoop.getBody());
-  auto newOffsetAtTileDim = calculateOffsetAtTilingDim(
-      rewriter, childOp->getLoc(), containingLoop, newSize.value());
+  auto newOffsetAtTileDim =
+      calculateOffsetAtTilingDim(rewriter, childOp->getLoc(), containingLoop,
+                                 createdNewParent->getResult(0), tilingDim);
 
   auto rankType = cast<ShapedType>(childOp.getSourceType());
   if (failed(findCorrespondingSizesOffsetsStrides(
@@ -886,11 +887,10 @@ createNewInsertForExtractOfInsertSameDim(RewriterBase &rewriter,
     return failure();
   auto rankType = cast<ShapedType>(parentInsertOp.getSourceType());
 
-  rewriter.setInsertionPointToStart(
-      sliceOp->getParentOfType<scf::ForOp>().getBody());
+  rewriter.setInsertionPointToStart(maybeSubBlockLoop.value().getBody());
   auto newOffsetAtTileDim = calculateOffsetAtTilingDim(
-      rewriter, sliceOp->getLoc(), sliceOp->getParentOfType<scf::ForOp>(),
-      size.value());
+      rewriter, sliceOp->getLoc(), maybeSubBlockLoop.value(),
+      parentInsertOp.getSource(), tilingDim);
   if (failed(findCorrespondingSizesOffsetsStrides(
           rewriter, rankType, tilingDim, newOffsetAtTileDim, size.value(),
           newInsertStrides, newInsertOffsets, newInsertSizes, newInsertShape)))

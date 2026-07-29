@@ -167,13 +167,11 @@ buildSubviewPointerTensor(ConversionPatternRewriter &rewriter, Location loc,
   //                            subviewResultTy.getShape().end());
 
   Value source = subviewOp.getSource();
-  auto baseMemrefTy = dyn_cast<MemRefType>(source.getType());
-  if (!baseMemrefTy)
-    return failure();
+  MemRefType sourceMemrefTy = subviewOp.getSourceType();
 
   SmallVector<int64_t> sourceStrides;
   int64_t sourceOffset;
-  if (failed(getStridesAndOffset(baseMemrefTy, sourceStrides, sourceOffset)))
+  if (failed(getStridesAndOffset(sourceMemrefTy, sourceStrides, sourceOffset)))
     return failure();
 
   SmallVector<OpFoldResult> mixedStrides;
@@ -195,8 +193,19 @@ buildSubviewPointerTensor(ConversionPatternRewriter &rewriter, Location loc,
       linearizeSubviewOffsets(rewriter, loc, subviewOffsets, sourceStrides);
   SmallVector<OpFoldResult> mixedOffsets{linearOffset};
 
-  return buildReinterpretCastTensorPointers(rewriter, loc, source, baseMemrefTy,
-                                            mixedOffsets, mixedStrides, subviewResultTy.getShape());
+  Value base = source;
+  // A zero-offset parent reinterpret_cast does not change the linear base, so
+  // use its raw source as the pointer base. Non-zero and dynamic parent offsets
+  // are rejected by the pass-level nested-view check before this helper runs.
+  if (auto parentCast = source.getDefiningOp<memref::ReinterpretCastOp>()) {
+    auto staticOffsets = parentCast.getStaticOffsets();
+    if (staticOffsets.size() == 1 && staticOffsets.front() == 0)
+      base = parentCast.getSource();
+  }
+
+  return buildReinterpretCastTensorPointers(
+      rewriter, loc, base, cast<MemRefType>(base.getType()), mixedOffsets,
+      mixedStrides, subviewResultTy.getShape());
 }
 
 class GetBlockIdxOpPattern : public OpRewritePattern<hivm::GetBlockIdxOp> {
@@ -818,56 +827,19 @@ buildMemRefTensorPointersImpl(ConversionPatternRewriter &rewriter, Location loc,
   }
 
   if (auto subviewOp = originalValue.getDefiningOp<memref::SubViewOp>()) {
-    // Require unit strides on the subview itself
-    for (auto svStride : subviewOp.getMixedStrides()) {
-      if (!isConstantIntValue(svStride, 1))
-        return failure();
-    }
-
-    // Per-dim strides come from the SubView source: prefer the strides of
-    // an upstream ReinterpretCast (so the base pointer is the raw memref);
-    // otherwise read the strided layout from the source memref type.
-    Value source = subviewOp.getSource();
-    SmallVector<OpFoldResult> mixedStrides;
-    if (auto srcCast = source.getDefiningOp<memref::ReinterpretCastOp>()) {
-      mixedStrides = srcCast.getMixedStrides();
-      source = srcCast.getSource();
-    } else {
-      auto sourceMemrefTy = dyn_cast<MemRefType>(source.getType());
-      if (!sourceMemrefTy)
-        return failure();
-      auto layout =
-          dyn_cast<StridedLayoutAttr>(sourceMemrefTy.getLayout());
-      if (!layout)
-        return failure();
-      for (int64_t s : layout.getStrides())
-        mixedStrides.push_back(rewriter.getIndexAttr(s));
-    }
-
-    auto baseMemrefTy = dyn_cast<MemRefType>(source.getType());
-    if (!baseMemrefTy)
+    if (!llvm::equal(shape, subviewOp.getType().getShape()))
       return failure();
-
-    auto subviewOffsets = subviewOp.getMixedOffsets();
-    if (subviewOffsets.size() != mixedStrides.size())
-      return failure();
-
-    SmallVector<int64_t> intStrides;
-    intStrides.reserve(mixedStrides.size());
-    for (auto ms : mixedStrides) {
-      auto s = getConstantIntValue(ms);
-      if (!s)
-        return failure();
-      intStrides.push_back(*s);
-    }
-
-    OpFoldResult linearOffset =
-        linearizeSubviewOffsets(rewriter, loc, subviewOffsets, intStrides);
-    SmallVector<OpFoldResult> mixedOffsets{linearOffset};
-    return buildReinterpretCastTensorPointers(rewriter, loc, source,
-                                              baseMemrefTy, mixedOffsets,
-                                              mixedStrides, shape);
+    return buildSubviewPointerTensor(rewriter, loc, subviewOp);
   }
+
+  // The generic fallback only materializes static layout descriptors. Dynamic
+  // layouts must be handled while their original view op is available.
+  SmallVector<int64_t> strides;
+  int64_t offset;
+  if (failed(getStridesAndOffset(memrefTy, strides, offset)) ||
+      offset == ShapedType::kDynamic ||
+      llvm::is_contained(strides, ShapedType::kDynamic))
+    return failure();
 
   Value offsets =
       calcStridedOffsets(rewriter, loc, memrefTy, shape, getLinearOffsets());

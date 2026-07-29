@@ -114,7 +114,7 @@ void HIVMToTritonGPUConversionPass::runOnOperation() {
   if (failed(applyPartialConversion(module, stage1Target,
                                     std::move(stage1Patterns)))) {
     module->emitError("Stage1 failed: HIVM/Bufferization Op conversion failed");
-    signalPassFailure();
+    return signalPassFailure();
   }
 
   // Remove redundant memref.alloc

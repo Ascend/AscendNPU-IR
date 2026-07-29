@@ -26,8 +26,8 @@ module {
 // CHECK-LABEL: func.func @tile_gather_local_store_with_indices_chain(
 // CHECK: scf.for
 // CHECK: %[[IDXUB:.*]] = memref.subview %arg1[%{{.*}}, 0] [4, 8] [1, 1]
-// CHECK: %[[IDX:.*]] = bufferization.to_tensor %[[IDXUB]] restrict writable {tiled_op} : memref<4x8xi64
 // CHECK: hivm.hir.vbrc
+// CHECK: %[[IDX:.*]] = bufferization.to_tensor %[[IDXUB]] restrict writable {tiled_op} : memref<4x8xi64
 // CHECK: hivm.hir.vadd
 // CHECK: %[[G:.*]] = hivm.hir.gather_load
 // CHECK-SAME: outs(%{{.*}} : tensor<4x8xf32>) -> tensor<4x8xf32>
