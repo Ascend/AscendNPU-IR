@@ -6,9 +6,9 @@ HIVM（Hybrid Intelligence Virtual Machine）方言，定义了用于异构计�
 
 ### hivm.hir.atomic_cas (hivm::AtomicCasOp)
 
-**功能：** 执行原子比较并交换（CAS）操作。
+**功能**：执行原子比较并交换（CAS）操作。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.atomic_cas` attr-dict
@@ -17,21 +17,21 @@ operation ::= `hivm.hir.atomic_cas` attr-dict
               (`->` type($result_tensor)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.atomic_cas ins(%src0, %src1 : memref<?xf32>, memref<?xf32>) outs(%dst : memref<?xf32>)
 %result = hivm.hir.atomic_cas ins(%src0, %src1 : tensor<?xf32>, tensor<?xf32>) outs(%dst : tensor<?xf32>) -> tensor<?xf32>
 ```
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
 | `src` | 可变参数，类型为Tensor或Memref |
 | `dst` | 类型为Tensor或Memref |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -39,9 +39,9 @@ hivm.hir.atomic_cas ins(%src0, %src1 : memref<?xf32>, memref<?xf32>) outs(%dst :
 
 ### hivm.hir.atomic_rmw (hivm::AtomicRMWOp)
 
-**功能：** 执行原子读-修改-写操作。
+**功能**：执行原子读-修改-写操作。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.atomic_rmw` attr-dict
@@ -51,23 +51,23 @@ operation ::= `hivm.hir.atomic_rmw` attr-dict
               (`->` type($result_tensor)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.atomic_rmw ins(%src : memref<?xf32>) outs(%dst : memref<?xf32>) atomic_kind = <add>
 %result = hivm.hir.atomic_rmw ins(%src : tensor<?xf32>) outs(%dst : tensor<?xf32>) atomic_kind = <or> -> tensor<?xf32>
 ```
 
-**特性：** `DestinationStyleOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `InferCoreTypeInterface`, `MemoryEffectsOpInterface`, `OpPipeInterface`
+**特性**：`DestinationStyleOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `InferCoreTypeInterface`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
 | `src` | 任意类型 |
 | `dst` | 类型为Tensor或Memref |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -75,9 +75,9 @@ hivm.hir.atomic_rmw ins(%src : memref<?xf32>) outs(%dst : memref<?xf32>) atomic_
 
 ### hivm.hir.atomic_xchg (hivm::AtomicXchgOp)
 
-**功能：** 执行原子交换操作。
+**功能**：执行原子交换操作。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.atomic_xchg` attr-dict
@@ -87,14 +87,14 @@ operation ::= `hivm.hir.atomic_xchg` attr-dict
               (`->` type($result_tensor)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.atomic_xchg ins(%src : memref<?xf32>) outs(%dst : memref<?xf32>)
 %result = hivm.hir.atomic_cas ins(%src : tensor<?xf32>) outs(%dst : tensor<?xf32>) -> tensor<?xf32>
 ```
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
@@ -102,7 +102,7 @@ hivm.hir.atomic_xchg ins(%src : memref<?xf32>) outs(%dst : memref<?xf32>)
 | `dst` | 类型为Tensor或Memref |
 | `mask` | 类型为Tensor或Memref |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -110,9 +110,9 @@ hivm.hir.atomic_xchg ins(%src : memref<?xf32>) outs(%dst : memref<?xf32>)
 
 ### hivm.hir.batchMmadL1 (hivm::BatchMmadL1Op)
 
-**功能：** 从L1内存层级执行批处理矩阵乘加操作，支持批处理维度。
+**功能**：从L1内存层级执行批处理矩阵乘加操作，支持批处理维度。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.batchMmadL1` attr-dict `ins` `(`
@@ -137,15 +137,15 @@ operation ::= `hivm.hir.batchMmadL1` attr-dict `ins` `(`
               (`->` type($result_tensors)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.batchMmadL1 ins(%A, %B, %init, %m, %k, %n : memref<2x32x64xf16>, memref<2x64x32xf16>, i1, index, index, index) outs(%C : memref<2x32x32xf16>)
 ```
 
-**特性：** `AttrSizedOperandSegments`, `CubeCoreTypeTrait`, `MacroOpPipeTrait<PIPE::PIPE_MTE1, PIPE::PIPE_M>`, `MacroOpTrait`
+**特性**：`AttrSizedOperandSegments`, `CubeCoreTypeTrait`, `MacroOpPipeTrait<PIPE::PIPE_MTE1, PIPE::PIPE_M>`, `MacroOpTrait`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
@@ -160,7 +160,7 @@ hivm.hir.batchMmadL1 ins(%A, %B, %init, %m, %k, %n : memref<2x32x64xf16>, memref
 | `unit_flag_cond` | 1位无符号整数 |
 | `per_channel_bias` | 类型为Tensor或Memref |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -168,29 +168,29 @@ hivm.hir.batchMmadL1 ins(%A, %B, %init, %m, %k, %n : memref<2x32x64xf16>, memref
 
 ### hivm.hir.bitcast (hivm::BitcastOp)
 
-**功能：** 在不改变底层位表示的前提下，重新解释有形状值的位模式，进行元素类型转换。
+**功能**：在不改变底层位表示的前提下，重新解释有形状值的位模式，进行元素类型转换。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.bitcast` $src `:` type($src) `->` type($result) attr-dict
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 %res = hivm.hir.bitcast %src : memref<4xf32> -> memref<4xi32>
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `Elementwise`, `SameOperandsAndResultShape`
+**特性**：`AlwaysSpeculatableImplTrait`, `Elementwise`, `SameOperandsAndResultShape`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
 | `src` | 任意类型 |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -198,29 +198,29 @@ operation ::= `hivm.hir.bitcast` $src `:` type($src) `->` type($result) attr-dic
 
 ### hivm.hir.convert_layout (hivm::ConvertLayoutOp)
 
-**功能：** 将memref从一种数据布局转换为另一种布局，不复制或修改数据。
+**功能**：将memref从一种数据布局转换为另一种布局，不复制或修改数据。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.convert_layout` $source attr-dict `:` functional-type(operands, results)
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 %res = hivm.hir.convert_layout %src {srcLayout = #hivm.data_layout<ND>, dstLayout = #hivm.data_layout<zN>} : memref<32x32xf16> -> memref<32x32xf16>
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `SameOperandsAndResultElementType`
+**特性**：`AlwaysSpeculatableImplTrait`, `SameOperandsAndResultElementType`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
 | `source` | 任意类型值的ranked或unranked memref |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -228,9 +228,9 @@ operation ::= `hivm.hir.convert_layout` $source attr-dict `:` functional-type(op
 
 ### hivm.hir.copy (hivm::CopyOp)
 
-**功能：** 在本地内存层级之间拷贝数据，支持非连续数据的重关联重塑。
+**功能**：在本地内存层级之间拷贝数据，支持非连续数据的重关联重塑。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.copy` `ins` `(` $src `:` type($src) `)`
@@ -242,15 +242,15 @@ operation ::= `hivm.hir.copy` `ins` `(` $src `:` type($src) `)`
               (`->` type($result_tensor)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.copy ins(%src : memref<16x16xf16, #hivm.address_space<ub>>) outs(%dst : memref<16x16xf16, #hivm.address_space<ub>>)
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `SinglePipeOpTrait`, `UniformReassociationFlattenTrait`
+**特性**：`AlwaysSpeculatableImplTrait`, `SinglePipeOpTrait`, `UniformReassociationFlattenTrait`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
@@ -258,7 +258,7 @@ hivm.hir.copy ins(%src : memref<16x16xf16, #hivm.address_space<ub>>) outs(%dst :
 | `dst` | 类型为Tensor或Memref |
 | `pad_value` | 任意类型 |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -266,29 +266,29 @@ hivm.hir.copy ins(%src : memref<16x16xf16, #hivm.address_space<ub>>) outs(%dst :
 
 ### hivm.hir.create_sync_block_lock (hivm::CreateSyncBlockLockOp)
 
-**功能：** 分配一块锁内存区域，用于确保锁与解锁之间的代码在块间按顺序执行。
+**功能**：分配一块锁内存区域，用于确保锁与解锁之间的代码在块间按顺序执行。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.create_sync_block_lock` (`from` $lockArg^)?
               attr-dict `:` (`from` type($lockArg)^ `to`)? type($memref)
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.create_sync_block_lock() : memref<1xi64>
 hivm.hir.create_sync_block_lock() from %arg : from memref<?xi8> to memref<1xi64>
 ```
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
 | `lockArg` | 任意类型值的memref |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -296,30 +296,30 @@ hivm.hir.create_sync_block_lock() from %arg : from memref<?xi8> to memref<1xi64>
 
 ### hivm.hir.custom (hivm::CustomOp)
 
-**功能：** 通用自定义操作接口，供用户编写内置操作无法满足或性能非最优的私有实现。
+**功能**：通用自定义操作接口，供用户编写内置操作无法满足或性能非最优的私有实现。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.custom` $name attr-dict `ins` `(` $inputs `:` type($inputs) `)` `outs` `(` $outputs `:` type($outputs) `)`
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.custom "__builtin_gather_load" ins(%src : memref<256xf32>) outs(%dst : memref<256xf32>)
 ```
 
-**特性：** `AttrSizedOperandSegments`, `SinglePipeOpTrait`
+**特性**：`AttrSizedOperandSegments`, `SinglePipeOpTrait`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
 | `inputs` | 可变参数，任意类型 |
 | `outputs` | 可变参数，任意类型 |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -327,21 +327,21 @@ hivm.hir.custom "__builtin_gather_load" ins(%src : memref<256xf32>) outs(%dst : 
 
 ### hivm.hir.dcci (hivm::DCCIOp)
 
-**功能：** 清理（写回）并使一个缓存行或整个数据缓存失效。
+**功能**：清理（写回）并使一个缓存行或整个数据缓存失效。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.dcci` attr-dict `(` $mode `,` $dataCacheKind (`,` $ptr^ `:` type($ptr))? `)`
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.dcci(#hivm.DCCIMode<single_cache_line>, #hivm.DataCacheKind<ub>, %ptr : memref<1024xf32>)
 ```
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
@@ -349,21 +349,21 @@ hivm.hir.dcci(#hivm.DCCIMode<single_cache_line>, #hivm.DataCacheKind<ub>, %ptr :
 
 ### hivm.hir.debug (hivm::DebugOp)
 
-**功能：** 设备端调试操作，用于输出调试信息。
+**功能**：设备端调试操作，用于输出调试信息。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.debug` attr-dict $arg `:` type($arg)
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.debug %arg {debugtype = "print", prefix = "value"} : f32
 ```
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
@@ -371,27 +371,27 @@ hivm.hir.debug %arg {debugtype = "print", prefix = "value"} : f32
 
 ### hivm.hir.finish_debug (hivm::FinishDebugOp)
 
-**功能：** 设备端调试的结束函数。
+**功能**：设备端调试的结束函数。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.finish_debug` attr-dict
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.finish_debug
 ```
 
-**特性：** `CubeVectorCoreTypeTrait`
+**特性**：`CubeVectorCoreTypeTrait`
 
 ### hivm.hir.fixpipe (hivm::FixpipeOp)
 
-**功能：** 从L0C到其他内存层级的数据搬移操作，支持前级量化、前级ReLU、逐元素加法、后级ReLU、后级量化及布局变换。
+**功能**：从L0C到其他内存层级的数据搬移操作，支持前级量化、前级ReLU、逐元素加法、后级ReLU、后级量化及布局变换。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.fixpipe` attr-dict
@@ -401,15 +401,15 @@ operation ::= `hivm.hir.fixpipe` attr-dict
               (`->` type($result_tensor)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.fixpipe ins(%src : memref<16x16xf16, #hivm.address_space<l0c>>) outs(%dst : memref<16x16xf16, #hivm.address_space<ub>>) {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>}
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `CubeCoreTypeTrait`, `OpPipeTrait<PIPE::PIPE_FIX>`, `SinglePipeOpTrait`
+**特性**：`AlwaysSpeculatableImplTrait`, `CubeCoreTypeTrait`, `OpPipeTrait<PIPE::PIPE_FIX>`, `SinglePipeOpTrait`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
@@ -417,7 +417,7 @@ hivm.hir.fixpipe ins(%src : memref<16x16xf16, #hivm.address_space<l0c>>) outs(%d
 | `dst` | 任意类型值的shaped类型 |
 | `unit_flag_cond` | 1位无符号整数 |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -425,23 +425,23 @@ hivm.hir.fixpipe ins(%src : memref<16x16xf16, #hivm.address_space<l0c>>) outs(%d
 
 ### hivm.hir.get_block_idx (hivm::GetBlockIdxOp)
 
-**功能：** 获取当前设备线程用于并行化的block索引。
+**功能**：获取当前设备线程用于并行化的block索引。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.get_block_idx` attr-dict `->` type($result)
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 %idx = hivm.hir.get_block_idx -> i64
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `CubeVectorCoreTypeTrait`
+**特性**：`AlwaysSpeculatableImplTrait`, `CubeVectorCoreTypeTrait`
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -449,23 +449,23 @@ operation ::= `hivm.hir.get_block_idx` attr-dict `->` type($result)
 
 ### hivm.hir.get_block_num (hivm::GetBlockNumOp)
 
-**功能：** 获取当前设备线程用于并行化的block数量。
+**功能**：获取当前设备线程用于并行化的block数量。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.get_block_num` attr-dict `->` type($result)
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 %num = hivm.hir.get_block_num -> i64
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `CubeVectorCoreTypeTrait`
+**特性**：`AlwaysSpeculatableImplTrait`, `CubeVectorCoreTypeTrait`
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -473,23 +473,23 @@ operation ::= `hivm.hir.get_block_num` attr-dict `->` type($result)
 
 ### hivm.hir.get_sub_block_idx (hivm::GetSubBlockIdxOp)
 
-**功能：** 获取当前设备线程用于并行化的子块索引。
+**功能**：获取当前设备线程用于并行化的子块索引。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.get_sub_block_idx` attr-dict `->` type($result)
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 %sub_idx = hivm.hir.get_sub_block_idx -> i64
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `CubeVectorCoreTypeTrait`
+**特性**：`AlwaysSpeculatableImplTrait`, `CubeVectorCoreTypeTrait`
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -497,23 +497,23 @@ operation ::= `hivm.hir.get_sub_block_idx` attr-dict `->` type($result)
 
 ### hivm.hir.get_sub_block_num (hivm::GetSubBlockNumOp)
 
-**功能：** 获取当前设备线程用于并行化的子块数量。
+**功能**：获取当前设备线程用于并行化的子块数量。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.get_sub_block_num` attr-dict `->` type($result)
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 %sub_num = hivm.hir.get_sub_block_num -> i64
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `CubeVectorCoreTypeTrait`
+**特性**：`AlwaysSpeculatableImplTrait`, `CubeVectorCoreTypeTrait`
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -521,23 +521,23 @@ operation ::= `hivm.hir.get_sub_block_num` attr-dict `->` type($result)
 
 ### hivm.hir.get_sys_cnt (hivm::GetSysCntOp)
 
-**功能：** 获取当前设备的系统计数。
+**功能**：获取当前设备的系统计数。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.get_sys_cnt` attr-dict `->` type($result)
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 %cnt = hivm.hir.get_sys_cnt -> i64
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `CubeVectorCoreTypeTrait`
+**特性**：`AlwaysSpeculatableImplTrait`, `CubeVectorCoreTypeTrait`
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -545,27 +545,27 @@ operation ::= `hivm.hir.get_sys_cnt` attr-dict `->` type($result)
 
 ### hivm.hir.init_debug (hivm::InitDebugOp)
 
-**功能：** 设备端调试的初始化函数。
+**功能**：设备端调试的初始化函数。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.init_debug` attr-dict
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.init_debug
 ```
 
-**特性：** `CubeVectorCoreTypeTrait`
+**特性**：`CubeVectorCoreTypeTrait`
 
 ### hivm.hir.load (hivm::LoadOp)
 
-**功能：** 将数据从全局内存加载到本地缓冲区，支持填充模式与隐式转置。
+**功能**：将数据从全局内存加载到本地缓冲区，支持填充模式与隐式转置。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.load` `ins` `(` $src `:` type($src) `)`
@@ -581,15 +581,15 @@ operation ::= `hivm.hir.load` `ins` `(` $src `:` type($src) `)`
               (`->` type($result_tensor)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.load ins(%src : memref<16x16xf16, #hivm.address_space<gm>>) outs(%dst : memref<16x16xf16, #hivm.address_space<ub>>)
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `OpPipeTrait<PIPE::PIPE_MTE2>`, `SinglePipeOpTrait`, `UniformReassociationFlattenTrait`
+**特性**：`AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `OpPipeTrait<PIPE::PIPE_MTE2>`, `SinglePipeOpTrait`, `UniformReassociationFlattenTrait`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
@@ -600,7 +600,7 @@ hivm.load ins(%src : memref<16x16xf16, #hivm.address_space<gm>>) outs(%dst : mem
 | `right_padding_num` | 任意类型 |
 | `init_condition` | 任意类型 |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -608,27 +608,27 @@ hivm.load ins(%src : memref<16x16xf16, #hivm.address_space<gm>>) outs(%dst : mem
 
 ### hivm.hir.load_scalar (hivm::LoadScalarOp)
 
-**功能：** 从LLVM指针地址加载标量值。
+**功能**：从LLVM指针地址加载标量值。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.load_scalar` attr-dict $addr `:` type($addr) `->` type($result)
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 %val = hivm.hir.load_scalar %addr : !llvm.ptr<f32> -> f32
 ```
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
 | `addr` | LLVM指针类型 |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -636,9 +636,9 @@ operation ::= `hivm.hir.load_scalar` attr-dict $addr `:` type($addr) `->` type($
 
 ### hivm.hir.matmul (hivm::MatmulOp)
 
-**功能：** 从全局内存执行矩阵乘法操作，支持转置、偏置与反量化。
+**功能**：从全局内存执行矩阵乘法操作，支持转置、偏置与反量化。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.matmul` attr-dict `ins` `(` $a `,` $b `:` type($a) `,` type($b) `)`
@@ -657,15 +657,15 @@ operation ::= `hivm.hir.matmul` attr-dict `ins` `(` $a `,` $b `:` type($a) `,` t
               (`->` type($result)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.matmul ins(%A, %B : memref<32x64xf16>, memref<64x32xf16>) outs(%C : memref<32x32xf32>) {a_transpose, block_sizes = [16, 16, 16]}
 ```
 
-**特性：** `AttrSizedOperandSegments`, `MacroOpPipeTrait<PIPE::PIPE_MTE2, PIPE::PIPE_MTE3>`, `MacroOpTrait`
+**特性**：`AttrSizedOperandSegments`, `MacroOpPipeTrait<PIPE::PIPE_MTE2, PIPE::PIPE_MTE3>`, `MacroOpTrait`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
@@ -681,7 +681,7 @@ hivm.hir.matmul ins(%A, %B : memref<32x64xf16>, memref<64x32xf16>) outs(%C : mem
 | `epiloguePTiles` | 64位无符号整数 |
 | `c` | 任意类型值的shaped类型 |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -689,9 +689,9 @@ hivm.hir.matmul ins(%A, %B : memref<32x64xf16>, memref<64x32xf16>) outs(%C : mem
 
 ### hivm.hir.mix_group_matmul (hivm::MixGroupMatmulOp)
 
-**功能：** 执行分组矩阵乘法，支持按专家分配token并与后向量函数融合。
+**功能**：执行分组矩阵乘法，支持按专家分配token并与后向量函数融合。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.mix_group_matmul` attr-dict `ins` `(` $a `,` $b `,` $tokens_per_expert `:` type($a) `,` type($b) `,` type($tokens_per_expert) `)`
@@ -714,15 +714,15 @@ operation ::= `hivm.hir.mix_group_matmul` attr-dict `ins` `(` $a `,` $b `,` $tok
               (`->` type($result)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.mix_group_matmul ins(%A, %B, %tokens : memref<128x64xf16>, memref<64x32xf16>, memref<8xi32>) outs(%C : memref<128x32xf32>)
 ```
 
-**特性：** `AttrSizedOperandSegments`, `MacroOpPipeTrait<PIPE::PIPE_MTE2, PIPE::PIPE_MTE3>`, `MacroOpTrait`
+**特性**：`AttrSizedOperandSegments`, `MacroOpPipeTrait<PIPE::PIPE_MTE2, PIPE::PIPE_MTE3>`, `MacroOpTrait`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
@@ -743,7 +743,7 @@ hivm.hir.mix_group_matmul ins(%A, %B, %tokens : memref<128x64xf16>, memref<64x32
 | `epiloguePTiles` | 64位无符号整数 |
 | `c` | 任意类型值的shaped类型 |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -751,9 +751,9 @@ hivm.hir.mix_group_matmul ins(%A, %B, %tokens : memref<128x64xf16>, memref<64x32
 
 ### hivm.hir.mix_matmul (hivm::MixMatmulOp)
 
-**功能：** 执行矩阵乘法，支持与后向量函数进行tile级融合。
+**功能**：执行矩阵乘法，支持与后向量函数进行tile级融合。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.mix_matmul` attr-dict `ins` `(` $a `,` $b `:` type($a) `,` type($b) `)`
@@ -775,15 +775,15 @@ operation ::= `hivm.hir.mix_matmul` attr-dict `ins` `(` $a `,` $b `:` type($a) `
               (`->` type($result)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.mix_matmul ins(%A, %B : memref<32x64xf16>, memref<64x32xf16>) outs(%C : memref<32x32xf32>) {a_transpose}
 ```
 
-**特性：** `AttrSizedOperandSegments`, `MacroOpPipeTrait<PIPE::PIPE_MTE2, PIPE::PIPE_MTE3>`, `MacroOpTrait`
+**特性**：`AttrSizedOperandSegments`, `MacroOpPipeTrait<PIPE::PIPE_MTE2, PIPE::PIPE_MTE3>`, `MacroOpTrait`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
@@ -802,7 +802,7 @@ hivm.hir.mix_matmul ins(%A, %B : memref<32x64xf16>, memref<64x32xf16>) outs(%C :
 | `epiloguePTiles` | 64位无符号整数 |
 | `c` | 任意类型值的shaped类型 |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -810,9 +810,9 @@ hivm.hir.mix_matmul ins(%A, %B : memref<32x64xf16>, memref<64x32xf16>) outs(%C :
 
 ### hivm.hir.mmadL1 (hivm::MmadL1Op)
 
-**功能：** 从L1内存层级执行矩阵乘加操作。
+**功能**：从L1内存层级执行矩阵乘加操作。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.mmadL1` attr-dict `ins` `(`
@@ -837,15 +837,15 @@ operation ::= `hivm.hir.mmadL1` attr-dict `ins` `(`
               (`->` type($result_tensors)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.mmadL1 ins(%A, %B, %init, %m, %k, %n : memref<32x64xf16>, memref<64x32xf16>, i1, index, index, index) outs(%C : memref<32x32xf16>)
 ```
 
-**特性：** `AttrSizedOperandSegments`, `CubeCoreTypeTrait`, `MacroOpPipeTrait<PIPE::PIPE_MTE1, PIPE::PIPE_M>`, `MacroOpTrait`
+**特性**：`AttrSizedOperandSegments`, `CubeCoreTypeTrait`, `MacroOpPipeTrait<PIPE::PIPE_MTE1, PIPE::PIPE_M>`, `MacroOpTrait`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
@@ -860,7 +860,7 @@ hivm.hir.mmadL1 ins(%A, %B, %init, %m, %k, %n : memref<32x64xf16>, memref<64x32x
 | `unit_flag_cond` | 1位无符号整数 |
 | `per_channel_bias` | 类型为Tensor或Memref |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -868,9 +868,9 @@ hivm.hir.mmadL1 ins(%A, %B, %init, %m, %k, %n : memref<32x64xf16>, memref<64x32x
 
 ### hivm.hir.nd2nz (hivm::ND2NZOp)
 
-**功能：** 执行即时ND到NZ布局变换的数据拷贝操作。
+**功能**：执行即时ND到NZ布局变换的数据拷贝操作。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.nd2nz` attr-dict
@@ -882,15 +882,15 @@ operation ::= `hivm.hir.nd2nz` attr-dict
               (`->` type($result_tensor)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.nd2nz ins(%src : memref<32x32xf16>) outs(%dst : memref<32x32xf16>) {dst_continuous}
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `CubeCoreTypeTrait`, `OpPipeTrait<PIPE::PIPE_MTE2>`, `SinglePipeOpTrait`
+**特性**：`AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `CubeCoreTypeTrait`, `OpPipeTrait<PIPE::PIPE_MTE2>`, `SinglePipeOpTrait`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
@@ -899,7 +899,7 @@ hivm.hir.nd2nz ins(%src : memref<32x32xf16>) outs(%dst : memref<32x32xf16>) {dst
 | `pad_value` | 任意类型 |
 | `init_condition` | 任意类型 |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -907,9 +907,9 @@ hivm.hir.nd2nz ins(%src : memref<32x32xf16>) outs(%dst : memref<32x32xf16>) {dst
 
 ### hivm.hir.nz2nd (hivm::NZ2NDOp)
 
-**功能：** 从L1到全局内存执行NZ2ND转换的数据拷贝操作。
+**功能**：从L1到全局内存执行NZ2ND转换的数据拷贝操作。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.nz2nd` attr-dict
@@ -918,22 +918,22 @@ operation ::= `hivm.hir.nz2nd` attr-dict
               (`->` type($result_tensor)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.nz2nd ins(%src : memref<32x32xf16, #hivm.address_space<l1>>) outs(%dst : memref<32x32xf16, #hivm.address_space<gm>>)
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `CubeCoreTypeTrait`, `OpPipeTrait<PIPE::PIPE_MTE3>`, `SinglePipeOpTrait`
+**特性**：`AlwaysSpeculatableImplTrait`, `CubeCoreTypeTrait`, `OpPipeTrait<PIPE::PIPE_MTE3>`, `SinglePipeOpTrait`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
 | `src` | 类型为Tensor或Memref |
 | `dst` | 类型为Tensor或Memref |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -941,15 +941,15 @@ hivm.hir.nz2nd ins(%src : memref<32x32xf16, #hivm.address_space<l1>>) outs(%dst 
 
 ### hivm.hir.pipe_barrier (hivm::PipeBarrierOp)
 
-**功能：** 在指定pipe上插入屏障，用于同步。
+**功能**：在指定pipe上插入屏障，用于同步。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.pipe_barrier` `[` $pipe `]` attr-dict
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.pipe_barrier [#hivm.pipe<PIPE_V>]
@@ -957,15 +957,15 @@ hivm.hir.pipe_barrier [#hivm.pipe<PIPE_V>]
 
 ### hivm.hir.pointer_cast (hivm::PointerCastOp)
 
-**功能：** 将指定的64位整型地址转换为memref。
+**功能**：将指定的64位整型地址转换为memref。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.pointer_cast` `(`$addrs `)` (`[` $dynamicSizes^`]`)? attr-dict `:` type($result)
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 %addr = arith.constant 1234 : i64
@@ -977,16 +977,16 @@ operation ::= `hivm.hir.pointer_cast` `(`$addrs `)` (`[` $dynamicSizes^`]`)? att
 %tmp3 = hivm.hir.pointer_cast(%addr, %addr2, %addr3) : memref<32xf32>
 ```
 
-**特性：** `AttrSizedOperandSegments`, `CubeVectorCoreTypeTrait`
+**特性**：`AttrSizedOperandSegments`, `CubeVectorCoreTypeTrait`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
 | `addrs` | 可变参数，64位无符号整数 |
 | `dynamicSizes` | 可变参数，index类型 |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -994,23 +994,23 @@ operation ::= `hivm.hir.pointer_cast` `(`$addrs `)` (`[` $dynamicSizes^`]`)? att
 
 ### hivm.hir.set_ffts_base_addr (hivm::SetFFTSBaseAddrOp)
 
-**功能：** 设置FFTS同步机制的基础地址。
+**功能**：设置FFTS同步机制的基础地址。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.set_ffts_base_addr` attr-dict $ffts_base_addr
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.set_ffts_base_addr %base_addr
 ```
 
-**特性：** `CubeVectorCoreTypeTrait`
+**特性**：`CubeVectorCoreTypeTrait`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
@@ -1018,9 +1018,9 @@ hivm.hir.set_ffts_base_addr %base_addr
 
 ### hivm.hir.set_flag (hivm::SetFlagOp)
 
-**功能：** 设置同步标志。
+**功能**：设置同步标志。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.set_flag` `[`
@@ -1030,13 +1030,13 @@ operation ::= `hivm.hir.set_flag` `[`
               `]` attr-dict
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.set_flag [#hivm.pipe<PIPE_V>, #hivm.pipe<PIPE_M>, #hivm.event<EVENT_ID0>]
 ```
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
@@ -1044,15 +1044,15 @@ hivm.hir.set_flag [#hivm.pipe<PIPE_V>, #hivm.pipe<PIPE_M>, #hivm.event<EVENT_ID0
 
 ### hivm.hir.set_mask_norm (hivm::SetMaskNormOp)
 
-**功能：** 设置掩码归一化模式。
+**功能**：设置掩码归一化模式。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.set_mask_norm` attr-dict
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.set_mask_norm
@@ -1060,9 +1060,9 @@ hivm.hir.set_mask_norm
 
 ### hivm.hir.store (hivm::StoreOp)
 
-**功能：** 将本地缓冲区数据存储到全局内存，支持原子操作。
+**功能**：将本地缓冲区数据存储到全局内存，支持原子操作。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.store` `ins` `(` $src `:` type($src) `)`
@@ -1072,23 +1072,23 @@ operation ::= `hivm.hir.store` `ins` `(` $src `:` type($src) `)`
               (`->` type($result_tensor)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.store ins(%src : memref<16x16xf16, #hivm.address_space<ub>>) outs(%dst : memref<16x16xf16, #hivm.address_space<gm>>)
 hivm.store ins(%src : memref<16x16xf16, #hivm.address_space<ub>>) outs(%dst : memref<16x16xf16, #hivm.address_space<gm>>) atomic = #hivm.atomic_kind<add>
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `OpPipeTrait<PIPE::PIPE_MTE3>`, `SinglePipeOpTrait`, `UniformReassociationFlattenTrait`
+**特性**：`AlwaysSpeculatableImplTrait`, `OpPipeTrait<PIPE::PIPE_MTE3>`, `SinglePipeOpTrait`, `UniformReassociationFlattenTrait`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
 | `src` | 类型为Tensor或Memref |
 | `dst` | 类型为Tensor或Memref |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -1096,9 +1096,9 @@ hivm.store ins(%src : memref<16x16xf16, #hivm.address_space<ub>>) outs(%dst : me
 
 ### hivm.hir.sync_block (hivm::SyncBlockOp)
 
-**功能：** 在不同内核间执行块同步，支持多种同步模式。
+**功能**：在不同内核间执行块同步，支持多种同步模式。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.sync_block` attr-dict `[` $sync_block_mode (`,` $flag_id^)?`]`
@@ -1107,13 +1107,13 @@ operation ::= `hivm.hir.sync_block` attr-dict `[` $sync_block_mode (`,` $flag_id
               (`tvector_pipe` `=` $tvector_pipe^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.sync_block [#hivm.sync_block_mode<ALL>] {tvector_pipe = #hivm.pipe<PIPE_V>}
 ```
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
@@ -1121,21 +1121,21 @@ hivm.hir.sync_block [#hivm.sync_block_mode<ALL>] {tvector_pipe = #hivm.pipe<PIPE
 
 ### hivm.hir.sync_block_lock (hivm::SyncBlockLockOp)
 
-**功能：** 等待锁变量等于当前block索引，实现块间同步。
+**功能**：等待锁变量等于当前block索引，实现块间同步。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.sync_block_lock` attr-dict `lock_var` `(` $lock_var `:` type($lock_var) `)`
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.sync_block_lock lock_var(%lock : memref<1xi64>)
 ```
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
@@ -1143,9 +1143,9 @@ hivm.hir.sync_block_lock lock_var(%lock : memref<1xi64>)
 
 ### hivm.hir.sync_block_set (hivm::SyncBlockSetOp)
 
-**功能：** 设置块同步的同步点。
+**功能**：设置块同步的同步点。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.sync_block_set` attr-dict `[` $tcore_type `,` $tpipe `,` $pipe`]`
@@ -1154,15 +1154,15 @@ operation ::= `hivm.hir.sync_block_set` attr-dict `[` $tcore_type `,` $tpipe `,`
               (`sync_instr_mode` `=` $tsync_instr_mode^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.sync_block_set [#hivm.tcore_type<CUBE>, #hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>] flag = #hivm.event<EVENT_ID0>
 ```
 
-**特性：** `AttrSizedOperandSegments`
+**特性**：`AttrSizedOperandSegments`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
@@ -1171,21 +1171,21 @@ hivm.hir.sync_block_set [#hivm.tcore_type<CUBE>, #hivm.pipe<PIPE_M>, #hivm.pipe<
 
 ### hivm.hir.sync_block_unlock (hivm::SyncBlockUnlockOp)
 
-**功能：** 递增并释放锁变量。
+**功能**：递增并释放锁变量。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.sync_block_unlock` attr-dict `lock_var` `(` $lock_var `:` type($lock_var) `)`
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.sync_block_unlock lock_var(%lock : memref<1xi64>)
 ```
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
@@ -1193,22 +1193,22 @@ hivm.hir.sync_block_unlock lock_var(%lock : memref<1xi64>)
 
 ### hivm.hir.sync_block_wait (hivm::SyncBlockWaitOp)
 
-**功能：** 等待指定块同步标志。
+**功能**：等待指定块同步标志。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.sync_block_wait` attr-dict `[` $tcore_type `,` $tpipe `,` $pipe`]`
               `flag` `=` custom<FlagID>($static_flag_id, $dynamic_flag_id)
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.sync_block_wait [#hivm.tcore_type<VECTOR>, #hivm.pipe<PIPE_V>, #hivm.pipe<PIPE_M>] flag = #hivm.event<EVENT_ID1>
 ```
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
@@ -1216,9 +1216,9 @@ hivm.hir.sync_block_wait [#hivm.tcore_type<VECTOR>, #hivm.pipe<PIPE_V>, #hivm.pi
 
 ### hivm.hir.vabs (hivm::VAbsOp)
 
-**功能：** 逐元素计算向量的绝对值。
+**功能**：逐元素计算向量的绝对值。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.vabs` attr-dict `ins` `(` $src `:` type($src) `)`
@@ -1229,15 +1229,15 @@ operation ::= `hivm.hir.vabs` attr-dict `ins` `(` $src `:` type($src) `)`
               (`->` type($result)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.vabs ins(%src : memref<32xf32>) outs(%dst : memref<32xf32>)
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `BroadcastableOTF`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<1>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
+**特性**：`AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `BroadcastableOTF`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<1>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
@@ -1245,7 +1245,7 @@ hivm.hir.vabs ins(%src : memref<32xf32>) outs(%dst : memref<32xf32>)
 | `dst` | 可变参数，任意类型值的shaped类型 |
 | `temp_buffer` | 任意类型值的memref |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -1253,9 +1253,9 @@ hivm.hir.vabs ins(%src : memref<32xf32>) outs(%dst : memref<32xf32>)
 
 ### hivm.hir.vadd (hivm::VAddOp)
 
-**功能：** 逐元素执行二元向量加法运算。
+**功能**：逐元素执行二元向量加法运算。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.vadd` attr-dict `ins` `(` $src `:` type($src) `)`
@@ -1266,15 +1266,15 @@ operation ::= `hivm.hir.vadd` attr-dict `ins` `(` $src `:` type($src) `)`
               (`->` type($result)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.vadd ins(%src0, %src1 : memref<32xf32>, memref<32xf32>) outs(%dst : memref<32xf32>)
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `BroadcastableOTF`, `CollapsibleConsecutiveTargetDimsTrait`, `CommutativeOpTrait`, `ElementwiseNaryOpTrait<2>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
+**特性**：`AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `BroadcastableOTF`, `CollapsibleConsecutiveTargetDimsTrait`, `CommutativeOpTrait`, `ElementwiseNaryOpTrait<2>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
@@ -1282,7 +1282,7 @@ hivm.hir.vadd ins(%src0, %src1 : memref<32xf32>, memref<32xf32>) outs(%dst : mem
 | `dst` | 可变参数，任意类型值的shaped类型 |
 | `temp_buffer` | 任意类型值的memref |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -1290,9 +1290,9 @@ hivm.hir.vadd ins(%src0, %src1 : memref<32xf32>, memref<32xf32>) outs(%dst : mem
 
 ### hivm.hir.vand (hivm::VAndOp)
 
-**功能：** 逐元素执行二元向量按位与运算。
+**功能**：逐元素执行二元向量按位与运算。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.vand` attr-dict `ins` `(` $src `:` type($src) `)`
@@ -1303,15 +1303,15 @@ operation ::= `hivm.hir.vand` attr-dict `ins` `(` $src `:` type($src) `)`
               (`->` type($result)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.vand ins(%src0, %src1 : memref<32xi32>, memref<32xi32>) outs(%dst : memref<32xi32>)
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `BroadcastableOTF`, `CollapsibleConsecutiveTargetDimsTrait`, `CommutativeOpTrait`, `ElementwiseNaryOpTrait<2>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`, `VectorOnlyTrait<1>`
+**特性**：`AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `BroadcastableOTF`, `CollapsibleConsecutiveTargetDimsTrait`, `CommutativeOpTrait`, `ElementwiseNaryOpTrait<2>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`, `VectorOnlyTrait<1>`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
@@ -1319,7 +1319,7 @@ hivm.hir.vand ins(%src0, %src1 : memref<32xi32>, memref<32xi32>) outs(%dst : mem
 | `dst` | 可变参数，任意类型值的shaped类型 |
 | `temp_buffer` | 任意类型值的memref |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -1327,9 +1327,9 @@ hivm.hir.vand ins(%src0, %src1 : memref<32xi32>, memref<32xi32>) outs(%dst : mem
 
 ### hivm.hir.varange (hivm::VArangeOp)
 
-**功能：** 根据步长和偏移量生成等差序列填充向量。
+**功能**：根据步长和偏移量生成等差序列填充向量。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.varange` attr-dict
@@ -1339,16 +1339,16 @@ operation ::= `hivm.hir.varange` attr-dict
               (`->` type($result)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.varange offset[%o] strides[%s0, %s1] outs(%dst : memref<32xf32>)
 %result = hivm.hir.varange offset[%o] strides[%s0, %s1] outs(%dst : tensor<32xf32>) -> tensor<32xf32>
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `OpPipeTrait<PIPE::PIPE_V>`, `SinglePipeOpTrait`, `VectorCoreTypeTrait`
+**特性**：`AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `OpPipeTrait<PIPE::PIPE_V>`, `SinglePipeOpTrait`, `VectorCoreTypeTrait`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
@@ -1356,7 +1356,7 @@ hivm.hir.varange offset[%o] strides[%s0, %s1] outs(%dst : memref<32xf32>)
 | `offset` | index类型 |
 | `strides` | 可变参数，index类型 |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -1364,9 +1364,9 @@ hivm.hir.varange offset[%o] strides[%s0, %s1] outs(%dst : memref<32xf32>)
 
 ### hivm.hir.vbrc (hivm::VBrcOp)
 
-**功能：** 将向量或标量沿指定维度进行广播。
+**功能**：将向量或标量沿指定维度进行广播。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.vbrc` attr-dict `ins` `(` $src `:` type($src) `)`
@@ -1376,7 +1376,7 @@ operation ::= `hivm.hir.vbrc` attr-dict `ins` `(` $src `:` type($src) `)`
               (`->` type($result)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.vbrc ins(%src : i32) outs(%dst : memref<?xi32>)
@@ -1384,9 +1384,9 @@ hivm.hir.vbrc ins(%src : memref<1xi32>) outs(%dst : memref<?xi32>) broadcast_dim
 %result = hivm.hir.vbrc ins(%src : tensor<1xi32>) outs(%dst : tensor<?xi32>) broadcast_dims = [0] -> tensor<?xi32>
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `CollapsibleConsecutiveTargetDimsTrait`, `SameOperandsElementType`, `SinglePipeOpTrait`, `UniformReassociationFlattenTrait`
+**特性**：`AlwaysSpeculatableImplTrait`, `CollapsibleConsecutiveTargetDimsTrait`, `SameOperandsElementType`, `SinglePipeOpTrait`, `UniformReassociationFlattenTrait`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
@@ -1394,7 +1394,7 @@ hivm.hir.vbrc ins(%src : memref<1xi32>) outs(%dst : memref<?xi32>) broadcast_dim
 | `dst` | 类型为Tensor或Memref |
 | `temp_buffer` | 任意类型值的memref |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -1402,9 +1402,9 @@ hivm.hir.vbrc ins(%src : memref<1xi32>) outs(%dst : memref<?xi32>) broadcast_dim
 
 ### hivm.hir.vcast (hivm::VCastOp)
 
-**功能：** 逐元素执行向量类型转换，支持多种舍入模式。
+**功能**：逐元素执行向量类型转换，支持多种舍入模式。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.vcast` attr-dict (`ins` `(` $src^ `:` type($src) `)`)?
@@ -1417,15 +1417,15 @@ operation ::= `hivm.hir.vcast` attr-dict (`ins` `(` $src^ `:` type($src) `)`)?
               (`->` type($result)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.vcast ins(%src : memref<32xf32>) outs(%dst : memref<32xi32>) {round_mode = #hivm.round_mode<rint>}
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `BroadcastableOTF`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<1>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
+**特性**：`AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `BroadcastableOTF`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<1>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
@@ -1433,7 +1433,7 @@ hivm.hir.vcast ins(%src : memref<32xf32>) outs(%dst : memref<32xi32>) {round_mod
 | `dst` | 可变参数，任意类型值的shaped类型 |
 | `temp_buffer` | 任意类型值的memref |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -1441,9 +1441,9 @@ hivm.hir.vcast ins(%src : memref<32xf32>) outs(%dst : memref<32xi32>) {round_mod
 
 ### hivm.hir.vcmp (hivm::VCmpOp)
 
-**功能：** 逐元素执行二元向量比较，结果存入bool向量。
+**功能**：逐元素执行二元向量比较，结果存入bool向量。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.vcmp` attr-dict (`ins` `(` $src^ `:` type($src) `)`)?
@@ -1454,22 +1454,22 @@ operation ::= `hivm.hir.vcmp` attr-dict (`ins` `(` $src^ `:` type($src) `)`)?
               (`->` type($result)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.vcmp ins(%src0, %src1 : memref<32xf32>, memref<32xf32>) outs(%dst : memref<32xi1>) {compare_mode = #hivm.compare_mode<GE>}
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<2>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
+**特性**：`AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<2>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
 | `src` | 可变参数，任意类型 |
 | `dst` | 可变参数，任意类型值的shaped类型 |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -1477,9 +1477,9 @@ hivm.hir.vcmp ins(%src0, %src1 : memref<32xf32>, memref<32xf32>) outs(%dst : mem
 
 ### hivm.hir.vconcat (hivm::VConcatOp)
 
-**功能：** 沿指定维度拼接多个向量。
+**功能**：沿指定维度拼接多个向量。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.vconcat` `dim` `(` $dim `)` attr-dict `ins` `(` $src `:` type($src) `)`
@@ -1487,22 +1487,22 @@ operation ::= `hivm.hir.vconcat` `dim` `(` $dim `)` attr-dict `ins` `(` $src `:`
               (`->` type($result)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.vconcat dim(1) ins(%0, %1 : tensor<136x2048xf32>, tensor<136x2048xf32>) outs(%2 : tensor<136x4096xf32>) -> tensor<136x4096xf32>
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`
+**特性**：`AlwaysSpeculatableImplTrait`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
 | `src` | 可变参数，任意类型 |
 | `dst` | 类型为Tensor或Memref |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -1510,9 +1510,9 @@ hivm.hir.vconcat dim(1) ins(%0, %1 : tensor<136x2048xf32>, tensor<136x2048xf32>)
 
 ### hivm.hir.vcos (hivm::VCosOp)
 
-**功能：** 逐元素计算向量的余弦值。
+**功能**：逐元素计算向量的余弦值。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.vcos` attr-dict (`ins` `(` $src^ `:` type($src) `)`)?
@@ -1522,22 +1522,22 @@ operation ::= `hivm.hir.vcos` attr-dict (`ins` `(` $src^ `:` type($src) `)`)?
               (`->` type($result)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.vcos ins(%src : memref<32xf32>) outs(%dst : memref<32xf32>)
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<1>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
+**特性**：`AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<1>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
 | `src` | 可变参数，任意类型 |
 | `dst` | 可变参数，任意类型值的shaped类型 |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -1545,9 +1545,9 @@ hivm.hir.vcos ins(%src : memref<32xf32>) outs(%dst : memref<32xf32>)
 
 ### hivm.hir.vcumprod (hivm::VCumprodOp)
 
-**功能：** 沿指定维度计算向量的累积乘积，支持反向方向。
+**功能**：沿指定维度计算向量的累积乘积，支持反向方向。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.vcumprod` attr-dict `ins` `(` $src `:` type($src) `)`
@@ -1557,23 +1557,23 @@ operation ::= `hivm.hir.vcumprod` attr-dict `ins` `(` $src `:` type($src) `)`
               (`->` type($result)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.vcumprod ins(%src : memref<?xf32>) outs(%dst : memref<?xf32>) cum_dims : [0] reverse = true
 %result = hivm.hir.vcumprod ins(%src : tensor<?xf32>) outs(%dst : tensor<?xf32>) cum_dims : [0] reverse = true -> tensor<?xf32>
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`
+**特性**：`AlwaysSpeculatableImplTrait`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
 | `src` | 类型为Tensor或Memref |
 | `dst` | 类型为Tensor或Memref |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -1581,9 +1581,9 @@ hivm.hir.vcumprod ins(%src : memref<?xf32>) outs(%dst : memref<?xf32>) cum_dims 
 
 ### hivm.hir.vcumsum (hivm::VCumsumOp)
 
-**功能：** 沿指定维度计算向量的累积和，支持反向方向。
+**功能**：沿指定维度计算向量的累积和，支持反向方向。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.vcumsum` attr-dict `ins` `(` $src `:` type($src) `)`
@@ -1593,23 +1593,23 @@ operation ::= `hivm.hir.vcumsum` attr-dict `ins` `(` $src `:` type($src) `)`
               (`->` type($result)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.vcumsum ins(%src : memref<?xf32>) outs(%dst : memref<?xf32>) cum_dims : [0] reverse = true
 %result = hivm.hir.vcumsum ins(%src : tensor<?xf32>) outs(%dst : tensor<?xf32>) cum_dims : [0] reverse = true -> tensor<?xf32>
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`
+**特性**：`AlwaysSpeculatableImplTrait`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
 | `src` | 类型为Tensor或Memref |
 | `dst` | 类型为Tensor或Memref |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -1617,9 +1617,9 @@ hivm.hir.vcumsum ins(%src : memref<?xf32>) outs(%dst : memref<?xf32>) cum_dims :
 
 ### hivm.hir.vdeinterleave (hivm::VDeinterleaveOp)
 
-**功能：** 沿最后一个维度对向量进行解交织。
+**功能**：沿最后一个维度对向量进行解交织。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.vdeinterleave` attr-dict `ins` `(` $src `:` type($src) `)`
@@ -1629,22 +1629,22 @@ operation ::= `hivm.hir.vdeinterleave` attr-dict `ins` `(` $src `:` type($src) `
               (`->` type($result)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.vdeinterleave ins(%src : memref<32x16xf32>) outs(%dst0, %dst1 : memref<32x8xf32>, memref<32x8xf32>) {channel_num = 2}
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`
+**特性**：`AlwaysSpeculatableImplTrait`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
 | `src` | 类型为Tensor或Memref |
 | `dst` | 可变参数，类型为Tensor或Memref |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -1652,9 +1652,9 @@ hivm.hir.vdeinterleave ins(%src : memref<32x16xf32>) outs(%dst0, %dst1 : memref<
 
 ### hivm.hir.vdiv (hivm::VDivOp)
 
-**功能：** 逐元素执行二元向量除法运算。
+**功能**：逐元素执行二元向量除法运算。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.vdiv` attr-dict (`ins` `(` $src^ `:` type($src) `)`)?
@@ -1665,15 +1665,15 @@ operation ::= `hivm.hir.vdiv` attr-dict (`ins` `(` $src^ `:` type($src) `)`)?
               (`->` type($result)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.vdiv ins(%src0, %src1 : memref<32xf32>, memref<32xf32>) outs(%dst : memref<32xf32>)
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `BroadcastableOTF`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<2>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`
+**特性**：`AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `BroadcastableOTF`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<2>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
@@ -1681,7 +1681,7 @@ hivm.hir.vdiv ins(%src0, %src1 : memref<32xf32>, memref<32xf32>) outs(%dst : mem
 | `dst` | 可变参数，任意类型值的shaped类型 |
 | `temp_buffer` | 任意类型值的memref |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -1689,9 +1689,9 @@ hivm.hir.vdiv ins(%src0, %src1 : memref<32xf32>, memref<32xf32>) outs(%dst : mem
 
 ### hivm.hir.verf (hivm::VErfOp)
 
-**功能：** 逐元素计算向量的误差函数。
+**功能**：逐元素计算向量的误差函数。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.verf` attr-dict (`ins` `(` $src^ `:` type($src) `)`)?
@@ -1701,22 +1701,22 @@ operation ::= `hivm.hir.verf` attr-dict (`ins` `(` $src^ `:` type($src) `)`)?
               (`->` type($result)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.verf ins(%src : memref<32xf32>) outs(%dst : memref<32xf32>)
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<1>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
+**特性**：`AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<1>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
 | `src` | 可变参数，任意类型 |
 | `dst` | 可变参数，任意类型值的shaped类型 |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -1724,9 +1724,9 @@ hivm.hir.verf ins(%src : memref<32xf32>) outs(%dst : memref<32xf32>)
 
 ### hivm.hir.vexp (hivm::VExpOp)
 
-**功能：** 逐元素计算向量的指数值。
+**功能**：逐元素计算向量的指数值。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.vexp` attr-dict `ins` `(` $src `:` type($src) `)`
@@ -1737,15 +1737,15 @@ operation ::= `hivm.hir.vexp` attr-dict `ins` `(` $src `:` type($src) `)`
               (`->` type($result)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.vexp ins(%src : memref<32xf32>) outs(%dst : memref<32xf32>)
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `BroadcastableOTF`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<1>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
+**特性**：`AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `BroadcastableOTF`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<1>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
@@ -1753,7 +1753,7 @@ hivm.hir.vexp ins(%src : memref<32xf32>) outs(%dst : memref<32xf32>)
 | `dst` | 可变参数，任意类型值的shaped类型 |
 | `temp_buffer` | 任意类型值的memref |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -1761,9 +1761,9 @@ hivm.hir.vexp ins(%src : memref<32xf32>) outs(%dst : memref<32xf32>)
 
 ### hivm.hir.vflip (hivm::VFlipOp)
 
-**功能：** 沿指定轴翻转向量元素顺序。
+**功能**：沿指定轴翻转向量元素顺序。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.vflip` attr-dict `ins` `(` $src `:` type($src) `)`
@@ -1772,22 +1772,22 @@ operation ::= `hivm.hir.vflip` attr-dict `ins` `(` $src `:` type($src) `)`
               (`->` type($result)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.vflip ins(%src : memref<32x16xf32>) outs(%dst : memref<32x16xf32>) flip_axis = 1
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`
+**特性**：`AlwaysSpeculatableImplTrait`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
 | `src` | 类型为Tensor或Memref |
 | `dst` | 类型为Tensor或Memref |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -1795,9 +1795,9 @@ hivm.hir.vflip ins(%src : memref<32x16xf32>) outs(%dst : memref<32x16xf32>) flip
 
 ### hivm.hir.vgather (hivm::VGatherOp)
 
-**功能：** 根据索引从源向量中收集元素。
+**功能**：根据索引从源向量中收集元素。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.vgather` attr-dict `ins` `(` $src `:` type($src) `)`
@@ -1807,15 +1807,15 @@ operation ::= `hivm.hir.vgather` attr-dict `ins` `(` $src `:` type($src) `)`
               (`->` type($result)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.vgather ins(%src : memref<32x16xf32>) indices(%idx : memref<32x8xi32>) outs(%dst : memref<32x8xf32>)
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SinglePipeOpTrait`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`
+**特性**：`AlwaysSpeculatableImplTrait`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SinglePipeOpTrait`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
@@ -1824,7 +1824,7 @@ hivm.hir.vgather ins(%src : memref<32x16xf32>) indices(%idx : memref<32x8xi32>) 
 | `dst` | 类型为Tensor或Memref |
 | `temp_buffer` | 任意类型值的memref |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -1832,9 +1832,9 @@ hivm.hir.vgather ins(%src : memref<32x16xf32>) indices(%idx : memref<32x8xi32>) 
 
 ### hivm.hir.vinterleave (hivm::VInterleaveOp)
 
-**功能：** 沿最后一个维度交织多个向量的值。
+**功能**：沿最后一个维度交织多个向量的值。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.vinterleave` attr-dict `ins` `(` $src `:` type($src) `)`
@@ -1844,15 +1844,15 @@ operation ::= `hivm.hir.vinterleave` attr-dict `ins` `(` $src `:` type($src) `)`
               (`->` type($result)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.vinterleave ins(%src0, %src1 : memref<32x8xf32>, memref<32x8xf32>) outs(%dst : memref<32x16xf32>) interleave_channel_nums = 2
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`
+**特性**：`AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
@@ -1860,7 +1860,7 @@ hivm.hir.vinterleave ins(%src0, %src1 : memref<32x8xf32>, memref<32x8xf32>) outs
 | `dst` | 类型为Tensor或Memref |
 | `temp_buffer` | 任意类型值的memref |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -1868,9 +1868,9 @@ hivm.hir.vinterleave ins(%src0, %src1 : memref<32x8xf32>, memref<32x8xf32>) outs
 
 ### hivm.hir.vln (hivm::VLnOp)
 
-**功能：** 逐元素计算向量的自然对数。
+**功能**：逐元素计算向量的自然对数。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.vln` attr-dict `ins` `(` $src `:` type($src) `)`
@@ -1881,15 +1881,15 @@ operation ::= `hivm.hir.vln` attr-dict `ins` `(` $src `:` type($src) `)`
               (`->` type($result)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.vln ins(%src : memref<32xf32>) outs(%dst : memref<32xf32>)
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `BroadcastableOTF`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<1>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
+**特性**：`AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `BroadcastableOTF`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<1>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
@@ -1897,7 +1897,7 @@ hivm.hir.vln ins(%src : memref<32xf32>) outs(%dst : memref<32xf32>)
 | `dst` | 可变参数，任意类型值的shaped类型 |
 | `temp_buffer` | 任意类型值的memref |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -1905,9 +1905,9 @@ hivm.hir.vln ins(%src : memref<32xf32>) outs(%dst : memref<32xf32>)
 
 ### hivm.hir.vmax (hivm::VMaxOp)
 
-**功能：** 逐元素计算两个向量的最大值。
+**功能**：逐元素计算两个向量的最大值。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.vmax` attr-dict `ins` `(` $src `:` type($src) `)`
@@ -1918,15 +1918,15 @@ operation ::= `hivm.hir.vmax` attr-dict `ins` `(` $src `:` type($src) `)`
               (`->` type($result)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.vmax ins(%src0, %src1 : memref<32xf32>, memref<32xf32>) outs(%dst : memref<32xf32>)
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `BroadcastableOTF`, `CollapsibleConsecutiveTargetDimsTrait`, `CommutativeOpTrait`, `ElementwiseNaryOpTrait<2>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
+**特性**：`AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `BroadcastableOTF`, `CollapsibleConsecutiveTargetDimsTrait`, `CommutativeOpTrait`, `ElementwiseNaryOpTrait<2>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
@@ -1934,7 +1934,7 @@ hivm.hir.vmax ins(%src0, %src1 : memref<32xf32>, memref<32xf32>) outs(%dst : mem
 | `dst` | 可变参数，任意类型值的shaped类型 |
 | `temp_buffer` | 任意类型值的memref |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -1942,9 +1942,9 @@ hivm.hir.vmax ins(%src0, %src1 : memref<32xf32>, memref<32xf32>) outs(%dst : mem
 
 ### hivm.hir.vmin (hivm::VMinOp)
 
-**功能：** 逐元素计算两个向量的最小值。
+**功能**：逐元素计算两个向量的最小值。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.vmin` attr-dict `ins` `(` $src `:` type($src) `)`
@@ -1955,15 +1955,15 @@ operation ::= `hivm.hir.vmin` attr-dict `ins` `(` $src `:` type($src) `)`
               (`->` type($result)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.vmin ins(%src0, %src1 : memref<32xf32>, memref<32xf32>) outs(%dst : memref<32xf32>)
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `BroadcastableOTF`, `CollapsibleConsecutiveTargetDimsTrait`, `CommutativeOpTrait`, `ElementwiseNaryOpTrait<2>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
+**特性**：`AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `BroadcastableOTF`, `CollapsibleConsecutiveTargetDimsTrait`, `CommutativeOpTrait`, `ElementwiseNaryOpTrait<2>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
@@ -1971,7 +1971,7 @@ hivm.hir.vmin ins(%src0, %src1 : memref<32xf32>, memref<32xf32>) outs(%dst : mem
 | `dst` | 可变参数，任意类型值的shaped类型 |
 | `temp_buffer` | 任意类型值的memref |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -1979,9 +1979,9 @@ hivm.hir.vmin ins(%src0, %src1 : memref<32xf32>, memref<32xf32>) outs(%dst : mem
 
 ### hivm.hir.vmod (hivm::VModOp)
 
-**功能：** 逐元素计算向量取模运算。
+**功能**：逐元素计算向量取模运算。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.vmod` attr-dict (`ins` `(` $src^ `:` type($src) `)`)?
@@ -1991,22 +1991,22 @@ operation ::= `hivm.hir.vmod` attr-dict (`ins` `(` $src^ `:` type($src) `)`)?
               (`->` type($result)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.vmod ins(%src0, %src1 : memref<32xi32>, memref<32xi32>) outs(%dst : memref<32xi32>)
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<2>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
+**特性**：`AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<2>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
 | `src` | 可变参数，任意类型 |
 | `dst` | 可变参数，任意类型值的shaped类型 |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -2014,9 +2014,9 @@ hivm.hir.vmod ins(%src0, %src1 : memref<32xi32>, memref<32xi32>) outs(%dst : mem
 
 ### hivm.hir.vmul (hivm::VMulOp)
 
-**功能：** 逐元素执行二元向量乘法运算。
+**功能**：逐元素执行二元向量乘法运算。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.vmul` attr-dict `ins` `(` $src `:` type($src) `)`
@@ -2027,15 +2027,15 @@ operation ::= `hivm.hir.vmul` attr-dict `ins` `(` $src `:` type($src) `)`
               (`->` type($result)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.vmul ins(%src0, %src1 : memref<32xf32>, memref<32xf32>) outs(%dst : memref<32xf32>)
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `BroadcastableOTF`, `CollapsibleConsecutiveTargetDimsTrait`, `CommutativeOpTrait`, `ElementwiseNaryOpTrait<2>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
+**特性**：`AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `BroadcastableOTF`, `CollapsibleConsecutiveTargetDimsTrait`, `CommutativeOpTrait`, `ElementwiseNaryOpTrait<2>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
@@ -2043,7 +2043,7 @@ hivm.hir.vmul ins(%src0, %src1 : memref<32xf32>, memref<32xf32>) outs(%dst : mem
 | `dst` | 可变参数，任意类型值的shaped类型 |
 | `temp_buffer` | 任意类型值的memref |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -2051,9 +2051,9 @@ hivm.hir.vmul ins(%src0, %src1 : memref<32xf32>, memref<32xf32>) outs(%dst : mem
 
 ### hivm.hir.vmulext (hivm::VMulExtOp)
 
-**功能：** 逐元素执行二元向量乘法，并计算高32位结果。
+**功能**：逐元素执行二元向量乘法，并计算高32位结果。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.vmulext` attr-dict (`ins` `(` $src^ `:` type($src) `)`)?
@@ -2063,22 +2063,22 @@ operation ::= `hivm.hir.vmulext` attr-dict (`ins` `(` $src^ `:` type($src) `)`)?
               (`->` type($result)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.vmulext ins(%src0, %src1 : memref<32xi32>, memref<32xi32>) outs(%dst : memref<32xi32>)
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<2>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
+**特性**：`AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<2>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
 | `src` | 可变参数，任意类型 |
 | `dst` | 可变参数，任意类型值的shaped类型 |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -2086,9 +2086,9 @@ hivm.hir.vmulext ins(%src0, %src1 : memref<32xi32>, memref<32xi32>) outs(%dst : 
 
 ### hivm.hir.vmulextended (hivm::VMulextendedOp)
 
-**功能：** 对两个tensor执行向量乘法，同时获取高16位和低16位结果。
+**功能**：对两个tensor执行向量乘法，同时获取高16位和低16位结果。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.vmulextended` attr-dict `ins` `(` $src `:` type($src) `)`
@@ -2097,15 +2097,15 @@ operation ::= `hivm.hir.vmulextended` attr-dict `ins` `(` $src `:` type($src) `)
               (`->` type($result)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.vmulextended ins(%src0, %src1 : memref<32xi16>, memref<32xi16>) outs(%dst_hi, %dst_lo : memref<32xi16>, memref<32xi16>)
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SinglePipeOpTrait`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`
+**特性**：`AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SinglePipeOpTrait`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
@@ -2113,7 +2113,7 @@ hivm.hir.vmulextended ins(%src0, %src1 : memref<32xi16>, memref<32xi16>) outs(%d
 | `dst` | 可变参数，类型为Tensor或Memref |
 | `temp_buffer` | 任意类型值的memref |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -2121,9 +2121,9 @@ hivm.hir.vmulextended ins(%src0, %src1 : memref<32xi16>, memref<32xi16>) outs(%d
 
 ### hivm.hir.vnot (hivm::VNotOp)
 
-**功能：** 逐元素执行向量按位非运算。
+**功能**：逐元素执行向量按位非运算。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.vnot` attr-dict `ins` `(` $src `:` type($src) `)`
@@ -2134,15 +2134,15 @@ operation ::= `hivm.hir.vnot` attr-dict `ins` `(` $src `:` type($src) `)`
               (`->` type($result)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.vnot ins(%src : memref<32xi32>) outs(%dst : memref<32xi32>)
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `BroadcastableOTF`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<1>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
+**特性**：`AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `BroadcastableOTF`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<1>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
@@ -2150,7 +2150,7 @@ hivm.hir.vnot ins(%src : memref<32xi32>) outs(%dst : memref<32xi32>)
 | `dst` | 可变参数，任意类型值的shaped类型 |
 | `temp_buffer` | 任意类型值的memref |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -2158,9 +2158,9 @@ hivm.hir.vnot ins(%src : memref<32xi32>) outs(%dst : memref<32xi32>)
 
 ### hivm.hir.vor (hivm::VOrOp)
 
-**功能：** 逐元素执行二元向量按位或运算。
+**功能**：逐元素执行二元向量按位或运算。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.vor` attr-dict `ins` `(` $src `:` type($src) `)`
@@ -2171,15 +2171,15 @@ operation ::= `hivm.hir.vor` attr-dict `ins` `(` $src `:` type($src) `)`
               (`->` type($result)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.vor ins(%src0, %src1 : memref<32xi32>, memref<32xi32>) outs(%dst : memref<32xi32>)
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `BroadcastableOTF`, `CollapsibleConsecutiveTargetDimsTrait`, `CommutativeOpTrait`, `ElementwiseNaryOpTrait<2>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`, `VectorOnlyTrait<1>`
+**特性**：`AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `BroadcastableOTF`, `CollapsibleConsecutiveTargetDimsTrait`, `CommutativeOpTrait`, `ElementwiseNaryOpTrait<2>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`, `VectorOnlyTrait<1>`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
@@ -2187,7 +2187,7 @@ hivm.hir.vor ins(%src0, %src1 : memref<32xi32>, memref<32xi32>) outs(%dst : memr
 | `dst` | 可变参数，任意类型值的shaped类型 |
 | `temp_buffer` | 任意类型值的memref |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -2195,9 +2195,9 @@ hivm.hir.vor ins(%src0, %src1 : memref<32xi32>, memref<32xi32>) outs(%dst : memr
 
 ### hivm.hir.vpad (hivm::VPadOp)
 
-**功能：** 对输入向量进行填充，类似`tensor.pad`语义。
+**功能**：对输入向量进行填充，类似`tensor.pad`语义。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.vpad` attr-dict
@@ -2209,15 +2209,15 @@ operation ::= `hivm.hir.vpad` attr-dict
               (`->` type($result)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.vpad ins(%src : tensor<2x16xf32>) outs(%dst: tensor<?x16xf32>) low[%first_dim_low, 0] high[%first_dim_high, 0] pad_value %pad_value : f32 -> tensor<?x16xf32>
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SinglePipeOpTrait`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`
+**特性**：`AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SinglePipeOpTrait`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
@@ -2227,7 +2227,7 @@ hivm.hir.vpad ins(%src : tensor<2x16xf32>) outs(%dst: tensor<?x16xf32>) low[%fir
 | `low` | 可变参数，index类型 |
 | `high` | 可变参数，index类型 |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -2235,9 +2235,9 @@ hivm.hir.vpad ins(%src : tensor<2x16xf32>) outs(%dst: tensor<?x16xf32>) low[%fir
 
 ### hivm.hir.vpow (hivm::VPowOp)
 
-**功能：** 逐元素执行向量幂运算（指数为标量或向量）。
+**功能**：逐元素执行向量幂运算（指数为标量或向量）。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.vpow` attr-dict (`ins` `(` $src^ `:` type($src) `)`)?
@@ -2248,15 +2248,15 @@ operation ::= `hivm.hir.vpow` attr-dict (`ins` `(` $src^ `:` type($src) `)`)?
               (`->` type($result)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.vpow ins(%src0, %src1 : memref<32xf32>, memref<32xf32>) outs(%dst : memref<32xf32>)
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<2>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`, `VectorOnlyTrait<1>`
+**特性**：`AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<2>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`, `VectorOnlyTrait<1>`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
@@ -2264,7 +2264,7 @@ hivm.hir.vpow ins(%src0, %src1 : memref<32xf32>, memref<32xf32>) outs(%dst : mem
 | `dst` | 可变参数，任意类型值的shaped类型 |
 | `temp_buffer` | 任意类型值的memref |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -2272,9 +2272,9 @@ hivm.hir.vpow ins(%src0, %src1 : memref<32xf32>, memref<32xf32>) outs(%dst : mem
 
 ### hivm.hir.vrec (hivm::VRecOp)
 
-**功能：** 逐元素计算向量的倒数。
+**功能**：逐元素计算向量的倒数。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.vrec` attr-dict `ins` `(` $src `:` type($src) `)`
@@ -2285,15 +2285,15 @@ operation ::= `hivm.hir.vrec` attr-dict `ins` `(` $src `:` type($src) `)`
               (`->` type($result)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.vrec ins(%src : memref<32xf32>) outs(%dst : memref<32xf32>)
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `BroadcastableOTF`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<1>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
+**特性**：`AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `BroadcastableOTF`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<1>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
@@ -2301,7 +2301,7 @@ hivm.hir.vrec ins(%src : memref<32xf32>) outs(%dst : memref<32xf32>)
 | `dst` | 可变参数，任意类型值的shaped类型 |
 | `temp_buffer` | 任意类型值的memref |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -2309,9 +2309,9 @@ hivm.hir.vrec ins(%src : memref<32xf32>) outs(%dst : memref<32xf32>)
 
 ### hivm.hir.vreduce (hivm::VReduceOp)
 
-**功能：** 沿指定轴对向量进行规约操作。
+**功能**：沿指定轴对向量进行规约操作。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.vreduce` attr-dict $arith `ins` `(` $src `:` type($src) `)`
@@ -2322,16 +2322,16 @@ operation ::= `hivm.hir.vreduce` attr-dict $arith `ins` `(` $src `:` type($src) 
               (`->` type($result)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.vreduce <add> ins(%src : memref<?xf32>) outs(%dst : memref<1xf32>) reduce_dims : [1]
 %result = hivm.hir.vreduce <max> ins(%src : tensor<?xf32>) outs(%dst : tensor<1xf32>) reduce_dims : [0] -> tensor<1xf32>
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `CollapsibleConsecutiveTargetDimsTrait`, `OpPipeTrait<PIPE::PIPE_V>`, `SinglePipeOpTrait`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`
+**特性**：`AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `CollapsibleConsecutiveTargetDimsTrait`, `OpPipeTrait<PIPE::PIPE_V>`, `SinglePipeOpTrait`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
@@ -2340,7 +2340,7 @@ hivm.hir.vreduce <add> ins(%src : memref<?xf32>) outs(%dst : memref<1xf32>) redu
 | `temp_buffer` | 任意类型值的memref |
 | `indices` | 类型为Tensor或Memref |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -2348,9 +2348,9 @@ hivm.hir.vreduce <add> ins(%src : memref<?xf32>) outs(%dst : memref<1xf32>) redu
 
 ### hivm.hir.vrelu (hivm::VReluOp)
 
-**功能：** 逐元素计算向量的ReLU激活函数。
+**功能**：逐元素计算向量的ReLU激活函数。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.vrelu` attr-dict `ins` `(` $src `:` type($src) `)`
@@ -2361,15 +2361,15 @@ operation ::= `hivm.hir.vrelu` attr-dict `ins` `(` $src `:` type($src) `)`
               (`->` type($result)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.vrelu ins(%src : memref<32xf32>) outs(%dst : memref<32xf32>)
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `BroadcastableOTF`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<1>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
+**特性**：`AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `BroadcastableOTF`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<1>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
@@ -2377,7 +2377,7 @@ hivm.hir.vrelu ins(%src : memref<32xf32>) outs(%dst : memref<32xf32>)
 | `dst` | 可变参数，任意类型值的shaped类型 |
 | `temp_buffer` | 任意类型值的memref |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -2385,9 +2385,9 @@ hivm.hir.vrelu ins(%src : memref<32xf32>) outs(%dst : memref<32xf32>)
 
 ### hivm.hir.vrsqrt (hivm::VRsqrtOp)
 
-**功能：** 逐元素计算向量倒数平方根。
+**功能**：逐元素计算向量倒数平方根。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.vrsqrt` attr-dict `ins` `(` $src `:` type($src) `)`
@@ -2398,15 +2398,15 @@ operation ::= `hivm.hir.vrsqrt` attr-dict `ins` `(` $src `:` type($src) `)`
               (`->` type($result)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.vrsqrt ins(%src : memref<32xf32>) outs(%dst : memref<32xf32>)
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `BroadcastableOTF`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<1>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
+**特性**：`AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `BroadcastableOTF`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<1>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
@@ -2414,7 +2414,7 @@ hivm.hir.vrsqrt ins(%src : memref<32xf32>) outs(%dst : memref<32xf32>)
 | `dst` | 可变参数，任意类型值的shaped类型 |
 | `temp_buffer` | 任意类型值的memref |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -2422,9 +2422,9 @@ hivm.hir.vrsqrt ins(%src : memref<32xf32>) outs(%dst : memref<32xf32>)
 
 ### hivm.hir.vsel (hivm::VSelOp)
 
-**功能：** 根据条件向量逐元素选择两个源向量中的值。
+**功能**：根据条件向量逐元素选择两个源向量中的值。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.vsel` attr-dict (`ins` `(` $src^ `:` type($src) `)`)?
@@ -2435,15 +2435,15 @@ operation ::= `hivm.hir.vsel` attr-dict (`ins` `(` $src^ `:` type($src) `)`)?
               (`->` type($result)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.vsel ins(%cond, %src0, %src1 : memref<32xi1>, memref<32xf32>, memref<32xf32>) outs(%dst : memref<32xf32>)
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `BroadcastableOTF`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<3>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`
+**特性**：`AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `BroadcastableOTF`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<3>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
@@ -2451,7 +2451,7 @@ hivm.hir.vsel ins(%cond, %src0, %src1 : memref<32xi1>, memref<32xf32>, memref<32
 | `dst` | 可变参数，任意类型值的shaped类型 |
 | `temp_buffer` | 任意类型值的memref |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -2459,9 +2459,9 @@ hivm.hir.vsel ins(%cond, %src0, %src1 : memref<32xi1>, memref<32xf32>, memref<32
 
 ### hivm.hir.vshl (hivm::VShLOp)
 
-**功能：** 逐元素执行向量左移运算（标量移位量）。
+**功能**：逐元素执行向量左移运算（标量移位量）。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.vshl` attr-dict `ins` `(` $src `:` type($src) `)`
@@ -2472,15 +2472,15 @@ operation ::= `hivm.hir.vshl` attr-dict `ins` `(` $src `:` type($src) `)`
               (`->` type($result)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.vshl ins(%src_vec, %shift : memref<32xi32>, i32) outs(%dst : memref<32xi32>)
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `BroadcastableOTF`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<2>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `ScalarOnlyHWTrait<1>`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
+**特性**：`AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `BroadcastableOTF`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<2>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `ScalarOnlyHWTrait<1>`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
@@ -2488,7 +2488,7 @@ hivm.hir.vshl ins(%src_vec, %shift : memref<32xi32>, i32) outs(%dst : memref<32x
 | `dst` | 可变参数，任意类型值的shaped类型 |
 | `temp_buffer` | 任意类型值的memref |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -2496,9 +2496,9 @@ hivm.hir.vshl ins(%src_vec, %shift : memref<32xi32>, i32) outs(%dst : memref<32x
 
 ### hivm.hir.vshr (hivm::VShROp)
 
-**功能：** 逐元素执行向量右移运算（标量移位量），支持算术右移舍入。
+**功能**：逐元素执行向量右移运算（标量移位量），支持算术右移舍入。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.vshr` attr-dict (`ins` `(` $src^ `:` type($src) `)`)?
@@ -2510,15 +2510,15 @@ operation ::= `hivm.hir.vshr` attr-dict (`ins` `(` $src^ `:` type($src) `)`)?
               (`->` type($result)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.vshr ins(%src_vec, %shift : memref<32xi32>, i32) outs(%dst : memref<32xi32>) {round}
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `BroadcastableOTF`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<2>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `ScalarOnlyHWTrait<1>`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
+**特性**：`AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `BroadcastableOTF`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<2>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `ScalarOnlyHWTrait<1>`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
@@ -2526,7 +2526,7 @@ hivm.hir.vshr ins(%src_vec, %shift : memref<32xi32>, i32) outs(%dst : memref<32x
 | `dst` | 可变参数，任意类型值的shaped类型 |
 | `temp_buffer` | 任意类型值的memref |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -2534,9 +2534,9 @@ hivm.hir.vshr ins(%src_vec, %shift : memref<32xi32>, i32) outs(%dst : memref<32x
 
 ### hivm.hir.vsin (hivm::VSinOp)
 
-**功能：** 逐元素计算向量的正弦值。
+**功能**：逐元素计算向量的正弦值。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.vsin` attr-dict (`ins` `(` $src^ `:` type($src) `)`)?
@@ -2546,22 +2546,22 @@ operation ::= `hivm.hir.vsin` attr-dict (`ins` `(` $src^ `:` type($src) `)`)?
               (`->` type($result)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.vsin ins(%src : memref<32xf32>) outs(%dst : memref<32xf32>)
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<1>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
+**特性**：`AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<1>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
 | `src` | 可变参数，任意类型 |
 | `dst` | 可变参数，任意类型值的shaped类型 |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -2569,9 +2569,9 @@ hivm.hir.vsin ins(%src : memref<32xf32>) outs(%dst : memref<32xf32>)
 
 ### hivm.hir.vsort (hivm::VSortOp)
 
-**功能：** 对向量的指定轴进行排序，输出排序后的值和对应索引。
+**功能**：对向量的指定轴进行排序，输出排序后的值和对应索引。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.vsort` attr-dict `ins` `(` $src `:` type($src) `)`
@@ -2582,16 +2582,16 @@ operation ::= `hivm.hir.vsort` attr-dict `ins` `(` $src `:` type($src) `)`
               (`->` type($result)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.vsort ins(%src : memref<?xf32>) outs(%dst : memref<?xf32>) descending = true sort_axis = 0
 %result = hivm.hir.vsort ins(%src : tensor<?xf32>) outs(%dst : tensor<?xf32>) descending = true sort_axis = 0 -> tensor<?xf32>
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `OpPipeTrait<PIPE::PIPE_V>`, `SinglePipeOpTrait`, `VectorCoreTypeTrait`
+**特性**：`AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `OpPipeTrait<PIPE::PIPE_V>`, `SinglePipeOpTrait`, `VectorCoreTypeTrait`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
@@ -2599,7 +2599,7 @@ hivm.hir.vsort ins(%src : memref<?xf32>) outs(%dst : memref<?xf32>) descending =
 | `dst` | 可变参数，类型为Tensor或Memref |
 | `temp_buffer` | 任意类型值的memref |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -2607,9 +2607,9 @@ hivm.hir.vsort ins(%src : memref<?xf32>) outs(%dst : memref<?xf32>) descending =
 
 ### hivm.hir.vsqrt (hivm::VSqrtOp)
 
-**功能：** 逐元素计算向量的平方根。
+**功能**：逐元素计算向量的平方根。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.vsqrt` attr-dict `ins` `(` $src `:` type($src) `)`
@@ -2620,15 +2620,15 @@ operation ::= `hivm.hir.vsqrt` attr-dict `ins` `(` $src `:` type($src) `)`
               (`->` type($result)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.vsqrt ins(%src : memref<32xf32>) outs(%dst : memref<32xf32>)
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `BroadcastableOTF`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<1>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
+**特性**：`AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `BroadcastableOTF`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<1>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
@@ -2636,7 +2636,7 @@ hivm.hir.vsqrt ins(%src : memref<32xf32>) outs(%dst : memref<32xf32>)
 | `dst` | 可变参数，任意类型值的shaped类型 |
 | `temp_buffer` | 任意类型值的memref |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -2644,9 +2644,9 @@ hivm.hir.vsqrt ins(%src : memref<32xf32>) outs(%dst : memref<32xf32>)
 
 ### hivm.hir.vsub (hivm::VSubOp)
 
-**功能：** 逐元素执行二元向量减法运算。
+**功能**：逐元素执行二元向量减法运算。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.vsub` attr-dict (`ins` `(` $src^ `:` type($src) `)`)?
@@ -2657,15 +2657,15 @@ operation ::= `hivm.hir.vsub` attr-dict (`ins` `(` $src^ `:` type($src) `)`)?
               (`->` type($result)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.vsub ins(%src0, %src1 : memref<32xf32>, memref<32xf32>) outs(%dst : memref<32xf32>)
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `BroadcastableOTF`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<2>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`
+**特性**：`AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `BroadcastableOTF`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<2>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
@@ -2673,7 +2673,7 @@ hivm.hir.vsub ins(%src0, %src1 : memref<32xf32>, memref<32xf32>) outs(%dst : mem
 | `dst` | 可变参数，任意类型值的shaped类型 |
 | `temp_buffer` | 任意类型值的memref |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -2681,9 +2681,9 @@ hivm.hir.vsub ins(%src0, %src1 : memref<32xf32>, memref<32xf32>) outs(%dst : mem
 
 ### hivm.hir.vtanh (hivm::VTanhOp)
 
-**功能：** 逐元素计算向量的双曲正切值。
+**功能**：逐元素计算向量的双曲正切值。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.vtanh` attr-dict (`ins` `(` $src^ `:` type($src) `)`)?
@@ -2693,22 +2693,22 @@ operation ::= `hivm.hir.vtanh` attr-dict (`ins` `(` $src^ `:` type($src) `)`)?
               (`->` type($result)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.vtanh ins(%src : memref<32xf32>) outs(%dst : memref<32xf32>)
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<1>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
+**特性**：`AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<1>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
 | `src` | 可变参数，任意类型 |
 | `dst` | 可变参数，任意类型值的shaped类型 |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -2716,9 +2716,9 @@ hivm.hir.vtanh ins(%src : memref<32xf32>) outs(%dst : memref<32xf32>)
 
 ### hivm.hir.vtranspose (hivm::VTransposeOp)
 
-**功能：** 根据指定的排列对向量维度进行转置。
+**功能**：根据指定的排列对向量维度进行转置。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.vtranspose` attr-dict `ins` `(` $src `:` type($src) `)`
@@ -2729,16 +2729,16 @@ operation ::= `hivm.hir.vtranspose` attr-dict `ins` `(` $src `:` type($src) `)`
               (`->` type($result)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.vtranspose ins(%src : memref<32x8xf32>) outs(%dst : memref<8x32xf32>) permutation = [1, 0]
 %result = hivm.hir.vtranspose ins(%src : tensor<32x8xf32>) outs(%dst: tensor<8x32xf32>) permutation = [1, 0] -> tensor<8x32xf32>
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `OpPipeTrait<PIPE::PIPE_V>`, `SinglePipeOpTrait`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`
+**特性**：`AlwaysSpeculatableImplTrait`, `OpPipeTrait<PIPE::PIPE_V>`, `SinglePipeOpTrait`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
@@ -2746,7 +2746,7 @@ hivm.hir.vtranspose ins(%src : memref<32x8xf32>) outs(%dst : memref<8x32xf32>) p
 | `dst` | 类型为Tensor或Memref |
 | `temp_buffer` | 任意类型值的memref |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -2754,9 +2754,9 @@ hivm.hir.vtranspose ins(%src : memref<32x8xf32>) outs(%dst : memref<8x32xf32>) p
 
 ### hivm.hir.vxor (hivm::VXorOp)
 
-**功能：** 逐元素执行二元向量按位异或运算。
+**功能**：逐元素执行二元向量按位异或运算。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.vxor` attr-dict (`ins` `(` $src^ `:` type($src) `)`)?
@@ -2767,15 +2767,15 @@ operation ::= `hivm.hir.vxor` attr-dict (`ins` `(` $src^ `:` type($src) `)`)?
               (`->` type($result)^)?
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.vxor ins(%src0, %src1 : memref<32xi32>, memref<32xi32>) outs(%dst : memref<32xi32>)
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<2>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`, `VectorOnlyTrait<1>`
+**特性**：`AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<2>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`, `VectorOnlyTrait<1>`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
@@ -2783,7 +2783,7 @@ hivm.hir.vxor ins(%src0, %src1 : memref<32xi32>, memref<32xi32>) outs(%dst : mem
 | `dst` | 可变参数，任意类型值的shaped类型 |
 | `temp_buffer` | 任意类型值的memref |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :--: | ---- |
@@ -2791,9 +2791,9 @@ hivm.hir.vxor ins(%src0, %src1 : memref<32xi32>, memref<32xi32>) outs(%dst : mem
 
 ### hivm.hir.wait_flag (hivm::WaitFlagOp)
 
-**功能：** 等待指定同步标志。
+**功能**：等待指定同步标志。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `hivm.hir.wait_flag` `[`
@@ -2803,13 +2803,13 @@ operation ::= `hivm.hir.wait_flag` `[`
               `]` attr-dict
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID0>]
 ```
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :----: | ---- |
@@ -2819,7 +2819,7 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### AddressSpaceAttr
 
-**功能：** 定义HIVM地址空间映射属性，映射到GM、L1、L0A、L0B、L0C和UB。
+**功能**：定义HIVM地址空间映射属性，映射到GM、L1、L0A、L0B、L0C和UB。
 
 | 参数 | C++ 类型 | 说明 |
 | :--: | :------: | ---- |
@@ -2827,7 +2827,7 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### AlignKindAttr
 
-**功能：** 定义对齐方式信息。
+**功能**：定义对齐方式信息。
 
 | 参数 | C++ 类型 | 说明 |
 | :--: | :------: | ---- |
@@ -2835,19 +2835,19 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### AllocAlignDimsAttr
 
-**功能：** 定义分配对齐维度信息。
+**功能**：定义分配对齐维度信息。
 
 无参数。
 
 ### AllocAlignValueInByteAttr
 
-**功能：** 定义按字节对齐的分配大小信息。
+**功能**：定义按字节对齐的分配大小信息。
 
 无参数。
 
 ### AtomicKindAttr
 
-**功能：** 定义StoreOp的原子操作类型。
+**功能**：定义StoreOp的原子操作类型。
 
 | 参数 | C++ 类型 | 说明 |
 | :--: | :------: | ---- |
@@ -2855,7 +2855,7 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### AxisKindAttr
 
-**功能：** 定义轴类型信息。
+**功能**：定义轴类型信息。
 
 | 参数 | C++ 类型 | 说明 |
 | :--: | :------: | ---- |
@@ -2863,7 +2863,7 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### HIVMBlockMappingAttr
 
-**功能：** 定义块映射信息。
+**功能**：定义块映射信息。
 
 | 参数 | C++ 类型 | 说明 |
 | :--: | :------: | ---- |
@@ -2871,7 +2871,7 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### CompareModeAttr
 
-**功能：** 定义VCmpOp的比较模式。
+**功能**：定义VCmpOp的比较模式。
 
 | 参数 | C++ 类型 | 说明 |
 | :--: | :------: | ---- |
@@ -2879,7 +2879,7 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### DCCIModeAttr
 
-**功能：** 定义DCCI模式。
+**功能**：定义DCCI模式。
 
 | 参数 | C++ 类型 | 说明 |
 | :--: | :------: | ---- |
@@ -2887,7 +2887,7 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### DataCacheKindAttr
 
-**功能：** 定义数据缓存类型。
+**功能**：定义数据缓存类型。
 
 | 参数 | C++ 类型 | 说明 |
 | :--: | :------: | ---- |
@@ -2895,7 +2895,7 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### DataLayoutAttr
 
-**功能：** 定义HIVM数据布局映射属性，包括DOTA_ND、DOTB_ND、DOTC_ND、zN、nZ和ND，支持转置标识。
+**功能**：定义HIVM数据布局映射属性，包括DOTA_ND、DOTB_ND、DOTC_ND、zN、nZ和ND，支持转置标识。
 
 | 参数 | C++ 类型 | 说明 |
 | :--: | :------: | ---- |
@@ -2905,7 +2905,7 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### DeinterleaveModeAttr
 
-**功能：** 定义解交织索引模式。
+**功能**：定义解交织索引模式。
 
 | 参数 | C++ 类型 | 说明 |
 | :--: | :------: | ---- |
@@ -2913,7 +2913,7 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### DescaleModeAttr
 
-**功能：** 定义MatmulOp的反量化模式。
+**功能**：定义MatmulOp的反量化模式。
 
 | 参数 | C++ 类型 | 说明 |
 | :--: | :------: | ---- |
@@ -2921,13 +2921,13 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### DisableAutoInjectBlockSyncAttr
 
-**功能：** 禁用自动注入块同步。
+**功能**：禁用自动注入块同步。
 
 无参数。
 
 ### EventAttr
 
-**功能：** 定义同步事件属性。
+**功能**：定义同步事件属性。
 
 | 参数 | C++ 类型 | 说明 |
 | :--: | :------: | ---- |
@@ -2935,7 +2935,7 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### FixpipePreQuantModeAttr
 
-**功能：** 定义Fixpipe前级量化模式。
+**功能**：定义Fixpipe前级量化模式。
 
 | 参数 | C++ 类型 | 说明 |
 | :--: | :------: | ---- |
@@ -2943,7 +2943,7 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### FixpipePreReluModeAttr
 
-**功能：** 定义Fixpipe前级ReLU模式。
+**功能**：定义Fixpipe前级ReLU模式。
 
 | 参数 | C++ 类型 | 说明 |
 | :--: | :------: | ---- |
@@ -2951,25 +2951,25 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### HIVMFuncDynMemrefArgsAttr
 
-**功能：** 标记函数中动态memref参数的索引数组。
+**功能**：标记函数中动态memref参数的索引数组。
 
 无参数。
 
 ### InsertSliceSourceIndexAttr
 
-**功能：** 指定VConcatOp中的插入片段的源操作数。
+**功能**：指定VConcatOp中的插入片段的源操作数。
 
 无参数。
 
 ### MultiBufferAttr
 
-**功能：** 定义多缓冲属性。
+**功能**：定义多缓冲属性。
 
 无参数。
 
 ### PadModeAttr
 
-**功能：** 定义填充模式属性。
+**功能**：定义填充模式属性。
 
 | 参数 | C++ 类型 | 说明 |
 | :--: | :------: | ---- |
@@ -2977,13 +2977,13 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### ParallelLoopAttr
 
-**功能：** 标记可并行执行的循环。
+**功能**：标记可并行执行的循环。
 
 无参数。
 
 ### PipeAttr
 
-**功能：** 定义操作所属的pipe。
+**功能**：定义操作所属的pipe。
 
 | 参数 | C++ 类型 | 说明 |
 | :--: | :------: | ---- |
@@ -2991,7 +2991,7 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### ReduceOpAttr
 
-**功能：** 定义规约操作的算术类型。
+**功能**：定义规约操作的算术类型。
 
 | 参数 | C++ 类型 | 说明 |
 | :--: | :------: | ---- |
@@ -2999,7 +2999,7 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### RoundModeAttr
 
-**功能：** 定义VCastOp的舍入模式。
+**功能**：定义VCastOp的舍入模式。
 
 | 参数 | C++ 类型 | 说明 |
 | :--: | :------: | ---- |
@@ -3007,25 +3007,25 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### StorageAlignedAttr
 
-**功能：** 标记模块或函数内所有操作已对齐。
+**功能**：标记模块或函数内所有操作已对齐。
 
 无参数。
 
 ### StrideAlignDimsAttr
 
-**功能：** 定义步长对齐维度信息。
+**功能**：定义步长对齐维度信息。
 
 无参数。
 
 ### StrideAlignValueInByteAttr
 
-**功能：** 定义按字节对齐的步长大小信息。
+**功能**：定义按字节对齐的步长大小信息。
 
 无参数。
 
 ### HIVMSubBlockMappingAttr
 
-**功能：** 定义混合函数中子块映射关系。
+**功能**：定义混合函数中子块映射关系。
 
 | 参数 | C++ 类型 | 说明 |
 | :--: | :------: | ---- |
@@ -3033,7 +3033,7 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### SyncBlockInstrModeAttr
 
-**功能：** 定义同步块指令模式。
+**功能**：定义同步块指令模式。
 
 | 参数 | C++ 类型 | 说明 |
 | :--: | :------: | ---- |
@@ -3041,7 +3041,7 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### SyncBlockModeAttr
 
-**功能：** 定义同步块模式。
+**功能**：定义同步块模式。
 
 | 参数 | C++ 类型 | 说明 |
 | :--: | :------: | ---- |
@@ -3049,7 +3049,7 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### TCoreTypeAttr
 
-**功能：** 定义操作的核心类型。
+**功能**：定义操作的核心类型。
 
 | 参数 | C++ 类型 | 说明 |
 | :--: | :------: | ---- |
@@ -3057,7 +3057,7 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### TCoreTypeMarkerAttr
 
-**功能：** 定义操作的核心类型标记。
+**功能**：定义操作的核心类型标记。
 
 | 参数 | C++ 类型 | 说明 |
 | :--: | :------: | ---- |
@@ -3065,7 +3065,7 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### TFuncCoreTypeAttr
 
-**功能：** 定义函数的核心类型。
+**功能**：定义函数的核心类型。
 
 | 参数 | C++ 类型 | 说明 |
 | :--: | :------: | ---- |
@@ -3073,7 +3073,7 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### TModuleCoreTypeAttr
 
-**功能：** 定义模块的核心类型，根据模块内函数类型自动推断为AIC、AIV或MIX。
+**功能**：定义模块的核心类型，根据模块内函数类型自动推断为AIC、AIV或MIX。
 
 | 参数 | C++ 类型 | 说明 |
 | :--: | :------: | ---- |
@@ -3081,13 +3081,13 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### TPartOfMixAttr
 
-**功能：** 标记函数是混合内核的一部分。
+**功能**：标记函数是混合内核的一部分。
 
 无参数。
 
 ### TypeFnAttr
 
-**功能：** 定义VCastOp的转换类型。
+**功能**：定义VCastOp的转换类型。
 
 | 参数 | C++ 类型 | 说明 |
 | :--: | :------: | ---- |
@@ -3095,7 +3095,7 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### UnitFlagAttr
 
-**功能：** 定义单元标志同步模式。
+**功能**：定义单元标志同步模式。
 
 | 参数 | C++ 类型 | 说明 |
 | :--: | :------: | ---- |
@@ -3103,13 +3103,13 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### UnlikelyConditionAttr
 
-**功能：** 标记条件分支大概率不成立。
+**功能**：标记条件分支大概率不成立。
 
 无参数。
 
 ### VFModeAttr
 
-**功能：** 定义向量单元运行模式。
+**功能**：定义向量单元运行模式。
 
 | 参数 | C++ 类型 | 说明 |
 | :--: | :------: | ---- |
@@ -3119,7 +3119,7 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### AddressSpace
 
-**功能：** 定义HIVM地址空间。
+**功能**：定义HIVM地址空间。
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
@@ -3133,7 +3133,7 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### AlignKind
 
-**功能：** 定义对齐方式信息。
+**功能**：定义对齐方式信息。
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
@@ -3143,7 +3143,7 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### AtomicKind
 
-**功能：** 定义StoreOp的原子操作类型。
+**功能**：定义StoreOp的原子操作类型。
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
@@ -3161,7 +3161,7 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### AxisKind
 
-**功能：** 定义轴类型信息。
+**功能**：定义轴类型信息。
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
@@ -3171,7 +3171,7 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### CompareMode
 
-**功能：** 定义VCmpOp的比较模式。
+**功能**：定义VCmpOp的比较模式。
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
@@ -3184,7 +3184,7 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### DCCIMode
 
-**功能：** 定义DCCI模式。
+**功能**：定义DCCI模式。
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
@@ -3193,7 +3193,7 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### DataCacheKind
 
-**功能：** 定义数据缓存类型。
+**功能**：定义数据缓存类型。
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
@@ -3204,7 +3204,7 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### DataLayout
 
-**功能：** 定义HIVM数据布局类型。
+**功能**：定义HIVM数据布局类型。
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
@@ -3217,7 +3217,7 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### DeinterleaveMode
 
-**功能：** 定义解交织索引模式。
+**功能**：定义解交织索引模式。
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
@@ -3227,7 +3227,7 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### DescaleMode
 
-**功能：** 定义MatmulOp的反量化模式。
+**功能**：定义MatmulOp的反量化模式。
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
@@ -3237,7 +3237,7 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### EVENT
 
-**功能：** 定义同步事件ID。
+**功能**：定义同步事件ID。
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
@@ -3252,7 +3252,7 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### FixpipePreQuantMode
 
-**功能：** 定义Fixpipe前级量化模式。
+**功能**：定义Fixpipe前级量化模式。
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
@@ -3263,7 +3263,7 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### FixpipePreReluMode
 
-**功能：** 定义Fixpipe前级ReLU模式。
+**功能**：定义Fixpipe前级ReLU模式。
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
@@ -3274,7 +3274,7 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### IteratorType
 
-**功能：** 定义结构化的迭代器类型。
+**功能**：定义结构化的迭代器类型。
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
@@ -3293,7 +3293,7 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### MatmulBiasMode
 
-**功能：** 定义局部MatmulOp的偏置模式。
+**功能**：定义局部MatmulOp的偏置模式。
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
@@ -3305,7 +3305,7 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### MemPlanMode
 
-**功能：** 定义内存规划模式。
+**功能**：定义内存规划模式。
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
@@ -3314,7 +3314,7 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### PadMode
 
-**功能：** 定义LoadOp的填充模式。
+**功能**：定义LoadOp的填充模式。
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
@@ -3324,7 +3324,7 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### PIPE
 
-**功能：** 定义HIVM操作所属的pipe。
+**功能**：定义HIVM操作所属的pipe。
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
@@ -3346,7 +3346,7 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### ReduceOperation
 
-**功能：** 定义VReduceOp的规约操作类型。
+**功能**：定义VReduceOp的规约操作类型。
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
@@ -3367,7 +3367,7 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### RoundMode
 
-**功能：** 定义VCastOp的舍入模式。
+**功能**：定义VCastOp的舍入模式。
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
@@ -3381,7 +3381,7 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### SyncBlockInstrMode
 
-**功能：** 定义同步块指令模式。
+**功能**：定义同步块指令模式。
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
@@ -3391,7 +3391,7 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### SyncBlockMode
 
-**功能：** 定义同步块模式。
+**功能**：定义同步块模式。
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
@@ -3404,7 +3404,7 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### TCoreType
 
-**功能：** 定义操作的核心类型。
+**功能**：定义操作的核心类型。
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
@@ -3415,7 +3415,7 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### TFuncCoreType
 
-**功能：** 定义函数的核心类型。
+**功能**：定义函数的核心类型。
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
@@ -3426,7 +3426,7 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### TModuleCoreType
 
-**功能：** 定义模块的核心类型。
+**功能**：定义模块的核心类型。
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
@@ -3436,7 +3436,7 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### TypeFn
 
-**功能：** 定义VCastOp的转换类型。
+**功能**：定义VCastOp的转换类型。
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
@@ -3446,7 +3446,7 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### UNIT_FLAG
 
-**功能：** 定义单元标志同步模式。
+**功能**：定义单元标志同步模式。
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
@@ -3460,7 +3460,7 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### VFMode
 
-**功能：** 定义向量单元运行模式。
+**功能**：定义向量单元运行模式。
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
@@ -3470,7 +3470,7 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 ### MappingId
 
-**功能：** 定义循环映射标识。
+**功能**：定义循环映射标识。
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |

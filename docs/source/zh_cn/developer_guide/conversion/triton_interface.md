@@ -130,9 +130,9 @@ def test_lt(param_list):
     validate_cmp(dtype, triton_res, torch_res)
 ```
 
-**动态tiling支持：** 通过[]内的grid参数配置并行粒度，通过XBLOCK和XBLOCK_SUB参数控制tiling大小，用户可按需调整。
+**动态tiling支持**：通过[]内的grid参数配置并行粒度，通过XBLOCK和XBLOCK_SUB参数控制tiling大小，用户可按需调整。
 
-**动态shape支持：** kernel自动适配任意长度的1D tensor，用户只需传入实际shape的数据即可。
+**动态shape支持**：kernel自动适配任意长度的1D tensor，用户只需传入实际shape的数据即可。
 
 ## Triton Op到Ascend NPU IR Op的转换
 

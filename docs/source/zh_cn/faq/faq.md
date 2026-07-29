@@ -37,22 +37,29 @@
 - **bishengir测试**：`ninja check-bishengir`或`cmake --build . --target check-bishengir`
 - **LIT测试套**：`./bin/llvm-lit ../bishengir/test`（路径以实际仓库与构建目录为准）
 
-详见[安装与构建](../introduction/quick_start/installing_guide.md)中的「运行测试」。
+详见[安装与构建-运行测试](../introduction/quick_start/installing_guide.md#运行测试)。
 
 **Q：上板运行需要什么环境？**
 
-端到端在NPU上运行算子需要：CANN（安装并source set_env.sh）、bishengir-compile生成的设备端二进制（如kernel.o）、以及使用CANN runtime的Host程序完成注册与调用。参见[快速开始示例](../introduction/quick_start/examples.md)与[快速开始](../introduction/quick_start/index.rst)。
+端到端在NPU上运行算子，需准备以下三项依赖：
+
+- `CANN`：完成安装并执行`source set_env.sh`配置环境变量。
+- `bishengir-compile`：编译生成设备端二进制文件（例：`kernel.o`）。
+- CANN Runtime的Host程序：用于算子注册与调用。
+
+完整操作流程与实操案例，可查阅：[快速开始示例](../introduction/quick_start/examples.md)、[快速开始](../introduction/quick_start/index.rst)
 
 **Q：如何获取各层MLIR的中间编译态（如HFusion、HIVM）？**
 
-- **构建时**：在构建脚本中将`ENABLE_IR_PRINT`与`BISHENGIR_PUBLISH`设为`ON`（以`build-tools/build.sh`及文档为准）。
-- **运行时**：使用`bishengir-compile`的打印选项，在指定pass前后导出MLIR，例如：
+- 构建阶段：修改构建脚本，将`ENABLE_IR_PRINT`、`BISHENGIR_PUBLISH`配置为ON，具体配置方式以`build-tools/build.sh`及配套文档为准。
 
-```bash
-bishengir-compile your.mlir --bishengir-print-ir-before=hivm-inject-block-sync --bishengir-print-ir-after=hivm-inject-block-sync
-```
+- 运行阶段：通过`bishengir-compile`提供的打印参数，在指定Pass前后导出对应MLIR，示例命令如下：
 
-可替换为其他pass名称。更多选项见[编译选项](../user_guide/compile_option.md)、[调试调测](../user_guide/debug_option.md)。
+  ```bash
+  bishengir-compile your.mlir --bishengir-print-ir-before=hivm-inject-block-sync --bishengir-print-ir-after=hivm-inject-block-sync
+  ```
+
+​  参数内的Pass名称可按需替换，完整参数说明可查阅：[编译选项](../user_guide/compile_option.md)、[调试调测](../user_guide/debug_option.md)
 
 **Q：如何用bishengir-compile将MLIR编译为设备端二进制？**
 
@@ -66,78 +73,73 @@ bishengir-compile input.mlir -enable-hivm-compile -o kernel.o
 
 **Q：LIT或check-bishengir测试失败如何排查？**
 
-根据失败用例名称定位到对应测试文件与断言，查看是IR变换、数值结果还是环境（CANN、路径等）问题；可结合上面的「如何获取各层MLIR的中间编译态（如HFusion、HIVM）？」查看中间态。调试选项见[调试调测](../user_guide/debug_option.md)。
+1. 根据失败用例名称定位对应测试文件与断言信息，区分故障类型：IR变换、数值结果、运行环境异常（CANN版本、文件路径配置等）。
+
+2. 如需定位IR变换问题，可参考上文「如何获取各层MLIR的中间编译态（如HFusion、HIVM）」的方法查看中间态。
+
+调试选项可查阅：[调试调测](../user_guide/debug_option.md)
 
 ## 性能调优
 
 **Q：如何定位算子性能瓶颈？**
 
-**MindStudio工具**：
+1. `MindStudio`：可使用[MindStudio](https://www.hiascend.com/developer/software/mindstudio)调试Triton Kernel性能，工具内置Profiler性能分析组件，能够采集硬件运行时的关键指标，帮助开发者定位kernel执行的瓶颈。
 
-链接：<https://www.hiascend.com/developer/software/mindstudio>
-在华为昇腾平台上，使用MindStudio调试Triton Kernel的性能主要依赖于其内置的性能分析工具（Profiler），它可以采集硬件运行时的关键指标，帮助开发者定位kernel执行的瓶颈。
+2. `torch_npu.profiler.profile`：昇腾AI处理器上用于PyTorch训练 / 推理任务性能分析的核心API接口。它的主要功能是采集并解析模型运行时的性能数据，帮助开发者定位瓶颈并进行优化。该接口通过代码注入的方式，在模型执行过程中全面采集CPU和NPU（昇腾AI处理器）的性能数据。可采集多维度数据，主要包括：
 
-**TorchNPU profiler**：
+   - PyTorch层信息：框架侧算子调用、内存占用、调用栈等。
+   - CANN层信息：昇腾计算语言接口层的调度和执行情况。
+   - 硬件层信息：NPU上的算子执行时间、AI Core性能指标（如流水线利用率）、缓存命中率等。
 
-torch_npu.profiler.profile
-是昇腾AI处理器上用于PyTorch训练/推理任务性能分析的核心API接口。它的主要功能是采集并解析模型运行时的性能数据，帮助开发者定位瓶颈并进行优化。
+   它是连接你的PyTorch训练脚本与用于可视化分析的工具（如MindStudio Insight或TensorBoard插件）之间的桥梁。
 
-**核心功能与定位：**
-该接口通过代码注入的方式，在模型执行过程中全面采集CPU和NPU（昇腾AI处理器）的性能数据。采集的数据非常丰富，主要包括：
+   **示例**：
 
-- PyTorch层信息：框架侧算子调用、内存占用、调用栈等。
-- CANN层信息：昇腾计算语言接口层的调度和执行情况。
-- 硬件层信息：NPU上的算子执行时间、AI Core性能指标（如流水线利用率）、缓存命中率等。
-
-它是连接你的PyTorch训练脚本与后面用于可视化分析的工具（如MindStudio Insight或TensorBoard插件）之间的桥梁。
-
-**写法样例**：
-
-```python
-@triton.jit
-def triton_example(in_ptr0, in_ptr1, out_ptr0, x0_numel, r1_numel, XBLOCK: tl.constexpr, XBLOCK_SUB: tl.constexpr):
-    ...
-
-dtype = torch.float16
-torch.manual_seed(0)
-
-input0 = rand_strided((86, 64, 130), (8320, 130, 1), device='npu:0', dtype=dtype)
-input1 = rand_strided((1, 64, 1), (64, 1, 1), device='npu:0', dtype=dtype)
-output = empty_strided((86, 1), (1, 86), device='npu', dtype=dtype)
-triton_example[6,1,1](input0, input1, output, 86, 64, XBLOCK=16, XBLOCK_SUB=16)
-
-experimental_config = torch_npu.profiler._ExperimentalConfig(
-        aic_metrics=torch_npu.profiler.AiCMetrics.PipeUtilization,
-        profiler_level=torch_npu.profiler.ProfilerLevel.Level1, l2_cache=False
-    )
-with torch_npu.profiler.profile(
-    activities=[  # torch_npu.profiler.ProfilerActivity.CPU,
-        torch_npu.profiler.ProfilerActivity.NPU],
-    with_stack=False, #采集torch 算子的函数调用栈的开关，该参数选填，默认关闭
-    record_shapes=False,  # 采集torch 算子的input shape和input type的开关，该参数选填，默认关闭
-    profile_memory=False,  # 采集memory相关数据的开关，该参数选填，默认关闭
-    schedule=torch_npu.profiler.schedule(wait=1,
-                                         warmup=1,
-                                         active=10,
-                                         repeat=1,
-                                         skip_first=1),
-    # schedule=torch_npu.profiler.schedule(wait=1, warmup=1, active=1, skip_first=6),
-    # warmup默认为0，老版本torch_npu包该参数为必填项
-    experimental_config=experimental_config,  # 该参数选填，默认为Level0
-    # 产生的profiling文件的位置
-    on_trace_ready=torch_npu.profiler.tensorboard_trace_handler("./result_dir")
-    # 导出tensorboard可呈现的数据形式，可指定worker_name, 默认为：{host名称}_{进程id}
-) as prof:
-    for i in range(20):
-        triton_example[6,1,1](input0, input1, output, 86, 64, XBLOCK=16, XBLOCK_SUB=16)
-        prof.step()
-```
+   ```python
+   @triton.jit
+   def triton_example(in_ptr0, in_ptr1, out_ptr0, x0_numel, r1_numel, XBLOCK: tl.constexpr, XBLOCK_SUB: tl.constexpr):
+       ...
+   
+   dtype = torch.float16
+   torch.manual_seed(0)
+   
+   input0 = rand_strided((86, 64, 130), (8320, 130, 1), device='npu:0', dtype=dtype)
+   input1 = rand_strided((1, 64, 1), (64, 1, 1), device='npu:0', dtype=dtype)
+   output = empty_strided((86, 1), (1, 86), device='npu', dtype=dtype)
+   triton_example[6,1,1](input0, input1, output, 86, 64, XBLOCK=16, XBLOCK_SUB=16)
+   
+   experimental_config = torch_npu.profiler._ExperimentalConfig(
+           aic_metrics=torch_npu.profiler.AiCMetrics.PipeUtilization,
+           profiler_level=torch_npu.profiler.ProfilerLevel.Level1, l2_cache=False
+       )
+   with torch_npu.profiler.profile(
+       activities=[  # torch_npu.profiler.ProfilerActivity.CPU,
+           torch_npu.profiler.ProfilerActivity.NPU],
+       with_stack=False, #采集torch 算子的函数调用栈的开关，该参数选填，默认关闭
+       record_shapes=False,  # 采集torch 算子的input shape和input type的开关，该参数选填，默认关闭
+       profile_memory=False,  # 采集memory相关数据的开关，该参数选填，默认关闭
+       schedule=torch_npu.profiler.schedule(wait=1,
+                                            warmup=1,
+                                            active=10,
+                                            repeat=1,
+                                            skip_first=1),
+       # schedule=torch_npu.profiler.schedule(wait=1, warmup=1, active=1, skip_first=6),
+       # warmup默认为0，老版本torch_npu包该参数为必填项
+       experimental_config=experimental_config,  # 该参数选填，默认为Level0
+       # 产生的profiling文件的位置
+       on_trace_ready=torch_npu.profiler.tensorboard_trace_handler("./result_dir")
+       # 导出tensorboard可呈现的数据形式，可指定worker_name, 默认为：{host名称}_{进程id}
+   ) as prof:
+       for i in range(20):
+           triton_example[6,1,1](input0, input1, output, 86, 64, XBLOCK=16, XBLOCK_SUB=16)
+           prof.step()
+   ```
 
 ## 精度定位
 
 **Q：算子结果与参考（如CPU/GPU或参考实现）不一致时如何排查？**
-在Triton kernel中调试精度问题时，tl.device_print是必不可少的工具。
-它允许你在NPU运行时直接打印张量或标量的中间值，从而定位误差出现的具体位置。使用指南如下。
+
+在Triton kernel中调试精度问题时，`tl.device_print`是必不可少的工具。它允许你在NPU运行时直接打印张量或标量的中间值，从而定位误差出现的具体位置。使用指南如下。
 
 ```python
 # 使用时需要打开环境变量 TRITON_DEVICE_PRINT=1
@@ -146,11 +148,11 @@ tl.device_print("前缀字符串",  value)
 
 **精度问题排查策略**：
 
-1. 分段打印：在关键计算步骤（如矩阵乘加、归约、激活函数）前后插入tl.device_print，观察数值变化。
+1. 分段打印：在关键计算步骤（如矩阵乘加、归约、激活函数）前后插入`tl.device_print`，观察数值变化。
 2. 对比预期值：打印中间结果后，与手工计算或CPU参考实现的结果比对，快速定位误差源头。
-3. 关注异常值：若发现数值突然变为NaN或Inf，可在相应位置前后打印更多上下文。
+3. 关注异常值：若发现数值突然变为`NaN`或`Inf`，可在相应位置前后打印更多上下文。
 
-**写法样例**：
+**示例**：
 
 ```python
 import triton
@@ -173,22 +175,18 @@ def triton_add(in_ptr0, in_ptr1, out_ptr0, XBLOCK: tl.constexpr, XBLOCK_SUB: tl.
 ```
 
 **Q：如何使用bishengir-opt对比各层MLIR？**
-bishengir-opt是类似于mlir-opt的工具，主要用于加载、优化和转换（降级）MLIR代码。你可以把它理解为一个“瑞士军刀”式的测试和调试工具，
-它读取一个.mlir文件，对其应用一系列由用户指定的编译过程（pass），然后将结果输出，因此可以用于对AscendNPU IR进行独立的Pass调试。
-通过它，开发者可以单独应用某个Pass，并对比应用前后的IR差异，从而验证该Pass是否达到预期功能。
+
+`bishengir-opt`是类似于`mlir-opt`的工具，是一个用于加载、优化和降级转换MLIR代码的综合测试调试工具。该工具读取`.mlir`文件，执行用户指定的编译Pass并输出变换后的IR，支持对AscendNPU IR进行独立的Pass调试。开发者可单独执行指定Pass，对比变换前后的IR差异，验证该Pass是否达到预期功能。
 
 **基本语法**：
-`bishengir-opt xx.mlir --{pass名称}`
 
-**使用示例**：
+`bishengir-opt xx.mlir --{Pass名称}`
 
-```bash
-bishengir-opt test.mlir --hfusion-normalize-ops
-```
+**示例**：
 
-`test.mlir`代码：
+变换前输入IR（`test.mlir`）：
 
-```c++
+```mlir
 // before hfusion-normalize-ops
 func.func @test_normalize_rec_i32_to_f32(%arg0 : tensor<1x2xi32>) -> tensor<1x2xi32> {
     %0 = tensor.empty() : tensor<1x2xi32>
@@ -197,9 +195,9 @@ func.func @test_normalize_rec_i32_to_f32(%arg0 : tensor<1x2xi32>) -> tensor<1x2x
 }
 ```
 
-单独执行hfusion-normalize-ops pass后：
+执行`bishengir-opt test.mlir --hfusion-normalize-ops`转换后输出IR：
 
-```c++
+```mlir
 // after hfusion-normalize-ops
 module {
   func.func @test_normalize_rec_i32_to_f32(%arg0: tensor<1x2xi32>) -> tensor<1x2xi32> {
@@ -217,46 +215,71 @@ module {
 
 **Q：常见精度问题有哪些（如BF16/FP16精度损失、累加顺序）？**
 
-如何判断精度损失是否符合标准：使用三方对比方案验证精度损失（NPU, GPU, CPU）。
+**典型精度问题场景**：
 
-这是一个非常经典且必要的验证流程，尤其在将算法从CPU移植到NPU或GPU时，用于确保硬件加速没有引入不可接受的精度损失。
-以CPU的float64作为“真值”基准，对比三者float32的输出，是衡量精度损失的黄金标准。
+常见精度偏差场景包含BF16/FP16低精度计算带来的数值损失、张量累加顺序不同引发的误差累积等。
 
-**为什么会有精度损失？**
-计算机使用二进制表示小数，很多十进制小数（如0.1）无法被有限长度的二进制精确表示，只能取近似值。float32和float64的精度差异巨大：
-float32（单精度）：约7位有效数字。内存占用4字节。
-float64（双精度）：约15-16位有效数字。内存占用8字节。
+**浮点数精度损失产生原理**：
 
-**为什么需要三方对比？**
-CPU (float64)：作为参考基准，提供最高精度的计算结果。
-CPU (float32)：用于隔离“精度损失”的来源。对比float32 CPU结果与float64结果，可以观察到单纯因“单精度”带来的理论损失。
-GPU/NPU (float32)：用于观察在特定硬件加速器上，由于硬件指令集差异、算子实现算法不同、中间结果保留精度不同（如某些NPU可能使用float16进行累加）或驱动/库的优化策略所引入的额外误差。
+计算机使用二进制表示小数，多数十进制小数（如0.1）无法被有限长度的二进制精确表示，只能取近似值。不同浮点位宽的数值表达能力存在明显差距：
 
-**核心对比逻辑**：
-由于浮点数不能直接用 == 比较，必须使用容差比较。常用的方法有两种：
+- float32（单精度）：有效数字约7位，占用4字节存储空间。
+- float64（双精度）：有效数字约15~16位，占用8字节存储空间。
 
-- 绝对误差 (Absolute Error)：|a - b|
-- 相对误差 (Relative Error)：|a - b| / max(|a|, |b|)，适用于大数比较。
+**精度判定方案**：
 
-混合容差结合了两者，如np.isclose() 的实现。
+采用CPU、GPU、NPU三方结果对照的验证方案校验精度偏差，该流程是算法从CPU移植到NPU/GPU迁移时的标准必做验证，可保障硬件加速没有引入不可接受的精度损失。
+
+校验基准规则：以CPU float64高精度计算结果作为真值基准，对比三类硬件float32输出，以此量化整体精度误差。
+
+**三方对比的作用**：
+
+1. CPU (float64)：作为参考基准，提供最高精度的计算结果。
+2. CPU (float32)：用于隔离“精度损失”的来源。对比float32 CPU结果与float64结果，可以观察到单纯因“单精度”带来的理论损失。
+3. GPU/NPU (float32)：定位硬件额外误差，误差来源包含硬件指令集、算子实现逻辑、中间计算存储位宽（如部分NPU采用FP16累加）、驱动/库的优化策略等。
+
+**浮点数对比核心逻辑**：
+
+浮点数无法直接用`==`比较，需基于容差阈值判定。常用判别方式分为两类：
+
+- 绝对误差：`|a - b|`
+- 相对误差：`|a - b| / max(|a|, |b|)`，适用于大数比较。
+
+混合容差是融合绝对误差与相对误差两种判别逻辑，典型实现如`np.isclose()`。
 
 ## 贡献与社区
 
 **Q：如何参与贡献？**
 
-参与前需签署Ascend社区贡献者许可协议（CLA），并遵循[ascend-community](https://gitcode.com/ascend/community)行为准则。贡献流程包括：通过Issue反馈或认领任务、Fork仓库开发、自测（如`ninja check-bishengir`）、提交PR，以及通过门禁（编译、静态检查、CI）。合入需2位Reviewer的`/lgtm`与1位Approver的`/approve`。完整说明见[贡献指南](../contributing_guide/contribute.md)。
+1. 前置要求：
+
+   参与前需签署Ascend社区贡献者许可协议（CLA），并遵循[ascend-community](https://gitcode.com/ascend/community)行为准则。
+
+2. 标准贡献流程：
+
+   通过Issue反馈或认领任务；Fork目标仓库，本地完成功能开发；本地执行自测（例如运行`ninja check-bishengir` ）；提交PR；通过门禁校验（包含编译、静态检查、CI）。
+
+3. PR合入条件：
+
+   PR需获得2位评审者的`/lgtm`，且至少1位审批者的`/approve` ，方可合入主干。
+
+完整贡献规范详见文档：[贡献指南](../contributing_guide/contribute.md)。
 
 **Q：PR门禁失败（编译失败、静态检查失败、CI未通过）如何排查？**
 
-根据CI提示信息逐项修复：**编译失败**时检查报错与构建环境；**静态检查失败**时按提示修改代码风格或逻辑；**CI测试未通过**时定位失败用例并修复后重新触发CI。详见[贡献指南](../contributing_guide/contribute.md)中的「门禁异常处理」。
+根据CI输出提示逐项处理门禁异常：
+
+- 编译失败：查看构建报错日志，检查代码与构建环境。
+- 静态检查失败：按照工具提示修正代码格式、编码规范或逻辑问题。
+- CI测试不通过：定位失败测试用例，修复代码后重新触发CI。
+
+详细方案参考文档：[贡献指南-门禁异常处理](../contributing_guide/contribute.md#门禁异常处理)
 
 **Q：提交PR前有哪些注意事项？**
-
-注意事项如下：
 
 - 避免在PR中引入与本次修改无关的变更。
 - 保持提交历史简洁（可适当squash/rebase）。
 - 创建PR前将分支rebase到上游最新master。
 - 若为错误修复类PR，请在描述中关联相关Issue与PR。
 
-详见[贡献指南](../contributing_guide/contribute.md)中的「注意事项」。
+详见[贡献指南-注意事项](../contributing_guide/contribute.md#注意事项)。

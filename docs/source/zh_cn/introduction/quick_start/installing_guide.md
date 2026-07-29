@@ -9,7 +9,7 @@
 - CMake >= 3.28
 - Ninja >= 1.12.0
 
-**推荐使用工具：**
+**推荐使用工具**：
 
 - Clang >= 10
 - LLD >= 10（使用LLVM LLD将显著提升构建速度）
@@ -170,11 +170,13 @@ CANN Toolkit包中会包含完整的AscendNPU IR二进制，Docker镜像可以�
 ### 构建本地镜像
 
 开发者也可以独立构建本地镜像，可参考`docker`目录中内置的不同架构的`Dockerfile`。
+
 对于不同架构，均包含CANN Toolkit包与最新编译的AscendNPU IR。可自行安装`ops`包与Torch相关组件体验更多内容。
+
 不同架构下的基础镜像信息为：
 
-- x86_64镜像: 基于`ubuntu:22.04`
-- aarch64镜像: 基于`openeuler/openeuler:24.03`
+- x86_64镜像：基于`ubuntu:22.04`
+- aarch64镜像：基于`openeuler/openeuler:24.03`
 
 构建方式：
 
@@ -238,7 +240,7 @@ Testing Time: 45.23s
 
 Total Discovered Tests: 388
   Unsupported: 89  (22.94%)
-  Passed     : 299 (77.06)
+  Passed     : 299 (77.06%)
 ```
 
 测试失败时：

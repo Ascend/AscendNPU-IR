@@ -1,4 +1,4 @@
-# HFusion AutoSchedule自动融合与调度框架
+# 自动融合与调度
 
 ## 框架总览
 
@@ -182,7 +182,7 @@ AutoSchedule的整体调用链可以概括为：
 - **Expr** / **StmtExprBuilder**：
     - DimSymbol：对动态维度的符号抽象。
     - Expr：可进行加减乘除等运算，表达“维度/因子”、“对齐到某个粒度”等逻辑。
-    - StmtExprBuilder：负责从IR中的shape信息、常量等构建Expr，生成host侧可执行的Tiling函数。
+    - StmtExprBuilder：负责从IR中的shape信息、常量等构建Expr，生成Host侧可执行的Tiling函数。
 
 **三、ValueHandle系列**
 
@@ -231,9 +231,9 @@ AutoSchedule的整体调用链可以概括为：
 
 **一、Stride-Align内存对齐优化**
 
-**优化目标：**防止出现非对齐内存UB访问。
+**优化目标**：防止出现非对齐内存UB访问。
 
-**接口与数据来源：**
+**接口与数据来源**：
 
 - `KernelInfo::getStrideAlignments()`（`KernelInfo.h`）：返回一组(维度索引, 对齐粒度)，描述某些维度在访存时需要对齐到的最小步长。
 - `getSizeAlignments()`：size维度对齐约束；
@@ -268,12 +268,12 @@ stride-align处理发生在Tiling计算阶段，即`SchedulerBase::runSchedulePr
 - Expr：支持基本算术运算，可以表示诸如`N / 4`、`min(N, 64)`、`(H * W) / factor`等表达式。
 - StmtExprBuilder：
     - 负责从IR中的shape信息、常量等构建Expr；
-    - 在host侧生成具体的Tiling计算语句。
+    - 在Host侧生成具体的Tiling计算语句。
 
 **Host Tiling函数生成与执行**：
 
 - `calculateTilingImpl()`返回的`TilingComputeFn`通常是一个lambda或可调用对象；
-- 在host上执行该函数时，已知实际输入shape，即可将`DimSymbol`映射为具体数值，求值出最终Tiling；
+- 在Host上执行该函数时，已知实际输入shape，即可将`DimSymbol`映射为具体数值，求值出最终Tiling；
 - 对于完全静态shape，表达式可以在编译期直接折叠为常量。
 
 **配置与扩展**：
@@ -420,4 +420,5 @@ AutoSchedule不会在调度器内部直接改写算子IR，而是先构建一段
 
 - 静态shape场景：表达式可在编译阶段完成求值，折叠成常量Tiling参数。
 - 动态shape场景：在Host侧生成的Tiling函数中，依据实际输入shape实时完成求值。
+
   同一套表达式既服务于静态场景，也兼容动态场景，减少代码分叉。

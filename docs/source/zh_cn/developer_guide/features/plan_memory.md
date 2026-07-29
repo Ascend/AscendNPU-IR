@@ -60,7 +60,7 @@
 1. 通过社区`Liveness`类分析各个节点的活跃性。
 2. 遍历IR（包含`scf.for`、`scf.if`、`scf.while`），收集每个op的gen（生成的Buffer）与kill（最后一次读取的Buffer）信息，用于计算每个Buffer的生命区间。
 3. 根据gen与kill计算每个Buffer的生命周期，即首次写入到最后一次读取的区间。如果两个Buffer的生命周期不重叠，即可共享内存。
-4. 基于Alias关系，别可执行inplace复用的Buffer，为其分配相同的内存起始地址。
+4. 基于Alias关系，识别可执行inplace复用的Buffer，为其分配相同的内存起始地址。
 
 #### 内存分配模式
 

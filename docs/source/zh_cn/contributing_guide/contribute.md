@@ -4,7 +4,7 @@
 
 ## ✍️如何签署Ascend社区贡献者许可协议（CLA）
 
-在参与社区贡献前，您需要签署Ascend社区贡献者许可协议（CLA）：
+在参与社区贡献前，需签署Ascend社区贡献者许可协议（CLA）：
 
 - **个人贡献者**：请选择「签署个人CLA」，填写好姓名和邮箱后提交申请即可。
 - **企业**：请选择「签署法人CLA」，填写企业相关信息，提交申请后，企业将接收到社区发出的签署企业CLA的文件，请按照邮件中的提示完成后续签署。
@@ -16,30 +16,30 @@
 
 - Bug修复
 
-  如果您在本项目中发现了某些Bug，希望对其进行修复，欢迎您新建Issue进行反馈和跟踪处理。
+  在本项目中发现某些Bug，希望对其进行修复，可新建Issue反馈与跟踪。
 
-  您可以新建[Bug-Report|缺陷反馈](https://gitcode.com/Ascend/AscendNPU-IR/issues/create?type=template&title=Bug-Report|%E7%BC%BA%E9%99%B7%E5%8F%8D%E9%A6%88&template=.gitcode%252FISSUE_TEMPLATE%252Fbug-report.yml)类Issue对Bug进行描述，然后在评论框中输入“/assign”或“/assign @yourself”，将该Issue分配给您进行处理。
+  可新建[Bug-Report|缺陷反馈](https://gitcode.com/Ascend/AscendNPU-IR/issues/create?type=template&title=Bug-Report|%E7%BC%BA%E9%99%B7%E5%8F%8D%E9%A6%88&template=.gitcode%252FISSUE_TEMPLATE%252Fbug-report.yml)类Issue描述Bug，然后在评论框中输入“/assign”或“/assign @yourself”，认领该Issue开展处理。
 
 - 贡献代码
 
-  您可以新建[Requirement|需求建议](https://gitcode.com/Ascend/AscendNPU-IR/issues/create?type=template&title=%E6%96%B0%E9%9C%80%E6%B1%82&template=.gitcode%252FISSUE_TEMPLATE%252Ffeature.yml)类Issue对新的样例算子予以说明，并提供您的设计方案，然后在评论框中输入“/assign”或“/assign @yourself”，将该Issue分配给您进行处理。
+  可新建[Requirement|需求建议](https://gitcode.com/Ascend/AscendNPU-IR/issues/create?type=template&title=%E6%96%B0%E9%9C%80%E6%B1%82&template=.gitcode%252FISSUE_TEMPLATE%252Ffeature.yml)类Issue对新的样例算子予以说明，并提供设计方案，然后在评论框中输入“/assign”或“/assign @yourself”，认领该Issue开展处理。
 
-  对于您浏览的其他Issue：
-    - 若该问题正是您要解决的，请在问题下评论说明您将负责处理。
+  浏览其他Issue时遵循以下要求：
+    - 计划解决对应问题，请在问题下评论说明负责处理。
     - 若问题已打开较久，解决前请先做预检查。
-    - 若您解决了自己报告的问题，关闭前请简要说明处理结果。
+    - 自行提交并修复的问题，关闭前请简要说明处理结果。
 
 - 问题咨询
 
-  如果您在本项目中的使用或者其他内容存在疑问，欢迎您新建Issue进行反馈和咨询。
+  使用本项目过程中存在疑问，可新建Issue进行反馈和咨询。
 
-  您可以通过新建[Question|问题咨询](https://gitcode.com/Ascend/AscendNPU-IR/issues/create?type=template&title=Question|%E9%97%AE%E9%A2%98%E5%92%A8%E8%AF%A2&template=.gitcode%252FISSUE_TEMPLATE%252Fquestion.yml)类Issue提出自己的疑问。
+  可通过新建[Question|问题咨询](https://gitcode.com/Ascend/AscendNPU-IR/issues/create?type=template&title=Question|%E9%97%AE%E9%A2%98%E5%92%A8%E8%AF%A2&template=.gitcode%252FISSUE_TEMPLATE%252Fquestion.yml)类Issue提出疑问。
 
 - 帮助解决他人Issue
 
-  如果社区中他人遇到的问题您有合适的解决方法，欢迎您在Issue中发表评论交流，帮助他人解决问题和痛点，共同优化易用性。
+  若有可行方案解决社区其他开发者遇到的问题，欢迎在Issue中发表评论交流，协助解决问题和痛点，共同优化易用性。
 
-  如果对应Issue需要进行代码修改，您可以在Issue评论框中输入 “/assign” 或 “/assign @yourself”，将该Issue分配给您，跟踪协助解决问题。
+  如果对应Issue需要进行代码修改，可在Issue评论框中输入 “/assign” 或 “/assign @yourself”，认领该Issue，跟踪协助解决问题。
 
 ## 开发建议
 
@@ -54,7 +54,7 @@
 
 ### 提交PR
 
-- 在[GitCode](https://gitcode.com/Ascend/AscendNPU-IR)上提出您的想法作为Issue。
+- 在[GitCode](https://gitcode.com/Ascend/AscendNPU-IR)上提出想法创建Issue。
 - 若新功能涉及较多设计细节，请同时提交设计方案。
 - 在问题讨论与设计方案审查达成共识后，再进行Fork开发并提交PR。
 - PR经充分讨论后，将根据讨论结果进行合并、拒绝或关闭。
@@ -62,7 +62,7 @@
 
 ### Fork-Pull开发模式
 
-在向AscendNPU IR项目提交代码前，请先将项目Fork到您自己的仓库。后续在您Fork的仓库中进行开发，并通过Pull Request将变更合并到本项目。
+在向AscendNPU IR项目提交代码前，请先将项目Fork至个人仓库。后续在Fork仓库中进行开发，并通过Pull Request将变更合并到本项目。
 
 ### 代码更改自测
 
@@ -74,11 +74,11 @@ ninja check-bishengir
 
 ### 代码推送验证
 
-代码更新与测试通过后，将您的commit推送到您的远程仓库。
+代码更新与测试通过后，将commit推送到个人远程仓库。
 
 ### 向主仓创建拉取请求
 
-将代码推送到您的远程仓库后，在您的新分支与AscendNPU IR的master分支之间新建Pull Request。创建合并请求后，在PR中评论`compile`可触发CI构建流水线。建议尽快将PR合并到上游master，以降低合并冲突风险。
+将代码推送到远程仓库后，在新分支与AscendNPU IR的master分支之间新建Pull Request。创建合并请求后，在PR中评论`compile`可触发CI构建流水线。建议尽快将PR合并到上游master，以降低合并冲突风险。
 
 ### 门禁异常处理
 
@@ -92,5 +92,5 @@ ninja check-bishengir
 
 - 避免在PR中引入与本次修改无关的变更。
 - 保持提交历史简洁、有序（可适当使用squash/rebase）。
-- 创建PR前，请将您的分支rebase到上游仓库最新master。
+- 创建PR前，请将本地分支rebase到上游仓库最新master。
 - 若为错误修复类PR，请在描述中关联所有相关Issue与PR。

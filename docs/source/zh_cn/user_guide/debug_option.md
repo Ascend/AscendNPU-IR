@@ -30,6 +30,7 @@ hfusion.print " x: " {hex = xxx} %0 : tensor<8xi64>
 **使用说明**：
 
 可以在hfusion Pass阶段或手动构造IR时，显式添加`PrintOp`节点。
+
 如下：当我们想打印`load`进来的结果时我们可以手动在hfusion阶段IR中添加`hfusion.print`以实现该效果。
 
 ```mlir
@@ -59,6 +60,7 @@ hivm.hir.debug {debugtype = "xxx", hex = xxx, prefix = " xxx: ", tcoretype = #hi
 **使用说明**：
 
 可以在hivm Pass阶段或手动构造IR时，显式添加Debug Op节点。
+
 如下：当我们想打印`load`进来的结果时我们可以手动在hivm阶段IR中添加`hivm.hir.debug`以实现该效果。
 
 ```mlir

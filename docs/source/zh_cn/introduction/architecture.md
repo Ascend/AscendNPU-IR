@@ -2,7 +2,7 @@
 
 ## 目标定位
 
-毕昇编译器AscendNPU IR是基于MLIR生态构建的昇腾硬件高层抽象表达，它会自下而上对昇腾硬件底层指令、核内资源、核间资源、SOC资源逐层进行抽象编译优化，多层抽象间分层解耦、开源开放，允许生态编程、三方框架权衡性能与易用性的需求灵活对接，为生态框架提供面向昇腾的统一编译接入层和硬件完备表达优化能力。
+毕昇编译器AscendNPU IR是基于MLIR生态构建的昇腾硬件高层抽象表达，它会自下而上对昇腾硬件底层指令、核内资源、核间资源、SOC资源逐层进行抽象编译优化，多层抽象间分层解耦、开源开放，允许生态编程、三方框架按需权衡性能与易用性灵活对接，为生态框架提供面向昇腾的统一编译接入层与硬件完备表达优化能力。
 
 ![image](../../images/introduction/architecture1_zh.png)
 
@@ -73,6 +73,7 @@ AscendNPU IR是基于MLIR生态构建的，MLIR原生社区代码是作为第三
 ```
 
 IR中主要由`Conversion`、`Dialect`、`tools`三部分组成，其中`Conversion`承载不同方言间转换的能力，`Dialect`下是不同方言的定义和实现，`tools`目录下定义编译工具链。
+
 `Conversion`中既包括三方生态对接转换（如TorchToHFusion）也包括AscendNPU IR内部方言间转换（如HFusionToHIVM）；`Dialect`下既包括自研方言也包括社区方言；`tools`中`bishengir-compile`是AscendNPU IR编译器的命令行驱动程序。
 
 ## 编译流程

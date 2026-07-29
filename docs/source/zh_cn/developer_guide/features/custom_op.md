@@ -1,4 +1,4 @@
-# 自定义算子（CustomOp）
+# 自定义算子
 
 ## 概述
 
@@ -16,7 +16,7 @@ AscendNPU IR已为上游模型支持丰富的算子集合。但部分业务场�
 
 | 参数      | 描述                                                         |
 | --------- | ------------------------------------------------------------ |
-| `name`    | 唯一算子名称<br>注意：部分名称为内置算子预留，命名多以`__builtin`为前缀。编译器会自动将此类内置算子链接到至`bishengir-compile`配套内置模板库，无需用户额外配置。<br>若使用自定义算子名称，用户需指定实现位置、编译命令及所有必要的信息。 |
+| `name`    | 唯一算子名称<br>注意：部分名称为内置算子预留，命名多以`__builtin`为前缀。编译器会自动将此类内置算子链接到`bishengir-compile`配套内置模板库，无需用户额外配置。<br>若使用自定义算子名称，用户需指定实现位置、编译命令及所有必要的信息。 |
 | `inputs`  | 输入参数                                                     |
 | `outputs` | 输出结果，可指定为`init`操作数，用作操作结果的初始值，或操作结果将写入的初始位置。 |
 
@@ -378,7 +378,7 @@ def test_custom(DT, L):
 
 C++ API定义：`add.cpp`
 
-```C++
+```cpp
 #define __aiv__ [aicore]
 #define INTRINSIC_NO_ARGS(NAME) NAME()
 #define INTRINSIC(NAME, ...) NAME(__VA_ARGS__)
@@ -503,7 +503,7 @@ def test_custom_macro(L):
 
 C++ API定义：`macro_add.cpp`
 
-```c++
+```cpp
 #define __aiv__ [aicore]
 #define INTRINSIC_NO_ARGS(NAME) NAME()
 #define INTRINSIC(NAME, ...) NAME(__VA_ARGS__)

@@ -1,4 +1,4 @@
-# 自动子块切分（Auto-Subtiling）
+# 自动子块切分
 
 本文介绍HIVM中的AutoBindSubBlock Pass。该Pass通过Cube-Vector 1:2切分，针对CV类kernel进行优化。在阅读本文之前，建议先阅读[CV Optimization](./cv_optimization.md)，了解CV编译相关术语。
 
@@ -111,7 +111,7 @@ Dimension Analyzer的核心功能在于其选轴算法。该算法通过对目�
 hivm.hir.store ins(%t1: tensor<64xf16>) outs(%output : memref<64xf16>)
 ```
 
-自动1:2使能失败时，假如`if`条件，仅0核工作
+自动1:2使能失败时，若进入`if`判断分支，仅0核工作
 
 ```mlir
 %0 = hivm.hir.get_sub_block_idx
