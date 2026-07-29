@@ -933,6 +933,10 @@ bool Solver::checkSyncOpsConflicts(ConflictPair *conflictPair1,
   if (conflictPair1->startIndex > conflictPair2->startIndex) {
     std::swap(conflictPair1, conflictPair2);
   }
+  if (conflictPair1->setCorePipeInfo.coreType !=
+      conflictPair2->setCorePipeInfo.coreType) {
+    return false;
+  }
   if (conflictPair1->startIndex >= conflictPair2->startIndex ||
       conflictPair1->endIndex >= conflictPair2->endIndex) {
     return true;
