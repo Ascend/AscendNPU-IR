@@ -208,11 +208,6 @@ static bool hasFusionOpportunity(Operation *producer, PlanContext &ctx) {
 static std::shared_ptr<FusedNode>
 findBestFusedNodeForProducer(Block *block, Operation *producer,
                              PlanContext &ctx, int64_t vectorLength) {
-  // here we do not fuse FillOp and put FillOp into a single VF, see issue:
-  // https://codehub-y.huawei.com/CompilerKernel/BiShengKernel/BiSheng/issues/3687
-  if (mlir::hfusion::isFillOp(producer))
-    return nullptr;
-
   // Since the producers and consumers of a transpose op have opposite axes, we
   // cannot fuse them into the same fusedNode. For vsstb pattern transpose, we
   // fuse the producers into this transpose op; for other pattern transpose, we
