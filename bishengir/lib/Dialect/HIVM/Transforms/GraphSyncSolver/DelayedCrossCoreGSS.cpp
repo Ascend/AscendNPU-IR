@@ -732,7 +732,7 @@ void DelayedCrossCoreGSSPass::crossCoreGssRunOnOperation(
     options.alwaysUsePipeSAsWaitingPipe = true;
   }
   if (this->useDifferentMultiBufferFlagIds) {
-    options.useDifferentMultiBufferFlagIds = true;
+    options.enableRepeatFlagIdFeat = true;
   }
   if (this->enableCVPatterns) {
     options.enableCVPatterns = true;
@@ -779,10 +779,28 @@ void DelayedCrossCoreGSSPass::crossCoreGssRunOnOperation(
       }
       return loopOp;
     };
-
+    auto fixScope = [coreType](Scope *scopeOp) -> Scope * {
+      if (!scopeOp) {
+        return nullptr;
+      }
+      if (coreType == hivm::TCoreType::CUBE) {
+        assert(scopeOp->cubeAnchorInfo.has_value());
+        auto *fixedScopeOp =
+            dyn_cast<Scope>(scopeOp->cubeAnchorInfo->anchorBefore);
+        assert(fixedScopeOp != nullptr);
+        return fixedScopeOp;
+      } else if (coreType == hivm::TCoreType::VECTOR) {
+        assert(scopeOp->vectorAnchorInfo.has_value());
+        auto *fixedScopeOp =
+            dyn_cast<Scope>(scopeOp->vectorAnchorInfo->anchorBefore);
+        assert(fixedScopeOp != nullptr);
+        return fixedScopeOp;
+      }
+      return scopeOp;
+    };
     if (auto &multiBufferInfo = eventIdInfo.multiBufferInfo) {
-      multiBufferInfo->multibufferLoop =
-          fixLoop(multiBufferInfo->multibufferLoop);
+      multiBufferInfo->multibufferScope =
+          fixScope(multiBufferInfo->multibufferScope);
     }
     if (auto &cvPipeliningInfo = eventIdInfo.cvPipeliningInfo) {
       cvPipeliningInfo->cvPipeliningLoop1 =
