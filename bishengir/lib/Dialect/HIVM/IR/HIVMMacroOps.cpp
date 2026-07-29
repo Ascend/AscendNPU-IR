@@ -479,8 +479,10 @@ LogicalResult MmadL1Op::verify() {
   return success();
 }
 
-bool isSatisfiedBrcForPerChannel(hivm::VBrcOp brcOp,
-                                 Operation *hookOp = nullptr) {
+namespace mlir {
+namespace hivm {
+
+bool isSatisfiedBrcForPerChannel(hivm::VBrcOp brcOp, Operation *hookOp) {
   // TODO: modify for batch matmul later.
   ArrayRef<int64_t> brcDims = brcOp.getBroadcastDims();
   if (brcDims.empty()) {
@@ -520,6 +522,9 @@ bool isSatisfiedBrcForPerChannel(hivm::VBrcOp brcOp,
 #endif
   // only brc first dim
   return brcDims.size() == 1 && brcDims[0] == 0;
+}
+
+}
 }
 
 static bool isPerChannelPattern(OpOperand &mmOut, OpOperand &mmInitCond) {

@@ -40,6 +40,7 @@ void populateNormalizeTrigPatterns(RewritePatternSet &patterns,
 void populateNormalizeModPatterns(RewritePatternSet &patterns);
 void populateNormalizePrimaryMathPatterns(RewritePatternSet &patterns);
 void populateNormalizeLateMathPatterns(RewritePatternSet &patterns);
+void populateNormalizeReluPatterns(RewritePatternSet &patterns);
 void populateNormalizeCastingPatterns(RewritePatternSet &patterns);
 void populateNormalizeFinalCastingPatterns(RewritePatternSet &patterns);
 void populateNormalizeI8I32CmpPatterns(RewritePatternSet &patterns);
