@@ -370,17 +370,17 @@ bishengir::regbase::runRegBasePipeline(ModuleOp mod,
       success = succeeded(runPipelineRegBase(hirCompileMode,
                                              regbase::buildBiShengTTIRPipeline,
                                              config, "BiShengTTIR"));
+    } else {
+      // Standard HIR compile path (no SIMD/SIMT split)
+      success = succeeded(runPipelineRegBase(hirCompileMode,
+                                             regbase::buildBiShengHIRPipeline,
+                                             config, "BiShengHIR"));
+      // Stop final HIVM lowering after earlier pipeline fails.
+      success =
+          success && succeeded(runPipelineRegBase(
+                         hirCompileMode, regbase::buildFinalHIVMPipelines,
+                         config, "buildFinalHIVMPipelines"));
     }
-
-    // Standard HIR compile path (no SIMD/SIMT split)
-    success = succeeded(runPipelineRegBase(hirCompileMode,
-                                           regbase::buildBiShengHIRPipeline,
-                                           config, "BiShengHIR"));
-    // Stop final HIVM lowering after earlier pipeline fails.
-    success = success &&
-              succeeded(runPipelineRegBase(hirCompileMode,
-                                           regbase::buildFinalHIVMPipelines,
-                                           config, "buildFinalHIVMPipelines"));
     bool hasMemoryOverflow = hasUboverflow || hasCcOverflow || hasCbufOverflow;
     if (!success && hasMemoryOverflow) {
       bool flippedAnyMultiBufferKnob = false;

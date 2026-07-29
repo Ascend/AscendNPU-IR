@@ -33,7 +33,6 @@ using namespace mlir;
 using namespace mlir::hivm;
 
 namespace {
-constexpr StringLiteral kSimtModuleAttrName = "hivm.simt_module";
 
 struct SplitSimtModulePass
     : public impl::SplitSimtModuleBase<SplitSimtModulePass> {
@@ -107,7 +106,7 @@ void SplitSimtModulePass::runOnOperation() {
     funcOp.setSymVisibility("private");
     builder.setInsertionPointToStart(modBlock);
     newMod->setAttrs(mod->getAttrs());
-    newMod->setAttr(kSimtModuleAttrName, builder.getUnitAttr());
+    newMod->setAttr(hacc::SIMTModuleAttr::name, builder.getUnitAttr());
   }
 
   llvm::SmallVector<Operation *> simdFuncs;

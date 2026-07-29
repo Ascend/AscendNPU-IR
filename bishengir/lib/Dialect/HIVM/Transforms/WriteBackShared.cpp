@@ -33,7 +33,6 @@ using namespace mlir;
 using namespace hivm;
 
 namespace {
-constexpr StringLiteral kSimtModuleAttrName = "hivm.simt_module";
 
 class WriteBackSharedPass
     : public impl::WriteBackSharedBase<WriteBackSharedPass> {
@@ -50,7 +49,7 @@ void WriteBackSharedPass::runOnOperation() {
       hacc::HACCToLLVMIRTranslateAttr::ENTRY);
   for (auto nested : topM.getOps<ModuleOp>()) {
     // Create the map from SIMT kernel to shared value
-    if (nested->hasAttr(kSimtModuleAttrName)) {
+    if (nested->hasAttr(hacc::SIMTModuleAttr::name)) {
       auto sharedAttr = nested->getAttrOfType<IntegerAttr>("ttg.shared");
       if (sharedAttr) {
         nested->walk([&](LLVM::LLVMFuncOp func) {
