@@ -109,6 +109,7 @@ class AVE_TenaryOp<string mnemonic, list<Trait> traits = []> :
 class AVE_VecScalarOp<string mnemonic, list<Trait> traits = []> :
     AVE_LibFnOp<mnemonic, !listconcat(traits, [
       Pure,
+      AVEElementwiseOpInterface,
       TypesMatchWith<"the scalar should have the same type with the vector's element type",
                      "vec", "scalar", "getElementType($_self)">,
       AllTypesMatch<["vec", "out"]>
