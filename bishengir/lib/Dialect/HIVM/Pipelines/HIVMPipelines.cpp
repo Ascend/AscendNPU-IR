@@ -209,12 +209,7 @@ static void hivmPreBufferizationOptimizationPipeline(
   pm.addPass(mlir::hivm::createNormalizeMatmulPass());
   pm.addPass(mlir::hivm::createNormalizeConvOpsPass());
   pm.addPass(mlir::hivm::createNormalizeBitwiseSelectPass());
-  pm.addPass(mlir::hivm::createInsertFixpipePass());
-  {
-    InlineFixpipeOptions opts;
-    opts.inlineQuantScale = hivmPipelineOptions.inlineQuantScaleInFixpipe;
-    pm.addPass(mlir::hivm::createInlineFixpipePass(opts));
-  }
+  pm.addPass(mlir::hivm::createInlineFixpipePass());
   if (!hivmPipelineOptions.disableAutoCVWorkSpaceManage) {
     hivmAutoInsertLdStForMixCVPipeline(pm, hivmPipelineOptions);
   }
@@ -228,12 +223,7 @@ static void hivmPreBufferizationOptimizationPipeline(
 
   pm.addPass(mlir::hivm::createNormalizeMatmulPass());
   pm.addPass(createInsertNZ2NDForDebugPass());
-  pm.addPass(mlir::hivm::createInsertFixpipePass());
-  {
-    InlineFixpipeOptions opts;
-    opts.inlineQuantScale = hivmPipelineOptions.inlineQuantScaleInFixpipe;
-    pm.addPass(mlir::hivm::createInlineFixpipePass(opts));
-  }
+  pm.addPass(mlir::hivm::createInlineFixpipePass());
 
   if (!hivmPipelineOptions.disableAutoCVWorkSpaceManage) {
     hivmAutoInsertLdStForMixCVPipeline(pm, hivmPipelineOptions);
