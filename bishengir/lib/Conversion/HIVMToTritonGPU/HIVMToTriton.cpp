@@ -5,6 +5,7 @@
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
+#include "HIVMToTritonUtils.h"
 #include "bishengir/Conversion/HIVMToTritonGPU/HIVMToTritonGPU.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -129,6 +130,75 @@ buildArangeTensor(ConversionPatternRewriter &rewriter, Location loc,
   return castI32TensorToType(rewriter, loc, result, resultElementType);
 }
 
+FailureOr<Value> buildReinterpretCastTensorPointers(
+    ConversionPatternRewriter &rewriter, Location loc, Value base,
+    MemRefType baseMemrefTy, ArrayRef<OpFoldResult> mixedOffsets,
+    ArrayRef<OpFoldResult> mixedStrides, ArrayRef<int64_t> shape);
+
+// Linearises multi-dimensional subview offsets into a single flat offset
+// using the given per-dimension strides:
+//   linearOffset = sum_i (offsets[i] * strides[i])
+// via an affine.apply so that symbolic (runtime) offsets are supported.
+static OpFoldResult
+linearizeSubviewOffsets(ConversionPatternRewriter &rewriter, Location loc,
+                        ArrayRef<OpFoldResult> offsets,
+                        ArrayRef<int64_t> strides) {
+  auto *ctx = rewriter.getContext();
+  AffineExpr expr = getAffineConstantExpr(0, ctx);
+  SmallVector<OpFoldResult> exprOperands;
+  for (size_t i = 0; i < offsets.size(); ++i) {
+    expr = expr + getAffineSymbolExpr(i, ctx) * strides[i];
+    exprOperands.push_back(offsets[i]);
+  }
+  return affine::makeComposedFoldedAffineApply(rewriter, loc, expr,
+                                               exprOperands);
+}
+
+// Extracts the common subview-to-pointer-tensor logic shared by
+// HIVMLoalLoadOpPattern and HIVMLoalStoreOpPattern.  Given a memref.subview,
+// computes the linearised base offset, the non-unit strides, and the transfer
+// shape, then delegates to buildReinterpretCastTensorPointers to produce the
+// final pointer tensor.
+static FailureOr<Value>
+buildSubviewPointerTensor(ConversionPatternRewriter &rewriter, Location loc,
+                          memref::SubViewOp subviewOp) {
+  auto subviewResultTy = cast<MemRefType>(subviewOp.getResult().getType());
+  // SmallVector<int64_t> shape(subviewResultTy.getShape().begin(),
+  //                            subviewResultTy.getShape().end());
+
+  Value source = subviewOp.getSource();
+  auto baseMemrefTy = dyn_cast<MemRefType>(source.getType());
+  if (!baseMemrefTy)
+    return failure();
+
+  SmallVector<int64_t> sourceStrides;
+  int64_t sourceOffset;
+  if (failed(getStridesAndOffset(baseMemrefTy, sourceStrides, sourceOffset)))
+    return failure();
+
+  SmallVector<OpFoldResult> mixedStrides;
+  auto layout = dyn_cast<StridedLayoutAttr>(subviewResultTy.getLayout());
+  if (layout) {
+    for (int64_t s : layout.getStrides())
+      mixedStrides.push_back(rewriter.getIndexAttr(s));
+  } else {
+    auto sizes = subviewOp.getMixedSizes();
+    for (size_t i = 0; i < sizes.size(); ++i) {
+      auto sizeOpt = getConstantIntValue(sizes[i]);
+      if (!sizeOpt || *sizeOpt != 1)
+        mixedStrides.push_back(rewriter.getIndexAttr(sourceStrides[i]));
+    }
+  }
+
+  auto subviewOffsets = subviewOp.getMixedOffsets();
+  OpFoldResult linearOffset =
+      linearizeSubviewOffsets(rewriter, loc, subviewOffsets, sourceStrides);
+  SmallVector<OpFoldResult> mixedOffsets{linearOffset};
+
+  return buildReinterpretCastTensorPointers(rewriter, loc, source, baseMemrefTy,
+                                            mixedOffsets, mixedStrides, subviewResultTy.getShape());
+}
+
 class GetBlockIdxOpPattern : public OpRewritePattern<hivm::GetBlockIdxOp> {
 public:
   using OpRewritePattern::OpRewritePattern;
@@ -247,18 +317,26 @@ class HIVMLoalLoadOpPattern : public OpConversionPattern<hivm::LocalLoadOp> {
     auto loc = op.getLoc();
     auto addr = op.getAddr();
     auto ptrTy = HIVMToTritonTypeConvert(addr.getType());
-
     auto tensorTy = op.getResult().getType();
 
-    // Generate tt.make_range operator to get continuous sequence
+    if (auto subviewOp = addr.getDefiningOp<memref::SubViewOp>()) {
+      auto ptrTensor = buildSubviewPointerTensor(rewriter, loc, subviewOp);
+      if (failed(ptrTensor))
+        return failure();
+
+      auto loaded = rewriter.create<triton::LoadOp>(
+          loc, tensorTy, *ptrTensor, Value{}, Value{},
+          llvm::ArrayRef<int32_t>{}, triton::PaddingOptionAttr{});
+      rewriter.replaceOp(op, loaded);
+      return success();
+    }
+
     auto num = tensorTy.getNumElements();
     auto rangeTensorTy = RankedTensorType::get({num}, rewriter.getI32Type());
     auto mkrng = rewriter.create<triton::MakeRangeOp>(op.getLoc(),
                                                       rangeTensorTy, 0, num);
 
     mlir::Value offset = mkrng;
-    // Generate tt.reshape operator to get multi-dim continuous sequence tensor
-    // of target shape if needed
     if (tensorTy.getRank() > 1) {
       auto reshapeTensorTy = RankedTensorType::get(
           tensorTy.getShape(), rangeTensorTy.getElementType());
@@ -268,17 +346,12 @@ class HIVMLoalLoadOpPattern : public OpConversionPattern<hivm::LocalLoadOp> {
     }
 
     auto ttPtr = rewriter.create<UnrealizedConversionCastOp>(loc, ptrTy, addr);
-
-    // Generate tt.splat operator to get pointer tensor of target shape
-    auto ptrTensor = RankedTensorType::get(tensorTy.getShape(), ptrTy);
-    auto splat = rewriter.create<triton::SplatOp>(op.getLoc(), ptrTensor,
+    auto ptrTensorTy = RankedTensorType::get(tensorTy.getShape(), ptrTy);
+    auto splat = rewriter.create<triton::SplatOp>(op.getLoc(), ptrTensorTy,
                                                   ttPtr.getResult(0));
-
-    // Generate tt.addptr operator to get pointer tensor with offset
-    auto addptr = rewriter.create<triton::AddPtrOp>(op.getLoc(), ptrTensor,
+    auto addptr = rewriter.create<triton::AddPtrOp>(op.getLoc(), ptrTensorTy,
                                                     splat, offset);
 
-    // Generate tt.load operator to get value from pointer tensor
     auto valTensor = rewriter.create<triton::LoadOp>(
         op.getLoc(), tensorTy, addptr, Value{}, Value{},
         llvm::ArrayRef<int32_t>{}, triton::PaddingOptionAttr{});
@@ -350,17 +423,26 @@ class HIVMLoalStoreOpPattern : public OpConversionPattern<hivm::LocalStoreOp> {
     auto addr = op.getAddr();
     auto data = op.getData();
     auto ptrTy = HIVMToTritonTypeConvert(addr.getType());
-
-    // Generate tt.make_range operator to get continuous sequence
     auto tensorTy = data.getType();
+
+    if (auto subviewOp = addr.getDefiningOp<memref::SubViewOp>()) {
+      auto ptrTensor = buildSubviewPointerTensor(rewriter, loc, subviewOp);
+      if (failed(ptrTensor))
+        return failure();
+
+      rewriter.create<triton::StoreOp>(
+          op.getLoc(), *ptrTensor, data, Value(), llvm::ArrayRef<int32_t>{},
+          triton::CacheModifier::NONE, triton::EvictionPolicy::NORMAL);
+      rewriter.eraseOp(op);
+      return success();
+    }
+
     auto num = tensorTy.getNumElements();
     auto rangeTensorTy = RankedTensorType::get({num}, rewriter.getI32Type());
     auto mkrng = rewriter.create<triton::MakeRangeOp>(op.getLoc(),
                                                       rangeTensorTy, 0, num);
 
     mlir::Value offset = mkrng;
-    // Generate tt.reshape operator to get multi-dim continuous sequence tensor
-    // of target shape if needed
     if (tensorTy.getRank() > 1) {
       auto reshapeTensorTy = RankedTensorType::get(
           tensorTy.getShape(), rangeTensorTy.getElementType());
@@ -370,21 +452,16 @@ class HIVMLoalStoreOpPattern : public OpConversionPattern<hivm::LocalStoreOp> {
     }
 
     auto ttPtr = rewriter.create<UnrealizedConversionCastOp>(loc, ptrTy, addr);
-
-    // Generate tt.splat operator to get pointer tensor of target shape
-    auto ptrTensor = RankedTensorType::get(tensorTy.getShape(), ptrTy);
-    auto splat = rewriter.create<triton::SplatOp>(op.getLoc(), ptrTensor,
+    auto ptrTensorTy = RankedTensorType::get(tensorTy.getShape(), ptrTy);
+    auto splat = rewriter.create<triton::SplatOp>(op.getLoc(), ptrTensorTy,
                                                   ttPtr.getResult(0));
-
-    // Generate tt.addptr operator to get pointer tensor with offset
-    auto addptr = rewriter.create<triton::AddPtrOp>(op.getLoc(), ptrTensor,
+    auto addptr = rewriter.create<triton::AddPtrOp>(op.getLoc(), ptrTensorTy,
                                                     splat, offset);
 
-    // Generate tt.store operator to set value to pointer tensor
-    auto storeOp =
-        rewriter.create<triton::StoreOp>(op.getLoc(), addptr, data, Value());
-
-    rewriter.replaceOp(op, storeOp);
+    rewriter.create<triton::StoreOp>(
+        op.getLoc(), addptr, data, Value(), llvm::ArrayRef<int32_t>{},
+        triton::CacheModifier::NONE, triton::EvictionPolicy::NORMAL);
+    rewriter.eraseOp(op);
     return success();
   }
 };
@@ -723,10 +800,10 @@ static Value buildTensorPointers(ConversionPatternRewriter &rewriter,
 }
 
 FailureOr<Value>
-buildMemRefTensorPointers(ConversionPatternRewriter &rewriter, Location loc,
-                          Value originalValue, Value convertedValue,
-                          MemRefType memrefTy, ArrayRef<int64_t> shape,
-                          llvm::function_ref<Value()> getLinearOffsets) {
+buildMemRefTensorPointersImpl(ConversionPatternRewriter &rewriter, Location loc,
+                              Value originalValue, Value convertedValue,
+                              MemRefType memrefTy, ArrayRef<int64_t> shape,
+                              llvm::function_ref<Value()> getLinearOffsets) {
   if (auto castOp =
           originalValue.getDefiningOp<memref::ReinterpretCastOp>()) {
     Value base = castOp.getSource();
@@ -775,21 +852,17 @@ buildMemRefTensorPointers(ConversionPatternRewriter &rewriter, Location loc,
     if (subviewOffsets.size() != mixedStrides.size())
       return failure();
 
-    // linearOffset = sum_i (subviewOffsets[i] * strides[i])
-    auto *ctx = rewriter.getContext();
-    AffineExpr expr = getAffineConstantExpr(0, ctx);
-    SmallVector<OpFoldResult> exprOperands;
-    for (size_t i = 0; i < subviewOffsets.size(); ++i) {
-      auto strideOptInt = getConstantIntValue(mixedStrides[i]);
-      if (!strideOptInt)
+    SmallVector<int64_t> intStrides;
+    intStrides.reserve(mixedStrides.size());
+    for (auto ms : mixedStrides) {
+      auto s = getConstantIntValue(ms);
+      if (!s)
         return failure();
-      expr = expr + getAffineSymbolExpr(i, ctx) * (*strideOptInt);
-      exprOperands.push_back(subviewOffsets[i]);
+      intStrides.push_back(*s);
     }
-    OpFoldResult linearOffset =
-        affine::makeComposedFoldedAffineApply(rewriter, loc, expr,
-                                              exprOperands);
 
+    OpFoldResult linearOffset =
+        linearizeSubviewOffsets(rewriter, loc, subviewOffsets, intStrides);
     SmallVector<OpFoldResult> mixedOffsets{linearOffset};
     return buildReinterpretCastTensorPointers(rewriter, loc, source,
                                               baseMemrefTy, mixedOffsets,
@@ -883,7 +956,7 @@ public:
       return linearOffsets;
     };
 
-    FailureOr<Value> maybeSrcPtrs = buildMemRefTensorPointers(
+    FailureOr<Value> maybeSrcPtrs = buildMemRefTensorPointersImpl(
         rewriter, loc, op.getSrc(), src, srcMemrefTy, shape, getLinearOffsets);
     if (failed(maybeSrcPtrs))
       return rewriter.notifyMatchFailure(op,
@@ -927,8 +1000,8 @@ public:
     // Store to dst if needed
     if (toTensorUsers.empty()) {
       FailureOr<Value> maybeDstPtrs =
-          buildMemRefTensorPointers(rewriter, loc, op.getDst(), dst,
-                                    dstMemrefTy, shape, getLinearOffsets);
+          buildMemRefTensorPointersImpl(rewriter, loc, op.getDst(), dst,
+                                        dstMemrefTy, shape, getLinearOffsets);
       if (failed(maybeDstPtrs))
         return rewriter.notifyMatchFailure(
             op, "failed to materialize destination pointers");
@@ -1052,8 +1125,8 @@ public:
       };
 
       FailureOr<Value> maybeDstPtrs =
-          buildMemRefTensorPointers(rewriter, loc, op.getDst(), dst,
-                                    dstMemrefTy, shape, getLinearOffsets);
+          buildMemRefTensorPointersImpl(rewriter, loc, op.getDst(), dst,
+                                        dstMemrefTy, shape, getLinearOffsets);
       if (failed(maybeDstPtrs))
         return rewriter.notifyMatchFailure(
             op, "failed to materialize destination pointers");
@@ -1303,6 +1376,20 @@ struct HIVMToTTReduceOp: public OpRewritePattern<hivm::VReduceOp> {
 };
 
 } // namespace
+
+FailureOr<Value> mlir::hivm::buildMemRefTensorPointers(
+    ConversionPatternRewriter &rewriter, Location loc, Value originalValue,
+    Value convertedValue, MemRefType memrefTy, ArrayRef<int64_t> shape) {
+  Value linearOffsets;
+  auto getLinearOffsets = [&]() -> Value {
+    if (!linearOffsets)
+      linearOffsets = createLinearOffsetTensor(rewriter, loc, shape);
+    return linearOffsets;
+  };
+  return buildMemRefTensorPointersImpl(rewriter, loc, originalValue,
+                                       convertedValue, memrefTy, shape,
+                                       getLinearOffsets);
+}
 
 void mlir::hivm::populateHIVMToTritonPatterns(RewritePatternSet &patterns) {
   auto *context = patterns.getContext();

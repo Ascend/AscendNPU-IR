@@ -9,6 +9,8 @@ file(GLOB NORMALIZE ${CMAKE_CURRENT_SOURCE_DIR}/regbase/Normalize/*.cpp)
 set(TILE_AND_BIND_SUB_BLOCK
     ${CMAKE_CURRENT_SOURCE_DIR}/TileAndBindSubBlock/Helper.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/TileAndBindSubBlock/TileUtils.cpp)
+file(GLOB PARTITION_AND_BIND_SUB_BLOCK CONFIGURE_DEPENDS
+     ${CMAKE_CURRENT_SOURCE_DIR}/PartitionAndBindSubBlock/*.cpp)
 
 add_bishengir_dialect_library(BiShengIRHIVMTransforms
   ${ALIGN_BUFFER}
@@ -19,6 +21,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   ${NDDMA}
   ${TILING}
   ${TILE_AND_BIND_SUB_BLOCK}
+  ${PARTITION_AND_BIND_SUB_BLOCK}
   ${NORMALIZE}
   AddFFTSToSyncBlockSetOp.cpp
   AllocExtraBuffer.cpp
@@ -119,6 +122,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   RemoveCopyOps.cpp
   SetBufferSize.cpp
   SinkOpToConsumerInLoop.cpp
+  SIMTVFSubTiling.cpp
   SplitSimtModule.cpp
   SplitMixedIfConditionals.cpp
   SplitMixKernel.cpp

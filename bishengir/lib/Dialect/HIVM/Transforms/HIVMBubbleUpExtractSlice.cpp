@@ -93,7 +93,7 @@ public:
           return WalkResult::advance();
         }
         auto *srcDefOp = extractSrc.getDefiningOp();
-        if (failed(findContainingSubblockLoop(srcDefOp))) {
+        if (failed(findContainingTilingLoop(srcDefOp))) {
           return WalkResult::advance();
         }
         if (auto bufferizeToTensor = dyn_cast<bufferization::ToTensorOp>(

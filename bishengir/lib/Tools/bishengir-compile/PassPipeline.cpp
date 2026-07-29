@@ -144,6 +144,7 @@ public:
         &enableMemoryDisplay,
         &enableStaticBarePtr,
         &enableTritonKernelCompile,
+        &enableSimtVFSubTiling,
         &enableHIVMUnitFlagSync,
         &enableHIVMAssumeAliveLoops,
         &enableUbufSaving,
@@ -156,10 +157,19 @@ public:
         &tileMixCubeLoop,
     };
 
+    SmallVector<Pass::Option<int> *> sharedWithHIVMCompileInt = {
+        &simtVFSubTilingMaxTileSize,
+    };
+
     SmallVector<Pass::Option<MultiBufferStrategy> *>
         sharedWithHIVMCompileMultiBuffer = {
             &limitAutoMultiBufferOfLocalBuffer,
             &limitAutoMultiBufferBuffer,
+        };
+
+    SmallVector<Pass::Option<PartitionAndBindSubBlockMode> *>
+        sharedWithHIVMCompilePartitionAndBindSubBlock = {
+            &partitionAndBindSubBlock,
         };
 
     SmallVector<Pass::Option<mlir::hacc::TargetDevice> *>
@@ -178,6 +188,11 @@ public:
           opt->getArgStr().str() + "=" + std::to_string(opt->getValue());
       collectedArgs.push_back(arg);
     }
+    for (auto &opt : sharedWithHIVMCompileInt) {
+      std::string arg =
+          opt->getArgStr().str() + "=" + std::to_string(opt->getValue());
+      collectedArgs.push_back(arg);
+    }
     const std::map<MultiBufferStrategy, std::string> multibufferStrategy2str = {
         {MultiBufferStrategy::NO_LIMIT, "no-limit"},
         {MultiBufferStrategy::ONLY_CUBE, "only-cube"},
@@ -187,6 +202,17 @@ public:
     for (auto &opt : sharedWithHIVMCompileMultiBuffer) {
       std::string arg = opt->getArgStr().str() + "=" +
                         multibufferStrategy2str.at(opt->getValue());
+      collectedArgs.push_back(arg);
+    }
+    const std::map<PartitionAndBindSubBlockMode, std::string>
+        partitionAndBindSubBlockMode2str = {
+            {PartitionAndBindSubBlockMode::Off, "off"},
+            {PartitionAndBindSubBlockMode::DefaultPin, "default-pin"},
+            {PartitionAndBindSubBlockMode::LoadBalanced, "load-balanced"},
+        };
+    for (auto &opt : sharedWithHIVMCompilePartitionAndBindSubBlock) {
+      std::string arg = opt->getArgStr().str() + "=" +
+                        partitionAndBindSubBlockMode2str.at(opt->getValue());
       collectedArgs.push_back(arg);
     }
     for (auto &opt : sharedWithHIVMCompileTargetDevice) {

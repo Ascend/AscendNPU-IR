@@ -95,6 +95,24 @@ bool DimensionAnalyzer::isReduceDim(Dimension dim) {
   return false;
 }
 
+template <typename StoreOpTy> Value getStoreLikeSrc(StoreOpTy storeOp) {
+  if constexpr (std::is_same_v<StoreOpTy, hivm::LocalStoreOp>)
+    return storeOp.getData();
+  else if constexpr (std::is_same_v<StoreOpTy, hivm::DebugOp>)
+    return storeOp.getArg();
+  else
+    return storeOp.getSrc();
+}
+
+template <typename StoreOpTy> Value getStoreLikeDst(StoreOpTy storeOp) {
+  if constexpr (std::is_same_v<StoreOpTy, hivm::VReduceOp>)
+    return storeOp.getDstValue();
+  else if constexpr (std::is_same_v<StoreOpTy, hivm::LocalStoreOp>)
+    return storeOp.getAddr();
+  else
+    return storeOp.getDst();
+}
+
 /// Get the optimal tiling dimension for each value in the operation.
 /// Analyzes parallel dimensions across all storeOp and selects
 /// the dimension that appears most frequently as a parallel dimension.
@@ -114,6 +132,7 @@ bool DimensionAnalyzer::computeTilingDim(bool isVectorOp) {
     computeTilingDimImpl<hivm::CopyOp>(parallelDimMaps, numStoreOps);
     computeTilingDimImpl<hivm::StrideStoreOp>(parallelDimMaps, numStoreOps);
     computeTilingDimImpl<hivm::IndirectStoreOp>(parallelDimMaps, numStoreOps);
+    computeTilingDimImpl<hivm::LocalStoreOp>(parallelDimMaps, numStoreOps);
     // FIXME: Support reduction dim slicing
     if (isRegbased)
       computeTilingDimImpl<hivm::VReduceOp>(parallelDimMaps, numStoreOps);
@@ -292,13 +311,8 @@ bool DimensionAnalyzer::isValidTilingSize(int64_t dim) const {
 template <typename StoreOpTy>
 bool DimensionAnalyzer::checkTileableMaskedStore(StoreOpTy storeOp,
                                                  size_t i) const {
-  auto src = storeOp.getSrc();
-  Value dst;
-  if constexpr (std::is_same_v<StoreOpTy, hivm::VReduceOp>) {
-    dst = storeOp.getDstValue();
-  } else {
-    dst = storeOp.getDst();
-  }
+  auto src = getStoreLikeSrc(storeOp);
+  auto dst = getStoreLikeDst(storeOp);
 
   int64_t srcOrigDim = ShapedType::kDynamic;
   int64_t dstOrigDim = ShapedType::kDynamic;
@@ -352,7 +366,7 @@ void DimensionAnalyzer::computeTilingDimImpl(
     if constexpr (std::is_same_v<StoreOpTy, scf::YieldOp>) {
       sources = llvm::to_vector(op.getResults());
     } else {
-      sources.push_back(op.getSrc());
+      sources.push_back(getStoreLikeSrc(op));
     }
     for (auto src : sources) {
       auto rank = utils::getShapeRank(src.getType()).value_or(0);

@@ -26,7 +26,7 @@ module {
   }
 
   module attributes {hivm.simt_module, ttg.shared = 32 : i32} {
-    llvm.func @simple_indirect_load_kernel_scope_0() attributes {nvvm.kernel = 1 : ui1} {
+    llvm.func @simple_indirect_load_kernel_scope_0() attributes {hacc.entry = 1 : ui1} {
       llvm.return
     }
   }
