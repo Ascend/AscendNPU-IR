@@ -226,6 +226,9 @@ private:
 public:
   bool isParallel{false};
   bool isCVUnrolledLoop{false};
+  bool isCVPreloadingLoop{false};
+  std::optional<int64_t> loopPreloadNum;
+
   std::optional<int64_t> multibufferUnrollNum;
   Loop(Operation *op, OperationBase *parentOp)
       : Scope(OpType::LOOP, op, parentOp) {}
@@ -325,11 +328,6 @@ public:
   bool hasUnitFlagFeat{false};
   UnitFlagInfoBase mergedUnitFlagInfo;
 
-  const llvm::SmallVector<Value> readMemVals;
-  const llvm::SmallVector<Value> writeMemVals;
-  const llvm::SmallVector<llvm::SmallVector<int64_t>> testReadMemVals;
-  const llvm::SmallVector<llvm::SmallVector<int64_t>> testWriteMemVals;
-
 public:
   RWOperation(Operation *op, OperationBase *parentOp, hivm::TCoreType coreType,
               hivm::PIPE pipeRead, hivm::PIPE pipeWrite,
@@ -345,28 +343,12 @@ public:
               const llvm::SmallVector<Value> &writeMemVals,
               OpType opType = OpType::RW_OPERATION)
       : OperationBase(opType, op, parentOp), coreType(coreType),
-        pipeRead(pipeRead), pipeWrite(pipeWrite), readMemVals(readMemVals),
-        writeMemVals(writeMemVals) {
+        pipeRead(pipeRead), pipeWrite(pipeWrite) {
+    assert(parentOp != nullptr);
     for (auto &val : readMemVals) {
       readMemInfo.push_back(MemInfo::getMemInfo(val));
     }
     for (auto &val : writeMemVals) {
-      writeMemInfo.push_back(MemInfo::getMemInfo(val));
-    }
-  };
-  RWOperation(
-      Operation *op, OperationBase *parentOp, hivm::TCoreType coreType,
-      hivm::PIPE pipeRead, hivm::PIPE pipeWrite,
-      const llvm::SmallVector<llvm::SmallVector<int64_t>> &testReadMemVals,
-      const llvm::SmallVector<llvm::SmallVector<int64_t>> &testWriteMemVals,
-      OpType opType = OpType::RW_OPERATION)
-      : OperationBase(opType, op, parentOp), coreType(coreType),
-        pipeRead(pipeRead), pipeWrite(pipeWrite),
-        testReadMemVals(testReadMemVals), testWriteMemVals(testWriteMemVals) {
-    for (auto &val : testReadMemVals) {
-      readMemInfo.push_back(MemInfo::getMemInfo(val));
-    }
-    for (auto &val : testWriteMemVals) {
       writeMemInfo.push_back(MemInfo::getMemInfo(val));
     }
   };
@@ -473,11 +455,11 @@ public:
 };
 
 struct MultiBufferInfo {
-  Loop *multibufferLoop{nullptr};
+  Scope *multibufferScope{nullptr};
 
   MultiBufferInfo() {};
-  explicit MultiBufferInfo(Loop *multibufferLoop)
-      : multibufferLoop(multibufferLoop) {};
+  explicit MultiBufferInfo(Scope *multibufferScope)
+      : multibufferScope(multibufferScope) {};
 };
 
 struct CVPipeliningInfo {
@@ -496,17 +478,15 @@ struct CVPreloadingInfo {
   Scope *preloadScope2{nullptr};
   int64_t preloadOffset1{0};
   int64_t preloadOffset2{0};
+  bool useUnlikely{false};
 
   CVPreloadingInfo() {};
   explicit CVPreloadingInfo(Loop *cvPreloadingLoop, Scope *preloadScope1,
-                            Scope *preloadScope2)
+                            Scope *preloadScope2, int64_t preloadOffset1,
+                            int64_t preloadOffset2)
       : cvPreloadingLoop(cvPreloadingLoop), preloadScope1(preloadScope1),
-        preloadScope2(preloadScope2) {
-    preloadOffset1 = preloadScope1->maxPreloadNum.value() -
-                     preloadScope1->preloadNum.value() - 1;
-    preloadOffset2 = preloadScope2->maxPreloadNum.value() -
-                     preloadScope2->preloadNum.value() - 1;
-  };
+        preloadScope2(preloadScope2), preloadOffset1(preloadOffset1),
+        preloadOffset2(preloadOffset2) {};
 };
 
 struct EventIdInfo {
@@ -521,6 +501,15 @@ struct EventIdInfo {
       : eventIdNum(eventIdNum), eventIdRepeatNum(eventIdRepeatNum) {};
 
   int64_t getEventIdNum() const { return eventIdNum * eventIdRepeatNum; }
+  void setEventIdNum(int64_t eventIdNum, int64_t eventIdRepeatNum = 1) {
+    this->eventIdNum = eventIdNum;
+    this->eventIdRepeatNum = eventIdRepeatNum;
+  }
+  void repeatEventId() {
+    assert(eventIdRepeatNum == 1);
+    eventIdRepeatNum = eventIdNum;
+    eventIdNum = 1;
+  }
 };
 
 class SyncOp : public OperationBase {

@@ -21,7 +21,7 @@
 
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/Utility.h"
-#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/LogicalResult.h"
 #include <climits>
@@ -33,6 +33,8 @@ namespace mlir::hivm::syncsolver {
 
 // NOLINTBEGIN
 constexpr int max_depth = 4;
+constexpr int loop_preload_max_num = 4;
+
 constexpr int loop_unrolling_num = 3;
 constexpr int read_write_vals_max_num = 2;
 constexpr int function_blocks_max_num = 5;
@@ -48,6 +50,8 @@ constexpr int multi_function_blocks_prob_a = 1;
 constexpr int multi_function_blocks_prob_b = 10;
 constexpr int scope_in_prob_a = 1;
 constexpr int scope_in_prob_b = 5;
+constexpr int preload_loop_prob_a = 1;
+constexpr int preload_loop_prob_b = 5;
 constexpr int unlikely_cond_prob_a = 1;
 constexpr int unlikely_cond_prob_b = 10;
 constexpr int parallel_loop_prob_a = 1;
@@ -72,12 +76,12 @@ private:
   bool enableMultiBuffer{false};
   SyncMode syncMode{SyncMode::TEST_INTRA_CORE_MODE};
   std::unique_ptr<std::mt19937> randGenerator;
-  llvm::DenseMap<const Scope *, int> countersMap;
+  llvm::DenseMap<Scope *, int> countersMap;
 
   int idx{0};
   llvm::DenseMap<CorePipeInfo,
                  std::deque<std::pair<std::pair<int, int>,
-                                      std::pair<const OperationBase *, int>>>>
+                                      std::pair<OperationBase *, int>>>>
       pipelineQue;
 
 public:
@@ -102,7 +106,7 @@ public:
 
   // Helper to toggle running as test mode (external use).
   static void runTestMode(const SmallVector<int64_t> &options);
-  
+
 private:
   void reset() {
     idx = 0;
@@ -145,12 +149,12 @@ private:
   // Recursively create a random region body (scopes/loops/cond/rw ops).
   void generateRandTest(Scope *scopeOp, const std::vector<int> &pointerOps,
                         const llvm::SmallVector<hivm::PIPE> &pipesVec,
-                        int &remOpNum, int depth);
+                        int &remOpNum, int depth, Scope *counterScope = nullptr,
+                        std::optional<hivm::TCoreType> scopeCoreType = {});
 
   // Walk the generated IR and place operations into pipeline queues for
   // simulation.
-  void fillPipelines(const OperationBase *op,
-                     const Scope *counterScope = nullptr, int loopCnt = 0);
+  void fillPipelines(OperationBase *op, Scope *counterScope = nullptr);
 
   // Simulate execution of queued pipeline operations, checking for memory/sync
   // conflicts.

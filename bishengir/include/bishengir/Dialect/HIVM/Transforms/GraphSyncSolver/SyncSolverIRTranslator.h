@@ -120,18 +120,19 @@ protected:
 
   // Generate processing orders (various flavors) used by the main algorithm.
   void generateProcessingOrders(Occurrence *occ1, Occurrence *occ2,
+                                int64_t stepNum, bool isUseless);
+  void generateProcessingOrders(Loop *loopOp, Occurrence *occ, int64_t stepNum,
                                 bool isUseless);
-  void generateProcessingOrders(Loop *loopOp, Occurrence *occ, bool isUseless);
   void generateProcessingOrders(Scope *scopeOp, Occurrence *occ,
-                                bool isUseless);
+                                int64_t stepNum, bool isUseless);
   void generateProcessingOrders(const llvm::SmallVector<Occurrence *> &occs,
-                                bool isUseless);
+                                int64_t stepNum, bool isUseless);
   void generateProcessingOrders(const llvm::SmallVector<Occurrence *> &occs1,
                                 const llvm::SmallVector<Occurrence *> &occs2,
-                                bool isUseless);
+                                int64_t stepNum, bool isUseless);
   void generateProcessingOrders(RWOperation *rwOp1, RWOperation *rwOp2,
                                 Occurrence *occ1, Occurrence *occ2,
-                                bool isUseless);
+                                int64_t stepNum, bool isUseless);
 
   bool skipLaterIterations(Occurrence *occ1, Occurrence *occ2);
 
@@ -155,7 +156,8 @@ protected:
   template <typename OP>
   std::unique_ptr<OperationBase> getLoadStoreOp(OP op, OperationBase *parentOp);
 
-  std::unique_ptr<OperationBase> getDebugOp(DebugOp debugOp, OperationBase *parentOp);
+  std::unique_ptr<OperationBase> getDebugOp(DebugOp debugOp,
+                                            OperationBase *parentOp);
 
   std::unique_ptr<OperationBase>
   getDestinationStyleInterfaceOp(Operation *op, OperationBase *parentOp);

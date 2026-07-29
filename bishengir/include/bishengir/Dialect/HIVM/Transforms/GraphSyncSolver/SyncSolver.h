@@ -25,7 +25,6 @@
 
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/Interfaces/LoopLikeInterface.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/MapVector.h"
@@ -37,6 +36,14 @@
 #include <utility>
 
 namespace mlir::hivm::syncsolver {
+
+struct SetWaitPairInfo {
+  Occurrence *setOcc{nullptr};
+  Occurrence *waitOcc{nullptr};
+  bool isBackwardPair{false};
+  bool isCVPreloading{false};
+  bool isCVPipelining{false};
+};
 
 class Solver {
 public:
@@ -68,6 +75,7 @@ protected:
   int64_t maxRunNum{99};
   bool moveBackwardSyncPairsToOutmostLoop{false};
   bool dontMoveBackwardSyncPairsToOutmostLoop{false};
+  bool enableSaveCVPreloadingEventIdsOpt{false};
 
   llvm::DenseMap<std::tuple<hivm::PIPE, hivm::PIPE>,
                  std::unique_ptr<EventIdSolver>>
@@ -212,20 +220,21 @@ protected:
 
   virtual void processConflict(Occurrence *occ1, Occurrence *occ2,
                                RWOperation *rwOp1, RWOperation *rwOp2,
-                               bool isUseless);
+                               int64_t stepNum, bool isUseless);
 
-  std::optional<Loop *>
-  getMultiBufferLoop(RWOperation *rwOp1, RWOperation *rwOp2,
-                     const llvm::SmallVector<MemInfo> &memInfoList1,
-                     const llvm::SmallVector<MemInfo> &memInfoList2);
-  std::optional<Loop *> getMultiBufferLoop(RWOperation *rwOp1,
-                                           RWOperation *rwOp2);
-  std::optional<int64_t> getMultiBufferEventIdNum(RWOperation *rwOp1,
-                                                  RWOperation *rwOp2);
-  std::optional<EventIdInfo> getMultiBufferEventIdInfo(Occurrence *occ1,
-                                                       Occurrence *occ2,
-                                                       RWOperation *rwOp1,
-                                                       RWOperation *rwOp2);
+  std::optional<Scope *>
+  getMultiBufferScope(RWOperation *rwOp1, RWOperation *rwOp2,
+                      const llvm::SmallVector<MemInfo> &memInfoList1,
+                      const llvm::SmallVector<MemInfo> &memInfoList2);
+  std::optional<Scope *> getMultiBufferScope(RWOperation *rwOp1,
+                                             RWOperation *rwOp2);
+  std::optional<int64_t> getMultiBufferEventIdNum(
+      RWOperation *rwOp1, RWOperation *rwOp2,
+      std::optional<std::pair<int64_t, int64_t>> offsetPair = {});
+  std::optional<EventIdInfo> getMultiBufferEventIdInfo(
+      Occurrence *occ1, Occurrence *occ2, RWOperation *rwOp1,
+      RWOperation *rwOp2,
+      std::optional<std::pair<int64_t, int64_t>> offsetPair = {});
 
   // Determine how many event ids are needed for a particular occurrence pair.
   EventIdInfo getEventIdInfo(Occurrence *occ1, Occurrence *occ2,
@@ -233,13 +242,14 @@ protected:
                              CorePipeInfo corePipeSrc,
                              CorePipeInfo corePipeDst);
 
-  std::optional<EventIdInfo> checkCVPipeliningEventIdInfo(RWOperation *rwOp1,
+  std::optional<EventIdInfo> checkCVPipeliningEventIdInfo(Occurrence *occ1,
+                                                          Occurrence *occ2,
+                                                          RWOperation *rwOp1,
                                                           RWOperation *rwOp2);
   std::optional<EventIdInfo> checkCVPreloadingEventIdInfo(Occurrence *occ1,
                                                           Occurrence *occ2,
                                                           RWOperation *rwOp1,
                                                           RWOperation *rwOp2);
-
   std::optional<EventIdInfo> checkMultiBufferEventIdInfo(Occurrence *occ1,
                                                          Occurrence *occ2,
                                                          RWOperation *rwOp1,
@@ -253,39 +263,45 @@ protected:
       const llvm::SmallVector<ConflictPair *> &extraConflictPairs = {},
       const llvm::SmallVector<ConflictPair *> &ignoreConflictPairs = {});
 
-  bool ignoreMemoryConflict(RWOperation *rwOp1, RWOperation *rwOp2,
-                            const MemInfo &memInfo1, const MemInfo &memInfo2);
+  bool checkMemInfoConflict(
+      RWOperation *rwOp1, RWOperation *rwOp2, const MemInfo &memInfo1,
+      const MemInfo &memInfo2, std::optional<int64_t> lcmLen = {},
+      std::optional<int64_t> eventIdNum = {},
+      std::optional<std::pair<int64_t, int64_t>> offsetPair = {});
 
-  bool checkMemInfoConflict(RWOperation *rwOp1, RWOperation *rwOp2,
-                            const MemInfo &memInfo1, const MemInfo &memInfo2,
-                            std::optional<int64_t> lcmLen = {},
-                            std::optional<int64_t> eventIdNum = {});
+  bool checkMemInfoConflict(
+      RWOperation *rwOp1, RWOperation *rwOp2,
+      const llvm::SmallVector<MemInfo> &memInfoList1,
+      const llvm::SmallVector<MemInfo> &memInfoList2,
+      std::optional<int64_t> lcmLen = {},
+      std::optional<int64_t> eventIdNum = {},
+      std::optional<std::pair<int64_t, int64_t>> offsetPair = {});
 
-  bool checkMemInfoConflict(RWOperation *rwOp1, RWOperation *rwOp2,
-                            const llvm::SmallVector<MemInfo> &memInfoList1,
-                            const llvm::SmallVector<MemInfo> &memInfoList2,
-                            std::optional<int64_t> lcmLen = {},
-                            std::optional<int64_t> eventIdNum = {});
-
-  bool checkMemoryConflicts(RWOperation *rwOp1, RWOperation *rwOp2,
-                            std::optional<int64_t> lcmLen = {},
-                            std::optional<int64_t> eventIdNum = {});
-
-  llvm::SmallVector<std::pair<const MemInfo *, const MemInfo *>>
-  getMemInfoConflict(RWOperation *rwOp1, RWOperation *rwOp2,
-                     const llvm::SmallVector<MemInfo> &memInfoList1,
-                     const llvm::SmallVector<MemInfo> &memInfoList2,
-                     std::optional<int64_t> lcmLen = {},
-                     std::optional<int64_t> eventIdNum = {});
+  bool checkMemoryConflicts(
+      RWOperation *rwOp1, RWOperation *rwOp2,
+      std::optional<int64_t> lcmLen = {},
+      std::optional<int64_t> eventIdNum = {},
+      std::optional<std::pair<int64_t, int64_t>> offsetPair = {});
 
   llvm::SmallVector<std::pair<const MemInfo *, const MemInfo *>>
-  getMemInfoConflict(RWOperation *rwOp1, RWOperation *rwOp2,
-                     std::optional<int64_t> lcmLen = {},
-                     std::optional<int64_t> eventIdNum = {});
+  getMemInfoConflict(
+      RWOperation *rwOp1, RWOperation *rwOp2,
+      const llvm::SmallVector<MemInfo> &memInfoList1,
+      const llvm::SmallVector<MemInfo> &memInfoList2,
+      std::optional<int64_t> lcmLen = {},
+      std::optional<int64_t> eventIdNum = {},
+      std::optional<std::pair<int64_t, int64_t>> offsetPair = {});
+
+  llvm::SmallVector<std::pair<const MemInfo *, const MemInfo *>>
+  getMemInfoConflict(
+      RWOperation *rwOp1, RWOperation *rwOp2,
+      std::optional<int64_t> lcmLen = {},
+      std::optional<int64_t> eventIdNum = {},
+      std::optional<std::pair<int64_t, int64_t>> offsetPair = {});
 
   bool checkCVPipeliningMemConflict(RWOperation *rwOp1, RWOperation *rwOp2);
-
-  bool checkCVPreloadingMemConflict(RWOperation *rwOp1, RWOperation *rwOp2);
+  bool checkCVPreloadingMemConflict(RWOperation *rwOp1, RWOperation *rwOp2,
+                                    int64_t eventIdNum);
 
   llvm::SmallVector<std::pair<CorePipeInfo, CorePipeInfo>>
   getMemoryConflicts(RWOperation *rwOp1, RWOperation *rwOp2);
@@ -304,6 +320,8 @@ protected:
   bool checkSkipParallelLoop(Occurrence *occ1, Occurrence *occ2);
 
   bool checkAlreadySynced(Occurrence *occ1, Occurrence *occ2);
+
+  bool checkSkipCVPreloadingPair(Occurrence *occ1, Occurrence *occ2);
 
   bool checkAlreadySyncedWithUnitFlag(Occurrence *occ1, Occurrence *occ2);
 
@@ -342,14 +360,15 @@ protected:
   // Utilities to map an occurrence pair to their set/wait occurrences.
   std::pair<Occurrence *, Occurrence *> getSetWaitLCAPairOcc(Occurrence *occ1,
                                                              Occurrence *occ2);
-  std::pair<Occurrence *, Occurrence *>
-  getSetWaitOcc(Occurrence *occ1, Occurrence *occ2,
-                std::optional<EventIdInfo> eventIdInfo = {});
-  std::pair<Occurrence *, Occurrence *>
+  SetWaitPairInfo getSetWaitOcc(Occurrence *occ1, Occurrence *occ2,
+                                std::optional<EventIdInfo> eventIdInfo = {});
+
+  SetWaitPairInfo
   getFixedSetWaitOcc(Occurrence *occ1, Occurrence *occ2,
                      std::optional<EventIdInfo> eventIdInfo = {});
 
-  Occurrence *getBarrierWaitOcc(Occurrence *occ1, Occurrence *occ2);
+  Occurrence *getBarrierWaitOcc(Occurrence *occ1, Occurrence *occ2,
+                                std::optional<EventIdInfo> eventIdInfo = {});
 
   std::optional<std::pair<Occurrence *, Occurrence *>>
   getFunctionBlockSetWaitOcc(Occurrence *occ1, Occurrence *occ2);
@@ -385,21 +404,24 @@ protected:
   // Primary handler invoked to register/record a found conflict.
   void handleConflict(Occurrence *occ1, Occurrence *occ2, RWOperation *rwOp1,
                       RWOperation *rwOp2, CorePipeInfo corePipeSrc,
-                      CorePipeInfo corePipeDst, EventIdInfo eventIdInfo,
+                      CorePipeInfo corePipeDst, int64_t stepNum,
                       bool isUseless);
 
   void handleBarrierConflict(Occurrence *occ1, Occurrence *occ2,
                              CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst,
+                             EventIdInfo eventIdInfo, int64_t stepNum,
                              bool isUseless);
 
   void handleSetWaitConflict(Occurrence *occ1, Occurrence *occ2,
                              CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst,
-                             EventIdInfo eventIdInfo, bool isUseless);
+                             EventIdInfo eventIdInfo, int64_t stepNum,
+                             bool isUseless);
 
   void handleUnitFlagConflict(Occurrence *occ1, Occurrence *occ2,
                               CorePipeInfo corePipeSrc,
                               CorePipeInfo corePipeDst,
-                              UnitFlagInfo unitFlagInfo, bool isUseless);
+                              UnitFlagInfo unitFlagInfo, int64_t stepNum,
+                              bool isUseless);
 
   Occurrence *getFirstIterOcc(Occurrence *occ, Occurrence *parOcc);
 
@@ -454,6 +476,8 @@ protected:
   llvm::LogicalResult considerOuterBackwardSyncPairs();
 
   llvm::LogicalResult reuseSyncPairToSaveEventIds();
+
+  llvm::LogicalResult saveCVPreloadingEventIdsOpt();
 
   llvm::LogicalResult disableMultiEventIdForBarrierAllPairs();
 

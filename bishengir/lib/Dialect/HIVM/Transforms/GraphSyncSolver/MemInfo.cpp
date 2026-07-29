@@ -145,10 +145,11 @@ bool FuncArgInfo::checkConflict(const FuncArgInfo &funcArgInfo1,
   return false;
 }
 
-bool PointerLikeInfo::checkConflict(const PointerLikeInfo &pointerLikeInfo1,
-                                    const PointerLikeInfo &pointerLikeInfo2,
-                                    std::optional<int64_t> lcmLen,
-                                    std::optional<int64_t> eventIdNum) {
+bool PointerLikeInfo::checkConflict(
+    const PointerLikeInfo &pointerLikeInfo1,
+    const PointerLikeInfo &pointerLikeInfo2, std::optional<int64_t> lcmLen,
+    std::optional<int64_t> eventIdNum,
+    std::optional<std::pair<int64_t, int64_t>> offsetPair) {
   if (!pointerLikeInfo1.addressSpace.has_value() ||
       !pointerLikeInfo2.addressSpace.has_value()) {
     return false;
@@ -170,6 +171,12 @@ bool PointerLikeInfo::checkConflict(const PointerLikeInfo &pointerLikeInfo1,
     len2 = lcmLen.value();
   }
 
+  int64_t offsetPairI = 0;
+  int64_t offsetPairJ = 0;
+  if (offsetPair.has_value()) {
+    std::tie(offsetPairI, offsetPairJ) = offsetPair.value();
+  }
+
   for (int64_t i = 0; i < len1; i++) {
     for (int64_t j = 0; j < len2; j++) {
       if (eventIdNum.has_value()) {
@@ -178,8 +185,10 @@ bool PointerLikeInfo::checkConflict(const PointerLikeInfo &pointerLikeInfo1,
         }
       }
 
-      auto offset1 = offsets1[i % sz1];
-      auto offset2 = offsets2[j % sz2];
+      int64_t idxI = (((i + offsetPairJ - offsetPairI) % sz1) + sz1) % sz1;
+      int64_t idxJ = j % sz2;
+      auto offset1 = offsets1[idxI];
+      auto offset2 = offsets2[idxJ];
       if (offset1 == ShapedType::kDynamic || offset2 == ShapedType::kDynamic) {
         return true;
       }
@@ -204,15 +213,14 @@ bool PointerLikeInfo::checkConflict(const PointerLikeInfo &pointerLikeInfo1,
 }
 
 bool AllocLikeInfo::checkConflict(const AllocLikeInfo &allocLikeInfo1,
-                                  const AllocLikeInfo &allocLikeInfo2,
-                                  std::optional<int64_t> lcmLen,
-                                  std::optional<int64_t> eventIdNum) {
+                                  const AllocLikeInfo &allocLikeInfo2) {
   return allocLikeInfo1.op == allocLikeInfo2.op;
 }
 
-bool MemInfo::checkConflict(const MemInfo &memInfo1, const MemInfo &memInfo2,
-                            std::optional<int64_t> lcmLen,
-                            std::optional<int64_t> eventIdNum) {
+bool MemInfo::checkConflict(
+    const MemInfo &memInfo1, const MemInfo &memInfo2,
+    std::optional<int64_t> lcmLen, std::optional<int64_t> eventIdNum,
+    std::optional<std::pair<int64_t, int64_t>> offsetPair) {
   if (memInfo1.funcArgInfo.has_value() && memInfo2.funcArgInfo.has_value()) {
     return FuncArgInfo::checkConflict(memInfo1.funcArgInfo.value(),
                                       memInfo2.funcArgInfo.value());
@@ -221,13 +229,12 @@ bool MemInfo::checkConflict(const MemInfo &memInfo1, const MemInfo &memInfo2,
       memInfo2.pointerLikeInfo.has_value()) {
     return PointerLikeInfo::checkConflict(memInfo1.pointerLikeInfo.value(),
                                           memInfo2.pointerLikeInfo.value(),
-                                          lcmLen, eventIdNum);
+                                          lcmLen, eventIdNum, offsetPair);
   }
   if (memInfo1.allocLikeInfo.has_value() &&
       memInfo2.allocLikeInfo.has_value()) {
     return AllocLikeInfo::checkConflict(memInfo1.allocLikeInfo.value(),
-                                        memInfo2.allocLikeInfo.value(), lcmLen,
-                                        eventIdNum);
+                                        memInfo2.allocLikeInfo.value());
   }
   return memInfo1.value == memInfo2.value;
 }
@@ -245,12 +252,15 @@ MemInfo MemInfo::getMemInfo(Value value, std::optional<PIPE> pipe) {
   return MemInfo(value, pipe);
 }
 
-MemInfo MemInfo::getMemInfo(const llvm::SmallVector<int64_t> &addrs) {
+MemInfo MemInfo::getMemInfo(Scope *counterScope,
+                            const llvm::SmallVector<int64_t> &addrs) {
   MemInfo memInfo;
   memInfo.pointerLikeInfo = PointerLikeInfo();
   memInfo.pointerLikeInfo->addresses = addrs;
   memInfo.pointerLikeInfo->allocateSize = 1;
   memInfo.pointerLikeInfo->addressSpace = hivm::AddressSpace::Zero;
+  memInfo.pointerLikeInfo->parentCounterScope = counterScope;
+  assert(addrs.size() < 2 || counterScope != nullptr);
   return memInfo;
 }
 

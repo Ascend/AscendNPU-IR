@@ -25,7 +25,6 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/LogicalResult.h"
-#include <cerrno>
 #include <memory>
 #include <tuple>
 #include <utility>
@@ -38,19 +37,90 @@ using namespace hivm::syncsolver;
 
 // Random test IR generator: recursively builds scopes, loops, conditions and RW
 // ops. Used by the tester to create synthetic cases exercising the solver.
-void SyncTester::generateRandTest(Scope *scopeOp,
-                                  const std::vector<int> &pointerOps,
-                                  const llvm::SmallVector<hivm::PIPE> &pipesVec,
-                                  int &remOpNum, int depth) {
+void SyncTester::generateRandTest(
+    Scope *scopeOp, const std::vector<int> &pointerOps,
+    const llvm::SmallVector<hivm::PIPE> &pipesVec, int &remOpNum, int depth,
+    Scope *counterScope, std::optional<hivm::TCoreType> scopeCoreType) {
   auto blockBeginPlaceHolderOp =
       std::make_unique<PlaceHolder>(nullptr, scopeOp);
   blockBeginPlaceHolderOp->scopeBegin = scopeOp;
   scopeOp->body.push_back(std::move(blockBeginPlaceHolderOp));
   bool empty = true;
   while (remOpNum > 0) {
-    if (depth < max_depth &&
-        isTrueWithProbability(scope_in_prob_a, scope_in_prob_b) &&
-        isTrueWithProbability(scope_for_loop_prob_a, scope_for_loop_prob_b)) {
+    if (!scopeCoreType.has_value() && depth + 1 < max_depth &&
+        pointerOps.size() >= read_write_vals_max_num * 2 &&
+        remOpNum >= loop_preload_max_num &&
+        isTrueWithProbability(preload_loop_prob_a, preload_loop_prob_b)) {
+
+      auto loopOp = std::make_unique<Loop>(nullptr, scopeOp);
+      loopOp->haveCounter = true;
+      loopOp->isCVPreloadingLoop = true;
+      loopOp->loopPreloadNum = loop_preload_max_num;
+      auto loopBody = std::make_unique<Scope>();
+      loopBody->parentOp = loopOp.get();
+
+      int coreTypeParity = getRand() % 2;
+      int skipEvenOddItrs =
+          syncMode == SyncMode::TEST_INTRA_CORE_MODE ? (getRand() % 2) : -1;
+
+      std::vector<int> pointerOps0(pointerOps.begin(),
+                                   pointerOps.begin() + pointerOps.size() / 2);
+      std::vector<int> pointerOps1(pointerOps.begin() + pointerOps.size() / 2,
+                                   pointerOps.end());
+      int remOpNumDivLoopPreloadNum = remOpNum / loop_preload_max_num;
+      for (int i = 0; i < loop_preload_max_num; i++) {
+        if (skipEvenOddItrs != -1) {
+          if ((i + skipEvenOddItrs) % 2 == 0) {
+            continue;
+          }
+        }
+
+        hivm::TCoreType coreType = (coreTypeParity + i) % 2
+                                       ? hivm::TCoreType::CUBE
+                                       : hivm::TCoreType::VECTOR;
+
+        std::vector<int> curPointerOps;
+        if (i == 0) {
+          curPointerOps = pointerOps0;
+        } else if (i == 3) {
+          curPointerOps = pointerOps1;
+        } else {
+          curPointerOps = pointerOps;
+        }
+
+        auto preloadScope = std::make_unique<Scope>();
+        preloadScope->parentOp = loopBody.get();
+        preloadScope->preloadNum = loop_preload_max_num - i - 1;
+        preloadScope->maxPreloadNum = loop_preload_max_num;
+        preloadScope->haveCounter = true;
+
+        int curRemOpNum = remOpNumDivLoopPreloadNum;
+        int ogCurRemOpNum = curRemOpNum;
+        auto preloadScopeBody = std::make_unique<Scope>();
+        preloadScopeBody->parentOp = preloadScope.get();
+        generateRandTest(preloadScopeBody.get(), curPointerOps, pipesVec,
+                         curRemOpNum, depth + 1, loopOp.get(), coreType);
+        remOpNum -= ogCurRemOpNum - curRemOpNum;
+
+        preloadScope->body.push_back(std::move(preloadScopeBody));
+        loopBody->body.push_back(std::move(preloadScope));
+      }
+
+      loopOp->body.push_back(std::move(loopBody));
+      auto beforePlaceHolderOp =
+          std::make_unique<PlaceHolder>(nullptr, loopOp->parentOp);
+      beforePlaceHolderOp->beforeOp = loopOp.get();
+      auto afterPlaceHolderOp =
+          std::make_unique<PlaceHolder>(nullptr, loopOp->parentOp);
+      afterPlaceHolderOp->afterOp = loopOp.get();
+      scopeOp->body.push_back(std::move(beforePlaceHolderOp));
+      scopeOp->body.push_back(std::move(loopOp));
+      scopeOp->body.push_back(std::move(afterPlaceHolderOp));
+      empty = false;
+    } else if (depth < max_depth &&
+               isTrueWithProbability(scope_in_prob_a, scope_in_prob_b) &&
+               isTrueWithProbability(scope_for_loop_prob_a,
+                                     scope_for_loop_prob_b)) {
       auto loopOp = std::make_unique<Loop>(nullptr, scopeOp);
       loopOp->isParallel =
           isTrueWithProbability(parallel_loop_prob_a, parallel_loop_prob_b);
@@ -58,7 +128,7 @@ void SyncTester::generateRandTest(Scope *scopeOp,
       auto loopBlock = std::make_unique<Scope>();
       loopBlock->parentOp = loopOp.get();
       generateRandTest(loopBlock.get(), pointerOps, pipesVec, remOpNum,
-                       depth + 1);
+                       depth + 1, loopOp.get(), scopeCoreType);
       loopOp->body.push_back(std::move(loopBlock));
       auto beforePlaceHolderOp =
           std::make_unique<PlaceHolder>(nullptr, loopOp->parentOp);
@@ -79,11 +149,11 @@ void SyncTester::generateRandTest(Scope *scopeOp,
       auto beforeBlock = std::make_unique<Scope>();
       beforeBlock->parentOp = loopOp.get();
       generateRandTest(beforeBlock.get(), pointerOps, pipesVec, remOpNum,
-                       depth + 1);
+                       depth + 1, loopOp.get(), scopeCoreType);
       auto afterBlock = std::make_unique<Scope>();
       afterBlock->parentOp = loopOp.get();
       generateRandTest(afterBlock.get(), pointerOps, pipesVec, remOpNum,
-                       depth + 1);
+                       depth + 1, loopOp.get(), scopeCoreType);
       loopOp->body.push_back(std::move(beforeBlock));
       loopOp->body.push_back(std::move(afterBlock));
       auto beforePlaceHolderOp =
@@ -106,11 +176,11 @@ void SyncTester::generateRandTest(Scope *scopeOp,
       auto trueBlock = std::make_unique<Scope>();
       trueBlock->parentOp = conditionOp.get();
       generateRandTest(trueBlock.get(), pointerOps, pipesVec, remOpNum,
-                       depth + 1);
+                       depth + 1, counterScope, scopeCoreType);
       auto falseBlock = std::make_unique<Scope>();
       falseBlock->parentOp = conditionOp.get();
       generateRandTest(falseBlock.get(), pointerOps, pipesVec, remOpNum,
-                       depth + 1);
+                       depth + 1, counterScope, scopeCoreType);
       conditionOp->setTrueScope(std::move(trueBlock));
       conditionOp->setFalseScope(std::move(falseBlock));
       scopeOp->body.push_back(std::move(conditionOp));
@@ -121,12 +191,21 @@ void SyncTester::generateRandTest(Scope *scopeOp,
       // hivm::PIPE pipeWrite = pipesVec[getRand() % pipesVec.size()];
       hivm::PIPE pipeWrite = pipeRead;
 
+      auto coreType = hivm::TCoreType::CUBE_OR_VECTOR;
+      if (syncMode == SyncMode::TEST_CROSS_CORE_MODE) {
+        if (scopeCoreType.has_value()) {
+          coreType = scopeCoreType.value();
+        } else {
+          coreType =
+              (getRand() % 2) ? hivm::TCoreType::CUBE : hivm::TCoreType::VECTOR;
+        }
+      }
+
       int readValsNum = 1;
       int writeValsNum = 1;
-      if (enableMultiBuffer) {
-        // readValsNum = writeValsNum = 2;
-        readValsNum = (getRand() % read_write_vals_max_num) + 1;
-        writeValsNum = (getRand() % read_write_vals_max_num) + 1;
+      if (counterScope != nullptr && enableMultiBuffer) {
+        readValsNum = getRand(1, read_write_vals_max_num);
+        writeValsNum = getRand(1, read_write_vals_max_num);
       }
       SmallVector<SmallVector<int64_t>> readVals(1);
       SmallVector<SmallVector<int64_t>> writeVals(1);
@@ -136,13 +215,18 @@ void SyncTester::generateRandTest(Scope *scopeOp,
       for (auto i : getNDifferentRandNums(writeValsNum, pointerOps.size())) {
         writeVals.back().push_back(pointerOps[i]);
       }
-      auto coreType = hivm::TCoreType::CUBE_OR_VECTOR;
-      if (syncMode == SyncMode::TEST_CROSS_CORE_MODE) {
-        coreType =
-            (getRand() % 2) ? hivm::TCoreType::CUBE : hivm::TCoreType::VECTOR;
+      llvm::SmallVector<MemInfo> readMemInfo;
+      llvm::SmallVector<MemInfo> writeMemInfo;
+      for (auto &val : readVals) {
+        readMemInfo.push_back(MemInfo::getMemInfo(counterScope, val));
       }
-      auto rwOp = std::make_unique<RWOperation>(
-          nullptr, scopeOp, coreType, pipeRead, pipeWrite, readVals, writeVals);
+      for (auto &val : writeVals) {
+        writeMemInfo.push_back(MemInfo::getMemInfo(counterScope, val));
+      }
+
+      auto rwOp =
+          std::make_unique<RWOperation>(nullptr, scopeOp, coreType, pipeRead,
+                                        pipeWrite, readMemInfo, writeMemInfo);
       assert(rwOp != nullptr);
       scopeOp->body.push_back(std::move(rwOp));
       empty = false;
@@ -194,18 +278,15 @@ std::unique_ptr<OperationBase> SyncTester::getGeneratedRandomTest() {
 
 // Walk generated IR and populate per-pipeline queues. The produced queues are
 // consumed by runSimulation to emulate runtime ordering and check conflicts.
-void SyncTester::fillPipelines(const OperationBase *op,
-                               const Scope *counterScope, int loopCnt) {
-
+void SyncTester::fillPipelines(OperationBase *op, Scope *counterScope) {
   assert(op != nullptr);
-  bool doubled = loopCnt > 0;
 
   if (isa<SyncOp>(op) && op->getDepth() <= 3) {
     llvm::dbgs() << op->getDepth() << ' ' << op->str(0, false) << '\n';
     assert(false && "unexpected sync operation outside of function-block");
   }
 
-  if (auto *setWaitOp = dyn_cast<const SetWaitOp>(op)) {
+  if (auto *setWaitOp = dyn_cast<SetWaitOp>(op)) {
     assert(!setWaitOp->checkFirstIter && !setWaitOp->checkLastIter);
   }
 
@@ -220,7 +301,44 @@ void SyncTester::fillPipelines(const OperationBase *op,
     loopIdx = countersMap[counterScope];
   }
 
-  if (auto *loopOp = dyn_cast<const Loop>(op)) {
+  if (auto *loopOp = dyn_cast<Loop>(op)) {
+    if (loopOp->isCVPreloadingLoop) {
+      assert(loopOp->haveCounter);
+      assert(!loopOp->isParallel);
+      if (isTrueWithProbability(dead_loop_prob_a, dead_loop_prob_b)) {
+        return;
+      }
+
+      assert(loopOp->loopPreloadNum.has_value());
+      int numIter = loopOp->loopPreloadNum.value() * 2;
+
+      auto &loopCounter = countersMap[loopOp];
+      for (int i = 0; i < numIter; i++) {
+        for (auto &outerScope : loopOp->body) {
+          for (auto &innerOp : cast<Scope>(outerScope.get())->body) {
+            if (auto innerScope = dyn_cast<Scope>(innerOp.get())) {
+              if (innerScope->preloadNum.has_value()) {
+                assert(innerScope->haveCounter);
+                // loopPreloadNum-scopePreloadNum <= i
+                // < (numIter-scopePreloadNum)
+                int lb = loopOp->loopPreloadNum.value() -
+                         innerScope->preloadNum.value() - 1;
+                int ub = numIter - innerScope->preloadNum.value();
+                if (!(lb <= i && i < ub)) {
+                  continue;
+                }
+              }
+            }
+            fillPipelines(innerOp.get(), loopOp);
+          }
+        }
+        loopCounter++;
+      }
+      return;
+    }
+  }
+
+  if (auto *loopOp = dyn_cast<Loop>(op)) {
     assert(loopOp->haveCounter);
     if (isTrueWithProbability(dead_loop_prob_a, dead_loop_prob_b)) {
       return;
@@ -228,14 +346,14 @@ void SyncTester::fillPipelines(const OperationBase *op,
 
     int numIter = 1;
     if (!loopOp->isParallel) {
-      numIter = (enableMultiBuffer || !doubled) ? loop_unrolling_num : 1;
+      numIter = enableMultiBuffer ? loop_unrolling_num : 1;
     }
 
     auto &loopCounter = countersMap[loopOp];
     for (int i = 0; i < numIter; i++) {
       for (auto &op : loopOp->body) {
         assert(isa<Scope>(op));
-        fillPipelines(op.get(), loopOp, loopCnt + 1);
+        fillPipelines(op.get(), loopOp);
       }
       loopCounter++;
     }
@@ -246,24 +364,27 @@ void SyncTester::fillPipelines(const OperationBase *op,
     return;
   }
 
-  if (auto *condOp = dyn_cast<const Condition>(op)) {
+  if (auto *condOp = dyn_cast<Condition>(op)) {
     if (isTrueWithProbability(true_branch_prob_a, true_branch_prob_b)) {
-      fillPipelines(condOp->getTrueScope(), counterScope, loopCnt);
+      fillPipelines(condOp->getTrueScope(), counterScope);
     } else if (condOp->hasFalseScope()) {
-      fillPipelines(condOp->getFalseScope(), counterScope, loopCnt);
+      fillPipelines(condOp->getFalseScope(), counterScope);
     }
     return;
   }
 
-  if (auto *scopeOp = dyn_cast<const Scope>(op)) {
+  if (auto *scopeOp = dyn_cast<Scope>(op)) {
+    auto newCounterScope = scopeOp->haveCounter ? scopeOp : counterScope;
     for (auto &op : scopeOp->body) {
-      fillPipelines(op.get(), (scopeOp->haveCounter ? scopeOp : counterScope),
-                    loopCnt);
+      fillPipelines(op.get(), newCounterScope);
+    }
+    if (scopeOp->haveCounter) {
+      countersMap[scopeOp]++;
     }
     return;
   }
 
-  if (auto *setFlagOp = dyn_cast<const SetFlagOp>(op)) {
+  if (auto *setFlagOp = dyn_cast<SetFlagOp>(op)) {
     assert(!setFlagOp->eventIds.empty());
     CorePipeInfo corePipe(setFlagOp->coreType, setFlagOp->pipeSrc);
     if (!setFlagOp->allAtOnce) {
@@ -276,7 +397,7 @@ void SyncTester::fillPipelines(const OperationBase *op,
     return;
   }
 
-  if (auto *waitFlagOp = dyn_cast<const WaitFlagOp>(op)) {
+  if (auto *waitFlagOp = dyn_cast<WaitFlagOp>(op)) {
     assert(!waitFlagOp->eventIds.empty());
     CorePipeInfo corePipe(waitFlagOp->coreType, waitFlagOp->pipeDst);
     if (!waitFlagOp->allAtOnce) {
@@ -289,14 +410,14 @@ void SyncTester::fillPipelines(const OperationBase *op,
     return;
   }
 
-  if (auto *barrierOp = dyn_cast<const BarrierOp>(op)) {
+  if (auto *barrierOp = dyn_cast<BarrierOp>(op)) {
     assert(syncMode == SyncMode::TEST_INTRA_CORE_MODE);
     CorePipeInfo corePipe(hivm::TCoreType::CUBE_OR_VECTOR, barrierOp->pipe);
     pipelineQue[corePipe].push_back({{idx++, getRand()}, {op, loopIdx}});
     return;
   }
 
-  if (auto *rwOp = dyn_cast<const RWOperation>(op)) {
+  if (auto *rwOp = dyn_cast<RWOperation>(op)) {
     CorePipeInfo corePipe(rwOp->coreType, rwOp->pipeRead);
     pipelineQue[corePipe].push_back({{idx++, getRand()}, {op, loopIdx}});
     return;
@@ -334,9 +455,9 @@ llvm::LogicalResult SyncTester::runSimulation(int runId, bool debugPrint) {
 
   std::set<CorePipeInfo, decltype(compairPipelines)> mainQue(compairPipelines);
   llvm::DenseMap<hivm::TCoreType,
-                 llvm::DenseMap<int, llvm::DenseSet<const RWOperation *>>>
+                 llvm::DenseMap<int, llvm::DenseSet<RWOperation *>>>
       ongoingWrites, ongoingReads;
-  llvm::DenseMap<CorePipeInfo, std::vector<std::pair<const RWOperation *, int>>>
+  llvm::DenseMap<CorePipeInfo, std::vector<std::pair<RWOperation *, int>>>
       runningOps;
   llvm::DenseMap<std::tuple<hivm::TCoreType, hivm::PIPE, hivm::PIPE>,
                  std::multiset<int64_t>>
@@ -355,12 +476,12 @@ llvm::LogicalResult SyncTester::runSimulation(int runId, bool debugPrint) {
     allIndexes.insert(i);
   }
 
-  auto getTriggeredGroup = [this](const SetWaitOp *syncOp) {
+  auto getTriggeredGroup = [this](SetWaitOp *syncOp) {
     if (syncMode == SyncMode::TEST_INTRA_CORE_MODE) {
       return std::make_tuple(TCoreType::CUBE_OR_VECTOR, syncOp->pipeSrc,
                              syncOp->pipeDst);
     } else {
-      if (isa<const SetFlagOp>(syncOp)) {
+      if (isa<SetFlagOp>(syncOp)) {
         return std::make_tuple(getOppositeCoreType(syncOp->coreType),
                                hivm::PIPE::PIPE_UNASSIGNED,
                                hivm::PIPE::PIPE_UNASSIGNED);
@@ -379,7 +500,7 @@ llvm::LogicalResult SyncTester::runSimulation(int runId, bool debugPrint) {
     auto &pipeQue = pipelineQue[corePipe];
     while (!pipeQue.empty()) {
       auto [op, loopIdx] = pipeQue.front().second;
-      if (auto *waitFlagOp = dyn_cast<const WaitFlagOp>(op)) {
+      if (auto *waitFlagOp = dyn_cast<WaitFlagOp>(op)) {
         assert(CorePipeInfo(waitFlagOp->coreType, waitFlagOp->pipeDst) ==
                corePipe);
         auto &triggeredOps = triggeredSetFlagOps[getTriggeredGroup(waitFlagOp)];
@@ -454,7 +575,8 @@ llvm::LogicalResult SyncTester::runSimulation(int runId, bool debugPrint) {
         if (!szLimit--) {
           break;
         }
-        llvm::dbgs() << e.second.first->str(0, false) << ' ';
+        llvm::dbgs() << e.second.second << ' ' << e.second.first->str(0, false)
+                     << ' ';
       }
       llvm::dbgs() << '\n';
     }
@@ -465,7 +587,8 @@ llvm::LogicalResult SyncTester::runSimulation(int runId, bool debugPrint) {
         if (!szLimit--) {
           break;
         }
-        llvm::dbgs() << e.second.first->str(0, false) << ' ';
+        llvm::dbgs() << e.second.second << ' ' << e.second.first->str(0, false)
+                     << ' ';
       }
       llvm::dbgs() << '\n';
     }
@@ -485,12 +608,13 @@ llvm::LogicalResult SyncTester::runSimulation(int runId, bool debugPrint) {
     return ret;
   };
 
-  auto checkMemoryConflict = [&](const RWOperation *rwOp, int loopIndex) {
+  auto checkMemoryConflict = [&](RWOperation *rwOp, int loopIndex) {
     auto curCoreType = rwOp->coreType;
     auto oppCoreType = getOppositeCoreType(curCoreType);
-    for (const auto &readPtr : rwOp->testReadMemVals) {
-      auto index = loopIndex % static_cast<int>(readPtr.size());
-      auto ptrVal = readPtr[index];
+    for (auto &memInfo : rwOp->readMemInfo) {
+      auto &addrs = memInfo.pointerLikeInfo->addresses;
+      auto index = loopIndex % static_cast<int>(addrs.size());
+      auto ptrVal = addrs[index];
       auto ongoingWriteOps = ongoingWrites[oppCoreType][ptrVal];
       if (!ongoingWriteOps.empty()) {
         LLVM_DEBUG({
@@ -507,9 +631,10 @@ llvm::LogicalResult SyncTester::runSimulation(int runId, bool debugPrint) {
         return llvm::failure();
       }
     }
-    for (const auto &writePtr : rwOp->testWriteMemVals) {
-      auto index = loopIndex % static_cast<int>(writePtr.size());
-      auto ptrVal = writePtr[index];
+    for (auto &memInfo : rwOp->writeMemInfo) {
+      auto &addrs = memInfo.pointerLikeInfo->addresses;
+      auto index = loopIndex % static_cast<int>(addrs.size());
+      auto ptrVal = addrs[index];
       auto ongoingReadOps = ongoingReads[oppCoreType][ptrVal];
       auto ongoingWriteOps = ongoingWrites[oppCoreType][ptrVal];
       if (!ongoingReadOps.empty()) {
@@ -544,15 +669,17 @@ llvm::LogicalResult SyncTester::runSimulation(int runId, bool debugPrint) {
     return llvm::success();
   };
 
-  auto handleRWOperation = [&](const RWOperation *rwOp, int loopIndex) {
-    for (const auto &readPtr : rwOp->testReadMemVals) {
-      auto index = loopIndex % static_cast<int>(readPtr.size());
-      auto ptrVal = readPtr[index];
+  auto handleRWOperation = [&](RWOperation *rwOp, int loopIndex) {
+    for (auto &memInfo : rwOp->readMemInfo) {
+      auto &addrs = memInfo.pointerLikeInfo->addresses;
+      auto index = loopIndex % static_cast<int>(addrs.size());
+      auto ptrVal = addrs[index];
       ongoingReads[rwOp->coreType][ptrVal].insert(rwOp);
     }
-    for (const auto &writePtr : rwOp->testWriteMemVals) {
-      auto index = loopIndex % static_cast<int>(writePtr.size());
-      auto ptrVal = writePtr[index];
+    for (auto &memInfo : rwOp->writeMemInfo) {
+      auto &addrs = memInfo.pointerLikeInfo->addresses;
+      auto index = loopIndex % static_cast<int>(addrs.size());
+      auto ptrVal = addrs[index];
       ongoingWrites[rwOp->coreType][ptrVal].insert(rwOp);
     }
     CorePipeInfo corePipe(rwOp->coreType, rwOp->pipeRead);
@@ -560,19 +687,21 @@ llvm::LogicalResult SyncTester::runSimulation(int runId, bool debugPrint) {
     runningOps[corePipe].emplace_back(rwOp, loopIndex);
   };
 
-  auto handleSetFlagOp = [&](const SetFlagOp *setFlagOp, int loopIndex) {
+  auto handleSetFlagOp = [&](SetFlagOp *setFlagOp, int loopIndex) {
     CorePipeInfo corePipeSrc(setFlagOp->coreType, setFlagOp->pipeSrc);
     CorePipeInfo corePipeDst(getOppositeCoreType(setFlagOp->coreType),
                              setFlagOp->pipeDst);
     for (auto [rwOp, loopIdx] : runningOps[corePipeSrc]) {
-      for (auto readPtr : rwOp->testReadMemVals) {
-        auto index = loopIdx % static_cast<int>(readPtr.size());
-        auto ptrVal = readPtr[index];
+      for (auto &memInfo : rwOp->readMemInfo) {
+        auto &addrs = memInfo.pointerLikeInfo->addresses;
+        auto index = loopIdx % static_cast<int>(addrs.size());
+        auto ptrVal = addrs[index];
         ongoingReads[setFlagOp->coreType][ptrVal].erase(rwOp);
       }
-      for (auto writePtr : rwOp->testWriteMemVals) {
-        auto index = loopIdx % static_cast<int>(writePtr.size());
-        auto ptrVal = writePtr[index];
+      for (auto &memInfo : rwOp->writeMemInfo) {
+        auto &addrs = memInfo.pointerLikeInfo->addresses;
+        auto index = loopIdx % static_cast<int>(addrs.size());
+        auto ptrVal = addrs[index];
         ongoingWrites[setFlagOp->coreType][ptrVal].erase(rwOp);
       }
     }
@@ -584,22 +713,24 @@ llvm::LogicalResult SyncTester::runSimulation(int runId, bool debugPrint) {
 
   auto clearPipeline = [&](const CorePipeInfo &corePipe) {
     for (auto [rwOp, loopIdx] : runningOps[corePipe]) {
-      for (auto readPtr : rwOp->testReadMemVals) {
-        auto index = loopIdx % static_cast<int>(readPtr.size());
-        auto ptrVal = readPtr[index];
+      for (auto &memInfo : rwOp->readMemInfo) {
+        auto &addrs = memInfo.pointerLikeInfo->addresses;
+        auto index = loopIdx % static_cast<int>(addrs.size());
+        auto ptrVal = addrs[index];
         ongoingReads[rwOp->coreType][ptrVal].erase(rwOp);
       }
     }
     for (auto [rwOp, loopIdx] : runningOps[corePipe]) {
-      for (auto writePtr : rwOp->testWriteMemVals) {
-        auto index = loopIdx % static_cast<int>(writePtr.size());
-        auto ptrVal = writePtr[index];
+      for (auto &memInfo : rwOp->writeMemInfo) {
+        auto &addrs = memInfo.pointerLikeInfo->addresses;
+        auto index = loopIdx % static_cast<int>(addrs.size());
+        auto ptrVal = addrs[index];
         ongoingWrites[rwOp->coreType][ptrVal].erase(rwOp);
       }
     }
   };
 
-  auto handleBarrierOp = [&](const BarrierOp *barrierOp) {
+  auto handleBarrierOp = [&](BarrierOp *barrierOp) {
     if (barrierOp->pipe == hivm::PIPE::PIPE_ALL) {
       for (auto &[corePipe, rwOps] : runningOps) {
         clearPipeline(corePipe);
@@ -633,16 +764,16 @@ llvm::LogicalResult SyncTester::runSimulation(int runId, bool debugPrint) {
       }
     });
 
-    if (auto *rwOp = dyn_cast<const RWOperation>(curOp)) {
+    if (auto *rwOp = dyn_cast<RWOperation>(curOp)) {
       if (llvm::failed(checkMemoryConflict(rwOp, curLoopIdx))) {
         return llvm::failure();
       }
       handleRWOperation(rwOp, curLoopIdx);
-    } else if (auto *setFlagOp = dyn_cast<const SetFlagOp>(curOp)) {
+    } else if (auto *setFlagOp = dyn_cast<SetFlagOp>(curOp)) {
       handleSetFlagOp(setFlagOp, curLoopIdx);
-    } else if (auto *barrierOp = dyn_cast<const BarrierOp>(curOp)) {
+    } else if (auto *barrierOp = dyn_cast<BarrierOp>(curOp)) {
       handleBarrierOp(barrierOp);
-    } else if (auto *waitFlagOp = dyn_cast<const WaitFlagOp>(curOp)) {
+    } else if (auto *waitFlagOp = dyn_cast<WaitFlagOp>(curOp)) {
       LLVM_DEBUG({
         if (debugPrint) {
           llvm::dbgs() << "untriggered waitFlagOp: "
@@ -673,6 +804,8 @@ llvm::LogicalResult SyncTester::test() {
 
   SyncSolverOptions options(syncMode, /*isMemBasedArch=*/false,
                             /*isRegBasedArch=*/false);
+  options.enableCVPatterns = true;
+
   auto irTranslator =
       std::make_unique<IRTranslator>(std::move(funcIr), options);
 
