@@ -89,6 +89,8 @@ std::string PointerLikeInfo::str() {
     ret += stringifyEnum(addressSpace.value());
   }
   ret += comma.get();
+  ret += parentCounterScope ? parentCounterScope->str(0, false) : "null";
+  ret += comma.get();
   {
     Comma comma;
     ret += "[";

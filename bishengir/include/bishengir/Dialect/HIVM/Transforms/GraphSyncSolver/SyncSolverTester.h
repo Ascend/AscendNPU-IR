@@ -21,6 +21,7 @@
 
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/Utility.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/LogicalResult.h"
 #include <climits>
@@ -32,6 +33,8 @@ namespace mlir::hivm::syncsolver {
 
 // NOLINTBEGIN
 constexpr int max_depth = 4;
+constexpr int loop_preload_max_num = 4;
+
 constexpr int loop_unrolling_num = 3;
 constexpr int read_write_vals_max_num = 2;
 constexpr int function_blocks_max_num = 5;
@@ -47,6 +50,8 @@ constexpr int multi_function_blocks_prob_a = 1;
 constexpr int multi_function_blocks_prob_b = 10;
 constexpr int scope_in_prob_a = 1;
 constexpr int scope_in_prob_b = 5;
+constexpr int preload_loop_prob_a = 1;
+constexpr int preload_loop_prob_b = 5;
 constexpr int unlikely_cond_prob_a = 1;
 constexpr int unlikely_cond_prob_b = 10;
 constexpr int parallel_loop_prob_a = 1;
@@ -71,11 +76,12 @@ private:
   bool enableMultiBuffer{false};
   SyncMode syncMode{SyncMode::TEST_INTRA_CORE_MODE};
   std::unique_ptr<std::mt19937> randGenerator;
+  llvm::DenseMap<Scope *, int> countersMap;
 
   int idx{0};
   llvm::DenseMap<CorePipeInfo,
                  std::deque<std::pair<std::pair<int, int>,
-                                      std::pair<const OperationBase *, int>>>>
+                                      std::pair<OperationBase *, int>>>>
       pipelineQue;
 
 public:
@@ -105,6 +111,7 @@ private:
   void reset() {
     idx = 0;
     pipelineQue.clear();
+    countersMap.clear();
   }
 
   int getRand() { return getRand(0, INT_MAX); }
@@ -113,20 +120,20 @@ private:
     return std::uniform_int_distribution<int>(minNum, maxNum)(*randGenerator);
   }
 
-  std::vector<int> getNDifferentRandNums(int n, int mod) {
+  llvm::SmallVector<int> getNDifferentRandNums(int n, int mod) {
+    assert(n >= 0);
+    assert(mod >= 0);
     assert(n <= mod);
-    std::set<int> ret;
-    while (static_cast<int>(ret.size()) < n) {
-      int rnd = getRand();
-      int val = rnd % (mod - static_cast<int>(ret.size()));
-      for (auto e : ret) {
-        if (e <= val) {
-          val++;
-        }
+    llvm::SetVector<int> ret;
+    for (int j = mod - n; j < mod; ++j) {
+      int candidate = getRand(0, j);
+      if (ret.contains(candidate)) {
+        ret.insert(j);
+      } else {
+        ret.insert(candidate);
       }
-      ret.insert(val);
     }
-    return std::vector<int>(ret.begin(), ret.end());
+    return ret.takeVector();
   }
 
   bool isTrueWithProbability(int a, int b) {
@@ -142,11 +149,12 @@ private:
   // Recursively create a random region body (scopes/loops/cond/rw ops).
   void generateRandTest(Scope *scopeOp, const std::vector<int> &pointerOps,
                         const llvm::SmallVector<hivm::PIPE> &pipesVec,
-                        int &remOpNum, int depth);
+                        int &remOpNum, int depth, Scope *counterScope = nullptr,
+                        std::optional<hivm::TCoreType> scopeCoreType = {});
 
   // Walk the generated IR and place operations into pipeline queues for
   // simulation.
-  void fillPipelines(const OperationBase *op, int loopCnt = 0, int loopIdx = 0);
+  void fillPipelines(OperationBase *op, Scope *counterScope = nullptr);
 
   // Simulate execution of queued pipeline operations, checking for memory/sync
   // conflicts.

@@ -429,7 +429,8 @@ Value CodeGenerator::getMultiBufferSelectOpConsecutive(IRRewriter &rewriter,
                                            : cvPreloadingInfo->preloadOffset2;
     multibufferLoopOp = cvPreloadingInfo->cvPreloadingLoop;
   } else if (auto multiBufferInfo = syncOp->eventIdInfo.multiBufferInfo) {
-    multibufferLoopOp = multiBufferInfo->multibufferLoop;
+    multibufferLoopOp = dyn_cast<Loop>(multiBufferInfo->multibufferScope);
+    assert(multibufferLoopOp != nullptr);
   } else {
     return nullptr;
   }
@@ -470,7 +471,8 @@ Value CodeGenerator::getMultiBufferSelectOp(IRRewriter &rewriter,
                                            : cvPreloadingInfo->preloadOffset2;
     multibufferLoopOp = cvPreloadingInfo->cvPreloadingLoop;
   } else if (auto multiBufferInfo = syncOp->eventIdInfo.multiBufferInfo) {
-    multibufferLoopOp = multiBufferInfo->multibufferLoop;
+    multibufferLoopOp = dyn_cast<Loop>(multiBufferInfo->multibufferScope);
+    assert(multibufferLoopOp != nullptr);
   } else {
     return nullptr;
   }

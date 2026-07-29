@@ -181,8 +181,26 @@ OperationBase *OperationBase::getParentWithOp(Operation *op,
   assert(op != nullptr);
   OperationBase *opBase = this;
   while (opBase != nullptr) {
-    if (opBase->op != nullptr && opBase->op == op) {
+    if (opBase->op == op) {
       return opBase;
+    }
+    if (opBase->cubeAnchorInfo.has_value()) {
+      if (opBase->cubeAnchorInfo->anchorBefore != nullptr &&
+          opBase->cubeAnchorInfo->anchorAfter != nullptr) {
+        if (opBase->cubeAnchorInfo->anchorBefore->op == op &&
+            opBase->cubeAnchorInfo->anchorAfter->op == op) {
+          return opBase;
+        }
+      }
+    }
+    if (opBase->vectorAnchorInfo.has_value()) {
+      if (opBase->vectorAnchorInfo->anchorBefore != nullptr &&
+          opBase->vectorAnchorInfo->anchorAfter != nullptr) {
+        if (opBase->vectorAnchorInfo->anchorBefore->op == op &&
+            opBase->vectorAnchorInfo->anchorAfter->op == op) {
+          return opBase;
+        }
+      }
     }
     opBase = opBase->parentOp;
   }

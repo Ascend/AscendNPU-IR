@@ -25,6 +25,9 @@
 
 namespace mlir::hivm::syncsolver {
 
+class OperationBase;
+class Scope;
+
 struct FuncArgInfo {
   func::FuncOp funcOp{nullptr};
   BlockArgument funcArg{nullptr};
@@ -59,6 +62,7 @@ struct PointerLikeInfo {
   std::optional<int64_t> allocateSize;
   std::optional<hivm::AddressSpace> addressSpace;
   LoopLikeOpInterface parentLoop{nullptr};
+  Scope *parentCounterScope{nullptr};
   bool isWorkSpace{false};
   bool isTightlyCoupledBuffer{false};
 
@@ -80,10 +84,12 @@ struct PointerLikeInfo {
 
   static std::optional<PointerLikeInfo> tryGet(Value value);
 
-  static bool checkConflict(const PointerLikeInfo &pointerLikeInfo1,
-                            const PointerLikeInfo &pointerLikeInfo2,
-                            std::optional<int64_t> lcmLen = {},
-                            std::optional<int64_t> eventIdNum = {});
+  static bool
+  checkConflict(const PointerLikeInfo &pointerLikeInfo1,
+                const PointerLikeInfo &pointerLikeInfo2,
+                std::optional<int64_t> lcmLen = {},
+                std::optional<int64_t> eventIdNum = {},
+                std::optional<std::pair<int64_t, int64_t>> offsetPair = {});
 };
 
 struct AllocLikeInfo {
@@ -106,13 +112,11 @@ struct AllocLikeInfo {
   static std::optional<AllocLikeInfo> tryGet(Value value);
 
   static bool checkConflict(const AllocLikeInfo &allocLikeInfo1,
-                            const AllocLikeInfo &allocLikeInfo2,
-                            std::optional<int64_t> lcmLen = {},
-                            std::optional<int64_t> eventIdNum = {});
+                            const AllocLikeInfo &allocLikeInfo2);
 };
 
 struct MemInfo {
-  Value value;
+  Value value{nullptr};
   std::optional<FuncArgInfo> funcArgInfo;
   std::optional<PointerLikeInfo> pointerLikeInfo;
   std::optional<AllocLikeInfo> allocLikeInfo;
@@ -156,11 +160,14 @@ struct MemInfo {
 
   static MemInfo getMemInfo(Value val, std::optional<PIPE> pipe = {});
 
-  static MemInfo getMemInfo(const llvm::SmallVector<int64_t> &addrs);
+  static MemInfo getMemInfo(Scope *counterScope,
+                            const llvm::SmallVector<int64_t> &addrs);
 
-  static bool checkConflict(const MemInfo &memInfo1, const MemInfo &memInfo2,
-                            std::optional<int64_t> lcmLen = {},
-                            std::optional<int64_t> eventIdNum = {});
+  static bool
+  checkConflict(const MemInfo &memInfo1, const MemInfo &memInfo2,
+                std::optional<int64_t> lcmLen = {},
+                std::optional<int64_t> eventIdNum = {},
+                std::optional<std::pair<int64_t, int64_t>> offsetPair = {});
 };
 
 } // namespace mlir::hivm::syncsolver
