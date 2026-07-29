@@ -110,7 +110,7 @@ static void addBitcodeAttrsToModule(ModuleOp module, StringRef executablePath,
                   return mlir::hivm::MIX_AIV_BITCODEAttr::get(c, s);
                 });
   }
-  addIfExists("host-a5.bc", mlir::hivm::HOST_BITCODEAttr::name,
+  addIfExists("host.bc", mlir::hivm::HOST_BITCODEAttr::name,
               [](MLIRContext *c, mlir::StringAttr s) -> mlir::Attribute {
                 return mlir::hivm::HOST_BITCODEAttr::get(c, s);
               });
