@@ -56,7 +56,10 @@ bash install_npuir.sh --bishengir-path=/path/to/AscendNPU-IR/build/install
 # 假定当前目录是 tilelang-ascend，选项可以是：--bishengir-path=./3rdparty/AscendNPU-IR/build/install
 ```
 
-> 注意：如果环境中有`gtest`头文件但没有`gtest`的库文件，编译过程可能会引发异常。
+> **注意**：
+>
+> 如果环境中有`gtest`头文件但没有`gtest`的库文件，编译过程可能会引发异常。
+>
 > 可以通过临时移除环境中的`gtest`头文件或者添加库文件，或者`tvm`联合`gtest`一同编译来进行解决。
 
 然后需要做下面任何一步来使能tilelang的环境设置：

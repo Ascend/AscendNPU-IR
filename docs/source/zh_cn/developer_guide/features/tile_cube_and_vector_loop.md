@@ -1,4 +1,4 @@
-# Cube与Vector循环切块（Tile Cube and Vector Loop）
+# Cube与Vector循环切块
 
 本文介绍HIVM中的TileCubeVectorLoop Pass。该Pass针对CV类kernel进行优化。在阅读本文之前，建议先阅读[CV Optimization](./cv_optimization.md)，了解CV编译相关术语。
 

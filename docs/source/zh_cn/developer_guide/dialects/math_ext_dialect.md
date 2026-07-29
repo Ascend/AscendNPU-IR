@@ -6,16 +6,16 @@
 
 ### mathExt.ilogb (::mlir::mathExt::IlogbOp)
 
-**功能：** 计算浮点数绝对值的以2为底对数的向下取整（等效于提取IEEE 754浮点数的指数部分）。
+**功能**：计算浮点数绝对值的以2为底对数的向下取整（等效于提取IEEE 754浮点数的指数部分）。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `mathExt.ilogb` $operand (`fastmath` `` $fastmath^)?
               attr-dict `:` type($result)
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 %0 = mathExt.ilogb %x : f32
@@ -23,15 +23,15 @@ operation ::= `mathExt.ilogb` $operand (`fastmath` `` $fastmath^)?
 %2 = mathExt.ilogb %vec fastmath<contract> : vector<8xf16>
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `Elementwise`, `SameOperandsAndResultType`, `Scalarizable`, `Tensorizable`, `Vectorizable`
+**特性**：`AlwaysSpeculatableImplTrait`, `Elementwise`, `SameOperandsAndResultType`, `Scalarizable`, `Tensorizable`, `Vectorizable`
 
-**操作数：**
+**操作数**：
 
 | 操作数    | 说明         |
 | :------: | ------------ |
 | `operand` | 浮点类型（标量/Tensor/向量） |
 
-**结果：**
+**结果**：
 
 | 结果     | 说明         |
 | :------: | ------------ |
@@ -39,16 +39,16 @@ operation ::= `mathExt.ilogb` $operand (`fastmath` `` $fastmath^)?
 
 ### mathExt.ldep (::mlir::mathExt::LdexpOp)
 
-**功能：** 计算浮点数的分数部分与指数部分的归一化组合（等效于`x * (ilogb(x) + 1)^(-1)`）。
+**功能**：计算浮点数的分数部分与指数部分的归一化组合（等效于`x * (ilogb(x) + 1)^(-1)`）。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `mathExt.ldep` $lhs `,` $rhs (`fastmath` `` $fastmath^)?
               attr-dict `:` type($result)
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 %0 = mathExt.ldep %x, %y : f32
@@ -56,16 +56,16 @@ operation ::= `mathExt.ldep` $lhs `,` $rhs (`fastmath` `` $fastmath^)?
 %2 = mathExt.ldep %vec1, %vec2 fastmath<nnan,ninf> : vector<8xf16>
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `Elementwise`, `SameOperandsAndResultType`, `Scalarizable`, `Tensorizable`, `Vectorizable`
+**特性**：`AlwaysSpeculatableImplTrait`, `Elementwise`, `SameOperandsAndResultType`, `Scalarizable`, `Tensorizable`, `Vectorizable`
 
-**操作数：**
+**操作数**：
 
 | 操作数   | 说明         |
 | :------: | ------------ |
 | `lhs`    | 浮点类型（标量/Tensor/向量） |
 | `rhs`    | 浮点类型（与`lhs`同类型） |
 
-**结果：**
+**结果**：
 
 | 结果     | 说明         |
 | :------: | ------------ |
@@ -75,9 +75,9 @@ operation ::= `mathExt.ldep` $lhs `,` $rhs (`fastmath` `` $fastmath^)?
 
 ### CmpFPredicate
 
-**功能：** 定义浮点数比较操作的谓词类型，控制NaN处理和比较语义。
+**功能**：定义浮点数比较操作的谓词类型，控制NaN处理和比较语义。
 
-**取值范围：** 64位无符号整数（0~15）
+**取值范围**：64位无符号整数（0~15）
 
 | 枚举符号      | 数值   | 标识字符串 |
 | :-----------: | :----: | ---------- |
@@ -100,9 +100,9 @@ operation ::= `mathExt.ldep` $lhs `,` $rhs (`fastmath` `` $fastmath^)?
 
 ### CmpIPredicate
 
-**功能：** 定义整数比较操作的谓词类型，区分有符号/无符号比较逻辑。
+**功能**：定义整数比较操作的谓词类型，区分有符号/无符号比较逻辑。
 
-**取值范围：** 64位无符号整数（0~9）
+**取值范围**：64位无符号整数（0~9）
 
 | 枚举符号 | 数值   | 标识字符串 |
 | :------: | :----: | ---------- |
@@ -119,7 +119,7 @@ operation ::= `mathExt.ldep` $lhs `,` $rhs (`fastmath` `` $fastmath^)?
 
 ### IntegerOverflowFlags
 
-**功能：** 标记整数溢出行为的语义属性（如`nsw`表示No Signed Wrap）。
+**功能**：标记整数溢出行为的语义属性（如`nsw`表示No Signed Wrap）。
 
 | 枚举符号 | 数值   | 标识字符串 |
 | :------: | :----: | ---------- |
@@ -129,7 +129,7 @@ operation ::= `mathExt.ldep` $lhs `,` $rhs (`fastmath` `` $fastmath^)?
 
 ### RoundingMode
 
-**功能：** 定义浮点运算的舍入模式，控制精度截断行为。
+**功能**：定义浮点运算的舍入模式，控制精度截断行为。
 
 | 枚举符号           | 数值   | 标识字符串          |
 | :----------------: | :----: | ------------------- |
@@ -141,9 +141,9 @@ operation ::= `mathExt.ldep` $lhs `,` $rhs (`fastmath` `` $fastmath^)?
 
 ### AtomicRMWKind
 
-**功能：** 定义原子读-修改-写操作的计算类型。
+**功能**：定义原子读-修改-写操作的计算类型。
 
-**取值范围：** 64位无符号整数（0~14）
+**取值范围**：64位无符号整数（0~14）
 
 | 枚举符号    | 数值   | 标识字符串  |
 | :---------: | :----: | ----------- |
@@ -165,7 +165,7 @@ operation ::= `mathExt.ldep` $lhs `,` $rhs (`fastmath` `` $fastmath^)?
 
 ### FastMathFlags
 
-**功能：** 定义浮点运算的优化标志集合，控制NaN/无穷大等特殊值的处理策略。
+**功能**：定义浮点运算的优化标志集合，控制NaN/无穷大等特殊值的处理策略。
 
 | 枚举符号   | 数值    | 标识字符串 |
 | :--------: | :-----: | ---------- |

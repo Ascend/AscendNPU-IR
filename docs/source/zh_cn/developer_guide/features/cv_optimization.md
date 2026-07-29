@@ -1,4 +1,4 @@
-# Cube-Vector优化总览
+# Cube与Vector优化
 
 ## 硬件背景
 
@@ -17,11 +17,12 @@
 | **Workspace** | 运行时在GM上分配的一块连续内存，作为kernel参数传入 | 用于存放Cube-Vector之间的中间结果（如fixpipe输出）。多个中间buffer可在同一块workspace上按偏移分配，由PlanMemory计算偏移，从而复用一块大buffer，减少总占用。 |
 | **Liveness** | 某个buffer从「被定义/首次使用」到「最后一次使用」的生命周期 | PlanMemory根据liveness判断两个buffer是否可能同时存活；若不重叠，可分配相同基址、不同偏移，实现复用。 |
 | **Inplace** | 操作的输出直接写在输入的存储位置上，复用同一块buffer | 例如vcast从f16转到i16（等宽），输出可覆盖输入，减少alloc。PlanMemory会识别可inplace的op并做相应偏移分配。 |
-| **AIC / AIV** | AIC：以Cube为主的子内核；AIV：以Vector为主的子内核 | Mix内核拆分后，AIC主要在Cube核心执行，AIV主要在Vector核心执行；二者通过fixpipe、DMA等传递数据，由host或调度器协调调用顺序。 |
-| **Host / Device** | Host：在CPU上运行<br>Device：在NPU上运行 | Mix内核属于device侧<br>文档中「Mix只能被host调用」指：从host发起的kernel调用里，可以调用mix entry，而device上的另一个kernel不能直接call一个mix函数（当前约定）。 |
+| **AIC / AIV** | AIC：以Cube为主的子内核；AIV：以Vector为主的子内核 | Mix内核拆分后，AIC主要在Cube核心执行，AIV主要在Vector核心执行；二者通过fixpipe、DMA等传递数据，由Host或调度器协调调用顺序。 |
+| **Host / Device** | Host：在CPU上运行<br>Device：在NPU上运行 | Mix内核属于device侧<br>文档中「Mix只能被Host调用」指：从Host发起的kernel调用里，可以调用mix entry，而device上的另一个kernel不能直接call一个mix函数（当前约定）。 |
 | **CC / CV / VC / VV** | 两个字母分别表示「前一段计算单元」和「后一段计算单元」：C=Cube，V=Vector | 例如CV表示Cube算完经fixpipe/load后接Vector运算；<br>CC表示两段Cube之间通过fixpipe+load衔接。用于描述InsertWorkSpaceForMixCV的匹配模式。 |
 
 **关于「预bufferization」与「后bufferization」**：
+
 CV相关pass多数在预bufferization阶段（`hivmPreBufferizationOptimizationPipeline`）执行，此时IR仍是tensor为主、带`scf.for`等控制流。Bufferization会把tensor转为memref并决定物理布局；在此之后还有后bufferization阶段的优化（如另一轮PlanMemory针对`memref.alloc`）。理解「先做CV结构变换，再做内存具体化」有助于理解pass顺序。
 
 ### 芯片架构
@@ -72,7 +73,7 @@ fixpipe是Cube与Vector之间的数据搬运通道，昇腾芯片的Cube和Vecto
 - **作用**：在mmadL1/batchMmadL1与store之间插入`hivm.hir.fixpipe`，将store+vcast等合并进fixpipe的量化/激活选项。
 - **目的**：显式表达Cube到Vector的数据搬运，使后续workspace分配、load/store插入有明确插入点。
 - **典型变换**：在mmadL1结果到store的use链上插入fixpipe；将vcast(f32->f16) 等融合为fixpipe的`pre_quant = F322F16`。
-- **典型场景**： 纯Cube到Store。
+- **典型场景**：纯Cube到Store。
 
 变换前：
 
@@ -97,7 +98,7 @@ InlineFixpipe负责插入fixpipe，站在新增的fixpipe的基础上，尝试in
 变换前：
 
 ```mlir
-batchmmadL1 a : [batch, m ,k], b[batch, k, n]
+batchmmadL1 a : [batch, m, k], b[batch, k, n]
 fixpipe workspace : [batch, m, n]
 ```
 
@@ -288,7 +289,8 @@ bishengir-opt -hivm-split-mixed-if-conditionals -hivm-mark-tightly-coupled-buffe
 ```
 
 其中，`bishengir-opt`和`FileCheck`均为编译生成的二进制可执行文件，路径在`path-to-ascendnpuir/build/bin`下。上述命令中的`%s`替换成对应的测试文件`bishengir/test/Dialect/HIVM/normalize-matmul.mlir`。
-输出的`mlir`会匹配测试文件中的`CHECK：`部分，测试后没有任何`CHECK failed`的报错即执行成功。
+
+输出的`mlir`会匹配测试文件中的`CHECK:`部分，测试后没有任何`CHECK failed`的报错即执行成功。
 
 ## 约束能力
 

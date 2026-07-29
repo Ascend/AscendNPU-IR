@@ -1,4 +1,4 @@
-# 自动展平（Auto Flatten）
+# 自动展平
 
 Auto Flatten Pass（HIVMFlattenOps）自动将多维张量操作折叠为低维等价形式，在保持语义正确性的同时降低秩（rank）。该优化简化了内存访问模式，提升了目标加速器上的硬件利用率。
 
@@ -253,7 +253,7 @@ OpTrait::CollapsibleConsecutiveTargetDimsTrait
 | 均匀重关联 | 所有操作数折叠方式相同时的高效处理 |
 | 非均匀重关联 | 支持不同的输入/init重关联（转置OTF） |
 | 屏障保护 | 语义关键维度保持独立 |
-| 跳过Host函数 | 自动跳过host侧函数 |
+| 跳过Host函数 | 自动跳过Host侧函数 |
 
 **限制约束**：
 

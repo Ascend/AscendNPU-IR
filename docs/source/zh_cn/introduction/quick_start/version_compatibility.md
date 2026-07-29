@@ -15,7 +15,7 @@
 
 **重要说明**：
 
-如果您的CANN版本不想进行升级和替换，又想使用AscendNPU IR的新特性，可以参考如下方式尝试体验：
+如需保留当前CANN版本不做升级替换，又想使用AscendNPU IR的新特性，可以参考如下方式尝试体验：
 
 ```bash
 NEW_CANN_PKG="PATH-TO/Ascend-cann-toolkit_9.0.0_linux-aarch64.run"

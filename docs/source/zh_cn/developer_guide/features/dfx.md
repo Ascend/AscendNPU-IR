@@ -1,4 +1,4 @@
-# 调试模块（DFX）
+# 调试模块DFX
 
 ## 硬件背景
 
@@ -24,7 +24,7 @@ flowchart LR
 
 - UB打印缓冲区：每个aicore固定分配16 KB空间用于数据暂存，且同一个aicore内的所有打印操作共享这16 KB缓冲区，写满后新数据提示warning，大小超过缓冲区最大值后丢弃。
 
-- 多核并发：每个aicore独立执行内核代码，最终host侧呈现每个核的打印结果。
+- 多核并发：每个aicore独立执行内核代码，最终Host侧呈现每个核的打印结果。
 
 ## 算法原理
 
@@ -193,7 +193,7 @@ hivm.hir.finish_debug
 
 ### 毕昇编译器
 
-triton-ascend产生的host侧launcher调用bisheng编译器编好的kernel并将打印缓冲区传给kernel，待kernel返回后在host launcher侧读取缓冲区并进行真正的打印。此部分代码在bisheng编译器自带的头文件中实现，并由triton-ascend自动从bisheng编译器的路径中抽取。
+triton-ascend产生的Host侧launcher调用bisheng编译器编好的kernel并将打印缓冲区传给kernel，待kernel返回后在Host Launcher侧读取缓冲区并进行真正的打印。此部分代码在bisheng编译器自带的头文件中实现，并由triton-ascend自动从bisheng编译器的路径中抽取。
 
 ## 接口说明
 
@@ -213,6 +213,6 @@ hivm.hir.debug {debugtype = "print", hex = xxx, prefix = " xxx: ", tcoretype = #
 
 | 适用硬件 | 使用约束 |
 |--------|--------|
-| A3 & A5 | 1. 打印对象仅支持张量、标量。<br>2. `device_print`打印缓冲区固定为16KB。<br>3.Triton内存检测工具sanitizer与`device_print`互斥，不可同时启用。<br>4. 编码规范：单个张量单独打印，打印指令紧跟目标张量，防止张量生命周期变动引发运行异常。<br>5. 内核限制：不允许待打印算子仅作为`device_print`唯一输入。<br>6. 循环限制：`while`循环内禁止打印循环体外定义的操作数。<br>7. 超时限制：打印等待内核完成超时时间10分钟，长耗时用例开启打印会触发超时失败。 |
+| A3 & A5 | 1. 打印对象仅支持张量、标量。<br>2. `device_print`打印缓冲区固定为16KB。<br>3. Triton内存检测工具sanitizer与`device_print`互斥，不可同时启用。<br>4. 编码规范：单个张量单独打印，打印指令紧跟目标张量，防止张量生命周期变动引发运行异常。<br>5. 内核限制：不允许待打印算子仅作为`device_print`唯一输入。<br>6. 循环限制：`while`循环内禁止打印循环体外定义的操作数。<br>7. 超时限制：打印等待内核完成超时时间10分钟，长耗时用例开启打印会触发超时失败。 |
 | A3 | 支持打印数据类型：`bool`、`int8`、`uint8`、`int16`、`uint16`、`int32`、`uint32`、`int64`、`bfloat16`、`half`、`float32`。 |
 | A5 | 1. 数据类型兼容：兼容A3全部类型，额外支持`fp8`。<br>2. 融合调度约束：插入`device_print`破坏VF融合边界情况下可能引发UB溢出，需减小tiling分块。<br>3. 缓存资源约束：打印`fp8`张量、L1张量边界情况下可能会引发UB溢出，需减小tiling分块规避缓存溢出。 |

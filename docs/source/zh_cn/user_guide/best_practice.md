@@ -171,7 +171,7 @@ chunk_gated_delta_rule_fwd_kernel_h_blockdim64[grid](
     K=K,
     V=V,
     BT=BT,
-    inject_block_all = True # 开启核间同步
+    inject_block_all = True， # 开启核间同步
     inject_barrier_all = True # 开启核内同步
 )
 ```
@@ -725,6 +725,7 @@ tl.compile_hint(cond, "bitwise_mask")
 参考[Ascend where算子](https://gitcode.com/Ascend/triton-ascend/blob/master/ascend/examples/pytest_ut/test_where_lt.py)进行改写，若用户需要输入`bitwise`的`i8`掩码作为算子入参，只需为`tl.where`的结果加上`compile_hint`即可。
 
 其中依赖的代码脚本请下载链接，并将其和测试脚本放在同个目录下执行`python3 test_bitmask.py`。
+
 [triton testcommon script](https://gitcode.com/Ascend/triton-ascend/blob/master/ascend/examples/pytest_ut/test_common.py)
 
 ```python
@@ -1133,5 +1134,4 @@ chunk_gated_delta_rule_fwd_kernel_h_blockdim64[grid](
 
 ## Triton NPU编程案例
 
-Triton NPU编程请参考：
-[https://github.com/Ascend/triton-ascend-ops/blob/main/tutorial/README.zh.md](https://github.com/Ascend/triton-ascend-ops/blob/main/tutorial/README.zh.md)
+Triton NPU编程请参考：[https://github.com/Ascend/triton-ascend-ops/blob/main/tutorial/README.zh.md](https://github.com/Ascend/triton-ascend-ops/blob/main/tutorial/README.zh.md)

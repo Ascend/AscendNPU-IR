@@ -6,16 +6,16 @@
 
 ### memref_ext.alloc_workspace (::bishengir::memref_ext::AllocWorkspaceOp)
 
-**功能：** 工作空间内存分配操作，用于申请一块工作空间内存区域。
+**功能**：工作空间内存分配操作，用于申请一块工作空间内存区域。
 
-**语法：**
+**语法**：
 
 ```mlir
 operation ::= `memref_ext.alloc_workspace` `(`$dynamicSize`)` (`from` $workspaceArg^)? ( `offset` `=` `[`$offset^`]`)?
               attr-dict `:` (`from` type($workspaceArg)^ `to`)? type($memref)
 ```
 
-**示例：**
+**示例**：
 
 ```mlir
 memref_ext.alloc_workspace() : memref<100xi8>
@@ -23,9 +23,9 @@ memref_ext.alloc_workspace(%dynamic) : memref<2x?xi32>
 memref_ext.alloc_workspace(%dynamic) from %arg offset = [%offset] : from memref<?xi8> to memref<2x?xi32>
 ```
 
-**特性：** `AttrSizedOperandSegments`
+**特性**：`AttrSizedOperandSegments`
 
-**操作数：**
+**操作数**：
 
 | 操作数 | 说明 |
 | :-----: | ----------- |
@@ -33,7 +33,7 @@ memref_ext.alloc_workspace(%dynamic) from %arg offset = [%offset] : from memref<
 | `dynamicSize` | 变长index动态尺寸 |
 | `offset` | 变长index偏移量 |
 
-**结果：**
+**结果**：
 
 | 结果 | 说明 |
 | :----: | ----------- |
@@ -43,7 +43,7 @@ memref_ext.alloc_workspace(%dynamic) from %arg offset = [%offset] : from memref<
 
 ### CmpFPredicate
 
-**取值范围：** 64位无符号整数0~15
+**取值范围**：64位无符号整数0~15
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :----: | :---: | ------ |
@@ -66,7 +66,7 @@ memref_ext.alloc_workspace(%dynamic) from %arg offset = [%offset] : from memref<
 
 ### CmpIPredicate
 
-**取值范围：** 64位无符号整数0~9
+**取值范围**：64位无符号整数0~9
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :----: | :---: | ------ |
@@ -83,7 +83,7 @@ memref_ext.alloc_workspace(%dynamic) from %arg offset = [%offset] : from memref<
 
 ### IntegerOverflowFlags
 
-**功能：** 整数溢出算术标识
+**功能**：整数溢出算术标识
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :----: | :---: | ------ |
@@ -93,7 +93,7 @@ memref_ext.alloc_workspace(%dynamic) from %arg offset = [%offset] : from memref<
 
 ### RoundingMode
 
-**功能：** 浮点舍入模式
+**功能**：浮点舍入模式
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :----: | :---: | ------ |
@@ -105,7 +105,7 @@ memref_ext.alloc_workspace(%dynamic) from %arg offset = [%offset] : from memref<
 
 ### AtomicRMWKind
 
-**取值范围：** 64位无符号整数0~14
+**取值范围**：64位无符号整数0~14
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :----: | :---: | ------ |
@@ -127,7 +127,7 @@ memref_ext.alloc_workspace(%dynamic) from %arg offset = [%offset] : from memref<
 
 ### FastMathFlags
 
-**功能：** 浮点快速运算标识
+**功能**：浮点快速运算标识
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :----: | :---: | ------ |
