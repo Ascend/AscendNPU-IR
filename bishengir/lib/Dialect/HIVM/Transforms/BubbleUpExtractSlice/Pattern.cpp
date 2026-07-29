@@ -21,6 +21,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/Helper.h"
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/TileUtils.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
@@ -186,9 +187,18 @@ createNewChildOpAfterBubbledUp(RewriterBase &rewriter, size_t tilingDim,
 
   rewriter.setInsertionPointToStart(
       childOp->template getParentOfType<scf::ForOp>().getBody());
-  auto newOffsetAtTileDim = calculateOffsetAtTilingDim(
-      rewriter, childOp->getLoc(),
-      childOp->template getParentOfType<scf::ForOp>(), newSize.value());
+  OpFoldResult newOffsetAtTileDim;
+  if (hacc::utils::isRegBasedArch(
+          childOp->template getParentOfType<ModuleOp>())) {
+    newOffsetAtTileDim = calculateOffsetAtTilingDim(
+        rewriter, childOp->getLoc(),
+        childOp->template getParentOfType<scf::ForOp>(),
+        createdNewParent->getResult(0), tilingDim);
+  } else {
+    newOffsetAtTileDim = calculateOffsetAtTilingDim(
+        rewriter, childOp->getLoc(),
+        childOp->template getParentOfType<scf::ForOp>(), newSize.value());
+  }
 
   auto rankType = cast<ShapedType>(childOp.getSourceType());
   if (failed(findCorrespondingSizesOffsetsStrides(
@@ -885,9 +895,16 @@ createNewInsertForExtractOfInsertSameDim(RewriterBase &rewriter,
 
   rewriter.setInsertionPointToStart(
       sliceOp->getParentOfType<scf::ForOp>().getBody());
-  auto newOffsetAtTileDim = calculateOffsetAtTilingDim(
-      rewriter, sliceOp->getLoc(), sliceOp->getParentOfType<scf::ForOp>(),
-      size.value());
+  OpFoldResult newOffsetAtTileDim;
+  if (hacc::utils::isRegBasedArch(sliceOp->getParentOfType<ModuleOp>())) {
+    newOffsetAtTileDim = calculateOffsetAtTilingDim(
+        rewriter, sliceOp->getLoc(), sliceOp->getParentOfType<scf::ForOp>(),
+        parentInsertOp.getSource(), tilingDim);
+  } else {
+    newOffsetAtTileDim = calculateOffsetAtTilingDim(
+        rewriter, sliceOp->getLoc(), sliceOp->getParentOfType<scf::ForOp>(),
+        size.value());
+  }
   if (failed(findCorrespondingSizesOffsetsStrides(
           rewriter, rankType, tilingDim, newOffsetAtTileDim, size.value(),
           newInsertStrides, newInsertOffsets, newInsertSizes, newInsertShape)))
@@ -1087,7 +1104,8 @@ InsertSliceBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   auto parentInsertOp =
       cast<tensor::InsertSliceOp>(sliceOp.getSource().getDefiningOp());
   if (parentInsertOp->hasAttrOfType<UnitAttr>(toBeBubbleUpSlice) ||
-      parentInsertOp->hasAttrOfType<UnitAttr>(toBeCancelOutInsertSlice)) {
+      (!hacc::utils::isRegBasedArch(sliceOp->getParentOfType<ModuleOp>()) &&
+       parentInsertOp->hasAttrOfType<UnitAttr>(toBeCancelOutInsertSlice))) {
     return failure();
   }
 
@@ -2353,7 +2371,8 @@ FixpipeBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
       hivm::FixpipeDualDstModeAttr::get(rewriter.getContext(), splitMode);
   NamedAttrList attrs(fixpipeOp->getAttrs());
   attrs.set(fixpipeOp.getDualDstModeAttrName(), dualAttr);
-  attrs.erase(fixpipeOp.getSubBlockIdxAttrName());
+  if (!hacc::utils::isRegBasedArch(fixpipeOp->getParentOfType<ModuleOp>()))
+    attrs.erase(fixpipeOp.getSubBlockIdxAttrName());
   auto newFixpipeOp = rewriter.create<hivm::FixpipeOp>(
       sliceOp.getLoc(), TypeRange{sliceOp.getType()},
       ValueRange{fixpipeOp.getSrc(), newSliceOp.getResult()}, attrs.getAttrs());
