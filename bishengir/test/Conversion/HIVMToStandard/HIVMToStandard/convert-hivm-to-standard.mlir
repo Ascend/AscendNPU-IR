@@ -2813,3 +2813,24 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
     return
   }
 }
+
+// -----
+module attributes {hacc.target = #hacc.target<"Ascend910B1">} {
+  // CHECK-LABEL: func.func @test_vgather_2d_membase
+  func.func @test_vgather_2d_membase(
+      %src: memref<7x11xf32, #hivm.address_space<ub>>,
+      %indices: memref<7x5xi32, #hivm.address_space<ub>>,
+      %dst: memref<7x5xf32, #hivm.address_space<ub>>)
+      attributes {hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    // Membase only has a 1D gather template, so the outer dimension must be
+    // lowered to a loop instead of being passed directly to gather_1d.
+    // CHECK: scf.for
+    // CHECK: call @gather_1d_float
+    // CHECK-NOT: call @gather_simt_2d_float_int32_t
+    hivm.hir.vgather {gather_axis = 1 : i64}
+        ins(%src : memref<7x11xf32, #hivm.address_space<ub>>)
+        indices(%indices : memref<7x5xi32, #hivm.address_space<ub>>)
+        outs(%dst : memref<7x5xf32, #hivm.address_space<ub>>)
+    return
+  }
+}
