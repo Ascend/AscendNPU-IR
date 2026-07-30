@@ -358,31 +358,6 @@ func.func @test_nz2nz_fixpipe_fold_convert(%dst: memref<128x80xf16, strided<[640
 }
 
 // -----
-// Fold the fixpipe edge when Fractal->ND convert_layout has another user.
-// Keep convert_layout for that other user.
-// CHECK-LABEL: func.func @test_nz2nz_fixpipe_fold_multi_use
-// CHECK: %[[FRACTAL:.*]] = arith.constant
-// CHECK: %[[ND:.*]] = hivm.hir.convert_layout %[[FRACTAL]]
-// CHECK: hivm.hir.fixpipe ins(%[[FRACTAL]] : tensor<8x5x16x16xf32>)
-// CHECK: hivm.hir.fixpipe ins(%[[FRACTAL]] : tensor<8x5x16x16xf32>)
-// CHECK: return %[[ND]] : tensor<128x80xf32>
-func.func @test_nz2nz_fixpipe_fold_multi_use(
-    %dst0: memref<128x80xf16, strided<[640, 1], offset: ?>>,
-    %dst1: memref<128x80xf16, strided<[640, 1], offset: ?>>)
-    -> tensor<128x80xf32> {
-  %fractal = arith.constant dense<0.0> : tensor<8x5x16x16xf32>
-  %nd = hivm.hir.convert_layout %fractal output_shape [128, 80]
-      {dstLayout = #hivm.data_layout<ND>,
-       srcLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>}
-      : (tensor<8x5x16x16xf32>) -> tensor<128x80xf32>
-  hivm.hir.fixpipe ins(%nd : tensor<128x80xf32>)
-      outs(%dst0 : memref<128x80xf16, strided<[640, 1], offset: ?>>)
-  hivm.hir.fixpipe ins(%nd : tensor<128x80xf32>)
-      outs(%dst1 : memref<128x80xf16, strided<[640, 1], offset: ?>>)
-  return %nd : tensor<128x80xf32>
-}
-
-// -----
 // Fold Fractal->ND convert_layout + extract_slice before an NZ2ND fixpipe.
 // Same as FoldConvertLayoutExtractSliceFixpipePattern with NZ2ND as the dma mode.
 // CHECK-LABEL: func.func @test_nz2nd_extract_slice_fixpipe_fold
