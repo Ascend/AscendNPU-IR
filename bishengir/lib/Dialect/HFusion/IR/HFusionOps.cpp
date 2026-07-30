@@ -3448,6 +3448,23 @@ FailureOr<SmallVector<Value>> HistogramOp::decomposeOperation(OpBuilder &b) {
   return SmallVector<Value>{finalHist};
 }
 
+void MatMulMxOp::build(OpBuilder &builder, OperationState &state, Value inputA,
+                       Value inputB, Value scaleA, Value scaleB, Value acc) {
+  build(builder, state, /*result=*/acc.getType(), inputA, inputB, scaleA,
+        scaleB, acc, /*lhsFormat=*/DataformatAttr{},
+        /*rhsFormat=*/DataformatAttr{});
+}
+
+#if BISHENGIR_BUILD_STANDALONE_IR_ONLY
+// HFusion Utils is not part of the standalone IR build; provide isFP8 here.
+// Prefer isa<> — Builder::getFloat8E*Type() was removed in newer LLVM.
+bool hfusion::isFP8(Type type) {
+  return isa<Float8E5M2Type, Float8E4M3Type, Float8E4M3FNType,
+             Float8E5M2FNUZType, Float8E4M3FNUZType, Float8E4M3B11FNUZType>(
+      type);
+}
+#endif
+
 LogicalResult MatMulMxOp::verify() {
   auto inputATy = mlir::cast<ShapedType>(getInputA().getType());
   auto inputBTy = mlir::cast<ShapedType>(getInputB().getType());
@@ -3584,7 +3601,7 @@ MatMulMxOp::decomposeOperation(OpBuilder &builder) {
 
   // If input is fp8, cast to fp16
   const Type f16Ty = builder.getF16Type();
-  if (isFP8(aType.getElementType(), builder)) {
+  if (isFP8(aType.getElementType())) {
     Value emptyAF16 = builder.create<tensor::EmptyOp>(
         location, RankedTensorType::get(aType.getShape(), f16Ty), ValueRange{});
     a = builder
@@ -3593,7 +3610,7 @@ MatMulMxOp::decomposeOperation(OpBuilder &builder) {
             .getResult(0);
     aType = RankedTensorType::get(aType.getShape(), f16Ty);
   }
-  if (isFP8(bType.getElementType(), builder)) {
+  if (isFP8(bType.getElementType())) {
     Value emptyBF16 = builder.create<tensor::EmptyOp>(
         location, RankedTensorType::get(bType.getShape(), f16Ty), ValueRange{});
     b = builder
