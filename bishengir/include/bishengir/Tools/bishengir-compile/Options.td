@@ -331,7 +331,7 @@ class GeneralOptimizationControlOptions<
 def EnableAutoMultiBuffer : GeneralOptimizationControlOptions<
   "Enable auto multi buffer.",
   "bool",
-  "false"
+  "true"
 > {
   let passGroup = ["HFUSION", "HIVM"];
 }

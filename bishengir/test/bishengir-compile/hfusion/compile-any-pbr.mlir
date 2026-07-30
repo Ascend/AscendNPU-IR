@@ -1,5 +1,5 @@
 // REQUIRES: enable-lir-compile
-// RUN: bishengir-compile -enable-lir-compile=false -enable-hfusion-compile=true %s | FileCheck %s
+// RUN: bishengir-compile --enable-auto-multi-buffer=False -enable-lir-compile=false -enable-hfusion-compile=true %s | FileCheck %s
 
 // -----
 // CHECK: define dso_local void @test_tile_last_reduce_last
