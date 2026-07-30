@@ -65,45 +65,48 @@ CATLASS_DEVICE inline uint32_t getMxFormatKFactor(HIVMMatmulDataformat format) {
   return isFp4Format(format) ? 2 : 1;
 }
 
-template <class ElementAFp8, class ArchTag, class LayoutTagL1A,
+template <class ElementAMx, class ArchTag, class LayoutTagL1A,
           class LayoutTagL0A, class TensorMxScale>
-CATLASS_DEVICE void copyTransposedAInFp8Format(
+CATLASS_DEVICE void copyTransposedAInTypedFormat(
     __cbuf__ int8_t *l1A, uint32_t l1M, uint32_t l1K, uint32_t actualM,
     uint32_t kL0Actual, uint32_t kL0Idx, uint32_t l0K, uint32_t pingPongId,
     TensorMxScale const &tensorTileL1MxScaleA) {
-  using LayoutL1AFp8 = detail::TagToLayout_t<ElementAFp8, LayoutTagL1A>;
-  using LayoutL0AFp8 = detail::TagToLayout_t<ElementAFp8, LayoutTagL0A>;
-  using TensorL1AFp8 =
-      tla::Tensor<AscendCBisheng::LocalTensor<ElementAFp8>, LayoutL1AFp8,
+  using LayoutL1AMx = detail::TagToLayout_t<ElementAMx, LayoutTagL1A>;
+  using LayoutL0AMx = detail::TagToLayout_t<ElementAMx, LayoutTagL0A>;
+  using TensorL1AMx =
+      tla::Tensor<AscendCBisheng::LocalTensor<ElementAMx>, LayoutL1AMx,
                   tla::Coord<tla::_0, tla::_0>, AscendCBisheng::TPosition::A1>;
-  using TensorL0AFp8 =
-      tla::Tensor<AscendCBisheng::LocalTensor<ElementAFp8>, LayoutL0AFp8,
+  using TensorL0AMx =
+      tla::Tensor<AscendCBisheng::LocalTensor<ElementAMx>, LayoutL0AMx,
                   tla::Coord<tla::_0, tla::_0>, AscendCBisheng::TPosition::A2>;
-  using CopyL1ToL0AFp8 =
-      Gemm::Tile::TileCopyTla<ArchTag, TensorL1AFp8, TensorL0AFp8>;
+  using CopyL1ToL0AMx =
+      Gemm::Tile::TileCopyTla<ArchTag, TensorL1AMx, TensorL0AMx>;
 
-  AscendCBisheng::LocalTensor<ElementAFp8> l1ATensorFp8{
+  AscendCBisheng::LocalTensor<ElementAMx> l1ATensorMx{
       AscendCBisheng::TPosition::A1, (uint32_t)reinterpret_cast<int64_t>(l1A),
       l1M * l1K};
-  AscendCBisheng::LocalTensor<ElementAFp8> l0ATensorFp8{
+  AscendCBisheng::LocalTensor<ElementAMx> l0ATensorMx{
       AscendCBisheng::TPosition::A2, 0, ArchTag::L0A_SIZE};
 
-  auto tensorL1AFp8 = tla::MakeTensor(
-      l1ATensorFp8, tla::MakeLayout<ElementAFp8, LayoutTagL1A>(l1M, l1K),
+  auto tensorL1AMx = tla::MakeTensor(
+      l1ATensorMx, tla::MakeLayout<ElementAMx, LayoutTagL1A>(l1M, l1K),
       Arch::PositionL1{});
-  auto l0ATileFp8 =
-      l0ATensorFp8[pingPongId * (ArchTag::L0A_SIZE / 2) /
-                   sizeof(ElementAFp8)];
-  auto tensorL0AFp8 = tla::MakeTensor(
-      l0ATileFp8,
-      tla::MakeLayout<ElementAFp8, LayoutTagL0A>(actualM, kL0Actual),
+  // LocalTensor::operator[] takes a logical element offset. Convert the
+  // ping-pong byte offset so half-byte FP4 types still advance by L0A_SIZE / 2
+  // bytes physically.
+  auto l0ATileMx =
+      l0ATensorMx[pingPongId * (ArchTag::L0A_SIZE / 2) /
+        sizeof(ElementAMx)];
+  auto tensorL0AMx = tla::MakeTensor(
+      l0ATileMx,
+      tla::MakeLayout<ElementAMx, LayoutTagL0A>(actualM, kL0Actual),
       Arch::PositionL0A{});
-  auto tensorTileL1AFp8 =
-      GetTile(tensorL1AFp8, tla::MakeCoord(0, kL0Idx * l0K),
+  auto tensorTileL1AMx =
+      GetTile(tensorL1AMx, tla::MakeCoord(0, kL0Idx * l0K),
               tla::MakeShape(actualM, kL0Actual));
 
-  CopyL1ToL0AFp8 copyL1ToL0AFp8;
-  copyL1ToL0AFp8(tensorL0AFp8, tensorTileL1AFp8, tensorTileL1MxScaleA);
+  CopyL1ToL0AMx copyL1ToL0AMx;
+  copyL1ToL0AMx(tensorL0AMx, tensorTileL1AMx, tensorTileL1MxScaleA);
 }
 
 template <class ArchTag, class LayoutTagL1A, class LayoutTagL0A,
@@ -116,15 +119,23 @@ CATLASS_DEVICE void copyTransposedAByFormat(
     uint32_t l1K, uint32_t actualM, uint32_t kL0Actual, uint32_t kL0Idx,
     uint32_t l0K, uint32_t pingPongId) {
   if (lhsFormat == HIVMMatmulDataformat::FP8E5M2_T) {
-    copyTransposedAInFp8Format<float8_e5m2_t, ArchTag, LayoutTagL1A,
-                               LayoutTagL0A>(l1A, l1M, l1K, actualM,
-                                             kL0Actual, kL0Idx, l0K,
-                                             pingPongId, tensorTileL1MxScaleA);
+    copyTransposedAInTypedFormat<float8_e5m2_t, ArchTag, LayoutTagL1A,
+                                 LayoutTagL0A>(l1A, l1M, l1K, actualM,
+                                               kL0Actual, kL0Idx, l0K,
+                                               pingPongId, tensorTileL1MxScaleA);
   } else if (lhsFormat == HIVMMatmulDataformat::FP8E4M3_T) {
-    copyTransposedAInFp8Format<float8_e4m3_t, ArchTag, LayoutTagL1A,
-                               LayoutTagL0A>(l1A, l1M, l1K, actualM,
-                                             kL0Actual, kL0Idx, l0K,
-                                             pingPongId, tensorTileL1MxScaleA);
+    copyTransposedAInTypedFormat<float8_e4m3_t, ArchTag, LayoutTagL1A,
+                                 LayoutTagL0A>(l1A, l1M, l1K, actualM,
+                                               kL0Actual, kL0Idx, l0K,
+                                               pingPongId, tensorTileL1MxScaleA);
+  } else if (lhsFormat == HIVMMatmulDataformat::FP4E2M1_T) {
+    // Move packed FP4 as B8, exactly like FP8. Each int8_t stores two
+    // consecutive logical K values; mad_mx still consumes L0A as FP4x2.
+    copyTransposedAInTypedFormat<int8_t, ArchTag, LayoutTagL1A,
+                                 LayoutTagL0A>(l1A, l1M, l1K, actualM,
+                                               CeilDiv<2>(kL0Actual), kL0Idx,
+                                               l0K / 2,
+                                               pingPongId, tensorTileL1MxScaleA);
   } else {
     copyL1ToL0A(tensorL0A, tensorTileL1A, tensorTileL1MxScaleA);
   }

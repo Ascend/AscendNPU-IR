@@ -294,9 +294,11 @@ struct TileCopyTla<
     tla::Tensor<AscendCBisheng::LocalTensor<ElementDst>, LayoutDst, CoordDst,
                 AscendCBisheng::TPosition::A2>,
     std::enable_if_t<!AscendCBisheng::Std::is_one_of_v<
-                         ElementSrc, int8_t, float8_e4m3_t, float8_e5m2_t> &&
+                         ElementSrc, int8_t, float8_e4m3_t, float8_e5m2_t,
+                         fp4x2_e2m1_t> &&
                      !AscendCBisheng::Std::is_one_of_v<
-                         ElementDst, int8_t, float8_e4m3_t, float8_e5m2_t> &&
+                         ElementDst, int8_t, float8_e4m3_t, float8_e5m2_t,
+                         fp4x2_e2m1_t> &&
                      tla::detail::isnZ<ElementSrc, LayoutSrc>::value &&
                      tla::detail::iszN<ElementDst, LayoutDst>::value>> {
   static constexpr uint32_t ELE_NUM_PER_C0 = BYTE_PER_C0 / sizeof(ElementSrc);
@@ -313,10 +315,12 @@ struct TileCopyTla<
                                  TensorSrc const &srcTensor) {
     static_assert(
         !AscendCBisheng::Std::is_one_of_v<typename TensorSrc::Element, int8_t,
-                                          float8_e4m3_t, float8_e5m2_t> &&
+                                          float8_e4m3_t, float8_e5m2_t,
+                                          fp4x2_e2m1_t> &&
             !AscendCBisheng::Std::is_one_of_v<typename TensorDst::Element,
                                               int8_t, float8_e4m3_t,
-                                              float8_e5m2_t> &&
+                                              float8_e5m2_t,
+                                              fp4x2_e2m1_t> &&
             tla::detail::isnZ<typename TensorSrc::Element,
                               typename TensorSrc::Layout>::value &&
             tla::detail::iszN<typename TensorDst::Element,
@@ -355,10 +359,12 @@ struct TileCopyTla<
                                  TensorSrc const &srcTensor, uint32_t l0Batch) {
     static_assert(
         !AscendCBisheng::Std::is_one_of_v<typename TensorSrc::Element, int8_t,
-                                          float8_e4m3_t, float8_e5m2_t> &&
+                                          float8_e4m3_t, float8_e5m2_t,
+                                          fp4x2_e2m1_t> &&
             !AscendCBisheng::Std::is_one_of_v<typename TensorDst::Element,
                                               int8_t, float8_e4m3_t,
-                                              float8_e5m2_t> &&
+                                              float8_e5m2_t,
+                                              fp4x2_e2m1_t> &&
             tla::detail::isnZ<typename TensorSrc::Element,
                               typename TensorSrc::Layout>::value &&
             tla::detail::iszN<typename TensorDst::Element,
@@ -396,18 +402,20 @@ struct TileCopyTla<
   }
 };
 
-/// Partial specialization for CopyL1ToL0A, AtlasA5, B8, nZ in and zN out. (Transpose A)
+/// Partial specialization for CopyL1ToL0A, AtlasA5, B8/B4, nZ in and zN out. (Transpose A)
 template <class ElementSrc, class ElementDst, class LayoutSrc, class LayoutDst, class CoordSrc, class CoordDst>
 struct TileCopyTla<
     Arch::AtlasA5,
     tla::Tensor<AscendCBisheng::LocalTensor<ElementSrc>, LayoutSrc, CoordSrc, AscendCBisheng::TPosition::A1>,
     tla::Tensor<AscendCBisheng::LocalTensor<ElementDst>, LayoutDst, CoordDst, AscendCBisheng::TPosition::A2>,
     std::enable_if_t<
-        AscendCBisheng::Std::is_one_of_v<ElementSrc, int8_t, float8_e4m3_t, float8_e5m2_t> &&
-        AscendCBisheng::Std::is_one_of_v<ElementDst, int8_t, float8_e4m3_t, float8_e5m2_t> &&
+        AscendCBisheng::Std::is_one_of_v<ElementSrc, int8_t, float8_e4m3_t, float8_e5m2_t, fp4x2_e2m1_t> &&
+        AscendCBisheng::Std::is_one_of_v<ElementDst, int8_t, float8_e4m3_t, float8_e5m2_t, fp4x2_e2m1_t> &&
         tla::detail::isnZ<ElementSrc, LayoutSrc>::value && tla::detail::iszN<ElementDst, LayoutDst>::value>> {
-    static constexpr uint32_t ELE_NUM_PER_C0 = BYTE_PER_C0 / sizeof(ElementSrc);
-    static constexpr uint32_t ELE_NUM_PER_FRACTAL = BYTE_PER_FRACTAL / sizeof(ElementSrc);
+    static constexpr uint32_t ELE_NUM_PER_C0 =
+        BYTE_PER_C0 * 8 / AscendCBisheng::SizeOfBits<ElementSrc>::value;
+    static constexpr uint32_t ELE_NUM_PER_FRACTAL =
+        BYTE_PER_FRACTAL * 8 / AscendCBisheng::SizeOfBits<ElementSrc>::value;
 
     // Mehtods
 
@@ -418,8 +426,8 @@ struct TileCopyTla<
     CATLASS_DEVICE void operator()(TensorDst const &dstTensor, TensorSrc const &srcTensor)
     {
         static_assert(
-            AscendCBisheng::Std::is_one_of_v<typename TensorSrc::Element, int8_t, float8_e4m3_t, float8_e5m2_t> &&
-            AscendCBisheng::Std::is_one_of_v<typename TensorDst::Element, int8_t, float8_e4m3_t, float8_e5m2_t> &&
+            AscendCBisheng::Std::is_one_of_v<typename TensorSrc::Element, int8_t, float8_e4m3_t, float8_e5m2_t, fp4x2_e2m1_t> &&
+            AscendCBisheng::Std::is_one_of_v<typename TensorDst::Element, int8_t, float8_e4m3_t, float8_e5m2_t, fp4x2_e2m1_t> &&
             tla::detail::isnZ<typename TensorSrc::Element, typename TensorSrc::Layout>::value
                 && tla::detail::iszN<typename TensorDst::Element, typename TensorDst::Layout>::value
                 && TensorSrc::position == AscendCBisheng::TPosition::A1 && TensorDst::position == AscendCBisheng::TPosition::A2,
@@ -445,10 +453,11 @@ struct TileCopyTla<
             auto dstOffset = dstTensor.layout()(dstTensor.coord());
             AscendCBisheng::LoadData(dstTensor.data()[dstOffset], srcTensor.data(), loadDataParams);
         } else {
+            constexpr uint32_t mStep = ELE_NUM_PER_C0 / C0_NUM_PER_FRACTAL;
             for (uint32_t kIdx = 0; kIdx < L0K / ELE_NUM_PER_C0; kIdx++) {
-                loadDataParams.mStartPosition = CeilDiv<C0_NUM_PER_FRACTAL>(tla::get<1>(srcCoord)) + kIdx * 2;
+                loadDataParams.mStartPosition = CeilDiv<C0_NUM_PER_FRACTAL>(tla::get<1>(srcCoord)) + kIdx * mStep;
                 loadDataParams.kStartPosition = CeilDiv<ELE_NUM_PER_C0>(tla::get<0>(srcCoord));
-                loadDataParams.mStep = 2;
+                loadDataParams.mStep = mStep;
                 loadDataParams.kStep = CeilDiv<ELE_NUM_PER_C0>(L0M);
                 loadDataParams.srcStride = CeilDiv<ELE_NUM_PER_FRACTAL>(srcOuterStrideRow);
                 loadDataParams.dstStride = CeilDiv<ELE_NUM_PER_FRACTAL>(dstOuterStrideCol);
@@ -496,8 +505,8 @@ struct TileCopyTla<
             loadDataParams.ifTranspose = true;
 
             if constexpr (AscendCBisheng::Std::is_one_of_v<
-                              typename TensorSrc::Element, float8_e4m3_t,
-                              float8_e5m2_t>) {
+                              typename TensorSrc::Element, int8_t,
+                              float8_e4m3_t, float8_e5m2_t>) {
                 load_cbuf_to_ca(
                     reinterpret_cast<__ca__ typename TensorSrc::Element *>(
                         dstTensor.data()[dstOffset].GetPhyAddr()),
@@ -534,18 +543,41 @@ struct TileCopyTla<
                 loadDataMxParams.xStep, loadDataMxParams.yStep,
                 loadDataMxParams.srcStride, loadDataMxParams.dstStride);
         } else {
+            constexpr uint32_t mStep = ELE_NUM_PER_C0 / C0_NUM_PER_FRACTAL;
             for (uint32_t kIdx = 0; kIdx < L0K / ELE_NUM_PER_C0; kIdx++) {
-                loadDataParams.mStartPosition = CeilDiv<C0_NUM_PER_FRACTAL>(tla::get<1>(srcCoord)) + kIdx * 2;
+                loadDataParams.mStartPosition = CeilDiv<C0_NUM_PER_FRACTAL>(tla::get<1>(srcCoord)) + kIdx * mStep;
                 loadDataParams.kStartPosition = CeilDiv<ELE_NUM_PER_C0>(tla::get<0>(srcCoord));
-                loadDataParams.mStep = 2;
+                loadDataParams.mStep = mStep;
                 loadDataParams.kStep = CeilDiv<ELE_NUM_PER_C0>(L0M);
                 loadDataParams.srcStride = CeilDiv<ELE_NUM_PER_FRACTAL>(srcOuterStrideRow);
                 loadDataParams.dstStride = CeilDiv<ELE_NUM_PER_FRACTAL>(dstOuterStrideCol);
                 loadDataParams.ifTranspose = true;
 
-                AscendCBisheng::LoadData(
-                    dstTensor.data()[dstOffset + kIdx * L0M * ELE_NUM_PER_C0],
-                    srcTensor.data(), loadDataParams);
+                auto dstTileOffset = dstOffset + kIdx * L0M * ELE_NUM_PER_C0;
+                if constexpr (AscendCBisheng::Std::is_one_of_v<
+                                  typename TensorSrc::Element, int8_t,
+                                  float8_e4m3_t, float8_e5m2_t>) {
+                    load_cbuf_to_ca(
+                        reinterpret_cast<__ca__ typename TensorSrc::Element *>(
+                            dstTensor.data()[dstTileOffset].GetPhyAddr()),
+                        (__cbuf__ typename TensorSrc::Element *)srcTensor.data()
+                            .GetPhyAddr(),
+                        loadDataParams.mStartPosition,
+                        loadDataParams.kStartPosition, loadDataParams.mStep,
+                        loadDataParams.kStep, loadDataParams.srcStride,
+                        loadDataParams.dstStride, 1);
+                } else {
+                    load_cbuf_to_ca_s4(
+                        (__ca__ typename TensorSrc::Element *)dstTensor
+                            .data()[dstTileOffset]
+                            .GetPhyAddr(),
+                        (__cbuf__ typename TensorSrc::Element *)srcTensor.data()
+                            .GetPhyAddr(),
+                        loadDataParams.mStartPosition,
+                        loadDataParams.kStartPosition, loadDataParams.mStep,
+                        loadDataParams.kStep, loadDataParams.srcStride,
+                        loadDataParams.dstStride, 1);
+                }
             }
 
             uint64_t mxDstAddr =
@@ -569,8 +601,8 @@ struct TileCopyTla<
     CATLASS_DEVICE void operator()(TensorDst const &dstTensor, TensorSrc const &srcTensor, uint32_t l0Batch)
     {
         static_assert(
-            AscendCBisheng::Std::is_one_of_v<typename TensorSrc::Element, int8_t, float8_e4m3_t, float8_e5m2_t> &&
-            AscendCBisheng::Std::is_one_of_v<typename TensorDst::Element, int8_t, float8_e4m3_t, float8_e5m2_t> &&
+            AscendCBisheng::Std::is_one_of_v<typename TensorSrc::Element, int8_t, float8_e4m3_t, float8_e5m2_t, fp4x2_e2m1_t> &&
+            AscendCBisheng::Std::is_one_of_v<typename TensorDst::Element, int8_t, float8_e4m3_t, float8_e5m2_t, fp4x2_e2m1_t> &&
             tla::detail::isnZ<typename TensorSrc::Element, typename TensorSrc::Layout>::value
                 && tla::detail::iszN<typename TensorDst::Element, typename TensorDst::Layout>::value
                 && TensorSrc::position == AscendCBisheng::TPosition::A1 && TensorDst::position == AscendCBisheng::TPosition::A2,
@@ -602,7 +634,8 @@ struct TileCopyTla<
         } else {
             loadDataParams.mStartPosition = 0;
             loadDataParams.kStartPosition = 0;
-            loadDataParams.mStep = 2;
+            constexpr uint32_t mStep = ELE_NUM_PER_C0 / C0_NUM_PER_FRACTAL;
+            loadDataParams.mStep = mStep;
             loadDataParams.kStep = CeilDiv<ELE_NUM_PER_C0>(L0M);
             loadDataParams.srcStride = CeilDiv<ELE_NUM_PER_FRACTAL>(srcOuterStrideRow);
             loadDataParams.dstStride = CeilDiv<ELE_NUM_PER_FRACTAL>(dstOuterStrideCol);
