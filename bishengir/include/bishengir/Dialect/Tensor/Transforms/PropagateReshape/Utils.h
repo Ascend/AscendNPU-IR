@@ -154,6 +154,42 @@ createMemrefExpand(PatternRewriter &rewriter, Location loc, Value src,
                    ArrayRef<ReassociationIndices> reassociation,
                    const SmallVector<OpFoldResult> &newOutputShape);
 
+SmallVector<int64_t> convertToConstantValues(ArrayRef<OpFoldResult> values);
+
+SmallVector<int64_t>
+getUndroppedSubviewShape(ArrayRef<int64_t> subview,
+                         const llvm::SmallBitVector &droppedDims);
+
+SmallVector<OpFoldResult>
+getUndroppedSubviewShape(PatternRewriter &rewriter,
+                         ArrayRef<OpFoldResult> subview,
+                         const llvm::SmallBitVector &droppedDims);
+
+SmallVector<OpFoldResult>
+getUndroppedExpandedSubviewShape(PatternRewriter &rewriter,
+                                 ArrayRef<OpFoldResult> subview,
+                                 ArrayRef<ReassociationIndices> reassociation,
+                                 const llvm::SmallBitVector &droppedDims);
+
+SmallVector<ReassociationIndices>
+getFullReassociation(ArrayRef<ReassociationIndices> reassociation,
+                     const llvm::SmallBitVector &droppedDims);
+
+SmallVector<int64_t>
+getRankReducingShape(const SmallVector<int64_t> &expandedShape,
+                     ArrayRef<ReassociationIndices> fullReassociation,
+                     const llvm::SmallBitVector &droppedDims);
+
+SmallVector<OpFoldResult>
+getRankReducingShape(const SmallVector<OpFoldResult> &expandedShape,
+                     ArrayRef<ReassociationIndices> fullReassociation,
+                     const llvm::SmallBitVector &droppedDims);
+
+RankedTensorType
+getRankReducingType(const SmallVector<OpFoldResult> &sizes,
+                    ArrayRef<ReassociationIndices> reassociation,
+                    const llvm::SmallBitVector &droppedDims, Type elementType);
+
 class SliceModifyingOpResult {
 public:
   SliceModifyingOpResult() = default;
@@ -168,6 +204,11 @@ public:
   ArrayRef<OpFoldResult> getSuperviewOutputShape() const {
     return superviewOutputShape;
   }
+  ArrayRef<ReassociationIndices> getReassociation() const {
+    return reassociation;
+  }
+
+  size_t size() const { return mixedOffsets.size(); }
 
   // Append methods for building the result
   void appendOffset(OpFoldResult offset) { mixedOffsets.push_back(offset); }
@@ -178,6 +219,9 @@ public:
   }
   void appendSuperviewShape(OpFoldResult shape) {
     superviewOutputShape.push_back(shape);
+  }
+  void setReassociaion(ArrayRef<ReassociationIndices> reasso) {
+    reassociation = llvm::to_vector(reasso);
   }
 
   // Method to append all values at once
@@ -199,12 +243,26 @@ public:
     superviewOutputShape.back() = superviewShape;
   }
 
+  void replaceAt(size_t index, OpFoldResult offset, OpFoldResult size,
+                 OpFoldResult stride, OpFoldResult subviewShape,
+                 OpFoldResult superviewShape) {
+    assert(index < mixedOffsets.size() &&
+           "index out of bounds in SliceModifyingOpResult");
+    mixedOffsets[index] = offset;
+    mixedSizes[index] = size;
+    mixedStrides[index] = stride;
+    subviewOutputShape[index] = subviewShape;
+    superviewOutputShape[index] = superviewShape;
+  }
+
 private:
   SmallVector<OpFoldResult> mixedOffsets;
   SmallVector<OpFoldResult> mixedSizes;
   SmallVector<OpFoldResult> mixedStrides;
   SmallVector<OpFoldResult> subviewOutputShape;
   SmallVector<OpFoldResult> superviewOutputShape;
+  // consider rank-reducing case, new reshape op need new reassociation
+  SmallVector<ReassociationIndices> reassociation;
 };
 
 LogicalResult
@@ -214,7 +272,8 @@ getExtractSliceModifyingOp(PatternRewriter &rewriter, ExtractSliceOp slicingOp,
                            SmallVector<OpFoldResult> &newMixedOffsets,
                            SmallVector<OpFoldResult> &newMixedSizes,
                            SmallVector<OpFoldResult> &newMixedStrides,
-                           SmallVector<OpFoldResult> &expandOutputShape);
+                           SmallVector<OpFoldResult> &expandOutputShape,
+                           SmallVector<ReassociationIndices> &newReasso);
 
 LogicalResult
 getInsertSliceModifyingOp(PatternRewriter &rewriter, InsertSliceOp slicingOp,
@@ -224,7 +283,17 @@ getInsertSliceModifyingOp(PatternRewriter &rewriter, InsertSliceOp slicingOp,
                           SmallVector<OpFoldResult> &newMixedSizes,
                           SmallVector<OpFoldResult> &newMixedStrides,
                           SmallVector<OpFoldResult> &expandSrcOutputShape,
-                          SmallVector<OpFoldResult> &expandDestOutputShape);
+                          SmallVector<OpFoldResult> &expandDestOutputShape,
+                          SmallVector<ReassociationIndices> &newReasso);
+
+LogicalResult
+getSubviewModifyingOp(PatternRewriter &rewriter, memref::SubViewOp slicingOp,
+                      ArrayRef<ReassociationIndices> reassociation,
+                      ArrayRef<OpFoldResult> expandedRef, bool isSubview,
+                      SmallVector<OpFoldResult> &newMixedOffsets,
+                      SmallVector<OpFoldResult> &newMixedSizes,
+                      SmallVector<OpFoldResult> &newMixedStrides,
+                      SmallVector<OpFoldResult> &expandOutputShape);
 
 SmallVector<OpFoldResult> getMixedSizesOrOutputShape(PatternRewriter &rewriter,
                                                      Value val);
@@ -232,6 +301,9 @@ SmallVector<OpFoldResult> getMixedSizesOrOutputShape(PatternRewriter &rewriter,
 void updateHFusionReduceWithIndexDim(PatternRewriter &rewriter,
                                      Operation *reduceWithIndexOp,
                                      const SmallVector<int64_t> &newDimensions);
+
+bool isUnitDimReshape(ArrayRef<int64_t> expandedShape,
+                      ArrayRef<mlir::ReassociationIndices> reassociation);
 
 // utility functions used for reorder tranpose op
 void createTransposedReassoc(
@@ -249,13 +321,12 @@ void createNewPermutation(
 // Get the inverse of this permutation
 SmallVector<int64_t> getInversePermutation(ArrayRef<int64_t> permutation);
 
-bool isUnitDimReshape(ArrayRef<int64_t> expandedShape,
-                      ArrayRef<ReassociationIndices> reassociation);
-
-bool isNonUnitExpandOrEmptyReassoc(ArrayRef<int64_t> expandedShape,
-                     ArrayRef<ReassociationIndices> reassociation);
+bool isNonUnitExpandOrEmptyReassoc(
+    ArrayRef<int64_t> expandedShape,
+    ArrayRef<ReassociationIndices> reassociation);
 
 } // namespace reshape_utils
+
 } // namespace tensor
 
 Operation *createNewExpandOpFromExpandOp(tensor::ExpandShapeOp expandOp,
@@ -272,7 +343,6 @@ SmallVector<Value> getNewOperands(Operation *collapseOp,
 
 Value tryExpandOperand(Operation *collapseOp, PatternRewriter &rewriter,
                        Value operand, int64_t targetRank);
-
 } // namespace mlir
 
 #endif // BISHENGIR_DIALECT_TENSOR_TRANSFORMS_PROPAGATERESHAPE_UTILS_H

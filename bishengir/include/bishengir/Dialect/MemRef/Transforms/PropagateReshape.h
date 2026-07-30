@@ -16,6 +16,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/MemRef/Transforms/Passes.h"
+#include "bishengir/Dialect/Tensor/Transforms/Passes.h"
 #include "mlir/Transforms/FoldUtils.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
@@ -29,21 +30,31 @@ namespace memref {
 class PropagateMemrefCollapseDown
     : public mlir::OpRewritePattern<memref::CollapseShapeOp> {
 public:
-  explicit PropagateMemrefCollapseDown(MLIRContext *context)
-      : OpRewritePattern<memref::CollapseShapeOp>(context, /*benefit=*/1) {}
+  explicit PropagateMemrefCollapseDown(
+      MLIRContext *context, PropagateReshapeOptions options = {})
+      : OpRewritePattern<memref::CollapseShapeOp>(context, /*benefit=*/1),
+        options(options) {}
 
   LogicalResult matchAndRewrite(memref::CollapseShapeOp collapseOp,
                                 PatternRewriter &rewriter) const override;
+
+private:
+  PropagateReshapeOptions options;
 };
 
 // Pattern to propagate expand shape operations upward through the IR
 class PropagateMemrefExpandUp
     : public mlir::OpRewritePattern<memref::ExpandShapeOp> {
 public:
-  explicit PropagateMemrefExpandUp(MLIRContext *context)
-      : OpRewritePattern<memref::ExpandShapeOp>(context, /*benefit=*/1) {}
+  explicit PropagateMemrefExpandUp(
+      MLIRContext *context, PropagateReshapeOptions options = {})
+      : OpRewritePattern<memref::ExpandShapeOp>(context, /*benefit=*/1),
+        options(options) {}
   LogicalResult matchAndRewrite(memref::ExpandShapeOp expandOp,
                                 PatternRewriter &rewriter) const override;
+
+private:
+  PropagateReshapeOptions options;
 };
 
 // Pattern to swap collapse and expand shape operations when beneficial

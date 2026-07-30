@@ -88,9 +88,10 @@ void PropagateReshapePass::runOnOperation() {
   patterns.add<SwapCollapseExpand>(context);
   patterns.add<PropagateExpandUp>(context, options);
   patterns.add<PropagateCollapseDown>(context, options);
-  patterns.add<memref::SwapMemrefCollapseExpand>(context);
-  patterns.add<memref::PropagateMemrefExpandUp>(context);
-  patterns.add<memref::PropagateMemrefCollapseDown>(context);
+  if (!options.forRegbased)
+    patterns.add<memref::SwapMemrefCollapseExpand>(context);
+  patterns.add<memref::PropagateMemrefExpandUp>(context, options);
+  patterns.add<memref::PropagateMemrefCollapseDown>(context, options);
 
   if (failed(applyPatternsGreedily(f, std::move(patterns)))) {
     signalPassFailure();
