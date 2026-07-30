@@ -247,10 +247,10 @@ A5InsertionPattern::matchAndRewrite(Operation *op,
         return success();
       })
       .Case<hivm::VBrcOp>([&](auto op) {
-        PropagatorUtil::createPropagatorsUp(op, TCoreType::CUBE_AND_VECTOR,
-                                            rewriter);
-        PropagatorUtil::createPropagatorsDown(op, TCoreType::CUBE_AND_VECTOR,
-                                              rewriter);
+        PropagatorUtil::createPropagatorsUp(op, TCoreType::VECTOR,
+                                            hivm::AddressSpace::UB, rewriter);
+        PropagatorUtil::createPropagatorsDown(op, TCoreType::VECTOR,
+                                              hivm::AddressSpace::UB, rewriter);
         return success();
       })
       .Case<func::CallOp>([&](auto callOp) {
