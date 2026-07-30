@@ -65,9 +65,17 @@ static bool isSharedWithDownstreamToolchain(StringRef argName) {
 
 LogicalResult inferMixedCV(ModuleOp &module,
                            BiShengIRCompileMainConfig &config) {
-  if (module.walk([](mlir::scope::ScopeOp) {
-        return mlir::WalkResult::interrupt();
-      }).wasInterrupted())
+  auto status = module.walk([](mlir::scope::ScopeOp scopeOp) {
+    // SIMT scopes are introduced by the mixed SIMD/SIMT pipeline and should
+    // not suppress MixedCV auto inference. Keep the old early exit for other
+    // scoped IR(especially the scope in CV affinity scenarios), which is still
+    // treated as hand-written/special-case input.
+    if (auto vectorType = scopeOp->getAttrOfType<StringAttr>("vector_type");
+        vectorType && vectorType.getValue() == "simt")
+      return mlir::WalkResult::advance();
+    return mlir::WalkResult::interrupt();
+  });
+  if (status.wasInterrupted())
     return success();
 
   auto funcs = llvm::make_filter_range(
