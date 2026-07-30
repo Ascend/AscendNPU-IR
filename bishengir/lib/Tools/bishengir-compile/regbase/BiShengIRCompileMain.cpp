@@ -36,6 +36,23 @@ using namespace mlir;
 
 namespace {
 
+using PipelineBuilder = std::function<void(mlir::PassManager &,
+                                           const BiShengIRCompileMainConfig &)>;
+
+enum class CompileFlow {
+  Mixed,
+  PureSimt,
+  Simd,
+};
+
+CompileFlow getCompileFlow(const BiShengIRCompileMainConfig &config) {
+  if (config.getEnableSimdSimtMixCompile())
+    return CompileFlow::Mixed;
+  if (config.getPureSimt())
+    return CompileFlow::PureSimt;
+  return CompileFlow::Simd;
+}
+
 /// Get the lib directory path (../lib relative to bishengir-compile
 /// executable). Returns canonical absolute path without ".." or ".".
 static std::string getLibDirFromExecutable(StringRef executablePath) {
@@ -229,9 +246,7 @@ using MixedModules = std::pair<ModuleOp, SmallVector<ModuleOp, 2>>;
 /// Run a pipeline on a module using the regbase builder and A3's runPipeline utility.
 static LogicalResult
 runPipelineRegBase(ModuleOp mod,
-                   const std::function<void(mlir::PassManager &,
-                                            const BiShengIRCompileMainConfig &)>
-                       &buildPipeline,
+                   const PipelineBuilder &buildPipeline,
                    BiShengIRCompileMainConfig &config,
                    const std::string &pipelineName) {
   // Bind the config parameter into the builder to match A3's runPipeline signature.
@@ -259,23 +274,50 @@ static MixedModules getMixedModules(ModuleOp topMod) {
   return res;
 }
 
-//   Depends on Triton and DPX lowering passes.
-static bool runSIMTToLLVMCompile(ArrayRef<ModuleOp> modules,
-                                 BiShengIRCompileMainConfig config) {
-  config.setPureSimt(true);
-  bool result = true;
-  for (auto module : modules) {
-    result = result && runPipelineRegBase(module, regbase::buildSIMTPipeline,
-                                          config, "BiShengSIMT").succeeded();
-  }
-  return result;
+static bool runModulePipeline(ModuleOp module, const PipelineBuilder &builder,
+                              BiShengIRCompileMainConfig &config,
+                              StringRef pipelineName) {
+  return succeeded(
+      runPipelineRegBase(module, builder, config, pipelineName.str()));
 }
 
-static bool runSIMDToLLVMCompile(ModuleOp module,
-                                 BiShengIRCompileMainConfig &config) {
-  return runPipelineRegBase(module, regbase::buildBiShengHIRAVEToLLVMPipeline,
-                            config, "BiShengSIMD")
-      .succeeded();
+static bool runModulePipelines(ArrayRef<ModuleOp> modules,
+                               const PipelineBuilder &builder,
+                               BiShengIRCompileMainConfig &config,
+                               StringRef pipelineName) {
+  bool success = true;
+  for (auto module : modules) {
+    // Stop this pipeline on each module after earlier pipeline fails.
+    success =
+        success && runModulePipeline(module, builder, config, pipelineName);
+  }
+  return success;
+}
+
+static bool runMixedPipelines(ModuleOp mixedModule,
+                              BiShengIRCompileMainConfig &config) {
+  if (!runModulePipeline(mixedModule, regbase::buildBiShengHIRPipeline, config,
+                         "BiShengHIR")) {
+    return false;
+  }
+
+  auto [mainMod, simtMods] = getMixedModules(mixedModule);
+  if (!runModulePipelines(simtMods, regbase::buildBiShengTTIRPipeline, config,
+                          "BiShengSIMT")) {
+    return false;
+  }
+
+  if (!runModulePipeline(mixedModule, regbase::buildBiShengHIRFinishPipeline,
+                         config, "BishengHIR")) {
+    return false;
+  }
+
+  if (!runModulePipeline(mainMod, regbase::buildFinalHIVMPipelines, config,
+                         "buildFinalHIVMPipelines")) {
+    return false;
+  }
+  return runModulePipeline(mainMod, regbase::buildBiShengHIRAVEToLLVMPipeline,
+                           config, "BiShengSIMD");
 }
 
 } // namespace
@@ -336,6 +378,7 @@ bishengir::regbase::runRegBasePipeline(ModuleOp mod,
   if (config.getEnableTuningMode()) {
     tryTimes = 1;
   }
+  CompileFlow compileFlow = getCompileFlow(config);
   for (int i = 0; i < tryTimes; i++) {
     LDBG("Attempt number: " << i << " with max buffer count tuning delta: "
                             << config.getHfusionMaxBufferCountTuning());
@@ -345,41 +388,22 @@ bishengir::regbase::runRegBasePipeline(ModuleOp mod,
     hasCcOverflow = false;
     hasCbufOverflow = false;
 
-    //   Depends on Triton pipeline and SIMT module split.
-    if (config.getEnableSimdSimtMixCompile()) {
-      // Mixed SIMD/SIMT pipeline
-      success = success && succeeded(runPipelineRegBase(
-                               hirCompileMode,
-                               regbase::buildBiShengHIRPipeline, config,
-                               "BiShengHIR"));
-      auto [mainMod, simtMods] = getMixedModules(hirCompileMode);
-      for (auto simtMod : simtMods) {
-        success = success && succeeded(runPipelineRegBase(
-                                 simtMod, regbase::buildBiShengTTIRPipeline,
-                                 config, "BiShengTTIR"));
-      }
-      success = success && succeeded(runPipelineRegBase(
-                               hirCompileMode,
-                               regbase::buildBiShengHIRFinishPipeline,
-                               config, "BishengHIR"));
-      success = success && succeeded(runPipelineRegBase(
-                               mainMod, regbase::buildFinalHIVMPipelines,
-                               config, "buildFinalHIVMPipelines"));
-
-    } else if (config.getEnableTritonIRCompile()) {
-      success = succeeded(runPipelineRegBase(hirCompileMode,
-                                             regbase::buildBiShengTTIRPipeline,
-                                             config, "BiShengTTIR"));
+    if (compileFlow == CompileFlow::Mixed) {
+      success = runMixedPipelines(hirCompileMode, config);
+    } else if (compileFlow == CompileFlow::PureSimt) {
+      success = runModulePipeline(hirCompileMode,
+                                  regbase::buildBiShengTTIRPipeline, config,
+                                  "BiShengSIMT");
     } else {
       // Standard HIR compile path (no SIMD/SIMT split)
-      success = succeeded(runPipelineRegBase(hirCompileMode,
-                                             regbase::buildBiShengHIRPipeline,
-                                             config, "BiShengHIR"));
+      success = runModulePipeline(hirCompileMode,
+                                  regbase::buildBiShengHIRPipeline, config,
+                                  "BiShengHIR");
       // Stop final HIVM lowering after earlier pipeline fails.
       success =
-          success && succeeded(runPipelineRegBase(
-                         hirCompileMode, regbase::buildFinalHIVMPipelines,
-                         config, "buildFinalHIVMPipelines"));
+          success && runModulePipeline(hirCompileMode,
+                                       regbase::buildFinalHIVMPipelines,
+                                       config, "buildFinalHIVMPipelines");
     }
     bool hasMemoryOverflow = hasUboverflow || hasCcOverflow || hasCbufOverflow;
     if (!success && hasMemoryOverflow) {
@@ -442,17 +466,11 @@ bishengir::regbase::runRegBasePipeline(ModuleOp mod,
       continue;
     }
 
-    // hivmc pipeline
-    if (config.getEnableSimdSimtMixCompile()) {
-      auto [mainMod, simtMods] = getMixedModules(hirCompileMode);
-      if (runSIMTToLLVMCompile(simtMods, config) &&
-          runSIMDToLLVMCompile(mainMod, config)) {
-        // Once both are lowered, flatten into single module
-      }
-    } else if (config.getPureSimt()) {
-      success = success && runSIMTToLLVMCompile(hirCompileMode, config);
-    } else {
-      success = success && runSIMDToLLVMCompile(hirCompileMode, config);
+    if (compileFlow == CompileFlow::Simd) {
+      // Stop SIMD lowering after earlier pipeline fails.
+      success = runModulePipeline(hirCompileMode,
+                                  regbase::buildBiShengHIRAVEToLLVMPipeline,
+                                  config, "BiShengSIMD");
     }
 
     addBitcodeAttrsToModule(hirCompileMode, config.getExecutablePath(), config);
