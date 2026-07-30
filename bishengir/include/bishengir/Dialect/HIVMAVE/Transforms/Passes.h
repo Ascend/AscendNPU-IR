@@ -28,9 +28,8 @@ std::unique_ptr<Pass> createAVENormalizeOpsPass();
 /// Create a pass to normalize arith ops for simd backend
 std::unique_ptr<Pass> createReplaceWithVectorScalarPass();
 
-/// Merge AVE small-width conversion chains and optimize AVE loops
-std::unique_ptr<Pass>
-createAveLoopOptimizePass(const AveLoopOptimizeOptions &options = {});
+/// Unroll and add deintlv for vextf
+std::unique_ptr<Pass> createAveLoopOptimizePass();
 
 /// Unroll and add deintlv for vsstb
 std::unique_ptr<Pass> createProcessVsstbPass();
