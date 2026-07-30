@@ -19,35 +19,22 @@
 
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/Utility.h"
 #include "llvm/ADT/SmallVector.h"
-#include <set>
 
 namespace mlir::hivm::syncsolver {
 
 class GraphSolver {
 public:
-  struct Edge {
-    ConflictPair *conflictPair;
-    CorePipeInfo corePipeSrc;
-    CorePipeInfo corePipeDst;
-    int startIndex;
-    int endIndex;
-    bool isUnitFlag;
-    Edge() = delete;
-    Edge(ConflictPair *conflictPair, CorePipeInfo corePipeSrc,
-         CorePipeInfo corePipeDst, int startIndex, int endIndex,
-         bool isUnitFlag)
-        : conflictPair(conflictPair), corePipeSrc(corePipeSrc),
-          corePipeDst(corePipeDst), startIndex(startIndex), endIndex(endIndex),
-          isUnitFlag(isUnitFlag) {}
-    Edge(CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst, int startIndex,
-         int endIndex)
-        : Edge(nullptr, corePipeSrc, corePipeDst, startIndex, endIndex, false) {
-    }
-    bool operator<(const Edge &other) const;
-  };
-
   // Configuration options.
   const SyncSolverOptions options;
+
+  struct Edge {
+    int startIndex{-1};
+    int endIndex{-1};
+
+    Edge() = delete;
+    Edge(int startIndex, int endIndex)
+        : startIndex(startIndex), endIndex(endIndex) {}
+  };
 
   // adjacencyList[pipeSrc][pipeDst] stores a set of Edge objects representing
   // directed transitions from pipeSrc to pipeDst that are valid for a given
@@ -58,27 +45,54 @@ public:
                  llvm::DenseMap<CorePipeInfo, llvm::SmallVector<Edge>>>
       adjacencyList;
 
+  virtual ~GraphSolver() = default;
   GraphSolver(const SyncSolverOptions &options) : options(options) {}
-
-  // Add a pipe-pair edge annotated with its active index interval.
-  void addPair(ConflictPair *conflictPair, CorePipeInfo corePipeSrc,
-               CorePipeInfo corePipeDst, int startIndex, int endIndex,
-               bool isUnitFlag = false);
 
   // Build adjacency list from a ConflictPair by decomposing it into edges.
   void addConflictPair(syncsolver::ConflictPair *conflictPair);
 
+  // Add a pipe-pair edge annotated with its active index interval.
+  virtual void addPair(CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst,
+                       ConflictPair *conflictPair);
+
   // Run shortest-path search (Dijkstra-like) with ordering constraints to find
   // the minimal reachable index for a path from startPipe to endPipe.
+  virtual std::optional<int> runDijkstra(CorePipeInfo corePipeSrc,
+                                         CorePipeInfo corePipeDst,
+                                         int startIndex, int endIndex,
+                                         Occurrence *occ1 = nullptr,
+                                         Occurrence *occ2 = nullptr);
+};
+
+class GraphSolverUnitFlag : public GraphSolver {
+public:
+  struct Edge {
+    int startIndex{-1};
+    int endIndex{-1};
+    bool isUnitFlag{false};
+    ConflictPair *conflictPair{nullptr};
+
+    Edge() = delete;
+    Edge(int startIndex, int endIndex, bool isUnitFlag,
+         ConflictPair *conflictPair = nullptr)
+        : startIndex(startIndex), endIndex(endIndex), isUnitFlag(isUnitFlag),
+          conflictPair(conflictPair) {}
+  };
+
+  llvm::DenseMap<CorePipeInfo,
+                 llvm::DenseMap<CorePipeInfo, llvm::SmallVector<Edge>>>
+      adjacencyList;
+
+  GraphSolverUnitFlag(const SyncSolverOptions &options)
+      : GraphSolver(options) {}
+
+  void addPair(CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst,
+               ConflictPair *conflictPair) override;
+
   std::optional<int> runDijkstra(CorePipeInfo corePipeSrc,
                                  CorePipeInfo corePipeDst, int startIndex,
-                                 int endIndex);
-
-  std::optional<int> runDijkstraUnitFlagEnabled(Occurrence *occ1,
-                                                Occurrence *occ2,
-                                                CorePipeInfo corePipeSrc,
-                                                CorePipeInfo corePipeDst,
-                                                int startIndex, int endIndex);
+                                 int endIndex, Occurrence *occ1 = nullptr,
+                                 Occurrence *occ2 = nullptr) override;
 };
 } // namespace mlir::hivm::syncsolver
 

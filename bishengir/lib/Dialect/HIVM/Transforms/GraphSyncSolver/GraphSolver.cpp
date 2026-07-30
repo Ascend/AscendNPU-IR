@@ -29,215 +29,126 @@
 using namespace mlir;
 using namespace hivm::syncsolver;
 
-// Compare edges (used for ordered sets). Edges must share endpoints when
-// compared.
-bool GraphSolver::Edge::operator<(const Edge &other) const {
-  assert(corePipeSrc == other.corePipeSrc);
-  assert(corePipeDst == other.corePipeDst);
-  if (startIndex != other.startIndex) {
-    return startIndex < other.startIndex;
-  }
-  return endIndex < other.endIndex;
+void GraphSolver::addPair(CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst,
+                          ConflictPair *conflictPair) {
+  Edge edge(conflictPair->startIndex, conflictPair->endIndex);
+  adjacencyList[corePipeSrc][corePipeDst].emplace_back(std::move(edge));
 }
 
-// Add an adjacency edge annotated with an active index interval.
-void GraphSolver::addPair(ConflictPair *conflictPair, CorePipeInfo corePipeSrc,
-                          CorePipeInfo corePipeDst, int startIndex,
-                          int endIndex, bool isUnitFlag) {
-  Edge edge(conflictPair, corePipeSrc, corePipeDst, startIndex, endIndex,
-            isUnitFlag);
-  adjacencyList[edge.corePipeSrc][edge.corePipeDst].push_back(edge);
-}
-
-// Convert a ConflictPair into adjacency edges (handles PIPE_ALL
-// special-casing).
 void GraphSolver::addConflictPair(ConflictPair *conflictPair) {
   assert(conflictPair != nullptr);
   DEBUG_WITH_TYPE("gss-graph-solver-add-conflict-pair", {
     llvm::dbgs() << "add-conflict-pair:\n";
     llvm::dbgs() << conflictPair->str() << '\n';
   });
-  if (conflictPair->isBarrier() &&
-      conflictPair->setCorePipeInfo.pipe == hivm::PIPE::PIPE_ALL) {
-    llvm::SmallVector<std::pair<hivm::TCoreType, hivm::TCoreType>> srcDstCores;
-    if (options.isCrossCoreMode()) {
-      srcDstCores.push_back(
-          std::make_pair(hivm::TCoreType::CUBE, hivm::TCoreType::VECTOR));
-      srcDstCores.push_back(
-          std::make_pair(hivm::TCoreType::VECTOR, hivm::TCoreType::CUBE));
-    } else {
-      srcDstCores.push_back(std::make_pair(hivm::TCoreType::CUBE_OR_VECTOR,
-                                           hivm::TCoreType::CUBE_OR_VECTOR));
-    }
-    for (auto [srcCore, dstCore] : srcDstCores) {
-      for (int i = 0; i < static_cast<int>(hivm::PIPE::PIPE_NUM); i++) {
-        auto setPipe = static_cast<hivm::PIPE>(i);
-        auto waitPipe = hivm::PIPE::PIPE_ALL;
-        int startIndex = conflictPair->startIndex;
-        int endIndex = conflictPair->endIndex;
-        assert(startIndex == endIndex);
-        addPair(conflictPair, CorePipeInfo(srcCore, setPipe),
-                CorePipeInfo(dstCore, waitPipe), startIndex, endIndex);
+  if (conflictPair->isBarrier()) {
+    if (conflictPair->setCorePipeInfo.pipe == hivm::PIPE::PIPE_ALL) {
+      llvm::SmallVector<std::tuple<hivm::TCoreType, hivm::TCoreType>>
+          srcDstCores;
+      if (options.isCrossCoreMode()) {
+        srcDstCores = {
+            {hivm::TCoreType::CUBE, hivm::TCoreType::VECTOR},
+            {hivm::TCoreType::VECTOR, hivm::TCoreType::CUBE},
+        };
+      } else {
+        srcDstCores = {
+            {hivm::TCoreType::CUBE_OR_VECTOR, hivm::TCoreType::CUBE_OR_VECTOR},
+        };
       }
-    }
-  } else if (!conflictPair->isBarrier() &&
-             conflictPair->waitCorePipeInfo.pipe == hivm::PIPE::PIPE_S) {
-    for (int i = 0; i < static_cast<int>(hivm::PIPE::PIPE_NUM); i++) {
-      auto coreDst = conflictPair->waitCorePipeInfo.coreType;
-      auto waitPipe = static_cast<hivm::PIPE>(i);
-      addPair(conflictPair, conflictPair->setCorePipeInfo,
-              CorePipeInfo(coreDst, waitPipe), conflictPair->startIndex,
-              conflictPair->endIndex);
+      for (auto &[srcCore, dstCore] : srcDstCores) {
+        for (int i = 0; i < static_cast<int>(hivm::PIPE::PIPE_NUM); i++) {
+          auto setPipe = static_cast<hivm::PIPE>(i);
+          auto waitPipe = hivm::PIPE::PIPE_ALL;
+          addPair(CorePipeInfo(srcCore, setPipe),
+                  CorePipeInfo(dstCore, waitPipe), conflictPair);
+        }
+      }
+    } else {
+      addPair(conflictPair->setCorePipeInfo, conflictPair->waitCorePipeInfo,
+              conflictPair);
     }
   } else {
-    auto corePipeSrc = conflictPair->setCorePipeInfo;
-    auto corePipeDst = conflictPair->waitCorePipeInfo;
-    int startIndex = conflictPair->startIndex;
-    int endIndex = conflictPair->endIndex;
-    addPair(conflictPair, corePipeSrc, corePipeDst, startIndex, endIndex,
-            conflictPair->replacedWithUnitFlag);
+    if (conflictPair->waitCorePipeInfo.pipe == hivm::PIPE::PIPE_S) {
+      for (int i = 0; i < static_cast<int>(hivm::PIPE::PIPE_NUM); i++) {
+        auto coreDst = conflictPair->waitCorePipeInfo.coreType;
+        auto waitPipe = static_cast<hivm::PIPE>(i);
+        addPair(conflictPair->setCorePipeInfo, CorePipeInfo(coreDst, waitPipe),
+                conflictPair);
+      }
+    } else {
+      addPair(conflictPair->setCorePipeInfo, conflictPair->waitCorePipeInfo,
+              conflictPair);
+    }
   }
 }
 
-// Run a Dijkstra-like search over pipes using index intervals as
-// weights/constraints. Returns minimal reachable index for endPipe or empty
-// optional if unreachable.
 std::optional<int> GraphSolver::runDijkstra(CorePipeInfo corePipeSrc,
                                             CorePipeInfo corePipeDst,
-                                            int startIndex, int endIndex) {
+                                            int startIndex, int endIndex,
+                                            Occurrence *occ1,
+                                            Occurrence *occ2) {
+  (void)occ1;
+  (void)occ2;
   llvm::DenseMap<CorePipeInfo, int> distance;
-  std::priority_queue<std::pair<int, CorePipeInfo>,
-                      std::vector<std::pair<int, CorePipeInfo>>,
-                      std::greater<std::pair<int, CorePipeInfo>>>
+  struct QueElement {
+    int index{-1};
+    CorePipeInfo corePipe;
+    QueElement(int index, CorePipeInfo corePipe)
+        : index(index), corePipe(corePipe) {}
+    bool operator>(const QueElement &other) const {
+      return index > other.index;
+    }
+  };
+  std::priority_queue<QueElement, std::vector<QueElement>,
+                      std::greater<QueElement>>
       que;
-  que.emplace(startIndex, corePipeSrc);
-  auto [coreDst, pipeDst] = corePipeDst;
+  que.emplace(QueElement(startIndex, corePipeSrc));
 
   LLVM_DEBUG(llvm::dbgs() << "dij-start-end-indices: " << startIndex << ' '
                           << endIndex << '\n');
 
   while (!que.empty()) {
-    auto [curIndex, curCorePipe] = que.top();
-    auto [curCore, curPipe] = curCorePipe;
+    auto curElement = que.top();
+    auto curIndex = curElement.index;
+    auto curCorePipe = curElement.corePipe;
     que.pop();
 
-    LLVM_DEBUG(llvm::dbgs() << "dij-step: " << curCore << ' ' << curPipe << ' '
-                            << curIndex << '\n');
+    LLVM_DEBUG(llvm::dbgs() << "dij-step: " << curCorePipe.coreType << ' '
+                            << curCorePipe.pipe << ' ' << curIndex << '\n');
 
-    if (curCorePipe == corePipeDst && distance.count(corePipeDst)) {
-      break;
+    auto curIt = distance.find(curCorePipe);
+    if (curIt != distance.end()) {
+      if (curIt->second < curIndex) {
+        continue;
+      }
+      if (curCorePipe == corePipeDst) {
+        return curIndex;
+      }
     }
 
-    if (distance.count(curCorePipe) && distance[curCorePipe] < curIndex) {
-      continue;
-    }
-
-    if (distance.count(curCorePipe) && distance[curCorePipe] > endIndex) {
-      break;
-    }
-
-    if (curCore == coreDst &&
-        ((curIndex != startIndex && curPipe == hivm::PIPE::PIPE_S) ||
-         curPipe == hivm::PIPE::PIPE_ALL)) {
-      distance[corePipeDst] = curIndex;
-      break;
+    if (curCorePipe.coreType == corePipeDst.coreType) {
+      if (curIndex != startIndex && curCorePipe.pipe == hivm::PIPE::PIPE_S) {
+        return curIndex;
+      }
+      if (curCorePipe.pipe == hivm::PIPE::PIPE_ALL) {
+        return curIndex;
+      }
     }
 
     for (auto &[endCorePipe, edges] : adjacencyList[curCorePipe]) {
-      for (auto edge : edges) {
-        if (edge.startIndex < curIndex) {
+      for (auto &edge : edges) {
+        if (edge.startIndex < curIndex || edge.endIndex > endIndex) {
           continue;
         }
-        if (!distance.count(endCorePipe) ||
-            (distance[endCorePipe] > (edge.endIndex))) {
-          distance[endCorePipe] = edge.endIndex;
-          que.emplace(edge.endIndex, endCorePipe);
+        auto [nextIt, isInserted] =
+            distance.insert({endCorePipe, edge.endIndex});
+        if (isInserted || nextIt->second > edge.endIndex) {
+          nextIt->second = edge.endIndex;
+          que.emplace(QueElement(edge.endIndex, endCorePipe));
         }
       }
     }
   }
 
-  return distance.count(corePipeDst) ? distance[corePipeDst]
-                                     : std::optional<int>();
-}
-
-std::optional<int> GraphSolver::runDijkstraUnitFlagEnabled(
-    Occurrence *occ1, Occurrence *occ2, CorePipeInfo corePipeSrc,
-    CorePipeInfo corePipeDst, int startIndex, int endIndex) {
-  // (is-unit-flag, last-node-is-occ-dst, core-pipe-info)
-  using DistKey = std::tuple<int, int, CorePipeInfo>;
-
-  llvm::DenseMap<DistKey, int> distance;
-  std::priority_queue<std::pair<int, DistKey>,
-                      std::vector<std::pair<int, DistKey>>,
-                      std::greater<std::pair<int, DistKey>>>
-      que;
-  que.emplace(startIndex, DistKey(false, false, corePipeSrc));
-  auto [coreDst, pipeDst] = corePipeDst;
-  LLVM_DEBUG(llvm::dbgs() << "dij-start-end-indices: " << startIndex << ' '
-                          << endIndex << '\n');
-
-  while (!que.empty()) {
-    auto [curIndex, curDistKey] = que.top();
-    auto [curIsUnitFlag, curIsOccDst, curCorePipe] = curDistKey;
-    auto [curCore, curPipe] = curCorePipe;
-    que.pop();
-
-    LLVM_DEBUG(llvm::dbgs() << "dij-step: " << curCore << ' ' << curPipe << ' '
-                            << curIsUnitFlag << ' ' << curIsOccDst << ' '
-                            << curIndex << '\n');
-
-    if (distance.count(curDistKey) && distance[curDistKey] < curIndex) {
-      continue;
-    }
-
-    if (distance.count(curDistKey) && distance[curDistKey] > endIndex) {
-      break;
-    }
-
-    if (curCore == coreDst &&
-        ((curIndex != startIndex && curPipe == hivm::PIPE::PIPE_S) ||
-         curPipe == hivm::PIPE::PIPE_ALL)) {
-      distance[DistKey(false, false, corePipeDst)] = curIndex;
-      break;
-    }
-
-    for (auto &[endCorePipe, edges] : adjacencyList[curCorePipe]) {
-      for (auto edge : edges) {
-        if (edge.startIndex < curIndex) {
-          continue;
-        }
-        if (edge.isUnitFlag) {
-          if (curIndex == startIndex && edge.startIndex != startIndex) {
-            continue;
-          }
-        }
-        assert(edge.conflictPair != nullptr);
-        DistKey nxtKey(edge.isUnitFlag, (edge.conflictPair->waitOcc == occ2),
-                       endCorePipe);
-        if (!distance.count(nxtKey) || (distance[nxtKey] > edge.endIndex)) {
-          distance[nxtKey] = edge.endIndex;
-          que.emplace(edge.endIndex, nxtKey);
-        }
-      }
-    }
-  }
-
-  std::optional<int> retDist;
-  if (auto it = distance.find(DistKey(false, false, corePipeDst));
-      it != distance.end()) {
-    retDist = retDist.has_value() ? std::min(retDist.value(), it->second)
-                                  : it->second;
-  }
-  if (auto it = distance.find(DistKey(false, true, corePipeDst));
-      it != distance.end()) {
-    retDist = retDist.has_value() ? std::min(retDist.value(), it->second)
-                                  : it->second;
-  }
-  if (auto it = distance.find(DistKey(true, true, corePipeDst));
-      it != distance.end()) {
-    retDist = retDist.has_value() ? std::min(retDist.value(), it->second)
-                                  : it->second;
-  }
-  return retDist;
+  return {};
 }

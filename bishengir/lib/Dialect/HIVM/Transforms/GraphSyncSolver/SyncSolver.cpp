@@ -863,7 +863,12 @@ bool Solver::checkGraphConflict(
   if (!endIndex.has_value()) {
     endIndex = occ2->startIndex;
   }
-  GraphSolver graphSolver(options);
+  std::unique_ptr<GraphSolver> graphSolver;
+  if (options.enableUnitFlagFeature) {
+    graphSolver = std::make_unique<GraphSolverUnitFlag>(options);
+  } else {
+    graphSolver = std::make_unique<GraphSolver>(options);
+  }
   llvm::DenseSet<ConflictPair *> visited;
   auto handleConflictPair = [&](ConflictPair *conflictPair) {
     if (conflictPair->couldNotRun) {
@@ -908,7 +913,7 @@ bool Solver::checkGraphConflict(
     DEBUG_WITH_TYPE("gss-sync-solver-check-graph-conflict", {
       llvm::dbgs() << "add-conflict-pair: " << conflictPair->str() << '\n';
     });
-    graphSolver.addConflictPair(conflictPair);
+    graphSolver->addConflictPair(conflictPair);
   };
 
   for (auto *parOcc : occ1->getAllParents()) {
@@ -951,16 +956,10 @@ bool Solver::checkGraphConflict(
   for (auto *conflictPair : extraConflictPairs) {
     handleConflictPair(conflictPair);
   }
-  std::optional<int> mnDistance;
-  if (options.enableUnitFlagFeature) {
-    mnDistance = graphSolver.runDijkstraUnitFlagEnabled(
-        occ1, occ2, corePipeSrc, corePipeDst, startIndex.value(),
-        endIndex.value());
-  } else {
-    mnDistance = graphSolver.runDijkstra(corePipeSrc, corePipeDst,
-                                         startIndex.value(), endIndex.value());
-  }
-  return !mnDistance.has_value() || mnDistance.value() > endIndex.value();
+  auto minDistance =
+      graphSolver->runDijkstra(corePipeSrc, corePipeDst, startIndex.value(),
+                               endIndex.value(), occ1, occ2);
+  return !minDistance.has_value() || minDistance.value() > endIndex.value();
 }
 
 bool Solver::checkSyncOpsConflicts(ConflictPair *conflictPair1,
