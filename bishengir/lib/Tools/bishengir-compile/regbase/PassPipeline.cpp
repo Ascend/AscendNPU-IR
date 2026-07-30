@@ -11,12 +11,9 @@
 #include "bishengir/Config/bishengir-config.h"
 #include "bishengir/Conversion/Passes.h"
 #include "bishengir/Conversion/HIVMAVEToStandard/HIVMAVEToStandard.h"
-// #include "bishengir/Conversion/FixCallUnknownLoc/FixCallUnknownLoc.h"
+#include "bishengir/Conversion/FixCallUnknownLoc/FixCallUnknownLoc.h"
 #include "bishengir/Conversion/HIVMToStandard/HIVMToStandard.h"
 #include "bishengir/Conversion/HIVMAVEToAVEIntrin/HIVMAVEToAVEIntrin.h"
-#include "bishengir/Conversion/HIVMAVEToStandard/HIVMAVEToStandard.h"
-#include "bishengir/Conversion/HIVMToStandard/HIVMToStandard.h"
-#include "bishengir/Conversion/Passes.h"
 #include "bishengir/Dialect/Annotation/Transforms/Passes.h"
 #include "bishengir/Dialect/AscendDPX/Transforms/Passes.h"
 #include "bishengir/Dialect/HACC/IR/HACC.h"
@@ -282,8 +279,7 @@ void buildLowerToLLVMPipeline(OpPassManager &pm,
   // hivm::addSyncBlockLockFinalizePasses(pm);
   pm.addPass(createConvertHIVMToStandardPass(hivmToStdOptions));
   pm.addPass(createConvertHIVMAVEToStandardPass());
-  // TOD(regbase)
-  // pm.nest<func::FuncOp>().addPass(createFixCallUnknownLocPass());
+  pm.nest<func::FuncOp>().addPass(createFixCallUnknownLocPass());
   pm.addPass(memref::createExpandStridedMetadataPass());
   pm.addPass(createConvertHIVMAVEToAVEIntrinPass());
   pm.addPass(hivmave::createHoistVstasPass());

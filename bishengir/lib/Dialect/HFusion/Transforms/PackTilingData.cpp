@@ -430,7 +430,8 @@ private:
         OpBuilder builder(deviceFunc);
         doEmitGetTilingStructSizeFunction(
             builder, tilingFuncName,
-            tilingFuncInfos.at(tilingFuncName).getTilingStructSize());
+            tilingFuncInfos.at(tilingFuncName).getTilingStructSize(),
+            deviceFunc.getLoc());
       }
 
       if (!emptyTilingFuncNames.contains(tilingFuncName))
@@ -949,7 +950,8 @@ private:
 
   void doEmitGetTilingStructSizeFunction(OpBuilder &opBuilder,
                                          StringRef tilingFuncName,
-                                         unsigned tilingStructSize) {
+                                         unsigned tilingStructSize,
+                                         Location loc) {
     auto getTilingStructSizeFnName = constructHostFunctionName(
         getOriginalKernelName(tilingFuncName.str()),
         hacc::HostFuncType::kGetTilingStructSizeFunction);
@@ -963,7 +965,7 @@ private:
                                        /*results=*/
                                        SmallVector<Type>{returnType});
     auto getTilingSizeFunc =
-        opBuilder.create<func::FuncOp>(opBuilder.getUnknownLoc(),
+        opBuilder.create<func::FuncOp>(loc,
                                        /*name=*/
                                        getTilingStructSizeFnName,
                                        /*type=*/t);
@@ -976,12 +978,12 @@ private:
     opBuilder.setInsertionPointToStart(entryBlock);
 #ifndef BSPUB_DAVINCI_BISHENGIR_A5
     auto tilingStructSizeV = opBuilder.create<arith::ConstantIntOp>(
-        opBuilder.getUnknownLoc(), tilingStructSize, returnType);
+        loc, tilingStructSize, returnType);
 #else
     auto tilingStructSizeV = opBuilder.create<arith::ConstantIntOp>(
-        opBuilder.getUnknownLoc(), returnType, tilingStructSize);
+        loc, returnType, tilingStructSize);
 #endif
-    opBuilder.create<func::ReturnOp>(opBuilder.getUnknownLoc(),
+    opBuilder.create<func::ReturnOp>(loc,
                                      SmallVector<Value>{tilingStructSizeV});
 
     // Set `hacc.get_tiling_struct_size` attribute to device functions

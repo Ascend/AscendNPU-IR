@@ -751,7 +751,7 @@ void SchedulerBase::setBufferSize(ValueHandles &targets, int64_t bufferSize,
   std::vector<int64_t> bufferSizes(targets.size(), bufferSize);
   auto targetValues = getValues(targets, opBuilder);
   opBuilder.create<transform::SetBufferSizeOp>(
-      opBuilder.getUnknownLoc(),
+      targetValues.front().getLoc(),
       /*target=*/targetValues,
       /*static_buffer_sizes=*/bufferSizes,
       /*unit_mode=*/options.mode,
@@ -839,7 +839,7 @@ ResultRange SchedulerBase::createForEachOp(Value target, TypeRange resultTypes,
   Block *block = opBuilder.createBlock(
       &body, /*insertPt=*/{}, {opBuilder.getType<transform::AnyOpType>()},
       {foreach.getLoc()});
-  ImplicitLocOpBuilder b(opBuilder.getUnknownLoc(), opBuilder);
+  ImplicitLocOpBuilder b(foreach.getLoc(), opBuilder);
   regionBuilder(b, *block);
   transform::ForeachOp::ensureTerminator(body, opBuilder, foreach.getLoc());
   return foreach->getResults();

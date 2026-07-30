@@ -49,8 +49,19 @@ constexpr size_t kTilingKeyPos = 0;
 
 Value evaluateAffineExpr(AffineExpr e, const SmallVector<OpFoldResult> &symbols,
                          OpBuilder &opBuilder) {
-  return affine::makeComposedAffineApply(opBuilder, opBuilder.getUnknownLoc(),
-                                         e, symbols)
+  Location loc = opBuilder.getUnknownLoc();
+  for (OpFoldResult ofr : symbols) {
+    if (auto v = ofr.dyn_cast<Value>()) {
+      loc = v.getLoc();
+      break;
+    }
+  }
+  if (isa<UnknownLoc>(loc)) {
+    if (auto *block = opBuilder.getInsertionBlock())
+      if (auto *parent = block->getParentOp())
+        loc = parent->getLoc();
+  }
+  return affine::makeComposedAffineApply(opBuilder, loc, e, symbols)
       ->getResult(0);
 }
 
@@ -264,7 +275,7 @@ Expr StmtExprBuilder::createDimSymbolExpr(Value tensorValue, size_t dimIdx) {
   assert(isa<ShapedType>(tensorValue.getType()) &&
          "source value must be shaped type!");
   auto dimValue =
-      this->create<tensor::DimOp>(this->getUnknownLoc(), tensorValue, dimIdx)
+      this->create<tensor::DimOp>(tensorValue.getLoc(), tensorValue, dimIdx)
           ->getOpResult(0);
   return DimSymbol(dimValue, this);
 }
@@ -402,14 +413,20 @@ CallStmt StmtExprBuilder::createCallStmt(FlatSymbolRefAttr funcName,
   }
 
   // create func.call op
-  auto callOp = this->create<func::CallOp>(
-      this->getUnknownLoc(), funcType.getResults(), funcName, operands);
+  Location loc = operands.empty()
+                     ? this->getInsertionBlock()->getParentOp()->getLoc()
+                     : operands.front().getLoc();
+  auto callOp =
+      this->create<func::CallOp>(loc, funcType.getResults(), funcName, operands);
   return CallStmt(this, callOp);
 }
 
 CallStmt StmtExprBuilder::createExternCallStmt(FlatSymbolRefAttr funcName,
                                                SmallVector<Value> operands,
                                                StringAttr externLibraryPath) {
+  Location loc = operands.empty()
+                     ? this->getInsertionBlock()->getParentOp()->getLoc()
+                     : operands.front().getLoc();
   // If function is not present, create extern declaration based on the operand
   // type
   auto originalInsertionPoint = this->saveInsertionPoint();
@@ -421,8 +438,8 @@ CallStmt StmtExprBuilder::createExternCallStmt(FlatSymbolRefAttr funcName,
       operandTypes.push_back(operand.getType());
     }
     auto funcType = FunctionType::get(this->getContext(), operandTypes, {});
-    auto funcOp = this->create<func::FuncOp>(this->getUnknownLoc(),
-                                             funcName.getValue(), funcType);
+    auto funcOp =
+        this->create<func::FuncOp>(loc, funcName.getValue(), funcType);
     auto libPathAttr =
         StringAttr::get(this->getContext(), externLibraryPath.getValue());
     funcOp->setAttr(hacc::ExternalFunctionPathAttr::name, libPathAttr);
@@ -443,8 +460,7 @@ CallStmt StmtExprBuilder::createExternCallStmt(FlatSymbolRefAttr funcName,
     return {};
   }
 
-  auto callOp =
-      this->create<func::CallOp>(this->getUnknownLoc(), funcOp, operands);
+  auto callOp = this->create<func::CallOp>(loc, funcOp, operands);
   return CallStmt(this, callOp);
 }
 
@@ -480,13 +496,14 @@ void TilingData::setData(Expr &&newData) {
   data_ = TilingDataTy(std::make_unique<Expr>(newData));
 }
 
-void TilingData::setHeuristicValueForKey(TilingKey key, int64_t hint) {
+void TilingData::setHeuristicValueForKey(TilingKey key, int64_t hint,
+                                         Location loc) {
   if (this->isConst() && this->getConst() != hint)
-    emitWarning(UnknownLoc(), "setting a heuristic tiling value that is "
-                              "inconsistent with the constant tiling data");
+    emitWarning(loc, "setting a heuristic tiling value that is "
+                     "inconsistent with the constant tiling data");
 
   if (heuristicForKey_.contains(key))
-    emitWarning(UnknownLoc(), "Overwriting existing heuristic");
+    emitWarning(loc, "Overwriting existing heuristic");
 
   heuristicForKey_[key] = hint;
 }

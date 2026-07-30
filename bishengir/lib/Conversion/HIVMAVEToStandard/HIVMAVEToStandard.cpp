@@ -183,11 +183,11 @@ static func::FuncOp ensureLibFunc(PatternRewriter &rewriter, ModuleOp mod,
     return f;
   OpBuilder::InsertionGuard g(rewriter);
   MLIRContext *ctx = rewriter.getContext();
-  auto fileLoc = mlir::FileLineColLoc::get(ctx, "internal", 0, 0);
+  auto nameLoc = mlir::NameLoc::get(mlir::StringAttr::get(ctx, name), loc);
   rewriter.setInsertionPoint(mod.getBody(), std::prev(mod.getBody()->end()));
 
   auto fn = rewriter.create<func::FuncOp>(
-      fileLoc, name, rewriter.getFunctionType(argTypes, resTypes));
+      nameLoc, name, rewriter.getFunctionType(argTypes, resTypes));
 
   fn->setAttr(LLVM::LLVMDialect::getEmitCWrapperAttrName(), UnitAttr::get(ctx));
   fn->setAttr(mlir::hivm::TFuncCoreTypeAttr::name,
