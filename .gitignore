@@ -1,6 +1,7 @@
 # Build directories (keep build-tools)
 build*/
 !build-tools/
+compile_commands.json
 
 # IDE & editor
 .vscode/
