@@ -44,12 +44,15 @@ public:
   llvm::DenseMap<CorePipeInfo,
                  llvm::DenseMap<CorePipeInfo, llvm::SmallVector<Edge>>>
       adjacencyList;
+  llvm::SmallVector<int> barrierAllIndexes;
 
   virtual ~GraphSolver() = default;
   GraphSolver(const SyncSolverOptions &options) : options(options) {}
 
   // Build adjacency list from a ConflictPair by decomposing it into edges.
   void addConflictPair(syncsolver::ConflictPair *conflictPair);
+
+  bool checkAnyBarrierAllBetween(int startIndex, int endIndex);
 
   // Add a pipe-pair edge annotated with its active index interval.
   virtual void addPair(CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst,

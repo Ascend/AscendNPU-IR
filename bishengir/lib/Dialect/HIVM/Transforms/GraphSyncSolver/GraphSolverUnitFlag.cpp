@@ -70,9 +70,9 @@ std::optional<int> GraphSolverUnitFlag::runDijkstra(
                             << curCorePipe.pipe << ' ' << curIsUnitFlag << ' '
                             << curIsOccDst << ' ' << curIndex << '\n');
 
-    auto curIt = distance.find(curDistKey);
-    if (curIt != distance.end()) {
-      if (curIt->second < curIndex) {
+    auto curDistIt = distance.find(curDistKey);
+    if (curDistIt != distance.end()) {
+      if (curDistIt->second < curIndex) {
         continue;
       }
       if (curCorePipe == corePipeDst && !(curIsUnitFlag && !curIsOccDst)) {
@@ -81,7 +81,8 @@ std::optional<int> GraphSolverUnitFlag::runDijkstra(
     }
 
     if (curCorePipe.coreType == corePipeDst.coreType) {
-      if (curIndex != startIndex && curCorePipe.pipe == hivm::PIPE::PIPE_S) {
+      if (curDistIt != distance.end() &&
+          curCorePipe.pipe == hivm::PIPE::PIPE_S) {
         return curIndex;
       }
       if (curCorePipe.pipe == hivm::PIPE::PIPE_ALL) {
@@ -89,23 +90,34 @@ std::optional<int> GraphSolverUnitFlag::runDijkstra(
       }
     }
 
-    for (auto &[endCorePipe, edges] : adjacencyList[curCorePipe]) {
-      for (auto &edge : edges) {
-        if (edge.startIndex < curIndex || edge.endIndex > endIndex) {
-          continue;
+    llvm::SmallVector<CorePipeInfo> startCorePipeInfos = {curCorePipe};
+    if (curDistIt != distance.end() && curCorePipe.pipe == hivm::PIPE::PIPE_S) {
+      for (auto &[startCorePipe, map] : adjacencyList) {
+        if (startCorePipe.coreType == curCorePipe.coreType) {
+          startCorePipeInfos.push_back(startCorePipe);
         }
-        if (edge.isUnitFlag) {
-          if (curIndex == startIndex && edge.startIndex != startIndex) {
+      }
+    }
+
+    for (auto startCorePipe : startCorePipeInfos) {
+      for (auto &[endCorePipe, edges] : adjacencyList[startCorePipe]) {
+        for (auto &edge : edges) {
+          if (edge.startIndex < curIndex || edge.endIndex > endIndex) {
             continue;
           }
-        }
-        assert(edge.conflictPair != nullptr);
-        DistKey nextKey(edge.isUnitFlag, (edge.conflictPair->waitOcc == occ2),
-                        endCorePipe);
-        auto [nextIt, isInserted] = distance.insert({nextKey, edge.endIndex});
-        if (isInserted || nextIt->second > edge.endIndex) {
-          nextIt->second = edge.endIndex;
-          que.emplace(QueElement(edge.endIndex, nextKey));
+          if (edge.isUnitFlag) {
+            if (curIndex == startIndex && edge.startIndex != startIndex) {
+              continue;
+            }
+          }
+          assert(edge.conflictPair != nullptr);
+          DistKey nextKey(edge.isUnitFlag, (edge.conflictPair->waitOcc == occ2),
+                          endCorePipe);
+          auto [nextIt, isInserted] = distance.insert({nextKey, edge.endIndex});
+          if (isInserted || (nextIt->second > edge.endIndex)) {
+            nextIt->second = edge.endIndex;
+            que.emplace(QueElement(edge.endIndex, nextKey));
+          }
         }
       }
     }

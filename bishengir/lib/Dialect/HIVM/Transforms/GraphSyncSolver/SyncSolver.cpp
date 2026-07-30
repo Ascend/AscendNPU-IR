@@ -956,6 +956,11 @@ bool Solver::checkGraphConflict(
   for (auto *conflictPair : extraConflictPairs) {
     handleConflictPair(conflictPair);
   }
+  if (graphSolver->checkAnyBarrierAllBetween(startIndex.value(),
+                                             endIndex.value())) {
+    return false;
+  }
+
   auto minDistance =
       graphSolver->runDijkstra(corePipeSrc, corePipeDst, startIndex.value(),
                                endIndex.value(), occ1, occ2);

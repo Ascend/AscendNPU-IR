@@ -41,45 +41,23 @@ void GraphSolver::addConflictPair(ConflictPair *conflictPair) {
     llvm::dbgs() << "add-conflict-pair:\n";
     llvm::dbgs() << conflictPair->str() << '\n';
   });
-  if (conflictPair->isBarrier()) {
-    if (conflictPair->setCorePipeInfo.pipe == hivm::PIPE::PIPE_ALL) {
-      llvm::SmallVector<std::tuple<hivm::TCoreType, hivm::TCoreType>>
-          srcDstCores;
-      if (options.isCrossCoreMode()) {
-        srcDstCores = {
-            {hivm::TCoreType::CUBE, hivm::TCoreType::VECTOR},
-            {hivm::TCoreType::VECTOR, hivm::TCoreType::CUBE},
-        };
-      } else {
-        srcDstCores = {
-            {hivm::TCoreType::CUBE_OR_VECTOR, hivm::TCoreType::CUBE_OR_VECTOR},
-        };
-      }
-      for (auto &[srcCore, dstCore] : srcDstCores) {
-        for (int i = 0; i < static_cast<int>(hivm::PIPE::PIPE_NUM); i++) {
-          auto setPipe = static_cast<hivm::PIPE>(i);
-          auto waitPipe = hivm::PIPE::PIPE_ALL;
-          addPair(CorePipeInfo(srcCore, setPipe),
-                  CorePipeInfo(dstCore, waitPipe), conflictPair);
-        }
-      }
-    } else {
-      addPair(conflictPair->setCorePipeInfo, conflictPair->waitCorePipeInfo,
-              conflictPair);
-    }
-  } else {
-    if (conflictPair->waitCorePipeInfo.pipe == hivm::PIPE::PIPE_S) {
-      for (int i = 0; i < static_cast<int>(hivm::PIPE::PIPE_NUM); i++) {
-        auto coreDst = conflictPair->waitCorePipeInfo.coreType;
-        auto waitPipe = static_cast<hivm::PIPE>(i);
-        addPair(conflictPair->setCorePipeInfo, CorePipeInfo(coreDst, waitPipe),
-                conflictPair);
-      }
-    } else {
-      addPair(conflictPair->setCorePipeInfo, conflictPair->waitCorePipeInfo,
-              conflictPair);
+  if (conflictPair->isBarrier() &&
+      conflictPair->setCorePipeInfo.pipe == hivm::PIPE::PIPE_ALL) {
+    assert(conflictPair->startIndex == conflictPair->endIndex);
+    barrierAllIndexes.push_back(conflictPair->endIndex);
+    return;
+  }
+  addPair(conflictPair->setCorePipeInfo, conflictPair->waitCorePipeInfo,
+          conflictPair);
+}
+
+bool GraphSolver::checkAnyBarrierAllBetween(int startIndex, int endIndex) {
+  for (auto barrierIndex : barrierAllIndexes) {
+    if (startIndex <= barrierIndex && barrierIndex <= endIndex) {
+      return true;
     }
   }
+  return false;
 }
 
 std::optional<int> GraphSolver::runDijkstra(CorePipeInfo corePipeSrc,
@@ -116,9 +94,9 @@ std::optional<int> GraphSolver::runDijkstra(CorePipeInfo corePipeSrc,
     LLVM_DEBUG(llvm::dbgs() << "dij-step: " << curCorePipe.coreType << ' '
                             << curCorePipe.pipe << ' ' << curIndex << '\n');
 
-    auto curIt = distance.find(curCorePipe);
-    if (curIt != distance.end()) {
-      if (curIt->second < curIndex) {
+    auto curDistIt = distance.find(curCorePipe);
+    if (curDistIt != distance.end()) {
+      if (curDistIt->second < curIndex) {
         continue;
       }
       if (curCorePipe == corePipeDst) {
@@ -127,7 +105,8 @@ std::optional<int> GraphSolver::runDijkstra(CorePipeInfo corePipeSrc,
     }
 
     if (curCorePipe.coreType == corePipeDst.coreType) {
-      if (curIndex != startIndex && curCorePipe.pipe == hivm::PIPE::PIPE_S) {
+      if (curDistIt != distance.end() &&
+          curCorePipe.pipe == hivm::PIPE::PIPE_S) {
         return curIndex;
       }
       if (curCorePipe.pipe == hivm::PIPE::PIPE_ALL) {
@@ -135,16 +114,27 @@ std::optional<int> GraphSolver::runDijkstra(CorePipeInfo corePipeSrc,
       }
     }
 
-    for (auto &[endCorePipe, edges] : adjacencyList[curCorePipe]) {
-      for (auto &edge : edges) {
-        if (edge.startIndex < curIndex || edge.endIndex > endIndex) {
-          continue;
+    llvm::SmallVector<CorePipeInfo> startCorePipeInfos = {curCorePipe};
+    if (curDistIt != distance.end() && curCorePipe.pipe == hivm::PIPE::PIPE_S) {
+      for (auto &[startCorePipe, map] : adjacencyList) {
+        if (startCorePipe.coreType == curCorePipe.coreType) {
+          startCorePipeInfos.push_back(startCorePipe);
         }
-        auto [nextIt, isInserted] =
-            distance.insert({endCorePipe, edge.endIndex});
-        if (isInserted || nextIt->second > edge.endIndex) {
-          nextIt->second = edge.endIndex;
-          que.emplace(QueElement(edge.endIndex, endCorePipe));
+      }
+    }
+
+    for (auto startCorePipe : startCorePipeInfos) {
+      for (auto &[endCorePipe, edges] : adjacencyList[startCorePipe]) {
+        for (auto &edge : edges) {
+          if (edge.startIndex < curIndex || edge.endIndex > endIndex) {
+            continue;
+          }
+          auto [nextIt, isInserted] =
+              distance.insert({endCorePipe, edge.endIndex});
+          if (isInserted || (nextIt->second > edge.endIndex)) {
+            nextIt->second = edge.endIndex;
+            que.emplace(QueElement(edge.endIndex, endCorePipe));
+          }
         }
       }
     }
