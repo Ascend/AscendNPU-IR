@@ -13,6 +13,7 @@
     #define CATLASS_ARCH_A5_ENABLED
 #endif
 
+#include "Utils.h"
 #include "catlass/catlass.hpp"
 #include "catlass/detail/tag_to_layout.hpp"
 #include "catlass/gemm/tile/copy_l1_to_bt_a5.hpp"
@@ -21,14 +22,6 @@
 #include "catlass/gemm/tile/tile_mmad.hpp"
 #include "tla/tensor.hpp"
 #include "ascendc_bisheng/ascendc_bisheng.hpp"
-
-template <typename T, size_t Dim> struct memref_t {
-  T *allocated;
-  T *aligned;
-  int64_t offset;
-  int64_t sizes[Dim];
-  int64_t strides[Dim];
-};
 
 namespace Catlass::Gemm {
 
@@ -243,6 +236,11 @@ CATLASS_DEVICE void L1Mmad(
 
     if constexpr (HF32) {
         AscendCBisheng::SetHF32Mode(false);
+    }
+    // bias should not be enabled double buffer between mmads
+    if (hasBias) {
+        AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::M_MTE1>(LIB_EVENT_ID0);
+        AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::M_MTE1>(LIB_EVENT_ID0);
     }
 }
 
