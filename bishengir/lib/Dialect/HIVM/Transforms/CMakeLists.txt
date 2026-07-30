@@ -38,6 +38,7 @@ add_bishengir_dialect_library(MLIRHIVMTransforms
   BufferizableOpInterfaceImpl.cpp
   CloneTensorEmpty.cpp
   ComposeCollapseExpand.cpp
+  ComposeMemRefViews.cpp
   ConstantizeBufferSize.cpp
   ConvertToHIVMOp.cpp
   InsertAnchorsAndBackup.cpp

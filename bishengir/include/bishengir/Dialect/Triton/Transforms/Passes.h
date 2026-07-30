@@ -20,6 +20,10 @@ namespace bishengir {
 
 namespace triton {
 
+/// Creates a pass that converts tensors with non power of 2 dimensions
+/// into tensors with power of 2 dimensions
+std::unique_ptr<mlir::Pass> createConvertNonPowerTwoTensorsPass();
+
 /// Creates wrappers and attributes for SIMT functions
 std::unique_ptr<mlir::Pass>
 createAdaptGPUKernelPass(TritonRemapOptions options = {});
@@ -59,6 +63,11 @@ std::unique_ptr<mlir::Pass> createFixFusedCatPass();
 /// axis, with the offset a multiple of the block size) into Triton dialect
 /// ops: `tt.trans`, `tt.reshape`, `tt.split`, `tt.join`.
 std::unique_ptr<mlir::Pass> createRewriteSliceOpToTritonPass();
+
+/// Create a pass to expand source tensors of triton::GatherOp ops when
+/// the source tensor is smaller than the indices tensor at gather axis 
+/// and when num warps > 1, num elements of indices tensor > 32
+std::unique_ptr<mlir::Pass> createExpandGatherOpSourcesPass();
 
 /// Create a pass that erases all `annotation.mark` ops in the module.
 std::unique_ptr<mlir::Pass> createRemoveAnnotationMarkPass();

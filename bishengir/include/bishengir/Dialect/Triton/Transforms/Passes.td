@@ -20,6 +20,17 @@ def DecomposeFRem : Pass<"decompose-frem", "ModuleOp"> {
 
 #ifdef BISHENGIR_ENABLE_TRITON_COMPILE
 
+def ConvertNonPowerTwoTensors
+  : Pass<"convert-non-power-two-tensors", "mlir::triton::FuncOp"> {
+  let summary = "Converts tensors with dimension sizes that are not powers of 2 into tensors with powers of 2";
+  let constructor = "bishengir::triton::createConvertNonPowerTwoTensorsPass()";
+  let dependentDialects = [
+    "mlir::arith::ArithDialect",
+    "mlir::triton::TritonDialect",
+    "mlir::tensor::TensorDialect",
+  ];
+}
+
 def SetBishengirSimtOptAttr
     : Pass<"set-bishengir-simt-opt-attr", "mlir::ModuleOp"> {
   let summary = "Set BishengIR SIMT optimization module attribute";
@@ -285,6 +296,15 @@ def RewriteSliceOpToTriton
 
   let dependentDialects = ["mlir::tensor::TensorDialect",
                             "mlir::triton::TritonDialect"];
+}
+
+def ExpandGatherOpSources 
+  : Pass<"expand-gather-op-sources", "mlir::ModuleOp"> {
+    let summary = "Expands tt.gather op sources to the indices tensor sizes if smaller when num warps > 1 and num elements in indices tensor > 32";
+    let constructor = "bishengir::triton::createExpandGatherOpSourcesPass()";
+    let dependentDialects = [
+      "mlir::triton::TritonDialect",
+    ];
 }
 
 def PopulateSharedMemoryOffsetToDPX : Pass<"populate-shared-memory-offset-to-dpx", "mlir::triton::FuncOp"> {

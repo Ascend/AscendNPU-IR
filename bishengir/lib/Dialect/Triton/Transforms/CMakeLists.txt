@@ -3,8 +3,10 @@ if(BISHENGIR_ENABLE_TRITON_COMPILE)
   list(APPEND BS_FEAT_SOURCES
     AdaptTritonIRKernel.cpp
     AdaptGPUKernel.cpp
+    ConvertNonPowerTwoTensors.cpp
     DecomposeReduction.cpp
     DumpFractalLayout.cpp
+    ExpandGatherOpSourcesPass.cpp
     FixFusedCatPass.cpp
     GetTritonMetadata.cpp
     LegalizeF16ForTriton.cpp

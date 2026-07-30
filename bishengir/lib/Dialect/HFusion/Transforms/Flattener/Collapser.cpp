@@ -765,11 +765,15 @@ template <class T> void Flattener::adjustCumOp(T cumOp, OpBuilder &builder) {
   llvm::SmallVector<int64_t> newCumDims = {newCumDim};
   cumOp.setCumDims(newCumDims);
 
-  // the output type should be the same with input
-  auto inputTy = cumOp.getInput().getType();
+  // Preserve output element type (cumsum may promote i32 → i64) while
+  // flattening the output shape to the input's collapsed shape.
+  auto inputTy = cast<ShapedType>(cumOp.getInput().getType());
   auto res = cumOp.getResult();
+  auto outTy = cast<ShapedType>(res.getType());
+  RankedTensorType newOutTy =
+      RankedTensorType::get(inputTy.getShape(), outTy.getElementType());
   updatePreviousType(res);
-  res.setType(inputTy);
+  res.setType(newOutTy);
 }
 
 std::optional<SmallVector<int64_t>>
