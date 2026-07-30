@@ -123,6 +123,18 @@ struct BiShengIRCompileMainConfigCLOptions : public BiShengIRCompileMainConfig {
             llvm::cl::cat(enableCPURunnerCategory)};
 #endif // MLIR_ENABLE_EXECUTION_ENGINE
 
+    static cl::opt<int32_t, /*ExternalStorage=*/true> simtStackLimitOpt(
+        "simt-stack-limit",
+        cl::desc("Per-thread stack size limit (bytes) for SIMT kernels. The "
+                 "compiler fails compilation if a kernel's per-thread stack "
+                 "usage exceeds this limit. If unset, the check is skipped "
+                 "— Triton-Ascend owns the policy (env var, default) and "
+                 "always forwards a resolved value. Set to a negative value "
+                 "to disable the check; 0 is a valid (strict) limit."),
+        cl::value_desc("bytes-per-thread"),
+        cl::location(simtStackLimitFlag),
+        cl::cat(sharedWithDownstreamToolchainCategory));
+
     // when enableSanitizer/enableMemoryDisplay is true, enable
     // printDebugInfoOpt
     auto &opts = cl::getRegisteredOptions();
