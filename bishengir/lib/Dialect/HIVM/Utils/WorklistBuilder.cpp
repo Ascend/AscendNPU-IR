@@ -351,7 +351,7 @@ markWorkspaceOps(Operation *op,
   }
   if (auto toTensor = dyn_cast<bufferization::ToTensorOp>(op)) {
     auto alloc = llvm::dyn_cast_if_present<bishengir::memref_ext::AllocWorkspaceOp>(
-        toTensor.getMemref().getDefiningOp());
+        toTensor.getOperand().getDefiningOp());
     if (!alloc)
       return success();
 
