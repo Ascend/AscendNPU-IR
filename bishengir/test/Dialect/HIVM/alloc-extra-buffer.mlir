@@ -2548,6 +2548,22 @@ func.func @test_vreduce_vcg_temp_buffer() attributes {hivm.enable_saving_ub} {
 
 // -----
 
+func.func @test_cast_s322s8_2d_size_align_extra() {
+  %src = memref.alloc() : memref<6x32xi32, #hivm.address_space<ub>>
+  %dst = memref.alloc() : memref<6x32xi8, #hivm.address_space<ub>>
+
+  // The first cast axis is padded from 6 to 32 for vnchwconv. Conservatively
+  // reserve two regions of 32 * 32 i32 elements.
+  // CHECK: memref.alloc() : memref<2048xi32>
+  // CHECK: hivm.hir.vcast{{.*}}temp_buffer({{.*}}memref<2048xi32>)
+  hivm.hir.vcast ins(%src : memref<6x32xi32, #hivm.address_space<ub>>)
+                 outs(%dst : memref<6x32xi8, #hivm.address_space<ub>>)
+                 round_mode = <truncwithoverflow>
+  return
+}
+
+// -----
+
 func.func @test_cast_s322s8_2d_extra() attributes {hivm.disable_size_align_for_cast} {
   %src = memref.alloc() : memref<2x16xi32, #hivm.address_space<ub>> // 32 * 16 * i32
   %dst = memref.alloc() : memref<2x16xi8, #hivm.address_space<ub>>
