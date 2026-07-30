@@ -238,11 +238,6 @@ struct RecognizeDeinterleaveOpForLoad : public OpRewritePattern<hivm::LoadOp> {
               "subview.");
     }
 
-    if (!isAllZero(offsets)) {
-      return rewriter.notifyMatchFailure(
-          op, " only recognize deinterleave op with zero offset alloc.");
-    }
-
     Location loc = op->getLoc();
     // reuse old alloc and subview from it as deinterleave dst
     Value deinterleaveDst = allocForDst;
