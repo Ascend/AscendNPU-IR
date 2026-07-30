@@ -48,10 +48,67 @@ LogicalResult allocExtraBuffersForCustomOp(CustomOpT op) {
   op.getTempBuffersMutable().assign(buffs);
   return success();
 }
+
+static LogicalResult allocCustomAttrExtraBuffers(CustomOp op) {
+  return allocExtraBuffersForCustomOp(op);
+}
+
+static LogicalResult allocIndirectAtomicExtraBuffer(CustomOp op) {
+  auto extraAttr = op.getExtraAttr();
+  if (!extraAttr)
+    return success();
+
+  bool needsTempBuffer = false;
+  SmallVector<StringRef> entries;
+  extraAttr.getValue().split(entries, ',');
+  for (StringRef entry : entries) {
+    StringRef key;
+    StringRef value;
+    std::tie(key, value) = entry.split('=');
+    key = key.trim();
+    value = value.trim();
+    if (key == "operate")
+      needsTempBuffer = value == "or" || value == "and" || value == "xor";
+  }
+
+  if (!needsTempBuffer)
+    return success();
+
+  ValueRange inputs = op.getInputs();
+  if (inputs.size() < 3)
+    return op.emitError("indirect atomic requires src, offset and value "
+                        "operands to allocate extra temp buffer");
+
+  auto offsetType = dyn_cast<ShapedType>(inputs[1].getType());
+  if (!offsetType || !offsetType.hasStaticShape())
+    return op.emitError("indirect atomic requires static offset shape to "
+                        "allocate extra temp buffer");
+
+  Type elementType = getElementTypeOrSelf(inputs[2]);
+  Value extraBuf = allocExtraBuffer(op.getOperation(),
+                                    {offsetType.getNumElements()}, elementType);
+  op.getTempBuffersMutable().assign(extraBuf);
+  return success();
+}
+
+static const DenseMap<StringRef, LogicalResult (*)(CustomOp)>
+    kCustomExtraBufferAllocators{
+        {CustomOp::kBuiltinIndirectAtomicName, allocIndirectAtomicExtraBuffer}
+    };
 } // namespace
 
 LogicalResult CustomOp::allocExtraBuffersIfPossible() {
-  return allocExtraBuffersForCustomOp(*this);
+  if (!getTempBuffers().empty())
+    return success();
+
+  if (!getExtraBuffersInfo().empty())
+    return allocCustomAttrExtraBuffers(*this);
+
+  auto it = kCustomExtraBufferAllocators.find(getName());
+  if (it == kCustomExtraBufferAllocators.end())
+    return success();
+
+  return it->second(*this);
 }
 
 LogicalResult CustomMacroOp::allocExtraBuffersIfPossible() {

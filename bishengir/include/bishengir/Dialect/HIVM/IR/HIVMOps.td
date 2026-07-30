@@ -886,6 +886,17 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
             DenseI32ArrayAttr::get(getContext(), i32Indices));
       }
 
+      static constexpr StringLiteral kBuiltinGatherLoadName = "__builtin_gather_load";
+      static constexpr StringLiteral kBuiltinIndexSelectName = "__builtin_index_select";
+      static constexpr StringLiteral kBuiltinIndirectAtomicName = "__builtin_indirect_atomic";
+      static constexpr StringLiteral kBuiltinHistogramName = "__builtin_histogram";
+
+      static constexpr StringLiteral kExtraAttrName = "extra_attr";
+
+      StringAttr getExtraAttr() {
+        return getOperation()->template getAttrOfType<StringAttr>(kExtraAttrName);
+      }
+
       // Returns true when VFMode attribute must be present (see HIVMOps.cpp).
       bool requiresVFMode();
 
@@ -943,9 +954,10 @@ def CustomOp : HIVM_CustomOp<"custom", [SinglePipeOpTrait]> {
       TCoreType coreType;
       PIPE pipe;
       VFMode vfMode;
+      const SmallVector<size_t> gmAddrArgsIndices;
     };
 
-    // Map <builtin in name> <-> {CORE_TYPE, PIPE, VF_MODE}
+    // Map <builtin in name> <-> {CORE_TYPE, PIPE, VF_MODE, gmAddrArgsIndices}
     static const DenseMap<StringRef, BuiltinInfo> kBuiltins;
   }];
 
@@ -1327,9 +1339,10 @@ def CustomMacroOp : HIVM_CustomOp<"custom_macro", [MacroOpTrait]> {
       PIPE inPipe;
       PIPE outPipe;
       VFMode vfMode;
+      const SmallVector<size_t> gmAddrArgsIndices;
     };
 
-    // Map <builtin in name> <-> {CORE_TYPE, PIPE, PIPE, VF_MODE}
+    // Map <builtin in name> <-> {CORE_TYPE, IN_PIPE, OUT_PIPE, VF_MODE, gmAddrArgsIndices}
     static const DenseMap<StringRef, BuiltinInfo> kBuiltins;
   }];
 

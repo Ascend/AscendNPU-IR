@@ -319,6 +319,13 @@ LogicalResult VCastOp::allocExtraBuffersIfPossible() {
 //===----------------------------------------------------------------------===//
 
 LogicalResult VGatherOp::allocExtraBuffersIfPossible() {
+  // A5 (Ascend 950) does not require a temp buffer for gather:
+  // All gather operations use the SIMT template, which does not need temp_buf.
+  auto moduleOp = (*this)->getParentOfType<ModuleOp>();
+  if (moduleOp && hacc::utils::isAscend950(moduleOp)) {
+    return success();
+  }
+
   if (this->getTempBuffer()) {
     this->emitWarning("already has extra temp buffer");
     return success();
