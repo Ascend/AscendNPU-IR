@@ -12,12 +12,15 @@
 
 #include "mlir/Dialect/Bufferization/Transforms/FuncBufferizableOpInterfaceImpl.h"
 #include "mlir/Dialect/Bufferization/Transforms/OneShotAnalysis.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/Dominance.h"
 
 using namespace mlir;
 using namespace mlir::bufferization;
 using namespace mlir::bufferization::func_ext;
 using namespace mlir::func;
+
+static constexpr llvm::StringLiteral KFoldOffsetMarker = "fold_offset_into_ptr";
 
 static FuncOp getCalledFunction(func::CallOp callOp) {
   SymbolRefAttr sym =
@@ -43,7 +46,7 @@ static FuncOpAnalysisState getFuncOpAnalysisState(const AnalysisState &state,
   return it->second;
 }
 
-namespace CallOpInterfaceForOpReuseInPlanMemory {
+namespace CallOpInterfaceOverwriter {
 static bool isNotConflicting(Operation *op, OpOperand *uRead, OpOperand *uWrite,
                              const AnalysisState &state) {
   /// Same callOp and different value are the preconditions to have no
@@ -90,13 +93,96 @@ static bool isNotConflicting(Operation *op, OpOperand *uRead, OpOperand *uWrite,
       const_cast<OneShotAnalysisState &>(
           static_cast<const OneShotAnalysisState &>(state)));
 }
-} // namespace CallOpInterfaceForOpReuseInPlanMemory
+
+static LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
+                               const BufferizationOptions &options) {
+  func::CallOp callOp = cast<func::CallOp>(op);
+
+  SmallVector<Type> resultTypes;
+  for (Value result : callOp.getResults()) {
+    Type returnType = result.getType();
+    if (!isa<TensorType>(returnType)) {
+      resultTypes.push_back(returnType);
+      continue;
+    }
+
+    FailureOr<BaseMemRefType> resultType =
+        bufferization::getBufferType(result, options);
+    if (failed(resultType))
+      return failure();
+    resultTypes.push_back(*resultType);
+  }
+
+  SmallVector<Value> newOperands;
+  FuncOp funcOp = getCalledFunction(callOp);
+  assert(funcOp && "expected CallOp to a FuncOp");
+  FunctionType funcType = funcOp.getFunctionType();
+
+  for (OpOperand &opOperand : callOp->getOpOperands()) {
+    if (!isa<TensorType>(opOperand.get().getType())) {
+      newOperands.push_back(opOperand.get());
+      continue;
+    }
+
+    FailureOr<Value> maybeBuffer =
+        getBuffer(rewriter, opOperand.get(), options);
+    if (failed(maybeBuffer))
+      return failure();
+    Value buffer = *maybeBuffer;
+
+    auto memRefType = funcType.getInput(opOperand.getOperandNumber());
+    if (buffer.getType() != memRefType) {
+      assert(memref::CastOp::areCastCompatible(buffer.getType(), memRefType) &&
+             "CallOp::bufferize: cast incompatible");
+
+      auto castOp =
+          rewriter.create<memref::CastOp>(callOp.getLoc(), memRefType, buffer);
+
+      /// Add KFoldOffsetMarker start
+      auto srcType = dyn_cast<MemRefType>(buffer.getType());
+      auto dstType = dyn_cast<MemRefType>(memRefType);
+      SmallVector<int64_t> srcStrides;
+      SmallVector<int64_t> dstStrides;
+      int64_t srcOffset;
+      int64_t dstOffset;
+      if (succeeded(getStridesAndOffset(srcType, srcStrides, srcOffset)) &&
+          succeeded(getStridesAndOffset(dstType, dstStrides, dstOffset))) {
+        bool srcStridesStatic = llvm::all_of(
+            srcStrides, [](int64_t s) { return !ShapedType::isDynamic(s); });
+        bool dstStridesStatic = llvm::all_of(
+            dstStrides, [](int64_t s) { return !ShapedType::isDynamic(s); });
+        if (srcStridesStatic && srcOffset == ShapedType::kDynamic &&
+            dstStridesStatic && dstOffset == 0)
+          castOp->setAttr(KFoldOffsetMarker, rewriter.getUnitAttr());
+      }
+      /// Add KFoldOffsetMarker end
+
+      buffer = castOp.getResult();
+    }
+    newOperands.push_back(buffer);
+  }
+
+  Operation *newCallOp = rewriter.create<func::CallOp>(
+      callOp.getLoc(), funcOp.getSymName(), resultTypes, newOperands);
+  newCallOp->setAttrs(callOp->getAttrs());
+
+  replaceOpWithBufferizedValues(rewriter, callOp, newCallOp->getResults());
+
+  return success();
+}
+} // namespace CallOpInterfaceOverwriter
 
 RegisterOpInterfaceOverride(
     /*Op=*/func::CallOp, /*Interface=*/BufferizableOpInterface,
     /*InterfaceMethod=*/isNotConflicting,
     /*Impl=*/
-    &CallOpInterfaceForOpReuseInPlanMemory::isNotConflicting);
+    &CallOpInterfaceOverwriter::isNotConflicting);
+
+RegisterOpInterfaceOverride(
+    /*Op=*/func::CallOp, /*Interface=*/BufferizableOpInterface,
+    /*InterfaceMethod=*/bufferize,
+    /*Impl=*/
+    &CallOpInterfaceOverwriter::bufferize);
 
 void mlir::bufferization_ext::registerFuncBufferizableOpInterfaceExternalModels(
     mlir::DialectRegistry &registry) {}
