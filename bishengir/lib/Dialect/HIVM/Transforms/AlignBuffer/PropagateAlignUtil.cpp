@@ -1560,12 +1560,8 @@ void mlir::hivm::handlePropagateFailure(RewriterBase &rewriter,
     auto src = conversion.getInputs()[0];
     SmallVector<Operation *> writeSrc;
     findWriteOp(src, writeSrc);
-    // Snapshot uses before rewriting because use.set() below mutates the
-    // conversion's use-list.
-    SmallVector<OpOperand *> uses = llvm::map_to_vector(
-        conversion->getUses(), [](OpOperand &operand) { return &operand; });
-    for (OpOperand *use : uses) {
-      Operation *user = use->getOwner();
+    for (OpOperand &use : make_early_inc_range(conversion->getUses())) {
+      Operation *user = use.getOwner();
       if (!user->hasAttr(propagateFailureName))
         continue;
       auto loc = conversion.getLoc();
@@ -1574,7 +1570,7 @@ void mlir::hivm::handlePropagateFailure(RewriterBase &rewriter,
       auto newDst = utils::createEmptyOp(rewriter, loc, dst);
       Operation *newCopy =
           rewriter.create<hivm::CopyOp>(loc, TypeRange{}, src, newDst);
-      rewriter.modifyOpInPlace(user, [&] { use->set(newDst); });
+      rewriter.modifyOpInPlace(user, [&] { use.set(newDst); });
 
       SmallVector<Operation *> writeNewDst;
       findWriteOp(newDst, writeNewDst);
