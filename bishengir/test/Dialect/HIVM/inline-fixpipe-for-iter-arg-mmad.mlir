@@ -1,4 +1,4 @@
-// RUN: bishengir-opt -hivm-inline-fixpipe %s -split-input-file | FileCheck %s
+// RUN: bishengir-opt -hivm-insert-fixpipe %s -split-input-file | FileCheck %s
 
 // -----
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {

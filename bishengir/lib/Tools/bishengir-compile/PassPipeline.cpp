@@ -18,6 +18,7 @@
 #include "bishengir/Tools/bishengir-compile/PassPipeline.h"
 #include "bishengir/Config/bishengir-config.h"
 #include "bishengir/Dialect/HACC/Transforms/Passes.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/Pipelines/Passes.h"
 #include "bishengir/Dialect/HIVM/Pipelines/ConvertToHIVMPipeline.h"
 #include "bishengir/Dialect/HIVM/Pipelines/Passes.h"
@@ -58,6 +59,10 @@ void setupHIVMPipelineOptions(hivm::HIVMPipelineOptions &options,
                               const BiShengIRCompileMainConfig &config) {
 #define GEN_HIVM_OPTION_SETUP
 #include "bishengir/Tools/bishengir-compile/ConfigUtils.cpp.inc"
+  // Options.td defaults EnableLayoutOptimization=true for Ascend950 (A5-630/v4).
+  // Keep the A3 mem-based path historically off unless the target is Ascend950.
+  if (!mlir::hacc::utils::isAscend950(config.getTarget()))
+    options.enableLayoutOptimization = false;
 }
 
 void buildBiShengHIRPipeline(OpPassManager &pm,

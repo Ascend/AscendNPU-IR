@@ -240,8 +240,12 @@ std::unique_ptr<Pass> createReduceRankSubviewPass();
 // Create a pass to init entry kernel
 std::unique_ptr<Pass> createInitEntryKernelPass();
 
-// Create a pass to convert ops to fixpipe
-std::unique_ptr<Pass> createInlineFixpipePass();
+// Create a pass to insert fixpipe ops.
+std::unique_ptr<Pass> createInsertFixpipePass();
+
+// Create a pass to inline ops into fixpipe.
+std::unique_ptr<Pass>
+createInlineFixpipePass(const InlineFixpipeOptions &options = {});
 
 // Create a pass to tile batch matmul into loop
 std::unique_ptr<Pass> createTileBatchMMIntoLoopPass();

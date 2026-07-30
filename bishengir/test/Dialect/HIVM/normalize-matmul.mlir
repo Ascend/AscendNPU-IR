@@ -1523,7 +1523,7 @@ func.func @test_matmul_with_scope_matmul_limited_in_cube(%arg1: memref<16x16xf16
 
     %alloc_15 = memref.alloc() : memref<64x64xf32>
 
-    // CHECK: %[[ALLOCA:.*]] = memref.alloca() {normalize_matmul_counter} : memref<i32>
+    // CHECK: %[[ALLOCA:.*]] = memref.alloca() {normalize_matmul_counter = 0 : i32} : memref<i32>
     // CHECK: memref.store %[[C0_I32]], %[[ALLOCA]][] {hivm.tcore_type = #hivm.tcore_type<CUBE_AND_VECTOR>} : memref<i32>
 
     %result = scf.for %iv = %c0 to %c4 step %c1 iter_args(%arg22 = %init_acc) -> tensor<64x64xf32> {
@@ -1585,7 +1585,7 @@ func.func @test_dot_pad_only_k_l1M_for_real_m() -> tensor<128x128xf32> {
 // Test: annotation.mark {matmul_at_least_once} on scf.for result overrides
 // mayNotExec to false, suppressing tail fallback and kMayNotExec attr.
 // CHECK-LABEL: func.func @test_matmul_at_least_once_annotation
-// CHECK: memref.alloca() {normalize_matmul_counter} : memref<i32>
+// CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32} : memref<i32>
 // CHECK-NOT: may_not_exec
 // CHECK: scf.for
 // CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
@@ -1864,7 +1864,7 @@ func.func @test_mmadmx_with_scope_matmul_limited_in_cube() {
 
     %alloc_15 = memref.alloc() : memref<64x64xf32>
 
-    // CHECK: %[[ALLOCA:.*]] = memref.alloca() {normalize_matmul_counter} : memref<i32>
+    // CHECK: %[[ALLOCA:.*]] = memref.alloca() {normalize_matmul_counter = 0 : i32} : memref<i32>
     // CHECK: memref.store %[[C0_I32]], %[[ALLOCA]][] {hivm.tcore_type = #hivm.tcore_type<CUBE_AND_VECTOR>} : memref<i32>
 
     %result = scf.for %iv = %c0 to %c4 step %c1 iter_args(%arg22 = %init_acc) -> tensor<64x64xf32> {
@@ -2024,7 +2024,7 @@ func.func @test_mmadL1_already_set_real_mkn_noop() -> tensor<16x16xf32> {
 // -----
 // A5: batchMmadL1 split-K CCF keeps L0C with counter-based init.
 // CHECK-LABEL: func.func @test_batchMmadL1_splitk_reuse_l0c
-// CHECK: memref.alloca() {normalize_matmul_counter} : memref<i32>
+// CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32} : memref<i32>
 // CHECK: hivm.hir.batchMmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
 // CHECK: } {normalized_in_L0C = [0 : i32]}
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
@@ -2132,13 +2132,12 @@ func.func @test_mmadL1_tensor_operands_Normalize_Mkn() -> tensor<128x256xf32> {
 }
 
 // -----
-// A5: dynamic for-bounds => may_not_exec + vbrc fallback.
+// A5: dynamic for-bounds => may_not_exec, and no zero-fill guard after the loop.
 // CHECK-LABEL: func.func @test_mmadL1_may_not_exec_dynamic_bounds
-// CHECK: memref.alloca() {normalize_matmul_counter}
+// CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32}
 // CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
 // CHECK: } {may_not_exec, normalized_in_L0C = [0 : i32]}
-// CHECK: scf.if
-// CHECK: hivm.hir.vbrc
+// CHECK-NEXT: return
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 func.func @test_mmadL1_may_not_exec_dynamic_bounds(%lb: i32, %ub: i32) -> tensor<16x16xf32> {
   %c1 = arith.constant 1 : i32
@@ -2312,7 +2311,7 @@ func.func @test_mmadmx_already_set_real_mkn_noop() -> tensor<16x16xf32> {
 // -----
 // A5: empty init (NoBias) split-K still gets counter + remain_in_l0c.
 // CHECK-LABEL: func.func @test_mmadL1_empty_init_splitk
-// CHECK: memref.alloca() {normalize_matmul_counter}
+// CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32}
 // CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
 // CHECK: } {normalized_in_L0C = [0 : i32]}
 // CHECK-NOT: may_not_exec
@@ -2335,13 +2334,12 @@ func.func @test_mmadL1_empty_init_splitk() -> tensor<16x16xf32> {
 }
 
 // -----
-// A5: mmadmx dynamic bounds => may_not_exec + vbrc fallback.
+// A5: mmadmx dynamic bounds => may_not_exec, and no zero-fill guard after the loop.
 // CHECK-LABEL: func.func @test_mmadmx_may_not_exec_dynamic_bounds
-// CHECK: memref.alloca() {normalize_matmul_counter}
+// CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32}
 // CHECK: hivm.hir.mmadmxL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
 // CHECK: } {may_not_exec, normalized_in_L0C = [0 : i32]}
-// CHECK: scf.if
-// CHECK: hivm.hir.vbrc
+// CHECK-NEXT: return
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 func.func @test_mmadmx_may_not_exec_dynamic_bounds(%lb: i32, %ub: i32) -> tensor<16x16xf32> {
   %c1 = arith.constant 1 : i32
@@ -2365,7 +2363,7 @@ func.func @test_mmadmx_may_not_exec_dynamic_bounds(%lb: i32, %ub: i32) -> tensor
 // -----
 // A5: mmadmx matmul_at_least_once suppresses may_not_exec.
 // CHECK-LABEL: func.func @test_mmadmx_at_least_once_annotation
-// CHECK: memref.alloca() {normalize_matmul_counter}
+// CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32}
 // CHECK-NOT: may_not_exec
 // CHECK: hivm.hir.mmadmxL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
@@ -2412,7 +2410,7 @@ func.func @test_mmadL1_dynamic_alloc_Normalize_Mkn(%m: index, %k: index, %n: ind
 // A5: batch pre-mmad + for currently cannot ReuseL0C (no Batch in couldReuse); falls to vadd.
 // CHECK-LABEL: func.func @test_batchMmadL1_reuse_l0c_pre
 // CHECK: hivm.hir.batchMmadL1 {already_set_real_mkn}
-// CHECK: memref.alloca() {normalize_matmul_counter}
+// CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32}
 // CHECK: hivm.hir.batchMmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
 // CHECK: hivm.hir.vadd
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
@@ -2460,7 +2458,7 @@ func.func @test_mmadmx_f8e5m2_Normalize_Mkn() -> tensor<32x64xf32> {
 // -----
 // A5: constant empty loop (ub==lb) sets may_not_exec.
 // CHECK-LABEL: func.func @test_mmadL1_empty_loop_bounds_may_not_exec
-// CHECK: memref.alloca() {normalize_matmul_counter}
+// CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32}
 // CHECK: } {may_not_exec, normalized_in_L0C = [0 : i32]}
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 func.func @test_mmadL1_empty_loop_bounds_may_not_exec() -> tensor<16x16xf32> {
@@ -2485,7 +2483,7 @@ func.func @test_mmadL1_empty_loop_bounds_may_not_exec() -> tensor<16x16xf32> {
 // -----
 // A5: batch dynamic bounds => may_not_exec.
 // CHECK-LABEL: func.func @test_batchMmadL1_may_not_exec_dynamic
-// CHECK: memref.alloca() {normalize_matmul_counter}
+// CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32}
 // CHECK: hivm.hir.batchMmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
 // CHECK: } {may_not_exec, normalized_in_L0C = [0 : i32]}
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
@@ -2509,7 +2507,7 @@ func.func @test_batchMmadL1_may_not_exec_dynamic(%lb: i32, %ub: i32) -> tensor<2
 // -----
 // A5: mmadmx empty-init split-K CCF.
 // CHECK-LABEL: func.func @test_mmadmx_empty_init_splitk
-// CHECK: memref.alloca() {normalize_matmul_counter}
+// CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32}
 // CHECK: hivm.hir.mmadmxL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
 // CHECK: } {normalized_in_L0C = [0 : i32]}
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
@@ -2535,7 +2533,7 @@ func.func @test_mmadmx_empty_init_splitk() -> tensor<16x16xf32> {
 // -----
 // A5: scf.if-only CCF sets may_not_exec (no remain_in_l0c on if parent).
 // CHECK-LABEL: func.func @test_mmadL1_if_only_may_not_exec
-// CHECK: memref.alloca() {normalize_matmul_counter}
+// CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32}
 // CHECK: hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
 // CHECK: } {may_not_exec, normalized_in_L0C = [0 : i32]}
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
@@ -2644,6 +2642,117 @@ func.func @test_mmadmx_conditional_init_elemwise(%cond: i1, %bias: tensor<16x16x
   %sb = tensor.empty() : tensor<1xi8>
   %r = hivm.hir.mmadmxL1 ins(%a, %b, %sa, %sb, %cond, %c0, %c0, %c0 : tensor<16x16xf8E4M3FN>, tensor<16x16xf8E4M3FN>, tensor<1xi8>, tensor<1xi8>, i1, index, index, index) outs(%bias : tensor<16x16xf32>) -> tensor<16x16xf32>
   return %r : tensor<16x16xf32>
+}
+}
+
+// -----
+// A5: a vtranspose feeding A is absorbed into a_transpose, and real MKN is then
+// read from the pre-transpose operand: (A[1], A[0], B[1]) = (16, 64, 32).
+// CHECK-LABEL: func.func @test_mmadL1_fold_vtranspose_a
+// CHECK-DAG: %[[C32:.*]] = arith.constant 32 : index
+// CHECK-DAG: %[[C16:.*]] = arith.constant 16 : index
+// CHECK-DAG: %[[C64:.*]] = arith.constant 64 : index
+// CHECK-NOT: hivm.hir.vtranspose
+// CHECK: hivm.hir.mmadL1 {a_transpose, already_set_real_mkn} ins(%{{.*}}, %{{.*}}, %{{.*}}, %[[C16]], %[[C64]], %[[C32]] : tensor<64x16xf16>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+func.func @test_mmadL1_fold_vtranspose_a(%a: tensor<64x16xf16>, %b: tensor<64x32xf16>) -> tensor<16x32xf32> {
+  %true = arith.constant true
+  %c0 = arith.constant 0 : index
+  %at_init = tensor.empty() : tensor<16x64xf16>
+  %at = hivm.hir.vtranspose ins(%a : tensor<64x16xf16>) outs(%at_init : tensor<16x64xf16>) permutation = [1, 0] -> tensor<16x64xf16>
+  %empty = tensor.empty() : tensor<16x32xf32>
+  %r = hivm.hir.mmadL1 ins(%at, %b, %true, %c0, %c0, %c0 : tensor<16x64xf16>, tensor<64x32xf16>, i1, index, index, index) outs(%empty : tensor<16x32xf32>) -> tensor<16x32xf32>
+  return %r : tensor<16x32xf32>
+}
+}
+
+// -----
+// A5: a vtranspose feeding B is absorbed into b_transpose.
+// CHECK-LABEL: func.func @test_mmadL1_fold_vtranspose_b
+// CHECK-NOT: hivm.hir.vtranspose
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, b_transpose} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<16x64xf16>, tensor<32x64xf16>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+func.func @test_mmadL1_fold_vtranspose_b(%a: tensor<16x64xf16>, %b: tensor<32x64xf16>) -> tensor<16x32xf32> {
+  %true = arith.constant true
+  %c0 = arith.constant 0 : index
+  %bt_init = tensor.empty() : tensor<64x32xf16>
+  %bt = hivm.hir.vtranspose ins(%b : tensor<32x64xf16>) outs(%bt_init : tensor<64x32xf16>) permutation = [1, 0] -> tensor<64x32xf16>
+  %empty = tensor.empty() : tensor<16x32xf32>
+  %r = hivm.hir.mmadL1 ins(%a, %bt, %true, %c0, %c0, %c0 : tensor<16x64xf16>, tensor<64x32xf16>, i1, index, index, index) outs(%empty : tensor<16x32xf32>) -> tensor<16x32xf32>
+  return %r : tensor<16x32xf32>
+}
+}
+
+// -----
+// A5: a batch vtranspose swapping the two innermost axes is absorbed.
+// CHECK-LABEL: func.func @test_batchMmadL1_fold_vtranspose_innermost
+// CHECK-NOT: hivm.hir.vtranspose
+// CHECK: hivm.hir.batchMmadL1 {a_transpose, already_set_real_mkn} ins(%{{.*}} : tensor<2x64x16xf16>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+func.func @test_batchMmadL1_fold_vtranspose_innermost(%a: tensor<2x64x16xf16>, %b: tensor<2x64x32xf16>) -> tensor<2x16x32xf32> {
+  %true = arith.constant true
+  %c0 = arith.constant 0 : index
+  %at_init = tensor.empty() : tensor<2x16x64xf16>
+  %at = hivm.hir.vtranspose ins(%a : tensor<2x64x16xf16>) outs(%at_init : tensor<2x16x64xf16>) permutation = [0, 2, 1] -> tensor<2x16x64xf16>
+  %empty = tensor.empty() : tensor<2x16x32xf32>
+  %r = hivm.hir.batchMmadL1 ins(%at, %b, %true, %c0, %c0, %c0 : tensor<2x16x64xf16>, tensor<2x64x32xf16>, i1, index, index, index) outs(%empty : tensor<2x16x32xf32>) -> tensor<2x16x32xf32>
+  return %r : tensor<2x16x32xf32>
+}
+}
+
+// -----
+// A5: a_transpose/b_transpose can only express a swap of the two innermost
+// axes. This vtranspose swaps the outermost and innermost axis, which is legal
+// for vtranspose but not representable by the flag, so it must be left alone.
+// CHECK-LABEL: func.func @test_batchMmadL1_no_fold_outer_axis_vtranspose
+// CHECK: hivm.hir.vtranspose
+// CHECK-NOT: batchMmadL1 {a_transpose
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+func.func @test_batchMmadL1_no_fold_outer_axis_vtranspose(%a: tensor<64x16x2xf16>, %b: tensor<2x64x32xf16>) -> tensor<2x16x32xf32> {
+  %true = arith.constant true
+  %c0 = arith.constant 0 : index
+  %at_init = tensor.empty() : tensor<2x16x64xf16>
+  %at = hivm.hir.vtranspose ins(%a : tensor<64x16x2xf16>) outs(%at_init : tensor<2x16x64xf16>) permutation = [2, 1, 0] -> tensor<2x16x64xf16>
+  %empty = tensor.empty() : tensor<2x16x32xf32>
+  %r = hivm.hir.batchMmadL1 ins(%at, %b, %true, %c0, %c0, %c0 : tensor<2x16x64xf16>, tensor<2x64x32xf16>, i1, index, index, index) outs(%empty : tensor<2x16x32xf32>) -> tensor<2x16x32xf32>
+  return %r : tensor<2x16x32xf32>
+}
+}
+
+// -----
+// A5: the operand is a slice of the transposed tensor, so the vtranspose source
+// cannot be handed to the mmad directly and the fold must be skipped.
+// CHECK-LABEL: func.func @test_mmadL1_no_fold_vtranspose_through_slice
+// CHECK: hivm.hir.vtranspose
+// CHECK-NOT: mmadL1 {a_transpose
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+func.func @test_mmadL1_no_fold_vtranspose_through_slice(%a: tensor<64x64xf16>, %b: tensor<32x32xf16>) -> tensor<32x32xf32> {
+  %true = arith.constant true
+  %c0 = arith.constant 0 : index
+  %at_init = tensor.empty() : tensor<64x64xf16>
+  %at = hivm.hir.vtranspose ins(%a : tensor<64x64xf16>) outs(%at_init : tensor<64x64xf16>) permutation = [1, 0] -> tensor<64x64xf16>
+  %slice = tensor.extract_slice %at[0, 0] [32, 32] [1, 1] : tensor<64x64xf16> to tensor<32x32xf16>
+  %empty = tensor.empty() : tensor<32x32xf32>
+  %r = hivm.hir.mmadL1 ins(%slice, %b, %true, %c0, %c0, %c0 : tensor<32x32xf16>, tensor<32x32xf16>, i1, index, index, index) outs(%empty : tensor<32x32xf32>) -> tensor<32x32xf32>
+  return %r : tensor<32x32xf32>
+}
+}
+
+// -----
+// A3 / mem-based: NormalizeMatmul does not run the fold there, so the
+// vtranspose survives.
+// CHECK-LABEL: func.func @test_mmadL1_membase_keeps_vtranspose
+// CHECK: hivm.hir.vtranspose
+// CHECK-NOT: mmadL1 {a_transpose
+module attributes {hacc.target = #hacc.target<"Ascend910B4">} {
+func.func @test_mmadL1_membase_keeps_vtranspose(%a: tensor<64x16xf16>, %b: tensor<64x32xf16>) -> tensor<16x32xf32> {
+  %true = arith.constant true
+  %c0 = arith.constant 0 : index
+  %at_init = tensor.empty() : tensor<16x64xf16>
+  %at = hivm.hir.vtranspose ins(%a : tensor<64x16xf16>) outs(%at_init : tensor<16x64xf16>) permutation = [1, 0] -> tensor<16x64xf16>
+  %empty = tensor.empty() : tensor<16x32xf32>
+  %r = hivm.hir.mmadL1 ins(%at, %b, %true, %c0, %c0, %c0 : tensor<16x64xf16>, tensor<64x32xf16>, i1, index, index, index) outs(%empty : tensor<16x32xf32>) -> tensor<16x32xf32>
+  return %r : tensor<16x32xf32>
 }
 }
 

@@ -306,7 +306,12 @@ static void hivmPreBufferizationOptimizationPipeline(
 
   pm.addPass(mlir::scf::createRemoveRedundantLoopInitPass());
   pm.addPass(mlir::hivm::createNormalizeMatmulPass());
-  pm.addPass(mlir::hivm::createInlineFixpipePass());
+  pm.addPass(mlir::hivm::createInsertFixpipePass());
+  {
+    InlineFixpipeOptions opts;
+    opts.inlineQuantScale = hivmPipelineOptions.inlineQuantScaleInFixpipe;
+    pm.addPass(mlir::hivm::createInlineFixpipePass(opts));
+  }
   hivmCVCommunicationPipeline(pm, hivmPipelineOptions);
   if (hivmPipelineOptions.enableLayoutOptimization &&
       hivmPipelineOptions.enableMixedCV) {
@@ -325,7 +330,12 @@ static void hivmPreBufferizationOptimizationPipeline(
   } else {
     pm.addPass(createInsertNZ2NDForDebugPass());
   }
-  pm.addPass(mlir::hivm::createInlineFixpipePass());
+  pm.addPass(mlir::hivm::createInsertFixpipePass());
+  {
+    InlineFixpipeOptions opts;
+    opts.inlineQuantScale = hivmPipelineOptions.inlineQuantScaleInFixpipe;
+    pm.addPass(mlir::hivm::createInlineFixpipePass(opts));
+  }
   hivmCVCommunicationPipeline(pm, hivmPipelineOptions);
   // must run CloneTensorEmpty to resotre merged&hoisted tensor.empty caused by
   // CSE
