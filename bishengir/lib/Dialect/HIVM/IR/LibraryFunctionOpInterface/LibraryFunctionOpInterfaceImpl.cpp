@@ -1379,21 +1379,98 @@ static std::string getHistogramLibraryCallName(CustomOpT op) {
 }
 
 template <typename CustomOpT>
+static std::string getGatherLoadLibraryCallName(CustomOpT op) {
+  const auto srcType = op->getOperand(0).getType();
+  const std::string srcTypeStr =
+      getTypeName(op->getLoc(), getElementTypeOrSelf(srcType));
+
+  const auto idxType = cast<ShapedType>(op->getOperand(1).getType());
+  const auto rank = idxType.getRank();
+  const std::string libCallDim = std::to_string(rank) + "d";
+  const std::string idxTypeStr =
+      getTypeName(op->getLoc(), getElementTypeOrSelf(idxType));
+
+  return "gather_out_to_ub_" + libCallDim + "_" + srcTypeStr + "_" +
+         idxTypeStr;
+}
+
+template <typename CustomOpT>
+static std::string getIndexSelectLibraryCallName(CustomOpT op) {
+  auto idxType = cast<ShapedType>(op->getOperand(1).getType());
+  int idxRank = idxType.getRank();
+  const std::string idxDim = std::to_string(idxRank) + "d";
+
+  auto extraAttr = op.getExtraAttr();
+  auto srcRank = extraAttr.getValue().str();
+  const std::string srcDim = srcRank.substr(srcRank.length() - 1, 1) + "d";
+
+  Type srcType = op->getOperand(0).getType();
+  const std::string srcTypeStr =
+      getTypeName(op->getLoc(), getElementTypeOrSelf(srcType));
+  const std::string idxTypeStr =
+      getTypeName(op->getLoc(), getElementTypeOrSelf(idxType));
+  return "index_select_" + srcDim + "_" + srcTypeStr + "_" + idxDim + "_" +
+         idxTypeStr;
+}
+
+template <typename CustomOpT>
+static std::string getIndirectAtomicLibraryCallName(CustomOpT op) {
+  std::string opName = "unknown";
+  bool isBlockScope = false;
+  if (auto extraAttr = op.getExtraAttr()) {
+    SmallVector<StringRef> entries;
+    extraAttr.getValue().split(entries, ',');
+    for (StringRef entry : entries) {
+      StringRef key;
+      StringRef value;
+      std::tie(key, value) = entry.split('=');
+      key = key.trim();
+      value = value.trim();
+      if (key == "operate" && !value.empty()) {
+        opName = value.str();
+      } else if (key == "scope") {
+        isBlockScope = value == "cta";
+      }
+    }
+  }
+
+  ValueRange inputs = op.getInputs();
+  const bool hasMask = inputs.size() > 3;
+
+  Type valueType = inputs[2].getType();
+  const std::string valueTypeStr =
+      getTypeName(op->getLoc(), getElementTypeOrSelf(valueType));
+
+  Type offsetsType = inputs[1].getType();
+  const std::string offsetsTypeStr =
+      getTypeName(op->getLoc(), getElementTypeOrSelf(offsetsType));
+
+  const bool isSoftwareAcceleratedOp =
+      opName == "or" || opName == "and" || opName == "xor";
+  std::string scopePrefix = "";
+  if (isSoftwareAcceleratedOp)
+    scopePrefix = isBlockScope ? "block_" : "soft_";
+
+  return "indirect_atomic_" + scopePrefix + opName +
+         (hasMask ? "" : "_no_mask") + "_" + valueTypeStr + "_" +
+         offsetsTypeStr;
+}
+
+template <typename CustomOpT>
 std::string inferCustomOpMaxRank(Operation *op,
                                  std::optional<bool> isOpsAligned) {
   auto concreteOp = cast<CustomOpT>(op);
 
-  // TODO: add support for built-in template library
-  using InferBuiltinMaxRankFuncTy =
-      std::function<std::string(std::optional<bool>)>;
-  static const DenseMap<StringRef, InferBuiltinMaxRankFuncTy>
-      builtinsCallName{};
-
   if (concreteOp.isBuiltin()) {
-    if (concreteOp.getName() == "__builtin_histogram")
+    if (concreteOp.getName() == CustomOpT::kBuiltinGatherLoadName)
+      return getGatherLoadLibraryCallName(concreteOp);
+    if (concreteOp.getName() == CustomOpT::kBuiltinIndexSelectName)
+      return getIndexSelectLibraryCallName(concreteOp);
+    if (concreteOp.getName() == CustomOpT::kBuiltinIndirectAtomicName)
+      return getIndirectAtomicLibraryCallName(concreteOp);
+    if (concreteOp.getName() == CustomOpT::kBuiltinHistogramName)
       return getHistogramLibraryCallName(concreteOp);
-    const auto inferBuiltinCallName = builtinsCallName.at(concreteOp.getName());
-    return inferBuiltinCallName(isOpsAligned);
+    llvm::report_fatal_error("Unsupported builtin CustomOp");
   }
 
   // add _mlir_ciface_ prefix if no memref in op's operands and values

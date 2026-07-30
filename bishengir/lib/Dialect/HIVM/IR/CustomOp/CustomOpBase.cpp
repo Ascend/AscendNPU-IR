@@ -49,8 +49,14 @@ PIPE CustomOp::getPipe() {
 }
 
 const DenseMap<StringRef, CustomOp::BuiltinInfo> CustomOp::kBuiltins{
-    {"__builtin_histogram",
-     CustomOp::BuiltinInfo{TCoreType::VECTOR, PIPE::PIPE_V, VFMode::SIMT}},
+    {kBuiltinGatherLoadName,
+     BuiltinInfo{TCoreType::VECTOR, PIPE::PIPE_V, VFMode::SIMT, {0}}},
+    {kBuiltinIndexSelectName,
+     BuiltinInfo{TCoreType::VECTOR, PIPE::PIPE_V, VFMode::SIMT, {0}}},
+    {kBuiltinIndirectAtomicName,
+     BuiltinInfo{TCoreType::VECTOR, PIPE::PIPE_V, VFMode::SIMT, {0}}},
+    {kBuiltinHistogramName,
+     BuiltinInfo{TCoreType::VECTOR, PIPE::PIPE_V, VFMode::SIMT, {}}},
 };
 
 void CustomMacroOp::setInPipe(PIPE pipe) {

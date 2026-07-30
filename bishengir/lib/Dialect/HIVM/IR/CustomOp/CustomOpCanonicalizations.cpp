@@ -61,6 +61,13 @@ struct CustomOpCanonicalizer : public OpRewritePattern<CustomOpT> {
       return success();
     }
 
+    const auto &gmAddrArgsIndices = customOp.getGMAddrArgsIndices();
+    if (!gmAddrArgsIndices ||
+        *gmAddrArgsIndices != builtinInfo.gmAddrArgsIndices) {
+      customOp.setGMAddrArgsIndices(builtinInfo.gmAddrArgsIndices);
+      return success();
+    }
+
     return failure();
   }
 };
