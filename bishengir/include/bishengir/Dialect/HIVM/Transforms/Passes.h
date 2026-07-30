@@ -41,6 +41,13 @@ enum class CVPipelineMode {
   Dynamic,
 };
 
+/// partition-and-bind-sub-block mode
+enum class PartitionAndBindSubBlockMode {
+  Off = 0,
+  DefaultPin,
+  LoadBalanced,
+};
+
 namespace mlir {
 
 namespace hivm {
@@ -310,6 +317,14 @@ std::unique_ptr<Pass> createAnnotateVFAliasPass();
 std::unique_ptr<Pass>
 createTileAndBindSubBlockPass(const TileAndBindSubBlockOptions &options = {});
 
+/// Create the self-gated operand-parallel sub-block pass.
+std::unique_ptr<Pass> createPartitionAndBindSubBlockPass(
+    const PartitionAndBindSubBlockOptions &options = {});
+
+/// Create the post-bufferization pass that cleans up operand-parallel sub-block
+/// guards.
+std::unique_ptr<Pass> createSubBlockGuardCleanupPass();
+
 /// Create a pass to bubble up extract slice for hivm ops.
 std::unique_ptr<Pass> createHIVMBubbleUpExtractSlicePass(
     const HIVMBubbleUpExtractSliceOptions &options = {});
@@ -354,6 +369,10 @@ std::unique_ptr<Pass> createInferSimtVFMemScopeHintPass();
 // Create a pass to materialize explicit memory scopes inside split simt
 // modules.
 std::unique_ptr<Pass> createMaterializeSimtVFMemScopePass();
+
+// Create a pass to serially split oversized SIMT VF tiles.
+std::unique_ptr<Pass>
+createSIMTVFSubTilingPass(const SIMTVFSubTilingOptions &options = {});
 
 // Split simt module for every simt vf
 std::unique_ptr<Pass> createSplitSimtModulePass();

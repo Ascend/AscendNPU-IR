@@ -482,6 +482,25 @@ def EnableAutoBindSubBlock : HIVMOptimizationControlOptions<
   "true"
 >;
 
+def PartitionAndBindSubBlock : HIVMOptimizationControlOptions<
+  "Operand-parallel partition-and-bind sub-block mode. off: disabled. "
+  "default-pin: enabled, pinning every free op to sub-block 0. "
+  "load-balanced: enabled, spreading across both AIV ",
+  "PartitionAndBindSubBlockMode",
+  "PartitionAndBindSubBlockMode::Off"
+> {
+  let passGroup = ["HIVM"];
+  let additionalOptFlags = [{
+llvm::cl::values(
+  clEnumValN(PartitionAndBindSubBlockMode::Off, "off",
+             "Disable partition-and-bind sub-block"),
+  clEnumValN(PartitionAndBindSubBlockMode::DefaultPin, "default-pin",
+             "Enable; pin every free op to sub-block 0"),
+  clEnumValN(PartitionAndBindSubBlockMode::LoadBalanced, "load-balanced",
+             "Enable; spread op across both AIV sub-cores"))
+  }];
+}
+
 def EnableCodeMotion : HIVMOptimizationControlOptions<
   "Enable code-motion/subset-hoist.",
   "bool",
@@ -862,6 +881,22 @@ def SimtVFDynamicSize : FeatureControlOptions<
   "Dynamic ub size(KB) for simt VF. Default is 216.",
   "int",
   "216"
+> {
+  let passGroup = ["HIVM"];
+}
+
+def EnableSimtVFSubTiling : FeatureControlOptions<
+  "Enable SIMT VF sub-tiling after split-simt-module.",
+  "bool",
+  "false"
+> {
+  let passGroup = ["HIVM"];
+}
+
+def SimtVFSubTilingMaxTileSize : FeatureControlOptions<
+  "Maximum tile size kept inside SIMT VF after sub-tiling.",
+  "int",
+  "64"
 > {
   let passGroup = ["HIVM"];
 }

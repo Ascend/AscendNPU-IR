@@ -33,7 +33,6 @@ using namespace mlir;
 using namespace mlir::hivm;
 
 namespace {
-constexpr StringLiteral kSimtModuleAttrName = "hivm.simt_module";
 
 struct SplitSimtModulePass
     : public impl::SplitSimtModuleBase<SplitSimtModulePass> {
@@ -51,12 +50,14 @@ void SplitSimtModulePass::runOnOperation() {
   auto modBlock = mod.getBody();
   builder.setInsertionPointToStart(modBlock);
   Type gridSizeType;
-  mod->walk([&mod, &gridSizeType](func::CallOp callOp) {
+  bool hasCallToSIMTVF = false;
+  mod->walk([&mod, &gridSizeType, &hasCallToSIMTVF](func::CallOp callOp) {
     auto parentFuncOp = callOp->getParentOfType<func::FuncOp>();
     assert(parentFuncOp && "call op to simt vf should in func body");
     auto funcOp = llvm::cast<func::FuncOp>(
         SymbolTable::lookupNearestSymbolFrom(mod, callOp.getCalleeAttr()));
     if (util::isSIMTVF(funcOp)) {
+      hasCallToSIMTVF = true;
       auto gridSizeArgs = parentFuncOp.getArguments().take_back(GridSizeCount);
       for (auto arg : gridSizeArgs) {
         assert(llvm::isa<IntegerType>(arg.getType()) &&
@@ -68,9 +69,6 @@ void SplitSimtModulePass::runOnOperation() {
       callOp.getOperandsMutable().append(gridSizeArgs);
     }
   });
-  if (!gridSizeType) {
-    llvm::report_fatal_error("gridSizeType is not initialized for SIMT vf");
-  }
 
   // Collect simt vf
   SmallVector<func::FuncOp> simtVFs;
@@ -79,6 +77,15 @@ void SplitSimtModulePass::runOnOperation() {
       simtVFs.push_back(funcOp);
     }
   });
+
+  // A pure SIMD kernel may still enter this pass in mix compile mode. If there is
+  // no call to SIMT VF, skip SIMT VF splitting but keep SIMD module wrapping.
+  if (!hasCallToSIMTVF) {
+    simtVFs.clear();
+  } else if (!gridSizeType) {
+    llvm::report_fatal_error("gridSizeType is not initialized for SIMT vf");
+  }
+
   // Create simt modules and then put simt vfs into their respective simt
   // modules.
   for (auto funcOp : simtVFs) {
@@ -99,7 +106,7 @@ void SplitSimtModulePass::runOnOperation() {
     funcOp.setSymVisibility("private");
     builder.setInsertionPointToStart(modBlock);
     newMod->setAttrs(mod->getAttrs());
-    newMod->setAttr(kSimtModuleAttrName, builder.getUnitAttr());
+    newMod->setAttr(hacc::SIMTModuleAttr::name, builder.getUnitAttr());
   }
 
   llvm::SmallVector<Operation *> simdFuncs;

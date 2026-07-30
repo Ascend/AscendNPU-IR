@@ -244,6 +244,14 @@ static void hivmPreBufferizationOptimizationPipeline(
   }
 
   pm.addPass(createInferFuncCoreTypePass());
+  if (hivmPipelineOptions.partitionAndBindSubBlock !=
+      PartitionAndBindSubBlockMode::Off) {
+    PartitionAndBindSubBlockOptions partitionOptions;
+    partitionOptions.enableLoadBalanced =
+        hivmPipelineOptions.partitionAndBindSubBlock ==
+        PartitionAndBindSubBlockMode::LoadBalanced;
+    pm.addPass(createPartitionAndBindSubBlockPass(partitionOptions));
+  }
   // AutoBlockifyParallelLoopPass needs to be after infer core type because
   // num. of physical blocks we loop on is dependent on core type
   if (hivmPipelineOptions.enableTritonKernelCompile &&
@@ -472,6 +480,8 @@ void buildOptimizeHIVMPipeline(OpPassManager &pm,
   if (!options.disableHIVMTensorCompile) {
     hivmPreBufferizationOptimizationPipeline(pm, options);
     bufferizationPipeline(pm, options);
+    if (options.partitionAndBindSubBlock != PartitionAndBindSubBlockMode::Off)
+      pm.addPass(createSubBlockGuardCleanupPass());
   }
   hivmPostBufferizationOptimizationPipeline(pm, options);
   // Optimizations that relies on scope should be done after this point. Inline

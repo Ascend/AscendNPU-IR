@@ -6,7 +6,7 @@
 module {
   func.func @simple_indirect_load_kernel_scope_0(%arg0: memref<?xi64>, %arg1: memref<8xi64>, %arg2: memref<?xf32>, %arg3: i32, %arg4: memref<8xf32>, %arg5: memref<1024xi8> {hivm.shared_memory}) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, no_inline, outline, hivm.vf_mode = #hivm.vf_mode<SIMT>} {
     %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [0], sizes: [8], strides: [1] : memref<?xi64> to memref<8xi64, strided<[1]>>
-    hivm.hir.load ins(%reinterpret_cast : memref<8xi64, strided<[1]>>) outs(%arg1 : memref<8xi64>)
+    hivm.hir.load ins(%reinterpret_cast : memref<8xi64, strided<[1]>>) outs(%arg1 : memref<8xi64>) eviction_policy = <EvictFirst>
     %0 = bufferization.to_tensor %arg1 restrict writable : memref<8xi64>
     %1 = tensor.empty() : tensor<8xf32>
     %2 = hivm.hir.gather_load ins(%arg2 : memref<?xf32>, %0 : tensor<8xi64>, %arg3 : i32) outs(%1 : tensor<8xf32>) {cache = #hivm.cache_modifier<none>, evict = #hivm.eviction_policy<EvictLast>, isVolatile = false} -> tensor<8xf32>
@@ -28,6 +28,39 @@ module {
     %2 = bufferization.to_tensor %alloc_0 : memref<8xf32>
     %reinterpret_cast = memref.reinterpret_cast %arg4 to offset: [0], sizes: [8], strides: [1] : memref<?xf32> to memref<8xf32, strided<[1]>>
     hivm.hir.store ins(%2 : tensor<8xf32>) outs(%reinterpret_cast : memref<8xf32, strided<[1]>>)
+    return
+  }
+}
+
+// -----
+
+// CHECK: hivm.simt_mem_scope_hint = #hivm.simt_mem_scope_hint<ub>
+module {
+  func.func @simt_vf(%arg0: memref<8xi64>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, no_inline, outline, hivm.vf_mode = #hivm.vf_mode<SIMT>} {
+    return
+  }
+
+  func.func @simple_kernel_2(%arg0: tensor<8xi64>, %arg1: tensor<8xi64>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vf_mode = #hivm.vf_mode<SIMD>} {
+    %0 = tensor.empty() : tensor<8xi64>
+    %1 = hivm.hir.vadd ins(%arg0, %arg1: tensor<8xi64>, tensor<8xi64>) outs(%0 : tensor<8xi64>) -> tensor<8xi64>
+    %2 = bufferization.to_memref %1 : memref<8xi64>
+    call @simt_vf(%2) : (memref<8xi64>) -> ()
+    return
+  }
+}
+
+// -----
+
+// CHECK: hivm.simt_mem_scope_hint = #hivm.simt_mem_scope_hint<ub>
+module {
+  func.func @simt_vf(%arg0: memref<8xi64>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, no_inline, outline, hivm.vf_mode = #hivm.vf_mode<SIMT>} {
+    return
+  }
+
+  func.func @simple_kernel_with_empty_inp(%arg0: tensor<8xi64>, %arg1: tensor<8xi64>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vf_mode = #hivm.vf_mode<SIMD>} {
+    %0 = tensor.empty() : tensor<8xi64>
+    %1 = bufferization.to_memref %0 : memref<8xi64>
+    call @simt_vf(%1) : (memref<8xi64>) -> ()
     return
   }
 }

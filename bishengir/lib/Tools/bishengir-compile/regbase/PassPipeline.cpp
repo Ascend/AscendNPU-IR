@@ -408,10 +408,17 @@ void setupLowerTritonPipelineOptions(
 void buildBiShengTTIRPipeline(OpPassManager &pm,
                               const BiShengIRCompileMainConfig &config) {
   if (config.getEnableSimdSimtMixCompile()) {
+    if (config.getEnableSimtVFSubTiling()) {
+      SIMTVFSubTilingOptions subTilingOptions;
+      subTilingOptions.maxTileSize = config.getSimtVFSubTilingMaxTileSize();
+      // Run while the split SIMT module is still in HIVM so sub-tiling can
+      // reuse tensor/memref tiling helpers before TTIR lowering.
+      pm.addPass(hivm::createSIMTVFSubTilingPass(subTilingOptions));
+    }
     // Materialize SIMT mem scopes only after split so the main module can stay
     // free of address-spaced memrefs before delayed reg-based vectorization.
     pm.addPass(hivm::createMaterializeSimtVFMemScopePass());
-    // pm.addPass(createHIVMToTritonGPUConversionPass());
+    pm.addPass(createHIVMToTritonGPUConversionPass());
   }
 
   if (!config.getCompileHost()) {
@@ -482,16 +489,16 @@ void buildBiShengHIRPipeline(OpPassManager &pm,
     }
     if (config.getEnableSimdSimtMixCompile()) {
       // TODO(regbase)
-      // pm.addPass(hivm::createAutoScopePass());
-      // pm.addPass(hivm::createInsertMemSemanticForSimtVFPass());
+      pm.addPass(hivm::createAutoScopePass());
+      pm.addPass(hivm::createInsertMemSemanticForSimtVFPass());
       pm.addPass(scope::createOutlineScopePass());
-      // pm.addPass(hivm::createInsertAllocBasePlaceholderPass());
-      // pm.addPass(hivm::createInferSimtVFMemEffectPass());
+      pm.addPass(hivm::createInsertAllocBasePlaceholderPass());
+      pm.addPass(hivm::createInferSimtVFMemEffectPass());
       // Infer per-argument mem scope hints from the mixed call boundary first;
       // actual address space rewrites are deferred until each SIMT module is
       // split out and lowered independently.
-      // pm.addPass(hivm::createInferSimtVFMemScopeHintPass());
-      // pm.addPass(hivm::createSplitSimtModulePass());
+      pm.addPass(hivm::createInferSimtVFMemScopeHintPass());
+      pm.addPass(hivm::createSplitSimtModulePass());
     }
   }
 }

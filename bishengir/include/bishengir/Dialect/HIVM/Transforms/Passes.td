@@ -1047,6 +1047,55 @@ def TileAndBindSubBlock : Pass<"hivm-bind-sub-block", "ModuleOp"> {
     "Enable TileAndBindSubBlock pass">];
 }
 
+def PartitionAndBindSubBlock
+    : Pass<"hivm-partition-and-bind-sub-block", "ModuleOp"> {
+  let summary =
+      "Lower {sub_block = n} scope.scope regions to operand-parallel guards";
+  let constructor = "mlir::hivm::createPartitionAndBindSubBlockPass()";
+  let options = [
+    Option<"enableLoadBalanced", "enable-load-balanced", "bool",
+           /*default=*/"false",
+           "Sub-block binding method. false: pin every free op to sub-block 0"
+           "true: spread independent fixpipe across both sub-cores">
+  ];
+  let dependentDialects = [
+    "scope::ScopeDialect",
+    "hivm::HIVMDialect",
+    "scf::SCFDialect",
+    "arith::ArithDialect",
+    "tensor::TensorDialect",
+    "func::FuncDialect"
+  ];
+}
+
+def SubBlockGuardCleanup
+    : Pass<"hivm-sub-block-guard-cleanup", "ModuleOp"> {
+  let summary =
+      "Clean up value-returning operand-parallel sub-block guards";
+  let description = [{
+    STAGE 3 of operand-parallel sub-block partition. Runs after bufferization +
+    DropEquivalentBufferResults. Cleans up each value-returning
+    `scf.if (get_sub_block_idx() == n) -> memref { ...; yield %out } else
+    { yield %init }` via three single-concern components: (1) bubble metadata-only
+    memref views (expand_shape/collapse_shape/cast) off the then-yields so the
+    then-output is a bare alloc (formerly a separate pre-bufferize pass); (2) fold
+    the redundant UB->UB copies bufferization left in the then block -- both the
+    scope-OUTPUT reconciliation copy and the read-only INPUT staging copy; (3)
+    make the guard result-free by hoisting the then-branch's own output alloc
+    above the guard and dropping the else. The dead else-init allocs then DCE
+    away. Guards are matched structurally by their `get_sub_block_idx() == const`
+    predicate (bufferization drops discardable attrs but leaves this index-domain
+    condition intact); only partition guards stay result-bearing here.
+  }];
+  let constructor = "mlir::hivm::createSubBlockGuardCleanupPass()";
+  let dependentDialects = [
+    "hivm::HIVMDialect",
+    "scf::SCFDialect",
+    "arith::ArithDialect",
+    "memref::MemRefDialect"
+  ];
+}
+
 def HIVMBubbleUpExtractSlice : Pass<"hivm-bubble-up-extract-slice", "func::FuncOp"> {
   let summary = "tile and bind sub block";
   let constructor = "mlir::hivm::createHIVMBubbleUpExtractSlicePass()";
@@ -1177,6 +1226,26 @@ def MaterializeSimtVFMemScope
   let summary = "Materialize explicit memory scopes inside split simt modules";
   let constructor = "mlir::hivm::createMaterializeSimtVFMemScopePass()";
   let dependentDialects = ["hivm::HIVMDialect", "memref::MemRefDialect"];
+}
+
+def SIMTVFSubTiling
+    : Pass<"hivm-simt-vf-sub-tiling", "ModuleOp"> {
+  let summary = "Split oversized SIMT VF tiles into serial smaller tiles";
+  let constructor = "mlir::hivm::createSIMTVFSubTilingPass()";
+  let dependentDialects = [
+    "annotation::AnnotationDialect",
+    "arith::ArithDialect",
+    "bufferization::BufferizationDialect",
+    "func::FuncDialect",
+    "hivm::HIVMDialect",
+    "memref::MemRefDialect",
+    "scf::SCFDialect",
+    "tensor::TensorDialect"
+  ];
+  let options = [Option<
+      "maxTileSize", "max-tile-size", "int64_t",
+      /*default=*/"64",
+      "Maximum per-tile size on the selected SIMT tiling dimension">];
 }
 
 def SplitSimtModule : Pass<"split-simt-module"> {
