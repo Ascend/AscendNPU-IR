@@ -46,7 +46,7 @@ void GraphSolver::addPair(ConflictPair *conflictPair, CorePipeInfo corePipeSrc,
                           int endIndex, bool isUnitFlag) {
   Edge edge(conflictPair, corePipeSrc, corePipeDst, startIndex, endIndex,
             isUnitFlag);
-  adjacencyList[edge.corePipeSrc][edge.corePipeDst].insert(edge);
+  adjacencyList[edge.corePipeSrc][edge.corePipeDst].push_back(edge);
 }
 
 // Convert a ConflictPair into adjacency edges (handles PIPE_ALL
@@ -99,23 +99,6 @@ void GraphSolver::addConflictPair(ConflictPair *conflictPair) {
   }
 }
 
-// Compact adjacency lists by removing dominated edges to accelerate queries.
-void GraphSolver::optimizeAdjacencyList() {
-  for (auto &[corePipeSrc, dstMap] : adjacencyList) {
-    for (auto &[corePipeDst, edges] : dstMap) {
-      std::set<Edge> optimizedEdges;
-      for (auto &edge : edges) {
-        while (!optimizedEdges.empty() &&
-               optimizedEdges.rbegin()->endIndex >= edge.endIndex) {
-          optimizedEdges.erase(*optimizedEdges.rbegin());
-        }
-        optimizedEdges.insert(edge);
-      }
-      edges = std::move(optimizedEdges);
-    }
-  }
-}
-
 // Run a Dijkstra-like search over pipes using index intervals as
 // weights/constraints. Returns minimal reachable index for endPipe or empty
 // optional if unreachable.
@@ -161,12 +144,14 @@ std::optional<int> GraphSolver::runDijkstra(CorePipeInfo corePipeSrc,
     }
 
     for (auto &[endCorePipe, edges] : adjacencyList[curCorePipe]) {
-      auto it = edges.lower_bound(Edge(curCorePipe, endCorePipe, curIndex, -1));
-      for (; it != edges.end(); it++) {
+      for (auto edge : edges) {
+        if (edge.startIndex < curIndex) {
+          continue;
+        }
         if (!distance.count(endCorePipe) ||
-            (distance[endCorePipe] > (it->endIndex))) {
-          distance[endCorePipe] = it->endIndex;
-          que.emplace(it->endIndex, endCorePipe);
+            (distance[endCorePipe] > (edge.endIndex))) {
+          distance[endCorePipe] = edge.endIndex;
+          que.emplace(edge.endIndex, endCorePipe);
         }
       }
     }
@@ -218,9 +203,10 @@ std::optional<int> GraphSolver::runDijkstraUnitFlagEnabled(
     }
 
     for (auto &[endCorePipe, edges] : adjacencyList[curCorePipe]) {
-      auto it = edges.lower_bound(Edge(curCorePipe, endCorePipe, curIndex, -1));
-      for (; it != edges.end(); it++) {
-        auto &edge = *it;
+      for (auto edge : edges) {
+        if (edge.startIndex < curIndex) {
+          continue;
+        }
         if (edge.isUnitFlag) {
           if (curIndex == startIndex && edge.startIndex != startIndex) {
             continue;

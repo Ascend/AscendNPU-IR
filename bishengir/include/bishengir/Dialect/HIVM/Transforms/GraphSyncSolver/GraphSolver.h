@@ -18,6 +18,7 @@
 #define BISHENG_DIALECT_HIVM_TRANSFORMS_GRAPHSYNCSOLVER_GRAPHSOLVER_H
 
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/Utility.h"
+#include "llvm/ADT/SmallVector.h"
 #include <set>
 
 namespace mlir::hivm::syncsolver {
@@ -25,12 +26,12 @@ namespace mlir::hivm::syncsolver {
 class GraphSolver {
 public:
   struct Edge {
-    ConflictPair *const conflictPair;
-    const CorePipeInfo corePipeSrc;
-    const CorePipeInfo corePipeDst;
-    const int startIndex;
-    const int endIndex;
-    const bool isUnitFlag;
+    ConflictPair *conflictPair;
+    CorePipeInfo corePipeSrc;
+    CorePipeInfo corePipeDst;
+    int startIndex;
+    int endIndex;
+    bool isUnitFlag;
     Edge() = delete;
     Edge(ConflictPair *conflictPair, CorePipeInfo corePipeSrc,
          CorePipeInfo corePipeDst, int startIndex, int endIndex,
@@ -53,7 +54,8 @@ public:
   // (startIndex,endIndex) lifetime. Used by runDijkstra to compute minimum
   // distance paths between two pipe ids taking ordering constraints into
   // account.
-  llvm::DenseMap<CorePipeInfo, llvm::DenseMap<CorePipeInfo, std::set<Edge>>>
+  llvm::DenseMap<CorePipeInfo,
+                 llvm::DenseMap<CorePipeInfo, llvm::SmallVector<Edge>>>
       adjacencyList;
 
   GraphSolver(const SyncSolverOptions &options) : options(options) {}
@@ -65,9 +67,6 @@ public:
 
   // Build adjacency list from a ConflictPair by decomposing it into edges.
   void addConflictPair(syncsolver::ConflictPair *conflictPair);
-
-  // Compact or merge overlapping edges to speed up Dijkstra queries.
-  void optimizeAdjacencyList();
 
   // Run shortest-path search (Dijkstra-like) with ordering constraints to find
   // the minimal reachable index for a path from startPipe to endPipe.
