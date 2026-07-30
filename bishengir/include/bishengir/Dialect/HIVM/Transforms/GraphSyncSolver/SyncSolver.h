@@ -29,6 +29,7 @@
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/Support/LogicalResult.h"
 #include <memory>
 #include <optional>
@@ -37,7 +38,7 @@
 
 namespace mlir::hivm::syncsolver {
 
-class Solver {
+class SyncSolverBase {
 public:
   // Configuration options.
   const SyncSolverOptions options;
@@ -101,10 +102,6 @@ protected:
                  llvm::DenseSet<ConflictPair *>>
       scopeOccPairChosenConflicts, persistentScopeOccPairChosenConflicts;
 
-  // Processing order list created from syncIr that drives pairwise conflict
-  // checks.
-  std::vector<ProcessingOrder> processingOrders;
-
   // Set of processed occurrence pairs to avoid re-processing the same pair.
   llvm::DenseSet<std::pair<Occurrence *, Occurrence *>> processedOccPairs;
 
@@ -162,11 +159,10 @@ protected:
 public:
   CustomMacroSyncState customMacroSync;
 
-  // Resolved event id per sync_event_slots entry, for sync_related_args.
-  Solver() = delete;
-  virtual ~Solver() = default;
+  SyncSolverBase() = delete;
+  virtual ~SyncSolverBase() = default;
 
-  Solver(std::unique_ptr<IRTranslator> irTranslator)
+  SyncSolverBase(std::unique_ptr<IRTranslator> irTranslator)
       : options(irTranslator->options) {
     init(std::move(irTranslator));
   }
@@ -192,7 +188,6 @@ protected:
     syncIr = std::move(irTranslator->syncIr);
     unitFlagFeaturedOps = std::move(irTranslator->unitFlagFeaturedOps);
     opAllOccurrences = std::move(irTranslator->opAllOccurrences);
-    processingOrders = std::move(irTranslator->processingOrders);
     customMacroSync.collectReservedEventIds(funcOp, options);
   }
 
@@ -208,8 +203,7 @@ protected:
   // Reset unit-flag related bookkeeping prior to another pass.
   void resetUnitFlag();
 
-  // Walk and process the generated processingOrders to choose conflicts.
-  void processOrders();
+  virtual void processOrders() = 0;
 
   virtual void processConflict(Occurrence *occ1, Occurrence *occ2,
                                RWOperation *rwOp1, RWOperation *rwOp2,
@@ -479,6 +473,38 @@ protected:
   Occurrence *getScopeBeginPlaceHolderOcc(Occurrence *occ);
   Occurrence *getScopeEndPlaceHolderOcc(Occurrence *occ);
 };
+
+class SyncSolverV1 : public SyncSolverBase {
+public:
+  SyncSolverV1() = delete;
+  explicit SyncSolverV1(std::unique_ptr<IRTranslator> irTranslator)
+      : SyncSolverBase(std::move(irTranslator)) {}
+
+protected:
+  std::vector<ProcessingOrder> processingOrders;
+
+  void processOrder(ProcessingOrder processingOrder);
+  void processOrders() override;
+  void buildOfflineProcessingOrders(Occurrence *occ, bool isUseless = false);
+  void generateProcessingOrders(Occurrence *occ1, Occurrence *occ2,
+                                bool isUseless);
+  void generateProcessingOrders(Loop *loopOp, Occurrence *occ, bool isUseless);
+  void generateProcessingOrders(Scope *scopeOp, Occurrence *occ,
+                                bool isUseless);
+  void generateProcessingOrders(const llvm::SmallVector<Occurrence *> &occs,
+                                bool isUseless);
+  void generateProcessingOrders(const llvm::SmallVector<Occurrence *> &occs1,
+                                const llvm::SmallVector<Occurrence *> &occs2,
+                                bool isUseless);
+  void generateProcessingOrders(RWOperation *rwOp1, RWOperation *rwOp2,
+                                Occurrence *occ1, Occurrence *occ2,
+                                bool isUseless);
+  bool skipLaterIterations(Occurrence *occ1, Occurrence *occ2);
+};
+
+SyncSolverVersion parseSyncSolverVersion(llvm::StringRef value);
+std::unique_ptr<SyncSolverBase>
+createSolver(std::unique_ptr<IRTranslator> irTranslator);
 
 } // namespace mlir::hivm::syncsolver
 

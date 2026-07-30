@@ -78,6 +78,7 @@ void GraphSyncSolverPass::runOnOperation() {
       this->ignoreWorkSpaceFunctionArguments;
   options.enableSubviewConflictRefinement =
       this->enableSubviewConflictRefinement;
+  options.solverVersion = parseSyncSolverVersion(this->solverVersion);
 
   auto irTranslator = std::make_unique<IRTranslator>(funcOp, options);
 
@@ -85,7 +86,7 @@ void GraphSyncSolverPass::runOnOperation() {
     llvm::dbgs() << "before:\n" << irTranslator->funcIr->str(0, true) << '\n';
   });
 
-  auto solver = std::make_unique<Solver>(std::move(irTranslator));
+  auto solver = createSolver(std::move(irTranslator));
 
   DEBUG_WITH_TYPE("gss-print-unrolled-sync-ir", {
     for (auto &occ : solver->syncIr) {

@@ -82,11 +82,12 @@ private:
 public:
   CodeGenerator(const SyncSolverOptions &options) : options(options) {}
 
-  CodeGenerator(std::unique_ptr<Solver> solver) : options(solver->options) {
+  CodeGenerator(std::unique_ptr<SyncSolverBase> solver)
+      : options(solver->options) {
     init(std::move(solver));
   }
 
-  void init(std::unique_ptr<Solver> solver) {
+  void init(std::unique_ptr<SyncSolverBase> solver) {
     auto [syncBefore, syncAfter] = solver->getBeforeAfterSyncMaps();
     syncMapBefore = std::move(syncBefore);
     syncMapAfter = std::move(syncAfter);

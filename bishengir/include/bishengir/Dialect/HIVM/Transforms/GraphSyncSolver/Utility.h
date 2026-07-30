@@ -109,6 +109,10 @@ enum SyncMode {
   TEST_CROSS_CORE_MODE,
 };
 
+enum class SyncSolverVersion {
+  V1,
+};
+
 struct SyncSolverOptions {
   // Synchronization mode.
   const SyncMode syncMode;
@@ -163,6 +167,9 @@ struct SyncSolverOptions {
 
   // Enable CV patterns.
   bool enableCVPatterns{false};
+
+  // Select which SyncSolver implementation to use.
+  SyncSolverVersion solverVersion{SyncSolverVersion::V1};
 
   SyncSolverOptions(SyncMode syncMode, bool isMemBasedArch, bool isRegBasedArch)
       : syncMode(syncMode), isMemBasedArch(isMemBasedArch),
