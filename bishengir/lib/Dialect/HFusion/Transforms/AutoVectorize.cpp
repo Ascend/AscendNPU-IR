@@ -1087,9 +1087,15 @@ bool isCubeFunc(func::FuncOp func) {
           fusionKind.value() == mlir::hfusion::FusionKind::SingleCube);
 }
 
-SmallVector<func::FuncOp> collectVectorizableFunc(ModuleOp module) {
+SmallVector<func::FuncOp>
+collectVectorizableFunc(ModuleOp module,
+                        ArrayRef<std::string> restrictToFuncNames = {}) {
   SmallVector<func::FuncOp> funcList;
-  module->walk([&funcList](func::FuncOp func) {
+  module->walk([&](func::FuncOp func) {
+    if (!restrictToFuncNames.empty() &&
+        !llvm::is_contained(restrictToFuncNames, func.getSymName())) {
+      return WalkResult::advance();
+    }
     if (!hacc::utils::isDevice(func)) {
       return WalkResult::advance();
     }
@@ -1125,7 +1131,7 @@ void AutoVectorize::runOnOperation() {
     hfusion::populateTreeReducePattern(treeReducePatterns);
     (void)applyPatternsGreedily(op, std::move(treeReducePatterns), config);
   }
-  for (func::FuncOp func : collectVectorizableFunc(op)) {
+  for (func::FuncOp func : collectVectorizableFunc(op, restrictToFuncNames)) {
     // Split all vectorizable op in the function into groups representing vec
     // scopes
     SmallVector<SmallVector<Operation *>> vecScopes;

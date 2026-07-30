@@ -1153,6 +1153,16 @@ transform::ExtendedLoopOutlineOp::apply(transform::TransformRewriter &rewriter,
     return diag;
   }
 
+  // Build the symbol table *before* outlineSingleBlockRegion below inserts
+  // the new func::FuncOp under its raw, possibly-already-taken name:
+  // SymbolTable's constructor asserts on any existing name collision, while
+  // SymbolTable::insert() (used below) safely auto-renames on collision.
+  SymbolTable *symbolTable = nullptr;
+  if (symbolTableOp) {
+    symbolTable = &symbolTables.try_emplace(symbolTableOp, symbolTableOp)
+                       .first->getSecond();
+  }
+
   func::CallOp call;
   FailureOr<func::FuncOp> outlined = outlineSingleBlockRegion(
       rewriter, executeRegionOp->getLoc(), executeRegionOp.getRegion(),
@@ -1162,11 +1172,8 @@ transform::ExtendedLoopOutlineOp::apply(transform::TransformRewriter &rewriter,
     return emitDefaultDefiniteFailure(executeRegionOp);
   }
 
-  if (symbolTableOp) {
-    SymbolTable &symbolTable =
-        symbolTables.try_emplace(symbolTableOp, symbolTableOp)
-            .first->getSecond();
-    symbolTable.insert(*outlined);
+  if (symbolTable) {
+    symbolTable->insert(*outlined);
     call.setCalleeAttr(FlatSymbolRefAttr::get(*outlined));
   }
 
