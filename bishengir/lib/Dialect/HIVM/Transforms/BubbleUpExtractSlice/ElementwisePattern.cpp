@@ -16,7 +16,6 @@
 //============================================================================//
 
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
-#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/Pattern.h"
 #include "bishengir/Dialect/HIVM/Transforms/HIVMTilingInterfaceImpl.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
@@ -263,18 +262,6 @@ static Value materializeTiledShape(OpBuilder &builder, Location loc,
                       })
                       .Case([&builder, &loc, &valueToTile,
                              &sliceParams](RankedTensorType) {
-                        if (valueToTile.getParentBlock() &&
-                            hacc::utils::isRegBasedArch(
-                                valueToTile.getParentBlock()
-                                    ->getParentOp()
-                                    ->getParentOfType<ModuleOp>())) {
-                          if (auto defOp = valueToTile.getDefiningOp()) {
-                            builder.setInsertionPointAfter(defOp);
-                          } else {
-                            builder.setInsertionPointToStart(
-                                valueToTile.getParentBlock());
-                          }
-                        }
                         return builder.create<tensor::ExtractSliceOp>(
                             loc, valueToTile, sliceParams.offsets,
                             sliceParams.sizes, sliceParams.strides);

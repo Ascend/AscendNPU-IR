@@ -1030,12 +1030,7 @@ static void populateBindSubBlockBubbleUpPassManager(PassManager &pm,
   HIVMBubbleUpExtractSliceOptions bubbleUpOptions;
   bubbleUpOptions.strictMode = strictMode;
   if (hacc::utils::isRegBasedArch(moduleOp)) {
-    // regbase baseline (f9d978b): plain canonicalizer before and after
-    // BubbleUp. The extended canonicalizer with ReinterpretCastConstantArgument
-    // disabled is a membase-only behavior.
-    pm.addPass(createCanonicalizerPass());
     pm.addPass(createHIVMBubbleUpExtractSlicePass(bubbleUpOptions));
-    pm.addPass(createCanonicalizerPass());
   } else {
     pm.addPass(createHIVMBubbleUpExtractSlicePass(bubbleUpOptions));
     CanonicalizerOptions options;
