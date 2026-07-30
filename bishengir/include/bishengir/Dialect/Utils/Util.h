@@ -77,6 +77,7 @@ constexpr llvm::StringLiteral kMemoryEffectAttr = "memory.effect";
 constexpr llvm::StringLiteral kReadOnly = "read_only";
 constexpr llvm::StringLiteral kReadWrite = "read_write";
 constexpr llvm::StringLiteral kWriteOnly = "write_only";
+constexpr llvm::StringLiteral KFoldOffsetMarker = "fold_offset_into_ptr";
 namespace debugger {
 
 // Type trait to check if T is an LLVM-style container
