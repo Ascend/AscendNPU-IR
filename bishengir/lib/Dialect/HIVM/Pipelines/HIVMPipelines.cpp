@@ -206,6 +206,7 @@ static void hivmPreBufferizationOptimizationPipeline(
   pm.nest<func::FuncOp>().addPass(
       tensor::createPropagateReshapePass(propagateOption));
   pm.addPass(mlir::scf::createRemoveRedundantLoopInitPass());
+  canonicalizationHIVMPipeline(pm);
   pm.addPass(mlir::hivm::createNormalizeMatmulPass());
   pm.addPass(mlir::hivm::createNormalizeConvOpsPass());
   pm.addPass(mlir::hivm::createNormalizeBitwiseSelectPass());
@@ -280,10 +281,14 @@ static void hivmPreBufferizationOptimizationPipeline(
   pm.nest<func::FuncOp>().addPass(createInlineOTFBroadcastPass());
   if (!hivmPipelineOptions.disableAutoCVWorkSpaceManage) {
     // Software pipelining Cube and Vector operations
-    CVPipeliningOptions pipelineOptions;
-    pipelineOptions.enableSkewMode =
-        hivmPipelineOptions.enablePreload;
-    pm.nest<func::FuncOp>().addPass(createCVPipeliningPass(pipelineOptions));
+    if (hivmPipelineOptions.setCVPipelineMode != CVPipelineMode::Off) {
+      CVPipeliningOptions pipelineOptions;
+      pipelineOptions.setDepthInUnrollMode =
+          hivmPipelineOptions.setWorkspaceMultibuffer;
+      pipelineOptions.enableLazyLoading = hivmPipelineOptions.enableLazyLoading;
+      pipelineOptions.pipelineMode = hivmPipelineOptions.setCVPipelineMode;
+      pm.nest<func::FuncOp>().addPass(createCVPipeliningPass(pipelineOptions));
+    }
   }
 
   if (hivmPipelineOptions.enableUbufSaving) {

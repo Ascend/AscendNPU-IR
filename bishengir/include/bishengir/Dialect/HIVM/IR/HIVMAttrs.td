@@ -1417,6 +1417,7 @@ def HIVM_MemoryEffectAttr : HIVM_Attr<"MemoryEffect", "memory_effect"> {
   }];
 }
 
+
 //===----------------------------------------------------------------------===//
 // RemainInL0CAttr
 //===----------------------------------------------------------------------===//
@@ -1425,7 +1426,11 @@ def HIVM_RemainInL0CAttr : HIVM_Attr<"RemainInL0C", "remain_in_l0c"> {
   let description = [{
     Indicates that the operation's result should remain in L0C buffer.
     Used by NormalizeMatmul pass for buffer reuse optimization.
+    The integer parameter specifies which result index should remain in L0C.
   }];
+
+  let parameters = (ins "unsigned":$resultIndex);
+  let assemblyFormat = "`<` params `>`";
 }
 
 def HIVM_MatmulLimitedInCubeAttr

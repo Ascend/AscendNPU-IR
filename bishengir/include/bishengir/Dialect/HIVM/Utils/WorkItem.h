@@ -27,29 +27,11 @@
 //===----------------------------------------------------------------------===//
 #ifndef BISHENGIR_DIALECT_HIVM_UTILS_WORKITEM_H
 #define BISHENGIR_DIALECT_HIVM_UTILS_WORKITEM_H
-
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
-#include "mlir/IR/IRMapping.h"
-#include "mlir/IR/Value.h"
-#include "llvm/ADT/SetVector.h"
-#include "bishengir/Dialect/Annotation/IR/Annotation.h"
-#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
-
 namespace mlir {
 namespace hivm {
-
-struct AtomicEffect {
-  AtomicKind kind;
-  TypeAttr type;
-};
-
-struct WorkspaceAllocParams {
-  unsigned multibuffer;
-  annotation::MarkOp marker;
-  bufferization::ToTensorOp toTensor;
-};
 
 struct WorkItem {
   /// Values crossing work-item boundaries (original, expanded). The expanded
@@ -66,17 +48,13 @@ struct WorkItem {
   SmallVector<std::pair<Value, unsigned>> yieldedOutputs;
 
   /// Store-like ops writing CV pipeline intermediates through
-  /// memref_ext.alloc_workspace. Preload-mode CV pipelining expands and slices
-  /// these separately from tensor localOutputs.
+  /// memref_ext.alloc_workspace. CV pipelining expands and slices these
+  /// separately from tensor localOutputs in both unroll and preload modes.
   SmallVector<Operation *> workspaceOutputs;
 
   /// CUBE or VECTOR. CUBE_OR_VECTOR may appear for the block-mode "remainder"
   /// work item that absorbs flexibly-typed ops.
   TCoreType core;
-
-  // After unrolling the parent for loop, the upper bound for "reroll"ed loops
-  // are computed and inserted here. Created in "unrollOuterLoop"
-  Value upperBound;
 
   // ===========================================================================
   // CV-pipelining codegen state (loop mode only). Block-mode consumers leave

@@ -1169,32 +1169,25 @@ def CVPipelining : Pass<"cv-pipelining", "func::FuncOp"> {
   let constructor = "mlir::hivm::createCVPipeliningPass()";
   let dependentDialects = ["hivm::HIVMDialect", "scf::SCFDialect",
                            "mlir::scope::ScopeDialect",
+                           "bishengir::memref_ext::MemRefExtDialect",
                            "annotation::AnnotationDialect"];
-  let options = [
-      Option<"enableSkewMode", "enable-skew-mode", "bool",
-            /*default=*/"false",
-            "Enable skew-mode cv-pipelining instead of the "
-            "default unroll-mode.">,
-      Option<"setDepthInUnrollMode", "set-depth-in-unroll-mode", "int",
-            /*default=*/"-1",
-            "Specify pipeline depth for cv-pipelining.">,
-      Option<"pipelineDepth", "pipeline-depth", "int",
-            /*default=*/"-1",
-            "Specify pipeline depth for cv-pipelining.">,
-      Option<"pipelineMode", "pipeline-mode", "CVPipelineMode",
-            "CVPipelineMode::Unroll",
-            "Pipeline mode for CV-pipelining.",
-            [{::llvm::cl::values(
-    clEnumValN(CVPipelineMode::Unroll, "unroll",
-              "Default unroll-mode pipelining"),
-    clEnumValN(CVPipelineMode::Skew, "skew",
-              "Preload/skew-mode pipelining"),
-    clEnumValN(CVPipelineMode::Dynamic, "dynamic",
-              "Dyanmic-mode pipelining (developing)"))}]>,
-      Option<"enableLazyLoading", "enable-lazy-loading", "bool",
-            /*default=*/"false",
-            "Allow load ops to be cloned into multiple work items "
-            "to reduce intermediate buffer expansion">];
+  let options = [Option<"setDepthInUnrollMode", "set-depth-in-unroll-mode", "int",
+                        /*default=*/"-1",
+                        "Specify pipeline depth for cv-pipelining.">,
+                 Option<"pipelineMode", "pipeline-mode", "CVPipelineMode",
+                        "CVPipelineMode::Unroll",
+                        "Pipeline mode for CV-pipelining.",
+                        [{::llvm::cl::values(
+               clEnumValN(CVPipelineMode::Unroll, "unroll",
+                          "Default unroll-mode pipelining"),
+               clEnumValN(CVPipelineMode::Skew, "skew",
+                          "Preload/skew-mode pipelining"),
+               clEnumValN(CVPipelineMode::Dynamic, "dynamic",
+                          "Dyanmic-mode pipelining (developing)"))}]>,
+                 Option<"enableLazyLoading", "enable-lazy-loading", "bool",
+                        /*default=*/"false",
+                        "Allow load ops to be cloned into multiple work items "
+                        "to reduce intermediate buffer expansion">];
 }
 
 def AutoBlockifyParallelLoop

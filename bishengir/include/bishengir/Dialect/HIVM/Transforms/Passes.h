@@ -34,11 +34,12 @@ enum class MultiBufferStrategy {
   CUBE_NO_L0C,
 };
 
+/// Cube-Vector pipelining mode
 enum class CVPipelineMode {
-  Off,
-  Unroll,
-  Skew,
-  Dynamic,
+  Off,     // disable CVPipelining
+  Unroll,  // standard unroll-mode pipelining
+  Skew,    // skew/preload-mode pipelining
+  Dynamic, // dynamic mode pipeling (developing)
 };
 
 /// partition-and-bind-sub-block mode

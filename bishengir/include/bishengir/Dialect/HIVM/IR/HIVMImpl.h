@@ -606,6 +606,9 @@ std::pair<bool, bool> analyzeCoreTypes(Block *block);
 /// True if every nested region op is either `scf.if` or uniform-core.
 bool hasOnlySplittableRegions(Block *block);
 
+/// To judge whether yields of if have the same core type
+bool needsSplit(scf::IfOp ifOp);
+
 namespace util {
 struct AlignInfo {
   llvm::SmallVector<int32_t> alignDims;

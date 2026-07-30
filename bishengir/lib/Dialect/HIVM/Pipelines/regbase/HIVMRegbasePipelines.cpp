@@ -371,10 +371,9 @@ static void hivmPreBufferizationOptimizationPipeline(
     // Software pipelining Cube and Vector operations
     if (hivmPipelineOptions.setCVPipelineMode != CVPipelineMode::Off) {
       CVPipeliningOptions pipelineOptions;
-      pipelineOptions.pipelineDepth =
+      pipelineOptions.setDepthInUnrollMode =
           hivmPipelineOptions.setWorkspaceMultibuffer;
       pipelineOptions.enableLazyLoading = hivmPipelineOptions.enableLazyLoading;
-      pipelineOptions.pipelineMode = hivmPipelineOptions.setCVPipelineMode;
       pm.nest<func::FuncOp>().addPass(createCVPipeliningPass(pipelineOptions));
     }
   }

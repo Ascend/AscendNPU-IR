@@ -22,14 +22,12 @@
 //===----------------------------------------------------------------------===//
 #ifndef BISHENGIR_DIALECT_HIVM_UTILS_WORKLISTBUILDER_H
 #define BISHENGIR_DIALECT_HIVM_UTILS_WORKLISTBUILDER_H
-
 #include "bishengir/Dialect/HIVM/Utils/WorkItem.h"
+#include "bishengir/Dialect/Annotation/IR/Annotation.h"
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
-#include "mlir/Interfaces/DestinationStyleOpInterface.h"
-#include "mlir/Support/LogicalResult.h"
-
-#include <memory>
 
 namespace mlir {
 namespace hivm {
@@ -38,6 +36,12 @@ namespace hivm {
 /// via an `annotation.mark` op. Used to override (Enable / Disable) or defer
 /// to (None) the kernel-level `enableLazyLoading` switch on a per-tensor basis.
 enum class LazyLoadHint { None, Enable, Disable };
+
+struct WorkspaceAllocParams {
+  unsigned multibuffer;
+  annotation::MarkOp marker;
+  bufferization::ToTensorOp toTensor;
+};
 
 /// Result bundle returned by WorklistBuilder::build().
 struct WorklistBuildResult {
@@ -57,6 +61,9 @@ struct WorklistBuildResult {
   /// In loop mode, the resolved multibuffer count after annotation::MarkOp
   /// reconciliation. -1 in block mode.
   int resolvedMultibuffer;
+
+  /// Tracked workspace allocations and their associated operations.
+  DenseMap<bishengir::memref_ext::AllocWorkspaceOp, WorkspaceAllocParams> workspaceAllocs;
 };
 
 /// Partitions operations into WorkItems grouped by core type (CUBE vs VECTOR).
@@ -178,8 +185,8 @@ private:
 
   DenseSet<Operation *> toBePipelined;
   SmallVector<Operation *> separators;
-  // Counter alloca value -> vector-safe clone advancing it (set by CV
-  // pipeline).
+
+  // Counter alloca value -> vector-safe clone advancing it (set by CV pipeline).
   DenseMap<Value, Operation *> counterClones;
   DenseMap<Operation *, DenseSet<Operation *>> dependenceMap;
   DenseMap<Operation *, DenseSet<Operation *>> loopCarriedDependenceMap;
