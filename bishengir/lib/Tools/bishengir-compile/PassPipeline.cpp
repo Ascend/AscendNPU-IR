@@ -188,8 +188,6 @@ void setupHIVMAVEPipelineOptions(
       config.getEnableHivmNd2nzOnVector();
   hivmAVEPipelineOptions.enableFusedMultiplyAdd =
       config.getEnableFusedMultiplyAdd();
-  hivmAVEPipelineOptions.enableAveLoopOptimize =
-      config.getEnableAveLoopOptimize();
   hivmAVEPipelineOptions.enablePrintMemoryAllocatedSize =
       config.getEnablePrintMemoryAllocatedSize();
   hivmAVEPipelineOptions.maxReductionSplitNum = config.getMaxReductionSplit();

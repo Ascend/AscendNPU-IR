@@ -59,8 +59,7 @@ static void hivmAVEOptimizationPipeline(
     pm.nest<func::FuncOp>().addPass(
         hivmave::createOptimizeReductionLoopHIVMAVEPass(
             optimizeReductionLoopOptions));
-    if (hivmAVEPipelineOptions.enableAveLoopOptimize)
-      pm.nest<func::FuncOp>().addPass(hivmave::createAveLoopOptimizePass());
+    pm.nest<func::FuncOp>().addPass(hivmave::createAveLoopOptimizePass());
     pm.nest<func::FuncOp>().addPass(hivmave::createLegalizeOptHIVMAVEPass());
     pm.nest<func::FuncOp>().addPass(
         hivmave::createReplaceWithVectorScalarPass());
