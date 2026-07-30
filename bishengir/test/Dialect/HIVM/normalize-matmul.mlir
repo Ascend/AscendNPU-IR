@@ -1749,6 +1749,64 @@ module {
 }
 
 // -----
+// vtranspose feeding into mmadmxL1 A side — folds to a_transpose
+// CHECK-LABEL: func.func @test_fold_vtranspose_mmadmx_a
+// CHECK: hivm.hir.mmadmxL1 {{{.*}}lhsFormat = 1 : i32, rhsFormat = 1 : i32}
+// CHECK-SAME: a_transpose
+// CHECK-SAME: tensor<8x4xi8>, tensor<8x16xi8>
+module {
+func.func @test_fold_vtranspose_mmadmx_a() -> tensor<4x16xf32> {
+    %c0 = arith.constant 0 : index
+    %true = arith.constant true
+    %alloc_a = memref.alloc() : memref<8x4xi8>
+    %a_src = bufferization.to_tensor %alloc_a restrict writable : memref<8x4xi8>
+    %empty_t = tensor.empty() : tensor<4x8xi8>
+    %a_vtrans = hivm.hir.vtranspose ins(%a_src : tensor<8x4xi8>) outs(%empty_t : tensor<4x8xi8>) permutation = [1, 0] -> tensor<4x8xi8>
+    %alloc_b = memref.alloc() : memref<8x16xi8>
+    %b = bufferization.to_tensor %alloc_b restrict writable : memref<8x16xi8>
+    %alloc_sa = memref.alloc() : memref<4x1xi8>
+    %scaleA = bufferization.to_tensor %alloc_sa restrict writable : memref<4x1xi8>
+    %alloc_sb = memref.alloc() : memref<16x1xi8>
+    %scaleB = bufferization.to_tensor %alloc_sb restrict writable : memref<16x1xi8>
+    %empty = tensor.empty() : tensor<4x16xf32>
+    %result = hivm.hir.mmadmxL1 {lhsFormat = 1 : i32, rhsFormat = 1 : i32}
+        ins(%a_vtrans, %b, %scaleA, %scaleB, %true, %c0, %c0, %c0
+            : tensor<4x8xi8>, tensor<8x16xi8>, tensor<4x1xi8>, tensor<16x1xi8>, i1, index, index, index)
+        outs(%empty : tensor<4x16xf32>) -> tensor<4x16xf32>
+    return %result : tensor<4x16xf32>
+}
+}
+
+// -----
+// vtranspose feeding into mmadmxL1 B side — folds to b_transpose
+// CHECK-LABEL: func.func @test_fold_vtranspose_mmadmx_b
+// CHECK: hivm.hir.mmadmxL1
+// CHECK-SAME: b_transpose
+// CHECK-SAME: tensor<4x8xf8E5M2>, tensor<16x8xf8E5M2>
+module {
+func.func @test_fold_vtranspose_mmadmx_b() -> tensor<4x16xf32> {
+    %c0 = arith.constant 0 : index
+    %true = arith.constant true
+    %alloc_a = memref.alloc() : memref<4x8xf8E5M2>
+    %a = bufferization.to_tensor %alloc_a restrict writable : memref<4x8xf8E5M2>
+    %alloc_b = memref.alloc() : memref<16x8xf8E5M2>
+    %b_src = bufferization.to_tensor %alloc_b restrict writable : memref<16x8xf8E5M2>
+    %empty_t = tensor.empty() : tensor<8x16xf8E5M2>
+    %b_vtrans = hivm.hir.vtranspose ins(%b_src : tensor<16x8xf8E5M2>) outs(%empty_t : tensor<8x16xf8E5M2>) permutation = [1, 0] -> tensor<8x16xf8E5M2>
+    %alloc_sa = memref.alloc() : memref<1xui8>
+    %scaleA = bufferization.to_tensor %alloc_sa restrict writable : memref<1xui8>
+    %alloc_sb = memref.alloc() : memref<1xui8>
+    %scaleB = bufferization.to_tensor %alloc_sb restrict writable : memref<1xui8>
+    %empty = tensor.empty() : tensor<4x16xf32>
+    %result = hivm.hir.mmadmxL1
+        ins(%a, %b_vtrans, %scaleA, %scaleB, %true, %c0, %c0, %c0
+            : tensor<4x8xf8E5M2>, tensor<8x16xf8E5M2>, tensor<1xui8>, tensor<1xui8>, i1, index, index, index)
+        outs(%empty : tensor<4x16xf32>) -> tensor<4x16xf32>
+    return %result : tensor<4x16xf32>
+}
+}
+
+// -----
 // vtranspose feeding into mmadL1 A side — folds to a_transpose
 // CHECK-LABEL: func.func @test_fold_vtranspose_a
 // CHECK: hivm.hir.mmadL1
@@ -1921,6 +1979,68 @@ func.func @test_fold_fractal_vtranspose_a() -> tensor<16x16xf32> {
     %empty = tensor.empty() : tensor<16x16xf32>
     %result = hivm.hir.mmadL1 ins(%conv, %b, %false, %c0, %c0, %c0
         : tensor<16x32xf16>, tensor<32x16xf16>, i1, index, index, index)
+        outs(%empty : tensor<16x16xf32>) -> tensor<16x16xf32>
+    return %result : tensor<16x16xf32>
+}
+}
+
+// -----
+// FoldFractalVtransposePattern: Fractal A nZ → vtranspose → convert_layout → mmadmxL1
+// CHECK-LABEL: func.func @test_fold_fractal_vtranspose_mmadmx_a
+// CHECK: hivm.hir.mmadmxL1
+// CHECK-SAME: a_transpose
+// CHECK-NOT: hivm.hir.vtranspose
+module {
+func.func @test_fold_fractal_vtranspose_mmadmx_a() -> tensor<16x16xf32> {
+    %c0 = arith.constant 0 : index
+    %false = arith.constant false
+    %alloc_a = memref.alloc() : memref<2x1x16x16xf8E5M2>
+    %a_nz = bufferization.to_tensor %alloc_a restrict writable : memref<2x1x16x16xf8E5M2>
+    %empty_a_t = tensor.empty() : tensor<1x2x16x16xf8E5M2>
+    %a_vtrans = hivm.hir.vtranspose ins(%a_nz : tensor<2x1x16x16xf8E5M2>) outs(%empty_a_t : tensor<1x2x16x16xf8E5M2>) permutation = [1, 0, 2, 3] -> tensor<1x2x16x16xf8E5M2>
+    %conv = hivm.hir.convert_layout %a_vtrans output_shape [16, 32]
+        {dstLayout = #hivm.data_layout<ND>, srcLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>}
+        : (tensor<1x2x16x16xf8E5M2>) -> tensor<16x32xf8E5M2>
+    %alloc_b = memref.alloc() : memref<32x16xf8E5M2>
+    %b = bufferization.to_tensor %alloc_b restrict writable : memref<32x16xf8E5M2>
+    %alloc_sa = memref.alloc() : memref<1xui8>
+    %scaleA = bufferization.to_tensor %alloc_sa restrict writable : memref<1xui8>
+    %alloc_sb = memref.alloc() : memref<1xui8>
+    %scaleB = bufferization.to_tensor %alloc_sb restrict writable : memref<1xui8>
+    %empty = tensor.empty() : tensor<16x16xf32>
+    %result = hivm.hir.mmadmxL1 ins(%conv, %b, %scaleA, %scaleB, %false, %c0, %c0, %c0
+        : tensor<16x32xf8E5M2>, tensor<32x16xf8E5M2>, tensor<1xui8>, tensor<1xui8>, i1, index, index, index)
+        outs(%empty : tensor<16x16xf32>) -> tensor<16x16xf32>
+    return %result : tensor<16x16xf32>
+}
+}
+
+// -----
+// FoldFractalVtransposePattern: Fractal B nZ → vtranspose → convert_layout → mmadmxL1
+// CHECK-LABEL: func.func @test_fold_fractal_vtranspose_mmadmx_b
+// CHECK: hivm.hir.mmadmxL1
+// CHECK-SAME: b_transpose
+// CHECK-NOT: hivm.hir.vtranspose
+module {
+func.func @test_fold_fractal_vtranspose_mmadmx_b() -> tensor<16x16xf32> {
+    %c0 = arith.constant 0 : index
+    %false = arith.constant false
+    %alloc_a = memref.alloc() : memref<16x32xf8E5M2>
+    %a = bufferization.to_tensor %alloc_a restrict writable : memref<16x32xf8E5M2>
+    %alloc_b = memref.alloc() : memref<2x1x16x16xf8E5M2>
+    %b_nz = bufferization.to_tensor %alloc_b restrict writable : memref<2x1x16x16xf8E5M2>
+    %empty_b_t = tensor.empty() : tensor<1x2x16x16xf8E5M2>
+    %b_vtrans = hivm.hir.vtranspose ins(%b_nz : tensor<2x1x16x16xf8E5M2>) outs(%empty_b_t : tensor<1x2x16x16xf8E5M2>) permutation = [1, 0, 2, 3] -> tensor<1x2x16x16xf8E5M2>
+    %conv = hivm.hir.convert_layout %b_vtrans output_shape [32, 16]
+        {dstLayout = #hivm.data_layout<ND>, srcLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>}
+        : (tensor<1x2x16x16xf8E5M2>) -> tensor<32x16xf8E5M2>
+    %alloc_sa = memref.alloc() : memref<1xui8>
+    %scaleA = bufferization.to_tensor %alloc_sa restrict writable : memref<1xui8>
+    %alloc_sb = memref.alloc() : memref<1xui8>
+    %scaleB = bufferization.to_tensor %alloc_sb restrict writable : memref<1xui8>
+    %empty = tensor.empty() : tensor<16x16xf32>
+    %result = hivm.hir.mmadmxL1 ins(%a, %conv, %scaleA, %scaleB, %false, %c0, %c0, %c0
+        : tensor<16x32xf8E5M2>, tensor<32x16xf8E5M2>, tensor<1xui8>, tensor<1xui8>, i1, index, index, index)
         outs(%empty : tensor<16x16xf32>) -> tensor<16x16xf32>
     return %result : tensor<16x16xf32>
 }
