@@ -37,14 +37,6 @@
 
 namespace mlir::hivm::syncsolver {
 
-struct SetWaitPairInfo {
-  Occurrence *setOcc{nullptr};
-  Occurrence *waitOcc{nullptr};
-  bool isBackwardPair{false};
-  bool isCVPreloading{false};
-  bool isCVPipelining{false};
-};
-
 class Solver {
 public:
   // Configuration options.
@@ -220,7 +212,7 @@ protected:
 
   virtual void processConflict(Occurrence *occ1, Occurrence *occ2,
                                RWOperation *rwOp1, RWOperation *rwOp2,
-                               int64_t stepNum, bool isUseless);
+                               bool isUseless);
 
   std::optional<Scope *>
   getMultiBufferScope(RWOperation *rwOp1, RWOperation *rwOp2,
@@ -404,24 +396,20 @@ protected:
   // Primary handler invoked to register/record a found conflict.
   void handleConflict(Occurrence *occ1, Occurrence *occ2, RWOperation *rwOp1,
                       RWOperation *rwOp2, CorePipeInfo corePipeSrc,
-                      CorePipeInfo corePipeDst, int64_t stepNum,
-                      bool isUseless);
+                      CorePipeInfo corePipeDst, bool isUseless);
 
   void handleBarrierConflict(Occurrence *occ1, Occurrence *occ2,
                              CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst,
-                             EventIdInfo eventIdInfo, int64_t stepNum,
-                             bool isUseless);
+                             EventIdInfo eventIdInfo, bool isUseless);
 
   void handleSetWaitConflict(Occurrence *occ1, Occurrence *occ2,
                              CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst,
-                             EventIdInfo eventIdInfo, int64_t stepNum,
-                             bool isUseless);
+                             EventIdInfo eventIdInfo, bool isUseless);
 
   void handleUnitFlagConflict(Occurrence *occ1, Occurrence *occ2,
                               CorePipeInfo corePipeSrc,
                               CorePipeInfo corePipeDst,
-                              UnitFlagInfo unitFlagInfo, int64_t stepNum,
-                              bool isUseless);
+                              UnitFlagInfo unitFlagInfo, bool isUseless);
 
   Occurrence *getFirstIterOcc(Occurrence *occ, Occurrence *parOcc);
 
