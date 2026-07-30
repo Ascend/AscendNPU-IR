@@ -67,7 +67,8 @@ protected:
   int64_t maxRunNum{99};
   bool moveBackwardSyncPairsToOutmostLoop{false};
   bool dontMoveBackwardSyncPairsToOutmostLoop{false};
-  bool enableSaveCVPreloadingEventIdsOpt{false};
+  bool saveCVPreloadingEventIdsOptFlag{false};
+  bool disableCVPatternsOptFlag{false};
 
   llvm::DenseMap<std::tuple<hivm::PIPE, hivm::PIPE>,
                  std::unique_ptr<EventIdSolver>>
@@ -466,6 +467,8 @@ protected:
   llvm::LogicalResult reuseSyncPairToSaveEventIds();
 
   llvm::LogicalResult saveCVPreloadingEventIdsOpt();
+
+  llvm::LogicalResult disableCVPatternsOpt();
 
   llvm::LogicalResult disableMultiEventIdForBarrierAllPairs();
 

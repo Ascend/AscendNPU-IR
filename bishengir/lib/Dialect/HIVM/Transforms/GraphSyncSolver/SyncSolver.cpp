@@ -56,7 +56,8 @@ void Solver::reset(bool resetEventIdRanOutOpts) {
     backwardSyncEventsAfterMerge.clear();
     moveBackwardSyncPairsToOutmostLoop = false;
     dontMoveBackwardSyncPairsToOutmostLoop = false;
-    enableSaveCVPreloadingEventIdsOpt = false;
+    saveCVPreloadingEventIdsOptFlag = false;
+    disableCVPatternsOptFlag = false;
   }
   skipOcc.clear();
   syncedPairs.clear();
@@ -665,7 +666,8 @@ std::optional<EventIdInfo>
 Solver::checkCVPipeliningEventIdInfo(Occurrence *occ1, Occurrence *occ2,
                                      RWOperation *rwOp1, RWOperation *rwOp2) {
   assert(rwOp1 != nullptr && rwOp2 != nullptr);
-  if (!options.isCrossCoreMode() || !options.enableCVPatterns) {
+  if (!options.isCrossCoreMode() || !options.enableCVPatterns ||
+      disableCVPatternsOptFlag) {
     return {};
   }
   if (!checkCVPipeliningMemConflict(rwOp1, rwOp2)) {
@@ -751,7 +753,7 @@ Solver::checkCVPreloadingEventIdInfo(Occurrence *occ1, Occurrence *occ2,
                                  parentScope2->preloadNum.value());
   int64_t eventIdNum = preloadDiff + 1;
 
-  if (options.enableCVPatterns) {
+  if (options.enableCVPatterns && !disableCVPatternsOptFlag) {
     if (checkCVPreloadingMemConflict(rwOp1, rwOp2, eventIdNum)) {
       EventIdInfo eventIdInfo(eventIdNum);
       eventIdInfo.cvPreloadingInfo =
@@ -1421,7 +1423,7 @@ Solver::getFixedSetWaitOcc(Occurrence *occ1, Occurrence *occ2,
             std::tie(ret.setOcc, ret.waitOcc) =
                 getSetWaitLCAPairOcc(occ1, occ2);
           }
-        } else if (enableSaveCVPreloadingEventIdsOpt) {
+        } else if (saveCVPreloadingEventIdsOptFlag) {
           assert(scopeOp1->maxPreloadNum == scopeOp2->maxPreloadNum);
           ret.setOcc = getScopeEndPlaceHolderOcc(
               occ1->getNthParent(occ1->depth - scopeOcc1->depth - 1));
@@ -2879,8 +2881,18 @@ llvm::LogicalResult Solver::reuseSyncPairToSaveEventIds() {
 
 llvm::LogicalResult Solver::saveCVPreloadingEventIdsOpt() {
   if (options.enableCVPatterns) {
-    if (!enableSaveCVPreloadingEventIdsOpt) {
-      enableSaveCVPreloadingEventIdsOpt = true;
+    if (!saveCVPreloadingEventIdsOptFlag) {
+      saveCVPreloadingEventIdsOptFlag = true;
+      return llvm::success();
+    }
+  }
+  return llvm::failure();
+}
+
+llvm::LogicalResult Solver::disableCVPatternsOpt() {
+  if (options.enableCVPatterns) {
+    if (!disableCVPatternsOptFlag) {
+      disableCVPatternsOptFlag = true;
       return llvm::success();
     }
   }
@@ -2961,6 +2973,9 @@ llvm::LogicalResult Solver::runSolver(bool enableOpts1, bool enableOpts2) {
           continue;
         }
         if (llvm::succeeded(saveCVPreloadingEventIdsOpt())) {
+          continue;
+        }
+        if (llvm::succeeded(disableCVPatternsOpt())) {
           continue;
         }
         if (llvm::succeeded(disableMultiEventIdForBarrierAllPairs())) {
