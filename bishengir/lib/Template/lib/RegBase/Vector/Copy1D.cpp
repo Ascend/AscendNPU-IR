@@ -109,13 +109,16 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_1d_core(
     load_gm_to_ubuf_1d_core_with_contiguous_last_dim<T>(
         src, dst, left_padding_num, l2_cache_ctl);
     if constexpr (std::is_same_v<T, int64_t> || std::is_same_v<T, uint64_t>) {
-      if (pad_mode == PadMode::Value) {
-        INTRINSIC(set_flag, PIPE_MTE2, PIPE_V, LIB_EVENT_ID0);
-        INTRINSIC(wait_flag, PIPE_MTE2, PIPE_V, LIB_EVENT_ID0);
-        int64_t scalar = static_cast<int64_t>(pad_value);
-        align_pad_for_load_b64_1d<T>(dst, scalar, left_padding_num);
-        INTRINSIC(set_flag, PIPE_V, PIPE_MTE3, LIB_EVENT_ID0);
-        INTRINSIC(wait_flag, PIPE_V, PIPE_MTE3, LIB_EVENT_ID0);
+      // No need to add zero padding, it is correct by default for b64 types
+      int64_t scalar = static_cast<int64_t>(pad_value);
+      if (scalar != 0) [[unlikely]] {
+        if (pad_mode == PadMode::Value) {
+          INTRINSIC(set_flag, PIPE_MTE2, PIPE_V, LIB_EVENT_ID0);
+          INTRINSIC(wait_flag, PIPE_MTE2, PIPE_V, LIB_EVENT_ID0);
+          align_pad_for_load_b64_1d<T>(dst, scalar, left_padding_num);
+          INTRINSIC(set_flag, PIPE_V, PIPE_MTE2, LIB_EVENT_ID0);
+          INTRINSIC(wait_flag, PIPE_V, PIPE_MTE2, LIB_EVENT_ID0);
+        }
       }
     }
     return;
@@ -126,13 +129,16 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_1d_core(
     load_gm_to_ubuf_1d_core_with_ubuf_contiguous_last_dim<T>(
         src, dst, left_padding_num, l2_cache_ctl);
     if constexpr (std::is_same_v<T, int64_t> || std::is_same_v<T, uint64_t>) {
-      if (pad_mode == PadMode::Value) {
-        INTRINSIC(set_flag, PIPE_MTE2, PIPE_V, LIB_EVENT_ID0);
-        INTRINSIC(wait_flag, PIPE_MTE2, PIPE_V, LIB_EVENT_ID0);
-        int64_t scalar = static_cast<int64_t>(pad_value);
-        align_pad_for_load_b64_1d<T>(dst, scalar, left_padding_num);
-        INTRINSIC(set_flag, PIPE_V, PIPE_MTE3, LIB_EVENT_ID0);
-        INTRINSIC(wait_flag, PIPE_V, PIPE_MTE3, LIB_EVENT_ID0);
+      // No need to fix zero padding, it is correct by default for b64 types
+      int64_t scalar = static_cast<int64_t>(pad_value);
+      if (scalar != 0) [[unlikely]] {
+        if (pad_mode == PadMode::Value) {
+          INTRINSIC(set_flag, PIPE_MTE2, PIPE_V, LIB_EVENT_ID0);
+          INTRINSIC(wait_flag, PIPE_MTE2, PIPE_V, LIB_EVENT_ID0);
+          align_pad_for_load_b64_1d<T>(dst, scalar, left_padding_num);
+          INTRINSIC(set_flag, PIPE_V, PIPE_MTE2, LIB_EVENT_ID0);
+          INTRINSIC(wait_flag, PIPE_V, PIPE_MTE2, LIB_EVENT_ID0);
+        }
       }
     }
     return;
