@@ -78,7 +78,7 @@ public:
                  AcceptContext actx = AcceptContext::Sibling) const;
 
   bool hasVsstb() const {
-    return llvm::any_of(leaf, analysis::isVsstbPatternTransposeOp);
+    return llvm::any_of(ops(), analysis::isVsstbPatternTransposeOp);
   }
   bool isMemref() const;
 

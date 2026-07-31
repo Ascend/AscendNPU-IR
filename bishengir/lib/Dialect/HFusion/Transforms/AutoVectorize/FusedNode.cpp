@@ -59,10 +59,13 @@ bool FusedNode::canFitStack(Operation *candidate) const {
   return ctx.canFitStack(existingOps);
 }
 
-bool FusedNode::isMemref() const { return isMemrefLinalgOp(*leaf.begin()); }
+bool FusedNode::isMemref() const {
+  assert(!leaf.empty());
+  return isMemrefLinalgOp(*leaf.begin());
+}
 
 bool FusedNode::hasRankReducing() const {
-  return llvm::any_of(leaf, hasRankReducingIndexingMap);
+  return llvm::any_of(ops(), hasRankReducingIndexingMap);
 }
 
 bool FusedNode::conflictsWith(const FusableOpInfo &otherInfo) const {
@@ -76,10 +79,8 @@ bool FusedNode::canAccept(Operation *candidate, AcceptContext actx) const {
   // checkIsMemref needs investigation (may be a legitimate distinction).
   // See AcceptContext doc in FusedNode.h.
   bool checkIsMemref = (actx != AcceptContext::Producer);
-  bool checkReverseVsstb = (actx == AcceptContext::Sibling);
-  bool countAllOpsForSize = (actx == AcceptContext::Producer);
 
-  if ((countAllOpsForSize ? size() : leaf.size()) > ctx.getMaxFusedOps())
+  if (size() >= ctx.getMaxFusedOps())
     return false;
   if (checkIsMemref && isMemref())
     return false;
@@ -87,8 +88,7 @@ bool FusedNode::canAccept(Operation *candidate, AcceptContext actx) const {
     return false;
   if (hasVsstb() && hasRankReducingIndexingMap(candidate))
     return false;
-  if (checkReverseVsstb && hasRankReducing() &&
-      analysis::isVsstbPatternTransposeOp(candidate))
+  if (hasRankReducing() && analysis::isVsstbPatternTransposeOp(candidate))
     return false;
   return hasCommonAxis(candidate) && !conflictsWith(ctx.getInfo(candidate));
 }
@@ -176,6 +176,7 @@ void FusedNode::estimateTileSizeForOp(
   bool shouldMultiAxisVectorize = hasVsstb();
 
   FusableOpInfo &opInfo = ctx.getInfo(fusedOp);
+  assert(opInfo.numLoops > 0);
   tileSize.assign(opInfo.numLoops, 1);
   if (shouldMultiAxisVectorize && opInfo.numLoops > 2) {
     int64_t maxElemByteWidthInFusedNode =
