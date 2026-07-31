@@ -60,8 +60,8 @@ int runExternalRegBaseCompile(ArrayRef<std::string> originalCLArgs) {
 
 int runRegBaseCompile(ModuleOp module, BiShengIRCompileMainConfig config,
                       ArrayRef<std::string> originalCLArgs) {
-  if (!shouldUseDirectRegBasePipeline(config))
-    return runExternalRegBaseCompile(originalCLArgs);
+  // if (!shouldUseDirectRegBasePipeline(config))
+  //   return runExternalRegBaseCompile(originalCLArgs);
 
   if (failed(inferLayoutOptimization(module, config))) {
     llvm::errs() << "[ERROR] Failed to infer layout optimization\n";

@@ -960,6 +960,14 @@ static void printVersion0_2(FixpipeOp &op, OpAsmPrinter &_odsPrinter) {
   elidedAttrs.push_back("unit_flag_mode");
   {
     ::mlir::Builder odsBuilder(op.getContext());
+    ::mlir::Attribute attr = op.getSubBlockIdxAttr();
+    if (attr && (attr == ::mlir::hivm::FixpipeSubBlockAttr::get(
+                             odsBuilder.getContext(),
+                             ::mlir::hivm::FixpipeSubBlock::SUB_BLOCK_0)))
+      elidedAttrs.push_back("sub_block_idx");
+  }
+  {
+    ::mlir::Builder odsBuilder(op.getContext());
     ::mlir::Attribute attr = op.getDmaModeAttr();
     if (attr && (attr == ::mlir::hivm::FixpipeDMAModeAttr::get(
                              odsBuilder.getContext(), FixpipeDMAMode::NZ2NZ)))

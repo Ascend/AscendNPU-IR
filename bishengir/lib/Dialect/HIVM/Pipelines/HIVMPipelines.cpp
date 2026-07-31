@@ -246,14 +246,7 @@ static void hivmPreBufferizationOptimizationPipeline(
   }
 
   pm.addPass(createInferFuncCoreTypePass());
-  if (hivmPipelineOptions.partitionAndBindSubBlock !=
-      PartitionAndBindSubBlockMode::Off) {
-    PartitionAndBindSubBlockOptions partitionOptions;
-    partitionOptions.enableLoadBalanced =
-        hivmPipelineOptions.partitionAndBindSubBlock ==
-        PartitionAndBindSubBlockMode::LoadBalanced;
-    pm.addPass(createPartitionAndBindSubBlockPass(partitionOptions));
-  }
+
   // AutoBlockifyParallelLoopPass needs to be after infer core type because
   // num. of physical blocks we loop on is dependent on core type
   if (hivmPipelineOptions.enableTritonKernelCompile &&
@@ -290,6 +283,17 @@ static void hivmPreBufferizationOptimizationPipeline(
       pipelineOptions.pipelineMode = hivmPipelineOptions.setCVPipelineMode;
       pm.nest<func::FuncOp>().addPass(createCVPipeliningPass(pipelineOptions));
     }
+  }
+
+  // Partition after CV pipelining so it sees the IR cv-pipeline actually
+  // emits.
+  if (hivmPipelineOptions.partitionAndBindSubBlock !=
+      PartitionAndBindSubBlockMode::Off) {
+    PartitionAndBindSubBlockOptions partitionOptions;
+    partitionOptions.enableLoadBalanced =
+        hivmPipelineOptions.partitionAndBindSubBlock ==
+        PartitionAndBindSubBlockMode::LoadBalanced;
+    pm.addPass(createPartitionAndBindSubBlockPass(partitionOptions));
   }
 
   if (hivmPipelineOptions.enableUbufSaving) {
