@@ -234,6 +234,68 @@ using NormalizeCeilandFloorOpRegBase =
     mlir::NormalizeCeilandFloorOpTemplate<linalg::ElemwiseUnaryOp,
                                           HFusionNormalizeCeilandFloorTraits>;
 
+/// normalize copysign(x, y) by preserving x magnitude bits and y sign bit.
+struct NormalizeCopysignOpRegBase
+    : public OpRewritePattern<hfusion::ElemwiseBinaryOp> {
+public:
+  using OpRewritePattern<hfusion::ElemwiseBinaryOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hfusion::ElemwiseBinaryOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!op.hasPureTensorSemantics() ||
+        op.getFun() != hfusion::BinaryFn::copysign)
+      return failure();
+
+    Value magnitude = op.getInputs()[0];
+    Value sign = op.getInputs()[1];
+    auto inputTensorType = dyn_cast<RankedTensorType>(magnitude.getType());
+    if (!inputTensorType || !isa<RankedTensorType>(sign.getType()))
+      return failure();
+
+    Type elementType = getElementTypeOrSelf(magnitude.getType());
+    Type intType;
+    uint64_t magnitudeMaskVal;
+    uint64_t signMaskVal;
+    if (elementType.isF32()) {
+      intType = rewriter.getI32Type();
+      magnitudeMaskVal = 0x7FFFFFFFU;
+      signMaskVal = 0x80000000U;
+    } else if (elementType.isF16() || elementType.isBF16()) {
+      intType = rewriter.getI16Type();
+      magnitudeMaskVal = 0x7FFFU;
+      signMaskVal = 0x8000U;
+    } else {
+      llvm::report_fatal_error(
+          "only support input Type is f16, bf16 or f32");
+    }
+
+    Location loc = op.getLoc();
+    auto intTensorType = inputTensorType.clone(intType);
+    Value magnitudeBits = NormalizeTraitsBase::createBitcastOp(
+        rewriter, loc, intTensorType, magnitude);
+    Value signBits =
+        NormalizeTraitsBase::createBitcastOp(rewriter, loc, intTensorType, sign);
+    Value magnitudeMask = rewriter.create<arith::ConstantOp>(
+        loc, intType, rewriter.getIntegerAttr(intType, magnitudeMaskVal));
+    Value signMask = rewriter.create<arith::ConstantOp>(
+        loc, intType, rewriter.getIntegerAttr(intType, signMaskVal));
+
+    Value maskedMagnitude = NormalizeTraitsBase::createBinaryOp(
+        rewriter, loc, magnitudeBits, magnitudeMask,
+        utils::createEmptyOp(rewriter, loc, magnitudeBits), BinaryKind::And);
+    Value maskedSign = NormalizeTraitsBase::createBinaryOp(
+        rewriter, loc, signBits, signMask,
+        utils::createEmptyOp(rewriter, loc, signBits), BinaryKind::And);
+    Value resultBits = NormalizeTraitsBase::createBinaryOp(
+        rewriter, loc, maskedMagnitude, maskedSign,
+        utils::createEmptyOp(rewriter, loc, maskedMagnitude), BinaryKind::Or);
+    Value result = NormalizeTraitsBase::createBitcastOp(
+        rewriter, loc, magnitude.getType(), resultBits);
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+};
+
 /// normalize 2^x to exp{ln(2)*x}
 /// eg.
 /// y = hfusion elemwise unary {exp2} (x)
@@ -488,6 +550,7 @@ void populateNormalizePrimaryMathPatterns(RewritePatternSet &patterns) {
   patterns.add<NormalizeReduceMinMaxNumFOpRegBase>(ctx);
   patterns.add<NormalizeElemwiseMaxNumFOpRegBase>(ctx);
   patterns.add<NormalizeElemwiseMinNumFOpRegBase>(ctx);
+  patterns.add<NormalizeCopysignOpRegBase>(ctx);
   patterns.add<NormalizeExp2OpRegBase>(ctx);
   patterns.add<NormalizeExpM1OpRegBase>(ctx);
   patterns.add<NormalizeErfOpRegBase>(ctx);

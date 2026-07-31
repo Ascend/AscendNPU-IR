@@ -71,6 +71,11 @@ static bool isBF16ElemTypeSelect(Operation *op) {
   return isa<BFloat16Type>(elemTy);
 }
 
+static bool isCopysignOp(Operation *op) {
+  auto binaryOp = dyn_cast<hfusion::ElemwiseBinaryOp>(op);
+  return binaryOp && binaryOp.getFun() == hfusion::BinaryFn::copysign;
+}
+
 static void setFastMathContractAttr(Operation *castOp) {
   assert(isa<hfusion::CastOp>(castOp));
   auto fastMathAttr = arith::FastMathFlagsAttr::get(
@@ -84,7 +89,8 @@ static bool shouldLegalizeBF16Op(Operation *op) {
                       isa<linalg::CopyOp>(op) || isa<linalg::MatmulOp>(op) ||
                       isa<linalg::BatchMatmulOp>(op) ||
                       isa<linalg::TransposeOp>(op) || isa<hfusion::LoadOp>(op) ||
-                      isa<hfusion::StoreOp>(op) || isa<hfusion::BitcastOp>(op);
+                      isa<hfusion::StoreOp>(op) || isa<hfusion::BitcastOp>(op) ||
+                      isCopysignOp(op);
 
     if (isAscend950Arch) {
       // Ascend 950 supports hardware instructions for BF16 floor operations.
@@ -105,6 +111,7 @@ static bool shouldLegalizeBF16Op(Operation *op) {
            isa<linalg::TransposeOp>(op) || isa<linalg::BroadcastOp>(op) ||
            isa<hfusion::LoadOp>(op) || isa<hfusion::StoreOp>(op) ||
            isa<hfusion::BitcastOp>(op) || isa<hfusion::SelectOp>(op) ||
+           isCopysignOp(op) ||
            isa<hfusion::Conv1DOp>(op) || isa<hfusion::Conv2DOp>(op) ||
            isa<hfusion::Conv3DOp>(op));
 }
