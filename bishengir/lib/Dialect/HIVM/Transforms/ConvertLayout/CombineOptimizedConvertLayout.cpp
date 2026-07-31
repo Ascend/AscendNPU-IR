@@ -21,6 +21,8 @@
 
 #include <bishengir/Dialect/Tensor/Transforms/PropagateReshape/Utils.h>
 
+#include "bishengir/Dialect/HIVM/Utils/Utils.h"
+
 #define DEBUG_TYPE "hivm-combine-optimized-convert-layout"
 #define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] ")
 #define LDBG(X) LLVM_DEBUG(DBGS() << X << "\n")
@@ -585,9 +587,10 @@ struct FoldConvertLayoutFixpipePattern
       return rewriter.notifyMatchFailure(op, "user is not a fixpipe");
 
     if (fixpipeOp.getDmaMode() != FixpipeDMAMode::NZ2ND &&
-        fixpipeOp.getDmaMode() != FixpipeDMAMode::NZ2DN)
+        fixpipeOp.getDmaMode() != FixpipeDMAMode::NZ2DN &&
+        fixpipeOp.getDmaMode() != FixpipeDMAMode::NZ2NZ)
       return rewriter.notifyMatchFailure(
-          fixpipeOp, "fixpipe dma_mode is not nz2nd or nz2dn");
+          fixpipeOp, "fixpipe dma_mode is not nz2nd, nz2dn, or nz2nz");
 
     rewriter.modifyOpInPlace(
         fixpipeOp, [&]() { fixpipeOp.getSrcMutable().assign(op.getSource()); });
@@ -791,6 +794,104 @@ struct FoldFixpipeConvertLayoutPattern
   }
 };
 
+// Fold ND-to-Fractal convert_layout through GM workspace for K-padded vectors.
+//
+// A convert_layout(ND→Fractal) whose result is copied into an L1 (cbuf)
+// buffer for the cube cannot be fractalized on-chip when the ND source is
+// K-padded: the tensor decomposition needs a UB transpose the memory planner
+// cannot fit, and an in-L1 pad copy would be an illegal L1↔L1 DMA. Instead,
+// spill the unpadded ND tensor to a GM workspace and reload with nd2nz, which
+// both pads and fractalizes during the GM→L1 DMA, removing the ND pad buffer
+// chain entirely.
+struct RouteVectorFractalizeViaGMPattern
+    : public OpRewritePattern<ConvertLayoutOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(ConvertLayoutOp op,
+                                PatternRewriter &rewriter) const override {
+    if (op.getSrcLayout().getDataLayout() != DataLayout::ND ||
+        op.getDstLayout().getDataLayout() != DataLayout::Fractal)
+      return rewriter.notifyMatchFailure(op, "not ND -> Fractal");
+
+    auto srcTy = dyn_cast<RankedTensorType>(op.getSource().getType());
+    auto dstTy = dyn_cast<RankedTensorType>(op.getResult().getType());
+    if (!srcTy || !dstTy || srcTy.getRank() != 2 || dstTy.getRank() != 4 ||
+        !srcTy.hasStaticShape() || !dstTy.hasStaticShape())
+      return rewriter.notifyMatchFailure(op, "expected static 2D -> 4D");
+
+    if (srcTy.getShape()[0] != dstTy.getShape()[1] * dstTy.getShape()[2] ||
+        srcTy.getShape()[1] != dstTy.getShape()[0] * dstTy.getShape()[3])
+      return rewriter.notifyMatchFailure(op, "not a zN dot fractal");
+
+    if (!op.getResult().hasOneUse())
+      return rewriter.notifyMatchFailure(op, "convert result has many uses");
+    auto copyOp =
+        dyn_cast<CopyOp>(*op.getResult().getUsers().begin());
+    if (!copyOp || copyOp.getSrc() != op.getResult())
+      return rewriter.notifyMatchFailure(op, "result not consumed by a copy");
+    if (!isa<MemRefType>(copyOp.getDst().getType()))
+      return rewriter.notifyMatchFailure(op, "copy target is not a memref");
+    auto l1Space = dyn_cast_or_null<AddressSpaceAttr>(
+        cast<MemRefType>(copyOp.getDst().getType()).getMemorySpace());
+    if (!l1Space || l1Space.getAddressSpace() != AddressSpace::L1)
+      return rewriter.notifyMatchFailure(op, "copy target is not L1");
+
+    auto toTensor = op.getSource().getDefiningOp<bufferization::ToTensorOp>();
+    if (!toTensor)
+      return rewriter.notifyMatchFailure(op, "source is not a K-padded buffer");
+    Value padAlloc = toTensor.getMemref();
+    VBrcOp vbrc;
+    CopyOp padCopy;
+    memref::SubViewOp subView;
+    bool ok = padAlloc.getDefiningOp<memref::AllocOp>() != nullptr;
+    for (Operation *user : padAlloc.getUsers()) {
+      if (user == toTensor)
+        continue;
+      if (auto b = dyn_cast<VBrcOp>(user))
+        vbrc = b;
+      else if (auto sv = dyn_cast<memref::SubViewOp>(user)) {
+        subView = sv;
+        for (Operation *svUser : sv.getResult().getUsers())
+          if (auto c = dyn_cast<CopyOp>(svUser))
+            padCopy = c;
+      } else
+        ok = false;
+    }
+    auto toMemref =
+        (ok && vbrc && padCopy && subView)
+            ? padCopy.getSrc().getDefiningOp<bufferization::ToMemrefOp>()
+            : nullptr;
+    if (!toMemref)
+      return rewriter.notifyMatchFailure(op, "no K-pad chain to spill");
+    Value storeSrc = toMemref.getTensor();
+    ArrayRef<int64_t> storeShape =
+        cast<RankedTensorType>(storeSrc.getType()).getShape();
+    Value padValue = vbrc.getSrc();
+    // Collect the K-pad chain for erasure, ordered users-before-defs.
+    SmallVector<Operation *> padOpsToErase{
+        padCopy.getOperation(), toMemref.getOperation(), vbrc.getOperation(),
+        subView.getOperation(), toTensor.getOperation(),
+        padAlloc.getDefiningOp()};
+
+    Location loc = op.getLoc();
+    rewriter.setInsertionPoint(copyOp);
+    Value gm = createAllocLocalWorkSpace(rewriter, loc, storeShape,
+                                         srcTy.getElementType());
+    rewriter.create<StoreOp>(loc, TypeRange{}, storeSrc, gm);
+    rewriter.create<ND2NZOp>(loc, TypeRange{}, gm, copyOp.getDst(),
+                             rewriter.getUnitAttr(),
+                             /*init_out_buffer=*/padValue != Value(),
+                             /*pad_value=*/padValue);
+    rewriter.eraseOp(copyOp);
+    rewriter.eraseOp(op);
+    // Erase the now-dead ND pad chain (uses before defs).
+    for (Operation *dead : padOpsToErase)
+      if (dead && dead->use_empty())
+        rewriter.eraseOp(dead);
+    return success();
+  }
+};
+
 void populateCombineOptimizedConvertLayoutPatterns(RewritePatternSet &patterns,
                                                    MLIRContext *context) {
   ConvertLayoutOp::getCanonicalizationPatterns(patterns, context);
@@ -802,7 +903,8 @@ void populateCombineOptimizedConvertLayoutPatterns(RewritePatternSet &patterns,
                FoldTensorLoadToLoadMXScalePattern,
                FoldFixpipeConvertLayoutPattern,
                FoldConvertLayoutFixpipePattern,
-               FoldConvertLayoutExtractSliceFixpipePattern>(context);
+               FoldConvertLayoutExtractSliceFixpipePattern,
+               RouteVectorFractalizeViaGMPattern>(context);
 }
 
 } // namespace

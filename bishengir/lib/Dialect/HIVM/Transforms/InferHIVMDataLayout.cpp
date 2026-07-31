@@ -103,6 +103,41 @@ inline bool isGlobalMemory(Value val) {
          maybeSpaceAttr->getAddressSpace() == AddressSpace::GM;
 }
 
+inline bool isFractalLayout(DataLayoutAttr layout) {
+  if (!layout)
+    return false;
+  switch (layout.getDataLayout()) {
+  case hivm::DataLayout::Fractal:
+  case hivm::DataLayout::nZ:
+  case hivm::DataLayout::zN:
+    return true;
+  default:
+    return false;
+  }
+}
+
+inline DataLayoutAttr makeFractalLayout(MemRefType type) {
+  auto shape = type.getShape();
+  int64_t rank = type.getRank();
+  return DataLayoutAttr::get(
+      type.getContext(), hivm::DataLayout::Fractal, /*transpose=*/nullptr,
+      DenseI64ArrayAttr::get(type.getContext(),
+                             {shape[rank - 2], shape[rank - 1]}));
+}
+
+inline DataLayoutAttr blockedFractalLayout(Value v) {
+  if (auto mt = dyn_cast<MemRefType>(v.getType());
+      mt && mt.hasRank() && mt.getRank() >= 4)
+    return makeFractalLayout(mt);
+  return nullptr;
+}
+
+inline DataLayoutAttr globalSeedLayout(Value v) {
+  if (auto fractal = blockedFractalLayout(v))
+    return fractal;
+  return DataLayoutAttr::get(v.getContext(), hivm::DataLayout::ND);
+}
+
 void convertToBatchND2NZOp(Value src, Value dst, OpBuilder &builder) {
   auto buildLoopBody = [&src, &dst,
                         &builder](llvm::SmallVector<Value> indexes) -> void {
@@ -627,9 +662,8 @@ void DataLayoutInferAndPropagateHelper::initAnchorLayout() {
         if (!isGlobalMemory(result))
           continue;
 
-        auto ndLayout =
-            DataLayoutAttr::get(result.getContext(), DataLayout::ND);
-        (void)updateLayoutIfChanged(result, {ndLayout, ndLayout});
+        auto layout = globalSeedLayout(result);
+        (void)updateLayoutIfChanged(result, {layout, layout});
       }
       return WalkResult::advance();
     }
@@ -647,8 +681,8 @@ void DataLayoutInferAndPropagateHelper::initAnchorLayout() {
       continue;
     if (dyn_cast<hivm::AddressSpaceAttr>(memorySpace).getAddressSpace() ==
         AddressSpace::GM) {
-      auto ndLayout = DataLayoutAttr::get(arg.getContext(), DataLayout::ND);
-      (void)updateLayoutIfChanged(arg, {ndLayout, ndLayout});
+      auto layout = globalSeedLayout(arg);
+      (void)updateLayoutIfChanged(arg, {layout, layout});
     }
   }
 }
@@ -701,7 +735,17 @@ DataLayoutInferAndPropagateHelper::propagateDataLayoutToUsers(
           updateLayout({arg, result}, info, changed);
         })
         .Case<ViewLikeOpInterface>([&](ViewLikeOpInterface op) {
-          updateLayout(op->getResults(), info, changed);
+          for (Value result : op->getResults()) {
+            if (!isa<BaseMemRefType>(result.getType()))
+              continue;
+            // Seed blocked GM values as Fractal so downstream copies skip nd2nz.
+            LayoutInfo resultInfo = info;
+            if (isGlobalMemory(result))
+              if (auto fractal = blockedFractalLayout(result))
+                resultInfo = LayoutInfo{fractal, fractal};
+            if (updateLayoutIfChanged(result, resultInfo))
+              changed.push_back(result);
+          }
         })
         .Case<bishengir::memref_ext::AllocWorkspaceOp>(
             [&](bishengir::memref_ext::AllocWorkspaceOp op) {
@@ -1463,6 +1507,13 @@ void DataLayoutInferAndPropagateHelper::rewriteCopyOp(mlir::Operation *op) {
     op->replaceUsesOfWith(src, rewrittenSrc);
     op->replaceUsesOfWith(dst, rewrittenDst);
     LDBG("src and dst has the same layout, no need to rewrite");
+    return;
+  }
+  // If both src and dst are fractal, treat as direct copy (skip nd2nz).
+  if (isFractalLayout(srcTargetLayout) && isFractalLayout(dstTargetLayout)) {
+    op->replaceUsesOfWith(src, rewrittenSrc);
+    op->replaceUsesOfWith(dst, rewrittenDst);
+    LDBG("both src and dst are fractal, no nd2nz needed");
     return;
   }
   // Otherwise, we can try to fold the ConvertLayoutOp with HIVM Ops.

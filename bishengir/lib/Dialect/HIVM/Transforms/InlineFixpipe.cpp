@@ -273,6 +273,43 @@ Operation *getInsertPoint(Operation *op, int &resultIndx) {
   return getInsertPoint(yieldParentOp, resultIndx);
 }
 
+// Return the single convert_layout{ND→Fractal} user, or null.
+static hivm::ConvertLayoutOp getOutputFractalConvert(Value mmadResult) {
+  if (!mmadResult.hasOneUse())
+    return nullptr;
+  auto convert = dyn_cast<hivm::ConvertLayoutOp>(*mmadResult.user_begin());
+  if (!convert)
+    return nullptr;
+  auto srcLayout = convert.getSrcLayoutAttr();
+  auto dstLayout = convert.getDstLayoutAttr();
+  if (!srcLayout.isNDLayout() ||
+      dstLayout.getDataLayout() != hivm::DataLayout::Fractal)
+    return nullptr;
+  return convert;
+}
+
+// Emit an NZ2NZ fixpipe when result feeds a single ND→Fractal convert_layout.
+// Returns false so the caller falls back to NZ2ND.
+static bool tryInsertFractalOutputFixpipe(PatternRewriter &rewriter,
+                                          Operation *insertAfterOp,
+                                          Value result) {
+  auto convert = getOutputFractalConvert(result);
+  if (!convert)
+    return false;
+  rewriter.setInsertionPointAfter(insertAfterOp);
+  Value dst = utils::createEmptyOp(rewriter, insertAfterOp->getLoc(),
+                                   convert.getResult());
+  auto dmaModeAttr =
+      FixpipeDMAModeAttr::get(rewriter.getContext(), FixpipeDMAMode::NZ2NZ);
+  auto fixpipe = rewriter.create<FixpipeOp>(
+      insertAfterOp->getLoc(), /*result_tensor=*/dst.getType(), result, dst,
+      dmaModeAttr, /*dual_dst_mode=*/nullptr, /*sub_block_idx=*/nullptr,
+      /*pre_quant=*/nullptr, /*pre_relu=*/nullptr, /*channel_split=*/nullptr);
+  rewriter.replaceAllUsesWith(convert.getResult(), fixpipe.getResultTensor());
+  rewriter.eraseOp(convert);
+  return true;
+}
+
 bool isAccumulationImpl(Operation *op, Value accumulator) {
   if (!accumulator)
     return false;
@@ -526,8 +563,9 @@ public:
     rewriter.setInsertionPointAfter(insertAfterOp);
 
     LDBG("Replacing fix pipe for " << op);
-    insertFixpipe(rewriter, insertAfterOp,
-                  insertAfterOp->getResult(resultIndx));
+    Value result = insertAfterOp->getResult(resultIndx);
+    if (!tryInsertFractalOutputFixpipe(rewriter, insertAfterOp, result))
+      insertFixpipe(rewriter, insertAfterOp, result);
     op->setAttr(mmadFixpipeForResultAlreadyInserted,
                 rewriter.getBoolAttr(true));
 
