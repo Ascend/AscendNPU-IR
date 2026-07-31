@@ -27,6 +27,7 @@
 #include "mlir/Dialect/Linalg/TransformOps/LinalgTransformOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/SCF/TransformOps/SCFTransformOps.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Tensor/TransformOps/TensorTransformOps.h"
 #include "mlir/Dialect/Transform/IR/TransformOps.h"
 #include "mlir/Dialect/Transform/IR/Utils.h"
@@ -1587,6 +1588,14 @@ LogicalResult TileCubeVectorLoopPass::collectCubeLoopInfo(OpType cubeLoop) {
               continue;
             }
           }
+        }
+
+        // Workspace preload slices read cross-scope buffers and cannot be
+        // fused into the tiled fixpipe loop after their consumers are pulled in.
+        if (isa<tensor::ExtractSliceOp>(op) &&
+            op->hasAttr(hivm::PreloadWorkspaceAttr::name)) {
+          LDBG("Skipping fuse tag for preload workspace extract_slice: " << *op);
+          continue;
         }
 
         info.lazySetAttr(op, groupTag, fuseTagAttr);
