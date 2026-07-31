@@ -28,7 +28,6 @@
 #include "mlir/Interfaces/LoopLikeInterface.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
-#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Casting.h"
@@ -1007,8 +1006,8 @@ bool SyncSolverBase::checkGraphConflict(
   return !minDistance.has_value() || minDistance.value() > endIndex.value();
 }
 
-bool SyncSolverBase::checkSyncOpsConflicts(ConflictPair *conflictPair1,
-                                           ConflictPair *conflictPair2) {
+bool SyncSolverBase::checkCrossCoreIntersect(ConflictPair *conflictPair1,
+                                             ConflictPair *conflictPair2) {
   if (conflictPair1->isBarrier() || conflictPair2->isBarrier()) {
     return false;
   }
@@ -1104,6 +1103,16 @@ bool SyncSolverBase::checkSyncOpsConflicts(ConflictPair *conflictPair1,
   return result;
 }
 
+bool SyncSolverBase::checkIntraCoreIntersect(ConflictPair *conflictPair1,
+                                             ConflictPair *conflictPair2) {
+  if (conflictPair1->setCorePipeInfo != conflictPair2->setCorePipeInfo ||
+      conflictPair1->waitCorePipeInfo != conflictPair2->waitCorePipeInfo) {
+    return false;
+  }
+  return conflictPair1->endIndex >= conflictPair2->startIndex &&
+         conflictPair2->endIndex >= conflictPair1->startIndex;
+}
+
 // Check whether two ConflictPair entries conflict in pipe and time ranges.
 bool SyncSolverBase::checkIntersect(ConflictPair *conflictPair1,
                                     ConflictPair *conflictPair2) {
@@ -1118,72 +1127,12 @@ bool SyncSolverBase::checkIntersect(ConflictPair *conflictPair1,
       conflictPair2->dontCheckForConflict) {
     return false;
   }
-  if (options.isCrossCoreMode()) {
-    return checkSyncOpsConflicts(conflictPair1, conflictPair2);
-  }
-  if (conflictPair1->setCorePipeInfo != conflictPair2->setCorePipeInfo ||
-      conflictPair1->waitCorePipeInfo != conflictPair2->waitCorePipeInfo) {
-    return false;
-  }
-  for (auto [l1, r1] : getRanges(conflictPair1)) {
-    for (auto [l2, r2] : getRanges(conflictPair2)) {
-      if (checkRangesIntersect(l1, r1 + 1, l2, r2 + 1)) {
-        return true;
-      }
-    }
+  if (options.isIntraCoreMode()) {
+    return checkIntraCoreIntersect(conflictPair1, conflictPair2);
+  } else if (options.isCrossCoreMode()) {
+    return checkCrossCoreIntersect(conflictPair1, conflictPair2);
   }
   return false;
-}
-
-// Obtain available event ids while accounting for already chosen conflicts.
-std::vector<ConflictPair *>
-SyncSolverBase::getIntersectingConflictPairs(ConflictPair *conflictPair) {
-  assert(conflictPair != nullptr);
-  if (conflictPair->isBarrier()) {
-    return {};
-  }
-  if (conflictPair->dontCheckForConflict) {
-    return {};
-  }
-  std::vector<ConflictPair *> intersectingConflictPairs;
-  for (auto &curConflictPair : chosenConflictedPairs) {
-    if (checkIntersect(conflictPair, curConflictPair.get())) {
-      intersectingConflictPairs.push_back(curConflictPair.get());
-    }
-  }
-  for (auto &curConflictPair : persistentChosenConflictedPairs) {
-    if (checkIntersect(conflictPair, curConflictPair.get())) {
-      intersectingConflictPairs.push_back(curConflictPair.get());
-    }
-  }
-  return intersectingConflictPairs;
-}
-
-llvm::SmallVector<EventIdNode *>
-SyncSolverBase::getIntersectingEventIdNodes(ConflictPair *conflictPair) {
-  assert(conflictPair != nullptr);
-  if (conflictPair->isBarrier()) {
-    return {};
-  }
-  if (conflictPair->dontCheckForConflict) {
-    return {};
-  }
-  llvm::SetVector<EventIdNode *> intersectingNodes;
-  for (auto &curConflictPair : chosenConflictedPairs) {
-    if (!intersectingNodes.contains(curConflictPair->eventIdNode)) {
-      if (checkIntersect(conflictPair, curConflictPair.get())) {
-        intersectingNodes.insert(curConflictPair->eventIdNode);
-      }
-    }
-  }
-  for (auto &curConflictPair : persistentChosenConflictedPairs) {
-    if (!intersectingNodes.contains(curConflictPair->eventIdNode)) {
-      if (checkIntersect(conflictPair, curConflictPair.get())) {
-        intersectingNodes.insert(curConflictPair->eventIdNode);
-      }
-    }
-  }
-  return intersectingNodes.takeVector();
 }
 
 // Processed-pair tracking helpers.

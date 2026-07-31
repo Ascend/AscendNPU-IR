@@ -285,23 +285,6 @@ OperationBase *OperationBase::getUnlikelyParentCondition(OperationBase *op) {
 
 namespace mlir::hivm::syncsolver {
 
-// Check if two integer ranges intersect (half-open semantics: [l, r) )
-bool checkRangesIntersect(int l1, int r1, int l2, int r2) {
-  // return !(r1 <= l2 || r2 <= l1);
-  return r1 > l2 && r2 > l1;
-}
-
-// Return explicit integer ranges covered by a conflict pair (barrier -> empty).
-std::vector<std::pair<int, int>> getRanges(ConflictPair *conflictPair) {
-  assert(conflictPair != nullptr);
-  if (conflictPair->isBarrier()) {
-    return {};
-  }
-  std::vector<std::pair<int, int>> ret;
-  ret.emplace_back(conflictPair->startIndex, conflictPair->endIndex);
-  return ret;
-}
-
 // Return the hardware-available EVENT ids for a given (setPipe, waitPipe) pair.
 // Respects reserved ids for special pipe pairs and returns a vector of usable
 // ids.

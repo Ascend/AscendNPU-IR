@@ -1,6 +1,7 @@
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolver.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/Support/Debug.h"
 
 #include <queue>
@@ -9,6 +10,33 @@
 
 using namespace mlir;
 using namespace hivm::syncsolver;
+
+llvm::SmallVector<EventIdNode *>
+SyncSolverV2::getIntersectingEventIdNodes(ConflictPair *conflictPair) {
+  assert(conflictPair != nullptr);
+  if (conflictPair->isBarrier()) {
+    return {};
+  }
+  if (conflictPair->dontCheckForConflict) {
+    return {};
+  }
+  llvm::SetVector<EventIdNode *> intersectingNodes;
+  for (auto &curConflictPair : chosenConflictedPairs) {
+    if (!intersectingNodes.contains(curConflictPair->eventIdNode)) {
+      if (checkIntersect(conflictPair, curConflictPair.get())) {
+        intersectingNodes.insert(curConflictPair->eventIdNode);
+      }
+    }
+  }
+  for (auto &curConflictPair : persistentChosenConflictedPairs) {
+    if (!intersectingNodes.contains(curConflictPair->eventIdNode)) {
+      if (checkIntersect(conflictPair, curConflictPair.get())) {
+        intersectingNodes.insert(curConflictPair->eventIdNode);
+      }
+    }
+  }
+  return intersectingNodes.takeVector();
+}
 
 void SyncSolverV2::processOrder(Occurrence *occ1, Occurrence *occ2,
                                 RWOperation *rwOp1, RWOperation *rwOp2,

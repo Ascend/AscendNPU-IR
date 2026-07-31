@@ -1,11 +1,39 @@
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolver.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SetVector.h"
 
 #define DEBUG_TYPE "hivm-gss-solver"
 
 using namespace mlir;
 using namespace hivm::syncsolver;
+
+llvm::SmallVector<EventIdNode *>
+SyncSolverV1::getIntersectingEventIdNodes(ConflictPair *conflictPair) {
+  assert(conflictPair != nullptr);
+  if (conflictPair->isBarrier()) {
+    return {};
+  }
+  if (conflictPair->dontCheckForConflict) {
+    return {};
+  }
+  llvm::SetVector<EventIdNode *> intersectingNodes;
+  for (auto &curConflictPair : chosenConflictedPairs) {
+    if (!intersectingNodes.contains(curConflictPair->eventIdNode)) {
+      if (checkIntersect(conflictPair, curConflictPair.get())) {
+        intersectingNodes.insert(curConflictPair->eventIdNode);
+      }
+    }
+  }
+  for (auto &curConflictPair : persistentChosenConflictedPairs) {
+    if (!intersectingNodes.contains(curConflictPair->eventIdNode)) {
+      if (checkIntersect(conflictPair, curConflictPair.get())) {
+        intersectingNodes.insert(curConflictPair->eventIdNode);
+      }
+    }
+  }
+  return intersectingNodes.takeVector();
+}
 
 bool SyncSolverV1::skipLaterIterations(Occurrence *occ1, Occurrence *occ2) {
   assert(occ1 != nullptr && occ2 != nullptr);

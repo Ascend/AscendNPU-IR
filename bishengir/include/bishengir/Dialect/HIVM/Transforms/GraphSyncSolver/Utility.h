@@ -540,13 +540,6 @@ struct MmadMxL1SyncArgs {
   Value l1ScaleBWaitL0Event; // Set ScaleB
 };
 
-// Check if two integer ranges intersect.
-bool checkRangesIntersect(int l1, int r1, int l2, int r2);
-
-// Return explicit integer ranges covered by a conflict pair (empty for
-// barrier).
-std::vector<std::pair<int, int>> getRanges(ConflictPair *conflictPair);
-
 // Return hardware-available EVENT ids for a given (setPipe, waitPipe) pair.
 int64_t
 getHWAvailableEventIdNum(SyncMode syncMode,

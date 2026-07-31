@@ -312,18 +312,19 @@ protected:
 
   bool skipMMad1DecomposedLoopOpt(Occurrence *occ1, Occurrence *occ2);
 
-  bool checkSyncOpsConflicts(ConflictPair *conflictPair1,
-                             ConflictPair *conflictPair2);
+  bool checkCrossCoreIntersect(ConflictPair *conflictPair1,
+                               ConflictPair *conflictPair2);
+
+  bool checkIntraCoreIntersect(ConflictPair *conflictPair1,
+                               ConflictPair *conflictPair2);
 
   // Check whether two ConflictPair ranges/event mapping intersect (same
   // pipes/events).
   bool checkIntersect(ConflictPair *conflictPair1, ConflictPair *conflictPair2);
 
   // Event-id allocation and reuse helpers.
-  std::vector<ConflictPair *>
-  getIntersectingConflictPairs(ConflictPair *conflictPair);
-  llvm::SmallVector<EventIdNode *>
-  getIntersectingEventIdNodes(ConflictPair *conflictPair);
+  virtual llvm::SmallVector<EventIdNode *>
+  getIntersectingEventIdNodes(ConflictPair *conflictPair) = 0;
 
   // Visit tracking helpers for occurrence pairs.
   bool checkVisited(Occurrence *occ1, Occurrence *occ2);
@@ -497,6 +498,8 @@ protected:
 
   void processOrder(ProcessingOrderV1 processingOrder);
   void processOrders() override;
+  llvm::SmallVector<EventIdNode *>
+  getIntersectingEventIdNodes(ConflictPair *conflictPair) override;
   void buildOfflineProcessingOrders(Occurrence *occ, bool isUseless = false);
   void generateProcessingOrders(Occurrence *occ1, Occurrence *occ2,
                                 bool isUseless);
@@ -553,6 +556,8 @@ protected:
   void processOrder(Occurrence *occ1, Occurrence *occ2, RWOperation *rwOp1,
                     RWOperation *rwOp2, bool isUseless);
   void processOrders() override;
+  llvm::SmallVector<EventIdNode *>
+  getIntersectingEventIdNodes(ConflictPair *conflictPair) override;
 
   void generateProcessingOrders(Occurrence *lcaOcc1, Occurrence *lcaOcc2,
                                 const llvm::ArrayRef<Occurrence *> &occs1,
