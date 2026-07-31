@@ -44,6 +44,7 @@ add_bishengir_dialect_library(MLIRHFusionTransforms
   ConstantizeTilingData.cpp
   ConvertGenericToNamedOp.cpp
   HFusionGeneralize.cpp
+  LoopInvariantPromotion.cpp
   Decompose.cpp
   DecomposeOpInterfaceImpl.cpp
   DecomposeMulti.cpp
@@ -116,6 +117,7 @@ add_bishengir_dialect_library(MLIRHFusionTransforms
   MLIRShardingInterface
   MLIRTensorDialect
   MLIRTensorTransformOps
+  MLIRTensorTransforms
   MLIRTensorUtils
   MLIRTransformDialect
   MLIRTransformDialectTransforms
