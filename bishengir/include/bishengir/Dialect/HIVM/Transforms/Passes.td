@@ -79,6 +79,7 @@ def HIVMNormalize : Pass<"hivm-normalize-ops", "func::FuncOp"> {
     "tensor::TensorDialect",
     "bufferization::BufferizationDialect",
     "memref::MemRefDialect",
+    "scope::ScopeDialect",
   ];
   let options = [
     Option<

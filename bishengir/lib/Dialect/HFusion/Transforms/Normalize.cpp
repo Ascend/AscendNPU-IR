@@ -23,6 +23,7 @@
 #include "bishengir/Dialect/HFusion/IR/HFusionImpl.h"
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"

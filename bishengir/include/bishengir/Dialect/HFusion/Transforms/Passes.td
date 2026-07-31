@@ -282,7 +282,8 @@ def Normalize : Pass<"hfusion-normalize-ops", "func::FuncOp"> {
   let summary = "Normalize Hfusion";
   let constructor = "mlir::hfusion::createHFusionNormalizeOpsPass()";
   let dependentDialects = ["hfusion::HFusionDialect", "hivm::HIVMDialect",
-                           "bufferization::BufferizationDialect"];
+                           "bufferization::BufferizationDialect",
+                           "scope::ScopeDialect"];
   let options = [
     Option<"useRegBase", "use-regbase", "bool", /*default=*/"false",
            "Forcefully use RegBase normalize implementation.">,
