@@ -18,6 +18,7 @@
 #include "bishengir/Dialect/HACC/IR/HACC.h"
 #include "bishengir/Dialect/HACC/Transforms/Passes.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/Interfaces/DataLayoutInterfaces.h"
 
@@ -47,8 +48,40 @@ public:
   void runOnOperation() override;
 };
 
-HACCTargetDeviceSpecInterface
-getNPUTargetSpecAttr(MLIRContext *context, TargetDevice target, Location loc) {
+Attribute maybeOverrideSpecValue(ImplicitLocOpBuilder &builder,
+                                 DeviceSpec specEntry, Attribute specValue,
+                                 int32_t customAICNumber,
+                                 int32_t customAIVNumber) {
+  auto specValueTyped = dyn_cast_if_present<IntegerAttr>(specValue);
+  if (customAICNumber == -1 || customAIVNumber == -1 || !specValueTyped)
+    return specValue;
+
+  int32_t oldVal = specValueTyped.getInt();
+  int32_t newVal = -1;
+  switch (specEntry) {
+  case DeviceSpec::AI_CORE_COUNT:
+    [[fallthrough]];
+  case DeviceSpec::CUBE_CORE_COUNT:
+    newVal = customAICNumber;
+    break;
+  case DeviceSpec::VECTOR_CORE_COUNT:
+    newVal = customAIVNumber;
+    break;
+  default:
+    break;
+  }
+
+  if (newVal == -1 || newVal > oldVal)
+    return specValue;
+
+  return builder.getI32IntegerAttr(newVal);
+}
+
+HACCTargetDeviceSpecInterface getNPUTargetSpecAttr(MLIRContext *context,
+                                                   TargetDevice target,
+                                                   int32_t customAICNumber,
+                                                   int32_t customAIVNumber,
+                                                   Location loc) {
   auto maybeSpec = getTargetSpec(target);
   if (!maybeSpec.has_value() ||
       maybeSpec.value()->device == TargetDevice::Unknown)
@@ -67,9 +100,12 @@ getNPUTargetSpecAttr(MLIRContext *context, TargetDevice target, Location loc) {
          specEntry == DeviceSpec::MAXIMUM_D_CACHE_SIZE ||
          specEntry == DeviceSpec::ARCH))
       continue;
+    auto specValue = maybeSpec.value()->getSpecEntry(specEntry, builder);
+    auto processedSpecValue = maybeOverrideSpecValue(
+        builder, specEntry, specValue, customAICNumber, customAIVNumber);
+
     entries.push_back(DataLayoutEntryAttr::get(
-        builder.getStringAttr(stringifyEnum(specEntry)),
-        maybeSpec.value()->getSpecEntry(specEntry, builder)));
+        builder.getStringAttr(stringifyEnum(specEntry)), processedSpecValue));
   }
   return cast<HACCTargetDeviceSpecInterface>(
       hacc::TargetDeviceSpecAttr::get(context, entries));
@@ -110,7 +146,8 @@ void AppendDeviceSpec::runOnOperation() {
 
   MLIRContext *ctx = &getContext();
   hacc::utils::setTargetDevice(moduleOp, finalTarget);
-  auto targetSpec = getNPUTargetSpecAttr(ctx, finalTarget, moduleOp->getLoc());
+  auto targetSpec = getNPUTargetSpecAttr(ctx, finalTarget, customAICNumber,
+                                         customAIVNumber, moduleOp->getLoc());
   hacc::utils::setNPUTargetSpec(moduleOp, targetSpec);
 
   if (hacc::utils::isMemBasedArch(moduleOp)) {

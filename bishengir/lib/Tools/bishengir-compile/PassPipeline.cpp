@@ -70,7 +70,8 @@ void buildBiShengHIRPipeline(OpPassManager &pm,
   pm.addPass(createCanonicalizeModulePass());
   pm.addPass(
       hacc::createAppendDeviceSpecPass(hacc::AppendTargetDeviceSpecOptions{
-          config.getTarget(), config.getHIVMCVersion()}));
+          config.getTarget(), config.getCustomAICNumber(),
+          config.getCustomAIVNumber(), config.getHIVMCVersion()}));
 
 #if BISHENGIR_ENABLE_TORCH_CONVERSIONS
   if (config.getEnableTorchCompile()) {
