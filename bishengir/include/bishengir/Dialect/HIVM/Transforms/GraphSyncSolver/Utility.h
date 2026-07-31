@@ -144,8 +144,8 @@ struct SyncSolverOptions {
   // global maximum) before falling back to reusing smaller unused ids.
   bool preferNewEventIds{false};
 
-  // Use different flag-ids for multibuffer backward sync pairs.
-  bool useDifferentMultiBufferFlagIds{false};
+  // Repeat the same flag-id for multi-id pairs.
+  bool enableRepeatFlagIdFeat{false};
 
   // Ignore workspace function arguments.
   bool intraCoreIgnoreWorkSpaceFunctionArguments{false};
@@ -172,7 +172,7 @@ struct SyncSolverOptions {
     alwaysUsePipeSAsWaitingPipe =
         !isTestMode() && isCrossCoreMode() && isMemBasedArch;
     reuseSyncPairToSaveEventIds = isIntraCoreMode();
-    useDifferentMultiBufferFlagIds = !isCrossCoreMode();
+    enableRepeatFlagIdFeat = isCrossCoreMode();
     preferNewEventIds = isCrossCoreMode();
   }
 
@@ -199,10 +199,11 @@ struct ProcessingOrder {
   Occurrence *occ2{nullptr};
   RWOperation *rwOp1{nullptr};
   RWOperation *rwOp2{nullptr};
+  int64_t stepNum{0};
   bool isUseless{false};
   ProcessingOrder(Occurrence *occ1, Occurrence *occ2, RWOperation *rwOp1,
-                  RWOperation *rwOp2, bool isUseless)
-      : occ1(occ1), occ2(occ2), rwOp1(rwOp1), rwOp2(rwOp2),
+                  RWOperation *rwOp2, int64_t stepNum, bool isUseless)
+      : occ1(occ1), occ2(occ2), rwOp1(rwOp1), rwOp2(rwOp2), stepNum(stepNum),
         isUseless(isUseless) {};
 };
 
@@ -312,6 +313,7 @@ struct ConflictPair {
   int startIndex{-1};
   int endIndex{-1};
   bool isInnerBackward{false};
+  bool isBackwardPair{false};
   bool isUseless{false};
   bool dontReuse{false};
   bool dontCheckForConflict{false};

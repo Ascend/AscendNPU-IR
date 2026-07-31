@@ -128,7 +128,7 @@ void CrossCoreGSSPass::runOnOperation() {
     options.alwaysUsePipeSAsWaitingPipe = true;
   }
   if (this->useDifferentMultiBufferFlagIds) {
-    options.useDifferentMultiBufferFlagIds = true;
+    options.enableRepeatFlagIdFeat = true;
   }
   if (this->enableCVPatterns) {
     options.enableCVPatterns = true;

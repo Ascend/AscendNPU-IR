@@ -64,6 +64,7 @@ struct NormalizeHIVMPass
     populateNormalizeShiftI8ToI16(patterns);
     populateNormalizeI8ToTargetPatterns(patterns);
     populateNormalizeLateMathPatterns(patterns);
+    populateNormalizeReluPatterns(patterns);
     populateNormalizeReductionPatterns(patterns);
     populateNormalizeScalarLikeHIVMPatterns(patterns);
     populateNormalizeI1ToTargetPatterns(patterns);

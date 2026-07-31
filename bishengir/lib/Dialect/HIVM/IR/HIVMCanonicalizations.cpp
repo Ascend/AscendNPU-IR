@@ -439,6 +439,89 @@ struct FoldLoadAndVPadPattern : public OpRewritePattern<VPadOp> {
   }
 };
 
+/// When sort_axis points to a dimension of size 1 (i.e., sorting a single
+/// element), the vsort is redundant — sorting one element is a no-op.
+/// Additionally, if src and dst have identical memref layouts (same shape,
+/// strides, and address space), we can directly replace dst with src.
+/// For buffer semantics: replace vsort with a CopyOp (src → dst).
+/// For tensor semantics: replace vsort result with src.
+struct RedundantVSortOp : public OpRewritePattern<VSortOp> {
+  using OpRewritePattern<VSortOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(VSortOp sortOp,
+                                PatternRewriter &rewriter) const final {
+    auto srcType = dyn_cast<ShapedType>(sortOp.getSrc().getType());
+    if (!srcType) {
+      return failure();
+    }
+
+    int64_t sortAxis = sortOp.getSignedSortAxis();
+    int64_t rank = srcType.getRank();
+    // Normalize: sort_axis == -1 means the last axis
+    if (sortAxis == -1) {
+      sortAxis = rank - 1;
+    }
+
+    // Check: the sort dimension size must be 1 (sorting 1 element is a no-op)
+    if (sortAxis < 0 || sortAxis >= rank || srcType.getShape()[sortAxis] != 1) {
+      return failure();
+    }
+
+    // Check: src and dst_value must have identical layouts
+    auto dstValueType = dyn_cast<ShapedType>(sortOp.getDstValue().getType());
+    if (!dstValueType) {
+      return failure();
+    }
+
+    // For memref: compare strides and shape; for tensor: compare shape
+    if (isa<MemRefType>(srcType) && isa<MemRefType>(dstValueType)) {
+      auto srcMemref = cast<MemRefType>(srcType);
+      auto dstMemref = cast<MemRefType>(dstValueType);
+      SmallVector<int64_t> srcStrides, dstStrides;
+      int64_t srcOffset, dstOffset;
+      if (failed(getStridesAndOffset(srcMemref, srcStrides, srcOffset)) ||
+          failed(getStridesAndOffset(dstMemref, dstStrides, dstOffset))) {
+        return failure();
+      }
+      if (srcMemref.getShape() != dstMemref.getShape() ||
+          srcStrides != dstStrides ||
+          srcMemref.getMemorySpace() != dstMemref.getMemorySpace()) {
+        return failure();
+      }
+    } else if (isa<TensorType>(srcType) && isa<TensorType>(dstValueType)) {
+      if (srcType.getShape() != dstValueType.getShape()) {
+        return failure();
+      }
+    } else {
+      // Mixed types — not handled
+      return failure();
+    }
+
+    // If the vsort also has a dst_index output (sort with index),
+    // we cannot simply eliminate it — the index output would need separate
+    // handling. Skip this case.
+    if (sortOp.getDst().size() > 1) {
+      return failure();
+    }
+
+    if (sortOp.hasPureTensorSemantics()) {
+      rewriter.replaceAllUsesWith(sortOp->getResults()[0],
+                                  ArrayRef{sortOp.getSrc()});
+      rewriter.eraseOp(sortOp);
+    } else {
+      // Buffer semantics: replace vsort with CopyOp (src → dst)
+      if (sortOp.getDstValue().getType().isIntOrFloat()) {
+        return failure();
+      }
+      rewriter.create<hivm::CopyOp>(sortOp.getLoc(), TypeRange(),
+                                    sortOp.getSrc(), sortOp.getDstValue());
+      rewriter.eraseOp(sortOp);
+    }
+
+    return success();
+  }
+};
+
 } // namespace
 
 void VPowOp::getCanonicalizationPatterns(::mlir::RewritePatternSet &results,
@@ -484,4 +567,9 @@ void VTransposeOp::getCanonicalizationPatterns(
 void VPadOp::getCanonicalizationPatterns(::mlir::RewritePatternSet &results,
                                          ::mlir::MLIRContext *context) {
   results.add<FoldLoadAndVPadPattern>(context);
+}
+
+void VSortOp::getCanonicalizationPatterns(::mlir::RewritePatternSet &results,
+                                          ::mlir::MLIRContext *context) {
+  results.add<RedundantVSortOp>(context);
 }

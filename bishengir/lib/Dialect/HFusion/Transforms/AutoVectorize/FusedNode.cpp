@@ -219,7 +219,24 @@ void FusedNode::estimateTileSizeForOp(
   tileSize[opInfo.numLoops - 1] = vectorLength / bytes;
 }
 
+// here we do not fuse op into user in DpsInits, see issue:
+// https://codehub-y.huawei.com/CompilerKernel/BiShengKernel/BiSheng/issues/3687
+bool FusedNode::useAsDpsInits(Operation *newOp) const {
+  auto results = newOp->getResults();
+  return any_of(ops(), [results](Operation *fusedOp) {
+    auto linalgOp = dyn_cast<linalg::LinalgOp>(fusedOp);
+    if (!linalgOp)
+      return false;
+    return llvm::any_of(results, [&linalgOp](OpResult res) {
+      return llvm::is_contained(linalgOp.getDpsInits(), res);
+    });
+  });
+}
+
 bool FusedNode::canFuseProducer(Operation *producer) const {
+  if (useAsDpsInits(producer))
+    return false;
+
   SmallVector<int64_t> estimatedTileSize;
   return !wouldBecomeTileLocal(producer, estimatedTileSize) ||
          !reductionConsumerNeedsFullDomain(producer, estimatedTileSize);

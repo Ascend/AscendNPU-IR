@@ -1,6 +1,6 @@
 // REQUIRES: enable-lir-compile
 
-// RUN: bishengir-compile -enable-lir-compile=false -enable-hfusion-compile=true -enable-triton-kernel-compile %s
+// RUN: bishengir-compile --enable-auto-multi-buffer=False -enable-lir-compile=false -enable-hfusion-compile=true -enable-triton-kernel-compile %s
 
 // Test case derived from triton_poi_fused_stack_14 â 27-input pointwise kernel
 // with sliding-window loads that creates high fan-out in use-def chains. This

@@ -331,7 +331,7 @@ class GeneralOptimizationControlOptions<
 def EnableAutoMultiBuffer : GeneralOptimizationControlOptions<
   "Enable auto multi buffer.",
   "bool",
-  "false"
+  "true"
 > {
   let passGroup = ["HFUSION", "HIVM"];
 }
@@ -575,7 +575,7 @@ def EnableHIVMAutoCVBalance : HIVMOptimizationControlOptions<
 def EnableLazyLoading : HIVMOptimizationControlOptions<
   "Enable lazy loading in CV pipelining to reduce buffer expansion.",
   "bool",
-  "false"
+  "true"
 >;
 
 def SetCVPipelineMode : HIVMOptimizationControlOptions<

@@ -279,7 +279,7 @@ def SetFFTSBaseAddrOp : HIVM_Op<"set_ffts_base_addr", [CubeVectorCoreTypeTrait]>
 
 def DebugOp :
   HIVM_Op<"debug",
-          [StaticMaxRankTrait<4>,
+          [StaticMaxRankTrait<8>,
            MemoryEffects<[MemRead, MemWrite]>,
            DeclareOpInterfaceMethods<LibraryFunctionOpInterface>,
            DeclareOpInterfaceMethods<HIVMInferCoreTypeInterface, ["inferCoreType"]>]>,
