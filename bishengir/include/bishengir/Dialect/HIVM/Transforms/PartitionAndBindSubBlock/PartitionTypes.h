@@ -34,12 +34,9 @@ inline constexpr llvm::StringLiteral kSubBlockAttrName = "sub_block";
 inline constexpr llvm::StringLiteral kSubBlockBoundOpAttrName =
     "already_sub_block_bound";
 
-/// UnitAttr tag stamped on a fixpipe whose post-cube result is needed on BOTH
-/// sub-blocks, so it must deposit the cube result into both sub-cores' UB The
-/// double-write CODEGEN is not yet implemented; the partition pass only records
-/// the requirement
-inline constexpr llvm::StringLiteral kFixpipeDoubleWriteAttrName =
-    "hivm.fixpipe_double_write";
+inline constexpr llvm::StringLiteral kVectorTypeAttrName = "vector_type";
+
+inline constexpr llvm::StringLiteral kSimtVectorType = "simt";
 
 inline constexpr int64_t kSubBlockDim = 0;
 
@@ -107,11 +104,28 @@ struct Supernode {
 
 bool isCubeOrSharedOp(Operation *op);
 
+/// True if `op` has a memory-write effect on a shaped (tensor/memref) value.
+bool writesAnyBuffer(Operation *op);
+
+/// Climb a memref through view / space-cast ops to its base buffer.
+Value traceBufferBase(Value v);
+
+/// True if `op` can carry a sub-block guard: it either produces an SSA result
+/// or writes a buffer.
+bool isGuardable(Operation *op);
+
 /// If `op` is a `scope.scope` carrying `{sub_block = n : i64}`, return its Core
 /// (V0/V1). Returns Bottom when the attr is absent
 Core getSubBlockCoreOf(Operation *op);
 
 bool isOperandParallelSubBlockGuard(Operation *op);
+
+/// True if `op` is an atomic SIMT scope: a `scope.scope` tagged
+/// `vector_type = "simt"`.
+bool isAtomicSimtScope(Operation *op);
+
+/// True if `op` sits strictly inside an atomic SIMT scope.
+bool isInsideAtomicSimtScope(Operation *op);
 
 } // namespace partition_and_bind
 } // namespace hivm

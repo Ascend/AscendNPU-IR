@@ -55,6 +55,11 @@ public:
 
 struct CoreAssignment {
   llvm::DenseMap<const Operation *, Core> opCore;
+  llvm::DenseMap<Value, Core> valueCore;
+  Core valueCoreOf(Value v) const {
+    auto it = valueCore.find(v);
+    return it == valueCore.end() ? Core::Bottom : it->second;
+  }
   llvm::SmallVector<Supernode, 4> supernodes;
   /// The sub-block each single-destination fixpipe must deposit its cube result
   /// into, so its post-cube consumer reads the right UB. Absent => default
@@ -71,32 +76,28 @@ public:
   CoreDependencyAnalysis(func::FuncOp func, FreeNodePlacementPolicy &policy)
       : func(func), policy(policy) {}
 
+  /// Resolve the sub-block core of every value/op.
   CoreAssignment run();
 
 private:
   void discoverSupernodes(CoreAssignment &out);
 
-  void buildDependencyDag();
+  void propagateValues(CoreAssignment &out);
 
-  void recordUse(Operation *consumer, Value operand,
-                 llvm::SmallPtrSet<Operation *, 8> &seenProducers);
+  /// Derive each guardable op's core (`opCore`) from the join of the cores of
+  /// the single-core values it reads and writes.
+  void deriveOpCores(CoreAssignment &out);
 
-  void propagateCores(CoreAssignment &out);
-
+  /// Pin every free (Bottom) guardable op to a sub-core, placing each connected
+  /// free component whole on one core so a diamond is never split.
   void placeFreeNodes(CoreAssignment &out);
 
   void deriveFixpipeDestinations(CoreAssignment &out);
 
   Core fixpipeDestination(Operation *fixpipe, const CoreAssignment &out) const;
 
-  Operation *definingTopLevelOp(Value v) const;
-
   func::FuncOp func;
   FreeNodePlacementPolicy &policy;
-
-  llvm::DenseMap<Operation *, llvm::SmallVector<Operation *, 4>> producers;
-
-  llvm::DenseMap<Operation *, llvm::SmallVector<Operation *, 4>> consumers;
 };
 
 } // namespace partition_and_bind

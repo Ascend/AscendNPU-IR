@@ -75,3 +75,23 @@ func.func @preserves_else_anchor(%in: memref<32x64xf16>, %dst: memref<32x64xf16>
   memref.copy %r, %dst : memref<32x64xf16> to memref<32x64xf16>
   return
 }
+
+// -----
+
+// CHECK-LABEL: func @resfree_nonhoist
+//       CHECK:   %[[A:.*]] = memref.alloc
+//       CHECK:   scf.if %{{.*}} {
+//       CHECK:     hivm.hir.copy ins(%arg0 : memref<16x16xf32>) outs(%[[A]]
+//   CHECK-NOT:   else
+func.func @resfree_nonhoist(%arg0: memref<16x16xf32>, %m: memref<16x16xf32>) attributes {hacc.entry} {
+  %idx = hivm.hir.get_sub_block_idx -> i64
+  %i = arith.index_cast %idx : i64 to index
+  %c0 = arith.constant 0 : index
+  %cond = arith.cmpi eq, %i, %c0 : index
+  %r = scf.if %cond -> (memref<16x16xf32>) {
+    scf.yield %arg0 : memref<16x16xf32>
+  } else {
+    scf.yield %m : memref<16x16xf32>
+  }
+  return
+}
