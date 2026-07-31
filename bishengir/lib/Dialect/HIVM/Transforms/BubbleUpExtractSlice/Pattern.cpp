@@ -1366,11 +1366,63 @@ CollapseBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   return tryCollapseBubbleUpGeneral(sliceOp, collapseOp, rewriter);
 }
 
+/// Check whether the trailing axis is aligned to one 32-byte block.
+static bool isTrailingAxisBlockAligned(ShapedType shapedType) {
+  if (!shapedType.hasRank() || shapedType.getRank() == 0)
+    return true;
+
+  int64_t trailingSize = shapedType.getShape().back();
+  if (ShapedType::isDynamic(trailingSize))
+    return true;
+
+  Type elementType = shapedType.getElementType();
+  if (!elementType.isIntOrFloat())
+    return true;
+  unsigned elementBitWidth = elementType.getIntOrFloatBitWidth();
+  if (elementBitWidth % util::BITS_PER_BYTE != 0)
+    return false;
+
+  int64_t trailingBytes =
+      trailingSize * static_cast<int64_t>(elementBitWidth / util::BITS_PER_BYTE);
+  return trailingBytes % util::INTR_BYTES_PER_BLOCK == 0;
+}
+
+/// Guard a known failing case: a 3-D while result split 1:2 on its middle axis
+/// with an unaligned trailing axis.
+/// TODO: Prove and fix the underlying issue, then remove this workaround.
+static bool isUnsafeThreeDimensionalMiddleAxisSplit(
+    tensor::ExtractSliceOp sliceOp) {
+  RankedTensorType sourceType = sliceOp.getSourceType();
+  RankedTensorType resultType = sliceOp.getResultType();
+  if (sourceType.getRank() != 3 || resultType.getRank() != 3)
+    return false;
+
+  auto extractDims = getExtractOrInsertDim(sliceOp);
+  if (extractDims.size() != 1 || !extractDims.contains(1))
+    return false;
+
+  int64_t sourceMiddleDim = sourceType.getDimSize(1);
+  int64_t resultMiddleDim = resultType.getDimSize(1);
+  if (ShapedType::isDynamic(sourceMiddleDim) ||
+      ShapedType::isDynamic(resultMiddleDim) ||
+      sourceMiddleDim != resultMiddleDim * kSubBlockDim)
+    return false;
+
+  return !isTrailingAxisBlockAligned(resultType);
+}
+
 bool LoopBubbleUpStrategy::isSupportedOperation(
     tensor::ExtractSliceOp sliceOp) const {
   auto *sourceOp = sliceOp.getSource().getDefiningOp();
-  return isa_and_nonnull<scf::ForOp, scf::WhileOp>(sourceOp) &&
-         !isDynamicSlice(sliceOp) && !sourceOp->hasAttr("ExtractedLoadOrStore");
+  if (!isa_and_nonnull<scf::ForOp, scf::WhileOp>(sourceOp) ||
+      isDynamicSlice(sliceOp) || sourceOp->hasAttr("ExtractedLoadOrStore"))
+    return false;
+
+  if (isa<scf::WhileOp>(sourceOp) &&
+      isUnsafeThreeDimensionalMiddleAxisSplit(sliceOp))
+    return false;
+
+  return true;
 }
 
 static void sliceRegionIterArg(BlockArgument regionIterArg,
