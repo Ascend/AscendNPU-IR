@@ -454,6 +454,19 @@ SyncSolverBase::checkUnitFlagPatterns(Occurrence *occ1, Occurrence *occ2) {
         rwOp2->op->getParentOp() != parentLCALoopOcc->op->op) {
       return {};
     }
+  } else {
+    // For forward sync: reject UF when both ops are inside the same ForOp
+    // but not direct children (e.g. ForOp{If{M,F}}). The backward sync
+    // cross-iteration pairs would still require SetWait, which conflicts
+    // with the invisibility of UF edges in the graph search.
+    auto loop1 = rwOp1->op->getParentOfType<scf::ForOp>();
+    auto loop2 = rwOp2->op->getParentOfType<scf::ForOp>();
+    if (loop1 && loop1 == loop2) {
+      if (rwOp1->op->getParentOp() != loop1 ||
+          rwOp2->op->getParentOp() != loop1) {
+        return {};
+      }
+    }
   }
   if (auto unitFlagInfo = checkUnitFlagSameBlockPattern(
           occ1->op->op, occ2->op->op, rwOp1->mergedUnitFlagInfo,

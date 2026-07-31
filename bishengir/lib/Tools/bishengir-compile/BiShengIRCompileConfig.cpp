@@ -353,6 +353,9 @@ void BiShengIRCompileMainConfig::registerCLOptions() {
 /// `--limit-auto-multi-buffer-buffer` keeps only-cube on A3/membase. On
 /// Ascend950/RegBase, MixCV vector-side buffers are included by default
 /// (no-limit) unless the user explicitly set the flag.
+///
+/// `--enable-hivm-unit-flag-sync` is enabled by default on Ascend950/RegBase
+/// unless the user explicitly set the flag.
 static bool hasExplicitCLOption(llvm::StringRef name) {
   auto &opts = cl::getRegisteredOptions();
   auto it = opts.find(name);
@@ -367,6 +370,8 @@ applyArchDependentCompileDefaults(BiShengIRCompileMainConfig &config) {
     config.setSetWorkspaceMultibuffer(2);
   if (!hasExplicitCLOption("limit-auto-multi-buffer-buffer"))
     config.setLimitAutoMultiBufferBuffer(MultiBufferStrategy::NO_LIMIT);
+  if (!hasExplicitCLOption("enable-hivm-unit-flag-sync"))
+    config.setEnableHIVMUnitFlagSync(true);
 }
 
 BiShengIRCompileMainConfig BiShengIRCompileMainConfig::createFromCLOptions() {

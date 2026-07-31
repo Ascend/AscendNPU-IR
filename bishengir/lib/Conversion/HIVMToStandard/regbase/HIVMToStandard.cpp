@@ -425,6 +425,7 @@ private:
               std::back_inserter(additionalArgs));
 
     additionalArgs.push_back(op.getUnitFlagModeLibValue(rewriter));
+    additionalArgs.push_back(op.getUnitFlagGroupIdValue(rewriter));
   }
 };
 
@@ -609,6 +610,7 @@ private:
     additionalArgs.push_back(channelSplit);
     additionalArgs.push_back(c0PadEn);
     additionalArgs.push_back(unitFlagMode);
+    additionalArgs.push_back(op.getUnitFlagGroupIdValue(rewriter));
 
     if (auto dualDstAttr = op.getDualDstModeAttr()) {
       const auto dualDstEnum = dualDstAttr.getDualDstMode();
