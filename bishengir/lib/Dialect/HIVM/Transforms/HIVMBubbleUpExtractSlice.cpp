@@ -136,7 +136,9 @@ public:
     // result before the fold moves it to tensor.empty.
     RewritePatternSet patterns(funcOp.getContext());
     populateHoistAffinePattern(patterns);
-    affine::AffineApplyOp::getCanonicalizationPatterns(patterns, patterns.getContext());
+    if (!hacc::utils::isRegBasedArch(funcOp->getParentOfType<ModuleOp>()))
+      affine::AffineApplyOp::getCanonicalizationPatterns(patterns,
+                                                         patterns.getContext());
     populateBubbleUpExtractSliceOpPatterns(patterns);
     populateCSEPattern(patterns);
     patterns.add<MarkEmptySliceBufferSize>(funcOp.getContext());
@@ -145,11 +147,16 @@ public:
       return signalPassFailure();
     }
     PassManager pm(funcOp->getContext());
-    CanonicalizerOptions options;
-    SmallVector<std::string> disabledPatterns(
-        {"ReinterpretCastConstantArgumentFolder"});
-    options.disabledPatterns = disabledPatterns;
-    pm.addPass(bishengir::createExtendedCanonicalizerPass(options));
+    if (hacc::utils::isRegBasedArch(funcOp->getParentOfType<ModuleOp>())) {
+      // regbase baseline (f9d978b): plain canonicalizer.
+      pm.addPass(createCanonicalizerPass());
+    } else {
+      CanonicalizerOptions options;
+      SmallVector<std::string> disabledPatterns(
+          {"ReinterpretCastConstantArgumentFolder"});
+      options.disabledPatterns = disabledPatterns;
+      pm.addPass(bishengir::createExtendedCanonicalizerPass(options));
+    }
     pm.addPass(createCSEPass());
     if (failed(pm.run(funcOp))) {
       return signalPassFailure();
@@ -158,7 +165,9 @@ public:
     // opportunity.
     RewritePatternSet patterns2(funcOp.getContext());
     populateHoistAffinePattern(patterns2);
-    affine::AffineApplyOp::getCanonicalizationPatterns(patterns2, patterns.getContext());
+    if (!hacc::utils::isRegBasedArch(funcOp->getParentOfType<ModuleOp>()))
+      affine::AffineApplyOp::getCanonicalizationPatterns(patterns2,
+                                                         patterns.getContext());
     populateBubbleUpExtractSliceOpPatterns(patterns2);
     populateCSEPattern(patterns2);
     patterns2.add<MarkEmptySliceBufferSize>(funcOp.getContext());

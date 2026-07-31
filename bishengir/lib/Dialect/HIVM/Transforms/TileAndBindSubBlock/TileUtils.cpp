@@ -229,7 +229,8 @@ public:
       if (auto quantScale = op.getQuantScale())
         oprs.push_back(quantScale);
       NamedAttrList attrs(op->getAttrs());
-      attrs.erase(op.getSubBlockIdxAttrName());
+      if (!hacc::utils::isRegBasedArch(op->getParentOfType<ModuleOp>()))
+        attrs.erase(op.getSubBlockIdxAttrName());
       auto newFixpipeOp = rewriter.create<FixpipeOp>(
           op.getLoc(), TypeRange{}, oprs, attrs.getAttrs());
       newFixpipeOp.setDualDstModeAttr(dualAttr);
@@ -291,7 +292,8 @@ public:
     rewriter.setInsertionPoint(op);
     NamedAttrList attrs(op->getAttrs());
     attrs.set(op.getDualDstModeAttrName(), dualAttr);
-    attrs.erase(op.getSubBlockIdxAttrName());
+    if (!hacc::utils::isRegBasedArch(op->getParentOfType<ModuleOp>()))
+      attrs.erase(op.getSubBlockIdxAttrName());
 
     auto newFixpipeOp = rewriter.create<FixpipeOp>(
         op.getLoc(), TypeRange{}, ValueRange{op.getSrc(), newSubview},

@@ -1025,15 +1025,20 @@ static void failAndRevert(func::FuncOp func) {
 }
 
 static void populateBindSubBlockBubbleUpPassManager(PassManager &pm,
-                                                    bool strictMode) {
+                                                    bool strictMode,
+                                                    ModuleOp moduleOp) {
   HIVMBubbleUpExtractSliceOptions bubbleUpOptions;
   bubbleUpOptions.strictMode = strictMode;
-  pm.addPass(createHIVMBubbleUpExtractSlicePass(bubbleUpOptions));
-  CanonicalizerOptions options;
-  SmallVector<std::string> disabledPatterns(
-      {"ReinterpretCastConstantArgumentFolder"});
-  options.disabledPatterns = disabledPatterns;
-  pm.addPass(bishengir::createExtendedCanonicalizerPass(options));
+  if (hacc::utils::isRegBasedArch(moduleOp)) {
+    pm.addPass(createHIVMBubbleUpExtractSlicePass(bubbleUpOptions));
+  } else {
+    pm.addPass(createHIVMBubbleUpExtractSlicePass(bubbleUpOptions));
+    CanonicalizerOptions options;
+    SmallVector<std::string> disabledPatterns(
+        {"ReinterpretCastConstantArgumentFolder"});
+    options.disabledPatterns = disabledPatterns;
+    pm.addPass(bishengir::createExtendedCanonicalizerPass(options));
+  }
   pm.addPass(createCSEPass());
 }
 
@@ -1273,7 +1278,8 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
   LDBG("After tileAndSliceStore: " << newFunc);
 
   PassManager pm2(newFunc->getContext());
-  populateBindSubBlockBubbleUpPassManager(pm2, strictMode);
+  populateBindSubBlockBubbleUpPassManager(pm2, strictMode,
+                                         newFunc->getParentOfType<ModuleOp>());
 
   LogicalResult bubbleUpResult = pm2.run(newFunc);
   if (bubbleUpResult.failed() || newFunc.verify().failed() ||
