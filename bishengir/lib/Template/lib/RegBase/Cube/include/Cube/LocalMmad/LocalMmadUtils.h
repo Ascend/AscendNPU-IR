@@ -16,7 +16,7 @@
 
 #ifndef HIVM_MLIR_TEMPLATE_MMA_TILE_UTILS_H
 #define HIVM_MLIR_TEMPLATE_MMA_TILE_UTILS_H
-#include "../Utils.h"
+#include "Cube/Utils.h"
 
 constexpr uint32_t HF32_CTRL_REGISTER_BIT = 49;
 
