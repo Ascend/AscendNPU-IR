@@ -174,3 +174,130 @@ func.func @do_not_fold_nested_row_load_from_case(%arg2: memref<?xf32>, %arg5: i3
   hivm.hir.copy ins(%a_fractal : tensor<4x4x16x8xf32>) outs(%cbuf : memref<4x4x16x8xf32, #hivm.address_space<cbuf>>) {"inserted-copy"}
   return
 }
+
+// -----
+
+// CHECK-LABEL: func.func @fold_tensor_load_scalea
+// CHECK: hivm.hir.load_scale ins(%[[SRC:.*]] : tensor<208x2xi8>) outs(%{{.*}} : tensor<13x1x16x2xi8>) -> tensor<13x1x16x2xi8>
+// CHECK-NOT: hivm.hir.convert_layout
+func.func @fold_tensor_load_scalea(%src: tensor<208x2xi8>) -> tensor<13x1x16x2xi8> {
+  %empty = tensor.empty() : tensor<208x2xi8>
+  %loaded = hivm.hir.load ins(%src : tensor<208x2xi8>) outs(%empty : tensor<208x2xi8>) -> tensor<208x2xi8>
+  %fractal = hivm.hir.convert_layout %loaded output_shape [13, 1, 16, 2]
+      {dstLayout = #hivm.data_layout<SCALEA_zZ, fractalSizes = [16, 2]>,
+       srcLayout = #hivm.data_layout<SCALEA_ND>}
+      : (tensor<208x2xi8>) -> tensor<13x1x16x2xi8>
+  return %fractal : tensor<13x1x16x2xi8>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @fold_tensor_load_scaleb
+// CHECK: hivm.hir.load_scale ins(%[[SRC:.*]] : tensor<224x2xi8>) outs(%{{.*}} : tensor<14x1x16x2xi8>) -> tensor<14x1x16x2xi8>
+// CHECK-NOT: is_transposed
+// CHECK-NOT: hivm.hir.convert_layout
+func.func @fold_tensor_load_scaleb(%src: tensor<224x2xi8>) -> tensor<14x1x16x2xi8> {
+  %empty = tensor.empty() : tensor<224x2xi8>
+  %loaded = hivm.hir.load ins(%src : tensor<224x2xi8>) outs(%empty : tensor<224x2xi8>) -> tensor<224x2xi8>
+  %fractal = hivm.hir.convert_layout %loaded output_shape [14, 1, 16, 2]
+      {dstLayout = #hivm.data_layout<SCALEB_nN, fractalSizes = [16, 2]>,
+       srcLayout = #hivm.data_layout<SCALEB_DN>}
+      : (tensor<224x2xi8>) -> tensor<14x1x16x2xi8>
+  return %fractal : tensor<14x1x16x2xi8>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @fold_memref_load_scalea
+// CHECK: hivm.hir.load_scale ins(%{{.*}} : memref<208x2xi8{{.*}}>) outs(%{{.*}} : memref<13x1x16x2xi8>)
+// CHECK: %[[T:.*]] = bufferization.to_tensor %{{.*}} restrict writable : memref<13x1x16x2xi8>
+// CHECK-NOT: hivm.hir.convert_layout
+// CHECK-NOT: hivm.hir.load ins
+// CHECK: return %[[T]] : tensor<13x1x16x2xi8>
+func.func @fold_memref_load_scalea(%gm: memref<208x2xi8, strided<[2, 1], offset: ?>>) -> tensor<13x1x16x2xi8> {
+  %alloc = memref.alloc() : memref<208x2xi8>
+  hivm.hir.load ins(%gm : memref<208x2xi8, strided<[2, 1], offset: ?>>) outs(%alloc : memref<208x2xi8>) eviction_policy = <EvictFirst> core_type = <CUBE>
+  %0 = bufferization.to_tensor %alloc restrict writable : memref<208x2xi8>
+  %1 = hivm.hir.convert_layout %0 output_shape [13, 1, 16, 2]
+      {dstLayout = #hivm.data_layout<SCALEA_zZ, fractalSizes = [16, 2]>,
+       srcLayout = #hivm.data_layout<SCALEA_ND>}
+      : (tensor<208x2xi8>) -> tensor<13x1x16x2xi8>
+  return %1 : tensor<13x1x16x2xi8>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @fold_memref_load_scaleb
+// CHECK: hivm.hir.load_scale ins(%{{.*}} : memref<224x2xi8{{.*}}>) outs(%{{.*}} : memref<14x1x16x2xi8>)
+// CHECK-NOT: is_transposed
+// CHECK: %[[T:.*]] = bufferization.to_tensor %{{.*}} restrict writable : memref<14x1x16x2xi8>
+// CHECK-NOT: hivm.hir.convert_layout
+// CHECK-NOT: hivm.hir.load ins
+// CHECK: return %[[T]] : tensor<14x1x16x2xi8>
+func.func @fold_memref_load_scaleb(%gm: memref<224x2xi8, strided<[2, 1], offset: ?>>) -> tensor<14x1x16x2xi8> {
+  %alloc = memref.alloc() : memref<224x2xi8>
+  hivm.hir.load ins(%gm : memref<224x2xi8, strided<[2, 1], offset: ?>>) outs(%alloc : memref<224x2xi8>) eviction_policy = <EvictFirst> core_type = <CUBE>
+  %0 = bufferization.to_tensor %alloc restrict writable : memref<224x2xi8>
+  %1 = hivm.hir.convert_layout %0 output_shape [14, 1, 16, 2]
+      {dstLayout = #hivm.data_layout<SCALEB_nN, fractalSizes = [16, 2]>,
+       srcLayout = #hivm.data_layout<SCALEB_DN>}
+      : (tensor<224x2xi8>) -> tensor<14x1x16x2xi8>
+  return %1 : tensor<14x1x16x2xi8>
+}
+
+// -----
+
+// Non-unit last-dim stride: cannot statically verify continuity → do not fuse.
+// CHECK-LABEL: func.func @nofold_memref_load_scalea_noncontiguous
+// CHECK-NOT: hivm.hir.load_scale
+// CHECK: hivm.hir.load
+// CHECK: hivm.hir.convert_layout
+func.func @nofold_memref_load_scalea_noncontiguous(%gm: memref<208x2xi8, strided<[4, 2], offset: ?>>) -> tensor<13x1x16x2xi8> {
+  %alloc = memref.alloc() : memref<208x2xi8>
+  hivm.hir.load ins(%gm : memref<208x2xi8, strided<[4, 2], offset: ?>>) outs(%alloc : memref<208x2xi8>) eviction_policy = <EvictFirst> core_type = <CUBE>
+  %0 = bufferization.to_tensor %alloc restrict writable : memref<208x2xi8>
+  %1 = hivm.hir.convert_layout %0 output_shape [13, 1, 16, 2]
+      {dstLayout = #hivm.data_layout<SCALEA_zZ, fractalSizes = [16, 2]>,
+       srcLayout = #hivm.data_layout<SCALEA_ND>}
+      : (tensor<208x2xi8>) -> tensor<13x1x16x2xi8>
+  return %1 : tensor<13x1x16x2xi8>
+}
+
+// -----
+
+// Dynamic last-dim size: cannot verify divisible-by-2 → do not fuse.
+// CHECK-LABEL: func.func @nofold_memref_load_scalea_dynamic_lastdim
+// CHECK-NOT: hivm.hir.load_scale
+// CHECK: hivm.hir.load
+// CHECK: hivm.hir.convert_layout
+func.func @nofold_memref_load_scalea_dynamic_lastdim(%gm: memref<208x?xi8, strided<[?, 1], offset: ?>>, %n: index) -> tensor<13x?x16x2xi8> {
+  %alloc = memref.alloc(%n) : memref<208x?xi8>
+  hivm.hir.load ins(%gm : memref<208x?xi8, strided<[?, 1], offset: ?>>) outs(%alloc : memref<208x?xi8>) eviction_policy = <EvictFirst> core_type = <CUBE>
+  %0 = bufferization.to_tensor %alloc restrict writable : memref<208x?xi8>
+  %c13 = arith.constant 13 : index
+  %c16 = arith.constant 16 : index
+  %c2 = arith.constant 2 : index
+  %n_tiles = arith.ceildivsi %n, %c2 : index
+  %1 = hivm.hir.convert_layout %0 output_shape [%c13, %n_tiles, %c16, %c2]
+      {dstLayout = #hivm.data_layout<SCALEA_zZ, fractalSizes = [16, 2]>,
+       srcLayout = #hivm.data_layout<SCALEA_ND>}
+      : (tensor<208x?xi8>) -> tensor<13x?x16x2xi8>
+  return %1 : tensor<13x?x16x2xi8>
+}
+
+// -----
+
+// Odd last-dim size: not divisible by 2 → do not fuse; fall back to transpose.
+// CHECK-LABEL: func.func @nofold_tensor_load_scalea_odd_lastdim
+// CHECK-NOT: hivm.hir.load_scale
+// CHECK: hivm.hir.load
+// CHECK: hivm.hir.convert_layout
+func.func @nofold_tensor_load_scalea_odd_lastdim(%src: tensor<208x3xi8>) -> tensor<13x2x16x2xi8> {
+  %empty = tensor.empty() : tensor<208x3xi8>
+  %loaded = hivm.hir.load ins(%src : tensor<208x3xi8>) outs(%empty : tensor<208x3xi8>) -> tensor<208x3xi8>
+  %fractal = hivm.hir.convert_layout %loaded output_shape [13, 2, 16, 2]
+      {dstLayout = #hivm.data_layout<SCALEA_zZ, fractalSizes = [16, 2]>,
+       srcLayout = #hivm.data_layout<SCALEA_ND>}
+      : (tensor<208x3xi8>) -> tensor<13x2x16x2xi8>
+  return %fractal : tensor<13x2x16x2xi8>
+}

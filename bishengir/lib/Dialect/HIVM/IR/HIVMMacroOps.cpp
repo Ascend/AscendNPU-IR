@@ -257,14 +257,14 @@ llvm::SmallVector<int64_t> getBlockSizes(mlir::Value oper) {
   return kBlockSizes;
 }
 
+/// Scale fractal tile sizes as [f0, f1] matching the trailing dims of the
+/// fractal tensor shape [..., f0, f1]. For i8 this is [16, 2]: M is tiled by
+/// FRACTAL_BLOCK_NUM and the K/32 scale axis by 2 bytes.
 llvm::SmallVector<int64_t> getScaleBlockSizes(mlir::Value oper) {
-  llvm::SmallVector<int64_t> kBlockSizes;
   auto elementType = getElementTypeOrSelf(oper.getType());
-  size_t kBlockSize =
+  int64_t kBlockSize =
       2 * utils::kBitsToByte / elementType.getIntOrFloatBitWidth();
-  kBlockSizes.push_back(kBlockSize);
-  kBlockSizes.push_back(utils::FRACTAL_BLOCK_NUM);
-  return kBlockSizes;
+  return {utils::FRACTAL_BLOCK_NUM, kBlockSize};
 }
 
 /// @brief Computes the block sizes for the A/B operands, with special handling
@@ -1257,6 +1257,43 @@ MmadMxL1Op::getOperandsTargetLayout() {
       mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(cBlockSizes)));
   valLayoutMap[getC()] = mCLayoutAttr;
   return valLayoutMap;
+}
+
+FractalOperandLayouts MmadMxL1Op::getOperandsTargetFractalLayout() {
+  FractalOperandLayouts layouts;
+
+  auto operA = getA();
+  bool isATranspose = getATranspose().has_value();
+  auto aBlockSizes = getBlockSizesTile(operA, isATranspose, true);
+  layouts.a = DataLayoutAttr::get(
+      getContext(), DataLayout::Fractal, nullptr,
+      mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(aBlockSizes)));
+
+  auto operB = getB();
+  bool isBTranspose = getBTranspose().has_value();
+  auto bBlockSizes = getBlockSizesTile(operB, isBTranspose, false);
+  layouts.b = DataLayoutAttr::get(
+      getContext(), DataLayout::Fractal, nullptr,
+      mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(bBlockSizes)));
+
+  llvm::SmallVector<int64_t> cBlockSizes;
+  cBlockSizes.push_back(utils::FRACTAL_BLOCK_NUM);
+  cBlockSizes.push_back(utils::FRACTAL_BLOCK_NUM);
+  layouts.c = DataLayoutAttr::get(
+      getContext(), DataLayout::Fractal, nullptr,
+      mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(cBlockSizes)));
+
+  auto scaleABlockSizes = getScaleBlockSizes(getScaleA());
+  layouts.scaleA = DataLayoutAttr::get(
+      getContext(), DataLayout::SCALEA_zZ, BoolAttr(),
+      mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(scaleABlockSizes)));
+
+  auto scaleBBlockSizes = getScaleBlockSizes(getScaleB());
+  layouts.scaleB = DataLayoutAttr::get(
+      getContext(), DataLayout::SCALEB_nN, BoolAttr(),
+      mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(scaleBBlockSizes)));
+
+  return layouts;
 }
 
 FailureOr<DataLayoutAttr> MmadMxL1Op::getOperandALayout() {
