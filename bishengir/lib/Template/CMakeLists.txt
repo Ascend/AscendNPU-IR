@@ -118,7 +118,7 @@ function(compile_shmem_to_bc cpp_with_path core_type platform_type)
     list(APPEND bisheng_args --cce-generic-addrspace=off)
     list(APPEND bisheng_args -mllvm -disable-llvm-optzns)
     list(APPEND bisheng_args --cce-enable-print)
-    list(APPEND bisheng_args --cce-enable-sanitizer)
+    # open --cce-enable-sanitizer after shmem upgrade to 1.6.x
 
     set(aicore_arch "dav-c220")
 
