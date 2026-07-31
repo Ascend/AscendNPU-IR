@@ -184,8 +184,37 @@ module {
 	  %42 = memref.alloc() : memref<1x2048xf16, #hivm.address_space<ub>>
       hivm.hir.vexp {vector_producer_to_fuse_1} ins(%40#0 : memref<1x2048xf16, #hivm.address_space<ub>>) outs(%42 : memref<1x2048xf16, #hivm.address_space<ub>>)
       scope.return %42 : memref<1x2048xf16, #hivm.address_space<ub>>
-	} {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.max_preload_num = 4 : i32, hivm.preload_num = 0 : i32, no_inline}
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.max_preload_num = 4 : i32, hivm.preload_num = 0 : i32, no_inline}
     return
+  }
+}
+
+// -----
+module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
+  // CHECK-LABEL: func.func @test_for_scope_markmultibuffer_for_preload_separate_annotation
+  func.func @test_for_scope_markmultibuffer_for_preload_separate_annotation(%arg0: i32, %arg1: tensor<128xf32>, %arg2: tensor<128x128xf32>, %arg3 : tensor<8x8x16x16xf32>) -> tensor<128x128xf32> {
+    %c128_i32 = arith.constant 128 : i32
+    // CHECK: %[[ALLOC:.*]] = memref.alloc()
+    // CHECK-NEXT: annotation.mark %[[ALLOC]] {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer = 1 : i32}
+    %alloc = memref.alloc() : memref<128x128xf32, #hivm.address_space<ub>>
+    %0 = tensor.empty() : tensor<128x128xf32>
+    %1 = scope.scope : () -> i32 {
+      // CHECK: annotation.mark %[[ALLOC]] {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<2>}
+      annotation.mark %alloc {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<2>} : memref<128x128xf32, #hivm.address_space<ub>>
+      hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%arg3 : tensor<8x8x16x16xf32>) outs(%alloc : memref<128x128xf32, #hivm.address_space<ub>>)
+      %2 = arith.addi %arg0, %c128_i32 : i32
+      scope.return %2 : i32
+    } {hivm.loop_core_type = #hivm.tcore_type<CUBE>, hivm.max_preload_num = 4 : i32, hivm.preload_num = 1 : i32, no_inline}
+    %memspacecast = memref.memory_space_cast %alloc : memref<128x128xf32, #hivm.address_space<ub>> to memref<128x128xf32>
+    %3 = bufferization.to_tensor %memspacecast restrict writable : memref<128x128xf32>
+    %4 = scope.scope : () -> tensor<128x128xf32> {
+      %expanded = tensor.expand_shape %arg1 [[0, 1]] output_shape [128, 1] : tensor<128xf32> into tensor<128x1xf32>
+      %5 = hivm.hir.vmul ins(%arg2, %expanded : tensor<128x128xf32>, tensor<128x1xf32>) outs(%0 : tensor<128x128xf32>) broadcast = [1] -> tensor<128x128xf32>
+      %6 = hivm.hir.vadd ins(%3, %5 : tensor<128x128xf32>, tensor<128x128xf32>) outs(%0 : tensor<128x128xf32>) -> tensor<128x128xf32>
+      scope.return %6 : tensor<128x128xf32>
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.max_preload_num = 4 : i32, hivm.preload_num = 0 : i32, no_inline}
+
+    return %4 : tensor<128x128xf32>
   }
 }
 

@@ -80,29 +80,31 @@ FailureOr<Operation *> tracebackForWorkspace(Value val) {
 
 /// Whether the op is already marked multi_buffer attr.
 static bool isMarked(Operation *op) {
-  auto users = op->getUsers();
-  // users has no rbegin iterator
-  for (auto user : users) {
-    if (auto markOp = dyn_cast<annotation::MarkOp>(user)) {
-      auto attrDict = markOp->getAttrDictionary();
-      if (!attrDict.empty() && attrDict.contains(hivm::MultiBufferAttr::name)) {
-        hivm::util::validateMultiBufferAttr(attrDict);
-        LLVM_DEBUG(DBGS() << "already marked, skip.\n");
-        return true;
-      }
-    }
-  }
-
-  return false;
+  bool marked = utils::getAnnotateOpWithAttr(op->getResult(0),
+                                             hivm::MultiBufferAttr::name)
+                    .has_value();
+  if (marked)
+    LLVM_DEBUG(DBGS() << "already marked, skip.\n");
+  return marked;
 }
 
 static void mark(mlir::Operation *op, PatternRewriter &rewriter,
                  unsigned numBuffer = 2, bool isPreload = false) {
-  OpBuilder::InsertionGuard guard(rewriter);
-  rewriter.setInsertionPointAfter(op);
   // result of allocOp or memref_ext::AllocWorkspaceOp
   auto mem = op->getResult(0);
-  auto markOp = rewriter.create<annotation::MarkOp>(op->getLoc(), mem);
+
+  annotation::MarkOp markOp;
+  if (auto maybeMarkOp = utils::getAnnotateOpWithAttr(
+          mem, hivm::MultiBufferAttr::name)) {
+    markOp = cast<annotation::MarkOp>(*maybeMarkOp);
+  }
+
+  if (!markOp) {
+    OpBuilder::InsertionGuard guard(rewriter);
+    rewriter.setInsertionPointAfter(op);
+    markOp = rewriter.create<annotation::MarkOp>(op->getLoc(), mem);
+  }
+
   markOp->setAttr(hivm::MultiBufferAttr::name,
                   rewriter.getI32IntegerAttr(numBuffer));
   if (isPreload) {
