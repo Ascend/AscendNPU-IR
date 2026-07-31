@@ -112,6 +112,16 @@ func.func @test_cosh(%arg0 : tensor<6x6xf32>) -> tensor<6x6xf32> {
 
 // -----
 
+// CHECK-LABEL: func.func @test_nearbyint
+func.func @test_nearbyint(%arg0 : tensor<6x6xf32>) -> tensor<6x6xf32> {
+  // CHECK:       %[[EMPTY:.*]] = tensor.empty()
+  // CHECK:       %[[RET:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<nearbyint>}
+  %ret = math.roundeven %arg0 : tensor<6x6xf32>
+  return %ret : tensor<6x6xf32>
+}
+
+// -----
+
 // CHECK-LABEL: func.func @test_copysign
 func.func @test_copysign(%arg0 : tensor<6x6xf32>, %arg1 : tensor<6x6xf32>) -> tensor<6x6xf32> {
   // CHECK:       %[[EMPTY:.*]] = tensor.empty()

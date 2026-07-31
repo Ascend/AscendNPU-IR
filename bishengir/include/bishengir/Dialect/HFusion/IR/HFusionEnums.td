@@ -52,7 +52,8 @@ def UnaryFn : I32EnumAttr<"UnaryFn", "", [
   I32EnumAttrCase<"atanh", 22>,
   I32EnumAttrCase<"sinh", 23>,
   I32EnumAttrCase<"lgamma", 24>,
-  I32EnumAttrCase<"cosh", 25>
+  I32EnumAttrCase<"cosh", 25>,
+  I32EnumAttrCase<"nearbyint", 26>
 ]> {
   let genSpecializedAttr = 0;
   let cppNamespace = "::mlir::hfusion";

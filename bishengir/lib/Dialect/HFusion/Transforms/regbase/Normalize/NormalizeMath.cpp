@@ -234,6 +234,64 @@ using NormalizeCeilandFloorOpRegBase =
     mlir::NormalizeCeilandFloorOpTemplate<linalg::ElemwiseUnaryOp,
                                           HFusionNormalizeCeilandFloorTraits>;
 
+/// normalize nearbyint(x) to cast with RINT round mode.
+struct NormalizeNearbyintOpRegBase
+    : public OpRewritePattern<hfusion::ElemwiseUnaryOp> {
+public:
+  using OpRewritePattern<hfusion::ElemwiseUnaryOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hfusion::ElemwiseUnaryOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!op.hasPureTensorSemantics() ||
+        op.getFun() != hfusion::UnaryFn::nearbyint)
+      return failure();
+
+    Location loc = op.getLoc();
+    Value originalSrc = op.getInputs()[0];
+    Value src = originalSrc;
+    Value dst = op.getOutputs()[0];
+    Type inType = getElementTypeOrSelf(src.getType());
+    Type outType = getElementTypeOrSelf(dst.getType());
+    if (!(inType.isF16() || inType.isBF16() || inType.isF32()) ||
+        !(outType.isF16() || outType.isBF16() || outType.isF32()))
+      llvm::report_fatal_error(
+          "nearbyint normalize only supports f16, bf16 or f32");
+
+    if (!NormalizeTraitsBase::archIsAscend950()) {
+      if ((inType.isF16() || inType.isBF16()) && inType == outType) {
+        src = NormalizeTraitsBase::createCastOp(
+            rewriter, loc, src, rewriter.getF32Type(), CastRoundKind::RInt);
+        src = NormalizeTraitsBase::createCastOp(
+            rewriter, loc, src, rewriter.getF32Type(), CastRoundKind::RInt);
+      }
+    }
+
+    Value result = NormalizeTraitsBase::createCastOp(
+        rewriter, loc, src, outType, CastRoundKind::RInt, dst);
+    Value signSrc = originalSrc;
+    if (inType != outType)
+      signSrc = NormalizeTraitsBase::createCastOp(
+          rewriter, loc, originalSrc, outType, CastRoundKind::Round);
+    result = buildCopysign(rewriter, loc, result, signSrc);
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+
+private:
+  Value buildCopysign(PatternRewriter &rewriter, Location loc, Value magnitude,
+                      Value sign) const {
+    auto empty = utils::createEmptyOp(rewriter, loc, magnitude);
+    return rewriter
+        .create<hfusion::ElemwiseBinaryOp>(
+            loc, TypeRange{empty.getType()}, ValueRange{magnitude, sign},
+            ValueRange{empty},
+            ArrayRef<NamedAttribute>{rewriter.getNamedAttr(
+                "fun", hfusion::BinaryFnAttr::get(
+                           rewriter.getContext(), hfusion::BinaryFn::copysign))})
+        ->getResult(0);
+  }
+};
+
 /// normalize copysign(x, y) by preserving x magnitude bits and y sign bit.
 struct NormalizeCopysignOpRegBase
     : public OpRewritePattern<hfusion::ElemwiseBinaryOp> {
@@ -550,6 +608,7 @@ void populateNormalizePrimaryMathPatterns(RewritePatternSet &patterns) {
   patterns.add<NormalizeReduceMinMaxNumFOpRegBase>(ctx);
   patterns.add<NormalizeElemwiseMaxNumFOpRegBase>(ctx);
   patterns.add<NormalizeElemwiseMinNumFOpRegBase>(ctx);
+  patterns.add<NormalizeNearbyintOpRegBase>(ctx);
   patterns.add<NormalizeCopysignOpRegBase>(ctx);
   patterns.add<NormalizeExp2OpRegBase>(ctx);
   patterns.add<NormalizeExpM1OpRegBase>(ctx);

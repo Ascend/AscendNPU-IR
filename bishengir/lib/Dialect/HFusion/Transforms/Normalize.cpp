@@ -2564,6 +2564,67 @@ public:
   }
 };
 
+/// normalize nearbyint(x) to cast with RINT round mode.
+///
+/// nearbyint returns the nearest integral value in floating-point format. The
+/// IR does not model floating-point exception flags, so this uses HFusion RINT
+/// semantics: round to nearest, ties to even.
+struct NormalizeNearbyintOp
+    : public OpRewritePattern<hfusion::ElemwiseUnaryOp> {
+public:
+  using OpRewritePattern<hfusion::ElemwiseUnaryOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hfusion::ElemwiseUnaryOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!op.hasPureTensorSemantics())
+      return failure();
+    if (op.getFun() != hfusion::UnaryFn::nearbyint)
+      return failure();
+
+    Value originalSrc = op.getInputs()[0];
+    Value src = originalSrc;
+    Value dst = op.getOutputs()[0];
+    Type inType = getElementTypeOrSelf(src.getType());
+    Type outType = getElementTypeOrSelf(dst.getType());
+    if (!(inType.isF16() || inType.isBF16() || inType.isF32()) ||
+        !(outType.isF16() || outType.isBF16() || outType.isF32()))
+      llvm::report_fatal_error(
+          "nearbyint normalize only supports f16, bf16 or f32");
+
+    OpBuilder builder(op);
+    if ((inType.isF16() || inType.isBF16()) && inType == outType) {
+      src = hfusion::castTo(builder, src, rewriter.getF32Type(),
+                            hfusion::RoundMode::RINT);
+      src = hfusion::castTo(builder, src, rewriter.getF32Type(),
+                            hfusion::RoundMode::RINT);
+    }
+
+    Value result =
+        hfusion::castTo(builder, src, outType, hfusion::RoundMode::RINT, dst);
+    Value signSrc = originalSrc;
+    if (inType != outType)
+      signSrc =
+          hfusion::castTo(builder, originalSrc, outType, hfusion::RoundMode::ROUND);
+    result = buildCopysign(builder, op.getLoc(), result, signSrc);
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+
+private:
+  Value buildCopysign(OpBuilder &builder, Location loc, Value magnitude,
+                      Value sign) const {
+    auto empty = utils::createEmptyOp(builder, loc, magnitude);
+    return builder
+        .create<hfusion::ElemwiseBinaryOp>(
+            loc, TypeRange{empty.getType()}, ValueRange{magnitude, sign},
+            ValueRange{empty},
+            ArrayRef<NamedAttribute>{builder.getNamedAttr(
+                "fun", hfusion::BinaryFnAttr::get(
+                           builder.getContext(), hfusion::BinaryFn::copysign))})
+        ->getResult(0);
+  }
+};
+
 /// normalize 2^x to exp{ln(2)*x}
 /// eg.
 /// y = hfusion elemwise unary {exp2} (x)
@@ -9897,6 +9958,7 @@ void populateNormalizeHFusionPatterns(RewritePatternSet &patterns) {
   patterns.add<NormalizeSubVSToVMulAndVAdd>(patterns.getContext());
   patterns.add<NormalizeRSqrtOp>(patterns.getContext());
   patterns.add<NormalizeCeilandFloorOp>(patterns.getContext());
+  patterns.add<NormalizeNearbyintOp>(patterns.getContext());
   patterns.add<NormalizeLogLikeOp>(patterns.getContext());
   patterns.add<NormalizeLog1pOp>(patterns.getContext());
   patterns.add<NormalizeExp2Op>(patterns.getContext());
