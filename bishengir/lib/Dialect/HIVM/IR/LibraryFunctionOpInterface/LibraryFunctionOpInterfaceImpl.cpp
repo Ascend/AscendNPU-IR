@@ -854,6 +854,26 @@ struct NoLibCallExternalModel
 };
 
 //===----------------------------------------------------------------------===//
+// VGatherOp
+//===----------------------------------------------------------------------===//
+
+template <>
+int InferMaxRankExternalModel<VGatherOp>::inferOpLibraryMaxRank(
+    Operation *operation) const {
+  auto module = operation->getParentOfType<ModuleOp>();
+  // Membase only provides the 1D gather template. Higher-dimensional gathers
+  // must be lowered to outer loops around that template call. Regbase provides
+  // native gather templates up to 5D.
+  return module && hacc::utils::isRegBasedArch(module) ? 5 : 1;
+}
+
+template <>
+std::string InferMaxRankExternalModel<VGatherOp>::getOpLibraryCallName(
+    Operation *operation, std::optional<bool> isOpsAligned) const {
+  return getVGatherOpLibraryCallName(cast<VGatherOp>(operation), isOpsAligned);
+}
+
+//===----------------------------------------------------------------------===//
 // VBrcOp
 //===----------------------------------------------------------------------===//
 
@@ -1559,7 +1579,7 @@ void bishengir::hivm::detail::registerLibraryFunctionOpInterfaceExtension(
     REGISTER_STATIC_MAX_RANK(VInterleaveOp, 1);
     REGISTER_STATIC_MAX_RANK(VFlipOp, 1);
     REGISTER_STATIC_MAX_RANK(VMulextendedOp, 1);
-    REGISTER_STATIC_MAX_RANK(VGatherOp, 5);
+    REGISTER_INFER_MAX_RANK(VGatherOp);
     REGISTER_STATIC_MAX_RANK(VGatherMaskOp, 1);
     REGISTER_STATIC_MAX_RANK(VCumprodOp, 1);
     REGISTER_STATIC_MAX_RANK(VCumsumOp, 2);
