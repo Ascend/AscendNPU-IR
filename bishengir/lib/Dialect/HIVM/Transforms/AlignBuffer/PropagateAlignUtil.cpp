@@ -1060,6 +1060,9 @@ FailureOrCastVec propagateScfForYieldOp(RewriterBase &rewriter,
   if (!regionIterArg.use_empty())
     return failure();
 
+  auto mutableYieldValues = op.getYieldedValuesMutable();
+  assert(mutableYieldValues.has_value());
+
   rewriter.setInsertionPoint(op);
   Value init = op.getInitArgs()[yieldIndex];
   Value newInit = init;
@@ -1076,7 +1079,36 @@ FailureOrCastVec propagateScfForYieldOp(RewriterBase &rewriter,
         return failure();
       }
     } else {
-      return failure();
+      // Plain init: keep loop types unchanged and copy the aligned value into a
+      // buffer of the original type. Also drop align marks on the init so a
+      // later EnableAlignAllocation does not rewrite the loop to strided types.
+      auto yieldOp = cast<scf::YieldOp>(op.getBody()->getTerminator());
+      rewriter.setInsertionPoint(yieldOp);
+      Value aligned = conversionOp.getOperand(0);
+      Value plain = conversionOp.getResult(0);
+      Value copyDst = utils::createEmptyOp(rewriter, op.getLoc(), plain);
+      rewriter.create<hivm::CopyOp>(op.getLoc(), TypeRange{}, aligned, copyDst);
+      mutableYieldValues.value()[yieldIndex].assign(copyDst);
+
+      auto stripAlignMarks = [&](Value v) {
+        if (Operation *def = v.getDefiningOp()) {
+          def->removeAttr(hivm::StrideAlignDimsAttr::name);
+          def->removeAttr(hivm::StrideAlignValueInByteAttr::name);
+          def->removeAttr(hivm::AllocAlignDimsAttr::name);
+          def->removeAttr(hivm::AllocAlignValueInByteAttr::name);
+        }
+        for (Operation *user : llvm::make_early_inc_range(v.getUsers())) {
+          auto markOp = dyn_cast<annotation::MarkOp>(user);
+          if (!markOp)
+            continue;
+          if (markOp->hasAttr(hivm::StrideAlignDimsAttr::name) ||
+              markOp->hasAttr(hivm::AllocAlignDimsAttr::name))
+            rewriter.eraseOp(markOp);
+        }
+      };
+      stripAlignMarks(init);
+      stripAlignMarks(regionIterArg);
+      return UnrealizedCastOpVec{};
     }
   }
   op.getInitArgsMutable()[yieldIndex].assign(newInit);
@@ -1090,8 +1122,6 @@ FailureOrCastVec propagateScfForYieldOp(RewriterBase &rewriter,
                                 resultConversionOp.getResult(0),
                                 resultConversionOp);
 
-  auto mutableYieldValues = op.getYieldedValuesMutable();
-  assert(mutableYieldValues.has_value());
   mutableYieldValues.value()[yieldIndex].assign(conversionOp.getOperand(0));
 
   return UnrealizedCastOpVec{};
