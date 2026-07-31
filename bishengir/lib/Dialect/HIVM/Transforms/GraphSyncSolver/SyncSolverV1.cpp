@@ -166,6 +166,7 @@ void SyncSolverV1::buildOfflineProcessingOrders(Occurrence *occ,
 
 void SyncSolverV1::processOrder(ProcessingOrderV1 processingOrder) {
   auto [occ1, occ2, rwOp1, rwOp2, isUseless] = processingOrder;
+  this->perfInfo.ordersCheckedNum += 1;
   assert(occ1 != occ2);
   assert(occ1->syncIrIndex < occ2->syncIrIndex);
   DEBUG_WITH_TYPE("gss-sync-solver-checking", {
@@ -183,9 +184,11 @@ void SyncSolverV1::processOrder(ProcessingOrderV1 processingOrder) {
   if (checkImpossibleOccPair(occ1, occ2) || checkAlreadySynced(occ1, occ2) ||
       skipMMad1DecomposedLoopOpt(occ1, occ2) ||
       checkSkipParallelLoop(occ1, occ2) || checkSkipCrossCorePair(occ1, occ2)) {
+    this->perfInfo.failedInitialChecksNum += 1;
     return;
   }
   if (checkAlreadySyncedWithUnitFlag(occ1, occ2)) {
+    this->perfInfo.failedInitialChecksNum += 1;
     return;
   }
   processConflict(occ1, occ2, rwOp1, rwOp2, isUseless);
@@ -204,7 +207,9 @@ void SyncSolverV1::processOrders() {
 void SyncSolverV1::processConflict(Occurrence *occ1, Occurrence *occ2,
                                    RWOperation *rwOp1, RWOperation *rwOp2,
                                    bool isUseless) {
+  this->perfInfo.conflictsProcessedNum += 1;
   for (auto [corePipeSrc, corePipeDst] : getMemoryConflicts(rwOp1, rwOp2)) {
+    this->perfInfo.memoryConflictsFoundNum += 1;
     if (options.alwaysUsePipeSAsWaitingPipe) {
       corePipeDst.pipe = hivm::PIPE::PIPE_S;
     }
@@ -216,6 +221,7 @@ void SyncSolverV1::processConflict(Occurrence *occ1, Occurrence *occ2,
 ConflictPair *SyncSolverV1::handleConflict(
     Occurrence *occ1, Occurrence *occ2, RWOperation *rwOp1, RWOperation *rwOp2,
     CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst, bool isUseless) {
+  this->perfInfo.handledConflictsNum += 1;
   bool isBarrier = corePipeSrc == corePipeDst;
   auto unitFlagInfo =
       isBarrier ? std::nullopt : checkUnitFlagPatterns(occ1, occ2);

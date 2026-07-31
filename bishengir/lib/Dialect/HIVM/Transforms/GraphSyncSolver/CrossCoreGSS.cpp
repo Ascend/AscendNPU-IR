@@ -156,6 +156,7 @@ void CrossCoreGSSPass::runOnOperation() {
   });
 
   solver->solve();
+  DEBUG_WITH_TYPE("hivm-gss-profile", { solver->perfInfo.print(); });
 
   CodeGenerator codeGen(std::move(solver));
   codeGen.generateResultOps();

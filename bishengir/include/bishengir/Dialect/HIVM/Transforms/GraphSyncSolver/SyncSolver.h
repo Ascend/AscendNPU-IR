@@ -31,6 +31,7 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/LogicalResult.h"
+#include "llvm/Support/raw_ostream.h"
 #include <memory>
 #include <optional>
 #include <tuple>
@@ -61,6 +62,28 @@ public:
   // persistent ones that survive multiple passes).
   std::vector<std::unique_ptr<ConflictPair>> chosenConflictedPairs,
       persistentChosenConflictedPairs;
+
+  struct PerfInfo {
+    int64_t ordersCheckedNum{0};
+    int64_t failedInitialChecksNum{0};
+    int64_t conflictsProcessedNum{0};
+    int64_t memoryConflictsFoundNum{0};
+    int64_t handledConflictsNum{0};
+    int64_t graphConflictPairsCheckedNum{0};
+
+    void print() {
+      llvm::dbgs() << "processing orders checked: " << ordersCheckedNum << '\n';
+      llvm::dbgs() << "failed initial checks: " << failedInitialChecksNum
+                   << '\n';
+      llvm::dbgs() << "conflicts processed: " << conflictsProcessedNum << '\n';
+      llvm::dbgs() << "memory conflicts found: " << memoryConflictsFoundNum
+                   << '\n';
+      llvm::dbgs() << "handled conflicts: " << handledConflictsNum << '\n';
+      llvm::dbgs() << "graph conflict pairs checked: "
+                   << graphConflictPairsCheckedNum << '\n';
+    }
+
+  } perfInfo;
 
 protected:
   int64_t globalSetWaitIndex{0};

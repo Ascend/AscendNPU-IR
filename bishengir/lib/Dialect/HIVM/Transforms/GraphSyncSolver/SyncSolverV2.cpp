@@ -41,6 +41,7 @@ SyncSolverV2::getIntersectingEventIdNodes(ConflictPair *conflictPair) {
 void SyncSolverV2::processOrder(Occurrence *occ1, Occurrence *occ2,
                                 RWOperation *rwOp1, RWOperation *rwOp2,
                                 bool isUseless) {
+  this->perfInfo.ordersCheckedNum += 1;
   assert(occ1 != occ2);
   assert(occ1->syncIrIndex < occ2->syncIrIndex);
 
@@ -52,6 +53,7 @@ void SyncSolverV2::processOrder(Occurrence *occ1, Occurrence *occ2,
       skipMMad1DecomposedLoopOpt(occ1, occ2) ||
       checkSkipParallelLoop(occ1, occ2) || checkSkipCrossCorePair(occ1, occ2) ||
       checkAlreadySyncedWithUnitFlag(occ1, occ2)) {
+    this->perfInfo.failedInitialChecksNum += 1;
     return;
   }
   processConflict(occ1, occ2, rwOp1, rwOp2, isUseless);
@@ -61,6 +63,7 @@ bool SyncSolverV2::processOrder(ProcessingOrderV2 processingOrder) {
   auto [lcaOcc1, lcaOcc2, occ1, occ2, rwOp1, rwOp2, corePipeSrc, corePipeDst,
         isUseless] = processingOrder;
 
+  this->perfInfo.ordersCheckedNum += 1;
   assert(occ1 != occ2);
   assert(occ1->syncIrIndex < occ2->syncIrIndex);
   assert(lcaOcc1 != lcaOcc2);
@@ -87,6 +90,7 @@ bool SyncSolverV2::processOrder(ProcessingOrderV2 processingOrder) {
   if (checkImpossibleOccPair(occ1, occ2) || checkAlreadySynced(occ1, occ2) ||
       skipMMad1DecomposedLoopOpt(occ1, occ2) ||
       checkSkipParallelLoop(occ1, occ2) || checkSkipCrossCorePair(occ1, occ2)) {
+    this->perfInfo.failedInitialChecksNum += 1;
     return false;
   }
 
@@ -99,9 +103,12 @@ bool SyncSolverV2::processOrder(ProcessingOrderV2 processingOrder) {
   });
 
   if (checkAlreadySyncedWithUnitFlag(occ1, occ2)) {
+    this->perfInfo.failedInitialChecksNum += 1;
     return false;
   }
 
+  this->perfInfo.conflictsProcessedNum += 1;
+  this->perfInfo.memoryConflictsFoundNum += 1;
   if (options.alwaysUsePipeSAsWaitingPipe) {
     corePipeDst.pipe = hivm::PIPE::PIPE_S;
   }
@@ -462,7 +469,9 @@ void SyncSolverV2::processOrders() {
 void SyncSolverV2::processConflict(Occurrence *occ1, Occurrence *occ2,
                                    RWOperation *rwOp1, RWOperation *rwOp2,
                                    bool isUseless) {
+  this->perfInfo.conflictsProcessedNum += 1;
   for (auto [corePipeSrc, corePipeDst] : getMemoryConflicts(rwOp1, rwOp2)) {
+    this->perfInfo.memoryConflictsFoundNum += 1;
     if (options.alwaysUsePipeSAsWaitingPipe) {
       corePipeDst.pipe = hivm::PIPE::PIPE_S;
     }
@@ -478,6 +487,7 @@ SyncSolverV2::handleConflict(Occurrence *occ1, Occurrence *occ2,
                              RWOperation *rwOp1, RWOperation *rwOp2,
                              CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst,
                              EventIdInfo eventIdInfo, bool isUseless) {
+  this->perfInfo.handledConflictsNum += 1;
   LLVM_DEBUG({
     llvm::dbgs() << "conflict found: "
                  << "isUseless: " << isUseless

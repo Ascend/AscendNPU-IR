@@ -103,6 +103,7 @@ void GraphSyncSolverPass::runOnOperation() {
   }
 
   solver->solve();
+  DEBUG_WITH_TYPE("hivm-gss-profile", { solver->perfInfo.print(); });
 
   if (solver->hasCustomMacroEventIdConflict()) {
     funcOp.emitError() << solver->getCustomMacroEventIdConflictMsg();

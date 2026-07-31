@@ -895,6 +895,7 @@ bool SyncSolverBase::checkGraphConflict(
     std::optional<int> startIndex, std::optional<int> endIndex,
     const llvm::SmallVector<ConflictPair *> &extraConflictPairs,
     const llvm::SmallVector<ConflictPair *> &ignoreConflictPairs) {
+  this->perfInfo.graphConflictPairsCheckedNum += 1;
   assert(occ1 != nullptr && occ2 != nullptr);
   if (!startIndex.has_value()) {
     startIndex = occ1->endIndex;
