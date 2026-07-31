@@ -28,6 +28,7 @@
 #include "mlir/Interfaces/LoopLikeInterface.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Casting.h"
@@ -1158,6 +1159,33 @@ SyncSolverBase::getIntersectingConflictPairs(ConflictPair *conflictPair) {
   return intersectingConflictPairs;
 }
 
+llvm::SmallVector<EventIdNode *>
+SyncSolverBase::getIntersectingEventIdNodes(ConflictPair *conflictPair) {
+  assert(conflictPair != nullptr);
+  if (conflictPair->isBarrier()) {
+    return {};
+  }
+  if (conflictPair->dontCheckForConflict) {
+    return {};
+  }
+  llvm::SetVector<EventIdNode *> intersectingNodes;
+  for (auto &curConflictPair : chosenConflictedPairs) {
+    if (!intersectingNodes.contains(curConflictPair->eventIdNode)) {
+      if (checkIntersect(conflictPair, curConflictPair.get())) {
+        intersectingNodes.insert(curConflictPair->eventIdNode);
+      }
+    }
+  }
+  for (auto &curConflictPair : persistentChosenConflictedPairs) {
+    if (!intersectingNodes.contains(curConflictPair->eventIdNode)) {
+      if (checkIntersect(conflictPair, curConflictPair.get())) {
+        intersectingNodes.insert(curConflictPair->eventIdNode);
+      }
+    }
+  }
+  return intersectingNodes.takeVector();
+}
+
 // Processed-pair tracking helpers.
 bool SyncSolverBase::checkVisited(Occurrence *occ1, Occurrence *occ2) {
   auto [it, isInserted] = processedOccPairs.insert(std::make_pair(occ1, occ2));
@@ -2182,9 +2210,10 @@ ConflictPair *SyncSolverBase::handleSetWaitConflict(
   };
 
   // add conflict-pair to event-id-solver
-  auto intersectingConflictPairs =
-      getIntersectingConflictPairs(conflictPair.get());
-  curEventIdSolver->addConflicts(conflictPair.get(), intersectingConflictPairs);
+  auto intersectingEventIdNodes =
+      getIntersectingEventIdNodes(conflictPair.get());
+  curEventIdSolver->addConflicts(conflictPair->eventIdNode,
+                                 intersectingEventIdNodes);
   if (!checkColorable()) {
     return nullptr;
   }
@@ -2216,10 +2245,10 @@ ConflictPair *SyncSolverBase::handleSetWaitConflict(
     });
     curEventIdSolver->insertConflictPair(conflictPair->eventIdNode,
                                          extraConflictPair.get());
-    auto intersectingConflictPairs =
-        getIntersectingConflictPairs(extraConflictPair.get());
-    curEventIdSolver->addConflicts(extraConflictPair.get(),
-                                   intersectingConflictPairs);
+    auto intersectingEventIdNodes =
+        getIntersectingEventIdNodes(extraConflictPair.get());
+    curEventIdSolver->addConflicts(extraConflictPair->eventIdNode,
+                                   intersectingEventIdNodes);
     if (!checkColorable()) {
       return false;
     }

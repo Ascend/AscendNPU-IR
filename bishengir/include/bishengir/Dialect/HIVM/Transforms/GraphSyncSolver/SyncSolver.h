@@ -322,6 +322,8 @@ protected:
   // Event-id allocation and reuse helpers.
   std::vector<ConflictPair *>
   getIntersectingConflictPairs(ConflictPair *conflictPair);
+  llvm::SmallVector<EventIdNode *>
+  getIntersectingEventIdNodes(ConflictPair *conflictPair);
 
   // Visit tracking helpers for occurrence pairs.
   bool checkVisited(Occurrence *occ1, Occurrence *occ2);

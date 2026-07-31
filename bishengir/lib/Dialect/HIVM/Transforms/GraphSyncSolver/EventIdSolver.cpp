@@ -219,6 +219,14 @@ void EventIdSolver::addConflicts(
   }
 }
 
+void EventIdSolver::addConflicts(
+    EventIdNode *nodeSrc, const llvm::SmallVector<EventIdNode *> &nodesDst) {
+  assert(nodeSrc != nullptr);
+  for (auto *nodeDst : nodesDst) {
+    addEdge(nodeSrc, nodeDst);
+  }
+}
+
 llvm::SmallVector<int64_t>
 EventIdSolver::getAdjNodesUsedEventIds(EventIdNode *node) {
   llvm::SmallDenseSet<int64_t> usedEventIds;
