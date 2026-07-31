@@ -24,9 +24,12 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/RegbaseUtils.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
+
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Interfaces/LoopLikeInterface.h"
 #include "mlir/IR/SymbolTable.h"
 #include "llvm/ADT/SmallPtrSet.h"
 
@@ -159,11 +162,90 @@ struct Candidate {
 
 struct VFOperandSubstitutionPass
     : public impl::VFOperandSubstitutionBase<VFOperandSubstitutionPass> {
+
+  void updatePreloadBuffers(annotation::MarkOp markOp,
+                            SetVector<Value> &preloadBuffers) {
+    auto attr = markOp->getAttr(hivm::PreloadLocalBufferAttr::name);
+    if (!attr) {
+      return;
+    }
+    auto loopOp = markOp->getParentOfType<LoopLikeOpInterface>();
+    if (!loopOp) {
+      llvm::report_fatal_error(
+          "preload local buffer must be inside a loop-like op");
+    }
+    preloadBuffers.insert(markOp.getSrc());
+  }
+
   void runOnOperation() override {
     ModuleOp module = getOperation();
     VFInplaceReuseAnalysis analysis(module);
     SymbolTableCollection symbolTable;
+    SetVector<Value> preloadBuffers;
+    module.walk([&](annotation::MarkOp markOp) {
+      updatePreloadBuffers(markOp, preloadBuffers);
+    });
 
+    if (!preloadBuffers.empty()) {
+      SmallVector<Candidate> candidates;
+      module.walk([&](func::CallOp call) {
+        if (!hivm::isVFCall(call)) {
+          return;
+        }
+        auto callee = symbolTable.lookupNearestSymbolFrom<func::FuncOp>(
+            call, call.getCalleeAttr());
+        if (!callee) {
+          return;
+        }
+        for (auto [dstIdx, srcIdx] :
+             analysis.getInplaceReusableArgPairs(callee)) {
+          if (dstIdx >= call.getNumOperands() ||
+              srcIdx >= call.getNumOperands()) {
+            continue;
+          }
+          Value dstOperand = call.getOperand(dstIdx);
+          Value srcOperand = call.getOperand(srcIdx);
+          if (dstOperand == srcOperand) {
+            continue;
+          }
+
+          if (dstOperand.getType() != srcOperand.getType()) {
+            continue;
+          }
+
+          if (!preloadBuffers.contains(srcOperand)) {
+            continue;
+          }
+
+          memref::AllocOp dstAlloc = getPrivateDstAlloc(dstOperand);
+          if (!dstAlloc) {
+            continue;
+          }
+
+          if (llvm::any_of(dstOperand.getUsers(), [&](auto user) {
+                return isa<scope::ReturnOp>(user);
+              })) {
+            continue;
+          }
+          candidates.push_back({call, dstIdx, srcIdx, dstAlloc});
+          LDBG("substitution candidate: call "
+               << call.getCallee() << " dst arg " << dstIdx << " <- src arg "
+               << srcIdx);
+        }
+      });
+
+      for (Candidate &c : candidates) {
+        Value dstOperand = c.call.getOperand(c.dstIdx);
+        Value srcOperand = c.call.getOperand(c.srcIdx);
+        // Redirect every use of the dead output buffer to the reused source
+        // buffer, then erase the now-unused output alloc.
+        dstOperand.replaceAllUsesWith(srcOperand);
+        if (c.dstAlloc->use_empty()) {
+          c.dstAlloc.erase();
+        }
+      }
+      return;
+    }
     SmallVector<Candidate> candidates;
     module.walk([&](func::CallOp call) {
       if (!hivm::isVFCall(call)) {

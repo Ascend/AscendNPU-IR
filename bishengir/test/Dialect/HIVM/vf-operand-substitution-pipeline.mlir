@@ -243,3 +243,55 @@ func.func @drop_multibuffer_mark_on_store_source(
       outs(%arg0 : memref<64xf32, #hivm.address_space<gm>>)
   return
 }
+
+// -----
+
+module {
+    func.func @vf_reuse_direct(
+        %arg0: memref<64x128xf32, #hivm.address_space<ub>>,
+        %arg1: memref<64x128xf32, #hivm.address_space<ub>>)
+        attributes {hivm.func_core_type = #hivm.func_core_type<AIV>,
+                    hivm.vector_function, no_inline} {
+    %c0 = arith.constant 0 : index
+    %cst = arith.constant 0.000000e+00 : f32
+    %0 = vector.transfer_read %arg0[%c0, %c0], %cst {in_bounds = [true, true]} :
+        memref<64x128xf32, #hivm.address_space<ub>>, vector<1x64xf32>
+    vector.transfer_write %0, %arg1[%c0, %c0] {in_bounds = [true, true]} :
+        vector<1x64xf32>, memref<64x128xf32, #hivm.address_space<ub>>
+    return
+    }
+
+  // CHECK-LABEL: func.func @test_preload_local_buffer_lifetime_is_per_enclosing_loop
+  // CHECK: annotation.mark
+  // CHECK-NOT: memref.alloc()
+  func.func @test_preload_local_buffer_lifetime_is_per_enclosing_loop(
+      %src0: memref<64x128xf32, #hivm.address_space<gm>>,
+      %dst0: memref<64x128xf32, #hivm.address_space<gm>>,
+      %src1: memref<64x128xf32, #hivm.address_space<gm>>,
+      %dst1: memref<64x128xf32, #hivm.address_space<gm>>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+
+    scf.for %i = %c0 to %c4 step %c1 {
+      scope.scope : () -> () {
+        %buf0 = memref.alloc() : memref<64x128xf32, #hivm.address_space<ub>>
+        annotation.mark %buf0 {
+          hivm.multi_buffer = 2 : i32,
+          hivm.preload_local_buffer = 1 : i32
+        } : memref<64x128xf32, #hivm.address_space<ub>>
+
+        hivm.hir.load ins(%src0 : memref<64x128xf32, #hivm.address_space<gm>>)
+                      outs(%buf0 : memref<64x128xf32, #hivm.address_space<ub>>)
+        %buf1 = memref.alloc() : memref<64x128xf32, #hivm.address_space<ub>>
+        func.call @vf_reuse_direct(%buf0, %buf1) {hivm.vector_function, no_inline} :
+            (memref<64x128xf32, #hivm.address_space<ub>>,
+            memref<64x128xf32, #hivm.address_space<ub>>) -> ()
+        hivm.hir.debug {debugtype = "print", hex = false, prefix = "selected: ",
+                  tcoretype = #hivm.tcore_type<CUBE_OR_VECTOR>} %buf1 : memref<64x128xf32, #hivm.address_space<ub>>
+        scope.return
+      }
+    }
+    return 
+  }
+}
