@@ -79,25 +79,47 @@ createBubblePropagatorDown(Value oldValue, Value newValue, OpFoldResult offset,
   return propagateOp;
 }
 
-/// Builds a memref type with the sliced tensor shape while keeping the
-/// original layout and memory space (used when matching a `to_tensor` slice).
-MemRefType getSlicedMemRefType(MemRefType oldType, ShapedType slicedType) {
-  return MemRefType::get(slicedType.getShape(), slicedType.getElementType(),
+/// Rebuild a memref type for `newShape`.
+/// Identity layouts stay identity (compact for the new extents, matching
+/// `createSlicedAllocLike`). Explicit strided layouts keep their strides so
+/// views into a larger parent buffer (e.g. GM reinterpret_cast / subview)
+/// remain valid when only the viewed size is halved.
+static MemRefType
+cloneMemRefTypeWithNewShape(MemRefType oldType, ArrayRef<int64_t> newShape) {
+  assert(static_cast<int64_t>(newShape.size()) == oldType.getRank() &&
+         "rank must be preserved when cloning a sliced memref type");
+
+  if (oldType.getLayout().isIdentity())
+    return MemRefType::get(newShape, oldType.getElementType(),
+                           MemRefLayoutAttrInterface{},
+                           oldType.getMemorySpace());
+
+  int64_t offset = 0;
+  SmallVector<int64_t> strides;
+  if (succeeded(getStridesAndOffset(oldType, strides, offset)))
+    return MemRefType::get(
+        newShape, oldType.getElementType(),
+        StridedLayoutAttr::get(oldType.getContext(), offset, strides),
+        oldType.getMemorySpace());
+
+  return MemRefType::get(newShape, oldType.getElementType(),
                          oldType.getLayout(), oldType.getMemorySpace());
 }
 
+/// Builds a memref type with the sliced tensor shape. Compact layouts are
+/// recomputed for the new extents (see `cloneMemRefTypeWithNewShape`).
+MemRefType getSlicedMemRefType(MemRefType oldType, ShapedType slicedType) {
+  return cloneMemRefTypeWithNewShape(oldType, slicedType.getShape());
+}
+
 /// Halves `tilingDim` in the memref shape (or marks it dynamic when the extent
-/// is odd). Preserves element type, memory space, and strided layout.
+/// is odd). Identity layouts stay compact; strided views keep their strides.
 FailureOr<MemRefType> getSlicedMemRefType(MemRefType oldType,
                                           int64_t tilingDim) {
-  auto shape = llvm::to_vector(oldType.getShape());
-  int64_t offset;
-  SmallVector<int64_t> strides;
-  if (failed(getStridesAndOffset(oldType, strides, offset)))
+  if (tilingDim < 0 || tilingDim >= oldType.getRank())
     return failure();
 
-  auto layout = StridedLayoutAttr::get(oldType.getContext(),
-                                       ShapedType::kDynamic, strides);
+  auto shape = llvm::to_vector(oldType.getShape());
   if (!ShapedType::isDynamic(shape[tilingDim])) {
     if (shape[tilingDim] % 2 == 0)
       shape[tilingDim] /= 2;
@@ -105,8 +127,7 @@ FailureOr<MemRefType> getSlicedMemRefType(MemRefType oldType,
       shape[tilingDim] = ShapedType::kDynamic;
   }
 
-  return MemRefType::get(shape, oldType.getElementType(), layout,
-                         oldType.getMemorySpace());
+  return cloneMemRefTypeWithNewShape(oldType, shape);
 }
 
 /// If `memrefValue` traces back to a tightly-coupled alloc, tag that

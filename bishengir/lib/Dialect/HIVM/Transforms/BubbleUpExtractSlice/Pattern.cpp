@@ -15,11 +15,11 @@
 //
 //============================================================================//
 
+#include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/BubbleUpUtils.h"
 #include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/Pattern.h"
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/AutoScheduleBase.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
-#include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/BubbleUpUtils.h"
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/Helper.h"
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/TileUtils.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
@@ -78,35 +78,6 @@ static bool isDynamicSlice(OffsetSizeAndStrideOpInterface op) {
   return ShapedType::isDynamicShape(op.getStaticSizes());
 }
 
-<<<<<<< HEAD
-/// When UB half-tiling succeeds in BufferizationBubbleUpStrategy, set
-/// `tiledTightlyCoupledAlloc` on the corresponding annotation.mark (see
-/// TileUtils.h).
-static void markTiledTightlyCoupledAllocIfNeeded(RewriterBase &rewriter,
-                                                 Value memrefValue) {
-  auto maybeAlloc = mlir::utils::tracebackMemRefToAlloc(memrefValue);
-  if (!maybeAlloc)
-    return;
-  Value allocResult = maybeAlloc->getResult();
-  auto allMarks = mlir::utils::getAllAnnotateOpsWithAttr(
-      allocResult, hivm::HIVMTightlyCoupledBufferAttr::name);
-  for (auto *mark : allMarks) {
-    auto markOp = dyn_cast<annotation::MarkOp>(mark);
-    if (!markOp)
-      return;
-    auto attr = markOp->getAttrOfType<hivm::HIVMTightlyCoupledBufferAttr>(
-        hivm::HIVMTightlyCoupledBufferAttr::name);
-    if (!attr || !attr.getId().has_value())
-      return;
-    rewriter.modifyOpInPlace(markOp, [&]() {
-      markOp->setAttr(kTiledTightlyCoupledAlloc,
-                      UnitAttr::get(rewriter.getContext()));
-    });
-  }
-}
-
-=======
->>>>>>> a80ac2ca7 ([Huawei][AscendNPU-IR] refactor bufferization bubble up using ucc propagate)
 // This function create new parentOp after bubble up
 
 // For example:
@@ -1113,11 +1084,6 @@ InsertSliceBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
     return failure();
   }
 
-  if (parentInsertOp->hasAttr(toBeCancelOutInsertSlice)) {
-    rewriter.replaceOp(sliceOp, parentInsertOp.getSource());
-    return success();
-  }
-
   // Handle ranked-reduce case.
   if ((parentInsertOp.getResultType().getRank() -
            parentInsertOp.getSource().getType().getRank() >
@@ -1628,6 +1594,13 @@ bool BufferizationBubbleUpStrategy::isSupportedOperation(
   auto toTensorOp = dyn_cast<bufferization::ToTensorOp>(sourceOp);
   if (!toTensorOp)
     return false;
+  if (failed(checkBufferizationBubbleUpPath(toTensorOp)))
+    return false;
+  for (Operation *user : toTensorOp.getMemref().getUsers()) {
+    if (user->hasAttr(kBubbleUpPropagateUp) ||
+        user->hasAttr(kBubbleUpPropagateDown))
+      return false;
+  }
   return true;
 }
 
@@ -1653,16 +1626,11 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   auto slicedMemrefAtToTensor =
       getSlicedMemRefType(oldMemrefType, slicedTensorType);
 
-  auto extractDims = getExtractOrInsertDim(sliceOp);
-  if (extractDims.size() != 1)
-    return failure();
-  auto tilingDim = *extractDims.begin();
+  BufferizationPropagationState state;
   UnrealizedConversionCastOp upAtToTensor = createBubblePropagatorUpLink(
-      oldMemrefAtToTensor, slicedMemrefAtToTensor,
-      sliceOp.getMixedOffsets()[tilingDim], sliceOp.getMixedSizes()[tilingDim],
-      tilingDim, rewriter);
+      oldMemrefAtToTensor, slicedMemrefAtToTensor, rewriter);
 
-  rewriter.setInsertionPointAfter(toTensorOp);
+  rewriter.setInsertionPoint(sliceOp);
   auto newToTensorOp = rewriter.create<bufferization::ToTensorOp>(
       sliceOp.getLoc(), upAtToTensor.getResult(0), true, true);
   rewriter.replaceOp(sliceOp, newToTensorOp.getResult());
