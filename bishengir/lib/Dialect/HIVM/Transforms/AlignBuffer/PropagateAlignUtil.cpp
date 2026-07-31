@@ -1090,7 +1090,7 @@ FailureOrCastVec propagateScfForYieldOp(RewriterBase &rewriter,
       rewriter.create<hivm::CopyOp>(op.getLoc(), TypeRange{}, aligned, copyDst);
       mutableYieldValues.value()[yieldIndex].assign(copyDst);
 
-      auto stripAlignMarks = [&](Value v) {
+      auto stripAlignMarks = [&rewriter](Value v) {
         if (Operation *def = v.getDefiningOp()) {
           def->removeAttr(hivm::StrideAlignDimsAttr::name);
           def->removeAttr(hivm::StrideAlignValueInByteAttr::name);
