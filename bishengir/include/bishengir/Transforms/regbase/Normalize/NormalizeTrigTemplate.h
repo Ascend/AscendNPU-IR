@@ -462,6 +462,62 @@ public:
   }
 };
 
+/// Rewrites `cosh(x)` using the exponential identity:
+///   cosh(x) = (exp(x) + exp(-x)) * 0.5
+///
+/// F16 inputs are promoted to F32 for the exponential work and cast back after,
+/// matching the existing sinh-style normalization behavior.
+template <typename CoshOpType, typename Traits>
+struct NormalizeCoshOpTemplate : public OpRewritePattern<CoshOpType> {
+public:
+  using OpRewritePattern<CoshOpType>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(CoshOpType op,
+                                PatternRewriter &rewriter) const override {
+    if (!Traits::shouldNormalizeCosh(op))
+      return failure();
+
+    Value originalInput = op.getDpsInputs()[0];
+    Type inputType = getElementTypeOrSelf(originalInput.getType());
+
+    Location loc = op.getLoc();
+    Value input = originalInput;
+    if (inputType.isF16()) {
+      input = Traits::createCastOp(rewriter, loc, input,
+                                   rewriter.getF32Type(),
+                                   CastRoundKind::Round);
+    }
+
+    Type elementType = getElementTypeOrSelf(input.getType());
+    Value empty = utils::createEmptyOp(rewriter, loc, input);
+
+    Value expX =
+        Traits::createUnaryOp(rewriter, loc, input, empty, UnaryKind::Exp);
+
+    Value negOne = createFloatConstant(rewriter, loc, elementType, -1.0);
+    Value negX = Traits::createBinaryOp(rewriter, loc, input, negOne, empty,
+                                        BinaryKind::Mul);
+    Value expNegX =
+        Traits::createUnaryOp(rewriter, loc, negX, empty, UnaryKind::Exp);
+
+    Value sum = Traits::createBinaryOp(rewriter, loc, expX, expNegX, empty,
+                                       BinaryKind::Add);
+
+    Value half = createFloatConstant(rewriter, loc, elementType, 0.5);
+    Value result = Traits::createBinaryOp(rewriter, loc, sum, half, empty,
+                                          BinaryKind::Mul);
+
+    if (inputType.isF16()) {
+      result = Traits::createCastOp(rewriter, loc, result,
+                                    rewriter.getF16Type(),
+                                    CastRoundKind::Round);
+    }
+
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+};
+
 } // namespace mlir
 
 #endif // BISHENGIR_TRANSFORMS_REGBASE_NORMALIZE_NORMALIZETRIGTEMPLATE_H

@@ -102,6 +102,16 @@ func.func @test_sinh(%arg0 : tensor<6x6xf32>) -> tensor<6x6xf32> {
 
 // -----
 
+// CHECK-LABEL: func.func @test_cosh
+func.func @test_cosh(%arg0 : tensor<6x6xf32>) -> tensor<6x6xf32> {
+  // CHECK:       %[[EMPTY:.*]] = tensor.empty()
+  // CHECK:       %[[RET:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<cosh>}
+  %ret = math.cosh %arg0 : tensor<6x6xf32>
+  return %ret : tensor<6x6xf32>
+}
+
+// -----
+
 // CHECK-LABEL: func @test_asin
 // CHECK-SAME: (%[[ARG:.*]]: tensor<10x20xf32>) -> tensor<10x20xf32>
 func.func @test_asin(%arg0: tensor<10x20xf32>) -> tensor<10x20xf32> {
@@ -248,5 +258,4 @@ func.func @test_fma(%arg0 : tensor<64xf32>, %arg1 : tensor<64xf32> , %arg2 : ten
   %ret = math.fma %arg0, %arg1, %arg2: tensor<64xf32>
   return %ret : tensor<64xf32>
 }
-
 

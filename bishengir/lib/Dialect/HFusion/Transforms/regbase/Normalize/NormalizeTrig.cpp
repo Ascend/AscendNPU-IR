@@ -19,6 +19,7 @@
 #include "bishengir/Dialect/HFusion/Transforms/regbase/NormalizeTraitsBase.h"
 #include "bishengir/Dialect/HFusion/Transforms/regbase/NormalizeUtils.h"
 #include "bishengir/Transforms/regbase/Normalize/NormalizeTrigTemplate.h"
+#include "llvm/Support/ErrorHandling.h"
 
 namespace mlir {
 struct HFusionNormalizeHighPrecisionTrigTraitsBase : public hfusion::NormalizeTraitsBase {
@@ -139,6 +140,19 @@ public:
   }
 };
 
+struct HFusionNormalizeCoshTraits : public hfusion::NormalizeTraitsBase {
+public:
+  static bool shouldNormalizeCosh(hfusion::ElemwiseUnaryOp op) {
+    if (!op.hasPureTensorSemantics() || op.getFun() != hfusion::UnaryFn::cosh) {
+      return false;
+    }
+    Type inputType = getElementTypeOrSelf(op.getDpsInputs()[0].getType());
+    if (!inputType.isF16() && !inputType.isF32())
+      llvm::report_fatal_error("only support input Type is f16 or f32");
+    return true;
+  }
+};
+
 using NormalizeSinOpRegBase =
     NormalizeSinOpTemplate<hfusion::ElemwiseUnaryOp, HFusionNormalizeSinTraits>;
 using NormalizeCosOpRegBase =
@@ -153,8 +167,12 @@ using NormalizeAtanOp = NormalizeAtanOpTemplate<hfusion::ElemwiseUnaryOp,
                                                 HFusionNormalizeAtanTraits>;
 using NormalizeTanOpRegBase =
     NormalizeTanOpTemplate<hfusion::ElemwiseUnaryOp, HFusionNormalizeTanTraits>;
-using NormalizeTanhOpRegBase = NormalizeTanhOpTemplate<hfusion::ElemwiseUnaryOp,
-                                                HFusionNormalizeTanhTraits>;
+using NormalizeTanhOpRegBase =
+    NormalizeTanhOpTemplate<hfusion::ElemwiseUnaryOp,
+                            HFusionNormalizeTanhTraits>;
+using NormalizeCoshOpRegBase =
+    NormalizeCoshOpTemplate<hfusion::ElemwiseUnaryOp,
+                            HFusionNormalizeCoshTraits>;
 } // namespace mlir
 
 namespace mlir::hfusion {
@@ -171,5 +189,6 @@ void populateNormalizeTrigPatterns(RewritePatternSet &patterns,
   patterns.add<NormalizeAtanOp>(ctx);
   patterns.add<NormalizeTanOpRegBase>(ctx);
   patterns.add<NormalizeTanhOpRegBase>(ctx);
+  patterns.add<NormalizeCoshOpRegBase>(ctx);
 }
 } // namespace mlir::hfusion
