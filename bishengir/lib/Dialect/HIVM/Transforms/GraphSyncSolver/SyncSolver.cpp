@@ -56,7 +56,8 @@ void Solver::reset(bool resetEventIdRanOutOpts) {
     backwardSyncEventsAfterMerge.clear();
     moveBackwardSyncPairsToOutmostLoop = false;
     dontMoveBackwardSyncPairsToOutmostLoop = false;
-    enableSaveCVPreloadingEventIdsOpt = false;
+    saveCVPreloadingEventIdsOptFlag = false;
+    disableCVPatternsOptFlag = false;
   }
   skipOcc.clear();
   syncedPairs.clear();
@@ -665,7 +666,8 @@ std::optional<EventIdInfo>
 Solver::checkCVPipeliningEventIdInfo(Occurrence *occ1, Occurrence *occ2,
                                      RWOperation *rwOp1, RWOperation *rwOp2) {
   assert(rwOp1 != nullptr && rwOp2 != nullptr);
-  if (!options.isCrossCoreMode() || !options.enableCVPatterns) {
+  if (!options.isCrossCoreMode() || !options.enableCVPatterns ||
+      disableCVPatternsOptFlag) {
     return {};
   }
   if (!checkCVPipeliningMemConflict(rwOp1, rwOp2)) {
@@ -751,7 +753,7 @@ Solver::checkCVPreloadingEventIdInfo(Occurrence *occ1, Occurrence *occ2,
                                  parentScope2->preloadNum.value());
   int64_t eventIdNum = preloadDiff + 1;
 
-  if (options.enableCVPatterns) {
+  if (options.enableCVPatterns && !disableCVPatternsOptFlag) {
     if (checkCVPreloadingMemConflict(rwOp1, rwOp2, eventIdNum)) {
       EventIdInfo eventIdInfo(eventIdNum);
       eventIdInfo.cvPreloadingInfo =
@@ -858,6 +860,20 @@ bool Solver::checkGraphConflict(
     if (eventIdInfo.getEventIdNum() <
         conflictPair->eventIdInfo.getEventIdNum()) {
       return;
+    }
+    if (eventIdInfo.cvPreloadingInfo) {
+      if (conflictPair->isBackwardPair) {
+        if (!conflictPair->setWaitPairInfo.has_value() ||
+            !conflictPair->setWaitPairInfo->isCVPreloading) {
+          return;
+        }
+      }
+    }
+    if (conflictPair->setWaitPairInfo.has_value() &&
+        conflictPair->setWaitPairInfo->isCVPreloading) {
+      if (!eventIdInfo.cvPreloadingInfo) {
+        return;
+      }
     }
     if (llvm::find(ignoreConflictPairs, conflictPair) !=
         ignoreConflictPairs.end()) {
@@ -1407,7 +1423,7 @@ Solver::getFixedSetWaitOcc(Occurrence *occ1, Occurrence *occ2,
             std::tie(ret.setOcc, ret.waitOcc) =
                 getSetWaitLCAPairOcc(occ1, occ2);
           }
-        } else if (enableSaveCVPreloadingEventIdsOpt) {
+        } else if (saveCVPreloadingEventIdsOptFlag) {
           assert(scopeOp1->maxPreloadNum == scopeOp2->maxPreloadNum);
           ret.setOcc = getScopeEndPlaceHolderOcc(
               occ1->getNthParent(occ1->depth - scopeOcc1->depth - 1));
@@ -1535,6 +1551,9 @@ Solver::getFixedSetWaitOcc(Occurrence *occ1, Occurrence *occ2,
     ret.waitOcc = getBeforePlaceHolderOcc(ret.waitOcc);
   }
 
+  assert(ret.setOcc->op != nullptr && ret.waitOcc->op != nullptr);
+  ret.isForwardPair =
+      ret.setOcc->op->preOrderIndex < ret.waitOcc->op->preOrderIndex;
   ret.isBackwardPair = isBackwardSync(ret.setOcc, ret.waitOcc);
   return ret;
 }
@@ -1906,8 +1925,7 @@ bool Solver::checkRepeatMultiBufferFlagId(ConflictPair *conflictPair) {
 void Solver::handleSetWaitConflict(Occurrence *occ1, Occurrence *occ2,
                                    CorePipeInfo corePipeSrc,
                                    CorePipeInfo corePipeDst,
-                                   EventIdInfo eventIdInfo, int64_t stepNum,
-                                   bool isUseless) {
+                                   EventIdInfo eventIdInfo, bool isUseless) {
   assert(occ1 != nullptr && occ2 != nullptr);
   auto *rwOp1 = llvm::dyn_cast_if_present<RWOperation>(occ1->op);
   auto *rwOp2 = llvm::dyn_cast_if_present<RWOperation>(occ2->op);
@@ -1918,12 +1936,6 @@ void Solver::handleSetWaitConflict(Occurrence *occ1, Occurrence *occ2,
   auto setWaitPairInfo = getSetWaitOcc(occ1, occ2, eventIdInfo);
   auto [setOcc, waitOcc] =
       std::tie(setWaitPairInfo.setOcc, setWaitPairInfo.waitOcc);
-
-  if (stepNum == 1) {
-    if (!setWaitPairInfo.isCVPreloading) {
-      return;
-    }
-  }
   if (setWaitPairInfo.isCVPreloading) {
     if (checkSkipCVPreloadingPair(occ1, occ2)) {
       return;
@@ -1966,8 +1978,7 @@ void Solver::handleSetWaitConflict(Occurrence *occ1, Occurrence *occ2,
                  << normScopeOcc2->op->str() << '\n';
   });
 
-  bool isForwardPair = setOcc->op->preOrderIndex < waitOcc->op->preOrderIndex;
-  assert(!isForwardPair || !setWaitPairInfo.isBackwardPair ||
+  assert(!setWaitPairInfo.isForwardPair || !setWaitPairInfo.isBackwardPair ||
          setWaitPairInfo.isCVPipelining || setWaitPairInfo.isCVPreloading ||
          options.enableUnitFlagFeature);
 
@@ -1978,9 +1989,10 @@ void Solver::handleSetWaitConflict(Occurrence *occ1, Occurrence *occ2,
   assert(conflictPair->startIndex <= conflictPair->endIndex);
   conflictPair->isBackwardPair = setWaitPairInfo.isBackwardPair;
   conflictPair->isInnerBackward =
-      !isForwardPair && setWaitPairInfo.isBackwardPair;
+      !setWaitPairInfo.isForwardPair && setWaitPairInfo.isBackwardPair;
   conflictPair->isUseless = isUseless;
   conflictPair->eventIdInfo = eventIdInfo;
+  conflictPair->setWaitPairInfo = setWaitPairInfo;
 
   // TODO: refactor this so it doesn't need to take conflict-pair as input.
   applyCustomMacroPinnedEventId(*conflictPair, rwOp1, rwOp2, corePipeSrc.pipe,
@@ -2184,16 +2196,11 @@ void Solver::handleSetWaitConflict(Occurrence *occ1, Occurrence *occ2,
 void Solver::handleBarrierConflict(Occurrence *occ1, Occurrence *occ2,
                                    CorePipeInfo corePipeSrc,
                                    CorePipeInfo corePipeDst,
-                                   EventIdInfo eventIdInfo, int64_t stepNum,
-                                   bool isUseless) {
+                                   EventIdInfo eventIdInfo, bool isUseless) {
   assert(occ1 != nullptr && occ2 != nullptr);
   auto *rwOp1 = llvm::dyn_cast_if_present<RWOperation>(occ1->op);
   auto *rwOp2 = llvm::dyn_cast_if_present<RWOperation>(occ2->op);
   assert(rwOp1 != nullptr && rwOp2 != nullptr);
-
-  if (stepNum == 1) {
-    return;
-  }
 
   assert(corePipeSrc == corePipeDst);
   if (corePipeSrc.pipe == hivm::PIPE::PIPE_S) {
@@ -2226,8 +2233,7 @@ void Solver::handleBarrierConflict(Occurrence *occ1, Occurrence *occ2,
 void Solver::handleUnitFlagConflict(Occurrence *occ1, Occurrence *occ2,
                                     CorePipeInfo corePipeSrc,
                                     CorePipeInfo corePipeDst,
-                                    UnitFlagInfo unitFlagInfo, int64_t stepNum,
-                                    bool isUseless) {
+                                    UnitFlagInfo unitFlagInfo, bool isUseless) {
   assert(occ1 != nullptr && occ2 != nullptr);
   auto *rwOp1 = llvm::dyn_cast_if_present<RWOperation>(occ1->op);
   auto *rwOp2 = llvm::dyn_cast_if_present<RWOperation>(occ2->op);
@@ -2288,7 +2294,7 @@ void Solver::handleUnitFlagConflict(Occurrence *occ1, Occurrence *occ2,
 void Solver::handleConflict(Occurrence *occ1, Occurrence *occ2,
                             RWOperation *rwOp1, RWOperation *rwOp2,
                             CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst,
-                            int64_t stepNum, bool isUseless) {
+                            bool isUseless) {
   auto eventIdInfo =
       getEventIdInfo(occ1, occ2, rwOp1, rwOp2, corePipeSrc, corePipeDst);
   if (!checkGraphConflict(occ1, occ2, corePipeSrc, corePipeDst, eventIdInfo)) {
@@ -2296,7 +2302,7 @@ void Solver::handleConflict(Occurrence *occ1, Occurrence *occ2,
   }
 
   LLVM_DEBUG({
-    llvm::dbgs() << "conflict found: " << "stepNum: " << stepNum << ' '
+    llvm::dbgs() << "conflict found: "
                  << "isUseless: " << isUseless
                  << " eventIdNum: " << eventIdInfo.eventIdNum << "\n";
     llvm::dbgs() << occ1->syncIrIndex << ' ' << occ1->startIndex << ' '
@@ -2307,13 +2313,13 @@ void Solver::handleConflict(Occurrence *occ1, Occurrence *occ2,
   if (corePipeSrc == corePipeDst) {
     eventIdInfo.setEventIdNum(1);
     handleBarrierConflict(occ1, occ2, corePipeSrc, corePipeDst, eventIdInfo,
-                          stepNum, isUseless);
+                          isUseless);
   } else if (auto unitFlagInfo = checkUnitFlagPatterns(occ1, occ2)) {
     handleUnitFlagConflict(occ1, occ2, corePipeSrc, corePipeDst,
-                           unitFlagInfo.value(), stepNum, isUseless);
+                           unitFlagInfo.value(), isUseless);
   } else {
     handleSetWaitConflict(occ1, occ2, corePipeSrc, corePipeDst, eventIdInfo,
-                          stepNum, isUseless);
+                          isUseless);
   }
 }
 
@@ -2719,12 +2725,12 @@ SyncBeforeAfterMap Solver::getBeforeAfterSyncMaps() {
 
 void Solver::processConflict(Occurrence *occ1, Occurrence *occ2,
                              RWOperation *rwOp1, RWOperation *rwOp2,
-                             int64_t stepNum, bool isUseless) {
+                             bool isUseless) {
   for (auto [corePipeSrc, corePipeDst] : getMemoryConflicts(rwOp1, rwOp2)) {
     if (options.alwaysUsePipeSAsWaitingPipe) {
       corePipeDst.pipe = hivm::PIPE::PIPE_S;
     }
-    handleConflict(occ1, occ2, rwOp1, rwOp2, corePipeSrc, corePipeDst, stepNum,
+    handleConflict(occ1, occ2, rwOp1, rwOp2, corePipeSrc, corePipeDst,
                    isUseless);
   }
 }
@@ -2732,19 +2738,18 @@ void Solver::processConflict(Occurrence *occ1, Occurrence *occ2,
 // Main processing loop that iterates processingOrders and attempts to
 // discover and record conflicts.
 void Solver::processOrders() {
-  for (auto &[occ1, occ2, rwOp1, rwOp2, stepNum, isUseless] :
-       processingOrders) {
+  for (auto &[occ1, occ2, rwOp1, rwOp2, isUseless] : processingOrders) {
     assert(occ1 != occ2);
     assert(occ1->syncIrIndex < occ2->syncIrIndex);
     DEBUG_WITH_TYPE("gss-sync-solver-checking", {
-      llvm::dbgs() << "checking: " << "stepNum: " << stepNum << ' '
+      llvm::dbgs() << "checking: "
                    << "isUseless: " << isUseless << '\n';
       llvm::dbgs() << occ1->syncIrIndex << ' ' << occ1->startIndex << ' '
                    << occ1->endIndex << ' ' << occ1->op->str(0, false) << '\n';
       llvm::dbgs() << occ2->syncIrIndex << ' ' << occ2->startIndex << ' '
                    << occ2->endIndex << ' ' << occ2->op->str(0, false) << '\n';
     });
-    if (!stepNum && checkVisited(occ1, occ2)) {
+    if (checkVisited(occ1, occ2)) {
       assert(false && "expected to not check a pair more than once.");
       continue;
     }
@@ -2757,7 +2762,7 @@ void Solver::processOrders() {
     if (checkAlreadySyncedWithUnitFlag(occ1, occ2)) {
       continue;
     }
-    processConflict(occ1, occ2, rwOp1, rwOp2, stepNum, isUseless);
+    processConflict(occ1, occ2, rwOp1, rwOp2, isUseless);
   }
 }
 
@@ -2876,8 +2881,18 @@ llvm::LogicalResult Solver::reuseSyncPairToSaveEventIds() {
 
 llvm::LogicalResult Solver::saveCVPreloadingEventIdsOpt() {
   if (options.enableCVPatterns) {
-    if (!enableSaveCVPreloadingEventIdsOpt) {
-      enableSaveCVPreloadingEventIdsOpt = true;
+    if (!saveCVPreloadingEventIdsOptFlag) {
+      saveCVPreloadingEventIdsOptFlag = true;
+      return llvm::success();
+    }
+  }
+  return llvm::failure();
+}
+
+llvm::LogicalResult Solver::disableCVPatternsOpt() {
+  if (options.enableCVPatterns) {
+    if (!disableCVPatternsOptFlag) {
+      disableCVPatternsOptFlag = true;
       return llvm::success();
     }
   }
@@ -2958,6 +2973,9 @@ llvm::LogicalResult Solver::runSolver(bool enableOpts1, bool enableOpts2) {
           continue;
         }
         if (llvm::succeeded(saveCVPreloadingEventIdsOpt())) {
+          continue;
+        }
+        if (llvm::succeeded(disableCVPatternsOpt())) {
           continue;
         }
         if (llvm::succeeded(disableMultiEventIdForBarrierAllPairs())) {

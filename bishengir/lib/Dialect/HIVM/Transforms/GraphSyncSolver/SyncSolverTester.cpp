@@ -305,19 +305,18 @@ void SyncTester::fillPipelines(OperationBase *op, Scope *counterScope) {
     if (loopOp->isCVPreloadingLoop) {
       assert(loopOp->haveCounter);
       assert(!loopOp->isParallel);
-      if (isTrueWithProbability(dead_loop_prob_a, dead_loop_prob_b)) {
-        return;
-      }
-
       assert(loopOp->loopPreloadNum.has_value());
-      int numIter = loopOp->loopPreloadNum.value() * 2;
 
+      int numIter = loopOp->loopPreloadNum.value() * 2 + 3;
       auto &loopCounter = countersMap[loopOp];
       for (int i = 0; i < numIter; i++) {
         for (auto &outerScope : loopOp->body) {
           for (auto &innerOp : cast<Scope>(outerScope.get())->body) {
             if (auto innerScope = dyn_cast<Scope>(innerOp.get())) {
               if (innerScope->preloadNum.has_value()) {
+                if (i == 0) {
+                  countersMap[innerScope] = 0;
+                }
                 assert(innerScope->haveCounter);
                 // loopPreloadNum-scopePreloadNum <= i
                 // < (numIter-scopePreloadNum)
@@ -758,7 +757,7 @@ llvm::LogicalResult SyncTester::runSimulation(int runId, bool debugPrint) {
 
     LLVM_DEBUG({
       if (debugPrint) {
-        llvm::dbgs() << "[loopIdx: ";
+        llvm::dbgs() << "[loopIdx: " << curLoopIdx << " - ";
         llvm::interleaveComma(decomposeIndex(curLoopIdx), llvm::dbgs());
         llvm::dbgs() << "] " << curOp->str(0, false) << "\n\n";
       }
