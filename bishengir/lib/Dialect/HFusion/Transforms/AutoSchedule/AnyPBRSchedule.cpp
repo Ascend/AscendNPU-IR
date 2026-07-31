@@ -544,12 +544,15 @@ TilingComputeFn AnyPBRScheduler::calculateTilingImpl() {
       }
 
       auto tilingDataForDim = TilingData(std::move(tileSize), tilingDataType);
+      Location heuristicLoc =
+          opBuilder->getInsertionBlock()->getParentOp()->getLoc();
       // Add heuristic values for case (a).
       for (int64_t tilingKey = dimUpperBound; tilingKey > dimIdx; --tilingKey) {
         int64_t constOne = 1;
         LDBG("Setting tiling data heuristic value: tilingKey="
              << tilingKey << " heuristic=" << constOne);
-        tilingDataForDim.setHeuristicValueForKey(tilingKey, constOne);
+        tilingDataForDim.setHeuristicValueForKey(tilingKey, constOne,
+                                                 heuristicLoc);
       }
       s[dimIdx + 1] = std::make_unique<TilingData>(std::move(tilingDataForDim));
       ubRemainingNum = ubRemainingNum.floorDiv(tileSize);

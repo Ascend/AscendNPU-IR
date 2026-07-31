@@ -149,11 +149,13 @@ using RegionBuilderFn = llvm::function_ref<void(
 /// `regionBuilder`. The method is used by both named structured ops created by
 /// ods-gen and by manually defined C++ ops. It is called by both builders and
 /// parsers and creates a block with arguments corresponding to the elemental
-/// types of `inputTypes` and `outputTypes`. All output types are asserted to be
-/// ShapedType.
+/// types of `inputTypes` and `outputTypes`. `loc` is attached to the block
+/// arguments and used as the implicit location for ops created by
+/// `regionBuilder`. All output types are asserted to be ShapedType.
 static void fillStructuredOpRegion(OpBuilder &opBuilder, Region &region,
                                    TypeRange inputTypes, TypeRange outputTypes,
                                    ArrayRef<NamedAttribute> attrs,
+                                   Location loc,
                                    RegionBuilderFn regionBuilder) {
   assert(llvm::all_of(outputTypes,
                       [](Type t) { return llvm::isa<ShapedType>(t); }));
@@ -165,8 +167,7 @@ static void fillStructuredOpRegion(OpBuilder &opBuilder, Region &region,
       argTypes.push_back(
           isa<MemRefType, RankedTensorType>(t) ? getElementTypeOrSelf(t) : t);
 
-      // TODO: Pass in a proper location here.
-      argLocs.push_back(opBuilder.getUnknownLoc());
+      argLocs.push_back(loc);
     }
   }
 
@@ -176,7 +177,7 @@ static void fillStructuredOpRegion(OpBuilder &opBuilder, Region &region,
       opBuilder.createBlock(&region, /*insertPt=*/{}, argTypes, argLocs);
 
   opBuilder.setInsertionPointToStart(body);
-  ImplicitLocOpBuilder b(opBuilder.getUnknownLoc(), opBuilder);
+  ImplicitLocOpBuilder b(loc, opBuilder);
 #ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
   regionBuilder(b, *body, attrs);
 #else
@@ -217,7 +218,8 @@ static void buildStructuredOp(OpBuilder &b, OperationState &state,
   // Create and fill the region of the structured operation.
   Region &region = *state.addRegion();
   fillStructuredOpRegion(b, region, TypeRange(inputs), TypeRange(outputs),
-                         state.attributes.getAttrs(), regionBuilder);
+                         state.attributes.getAttrs(), state.location,
+                         regionBuilder);
 }
 
 void addOperandSegmentSizesAttr(
@@ -332,6 +334,7 @@ static ParseResult parseNamedStructuredOpRegion(
 
   OpBuilder opBuilder(parser.getContext());
   fillStructuredOpRegion(opBuilder, region, inputTypes, outputTypes, attrs,
+                         parser.getEncodedSourceLoc(parser.getCurrentLocation()),
                          regionBuilder);
   return success();
 }
@@ -424,8 +427,8 @@ namespace {
 
 class RegionBuilderHelper {
 public:
-  RegionBuilderHelper(MLIRContext *context, Block &block)
-      : context(context), block(block) {}
+  RegionBuilderHelper(MLIRContext *context, Block &block, Location loc)
+      : context(context), block(block), loc(loc) {}
 
   // Build the unary functions defined by OpDSL.
   Value buildUnaryFn(UnaryFn unaryFn, Value arg) {
@@ -789,20 +792,18 @@ public:
 
   void yieldOutputs(ValueRange values) {
     OpBuilder builder = getBuilder();
-    Location loc = builder.getUnknownLoc();
     builder.create<linalg::YieldOp>(loc, values);
   }
 
   Value constant(const std::string &value) {
     OpBuilder builder = getBuilder();
-    Location loc = builder.getUnknownLoc();
     Attribute valueAttr = parseAttribute(value, builder.getContext());
     return builder.create<arith::ConstantOp>(loc, ::cast<TypedAttr>(valueAttr));
   }
 
   Value index(int64_t dim) {
     OpBuilder builder = getBuilder();
-    return builder.create<linalg::IndexOp>(builder.getUnknownLoc(), dim);
+    return builder.create<linalg::IndexOp>(loc, dim);
   }
 
   Type getIntegerType(unsigned width) {
@@ -852,6 +853,7 @@ private:
 
   MLIRContext *context;
   Block &block;
+  Location loc;
 };
 
 template <typename CumOpTy> LogicalResult verifyCumOp(CumOpTy op) {
@@ -1728,7 +1730,7 @@ ParseResult ReduceWithIndexOp::parse(OpAsmParser &parser,
   OpBuilder opBuilder(parser.getContext());
   fillStructuredOpRegion(opBuilder, *(result.addRegion()), inputTypes,
                          outputTypes, result.attributes.getAttrs(),
-                         getRegionBuilder());
+                         result.location, getRegionBuilder());
 
   return success();
 }
@@ -2335,7 +2337,7 @@ void ArangeOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                             {1, static_cast<int32_t>(strides.size()), 1}));
   Region &region = *odsState.addRegion();
   fillStructuredOpRegion(odsBuilder, region, ValueRange(inputs), init.getType(),
-                         odsState.attributes.getAttrs(),
+                         odsState.attributes.getAttrs(), odsState.location,
                          ArangeOp::getRegionBuilder());
 }
 
@@ -2353,7 +2355,7 @@ void ArangeOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                             {1, static_cast<int32_t>(strides.size()), 1}));
   Region &region = *odsState.addRegion();
   fillStructuredOpRegion(odsBuilder, region, ValueRange(inputs), init.getType(),
-                         odsState.attributes.getAttrs(),
+                         odsState.attributes.getAttrs(), odsState.location,
                          ArangeOp::getRegionBuilder());
 }
 
@@ -2423,16 +2425,15 @@ ParseResult ArangeOp::parse(OpAsmParser &parser, OperationState &result) {
                       parser.getBuilder().getDenseI32ArrayAttr(operandSizes));
 
   // Generate the implicit block
-  auto unknownLoc = UnknownLoc::get(parser.getContext());
+  Location loc = result.location;
   Block &block = result.addRegion()->emplaceBlock();
   // Create the block arguments
   SmallVector<Type, 8> argTypes(rank, indexTy);
   if (hasOffset)
     argTypes.push_back(indexTy);
   argTypes.push_back(shapeTy.getElementType());
-  block.addArguments(argTypes,
-                     SmallVector<Location>(argTypes.size(), unknownLoc));
-  ImplicitLocOpBuilder builder(unknownLoc, parser.getContext());
+  block.addArguments(argTypes, SmallVector<Location>(argTypes.size(), loc));
+  ImplicitLocOpBuilder builder(loc, parser.getContext());
   builder.setInsertionPointToStart(&block);
   // Build the region
 #ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
@@ -2813,7 +2814,7 @@ ParseResult GatherOp::parse(OpAsmParser &p, OperationState &result) {
   OpBuilder opBuilder(p.getContext());
   fillStructuredOpRegion(opBuilder, *(result.addRegion()), inputTypes,
                          outputTypes, result.attributes.getAttrs(),
-                         getRegionBuilder());
+                         result.location, getRegionBuilder());
 
   return success();
 }
@@ -3069,7 +3070,7 @@ ParseResult GatherMaskOp::parse(OpAsmParser &p, OperationState &result) {
   OpBuilder opBuilder(p.getContext());
   fillStructuredOpRegion(opBuilder, *(result.addRegion()), inputTypes,
                          outputTypes, result.attributes.getAttrs(),
-                         getRegionBuilder());
+                         result.location, getRegionBuilder());
 
   return success();
 }
@@ -3901,7 +3902,7 @@ void Conv1DOp::build(OpBuilder &odsBuilder, OperationState &odsState,
   Region &region = *odsState.addRegion();
   fillStructuredOpRegion(odsBuilder, region, TypeRange(inputs),
                          TypeRange(output), odsState.attributes.getAttrs(),
-                         getRegionBuilder());
+                         odsState.location, getRegionBuilder());
 }
 
 MutableOperandRange Conv1DOp::getDpsInitsMutable() { return getInitMutable(); }
@@ -4018,7 +4019,7 @@ ParseResult Conv1DOp::parse(OpAsmParser &p, OperationState &result) {
   OpBuilder opBuilder(p.getContext());
   fillStructuredOpRegion(opBuilder, *(result.addRegion()), inputTypes,
                          outputTypes, result.attributes.getAttrs(),
-                         getRegionBuilder());
+                         result.location, getRegionBuilder());
 
   return success();
 }
@@ -4037,7 +4038,7 @@ Conv1DOp::getRegionBuilder() {
             function_ref<InFlightDiagnostic()> emitError
 #endif
          ) {
-    RegionBuilderHelper helper(builder.getContext(), block);
+    RegionBuilderHelper helper(builder.getContext(), block, builder.getLoc());
     SmallVector<Value> yields;
 
     if (block.getNumArguments() == 4) {
@@ -4215,7 +4216,7 @@ void Conv2DOp::build(OpBuilder &odsBuilder, OperationState &odsState,
   Region &region = *odsState.addRegion();
   fillStructuredOpRegion(odsBuilder, region, TypeRange(inputs),
                          TypeRange(output), odsState.attributes.getAttrs(),
-                         getRegionBuilder());
+                         odsState.location, getRegionBuilder());
 }
 
 MutableOperandRange Conv2DOp::getDpsInitsMutable() { return getInitMutable(); }
@@ -4336,7 +4337,7 @@ ParseResult Conv2DOp::parse(OpAsmParser &p, OperationState &result) {
   OpBuilder opBuilder(p.getContext());
   fillStructuredOpRegion(opBuilder, *(result.addRegion()), inputTypes,
                          outputTypes, result.attributes.getAttrs(),
-                         getRegionBuilder());
+                         result.location, getRegionBuilder());
 
   return success();
 }
@@ -4355,7 +4356,7 @@ Conv2DOp::getRegionBuilder() {
             function_ref<InFlightDiagnostic()> emitError
 #endif
          ) {
-    RegionBuilderHelper helper(builder.getContext(), block);
+    RegionBuilderHelper helper(builder.getContext(), block, builder.getLoc());
     SmallVector<Value> yields;
 
     if (block.getNumArguments() == 4) {
@@ -4526,7 +4527,7 @@ void Conv3DOp::build(OpBuilder &odsBuilder, OperationState &odsState,
   Region &region = *odsState.addRegion();
   fillStructuredOpRegion(odsBuilder, region, TypeRange(inputs),
                          TypeRange(output), odsState.attributes.getAttrs(),
-                         getRegionBuilder());
+                         odsState.location, getRegionBuilder());
 }
 
 MutableOperandRange Conv3DOp::getDpsInitsMutable() { return getInitMutable(); }
@@ -4663,7 +4664,7 @@ ParseResult Conv3DOp::parse(OpAsmParser &p, OperationState &result) {
   OpBuilder opBuilder(p.getContext());
   fillStructuredOpRegion(opBuilder, *(result.addRegion()), inputTypes,
                          outputTypes, result.attributes.getAttrs(),
-                         getRegionBuilder());
+                         result.location, getRegionBuilder());
 
   return success();
 }
@@ -4682,7 +4683,7 @@ Conv3DOp::getRegionBuilder() {
             function_ref<InFlightDiagnostic()> emitError
 #endif
          ) {
-    RegionBuilderHelper helper(builder.getContext(), block);
+    RegionBuilderHelper helper(builder.getContext(), block, builder.getLoc());
     SmallVector<Value> yields;
 
     if (block.getNumArguments() == 4) {

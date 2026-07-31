@@ -378,6 +378,16 @@ def ConvertHIVMAVEToStandard : Pass<"convert-hivmave-to-std", "ModuleOp"> {
 }
 
 //===----------------------------------------------------------------------===//
+// FixCallUnknownLoc
+//===----------------------------------------------------------------------===//
+
+def FixCallUnknownLoc : Pass<"fix-call-unknown-loc", "func::FuncOp"> {
+  let summary = "Fix UnknownLoc on call ops by inheriting location from users or parent ops";
+  let constructor = "mlir::createFixCallUnknownLocPass()";
+  let dependentDialects = ["func::FuncDialect", "LLVM::LLVMDialect"];
+}
+
+//===----------------------------------------------------------------------===//
 // ArithToHIVMAVE
 //===----------------------------------------------------------------------===//
 

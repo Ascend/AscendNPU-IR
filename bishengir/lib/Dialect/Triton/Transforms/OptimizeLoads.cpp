@@ -183,8 +183,7 @@ static Value ensureValueOfType(Value src, Type targetType, Location loc,
 static Value createNotBool(Value val, RewriterBase &rewriter) {
   if (!val)
     return val;
-  Location loc = val.getDefiningOp() ? val.getDefiningOp()->getLoc()
-                                     : rewriter.getUnknownLoc();
+  Location loc = val.getLoc();
   Type t = val.getType();
   Value ones = createOnesConst(t, loc, rewriter);
   if (!ones)
@@ -202,10 +201,7 @@ static Value createAnd(Value a, Value b, Type finalTarget,
     return b;
   if (!b)
     return a;
-  Location loc = a.getDefiningOp()
-                     ? a.getDefiningOp()->getLoc()
-                     : (b.getDefiningOp() ? b.getDefiningOp()->getLoc()
-                                          : rewriter.getUnknownLoc());
+  Location loc = a.getLoc();
   // handle broadcasting: broadcast smaller shape to larger shape
   Type aType = a.getType();
   Type bType = b.getType();

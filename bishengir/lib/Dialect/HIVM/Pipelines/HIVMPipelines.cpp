@@ -27,6 +27,7 @@
 #include "bishengir/Dialect/Scope/Transforms/Passes.h"
 #include "bishengir/Dialect/Tensor/Transforms/Passes.h"
 #include "bishengir/Transforms/Passes.h"
+#include "bishengir/Conversion/FixCallUnknownLoc/FixCallUnknownLoc.h"
 
 #include "mlir/Dialect/Bufferization/Transforms/OneShotAnalysis.h"
 #include "mlir/Dialect/Bufferization/Transforms/Passes.h"
@@ -501,6 +502,7 @@ void buildOptimizeHIVMPipeline(OpPassManager &pm,
   pm.addPass(createMarkDisableLoadPass());
   syncBlockLockPipeline(pm, SyncBlockLockPipelinePhase::Finalize);
   pm.addPass(createConvertHIVMToStandardPass());
+  pm.nest<func::FuncOp>().addPass(createFixCallUnknownLocPass());
 }
 
 //===----------------------------------------------------------------------===//

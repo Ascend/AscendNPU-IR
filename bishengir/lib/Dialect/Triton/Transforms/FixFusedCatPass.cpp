@@ -157,7 +157,7 @@ static LogicalResult rewriteStore(triton::StoreOp op,
   SmallVector<mlir::Value> tensors;
   tensors.reserve(loads.size());
   Value Columns;
-  auto loc = rewriter.getUnknownLoc();
+  auto loc = op.getLoc();
 
   for (auto [loadOp, size, offset] : loads) {
     LDBG("transforming " << loadOp);
