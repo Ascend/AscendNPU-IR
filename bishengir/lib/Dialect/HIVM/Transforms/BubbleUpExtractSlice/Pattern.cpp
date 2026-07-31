@@ -86,21 +86,21 @@ static void markTiledTightlyCoupledAllocIfNeeded(RewriterBase &rewriter,
   if (!maybeAlloc)
     return;
   Value allocResult = maybeAlloc->getResult();
-  auto maybeMark = mlir::utils::getAnnotateOpWithAttr(
+  auto allMarks = mlir::utils::getAllAnnotateOpsWithAttr(
       allocResult, hivm::HIVMTightlyCoupledBufferAttr::name);
-  if (!maybeMark.has_value())
-    return;
-  auto markOp = dyn_cast<annotation::MarkOp>(maybeMark.value());
-  if (!markOp)
-    return;
-  auto attr = markOp->getAttrOfType<hivm::HIVMTightlyCoupledBufferAttr>(
-      hivm::HIVMTightlyCoupledBufferAttr::name);
-  if (!attr || !attr.getId().has_value())
-    return;
-  rewriter.modifyOpInPlace(markOp, [&]() {
-    markOp->setAttr(kTiledTightlyCoupledAlloc,
-                    UnitAttr::get(rewriter.getContext()));
-  });
+  for (auto *mark : allMarks) {
+    auto markOp = dyn_cast<annotation::MarkOp>(mark);
+    if (!markOp)
+      return;
+    auto attr = markOp->getAttrOfType<hivm::HIVMTightlyCoupledBufferAttr>(
+        hivm::HIVMTightlyCoupledBufferAttr::name);
+    if (!attr || !attr.getId().has_value())
+      return;
+    rewriter.modifyOpInPlace(markOp, [&]() {
+      markOp->setAttr(kTiledTightlyCoupledAlloc,
+                      UnitAttr::get(rewriter.getContext()));
+    });
+  }
 }
 
 // This function create new parentOp after bubble up

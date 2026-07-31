@@ -881,8 +881,14 @@ template <>
 int InferMaxRankExternalModel<VBrcOp>::inferOpLibraryMaxRank(
     Operation *operation) const {
   VBrcOp op = cast<VBrcOp>(operation);
-  Type srcType = op.getSrc().getType();
   MemRefType dstVecType = cast<MemRefType>(op.getDst().getType());
+  auto dstMemSpaceAttr = dstVecType.getMemorySpace();
+  auto dstAddrSpace =
+      cast<AddressSpaceAttr>(dstMemSpaceAttr).getAddressSpace();
+  if (dstAddrSpace == AddressSpace::L1)
+    return 1;
+
+  Type srcType = op.getSrc().getType();
   int rank = dstVecType.getRank();
   if (isScalarLike(srcType))
     return 2;
