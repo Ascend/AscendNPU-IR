@@ -293,3 +293,13 @@ func.func @triton_V_C_kernel_backup(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %a
   hivm.hir.store ins(%7 : tensor<1x3xf32>) outs(%reinterpret_cast_0 : memref<1x3xf32, strided<[3, 1]>>)
   return
 }
+
+// -----
+
+// CHECK-LABEL: @copy_was_bool_to_int8_attr
+// CHECK: hivm.hir.load
+// CHECK-SAME: was_bool_to_int8 = true
+func.func @copy_was_bool_to_int8_attr(%src: memref<256xi8, #hivm.address_space<gm>>, %dst: memref<256xi8, #hivm.address_space<ub>>) attributes {global_kernel = "local"} {
+  memref.copy %src, %dst {was_bool_to_int8 = true} : memref<256xi8, #hivm.address_space<gm>> to memref<256xi8, #hivm.address_space<ub>>
+  return
+}

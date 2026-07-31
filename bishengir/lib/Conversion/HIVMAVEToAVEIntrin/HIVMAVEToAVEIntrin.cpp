@@ -23,6 +23,7 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
@@ -45,6 +46,47 @@ using namespace mlir;
 using namespace mlir::hivm;
 using namespace mlir::hivmave;
 using namespace mlir::hivm_regbaseintrins;
+
+static bool isI8BroadcastZero(Value value) {
+  auto broadcast = value.getDefiningOp<VFBroadcastScalarMaskOp>();
+  if (!broadcast || !broadcast.getSrc().getType().isInteger(8))
+    return false;
+  auto constOp = broadcast.getSrc().getDefiningOp<arith::ConstantOp>();
+  if (!constOp)
+    return false;
+  auto intAttr = dyn_cast<IntegerAttr>(constOp.getValue());
+  return intAttr && intAttr.getValue().isZero();
+}
+
+static VFCmpOp getFusibleWasBoolToInt8CmpUser(VFLoadOp load) {
+  if (!load->hasAttr(utils::wasBoolToInt8))
+    return {};
+  MemRefType memRefTy = load.getMemRefType();
+  Type elementType = memRefTy.getElementType();
+  if (!elementType.isInteger(8))
+    return {};
+  std::optional<hivm::AddressSpace> addrSpace =
+      hivm::getOptionalHIVMAddressSpace(memRefTy);
+  if (!addrSpace || *addrSpace != hivm::AddressSpace::UB)
+    return {};
+  Value loadResult = load.getResult(0);
+  if (!loadResult.hasOneUse())
+    return {};
+  auto cmpOp = dyn_cast<VFCmpOp>(*loadResult.getUsers().begin());
+  if (!cmpOp || cmpOp.getCmp() != CmpType::NE)
+    return {};
+  if (cmpOp.getLhs() != loadResult || !isI8BroadcastZero(cmpOp.getRhs()))
+    return {};
+  return cmpOp;
+}
+
+static bool isFusibleWasBoolToInt8Cmp(VFCmpOp cmpOp) {
+  VFLoadOp load = cmpOp.getLhs().getDefiningOp<VFLoadOp>();
+  if (!load)
+    return false;
+  VFCmpOp fusibleCmp = getFusibleWasBoolToInt8CmpUser(load);
+  return fusibleCmp && fusibleCmp.getOperation() == cmpOp.getOperation();
+}
 
 template <typename TargetTy, typename... Args>
 inline Value createTargetTyIfValid(OpBuilder &builder, const Location &loc,
@@ -875,6 +917,38 @@ struct HIVMLoadOpLowering : public ConvertOpToLLVMPattern<VFLoadOp> {
     }
 
     Type elementType = memRefTy.getElementType();
+    if (VFCmpOp boolToInt8Cmp = getFusibleWasBoolToInt8CmpUser(load)) {
+      auto predicateTy =
+          VectorType::get({util::PREDICATE_BITS}, rewriter.getI1Type());
+      Value pldsDist = rewriter.create<LLVM::ConstantOp>(
+          loc, rewriter.getI32Type(), rewriter.getI32IntegerAttr(0));
+      auto pLoadOp = rewriter.create<PLoadB8InstOp>(loc, predicateTy, dataPtr,
+                                                    offset, pldsDist, mode);
+      Value pLoadRes = pLoadOp->getResult(0);
+
+      int pbMode = getBitWidthFromAttr(boolToInt8Cmp);
+      if (pbMode == -1)
+        pbMode = getBitWidthFromAttr(load);
+      bool shouldSparsifyLayout = pbMode == 16 || pbMode == 32;
+      if (archIs910_95 && shouldSparsifyLayout)
+        pLoadRes =
+            preginterleaveDataLayoutForExtCast(rewriter, loc, pLoadRes, pbMode);
+
+      auto cmpMaskPge = boolToInt8Cmp.getMask().getDefiningOp<VFPgeOp>();
+      if (!cmpMaskPge || cmpMaskPge.getPattern() != PgePattern::ALL) {
+        Value cmpMask = getVLRegValueOrSelf(boolToInt8Cmp.getMask(), rewriter);
+        Value allMask = createMaskByPGE(rewriter, loc);
+        pLoadRes = rewriter.create<PandB8InstrOp>(loc, predicateTy, pLoadRes,
+                                                  cmpMask, allMask);
+      }
+
+      pLoadRes = castToTypeIfNeeded(rewriter, loc, pLoadRes,
+                                    boolToInt8Cmp.getRes().getType());
+      rewriter.replaceOp(boolToInt8Cmp, pLoadRes);
+      rewriter.eraseOp(load);
+      return success();
+    }
+
     if (elementType.isUnsignedInteger(64)) {
       auto result = rewriter.create<Vldsx1V32U64InstrOp>(loc, vtype, dataPtr,
                                                          offset, dist, mode);
@@ -1591,6 +1665,9 @@ struct HIVMCmpOpLowering : public ConvertOpToLLVMPattern<VFCmpOp> {
   LogicalResult
   matchAndRewrite(VFCmpOp cmpOp, VFCmpOp::Adaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
+    if (isFusibleWasBoolToInt8Cmp(cmpOp))
+      return rewriter.notifyMatchFailure(
+          cmpOp, "was_bool_to_int8 compare is fused by load lowering");
 
     Value res;
     switch (cmpOp.getCmp()) {
