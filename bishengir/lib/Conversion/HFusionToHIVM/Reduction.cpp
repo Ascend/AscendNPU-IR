@@ -103,7 +103,7 @@ static hivm::ReduceOpAttr getReduceOpAttr(Operation *op) {
   auto *ctx = op->getContext();
 
   if (auto reduceOp = dyn_cast<hfusion::ReduceWithIndexOp>(op)) {
-    kind = isRegBasedArch ? getReduceWithIndexKind(reduceOp) : getReduceWithIndexOpAttr(reduceOp);
+    kind = getReduceWithIndexOpAttr(reduceOp);
   } else if (auto reduceOp = dyn_cast<linalg::ReduceOp>(op)) {
     Block &body = reduceOp.getCombiner().front();
     auto yieldOp = dyn_cast<linalg::YieldOp>(body.getTerminator());

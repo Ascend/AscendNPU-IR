@@ -1083,13 +1083,6 @@ struct VReduceInitInitializing : public OpRewritePattern<hivm::VReduceOp> {
       return failure();
     }
 
-    // On reg-based arch (Ascend950/310B), skip scalar-loop init seeding; the
-    // template-lib / compiler path owns reduce init.
-    auto mod = op->getParentOfType<ModuleOp>();
-    if (hacc::utils::isRegBasedArch(mod)) {
-      return failure();
-    }
-
     static constexpr llvm::StringLiteral kAlreadyInitalizeInit =
         "already_initialize_init";
     if (op->hasAttr(kAlreadyInitalizeInit)) {

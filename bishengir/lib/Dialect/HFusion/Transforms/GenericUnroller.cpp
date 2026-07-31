@@ -567,7 +567,10 @@ struct HandleReduceWithIndexOpPattern : public OpRewritePattern<hfusion::ReduceW
       return failure();
     }
     bool unsignedCmp = op->getAttrOfType<BoolAttr>("unsigned_src").getValue();
-
+    auto moduleOp = op->getParentOfType<ModuleOp>();
+    if (moduleOp && hacc::utils::isRegBasedArch(moduleOp) && !unsignedCmp) {
+      return failure();
+    }
     SmallVector<unsigned> reduceDims;
     op.getReductionDims(reduceDims);
     assert(reduceDims.size() == 1 && "according to .td spec of ReduceWithIndexOp, only one reduce dim is supported");
