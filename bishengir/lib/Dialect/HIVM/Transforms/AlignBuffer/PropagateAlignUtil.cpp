@@ -19,6 +19,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/AlignBuffer/Util.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -1103,6 +1104,41 @@ FailureOrCastVec propagateYieldOp(RewriterBase &rewriter, scf::YieldOp yieldOp,
   return UnrealizedCastOpVec{};
 }
 
+/// Push down an UnrealizedConversionCastOp past a scope::ReturnOp.
+/// This updates the parent scope::ScopeOp result type and inserts
+/// a conversion cast after the scope result to cast back to original type.
+FailureOrCastVec propagateScopeReturnOp(RewriterBase &rewriter,
+                                        UnrealizedConversionCastOp conversionOp,
+                                        scope::ReturnOp returnOp,
+                                        unsigned int operandIndex) {
+  LDBG("propagate unrealized conversion cast down scope.return op : "
+      << *returnOp);
+  auto scopeOp = cast<scope::ScopeOp>(returnOp->getParentOp());
+
+  // Replace scope.return operand with conversion input (aligned type)
+  auto alignedValue = conversionOp.getInputs()[0];
+  auto alignedType = alignedValue.getType();
+  auto origType = conversionOp.getResult(0).getType();
+
+  rewriter.modifyOpInPlace(returnOp, [&]() {
+    returnOp.setOperand(operandIndex, alignedValue);
+  });
+
+  // Update scope.scope result type to aligned type
+  auto scopeResult = scopeOp.getResult(operandIndex);
+  scopeResult.setType(alignedType);
+
+  // Insert conversion cast after scope.scope result to cast back to original
+  // type
+  rewriter.setInsertionPointAfter(scopeOp);
+  auto resultConversionOp = rewriter.create<UnrealizedConversionCastOp>(
+      scopeOp.getLoc(), origType, scopeResult);
+  rewriter.replaceAllUsesExcept(scopeResult, resultConversionOp.getResult(0),
+                                resultConversionOp);
+
+  return UnrealizedCastOpVec{resultConversionOp};
+}
+
 /// Push down an UnrealizedConversionCastOp past a UnrealizedConversionCastOp.
 FailureOrCastVec
 propagateUnrealizedConversionCastOp(RewriterBase &rewriter,
@@ -1646,6 +1682,10 @@ LogicalResult mlir::hivm::replaceAndPropagateMemRefType(RewriterBase &rewriter,
                 return propagateYieldOp(rewriter, yieldOp,
                                         use->getOperandNumber());
               })
+              .Case([&rewriter, &conversion, &use](scope::ReturnOp returnOp) {
+ 	              return propagateScopeReturnOp(rewriter, conversion, returnOp,
+ 	                                            use->getOperandNumber());
+ 	            })
               .Case([&rewriter,
                      &conversion](UnrealizedConversionCastOp conversionOp) {
                 return propagateUnrealizedConversionCastOp(rewriter, conversion,
