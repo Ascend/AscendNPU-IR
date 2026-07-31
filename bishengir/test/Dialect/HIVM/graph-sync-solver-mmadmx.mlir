@@ -1,4 +1,4 @@
-// RUN: bishengir-opt -hivm-graph-sync-solver -hivm-lower-multi-buffer-counter -split-input-file %s | FileCheck %s
+// RUN: bishengir-opt "-hivm-graph-sync-solver=solver-version=v1" -hivm-lower-multi-buffer-counter -split-input-file %s | FileCheck %s
 
 // ============================================================================
 // GraphSyncSolver MmadMxL1Op sync injection tests

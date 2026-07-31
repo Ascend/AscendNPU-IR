@@ -45,7 +45,8 @@ bool Occurrence::sameScope(Occurrence *occ1, Occurrence *occ2) {
 
 int Occurrence::getDepth(Occurrence *occ) {
   int ret = 0;
-  while (occ != nullptr) {
+  assert(occ != nullptr);
+  while (occ->parentOcc != nullptr) {
     occ = occ->parentOcc;
     ret++;
   }

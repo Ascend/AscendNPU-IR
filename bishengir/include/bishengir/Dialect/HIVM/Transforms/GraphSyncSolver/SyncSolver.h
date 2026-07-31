@@ -205,10 +205,6 @@ protected:
 
   virtual void processOrders() = 0;
 
-  virtual void processConflict(Occurrence *occ1, Occurrence *occ2,
-                               RWOperation *rwOp1, RWOperation *rwOp2,
-                               bool isUseless);
-
   std::optional<Scope *>
   getMultiBufferScope(RWOperation *rwOp1, RWOperation *rwOp2,
                       const llvm::SmallVector<MemInfo> &memInfoList1,
@@ -302,6 +298,8 @@ protected:
   // Feasibility checks and bookkeeping accessors used by the solver loop.
   bool checkImpossibleOccPair(Occurrence *occ1, Occurrence *occ2);
 
+  bool checkSkipCrossCorePair(hivm::TCoreType coreTypeSrc,
+                              hivm::TCoreType coreTypeDst);
   bool checkSkipCrossCorePair(Occurrence *occ1, Occurrence *occ2);
 
   bool checkSkipParallelLoop(Occurrence *occ1, Occurrence *occ2);
@@ -391,22 +389,22 @@ protected:
   bool checkRepeatMultiBufferFlagId(ConflictPair *conflictPair);
 
   // Primary handler invoked to register/record a found conflict.
-  void handleConflict(Occurrence *occ1, Occurrence *occ2, RWOperation *rwOp1,
-                      RWOperation *rwOp2, CorePipeInfo corePipeSrc,
-                      CorePipeInfo corePipeDst, bool isUseless);
 
-  void handleBarrierConflict(Occurrence *occ1, Occurrence *occ2,
-                             CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst,
-                             EventIdInfo eventIdInfo, bool isUseless);
+  ConflictPair *handleBarrierConflict(Occurrence *occ1, Occurrence *occ2,
+                                      CorePipeInfo corePipeSrc,
+                                      CorePipeInfo corePipeDst,
+                                      EventIdInfo eventIdInfo, bool isUseless);
 
-  void handleSetWaitConflict(Occurrence *occ1, Occurrence *occ2,
-                             CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst,
-                             EventIdInfo eventIdInfo, bool isUseless);
+  ConflictPair *handleSetWaitConflict(Occurrence *occ1, Occurrence *occ2,
+                                      CorePipeInfo corePipeSrc,
+                                      CorePipeInfo corePipeDst,
+                                      EventIdInfo eventIdInfo, bool isUseless);
 
-  void handleUnitFlagConflict(Occurrence *occ1, Occurrence *occ2,
-                              CorePipeInfo corePipeSrc,
-                              CorePipeInfo corePipeDst,
-                              UnitFlagInfo unitFlagInfo, bool isUseless);
+  ConflictPair *handleUnitFlagConflict(Occurrence *occ1, Occurrence *occ2,
+                                       CorePipeInfo corePipeSrc,
+                                       CorePipeInfo corePipeDst,
+                                       UnitFlagInfo unitFlagInfo,
+                                       bool isUseless);
 
   Occurrence *getFirstIterOcc(Occurrence *occ, Occurrence *parOcc);
 
@@ -476,14 +474,26 @@ protected:
 
 class SyncSolverV1 : public SyncSolverBase {
 public:
+  struct ProcessingOrderV1 {
+    Occurrence *occ1{nullptr};
+    Occurrence *occ2{nullptr};
+    RWOperation *rwOp1{nullptr};
+    RWOperation *rwOp2{nullptr};
+    bool isUseless{false};
+    ProcessingOrderV1(Occurrence *occ1, Occurrence *occ2, RWOperation *rwOp1,
+                      RWOperation *rwOp2, bool isUseless)
+        : occ1(occ1), occ2(occ2), rwOp1(rwOp1), rwOp2(rwOp2),
+          isUseless(isUseless) {}
+  };
+
   SyncSolverV1() = delete;
   explicit SyncSolverV1(std::unique_ptr<IRTranslator> irTranslator)
       : SyncSolverBase(std::move(irTranslator)) {}
 
 protected:
-  std::vector<ProcessingOrder> processingOrders;
+  std::vector<ProcessingOrderV1> processingOrders;
 
-  void processOrder(ProcessingOrder processingOrder);
+  void processOrder(ProcessingOrderV1 processingOrder);
   void processOrders() override;
   void buildOfflineProcessingOrders(Occurrence *occ, bool isUseless = false);
   void generateProcessingOrders(Occurrence *occ1, Occurrence *occ2,
@@ -500,6 +510,71 @@ protected:
                                 Occurrence *occ1, Occurrence *occ2,
                                 bool isUseless);
   bool skipLaterIterations(Occurrence *occ1, Occurrence *occ2);
+
+  void processConflict(Occurrence *occ1, Occurrence *occ2, RWOperation *rwOp1,
+                       RWOperation *rwOp2, bool isUseless);
+
+  ConflictPair *handleConflict(Occurrence *occ1, Occurrence *occ2,
+                               RWOperation *rwOp1, RWOperation *rwOp2,
+                               CorePipeInfo corePipeSrc,
+                               CorePipeInfo corePipeDst, bool isUseless);
+};
+
+class SyncSolverV2 : public SyncSolverBase {
+public:
+  struct ProcessingOrderV2 {
+    Occurrence *lcaOcc1{nullptr};
+    Occurrence *lcaOcc2{nullptr};
+    Occurrence *occ1{nullptr};
+    Occurrence *occ2{nullptr};
+    RWOperation *rwOp1{nullptr};
+    RWOperation *rwOp2{nullptr};
+    CorePipeInfo corePipeSrc;
+    CorePipeInfo corePipeDst;
+    bool isUseless{false};
+
+    ProcessingOrderV2(Occurrence *lcaOcc1, Occurrence *lcaOcc2,
+                      Occurrence *occ1, Occurrence *occ2, RWOperation *rwOp1,
+                      RWOperation *rwOp2, CorePipeInfo corePipeSrc,
+                      CorePipeInfo corePipeDst, bool isUseless)
+        : lcaOcc1(lcaOcc1), lcaOcc2(lcaOcc2), occ1(occ1), occ2(occ2),
+          rwOp1(rwOp1), rwOp2(rwOp2), corePipeSrc(corePipeSrc),
+          corePipeDst(corePipeDst), isUseless(isUseless) {}
+  };
+
+  SyncSolverV2() = delete;
+  explicit SyncSolverV2(std::unique_ptr<IRTranslator> irTranslator)
+      : SyncSolverBase(std::move(irTranslator)) {}
+
+protected:
+  bool processOrder(ProcessingOrderV2 processingOrder);
+  void processOrder(Occurrence *occ1, Occurrence *occ2, RWOperation *rwOp1,
+                    RWOperation *rwOp2, bool isUseless);
+  void processOrders() override;
+
+  void generateProcessingOrders(Occurrence *lcaOcc1, Occurrence *lcaOcc2,
+                                const llvm::ArrayRef<Occurrence *> &occs1,
+                                const llvm::ArrayRef<Occurrence *> &occs2,
+                                bool isUseless, bool occs1IsLcaOcc1 = false,
+                                bool occs2IsLcaOcc2 = false);
+  void generateProcessingOrders(Occurrence *occ1, Occurrence *occ2,
+                                bool isUseless);
+  void generateProcessingOrders(Occurrence *lcaOcc,
+                                const llvm::ArrayRef<Occurrence *> &occs,
+                                bool isUseless);
+  void generateProcessingOrders(Scope *scopeOp, Occurrence *occ,
+                                bool isUseless);
+  void generateProcessingOrders(Loop *loopOp, Occurrence *occ, bool isUseless);
+  void collectProcessingOrders(Occurrence *occ, bool isUseless = false);
+
+  void processConflict(Occurrence *occ1, Occurrence *occ2, RWOperation *rwOp1,
+                       RWOperation *rwOp2, bool isUseless);
+
+  ConflictPair *handleConflict(Occurrence *occ1, Occurrence *occ2,
+                               RWOperation *rwOp1, RWOperation *rwOp2,
+                               CorePipeInfo corePipeSrc,
+                               CorePipeInfo corePipeDst,
+                               EventIdInfo eventIdInfo, bool isUseless);
 };
 
 SyncSolverVersion parseSyncSolverVersion(llvm::StringRef value);

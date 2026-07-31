@@ -2,6 +2,8 @@
 
 #include "llvm/ADT/STLExtras.h"
 
+#define DEBUG_TYPE "hivm-gss-solver"
+
 using namespace mlir;
 using namespace hivm::syncsolver;
 
@@ -105,7 +107,8 @@ void SyncSolverV1::generateProcessingOrders(RWOperation *rwOp1,
   assert(rwOp2 != nullptr && occ2 != nullptr);
   assert(occ1->op == rwOp1);
   assert(occ2->op == rwOp2);
-  processingOrders.emplace_back(occ1, occ2, rwOp1, rwOp2, isUseless);
+  processingOrders.push_back(
+      ProcessingOrderV1(occ1, occ2, rwOp1, rwOp2, isUseless));
 }
 
 void SyncSolverV1::buildOfflineProcessingOrders(Occurrence *occ,
@@ -133,7 +136,7 @@ void SyncSolverV1::buildOfflineProcessingOrders(Occurrence *occ,
   }
 }
 
-void SyncSolverV1::processOrder(ProcessingOrder processingOrder) {
+void SyncSolverV1::processOrder(ProcessingOrderV1 processingOrder) {
   auto [occ1, occ2, rwOp1, rwOp2, isUseless] = processingOrder;
   assert(occ1 != occ2);
   assert(occ1->syncIrIndex < occ2->syncIrIndex);
@@ -167,5 +170,51 @@ void SyncSolverV1::processOrders() {
   }
   for (auto &processingOrder : processingOrders) {
     processOrder(processingOrder);
+  }
+}
+
+void SyncSolverV1::processConflict(Occurrence *occ1, Occurrence *occ2,
+                                   RWOperation *rwOp1, RWOperation *rwOp2,
+                                   bool isUseless) {
+  for (auto [corePipeSrc, corePipeDst] : getMemoryConflicts(rwOp1, rwOp2)) {
+    if (options.alwaysUsePipeSAsWaitingPipe) {
+      corePipeDst.pipe = hivm::PIPE::PIPE_S;
+    }
+    handleConflict(occ1, occ2, rwOp1, rwOp2, corePipeSrc, corePipeDst,
+                   isUseless);
+  }
+}
+
+ConflictPair *SyncSolverV1::handleConflict(
+    Occurrence *occ1, Occurrence *occ2, RWOperation *rwOp1, RWOperation *rwOp2,
+    CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst, bool isUseless) {
+  bool isBarrier = corePipeSrc == corePipeDst;
+  auto unitFlagInfo =
+      isBarrier ? std::nullopt : checkUnitFlagPatterns(occ1, occ2);
+  auto eventIdInfo =
+      getEventIdInfo(occ1, occ2, rwOp1, rwOp2, corePipeSrc, corePipeDst);
+  if (!checkGraphConflict(occ1, occ2, corePipeSrc, corePipeDst, eventIdInfo)) {
+    return nullptr;
+  }
+
+  LLVM_DEBUG({
+    llvm::dbgs() << "conflict found: "
+                 << "isUseless: " << isUseless
+                 << " eventIdNum: " << eventIdInfo.eventIdNum << "\n";
+    llvm::dbgs() << occ1->syncIrIndex << ' ' << occ1->startIndex << ' '
+                 << occ1->endIndex << ' ' << rwOp1->str(0, false) << '\n';
+    llvm::dbgs() << occ2->syncIrIndex << ' ' << occ2->startIndex << ' '
+                 << occ2->endIndex << ' ' << rwOp2->str(0, false) << '\n';
+  });
+  if (isBarrier) {
+    eventIdInfo.setEventIdNum(1);
+    return handleBarrierConflict(occ1, occ2, corePipeSrc, corePipeDst,
+                                 eventIdInfo, isUseless);
+  } else if (unitFlagInfo) {
+    return handleUnitFlagConflict(occ1, occ2, corePipeSrc, corePipeDst,
+                                  unitFlagInfo.value(), isUseless);
+  } else {
+    return handleSetWaitConflict(occ1, occ2, corePipeSrc, corePipeDst,
+                                 eventIdInfo, isUseless);
   }
 }

@@ -212,8 +212,13 @@ bool PointerLikeInfo::checkConflict(
   return false;
 }
 
-bool AllocLikeInfo::checkConflict(const AllocLikeInfo &allocLikeInfo1,
-                                  const AllocLikeInfo &allocLikeInfo2) {
+bool AllocLikeInfo::checkConflict(
+    const AllocLikeInfo &allocLikeInfo1, const AllocLikeInfo &allocLikeInfo2,
+    std::optional<int64_t> lcmLen, std::optional<int64_t> eventIdNum,
+    std::optional<std::pair<int64_t, int64_t>> offsetPair) {
+  (void)lcmLen;
+  (void)eventIdNum;
+  (void)offsetPair;
   return allocLikeInfo1.op == allocLikeInfo2.op;
 }
 
@@ -273,7 +278,8 @@ static bool checkUnderlyingMemoryConflict(
   if (memInfo1.allocLikeInfo.has_value() &&
       memInfo2.allocLikeInfo.has_value()) {
     return AllocLikeInfo::checkConflict(memInfo1.allocLikeInfo.value(),
-                                        memInfo2.allocLikeInfo.value());
+                                        memInfo2.allocLikeInfo.value(), lcmLen,
+                                        eventIdNum, offsetPair);
   }
   return memInfo1.value == memInfo2.value;
 }

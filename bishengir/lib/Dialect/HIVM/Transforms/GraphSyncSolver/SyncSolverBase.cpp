@@ -53,6 +53,9 @@ mlir::hivm::syncsolver::parseSyncSolverVersion(llvm::StringRef value) {
   if (value.empty() || value.equals_insensitive("v1")) {
     return SyncSolverVersion::V1;
   }
+  if (value.equals_insensitive("v2")) {
+    return SyncSolverVersion::V2;
+  }
   llvm_unreachable("unknown SyncSolver version");
 }
 
@@ -61,6 +64,8 @@ std::unique_ptr<SyncSolverBase> mlir::hivm::syncsolver::createSolver(
   switch (irTranslator->options.solverVersion) {
   case SyncSolverVersion::V1:
     return std::make_unique<SyncSolverV1>(std::move(irTranslator));
+  case SyncSolverVersion::V2:
+    return std::make_unique<SyncSolverV2>(std::move(irTranslator));
   }
   llvm_unreachable("unsupported SyncSolver version");
 }
@@ -136,6 +141,22 @@ Occurrence *SyncSolverBase::getLastIterOcc(Occurrence *occ,
   return *it;
 }
 
+bool SyncSolverBase::checkSkipCrossCorePair(hivm::TCoreType coreTypeSrc,
+                                            hivm::TCoreType coreTypeDst) {
+  if (!options.isCrossCoreMode()) {
+    return false;
+  }
+  assert(coreTypeSrc != hivm::TCoreType::CUBE_OR_VECTOR);
+  assert(coreTypeDst != hivm::TCoreType::CUBE_OR_VECTOR);
+  if (coreTypeSrc == coreTypeDst) {
+    return true;
+  }
+  if (coreTypeSrc == hivm::TCoreType::CUBE_AND_VECTOR) {
+    return true;
+  }
+  return false;
+}
+
 bool SyncSolverBase::checkSkipCrossCorePair(Occurrence *occ1,
                                             Occurrence *occ2) {
   if (!options.isCrossCoreMode()) {
@@ -144,15 +165,7 @@ bool SyncSolverBase::checkSkipCrossCorePair(Occurrence *occ1,
   auto *rwOp1 = llvm::dyn_cast<RWOperation>(occ1->op);
   auto *rwOp2 = llvm::dyn_cast<RWOperation>(occ2->op);
   assert(rwOp1 != nullptr && rwOp2 != nullptr);
-  assert(rwOp1->coreType != hivm::TCoreType::CUBE_OR_VECTOR);
-  assert(rwOp2->coreType != hivm::TCoreType::CUBE_OR_VECTOR);
-  if (rwOp1->coreType == rwOp2->coreType) {
-    return true;
-  }
-  if (rwOp1->coreType == hivm::TCoreType::CUBE_AND_VECTOR) {
-    return true;
-  }
-  return false;
+  return checkSkipCrossCorePair(rwOp1->coreType, rwOp2->coreType);
 }
 
 bool SyncSolverBase::checkSkipParallelLoop(Occurrence *occ1, Occurrence *occ2) {
@@ -1997,11 +2010,9 @@ bool SyncSolverBase::checkRepeatMultiBufferFlagId(ConflictPair *conflictPair) {
 
 // TODO: refactor handleSetWaitConflict and split it into 3 cases (intra-core,
 // cross-core, cv).
-void SyncSolverBase::handleSetWaitConflict(Occurrence *occ1, Occurrence *occ2,
-                                           CorePipeInfo corePipeSrc,
-                                           CorePipeInfo corePipeDst,
-                                           EventIdInfo eventIdInfo,
-                                           bool isUseless) {
+ConflictPair *SyncSolverBase::handleSetWaitConflict(
+    Occurrence *occ1, Occurrence *occ2, CorePipeInfo corePipeSrc,
+    CorePipeInfo corePipeDst, EventIdInfo eventIdInfo, bool isUseless) {
   assert(occ1 != nullptr && occ2 != nullptr);
   auto *rwOp1 = llvm::dyn_cast_if_present<RWOperation>(occ1->op);
   auto *rwOp2 = llvm::dyn_cast_if_present<RWOperation>(occ2->op);
@@ -2014,7 +2025,7 @@ void SyncSolverBase::handleSetWaitConflict(Occurrence *occ1, Occurrence *occ2,
       std::tie(setWaitPairInfo.setOcc, setWaitPairInfo.waitOcc);
   if (setWaitPairInfo.isCVPreloading) {
     if (checkSkipCVPreloadingPair(occ1, occ2)) {
-      return;
+      return nullptr;
     }
   }
 
@@ -2062,6 +2073,7 @@ void SyncSolverBase::handleSetWaitConflict(Occurrence *occ1, Occurrence *occ2,
   auto conflictPair = std::make_unique<ConflictPair>(
       rwOp1, rwOp2, setOcc->op, waitOcc->op, setOcc, waitOcc, corePipeSrc,
       corePipeDst, setOcc->endIndex, waitOcc->startIndex);
+  auto *newConflictPair = conflictPair.get();
   assert(conflictPair->startIndex <= conflictPair->endIndex);
   conflictPair->isBackwardPair = setWaitPairInfo.isBackwardPair;
   conflictPair->isInnerBackward =
@@ -2125,7 +2137,7 @@ void SyncSolverBase::handleSetWaitConflict(Occurrence *occ1, Occurrence *occ2,
   // try reusing existing conflict-pair
   if (options.reuseSyncPairToSaveEventIds) {
     if (reuseConflictPair(conflictPair.get(), normScopeOcc1, normScopeOcc2)) {
-      return;
+      return nullptr;
     }
   }
 
@@ -2174,7 +2186,7 @@ void SyncSolverBase::handleSetWaitConflict(Occurrence *occ1, Occurrence *occ2,
       getIntersectingConflictPairs(conflictPair.get());
   curEventIdSolver->addConflicts(conflictPair.get(), intersectingConflictPairs);
   if (!checkColorable()) {
-    return;
+    return nullptr;
   }
 
   LLVM_DEBUG({
@@ -2236,7 +2248,7 @@ void SyncSolverBase::handleSetWaitConflict(Occurrence *occ1, Occurrence *occ2,
       if (!insertExtraConflictPair(parentLCALoopBeforePHOcc,
                                    parentLCALoopAfterPHOcc,
                                    parentLCALoopOcc->parentOcc)) {
-        return;
+        return nullptr;
       }
     }
   }
@@ -2246,11 +2258,11 @@ void SyncSolverBase::handleSetWaitConflict(Occurrence *occ1, Occurrence *occ2,
     auto *loopOpOcc2 = getLastIterOcc(setOcc, parentLCALoopOcc);
     if (!insertExtraConflictPair(parentLCALoopBeforePHOcc, loopOpOcc1,
                                  parentLCALoopOcc, /*couldNotRun=*/true)) {
-      return;
+      return nullptr;
     }
     if (!insertExtraConflictPair(loopOpOcc2, parentLCALoopAfterPHOcc,
                                  parentLCALoopOcc, /*couldNotRun=*/true)) {
-      return;
+      return nullptr;
     }
   }
 
@@ -2273,13 +2285,12 @@ void SyncSolverBase::handleSetWaitConflict(Occurrence *occ1, Occurrence *occ2,
     scopeOccChosenConflicts[parentScope].insert(extraConflictPair.get());
     chosenConflictedPairs.push_back(std::move(extraConflictPair));
   }
+  return newConflictPair;
 }
 
-void SyncSolverBase::handleBarrierConflict(Occurrence *occ1, Occurrence *occ2,
-                                           CorePipeInfo corePipeSrc,
-                                           CorePipeInfo corePipeDst,
-                                           EventIdInfo eventIdInfo,
-                                           bool isUseless) {
+ConflictPair *SyncSolverBase::handleBarrierConflict(
+    Occurrence *occ1, Occurrence *occ2, CorePipeInfo corePipeSrc,
+    CorePipeInfo corePipeDst, EventIdInfo eventIdInfo, bool isUseless) {
   assert(occ1 != nullptr && occ2 != nullptr);
   auto *rwOp1 = llvm::dyn_cast_if_present<RWOperation>(occ1->op);
   auto *rwOp2 = llvm::dyn_cast_if_present<RWOperation>(occ2->op);
@@ -2287,11 +2298,11 @@ void SyncSolverBase::handleBarrierConflict(Occurrence *occ1, Occurrence *occ2,
 
   assert(corePipeSrc == corePipeDst);
   if (corePipeSrc.pipe == hivm::PIPE::PIPE_S) {
-    return;
+    return nullptr;
   }
   if (options.isRegBasedArch) {
     if (corePipeSrc.pipe == hivm::PIPE::PIPE_V) {
-      return;
+      return nullptr;
     }
   }
   if (corePipeSrc.pipe == hivm::PIPE::PIPE_M) {
@@ -2303,6 +2314,7 @@ void SyncSolverBase::handleBarrierConflict(Occurrence *occ1, Occurrence *occ2,
   auto conflictPair = std::make_unique<ConflictPair>(
       rwOp1, rwOp2, waitOcc->op, waitOcc->op, waitOcc, waitOcc, corePipeSrc,
       corePipeDst, waitOcc->startIndex, waitOcc->startIndex);
+  auto *newConflictPair = conflictPair.get();
   conflictPair->isUseless = isUseless;
   assert(conflictPair->startIndex <= conflictPair->endIndex);
 
@@ -2311,13 +2323,12 @@ void SyncSolverBase::handleBarrierConflict(Occurrence *occ1, Occurrence *occ2,
   auto *normScopeOcc = waitOcc->parentOcc;
   scopeOccChosenConflicts[normScopeOcc].insert(conflictPair.get());
   chosenConflictedPairs.push_back(std::move(conflictPair));
+  return newConflictPair;
 }
 
-void SyncSolverBase::handleUnitFlagConflict(Occurrence *occ1, Occurrence *occ2,
-                                            CorePipeInfo corePipeSrc,
-                                            CorePipeInfo corePipeDst,
-                                            UnitFlagInfo unitFlagInfo,
-                                            bool isUseless) {
+ConflictPair *SyncSolverBase::handleUnitFlagConflict(
+    Occurrence *occ1, Occurrence *occ2, CorePipeInfo corePipeSrc,
+    CorePipeInfo corePipeDst, UnitFlagInfo unitFlagInfo, bool isUseless) {
   assert(occ1 != nullptr && occ2 != nullptr);
   auto *rwOp1 = llvm::dyn_cast_if_present<RWOperation>(occ1->op);
   auto *rwOp2 = llvm::dyn_cast_if_present<RWOperation>(occ2->op);
@@ -2332,6 +2343,7 @@ void SyncSolverBase::handleUnitFlagConflict(Occurrence *occ1, Occurrence *occ2,
   auto conflictPair = std::make_unique<ConflictPair>(
       rwOp1, rwOp2, setOcc->op, waitOcc->op, setOcc, waitOcc, corePipeSrc,
       corePipeDst, setOcc->endIndex, waitOcc->startIndex);
+  auto *newConflictPair = conflictPair.get();
   assert(conflictPair->startIndex <= conflictPair->endIndex);
 
   conflictPair->isUseless = true;
@@ -2375,41 +2387,7 @@ void SyncSolverBase::handleUnitFlagConflict(Occurrence *occ1, Occurrence *occ2,
         conflictPair.get());
   }
   chosenConflictedPairs.push_back(std::move(conflictPair));
-}
-
-void SyncSolverBase::handleConflict(Occurrence *occ1, Occurrence *occ2,
-                                    RWOperation *rwOp1, RWOperation *rwOp2,
-                                    CorePipeInfo corePipeSrc,
-                                    CorePipeInfo corePipeDst, bool isUseless) {
-  bool isBarrier = corePipeSrc == corePipeDst;
-  auto unitFlagInfo =
-      isBarrier ? std::nullopt : checkUnitFlagPatterns(occ1, occ2);
-  auto eventIdInfo =
-      getEventIdInfo(occ1, occ2, rwOp1, rwOp2, corePipeSrc, corePipeDst);
-  if (!checkGraphConflict(occ1, occ2, corePipeSrc, corePipeDst, eventIdInfo)) {
-    return;
-  }
-
-  LLVM_DEBUG({
-    llvm::dbgs() << "conflict found: "
-                 << "isUseless: " << isUseless
-                 << " eventIdNum: " << eventIdInfo.eventIdNum << "\n";
-    llvm::dbgs() << occ1->syncIrIndex << ' ' << occ1->startIndex << ' '
-                 << occ1->endIndex << ' ' << rwOp1->str(0, false) << '\n';
-    llvm::dbgs() << occ2->syncIrIndex << ' ' << occ2->startIndex << ' '
-                 << occ2->endIndex << ' ' << rwOp2->str(0, false) << '\n';
-  });
-  if (isBarrier) {
-    eventIdInfo.setEventIdNum(1);
-    handleBarrierConflict(occ1, occ2, corePipeSrc, corePipeDst, eventIdInfo,
-                          isUseless);
-  } else if (unitFlagInfo) {
-    handleUnitFlagConflict(occ1, occ2, corePipeSrc, corePipeDst,
-                           unitFlagInfo.value(), isUseless);
-  } else {
-    handleSetWaitConflict(occ1, occ2, corePipeSrc, corePipeDst, eventIdInfo,
-                          isUseless);
-  }
+  return newConflictPair;
 }
 
 void SyncSolverBase::calcAllEventIds() {
@@ -2812,18 +2790,6 @@ SyncBeforeAfterMap SyncSolverBase::getBeforeAfterSyncMaps() {
         return getEventIdSolverRef(pipeSrc, pipeDst);
       });
   return std::make_pair(std::move(syncMapBefore), std::move(syncMapAfter));
-}
-
-void SyncSolverBase::processConflict(Occurrence *occ1, Occurrence *occ2,
-                                     RWOperation *rwOp1, RWOperation *rwOp2,
-                                     bool isUseless) {
-  for (auto [corePipeSrc, corePipeDst] : getMemoryConflicts(rwOp1, rwOp2)) {
-    if (options.alwaysUsePipeSAsWaitingPipe) {
-      corePipeDst.pipe = hivm::PIPE::PIPE_S;
-    }
-    handleConflict(occ1, occ2, rwOp1, rwOp2, corePipeSrc, corePipeDst,
-                   isUseless);
-  }
 }
 
 void SyncSolverBase::insertMergedBackwardSyncPairs() {

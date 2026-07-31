@@ -930,8 +930,9 @@ void IRTranslator::syncIrBuilder(OperationBase *op, Occurrence *parentOcc,
   }
 
   int startIndex = globalIndex++;
-  auto occ = std::make_unique<Occurrence>(op, parentOcc, depth, startIndex, -1);
-  occ->syncIrIndex = static_cast<int>(syncIr.size());
+  int syncIrIndex = static_cast<int>(syncIr.size());
+  auto occ = std::make_unique<Occurrence>(op, parentOcc, depth, syncIrIndex,
+                                          startIndex, /*endIdx=*/-1);
   if (auto *rwOp = dyn_cast<RWOperation>(op)) {
     occ->hasUnitFlagFeat = rwOp->hasUnitFlagFeat;
   }
@@ -959,4 +960,5 @@ void IRTranslator::syncIrBuilder(OperationBase *op, Occurrence *parentOcc,
   int endIndex = globalIndex++;
   occPtr->endIndex = endIndex;
   occPtr->syncIrEndIndex = static_cast<int>(syncIr.size());
+  occPtr->initMemInfoTree();
 }
