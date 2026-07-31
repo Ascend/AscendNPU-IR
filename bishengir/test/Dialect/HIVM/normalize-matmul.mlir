@@ -2645,6 +2645,7 @@ func.func @test_mmadmx_conditional_init_elemwise(%cond: i1, %bias: tensor<16x16x
 }
 }
 
+
 // -----
 // A5: a vtranspose feeding A is absorbed into a_transpose, and real MKN is then
 // read from the pre-transpose operand: (A[1], A[0], B[1]) = (16, 64, 32).
@@ -2753,6 +2754,90 @@ func.func @test_mmadL1_membase_keeps_vtranspose(%a: tensor<64x16xf16>, %b: tenso
   %empty = tensor.empty() : tensor<16x32xf32>
   %r = hivm.hir.mmadL1 ins(%at, %b, %true, %c0, %c0, %c0 : tensor<16x64xf16>, tensor<64x32xf16>, i1, index, index, index) outs(%empty : tensor<16x32xf32>) -> tensor<16x32xf32>
   return %r : tensor<16x32xf32>
+}
+}
+
+
+//===----------------------------------------------------------------------===//
+// A3 / mem-based (Ascend910B4): per-channel bias MUST NOT be folded into
+// MmadL1Op when A or B is transposed. The mem-based backend only registers
+// the non-transposed mma_tile BIAS symbol variants, so folding bias into a
+// transposed mmad would later lower to an undefined library call. The bias
+// is kept as a separate hivm.hir.vadd instead.
+//===----------------------------------------------------------------------===//
+
+// -----
+// CHECK-LABEL: func.func @test_madL1_perChannelAdd_b_transpose_keeps_vadd(
+// On mem-based arch with b_transpose, per-channel bias must NOT fold into
+// mmadL1 (no BIAS_TB symbol exists on 910B); the bias stays materialised as
+// a separate hivm.hir.vadd taking the mmad result and the bias broadcast.
+// CHECK: %[[BIAS:.*]] = hivm.hir.vbrc ins({{.*}} : tensor<1x768xf32>) outs({{.*}} : tensor<29x768xf32>) broadcast_dims = [0] -> tensor<29x768xf32>
+// CHECK: %[[MMAD:.*]] = hivm.hir.mmadL1 {b_transpose} ins({{.*}} : tensor<29x128xf16>, tensor<768x128xf16>, i1, index, index, index) outs({{.*}} : tensor<29x768xf32>) -> tensor<29x768xf32>
+// CHECK: %[[VADD:.*]] = hivm.hir.vadd ins(%[[MMAD]], %[[BIAS]] : tensor<29x768xf32>, tensor<29x768xf32>) outs({{.*}} : tensor<29x768xf32>) -> tensor<29x768xf32>
+module attributes {hacc.target = #hacc.target<"Ascend910B4">} {
+func.func @test_madL1_perChannelAdd_b_transpose_keeps_vadd(%arg2: memref<?xf16> , %arg3: memref<?xf16>, %arg4: memref<?xf16> , %arg5: memref<?xf32>) {
+  %false = arith.constant false
+  %c128 = arith.constant 128 : index
+  %c768 = arith.constant 768 : index
+  %c29 = arith.constant 29 : index
+  %reinterpret_cast = memref.reinterpret_cast %arg2 to offset: [0], sizes: [29, 128], strides: [128, 1] : memref<?xf16> to memref<29x128xf16, strided<[128, 1]>>
+  %reinterpret_cast_0 = memref.reinterpret_cast %arg3 to offset: [0], sizes: [768, 128], strides: [128, 1] : memref<?xf16> to memref<768x128xf16, strided<[128, 1]>>
+  %reinterpret_cast_1 = memref.reinterpret_cast %arg5 to offset: [0], sizes: [1, 768], strides: [768, 1] : memref<?xf32> to memref<1x768xf32, strided<[768, 1]>>
+  %reinterpret_cast_2 = memref.reinterpret_cast %arg4 to offset: [0], sizes: [29, 768], strides: [768, 1] : memref<?xf16> to memref<29x768xf16, strided<[768, 1]>>
+  %alloc = memref.alloc() : memref<29x128xf16>
+  hivm.hir.load ins(%reinterpret_cast : memref<29x128xf16, strided<[128, 1]>>) outs(%alloc : memref<29x128xf16>)
+  %9 = bufferization.to_tensor %alloc restrict writable : memref<29x128xf16>
+  %alloc_3 = memref.alloc() : memref<768x128xf16>
+  hivm.hir.load ins(%reinterpret_cast_0 : memref<768x128xf16, strided<[128, 1]>>) outs(%alloc_3 : memref<768x128xf16>)
+  %10 = bufferization.to_tensor %alloc_3 restrict writable : memref<768x128xf16>
+  %alloc_4 = memref.alloc() : memref<1x768xf32>
+  hivm.hir.load ins(%reinterpret_cast_1 : memref<1x768xf32, strided<[768, 1]>>) outs(%alloc_4 : memref<1x768xf32>)
+  %11 = bufferization.to_tensor %alloc_4 restrict writable : memref<1x768xf32>
+  %12 = tensor.empty() : tensor<29x768xf32>
+  %13 = hivm.hir.vbrc ins(%11 : tensor<1x768xf32>) outs(%12 : tensor<29x768xf32>) broadcast_dims = [0] -> tensor<29x768xf32>
+  %14 = hivm.hir.mmadL1 {b_transpose} ins(%9, %10, %false, %c29, %c128, %c768 : tensor<29x128xf16>, tensor<768x128xf16>, i1, index, index, index)
+        outs(%13 : tensor<29x768xf32>) -> tensor<29x768xf32>
+  %15 = tensor.empty() : tensor<29x768xf16>
+  %16 = hivm.hir.vcast ins(%14 : tensor<29x768xf32>) outs(%15 : tensor<29x768xf16>) round_mode = <rint> -> tensor<29x768xf16>
+  hivm.hir.store ins(%16 : tensor<29x768xf16>) outs(%reinterpret_cast_2 : memref<29x768xf16, strided<[768, 1]>>)
+  return
+}
+}
+// -----
+// CHECK-LABEL: func.func @test_madL1_perChannelAdd_a_transpose_keeps_vadd(
+// On mem-based arch with a_transpose, per-channel bias must NOT fold into
+// mmadL1 (no BIAS_TA symbol exists on 910B); the bias stays materialised as
+// a separate hivm.hir.vadd taking the mmad result and the bias broadcast.
+// CHECK: %[[BIAS:.*]] = hivm.hir.vbrc ins({{.*}} : tensor<1x768xf32>) outs({{.*}} : tensor<29x768xf32>) broadcast_dims = [0] -> tensor<29x768xf32>
+// CHECK: %[[MMAD:.*]] = hivm.hir.mmadL1 {a_transpose} ins({{.*}} : tensor<128x29xf16>, tensor<128x768xf16>, i1, index, index, index) outs({{.*}} : tensor<29x768xf32>) -> tensor<29x768xf32>
+// CHECK: %[[VADD:.*]] = hivm.hir.vadd ins(%[[MMAD]], %[[BIAS]] : tensor<29x768xf32>, tensor<29x768xf32>) outs({{.*}} : tensor<29x768xf32>) -> tensor<29x768xf32>
+module attributes {hacc.target = #hacc.target<"Ascend910B4">} {
+func.func @test_madL1_perChannelAdd_a_transpose_keeps_vadd(%arg2: memref<?xf16> , %arg3: memref<?xf16>, %arg4: memref<?xf16> , %arg5: memref<?xf32>) {
+  %false = arith.constant false
+  %c128 = arith.constant 128 : index
+  %c768 = arith.constant 768 : index
+  %c29 = arith.constant 29 : index
+  %reinterpret_cast = memref.reinterpret_cast %arg2 to offset: [0], sizes: [128, 29], strides: [29, 1] : memref<?xf16> to memref<128x29xf16, strided<[29, 1]>>
+  %reinterpret_cast_0 = memref.reinterpret_cast %arg3 to offset: [0], sizes: [128, 768], strides: [768, 1] : memref<?xf16> to memref<128x768xf16, strided<[768, 1]>>
+  %reinterpret_cast_1 = memref.reinterpret_cast %arg5 to offset: [0], sizes: [1, 768], strides: [768, 1] : memref<?xf32> to memref<1x768xf32, strided<[768, 1]>>
+  %reinterpret_cast_2 = memref.reinterpret_cast %arg4 to offset: [0], sizes: [29, 768], strides: [768, 1] : memref<?xf16> to memref<29x768xf16, strided<[768, 1]>>
+  %alloc = memref.alloc() : memref<128x29xf16>
+  hivm.hir.load ins(%reinterpret_cast : memref<128x29xf16, strided<[29, 1]>>) outs(%alloc : memref<128x29xf16>)
+  %9 = bufferization.to_tensor %alloc restrict writable : memref<128x29xf16>
+  %alloc_3 = memref.alloc() : memref<128x768xf16>
+  hivm.hir.load ins(%reinterpret_cast_0 : memref<128x768xf16, strided<[768, 1]>>) outs(%alloc_3 : memref<128x768xf16>)
+  %10 = bufferization.to_tensor %alloc_3 restrict writable : memref<128x768xf16>
+  %alloc_4 = memref.alloc() : memref<1x768xf32>
+  hivm.hir.load ins(%reinterpret_cast_1 : memref<1x768xf32, strided<[768, 1]>>) outs(%alloc_4 : memref<1x768xf32>)
+  %11 = bufferization.to_tensor %alloc_4 restrict writable : memref<1x768xf32>
+  %12 = tensor.empty() : tensor<29x768xf32>
+  %13 = hivm.hir.vbrc ins(%11 : tensor<1x768xf32>) outs(%12 : tensor<29x768xf32>) broadcast_dims = [0] -> tensor<29x768xf32>
+  %14 = hivm.hir.mmadL1 {a_transpose} ins(%9, %10, %false, %c29, %c128, %c768 : tensor<128x29xf16>, tensor<128x768xf16>, i1, index, index, index)
+        outs(%13 : tensor<29x768xf32>) -> tensor<29x768xf32>
+  %15 = tensor.empty() : tensor<29x768xf16>
+  %16 = hivm.hir.vcast ins(%14 : tensor<29x768xf32>) outs(%15 : tensor<29x768xf16>) round_mode = <rint> -> tensor<29x768xf16>
+  hivm.hir.store ins(%16 : tensor<29x768xf16>) outs(%reinterpret_cast_2 : memref<29x768xf16, strided<[768, 1]>>)
+  return
 }
 }
 
