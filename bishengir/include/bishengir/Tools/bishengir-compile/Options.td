@@ -314,7 +314,9 @@ def SaveTemps : DFXControlOptions<
   "Save intermediate compilation results to specified directory.",
   "std::string",
   "\"\""
->;
+> {
+  bit isSharedWithDownstreamToolchain = 1;
+}
 
 //===----------------------------------------------------------------------===//
 // General Optimization Control Options
