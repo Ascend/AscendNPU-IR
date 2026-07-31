@@ -157,7 +157,7 @@ struct FoldWidenedTransferReadAfterWrite
       activeSizes = maskSizes;
     }
 
-    for (size_t dim = 0, rank = readType.getRank(); dim < rank; ++dim) {
+    for (int64_t dim = 0, rank = readType.getRank(); dim < rank; ++dim) {
       if (activeSizes[dim] > writeType.getDimSize(dim) ||
           writeType.getDimSize(dim) > readType.getDimSize(dim))
         return failure();
