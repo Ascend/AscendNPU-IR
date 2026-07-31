@@ -18,7 +18,6 @@
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolverTester.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolverCodeGen.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolverIR.h"
-#include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolverTest.h"
 
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/Utility.h"
@@ -805,11 +804,12 @@ llvm::LogicalResult SyncTester::test() {
   SyncSolverOptions options(syncMode, /*isMemBasedArch=*/false,
                             /*isRegBasedArch=*/false);
   options.enableCVPatterns = true;
+  options.solverVersion = solverVersion;
 
   auto irTranslator =
       std::make_unique<IRTranslator>(std::move(funcIr), options);
 
-  auto solver = std::make_unique<SolverTest>(std::move(irTranslator));
+  auto solver = createSolver(std::move(irTranslator));
 
   DEBUG_WITH_TYPE("gss-print-unrolled-sync-ir", {
     for (auto &occ : solver->syncIr) {
@@ -854,7 +854,8 @@ llvm::LogicalResult SyncTester::test() {
 }
 
 // If environment indicates tester mode, parse env vars and run SyncTester.
-void SyncTester::runTestMode(const SmallVector<int64_t> &options) {
+void SyncTester::runTestMode(const SmallVector<int64_t> &options,
+                             const SyncSolverOptions &solverOptions) {
   if (options.size() != SyncTester::getOptionsNum()) {
     llvm::report_fatal_error(("Expected size of sync-tester options to be equal to " +
                               std::to_string(SyncTester::getOptionsNum()))
@@ -878,7 +879,7 @@ void SyncTester::runTestMode(const SmallVector<int64_t> &options) {
                << "\n";
 
   SyncTester tester(numOperations, numPointers, enableMultiBuffer,
-                    enableCrossCoreMode, initSeed);
+                    enableCrossCoreMode, solverOptions.solverVersion, initSeed);
 
   llvm::LogicalResult result = llvm::success();
   for (int64_t runI = 0; runI < numRuns; ++runI) {

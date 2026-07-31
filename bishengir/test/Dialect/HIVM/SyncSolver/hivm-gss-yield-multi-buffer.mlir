@@ -1,4 +1,5 @@
-// RUN: bishengir-opt -hivm-graph-sync-solver -split-input-file %s | FileCheck %s
+// RUN: bishengir-opt -hivm-graph-sync-solver=solver-version=v1 -split-input-file %s | FileCheck %s
+// RUN: bishengir-opt -hivm-graph-sync-solver=solver-version=v2 -split-input-file %s | FileCheck %s
 
 // A multi_buffer pointer_cast lives in the inner for, is yielded out, and the
 // outer for consumes it. getParentLoop anchors the double buffer on the outer

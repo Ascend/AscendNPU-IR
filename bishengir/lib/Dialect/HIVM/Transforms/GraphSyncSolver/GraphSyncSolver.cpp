@@ -54,7 +54,11 @@ void GraphSyncSolverPass::runOnOperation() {
   if (this->enableTesterMode) {
     auto testerOptions = SmallVector<int64_t>(this->syncTesterOptions.begin(),
                                               this->syncTesterOptions.end());
-    SyncTester::runTestMode(testerOptions);
+    SyncSolverOptions solverOptions(SyncMode::INTRA_CORE_SYNC,
+                                    /*isMemBasedArch=*/false,
+                                    /*isRegBasedArch=*/false);
+    solverOptions.solverVersion = parseSyncSolverVersion(this->solverVersion);
+    SyncTester::runTestMode(testerOptions, solverOptions);
     return;
   }
 

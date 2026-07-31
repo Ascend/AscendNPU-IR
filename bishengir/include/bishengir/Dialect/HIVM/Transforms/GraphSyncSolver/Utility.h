@@ -124,7 +124,7 @@ struct SyncSolverOptions {
   bool enableCVPatterns{false};
 
   // Select which SyncSolver implementation to use.
-  SyncSolverVersion solverVersion{SyncSolverVersion::V2};
+  SyncSolverVersion solverVersion{SyncSolverVersion::V1};
 
   SyncSolverOptions(SyncMode syncMode, bool isMemBasedArch, bool isRegBasedArch)
       : syncMode(syncMode), isMemBasedArch(isMemBasedArch),

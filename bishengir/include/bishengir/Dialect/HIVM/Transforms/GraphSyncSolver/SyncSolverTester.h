@@ -75,6 +75,7 @@ private:
   int numPointers{10};
   bool enableMultiBuffer{false};
   SyncMode syncMode{SyncMode::TEST_INTRA_CORE_MODE};
+  SyncSolverVersion solverVersion{SyncSolverVersion::V1};
   std::unique_ptr<std::mt19937> randGenerator;
   llvm::DenseMap<Scope *, int> countersMap;
 
@@ -86,11 +87,13 @@ private:
 
 public:
   SyncTester(int numOperations, int numPointers, bool enableMultiBuffer,
-             bool enableCrossCoreMode, std::optional<int64_t> seed = {})
+             bool enableCrossCoreMode, SyncSolverVersion solverVersion,
+             std::optional<int64_t> seed = {})
       : numOperations(numOperations), numPointers(numPointers),
         enableMultiBuffer(enableMultiBuffer),
         syncMode(enableCrossCoreMode ? SyncMode::TEST_CROSS_CORE_MODE
-                                     : SyncMode::TEST_INTRA_CORE_MODE) {
+                                     : SyncMode::TEST_INTRA_CORE_MODE),
+        solverVersion(solverVersion) {
     this->initSeed =
         seed.has_value()
             ? seed.value()
@@ -105,7 +108,8 @@ public:
   static size_t getOptionsNum() { return 6; }
 
   // Helper to toggle running as test mode (external use).
-  static void runTestMode(const SmallVector<int64_t> &options);
+  static void runTestMode(const SmallVector<int64_t> &options,
+                          const SyncSolverOptions &solverOptions);
 
 private:
   void reset() {

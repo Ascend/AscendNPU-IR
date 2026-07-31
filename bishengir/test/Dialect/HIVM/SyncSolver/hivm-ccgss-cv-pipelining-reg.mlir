@@ -1,4 +1,5 @@
-// RUN: bishengir-opt -pass-pipeline="builtin.module(func.func(hivm-cross-core-gss{force-is-reg-based=true}))" -split-input-file -verify-diagnostics %s | FileCheck %s
+// RUN: bishengir-opt -pass-pipeline="builtin.module(func.func(hivm-cross-core-gss{solver-version=v1 force-is-reg-based=true}))" -split-input-file -verify-diagnostics %s | FileCheck %s
+// RUN: bishengir-opt -pass-pipeline="builtin.module(func.func(hivm-cross-core-gss{solver-version=v2 force-is-reg-based=true}))" -split-input-file -verify-diagnostics %s | FileCheck %s
 
 module {
   // CHECK: test_block_sync_loop

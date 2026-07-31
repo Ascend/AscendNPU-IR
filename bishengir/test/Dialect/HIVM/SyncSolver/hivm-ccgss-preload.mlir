@@ -1,4 +1,5 @@
-// RUN: bishengir-opt -hivm-cross-core-gss -split-input-file %s 2>&1 | FileCheck %s
+// RUN: bishengir-opt -hivm-cross-core-gss=solver-version=v1 -split-input-file %s 2>&1 | FileCheck %s
+// RUN: bishengir-opt -hivm-cross-core-gss=solver-version=v2 -split-input-file %s 2>&1 | FileCheck %s
 
 #map = affine_map<()[s0] -> (s0 * 128)>
 #map1 = affine_map<()[s0, s1] -> (s0 + s1)>

@@ -1,4 +1,5 @@
-// RUN: bishengir-opt -hivm-graph-sync-solver %s | FileCheck %s
+// RUN: bishengir-opt -hivm-graph-sync-solver=solver-version=v1 %s | FileCheck %s
+// RUN: bishengir-opt -hivm-graph-sync-solver=solver-version=v2 %s | FileCheck %s
 //
 // set slot with pinned event: GSS injects wait_flag after macro with that id.
 

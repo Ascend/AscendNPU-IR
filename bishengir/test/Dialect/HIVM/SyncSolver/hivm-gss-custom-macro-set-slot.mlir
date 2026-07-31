@@ -1,9 +1,10 @@
-// RUN: bishengir-opt -hivm-graph-sync-solver %s | FileCheck %s
+// RUN: bishengir-opt -hivm-graph-sync-solver=solver-version=v1 %s | FileCheck %s
+// RUN: bishengir-opt -hivm-graph-sync-solver=solver-version=v2 %s | FileCheck %s
 //
-// Pinned event id on a wait slot is passed through sync_related_args.
+// set slot: macro sets internally; GSS injects wait_flag after the macro.
 
 module {
-  func.func @test_custom_macro_pinned_event(
+  func.func @test_custom_macro_set_slot(
       %arg0: memref<16xf16, #hivm.address_space<gm>>)
       attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
     %c0_i64 = arith.constant 0 : i64
@@ -13,15 +14,15 @@ module {
         {hivm.tcore_type = #hivm.tcore_type<VECTOR>,
          hivm.pipe_in = #hivm.pipe<PIPE_MTE2>,
          hivm.pipe_out = #hivm.pipe<PIPE_V>,
-         symbol = "k_custom_macro_pinned",
+         symbol = "k_custom_macro_set",
          sync_event_slots = [
-           #hivm.sync_event_slot<#hivm.pipe<PIPE_MTE2>, #hivm.pipe<PIPE_MTE1>, wait, <EVENT_ID1>>
+           #hivm.sync_event_slot<#hivm.pipe<PIPE_MTE2>, #hivm.pipe<PIPE_MTE1>, set>
          ]}
-        "user.macro_pinned"
+        "user.macro_set"
         ins(%0 : memref<16xf16, #hivm.address_space<ub>>)
         outs(%0 : memref<16xf16, #hivm.address_space<ub>>)
-    // CHECK: %c1_i64 = arith.constant 1 : i64
-    // CHECK: sync_related_args(%c1_i64 : i64)
+    // CHECK: sync_related_args(%c0_i64 : i64)
+    // CHECK: hivm.hir.wait_flag[<PIPE_MTE2>, <PIPE_MTE1>, <EVENT_ID0>]
     hivm.hir.pipe_barrier[<PIPE_ALL>]
     return
   }

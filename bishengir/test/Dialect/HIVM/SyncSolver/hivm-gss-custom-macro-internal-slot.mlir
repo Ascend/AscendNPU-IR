@@ -1,4 +1,5 @@
-// RUN: bishengir-opt -hivm-graph-sync-solver %s | FileCheck %s
+// RUN: bishengir-opt -hivm-graph-sync-solver=solver-version=v1 %s | FileCheck %s
+// RUN: bishengir-opt -hivm-graph-sync-solver=solver-version=v2 %s | FileCheck %s
 //
 // internal slot: GSS allocates event id only, no boundary set_flag/wait_flag.
 
