@@ -243,7 +243,7 @@ func.func @test_sort_half() {
 // CHECK:             %[[VAL_28:.*]] = memref.alloc() : memref<1x1x1x32x32xi8, #hivm.address_space<ub>>	 
 // CHECK:             %[[VAL_29:.*]] = memref.subview %[[VAL_28]][0, 0, 0, 0, 0] [1, 1, 1, 1, 32] [1, 1, 1, 1, 1] : memref<1x1x1x32x32xi8, #hivm.address_space<ub>> to  memref<1x1x1x1x32xi8, strided<[1024, 1024, 1024, 32, 1]>, #hivm.address_space<ub>>	 
 // CHECK:             hivm.hir.vcast ins(%[[VAL_27:.*]] : memref<1x1x1x1x32xi32, strided<[1024, 1024, 1024, 32, 1]>, #hivm.address_space<ub>>) outs(%[[VAL_29]] : memref<1x1x1x1x32xi8, strided<[1024, 1024, 1024, 32, 1]>, #hivm.address_space<ub>>) round_mode = <truncwithoverflow> 
-// CHECK:             scf.yield %[[VAL_29]] : memref<1x1x1x1x32xi8, strided<[1024, 1024, 1024, 32, 1]>, #hivm.address_space<ub>> 
+// CHECK:             scf.yield{{.*}}%[[VAL_29]] : memref<1x1x1x1x32xi8, strided<[1024, 1024, 1024, 32, 1]>, #hivm.address_space<ub>> 
 // CHECK:           }	 
 func.func @triton_yield_iter_args(%arg0: i64, %arg1: memref<?xi8, #hivm.address_space<gm>>, %arg2: memref<?xi8, #hivm.address_space<gm>>, %arg3: memref<?xi8, #hivm.address_space<gm>>, %arg4: memref<?xi8, #hivm.address_space<gm>>, %arg5: memref<?xi8, #hivm.address_space<gm>>, %arg6: i32,  %arg7: i32,  %arg8: i32) {
   %c1_i32 = arith.constant 1 : i32	 

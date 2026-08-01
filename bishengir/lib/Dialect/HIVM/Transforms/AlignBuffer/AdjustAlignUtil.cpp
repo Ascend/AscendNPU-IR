@@ -184,8 +184,8 @@ bool isLastBrc(hivm::VBrcOp brcOp, FlattenResult &flattenResult) {
   auto brcDims = brcOp.getBroadcastDims();
   auto dstType = brcOp.getDst().getType();
   auto dstRank = cast<ShapedType>(dstType).getRank();
-  brcDims =
-      brcDims.empty() ? llvm::to_vector(llvm::seq<int64_t>(dstRank)) : brcDims;
+  auto generated = llvm::to_vector(llvm::seq<int64_t>(dstRank));
+  brcDims = brcDims.empty() ? generated : brcDims;
   auto lastBrcDim = brcDims.back();
 
   auto flattenRank = flattenResult.getRankAfterFlatten();

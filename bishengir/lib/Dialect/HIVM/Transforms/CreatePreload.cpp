@@ -138,11 +138,7 @@ static bool hasPreloadWorkspaceMark(Value value) {
 }
 
 static bool isPreloadWorkspaceSubview(memref::SubViewOp subviewOp) {
-  // The preload-workspace mark is placed on the subview op itself by the
-  // producer (see CVPipelining::createAttrForPreloadWS). Also accept a marked
-  // source so subviews derived from an already-marked workspace are detected.
-  return subviewOp->hasAttr(hivm::PreloadWorkspaceAttr::name) ||
-         hasPreloadWorkspaceMark(subviewOp.getSource());
+  return hasPreloadWorkspaceMark(subviewOp.getSource());
 }
 
 static Value

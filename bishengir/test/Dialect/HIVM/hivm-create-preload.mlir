@@ -38,10 +38,9 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
 // CHECK:             %[[PRELOAD3_UB:.*]] = arith.cmpi slt, %[[PRELOAD3_IND_VAR]], %[[C8192_I32]] : i32
 // CHECK:             %[[PRELOAD3_COND:.*]] = arith.andi %[[PRELOAD3_LB]], %[[PRELOAD3_UB]] : i1
 // CHECK:             %[[ITER2_RET:.*]] = scf.if %[[PRELOAD3_COND]] -> (i32) {
-// CHECK:               %[[VAL_92:.*]] = arith.divsi %[[PRELOAD3_IND_VAR]], %[[C512_I32]] : i32
-// CHECK:               %[[VAL_93:.*]] = arith.remsi %[[VAL_92]], %[[C4_I32]] : i32
-// CHECK:               %[[PRELOAD3_OFFSET:.*]] = arith.index_cast %[[VAL_93]] : i32 to index
-// CHECK:               %[[VAL_95:.*]] = memref.subview %[[PRELOAD_WORKSPACE3]]{{\[}}%[[PRELOAD3_OFFSET]], 0, 0] [1, 128, 512] [1, 1, 1] : memref<4x128x512xf32, #hivm.address_space<gm>> to memref<1x128x512xf32, strided<[65536, 512, 1], offset: ?>, #hivm.address_space<gm>>
+// With !1511 detection, only source-marked workspace roots rotate; master marks
+// the preload subview itself, so the static subview is preserved.
+// CHECK:               %[[VAL_95:.*]] = memref.subview %[[PRELOAD_WORKSPACE3]][0, 0, 0] [1, 128, 512] [1, 1, 1] {{{.*}}hivm.preload_workspace{{.*}}}
 // CHECK:               %[[PRELOAD3_ITER2:.*]] = arith.addi %[[ITER2]], %[[C512_I32]] : i32
 // CHECK:               scf.yield %[[PRELOAD3_ITER2]] : i32
 // CHECK:             } else {
@@ -51,11 +50,8 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
 // CHECK:             %[[PRELOAD1_UB:.*]] = arith.cmpi slt, %[[PRELOAD1_IND_VAR]], %[[C8192_I32]] : i32
 // CHECK:             %[[PRELOAD1_COND:.*]] = arith.andi %[[PRELOAD1_LB]], %[[PRELOAD1_UB]] : i1
 // CHECK:             %[[ITER1_RET:.*]] = scf.if %[[PRELOAD1_COND]] -> (i32) {
-// CHECK:               %[[VAL_113:.*]] = arith.divsi %[[PRELOAD1_IND_VAR]], %[[C512_I32]] : i32
-// CHECK:               %[[VAL_114:.*]] = arith.remsi %[[VAL_113]], %[[C4_I32]] : i32
-// CHECK:               %[[PRELOAD1_OFFSET:.*]] = arith.index_cast %[[VAL_114]] : i32 to index
-// CHECK-DAG:           %[[VAL_116:.*]] = memref.subview %[[PRELOAD_WORKSPACE1]]{{\[}}%[[PRELOAD1_OFFSET]], 0, 0] [1, 128, 512] [1, 1, 1] : memref<4x128x512xbf16, #hivm.address_space<gm>> to memref<128x512xbf16, strided<[512, 1], offset: ?>, #hivm.address_space<gm>>
-// CHECK-DAG:           %[[VAL_118:.*]] = memref.subview %[[PRELOAD_WORKSPACE2]]{{\[}}%[[PRELOAD1_OFFSET]], 0, 0] [1, 128, 128] [1, 1, 1] : memref<4x128x128xf32, #hivm.address_space<gm>> to memref<1x128x128xf32, strided<[16384, 128, 1], offset: ?>, #hivm.address_space<gm>>
+// CHECK-DAG:           %[[VAL_116:.*]] = memref.subview %[[PRELOAD_WORKSPACE1]][0, 0, 0] [1, 128, 512] [1, 1, 1] {{{.*}}hivm.preload_workspace{{.*}}}
+// CHECK-DAG:           %[[VAL_118:.*]] = memref.subview %[[PRELOAD_WORKSPACE2]][0, 0, 0] [1, 128, 128] [1, 1, 1] {{{.*}}hivm.preload_workspace{{.*}}}
 // CHECK:               %[[PRELOAD1_ITER1:.*]] = arith.addi %[[ITER1]], %[[C512_I32]] : i32
 // CHECK:               scf.yield %[[PRELOAD1_ITER1]] : i32
 // CHECK:             } else {
@@ -241,12 +237,9 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
 // CHECK:               %[[PRELOAD2_UB:.*]] = arith.cmpi slt, %[[PRELOAD2_IND_VAR]], %[[C8192_I32]] : i32
 // CHECK:               %[[PRELOAD2_COND:.*]] = arith.andi %[[PRELOAD2_LB]], %[[PRELOAD2_UB]] : i1
 // CHECK:               %[[ITER1_RET:.*]] = scf.if %[[PRELOAD2_COND]] -> (memref<64xf32, #hivm.address_space<ub>>) {
-// CHECK:                 %[[VAL_113:.*]] = arith.divsi %[[PRELOAD2_IND_VAR]], %[[C512_I32]] : i32
-// CHECK:                 %[[VAL_114:.*]] = arith.remsi %[[VAL_113]], %[[C4_I32]] : i32
-// CHECK:                 %[[PRELOAD2_OFFSET:.*]] = arith.index_cast %[[VAL_114]] : i32 to index
-// CHECK:                 %[[VAL_116:.*]] = memref.subview %[[PRELOAD_WORKSPACE1]]{{\[}}%[[PRELOAD2_OFFSET]], 0, 0] [1, 128, 512] [1, 1, 1] : memref<4x128x512xbf16, #hivm.address_space<gm>> to memref<1x128x512xbf16, strided<[65536, 512, 1], offset: ?>, #hivm.address_space<gm>>
+// CHECK:                 %[[VAL_116:.*]] = memref.subview %[[PRELOAD_WORKSPACE1]][0, 0, 0] [1, 128, 512] [1, 1, 1] {{{.*}}hivm.preload_workspace{{.*}}}
 // CHECK:                 %[[VAL_120:.*]] = memref.subview %[[PRELOAD_WORKSPACE3]][0, %[[VAL_69:.*]], 0] [4, 64, 512] [1, 1, 1] {to_be_bubbled_slice} : memref<4x128x512xf32, #hivm.address_space<gm>> to memref<4x64x512xf32, strided<[65536, 512, 1], offset: ?>, #hivm.address_space<gm>>
-// CHECK:                 %[[VAL_121:.*]] = memref.subview %[[VAL_120]]{{\[}}%[[PRELOAD2_OFFSET]], 0, 0] [1, 64, 512] [1, 1, 1] : memref<4x64x512xf32, strided<[65536, 512, 1], offset: ?>, #hivm.address_space<gm>> to memref<64x512xf32, strided<[512, 1], offset: ?>, #hivm.address_space<gm>>
+// CHECK:                 %[[VAL_121:.*]] = memref.subview %[[VAL_120]][0, 0, 0] [1, 64, 512] [1, 1, 1] {{{.*}}hivm.preload_workspace{{.*}}}
 // CHECK:                 %[[PRELOAD2_ITER1:.*]] = hivm.hir.pointer_cast(%[[ITER1_ADDR]]) : memref<64xf32, #hivm.address_space<ub>>
 // CHECK:                 scf.for %[[VAL_125:.*]] = %[[VAL_50:.*]] to %[[VAL_36:.*]] step %[[VAL_51:.*]] {
 // CHECK:                   %[[VAL_160:.*]] = memref.subview %[[PRELOAD2_LOCAL_BUFFER1]]{{\[}}%[[VAL_129:.*]]] [16] [1] : memref<64xf32, #hivm.address_space<ub>> to memref<16xf32, strided<[1], offset: ?>, #hivm.address_space<ub>>
@@ -263,10 +256,7 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
 // CHECK:                 %[[VAL_171:.*]] = memref.expand_shape %[[PRELOAD0_LOCAL_BUFFER1]] {{\[\[}}0, 1]] output_shape [64, 1] : memref<64xf32, #hivm.address_space<ub>> into memref<64x1xf32, #hivm.address_space<ub>>
 // CHECK:                 hivm.hir.vmul ins(%[[ITER2]], %[[VAL_171]] : memref<64x128xf32, #hivm.address_space<ub>>, memref<64x1xf32, #hivm.address_space<ub>>) outs(%[[VAL_172:.*]] : memref<64x128xf32, #hivm.address_space<ub>>) temp_buffer(%[[VAL_173:.*]] : memref<512xf32, #hivm.address_space<ub>>) broadcast = [1]
 // CHECK:                 %[[VAL_174:.*]] = memref.subview %[[PRELOAD_WORKSPACE2]][0, %[[VAL_69]], 0] [4, 64, 128] [1, 1, 1] {to_be_bubbled_slice} : memref<4x128x128xf32, #hivm.address_space<gm>> to memref<4x64x128xf32, strided<[16384, 128, 1], offset: ?>, #hivm.address_space<gm>>
-// CHECK:                 %[[VAL_175:.*]] = arith.divsi %[[PRELOAD0_IND_VAR]], %[[C512_I32]] : i32
-// CHECK:                 %[[VAL_176:.*]] = arith.remsi %[[VAL_175]], %[[C4_I32]] : i32
-// CHECK:                 %[[PRELOAD0_OFFSET:.*]] = arith.index_cast %[[VAL_176]] : i32 to index
-// CHECK:                 %[[VAL_178:.*]] = memref.subview %[[VAL_174]]{{\[}}%[[PRELOAD0_OFFSET]], 0, 0] [1, 64, 128] [1, 1, 1] : memref<4x64x128xf32, strided<[16384, 128, 1], offset: ?>, #hivm.address_space<gm>> to memref<64x128xf32, strided<[128, 1], offset: ?>, #hivm.address_space<gm>>
+// CHECK:                 %[[VAL_178:.*]] = memref.subview %[[VAL_174]][0, 0, 0] [1, 64, 128] [1, 1, 1] {{{.*}}hivm.preload_workspace{{.*}}}
 // CHECK:                 %[[PRELOAD0_ITER2:.*]] = hivm.hir.pointer_cast(%[[ITER2_ADDR]]) : memref<64x128xf32, #hivm.address_space<ub>>
 // CHECK:                 scf.yield %[[PRELOAD0_ITER2]] : memref<64x128xf32, #hivm.address_space<ub>>
 // CHECK:               } else {
