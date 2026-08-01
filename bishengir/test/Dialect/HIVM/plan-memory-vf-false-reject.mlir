@@ -1,9 +1,13 @@
-// REQUIRES: asserts
-// RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend950PR_950z -hivm-plan-memory-regbase -split-input-file --debug-only=hivm-plan-memory-regbase 2>&1 | FileCheck %s
+// RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend950PR_950z -hivm-plan-memory-regbase -split-input-file | FileCheck %s
 
-// CHECK: Buffer2Life
-// CHECK-COUNT-3: bufferLife
-// CHECK-NOT: bufferLife
+// Two kill buffers cannot both be reused by gen (overlap); gen and store can
+// share. Expect two physical UB slots (offsets 0 and 256).
+// CHECK-LABEL: func.func @kernel_two_kill
+// CHECK-DAG: %[[C0:.*]] = arith.constant 0 : i64
+// CHECK-DAG: %[[C256:.*]] = arith.constant 256 : i64
+// CHECK-DAG: hivm.hir.pointer_cast(%[[C0]])
+// CHECK-DAG: hivm.hir.pointer_cast(%[[C256]])
+// CHECK-NOT: pointer_cast(%{{.*}}512
 
 module {
   func.func @vf_a(%kill_1: memref<64xf32, #hivm.address_space<ub>>, %kill_2: memref<64xf32, #hivm.address_space<ub>>, %gen: memref<64xf32, #hivm.address_space<ub>>) attributes {hivm.vector_function, no_inline} {
@@ -24,7 +28,7 @@ module {
     return
   }
 
-  func.func @kernel(%gm: memref<64xf32, #hivm.address_space<gm>>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vf_mode = #hivm.vf_mode<SIMD>} {
+  func.func @kernel_two_kill(%gm: memref<64xf32, #hivm.address_space<gm>>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vf_mode = #hivm.vf_mode<SIMD>} {
     %c64 = arith.constant 64 : index
     %c0 = arith.constant 0 : index
     %c256 = arith.constant 256 : index
@@ -47,9 +51,10 @@ module {
 
 // -----
 
-// CHECK: Buffer2Life
-// CHECK-COUNT-2: bufferLife
-// CHECK-NOT: bufferLife
+// Single kill can be reused through gen into store — one physical UB slot.
+// CHECK-LABEL: func.func @kernel_one_kill
+// CHECK: pointer_cast(%{{.*}}0
+// CHECK-NOT: pointer_cast(%{{.*}}256
 
 module {
   func.func @vf_a(%kill_1: memref<64xf32, #hivm.address_space<ub>>, %gen: memref<64xf32, #hivm.address_space<ub>>) attributes {hivm.vector_function, no_inline} {
@@ -68,7 +73,7 @@ module {
     return
   }
 
-  func.func @kernel(%gm: memref<64xf32, #hivm.address_space<gm>>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vf_mode = #hivm.vf_mode<SIMD>} {
+  func.func @kernel_one_kill(%gm: memref<64xf32, #hivm.address_space<gm>>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vf_mode = #hivm.vf_mode<SIMD>} {
     %c64 = arith.constant 64 : index
     %c0 = arith.constant 0 : index
     %c256 = arith.constant 256 : index

@@ -1,4 +1,4 @@
-// RUN: bishengir-opt %s --convert-hivm-to-std=mark-libcall-noinline -split-input-file | FileCheck %s
+// RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend950PR_9589 -convert-hivm-to-std="mark-libcall-noinline=true" -split-input-file | FileCheck %s
 
 module {
   func.func @custom_always_inline(%src: memref<16xf32>, %dst: memref<16xf32>) {
