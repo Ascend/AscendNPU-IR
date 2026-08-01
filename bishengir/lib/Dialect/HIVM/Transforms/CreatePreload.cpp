@@ -381,7 +381,7 @@ static void rewritePreloadLoop(scf::ForOp forOp,
             } else if (auto subviewOp = dyn_cast<memref::SubViewOp>(&bodyOp);
                       subviewOp && isPreloadWorkspaceSubview(subviewOp)) {
               for (int64_t preloadNum = maxPreloadNum - 1; preloadNum >= 0;
-                   preloadNum--) {
+                  preloadNum--) {
                 cloneWorkspaceSubview(subviewOp, preloadNum, info, b);
               }
               continue;
