@@ -514,7 +514,6 @@ static bool canSkipTilingForTrivialUbAlloc(annotation::MarkOp markOp) {
 LogicalResult pruneTightlyCoupledBufferToTilingDimAfterAivBubbleUp(
     func::FuncOp newFunc,
     llvm::DenseMap<int32_t, int64_t> &tightlyCoupledBufferToTilingDim) {
-<<<<<<< HEAD
   bool erasedAny = false;
   newFunc.walk([&](annotation::MarkOp markOp) {
     auto attr = markOp->getAttrOfType<HIVMTightlyCoupledBufferAttr>(
@@ -535,28 +534,6 @@ LogicalResult pruneTightlyCoupledBufferToTilingDimAfterAivBubbleUp(
         tightlyCoupledBufferToTilingDim.erase(id))
       erasedAny = true;
     auto tilingDimAttr = markOp->getAttrOfType<IntegerAttr>(AICAttrTilingDim);
-=======
-  bool erasedAny = false;
-  newFunc.walk([&](annotation::MarkOp markOp) {
-    auto attr = markOp->getAttrOfType<HIVMTightlyCoupledBufferAttr>(
-        HIVMTightlyCoupledBufferAttr::name);
-    if (!attr || !attr.getId().has_value())
-      return;
-    // Cbuf tightly-coupled buffers are not tiled; their IDs should not be in
-    // the map and must not affect the tiling decision.
-    {
-      auto maybeSpace =
-          getOptionalHIVMAddressSpace(markOp.getSrc().getType());
-      if (maybeSpace && *maybeSpace == AddressSpace::L1)
-        return;
-    }
-    int32_t id = attr.getId().value();
-    if (!markOp->hasAttrOfType<UnitAttr>(kTiledTightlyCoupledAlloc) &&
-        !canSkipTilingForTrivialUbAlloc(markOp) &&
-        tightlyCoupledBufferToTilingDim.erase(id))
-      erasedAny = true;
-    auto tilingDimAttr = markOp->getAttrOfType<IntegerAttr>(AICAttrTilingDim);
->>>>>>> cc2eb0c45 ([AscendNPU IR][A5][CV1:2] refactor tiling AI)
     if (tilingDimAttr) {
       int64_t tilingDim = tilingDimAttr.getValue().getSExtValue();
       tightlyCoupledBufferToTilingDim[id] = tilingDim;
