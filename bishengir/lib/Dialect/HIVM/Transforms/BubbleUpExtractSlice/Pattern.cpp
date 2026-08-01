@@ -1594,13 +1594,6 @@ bool BufferizationBubbleUpStrategy::isSupportedOperation(
   auto toTensorOp = dyn_cast<bufferization::ToTensorOp>(sourceOp);
   if (!toTensorOp)
     return false;
-  if (failed(checkBufferizationBubbleUpPath(toTensorOp)))
-    return false;
-  for (Operation *user : toTensorOp.getMemref().getUsers()) {
-    if (user->hasAttr(kBubbleUpPropagateUp) ||
-        user->hasAttr(kBubbleUpPropagateDown))
-      return false;
-  }
   return true;
 }
 
@@ -1626,11 +1619,16 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   auto slicedMemrefAtToTensor =
       getSlicedMemRefType(oldMemrefType, slicedTensorType);
 
-  BufferizationPropagationState state;
+  auto extractDims = getExtractOrInsertDim(sliceOp);
+  if (extractDims.size() != 1)
+    return failure();
+  auto tilingDim = *extractDims.begin();
   UnrealizedConversionCastOp upAtToTensor = createBubblePropagatorUpLink(
-      oldMemrefAtToTensor, slicedMemrefAtToTensor, rewriter);
+      oldMemrefAtToTensor, slicedMemrefAtToTensor,
+      sliceOp.getMixedOffsets()[tilingDim], sliceOp.getMixedSizes()[tilingDim],
+      tilingDim, rewriter);
 
-  rewriter.setInsertionPoint(sliceOp);
+  rewriter.setInsertionPointAfter(toTensorOp);
   auto newToTensorOp = rewriter.create<bufferization::ToTensorOp>(
       sliceOp.getLoc(), upAtToTensor.getResult(0), true, true);
   rewriter.replaceOp(sliceOp, newToTensorOp.getResult());
