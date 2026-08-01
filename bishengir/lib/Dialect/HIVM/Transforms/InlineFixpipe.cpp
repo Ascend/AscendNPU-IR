@@ -574,18 +574,11 @@ public:
     rewriter.setInsertionPointAfter(insertAfterOp);
 
     LDBG("Replacing fix pipe for " << op);
-<<<<<<< HEAD
     Value result = insertAfterOp->getResult(resultIndx);
     if (!tryInsertFractalOutputFixpipe(rewriter, insertAfterOp, result))
       insertFixpipe(rewriter, insertAfterOp, result);
     op->setAttr(mmadFixpipeForResultAlreadyInserted,
                 rewriter.getBoolAttr(true));
-=======
-    insertFixpipe(rewriter, insertAfterOp,
-                  insertAfterOp->getResult(resultIndx));
-    opInst->setAttr(mmadFixpipeForResultAlreadyInserted,
-                    rewriter.getBoolAttr(true));
->>>>>>> 61b87ba62 ([Huawei][AscendNPU-IR] Implement inline bias for mmadmx)
 
     // When the mmad-like op is an accumulation, the fixpipe above only serves
     // external consumers of the loop's final accumulated value. If the mmad
