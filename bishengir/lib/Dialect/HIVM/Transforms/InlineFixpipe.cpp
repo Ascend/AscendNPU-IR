@@ -26,6 +26,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
@@ -56,6 +57,19 @@ static constexpr llvm::StringLiteral fixpipeDoNotMoveOutOfScfFor =
 
 static constexpr llvm::StringLiteral scfforFixpipeForMMADResultAlreadyInserted =
     "fixpipe_for_mmad_result_already_inserted";
+
+/// Return true when \p op is nested in a scope marked for the vector core.
+/// Fixpipe must not be fused with a store in such scopes: fusion would place
+/// the cube fixpipe inside the vector scope and break mix AIC/AIV splitting.
+static bool isInsideVectorScope(Operation *op) {
+  auto scopeOp = op->getParentOfType<scope::ScopeOp>();
+  if (!scopeOp)
+    return false;
+  auto coreTypeAttr =
+      scopeOp->getAttrOfType<hivm::TCoreTypeAttr>(hivm::TCoreTypeAttr::name);
+  return coreTypeAttr &&
+         coreTypeAttr.getTcoretype() == hivm::TCoreType::VECTOR;
+}
 } // namespace
 
 namespace {
@@ -257,6 +271,43 @@ Operation *getInsertPoint(Operation *op, int &resultIndx) {
     llvm::report_fatal_error("yield value must have user");
   resultIndx = yieldValueIndx.value();
   return getInsertPoint(yieldParentOp, resultIndx);
+}
+
+// Return the single convert_layout{ND→Fractal} user, or null.
+static hivm::ConvertLayoutOp getOutputFractalConvert(Value mmadResult) {
+  if (!mmadResult.hasOneUse())
+    return nullptr;
+  auto convert = dyn_cast<hivm::ConvertLayoutOp>(*mmadResult.user_begin());
+  if (!convert)
+    return nullptr;
+  auto srcLayout = convert.getSrcLayoutAttr();
+  auto dstLayout = convert.getDstLayoutAttr();
+  if (!srcLayout.isNDLayout() ||
+      dstLayout.getDataLayout() != hivm::DataLayout::Fractal)
+    return nullptr;
+  return convert;
+}
+
+// Emit an NZ2NZ fixpipe when result feeds a single ND→Fractal convert_layout.
+// Returns false so the caller falls back to NZ2ND.
+static bool tryInsertFractalOutputFixpipe(PatternRewriter &rewriter,
+                                          Operation *insertAfterOp,
+                                          Value result) {
+  auto convert = getOutputFractalConvert(result);
+  if (!convert)
+    return false;
+  rewriter.setInsertionPointAfter(insertAfterOp);
+  Value dst = utils::createEmptyOp(rewriter, insertAfterOp->getLoc(),
+                                   convert.getResult());
+  auto dmaModeAttr =
+      FixpipeDMAModeAttr::get(rewriter.getContext(), FixpipeDMAMode::NZ2NZ);
+  auto fixpipe = rewriter.create<FixpipeOp>(
+      insertAfterOp->getLoc(), /*result_tensor=*/dst.getType(), result, dst,
+      dmaModeAttr, /*dual_dst_mode=*/nullptr, /*sub_block_idx=*/nullptr,
+      /*pre_quant=*/nullptr, /*pre_relu=*/nullptr, /*channel_split=*/nullptr);
+  rewriter.replaceAllUsesWith(convert.getResult(), fixpipe.getResultTensor());
+  rewriter.eraseOp(convert);
+  return true;
 }
 
 bool isAccumulationImpl(Operation *op, Value accumulator) {
@@ -512,8 +563,9 @@ public:
     rewriter.setInsertionPointAfter(insertAfterOp);
 
     LDBG("Replacing fix pipe for " << op);
-    insertFixpipe(rewriter, insertAfterOp,
-                  insertAfterOp->getResult(resultIndx));
+    Value result = insertAfterOp->getResult(resultIndx);
+    if (!tryInsertFractalOutputFixpipe(rewriter, insertAfterOp, result))
+      insertFixpipe(rewriter, insertAfterOp, result);
     op->setAttr(mmadFixpipeForResultAlreadyInserted,
                 rewriter.getBoolAttr(true));
 
@@ -782,6 +834,9 @@ private:
     // FixPipe followed by debugOp only, no need to inline
     if (curOp == nullptr)
       return success();
+    // Avoid fusing fixpipe into a VECTOR-scope store (mix AIC/AIV).
+    if (isInsideVectorScope(curOp))
+      return failure();
     // Operation curOp = *maybeInlinedOp;
     // 1. cast or quantization
     auto castOp = dyn_cast_if_present<hivm::VCastOp>(curOp);

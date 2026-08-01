@@ -611,12 +611,17 @@ extractRealMKN(LocalMatmulLikeOpInterface matmulOp, PatternRewriter &rewriter) {
   auto realMK =
       getRealShapeFromMemrefOrTensor(matmulOp.getMatmulA(), loc, rewriter);
   const int matrixSize = 2;
-  if (failed(realMK) || (*realMK).size() != matrixSize + batchIndexBias) {
+  const int matrixFractalSize = 4;
+  if (failed(realMK) ||
+      ((*realMK).size() != matrixSize + batchIndexBias &&
+       (*realMK).size() != matrixFractalSize + batchIndexBias)) {
     return failure();
   }
   auto realKN =
       getRealShapeFromMemrefOrTensor(matmulOp.getMatmulB(), loc, rewriter);
-  if (failed(realKN) || (*realKN).size() != matrixSize + batchIndexBias) {
+  if (failed(realKN) ||
+      ((*realKN).size() != matrixSize + batchIndexBias &&
+       (*realKN).size() != matrixFractalSize + batchIndexBias)) {
     return failure();
   }
   // set m, k, n
@@ -636,14 +641,25 @@ extractRealMKN(LocalMatmulLikeOpInterface matmulOp, PatternRewriter &rewriter) {
       return false;
     return !matmulOp->hasAttr(kFractalVtransposeFolded);
   };
-  const bool aTransposed = matmulOp.isMatmulATransposed() &&
-                           !isFractalSpaceTranspose(matmulOp.getMatmulA());
-  const bool bTransposed = matmulOp.isMatmulBTransposed() &&
-                           !isFractalSpaceTranspose(matmulOp.getMatmulB());
-  if (aTransposed) {
-    realM = (*realMK)[1 + batchIndexBias];
+  if ((*realMK).size() == matrixFractalSize + batchIndexBias) {
+    // Fractal 4D shape
+    if (matmulOp.isMatmulATransposed()) {
+      realM = rewriter.create<arith::MulIOp>(
+          loc, (*realMK)[0 + batchIndexBias],
+          (*realMK)[3 + batchIndexBias]);
+    } else {
+      realM = rewriter.create<arith::MulIOp>(
+          loc, (*realMK)[1 + batchIndexBias],
+          (*realMK)[2 + batchIndexBias]);
+    }
   } else {
-    realM = (*realMK)[0 + batchIndexBias];
+    // Original 2D shape logic
+    if (matmulOp.isMatmulATransposed() &&
+        !isFractalSpaceTranspose(matmulOp.getMatmulA())) {
+      realM = (*realMK)[1 + batchIndexBias];
+    } else {
+      realM = (*realMK)[0 + batchIndexBias];
+    }
   }
 
   if (matmulOp.supportsPerChannelBias() &&
@@ -658,15 +674,41 @@ extractRealMKN(LocalMatmulLikeOpInterface matmulOp, PatternRewriter &rewriter) {
   }
 
   mkn.push_back(realM);
-  if (aTransposed) {
-    mkn.push_back((*realMK)[0 + batchIndexBias]);
+  if ((*realMK).size() == matrixFractalSize + batchIndexBias) {
+    if (matmulOp.isMatmulATransposed()) {
+      mkn.push_back(rewriter.create<arith::MulIOp>(
+          loc, (*realMK)[1 + batchIndexBias],
+          (*realMK)[2 + batchIndexBias]));
+    } else {
+      mkn.push_back(rewriter.create<arith::MulIOp>(
+          loc, (*realMK)[0 + batchIndexBias],
+          (*realMK)[3 + batchIndexBias]));
+    }
   } else {
-    mkn.push_back((*realMK)[1 + batchIndexBias]);
+    if (matmulOp.isMatmulATransposed() &&
+        !isFractalSpaceTranspose(matmulOp.getMatmulA())) {
+      mkn.push_back((*realMK)[0 + batchIndexBias]);
+    } else {
+      mkn.push_back((*realMK)[1 + batchIndexBias]);
+    }
   }
-  if (bTransposed) {
-    mkn.push_back((*realKN)[0 + batchIndexBias]);
+  if ((*realKN).size() == matrixFractalSize + batchIndexBias) {
+    if (matmulOp.isMatmulBTransposed()) {
+      mkn.push_back(rewriter.create<arith::MulIOp>(
+          loc, (*realKN)[1 + batchIndexBias],
+          (*realKN)[2 + batchIndexBias]));
+    } else {
+      mkn.push_back(rewriter.create<arith::MulIOp>(
+          loc, (*realKN)[0 + batchIndexBias],
+          (*realKN)[3 + batchIndexBias]));
+    }
   } else {
-    mkn.push_back((*realKN)[1 + batchIndexBias]);
+    if (matmulOp.isMatmulBTransposed() &&
+        !isFractalSpaceTranspose(matmulOp.getMatmulB())) {
+      mkn.push_back((*realKN)[0 + batchIndexBias]);
+    } else {
+      mkn.push_back((*realKN)[1 + batchIndexBias]);
+    }
   }
   return mkn;
 }

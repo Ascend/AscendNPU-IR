@@ -177,6 +177,17 @@ def HIVM_DataLayoutAttr : HIVM_Attr<"DataLayout", "data_layout"> {
       }
     }
 
+    /// True if layout is a fractal MX scale layout.
+    bool isScaleFractalLayout() const {
+      switch (getDataLayout()) {
+        case hivm::DataLayout::SCALEA_zZ:
+        case hivm::DataLayout::SCALEB_nN:
+          return true;
+        default:
+          return false;
+      }
+    }
+
     using FractalSize = std::pair<int32_t, int32_t>;
 
     /// Extract exactly 2 fractal block sizes.

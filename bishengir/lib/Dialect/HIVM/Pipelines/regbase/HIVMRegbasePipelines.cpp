@@ -266,7 +266,8 @@ static void addOptimizedConvertLayoutFixpipePipeline(OpPassManager &pm) {
   pm.nest<func::FuncOp>().addPass(createCanonicalizerPass());
   pm.nest<func::FuncOp>().addPass(createCSEPass());
 
-  pm.addPass(mlir::hivm::createCombineOptimizedConvertLayoutPass());
+  pm.nest<func::FuncOp>().addPass(
+      mlir::hivm::createCombineOptimizedConvertLayoutPass());
   pm.nest<func::FuncOp>().addPass(createConvertLayoutToTransposePass());
 }
 
@@ -313,8 +314,7 @@ static void hivmPreBufferizationOptimizationPipeline(
     pm.addPass(mlir::hivm::createInlineFixpipePass(opts));
   }
   hivmCVCommunicationPipeline(pm, hivmPipelineOptions);
-  if (hivmPipelineOptions.enableLayoutOptimization &&
-      hivmPipelineOptions.enableMixedCV) {
+  if (hivmPipelineOptions.enableLayoutOptimization) {
     // Combine optimized folds:
     // - load + convert layout
     // - convert layout + fixpipe

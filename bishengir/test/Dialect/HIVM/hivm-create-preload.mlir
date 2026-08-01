@@ -707,3 +707,43 @@ module {
   // CHECK: }
   // CHECK: return %[[RESULTS]]#0, %[[RESULTS]]#1 : i32, i32
 }
+// -----
+
+// Each parent loop must use its own declared preload depth. Collecting preload
+// numbers module-wide would truncate the second loop to depth 2 and drop stage 3.
+
+// CHECK-LABEL: func.func @test_preload_depth_is_per_loop
+func.func @test_preload_depth_is_per_loop() {
+  %c0 = arith.constant 0 : i32
+  %c16 = arith.constant 16 : i32
+  %c1 = arith.constant 1 : i32
+
+  // CHECK-DAG: %[[C18:.*]] = arith.constant 18 : i32
+  // CHECK-DAG: %[[C20:.*]] = arith.constant 20 : i32
+  // CHECK: scf.for {{.*}} to %[[C18]] step
+  scf.for %i = %c0 to %c16 step %c1 : i32 {
+    scope.scope : () -> () {
+      "test.stage1"(%i) : (i32) -> ()
+      scope.return
+    } {
+      no_inline,
+      hivm.preload_num = 1 : i32,
+      hivm.max_preload_num = 2 : i32
+    }
+  }
+
+  // CHECK: scf.for {{.*}} to %[[C20]] step
+  // CHECK: "test.stage3"
+  scf.for %i = %c0 to %c16 step %c1 : i32 {
+    scope.scope : () -> () {
+      "test.stage3"(%i) : (i32) -> ()
+      scope.return
+    } {
+      no_inline,
+      hivm.preload_num = 3 : i32,
+      hivm.max_preload_num = 4 : i32
+    }
+  }
+
+  return
+}

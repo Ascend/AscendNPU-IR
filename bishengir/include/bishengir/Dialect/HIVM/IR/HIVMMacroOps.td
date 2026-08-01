@@ -296,7 +296,9 @@ class HIVM_LocalMmadMxOp<string mnemonic, list<Trait> traits = []> :
 }
  
 def MmadMxL1Op
-    : HIVM_LocalMmadMxOp<"mmadmxL1", [NoMaxRankTrait, OpLayoutInterface]> {
+    : HIVM_LocalMmadMxOp<"mmadmxL1", [NoMaxRankTrait,
+        DeclareOpInterfaceMethods<OpLayoutInterface,
+                                  ["getOperandsTargetFractalLayout"]>]> {
   let summary = [{
     Matrix Multiply and Add Op with inputs from L1 memory hierarchy.
   }];
@@ -314,8 +316,6 @@ def MmadMxL1Op
     FailureOr<DataLayoutAttr> getOperandScaleBLayout();
     FailureOr<DataLayoutAttr> getOperandCLayout();
     FailureOr<DataLayoutAttr> getOperandBiasLayout();
-    llvm::SmallDenseMap<Value, DataLayoutAttr> getOperandsTargetLayout();
-    llvm::SmallDenseMap<Value, DataLayoutAttr> getOperandsCurrentLayout();
     llvm::SmallVector<int64_t> getBlockSizesTile(
         Value oper, bool isTranspose, bool isA) const;
   }];
