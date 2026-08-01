@@ -20,6 +20,15 @@
 
 include "mlir/Pass/PassBase.td"
 
+def TransformOpForSIMT : Pass<"transform-op-for-simt", "mlir::ModuleOp"> {
+  let summary = "Transform operations for SIMT execution.";
+  let description = [{
+    Transform operations to prepare for SIMT (Single Instruction, Multiple
+    Threads) execution before outlining scope regions.
+  }];
+  let constructor = "mlir::scope::createTransformOpForSIMTPass()";
+}
+
 def OutlineScope : Pass<"outline-scope", "mlir::ModuleOp"> {
   let summary = "Outline scope region within ScopeOp.";
   let description = [{
