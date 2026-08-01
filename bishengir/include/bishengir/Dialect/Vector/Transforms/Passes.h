@@ -21,8 +21,7 @@ namespace mlir {
 namespace vector {
 
 /// Creates a pass to normalize vector ops to fit HIVM requirements.
-std::unique_ptr<Pass>
-createNormalizeVectorPass(const NormalizeVectorOptions &options = {});
+std::unique_ptr<Pass> createNormalizeVectorPass();
 
 /// Creates a pass to peel loops containing vector.transfer_read with
 /// transpose permutation.

@@ -235,7 +235,8 @@ void traceDefOpsImpl(Value v, bool isSingleChain, TraceResultMode traceMode,
   if (defOp && traceMode == TraceResultMode::TypeMatch) {
     auto core = queryCoreTypeHelper(defOp).value_or(TCoreType::CUBE_OR_VECTOR);
     if ((std::is_same_v<OpType, hivm::MmadL1Op> ||
-         std::is_same_v<OpType, hivm::BatchMmadL1Op>) &&
+         std::is_same_v<OpType, hivm::BatchMmadL1Op> ||
+         std::is_same_v<OpType, hivm::LocalMatmulLikeOpInterface>) &&
         (core == TCoreType::VECTOR)) {
       traceDefState = TraceDefState::Failed;
       return;

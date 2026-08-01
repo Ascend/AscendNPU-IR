@@ -1170,6 +1170,78 @@ std::string NoMaxRankExternalModel<MmadL1Op>::getOpLibraryCallName(
 }
 
 //===----------------------------------------------------------------------===//
+// MmadMxL1Op
+//===----------------------------------------------------------------------===//
+
+template <>
+std::string NoMaxRankExternalModel<MmadMxL1Op>::getOpLibraryCallName(
+    Operation *op, std::optional<bool> /*isOpsAligned*/) const {
+  auto concreteOp = cast<MmadMxL1Op>(op);
+  auto baseCallName = concreteOp.getOpName().str();
+  auto elemAType = getElementTypeOrSelf(concreteOp.getDpsInputs()[0].getType());
+  auto elemBType = getElementTypeOrSelf(concreteOp.getDpsInputs()[1].getType());
+
+  auto srcTypeName = getTypeName(concreteOp.getLoc(), elemAType);
+  auto dstTypeName = getTypeName(
+      concreteOp.getLoc(),
+      getElementTypeOrSelf(concreteOp.getDpsInits()[0].getType()));
+
+  std::string finalName = baseCallName;
+  if (concreteOp.getPerChannelBias()) {
+    auto biasTypeName = getTypeName(
+        concreteOp.getLoc(),
+        getElementTypeOrSelf(concreteOp.getPerChannelBias().getType()));
+    finalName += "_with_" + biasTypeName + "_bias";
+  }
+  finalName += "_" + srcTypeName + "_to_" + dstTypeName;
+  if (concreteOp.getATranspose().has_value())
+    finalName += "_ta";
+  if (concreteOp.getBTranspose().has_value())
+    finalName += "_tb";
+
+  auto i8Type = IntegerType::get(concreteOp.getContext(), 8);
+  auto lhsFmt = concreteOp.getLhsFormat();
+  if (!lhsFmt || elemAType != i8Type || elemBType != i8Type)
+    return finalName;
+
+  std::string lhsFmtStr;
+  switch (lhsFmt->getSExtValue()) {
+  case 1:
+    lhsFmtStr = "fp8_e5m2_t";
+    break;
+  case 2:
+    lhsFmtStr = "fp8_e4m3_t";
+    break;
+  case 3:
+    lhsFmtStr = "fp4x2_e2m1_t";
+    break;
+  default:
+    llvm_unreachable("unsupported Dataformat");
+  }
+
+  auto rhsFmt = concreteOp.getRhsFormat();
+  if (!rhsFmt)
+    return finalName;
+
+  std::string rhsFmtStr;
+  switch (rhsFmt->getSExtValue()) {
+  case 1:
+    rhsFmtStr = "fp8_e5m2_t";
+    break;
+  case 2:
+    rhsFmtStr = "fp8_e4m3_t";
+    break;
+  case 3:
+    rhsFmtStr = "fp4x2_e2m1_t";
+    break;
+  default:
+    llvm_unreachable("unsupported Dataformat");
+  }
+
+  return finalName + "_lhs_format_" + lhsFmtStr + "_rhs_format_" + rhsFmtStr;
+}
+
+//===----------------------------------------------------------------------===//
 // Conv1DL1Op
 //===----------------------------------------------------------------------===//
 
@@ -1235,6 +1307,10 @@ std::string NoMaxRankExternalModel<ND2NZOp>::getOpLibraryCallName(
   for (Operation *nextOp : concreteOp.getDst().getUsers()) {
     if (auto mmadl1Op = llvm::dyn_cast<hivm::MmadL1Op>(nextOp)) {
       if (mmadl1Op.getPerChannelBias() == concreteOp.getDst())
+        callName = callName + "_forbias";
+    }
+    if (auto mmadMxOp = llvm::dyn_cast<hivm::MmadMxL1Op>(nextOp)) {
+      if (mmadMxOp.getPerChannelBias() == concreteOp.getDst())
         callName = callName + "_forbias";
     }
   }
@@ -1618,6 +1694,7 @@ void bishengir::hivm::detail::registerLibraryFunctionOpInterfaceExtension(
 
     // Macro Ops
     REGISTER_NO_MAX_RANK(MmadL1Op);
+    REGISTER_NO_MAX_RANK(MmadMxL1Op);
     REGISTER_NO_MAX_RANK(Conv1DL1Op);
     REGISTER_NO_MAX_RANK(Conv2DL1Op);
     REGISTER_NO_MAX_RANK(MatmulOp);

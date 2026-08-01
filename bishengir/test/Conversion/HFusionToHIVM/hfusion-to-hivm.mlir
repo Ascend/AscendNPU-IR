@@ -20,6 +20,84 @@ func.func @test_elemwise_unary_ops(
 }
 
 // -----
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+  // CHECK-LABEL: func.func @test_matmulscale_formatted_i8_transpose
+  // CHECK-NOT: hfusion.bitcast
+  // CHECK-NOT: linalg.transpose
+  // CHECK: hivm.hir.mmadmxL1 {lhsFormat = 1 : i32, rhsFormat = 1 : i32} a_transpose
+  // CHECK-SAME: tensor<8x4xi8>, tensor<8x16xi8>
+  func.func @test_matmulscale_formatted_i8_transpose(
+      %arg0: tensor<8x4xi8>, %arg1: tensor<8x16xi8>,
+      %arg2: tensor<4x1xi8>, %arg3: tensor<16x1xi8>)
+      -> tensor<4x16xf32> {
+    %a_empty_i8 = tensor.empty() : tensor<4x8xi8>
+    %a_t_i8 = linalg.transpose ins(%arg0 : tensor<8x4xi8>)
+      outs(%a_empty_i8 : tensor<4x8xi8>) permutation = [1, 0]
+    %a_empty_fp8 = tensor.empty() : tensor<4x8xf8E5M2>
+    %b_empty_fp8 = tensor.empty() : tensor<8x16xf8E5M2>
+    %a_fp8 = hfusion.bitcast ins(%a_t_i8 : tensor<4x8xi8>)
+      outs(%a_empty_fp8 : tensor<4x8xf8E5M2>) -> tensor<4x8xf8E5M2>
+    %b_fp8 = hfusion.bitcast ins(%arg1 : tensor<8x16xi8>)
+      outs(%b_empty_fp8 : tensor<8x16xf8E5M2>) -> tensor<8x16xf8E5M2>
+    %acc = tensor.empty() : tensor<4x16xf32>
+    %res = hfusion.matmul_mx {lhsFormat = 1 : i32, rhsFormat = 1 : i32}
+      ins(%a_fp8, %b_fp8, %arg2, %arg3 :
+          tensor<4x8xf8E5M2>, tensor<8x16xf8E5M2>,
+          tensor<4x1xi8>, tensor<16x1xi8>)
+      outs(%acc : tensor<4x16xf32>) -> tensor<4x16xf32>
+    return %res : tensor<4x16xf32>
+  }
+}
+
+// -----
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+  // CHECK-LABEL: func.func @test_matmulscale_do_not_inline_format_mismatch
+  // CHECK: hivm.hir.bitcast %{{.*}} : tensor<4x8xi8> -> tensor<4x8xf8E5M2>
+  // CHECK: hivm.hir.bitcast %{{.*}} : tensor<8x16xi8> -> tensor<8x16xf8E5M2>
+  // CHECK: hivm.hir.mmadmxL1 {lhsFormat = 2 : i32, rhsFormat = 2 : i32} ins({{.*}} : tensor<4x8xf8E5M2>, tensor<8x16xf8E5M2>
+  func.func @test_matmulscale_do_not_inline_format_mismatch(
+      %arg0: tensor<4x8xi8>, %arg1: tensor<8x16xi8>,
+      %arg2: tensor<4x1xi8>, %arg3: tensor<16x1xi8>)
+      -> tensor<4x16xf32> {
+    %a_empty_fp8 = tensor.empty() : tensor<4x8xf8E5M2>
+    %b_empty_fp8 = tensor.empty() : tensor<8x16xf8E5M2>
+    %a_fp8 = hfusion.bitcast ins(%arg0 : tensor<4x8xi8>)
+      outs(%a_empty_fp8 : tensor<4x8xf8E5M2>) -> tensor<4x8xf8E5M2>
+    %b_fp8 = hfusion.bitcast ins(%arg1 : tensor<8x16xi8>)
+      outs(%b_empty_fp8 : tensor<8x16xf8E5M2>) -> tensor<8x16xf8E5M2>
+    %acc = tensor.empty() : tensor<4x16xf32>
+    %res = hfusion.matmul_mx {lhsFormat = 2 : i32, rhsFormat = 2 : i32}
+      ins(%a_fp8, %b_fp8, %arg2, %arg3 :
+          tensor<4x8xf8E5M2>, tensor<8x16xf8E5M2>,
+          tensor<4x1xi8>, tensor<16x1xi8>)
+      outs(%acc : tensor<4x16xf32>) -> tensor<4x16xf32>
+    return %res : tensor<4x16xf32>
+  }
+}
+
+// -----
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+  // CHECK-LABEL: func.func @test_matmulscale_do_not_inline_partial_bitcast
+  // CHECK: hivm.hir.bitcast %{{.*}} : tensor<4x8xi8> -> tensor<4x8xf8E5M2>
+  // CHECK: hivm.hir.mmadmxL1 {lhsFormat = 1 : i32, rhsFormat = 1 : i32} ins({{.*}} : tensor<4x8xf8E5M2>, tensor<8x16xf8E5M2>
+  func.func @test_matmulscale_do_not_inline_partial_bitcast(
+      %arg0: tensor<4x8xi8>, %arg1: tensor<8x16xf8E5M2>,
+      %arg2: tensor<4x1xi8>, %arg3: tensor<16x1xi8>)
+      -> tensor<4x16xf32> {
+    %a_empty_fp8 = tensor.empty() : tensor<4x8xf8E5M2>
+    %a_fp8 = hfusion.bitcast ins(%arg0 : tensor<4x8xi8>)
+      outs(%a_empty_fp8 : tensor<4x8xf8E5M2>) -> tensor<4x8xf8E5M2>
+    %acc = tensor.empty() : tensor<4x16xf32>
+    %res = hfusion.matmul_mx {lhsFormat = 1 : i32, rhsFormat = 1 : i32}
+      ins(%a_fp8, %arg1, %arg2, %arg3 :
+          tensor<4x8xf8E5M2>, tensor<8x16xf8E5M2>,
+          tensor<4x1xi8>, tensor<16x1xi8>)
+      outs(%acc : tensor<4x16xf32>) -> tensor<4x16xf32>
+    return %res : tensor<4x16xf32>
+  }
+}
+
+// -----
 
 // CHECK-LABEL: func.func @test_elemwise_binary_ops
 func.func @test_elemwise_binary_ops(
@@ -1022,5 +1100,25 @@ module {
     %c1_i64 = arith.constant 1 : i64
     hfusion.scatter_store ins(%arg1: tensor<16x400xi32>, %arg2: tensor<16x400xf32>, %c1_i64: i64, %arg3: tensor<16x400xi1>) outs(%arg0 : memref<?xf32>) {cache = #hfusion.cache_modifier<none>, evict = #hfusion.eviction_policy<EvictNormal>}
     return
+  }
+}
+
+// -----
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+  // CHECK-LABEL: func.func @test_matmulscale_transpose
+  // CHECK-NOT: linalg.transpose
+  // CHECK: hivm.hir.mmadmxL1 {{.*}}a_transpose{{.*}}b_transpose
+  func.func @test_matmulscale_transpose(%arg0: memref<8x4xf8E5M2>, %arg1: memref<16x8xf8E5M2>, %arg2: memref<1xui8>, %arg3: memref<1xui8>) -> tensor<4x16xf32> {
+    %0 = bufferization.to_tensor %arg0 : memref<8x4xf8E5M2>
+    %1 = bufferization.to_tensor %arg1 : memref<16x8xf8E5M2>
+    %2 = bufferization.to_tensor %arg2 : memref<1xui8>
+    %3 = bufferization.to_tensor %arg3 : memref<1xui8>
+    %a_empty = tensor.empty() : tensor<4x8xf8E5M2>
+    %b_empty = tensor.empty() : tensor<8x16xf8E5M2>
+    %acc = tensor.empty() : tensor<4x16xf32>
+    %a_t = linalg.transpose ins(%0 : tensor<8x4xf8E5M2>) outs(%a_empty : tensor<4x8xf8E5M2>) permutation = [1, 0]
+    %b_t = linalg.transpose ins(%1 : tensor<16x8xf8E5M2>) outs(%b_empty : tensor<8x16xf8E5M2>) permutation = [1, 0]
+    %res = hfusion.matmul_mx ins(%a_t, %b_t, %2, %3 : tensor<4x8xf8E5M2>, tensor<8x16xf8E5M2>, tensor<1xui8>, tensor<1xui8>) outs(%acc : tensor<4x16xf32>) -> tensor<4x16xf32>
+    return %res : tensor<4x16xf32>
   }
 }
