@@ -86,9 +86,9 @@ private:
 
   LogicalResult markOutputs();
   /// For each marked counter alloca whose value is incremented inside a
-  /// regioned op (e.g. the scf.if after a matmul), clone that op and erase all
-  /// CUBE ops inside the clone, so a vector-only stage can keep the counter
-  /// advancing. Returns alloca -> vector-safe clone.
+  /// regioned op and read outside that op (e.g. by the post-scf.if fallback),
+  /// clone the op and erase all CUBE ops inside the clone, so a vector-only
+  /// stage can keep the counter advancing. Returns alloca -> vector-safe clone.
   LogicalResult preprocessCounterAllocas();
 
   /// Absorb non-core "merger" ops (e.g. `arith.select`, `arith.cmpi`) that
@@ -2026,6 +2026,21 @@ LogicalResult CVPipelineImpl::preprocessCounterAllocas() {
       }
     }
     if (!regioned)
+      continue;
+
+    // The vector-safe clone only exists to preserve the counter side effect
+    // for a counter read outside the mixed region (for example, the
+    // normalize-matmul fallback load/cmpi/select following an scf.if).  When
+    // every load is contained in `regioned`, the counter is only used by the
+    // CUBE computation's init condition.  Advancing it again in the VECTOR
+    // stage is unobservable and leaves a dead counter-only clone.
+    bool hasExternalCounterRead =
+        llvm::any_of(alloca->getUsers(), [this, regioned](Operation *user) {
+          auto load = dyn_cast<memref::LoadOp>(user);
+          return load && pipelineLoop->isAncestor(load) &&
+                 !regioned->isAncestor(load);
+        });
+    if (!hasExternalCounterRead)
       continue;
 
     // Clone the regioned op and strip every CUBE op from the clone, leaving a
