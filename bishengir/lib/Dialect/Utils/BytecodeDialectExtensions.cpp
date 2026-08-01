@@ -50,14 +50,13 @@ struct BufferizationBytecodeDialectInterface : public BytecodeDialectInterface {
       : BytecodeDialectInterface(dialect) {}
 
 private:
-#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
-  static LogicalResult downgradeToMemrefOp(Operation *topLevelOp) {
+  static LogicalResult downgradeToBufferOp(Operation *topLevelOp) {
     MLIRContext *ctx = topLevelOp->getContext();
     ctx->allowUnregisteredDialects();
 
     SmallVector<Operation *> toBufferOps;
     topLevelOp->walk([&](Operation *op) {
-      if (op->getName().getStringRef() == "bufferization.to_memref")
+      if (op->getName().getStringRef() == "bufferization.to_buffer")
         toBufferOps.push_back(op);
     });
 
@@ -77,34 +76,6 @@ private:
 
     return success();
   }
-#else
-  static LogicalResult downgradeToBufferOp(Operation *topLevelOp) {
-    MLIRContext *ctx = topLevelOp->getContext();
-    ctx->allowUnregisteredDialects();
-
-    SmallVector<Operation *> toBufferOps;
-    topLevelOp->walk([&](Operation *op) {
-      if (op->getName().getStringRef() == "bufferization.to_buffer")
-        toBufferOps.push_back(op);
-    });
-
-    OpBuilder builder(ctx);
-    for (Operation *op : toBufferOps) {
-      builder.setInsertionPoint(op);
-
-      Value tensorInput = op->getOperand(0);
-      Type memrefType = op->getResult(0).getType();
-      auto readOnlyAttr = op->getAttrOfType<UnitAttr>("read_only");
-
-      auto toMemrefOp = builder.create<bufferization::ToBufferOp>(
-          op->getLoc(), memrefType, tensorInput, readOnlyAttr);
-      op->replaceAllUsesWith(toMemrefOp);
-      op->erase();
-    }
-
-    return success();
-  }
-#endif
 
 public:
   std::unique_ptr<DialectVersion>
@@ -126,11 +97,7 @@ public:
     // Currently we impl downgrade logic to support TA that has higher versions.
     if (bufferizationVersion.version >=
         static_cast<uint64_t>(TritonAscendVersion::V3_4_0))
-#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
-      return downgradeToMemrefOp(topLevelOp);
-#else
       return downgradeToBufferOp(topLevelOp);
-#endif
 
     return success();
   }
