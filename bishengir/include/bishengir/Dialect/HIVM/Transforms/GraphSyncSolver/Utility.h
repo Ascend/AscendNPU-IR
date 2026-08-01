@@ -194,24 +194,16 @@ struct SyncSolverOptions {
 
 struct Occurrence;
 
-struct SetWaitPairInfo {
-  Occurrence *setOcc{nullptr};
-  Occurrence *waitOcc{nullptr};
-  bool isForwardPair{false};
-  bool isBackwardPair{false};
-  bool isCVPreloading{false};
-  bool isCVPipelining{false};
-};
-
 struct ProcessingOrder {
   Occurrence *occ1{nullptr};
   Occurrence *occ2{nullptr};
   RWOperation *rwOp1{nullptr};
   RWOperation *rwOp2{nullptr};
+  int64_t stepNum{0};
   bool isUseless{false};
   ProcessingOrder(Occurrence *occ1, Occurrence *occ2, RWOperation *rwOp1,
-                  RWOperation *rwOp2, bool isUseless)
-      : occ1(occ1), occ2(occ2), rwOp1(rwOp1), rwOp2(rwOp2),
+                  RWOperation *rwOp2, int64_t stepNum, bool isUseless)
+      : occ1(occ1), occ2(occ2), rwOp1(rwOp1), rwOp2(rwOp2), stepNum(stepNum),
         isUseless(isUseless) {};
 };
 
@@ -334,7 +326,6 @@ struct ConflictPair {
   Occurrence *backwardSyncLoopOcc{nullptr};
   EventIdInfo eventIdInfo;
   EventIdNode *eventIdNode{nullptr};
-  std::optional<SetWaitPairInfo> setWaitPairInfo;
   // When set, GraphSyncSolver must assign this event id for the conflict
   // (from CustomMacroOp sync_event_slots with an optional pinned event).
   std::optional<int64_t> pinnedEventId;
@@ -372,21 +363,17 @@ struct ConflictPair {
     auto clonedConflictPair = std::make_unique<ConflictPair>(
         op1, op2, setOp, waitOp, setOcc, waitOcc, setCorePipeInfo,
         waitCorePipeInfo, startIndex, endIndex);
-    clonedConflictPair->isBackwardPair = isBackwardPair;
     clonedConflictPair->isInnerBackward = isInnerBackward;
     clonedConflictPair->isUseless = isUseless;
     clonedConflictPair->dontReuse = dontReuse;
-    clonedConflictPair->dontCheckForConflict = dontCheckForConflict;
     clonedConflictPair->couldNotRun = couldNotRun;
     clonedConflictPair->setOnLastIterOnly = setOnLastIterOnly;
     clonedConflictPair->waitOnFirstIterOnly = waitOnFirstIterOnly;
     clonedConflictPair->replacedWithUnitFlag = replacedWithUnitFlag;
-    clonedConflictPair->movedToOuterLoop = movedToOuterLoop;
     clonedConflictPair->backwardSyncLoopOp = backwardSyncLoopOp;
     clonedConflictPair->backwardSyncLoopOcc = backwardSyncLoopOcc;
     clonedConflictPair->eventIdInfo = eventIdInfo;
     clonedConflictPair->eventIdNode = eventIdNode;
-    clonedConflictPair->setWaitPairInfo = setWaitPairInfo;
     clonedConflictPair->pinnedEventId = pinnedEventId;
     return clonedConflictPair;
   }
@@ -489,16 +476,16 @@ struct MmadMxL1SyncArgs {
   MmadMxL1SyncArgs() = default;
 
   // Wait side (MTE2→MTE1) — each stream independent
-  Value l0WaitL1AEvent;      // Wait A
-  Value l0WaitL1ScaleAEvent; // Wait ScaleA
-  Value l0WaitL1BEvent;      // Wait B
-  Value l0WaitL1ScaleBEvent; // Wait ScaleB
+  Value l0WaitL1AEvent;         // Wait A
+  Value l0WaitL1ScaleAEvent;    // Wait ScaleA
+  Value l0WaitL1BEvent;         // Wait B
+  Value l0WaitL1ScaleBEvent;    // Wait ScaleB
 
   // Set side (MTE1→MTE2) — each stream independent
-  Value l1AWaitL0Event;      // Set A
-  Value l1ScaleAWaitL0Event; // Set ScaleA
-  Value l1BWaitL0Event;      // Set B
-  Value l1ScaleBWaitL0Event; // Set ScaleB
+  Value l1AWaitL0Event;         // Set A
+  Value l1ScaleAWaitL0Event;    // Set ScaleA
+  Value l1BWaitL0Event;         // Set B
+  Value l1ScaleBWaitL0Event;    // Set ScaleB
 };
 
 // Check if two integer ranges intersect.
