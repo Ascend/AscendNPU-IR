@@ -186,3 +186,69 @@ module {
     return
   }
 }
+
+// -----
+
+// Test that memref.load consuming a memref.subview result is correctly
+// converted without leaving irreconcilable unrealized_conversion_cast ops.
+// The subview offset (0) and stride (1) should be composed into the pointer
+// arithmetic, and the base pointer should come directly from the function
+// argument (after Stage 2 expansion).
+
+// CHECK-LABEL: tt.func @subview_memref_load_scalar
+// CHECK-SAME:  %[[ARG0:[a-zA-Z0-9_]+]]: !tt.ptr<f16, 6>,
+// CHECK:       %[[C0:[^ ]+]] = arith.constant 0 : i64
+// CHECK:       %[[C1:[^ ]+]] = arith.constant 1 : i64
+// CHECK:       %[[OFF0:[^ ]+]] = arith.muli %[[C0]], %[[C1]] : i64
+// CHECK:       %[[C0_2:[^ ]+]] = arith.constant 0 : i64
+// CHECK:       %[[C1_2:[^ ]+]] = arith.constant 1 : i64
+// CHECK:       %[[OFF1:[^ ]+]] = arith.muli %[[C0_2]], %[[C1_2]] : i64
+// CHECK:       %[[TOTAL_OFF:[^ ]+]] = arith.addi %[[OFF0]], %[[OFF1]] : i64
+// CHECK:       %[[ADDR:[^ ]+]] = tt.addptr %[[ARG0]], %[[TOTAL_OFF]] : !tt.ptr<f16, 6>, i64
+// CHECK:       %[[VAL:[^ ]+]] = tt.load %[[ADDR]] : !tt.ptr<f16, 6>
+// CHECK-NOT:   builtin.unrealized_conversion_cast
+// CHECK:       tt.return
+
+module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 32 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 32 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 64 : i32>, #dlti.dl_entry<"UB_SIZE", 2031616 : i32>, #dlti.dl_entry<"L1_SIZE", 4194304 : i32>, #dlti.dl_entry<"L0A_SIZE", 524288 : i32>, #dlti.dl_entry<"L0B_SIZE", 524288 : i32>, #dlti.dl_entry<"L0C_SIZE", 2097152 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L1_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L0C_ALIGN_SIZE", 4096 : i32>, #dlti.dl_entry<"MINIMAL_D_CACHE_SIZE", 262144 : i32>, #dlti.dl_entry<"MAXIMUM_D_CACHE_SIZE", 983040 : i32>, #dlti.dl_entry<"ARCH", "dav-c310">>>, hacc.simt_module, hacc.target = #hacc.target<"Ascend910_9589">, hfusion.disableHfusionVectorize, hivm.module_core_type = #hivm.module_core_type<AIV>, ssbuffer.insertionOptimization} {
+  func.func @subview_memref_load_scalar(%arg0: memref<4xf16, #hivm.address_space<ub>>, %arg1: memref<128xf16, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vf_mode = #hivm.vf_mode<SIMT>, memref_attr = array<i32: 0, 1>, no_inline, outline} {
+    %c0 = arith.constant 0 : index
+    %subview = memref.subview %arg0[%c0] [1] [1] : memref<4xf16, #hivm.address_space<ub>> to memref<1xf16, strided<[1], offset: ?>, #hivm.address_space<ub>>
+    %val = memref.load %subview[%c0] : memref<1xf16, strided<[1], offset: ?>, #hivm.address_space<ub>>
+    %empty = tensor.empty() : tensor<128xf16>
+    %bcast = hivm.hir.vbrc {hivm.tcore_type = #hivm.tcore_type<VECTOR>} ins(%val : f16) outs(%empty : tensor<128xf16>) -> tensor<128xf16>
+    hivm.hir.local_store ins(%arg1 : memref<128xf16, #hivm.address_space<ub>>, %bcast : tensor<128xf16>)
+    return
+  }
+}
+
+// -----
+
+// Test that memref.load consuming a memref.subview with dynamic offset is
+// correctly converted. The dynamic subview offset should be multiplied by the
+// source stride and added to the pointer arithmetic.
+
+// CHECK-LABEL: tt.func @subview_memref_load_dynamic_offset
+// CHECK-SAME:  %[[ARG0:[a-zA-Z0-9_]+]]: !tt.ptr<f16, 6>,
+// CHECK:       %[[IDX:[^ ]+]] = arith.index_cast {{.*}} : index to i64
+// CHECK:       %[[C1:[^ ]+]] = arith.constant 1 : i64
+// CHECK:       %[[OFF0:[^ ]+]] = arith.muli %[[IDX]], %[[C1]] : i64
+// CHECK:       %[[C0:[^ ]+]] = arith.constant 0 : i64
+// CHECK:       %[[C1_2:[^ ]+]] = arith.constant 1 : i64
+// CHECK:       %[[OFF1:[^ ]+]] = arith.muli %[[C0]], %[[C1_2]] : i64
+// CHECK:       %[[TOTAL_OFF:[^ ]+]] = arith.addi %[[OFF0]], %[[OFF1]] : i64
+// CHECK:       %[[ADDR:[^ ]+]] = tt.addptr %[[ARG0]], %[[TOTAL_OFF]] : !tt.ptr<f16, 6>, i64
+// CHECK:       %[[VAL:[^ ]+]] = tt.load %[[ADDR]] : !tt.ptr<f16, 6>
+// CHECK-NOT:   builtin.unrealized_conversion_cast
+// CHECK:       tt.return
+
+module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 32 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 32 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 64 : i32>, #dlti.dl_entry<"UB_SIZE", 2031616 : i32>, #dlti.dl_entry<"L1_SIZE", 4194304 : i32>, #dlti.dl_entry<"L0A_SIZE", 524288 : i32>, #dlti.dl_entry<"L0B_SIZE", 524288 : i32>, #dlti.dl_entry<"L0C_SIZE", 2097152 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L1_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L0C_ALIGN_SIZE", 4096 : i32>, #dlti.dl_entry<"MINIMAL_D_CACHE_SIZE", 262144 : i32>, #dlti.dl_entry<"MAXIMUM_D_CACHE_SIZE", 983040 : i32>, #dlti.dl_entry<"ARCH", "dav-c310">>>, hacc.simt_module, hacc.target = #hacc.target<"Ascend910_9589">, hfusion.disableHfusionVectorize, hivm.module_core_type = #hivm.module_core_type<AIV>, ssbuffer.insertionOptimization} {
+  func.func @subview_memref_load_dynamic_offset(%arg0: memref<4xf16, #hivm.address_space<ub>>, %arg1: index, %arg2: memref<128xf16, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vf_mode = #hivm.vf_mode<SIMT>, memref_attr = array<i32: 0, 1>, no_inline, outline} {
+    %subview = memref.subview %arg0[%arg1] [1] [1] : memref<4xf16, #hivm.address_space<ub>> to memref<1xf16, strided<[1], offset: ?>, #hivm.address_space<ub>>
+    %c0 = arith.constant 0 : index
+    %val = memref.load %subview[%c0] : memref<1xf16, strided<[1], offset: ?>, #hivm.address_space<ub>>
+    %empty = tensor.empty() : tensor<128xf16>
+    %bcast = hivm.hir.vbrc {hivm.tcore_type = #hivm.tcore_type<VECTOR>} ins(%val : f16) outs(%empty : tensor<128xf16>) -> tensor<128xf16>
+    hivm.hir.local_store ins(%arg2 : memref<128xf16, #hivm.address_space<ub>>, %bcast : tensor<128xf16>)
+    return
+  }
+}
