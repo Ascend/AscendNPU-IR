@@ -26,6 +26,7 @@
 #include "mlir/IR/Dialect.h"
 #include "mlir/IR/Operation.h"
 #include "llvm/ADT/APFloat.h"
+#include "llvm/ADT/STLExtras.h"
 
 using namespace mlir;
 using namespace hfusion;
@@ -435,6 +436,143 @@ public:
   }
 };
 
+struct InterleaveDecomposeInterface
+    : public bishengir::BiShengIRAggregatedOpInterface::ExternalModel<
+          InterleaveDecomposeInterface, hfusion::InterleaveOp> {
+private:
+  Value emitInsertInterleavedValues(OpBuilder &rewriter, Location loc,
+                                    hfusion::InterleaveOp op,
+                                    Value resultTensor,
+                                    ArrayRef<Value> inputIndices) const {
+    Value channelNums = rewriter.create<arith::ConstantIndexOp>(
+        loc, hfusion::InterleaveOp::getInterLeaveChannelNums());
+    Value outputLastIndex =
+        rewriter.create<arith::MulIOp>(loc, inputIndices.back(), channelNums);
+
+    Value currentResult = resultTensor;
+    for (auto [channel, input] : llvm::enumerate(op.getInput())) {
+      SmallVector<Value> outputIndices(inputIndices.begin(),
+                                       inputIndices.end());
+      if (channel != 0) {
+        Value channelOffset = rewriter.create<arith::ConstantIndexOp>(
+            loc, static_cast<int64_t>(channel));
+        outputIndices.back() =
+            rewriter.create<arith::AddIOp>(loc, outputLastIndex,
+                                           channelOffset);
+      } else {
+        outputIndices.back() = outputLastIndex;
+      }
+
+      Value inputElem =
+          rewriter.create<tensor::ExtractOp>(loc, input, inputIndices);
+      currentResult = rewriter.create<tensor::InsertOp>(
+          loc, inputElem, currentResult, outputIndices);
+    }
+
+    return currentResult;
+  }
+
+  Value emitLoops(OpBuilder &rewriter, Location loc, hfusion::InterleaveOp op,
+                  Value resultTensor, ArrayRef<int64_t> inputShape,
+                  int64_t dim, SmallVector<Value> &inputIndices) const {
+    if (dim == static_cast<int64_t>(inputShape.size()))
+      return emitInsertInterleavedValues(rewriter, loc, op, resultTensor,
+                                         inputIndices);
+
+    Value lower = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+    Value upper =
+        rewriter.create<arith::ConstantIndexOp>(loc, inputShape[dim]);
+    Value step = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+
+    auto forOp =
+        rewriter.create<scf::ForOp>(loc, lower, upper, step,
+                                    ValueRange{resultTensor});
+
+    {
+      OpBuilder::InsertionGuard guard(rewriter);
+      rewriter.setInsertionPointToStart(forOp.getBody());
+
+      inputIndices.push_back(forOp.getInductionVar());
+      Value updated =
+          emitLoops(rewriter, loc, op, forOp.getRegionIterArgs()[0],
+                    inputShape, dim + 1, inputIndices);
+      inputIndices.pop_back();
+
+      rewriter.create<scf::YieldOp>(loc, updated);
+    }
+
+    return forOp.getResult(0);
+  }
+
+public:
+  FailureOr<SmallVector<Value>>
+  decomposeOperation(Operation *op, OpBuilder &rewriter) const {
+    auto interleaveOp = dyn_cast<hfusion::InterleaveOp>(op);
+    if (!interleaveOp)
+      return failure();
+
+    Location loc = op->getLoc();
+    OperandRange inputs = interleaveOp.getInput();
+    if (inputs.empty())
+      return failure();
+
+    if (static_cast<int64_t>(inputs.size()) !=
+        hfusion::InterleaveOp::getInterLeaveChannelNums())
+      return failure();
+
+    auto firstInputTy = dyn_cast<RankedTensorType>(inputs.front().getType());
+    auto resultTy =
+        dyn_cast<RankedTensorType>(interleaveOp.getOutput().getType());
+    if (!firstInputTy || !resultTy)
+      return failure();
+
+    int64_t rank = firstInputTy.getRank();
+    if (rank <= 0 || resultTy.getRank() != rank)
+      return failure();
+
+    for (Value input : inputs) {
+      auto inputTy = dyn_cast<RankedTensorType>(input.getType());
+      if (!inputTy || inputTy != firstInputTy)
+        return failure();
+    }
+
+    ArrayRef<int64_t> inputShape = firstInputTy.getShape();
+    ArrayRef<int64_t> resultShape = resultTy.getShape();
+    for (int64_t dim : inputShape) {
+      if (dim == ShapedType::kDynamic || dim <= 0)
+        return failure();
+    }
+    for (int64_t dim : resultShape) {
+      if (dim == ShapedType::kDynamic || dim <= 0)
+        return failure();
+    }
+
+    for (int64_t dim = 0; dim < rank - 1; ++dim) {
+      if (inputShape[dim] != resultShape[dim])
+        return failure();
+    }
+
+    int64_t channelNums = hfusion::InterleaveOp::getInterLeaveChannelNums();
+    if (resultShape.back() != inputShape.back() * channelNums)
+      return failure();
+
+    if (firstInputTy.getElementType() != resultTy.getElementType())
+      return failure();
+
+    Value initTensor = rewriter.create<tensor::EmptyOp>(
+        loc, resultTy.getShape(), resultTy.getElementType());
+    SmallVector<Value> inputIndices;
+    Value result = emitLoops(rewriter, loc, interleaveOp, initTensor,
+                             inputShape, /*dim=*/0, inputIndices);
+
+    return SmallVector<Value>{result};
+  }
+
+  bishengir::DecomposePhase getDecomposePhase(Operation *op) const {
+    return bishengir::DecomposePhase::BEFORE_LOWER_TO_LOOPS;
+  }
+};
+
 struct CumsumDecomposeInterface
     : public bishengir::BiShengIRAggregatedOpInterface::ExternalModel<
           CumsumDecomposeInterface, hfusion::CumsumOp> {
@@ -815,6 +953,8 @@ public:
         +[](MLIRContext *ctx, hfusion::HFusionDialect *dialect) {
           hfusion::IsInfOp::attachInterface<IsInfDecomposeInterface>(*ctx);
           hfusion::FlipOp::attachInterface<FlipDecomposeInterface>(*ctx);
+          hfusion::InterleaveOp::attachInterface<InterleaveDecomposeInterface>(
+              *ctx);
           hfusion::CumsumOp::attachInterface<CumsumDecomposeInterface>(*ctx);
           hfusion::SortOp::attachInterface<SortDecomposeInterface>(*ctx);
           hfusion::AtomicXchgOp::attachInterface<AtomicXchgDecomposeInterface>(*ctx);
