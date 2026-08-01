@@ -1083,17 +1083,20 @@ struct VReduceInitInitializing : public OpRewritePattern<hivm::VReduceOp> {
       return failure();
     }
 
-    // On reg-based arch (Ascend950/310B), skip scalar-loop init seeding; the
-    // template-lib / compiler path owns reduce init.
-    auto mod = op->getParentOfType<ModuleOp>();
-    if (hacc::utils::isRegBasedArch(mod)) {
-      return failure();
-    }
-
     static constexpr llvm::StringLiteral kAlreadyInitalizeInit =
         "already_initialize_init";
     if (op->hasAttr(kAlreadyInitalizeInit)) {
       return failure();
+    }
+
+    auto mod = op->getParentOfType<ModuleOp>();
+    if (hacc::utils::isRegBasedArch(mod)) {
+      // On reg-based the template-library lowering passes the reduce init value
+      // as a scalar argument to the library function, so a vbrc-based buffer
+      // fill is unnecessary. Set the already_initialize_init flag to signal
+      // downstream passes that initialization has been handled.
+      op->setAttr(kAlreadyInitalizeInit, rewriter.getUnitAttr());
+      return success();
     }
 
     // initialize reduce init operand

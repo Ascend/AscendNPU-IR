@@ -656,7 +656,6 @@ public:
             arg0.getLoc(), arith::CmpFPredicate::UNE, arg0, arg1);
       llvm::report_fatal_error("unsupported type for vne");
     case CompareFn::vle:
-    case CompareFn::vule:
       if (allInteger)
         return builder.create<arith::CmpIOp>(
             arg0.getLoc(), arith::CmpIPredicate::sle, arg0, arg1);
@@ -664,8 +663,12 @@ public:
         return builder.create<arith::CmpFOp>(
             arg0.getLoc(), arith::CmpFPredicate::OLE, arg0, arg1);
       llvm::report_fatal_error("unsupported type for vle");
+    case CompareFn::vule:
+      if (allInteger)
+        return builder.create<arith::CmpIOp>(
+            arg0.getLoc(), arith::CmpIPredicate::ule, arg0, arg1);
+      llvm::report_fatal_error("unsupported type for vule");
     case CompareFn::vlt:
-    case CompareFn::vult:
       if (allInteger)
         return builder.create<arith::CmpIOp>(
             arg0.getLoc(), arith::CmpIPredicate::slt, arg0, arg1);
@@ -673,8 +676,12 @@ public:
         return builder.create<arith::CmpFOp>(
             arg0.getLoc(), arith::CmpFPredicate::OLT, arg0, arg1);
       llvm::report_fatal_error("unsupported type for vlt");
+    case CompareFn::vult:
+      if (allInteger)
+        return builder.create<arith::CmpIOp>(
+            arg0.getLoc(), arith::CmpIPredicate::ult, arg0, arg1);
+      llvm::report_fatal_error("unsupported type for vult");
     case CompareFn::vge:
-    case CompareFn::vuge:
       if (allInteger)
         return builder.create<arith::CmpIOp>(
             arg0.getLoc(), arith::CmpIPredicate::sge, arg0, arg1);
@@ -682,8 +689,12 @@ public:
         return builder.create<arith::CmpFOp>(
             arg0.getLoc(), arith::CmpFPredicate::OGE, arg0, arg1);
       llvm::report_fatal_error("unsupported type for vge");
+    case CompareFn::vuge:
+      if (allInteger)
+        return builder.create<arith::CmpIOp>(
+            arg0.getLoc(), arith::CmpIPredicate::uge, arg0, arg1);
+      llvm::report_fatal_error("unsupported type for vuge");
     case CompareFn::vgt:
-    case CompareFn::vugt:
       if (allInteger)
         return builder.create<arith::CmpIOp>(
             arg0.getLoc(), arith::CmpIPredicate::sgt, arg0, arg1);
@@ -691,6 +702,11 @@ public:
         return builder.create<arith::CmpFOp>(
             arg0.getLoc(), arith::CmpFPredicate::OGT, arg0, arg1);
       llvm::report_fatal_error("unsupported type for vgt");
+    case CompareFn::vugt:
+      if (allInteger)
+        return builder.create<arith::CmpIOp>(
+            arg0.getLoc(), arith::CmpIPredicate::ugt, arg0, arg1);
+      llvm::report_fatal_error("unsupported type for vugt");
     }
     llvm::report_fatal_error("unsupported binary function");
   }

@@ -15,6 +15,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
@@ -709,8 +710,15 @@ std::pair<Value, Value> getIndexTensorForArgmaxArgmin(
     resIndex =
         calculateIndexFloatArgMinArgMax(rewriter, op, scalarInputs, scalarIndx,
                                         floatPred, scalarInputs[1], index);
-    resTensor = getScalarResult<hivm::VMinOp, FLOATINGOP>(rewriter, op.getLoc(),
-                                                          scalarInputs);
+    auto moduleOp = op->getParentOfType<ModuleOp>();
+    if (moduleOp && hacc::utils::isRegBasedArch(moduleOp)) {
+      resTensor = calculateResFloatArgMinArgMax(rewriter, op, scalarInputs,
+                                                floatPred, scalarInputs[1]);
+    } else {
+      resTensor =
+          getScalarResult<hivm::VMinOp, FLOATINGOP>(rewriter, op.getLoc(),
+                                                    scalarInputs);
+    }
   }
   return {resIndex, resTensor};
 }

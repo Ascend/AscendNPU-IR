@@ -79,11 +79,7 @@ inline void registerAllPasses() {
   mlir::ascend_dpx::registerBishengIRTransformsPasses();
   mlir::hfusion::registerHFusionPasses();
   mlir::hivm::registerHIVMPasses();
-  mlir::hivmave::registerAveLoopOptimize();
-  mlir::hivmave::registerAVENormalizeOps();
-  mlir::hivmave::registerAnalyzeVectorLayout();
-  mlir::hivmave::registerAnalyzeAlignmentBitwidth();
-  mlir::hivmave::registerRemoveVectorLayoutAttr();
+  mlir::hivmave::registerAVEPasses();
   mlir::memref::registerBiShengIRMemRefPasses();
   mlir::tensor::registerBiShengIRTensorPasses();
   mlir::scf::registerBiShengIRSCFPasses();
