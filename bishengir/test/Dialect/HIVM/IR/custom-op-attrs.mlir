@@ -94,3 +94,56 @@ func.func @custom_extra_buffer_attrs_multi(%arg0: memref<2x2xf32>, %arg1: tensor
 // CHECK-LABEL: func.func @custom_extra_buffer_attrs_multi
 // CHECK-DAG:   extra_buffers_types = [f32, f16]
 // CHECK-DAG:   extra_buffers_sizes = [512, 128]
+
+// -----
+
+// Inline mode.
+
+func.func @custom_inline_mode(%arg0: memref<1xf32>, %arg1: tensor<1xf32>)
+    attributes {hacc.function_kind = #hacc.function_kind<DEVICE>} {
+  %empty = tensor.empty() : tensor<1xf32>
+  %0 = hivm.hir.custom
+      {hivm.tcore_type = #hivm.tcore_type<VECTOR>,
+       hivm.pipe = #hivm.pipe<PIPE_V>,
+       hivm.vf_mode = #hivm.vf_mode<SIMD>,
+       hivm.inline_mode = #hivm.inline_mode<always_inline>,
+       symbol = "k_inline_always"}
+      "user.inline_always"
+      ins(%arg0, %arg1 : memref<1xf32>, tensor<1xf32>)
+      outs(%empty : tensor<1xf32>) -> tensor<1xf32>
+  %1 = hivm.hir.custom
+      {hivm.tcore_type = #hivm.tcore_type<VECTOR>,
+       hivm.pipe = #hivm.pipe<PIPE_V>,
+       hivm.vf_mode = #hivm.vf_mode<SIMD>,
+       hivm.inline_mode = #hivm.inline_mode<no_inline>,
+       symbol = "k_inline_no"}
+      "user.inline_no"
+      ins(%arg0, %arg1 : memref<1xf32>, tensor<1xf32>)
+      outs(%empty : tensor<1xf32>) -> tensor<1xf32>
+  return
+}
+
+// CHECK-LABEL: func.func @custom_inline_mode
+// CHECK:       hivm.inline_mode = #hivm.inline_mode<always_inline>
+// CHECK:       hivm.inline_mode = #hivm.inline_mode<no_inline>
+
+// -----
+
+func.func @custom_macro_inline_mode(%arg0: memref<1xf32>, %arg1: tensor<1xf32>)
+    attributes {hacc.function_kind = #hacc.function_kind<DEVICE>} {
+  %empty = tensor.empty() : tensor<1xf32>
+  %0 = hivm.hir.custom_macro
+      {hivm.tcore_type = #hivm.tcore_type<VECTOR>,
+       hivm.pipe_in = #hivm.pipe<PIPE_MTE2>,
+       hivm.pipe_out = #hivm.pipe<PIPE_V>,
+       hivm.vf_mode = #hivm.vf_mode<SIMD>,
+       hivm.inline_mode = #hivm.inline_mode<no_inline>,
+       symbol = "k_inline_never"}
+      "user.inline_never"
+      ins(%arg0, %arg1 : memref<1xf32>, tensor<1xf32>)
+      outs(%empty : tensor<1xf32>) -> tensor<1xf32>
+  return
+}
+
+// CHECK-LABEL: func.func @custom_macro_inline_mode
+// CHECK:       hivm.inline_mode = #hivm.inline_mode<no_inline>

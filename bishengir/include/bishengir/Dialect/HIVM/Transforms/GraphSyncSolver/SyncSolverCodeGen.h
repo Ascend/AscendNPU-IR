@@ -72,6 +72,8 @@ private:
   llvm::DenseMap<hivm::MmadL1Op, MmadL1SyncArgs> mmadl1SyncArgsMap;
 
   CustomMacroSyncCodegenState customMacroCodegen;
+  // Per-MMAD MxL1 op arguments collected during sync codegen insertion.
+  llvm::DenseMap<hivm::MmadMxL1Op, MmadMxL1SyncArgs> mmadMxL1SyncArgsMap;
 
   // Mapping to cache loop DB conditions used during codegen insertion.
   llvm::DenseMap<LoopLikeOpInterface, Value> loopDBCondMap;
@@ -153,6 +155,12 @@ private:
   void insertPipeMPipeMte1OuterBwdPairs(IRRewriter &rewriter);
 
   void insertMmadL1SyncArgs(IRRewriter &rewriter);
+
+  llvm::LogicalResult handleMmadMxL1SyncOps(IRRewriter &rewriter,
+                                             OperationBase *opBase,
+                                             SyncOp *syncOp);
+
+  void insertMmadMxL1SyncArgs(IRRewriter &rewriter);
 
   void handleUnitFlagEnabledOps(IRRewriter &rewriter);
 

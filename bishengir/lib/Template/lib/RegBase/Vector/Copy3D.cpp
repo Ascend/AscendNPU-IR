@@ -117,20 +117,6 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_3d_core(
   const int64_t stride2_gm = src->strides[2];
   const int64_t stride2_ub = dst->strides[2];
   bool has_padding = left_padding_num != 0;
-  if (stride2_gm == 1 && stride2_ub == 1) [[likely]] {
-    // last dimension is contiguous
-    if (!has_padding && hasUnalignedUbufStrideFor3dDma<T>(
-                            dst->sizes[1], dst->sizes[2], dst->strides[0],
-                            dst->strides[1], src->strides[0],
-                            src->strides[1])) {
-      load_gm_to_ubuf_3d_by_scalar<T>(src, dst);
-      return;
-    }
-    load_gm_to_ubuf_3d_core_with_contiguous_last_dim<T>(
-        src, dst, left_padding_num, l2_cache_ctl);
-    return;
-  }
-  // last dimension is not contiguous
   const int64_t stride0_ub = dst->strides[0];
   const int64_t stride1_ub = dst->strides[1];
   const int64_t stride0_gm = src->strides[0];
@@ -145,6 +131,21 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_3d_core(
     }
     return;
   }
+
+  if (stride2_gm == 1 && stride2_ub == 1) [[likely]] {
+    // last dimension is contiguous
+    if (!has_padding &&
+        hasUnalignedUbufStrideFor3dDma<T>(dst->sizes[1], dst->sizes[2],
+                                          dst->strides[0], dst->strides[1],
+                                          src->strides[0], src->strides[1])) {
+      load_gm_to_ubuf_3d_by_scalar<T>(src, dst);
+      return;
+    }
+    load_gm_to_ubuf_3d_core_with_contiguous_last_dim<T>(
+        src, dst, left_padding_num, l2_cache_ctl);
+    return;
+  }
+  // last dimension is not contiguous
   // axis 1 is contiguous
   const int64_t size0 = dst->sizes[0];
   const int64_t size1 = dst->sizes[1];
@@ -181,10 +182,10 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_3d_core(
                                   dst->offset,
                                   {size0, size1 * size2, 1},
                                   {stride0_ub, stride2_ub, 1}};
-    if (!has_padding && hasUnalignedUbufStrideFor3dDma<T>(
-                            ub_3d.sizes[1], ub_3d.sizes[2], ub_3d.strides[0],
-                            ub_3d.strides[1], gm_3d.strides[0],
-                            gm_3d.strides[1])) {
+    if (!has_padding &&
+        hasUnalignedUbufStrideFor3dDma<T>(ub_3d.sizes[1], ub_3d.sizes[2],
+                                          ub_3d.strides[0], ub_3d.strides[1],
+                                          gm_3d.strides[0], gm_3d.strides[1])) {
       load_gm_to_ubuf_3d_by_scalar<T>(src, dst);
       return;
     }
@@ -205,10 +206,10 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_3d_core(
                                   dst->offset,
                                   {size0 * size1, size2, 1},
                                   {stride1_ub, stride2_ub, 1}};
-    if (!has_padding && hasUnalignedUbufStrideFor3dDma<T>(
-                            ub_3d.sizes[1], ub_3d.sizes[2], ub_3d.strides[0],
-                            ub_3d.strides[1], gm_3d.strides[0],
-                            gm_3d.strides[1])) {
+    if (!has_padding &&
+        hasUnalignedUbufStrideFor3dDma<T>(ub_3d.sizes[1], ub_3d.sizes[2],
+                                          ub_3d.strides[0], ub_3d.strides[1],
+                                          gm_3d.strides[0], gm_3d.strides[1])) {
       load_gm_to_ubuf_3d_by_scalar<T>(src, dst);
       return;
     }
