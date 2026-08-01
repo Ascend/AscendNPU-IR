@@ -282,7 +282,7 @@ def GatherOp
     getRegionBuilder();
 
     // Used for AggregateOpInterface to decompose into legal operations
-    FailureOr<SmallVector<Value>> decomposeOperation(OpBuilder &);
+    FailureOr<SmallVector<Value>> decomposeOperation(PatternRewriter &);
   }];
 }
 

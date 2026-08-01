@@ -308,6 +308,9 @@ std::unique_ptr<Pass> createNormalizeLoopIteratorPass();
 /// Create a pass to Inline Load and Store operation on the fly.
 std::unique_ptr<Pass> createHIVMInlineOTFLoadStorePass();
 
+/// Create a pass to reuse a VF input buffer for its output
+std::unique_ptr<Pass> createVFOperandSubstitutionPass();
+
 /// Create a pass to analyze arith/vector mask
 std::unique_ptr<Pass> createArithVectorMaskAnalysisPass();
 

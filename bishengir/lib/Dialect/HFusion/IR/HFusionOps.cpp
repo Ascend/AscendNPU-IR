@@ -2558,7 +2558,7 @@ void ArangeOp::getEffects(
 /// isFiniteOp decompose:
 /// eg.
 /// isFiniteOp = !(isnanOp(x) || isinfOp(x))
-FailureOr<SmallVector<Value>> IsFiniteOp::decomposeOperation(OpBuilder &b) {
+FailureOr<SmallVector<Value>> IsFiniteOp::decomposeOperation(PatternRewriter &b) {
   auto loc = getLoc();
   auto input = getInput();
 
@@ -2857,7 +2857,7 @@ LogicalResult GatherOp::verify() {
 ///       extract = tensor.extract src[i, idx, k]
 ///       insert = tensor.insert extract into dest[i, j, k]
 ///
-FailureOr<SmallVector<Value>> GatherOp::decomposeOperation(OpBuilder &b) {
+FailureOr<SmallVector<Value>> GatherOp::decomposeOperation(PatternRewriter &b) {
   // According to numpy.take_along_axis (which triton.gather calls), the
   // dimensions that are not the gather axis are just broadcasts of the index
   OpBuilder::InsertionGuard guard(b);
@@ -3375,7 +3375,7 @@ Value buildHistogramConditionalWrite(OpBuilder &b, Location loc, Value hist,
   return ifOp.getResult(0);
 }
 
-FailureOr<SmallVector<Value>> HistogramOp::decomposeOperation(OpBuilder &b) {
+FailureOr<SmallVector<Value>> HistogramOp::decomposeOperation(PatternRewriter &b) {
   OpBuilder::InsertionGuard guard(b);
   b.setInsertionPoint(getOperation());
 
@@ -3509,7 +3509,7 @@ LogicalResult MatMulMxOp::verify() {
 }
 
 FailureOr<SmallVector<Value>>
-MatMulMxOp::decomposeOperation(OpBuilder &builder) {
+MatMulMxOp::decomposeOperation(PatternRewriter &builder) {
   OpBuilder::InsertionGuard guard(builder);
   builder.setInsertionPoint(getOperation());
   Location location = getLoc();
