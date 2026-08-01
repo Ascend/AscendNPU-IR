@@ -21,6 +21,7 @@
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallVectorExtras.h"
 #include <type_traits>
 
 using namespace mlir;
@@ -141,6 +142,7 @@ bool DimensionAnalyzer::computeTilingDim(bool isVectorOp) {
   } else {
     computeTilingDimImpl<hivm::FixpipeOp>(parallelDimMaps, numStoreOps);
   }
+  computeTilingDimImpl<hivm::DebugOp>(parallelDimMaps, numStoreOps);
 
   mlir::detail::SimpleUnionFind candGroupDSU(argumentTotalLength_);
   SmallVector<int64_t> candidateGroupSize(argumentTotalLength_);
@@ -242,6 +244,8 @@ int64_t DimensionAnalyzer::getTilingDim(Value v) {
   int64_t tilingDim = -1;
   int order = -1;
   auto args = getValueDimIndices(v);
+  LDBG("getTilingDim: " << utils::debugger::to_string(llvm::map_to_vector(
+           args, [&](auto arg) { return structuralDsu_->find(arg); })));
   for (size_t i = 0; i < rank; i++) {
     auto parentIndex = structuralDsu_->find(args[i]);
     if (selectedTilingParIdx.contains(parentIndex) &&
@@ -333,6 +337,12 @@ bool DimensionAnalyzer::checkTileableMaskedStore(StoreOpTy storeOp,
 
 template <>
 bool DimensionAnalyzer::checkTileableMaskedStore(scf::YieldOp storeOp,
+                                                 size_t i) const {
+  return false;
+}
+
+template <>
+bool DimensionAnalyzer::checkTileableMaskedStore(hivm::DebugOp storeOp,
                                                  size_t i) const {
   return false;
 }

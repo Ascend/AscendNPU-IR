@@ -17,6 +17,8 @@
 
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
+#include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/BubbleUpUtils.h"
+#include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/BufferizationBubbleUp.h"
 #include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/CSEPattern.h"
 #include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/HoistAffine.h"
 #include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/Pattern.h"
@@ -34,6 +36,7 @@
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/AsmState.h"
 #include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Value.h"
 #include "mlir/IR/Visitors.h"
 #include "mlir/Pass/PassManager.h"
@@ -66,7 +69,8 @@ public:
 
   LogicalResult
   verifyMarkedExtractSlicesAreBubbledUp(func::FuncOp funcOp) const {
-    auto walkResult = funcOp->walk([this](Operation *op) {
+    int64_t subblockSyncCnt = 0;
+    auto walkResult = funcOp->walk([this, &subblockSyncCnt](Operation *op) {
       if (isa<tensor::InsertSliceOp>(op)) {
         auto insertSliceOp = cast<tensor::InsertSliceOp>(op);
         // All marked insertslice is expected to be cancelled out
@@ -81,6 +85,15 @@ public:
             return WalkResult::interrupt();
         }
       }
+
+      if (auto syncBlockOp = dyn_cast<hivm::SyncBlockOp>(op)) {
+        if (syncBlockOp.getSyncBlockMode().getSyncMode() ==
+            hivm::SyncBlockMode::ALL_SUB_VECTOR)
+          subblockSyncCnt++;
+      }
+
+      if (isa<UnrealizedConversionCastOp>(op))
+        return WalkResult::interrupt();
 
       if (!isa<tensor::ExtractSliceOp>(op)) {
         return WalkResult::advance();
@@ -104,12 +117,12 @@ public:
           }
           return WalkResult::advance();
         }
-        if (auto whileOp =
-                dyn_cast<scf::WhileOp>(srcDefOp)) {
+        if (auto whileOp = dyn_cast<scf::WhileOp>(srcDefOp)) {
           return WalkResult::interrupt();
         }
         if (!isa<tensor::EmptyOp>(srcDefOp) &&
-            !(isa<scf::ForOp>(srcDefOp) && srcDefOp->hasAttr("ExtractedLoadOrStore")) &&
+            !(isa<scf::ForOp>(srcDefOp) &&
+              srcDefOp->hasAttr("ExtractedLoadOrStore")) &&
             !srcDefOp->hasAttr(tiledOp)) {
           if (strictMode) {
             return WalkResult::interrupt();
@@ -119,7 +132,7 @@ public:
       }
       return WalkResult::advance();
     });
-    if (walkResult.wasInterrupted()) {
+    if (walkResult.wasInterrupted() || subblockSyncCnt >= 4) {
       return failure();
     }
     return success();
@@ -161,8 +174,9 @@ public:
     if (failed(pm.run(funcOp))) {
       return signalPassFailure();
     }
-    // Apply bubble up once more, because canonicalize might bring more
-    // opportunity.
+    // Apply bubble up once more; canonicalize/CSE are run by the outer
+    // pass pipeline (e.g. bind-sub-block) to avoid crashing on intermediate
+    // UCC propagators left in the IR.
     RewritePatternSet patterns2(funcOp.getContext());
     populateHoistAffinePattern(patterns2);
     if (!hacc::utils::isRegBasedArch(funcOp->getParentOfType<ModuleOp>()))
@@ -175,6 +189,17 @@ public:
     if (failed(applyPatternsGreedily(funcOp, std::move(patterns2), config))) {
       return signalPassFailure();
     }
+
+    // Apply post process for removing remaining upward propagation from
+    // bufferization bubble up
+    RewritePatternSet patterns3(funcOp.getContext());
+    patterns3.add<BufferizationPropagatePostProcessPattern>(
+        funcOp.getContext());
+
+    if (failed(applyPatternsGreedily(funcOp, std::move(patterns3), config))) {
+      return signalPassFailure();
+    }
+
     if (failed(verifyMarkedExtractSlicesAreBubbledUp(funcOp))) {
       return signalPassFailure();
     }
@@ -197,7 +222,6 @@ private:
     strategies.push_back(std::make_shared<ExtractSliceBubbleUpStrategy>());
     strategies.push_back(std::make_shared<InsertSliceBubbleUpStrategy>());
     strategies.push_back(std::make_shared<BitcastBubbleUpStrategy>());
-    strategies.push_back(std::make_shared<BufferizationBubbleUpStrategy>());
     strategies.push_back(std::make_shared<VTransposeBubbleUpStrategy>());
     strategies.push_back(std::make_shared<IfBubbleUpStrategy>());
     strategies.push_back(std::make_shared<VarangeBubbleUpStrategy>());
@@ -208,9 +232,11 @@ private:
     strategies.push_back(std::make_shared<IndirectLoadBubbleUpStrategy>());
     strategies.push_back(std::make_shared<GatherLoadBubbleUpStrategy>());
     strategies.push_back(std::make_shared<StrideLoadBubbleUpStrategy>());
-    
+    strategies.push_back(std::make_shared<BufferizationBubbleUpStrategy>());
 
     patterns.add<BubbleUpPattern>(context, std::move(strategies));
+    patterns.add<BufferizationPropagateUpPattern>(context);
+    patterns.add<BufferizationPropagateDownPattern>(context);
   }
 };
 
