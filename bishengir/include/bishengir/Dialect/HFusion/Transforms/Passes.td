@@ -164,6 +164,8 @@ def AutoVectorizeV2 : Pass<"hfusion-auto-vectorize-v2", "ModuleOp"> {
     Option<"emitTransformSequence", "emit-transform-sequence", "bool", "false",
            "Emit AutoVectorizeV2 payload tags and transform sequence without applying it.">,
     Option<"treeReduce", "tree-reduce", "bool", "false", "use tree reduce">,
+    Option<"enableCrossIfFusion", "enable-cross-if-fusion", "bool", "false",
+           "Enable fusion op cross region-bearing op in AutoVectorizeV2">,
   ];
 }
 
@@ -280,13 +282,18 @@ def Normalize : Pass<"hfusion-normalize-ops", "func::FuncOp"> {
   let summary = "Normalize Hfusion";
   let constructor = "mlir::hfusion::createHFusionNormalizeOpsPass()";
   let dependentDialects = ["hfusion::HFusionDialect", "hivm::HIVMDialect",
-                           "bufferization::BufferizationDialect"];
+                           "bufferization::BufferizationDialect",
+                           "scope::ScopeDialect"];
   let options = [
     Option<"useRegBase", "use-regbase", "bool", /*default=*/"false",
            "Forcefully use RegBase normalize implementation.">,
     Option<"enableHighPrecision", "enable-high-precision", "bool",
            /*default=*/"true",
-           "Enable high precision calculation for sin/cos in HFusion.">
+           "Enable high precision calculation for sin/cos in HFusion.">,
+    Option<
+      "enableFastDiv", "enable-fast-div", "bool",
+      /*default=*/"false",
+      "Enable conversion of div with constant denominator into mul">
   ];
 }
 

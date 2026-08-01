@@ -14,6 +14,9 @@ add_bishengir_dialect_library(BiShengIRHFusionTransforms
   AddFFTSAddr.cpp
   AutoVectorize.cpp
   AutoVectorize/AutoVectorizeInterpreter.cpp
+  AutoVectorize/FusedNode.cpp
+  AutoVectorize/FusionUtils.cpp
+  AutoVectorize/PlanContext.cpp
   AutoVectorize/Verify.cpp
   AutoVectorizeV2.cpp
   AutoVectorizeVerifier.cpp

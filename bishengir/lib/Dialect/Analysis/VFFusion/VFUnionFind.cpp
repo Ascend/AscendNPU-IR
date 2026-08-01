@@ -27,13 +27,14 @@ namespace mlir::analysis {
 
 VFUnionFind::VFUnionFind(ArrayRef<Operation *> opsInBlock)
     : UnionFindBase(opsInBlock.size()), totalSize(opsInBlock.size(), 0),
-      maxIndex(opsInBlock.size(), 0) {
+      maxIndex(opsInBlock.size(), 0), unionMembers(opsInBlock.size()) {
   std::iota(maxIndex.begin(), maxIndex.end(), 0);
 
   for (auto [i, op] : llvm::enumerate(opsInBlock)) {
     size_t cntNumberOps = 0;
     op->walk([&cntNumberOps](Operation *const _) { ++cntNumberOps; });
     totalSize[i] = cntNumberOps;
+    unionMembers[i].push_back(static_cast<int>(i));
   }
 }
 
@@ -47,6 +48,10 @@ size_t VFUnionFind::getTotalSizeUnion(int x) {
 
 size_t VFUnionFind::getMaxIndexUnion(int x) { return maxIndex[this->find(x)]; }
 
+const SmallVector<int> &VFUnionFind::getMembersUnion(int x) {
+  return unionMembers[this->find(x)];
+}
+
 bool VFUnionFind::join(int a, int b) {
   a = find(a);
   b = find(b);
@@ -59,6 +64,11 @@ bool VFUnionFind::join(int a, int b) {
     maxIndex[a] = std::max(maxIndex[b], maxIndex[a]);
     totalSize[a] += totalSize[b];
     totalSize[b] = 0;
+    // Append the smaller list into the larger, it is O(nlogn).
+    if (unionMembers[a].size() < unionMembers[b].size())
+      std::swap(unionMembers[a], unionMembers[b]);
+    unionMembers[a].append(unionMembers[b].begin(), unionMembers[b].end());
+    unionMembers[b].clear();
     return true;
   }
   return false;

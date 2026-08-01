@@ -13,8 +13,13 @@ namespace mlir {
 namespace analysis {
 class CostModelInfo : public CostModelInfoBase {
 public:
-  const OpConfigMap getConfigMap(bool isReduction) const override {
+  const OpConfigMap &getConfigMap(bool isReduction) const override {
     return isReduction ? ReductionOpCostInfos : ParallelOpCostInfos;
+  }
+
+  static const CostModelInfo &getInstance() {
+    static const CostModelInfo instance;
+    return instance;
   }
 
 protected:

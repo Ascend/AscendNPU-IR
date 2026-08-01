@@ -106,8 +106,15 @@ SmallVector<int64_t> VArangeOp::getLimitedAxes() {
 
 SmallVector<int64_t> VFlipOp::getLimitedAxes() {
   SmallVector<int64_t> limitedAxes = computeElementwiseLimitation(*this);
-  // limit for flip_axis dimension
-  limitedAxes.push_back(this->getFlipAxis());
+  // limit for last dimension
+  limitedAxes.push_back(getFlipAxis());
+  return limitedAxes;
+}
+
+SmallVector<int64_t> VSortOp::getLimitedAxes() {
+  SmallVector<int64_t> limitedAxes = computeElementwiseLimitation(*this);
+  // limit for the sort axis
+  limitedAxes.push_back(getSortAxis());
   return limitedAxes;
 }
 

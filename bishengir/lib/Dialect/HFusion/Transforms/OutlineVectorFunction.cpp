@@ -10,8 +10,8 @@
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
-#include "mlir/Dialect/Transform/Interfaces/TransformInterfaces.h"
 #include "mlir/Dialect/Transform/IR/TransformOps.h"
+#include "mlir/Dialect/Transform/Interfaces/TransformInterfaces.h"
 #include "mlir/Dialect/Transform/Transforms/TransformInterpreterUtils.h"
 #include "mlir/Transforms/RegionUtils.h"
 
@@ -70,11 +70,10 @@ static void outlineLoopsIntoVF(SmallVector<Value> &loopHandles, Location loc,
                                         nullptr);
   builder.create<transform::AnnotateOp>(loc, outlineOp.getFunction(),
                                         "no_inline", nullptr);
-  builder.create<transform::AnnotateOp>(loc, outlineOp.getCall(),
-                                        mlir::hivm::VectorFunctionAttr::name,
+  builder.create<transform::AnnotateOp>(
+      loc, outlineOp.getCall(), mlir::hivm::VectorFunctionAttr::name, nullptr);
+  builder.create<transform::AnnotateOp>(loc, outlineOp.getCall(), "no_inline",
                                         nullptr);
-  builder.create<transform::AnnotateOp>(loc, outlineOp.getCall(),
-                                        "no_inline", nullptr);
   loopHandles.clear();
 }
 
@@ -110,18 +109,21 @@ static void duplicateReusedValuesForInnerSCFForOp(scf::ForOp loop,
       } else {
         builder.setInsertionPoint(loop);
         auto ty = dyn_cast<RankedTensorType>(src.getType());
-        Value empty = builder.create<tensor::EmptyOp>(loc, ty.getShape(),
-                                                      ty.getElementType());
-        auto copyOp = builder.create<linalg::CopyOp>(loc, src, empty);
+        Value duplicated = builder.create<tensor::EmptyOp>(loc, ty.getShape(),
+                                                           ty.getElementType());
+        if (!isEmptyLikeTensor(src)) {
+          duplicated =
+              builder.create<linalg::CopyOp>(loc, src, duplicated).getResult(0);
+        }
         if (srcExtractOp) {
           builder.setInsertionPoint(srcExtractOp);
           auto newSrcExtractOp = builder.create<tensor::ExtractSliceOp>(
-              loc, srcExtractOp.getType(), copyOp.getResult(0),
+              loc, srcExtractOp.getType(), duplicated,
               srcExtractOp.getMixedOffsets(), srcExtractOp.getMixedSizes(),
               srcExtractOp.getMixedStrides());
           iterArg.assign(newSrcExtractOp.getResult());
         } else {
-          iterArg.assign(copyOp.getResult(0));
+          iterArg.assign(duplicated);
         }
       }
     }
@@ -141,7 +143,8 @@ void OutlineVectorFunctionPass::runOnOperation() {
     int vfIdx = -1;
     builder.setInsertionPointAfter(func);
     transform::SequenceOp seqOp = builder.create<transform::SequenceOp>(
-        func.getLoc(), TypeRange(), transform::FailurePropagationMode::Propagate,
+        func.getLoc(), TypeRange(),
+        transform::FailurePropagationMode::Propagate,
         builder.getType<transform::AnyOpType>(),
         [](OpBuilder &b, Location nested, Value rootH) {
           b.create<transform::YieldOp>(nested, ValueRange());
@@ -161,7 +164,8 @@ void OutlineVectorFunctionPass::runOnOperation() {
           vfIdx++;
           std::string loopLabel = vfNamePrefix + std::to_string(vfIdx);
           op->setAttr(loopLabel, builder.getUnitAttr());
-          loopHandles.push_back(getOpTransformHandle(loopLabel, builder, seqOp));
+          loopHandles.push_back(
+              getOpTransformHandle(loopLabel, builder, seqOp));
           outlineLoopsIntoVF(loopHandles, loc, builder,
                              vfNamePrefix + std::to_string(vfIdx));
           prevLoop = nullptr;
@@ -172,10 +176,11 @@ void OutlineVectorFunctionPass::runOnOperation() {
             loopIdxInVf = -1;
           }
           loopIdxInVf++;
-          std::string loopLabel =
-              vfNamePrefix + std::to_string(vfIdx) + "_" + std::to_string(loopIdxInVf);
+          std::string loopLabel = vfNamePrefix + std::to_string(vfIdx) + "_" +
+                                  std::to_string(loopIdxInVf);
           op->setAttr(loopLabel, builder.getUnitAttr());
-          loopHandles.push_back(getOpTransformHandle(loopLabel, builder, seqOp));
+          loopHandles.push_back(
+              getOpTransformHandle(loopLabel, builder, seqOp));
           prevLoop = op;
         } else {
           outlineLoopsIntoVF(loopHandles, loc, builder,
@@ -190,12 +195,11 @@ void OutlineVectorFunctionPass::runOnOperation() {
         func, seqOp, func->getParentOfType<ModuleOp>(), options);
     seqOp->erase();
     if (failed(result))
-      func->emitError("Failed to outline vector function from loops of current function.");
+      func->emitError(
+          "Failed to outline vector function from loops of current function.");
   });
 
-  module.walk([&](scf::ForOp forOp) {
-    removeLabelsForOutlinedLoops(forOp);
-  });
+  module.walk([&](scf::ForOp forOp) { removeLabelsForOutlinedLoops(forOp); });
 }
 
 } // anonymous namespace

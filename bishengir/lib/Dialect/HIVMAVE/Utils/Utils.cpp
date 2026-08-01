@@ -309,6 +309,18 @@ static bool isMemrefAligned(Value memrefVal, int64_t hwAlignBits,
   }
   if (dyn_cast<func::FuncOp>(defOp)) {
     // Check whether the memref object is a function parameter.
+    MemRefType memRefTy = cast<MemRefType>(memrefVal.getType());
+    SmallVector<int64_t> strides(memRefTy.getRank());
+    int64_t offset = 0;
+    // If can't get strides and offset -> unaligned
+    if (failed(getStridesAndOffset(memRefTy, strides, offset)))
+      return false;
+    // If offset is dynamic -> unaligned
+    if (offset == ShapedType::kDynamic)
+      return false;
+    // If static offset is unaligned -> unaligned
+    if (offset % (hwAlignBits / 8))
+      return false;
     // The memref object address in the parameters is aligned.
     return true;
   } else if (auto subViewOp = dyn_cast<memref::SubViewOp>(defOp)) {
@@ -399,6 +411,7 @@ uint32_t hivmave::getNumfromPgePattern(VFPgeOp pge) {
   case PgePattern::VL128:
     res = 128;
     break;
+  case PgePattern::H:
   case PgePattern::ALL: {
     res =
         static_cast<uint32_t>(cast<VectorType>(pge.getType()).getNumElements());

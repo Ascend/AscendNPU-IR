@@ -419,7 +419,7 @@ static FailureOr<Value> insertViewFromByteAlloc(Value alloc, Type elemType,
 /// Returns the memref buffer to initialize via VBrc before load/nd2nz.
 /// Uses the underlying alloc when its element type matches dst; otherwise
 /// inserts a 1-D view on the byte alloc sized from the alloc only.
-static FailureOr<Value> getVBrcPadBuffer(Value dst, OpBuilder &b) {
+static FailureOr<Value> getVBrcPadBuffer(Value dst, PatternRewriter &b) {
   auto maybeAlloc = traceDefOp<memref::AllocOp>(dst);
   if (!maybeAlloc.has_value())
     return failure();
@@ -441,7 +441,7 @@ static FailureOr<Value> getVBrcPadBuffer(Value dst, OpBuilder &b) {
     auto markOp = cast<annotation::MarkOp>(*maybePageMark);
     if (!markOp.getValues().empty()) {
       Value subview = markOp.getValues().front();
-      markOp->erase();
+      b.eraseOp(markOp);
       return subview;
     }
   }

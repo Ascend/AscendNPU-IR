@@ -244,6 +244,14 @@ def DisableHIVMTensorCompile : FeatureControlOptions<
   let passGroup = ["HFUSION", "HIVM"];
 }
 
+def EnableFastDiv : FeatureControlOptions<
+  "Enable conversion of div with constant denominator into mul",
+  "bool",
+  "false"
+> {
+  let passGroup = ["HFUSION"];
+}
+
 def EnableLegacyInsertLoadStoreForMixCV : FeatureControlOptions<
   "Use legacy InsertLoadStoreForMixCV.",
   "bool",
@@ -1019,6 +1027,14 @@ llvm::cl::values(
   }];
 }
 
+def HfusionEnableCrossIfFusion : FeatureControlOptions<
+  "Enable fusion op cross region-bearing op in AutoVectorizeV2",
+  "bool",
+  "false"
+> {
+  let passGroup = ["HFUSION"];
+}
+
 def HfusionEnableMultipleConsumerFusion : FeatureControlOptions<
   "Enable multiple consumer fusion in AutoVectorizeV2",
   "bool",
@@ -1247,7 +1263,7 @@ def EnableSinkDPXLoad : SIMTOptimizationControlOptions<
   "bool",
   "true"
 > {
-  bit isSharedWithDownstreamToolchain = 1;
+  bit isSharedWithDownstreamToolchain = 0;
 }
 
 def KTileSize : SIMTOptimizationControlOptions<

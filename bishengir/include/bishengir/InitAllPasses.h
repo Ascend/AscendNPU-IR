@@ -35,6 +35,7 @@
 #include "bishengir/Dialect/HIVM/Pipelines/ConvertToHIVMPipeline.h"
 #include "bishengir/Dialect/HIVM/Pipelines/Passes.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVMAVE/Transforms/Passes.h"
 #include "bishengir/Dialect/LLVMIR/Transforms/Passes.h"
 #include "bishengir/Dialect/MemRef/Transforms/Passes.h"
 #include "bishengir/Dialect/SCF/Transforms/Passes.h"
@@ -78,6 +79,11 @@ inline void registerAllPasses() {
   mlir::ascend_dpx::registerBishengIRTransformsPasses();
   mlir::hfusion::registerHFusionPasses();
   mlir::hivm::registerHIVMPasses();
+  mlir::hivmave::registerAveLoopOptimize();
+  mlir::hivmave::registerAVENormalizeOps();
+  mlir::hivmave::registerAnalyzeVectorLayout();
+  mlir::hivmave::registerAnalyzeAlignmentBitwidth();
+  mlir::hivmave::registerRemoveVectorLayoutAttr();
   mlir::memref::registerBiShengIRMemRefPasses();
   mlir::tensor::registerBiShengIRTensorPasses();
   mlir::scf::registerBiShengIRSCFPasses();
@@ -111,6 +117,7 @@ inline void registerAllPasses() {
   mlir::hivm::registerLowerHIVMPipelines();
   mlir::hivm::registerConvertToHIVMPipelines();
   mlir::hfusion::registerLowerHFusionPipelines();
+  mlir::hfusion::regbase::registerLowerHFusionPipelines();
 
 #if MLIR_ENABLE_EXECUTION_ENGINE
   mlir::execution_engine::registerExecutionEnginePasses();

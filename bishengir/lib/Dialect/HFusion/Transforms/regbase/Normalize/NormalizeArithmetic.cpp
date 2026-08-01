@@ -22,6 +22,7 @@
 #include "bishengir/Dialect/HFusion/Transforms/regbase/NormalizeUtils.h"
 #include "bishengir/Dialect/HFusion/Transforms/regbase/NormalizeTraitsBase.h"
 #include "bishengir/Transforms/regbase/Normalize/NormalizeArithmeticTemplate.h"
+#include "llvm/ADT/APFloat.h"
 
 namespace mlir {
 /// Normalizes `rsqrt(x)` to `rec(sqrt(x))`
@@ -303,6 +304,73 @@ public:
   }
 };
 
+/// normalize div with constant denominator
+/// a/cst -> rec = 1/cst; a * rec
+struct NormalizeDivWithCstDenominator : public OpRewritePattern<linalg::ElemwiseBinaryOp> {
+public:
+  using OpRewritePattern<linalg::ElemwiseBinaryOp>::OpRewritePattern;
+
+  bool checkTypeConsistencyFails(double reciprocal, FloatType targetT) const {
+    llvm::APFloat castedRecip(reciprocal);
+    bool losesInfo;
+    castedRecip.convert(targetT.getFloatSemantics(),
+                        llvm::RoundingMode::NearestTiesToEven,
+                        &losesInfo);
+    // to preserve precision exclude fp number overflow
+    // and fp number denormal value cases
+    bool fail = castedRecip.isDenormal() || castedRecip.isInfinity();
+    return fail;
+  }
+
+  LogicalResult matchAndRewrite(linalg::ElemwiseBinaryOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!op.hasPureTensorSemantics() ||
+        op.getFun() != linalg::BinaryFn::div) {
+      return failure();
+    }
+
+    auto inputs = op.getDpsInputs();
+    Value lhs = inputs[0];
+    Value rhs = inputs[1];
+    auto rhsOp = rhs.getDefiningOp<arith::ConstantOp>();
+
+    if (!rhsOp) {
+      return failure();
+    }
+
+    // skip the integer division case
+    if (auto constFloatAttr = dyn_cast<FloatAttr>(rhsOp.getValue())) {
+      double reciprocal = 1 / constFloatAttr.getValueAsDouble();
+
+      FloatType rhsDType = dyn_cast<FloatType>(rhs.getType());
+      if (!rhsDType) {
+        return failure();
+      }
+
+      if (checkTypeConsistencyFails(reciprocal, rhsDType)) {
+        return failure();
+      }
+
+      {
+        PatternRewriter::InsertionGuard guard(rewriter);
+        rewriter.setInsertionPointAfter(rhsOp);
+        rhs = rewriter.create<arith::ConstantOp>(rhsOp.getLoc(), rhsDType,
+                                          rewriter.getFloatAttr(rhsDType, reciprocal));
+      }
+
+      auto out = utils::createEmptyOp(rewriter, op.getLoc(), op.getResult(0));
+      auto attr = rewriter.getAttr<linalg::BinaryFnAttr>(linalg::BinaryFn::mul);
+      auto fnAttr = rewriter.getNamedAttr("fun", attr);
+      Value mul = rewriter.create<linalg::ElemwiseBinaryOp>(
+                        op.getLoc(), ValueRange{lhs, rhs}, ValueRange{out}, fnAttr)->getResults()[0];
+
+      rewriter.replaceOp(op, mul);
+      return success();
+    }
+    return failure();
+  }
+};
+
 using NormalizeRSqrtOpRegBase =
     NormalizeRSqrtOpTemplate<hfusion::ElemwiseUnaryOp, HFusionNormalizeRSqrtTraits>;
 using NormalizeMulRecOpRegBase =
@@ -325,13 +393,16 @@ void populateNormalizeMulRecPatterns(RewritePatternSet &patterns) {
   patterns.add<NormalizeMulRecOpRegBase>(patterns.getContext());
 }
 
-void populateNormalizeArithmeticPatterns(RewritePatternSet &patterns) {
+void populateNormalizeArithmeticPatterns(RewritePatternSet &patterns, bool enableFastDiv) {
   MLIRContext *ctx = patterns.getContext();
   patterns.add<NormalizeNegToMulRegBase>(ctx);
   patterns.add<NormalizeDivVSToRecRegBase>(ctx);
   patterns.add<NormalizeVPowiToPowfRegBase>(ctx);
   patterns.add<NormalizeSubVSToVMulAndVAddRegBase>(ctx);
   patterns.add<NormalizeRSqrtOpRegBase>(ctx);
+  if (enableFastDiv) {
+    patterns.add<NormalizeDivWithCstDenominator>(ctx);
+  }
 }
 
 void populateNormalizePreFinalArithmeticPatterns(RewritePatternSet &patterns) {

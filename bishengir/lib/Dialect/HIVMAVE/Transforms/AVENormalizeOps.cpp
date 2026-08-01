@@ -49,6 +49,24 @@ static std::optional<hivmave::VecMemType> getVecMemType(Type vector) {
   return memAttr.getValue();
 }
 
+static bool breaksPB16AlignmentOnNextContinuousStore(VFMaskedStoreOp store) {
+  if (!store->hasAttr("hivm.is_continuous") ||
+      !store->getParentOfType<scf::ForOp>())
+    return false;
+
+  // The "hivm.is_continuous" marker is produced from
+  // loopStep * memrefStride == vectorLength, so adjacent stores advance by one
+  // stored vector.  PB16 predicate stores require the next start address to
+  // preserve 16-byte granularity.
+  constexpr int64_t pb16AlignmentBits = 16 * 8;
+  const int64_t vectorElements = store.getVectorType().getNumElements();
+  const int64_t elementBitWidth =
+      static_cast<int64_t>(store.getMemRefType().getElementTypeBitWidth());
+  const int64_t nextStoreDeltaBits = vectorElements * elementBitWidth;
+
+  return nextStoreDeltaBits % pb16AlignmentBits != 0;
+}
+
 /// Before conversion:
 /// ```mlir
 ///    %res = ave.hir.vload <NORM> %subview[%c0] {ave.unaligned_ub_access =
@@ -116,38 +134,49 @@ static LogicalResult insertPregCastAfterLoad(VFLoadOp load,
 ///       strided<[1], offset: ?>, #hivm.address_space<ub>>, vector<64xi1>,
 ///       vector<64xi1>
 /// ```
-static LogicalResult insertPregCastBeforeStore(VFMaskedStoreOp store,
-                                               VectorType maskType,
-                                               PatternRewriter &rewriter) {
+static LogicalResult
+insertPregCastBeforeStore(VFMaskedStoreOp store, VectorType maskType,
+                          hivmave::FunctionDistType funcDist,
+                          PatternRewriter &rewriter) {
   auto vecMemTypeOpt = getVecMemType(store.getVal().getType());
   if (!vecMemTypeOpt)
     return failure();
   auto vecMemType = *vecMemTypeOpt;
   Value originalValue = store.getVal();
   VectorType vectorTy = store.getVectorType();
-  auto vecSize = vectorTy.getNumElements();                                              
+  auto vecSize = vectorTy.getNumElements();
+  hivmave::PregCastMode castMode;
   if (vecMemType == hivmave::VecMemType::B8) {
+    if (funcDist != hivmave::FunctionDistType::PB8)
+      return failure();
     if (vecSize == 64) {
       store->setAttr("functionType", hivmave::FunctionDistTypeAttr::get(
                                          store.getContext(),
-                                        hivmave::FunctionDistType::PB32));
+                                         hivmave::FunctionDistType::PB32));
+      castMode = hivmave::PregCastMode::UNPK4_B8;
     } else if (vecSize == 128) {
       store->setAttr("functionType", hivmave::FunctionDistTypeAttr::get(
                                          store.getContext(),
                                          hivmave::FunctionDistType::PB16));
+      castMode = hivmave::PregCastMode::UNPK_B8;
     } else {
       return failure();
     }
+  } else if (vecMemType == hivmave::VecMemType::B16) {
+    if (funcDist != hivmave::FunctionDistType::PB16 || vecSize != 64 ||
+        !breaksPB16AlignmentOnNextContinuousStore(store))
+      return failure();
+    store->setAttr("functionType", hivmave::FunctionDistTypeAttr::get(
+                                       store.getContext(),
+                                       hivmave::FunctionDistType::PB32));
+    castMode = hivmave::PregCastMode::UNPK_B16;
   } else {
     return failure();
   }
 
   rewriter.setInsertionPoint(store);
   auto castOp = rewriter.create<hivmave::VFPregTypeCastOp>(
-      store.getLoc(), maskType, originalValue,
-      vecSize == 64
-          ? hivmave::PregCastMode::UNPK4_B8
-          : hivmave::PregCastMode::UNPK_B8);
+      store.getLoc(), maskType, originalValue, castMode);
 
   store->setOperand(3, castOp.getResult());
   return success();
@@ -262,6 +291,8 @@ struct AVEStorePattern : public OpRewritePattern<VFMaskedStoreOp> {
     if (store->hasAttr(UnalignedAttr::name))
       return;
     Value data = store.getVal();
+    auto orgAligmentAttr =
+        data.getDefiningOp()->getAttr(utils::elementAlignmentBitWidth);
     Location loc = store->getLoc();
     VectorType orgVectorTy = store.getVectorType();
     Type dElemType = orgVectorTy.getElementType();
@@ -277,11 +308,13 @@ struct AVEStorePattern : public OpRewritePattern<VFMaskedStoreOp> {
           VectorType::get(SmallVector<int64_t>{regSize}, dElemType);
       UnrealizedConversionCastOp ucc =
           rewriter.create<UnrealizedConversionCastOp>(loc, castRegType, data);
+      ucc->setAttr(utils::elementAlignmentBitWidth, orgAligmentAttr);
       data = ucc->getResult(0);
     }
     VectorType targetVectorTy = VectorType::get(targetRegSize, targetRegType);
     LLVM::BitcastOp bitcast =
         rewriter.create<LLVM::BitcastOp>(loc, targetVectorTy, data);
+    bitcast->setAttr(utils::elementAlignmentBitWidth, orgAligmentAttr);
     store->setOperand(store->getNumOperands() - 1, bitcast);
   }
 
@@ -333,8 +366,9 @@ struct AVEStorePattern : public OpRewritePattern<VFMaskedStoreOp> {
     }
     if (funcDistAttr) {
       auto funcDist = funcDistAttr.getValue();
-      if (funcDist == hivmave::FunctionDistType::PB8) {
-        return insertPregCastBeforeStore(store, maskType, rewriter);
+      if (funcDist == hivmave::FunctionDistType::PB8 ||
+          funcDist == hivmave::FunctionDistType::PB16) {
+        return insertPregCastBeforeStore(store, maskType, funcDist, rewriter);
       }
     }
     return failure();
@@ -565,6 +599,12 @@ struct AVEPgePattern : public OpRewritePattern<VFPgeOp> {
     if (elementAlignment == -1)
       elementAlignment = util::VL_BITS / dstTyNumElems;
     PgePattern pattern = pge.getPattern();
+    if (pattern == PgePattern::ALL &&
+        dstTyNumElems != util::VL_BITS / elementAlignment)
+      pattern = hivmave::getPgePatternAttr(rewriter, dstTyNumElems,
+                                           util::PREDICATE_BITS)
+                    .value()
+                    .getValue();
     PgePattern normPattern = pattern;
     if (pattern == PgePattern::ALL &&
         dstTyNumElems != util::VL_BITS / elementAlignment)

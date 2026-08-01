@@ -436,6 +436,7 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
           static_cast<unsigned>(
               hfusionOptions.hfusionMaxFusedOpsInAutoVectorizeV2);
     vecOptions.treeReduce = hfusionOptions.enableTreeReduce;
+    vecOptions.enableCrossIfFusion = hfusionOptions.hfusionEnableCrossIfFusion;
     pm.addPass(createHFusionAutoVectorizeV2Pass(vecOptions));
     pm.addPass(createOutlineVectorFunctionPass());
   } else {
@@ -564,6 +565,7 @@ void buildHFusionRegBasePipeline(OpPassManager &pm,
 
   NormalizeOptions normalizeOptions;
   normalizeOptions.enableHighPrecision = options.enableHighPrecision;
+  normalizeOptions.enableFastDiv = options.enableFastDiv;
   pm.nest<func::FuncOp>().addPass(
       createHFusionNormalizeOpsPass(normalizeOptions));
 
