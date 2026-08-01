@@ -248,6 +248,9 @@ std::optional<TFuncCoreType> queryFuncCoreType(Operation *funcOp) {
     return std::nullopt;
   }
 
+  if (funcOp->hasAttr(hivm::VectorFunctionAttr::name))
+    return hivm::TFuncCoreType::AIV;
+
   auto tFuncCoreTypeAttr = funcOp->getAttrOfType<hivm::TFuncCoreTypeAttr>(
       hivm::TFuncCoreTypeAttr::name);
   if (tFuncCoreTypeAttr) {
