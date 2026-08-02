@@ -283,17 +283,21 @@ findBestFusedNodeForProducer(Block *block, Operation *producer,
   if (isVsstbPatternTransposeOp(producer))
     return nullptr;
 
-  // A standalone loop would not yield the tiled intermediate back to other
-  // consumers; they would still read the original untiled tensor, producing
-  // wrong slices. Keep it in-place so every consumer extract_slices from the
-  // full tensor directly.
-  if (isExpandShapeOpCanFuseIntoVsstbPatternTranspose(producer) &&
+  // Multi-consumer fusion (hasManyUsers && !hasFusionOpportunity) requires the
+  // containing loop to yield the tiled result back to outside consumers, but
+  // upstream replaceForWithNewSignature only supports linalg::GenericOp.
+  //
+  // Allowing fusion for a non-GenericOp producer leaves both the untiled
+  // original and the tiled clone alive with the same label, causing vectorize
+  // to abort on the untiled one (its iteration space no longer matches the tile
+  // sizes).
+  //
+  // So bail out for non-GenericOp. Remove this guard once
+  // replaceForWithNewSignature supports more producer types. The producer
+  // stays in place regardless.
+  if ((!ctx.getEnableMultipleConsumerFusion() ||
+       !isa<linalg::GenericOp>(producer)) &&
       hasManyUsers(producer) && !hasFusionOpportunity(producer, ctx)) {
-    return nullptr;
-  }
-
-  if (!ctx.getEnableMultipleConsumerFusion() && hasManyUsers(producer) &&
-      !hasFusionOpportunity(producer, ctx)) {
     return nullptr;
   }
 
