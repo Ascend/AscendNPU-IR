@@ -358,28 +358,32 @@ struct TensorSliceParameters {
   SmallVector<OpFoldResult> sizes;
 };
 
-// NOTE: the offset-constant fallback for dynamic tileSize is unreliable
-// (e.g. shape=8, tile=[%dyn], offset=[0] -> true).  Prefer the pattern in
-// getCollapsedSliceParameters (mustNoTile) instead.
 static bool isNoTile(OpFoldResult tileSize, OpFoldResult offset,
-                     int64_t shape) {
+                     ArrayRef<int64_t> shape, int64_t dim) {
   std::optional<int64_t> maybeIntTileSize = getConstantIntValue(tileSize);
   if (maybeIntTileSize.has_value()) {
-    return maybeIntTileSize.value() == 0 || maybeIntTileSize.value() == shape;
+    return maybeIntTileSize.value() == 0 ||
+           maybeIntTileSize.value() == shape[dim];
   }
   std::optional<int64_t> maybeIntOffset = getConstantIntValue(offset);
   return maybeIntOffset.has_value();
 }
 
-static bool isUnitTile(OpFoldResult tileSize) {
+static bool isUnitTile(OpFoldResult tileSize, int64_t dim) {
   std::optional<int64_t> maybeIntTileSize = getConstantIntValue(tileSize);
-  return maybeIntTileSize.has_value() && maybeIntTileSize.value() == 1;
+  if (maybeIntTileSize.has_value()) {
+    return maybeIntTileSize.value() == 1;
+  }
+  return false;
 }
 
-static bool isValidTile(OpFoldResult tileSize, int64_t shape) {
+static bool isValidTile(OpFoldResult tileSize, ArrayRef<int64_t> shape,
+                        int64_t dim) {
   std::optional<int64_t> maybeIntTileSize = getConstantIntValue(tileSize);
-  return maybeIntTileSize.has_value() &&
-         (shape % maybeIntTileSize.value() == 0);
+  if (maybeIntTileSize.has_value()) {
+    return shape[dim] % maybeIntTileSize.value() == 0;
+  }
+  return false;
 }
 
 static FailureOr<TensorSliceParameters> getExpandedSliceParameters(
@@ -399,8 +403,8 @@ static FailureOr<TensorSliceParameters> getExpandedSliceParameters(
 
     // Case 0a: if a dimension of the collapsed value isn't tiled, all the
     // correspond dimensions of the expanded value won't be tiled.
-    if (isNoTile(collapsedTileSize, collapsedOffset,
-                 collapsedShape[collapsedIdx])) {
+    if (isNoTile(collapsedTileSize, collapsedOffset, collapsedShape,
+                 collapsedIdx)) {
       for (int64_t expandedIdx : expandedIndices) {
         resSliceParameters.offsets.push_back(b.getIndexAttr(0));
         resSliceParameters.sizes.push_back(
@@ -413,8 +417,8 @@ static FailureOr<TensorSliceParameters> getExpandedSliceParameters(
     // Case 0b: if the last dimension of the expanded value was the multiple of
     // the tileSize N of the collapsed dimension, the expanded value could be
     // tiled by [1, ...,1, N]
-    if (isValidTile(collapsedTileSize,
-                    expandedShape[expandedIndicesRef.back()])) {
+    if (isValidTile(collapsedTileSize, expandedShape,
+                    expandedIndicesRef.back())) {
       std::optional<int64_t> maybeIntOffset =
           getConstantIntValue(collapsedOffset);
       AffineExpr offsetExpr;
@@ -542,95 +546,151 @@ static FailureOr<TensorSliceParameters> getExpandedSliceParameters(
   return resSliceParameters;
 }
 
-// Map expanded-space tile (offsets/sizes) back to a single contiguous
-// collapsed-space slice via row-major flattening, the inverse of
-// getExpandedSliceParameters.
-//
-// In row-major order a rectangular expanded tile projects to a contiguous
-// collapsed interval iff the expanded dims follow the pattern
-//   [unit || shape==1]*  [mainDim]  [NoTile]*
-// where "unit" means tile size == 1, "NoTile" means tile covers the full
-// dimension.  The collapsed offset is the row-major flattening of all
-// expanded offsets; the collapsed size is size[mainDim] times the product
-// of trailing fully-covered shapes.
-static FailureOr<TensorSliceParameters>
-getCollapsedSliceParameters(OpBuilder &b, Location loc,
-                            const TensorSliceParameters &expandedSliceParams,
-                            ExpandShapeOp expandShapeOp) {
+static FailureOr<TensorSliceParameters> getCollapsedSliceParameters(
+    OpBuilder &b, Location loc, ArrayRef<ReassociationIndices> associations,
+    const TensorSliceParameters &expandedSliceParams,
+    ArrayRef<int64_t> expandedShape, Value collapsedValue) {
+  MLIRContext *ctx = collapsedValue.getContext();
+  ArrayRef<int64_t> collapsedShape =
+      cast<ShapedType>(collapsedValue.getType()).getShape();
   TensorSliceParameters resSliceParameters;
-
-  auto associations = expandShapeOp.getReassociationIndices();
-  auto expandedValue = expandShapeOp.getResult();
-  auto expandedShape = expandShapeOp.getResultType().getShape();
-
-  // Helper to obtain the runtime size of an expanded dim.
-  auto shapeOf = [&b, loc, &expandedValue, &expandedShape](int64_t dim) {
-    return ShapedType::isDynamic(expandedShape[dim])
-               ? b.createOrFold<tensor::DimOp>(loc, expandedValue, dim)
-               : b.createOrFold<arith::ConstantIndexOp>(loc,
-                                                        expandedShape[dim]);
-  };
-
-  auto mustNoTile = [&expandedSliceParams, &expandedShape](int64_t dim) {
-    if (ShapedType::isDynamic(expandedShape[dim]))
-      return false;
-    auto c = getConstantIntValue(expandedSliceParams.sizes[dim]);
-    return c.has_value() && (c.value() == 0 || c.value() == expandedShape[dim]);
-  };
-  auto mustUnitTile = [&expandedSliceParams, &expandedShape](int64_t dim) {
-    return expandedShape[dim] == 1 ||
-           isUnitTile(expandedSliceParams.sizes[dim]);
-  };
-
-  // Convert OpFoldResult to Value for use in arith ops.
-  auto toValue = [&b, loc](OpFoldResult ofr) {
-    auto c = getConstantIntValue(ofr);
-    return c ? b.createOrFold<arith::ConstantIndexOp>(loc, *c)
-             : ofr.get<Value>();
-  };
-  // Multiply with constant folding to Attribute when both operands are static.
-  auto mul = [&b, loc, toValue](auto lhs, auto rhs) -> OpFoldResult {
-    auto cl = getConstantIntValue(lhs);
-    auto cr = getConstantIntValue(rhs);
-    if (cl && cr)
-      return b.getIndexAttr((*cl) * (*cr));
-    return b.createOrFold<arith::MulIOp>(loc, toValue(lhs), toValue(rhs));
-  };
-  // Add with constant folding to Attribute when both operands are static.
-  auto add = [&b, loc, toValue](auto lhs, auto rhs) -> OpFoldResult {
-    auto cl = getConstantIntValue(lhs);
-    auto cr = getConstantIntValue(rhs);
-    if (cl && cr)
-      return b.getIndexAttr((*cl) + (*cr));
-    return b.createOrFold<arith::AddIOp>(loc, toValue(lhs), toValue(rhs));
-  };
+  resSliceParameters.offsets.reserve(collapsedShape.size());
+  resSliceParameters.sizes.reserve(collapsedShape.size());
 
   for (auto [collapsedIdx, expandedIndices] : llvm::enumerate(associations)) {
-    // Row-major flattening:
-    // offset = ((offset0) * size1 + offset1) * size2 + offset2...
-    OpFoldResult offset = expandedSliceParams.offsets[expandedIndices.front()];
-    for (int64_t dim : drop_begin(expandedIndices))
-      offset = add(mul(offset, shapeOf(dim)), expandedSliceParams.offsets[dim]);
-    resSliceParameters.offsets.push_back(offset);
+    // Case 0a: If all the dimensions of the expanded value aren't tiled, the
+    // corresponding collapsed dimension of the collapsed value won't be tiled.
+    if (llvm::all_of(expandedIndices, [&](int64_t dim) {
+          OpFoldResult expandedTileSize = expandedSliceParams.sizes[dim];
+          OpFoldResult expandedOffset = expandedSliceParams.offsets[dim];
+          return isNoTile(expandedTileSize, expandedOffset, expandedShape, dim);
+        })) {
+      resSliceParameters.offsets.push_back(b.getIndexAttr(0));
+      resSliceParameters.sizes.push_back(
+          utils::getDimOFR(b, loc, collapsedValue, collapsedIdx));
+      continue;
+    }
 
-    // Absorb prefix of unit or shape==1 dims.
-    auto mainDim = llvm::find_if_not(expandedIndices, mustUnitTile);
-    auto endDim = expandedIndices.end();
-    // All unit -> collapsed size is 1.
-    if (mainDim == endDim) {
+    ArrayRef<int64_t> expandedIndicesRef = expandedIndices;
+    // Case 0b: If expanded value are tiled by (1, ...,1, N), the corresponding
+    // collapsed dimension of the collapsed value will be tiled by N
+    if (llvm::all_of(expandedIndicesRef.drop_back(1), [&](int64_t dim) {
+          OpFoldResult expandedTileSize = expandedSliceParams.sizes[dim];
+          return isUnitTile(expandedTileSize, dim);
+        })) {
+      auto offsetExpr = getAffineConstantExpr(0, ctx);
+      SmallVector<Value> offsetValues;
+      int64_t ind = 0;
+      for (auto &&dim : expandedIndicesRef) {
+        offsetExpr =
+            offsetExpr * getAffineConstantExpr(expandedShape[dim], ctx);
+        std::optional<int64_t> maybeIntOffset =
+            getConstantIntValue(expandedSliceParams.offsets[dim]);
+        if (!maybeIntOffset.has_value()) {
+          offsetExpr = offsetExpr + getAffineDimExpr(ind++, ctx);
+          offsetValues.push_back(
+              dyn_cast<Value>(expandedSliceParams.offsets[dim]));
+        } else {
+          offsetExpr = offsetExpr + getAffineConstantExpr(*maybeIntOffset, ctx);
+        }
+      }
+
+      resSliceParameters.sizes.push_back(
+          expandedSliceParams.sizes[expandedIndicesRef.back()]);
+      resSliceParameters.offsets.push_back(
+          b.create<affine::AffineApplyOp>(
+               loc, AffineMap::inferFromExprList({offsetExpr}, ctx).front(),
+               offsetValues)
+              ->getResult(0));
+      continue;
+    }
+
+    // handle the leading dimensions whose size is equal to 1
+    expandedIndicesRef = expandedIndicesRef.drop_while([&](int64_t idx) {
+      bool isOne = expandedShape[idx] == 1;
+      return isOne;
+    });
+
+    // Case 1: No more index left
+    if (expandedIndicesRef.empty()) {
+      resSliceParameters.offsets.push_back(b.getIndexAttr(0));
       resSliceParameters.sizes.push_back(b.getIndexAttr(1));
       continue;
     }
 
-    // Trailing dims must all be NoTile; accumulating their shapes into the
-    // collapsed stride.
-    OpFoldResult mainSize = expandedSliceParams.sizes[*mainDim];
-    for (auto dim : llvm::make_range(std::next(mainDim), endDim)) {
-      if (!mustNoTile(dim))
-        return failure();
-      mainSize = mul(mainSize, shapeOf(dim));
+    int64_t firstNotOneDim = expandedIndicesRef[0];
+    // Case 2: If only one index left, the tile size on the expanded side is
+    // equal to that on the collapsed side
+    if (expandedIndicesRef.size() == 1) {
+      resSliceParameters.offsets.push_back(
+          expandedSliceParams.offsets[firstNotOneDim]);
+      resSliceParameters.sizes.push_back(
+          expandedSliceParams.sizes[firstNotOneDim]);
+      continue;
     }
-    resSliceParameters.sizes.push_back(mainSize);
+
+    expandedIndicesRef = expandedIndicesRef.drop_front(1);
+    // Case 3: If all the remaining dimention sizes except the leading one is
+    // equal to one, the situation is similar to above.
+    if (llvm::all_of(expandedIndicesRef,
+                     [&](int64_t dim) { return expandedShape[dim] == 1; })) {
+      resSliceParameters.offsets.push_back(
+          expandedSliceParams.offsets[firstNotOneDim]);
+      resSliceParameters.sizes.push_back(
+          expandedSliceParams.sizes[firstNotOneDim]);
+      continue;
+    }
+
+    // Case 4: If more than 1 indices are left, the tile size must be a multiple
+    // of the product of the dimension size except the first one, which also
+    // requires that the tile size and all the dimension size of the first one
+    // must be static.
+    if (!llvm::all_of(expandedIndicesRef, [&](int64_t dim) {
+          return expandedShape[dim] != ShapedType::kDynamic;
+        })) {
+      LLVM_DEBUG(
+          DBGS() << "Not all of the remaining dimension size is equal to 1.\n");
+      return failure();
+    }
+
+    int64_t productOfExpandedTileSize = 1;
+    // If any of the remaining dimension is tiled, return failure
+    for (int64_t dim : expandedIndicesRef) {
+      OpFoldResult expandedTileSize = expandedSliceParams.sizes[dim];
+      OpFoldResult expandedOffset = expandedSliceParams.offsets[dim];
+      if (!isNoTile(expandedTileSize, expandedOffset, expandedShape, dim) ||
+          expandedShape[dim] == ShapedType::kDynamic)
+        return failure();
+      productOfExpandedTileSize *= expandedShape[dim];
+    }
+
+    Value firstNotOneOffsetVal =
+        dyn_cast<Value>(expandedSliceParams.offsets[firstNotOneDim]);
+    if (!firstNotOneOffsetVal) {
+      return failure();
+    }
+    OpFoldResult firstNotOneTileSize =
+        expandedSliceParams.sizes[firstNotOneDim];
+    std::optional<int64_t> maybeIntFirstNotOneTileSize =
+        getConstantIntValue(firstNotOneTileSize);
+    if (!maybeIntFirstNotOneTileSize.has_value()) {
+      LLVM_DEBUG(
+          DBGS() << "the tile size of the first not-one should be static.\n");
+      return failure();
+    }
+    int64_t collaspedTileSize =
+        (*maybeIntFirstNotOneTileSize) * productOfExpandedTileSize;
+
+    // add the size and offset of the first the dimensions after dropping those
+    // of dimension size one
+    resSliceParameters.sizes.push_back(b.getIndexAttr(collaspedTileSize));
+    AffineMap map =
+        AffineMap::inferFromExprList(
+            {mlir::getAffineDimExpr(0, ctx) * productOfExpandedTileSize}, ctx)
+            .front();
+    resSliceParameters.offsets.push_back(
+        b.create<affine::AffineApplyOp>(loc, map, firstNotOneOffsetVal)
+            ->getResult(0));
   }
 
   return resSliceParameters;
@@ -731,6 +791,8 @@ struct ExpandShapeOpTiling
     int64_t outRank = expandShapeOp.getResultType().getRank();
 #endif
     int64_t srcRank = expandShapeOp.getSrcType().getRank();
+    SmallVector<ReassociationIndices, 4> associations =
+        expandShapeOp.getReassociationIndices();
     assert(offsets.size() == static_cast<size_t>(outRank) &&
            sizes.size() == static_cast<size_t>(outRank));
 
@@ -740,7 +802,9 @@ struct ExpandShapeOpTiling
     expandedSliceParams.offsets = canonOffsets;
     expandedSliceParams.sizes = canonSizes;
     FailureOr<TensorSliceParameters> collapsedSliceParam =
-        getCollapsedSliceParameters(b, loc, expandedSliceParams, expandShapeOp);
+        getCollapsedSliceParameters(b, loc, associations, expandedSliceParams,
+                                    expandShapeOp.getResultType().getShape(),
+                                    expandShapeOp.getSrc());
     if (failed(collapsedSliceParam)) {
       LLVM_DEBUG(DBGS() << "Check tile size failed.\n");
       return {};
