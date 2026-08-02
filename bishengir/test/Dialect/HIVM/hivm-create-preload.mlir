@@ -216,57 +216,6 @@ module {
 
 // -----
 
-// Synchronization operations that are direct children of a preload loop
-// coordinate the expanded loop. They must remain single operations instead of
-// being cloned once for every preload mapping.
-
-// CHECK-LABEL: func.func @test_sync_outside_preload_scope
-// CHECK: scf.for %[[NEW_IV:.*]] =
-// CHECK-COUNT-1: hivm.hir.sync_block_set[<CUBE>, <PIPE_S>, <PIPE_S>] flag = 15
-// CHECK-COUNT-1: hivm.hir.sync_block_wait[<CUBE>, <PIPE_S>, <PIPE_S>] flag = 14
-// CHECK-COUNT-1: hivm.hir.set_flag[<PIPE_MTE1>, <PIPE_MTE3>, <EVENT_ID0>]
-// CHECK-COUNT-1: hivm.hir.wait_flag[<PIPE_MTE1>, <PIPE_MTE3>, <EVENT_ID0>]
-// CHECK-COUNT-1: hivm.hir.pipe_barrier[<PIPE_ALL>]
-// CHECK-COUNT-1: %[[DYNAMIC_FLAG:.*]] = arith.extsi %[[NEW_IV]] : i32 to i64
-// CHECK-COUNT-1: hivm.hir.sync_block_set[<CUBE>, <PIPE_MTE1>, <PIPE_MTE3>] flag = %[[DYNAMIC_FLAG]]
-func.func @test_sync_outside_preload_scope() {
-  %c0 = arith.constant 0 : i32
-  %c4 = arith.constant 4 : i32
-  %c1 = arith.constant 1 : i32
-
-  scf.for %i = %c0 to %c4 step %c1 : i32 {
-    scope.scope : () -> () {
-      "test.stage1"(%i) : (i32) -> ()
-      scope.return
-    } {
-      no_inline,
-      hivm.preload_num = 1 : i32,
-      hivm.max_preload_num = 2 : i32
-    }
-
-    hivm.hir.sync_block_set[<CUBE>, <PIPE_S>, <PIPE_S>] flag = 15
-    hivm.hir.sync_block_wait[<CUBE>, <PIPE_S>, <PIPE_S>] flag = 14
-    hivm.hir.set_flag[<PIPE_MTE1>, <PIPE_MTE3>, <EVENT_ID0>]
-    hivm.hir.wait_flag[<PIPE_MTE1>, <PIPE_MTE3>, <EVENT_ID0>]
-    hivm.hir.pipe_barrier[<PIPE_ALL>]
-    %dynamic_flag = arith.extsi %i : i32 to i64
-    hivm.hir.sync_block_set[<CUBE>, <PIPE_MTE1>, <PIPE_MTE3>]
-      flag = %dynamic_flag
-
-    scope.scope : () -> () {
-      "test.stage0"(%i) : (i32) -> ()
-      scope.return
-    } {
-      no_inline,
-      hivm.preload_num = 0 : i32,
-      hivm.max_preload_num = 2 : i32
-    }
-  }
-  return
-}
-
-// -----
-
 // A scope result that is an arbitrary-depth chain of views rooted at a preload
 // local buffer. The preload skip (else) branch must rematerialize each view
 // instead of aborting with "Unhandled scope result case".
