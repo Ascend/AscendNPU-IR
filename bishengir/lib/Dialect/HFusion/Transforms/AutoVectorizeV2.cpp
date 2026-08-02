@@ -263,13 +263,10 @@ static bool hasFusionOpportunity(Operation *producer, PlanContext &ctx) {
   return consumerLabels.size() == 1;
 }
 
-// Normally, we should fuse the producer into the closest fusedNode which
-// contains its consumers. But in some context, we should give up fusing and
-// return nullptr:
-// 1. the producer is fill op or vsstb pattern transpose op
-// 2. there is fusedOps within the closest fusedNode conflict with the producer
-// 3. there is normal(not vsstb pattern) transpose user within the closest
-//    fusedNode
+// Among the producer's fusable users, pick the FusedNode whose ops
+// appear earliest in the block and that passes all plan-level checks.
+// Choosing the earliest minimizes disruption to the original op order;
+// skipping non-fusable users avoids missing any viable fusion chance.
 static std::shared_ptr<FusedNode>
 findBestFusedNodeForProducer(Block *block, Operation *producer,
                              PlanContext &ctx, int64_t vectorLength) {
@@ -301,23 +298,29 @@ findBestFusedNodeForProducer(Block *block, Operation *producer,
     return nullptr;
   }
 
-  Operation *closestUser = nullptr;
-  for (auto user : producer->getUsers()) {
-    if (isOpInBlock(user, block)) {
-      if (!closestUser || user->isBeforeInBlock(closestUser))
-        closestUser = user;
-    }
+  std::shared_ptr<FusedNode> bestFusedNode = nullptr;
+  // Returns true when bestFusedNode is unset (first candidate) or `user` is in
+  // a node appearing earlier in the block.
+  // Relies on ops within a node being contiguous after consolidation, so any op
+  // from bestFusedNode serves as a valid proxy for its block position.
+  auto isBetter = [&bestFusedNode](auto *user) {
+    if (!bestFusedNode)
+      return true;
+    return !bestFusedNode->contains(user) &&
+           user->isBeforeInBlock(*bestFusedNode->ops().begin());
+  };
+  for (auto *user : producer->getUsers()) {
+    if (!isOpInBlock(user, block) || !isFusableOp(user) || !isBetter(user))
+      continue;
+    if (auto node = ctx.getInfo(user).fusedNode;
+        node->canAccept(producer, AcceptContext::Producer) &&
+        node->canFuseProducer(producer))
+      bestFusedNode = node;
   }
-  if (!closestUser || !isFusableOp(closestUser))
+  if (!bestFusedNode)
     return nullptr;
 
-  auto bestFusedNode = ctx.getInfo(closestUser).fusedNode;
-  assert(bestFusedNode);
-  if (!bestFusedNode->canAccept(producer, AcceptContext::Producer))
-    return nullptr;
   FusableOpInfo &producerInfo = ctx.getInfo(producer);
-  if (!bestFusedNode->canFuseProducer(producer))
-    return nullptr;
   int numUsersInBestFusedNode = 0;
   for (auto user : DenseSet<Operation *>(producer->getUsers().begin(),
                                          producer->getUsers().end())) {
