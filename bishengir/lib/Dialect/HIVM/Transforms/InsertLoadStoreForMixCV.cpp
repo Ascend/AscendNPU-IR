@@ -801,6 +801,7 @@ struct AddConvertLayoutUBToL1
 }
 };
 
+// Handle convert layout from ub to L1 for FixpipeOp->MmadL1Op.
 template<>
 struct AddConvertLayoutUBToL1<hivm::FixpipeOp>
     : public OpRewritePattern<hivm::MmadL1Op> {
@@ -817,6 +818,13 @@ struct AddConvertLayoutUBToL1<hivm::FixpipeOp>
       auto maybeFixpipe = traceDefOp<hivm::FixpipeOp>(operand.get());
       if (!maybeFixpipe)
         continue;
+
+      // FixpipeOp of rank 4 (Fractal layout) do not need add layout conversion.
+      auto fixpipeOp = *maybeFixpipe;
+      auto fixpipeType = cast<ShapedType>(fixpipeOp->getResult(0).getType());
+      if (fixpipeType.hasRank() && fixpipeType.getRank() == 4)
+        continue;
+
       llvm::SmallVector<OpOperand *> consumerOperands{&operand};
 
       Value valueAfterUb = operand.get();
@@ -898,6 +906,8 @@ void InsertLoadStoreForMixCVPass::runOnOperation() {
   if (isEnabledTightCoupledBuffer() && failed(addConvertLayoutUBToL1(funcOp))) {
     return signalPassFailure();
   }
+
+  LDBG("After adding convert layout UB to L1 Op: " << funcOp);
 
   if (failed(pm.run(funcOp))) {
     return signalPassFailure();

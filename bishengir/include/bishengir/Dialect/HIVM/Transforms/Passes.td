@@ -774,11 +774,10 @@ def InsertFixpipe : Pass<"hivm-insert-fixpipe"> {
   let dependentDialects =
       ["hivm::HIVMDialect", "bishengir::memref_ext::MemRefExtDialect",
        "bufferization::BufferizationDialect"];
-  let options = [
-    Option<"inferFixpipeDmaMode", "infer-fixpipe-dma-mode", "bool",
-           /*default=*/"false",
-           "Infer fixpipe dma_mode from source/destination shape compatibility.">
-  ];
+  let options = [Option<
+      "inferFixpipeDmaMode", "infer-fixpipe-dma-mode", "bool",
+      /*default=*/"false",
+      "Infer fixpipe dma_mode from source/destination shape compatibility.">];
 }
 
 def TileBatchMMIntoLoop : Pass<"hivm-tile-batchmm-into-loop", "func::FuncOp"> {

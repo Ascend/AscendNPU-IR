@@ -215,6 +215,7 @@ hivm::LoadOp insertLoad(Value value, Location loc, PatternRewriter &rewriter);
 /// Insert a fixpipe that rematerializes `value` with matching element type.
 hivm::FixpipeOp insertFixpipe(Value value, Location loc,
                               PatternRewriter &rewriter,
+                              hivm::AddressSpace addressSpace,
                               bool inferFixpipeDmaMode);
 
 /// Insert tight coupled buffer to L1 that rematerializes `value` with matching element type.

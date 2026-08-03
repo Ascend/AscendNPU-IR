@@ -91,6 +91,10 @@ public:
                                UnrealizedConversionCastOp upPropOp,
                                PatternRewriter &rewriter) const;
 
+  LogicalResult resolveL0CToL1(UnrealizedConversionCastOp downPropOp,
+                               UnrealizedConversionCastOp upPropOp,
+                               PatternRewriter &rewriter) const;
+
 private:
   const bool inferFixpipeDmaMode;
 };
