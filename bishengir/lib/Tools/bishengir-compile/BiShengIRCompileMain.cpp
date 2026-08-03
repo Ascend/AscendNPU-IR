@@ -17,12 +17,12 @@
 
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
-#include "bishengir/Tools/Utils/Utils.h"
-#include "bishengir/Tools/RetriablePassManager/RetriablePassManager.h"
 #include "bishengir/Tools/RetriablePassManager/CbufOverflowRetryPolicy.h"
 #include "bishengir/Tools/RetriablePassManager/CcOverflowRetryPolicy.h"
+#include "bishengir/Tools/RetriablePassManager/RetriablePassManager.h"
 #include "bishengir/Tools/RetriablePassManager/TuningRetryPolicy.h"
 #include "bishengir/Tools/RetriablePassManager/UbOverflowRetryPolicy.h"
+#include "bishengir/Tools/Utils/Utils.h"
 #include "bishengir/Tools/bishengir-compile/BiShengIRCompile.h"
 #include "bishengir/Tools/bishengir-compile/PassPipeline.h"
 
@@ -201,23 +201,27 @@ LogicalResult runExternalHIVMC(ModuleOp module,
     }
     if (!llvm::sys::fs::exists(saveTempsDir))
       if (auto ec = llvm::sys::fs::create_directories(saveTempsDir)) {
-        llvm::errs() << "[ERROR] Failed to create save-temps directory: " << saveTempsDir << "\n";
+        llvm::errs() << "[ERROR] Failed to create save-temps directory: "
+                     << saveTempsDir << "\n";
         return failure();
       }
     llvm::sys::path::append(saveTempsDir, inputFile);
     std::string errorMessage;
     inputFileHandler = mlir::openOutputFile(saveTempsDir, &errorMessage);
     if (!inputFileHandler) {
-      llvm::errs() << "[ERROR] Failed to open save-temps file: " << errorMessage << "\n";
+      llvm::errs() << "[ERROR] Failed to open save-temps file: " << errorMessage
+                   << "\n";
       return failure();
     }
     // Make sure module.hivm.opt.mlir will not be deleted.
     inputFileHandler->keep();
-  // If --save-temps is not set, use a temporary directory for module.hivm.opt.mlir
+    // If --save-temps is not set, use a temporary directory for
+    // module.hivm.opt.mlir
   } else {
     inputFileHandler = getTempFile(inputFile, tempDirsStore);
     if (!inputFileHandler) {
-      llvm::dbgs() << "[ERROR] Failed to create temporary input file needed to run hivm compile.\n";
+      llvm::dbgs() << "[ERROR] Failed to create temporary input file needed to "
+                      "run hivm compile.\n";
       return failure();
     }
   }
@@ -260,6 +264,7 @@ LogicalResult runExternalHIVMC(ModuleOp module,
 FailureOr<OwningModuleRef>
 bishengir::runBiShengIRPipeline(ModuleOp mod,
                                 BiShengIRCompileMainConfig config) {
+  CompileTiming timing;
 
   MLIRContext *ctx = mod->getContext();
   mlir::DiagnosticEngine &diagEngine = ctx->getDiagEngine();
@@ -298,10 +303,9 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
   std::vector<AppliedCompileFallback> retriablePipelineFallbacks;
   auto buildPipeline = std::bind(buildBiShengHIRPipeline, std::placeholders::_1,
                                  std::cref(config));
-  bool hirCompileSuccess =
-      succeeded(retriablePm.runWithRetry(mod, buildPipeline, "BiShengHIR",
-                                         collectedDiagnostics,
-                                         retriablePipelineFallbacks));
+  bool hirCompileSuccess = succeeded(retriablePm.runWithRetry(
+      mod, buildPipeline, "BiShengHIR", collectedDiagnostics,
+      retriablePipelineFallbacks));
 
   // Restore to the default handler.
   diagEngine.eraseHandler(handlerID);

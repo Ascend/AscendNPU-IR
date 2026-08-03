@@ -18,6 +18,7 @@
 #include "bishengir/Tools/RetriablePassManager/RetriablePassManager.h"
 
 #include "bishengir/Pass/PassManager.h"
+#include "bishengir/Tools/Utils/Utils.h"
 #include "bishengir/Transforms/InjectIRInstrumentation.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/PassManager.h"
@@ -60,9 +61,10 @@ void RetriablePassManager::emitFallbackSummary(
     return;
 
   const AppliedCompileFallback &first = appliedFallbacks.front();
-  const bool allSameCause = llvm::all_of(appliedFallbacks, [&](const AppliedCompileFallback &fb) {
-    return fb.retryCause == first.retryCause;
-  });
+  const bool allSameCause =
+      llvm::all_of(appliedFallbacks, [&](const AppliedCompileFallback &fb) {
+        return fb.retryCause == first.retryCause;
+      });
 
   llvm::errs() << "[NOTE] ";
   if (allSameCause) {
@@ -89,9 +91,10 @@ void RetriablePassManager::emitFallbackSummary(
     llvm::errs() << "; compilation still failed.\n";
 }
 
-LogicalResult RetriablePassManager::runOnce(ModuleOp mod,
-                                            const BuildPipelineFn &buildPipeline,
-                                            StringRef pipelineName) {
+LogicalResult
+RetriablePassManager::runOnce(ModuleOp mod,
+                              const BuildPipelineFn &buildPipeline,
+                              StringRef pipelineName) {
   BiShengIRPassManager passManager(config, context,
                                    ModuleOp::getOperationName(),
                                    OpPassManager::Nesting::Implicit);
@@ -99,6 +102,13 @@ LogicalResult RetriablePassManager::runOnce(ModuleOp mod,
 
   (void)mlir::applyPassManagerCLOptions(passManager);
   (void)bishengir::applyPassManagerCLOptions(passManager);
+
+  std::optional<mlir::TimingScope> pipelineTimingScope;
+  mlir::TimingScope *timingScope = getCurrentCompileTimingScope();
+  if (timingScope) {
+    pipelineTimingScope.emplace(timingScope->nest(pipelineName));
+    passManager.enableTiming(*pipelineTimingScope);
+  }
 
   if (config.getPrintPassId() || !config.getInjectIrBefore().empty() ||
       !config.getInjectIrAfter().empty()) {
@@ -108,7 +118,8 @@ LogicalResult RetriablePassManager::runOnce(ModuleOp mod,
   }
 
   if (failed(passManager.run(mod)))
-    return mod->emitError("Failed to run " + pipelineName.str() + " pipeline\n");
+    return mod->emitError("Failed to run " + pipelineName.str() +
+                          " pipeline\n");
 
   return success();
 }
@@ -157,7 +168,8 @@ LogicalResult RetriablePassManager::runWithRetry(
     LLVM_DEBUG({
       llvm::dbgs() << "[BiShengHIR] Pipeline retry ("
                    << matchedPolicy->userVisibleRetryCause() << "): ";
-      printSetOptionAction(llvm::dbgs(), retryAction->option, retryAction->value);
+      printSetOptionAction(llvm::dbgs(), retryAction->option,
+                           retryAction->value);
       llvm::dbgs() << " and retrying\n";
     });
     if (matchedPolicy->recordsCompileFallback()) {
@@ -167,8 +179,8 @@ LogicalResult RetriablePassManager::runWithRetry(
         appliedFallbacks.push_back(
             {retryAction->option, retryAction->value,
              std::string(matchedPolicy->userVisibleRetryCause())});
-      emitFallbackNote(matchedPolicy->userVisibleRetryCause(), retryAction->option,
-                       retryAction->value);
+      emitFallbackNote(matchedPolicy->userVisibleRetryCause(),
+                       retryAction->option, retryAction->value);
     }
 
     collectedDiagnostics.resize(pipelineAttemptDiagStart);
