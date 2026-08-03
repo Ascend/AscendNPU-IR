@@ -11,6 +11,10 @@
 
 #include "bishengir/Dialect/HIVMAVE/IR/HIVMAVE.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/IR/AffineExpr.h"
+#include "llvm/ADT/ArrayRef.h"
+#include <cstdint>
+#include <optional>
 
 namespace mlir {
 namespace hivmave {
@@ -21,50 +25,36 @@ enum class LoopAccessContinuity {
   Unknown,
 };
 
-/// Prove whether adjacent loop iterations access adjacent vectors. Memref
-/// strides and the resulting address delta are measured in elements.
-LoopAccessContinuity analyzeLoopAccessContinuity(scf::ForOp loop, Value base,
-                                                 ValueRange indices,
-                                                 MemRefType memrefType,
-                                                 VectorType vectorType);
+/// Reusable analysis for memory accesses derived from one scf.for IV.
+class AveLoopAnalysis {
+public:
+  explicit AveLoopAnalysis(scf::ForOp loop);
 
-/// Relative pressure on the three independently scheduled vector pipelines.
-/// The values are throughput weights, not hardware cycle estimates.
-struct AVEPipelineCost {
-  float load = 0.0f;
-  float execute = 0.0f;
-  float store = 0.0f;
+  /// Return the coefficient of the loop IV in value, or std::nullopt when the
+  /// expression cannot be represented as a linear function of the IV.
+  std::optional<int64_t> getInductionVarCoefficient(Value value) const;
 
-  AVEPipelineCost &operator+=(const AVEPipelineCost &other);
-  AVEPipelineCost scaled(float factor) const;
-  float bottleneck() const;
+  /// Return the linearized memref address stride per unit IV increment. Memref
+  /// strides and the result are measured in elements.
+  std::optional<int64_t> getLinearizedAccessStride(Value base,
+                                                   ValueRange indices,
+                                                   MemRefType memrefType) const;
+
+  /// Prove whether adjacent loop iterations access adjacent vectors.
+  LoopAccessContinuity analyzeAccessContinuity(Value base, ValueRange indices,
+                                               MemRefType memrefType,
+                                               VectorType vectorType) const;
+
+private:
+  std::optional<int64_t> getAffineExprCoefficient(
+      AffineExpr expr, ArrayRef<std::optional<int64_t>> dimCoefficients,
+      ArrayRef<std::optional<int64_t>> symbolCoefficients) const;
+
+  Operation *loopOp;
+  Block *loopBody;
+  Value inductionVar;
+  Value step;
 };
-
-enum class AVEPipelineBound {
-  Load,
-  Execute,
-  Store,
-  Balanced,
-};
-
-/// Estimate one AVE operation or one loop iteration. Loop analysis ignores
-/// non-AVE address calculation operations. Unclassified AVE operations do not
-/// participate in the cost calculation.
-AVEPipelineCost estimateAVEPipelineCost(const Operation &op);
-AVEPipelineCost estimateLoopPipelineCost(scf::ForOp loop);
-
-AVEPipelineBound classifyAVEPipelineBound(const AVEPipelineCost &cost);
-
-/// Cost deltas for replacing factor original operations with one merged group.
-AVEPipelineCost estimateLoadMergeDelta(unsigned factor);
-AVEPipelineCost estimateNarrowChainMergeDelta(unsigned factor,
-                                              float elementwiseChainCost,
-                                              unsigned packTreeCount);
-
-/// Compare the bottleneck before and after applying delta.
-bool isAVEPipelinePlanProfitable(const AVEPipelineCost &before,
-                                 const AVEPipelineCost &delta,
-                                 float minimumGain = 0.0f);
 
 } // namespace hivmave
 } // namespace mlir

@@ -69,6 +69,7 @@
 
 #include "bishengir/Dialect/HIVM/Utils/RegbaseUtils.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/HIVMAVE/CostModelInfo/AVECostModel.h"
 #include "bishengir/Dialect/HIVMAVE/IR/HIVMAVE.h"
 #include "bishengir/Dialect/HIVMAVE/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVMAVE/Utils/AveLoopAnalysis.h"
@@ -127,6 +128,7 @@ struct SmallWidthGroup {
 struct SmallWidthMergePlan {
   unsigned unrollFactor;
   SmallVector<SmallWidthGroup, 8> groups;
+  bool peelPartialIteration;
 };
 
 struct PackedAccess {
@@ -325,7 +327,9 @@ static bool hasContinuousOnePointStore(scf::ForOp forOp) {
   return found;
 }
 
-static bool canUnrollLoop(scf::ForOp forOp, unsigned factor) {
+static bool canUnrollLoop(scf::ForOp forOp, unsigned factor,
+                          bool &peelPartialIteration) {
+  peelPartialIteration = false;
   auto lowerBound = hivmave::getConstantIntValue(forOp.getLowerBound());
   auto upperBound = hivmave::getConstantIntValue(forOp.getUpperBound());
   auto step = hivmave::getConstantIntValue(forOp.getStep());
@@ -334,12 +338,13 @@ static bool canUnrollLoop(scf::ForOp forOp, unsigned factor) {
   if (*step <= 0 || *upperBound <= *lowerBound)
     return false;
   int64_t range = *upperBound - *lowerBound;
-  if (range % *step != 0)
-    return false;
-  int64_t tripCount = range / *step;
+  int64_t fullTripCount = range / *step;
+  peelPartialIteration = range % *step != 0;
   const int64_t factorAsInt64 = static_cast<int64_t>(factor);
-  // loopUnrollByFactor keeps the remaining full iterations in a cleanup loop.
-  return tripCount >= factorAsInt64;
+  // Only complete iterations participate in a merge group. A partial data
+  // iteration is peeled after the candidate passes profitability; the unroller
+  // then owns any remaining complete iteration that cannot fill a group.
+  return fullTripCount >= factorAsInt64;
 }
 
 static bool isTemporaryAttr(StringRef name) {
@@ -742,6 +747,7 @@ collectGroupInstances(Block &block, const SmallWidthGroup &group,
 static SmallVector<SmallWidthGroup, 8>
 buildGroups(scf::ForOp forOp, unsigned maxMergeFactor, int64_t &nextGroupId) {
   SmallVector<SmallWidthGroup, 8> groups;
+  AveLoopAnalysis loopAnalysis(forOp);
   // Widening conversions contribute adjacent narrow loads. Narrowing
   // conversions contribute a conversion -> narrow elementwise -> store chain.
   for (Operation &operation : forOp.getBody()->without_terminator()) {
@@ -755,8 +761,8 @@ buildGroups(scf::ForOp forOp, unsigned maxMergeFactor, int64_t &nextGroupId) {
           load.getPattern() != LoadDist::NORM || load.getRes1() ||
           !load->hasOneUse() ||
           !canBuildPackedAccess(load.getMemRefType(), load.getIndices()) ||
-          analyzeLoopAccessContinuity(
-              forOp, load.getBase(), load.getIndices(), load.getMemRefType(),
+          loopAnalysis.analyzeAccessContinuity(
+              load.getBase(), load.getIndices(), load.getMemRefType(),
               load.getVectorType()) != LoopAccessContinuity::Contiguous)
         continue;
       groups.push_back(
@@ -769,8 +775,8 @@ buildGroups(scf::ForOp forOp, unsigned maxMergeFactor, int64_t &nextGroupId) {
       continue;
     auto store = cast<VFMaskedStoreOp>(nodes->back());
     if (!canBuildPackedAccess(store.getMemRefType(), store.getIndices()) ||
-        analyzeLoopAccessContinuity(
-            forOp, store.getBase(), store.getIndices(), store.getMemRefType(),
+        loopAnalysis.analyzeAccessContinuity(
+            store.getBase(), store.getIndices(), store.getMemRefType(),
             cast<VectorType>(store.getVal().getType())) !=
             LoopAccessContinuity::Contiguous)
       continue;
@@ -803,24 +809,28 @@ static bool hasCloneEquivalentScalars(const SmallWidthGroup &group,
 }
 
 static AVEPipelineCost estimateGroupDelta(const SmallWidthGroup &group,
-                                          unsigned unrollFactor) {
+                                          unsigned unrollFactor,
+                                          const AVECostModel &costModel) {
   assert(unrollFactor % group.factor == 0 &&
          "group factor must divide the loop unroll factor");
 
   AVEPipelineCost delta;
+  int64_t eliminated = static_cast<int64_t>(group.factor - 1);
   if (group.kind == GroupKind::Load) {
-    delta = estimateLoadMergeDelta(group.factor);
+    delta +=
+        costModel.estimateOperation(*group.nodes.front()).scaled(-eliminated);
+    delta.addExecution(costModel.getInterleaveCost(
+                           group.nodes.front()->getResult(0).getType()),
+                       eliminated);
   } else {
     assert(group.nodes.size() >= 2 && "narrow group must end in a store");
-    float elementwiseChainCost = 0.0f;
     unsigned packTreeCount = 1;
     llvm::DenseSet<Value> packedResults;
     packedResults.insert(group.nodes.front()->getResult(0));
 
     for (Operation *op :
          ArrayRef<Operation *>(group.nodes).drop_front().drop_back()) {
-      AVEPipelineCost opCost = estimateAVEPipelineCost(*op);
-      elementwiseChainCost += opCost.execute;
+      delta += costModel.estimateOperation(*op).scaled(-eliminated);
 
       // The conversion results share the first vdintlv tree. Each independent
       // narrow vector operand needs another tree because rewriteNarrowBatch
@@ -832,12 +842,15 @@ static AVEPipelineCost estimateGroupDelta(const SmallWidthGroup &group,
       }
       packedResults.insert(op->getResult(0));
     }
-    delta = estimateNarrowChainMergeDelta(group.factor, elementwiseChainCost,
-                                          packTreeCount);
+    delta.addExecution(costModel.getDeInterleaveCost(
+                           group.nodes.front()->getResult(0).getType()),
+                       eliminated * static_cast<int64_t>(packTreeCount));
+    delta +=
+        costModel.estimateOperation(*group.nodes.back()).scaled(-eliminated);
   }
 
   unsigned batchCount = unrollFactor / group.factor;
-  return delta.scaled(static_cast<float>(batchCount));
+  return delta.scaled(static_cast<int64_t>(batchCount));
 }
 
 static std::optional<SmallWidthMergePlan>
@@ -845,7 +858,7 @@ buildMergePlan(scf::ForOp forOp, unsigned maxMergeFactor,
                int64_t &nextGroupId) {
   SmallVector<SmallWidthGroup, 8> candidates =
       buildGroups(forOp, maxMergeFactor, nextGroupId);
-  SmallWidthMergePlan plan{0, {}};
+  SmallWidthMergePlan plan{0, {}, false};
   for (SmallWidthGroup &group : candidates) {
     if (!hasCloneEquivalentScalars(group, forOp))
       continue;
@@ -853,18 +866,23 @@ buildMergePlan(scf::ForOp forOp, unsigned maxMergeFactor,
     plan.groups.push_back(std::move(group));
   }
 
-  if (plan.groups.empty() || !canUnrollLoop(forOp, plan.unrollFactor))
+  if (plan.groups.empty() ||
+      !canUnrollLoop(forOp, plan.unrollFactor, plan.peelPartialIteration))
     return std::nullopt;
 
-  // Before covers the complete AVE loop body, including unrelated loads,
-  // stores and computations. Candidate groups contribute only their concrete
-  // rewrite deltas, so bound classification and profitability use one model.
+  AVECostModel costModel(*forOp.getOperation());
+  // Throughput compares the same factor-iteration window before and after.
+  // Issue-queue parallelism keeps the original one-iteration body separate,
+  // because the unrolled body exposes fewer independent loop iterations.
+  AVEPipelineCost originalIteration = costModel.estimateLoop(forOp);
   AVEPipelineCost before =
-      estimateLoopPipelineCost(forOp).scaled(plan.unrollFactor);
+      originalIteration.scaled(static_cast<int64_t>(plan.unrollFactor));
   AVEPipelineCost delta;
   for (const SmallWidthGroup &group : plan.groups)
-    delta += estimateGroupDelta(group, plan.unrollFactor);
-  if (!isAVEPipelinePlanProfitable(before, delta))
+    delta += estimateGroupDelta(group, plan.unrollFactor, costModel);
+  AVEPipelineCost after = before;
+  after += delta;
+  if (!costModel.isProfitable(originalIteration, before, after))
     return std::nullopt;
   return plan;
 }
@@ -893,6 +911,16 @@ static LogicalResult optimizeLoop(scf::ForOp forOp, unsigned maxMergeFactor,
       buildMergePlan(forOp, maxMergeFactor, nextGroupId);
   if (!plan)
     return failure();
+
+  // Peeling changes the IR, so defer it until the complete candidate has passed
+  // the cost model. The original loop is updated in place; its body operations
+  // (and therefore the plan's operation pointers) remain valid.
+  if (plan->peelPartialIteration) {
+    scf::ForOp partialIteration;
+    if (failed(scf::peelForLoopAndSimplifyBounds(rewriter, forOp,
+                                                 partialIteration)))
+      return failure();
+  }
 
   unsigned unrollFactor = plan->unrollFactor;
   annotateGroups(plan->groups, rewriter);
@@ -956,30 +984,6 @@ static LogicalResult optimizeLoop(scf::ForOp forOp, unsigned maxMergeFactor,
   return success();
 }
 
-// Peel a partial data tail first, for example the final 8 elements of
-// `for 0 to 200 step 64`. loopUnrollByFactor later owns any remaining complete
-// iteration that cannot fill a factor-2/factor-4 group.
-struct PeelEpiloguePattern : public OpRewritePattern<scf::ForOp> {
-  explicit PeelEpiloguePattern(MLIRContext *context)
-      : OpRewritePattern<scf::ForOp>(context) {}
-
-  LogicalResult matchAndRewrite(scf::ForOp forOp,
-                                PatternRewriter &rewriter) const override {
-    if (forOp->hasAttr("__peeled_loop__"))
-      return failure();
-    if (!forOp.getLowerBound().getType().isIndex() ||
-        !forOp.getUpperBound().getType().isIndex() ||
-        !forOp.getStep().getType().isIndex())
-      return failure();
-    scf::ForOp partialIteration;
-    if (failed(scf::peelForLoopAndSimplifyBounds(rewriter, forOp,
-                                                 partialIteration)))
-      return failure();
-    partialIteration->setAttr("__peeled_loop__", rewriter.getUnitAttr());
-    return success();
-  }
-};
-
 struct aveLoopOptimizePass
     : public impl::AveLoopOptimizeBase<aveLoopOptimizePass> {
   using Base::Base;
@@ -1004,11 +1008,6 @@ struct aveLoopOptimizePass
     auto funcOp = getOperation();
     if (!hivm::isVF(funcOp))
       return;
-
-    RewritePatternSet peelPatterns(&getContext());
-    peelPatterns.add<PeelEpiloguePattern>(&getContext());
-    if (failed(applyPatternsGreedily(funcOp, std::move(peelPatterns))))
-      return signalPassFailure();
 
     SmallVector<scf::ForOp, 8> loops;
     funcOp.walk([&](scf::ForOp forOp) {
@@ -1040,7 +1039,6 @@ struct aveLoopOptimizePass
 
 } // namespace
 
-std::unique_ptr<Pass>
-hivmave::createAveLoopOptimizePass(const AveLoopOptimizeOptions &options) {
-  return std::make_unique<aveLoopOptimizePass>(options);
+std::unique_ptr<Pass> hivmave::createAveLoopOptimizePass() {
+  return std::make_unique<aveLoopOptimizePass>();
 }
