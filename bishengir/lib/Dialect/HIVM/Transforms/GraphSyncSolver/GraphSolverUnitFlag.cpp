@@ -29,12 +29,24 @@
 using namespace mlir;
 using namespace hivm::syncsolver;
 
+void GraphSolverUnitFlag::clearAdjList(bool isTemp) {
+  if (isTemp) {
+    tempAdjacencyList.clear();
+  } else {
+    adjacencyList.clear();
+  }
+}
+
 void GraphSolverUnitFlag::addPair(CorePipeInfo corePipeSrc,
                                   CorePipeInfo corePipeDst,
-                                  ConflictPair *conflictPair) {
+                                  ConflictPair *conflictPair, bool isTemp) {
   Edge edge(conflictPair->startIndex, conflictPair->endIndex,
             conflictPair->replacedWithUnitFlag, conflictPair);
-  adjacencyList[corePipeSrc][corePipeDst].emplace_back(std::move(edge));
+  if (isTemp) {
+    tempAdjacencyList[corePipeSrc][corePipeDst].emplace_back(std::move(edge));
+  } else {
+    adjacencyList[corePipeSrc][corePipeDst].emplace_back(std::move(edge));
+  }
 }
 
 std::optional<int> GraphSolverUnitFlag::runDijkstra(
@@ -99,8 +111,8 @@ std::optional<int> GraphSolverUnitFlag::runDijkstra(
       }
     }
 
-    for (auto startCorePipe : startCorePipeInfos) {
-      for (auto &[endCorePipe, edges] : adjacencyList[startCorePipe]) {
+    auto processAdjList = [&](auto &adjList, CorePipeInfo startCorePipe) {
+      for (auto &[endCorePipe, edges] : adjList[startCorePipe]) {
         for (auto &edge : edges) {
           if (edge.startIndex < curIndex || edge.endIndex > endIndex) {
             continue;
@@ -120,6 +132,10 @@ std::optional<int> GraphSolverUnitFlag::runDijkstra(
           }
         }
       }
+    };
+    for (auto startCorePipe : startCorePipeInfos) {
+      processAdjList(adjacencyList, startCorePipe);
+      processAdjList(tempAdjacencyList, startCorePipe);
     }
   }
 

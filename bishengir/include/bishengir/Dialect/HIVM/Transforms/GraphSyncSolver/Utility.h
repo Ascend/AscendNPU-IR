@@ -246,6 +246,7 @@ struct Occurrence {
   static Occurrence *getParentCondition(Occurrence *occ);
 
   // Return true if this occurrence is a strict ancestor of `occ`.
+  bool isAncestor(Occurrence *occ);
   bool isProperAncestor(Occurrence *occ);
 
   // Collect and return all occurrence parents (in upward order).
@@ -358,6 +359,8 @@ struct ConflictPair {
   const CorePipeInfo waitCorePipeInfo;
   int startIndex{-1};
   int endIndex{-1};
+  Occurrence *parOcc1{nullptr};
+  Occurrence *parOcc2{nullptr};
   bool isInnerBackward{false};
   bool isBackwardPair{false};
   bool isUseless{false};
@@ -368,6 +371,7 @@ struct ConflictPair {
   bool waitOnFirstIterOnly{false};
   bool replacedWithUnitFlag{false};
   bool movedToOuterLoop{false};
+  bool isPersistent{false};
   Loop *backwardSyncLoopOp{nullptr};
   Occurrence *backwardSyncLoopOcc{nullptr};
   EventIdInfo eventIdInfo;
@@ -410,7 +414,8 @@ struct ConflictPair {
     auto clonedConflictPair = std::make_unique<ConflictPair>(
         op1, op2, setOp, waitOp, setOcc, waitOcc, setCorePipeInfo,
         waitCorePipeInfo, startIndex, endIndex);
-    clonedConflictPair->isBackwardPair = isBackwardPair;
+    clonedConflictPair->parOcc1 = parOcc1;
+    clonedConflictPair->parOcc2 = parOcc2;
     clonedConflictPair->isInnerBackward = isInnerBackward;
     clonedConflictPair->isBackwardPair = isBackwardPair;
     clonedConflictPair->isUseless = isUseless;
@@ -421,6 +426,7 @@ struct ConflictPair {
     clonedConflictPair->waitOnFirstIterOnly = waitOnFirstIterOnly;
     clonedConflictPair->replacedWithUnitFlag = replacedWithUnitFlag;
     clonedConflictPair->movedToOuterLoop = movedToOuterLoop;
+    clonedConflictPair->isPersistent = isPersistent;
     clonedConflictPair->backwardSyncLoopOp = backwardSyncLoopOp;
     clonedConflictPair->backwardSyncLoopOcc = backwardSyncLoopOcc;
     clonedConflictPair->eventIdInfo = eventIdInfo;

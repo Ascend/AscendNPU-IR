@@ -16,7 +16,6 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/CustomMacroSync.h"
-#include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/GraphSolver.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/MemInfo.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolver.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolverIR.h"
@@ -86,6 +85,7 @@ void SyncSolverBase::reset(bool resetEventIdRanOutOpts) {
   chosenConflictedPairs.clear();
   scopeOccChosenConflicts.clear();
   scopeOccPairChosenConflicts.clear();
+  tempInsertedConflictPairs.clear();
   backwardSyncEvents.clear();
   replacedWithReusableSyncedPairs.clear();
   reusedPairs.clear();
@@ -886,224 +886,6 @@ EventIdInfo SyncSolverBase::getEventIdInfo(Occurrence *occ1, Occurrence *occ2,
   return singleEventId;
 }
 
-// Graph-based check to determine if adding a sync between occ1 and occ2 would
-// block progress. Uses GraphSolver (Dijkstra) to estimate minimal reachable
-// index.
-bool SyncSolverBase::checkGraphConflict(
-    Occurrence *occ1, Occurrence *occ2, CorePipeInfo corePipeSrc,
-    CorePipeInfo corePipeDst, std::optional<EventIdInfo> eventIdInfo,
-    std::optional<int> startIndex, std::optional<int> endIndex,
-    const llvm::SmallVector<ConflictPair *> &extraConflictPairs,
-    const llvm::SmallVector<ConflictPair *> &ignoreConflictPairs) {
-  this->perfInfo.graphConflictPairsCheckedNum += 1;
-  assert(occ1 != nullptr && occ2 != nullptr);
-  if (!startIndex.has_value()) {
-    startIndex = occ1->endIndex;
-  }
-  if (!endIndex.has_value()) {
-    endIndex = occ2->startIndex;
-  }
-  std::unique_ptr<GraphSolver> graphSolver;
-  if (options.enableUnitFlagFeature) {
-    graphSolver = std::make_unique<GraphSolverUnitFlag>(options);
-  } else {
-    graphSolver = std::make_unique<GraphSolver>(options);
-  }
-  llvm::DenseSet<ConflictPair *> visited;
-  auto handleConflictPair = [&](ConflictPair *conflictPair) {
-    if (conflictPair->couldNotRun) {
-      return;
-    }
-    if (conflictPair->endIndex < startIndex.value() ||
-        conflictPair->startIndex > endIndex.value()) {
-      return;
-    }
-    if (conflictPair->isInnerBackward) {
-      int64_t candidateEventIdProduct =
-          eventIdInfo.has_value() ? eventIdInfo->getEventIdNum() : 1;
-      if (candidateEventIdProduct <
-          (conflictPair->eventIdInfo.getEventIdNum())) {
-        return;
-      }
-    }
-    if (eventIdInfo.has_value()) {
-      if (eventIdInfo->cvPreloadingInfo) {
-        if (conflictPair->isBackwardPair) {
-          if (!conflictPair->setWaitPairInfo.has_value() ||
-              !conflictPair->setWaitPairInfo->isCVPreloading) {
-            return;
-          }
-        }
-      }
-      if (conflictPair->setWaitPairInfo.has_value() &&
-          conflictPair->setWaitPairInfo->isCVPreloading) {
-        if (!eventIdInfo->cvPreloadingInfo) {
-          return;
-        }
-      }
-    }
-    if (llvm::find(ignoreConflictPairs, conflictPair) !=
-        ignoreConflictPairs.end()) {
-      return;
-    }
-    auto [it, isInserted] = visited.insert(conflictPair);
-    if (!isInserted) {
-      return;
-    }
-    DEBUG_WITH_TYPE("gss-sync-solver-check-graph-conflict", {
-      llvm::dbgs() << "add-conflict-pair: " << conflictPair->str() << '\n';
-    });
-    graphSolver->addConflictPair(conflictPair);
-  };
-
-  for (auto *parOcc : occ1->getAllParents()) {
-    if (scopeOccChosenConflicts.contains(parOcc)) {
-      for (auto *conflictPair : scopeOccChosenConflicts[parOcc]) {
-        handleConflictPair(conflictPair);
-      }
-    }
-  }
-  for (auto *parOcc : occ2->getAllParents()) {
-    if (scopeOccChosenConflicts.contains(parOcc)) {
-      for (auto *conflictPair : scopeOccChosenConflicts[parOcc]) {
-        handleConflictPair(conflictPair);
-      }
-    }
-  }
-  for (auto &[scopeOccPair, chosenConflicts] : scopeOccPairChosenConflicts) {
-    auto [scopeOcc1, scopeOcc2] = scopeOccPair;
-    if (scopeOcc1->isProperAncestor(occ1) &&
-        scopeOcc2->isProperAncestor(occ2)) {
-      for (auto *conflictPair : chosenConflicts) {
-        handleConflictPair(conflictPair);
-      }
-    }
-  }
-  for (auto *parOcc : occ1->getAllParents()) {
-    if (persistentScopeOccChosenConflicts.contains(parOcc)) {
-      for (auto *conflictPair : persistentScopeOccChosenConflicts[parOcc]) {
-        handleConflictPair(conflictPair);
-      }
-    }
-  }
-  for (auto *parOcc : occ2->getAllParents()) {
-    if (persistentScopeOccChosenConflicts.contains(parOcc)) {
-      for (auto *conflictPair : persistentScopeOccChosenConflicts[parOcc]) {
-        handleConflictPair(conflictPair);
-      }
-    }
-  }
-  for (auto *conflictPair : extraConflictPairs) {
-    handleConflictPair(conflictPair);
-  }
-  if (graphSolver->checkAnyBarrierAllBetween(startIndex.value(),
-                                             endIndex.value())) {
-    return false;
-  }
-
-  auto minDistance =
-      graphSolver->runDijkstra(corePipeSrc, corePipeDst, startIndex.value(),
-                               endIndex.value(), occ1, occ2);
-  return !minDistance.has_value() || minDistance.value() > endIndex.value();
-}
-
-bool SyncSolverBase::checkCrossCoreIntersect(ConflictPair *conflictPair1,
-                                             ConflictPair *conflictPair2) {
-  if (conflictPair1->isBarrier() || conflictPair2->isBarrier()) {
-    return false;
-  }
-  if (conflictPair1->setCorePipeInfo.coreType !=
-      conflictPair2->setCorePipeInfo.coreType) {
-    return false;
-  }
-  if (conflictPair1->startIndex > conflictPair2->startIndex) {
-    std::swap(conflictPair1, conflictPair2);
-  }
-  if (conflictPair1->startIndex >= conflictPair2->startIndex ||
-      conflictPair1->endIndex >= conflictPair2->endIndex) {
-    return true;
-  }
-
-  auto setOcc1 = conflictPair1->setOcc;
-  auto waitOcc1 = conflictPair1->waitOcc;
-  auto setOcc2 = conflictPair2->setOcc;
-  auto waitOcc2 = conflictPair2->waitOcc;
-
-  bool checkSamePipeSetSet = false;
-  if (conflictPair1->setCorePipeInfo == conflictPair2->setCorePipeInfo) {
-    auto parentLoopOp1 = setOcc1->op->getParentOfType<Loop>();
-    auto parentLoopOp2 = setOcc2->op->getParentOfType<Loop>();
-    if (parentLoopOp1 && !parentLoopOp1->isProperAncestor(waitOcc1->op)) {
-      if (parentLoopOp1->isProperAncestor(setOcc2->op)) {
-        checkSamePipeSetSet = true;
-      }
-    }
-    if (parentLoopOp2 && !parentLoopOp2->isProperAncestor(waitOcc2->op)) {
-      if (parentLoopOp2->isProperAncestor(setOcc1->op)) {
-        checkSamePipeSetSet = true;
-      }
-    }
-  }
-
-  bool checkSamePipeWaitWait = false;
-  if (conflictPair1->waitCorePipeInfo == conflictPair2->waitCorePipeInfo) {
-    auto parentLoopOp1 = waitOcc1->op->getParentOfType<Loop>();
-    auto parentLoopOp2 = waitOcc2->op->getParentOfType<Loop>();
-    if (parentLoopOp1 && !parentLoopOp1->isProperAncestor(setOcc1->op)) {
-      if (parentLoopOp1->isProperAncestor(waitOcc2->op)) {
-        checkSamePipeWaitWait = true;
-      }
-    }
-    if (parentLoopOp2 && !parentLoopOp2->isProperAncestor(setOcc2->op)) {
-      if (parentLoopOp2->isProperAncestor(waitOcc1->op)) {
-        checkSamePipeWaitWait = true;
-      }
-    }
-  }
-
-  bool result = false;
-  if (checkSamePipeSetSet ||
-      conflictPair1->setCorePipeInfo != conflictPair2->setCorePipeInfo) {
-    auto corePipeSrc = conflictPair1->setCorePipeInfo;
-    auto corePipeDst = conflictPair2->setCorePipeInfo;
-    Occurrence *occ1 = conflictPair1->setOcc;
-    Occurrence *occ2 = conflictPair2->setOcc;
-    auto startIndex = conflictPair1->startIndex + 1;
-    auto endIndex = conflictPair2->startIndex;
-    conflictPair1->startIndex += 1;
-    assert(occ1 != nullptr && occ2 != nullptr);
-    result = result ||
-             checkGraphConflict(occ1, occ2, corePipeSrc, corePipeDst,
-                                conflictPair1->eventIdInfo, startIndex,
-                                endIndex, {conflictPair1}, {conflictPair2});
-    conflictPair1->startIndex -= 1;
-  }
-  if (checkSamePipeWaitWait ||
-      conflictPair1->waitCorePipeInfo != conflictPair2->waitCorePipeInfo) {
-    auto corePipeSrc = conflictPair1->waitCorePipeInfo;
-    auto corePipeDst = conflictPair2->waitCorePipeInfo;
-    Occurrence *occ1 = conflictPair1->waitOcc;
-    Occurrence *occ2 = conflictPair2->waitOcc;
-    auto startIndex = conflictPair1->endIndex;
-    auto endIndex = conflictPair2->endIndex - 1;
-    conflictPair2->endIndex -= 1;
-    assert(occ1 != nullptr && occ2 != nullptr);
-    result = result ||
-             checkGraphConflict(occ1, occ2, corePipeSrc, corePipeDst,
-                                conflictPair1->eventIdInfo, startIndex,
-                                endIndex, {conflictPair1}, {conflictPair2});
-    conflictPair2->endIndex += 1;
-  }
-  DEBUG_WITH_TYPE("gss-check-sync-ops-conflicts", {
-    if (result) {
-      llvm::dbgs() << "sync-ops-conflict-found: " << "\n";
-      llvm::dbgs() << " " << conflictPair1->str() << '\n';
-      llvm::dbgs() << " " << conflictPair2->str() << '\n';
-    }
-  });
-  return result;
-}
-
 bool SyncSolverBase::checkIntraCoreIntersect(ConflictPair *conflictPair1,
                                              ConflictPair *conflictPair2) {
   if (conflictPair1->setCorePipeInfo != conflictPair2->setCorePipeInfo ||
@@ -1704,19 +1486,14 @@ void SyncSolverBase::insertBarrierAllBeforeOcc(Occurrence *occ, bool isUseless,
       CorePipeInfo(hivm::TCoreType::CUBE_OR_VECTOR, hivm::PIPE::PIPE_ALL),
       occ->startIndex, occ->startIndex);
   conflictPair->isUseless = isUseless;
-  auto *normScopeOcc = occ->parentOcc;
-  assert(normScopeOcc != nullptr);
+  conflictPair->isPersistent = isPersistent;
   LLVM_DEBUG(llvm::dbgs() << (isPersistent ? "is-persistent " : "")
                           << occ->op->str(0, false) << ' '
                           << conflictPair->str() << '\n';);
-  if (isPersistent) {
-    persistentScopeOccChosenConflicts[normScopeOcc].insert(conflictPair.get());
-    persistentChosenConflictedPairs.push_back(std::move(conflictPair));
-  } else {
+  if (!isPersistent) {
     insertedBarrierAllBefore[occ->op].insert({occ, isUseless});
-    scopeOccChosenConflicts[normScopeOcc].insert(conflictPair.get());
-    chosenConflictedPairs.push_back(std::move(conflictPair));
   }
+  insertConflictPair(std::move(conflictPair));
 }
 
 void SyncSolverBase::insertBarrierAllBeforeOp(OperationBase *op, bool isUseless,
@@ -1867,12 +1644,14 @@ bool SyncSolverBase::reuseConflictPair(ConflictPair *conflictPair,
   ConflictPair *opt3 = nullptr;
   ConflictPair *opt4 = nullptr;
   ConflictPair *opt5 = nullptr;
+  ConflictPair *opt6 = nullptr;
 
   auto it1 = scopeOccChosenConflicts.find(scopeOcc1);
   auto it2 = scopeOccChosenConflicts.find(scopeOcc2);
   auto it3 = scopeOccPairChosenConflicts.find({scopeOcc1, scopeOcc2});
   auto it4 = persistentScopeOccChosenConflicts.find(scopeOcc1);
   auto it5 = persistentScopeOccChosenConflicts.find(scopeOcc2);
+  auto it6 = persistentScopeOccPairChosenConflicts.find({scopeOcc1, scopeOcc2});
 
   if (it1 != scopeOccChosenConflicts.end()) {
     opt1 = getReusableConflictPair(conflictPair, it1->second);
@@ -1889,9 +1668,12 @@ bool SyncSolverBase::reuseConflictPair(ConflictPair *conflictPair,
   if (it5 != persistentScopeOccChosenConflicts.end()) {
     opt5 = getReusableConflictPair(conflictPair, it5->second);
   }
+  if (it6 != persistentScopeOccPairChosenConflicts.end()) {
+    opt6 = getReusableConflictPair(conflictPair, it6->second);
+  }
 
   ConflictPair *reusableConflictPair = nullptr;
-  for (auto *opt : {opt1, opt2, opt3, opt4, opt5}) {
+  for (auto *opt : {opt1, opt2, opt3, opt4, opt5, opt6}) {
     if (opt != nullptr) {
       if (reusableConflictPair == nullptr ||
           reuseCmp(reusableConflictPair, opt)) {
@@ -1913,6 +1695,7 @@ bool SyncSolverBase::reuseConflictPair(ConflictPair *conflictPair,
   assert(reusableConflictPair->endIndex <= conflictPair->endIndex);
   reusableConflictPair->setOp = conflictPair->setOp;
   reusableConflictPair->setOcc = conflictPair->setOcc;
+  // TODO: Update or invalidate V2's cached graph edge when reusing a pair.
   reusableConflictPair->startIndex = conflictPair->startIndex;
   // The reused pair takes over this conflict pair's set op, which is no longer
   // the foldable MmadL1 L0 load the last-iteration optimization assumes.
@@ -1996,6 +1779,7 @@ ConflictPair *SyncSolverBase::handleSetWaitConflict(
   auto *rwOp2 = llvm::dyn_cast_if_present<RWOperation>(occ2->op);
   assert(rwOp1 != nullptr && rwOp2 != nullptr);
   assert(corePipeSrc != corePipeDst);
+  assert(tempInsertedConflictPairs.empty());
 
   // get set/wait occs
   auto setWaitPairInfo = getSetWaitOcc(occ1, occ2, eventIdInfo, true);
@@ -2027,21 +1811,12 @@ ConflictPair *SyncSolverBase::handleSetWaitConflict(
   Occurrence *parentLCALoopOcc{nullptr};
   Occurrence *parentLCALoopBeforePHOcc{nullptr};
   Occurrence *parentLCALoopAfterPHOcc{nullptr};
-  Occurrence *normScopeOcc1{nullptr};
-  Occurrence *normScopeOcc2{nullptr};
 
   // calc norm scope occs
-  normScopeOcc1 = setOcc->parentOcc;
-  normScopeOcc2 = waitOcc->parentOcc;
+  Occurrence *parOcc1 = setOcc->parentOcc;
+  Occurrence *parOcc2 = waitOcc->parentOcc;
   assert(setWaitPairInfo.isCVPreloading || setWaitPairInfo.isCVPipelining ||
-         normScopeOcc1->op == normScopeOcc2->op);
-
-  LLVM_DEBUG({
-    llvm::dbgs() << normScopeOcc1->syncIrIndex << ' '
-                 << normScopeOcc1->op->str() << '\n';
-    llvm::dbgs() << normScopeOcc2->syncIrIndex << ' '
-                 << normScopeOcc2->op->str() << '\n';
-  });
+         parOcc1->op == parOcc2->op);
 
   assert(!setWaitPairInfo.isForwardPair || !setWaitPairInfo.isBackwardPair ||
          setWaitPairInfo.isCVPipelining || setWaitPairInfo.isCVPreloading ||
@@ -2059,6 +1834,8 @@ ConflictPair *SyncSolverBase::handleSetWaitConflict(
   conflictPair->isUseless = isUseless;
   conflictPair->eventIdInfo = eventIdInfo;
   conflictPair->setWaitPairInfo = setWaitPairInfo;
+  conflictPair->parOcc1 = parOcc1;
+  conflictPair->parOcc2 = parOcc2;
 
   // TODO: refactor this so it doesn't need to take conflict-pair as input.
   applyCustomMacroPinnedEventId(*conflictPair, rwOp1, rwOp2, corePipeSrc.pipe,
@@ -2114,7 +1891,7 @@ ConflictPair *SyncSolverBase::handleSetWaitConflict(
 
   // try reusing existing conflict-pair
   if (options.reuseSyncPairToSaveEventIds) {
-    if (reuseConflictPair(conflictPair.get(), normScopeOcc1, normScopeOcc2)) {
+    if (reuseConflictPair(conflictPair.get(), parOcc1, parOcc2)) {
       return nullptr;
     }
   }
@@ -2155,11 +1932,13 @@ ConflictPair *SyncSolverBase::handleSetWaitConflict(
     insertBarrierAllBeforeOp(waitOcc->op, conflictPair->isUseless,
                              /*isPersistent=*/false);
     barrierAllPairs.insert({corePipeSrc, corePipeDst});
+    tempInsertedConflictPairs.clear();
     curEventIdSolver->undoActions();
     return false;
   };
 
   // add conflict-pair to event-id-solver
+  insertTempConflictPair(conflictPair.get());
   auto intersectingEventIdNodes =
       getIntersectingEventIdNodes(conflictPair.get());
   curEventIdSolver->addConflicts(conflictPair->eventIdNode,
@@ -2195,6 +1974,7 @@ ConflictPair *SyncSolverBase::handleSetWaitConflict(
     });
     curEventIdSolver->insertConflictPair(conflictPair->eventIdNode,
                                          extraConflictPair.get());
+    insertTempConflictPair(extraConflictPair.get(), parentScope);
     auto intersectingEventIdNodes =
         getIntersectingEventIdNodes(extraConflictPair.get());
     curEventIdSolver->addConflicts(extraConflictPair->eventIdNode,
@@ -2249,20 +2029,13 @@ ConflictPair *SyncSolverBase::handleSetWaitConflict(
   memorizeSyncedPair(conflictPair.get());
 
   // clear event-id-solver action-stack
+  tempInsertedConflictPairs.clear();
   curEventIdSolver->clearActionStack();
 
   // add created conflict-pairs to the list of chosen-conflicts
-  if (normScopeOcc1 == normScopeOcc2) {
-    scopeOccChosenConflicts[normScopeOcc1].insert(conflictPair.get());
-  } else {
-    scopeOccPairChosenConflicts[{normScopeOcc1, normScopeOcc2}].insert(
-        conflictPair.get());
-  }
-
-  chosenConflictedPairs.push_back(std::move(conflictPair));
+  insertConflictPair(std::move(conflictPair));
   for (auto &[extraConflictPair, parentScope] : extraConflictPairs) {
-    scopeOccChosenConflicts[parentScope].insert(extraConflictPair.get());
-    chosenConflictedPairs.push_back(std::move(extraConflictPair));
+    insertConflictPair(std::move(extraConflictPair), parentScope);
   }
   return newConflictPair;
 }
@@ -2299,9 +2072,7 @@ ConflictPair *SyncSolverBase::handleBarrierConflict(
 
   LLVM_DEBUG({ llvm::dbgs() << conflictPair->str() << '\n'; });
 
-  auto *normScopeOcc = waitOcc->parentOcc;
-  scopeOccChosenConflicts[normScopeOcc].insert(conflictPair.get());
-  chosenConflictedPairs.push_back(std::move(conflictPair));
+  insertConflictPair(std::move(conflictPair));
   return newConflictPair;
 }
 
@@ -2316,8 +2087,6 @@ ConflictPair *SyncSolverBase::handleUnitFlagConflict(
 
   auto *setOcc = occ1;
   auto *waitOcc = occ2;
-  auto *normScopeOcc1 = setOcc->parentOcc;
-  auto *normScopeOcc2 = waitOcc->parentOcc;
 
   auto conflictPair = std::make_unique<ConflictPair>(
       rwOp1, rwOp2, setOcc->op, waitOcc->op, setOcc, waitOcc, corePipeSrc,
@@ -2359,13 +2128,7 @@ ConflictPair *SyncSolverBase::handleUnitFlagConflict(
                                     /*asWait=*/true);
   }
 
-  if (normScopeOcc1 == normScopeOcc2) {
-    scopeOccChosenConflicts[normScopeOcc1].insert(conflictPair.get());
-  } else {
-    scopeOccPairChosenConflicts[{normScopeOcc1, normScopeOcc2}].insert(
-        conflictPair.get());
-  }
-  chosenConflictedPairs.push_back(std::move(conflictPair));
+  insertConflictPair(std::move(conflictPair));
   return newConflictPair;
 }
 
@@ -2801,8 +2564,7 @@ void SyncSolverBase::insertMergedBackwardSyncPairs() {
                        << scopeOp->str(0, false) << ' ' << conflictPair->str()
                        << "\n";
         });
-        scopeOccChosenConflicts[parentScopeOcc].insert(conflictPair.get());
-        chosenConflictedPairs.push_back(std::move(conflictPair));
+        insertConflictPair(std::move(conflictPair), parentScopeOcc);
       }
     }
   }

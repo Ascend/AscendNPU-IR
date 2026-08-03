@@ -29,35 +29,22 @@
 using namespace mlir;
 using namespace hivm::syncsolver;
 
+void GraphSolver::clearAdjList(bool isTemp) {
+  if (isTemp) {
+    tempAdjacencyList.clear();
+  } else {
+    adjacencyList.clear();
+  }
+}
+
 void GraphSolver::addPair(CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst,
-                          ConflictPair *conflictPair) {
+                          ConflictPair *conflictPair, bool isTemp) {
   Edge edge(conflictPair->startIndex, conflictPair->endIndex);
-  adjacencyList[corePipeSrc][corePipeDst].emplace_back(std::move(edge));
-}
-
-void GraphSolver::addConflictPair(ConflictPair *conflictPair) {
-  assert(conflictPair != nullptr);
-  DEBUG_WITH_TYPE("gss-graph-solver-add-conflict-pair", {
-    llvm::dbgs() << "add-conflict-pair:\n";
-    llvm::dbgs() << conflictPair->str() << '\n';
-  });
-  if (conflictPair->isBarrier() &&
-      conflictPair->setCorePipeInfo.pipe == hivm::PIPE::PIPE_ALL) {
-    assert(conflictPair->startIndex == conflictPair->endIndex);
-    barrierAllIndexes.push_back(conflictPair->endIndex);
-    return;
+  if (isTemp) {
+    tempAdjacencyList[corePipeSrc][corePipeDst].emplace_back(std::move(edge));
+  } else {
+    adjacencyList[corePipeSrc][corePipeDst].emplace_back(std::move(edge));
   }
-  addPair(conflictPair->setCorePipeInfo, conflictPair->waitCorePipeInfo,
-          conflictPair);
-}
-
-bool GraphSolver::checkAnyBarrierAllBetween(int startIndex, int endIndex) {
-  for (auto barrierIndex : barrierAllIndexes) {
-    if (startIndex <= barrierIndex && barrierIndex <= endIndex) {
-      return true;
-    }
-  }
-  return false;
 }
 
 std::optional<int> GraphSolver::runDijkstra(CorePipeInfo corePipeSrc,
@@ -123,8 +110,8 @@ std::optional<int> GraphSolver::runDijkstra(CorePipeInfo corePipeSrc,
       }
     }
 
-    for (auto startCorePipe : startCorePipeInfos) {
-      for (auto &[endCorePipe, edges] : adjacencyList[startCorePipe]) {
+    auto processAdjList = [&](auto &adjList, CorePipeInfo startCorePipe) {
+      for (auto &[endCorePipe, edges] : adjList[startCorePipe]) {
         for (auto &edge : edges) {
           if (edge.startIndex < curIndex || edge.endIndex > endIndex) {
             continue;
@@ -137,6 +124,10 @@ std::optional<int> GraphSolver::runDijkstra(CorePipeInfo corePipeSrc,
           }
         }
       }
+    };
+    for (auto startCorePipe : startCorePipeInfos) {
+      processAdjList(adjacencyList, startCorePipe);
+      processAdjList(tempAdjacencyList, startCorePipe);
     }
   }
 

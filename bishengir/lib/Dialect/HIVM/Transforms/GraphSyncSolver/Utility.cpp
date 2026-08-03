@@ -134,6 +134,10 @@ Occurrence *Occurrence::getUnlikelyParentCondition(Occurrence *occ) {
   return nullptr;
 }
 
+bool Occurrence::isAncestor(Occurrence *occ) {
+  return occ == this || isProperAncestor(occ);
+}
+
 bool Occurrence::isProperAncestor(Occurrence *occ) {
   assert(occ != nullptr);
   int depth1 = getDepth(this);

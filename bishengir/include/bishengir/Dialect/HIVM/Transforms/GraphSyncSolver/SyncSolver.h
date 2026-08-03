@@ -19,6 +19,7 @@
 
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/CustomMacroSync.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/EventIdSolver.h"
+#include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/GraphSolver.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolverIR.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolverIRTranslator.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/Utility.h"
@@ -70,6 +71,8 @@ public:
     int64_t memoryConflictsFoundNum{0};
     int64_t handledConflictsNum{0};
     int64_t graphConflictPairsCheckedNum{0};
+    int64_t solverSkipNum{0};
+    int64_t checkGraphConflictSkipDijNum{0};
 
     void print() {
       llvm::dbgs() << "processing orders checked: " << ordersCheckedNum << '\n';
@@ -81,6 +84,9 @@ public:
       llvm::dbgs() << "handled conflicts: " << handledConflictsNum << '\n';
       llvm::dbgs() << "graph conflict pairs checked: "
                    << graphConflictPairsCheckedNum << '\n';
+      llvm::dbgs() << "graph conflict pairs skipped Dijkstra: "
+                   << checkGraphConflictSkipDijNum << '\n';
+      llvm::dbgs() << "solver skipped: " << solverSkipNum << '\n';
     }
 
   } perfInfo;
@@ -124,6 +130,9 @@ protected:
   llvm::DenseMap<std::pair<Occurrence *, Occurrence *>,
                  llvm::DenseSet<ConflictPair *>>
       scopeOccPairChosenConflicts, persistentScopeOccPairChosenConflicts;
+
+  llvm::SmallVector<std::tuple<Occurrence *, Occurrence *, ConflictPair *>>
+      tempInsertedConflictPairs;
 
   // Set of processed occurrence pairs to avoid re-processing the same pair.
   llvm::DenseSet<std::pair<Occurrence *, Occurrence *>> processedOccPairs;
@@ -205,6 +214,17 @@ public:
   SyncBeforeAfterMap getBeforeAfterSyncMaps();
 
 protected:
+  virtual void reset(bool resetEventIdRanOutOpts = false);
+  virtual bool insertConflictPair(std::unique_ptr<ConflictPair> conflictPair,
+                                  Occurrence *parOcc = nullptr) = 0;
+  virtual bool insertTempConflictPair(ConflictPair *conflictPair,
+                                      Occurrence *parOcc = nullptr) = 0;
+  virtual bool checkCrossCoreIntersect(ConflictPair *conflictPair1,
+                                       ConflictPair *conflictPair2) = 0;
+  virtual llvm::SmallVector<EventIdNode *>
+  getIntersectingEventIdNodes(ConflictPair *conflictPair) = 0;
+  virtual void processOrders() = 0;
+
   void init(std::unique_ptr<IRTranslator> irTranslator) {
     funcOp = irTranslator->funcOp;
     funcIr = std::move(irTranslator->funcIr);
@@ -217,16 +237,11 @@ protected:
   // Run solver in block-all mode.
   void solveBlockAllMode();
 
-  // Reset solver internal bookkeeping prior to another pass.
-  void reset(bool resetEventIdRanOutOpts = false);
-
-  llvm::LogicalResult runSolver(bool enableOpts1 = true,
-                                bool enableOpts2 = true);
-
   // Reset unit-flag related bookkeeping prior to another pass.
   void resetUnitFlag();
 
-  virtual void processOrders() = 0;
+  llvm::LogicalResult runSolver(bool enableOpts1 = true,
+                                bool enableOpts2 = true);
 
   std::optional<Scope *>
   getMultiBufferScope(RWOperation *rwOp1, RWOperation *rwOp2,
@@ -262,13 +277,6 @@ protected:
                                                          RWOperation *rwOp2);
 
   // Graph-based conflict checking and memory conflict detection helpers.
-  bool checkGraphConflict(
-      Occurrence *occ1, Occurrence *occ2, CorePipeInfo corePipeSrc,
-      CorePipeInfo corePipeDst, std::optional<EventIdInfo> eventIdInfo = {},
-      std::optional<int> startIndex = {}, std::optional<int> endIndex = {},
-      const llvm::SmallVector<ConflictPair *> &extraConflictPairs = {},
-      const llvm::SmallVector<ConflictPair *> &ignoreConflictPairs = {});
-
   bool checkMemInfoConflict(
       RWOperation *rwOp1, RWOperation *rwOp2, const MemInfo &memInfo1,
       const MemInfo &memInfo2, std::optional<int64_t> lcmLen = {},
@@ -335,19 +343,12 @@ protected:
 
   bool skipMMad1DecomposedLoopOpt(Occurrence *occ1, Occurrence *occ2);
 
-  bool checkCrossCoreIntersect(ConflictPair *conflictPair1,
-                               ConflictPair *conflictPair2);
-
   bool checkIntraCoreIntersect(ConflictPair *conflictPair1,
                                ConflictPair *conflictPair2);
 
   // Check whether two ConflictPair ranges/event mapping intersect (same
   // pipes/events).
   bool checkIntersect(ConflictPair *conflictPair1, ConflictPair *conflictPair2);
-
-  // Event-id allocation and reuse helpers.
-  virtual llvm::SmallVector<EventIdNode *>
-  getIntersectingEventIdNodes(ConflictPair *conflictPair) = 0;
 
   // Visit tracking helpers for occurrence pairs.
   bool checkVisited(Occurrence *occ1, Occurrence *occ2);
@@ -519,10 +520,26 @@ public:
 protected:
   std::vector<ProcessingOrderV1> processingOrders;
 
-  void processOrder(ProcessingOrderV1 processingOrder);
-  void processOrders() override;
+  bool insertConflictPair(std::unique_ptr<ConflictPair> conflictPair,
+                          Occurrence *parOcc = nullptr) override;
+  bool insertTempConflictPair(ConflictPair *conflictPair,
+                              Occurrence *parOcc = nullptr) override;
+  bool checkGraphConflict(
+      Occurrence *occ1, Occurrence *occ2, CorePipeInfo corePipeSrc,
+      CorePipeInfo corePipeDst, EventIdInfo eventIdInfo,
+      std::optional<int64_t> startIndex = {},
+      std::optional<int64_t> endIndex = {},
+      const llvm::SmallVector<ConflictPair *> &extraConflictPairs = {},
+      const llvm::SmallVector<ConflictPair *> &ignoreConflictPairs = {});
+  bool checkCrossCoreIntersect(ConflictPair *conflictPair1,
+                               ConflictPair *conflictPair2) override;
   llvm::SmallVector<EventIdNode *>
   getIntersectingEventIdNodes(ConflictPair *conflictPair) override;
+  void processConflict(Occurrence *occ1, Occurrence *occ2, RWOperation *rwOp1,
+                       RWOperation *rwOp2, bool isUseless);
+  void processOrders() override;
+
+  void processOrder(ProcessingOrderV1 processingOrder);
   void buildOfflineProcessingOrders(Occurrence *occ, bool isUseless = false);
   void generateProcessingOrders(Occurrence *occ1, Occurrence *occ2,
                                 bool isUseless);
@@ -538,9 +555,6 @@ protected:
                                 Occurrence *occ1, Occurrence *occ2,
                                 bool isUseless);
   bool skipLaterIterations(Occurrence *occ1, Occurrence *occ2);
-
-  void processConflict(Occurrence *occ1, Occurrence *occ2, RWOperation *rwOp1,
-                       RWOperation *rwOp2, bool isUseless);
 
   ConflictPair *handleConflict(Occurrence *occ1, Occurrence *occ2,
                                RWOperation *rwOp1, RWOperation *rwOp2,
@@ -575,12 +589,42 @@ public:
       : SyncSolverBase(std::move(irTranslator)) {}
 
 protected:
+  struct GraphSolverInfo {
+    std::unique_ptr<GraphSolverBase> graphSolver;
+    size_t insertedConflictPairsIndex{0};
+    size_t persistentInsertedConflictPairsIndex{0};
+  };
+  llvm::DenseMap<std::tuple<Occurrence *, Occurrence *, int64_t>,
+                 GraphSolverInfo>
+      graphSolverMap;
+  llvm::SmallVector<std::tuple<Occurrence *, Occurrence *, ConflictPair *>>
+      insertedConflictPairs, persistentInsertedConflictPairs;
+
+  void reset(bool resetEventIdRanOutOpts = false) override;
+  bool insertConflictPair(std::unique_ptr<ConflictPair> conflictPair,
+                          Occurrence *parOcc = nullptr) override;
+  bool insertTempConflictPair(ConflictPair *conflictPair,
+                              Occurrence *parOcc = nullptr) override;
+  std::unique_ptr<GraphSolverBase> &
+  getGraphSolverRef(Occurrence *occ1, Occurrence *occ2, int64_t eventIdNum);
+  bool checkGraphConflict(
+      Occurrence *occ1, Occurrence *occ2, CorePipeInfo corePipeSrc,
+      CorePipeInfo corePipeDst, EventIdInfo eventIdInfo,
+      std::optional<int64_t> startIndex = {},
+      std::optional<int64_t> endIndex = {},
+      const llvm::SmallVector<ConflictPair *> &extraConflictPairs = {},
+      const llvm::SmallVector<ConflictPair *> &ignoreConflictPairs = {});
+  bool checkCrossCoreIntersect(ConflictPair *conflictPair1,
+                               ConflictPair *conflictPair2) override;
+  llvm::SmallVector<EventIdNode *>
+  getIntersectingEventIdNodes(ConflictPair *conflictPair) override;
+  void processConflict(Occurrence *occ1, Occurrence *occ2, RWOperation *rwOp1,
+                       RWOperation *rwOp2, bool isUseless);
+  void processOrders() override;
+
   bool processOrder(ProcessingOrderV2 processingOrder);
   void processOrder(Occurrence *occ1, Occurrence *occ2, RWOperation *rwOp1,
                     RWOperation *rwOp2, bool isUseless);
-  void processOrders() override;
-  llvm::SmallVector<EventIdNode *>
-  getIntersectingEventIdNodes(ConflictPair *conflictPair) override;
 
   void generateProcessingOrders(Occurrence *lcaOcc1, Occurrence *lcaOcc2,
                                 const llvm::ArrayRef<Occurrence *> &occs1,
@@ -596,9 +640,6 @@ protected:
                                 bool isUseless);
   void generateProcessingOrders(Loop *loopOp, Occurrence *occ, bool isUseless);
   void collectProcessingOrders(Occurrence *occ, bool isUseless = false);
-
-  void processConflict(Occurrence *occ1, Occurrence *occ2, RWOperation *rwOp1,
-                       RWOperation *rwOp2, bool isUseless);
 
   ConflictPair *handleConflict(Occurrence *occ1, Occurrence *occ2,
                                RWOperation *rwOp1, RWOperation *rwOp2,
