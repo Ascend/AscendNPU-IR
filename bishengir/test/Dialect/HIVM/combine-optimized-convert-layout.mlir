@@ -130,7 +130,7 @@ func.func @fold_direct_load_annotation_mark(%arg0: memref<16x16xf16, strided<[?,
 // CHECK: %[[RES:.*]] = hivm.hir.nd2nz {dst_continuous} ins(%{{.*}} : tensor<64x64xf32>) outs(%[[EMPTY]] : tensor<8x4x16x8xf32>) -> tensor<8x4x16x8xf32>
 // CHECK: return %[[RES]] : tensor<8x4x16x8xf32>
 func.func @fold_tensor_load_convert_layout(%src: tensor<64x64xf32>, %l1_init: tensor<64x64xf32>) -> tensor<8x4x16x8xf32> {
-  %load = hivm.hir.load ins(%src : tensor<64x64xf32>) outs(%l1_init : tensor<64x64xf32>) {"inserted-load"} core_type = <CUBE> -> tensor<64x64xf32>
+  %load = hivm.hir.load ins(%src : tensor<64x64xf32>) outs(%l1_init : tensor<64x64xf32>) {"hivm.inserted-load"} core_type = <CUBE> -> tensor<64x64xf32>
   %conv = hivm.hir.convert_layout %load output_shape [8, 4, 16, 8] {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 8]>, srcLayout = #hivm.data_layout<ND>} : (tensor<64x64xf32>) -> tensor<8x4x16x8xf32>
   return %conv : tensor<8x4x16x8xf32>
 }
@@ -171,7 +171,7 @@ func.func @do_not_fold_nested_row_load_from_case(%arg2: memref<?xf32>, %arg5: i3
   %a_tensor = bufferization.to_tensor %alloc restrict writable : memref<64x32xf32>
   %a_fractal = hivm.hir.convert_layout %a_tensor output_shape [4, 4, 16, 8] {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 8]>, not_to_propagate_up = true, srcLayout = #hivm.data_layout<ND>} : (tensor<64x32xf32>) -> tensor<4x4x16x8xf32>
   %cbuf = memref.alloc() : memref<4x4x16x8xf32, #hivm.address_space<cbuf>>
-  hivm.hir.copy ins(%a_fractal : tensor<4x4x16x8xf32>) outs(%cbuf : memref<4x4x16x8xf32, #hivm.address_space<cbuf>>) {"inserted-copy"}
+  hivm.hir.copy ins(%a_fractal : tensor<4x4x16x8xf32>) outs(%cbuf : memref<4x4x16x8xf32, #hivm.address_space<cbuf>>) {"hivm.inserted-copy"}
   return
 }
 
@@ -399,7 +399,7 @@ func.func @test_route_vector_fractalize_via_gm(%real_tensor: tensor<128x240xf16>
        srcLayout = #hivm.data_layout<ND>}
       : (tensor<128x256xf16>) -> tensor<16x8x16x16xf16>
   %l1_buf = memref.alloc() : memref<16x8x16x16xf16, #hivm.address_space<cbuf>>
-  hivm.hir.copy ins(%fractal : tensor<16x8x16x16xf16>) outs(%l1_buf : memref<16x8x16x16xf16, #hivm.address_space<cbuf>>) {"inserted-copy"}
+  hivm.hir.copy ins(%fractal : tensor<16x8x16x16xf16>) outs(%l1_buf : memref<16x8x16x16xf16, #hivm.address_space<cbuf>>) {"hivm.inserted-copy"}
   return
 }
 

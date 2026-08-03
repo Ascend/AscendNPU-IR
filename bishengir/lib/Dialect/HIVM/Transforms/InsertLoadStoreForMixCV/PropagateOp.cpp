@@ -38,6 +38,9 @@ static bool checkPropagate(PropagationStep step,
                            UnrealizedConversionCastOp propagateOp) {
   auto addressSpaces = PropagatorUtil::getAddressSpace(propagateOp);
   switch (step) {
+  case PropagationStep::L0C:
+    return llvm::find(addressSpaces, hivm::AddressSpace::L0C) !=
+           addressSpaces.end();
   case PropagationStep::LOCAL:
     return PropagatorUtil::getCoreType(propagateOp) ==
            TCoreType::CUBE_AND_VECTOR;
@@ -497,6 +500,13 @@ PropagateUpPattern::matchAndRewrite(UnrealizedConversionCastOp propagateOp,
       .Case([&](tensor::InsertSliceOp op) {
         if (step == PropagationStep::LOCAL)
           return failure();
+        // TODO: refactor this propagation logic for A5
+        if (isRegBaseTarget) {
+          PropagatorUtil::createPropagatorsUp(op, propagateOp, rewriter);
+          PropagatorUtil::createPropagatorsDown(op, propagateOp, rewriter);
+          return success();
+        }
+
         if (PropagatorUtil::getCoreType(propagateOp) == TCoreType::CUBE) {
           PropagatorUtil::createPropagatorsUp(op, TCoreType::VECTOR,
                                               hivm::AddressSpace::UB, rewriter);

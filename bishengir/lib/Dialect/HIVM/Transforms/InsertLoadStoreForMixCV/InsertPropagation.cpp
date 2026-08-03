@@ -23,6 +23,7 @@
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 
 #include "llvm/ADT/TypeSwitch.h"
 
@@ -182,7 +183,7 @@ InsertPropagationPattern::handleSpecialCase(Operation *op,
       return failure();
     }
     if (auto storeOp = extractOp.getTensor().getDefiningOp<hivm::StoreOp>();
-        storeOp && storeOp->hasAttr("inserted-store")) {
+        storeOp && storeOp->hasAttr(hivm::kInsertedStoreAttr::name)) {
       PropagatorUtil::createPropagatorsUp(op, hivm::AddressSpace::GM, rewriter);
       return success();
     }
@@ -239,18 +240,18 @@ A5InsertionPattern::matchAndRewrite(Operation *op,
     return failure();
 
   return TypeSwitch<Operation *, LogicalResult>(op)
-      .Case<tensor::InsertSliceOp>([&](Operation *op) {
+      .Case<hivm::VBrcOp>([&](auto op) {
         PropagatorUtil::createPropagatorsUp(op, TCoreType::CUBE_AND_VECTOR,
                                             rewriter);
         PropagatorUtil::createPropagatorsDown(op, TCoreType::CUBE_AND_VECTOR,
                                               rewriter);
         return success();
       })
-      .Case<hivm::VBrcOp>([&](auto op) {
-        PropagatorUtil::createPropagatorsUp(op, TCoreType::VECTOR,
-                                            hivm::AddressSpace::UB, rewriter);
-        PropagatorUtil::createPropagatorsDown(op, TCoreType::VECTOR,
-                                              hivm::AddressSpace::UB, rewriter);
+      .Case<tensor::InsertSliceOp>([&](Operation *op) {
+        PropagatorUtil::createPropagatorsUp(op, TCoreType::CUBE_AND_VECTOR,
+                                            rewriter);
+        PropagatorUtil::createPropagatorsDown(op, TCoreType::CUBE_AND_VECTOR,
+                                              rewriter);
         return success();
       })
       .Case<func::CallOp>([&](auto callOp) {
