@@ -291,8 +291,6 @@ struct AVEStorePattern : public OpRewritePattern<VFMaskedStoreOp> {
     if (store->hasAttr(UnalignedAttr::name))
       return;
     Value data = store.getVal();
-    auto orgAligmentAttr =
-        data.getDefiningOp()->getAttr(utils::elementAlignmentBitWidth);
     Location loc = store->getLoc();
     VectorType orgVectorTy = store.getVectorType();
     Type dElemType = orgVectorTy.getElementType();
@@ -308,13 +306,11 @@ struct AVEStorePattern : public OpRewritePattern<VFMaskedStoreOp> {
           VectorType::get(SmallVector<int64_t>{regSize}, dElemType);
       UnrealizedConversionCastOp ucc =
           rewriter.create<UnrealizedConversionCastOp>(loc, castRegType, data);
-      ucc->setAttr(utils::elementAlignmentBitWidth, orgAligmentAttr);
       data = ucc->getResult(0);
     }
     VectorType targetVectorTy = VectorType::get(targetRegSize, targetRegType);
     LLVM::BitcastOp bitcast =
         rewriter.create<LLVM::BitcastOp>(loc, targetVectorTy, data);
-    bitcast->setAttr(utils::elementAlignmentBitWidth, orgAligmentAttr);
     store->setOperand(store->getNumOperands() - 1, bitcast);
   }
 

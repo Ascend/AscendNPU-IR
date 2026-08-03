@@ -1,6 +1,6 @@
 // RUN: bishengir-opt -hacc-append-device-spec=target=Ascend950PR_9589 --arith-vector-mask-analyze --convert-vector-to-hivmave  \
 // RUN: --convert-arith-to-hivmave --annotation-lowering  \
-// RUN: --analyze-vector-layout --analyze-alignment-bitwidth --remove-vector-layout-attr \
+// RUN: --analyze-vector-layout --remove-vector-layout-attr \
 // RUN: -ave-normalize-ops --convert-hivmave-to-ave-intrin -reconcile-unrealized-casts -cse  \
 // RUN: -split-input-file %s | FileCheck %s
 
