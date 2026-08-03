@@ -299,8 +299,10 @@ static void removeWorkspaceMultiBufferMarks(Operation *root) {
       marksToErase.push_back(markOp);
     return WalkResult::advance();
   });
-  for (annotation::MarkOp markOp : marksToErase)
-    markOp.erase();
+  for (annotation::MarkOp markOp : marksToErase) {
+    if (markOp->getAttrs().empty())
+      markOp.erase();
+  }
 }
 
 static Value traceValueDef(Value v) {
