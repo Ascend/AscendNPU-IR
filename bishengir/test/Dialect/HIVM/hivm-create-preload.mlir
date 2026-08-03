@@ -764,12 +764,13 @@ func.func @test_nested_subview_local_buffer_result() {
   %a2 = arith.constant 69888 : i64
   // CHECK: scf.for
   scf.for %i = %c0 to %c16 step %c1  : i32 {
-    // CHECK: %[[BUF:.*]] = hivm.hir.pointer_cast
+    // CHECK-DAG: %[[BUF0:.*]] = hivm.hir.pointer_cast
+    // CHECK-DAG: %[[BUF1:.*]] = hivm.hir.pointer_cast
     %buf = hivm.hir.pointer_cast(%a0, %a1, %a2) : memref<64x256x1xi1, #hivm.address_space<ub>>
     annotation.mark %buf {hivm.preload_local_buffer = 1 : i32, hivm.multi_buffer = 3 : i32} : memref<64x256x1xi1, #hivm.address_space<ub>>
     // CHECK: scf.if
     // CHECK: } else {
-    // CHECK: %[[RE0:.*]] = memref.subview %[[BUF]]
+    // CHECK: %[[RE0:.*]] = memref.subview %[[BUF1]]
     // CHECK: %[[RE1:.*]] = memref.subview %[[RE0]]
     // CHECK: scf.yield %[[RE1]]
     %s0 = scope.scope : () -> memref<64x64xi1, strided<[256, 1]>, #hivm.address_space<ub>> {
