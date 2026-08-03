@@ -546,7 +546,9 @@ def EnableHIVMInjectBlockAllSync : HIVMOptimizationControlOptions<
 >;
 
 def SetWorkspaceMultibuffer : HIVMOptimizationControlOptions<
-  "Override number of multibuffers for workspace, defaults to 4.",
+  "Override number of multibuffers for workspace. "
+  "TableGen/CLI default is 4 (A3); Ascend950/RegBase applies 2 "
+  "(double-buffer) when this flag is not explicitly set.",
   "unsigned",
   "4"
 >;
