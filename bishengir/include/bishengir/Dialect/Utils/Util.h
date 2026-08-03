@@ -80,6 +80,7 @@ inline constexpr llvm::StringLiteral kInlinableQuantScaleAttr =
 inline constexpr llvm::StringLiteral kInlinedQuantScaleAttr =
     "inlined_fast_tf32_mul";
 
+constexpr llvm::StringLiteral KFoldOffsetMarker = "fold_offset_into_ptr";
 namespace debugger {
 
 // Type trait to check if T is an LLVM-style container
