@@ -58,6 +58,12 @@ struct ValueComparator {
 
 namespace hivm {
 
+/// Plan memory strategy for storage entry reorder.
+enum class PlanMemoryStrategy {
+  DEFAULT,       // keep original storage entry order without sorting
+  LARGEST_FIRST, // sort by const bits descending, allocate larger buffer first
+};
+
 // TODO : put it into platform info
 #define MASTK_MODE_CTROL_BIT 56
 
