@@ -385,6 +385,12 @@ static scf::IfOp rewriteScopeOp(Value cond, scope::ScopeOp scopeOp,
       });
 }
 
+static bool isSynchronizationOp(Operation *op) {
+  return isa<hivm::SetFlagOp, hivm::WaitFlagOp, hivm::PipeBarrierOp,
+             hivm::SyncBlockOp, hivm::SyncBlockSetOp,
+             hivm::SyncBlockWaitOp>(op);
+}
+
 static void rewritePreloadLoop(scf::ForOp forOp,
                                SmallVector<scope::ScopeOp, 4> scopes,
                                size_t maxPreloadNum) {
@@ -439,6 +445,10 @@ static void rewritePreloadLoop(scf::ForOp forOp,
 
         for (auto &bodyOp : forOp.getBody()->without_terminator()) {
           if (!scopeToIdx.contains(&bodyOp)) {
+            if (isSynchronizationOp(&bodyOp)) {
+              b.clone(bodyOp, info.mappings[maxPreloadNum - 1]);
+              continue;
+            }
             if (auto pointerCastOp = dyn_cast<hivm::PointerCastOp>(&bodyOp)) {
               if (getLocalBuffer(pointerCastOp)) {
                 for (int64_t preloadNum = maxPreloadNum - 1; preloadNum >= 0;
