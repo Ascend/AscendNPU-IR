@@ -91,6 +91,9 @@ void MarkSyncBlockLockWithSubblockPass::runOnOperation() {
     if (!isa<SyncBlockLockOp, SyncBlockUnlockOp>(op))
       return WalkResult::advance();
 
+    if (op->hasAttr(SyncBlockLockUnorderedAttr::name))
+      return WalkResult::advance();
+
     if (op->hasAttr(SyncBlockLockWithSubblockAttr::name))
       return WalkResult::advance();
 

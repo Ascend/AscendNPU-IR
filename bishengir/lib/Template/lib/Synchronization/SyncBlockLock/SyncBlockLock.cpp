@@ -143,6 +143,154 @@ free_lock_var_with_subblock(memref_t<__gm__ int64_t, 1> *lock_var) {
 #endif
 }
 
+//===----------------------------------------------------------------------===//
+// Unordered lock implemented as a Lamport bakery lock over physical blocks.
+// A fixed token order is not valid here: CV kernels such as FZE can skip the
+// guarded region on some blocks, so the lock must ignore non-participants.
+//
+// lock_var layout (sized by the host infer-num callback to
+// 1 + 2 * SYNC_LOCK_MAX_PARTICIPANTS cache lines):
+//   participant_num at i64 index 0
+//   choosing[p] at i64 index (1 + p) * SYNC_LOCK_CACHELINE_I64
+//   ticket[p] at i64 index
+//       (1 + SYNC_LOCK_MAX_PARTICIPANTS + p) * SYNC_LOCK_CACHELINE_I64
+// Each slot occupies a full cache line because dcci works at cache-line
+// granularity; packing slots can let one core's writeback clobber another.
+// NOTE: SYNC_LOCK_MAX_PARTICIPANTS must match kMaxSyncBlockParticipants in
+// InsertInferSyncBlockLockNumAndInitFunc.cpp.
+//===----------------------------------------------------------------------===//
+static constexpr int64_t SYNC_LOCK_CACHELINE_I64 = 8;
+static constexpr int64_t SYNC_LOCK_MAX_PARTICIPANTS = 1024;
+static constexpr int64_t SYNC_LOCK_CHOOSING_BASE_I64 =
+    SYNC_LOCK_CACHELINE_I64;
+static constexpr int64_t SYNC_LOCK_TICKET_BASE_I64 =
+    (1 + SYNC_LOCK_MAX_PARTICIPANTS) * SYNC_LOCK_CACHELINE_I64;
+
+__aiv__ __attribute__((always_inline)) int64_t sync_lock_participant_id() {
+  return INTRINSIC_NO_ARGS(get_block_idx);
+}
+
+// Cross-core GM coherence follows the existing ordered lock's dcci pattern:
+// store/read the scalar slot and dcci the corresponding cache line.
+static constexpr int64_t SYNC_LOCK_DCCI_MODE = 1;
+__aiv__ __attribute__((always_inline)) void
+lock_gm_store_i64(volatile __gm__ int64_t *p, int64_t v) {
+  *p = v; // scalar GM store
+  __asm__ __volatile__("");
+  INTRINSIC(dcci, (__gm__ int64_t *)p, SYNC_LOCK_DCCI_MODE);
+  __asm__ __volatile__("");
+}
+__aiv__ __attribute__((always_inline)) int64_t
+lock_gm_load_i64(volatile __gm__ int64_t *p) {
+  __asm__ __volatile__("");
+  INTRINSIC(dcci, (__gm__ int64_t *)p, SYNC_LOCK_DCCI_MODE);
+  __asm__ __volatile__("");
+  return *p;
+}
+
+__aiv__ __attribute__((always_inline)) int64_t
+sync_lock_participant_num(__gm__ int64_t *base) {
+  // The launcher writes the actual launch-time participant count here after it
+  // clamps blockNum to the target's physical block capacity. If the metadata is
+  // missing or malformed, fall back to the full buffer capacity for correctness.
+  volatile __gm__ int64_t *participant_num_ptr = base;
+  int64_t participant_num = lock_gm_load_i64(participant_num_ptr);
+  if (participant_num <= 0 ||
+      participant_num > SYNC_LOCK_MAX_PARTICIPANTS)
+    return SYNC_LOCK_MAX_PARTICIPANTS;
+  return participant_num;
+}
+
+__aiv__ __attribute__((always_inline)) void
+sync_block_lock_unordered(memref_t<__gm__ int64_t, 1> *lock_var) {
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
+#else
+  const int64_t i = sync_lock_participant_id();
+  __gm__ int64_t *base = lock_var->aligned + lock_var->offset;
+  const int64_t N = sync_lock_participant_num(base);
+  if (N <= 1)
+    return;
+
+  volatile __gm__ int64_t *choosing_i =
+      base + SYNC_LOCK_CHOOSING_BASE_I64 + i * SYNC_LOCK_CACHELINE_I64;
+  volatile __gm__ int64_t *ticket_i =
+      base + SYNC_LOCK_TICKET_BASE_I64 + i * SYNC_LOCK_CACHELINE_I64;
+
+  lock_gm_store_i64(choosing_i, 1);
+  INTRINSIC(pipe_barrier, PIPE_ALL);
+
+  int64_t max_ticket = 0;
+  for (int64_t j = 0; j < N; ++j) {
+    volatile __gm__ int64_t *ticket_j =
+        base + SYNC_LOCK_TICKET_BASE_I64 + j * SYNC_LOCK_CACHELINE_I64;
+    int64_t ticket = lock_gm_load_i64(ticket_j);
+    if (ticket > max_ticket)
+      max_ticket = ticket;
+  }
+
+  const int64_t my_ticket = max_ticket + 1;
+  lock_gm_store_i64(ticket_i, my_ticket);
+  INTRINSIC(pipe_barrier, PIPE_ALL);
+  lock_gm_store_i64(choosing_i, 0);
+  INTRINSIC(pipe_barrier, PIPE_ALL);
+
+  for (int64_t j = 0; j < N; ++j) {
+    if (j == i)
+      continue;
+
+    volatile __gm__ int64_t *choosing_j =
+        base + SYNC_LOCK_CHOOSING_BASE_I64 + j * SYNC_LOCK_CACHELINE_I64;
+    volatile __gm__ int64_t *ticket_j =
+        base + SYNC_LOCK_TICKET_BASE_I64 + j * SYNC_LOCK_CACHELINE_I64;
+
+    while (lock_gm_load_i64(choosing_j) != 0) {
+      continue;
+    }
+
+    for (;;) {
+      int64_t other_ticket = lock_gm_load_i64(ticket_j);
+      bool other_before =
+          other_ticket != 0 &&
+          (other_ticket < my_ticket ||
+           (other_ticket == my_ticket && j < i));
+      if (!other_before)
+        break;
+    }
+  }
+
+  INTRINSIC(pipe_barrier, PIPE_ALL);
+#endif
+}
+
+__aiv__ __attribute__((always_inline)) void
+sync_block_unlock_unordered(memref_t<__gm__ int64_t, 1> *lock_var) {
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
+#else
+  INTRINSIC(pipe_barrier, PIPE_ALL);
+  const int64_t i = sync_lock_participant_id();
+  __gm__ int64_t *base = lock_var->aligned + lock_var->offset;
+  volatile __gm__ int64_t *ticket_i =
+      base + SYNC_LOCK_TICKET_BASE_I64 + i * SYNC_LOCK_CACHELINE_I64;
+  lock_gm_store_i64(ticket_i, 0);
+#endif
+}
+
+/// free_lock_var_unordered: bakery release is idempotent. Clearing an
+/// already-zero ticket is a no-op, so this is safe for paths that skipped the
+/// normal lock/unlock pair.
+__aiv__ __attribute__((always_inline)) void
+free_lock_var_unordered(memref_t<__gm__ int64_t, 1> *lock_var) {
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
+#else
+  INTRINSIC(pipe_barrier, PIPE_ALL);
+  const int64_t i = sync_lock_participant_id();
+  __gm__ int64_t *base = lock_var->aligned + lock_var->offset;
+  volatile __gm__ int64_t *ticket_i =
+      base + SYNC_LOCK_TICKET_BASE_I64 + i * SYNC_LOCK_CACHELINE_I64;
+  lock_gm_store_i64(ticket_i, 0);
+#endif
+}
+
 extern "C" {
 //===-------------------------------------------------------------------===//
 // sync_block_lock
@@ -175,4 +323,19 @@ REGISTE_FREE_LOCK_VAR();
 // free_lock_var_with_subblock
 //===-------------------------------------------------------------------===//
 REGISTE_FREE_LOCK_VAR_WITH_SUBBLOCK();
+
+//===-------------------------------------------------------------------===//
+// sync_block_lock_unordered (Lamport bakery)
+//===-------------------------------------------------------------------===//
+REGISTE_SYNCBLOCKLOCK_UNORDERED();
+
+//===-------------------------------------------------------------------===//
+// sync_block_unlock_unordered
+//===-------------------------------------------------------------------===//
+REGISTE_SYNCBLOCKUNLOCK_UNORDERED();
+
+//===-------------------------------------------------------------------===//
+// free_lock_var_unordered
+//===-------------------------------------------------------------------===//
+REGISTE_FREE_LOCK_VAR_UNORDERED();
 }

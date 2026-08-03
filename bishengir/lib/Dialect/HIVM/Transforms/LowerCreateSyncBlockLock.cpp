@@ -51,8 +51,12 @@ public:
   explicit LowerCreateSyncBlockLock(MLIRContext *context)
       : OpRewritePattern(context) {}
 
-  // offset of current CreateSyncBlockLockOp in arg
-  inline static size_t localOffset = 0;
+  // Use two static counters to record the number of ordered and unordered
+  // locks already processed. On each match, the offset of the current op
+  // is computed based on these counters (which represent the locks preceding it).
+  inline static size_t orderedCount = 0;
+  inline static size_t unorderedCount = 0;
+
   LogicalResult matchAndRewrite(hivm::CreateSyncBlockLockOp op,
                                 PatternRewriter &rewriter) const override {
     if (!op.getLockArg()) {
@@ -60,22 +64,52 @@ public:
     }
 
     auto loc = op.getLoc();
-    // create viewOp
-    auto constantOffset =
-        rewriter.create<arith::ConstantIndexOp>(loc, localOffset);
-    auto viewOp = rewriter.create<memref::ViewOp>(
-        loc, op.getType(), op.getLockArg(),
-        /*byte_shift*/ constantOffset, /*dynamic_sizes*/ ValueRange{});
 
-    // calculate offset of the next CreateSyncBlockLockOp
+    // Calculate the basic stride per lock (excluding the block_num multiplier)
     auto bindArgTypeWith =
         getElementTypeOrSelf(op.getLockArg()).getIntOrFloatBitWidth();
     auto lockResTypeWith =
         getElementTypeOrSelf(op.getMemref().getType()).getIntOrFloatBitWidth();
-    auto perOffset = CEIL_DIV(lockResTypeWith, bindArgTypeWith);
-    // To avoid more than 1 lock_vars in 1 cache-line, every lock_var will use a
-    // whole cache-line(64B, which is 8xi64), so the gap of offset should be 8
-    localOffset += perOffset * 8;
+    int64_t perOffset = CEIL_DIV(lockResTypeWith, bindArgTypeWith);
+    // Ordered lock stride in bytes = perOffset * 8
+    int64_t orderedStep = perOffset * 8;
+    // Unordered lock stride in bytes (without block_num) = perOffset * 8 * cacheLines
+    bool isUnordered = op->hasAttr(SyncBlockLockUnorderedAttr::name);
+    int64_t unorderedCacheLines = isUnordered ? hivm::kUnorderedSyncBlockLockCacheLines : 1;
+    int64_t unorderedStep = perOffset * 8 * unorderedCacheLines;
+
+    // ----- Compute the start offset for the current lock -----
+    // offset = orderedCount * orderedStep + unorderedCount * unorderedStep * block_num
+    // Note: unorderedStep here is the fixed stride per unordered lock (without block_num),
+    // unorderedCount * unorderedStep is the total constant stride for all preceding
+    // unordered locks (compile-time constant).
+
+    // 1. Ordered part offset in bytes (i64)
+    Value orderedPart = rewriter.create<arith::ConstantIntOp>(
+        loc, (int64_t)(orderedCount * orderedStep), 64);
+    // 2. Unordered part constant product (i64)
+    Value unorderedConst = rewriter.create<arith::ConstantIntOp>(
+        loc, (int64_t)(unorderedCount * unorderedStep), 64);
+    // 3. Get block_num
+    Value blockNum = rewriter.create<hivm::GetBlockNumOp>(loc)->getResult(0);
+    // 4. Unordered part total bytes = unorderedConst * block_num (i64)
+    Value unorderedPart = rewriter.create<arith::MulIOp>(loc, unorderedConst, blockNum);
+    // 5. Total bytes = orderedPart + unorderedPart
+    Value totalByte = rewriter.create<arith::AddIOp>(loc, orderedPart, unorderedPart);
+    // 6. Cast to index
+    Value offsetIndex = rewriter.create<arith::IndexCastOp>(loc, rewriter.getIndexType(), totalByte);
+
+    // Create the view with dynamic byte offset
+    auto viewOp = rewriter.create<memref::ViewOp>(
+        loc, op.getType(), op.getLockArg(),
+        /*byte_shift*/ offsetIndex, /*dynamic_sizes*/ ValueRange{});
+
+    // Update counters: the current lock has been processed, increment the corresponding counter
+    if (isUnordered) {
+      unorderedCount++;
+    } else {
+      orderedCount++;
+    }
 
     rewriter.replaceOp(op, viewOp);
     return success();
@@ -94,6 +128,10 @@ void LowerCreateSyncBlockLockPass::runOnOperation() {
     return;
 
   RewritePatternSet patterns(&getContext());
+
+  // Reset static counters
+  LowerCreateSyncBlockLock::orderedCount = 0;
+  LowerCreateSyncBlockLock::unorderedCount = 0;
 
   patterns.add<LowerCreateSyncBlockLock>(&getContext());
   (void)applyPatternsGreedily(funcOp, std::move(patterns));

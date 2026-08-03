@@ -18,6 +18,7 @@
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVM/Utils/Utils.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -161,8 +162,15 @@ void InsertInferSyncBlockLockNumAndInitFuncPass::runOnOperation() {
   if (createSyncBlockLockOps.empty())
     return;
 
-  // 1. Calculate total sync block lock num
-  auto syncBlockLockNum = createSyncBlockLockOps.size();
+  // Calculate total sync block lock num in cache-line units. 
+  int64_t syncBlockLockNum = 0;
+  for (Operation *op : createSyncBlockLockOps) {
+    int64_t cacheLinesPerLock =
+        op->hasAttr(SyncBlockLockUnorderedAttr::name)
+            ? hivm::kUnorderedSyncBlockLockCacheLines
+            : 1;
+    syncBlockLockNum += cacheLinesPerLock;
+  }
 
   // 2. Insert host callback func to return sync block lock num
   insertInferSyncBlockLockNumFunc(funcOp, syncBlockLockNum);

@@ -1859,7 +1859,11 @@ public:
                                 PatternRewriter &rewriter) const final {
     ModuleOp mod = op->template getParentOfType<ModuleOp>();
     std::string libCallName = op.getOpName().str();
-    if (op->hasAttr(SyncBlockLockWithSubblockAttr::name))
+    // The unordered (Bakery) attr is exclusive of the subblock-ordered token
+    // ring: the unordered template already uses subblock-aware indexing.
+    if (op->hasAttr(SyncBlockLockUnorderedAttr::name))
+      libCallName += "_unordered";
+    else if (op->hasAttr(SyncBlockLockWithSubblockAttr::name))
       libCallName += "_with_subblock";
     createLibCall(rewriter, op, mod, libCallName, op->getOperands(), {});
     rewriter.eraseOp(op);
