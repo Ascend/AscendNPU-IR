@@ -1685,7 +1685,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // CCF4: for, constant bounds (mayNotExec=false) → ReuseL0C from CCF3's MmadL1Op, counterPrevious=false (folded)
 
 // CHECK-LABEL: func.func @test_counter_previous_mixed_ccf
-module {
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
   func.func @test_counter_previous_mixed_ccf(%lb: i32, %ub: i32) -> tensor<64x32xf32> {
     %c1_i32 = arith.constant 1 : i32
     %c0_i32 = arith.constant 0 : i32
@@ -1945,7 +1945,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 //        → no addTailFallback, no kMayNotExec, initCondition=false (always accumulate)
 
 // CHECK-LABEL: func.func @test_reuse_l0c_skip_tail_fallback
-module {
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
   func.func @test_reuse_l0c_skip_tail_fallback(%lb: i32, %ub: i32) -> tensor<64x32xf32> {
     %c1_i32 = arith.constant 1 : i32
     %c0_i32 = arith.constant 0 : i32
@@ -2278,7 +2278,7 @@ func.func @test_mmadL1_tensor_operands_Normalize_Mkn() -> tensor<128x256xf32> {
 // CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32}
 // CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
 // CHECK: } {may_not_exec, normalized_in_L0C = [0 : i32]}
-// CHECK-NEXT: return
+// CHECK: return
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 func.func @test_mmadL1_may_not_exec_dynamic_bounds(%lb: i32, %ub: i32) -> tensor<16x16xf32> {
   %c1 = arith.constant 1 : i32
@@ -2480,7 +2480,7 @@ func.func @test_mmadL1_empty_init_splitk() -> tensor<16x16xf32> {
 // CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32}
 // CHECK: hivm.hir.mmadmxL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
 // CHECK: } {may_not_exec, normalized_in_L0C = [0 : i32]}
-// CHECK-NEXT: return
+// CHECK: return
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 func.func @test_mmadmx_may_not_exec_dynamic_bounds(%lb: i32, %ub: i32) -> tensor<16x16xf32> {
   %c1 = arith.constant 1 : i32
@@ -3176,7 +3176,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // chain.
 
 // CHECK-LABEL: func.func @test_all_may_not_exec_chain
-module {
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
   func.func @test_all_may_not_exec_chain(%lb: i32, %ub: i32) -> (tensor<64x32xf32>, tensor<64x32xf32>) {
     %c1_i32 = arith.constant 1 : i32
     %c0_i32 = arith.constant 0 : i32
@@ -3253,6 +3253,7 @@ module {
 // CHECK: scf.if
 // CHECK: hivm.hir.vbrc
 // CHECK: return
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 func.func @test_nobias_for_var_fallback(%a: tensor<16x16xf16>, %b: tensor<16x16xf16>, %lb: i32, %ub: i32) -> tensor<16x16xf32> {
   %false = arith.constant false
   %c0 = arith.constant 0 : index
@@ -3263,6 +3264,7 @@ func.func @test_nobias_for_var_fallback(%a: tensor<16x16xf16>, %b: tensor<16x16x
     scf.yield %m : tensor<16x16xf32>
   }
   return %for : tensor<16x16xf32>
+}
 }
 
 // -----
@@ -3275,6 +3277,7 @@ func.func @test_nobias_for_var_fallback(%a: tensor<16x16xf16>, %b: tensor<16x16x
 // CHECK: scf.if
 // CHECK: hivm.hir.vbrc
 // CHECK: return
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 func.func @test_zeroinit_for_var_fallback(%a: tensor<16x16xf16>, %b: tensor<16x16xf16>, %lb: i32, %ub: i32) -> tensor<16x16xf32> {
   %false = arith.constant false
   %c0 = arith.constant 0 : index
@@ -3288,6 +3291,7 @@ func.func @test_zeroinit_for_var_fallback(%a: tensor<16x16xf16>, %b: tensor<16x1
   }
   return %for : tensor<16x16xf32>
 }
+}
 
 // -----
 
@@ -3300,6 +3304,7 @@ func.func @test_zeroinit_for_var_fallback(%a: tensor<16x16xf16>, %b: tensor<16x1
 // CHECK: scf.if
 // CHECK: hivm.hir.vbrc ins(%{{.*}} : i32) outs
 // CHECK: return
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 func.func @test_zeroinit_for_var_i32_fallback(%a: tensor<16x16xf16>, %b: tensor<16x16xf16>, %lb: i32, %ub: i32) -> tensor<16x16xi32> {
   %false = arith.constant false
   %c0 = arith.constant 0 : index
@@ -3313,3 +3318,5 @@ func.func @test_zeroinit_for_var_i32_fallback(%a: tensor<16x16xf16>, %b: tensor<
   }
   return %for : tensor<16x16xi32>
 }
+}
+
