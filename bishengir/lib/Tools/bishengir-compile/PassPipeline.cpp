@@ -48,7 +48,6 @@
 #include "mlir/Support/FileUtilities.h"
 #include "mlir/Target/LLVMIR/ModuleTranslation.h"
 #include "mlir/Transforms/Passes.h"
-#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/WithColor.h"
@@ -274,24 +273,13 @@ static void buildDelayedHFusionRegBaseVectorizePipeline(
   if (config.getDisableHfusionVectorize()) {
     return;
   }
-  // inferMixedCV populates enableMixedCV before this delayed HFusion pipeline
-  // is built; adjust only the local HFusion options consumed by flatten.
-  BiShengIRCompileMainConfig hfusionConfig = config;
-  auto &registeredOptions = llvm::cl::getRegisteredOptions();
-  auto enableFlattenOpt = registeredOptions.find("enable-flatten");
-  bool hasExplicitEnableFlatten =
-      enableFlattenOpt != registeredOptions.end() &&
-      enableFlattenOpt->second->getNumOccurrences() != 0;
-  if (hfusionConfig.shouldEnableMixedCV() && !hasExplicitEnableFlatten) {
-    hfusionConfig.setEnableFlatten(false);
-  }
 
   HIVMAggregatedDecomposeOpOptions decomposeOption;
   decomposeOption.decomposePhase = bishengir::DecomposePhase::NO_CONSTRAINT;
   pm.nest<func::FuncOp>().addPass(
       mlir::hivm::createHIVMAggregatedDecomposeOpPass(decomposeOption));
   hfusion::HFusionPipelineOptions hfusionPipelineOptions;
-  setupHFusionPipelineOptions(hfusionPipelineOptions, hfusionConfig);
+  setupHFusionPipelineOptions(hfusionPipelineOptions, config);
   ExecutionEngineHIVMToUpstreamConversionOptions upstreamOptions;
   upstreamOptions.convertToNamedOp =
       hacc::utils::isRegBasedArch(config.getTarget());

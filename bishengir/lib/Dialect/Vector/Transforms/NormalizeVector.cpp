@@ -1084,6 +1084,13 @@ class TransferReadToGatheringLoadPattern
     for (unsigned i = 0; i < destShape.size(); ++i)
       totalDestSize *= destShape[i];
 
+    // permMap maps the memref index space onto the result vector index space,
+    // so recovering the memref indices of a result element requires the
+    // *inverse* map. For a 2-D transpose they're the same, but not for a
+    // 3-D one, like (d0, d1, d2) -> (d1, d2, d0)
+    AffineMap invPermMap = inversePermutation(permMap);
+    assert(invPermMap && "expected an invertible permutation map");
+
     unsigned elementBitWidth = memrefType.getElementTypeBitWidth();
     SmallVector<int64_t, 0> composeIndices(destShape.size(), 0);
     gatherIndices.reserve(totalDestSize);
@@ -1101,7 +1108,7 @@ class TransferReadToGatheringLoadPattern
         composeIndices[dim - 1] += 1;
       }
 
-      auto composeResult = permMap.compose(composeIndices);
+      auto composeResult = invPermMap.compose(composeIndices);
       if (composeResult.size() != strides.size())
         llvm_unreachable("Unexpected dimension mismatch");
 
