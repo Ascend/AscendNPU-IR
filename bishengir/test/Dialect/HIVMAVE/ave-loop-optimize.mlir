@@ -91,20 +91,15 @@ func.func @peel_epilogue_canon_test(
 
 // -----
 
+// The factor tail is legal, but the short load-to-store chain is not
+// profitable after charging both layout trees. Do not peel a loop unless its
+// main loop will actually be optimized.
 // CHECK-LABEL: func.func @factor_tail_full_chain
-// CHECK-DAG: %[[TAIL_C128:.*]] = arith.constant 128 : index
-// CHECK-DAG: %[[TAIL_C256:.*]] = arith.constant 256 : index
-// CHECK: scf.for {{.*}} = %c0 to %[[TAIL_C256]] step %[[TAIL_C128]]
-// CHECK: %[[TAIL_PACKED_LOAD:.*]] = ave.hir.vload <NORM> {{.*}} into vector<128xf16>
-// CHECK-NEXT: %[[TAIL_EVEN:.*]], %[[TAIL_ODD:.*]] = ave.hir.vintlv %[[TAIL_PACKED_LOAD]], %[[TAIL_PACKED_LOAD]]
-// CHECK: %[[TAIL_PACKED:.*]], %{{.*}} = ave.hir.vdintlv {{.*}} : vector<64xf16>, vector<128xf16>
-// CHECK: %[[TAIL_ABS0:.*]] = ave.hir.vabs %[[TAIL_PACKED]], %{{.*}} : vector<128xf16>, vector<128xi1>
-// CHECK: %[[TAIL_ABS1:.*]] = ave.hir.vabs %[[TAIL_ABS0]], %{{.*}} : vector<128xf16>, vector<128xi1>
-// CHECK: ave.hir.masked_store <NORM_B16> {{.*}}, %{{.*}}, %[[TAIL_ABS1]] : {{.*}}, vector<128xi1>, vector<128xf16>
-// CHECK: }
-// CHECK-NOT: scf.for
-// CHECK: ave.hir.vload <NORM> %{{.*}}[%[[TAIL_C256]]] : {{.*}} into vector<64xf16>
-// CHECK: ave.hir.masked_store <NORM_B16> %{{.*}}[%[[TAIL_C256]]], %{{.*}}, %{{.*}} : {{.*}}, vector<64xi1>, vector<64xf16>
+// CHECK: scf.for {{.*}} = %c0 to %c320 step %c64
+// CHECK: ave.hir.vload <NORM> {{.*}} into vector<64xf16>
+// CHECK-NOT: ave.hir.vintlv
+// CHECK-NOT: ave.hir.vdintlv
+// CHECK: ave.hir.masked_store <NORM_B16> {{.*}} vector<64xi1>, vector<64xf16>
 func.func @factor_tail_full_chain(
     %src: memref<320xf16, #hivm.address_space<ub>>,
     %dst: memref<320xf16, #hivm.address_space<ub>>)
@@ -130,6 +125,45 @@ func.func @factor_tail_full_chain(
         : vector<64xf16>, vector<64xi1>
     ave.hir.masked_store <NORM_B16> %dst[%iv], %mask, %abs1
         : memref<320xf16, #hivm.address_space<ub>>,
+          vector<64xi1>, vector<64xf16>
+  }
+  return
+}
+
+// -----
+
+// Profitability rejects this short chain. The pass must not peel the partial
+// data iteration as a side effect when no merge will be applied.
+// CHECK-LABEL: func.func @unprofitable_partial_tail
+// CHECK: %[[C200:.*]] = arith.constant 200 : index
+// CHECK-NOT: arith.constant 192 : index
+// CHECK: scf.for {{.*}} = {{.*}} to %[[C200]] step {{.*}}
+// CHECK: ave.hir.vload <NORM> {{.*}} into vector<64xf16>
+// CHECK-NOT: vector<128xf16>
+// CHECK-NOT: ave.hir.vintlv
+// CHECK-NOT: ave.hir.vdintlv
+// CHECK: ave.hir.masked_store <NORM_B16> {{.*}} vector<64xi1>, vector<64xf16>
+func.func @unprofitable_partial_tail(
+    %src: memref<256xf16, #hivm.address_space<ub>>,
+    %dst: memref<256xf16, #hivm.address_space<ub>>)
+    attributes {
+      hivm.func_core_type = #hivm.func_core_type<AIV>,
+      hivm.vector_function,
+      no_inline
+    } {
+  %c0 = arith.constant 0 : index
+  %c64 = arith.constant 64 : index
+  %c200 = arith.constant 200 : index
+  scf.for %iv = %c0 to %c200 step %c64 {
+    %loaded = ave.hir.vload <NORM> %src[%iv]
+        : memref<256xf16, #hivm.address_space<ub>> into vector<64xf16>
+    %mask = ave.hir.pge <ALL> : vector<64xi1>
+    %wide = ave.hir.vextf %loaded, <part_even>, %mask
+        : vector<64xf16>, vector<64xf32>, vector<64xi1>
+    %narrow = ave.hir.vtruncf %wide, <rint>, false, <part_even>, %mask
+        : vector<64xf32>, vector<64xf16>, vector<64xi1>
+    ave.hir.masked_store <NORM_B16> %dst[%iv], %mask, %narrow
+        : memref<256xf16, #hivm.address_space<ub>>,
           vector<64xi1>, vector<64xf16>
   }
   return

@@ -1,7 +1,8 @@
 // RUN: bishengir-opt -ave-loop-optimize="max-small-width-merge-factor=4" %s --split-input-file | FileCheck %s
 // RUN: bishengir-opt -ave-loop-optimize="max-small-width-merge-factor=2" %s --split-input-file | FileCheck %s --check-prefix=MAX2
+// RUN: bishengir-opt -hacc-append-device-spec=target=Ascend910_9589 -ave-loop-optimize="max-small-width-merge-factor=4" %s --split-input-file | FileCheck %s --check-prefix=TARGET
 // RUN: bishengir-opt -ave-process-vsstb -ave-loop-optimize="max-small-width-merge-factor=4" %s --split-input-file | FileCheck %s --check-prefix=PIPE
-// RUN: bishengir-opt -hacc-append-device-spec=target=Ascend910_9589 -ave-process-vsstb -ave-loop-optimize="max-small-width-merge-factor=4" -analyze-vector-layout -canonicalize -ave-normalize-ops -remove-vector-layout-attr -convert-hivmave-to-ave-intrin %s --split-input-file | FileCheck %s --check-prefix=LOWER
+// RUN: bishengir-opt -ave-process-vsstb -ave-loop-optimize="max-small-width-merge-factor=4" -hacc-append-device-spec=target=Ascend910_9589 -analyze-vector-layout -canonicalize -ave-normalize-ops -remove-vector-layout-attr -convert-hivmave-to-ave-intrin %s --split-input-file | FileCheck %s --check-prefix=LOWER
 
 // The short full chain is execute-bound. Saving one load/store does not cover
 // the added vintlv/vdintlv work, so the loop must remain unchanged.
@@ -111,21 +112,29 @@ func.func @factor4_load_i8_to_i32(
 
 // -----
 
+// Without a target cost table, the fallback makes the layout tree too
+// expensive. The AVE target table uses the measured i8 throughput and makes
+// the four narrow chains profitable.
 // CHECK-LABEL: func.func @factor4_narrow_i32_to_i8
-// CHECK-COUNT-4: ave.hir.vtrunci
-// CHECK-COUNT-3: ave.hir.vdintlv
-// CHECK-COUNT-1: ave.hir.vadds {{.*}} : vector<256xi8>, i8, vector<256xi1>
-// CHECK-COUNT-1: ave.hir.masked_store <NORM_B8> {{.*}} vector<256xi1>, vector<256xi8>
+// CHECK: scf.for {{.*}} step %c64
+// CHECK: ave.hir.vtrunci {{.*}} : vector<64xi32>, vector<64xi8>, vector<64xi1>
+// CHECK-NOT: ave.hir.vdintlv
+// CHECK: ave.hir.masked_store <NORM_B8> {{.*}} vector<64xi1>, vector<64xi8>
 // CHECK-NOT: __ave_small_width
 // MAX2-LABEL: func.func @factor4_narrow_i32_to_i8
 // MAX2: scf.for
 // MAX2-NOT: ave.hir.vdintlv
 // MAX2: ave.hir.masked_store <NORM_B8> {{.*}} vector<64xi1>, vector<64xi8>
+// TARGET-LABEL: func.func @factor4_narrow_i32_to_i8
+// TARGET-COUNT-4: ave.hir.vtrunci
+// TARGET-COUNT-3: ave.hir.vdintlv
+// TARGET-COUNT-1: ave.hir.vadds {{.*}} : vector<256xi8>, i8, vector<256xi1>
+// TARGET-COUNT-1: ave.hir.masked_store <NORM_B8> {{.*}} vector<256xi1>, vector<256xi8>
 // LOWER-LABEL: func.func @factor4_narrow_i32_to_i8
-// LOWER-COUNT-4: hivm_regbaseintrins.intr.hivm.vcvtii.s322u8
-// LOWER-COUNT-3: hivm_regbaseintrins.intr.hivm.vdintlv
-// LOWER: hivm_regbaseintrins.intr.hivm.vadds
-// LOWER: hivm_regbaseintrins.intr.hivm.vstsx1.v256s8
+// LOWER-COUNT-1: hivm_regbaseintrins.intr.hivm.vcvtii.s322u8.x
+// LOWER-NOT: hivm_regbaseintrins.intr.hivm.vdintlv
+// LOWER: hivm_regbaseintrins.intr.hivm.vadds.s.x
+// LOWER: hivm_regbaseintrins.intr.hivm.vstsx1
 func.func @factor4_narrow_i32_to_i8(
     %src: memref<256xi32, #hivm.address_space<ub>>,
     %dst: memref<256xi8, #hivm.address_space<ub>>,
@@ -205,79 +214,21 @@ func.func @factor2_store_with_stride(
 
 // -----
 
-// The four widening groups are balanced before rewriting. Their vintlv trees
-// would make execute the bottleneck, so the profitability model rejects them.
-// CHECK-LABEL: func.func @mixed_widening_types
-// CHECK: scf.for {{.*}} step %c64
-// CHECK: ave.hir.vload <NORM> {{.*}} into vector<64xbf16>
-// CHECK-NOT: ave.hir.vintlv
-// CHECK-NOT: __ave_small_width
-func.func @mixed_widening_types(
-    %bf16Src: memref<256xbf16, #hivm.address_space<ub>>,
-    %u8Src: memref<512xi8, #hivm.address_space<ub>>,
-    %i16Src: memref<256xi16, #hivm.address_space<ub>>,
-    %f8Src: memref<256xf8E5M2, #hivm.address_space<ub>>,
-    %f32Dst0: memref<256xf32, #hivm.address_space<ub>>,
-    %i16Dst: memref<512xi16, #hivm.address_space<ub>>,
-    %i32Dst: memref<256xi32, #hivm.address_space<ub>>,
-    %f32Dst1: memref<256xf32, #hivm.address_space<ub>>)
-    attributes {hivm.func_core_type = #hivm.func_core_type<AIV>,
-                hivm.vector_function, no_inline} {
-  %c0 = arith.constant 0 : index
-  %c64 = arith.constant 64 : index
-  %c256 = arith.constant 256 : index
-  scf.for %iv = %c0 to %c256 step %c64 {
-    %offset128 = affine.apply affine_map<(d0) -> (d0 * 2)>(%iv)
-    %mask64 = ave.hir.pge <ALL> : vector<64xi1>
-    %mask128 = ave.hir.pge <ALL> : vector<128xi1>
-    %bf16 = ave.hir.vload <NORM> %bf16Src[%iv]
-        : memref<256xbf16, #hivm.address_space<ub>> into vector<64xbf16>
-    %f32FromBf16 = ave.hir.vextf %bf16, <part_even>, %mask64
-        : vector<64xbf16>, vector<64xf32>, vector<64xi1>
-    ave.hir.masked_store <NORM_B32> %f32Dst0[%iv], %mask64, %f32FromBf16
-        : memref<256xf32, #hivm.address_space<ub>>,
-          vector<64xi1>, vector<64xf32>
-    %u8 = ave.hir.vload <NORM> %u8Src[%offset128]
-        : memref<512xi8, #hivm.address_space<ub>> into vector<128xi8>
-    %i16 = ave.hir.vextui %u8, %mask128
-        {part = #ave.vcvt_part_type<part_even>}
-        : vector<128xi8>, vector<128xi16>, vector<128xi1>
-    ave.hir.masked_store <NORM_B16> %i16Dst[%offset128], %mask128, %i16
-        : memref<512xi16, #hivm.address_space<ub>>,
-          vector<128xi1>, vector<128xi16>
-    %i16Input = ave.hir.vload <NORM> %i16Src[%iv]
-        : memref<256xi16, #hivm.address_space<ub>> into vector<64xi16>
-    %i32 = ave.hir.vextsi %i16Input, %mask64
-        {part = #ave.vcvt_part_type<part_even>}
-        : vector<64xi16>, vector<64xi32>, vector<64xi1>
-    ave.hir.masked_store <NORM_B32> %i32Dst[%iv], %mask64, %i32
-        : memref<256xi32, #hivm.address_space<ub>>,
-          vector<64xi1>, vector<64xi32>
-    %f8 = ave.hir.vload <NORM> %f8Src[%iv]
-        : memref<256xf8E5M2, #hivm.address_space<ub>>
-          into vector<64xf8E5M2>
-    %f32FromF8 = ave.hir.vextf %f8, <part_even>, %mask64
-        : vector<64xf8E5M2>, vector<64xf32>, vector<64xi1>
-    ave.hir.masked_store <NORM_B32> %f32Dst1[%iv], %mask64, %f32FromF8
-        : memref<256xf32, #hivm.address_space<ub>>,
-          vector<64xi1>, vector<64xf32>
-  }
-  return
-}
-
-// -----
-
 // CHECK-LABEL: func.func @mixed_narrowing_types
-// CHECK-DAG: ave.hir.vdintlv {{.*}} : vector<64xbf16>, vector<128xbf16>
-// CHECK-DAG: ave.hir.vdintlv {{.*}} : vector<128xi8>, vector<256xi8>
-// CHECK-DAG: ave.hir.vdintlv {{.*}} : vector<64xi16>, vector<128xi16>
-// CHECK-DAG: ave.hir.vdintlv {{.*}} : vector<128xf8E4M3FN>, vector<256xf8E4M3FN>
-// CHECK-DAG: ave.hir.vadds {{.*}} : vector<256xi8>, i8, vector<256xi1>
-// CHECK-DAG: ave.hir.masked_store <NORM_B16> {{.*}} vector<128xi1>, vector<128xbf16>
-// CHECK-DAG: ave.hir.masked_store <NORM_B8> {{.*}} vector<256xi1>, vector<256xi8>
-// CHECK-DAG: ave.hir.masked_store <NORM_B16> {{.*}} vector<128xi1>, vector<128xi16>
-// CHECK-DAG: ave.hir.masked_store <NORM_B8> {{.*}} vector<256xi1>, vector<256xf8E4M3FN>
+// CHECK: scf.for {{.*}} step %c64
+// CHECK-NOT: ave.hir.vdintlv
+// CHECK: return
 // CHECK-NOT: __ave_small_width
+// TARGET-LABEL: func.func @mixed_narrowing_types
+// TARGET-DAG: ave.hir.vdintlv {{.*}} : vector<64xbf16>, vector<128xbf16>
+// TARGET-DAG: ave.hir.vdintlv {{.*}} : vector<128xi8>, vector<256xi8>
+// TARGET-DAG: ave.hir.vdintlv {{.*}} : vector<64xi16>, vector<128xi16>
+// TARGET-DAG: ave.hir.vdintlv {{.*}} : vector<128xf8E4M3FN>, vector<256xf8E4M3FN>
+// TARGET-DAG: ave.hir.vadds {{.*}} : vector<256xi8>, i8, vector<256xi1>
+// TARGET-DAG: ave.hir.masked_store <NORM_B16> {{.*}} vector<128xi1>, vector<128xbf16>
+// TARGET-DAG: ave.hir.masked_store <NORM_B8> {{.*}} vector<256xi1>, vector<256xi8>
+// TARGET-DAG: ave.hir.masked_store <NORM_B16> {{.*}} vector<128xi1>, vector<128xi16>
+// TARGET-DAG: ave.hir.masked_store <NORM_B8> {{.*}} vector<256xi1>, vector<256xf8E4M3FN>
 func.func @mixed_narrowing_types(
     %f32Src0: memref<256xf32, #hivm.address_space<ub>>,
     %i16Src: memref<512xi16, #hivm.address_space<ub>>,
@@ -589,6 +540,158 @@ func.func @reject_unmarked_strided_column_store(
         : memref<4x16xf16,
                  affine_map<(d0, d1)[s0] -> (d0 * 272 + d1 + s0)>,
                  #hivm.address_space<ub>>,
+          vector<64xi1>, vector<64xf16>
+  }
+  return
+}
+
+// -----
+
+// Extra loads make the loop load-bound, so one packed f16 load plus vintlv is
+// cheaper than two original loads.
+// CHECK-LABEL: func.func @accept_factor2_load_bound
+// CHECK: ave.hir.vload <NORM> {{.*}} into vector<128xf16>
+// CHECK: ave.hir.vintlv
+// TARGET-LABEL: func.func @accept_factor2_load_bound
+// TARGET: ave.hir.vload <NORM> {{.*}} into vector<128xf16>
+// TARGET: ave.hir.vintlv
+func.func @accept_factor2_load_bound(
+    %src: memref<128xf16, #hivm.address_space<ub>>,
+    %aux0: memref<128xf32, #hivm.address_space<ub>>,
+    %aux1: memref<128xf32, #hivm.address_space<ub>>,
+    %aux2: memref<128xf32, #hivm.address_space<ub>>,
+    %aux3: memref<128xf32, #hivm.address_space<ub>>,
+    %dst: memref<128xf32, #hivm.address_space<ub>>)
+    attributes {hivm.vector_function} {
+  %c0 = arith.constant 0 : index
+  %c64 = arith.constant 64 : index
+  %c128 = arith.constant 128 : index
+  scf.for %iv = %c0 to %c128 step %c64 {
+    %loaded = ave.hir.vload <NORM> %src[%iv]
+        : memref<128xf16, #hivm.address_space<ub>> into vector<64xf16>
+    %mask = ave.hir.pge <ALL> : vector<64xi1>
+    %wide = ave.hir.vextf %loaded, <part_even>, %mask
+        : vector<64xf16>, vector<64xf32>, vector<64xi1>
+    %a0 = ave.hir.vload <NORM> %aux0[%iv]
+        : memref<128xf32, #hivm.address_space<ub>> into vector<64xf32>
+    %a1 = ave.hir.vload <NORM> %aux1[%iv]
+        : memref<128xf32, #hivm.address_space<ub>> into vector<64xf32>
+    %a2 = ave.hir.vload <NORM> %aux2[%iv]
+        : memref<128xf32, #hivm.address_space<ub>> into vector<64xf32>
+    %a3 = ave.hir.vload <NORM> %aux3[%iv]
+        : memref<128xf32, #hivm.address_space<ub>> into vector<64xf32>
+    %fused0 = ave.hir.vmula %wide, %a0, %a1, %mask
+        : vector<64xf32>, vector<64xi1>
+    %fused1 = ave.hir.vmula %fused0, %a2, %a3, %mask
+        : vector<64xf32>, vector<64xi1>
+    ave.hir.masked_store <NORM_B32> %dst[%iv], %mask, %fused1
+        : memref<128xf32, #hivm.address_space<ub>>,
+          vector<64xi1>, vector<64xf32>
+  }
+  return
+}
+
+// -----
+
+// Vexp already dominates Vector execute. Adding vintlv would increase the
+// bottleneck, so the widening load is not merged.
+// CHECK-LABEL: func.func @reject_factor2_execute_bound
+// CHECK: ave.hir.vload <NORM> {{.*}} into vector<64xf16>
+// CHECK-NOT: ave.hir.vintlv
+// TARGET-LABEL: func.func @reject_factor2_execute_bound
+// TARGET: ave.hir.vload <NORM> {{.*}} into vector<64xf16>
+// TARGET-NOT: ave.hir.vintlv
+func.func @reject_factor2_execute_bound(
+    %src: memref<128xf16, #hivm.address_space<ub>>,
+    %dst: memref<128xf32, #hivm.address_space<ub>>)
+    attributes {hivm.vector_function} {
+  %c0 = arith.constant 0 : index
+  %c64 = arith.constant 64 : index
+  %c128 = arith.constant 128 : index
+  scf.for %iv = %c0 to %c128 step %c64 {
+    %loaded = ave.hir.vload <NORM> %src[%iv]
+        : memref<128xf16, #hivm.address_space<ub>> into vector<64xf16>
+    %mask = ave.hir.pge <ALL> : vector<64xi1>
+    %wide = ave.hir.vextf %loaded, <part_even>, %mask
+        : vector<64xf16>, vector<64xf32>, vector<64xi1>
+    %exp = ave.hir.vexp %wide, %mask : vector<64xf32>, vector<64xi1>
+    ave.hir.masked_store <NORM_B32> %dst[%iv], %mask, %exp
+        : memref<128xf32, #hivm.address_space<ub>>,
+          vector<64xi1>, vector<64xf32>
+  }
+  return
+}
+
+// -----
+
+// Two narrow elementwise ops cover one vdintlv tree and one merged store.
+// CHECK-LABEL: func.func @accept_factor2_narrow_chain
+// CHECK: ave.hir.vdintlv
+// CHECK: ave.hir.vabs {{.*}} : vector<128xf16>, vector<128xi1>
+// CHECK: ave.hir.masked_store <NORM_B16> {{.*}} vector<128xi1>, vector<128xf16>
+// TARGET-LABEL: func.func @accept_factor2_narrow_chain
+// TARGET: ave.hir.vdintlv
+// TARGET: ave.hir.vabs {{.*}} : vector<128xf16>, vector<128xi1>
+func.func @accept_factor2_narrow_chain(
+    %src: memref<128xf32, #hivm.address_space<ub>>,
+    %dst: memref<128xf16, #hivm.address_space<ub>>)
+    attributes {hivm.vector_function} {
+  %c0 = arith.constant 0 : index
+  %c64 = arith.constant 64 : index
+  %c128 = arith.constant 128 : index
+  scf.for %iv = %c0 to %c128 step %c64 {
+    %loaded = ave.hir.vload <NORM> %src[%iv]
+        : memref<128xf32, #hivm.address_space<ub>> into vector<64xf32>
+    %mask = ave.hir.pge <ALL> : vector<64xi1>
+    %narrow = ave.hir.vtruncf %loaded, <rint>, false, <part_even>, %mask
+        : vector<64xf32>, vector<64xf16>, vector<64xi1>
+    %abs0 = ave.hir.vabs %narrow, %mask : vector<64xf16>, vector<64xi1>
+    %abs1 = ave.hir.vabs %abs0, %mask : vector<64xf16>, vector<64xi1>
+    ave.hir.masked_store <NORM_B16> %dst[%iv], %mask, %abs1
+        : memref<128xf16, #hivm.address_space<ub>>,
+          vector<64xi1>, vector<64xf16>
+  }
+  return
+}
+
+// -----
+
+// Reduced from the layer_norm_gated regression. Wide calculation already
+// dominates, so adding vdintlv for the final f16 store is unprofitable.
+// CHECK-LABEL: func.func @reject_compute_bound_store_merge
+// CHECK: ave.hir.vtruncf {{.*}} vector<64xf16>
+// CHECK-NOT: ave.hir.vdintlv
+// CHECK: ave.hir.masked_store <NORM_B16> {{.*}} vector<64xi1>, vector<64xf16>
+// TARGET-LABEL: func.func @reject_compute_bound_store_merge
+// TARGET: ave.hir.vtruncf {{.*}} vector<64xf16>
+// TARGET-NOT: ave.hir.vdintlv
+func.func @reject_compute_bound_store_merge(
+    %src0: memref<128xf32, #hivm.address_space<ub>>,
+    %src1: memref<128xf32, #hivm.address_space<ub>>,
+    %src2: memref<128xf32, #hivm.address_space<ub>>,
+    %dst: memref<128xf16, #hivm.address_space<ub>>)
+    attributes {hivm.vector_function} {
+  %c0 = arith.constant 0 : index
+  %c64 = arith.constant 64 : index
+  %c128 = arith.constant 128 : index
+  scf.for %iv = %c0 to %c128 step %c64 {
+    %lhs = ave.hir.vload <NORM> %src0[%iv]
+        : memref<128xf32, #hivm.address_space<ub>> into vector<64xf32>
+    %rhs = ave.hir.vload <NORM> %src1[%iv]
+        : memref<128xf32, #hivm.address_space<ub>> into vector<64xf32>
+    %factor = ave.hir.vload <NORM> %src2[%iv]
+        : memref<128xf32, #hivm.address_space<ub>> into vector<64xf32>
+    %mask = ave.hir.pge <ALL> : vector<64xi1>
+    %div = ave.hir.vdiv %lhs, %rhs, %mask
+        : vector<64xf32>, vector<64xi1>
+    %sum = ave.hir.vadd %div, %lhs, %mask
+        : vector<64xf32>, vector<64xi1>
+    %product = ave.hir.vmul %sum, %factor, %mask
+        : vector<64xf32>, vector<64xi1>
+    %narrow = ave.hir.vtruncf %product, <rint>, false, <part_even>, %mask
+        : vector<64xf32>, vector<64xf16>, vector<64xi1>
+    ave.hir.masked_store <NORM_B16> %dst[%iv], %mask, %narrow
+        : memref<128xf16, #hivm.address_space<ub>>,
           vector<64xi1>, vector<64xf16>
   }
   return
