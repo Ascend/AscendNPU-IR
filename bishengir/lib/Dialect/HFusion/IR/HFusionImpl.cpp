@@ -79,6 +79,10 @@ Value hfusion::castTo(OpBuilder &builder, Value src, Type targetElemType,
   if (!isa<TensorType>(src.getType())) {
     assert(src.getType().isIntOrIndexOrFloat());
     bool isUnsignedCast = (hfusion::TypeFn::cast_unsigned == castIntegerType);
+    Type srcElem = getElementTypeOrSelf(src.getType());
+    if (srcElem.isInteger(1) && isa<mlir::FloatType>(targetElemType)) {
+      isUnsignedCast = true;
+    }
     return convertScalarToDtype(builder, loc, src, targetElemType,
                                 isUnsignedCast);
   }
