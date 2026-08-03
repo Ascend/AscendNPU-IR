@@ -23,18 +23,24 @@
 #include "bishengir/Dialect/SCF/TransformOps/SCFTransformOps.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Scope/Utils/Utils.h"
+#include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Analysis/TopologicalSortUtils.h"
+#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Linalg/TransformOps/LinalgTransformOps.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/TransformOps/SCFTransformOps.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Tensor/TransformOps/TensorTransformOps.h"
 #include "mlir/Dialect/Transform/IR/TransformOps.h"
 #include "mlir/Dialect/Transform/Interfaces/TransformInterfaces.h"
 #include "mlir/Dialect/Transform/Transforms/TransformInterpreterUtils.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/Dominance.h"
+#include "mlir/Interfaces/DestinationStyleOpInterface.h"
 #include "mlir/Pass/PassManager.h"
 #include "llvm/Support/Debug.h"
 #include <cassert>
@@ -65,6 +71,65 @@ static bool isCubeScopeOp(Operation *op) {
     return false;
 
   return attr.getTcoretype() == mlir::hivm::TCoreType::CUBE;
+}
+
+static bufferization::ToTensorOp traceToTensorSource(Value value) {
+  DenseSet<Value> visited;
+  while (value && visited.insert(value).second) {
+    if (auto toTensor = value.getDefiningOp<bufferization::ToTensorOp>())
+      return toTensor;
+
+    Operation *defOp = value.getDefiningOp();
+    if (!defOp)
+      return {};
+
+    bool isTensorView =
+        isa<tensor::ExtractSliceOp, tensor::CastOp, tensor::CollapseShapeOp,
+            tensor::ExpandShapeOp>(defOp);
+    bool isSingleOperandCast = isa<UnrealizedConversionCastOp>(defOp) &&
+                               defOp->getNumOperands() == 1 &&
+                               defOp->getNumResults() == 1;
+    if (!isTensorView && !isSingleOperandCast)
+      return {};
+
+    value = defOp->getOperand(0);
+  }
+  return {};
+}
+
+static Attribute findWasBoolToInt8WriterAttr(Value memref, Operation *readOp,
+                                             DominanceInfo &domInfo) {
+  for (OpOperand &use : memref.getUses()) {
+    Operation *user = use.getOwner();
+    if (!domInfo.properlyDominates(user, readOp))
+      continue;
+
+    Attribute attr = user->getAttr(utils::wasBoolToInt8);
+    auto dpsOp = dyn_cast<DestinationStyleOpInterface>(user);
+    if (attr && dpsOp && dpsOp.isDpsInit(&use))
+      return attr;
+  }
+
+  return {};
+}
+
+static void propagateWasBoolToInt8ToTransferReads(func::FuncOp func) {
+  DominanceInfo domInfo(func);
+  func.walk([&](vector::TransferReadOp readOp) {
+    if (readOp->hasAttr(utils::wasBoolToInt8) ||
+        !readOp.getVectorType().getElementType().isInteger(8))
+      return;
+
+    auto toTensor = traceToTensorSource(readOp.getSource());
+    if (!toTensor)
+      return;
+
+    Value memref = toTensor.getMemref();
+    Attribute attr =
+        findWasBoolToInt8WriterAttr(memref, readOp.getOperation(), domInfo);
+    if (attr)
+      readOp->setAttr(utils::wasBoolToInt8, attr);
+  });
 }
 
 /// If two fusable ops are conflict with each other, they cannot be fused into
@@ -849,6 +914,8 @@ LogicalResult AutoVectorizeV2::vectorize(func::FuncOp func,
   LogicalResult result = transform::applyTransformNamedSequence(
       func, seqOp, func->getParentOfType<ModuleOp>(), transformOptions);
   seqOp->erase();
+  if (succeeded(result))
+    propagateWasBoolToInt8ToTransferReads(func);
 
   hfusion::AutoVectorizeVerifier verifier;
   return failure(

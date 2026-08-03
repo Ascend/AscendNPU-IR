@@ -314,7 +314,9 @@ def SaveTemps : DFXControlOptions<
   "Save intermediate compilation results to specified directory.",
   "std::string",
   "\"\""
->;
+> {
+  bit isSharedWithDownstreamToolchain = 1;
+}
 
 //===----------------------------------------------------------------------===//
 // General Optimization Control Options
@@ -382,6 +384,12 @@ def EnableDeterministicComputing : HFusionOptimizationControlOptions<
 
 def EnableOpsReorder : HFusionOptimizationControlOptions<
   "Enable ops reorder to opt pipeline.",
+  "bool",
+  "true"
+>;
+
+def EnableLoopInvariantPromotion : HFusionOptimizationControlOptions<
+  "Enable the loop-invariant-promotion pass",
   "bool",
   "true"
 >;

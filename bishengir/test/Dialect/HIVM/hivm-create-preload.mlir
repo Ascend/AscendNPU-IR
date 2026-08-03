@@ -230,20 +230,21 @@ func.func @test_nested_subview_local_buffer_result() {
   %a2 = arith.constant 69888 : i64
   // CHECK: scf.for
   scf.for %i = %c0 to %c16 step %c1  : i32 {
-    // CHECK: %[[BUF:.*]] = hivm.hir.pointer_cast
+    // CHECK: %[[MAPPING0_BUFFER:.*]] = hivm.hir.pointer_cast
     %buf = hivm.hir.pointer_cast(%a0, %a1, %a2) : memref<64x256x1xi1, #hivm.address_space<ub>>
     annotation.mark %buf {hivm.preload_local_buffer = 1 : i32, hivm.multi_buffer = 3 : i32} : memref<64x256x1xi1, #hivm.address_space<ub>>
     // CHECK: scf.if
-    // CHECK: } else {
-    // Each preload mapping has its own rotated pointer cast.
-    // CHECK: %[[RE0:.*]] = memref.subview {{.*}}
+    // CHECK: %[[RE0:.*]] = memref.subview %[[MAPPING0_BUFFER]]
     // CHECK: %[[RE1:.*]] = memref.subview %[[RE0]]
-    // CHECK: scf.yield %[[RE1]]
+    // CHECK: "test.consume"(%[[RE1]])
     %s0 = scope.scope : () -> memref<64x64xi1, strided<[256, 1]>, #hivm.address_space<ub>> {
-      %sv0 = memref.subview %buf[0, 0, 0] [64, 128, 1] [1, 1, 1] : memref<64x256x1xi1, #hivm.address_space<ub>> to memref<64x128x1xi1, strided<[256, 1, 1]>, #hivm.address_space<ub>>
-      %sv1 = memref.subview %sv0[0, 0, 0] [64, 64, 1] [1, 1, 1] : memref<64x128x1xi1, strided<[256, 1, 1]>, #hivm.address_space<ub>> to memref<64x64xi1, strided<[256, 1]>, #hivm.address_space<ub>>
-      "test.use"(%sv1) : (memref<64x64xi1, strided<[256, 1]>, #hivm.address_space<ub>>) -> ()
-      scope.return %sv1 : memref<64x64xi1, strided<[256, 1]>, #hivm.address_space<ub>>
+      %nested = scope.scope : () -> memref<64x64xi1, strided<[256, 1]>, #hivm.address_space<ub>> {
+        %sv0 = memref.subview %buf[0, 0, 0] [64, 128, 1] [1, 1, 1] : memref<64x256x1xi1, #hivm.address_space<ub>> to memref<64x128x1xi1, strided<[256, 1, 1]>, #hivm.address_space<ub>>
+        %sv1 = memref.subview %sv0[0, 0, 0] [64, 64, 1] [1, 1, 1] : memref<64x128x1xi1, strided<[256, 1, 1]>, #hivm.address_space<ub>> to memref<64x64xi1, strided<[256, 1]>, #hivm.address_space<ub>>
+        "test.use"(%sv1) : (memref<64x64xi1, strided<[256, 1]>, #hivm.address_space<ub>>) -> ()
+        scope.return %sv1 : memref<64x64xi1, strided<[256, 1]>, #hivm.address_space<ub>>
+      }
+      scope.return %nested : memref<64x64xi1, strided<[256, 1]>, #hivm.address_space<ub>>
     } {no_inline, hivm.preload_num = 0 : i32, hivm.max_preload_num = 2 : i32}
     "test.consume"(%s0) : (memref<64x64xi1, strided<[256, 1]>, #hivm.address_space<ub>>) -> ()
   }
@@ -290,58 +291,3 @@ func.func @test_preload_depth_is_per_loop() {
 
   return
 }
-
-// -----
-
-// A view returned by a scope must use the preload-local buffer selected for
-// each mapping, rather than becoming one shared conditional result.
-
-// CHECK-LABEL: func.func @test_preload_local_view_uses_mapping
-func.func @test_preload_local_view_uses_mapping() {
-  %c0_i64 = arith.constant 0 : i64
-  %c128_i64 = arith.constant 128 : i64
-  %c0 = arith.constant 0 : i32
-  %c4 = arith.constant 4 : i32
-  %c1 = arith.constant 1 : i32
-
-  scf.for %i = %c0 to %c4 step %c1 : i32 {
-    %buffer = hivm.hir.pointer_cast(%c0_i64, %c128_i64)
-      : memref<2x64xi1, #hivm.address_space<ub>>
-    annotation.mark %buffer {
-      hivm.multi_buffer = 2 : i32,
-      hivm.preload_local_buffer = 1 : i32
-    } : memref<2x64xi1, #hivm.address_space<ub>>
-
-    %view = scope.scope : () -> memref<1x64xi1, strided<[64, 1]>, #hivm.address_space<ub>> {
-      "test.produce"(%i) : (i32) -> ()
-      %subview = memref.subview %buffer[0, 0] [1, 64] [1, 1]
-        : memref<2x64xi1, #hivm.address_space<ub>>
-          to memref<1x64xi1, strided<[64, 1]>, #hivm.address_space<ub>>
-      scope.return %subview
-        : memref<1x64xi1, strided<[64, 1]>, #hivm.address_space<ub>>
-    } {
-      no_inline,
-      hivm.preload_num = 1 : i32,
-      hivm.max_preload_num = 2 : i32
-    }
-
-    scope.scope : () -> () {
-      "test.consume"(%view)
-        : (memref<1x64xi1, strided<[64, 1]>, #hivm.address_space<ub>>) -> ()
-      scope.return
-    } {
-      no_inline,
-      hivm.preload_num = 0 : i32,
-      hivm.max_preload_num = 2 : i32
-    }
-  }
-  return
-}
-
-// CHECK: %[[MAPPING1_BUFFER:.*]] = hivm.hir.pointer_cast
-// CHECK: %[[MAPPING0_BUFFER:.*]] = hivm.hir.pointer_cast
-// CHECK: scf.if {{.*}} {
-// CHECK:   "test.produce"
-// CHECK: }
-// CHECK: %[[MAPPING0_VIEW:.*]] = memref.subview %[[MAPPING0_BUFFER]]
-// CHECK: "test.consume"(%[[MAPPING0_VIEW]])

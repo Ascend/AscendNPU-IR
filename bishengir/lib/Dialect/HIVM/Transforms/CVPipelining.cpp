@@ -26,6 +26,7 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/SCF/Utils/Utils.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/IR/PatternMatch.h"
 #include "mlir/Interfaces/DestinationStyleOpInterface.h"
 #include "llvm/ADT/TypeSwitch.h"
 
@@ -128,6 +129,23 @@ private:
 
   void expandWorkspace(OpBuilder &builder);
   LogicalResult migrateOpsForPreload(OpBuilder &builder);
+
+  /// Skew mode only. Lazy loading clones a load-like op into several work
+  /// items; the clone drags along the loop counter that computes its GM
+  /// address, so several scopes read and advance the same iter_arg while only
+  /// the first one wins the scf.yield slot in
+  /// createNewLoopsForPreloadWithScopes. Give every extra reader its own
+  /// iter_arg (same init) so each counter is advanced solely by the scope that
+  /// reads it; create-preload's per-stage scf.if then passes it through
+  /// unchanged on iterations where that scope does not run, keeping the counter
+  /// in step with the stage. Must run before any scope is created.
+  ///
+  /// Assumes every read of the shared iter_arg inside a non-owning work item
+  /// belongs to the cloned load's address chain -- that item only exists in
+  /// the counter's reader set because the load was cloned into it -- so
+  /// redirecting all of its reads to the private iter_arg is safe.
+  LogicalResult privatizeSharedCounterIterArgs();
+
   LogicalResult createNewLoopsForPreloadWithScopes();
   LogicalResult markScopesForPreload();
 
@@ -1659,6 +1677,96 @@ LogicalResult CVPipelineImpl::migrateOpsForPreload(OpBuilder &builder) {
   return success();
 }
 
+LogicalResult CVPipelineImpl::privatizeSharedCounterIterArgs() {
+  if (worklist.size() < 2)
+    return success();
+
+  ValueRange yielded = pipelineLoop.getYieldedValues();
+  // Shared counter slot -> work items that read and advance it, in worklist
+  // order. `slots` keeps the iteration deterministic.
+  SmallVector<unsigned> slots;
+  DenseMap<unsigned, SmallVector<WorkItem *>> readers;
+  DenseMap<unsigned, Value> advanceVals;
+  for (const auto &item : worklist) {
+    for (auto [val, opNumber] : item->yieldedOutputs) {
+      // Only scalar counters are affected. Shaped (tensor) outputs shared by
+      // several work items are forwarded through the multi-buffer path.
+      if (isa<ShapedType>(val.getType()))
+        continue;
+      Operation *def = val.getDefiningOp();
+      if (!def || opToWorkItemMap.lookup(def).size() < 2)
+        continue;
+      if (opNumber >= pipelineLoop.getNumRegionIterArgs() ||
+          yielded[opNumber] != val)
+        return pipelineLoop->emitWarning(
+            "[cv-pipelining] cannot map a shared loop counter back to its "
+            "iter_arg; refusing to pipeline this loop");
+      if (!readers.contains(opNumber))
+        slots.push_back(opNumber);
+      readers[opNumber].push_back(item.get());
+      advanceVals[opNumber] = val;
+    }
+  }
+
+  struct Pending {
+    WorkItem *item;
+    unsigned sharedArgIdx;
+    Value advanceVal;
+  };
+  SmallVector<Pending> pending;
+  SmallVector<Value> newInits;
+  for (unsigned argIdx : slots) {
+    ArrayRef<WorkItem *> items = readers[argIdx];
+    if (items.size() < 2)
+      continue;
+    Value advanceVal = advanceVals[argIdx];
+    // The first reader keeps the original iter_arg, matching the pre-existing
+    // (and, for a single reader, correct) behavior.
+    for (WorkItem *item : items.drop_front()) {
+      if (!item->ops.contains(advanceVal.getDefiningOp()))
+        return pipelineLoop->emitWarning(
+            "[cv-pipelining] work item reads a shared loop counter without "
+            "advancing it; refusing to pipeline this loop");
+      pending.push_back({item, argIdx, advanceVal});
+      newInits.push_back(pipelineLoop.getInitArgs()[argIdx]);
+    }
+  }
+  if (pending.empty())
+    return success();
+
+  unsigned origNumIterArgs = pipelineLoop.getNumRegionIterArgs();
+  IRRewriter rewriter(pipelineLoop.getContext());
+  FailureOr<LoopLikeOpInterface> newLoopLike =
+      pipelineLoop.replaceWithAdditionalYields(
+          rewriter, newInits, /*replaceInitOperandUsesInLoop=*/false,
+          [](OpBuilder &, Location, ArrayRef<BlockArgument> newArgs) {
+            // Placeholder pass-through; each private counter's yield slot is
+            // rewritten to its scope result in
+            // createNewLoopsForPreloadWithScopes.
+            return SmallVector<Value>(newArgs.begin(), newArgs.end());
+          });
+  if (failed(newLoopLike))
+    return pipelineLoop->emitWarning(
+        "[cv-pipelining] failed to append private counter iter_args");
+  // The old loop is replaced, but its body block was moved rather than cloned,
+  // so every Operation * collected so far (worklist, toErase, atomic effects,
+  // workspace allocs) stays valid. globalIRMap is still empty at this point.
+  pipelineLoop = cast<scf::ForOp>(newLoopLike->getOperation());
+  builder.setInsertionPoint(pipelineLoop);
+
+  for (auto [idx, p] : llvm::enumerate(pending)) {
+    unsigned privateIdx = origNumIterArgs + static_cast<unsigned>(idx);
+    p.item->privateCounters.push_back(
+        {p.advanceVal, p.sharedArgIdx,
+         pipelineLoop.getRegionIterArg(p.sharedArgIdx),
+         pipelineLoop.getRegionIterArg(privateIdx), privateIdx});
+    LLVM_DEBUG(dbgs() << "[privatizeSharedCounterIterArgs] iter_arg #"
+                      << p.sharedArgIdx << " privatized as #" << privateIdx
+                      << " for work item\n");
+  }
+  return success();
+}
+
 LogicalResult CVPipelineImpl::createNewLoopsForPreloadWithScopes() {
   for (Operation &op : *pipelineLoop.getBody())
     if (isa<SetAtomicOp>(op))
@@ -1705,6 +1813,11 @@ LogicalResult CVPipelineImpl::createNewLoopsForPreloadWithScopes() {
     Block *bodyBlock = builder.createBlock(&region);
     builder.setInsertionPointToEnd(bodyBlock);
     IRMapping scopeMap(globalIRMap);
+
+    // This work item reads a private copy of a shared loop counter; redirect
+    // every read of the shared iter_arg inside the cloned body.
+    for (const auto &pc : item->privateCounters)
+      scopeMap.map(pc.sharedIterArg, pc.privateIterArg);
 
     Value origIV = pipelineLoop.getInductionVar();
     scopeMap.map(origIV, origIV);
@@ -1784,6 +1897,19 @@ LogicalResult CVPipelineImpl::createNewLoopsForPreloadWithScopes() {
     for (auto &yieldedOutput : item->yieldedOutputs) {
       Value returnTensor = yieldedOutput.first;
       Value scopeResult = newScopeOp->getResult(resultIdx++);
+
+      // A privatized counter owns its own yield slot: write it directly
+      // instead of racing the owning scope for the shared one, and keep
+      // globalIRMap pointing at the owner's value.
+      auto pcIt = llvm::find_if(item->privateCounters,
+                                [&](const WorkItem::PrivateCounter &pc) {
+                                  return pc.advanceVal == returnTensor;
+                                });
+      if (pcIt != item->privateCounters.end()) {
+        pipelineLoop.getBody()->getTerminator()->setOperand(
+            pcIt->privateYieldIdx, scopeResult);
+        continue;
+      }
 
       pipelineLoop.getBody()->getTerminator()->replaceUsesOfWith(returnTensor,
                                                                  scopeResult);
@@ -1887,7 +2013,13 @@ LogicalResult CVPipelineImpl::markScopesForPreload() {
 void CVPipelineImpl::revert() {
   if (newLoop)
     newLoop->erase();
-  pipelineLoop->replaceAllUsesWith(checkpoint->getResults());
+  // The preload path may have appended private counter iter_args, so
+  // pipelineLoop can have more results than the checkpoint clone. The extra
+  // results are only fed back into the loop, never used outside it.
+  for (auto [res, orig] : llvm::zip(
+           pipelineLoop->getResults().take_front(checkpoint->getNumResults()),
+           checkpoint->getResults()))
+    res.replaceAllUsesWith(orig);
   pipelineLoop->erase();
 }
 
@@ -1963,6 +2095,23 @@ LogicalResult CVPipelineImpl::preprocessCounterAllocas() {
       }
       cube->erase();
     }
+
+    // Since we only really care about the counter in the loop, the iter args
+    // can be also replaced with empties if they are tensors
+    auto clonedLoop = dyn_cast<scf::ForOp>(clone);
+    if (clonedLoop) {
+      for (OpOperand &iterarg : clonedLoop.getInitArgsMutable()) {
+        auto tensorTy = dyn_cast<TensorType>(iterarg.get().getType());
+        if (!tensorTy)
+            continue;
+        if (tensorTy.getNumDynamicDims() > 0)
+          return clone->emitWarning("Cannot pipeline loop with nested counter "
+                                    "loop with dynamic iter args");
+        builder.setInsertionPoint(clone);
+        iterarg.set(builder.create<tensor::EmptyOp>(clone->getLoc(), tensorTy, ValueRange{}));
+      }
+    }
+
     counterCloneMap[alloca.getResult()] = clone;
   }
   return success();
@@ -2198,6 +2347,10 @@ LogicalResult CVPipelineImpl::run() {
 
   // Preload pipeline reuse workitems with cvpipeline.
   if (pipelineMode == CVPipelineMode::Skew) {
+    if (failed(privatizeSharedCounterIterArgs())) {
+      revert();
+      return failure();
+    }
     expandWorkspace(builder);
     return markScopesForPreload();
   }

@@ -50,3 +50,35 @@ func.func @calc_cube_vector_mix_aiv(%arg0: memref<?xi8> {hacc.arg_type = #hacc.a
   hivm.hir.anchor {id = 18 : i64}
   return
 }
+
+// -----
+
+#map = affine_map<(d0, d1) -> (d0, d1)>
+
+// CHECK-LABEL: func.func @was_bool_to_int8_transfer_read_from_load_writer
+// CHECK: vector.transfer_read {{.*}}was_bool_to_int8 = true{{.*}} : tensor<1x64xi8>, vector<1x64xi8>
+func.func @was_bool_to_int8_transfer_read_from_load_writer(
+    %arg0: memref<1x64xi8, #hivm.address_space<gm>>,
+    %arg1: tensor<1x64xf32>) -> tensor<1x64xf32>
+    attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, parallel_mode = "simd"} {
+  %c0_i8 = arith.constant 0 : i8
+  %c0_f32 = arith.constant 0.0 : f32
+  %alloc = memref.alloc() : memref<1x64xi8, #hivm.address_space<ub>>
+  hivm.hir.load ins(%arg0 : memref<1x64xi8, #hivm.address_space<gm>>)
+    outs(%alloc : memref<1x64xi8, #hivm.address_space<ub>>)
+    {was_bool_to_int8 = true} eviction_policy = <EvictFirst> core_type = <VECTOR>
+  %mask = bufferization.to_tensor %alloc restrict writable
+    : memref<1x64xi8, #hivm.address_space<ub>>
+  %empty = tensor.empty() : tensor<1x64xf32>
+  %0 = linalg.generic {
+      indexing_maps = [#map, #map, #map],
+      iterator_types = ["parallel", "parallel"]}
+      ins(%mask, %arg1 : tensor<1x64xi8>, tensor<1x64xf32>)
+      outs(%empty : tensor<1x64xf32>) {
+    ^bb0(%mask_elem: i8, %value: f32, %out: f32):
+      %pred = arith.cmpi ne, %mask_elem, %c0_i8 : i8
+      %selected = arith.select %pred, %value, %c0_f32 : f32
+      linalg.yield %selected : f32
+  } -> tensor<1x64xf32>
+  return %0 : tensor<1x64xf32>
+}
