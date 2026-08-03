@@ -123,6 +123,10 @@ bufferizationPipeline(OpPassManager &pm,
     pm.nest<func::FuncOp>().addPass(createCloneTensorEmptyPass());
     pm.nest<func::FuncOp>().addPass(createSinkOpToConsumerInLoopPass());
   }
+  // TODO: support process toTensorOp in one-shot-bufferize.
+  // Expose memref-level writes (e.g., hivm.hir.load) to tensor-level analysis
+  // by replacing to_tensor writable with hivm.hir.copy
+  pm.nest<func::FuncOp>().addPass(hivm::createExposeMemrefWriteToTensorPass());
   bufferization::OneShotBufferizationOptions oneShotOptions;
   oneShotOptions.bufferizeFunctionBoundaries = true;
   oneShotOptions.setFunctionBoundaryTypeConversion(
@@ -265,6 +269,7 @@ static void hivmPreBufferizationOptimizationPipeline(
         hivmPipelineOptions.limitAutoMultiBufferBuffer;
     multiBufferOptions.workspaceMultiBufferNum =
         hivmPipelineOptions.setWorkspaceMultibuffer;
+    multiBufferOptions.enablePreload = hivmPipelineOptions.enablePreload;
     pm.addNestedPass<func::FuncOp>(
         createMarkMultiBufferPass(multiBufferOptions));
   }
@@ -459,6 +464,7 @@ static void hivmPostBufferizationOptimizationPipeline(
       hivmPipelineOptions.limitAutoMultiBufferOfLocalBuffer;
   multiBufferOptions.limitMixAutoMultiBufferBuffer =
       hivmPipelineOptions.limitAutoMultiBufferBuffer;
+  multiBufferOptions.enablePreload = hivmPipelineOptions.enablePreload;
   pm.nest<func::FuncOp>().addPass(
       createMarkMultiBufferPass(multiBufferOptions));
   PlanMemoryOptions planMemoryOption;
