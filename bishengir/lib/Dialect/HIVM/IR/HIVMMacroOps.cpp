@@ -631,7 +631,10 @@ static std::optional<Value> getPerChannelOperand(OpOperand &operand) {
   auto traceIfDefOp = traceDefOp<scf::IfOp>(operand.get());
   if (traceIfDefOp.has_value()) {
     auto ifOp = cast<scf::IfOp>(traceIfDefOp.value());
-    const unsigned int index = cast<OpResult>(operand.get()).getResultNumber();
+    auto opResult = dyn_cast<OpResult>(operand.get());
+    if (!opResult)
+      return std::nullopt;
+    const unsigned int index = opResult.getResultNumber();
     OpOperand &thenYeildOperand =
         ifOp.getThenRegion().front().getTerminator()->getOpOperand(index);
     OpOperand &elseYeildOperand =
