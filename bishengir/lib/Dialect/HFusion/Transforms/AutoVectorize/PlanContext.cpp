@@ -195,7 +195,7 @@ dissolvePivotImpl(FusableOpInfo::ConflictPivotMap<PivotTy> &conflictA,
                   FusableOpInfo::ConflictPivotMap<PivotTy> &conflictB,
                   Operation *b, PivotTy pivot) {
   if (!conflictA.contains(b) || !conflictB.contains(a) ||
-      conflictA[b].erase(pivot) != conflictB[a].erase(pivot) ||
+      (conflictA[b].erase(pivot) != conflictB[a].erase(pivot) && a != b) ||
       conflictA[b].empty() != conflictB[a].empty())
     llvm::report_fatal_error("inconsistent conflict state");
   if (!conflictA[b].empty())
