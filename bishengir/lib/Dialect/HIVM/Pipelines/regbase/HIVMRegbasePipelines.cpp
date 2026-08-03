@@ -223,6 +223,10 @@ bufferizationPipeline(OpPassManager &pm,
   // Fold redundant extract_slice -> transfer_write -> insert_slice pattern
   // before bufferization to avoid unnecessary memref operations
   pm.nest<func::FuncOp>().addPass(hfusion::createFoldExtractInsertPairPass());
+  // TODO: support process toTensorOp in one-shot-bufferize.
+  // Expose memref-level writes (e.g., hivm.hir.load) to tensor-level analysis
+  // by replacing to_tensor writable with hivm.hir.copy
+  pm.nest<func::FuncOp>().addPass(hivm::createExposeMemrefWriteToTensorPass());
   bufferization::OneShotBufferizationOptions oneShotOptions;
   oneShotOptions.bufferizeFunctionBoundaries = true;
   oneShotOptions.setFunctionBoundaryTypeConversion(
@@ -360,6 +364,16 @@ static void hivmPreBufferizationOptimizationPipeline(
       hivmPipelineOptions.limitAutoMultiBufferBuffer;
   multiBufferOptions.workspaceMultiBufferNum =
       hivmPipelineOptions.setWorkspaceMultibuffer;
+  multiBufferOptions.enablePreload = hivmPipelineOptions.enablePreload;
+  // MarkTightlyCoupledBuffer before CVPipelining is only needed in Skew
+  // (preload) mode: createNewLoopsForPreloadWithScopes uses TCB marks to
+  // decide which local outputs bypass scope.return.  Running it for
+  // standard CVPipelining causes migrateOps to clone the TCB-marked allocs
+  // into work-item loops; those dead clones retain their marks and force
+  // PlanMemory to allocate them as independent buffers, causing UB overflow.
+  if (hivmPipelineOptions.setCVPipelineMode == CVPipelineMode::Skew) {
+    pm.nest<func::FuncOp>().addPass(createMarkTightlyCoupledBufferPass());
+  }
   pm.addNestedPass<func::FuncOp>(createMarkMultiBufferPass(multiBufferOptions));
   // Call canonicalize before inline OTF broadcast to optimize redundant 1-to-1
   // broadcasts.
@@ -372,7 +386,10 @@ static void hivmPreBufferizationOptimizationPipeline(
       pipelineOptions.setDepthInUnrollMode =
           hivmPipelineOptions.setWorkspaceMultibuffer;
       pipelineOptions.enableLazyLoading = hivmPipelineOptions.enableLazyLoading;
+      pipelineOptions.pipelineMode = hivmPipelineOptions.setCVPipelineMode;
       pm.nest<func::FuncOp>().addPass(createCVPipeliningPass(pipelineOptions));
+      pm.addNestedPass<func::FuncOp>(
+          createMarkMultiBufferPass(multiBufferOptions));
     }
   }
 
@@ -551,6 +568,7 @@ static void hivmPostBufferizationOptimizationPipeline(
       hivmPipelineOptions.limitAutoMultiBufferOfLocalBuffer;
   multiBufferOptions.limitMixAutoMultiBufferBuffer =
       hivmPipelineOptions.limitAutoMultiBufferBuffer;
+  multiBufferOptions.enablePreload = hivmPipelineOptions.enablePreload;
   pm.nest<func::FuncOp>().addPass(
       createMarkMultiBufferPass(multiBufferOptions));
   PlanMemoryRegBaseOptions planMemoryOption;

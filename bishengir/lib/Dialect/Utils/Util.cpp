@@ -16,6 +16,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/Utils/Util.h"
+#include "mlir/Interfaces/CallInterfaces.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "bishengir/Config/bishengir-config.h"
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HACC/IR/HACC.h"
@@ -304,21 +306,6 @@ Value createEmptyOp(OpBuilder &builder, Location loc, Value source) {
   return memref::createMemRefAllocOp(builder, loc, source);
 }
 
-Value createAllocTensorOp(OpBuilder &builder, Location loc, Value source) {
-  auto shapedType = cast<ShapedType>(source.getType());
-  auto targetElemType = getElementTypeOrSelf(source);
-
-  ArrayRef<int64_t> staticShapes = shapedType.getShape();
-  SmallVector<Value, 2> dynamicSizes;
-  for (size_t i = 0; i < staticShapes.size(); i++) {
-    if (staticShapes[i] == ShapedType::kDynamic) {
-      Operation *dynDimOp = builder.create<tensor::DimOp>(loc, source, i);
-      dynamicSizes.push_back(dynDimOp->getResults()[0]);
-    }
-  }
-  return builder.create<bufferization::AllocTensorOp>(
-      loc, RankedTensorType::get(staticShapes, targetElemType), dynamicSizes);
-}
 
 tensor::EmptyOp createStaticShapeEmptyOp(OpBuilder &builder, Location loc,
                                          TensorType targetTensorType) {
@@ -1741,6 +1728,39 @@ bool isValidTwoDimVectorType(VectorType vType) {
     return false;
 
   return true;
+}
+
+
+void collectAllEffects(
+    Operation *op, SmallVectorImpl<MemoryEffects::EffectInstance> &effects) {
+  if (auto callOp = dyn_cast<CallOpInterface>(op)) {
+    for (Value arg : callOp.getArgOperands()) {
+      if (isa<MemRefType>(arg.getType())) {
+        auto addEffect = [&](auto effectType, Value v) {
+          if (auto res = llvm::dyn_cast<OpResult>(v)) {
+            effects.emplace_back(effectType, res, 0, true);
+          } else if (auto bArg = llvm::dyn_cast<BlockArgument>(v)) {
+            effects.emplace_back(effectType, bArg, 0, true);
+          }
+        };
+
+        addEffect(MemoryEffects::Write::get(), arg);
+      }
+    }
+    return;
+  }
+
+  if (auto interface = dyn_cast<MemoryEffectOpInterface>(op)) {
+    interface.getEffects(effects);
+  }
+
+  if (op->hasTrait<mlir::OpTrait::HasRecursiveMemoryEffects>()) {
+    for (Region &region : op->getRegions()) {
+      for (Operation &innerOp : region.getOps()) {
+        collectAllEffects(&innerOp, effects);
+      }
+    }
+  }
 }
 
 } // namespace utils

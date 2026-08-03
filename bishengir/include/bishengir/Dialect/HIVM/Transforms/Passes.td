@@ -149,6 +149,20 @@ def MarkMultiBuffer : Pass<"hivm-mark-multi-buffer", "func::FuncOp"> {
                           "Disable l0c for mix auto multi buffer"))}]>,
     Option<"workspaceMultiBufferNum", "set-workspace-multibuffer", "unsigned",
            /*default=*/"4", "Override for multibuffer number for workspace">,
+    Option<"disableMultiBufferOnUB",
+           "disable-multi-buffer-on-ub", "bool",
+           /*default=*/"false",
+           "Skip multi-buffer mark for UB (Vector Load/Store) buffers">,
+    Option<"disableMultiBufferOnL0C",
+           "disable-multi-buffer-on-l0c", "bool",
+           /*default=*/"false",
+           "Skip multi-buffer mark for L0C (Cube accumulator, Fixpipe) buffers">,
+    Option<"disableMultiBufferOnL1",
+           "disable-multi-buffer-on-l1", "bool",
+           /*default=*/"false",
+           "Skip multi-buffer mark for L1 (cbuf, ND2NZ) buffers">,
+    Option<"enablePreload", "enable-preload", "bool",
+           /*default=*/"false", "Mark multi buffer for preload.">,
   ];
 }
 
@@ -210,6 +224,20 @@ def InferHIVMDataLayout : Pass<"hivm-infer-data-layout", "func::FuncOp"> {
   let dependentDialects = ["affine::AffineDialect", "hivm::HIVMDialect", 
                            "annotation::AnnotationDialect",
   ];
+}
+
+def ExposeMemrefWriteToTensor
+    : Pass<"hivm-expose-memref-write-to-tensor", "func::FuncOp"> {
+  let summary = "Expose memref-level writes to tensor-level analysis.";
+  let description = [{
+    Expose memref-level writes (e.g., hivm.hir.load) to tensor-level analysis
+    by add copyOp for toTensorOp and replace all users of toTensorOp. This makes
+    memref-level writes visible to One-Shot Bufferization analysis, enabling RAW
+    conflict detection and correct copy insertion.
+  }];
+  let constructor = "mlir::hivm::createExposeMemrefWriteToTensorPass()";
+  let dependentDialects =
+    ["bufferization::BufferizationDialect", "memref::MemRefDialect"];
 }
 
 def InferVFMode : Pass<"hivm-infer-vf-mode", "func::FuncOp"> {
@@ -887,7 +915,11 @@ def InsertLoadStoreForMixCV
                  Option<"disableTightCoupledBuffer",
                         "disable-tight-coupled-buffer", "bool",
                         /*default=*/"false",
-                        "Disable Tight Coupled Buffer Allocation">];
+                        "Disable Tight Coupled Buffer Allocation">,
+                 Option<"inferFixpipeDmaMode", "infer-fixpipe-dma-mode", "bool",
+                        /*default=*/"false",
+                        "Infer fixpipe dma_mode from source/destination shape "
+                        "compatibility.">];
 }
 
 def InsertCVTightCoupledBuffer
@@ -897,6 +929,10 @@ def InsertCVTightCoupledBuffer
   let dependentDialects = ["hivm::HIVMDialect",
                            "bufferization::BufferizationDialect",
                            "annotation::AnnotationDialect"];
+  let options = [Option<"onlyInsertTightlyCoupledBuffer",
+                        "only-insert-tightly-coupled-buffer", "bool",
+                        /*default=*/"false",
+                        "only insert tightly coupled buffer">];
 }
 
 def InsertLoadStoreForScalar
@@ -1373,14 +1409,5 @@ def FuseTransposeIntoLoad : Pass<"hivm-fuse-transpose-into-load", "func::FuncOp"
   ];
 }
 
-def CloneSCFIfYieldOperand : Pass<"hivm-clone-scf-if-yield-operand", "func::FuncOp"> {
-  let summary = "Clone scf.if.yield operand for PlanMemory.";
-  let description = [{This pass clones scf.if yield operand if yield operands
-    are same or it is used after this scf.if, avoid inplace by PlanMemory}];
-  let constructor = "mlir::hivm::createCloneSCFIfYieldOperandPass()";
-  let dependentDialects =
-    ["hivm::HIVMDialect", "scf::SCFDialect", "tensor::TensorDialect",
-     "bufferization::BufferizationDialect"];
-}
 
 #endif // BISHENGIR_DIALECT_HIVM_TRANSFORMS_PASSES_TD
