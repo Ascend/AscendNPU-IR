@@ -22,6 +22,7 @@
 #define BISHENGIR_DIALECT_HIVM_TRANSFORMS_PASSES_H
 
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "mlir/Pass/Pass.h"
 #include <memory>

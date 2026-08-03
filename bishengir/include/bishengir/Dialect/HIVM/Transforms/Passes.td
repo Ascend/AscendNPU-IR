@@ -281,6 +281,14 @@ def PlanMemory : Pass<"hivm-plan-memory", "func::FuncOp"> {
     Option<"restrictInplaceAsISA", "restrict-inplace-as-isa", "bool",
            /*default=*/"false",
            "restrict memory inplace as isa, default : false">,
+    Option<"planMemoryStrategy", "plan-memory-strategy", "::mlir::hivm::PlanMemoryStrategy",
+           "mlir::hivm::PlanMemoryStrategy::DEFAULT",
+           "Plan memory strategy for storage entry reorder",
+           [{::llvm::cl::values(
+               clEnumValN(mlir::hivm::PlanMemoryStrategy::DEFAULT, "default",
+                          "keep original storage entry order without sorting"),
+               clEnumValN(mlir::hivm::PlanMemoryStrategy::LARGEST_FIRST, "largest-first",
+                          "sort storage entries by const bits descending, allocate larger buffer first"))}]>,
   ];
 }
 
@@ -317,6 +325,14 @@ def PlanMemoryRegBase : Pass<"hivm-plan-memory-regbase", "ModuleOp"> {
     Option<"disableVFReachableCheck", "disable-vf-reachable-check", "bool",
            /*default=*/"false",
            "Disable VF reachable check, default : false">,
+    Option<"planMemoryStrategy", "plan-memory-strategy", "::mlir::hivm::PlanMemoryStrategy",
+           "mlir::hivm::PlanMemoryStrategy::DEFAULT",
+           "Plan memory strategy for storage entry reorder",
+           [{::llvm::cl::values(
+               clEnumValN(mlir::hivm::PlanMemoryStrategy::DEFAULT, "default",
+                          "keep original storage entry order without sorting"),
+               clEnumValN(mlir::hivm::PlanMemoryStrategy::LARGEST_FIRST, "largest-first",
+                          "sort storage entries by const bits descending, allocate larger buffer first"))}]>,
   ];
 }
 

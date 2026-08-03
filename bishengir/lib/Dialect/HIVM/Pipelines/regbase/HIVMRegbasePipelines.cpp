@@ -288,6 +288,8 @@ hivmWorkspacePipeline(OpPassManager &pm,
       hivmPipelineOptions.enablePrintMemoryAllocatedSize;
   planMemoryOption.disableTightlyCoupledBufferReuse =
       hivmPipelineOptions.disableTightlyCoupledBufferReuse;
+  planMemoryOption.planMemoryStrategy =
+      hivmPipelineOptions.planMemoryStrategy;
   pm.addPass(createPlanMemoryRegBasePass(planMemoryOption));
   if (hivmPipelineOptions.enableTritonKernelCompile)
     // Must place after plan-workspace-memory
@@ -405,6 +407,8 @@ static void hivmPreBufferizationOptimizationPipeline(
       hivmPipelineOptions.disableTightlyCoupledBufferReuse;
   planMemoryOption.disableVFReachableCheck =
       hivmPipelineOptions.disableVFReachableCheck;
+  planMemoryOption.planMemoryStrategy =
+      hivmPipelineOptions.planMemoryStrategy;
   pm.addPass(createPlanMemoryRegBasePass(planMemoryOption));
 
   // Cross-Core Auto-Sync passes STEP=1
@@ -582,6 +586,8 @@ static void hivmPostBufferizationOptimizationPipeline(
   if (hivmPipelineOptions.enableVFOperandSubstitution) {
     pm.addPass(createVFOperandSubstitutionPass());
   }
+  planMemoryOption.planMemoryStrategy =
+      hivmPipelineOptions.planMemoryStrategy;
   pm.addPass(createPlanMemoryRegBasePass(planMemoryOption));
 
   // Cross-Core Auto-Sync passes STEP=2

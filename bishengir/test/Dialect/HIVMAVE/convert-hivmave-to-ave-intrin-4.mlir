@@ -1,4 +1,4 @@
-// RUN: bishengir-opt -analyze-vector-layout -analyze-alignment-bitwidth \
+// RUN: bishengir-opt -analyze-vector-layout \
 // RUN: -remove-vector-layout-attr -ave-normalize-ops -convert-hivmave-to-ave-intrin -cse -split-input-file %s | FileCheck %s
 // CHECK-LABEL: @test_ext_user_is_call
 #map = affine_map<()[s0, s1, s2] -> (s0 * 256 + s1 * 64 + s2 * 8)>
@@ -18,8 +18,8 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
           %base_buffer, %offset, %sizes:4, %strides:4 = memref.extract_strided_metadata %arg0 : memref<8x4x8x8xi8, #hivm.address_space<ub>> -> memref<i8, #hivm.address_space<ub>>, index, index, index, index, index, index, index, index, index
           %2 = affine.apply #map()[%arg2, %arg3, %arg4]
           %reinterpret_cast = memref.reinterpret_cast %base_buffer to offset: [%2], sizes: [8], strides: [1] : memref<i8, #hivm.address_space<ub>> to memref<8xi8, #map1, #hivm.address_space<ub>>
-          %res = ave.hir.vload <NORM> %reinterpret_cast[%c0] {ave.unaligned_ub_access = #ave.unaligned_ub_access, element_alignment_bit_width = 32 : i32} : memref<8xi8, #map1, #hivm.address_space<ub>> into vector<64xi8>
-          %3 = ave.hir.vextui %res, %1 {element_alignment_bit_width = 32 : i32, pp = #ave.vcvt_pp_type<pp0>} : vector<64xi8>, vector<64xi32>, vector<64xi1>
+          %res = ave.hir.vload <NORM> %reinterpret_cast[%c0] {ave.unaligned_ub_access = #ave.unaligned_ub_access} : memref<8xi8, #map1, #hivm.address_space<ub>> into vector<64xi8>
+          %3 = ave.hir.vextui %res, %1 {pp = #ave.vcvt_pp_type<pp0>} : vector<64xi8>, vector<64xi32>, vector<64xi1>
           // CHECK: "hivm_regbaseintrins.intr.hivm.vldas"
           // CHECK: "hivm_regbaseintrins.intr.hivm.vldus.post.s8"
           // CHECK: "hivm_regbaseintrins.intr.hivm.vintlv"

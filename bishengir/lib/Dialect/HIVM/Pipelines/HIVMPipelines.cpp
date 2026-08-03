@@ -319,6 +319,8 @@ static void hivmPreBufferizationOptimizationPipeline(
     planMemoryOption.memMode = MemPlanMode::GLOBAL_WORKSPACE_PLAN;
     planMemoryOption.enableGlobalReuse =
         hivmPipelineOptions.enableHIVMGlobalWorkspaceReuse;
+  planMemoryOption.planMemoryStrategy =
+      hivmPipelineOptions.planMemoryStrategy;
     pm.nest<func::FuncOp>().addPass(createPlanMemoryPass(planMemoryOption));
   }
   // cross-core sync (inject-block-sync) passes.
@@ -470,6 +472,8 @@ static void hivmPostBufferizationOptimizationPipeline(
   PlanMemoryOptions planMemoryOption;
   planMemoryOption.enableMemoryDisplay =
       hivmPipelineOptions.enableMemoryDisplay;
+  planMemoryOption.planMemoryStrategy =
+      hivmPipelineOptions.planMemoryStrategy;
   pm.nest<func::FuncOp>().addPass(createPlanMemoryPass(planMemoryOption));
 
   // Lower hivm ops to loops
