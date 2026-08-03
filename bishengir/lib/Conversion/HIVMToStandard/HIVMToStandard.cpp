@@ -124,9 +124,37 @@ static func::CallOp createLibCall(PatternRewriter &rewriter, Operation *op,
     funcOp->setAttr(LLVM::LLVMDialect::getEmitCWrapperAttrName(),
                     UnitAttr::get(ctx));
 
-    auto haccAlwaysInlineAttr = hacc::stringifyHACCToLLVMIRTranslateAttr(
-        hacc::HACCToLLVMIRTranslateAttr::ALWAYS_INLINE);
-    funcOp->setAttr(haccAlwaysInlineAttr, rewriter.getUnitAttr());
+    // Default: always_inline for standard library calls. HIVM custom ops
+    // default to noinline unless explicitly marked always_inline via
+    // hivm.inline_mode.
+    bool markNoInline = false;
+    std::optional<hivm::InlineMode> inlineMode;
+    if (auto customOp = dyn_cast<hivm::CustomOp>(op))
+      inlineMode =
+          customOp.getInlineMode().value_or(hivm::InlineMode::NoInline);
+    else if (auto customMacroOp = dyn_cast<hivm::CustomMacroOp>(op))
+      inlineMode =
+          customMacroOp.getInlineMode().value_or(hivm::InlineMode::NoInline);
+    if (inlineMode) {
+      switch (*inlineMode) {
+      case hivm::InlineMode::AlwaysInline:
+        markNoInline = false;
+        break;
+      case hivm::InlineMode::NoInline:
+        markNoInline = true;
+        break;
+      }
+    }
+
+    auto haccInlineAttr = hacc::stringifyHACCToLLVMIRTranslateAttr(
+        markNoInline ? hacc::HACCToLLVMIRTranslateAttr::NOINLINE
+                     : hacc::HACCToLLVMIRTranslateAttr::ALWAYS_INLINE);
+    funcOp->setAttr(haccInlineAttr, rewriter.getUnitAttr());
+
+    if (markNoInline)
+      funcOp->setAttr(
+          hacc::HACCFuncTypeAttr::name,
+          hacc::HACCFuncTypeAttr::get(ctx, hacc::HACCFuncType::DEVICE));
 
     funcOp.setPrivate();
 

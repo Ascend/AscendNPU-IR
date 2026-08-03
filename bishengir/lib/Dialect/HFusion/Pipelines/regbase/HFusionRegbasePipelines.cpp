@@ -410,12 +410,23 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
   treeReduceOptions.enableRA = treeReduceFlags.enableRA;
   treeReduceOptions.enableAR = treeReduceFlags.enableAR;
   if (enableSIMDVFFusion(hfusionOptions)) {
+    bool runRegBasePasses = !hfusionOptions.enableMixedCV &&
+                            hacc::utils::isRegBasedArch(hfusionOptions.target);
     VFFusionOptions vfFusionOptions;
     vfFusionOptions.fusionMode = hfusionOptions.vfFusionMode;
     vfFusionOptions.enableRA = treeReduceFlags.enableRA;
     vfFusionOptions.enableAR = treeReduceFlags.enableAR;
     vfFusionOptions.enableVFStackLimit = hfusionOptions.enableVFStackLimit;
     pm.addPass(analysis::createVFFusionPass(vfFusionOptions));
+    if (runRegBasePasses && hfusionOptions.enableFlatten) {
+      FlattenOpsOptions flattenOpsOpt;
+      flattenOpsOpt.flattenMode = hfusion::FlattenMode::Tidy;
+      flattenOpsOpt.skipHost = hfusionOptions.enableMultiKernel;
+      flattenOpsOpt.multiDynamicShape = false;
+      flattenOpsOpt.registerBased = true;
+      flattenOpsOpt.skipScope = hfusionOptions.skipScope;
+      pm.nest<func::FuncOp>().addPass(createFlattenOpsPass(flattenOpsOpt));
+    }
     canonicalizationPipeline(pm, hfusionOptions);
   }
   pm.nest<func::FuncOp>().addPass(hivm::createFuseTransposeIntoLoadPass());
@@ -436,6 +447,7 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
           static_cast<unsigned>(
               hfusionOptions.hfusionMaxFusedOpsInAutoVectorizeV2);
     vecOptions.treeReduce = hfusionOptions.enableTreeReduce;
+    vecOptions.enableCrossIfFusion = hfusionOptions.hfusionEnableCrossIfFusion;
     pm.addPass(createHFusionAutoVectorizeV2Pass(vecOptions));
     pm.addPass(createOutlineVectorFunctionPass());
   } else {
@@ -564,6 +576,7 @@ void buildHFusionRegBasePipeline(OpPassManager &pm,
 
   NormalizeOptions normalizeOptions;
   normalizeOptions.enableHighPrecision = options.enableHighPrecision;
+  normalizeOptions.enableFastDiv = options.enableFastDiv;
   pm.nest<func::FuncOp>().addPass(
       createHFusionNormalizeOpsPass(normalizeOptions));
 

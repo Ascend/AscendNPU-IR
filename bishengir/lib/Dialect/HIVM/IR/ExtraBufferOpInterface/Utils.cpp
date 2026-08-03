@@ -15,6 +15,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -579,6 +580,9 @@ getExtraBufferSizeForReduceOpSingleDim(Operation *op, BufferSizeUnit unit,
 
 std::optional<int64_t> getExtraBufferSizeForReduceOp(Operation *op,
                                                      BufferSizeUnit unit) {
+  auto moduleOp = op->getParentOfType<ModuleOp>();
+  if (hacc::utils::isRegBasedArch(moduleOp))
+    return std::nullopt;
   bool saveUbUf = false;
   if (op->getParentOfType<func::FuncOp>()->hasAttr(
           hivm::EnableSavingUbAttr::name)) {

@@ -129,13 +129,6 @@ struct HFusionNormalizeSortTraits : public hfusion::NormalizeTraitsBase {
     return intType && (intType.isInteger(32) || intType.isInteger(64));
   }
 
-  static Value createCastOp(PatternRewriter &rewriter, Location loc,
-                            Value input, Type targetElemType) {
-    return NormalizeTraitsBase::createCastOp(rewriter, loc, input,
-                                             targetElemType,
-                                             CastRoundKind::Round);
-  }
-
   static Value createSortOp(PatternRewriter &rewriter, hfusion::SortOp op,
                             Value input) {
     return rewriter

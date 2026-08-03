@@ -192,9 +192,6 @@ void VFFusionPass::runOnOperation() {
     case FusionMode::AllOp:
       return WalkResult(
           this->tryToFuse<AllOpKind>(funcOp.getOperation(), builder));
-    case FusionMode::NMostOp:
-      return WalkResult(
-          this->tryToFuse<NMostOpKind>(funcOp.getOperation(), builder));
     case FusionMode::MaxParallel:
       return WalkResult(
           this->tryToFuse<MaxParallelKind>(funcOp.getOperation(), builder));

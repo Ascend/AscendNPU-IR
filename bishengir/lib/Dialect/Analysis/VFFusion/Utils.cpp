@@ -16,6 +16,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/Analysis/VFFusion/Utils.h"
+#include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -273,5 +274,8 @@ bool shouldSkipFusion(Operation *op, const VFFusionKindOption &option) {
       });
 }
 
+bool isComputeOp(Operation* op) {
+  return !isa<annotation::MarkOp>(op);
+}
 
 } // namespace mlir::analysis

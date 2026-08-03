@@ -1,11 +1,15 @@
 // RUN: bishengir-opt %s --hacc-append-device-spec=target=Ascend910B1 -split-input-file | FileCheck --check-prefix=910B1 %s
 // RUN: bishengir-opt %s --hacc-append-device-spec -split-input-file | FileCheck --check-prefix=UNKNOWN %s
+// RUN: bishengir-opt %s --hacc-append-device-spec="target=Ascend950PR_9589 custom-aic-number=5 custom-aiv-number=10" -split-input-file | FileCheck --check-prefix=OVERRIDE %s
 
 
 // 910B1: dlti.target_system_spec = #dlti.target_system_spec<"NPU"
 // 910B1-SAME: "VECTOR_CORE_COUNT", 48
 // 910B1-SAME: "UB_SIZE", 1572864
 // 910B1-SAME: "L0C_SIZE", 1048576
+// OVERRIDE: "AI_CORE_COUNT", 5
+// OVERRIDE-SAME: "CUBE_CORE_COUNT", 5
+// OVERRIDE-SAME: "VECTOR_CORE_COUNT", 10
 module {
 
 }

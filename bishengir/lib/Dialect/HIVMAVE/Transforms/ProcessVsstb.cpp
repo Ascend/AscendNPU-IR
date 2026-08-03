@@ -261,6 +261,12 @@ struct Unroll64F32ForLoopPattern : public OpRewritePattern<scf::ForOp> {
       // then change truncOp with even/odd mode and use OrOp to combine the two
       // vector before vsstb,
       // or use DintlvOp to combine the two vector before vsstb.
+      //
+      // vtruncfOps/oldStoreOps/oldLoad1/oldLoad2 are all ordered by which
+      // store's trunc chain found them (store encounter order in the block),
+      // not by their own physical position -- that order can be inverted
+      // relative to their dependency chains, so every insertion point below
+      // must be picked by actual block position, not by index into these arrays.
       bool useDIntlv = true;
       SmallVector<VFLoadOp> loadList1, loadList2;
       SmallVector<Operation *> opList1, opList2;
@@ -276,18 +282,40 @@ struct Unroll64F32ForLoopPattern : public OpRewritePattern<scf::ForOp> {
           checkTwoLoadCanCombine(opList1, loadList1, opList2, loadList2,
                                  oldLoad1, oldLoad2) &&
           vtruncfOps[0]->hasOneUse() && vtruncfOps[1]->hasOneUse()) {
-        // change two norm load to one intlv load
-        useDIntlv = false;
-        rewriter.setInsertionPointAfter(oldLoad1);
-        hivmave::VFLoadOp newLoadOp = rewriter.create<hivmave::VFLoadOp>(
-            loc, oldLoad1.getVectorType(), oldLoad1.getVectorType(),
-            hivmave::LoadDist::DINTLV_B32, oldLoad1.getBase(),
-            oldLoad1.getIndices());
-        rewriter.replaceAllOpUsesWith(oldLoad1, newLoadOp.getResult(0));
-        rewriter.replaceAllOpUsesWith(oldLoad2, newLoadOp.getResult(1));
+        // newLoadOp reuses oldLoad1's base/indices, so it can't go before
+        // oldLoad1, and it must come before either old load's first user.
+        // opList1/opList2 list the ops between each load and its trunc,
+        // closest-to-trunc first, so .back() is that load's direct user (or
+        // the trunc itself if the list is empty). If oldLoad1 comes after
+        // the other load's direct user, there's no single spot that works
+        // for both: it would have to sit after oldLoad1 (so its base is ready)
+        // but before that other user (who comes even earlier) -- an impossible
+        // ordering. In that case, skip the merge and fall back to the safe
+        // deinterleave (useDIntlv) path.
+        Operation *firstConsumer1 =
+            opList1.empty() ? vtruncfOps[0].getOperation() : opList1.back();
+        Operation *firstConsumer2 =
+            opList2.empty() ? vtruncfOps[1].getOperation() : opList2.back();
+        if (oldLoad1->isBeforeInBlock(firstConsumer1) &&
+            oldLoad1->isBeforeInBlock(firstConsumer2)) {
+          useDIntlv = false;
+          rewriter.setInsertionPointAfter(oldLoad1);
+          hivmave::VFLoadOp newLoadOp = rewriter.create<hivmave::VFLoadOp>(
+              loc, oldLoad1.getVectorType(), oldLoad1.getVectorType(),
+              hivmave::LoadDist::DINTLV_B32, oldLoad1.getBase(),
+              oldLoad1.getIndices());
+          rewriter.replaceAllOpUsesWith(oldLoad1, newLoadOp.getResult(0));
+          rewriter.replaceAllOpUsesWith(oldLoad2, newLoadOp.getResult(1));
+        }
       }
 
-      rewriter.setInsertionPointAfter(vtruncfOps[1]);
+      // The code below replaces both original stores, so it must sit at
+      // whichever one is physically last -- both stores already dominate
+      // everything they and the trunc ops need.
+      Operation *anchor = oldStoreOps[0]->isBeforeInBlock(oldStoreOps[1])
+                               ? oldStoreOps[1].getOperation()
+                               : oldStoreOps[0].getOperation();
+      rewriter.setInsertionPoint(anchor);
       Value newMask = getNewMask(oldStoreOps[0].getMask(), newMaskType, loc,
                                  rewriter, true);
       // change TruncF to output with 128*f16 and set with even/odd part

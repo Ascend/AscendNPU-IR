@@ -86,9 +86,9 @@ private:
 
   LogicalResult markOutputs();
   /// For each marked counter alloca whose value is incremented inside a
-  /// regioned op (e.g. the scf.if after a matmul), clone that op and erase all
-  /// CUBE ops inside the clone, so a vector-only stage can keep the counter
-  /// advancing. Returns alloca -> vector-safe clone.
+  /// regioned op and read outside that op (e.g. by the post-scf.if fallback),
+  /// clone the op and erase all CUBE ops inside the clone, so a vector-only
+  /// stage can keep the counter advancing. Returns alloca -> vector-safe clone.
   LogicalResult preprocessCounterAllocas();
 
   /// Absorb non-core "merger" ops (e.g. `arith.select`, `arith.cmpi`) that
@@ -204,8 +204,6 @@ private:
   // Mapping from the original pipelineLoop to the newLoop to guide the cloning
   // process
   IRMapping globalIRMap;
-
-  DenseMap<Value, Value> localOuputsToRedurnRes;
 
   DenseSet<Operation *> toErase;
 
@@ -474,6 +472,19 @@ static tensor::ExtractSliceOp createExtractSlice(OpBuilder &builder,
   strides.append(newType.getRank(), const1);
   return builder.create<tensor::ExtractSliceOp>(loc, cast<RankedTensorType>(to),
                                                 from, offsets, sizes, strides);
+}
+
+static bool isTCBLocalOutput(const std::pair<Value, Value> &localOutput) {
+  Value localBuffer = traceValueDef(localOutput.second);
+  if (!localBuffer)
+    return false;
+
+  for (Operation *user : localBuffer.getUsers())
+    if (utils::isAnnotationWithAttr(
+            user, hivm::HIVMTightlyCoupledBufferAttr::name))
+      return true;
+
+  return false;
 }
 
 static void createAttrForPreloadWS(OpBuilder &builder, Value markedVal) {
@@ -877,8 +888,10 @@ void CVPipelineImpl::expandWorkspace(OpBuilder &builder) {
         alloc.getOffset());
 
     expandedWorkspaceMap_[alloc] = newAlloc;
+
     info.marker.getSrcMutable().set(newAlloc);
     info.marker->removeAttr(MultiBufferAttr::name);
+    info.marker->setAttr(hivm::PreloadWorkspaceAttr::name, builder.getUnitAttr());
 
     toErase.insert(alloc);
     toErase.insert(info.toTensor);
@@ -901,9 +914,9 @@ LogicalResult CVPipelineImpl::markOutputs() {
         continue;
       // With lazy loading (kernel-level switch, per-tensor compile hint,
       // or auto cross-core legality), skip to_tensor results backed by a
-      // LoadOp since the load is cloned into each consuming work item
-      // directly and therefore does not need a multi-buffered cross-stage
-      // tensor.
+      // load-like writer (LoadOp or ND2NZOp) since the writer is cloned into
+      // each consuming work item directly and therefore does not need a
+      // multi-buffered cross-stage tensor.
       FailureOr<bool> shouldLazy = wlBuilder.shouldLazyLoadFor(op);
       if (failed(shouldLazy))
         return failure();
@@ -1735,7 +1748,7 @@ LogicalResult CVPipelineImpl::migrateOpsForPreload(OpBuilder &builder) {
       for (OpOperand &operand :
            llvm::make_early_inc_range(storeLikeOp->getUses())) {
         Operation *userOp = operand.getOwner();
-        if (!isa<LoadOp>(userOp))
+        if (!isa<LoadOp, ND2NZOp>(userOp))
           continue;
         builder.setInsertionPoint(userOp);
         Value loadSliceIdx = builder.create<arith::ConstantIndexOp>(loc, 0);
@@ -1763,15 +1776,22 @@ LogicalResult CVPipelineImpl::createNewLoopsForPreloadWithScopes() {
     LLVM_DEBUG(dbgs() << "Creating scope for work item #" << item->id << '\n');
     scf::ForOp parentFor = pipelineLoop;
 
-    // collect return values
+    // TCB local outputs are backed by local buffers and are rebuilt as
+    // tensor views after the scope.
+    bool hasTCBLocalOutput = false;
     SmallVector<Value> returnTensors{};
     for (auto &localOutput : item->localOutputs) {
-      returnTensors.push_back(localOutput.first);
+      if (isTCBLocalOutput(localOutput)) {
+        hasTCBLocalOutput = true;
+      } else {
+        returnTensors.push_back(localOutput.first);
+      }
     }
     for (auto &yieldedOutput : item->yieldedOutputs) {
       returnTensors.push_back(yieldedOutput.first);
     }
-    if (returnTensors.empty() && item->workspaceOutputs.empty()) {
+    if (returnTensors.empty() && item->workspaceOutputs.empty() &&
+        !hasTCBLocalOutput) {
       preloadNum--;
       continue;
     }
@@ -1801,12 +1821,25 @@ LogicalResult CVPipelineImpl::createNewLoopsForPreloadWithScopes() {
 
     LLVM_DEBUG(dbgs() << "Created scope for work item #" << item->id << " with "
                       << returnTensors.size() << " results\n");
+
+    // Skip original TCB to_tensor ops here. They are rebuilt after the
+    // scope from the same local buffers.
+    DenseSet<Operation *> tcbToTensorOps;
+    for (auto &localOutput : item->localOutputs) {
+      if (!isTCBLocalOutput(localOutput))
+        continue;
+      auto toTensorOp =
+          localOutput.first.getDefiningOp<bufferization::ToTensorOp>();
+      if (toTensorOp)
+        tcbToTensorOps.insert(toTensorOp);
+    }
     for (Operation &op : parentFor.getBody()->getOperations()) {
       if (!item->ops.contains(&op))
         continue;
-
-      builder.clone(op, scopeMap);
       toErase.insert(&op);
+      if (tcbToTensorOps.contains(&op))
+        continue;
+      builder.clone(op, scopeMap);
     }
     item->irMap = scopeMap;
 
@@ -1831,11 +1864,23 @@ LogicalResult CVPipelineImpl::createNewLoopsForPreloadWithScopes() {
     }
     builder.create<scope::ReturnOp>(loc, ValueRange(newReturnTensors));
 
+    builder.setInsertionPointAfter(newScopeOp);
+    for (auto &localOutput : item->localOutputs) {
+      if (!isTCBLocalOutput(localOutput))
+        continue;
+      // TODO: Avoid the need to generate bufferization.to_tensor.
+      Value toTensor = createToTensor(builder, loc, localOutput.second);
+      if (!toTensor)
+        return failure();
+      globalIRMap.map(localOutput.first, toTensor);
+    }
+
     size_t resultIdx = 0;
     for (auto &localOutput : item->localOutputs) {
+      if (isTCBLocalOutput(localOutput))
+        continue;
       Value returnTensor = localOutput.first;
       Value scopeResult = newScopeOp->getResult(resultIdx++);
-      localOuputsToRedurnRes[returnTensor] = scopeResult;
       globalIRMap.map(returnTensor, scopeResult);
     }
 
@@ -1933,6 +1978,7 @@ LogicalResult CVPipelineImpl::markScopesForPreload() {
   }
   LLVM_DEBUG(dbgs() << "\n\nAfter everything:\n";
              newLoop->getParentOfType<func::FuncOp>()->dump());
+  checkpoint->erase();
   return success();
 }
 
@@ -1981,6 +2027,21 @@ LogicalResult CVPipelineImpl::preprocessCounterAllocas() {
       }
     }
     if (!regioned)
+      continue;
+
+    // The vector-safe clone only exists to preserve the counter side effect
+    // for a counter read outside the mixed region (for example, the
+    // normalize-matmul fallback load/cmpi/select following an scf.if).  When
+    // every load is contained in `regioned`, the counter is only used by the
+    // CUBE computation's init condition.  Advancing it again in the VECTOR
+    // stage is unobservable and leaves a dead counter-only clone.
+    bool hasExternalCounterRead =
+        llvm::any_of(alloca->getUsers(), [this, regioned](Operation *user) {
+          auto load = dyn_cast<memref::LoadOp>(user);
+          return load && pipelineLoop->isAncestor(load) &&
+                 !regioned->isAncestor(load);
+        });
+    if (!hasExternalCounterRead)
       continue;
 
     // Clone the regioned op and strip every CUBE op from the clone, leaving a

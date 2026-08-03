@@ -184,7 +184,29 @@ module {
 	  %42 = memref.alloc() : memref<1x2048xf16, #hivm.address_space<ub>>
       hivm.hir.vexp {vector_producer_to_fuse_1} ins(%40#0 : memref<1x2048xf16, #hivm.address_space<ub>>) outs(%42 : memref<1x2048xf16, #hivm.address_space<ub>>)
       scope.return %42 : memref<1x2048xf16, #hivm.address_space<ub>>
-	} {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.max_preload_num = 4 : i32, hivm.preload_num = 0 : i32, no_inline}
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.max_preload_num = 4 : i32, hivm.preload_num = 0 : i32, no_inline}
+    return
+  }
+}
+
+// -----
+module {
+  // CHECK-LABEL: func.func @test_mark_multi_buffer_separate_annotation
+  func.func @test_mark_multi_buffer_separate_annotation(
+      %in : memref<8xf32, #hivm.address_space<gm>>,
+      %out : memref<8xf32, #hivm.address_space<gm>>) {
+    %c0 = arith.constant 0 : index
+    %c4 = arith.constant 4 : index
+    %c16 = arith.constant 16 : index
+    scf.for %i0 = %c0 to %c16 step %c4 {
+      // CHECK: %[[ALLOCA:.*]] = memref.alloca() : memref<8xf32, #hivm.address_space<ub>>
+      // CHECK: annotation.mark %[[ALLOCA]] {hivm.multi_buffer = 2 : i32}
+      // CHECK: annotation.mark %[[ALLOCA]] {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<2>}
+      %tmp = memref.alloca() : memref<8xf32, #hivm.address_space<ub>>
+      annotation.mark %tmp {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<2>} : memref<8xf32, #hivm.address_space<ub>>
+      hivm.hir.load ins(%in : memref<8xf32, #hivm.address_space<gm>>) outs(%tmp : memref<8xf32, #hivm.address_space<ub>>)
+      hivm.hir.store ins(%tmp : memref<8xf32, #hivm.address_space<ub>>) outs(%out : memref<8xf32, #hivm.address_space<gm>>)
+    }
     return
   }
 }

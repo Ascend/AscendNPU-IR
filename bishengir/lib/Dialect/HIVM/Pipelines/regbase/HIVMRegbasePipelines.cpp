@@ -67,7 +67,6 @@ static void hivmAutoInsertLdStForMixCVPipeline(
   options.target =
       hacc::stringifyTargetDeviceEnum(hivmPipelineOptions.target.getValue())
           .str();
-  options.enableDotScaledCompile = hivmPipelineOptions.enableDotScaledCompile;
   options.disableTightCoupledBuffer =
       hivmPipelineOptions.disableTightCoupledBuffer;
   pm.nest<func::FuncOp>().addPass(
@@ -83,8 +82,7 @@ hivmCVCommunicationPipeline(OpPassManager &pm,
 
   if (hivmPipelineOptions.enableTritonKernelCompile) {
     hivmAutoInsertLdStForMixCVPipeline(pm, hivmPipelineOptions);
-  } else if (hacc::utils::isAscend950(hivmPipelineOptions.target) &&
-             !hivmPipelineOptions.enableDotScaledCompile) {
+  } else if (hacc::utils::isAscend950(hivmPipelineOptions.target)) {
     // New A5 convert layout pipeline
     pm.nest<func::FuncOp>().addPass(createInsertCVTightCoupledBufferPass());
     pm.nest<func::FuncOp>().addPass(
@@ -266,7 +264,8 @@ static void addOptimizedConvertLayoutFixpipePipeline(OpPassManager &pm) {
   pm.nest<func::FuncOp>().addPass(createCanonicalizerPass());
   pm.nest<func::FuncOp>().addPass(createCSEPass());
 
-  pm.addPass(mlir::hivm::createCombineOptimizedConvertLayoutPass());
+  pm.nest<func::FuncOp>().addPass(
+      mlir::hivm::createCombineOptimizedConvertLayoutPass());
   pm.nest<func::FuncOp>().addPass(createConvertLayoutToTransposePass());
 }
 
@@ -313,8 +312,7 @@ static void hivmPreBufferizationOptimizationPipeline(
     pm.addPass(mlir::hivm::createInlineFixpipePass(opts));
   }
   hivmCVCommunicationPipeline(pm, hivmPipelineOptions);
-  if (hivmPipelineOptions.enableLayoutOptimization &&
-      hivmPipelineOptions.enableMixedCV) {
+  if (hivmPipelineOptions.enableLayoutOptimization) {
     // Combine optimized folds:
     // - load + convert layout
     // - convert layout + fixpipe
@@ -563,6 +561,9 @@ static void hivmPostBufferizationOptimizationPipeline(
       hivmPipelineOptions.disableTightlyCoupledBufferReuse;
   planMemoryOption.disableVFReachableCheck =
       hivmPipelineOptions.disableVFReachableCheck;
+  if (hivmPipelineOptions.enableVFOperandSubstitution) {
+    pm.addPass(createVFOperandSubstitutionPass());
+  }
   pm.addPass(createPlanMemoryRegBasePass(planMemoryOption));
 
   // Cross-Core Auto-Sync passes STEP=2
@@ -591,11 +592,7 @@ static void hivmPostBufferizationOptimizationPipeline(
     pm.nest<func::FuncOp>().addPass(
         vector::createPeelLoopsContainingTransposePass());
     pm.addPass(createCanonicalizerPass());
-    NormalizeVectorOptions normalizeVectorOptions;
-    normalizeVectorOptions.enableDotScaledCompile =
-        hivmPipelineOptions.enableDotScaledCompile;
-    pm.nest<func::FuncOp>().addPass(
-        vector::createNormalizeVectorPass(normalizeVectorOptions));
+    pm.nest<func::FuncOp>().addPass(vector::createNormalizeVectorPass());
     pm.nest<func::FuncOp>().addPass(createCSEPass());
     pm.nest<func::FuncOp>().addPass(createArithVectorMaskAnalysisPass());
   }

@@ -1,4 +1,5 @@
 // RUN: bishengir-opt %s -hivm-split-mixed-if-conditionals -hivm-mark-tightly-coupled-buffer -hivm-hoist-tightly-coupled-alloc -hivm-split-mix-kernel -split-input-file -verify-diagnostics | FileCheck %s
+// UNSUPPORTED: bishengir_published
 // NOTE: SplitMixedIfConditionals is a standalone pass (not in the default HIVM
 // pipeline); it is run here so mixed scf.if cases stay uniform-core before the
 // mix split. TCB mark/hoist are Ascend950 no-ops elsewhere.

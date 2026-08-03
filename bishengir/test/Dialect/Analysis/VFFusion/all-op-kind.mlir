@@ -130,3 +130,16 @@ module {
     return %5 : tensor<1xf16>
   }
 }
+
+// -----
+
+// CHECK-NOT: call @cast_with_annotation_test_fused_0
+module {
+  func.func @cast_with_annotation_test() -> tensor<9xi8> {
+    %0 = tensor.empty() : tensor<9xi64>
+    %1 = tensor.empty() : tensor<9xi8>
+    %2 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>} ins(%0 : tensor<9xi64>) outs(%1 : tensor<9xi8>) -> tensor<9xi8>
+    annotation.mark %2 {overflow_mode = "trunc"} : tensor<9xi8>
+    return %2 : tensor<9xi8>
+  }
+}

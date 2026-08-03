@@ -656,7 +656,6 @@ public:
             arg0.getLoc(), arith::CmpFPredicate::UNE, arg0, arg1);
       llvm::report_fatal_error("unsupported type for vne");
     case CompareFn::vle:
-    case CompareFn::vule:
       if (allInteger)
         return builder.create<arith::CmpIOp>(
             arg0.getLoc(), arith::CmpIPredicate::sle, arg0, arg1);
@@ -664,8 +663,12 @@ public:
         return builder.create<arith::CmpFOp>(
             arg0.getLoc(), arith::CmpFPredicate::OLE, arg0, arg1);
       llvm::report_fatal_error("unsupported type for vle");
+    case CompareFn::vule:
+      if (allInteger)
+        return builder.create<arith::CmpIOp>(
+            arg0.getLoc(), arith::CmpIPredicate::ule, arg0, arg1);
+      llvm::report_fatal_error("unsupported type for vule");
     case CompareFn::vlt:
-    case CompareFn::vult:
       if (allInteger)
         return builder.create<arith::CmpIOp>(
             arg0.getLoc(), arith::CmpIPredicate::slt, arg0, arg1);
@@ -673,8 +676,12 @@ public:
         return builder.create<arith::CmpFOp>(
             arg0.getLoc(), arith::CmpFPredicate::OLT, arg0, arg1);
       llvm::report_fatal_error("unsupported type for vlt");
+    case CompareFn::vult:
+      if (allInteger)
+        return builder.create<arith::CmpIOp>(
+            arg0.getLoc(), arith::CmpIPredicate::ult, arg0, arg1);
+      llvm::report_fatal_error("unsupported type for vult");
     case CompareFn::vge:
-    case CompareFn::vuge:
       if (allInteger)
         return builder.create<arith::CmpIOp>(
             arg0.getLoc(), arith::CmpIPredicate::sge, arg0, arg1);
@@ -682,8 +689,12 @@ public:
         return builder.create<arith::CmpFOp>(
             arg0.getLoc(), arith::CmpFPredicate::OGE, arg0, arg1);
       llvm::report_fatal_error("unsupported type for vge");
+    case CompareFn::vuge:
+      if (allInteger)
+        return builder.create<arith::CmpIOp>(
+            arg0.getLoc(), arith::CmpIPredicate::uge, arg0, arg1);
+      llvm::report_fatal_error("unsupported type for vuge");
     case CompareFn::vgt:
-    case CompareFn::vugt:
       if (allInteger)
         return builder.create<arith::CmpIOp>(
             arg0.getLoc(), arith::CmpIPredicate::sgt, arg0, arg1);
@@ -691,6 +702,11 @@ public:
         return builder.create<arith::CmpFOp>(
             arg0.getLoc(), arith::CmpFPredicate::OGT, arg0, arg1);
       llvm::report_fatal_error("unsupported type for vgt");
+    case CompareFn::vugt:
+      if (allInteger)
+        return builder.create<arith::CmpIOp>(
+            arg0.getLoc(), arith::CmpIPredicate::ugt, arg0, arg1);
+      llvm::report_fatal_error("unsupported type for vugt");
     }
     llvm::report_fatal_error("unsupported binary function");
   }
@@ -2558,7 +2574,7 @@ void ArangeOp::getEffects(
 /// isFiniteOp decompose:
 /// eg.
 /// isFiniteOp = !(isnanOp(x) || isinfOp(x))
-FailureOr<SmallVector<Value>> IsFiniteOp::decomposeOperation(OpBuilder &b) {
+FailureOr<SmallVector<Value>> IsFiniteOp::decomposeOperation(PatternRewriter &b) {
   auto loc = getLoc();
   auto input = getInput();
 
@@ -2857,7 +2873,7 @@ LogicalResult GatherOp::verify() {
 ///       extract = tensor.extract src[i, idx, k]
 ///       insert = tensor.insert extract into dest[i, j, k]
 ///
-FailureOr<SmallVector<Value>> GatherOp::decomposeOperation(OpBuilder &b) {
+FailureOr<SmallVector<Value>> GatherOp::decomposeOperation(PatternRewriter &b) {
   // According to numpy.take_along_axis (which triton.gather calls), the
   // dimensions that are not the gather axis are just broadcasts of the index
   OpBuilder::InsertionGuard guard(b);
@@ -3375,7 +3391,7 @@ Value buildHistogramConditionalWrite(OpBuilder &b, Location loc, Value hist,
   return ifOp.getResult(0);
 }
 
-FailureOr<SmallVector<Value>> HistogramOp::decomposeOperation(OpBuilder &b) {
+FailureOr<SmallVector<Value>> HistogramOp::decomposeOperation(PatternRewriter &b) {
   OpBuilder::InsertionGuard guard(b);
   b.setInsertionPoint(getOperation());
 
@@ -3509,24 +3525,25 @@ LogicalResult MatMulMxOp::verify() {
 }
 
 FailureOr<SmallVector<Value>>
-MatMulMxOp::decomposeOperation(OpBuilder &builder) {
+MatMulMxOp::decomposeOperation(PatternRewriter &builder) {
+  Value a = getInputA();
+  auto aType = cast<RankedTensorType>(a.getType());
+
+  // Software emulation only used to support K = 32
+  const auto K = aType.getShape()[1];
+  if (K != 32)
+    return failure();
+
   OpBuilder::InsertionGuard guard(builder);
   builder.setInsertionPoint(getOperation());
   Location location = getLoc();
 
-  Value a = getInputA();
   Value b = getInputB();
   Value c = getAcc();
   Value scaleA = getScaleA();
   Value scaleB = getScaleB();
 
-  auto aType = cast<RankedTensorType>(a.getType());
   auto bType = cast<RankedTensorType>(b.getType());
-
-  // Software emulation only used to support K = 32
-  auto K = aType.getShape()[1];
-  if (K != 32)
-    return failure();
 
   auto scaleAType = cast<RankedTensorType>(scaleA.getType());
   auto scaleBType = cast<RankedTensorType>(scaleB.getType());

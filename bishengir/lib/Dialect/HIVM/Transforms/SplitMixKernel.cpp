@@ -138,6 +138,47 @@ static SmallVector<Value> getOutOperands(Operation *op) {
     return {};
   }
 
+  // Distributed custom ops (e.g. dist.aclshmem_ptr_*) may carry results without
+  // any "outputs"/init operands, so the DPS path below would yield zero inits
+  // for a result-bearing op. Derive a replacement per result: unused results
+  // need no replacement (sentinel), used results reuse a type-matching input
+  // operand when available, otherwise fall back to a zero/empty stub.
+  if (hivm::isDistributedTypeCustomOp(op)) {
+    auto dpsOp = dyn_cast_if_present<DestinationStyleOpInterface>(op);
+    // If the op already provides matching init operands, use them directly.
+    if (dpsOp && dpsOp.getDpsInits().size() == op->getNumResults()) {
+      return SmallVector<Value>(dpsOp.getDpsInits());
+    }
+    SmallVector<Value> outVals;
+    for (OpResult result : op->getResults()) {
+      if (result.use_empty()) {
+        outVals.push_back(Value());
+        continue;
+      }
+      // Prefer forwarding an input operand of the same type (for pointer-like
+      // distributed ops the result aliases an input memref).
+      Value replacement;
+      for (Value operand : op->getOperands()) {
+        if (operand.getType() == result.getType()) {
+          replacement = operand;
+          break;
+        }
+      }
+      if (!replacement) {
+        OpBuilder localBuilder(op->getBlock(), Block::iterator(op));
+        replacement =
+            createZeroOrEmptyStub(localBuilder, op->getLoc(), result.getType());
+        if (!replacement)
+          op->emitError() << "Failed to create replacement stub for "
+                             "distributed custom op result #"
+                          << result.getResultNumber()
+                          << " with unsupported type: " << result.getType();
+      }
+      outVals.push_back(replacement);
+    }
+    return outVals;
+  }
+
   if (auto dpsOp = dyn_cast<DestinationStyleOpInterface>(op)) {
     return dpsOp.getDpsInits();
   }
@@ -300,6 +341,10 @@ struct SplitMixKernelPass
     : public impl::SplitMixKernelBase<SplitMixKernelPass> {
   void filterMixFunc(OpBuilder &builder, func::FuncOp mixedFunc,
                      enum TCoreType filterCoreType);
+  void filterMixFuncA3(OpBuilder &builder, func::FuncOp mixedFunc,
+                       enum TCoreType filterCoreType);
+  void filterMixFuncCurrent(OpBuilder &builder, func::FuncOp mixedFunc,
+                            enum TCoreType filterCoreType);
   void splitMixKernel(func::FuncOp &funcOp);
   void runOnOperation() override;
   void generateMixKernelDecl(func::FuncOp &funcOp);
@@ -513,6 +558,56 @@ static void filterEmptyScopesPreOrder(OpBuilder &builder,
 void SplitMixKernelPass::filterMixFunc(OpBuilder &builder,
                                        func::FuncOp mixedFunc,
                                        enum TCoreType filterCoreType) {
+  // TODO: Unify the SplitMixKernel filtering logic for MemBase and RegBase
+  // architectures.
+  if (hacc::utils::isMemBasedArch(getOperation())) {
+    filterMixFuncA3(builder, mixedFunc, filterCoreType);
+    return;
+  }
+  filterMixFuncCurrent(builder, mixedFunc, filterCoreType);
+}
+
+void SplitMixKernelPass::filterMixFuncA3(OpBuilder &builder,
+                                         func::FuncOp mixedFunc,
+                                         enum TCoreType filterCoreType) {
+  const enum TCoreType coreType =
+      filterCoreType == TCoreType::CUBE ? TCoreType::VECTOR : TCoreType::CUBE;
+
+  inferDistributedCoreType(mixedFunc);
+  mixedFunc.walk<WalkOrder::PostOrder>([&](Operation *op) {
+    if (auto forOp = dyn_cast<scf::ForOp>(op)) {
+      if (isLoopOfCoreType(forOp, filterCoreType)) {
+        forOp.setUpperBound(forOp.getLowerBound());
+        return;
+      }
+    }
+
+    FailureOr<bool> res = isCoreTypeOp(op, filterCoreType);
+    if (isa<scope::ScopeOp>(op)) {
+      if (auto coreTypeAttr = op->getAttrOfType<hivm::TCoreTypeAttr>(
+              hivm::kPipelinedLoopCoreTypeAttrName)) {
+        res = coreTypeAttr.getTcoretype() == filterCoreType;
+      }
+    }
+
+    if (failed(res)) {
+      signalPassFailure();
+      return;
+    }
+    if (res.value()) {
+      annotateOpOperand(builder, op, coreType);
+      if (failed(replaceResultWithInitOperand(op))) {
+        signalPassFailure();
+        return;
+      }
+      op->erase();
+    }
+  });
+}
+
+void SplitMixKernelPass::filterMixFuncCurrent(
+    OpBuilder &builder, func::FuncOp mixedFunc,
+    enum TCoreType filterCoreType) {
   // `coreType` is the core that remains after filtering `filterCoreType` out.
   const enum TCoreType coreType =
       filterCoreType == TCoreType::CUBE ? TCoreType::VECTOR : TCoreType::CUBE;

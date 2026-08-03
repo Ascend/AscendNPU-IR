@@ -138,11 +138,7 @@ static bool hasPreloadWorkspaceMark(Value value) {
 }
 
 static bool isPreloadWorkspaceSubview(memref::SubViewOp subviewOp) {
-  // The preload-workspace mark is placed on the subview op itself by the
-  // producer (see CVPipelining::createAttrForPreloadWS). Also accept a marked
-  // source so subviews derived from an already-marked workspace are detected.
-  return subviewOp->hasAttr(hivm::PreloadWorkspaceAttr::name) ||
-         hasPreloadWorkspaceMark(subviewOp.getSource());
+  return hasPreloadWorkspaceMark(subviewOp.getSource());
 }
 
 static Value
@@ -385,7 +381,7 @@ static void rewritePreloadLoop(scf::ForOp forOp,
             } else if (auto subviewOp = dyn_cast<memref::SubViewOp>(&bodyOp);
                       subviewOp && isPreloadWorkspaceSubview(subviewOp)) {
               for (int64_t preloadNum = maxPreloadNum - 1; preloadNum >= 0;
-                   preloadNum--) {
+                  preloadNum--) {
                 cloneWorkspaceSubview(subviewOp, preloadNum, info, b);
               }
               continue;
@@ -516,7 +512,6 @@ static void cleanupPreloadWorkspaceMarks(Operation &op) {
 void CreatePreloadPass::runOnOperation() {
   auto moduleOp = getOperation();
   DenseMap<scf::ForOp, SmallVector<scope::ScopeOp, 4>> preload;
-  DenseSet<int64_t> preloadNumSet;
   moduleOp->walk([&](scope::ScopeOp scopeOp) {
     if (auto maxPreloadNumAttr = scopeOp->getAttrOfType<IntegerAttr>(
             hivm::MaxPreloadNumAttr::name)) {
@@ -532,7 +527,6 @@ void CreatePreloadPass::runOnOperation() {
       assert(preloadNum < static_cast<int64_t>(preloadVec.size()) &&
              "MaxPreloadNumAttr must be set");
       preloadVec[preloadNum] = scopeOp;
-      preloadNumSet.insert(preloadNum);
     }
   });
 
@@ -541,8 +535,15 @@ void CreatePreloadPass::runOnOperation() {
 
   for (auto &[forOp, scopes] : preload) {
     LDBG("Processing preload:\n" << forOp);
-    scopes.resize(preloadNumSet.size(), nullptr);
-    rewritePreloadLoop(forOp, scopes, preloadNumSet.size());
+    auto scopeIt = llvm::find_if(scopes, [](scope::ScopeOp scopeOp) {
+      return static_cast<bool>(scopeOp);
+    });
+    assert(scopeIt != scopes.end() && "Expected at least one preload scope");
+    auto maxPreloadNumAttr = (*scopeIt)->getAttrOfType<IntegerAttr>(
+        hivm::MaxPreloadNumAttr::name);
+    assert(maxPreloadNumAttr && "MaxPreloadNumAttr must be set");
+    rewritePreloadLoop(forOp, scopes,
+                       static_cast<size_t>(maxPreloadNumAttr.getInt()));
   }
 
   cleanupPreloadWorkspaceMarks(*moduleOp);

@@ -23,6 +23,9 @@
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -91,6 +94,15 @@ void DimensionAnalyzer::handleValueGroupForUse(Operation *user, Value current,
       }
       if (idx < whileOp.getNumResults())
         joinValueGroup(current, whileOp->getResult(idx));
+    }
+  } else if (isParallelOp(user)) {
+    for (auto opr : user->getOperands()) {
+      if (isa<ShapedType>(opr.getType()))
+        joinValueGroup(current, opr);
+    }
+    for (auto res : user->getResults()) {
+      if (isa<ShapedType>(res.getType()))
+        joinValueGroup(current, res);
     }
   } else {
     for (auto res : user->getResults()) {
@@ -311,16 +323,7 @@ bool DimensionAnalyzer::processOperation(Operation *op, Value current) {
             return false;
           })
           .Default([&](Operation *op) {
-            if (isElemwiseNaryOpImpl(op) ||
-                isa_and_nonnull<CopyOpInterface>(op) ||
-                utils::isAllocLikeOp(op) ||
-                isa<memref::MemorySpaceCastOp, bufferization::ToTensorOp,
-#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
-                    bufferization::ToMemrefOp
-#else
-                    bufferization::ToBufferOp
-#endif
-                    >(op)) {
+            if (isParallelOp(op)) {
               processParallelOp(op, current);
               return true;
             }
@@ -551,10 +554,11 @@ void DimensionAnalyzer::processYieldOp(scf::YieldOp op) {
 
 void DimensionAnalyzer::processForOp(scf::ForOp op) {
   LDBG("Processing ForOp " << op);
-  for (const auto &[regionArg, initArg] :
-       zip_equal(op.getRegionIterArgs(), op.getInitArgs())) {
-    createDummyRefIfNotExist({regionArg, initArg});
+  for (const auto &[regionArg, initArg, yield] : zip_equal(
+           op.getRegionIterArgs(), op.getInitArgs(), op.getYieldedValues())) {
+    createDummyRefIfNotExist({regionArg, initArg, yield});
     processValue(regionArg, initArg);
+    processValue(regionArg, yield);
   }
 }
 
@@ -889,6 +893,21 @@ bool DimensionAnalyzer::finalizeTransaction() {
   return true;
 }
 
+bool DimensionAnalyzer::isParallelOp(Operation *op) const {
+  return op &&
+         (isElemwiseNaryOpImpl(op) || isa<CopyOpInterface>(op) ||
+          utils::isAllocLikeOp(op) ||
+          isa<memref::MemorySpaceCastOp, bufferization::ToTensorOp,
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+              bufferization::ToMemrefOp
+#else
+              bufferization::ToBufferOp
+#endif
+              ,
+              arith::SelectOp, hivm::IndirectLoadOp, hivm::IndirectStoreOp>(
+              op));
+}
+
 void DimensionAnalyzer::combineInferable() {
   DimensionAnalyzerBase::combineInferable();
   for (const auto &arg : argumentList_) {
@@ -957,65 +976,57 @@ void DimensionAnalyzer::markDimensions() {
   };
 
   op_->walk<WalkOrder::PreOrder>([&](Operation *op) {
-    if (auto reduceOp = dyn_cast<hivm::VReduceOp>(op)) {
-      // By default reduce would connect with each other
-      LDBG("Trying to mark this reduce op " << reduceOp);
-      auto reduceSrcRef = getValueDimIndices(reduceOp.getSrc());
-      auto reduceDstRef = getValueDimIndices(reduceOp.getDst()[0]);
-      for (auto reduceDim : reduceOp.getReduceDims()) {
-        tilingDimKindMapForCollapser[structuralDsu_->find(
-            reduceSrcRef[reduceDim])] = TilingDimensionKind::Reduce;
-        tilingDimKindMapForShape[equivalentDsu_->find(
-            reduceSrcRef[reduceDim])] = TilingDimensionKind::Reduce;
-        tilingDimKindMapForShape[equivalentDsu_->find(
-            reduceDstRef[reduceDim])] = TilingDimensionKind::Reduce;
-        LDBG("Reduced dim: " << equivalentDsu_->find(reduceSrcRef[reduceDim])
-                             << " -> "
-                             << equivalentDsu_->find(reduceDstRef[reduceDim]));
-      }
-    } else if (auto vbrcOp = dyn_cast<hivm::VBrcOp>(op)) {
-
-    } else if (auto mmadOp = dyn_cast<hivm::MmadL1Op>(op)) {
-      LDBG("Marking mmadL1 reduction axis: " << mmadOp);
-      createDummyRefIfNotExist(mmadOp.getA());
-      auto dimRefsA = getValueDimIndices(mmadOp.getA());
-      int kAxisIdxA = mmadOp.getATranspose() ? 0 : 1;
-      int64_t kAxisRootId = structuralDsu_->find(dimRefsA[kAxisIdxA]);
-      tilingDimKindMapForCollapser[kAxisRootId] = TilingDimensionKind::Reduce;
-    } else if (auto insertOp = dyn_cast<tensor::InsertSliceOp>(op)) {
-      processSlice(insertOp);
-    } else if (auto extractOp = dyn_cast<tensor::ExtractSliceOp>(op)) {
-      processSlice(extractOp);
-    } else if (auto vtransposeOp = dyn_cast<hivm::VTransposeOp>(op)) {
-      markTransposedDim(vtransposeOp);
-    } else if (auto allocOp = dyn_cast<memref::AllocOp>(op)) {
-      if (!hacc::utils::isRegBasedArch(op->getParentOfType<ModuleOp>()))
-        return;
-      // FIXME: FIXPIPE intrinsic has the constraint that N has to be multiples
-      // of 32 for COL_SPLIT. For compiler to lift this constraint, we need to
-      // enhance Stride Align.
-      LDBG("Trying to mark this alloc op " << allocOp);
-      auto addressAttr = dyn_cast_or_null<hivm::AddressSpaceAttr>(
-          allocOp.getType().getMemorySpace());
-      auto alloc = allocOp.getMemref();
-      if (addressAttr &&
-          addressAttr.getAddressSpace() == hivm::AddressSpace::UB &&
-          utils::getAnnotateOpWithAttr(alloc,
-                                       hivm::HIVMTightlyCoupledBufferAttr::name)
-              .has_value()) {
-        auto shape = allocOp.getType().getShape();
-        if (shape.size() == 2 && shape[1] < 32) {
-          createDummyRefIfNotExist(alloc);
-          auto args = getValueDimIndices(alloc);
-          tilingDimKindMapForCollapser[structuralDsu_->find(args[1])] =
-              TilingDimensionKind::InvalidColumnSplit;
-          tilingDimKindMapForShape[equivalentDsu_->find(args[1])] =
-              TilingDimensionKind::InvalidColumnSplit;
-          LDBG("Invalid dim: " << structuralDsu_->find(args[1]) << "("
-                               << equivalentDsu_->find(args[1]) << ")");
-        }
-      }
-    }
+    TypeSwitch<Operation *>(op)
+        .Case<hivm::VReduceOp>([&](auto op) {
+          // By default reduce would connect with each other
+          LDBG("Trying to mark this reduce op " << op);
+          auto reduceSrcRef = getValueDimIndices(op.getSrc());
+          auto reduceDstRef = getValueDimIndices(op.getDst()[0]);
+          for (auto reduceDim : op.getReduceDims()) {
+            tilingDimKindMapForCollapser[structuralDsu_->find(
+                reduceSrcRef[reduceDim])] = TilingDimensionKind::Reduce;
+            tilingDimKindMapForShape[equivalentDsu_->find(
+                reduceSrcRef[reduceDim])] = TilingDimensionKind::Reduce;
+            tilingDimKindMapForShape[equivalentDsu_->find(
+                reduceDstRef[reduceDim])] = TilingDimensionKind::Reduce;
+            LDBG("Reduced dim: "
+                 << equivalentDsu_->find(reduceSrcRef[reduceDim]) << " -> "
+                 << equivalentDsu_->find(reduceDstRef[reduceDim]));
+          }
+        })
+        .Case<tensor::ExtractSliceOp, tensor::InsertSliceOp>(
+            [&](auto op) { processSlice(op); })
+        .Case<hivm::VTransposeOp>([&](auto op) { markTransposedDim(op); })
+        .Case<memref::AllocOp>([&](auto op) {
+          if (!hacc::utils::isRegBasedArch(
+                  op->template getParentOfType<ModuleOp>()))
+            return;
+          // FIXME: FIXPIPE intrinsic has the constraint that N has to be
+          // multiples of 32 for COL_SPLIT. For compiler to lift this
+          // constraint, we need to enhance Stride Align.
+          LDBG("Trying to mark this alloc op " << op);
+          auto addressAttr = dyn_cast_or_null<hivm::AddressSpaceAttr>(
+              op.getType().getMemorySpace());
+          auto alloc = op.getMemref();
+          if (addressAttr &&
+              addressAttr.getAddressSpace() == hivm::AddressSpace::UB &&
+              utils::getAnnotateOpWithAttr(
+                  alloc, hivm::HIVMTightlyCoupledBufferAttr::name)
+                  .has_value()) {
+            auto shape = op.getType().getShape();
+            if (shape.size() == 2 && shape[1] < 32) {
+              createDummyRefIfNotExist(alloc);
+              auto args = getValueDimIndices(alloc);
+              tilingDimKindMapForCollapser[structuralDsu_->find(args[1])] =
+                  TilingDimensionKind::InvalidColumnSplit;
+              tilingDimKindMapForShape[equivalentDsu_->find(args[1])] =
+                  TilingDimensionKind::InvalidColumnSplit;
+              LDBG("Invalid dim: " << structuralDsu_->find(args[1]) << "("
+                                   << equivalentDsu_->find(args[1]) << ")");
+            }
+          }
+        })
+        .Case<hivm::CopyOp>([&](auto op) { markUnalignedDim(op); });
   });
 }
 
@@ -1038,6 +1049,49 @@ void DimensionAnalyzer::markTransposedDim(hivm::VTransposeOp op) {
     }
     LDBG(dstSolverIdx << " is now transposed dim("
                       << transposedDimMap[dstSolverIdx] << ")");
+  }
+}
+
+void DimensionAnalyzer::markUnalignedDim(hivm::CopyOp op) {
+  auto dst = op.getDst();
+  auto dstOrig = utils::tracebackMemRef(dst);
+  // If CopyOp is from TightlyCoupledBuffer with ub space,
+  // AllocOp is fully sliced so alignment issue does not occur
+  if (auto maybeAddressSpace = GetBufferSpaceAttr(dstOrig);
+      maybeAddressSpace &&
+      utils::getAnnotateOpWithAttr(dstOrig,
+                                   hivm::HIVMTightlyCoupledBufferAttr::name)) {
+    if (dstOrig.getDefiningOp<memref::AllocOp>() &&
+        maybeAddressSpace.value().getAddressSpace() == hivm::AddressSpace::UB)
+      return;
+  }
+  auto dstType = cast<ShapedType>(dst.getType());
+  SmallVector<int64_t> dimSizeUnit{dstType.getElementTypeBitWidth()};
+  for (auto size : llvm::reverse(dstType.getShape())) {
+    if (ShapedType::isDynamicShape(size))
+      return;
+    auto lastSize = dimSizeUnit.back();
+    dimSizeUnit.push_back(lastSize * size);
+  }
+  dimSizeUnit.pop_back();
+  createDummyRefIfNotExist(dst);
+  auto args = getValueDimIndices(dst);
+  LDBG("Trying to mark this copy op " << op);
+  for (auto [size, unit, arg] :
+       llvm::zip_equal(dstType.getShape(), llvm::reverse(dimSizeUnit), args)) {
+    auto sizeInBit = size * unit;
+    auto tiledDimSize = {sizeInBit / tilingSize,
+                         (sizeInBit + tilingSize - 1) / tilingSize};
+    if (llvm::any_of(tiledDimSize, [](auto size) {
+          return size % utils::kUBAlignSizeInBits != 0;
+        })) {
+      LDBG("Not aligned dim: " << structuralDsu_->find(arg) << " "
+                               << equivalentDsu_->find(arg));
+      tilingDimKindMapForCollapser[structuralDsu_->find(arg)] =
+          TilingDimensionKind::NotAligned;
+      tilingDimKindMapForShape[equivalentDsu_->find(arg)] =
+          TilingDimensionKind::NotAligned;
+    }
   }
 }
 

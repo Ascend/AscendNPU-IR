@@ -244,6 +244,14 @@ def DisableHIVMTensorCompile : FeatureControlOptions<
   let passGroup = ["HFUSION", "HIVM"];
 }
 
+def EnableFastDiv : FeatureControlOptions<
+  "Enable conversion of div with constant denominator into mul",
+  "bool",
+  "false"
+> {
+  let passGroup = ["HFUSION"];
+}
+
 def EnableLegacyInsertLoadStoreForMixCV : FeatureControlOptions<
   "Use legacy InsertLoadStoreForMixCV.",
   "bool",
@@ -691,6 +699,18 @@ llvm::cl::values(
   bit isSharedWithDownstreamToolchain = 1;
 }
 
+def CustomAICNumber : BiShengIRCompileOpt<
+  "Custom amount of aic cores to use (should be lower or equal than targets' real number, default is no override)",
+  "int32_t",
+  "-1"
+>;
+
+def CustomAIVNumber : BiShengIRCompileOpt<
+  "Custom amount of aiv cores to use (should be lower or equal than targets' real number, default is no override)",
+  "int32_t",
+  "-1"
+>;
+
 //===----------------------------------------------------------------------===//
 // Other Options
 //===----------------------------------------------------------------------===//
@@ -840,15 +860,16 @@ def DisableVFReachableCheck : FeatureControlOptions<
   let passGroup = ["HIVM"];
 }
 
-#ifdef BISHENGIR_ENABLE_TRITON_COMPILE
-def EnableDotScaledCompile : FeatureControlOptions<
-  "Enable dot scaled compile",
+def EnableVFOperandSubstitution : FeatureControlOptions<
+  "enable VF callsite operand substitution (reuse a VF input buffer for its "
+  "output when the input is a dynamic select)",
   "bool",
   "false"
 > {
+  // Frontend-only: this gates the HIVM pipeline insertion point and must not be
+  // forwarded or registered as a downstream hivmc option.
   let passGroup = ["HIVM"];
 }
-#endif
 
 def DisableFFTS : FeatureControlOptions<
   "Force disabling FFTS.",
@@ -958,7 +979,7 @@ def EnableVFStackLimit : FeatureControlOptions<
 }
 
 def VfFusionMode : FeatureControlOptions<
-  "VF fusion mode(max-parallel | all-op | n-most-op |). default is max-parallel",
+  "VF fusion mode(max-parallel | all-op |). default is max-parallel",
   "mlir::analysis::FusionMode",
   "mlir::analysis::FusionMode::MaxParallel"
 > {
@@ -969,8 +990,6 @@ llvm::cl::values(
              "Fuse for max parallel"),
   clEnumValN(mlir::analysis::FusionMode::AllOp, "all-op",
              "Fuse all vector operations"),
-  clEnumValN(mlir::analysis::FusionMode::NMostOp, "n-most-op",
-             "Fuse at most N operations"),
   clEnumValN(mlir::analysis::FusionMode::UBAwareOp, "ub-aware-op",
              "Fuse with UB budget awareness")
 )
@@ -996,6 +1015,14 @@ llvm::cl::values(
              "Enable TreeReduce RA and AR processing")
 )
   }];
+}
+
+def HfusionEnableCrossIfFusion : FeatureControlOptions<
+  "Enable fusion op cross region-bearing op in AutoVectorizeV2",
+  "bool",
+  "false"
+> {
+  let passGroup = ["HFUSION"];
 }
 
 def HfusionEnableMultipleConsumerFusion : FeatureControlOptions<
@@ -1226,7 +1253,7 @@ def EnableSinkDPXLoad : SIMTOptimizationControlOptions<
   "bool",
   "true"
 > {
-  bit isSharedWithDownstreamToolchain = 1;
+  bit isSharedWithDownstreamToolchain = 0;
 }
 
 def KTileSize : SIMTOptimizationControlOptions<

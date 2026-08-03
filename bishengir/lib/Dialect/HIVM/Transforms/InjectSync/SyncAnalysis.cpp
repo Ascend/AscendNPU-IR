@@ -42,8 +42,7 @@ void SyncAnalyzer::Plan(bool insertBarAllAtLast) {
     } else if (auto *loopElement =
                    dyn_cast<LoopInstanceElement>(nowElement.get())) {
       DealWithLoopSync(loopElement);
-    } else if (auto *branchElement =
-                   dyn_cast<BranchInstanceElement>(nowElement.get())) {
+    } else if (dyn_cast<BranchInstanceElement>(nowElement.get())) {
       continue;
     }
   }

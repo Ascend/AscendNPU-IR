@@ -534,9 +534,14 @@ public:
   template <typename DstOpType>
   std::optional<bool> get(Value key);
 
+  void unite(Value val1, Value val2);
+
 private:
   DenseMap<Value, bool> storeReachable;
   DenseMap<Value, bool> loadReachable;
+
+  DenseMap<Value, Value> parent;
+  Value find(Value val);
 };
 
 class MemPlanRegBase {

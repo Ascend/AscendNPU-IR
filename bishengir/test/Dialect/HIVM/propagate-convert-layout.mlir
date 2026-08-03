@@ -241,3 +241,209 @@ func.func @propagate_up_from_while_result_with_raw_user(
 
   return %raw_user, %w_up : tensor<16x16xf16>, tensor<1x1x16x16xf16>
 }
+
+// -----
+
+// CHECK-LABEL: func.func @propagate_up_through_scalar_vbrc(
+// CHECK-SAME:      %[[SCALAR:.*]]: bf16
+// CHECK:           %[[EMPTY:.*]] = tensor.empty() : tensor<8x8x16x16xbf16>
+// CHECK:           %[[VBRC:.*]] = hivm.hir.vbrc ins(%[[SCALAR]] : bf16) outs(%[[EMPTY]] : tensor<8x8x16x16xbf16>) -> tensor<8x8x16x16xbf16>
+// CHECK:           return %[[VBRC]] : tensor<8x8x16x16xbf16>
+func.func @propagate_up_through_scalar_vbrc(%cst: bf16) -> tensor<8x8x16x16xbf16> {
+  %empty = tensor.empty() : tensor<128x128xbf16>
+  %brc = hivm.hir.vbrc ins(%cst : bf16) outs(%empty : tensor<128x128xbf16>)
+      -> tensor<128x128xbf16>
+  %fractal = hivm.hir.convert_layout %brc output_shape [8, 8, 16, 16]
+      {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>,
+       srcLayout = #hivm.data_layout<ND>}
+      : (tensor<128x128xbf16>) -> tensor<8x8x16x16xbf16>
+  return %fractal : tensor<8x8x16x16xbf16>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @propagate_up_through_insert_slice(
+// CHECK-SAME:      %[[DEST:.*]]: tensor<128x128xbf16>, %[[SRC:.*]]: tensor<32x128xbf16>
+// CHECK:           %[[DEST_FR:.*]] = hivm.hir.convert_layout %[[DEST]] output_shape [8, 8, 16, 16]
+// CHECK-SAME:      (tensor<128x128xbf16>) -> tensor<8x8x16x16xbf16>
+// CHECK:           %[[SRC_FR:.*]] = hivm.hir.convert_layout %[[SRC]] output_shape [8, 2, 16, 16]
+// CHECK-SAME:      (tensor<32x128xbf16>) -> tensor<8x2x16x16xbf16>
+// CHECK:           %[[INSERTED:.*]] = tensor.insert_slice %[[SRC_FR]] into %[[DEST_FR]][0, 2, 0, 0] [8, 2, 16, 16] [1, 1, 1, 1]
+// CHECK:           return %[[INSERTED]] : tensor<8x8x16x16xbf16>
+func.func @propagate_up_through_insert_slice(
+    %dest: tensor<128x128xbf16>, %source: tensor<32x128xbf16>
+) -> tensor<8x8x16x16xbf16> {
+  %inserted = tensor.insert_slice %source into %dest[32, 0] [32, 128] [1, 1]
+      : tensor<32x128xbf16> into tensor<128x128xbf16>
+  %fractal = hivm.hir.convert_layout %inserted output_shape [8, 8, 16, 16]
+      {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>,
+       srcLayout = #hivm.data_layout<ND>}
+      : (tensor<128x128xbf16>) -> tensor<8x8x16x16xbf16>
+  return %fractal : tensor<8x8x16x16xbf16>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @propagate_insert_slice_both_offsets_nonzero(
+// CHECK-SAME:      %[[DEST:.*]]: tensor<128x128xbf16>, %[[SRC:.*]]: tensor<32x64xbf16>
+// CHECK:           %[[DEST_FR:.*]] = hivm.hir.convert_layout %[[DEST]] output_shape [8, 8, 16, 16]
+// CHECK-SAME:      (tensor<128x128xbf16>) -> tensor<8x8x16x16xbf16>
+// CHECK:           %[[SRC_FR:.*]] = hivm.hir.convert_layout %[[SRC]] output_shape [4, 2, 16, 16]
+// CHECK-SAME:      (tensor<32x64xbf16>) -> tensor<4x2x16x16xbf16>
+// CHECK:           %[[INSERTED:.*]] = tensor.insert_slice %[[SRC_FR]] into %[[DEST_FR]][1, 2, 0, 0] [4, 2, 16, 16] [1, 1, 1, 1]
+// CHECK:           return %[[INSERTED]] : tensor<8x8x16x16xbf16>
+func.func @propagate_insert_slice_both_offsets_nonzero(
+    %dest: tensor<128x128xbf16>, %source: tensor<32x64xbf16>
+) -> tensor<8x8x16x16xbf16> {
+  %inserted = tensor.insert_slice %source into %dest[32, 16] [32, 64] [1, 1]
+      : tensor<32x64xbf16> into tensor<128x128xbf16>
+  %fractal = hivm.hir.convert_layout %inserted output_shape [8, 8, 16, 16]
+      {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>,
+       srcLayout = #hivm.data_layout<ND>}
+      : (tensor<128x128xbf16>) -> tensor<8x8x16x16xbf16>
+  return %fractal : tensor<8x8x16x16xbf16>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @propagate_rank_three_insert_slice(
+// CHECK-SAME:      %[[DEST:.*]]: tensor<4x128x128xbf16>, %[[SRC:.*]]: tensor<2x32x64xbf16>
+// CHECK:           %[[DEST_FR:.*]] = hivm.hir.convert_layout %[[DEST]] output_shape [4, 8, 8, 16, 16]
+// CHECK-SAME:      (tensor<4x128x128xbf16>) -> tensor<4x8x8x16x16xbf16>
+// CHECK:           %[[SRC_FR:.*]] = hivm.hir.convert_layout %[[SRC]] output_shape [2, 4, 2, 16, 16]
+// CHECK-SAME:      (tensor<2x32x64xbf16>) -> tensor<2x4x2x16x16xbf16>
+// CHECK:           %[[INSERTED:.*]] = tensor.insert_slice %[[SRC_FR]] into %[[DEST_FR]][1, 1, 2, 0, 0] [2, 4, 2, 16, 16] [1, 1, 1, 1, 1]
+// CHECK:           return %[[INSERTED]] : tensor<4x8x8x16x16xbf16>
+func.func @propagate_rank_three_insert_slice(
+    %dest: tensor<4x128x128xbf16>, %source: tensor<2x32x64xbf16>
+) -> tensor<4x8x8x16x16xbf16> {
+  %inserted = tensor.insert_slice %source into %dest[1, 32, 16] [2, 32, 64] [1, 1, 1]
+      : tensor<2x32x64xbf16> into tensor<4x128x128xbf16>
+  %fractal = hivm.hir.convert_layout %inserted output_shape [4, 8, 8, 16, 16]
+      {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>,
+       srcLayout = #hivm.data_layout<ND>}
+      : (tensor<4x128x128xbf16>) -> tensor<4x8x8x16x16xbf16>
+  return %fractal : tensor<4x8x8x16x16xbf16>
+}
+
+// -----
+
+// An unaligned offset cannot be represented by one fractal insert_slice. For
+// example, converting offset 1 to [0, 0, 1, 0] and inserting a complete 16-row
+// inner tile would exceed that dimension.
+// CHECK-LABEL: func.func @do_not_propagate_insert_slice_unaligned_offset(
+// CHECK:           %[[INSERTED:.*]] = tensor.insert_slice %{{.*}} into %{{.*}}[1, 0] [32, 128] [1, 1]
+// CHECK:           %[[FRACTAL:.*]] = hivm.hir.convert_layout %[[INSERTED]] output_shape [8, 8, 16, 16]
+// CHECK:           return %[[FRACTAL]] : tensor<8x8x16x16xbf16>
+func.func @do_not_propagate_insert_slice_unaligned_offset(
+    %dest: tensor<128x128xbf16>, %source: tensor<32x128xbf16>
+) -> tensor<8x8x16x16xbf16> {
+  %inserted = tensor.insert_slice %source into %dest[1, 0] [32, 128] [1, 1]
+      : tensor<32x128xbf16> into tensor<128x128xbf16>
+  %fractal = hivm.hir.convert_layout %inserted output_shape [8, 8, 16, 16]
+      {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>,
+       srcLayout = #hivm.data_layout<ND>}
+      : (tensor<128x128xbf16>) -> tensor<8x8x16x16xbf16>
+  return %fractal : tensor<8x8x16x16xbf16>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @do_not_propagate_insert_slice_unaligned_nonzero_column_offset(
+// CHECK:           %[[INSERTED:.*]] = tensor.insert_slice %{{.*}} into %{{.*}}[32, 1] [32, 64] [1, 1]
+// CHECK:           %[[FRACTAL:.*]] = hivm.hir.convert_layout %[[INSERTED]] output_shape [8, 8, 16, 16]
+// CHECK:           return %[[FRACTAL]] : tensor<8x8x16x16xbf16>
+func.func @do_not_propagate_insert_slice_unaligned_nonzero_column_offset(
+    %dest: tensor<128x128xbf16>, %source: tensor<32x64xbf16>
+) -> tensor<8x8x16x16xbf16> {
+  %inserted = tensor.insert_slice %source into %dest[32, 1] [32, 64] [1, 1]
+      : tensor<32x64xbf16> into tensor<128x128xbf16>
+  %fractal = hivm.hir.convert_layout %inserted output_shape [8, 8, 16, 16]
+      {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>,
+       srcLayout = #hivm.data_layout<ND>}
+      : (tensor<128x128xbf16>) -> tensor<8x8x16x16xbf16>
+  return %fractal : tensor<8x8x16x16xbf16>
+}
+
+// -----
+
+// Rounding an interior slice size up to a complete tile would overwrite values
+// in the destination which are outside the original ND slice.
+// CHECK-LABEL: func.func @do_not_propagate_insert_slice_unaligned_size(
+// CHECK:           %[[INSERTED:.*]] = tensor.insert_slice %{{.*}} into %{{.*}}[32, 0] [17, 128] [1, 1]
+// CHECK:           %[[FRACTAL:.*]] = hivm.hir.convert_layout %[[INSERTED]] output_shape [8, 8, 16, 16]
+// CHECK:           return %[[FRACTAL]] : tensor<8x8x16x16xbf16>
+func.func @do_not_propagate_insert_slice_unaligned_size(
+    %dest: tensor<128x128xbf16>, %source: tensor<17x128xbf16>
+) -> tensor<8x8x16x16xbf16> {
+  %inserted = tensor.insert_slice %source into %dest[32, 0] [17, 128] [1, 1]
+      : tensor<17x128xbf16> into tensor<128x128xbf16>
+  %fractal = hivm.hir.convert_layout %inserted output_shape [8, 8, 16, 16]
+      {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>,
+       srcLayout = #hivm.data_layout<ND>}
+      : (tensor<128x128xbf16>) -> tensor<8x8x16x16xbf16>
+  return %fractal : tensor<8x8x16x16xbf16>
+}
+
+// -----
+
+// Dynamic offsets cannot currently be proven tile-aligned.
+// CHECK-LABEL: func.func @do_not_propagate_insert_slice_dynamic_offset(
+// CHECK-SAME:      %[[OFFSET:.*]]: index
+// CHECK:           %[[INSERTED:.*]] = tensor.insert_slice %{{.*}} into %{{.*}}[%[[OFFSET]], 0] [32, 128] [1, 1]
+// CHECK:           %[[FRACTAL:.*]] = hivm.hir.convert_layout %[[INSERTED]] output_shape [8, 8, 16, 16]
+// CHECK:           return %[[FRACTAL]] : tensor<8x8x16x16xbf16>
+func.func @do_not_propagate_insert_slice_dynamic_offset(
+    %offset: index, %dest: tensor<128x128xbf16>,
+    %source: tensor<32x128xbf16>
+) -> tensor<8x8x16x16xbf16> {
+  %inserted = tensor.insert_slice %source into %dest[%offset, 0] [32, 128] [1, 1]
+      : tensor<32x128xbf16> into tensor<128x128xbf16>
+  %fractal = hivm.hir.convert_layout %inserted output_shape [8, 8, 16, 16]
+      {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>,
+       srcLayout = #hivm.data_layout<ND>}
+      : (tensor<128x128xbf16>) -> tensor<8x8x16x16xbf16>
+  return %fractal : tensor<8x8x16x16xbf16>
+}
+
+// -----
+
+// A rank-reduced source cannot independently be converted with the same
+// rank-two ND-to-fractal layout conversion.
+// CHECK-LABEL: func.func @do_not_propagate_rank_reduced_insert_slice(
+// CHECK:           %[[INSERTED:.*]] = tensor.insert_slice %{{.*}} into %{{.*}}[0, 0] [1, 128] [1, 1]
+// CHECK:           %[[FRACTAL:.*]] = hivm.hir.convert_layout %[[INSERTED]] output_shape [8, 8, 16, 16]
+// CHECK:           return %[[FRACTAL]] : tensor<8x8x16x16xbf16>
+func.func @do_not_propagate_rank_reduced_insert_slice(
+    %dest: tensor<128x128xbf16>, %source: tensor<128xbf16>
+) -> tensor<8x8x16x16xbf16> {
+  %inserted = tensor.insert_slice %source into %dest[0, 0] [1, 128] [1, 1]
+      : tensor<128xbf16> into tensor<128x128xbf16>
+  %fractal = hivm.hir.convert_layout %inserted output_shape [8, 8, 16, 16]
+      {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>,
+       srcLayout = #hivm.data_layout<ND>}
+      : (tensor<128x128xbf16>) -> tensor<8x8x16x16xbf16>
+  return %fractal : tensor<8x8x16x16xbf16>
+}
+
+// -----
+
+// Non-unit strides are not supported by the fractal rewrite.
+// CHECK-LABEL: func.func @do_not_propagate_insert_slice_non_unit_stride(
+// CHECK:           %[[INSERTED:.*]] = tensor.insert_slice %{{.*}} into %{{.*}}[0, 0] [32, 64] [1, 2]
+// CHECK:           %[[FRACTAL:.*]] = hivm.hir.convert_layout %[[INSERTED]] output_shape [8, 8, 16, 16]
+// CHECK:           return %[[FRACTAL]] : tensor<8x8x16x16xbf16>
+func.func @do_not_propagate_insert_slice_non_unit_stride(
+    %dest: tensor<128x128xbf16>, %source: tensor<32x64xbf16>
+) -> tensor<8x8x16x16xbf16> {
+  %inserted = tensor.insert_slice %source into %dest[0, 0] [32, 64] [1, 2]
+      : tensor<32x64xbf16> into tensor<128x128xbf16>
+  %fractal = hivm.hir.convert_layout %inserted output_shape [8, 8, 16, 16]
+      {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>,
+       srcLayout = #hivm.data_layout<ND>}
+      : (tensor<128x128xbf16>) -> tensor<8x8x16x16xbf16>
+  return %fractal : tensor<8x8x16x16xbf16>
+}
+
+// -----
+

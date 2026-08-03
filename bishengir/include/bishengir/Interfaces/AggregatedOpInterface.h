@@ -20,6 +20,7 @@
 
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/OpDefinition.h"
+#include "mlir/IR/PatternMatch.h"
 
 // Include the generated interface declarations.
 #include "bishengir/Interfaces/BiShengIREnums.h.inc"

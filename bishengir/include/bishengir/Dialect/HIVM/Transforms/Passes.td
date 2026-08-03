@@ -79,6 +79,7 @@ def HIVMNormalize : Pass<"hivm-normalize-ops", "func::FuncOp"> {
     "tensor::TensorDialect",
     "bufferization::BufferizationDialect",
     "memref::MemRefDialect",
+    "scope::ScopeDialect",
   ];
   let options = [
     Option<
@@ -215,6 +216,17 @@ def InferVFMode : Pass<"hivm-infer-vf-mode", "func::FuncOp"> {
   let summary = "Infer vf mode for Ops";
   let constructor = "mlir::hivm::createInferVFModePass()";
   let dependentDialects = ["hivm::HIVMDialect"];
+}
+
+def VFOperandSubstitution
+    : Pass<"hivm-vf-operand-substitution", "ModuleOp"> {
+  let summary =
+      "Reuse a VF input buffer for its output via callsite operand substitution";
+  let constructor = "mlir::hivm::createVFOperandSubstitutionPass()";
+  let dependentDialects = [
+    "arith::ArithDialect", "func::FuncDialect", "memref::MemRefDialect",
+    "hivm::HIVMDialect"
+  ];
 }
 
 def PlanMemory : Pass<"hivm-plan-memory", "func::FuncOp"> {
@@ -437,13 +449,13 @@ def InsertAnchorsAndBackup
               "bool", /*default=*/"false",
               "Insert Anchor Ops before operations that have memory effect">,
        Option<"insertAnchorOnlyBeforeCubeOps", "insert-anchor-only-before-cube-ops",
-              "bool", /*default=*/"true",
+              "bool", /*default=*/"false",
               "Insert Anchor Ops before cube ops only">,
        Option<"insertAnchorOnlyBeforeVectorOps", "insert-anchor-only-before-vector-ops",
               "bool", /*default=*/"false",
               "Insert Anchor Ops before vector ops only">,
        Option<"insertAnchorBeforeCubeAndVectorOps", "insert-anchor-before-cube-and-vector-ops",
-              "bool", /*default=*/"false",
+              "bool", /*default=*/"true",
               "Insert Anchor Ops before cube and vector ops only">,
   ];
 }
@@ -872,10 +884,6 @@ def InsertLoadStoreForMixCV
                  Option<"target", "target", "std::string",
                         /*default=*/"\"Ascend910B1\"",
                         "Target device name">,
-                 Option<"enableDotScaledCompile",
-                        "enable-dot-scaled-compile", "bool",
-                        /*default=*/"false",
-                        "Enable dot scaled compile">,
                  Option<"disableTightCoupledBuffer",
                         "disable-tight-coupled-buffer", "bool",
                         /*default=*/"false",

@@ -2265,20 +2265,3 @@ func.func @test_scalar_f32_to_si64(%0: f32, %1 : memref<1xi64>) {
   memref.store %6, %1[%c0] : memref<1xi64>
   return
 }
-
-
-// -----
-// On reg-based arch, VReduceInitInitializing must not seed reduce init.
-module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
-  // CHECK-LABEL: func @test_reduce_min_with_index_int64_regbase_no_init
-  func.func @test_reduce_min_with_index_int64_regbase_no_init() {
-    // CHECK-NOT: hivm.hir.vbrc
-    // CHECK-NOT: already_initialize_init
-    // CHECK: hivm.hir.vreduce <min_with_index_left>
-    %src = memref.alloc() : memref<2x2xi64>
-    %dst1 = memref.alloc() : memref<1x2xi64>
-    %dst2 = memref.alloc() : memref<1x2xi32>
-    hivm.hir.vreduce <min_with_index_left> ins(%src : memref<2x2xi64>) outs(%dst1, %dst2 : memref<1x2xi64>, memref<1x2xi32>) reduce_dims = [0]
-    return
-  }
-}

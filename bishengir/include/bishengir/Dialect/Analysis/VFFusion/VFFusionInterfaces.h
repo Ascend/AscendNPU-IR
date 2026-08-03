@@ -67,6 +67,9 @@ public:
         if (candidateBlock.getOps().size() == block.getOperations().size())
           continue;
 
+        // Filter out for ops which make sense for fusion
+        SmallVector<Operation *> computeOps =
+            getComputeOps(SmallVector<Operation*>(candidateBlock.getOps()));
         // When a fusion block contains at most one op, the normal fusion
         // path is bypassed (continue).  However, certain ops that are known
         // to be processed by a dedicated downstream pass (e.g. reduce-sum
@@ -76,9 +79,9 @@ public:
         //   - returns true  → outline this single-op block (skip fusion,
         //                     but keep the op isolated for later handling)
         //   - returns false → skip entirely (no outline, no fusion)
-        if (candidateBlock.getOps().size() <= 1) {
-          auto ops = candidateBlock.getOps();
-          if (ops.empty() || !shouldSkipFusion(ops.front(), option))
+        if (computeOps.size() <= 1) {
+          if (computeOps.empty() ||
+              !shouldSkipFusion(computeOps.front(), option))
             continue;
         }
 
@@ -118,30 +121,27 @@ protected:
     SmallVector<VFFusionBlock> splitBlocks;
     VFFusionBlock currentBlock;
     bool hasCurrentBlock = false;
+    auto fits = [&](const VFFusionBlock &blk) {
+      return getTotalParamRegisterCost(blk.getInputs()) <= option.maxVFParams &&
+             stackInfoBuilder.fitsStack(blk.getOps());
+    };
 
     for (Operation *op : fusionBlock.getOps()) {
-      VFFusionBlock tentativeBlock = currentBlock;
-      tentativeBlock.fuseOp(op);
-
-      SmallVector<Operation *> tentativeOps = tentativeBlock.getOps();
-      if ((getTotalParamRegisterCost(tentativeBlock.recomputeInputs()) <=
-           option.maxVFParams) &&
-          stackInfoBuilder.fitsStack(tentativeOps)) {
-        currentBlock = std::move(tentativeBlock);
+      // Grow the current block in place -- no per-op block copy.
+      currentBlock.fuseOp(op);
+      if (fits(currentBlock)) {
         hasCurrentBlock = true;
         continue;
       }
 
+      // Overflows: roll back it.
+      currentBlock.unfuseOp(op);
       if (hasCurrentBlock)
-        splitBlocks.push_back(currentBlock);
+        splitBlocks.push_back(std::move(currentBlock));
 
-      VFFusionBlock singletonBlock;
-      singletonBlock.fuseOp(op);
-      SmallVector<Operation *> singletonOps = singletonBlock.getOps();
-      if ((getTotalParamRegisterCost(singletonBlock.recomputeInputs()) <=
-           option.maxVFParams) &&
-          stackInfoBuilder.fitsStack(singletonOps)) {
-        currentBlock = std::move(singletonBlock);
+      currentBlock = VFFusionBlock();
+      currentBlock.fuseOp(op);
+      if (fits(currentBlock)) {
         hasCurrentBlock = true;
       } else {
         currentBlock = VFFusionBlock();
@@ -150,7 +150,7 @@ protected:
     }
 
     if (hasCurrentBlock)
-      splitBlocks.push_back(currentBlock);
+      splitBlocks.push_back(std::move(currentBlock));
 
     return splitBlocks;
   }
@@ -176,6 +176,15 @@ protected:
   VFFusionOutliner outliner;
   VFFusionBlockList analyzedBlocks; // Renamed from fusedBlock
   const VFFusionKindOption option;
+
+private:
+  static SmallVector<Operation *>
+  getComputeOps(SmallVector<Operation *> allOps) {
+    SmallVector<Operation *> res;
+    llvm::copy_if(allOps, std::back_inserter(res),
+                  [](auto *op) { return isComputeOp(op); });
+    return res;
+  }
 };
 
 class AllOpKind : public FusionKindBase {
@@ -187,18 +196,6 @@ public:
 
 private:
   AllOpKindAnalyzer analyzer;
-};
-
-class NMostOpKind : public FusionKindBase {
-public:
-  FailureOr<VFFusionBlockList> analyzeBlockImpl(Block &block) override;
-
-  explicit NMostOpKind(const VFFusionKindOption &option)
-      : FusionKindBase(option), analyzer(option, N) {};
-
-private:
-  const size_t N = 8;
-  NMostOpKindAnalyzer analyzer;
 };
 
 class MaxParallelKind : public FusionKindBase {

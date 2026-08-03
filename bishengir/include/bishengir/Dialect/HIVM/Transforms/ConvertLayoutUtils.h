@@ -160,6 +160,12 @@ void populateConvertLayoutScfWhile(RewritePatternSet &patterns,
 void populateConvertLayoutExtractSlice(RewritePatternSet &patterns,
                                        MLIRContext *context);
 
+void populateConvertLayoutInsertSlice(RewritePatternSet &patterns,
+                                      MLIRContext *context);
+
+void populateConvertLayoutVBrc(RewritePatternSet &patterns,
+                               MLIRContext *context);
+
 void populateHoistConvertLayout(RewritePatternSet &patterns,
                                 MLIRContext *context);
 } // namespace mlir

@@ -17,7 +17,6 @@
 
 #include "bishengir/Tools/bishengir-compile/regbase/Utility.h"
 
-#include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -33,20 +32,6 @@ using namespace llvm;
 namespace bishengir {
 namespace regbase {
 namespace {
-
-bool shouldUseSoftDotScale(ModuleOp module) {
-  bool useSoftDotScale = false;
-  module.walk<WalkOrder::PreOrder>(
-      [&](mlir::hfusion::MatMulMxOp matmulMxOp) -> WalkResult {
-        auto aType =
-            mlir::cast<ShapedType>(matmulMxOp->getOperand(0).getType());
-        auto shape = aType.getShape();
-        if (shape.size() > 1 && shape[1] == 32)
-          useSoftDotScale = true;
-        return WalkResult::interrupt();
-      });
-  return useSoftDotScale;
-}
 
 static bool isSharedWithDownstreamToolchain(StringRef argName) {
   auto &opts = llvm::cl::getRegisteredOptions();
@@ -87,11 +72,6 @@ LogicalResult inferMixedCV(ModuleOp &module,
     return success();
   }
 
-  if (shouldUseSoftDotScale(module)) {
-    config.setEnableMixedCV(false);
-    return success();
-  }
-
   auto first =
       (*funcs.begin())->getAttrOfType<StringAttr>("mix_mode").getValue();
   if (!llvm::all_of(funcs, [&](const func::FuncOp &func) {
@@ -101,13 +81,6 @@ LogicalResult inferMixedCV(ModuleOp &module,
 
   config.setEnableMixedCV(first != StringRef{"aiv"} ||
                           config.shouldEnableMixedCV());
-  return success();
-}
-
-LogicalResult inferDotScale(ModuleOp &module,
-                            BiShengIRCompileMainConfig &config) {
-  if (shouldUseSoftDotScale(module))
-    config.setEnableDotScaledCompile(true);
   return success();
 }
 

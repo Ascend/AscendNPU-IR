@@ -16,6 +16,8 @@
 //
 //===----------------------------------------------------------------------===//
 #include "bishengir/Dialect/Analysis/VFFusion/CostModelInfo/CostModelInfoUtils.h"
+#include "bishengir/Dialect/Analysis/VFFusion/CostModelInfo/CostModelInfo.h"
+#include "bishengir/Dialect/Analysis/VFFusion/CostModelInfo/CostModelInfoBase.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 #define DEBUG_TYPE "hardware_info"
@@ -91,14 +93,13 @@ CostInfo CostModelInfoUtils::lookupConfig(const OpConfigMap &targetMap,
   return typeKindIter->second;
 }
 
-OpConfigMap CostModelInfoUtils::getOpConfigMap(hacc::TargetDevice dev,
-                                  bool isReduction) {
+const OpConfigMap &CostModelInfoUtils::getOpConfigMap(hacc::TargetDevice dev,
+                                                      bool isReduction) {
 
-  if (hacc::utils::isAscend950(dev)) {
-    return std::make_unique<CostModelInfo>()->getConfigMap(isReduction);
-  } else {
-    return OpConfigMap();
-  }
+  if (hacc::utils::isAscend950(dev))
+    return CostModelInfo::getInstance().getConfigMap(isReduction);
+  static OpConfigMap emptyMap;
+  return emptyMap;
 }
 
 CostInfo CostModelInfoUtils::getOpCostInfo(mlir::Operation *op, bool isReduction) {

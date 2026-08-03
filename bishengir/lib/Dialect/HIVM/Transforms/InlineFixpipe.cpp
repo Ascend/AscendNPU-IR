@@ -26,6 +26,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
@@ -56,6 +57,19 @@ static constexpr llvm::StringLiteral fixpipeDoNotMoveOutOfScfFor =
 
 static constexpr llvm::StringLiteral scfforFixpipeForMMADResultAlreadyInserted =
     "fixpipe_for_mmad_result_already_inserted";
+
+/// Return true when \p op is nested in a scope marked for the vector core.
+/// Fixpipe must not be fused with a store in such scopes: fusion would place
+/// the cube fixpipe inside the vector scope and break mix AIC/AIV splitting.
+static bool isInsideVectorScope(Operation *op) {
+  auto scopeOp = op->getParentOfType<scope::ScopeOp>();
+  if (!scopeOp)
+    return false;
+  auto coreTypeAttr =
+      scopeOp->getAttrOfType<hivm::TCoreTypeAttr>(hivm::TCoreTypeAttr::name);
+  return coreTypeAttr &&
+         coreTypeAttr.getTcoretype() == hivm::TCoreType::VECTOR;
+}
 } // namespace
 
 namespace {
@@ -259,6 +273,43 @@ Operation *getInsertPoint(Operation *op, int &resultIndx) {
   return getInsertPoint(yieldParentOp, resultIndx);
 }
 
+// Return the single convert_layout{ND→Fractal} user, or null.
+static hivm::ConvertLayoutOp getOutputFractalConvert(Value mmadResult) {
+  if (!mmadResult.hasOneUse())
+    return nullptr;
+  auto convert = dyn_cast<hivm::ConvertLayoutOp>(*mmadResult.user_begin());
+  if (!convert)
+    return nullptr;
+  auto srcLayout = convert.getSrcLayoutAttr();
+  auto dstLayout = convert.getDstLayoutAttr();
+  if (!srcLayout.isNDLayout() ||
+      dstLayout.getDataLayout() != hivm::DataLayout::Fractal)
+    return nullptr;
+  return convert;
+}
+
+// Emit an NZ2NZ fixpipe when result feeds a single ND→Fractal convert_layout.
+// Returns false so the caller falls back to NZ2ND.
+static bool tryInsertFractalOutputFixpipe(PatternRewriter &rewriter,
+                                          Operation *insertAfterOp,
+                                          Value result) {
+  auto convert = getOutputFractalConvert(result);
+  if (!convert)
+    return false;
+  rewriter.setInsertionPointAfter(insertAfterOp);
+  Value dst = utils::createEmptyOp(rewriter, insertAfterOp->getLoc(),
+                                   convert.getResult());
+  auto dmaModeAttr =
+      FixpipeDMAModeAttr::get(rewriter.getContext(), FixpipeDMAMode::NZ2NZ);
+  auto fixpipe = rewriter.create<FixpipeOp>(
+      insertAfterOp->getLoc(), /*result_tensor=*/dst.getType(), result, dst,
+      dmaModeAttr, /*dual_dst_mode=*/nullptr, /*sub_block_idx=*/nullptr,
+      /*pre_quant=*/nullptr, /*pre_relu=*/nullptr, /*channel_split=*/nullptr);
+  rewriter.replaceAllUsesWith(convert.getResult(), fixpipe.getResultTensor());
+  rewriter.eraseOp(convert);
+  return true;
+}
+
 bool isAccumulationImpl(Operation *op, Value accumulator) {
   if (!accumulator)
     return false;
@@ -460,30 +511,41 @@ static bool allUsersReachFixpipe(Value value) {
   });
 }
 
-/// Insert fixpipe when there is hivm::MmadL1Op or hivm::BatchMmadL1Op.
+/// Insert fixpipe when there is hivm::MmadL1Op, hivm::BatchMmadL1Op, or
+/// hivm::MmadMxL1Op.
 template <typename OpType>
 struct InsertFixpipeOpPattern : public OpRewritePattern<OpType> {
 public:
   using OpRewritePattern<OpType>::OpRewritePattern;
   LogicalResult matchAndRewrite(OpType op,
                                 PatternRewriter &rewriter) const override {
+    Operation *opInst = op.getOperation();
     auto mmadLikeOpRes = op.getResultTensors()[0];
 
     // shouldDecomposeBiasByElementAdd is true for ElementwiseAdd regardless of
     // init; NormalizeMatmul only decomposes when init is const false, or
-    // non-const on reg-based. Skip fixpipe only in those cases (not init=true).
-    if (op.shouldDecomposeBiasByElementAdd() &&
-        (op.isInitConstant(false) ||
-         (!op.isInitConstant() && isRegBasedArch(op)))) {
+    // non-const on reg-based. MmadMxL1 skips fixpipe whenever init is not
+    // const true (inline-bias decompose path).
+    bool skipFixpipeForBiasDecompose = false;
+    if (op.shouldDecomposeBiasByElementAdd()) {
+      if constexpr (std::is_same_v<OpType, hivm::MmadMxL1Op>) {
+        skipFixpipeForBiasDecompose = !op.isInitConstant(true);
+      } else {
+        skipFixpipeForBiasDecompose =
+            op.isInitConstant(false) ||
+            (!op.isInitConstant() && isRegBasedArch(opInst));
+      }
+    }
+    if (skipFixpipeForBiasDecompose) {
       // the op will decompose to mmadL1 + vadd, so fixpipe cannot be inserted
       // now, and fixpipe should be inserted after the decomposition
       return failure();
     }
 
-    if (op->getAttr(mmadFixpipeForResultAlreadyInserted))
+    if (opInst->getAttr(mmadFixpipeForResultAlreadyInserted))
       return failure();
 
-    if (isRegBasedArch(op) && allUsersReachFixpipe(mmadLikeOpRes))
+    if (isRegBasedArch(opInst) && allUsersReachFixpipe(mmadLikeOpRes))
       return failure();
 
     auto isMatchedOp = [](Operation *op, Value v) {
@@ -502,18 +564,19 @@ public:
 
     int resultIndx = 0;
     Operation *insertAfterOp = nullptr;
-    if (isAccumulation(op)) {
+    if (isAccumulation(opInst)) {
       // only insert fixpipe outside of the for loop when it is an accumulation
       // loop
-      insertAfterOp = getInsertPoint(op, resultIndx);
+      insertAfterOp = getInsertPoint(opInst, resultIndx);
     } else {
-      insertAfterOp = getInsertPointOutOfIf(op, resultIndx);
+      insertAfterOp = getInsertPointOutOfIf(opInst, resultIndx);
     }
     rewriter.setInsertionPointAfter(insertAfterOp);
 
     LDBG("Replacing fix pipe for " << op);
-    insertFixpipe(rewriter, insertAfterOp,
-                  insertAfterOp->getResult(resultIndx));
+    Value result = insertAfterOp->getResult(resultIndx);
+    if (!tryInsertFractalOutputFixpipe(rewriter, insertAfterOp, result))
+      insertFixpipe(rewriter, insertAfterOp, result);
     op->setAttr(mmadFixpipeForResultAlreadyInserted,
                 rewriter.getBoolAttr(true));
 
@@ -525,8 +588,8 @@ public:
     // fixpipe right after the mmad-like op inside the loop and redirect only
     // those in-loop Vector consumers to it; the accumulation yield is left on
     // the raw result so the iter_arg chain stays in L1.
-    if (isAccumulation(op)) {
-      scf::ForOp forOp = op->template getParentOfType<scf::ForOp>();
+    if (isAccumulation(opInst)) {
+      scf::ForOp forOp = opInst->getParentOfType<scf::ForOp>();
       SmallVector<OpOperand *, 4> inLoopVecOperands;
       for (OpOperand &use : mmadLikeOpRes.getUses()) {
         Operation *user = use.getOwner();
@@ -540,7 +603,7 @@ public:
         inLoopVecOperands.push_back(&use);
       }
       if (!inLoopVecOperands.empty()) {
-        rewriter.setInsertionPointAfter(op);
+        rewriter.setInsertionPointAfter(opInst);
         MLIRContext *ctx = rewriter.getContext();
         FixpipeDMAModeAttr dmaModeAttr =
             FixpipeDMAModeAttr::get(ctx, FixpipeDMAMode::NZ2ND);
@@ -782,6 +845,9 @@ private:
     // FixPipe followed by debugOp only, no need to inline
     if (curOp == nullptr)
       return success();
+    // Avoid fusing fixpipe into a VECTOR-scope store (mix AIC/AIV).
+    if (isInsideVectorScope(curOp))
+      return failure();
     // Operation curOp = *maybeInlinedOp;
     // 1. cast or quantization
     auto castOp = dyn_cast_if_present<hivm::VCastOp>(curOp);
@@ -1207,6 +1273,7 @@ void populateInsertFixpipePatterns(RewritePatternSet &patterns) {
   MLIRContext *ctx = patterns.getContext();
   patterns.add<InsertFixpipeOpPattern<hivm::MmadL1Op>>(ctx);
   patterns.add<InsertFixpipeOpPattern<hivm::BatchMmadL1Op>>(ctx);
+  patterns.add<InsertFixpipeOpPattern<hivm::MmadMxL1Op>>(ctx);
   patterns.add<InsertFixpipeForConvOpPattern<hivm::Conv1DL1Op>>(ctx);
   patterns.add<InsertFixpipeForConvOpPattern<hivm::Conv2DL1Op>>(ctx);
   patterns.add<InsertFixpipeForConvOpPattern<hivm::Conv3DL1Op>>(ctx);

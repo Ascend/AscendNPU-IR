@@ -24,6 +24,7 @@
 
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/TypeUtilities.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
@@ -63,7 +64,7 @@ inline RoundModeAttr getRoundAttr(mlir::OpBuilder &b, Type srcType,
 /// - For I1: I1 -> F16 -> broadcast -> F16 -> I1 (via comparison with 0.0)
 /// - For I8: I8 -> F16 -> broadcast -> F16 -> I8 (via cast)
 mlir::FailureOr<llvm::SmallVector<mlir::Value>>
-VBrcOp::decomposeOperation(mlir::OpBuilder &b) {
+VBrcOp::decomposeOperation(mlir::PatternRewriter &b) {
   const Type srcType = getSrc().getType();
   const Type srcElemType = getElementTypeOrSelf(srcType);
   const Type dstElemType = b.getF16Type();
@@ -192,7 +193,7 @@ LogicalResult decomposeInsertSliceConcat(VConcatOp concatOp, OpBuilder &b) {
 /// Here we specify VConcat's decompose behavior
 /// VConcat will get erased and become Copy ops
 /// from inputs of concat to subviews of it's output
-FailureOr<SmallVector<Value>> VConcatOp::decomposeOperation(OpBuilder &b) {
+FailureOr<SmallVector<Value>> VConcatOp::decomposeOperation(PatternRewriter &b) {
   if (hasPureTensorSemantics()) {
     return failure();
   }
@@ -356,7 +357,7 @@ decomposeMemRefDeinterleave(VDeinterleaveOp &op, mlir::OpBuilder &b) {
 } // namespace mlir::hivm
 
 mlir::FailureOr<llvm::SmallVector<mlir::Value>>
-VDeinterleaveOp::decomposeOperation(mlir::OpBuilder &b) {
+VDeinterleaveOp::decomposeOperation(mlir::PatternRewriter &b) {
   // only apply pattern for hivm.deinterleave on shaped type of i8
   const Type srcType = getSrc().getType();
   if (!getElementTypeOrSelf(srcType).isInteger(8))
@@ -418,7 +419,7 @@ static FailureOr<Value> insertViewFromByteAlloc(Value alloc, Type elemType,
 /// Returns the memref buffer to initialize via VBrc before load/nd2nz.
 /// Uses the underlying alloc when its element type matches dst; otherwise
 /// inserts a 1-D view on the byte alloc sized from the alloc only.
-static FailureOr<Value> getVBrcPadBuffer(Value dst, OpBuilder &b) {
+static FailureOr<Value> getVBrcPadBuffer(Value dst, PatternRewriter &b) {
   auto maybeAlloc = traceDefOp<memref::AllocOp>(dst);
   if (!maybeAlloc.has_value())
     return failure();
@@ -440,7 +441,7 @@ static FailureOr<Value> getVBrcPadBuffer(Value dst, OpBuilder &b) {
     auto markOp = cast<annotation::MarkOp>(*maybePageMark);
     if (!markOp.getValues().empty()) {
       Value subview = markOp.getValues().front();
-      markOp->erase();
+      b.eraseOp(markOp);
       return subview;
     }
   }
@@ -514,7 +515,7 @@ static FailureOr<Value> getVBrcPadBuffer(Value dst, OpBuilder &b) {
 // LoadOp
 //===----------------------------------------------------------------------===//
 
-FailureOr<SmallVector<Value>> LoadOp::decomposeOperation(OpBuilder &b) {
+FailureOr<SmallVector<Value>> LoadOp::decomposeOperation(PatternRewriter &b) {
   if (!hasPureBufferSemantics())
     return failure();
   if (!getInitOutBuffer())
@@ -562,7 +563,7 @@ FailureOr<SmallVector<Value>> LoadOp::decomposeOperation(OpBuilder &b) {
 // ND2NZOp
 //===----------------------------------------------------------------------===//
 
-FailureOr<SmallVector<Value>> ND2NZOp::decomposeOperation(OpBuilder &b) {
+FailureOr<SmallVector<Value>> ND2NZOp::decomposeOperation(PatternRewriter &b) {
   if (!hasPureBufferSemantics())
     return failure();
   if (!getInitOutBuffer())
@@ -937,7 +938,7 @@ private:
 };
 } // namespace
 
-FailureOr<SmallVector<Value>> VPadOp::decomposeOperation(OpBuilder &b) {
+FailureOr<SmallVector<Value>> VPadOp::decomposeOperation(PatternRewriter &b) {
   return VPadOpDecomposer::run(*this, b);
 }
 
@@ -1017,7 +1018,7 @@ FailureOr<SmallVector<Value>> decomposeMultiAxesVReduceOp(hivm::VReduceOp op,
 }
 } // namespace mlir::hivm
 
-FailureOr<SmallVector<Value>> VReduceOp::decomposeOperation(OpBuilder &b) {
+FailureOr<SmallVector<Value>> VReduceOp::decomposeOperation(PatternRewriter &b) {
   const int reduceDimSize = static_cast<int>(getReduceDims().size());
   if (reduceDimSize < 2) {
     return failure();
@@ -1165,7 +1166,7 @@ decomposeUnalignTransposeOp(VTransposeOp op, OpBuilder &builder) {
 
 } // namespace mlir::hivm
 
-FailureOr<SmallVector<Value>> VTransposeOp::decomposeOperation(OpBuilder &b) {
+FailureOr<SmallVector<Value>> VTransposeOp::decomposeOperation(PatternRewriter &b) {
   return decomposeUnalignTransposeOp(*this, b);
 }
 
@@ -1281,7 +1282,7 @@ static FailureOr<SmallVector<Value>> decomposeBinaryVecOpLayout(OpType op,
 
 // Binary VectorOp
 #define DECOMPOSE_BINARY_VEC_OP(opName)                                        \
-  FailureOr<SmallVector<Value>> opName::decomposeOperation(OpBuilder &b) {     \
+  FailureOr<SmallVector<Value>> opName::decomposeOperation(PatternRewriter &b) {     \
     return decomposeBinaryVecOpLayout(*this, b);                               \
   }
 

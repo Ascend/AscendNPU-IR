@@ -257,14 +257,14 @@ llvm::SmallVector<int64_t> getBlockSizes(mlir::Value oper) {
   return kBlockSizes;
 }
 
+/// Scale fractal tile sizes as [f0, f1] matching the trailing dims of the
+/// fractal tensor shape [..., f0, f1]. For i8 this is [16, 2]: M is tiled by
+/// FRACTAL_BLOCK_NUM and the K/32 scale axis by 2 bytes.
 llvm::SmallVector<int64_t> getScaleBlockSizes(mlir::Value oper) {
-  llvm::SmallVector<int64_t> kBlockSizes;
   auto elementType = getElementTypeOrSelf(oper.getType());
-  size_t kBlockSize =
+  int64_t kBlockSize =
       2 * utils::kBitsToByte / elementType.getIntOrFloatBitWidth();
-  kBlockSizes.push_back(kBlockSize);
-  kBlockSizes.push_back(utils::FRACTAL_BLOCK_NUM);
-  return kBlockSizes;
+  return {utils::FRACTAL_BLOCK_NUM, kBlockSize};
 }
 
 /// @brief Computes the block sizes for the A/B operands, with special handling
@@ -943,6 +943,13 @@ MatmulBiasMode getMatmulLikeBiasMode(LocalMmadTy localMatmulOp) {
                              : MatmulBiasMode::ElementwiseAdd;
 }
 
+template <typename LocalMmadTy>
+bool shouldDecomposeLocalMatmulBiasByElementAdd(LocalMmadTy localMatmulOp) {
+  if (localMatmulOp.getMatmulBiasMode() != MatmulBiasMode::ElementwiseAdd)
+    return false;
+  return !isSingleChainMmadToMmad(localMatmulOp);
+}
+
 FailureOr<DataLayoutAttr> MmadL1Op::getOperandALayout() {
   return detail::getLocalMatmulOperandALayoutImpl(*this);
 }
@@ -1000,23 +1007,7 @@ MatmulBiasMode MmadL1Op::getMatmulBiasMode() {
 }
 
 bool MmadL1Op::shouldDecomposeBiasByElementAdd() {
-  if (this->getMatmulBiasMode() != MatmulBiasMode::ElementwiseAdd) {
-    // Type of C is not used for accumulating
-    return false;
-  }
-
-  if (isSingleChainMmadToMmad<MmadL1Op>(*this)) {
-    // One of accumulating situation is C to C:
-    // the C can be stored in L0c and directly be the init operand of local
-    // matmul like op, so no need decomposing by mmad op and additionally vector
-    // add.
-    return false;
-  }
-
-  // The other of accumulating situation is :
-  // should decompose local matmul like op with bias to local matmul like op and
-  // additional vector add op.
-  return true;
+  return shouldDecomposeLocalMatmulBiasByElementAdd(*this);
 }
 
 bool MmadL1Op::shouldDecomposeBiasByCrossLoopElementAdd() {
@@ -1091,23 +1082,7 @@ BatchMmadL1Op::getMatmulBlockSizesTile(Value oper, bool isTranspose,
 }
 
 bool BatchMmadL1Op::shouldDecomposeBiasByElementAdd() {
-  if (this->getMatmulBiasMode() != MatmulBiasMode::ElementwiseAdd) {
-    // Type of C is not used for accumulating
-    return false;
-  }
-
-  if (isSingleChainMmadToMmad<BatchMmadL1Op>(*this)) {
-    // One of accumulating situation is C to C:
-    // the C can be stored in L0c and directly be the init operand of local
-    // matmul like op, so no need decomposing by mmad op and additionally vector
-    // add.
-    return false;
-  }
-
-  // The other of accumulating situation is :
-  // should decompose local matmul like op with bias to local matmul like op and
-  // additional vector add op.
-  return true;
+  return shouldDecomposeLocalMatmulBiasByElementAdd(*this);
 }
 
 bool BatchMmadL1Op::shouldDecomposeBiasByCrossLoopElementAdd() {
@@ -1215,25 +1190,45 @@ LogicalResult MixGroupMatmulOp::verify() {
 // MmadMxL1Op
 //===----------------------------------------------------------------------===//
 
+void MmadMxL1Op::build(OpBuilder &odsBuilder, OperationState &odsState,
+                       TypeRange result_tensors, Value a, Value b, Value scaleA,
+                       Value scaleB, Value init_condition, Value real_m,
+                       Value real_k, Value real_n, Value c,
+                       IntegerAttr lhsFormat, IntegerAttr rhsFormat,
+                       UnitAttr a_transpose, UnitAttr b_transpose,
+                       Value per_channel_bias) {
+  build(odsBuilder, odsState, result_tensors, a, b, scaleA, scaleB,
+        init_condition, real_m, real_k, real_n, c,
+        /*sync_related_args*/ ValueRange{}, per_channel_bias, lhsFormat,
+        rhsFormat, a_transpose, b_transpose);
+}
+
+SmallVector<Value>
+MmadMxL1Op::getInputOperands(bool includeSyncRelatedArgs /*=true*/) {
+  SmallVector<Value> retOperands;
+  retOperands.push_back(getA());
+  retOperands.push_back(getB());
+  retOperands.push_back(getScaleA());
+  retOperands.push_back(getScaleB());
+  retOperands.push_back(getInitCondition());
+  retOperands.push_back(getRealM());
+  retOperands.push_back(getRealK());
+  retOperands.push_back(getRealN());
+  if (getPerChannelBias()) {
+    retOperands.push_back(getPerChannelBias());
+  }
+  if (includeSyncRelatedArgs) {
+    auto syncRelatedArgs = getSyncRelatedArgs();
+    std::copy(syncRelatedArgs.begin(), syncRelatedArgs.end(),
+              std::back_inserter(retOperands));
+  }
+  return retOperands;
+}
+
 llvm::SmallDenseMap<Value, DataLayoutAttr>
 MmadMxL1Op::getOperandsTargetLayout() {
-  llvm::SmallDenseMap<Value, DataLayoutAttr> valLayoutMap;
-
-  auto operA = getA();
-  bool isATranspose = false;
-  auto aBlockSizes = getBlockSizes(operA);
-  auto mALayoutAttr = DataLayoutAttr::get(
-      getContext(), isATranspose ? DataLayout::nZ : DataLayout::zN, BoolAttr(),
-      mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(aBlockSizes)));
-  valLayoutMap[operA] = mALayoutAttr;
-
-  auto operB = getB();
-  bool isBTranspose = false;
-  auto bBlockSizes = getBlockSizesTile(operB, isBTranspose, false);
-  auto mBLayoutAttr = DataLayoutAttr::get(
-      getContext(), isBTranspose ? DataLayout::nZ : DataLayout::zN, BoolAttr(),
-      mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(bBlockSizes)));
-  valLayoutMap[operB] = mBLayoutAttr;
+  llvm::SmallDenseMap<Value, DataLayoutAttr> valLayoutMap =
+      getMatmulOperandsTargetLayout();
 
   auto operScaleA = getScaleA();
   auto scaleABlockSizes = getScaleBlockSizes(operScaleA);
@@ -1249,58 +1244,58 @@ MmadMxL1Op::getOperandsTargetLayout() {
       mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(scaleBBlockSizes)));
   valLayoutMap[operScaleB] = scaleBLayoutAttr;
 
-  llvm::SmallVector<int64_t> cBlockSizes;
-  cBlockSizes.push_back(utils::FRACTAL_BLOCK_NUM);
-  cBlockSizes.push_back(utils::FRACTAL_BLOCK_NUM);
-  auto mCLayoutAttr = DataLayoutAttr::get(
-      getContext(), DataLayout::zN, BoolAttr(),
-      mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(cBlockSizes)));
-  valLayoutMap[getC()] = mCLayoutAttr;
+  if (auto bias = getPerChannelBias()) {
+    auto biasLayoutAttr =
+        DataLayoutAttr::get(getContext(), DataLayout::ND, nullptr, nullptr);
+    valLayoutMap[bias] = biasLayoutAttr;
+  }
+
   return valLayoutMap;
 }
 
-FailureOr<DataLayoutAttr> MmadMxL1Op::getOperandALayout() {
-  auto rank = getRankFromShapedTypeValue(getA());
-  if (failed(rank)) {
-    return failure();
-  }
-  switch (*rank) {
-  case kDimTwo:
-    return DataLayoutAttr::get(getContext(), DataLayout::DOTA_ND, false);
-  case kDimFour: {
-    auto shape = cast<MemRefType>(getA().getType()).getShape();
-    // When the alloc is four-dimensional, the last two dims should be the
-    // fractal block sizes.
-    return DataLayoutAttr::get(
-        getContext(), DataLayout::zN, BoolAttr(),
-        mlir::DenseI64ArrayAttr::get(getContext(),
-                                     ArrayRef({shape[2], shape[3]})));
-  }
-  default:
-    return failure();
-  }
+FractalOperandLayouts MmadMxL1Op::getOperandsTargetFractalLayout() {
+  FractalOperandLayouts layouts;
+
+  auto operA = getA();
+  bool isATranspose = getATranspose().has_value();
+  auto aBlockSizes = getBlockSizesTile(operA, isATranspose, true);
+  layouts.a = DataLayoutAttr::get(
+      getContext(), DataLayout::Fractal, nullptr,
+      mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(aBlockSizes)));
+
+  auto operB = getB();
+  bool isBTranspose = getBTranspose().has_value();
+  auto bBlockSizes = getBlockSizesTile(operB, isBTranspose, false);
+  layouts.b = DataLayoutAttr::get(
+      getContext(), DataLayout::Fractal, nullptr,
+      mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(bBlockSizes)));
+
+  llvm::SmallVector<int64_t> cBlockSizes;
+  cBlockSizes.push_back(utils::FRACTAL_BLOCK_NUM);
+  cBlockSizes.push_back(utils::FRACTAL_BLOCK_NUM);
+  layouts.c = DataLayoutAttr::get(
+      getContext(), DataLayout::Fractal, nullptr,
+      mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(cBlockSizes)));
+
+  auto scaleABlockSizes = getScaleBlockSizes(getScaleA());
+  layouts.scaleA = DataLayoutAttr::get(
+      getContext(), DataLayout::SCALEA_zZ, BoolAttr(),
+      mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(scaleABlockSizes)));
+
+  auto scaleBBlockSizes = getScaleBlockSizes(getScaleB());
+  layouts.scaleB = DataLayoutAttr::get(
+      getContext(), DataLayout::SCALEB_nN, BoolAttr(),
+      mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(scaleBBlockSizes)));
+
+  return layouts;
 }
 
-FailureOr<DataLayoutAttr> MmadMxL1Op::getOperandBLayout() {
-  auto rank = getRankFromShapedTypeValue(getB());
-  if (failed(rank)) {
-    return failure();
-  }
-  switch (*rank) {
-  case kDimTwo:
-    return DataLayoutAttr::get(getContext(), DataLayout::DOTB_ND, false);
-  case kDimFour: {
-    auto shape = cast<MemRefType>(getB().getType()).getShape();
-    // When the alloc is four-dimensional, the last two dims should be the
-    // fractal block sizes.
-    return DataLayoutAttr::get(
-        getContext(), DataLayout::zN, BoolAttr(),
-        mlir::DenseI64ArrayAttr::get(getContext(),
-                                     ArrayRef({shape[2], shape[3]})));
-  }
-  default:
-    return failure();
-  }
+FailureOr<DataLayoutAttr> MmadMxL1Op::getOperandALayout() const {
+  return detail::getLocalMatmulOperandALayoutImpl(*this);
+}
+
+FailureOr<DataLayoutAttr> MmadMxL1Op::getOperandBLayout() const {
+  return detail::getLocalMatmulOperandBLayoutImpl(*this);
 }
 
 FailureOr<DataLayoutAttr> MmadMxL1Op::getOperandScaleALayout() {
@@ -1349,14 +1344,19 @@ FailureOr<DataLayoutAttr> MmadMxL1Op::getOperandScaleBLayout() {
   }
 }
 
-FailureOr<DataLayoutAttr> MmadMxL1Op::getOperandCLayout() {
-  auto rank = getRankFromShapedTypeValue(getC());
+FailureOr<DataLayoutAttr> MmadMxL1Op::getOperandCLayout() const {
+  return detail::getLocalMatmulOperandCLayoutImpl(*this);
+}
+
+FailureOr<DataLayoutAttr> MmadMxL1Op::getOperandBiasLayout() {
+  auto rank = getRankFromShapedTypeValue(getPerChannelBias());
   if (failed(rank)) {
     return failure();
   }
   switch (*rank) {
+  case kDimOne:
   case kDimTwo:
-    return DataLayoutAttr::get(getContext(), DataLayout::DOTC_ND);
+    return DataLayoutAttr::get(getContext(), DataLayout::ND);
   case kDimFour:
     return DataLayoutAttr::get(getContext(), DataLayout::zN);
   default:
@@ -1366,15 +1366,8 @@ FailureOr<DataLayoutAttr> MmadMxL1Op::getOperandCLayout() {
 
 llvm::SmallDenseMap<Value, DataLayoutAttr>
 MmadMxL1Op::getOperandsCurrentLayout() {
-  llvm::SmallDenseMap<Value, DataLayoutAttr> valLayoutMap;
-
-  auto aLayoutAttr = getOperandALayout();
-  assert(succeeded(aLayoutAttr) && "Cannot get layout for Matrix A");
-  valLayoutMap[getDpsInputOperand(0)->get()] = *aLayoutAttr;
-
-  auto bLayoutAttr = getOperandBLayout();
-  assert(succeeded(bLayoutAttr) && "Cannot get layout for Matrix B");
-  valLayoutMap[getDpsInputOperand(1)->get()] = *bLayoutAttr;
+  llvm::SmallDenseMap<Value, DataLayoutAttr> valLayoutMap =
+      getMatmulOperandsCurrentLayout();
 
   auto scaleALayoutAttr = getOperandScaleALayout();
   assert(succeeded(scaleALayoutAttr) && "Cannot get layout for Matrix C");
@@ -1384,9 +1377,11 @@ MmadMxL1Op::getOperandsCurrentLayout() {
   assert(succeeded(scaleBLayoutAttr) && "Cannot get layout for Matrix C");
   valLayoutMap[this->getScaleB()] = *scaleBLayoutAttr;
 
-  auto cLayoutAttr = getOperandCLayout();
-  assert(succeeded(cLayoutAttr) && "Cannot get layout for Matrix C");
-  valLayoutMap[getDpsInitOperand(0)->get()] = *cLayoutAttr;
+  if (getPerChannelBias()) {
+    auto biasLayoutAttr = getOperandBiasLayout();
+    assert(succeeded(biasLayoutAttr) && "Cannot get layout for bias");
+    valLayoutMap[getPerChannelBias()] = *biasLayoutAttr;
+  }
 
   return valLayoutMap;
 }
@@ -1400,9 +1395,7 @@ void MmadMxL1Op::setInitCondition(Value init) {
 }
 
 bool MmadMxL1Op::shouldDecomposeBiasByElementAdd() {
-  if (this->getMatmulBiasMode() != MatmulBiasMode::ElementwiseAdd)
-    return false;
-  return true;
+  return shouldDecomposeLocalMatmulBiasByElementAdd(*this);
 }
 
 llvm::SmallVector<int64_t>
