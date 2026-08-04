@@ -40,6 +40,31 @@ using IRModulePair =
 using IRFilePair =
     std::pair<std::unique_ptr<llvm::ToolOutputFile>, bishengir::SubCoreTarget>;
 
+struct ScopedCompileTimingContext;
+
+struct CompileTiming {
+  mlir::DefaultTimingManager manager;
+  std::unique_ptr<mlir::TimingScope> rootScope;
+  std::unique_ptr<ScopedCompileTimingContext> context;
+
+  CompileTiming();
+  mlir::TimingScope *getRootScope() const { return rootScope.get(); }
+};
+
+mlir::TimingScope *getCurrentCompileTimingScope();
+
+struct ScopedCompileTimingContext {
+  explicit ScopedCompileTimingContext(CompileTiming *timing);
+  ~ScopedCompileTimingContext();
+
+private:
+  CompileTiming *previousTiming = nullptr;
+};
+
+struct ExternalToolProfiler {
+  static int run(llvm::StringRef name, std::function<int()> fn);
+};
+
 /// This is a utility function to run a pre-constructed pass pipeline on the
 /// input module.
 llvm::LogicalResult
