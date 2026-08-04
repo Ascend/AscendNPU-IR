@@ -6,6 +6,14 @@
 // RUN:   -pass-pipeline="builtin.module(                        \
 // RUN:     func.func(hivm-mark-multi-buffer{enable-auto=true limit-auto-multi-buffer-only-for-local-buffer=true}),cse)" \
 // RUN:   -split-input-file -verify-diagnostics | FileCheck %s --check-prefix=LIMIT-LOCAL
+// RUN: bishengir-opt -allow-unregistered-dialect %s             \
+// RUN:   -pass-pipeline="builtin.module(                        \
+// RUN:     func.func(hivm-mark-multi-buffer{enable-auto=true limit-mix-auto-multi-buffer-buffer=no-limit}),cse)" \
+// RUN:   -split-input-file -verify-diagnostics | FileCheck %s --check-prefix=NO-LIMIT
+// RUN: bishengir-opt -allow-unregistered-dialect %s             \
+// RUN:   -pass-pipeline="builtin.module(                        \
+// RUN:     func.func(hivm-mark-multi-buffer{enable-auto=true limit-mix-auto-multi-buffer-buffer=only-cube}),cse)" \
+// RUN:   -split-input-file -verify-diagnostics | FileCheck %s --check-prefix=ONLY-CUBE
 
 // -----
 // CHECK-LABEL: func.func @test_mark_multi_buffer(
@@ -257,6 +265,41 @@ module {
       annotation.mark %tmp {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<2>} : memref<8xf32, #hivm.address_space<ub>>
       hivm.hir.load ins(%in : memref<8xf32, #hivm.address_space<gm>>) outs(%tmp : memref<8xf32, #hivm.address_space<ub>>)
       hivm.hir.store ins(%tmp : memref<8xf32, #hivm.address_space<ub>>) outs(%out : memref<8xf32, #hivm.address_space<gm>>)
+    }
+    return
+  }
+}
+
+// -----
+// Ascend950 MixCV vector-side multi-buffer: after SplitMixKernel the AIV
+// function carries hivm.part_of_mix. Compile default
+// (--limit-auto-multi-buffer-buffer=no-limit from Options.td) enables vector
+// marking; only-cube keeps the historical cube-only MixCV policy.
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+  // NO-LIMIT-LABEL: func.func @test_a5_mix_vector_mark_no_limit(
+  // ONLY-CUBE-LABEL: func.func @test_a5_mix_vector_mark_no_limit(
+  func.func @test_a5_mix_vector_mark_no_limit(
+      %in: memref<8xf32, #hivm.address_space<gm>>,
+      %out: memref<8xf32, #hivm.address_space<gm>>)
+      attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>,
+                  hivm.func_core_type = #hivm.func_core_type<AIV>,
+                  hivm.part_of_mix} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    scf.for %i = %c0 to %c4 step %c1 {
+      // NO-LIMIT: %[[UB:.*]] = memref.alloca() : memref<8xf32, #hivm.address_space<ub>>
+      // NO-LIMIT-NEXT: annotation.mark %[[UB]] {hivm.multi_buffer = 2 : i32}
+      // ONLY-CUBE: %[[UB:.*]] = memref.alloca() : memref<8xf32, #hivm.address_space<ub>>
+      // ONLY-CUBE-NOT: annotation.mark
+      %ub = memref.alloca() : memref<8xf32, #hivm.address_space<ub>>
+      hivm.hir.load ins(%in : memref<8xf32, #hivm.address_space<gm>>)
+                    outs(%ub : memref<8xf32, #hivm.address_space<ub>>)
+      hivm.hir.vadd ins(%ub, %ub : memref<8xf32, #hivm.address_space<ub>>,
+                                   memref<8xf32, #hivm.address_space<ub>>)
+                    outs(%ub : memref<8xf32, #hivm.address_space<ub>>)
+      hivm.hir.store ins(%ub : memref<8xf32, #hivm.address_space<ub>>)
+                     outs(%out : memref<8xf32, #hivm.address_space<gm>>)
     }
     return
   }
