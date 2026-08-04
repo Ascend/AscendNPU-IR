@@ -1080,6 +1080,21 @@ getInsertSliceModifyingOp(PatternRewriter &rewriter, InsertSliceOp slicingOp,
   return success();
 }
 
+// A rank-reducing slice's getMixedSizes() is in source index space (includes
+// dropped dims); callers index the result by the result's own rank, so the
+// dropped dims must go.
+static SmallVector<OpFoldResult>
+dropReducedDims(SmallVector<OpFoldResult> sizes,
+                const llvm::SmallBitVector &droppedDims) {
+  if (droppedDims.none())
+    return sizes;
+  SmallVector<OpFoldResult> result;
+  for (auto [idx, size] : llvm::enumerate(sizes))
+    if (!droppedDims.test(idx))
+      result.push_back(size);
+  return result;
+}
+
 SmallVector<OpFoldResult> getMixedSizesOrOutputShape(PatternRewriter &rewriter,
                                                      Value val) {
   auto *op = val.getDefiningOp();
@@ -1091,10 +1106,12 @@ SmallVector<OpFoldResult> getMixedSizesOrOutputShape(PatternRewriter &rewriter,
     return outputShape;
   }
   if (auto hasSizeOp = dyn_cast_or_null<tensor::ExtractSliceOp>(op)) {
-    return hasSizeOp.getMixedSizes();
+    return dropReducedDims(hasSizeOp.getMixedSizes(),
+                           hasSizeOp.getDroppedDims());
   }
   if (auto hasSizeOp = dyn_cast_or_null<memref::SubViewOp>(op)) {
-    return hasSizeOp.getMixedSizes();
+    return dropReducedDims(hasSizeOp.getMixedSizes(),
+                           hasSizeOp.getDroppedDims());
   }
   // Consider returning reify?
   if (isa<RankedTensorType>(val.getType())) {
