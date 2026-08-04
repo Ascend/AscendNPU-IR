@@ -58,6 +58,12 @@ struct ValueComparator {
 
 namespace hivm {
 
+/// Plan memory strategy for storage entry reorder.
+enum class PlanMemoryStrategy {
+  DEFAULT,       // keep original storage entry order without sorting
+  LARGEST_FIRST, // sort by const bits descending, allocate larger buffer first
+};
+
 // TODO : put it into platform info
 #define MASTK_MODE_CTROL_BIT 56
 
@@ -370,6 +376,14 @@ Value getLocalWorkSpaceTensor(
 // Create local lock var
 hivm::CreateSyncBlockLockOp createSyncBlockLockVar(OpBuilder &builder,
                                                    Location loc);
+
+// Upper bound on concurrent lock participants (block_num * subblockdim) used to
+// size the unordered (Bakery) lock buffer when an op carries
+// SyncBlockLockUnorderedAttr. Must match SYNC_LOCK_MAX_PARTICIPANTS in
+// lib/Template/lib/Synchronization/SyncBlockLock/SyncBlockLock.cpp.
+constexpr int64_t kMaxSyncBlockParticipants = 1024;
+constexpr int64_t kUnorderedSyncBlockLockCacheLines =
+    1 + 2 * kMaxSyncBlockParticipants;
 
 /// get Operation alias pair.
 std::vector<std::pair<Value, Value>> getOperationAliasInfo(Operation *op);

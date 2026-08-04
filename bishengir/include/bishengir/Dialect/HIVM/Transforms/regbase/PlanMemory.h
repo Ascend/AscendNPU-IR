@@ -66,6 +66,9 @@ constexpr const int SPEC_LEVEL_1 = 1;
 /// pipe conflict opt.
 constexpr const int SPEC_LEVEL_2 = 2;
 
+/// pipe conflict opt in same loop.
+constexpr const int SPEC_LEVEL_3 = 3;
+
 /// plan information of alloc buffer.
 struct BufferInfo {
   /// Alloc operation of buffer.
@@ -212,9 +215,9 @@ struct PlanRecord {
 using PlanRecHis = SmallVector<PlanRecord>;
 
 struct SpecInfo {
-  int maxLevel = SPEC_LEVEL_2;
+  int maxLevel = SPEC_LEVEL_3;
   int minLevel = SPEC_LEVEL_0;
-  int specLevel = SPEC_LEVEL_2;
+  int specLevel = SPEC_LEVEL_3;
   int childIdx = -1;
   int specStartIdx = 0;
   int rollbackIdx = -1;
@@ -548,12 +551,14 @@ class MemPlanRegBase {
 public:
 MemPlanRegBase(MemPlanMode planMode, bool enableGlobalReuse,
            bool enablePrintMemoryAllocatedSize, bool restrictInplaceAsISA,
-           int simtVFDynamicSize, bool disableVFReachableCheck)
+           int simtVFDynamicSize, bool disableVFReachableCheck,
+           PlanMemoryStrategy planMemoryStrategy = PlanMemoryStrategy::DEFAULT)
       : planMode(planMode), enableGlobalReuse(enableGlobalReuse),
         enablePrintMemoryAllocatedSize(enablePrintMemoryAllocatedSize),
         restrictInplaceAsISA(restrictInplaceAsISA),
         simtVFDynamicSize(simtVFDynamicSize),
         disableVFReachableCheck(disableVFReachableCheck),
+        planMemoryStrategy(planMemoryStrategy),
         vfInplaceReuseInfo(nullptr) {}
 
   LogicalResult plan(bool emitErrors = true);
@@ -626,6 +631,9 @@ protected:
   /// Disable VF reachable check. Default is false
   bool disableVFReachableCheck;
 
+  /// Strategy for reordering storage entries during plan memory.
+  PlanMemoryStrategy planMemoryStrategy;
+
   /// StorageEntry generate.
   void GenerateStorageEntry();
 
@@ -662,12 +670,9 @@ protected:
   /// Start plan.
   PlanStatus PlanMemAddressOfWholeLocalBuffer();
 
-  /// Plan memory only by level0 to report failure info.
-  void PlanMemAddressForLevel0(StorageEntry *rootStorageEntry);
-
-  /// Determine if the current space is enough to allocate all buffers.
-  bool IsEnoughForBuffersNoReuse(StorageEntry *rootStorageEntry,
-                                 size_t restBufferSize, size_t alignUnit);
+  /// Plan memory for single spaceLevel and return maxAllocBits
+  uint64_t PlanMemAddressForSingleLevel(StorageEntry *rootStorageEntry,
+                                        int specLevel);
 
   /// Adjust the allocation order of rootStoreEntry to prioritize the allocation
   /// of buffers corresponding to DMA.
@@ -692,6 +697,20 @@ protected:
                           StorageEntry *e, const SpecInfo &si, int localLevel);
 
   /// spec_level == SPEC_LEVEL_2, mte2/3 do not reuse with vector.
+  /// Check whether current buffer conflicts with the history buffers.
+  bool VerifyConflictStageCommon(
+      PlanRecHis &his, const StorageEntry *e, MemBoundListConstIter &start,
+      const MemBoundList &outline,
+      std::function<bool(const StorageEntry *, const StorageEntry *)>
+          conflictChecker);
+
+  /// spec_level == SPEC_LEVEL_3, do not reuse buffer when pipe conflicts.
+  bool VerifyConflictStage3(PlanRecHis &his, const StorageEntry *e,
+                            int specLevel, MemBoundListConstIter &start,
+                            const MemBoundList &outline);
+
+  /// spec_level == SPEC_LEVEL_2, do not reuse the buffer in same loop when pipe
+  /// conflicts between vector and dma.
   bool VerifyConflictStage2(PlanRecHis &his, const StorageEntry *e,
                             int specLevel, MemBoundListConstIter &start,
                             const MemBoundList &outline);
@@ -706,6 +725,9 @@ protected:
   /// check if e1 and e2 has pipe conflict.
   bool PipeConflict(const StorageEntry *e1, const StorageEntry *e2,
                     DenseMap<StorageEntryPair, bool> &conflictMap);
+
+  /// check if e1 and e2 has same parent loop.
+  bool PipeConflictInSameLoop(const StorageEntry *e1, const StorageEntry *e2);
 
   /// spec_level == SPEC_LEVEL_2, MTE2/MTE3 is pipe conflict with all existing
   /// allocation. check if current entry has OptDmaPipe-conflict with buffers

@@ -354,6 +354,13 @@ struct HIVMCopyOrStoreOpInterface
   LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
                           const BufferizationOptions &options) const {
     auto dpsOp = cast<DestinationStyleOpInterface>(op);
+    // Clean up copyOps inserted by ExposeMemrefWriteToTensor pass
+    if (dpsOp->hasAttr("to_be_replaced")) {
+      rewriter.replaceAllUsesWith(dpsOp->getResult(0),
+                                  dpsOp.getDpsInputOperand(0)->get());
+      rewriter.eraseOp(dpsOp);
+      return success();
+    }
     if (dpsOp.hasPureBufferSemantics()) {
       return success();
     }

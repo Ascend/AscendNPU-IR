@@ -27,6 +27,7 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/BuiltinTypes.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/IR/TypeRange.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 
@@ -72,8 +73,6 @@ static constexpr llvm::StringLiteral maskOpIdx = "mask_op_idx";
 static constexpr llvm::StringLiteral reachedMaskOpsIdx = "reached_mask_ops_idx";
 static constexpr llvm::StringLiteral maskBitWidth = "mask_bit_width";
 static const llvm::StringLiteral simtVFSuffix = "_vf_simt";
-static constexpr llvm::StringLiteral elementAlignmentBitWidth =
-    "element_alignment_bit_width";
 static const llvm::StringLiteral kMapForToForallAttrName = "map_for_to_forall";
 const llvm::StringLiteral padConst = "pad_const";
 inline constexpr llvm::StringLiteral kInlinableQuantScaleAttr =
@@ -361,9 +360,6 @@ memref::StoreOp createSinglePointStore(
 /// Create tensor.empty or memref.alloc op with the same type as source
 Value createEmptyOp(OpBuilder &builder, Location loc, Value source);
 
-/// Create a `bufferization.alloc_tensor` op with the same shape and element
-/// type as `source`. The source must be `TensorType`.
-Value createAllocTensorOp(OpBuilder &builder, Location loc, Value source);
 
 ///  Create tensor.empty or memref.alloc op with the same shape as source
 ///  but with element type targetElemType
@@ -662,6 +658,10 @@ void dumpReassociationIndicesVector(
     const SmallVector<ReassociationIndices> &reassocVec);
 
 bool isUnstructuredMemAccLoop(Operation *op);
+
+void collectAllEffects(
+    Operation *op,
+    SmallVectorImpl<MemoryEffects::EffectInstance> &effects);
 
 int64_t getNumPerRepeat(Type t);
 

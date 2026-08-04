@@ -400,8 +400,6 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
   canonicalizationPipeline(pm, hfusionOptions);
   pm.nest<func::FuncOp>().addPass(createFoldExtractInsertPairPass());
   pm.nest<func::FuncOp>().addPass(hivm::createSinkOpToConsumerInLoopPass());
-  // Deprecated: no longer needed
-  pm.nest<func::FuncOp>().addPass(hivm::createCloneSCFIfYieldOperandPass());
   hfusionVectorizeManualScopePipeline(pm, hfusionOptions);
   // Prepare tree reduce options for RA / AR control.
   TreeReduceEnableFlags treeReduceFlags =

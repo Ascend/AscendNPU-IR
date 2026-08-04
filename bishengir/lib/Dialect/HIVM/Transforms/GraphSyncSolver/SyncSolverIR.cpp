@@ -102,7 +102,17 @@ std::string PointerLikeInfo::str() {
     ret += comma.get();
     ret += std::to_string(allocateSize.value());
   }
+  ret += comma.get();
+  ret += std::string("isWorkSpace=") + (isWorkSpace ? "true" : "false");
+  ret += comma.get();
+  ret += std::string("isTightlyCoupledBuffer=") +
+         (isTightlyCoupledBuffer ? "true" : "false");
   ret += ")";
+  return ret;
+}
+
+std::string AllocLikeInfo::str() {
+  std::string ret = "AllocLikeInfo()";
   return ret;
 }
 
@@ -124,6 +134,10 @@ std::string MemInfo::str() {
   if (this->pointerLikeInfo) {
     ret += comma.get();
     ret += this->pointerLikeInfo->str();
+  }
+  if (this->allocLikeInfo) {
+    ret += comma.get();
+    ret += this->allocLikeInfo->str();
   }
   ret += ")";
   return ret;

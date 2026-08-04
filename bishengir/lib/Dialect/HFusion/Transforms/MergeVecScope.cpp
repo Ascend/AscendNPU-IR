@@ -96,41 +96,9 @@ bool hasMemDependency(ArrayRef<MemoryEffects::EffectInstance> effects1,
   return false;
 }
 
-void collectAllEffects(
-    Operation *op, SmallVectorImpl<MemoryEffects::EffectInstance> &effects) {
-  if (auto callOp = dyn_cast<CallOpInterface>(op)) {
-    for (Value arg : callOp.getArgOperands()) {
-      if (isa<MemRefType>(arg.getType())) {
-        auto addEffect = [&](auto effectType, Value v) {
-          if (auto res = llvm::dyn_cast<OpResult>(v)) {
-            effects.emplace_back(effectType, res, 0, true);
-          } else if (auto bArg = llvm::dyn_cast<BlockArgument>(v)) {
-            effects.emplace_back(effectType, bArg, 0, true);
-          }
-        };
-
-        addEffect(MemoryEffects::Write::get(), arg);
-      }
-    }
-    return;
-  }
-
-  if (auto interface = dyn_cast<MemoryEffectOpInterface>(op)) {
-    interface.getEffects(effects);
-  }
-
-  if (op->hasTrait<mlir::OpTrait::HasRecursiveMemoryEffects>()) {
-    for (Region &region : op->getRegions()) {
-      for (Operation &innerOp : region.getOps()) {
-        collectAllEffects(&innerOp, effects);
-      }
-    }
-  }
-}
-
 void getEffectsOrConservative(
     Operation *op, SmallVectorImpl<MemoryEffects::EffectInstance> &effects) {
-  collectAllEffects(op, effects);
+  utils::collectAllEffects(op, effects);
 
   // only consider memref
   llvm::erase_if(effects, [](const MemoryEffects::EffectInstance &it) {

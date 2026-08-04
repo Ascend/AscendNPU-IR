@@ -157,6 +157,9 @@ struct SyncSolverOptions {
   // Enable block-all mode.
   bool enableBlockAllMode{false};
 
+  // Enable CV patterns.
+  bool enableCVPatterns{false};
+
   SyncSolverOptions(SyncMode syncMode, bool isMemBasedArch, bool isRegBasedArch)
       : syncMode(syncMode), isMemBasedArch(isMemBasedArch),
         isRegBasedArch(isRegBasedArch) {
@@ -568,6 +571,10 @@ getFirstLastOpOfTypes(Operation *parentOp) {
 }
 
 bool isEmptyScope(Scope *scope);
+
+bool isWorkSpaceFuncArgument(func::FuncOp funcOp, BlockArgument funcArg);
+
+llvm::SmallVector<int64_t> getAddresses(const llvm::SmallVector<Value> &addrs);
 
 } // namespace mlir::hivm::syncsolver
 

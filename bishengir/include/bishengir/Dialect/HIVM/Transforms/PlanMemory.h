@@ -508,10 +508,12 @@ using StorageEntryPair = std::pair<const StorageEntry *, const StorageEntry *>;
 class MemPlan {
 public:
   MemPlan(MemPlanMode planMode, bool enableGlobalReuse,
-          bool enableMemoryDisplay, bool restrictInplaceAsISA)
+          bool enableMemoryDisplay, bool restrictInplaceAsISA,
+          PlanMemoryStrategy planMemoryStrategy = PlanMemoryStrategy::DEFAULT)
       : enableMemoryDisplay(enableMemoryDisplay), planMode(planMode),
         enableGlobalReuse(enableGlobalReuse),
-        restrictInplaceAsISA(restrictInplaceAsISA) {}
+        restrictInplaceAsISA(restrictInplaceAsISA),
+        planMemoryStrategy(planMemoryStrategy) {}
 
   LogicalResult plan(bool emitErrors = true);
 
@@ -550,6 +552,9 @@ public:
 
   /// enable memory display tools.
   bool enableMemoryDisplay;
+
+  /// Strategy for reordering storage entries during plan memory.
+  PlanMemoryStrategy planMemoryStrategy;
 
   /// when plan memory failed, record error info
   DenseMap<hivm::AddressSpace, std::string> errorInfo;
@@ -614,12 +619,9 @@ private:
   /// Start plan.
   PlanStatus PlanMemAddressOfWholeLocalBuffer();
 
-  /// Plan memory only by level0 to report failure info.
-  void PlanMemAddressForLevel0(StorageEntry *rootStorageEntry);
-
-  /// Determine if the current space is enough to allocate all buffers.
-  bool IsEnoughForBuffersNoReuse(StorageEntry *rootStorageEntry,
-                                 size_t restBufferSize, size_t alignUnit);
+  /// Plan memory for single spaceLevel and return maxAllocBits
+  uint64_t PlanMemAddressForSingleLevel(StorageEntry *rootStorageEntry,
+                                        int specLevel);
 
   /// Adjust the allocation order of rootStoreEntry to prioritize the allocation
   /// of buffers corresponding to DMA.

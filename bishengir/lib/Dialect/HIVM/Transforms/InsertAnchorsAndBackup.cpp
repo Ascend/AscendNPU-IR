@@ -209,6 +209,14 @@ private:
     return false;
   }
 
+  bool isCVPreloadingScope(Operation *op) const {
+    if (auto scopeOp = dyn_cast<scope::ScopeOp>(op)) {
+      return scopeOp->hasAttr(hivm::PreloadNumAttr::name) ||
+             scopeOp->hasAttr(hivm::MaxPreloadNumAttr::name);
+    }
+    return false;
+  }
+
   bool isSIMTScope(Operation *op) const {
     // Skip anchor-insert in simt scope
     if (auto scopeOp = dyn_cast<scope::ScopeOp>(op)) {
@@ -222,7 +230,7 @@ private:
   }
 
   bool isRegionsToBeAnchored(Operation *op) const {
-    if (isCVPipeliningLoop(op)) {
+    if (isCVPipeliningLoop(op) || isCVPreloadingScope(op)) {
       return true;
     }
     if (isSIMTScope(op)) {
@@ -244,7 +252,7 @@ private:
   }
 
   bool isBlockToBeAnchored(Operation *op, Block &block) const {
-    if (isCVPipeliningLoop(op)) {
+    if (isCVPipeliningLoop(op) || isCVPreloadingScope(op)) {
       return true;
     }
     if (isSIMTScope(op)) {

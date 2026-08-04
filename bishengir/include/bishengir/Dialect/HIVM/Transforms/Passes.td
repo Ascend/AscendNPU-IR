@@ -149,6 +149,20 @@ def MarkMultiBuffer : Pass<"hivm-mark-multi-buffer", "func::FuncOp"> {
                           "Disable l0c for mix auto multi buffer"))}]>,
     Option<"workspaceMultiBufferNum", "set-workspace-multibuffer", "unsigned",
            /*default=*/"4", "Override for multibuffer number for workspace">,
+    Option<"disableMultiBufferOnUB",
+           "disable-multi-buffer-on-ub", "bool",
+           /*default=*/"false",
+           "Skip multi-buffer mark for UB (Vector Load/Store) buffers">,
+    Option<"disableMultiBufferOnL0C",
+           "disable-multi-buffer-on-l0c", "bool",
+           /*default=*/"false",
+           "Skip multi-buffer mark for L0C (Cube accumulator, Fixpipe) buffers">,
+    Option<"disableMultiBufferOnL1",
+           "disable-multi-buffer-on-l1", "bool",
+           /*default=*/"false",
+           "Skip multi-buffer mark for L1 (cbuf, ND2NZ) buffers">,
+    Option<"enablePreload", "enable-preload", "bool",
+           /*default=*/"false", "Mark multi buffer for preload.">,
   ];
 }
 
@@ -212,6 +226,20 @@ def InferHIVMDataLayout : Pass<"hivm-infer-data-layout", "func::FuncOp"> {
   ];
 }
 
+def ExposeMemrefWriteToTensor
+    : Pass<"hivm-expose-memref-write-to-tensor", "func::FuncOp"> {
+  let summary = "Expose memref-level writes to tensor-level analysis.";
+  let description = [{
+    Expose memref-level writes (e.g., hivm.hir.load) to tensor-level analysis
+    by add copyOp for toTensorOp and replace all users of toTensorOp. This makes
+    memref-level writes visible to One-Shot Bufferization analysis, enabling RAW
+    conflict detection and correct copy insertion.
+  }];
+  let constructor = "mlir::hivm::createExposeMemrefWriteToTensorPass()";
+  let dependentDialects =
+    ["bufferization::BufferizationDialect", "memref::MemRefDialect"];
+}
+
 def InferVFMode : Pass<"hivm-infer-vf-mode", "func::FuncOp"> {
   let summary = "Infer vf mode for Ops";
   let constructor = "mlir::hivm::createInferVFModePass()";
@@ -253,6 +281,14 @@ def PlanMemory : Pass<"hivm-plan-memory", "func::FuncOp"> {
     Option<"restrictInplaceAsISA", "restrict-inplace-as-isa", "bool",
            /*default=*/"false",
            "restrict memory inplace as isa, default : false">,
+    Option<"planMemoryStrategy", "plan-memory-strategy", "::mlir::hivm::PlanMemoryStrategy",
+           "mlir::hivm::PlanMemoryStrategy::DEFAULT",
+           "Plan memory strategy for storage entry reorder",
+           [{::llvm::cl::values(
+               clEnumValN(mlir::hivm::PlanMemoryStrategy::DEFAULT, "default",
+                          "keep original storage entry order without sorting"),
+               clEnumValN(mlir::hivm::PlanMemoryStrategy::LARGEST_FIRST, "largest-first",
+                          "sort storage entries by const bits descending, allocate larger buffer first"))}]>,
   ];
 }
 
@@ -289,6 +325,14 @@ def PlanMemoryRegBase : Pass<"hivm-plan-memory-regbase", "ModuleOp"> {
     Option<"disableVFReachableCheck", "disable-vf-reachable-check", "bool",
            /*default=*/"false",
            "Disable VF reachable check, default : false">,
+    Option<"planMemoryStrategy", "plan-memory-strategy", "::mlir::hivm::PlanMemoryStrategy",
+           "mlir::hivm::PlanMemoryStrategy::DEFAULT",
+           "Plan memory strategy for storage entry reorder",
+           [{::llvm::cl::values(
+               clEnumValN(mlir::hivm::PlanMemoryStrategy::DEFAULT, "default",
+                          "keep original storage entry order without sorting"),
+               clEnumValN(mlir::hivm::PlanMemoryStrategy::LARGEST_FIRST, "largest-first",
+                          "sort storage entries by const bits descending, allocate larger buffer first"))}]>,
   ];
 }
 
@@ -369,6 +413,9 @@ def CrossCoreGSS : Pass<"hivm-cross-core-gss", "func::FuncOp"> {
        Option<"useDifferentMultiBufferFlagIds",
               "use-different-multibuffer-flag-ids", "bool", /*default=*/"false",
               "Use different flag-ids for multibuffer backward sync pairs.">,
+       Option<"enableCVPatterns",
+              "enable-cv-patterns", "bool", /*default=*/"true",
+              "Enable CV patterns for cross-core synchronization.">,
        Option<"forceIsMemBased", "force-is-mem-based", "bool",
               /*default=*/"false",
               "Force memory based ai-core architecture mode.">,
@@ -407,6 +454,9 @@ def DelayedCrossCoreGSS : Pass<"hivm-delayed-cross-core-gss", "ModuleOp"> {
        Option<"useDifferentMultiBufferFlagIds",
               "use-different-multibuffer-flag-ids", "bool", /*default=*/"false",
               "Use different flag-ids for multibuffer backward sync pairs.">,
+       Option<"enableCVPatterns",
+              "enable-cv-patterns", "bool", /*default=*/"true",
+              "Enable CV patterns for cross-core synchronization.">,
        Option<"forceIsMemBased", "force-is-mem-based", "bool",
               /*default=*/"false",
               "Force memory based ai-core architecture mode.">,
@@ -711,6 +761,15 @@ def MarkRealCoreType : Pass<"hivm-mark-real-core-type", "ModuleOp"> {
                         "pass becomes a cleanup pass.">];
 }
 
+def HIVMCanonicalizationPipeline
+    : Pass<"hivm-canonicalization-pipeline", "func::FuncOp"> {
+  let summary = "Run HIVM canonicalization pass pipeline on one function";
+  let constructor = "mlir::hivm::createHIVMCanonicalizationPipelinePass()";
+  let dependentDialects = ["hivm::HIVMDialect", "func::FuncDialect",
+                           "arith::ArithDialect", "memref::MemRefDialect", 
+                           "scf::SCFDialect"];
+}
+
 def SetBufferSize : Pass<"hivm-set-buffer-size", "func::FuncOp"> {
   let constructor = "mlir::hivm::createSetBufferSizePass()";
   let dependentDialects = ["arith::ArithDialect", "memref::MemRefDialect"];
@@ -887,7 +946,11 @@ def InsertLoadStoreForMixCV
                  Option<"disableTightCoupledBuffer",
                         "disable-tight-coupled-buffer", "bool",
                         /*default=*/"false",
-                        "Disable Tight Coupled Buffer Allocation">];
+                        "Disable Tight Coupled Buffer Allocation">,
+                 Option<"inferFixpipeDmaMode", "infer-fixpipe-dma-mode", "bool",
+                        /*default=*/"false",
+                        "Infer fixpipe dma_mode from source/destination shape "
+                        "compatibility.">];
 }
 
 def InsertCVTightCoupledBuffer
@@ -897,6 +960,10 @@ def InsertCVTightCoupledBuffer
   let dependentDialects = ["hivm::HIVMDialect",
                            "bufferization::BufferizationDialect",
                            "annotation::AnnotationDialect"];
+  let options = [Option<"onlyInsertTightlyCoupledBuffer",
+                        "only-insert-tightly-coupled-buffer", "bool",
+                        /*default=*/"false",
+                        "only insert tightly coupled buffer">];
 }
 
 def InsertLoadStoreForScalar
@@ -1373,14 +1440,5 @@ def FuseTransposeIntoLoad : Pass<"hivm-fuse-transpose-into-load", "func::FuncOp"
   ];
 }
 
-def CloneSCFIfYieldOperand : Pass<"hivm-clone-scf-if-yield-operand", "func::FuncOp"> {
-  let summary = "Clone scf.if.yield operand for PlanMemory.";
-  let description = [{This pass clones scf.if yield operand if yield operands
-    are same or it is used after this scf.if, avoid inplace by PlanMemory}];
-  let constructor = "mlir::hivm::createCloneSCFIfYieldOperandPass()";
-  let dependentDialects =
-    ["hivm::HIVMDialect", "scf::SCFDialect", "tensor::TensorDialect",
-     "bufferization::BufferizationDialect"];
-}
 
 #endif // BISHENGIR_DIALECT_HIVM_TRANSFORMS_PASSES_TD

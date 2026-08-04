@@ -123,6 +123,10 @@ bufferizationPipeline(OpPassManager &pm,
     pm.nest<func::FuncOp>().addPass(createCloneTensorEmptyPass());
     pm.nest<func::FuncOp>().addPass(createSinkOpToConsumerInLoopPass());
   }
+  // TODO: support process toTensorOp in one-shot-bufferize.
+  // Expose memref-level writes (e.g., hivm.hir.load) to tensor-level analysis
+  // by replacing to_tensor writable with hivm.hir.copy
+  pm.nest<func::FuncOp>().addPass(hivm::createExposeMemrefWriteToTensorPass());
   bufferization::OneShotBufferizationOptions oneShotOptions;
   oneShotOptions.bufferizeFunctionBoundaries = true;
   oneShotOptions.setFunctionBoundaryTypeConversion(
@@ -265,6 +269,7 @@ static void hivmPreBufferizationOptimizationPipeline(
         hivmPipelineOptions.limitAutoMultiBufferBuffer;
     multiBufferOptions.workspaceMultiBufferNum =
         hivmPipelineOptions.setWorkspaceMultibuffer;
+    multiBufferOptions.enablePreload = hivmPipelineOptions.enablePreload;
     pm.addNestedPass<func::FuncOp>(
         createMarkMultiBufferPass(multiBufferOptions));
   }
@@ -314,6 +319,8 @@ static void hivmPreBufferizationOptimizationPipeline(
     planMemoryOption.memMode = MemPlanMode::GLOBAL_WORKSPACE_PLAN;
     planMemoryOption.enableGlobalReuse =
         hivmPipelineOptions.enableHIVMGlobalWorkspaceReuse;
+  planMemoryOption.planMemoryStrategy =
+      hivmPipelineOptions.planMemoryStrategy;
     pm.nest<func::FuncOp>().addPass(createPlanMemoryPass(planMemoryOption));
   }
   // cross-core sync (inject-block-sync) passes.
@@ -459,11 +466,14 @@ static void hivmPostBufferizationOptimizationPipeline(
       hivmPipelineOptions.limitAutoMultiBufferOfLocalBuffer;
   multiBufferOptions.limitMixAutoMultiBufferBuffer =
       hivmPipelineOptions.limitAutoMultiBufferBuffer;
+  multiBufferOptions.enablePreload = hivmPipelineOptions.enablePreload;
   pm.nest<func::FuncOp>().addPass(
       createMarkMultiBufferPass(multiBufferOptions));
   PlanMemoryOptions planMemoryOption;
   planMemoryOption.enableMemoryDisplay =
       hivmPipelineOptions.enableMemoryDisplay;
+  planMemoryOption.planMemoryStrategy =
+      hivmPipelineOptions.planMemoryStrategy;
   pm.nest<func::FuncOp>().addPass(createPlanMemoryPass(planMemoryOption));
 
   // Lower hivm ops to loops

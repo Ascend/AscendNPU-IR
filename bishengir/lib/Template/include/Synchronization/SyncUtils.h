@@ -44,6 +44,18 @@ free_lock_var(memref_t<__gm__ int64_t, 1> *lock_var);
 __aiv__ __attribute__((always_inline)) void
 free_lock_var_with_subblock(memref_t<__gm__ int64_t, 1> *lock_var);
 
+/// Unordered (arrival-order, Lamport Bakery) lock primitives. No fixed
+/// block ordering: whoever takes a ticket first enters first, ties broken by
+/// participant id. See SyncBlockLock.cpp for the layout/coherence contract.
+__aiv__ __attribute__((always_inline)) void
+sync_block_lock_unordered(memref_t<__gm__ int64_t, 1> *lock_var);
+
+__aiv__ __attribute__((always_inline)) void
+sync_block_unlock_unordered(memref_t<__gm__ int64_t, 1> *lock_var);
+
+__aiv__ __attribute__((always_inline)) void
+free_lock_var_unordered(memref_t<__gm__ int64_t, 1> *lock_var);
+
 #define DECLARE_SYNCBLOCKLOCK()                                                \
   __aiv__ __attribute__((always_inline)) void _mlir_ciface_sync_block_lock(    \
       memref_t<__gm__ int64_t, 1> *lock_var)
@@ -95,6 +107,32 @@ free_lock_var_with_subblock(memref_t<__gm__ int64_t, 1> *lock_var);
     free_lock_var_with_subblock(lock_var);                                     \
   }
 
+#define DECLARE_SYNCBLOCKLOCK_UNORDERED()                                      \
+  __aiv__ __attribute__((always_inline)) void                                  \
+  _mlir_ciface_sync_block_lock_unordered(                                      \
+      memref_t<__gm__ int64_t, 1> *lock_var)
+
+#define REGISTE_SYNCBLOCKLOCK_UNORDERED()                                      \
+  DECLARE_SYNCBLOCKLOCK_UNORDERED() { sync_block_lock_unordered(lock_var); }
+
+#define DECLARE_SYNCBLOCKUNLOCK_UNORDERED()                                    \
+  __aiv__ __attribute__((always_inline)) void                                  \
+  _mlir_ciface_sync_block_unlock_unordered(                                    \
+      memref_t<__gm__ int64_t, 1> *lock_var)
+
+#define REGISTE_SYNCBLOCKUNLOCK_UNORDERED()                                    \
+  DECLARE_SYNCBLOCKUNLOCK_UNORDERED() {                                        \
+    sync_block_unlock_unordered(lock_var);                                     \
+  }
+
+#define DECLARE_FREE_LOCK_VAR_UNORDERED()                                      \
+  __aiv__ __attribute__((always_inline)) void                                  \
+  _mlir_ciface_free_lock_var_unordered(                                        \
+      memref_t<__gm__ int64_t, 1> *lock_var)
+
+#define REGISTE_FREE_LOCK_VAR_UNORDERED()                                      \
+  DECLARE_FREE_LOCK_VAR_UNORDERED() { free_lock_var_unordered(lock_var); }
+
 extern "C" {
 //===-------------------------------------------------------------------===//
 // sync_block_lock
@@ -125,5 +163,20 @@ DECLARE_FREE_LOCK_VAR();
 // free_lock_var_with_subblock
 //===-------------------------------------------------------------------===//
 DECLARE_FREE_LOCK_VAR_WITH_SUBBLOCK();
+
+//===-------------------------------------------------------------------===//
+// sync_block_lock_unordered
+//===-------------------------------------------------------------------===//
+DECLARE_SYNCBLOCKLOCK_UNORDERED();
+
+//===-------------------------------------------------------------------===//
+// sync_block_unlock_unordered
+//===-------------------------------------------------------------------===//
+DECLARE_SYNCBLOCKUNLOCK_UNORDERED();
+
+//===-------------------------------------------------------------------===//
+// free_lock_var_unordered
+//===-------------------------------------------------------------------===//
+DECLARE_FREE_LOCK_VAR_UNORDERED();
 }
 #endif // BISHENGIR_LIB_TEMPLATE_INCLUDE_SYNC_UTILS_H

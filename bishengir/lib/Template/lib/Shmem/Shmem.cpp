@@ -99,6 +99,15 @@ _mlir_ciface_aclshmemx_signal_op(memref_t<__gm__ int32_t, 1> sigAddr,
   aclshmemx_signal_op(sigAddr.aligned + sigAddr.offset, signal, sig_op, pe);
 }
 
+// Wrapper for aclshmem_signal_wait_until
+// Returns the contents of the signal object that satisfied the wait condition.
+__aicore__ __attribute__((always_inline)) int32_t
+_mlir_ciface_aclshmem_signal_wait_until(memref_t<__gm__ int32_t, 1> sigAddr,
+                                        int cmp, int32_t cmp_val) {
+  return aclshmem_signal_wait_until(sigAddr.aligned + sigAddr.offset, cmp,
+                                    cmp_val);
+}
+
 // TODO: Consider enhance memref_as_ptr attribute and adapt for HIVMToStandard &
 // ConvertMemrefToBarePtr pass, so that template function can directly use
 // pointer, no need to wrap with memref struct. Macro to generate wrappers for

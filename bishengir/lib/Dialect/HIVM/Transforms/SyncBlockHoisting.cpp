@@ -44,6 +44,22 @@ using namespace mlir::hivm;
 
 namespace {
 
+static constexpr llvm::StringLiteral kPostLoopAllVectorSyncAttr =
+    "hivm.unordered_lock_post_loop_all_vector_sync";
+
+static void insertPostLoopAllVectorSync(PatternRewriter &rewriter,
+                                        Operation *loopOp) {
+  auto *ctx = loopOp->getContext();
+  auto syncMode =
+      hivm::SyncBlockModeAttr::get(ctx, hivm::SyncBlockMode::ALL_VECTOR);
+  auto vectorPipe = hivm::PipeAttr::get(ctx, hivm::PIPE::PIPE_MTE3);
+
+  OpBuilder::InsertionGuard guard(rewriter);
+  rewriter.setInsertionPointAfter(loopOp);
+  rewriter.create<hivm::SyncBlockOp>(loopOp->getLoc(), syncMode, IntegerAttr{},
+                                     Value{}, hivm::PipeAttr{}, vectorPipe);
+}
+
 struct SyncBlockHoistingPass
     : public mlir::impl::SyncBlockHoistingBase<SyncBlockHoistingPass> {
 
@@ -101,6 +117,27 @@ struct HoistingSyncBlockPattern
     if (lockVec.empty())
       return failure();
 
+    bool hasUnorderedLock = false;
+    for (auto lockOp : lockVec)
+      hasUnorderedLock |=
+          lockOp->hasAttr(hivm::SyncBlockLockUnorderedAttr::name);
+
+    // Do NOT hoist unordered lock/unlock out of loops. The unordered bakery
+    // lock supports skipped participants, so it does not need the old ordered
+    // lock's "everyone reaches the lock" transformation. Hoisting would widen
+    // the critical section from the guarded RMW to the whole autoblockify loop,
+    // serializing pure-vector kernels and pulling any later cross-block sync
+    // into the critical section.
+    bool hasCrossBlockSync = false;
+    for (auto &region : op->getRegions())
+      region.walk([&](Operation *inner) {
+        if (isa<hivm::SyncBlockOp, hivm::SyncBlockSetOp, hivm::SyncBlockWaitOp>(
+                inner))
+          hasCrossBlockSync = true;
+      });
+
+    SmallVector<Operation *, 4> createOps;
+    llvm::SmallPtrSet<Operation *, 4> createOpSet;
     for (auto lockOp : lockVec) {
       auto *defOp = lockOp.getLockVar().getDefiningOp();
       if (!isa<CreateSyncBlockLockOp>(defOp)) {
@@ -108,16 +145,50 @@ struct HoistingSyncBlockPattern
             "expected lock memref defined by hivm.hir.create_sync_block_lock");
         return failure();
       }
+      if (createOpSet.insert(defOp).second)
+        createOps.push_back(defOp);
     }
-
-    Value lockMemref = lockVec.front().getLockVar();
-    llvm::SmallPtrSet<Operation *, 4> createOpSet;
-    for (auto lockOp : lockVec)
-      createOpSet.insert(lockOp.getLockVar().getDefiningOp());
 
     auto funcOp = op->getParentOfType<func::FuncOp>();
     assert(funcOp && "sync block hoisting expects loop inside func.func");
     Block &entry = funcOp.getBody().front();
+
+    // move create_sync_block_lock out of the loop if it is nested in the loop.
+    // keep the lock/unlock in the loop to avoid widening the critical section.
+    auto hoistCreateOpsNestedInLoop = [&]() -> bool {
+      bool changed = false;
+      for (auto it = createOps.rbegin(); it != createOps.rend(); ++it) {
+        Operation *createOp = *it;
+        bool nestedInLoop = false;
+        for (Operation *parent = createOp->getParentOp(); parent;
+             parent = parent->getParentOp()) {
+          if (parent == loopOp) {
+            nestedInLoop = true;
+            break;
+          }
+        }
+        if (!nestedInLoop)
+          continue;
+        rewriter.moveOpBefore(createOp, &entry.front());
+        changed = true;
+      }
+      return changed;
+    };
+
+    if (hasUnorderedLock) {
+      bool changed = hoistCreateOpsNestedInLoop();
+      if (hasCrossBlockSync && !loopOp->hasAttr(kPostLoopAllVectorSyncAttr)) {
+        rewriter.modifyOpInPlace(loopOp, [&] {
+          loopOp->setAttr(kPostLoopAllVectorSyncAttr,
+                          UnitAttr::get(loopOp->getContext()));
+        });
+        insertPostLoopAllVectorSync(rewriter, loopOp);
+        return success();
+      }
+      return changed ? success() : failure();
+    }
+
+    Value lockMemref = lockVec.front().getLockVar();
 
     auto primaryCreate =
         cast<CreateSyncBlockLockOp>(lockMemref.getDefiningOp());

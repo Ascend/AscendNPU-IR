@@ -245,9 +245,10 @@ def DisableHIVMTensorCompile : FeatureControlOptions<
 }
 
 def EnableFastDiv : FeatureControlOptions<
-  "Enable conversion of div with constant denominator into mul",
+  "Enable conversion of div with constant denominator into mul "
+  "excluding cases when reciprocal value is denormal or inf value",
   "bool",
-  "false"
+  "true"
 > {
   let passGroup = ["HFUSION"];
 }
@@ -486,6 +487,21 @@ llvm::cl::values(
   }];
 }
 
+def PlanMemoryStrategy : HIVMOptimizationControlOptions<
+  "Plan memory strategy for storage entry reorder.",
+  "mlir::hivm::PlanMemoryStrategy",
+  "mlir::hivm::PlanMemoryStrategy::DEFAULT"
+> {
+  let additionalOptFlags = [{
+llvm::cl::values(
+  clEnumValN(mlir::hivm::PlanMemoryStrategy::DEFAULT, "default",
+             "Keep original storage entry order without sorting"),
+  clEnumValN(mlir::hivm::PlanMemoryStrategy::LARGEST_FIRST, "largest-first",
+             "Sort storage entries by const bits descending, allocate larger buffer first")
+)
+  }];
+}
+
 def EnableAutoBindSubBlock : HIVMOptimizationControlOptions<
   "Enable auto bind sub block.",
   "bool",
@@ -546,7 +562,9 @@ def EnableHIVMInjectBlockAllSync : HIVMOptimizationControlOptions<
 >;
 
 def SetWorkspaceMultibuffer : HIVMOptimizationControlOptions<
-  "Override number of multibuffers for workspace, defaults to 4.",
+  "Override number of multibuffers for workspace. "
+  "TableGen/CLI default is 4 (A3); Ascend950/RegBase applies 2 "
+  "(double-buffer) when this flag is not explicitly set.",
   "unsigned",
   "4"
 >;

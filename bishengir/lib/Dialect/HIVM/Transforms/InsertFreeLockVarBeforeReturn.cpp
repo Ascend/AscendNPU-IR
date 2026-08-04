@@ -53,6 +53,7 @@ namespace {
 struct LockVarInfo {
   Value lockVar;
   bool withSubblock = false;
+  bool unordered = false;
 };
 
 void collectLockVarsAndReturnOps(func::FuncOp funcOp,
@@ -61,13 +62,16 @@ void collectLockVarsAndReturnOps(func::FuncOp funcOp,
   lockVars.clear();
   returnOps.clear();
 
-  llvm::SmallDenseMap<Value, bool> lockVarToWithSubblock;
+  llvm::SmallDenseMap<Value, LockVarInfo> lockVarToInfo;
 
   // assuming that each SyncBlockLock is paired with a SyncBlockUnlock on the
   // same lock_var
-  auto recordLockVar = [&](Value lockVar, bool withSubblock) {
-    lockVarToWithSubblock.try_emplace(lockVar, false).first->second =
-        withSubblock;
+  auto recordLockVar = [&](Value lockVar, bool withSubblock, bool unordered) {
+    auto [it, inserted] =
+        lockVarToInfo.try_emplace(lockVar, LockVarInfo{lockVar});
+    (void)inserted;
+    it->second.withSubblock |= withSubblock;
+    it->second.unordered |= unordered;
   };
 
   // Each SyncBlockLock is assumed paired with a SyncBlockUnlock on the same
@@ -75,14 +79,15 @@ void collectLockVarsAndReturnOps(func::FuncOp funcOp,
   funcOp.walk([&](Operation *op) {
     if (auto lockOp = dyn_cast<SyncBlockLockOp>(op)) {
       recordLockVar(lockOp.getLockVar(),
-                    lockOp->hasAttr(SyncBlockLockWithSubblockAttr::name));
+                    lockOp->hasAttr(SyncBlockLockWithSubblockAttr::name),
+                    lockOp->hasAttr(SyncBlockLockUnorderedAttr::name));
     } else if (auto returnOp = dyn_cast<func::ReturnOp>(op)) {
       returnOps.push_back(returnOp);
     }
   });
 
-  for (const auto &[lockVar, withSubblock] : lockVarToWithSubblock)
-    lockVars.push_back({lockVar, withSubblock});
+  for (const auto &entry : lockVarToInfo)
+    lockVars.push_back(entry.second);
 }
 
 class InsertFreeLockVarBeforeReturnPass
@@ -119,7 +124,10 @@ public:
           auto freeLockOp =
               builder.create<FreeLockVarOp>(returnOp.getLoc(), info.lockVar);
 
-          if (info.withSubblock)
+          if (info.unordered)
+            freeLockOp->setAttr(SyncBlockLockUnorderedAttr::name,
+                                builder.getUnitAttr());
+          else if (info.withSubblock)
             freeLockOp->setAttr(SyncBlockLockWithSubblockAttr::name,
                                 builder.getUnitAttr());
         }

@@ -9,8 +9,11 @@
 #include "bishengir/Dialect/SCF/Transforms/BufferizableOpInterfaceImpl.h"
 #include "bishengir/Dialect/Utils/OpInterfaceUtils.h"
 #include "bishengir/Dialect/HIVM/Utils/RegbaseUtils.h"
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 
 #include "mlir/Dialect/Bufferization/IR/BufferizableOpInterface.h"
+#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Bufferization/Transforms/Bufferize.h"
 #include "mlir/Dialect/Bufferization/Transforms/OneShotAnalysis.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -187,6 +190,69 @@ bool isNotConflicting(Operation *op, OpOperand *uRead, OpOperand *uWrite,
          uRead->getOperandNumber() < uWrite->getOperandNumber() &&
          !state.isInPlace(*uRead);
 }
+
+/// change copy insertion point for preload, like the following:
+/// scf.for ... {
+///     %0 = scope.scope ... {
+///         ...
+///         scope.return %2
+///     }
+///     ...
+///     memref.copy %0, %1
+///     scf.yield %1
+/// }
+
+/// After change insertion point, the IR will be like the following:
+
+/// scf.for ... {
+///     %0 = scope.scope ... {
+///         ...
+///         memref.copy %2, %3
+///         scope.return %3
+///     }
+///     ...
+///     scf.yield %0
+/// }
+LogicalResult resolveConflicts(Operation *op, RewriterBase &rewriter,
+                               const AnalysisState &state) {
+  auto bufferizableOp = cast<BufferizableOpInterface>(op);
+  if (failed(bufferizableOp.resolveTensorOpOperandConflicts(rewriter, state)))
+    return failure();
+  if (!isa<scf::ForOp>(op->getParentOp()))
+    return success();
+
+  OpBuilder::InsertionGuard g(rewriter);
+  auto yieldOp = cast<scf::YieldOp>(op);
+  for (const auto &pair : llvm::enumerate(yieldOp->getOperands())) {
+    auto *defOp = pair.value().getDefiningOp();
+    if (!isa_and_nonnull<bufferization::AllocTensorOp>(defOp)) {
+      continue;
+    }
+    auto scopeResult = defOp->getOperand(0);
+    if (!isa_and_nonnull<scope::ScopeOp>(scopeResult.getDefiningOp()) ||
+        !scopeResult.getDefiningOp()->hasAttr(hivm::PreloadNumAttr::name)) {
+      continue;
+    }
+    // Remove old copy out of scopeOp
+    rewriter.setInsertionPoint(yieldOp);
+    rewriter.modifyOpInPlace(
+        yieldOp, [&]() { yieldOp.setOperand(pair.index(), scopeResult); });
+    rewriter.eraseOp(defOp);
+    // Add new copy in scopeOp
+    auto scopeOp = cast<scope::ScopeOp>(scopeResult.getDefiningOp());
+    auto *returnOp = &scopeOp.getBody()->back();
+    auto returnOpIdx = cast<OpResult>(scopeResult).getResultNumber();
+    auto returnValue = returnOp->getOperand(returnOpIdx);
+    rewriter.setInsertionPoint(returnOp);
+    FailureOr<Value> alloc = allocateTensorForShapedValue(
+        rewriter, returnOp->getLoc(), returnValue, state.getOptions());
+    if (failed(alloc))
+      return failure();
+    rewriter.modifyOpInPlace(
+        returnOp, [&]() { returnOp->setOperand(returnOpIdx, *alloc); });
+  }
+  return success();
+}
 } // namespace YieldOpInterfaceForOpReuseInPlanMemory
 
 RegisterOpInterfaceOverride(
@@ -212,6 +278,12 @@ RegisterOpInterfaceOverride(
     /*InterfaceMethod=*/isNotConflicting,
     /*Impl=*/
     &YieldOpInterfaceForOpReuseInPlanMemory::isNotConflicting);
+
+RegisterOpInterfaceOverride(
+    /*Op=*/scf::YieldOp, /*Interface=*/BufferizableOpInterface,
+    /*InterfaceMethod=*/resolveConflicts,
+    /*Impl=*/
+    &YieldOpInterfaceForOpReuseInPlanMemory::resolveConflicts);
 
 RegisterOpInterfaceOverride(
     /*Op=*/scf::ForOp, /*Interface=*/BufferizableOpInterface,
