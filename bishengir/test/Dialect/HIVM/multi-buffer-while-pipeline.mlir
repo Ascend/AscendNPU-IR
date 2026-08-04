@@ -11,7 +11,8 @@
 // RUN:   -pass-pipeline="builtin.module(                                      \
 // RUN:     hacc-append-device-spec{target=Ascend950PR_9589},                  \
 // RUN:     func.func(hivm-mark-multi-buffer{enable-auto=true limit-mix-auto-multi-buffer-buffer=no-limit}), \
-// RUN:     func.func(hivm-plan-memory,hivm-graph-sync-solver,                  \
+// RUN:     hivm-plan-memory,                                                  \
+// RUN:     func.func(hivm-graph-sync-solver,                                  \
 // RUN:               hivm-enable-multi-buffer,hivm-lower-multi-buffer-counter))" \
 // RUN:   -split-input-file -verify-diagnostics                                \
 // RUN:   | FileCheck %s --check-prefix=A5
@@ -99,8 +100,8 @@ func.func @a5_mix_vector_multibuffer_reuse(
   // A5-DAG: %[[CTR:.*]] = memref.alloca() : memref<1xi64>
   // A5-DAG: memref.store %{{.*}}, %[[CTR]]
 
-  // Multi-buffer physical addresses: phase reuse shows 77824 / 116736 each
-  // appearing twice across the eight pointer_cast slots.
+  // Multi-buffer physical addresses: phase reuse shows 77824 / 116736 / 0
+  // each appearing twice across the eight pointer_cast slots.
   // A5-DAG: %[[C77824:.*]] = arith.constant 77824 : i64
   // A5-DAG: %[[C38912:.*]] = arith.constant 38912 : i64
   // A5-DAG: %[[C116736:.*]] = arith.constant 116736 : i64
