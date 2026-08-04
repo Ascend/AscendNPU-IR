@@ -345,8 +345,26 @@ void BiShengIRCompileMainConfig::registerCLOptions() {
   *clOptionsConfig;
 }
 
+/// Apply arch-dependent defaults that must not override user-provided flags.
+///
+/// `--set-workspace-multibuffer` keeps the TableGen default of 4 for A3, but
+/// Ascend950/RegBase defaults to 2 (double-buffer) to match A5 CV-pipelining
+/// depth and avoid cbuf OOM in PlanMemory. Explicit CLI values are preserved.
+static void applyArchDependentCompileDefaults(
+    BiShengIRCompileMainConfig &config) {
+  auto &opts = cl::getRegisteredOptions();
+  auto it = opts.find("set-workspace-multibuffer");
+  bool hasExplicit =
+      it != opts.end() && it->second->getNumOccurrences() != 0;
+  if (hasExplicit)
+    return;
+  if (mlir::hacc::utils::isRegBasedArch(config.getTarget()))
+    config.setSetWorkspaceMultibuffer(2);
+}
+
 BiShengIRCompileMainConfig BiShengIRCompileMainConfig::createFromCLOptions() {
   BiShengIRCompileMainConfig::collectHIVMCArgs();
+  applyArchDependentCompileDefaults(*clOptionsConfig);
   return *clOptionsConfig;
 }
 
@@ -363,9 +381,11 @@ BiShengIRCompileMainConfig::createFromCLOptions(bool regbase) {
     llvm::cantFail(llvm::errorCodeToError(canonicalizePath(path)),
                    "failed to canonicalize output file path.");
     clOptionsConfig->setOutputFile(path.str().str());
+    applyArchDependentCompileDefaults(*clOptionsConfig);
     return *clOptionsConfig;
   } else {
     BiShengIRCompileMainConfig::collectHIVMCArgs();
+    applyArchDependentCompileDefaults(*clOptionsConfig);
     return *clOptionsConfig;
   }
 }
