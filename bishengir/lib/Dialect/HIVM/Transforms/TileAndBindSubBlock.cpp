@@ -24,6 +24,7 @@
 #include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/AutoScheduleBase.h"
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/Analysis/DimensionAnalyzer.h"
+#include "bishengir/Dialect/HIVM/IR/CustomOp/DistributedTransformUtils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/HoistAffine.h"
@@ -898,6 +899,13 @@ public:
 
     if (op->template hasAttrOfType<UnitAttr>(tiledOp))
       return failure();
+
+    if constexpr (std::is_same_v<hivm::CustomOp, OpType>) {
+      if (isDistributedTypeCustomOp(op.getOperation()) &&
+          op->getNumResults() > op.getOutputs().size()) {
+        return failure();
+      }
+    }
 
     // Copy operations on A2/A3 represent ub-to-ub transfers, whereas on A5 they
     // can be either ub-to-ub or ub-to-l1, with only ub-to-l1 used for CV1:1.
