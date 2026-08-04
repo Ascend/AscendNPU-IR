@@ -365,9 +365,7 @@ void MaxParallelAnalyzer::initializeImpl(Block &block) {
     Operation *groupOp = opsInBlock[currentOpIndex];
     if (!opToGroupIndex.count(groupOp)) {
       auto groupId = AllFusedGroupBlocks.size();
-      DenseSet<Operation *> newGroup;
-      newGroup.insert(groupOp);
-      AllFusedGroupBlocks[groupId] = newGroup;
+      AllFusedGroupBlocks[groupId].insert(groupOp);
       opToGroupIndex.insert({groupOp, groupId});
       groupMetrics[groupId] = getOpMetrics(groupOp);
     }
