@@ -117,6 +117,10 @@ static bool isCVCases(ModuleOp moduleOp) {
 }
 
 void VFFusionPass::runOnOperation() {
+  // TODO: dirty hack to make behaviour of AllOp same as disabled vf-fusion
+  if (fusionMode == FusionMode::AllOp) {
+    return;
+  }
   ModuleOp moduleOp = getOperation();
   RewritePatternSet patterns(&getContext());
   OpBuilder builder(moduleOp.getContext());
