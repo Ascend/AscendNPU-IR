@@ -65,6 +65,10 @@ struct LowerTritonPipelineOptions
       *this, "enable-simt-fast-div",
       llvm::cl::desc("enable SIMT fast division optimization"),
       llvm::cl::init(true)};
+  PassOptions::Option<bool> enableSIMTDeviceDebug{
+      *this, "enable-simt-device-debug",
+      llvm::cl::desc("enable SIMT device print and assert lowering"),
+      llvm::cl::init(false)};
   PassOptions::Option<bool> useDPX{
       *this, "use-dpx",
       llvm::cl::desc("enable SIMT lowering through DPX Dialect"),

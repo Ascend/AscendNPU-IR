@@ -241,11 +241,13 @@ def ConvertTritonAscendGPUToLLVM : Pass<"convert-triton-ascend-gpu-to-llvm", "ml
 
   let dependentDialects = [
     "mlir::LLVM::LLVMDialect",
+    "mlir::func::FuncDialect",
     "mlir::NVVM::NVVMDialect",
     "mlir::scf::SCFDialect",
     "mlir::cf::ControlFlowDialect",
     "mlir::triton::TritonDialect",
     "mlir::triton::gpu::TritonGPUDialect",
+    "mlir::hivm::HIVMDialect",
     "mlir::ascend_dpx::AscendDPXDialect"
   ];
 }

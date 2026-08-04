@@ -1339,6 +1339,14 @@ def EnableSIMTFastDiv : SIMTOptimizationControlOptions<
   bit isSharedWithDownstreamToolchain = 1;
 }
 
+def EnableSIMTDeviceDebug : SIMTOptimizationControlOptions<
+  "Enable SIMT device print and assert lowering",
+  "bool",
+  "false"
+> {
+  bit isSharedWithDownstreamToolchain = 0;
+}
+
 #ifdef BISHENGIR_ENABLE_TRITON_COMPILE
 def ProtonMetricType : ProtonFieldOption<
   "The performance counter metric type we are profiling",

@@ -45,4 +45,33 @@ def SinkDPXLoad :
   }];
 }
 
+def ConvertDebugOpToAscendDPX :
+    Pass<"convert-debug-to-ascenddpx", "mlir::ModuleOp"> {
+  let summary = "Unswizzle shared tensors passed to tt.device_print / tt.assert";
+
+  let description = [{
+    Converts tensors with swizzled shared memory encodings to natural
+    (unswizzled) layout before tt.device_print / tt.assert ops. We use this
+    in SIMT mode to read tensors in logical row-major order (for printing
+    and assertion checking).
+  }];
+
+  let dependentDialects = [
+    "mlir::arith::ArithDialect",
+    "mlir::triton::gpu::TritonGPUDialect",
+    "mlir::triton::TritonDialect",
+    "mlir::ascend_dpx::AscendDPXDialect",
+  ];
+}
+
+def EraseTritonDebugOps :
+    Pass<"erase-triton-debug-ops", "mlir::ModuleOp"> {
+  let summary = "Erase Triton device print and assert operations";
+
+  let description = [{
+    Erases all tt.print and tt.assert operations so disabled SIMT device
+    debugging preserves the existing runtime behavior and performance.
+  }];
+}
+
 #endif // BISHENGIR_TRITONASCENDGPUTOLLVM_PASSES_H

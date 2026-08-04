@@ -1,5 +1,7 @@
 // RUN: bishengir-opt %s --convert-ascend-dpx-to-hivmregbaseintrins --split-input-file -o %t.mlir
 // RUN: cat %t.mlir | FileCheck --enable-var-scope %s
+// RUN: bishengir-opt %t.mlir --convert-ascend-dpx-to-hivmregbaseintrins --split-input-file -o %t.twice.mlir
+// RUN: diff %t.mlir %t.twice.mlir
 
 // CHECK-LABEL: @ascend_dpx_load_lowering
 // CHECK-SAME: %[[ARG0:.*]]: !llvm.ptr<6>
@@ -107,4 +109,43 @@ func.func @ascend_dpx_cache_hint_option_store_lowering(%arg0 : !llvm.ptr<1>, %ar
     // CHECK-SAME: %[[CONST0]]
     ascend_dpx.store %arg0, %arg1, cacheModifier = < L2_CACHE_HINT_WTS_RED > cacheOption = < LOADCACHEOPTION_NCA > : !llvm.ptr<1>, i32
     return
+}
+
+// -----
+
+// CHECK-LABEL: llvm.func @remap_identified_shared_memory(
+// CHECK-SAME: %[[ARG0:.*]]: !llvm.struct<"[[OUTER:[^"]+]]", (struct<"[[INNER:[^"]+]]", packed (ptr<6>, i32)>, struct<packed (ptr<6>, i16)>, struct<"Plain", (i32)>)>)
+// CHECK-SAME: -> !llvm.struct<"[[OUTER]]", (struct<"[[INNER]]", packed (ptr<6>, i32)>, struct<packed (ptr<6>, i16)>, struct<"Plain", (i32)>)> {
+// CHECK: %[[UNDEF:.*]] = llvm.mlir.undef : !llvm.struct<"[[OUTER]]", (struct<"[[INNER]]", packed (ptr<6>, i32)>, struct<packed (ptr<6>, i16)>, struct<"Plain", (i32)>)>
+// CHECK: llvm.return %[[UNDEF]] : !llvm.struct<"[[OUTER]]", (struct<"[[INNER]]", packed (ptr<6>, i32)>, struct<packed (ptr<6>, i16)>, struct<"Plain", (i32)>)>
+// CHECK-LABEL: llvm.func @remap_recursive_shared_memory(
+// CHECK-SAME: %[[ARG0:.*]]: !llvm.struct<"[[NODE:[^"]+]]", (struct<"[[NODE]]">, ptr<6>)>) {
+// CHECK: llvm.mlir.undef : !llvm.struct<"[[NODE]]", (struct<"[[NODE]]">, ptr<6>)>
+// CHECK-LABEL: llvm.func @preserve_opaque_struct(
+// CHECK-SAME: %[[ARG0:.*]]: !llvm.struct<"Opaque", opaque>) {
+// CHECK: llvm.mlir.undef : !llvm.struct<"Opaque", opaque>
+module attributes {
+  dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"ARCH", "dav-c310">>>,
+  hacc.target = #hacc.target<"Ascend910_9589">
+} {
+  llvm.func @remap_identified_shared_memory(
+    %arg0: !llvm.struct<"Outer", (struct<"Inner", packed (ptr<3>, i32)>, struct<packed (ptr<3>, i16)>, struct<"Plain", (i32)>)>
+  ) -> !llvm.struct<"Outer", (struct<"Inner", packed (ptr<3>, i32)>, struct<packed (ptr<3>, i16)>, struct<"Plain", (i32)>)> {
+    %0 = llvm.mlir.undef : !llvm.struct<"Outer", (struct<"Inner", packed (ptr<3>, i32)>, struct<packed (ptr<3>, i16)>, struct<"Plain", (i32)>)>
+    llvm.return %0 : !llvm.struct<"Outer", (struct<"Inner", packed (ptr<3>, i32)>, struct<packed (ptr<3>, i16)>, struct<"Plain", (i32)>)>
+  }
+
+  llvm.func @remap_recursive_shared_memory(
+    %arg0: !llvm.struct<"Node", (struct<"Node">, ptr<3>)>
+  ) {
+    %0 = llvm.mlir.undef : !llvm.struct<"Node", (struct<"Node">, ptr<3>)>
+    llvm.return
+  }
+
+  llvm.func @preserve_opaque_struct(
+    %arg0: !llvm.struct<"Opaque", opaque>
+  ) {
+    %0 = llvm.mlir.undef : !llvm.struct<"Opaque", opaque>
+    llvm.return
+  }
 }

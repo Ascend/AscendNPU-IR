@@ -31,6 +31,7 @@
 
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/ValueRange.h"
+#include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Interfaces/DataLayoutInterfaces.h"
 #include "llvm/ADT/STLExtras.h"
 
@@ -798,35 +799,41 @@ static void scheduleSegment(Block &block, Block::iterator segBegin,
     op->moveBefore(insertPtStores);
 }
 
+/// Return whether an operation must remain fixed relative to the scheduled
+/// load/store segments around it.
+///
+/// This basic-block-local scheduler does not model synchronization or control
+/// flow through nested regions, so neither may be crossed while reordering.
+static bool isSchedulingBoundary(Operation *op) {
+  return isa<ascend_dpx::SyncThreadsOp>(op) || isa<RegionBranchOpInterface>(op);
+}
+
 /// Process a single basic block using bottom-up store-rooted scheduling.
 ///
 /// After SROA, the struct intermediaries are gone and each store's dependency
 /// tree is independent (loads → extractelement → div → insertelement → store).
 /// We reorder operations so each store's full dependency tree is contiguous.
 ///
-/// Scheduling respects barrier boundaries (e.g. ascend_dpx.sync_threads):
-/// operations are never reordered across a barrier. The block is split into
-/// segments at each barrier, and each segment is scheduled independently.
+/// The block is split at each synchronization or region control-flow boundary,
+/// and every segment is scheduled independently.
 static void scheduleBlock(Block &block, const DataLayout &dataLayout) {
   if (block.empty())
     return;
 
-  // Split the block into segments at barrier operations and schedule each
-  // segment independently. This ensures barriers maintain their relative
-  // ordering with respect to loads and stores.
+  // Split the block into independently schedulable segments.
   Operation *terminator = block.getTerminator();
   Block::iterator termIt = terminator->getIterator();
   Block::iterator segBegin = block.begin();
   for (auto it = block.begin(); it != termIt; ++it) {
-    if (isa<ascend_dpx::SyncThreadsOp>(&*it)) {
-      // Schedule the segment [segBegin, it) — everything before this barrier.
+    if (isSchedulingBoundary(&*it)) {
+      // Schedule the segment [segBegin, it) before this fixed boundary.
       if (segBegin != it)
         scheduleSegment(block, segBegin, it, dataLayout);
-      // Skip past the barrier; next segment starts after it.
+      // The next segment starts after the boundary.
       segBegin = std::next(it);
     }
   }
-  // Schedule the final segment (after the last barrier, up to the terminator).
+  // Schedule the final segment (after the last boundary, up to the terminator).
   if (segBegin != termIt)
     scheduleSegment(block, segBegin, termIt, dataLayout);
 }

@@ -190,13 +190,13 @@ struct AdaptGPUKernelPass
     if (isSimdSimtMixCompile) {
       // In the SIMD-SIMT mixed path, HIVMToTriton lowers the one-dimensional
       // HIVM block id to tt.get_program_id x and the VF body performs the
-      // logical 1D -> 3D decomposition itself.  Pass the raw linear NPU block id
-      // as program_id x so the decomposition only happens once.
+      // logical 1D -> 3D decomposition itself.  Pass the raw linear NPU block
+      // id as program_id x so the decomposition only happens once.
       px = newIdx;
-      py = builder.create<LLVM::ConstantOp>(
-          loc, int64Ty, builder.getI64IntegerAttr(0));
-      pz = builder.create<LLVM::ConstantOp>(
-          loc, int64Ty, builder.getI64IntegerAttr(0));
+      py = builder.create<LLVM::ConstantOp>(loc, int64Ty,
+                                            builder.getI64IntegerAttr(0));
+      pz = builder.create<LLVM::ConstantOp>(loc, int64Ty,
+                                            builder.getI64IntegerAttr(0));
     } else {
       // get grid x,y,z from linear grid id using x
       // px = pid % Gx
@@ -367,7 +367,7 @@ struct AdaptGPUKernelPass
             << "Unable to evenly divide allocated shared memory: "
             << sharedMemoryCapacity
             << " across number of logical blocks: " << superBlockFactor;
-            return;
+        return;
       }
       int64_t logicalBlockMem = sharedMemoryCapacity / superBlockFactor;
 
@@ -378,8 +378,7 @@ struct AdaptGPUKernelPass
           numThreadPerWarp = intAttr.getInt();
 
       if (numThreadPerWarp < 0) {
-        moduleOp->emitError()
-            << "Number of threads per warp missing";
+        moduleOp->emitError() << "Number of threads per warp missing";
         return;
       }
 
@@ -400,8 +399,19 @@ struct AdaptGPUKernelPass
     }
 
     funcOp.walk([&](LLVM::AddressOfOp addrOp) {
-      if (addrOp.getGlobalName() == "global_smem") {
+      llvm::StringRef globalName = addrOp.getGlobalName();
+      if (globalName == "global_smem") {
         addrOp.getResult().replaceAllUsesWith(newSharedMemPtr);
+      } else if (globalName.starts_with("_debug_prefix_") ||
+                 globalName.starts_with("_debug_msg_")) {
+        // Debug string globals (_debug_prefix_ / _debug_msg_) are created by
+        // DebugOpToLLVM.cpp (LLVM::createGlobalString) and referenced by the
+        // lowered _mlir_ciface_print_* / _mlir_ciface_assert_* calls in the
+        // SIMT kernel. They are legitimate symbols that must survive
+        // AdaptGPUKernel -- the default branch below would erase the
+        // addressof's users (the GEPs feeding the call) and leave the call
+        // dangling.
+        return;
       } else {
         for (auto &use :
              llvm::make_early_inc_range(addrOp.getResult().getUses())) {
@@ -529,8 +539,15 @@ struct AdaptGPUKernelPass
           pruneUnusedSIMTArgs(funcOp);
         }
       }
-      if (isa<LLVM::GlobalOp>(nestedOp)) {
-        toBeRemoved.push_back(nestedOp);
+      if (auto globalOp = dyn_cast<LLVM::GlobalOp>(nestedOp)) {
+        // @global_smem is dead after convertGridDPXToArgs; the
+        // @_debug_prefix_* / @_debug_msg_* globals created by DebugOpToLLVM.cpp
+        // are still live (the SIMT kernel's _mlir_ciface_print_* /
+        // _mlir_ciface_assert_* calls reach them via addressof+GEP), so leave
+        // them in place.
+        if (!globalOp.getSymName().starts_with("_debug_prefix_") &&
+            !globalOp.getSymName().starts_with("_debug_msg_"))
+          toBeRemoved.push_back(nestedOp);
       }
     });
     for (Operation *op : toBeRemoved)
