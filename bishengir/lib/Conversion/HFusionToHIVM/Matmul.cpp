@@ -543,7 +543,16 @@ MmadL1InfoCollector<T, U>::buildInitCondition(InitTensorInfo &info,
     if (!scfForOp) {
       return failure();
     }
-
+    // Bail out if the iter_arg has any non-forwarding user other than op_:
+    // such a user would observe the un-filled tensor.empty on the first
+    // iteration once the fill is stripped.
+    for (Operation *user : blockArg.getUsers()) {
+      if (user == op_)
+        continue;
+      if (isa<scf::ForOp, scf::YieldOp>(user))
+        continue;
+      return failure();
+    }
     if (OpOperand* tiedYielded = scfForOp.getTiedLoopYieldedValue(blockArg)) {
       // TODO: Change to potential definers analysis which returns set of definers to fix if
       if (!info.initTensorOutermostLoop && !hivm::traceDefOp<T>(tiedYielded->get()).has_value()) {
