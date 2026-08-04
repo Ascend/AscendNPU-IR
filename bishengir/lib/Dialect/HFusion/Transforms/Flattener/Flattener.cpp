@@ -91,8 +91,56 @@ LogicalResult Flattener::flatten(bool multiDynamicShape) {
     propagateBroken();
     dumpIsConnected();
   }
+  breakSubByteI1CollapseBoundaries();
+  propagateBroken();
+  dumpIsConnected();
   adjustOperations();
   return success();
+}
+
+void Flattener::breakSubByteI1CollapseBoundaries() {
+  if (!options.registerBased)
+    return;
+
+  auto isSelectMask = [](Value v) -> bool {
+    for (Operation *user : v.getUsers()) {
+      if (isa<hfusion::SelectOp>(user) && user->getNumOperands() > 0 &&
+          user->getOperand(0) == v)
+        return true;
+    }
+    return false;
+  };
+
+  auto crossesBoundary = [](Value v) -> bool {
+  if (isa<BlockArgument>(v))
+    return isa<func::FuncOp>(
+        cast<BlockArgument>(v).getOwner()->getParentOp());
+  Operation *def = v.getDefiningOp();
+  return def && isa<func::CallOp>(def);
+  };
+
+  for (const auto &valAndIdx : valueToDimIndicesIndex_) {
+    Value val = valAndIdx.first;
+    auto shapedTy = dyn_cast<ShapedType>(val.getType());
+    if (!shapedTy || !shapedTy.hasRank() ||
+        !shapedTy.getElementType().isInteger(1))
+      continue;
+    if (!isSelectMask(val))
+      continue;
+    if (!crossesBoundary(val))
+      continue;
+
+    const auto args = getValueDimIndices(val);
+    ArrayRef<int64_t> shape = shapedTy.getShape();
+    if (args.size() < 2 || shape.size() != args.size())
+      continue;
+
+    int64_t innerAxis = shape.back();
+    if (!ShapedType::isDynamic(innerAxis) && innerAxis % utils::kBitsToByte == 0)
+      continue;
+    for (size_t j = 1; j < args.size(); ++j)
+      disconnect(args[j - 1], args[j]);
+  }
 }
 
 /// This is marking broken based on shape inference
