@@ -56,7 +56,7 @@ def testHIVMPlanMemory():
         module = Module.parse(str_case)
         pm = PassManager("builtin.module")
         pm.enable_ir_printing()
-        pm.add("func.func(hivm-plan-memory)")
+        pm.add("hivm-plan-memory")
         pm.run(module.operation)
         print('--- module: ', module)
 

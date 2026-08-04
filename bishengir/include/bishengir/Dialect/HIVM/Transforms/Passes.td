@@ -257,7 +257,7 @@ def VFOperandSubstitution
   ];
 }
 
-def PlanMemory : Pass<"hivm-plan-memory", "func::FuncOp"> {
+def PlanMemory : Pass<"hivm-plan-memory", "ModuleOp"> {
   let summary = "Plan memory for HIVM Ops";
   let constructor = "mlir::hivm::createPlanMemoryPass()";
   let dependentDialects = ["hivm::HIVMDialect", ];
