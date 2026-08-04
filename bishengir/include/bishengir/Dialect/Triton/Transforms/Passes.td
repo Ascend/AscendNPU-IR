@@ -46,6 +46,21 @@ def SetBishengirSimtOptAttr
   ];
 }
 
+def SetAllowGlobalScratchAttr
+    : Pass<"set-allow-global-scratch-attr", "mlir::ModuleOp"> {
+  let summary = "Set allow global scratch attribute";
+  let description = [{
+    Sets the module attribute controlling whether global scratch is allowed.
+  }];
+  let constructor = "bishengir::triton::createSetAllowGlobalScratchAttrPass()";
+
+  let options = [
+    Option<"enableGlobalScratchAllocation", "enable-global-scratch-allocation",
+          "bool", /*default*/"false",
+          "enable global scratch allocation">,
+  ];
+}
+
 def AdaptTritonIRKernel
    : Pass<"adapt-triton-ir-kernel", "mlir::triton::FuncOp"> {
   let constructor = "bishengir::triton::createAdaptTritonIRKernelPass()";
@@ -164,6 +179,9 @@ def TileDotLoads
            /*default*/"0",
            "Custom tile size for k tiling of dot operations.  0 enables "
            "standard calculation for tile size.">,
+    Option<"enableGlobalScratchAllocation", "enable-global-scratch-allocation", "bool",
+            /*default*/"false",
+            "Whether to allow using global scratch memory for staging.">,
   ];
   let dependentDialects = [
     "mlir::scf::SCFDialect",

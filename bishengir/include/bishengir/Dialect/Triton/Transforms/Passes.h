@@ -39,6 +39,11 @@ std::unique_ptr<mlir::Pass> createTritonRemapPass(const TritonRemapOptions &opti
 std::unique_ptr<mlir::Pass> createSetBishengirSimtOptAttrPass(
     const SetBishengirSimtOptAttrOptions &options = {});
 
+    
+/// Create a pass to add SIMT opt attribution.
+std::unique_ptr<mlir::Pass> createSetAllowGlobalScratchAttrPass(
+ 	const SetAllowGlobalScratchAttrOptions &options = {});
+
 /// Create a pass to adapt Triton IR kernel.
 std::unique_ptr<mlir::Pass> createAdaptTritonIRKernelPass(
     const AdaptTritonIRKernelOptions &options = {});

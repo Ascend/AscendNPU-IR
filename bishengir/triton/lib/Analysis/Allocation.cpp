@@ -517,7 +517,7 @@ private:
               if (superBlockFactor > 1) {
                 currOffset = (currOffset - 1) / 16 * 16 + 16;
               }
-              if (dyn_cast<gpu::ConvertLayoutOp>(buffer->owner) && smemSize > 0 && static_cast<int64_t>(currOffset) * superBlockFactor > smemSize) {
+              if (allowGlobalScratch && dyn_cast<gpu::ConvertLayoutOp>(buffer->owner) && smemSize > 0 && static_cast<int64_t>(currOffset) * superBlockFactor > smemSize) {
                 OpBuilder builder(buffer->owner->getContext());
                 StringAttr gmStore = builder.getStringAttr("true");
                 buffer->owner->setAttr("store_to_gmem", gmStore);
@@ -698,16 +698,34 @@ private:
 #ifdef BSPUB_DAVINCI_BISHENGIR
   int smemSize = 0;
   int superBlockFactor = 1;
+  bool allowGlobalScratch = false;
 
   void setSmemAndSuperBlockFactor() {
     smemSize = 0;
     superBlockFactor = 1;
+    allowGlobalScratch = false;
+
     auto moduleOp = operation->getParentOfType<mlir::ModuleOp>();
     if (!moduleOp) {
       LDBG("module op not found. Skip setting.");
       return;
     }
 
+    // The module attribute specified for allowing global scratch allocation.
+    constexpr static char AttrAllowGlobalScratch[] = "ttg.enable-global-scratch-allocation";
+    if (auto allowGlobalScratchAttr = moduleOp->getAttr(AttrAllowGlobalScratch)) {
+      if (auto boolAttr = dyn_cast<mlir::BoolAttr>(allowGlobalScratchAttr)) {
+        allowGlobalScratch = boolAttr.getValue();
+      } else {
+        moduleOp->emitError() << AttrAllowGlobalScratch << " must be an BoolAttr, but got: "
+          << allowGlobalScratchAttr;
+        return;
+      }
+    } else {
+      LDBG(Twine(AttrAllowGlobalScratch) + " attribute missing. Skip checking.");
+      return;
+    }
+    
     // The module attribute specified for shared memory capacity size.
     constexpr static char AttrShared[] = "ttg.shared";
 

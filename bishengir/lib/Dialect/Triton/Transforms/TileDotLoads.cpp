@@ -1703,9 +1703,10 @@ struct StageNonLoadOperandPattern : public OpRewritePattern<triton::DotOp> {
   /// still gates). Wired from the pass's `smem-budget-bytes` option.
   int64_t smemBudgetBytes;
   int KTileSize = 0; // 0 = auto-pick K-tile size
+  bool allowGlobalScratch;
 
-  StageNonLoadOperandPattern(MLIRContext *ctx, int64_t smemBudgetBytes, int KTileSize = 0)
-      : OpRewritePattern<triton::DotOp>(ctx), smemBudgetBytes(smemBudgetBytes), KTileSize(KTileSize) {
+  StageNonLoadOperandPattern(MLIRContext *ctx, int64_t smemBudgetBytes, int KTileSize = 0, bool allowGlobalScratch = false)
+      : OpRewritePattern<triton::DotOp>(ctx), smemBudgetBytes(smemBudgetBytes), KTileSize(KTileSize), allowGlobalScratch(allowGlobalScratch) {
   }
 
   LogicalResult matchAndRewrite(triton::DotOp dot,
@@ -1827,6 +1828,11 @@ struct StageNonLoadOperandPattern : public OpRewritePattern<triton::DotOp> {
       LLVM_DEBUG(DBGS() << "[StageNonLoadOperand]   -> staging would need "
                         << totalStageBytes << " B; SRAM budget is " << smemBudgetBytes
                         << " B" << '\n');
+      if (!allowGlobalScratch) {
+        LLVM_DEBUG(DBGS() << "[StageNonLoadOperand]   -> Global scratch memory "
+                          << "allocation not allowed; skipping\n");
+        return failure();
+      }
       bool canStageA = (!aLoad && (aEnvBytes <= smemBudgetBytes));
       bool canStageB = (!bLoad && (bEnvBytes <= smemBudgetBytes));
       if (canStageA && canStageB) {
@@ -2315,7 +2321,7 @@ struct TileDotLoadsPass : public impl::TileDotLoadsBase<TileDotLoadsPass> {
     // Stage non-load operands of over-budget dots through scratch SHM/GM.
     {
       RewritePatternSet p(&getContext());
-      p.add<StageNonLoadOperandPattern>(&getContext(), this->smemBudgetBytes, this->KTileSize);
+      p.add<StageNonLoadOperandPattern>(&getContext(), this->smemBudgetBytes, this->KTileSize, this->enableGlobalScratchAllocation);
       (void)applyPatternsGreedily(getOperation(), std::move(p));
     }
 

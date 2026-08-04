@@ -17,6 +17,7 @@ if(BISHENGIR_ENABLE_TRITON_COMPILE)
     RemoveAnnotationMark.cpp
     RewriteSliceOpToTriton.cpp
     SetBishengirSimtOptAttr.cpp
+    SetAllowGlobalScratchAttr.cpp
     PopulateSharedMemoryOffsetToDPX.cpp
     SIMTAutoBlockify.cpp
     SIMTFastDiv.cpp

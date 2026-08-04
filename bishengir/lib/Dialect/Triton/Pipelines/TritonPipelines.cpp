@@ -104,6 +104,11 @@ void buildLowerTritonPipeline(OpPassManager &pm,
   pm.addNestedPass<mlir::triton::FuncOp>(createConvertNonPowerTwoTensorsPass());
   pm.addPass(
       bishengir::triton::createSetBishengirSimtOptAttrPass(optionsSimtOpt));
+  bishengir::SetAllowGlobalScratchAttrOptions optionsGlobalScratch;
+  optionsGlobalScratch.enableGlobalScratchAllocation =
+      options.enableGlobalScratchAllocation;
+  pm.addPass(
+      bishengir::triton::createSetAllowGlobalScratchAttrPass(optionsGlobalScratch));
   AdaptTritonIRKernelOptions adaptOpt;
   adaptOpt.superBlockBarrier = options.superBlockBarrier;
   pm.addNestedPass<mlir::triton::FuncOp>(
@@ -121,6 +126,7 @@ void buildLowerTritonPipeline(OpPassManager &pm,
   bishengir::TileDotLoadsOptions tileDotLoadsOpts;
   tileDotLoadsOpts.smemBudgetBytes = options.sharedDynamicSize;
   tileDotLoadsOpts.KTileSize = options.KTileSize;
+  tileDotLoadsOpts.enableGlobalScratchAllocation = options.enableGlobalScratchAllocation;
   pm.addNestedPass<mlir::triton::FuncOp>(
       bishengir::triton::createTileDotLoadsPass(tileDotLoadsOpts));
   pm.addPass(bishengir::triton::createEnableAscendDPXMMAPass());
@@ -179,7 +185,9 @@ void buildLowerTritonPipeline(OpPassManager &pm,
         bishengir::triton::createSIMTFastDivPass());
   pm.addPass(createConvertSCFToCFPass());
   pm.addPass(mlir::triton::ascend::createAllocateAscendSharedMemory());
-  pm.addPass(mlir::triton::gpu::createTritonGPUGlobalScratchAllocationPass());
+  if (options.enableGlobalScratchAllocation) {
+    pm.addPass(mlir::triton::gpu::createTritonGPUGlobalScratchAllocationPass());
+  }
   if (options.enableSIMTFastDiv && options.useDPX)
     pm.addNestedPass<mlir::triton::FuncOp>(
         bishengir::triton::createPopulateSharedMemoryOffsetToDPXPass());
