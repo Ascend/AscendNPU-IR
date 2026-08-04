@@ -21,6 +21,7 @@
 #include "bishengir/Dialect/HACC/IR/HACCInterfaces.h"
 #include "bishengir/Dialect/HIVM/Analysis/VFInplaceReuseAnalyzer.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/Transforms/VFInplaceReuseReachability.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/HIVM/Transforms/OptMemPlanForPipeline.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
@@ -526,26 +527,6 @@ protected:
 
 /// Pair of StorageEntry.
 using StorageEntryPair = std::pair<const StorageEntry *, const StorageEntry *>;
-
-/// Memoization cache intended to prevent recomputation of
-/// MemPlan::IsInplaceReuseReachable when it called with the same value.
-class InplaceReuseReachableMap {
-public:
-  template <typename DstOpType>
-  void put(Value key, bool val);
-
-  template <typename DstOpType>
-  std::optional<bool> get(Value key);
-
-  void unite(Value val1, Value val2);
-
-private:
-  DenseMap<Value, bool> storeReachable;
-  DenseMap<Value, bool> loadReachable;
-
-  DenseMap<Value, Value> parent;
-  Value find(Value val);
-};
 
 class MemPlanRegBase {
 public:

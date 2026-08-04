@@ -18,7 +18,9 @@
 #define BISHENG_DIALECT_HIVM_TRANSFORMS_PLAN_MEMORY_H
 
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
+#include "bishengir/Dialect/HIVM/Analysis/VFInplaceReuseAnalyzer.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/Transforms/VFInplaceReuseReachability.h"
 #include "bishengir/Dialect/HIVM/Transforms/OptMemPlanForPipeline.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
@@ -509,11 +511,14 @@ class MemPlan {
 public:
   MemPlan(MemPlanMode planMode, bool enableGlobalReuse,
           bool enableMemoryDisplay, bool restrictInplaceAsISA,
+          bool disableVFReachableCheck,
           PlanMemoryStrategy planMemoryStrategy = PlanMemoryStrategy::DEFAULT)
       : enableMemoryDisplay(enableMemoryDisplay), planMode(planMode),
         enableGlobalReuse(enableGlobalReuse),
         restrictInplaceAsISA(restrictInplaceAsISA),
-        planMemoryStrategy(planMemoryStrategy) {}
+        disableVFReachableCheck(disableVFReachableCheck),
+        planMemoryStrategy(planMemoryStrategy),
+        vfInplaceReuseInfo(nullptr) {}
 
   LogicalResult plan(bool emitErrors = true);
 
@@ -546,6 +551,10 @@ public:
 
   inline void SetInplacePairList(SmallVector<ValuePair> inplaceList) {
     inplacePairList = inplaceList;
+  }
+
+  inline void SetVFInplaceReuseInfo(VFCallInplaceReuseInfo *inplaceReuseInfo) {
+    vfInplaceReuseInfo = inplaceReuseInfo;
   }
 
   func::FuncOp func_;
@@ -585,6 +594,12 @@ private:
 
   /// enable HIVM op plan memory inplace
   bool restrictInplaceAsISA;
+
+  /// Disable VF load/store reachability check for inplace reuse.
+  bool disableVFReachableCheck;
+
+  /// inplace-reuse info for the vf call.
+  VFCallInplaceReuseInfo *vfInplaceReuseInfo;
 
   /// StorageEntry generate.
   void GenerateStorageEntry();
@@ -769,6 +784,17 @@ private:
   /// the hivmop that can reuse dst address and src address in limited situation
   bool IsReuseHIVMOp(Operation *op, const Value &genBuffer,
                      const Value &killBuffer) const;
+
+  /// the vf call that can reuse dst address `gen` and src address `kill` in
+  /// limited situation
+  bool IsReuseVFCall(Value gen, Value kill,
+                     InplaceReuseReachableMap &reachableMap) const;
+
+  /// Determines whether the value `src` is reachable to an operand of a
+  /// `DstOpType` operation.
+  template <typename DstOpType>
+  bool IsInplaceReuseReachable(Value src,
+                               InplaceReuseReachableMap &reachableMap) const;
 
   /// Get overlap buffer life.
   DenseMap<ValuePair, BufferLife>
