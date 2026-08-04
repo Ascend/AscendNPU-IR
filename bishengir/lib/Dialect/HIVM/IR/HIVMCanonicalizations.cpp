@@ -546,8 +546,8 @@ struct FoldTrivialAssertDebugOp : public OpRewritePattern<DebugOp> {
 
 /// When sort_axis points to a dimension of size 1 (i.e., sorting a single
 /// element), the vsort is redundant — sorting one element is a no-op.
-/// Additionally, if src and dst have identical memref layouts (same shape,
-/// strides, and address space), we can directly replace dst with src.
+/// Additionally, if src and dst have identical shapes and memory space,
+/// we can directly replace dst with src.
 /// For buffer semantics: replace vsort with a CopyOp (src → dst).
 /// For tensor semantics: replace vsort result with src.
 struct RedundantVSortOp : public OpRewritePattern<VSortOp> {
@@ -572,24 +572,17 @@ struct RedundantVSortOp : public OpRewritePattern<VSortOp> {
       return failure();
     }
 
-    // Check: src and dst_value must have identical layouts
+    // Check: src and dst_value must have identical shapes
     auto dstValueType = dyn_cast<ShapedType>(sortOp.getDstValue().getType());
     if (!dstValueType) {
       return failure();
     }
 
-    // For memref: compare strides and shape; for tensor: compare shape
+    // For memref: compare shape and memory space; for tensor: compare shape
     if (isa<MemRefType>(srcType) && isa<MemRefType>(dstValueType)) {
       auto srcMemref = cast<MemRefType>(srcType);
       auto dstMemref = cast<MemRefType>(dstValueType);
-      SmallVector<int64_t> srcStrides, dstStrides;
-      int64_t srcOffset, dstOffset;
-      if (failed(getStridesAndOffset(srcMemref, srcStrides, srcOffset)) ||
-          failed(getStridesAndOffset(dstMemref, dstStrides, dstOffset))) {
-        return failure();
-      }
       if (srcMemref.getShape() != dstMemref.getShape() ||
-          srcStrides != dstStrides ||
           srcMemref.getMemorySpace() != dstMemref.getMemorySpace()) {
         return failure();
       }

@@ -609,20 +609,6 @@ func.func @test_vsort_sort_axis_non_one_dim(
 
 // -----
 
-// VSort should NOT be eliminated when src and dst have different layouts
-// CHECK-LABEL: func.func @test_vsort_different_layout
-// CHECK: hivm.hir.vsort
-func.func @test_vsort_different_layout(
-    %arg0 : memref<23x1xf32, strided<[32, 1]>, #hivm.address_space<ub>>,
-    %arg1 : memref<23x1xf32, strided<[1, 1]>, #hivm.address_space<ub>>) {
-  hivm.hir.vsort ins(%arg0 : memref<23x1xf32, strided<[32, 1]>, #hivm.address_space<ub>>)
-                  outs(%arg1 : memref<23x1xf32, strided<[1, 1]>, #hivm.address_space<ub>>)
-                  descending = true sort_axis = 1
-  return
-}
-
-// -----
-
 // VSort should NOT be eliminated when dst has an index output (sort with index)
 // CHECK-LABEL: func.func @test_vsort_with_index
 // CHECK: hivm.hir.vsort
