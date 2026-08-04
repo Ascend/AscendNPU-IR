@@ -2215,8 +2215,10 @@ public:
 void populateFoldVtransposePattern(RewritePatternSet &patterns) {
   patterns.add<FoldVtransposePattern<hivm::MmadL1Op>,
                FoldVtransposePattern<hivm::BatchMmadL1Op>,
+               FoldVtransposePattern<hivm::MmadMxL1Op>,
                FoldFractalVtransposePattern<hivm::MmadL1Op>,
-               FoldFractalVtransposePattern<hivm::BatchMmadL1Op>>(
+               FoldFractalVtransposePattern<hivm::BatchMmadL1Op>,
+               FoldFractalVtransposePattern<hivm::MmadMxL1Op>>(
       patterns.getContext());
 }
 
