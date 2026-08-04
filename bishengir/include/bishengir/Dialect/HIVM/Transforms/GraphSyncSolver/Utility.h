@@ -372,6 +372,7 @@ struct ConflictPair {
   bool replacedWithUnitFlag{false};
   bool movedToOuterLoop{false};
   bool isPersistent{false};
+  bool isErased{false};
   Loop *backwardSyncLoopOp{nullptr};
   Occurrence *backwardSyncLoopOcc{nullptr};
   EventIdInfo eventIdInfo;
@@ -427,6 +428,7 @@ struct ConflictPair {
     clonedConflictPair->replacedWithUnitFlag = replacedWithUnitFlag;
     clonedConflictPair->movedToOuterLoop = movedToOuterLoop;
     clonedConflictPair->isPersistent = isPersistent;
+    clonedConflictPair->isErased = isErased;
     clonedConflictPair->backwardSyncLoopOp = backwardSyncLoopOp;
     clonedConflictPair->backwardSyncLoopOcc = backwardSyncLoopOcc;
     clonedConflictPair->eventIdInfo = eventIdInfo;
@@ -581,6 +583,13 @@ bool checkAllParentLoopsAreForLoops(Operation *op);
 Value getValueOrCreateCastToI64(IRRewriter &rewriter, Location loc, Value val);
 
 hivm::TCoreType getOppositeCoreType(hivm::TCoreType coreType);
+
+// Find the unique_ptr in `container` that owns `ptr`.
+template <typename Container, typename T>
+auto findUniquePtr(Container &container, T *ptr) {
+  return llvm::find_if(
+      container, [ptr](const std::unique_ptr<T> &p) { return p.get() == ptr; });
+}
 
 template <typename OpTy>
 llvm::FailureOr<std::pair<OpTy, OpTy>> getFirstLastOp(Operation *parentOp) {

@@ -34,13 +34,51 @@ bool SyncSolverV1::insertConflictPair(
     }
     persistentChosenConflictedPairs.push_back(std::move(conflictPair));
     return true;
-  }
-  if (parOcc1 == parOcc2) {
-    scopeOccChosenConflicts[parOcc1].insert(conflictPair.get());
   } else {
-    scopeOccPairChosenConflicts[{parOcc1, parOcc2}].insert(conflictPair.get());
+    if (parOcc1 == parOcc2) {
+      scopeOccChosenConflicts[parOcc1].insert(conflictPair.get());
+    } else {
+      scopeOccPairChosenConflicts[{parOcc1, parOcc2}].insert(
+          conflictPair.get());
+    }
+    chosenConflictedPairs.push_back(std::move(conflictPair));
+    return true;
   }
-  chosenConflictedPairs.push_back(std::move(conflictPair));
+}
+
+bool SyncSolverV1::eraseConflictPair(ConflictPair *conflictPair) {
+  Occurrence *parOcc1 = conflictPair->parOcc1;
+  Occurrence *parOcc2 = conflictPair->parOcc2;
+  assert(!conflictPair->isPersistent);
+  conflictPair->isErased = true;
+  if (conflictPair->isPersistent) {
+    if (parOcc1 != nullptr) {
+      assert(parOcc2 != nullptr);
+      if (parOcc1 == parOcc2) {
+        persistentScopeOccChosenConflicts[parOcc1].erase(conflictPair);
+      } else {
+        persistentScopeOccPairChosenConflicts[{parOcc1, parOcc2}].erase(
+            conflictPair);
+      }
+    }
+    auto it = findUniquePtr(persistentChosenConflictedPairs, conflictPair);
+    assert(it != persistentChosenConflictedPairs.end());
+    erasedPersistentChosenConflictedPairs.push_back(std::move(*it));
+    persistentChosenConflictedPairs.erase(it);
+  } else {
+    if (parOcc1 != nullptr) {
+      assert(parOcc2 != nullptr);
+      if (parOcc1 == parOcc2) {
+        scopeOccChosenConflicts[parOcc1].erase(conflictPair);
+      } else {
+        scopeOccPairChosenConflicts[{parOcc1, parOcc2}].erase(conflictPair);
+      }
+    }
+    auto it = findUniquePtr(chosenConflictedPairs, conflictPair);
+    assert(it != chosenConflictedPairs.end());
+    erasedChosenConflictedPairs.push_back(std::move(*it));
+    chosenConflictedPairs.erase(it);
+  }
   return true;
 }
 
@@ -129,7 +167,7 @@ bool SyncSolverV1::checkGraphConflict(
     DEBUG_WITH_TYPE("gss-sync-solver-check-graph-conflict", {
       llvm::dbgs() << "add-conflict-pair: " << conflictPair->str() << '\n';
     });
-    graphSolver->addConflictPair(conflictPair);
+    graphSolver->insertConflictPair(conflictPair);
   };
 
   for (auto *parOcc : occ1->getAllParents()) {

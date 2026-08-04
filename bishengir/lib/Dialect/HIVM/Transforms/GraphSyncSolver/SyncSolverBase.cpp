@@ -83,6 +83,8 @@ void SyncSolverBase::reset(bool resetEventIdRanOutOpts) {
   syncedPairs.clear();
   processedOccPairs.clear();
   chosenConflictedPairs.clear();
+  erasedChosenConflictedPairs.clear();
+  erasedPersistentChosenConflictedPairs.clear();
   scopeOccChosenConflicts.clear();
   scopeOccPairChosenConflicts.clear();
   tempInsertedConflictPairs.clear();
@@ -972,10 +974,10 @@ void SyncSolverBase::forgetSyncedPair(ConflictPair *conflictPair) {
 void SyncSolverBase::memorizeReusedSyncedPair(
     ConflictPair *conflictPair, ConflictPair *reusedConflictPair) {
   assert(conflictPair != nullptr);
-  replacedWithReusableSyncedPairs[{
+  auto key = std::make_tuple(
       conflictPair->backwardSyncLoopOp, conflictPair->op1, conflictPair->op2,
-      conflictPair->setCorePipeInfo, conflictPair->waitCorePipeInfo}] =
-      reusedConflictPair;
+      conflictPair->setCorePipeInfo, conflictPair->waitCorePipeInfo);
+  replacedWithReusableSyncedPairs[key] = reusedConflictPair;
 }
 
 bool SyncSolverBase::skipMMad1DecomposedLoopOpt(Occurrence *occ1,
@@ -1594,6 +1596,9 @@ ConflictPair *SyncSolverBase::getReusableConflictPair(
 bool SyncSolverBase::reuseConflictPair(ConflictPair *conflictPair,
                                        Occurrence *scopeOcc1,
                                        Occurrence *scopeOcc2) {
+  if (!options.reuseSyncPairToSaveEventIds) {
+    return false;
+  }
   if (conflictPair->isBarrier()) {
     return false;
   }
@@ -1693,16 +1698,14 @@ bool SyncSolverBase::reuseConflictPair(ConflictPair *conflictPair,
 
   assert(reusableConflictPair->startIndex < conflictPair->startIndex);
   assert(reusableConflictPair->endIndex <= conflictPair->endIndex);
-  reusableConflictPair->setOp = conflictPair->setOp;
-  reusableConflictPair->setOcc = conflictPair->setOcc;
-  // TODO: Update or invalidate V2's cached graph edge when reusing a pair.
-  reusableConflictPair->startIndex = conflictPair->startIndex;
-  // The reused pair takes over this conflict pair's set op, which is no longer
-  // the foldable MmadL1 L0 load the last-iteration optimization assumes.
-  reusableConflictPair->setOnLastIterOnly = false;
+  auto clonedConflictPair = reusableConflictPair->clone();
+  clonedConflictPair->setOp = conflictPair->setOp;
+  clonedConflictPair->setOcc = conflictPair->setOcc;
+  clonedConflictPair->startIndex = conflictPair->startIndex;
+  clonedConflictPair->setOnLastIterOnly = false;
 
   if (!conflictPair->isUseless) {
-    memorizeReusedSyncedPair(conflictPair, reusableConflictPair);
+    memorizeReusedSyncedPair(conflictPair, clonedConflictPair.get());
   }
 
   DEBUG_WITH_TYPE("gss-sync-solver-reuse", {
@@ -1712,15 +1715,17 @@ bool SyncSolverBase::reuseConflictPair(ConflictPair *conflictPair,
   });
 
   if (oldReusedConflictPair != nullptr) {
-    assert(oldReusedConflictPair->op1 == reusableConflictPair->op1);
-    assert(oldReusedConflictPair->op2 == reusableConflictPair->op2);
-    assert(oldReusedConflictPair->waitOp == reusableConflictPair->waitOp);
+    assert(oldReusedConflictPair->op1 == clonedConflictPair->op1);
+    assert(oldReusedConflictPair->op2 == clonedConflictPair->op2);
+    assert(oldReusedConflictPair->waitOp == clonedConflictPair->waitOp);
   }
 
   if (!conflictPair->isUseless) {
     reusedPairs[{corePipeSrc, corePipeDst}] += 1;
   }
 
+  eraseConflictPair(reusableConflictPair);
+  insertConflictPair(std::move(clonedConflictPair));
   return true;
 }
 
@@ -1890,10 +1895,8 @@ ConflictPair *SyncSolverBase::handleSetWaitConflict(
   }
 
   // try reusing existing conflict-pair
-  if (options.reuseSyncPairToSaveEventIds) {
-    if (reuseConflictPair(conflictPair.get(), parOcc1, parOcc2)) {
-      return nullptr;
-    }
+  if (reuseConflictPair(conflictPair.get(), parOcc1, parOcc2)) {
+    return nullptr;
   }
 
   // get event-id-solver

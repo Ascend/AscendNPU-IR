@@ -27,8 +27,9 @@ public:
   // Configuration options.
   const SyncSolverOptions options;
 
-  llvm::SmallVector<int> barrierAllIndexes;
-  llvm::DenseMap<CorePipeInfo, llvm::SmallVector<int>> barrierIndexes;
+  llvm::SmallVector<int> barrierAllIndexes, tempBarrierAllIndexes;
+  llvm::DenseMap<CorePipeInfo, llvm::SmallVector<int>> barrierIndexes,
+      tempBarrierIndexes;
 
   virtual ~GraphSolverBase() = default;
   GraphSolverBase(const SyncSolverOptions &options) : options(options) {}
@@ -36,8 +37,10 @@ public:
   void clearBarrierIndexes();
 
   // Build adjacency list from a ConflictPair by decomposing it into edges.
-  void addConflictPair(syncsolver::ConflictPair *conflictPair,
-                       bool isTemp = false);
+  void insertConflictPair(syncsolver::ConflictPair *conflictPair,
+                          bool isTemp = false);
+  void eraseConflictPair(syncsolver::ConflictPair *conflictPair,
+                         bool isTemp = false);
 
   bool checkAnyBarrierAllBetween(int startIndex, int endIndex);
   bool checkAnyBarrierBetween(CorePipeInfo corePipe, int startIndex,
@@ -46,8 +49,10 @@ public:
   virtual void clearAdjList(bool isTemp) = 0;
 
   // Add a pipe-pair edge annotated with its active index interval.
-  virtual void addPair(CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst,
-                       ConflictPair *conflictPair, bool isTemp = false) = 0;
+  virtual void insertEdge(CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst,
+                          ConflictPair *conflictPair, bool isTemp = false) = 0;
+  virtual void eraseEdge(CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst,
+                         ConflictPair *conflictPair, bool isTemp = false) = 0;
 
   // Run shortest-path search (Dijkstra-like) with ordering constraints to find
   // the minimal reachable index for a path from startPipe to endPipe.
@@ -67,6 +72,13 @@ public:
     Edge() = delete;
     Edge(int startIndex, int endIndex)
         : startIndex(startIndex), endIndex(endIndex) {}
+
+    bool operator==(const Edge &other) const {
+      return std::tie(startIndex, endIndex) ==
+             std::tie(other.startIndex, other.endIndex);
+    }
+
+    bool operator!=(const Edge &other) const { return !(*this == other); }
   };
 
   llvm::DenseMap<CorePipeInfo,
@@ -77,8 +89,10 @@ public:
 
   void clearAdjList(bool isTemp = false) override;
 
-  void addPair(CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst,
-               ConflictPair *conflictPair, bool isTemp = false) override;
+  void insertEdge(CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst,
+                  ConflictPair *conflictPair, bool isTemp = false) override;
+  void eraseEdge(CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst,
+                 ConflictPair *conflictPair, bool isTemp = false) override;
 
   std::optional<int> runDijkstra(CorePipeInfo corePipeSrc,
                                  CorePipeInfo corePipeDst, int startIndex,
@@ -99,6 +113,14 @@ public:
          ConflictPair *conflictPair = nullptr)
         : startIndex(startIndex), endIndex(endIndex), isUnitFlag(isUnitFlag),
           conflictPair(conflictPair) {}
+
+    bool operator==(const Edge &other) const {
+      return std::tie(startIndex, endIndex, isUnitFlag, conflictPair) ==
+             std::tie(other.startIndex, other.endIndex, other.isUnitFlag,
+                      other.conflictPair);
+    }
+
+    bool operator!=(const Edge &other) const { return !(*this == other); }
   };
 
   llvm::DenseMap<CorePipeInfo,
@@ -110,8 +132,10 @@ public:
 
   void clearAdjList(bool isTemp = false) override;
 
-  void addPair(CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst,
-               ConflictPair *conflictPair, bool isTemp = false) override;
+  void insertEdge(CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst,
+                  ConflictPair *conflictPair, bool isTemp = false) override;
+  void eraseEdge(CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst,
+                 ConflictPair *conflictPair, bool isTemp = false) override;
 
   std::optional<int> runDijkstra(CorePipeInfo corePipeSrc,
                                  CorePipeInfo corePipeDst, int startIndex,

@@ -62,7 +62,8 @@ public:
   // Collected conflict pairs chosen by the algorithm for insertion (and
   // persistent ones that survive multiple passes).
   std::vector<std::unique_ptr<ConflictPair>> chosenConflictedPairs,
-      persistentChosenConflictedPairs;
+      persistentChosenConflictedPairs, erasedChosenConflictedPairs,
+      erasedPersistentChosenConflictedPairs;
 
   struct PerfInfo {
     int64_t ordersCheckedNum{0};
@@ -217,6 +218,7 @@ protected:
   virtual void reset(bool resetEventIdRanOutOpts = false);
   virtual bool insertConflictPair(std::unique_ptr<ConflictPair> conflictPair,
                                   Occurrence *parOcc = nullptr) = 0;
+  virtual bool eraseConflictPair(ConflictPair *conflictPair) = 0;
   virtual bool insertTempConflictPair(ConflictPair *conflictPair,
                                       Occurrence *parOcc = nullptr) = 0;
   virtual bool checkCrossCoreIntersect(ConflictPair *conflictPair1,
@@ -522,6 +524,7 @@ protected:
 
   bool insertConflictPair(std::unique_ptr<ConflictPair> conflictPair,
                           Occurrence *parOcc = nullptr) override;
+  bool eraseConflictPair(ConflictPair *conflictPair) override;
   bool insertTempConflictPair(ConflictPair *conflictPair,
                               Occurrence *parOcc = nullptr) override;
   bool checkGraphConflict(
@@ -592,17 +595,21 @@ protected:
   struct GraphSolverInfo {
     std::unique_ptr<GraphSolverBase> graphSolver;
     size_t insertedConflictPairsIndex{0};
-    size_t persistentInsertedConflictPairsIndex{0};
+    size_t insertedPersistentConflictPairsIndex{0};
+    size_t erasedConflictPairsIndex{0};
+    size_t erasedPersistentConflictPairsIndex{0};
   };
   llvm::DenseMap<std::tuple<Occurrence *, Occurrence *, int64_t>,
                  GraphSolverInfo>
       graphSolverMap;
   llvm::SmallVector<std::tuple<Occurrence *, Occurrence *, ConflictPair *>>
-      insertedConflictPairs, persistentInsertedConflictPairs;
+      insertedConflictPairs, insertedPersistentConflictPairs,
+      erasedConflictPairs, erasedPersistentConflictPairs;
 
   void reset(bool resetEventIdRanOutOpts = false) override;
   bool insertConflictPair(std::unique_ptr<ConflictPair> conflictPair,
                           Occurrence *parOcc = nullptr) override;
+  bool eraseConflictPair(ConflictPair *conflictPair) override;
   bool insertTempConflictPair(ConflictPair *conflictPair,
                               Occurrence *parOcc = nullptr) override;
   std::unique_ptr<GraphSolverBase> &

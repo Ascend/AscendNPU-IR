@@ -37,13 +37,31 @@ void GraphSolver::clearAdjList(bool isTemp) {
   }
 }
 
-void GraphSolver::addPair(CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst,
-                          ConflictPair *conflictPair, bool isTemp) {
+void GraphSolver::insertEdge(CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst,
+                             ConflictPair *conflictPair, bool isTemp) {
   Edge edge(conflictPair->startIndex, conflictPair->endIndex);
   if (isTemp) {
     tempAdjacencyList[corePipeSrc][corePipeDst].emplace_back(std::move(edge));
   } else {
     adjacencyList[corePipeSrc][corePipeDst].emplace_back(std::move(edge));
+  }
+}
+
+void GraphSolver::eraseEdge(CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst,
+                            ConflictPair *conflictPair, bool isTemp) {
+  Edge edge(conflictPair->startIndex, conflictPair->endIndex);
+  if (isTemp) {
+    auto it = llvm::find(tempAdjacencyList[corePipeSrc][corePipeDst], edge);
+    assert(it != tempAdjacencyList[corePipeSrc][corePipeDst].end());
+    if (it != tempAdjacencyList[corePipeSrc][corePipeDst].end()) {
+      tempAdjacencyList[corePipeSrc][corePipeDst].erase(it);
+    }
+  } else {
+    auto it = llvm::find(adjacencyList[corePipeSrc][corePipeDst], edge);
+    assert(it != adjacencyList[corePipeSrc][corePipeDst].end());
+    if (it != adjacencyList[corePipeSrc][corePipeDst].end()) {
+      adjacencyList[corePipeSrc][corePipeDst].erase(it);
+    }
   }
 }
 

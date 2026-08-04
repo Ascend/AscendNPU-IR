@@ -14,6 +14,8 @@ using namespace hivm::syncsolver;
 void SyncSolverV2::reset(bool resetEventIdRanOutOpts) {
   SyncSolverBase::reset(resetEventIdRanOutOpts);
   insertedConflictPairs.clear();
+  erasedConflictPairs.clear();
+  erasedPersistentConflictPairs.clear();
   graphSolverMap.clear();
 }
 
@@ -42,7 +44,7 @@ bool SyncSolverV2::insertConflictPair(
         persistentScopeOccPairChosenConflicts[{parOcc1, parOcc2}].insert(
             conflictPair.get());
       }
-      persistentInsertedConflictPairs.emplace_back(parOcc1, parOcc2,
+      insertedPersistentConflictPairs.emplace_back(parOcc1, parOcc2,
                                                    conflictPair.get());
       persistentChosenConflictedPairs.push_back(std::move(conflictPair));
       return true;
@@ -64,6 +66,45 @@ bool SyncSolverV2::insertConflictPair(
     chosenConflictedPairs.push_back(std::move(conflictPair));
     return false;
   }
+}
+
+bool SyncSolverV2::eraseConflictPair(ConflictPair *conflictPair) {
+  Occurrence *parOcc1 = conflictPair->parOcc1;
+  Occurrence *parOcc2 = conflictPair->parOcc2;
+  assert(!conflictPair->isPersistent);
+  conflictPair->isErased = true;
+  if (conflictPair->isPersistent) {
+    if (parOcc1 != nullptr) {
+      assert(parOcc2 != nullptr);
+      if (parOcc1 == parOcc2) {
+        persistentScopeOccChosenConflicts[parOcc1].erase(conflictPair);
+      } else {
+        persistentScopeOccPairChosenConflicts[{parOcc1, parOcc2}].erase(
+            conflictPair);
+      }
+      erasedPersistentConflictPairs.emplace_back(parOcc1, parOcc2,
+                                                 conflictPair);
+    }
+    auto it = findUniquePtr(persistentChosenConflictedPairs, conflictPair);
+    assert(it != persistentChosenConflictedPairs.end());
+    erasedPersistentChosenConflictedPairs.push_back(std::move(*it));
+    persistentChosenConflictedPairs.erase(it);
+  } else {
+    if (parOcc1 != nullptr) {
+      assert(parOcc2 != nullptr);
+      if (parOcc1 == parOcc2) {
+        scopeOccChosenConflicts[parOcc1].erase(conflictPair);
+      } else {
+        scopeOccPairChosenConflicts[{parOcc1, parOcc2}].erase(conflictPair);
+      }
+      erasedConflictPairs.emplace_back(parOcc1, parOcc2, conflictPair);
+    }
+    auto it = findUniquePtr(chosenConflictedPairs, conflictPair);
+    assert(it != chosenConflictedPairs.end());
+    erasedChosenConflictedPairs.push_back(std::move(*it));
+    chosenConflictedPairs.erase(it);
+  }
+  return true;
 }
 
 bool SyncSolverV2::insertTempConflictPair(ConflictPair *conflictPair,
@@ -106,8 +147,9 @@ SyncSolverV2::getGraphSolverRef(Occurrence *occ1, Occurrence *occ2,
 
   auto &graphSolverInfo = graphSolverMap[key];
   auto handleConflictPair = [&](Occurrence *parOcc1, Occurrence *parOcc2,
-                                ConflictPair *conflictPair,
-                                bool isTemp = false) {
+                                ConflictPair *conflictPair, bool isTemp = false,
+                                bool isErase = false) {
+    assert(!isErase || conflictPair->isErased);
     if (conflictPair->couldNotRun) {
       return;
     }
@@ -122,7 +164,11 @@ SyncSolverV2::getGraphSolverRef(Occurrence *occ1, Occurrence *occ2,
                (!parOcc1->isAncestor(occ2) || !parOcc2->isAncestor(occ1))) {
       return;
     }
-    graphSolverInfo.graphSolver->addConflictPair(conflictPair, isTemp);
+    if (isErase) {
+      graphSolverInfo.graphSolver->eraseConflictPair(conflictPair, isTemp);
+    } else {
+      graphSolverInfo.graphSolver->insertConflictPair(conflictPair, isTemp);
+    }
   };
 
   graphSolverInfo.graphSolver->clearAdjList(/*isTemp=*/true);
@@ -134,15 +180,30 @@ SyncSolverV2::getGraphSolverRef(Occurrence *occ1, Occurrence *occ2,
     auto [parOcc1, parOcc2, conflictPair] = insertedConflictPairs[i];
     handleConflictPair(parOcc1, parOcc2, conflictPair);
   }
-  for (size_t i = graphSolverInfo.persistentInsertedConflictPairsIndex;
-       i < persistentInsertedConflictPairs.size(); ++i) {
-    auto [parOcc1, parOcc2, conflictPair] = persistentInsertedConflictPairs[i];
+  for (size_t i = graphSolverInfo.insertedPersistentConflictPairsIndex;
+       i < insertedPersistentConflictPairs.size(); ++i) {
+    auto [parOcc1, parOcc2, conflictPair] = insertedPersistentConflictPairs[i];
     handleConflictPair(parOcc1, parOcc2, conflictPair);
+  }
+  for (size_t i = graphSolverInfo.erasedConflictPairsIndex;
+       i < erasedConflictPairs.size(); ++i) {
+    auto [parOcc1, parOcc2, conflictPair] = erasedConflictPairs[i];
+    handleConflictPair(parOcc1, parOcc2, conflictPair, /*isTemp=*/false,
+                       /*isErase=*/true);
+  }
+  for (size_t i = graphSolverInfo.erasedPersistentConflictPairsIndex;
+       i < erasedPersistentConflictPairs.size(); ++i) {
+    auto [parOcc1, parOcc2, conflictPair] = erasedPersistentConflictPairs[i];
+    handleConflictPair(parOcc1, parOcc2, conflictPair, /*isTemp=*/false,
+                       /*isErase=*/true);
   }
 
   graphSolverInfo.insertedConflictPairsIndex = insertedConflictPairs.size();
-  graphSolverInfo.persistentInsertedConflictPairsIndex =
-      persistentInsertedConflictPairs.size();
+  graphSolverInfo.insertedPersistentConflictPairsIndex =
+      insertedPersistentConflictPairs.size();
+  graphSolverInfo.erasedConflictPairsIndex = erasedConflictPairs.size();
+  graphSolverInfo.erasedPersistentConflictPairsIndex =
+      erasedPersistentConflictPairs.size();
   return graphSolverInfo.graphSolver;
 }
 
@@ -414,7 +475,8 @@ bool SyncSolverV2::processOrder(ProcessingOrderV2 processingOrder) {
 
   auto *conflictPair = handleConflict(occ1, occ2, rwOp1, rwOp2, corePipeSrc,
                                       corePipeDst, eventIdInfo, isUseless);
-  if (conflictPair == nullptr || conflictPair->couldNotRun) {
+  if (conflictPair == nullptr || conflictPair->couldNotRun ||
+      conflictPair->setOnLastIterOnly || conflictPair->waitOnFirstIterOnly) {
     return false;
   }
   if (conflictPair->isBarrier()) {
