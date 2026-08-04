@@ -1267,36 +1267,44 @@ bool MemPlanRegBase::IsReuseHIVMOp(Operation *op, const Value &genBuffer,
   return isReusableOperands(op, hivmOp);
 }
 
-template <typename DstOpType>
-bool MemPlanRegBase::IsInplaceReuseReachable(
-    Value src, InplaceReuseReachableMap &reachableMap) const {
-  LDBG("-- start visiting inplace-reuse path from: "
-       << src << ", to: " << DstOpType::getOperationName() << "\n");
-  DenseSet<Value> visited;
-  return VisitInplaceReuseReachable<DstOpType>(
-      src, vfInplaceReuseInfo, visited, reachableMap,
-      disableVFReachableCheck ? noneVFReachableOpCheck
-                              : defaultVFReachableOpCheck);
+template <PIPE Pipe>
+bool MemPlanRegBase::IsInplaceReuseReachable(Value allocValue) {
+  if (disableVFReachableCheck) {
+    return false;
+  }
+  if (auto computedReachable = reachableMap.get<Pipe>(allocValue)) {
+    return computedReachable.value();
+  }
+  if (dmaFirstPipelineOpt.IsDmaBuffer(Pipe, allocValue)) {
+    reachableMap.put<Pipe>(allocValue, true);
+    LDBG(allocValue << " is reachable to " << stringifyPIPE(Pipe) << "\n");
+    return true;
+  }
+  reachableMap.put<Pipe>(allocValue, false);
+  LDBG(allocValue << " is not reachable to " << stringifyPIPE(Pipe) << "\n");
+  return false;
 }
 
-bool MemPlanRegBase::IsReuseVFCall(Value gen, Value kill,
-                            InplaceReuseReachableMap &reachableMap) const {
+bool MemPlanRegBase::IsReuseVFCall(Value gen, Value kill) {
   auto genAlloc = utils::tracebackMemRefToAlloc(gen);
   auto killAlloc = utils::tracebackMemRefToAlloc(kill);
   if (!genAlloc.has_value() || !killAlloc.has_value()) {
     return false;
   }
+  auto genRoot = genAlloc.value().getResult();
+  auto killRoot = killAlloc.value().getResult();
+  auto genReachStore = IsInplaceReuseReachable<PIPE::PIPE_MTE3>(genRoot);
+  auto killReachLoad = IsInplaceReuseReachable<PIPE::PIPE_MTE2>(killRoot);
+  auto loopParent = genAlloc.value()->getParentOfType<LoopLikeOpInterface>();
 
   // When `gen` reaches `store` and `kill` reaches `load`, inplace-reuse for
   // `gen` and `kill` can cause mte2/mte3 pipeline stalls, because we need extra
   // synchronization on the same ub address between loop interations.
-  //
-  // Note that we can still do inplace-reuse if it is only reachable from
-  // one-side, because there will be synchronization inside other vf functions.
-  if (IsInplaceReuseReachable<hivm::StoreOp>(genAlloc.value(), reachableMap) &&
-      IsInplaceReuseReachable<hivm::LoadOp>(killAlloc.value(), reachableMap)) {
+  if (genReachStore && killReachLoad && loopParent) {
+    LDBG("can't reuse " << genRoot << " and " << killRoot << "\n");
     return false;
   }
+  LDBG("can reuse " << genRoot << " and " << killRoot << "\n");
   return true;
 }
 
@@ -1305,7 +1313,6 @@ SmallVector<ValuePair> MemPlanRegBase::GenerateInplaceList() {
   DenseMap<Operation *, bool> hasTouchOp;
   inplaceList.insert(inplaceList.end(), inplacePairList.begin(),
                      inplacePairList.end());
-  InplaceReuseReachableMap reachableMap;
   for (auto &operationSeq : linearOperation) {
     auto it = genKillMap.find(operationSeq.get());
     if (it == genKillMap.end())
@@ -1331,7 +1338,7 @@ SmallVector<ValuePair> MemPlanRegBase::GenerateInplaceList() {
         return cached->second;
       }
       return vfReuseCache
-          .try_emplace(pair, IsReuseVFCall(genBuffer, killBuffer, reachableMap))
+          .try_emplace(pair, IsReuseVFCall(genBuffer, killBuffer))
           .first->second;
     };
 
@@ -1548,9 +1555,9 @@ void MemPlanRegBase::MergeInplaceSE() {
 }
 
 PlanStatus MemPlanRegBase::PlanLocalMemAddress() {
+  dmaFirstPipelineOpt.build(func_);
   // merge from the first storage entry
   MergeInplaceSE();
-  dmaFirstPipelineOpt.build(func_);
   ExpandMultiBufferStorageEntry();
   MergeSameScopeSE();
   return PlanMemAddressOfWholeLocalBuffer();

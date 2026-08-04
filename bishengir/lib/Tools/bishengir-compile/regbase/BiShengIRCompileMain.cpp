@@ -362,7 +362,7 @@ bishengir::regbase::runRegBasePipeline(ModuleOp mod,
   });
 
   bool hirCompileSuccess = false;
-  int tryTimes = 5;
+  int tryTimes = 6;
   // triton compile has nothing to do with HFusion auto schedule, so we don't
   // need to tune for it.
   //
