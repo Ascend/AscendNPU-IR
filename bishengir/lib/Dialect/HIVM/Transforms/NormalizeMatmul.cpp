@@ -2086,23 +2086,26 @@ hivm::VTransposeOp lookThroughViewLikes(Value v) {
 
 /// Absorb a vtranspose feeding A or B into the matching transpose flag, so the
 /// transpose happens while loading the operand instead of as a separate op.
-template <typename T>
-struct FoldVtransposePattern : public OpRewritePattern<T> {
+struct FoldVtransposePattern
+    : public OpInterfaceRewritePattern<LocalMatmulLikeOpInterface> {
 public:
-  using OpRewritePattern<T>::OpRewritePattern;
-  LogicalResult matchAndRewrite(T op,
-                                PatternRewriter &rewriter) const override {
-    auto aVtrans = lookThroughViewLikes(op.getA());
-    auto bVtrans = lookThroughViewLikes(op.getB());
-    if (aVtrans && !isSwappedInnermostShape(aVtrans.getSrc(), op.getA()))
+  using OpInterfaceRewritePattern<
+      LocalMatmulLikeOpInterface>::OpInterfaceRewritePattern;
+
+  LogicalResult
+  matchAndRewriteInterface(LocalMatmulLikeOpInterface op,
+                           PatternRewriter &rewriter) const {
+    auto aVtrans = lookThroughViewLikes(op.getMatmulA());
+    auto bVtrans = lookThroughViewLikes(op.getMatmulB());
+    if (aVtrans && !isSwappedInnermostShape(aVtrans.getSrc(), op.getMatmulA()))
       aVtrans = hivm::VTransposeOp();
-    if (bVtrans && !isSwappedInnermostShape(bVtrans.getSrc(), op.getB()))
+    if (bVtrans && !isSwappedInnermostShape(bVtrans.getSrc(), op.getMatmulB()))
       bVtrans = hivm::VTransposeOp();
     if (!aVtrans && !bVtrans)
       return rewriter.notifyMatchFailure(op, "no foldable vtranspose found");
 
     auto newOp = rewriter.clone(*op.getOperation());
-    auto newMmad = cast<T>(newOp);
+    auto newMmad = cast<LocalMatmulLikeOpInterface>(newOp);
     bool setVtransposeFolded = false;
 
     auto foldSide = [&](hivm::VTransposeOp vtrans, bool isA) {
@@ -2113,11 +2116,11 @@ public:
             convert.getDstLayout().isNDLayout())
           setVtransposeFolded = true;
       if (isA) {
-        newMmad.getAMutable().assign(src);
-        newMmad.setATransposeAttr(rewriter.getUnitAttr());
+        newMmad.setMatmulA(src);
+        newMmad.setMatmulATranspose(rewriter.getUnitAttr());
       } else {
-        newMmad.getBMutable().assign(src);
-        newMmad.setBTransposeAttr(rewriter.getUnitAttr());
+        newMmad.setMatmulB(src);
+        newMmad.setMatmulBTranspose(rewriter.getUnitAttr());
       }
     };
 
@@ -2130,6 +2133,11 @@ public:
 
     rewriter.replaceOp(op, newOp);
     return success();
+  }
+
+  LogicalResult matchAndRewrite(LocalMatmulLikeOpInterface op,
+                                PatternRewriter &rewriter) const override {
+    return matchAndRewriteInterface(op, rewriter);
   }
 };
 
@@ -2178,17 +2186,19 @@ std::optional<Value> absorbFractalVtranspose(PatternRewriter &rewriter,
 /// Absorb vtranspose ops behind a Fractal->ND convert_layout into the mmad
 /// transpose flags, and set kFractalVtransposeFolded so extractRealMKN treats
 /// those flags as real 2D transposes.
-template <typename T>
-struct FoldFractalVtransposePattern : public OpRewritePattern<T> {
+struct FoldFractalVtransposePattern
+    : public OpInterfaceRewritePattern<LocalMatmulLikeOpInterface> {
 public:
-  using OpRewritePattern<T>::OpRewritePattern;
+  using OpInterfaceRewritePattern<
+      LocalMatmulLikeOpInterface>::OpInterfaceRewritePattern;
 
-  LogicalResult matchAndRewrite(T op,
-                                PatternRewriter &rewriter) const override {
+  LogicalResult
+  matchAndRewriteInterface(LocalMatmulLikeOpInterface op,
+                           PatternRewriter &rewriter) const {
     std::optional<Value> newA, newB;
-    if (auto convert = op.getA().template getDefiningOp<ConvertLayoutOp>())
+    if (auto convert = op.getMatmulA().getDefiningOp<ConvertLayoutOp>())
       newA = absorbFractalVtranspose(rewriter, convert);
-    if (auto convert = op.getB().template getDefiningOp<ConvertLayoutOp>())
+    if (auto convert = op.getMatmulB().getDefiningOp<ConvertLayoutOp>())
       newB = absorbFractalVtranspose(rewriter, convert);
     if (!newA && !newB)
       return rewriter.notifyMatchFailure(
@@ -2196,29 +2206,29 @@ public:
 
     rewriter.modifyOpInPlace(op, [&]() {
       if (newA) {
-        op.getAMutable().assign(*newA);
-        if (!op.getATranspose().has_value())
-          op.setATransposeAttr(rewriter.getUnitAttr());
+        op.setMatmulA(*newA);
+        if (!op.isMatmulATransposed())
+          op.setMatmulATranspose(rewriter.getUnitAttr());
       }
       if (newB) {
-        op.getBMutable().assign(*newB);
-        if (!op.getBTranspose().has_value())
-          op.setBTransposeAttr(rewriter.getUnitAttr());
+        op.setMatmulB(*newB);
+        if (!op.isMatmulBTransposed())
+          op.setMatmulBTranspose(rewriter.getUnitAttr());
       }
       op->setAttr(kFractalVtransposeFolded, rewriter.getUnitAttr());
     });
 
     return success();
   }
+
+  LogicalResult matchAndRewrite(LocalMatmulLikeOpInterface op,
+                                PatternRewriter &rewriter) const override {
+    return matchAndRewriteInterface(op, rewriter);
+  }
 };
 
 void populateFoldVtransposePattern(RewritePatternSet &patterns) {
-  patterns.add<FoldVtransposePattern<hivm::MmadL1Op>,
-               FoldVtransposePattern<hivm::BatchMmadL1Op>,
-               FoldVtransposePattern<hivm::MmadMxL1Op>,
-               FoldFractalVtransposePattern<hivm::MmadL1Op>,
-               FoldFractalVtransposePattern<hivm::BatchMmadL1Op>,
-               FoldFractalVtransposePattern<hivm::MmadMxL1Op>>(
+  patterns.add<FoldVtransposePattern, FoldFractalVtransposePattern>(
       patterns.getContext());
 }
 

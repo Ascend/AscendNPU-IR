@@ -3231,7 +3231,6 @@ func.func @test_fold_vtranspose_mmadmx_b() -> tensor<4x16xf32> {
 }
 }
 
-
 // Test: all CCFs are mayNotExec (variable bounds), 2 mmads per for.
 // CCF1 is ZeroInit, CCF2/CCF3 are ReuseL0C. AddIf should create IfOp only at
 // the last CCF (CCF3) for each mmad, providing vbrc(0) fallback when all
