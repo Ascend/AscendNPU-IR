@@ -496,6 +496,23 @@ static bool isLoopOfCoreType(scf::ForOp forOp, TCoreType coreType) {
          coreType == inferredCoreType.value();
 }
 
+static bool isPreloadScope(scope::ScopeOp scopeOp) {
+  return scopeOp->hasAttr(hivm::PreloadNumAttr::name) ||
+         scopeOp->hasAttr(hivm::MaxPreloadNumAttr::name);
+}
+
+static bool shouldPreserveForSplit(Operation *op) {
+  // Delayed cross-core GSS matches intervals by anchor id across the backup,
+  // AIC and AIV functions. Anchors and their preload scope/loop containers
+  // are structural positions rather than core-specific computation, so keep
+  // the skeleton on both split sides while filtering the inner operations.
+  if (isa<hivm::AnchorOp, LoopLikeOpInterface>(op))
+    return true;
+  if (auto scopeOp = dyn_cast<scope::ScopeOp>(op))
+    return isPreloadScope(scopeOp);
+  return false;
+}
+
 static void inferDistributedCoreType(func::FuncOp mixedFunc) {
   auto rectifyCoreType = [mixedFunc](hivm::TCoreType &cur) {
     auto funcCoreType = mixedFunc
@@ -536,6 +553,9 @@ static void filterEmptyScopesPreOrder(OpBuilder &builder,
             hivm::TCoreTypeAttr::get(builder.getContext(), TCoreType::VECTOR));
       }
     }
+
+    if (isPreloadScope(scopeOp))
+      return WalkResult::advance();
 
     if (scopeOp->getNumResults() != 0)
       return WalkResult::advance();
@@ -618,6 +638,9 @@ void SplitMixKernelPass::filterMixFuncCurrent(
 
   mixedFunc.walk<WalkOrder::PostOrder>([&](Operation *op) {
     LDBG("filterMixFunc visiting: " << *op);
+    if (isa<hivm::AnchorOp>(op))
+      return WalkResult::advance();
+
     if (auto forOp = dyn_cast<scf::ForOp>(op)) {
       if (isLoopOfCoreType(forOp, filterCoreType))
         return WalkResult::skip();
@@ -655,6 +678,13 @@ void SplitMixKernelPass::filterMixFuncCurrent(
           });
       if (innerWalk.wasInterrupted())
         return WalkResult::interrupt();
+    }
+
+    if (shouldPreserveForSplit(op)) {
+      // Replace any result uses on the filtered side, but retain the region
+      // skeleton so its anchors keep the same nesting and ids as the backup.
+      (void)replaceResultWithInitOperand(op);
+      return WalkResult::advance();
     }
 
     annotateOpOperand(builder, op, coreType);
