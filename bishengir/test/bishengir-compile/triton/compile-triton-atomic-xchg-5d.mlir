@@ -1,5 +1,5 @@
 // REQUIRES: hivmc-a5
-// RUN: BISHENGIR_NATIVE_A5_REGBASE=1 bishengir-compile %s --target=Ascend950PR_9589 --enable-auto-multi-buffer=true --enable-hfusion-compile=true --enable-hivm-compile=true --enable-triton-kernel-compile=true --enable-lir-compile=false -o %t
+// RUN: bishengir-compile %s --target=Ascend950PR_9589 --enable-auto-multi-buffer=true --enable-hfusion-compile=true --enable-hivm-compile=true --enable-triton-kernel-compile=true --enable-lir-compile=false -o %t
 
 
 #loc = loc("test_atomic_xchg_op_fp8_1.py":176:0)
