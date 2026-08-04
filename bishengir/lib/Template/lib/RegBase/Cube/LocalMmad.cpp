@@ -126,13 +126,15 @@ CATLASS_DEVICE void L1Mmad(
     auto tensorL1B = tla::MakeTensor(l1BTensor, layoutBInL1, Arch::PositionL1{});
     auto layoutInL0C = tla::MakeLayoutL0C(actualM, actualN);
     auto tensorL0C = tla::MakeTensor(l0CTensor, layoutInL0C, Arch::PositionL0C{});
-    auto layoutBiasInBT = tla::MakeLayout(actualN);
-    auto tensorL0Bias = tla::MakeTensor(bTTensor, layoutBiasInBT, Arch::PositionBias{});
 
     constexpr uint32_t L0A_PINGPONG_BUF_SIZE = ArchTag::L0A_SIZE / 2;
     constexpr uint32_t L0B_PINGPONG_BUF_SIZE = ArchTag::L0B_SIZE / 2;
+    constexpr uint32_t BT_PINGPONG_BUF_SIZE = ArchTag::BIAS_SIZE / 2;
     constexpr uint32_t L0A_ELE_NUM_PER_C0 = BYTE_PER_C0 / sizeof(ElementA);
     constexpr uint32_t L0B_ELE_NUM_PER_C0 = BYTE_PER_C0 / sizeof(ElementB);
+
+    // Bias Table half selected with L0 ping-pong; guarded by the same M_MTE1 event.
+    AscendCBisheng::LocalTensor<ElementACC> btTile = bTTensor;
 
     bool enableDoubleBuffer = true;
     uint32_t l0K = RoundDown<C0_NUM_PER_FRACTAL>(
@@ -200,7 +202,10 @@ CATLASS_DEVICE void L1Mmad(
                     AscendCBisheng::TPosition::A1, (uint32_t)reinterpret_cast<int64_t>(l1Bias), actualN};
                 auto layoutBiasInL1 = tla::MakeLayout(actualN);
                 auto tensorL1Bias = tla::MakeTensor(l1BiasTensor, layoutBiasInL1, Arch::PositionL1{});
-                // Load bias to l0 biastable
+                // Ping-pong Bias Table with L0; Wait/Set(l0EventId) already covers this half.
+                btTile = bTTensor[pingPongId * BT_PINGPONG_BUF_SIZE / sizeof(ElementACC)];
+                auto layoutBiasInBT = tla::MakeLayout(actualN);
+                auto tensorL0Bias = tla::MakeTensor(btTile, layoutBiasInBT, Arch::PositionBias{});
                 using TensorL1Bias = tla::Tensor<
                     AscendCBisheng::LocalTensor<ElementBias>, detail::TagToLayout_t<ElementBias, layout::VectorLayout>,
                     tla::Coord<tla::_0>, AscendCBisheng::TPosition::A1>;
@@ -229,6 +234,8 @@ CATLASS_DEVICE void L1Mmad(
 
         if (hasBias) {
             if (initC) {
+                auto layoutBiasInBT = tla::MakeLayout(actualN);
+                auto tensorL0Bias = tla::MakeTensor(btTile, layoutBiasInBT, Arch::PositionBias{});
                 tileMmad(tensorL0C, tensorL0A, tensorL0B, tensorL0Bias, actualM, actualN, kL0Actual, initC, unitFlag);
             } else {
                 tileMmad(tensorL0C, tensorL0A, tensorL0B, actualM, actualN, kL0Actual, initC, unitFlag);
