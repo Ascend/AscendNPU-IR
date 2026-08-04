@@ -11,7 +11,8 @@
 // RUN:   -pass-pipeline="builtin.module(                                      \
 // RUN:     hacc-append-device-spec{target=Ascend950PR_9589},                  \
 // RUN:     func.func(hivm-mark-multi-buffer{enable-auto=true limit-mix-auto-multi-buffer-buffer=no-limit}), \
-// RUN:     func.func(hivm-plan-memory,hivm-graph-sync-solver,                  \
+// RUN:     hivm-plan-memory,                                                  \
+// RUN:     func.func(hivm-graph-sync-solver,                                  \
 // RUN:               hivm-enable-multi-buffer,hivm-lower-multi-buffer-counter))" \
 // RUN:   -split-input-file -verify-diagnostics                                \
 // RUN:   | FileCheck %s --check-prefix=A5
