@@ -2003,8 +2003,10 @@ LogicalResult CVPipelineImpl::createNewLoopsForPreloadWithScopes() {
 LogicalResult CVPipelineImpl::markScopesForPreload() {
   toErase.clear();
 
-  if (failed(createNewLoopsForPreloadWithScopes()))
+  if (failed(createNewLoopsForPreloadWithScopes())) {
+    revert();
     return failure();
+  }
 
   if (failed(migrateOpsForPreload(builder))) {
     revert();
