@@ -261,12 +261,16 @@ LogicalResult BufferizationPropagateUpPattern::matchAndRewrite(
 
 LogicalResult BufferizationPropagateDownPattern::propagateDownMarkOp(
     annotation::MarkOp markOp, UnrealizedConversionCastOp propagateOp,
-    OpOperand &use, PatternRewriter &rewriter) const {
+    PatternRewriter &rewriter) const {
+  if (markOp.getSrc() != propagateOp.getResult(0))
+    return failure();
 
   Value newValue = propagateOp.getInputs()[0];
-  rewriter.modifyOpInPlace(markOp, [&]() { use.set(newValue); });
+  rewriter.modifyOpInPlace(
+      markOp, [&]() { markOp.getSrcMutable().set(newValue); });
   LDBG("Propagated down through annotation.mark " << markOp);
-  rewriter.eraseOp(propagateOp);
+  if (propagateOp->use_empty())
+    rewriter.eraseOp(propagateOp);
   return success();
 }
 
@@ -342,7 +346,8 @@ static LogicalResult handleParallelLoop(scf::ForOp parallelLoopOp,
   rewriter.replaceOpWithNewOp<memref::SubViewOp>(
       subViewOp, propagateOp.getInputs()[0], offsets, sizes,
       subViewOp.getMixedStrides());
-  rewriter.eraseOp(propagateOp);
+  if (propagateOp->use_empty())
+    rewriter.eraseOp(propagateOp);
   return success();
 }
 
@@ -414,7 +419,8 @@ LogicalResult BufferizationPropagateDownPattern::propagateDownSubView(
   insertDownPropagators(subViewOp, newOp, tiledOffset, tiledSize, tilingDim,
                         rewriter);
   rewriter.eraseOp(subViewOp);
-  rewriter.eraseOp(propagateOp);
+  if (propagateOp->use_empty())
+    rewriter.eraseOp(propagateOp);
   LDBG("Propagated down through dynamic subview " << newOp);
   return success();
 }
@@ -436,7 +442,8 @@ LogicalResult BufferizationPropagateDownPattern::propagateDownMemorySpaceCast(
   insertDownPropagators(castOp, newCastOp, tiledOffset, tiledSize, tilingDim,
                         rewriter);
   rewriter.eraseOp(castOp);
-  rewriter.eraseOp(propagateOp);
+  if (propagateOp->use_empty())
+    rewriter.eraseOp(propagateOp);
   return success();
 }
 
@@ -447,33 +454,46 @@ LogicalResult BufferizationPropagateDownPattern::matchAndRewrite(
     return failure();
   if (propagateOp.use_empty())
     return failure();
-  assert(propagateOp.getResult(0).hasOneUse());
 
-  OpOperand &use = *propagateOp.getResult(0).use_begin();
-  Operation *userOp = use.getOwner();
-  if (userOp->hasAttr(kBubbleUpPropagateUp) ||
-      userOp->hasAttr(kBubbleUpPropagateDown))
-    return failure();
+  // CSE may merge identical one-per-use down links into a multi-use UCC.
+  SmallVector<Operation *> users;
+  for (Operation *user : propagateOp.getResult(0).getUsers())
+    users.push_back(user);
 
-  return TypeSwitch<Operation *, LogicalResult>(userOp)
-      .Case([&](annotation::MarkOp op) {
-        return propagateDownMarkOp(op, propagateOp, use, rewriter);
-      })
-      .Case([&](hivm::LoadOp op) {
-        return propagateDownLoadOp(op, propagateOp, rewriter);
-      })
-      .Case([&](memref::SubViewOp op) {
-        if (op->hasAttr(toBeBubbleUpSlice)) {
-          rewriter.replaceOp(op, propagateOp.getInputs()[0]);
-          rewriter.eraseOp(propagateOp);
-          return success();
-        }
-        return propagateDownSubView(op, propagateOp, rewriter);
-      })
-      .Case([&](memref::MemorySpaceCastOp op) {
-        return propagateDownMemorySpaceCast(op, propagateOp, rewriter);
-      })
-      .Default([&](Operation *) { return failure(); });
+  bool changed = false;
+  for (Operation *userOp : users) {
+    if (!userOp->getBlock())
+      continue;
+    if (userOp->hasAttr(kBubbleUpPropagateUp) ||
+        userOp->hasAttr(kBubbleUpPropagateDown))
+      continue;
+
+    LogicalResult result =
+        TypeSwitch<Operation *, LogicalResult>(userOp)
+            .Case([&](annotation::MarkOp op) {
+              return propagateDownMarkOp(op, propagateOp, rewriter);
+            })
+            .Case([&](hivm::LoadOp op) {
+              return propagateDownLoadOp(op, propagateOp, rewriter);
+            })
+            .Case([&](memref::SubViewOp op) {
+              if (op->hasAttr(toBeBubbleUpSlice)) {
+                rewriter.replaceOp(op, propagateOp.getInputs()[0]);
+                if (propagateOp->use_empty())
+                  rewriter.eraseOp(propagateOp);
+                return success();
+              }
+              return propagateDownSubView(op, propagateOp, rewriter);
+            })
+            .Case([&](memref::MemorySpaceCastOp op) {
+              return propagateDownMemorySpaceCast(op, propagateOp, rewriter);
+            })
+            .Default([&](Operation *) { return failure(); });
+    if (succeeded(result))
+      changed = true;
+  }
+
+  return success(changed);
 }
 
 LogicalResult BufferizationPropagatePostProcessPattern::matchAndRewrite(

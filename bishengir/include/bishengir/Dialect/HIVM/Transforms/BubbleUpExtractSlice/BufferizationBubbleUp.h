@@ -84,7 +84,6 @@ struct BufferizationPropagateDownPattern
 private:
   LogicalResult propagateDownMarkOp(annotation::MarkOp markOp,
                                     UnrealizedConversionCastOp propagateOp,
-                                    OpOperand &use,
                                     PatternRewriter &rewriter) const;
 
   LogicalResult propagateDownLoadOp(hivm::LoadOp loadOp,
