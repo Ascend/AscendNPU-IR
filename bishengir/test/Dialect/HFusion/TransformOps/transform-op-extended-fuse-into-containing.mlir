@@ -191,12 +191,10 @@ module attributes {transform.with_named_sequence} {
 
 // CHECK-LABEL: func.func @test_rank0_producer_with_multiple_users(
 // CHECK: scf.for
-// CHECK: %[[fused_mul_0:.*]] = linalg.elemwise_binary {__b__, 
-// CHECK: %[[fused_mul_1:.*]] = linalg.elemwise_binary {__a__, fun = #linalg.binary_fn<mul>} ins(%[[fused_mul_0]]
+// CHECK: %[[fused_mul_0:.*]] = linalg.elemwise_binary {__a__, fun = #linalg.binary_fn<mul>} 
+// CHECK: linalg.elemwise_binary {{.*}} ins({{.*}}, %[[fused_mul_0]] : tensor<f32>, tensor<f32>)
+// CHECK: %[[fused_mul_1:.*]] = linalg.elemwise_binary {__a__, fun = #linalg.binary_fn<mul>} 
 // CHECK: linalg.elemwise_binary {{.*}} ins({{.*}}, %[[fused_mul_1]] : tensor<f32>, tensor<f32>)
-// CHECK: %[[fused_mul_2:.*]] = linalg.elemwise_binary {__b__, 
-// CHECK: %[[fused_mul_3:.*]] = linalg.elemwise_binary {__a__, fun = #linalg.binary_fn<mul>} ins(%[[fused_mul_2]]
-// CHECK: linalg.elemwise_binary {{.*}} ins({{.*}}, %[[fused_mul_3]] : tensor<f32>, tensor<f32>)
 module attributes {transform.with_named_sequence} {
   func.func @test_rank0_producer_with_multiple_users(%arg0: tensor<f32>, %arg1: tensor<f32>, %arg2: tensor<f32>, %arg3: tensor<f32>) -> (tensor<f32>, tensor<f32>) {
     %c16 = arith.constant 16 : index
