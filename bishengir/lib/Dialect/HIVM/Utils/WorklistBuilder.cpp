@@ -355,8 +355,13 @@ markWorkspaceOps(Operation *op,
     if (!alloc)
       return success();
 
+    unsigned expectedUsers = 1;
+    for (Operation *user : alloc.getResult().getUsers()) {
+      if (isa<annotation::MarkOp>(user))
+        expectedUsers++;
+    }
     if (!toTensor.getResult().hasOneUse() ||
-        llvm::range_size(alloc.getResult().getUsers()) != 2)
+        llvm::range_size(alloc.getResult().getUsers()) != expectedUsers)
       return alloc->emitWarning(
           "Expecting alloc_workspace and its tensor to only have one user "
           "(excluding annotation.mark)");
@@ -1381,6 +1386,13 @@ FailureOr<WorklistBuildResult> WorklistBuilder::build() {
       if (failed(markWorkspaceOps(&op, workspaceAllocs, numMultibuffer)))
         return failure();
     }
+    SmallVector<bishengir::memref_ext::AllocWorkspaceOp> incomplete;
+    for (auto &[alloc, info] : workspaceAllocs) {
+      if (!info.marker)
+        incomplete.push_back(alloc);
+    }
+    for (auto alloc : incomplete)
+      workspaceAllocs.erase(alloc);
   }
 
   // Return COPIES rather than moves: post-build consumers (e.g. CVPipelining
