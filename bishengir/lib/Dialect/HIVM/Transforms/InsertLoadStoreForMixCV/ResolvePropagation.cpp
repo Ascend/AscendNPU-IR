@@ -163,9 +163,31 @@ static LogicalResult resolveLocaltoGM(UnrealizedConversionCastOp downPropOp,
   return success();
 }
 
-[[maybe_unused]] static LogicalResult
-resolveL0CToUB(UnrealizedConversionCastOp downPropOp,
-               UnrealizedConversionCastOp upPropOp, PatternRewriter &rewriter) {
+LogicalResult TightCoupledBufferResolvePropagationPattern::resolveL0CToUB(
+    UnrealizedConversionCastOp downPropOp, UnrealizedConversionCastOp upPropOp,
+    PatternRewriter &rewriter) const {
+  auto fixpipeOp = PropagatorUtil::insertFixpipe(downPropOp->getResult(0),
+                                                 downPropOp.getLoc(), rewriter,
+                                                 inferFixpipeDmaMode);
+  if (isa<RankedTensorType>(fixpipeOp.getDstOperandType())) {
+    Value loadedValue = fixpipeOp.getResult(0);
+    rewriter.modifyOpInPlace(
+        upPropOp, [&]() { upPropOp.getInputsMutable()[0].set(loadedValue); });
+  } else {
+    llvm_unreachable("inserted fixpipe should return tensor type");
+  }
+  rewriter.setInsertionPointAfter(fixpipeOp);
+  PropagatorUtil::createPropagatorUp(&fixpipeOp.getSrcMutable(), downPropOp,
+                                     rewriter);
+  PropagatorUtil::createPropagatorUp(&fixpipeOp.getDstMutable(), upPropOp,
+                                     rewriter);
+  PropagatorUtil::createPropagatorsDown(fixpipeOp, upPropOp, rewriter);
+  return success();
+}
+
+static LogicalResult ensureFixpipeToUB(UnrealizedConversionCastOp downPropOp,
+                                       UnrealizedConversionCastOp upPropOp,
+                                       PatternRewriter &rewriter) {
   // Insert load from L0C to rematerialize the value in UB
   // for fixpipe op.
   auto fixpipeOp = downPropOp.getInputs()[0].getDefiningOp<FixpipeOp>();
@@ -253,18 +275,16 @@ LogicalResult TightCoupledBufferResolvePropagationPattern::resolveUBToL1(
     UnrealizedConversionCastOp downPropOp, UnrealizedConversionCastOp upPropOp,
     PatternRewriter &rewriter) const {
   Value value = downPropOp->getResult(0);
-  auto [allocationResult, ToTensorOp] =
-      PropagatorUtil::insertTightCoupledBufferToL1(
-          value, downPropOp.getLoc(), rewriter,
-          cast<RankedTensorType>(value.getType()).getShape());
-  auto copyOp = rewriter.create<CopyOp>(downPropOp.getLoc(), TypeRange{}, value,
-                                        allocationResult.plainMemref);
-  copyOp->setAttr("inserted-copy", rewriter.getUnitAttr());
+  auto emptyOp = PropagatorUtil::insertTensor(
+      value, downPropOp.getLoc(), rewriter,
+      cast<RankedTensorType>(value.getType()).getShape(), AddressSpace::L1);
+  auto copyOp = rewriter.create<CopyOp>(downPropOp.getLoc(), emptyOp.getType(),
+                                        value, emptyOp);
+  copyOp->setAttr(hivm::kInsertedCopyAttr::name, rewriter.getUnitAttr());
 
   // Update operand to use the L1-buffered tensor
-  auto tensor = ToTensorOp;
   rewriter.modifyOpInPlace(upPropOp, [&]() {
-    upPropOp.getInputsMutable()[0].set(tensor.getResult());
+    upPropOp.getInputsMutable()[0].set(copyOp.getResultTensor());
   });
   PropagatorUtil::createPropagatorUp(&copyOp.getSrcMutable(), downPropOp,
                                      rewriter);
@@ -287,11 +307,18 @@ LogicalResult TightCoupledBufferResolvePropagationPattern::matchAndRewrite(
   auto [upCoreType, upAddressSpace] =
       PropagatorUtil::extractPropagatorInfo(upPropOp);
   rewriter.setInsertionPointAfter(downPropOp);
+  if (llvm::find(downAddressSpace, hivm::AddressSpace::L0C) !=
+          downAddressSpace.end() &&
+      llvm::find(upAddressSpace, hivm::AddressSpace::UB) !=
+          upAddressSpace.end()) {
+    LDBG("Resolving CC to UB: " << downPropOp << "\n" << upPropOp << "\n");
+    return resolveL0CToUB(downPropOp, upPropOp, rewriter);
+  }
   if (downCoreType == TCoreType::CUBE_AND_VECTOR &&
       llvm::find(upAddressSpace, hivm::AddressSpace::UB) !=
           upAddressSpace.end()) {
-    LDBG("Resolving Local to UB: " << downPropOp << "\n" << upPropOp << "\n");
-    return resolveL0CToUB(downPropOp, upPropOp, rewriter);
+    LDBG("Ensuring Fixpipe to UB: " << downPropOp << "\n" << upPropOp << "\n");
+    return ensureFixpipeToUB(downPropOp, upPropOp, rewriter);
   }
   if (downCoreType == TCoreType::CUBE_OR_VECTOR &&
       llvm::find(upAddressSpace, hivm::AddressSpace::GM) ==

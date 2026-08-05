@@ -1038,15 +1038,15 @@ InsertLoadStoreForMixCVPass::runPropagateOpPatterns(func::FuncOp funcOp,
                                                     PropagationStep step) {
   RewritePatternSet patterns(funcOp.getContext());
   GreedyRewriteConfig rewriteConfig;
-  patterns.add<PropagateUpPattern, PropagateDownPattern>(patterns.getContext(),
-                                                         step);
+  patterns.add<PropagateUpPattern>(patterns.getContext(), step, isA5Target());
+  patterns.add<PropagateDownPattern>(patterns.getContext(), step);
   patterns.add<ResolvePropagationPattern, RemoveRedundantPropagationPattern>(
       patterns.getContext());
   rewriteConfig.fold = false;
 
   if (isEnabledTightCoupledBuffer()) {
     patterns.add<TightCoupledBufferResolvePropagationPattern>(
-        patterns.getContext());
+        patterns.getContext(), inferFixpipeDmaMode);
   }
 
   if (failed(
@@ -1092,8 +1092,8 @@ InsertLoadStoreForMixCVPass::insertPropagationOp(func::FuncOp funcOp) {
 SmallVector<PropagationStep>
 InsertLoadStoreForMixCVPass::getPropagationSteps() {
   if (isA5Target()) {
-    return {PropagationStep::LOCAL, PropagationStep::UB, PropagationStep::L1,
-            PropagationStep::ALL};
+    return {PropagationStep::L0C, PropagationStep::LOCAL, PropagationStep::UB,
+            PropagationStep::L1, PropagationStep::ALL};
   }
   return {PropagationStep::LOCAL, PropagationStep::GM, PropagationStep::UB,
           PropagationStep::L1, PropagationStep::ALL};

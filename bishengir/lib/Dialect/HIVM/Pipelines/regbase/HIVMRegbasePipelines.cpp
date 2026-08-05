@@ -300,6 +300,13 @@ hivmWorkspacePipeline(OpPassManager &pm,
   pm.addPass(mlir::createMemrefExtLoweringPass());
 }
 
+static void convertTensorToTightCoupledBuffer(OpPassManager &pm) {
+  InsertCVTightCoupledBufferOptions options;
+  options.onlyInsertTightlyCoupledBuffer = true;
+  pm.nest<func::FuncOp>().addPass(
+      createInsertCVTightCoupledBufferPass(options));
+}
+
 static void hivmPreBufferizationOptimizationPipeline(
     OpPassManager &pm, const HIVMPipelineOptions &hivmPipelineOptions) {
   if (!hacc::utils::isRegBasedArch(hivmPipelineOptions.target)) {
@@ -321,6 +328,7 @@ static void hivmPreBufferizationOptimizationPipeline(
     pm.addPass(mlir::hivm::createInlineFixpipePass(opts));
   }
   hivmCVCommunicationPipeline(pm, hivmPipelineOptions);
+  convertTensorToTightCoupledBuffer(pm);
   if (hivmPipelineOptions.enableLayoutOptimization) {
     // Combine optimized folds:
     // - load + convert layout
@@ -344,6 +352,7 @@ static void hivmPreBufferizationOptimizationPipeline(
     pm.addPass(mlir::hivm::createInlineFixpipePass(opts));
   }
   hivmCVCommunicationPipeline(pm, hivmPipelineOptions);
+  convertTensorToTightCoupledBuffer(pm);
   // must run CloneTensorEmpty to resotre merged&hoisted tensor.empty caused by
   // CSE
   pm.nest<func::FuncOp>().addPass(createCloneTensorEmptyPass());

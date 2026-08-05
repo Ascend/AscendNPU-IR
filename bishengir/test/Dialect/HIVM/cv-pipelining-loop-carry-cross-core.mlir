@@ -46,7 +46,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
       %alloc_7 = memref.alloc() : memref<1x1x16x8xf32, #hivm.address_space<cbuf>>
       %memspacecast_8 = memref.memory_space_cast %alloc_7 : memref<1x1x16x8xf32, #hivm.address_space<cbuf>> to memref<1x1x16x8xf32>
       %15 = bufferization.to_tensor %memspacecast_8 restrict writable : memref<1x1x16x8xf32>
-      hivm.hir.copy ins(%expanded_6 : tensor<1x1x16x8xf32>) outs(%memspacecast_8 : memref<1x1x16x8xf32>) {"inserted-copy"}
+      hivm.hir.copy ins(%expanded_6 : tensor<1x1x16x8xf32>) outs(%memspacecast_8 : memref<1x1x16x8xf32>) {"hivm.inserted-copy"}
       %16 = tensor.empty() : tensor<1x1x16x16xf32>
       %17 = hivm.hir.mmadL1 {already_set_real_mkn, fixpipe_for_result_already_inserted = true, normalized_in_L0C} ins(%15, %3, %true, %c2, %c2, %c2 : tensor<1x1x16x8xf32>, tensor<1x1x16x8xf32>, i1, index, index, index) outs(%16 : tensor<1x1x16x16xf32>) -> tensor<1x1x16x16xf32>
       %alloc_9 = memref.alloc() : memref<2x2xf32, #hivm.address_space<ub>>
