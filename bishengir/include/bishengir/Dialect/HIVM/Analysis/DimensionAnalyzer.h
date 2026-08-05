@@ -141,7 +141,8 @@ protected:
   void processCollapseShapeOpLeftmostNonUnit(tensor::CollapseShapeOp op);
   template <typename T, typename = std::enable_if_t<
                             std::is_same_v<T, tensor::ExpandShapeOp> ||
-                            std::is_same_v<T, tensor::CollapseShapeOp>>>
+                            std::is_same_v<T, tensor::CollapseShapeOp> ||
+                            std::is_same_v<T, memref::CollapseShapeOp>>>
   void processReshapeOp(T op);
   void processScopeOp(scope::ScopeOp op);
   void processTilingDimMapping(tensor::ExpandShapeOp expandShapeOp,
