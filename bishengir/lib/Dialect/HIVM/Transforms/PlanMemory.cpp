@@ -21,11 +21,13 @@
 #include "bishengir/Dialect/HIVM/Transforms/AllocToPointerCast.h"
 #include "bishengir/Dialect/HIVM/Transforms/MemoryDisplay.h"
 #include "bishengir/Dialect/HIVM/Transforms/NormalizeLoopIterator.h"
+#include "bishengir/Dialect/HIVM/Utils/RegbaseUtils.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExtImpl.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+#include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
@@ -260,6 +262,14 @@ void MemLivenessAnalysis::RecursionIR(Region *region, Liveness live) {
                           condBrOp.getFalseDestOperands());
     } else if (auto brOp = dyn_cast<cf::BranchOp>(op)) {
       UpdateBranchOpAlias(brOp.getDest(), brOp.getDestOperands());
+    } else if (auto callOp = dyn_cast<func::CallOp>(op)) {
+      UpdateOpGenInfo(curOpInfo, llvm::to_vector(callOp->getOperands()));
+      UpdateOpTempGenInfo(curOpInfo);
+      OpKillHandle(curOpInfo, live, op->getBlock());
+    } else if (auto gpuLaunchOp = dyn_cast<gpu::LaunchFuncOp>(op)) {
+      UpdateOpGenInfo(curOpInfo, llvm::to_vector(gpuLaunchOp->getOperands()));
+      UpdateOpTempGenInfo(curOpInfo);
+      OpKillHandle(curOpInfo, live, op->getBlock());
     } else if (auto debugOp = dyn_cast<hivm::DebugOp>(op)) {
       OpKillHandle(curOpInfo, live, op->getBlock());
     } else if (failed(CheckIfUnknownOpTouchBuffer(op))) {
@@ -1312,11 +1322,45 @@ bool MemPlan::IsReuseHIVMOp(Operation *op, const Value &genBuffer,
   return isReusableOperands(op, hivmOp);
 }
 
+template <typename DstOpType>
+bool MemPlan::IsInplaceReuseReachable(
+    Value src, InplaceReuseReachableMap &reachableMap) const {
+  LDBG("-- start visiting inplace-reuse path from: "
+       << src << ", to: " << DstOpType::getOperationName() << "\n");
+  DenseSet<Value> visited;
+  return VisitInplaceReuseReachable<DstOpType>(
+      src, vfInplaceReuseInfo, visited, reachableMap,
+      disableVFReachableCheck ? noneVFReachableOpCheck
+                              : defaultVFReachableOpCheck);
+}
+
+bool MemPlan::IsReuseVFCall(Value gen, Value kill,
+                            InplaceReuseReachableMap &reachableMap) const {
+  auto genAlloc = utils::tracebackMemRefToAlloc(gen);
+  auto killAlloc = utils::tracebackMemRefToAlloc(kill);
+  if (!genAlloc.has_value() || !killAlloc.has_value()) {
+    return false;
+  }
+
+  // When `gen` reaches `store` and `kill` reaches `load`, inplace-reuse for
+  // `gen` and `kill` can cause mte2/mte3 pipeline stalls, because we need extra
+  // synchronization on the same ub address between loop interations.
+  //
+  // Note that we can still do inplace-reuse if it is only reachable from
+  // one-side, because there will be synchronization inside other vf functions.
+  if (IsInplaceReuseReachable<hivm::StoreOp>(genAlloc.value(), reachableMap) &&
+      IsInplaceReuseReachable<hivm::LoadOp>(killAlloc.value(), reachableMap)) {
+    return false;
+  }
+  return true;
+}
+
 SmallVector<ValuePair> MemPlan::GenerateInplaceList() {
   SmallVector<ValuePair> inplaceList;
   DenseMap<Operation *, bool> hasTouchOp;
   inplaceList.insert(inplaceList.end(), inplacePairList.begin(),
                      inplacePairList.end());
+  InplaceReuseReachableMap reachableMap;
   for (auto &operationSeq : linearOperation) {
     auto it = genKillMap.find(operationSeq.get());
     if (it == genKillMap.end())
@@ -1324,7 +1368,35 @@ SmallVector<ValuePair> MemPlan::GenerateInplaceList() {
     if (hasTouchOp[operationSeq->operation]) {
       continue;
     }
-    for (const Value &genBuffer : it->second.gen) {
+    Operation *op = it->first->operation;
+    bool isVFCallReusable = vfInplaceReuseInfo && hivm::isVFCall(op) &&
+                            !VFCallInplaceReuseInfo::hasAliasArgRisk(op);
+    DenseMap<ValuePair, bool> vfReuseCache;
+
+    auto isVFInplacePair = [&](Value genBuffer, Value killBuffer) {
+      if (!isVFCallReusable ||
+          !vfInplaceReuseInfo->isInplaceReusable(op, genBuffer, killBuffer)) {
+        return false;
+      }
+
+      // use cache to avoid redundant traversal
+      ValuePair pair = {genBuffer, killBuffer};
+      auto cached = vfReuseCache.find(pair);
+      if (cached != vfReuseCache.end()) {
+        return cached->second;
+      }
+      return vfReuseCache
+          .try_emplace(pair, IsReuseVFCall(genBuffer, killBuffer, reachableMap))
+          .first->second;
+    };
+
+    SmallVector<Value> sortedGen(it->second.gen.begin(), it->second.gen.end());
+    llvm::stable_sort(sortedGen, [&](Value a, Value b) {
+      return bufferInfos[a].constBits > bufferInfos[b].constBits;
+    });
+
+    DenseSet<Value> reusedKill;
+    for (const Value &genBuffer : sortedGen) {
       auto genBufferIter = bufferInfos.find(genBuffer);
       assert(genBufferIter != bufferInfos.end() &&
              "genBuffer should be find in bufferInfos");
@@ -1338,13 +1410,27 @@ SmallVector<ValuePair> MemPlan::GenerateInplaceList() {
         if (killBufferIter->second.ignoreInplace) {
           continue;
         }
-        bool canInplace =
-            killBufferIter->second.constBits >=
-                genBufferIter->second.constBits &&
-            IsReuseHIVMOp(it->first->operation, genBuffer, killBuffer) &&
-            !InplaceStallPipeline(genBuffer, killBuffer, inplaceList);
-        if (canInplace) {
-          inplaceList.emplace_back(std::make_pair(genBuffer, killBuffer));
+        if (reusedKill.contains(killBuffer))
+          continue;
+
+        int64_t genBits = genBufferIter->second.constBits;
+        int64_t killBits = killBufferIter->second.constBits;
+        if (killBits < genBits) {
+          continue;
+        }
+
+        if (isVFInplacePair(genBuffer, killBuffer)) {
+          reusedKill.insert(killBuffer);
+          reachableMap.unite(genBuffer, killBuffer);
+          inplaceList.emplace_back(genBuffer, killBuffer);
+          break;
+        }
+
+        if (IsReuseHIVMOp(op, genBuffer, killBuffer) &&
+            !InplaceStallPipeline(genBuffer, killBuffer, inplaceList)) {
+          reusedKill.insert(killBuffer);
+          reachableMap.unite(genBuffer, killBuffer);
+          inplaceList.emplace_back(genBuffer, killBuffer);
           break;
         }
       }
@@ -2727,7 +2813,8 @@ private:
   void markTempBufForMemoryDisplay(func::FuncOp funcOp);
   // Returning nullopt means that memory plan for funcOp failed
   std::optional<DenseMap<Value, SmallVector<uint64_t>>>
-  planMemoryForFuncOp(func::FuncOp &funcOp);
+  planMemoryForFuncOp(func::FuncOp &funcOp,
+                      VFInplaceReuseAnalysis &vfInplaceReuseAnalysis);
 
   void populateBufferAddressToAllocOp(
       RewritePatternSet &patterns,
@@ -2748,7 +2835,8 @@ private:
 } // namespace
 
 std::optional<DenseMap<Value, SmallVector<uint64_t>>>
-PlanMemoryPass::planMemoryForFuncOp(func::FuncOp &funcOp) {
+PlanMemoryPass::planMemoryForFuncOp(
+    func::FuncOp &funcOp, VFInplaceReuseAnalysis &vfInplaceReuseAnalysis) {
   if (this->memMode == MemPlanMode::LOCAL_MEM_PLAN) {
     RewritePatternSet normalizeLoopIterPatterns(&getContext());
     populateNormalizeLoopIneratorPattern(normalizeLoopIterPatterns);
@@ -2782,7 +2870,7 @@ PlanMemoryPass::planMemoryForFuncOp(func::FuncOp &funcOp) {
 
     MemPlan memPlan(this->memMode, this->enableGlobalReuse,
                     this->enableMemoryDisplay, this->restrictInplaceAsISA,
-                    this->planMemoryStrategy);
+                    this->disableVFReachableCheck, this->planMemoryStrategy);
     memPlan.func_ = funcOp;
     memPlan.SetLinearOperation(memLiveness.linearOperation);
     memPlan.SetBufferInfos(memLiveness.bufferInfos);
@@ -2790,6 +2878,8 @@ PlanMemoryPass::planMemoryForFuncOp(func::FuncOp &funcOp) {
     memPlan.SetGenKillMap(memLiveness.genKillMap);
     memPlan.SetBuffer2MultiNum(memLiveness.buffer2MultiNum);
     memPlan.SetInplacePairList(memLiveness.inplacePairList);
+    memPlan.SetVFInplaceReuseInfo(
+        vfInplaceReuseAnalysis.getVFCallInplaceReuseInfo(funcOp));
 
     const bool isLastAttempt = attempt == kPlanRetryCount - 1;
     if (succeeded(memPlan.plan(/*emitErrors=*/isLastAttempt))) {
@@ -2905,10 +2995,14 @@ void MemPlan::SetMemscope2rootSuccessStorageEntry() {
 
 void PlanMemoryPass::runOnOperation() {
   ModuleOp moduleOp = getOperation();
+  VFInplaceReuseAnalysis vfInplaceReuseAnalysis(moduleOp);
   for (auto funcOp : moduleOp.getOps<func::FuncOp>()) {
     if (hacc::utils::isHost(funcOp))
       continue;
-    auto plannedBuffer2Offsets = planMemoryForFuncOp(funcOp);
+    if (hivm::isVF(funcOp))
+      continue;
+    auto plannedBuffer2Offsets =
+        planMemoryForFuncOp(funcOp, vfInplaceReuseAnalysis);
     if (!plannedBuffer2Offsets.has_value()) {
       signalPassFailure();
       return;

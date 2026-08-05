@@ -289,6 +289,9 @@ def PlanMemory : Pass<"hivm-plan-memory", "ModuleOp"> {
                           "keep original storage entry order without sorting"),
                clEnumValN(mlir::hivm::PlanMemoryStrategy::LARGEST_FIRST, "largest-first",
                           "sort storage entries by const bits descending, allocate larger buffer first"))}]>,
+    Option<"disableVFReachableCheck", "disable-vf-reachable-check", "bool",
+           /*default=*/"false",
+           "Disable VF reachable check, default : false">,
   ];
 }
 
