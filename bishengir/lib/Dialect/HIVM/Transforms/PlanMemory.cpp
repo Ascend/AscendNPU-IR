@@ -842,6 +842,14 @@ bool MemLivenessAnalysis::ProcessMarkOpForTightlyCoupledCV(
   }
   if ((funcType == TFuncCoreType::AIV && addressSpace == AddressSpace::UB) ||
       (funcType == TFuncCoreType::AIC && addressSpace == AddressSpace::L1)) {
+    if (disableTightlyCoupledBufferReuse) {
+      auto it = bufferInfos.find(allocValue);
+      if (it == bufferInfos.end()) {
+        llvm::report_fatal_error("Use allocOp before defined!");
+      }
+      it->second.memoryUnique = true;
+    }
+    LDBG(allocValue << "set memory unique\n");
     // AllocOp will be writed in another scope and read in current scope, so we
     // will update its genInfo in markOp.
     LDBG(allocValue << " Manually run UpdateOpGenInfo\n");
@@ -3033,6 +3041,7 @@ PlanMemoryPass::planMemoryForFuncOp(
                                     << "\n");
 
     MemLivenessAnalysis memLiveness(funcOp, this->memMode,
+                                    this->disableTightlyCoupledBufferReuse,
                                     /*randomSeed=*/attempt);
     memLiveness.build();
 
