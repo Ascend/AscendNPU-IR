@@ -1433,6 +1433,41 @@ func.func @extract_slice_rank_reduced2() -> tensor<4x12x16xf32> {
 }
 
 // -----
+// CHECK-LABEL: func.func @extract_insert_slice_noncanonical_rank_reduction(
+// CHECK: %[[SLICE:.*]] = tensor.extract_slice {{.*}} : tensor<1x2x1x2x1x2x1x2xf32> to tensor<1x2x1x2x1x2xf32>
+// CHECK: tensor.insert_slice %[[SLICE]] into {{.*}} : tensor<1x2x1x2x1x2xf32> into tensor<1x2x1x2x1x2x2xf32>
+func.func @extract_insert_slice_noncanonical_rank_reduction() -> tensor<1x2x1x2x1x2x2xf32> {
+  %source = tensor.empty() : tensor<1x2x1x2x1x2x1x2xf32>
+  %source_reduce_init = tensor.empty() : tensor<1x1x1x1xf32>
+  %source_reduce = linalg.reduce ins(%source : tensor<1x2x1x2x1x2x1x2xf32>) outs(%source_reduce_init : tensor<1x1x1x1xf32>) dimensions = [1, 3, 5, 7]
+    (%in: f32, %init: f32) {
+      %sum = arith.addf %in, %init : f32
+      linalg.yield %sum : f32
+    }
+
+  %slice = tensor.extract_slice %source[0, 0, 0, 0, 0, 0, 0, 0] [1, 2, 1, 2, 1, 1, 1, 2] [1, 1, 1, 1, 1, 1, 1, 1]
+    : tensor<1x2x1x2x1x2x1x2xf32> to tensor<1x2x1x2x1x2xf32>
+  %slice_reduce_init = tensor.empty() : tensor<1x1x1xf32>
+  %slice_reduce = linalg.reduce ins(%slice : tensor<1x2x1x2x1x2xf32>) outs(%slice_reduce_init : tensor<1x1x1xf32>) dimensions = [1, 3, 5]
+    (%in: f32, %init: f32) {
+      %sum = arith.addf %in, %init : f32
+      linalg.yield %sum : f32
+    }
+
+  %dest = tensor.empty() : tensor<1x2x1x2x1x2x2xf32>
+  %dest_reduce_init = tensor.empty() : tensor<1x1x1x2xf32>
+  %dest_reduce = linalg.reduce ins(%dest : tensor<1x2x1x2x1x2x2xf32>) outs(%dest_reduce_init : tensor<1x1x1x2xf32>) dimensions = [1, 3, 5]
+    (%in: f32, %init: f32) {
+      %sum = arith.addf %in, %init : f32
+      linalg.yield %sum : f32
+    }
+
+  %inserted = tensor.insert_slice %slice into %dest[0, 0, 0, 0, 0, 0, 0] [1, 2, 1, 2, 1, 1, 2] [1, 1, 1, 1, 1, 1, 1]
+    : tensor<1x2x1x2x1x2xf32> into tensor<1x2x1x2x1x2x2xf32>
+  return %inserted : tensor<1x2x1x2x1x2x2xf32>
+}
+
+// -----
 // CHECK-LABEL: func.func @hivm_store(
 // CHECK: hivm.hir.store ins({{.*}} : tensor<4x8xf32>) outs({{.*}} : memref<4x8xf32>)
 func.func @hivm_store(%arg0: tensor<4xf32>, %arg8: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 2 : i32}) {

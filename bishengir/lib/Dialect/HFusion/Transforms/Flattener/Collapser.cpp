@@ -1097,14 +1097,14 @@ void Flattener::adjustExtractSliceOp(tensor::ExtractSliceOp extractSliceOp,
   SmallVector<OpFoldResult> newMixedStrides;
   computeNewSlicingOperands(extractSliceOp, newMixedOffsets, newMixedSizes,
                             newMixedStrides, builder);
-  auto sourceRankedTensorType =
-      llvm::cast<RankedTensorType>(extractSliceOp.getSource().getType());
   auto collapseGroups = getCollapseGroup(extractSliceOp.getResult());
-  auto resultSize = collapseGroups.size();
-  RankedTensorType resultType = llvm::cast<RankedTensorType>(
-      tensor::ExtractSliceOp::inferCanonicalRankReducedResultType(
-          resultSize, sourceRankedTensorType, newMixedOffsets, newMixedSizes,
-          newMixedStrides));
+  auto oldResultType =
+      llvm::cast<RankedTensorType>(extractSliceOp.getResult().getType());
+  RankedTensorType resultType = oldResultType;
+  if (!collapseGroups.empty()) {
+    resultType = tensor::CollapseShapeOp::inferCollapsedType(oldResultType,
+                                                             collapseGroups);
+  }
   // get which one to collapse together
   builder.setInsertionPoint(extractSliceOp);
   auto newExtractSliceOp = builder.create<tensor::ExtractSliceOp>(
