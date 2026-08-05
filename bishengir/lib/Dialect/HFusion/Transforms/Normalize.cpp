@@ -2565,6 +2565,67 @@ public:
   }
 };
 
+/// normalize nearbyint(x) to cast with RINT round mode.
+///
+/// nearbyint returns the nearest integral value in floating-point format. The
+/// IR does not model floating-point exception flags, so this uses HFusion RINT
+/// semantics: round to nearest, ties to even.
+struct NormalizeNearbyintOp
+    : public OpRewritePattern<hfusion::ElemwiseUnaryOp> {
+public:
+  using OpRewritePattern<hfusion::ElemwiseUnaryOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hfusion::ElemwiseUnaryOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!op.hasPureTensorSemantics())
+      return failure();
+    if (op.getFun() != hfusion::UnaryFn::nearbyint)
+      return failure();
+
+    Value originalSrc = op.getInputs()[0];
+    Value src = originalSrc;
+    Value dst = op.getOutputs()[0];
+    Type inType = getElementTypeOrSelf(src.getType());
+    Type outType = getElementTypeOrSelf(dst.getType());
+    if (!(inType.isF16() || inType.isBF16() || inType.isF32()) ||
+        !(outType.isF16() || outType.isBF16() || outType.isF32()))
+      llvm::report_fatal_error(
+          "nearbyint normalize only supports f16, bf16 or f32");
+
+    OpBuilder builder(op);
+    if ((inType.isF16() || inType.isBF16()) && inType == outType) {
+      src = hfusion::castTo(builder, src, rewriter.getF32Type(),
+                            hfusion::RoundMode::RINT);
+      src = hfusion::castTo(builder, src, rewriter.getF32Type(),
+                            hfusion::RoundMode::RINT);
+    }
+
+    Value result =
+        hfusion::castTo(builder, src, outType, hfusion::RoundMode::RINT, dst);
+    Value signSrc = originalSrc;
+    if (inType != outType)
+      signSrc =
+          hfusion::castTo(builder, originalSrc, outType, hfusion::RoundMode::ROUND);
+    result = buildCopysign(builder, op.getLoc(), result, signSrc);
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+
+private:
+  Value buildCopysign(OpBuilder &builder, Location loc, Value magnitude,
+                      Value sign) const {
+    auto empty = utils::createEmptyOp(builder, loc, magnitude);
+    return builder
+        .create<hfusion::ElemwiseBinaryOp>(
+            loc, TypeRange{empty.getType()}, ValueRange{magnitude, sign},
+            ValueRange{empty},
+            ArrayRef<NamedAttribute>{builder.getNamedAttr(
+                "fun", hfusion::BinaryFnAttr::get(
+                           builder.getContext(), hfusion::BinaryFn::copysign))})
+        ->getResult(0);
+  }
+};
+
 /// normalize 2^x to exp{ln(2)*x}
 /// eg.
 /// y = hfusion elemwise unary {exp2} (x)
@@ -2958,6 +3019,89 @@ private:
     Value originMask = createVand(rewriter, loc, xZero, yZero);
 
     return createSelect(rewriter, loc, originMask, zeroTheta, theta);
+  }
+};
+
+/// normalize copysign(x, y) implementation.
+///
+/// Preserve the magnitude bits from x and the sign bit from y:
+///   bitcast((bitcast(x) & magnitude_mask) | (bitcast(y) & sign_mask))
+struct NormalizeCopysignOp : public OpRewritePattern<hfusion::ElemwiseBinaryOp> {
+public:
+  using OpRewritePattern<hfusion::ElemwiseBinaryOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hfusion::ElemwiseBinaryOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!op.hasPureTensorSemantics())
+      return failure();
+    if (op.getFun() != hfusion::BinaryFn::copysign)
+      return failure();
+
+    Value magnitude = op.getInputs()[0];
+    Value sign = op.getInputs()[1];
+    auto magnitudeTensorType = dyn_cast<RankedTensorType>(magnitude.getType());
+    if (!magnitudeTensorType || !isa<RankedTensorType>(sign.getType()))
+      return failure();
+    auto elementType = getElementTypeOrSelf(magnitude.getType());
+    Type intType;
+    uint64_t magnitudeMaskVal;
+    uint64_t signMaskVal;
+    if (elementType.isF32()) {
+      intType = rewriter.getI32Type();
+      magnitudeMaskVal = 0x7FFFFFFFU;
+      signMaskVal = 0x80000000U;
+    } else if (elementType.isF16() || elementType.isBF16()) {
+      intType = rewriter.getI16Type();
+      magnitudeMaskVal = 0x7FFFU;
+      signMaskVal = 0x8000U;
+    } else {
+      llvm::report_fatal_error(
+          "only support input Type is f16, bf16 or f32");
+    }
+
+    Location loc = op->getLoc();
+    auto intTensorType = magnitudeTensorType.clone(intType);
+    Value magnitudeBits = buildBitcast(rewriter, loc, magnitude, intTensorType);
+    Value signBits = buildBitcast(rewriter, loc, sign, intTensorType);
+    Value magnitudeMask = rewriter.create<arith::ConstantOp>(
+        loc, intType, rewriter.getIntegerAttr(intType, magnitudeMaskVal));
+    Value signMask = rewriter.create<arith::ConstantOp>(
+        loc, intType, rewriter.getIntegerAttr(intType, signMaskVal));
+
+    Value maskedMagnitude = buildBinary(rewriter, loc, hfusion::BinaryFn::vand,
+                                        magnitudeBits, magnitudeMask);
+    Value maskedSign =
+        buildBinary(rewriter, loc, hfusion::BinaryFn::vand, signBits, signMask);
+    Value resultBits = buildBinary(rewriter, loc, hfusion::BinaryFn::vor,
+                                   maskedMagnitude, maskedSign);
+    Value result = buildBitcast(rewriter, loc, resultBits, magnitude.getType());
+
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+
+private:
+  Value buildBitcast(PatternRewriter &rewriter, Location loc, Value input,
+                     Type resultType) const {
+    auto resultTensorType = cast<RankedTensorType>(resultType);
+    Value empty = rewriter.create<tensor::EmptyOp>(
+        loc, resultTensorType.getShape(), resultTensorType.getElementType());
+    return rewriter
+        .create<hfusion::BitcastOp>(loc, TypeRange{resultType},
+                                    ValueRange{input}, ValueRange{empty})
+        ->getResult(0);
+  }
+
+  Value buildBinary(PatternRewriter &rewriter, Location loc, hfusion::BinaryFn fn,
+                    Value lhs, Value rhs) const {
+    auto empty = utils::createEmptyOp(rewriter, loc, lhs);
+    return rewriter
+        .create<hfusion::ElemwiseBinaryOp>(
+            loc, TypeRange{empty.getType()}, ValueRange{lhs, rhs},
+            ValueRange{empty},
+            ArrayRef<NamedAttribute>{rewriter.getNamedAttr(
+                "fun", hfusion::BinaryFnAttr::get(rewriter.getContext(), fn))})
+        ->getResult(0);
   }
 };
 
@@ -9806,6 +9950,7 @@ void populateNormalizeHFusionPatterns(RewritePatternSet &patterns) {
   patterns.add<NormalizeTanhOp>(patterns.getContext());
   patterns.add<NormalizeI8I32CmpOp>(patterns.getContext());
   patterns.add<NormalizeMulRec>(patterns.getContext());
+  patterns.add<NormalizeCopysignOp>(patterns.getContext());
   patterns.add<NormalizeModOp>(patterns.getContext());
   patterns.add<NormalizeCmpToCastOp>(patterns.getContext());
   patterns.add<NormalizeNegToMul>(patterns.getContext());
@@ -9814,6 +9959,7 @@ void populateNormalizeHFusionPatterns(RewritePatternSet &patterns) {
   patterns.add<NormalizeSubVSToVMulAndVAdd>(patterns.getContext());
   patterns.add<NormalizeRSqrtOp>(patterns.getContext());
   patterns.add<NormalizeCeilandFloorOp>(patterns.getContext());
+  patterns.add<NormalizeNearbyintOp>(patterns.getContext());
   patterns.add<NormalizeLogLikeOp>(patterns.getContext());
   patterns.add<NormalizeLog1pOp>(patterns.getContext());
   patterns.add<NormalizeExp2Op>(patterns.getContext());

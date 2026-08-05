@@ -478,6 +478,8 @@ public:
       return builder.create<math::SinhOp>(arg.getLoc(), arg);
     case UnaryFn::cosh:
       return builder.create<math::CoshOp>(arg.getLoc(), arg);
+    case UnaryFn::nearbyint:
+      return builder.create<math::RoundEvenOp>(arg.getLoc(), arg);
     case UnaryFn::relu:
       return buildUnaryRelu(builder, arg);
     case UnaryFn::rec:
@@ -579,6 +581,10 @@ public:
       if (allFloatingPoint)
         return builder.create<math::Atan2Op>(arg0.getLoc(), arg0, arg1);
       llvm::report_fatal_error("unsupported type for atan2");
+    case BinaryFn::copysign:
+      if (allFloatingPoint)
+        return builder.create<math::CopySignOp>(arg0.getLoc(), arg0, arg1);
+      llvm::report_fatal_error("unsupported type for copysign");
     case BinaryFn::powi:
       if (allInteger)
         return builder.create<math::IPowIOp>(arg0.getLoc(), arg0, arg1);
