@@ -349,7 +349,8 @@ LogicalResult VCastOp::verify() {
       "uint8_t_to_uint32_t_rintmode",
       "uint32_t_to_uint64_t_rintmode",
       "float8_e4m3_t_to_float_rintmode",
-      "float8_e5m2_t_to_float_rintmode"};
+      "float8_e5m2_t_to_float_rintmode",
+      "int32_t_to_int16_t_truncmode"};
 
   static const std::set<std::string> kMemBasedSoftCasts{
       "float_to_int8_t_roundmode",

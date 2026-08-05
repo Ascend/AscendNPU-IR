@@ -750,24 +750,132 @@ public:
   }
 };
 
-static bool isVcastInlinableIntoFixpipe(hivm::VCastOp castOp);
+/// Return the single non-ignored user of \p v, or nullptr if there is not
+/// exactly one.
+static Operation *getSingleSiftedUser(Value v) {
+  Operation *singleUser = nullptr;
+  for (Operation *user : v.getUsers()) {
+    if (isa<annotation::MarkOp, hivm::DebugOp, tensor::DimOp>(user))
+      continue;
+    if (singleUser)
+      return nullptr;
+    singleUser = user;
+  }
+  return singleUser;
+}
 
-std::optional<FixpipePreQuantMode> getQuantMode(hivm::VCastOp castOp) {
-  if (!isVcastInlinableIntoFixpipe(castOp))
-    return std::nullopt;
+/// Fixpipe pre-quant cannot implement integer narrowing casts that disable
+/// saturation (e.g. trunc-with-overflow semantics).
+static bool isIntegerNarrowingCastInlinable(Type inputType, Type outputType,
+                                            Operation *castOp) {
+  if (!inputType.isIntOrIndex() || !outputType.isIntOrIndex())
+    return true;
 
+  int64_t srcBitWidth = inputType.getIntOrFloatBitWidth();
+  int64_t dstBitWidth = outputType.getIntOrFloatBitWidth();
+  if (srcBitWidth <= dstBitWidth || outputType.isInteger(1))
+    return true;
+
+  if (auto enableSaturate = castOp->getAttrOfType<BoolAttr>("enable_saturate"))
+    return enableSaturate.getValue();
+
+  return true;
+}
+
+static bool isVcastInlinableIntoFixpipe(hivm::VCastOp castOp) {
+  if (!isRegBasedArch(castOp))
+    return true;
   auto inputType = getElementTypeOrSelf(castOp.getSrc()[0].getType());
   auto outputType = getElementTypeOrSelf(castOp.getDst()[0].getType());
-  if (inputType.isF32() && outputType.isF16()) {
+  return isIntegerNarrowingCastInlinable(inputType, outputType, castOp);
+}
+
+/// Collect a single-use chain of VCastOps starting at \p firstCast.
+/// The chain always includes at least \p firstCast.
+static SmallVector<hivm::VCastOp> collectVCastChain(hivm::VCastOp firstCast) {
+  SmallVector<hivm::VCastOp> chain;
+  hivm::VCastOp cur = firstCast;
+  while (true) {
+    chain.push_back(cur);
+    Value res = cur.getResult()[0];
+    Operation *nextUser = getSingleSiftedUser(res);
+    auto nextCast = dyn_cast_if_present<hivm::VCastOp>(nextUser);
+    if (!nextCast || nextCast.getSrc()[0] != res)
+      break;
+    cur = nextCast;
+  }
+  return chain;
+}
+
+static std::optional<FixpipePreQuantMode>
+getQuantModeForTypes(Type inputType, Type outputType) {
+  if (inputType.isF32() && outputType.isF16())
     return symbolizeFixpipePreQuantMode("F322F16");
-  }
-  if (inputType.isF32() && outputType.isBF16()) {
+  if (inputType.isF32() && outputType.isBF16())
     return symbolizeFixpipePreQuantMode("F322BF16");
-  }
-  if (inputType.isInteger(32) && outputType.isInteger(8)) {
+  if (inputType.isInteger(32) && outputType.isInteger(8))
     return symbolizeFixpipePreQuantMode("S322I8");
-  }
   return std::nullopt;
+}
+
+/// True when \p inputType -> \p outputType is an integer bit-width narrowing.
+static bool isIntegerNarrowing(Type inputType, Type outputType) {
+  if (!inputType.isIntOrIndex() || !outputType.isIntOrIndex())
+    return false;
+  if (outputType.isInteger(1))
+    return false;
+  return inputType.getIntOrFloatBitWidth() > outputType.getIntOrFloatBitWidth();
+}
+
+/// Decide pre-quant mode from the overall cast chain: element type of the
+/// first cast's input to element type of the last cast's output. Every cast
+/// in the chain (and the overall conversion) must be inlinable.
+static std::optional<FixpipePreQuantMode>
+getQuantModeForCastChain(ArrayRef<hivm::VCastOp> castChain) {
+  assert(!castChain.empty() && "cast chain must be non-empty");
+  for (hivm::VCastOp castOp : castChain) {
+    if (!isVcastInlinableIntoFixpipe(castOp))
+      return std::nullopt;
+  }
+
+  // Copy out of ArrayRef: getSrc/getDst are non-const accessors.
+  hivm::VCastOp firstCast = castChain.front();
+  hivm::VCastOp lastCast = castChain.back();
+  Type inputType = getElementTypeOrSelf(firstCast.getSrc()[0].getType());
+  Type outputType = getElementTypeOrSelf(lastCast.getDst()[0].getType());
+
+  // For overall integer narrowing (e.g. i32->i8):
+  // - Integer-narrowing steps must not disable saturation.
+  // - Float intermediates (i32->f32->f16->i8) often set enable_saturate=false;
+  //   ignore those and instead require the last cast to allow saturation.
+  if (isIntegerNarrowing(inputType, outputType)) {
+    bool sawIntegerNarrowingCast = false;
+    for (hivm::VCastOp castOp : castChain) {
+      Type castIn = getElementTypeOrSelf(castOp.getSrc()[0].getType());
+      Type castOut = getElementTypeOrSelf(castOp.getDst()[0].getType());
+      if (!isIntegerNarrowing(castIn, castOut))
+        continue;
+      sawIntegerNarrowingCast = true;
+      if (auto enableSaturate =
+              castOp->getAttrOfType<BoolAttr>("enable_saturate")) {
+        if (!enableSaturate.getValue())
+          return std::nullopt;
+      }
+    }
+    if (!sawIntegerNarrowingCast) {
+      if (auto enableSaturate =
+              lastCast->getAttrOfType<BoolAttr>("enable_saturate")) {
+        if (!enableSaturate.getValue())
+          return std::nullopt;
+      }
+    }
+  }
+
+  return getQuantModeForTypes(inputType, outputType);
+}
+
+std::optional<FixpipePreQuantMode> getQuantMode(hivm::VCastOp castOp) {
+  return getQuantModeForCastChain(collectVCastChain(castOp));
 }
 
 /// when all the activationOps are ready, there should be relu, leaky-relu and
@@ -788,27 +896,6 @@ static bool hasCompatibleShape(Value lhs, Value rhs) {
     return false;
   return succeeded(
       verifyCompatibleShape(lhsType.getShape(), rhsType.getShape()));
-}
-
-/// Fixpipe pre-quant cannot implement integer narrowing casts that disable
-/// saturation (for example, trunc-with-overflow semantics).
-static bool isVcastInlinableIntoFixpipe(hivm::VCastOp castOp) {
-  if (!isRegBasedArch(castOp))
-    return true;
-
-  auto inputType = getElementTypeOrSelf(castOp.getSrc()[0].getType());
-  auto outputType = getElementTypeOrSelf(castOp.getDst()[0].getType());
-  if (!inputType.isIntOrIndex() || !outputType.isIntOrIndex())
-    return true;
-
-  int64_t srcBitWidth = inputType.getIntOrFloatBitWidth();
-  int64_t dstBitWidth = outputType.getIntOrFloatBitWidth();
-  if (srcBitWidth <= dstBitWidth || outputType.isInteger(1))
-    return true;
-
-  if (auto enableSaturate = castOp->getAttrOfType<BoolAttr>("enable_saturate"))
-    return enableSaturate.getValue();
-  return true;
 }
 
 template <typename OpType>
@@ -944,11 +1031,13 @@ private:
     //    Quant mode is decided from first-cast input type to last-cast output
     //    type so decomposed casts (e.g. i32->i16->i8) still fuse as S322I8.
     auto castOp = dyn_cast_if_present<hivm::VCastOp>(curOp);
-    if (op.getFixpipeState() <= op.needFixpipePreFuse() && castOp &&
-        getQuantMode(castOp).has_value()) {
-      matched = true;
-      inlineFixPipeWithRreQuant(rewriter, loc, op, castOp,
-                                op.getDpsInputOperand(0)->get());
+    if (op.getFixpipeState() <= op.needFixpipePreFuse() && castOp) {
+      SmallVector<hivm::VCastOp> castChain = collectVCastChain(castOp);
+      if (getQuantModeForCastChain(castChain).has_value()) {
+        matched = true;
+        inlineFixPipeWithRreQuant(rewriter, loc, op, castChain,
+                                  op.getDpsInputOperand(0)->get());
+      }
     } else if (op.getFixpipeState() <= op.needFixpipePreFuse() &&
                isActivationOp(curOp)) {
       // 2. relu and other activation function
@@ -1002,16 +1091,23 @@ private:
   }
 
   void inlineFixPipeWithRreQuant(PatternRewriter &rewriter, Location loc,
-                                 hivm::FixpipeOp op, hivm::VCastOp castOp,
+                                 hivm::FixpipeOp op,
+                                 ArrayRef<hivm::VCastOp> castChain,
                                  Value newFixpipeSrcTensor) const {
-    std::optional<FixpipePreQuantMode> quantMode = getQuantMode(castOp);
+    std::optional<FixpipePreQuantMode> quantMode =
+        getQuantModeForCastChain(castChain);
+    if (!quantMode) {
+      LDBG("cast op quant mode is null");
+      return;
+    }
     auto quantModeAttr =
         FixpipePreQuantModeAttr::get(op.getContext(), quantMode.value());
     auto reluModeAttr = op.getPreReluAttr();
 
-    rewriter.setInsertionPointAfter(castOp);
+    hivm::VCastOp lastCast = castChain.back();
+    rewriter.setInsertionPointAfter(lastCast);
     Value fixpipeInit =
-        utils::createEmptyOp(rewriter, loc, castOp.getResult()[0]);
+        utils::createEmptyOp(rewriter, loc, lastCast.getResult()[0]);
     MLIRContext *ctx = rewriter.getContext();
     bool regBased = isRegBasedArch(op);
     FixpipeDMAModeAttr dmaModeAttr =
@@ -1022,9 +1118,10 @@ private:
         /*dst=*/fixpipeInit, dmaModeAttr, op.getDualDstModeAttr(),
         op.getSubBlockIdxAttr(), quantModeAttr, reluModeAttr,
         op.getChannelSplitAttr(), op.getQuantScale());
-    rewriter.replaceAllUsesWith(castOp.getResult()[0],
+    rewriter.replaceAllUsesWith(lastCast.getResult()[0],
                                 newFixpipeOp.getResultTensor());
-    rewriter.eraseOp(castOp);
+    for (hivm::VCastOp castOp : llvm::reverse(castChain))
+      rewriter.eraseOp(castOp);
     rewriter.eraseOp(op);
     LDBG("InlineFixpipeWithPreQuant");
   }
