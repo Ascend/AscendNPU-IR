@@ -2185,12 +2185,7 @@ void Solver::handleConflict(Occurrence *occ1, Occurrence *occ2,
   bool isBarrier = corePipeSrc == corePipeDst;
   auto unitFlagInfo =
       isBarrier ? std::nullopt : checkUnitFlagPatterns(occ1, occ2);
-  std::optional<EventIdInfo> checkEventIdInfo;
-  if (!isBarrier && !unitFlagInfo) {
-    checkEventIdInfo = eventIdInfo;
-  }
-  if (!checkGraphConflict(occ1, occ2, corePipeSrc, corePipeDst,
-                          checkEventIdInfo)) {
+  if (!checkGraphConflict(occ1, occ2, corePipeSrc, corePipeDst, eventIdInfo)) {
     return;
   }
   LLVM_DEBUG({
