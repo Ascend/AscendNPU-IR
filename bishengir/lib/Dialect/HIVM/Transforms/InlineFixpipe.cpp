@@ -402,12 +402,12 @@ static FixpipeOp insertFixpipeToL1(PatternRewriter &rewriter, Operation *point,
 static bool isInsertingFixpipeToL1(Value src) {
   if (src.use_empty())
     return false;
-  // used by L1 operations, such as hivm::MmadL1Op, hivm::MmadMxL1Op, etc.
-  return llvm::all_of(src.getUsers(), [](auto *user) {
-    return isa<
-#define GET_OP_LIST
-#include "bishengir/Dialect/HIVM/IR/HIVMMacroOps.cpp.inc"
-        >(user);
+  // used by L1 / cube macro ops (same set as HIVMMacroOps GET_OP_LIST).
+  // Keep the op list explicit so this .cpp has no #include after using-namespace
+  // (G.INC.08-CPP).
+  return llvm::all_of(src.getUsers(), [](Operation *user) {
+    return isa<BatchMmadL1Op, Conv1DL1Op, Conv2DL1Op, Conv3DL1Op, MatmulOp,
+               MixGroupMatmulOp, MixMatmulOp, MmadL1Op, MmadMxL1Op>(user);
   });
 }
 
