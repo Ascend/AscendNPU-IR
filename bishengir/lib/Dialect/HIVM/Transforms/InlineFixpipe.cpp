@@ -44,10 +44,7 @@ namespace mlir {
 #define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] ")
 #define LDBG(X) LLVM_DEBUG(DBGS() << X << "\n")
 
-using namespace mlir;
-using namespace mlir::hivm;
-
-namespace {
+namespace mlir::hivm {
 static constexpr llvm::StringLiteral printType = "print";
 static constexpr llvm::StringLiteral mmadFixpipeForResultAlreadyInserted =
     "fixpipe_for_result_already_inserted";
@@ -70,9 +67,7 @@ static bool isInsideVectorScope(Operation *op) {
   return coreTypeAttr &&
          coreTypeAttr.getTcoretype() == hivm::TCoreType::VECTOR;
 }
-} // namespace
 
-namespace {
 struct InsertFixpipe : public impl::InsertFixpipeBase<InsertFixpipe> {
   using Base::Base;
   void runOnOperation() override;
@@ -82,7 +77,6 @@ struct InlineFixpipe : public impl::InlineFixpipeBase<InlineFixpipe> {
   using Base::Base;
   void runOnOperation() override;
 };
-} // namespace
 
 std::optional<bool> isStoreOp(Operation *dstOp) {
   if (isa<hivm::StoreOp>(dstOp)) {
@@ -386,8 +380,9 @@ static FixpipeOp insertFixpipeToL1(PatternRewriter &rewriter, Operation *point,
   // FixpipeOp with channel_split enabled may split each channel (C0) in two
   // parts in destination.
   bool channelSplit = numElemPerBlock == alignM / 2;
-  Value fixpipeInit = rewriter.create<mlir::tensor::EmptyOp>(
-      point->getLoc(), dstTy, mlir::ValueRange{});
+  Value fixpipeInit =
+      rewriter.create<tensor::EmptyOp>(point->getLoc(), dstTy,
+                                       /*dynamicSizes=*/ValueRange{});
   FixpipeDMAModeAttr dmaModeAttr =
       FixpipeDMAModeAttr::get(ctx, FixpipeDMAMode::NZ2NZ);
 
@@ -399,15 +394,32 @@ static FixpipeOp insertFixpipeToL1(PatternRewriter &rewriter, Operation *point,
       /*channel_split=*/rewriter.getBoolAttr(channelSplit));
 }
 
+static FixpipeOp insertFixpipeToLocal(PatternRewriter &rewriter,
+                                      Operation *point, Value src) {
+  rewriter.setInsertionPointAfter(point);
+
+  auto dst = utils::createEmptyOp(rewriter, point->getLoc(), src);
+  MLIRContext *ctx = rewriter.getContext();
+  FixpipeDMAModeAttr dmaModeAttr =
+      FixpipeDMAModeAttr::get(ctx, FixpipeDMAMode::NZ2ND);
+
+  return rewriter.create<FixpipeOp>(
+      point->getLoc(), /*result_tensor=*/dst.getType(), src, dst, dmaModeAttr,
+      /*dual_dst_mode=*/nullptr,
+      /*sub_block_idx=*/nullptr,
+      /*pre_quant=*/nullptr, /*pre_relu=*/nullptr, /*channel_split=*/nullptr);
+}
+
 static bool isInsertingFixpipeToL1(Value src) {
   if (src.use_empty())
     return false;
-  // used by L1 / cube macro ops (same set as HIVMMacroOps GET_OP_LIST).
-  // Keep the op list explicit so this .cpp has no #include after using-namespace
-  // (G.INC.08-CPP).
-  return llvm::all_of(src.getUsers(), [](Operation *user) {
-    return isa<BatchMmadL1Op, Conv1DL1Op, Conv2DL1Op, Conv3DL1Op, MatmulOp,
-               MixGroupMatmulOp, MixMatmulOp, MmadL1Op, MmadMxL1Op>(user);
+  // used by L1 operations, such as hivm::MmadL1Op, hivm::MmadMxL1Op, etc.
+  // TODO: replace to any_of to prioritize fixpipe to L1 (if enhance perf)
+  return llvm::all_of(src.getUsers(), [](auto *user) {
+    return isa<
+#define GET_OP_LIST
+#include "bishengir/Dialect/HIVM/IR/HIVMMacroOps.cpp.inc"
+        >(user);
   });
 }
 
@@ -419,20 +431,8 @@ static FixpipeOp insertFixpipe(PatternRewriter &rewriter, Operation *point,
       hacc::utils::isRegBasedArch(point->getParentOfType<ModuleOp>()) &&
       isInsertingFixpipeToL1(src);
 
-  FixpipeOp fixpipe;
-  if (isMovingToL1) {
-    fixpipe = insertFixpipeToL1(rewriter, point, src);
-  } else {
-    auto dst = utils::createEmptyOp(rewriter, point->getLoc(), src);
-    MLIRContext *ctx = rewriter.getContext();
-    FixpipeDMAModeAttr dmaModeAttr =
-        FixpipeDMAModeAttr::get(ctx, FixpipeDMAMode::NZ2ND);
-    fixpipe = rewriter.create<FixpipeOp>(
-        point->getLoc(), /*result_tensor=*/dst.getType(), src, dst, dmaModeAttr,
-        /*dual_dst_mode=*/nullptr,
-        /*sub_block_idx=*/nullptr,
-        /*pre_quant=*/nullptr, /*pre_relu=*/nullptr, /*channel_split=*/nullptr);
-  }
+  auto fixpipe = (isMovingToL1 ? insertFixpipeToL1
+                               : insertFixpipeToLocal)(rewriter, point, src);
 
   SmallPtrSet<Operation *, 4> exceptedOps;
   exceptedOps.insert(fixpipe);
@@ -898,8 +898,51 @@ private:
     // Avoid fusing fixpipe into a VECTOR-scope store (mix AIC/AIV).
     if (isInsideVectorScope(curOp))
       return failure();
-    // Operation curOp = *maybeInlinedOp;
-    // 1. cast or quantization
+
+    if (isRegBasedArch(op) && op.getDmaMode() != FixpipeDMAMode::NZ2NZ) {
+      if (all_of(op->getUsers(), [](auto *user) {
+            return isa<
+#define GET_OP_LIST
+#include "bishengir/Dialect/HIVM/IR/HIVMMacroOps.cpp.inc"
+                >(user);
+          })) {
+
+        MLIRContext *ctx = rewriter.getContext();
+        auto tensorType = cast<RankedTensorType>(op.getDst().getType());
+        int64_t M = tensorType.getDimSize(0);
+        int64_t N = tensorType.getDimSize(1);
+        static constexpr int32_t alignM = 16;
+        auto numElemPerBlock = mlir::utils::getNumPerBlock(tensorType);
+        int64_t M1 = M / alignM;
+        int64_t N1 = N / numElemPerBlock;
+        auto dstTy = RankedTensorType::get({N1, M1, alignM, numElemPerBlock},
+                                           tensorType.getElementType());
+
+        // FixpipeOp with channel_split enabled may split each channel (C0) in
+        // two parts in destination.
+        bool channelSplit = numElemPerBlock == alignM / 2;
+        Value fixpipeInit = rewriter.create<mlir::tensor::EmptyOp>(
+            op->getLoc(), dstTy, mlir::ValueRange{});
+        FixpipeDMAModeAttr dmaModeAttr =
+            FixpipeDMAModeAttr::get(ctx, FixpipeDMAMode::NZ2NZ);
+
+        auto fixpipe = rewriter.create<FixpipeOp>(
+            op->getLoc(), /*result_tensor=*/fixpipeInit.getType(), op.getSrc(),
+            fixpipeInit, dmaModeAttr,
+            /*dual_dst_mode=*/op.getDualDstModeAttr(),
+            /*sub_block_idx=*/op.getSubBlockIdxAttr(),
+            /*pre_quant=*/op.getPreQuantAttr(),
+            /*pre_relu=*/op.getPreReluAttr(),
+            /*channel_split=*/rewriter.getBoolAttr(channelSplit));
+
+        rewriter.replaceOp(op, fixpipe.getResult(0));
+        return success();
+      }
+    }
+
+    // 1. cast or quantization (single VCast or a single-use VCast chain).
+    //    Quant mode is decided from first-cast input type to last-cast output
+    //    type so decomposed casts (e.g. i32->i16->i8) still fuse as S322I8.
     auto castOp = dyn_cast_if_present<hivm::VCastOp>(curOp);
     if (op.getFixpipeState() <= op.needFixpipePreFuse() && castOp &&
         getQuantMode(castOp).has_value()) {
@@ -1335,11 +1378,13 @@ void InlineFixpipe::runOnOperation() {
   eraseInlinableQuantScaleMarkOps(getOperation());
 }
 
-std::unique_ptr<Pass> mlir::hivm::createInsertFixpipePass() {
+std::unique_ptr<Pass> createInsertFixpipePass() {
   return std::make_unique<InsertFixpipe>();
 }
 
-std::unique_ptr<Pass> mlir::hivm::createInlineFixpipePass(
-    const InlineFixpipeOptions &options) {
+std::unique_ptr<Pass>
+createInlineFixpipePass(const InlineFixpipeOptions &options) {
   return std::make_unique<InlineFixpipe>(options);
 }
+
+} // namespace mlir::hivm

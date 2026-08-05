@@ -1459,7 +1459,12 @@ struct AddConvertLayoutUBToL1<hivm::FixpipeOp>
         continue;
 
       // FixpipeOp of rank 4 (Fractal layout) do not need add layout conversion.
-      auto fixpipeOp = *maybeFixpipe;
+      auto fixpipeOp = llvm::cast<hivm::FixpipeOp>(*maybeFixpipe);
+      // don't insert convert layout for FixpipeOp that is used by MmadL1Op with
+      // NZ2NZ DMA mode
+      if (fixpipeOp.getDmaMode() == FixpipeDMAMode::NZ2NZ) {
+        continue;
+      }
       auto fixpipeType = cast<ShapedType>(fixpipeOp->getResult(0).getType());
       if (fixpipeType.hasRank() && fixpipeType.getRank() == 4)
         continue;
