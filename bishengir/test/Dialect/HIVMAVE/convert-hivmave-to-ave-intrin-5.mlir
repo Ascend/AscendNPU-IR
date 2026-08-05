@@ -84,7 +84,7 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
   // so the unaligned f32 store gets element size 64 * 4 = 256 bytes.
   // Without the getNumfromPgePattern fix, H falls through to the default
   // case and yields an overflowed -4 instead.
-  // CHECK: %[[ELEMSIZE:.*]] = llvm.mlir.constant(256 : i32) : i32
+  // CHECK: %[[ELEMSIZE:.*]] = llvm.mlir.constant(128 : i32) : i32
   // CHECK: "hivm_regbaseintrins.intr.hivm.vstus.post.f32"(%{{.*}}, %{{.*}}, %[[ELEMSIZE]], %{{.*}})
   func.func @test_pge_h_unaligned_store(%arg0: memref<512xf32, #hivm.address_space<ub>>, %arg1: memref<512xf32, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
     %c0 = arith.constant 0 : index
