@@ -409,6 +409,9 @@ std::unique_ptr<Pass> createSinkOpToConsumerInLoopPass();
 std::unique_ptr<Pass> createPropagateConvertLayoutPass(
     const PropagateConvertLayoutOptions &options = {});
 
+// Legalize bool value used in simt vf
+std::unique_ptr<Pass> createLegalizeBoolForSimtVFPass();
+
 // Create a pass to insert memory semantic for simt vf.
 std::unique_ptr<Pass> createInsertMemSemanticForSimtVFPass();
 

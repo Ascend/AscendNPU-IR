@@ -99,6 +99,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   InsertNZ2NDForDebug.cpp
   InsertL12UBForDebug.cpp
   InsertWorkSpaceForMixCV.cpp
+  LegalizeBoolForSimtVF.cpp
   LiftLowestStride.cpp
   LiftZeroRank.cpp
   LowerCreateSyncBlockLock.cpp

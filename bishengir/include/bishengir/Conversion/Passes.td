@@ -147,6 +147,7 @@ def ConvertHIVMToTritonGPU : Pass<"convert-hivm-to-tritongpu"> {
   let summary = "Convert hivm ops to triton ops";
   let constructor = "mlir::createHIVMToTritonGPUConversionPass()";
   let dependentDialects = [
+    "LLVM::LLVMDialect",
     "mlir::triton::TritonDialect",
     "memref::MemRefDialect",
     "scf::SCFDialect"

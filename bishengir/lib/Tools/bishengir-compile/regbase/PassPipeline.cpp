@@ -508,6 +508,7 @@ void buildBiShengHIRPipeline(OpPassManager &pm,
     if (config.getEnableSimdSimtMixCompile()) {
       // TODO(regbase)
       pm.addPass(hivm::createAutoScopePass());
+      pm.addPass(hivm::createLegalizeBoolForSimtVFPass());
       pm.addPass(hivm::createInsertMemSemanticForSimtVFPass());
       pm.addPass(scope::createOutlineScopePass());
       pm.addPass(hivm::createInsertAllocBasePlaceholderPass());
