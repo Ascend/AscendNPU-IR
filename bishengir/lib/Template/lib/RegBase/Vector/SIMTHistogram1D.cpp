@@ -46,8 +46,18 @@ simt_histogram_1d_masked(__ubuf__ T *inputs, __ubuf__ int32_t *bins, __ubuf__ bo
                          int64_t mask_stride,
                          int64_t num_bins) {
   using U = typename std::make_unsigned<T>::type;
+  // Reinterpret the mask as a byte (uint8_t) pointer to enable efficient
+  // byte-level (8-bit) memory accesses. Since the mask is a bit-stream, loading
+  // one byte (8 bits) at a time and extracting individual bits via bitwise operations.
+  __ubuf__ const uint8_t *mask_bytes = reinterpret_cast<__ubuf__ const uint8_t *>(mask);
+
   for (uint32_t i = threadIdx.x; i < input_size; i += blockDim.x) {
-    if (!mask[i * mask_stride]) {
+    int64_t bit_idx = i * mask_stride;
+    // Check if the current element's corresponding mask bit is 1.
+    // `bit_idx >> 3` calculates the byte index (floor division by 8).
+    // `bit_idx & 7` calculates the bit offset within that byte (modulo 8).
+    // If the bit is 0 (mask is false), skip the current element.
+    if (!((mask_bytes[bit_idx >> 3] >> (bit_idx & 7)) & 1)) {
       continue;
     }
     uint64_t value = static_cast<uint64_t>(static_cast<U>(inputs[i * input_stride]));
