@@ -49,15 +49,6 @@ using namespace hivm;
 using namespace util;
 
 namespace {
-/// TODO: Obtain information from the same platform in the future
-constexpr const int ubAlignSize = 32 * 8;
-constexpr const int ubSpaceSize = 192 * 1024 * 8;
-constexpr const int l1AlignSize = 32 * 8;
-constexpr const int l1SpaceSize = 512 * 1024 * 8;
-constexpr const int l0cAlignSize = 512 * 8;
-constexpr const int l0cSpaceSize = 128 * 1024 * 8;
-constexpr const int workSpaceAlignSize = 32 * 8;
-
 bool isReusableCastOp(hivm::VCastOp &castOp, Value output, Value input) {
   auto rank = dyn_cast<MemRefType>(output.getType()).getRank();
   if (rank > 1 || !isLastDimContiguous(output) || !isLastDimContiguous(input)) {
@@ -2718,6 +2709,86 @@ void MemPlan::ReportAllocatedEntryDebugInfo(
 #endif
 }
 
+LogicalResult MemPlan::DynamicSetUbSpaceSize(
+    hacc::HACCTargetDeviceSpecInterface specInterface, func::FuncOp funcOp) {
+  auto aUBSize =
+      specInterface.getSpecForIdentifierEnum(hacc::DeviceSpec::UB_SIZE);
+  ubSpaceSize = cast<IntegerAttr>(aUBSize.getValue()).getInt();
+  if (!hacc::utils::isRegBasedArch(funcOp->getParentOfType<ModuleOp>())) {
+    return success();
+  }
+  if (const auto vfModeAttr =
+          funcOp->getAttrOfType<VFModeAttr>(VFModeAttr::name)) {
+    if (vfModeAttr.getValue() == VFMode::SIMT ||
+        vfModeAttr.getValue() == VFMode::MIX) {
+      constexpr int numBitsInByte = 8;
+      constexpr int numByteInKB = 1024;
+      auto simtVFUbSize = this->simtVFDynamicSize * numByteInKB * numBitsInByte;
+      auto minimalDCacheSize =
+          cast<IntegerAttr>(specInterface
+                                .getSpecForIdentifierEnum(
+                                    hacc::DeviceSpec::MINIMAL_D_CACHE_SIZE)
+                                .getValue())
+              .getInt();
+      auto maximumDCacheSize =
+          cast<IntegerAttr>(specInterface
+                                .getSpecForIdentifierEnum(
+                                    hacc::DeviceSpec::MAXIMUM_D_CACHE_SIZE)
+                                .getValue())
+              .getInt();
+      if (simtVFUbSize < (ubSpaceSize - maximumDCacheSize) ||
+          simtVFUbSize > (ubSpaceSize - minimalDCacheSize)) {
+        funcOp->emitError()
+            << "PlanMemory Fail : SimtVFDynamicSize have to in range ["
+            << (ubSpaceSize - maximumDCacheSize) / numByteInKB / numBitsInByte
+            << ", "
+            << (ubSpaceSize - minimalDCacheSize) / numByteInKB / numBitsInByte
+            << "], but got " << simtVFDynamicSize << "!";
+        return failure();
+      }
+      ubSpaceSize = simtVFUbSize;
+      return success();
+    }
+  }
+  return success();
+}
+
+LogicalResult MemPlan::InitMemSpecsFromModule(func::FuncOp funcOp) {
+  auto moduleOp = utils::getTopLevelModuleOp(funcOp);
+  auto maybeSpecInterface = hacc::utils::getNPUTargetSpec(moduleOp);
+  if (!maybeSpecInterface.has_value()) {
+    return failure();
+  }
+  auto specInterface = maybeSpecInterface.value();
+
+  if (failed(DynamicSetUbSpaceSize(specInterface, funcOp))) {
+    return failure();
+  }
+
+  auto aL1Size =
+      specInterface.getSpecForIdentifierEnum(hacc::DeviceSpec::L1_SIZE);
+  l1SpaceSize = cast<IntegerAttr>(aL1Size.getValue()).getInt();
+  auto aL0ASize =
+      specInterface.getSpecForIdentifierEnum(hacc::DeviceSpec::L0A_SIZE);
+  l0aSpaceSize = cast<IntegerAttr>(aL0ASize.getValue()).getInt();
+  auto aL0BSize =
+      specInterface.getSpecForIdentifierEnum(hacc::DeviceSpec::L0B_SIZE);
+  l0bSpaceSize = cast<IntegerAttr>(aL0BSize.getValue()).getInt();
+  auto aL0CSize =
+      specInterface.getSpecForIdentifierEnum(hacc::DeviceSpec::L0C_SIZE);
+  l0cSpaceSize = cast<IntegerAttr>(aL0CSize.getValue()).getInt();
+  auto aUBAlignSize =
+      specInterface.getSpecForIdentifierEnum(hacc::DeviceSpec::UB_ALIGN_SIZE);
+  ubAlignSize = cast<IntegerAttr>(aUBAlignSize.getValue()).getInt();
+  auto aL1AlignSize =
+      specInterface.getSpecForIdentifierEnum(hacc::DeviceSpec::L1_ALIGN_SIZE);
+  l1AlignSize = cast<IntegerAttr>(aL1AlignSize.getValue()).getInt();
+  auto aL0cAlignSize =
+      specInterface.getSpecForIdentifierEnum(hacc::DeviceSpec::L0C_ALIGN_SIZE);
+  l0cAlignSize = cast<IntegerAttr>(aL0cAlignSize.getValue()).getInt();
+  return success();
+}
+
 void MemPlan::RollBackForAllocFail(StatusWrapper &statusWrapper,
                                    const size_t maxBits) {
   while (ContinueRollBack(statusWrapper)) {
@@ -2850,7 +2921,11 @@ PlanMemoryPass::planMemoryForFuncOp(
 
     MemPlan memPlan(this->memMode, this->enableGlobalReuse,
                     this->enableMemoryDisplay, this->restrictInplaceAsISA,
-                    this->disableVFReachableCheck, this->planMemoryStrategy);
+                    this->simtVFDynamicSize, this->disableVFReachableCheck,
+                    this->planMemoryStrategy);
+    if (failed(memPlan.InitMemSpecsFromModule(funcOp))) {
+      return std::nullopt;
+    }
     memPlan.func_ = funcOp;
     memPlan.SetLinearOperation(memLiveness.linearOperation);
     memPlan.SetBufferInfos(memLiveness.bufferInfos);

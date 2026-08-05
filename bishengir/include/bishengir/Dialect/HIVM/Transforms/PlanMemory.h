@@ -18,6 +18,7 @@
 #define BISHENG_DIALECT_HIVM_TRANSFORMS_PLAN_MEMORY_H
 
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
+#include "bishengir/Dialect/HACC/IR/HACCInterfaces.h"
 #include "bishengir/Dialect/HIVM/Analysis/VFInplaceReuseAnalyzer.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/InplaceReuseReachableMap.h"
@@ -511,11 +512,12 @@ class MemPlan {
 public:
   MemPlan(MemPlanMode planMode, bool enableGlobalReuse,
           bool enableMemoryDisplay, bool restrictInplaceAsISA,
-          bool disableVFReachableCheck,
+          int simtVFDynamicSize, bool disableVFReachableCheck,
           PlanMemoryStrategy planMemoryStrategy = PlanMemoryStrategy::DEFAULT)
       : enableMemoryDisplay(enableMemoryDisplay), planMode(planMode),
         enableGlobalReuse(enableGlobalReuse),
         restrictInplaceAsISA(restrictInplaceAsISA),
+        simtVFDynamicSize(simtVFDynamicSize),
         disableVFReachableCheck(disableVFReachableCheck),
         planMemoryStrategy(planMemoryStrategy),
         vfInplaceReuseInfo(nullptr) {}
@@ -557,6 +559,9 @@ public:
     vfInplaceReuseInfo = inplaceReuseInfo;
   }
 
+  /// Setup the device's storage specs
+  LogicalResult InitMemSpecsFromModule(func::FuncOp funcOp);
+
   func::FuncOp func_;
 
   /// enable memory display tools.
@@ -594,6 +599,9 @@ private:
 
   /// enable HIVM op plan memory inplace
   bool restrictInplaceAsISA;
+
+  /// Dynamic ub size(KB) for simt VF. Default is 216
+  int simtVFDynamicSize;
 
   /// Disable VF load/store reachability check for inplace reuse.
   bool disableVFReachableCheck;
@@ -739,6 +747,12 @@ private:
   /// plan failed.
   PlanStatus ApplyFailStrategy(StatusWrapper &statusWrapper,
                                const size_t maxBits);
+
+  /// Dynamically set the UB space size based on VFModeAttr, which is set by the
+  /// InferVFModePass.
+  LogicalResult
+  DynamicSetUbSpaceSize(hacc::HACCTargetDeviceSpecInterface specInterface,
+                        func::FuncOp funcOp);
 
   void RollBackForAllocFail(StatusWrapper &statusWrapper, const size_t maxBits);
 
@@ -920,6 +934,33 @@ private:
   /// when plan memory success, map from each scope to its root StorageEntry.
   llvm::MapVector<hivm::AddressSpace, StorageEntry *>
       memscope2rootSuccessStorageEntry;
+
+  /// The device's UB storage size
+  int ubSpaceSize{0};
+
+  /// The device's L1 storage size
+  int l1SpaceSize{0};
+
+  /// The device's L0A storage size
+  int l0aSpaceSize{0};
+
+  /// The device's L0B storage size
+  int l0bSpaceSize{0};
+
+  /// The device's L0C storage size
+  int l0cSpaceSize{0};
+
+  /// The device's UB align size
+  int ubAlignSize{0};
+
+  /// The device's L1 align size
+  int l1AlignSize{0};
+
+  /// The device's L0C align size
+  int l0cAlignSize{0};
+
+  /// The device's work space align size
+  int workSpaceAlignSize{32 * 8};
 };
 
 } // namespace hivm

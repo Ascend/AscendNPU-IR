@@ -1,4 +1,4 @@
-// RUN: bishengir-opt %s -hivm-plan-memory="mem-plan-mode=global-work-space-plan" -split-input-file -verify-diagnostics | FileCheck %s
+// RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend910B1 -hivm-plan-memory="mem-plan-mode=global-work-space-plan" -split-input-file -verify-diagnostics | FileCheck %s
 
 // -----
 module {
