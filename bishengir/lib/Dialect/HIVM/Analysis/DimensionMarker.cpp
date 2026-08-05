@@ -213,7 +213,7 @@ void DimensionAnalyzer::processPreOrderWalk() {
   combineInferable();
 
   op_->walk<WalkOrder::PreOrder>([&](Operation *op) {
-    for (OpOperand &operand : op->getOpOperands()) {
+    for (OpOperand &operand : llvm::reverse(op->getOpOperands())) {
       auto current = operand.get();
       processOperation(op, current);
       handleValueGroupForUse(op, current, &operand, operand.getOperandNumber());
