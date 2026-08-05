@@ -58,13 +58,13 @@ namespace mlir {
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h.inc"
 } // namespace mlir
 
-using namespace mlir;
-using namespace mlir::hivm;
-
 #define DEBUG_TYPE "insert-load-store"
 #define DBGS() (llvm::dbgs() << "[" DEBUG_TYPE "]: ")
 #define DBGSNL() (llvm::dbgs() << "\n")
 #define LDBG(X) LLVM_DEBUG(DBGS() << X << "\n")
+
+using namespace mlir;
+using namespace mlir::hivm;
 
 namespace {
 static const llvm::StringLiteral kConvertLayoutOperand =

@@ -40,13 +40,12 @@ namespace mlir {
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h.inc"
 } // namespace mlir
 
+#define DEBUG_TYPE "hivm-inline-fixpipe"
 #define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] ")
 #define LDBG(X) LLVM_DEBUG(DBGS() << X << "\n")
 
 using namespace mlir;
 using namespace mlir::hivm;
-
-#define DEBUG_TYPE "hivm-inline-fixpipe"
 
 namespace {
 static constexpr llvm::StringLiteral printType = "print";
