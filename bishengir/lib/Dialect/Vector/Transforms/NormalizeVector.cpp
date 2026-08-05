@@ -1556,12 +1556,20 @@ struct UnaryScalarOpToVectorPattern : public OpRewritePattern<UnaryOpType> {
     Location loc = op.getLoc();
     auto blockArg = dyn_cast<BlockArgument>(operand);
 
-    // Collect broadcast users
+    // Reject if any user is neither a broadcast, a conversion cast inserted
+    // by sibling patterns, nor an op this pass will vectorize: the cast-back
+    // we'd emit cannot be folded (its producer is a vector op) and leaks to
+    // LLVM lowering, where the AIC vec backend cannot select it.
     SmallVector<vector::BroadcastOp, 4> broadcastUsers;
     for (auto user : op->getUsers()) {
       if (auto broadcastUser = dyn_cast<vector::BroadcastOp>(user)) {
         broadcastUsers.push_back(broadcastUser);
+        continue;
       }
+      if (isa<UnrealizedConversionCastOp>(user))
+        continue;
+      if (!isVectorizableByThisPass(user))
+        return failure();
     }
 
     // Create vector operand
@@ -1591,6 +1599,22 @@ struct UnaryScalarOpToVectorPattern : public OpRewritePattern<UnaryOpType> {
       rewriter.replaceOp(op, castOp.getResult(0));
     }
     return success();
+  }
+
+  // Whether `user` is rewritten to vector form by this pass, so the cast-back
+  // feeding it folds. Mirrors the op list in NormalizeVectorPass::runOnOperation.
+  static bool isVectorizableByThisPass(Operation *user) {
+    if (isa<math::AbsFOp, math::LogOp, math::RoundOp>(user))
+      return true;
+    if (isa<mathExt::DivFHPOp, arith::AndIOp, arith::XOrIOp, arith::MulFOp,
+            arith::SubFOp, arith::CmpFOp>(user))
+      return true;
+    if (auto fma = dyn_cast<math::FmaOp>(user)) {
+      auto types = fma.getOperandTypes();
+      return std::all_of(types.begin(), types.end(),
+                         [](Type t) { return t.isF32(); });
+    }
+    return false;
   }
 
   void copyRoundAttributes(Operation *src, Operation *dst) const {
@@ -1661,7 +1685,104 @@ struct FmaOpScalarToVectorPattern : public OpRewritePattern<math::FmaOp> {
   }
 };
 
+// Vectorize a single-use scalar chain ending in `vector.broadcast %scalar :
+// T to vector<64xT>` (T = f32 or i32). Each link is a bit-exact op (bitcast
+// / andi / addi / subi / muli / minsi / maxsi / math.absf). Vectorizing the
+// whole chain at once avoids leaving a scalar `arith.bitcast f32<->i32`,
+// whose LLVM lowering the AIC vec backend cannot select.
+struct ScalarChainBroadcastToVectorPattern
+    : public OpRewritePattern<vector::BroadcastOp> {
+  using OpRewritePattern<vector::BroadcastOp>::OpRewritePattern;
 
+  LogicalResult matchAndRewrite(vector::BroadcastOp brcOp,
+                                PatternRewriter &rewriter) const override {
+    Value src = brcOp.getOperand();
+    Type scalarType = src.getType();
+    VectorType vecType =
+        mlir::dyn_cast<VectorType>(brcOp.getResult().getType());
+    if (!vecType || vecType.getRank() != 1 || vecType.getNumElements() != 64)
+      return failure();
+    if (!scalarType.isF32() && !scalarType.isInteger(32))
+      return failure();
+
+    SmallVector<Operation *, 8> chain;
+    Value cur = src;
+    while (auto defOp = cur.getDefiningOp()) {
+      if (!isScalarChainOp(defOp) || !defOp->hasOneUse())
+        break;
+      chain.push_back(defOp);
+      cur = defOp->getOperand(0);
+    }
+    if (chain.empty())
+      return failure();
+
+    Location loc = brcOp.getLoc();
+    VectorType rootVecType = VectorType::get({64}, cur.getType());
+    Value curVec = isa<BlockArgument>(cur)
+                       ? (Value)rewriter.create<vector::BroadcastOp>(
+                             loc, rootVecType, cur)
+                       : rewriter
+                             .create<UnrealizedConversionCastOp>(
+                                 loc, rootVecType, cur)
+                             .getResult(0);
+
+    for (auto it = chain.rbegin(), e = chain.rend(); it != e; ++it) {
+      Operation *op = *it;
+      VectorType opVecType =
+          VectorType::get({64}, op->getResult(0).getType());
+      if (auto bc = dyn_cast<arith::BitcastOp>(op)) {
+        curVec = rewriter.create<arith::BitcastOp>(loc, opVecType, curVec);
+      } else if (auto andi = dyn_cast<arith::AndIOp>(op)) {
+        curVec = rewriter.create<arith::AndIOp>(
+            loc, opVecType, curVec,
+            broadcastOrCast(rewriter, loc, andi.getRhs(), opVecType));
+      } else if (auto addi = dyn_cast<arith::AddIOp>(op)) {
+        curVec = rewriter.create<arith::AddIOp>(
+            loc, opVecType, curVec,
+            broadcastOrCast(rewriter, loc, addi.getRhs(), opVecType));
+      } else if (auto subi = dyn_cast<arith::SubIOp>(op)) {
+        curVec = rewriter.create<arith::SubIOp>(
+            loc, opVecType, curVec,
+            broadcastOrCast(rewriter, loc, subi.getRhs(), opVecType));
+      } else if (auto muli = dyn_cast<arith::MulIOp>(op)) {
+        curVec = rewriter.create<arith::MulIOp>(
+            loc, opVecType, curVec,
+            broadcastOrCast(rewriter, loc, muli.getRhs(), opVecType));
+      } else if (auto minsi = dyn_cast<arith::MinSIOp>(op)) {
+        curVec = rewriter.create<arith::MinSIOp>(
+            loc, opVecType, curVec,
+            broadcastOrCast(rewriter, loc, minsi.getRhs(), opVecType));
+      } else if (auto maxsi = dyn_cast<arith::MaxSIOp>(op)) {
+        curVec = rewriter.create<arith::MaxSIOp>(
+            loc, opVecType, curVec,
+            broadcastOrCast(rewriter, loc, maxsi.getRhs(), opVecType));
+      } else if (isa<math::AbsFOp>(op)) {
+        curVec = rewriter.create<math::AbsFOp>(loc, opVecType, curVec);
+      } else {
+        return failure();
+      }
+    }
+
+    rewriter.replaceOp(brcOp, curVec);
+    for (auto *op : chain)
+      rewriter.eraseOp(op);
+    return success();
+  }
+
+private:
+  static bool isScalarChainOp(Operation *op) {
+    return isa<arith::BitcastOp, arith::AndIOp, arith::AddIOp, arith::MinSIOp,
+               arith::MaxSIOp, arith::SubIOp, arith::MulIOp, math::AbsFOp>(op);
+  }
+
+  static Value broadcastOrCast(PatternRewriter &rewriter, Location loc,
+                               Value scalar, VectorType vecType) {
+    if (isa<BlockArgument>(scalar))
+      return rewriter.create<vector::BroadcastOp>(loc, vecType, scalar);
+    return rewriter.create<UnrealizedConversionCastOp>(loc, vecType, scalar)
+        .getResult(0);
+  }
+};
 
 } // namespace
 /// This pass normalizes vector ops to meet HIVM requirements:
@@ -1705,7 +1826,8 @@ void NormalizeVectorPass::runOnOperation() {
                  BinaryScalarOpToVectorPattern<arith::MulFOp>,
                  BinaryScalarOpToVectorPattern<arith::SubFOp>,
                  BinaryScalarOpToVectorPattern<arith::CmpFOp>,
-                 FmaOpScalarToVectorPattern>(
+                 FmaOpScalarToVectorPattern,
+                 ScalarChainBroadcastToVectorPattern>(
         patterns.getContext());
   patterns.add<TransferReadToGatheringLoadPattern>(patterns.getContext());
   vector::ExtractOp::getCanonicalizationPatterns(patterns, ctx);
