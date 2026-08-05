@@ -35,7 +35,7 @@ AscendNPU IR端到端运行依赖CANN环境。
 2. 安装CANN包：
 
    ```bash
-   # 以x86系统A3环境，{version}为CANN版本，如9.0.0
+   # 以x86系统Atlas A3系列产品安装CANN包为例，其中{version}为CANN版本，如9.0.0
    chmod +x Ascend-cann_{version}_linux-x86_64.run
    chmod +x Ascend-cann-A3-ops_{version}_linux-x86_64.run
    ./Ascend-cann_{version}_linux-x86_64.run --full [--install-path=${PATH-TO-CANN}]

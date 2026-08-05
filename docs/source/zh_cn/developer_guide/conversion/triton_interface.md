@@ -13,7 +13,7 @@ Triton-Ascend要求的Python版本为Python 3.9~3.11（含边界），运行依�
     从[昇腾社区CANN下载页](https://www.hiascend.com/cann/download)下载Toolkit包及与硬件对应的ops包。
 
     ```bash
-    # 以x86系统A3环境，{version}为CANN版本，如9.0.0
+    # 以x86环境下Atlas A3系列产品的CANN安装举例，其中{version}替换为实际CANN版本号，如9.0.0
     chmod +x Ascend-cann_{version}_linux-x86_64.run
     chmod +x Ascend-cann-A3-ops_{version}_linux-x86_64.run
     ./Ascend-cann_{version}_linux-x86_64.run --full [--install-path=${PATH-TO-CANN}]
@@ -339,7 +339,7 @@ def triton_matmul_exp():
 
 **限制**：
 
-目前Atlas A2最多支持2个Vector核。
+目前Atlas A2训练系列产品/Atlas A2推理系列产品最多支持2个Vector核。
 
 **写法样例**：
 
@@ -839,7 +839,7 @@ def index_select_simd():
 
 ## Triton独有定制化操作
 
-在A5的架构下，Triton-Ascend的Custom Op支持用户自行定制操作并使用它。定制操作在运行时转换为对设备侧实现函数的调用，可以调用已有的库函数，也可以调用由用户提供的源码或字节码编译生成的实现函数。
+在Ascend 950PR/Ascend 950DT架构中，Triton-Ascend的Custom Op支持用户自行定制操作并使用它。定制操作在运行时转换为对设备侧实现函数的调用，可以调用已有的库函数，也可以调用由用户提供的源码或字节码编译生成的实现函数。
 
 ### 注册与使用定制操作
 

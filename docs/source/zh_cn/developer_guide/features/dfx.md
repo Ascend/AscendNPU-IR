@@ -213,6 +213,6 @@ hivm.hir.debug {debugtype = "print", hex = xxx, prefix = " xxx: ", tcoretype = #
 
 | 适用硬件 | 使用约束 |
 |--------|--------|
-| A3 & A5 | 1. 打印对象仅支持张量、标量。<br>2. `device_print`打印缓冲区固定为16KB。<br>3. Triton内存检测工具sanitizer与`device_print`互斥，不可同时启用。<br>4. 编码规范：单个张量单独打印，打印指令紧跟目标张量，防止张量生命周期变动引发运行异常。<br>5. 内核限制：不允许待打印算子仅作为`device_print`唯一输入。<br>6. 循环限制：`while`循环内禁止打印循环体外定义的操作数。<br>7. 超时限制：打印等待内核完成超时时间10分钟，长耗时用例开启打印会触发超时失败。 |
-| A3 | 支持打印数据类型：`bool`、`int8`、`uint8`、`int16`、`uint16`、`int32`、`uint32`、`int64`、`bfloat16`、`half`、`float32`。 |
-| A5 | 1. 数据类型兼容：兼容A3全部类型，额外支持`fp8`。<br>2. 融合调度约束：插入`device_print`破坏VF融合边界情况下可能引发UB溢出，需减小tiling分块。<br>3. 缓存资源约束：打印`fp8`张量、L1张量边界情况下可能会引发UB溢出，需减小tiling分块规避缓存溢出。 |
+| <ul><li>Ascend 950PR/Ascend 950DT</li><li>Atlas A3训练系列产品/Atlas A3推理系列产品</li><li>Atlas A2训练系列产品/Atlas A2推理系列产品</li></ul> | 1. 打印对象仅支持张量、标量。<br>2. `device_print`打印缓冲区固定为16KB。<br>3. Triton内存检测工具sanitizer与`device_print`互斥，不可同时启用。<br>4. 编码规范：单个张量单独打印，打印指令紧跟目标张量，防止张量生命周期变动引发运行异常。<br>5. 内核限制：不允许待打印算子仅作为`device_print`唯一输入。<br>6. 循环限制：`while`循环内禁止打印循环体外定义的操作数。<br>7. 超时限制：打印等待内核完成超时时间10分钟，长耗时用例开启打印会触发超时失败。 |
+| <ul><li>Atlas A3训练系列产品/Atlas A3推理系列产品</li><li>Atlas A2训练系列产品/Atlas A2推理系列产品</li></ul> | 支持打印数据类型：`bool`、`int8`、`uint8`、`int16`、`uint16`、`int32`、`uint32`、`int64`、`bfloat16`、`half`、`float32`。 |
+| <ul><li>Ascend 950PR/Ascend 950DT</li></ul> | 1. 数据类型兼容：兼容Atlas A3训练系列产品/Atlas A3推理系列产品全部类型，额外支持`fp8`。<br>2. 融合调度约束：插入`device_print`破坏VF融合边界情况下可能引发UB溢出，需减小tiling分块。<br>3. 缓存资源约束：打印`fp8`张量、L1张量边界情况下可能会引发UB溢出，需减小tiling分块规避缓存溢出。 |
