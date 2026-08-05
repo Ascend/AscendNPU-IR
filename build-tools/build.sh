@@ -482,14 +482,10 @@ parse_arguments() {
                 break
                 ;;
             -*)
-                echo "Error: Unknown option: $1"
-                usage
-                exit 1
-                ;;
-            *)
-                echo "Error: Unexpected argument: $1"
-                usage
-                exit 1
+              # Unknown options are rejected by getopt above, so reaching here means the
+ 	            # option is declared in LONG_OPTS but has no case arm.
+ 	            echo "${SCRIPT_NAME}: internal error: option '$1' is declared but not handled" >&2
+ 	            exit 1
                 ;;
         esac
     done
