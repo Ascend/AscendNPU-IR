@@ -1,4 +1,3 @@
-// UNSUPPORTED: bishengir_published
 // RUN: bishengir-opt --hivm-insert-anchors-and-backup -split-input-file -verify-diagnostics %s | FileCheck %s
 
 #map = affine_map<(d0, d1) -> (d0 - d1)>

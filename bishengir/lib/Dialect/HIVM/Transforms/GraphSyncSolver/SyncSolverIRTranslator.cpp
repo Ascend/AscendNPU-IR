@@ -412,8 +412,9 @@ IRTranslator::getDecomposedMmadMxL1(hivm::MmadMxL1Op mmadMxL1Op,
 
   // Sub-op 5: MmadL0 — M, write C (no UnitFlag for MxL1)
   auto mmadl0Op = std::make_unique<MmadL0Operation>(
-      mmadMxL1Op, scopeOp.get(), coreType, hivm::PIPE::PIPE_M, hivm::PIPE::PIPE_M,
-      SmallVector<Value>(), getMemoryOps({mmadMxL1Op.getC()}));
+      mmadMxL1Op, scopeOp.get(), coreType, hivm::PIPE::PIPE_M,
+      hivm::PIPE::PIPE_M, SmallVector<Value>(),
+      getMemoryOps({mmadMxL1Op.getC()}));
   // MmadMxL1Op does not support UnitFlag
   mmadMxL1LoopOp->mmadL0Op = mmadl0Op.get();
   scopeOp->body.push_back(std::move(mmadl0Op));
@@ -473,13 +474,11 @@ IRTranslator::getInferredPipe(Operation *op, TCoreType coreType,
       curPipe = PIPE::PIPE_MTE2;
     }
     if (isa<hivm::CopyOp, tensor::InsertSliceOp>(op) &&
-        (coreType == TCoreType::VECTOR) &&
-        (addressSpace == AddressSpace::L1)) {
+        (coreType == TCoreType::VECTOR) && (addressSpace == AddressSpace::L1)) {
       curPipe = PIPE::PIPE_MTE3;
     }
     if (isa<hivm::VBrcOp, hivm::CopyOp, tensor::InsertSliceOp>(op) &&
-        (coreType == TCoreType::VECTOR) &&
-        (addressSpace == AddressSpace::UB)) {
+        (coreType == TCoreType::VECTOR) && (addressSpace == AddressSpace::UB)) {
       curPipe = PIPE::PIPE_V;
     }
     if (curPipe.has_value()) {
@@ -513,8 +512,9 @@ IRTranslator::getDestinationStyleInterfaceOp(Operation *op,
   auto [readMemOps, writeMemOps] = getReadWriteMemoryOps(op);
   std::optional<hivm::PIPE> pipe;
   if (options.isCrossCoreMode()) {
-    if (isa<hivm::CopyOp, hivm::VBrcOp>(op) || (options.isRegBasedArch && isa<tensor::InsertSliceOp,
-            tensor::InsertOp>(op))) {
+    if (isa<hivm::CopyOp, hivm::VBrcOp>(op) ||
+        (options.isRegBasedArch &&
+         isa<tensor::InsertSliceOp, tensor::InsertOp>(op))) {
       if (auto pipeOpt = getInferredPipe(op, coreTypeVal, writeMemOps)) {
         pipe = pipeOpt.value();
       } else {
@@ -522,7 +522,8 @@ IRTranslator::getDestinationStyleInterfaceOp(Operation *op,
       }
     }
   }
-  hivm::PIPE pipeRead, pipeWrite;
+  hivm::PIPE pipeRead = hivm::PIPE::PIPE_UNASSIGNED;
+  hivm::PIPE pipeWrite = hivm::PIPE::PIPE_UNASSIGNED;
   if (pipe.has_value()) {
     pipeRead = pipe.value();
     pipeWrite = pipe.value();
@@ -604,13 +605,13 @@ IRTranslator::getTensorExtractOp(tensor::ExtractOp extractOp,
 
 std::unique_ptr<OperationBase>
 IRTranslator::getCallOp(func::CallOp callOp, OperationBase *parentOp) {
-  // TODO: A3/A5 DIFF
-  if (!options.isRegBasedArch) {
-    return nullptr;
-  }
   ModuleOp module = funcOp->getParentOfType<ModuleOp>();
   SymbolTable symtab(module);
   auto calledFuncOp = symtab.lookup<func::FuncOp>(callOp.getCallee());
+  // Track calls to vector functions and outlined SIMT vector functions:
+  // both run on the vector core and must participate in sync analysis as
+  // PIPE_V ops so the Solver can compute correct <src_pipe, dst_pipe>
+  // pairs against neighboring producers/consumers.
   if (!calledFuncOp ||
       (!calledFuncOp->hasAttr(hivm::VectorFunctionAttr::name) &&
        !hivm::util::isSIMTVF(calledFuncOp))) {
@@ -746,8 +747,8 @@ std::optional<int64_t> IRTranslator::getScopePreloadNum(Scope *scopeOp) {
   if (scopeOp->op == nullptr) {
     return {};
   }
-  if (auto intAttr = scopeOp->op->getAttrOfType<IntegerAttr>(
-          hivm::PreloadNumAttr::name)) {
+  if (auto intAttr =
+          scopeOp->op->getAttrOfType<IntegerAttr>(hivm::PreloadNumAttr::name)) {
     return intAttr.getInt();
   }
   return {};
@@ -828,12 +829,13 @@ std::unique_ptr<Scope> IRTranslator::funcIrBuilder(Region &region,
         }
         continue;
       }
-      if (isa<LoopLikeOpInterface>(op)) {
+      if (auto loopLikeOp = dyn_cast<LoopLikeOpInterface>(op)) {
         auto loopOp = std::make_unique<Loop>(&op, parScope);
         loopOp->isParallel = isParallelLoop(loopOp.get());
         loopOp->isCVUnrolledLoop = isCVUnrolledLoop(loopOp.get());
         loopOp->multibufferUnrollNum =
             getLoopMultibufferUnrollNum(loopOp.get());
+        loopOp->staticLoopCount = getStaticLoopCount(loopLikeOp);
         for (auto &region : op.getRegions()) {
           auto regionOp = funcIrBuilder(region, loopOp.get(), skipEmptyScopes);
           loopOp->body.push_back(std::move(regionOp));

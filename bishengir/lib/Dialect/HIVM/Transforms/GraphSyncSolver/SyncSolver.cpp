@@ -581,18 +581,12 @@ Solver::getMultiBufferEventIdInfo(Occurrence *occ1, Occurrence *occ2,
     assert(multibufferLoop != nullptr);
     auto [setOcc, waitOcc] = getSetWaitOcc(occ1, occ2);
     assert(setOcc != nullptr && waitOcc != nullptr);
-    // TODO: This still matches the multibuffer loop through the MLIR loop op
-    // (LoopLikeOpInterface) rather than the solver occurrence; unify it with
-    // the solver loop nest once the a5 PR is merged.
-    Operation *multibufferLoopOp = multibufferLoop->op;
     auto *setParentLoop = setOcc->getParentOfType<Loop>();
-    auto *waitParentLoop = waitOcc->getParentOfType<Loop>();
-    if (!setParentLoop || !setParentLoop->op ||
-        setParentLoop->op->op != multibufferLoopOp) {
+    if (!setParentLoop || setParentLoop->op != multibufferLoop) {
       return {};
     }
-    if (!waitParentLoop || !waitParentLoop->op ||
-        waitParentLoop->op->op != multibufferLoopOp) {
+    auto *waitParentLoop = waitOcc->getParentOfType<Loop>();
+    if (!waitParentLoop || waitParentLoop->op != multibufferLoop) {
       return {};
     }
   }
@@ -657,41 +651,35 @@ Solver::checkCVPipeliningEventIdInfo(RWOperation *rwOp1, RWOperation *rwOp2) {
       return {};
     }
   }
-  if (options.isRegBasedArch) {
-    auto *parentCVUnrolledLoop1 = parentLoop1->getParentOfType<Loop>();
-    auto *parentCVUnrolledLoop2 = parentLoop2->getParentOfType<Loop>();
-    if (parentCVUnrolledLoop1 == nullptr ||
-        parentCVUnrolledLoop1 != parentCVUnrolledLoop2) {
-      return {};
-    }
-    if (!parentCVUnrolledLoop1->isCVUnrolledLoop) {
-      return {};
-    }
+  auto *parentCVUnrolledLoop1 = parentLoop1->getParentOfType<Loop>();
+  auto *parentCVUnrolledLoop2 = parentLoop2->getParentOfType<Loop>();
+  if (parentCVUnrolledLoop1 == nullptr ||
+      parentCVUnrolledLoop1 != parentCVUnrolledLoop2) {
+    return {};
+  }
+  if (!parentCVUnrolledLoop1->isCVUnrolledLoop) {
+    return {};
   }
 
   assert(parentLoop1->multibufferUnrollNum.has_value() &&
          parentLoop2->multibufferUnrollNum.has_value());
   assert(parentLoop1->multibufferUnrollNum.value() ==
          parentLoop2->multibufferUnrollNum.value());
+
   // dynamic loop: eventId -> attr, disable repeat flag id
   // constant loop: eventId -> loop trip count
-  auto multibufferUnrollLoop1 = cast<LoopLikeOpInterface>(parentLoop1->op);
-  auto multibufferUnrollLoop2 = cast<LoopLikeOpInterface>(parentLoop2->op);
-  int64_t multibufferUnrollNum = parentLoop1->multibufferUnrollNum.value();
-  std::optional<int64_t> loopCount1 =
-      getStaticLoopCount(multibufferUnrollLoop1);
-  std::optional<int64_t> loopCount2 =
-      getStaticLoopCount(multibufferUnrollLoop2);
-  bool staticLoopCount = loopCount1.has_value() && loopCount2.has_value() &&
-                         loopCount1.value() == loopCount2.value();
+  bool hasStaticLoopCount =
+      parentLoop1->staticLoopCount.has_value() &&
+      parentLoop1->staticLoopCount == parentLoop2->staticLoopCount;
+  int64_t eventIdNum = parentLoop1->multibufferUnrollNum.value();
+  if (hasStaticLoopCount) {
+    eventIdNum = std::min(eventIdNum, parentLoop1->staticLoopCount.value());
+  }
 
-  EventIdInfo eventIdInfo;
+  EventIdInfo eventIdInfo(eventIdNum);
   eventIdInfo.cvPipeliningInfo = CVPipeliningInfo(parentLoop1, parentLoop2);
+  eventIdInfo.cannotRepeatFlagId = !hasStaticLoopCount;
   eventIdInfo.isCVPipeline = true;
-  eventIdInfo.eventIdNum =
-      staticLoopCount ? std::min(multibufferUnrollNum, loopCount1.value())
-                      : multibufferUnrollNum;
-  eventIdInfo.cannotRepeatFlagId = !staticLoopCount;
   return eventIdInfo;
 }
 
@@ -1116,8 +1104,8 @@ Solver::checkAndApplyMmadl0LoopOpt(ConflictPair *conflictPair, Occurrence *occ1,
 
   // Check if occ->op is an MTE1 load sub-operation of a decomposed Mmad
   auto isMmadL0LoadOp = [](OperationBase *op) -> bool {
-    return llvm::isa_and_present<LoadL0AOp, LoadL0BOp,
-                                 LoadL0AMxOp, LoadL0BMxOp>(op);
+    return llvm::isa_and_present<LoadL0AOp, LoadL0BOp, LoadL0AMxOp,
+                                 LoadL0BMxOp>(op);
   };
 
   auto isChildOfMmadLoopOp = [](Occurrence *occ) -> bool {
@@ -1137,8 +1125,8 @@ Solver::checkAndApplyMmadl0LoopOpt(ConflictPair *conflictPair, Occurrence *occ1,
   if (conflictPair->setCorePipeInfo.pipe == PIPE::PIPE_MTE2 &&
       conflictPair->waitCorePipeInfo.pipe == PIPE::PIPE_MTE1) {
     if (!conflictPair->isInnerBackward && occ2->depth >= 3 &&
-        occ2->getNthParent(3) == parOcc2 &&
-        isMmadL0LoadOp(occ2->op) && isChildOfMmadLoopOp(occ2)) {
+        occ2->getNthParent(3) == parOcc2 && isMmadL0LoadOp(occ2->op) &&
+        isChildOfMmadLoopOp(occ2)) {
       conflictPair->waitOnFirstIterOnly = true;
       return std::make_pair(parOcc1, occ2);
     }
@@ -1693,10 +1681,10 @@ bool Solver::reuseConflictPair(ConflictPair *conflictPair,
 
 #ifndef NDEBUG
   if (!conflictPair->isUseless) {
-    auto it = replacedWithReusableSyncedPairs.find(
-        {conflictPair->backwardSyncLoopOp, conflictPair->op1, conflictPair->op2,
-         conflictPair->setCorePipeInfo, conflictPair->waitCorePipeInfo});
-    assert(it == replacedWithReusableSyncedPairs.end());
+    auto key = std::make_tuple(
+        conflictPair->backwardSyncLoopOp, conflictPair->op1, conflictPair->op2,
+        conflictPair->setCorePipeInfo, conflictPair->waitCorePipeInfo);
+    assert(!replacedWithReusableSyncedPairs.contains(key));
   }
 #endif
 
@@ -2434,7 +2422,7 @@ void Solver::mergeBackwardSyncEventIds(OperationBase *op) {
   size_t eventIdMax =
       static_cast<size_t>(getHWAvailableEventIdNum(options.syncMode));
 
-  for (int64_t eventId = 0; eventId < eventIdMax; ++eventId) {
+  for (size_t eventId = 0; eventId < eventIdMax; eventId++) {
     for (auto coreSrc : coreTypes) {
       for (auto coreDst : coreTypes) {
         for (size_t pipeSrcInt = 0; pipeSrcInt < pipeNumMax; pipeSrcInt++) {

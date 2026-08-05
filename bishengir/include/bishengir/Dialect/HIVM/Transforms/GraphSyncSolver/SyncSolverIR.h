@@ -226,6 +226,7 @@ public:
   bool isParallel{false};
   bool isCVUnrolledLoop{false};
   std::optional<int64_t> multibufferUnrollNum;
+  std::optional<int64_t> staticLoopCount;
   Loop(Operation *op, OperationBase *parentOp)
       : Scope(OpType::LOOP, op, parentOp) {}
 
@@ -426,11 +427,10 @@ public:
 class LoadL0AMxOp : public RWOperation {
 private:
 public:
-  LoadL0AMxOp(Operation *op, OperationBase *parentOp,
-                 hivm::TCoreType coreType, hivm::PIPE pipeRead,
-                 hivm::PIPE pipeWrite,
-                 const llvm::SmallVector<Value> &readMemVals,
-                 const llvm::SmallVector<Value> &writeMemVals)
+  LoadL0AMxOp(Operation *op, OperationBase *parentOp, hivm::TCoreType coreType,
+              hivm::PIPE pipeRead, hivm::PIPE pipeWrite,
+              const llvm::SmallVector<Value> &readMemVals,
+              const llvm::SmallVector<Value> &writeMemVals)
       : RWOperation(op, parentOp, coreType, pipeRead, pipeWrite, readMemVals,
                     writeMemVals, OpType::MMAD_LOAD_L0A_MX_OPERATION) {}
 
@@ -442,11 +442,10 @@ public:
 class LoadL0BMxOp : public RWOperation {
 private:
 public:
-  LoadL0BMxOp(Operation *op, OperationBase *parentOp,
-                 hivm::TCoreType coreType, hivm::PIPE pipeRead,
-                 hivm::PIPE pipeWrite,
-                 const llvm::SmallVector<Value> &readMemVals,
-                 const llvm::SmallVector<Value> &writeMemVals)
+  LoadL0BMxOp(Operation *op, OperationBase *parentOp, hivm::TCoreType coreType,
+              hivm::PIPE pipeRead, hivm::PIPE pipeWrite,
+              const llvm::SmallVector<Value> &readMemVals,
+              const llvm::SmallVector<Value> &writeMemVals)
       : RWOperation(op, parentOp, coreType, pipeRead, pipeWrite, readMemVals,
                     writeMemVals, OpType::MMAD_LOAD_L0B_MX_OPERATION) {}
 

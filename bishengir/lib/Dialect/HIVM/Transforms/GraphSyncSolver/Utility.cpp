@@ -19,8 +19,9 @@
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolverIR.h"
-#include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "bishengir/Dialect/Utils/Util.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/Value.h"
 #include "llvm/Support/ErrorHandling.h"
 #include <cstdint>
@@ -370,13 +371,13 @@ SmallVector<int64_t> getHWAvailableEventIds(SyncMode syncMode,
 }
 
 std::optional<int64_t> getStaticLoopCount(LoopLikeOpInterface forOp) {
-  if (!forOp) {
+  if (!isa<scf::ForOp>(forOp)) {
     return std::nullopt;
   }
-  std::optional<OpFoldResult> lb = forOp.getSingleLowerBound();
-  std::optional<OpFoldResult> ub = forOp.getSingleUpperBound();
-  std::optional<OpFoldResult> step = forOp.getSingleStep();
-  if (!lb || !ub || !step) {
+  auto lb = forOp.getSingleLowerBound();
+  auto ub = forOp.getSingleUpperBound();
+  auto step = forOp.getSingleStep();
+  if (!lb.has_value() || !ub.has_value() || !step.has_value()) {
     return std::nullopt;
   }
   return constantTripCount(lb.value(), ub.value(), step.value());

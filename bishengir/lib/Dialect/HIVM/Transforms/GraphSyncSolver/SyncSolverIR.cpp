@@ -196,6 +196,9 @@ std::string Loop::str(int indent, bool recursive) const {
     ret += " multibuffer-unroll-num=" +
            std::to_string(multibufferUnrollNum.value());
   }
+  if (staticLoopCount.has_value()) {
+    ret += " static-loop-count=" + std::to_string(staticLoopCount.value());
+  }
   if (recursive) {
     ret += " {\n";
     for (auto &op : body) {

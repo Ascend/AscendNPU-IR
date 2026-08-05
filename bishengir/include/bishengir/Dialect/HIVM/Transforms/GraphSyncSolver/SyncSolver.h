@@ -249,7 +249,7 @@ protected:
   // Graph-based conflict checking and memory conflict detection helpers.
   bool checkGraphConflict(
       Occurrence *occ1, Occurrence *occ2, CorePipeInfo corePipeSrc,
-      CorePipeInfo corePipeDst, std::optional<EventIdInfo> eventIdInfo,
+      CorePipeInfo corePipeDst, std::optional<EventIdInfo> eventIdInfo = {},
       std::optional<int> startIndex = {}, std::optional<int> endIndex = {},
       const llvm::SmallVector<ConflictPair *> &extraConflictPairs = {},
       const llvm::SmallVector<ConflictPair *> &ignoreConflictPairs = {});
@@ -345,10 +345,12 @@ protected:
                                                              Occurrence *occ2);
   std::pair<Occurrence *, Occurrence *>
   getSetWaitOcc(Occurrence *occ1, Occurrence *occ2,
-                std::optional<EventIdInfo> eventIdInfo = {}, bool sinkSyncIntoCVLoops = false);
+                std::optional<EventIdInfo> eventIdInfo = {},
+                bool sinkSyncIntoCVLoops = false);
   std::pair<Occurrence *, Occurrence *>
   getFixedSetWaitOcc(Occurrence *occ1, Occurrence *occ2,
-                     std::optional<EventIdInfo> eventIdInfo = {}, bool sinkSyncIntoCVLoops = false);
+                     std::optional<EventIdInfo> eventIdInfo = {},
+                     bool sinkSyncIntoCVLoops = false);
 
   Occurrence *getBarrierWaitOcc(Occurrence *occ1, Occurrence *occ2);
 

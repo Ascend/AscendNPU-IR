@@ -1,4 +1,3 @@
-// UNSUPPORTED: bishengir_published
 // RUN: bishengir-opt -pass-pipeline="builtin.module(func.func(hivm-cross-core-gss{force-is-reg-based=true}))" -split-input-file -verify-diagnostics %s | FileCheck %s
 
 // Regression for cv-pipelining when the outer cv-unrolled (K) loop is folded
@@ -28,7 +27,7 @@
 // before reusing the slot, then signals data-ready (RAW) on PIPE_MTE3.
 // CHECK:      hivm.hir.sync_block_wait[<VECTOR>, <PIPE_MTE2>, <PIPE_MTE3>] flag = 1
 // CHECK-NEXT: hivm.hir.store
-// CHECK:      hivm.hir.sync_block_set[<VECTOR>, <PIPE_MTE3>, <PIPE_MTE2>] flag = 2
+// CHECK:      hivm.hir.sync_block_set[<VECTOR>, <PIPE_MTE3>, <PIPE_MTE2>] flag = 3
 // CHECK:      hivm.hir.sync_block_wait[<VECTOR>, <PIPE_MTE2>, <PIPE_MTE3>] flag = 0
 // CHECK-NEXT: hivm.hir.store
 // CHECK:      hivm.hir.sync_block_set[<VECTOR>, <PIPE_MTE3>, <PIPE_MTE2>] flag = 2
@@ -186,7 +185,7 @@ module {
       %extracted_slice = tensor.extract_slice %16[0, 0] [%25, %26] [1, 1] {hivm.tcore_type = #hivm.tcore_type<CUBE>} : tensor<16x16xf32> to tensor<?x?xf32>
       %subview = memref.subview %reinterpret_cast[0, 0] [%25, %26] [1, 1] : memref<16x16xf16, strided<[?, 1], offset: ?>> to memref<?x?xf16, strided<[?, 1], offset: ?>>
       hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%extracted_slice : tensor<?x?xf32>) outs(%subview : memref<?x?xf16, strided<[?, 1], offset: ?>>)
-    } {autoblockify.subloop}
+    } {cv_unrolled_loop, autoblockify.subloop}
     return
   }
 }
