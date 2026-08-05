@@ -500,3 +500,152 @@ func.func @no_collapse_distinct(%a: tensor<4xi32>, %b: tensor<4xi32>, %c: tensor
   %1 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%0, %c : tensor<4xi32>, tensor<4xi32>) outs(%e : tensor<4xi32>) -> tensor<4xi32>
   return %1 : tensor<4xi32>
 }
+
+// -----
+// Test: hoist negation through two consecutive matmuls to the final output
+// The pattern moves both negations forward: matmul1 result negation hoists through matmul2,
+// and matmul2 result negation becomes the final negation
+// CHECK-LABEL: func.func @hoist_negation_two_matmuls
+// CHECK-SAME: (%[[A:.*]]: tensor<4x8xf32>, %[[B:.*]]: tensor<8x4xf32>, %[[C:.*]]: tensor<4x4xf32>)
+// CHECK-DAG: %[[NEG_ONE:.*]] = arith.constant -1.000000e+00 : f32
+// CHECK: %[[MATMUL1:.*]] = linalg.matmul ins(%[[A]], %[[B]] : tensor<4x8xf32>, tensor<8x4xf32>)
+// CHECK: %[[MATMUL2:.*]] = linalg.matmul ins(%[[MATMUL1]], %[[C]] : tensor<4x4xf32>, tensor<4x4xf32>)
+// CHECK: %[[NEG2:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[MATMUL2]], %[[NEG_ONE]]
+// CHECK: %[[NEG_FINAL:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[NEG2]], %[[NEG_ONE]]
+// CHECK: return %[[NEG_FINAL]]
+func.func @hoist_negation_two_matmuls(%a: tensor<4x8xf32>, %b: tensor<8x4xf32>, %c: tensor<4x4xf32>) -> tensor<4x4xf32> {
+  %init1 = tensor.empty() : tensor<4x4xf32>
+  %cst_zero = arith.constant 0.000000e+00 : f32
+  %fill1 = linalg.fill ins(%cst_zero : f32) outs(%init1 : tensor<4x4xf32>) -> tensor<4x4xf32>
+  %matmul1 = linalg.matmul ins(%a, %b : tensor<4x8xf32>, tensor<8x4xf32>) outs(%fill1 : tensor<4x4xf32>) -> tensor<4x4xf32>
+  %cst_neg1 = arith.constant -1.000000e+00 : f32
+  %out1 = tensor.empty() : tensor<4x4xf32>
+  %neg1 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%matmul1, %cst_neg1 : tensor<4x4xf32>, f32) outs(%out1 : tensor<4x4xf32>) -> tensor<4x4xf32>
+  
+  %init2 = tensor.empty() : tensor<4x4xf32>
+  %fill2 = linalg.fill ins(%cst_zero : f32) outs(%init2 : tensor<4x4xf32>) -> tensor<4x4xf32>
+  %matmul2 = linalg.matmul ins(%neg1, %c : tensor<4x4xf32>, tensor<4x4xf32>) outs(%fill2 : tensor<4x4xf32>) -> tensor<4x4xf32>
+  %out2 = tensor.empty() : tensor<4x4xf32>
+  %neg2 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%matmul2, %cst_neg1 : tensor<4x4xf32>, f32) outs(%out2 : tensor<4x4xf32>) -> tensor<4x4xf32>
+  
+  return %neg2 : tensor<4x4xf32>
+}
+
+// -----
+// Test: negation NOT hoisted when scaling op has multiple uses (not just one consumer matmul)
+// CHECK-LABEL: func.func @no_hoist_multi_use
+// CHECK: %[[MATMUL1:.*]] = linalg.matmul ins(%arg0, %arg1
+// CHECK: %[[NEG:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[MATMUL1]],
+// CHECK: %[[MATMUL2:.*]] = linalg.matmul ins(%[[NEG]], %arg2
+// CHECK: %[[ADD:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%[[NEG]], %[[NEG]]
+// CHECK: return %[[MATMUL2]], %[[ADD]]
+func.func @no_hoist_multi_use(%a: tensor<4x8xf32>, %b: tensor<8x4xf32>, %c: tensor<4x4xf32>) -> (tensor<4x4xf32>, tensor<4x4xf32>) {
+  %init = tensor.empty() : tensor<4x4xf32>
+  %cst_zero = arith.constant 0.000000e+00 : f32
+  %fill = linalg.fill ins(%cst_zero : f32) outs(%init : tensor<4x4xf32>) -> tensor<4x4xf32>
+  %matmul1 = linalg.matmul ins(%a, %b : tensor<4x8xf32>, tensor<8x4xf32>) outs(%fill : tensor<4x4xf32>) -> tensor<4x4xf32>
+  %cst_neg1 = arith.constant -1.000000e+00 : f32
+  %out = tensor.empty() : tensor<4x4xf32>
+  %neg = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%matmul1, %cst_neg1 : tensor<4x4xf32>, f32) outs(%out : tensor<4x4xf32>) -> tensor<4x4xf32>
+  %fill2 = linalg.fill ins(%cst_zero : f32) outs(%init : tensor<4x4xf32>) -> tensor<4x4xf32>
+  %matmul2 = linalg.matmul ins(%neg, %c : tensor<4x4xf32>, tensor<4x4xf32>) outs(%fill2 : tensor<4x4xf32>) -> tensor<4x4xf32>
+  %out2 = tensor.empty() : tensor<4x4xf32>
+  %add = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%neg, %neg : tensor<4x4xf32>, tensor<4x4xf32>) outs(%out2 : tensor<4x4xf32>) -> tensor<4x4xf32>
+  return %matmul2, %add : tensor<4x4xf32>, tensor<4x4xf32>
+}
+
+// -----
+// Test: sub(0, matmul) NOT hoisted when scaling op has multiple uses (not just one consumer matmul)
+// CHECK-LABEL: func.func @no_hoist_sub_zero_multi_use_matmul
+// CHECK: %[[MATMUL1:.*]] = linalg.matmul ins(%arg0, %arg1
+// CHECK: %[[NEG:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<sub>} ins(%{{.*}}, %[[MATMUL1]]
+// CHECK: %[[MATMUL2:.*]] = linalg.matmul ins(%[[NEG]], %arg2
+// CHECK: %[[ADD:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%[[NEG]], %[[NEG]]
+// CHECK: return %[[MATMUL2]], %[[ADD]]
+func.func @no_hoist_sub_zero_multi_use_matmul(%a: tensor<4x8xf32>, %b: tensor<8x4xf32>, %c: tensor<4x4xf32>) -> (tensor<4x4xf32>, tensor<4x4xf32>) {
+  %init = tensor.empty() : tensor<4x4xf32>
+  %cst_zero = arith.constant 0.000000e+00 : f32
+  %fill = linalg.fill ins(%cst_zero : f32) outs(%init : tensor<4x4xf32>) -> tensor<4x4xf32>
+  %matmul1 = linalg.matmul ins(%a, %b : tensor<4x8xf32>, tensor<8x4xf32>) outs(%fill : tensor<4x4xf32>) -> tensor<4x4xf32>
+  
+  %out1 = tensor.empty() : tensor<4x4xf32>
+  %neg = linalg.elemwise_binary {fun = #linalg.binary_fn<sub>} ins(%cst_zero, %matmul1 : f32, tensor<4x4xf32>) outs(%out1 : tensor<4x4xf32>) -> tensor<4x4xf32>
+  
+  %fill2 = linalg.fill ins(%cst_zero : f32) outs(%init : tensor<4x4xf32>) -> tensor<4x4xf32>
+  %matmul2 = linalg.matmul ins(%neg, %c : tensor<4x4xf32>, tensor<4x4xf32>) outs(%fill2 : tensor<4x4xf32>) -> tensor<4x4xf32>
+  
+  %out2 = tensor.empty() : tensor<4x4xf32>
+  %add = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%neg, %neg : tensor<4x4xf32>, tensor<4x4xf32>) outs(%out2 : tensor<4x4xf32>) -> tensor<4x4xf32>
+  
+  return %matmul2, %add : tensor<4x4xf32>, tensor<4x4xf32>
+}
+
+// -----
+// Test: hoist sub(0, x) negation through two consecutive matmuls to the final output
+// CHECK-LABEL: func.func @hoist_sub_zero_negation_two_matmuls
+// CHECK-SAME: (%[[A:.*]]: tensor<4x8xf32>, %[[B:.*]]: tensor<8x4xf32>, %[[C:.*]]: tensor<4x4xf32>)
+// CHECK-DAG: %[[ZERO:.*]] = arith.constant 0.000000e+00 : f32
+// CHECK-DAG: %[[NEG_ONE:.*]] = arith.constant -1.000000e+00 : f32
+// CHECK: %[[MATMUL1:.*]] = linalg.matmul ins(%[[A]], %[[B]] : tensor<4x8xf32>, tensor<8x4xf32>)
+// CHECK: %[[MATMUL2:.*]] = linalg.matmul ins(%[[MATMUL1]], %[[C]] : tensor<4x4xf32>, tensor<4x4xf32>)
+// CHECK: %[[NEG2:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[MATMUL2]], %[[NEG_ONE]]
+// CHECK: %[[NEG_FINAL:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<sub>} ins(%[[ZERO]], %[[NEG2]]
+// CHECK: return %[[NEG_FINAL]]
+func.func @hoist_sub_zero_negation_two_matmuls(%a: tensor<4x8xf32>, %b: tensor<8x4xf32>, %c: tensor<4x4xf32>) -> tensor<4x4xf32> {
+  %init1 = tensor.empty() : tensor<4x4xf32>
+  %cst_zero = arith.constant 0.000000e+00 : f32
+  %fill1 = linalg.fill ins(%cst_zero : f32) outs(%init1 : tensor<4x4xf32>) -> tensor<4x4xf32>
+  %matmul1 = linalg.matmul ins(%a, %b : tensor<4x8xf32>, tensor<8x4xf32>) outs(%fill1 : tensor<4x4xf32>) -> tensor<4x4xf32>
+
+  %out1 = tensor.empty() : tensor<4x4xf32>
+  %neg1 = linalg.elemwise_binary {fun = #linalg.binary_fn<sub>} ins(%cst_zero, %matmul1 : f32, tensor<4x4xf32>) outs(%out1 : tensor<4x4xf32>) -> tensor<4x4xf32>
+
+  %init2 = tensor.empty() : tensor<4x4xf32>
+  %fill2 = linalg.fill ins(%cst_zero : f32) outs(%init2 : tensor<4x4xf32>) -> tensor<4x4xf32>
+  %matmul2 = linalg.matmul ins(%neg1, %c : tensor<4x4xf32>, tensor<4x4xf32>) outs(%fill2 : tensor<4x4xf32>) -> tensor<4x4xf32>
+
+  %out2 = tensor.empty() : tensor<4x4xf32>
+  %neg2 = linalg.elemwise_binary {fun = #linalg.binary_fn<sub>} ins(%cst_zero, %matmul2 : f32, tensor<4x4xf32>) outs(%out2 : tensor<4x4xf32>) -> tensor<4x4xf32>
+
+  return %neg2 : tensor<4x4xf32>
+}
+
+// -----
+// Test: negation NOT hoisted when matmul accumulates onto a non-zero bias.
+// The forward hoisting would give s*(A*B + bias) but we can't move the scale
+// through a consumer if the producer has bias, so the mul stays on the result.
+// CHECK-LABEL: func.func @no_hoist_negation_bias_matmul
+// CHECK: %[[MATMUL1:.*]] = linalg.matmul ins(%arg0, %arg1{{.*}}outs(%arg2
+// CHECK: %[[NEG:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[MATMUL1]],
+// CHECK: %[[MATMUL2:.*]] = linalg.matmul ins(%[[NEG]], %arg3
+// CHECK: return
+func.func @no_hoist_negation_bias_matmul(%a: tensor<4x8xf32>, %b: tensor<8x4xf32>, %bias: tensor<4x4xf32>, %c: tensor<4x4xf32>) -> tensor<4x4xf32> {
+  %matmul = linalg.matmul ins(%a, %b : tensor<4x8xf32>, tensor<8x4xf32>) outs(%bias : tensor<4x4xf32>) -> tensor<4x4xf32>
+  %cst_neg1 = arith.constant -1.000000e+00 : f32
+  %out = tensor.empty() : tensor<4x4xf32>
+  %neg = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%matmul, %cst_neg1 : tensor<4x4xf32>, f32) outs(%out : tensor<4x4xf32>) -> tensor<4x4xf32>
+  %init = tensor.empty() : tensor<4x4xf32>
+  %cst_zero = arith.constant 0.000000e+00 : f32
+  %fill = linalg.fill ins(%cst_zero : f32) outs(%init : tensor<4x4xf32>) -> tensor<4x4xf32>
+  %matmul2 = linalg.matmul ins(%neg, %c : tensor<4x4xf32>, tensor<4x4xf32>) outs(%fill : tensor<4x4xf32>) -> tensor<4x4xf32>
+  return %matmul2 : tensor<4x4xf32>
+}
+
+// -----
+// Test: scalar mul NOT hoisted when consumer matmul accumulates onto a non-zero bias.
+// CHECK-LABEL: func.func @no_hoist_scale_bias_matmul
+// CHECK: %[[MATMUL1:.*]] = linalg.matmul ins(%arg0, %arg1
+// CHECK: %[[SCALE:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[MATMUL1]],
+// CHECK: %[[MATMUL2:.*]] = linalg.matmul ins(%[[SCALE]], %arg2{{.*}}outs(%arg3
+// CHECK: return
+func.func @no_hoist_scale_bias_matmul(%a: tensor<4x8xf32>, %b: tensor<8x4xf32>, %c: tensor<4x4xf32>, %bias: tensor<4x4xf32>) -> tensor<4x4xf32> {
+  %init = tensor.empty() : tensor<4x4xf32>
+  %cst_zero = arith.constant 0.000000e+00 : f32
+  %fill = linalg.fill ins(%cst_zero : f32) outs(%init : tensor<4x4xf32>) -> tensor<4x4xf32>
+  %matmul = linalg.matmul ins(%a, %b : tensor<4x8xf32>, tensor<8x4xf32>) outs(%fill : tensor<4x4xf32>) -> tensor<4x4xf32>
+  %cst_scale = arith.constant 2.000000e+00 : f32
+  %out = tensor.empty() : tensor<4x4xf32>
+  %scaled = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%matmul, %cst_scale : tensor<4x4xf32>, f32) outs(%out : tensor<4x4xf32>) -> tensor<4x4xf32>
+  %matmul2 = linalg.matmul ins(%scaled, %c : tensor<4x4xf32>, tensor<4x4xf32>) outs(%bias : tensor<4x4xf32>) -> tensor<4x4xf32>
+  return %matmul2 : tensor<4x4xf32>
+}
