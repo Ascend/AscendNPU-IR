@@ -93,6 +93,140 @@ __aicore__ __attribute__((always_inline)) void load_gm_to_cbuf_intrin_core(
 #endif
 }
 
+#if defined(__DAV_C310__)
+template <typename T>
+__aicore__ __attribute__((always_inline)) bool
+is_gm_to_cbuf_2d_layout_supported(int64_t burst_num,
+                                  int64_t burst_elements,
+                                  int64_t src_stride_elements,
+                                  int64_t dst_stride_elements) {
+  constexpr uint64_t max_burst_num = (1ull << 21) - 1;
+  constexpr uint64_t max_burst_len = (1ull << 21) - 1;
+  constexpr uint64_t max_src_stride = (1ull << 40) - 1;
+  constexpr uint64_t max_dst_stride = (1ull << 21) - 1;
+  constexpr uint64_t bytes = sizeof(T);
+
+  if (burst_num <= 0 || static_cast<uint64_t>(burst_num) > max_burst_num ||
+      burst_elements <= 0 ||
+      static_cast<uint64_t>(burst_elements) > max_burst_len / bytes)
+    return false;
+  if (burst_num == 1)
+    return true; // Both stride fields are ignored for a single burst.
+
+  if (src_stride_elements < 0 || dst_stride_elements < 0 ||
+      static_cast<uint64_t>(src_stride_elements) > max_src_stride / bytes ||
+      static_cast<uint64_t>(dst_stride_elements) > max_dst_stride / bytes)
+    return false;
+
+  const uint64_t burst_len = static_cast<uint64_t>(burst_elements) * bytes;
+  const uint64_t dst_stride =
+      static_cast<uint64_t>(dst_stride_elements) * bytes;
+  if (dst_stride == burst_len)
+    return true; // Compact mode.
+
+  const uint64_t padded_burst_len =
+      CEIL_FACTOR(burst_len, L1_ALIGN_BYTES);
+  return dst_stride % L1_ALIGN_BYTES == 0 &&
+         dst_stride >= padded_burst_len; // Normal mode, without overlap.
+}
+
+template <typename T>
+__aicore__ __attribute__((always_inline)) bool
+is_gm_to_cbuf_2d_rowwise_layout_supported(int64_t burst_num,
+                                          int64_t burst_elements,
+                                          int64_t dst_stride_elements) {
+  constexpr uint64_t max_burst_len = (1ull << 21) - 1;
+  constexpr uint64_t bytes = sizeof(T);
+  if (burst_num <= 0 || burst_elements <= 0 ||
+      static_cast<uint64_t>(burst_elements) > max_burst_len / bytes)
+    return false;
+  if (burst_num == 1)
+    return true;
+  if (dst_stride_elements < 0 ||
+      static_cast<uint64_t>(dst_stride_elements) > (~0ull) / bytes)
+    return false;
+
+  const uint64_t burst_len = static_cast<uint64_t>(burst_elements) * bytes;
+  const uint64_t dst_stride =
+      static_cast<uint64_t>(dst_stride_elements) * bytes;
+  return dst_stride % L1_ALIGN_BYTES == 0 &&
+         dst_stride >= CEIL_FACTOR(burst_len, L1_ALIGN_BYTES);
+}
+
+template <typename T>
+__aicore__ __attribute__((always_inline)) bool
+is_gm_to_cbuf_2d_transfer_supported(int64_t burst_num,
+                                    int64_t burst_elements,
+                                    int64_t src_stride_elements,
+                                    int64_t dst_stride_elements) {
+  return is_gm_to_cbuf_2d_layout_supported<T>(
+             burst_num, burst_elements, src_stride_elements,
+             dst_stride_elements) ||
+         is_gm_to_cbuf_2d_rowwise_layout_supported<T>(
+             burst_num, burst_elements, dst_stride_elements);
+}
+
+template <typename T>
+__aicore__ __attribute__((always_inline)) bool
+is_gm_to_cbuf_loop_stride_supported(int64_t loop_size,
+                                    int64_t dst_stride_elements) {
+  constexpr int64_t elements_per_block = L1_ALIGN_BYTES / sizeof(T);
+  return loop_size > 0 &&
+         (loop_size == 1 ||
+          (dst_stride_elements >= 0 &&
+           dst_stride_elements % elements_per_block == 0));
+}
+
+template <typename T>
+__aicore__ __attribute__((always_inline)) bool
+is_gm_to_cbuf_3d_contiguous_layout_supported(
+    int64_t size0, int64_t size1, int64_t size2, int64_t src_stride0,
+    int64_t src_stride1, int64_t dst_stride0, int64_t dst_stride1) {
+  if (size0 <= 0 || size1 <= 0 || size2 <= 0)
+    return false;
+
+  constexpr uint64_t max_burst_elements =
+      ((1ull << 21) - 1) / sizeof(T);
+  const bool dense_inner = src_stride1 == size2 && dst_stride1 == size2;
+  if (dense_inner && static_cast<uint64_t>(size2) <= max_burst_elements &&
+      static_cast<uint64_t>(size1) <=
+          max_burst_elements / static_cast<uint64_t>(size2) &&
+      is_gm_to_cbuf_2d_transfer_supported<T>(
+          size0, size1 * size2, src_stride0, dst_stride0))
+    return true;
+
+  return (is_gm_to_cbuf_loop_stride_supported<T>(size0, dst_stride0) &&
+          is_gm_to_cbuf_2d_transfer_supported<T>(
+              size1, size2, src_stride1, dst_stride1)) ||
+         (is_gm_to_cbuf_loop_stride_supported<T>(size1, dst_stride1) &&
+          is_gm_to_cbuf_2d_transfer_supported<T>(
+              size0, size2, src_stride0, dst_stride0));
+}
+
+template <typename T>
+__aicore__ __attribute__((always_inline)) bool
+is_gm_to_cbuf_3d_loop_axis_supported(
+    int64_t loop_size, int64_t loop_dst_stride, int64_t inner_size0,
+    int64_t inner_size1, int64_t inner_src_stride0,
+    int64_t inner_src_stride1, int64_t inner_dst_stride0,
+    int64_t inner_dst_stride1) {
+  return is_gm_to_cbuf_loop_stride_supported<T>(loop_size, loop_dst_stride) &&
+         is_gm_to_cbuf_3d_contiguous_layout_supported<T>(
+             inner_size0, inner_size1, 1, inner_src_stride0,
+             inner_src_stride1, inner_dst_stride0, inner_dst_stride1);
+}
+
+template <typename T>
+__aicore__ __attribute__((always_inline)) void
+load_gm_to_cbuf_align_v2_intrin_core(__gm__ T *src, __cbuf__ T *dst,
+                                     uint32_t burst_num, uint32_t burst_len,
+                                     uint64_t src_stride,
+                                     uint32_t dst_stride) {
+  INTRINSIC(copy_gm_to_cbuf_align_v2, dst, src, 0, burst_num, burst_len, 0, 0,
+            true, 0, src_stride, dst_stride);
+}
+#endif
+
 template <typename T>
 __aicore__ __attribute__((always_inline)) void
 load_gm_to_cbuf_1d_core_with_contiguous_last_dim(memref_t<__gm__ T, 1> *gm,
@@ -122,6 +256,40 @@ load_gm_to_cbuf_2d_core_with_contiguous_last_dim(memref_t<__gm__ T, 2> *gm,
   int64_t stride0_gm = gm->strides[0];
   int64_t stride0_cbuf = cbuf->strides[0];
   constexpr int32_t bytes = sizeof(T);
+#if defined(__DAV_C310__)
+  int64_t size0 = gm->sizes[0];
+  auto gm_ptr = gm->aligned + gm->offset;
+  auto cbuf_ptr = cbuf->aligned + cbuf->offset;
+  if ((reinterpret_cast<uintptr_t>(cbuf_ptr) & (L1_ALIGN_BYTES - 1)) != 0)
+    return; // The L1 layout is an ISA precondition; no scalar fallback exists.
+
+  if (is_gm_to_cbuf_2d_layout_supported<T>(size0, size1, stride0_gm,
+                                            stride0_cbuf)) {
+    const uint32_t burst_len = static_cast<uint32_t>(size1 * bytes);
+    const uint64_t src_stride = static_cast<uint64_t>(
+        (size0 == 1 ? size1 : stride0_gm) * bytes);
+    const uint32_t dst_stride = static_cast<uint32_t>(
+        (size0 == 1 ? size1 : stride0_cbuf) * bytes);
+    load_gm_to_cbuf_align_v2_intrin_core<T>(
+        gm_ptr, cbuf_ptr, static_cast<uint32_t>(size0), burst_len, src_stride,
+        dst_stride);
+    return;
+  }
+
+  if (!is_gm_to_cbuf_2d_rowwise_layout_supported<T>(size0, size1,
+                                                      stride0_cbuf))
+    return; // Unaligned L1 rows are outside the ISA-supported domain.
+
+  for (int64_t i = 0; i < size0; ++i) {
+    memref_t<__gm__ T, 1> gm_1d{gm->allocated, gm->aligned,
+                                 gm->offset + stride0_gm * i, {size1}, {1}};
+    memref_t<__cbuf__ T, 1> cbuf_1d{
+        cbuf->allocated, cbuf->aligned, cbuf->offset + stride0_cbuf * i,
+        {size1}, {1}};
+    load_gm_to_cbuf_1d_core_with_contiguous_last_dim<T>(&gm_1d, &cbuf_1d,
+                                                        pad_mode);
+  }
+#else
   const int64_t cbuf_gap = (stride0_cbuf - size1) * bytes / L1_ALIGN_BYTES;
   const int64_t gm_gap = (stride0_gm - size1) * bytes / L1_ALIGN_BYTES;
 
@@ -171,6 +339,7 @@ load_gm_to_cbuf_2d_core_with_contiguous_last_dim(memref_t<__gm__ T, 2> *gm,
                                      burst_len, gm_gap, cbuf_gap, pad_mode);
     }
   }
+#endif
 }
 
 // Copy 3d, where the last dim is contiguous i.e. stride2=1
@@ -186,6 +355,57 @@ load_gm_to_cbuf_3d_core_with_contiguous_last_dim(memref_t<__gm__ T, 3> *gm,
   int64_t stride1_cbuf = cbuf->strides[1];
   int64_t stride0_gm = gm->strides[0];
   int64_t stride1_gm = gm->strides[1];
+#if defined(__DAV_C310__)
+  auto cbuf_ptr = cbuf->aligned + cbuf->offset;
+  if ((reinterpret_cast<uintptr_t>(cbuf_ptr) & (L1_ALIGN_BYTES - 1)) != 0)
+    return;
+
+  // Preserve ALIGN V2 compact mode when the two inner dimensions are dense.
+  constexpr uint64_t max_burst_elements =
+      ((1ull << 21) - 1) / sizeof(T);
+  const bool can_collapse =
+      size1 > 0 && size2 > 0 && stride1_cbuf == size2 &&
+      stride1_gm == size2 &&
+      static_cast<uint64_t>(size2) <= max_burst_elements &&
+      static_cast<uint64_t>(size1) <=
+          max_burst_elements / static_cast<uint64_t>(size2) &&
+      is_gm_to_cbuf_2d_transfer_supported<T>(
+          size0, size1 * size2, stride0_gm, stride0_cbuf);
+  if (can_collapse) {
+    memref_t<__gm__ T, 2> gm_2d{gm->allocated,
+                                gm->aligned,
+                                gm->offset,
+                                {size0, size1 * size2},
+                                {stride0_gm, 1}};
+    memref_t<__cbuf__ T, 2> cbuf_2d{cbuf->allocated,
+                                    cbuf->aligned,
+                                    cbuf->offset,
+                                    {size0, size1 * size2},
+                                    {stride0_cbuf, 1}};
+    load_gm_to_cbuf_2d_core_with_contiguous_last_dim<T>(&gm_2d, &cbuf_2d,
+                                                        pad_mode);
+    return;
+  }
+
+  const bool can_loop0 =
+      is_gm_to_cbuf_loop_stride_supported<T>(size0, stride0_cbuf) &&
+      is_gm_to_cbuf_2d_transfer_supported<T>(
+          size1, size2, stride1_gm, stride1_cbuf);
+  const bool can_loop1 =
+      is_gm_to_cbuf_loop_stride_supported<T>(size1, stride1_cbuf) &&
+      is_gm_to_cbuf_2d_transfer_supported<T>(
+          size0, size2, stride0_gm, stride0_cbuf);
+  if (!can_loop0 && !can_loop1)
+    return;
+  if (can_loop1 && (!can_loop0 || size1 < size0)) {
+    size0 = size1;
+    size1 = gm->sizes[0];
+    stride0_cbuf = cbuf->strides[1];
+    stride1_cbuf = cbuf->strides[0];
+    stride0_gm = gm->strides[1];
+    stride1_gm = gm->strides[0];
+  }
+#else
   if (size0 > size1) {
     size0 = size1;
     size1 = gm->sizes[0];
@@ -194,6 +414,7 @@ load_gm_to_cbuf_3d_core_with_contiguous_last_dim(memref_t<__gm__ T, 3> *gm,
     stride0_gm = gm->strides[1];
     stride1_gm = gm->strides[0];
   }
+#endif
 
   for (int64_t i = 0; i < size0; i++) {
     memref_t<__gm__ T, 2> gm_2d = {gm->allocated,

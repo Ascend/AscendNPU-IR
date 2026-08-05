@@ -1902,6 +1902,58 @@ __aiv__ __attribute__((always_inline)) void
 load_gm_to_ubuf_3d_by_nddma(memref_t<__gm__ T, 3> *src,
                             memref_t<__ubuf__ T, 3> *dst);
 
+template <typename T, size_t DIM>
+__aiv__ __attribute__((always_inline)) bool
+is_unpadded_gm_to_ubuf_copy(memref_t<__gm__ T, DIM> *src,
+                            memref_t<__ubuf__ T, DIM> *dst,
+                            int64_t left_padding_num) {
+  if (left_padding_num != 0)
+    return false;
+  for (size_t dim = 0; dim < DIM; ++dim)
+    if (src->sizes[dim] != dst->sizes[dim])
+      return false;
+  return true;
+}
+
+/// NDDMA is used only for a dense, unpadded GM -> UB copy.  Ranks 1-3 collapse
+/// to one loop, so the ISA non-overlap and stride constraints are trivial.
+template <typename T, size_t DIM>
+__aiv__ __attribute__((always_inline)) bool
+load_dense_gm_to_ubuf_by_nddma(memref_t<__gm__ T, DIM> *src,
+                               memref_t<__ubuf__ T, DIM> *dst,
+                               uint8_t l2_cache_ctl) {
+  static_assert(DIM >= 1 && DIM <= 3, "RegBase NDDMA supports ranks 1 to 3");
+  if constexpr (sizeof(T) != BYTES_B8 && sizeof(T) != BYTES_B16 &&
+                sizeof(T) != BYTES_B32) {
+    return false;
+  } else {
+    constexpr uint64_t max_elements = 256 * 1024 / sizeof(T);
+    uint64_t elements = 1;
+    for (int64_t dim = DIM - 1; dim >= 0; --dim) {
+      if (src->sizes[dim] <= 0 || src->sizes[dim] != dst->sizes[dim] ||
+          src->strides[dim] != elements || dst->strides[dim] != elements ||
+          static_cast<uint64_t>(src->sizes[dim]) > max_elements / elements)
+        return false;
+      elements *= src->sizes[dim];
+    }
+
+    auto src_ptr = src->aligned + src->offset;
+    if (reinterpret_cast<uintptr_t>(src_ptr) % sizeof(T) != 0)
+      return false;
+
+    using DmaType = std::conditional_t<std::is_same_v<T, float8_e4m3_t> ||
+                                           std::is_same_v<T, float8_e5m2_t>,
+                                       uint8_t, T>;
+    auto dst_ptr =
+        reinterpret_cast<__ubuf__ DmaType *>(dst->aligned + dst->offset);
+    auto gm_ptr = reinterpret_cast<__gm__ DmaType *>(src_ptr);
+    nddma_desc desc(nddma_desc::loop_desc(elements, 1, 1));
+    INTRINSIC(nddma_out_to_ub, dst_ptr, gm_ptr, 0, desc, 0, NEAREST_PADDING,
+              l2_cache_ctl);
+    return true;
+  }
+}
+
 #endif
 
 template <typename T>

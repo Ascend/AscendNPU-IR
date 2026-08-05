@@ -28,11 +28,37 @@ check_inputs_of_load_gm_to_cbuf_3d_core(memref_t<__gm__ T, 3> *src,
   auto stride2_cbuf = dst->strides[2];
   assert(isAddress32ByteAligned(dst_ptr) &&
          "The starting address of dst must be 32byte aligned.");
+#if defined(__DAV_C310__)
+  const bool contiguous_last =
+      src->strides[2] == 1 && stride2_cbuf == 1;
+  if (contiguous_last) {
+    assert(is_gm_to_cbuf_3d_contiguous_layout_supported<T>(
+               src->sizes[0], src->sizes[1], src->sizes[2],
+               src->strides[0], src->strides[1], stride0_cbuf,
+               stride1_cbuf) &&
+           "The L1 planes must use a valid ALIGN V2 layout.");
+  } else {
+    assert((is_gm_to_cbuf_3d_loop_axis_supported<T>(
+                src->sizes[0], stride0_cbuf, src->sizes[1], src->sizes[2],
+                src->strides[1], src->strides[2], stride1_cbuf,
+                stride2_cbuf) ||
+            is_gm_to_cbuf_3d_loop_axis_supported<T>(
+                src->sizes[1], stride1_cbuf, src->sizes[0], src->sizes[2],
+                src->strides[0], src->strides[2], stride0_cbuf,
+                stride2_cbuf) ||
+            is_gm_to_cbuf_3d_loop_axis_supported<T>(
+                src->sizes[2], stride2_cbuf, src->sizes[0], src->sizes[1],
+                src->strides[0], src->strides[1], stride0_cbuf,
+                stride1_cbuf)) &&
+           "The decomposed L1 layout must have a valid loop axis.");
+  }
+#else
   assert(((isSizeAlignedToBlock<T>(stride0_cbuf) || stride0_cbuf == 1) &&
           (isSizeAlignedToBlock<T>(stride1_cbuf) || stride1_cbuf == 1) &&
           (isSizeAlignedToBlock<T>(stride2_cbuf) || stride2_cbuf == 1)) &&
          "The dst strides[0]/strides[1]/strides[2] must be 1 or aligned to"
          "block.");
+#endif
 #endif
 }
 
@@ -62,6 +88,53 @@ load_gm_to_cbuf_3d_core(memref_t<__gm__ T, 3> *src,
     load_gm_to_cbuf_3d_core_with_contiguous_last_dim(src, dst, pad_mode);
     return;
   }
+
+#if defined(__DAV_C310__)
+  auto dst_ptr = dst->aligned + dst->offset;
+  if ((reinterpret_cast<uintptr_t>(dst_ptr) & (L1_ALIGN_BYTES - 1)) != 0)
+    return;
+
+  const bool candidates[3] = {
+      is_gm_to_cbuf_3d_loop_axis_supported<T>(
+          src->sizes[0], dst->strides[0], src->sizes[1], src->sizes[2],
+          src->strides[1], src->strides[2], dst->strides[1],
+          dst->strides[2]),
+      is_gm_to_cbuf_3d_loop_axis_supported<T>(
+          src->sizes[1], dst->strides[1], src->sizes[0], src->sizes[2],
+          src->strides[0], src->strides[2], dst->strides[0],
+          dst->strides[2]),
+      is_gm_to_cbuf_3d_loop_axis_supported<T>(
+          src->sizes[2], dst->strides[2], src->sizes[0], src->sizes[1],
+          src->strides[0], src->strides[1], dst->strides[0],
+          dst->strides[1])};
+
+  int64_t loop_axis = -1;
+  for (int64_t axis = 0; axis < 3; ++axis)
+    if (candidates[axis] &&
+        (loop_axis < 0 || src->sizes[axis] < src->sizes[loop_axis]))
+      loop_axis = axis;
+  if (loop_axis < 0)
+    return;
+
+  const int64_t first_axis = loop_axis == 0 ? 1 : 0;
+  const int64_t second_axis = loop_axis == 2 ? 1 : 2;
+  for (int64_t i = 0; i < src->sizes[loop_axis]; ++i) {
+    memref_t<__gm__ T, 3> gm_3d{
+        src->allocated,
+        src->aligned,
+        src->offset + src->strides[loop_axis] * i,
+        {src->sizes[first_axis], src->sizes[second_axis], 1},
+        {src->strides[first_axis], src->strides[second_axis], 1}};
+    memref_t<__cbuf__ T, 3> cbuf_3d{
+        dst->allocated,
+        dst->aligned,
+        dst->offset + dst->strides[loop_axis] * i,
+        {dst->sizes[first_axis], dst->sizes[second_axis], 1},
+        {dst->strides[first_axis], dst->strides[second_axis], 1}};
+    load_gm_to_cbuf_3d_core_with_contiguous_last_dim(&gm_3d, &cbuf_3d,
+                                                     pad_mode);
+  }
+#else
 
   // last dimension is not contiguous,
   // view the src (size0, size1, size2) with stride [stride0, stride1, stride2]
@@ -129,6 +202,7 @@ load_gm_to_cbuf_3d_core(memref_t<__gm__ T, 3> *src,
     load_gm_to_cbuf_3d_core_with_contiguous_last_dim(&gm_3d, &cbuf_3d,
                                                      pad_mode);
   }
+#endif
 }
 
 extern "C" {
@@ -141,8 +215,10 @@ REGISTE_DMA_L1_LOAD(3, int16_t);
 REGISTE_DMA_L1_LOAD(3, uint16_t);
 REGISTE_DMA_L1_LOAD(3, int32_t);
 REGISTE_DMA_L1_LOAD(3, uint32_t);
+#if !defined(__DAV_C310__)
 REGISTE_DMA_L1_LOAD(3, int64_t);
 REGISTE_DMA_L1_LOAD(3, uint64_t);
+#endif
 REGISTE_DMA_L1_LOAD(3, half);
 REGISTE_DMA_L1_LOAD(3, float);
 REGISTE_DMA_L1_LOAD(3, bfloat16_t);
