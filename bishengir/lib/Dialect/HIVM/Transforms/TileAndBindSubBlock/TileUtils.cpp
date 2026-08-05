@@ -59,7 +59,13 @@ LogicalResult computeFixpipeSplitInfo(FixpipeOp op, int64_t tilingDim,
   invalidTilingDim = false;
   auto allocTy = cast<MemRefType>(allocVal.getType());
   int64_t rank = allocTy.getRank();
-  if (tilingDim != rank - 2 && tilingDim != rank - 1) {
+  // A 4D fractal dst [N1, M1, 16, 16] may also split along the outer block
+  // dims (dim 0 = N1, dim 1 = M1); otherwise the fixpipe stays NO_DUAL and
+  // only one sub-block's UB is written when the AIV consumer is sub-tiled.
+  // NZ2NZ keeps the L0C accumulator layout, so an NZ2NZ dst is fractal.
+  bool isCFractalDst = op.getDmaMode() == FixpipeDMAMode::NZ2NZ;
+  bool isFractalBlockDim = isCFractalDst && (tilingDim == 0 || tilingDim == 1);
+  if (tilingDim != rank - 2 && tilingDim != rank - 1 && !isFractalBlockDim) {
     op.emitWarning(
         "The tilingDim in AIC does not match row_split or column split!");
     invalidTilingDim = true;
@@ -90,7 +96,14 @@ LogicalResult computeFixpipeSplitInfo(FixpipeOp op, int64_t tilingDim,
     /// FIXME: please double checkout the constraint of nz2nd.
     constexpr int64_t nz2ndRowSplitConstraint = 2;
     constexpr int64_t nz2ndColSplitConstraint = 32;
-    if (tilingDim == rank - 2) {
+    if (isFractalBlockDim) {
+      // Fractal [.., N1, M1, 16, 16]: N1 (ND column dir) -> COLUMN_SPLIT,
+      // M1 (ND row dir) -> ROW_SPLIT; the split dim must be even
+      // (block-granularity halving).
+      splitMode = (tilingDim == rank - 4) ? FixpipeDualDstMode::COLUMN_SPLIT
+                                          : FixpipeDualDstMode::ROW_SPLIT;
+      constraints = 2;
+    } else if (tilingDim == rank - 2) {
       splitMode = FixpipeDualDstMode::ROW_SPLIT;
       constraints = nz2ndRowSplitConstraint;
     } else if (tilingDim == rank - 1) {
