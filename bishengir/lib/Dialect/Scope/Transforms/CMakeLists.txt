@@ -14,12 +14,13 @@ add_bishengir_dialect_library(BiShengIRScopeTransforms
   BiShengIRDialectUtils
   BiShengIRScopeDialect
   BiShengIRHACCUtils
+  BiShengIRHIVMDialect
   MLIRArithDialect
   MLIRBufferizationDialect
   MLIRDialect
   MLIRFuncDialect
-  MLIRHIVMDialect
-  MLIRHIVMUtils
+  MLIRMemRefDialect
+  MLIRTensorDialect
   MLIRIR
   MLIRPass
 )
