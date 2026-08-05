@@ -46,22 +46,11 @@ BiShengIR编译器通过一系列命令行编译选项控制编译流程、功�
 
 AI处理器型号及对应查询方式如下：
 
-**方式一：通过`npu-smi info`命令查询**
+**方式一：通过`npu-smi info -t board -i <id> -c <chip_id>`命令查询**
 
 **适用产品**：
 
-- Atlas A2训练系列产品 / Atlas A2推理系列产品
-- Atlas 200I/500 A2推理产品
-- Atlas推理系列产品
-- Atlas训练系列产品
-
-在安装AI处理器的服务器上执行该命令，查询得到`<Name>`的对应取值，完整配置值为`Ascend<Name>`。示例：若`<Name>`取值为`xxx`，则配置值为`Ascendxxx`。
-
-**方式二：通过`npu-smi info -t board -i <id> -c <chip_id>`命令查询**
-
-**适用产品**：
-
-- Atlas 350加速卡
+- Ascend 950PR/Ascend 950DT
 - Atlas A3训练系列产品 / Atlas A3推理系列产品
 
 在安装AI处理器的服务器上执行该命令，获取**Chip Name**和**NPU Name**信息，实际配置值为`<Chip Name>_<NPU Name>`。示例：若Chip Name为`Ascendxxx`、NPU Name为`yyy`，则配置值为`Ascendxxx_yyy`。
@@ -70,3 +59,11 @@ AI处理器型号及对应查询方式如下：
 
 - `id`：设备ID，通过`npu-smi info -l`命令查询得到的NPU ID即为设备ID。
 - `chip_id`：芯片ID，通过`npu-smi info -m`命令查询得到的Chip ID即为芯片ID。
+
+**方式二：通过`npu-smi info`命令查询**
+
+**适用产品**：
+
+- Atlas A2训练系列产品 / Atlas A2推理系列产品
+
+在安装AI处理器的服务器上执行该命令，查询得到`<Name>`的对应取值，完整配置值为`Ascend<Name>`。示例：若`<Name>`取值为`xxx`，则配置值为`Ascendxxx`。
