@@ -363,6 +363,7 @@ LogicalResult TightCoupledBufferResolvePropagationPattern::matchAndRewrite(
           upAddressSpace.end()) {
     LDBG("Resolving Local to UB: " << downPropOp << "\n" << upPropOp << "\n");
     return resolveGMtoLocal(downPropOp, upPropOp, rewriter);
+  }
   if (downCoreType == TCoreType::CUBE_AND_VECTOR &&
       llvm::find(upAddressSpace, hivm::AddressSpace::L1) !=
           upAddressSpace.end()) {
