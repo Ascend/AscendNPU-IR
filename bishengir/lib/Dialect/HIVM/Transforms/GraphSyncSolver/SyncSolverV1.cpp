@@ -8,6 +8,11 @@
 using namespace mlir;
 using namespace hivm::syncsolver;
 
+void SyncSolverV1::reset(bool resetEventIdRanOutOpts) {
+  SyncSolverBase::reset(resetEventIdRanOutOpts);
+  processedOccPairs.clear();
+}
+
 bool SyncSolverV1::insertConflictPair(
     std::unique_ptr<ConflictPair> conflictPair, Occurrence *parOcc) {
   Occurrence *parOcc1 = parOcc;
@@ -155,7 +160,6 @@ bool SyncSolverV1::checkGraphConflict(
         return;
       }
     }
-
     if (llvm::find(ignoreConflictPairs, conflictPair) !=
         ignoreConflictPairs.end()) {
       return;
@@ -494,17 +498,15 @@ void SyncSolverV1::buildOfflineProcessingOrders(Occurrence *occ,
   }
 }
 
-ConflictPair *SyncSolverV1::handleConflict(
-    Occurrence *occ1, Occurrence *occ2, RWOperation *rwOp1, RWOperation *rwOp2,
-    CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst, bool isUseless) {
+void SyncSolverV1::handleConflict(Occurrence *occ1, Occurrence *occ2,
+                                  RWOperation *rwOp1, RWOperation *rwOp2,
+                                  CorePipeInfo corePipeSrc,
+                                  CorePipeInfo corePipeDst, bool isUseless) {
   this->perfInfo.handledConflictsNum += 1;
-  bool isBarrier = corePipeSrc == corePipeDst;
-  auto unitFlagInfo =
-      isBarrier ? std::nullopt : checkUnitFlagPatterns(occ1, occ2);
   auto eventIdInfo =
       getEventIdInfo(occ1, occ2, rwOp1, rwOp2, corePipeSrc, corePipeDst);
   if (!checkGraphConflict(occ1, occ2, corePipeSrc, corePipeDst, eventIdInfo)) {
-    return nullptr;
+    return;
   }
 
   LLVM_DEBUG({
@@ -516,16 +518,17 @@ ConflictPair *SyncSolverV1::handleConflict(
     llvm::dbgs() << occ2->syncIrIndex << ' ' << occ2->startIndex << ' '
                  << occ2->endIndex << ' ' << rwOp2->str(0, false) << '\n';
   });
-  if (isBarrier) {
+
+  if (corePipeSrc == corePipeDst) {
     eventIdInfo.setEventIdNum(1);
-    return handleBarrierConflict(occ1, occ2, corePipeSrc, corePipeDst,
-                                 eventIdInfo, isUseless);
-  } else if (unitFlagInfo) {
-    return handleUnitFlagConflict(occ1, occ2, corePipeSrc, corePipeDst,
-                                  unitFlagInfo.value(), isUseless);
+    handleBarrierConflict(occ1, occ2, corePipeSrc, corePipeDst, eventIdInfo,
+                          isUseless);
+  } else if (auto unitFlagInfo = checkUnitFlagPatterns(occ1, occ2)) {
+    handleUnitFlagConflict(occ1, occ2, corePipeSrc, corePipeDst,
+                           unitFlagInfo.value(), isUseless);
   } else {
-    return handleSetWaitConflict(occ1, occ2, corePipeSrc, corePipeDst,
-                                 eventIdInfo, isUseless);
+    handleSetWaitConflict(occ1, occ2, corePipeSrc, corePipeDst, eventIdInfo,
+                          isUseless);
   }
 }
 
@@ -543,6 +546,11 @@ void SyncSolverV1::processConflict(Occurrence *occ1, Occurrence *occ2,
   }
 }
 
+bool SyncSolverV1::checkVisited(Occurrence *occ1, Occurrence *occ2) {
+  auto [it, isInserted] = processedOccPairs.insert(std::make_pair(occ1, occ2));
+  return !isInserted;
+}
+
 void SyncSolverV1::processOrder(ProcessingOrderV1 processingOrder) {
   auto [occ1, occ2, rwOp1, rwOp2, isUseless] = processingOrder;
   this->perfInfo.ordersCheckedNum += 1;
@@ -556,10 +564,8 @@ void SyncSolverV1::processOrder(ProcessingOrderV1 processingOrder) {
     llvm::dbgs() << occ2->syncIrIndex << ' ' << occ2->startIndex << ' '
                  << occ2->endIndex << ' ' << occ2->op->str(0, false) << '\n';
   });
-  if (checkVisited(occ1, occ2)) {
-    assert(false && "expected to not check a pair more than once.");
-    return;
-  }
+  assert(!checkVisited(occ1, occ2) &&
+         "expected to not check a pair more than once.");
   if (checkImpossibleOccPair(occ1, occ2) || checkAlreadySynced(occ1, occ2) ||
       skipMMad1DecomposedLoopOpt(occ1, occ2) ||
       checkSkipParallelLoop(occ1, occ2) || checkSkipCrossCorePair(occ1, occ2)) {

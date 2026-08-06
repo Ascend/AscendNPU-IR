@@ -214,6 +214,8 @@ bool SyncSolverV2::checkGraphConflict(
     const llvm::SmallVector<ConflictPair *> &,
     const llvm::SmallVector<ConflictPair *> &) {
   assert(occ1 != nullptr && occ2 != nullptr);
+  this->perfInfo.graphConflictPairsCheckedNum += 1;
+
   if (!startIndex.has_value()) {
     startIndex = occ1->endIndex;
   }
@@ -224,7 +226,6 @@ bool SyncSolverV2::checkGraphConflict(
   auto &graphSolver = getGraphSolverRef(occ1->parentOcc, occ2->parentOcc,
                                         eventIdInfo.getEventIdNum());
 
-  this->perfInfo.graphConflictPairsCheckedNum += 1;
   if (graphSolver->checkAnyBarrierAllBetween(startIndex.value(),
                                              endIndex.value())) {
     this->perfInfo.checkGraphConflictSkipDijNum += 1;
@@ -259,15 +260,15 @@ bool SyncSolverV2::checkCrossCoreIntersect(ConflictPair *conflictPair1,
     return true;
   }
 
-  auto setOcc1 = conflictPair1->setOcc;
-  auto waitOcc1 = conflictPair1->waitOcc;
-  auto setOcc2 = conflictPair2->setOcc;
-  auto waitOcc2 = conflictPair2->waitOcc;
+  auto *setOcc1 = conflictPair1->setOcc;
+  auto *waitOcc1 = conflictPair1->waitOcc;
+  auto *setOcc2 = conflictPair2->setOcc;
+  auto *waitOcc2 = conflictPair2->waitOcc;
 
   bool checkSamePipeSetSet = false;
   if (conflictPair1->setCorePipeInfo == conflictPair2->setCorePipeInfo) {
-    auto parentLoopOp1 = setOcc1->op->getParentOfType<Loop>();
-    auto parentLoopOp2 = setOcc2->op->getParentOfType<Loop>();
+    auto *parentLoopOp1 = setOcc1->op->getParentOfType<Loop>();
+    auto *parentLoopOp2 = setOcc2->op->getParentOfType<Loop>();
     if (parentLoopOp1 && !parentLoopOp1->isProperAncestor(waitOcc1->op)) {
       if (parentLoopOp1->isProperAncestor(setOcc2->op)) {
         checkSamePipeSetSet = true;
@@ -282,8 +283,8 @@ bool SyncSolverV2::checkCrossCoreIntersect(ConflictPair *conflictPair1,
 
   bool checkSamePipeWaitWait = false;
   if (conflictPair1->waitCorePipeInfo == conflictPair2->waitCorePipeInfo) {
-    auto parentLoopOp1 = waitOcc1->op->getParentOfType<Loop>();
-    auto parentLoopOp2 = waitOcc2->op->getParentOfType<Loop>();
+    auto *parentLoopOp1 = waitOcc1->op->getParentOfType<Loop>();
+    auto *parentLoopOp2 = waitOcc2->op->getParentOfType<Loop>();
     if (parentLoopOp1 && !parentLoopOp1->isProperAncestor(setOcc1->op)) {
       if (parentLoopOp1->isProperAncestor(waitOcc2->op)) {
         checkSamePipeWaitWait = true;
@@ -371,9 +372,59 @@ SyncSolverV2::getIntersectingEventIdNodes(ConflictPair *conflictPair) {
   return intersectingNodes.takeVector();
 }
 
-void SyncSolverV2::processConflict(Occurrence *occ1, Occurrence *occ2,
-                                   RWOperation *rwOp1, RWOperation *rwOp2,
-                                   bool isUseless) {
+ConflictPair *
+SyncSolverV2::handleConflict(Occurrence *occ1, Occurrence *occ2,
+                             RWOperation *rwOp1, RWOperation *rwOp2,
+                             CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst,
+                             EventIdInfo eventIdInfo, bool isUseless) {
+  this->perfInfo.handledConflictsNum += 1;
+  LLVM_DEBUG({
+    llvm::dbgs() << "conflict found: "
+                 << "isUseless: " << isUseless
+                 << " eventIdNum: " << eventIdInfo.eventIdNum << "\n";
+    llvm::dbgs() << occ1->syncIrIndex << ' ' << occ1->startIndex << ' '
+                 << occ1->endIndex << ' ' << rwOp1->str(0, false) << '\n';
+    llvm::dbgs() << occ2->syncIrIndex << ' ' << occ2->startIndex << ' '
+                 << occ2->endIndex << ' ' << rwOp2->str(0, false) << '\n';
+  });
+  if (corePipeSrc == corePipeDst) {
+    eventIdInfo.setEventIdNum(1);
+    return handleBarrierConflict(occ1, occ2, corePipeSrc, corePipeDst,
+                                 eventIdInfo, isUseless);
+  } else if (auto unitFlagInfo = checkUnitFlagPatterns(occ1, occ2)) {
+    return handleUnitFlagConflict(occ1, occ2, corePipeSrc, corePipeDst,
+                                  unitFlagInfo.value(), isUseless);
+  } else {
+    return handleSetWaitConflict(occ1, occ2, corePipeSrc, corePipeDst,
+                                 eventIdInfo, isUseless);
+  }
+}
+
+void SyncSolverV2::processOrder(Occurrence *occ1, Occurrence *occ2,
+                                RWOperation *rwOp1, RWOperation *rwOp2,
+                                bool isUseless) {
+  assert(occ1 != occ2);
+  assert(occ1->syncIrIndex < occ2->syncIrIndex);
+  this->perfInfo.ordersCheckedNum += 1;
+
+  DEBUG_WITH_TYPE("gss-sync-solver-checking", {
+    llvm::dbgs() << "checking: " << (isUseless ? "is-useless\n" : "\n");
+    llvm::dbgs() << occ1->syncIrIndex << ' ' << occ1->startIndex << ' '
+                 << occ1->endIndex << ' ' << occ1->op->str(0, false) << '\n';
+    llvm::dbgs() << occ2->syncIrIndex << ' ' << occ2->startIndex << ' '
+                 << occ2->endIndex << ' ' << occ2->op->str(0, false) << '\n';
+  });
+  if (checkImpossibleOccPair(occ1, occ2) || checkAlreadySynced(occ1, occ2) ||
+      skipMMad1DecomposedLoopOpt(occ1, occ2) ||
+      checkSkipParallelLoop(occ1, occ2) || checkSkipCrossCorePair(occ1, occ2)) {
+    this->perfInfo.failedInitialChecksNum += 1;
+    return;
+  }
+  if (checkAlreadySyncedWithUnitFlag(occ1, occ2)) {
+    this->perfInfo.failedInitialChecksNum += 1;
+    return;
+  }
+
   this->perfInfo.conflictsProcessedNum += 1;
   for (auto [corePipeSrc, corePipeDst] : getMemoryConflicts(rwOp1, rwOp2)) {
     this->perfInfo.memoryConflictsFoundNum += 1;
@@ -389,36 +440,33 @@ void SyncSolverV2::processConflict(Occurrence *occ1, Occurrence *occ2,
   }
 }
 
-void SyncSolverV2::processOrder(Occurrence *occ1, Occurrence *occ2,
-                                RWOperation *rwOp1, RWOperation *rwOp2,
-                                bool isUseless) {
-  this->perfInfo.ordersCheckedNum += 1;
-  assert(occ1 != occ2);
-  assert(occ1->syncIrIndex < occ2->syncIrIndex);
-
-  if (checkVisited(occ1, occ2)) {
-    assert(false && "expected to not check a pair more than once.");
-    return;
-  }
-  if (checkImpossibleOccPair(occ1, occ2) || checkAlreadySynced(occ1, occ2) ||
-      skipMMad1DecomposedLoopOpt(occ1, occ2) ||
-      checkSkipParallelLoop(occ1, occ2) || checkSkipCrossCorePair(occ1, occ2) ||
-      checkAlreadySyncedWithUnitFlag(occ1, occ2)) {
-    this->perfInfo.failedInitialChecksNum += 1;
-    return;
-  }
-  processConflict(occ1, occ2, rwOp1, rwOp2, isUseless);
-}
-
 bool SyncSolverV2::processOrder(ProcessingOrderV2 processingOrder) {
   auto [lcaOcc1, lcaOcc2, occ1, occ2, rwOp1, rwOp2, corePipeSrc, corePipeDst,
         isUseless] = processingOrder;
 
-  this->perfInfo.ordersCheckedNum += 1;
   assert(occ1 != occ2);
   assert(occ1->syncIrIndex < occ2->syncIrIndex);
   assert(lcaOcc1 != lcaOcc2);
   assert(!lcaOcc2->isProperAncestor(lcaOcc1));
+  this->perfInfo.ordersCheckedNum += 1;
+
+  DEBUG_WITH_TYPE("gss-sync-solver-checking", {
+    llvm::dbgs() << "checking: " << (isUseless ? "is-useless\n" : "\n");
+    llvm::dbgs() << occ1->syncIrIndex << ' ' << occ1->startIndex << ' '
+                 << occ1->endIndex << ' ' << occ1->op->str(0, false) << '\n';
+    llvm::dbgs() << occ2->syncIrIndex << ' ' << occ2->startIndex << ' '
+                 << occ2->endIndex << ' ' << occ2->op->str(0, false) << '\n';
+  });
+  if (checkImpossibleOccPair(occ1, occ2) || checkAlreadySynced(occ1, occ2) ||
+      skipMMad1DecomposedLoopOpt(occ1, occ2) ||
+      checkSkipParallelLoop(occ1, occ2) || checkSkipCrossCorePair(occ1, occ2)) {
+    this->perfInfo.failedInitialChecksNum += 1;
+    return false;
+  }
+  if (checkAlreadySyncedWithUnitFlag(occ1, occ2)) {
+    this->perfInfo.failedInitialChecksNum += 1;
+    return false;
+  }
 
   bool lcaOcc1IsAncestorLcaOcc2 = lcaOcc1->isProperAncestor(lcaOcc2);
   bool lcaOcc2IsAncestorLcaOcc1 = lcaOcc2->isProperAncestor(lcaOcc1);
@@ -436,26 +484,6 @@ bool SyncSolverV2::processOrder(ProcessingOrderV2 processingOrder) {
     parOcc2 = occ2->getNthParent(occ2->depth - lcaOcc2->depth - 1);
     assert(parOcc2 != nullptr);
     assert(parOcc2->parentOcc == lcaOcc2);
-  }
-
-  if (checkImpossibleOccPair(occ1, occ2) || checkAlreadySynced(occ1, occ2) ||
-      skipMMad1DecomposedLoopOpt(occ1, occ2) ||
-      checkSkipParallelLoop(occ1, occ2) || checkSkipCrossCorePair(occ1, occ2)) {
-    this->perfInfo.failedInitialChecksNum += 1;
-    return false;
-  }
-
-  DEBUG_WITH_TYPE("gss-sync-solver-checking", {
-    llvm::dbgs() << "checking: " << (isUseless ? "is-useless\n" : "\n");
-    llvm::dbgs() << occ1->syncIrIndex << ' ' << occ1->startIndex << ' '
-                 << occ1->endIndex << ' ' << occ1->op->str(0, false) << '\n';
-    llvm::dbgs() << occ2->syncIrIndex << ' ' << occ2->startIndex << ' '
-                 << occ2->endIndex << ' ' << occ2->op->str(0, false) << '\n';
-  });
-
-  if (checkAlreadySyncedWithUnitFlag(occ1, occ2)) {
-    this->perfInfo.failedInitialChecksNum += 1;
-    return false;
   }
 
   this->perfInfo.conflictsProcessedNum += 1;
@@ -584,7 +612,7 @@ void SyncSolverV2::generateProcessingOrders(
   for (auto &[memoryEffect1, map1] : lcaOcc1->memInfoTree1.nodeListMap) {
     for (auto &[corePipeSrc, nodeList1] : map1) {
       for (auto &node1 : nodeList1) {
-        auto it1 =
+        auto *it1 =
             node1.lower_bound(MemInfoOccElement(nullptr, nullptr, rIndex1, -1));
         if (it1 == node1.occElements.begin()) {
           continue;
@@ -605,7 +633,7 @@ void SyncSolverV2::generateProcessingOrders(
               continue;
             }
             for (auto &node2 : nodeList2) {
-              auto it2 = node2.lower_bound(
+              auto *it2 = node2.lower_bound(
                   MemInfoOccElement(nullptr, nullptr, lIndex2, -1));
               if (it2 == node2.occElements.end() || it2->occIndex >= rIndex2) {
                 continue;
@@ -677,7 +705,7 @@ void SyncSolverV2::generateProcessingOrders(
     }
 
     if (current.occElementIt1 != current.node1->occElements.begin()) {
-      auto nextIt1 = std::prev(current.occElementIt1);
+      auto *nextIt1 = std::prev(current.occElementIt1);
       if (nextIt1->occIndex >= lIndex1) {
         auto next = current;
         next.occElement1 = *nextIt1;
@@ -686,7 +714,7 @@ void SyncSolverV2::generateProcessingOrders(
       }
     }
 
-    auto nextIt2 = std::next(current.occElementIt2);
+    auto *nextIt2 = std::next(current.occElementIt2);
     if (nextIt2 != current.node2->occElements.end() &&
         nextIt2->occIndex < rIndex2) {
       auto next = current;
@@ -816,33 +844,5 @@ void SyncSolverV2::collectProcessingOrders(Occurrence *occ, bool isUseless) {
 void SyncSolverV2::processOrders() {
   if (!syncIr.empty()) {
     collectProcessingOrders(syncIr.front().get());
-  }
-}
-
-ConflictPair *
-SyncSolverV2::handleConflict(Occurrence *occ1, Occurrence *occ2,
-                             RWOperation *rwOp1, RWOperation *rwOp2,
-                             CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst,
-                             EventIdInfo eventIdInfo, bool isUseless) {
-  this->perfInfo.handledConflictsNum += 1;
-  LLVM_DEBUG({
-    llvm::dbgs() << "conflict found: "
-                 << "isUseless: " << isUseless
-                 << " eventIdNum: " << eventIdInfo.eventIdNum << "\n";
-    llvm::dbgs() << occ1->syncIrIndex << ' ' << occ1->startIndex << ' '
-                 << occ1->endIndex << ' ' << rwOp1->str(0, false) << '\n';
-    llvm::dbgs() << occ2->syncIrIndex << ' ' << occ2->startIndex << ' '
-                 << occ2->endIndex << ' ' << rwOp2->str(0, false) << '\n';
-  });
-  if (corePipeSrc == corePipeDst) {
-    eventIdInfo.setEventIdNum(1);
-    return handleBarrierConflict(occ1, occ2, corePipeSrc, corePipeDst,
-                                 eventIdInfo, isUseless);
-  } else if (auto unitFlagInfo = checkUnitFlagPatterns(occ1, occ2)) {
-    return handleUnitFlagConflict(occ1, occ2, corePipeSrc, corePipeDst,
-                                  unitFlagInfo.value(), isUseless);
-  } else {
-    return handleSetWaitConflict(occ1, occ2, corePipeSrc, corePipeDst,
-                                 eventIdInfo, isUseless);
   }
 }
