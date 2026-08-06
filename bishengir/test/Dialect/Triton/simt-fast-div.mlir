@@ -9,7 +9,7 @@
 //  - Two tt.func private declarations inserted in the module.
 //  - Two ttg.local_alloc + two tt.call_scalar at function entry.
 //  - Two ttg.local_load (for memory ordering) before the division.
-//  - arith.divsi replaced by ascend_dpx.umulhi + arith.addi + arith.shrsi.
+//  - arith.divsi replaced by ascend_dpx.umulhi + arith.addi + arith.shrui.
 
 // CHECK-DAG: llvm.func @_mlir_ciface_simt_div_magic_shift_uint32_t({{.*}}) -> i32 attributes {hacc.always_inline, hivm.func_core_type = #hivm.func_core_type<AIV>, llvm.emit_c_interface, sym_visibility = "private"}
 // CHECK-DAG: llvm.func @_mlir_ciface_simt_div_magic_mul_uint32_t({{.*}}) -> i32 attributes {hacc.always_inline, hivm.func_core_type = #hivm.func_core_type<AIV>, llvm.emit_c_interface, sym_visibility = "private"}
@@ -23,7 +23,7 @@
 // CHECK:       ttg.local_load [[SHM_MUL]]
 // CHECK:       [[HI:%[^ ]+]] = ascend_dpx.umulhi {{%[^ ]+}}, [[MAGIC]]
 // CHECK:       [[SUM:%[^ ]+]] = arith.addi [[HI]], {{%[^ ]+}}
-// CHECK:       arith.shrsi [[SUM]], [[SHIFT]]
+// CHECK:       arith.shrui [[SUM]], [[SHIFT]]
 // CHECK-NOT:   arith.divsi
 module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 1 : i32, "ttg.threads-per-warp" = 32 : i32} {
   tt.func public @scalar_divsi(%dividend: i32, %divisor: i32) -> i32 {
@@ -35,7 +35,7 @@ module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 1 : i32, "ttg.thr
 // -----
 
 // Test 2: scalar unsigned division whose divisor is a direct i32 function arg.
-// The replacement uses arith.shrui (logical shift) instead of arith.shrsi.
+// The replacement uses arith.shrui (logical shift) instead of arith.shrui.
 
 // CHECK-LABEL: @scalar_divui
 // CHECK:       tt.call_scalar {{.*}}, @_mlir_ciface_simt_div_magic_shift_uint32_t
@@ -43,7 +43,7 @@ module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 1 : i32, "ttg.thr
 // CHECK:       [[HI:%[^ ]+]] = ascend_dpx.umulhi
 // CHECK:       [[SUM:%[^ ]+]] = arith.addi [[HI]], {{%[^ ]+}}
 // CHECK:       arith.shrui [[SUM]],
-// CHECK-NOT:   arith.shrsi
+// CHECK-NOT:   arith.shrui
 // CHECK-NOT:   arith.divui
 module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 1 : i32, "ttg.threads-per-warp" = 32 : i32} {
   tt.func public @scalar_divui(%dividend: i32, %divisor: i32) -> i32 {
@@ -61,7 +61,7 @@ module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 1 : i32, "ttg.thr
 //  - ttg.local_load returns tensor<1xi32, #blocked1> (dividend encoding).
 //  - tt.broadcast widens tensor<1xi32> to tensor<32xi32>.
 //  - tt.mulhiui performs element-wise upper-32-bit multiply.
-//  - arith.shrsi performs the final tensor shift.
+//  - arith.shrui performs the final tensor shift.
 
 // CHECK-LABEL: @tensor_divsi
 // CHECK:       tt.call_scalar {{.*}}, @_mlir_ciface_simt_div_magic_shift_uint32_t
@@ -72,7 +72,7 @@ module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 1 : i32, "ttg.thr
 // CHECK:       [[ST:%[^ ]+]] = tt.broadcast [[SL]] : tensor<1xi32, {{.*}}> -> tensor<32xi32,
 // CHECK:       [[HI:%[^ ]+]] = tt.mulhiui {{%[^ ]+}}, [[MT]]
 // CHECK:       [[SUM:%[^ ]+]] = arith.addi [[HI]], {{%[^ ]+}}
-// CHECK:       arith.shrsi [[SUM]], [[ST]]
+// CHECK:       arith.shrui [[SUM]], [[ST]]
 // CHECK-NOT:   arith.divsi
 module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 1 : i32, "ttg.threads-per-warp" = 32 : i32} {
   tt.func public @tensor_divsi(%dividend: tensor<32xi32, #blocked1>, %divisor: i32) -> tensor<32xi32, #blocked1> {
@@ -91,7 +91,7 @@ module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 1 : i32, "ttg.thr
 // CHECK:       [[HI:%[^ ]+]] = tt.mulhiui
 // CHECK:       [[SUM:%[^ ]+]] = arith.addi [[HI]], {{%[^ ]+}}
 // CHECK:       arith.shrui [[SUM]],
-// CHECK-NOT:   arith.shrsi
+// CHECK-NOT:   arith.shrui
 // CHECK-NOT:   arith.divui
 module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 1 : i32, "ttg.threads-per-warp" = 32 : i32} {
   tt.func public @tensor_divui(%dividend: tensor<32xi32, #blocked1>, %divisor: i32) -> tensor<32xi32, #blocked1> {
@@ -275,7 +275,7 @@ module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 1 : i32, "ttg.thr
 // CHECK:       [[ST:%[^ ]+]] = tt.broadcast [[SL]] : tensor<1x1xi32, {{.*}}> -> tensor<4x32xi32,
 // CHECK:       [[HI:%[^ ]+]] = tt.mulhiui {{%[^ ]+}}, [[MT]]
 // CHECK:       [[SUM:%[^ ]+]] = arith.addi [[HI]], {{%[^ ]+}}
-// CHECK:       [[Q:%[^ ]+]] = arith.shrsi [[SUM]], [[ST]]
+// CHECK:       [[Q:%[^ ]+]] = arith.shrui [[SUM]], [[ST]]
 // CHECK:       arith.addi [[Q]], {{%[^ ]+}}
 // CHECK-NOT:   arith.divsi
 module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 1 : i32, "ttg.threads-per-warp" = 32 : i32} {
@@ -305,14 +305,14 @@ module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 1 : i32, "ttg.thr
 // CHECK:       tt.broadcast {{.*}} : tensor<1x1x1xi32, {{.*}}> -> tensor<2x4x16xi32,
 // CHECK:       tt.broadcast {{.*}} : tensor<1x1x1xi32, {{.*}}> -> tensor<2x4x16xi32,
 // CHECK:       tt.mulhiui
-// CHECK:       arith.shrsi
+// CHECK:       arith.shrui
 //   rem replacement (same magic, fresh loads):
 // CHECK:       ttg.local_load {{.*}} -> tensor<1x1x1xi32, #{{.*}}>
 // CHECK:       ttg.local_load {{.*}} -> tensor<1x1x1xi32, #{{.*}}>
 // CHECK:       tt.broadcast {{.*}} : tensor<1x1x1xi32, {{.*}}> -> tensor<2x4x16xi32,
 // CHECK:       tt.broadcast {{.*}} : tensor<1x1x1xi32, {{.*}}> -> tensor<2x4x16xi32,
 // CHECK:       tt.mulhiui
-// CHECK:       arith.shrsi
+// CHECK:       arith.shrui
 // CHECK:       arith.muli
 // CHECK:       arith.subi
 //   user code:
@@ -348,7 +348,7 @@ module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 1 : i32, "ttg.thr
 // CHECK:       tt.broadcast [[ML]] : tensor<1x1x1xi32, {{.*}}> -> tensor<2x4x16xi32,
 // CHECK:       tt.broadcast [[SL]] : tensor<1x1x1xi32, {{.*}}> -> tensor<2x4x16xi32,
 // CHECK:       tt.mulhiui
-// CHECK:       arith.shrsi
+// CHECK:       arith.shrui
 // CHECK:       arith.muli
 // CHECK:       arith.subi
 // CHECK:       arith.muli
@@ -420,7 +420,7 @@ module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 1 : i32, "ttg.thr
 // CHECK:         tt.broadcast {{.*}} : tensor<1x1x1xi32, {{.*}}> -> tensor<2x16x16xi32,
 // CHECK:         tt.broadcast {{.*}} : tensor<1x1x1xi32, {{.*}}> -> tensor<2x16x16xi32,
 // CHECK:         tt.mulhiui
-// CHECK:         arith.shrsi
+// CHECK:         arith.shrui
 // CHECK:         arith.addi
 // CHECK-NOT:   arith.divsi
 module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 2 : i32, "ttg.threads-per-warp" = 32 : i32} {
@@ -489,14 +489,14 @@ module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 1 : i32, "ttg.thr
 // CHECK:           tt.broadcast {{.*}} : tensor<1x1x1xi32, {{.*}}> -> tensor<2x16x32xi32,
 // CHECK:           tt.broadcast {{.*}} : tensor<1x1x1xi32, {{.*}}> -> tensor<2x16x32xi32,
 // CHECK:           tt.mulhiui
-// CHECK:           arith.shrsi
+// CHECK:           arith.shrui
 //   rem replacement:
 // CHECK:           ttg.local_load {{.*}} -> tensor<1x1x1xi32, #{{.*}}>
 // CHECK:           ttg.local_load {{.*}} -> tensor<1x1x1xi32, #{{.*}}>
 // CHECK:           tt.broadcast {{.*}} : tensor<1x1x1xi32, {{.*}}> -> tensor<2x16x32xi32,
 // CHECK:           tt.broadcast {{.*}} : tensor<1x1x1xi32, {{.*}}> -> tensor<2x16x32xi32,
 // CHECK:           tt.mulhiui
-// CHECK:           arith.shrsi
+// CHECK:           arith.shrui
 // CHECK:           arith.muli
 // CHECK:           arith.subi
 //   user code:
@@ -544,14 +544,14 @@ module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 4 : i32, "ttg.thr
 // CHECK:       tt.broadcast {{.*}} : tensor<1xi32, {{.*}}> -> tensor<32xi32,
 // CHECK:       tt.broadcast {{.*}} : tensor<1xi32, {{.*}}> -> tensor<32xi32,
 // CHECK:       tt.mulhiui
-// CHECK:       arith.shrsi
+// CHECK:       arith.shrui
 //   3-D replacement:
 // CHECK:       ttg.local_load {{.*}} -> tensor<1x1x1xi32, #{{.*}}>
 // CHECK:       ttg.local_load {{.*}} -> tensor<1x1x1xi32, #{{.*}}>
 // CHECK:       tt.broadcast {{.*}} : tensor<1x1x1xi32, {{.*}}> -> tensor<2x4x16xi32,
 // CHECK:       tt.broadcast {{.*}} : tensor<1x1x1xi32, {{.*}}> -> tensor<2x4x16xi32,
 // CHECK:       tt.mulhiui
-// CHECK:       arith.shrsi
+// CHECK:       arith.shrui
 // CHECK-NOT:   arith.divsi
 module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 1 : i32, "ttg.threads-per-warp" = 32 : i32} {
   tt.func public @same_divisor_different_ranks(%a: tensor<32xi32, #blocked1d>, %b: tensor<2x4x16xi32, #blocked3d>, %divisor: i32) -> tensor<2x4x16xi32, #blocked3d> {
