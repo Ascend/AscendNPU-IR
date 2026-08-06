@@ -7,6 +7,7 @@ OFF = 0
 
 config.mlir_obj_root = "@MLIR_BINARY_DIR@"
 config.llvm_shlib_ext = "@SHLIBEXT@"
+config.llvm_shlib_dir = path(r"@SHLIBDIR@")
 config.host_cxx = "@HOST_CXX@"
 config.host_cc = "@HOST_CC@"
 config.llvm_tools_dir = "@LLVM_TOOLS_DIR@"
