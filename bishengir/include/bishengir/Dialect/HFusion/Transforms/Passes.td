@@ -700,9 +700,9 @@ def PrepareI1Nx1ForVectorization
 }
 
 def SimplifyVFArgs : Pass<"hfusion-simplify-vf-arg", "ModuleOp"> {
-  let summary = "simplify vf function arguments";
+  let summary = "simplify and legalize vf function arguments";
   let constructor = "mlir::hfusion::createSimplifyVFArgsPass()";
-  let dependentDialects = ["func::FuncDialect"];
+  let dependentDialects = ["arith::ArithDialect", "func::FuncDialect"];
 }
 
 def MergeVecScope : Pass<"hfusion-merge-vf", "ModuleOp"> {
