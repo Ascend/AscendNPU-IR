@@ -245,8 +245,13 @@ LogicalResult processAlignPropagationAmongOperationOperands(
   }
 
   bool isChanged = false;
-  for (auto [maybeMarkOp, tobeStrideAlignOperand] :
-       llvm::zip(maybeMarkOps, tobeStrideAlignOperands)) {
+  const bool isCopy = isa<hivm::CopyOp>(op);
+  for (auto [idx, pair] : llvm::enumerate(
+           llvm::zip(maybeMarkOps, tobeStrideAlignOperands))) {
+    if (isCopy && idx == 0) {
+      continue;
+    }
+    auto [maybeMarkOp, tobeStrideAlignOperand] = pair;
     if (!maybeMarkOp.has_value()) {
       // no storage align info, just create new one to add info
       isChanged =
