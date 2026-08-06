@@ -2943,19 +2943,15 @@ void PlanMemoryPass::fixMultibufferEnabledPointerCastOps(
     } else if (auto whileOp = dyn_cast<scf::WhileOp>(loopOp.getOperation())) {
       // Hoist within the while region that already owns the pointer_cast.
       // Moving a before-region cast into after (or vice versa) breaks dominance
-      // for uses that stay in the original region. Walk out of nested ops
-      // (e.g. scf.if) until the while's before/after region is found.
-      Region *region = pointerCastOp->getParentRegion();
-      while (region && region->getParentOp() != whileOp.getOperation())
-        region = region->getParentOp()->getParentRegion();
-      if (region == &whileOp.getBefore())
-        targetBlock = &whileOp.getBefore().front();
-      else if (region == &whileOp.getAfter())
-        targetBlock = &whileOp.getAfter().front();
-      else
-        continue;
+      // for uses that stay in the original region.
+      if (whileOp.getAfter().isAncestor(pointerCastOp->getParentRegion())) {
+        targetBlock = whileOp.getAfterBody();
+      } else {
+        targetBlock = whileOp.getBeforeBody();
+      }
     } else {
-      continue;
+      llvm::report_fatal_error("Unsupported loop parent for pointer cast op "
+                               "with multibuffer attribute");
     }
     pointerCastOp->moveBefore(&targetBlock->front());
     markedOp->moveAfter(pointerCastOp);

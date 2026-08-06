@@ -3004,17 +3004,14 @@ PlanMemoryPass::fixMultibufferEnabledPointerCastOps(Operation *funcOp) const {
       // Hoist within the while region that already owns the pointer_cast.
       // Moving a before-region cast into after (or vice versa) breaks dominance
       // for uses that stay in the original region.
-      Region *region = pointerCastOp->getParentRegion();
-      while (region && region->getParentOp() != whileOp.getOperation())
-        region = region->getParentOp()->getParentRegion();
-      if (region == &whileOp.getBefore())
-        targetBlock = &whileOp.getBefore().front();
-      else if (region == &whileOp.getAfter())
-        targetBlock = &whileOp.getAfter().front();
-      else
-        continue;
+      if (whileOp.getAfter().isAncestor(pointerCastOp->getParentRegion())) {
+        targetBlock = whileOp.getAfterBody();
+      } else {
+        targetBlock = whileOp.getBeforeBody();
+      }
     } else {
-      continue;
+      llvm::report_fatal_error("Unsupported loop parent for pointer cast op "
+                               "with multibuffer attribute");
     }
     pointerCastOp->moveBefore(&targetBlock->front());
     markedOp->moveAfter(pointerCastOp);
