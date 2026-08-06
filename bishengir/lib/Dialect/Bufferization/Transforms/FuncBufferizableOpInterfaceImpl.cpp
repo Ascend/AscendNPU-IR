@@ -9,6 +9,7 @@
 
 #include "bishengir/Dialect/Bufferization/Transforms/FuncBufferizableOpInterfaceImpl.h"
 #include "bishengir/Dialect/Utils/OpInterfaceUtils.h"
+#include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/Bufferization/Transforms/FuncBufferizableOpInterfaceImpl.h"
 #include "mlir/Dialect/Bufferization/Transforms/OneShotAnalysis.h"
@@ -19,8 +20,6 @@ using namespace mlir;
 using namespace mlir::bufferization;
 using namespace mlir::bufferization::func_ext;
 using namespace mlir::func;
-
-static constexpr llvm::StringLiteral KFoldOffsetMarker = "fold_offset_into_ptr";
 
 static FuncOp getCalledFunction(func::CallOp callOp) {
   SymbolRefAttr sym =
@@ -153,7 +152,7 @@ static LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
             dstStrides, [](int64_t s) { return !ShapedType::isDynamic(s); });
         if (srcStridesStatic && srcOffset == ShapedType::kDynamic &&
             dstStridesStatic && dstOffset == 0)
-          castOp->setAttr(KFoldOffsetMarker, rewriter.getUnitAttr());
+          castOp->setAttr(utils::KFoldOffsetMarker, rewriter.getUnitAttr());
       }
       /// Add KFoldOffsetMarker end
 

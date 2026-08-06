@@ -40,6 +40,38 @@ using namespace mlir;
 using namespace llvm;
 using namespace bishengir;
 
+namespace {
+thread_local CompileTiming *currentCompileTiming = nullptr;
+} // namespace
+
+mlir::TimingScope *bishengir::getCurrentCompileTimingScope() {
+  return currentCompileTiming ? currentCompileTiming->getRootScope() : nullptr;
+}
+
+ScopedCompileTimingContext::ScopedCompileTimingContext(CompileTiming *timing)
+    : previousTiming(currentCompileTiming) {
+  currentCompileTiming = timing;
+}
+
+ScopedCompileTimingContext::~ScopedCompileTimingContext() {
+  currentCompileTiming = previousTiming;
+}
+
+CompileTiming::CompileTiming() {
+  mlir::applyDefaultTimingManagerCLOptions(manager);
+  if (manager.isEnabled())
+    rootScope = std::make_unique<mlir::TimingScope>(manager.getRootScope());
+  context = std::make_unique<ScopedCompileTimingContext>(this);
+}
+
+int ExternalToolProfiler::run(StringRef name, std::function<int()> fn) {
+  std::optional<mlir::TimingScope> toolTimingScope;
+  mlir::TimingScope *timingScope = getCurrentCompileTimingScope();
+  if (timingScope)
+    toolTimingScope.emplace(timingScope->nest(name));
+  return fn();
+}
+
 LogicalResult bishengir::runPipeline(
     ModuleOp mod, const std::function<void(mlir::PassManager &)> &buildPipeline,
     BiShengIRCompileMainConfig &config, const std::string &pipelineName) {
@@ -97,7 +129,8 @@ std::error_code bishengir::canonicalizePath(StringTmpPath &path) {
   return {};
 }
 
-/// True if \p path is \p root or a path nested under \p root (not e.g. /tmpfoo).
+/// True if \p path is \p root or a path nested under \p root (not e.g.
+/// /tmpfoo).
 static bool isPathUnderPrefix(StringRef path, StringRef root) {
   if (path == root)
     return true;
@@ -119,7 +152,8 @@ void TempDirectoriesStore::assertInsideTmp(StringTmpPath path) const {
                  "failed to canonicalize system temp directory");
   llvm::sys::path::remove_dots(tempRoot, /*remove_dot_dot=*/true);
   if (!isPathUnderPrefix(path, tempRoot))
-    llvm::report_fatal_error("unexpected temp folder created outside of system temp dir");
+    llvm::report_fatal_error(
+        "unexpected temp folder created outside of system temp dir");
 }
 
 TempDirectoriesStore::~TempDirectoriesStore() {
@@ -195,8 +229,12 @@ LogicalResult bishengir::execute(StringRef binName, StringRef installPath,
   SmallVector<std::optional<StringRef>> redirects = {
       /*stdin(0)=*/std::nullopt, /*stdout(1)=*/outputFile,
       /*stderr(2)=*/std::nullopt};
-  if (llvm::sys::ExecuteAndWait(binPath, arguments, /*Env=*/std::nullopt,
-                                /*Redirects=*/redirects) != 0) {
+  std::string profilerName = llvm::sys::path::filename(binPath).str();
+  if (ExternalToolProfiler::run(profilerName, [&]() {
+        return llvm::sys::ExecuteAndWait(binPath, arguments,
+                                         /*Env=*/std::nullopt,
+                                         /*Redirects=*/redirects);
+      }) != 0) {
     llvm::errs() << "[ERROR] Executing: ";
     llvm::interleave(
         arguments, llvm::errs(),

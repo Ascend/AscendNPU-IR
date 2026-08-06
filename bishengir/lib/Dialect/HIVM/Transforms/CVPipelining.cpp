@@ -17,6 +17,7 @@
 
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/TileUtils.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
@@ -103,6 +104,14 @@ private:
   /// producer at all). In that case `run()` reverts and the pass becomes a
   /// no-op for this loop.
   LogicalResult absorbMergerOpsIntoWorkItems();
+
+  // For each `annotation.mark` with
+  // `DuplicateTensorExtractForCube::replacementLabel` inside `pipelineLoop`,
+  // clone the scalar/control op chain that derives from the marked original
+  // value and feeds into CUBE consumers, rewiring those consumers to read
+  // from the cloned chain rooted at the replacement value (which lives on a
+  // VECTOR side path produced by an `inserted-store`).
+  LogicalResult duplicateExtractScalarForCube();
 
   LogicalResult collectWorkspaceAllocsForPreload();
 
@@ -207,8 +216,8 @@ private:
 
   DenseSet<Operation *> toErase;
 
-  DenseMap<AllocWorkspaceOp, WorkspaceAllocParams> workspaceAllocs_;
-  DenseMap<Value, Value> expandedWorkspaceMap_;
+  DenseMap<AllocWorkspaceOp, WorkspaceAllocParams> workspaceAllocs;
+  DenseMap<Value, Value> expandedWorkspaceMap;
   // annotation.mark ops we've already emitted a "hint overrides kernel
   // switch" warning on, to avoid duplicate diagnostics for the same tensor.
   DenseSet<Operation *> warnedOverrideMarks;
@@ -275,16 +284,6 @@ filterMarkOpsValuesInsideLoop(ArrayRef<annotation::MarkOp> markOps,
   if (hasIlligalMarkOp)
     return failure();
   return success();
-}
-
-static int getMultibufferCount(annotation::MarkOp marker) {
-  auto attrDict = marker->getAttrDictionary();
-  hivm::util::validateMultiBufferAttr(attrDict);
-  auto multibufferAttr = llvm::dyn_cast_if_present<IntegerAttr>(
-      marker->getAttr(MultiBufferAttr::name));
-  if (!multibufferAttr)
-    return -1;
-  return multibufferAttr.getInt();
 }
 
 static void removeWorkspaceMultiBufferMarks(Operation *root) {
@@ -379,6 +378,20 @@ static AllocWorkspaceOp getAllocWorkspace(Value v) {
       return nullptr;
     return getAllocWorkspace(tiedOperand->get());
   }
+  return nullptr;
+}
+
+// Trace `v` back through casts/views/iter_arg inits to either a
+// `memref::AllocOp` or a `memref_ext::AllocWorkspaceOp`. Returns nullptr if
+// the value does not resolve to one of those.
+static Operation *traceAllocLike(Value v) {
+  Value maybeAlloc = traceValueDef(v);
+  if (!maybeAlloc)
+    return nullptr;
+  Operation *defOp = maybeAlloc.getDefiningOp();
+  if (isa_and_present<memref::AllocOp, bishengir::memref_ext::AllocWorkspaceOp>(
+          defOp))
+    return defOp;
   return nullptr;
 }
 
@@ -489,6 +502,18 @@ static bool isTCBLocalOutput(const std::pair<Value, Value> &localOutput) {
   return false;
 }
 
+static bool isFreshOutputInit(Value init) {
+  Operation *defining = init.getDefiningOp();
+  if (isa_and_nonnull<tensor::EmptyOp, memref::AllocOp>(defining))
+    return true;
+
+  auto toTensor = dyn_cast_if_present<bufferization::ToTensorOp>(defining);
+  if (!toTensor)
+    return false;
+  Value root = traceValueDef(toTensor.getMemref());
+  return root && isa_and_nonnull<memref::AllocOp>(root.getDefiningOp());
+}
+
 static void createAttrForPreloadWS(OpBuilder &builder, Value markedVal) {
   Operation *markedOp = markedVal.getDefiningOp();
   if (markedOp)
@@ -590,8 +615,8 @@ static void processWorkspaceOutputUsers(
       builder.setInsertionPoint(owner);
       Value sliceIdx;
       if (isa<scf::YieldOp>(owner)) {
-        sliceIdx = builder.create<arith::ConstantIndexOp>(
-            owner->getLoc(), numMultibuffer - 1);
+        sliceIdx = builder.create<arith::ConstantIndexOp>(owner->getLoc(),
+                                                          numMultibuffer - 1);
       } else {
         sliceIdx = owner->getParentOfType<scf::ForOp>().getInductionVar();
       }
@@ -781,30 +806,6 @@ LogicalResult CVPipelineImpl::absorbMergerOpsIntoWorkItems() {
   return success();
 }
 
-// Given memref value, populate users with all operations that uses any aliasing
-// memrefs as `memrefVal`
-static void memrefDFS(Value memrefVal, SmallVector<Operation *> &users) {
-  SmallVector<Operation *> traceStack;
-  DenseSet<Operation *> visited;
-  Value rootVal = traceValueDef(memrefVal);
-  if (!rootVal)
-    return;
-  traceStack.append(rootVal.user_begin(), rootVal.user_end());
-  while (!traceStack.empty()) {
-    Operation *op = traceStack.pop_back_val();
-    if (visited.contains(op))
-      continue;
-    visited.insert(op);
-    users.push_back(op);
-
-    // If not memref result, dont need to trace any more
-    if (op->getNumResults() == 1 &&
-        !isa<MemRefType>(op->getResult(0).getType()))
-      continue;
-    traceStack.append(op->user_begin(), op->user_end());
-  }
-}
-
 /// Walk the pipeline loop body and record which store-like ops (FixpipeOp,
 /// StoreOp) are under an active atomic effect.
 void CVPipelineImpl::collectAtomicEffects() {
@@ -833,7 +834,7 @@ void CVPipelineImpl::collectAtomicEffects() {
   });
 }
 LogicalResult CVPipelineImpl::collectWorkspaceAllocsForPreload() {
-  workspaceAllocs_.clear();
+  workspaceAllocs.clear();
   if (worklist.empty())
     return success();
 
@@ -842,7 +843,7 @@ LogicalResult CVPipelineImpl::collectWorkspaceAllocsForPreload() {
   for (Operation &op : pipelineLoop.getBody()->getOperations()) {
     if (auto mark = dyn_cast<annotation::MarkOp>(&op)) {
       if (auto alloc = traceAllocWorkspace(mark.getSrc())) {
-        auto &info = workspaceAllocs_[alloc];
+        auto &info = workspaceAllocs[alloc];
         info.multibuffer = preloadSlots;
         info.marker = mark;
       }
@@ -853,14 +854,14 @@ LogicalResult CVPipelineImpl::collectWorkspaceAllocsForPreload() {
       auto alloc = traceAllocWorkspace(toTensor.getMemref());
       if (!alloc)
         continue;
-      auto &info = workspaceAllocs_[alloc];
+      auto &info = workspaceAllocs[alloc];
       info.multibuffer = preloadSlots;
       info.toTensor = toTensor;
     }
   }
 
   SmallVector<AllocWorkspaceOp> incompleteAllocs;
-  for (auto &[alloc, info] : workspaceAllocs_) {
+  for (auto &[alloc, info] : workspaceAllocs) {
     if (!info.marker || !info.toTensor) {
       incompleteAllocs.push_back(alloc);
       continue;
@@ -870,14 +871,14 @@ LogicalResult CVPipelineImpl::collectWorkspaceAllocsForPreload() {
           "[cv-pipelining] expected preload workspace tensor to have one use");
   }
   for (AllocWorkspaceOp alloc : incompleteAllocs)
-    workspaceAllocs_.erase(alloc);
+    workspaceAllocs.erase(alloc);
   return success();
 }
 
 void CVPipelineImpl::expandWorkspace(OpBuilder &builder) {
   OpBuilder::InsertionGuard g(builder);
   builder.setInsertionPoint(pipelineLoop);
-  for (auto &[alloc, info] : workspaceAllocs_) {
+  for (auto &[alloc, info] : workspaceAllocs) {
     Location loc = alloc.getLoc();
     MemRefType origType = alloc.getType();
     ArrayRef<int64_t> origShape = origType.getShape();
@@ -889,7 +890,7 @@ void CVPipelineImpl::expandWorkspace(OpBuilder &builder) {
         loc, newType, alloc.getWorkspaceArg(), alloc.getDynamicSize(),
         alloc.getOffset());
 
-    expandedWorkspaceMap_[alloc] = newAlloc;
+    expandedWorkspaceMap[alloc] = newAlloc;
 
     info.marker.getSrcMutable().set(newAlloc);
     info.marker->removeAttr(MultiBufferAttr::name);
@@ -906,12 +907,12 @@ LogicalResult CVPipelineImpl::markOutputs() {
       auto dps = dyn_cast<DestinationStyleOpInterface>(op);
       if (dps && isa<StoreOp, FixpipeOp>(op) && dps.getNumDpsInits() == 1) {
         auto alloc = getAllocWorkspace(dps.getDpsInitOperand(0)->get());
-        if (alloc && workspaceAllocs_.contains(alloc)) {
+        if (alloc && workspaceAllocs.contains(alloc)) {
           item->workspaceOutputs.push_back(op);
           continue;
         }
       }
-      
+
       if (isa<tensor::EmptyOp>(op))
         continue;
       // With lazy loading (kernel-level switch, per-tensor compile hint,
@@ -943,7 +944,11 @@ LogicalResult CVPipelineImpl::markOutputs() {
           if (!pipelineLoop->isAncestor(usr))
             continue;
           Operation *usrTop = getContainedParent(pipelineLoop, usr);
-          if (opToWorkItemMap.contains(usrTop) && !item->ops.contains(usrTop)) {
+          if (opToWorkItemMap.contains(usrTop) &&
+              llvm::any_of(opToWorkItemMap[usrTop],
+                           [op](const WorkItem *usrWI) {
+                             return !usrWI->ops.contains(op);
+                           })) {
             item->localOutputs.push_back(std::make_pair(result, nullptr));
             break;
           }
@@ -1177,7 +1182,10 @@ LogicalResult CVPipelineImpl::expandOutputInits(WorkItem *item) {
       if (!defining)
         return dps->emitWarning(
             "[cv-pipelining] expected dps init to be result of op");
-      if (isa<tensor::EmptyOp>(defining)) {
+      // All DMA ops should have the CopyOpInterface, and they can't be simply
+      // inserted into an empty tensor due to addrspace handling
+      if (isa<tensor::EmptyOp>(defining) ||
+          !isa<CopyOpInterface>(dps.getOperation())) {
         auto origTy = dyn_cast<TensorType>(init.getType());
         if (!origTy)
           return defining->emitWarning(
@@ -1221,35 +1229,67 @@ LogicalResult CVPipelineImpl::expandOutputInits(WorkItem *item) {
         continue;
       }
     }
-    toTensor = dyn_cast<bufferization::ToTensorOp>(defining);
+    // Scalar workspace stores (`hivm.hir.store` writing back to an
+    // `alloc_workspace`-backed scalar tensor) surface the alloc_workspace's
+    // memref result as the cross-stage value rather than the writer's tensor
+    // result. Route through the to_tensor that wraps the alloc so the rest
+    // of the flow sees a tensor-typed output it can expand uniformly.
+    if (auto wsAlloc =
+            dyn_cast<bishengir::memref_ext::AllocWorkspaceOp>(defining)) {
+      for (Operation *u : wsAlloc->getUsers()) {
+        if (auto tt = dyn_cast<bufferization::ToTensorOp>(u)) {
+          toTensor = tt;
+          defining = tt;
+          break;
+        }
+      }
+    }
+    if (!toTensor)
+      toTensor = dyn_cast<bufferization::ToTensorOp>(defining);
     if (!toTensor)
       return defining->emitWarning(
           "[cv-pipelining] expected to_tensor for non-tensor-empty output");
-    auto alloc = traceAlloc(toTensor.getMemref());
-    if (!alloc)
+    // Find the alloc — either a plain `memref.alloc` or a workspace alloc
+    // (`memref_ext.alloc_workspace`). Workspace allocs carve a slice out of
+    // a function-arg workspace and are expanded the same way: we add a
+    // leading multibuffer dim and preserve the workspace arg / dynamic-size /
+    // offset operands so PlanMemory can re-place the enlarged region.
+    Operation *allocOp = traceAllocLike(toTensor.getMemref());
+    if (!allocOp)
       return toTensor->emitWarning(
           "[cv-pipelining] expected alloc from toTensor");
-
-    auto origTy = alloc.getMemref().getType();
+    auto origTy = cast<MemRefType>(allocOp->getResult(0).getType());
     if (!origTy.hasStaticShape())
-      return alloc->emitWarning(
+      return allocOp->emitWarning(
           "[cv-pipelining] expected temporary buffer to be static");
     newShape.append(origTy.getShape().begin(), origTy.getShape().end());
     auto memspace = origTy.getMemorySpace();
     auto newType = MemRefType::get(newShape, origTy.getElementType(),
                                    MemRefLayoutAttrInterface(), memspace);
-    auto expandedAlloc = builder.create<memref::AllocOp>(
-        loc, newType, ValueRange(), alloc.getAlignmentAttr());
+    Value expandedResult;
+    if (auto plainAlloc = dyn_cast<memref::AllocOp>(allocOp)) {
+      expandedResult =
+          builder
+              .create<memref::AllocOp>(loc, newType, ValueRange(),
+                                       plainAlloc.getAlignmentAttr())
+              .getResult();
+    } else {
+      auto wsAlloc = cast<bishengir::memref_ext::AllocWorkspaceOp>(allocOp);
+      expandedResult = builder
+                           .create<bishengir::memref_ext::AllocWorkspaceOp>(
+                               loc, newType, wsAlloc.getWorkspaceArg(),
+                               wsAlloc.getDynamicSize(), wsAlloc.getOffset())
+                           .getResult();
+    }
     // Mark the expanded alloc with an `annotation.mark` carrying
     // `hivm.cv_pipelined_multi_buffer` so downstream passes (notably
     // the ND2NZOp aggregated-decompose pad/vbrc path) know this
     // storage is sliced into per-stage slots — any pre-init must
     // target only the current slot, never the whole alloc.
-    auto markOp =
-        builder.create<annotation::MarkOp>(loc, expandedAlloc.getResult());
+    auto markOp = builder.create<annotation::MarkOp>(loc, expandedResult);
     markOp->setAttr(hivm::CVPipelinedMultiBufferAttr::name,
                     UnitAttr::get(builder.getContext()));
-    expanded = expandedAlloc;
+    expanded = expandedResult;
   }
   return success();
 }
@@ -1442,11 +1482,11 @@ FailureOr<Value> CVPipelineImpl::updateMaskingSubview(OpBuilder &builder,
   int64_t offset;
   auto targetTy = cast<MemRefType>(initOperand->get().getType());
   SmallVector<int64_t> layoutStrides;
-  #ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
   if (getStridesAndOffset(targetTy, layoutStrides, offset).failed()) {
-  #else
+#else
   if (targetTy.getStridesAndOffset(layoutStrides, offset).failed()) {
-  #endif
+#endif
     subview->emitWarning("[cv-pipelining] unexpected memref layout");
     return failure();
   }
@@ -1492,7 +1532,7 @@ LogicalResult CVPipelineImpl::migrateOps() {
     }
 
     // Replace workspace stores in c220
-    processWorkspaceOutputs(builder, item.get(), expandedWorkspaceMap_,
+    processWorkspaceOutputs(builder, item.get(), expandedWorkspaceMap,
                             item->irMap);
 
     auto *argIt =
@@ -1596,9 +1636,12 @@ LogicalResult CVPipelineImpl::migrateOps() {
       // to the tensor path and crash in `createExtractSlice` on a memref
       // iter_arg.
       if (isa<TensorType>(expanded.getType())) {
-        Value extracted =
-            createExtractSlice(builder, loc, *argIt, orig.getType(), iv);
-        initOperand->set(extracted);
+        Value init = initOperand->get();
+        if (isFreshOutputInit(init)) {
+          Value extracted =
+              createExtractSlice(builder, loc, *argIt, orig.getType(), iv);
+          initOperand->set(extracted);
+        }
         Value newOutput = dps->getResult(0);
         builder.setInsertionPointAfterValue(newOutput);
         Value yieldVal = createInsertSlice(builder, loc, newOutput, *argIt, iv);
@@ -1624,49 +1667,92 @@ LogicalResult CVPipelineImpl::migrateOps() {
           innerToTensor = dyn_cast_if_present<bufferization::ToTensorOp>(
               internalDef.getDefiningOp());
         }
-        // If there are masking subviews, update those first
-        FailureOr<Value> updatedSubviewOr =
-            updateMaskingSubview(builder, loc, expanded, initOperand, iv);
-        if (failed(updatedSubviewOr))
-          return failure();
-        Value updatedSubview = *updatedSubviewOr;
-        // Then replace the toTensor operand if it is not updated
-        if (!innerToTensor)
-          return dps->emitWarning("[cv-pipelining] expected memref outputs to "
-                                  "be passed as tensors");
-        OpOperand *memrefOperand = &innerToTensor.getMemrefMutable();
-        if (memrefOperand->get() != updatedSubview) {
+        // Workspace scalar store: `hivm.hir.store` writing through a
+        // `to_tensor` of an `alloc_workspace`. Rewire the cloned store to
+        // write directly into the per-slot memref subview of `expanded` and
+        // drop the intermediate `to_tensor` — the post-jam-loop `to_tensor`
+        // below is the only one any consumer should read from.
+        auto clonedStore = dyn_cast<hivm::StoreOp>(dps.getOperation());
+        Operation *backingAlloc =
+            innerToTensor ? traceAllocLike(innerToTensor.getMemref()) : nullptr;
+        if (clonedStore && innerToTensor &&
+            isa_and_present<bishengir::memref_ext::AllocWorkspaceOp>(
+                backingAlloc)) {
           builder.setInsertionPointToStart(item->forOp.getBody());
-          Value toTensorSubview = createSubview(
-              builder, loc, expanded, memrefOperand->get().getType(), iv);
-          if (!toTensorSubview)
+          Value memrefSlot = createSubview(
+              builder, loc, expanded, innerToTensor.getMemref().getType(), iv);
+          if (!memrefSlot)
             return failure();
-          // If the DPS init is itself a memref (e.g. fixpipe writing
-          // directly to an alloc), redirect it onto the multibuffered slot.
-          // If it is a tensor backed by a `to_tensor` (e.g. the cross-core
-          // copy case), leave it alone — rewriting the inner toTensor's
-          // memref operand below is enough to redirect the writer.
-          //
-          // The fixpipe writes to a UB-typed memref but `toTensorSubview`
-          // has been address-space-stripped to match the to_tensor's memref
-          // operand. Recover the pre-cast UB-typed subview for the writer
-          // so the fixpipe verifier and downstream codegen see the correct
-          // address space; otherwise the writer is treated as an
-          // unspecified-aspace store and the staged result is corrupted.
-          if (!updatedSubview &&
-              isa<MemRefType>(initOperand->get().getType())) {
-            Value writerSubview = toTensorSubview;
-            if (auto cast =
-                    toTensorSubview.getDefiningOp<memref::MemorySpaceCastOp>())
-              writerSubview = cast.getSource();
-            initOperand->set(writerSubview);
+          builder.setInsertionPoint(clonedStore);
+          builder.create<hivm::StoreOp>(clonedStore.getLoc(), TypeRange{},
+                                        clonedStore.getSrc(), memrefSlot);
+          // The cloned store carries a result tensor used by a cloned
+          // `annotation.mark` (the VECTOR tcore_type marker inserted next to
+          // the store). Drop those marker users so the store can be erased.
+          SmallVector<Operation *> markUsers;
+          for (Operation *u : clonedStore->getUsers())
+            if (isa<annotation::MarkOp>(u))
+              markUsers.push_back(u);
+          for (Operation *u : markUsers)
+            u->erase();
+          clonedStore.erase();
+          if (innerToTensor.use_empty())
+            innerToTensor.erase();
+          builder.setInsertionPointAfter(item->forOp);
+          newResult = createToTensor(builder, loc, expanded);
+          if (!newResult)
+            return failure();
+        } else {
+          // If there are masking subviews, update those first
+          FailureOr<Value> updatedSubviewOr =
+              updateMaskingSubview(builder, loc, expanded, initOperand, iv);
+          if (failed(updatedSubviewOr))
+            return failure();
+          Value updatedSubview = *updatedSubviewOr;
+          // Then replace the toTensor operand if it is not updated
+          if (!innerToTensor)
+            return dps->emitWarning(
+                "[cv-pipelining] expected memref outputs to "
+                "be passed as tensors");
+          OpOperand *memrefOperand = &innerToTensor.getMemrefMutable();
+          if (memrefOperand->get() != updatedSubview) {
+            // Always build the subview against a memref type — `initOperand`
+            // may itself be a tensor when the writer's DPS init is a
+            // `to_tensor` of an alloc (e.g. cross-core `hivm.hir.copy`, whose
+            // L1 destination is presented as a tensor). Driving createSubview
+            // off `initOperand`'s type would crash there.
+            builder.setInsertionPointToStart(item->forOp.getBody());
+            Value toTensorSubview = createSubview(
+                builder, loc, expanded, memrefOperand->get().getType(), iv);
+            if (!toTensorSubview)
+              return failure();
+            // If the DPS init is itself a memref (e.g. fixpipe writing
+            // directly to an alloc), redirect it onto the multibuffered slot.
+            // If it is a tensor backed by a `to_tensor` (e.g. the cross-core
+            // copy case), leave it alone — rewriting the inner toTensor's
+            // memref operand below is enough to redirect the writer.
+            //
+            // The fixpipe writes to a UB-typed memref but `toTensorSubview`
+            // has been address-space-stripped to match the to_tensor's memref
+            // operand. Recover the pre-cast UB-typed subview for the writer
+            // so the fixpipe verifier and downstream codegen see the correct
+            // address space; otherwise the writer is treated as an
+            // unspecified-aspace store and the staged result is corrupted.
+            if (!updatedSubview &&
+                isa<MemRefType>(initOperand->get().getType())) {
+              Value writerSubview = toTensorSubview;
+              if (auto cast = toTensorSubview
+                                  .getDefiningOp<memref::MemorySpaceCastOp>())
+                writerSubview = cast.getSource();
+              initOperand->set(writerSubview);
+            }
+            memrefOperand->set(toTensorSubview);
           }
-          memrefOperand->set(toTensorSubview);
+          builder.setInsertionPointAfter(item->forOp);
+          newResult = createToTensor(builder, loc, expanded);
+          if (!newResult)
+            return failure();
         }
-        builder.setInsertionPointAfter(item->forOp);
-        newResult = createToTensor(builder, loc, expanded);
-        if (!newResult)
-          return failure();
       } else
         return dps->emitWarning("[cv-pipelining] unexpected output type that "
                                 "is not tensor or memref");
@@ -1705,7 +1791,7 @@ LogicalResult CVPipelineImpl::migrateOps() {
   // original loop result. Redirect them to the corresponding expanded slot
   // after all work-item loops and workspace tensors have been materialized.
   processWorkspaceOutputUsers(builder, worklist, opToWorkItemMap,
-                              expandedWorkspaceMap_, newLoop, numMultibuffer);
+                              expandedWorkspaceMap, newLoop, numMultibuffer);
 
   builder.setInsertionPointToEnd(newLoop.getBody());
   if (trailingAtomicEffect) {
@@ -1725,8 +1811,8 @@ LogicalResult CVPipelineImpl::migrateOpsForPreload(OpBuilder &builder) {
       if (!wsAlloc)
         continue;
 
-      auto expandedIt = expandedWorkspaceMap_.find(wsAlloc);
-      if (expandedIt == expandedWorkspaceMap_.end())
+      auto expandedIt = expandedWorkspaceMap.find(wsAlloc);
+      if (expandedIt == expandedWorkspaceMap.end())
         return output->emitWarning(
             "[cv-pipelining] missing expanded preload workspace");
 
@@ -2081,12 +2167,205 @@ LogicalResult CVPipelineImpl::preprocessCounterAllocas() {
       }
       cube->erase();
     }
+
+    // Since we only really care about the counter in the loop, the iter args
+    // can be also replaced with empties if they are tensors
+    auto clonedLoop = dyn_cast<scf::ForOp>(clone);
+    if (clonedLoop) {
+      for (OpOperand &iterarg : clonedLoop.getInitArgsMutable()) {
+        auto tensorTy = dyn_cast<TensorType>(iterarg.get().getType());
+        if (!tensorTy)
+            continue;
+        if (tensorTy.getNumDynamicDims() > 0)
+          return clone->emitWarning("Cannot pipeline loop with nested counter "
+                                    "loop with dynamic iter args");
+        builder.setInsertionPoint(clone);
+        iterarg.set(builder.create<tensor::EmptyOp>(clone->getLoc(), tensorTy, ValueRange{}));
+      }
+    }
+
     counterCloneMap[alloca.getResult()] = clone;
   }
   return success();
 }
 
+namespace {
+// Return the ancestor of `op` that lives directly inside `block`, or nullptr
+// if `op` is not nested within `block`.
+Operation *ancestorInBlock(Operation *op, const Block *block) {
+  Operation *cur = op;
+  while (cur) {
+    if (cur->getBlock() == block)
+      return cur;
+    cur = cur->getParentOp();
+  }
+  return nullptr;
+}
+} // namespace
+
+LogicalResult CVPipelineImpl::duplicateExtractScalarForCube() {
+  static constexpr llvm::StringLiteral kReplacementLabel =
+      "DuplicateTensorExtractForCube::replacementLabel";
+
+  SmallVector<annotation::MarkOp> replacementMarks;
+  pipelineLoop.walk([&](annotation::MarkOp markOp) {
+    if (markOp->hasAttr(kReplacementLabel))
+      replacementMarks.push_back(markOp);
+  });
+
+  for (annotation::MarkOp markOp : replacementMarks) {
+    Value original = markOp.getSrc();
+    if (markOp.getValues().empty())
+      continue;
+    Value replacement = markOp.getValues()[0];
+
+    // Block defining `original` — the block we will clone into. Tainted ops
+    // outside this block are not handled here.
+    Block *defBlock = nullptr;
+    if (Operation *defOp = original.getDefiningOp())
+      defBlock = defOp->getBlock();
+    else if (auto blkArg = dyn_cast<BlockArgument>(original))
+      defBlock = blkArg.getOwner();
+    if (!defBlock)
+      continue;
+
+    // Forward closure: scalar/control ops in `defBlock` that transitively
+    // consume `original`. Cube/vector ops are recorded separately and are
+    // not descended into.
+    DenseSet<Operation *> tainted;
+    DenseSet<Operation *> cubeConsumers;
+    DenseSet<Value> visitedValues;
+    SmallVector<Value> wl;
+    wl.push_back(original);
+    while (!wl.empty()) {
+      Value v = wl.pop_back_val();
+      if (!visitedValues.insert(v).second)
+        continue;
+      for (OpOperand &use : v.getUses()) {
+        Operation *user = use.getOwner();
+        Operation *ancestor = ancestorInBlock(user, defBlock);
+        if (!ancestor)
+          continue;
+        if (ancestor == markOp.getOperation())
+          continue;
+        TCoreType ancCore =
+            getCoreType(ancestor).value_or(TCoreType::CUBE_OR_VECTOR);
+        if (ancCore == TCoreType::CUBE) {
+          cubeConsumers.insert(ancestor);
+          continue;
+        }
+        if (ancCore == TCoreType::VECTOR)
+          continue;
+        if (tainted.insert(ancestor).second) {
+          for (Value res : ancestor->getResults())
+            wl.push_back(res);
+        }
+      }
+    }
+
+    // Reverse reachability: keep only tainted ops on some path to a cube
+    // consumer. Seed with tainted ops whose results are directly consumed by
+    // an op in `cubeConsumers`, then walk operand chains backward (including
+    // inside nested regions, so e.g. an scf.if body's references to other
+    // tainted results are picked up).
+    DenseSet<Operation *> needed;
+    SmallVector<Operation *> seed;
+    for (Operation *op : tainted) {
+      bool reachesCube = false;
+      for (Value res : op->getResults()) {
+        for (Operation *u : res.getUsers()) {
+          Operation *ua = ancestorInBlock(u, defBlock);
+          if (ua && cubeConsumers.contains(ua)) {
+            reachesCube = true;
+            break;
+          }
+        }
+        if (reachesCube)
+          break;
+      }
+      if (reachesCube)
+        seed.push_back(op);
+    }
+    while (!seed.empty()) {
+      Operation *op = seed.pop_back_val();
+      if (!needed.insert(op).second)
+        continue;
+      op->walk([&](Operation *nested) {
+        for (Value operand : nested->getOperands()) {
+          Operation *def = operand.getDefiningOp();
+          if (!def)
+            continue;
+          Operation *defAnc = ancestorInBlock(def, defBlock);
+          if (defAnc && tainted.contains(defAnc) && !needed.contains(defAnc))
+            seed.push_back(defAnc);
+        }
+      });
+    }
+
+    bool originalUsedDirectly = false;
+    for (Operation *consumer : cubeConsumers) {
+      consumer->walk([&](Operation *opIn) {
+        for (Value operand : opIn->getOperands()) {
+          if (operand == original) {
+            originalUsedDirectly = true;
+            return WalkResult::interrupt();
+          }
+        }
+        return WalkResult::advance();
+      });
+      if (originalUsedDirectly)
+        break;
+    }
+    if (needed.empty() && !originalUsedDirectly)
+      continue;
+
+    // Clone needed ops in IR order, mapping `original → replacement`.
+    // `builder.clone` updates the mapping with each cloned result, so
+    // subsequent clones and the consumer rewires below resolve their
+    // operands via `irMap`.
+    IRMapping irMap;
+    irMap.map(original, replacement);
+
+    builder.setInsertionPointAfter(markOp);
+    for (Operation &op : *defBlock) {
+      if (!needed.contains(&op))
+        continue;
+      Operation *cloned = builder.clone(op, irMap);
+      builder.setInsertionPointAfter(cloned);
+    }
+
+    // Rewire cube consumers to consume the cloned chain. Walk the entire
+    // consumer subtree so nested uses are rerouted as well.
+    for (Operation *consumer : cubeConsumers) {
+      consumer->walk([&](Operation *opIn) {
+        for (OpOperand &operand : opIn->getOpOperands()) {
+          Value v = operand.get();
+          if (v == original) {
+            operand.set(replacement);
+            continue;
+          }
+          if (Value mapped = irMap.lookupOrNull(v))
+            operand.set(mapped);
+        }
+      });
+    }
+
+    // Drop the replacement-label `annotation.mark`. It paired the original
+    // value with its cube replacement so the later split-mix-kernel pass
+    // could rewrite cube uses; we have already done that rewrite by cloning
+    // the chain above, so leaving the mark around just produces dangling
+    // cross-workitem operands once cv-pipelining clones the mark into
+    // every WI that mentions either side of the pair.
+    markOp->erase();
+  }
+
+  return success();
+}
+
+/// Main method of the pass
 LogicalResult CVPipelineImpl::run() {
+  if (failed(duplicateExtractScalarForCube()))
+    return failure();
   collectAtomicEffects();
   if (failed(preprocessCounterAllocas())) {
     revert();
@@ -2102,7 +2381,7 @@ LogicalResult CVPipelineImpl::run() {
   opToWorkItemMap = buildResult->opToWorkItemMap;
   outputMemrefMap = buildResult->outputMemrefMap;
   numMultibuffer = buildResult->resolvedMultibuffer;
-  workspaceAllocs_ = buildResult->workspaceAllocs;
+  workspaceAllocs = buildResult->workspaceAllocs;
 
   if (failed(absorbMergerOpsIntoWorkItems())) {
     revert();

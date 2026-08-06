@@ -226,6 +226,18 @@ insertTightCoupledBufferToUB(Value value, Location loc,
                              PatternRewriter &rewriter,
                              ArrayRef<int64_t> maybeStaticTotalSize);
 
+/// Insert a fixpipe that rematerializes `value` with matching element type.
+hivm::FixpipeOp insertFixpipe(Value value, Location loc,
+                              PatternRewriter &rewriter,
+                              hivm::AddressSpace addressSpace,
+                              bool inferFixpipeDmaMode);
+
+/// Insert empty op that rematerializes `value` with matching element type.
+tensor::EmptyOp insertTensor(Value value, Location loc,
+                             PatternRewriter &rewriter,
+                             ArrayRef<int64_t> maybeStaticTotalSize,
+                             hivm::AddressSpace addressSpace);
+
 /// Convenience helper to insert store followed by load for `value`.
 std::pair<hivm::StoreOp, hivm::LoadOp> insertStoreAndLoad(
     Value value, Location loc, PatternRewriter &rewriter,

@@ -1478,57 +1478,87 @@ struct BrcBiasInfo {
   MatmulBiasMode brcBiasMode = MatmulBiasMode::NoBias;
   Value perChannelValue;
   hivm::VAddOp addOp;
+  Value biasBrcSrc;
 };
 
-// Get the Bias mode
-// PerChannelAdd: Vbrc(x, [0])
-// ZeroInitNoAccumulation: Vbrc(0)
-// ReuseL0C: prev_val (mmadL1) is confrimly executed and current mayNotExec is
-//          false; TODO: mayNotExecWithIf criteria should be removed
-// NoBias: empty ElementwiseAdd: x[n, m]
+// Match PostPerChannelAddWithSplitK: ccfOutVal has one use that is VAddOp
+// with a perChannel VBrcOp source. Covers:
+//   vbrc(x,[0]) + vadd, empty() + vadd, vbrc(0) + vadd
+static std::optional<BrcBiasInfo>
+matchPostPerChannelAddWithSplitK(Value ccfOutVal, Operation *hookOp) {
+  if (!ccfOutVal.hasOneUse())
+    return std::nullopt;
+  auto addOp = dyn_cast<hivm::VAddOp>(*ccfOutVal.getUsers().begin());
+  if (!addOp)
+    return std::nullopt;
+  for (Value src : addOp.getSrc()) {
+    if (auto brcOp = src.getDefiningOp<hivm::VBrcOp>()) {
+      if (isSatisfiedBrcForPerChannel(brcOp, hookOp)) {
+        BrcBiasInfo result;
+        result.perChannelValue = getBiasInputForPerChannelAdd(src);
+        result.addOp = addOp;
+        result.biasBrcSrc = brcOp.getSrc();
+        result.brcBiasMode = MatmulBiasMode::PostPerChannelAddWithSplitK;
+        return result;
+      }
+    }
+  }
+  return std::nullopt;
+}
+
+// Get the Bias mode — rules tried in priority order, first match wins:
+//   1. PerChannelAdd:          ccfInVal = Vbrc(x, [0])
+//   2. PostPerChannel(vbrc0):  ccfInVal = Vbrc(0) with perChannel vadd
+//   3. ZeroInitNoAccumulation: ccfInVal = Vbrc(0) without vadd
+//   4. ReuseL0C:               ccfInVal is reusable L0C from previous mmad
+//                              TODO: mayNotExecWithIf should be removed
+//   5. PostPerChannel(empty):  ccfInVal traces to empty() with perChannel vadd
+//   6. NoBias:                 ccfInVal traces to empty() without vadd
+//   7. ElementwiseAdd:         fallback x[n, m]
 BrcBiasInfo getBrcBiasMode(CCFInfo ccfinfo) {
   // refer to getMatmulLikeBiasMode
   Value ccfInVal = ccfinfo.inVal;
-  BrcBiasInfo info;
+  Value ccfOutVal = ccfinfo.outVal;
   if (auto brcOp = ccfInVal.getDefiningOp<hivm::VBrcOp>()) {
     if (isSatisfiedBrcForPerChannel(brcOp)) {
+      BrcBiasInfo info;
       info.perChannelValue = getBiasInputForPerChannelAdd(ccfInVal);
       info.brcBiasMode = MatmulBiasMode::PerChannelAdd;
       return info;
     }
     if (isConstZero(brcOp.getSrc())) {
+      auto postPerChannel =
+          matchPostPerChannelAddWithSplitK(ccfOutVal, ccfinfo.insertPointOp);
+      if (postPerChannel)
+        return *postPerChannel;
+      BrcBiasInfo info;
       info.brcBiasMode = MatmulBiasMode::ZeroInitNoAccumulation;
       return info;
     }
-  } else if (couldReuse(ccfInVal) && (!ccfinfo.mayNotExecWithIf)) {
+  }
+
+  if (couldReuse(ccfInVal) && (!ccfinfo.mayNotExecWithIf)) {
+    BrcBiasInfo info;
     info.brcBiasMode = MatmulBiasMode::ReuseL0C;
     return info;
-  } else if (ccfInVal.hasOneUse()) {
-    if (auto addOp = dyn_cast<hivm::VAddOp>(*ccfInVal.getUsers().begin())) {
-      for (Value src : addOp.getSrc()) {
-        if (auto brcOp = src.getDefiningOp<hivm::VBrcOp>()) {
-          if (isSatisfiedBrcForPerChannel(brcOp)) {
-            info.perChannelValue = getBiasInputForPerChannelAdd(src);
-            info.brcBiasMode = MatmulBiasMode::PostPerChannelAddWithSplitK;
-            return info;
-          }
-        }
-      }
-    }
   }
-  auto emptyOp = traceDefOp<tensor::EmptyOp>(ccfInVal);
-  // Mimic A5 TraceResultMode::StrictSame for loop-carried values: an empty
-  // ForOp init alone is not enough for NoBias, because the yield path also
-  // defines the value (typically another mmad).
-  if (auto blockArg = dyn_cast<BlockArgument>(ccfInVal)) {
-    if (isa_and_nonnull<scf::ForOp>(blockArg.getOwner()->getParentOp())) {
-      info.brcBiasMode = MatmulBiasMode::ElementwiseAdd;
-      return info;
-    }
-  }
-  info.brcBiasMode = emptyOp.has_value() ? MatmulBiasMode::NoBias
-                                         : MatmulBiasMode::ElementwiseAdd;
 
+  auto emptyOps =
+      traceDefOps<tensor::EmptyOp>(ccfInVal,
+                                   /*isSingleChain=*/false,
+                                   /*traceMode=*/TraceResultMode::StrictSame);
+  if (!emptyOps.empty()) {
+    auto postPerChannel =
+        matchPostPerChannelAddWithSplitK(ccfOutVal, ccfinfo.insertPointOp);
+    if (postPerChannel)
+      return *postPerChannel;
+    BrcBiasInfo info;
+    info.brcBiasMode = MatmulBiasMode::NoBias;
+    return info;
+  }
+
+  BrcBiasInfo info;
+  info.brcBiasMode = MatmulBiasMode::ElementwiseAdd;
   return info;
 }
 
@@ -1691,7 +1721,7 @@ class NoBiasStrategy : public DecomposeStrategyBase {
   }
   void handleTailFallback(PatternRewriter &rewriter,
                           NormalizeCtx &ctx) override {
-    if (ctx.mayNotExec)
+    if (ctx.mayNotExec && !isa<scf::IfOp>(ctx.insertPointOp))
       ctx.tmpNewMmad.getOperation()->setAttr(kDeferredTailFallback,
                                              rewriter.getUnitAttr());
   }
@@ -1704,7 +1734,10 @@ class ZeroInitStrategy : public DecomposeStrategyBase {
       LDBG("decompose matmul with zero init no accumulation");
       return;
     }
-    if (ctx.mayNotExec)
+    // if-only ZeroInit: the else block already yields the zero bias
+    // (vbrc(0)), which is exactly the fallback value AddIfPattern would
+    // create. No deferred tail fallback IfOp needed.
+    if (ctx.mayNotExec && !isa<scf::IfOp>(ctx.insertPointOp))
       ctx.tmpNewMmad.getOperation()->setAttr(kDeferredTailFallback,
                                              rewriter.getUnitAttr());
   }
@@ -1749,12 +1782,71 @@ class PerChannelAddStrategy : public DecomposeStrategyBase {
   }
   void handleTailFallback(PatternRewriter &rewriter,
                           NormalizeCtx &ctx) override {
-    if (ctx.mayNotExec)
+    if (ctx.mayNotExec && !isa<scf::IfOp>(ctx.insertPointOp))
       addTailFallback(rewriter, *ctx.insertPointOp, ctx.tmpNewMmad,
                       ctx.counterBuf, ctx.ccfInVal, ctx.ccfOutVal);
     LDBG("decompose matmul with other cases");
   }
 };
+
+class PostPerChannelAddStrategy : public DecomposeStrategyBase {
+  void mergeBias(PatternRewriter &rewriter,
+                 NormalizeCtx &ctx) override {
+    ctx.tmpNewMmad.setPerChannelBias(
+        ctx.biasInfo.perChannelValue);
+    if (ctx.biasInfo.addOp) {
+      rewriter.replaceAllUsesWith(ctx.biasInfo.addOp->getResults()[0],
+                                  ctx.ccfOutVal);
+    }
+    ctx.tmpNewMmad->setAttr(kNormalizedInitOrBias, rewriter.getUnitAttr());
+
+    // if-only: the else block must yield the perChannel bias (vbrc) so that
+    // when the if-condition is false the result is the bias, not
+    // ccfInVal (empty/zero). No fallback IfOp is needed.
+    if (isa<scf::IfOp>(ctx.insertPointOp)) {
+      Value newVbrc = createPerChannelVbrc(rewriter, ctx);
+      auto ifOp = cast<scf::IfOp>(ctx.insertPointOp);
+      unsigned idx = getResultIndex(*ifOp, ctx.ccfOutVal);
+      auto elseYield = cast<scf::YieldOp>(ifOp.elseBlock()->getTerminator());
+      rewriter.modifyOpInPlace(elseYield,
+          [&]() { elseYield.setOperand(idx, newVbrc); });
+    }
+  }
+  void handleTailFallback(PatternRewriter &rewriter,
+                          NormalizeCtx &ctx) override {
+    // if-only: handled in mergeBias (else yield changed to vbrc).
+    // for-only: create fallback IfOp with perChannel vbrc.
+    if (!ctx.mayNotExec || isa<scf::IfOp>(ctx.insertPointOp))
+      return;
+    Value newVbrc = createPerChannelVbrc(rewriter, ctx);
+    addTailFallback(rewriter, *ctx.insertPointOp, ctx.tmpNewMmad,
+                    ctx.counterBuf, newVbrc, ctx.ccfOutVal);
+    LDBG("decompose matmul with post per channel add");
+  }
+
+private:
+  static Value createPerChannelVbrc(PatternRewriter &rewriter,
+                                    NormalizeCtx &ctx) {
+    rewriter.setInsertionPoint(ctx.insertPointOp);
+    Value vbrcSrc = ctx.biasInfo.perChannelValue;
+    if (vbrcSrc.getType() != ctx.biasInfo.biasBrcSrc.getType()) {
+      if (auto expandOp = ctx.biasInfo.biasBrcSrc
+                              .getDefiningOp<tensor::ExpandShapeOp>()) {
+        vbrcSrc = rewriter.create<tensor::ExpandShapeOp>(
+            ctx.insertPointOp->getLoc(), expandOp.getResultType(),
+            vbrcSrc, expandOp.getReassociationIndices());
+      }
+    }
+    Value emptyOut = mlir::utils::createEmptyOp(
+        rewriter, ctx.insertPointOp->getLoc(), ctx.ccfInVal);
+    auto newVbrc = rewriter.create<hivm::VBrcOp>(
+        ctx.insertPointOp->getLoc(), ctx.ccfInVal.getType(),
+        vbrcSrc, emptyOut,
+        rewriter.getDenseI64ArrayAttr({0}));
+    return newVbrc->getResult(0);
+  }
+};
+
 
 struct NormalizeMmadCCFPattern
     : public OpInterfaceRewritePattern<LocalMatmulLikeOpInterface> {
@@ -1852,6 +1944,7 @@ struct NormalizeMmadCCFPattern
     static ZeroInitStrategy sZeroInit;
     static ElementwiseAddStrategy sElemAdd;
     static PerChannelAddStrategy sPerChannel;
+    static PostPerChannelAddStrategy sPostPerChannel;
 
     BiasModeStrategy *strategy = nullptr;
     switch (biasInfo.brcBiasMode) {
@@ -1868,8 +1961,10 @@ struct NormalizeMmadCCFPattern
       strategy = &sElemAdd;
       break;
     case MatmulBiasMode::PerChannelAdd:
-    case MatmulBiasMode::PostPerChannelAddWithSplitK:
       strategy = &sPerChannel;
+      break;
+    case MatmulBiasMode::PostPerChannelAddWithSplitK:
+      strategy = &sPostPerChannel;
       break;
     default:
       return rewriter.notifyMatchFailure(op, "unknown bias mode");
@@ -2086,23 +2181,26 @@ hivm::VTransposeOp lookThroughViewLikes(Value v) {
 
 /// Absorb a vtranspose feeding A or B into the matching transpose flag, so the
 /// transpose happens while loading the operand instead of as a separate op.
-template <typename T>
-struct FoldVtransposePattern : public OpRewritePattern<T> {
+struct FoldVtransposePattern
+    : public OpInterfaceRewritePattern<LocalMatmulLikeOpInterface> {
 public:
-  using OpRewritePattern<T>::OpRewritePattern;
-  LogicalResult matchAndRewrite(T op,
-                                PatternRewriter &rewriter) const override {
-    auto aVtrans = lookThroughViewLikes(op.getA());
-    auto bVtrans = lookThroughViewLikes(op.getB());
-    if (aVtrans && !isSwappedInnermostShape(aVtrans.getSrc(), op.getA()))
+  using OpInterfaceRewritePattern<
+      LocalMatmulLikeOpInterface>::OpInterfaceRewritePattern;
+
+  LogicalResult
+  matchAndRewriteInterface(LocalMatmulLikeOpInterface op,
+                           PatternRewriter &rewriter) const {
+    auto aVtrans = lookThroughViewLikes(op.getMatmulA());
+    auto bVtrans = lookThroughViewLikes(op.getMatmulB());
+    if (aVtrans && !isSwappedInnermostShape(aVtrans.getSrc(), op.getMatmulA()))
       aVtrans = hivm::VTransposeOp();
-    if (bVtrans && !isSwappedInnermostShape(bVtrans.getSrc(), op.getB()))
+    if (bVtrans && !isSwappedInnermostShape(bVtrans.getSrc(), op.getMatmulB()))
       bVtrans = hivm::VTransposeOp();
     if (!aVtrans && !bVtrans)
       return rewriter.notifyMatchFailure(op, "no foldable vtranspose found");
 
     auto newOp = rewriter.clone(*op.getOperation());
-    auto newMmad = cast<T>(newOp);
+    auto newMmad = cast<LocalMatmulLikeOpInterface>(newOp);
     bool setVtransposeFolded = false;
 
     auto foldSide = [&](hivm::VTransposeOp vtrans, bool isA) {
@@ -2113,11 +2211,11 @@ public:
             convert.getDstLayout().isNDLayout())
           setVtransposeFolded = true;
       if (isA) {
-        newMmad.getAMutable().assign(src);
-        newMmad.setATransposeAttr(rewriter.getUnitAttr());
+        newMmad.setMatmulA(src);
+        newMmad.setMatmulATranspose(rewriter.getUnitAttr());
       } else {
-        newMmad.getBMutable().assign(src);
-        newMmad.setBTransposeAttr(rewriter.getUnitAttr());
+        newMmad.setMatmulB(src);
+        newMmad.setMatmulBTranspose(rewriter.getUnitAttr());
       }
     };
 
@@ -2130,6 +2228,11 @@ public:
 
     rewriter.replaceOp(op, newOp);
     return success();
+  }
+
+  LogicalResult matchAndRewrite(LocalMatmulLikeOpInterface op,
+                                PatternRewriter &rewriter) const override {
+    return matchAndRewriteInterface(op, rewriter);
   }
 };
 
@@ -2178,17 +2281,19 @@ std::optional<Value> absorbFractalVtranspose(PatternRewriter &rewriter,
 /// Absorb vtranspose ops behind a Fractal->ND convert_layout into the mmad
 /// transpose flags, and set kFractalVtransposeFolded so extractRealMKN treats
 /// those flags as real 2D transposes.
-template <typename T>
-struct FoldFractalVtransposePattern : public OpRewritePattern<T> {
+struct FoldFractalVtransposePattern
+    : public OpInterfaceRewritePattern<LocalMatmulLikeOpInterface> {
 public:
-  using OpRewritePattern<T>::OpRewritePattern;
+  using OpInterfaceRewritePattern<
+      LocalMatmulLikeOpInterface>::OpInterfaceRewritePattern;
 
-  LogicalResult matchAndRewrite(T op,
-                                PatternRewriter &rewriter) const override {
+  LogicalResult
+  matchAndRewriteInterface(LocalMatmulLikeOpInterface op,
+                           PatternRewriter &rewriter) const {
     std::optional<Value> newA, newB;
-    if (auto convert = op.getA().template getDefiningOp<ConvertLayoutOp>())
+    if (auto convert = op.getMatmulA().getDefiningOp<ConvertLayoutOp>())
       newA = absorbFractalVtranspose(rewriter, convert);
-    if (auto convert = op.getB().template getDefiningOp<ConvertLayoutOp>())
+    if (auto convert = op.getMatmulB().getDefiningOp<ConvertLayoutOp>())
       newB = absorbFractalVtranspose(rewriter, convert);
     if (!newA && !newB)
       return rewriter.notifyMatchFailure(
@@ -2196,27 +2301,29 @@ public:
 
     rewriter.modifyOpInPlace(op, [&]() {
       if (newA) {
-        op.getAMutable().assign(*newA);
-        if (!op.getATranspose().has_value())
-          op.setATransposeAttr(rewriter.getUnitAttr());
+        op.setMatmulA(*newA);
+        if (!op.isMatmulATransposed())
+          op.setMatmulATranspose(rewriter.getUnitAttr());
       }
       if (newB) {
-        op.getBMutable().assign(*newB);
-        if (!op.getBTranspose().has_value())
-          op.setBTransposeAttr(rewriter.getUnitAttr());
+        op.setMatmulB(*newB);
+        if (!op.isMatmulBTransposed())
+          op.setMatmulBTranspose(rewriter.getUnitAttr());
       }
       op->setAttr(kFractalVtransposeFolded, rewriter.getUnitAttr());
     });
 
     return success();
   }
+
+  LogicalResult matchAndRewrite(LocalMatmulLikeOpInterface op,
+                                PatternRewriter &rewriter) const override {
+    return matchAndRewriteInterface(op, rewriter);
+  }
 };
 
 void populateFoldVtransposePattern(RewritePatternSet &patterns) {
-  patterns.add<FoldVtransposePattern<hivm::MmadL1Op>,
-               FoldVtransposePattern<hivm::BatchMmadL1Op>,
-               FoldFractalVtransposePattern<hivm::MmadL1Op>,
-               FoldFractalVtransposePattern<hivm::BatchMmadL1Op>>(
+  patterns.add<FoldVtransposePattern, FoldFractalVtransposePattern>(
       patterns.getContext());
 }
 

@@ -31,6 +31,7 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/LogicalResult.h"
 
+#include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/NDDMA/ComposeUnitStrideSubview.h"
@@ -78,6 +79,12 @@ LogicalResult inspectLoadUses(Value root, hivm::LoadOp &loadOp,
       continue;
     }
 
+    if (isa<annotation::MarkOp>(user)) {
+      // Accept any annotation.mark on the alloc; they will be transferred
+      // to the new alloc by transferAnnotationMarks.
+      continue;
+    }
+
     if (auto curLoadOp = dyn_cast<hivm::LoadOp>(user)) {
       auto loadTile = TileView::fromMemRef(curLoadOp.getDst(), builder);
       if (failed(loadTile) ||
@@ -121,6 +128,30 @@ FailureOr<hivm::LoadOp> findLoadToFuse(Value root, const TileView &permTile,
     return failure();
   }
   return loadOp;
+}
+
+/// Transfer annotation.mark ops from the old alloc to the new alloc created
+/// by permuteRoot(). Only AllocOp roots are handled; reinterpret_cast roots
+/// (which target block arguments) are left untouched.
+static void transferAnnotationMarks(Value oldAlloc, Value newAlloc,
+                                    PatternRewriter &rewriter) {
+  if (!isa<memref::AllocOp>(oldAlloc.getDefiningOp()))
+    return;
+  SmallVector<annotation::MarkOp> marks;
+  for (Operation *user : oldAlloc.getUsers()) {
+    if (auto markOp = dyn_cast<annotation::MarkOp>(user))
+      marks.push_back(markOp);
+  }
+  if (marks.empty())
+    return;
+  OpBuilder::InsertionGuard guard(rewriter);
+  rewriter.setInsertionPointAfter(newAlloc.getDefiningOp());
+  for (auto markOp : marks) {
+    auto *newMarkOp = rewriter.clone(*markOp.getOperation());
+    newMarkOp->setOperand(0, newAlloc);
+  }
+  for (auto markOp : marks)
+    rewriter.eraseOp(markOp);
 }
 
 struct FuseTransposeIntoLoadPattern
@@ -218,6 +249,8 @@ struct FuseTransposeIntoLoadPattern
       TileView::unifyRoot(newSubviewTile, newLoadDstTile, rewriter);
       newMemref = newSubviewTile.view;
     }
+    transferAnnotationMarks(permTile->root, newLoadDstTile.root, rewriter);
+
     auto newToTensorOp = rewriter.create<bufferization::ToTensorOp>(
         toTensorOp.getLoc(), transposeOp->getResult(0).getType(), newMemref,
         toTensorOp.getRestrict(), toTensorOp.getWritable());

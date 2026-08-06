@@ -32,13 +32,13 @@ HIVM（Hybrid ISA Virtual Machine）：面向昇腾硬件对计算、搬运、�
 
 - **核内处理单元映射**：感知NPU核内多级流水处理单元，自动插入流水同步操作保证不同流水线有序执行同时并行流水优化；感知NPU指令细节自动完成基于策略的指令自动映射，使能NPU SIMD高效指令。
 
-### A5芯片上的特性与AscendNPU IR的支持优化
+### Ascend 950PR/Ascend 950DT芯片上的特性与AscendNPU IR的支持优化
 
-A5芯片继承了310B芯片的RegBase（Register-based）的编程模型，硬件上相比A2和A3芯片Memory-based编程模型增加了寄存器层；在Cube和Vector核之间增加了数据通路，为CV融合提供更多优化空间；增加了Warp Scheduler等组件引入SIMT能力；增加`ND-DMA`等一些新的硬件指令。
+Ascend 950PR/Ascend 950DT芯片继承了310B芯片的RegBase（Register-based）的编程模型，硬件上相比Atlas A2系列产品/Atlas A3系列产品芯片的Memory-based编程模型，增加了寄存器层；在Cube和Vector核之间增加了数据通路，为CV融合提供更多优化空间；增加了Warp Scheduler等组件引入SIMT能力；增加`ND-DMA`等一些新的硬件指令。
 
-AscendNPU IR在HIVM方言中对新的硬件特性提供了支持，包括Arith和Vector方言支持计算与规约类Op。对于纯SIMD编译增加了VF融合、向量化、掩码优化和Combine优化。在A5上新增SIMT编译支持，将社区的TritonGPU方言对接至HIVM，构建昇腾亲和的Layout优化、共享内存分配、核心指令映射优化的算法。AscendNPU IR在A5上除了支持纯SIMD模式和纯SIMT以外，还支持SIMD/SIMT混合编译。
+AscendNPU IR在HIVM方言中对新的硬件特性提供了支持，包括Arith和Vector方言支持计算与规约类Op。对于纯SIMD编译增加了VF融合、向量化、掩码优化和Combine优化。在Ascend 950PR/Ascend 950DT上新增SIMT编译支持，将社区的TritonGPU方言对接至HIVM，构建昇腾亲和的Layout优化、共享内存分配、核心指令映射优化的算法。AscendNPU IR在Ascend 950PR/Ascend 950DT上除了支持纯SIMD模式和纯SIMT以外，还支持SIMD/SIMT混合编译。
 
-![A5的AscendNPU IR架构](../../images/introduction/architecture_A5_zh.png)
+![Ascend 950PR/Ascend 950DT的AscendNPU IR架构](../../images/introduction/architecture_A5_zh.png)
 
 ## 代码架构
 

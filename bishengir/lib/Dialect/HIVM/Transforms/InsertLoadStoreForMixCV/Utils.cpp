@@ -441,7 +441,7 @@ hivm::StoreOp insertStore(Value value, Location loc, PatternRewriter &rewriter,
       tensorType.getElementType(), addressSpace);
   auto storeOp =
       rewriter.create<hivm::StoreOp>(loc, TypeRange(type), value, storeInit);
-  storeOp->setAttr("inserted-store", rewriter.getUnitAttr());
+  storeOp->setAttr(hivm::kInsertedStoreAttr::name, rewriter.getUnitAttr());
   return storeOp;
 }
 
@@ -454,8 +454,49 @@ hivm::LoadOp insertLoad(Value value, Location loc, PatternRewriter &rewriter) {
       rewriter, loc, value, elemType, MemRefLayoutAttrInterface{});
   auto loadOp = rewriter.create<hivm::LoadOp>(
       loc, isBufferized ? TypeRange() : TypeRange(type), value, loadInit);
-  loadOp->setAttr("inserted-load", rewriter.getUnitAttr());
+  loadOp->setAttr(hivm::kInsertedLoadAttr::name, rewriter.getUnitAttr());
   return loadOp;
+}
+
+static FixpipeDMAMode getInsertedFixpipeDmaMode(Value src, Value dst,
+                                                bool inferFixpipeDmaMode) {
+  if (!inferFixpipeDmaMode)
+    return FixpipeDMAMode::NZ2ND;
+
+  auto srcType = dyn_cast<ShapedType>(src.getType());
+  auto dstType = dyn_cast<ShapedType>(dst.getType());
+  if (!srcType || !dstType)
+    return FixpipeDMAMode::NZ2ND;
+
+  if (srcType.hasRank() && dstType.hasRank() &&
+      succeeded(
+          verifyCompatibleShape(srcType.getShape(), dstType.getShape()))) {
+    // For same-shape cases, use rank to distinguish ND-like tensors.
+    // A 2D destination is treated as ND; otherwise keep normal mode.
+    if (dstType.getRank() == 2)
+      return FixpipeDMAMode::NZ2ND;
+    return FixpipeDMAMode::NZ2NZ;
+  }
+
+  return FixpipeDMAMode::NZ2ND;
+}
+
+hivm::FixpipeOp insertFixpipe(Value value, Location loc,
+                              PatternRewriter &rewriter,
+                              hivm::AddressSpace addressSpace,
+                              bool inferFixpipeDmaMode) {
+  auto tensorType = cast<RankedTensorType>(value.getType());
+
+  auto emptyOp =
+      insertTensor(value, loc, rewriter, tensorType.getShape(), addressSpace);
+
+  auto fixpipeOp = rewriter.create<hivm::FixpipeOp>(loc, TypeRange(tensorType),
+                                                    value, emptyOp);
+  auto dmaMode = getInsertedFixpipeDmaMode(value, emptyOp, inferFixpipeDmaMode);
+  auto dmaModeAttr = FixpipeDMAModeAttr::get(rewriter.getContext(), dmaMode);
+  fixpipeOp.setDmaModeAttr(dmaModeAttr);
+  fixpipeOp->setAttr(hivm::kInsertedFixpipeAttr::name, rewriter.getUnitAttr());
+  return fixpipeOp;
 }
 
 /// Creates a memref allocation with the specified address space.
@@ -528,6 +569,7 @@ insertTightCoupledBufferToUB(Value value, Location loc,
                              PatternRewriter &rewriter,
                              ArrayRef<int64_t> maybeStaticTotalSize) {
   rewriter.setInsertionPointAfterValue(value);
+
   auto resultType = cast<RankedTensorType>(value.getType());
 
   auto coupledBuffer =
@@ -539,6 +581,19 @@ insertTightCoupledBufferToUB(Value value, Location loc,
       loc, resultType, plainMemref,
       /*restrict=*/true, /*writable=*/true);
   return std::make_tuple(coupledBuffer, toTensorOp);
+}
+
+tensor::EmptyOp insertTensor(Value value, Location loc,
+                             PatternRewriter &rewriter,
+                             ArrayRef<int64_t> maybeStaticTotalSize,
+                             hivm::AddressSpace addressSpace) {
+  auto emptyOp = utils::createEmptyOp(rewriter, loc, value)
+                     .getDefiningOp<tensor::EmptyOp>();
+  assert(emptyOp && "EmptyOp/AllocOp is not created");
+  emptyOp->setAttr(hivm::kInsertedTensorAttr::name, rewriter.getUnitAttr());
+  emptyOp->setAttr(hivm::AddressSpaceAttr::name,
+                   rewriter.getAttr<hivm::AddressSpaceAttr>(addressSpace));
+  return emptyOp;
 }
 
 std::pair<hivm::StoreOp, hivm::LoadOp>

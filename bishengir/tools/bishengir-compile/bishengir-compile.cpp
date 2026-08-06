@@ -88,6 +88,7 @@ static void registerAndParseCLIOptions(int argc, char **argv) {
   // Register any command line options.
   mlir::registerMLIRContextCLOptions();
   mlir::registerAsmPrinterCLOptions();
+  mlir::registerDefaultTimingManagerCLOptions();
   bishengir::BiShengIRCompileMainConfig::registerCLOptions();
   bishengir::registerPassManagerCLOptions();
   // Enable full pass management abilities.

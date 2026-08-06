@@ -58,13 +58,13 @@ namespace mlir {
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h.inc"
 } // namespace mlir
 
-using namespace mlir;
-using namespace mlir::hivm;
-
 #define DEBUG_TYPE "insert-load-store"
 #define DBGS() (llvm::dbgs() << "[" DEBUG_TYPE "]: ")
 #define DBGSNL() (llvm::dbgs() << "\n")
 #define LDBG(X) LLVM_DEBUG(DBGS() << X << "\n")
+
+using namespace mlir;
+using namespace mlir::hivm;
 
 namespace {
 static const llvm::StringLiteral kConvertLayoutOperand =
@@ -1038,15 +1038,15 @@ InsertLoadStoreForMixCVPass::runPropagateOpPatterns(func::FuncOp funcOp,
                                                     PropagationStep step) {
   RewritePatternSet patterns(funcOp.getContext());
   GreedyRewriteConfig rewriteConfig;
-  patterns.add<PropagateUpPattern, PropagateDownPattern>(patterns.getContext(),
-                                                         step);
+  patterns.add<PropagateUpPattern>(patterns.getContext(), step, isA5Target());
+  patterns.add<PropagateDownPattern>(patterns.getContext(), step);
   patterns.add<ResolvePropagationPattern, RemoveRedundantPropagationPattern>(
       patterns.getContext());
   rewriteConfig.fold = false;
 
   if (isEnabledTightCoupledBuffer()) {
     patterns.add<TightCoupledBufferResolvePropagationPattern>(
-        patterns.getContext());
+        patterns.getContext(), inferFixpipeDmaMode);
   }
 
   if (failed(
@@ -1092,8 +1092,8 @@ InsertLoadStoreForMixCVPass::insertPropagationOp(func::FuncOp funcOp) {
 SmallVector<PropagationStep>
 InsertLoadStoreForMixCVPass::getPropagationSteps() {
   if (isA5Target()) {
-    return {PropagationStep::LOCAL, PropagationStep::UB, PropagationStep::L1,
-            PropagationStep::ALL};
+    return {PropagationStep::L0C, PropagationStep::LOCAL, PropagationStep::UB,
+            PropagationStep::L1, PropagationStep::ALL};
   }
   return {PropagationStep::LOCAL, PropagationStep::GM, PropagationStep::UB,
           PropagationStep::L1, PropagationStep::ALL};
@@ -1438,6 +1438,7 @@ struct AddConvertLayoutUBToL1 : public OpRewritePattern<hivm::MmadL1Op> {
   }
 };
 
+// Handle convert layout from ub to L1 for FixpipeOp->MmadL1Op.
 template <>
 struct AddConvertLayoutUBToL1<hivm::FixpipeOp>
     : public OpRewritePattern<hivm::MmadL1Op> {
@@ -1456,6 +1457,13 @@ struct AddConvertLayoutUBToL1<hivm::FixpipeOp>
       auto maybeFixpipe = traceDefOp<hivm::FixpipeOp>(operand.get());
       if (!maybeFixpipe)
         continue;
+
+      // FixpipeOp of rank 4 (Fractal layout) do not need add layout conversion.
+      auto fixpipeOp = *maybeFixpipe;
+      auto fixpipeType = cast<ShapedType>(fixpipeOp->getResult(0).getType());
+      if (fixpipeType.hasRank() && fixpipeType.getRank() == 4)
+        continue;
+
       llvm::SmallVector<OpOperand *> consumerOperands{&operand};
 
       Value valueAfterUb = operand.get();
@@ -1709,6 +1717,8 @@ void InsertLoadStoreForMixCVPass::runOnOperation() {
   if (isEnabledTightCoupledBuffer() && failed(addConvertLayoutUBToL1(funcOp))) {
     return signalPassFailure();
   }
+
+  LDBG("After adding convert layout UB to L1 Op: " << funcOp);
 
   if (failed(pm.run(funcOp))) {
     return signalPassFailure();

@@ -257,7 +257,7 @@ def VFOperandSubstitution
   ];
 }
 
-def PlanMemory : Pass<"hivm-plan-memory", "func::FuncOp"> {
+def PlanMemory : Pass<"hivm-plan-memory", "ModuleOp"> {
   let summary = "Plan memory for HIVM Ops";
   let constructor = "mlir::hivm::createPlanMemoryPass()";
   let dependentDialects = ["hivm::HIVMDialect", ];
@@ -289,6 +289,9 @@ def PlanMemory : Pass<"hivm-plan-memory", "func::FuncOp"> {
                           "keep original storage entry order without sorting"),
                clEnumValN(mlir::hivm::PlanMemoryStrategy::LARGEST_FIRST, "largest-first",
                           "sort storage entries by const bits descending, allocate larger buffer first"))}]>,
+    Option<"disableVFReachableCheck", "disable-vf-reachable-check", "bool",
+           /*default=*/"false",
+           "Disable VF reachable check, default : false">,
   ];
 }
 
@@ -941,8 +944,7 @@ def InsertLoadStoreForMixCV
                         /*default=*/"false",
                         "Run legacy logic for insert load store op for mix cv">,
                  Option<"target", "target", "std::string",
-                        /*default=*/"\"Ascend910B1\"",
-                        "Target device name">,
+                        /*default=*/"\"Ascend910B1\"", "Target device name">,
                  Option<"disableTightCoupledBuffer",
                         "disable-tight-coupled-buffer", "bool",
                         /*default=*/"false",

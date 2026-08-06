@@ -109,6 +109,8 @@ private:
 
   void consolidateToTail(Block *block) const;
   void updateConflicts(Block *block) const;
+
+  bool useAsDpsInits(Operation *op) const;
 };
 
 } // namespace hfusion

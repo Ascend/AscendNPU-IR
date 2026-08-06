@@ -219,9 +219,10 @@ static void hivmPreBufferizationOptimizationPipeline(
   // A3 mem-based path still needs InsertFixpipe (MR 2052 / compile-bisheng-distributed).
   pm.addPass(mlir::hivm::createInsertFixpipePass());
   {
-    InlineFixpipeOptions opts;
-    opts.inlineQuantScale = hivmPipelineOptions.inlineQuantScaleInFixpipe;
-    pm.addPass(mlir::hivm::createInlineFixpipePass(opts));
+    InlineFixpipeOptions inlineFixpipeOpts;
+    inlineFixpipeOpts.inlineQuantScale =
+        hivmPipelineOptions.inlineQuantScaleInFixpipe;
+    pm.addPass(mlir::hivm::createInlineFixpipePass(inlineFixpipeOpts));
   }
   if (!hivmPipelineOptions.disableAutoCVWorkSpaceManage) {
     hivmAutoInsertLdStForMixCVPipeline(pm, hivmPipelineOptions);
@@ -238,9 +239,10 @@ static void hivmPreBufferizationOptimizationPipeline(
   pm.addPass(createInsertNZ2NDForDebugPass());
   pm.addPass(mlir::hivm::createInsertFixpipePass());
   {
-    InlineFixpipeOptions opts;
-    opts.inlineQuantScale = hivmPipelineOptions.inlineQuantScaleInFixpipe;
-    pm.addPass(mlir::hivm::createInlineFixpipePass(opts));
+    InlineFixpipeOptions inlineFixpipeOpts;
+    inlineFixpipeOpts.inlineQuantScale =
+        hivmPipelineOptions.inlineQuantScaleInFixpipe;
+    pm.addPass(mlir::hivm::createInlineFixpipePass(inlineFixpipeOpts));
   }
 
   if (!hivmPipelineOptions.disableAutoCVWorkSpaceManage) {
@@ -321,7 +323,7 @@ static void hivmPreBufferizationOptimizationPipeline(
         hivmPipelineOptions.enableHIVMGlobalWorkspaceReuse;
   planMemoryOption.planMemoryStrategy =
       hivmPipelineOptions.planMemoryStrategy;
-    pm.nest<func::FuncOp>().addPass(createPlanMemoryPass(planMemoryOption));
+    pm.addPass(createPlanMemoryPass(planMemoryOption));
   }
   // cross-core sync (inject-block-sync) passes.
   hivmCrossCoreSyncPipeline(pm, hivmPipelineOptions);
@@ -474,7 +476,7 @@ static void hivmPostBufferizationOptimizationPipeline(
       hivmPipelineOptions.enableMemoryDisplay;
   planMemoryOption.planMemoryStrategy =
       hivmPipelineOptions.planMemoryStrategy;
-  pm.nest<func::FuncOp>().addPass(createPlanMemoryPass(planMemoryOption));
+  pm.addPass(createPlanMemoryPass(planMemoryOption));
 
   // Lower hivm ops to loops
   pm.nest<func::FuncOp>().addPass(createHIVMLowerToLoopsPass());

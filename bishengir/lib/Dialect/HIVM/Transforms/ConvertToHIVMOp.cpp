@@ -290,6 +290,8 @@ LogicalResult replaceMemCopyByHIVMLoadOp(memref::CopyOp copyOp,
   rewriter.setInsertionPoint(copyOp);
   auto loadOp = rewriter.create<hivm::LoadOp>(copyOp->getLoc(), TypeRange(),
                                               copyOp.getSource(), dst);
+  if (Attribute attr = copyOp->getAttr(utils::wasBoolToInt8))
+    loadOp->setAttr(utils::wasBoolToInt8, attr);
   if (maybeLeftPadNum.has_value()) {
     loadOp.getLeftPaddingNumMutable().assign(maybeLeftPadNum.value());
   }

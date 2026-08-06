@@ -94,6 +94,7 @@ void HIVMToTritonGPUConversionPass::runOnOperation() {
   stage1Target.addIllegalDialect<hivm::HIVMDialect>();
   stage1Target.addIllegalOp<memref::ReinterpretCastOp>();
   stage1Target.addIllegalOp<memref::SubViewOp>();
+  stage1Target.addIllegalOp<memref::LoadOp>();
   // The TTIR path only accepts Triton ops plus tensor types
   stage1Target.addLegalOp<tensor::EmptyOp>();
   stage1Target.addIllegalOp<tensor::ExpandShapeOp, tensor::CollapseShapeOp>();
@@ -107,6 +108,7 @@ void HIVMToTritonGPUConversionPass::runOnOperation() {
   populateHIVMToMathConversionPatterns(stage1Patterns);
   populateTensorToTritonPatterns(stage1Patterns);
   populateReinterpretCastToUnrealizedCastPatterns(stage1Patterns);
+  populateMemRefLoadToTritonPatterns(stage1Patterns);
   populateHIVMToTritonPatterns(stage1Patterns);
   populateBufferizationToTritonPatterns(stage1Patterns);
   populateAffineToTritonPatterns(stage1Patterns);

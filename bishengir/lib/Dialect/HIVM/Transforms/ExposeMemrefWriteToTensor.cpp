@@ -41,6 +41,8 @@
 
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 
+#include "bishengir/Dialect/Utils/Util.h"
+
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -128,13 +130,24 @@ struct ExposeMemrefWriteToTensorPass
       Location loc = toTensorOp.getLoc();
       Type tensorType = toTensorOp.getType();
 
-      auto emptyOp =
-          rewriter.create<tensor::EmptyOp>(loc, tensorType, ValueRange{});
+      // Retarget only the uses existing now; the helpers created below add
+      // new uses of the to_tensor result that must stay (dominance).
+      SmallVector<OpOperand *> usesToReplace;
+      for (OpOperand &use : toTensorOp.getResult().getUses())
+        usesToReplace.push_back(&use);
+
+      // createEmptyOp derives dim sizes; to_tensor may be dynamic-typed
+      // (e.g. sub-tiled AIV functions), where ValueRange{} is invalid.
+      Value emptyOp =
+          utils::createEmptyOp(rewriter, loc, toTensorOp.getResult());
       auto copyOp = rewriter.create<hivm::CopyOp>(
-          loc, tensorType, toTensorOp.getResult(), emptyOp.getResult());
+          loc, tensorType, toTensorOp.getResult(), emptyOp);
       copyOp->setAttr("to_be_replaced", rewriter.getUnitAttr());
-      rewriter.replaceAllUsesExcept(toTensorOp.getResult(), copyOp.getResult(0),
-                                    copyOp);
+      for (OpOperand *use : usesToReplace) {
+        Operation *user = use->getOwner();
+        rewriter.modifyOpInPlace(user,
+                                 [&]() { use->set(copyOp.getResult(0)); });
+      }
     }
   }
 };

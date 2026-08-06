@@ -9,11 +9,9 @@
 // CHECK: %[[VT:.+]] = hivm.hir.vtranspose ins(%[[EX1]]
 // CHECK-SAME: permutation = [1, 0, 2]
 // CHECK: %[[EX2:.+]] = tensor.expand_shape %[[VT]]
-// CHECK: %[[ALLOC:.+]] = memref.alloc() : memref<{{.*}}#hivm.address_space<cbuf>>
-// CHECK: %[[CAST:.+]] = memref.memory_space_cast %[[ALLOC]]
-// CHECK: %[[L1:.+]] = bufferization.to_tensor %[[CAST]]
-// CHECK: hivm.hir.copy ins(%[[EX2]]
-// CHECK: hivm.hir.mmadL1 {{.*}}ins(%[[L1]]
+// CHECK: %[[TENSOR:.*]] = tensor.empty() {hivm.address_space = #hivm.address_space<cbuf>, "hivm.inserted-tensor"} : tensor<2x1x16x8xf32>
+// CHECK: %[[COPY:.*]] = hivm.hir.copy ins(%[[EX2]] : tensor<2x1x16x8xf32>) outs(%[[TENSOR]] : tensor<2x1x16x8xf32>) {"hivm.inserted-copy"} -> tensor<2x1x16x8xf32>
+// CHECK: hivm.hir.mmadL1 {{.*}}ins(%[[COPY]]
 module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
   func.func @scope_to_mmadL1(%arg0: tensor<16x16xf32>)
       -> tensor<16x16xf32>

@@ -115,10 +115,15 @@ struct DuplicateTensorExtractForCube
         return true;
       }
 
-      // Add all users of currentOp to worklist for indirect user checking
-      auto enqueue = [&](Operation *userOp) {
+      auto enqueue = [&](Operation *userOp) -> WalkResult {
+        auto hivmOp = dyn_cast<hivm::HIVMStructuredOp>(userOp);
+        if (getCoreType(userOp) == TCoreType::VECTOR ||
+            (hivmOp && hivmOp.getCoreType() == TCoreType::VECTOR))
+          return WalkResult::skip();
+
         if (userOp && visited.insert(userOp).second)
           worklist.push_back(userOp);
+        return WalkResult::advance();
       };
 
       for (Operation *userOp : currentOp->getUsers()) {
@@ -245,7 +250,7 @@ struct DuplicateTensorExtractForCube
       hivm::StoreOp storeOp = rewriter.create<hivm::StoreOp>(
           loc, TypeRange(srcTensor.getType()), srcTensor, workSpaceTensor);
       markCoreType(rewriter, loc, storeOp.getResults()[0], TCoreType::VECTOR);
-      storeOp->setAttr("inserted-store", rewriter.getUnitAttr());
+      storeOp->setAttr(hivm::kInsertedStoreAttr::name, rewriter.getUnitAttr());
       newExtractOp = rewriter.create<tensor::ExtractOp>(
           loc, storeOp.getResultTensor(), extractOp.getIndices());
     } else {
@@ -264,7 +269,7 @@ struct DuplicateTensorExtractForCube
       hivm::StoreOp storeOp = rewriter.create<hivm::StoreOp>(
           loc, TypeRange(inserted.getType()), inserted, workSpaceTensor);
       markCoreType(rewriter, loc, storeOp.getResults()[0], TCoreType::VECTOR);
-      storeOp->setAttr("inserted-store", rewriter.getUnitAttr());
+      storeOp->setAttr(hivm::kInsertedStoreAttr::name, rewriter.getUnitAttr());
       newExtractOp = rewriter.create<tensor::ExtractOp>(
           loc, storeOp.getResultTensor(), zero);
     }

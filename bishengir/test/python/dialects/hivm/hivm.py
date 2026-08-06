@@ -56,7 +56,7 @@ def testHIVMPlanMemory():
         module = Module.parse(str_case)
         pm = PassManager("builtin.module")
         pm.enable_ir_printing()
-        pm.add("func.func(hivm-plan-memory)")
+        pm.add("hivm-plan-memory")
         pm.run(module.operation)
         print('--- module: ', module)
 
@@ -66,7 +66,7 @@ def testHIVMPlanMemoryPMParse():
     with Context() as ctx, Location.unknown():
         register_dialects(ctx)
         module = Module.parse(str_case)
-        pm = PassManager.parse("builtin.module(func.func(hivm-plan-memory))")  # work
+        pm = PassManager.parse("builtin.module(hivm-plan-memory)")
         pm.enable_ir_printing()
         pm.run(module.operation)
         print('--- module: ', module)

@@ -65,6 +65,20 @@ createBubblePropagatorUpLink(Value oldValue, Type slicedType,
   return propagateOp;
 }
 
+/// Creates an upward propagator immediately before `anchor`. This variant is
+/// needed when the tiling metadata is defined in a nested region while the
+/// original memref is defined outside it: inserting after the memref would not
+/// be dominated by a dynamic offset/size from the nested region.
+UnrealizedConversionCastOp createBubblePropagatorUpLinkBefore(
+    Operation *anchor, Value oldValue, Type slicedType, OpFoldResult offset,
+    OpFoldResult size, int64_t tilingDim, PatternRewriter &rewriter) {
+  PatternRewriter::InsertionGuard guard(rewriter);
+  rewriter.setInsertionPoint(anchor);
+  return createBubblePropagationCast(oldValue, slicedType,
+                                     kBubbleUpPropagateUp, offset, size,
+                                     tilingDim, rewriter);
+}
+
 /// Creates a downward propagator: `newValue` (sliced) is cast to `oldValue`'s
 /// type so existing users can be rewired before memref ops are updated.
 UnrealizedConversionCastOp

@@ -128,10 +128,11 @@ struct PropagateUpPattern
 public:
   using OpRewritePattern<UnrealizedConversionCastOp>::OpRewritePattern;
 
-  explicit PropagateUpPattern(MLIRContext *ctx, PropagationStep step)
+  explicit PropagateUpPattern(MLIRContext *ctx, PropagationStep step,
+                              bool isRegBaseTarget)
       : OpRewritePattern(ctx,
                          /*benefit=*/PropagatePriority::DefaultPropagateUp),
-        step(step) {}
+        step(step), isRegBaseTarget(isRegBaseTarget) {}
 
   LogicalResult matchAndRewrite(UnrealizedConversionCastOp propagateOp,
                                 PatternRewriter &rewriter) const override;
@@ -166,6 +167,7 @@ private:
                                  PatternRewriter &rewriter) const;
 
   PropagationStep step;
+  bool isRegBaseTarget;
 };
 
 } // namespace hivm

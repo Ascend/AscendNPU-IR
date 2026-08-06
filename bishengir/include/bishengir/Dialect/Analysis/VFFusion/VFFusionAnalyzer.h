@@ -18,6 +18,8 @@
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/MapVector.h"
+#include "llvm/ADT/SetVector.h"
 
 namespace mlir::analysis {
 
@@ -341,7 +343,11 @@ private:
   void printValidGroupCount();
   const CostMetrics &getOpMetrics(Operation *op);
   DenseMap<Operation *, size_t> opToGroupIndex;
-  DenseMap<int64_t, DenseSet<Operation *>> AllFusedGroupBlocks;
+  // Insertion-ordered: the outer iteration order (group ids collected in
+  // fuseGroupsWithNearestConsumer) and the inner begin() (representative op
+  // picked in areFusibleOps/canFuseGroups) must be deterministic, otherwise
+  // the fusion result depends on DenseMap/DenseSet hashing.
+  llvm::MapVector<int64_t, llvm::SetVector<Operation *>> AllFusedGroupBlocks;
   DenseMap<int64_t, CostMetrics> groupMetrics;
   CostMetrics nonLinalgOpMetrics;
   DenseMap<Operation *, CostMetrics> linalgOpMetrics;

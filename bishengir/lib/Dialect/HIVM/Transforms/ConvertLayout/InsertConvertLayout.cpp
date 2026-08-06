@@ -72,11 +72,15 @@ DataLayoutAttr normalizeToND(MLIRContext *ctx, DataLayoutAttr layout) {
   }
 }
 
-/// Insert convert_layout(srcLayout→dstLayout) on `input` when needed.
-LogicalResult convertAndAssignOperand(PatternRewriter &rewriter, Location loc,
-                                      Value input, OpOperand &targetOperand,
-                                      DataLayoutAttr srcLayout,
-                                      DataLayoutAttr dstLayout) {
+/// Insert convert_layout(srcLayout→dstLayout) on `input` when needed and
+/// assign the converted value to `targetOperand`. Scale ND layouts are
+/// preserved on the ConvertLayoutOp so downstream load_scale fusion can match
+/// them.
+static LogicalResult convertAndAssignOperand(PatternRewriter &rewriter,
+                                             Location loc, Value input,
+                                             OpOperand &targetOperand,
+                                             DataLayoutAttr srcLayout,
+                                             DataLayoutAttr dstLayout) {
   if (isAlreadyConverted(input)) {
     LDBG("Input already in fractal layout, no conversion needed");
     targetOperand.assign(input);
@@ -194,15 +198,35 @@ struct InsertConvertLayoutAroundMmadL1 : public OpRewritePattern<MmadL1Op> {
     newOp.getResult(0).setType(newOp.getC().getType());
     rewriter.setInsertionPointAfter(newOp);
 
-    srcLayoutC = normalizeToND(rewriter.getContext(), srcLayoutC);
+    // if mmadL1Op->fixpipeOp(cbuf), no convert layout on mmadL1Op result.
+    bool usedByFixpipeCbuf =
+        llvm::all_of(op->getResults()[0].getUsers(), [](auto *user) {
+          if (!isa<hivm::FixpipeOp>(user)) {
+            return false;
+          }
+          hivm::FixpipeOp fixpipeOp = cast<hivm::FixpipeOp>(user);
+          memref::AllocOp allocOp =
+              fixpipeOp.getDst().getDefiningOp<memref::AllocOp>();
+          if (!allocOp) {
+            return false;
+          }
+          auto memorySpace = allocOp.getType().getMemorySpace();
+          auto toAddrSpace =
+              cast<hivm::AddressSpaceAttr>(memorySpace).getAddressSpace();
+          return toAddrSpace == hivm::AddressSpace::L1;
+        });
 
-    // Convert result back: from target layout (zN) to source layout (dotC_ND)
-    auto ndResult = rewriter.create<ConvertLayoutOp>(
-        loc, cMatrix.getType(), newOp.getResult(0),
-        dstLayoutC,  // from target layout (e.g., zN)
-        srcLayoutC); // back to source layout (e.g., dotC_ND)
-
-    rewriter.replaceOp(op, ndResult);
+    if (usedByFixpipeCbuf) {
+      rewriter.replaceOp(op, newOp);
+    } else {
+      srcLayoutC = normalizeToND(rewriter.getContext(), srcLayoutC);
+      // Convert result back: from target layout (zN) to source layout (dotC_ND)
+      auto ndResult = rewriter.create<ConvertLayoutOp>(
+          loc, cMatrix.getType(), newOp.getResult(0),
+          dstLayoutC,  // from target layout (e.g., zN)
+          srcLayoutC); // back to source layout (e.g., dotC_ND)
+      rewriter.replaceOp(op, ndResult);
+    }
 
     LDBG("=== MmadL1Op conversion complete ===");
     return success();
@@ -296,9 +320,10 @@ struct InsertConvertLayoutAroundMmadMxL1 : public OpRewritePattern<MmadMxL1Op> {
 
     srcLayoutC = normalizeToND(rewriter.getContext(), srcLayoutC);
     auto ndResult = rewriter.create<ConvertLayoutOp>(
-        loc, cMatrix.getType(), newOp.getResult(0), dstLayoutC, srcLayoutC);
-
+        loc, cMatrix.getType(), newOp->getResult(0), dstLayoutC, srcLayoutC);
     rewriter.replaceOp(op, ndResult);
+
+    LDBG("=== MmadMxL1Op conversion complete ===");
     return success();
   }
 };

@@ -1,4 +1,4 @@
-// RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend950PR_950z -hivm-plan-memory-regbase -split-input-file | FileCheck %s
+// RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend950PR_950z -hivm-plan-memory -split-input-file | FileCheck %s
 
 // Two kill buffers cannot both be reused by gen (overlap); gen and store can
 // share. Expect two physical UB slots (offsets 0 and 256).

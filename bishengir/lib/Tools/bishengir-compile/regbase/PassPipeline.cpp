@@ -134,6 +134,10 @@ void setupHIVMPipelineOptions(hivm::regbase::HIVMPipelineOptions &hivmPipelineOp
     }
   }
 
+  if (options.setCVPipelineMode == CVPipelineMode::Unroll) {
+    options.enableLazyLoading = false;
+  }
+
   // When cv-pipelining is off, disable workspace multibuffer entirely
   // so downstream passes do not allocate extra buffer slots for CV software
   // pipelining that will not be applied.
@@ -297,24 +301,13 @@ static void buildDelayedHFusionRegBaseVectorizePipeline(
   if (config.getDisableHfusionVectorize()) {
     return;
   }
-  // inferMixedCV populates enableMixedCV before this delayed HFusion pipeline
-  // is built; adjust only the local HFusion options consumed by flatten.
-  BiShengIRCompileMainConfig hfusionConfig = config;
-  auto &registeredOptions = llvm::cl::getRegisteredOptions();
-  auto enableFlattenOpt = registeredOptions.find("enable-flatten");
-  bool hasExplicitEnableFlatten =
-      enableFlattenOpt != registeredOptions.end() &&
-      enableFlattenOpt->second->getNumOccurrences() != 0;
-  if (hfusionConfig.shouldEnableMixedCV() && !hasExplicitEnableFlatten) {
-    hfusionConfig.setEnableFlatten(false);
-  }
 
   HIVMAggregatedDecomposeOpOptions decomposeOption;
   decomposeOption.decomposePhase = bishengir::DecomposePhase::NO_CONSTRAINT;
   pm.nest<func::FuncOp>().addPass(
       mlir::hivm::createHIVMAggregatedDecomposeOpPass(decomposeOption));
   hfusion::HFusionPipelineOptions hfusionPipelineOptions;
-  setupHFusionPipelineOptions(hfusionPipelineOptions, hfusionConfig);
+  setupHFusionPipelineOptions(hfusionPipelineOptions, config);
   ExecutionEngineHIVMToUpstreamConversionOptions upstreamOptions;
   upstreamOptions.convertToNamedOp =
       hacc::utils::isRegBasedArch(config.getTarget());
