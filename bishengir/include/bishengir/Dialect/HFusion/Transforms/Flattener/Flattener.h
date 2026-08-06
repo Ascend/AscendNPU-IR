@@ -49,6 +49,8 @@ private:
   bool isValueFromHead(Value val) const {
     return llvm::count(argumentList_, val) > 0;
   }
+  // Breaks collapse boundaries for i1 values whose innermost dimension size is not a multiple of 8
+  void breakSubByteI1CollapseBoundaries();
   /// Marks broken connections in dimensions.
   void markBroken(const DimensionIndex &args);
 
@@ -120,7 +122,7 @@ private:
                              ReassociationIndices &collapseGroup,
                              SmallVector<OpFoldResult> &newMixedStrides,
                              OpBuilder &builder);
-  
+
   template <class T>
   void calculateOffsets(T slicingOp,
                         ReassociationIndices &collapseGroup,
