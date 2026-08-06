@@ -44,6 +44,11 @@ namespace mlir {
 namespace tensor {
 namespace reshape_utils {
 
+bool exceedsUnitDimPropagationLimit(ArrayRef<int64_t> shape,
+                                    unsigned maxUnitDims) {
+  return llvm::count(shape, int64_t{1}) > maxUnitDims;
+}
+
 template <class OpDimTy>
 void updateDimensionalOp(OpDimTy op, PatternRewriter &rewriter,
                          ArrayRef<int64_t> newDimensions) {
