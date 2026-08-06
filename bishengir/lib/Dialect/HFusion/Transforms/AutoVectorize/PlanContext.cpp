@@ -9,6 +9,7 @@
 
 #define DEBUG_TYPE "hfusion-auto-vectorize-v2"
 
+#include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoVectorize/PlanContext.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
@@ -47,6 +48,10 @@ void PlanContext::registerAndAnalyzeOp(Operation *op,
     allTypes.append(op->getResultTypes().begin(), op->getResultTypes().end());
   }
 
+  // TODO: Move per-op vectorization planning analysis into a dedicated
+  // AutoVectorizationPlanInterface. Keeping op-specific iteration-domain
+  // semantics with each op will make this analysis easier to maintain as new
+  // fusable operations are added.
   if (auto linalgOp = dyn_cast<linalg::LinalgOp>(op)) {
     opInfo.numReductionLoops = linalgOp.getNumReductionLoops();
     opInfo.numLoops = linalgOp.getNumLoops();
@@ -67,6 +72,24 @@ void PlanContext::registerAndAnalyzeOp(Operation *op,
                       op->getOperandTypes().end());
       allTypes.append(op->getResultTypes().begin(), op->getResultTypes().end());
     });
+  } else if (auto interleaveOp = dyn_cast<InterleaveOp>(op)) {
+    ShapedType inputType =
+        cast<ShapedType>(interleaveOp.getInput().front().getType());
+    opInfo.numLoops = inputType.getRank();
+    opInfo.shape.append(inputType.getShape().begin(),
+                        inputType.getShape().end());
+    int64_t &interleaveDim = opInfo.shape.back();
+    if (!ShapedType::isDynamic(interleaveDim))
+      interleaveDim *= interleaveOp.getInterLeaveChannelNums();
+  } else if (auto deinterleaveOp = dyn_cast<DeinterleaveOp>(op)) {
+    ShapedType inputType =
+        cast<ShapedType>(deinterleaveOp.getInput().getType());
+    opInfo.numLoops = inputType.getRank();
+    opInfo.shape.append(inputType.getShape().begin(),
+                        inputType.getShape().end());
+    int64_t &deinterleaveDim = opInfo.shape.back();
+    if (!ShapedType::isDynamic(deinterleaveDim))
+      deinterleaveDim /= deinterleaveOp.getDeInterLeaveChannelNum();
   } else {
     // For non-LinalgOp, its numLoops corresponds to the largest rank of
     // operand/result type, its shape corresponds to the shape of operand/result
@@ -84,6 +107,13 @@ void PlanContext::registerAndAnalyzeOp(Operation *op,
       opInfo.shape.push_back(i);
   }
 
+  // FIXME: Model dynamic iteration extents precisely during planning.
+  // Dynamic extents are currently represented as ShapedType::kDynamic, so
+  // unrelated dynamic domains may be grouped together. Loop fusion still
+  // rejects incompatible runtime bounds, but the rejection may roll back the
+  // entire AutoVectorizeV2 attempt and leave vectorizable operations for
+  // downstream passes.
+  // https://gitcode.com/Ascend/AscendNPU-IR/issues/378
   unsigned maxElemBitWidth = 1;
   for (Type ty : allTypes) {
     Type elemType = getElementTypeOrSelf(ty);
