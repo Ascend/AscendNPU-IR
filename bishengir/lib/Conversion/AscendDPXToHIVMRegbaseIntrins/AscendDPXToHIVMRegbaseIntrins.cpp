@@ -804,6 +804,19 @@ using AscendDPXCoreIdOpLowering =
     DirectConversion<ascend_dpx::CoreIdOp, ascend_dpx::CoreIdOp::Adaptor,
                      hivm_regbaseintrins::CoreIdOp>;
 
+struct AscendDPXYieldOpLowering
+    : public ConvertOpToLLVMPattern<ascend_dpx::YieldOp> {
+  explicit AscendDPXYieldOpLowering(LLVMTypeConverter &converter)
+      : mlir::ConvertOpToLLVMPattern<ascend_dpx::YieldOp>(converter) {}
+  LogicalResult
+  matchAndRewrite(ascend_dpx::YieldOp dpx_op,
+                  ascend_dpx::YieldOp::Adaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    rewriter.replaceOpWithNewOp<hivm_regbaseintrins::YieldOp>(dpx_op);
+    return success();
+  }
+};
+
 static inline Value getSharedMemBase(LLVM::LLVMFuncOp funcOp) {
   for (auto [idx, arg] : llvm::enumerate(funcOp.getArguments())) {
     if (DictionaryAttr dictAttr = funcOp.getArgAttrDict(idx)) {
@@ -872,11 +885,12 @@ static LogicalResult lowerBarrierBySoft(ModuleOp moduleOp) {
   }
 
   int32_t totalWarps = numWarps * superBlockFactor;
-  if (totalWarps > 32) {
+  constexpr int32_t maxSoftBarrierWarps = 64;
+  if (totalWarps > maxSoftBarrierWarps) {
     return moduleOp.emitError("super-block barrier requires numWarps * "
-                              "superBlockFactor <= 32, "
-                              "but got numWarps=")
-           << numWarps << " and superBlockFactor=" << superBlockFactor
+                              "superBlockFactor <= ")
+           << maxSoftBarrierWarps << ", but got numWarps=" << numWarps
+           << " and superBlockFactor=" << superBlockFactor
            << " (totalWarps=" << totalWarps << ")";
   }
 
@@ -1118,6 +1132,7 @@ static LogicalResult lowerBarrierBySoft(ModuleOp moduleOp) {
                       b3.create<scf::ConditionOp>(loc, spinCond, ValueRange{});
                     },
                     [](OpBuilder &b3, Location loc, ValueRange args) {
+                      b3.create<ascend_dpx::YieldOp>(loc);
                       b3.create<scf::YieldOp>(loc, ValueRange{});
                     });
                 b2.create<scf::YieldOp>(loc);
@@ -1625,16 +1640,17 @@ struct AscendDPXToHIVMRegbaseIntrins
              AscendDPXThreadIdxYOpLowering, AscendDPXThreadIdxZOpLowering,
              AscendDPXBlockIdxOpLowering, AscendDPXCoreIdOpLowering,
              AscendDPXClock32OpLowering, AscendDPXClock64OpLowering,
-             AscendDPXSyncThreadsOpLowering, AscendDPXAtomicAndOpLowering,
-             AscendDPXAtomicOrOpLowering, AscendDPXAtomicXorOpLowering,
-             AscendDPXAtomicIncOpLowering, AscendDPXAtomicDecOpLowering,
-             AscendDPXAtomicMaxOpLowering, AscendDPXAtomicMinOpLowering,
-             AscendDPXAtomicUMaxOpLowering, AscendDPXAtomicUMinOpLowering,
-             AscendDPXAtomicAddOpLowering, AscendDPXAtomicSubOpLowering,
-             AscendDPXAtomicExchangeOpLowering, AscendDPXAtomicCASOpLowering,
-             AscendDPXReduceAddOpLowering, AscendDPXReduceMaxOpLowering,
-             AscendDPXReduceMinOpLowering, AscendDPXReduceUMaxOpLowering,
-             AscendDPXReduceUMinOpLowering, AscendDPXCastOpLowering>(converter);
+             AscendDPXSyncThreadsOpLowering, AscendDPXYieldOpLowering,
+             AscendDPXAtomicAndOpLowering, AscendDPXAtomicOrOpLowering,
+             AscendDPXAtomicXorOpLowering, AscendDPXAtomicIncOpLowering,
+             AscendDPXAtomicDecOpLowering, AscendDPXAtomicMaxOpLowering,
+             AscendDPXAtomicMinOpLowering, AscendDPXAtomicUMaxOpLowering,
+             AscendDPXAtomicUMinOpLowering, AscendDPXAtomicAddOpLowering,
+             AscendDPXAtomicSubOpLowering, AscendDPXAtomicExchangeOpLowering,
+             AscendDPXAtomicCASOpLowering, AscendDPXReduceAddOpLowering,
+             AscendDPXReduceMaxOpLowering, AscendDPXReduceMinOpLowering,
+             AscendDPXReduceUMaxOpLowering, AscendDPXReduceUMinOpLowering,
+             AscendDPXCastOpLowering>(converter);
     addAscendDPXMathOpsLoweringPatterns(patterns, converter);
     if (failed(applyPartialConversion(moduleOp, target, std::move(patterns))))
       signalPassFailure();

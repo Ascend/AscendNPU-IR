@@ -2828,6 +2828,10 @@ def ThreadFenceBlockOp
   let assemblyFormat = "attr-dict";
 }
 
+def YieldOp : HIVMRegbaseIntrinsSIMT_IntrOp<"yield", "yield", 0> {
+  let assemblyFormat = "attr-dict";
+}
+
 class ReduceOp<string mnemonic, Type opType> : 
   HIVMRegbaseIntrins_Op<mnemonic, [], [], [], 1> {
   let arguments = (ins opType:$src);

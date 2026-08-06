@@ -1,5 +1,6 @@
 // RUN: bishengir-opt %s -convert-ascend-dpx-to-hivmregbaseintrins --split-input-file | FileCheck %s
 
+// CHECK:         ttg.shared = 140 : i32
 // CHECK-LABEL:   llvm.func @test_multi_barrier_kernel(
 // CHECK-SAME:                                         %[[VAL_0:.*]]: !llvm.ptr<1>,
 // CHECK-SAME:                                         %[[VAL_1:.*]]: !llvm.ptr<6> {hivm.shared_memory}) attributes {hivm_regbaseintrins.kernel} {
@@ -12,7 +13,7 @@
 // CHECK:           %[[VAL_7:.*]] = hivm_regbaseintrins.thread_id_x
 // CHECK:           %[[VAL_8:.*]] = llvm.urem %[[VAL_7]], %[[VAL_6]]  : i32
 // CHECK:           %[[VAL_9:.*]] = llvm.icmp "eq" %[[VAL_8]], %[[VAL_2]] : i32
-// CHECK:           %[[VAL_10:.*]] = llvm.mlir.constant(4 : i32) : i32
+// CHECK:           %[[VAL_10:.*]] = llvm.mlir.constant(16 : i32) : i32
 // CHECK:           %[[VAL_11:.*]] = llvm.udiv %[[VAL_7]], %[[VAL_6]]  : i32
 // CHECK:           %[[VAL_12:.*]] = llvm.urem %[[VAL_11]], %[[VAL_10]]  : i32
 // CHECK:           %[[VAL_13:.*]] = llvm.udiv %[[VAL_11]], %[[VAL_10]]  : i32
@@ -51,6 +52,7 @@
 // CHECK:                 %[[VAL_36:.*]] = llvm.icmp "ne" %[[VAL_35]], %[[VAL_26]] : i32
 // CHECK:                 scf.condition(%[[VAL_36]])
 // CHECK:               } do {
+// CHECK:                 hivm_regbaseintrins.yield
 // CHECK:                 scf.yield
 // CHECK:               }
 // CHECK:             }
@@ -75,6 +77,7 @@
 // CHECK:                 %[[VAL_49:.*]] = llvm.icmp "ne" %[[VAL_48]], %[[VAL_39]] : i32
 // CHECK:                 scf.condition(%[[VAL_49]])
 // CHECK:               } do {
+// CHECK:                 hivm_regbaseintrins.yield
 // CHECK:                 scf.yield
 // CHECK:               }
 // CHECK:             }
@@ -99,6 +102,7 @@
 // CHECK:                 %[[VAL_62:.*]] = llvm.icmp "ne" %[[VAL_61]], %[[VAL_52]] : i32
 // CHECK:                 scf.condition(%[[VAL_62]])
 // CHECK:               } do {
+// CHECK:                 hivm_regbaseintrins.yield
 // CHECK:                 scf.yield
 // CHECK:               }
 // CHECK:             }
@@ -108,7 +112,7 @@
 module attributes {
   dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 28 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 28 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 56 : i32>, #dlti.dl_entry<"UB_SIZE", 2031616 : i32>, #dlti.dl_entry<"L1_SIZE", 4194304 : i32>, #dlti.dl_entry<"L0A_SIZE", 524288 : i32>, #dlti.dl_entry<"L0B_SIZE", 524288 : i32>, #dlti.dl_entry<"L0C_SIZE", 2097152 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L1_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L0C_ALIGN_SIZE", 4096 : i32>, #dlti.dl_entry<"MINIMAL_D_CACHE_SIZE", 262144 : i32>, #dlti.dl_entry<"MAXIMUM_D_CACHE_SIZE", 983040 : i32>, #dlti.dl_entry<"ARCH", "dav-c310">>>,
   "ttg.num-warps" = 4 : i32,
-  "ttg.super-block-factor" = 4 : ui32,
+  "ttg.super-block-factor" = 16 : ui32,
   ttg.shared = 12 : i32,
   "ttg.threads-per-warp" = 32 : i32,
   "ttg.super-block-barrier" = true
