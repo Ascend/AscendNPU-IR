@@ -56,8 +56,8 @@ public:
   /// for both scf.for and scf.while. Counter-op materialization is done
   /// idempotently on the first call.
   ///
-  /// For scf.while, `anchor` selects before vs after: the counter is placed in
-  /// the while region that contains `anchor`. When null, after is used.
+  /// For scf.while, `anchor` selects before vs after. When null, the builder
+  /// insertion point selects the region, falling back to after if unavailable.
   Value getModuloIndex(OpBuilder &builder, int64_t modular,
                        Operation *anchor = nullptr);
 
@@ -92,7 +92,7 @@ private:
 
   /// Find or create the shared counter op in the loop body. Works uniformly for
   /// both scf.for (body = forOp.getBody()) and scf.while (before or after
-  /// region selected by `anchor`; defaults to after when anchor is null).
+  /// region selected by `anchor` or the builder insertion point).
   void ensureCounterMaterialized(OpBuilder &builder, Operation *anchor);
 
   LoopLikeOpInterface loop_;

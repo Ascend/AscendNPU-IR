@@ -36,20 +36,25 @@ namespace {
 
 /// Body block of a multi-buffer-supported LoopLike op (for / while).
 ///   - scf.for   : the single body block (`forOp.getBody()`).
-///   - scf.while : the before or after region that contains `anchor`. When
-///                 `anchor` is null, after is used (legacy default for the
-///                 common body-only multi-buffer path).
+///   - scf.while : the before or after region that contains `anchor`, or the
+///                 builder insertion point when `anchor` is null. The latter
+///                 supports GSS, which selects events from a LoopLike handle.
+///                 After is the fallback when neither context is available.
 /// Returns nullptr for any unsupported loop type, which lets callers fail
 /// gracefully (the adapter's `create()` factory also gates on the same types).
-Block *getLoopBodyBlock(LoopLikeOpInterface loop, Operation *anchor) {
+Block *getLoopBodyBlock(LoopLikeOpInterface loop, Operation *anchor,
+                        Block *insertionBlock) {
   if (!loop)
     return nullptr;
   Operation *op = loop.getOperation();
   if (auto forOp = dyn_cast<scf::ForOp>(op))
     return forOp.getBody();
   if (auto whileOp = dyn_cast<scf::WhileOp>(op)) {
-    if (anchor) {
-      Region *region = anchor->getParentRegion();
+    Region *region = anchor ? anchor->getParentRegion()
+                            : insertionBlock
+                                  ? insertionBlock->getParent()
+                                  : nullptr;
+    if (region) {
       while (region && region->getParentOp() != whileOp.getOperation())
         region = region->getParentOp()->getParentRegion();
       if (region == &whileOp.getBefore())
@@ -93,7 +98,8 @@ MultiBufferLoopAdapter::create(LoopLikeOpInterface loop) {
 
 void MultiBufferLoopAdapter::ensureCounterMaterialized(OpBuilder &builder,
                                                        Operation *anchor) {
-  Block *body = getLoopBodyBlock(loop_, anchor);
+  Block *body =
+      getLoopBodyBlock(loop_, anchor, builder.getInsertionBlock());
   if (!body)
     llvm::report_fatal_error("ensureCounterMaterialized only valid for scf.for / "
                      "scf.while; adapter::create gates on this invariant.");
