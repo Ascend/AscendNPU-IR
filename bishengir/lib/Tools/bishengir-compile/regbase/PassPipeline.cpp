@@ -134,6 +134,10 @@ void setupHIVMPipelineOptions(hivm::regbase::HIVMPipelineOptions &hivmPipelineOp
     }
   }
 
+  if (options.setCVPipelineMode == CVPipelineMode::Unroll) {
+    options.enableLazyLoading = false;
+  }
+
   // When cv-pipelining is off, disable workspace multibuffer entirely
   // so downstream passes do not allocate extra buffer slots for CV software
   // pipelining that will not be applied.
