@@ -69,8 +69,7 @@ public:
 
   LogicalResult
   verifyMarkedExtractSlicesAreBubbledUp(func::FuncOp funcOp) const {
-    int64_t subblockSyncCnt = 0;
-    auto walkResult = funcOp->walk([this, &subblockSyncCnt](Operation *op) {
+    auto walkResult = funcOp->walk([this](Operation *op) {
       if (isa<tensor::InsertSliceOp>(op)) {
         auto insertSliceOp = cast<tensor::InsertSliceOp>(op);
         // All marked insertslice is expected to be cancelled out
@@ -84,12 +83,6 @@ public:
           if (ShapedType::isDynamicShape(srcType.getShape()))
             return WalkResult::interrupt();
         }
-      }
-
-      if (auto syncBlockOp = dyn_cast<hivm::SyncBlockOp>(op)) {
-        if (syncBlockOp.getSyncBlockMode().getSyncMode() ==
-            hivm::SyncBlockMode::ALL_SUB_VECTOR)
-          subblockSyncCnt++;
       }
 
       if (isa<UnrealizedConversionCastOp>(op))
@@ -132,7 +125,7 @@ public:
       }
       return WalkResult::advance();
     });
-    if (walkResult.wasInterrupted() || subblockSyncCnt >= 4) {
+    if (walkResult.wasInterrupted()) {
       return failure();
     }
     return success();
