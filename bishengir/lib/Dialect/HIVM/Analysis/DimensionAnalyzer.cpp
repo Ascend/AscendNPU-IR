@@ -124,15 +124,46 @@ bool DimensionAnalyzer::computeTilingDim(bool isVectorOp) {
       candidateGroupSize[parentIndex] = static_cast<int64_t>(candidate.size());
   }
   LDBG("Connecting invalid updates: ");
-  DenseSet<std::pair<int, int>> invalidConnection;
+  SmallVector<DenseSet<int64_t>> invalidConnection(argumentTotalLength_);
+  auto candidateExclusiveDimIdx = exclusiveDimIdx;
+  auto hasConnection = [&](auto &connections, int lhs, int rhs) {
+    lhs = candGroupDSU.find(lhs);
+    rhs = candGroupDSU.find(rhs);
+    return connections[lhs].contains(rhs);
+  };
+  auto addConnection = [&](auto &connections, int lhs, int rhs) {
+    lhs = candGroupDSU.find(lhs);
+    rhs = candGroupDSU.find(rhs);
+    if (lhs == rhs)
+      return;
+    connections[lhs].insert(rhs);
+    connections[rhs].insert(lhs);
+  };
+  auto mergeConnections = [&](auto &connections, int lhs, int rhs) {
+    auto merged = candGroupDSU.find(lhs);
+    DenseSet<int64_t> connected;
+    for (auto idx : connections[lhs])
+      connected.insert(candGroupDSU.find(idx));
+    for (auto idx : connections[rhs])
+      connected.insert(candGroupDSU.find(idx));
+
+    connections[lhs].clear();
+    connections[rhs].clear();
+    for (auto idx : connected) {
+      connections[idx].erase(lhs);
+      connections[idx].erase(rhs);
+      if (idx == merged)
+        continue;
+      connections[merged].insert(idx);
+      connections[idx].insert(merged);
+    }
+  };
   for (auto &[repIdx, indices] : invalidUpdates) {
     if (llvm::any_of(indices,
                      [repIdx = repIdx](auto idx) { return idx == repIdx; })) {
       for (auto idx : indices) {
-        if (idx != repIdx) {
-          invalidConnection.insert({idx, repIdx});
-          invalidConnection.insert({repIdx, idx});
-        }
+        if (idx != repIdx)
+          addConnection(invalidConnection, repIdx, idx);
       }
     }
   }
@@ -142,12 +173,14 @@ bool DimensionAnalyzer::computeTilingDim(bool isVectorOp) {
     for (auto [store, dim] : parallelDimMaps[groupIdx][idxToMerge])
       tilingDim_[store] = dim;
     for (auto &idx : llvm::drop_begin(indices)) {
-      if (invalidConnection.contains({repIdx, idx}) ||
-          exclusiveDimIdx[repIdx].contains(idx))
+      if (hasConnection(invalidConnection, repIdx, idx) ||
+          hasConnection(candidateExclusiveDimIdx, repIdx, idx))
         continue;
       auto curSize = candidateGroupSize[candGroupDSU.find(idxToMerge)];
       auto size = candidateGroupSize[candGroupDSU.find(idx)];
-      if (curSize < size || invalidConnection.contains({repIdx, idxToMerge})) {
+      if (curSize < size ||
+          hasConnection(invalidConnection, repIdx, idxToMerge) ||
+          hasConnection(candidateExclusiveDimIdx, repIdx, idxToMerge)) {
         idxToMerge = idx;
         for (auto [store, dim] : parallelDimMaps[groupIdx][idxToMerge])
           tilingDim_[store] = dim;
@@ -160,8 +193,8 @@ bool DimensionAnalyzer::computeTilingDim(bool isVectorOp) {
       }
     }
     if (candGroupDSU.find(repIdx) == candGroupDSU.find(idxToMerge) ||
-        invalidConnection.contains({repIdx, idxToMerge}) ||
-        exclusiveDimIdx[repIdx].contains(idxToMerge))
+        hasConnection(invalidConnection, repIdx, idxToMerge) ||
+        hasConnection(candidateExclusiveDimIdx, repIdx, idxToMerge))
       continue;
     LDBG("repIdx " << repIdx << "("
                    << candidateGroupSize[candGroupDSU.find(repIdx)]
@@ -170,40 +203,58 @@ bool DimensionAnalyzer::computeTilingDim(bool isVectorOp) {
                      candidateGroupSize[candGroupDSU.find(idxToMerge)];
     LDBG("Merging " << repIdx << " with " << idxToMerge << " to be "
                     << totalSize);
+    auto repRoot = candGroupDSU.find(repIdx);
+    auto idxRoot = candGroupDSU.find(idxToMerge);
     candGroupDSU.join(repIdx, idxToMerge);
+    mergeConnections(invalidConnection, repRoot, idxRoot);
+    mergeConnections(candidateExclusiveDimIdx, repRoot, idxRoot);
     candidateGroupSize[candGroupDSU.find(repIdx)] = totalSize;
+    for (auto &idx : indices) {
+      if (candGroupDSU.find(idx) != candGroupDSU.find(idxToMerge))
+        addConnection(invalidConnection, repIdx, idx);
+    }
   }
 
   for (auto [value, _] : valueToDimIndicesIndex_)
     tilingDim_[value] = -1;
 
-  DenseMap<int64_t, int> selectedTilingParIdxMap;
+  DenseMap<int64_t, int> selectedTilingCandGroupMap;
   for (const auto &[groupIndex, parallelDimMap] : parallelDimMaps) {
     auto numStoreOp = 0;
     if (auto it = numStoreOps.find(groupIndex); it != numStoreOps.end())
       numStoreOp = it->second;
     LDBG("Group " << groupIndex << " has " << numStoreOp << " operations");
+    DenseMap<int64_t, SmallVector<Dimension>> candidatesByCandGroup;
     for (const auto &[parentIndex, candidate] : parallelDimMap) {
-      if (candidateGroupSize[candGroupDSU.find(parentIndex)] == numStoreOp) {
+      auto candGroup = candGroupDSU.find(parentIndex);
+      llvm::append_range(candidatesByCandGroup[candGroup], candidate);
+    }
+    for (const auto &[candGroup, candidate] : candidatesByCandGroup) {
+      if (candidateGroupSize[candGroup] == numStoreOp) {
         SmallVector<int64_t> candidateDims;
         int64_t higherDimCnt = getHigherDimCounts(candidate, &candidateDims);
 
         LDBG("Candidate of "
-             << parentIndex << " in group " << groupIndex << " is "
+             << candGroup << " in group " << groupIndex << " is "
              << utils::debugger::to_string(candidateDims) << " with "
              << higherDimCnt << " priority dimensions");
         // try to find majority of dimension is higher
         if (2 * higherDimCnt >= numStoreOp) {
-          selectedTilingParIdxMap[groupIndex] = parentIndex;
+          selectedTilingCandGroupMap[groupIndex] = candGroup;
           for (auto [store, dim] : candidate)
             tilingDim_[store] = dim;
         }
       }
     }
   }
-  LDBG("Selected independent tiling dims: " << selectedTilingParIdxMap.size());
-  for (auto [_, parIdx] : selectedTilingParIdxMap)
-    selectedTilingParIdx.insert(parIdx);
+  LDBG("Selected independent tiling dims: "
+       << selectedTilingCandGroupMap.size());
+  for (auto [groupIndex, candGroup] : selectedTilingCandGroupMap) {
+    for (const auto &[parentIndex, _] : parallelDimMaps[groupIndex]) {
+      if (candGroupDSU.find(parentIndex) == candGroup)
+        selectedTilingParIdx.insert(parentIndex);
+    }
+  }
   LDBG(utils::debugger::to_string(selectedTilingParIdx));
   return isBroadcastAxisCase;
 }
