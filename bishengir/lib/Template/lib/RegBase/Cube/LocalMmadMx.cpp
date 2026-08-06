@@ -282,14 +282,14 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
       tla::MakeTensor(l1MxScaleBTensor, layoutMxScaleBInL1, Arch::PositionL1{});
   auto layoutInL0C = tla::MakeLayoutL0C(actualM, actualN);
   auto tensorL0C = tla::MakeTensor(l0CTensor, layoutInL0C, Arch::PositionL0C{});
-  auto layoutBiasInBT = tla::MakeLayout(actualN);
-  auto tensorL0Bias =
-      tla::MakeTensor(bTTensor, layoutBiasInBT, Arch::PositionBias{});
 
   constexpr uint32_t L0A_PINGPONG_BUF_SIZE = ArchTag::L0A_SIZE / 2;
   constexpr uint32_t L0B_PINGPONG_BUF_SIZE = ArchTag::L0B_SIZE / 2;
+  constexpr uint32_t BT_PINGPONG_BUF_SIZE = ArchTag::BIAS_SIZE / 2;
   constexpr uint32_t L0A_ELE_NUM_PER_C0 = BYTE_PER_C0 / sizeof(ElementA);
   constexpr uint32_t L0B_ELE_NUM_PER_C0 = BYTE_PER_C0 / sizeof(ElementB);
+
+  AscendCBisheng::LocalTensor<ElementACC> btTile = bTTensor;
 
   uint32_t l0K =
       RoundDown<64>(min(L0A_PINGPONG_BUF_SIZE / sizeof(ElementA) /
@@ -396,6 +396,10 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
         auto layoutBiasInL1 = tla::MakeLayout(actualN);
         auto tensorL1Bias =
             tla::MakeTensor(l1BiasTensor, layoutBiasInL1, Arch::PositionL1{});
+        btTile = bTTensor[pingPongId * BT_PINGPONG_BUF_SIZE / sizeof(ElementACC)];
+        auto layoutBiasInBT = tla::MakeLayout(actualN);
+        auto tensorL0Bias =
+            tla::MakeTensor(btTile, layoutBiasInBT, Arch::PositionBias{});
         using TensorL1Bias = tla::Tensor<
             AscendCBisheng::LocalTensor<ElementBias>,
             detail::TagToLayout_t<ElementBias, layout::VectorLayout>,
@@ -415,6 +419,9 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
     AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::MTE1_M>(EVENT_ID0);
 
     const bool applyBias = hasBias && initC;
+    auto layoutBiasInBT = tla::MakeLayout(actualN);
+    auto tensorL0Bias =
+        tla::MakeTensor(btTile, layoutBiasInBT, Arch::PositionBias{});
     auto *cAddr = packCWithBiasAddr<ElementACC>(
         (__cc__ ElementACC *)tensorL0C.data().GetPhyAddr(),
         applyBias ? (uint64_t)tensorL0Bias.data().GetPhyAddr() : 0, applyBias);
@@ -535,14 +542,14 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
       tla::MakeTensor(l1MxScaleBTensor, layoutMxScaleBInL1, Arch::PositionL1{});
   auto layoutInL0C = tla::MakeLayoutL0C(actualM, actualN);
   auto tensorL0C = tla::MakeTensor(l0CTensor, layoutInL0C, Arch::PositionL0C{});
-  auto layoutBiasInBT = tla::MakeLayout(actualN);
-  auto tensorL0Bias =
-      tla::MakeTensor(bTTensor, layoutBiasInBT, Arch::PositionBias{});
 
   constexpr uint32_t L0A_PINGPONG_BUF_SIZE = ArchTag::L0A_SIZE / 2;
   constexpr uint32_t L0B_PINGPONG_BUF_SIZE = ArchTag::L0B_SIZE / 2;
+  constexpr uint32_t BT_PINGPONG_BUF_SIZE = ArchTag::BIAS_SIZE / 2;
   constexpr uint32_t L0A_ELE_NUM_PER_C0 = BYTE_PER_C0 / sizeof(ElementA);
   constexpr uint32_t L0B_ELE_NUM_PER_C0 = BYTE_PER_C0 / sizeof(ElementB);
+
+  AscendCBisheng::LocalTensor<ElementACC> btTile = bTTensor;
 
   uint32_t l0K =
       RoundDown<64>(min(L0A_PINGPONG_BUF_SIZE / sizeof(ElementA) /
@@ -652,6 +659,10 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
         auto layoutBiasInL1 = tla::MakeLayout(actualN);
         auto tensorL1Bias =
             tla::MakeTensor(l1BiasTensor, layoutBiasInL1, Arch::PositionL1{});
+        btTile = bTTensor[pingPongId * BT_PINGPONG_BUF_SIZE / sizeof(ElementACC)];
+        auto layoutBiasInBT = tla::MakeLayout(actualN);
+        auto tensorL0Bias =
+            tla::MakeTensor(btTile, layoutBiasInBT, Arch::PositionBias{});
         using TensorL1Bias = tla::Tensor<
             AscendCBisheng::LocalTensor<ElementBias>,
             detail::TagToLayout_t<ElementBias, layout::VectorLayout>,
@@ -682,6 +693,9 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
     // }
 
     const bool applyBias = hasBias && initC;
+    auto layoutBiasInBT = tla::MakeLayout(actualN);
+    auto tensorL0Bias =
+        tla::MakeTensor(btTile, layoutBiasInBT, Arch::PositionBias{});
     madMxByFormat<ElementACC>(
         tensorL0C.data().GetPhyAddr(), tensorL0A.data().GetPhyAddr(),
         tensorL0B.data().GetPhyAddr(), actualM, kL0Actual, actualN, unitFlag,
