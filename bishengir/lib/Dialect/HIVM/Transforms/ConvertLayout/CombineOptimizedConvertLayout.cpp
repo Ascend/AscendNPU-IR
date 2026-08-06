@@ -726,6 +726,87 @@ struct FoldConvertLayoutExtractSliceFixpipePattern
 //   tensor<ND>
 //===----------------------------------------------------------------------===//
 
+//===----------------------------------------------------------------------===//
+// Fold Fixpipe(NZ2NZ) + convert_layout(→Fractal)
+//
+// A rank-2 NZ2NZ Fixpipe result is already physically fractal.
+// InsertConvertLayout may insert convert_layout(Fractal→Fractal) (or a leftover
+// ND→Fractal) only to materialize the rank-4 SSA type for the consumer mmad.
+// Fold that convert into the Fixpipe by making the Fixpipe produce the fractal
+// tensor directly.
+//
+// Matches:
+//   %fix = hivm.hir.fixpipe {NZ2NZ} ... -> tensor<MxN>
+//   %fr  = hivm.hir.convert_layout %fix {src=Fractal|ND, dst=Fractal}
+//       -> tensor<4D>
+//
+// Transforms to:
+//   %fr = hivm.hir.fixpipe {NZ2NZ} ... -> tensor<4D>
+//===----------------------------------------------------------------------===//
+
+struct FoldFixpipeNz2NzToFractalConvertLayoutPattern
+    : public OpRewritePattern<ConvertLayoutOp> {
+  FoldFixpipeNz2NzToFractalConvertLayoutPattern(MLIRContext *context)
+      : OpRewritePattern(context) {}
+
+  LogicalResult matchAndRewrite(ConvertLayoutOp op,
+                                PatternRewriter &rewriter) const override {
+    auto fixpipeOp = op.getSource().getDefiningOp<FixpipeOp>();
+    if (!fixpipeOp)
+      return rewriter.notifyMatchFailure(op, "source is not a FixpipeOp");
+
+    if (fixpipeOp.getDmaMode() != FixpipeDMAMode::NZ2NZ)
+      return rewriter.notifyMatchFailure(fixpipeOp, "fixpipe is not NZ2NZ");
+
+    if (!fixpipeOp.getResultTensor())
+      return rewriter.notifyMatchFailure(fixpipeOp,
+                                         "fixpipe has no tensor result");
+
+    auto dstLayout = op.getDstLayout();
+    if (dstLayout.getDataLayout() != DataLayout::Fractal)
+      return rewriter.notifyMatchFailure(op, "dst layout is not Fractal");
+
+    auto srcLayout = op.getSrcLayout();
+    if (srcLayout.getDataLayout() != DataLayout::Fractal &&
+        !srcLayout.isNDLayout())
+      return rewriter.notifyMatchFailure(
+          op, "src layout is neither Fractal nor ND");
+
+    auto resultTensorType = cast<RankedTensorType>(op.getType());
+    if (resultTensorType.getRank() != 4)
+      return rewriter.notifyMatchFailure(op, "convert result is not rank-4");
+
+    auto fixpipeType =
+        dyn_cast<RankedTensorType>(fixpipeOp.getResultTensor().getType());
+    if (!fixpipeType || fixpipeType.getRank() == 4)
+      return rewriter.notifyMatchFailure(
+          fixpipeOp, "fixpipe result is already rank-4 or not a ranked tensor");
+
+    // Only fold when the convert is the sole real user of the Fixpipe result
+    // (aside from the convert itself being fed by it).
+    if (!op.getSource().hasOneUse())
+      return rewriter.notifyMatchFailure(
+          fixpipeOp, "fixpipe result has multiple uses; cannot retarget");
+
+    auto mixedFractalShape = op.getMixedOutputShape();
+    auto emptyOp = rewriter.create<tensor::EmptyOp>(
+        op.getLoc(), mixedFractalShape, resultTensorType.getElementType());
+
+    auto newFixpipe = rewriter.create<FixpipeOp>(
+        fixpipeOp.getLoc(), resultTensorType, fixpipeOp.getSrc(),
+        emptyOp.getResult(), fixpipeOp.getDmaModeAttr(),
+        fixpipeOp.getDualDstModeAttr(), fixpipeOp.getSubBlockIdxAttr(),
+        fixpipeOp.getPreQuantAttr(), fixpipeOp.getPreReluAttr(),
+        fixpipeOp.getChannelSplitAttr(), fixpipeOp.getQuantScale());
+    if (fixpipeOp.getUnitFlagMode())
+      newFixpipe.setUnitFlagModeAttr(fixpipeOp.getUnitFlagModeAttr());
+
+    rewriter.replaceOp(op, newFixpipe.getResultTensor());
+    rewriter.eraseOp(fixpipeOp);
+    return success();
+  }
+};
+
 struct FoldFixpipeConvertLayoutPattern
     : public OpRewritePattern<ConvertLayoutOp> {
   FoldFixpipeConvertLayoutPattern(MLIRContext *context)
@@ -742,11 +823,11 @@ struct FoldFixpipeConvertLayoutPattern
       return rewriter.notifyMatchFailure(fixpipeOp,
                                          "fixpipe already has a DMA mode set");
 
-    // Verify this is NZ -> ND conversion
+    // Verify this is NZ -> ND conversion. Fractal destinations are handled by
+    // FoldFixpipeNz2NzToFractalConvertLayoutPattern.
     auto dstLayout = op.getDstLayout();
-
-    // if (srcLayout.getDataLayout() != DataLayout::nZ)
-    //   return rewriter.notifyMatchFailure(op, "source layout is not nZ");
+    if (!dstLayout.isNDLayout())
+      return rewriter.notifyMatchFailure(op, "not an NZ->ND conversion");
 
     // Determine the appropriate DMA mode based on destination layout
     FixpipeDMAMode dmaMode;
@@ -769,11 +850,6 @@ struct FoldFixpipeConvertLayoutPattern
 
     // Get the result tensor type (ND shape from convert_layout)
     auto resultTensorType = cast<RankedTensorType>(op.getType());
-    auto ofrSize = tensor::reshape_utils::getMixedSizesOrOutputShape(
-        rewriter, fixpipeOp.getSource());
-
-    // Src should be the fractal
-    assert(dstLayout.isNDLayout());
     auto mixedFractalShape = op.getMixedOutputShape();
 
     // Create an empty tensor for the new fixpipe output (ND shape)
@@ -901,16 +977,14 @@ struct RouteVectorFractalizeViaGMPattern
 void populateCombineOptimizedConvertLayoutPatterns(RewritePatternSet &patterns,
                                                    MLIRContext *context) {
   ConvertLayoutOp::getCanonicalizationPatterns(patterns, context);
-  patterns.add<FoldDirectLoadToND2NZPattern,
-               FoldDirectLoadToLoadMXScalePattern,
-               FoldSubviewLoadToND2NZPattern,
-               FoldSubviewLoadToLoadMXScalePattern,
-               FoldTensorLoadToND2NZPattern,
-               FoldTensorLoadToLoadMXScalePattern,
-               FoldFixpipeConvertLayoutPattern,
-               FoldConvertLayoutFixpipePattern,
-               FoldConvertLayoutExtractSliceFixpipePattern,
-               RouteVectorFractalizeViaGMPattern>(context);
+  patterns
+      .add<FoldDirectLoadToND2NZPattern, FoldDirectLoadToLoadMXScalePattern,
+           FoldSubviewLoadToND2NZPattern, FoldSubviewLoadToLoadMXScalePattern,
+           FoldTensorLoadToND2NZPattern, FoldTensorLoadToLoadMXScalePattern,
+           FoldFixpipeNz2NzToFractalConvertLayoutPattern,
+           FoldFixpipeConvertLayoutPattern, FoldConvertLayoutFixpipePattern,
+           FoldConvertLayoutExtractSliceFixpipePattern,
+           RouteVectorFractalizeViaGMPattern>(context);
 }
 
 } // namespace
