@@ -90,7 +90,7 @@ struct DeleteCreatedMarkOp : public OpRewritePattern<annotation::MarkOp> {
 
 // Identify if the input value carries the pseudo boolean attribute
 static bool hasPseudoBoolAttr(Operation *op) {
-  return op && op->hasAttr("was_bool_to_int8");
+  return op && op->hasAttr(utils::wasBoolToInt8);
 }
 
 static Value getPseudoBoolSource(Value val) {
@@ -216,7 +216,7 @@ struct ClampPseudoBoolArithOp : public OpRewritePattern<OpTy> {
                        hfusion::BinaryFnAttr>(
             rewriter, location, hfusion::BinaryFn::vand,
             ValueRange{logicResult, oneTensor}, ValueRange{andInit});
-    clampedOp->setAttr("was_bool_to_int8", rewriter.getBoolAttr(true));
+    clampedOp->setAttr(utils::wasBoolToInt8, rewriter.getBoolAttr(true));
     rewriter.replaceOp(op, clampedOp->getResult(0));
     return success();
   }
