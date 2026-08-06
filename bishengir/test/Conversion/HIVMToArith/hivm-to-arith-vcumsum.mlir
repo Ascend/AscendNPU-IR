@@ -52,4 +52,16 @@ func.func @test_vcumsum_2d_f32(%arg0: tensor<8x16xf32>) -> tensor<8x16xf32> {
     return %1 : tensor<8x16xf32>
 }
 
+// -----
 
+// Test vcumsum on 2D integer tensor along axis 1
+// CHECK-LABEL: func.func @test_vcumsum_2d_i32
+func.func @test_vcumsum_2d_i32(%arg0: tensor<8x16xi32>) -> tensor<8x16xi32> {
+    %0 = tensor.empty():tensor<8x16xi32>
+    // CHECK: tt.scan
+    // CHECK-SAME: axis = 1
+    // CHECK: arith.addi
+    // CHECK: tt.scan.return
+    %1 = hivm.hir.vcumsum ins(%arg0 : tensor<8x16xi32>) outs(%0 : tensor<8x16xi32>) cum_dims = [1] reverse = false -> tensor<8x16xi32>
+    return %1 : tensor<8x16xi32>
+}

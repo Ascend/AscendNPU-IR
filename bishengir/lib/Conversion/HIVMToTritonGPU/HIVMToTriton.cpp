@@ -1356,7 +1356,7 @@ struct HIVMToTTReduceOp: public OpRewritePattern<hivm::VReduceOp> {
 //     ^bb0(%1,%2):
 //      %3 = arith,addf %1,%2
 //      tt.scan.return %3
-// }): tensor<10xf32> -> tenso<10xf32>
+// }): tensor<100xf32> -> tensor<100xf32>
 struct HIVMToTTScanOp : public OpRewritePattern<hivm::VCumsumOp> {
     using OpRewritePattern<hivm::VCumsumOp>::OpRewritePattern;
     LogicalResult matchAndRewrite(hivm::VCumsumOp op,
