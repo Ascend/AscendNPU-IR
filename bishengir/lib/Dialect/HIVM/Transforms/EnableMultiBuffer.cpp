@@ -64,8 +64,8 @@ public:
   /// dependencies on the temporary pointerCastOp between consecutive loop
   /// iterations. It returns the new pointerCastOp if the original
   /// pointerCastOp was multi-buffered and returns failure() otherwise.
-  /// Example (scf.for; scf.while is fully analogous, body block is
-  /// `whileOp.getAfter().front()`):
+  /// Example (scf.for; scf.while is analogous for the region that owns the
+  /// pointer_cast — after or before — via MultiBufferLoopAdapter's anchor):
   /// ```
   /// scf.for %iv = %c0 to %c16 step %c4 {
   ///   %0 = hivm.hir.pointer_cast(addr1, addr2) [] : memref<4x128xf32>

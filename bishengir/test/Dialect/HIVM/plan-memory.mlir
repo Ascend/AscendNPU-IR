@@ -3087,3 +3087,58 @@ func.func @test_reuse_dma_buffer_warning(%arg0: memref<16x32x128xf16, #hivm.addr
   hivm.hir.store ins(%alloc_0 : memref<16x32x128xf16, #hivm.address_space<ub>>) outs(%arg1 : memref<16x32x128xf16, #hivm.address_space<gm>>)
   return
 }
+
+// -----
+// Multi-buffer pointer_cast in scf.while after region: hoist to after head.
+// CHECK-LABEL: func.func @while_plan_memory_basic(
+func.func @while_plan_memory_basic(%arg0: memref<8xf32, #hivm.address_space<gm>>,
+                                   %arg1: memref<8xf32, #hivm.address_space<gm>>) {
+  %true = arith.constant true
+  // CHECK: scf.while
+  %r = scf.while (%cond = %true) : (i1) -> i1 {
+    scf.condition(%cond) %cond : i1
+  } do {
+  // CHECK: ^bb0
+  ^bb0(%cin: i1):
+    // CHECK-NEXT: %[[PCAST:.*]] = hivm.hir.pointer_cast({{.*}}) : memref<8xf32, #hivm.address_space<ub>>
+    // CHECK-NEXT: annotation.mark %[[PCAST]] {hivm.multi_buffer = 2 : i32}
+    %tmp = memref.alloc() : memref<8xf32, #hivm.address_space<ub>>
+    annotation.mark %tmp {hivm.multi_buffer = 2 : i32} : memref<8xf32, #hivm.address_space<ub>>
+    hivm.hir.load ins(%arg0 : memref<8xf32, #hivm.address_space<gm>>)
+                  outs(%tmp : memref<8xf32, #hivm.address_space<ub>>)
+    hivm.hir.store ins(%tmp : memref<8xf32, #hivm.address_space<ub>>)
+                   outs(%arg1 : memref<8xf32, #hivm.address_space<gm>>)
+    scf.yield %cin : i1
+  }
+  return
+}
+
+// -----
+// Multi-buffer pointer_cast in scf.while before region: hoist to before head,
+// not into after (dominance for before uses / scf.condition).
+// CHECK-LABEL: func.func @while_plan_memory_before_region(
+func.func @while_plan_memory_before_region(
+    %arg0: memref<8xf32, #hivm.address_space<gm>>,
+    %arg1: memref<8xf32, #hivm.address_space<gm>>) {
+  %true = arith.constant true
+  // CHECK: scf.while
+  %r = scf.while (%cond = %true) : (i1) -> i1 {
+    // CHECK: %[[PCAST:.*]] = hivm.hir.pointer_cast({{.*}}) : memref<8xf32, #hivm.address_space<ub>>
+    // CHECK-NEXT: annotation.mark %[[PCAST]] {hivm.multi_buffer = 2 : i32}
+    // CHECK: scf.condition
+    %tmp = memref.alloc() : memref<8xf32, #hivm.address_space<ub>>
+    annotation.mark %tmp {hivm.multi_buffer = 2 : i32} : memref<8xf32, #hivm.address_space<ub>>
+    hivm.hir.load ins(%arg0 : memref<8xf32, #hivm.address_space<gm>>)
+                  outs(%tmp : memref<8xf32, #hivm.address_space<ub>>)
+    hivm.hir.store ins(%tmp : memref<8xf32, #hivm.address_space<ub>>)
+                   outs(%arg1 : memref<8xf32, #hivm.address_space<gm>>)
+    scf.condition(%cond) %cond : i1
+  } do {
+  ^bb0(%cin: i1):
+    // CHECK: } do {
+    // CHECK-NEXT: ^{{.*}}
+    // CHECK-NEXT: scf.yield
+    scf.yield %cin : i1
+  }
+  return
+}

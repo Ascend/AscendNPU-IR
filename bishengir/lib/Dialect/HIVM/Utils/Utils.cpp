@@ -1208,7 +1208,13 @@ LoopLikeOpInterface getParentLoop(Value val) {
 Value createNestedIndexModular(OpBuilder &builder, Operation *op, int modular) {
   LoopLikeOpInterface parentLoop = getParentLoop(op->getResult(0));
   assert(parentLoop && " op has no proper parent loop to do multi buffer");
-  return createNestedIndexModular(builder, parentLoop, modular);
+  auto adapter = MultiBufferLoopAdapter::create(parentLoop);
+  assert(succeeded(adapter) &&
+         "createNestedIndexModular: loop is neither scf.for nor scf.while");
+  // Pass `op` so scf.while places the counter in the same before/after region
+  // as the multi-buffer use (before and after do not dominate each other).
+  return modular == -1 ? adapter->getIterationCounter(builder, op)
+                       : adapter->getModuloIndex(builder, modular, op);
 }
 
 Value createNestedIndexModular(OpBuilder &builder, LoopLikeOpInterface loopOp,
@@ -1216,6 +1222,8 @@ Value createNestedIndexModular(OpBuilder &builder, LoopLikeOpInterface loopOp,
   auto adapter = MultiBufferLoopAdapter::create(loopOp);
   assert(succeeded(adapter) &&
          "createNestedIndexModular: loop is neither scf.for nor scf.while");
+  // No use-site anchor: default to while-after / for-body (legacy path used by
+  // GraphSyncSolver when the rewriter is not pinned to a specific op).
   return modular == -1 ? adapter->getIterationCounter(builder)
                        : adapter->getModuloIndex(builder, modular);
 }
@@ -1229,7 +1237,7 @@ Value createNestedIndexForOp(OpBuilder &builder, Operation *operation) {
   auto adapter = MultiBufferLoopAdapter::create(parentLoop);
   if (failed(adapter))
     return nullptr;
-  return adapter->getIterationCounter(builder);
+  return adapter->getIterationCounter(builder, operation);
 }
 
 static std::optional<BlockArgument> traceBlockArgument(BlockArgument ba) {

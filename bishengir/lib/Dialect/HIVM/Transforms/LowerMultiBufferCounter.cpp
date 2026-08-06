@@ -35,17 +35,6 @@ using namespace mlir::hivm;
 
 namespace {
 
-Block *getLoopBodyBlock(LoopLikeOpInterface loop) {
-  if (!loop)
-    return nullptr;
-  Operation *op = loop.getOperation();
-  if (auto forOp = dyn_cast<scf::ForOp>(op))
-    return forOp.getBody();
-  if (auto whileOp = dyn_cast<scf::WhileOp>(op))
-    return &whileOp.getAfter().front();
-  return nullptr;
-}
-
 struct LowerMultiBufferCounterPass
     : public impl::LowerMultiBufferCounterBase<LowerMultiBufferCounterPass> {
   void runOnOperation() override;
@@ -66,10 +55,11 @@ void LowerMultiBufferCounterPass::runOnOperation() {
   Type i64Ty = rewriter.getI64Type();
   auto memTy = MemRefType::get(/*shape=*/{1}, i64Ty);
 
-  // A loop owns at most one lowered counter. Dedup all counter ops of the same
-  // loop onto the first one so the alloca/init/increment triplet is emitted
-  // exactly once per loop; later clones just reuse that load value.
-  llvm::DenseMap<Operation *, Value> loweredCounter;
+  // Dedup by the block that owns the counter. For scf.while this means before
+  // and after each keep an independent load/increment (SSA values do not
+  // dominate across those regions). Sibling counters in the *same* block still
+  // collapse onto one alloca/load/increment triplet.
+  llvm::DenseMap<Block *, Value> loweredCounter;
   for (hivm::MultiBufferCounterOp counterOp : counterOps) {
     LoopLikeOpInterface loop =
         counterOp->getParentOfType<LoopLikeOpInterface>();
@@ -80,21 +70,23 @@ void LowerMultiBufferCounterPass::runOnOperation() {
       signalPassFailure();
       return;
     }
-    Block *body = getLoopBodyBlock(loop);
+    // Use the counter's own block — not a hardcoded while-after — so a
+    // before-region counter increments before scf.condition and an
+    // after-region counter increments before scf.yield.
+    Block *body = counterOp->getBlock();
     if (!body || !body->getTerminator()) {
       counterOp.emitError("multi-buffer counter loop body has no terminator");
       signalPassFailure();
       return;
     }
-    Operation *loopOp = loop.getOperation();
 
-    // Reuse path: a sibling counter op for this loop is already lowered.
-    if (auto it = loweredCounter.find(loopOp); it != loweredCounter.end()) {
+    // Reuse path: a sibling counter op in this block is already lowered.
+    if (auto it = loweredCounter.find(body); it != loweredCounter.end()) {
       rewriter.replaceOp(counterOp, it->second);
       continue;
     }
 
-    // Fresh loop: function-scoped alloca + zero-init at the entry block.
+    // Fresh body block: function-scoped alloca + zero-init at the entry block.
     rewriter.setInsertionPointToStart(&funcOp.getBody().front());
     auto alloca = rewriter.create<memref::AllocaOp>(counterOp.getLoc(), memTy);
 #ifndef BSPUB_DAVINCI_BISHENGIR_A5
@@ -134,7 +126,7 @@ void LowerMultiBufferCounterPass::runOnOperation() {
     rewriter.create<memref::StoreOp>(terminator->getLoc(), next,
                                      alloca.getResult(), ValueRange{storeIdx});
 
-    loweredCounter.try_emplace(loopOp, counterVal);
+    loweredCounter.try_emplace(body, counterVal);
     rewriter.replaceOp(counterOp, counterVal);
   }
 }
