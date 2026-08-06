@@ -100,22 +100,19 @@ createNewParentOpAfterBubbledUp(RewriterBase &rewriter, size_t tilingDim,
   SmallVector<OpFoldResult, 4> newSrcSizes;
   SmallVector<int64_t, 4> newSrcShape;
   rewriter.setInsertionPoint(childOp);
-  auto maybeSubBlockLoop = findContainingSubblockLoop(childOp);
-  if (failed(maybeSubBlockLoop))
+  auto maybeTilingLoop = findContainingTilingLoop(childOp);
+  if (failed(maybeTilingLoop))
     return failure();
 
-  // We have an assumption here that HIVMBubbleUp is only serving
-  // HIVMTileAndBindSubBlock 1:2. Since we only work on marked extractSlice,
-  // it's safe for now.
   auto size =
       getSingleTileSize(rewriter, childOp->getLoc(), parentOp.getSource(),
-                        tilingDim, maybeSubBlockLoop.value());
+                        tilingDim, maybeTilingLoop.value());
   if (failed(size))
     return failure();
 
-  rewriter.setInsertionPointToStart(maybeSubBlockLoop.value().getBody());
+  rewriter.setInsertionPointToStart(maybeTilingLoop.value().getBody());
   auto offsetAtTileDim = calculateOffsetAtTilingDim(
-      rewriter, childOp->getLoc(), maybeSubBlockLoop.value(),
+      rewriter, childOp->getLoc(), maybeTilingLoop.value(),
       parentOp.getSource(), tilingDim);
 
   auto rankType = cast<ShapedType>(childOp.getSourceType());
@@ -154,26 +151,19 @@ createNewChildOpAfterBubbledUp(RewriterBase &rewriter, size_t tilingDim,
   SmallVector<OpFoldResult, 4> newViewOffsets;
   SmallVector<OpFoldResult, 4> newViewSizes;
   SmallVector<int64_t, 4> newViewShape;
-  auto newSize = getSingleTileSize(
-      rewriter, childOp->getLoc(), createdNewParent->getResult(0), tilingDim,
-      childOp->template getParentOfType<scf::ForOp>());
+  auto containingLoop = childOp->template getParentOfType<scf::ForOp>();
+  if (!containingLoop)
+    return failure();
+  auto newSize = getSingleTileSize(rewriter, childOp->getLoc(),
+                                   createdNewParent->getResult(0), tilingDim,
+                                   containingLoop);
   if (failed(newSize))
     return failure();
 
-  rewriter.setInsertionPointToStart(
-      childOp->template getParentOfType<scf::ForOp>().getBody());
-  OpFoldResult newOffsetAtTileDim;
-  if (hacc::utils::isRegBasedArch(
-          childOp->template getParentOfType<ModuleOp>())) {
-    newOffsetAtTileDim = calculateOffsetAtTilingDim(
-        rewriter, childOp->getLoc(),
-        childOp->template getParentOfType<scf::ForOp>(),
-        createdNewParent->getResult(0), tilingDim);
-  } else {
-    newOffsetAtTileDim = calculateOffsetAtTilingDim(
-        rewriter, childOp->getLoc(),
-        childOp->template getParentOfType<scf::ForOp>(), newSize.value());
-  }
+  rewriter.setInsertionPointToStart(containingLoop.getBody());
+  auto newOffsetAtTileDim =
+      calculateOffsetAtTilingDim(rewriter, childOp->getLoc(), containingLoop,
+                                 createdNewParent->getResult(0), tilingDim);
 
   auto rankType = cast<ShapedType>(childOp.getSourceType());
   if (failed(findCorrespondingSizesOffsetsStrides(
@@ -499,7 +489,7 @@ LogicalResult ExpandBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
     }
 
     // Calculate the offset at tilingDim
-    auto maybeContainingLoop = findContainingSubblockLoop(expandOp);
+    auto maybeContainingLoop = findContainingTilingLoop(expandOp);
     if (tilingDim == -1 || failed(maybeContainingLoop)) {
       return failure();
     }
@@ -858,28 +848,22 @@ createNewInsertForExtractOfInsertSameDim(RewriterBase &rewriter,
   SmallVector<OpFoldResult, 4> newInsertOffsets;
   SmallVector<OpFoldResult, 4> newInsertSizes;
   SmallVector<int64_t, 4> newInsertShape;
-  auto maybeSubBlockLoop = findContainingSubblockLoop(sliceOp);
-  if (failed(maybeSubBlockLoop))
+  auto maybeTilingLoop = findContainingTilingLoop(sliceOp);
+  if (failed(maybeTilingLoop))
     return failure();
   auto size =
       getSingleTileSize(rewriter, sliceOp->getLoc(), parentInsertOp.getSource(),
-                        tilingDim, maybeSubBlockLoop.value());
+                        tilingDim, maybeTilingLoop.value());
   if (failed(size))
     return failure();
   auto rankType = cast<ShapedType>(parentInsertOp.getSourceType());
 
-  rewriter.setInsertionPointToStart(
-      sliceOp->getParentOfType<scf::ForOp>().getBody());
-  OpFoldResult newOffsetAtTileDim;
-  if (hacc::utils::isRegBasedArch(sliceOp->getParentOfType<ModuleOp>())) {
-    newOffsetAtTileDim = calculateOffsetAtTilingDim(
-        rewriter, sliceOp->getLoc(), sliceOp->getParentOfType<scf::ForOp>(),
-        parentInsertOp.getSource(), tilingDim);
-  } else {
-    newOffsetAtTileDim = calculateOffsetAtTilingDim(
-        rewriter, sliceOp->getLoc(), sliceOp->getParentOfType<scf::ForOp>(),
-        size.value());
-  }
+  auto containingLoop = sliceOp->getParentOfType<scf::ForOp>();
+  if (!containingLoop)
+    return failure();
+  rewriter.setInsertionPointToStart(containingLoop.getBody());
+  auto newOffsetAtTileDim = calculateOffsetAtTilingDim(
+      rewriter, sliceOp->getLoc(), containingLoop, size.value());
   if (failed(findCorrespondingSizesOffsetsStrides(
           rewriter, rankType, tilingDim, newOffsetAtTileDim, size.value(),
           newInsertStrides, newInsertOffsets, newInsertSizes, newInsertShape)))
@@ -1266,7 +1250,7 @@ tryCollapseBubbleUpGeneral(tensor::ExtractSliceOp sliceOp,
       for (int64_t inDim : group) {
         if (inDim == leftmostNonUnitDim) {
           // Calculate the offset at tilingDim
-          auto maybeContainingLoop = findContainingSubblockLoop(collapseOp);
+          auto maybeContainingLoop = findContainingTilingLoop(collapseOp);
           if (failed(maybeContainingLoop)) {
             return failure();
           }
@@ -1597,7 +1581,7 @@ bool BufferizationBubbleUpStrategy::isSupportedOperation(
   return true;
 }
 
-// BufferizationBubbleUpStrategy only inserts the propagator before toTensorOp
+// Translate extract_slice(to_tensor) into memref-side propagation links.
 LogicalResult
 BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
                                        PatternRewriter &rewriter) const {
@@ -1623,15 +1607,68 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   if (extractDims.size() != 1)
     return failure();
   auto tilingDim = *extractDims.begin();
-  UnrealizedConversionCastOp upAtToTensor = createBubblePropagatorUpLink(
-      oldMemrefAtToTensor, slicedMemrefAtToTensor,
-      sliceOp.getMixedOffsets()[tilingDim], sliceOp.getMixedSizes()[tilingDim],
-      tilingDim, rewriter);
+
+  UnrealizedConversionCastOp upAtToTensor =
+      createBubblePropagatorUpLinkBefore(
+          toTensorOp, oldMemrefAtToTensor, slicedMemrefAtToTensor,
+          sliceOp.getMixedOffsets()[tilingDim],
+          sliceOp.getMixedSizes()[tilingDim], tilingDim, rewriter);
 
   rewriter.setInsertionPointAfter(toTensorOp);
   auto newToTensorOp = rewriter.create<bufferization::ToTensorOp>(
       sliceOp.getLoc(), upAtToTensor.getResult(0), true, true);
   rewriter.replaceOp(sliceOp, newToTensorOp.getResult());
+  return success();
+}
+
+bool LocalLoadBubbleUpStrategy::isSupportedOperation(
+    tensor::ExtractSliceOp sliceOp) const {
+  return isa_and_nonnull<hivm::LocalLoadOp>(
+      sliceOp.getSource().getDefiningOp());
+}
+
+// Rewrite extract_slice(local_load(memref)) as local_load(UCC(memref)). The
+// upward UCC carries the tile offset and size into the memref propagation
+// pipeline, which can then shrink an allocation or materialize a subview.
+// This strategy intentionally keeps the default single-user capability:
+// cloning a local_load for a multi-user tensor source is not supported.
+LogicalResult
+LocalLoadBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
+                                   PatternRewriter &rewriter) const {
+  auto localLoad =
+      dyn_cast<hivm::LocalLoadOp>(sliceOp.getSource().getDefiningOp());
+  if (!localLoad)
+    return failure();
+
+  auto slicedTensorType =
+      dyn_cast<RankedTensorType>(sliceOp.getResult().getType());
+  auto oldMemrefType = dyn_cast<MemRefType>(localLoad.getAddr().getType());
+  if (!slicedTensorType || !oldMemrefType)
+    return failure();
+
+  auto extractDims = getExtractOrInsertDim(sliceOp);
+  if (extractDims.size() != 1)
+    return failure();
+  auto tilingDim = *extractDims.begin();
+  auto slicedMemrefType =
+      getSlicedMemRefType(oldMemrefType, slicedTensorType);
+
+  auto upAtLocalLoad = createBubblePropagatorUpLinkBefore(
+      localLoad, localLoad.getAddr(), slicedMemrefType,
+      sliceOp.getMixedOffsets()[tilingDim],
+      sliceOp.getMixedSizes()[tilingDim], tilingDim, rewriter);
+
+  rewriter.setInsertionPointAfter(localLoad);
+  auto newLocalLoad = rewriter.create<hivm::LocalLoadOp>(
+      localLoad.getLoc(), slicedTensorType, upAtLocalLoad.getResult(0));
+  for (NamedAttribute attr : localLoad->getAttrs()) {
+    if (!newLocalLoad->hasAttr(attr.getName()))
+      newLocalLoad->setAttr(attr.getName(), attr.getValue());
+  }
+
+  rewriter.replaceOp(sliceOp, newLocalLoad.getResult());
+  if (localLoad->use_empty())
+    rewriter.eraseOp(localLoad);
   return success();
 }
 

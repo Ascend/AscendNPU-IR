@@ -54,15 +54,16 @@
 //     }
 
 #include "bishengir/Dialect/HIVM/Analysis/DimensionAnalyzer.h"
+#include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/BufferizationBubbleUp.h"
 #include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/CSEPattern.h"
 #include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/HoistAffine.h"
 #include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/Pattern.h"
+#include "bishengir/Dialect/HIVM/Transforms/ComposeMemRefViews.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/Helper.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -397,6 +398,10 @@ void populateProducerBubbleUpPatterns(RewritePatternSet &patterns) {
   strategies.push_back(
       std::make_shared<hivm::detail::LoopArgsBubbleUpStrategy>());
   strategies.push_back(
+      std::make_shared<hivm::detail::ExtractSliceBubbleUpStrategy>());
+  strategies.push_back(
+      std::make_shared<hivm::detail::InsertSliceBubbleUpStrategy>());
+  strategies.push_back(
       std::make_shared<hivm::detail::BitcastBubbleUpStrategy>());
   strategies.push_back(std::make_shared<hivm::detail::IfBubbleUpStrategy>());
   strategies.push_back(
@@ -406,76 +411,15 @@ void populateProducerBubbleUpPatterns(RewritePatternSet &patterns) {
       std::make_shared<hivm::detail::SelectBubbleUpStrategy>());
   strategies.push_back(
       std::make_shared<hivm::detail::GatherLoadBubbleUpStrategy>());
+  strategies.push_back(
+      std::make_shared<hivm::detail::BufferizationBubbleUpStrategy>());
+  strategies.push_back(
+      std::make_shared<hivm::detail::LocalLoadBubbleUpStrategy>());
 
   patterns.add<hivm::detail::BubbleUpPattern>(context, std::move(strategies));
+  patterns.add<hivm::detail::BufferizationPropagateUpPattern,
+               hivm::detail::BufferizationPropagateDownPattern>(context);
 }
-
-struct MaterializeToTensorSlicePattern
-    : public OpRewritePattern<tensor::ExtractSliceOp> {
-  using OpRewritePattern<tensor::ExtractSliceOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(tensor::ExtractSliceOp sliceOp,
-                                PatternRewriter &rewriter) const override {
-    if (!sliceOp->hasAttrOfType<UnitAttr>(toBeBubbleUpSlice))
-      return failure();
-    if (!sliceOp.hasUnitStride())
-      return failure();
-
-    auto toTensorOp = dyn_cast_or_null<bufferization::ToTensorOp>(
-        sliceOp.getSource().getDefiningOp());
-    if (!toTensorOp)
-      return failure();
-
-    IRRewriter irRewriter(rewriter);
-    hivm::LoadOp producerLoad = nullptr;
-    SmallVector<Operation *> memrefUsers(
-        toTensorOp.getMemref().getUsers().begin(),
-        toTensorOp.getMemref().getUsers().end());
-    for (Operation *user : memrefUsers) {
-      auto loadOp = dyn_cast<hivm::LoadOp>(user);
-      if (loadOp && loadOp.getDst() == toTensorOp.getMemref()) {
-        producerLoad = loadOp;
-        break;
-      }
-    }
-
-    irRewriter.setInsertionPoint(producerLoad ? producerLoad.getOperation()
-                                              : sliceOp.getOperation());
-    auto maybeDstSubview =
-        createSlicedValue(irRewriter, sliceOp.getLoc(), toTensorOp.getMemref(),
-                          sliceOp.getMixedOffsets(), sliceOp.getMixedSizes(),
-                          sliceOp.getMixedStrides());
-    if (failed(maybeDstSubview))
-      return failure();
-
-    if (producerLoad) {
-      auto maybeSrcSubview =
-          createSlicedValue(irRewriter, producerLoad.getLoc(),
-                            producerLoad.getSrc(), sliceOp.getMixedOffsets(),
-                            sliceOp.getMixedSizes(), sliceOp.getMixedStrides());
-      if (failed(maybeSrcSubview))
-        return failure();
-
-      irRewriter.modifyOpInPlace(producerLoad, [&]() {
-        producerLoad.getSrcMutable().set(maybeSrcSubview.value());
-        producerLoad.getDstMutable().set(maybeDstSubview.value());
-        producerLoad->setAttr(tiledOp, irRewriter.getUnitAttr());
-      });
-    }
-
-    irRewriter.setInsertionPoint(sliceOp);
-    auto newToTensorOp = irRewriter.create<bufferization::ToTensorOp>(
-        sliceOp.getLoc(), maybeDstSubview.value(), true, true);
-    irRewriter.modifyOpInPlace(newToTensorOp, [&]() {
-      newToTensorOp->setAttr(tiledOp, irRewriter.getUnitAttr());
-    });
-
-    irRewriter.replaceOp(sliceOp, newToTensorOp->getResults());
-    if (toTensorOp->use_empty())
-      irRewriter.eraseOp(toTensorOp);
-    return success();
-  }
-};
 
 LogicalResult runProducerBubbleUp(func::FuncOp func) {
   GreedyRewriteConfig config;
@@ -502,13 +446,18 @@ LogicalResult runProducerBubbleUp(func::FuncOp func) {
   return applyBubbleRound(func);
 }
 
-LogicalResult verifyNoPendingBoundarySlices(func::FuncOp func) {
+LogicalResult verifyNoPendingTilingArtifacts(func::FuncOp func) {
   auto walkResult = func.walk([](Operation *op) {
     if (auto insertSliceOp = dyn_cast<tensor::InsertSliceOp>(op);
         insertSliceOp && isMarkedInsertSliceOp(insertSliceOp))
       return WalkResult::interrupt();
     if (auto sliceOp = dyn_cast<tensor::ExtractSliceOp>(op);
         sliceOp && sliceOp->hasAttrOfType<UnitAttr>(toBeBubbleUpSlice))
+      return WalkResult::interrupt();
+    if (auto castOp = dyn_cast<UnrealizedConversionCastOp>(op);
+        castOp &&
+        (castOp->hasAttr(hivm::detail::kBubbleUpPropagateUp) ||
+         castOp->hasAttr(hivm::detail::kBubbleUpPropagateDown)))
       return WalkResult::interrupt();
     return WalkResult::advance();
   });
@@ -517,21 +466,26 @@ LogicalResult verifyNoPendingBoundarySlices(func::FuncOp func) {
 
 // Drive the post-tiling cleanup pipeline to convergence:
 // 1. Bubble the seeded local_store boundary slices up through the producer DAG.
-// 2. Materialize extract_slice(to_tensor(...)) back onto the memref side.
-// 3. Fold nested tiling subviews.
-// 4. Run canonicalize + cse cleanup.
-// 5. Succeed only if no marked boundary slices or cancel-out insert_slices
-//    remain at the end.
+// 2. Propagate extract_slice(to_tensor(...)) through the memref def-use chain.
+// 3. Materialize any remaining upward propagators as memref.subview ops.
+// 4. Fold nested tiling views.
+// 5. Run canonicalize + cse cleanup.
+// 6. Succeed only if no marked boundary slices, cancel-out insert_slices, or
+//    bufferization propagators remain at the end.
 LogicalResult runBubbleUpCleanupPipeline(func::FuncOp func) {
   if (failed(runProducerBubbleUp(func)))
     return failure();
 
-  RewritePatternSet toTensorPatterns(func.getContext());
-  toTensorPatterns.add<MaterializeToTensorSlicePattern>(func.getContext());
-  if (failed(applyPatternsGreedily(func, std::move(toTensorPatterns))))
+  RewritePatternSet bufferizationPostProcess(func.getContext());
+  bufferizationPostProcess
+      .add<hivm::detail::BufferizationPropagatePostProcessPattern>(
+          func.getContext());
+  if (failed(applyPatternsGreedily(func,
+                                   std::move(bufferizationPostProcess))))
     return failure();
 
   RewritePatternSet patternsPost(func.getContext());
+  hivm::populateComposeMemRefViewPatterns(patternsPost, func.getContext());
   patternsPost.add<hivm::detail::BubbleUpSubviewFromTiling>(func.getContext());
   if (failed(applyPatternsGreedily(func, std::move(patternsPost))))
     return failure();
@@ -542,7 +496,7 @@ LogicalResult runBubbleUpCleanupPipeline(func::FuncOp func) {
   if (failed(cleanupPm.run(func)))
     return failure();
 
-  return verifyNoPendingBoundarySlices(func);
+  return verifyNoPendingTilingArtifacts(func);
 }
 
 struct SIMTVFSubTilingPass
