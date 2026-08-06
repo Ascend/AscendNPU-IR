@@ -259,6 +259,63 @@ struct VectorOpToArithBinary : public OpRewritePattern<HIVMVectorOp> {
   }
 };
 
+struct HIVMToArithNotOp : public OpRewritePattern<hivm::VNotOp> {
+  using OpRewritePattern<hivm::VNotOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hivm::VNotOp op,
+                                PatternRewriter &rewriter) const final {
+    if (!operateOnTensorOrScalar(op)) {
+      return op.emitOpError(
+          "expected tensor/scalar operands with at least one shaped input");
+    }
+
+    if (!operateOnTypes<IntegerType>(op)) {
+      return op.emitOpError("expected integer operands");
+    }
+
+    if (!transpose_check(op)) {
+      return op.emitOpError("unsupported transpose form");
+    }
+
+    if (!broadcast_split<hivm::VNotOp>(rewriter, op)) {
+      return op.emitOpError("failed to split broadcast");
+    }
+
+    SmallVector<Value> hivmOperands = getHIVMVectorOperands(op);
+    if (hivmOperands.empty()) {
+      return op.emitOpError("missing HIVM vector operand");
+    }
+
+    Type resultType = op->getResult(0).getType();
+    auto elementType = dyn_cast<IntegerType>(getElementTypeOrSelf(resultType));
+    if (!elementType) {
+      return op.emitOpError("expected integer result type");
+    }
+
+    Value src =
+        splatScalarOperand(rewriter, op.getLoc(), hivmOperands[0], resultType);
+    if (!src) {
+      return op.emitOpError("failed to splat scalar operand");
+    }
+
+    Value allOnes;
+    if (auto shapedType = dyn_cast<ShapedType>(resultType)) {
+      auto attr = DenseElementsAttr::get(
+          shapedType, rewriter.getIntegerAttr(elementType, -1));
+      allOnes =
+          rewriter.create<arith::ConstantOp>(op.getLoc(), resultType, attr);
+    } else {
+      allOnes = rewriter.create<arith::ConstantOp>(
+          op.getLoc(), resultType, rewriter.getIntegerAttr(elementType, -1));
+    }
+
+    Value result =
+        rewriter.create<arith::XOrIOp>(op.getLoc(), resultType, src, allOnes);
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+};
+
 /*
 * vcast -> arith.extsi
 * The round_mode attribute value of the hivm.hir.vcast Op must be rint.
@@ -984,6 +1041,7 @@ struct HIVMToArithMulExtOp: public OpRewritePattern<hivm::VMulExtOp> {
 void mlir::hivm::populateHIVMToArithConversionPatterns(RewritePatternSet &patterns) {
     patterns.add<
         VectorOpToArithBinary<arith::AndIOp, hivm::VAndOp, true, false, IntegerType::Signless, IntegerType>,
+        VectorOpToArithBinary<arith::XOrIOp, hivm::VXorOp, true, false, IntegerType::Signless, IntegerType>,
         VectorOpToArithBinary<arith::OrIOp, hivm::VOrOp, true, false, IntegerType::Signless, IntegerType>,
         VectorOpToArithBinary<arith::AddFOp, hivm::VAddOp, true, false, IntegerType::Signless, FloatType>,
         VectorOpToArithBinary<arith::AddIOp, hivm::VAddOp, true, false, IntegerType::Signless, IntegerType>,
@@ -1001,6 +1059,7 @@ void mlir::hivm::populateHIVMToArithConversionPatterns(RewritePatternSet &patter
         VectorOpToArithBinary<arith::RemUIOp, hivm::VModUIOp, true, false, IntegerType::Signless, IntegerType>,
         VectorOpToArithBinary<arith::RemSIOp, hivm::VModOp, true, false, IntegerType::Signless, IntegerType>,
         VectorOpToArithBinary<arith::RemFOp, hivm::VModOp, true, false, IntegerType::Signless, FloatType>,
+        HIVMToArithNotOp,
         HIVMToArithCastOp,
         HIVMToArithCmpOp,
         HIVMToArithBitcastOp,
