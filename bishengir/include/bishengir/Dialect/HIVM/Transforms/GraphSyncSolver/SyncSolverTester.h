@@ -74,6 +74,7 @@ private:
   int numOperations{20};
   int numPointers{10};
   bool enableMultiBuffer{false};
+  bool performanceOnly{false};
   SyncMode syncMode{SyncMode::TEST_INTRA_CORE_MODE};
   SyncSolverVersion solverVersion{SyncSolverVersion::V1};
   std::unique_ptr<std::mt19937> randGenerator;
@@ -88,9 +89,9 @@ private:
 public:
   SyncTester(int numOperations, int numPointers, bool enableMultiBuffer,
              bool enableCrossCoreMode, SyncSolverVersion solverVersion,
-             std::optional<int64_t> seed = {})
+             std::optional<int64_t> seed = {}, bool performanceOnly = false)
       : numOperations(numOperations), numPointers(numPointers),
-        enableMultiBuffer(enableMultiBuffer),
+        enableMultiBuffer(enableMultiBuffer), performanceOnly(performanceOnly),
         syncMode(enableCrossCoreMode ? SyncMode::TEST_CROSS_CORE_MODE
                                      : SyncMode::TEST_INTRA_CORE_MODE),
         solverVersion(solverVersion) {
@@ -103,9 +104,13 @@ public:
   }
 
   // Generate a full solver test, run the solver and simulate the result.
+  // When performanceOnly is set, only run the solver (skip dump / verify).
   llvm::LogicalResult test();
 
-  static size_t getOptionsNum() { return 6; }
+  // Required: num_runs, init_seed, num_ops, num_ptrs, multibuffer, cross-core.
+  // Optional 7th: performance-only (default 0).
+  static size_t getMinOptionsNum() { return 6; }
+  static size_t getMaxOptionsNum() { return 7; }
 
   // Helper to toggle running as test mode (external use).
   static void runTestMode(const SmallVector<int64_t> &options,

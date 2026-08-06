@@ -407,7 +407,8 @@ def GraphSyncSolver : Pass<"hivm-graph-sync-solver", "func::FuncOp"> {
                  ListOption<"syncTesterOptions", "sync-tester-options",
                             "int64_t",
                             "Sync-tester options (num_runs, init_seed, "
-                            "num_ops, num_ptrs, enable-multibuffer)">,
+                            "num_ops, num_ptrs, enable-multibuffer, "
+                            "enable-cross-core[, performance-only=0])">,
   ];
 }
 

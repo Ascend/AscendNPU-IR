@@ -503,8 +503,9 @@ llvm::LogicalResult SyncTester::runSimulation(int runId, bool debugPrint) {
                corePipe);
         auto &triggeredOps = triggeredSetFlagOps[getTriggeredGroup(waitFlagOp)];
         assert(!waitFlagOp->eventIds.empty());
-        auto eventId = waitFlagOp->eventIds[loopIdx % static_cast<int>(
-            waitFlagOp->eventIds.size())];
+        auto eventId =
+            waitFlagOp->eventIds[loopIdx %
+                                 static_cast<int>(waitFlagOp->eventIds.size())];
         auto it = triggeredOps.find(eventId);
         if (it != triggeredOps.end()) {
           assert((*it) == eventId);
@@ -794,8 +795,9 @@ llvm::LogicalResult SyncTester::runSimulation(int runId, bool debugPrint) {
   return success();
 }
 
-// High-level test runner: generate random test, run solver, generate result
-// ops, and run multiple simulation runs to verify correctness.
+// High-level test runner: generate random test and run the solver. By default
+// also generate result ops and run simulations to verify correctness; when
+// performanceOnly is set, stop after solve (no IR dump / simulation).
 llvm::LogicalResult SyncTester::test() {
   auto funcIr = getGeneratedRandomTest();
   LLVM_DEBUG(llvm::dbgs() << "before-tester:\n"
@@ -822,6 +824,9 @@ llvm::LogicalResult SyncTester::test() {
 
   solver->solve();
   DEBUG_WITH_TYPE("hivm-gss-profile", { solver->perfInfo.print(); });
+
+  if (performanceOnly)
+    return llvm::success();
 
   CodeGenerator codeGen(std::move(solver));
   codeGen.generateFuncIrResultOps();
@@ -856,10 +861,13 @@ llvm::LogicalResult SyncTester::test() {
 // If environment indicates tester mode, parse env vars and run SyncTester.
 void SyncTester::runTestMode(const SmallVector<int64_t> &options,
                              const SyncSolverOptions &solverOptions) {
-  if (options.size() != SyncTester::getOptionsNum()) {
-    llvm::report_fatal_error(("Expected size of sync-tester options to be equal to " +
-                              std::to_string(SyncTester::getOptionsNum()))
-                              .c_str());
+  if (options.size() < SyncTester::getMinOptionsNum() ||
+      options.size() > SyncTester::getMaxOptionsNum()) {
+    llvm::report_fatal_error(
+        ("Expected size of sync-tester options to be in [" +
+         std::to_string(SyncTester::getMinOptionsNum()) + ", " +
+         std::to_string(SyncTester::getMaxOptionsNum()) + "]")
+            .c_str());
     return;
   }
 
@@ -869,6 +877,9 @@ void SyncTester::runTestMode(const SmallVector<int64_t> &options,
   int64_t numPointers = options[3];
   int64_t enableMultiBuffer = options[4];
   int64_t enableCrossCoreMode = options[5];
+  // Optional trailing flag; default off so existing 6-option invocations stay
+  // on the full dump + simulation path.
+  bool performanceOnly = options.size() > 6 && options[6] != 0;
 
   llvm::outs() << "tester-options:"
                << " seed(" << initSeed << ")"
@@ -876,10 +887,12 @@ void SyncTester::runTestMode(const SmallVector<int64_t> &options,
                << " num_ptrs(" << numPointers << ")"
                << " multibuffer(" << enableMultiBuffer << ")"
                << " enableCrossCoreMode(" << enableCrossCoreMode << ")"
+               << " performanceOnly(" << performanceOnly << ")"
                << "\n";
 
   SyncTester tester(numOperations, numPointers, enableMultiBuffer,
-                    enableCrossCoreMode, solverOptions.solverVersion, initSeed);
+                    enableCrossCoreMode, solverOptions.solverVersion, initSeed,
+                    performanceOnly);
 
   llvm::LogicalResult result = llvm::success();
   for (int64_t runI = 0; runI < numRuns; ++runI) {
