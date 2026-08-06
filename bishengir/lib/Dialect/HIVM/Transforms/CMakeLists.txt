@@ -63,7 +63,6 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   CVPipelining.cpp
   EnableHIVMCCompatiblePrint.cpp
   EnableMultiBuffer.cpp
-  ExposeMemrefWriteToTensor.cpp
   FlattenOps.cpp
   HIVMAggregatedDecomposeOp.cpp
   HIVMBubbleUpExtractSlice.cpp
@@ -116,6 +115,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   MemoryDisplay.cpp
   NormalizeBitwiseSelect.cpp
   NormalizeConvOps.cpp
+  NormalizeToTensorOp.cpp
   TensorCopyInsertion.cpp
   NormalizeMatmul.cpp
   OptMemPlanForPipeline.cpp

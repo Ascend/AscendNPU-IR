@@ -131,7 +131,7 @@ bufferizationPipeline(OpPassManager &pm,
   // TODO: support process toTensorOp in one-shot-bufferize.
   // Expose memref-level writes (e.g., hivm.hir.load) to tensor-level analysis
   // by replacing to_tensor writable with hivm.hir.copy
-  pm.nest<func::FuncOp>().addPass(hivm::createExposeMemrefWriteToTensorPass());
+  pm.nest<func::FuncOp>().addPass(hivm::createNormalizeToTensorOpPass());
   bufferization::OneShotBufferizationOptions oneShotOptions;
   oneShotOptions.bufferizeFunctionBoundaries = true;
   oneShotOptions.setFunctionBoundaryTypeConversion(
