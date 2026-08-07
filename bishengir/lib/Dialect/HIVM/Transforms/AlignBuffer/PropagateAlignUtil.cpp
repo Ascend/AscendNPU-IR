@@ -16,6 +16,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/AlignBuffer/Util.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
@@ -23,6 +24,7 @@
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Dominance.h"
 #include "mlir/IR/Value.h"
 #include "llvm/Support/LogicalResult.h"
@@ -550,6 +552,8 @@ LogicalResult propagateDownAlignInfo(
             })
             .Case([&rewriter, &v, &alignDims, &alignBytes, &alignDimAttrName,
                    &alignBytesAttrName](scf::YieldOp scfYieldOp) {
+              if (hacc::utils::isRegBasedArch(scfYieldOp->getParentOfType<ModuleOp>()))
+                return failure();
               return propagateAlignDown(rewriter, scfYieldOp, v, alignDims,
                                         alignBytes, alignDimAttrName,
                                         alignBytesAttrName);
@@ -813,7 +817,8 @@ mlir::LogicalResult propagateAlignUp(
           DenseI32ArrayAttr::get(rewriter.getContext(), unionAlignBytes));
     });
 
-    if (failed(processYieldOp(rewriter, markedOp, alignDims, alignBytes,
+    if (!hacc::utils::isRegBasedArch(markedOp->getParentOfType<ModuleOp>()) &&
+        failed(processYieldOp(rewriter, markedOp, alignDims, alignBytes,
                                 alignDimAttrName, alignBytesAttrName))) {
         return failure();
     }
