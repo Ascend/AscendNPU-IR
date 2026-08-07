@@ -794,6 +794,8 @@ void EnableStrideAlignPass::runOnOperation() {
 
     IRRewriter rewriter(context);
     handlePropagateFailure(rewriter, funcOp);
+    if (archIsRegbased)
+      materializeRemainingStaticUBLayoutCasts(rewriter, funcOp);
 
     // Master metadata contract.
     funcOp->setAttr(hivm::StorageAlignedAttr::name, UnitAttr::get(context));

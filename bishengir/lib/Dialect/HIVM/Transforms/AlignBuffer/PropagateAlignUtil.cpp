@@ -1599,6 +1599,52 @@ void mlir::hivm::handlePropagateFailure(RewriterBase &rewriter,
   });
 }
 
+void mlir::hivm::materializeRemainingStaticUBLayoutCasts(RewriterBase &rewriter,
+                                                         func::FuncOp funcOp) {
+  SmallVector<UnrealizedConversionCastOp> conversions;
+  funcOp.walk([&](UnrealizedConversionCastOp conversion) {
+    conversions.push_back(conversion);
+  });
+
+  for (UnrealizedConversionCastOp conversion : conversions) {
+    if (conversion->use_empty()) {
+      rewriter.eraseOp(conversion);
+      continue;
+    }
+    if (conversion.getInputs().size() != 1 ||
+        conversion.getOutputs().size() != 1)
+      continue;
+    Value src = conversion.getInputs()[0];
+    Value dst = conversion.getOutputs()[0];
+    auto srcType = dyn_cast<MemRefType>(src.getType());
+    auto dstType = dyn_cast<MemRefType>(dst.getType());
+    if (!srcType || !dstType)
+      continue;
+    auto srcSpace =
+        dyn_cast_or_null<hivm::AddressSpaceAttr>(srcType.getMemorySpace());
+    auto dstSpace =
+        dyn_cast_or_null<hivm::AddressSpaceAttr>(dstType.getMemorySpace());
+    auto srcLayout = dyn_cast<StridedLayoutAttr>(srcType.getLayout());
+    assert(!srcType.getElementType().isInteger(1) &&
+           "PropagateAlignUtil: i1 type is not supported");
+    if (!srcSpace || !dstSpace ||
+        srcSpace.getAddressSpace() != hivm::AddressSpace::UB ||
+        dstSpace.getAddressSpace() != hivm::AddressSpace::UB ||
+        srcType.getShape() != dstType.getShape() ||
+        srcType.getElementType() != dstType.getElementType() ||
+        !srcType.hasStaticShape())
+      continue;
+
+    rewriter.setInsertionPoint(conversion);
+    Value newDst =
+        rewriter.create<memref::AllocOp>(conversion.getLoc(), dstType);
+    rewriter.create<hivm::CopyOp>(conversion.getLoc(), TypeRange{}, src,
+                                  newDst);
+    rewriter.replaceAllUsesWith(dst, newDst);
+    rewriter.eraseOp(conversion);
+  }
+}
+
 void mlir::hivm::populatePropagateAlignUpToRootAllocationPattern(
     RewritePatternSet &patterns, std::string alignDimAttrName,
     std::string alignBytesAttrName) {
