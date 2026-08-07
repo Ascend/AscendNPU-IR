@@ -2036,8 +2036,8 @@ MemPlan::GetReorderRootStorageEntry(StorageEntry *rootStorageEntry) {
     auto storageEntryVecOrderCmp = [](StorageEntry *a, StorageEntry *b) {
       return a->bufInfo->constBits > b->bufInfo->constBits;
     };
-    llvm::sort(memUniqueStorageEntryVec.begin(),
-               memUniqueStorageEntryVec.end(), storageEntryVecOrderCmp);
+    llvm::sort(memUniqueStorageEntryVec.begin(), memUniqueStorageEntryVec.end(),
+               storageEntryVecOrderCmp);
     llvm::sort(touchDmaStorageEntryVec.begin(), touchDmaStorageEntryVec.end(),
                storageEntryVecOrderCmp);
     llvm::sort(touchPipeScalarStorageEntryVec.begin(),
@@ -3008,17 +3008,17 @@ private:
       DenseMap<Value, SmallVector<uint64_t>> &buffer2Offsets,
       DenseMap<int32_t, SmallVector<uint64_t>> &id2Offsets);
 
-  void populateBufferAddressToAllocOp(
-      RewritePatternSet &patterns,
-      DenseMap<Value, SmallVector<uint64_t>> buffer2Offsets) {
+  LogicalResult populateBufferAddressToAllocOp(
+      func::FuncOp &funcOp,
+      const DenseMap<Value, SmallVector<uint64_t>> &buffer2Offsets) {
     if (this->memMode == MemPlanMode::LOCAL_MEM_PLAN) {
-      patterns.add<MemrefAllocaOpToPointerCastOpPattern>(patterns.getContext(),
-                                                         buffer2Offsets);
-    } else {
-      assert(this->memMode == MemPlanMode::GLOBAL_WORKSPACE_PLAN);
-      patterns.add<UpdateWorkSpaceAllocaOpOffsetPattern>(patterns.getContext(),
-                                                         buffer2Offsets);
+      // Convert every memref.alloc into an hivm.hir.pointer_cast bound to its
+      // planned address(es).
+      return walkAllocToPointerCast(funcOp, buffer2Offsets);
     }
+    assert(this->memMode == MemPlanMode::GLOBAL_WORKSPACE_PLAN);
+    // Attach the planned offset(s) to every memref_ext.alloc_workspace.
+    return walkUpdateAllocWorkspaceOffset(funcOp, buffer2Offsets);
   }
   bool checkSimilarPointerCastOps(hivm::PointerCastOp op1,
                                   hivm::PointerCastOp op2) const;
@@ -3262,9 +3262,7 @@ void PlanMemoryPass::runOnOperation() {
   for (auto [funcOp, buffer2Offsets] : buffer2OffsetMap) {
     LDBG("\n------------funcOp : " << funcOp.getName() << "---------------\n");
     updateBuffer2OffsetsForFuncOp(funcOp, buffer2Offsets, id2Offsets);
-    RewritePatternSet patterns(&getContext());
-    populateBufferAddressToAllocOp(patterns, buffer2Offsets);
-    if (failed(applyPatternsGreedily(funcOp, std::move(patterns)))) {
+    if (failed(populateBufferAddressToAllocOp(funcOp, buffer2Offsets))) {
       signalPassFailure();
       return;
     }

@@ -2841,17 +2841,17 @@ public:
   void runOnOperation() override;
 
 private:
-  void PopulateBufferAddressToAllocOp(
-      RewritePatternSet &patterns,
-      DenseMap<Value, SmallVector<uint64_t>> buffer2Offsets) {
+  LogicalResult PopulateBufferAddressToAllocOp(
+      func::FuncOp &funcOp,
+      const DenseMap<Value, SmallVector<uint64_t>> &buffer2Offsets) {
     if (this->memMode == MemPlanMode::LOCAL_MEM_PLAN) {
-      patterns.add<MemrefAllocaOpToPointerCastOpPattern>(patterns.getContext(),
-                                                         buffer2Offsets);
-    } else {
-      assert(this->memMode == MemPlanMode::GLOBAL_WORKSPACE_PLAN);
-      patterns.add<UpdateWorkSpaceAllocaOpOffsetPattern>(patterns.getContext(),
-                                                         buffer2Offsets);
+      // Convert every memref.alloc into an hivm.hir.pointer_cast bound to its
+      // planned address(es).
+      return walkAllocToPointerCast(funcOp, buffer2Offsets);
     }
+    assert(this->memMode == MemPlanMode::GLOBAL_WORKSPACE_PLAN);
+    // Attach the planned offset(s) to every memref_ext.alloc_workspace.
+    return walkUpdateAllocWorkspaceOffset(funcOp, buffer2Offsets);
   }
 
   void UpdateId2Offsets(func::FuncOp &funcOp,
@@ -3205,9 +3205,7 @@ void PlanMemoryPass::runOnOperation() {
   for (auto [funcOp, buffer2Offsets] : buffer2OffsetMap) {
     LDBG("\n------------funcOp : " << funcOp.getName() << "---------------\n");
     UpdateBuffer2OffsetsForFuncOp(funcOp, buffer2Offsets, id2Offsets);
-    RewritePatternSet patterns(&getContext());
-    PopulateBufferAddressToAllocOp(patterns, buffer2Offsets);
-    if (failed(applyPatternsGreedily(funcOp, std::move(patterns)))) {
+    if (failed(PopulateBufferAddressToAllocOp(funcOp, buffer2Offsets))) {
       signalPassFailure();
       return;
     }

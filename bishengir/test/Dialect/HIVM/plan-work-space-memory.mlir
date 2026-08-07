@@ -53,6 +53,7 @@ module {
 
 // -----
 module {
+  // CHECK-NOT-LABEL: func.func @test_mem_global_workspace_without_load
   func.func @test_mem_global_workspace_without_load(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>},
                                                     %arg1: memref<1xi32>) {
     // expected-error@+1 {{'memref_ext.alloc_workspace' op error: read before first write}}
