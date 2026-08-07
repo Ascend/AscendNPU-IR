@@ -22,8 +22,10 @@
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/Interfaces/ControlFlowInterfaces.h"
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/LogicalResult.h"
 #include <optional>
@@ -190,6 +192,59 @@ void createPropagatorsDown(Operation *op,
 void createPropagatorsDown(Operation *op,
                            UnrealizedConversionCastOp propagateOp,
                            PatternRewriter &rewriter);
+
+/// Tracks unique propagate_up / propagate_down sites so each can be queried
+/// and applied independently.
+class PropagatorSiteSet {
+public:
+  /// Record `operand` as an up site. Returns true if it was newly added.
+  bool addUp(OpOperand *operand) {
+    return operand && upSites.insert(operand).second;
+  }
+
+  /// Record `value` as a down site. Returns true if it was newly added.
+  bool addDown(Value value) {
+    return value && downSites.insert(value).second;
+  }
+
+  bool containsUp(OpOperand *operand) const {
+    return operand && upSites.contains(operand);
+  }
+
+  bool containsDown(Value value) const {
+    return value && downSites.contains(value);
+  }
+
+  const DenseSet<OpOperand *> &getUpSites() const { return upSites; }
+  const DenseSet<Value> &getDownSites() const { return downSites; }
+
+private:
+  DenseSet<OpOperand *> upSites;
+  DenseSet<Value> downSites;
+};
+
+/// Collect unique propagate_up operands and propagate_down values reachable
+/// from `seed` along RegionBranch forwarded edges of `branch`.
+///
+/// Returns failure if `seed` is not on any forwarded edge (e.g. scf.for IV).
+/// While before/after channels stay separate because they share no edges.
+///
+/// Example for `scf.for` seed = init operand value:
+///   getUpSites()   -> {init operand, yield operand}
+///   getDownSites() -> {iter_arg, loop result}
+FailureOr<PropagatorSiteSet>
+collectRelatedPropagatorSites(RegionBranchOpInterface branch, Value seed);
+
+/// Partition all RegionBranch forwarded edges of `branch` into independent
+/// up/down site groups (connected components).
+///
+/// Each group is a `PropagatorSiteSet` whose ups/downs are mutually reachable
+/// and disjoint from other groups. Typical examples:
+/// - `scf.for` with N iter_args -> N groups (one per carried value)
+/// - `scf.while` -> before-channel groups + after-channel groups
+/// - `scf.if` / `scope` with N results -> N groups
+SmallVector<PropagatorSiteSet>
+collectIndependentPropagatorSiteGroups(RegionBranchOpInterface branch);
 
 /// Get propagated core type from cast op, defaulting to CUBE_OR_VECTOR.
 TCoreType getCoreType(UnrealizedConversionCastOp op);
