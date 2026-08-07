@@ -541,13 +541,52 @@ UnrealizedConversionCastOp getUpPropagator(OpOperand *operand) {
   return nullptr;
 }
 
-UnrealizedConversionCastOp getDownPropagator(OpResult res) {
-  if (!res.hasOneUse())
+UnrealizedConversionCastOp getDownPropagator(OpResult result) {
+  if (!result.hasOneUse())
     return nullptr;
-  auto uccOp = dyn_cast<UnrealizedConversionCastOp>(*res.user_begin());
-  if (uccOp && uccOp->hasAttr(kPropagateDownAttr))
-    return uccOp;
+  auto propagateOp =
+      dyn_cast<UnrealizedConversionCastOp>(*result.user_begin());
+  if (propagateOp && propagateOp->hasAttr(kPropagateDownAttr))
+    return propagateOp;
   return nullptr;
+}
+
+UnrealizedConversionCastOp getDownPropagator(Value value) {
+  if (auto propagateOp =
+          value.getDefiningOp<UnrealizedConversionCastOp>();
+      propagateOp && propagateOp->hasAttr(kPropagateDownAttr))
+    return propagateOp;
+  for (Operation *user : value.getUsers()) {
+    auto propagateOp = dyn_cast<UnrealizedConversionCastOp>(user);
+    if (propagateOp && propagateOp->hasAttr(kPropagateDownAttr))
+      return propagateOp;
+  }
+  return nullptr;
+}
+
+UnrealizedConversionCastOp getUpSiteRequirement(OpOperand *operand) {
+  if (auto up = getUpPropagator(operand))
+    return up;
+  auto defOp = operand->get().getDefiningOp<UnrealizedConversionCastOp>();
+  if (defOp && defOp->hasAttr(kPropagateDownAttr))
+    return defOp;
+  return nullptr;
+}
+
+UnrealizedConversionCastOp getDownSiteRequirement(Value value) {
+  if (auto down = getDownPropagator(value))
+    return down;
+  for (Operation *user : value.getUsers()) {
+    auto propagateOp = dyn_cast<UnrealizedConversionCastOp>(user);
+    if (propagateOp && propagateOp->hasAttr(kPropagateUpAttr))
+      return propagateOp;
+  }
+  return nullptr;
+}
+
+bool haveSamePropagation(UnrealizedConversionCastOp lhs,
+                         UnrealizedConversionCastOp rhs) {
+  return extractPropagatorInfo(lhs) == extractPropagatorInfo(rhs);
 }
 
 hivm::StoreOp insertStore(Value value, Location loc, PatternRewriter &rewriter,

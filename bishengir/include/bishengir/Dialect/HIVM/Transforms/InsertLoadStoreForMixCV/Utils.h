@@ -195,7 +195,7 @@ void createPropagatorsDown(Operation *op,
 
 /// Tracks unique propagate_up / propagate_down sites so each can be queried
 /// and applied independently.
-class PropagatorSiteSet {
+struct PropagatorSiteSet {
 public:
   /// Record `operand` as an up site. Returns true if it was newly added.
   bool addUp(OpOperand *operand) {
@@ -256,7 +256,25 @@ SmallVector<AddressSpace, 2> getAddressSpace(UnrealizedConversionCastOp op);
 UnrealizedConversionCastOp getUpPropagator(OpOperand *operand);
 
 /// Return the down-propagator attached to a result, if present.
-UnrealizedConversionCastOp getDownPropagator(OpResult res);
+UnrealizedConversionCastOp getDownPropagator(OpResult result);
+
+/// Return the down-propagator attached to an arbitrary value, if present.
+UnrealizedConversionCastOp getDownPropagator(Value value);
+
+/// Requirement present at an up site (yield / region predecessor operand).
+/// Producers often leave a `propagate_down` value here before control-flow has
+/// mirrored a matching `propagate_up`.
+UnrealizedConversionCastOp getUpSiteRequirement(OpOperand *operand);
+
+/// Requirement present at a down site (result / block argument). Consumers
+/// often attach a `propagate_up` user here before control-flow has mirrored a
+/// matching `propagate_down`.
+UnrealizedConversionCastOp getDownSiteRequirement(Value value);
+
+/// Return whether two propagators carry the same core and address-space
+/// requirement.
+bool haveSamePropagation(UnrealizedConversionCastOp lhs,
+                         UnrealizedConversionCastOp rhs);
 
 /// Insert a store that materializes `value` into a local buffer. UB targets use
 /// memref.alloc; GM workspace targets use memref_ext.alloc_workspace.

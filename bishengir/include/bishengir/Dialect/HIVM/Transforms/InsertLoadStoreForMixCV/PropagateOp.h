@@ -27,6 +27,7 @@ namespace mlir {
 namespace hivm {
 
 enum PropagatePriority : uint8_t {
+  ControlFlowPropagate = 50,
   DefaultPropagateDown = 40,
   RegbasePropagateDown = 41,
   DefaultPropagateUp = 30,
@@ -60,11 +61,9 @@ enum class PropagationStep {
 /// }
 /// ```
 ///
-/// Region-carrying ops (`scf.for`, `scf.while`, `scf.if`, `scf.index_switch`,
-/// `scope.scope`, and their terminators / block arguments) are handled uniformly
-/// via `RegionBranchOpInterface`: forwarded entry/terminator operands are zipped
-/// with successor inputs, and markers are mirrored across the connected
-/// component so the producer, block argument, yield operand, and result agree.
+/// Region-carrying ops are only crossed directly during the final `ALL` step.
+/// Earlier steps leave control-flow propagation to
+/// `ControlFlowPropagatePattern`, which requires a majority agreement.
 ///
 /// `step` gates which core type is propagated in the current rewrite round:
 /// step LOCAL handles mixed cube/vector markers, step UB handles vector markers,
@@ -122,6 +121,25 @@ private:
 
   PropagationStep step;
   bool isRegBaseTarget;
+};
+
+/// Propagates an agreed requirement across each independent forwarded-value
+/// group of a RegionBranch operation. A requirement must be the unique most
+/// common propagator and occur at no fewer than half of the group's shaped
+/// up/down sites.
+struct ControlFlowPropagatePattern
+    : public OpInterfaceRewritePattern<RegionBranchOpInterface> {
+public:
+  explicit ControlFlowPropagatePattern(MLIRContext *ctx, PropagationStep step)
+      : OpInterfaceRewritePattern(
+            ctx, /*benefit=*/PropagatePriority::ControlFlowPropagate),
+        step(step) {}
+
+private:
+  LogicalResult matchAndRewrite(RegionBranchOpInterface branch,
+                                PatternRewriter &rewriter) const override;
+
+  PropagationStep step;
 };
 
 } // namespace hivm

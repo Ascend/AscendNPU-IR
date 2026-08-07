@@ -82,15 +82,100 @@ propagateAlongRegionEdges(RegionBranchOpInterface branch, Value seed,
   return success();
 }
 
-static bool shouldSkipRegionBranchStep(PropagationStep step, Operation *op) {
-  if (step == PropagationStep::LOCAL)
-    return true;
-  if (step == PropagationStep::GM && isa<scf::WhileOp>(op))
-    return true;
-  return false;
-}
+struct Candidate {
+  UnrealizedConversionCastOp propagator;
+  size_t count = 0;
+};
 
 } // namespace
+
+
+LogicalResult ControlFlowPropagatePattern::matchAndRewrite(
+    RegionBranchOpInterface branch, PatternRewriter &rewriter) const {
+  if (step == PropagationStep::LOCAL || step == PropagationStep::ALL)
+    return failure();
+
+  bool changed = false;
+  for (const PropagatorUtil::PropagatorSiteSet &sites :
+       PropagatorUtil::collectIndependentPropagatorSiteGroups(branch)) {
+
+    SmallVector<Candidate> candidates;
+    size_t shapedSiteCount = 0;
+
+    auto countPropagator = [&](UnrealizedConversionCastOp propagator) {
+      if (!propagator || !checkPropagate(step, propagator))
+        return;
+      auto *candidate = llvm::find_if(candidates, [&](const Candidate &other) {
+        return PropagatorUtil::haveSamePropagation(propagator,
+                                                   other.propagator);
+      });
+      if (candidate == candidates.end())
+        candidates.push_back({propagator, 1});
+      else
+        ++candidate->count;
+    };
+
+    for (OpOperand *operand : sites.getUpSites()) {
+      if (!isa<ShapedType>(operand->get().getType()))
+        continue;
+      ++shapedSiteCount;
+      countPropagator(PropagatorUtil::getUpSiteRequirement(operand));
+    }
+    for (Value value : sites.getDownSites()) {
+      if (!isa<ShapedType>(value.getType()) || value.use_empty())
+        continue;
+      ++shapedSiteCount;
+      countPropagator(PropagatorUtil::getDownSiteRequirement(value));
+    }
+    if (shapedSiteCount == 0 || candidates.empty())
+      continue;
+
+    Candidate *majority = nullptr;
+    bool tied = false;
+    for (Candidate &candidate : candidates) {
+      if (!majority || candidate.count > majority->count) {
+        majority = &candidate;
+        tied = false;
+      } else if (candidate.count == majority->count) {
+        tied = true;
+      }
+    }
+    if (tied || majority->count * 2 < shapedSiteCount ||
+        majority->count == shapedSiteCount)
+      continue;
+
+    bool groupChanged = false;
+    for (OpOperand *operand : sites.getUpSites()) {
+      if (!isa<ShapedType>(operand->get().getType()))
+        continue;
+      auto existing = PropagatorUtil::getUpPropagator(operand);
+      if (existing && PropagatorUtil::haveSamePropagation(
+                          existing, majority->propagator))
+        continue;
+      PropagatorUtil::createPropagatorUp(operand, majority->propagator,
+                                         rewriter);
+      groupChanged = true;
+    }
+    for (Value value : sites.getDownSites()) {
+      if (!isa<ShapedType>(value.getType()) || value.use_empty())
+        continue;
+      auto existing = PropagatorUtil::getDownPropagator(value);
+      if (existing && PropagatorUtil::haveSamePropagation(
+                          existing, majority->propagator))
+        continue;
+      PropagatorUtil::createPropagatorDown(value, majority->propagator,
+                                           rewriter);
+      groupChanged = true;
+    }
+    if (!groupChanged)
+      continue;
+    changed = true;
+    LDBG("Propagated majority requirement across RegionBranch group in "
+         << branch << " (count=" << majority->count
+         << ", sites=" << shapedSiteCount << ")");
+  }
+  return success(changed);
+}
 
 LogicalResult PropagateDownPattern::propagateDownDmaOp(
     hivm::HIVMStructuredOp op, OpOperand &operand,
@@ -155,14 +240,14 @@ PropagateDownPattern::matchAndRewrite(UnrealizedConversionCastOp propagateOp,
     auto newRes =
         TypeSwitch<Operation *, LogicalResult>(user)
             .Case([&](RegionBranchOpInterface branch) {
-              if (shouldSkipRegionBranchStep(step, branch.getOperation()))
+              if (step != PropagationStep::ALL)
                 return failure();
               return propagateAlongRegionEdges(branch, use->get(), propagateOp,
                                                rewriter);
             })
             .Case([&](RegionBranchTerminatorOpInterface terminator) {
               Operation *parent = terminator->getParentOp();
-              if (shouldSkipRegionBranchStep(step, parent))
+              if (step != PropagationStep::ALL)
                 return failure();
               // Condition predicate is not a forwarded successor operand.
               if (isa<scf::ConditionOp>(terminator.getOperation()) &&
@@ -217,6 +302,8 @@ PropagateUpPattern::matchAndRewrite(UnrealizedConversionCastOp propagateOp,
     auto blockArgument = cast<BlockArgument>(input);
     Operation *parentOp = blockArgument.getOwner()->getParentOp();
     if (auto branch = dyn_cast<RegionBranchOpInterface>(parentOp)) {
+      if (step != PropagationStep::ALL)
+        return failure();
       auto maybeSites =
           PropagatorUtil::collectRelatedPropagatorSites(branch, blockArgument);
       if (failed(maybeSites)) {
@@ -239,7 +326,7 @@ PropagateUpPattern::matchAndRewrite(UnrealizedConversionCastOp propagateOp,
     return failure();
   return TypeSwitch<Operation *, LogicalResult>(defOp)
       .Case([&](RegionBranchOpInterface branch) {
-        if (step == PropagationStep::LOCAL)
+        if (step != PropagationStep::ALL)
           return failure();
         // Unstructured load case should be propagated from the inside.
         if (auto forOp = dyn_cast<scf::ForOp>(branch.getOperation())) {
