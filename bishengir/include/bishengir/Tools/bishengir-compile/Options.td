@@ -201,11 +201,10 @@ def EnableHIVMGraphSyncSolver : FeatureControlOptions<
   let passGroup = ["HIVM"];
 }
 
-def HIVMSyncSolverVersion : FeatureControlOptions<
-  "Specify the version of hivm sync-solver used for auto-sync passes.",
-  "std::string",
-  "\"v1\""
-> {
+def HIVMSyncSolverVersion
+    : FeatureControlOptions<
+          "Specify the version of hivm sync-solver used for auto-sync passes.",
+          "std::string", "\"v2\""> {
   let passGroup = ["HIVM"];
 }
 

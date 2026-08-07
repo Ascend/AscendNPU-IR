@@ -389,26 +389,25 @@ def GraphSyncSolver : Pass<"hivm-graph-sync-solver", "func::FuncOp"> {
   let summary = "graph sync solver ";
   let constructor = "mlir::hivm::createGraphSyncSolverPass()";
   let dependentDialects = ["affine::AffineDialect", "hivm::HIVMDialect"];
-  let options = [Option<"enableUnitFlag", "enable-unit-flag", "bool",
-                        /*default=*/"false",
-                        "Enable unit-flag modes for synchronization">,
-                 Option<"ignoreWorkSpaceFunctionArguments", "ignore-workspace-func-args", "bool",
-                        /*default=*/"false",
-                        "Ignore workspace function arguments.">,
-                 Option<"enableTesterMode", "enable-tester-mode", "bool",
-                        /*default=*/"false", "Enable sync-tester mode">,
-                 Option<"enableSubviewConflictRefinement",
-                        "enable-subview-conflict-refinement", "bool",
-                        /*default=*/"true",
-                        "Use disjoint direct subviews to refine memory conflicts">,
-                 Option<"solverVersion", "solver-version", "std::string",
-                        /*default=*/"\"v1\"",
-                        "Select SyncSolver implementation.">,
-                 ListOption<"syncTesterOptions", "sync-tester-options",
-                            "int64_t",
-                            "Sync-tester options (num_runs, init_seed, "
-                            "num_ops, num_ptrs, enable-multibuffer, "
-                            "enable-cross-core[, performance-only=0])">,
+  let options =
+      [Option<"enableUnitFlag", "enable-unit-flag", "bool",
+              /*default=*/"false",
+              "Enable unit-flag modes for synchronization">,
+       Option<"ignoreWorkSpaceFunctionArguments", "ignore-workspace-func-args",
+              "bool",
+              /*default=*/"false", "Ignore workspace function arguments.">,
+       Option<"enableTesterMode", "enable-tester-mode", "bool",
+              /*default=*/"false", "Enable sync-tester mode">,
+       Option<"enableSubviewConflictRefinement",
+              "enable-subview-conflict-refinement", "bool",
+              /*default=*/"true",
+              "Use disjoint direct subviews to refine memory conflicts">,
+       Option<"solverVersion", "solver-version", "std::string",
+              /*default=*/"\"v2\"", "Select SyncSolver implementation.">,
+       ListOption<"syncTesterOptions", "sync-tester-options", "int64_t",
+                  "Sync-tester options (num_runs, init_seed, "
+                  "num_ops, num_ptrs, enable-multibuffer, "
+                  "enable-cross-core[, performance-only=0])">,
   ];
 }
 
@@ -430,12 +429,11 @@ def CrossCoreGSS : Pass<"hivm-cross-core-gss", "func::FuncOp"> {
        Option<"useDifferentMultiBufferFlagIds",
               "use-different-multibuffer-flag-ids", "bool", /*default=*/"false",
               "Use different flag-ids for multibuffer backward sync pairs.">,
-       Option<"enableCVPatterns",
-              "enable-cv-patterns", "bool", /*default=*/"true",
+       Option<"enableCVPatterns", "enable-cv-patterns", "bool",
+              /*default=*/"true",
               "Enable CV patterns for cross-core synchronization.">,
        Option<"solverVersion", "solver-version", "std::string",
-              /*default=*/"\"v1\"",
-              "Select SyncSolver implementation.">,
+              /*default=*/"\"v2\"", "Select SyncSolver implementation.">,
        Option<"roundRobinEventIds", "round-robin-event-ids", "bool",
               /*default=*/"true",
               "On memory-based architectures, retry EventId allocation in "
@@ -479,12 +477,11 @@ def DelayedCrossCoreGSS : Pass<"hivm-delayed-cross-core-gss", "ModuleOp"> {
        Option<"useDifferentMultiBufferFlagIds",
               "use-different-multibuffer-flag-ids", "bool", /*default=*/"false",
               "Use different flag-ids for multibuffer backward sync pairs.">,
-       Option<"enableCVPatterns",
-              "enable-cv-patterns", "bool", /*default=*/"true",
+       Option<"enableCVPatterns", "enable-cv-patterns", "bool",
+              /*default=*/"true",
               "Enable CV patterns for cross-core synchronization.">,
        Option<"solverVersion", "solver-version", "std::string",
-              /*default=*/"\"v1\"",
-              "Select SyncSolver implementation.">,
+              /*default=*/"\"v2\"", "Select SyncSolver implementation.">,
        Option<"forceIsMemBased", "force-is-mem-based", "bool",
               /*default=*/"false",
               "Force memory based ai-core architecture mode.">,
