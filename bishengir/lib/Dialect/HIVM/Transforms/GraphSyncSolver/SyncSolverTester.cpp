@@ -888,6 +888,8 @@ void SyncTester::runTestMode(const SmallVector<int64_t> &options,
                << " multibuffer(" << enableMultiBuffer << ")"
                << " enableCrossCoreMode(" << enableCrossCoreMode << ")"
                << " performanceOnly(" << performanceOnly << ")"
+               << " solverVersion("
+               << (static_cast<int>(solverOptions.solverVersion) + 1) << ")"
                << "\n";
 
   SyncTester tester(numOperations, numPointers, enableMultiBuffer,
