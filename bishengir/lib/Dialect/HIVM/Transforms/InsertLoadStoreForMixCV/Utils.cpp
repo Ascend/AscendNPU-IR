@@ -483,12 +483,11 @@ static FixpipeDMAMode getInsertedFixpipeDmaMode(Value src, Value dst,
 
 hivm::FixpipeOp insertFixpipe(Value value, Location loc,
                               PatternRewriter &rewriter,
-                              hivm::AddressSpace addressSpace,
                               bool inferFixpipeDmaMode) {
   auto tensorType = cast<RankedTensorType>(value.getType());
 
-  auto emptyOp =
-      insertTensor(value, loc, rewriter, tensorType.getShape(), addressSpace);
+  auto emptyOp = insertTensor(value, loc, rewriter, tensorType.getShape(),
+                              hivm::AddressSpace::UB);
 
   auto fixpipeOp = rewriter.create<hivm::FixpipeOp>(loc, TypeRange(tensorType),
                                                     value, emptyOp);

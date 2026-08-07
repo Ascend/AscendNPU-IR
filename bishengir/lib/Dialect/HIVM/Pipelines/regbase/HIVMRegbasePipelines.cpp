@@ -323,10 +323,9 @@ static void hivmPreBufferizationOptimizationPipeline(
   pm.addPass(mlir::hivm::createNormalizeMatmulPass());
   pm.addPass(mlir::hivm::createInsertFixpipePass());
   {
-    InlineFixpipeOptions inlineFixpipeOpts;
-    inlineFixpipeOpts.inlineQuantScale =
-        hivmPipelineOptions.inlineQuantScaleInFixpipe;
-    pm.addPass(mlir::hivm::createInlineFixpipePass(inlineFixpipeOpts));
+    InlineFixpipeOptions opts;
+    opts.inlineQuantScale = hivmPipelineOptions.inlineQuantScaleInFixpipe;
+    pm.addPass(mlir::hivm::createInlineFixpipePass(opts));
   }
   hivmCVCommunicationPipeline(pm, hivmPipelineOptions);
   convertTensorToTightCoupledBuffer(pm);
@@ -348,10 +347,9 @@ static void hivmPreBufferizationOptimizationPipeline(
   }
   pm.addPass(mlir::hivm::createInsertFixpipePass());
   {
-    InlineFixpipeOptions inlineFixpipeOpts;
-    inlineFixpipeOpts.inlineQuantScale =
-        hivmPipelineOptions.inlineQuantScaleInFixpipe;
-    pm.addPass(mlir::hivm::createInlineFixpipePass(inlineFixpipeOpts));
+    InlineFixpipeOptions opts;
+    opts.inlineQuantScale = hivmPipelineOptions.inlineQuantScaleInFixpipe;
+    pm.addPass(mlir::hivm::createInlineFixpipePass(opts));
   }
   hivmCVCommunicationPipeline(pm, hivmPipelineOptions);
   convertTensorToTightCoupledBuffer(pm);

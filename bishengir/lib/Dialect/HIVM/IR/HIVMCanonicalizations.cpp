@@ -621,6 +621,47 @@ struct RedundantVSortOp : public OpRewritePattern<VSortOp> {
   }
 };
 
+static LogicalResult dropLoadZeroPadding(
+    LoadOp load, PatternRewriter &rewriter,
+    MutableOperandRange (LoadOp::*getMutablePad)()) {
+  MutableOperandRange padRange = (load.*getMutablePad)();
+  if (padRange.empty())
+    return failure();
+  Value padVal = padRange[0].get();
+  Operation *defining = padVal.getDefiningOp();
+  if (!defining)
+    return failure();
+  SmallVector<OpFoldResult, 1> result;
+  if (defining->fold(result).failed())
+    return failure();
+  auto attr = dyn_cast<Attribute>(result.front());
+  if (!attr)
+    return failure();
+  auto intAttr = dyn_cast<IntegerAttr>(attr);
+  if (!intAttr || !intAttr.getValue().isZero())
+    return failure();
+
+  rewriter.modifyOpInPlace(load, [&]() {
+    (load.*getMutablePad)().clear();
+  });
+  return success();
+}
+
+struct DropLoadLeftPad : public OpRewritePattern<LoadOp> {
+  using OpRewritePattern<LoadOp>::OpRewritePattern;
+  LogicalResult matchAndRewrite(LoadOp load,
+                                PatternRewriter &rewriter) const final {
+    return dropLoadZeroPadding(load, rewriter, &LoadOp::getLeftPaddingNumMutable);
+  }
+};
+
+struct DropLoadRightPad : public OpRewritePattern<LoadOp> {
+  using OpRewritePattern<LoadOp>::OpRewritePattern;
+  LogicalResult matchAndRewrite(LoadOp load,
+                                PatternRewriter &rewriter) const final {
+    return dropLoadZeroPadding(load, rewriter, &LoadOp::getRightPaddingNumMutable);
+  }
+};
 } // namespace
 
 void DebugOp::getCanonicalizationPatterns(::mlir::RewritePatternSet &results,
@@ -681,6 +722,11 @@ void VPadOp::getCanonicalizationPatterns(::mlir::RewritePatternSet &results,
 void VSortOp::getCanonicalizationPatterns(::mlir::RewritePatternSet &results,
                                           ::mlir::MLIRContext *context) {
   results.add<RedundantVSortOp>(context);
+}
+
+void LoadOp::getCanonicalizationPatterns(::mlir::RewritePatternSet &results,
+                                         ::mlir::MLIRContext *context) {
+  results.add<DropLoadLeftPad, DropLoadRightPad>(context);
 }
 
 //===----------------------------------------------------------------------===//

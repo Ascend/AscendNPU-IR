@@ -115,8 +115,8 @@ protected:
   std::unique_ptr<OperationBase> getDecomposedMmadl1(hivm::MmadL1Op mmadl1Op,
                                                      OperationBase *parentOp);
 
-  std::unique_ptr<OperationBase> getDecomposedMmadMxL1(
-      hivm::MmadMxL1Op mmadMxL1Op, OperationBase *parentOp);
+  std::unique_ptr<OperationBase>
+  getDecomposedMmadMxL1(hivm::MmadMxL1Op mmadMxL1Op, OperationBase *parentOp);
 
   // Generate processing orders (various flavors) used by the main algorithm.
   void generateProcessingOrders(Occurrence *occ1, Occurrence *occ2,
@@ -155,7 +155,8 @@ protected:
   template <typename OP>
   std::unique_ptr<OperationBase> getLoadStoreOp(OP op, OperationBase *parentOp);
 
-  std::unique_ptr<OperationBase> getDebugOp(DebugOp debugOp, OperationBase *parentOp);
+  std::unique_ptr<OperationBase> getDebugOp(DebugOp debugOp,
+                                            OperationBase *parentOp);
 
   std::unique_ptr<OperationBase>
   getDestinationStyleInterfaceOp(Operation *op, OperationBase *parentOp);

@@ -1,3 +1,5 @@
+// Ascend950 device-spec / retry counts depend on a real hivmc; without it the
+// pipeline falls back to Ascend910B* and PlanMemory failure dumps diverge.
 // REQUIRES: hivmc
 // RUN: bishengir-compile %s \
 // RUN:   --enable-auto-multi-buffer=True \

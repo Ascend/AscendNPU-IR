@@ -1479,6 +1479,7 @@ struct BrcBiasInfo {
   Value perChannelValue;
   hivm::VAddOp addOp;
   Value biasBrcSrc;
+  Value biasVbrcResult;
 };
 
 // Match PostPerChannelAddWithSplitK: ccfOutVal has one use that is VAddOp
@@ -1498,6 +1499,7 @@ matchPostPerChannelAddWithSplitK(Value ccfOutVal, Operation *hookOp) {
         result.perChannelValue = getBiasInputForPerChannelAdd(src);
         result.addOp = addOp;
         result.biasBrcSrc = brcOp.getSrc();
+        result.biasVbrcResult = src;
         result.brcBiasMode = MatmulBiasMode::PostPerChannelAddWithSplitK;
         return result;
       }
@@ -1799,51 +1801,18 @@ class PostPerChannelAddStrategy : public DecomposeStrategyBase {
                                   ctx.ccfOutVal);
     }
     ctx.tmpNewMmad->setAttr(kNormalizedInitOrBias, rewriter.getUnitAttr());
-
-    // if-only: the else block must yield the perChannel bias (vbrc) so that
-    // when the if-condition is false the result is the bias, not
-    // ccfInVal (empty/zero). No fallback IfOp is needed.
-    if (isa<scf::IfOp>(ctx.insertPointOp)) {
-      Value newVbrc = createPerChannelVbrc(rewriter, ctx);
-      auto ifOp = cast<scf::IfOp>(ctx.insertPointOp);
-      unsigned idx = getResultIndex(*ifOp, ctx.ccfOutVal);
-      auto elseYield = cast<scf::YieldOp>(ifOp.elseBlock()->getTerminator());
-      rewriter.modifyOpInPlace(elseYield,
-          [&]() { elseYield.setOperand(idx, newVbrc); });
-    }
   }
   void handleTailFallback(PatternRewriter &rewriter,
                           NormalizeCtx &ctx) override {
-    // if-only: handled in mergeBias (else yield changed to vbrc).
-    // for-only: create fallback IfOp with perChannel vbrc.
-    if (!ctx.mayNotExec || isa<scf::IfOp>(ctx.insertPointOp))
+    if (!ctx.mayNotExec)
       return;
-    Value newVbrc = createPerChannelVbrc(rewriter, ctx);
-    addTailFallback(rewriter, *ctx.insertPointOp, ctx.tmpNewMmad,
-                    ctx.counterBuf, newVbrc, ctx.ccfOutVal);
+    // Insert fallback IfOp after the original vbrc (not after the CCF) so
+    // that the vbrc and its src def-chain (vcast/expand_shape) dominate the
+    // fallback then-block where the vbrc is cloned.
+    addTailFallback(rewriter, *ctx.biasInfo.biasVbrcResult.getDefiningOp(),
+                    ctx.tmpNewMmad, ctx.counterBuf,
+                    ctx.biasInfo.biasVbrcResult, ctx.ccfOutVal);
     LDBG("decompose matmul with post per channel add");
-  }
-
-private:
-  static Value createPerChannelVbrc(PatternRewriter &rewriter,
-                                    NormalizeCtx &ctx) {
-    rewriter.setInsertionPoint(ctx.insertPointOp);
-    Value vbrcSrc = ctx.biasInfo.perChannelValue;
-    if (vbrcSrc.getType() != ctx.biasInfo.biasBrcSrc.getType()) {
-      if (auto expandOp = ctx.biasInfo.biasBrcSrc
-                              .getDefiningOp<tensor::ExpandShapeOp>()) {
-        vbrcSrc = rewriter.create<tensor::ExpandShapeOp>(
-            ctx.insertPointOp->getLoc(), expandOp.getResultType(),
-            vbrcSrc, expandOp.getReassociationIndices());
-      }
-    }
-    Value emptyOut = mlir::utils::createEmptyOp(
-        rewriter, ctx.insertPointOp->getLoc(), ctx.ccfInVal);
-    auto newVbrc = rewriter.create<hivm::VBrcOp>(
-        ctx.insertPointOp->getLoc(), ctx.ccfInVal.getType(),
-        vbrcSrc, emptyOut,
-        rewriter.getDenseI64ArrayAttr({0}));
-    return newVbrc->getResult(0);
   }
 };
 
