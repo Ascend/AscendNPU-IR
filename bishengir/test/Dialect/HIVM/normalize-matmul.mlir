@@ -3588,12 +3588,12 @@ func.func @if_only_perchannel(%a: tensor<16x16xf16>, %b: tensor<16x16xf16>, %bia
 
 // CHECK-LABEL: func.func @if_only_postperchannel
 // CHECK: memref.alloca() {normalize_matmul_counter
-// CHECK: hivm.hir.vbrc
 // CHECK: scf.if
 // CHECK: hivm.hir.mmadL1
 // CHECK-SAME: normalized_init_or_bias
 // CHECK-NOT: deferred_tail_fallback
-// CHECK-NOT: scf.if
+// CHECK: scf.if
+// CHECK: hivm.hir.vbrc
 // CHECK-NOT: hivm.hir.vadd
 // CHECK: return
 module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
@@ -3641,5 +3641,36 @@ func.func @if_only_elemadd(%a: tensor<16x16xf16>, %b: tensor<16x16xf16>, %bias: 
     scf.yield %bias : tensor<16x16xf32>
   }
   return %r : tensor<16x16xf32>
+}
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_postperchannel_vcast_after_for
+// CHECK: memref.alloca() {normalize_matmul_counter
+// CHECK: scf.for
+// CHECK: may_not_exec
+// CHECK: hivm.hir.vcast
+// CHECK: scf.if
+// CHECK: hivm.hir.vbrc ins(%{{.*}} : tensor<1x16xf32>) outs
+// CHECK: return
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+func.func @test_postperchannel_vcast_after_for(%a: tensor<16x16xf16>, %b: tensor<16x16xf16>, %lb: i32, %ub: i32) -> tensor<16x16xf32> {
+  %false = arith.constant false
+  %c0 = arith.constant 0 : index
+  %c1_i32 = arith.constant 1 : i32
+  %cst_f16 = arith.constant dense<1.000000e+00> : tensor<1x16xf16>
+  %init = tensor.empty() : tensor<16x16xf32>
+  %mat = scf.for %i = %lb to %ub step %c1_i32 iter_args(%acc = %init) -> tensor<16x16xf32> : i32 {
+    %m = hivm.hir.mmadL1 ins(%a, %b, %false, %c0, %c0, %c0 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%acc : tensor<16x16xf32>) -> tensor<16x16xf32>
+    scf.yield %m : tensor<16x16xf32>
+  }
+  %empty1 = tensor.empty() : tensor<1x16xf32>
+  %cast = hivm.hir.vcast ins(%cst_f16 : tensor<1x16xf16>) outs(%empty1 : tensor<1x16xf32>) -> tensor<1x16xf32>
+  %empty2 = tensor.empty() : tensor<16x16xf32>
+  %bias = hivm.hir.vbrc ins(%cast : tensor<1x16xf32>) outs(%empty2 : tensor<16x16xf32>) broadcast_dims = [0] -> tensor<16x16xf32>
+  %empty3 = tensor.empty() : tensor<16x16xf32>
+  %add = hivm.hir.vadd ins(%mat, %bias : tensor<16x16xf32>, tensor<16x16xf32>) outs(%empty3 : tensor<16x16xf32>) -> tensor<16x16xf32>
+  return %add : tensor<16x16xf32>
 }
 }
