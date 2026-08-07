@@ -403,8 +403,6 @@ struct OpToTile {
   bool operator<(const OpToTile &other) const {
     assert(this->op);
     assert(other.op);
-    assert(this->op->getBlock() == other.op->getBlock() &&
-           "operations must be in the same block");
     return this->op->isBeforeInBlock(other.op);
   }
 
@@ -943,6 +941,26 @@ TilingParams getVectorTiling(ShapedType tilingShape, int64_t tilingDim,
   return result;
 }
 
+/// Detect whether the candidate loop's body contains operations that live
+/// outside its direct body block (e.g. stores inside an `scf.if` branch).
+/// TODO: support partial tiling for these complex control-flow cases
+/// (e.g. tile only the ops reachable from the loop body's entry block).
+template <typename OpType>
+static bool hasComplexControlFlow(OpType candidateLoop) {
+  Block *body = candidateLoop.getBody();
+  bool found = false;
+  candidateLoop->walk([&](Operation *op) {
+    if (op == candidateLoop.getOperation())
+      return WalkResult::advance();
+    if (op->getBlock() != body) {
+      found = true;
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
+  });
+  return found;
+}
+
 /// Try to collect tiling information for store op.
 ///
 /// Return failure if dimension analyzer failed to analyze tiling dimension.
@@ -1153,6 +1171,14 @@ template <typename OpType>
 LogicalResult TileCubeVectorLoopPass::collectVectorLoopInfo(OpType vectorLoop) {
   VectorLoopInfo info(loopsToTile.size(),
                       static_cast<int64_t>(this->tiledMixVectorLoopNumber));
+  // Skip subtiling for vector loop with complex control flow.
+  if (hasComplexControlFlow(vectorLoop)) {
+    LLVM_DEBUG(llvm::dbgs()
+               << "[tile-cube-vector-loop] skip tiling: vector loop has "
+                  "complex control flow with multiple blocks\n");
+    info.setTripCount(1);
+  }
+
   if (info.getTripCount() == 1)
     return success();
 
@@ -1509,6 +1535,14 @@ LogicalResult TileCubeVectorLoopPass::collectCubeLoopInfo(OpType cubeLoop) {
   if (tileCubeLoopNum.has_value()) {
     info.setTileCubeAttr(true);
     info.setTripCount(tileCubeLoopNum.value());
+  }
+
+  // Skip subtiling for cube loops with complex control flow.
+  if (hasComplexControlFlow(cubeLoop)) {
+    LLVM_DEBUG(llvm::dbgs()
+               << "[tile-cube-vector-loop] skip tiling: cube loop has "
+                  "complex control flow with multiple blocks\n");
+    info.setTripCount(1);
   }
 
   if (info.getTripCount() == 1)
