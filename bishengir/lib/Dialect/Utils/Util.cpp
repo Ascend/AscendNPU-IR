@@ -1305,10 +1305,27 @@ utils::tracebackMemRefToAllocOrBlockArgument(Value memrefVal) {
 }
 
 SmallVector<Value> utils::tracebackMemRefAllocAndAlias(Value memrefVal) {
-  return utils::tracebackMemRefVecByTargetFn(memrefVal, [](Value val) {
-    return utils::isAllocLikeOp(val) || utils::isCollapseShapeOp(val) ||
-           utils::isExpandShapeOp(val);
-  });
+  auto allocOpAliases =
+      utils::tracebackMemRefVecByTargetFn(memrefVal, [](Value val) {
+        return utils::isAllocLikeOp(val) || utils::isCollapseShapeOp(val) ||
+               utils::isExpandShapeOp(val);
+      });
+
+  // If there is alloc ->... ->collapse ->... ->copy, the annotations marked on
+  // alloc will be lost.
+  SmallVector<Value> roots;
+  for (Value alias : allocOpAliases) {
+    if (utils::isAllocLikeOp(alias))
+      continue;
+    for (Value root : utils::tracebackMemRefVec(alias)) {
+      if (utils::isAllocLikeOp(root) &&
+          !llvm::is_contained(allocOpAliases, root) &&
+          !llvm::is_contained(roots, root))
+        roots.push_back(root);
+    }
+  }
+  allocOpAliases.append(roots);
+  return allocOpAliases;
 }
 
 namespace reshape_utils {
