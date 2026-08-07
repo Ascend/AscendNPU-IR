@@ -219,10 +219,9 @@ static void hivmPreBufferizationOptimizationPipeline(
   // A3 mem-based path still needs InsertFixpipe (MR 2052 / compile-bisheng-distributed).
   pm.addPass(mlir::hivm::createInsertFixpipePass());
   {
-    InlineFixpipeOptions inlineFixpipeOpts;
-    inlineFixpipeOpts.inlineQuantScale =
-        hivmPipelineOptions.inlineQuantScaleInFixpipe;
-    pm.addPass(mlir::hivm::createInlineFixpipePass(inlineFixpipeOpts));
+    InlineFixpipeOptions opts;
+    opts.inlineQuantScale = hivmPipelineOptions.inlineQuantScaleInFixpipe;
+    pm.addPass(mlir::hivm::createInlineFixpipePass(opts));
   }
   if (!hivmPipelineOptions.disableAutoCVWorkSpaceManage) {
     hivmAutoInsertLdStForMixCVPipeline(pm, hivmPipelineOptions);
@@ -239,10 +238,9 @@ static void hivmPreBufferizationOptimizationPipeline(
   pm.addPass(createInsertNZ2NDForDebugPass());
   pm.addPass(mlir::hivm::createInsertFixpipePass());
   {
-    InlineFixpipeOptions inlineFixpipeOpts;
-    inlineFixpipeOpts.inlineQuantScale =
-        hivmPipelineOptions.inlineQuantScaleInFixpipe;
-    pm.addPass(mlir::hivm::createInlineFixpipePass(inlineFixpipeOpts));
+    InlineFixpipeOptions opts;
+    opts.inlineQuantScale = hivmPipelineOptions.inlineQuantScaleInFixpipe;
+    pm.addPass(mlir::hivm::createInlineFixpipePass(opts));
   }
 
   if (!hivmPipelineOptions.disableAutoCVWorkSpaceManage) {
