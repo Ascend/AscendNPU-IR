@@ -108,9 +108,38 @@ ENABLE_DEFAULT_OP_SHOULD_LOWER_TO_SCALAR_LOOPS_IMPL(VMinOp)
 ENABLE_DEFAULT_OP_SHOULD_LOWER_TO_SCALAR_LOOPS_IMPL(VMaxOp)
 ENABLE_DEFAULT_OP_SHOULD_LOWER_TO_SCALAR_LOOPS_IMPL(VAbsOp)
 ENABLE_DEFAULT_OP_SHOULD_LOWER_TO_SCALAR_LOOPS_IMPL(VShLOp)
-ENABLE_DEFAULT_OP_SHOULD_LOWER_TO_SCALAR_LOOPS_IMPL(VShROp)
 ENABLE_DEFAULT_OP_SHOULD_LOWER_TO_SCALAR_LOOPS_IMPL(VDivOp)
 #undef ENABLE_DEFAULT_OP_SHOULD_LOWER_TO_SCALAR_LOOPS_IMPL
+
+//===----------------------------------------------------------------------===//
+// VShROp
+//===----------------------------------------------------------------------===//
+
+bool VShROp::shouldLowerToScalarLoops() {
+  if (!hasPureBufferSemantics()) {
+    return false;
+  }
+
+  if (util::isSIMTVF(getOperation()) || hasHWUnsupportedScalarOperand())
+    return true;
+
+  auto elemType = getElementTypeOrSelf(getOperandTypes()[0]);
+  if (elemType.isInteger(64))
+    return true;
+
+  // Mem-based (A3): ConvertHIVMToStandard would emit `vshr_*` library calls for
+  // shaped / broadcast shift amounts, but those symbols are not provided on A3.
+  // Lower them to scalar loops instead. Reg-based (A5) keeps the HIVM op for the
+  // AVE / template path.
+  auto mod = getOperation()->getParentOfType<ModuleOp>();
+  if (!hacc::utils::isRegBasedArch(mod)) {
+    auto inputs = getDpsInputs();
+    if (inputs.size() > 1 && isa<ShapedType>(inputs[1].getType()))
+      return true;
+  }
+
+  return false;
+}
 
 // TODO: Use unified method to decide if we should lower to loops
 #undef ENABLE_CUM_OP_SHOULD_LOWER_TO_SCALAR_LOOPS_IMPL

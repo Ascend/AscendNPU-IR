@@ -1213,9 +1213,8 @@ FailureOrCastVec propagateScopeReturnOp(RewriterBase &rewriter,
   auto alignedType = alignedValue.getType();
   auto origType = conversionOp.getResult(0).getType();
 
-  rewriter.modifyOpInPlace(returnOp, [&]() {
-    returnOp.setOperand(operandIndex, alignedValue);
-  });
+  rewriter.modifyOpInPlace(
+      returnOp, [&]() { returnOp.setOperand(operandIndex, alignedValue); });
 
   // Update scope.scope result type to aligned type
   auto scopeResult = scopeOp.getResult(operandIndex);
@@ -1554,7 +1553,7 @@ void mlir::hivm::handlePropagateFailure(RewriterBase &rewriter,
     auto src = conversion.getInputs()[0];
     SmallVector<Operation *> writeSrc;
     findWriteOp(src, writeSrc);
-    for (OpOperand &use : conversion->getUses()) {
+    for (OpOperand &use : make_early_inc_range(conversion->getUses())) {
       Operation *user = use.getOwner();
       if (!user->hasAttr(propagateFailureName))
         continue;
@@ -1748,10 +1747,11 @@ LogicalResult mlir::hivm::replaceAndPropagateMemRefType(RewriterBase &rewriter,
                 auto res = propagateSubViewOp(rewriter, conversion, subviewOp);
                 return UnrealizedCastOpVec{res};
               })
-              .Case([&rewriter,
-                     &conversion](memref::CollapseShapeOp collapseOp) {
-                return propagateCollapseShapeOp(rewriter, conversion, collapseOp);
-              })
+              .Case(
+                  [&rewriter, &conversion](memref::CollapseShapeOp collapseOp) {
+                    return propagateCollapseShapeOp(rewriter, conversion,
+                                                    collapseOp);
+                  })
               .Case([&rewriter, &conversion](memref::ExpandShapeOp expandOp) {
                 auto res =
                     propagateExpandShapeOp(rewriter, conversion, expandOp);
@@ -1776,9 +1776,9 @@ LogicalResult mlir::hivm::replaceAndPropagateMemRefType(RewriterBase &rewriter,
                                         use->getOperandNumber());
               })
               .Case([&rewriter, &conversion, &use](scope::ReturnOp returnOp) {
- 	              return propagateScopeReturnOp(rewriter, conversion, returnOp,
- 	                                            use->getOperandNumber());
- 	            })
+                return propagateScopeReturnOp(rewriter, conversion, returnOp,
+                                              use->getOperandNumber());
+              })
               .Case([&rewriter,
                      &conversion](UnrealizedConversionCastOp conversionOp) {
                 return propagateUnrealizedConversionCastOp(rewriter, conversion,
