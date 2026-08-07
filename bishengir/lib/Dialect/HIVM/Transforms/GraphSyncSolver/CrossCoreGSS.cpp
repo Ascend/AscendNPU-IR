@@ -99,7 +99,7 @@ void CrossCoreGSSPass::runOnOperation() {
   auto moduleOp = funcOp->getParentOfType<ModuleOp>();
   bool isMemBasedArch = hacc::utils::isMemBasedArch(moduleOp);
   bool isRegBasedArch = hacc::utils::isRegBasedArch(moduleOp);
-  assert(isMemBasedArch != isRegBasedArch);;
+  assert(isMemBasedArch != isRegBasedArch);
 
   if (this->forceIsRegBased) {
     isMemBasedArch = false;
@@ -128,7 +128,7 @@ void CrossCoreGSSPass::runOnOperation() {
     options.alwaysUsePipeSAsWaitingPipe = true;
   }
   if (this->useDifferentMultiBufferFlagIds) {
-    options.useDifferentMultiBufferFlagIds = true;
+    options.enableRepeatFlagIdFeat = true;
   }
   if (this->enableCVPatterns) {
     options.enableCVPatterns = true;

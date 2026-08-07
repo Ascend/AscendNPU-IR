@@ -71,12 +71,13 @@ private:
   // Per-MMAD L1 op arguments collected during sync codegen insertion.
   llvm::DenseMap<hivm::MmadL1Op, MmadL1SyncArgs> mmadl1SyncArgsMap;
 
-  CustomMacroSyncCodegenState customMacroCodegen;
   // Per-MMAD MxL1 op arguments collected during sync codegen insertion.
   llvm::DenseMap<hivm::MmadMxL1Op, MmadMxL1SyncArgs> mmadMxL1SyncArgsMap;
 
   // Mapping to cache loop DB conditions used during codegen insertion.
   llvm::DenseMap<LoopLikeOpInterface, Value> loopDBCondMap;
+
+  CustomMacroSyncCodegenState customMacroCodegen;
 
 public:
   CodeGenerator(const SyncSolverOptions &options) : options(options) {}
@@ -161,8 +162,8 @@ private:
   void insertMmadL1SyncArgs(IRRewriter &rewriter);
 
   llvm::LogicalResult handleMmadMxL1SyncOps(IRRewriter &rewriter,
-                                             OperationBase *opBase,
-                                             SyncOp *syncOp);
+                                            OperationBase *opBase,
+                                            SyncOp *syncOp);
 
   void insertMmadMxL1SyncArgs(IRRewriter &rewriter);
 

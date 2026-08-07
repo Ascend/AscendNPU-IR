@@ -62,15 +62,15 @@ void GraphSyncSolverPass::runOnOperation() {
   if (hacc::utils::isHost(funcOp)) {
     return;
   }
+  if (funcOp->hasAttr(hivm::VectorFunctionAttr::name)) {
+    return;
+  }
 
   auto moduleOp = funcOp->getParentOfType<ModuleOp>();
   bool isMemBasedArch = hacc::utils::isMemBasedArch(moduleOp);
   bool isRegBasedArch = hacc::utils::isRegBasedArch(moduleOp);
   assert(isMemBasedArch != isRegBasedArch);
-  
-  if (isRegBasedArch && funcOp->hasAttr(hivm::VectorFunctionAttr::name)) {
-    return;
-  }
+
   SyncSolverOptions options(SyncMode::INTRA_CORE_SYNC, isMemBasedArch,
                             isRegBasedArch);
   options.enableUnitFlagFeature = this->enableUnitFlag;

@@ -89,6 +89,8 @@ std::string PointerLikeInfo::str() {
     ret += stringifyEnum(addressSpace.value());
   }
   ret += comma.get();
+  ret += parentCounterScope ? parentCounterScope->str(0, false) : "null";
+  ret += comma.get();
   {
     Comma comma;
     ret += "[";
@@ -195,6 +197,9 @@ std::string Loop::str(int indent, bool recursive) const {
   if (multibufferUnrollNum.has_value()) {
     ret += " multibuffer-unroll-num=" +
            std::to_string(multibufferUnrollNum.value());
+  }
+  if (staticLoopCount.has_value()) {
+    ret += " static-loop-count=" + std::to_string(staticLoopCount.value());
   }
   if (recursive) {
     ret += " {\n";
