@@ -503,8 +503,8 @@ void SyncSolverV1::handleConflict(Occurrence *occ1, Occurrence *occ2,
                                   CorePipeInfo corePipeSrc,
                                   CorePipeInfo corePipeDst, bool isUseless) {
   this->perfInfo.handledConflictsNum += 1;
-  auto eventIdInfo =
-      getEventIdInfo(occ1, occ2, rwOp1, rwOp2, corePipeSrc, corePipeDst);
+  auto [eventIdInfo, setWaitPairInfo] = getEventIdSetWaitPairInfo(
+      occ1, occ2, rwOp1, rwOp2, corePipeSrc, corePipeDst);
   if (!checkGraphConflict(occ1, occ2, corePipeSrc, corePipeDst, eventIdInfo)) {
     return;
   }
@@ -520,7 +520,6 @@ void SyncSolverV1::handleConflict(Occurrence *occ1, Occurrence *occ2,
   });
 
   if (corePipeSrc == corePipeDst) {
-    eventIdInfo.setEventIdNum(1);
     handleBarrierConflict(occ1, occ2, corePipeSrc, corePipeDst, eventIdInfo,
                           isUseless);
   } else if (auto unitFlagInfo = checkUnitFlagPatterns(occ1, occ2)) {
@@ -528,7 +527,7 @@ void SyncSolverV1::handleConflict(Occurrence *occ1, Occurrence *occ2,
                            unitFlagInfo.value(), isUseless);
   } else {
     handleSetWaitConflict(occ1, occ2, corePipeSrc, corePipeDst, eventIdInfo,
-                          isUseless);
+                          setWaitPairInfo, isUseless);
   }
 }
 

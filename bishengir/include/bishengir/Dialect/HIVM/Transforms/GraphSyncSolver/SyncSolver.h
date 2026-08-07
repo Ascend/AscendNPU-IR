@@ -397,10 +397,10 @@ protected:
                                                           RWOperation *rwOp2);
 
   // Construct and return the EventIdInfo required for a hazard.
-  EventIdInfo getEventIdInfo(Occurrence *occ1, Occurrence *occ2,
-                             RWOperation *rwOp1, RWOperation *rwOp2,
-                             CorePipeInfo corePipeSrc,
-                             CorePipeInfo corePipeDst);
+  std::tuple<EventIdInfo, SetWaitPairInfo>
+  getEventIdSetWaitPairInfo(Occurrence *occ1, Occurrence *occ2,
+                            RWOperation *rwOp1, RWOperation *rwOp2,
+                            CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst);
 
   // Existing EventIdNode for a ConflictPair coverage key, if already allocated.
   EventIdNode *getOldEventIdNodeIfExists(ConflictPair *conflictPair);
@@ -420,8 +420,7 @@ protected:
   // further sinking/hoisting).
   SetWaitPairInfo
   getFixedSetWaitOcc(Occurrence *occ1, Occurrence *occ2,
-                     std::optional<EventIdInfo> eventIdInfo = {},
-                     bool sinkSyncIntoCVLoops = false);
+                     std::optional<EventIdInfo> eventIdInfo = {});
 
   // Construct and return set/wait Occurrences at function-block boundaries, if
   // applicable.
@@ -435,8 +434,7 @@ protected:
 
   // Construct and return SetWaitPairInfo with default set/wait placement.
   SetWaitPairInfo getSetWaitOcc(Occurrence *occ1, Occurrence *occ2,
-                                std::optional<EventIdInfo> eventIdInfo = {},
-                                bool sinkSyncIntoCVLoops = false);
+                                std::optional<EventIdInfo> eventIdInfo = {});
 
   // Return the Occurrence where a barrier wait should be placed.
   Occurrence *getBarrierWaitOcc(Occurrence *occ1, Occurrence *occ2,
@@ -485,7 +483,9 @@ protected:
   ConflictPair *handleSetWaitConflict(Occurrence *occ1, Occurrence *occ2,
                                       CorePipeInfo corePipeSrc,
                                       CorePipeInfo corePipeDst,
-                                      EventIdInfo eventIdInfo, bool isUseless);
+                                      EventIdInfo eventIdInfo,
+                                      SetWaitPairInfo setWaitPairInfo,
+                                      bool isUseless);
 
   // Create and record a barrier ConflictPair for a same-pipe hazard.
   ConflictPair *handleBarrierConflict(Occurrence *occ1, Occurrence *occ2,
@@ -717,8 +717,9 @@ protected:
     size_t erasedPersistentConflictPairsIndex{0};
   };
 
-  // GraphSolverInfo keyed by (parentOcc1, parentOcc2, eventIdNum).
-  llvm::DenseMap<std::tuple<Occurrence *, Occurrence *, int64_t>,
+  // GraphSolverInfo keyed by (parentOcc1, parentOcc2, eventIdNum,
+  // isCVPreloading).
+  llvm::DenseMap<std::tuple<Occurrence *, Occurrence *, int64_t, int16_t>,
                  GraphSolverInfo>
       graphSolverMap;
 
@@ -739,10 +740,11 @@ protected:
   bool insertTempConflictPair(ConflictPair *conflictPair,
                               Occurrence *parOcc = nullptr) override;
 
-  // Return the GraphSolverBase for (occ1, occ2, eventIdNum), creating it if
+  // Return the GraphSolverBase for (occ1, occ2, eventIdInfo), creating it if
   // needed and applying pending ConflictPair insert/erase logs.
   std::unique_ptr<GraphSolverBase> &
-  getGraphSolverRef(Occurrence *occ1, Occurrence *occ2, int64_t eventIdNum);
+  getGraphSolverRef(Occurrence *occ1, Occurrence *occ2,
+                    const EventIdInfo &eventIdInfo);
 
   // Return true if GraphSolver says a new ConflictPair is still required
   // between occ1 and occ2 on the given pipes.
@@ -768,7 +770,8 @@ protected:
                                RWOperation *rwOp1, RWOperation *rwOp2,
                                CorePipeInfo corePipeSrc,
                                CorePipeInfo corePipeDst,
-                               EventIdInfo eventIdInfo, bool isUseless);
+                               EventIdInfo eventIdInfo,
+                               SetWaitPairInfo setWaitPairInfo, bool isUseless);
 
   // Run skip checks, then for each getMemoryConflicts pipe edge call
   // checkGraphConflict / handleConflict as needed.

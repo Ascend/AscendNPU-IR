@@ -495,8 +495,6 @@ struct EventIdInfo {
   std::optional<CVPreloadingInfo> cvPreloadingInfo;
   std::optional<CVPipeliningInfo> cvPipeliningInfo;
   bool cannotRepeatFlagId{false};
-  bool isCVPipeline{false};
-  bool isCVPreload{false};
 
   EventIdInfo() {};
   explicit EventIdInfo(int64_t eventIdNum, int64_t eventIdRepeatNum = 1)

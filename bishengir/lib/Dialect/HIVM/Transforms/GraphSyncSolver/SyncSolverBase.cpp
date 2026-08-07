@@ -940,7 +940,6 @@ SyncSolverBase::checkCVPipeliningEventIdInfo(Occurrence *occ1, Occurrence *occ2,
   EventIdInfo eventIdInfo(eventIdNum);
   eventIdInfo.cvPipeliningInfo = CVPipeliningInfo(parentLoop1, parentLoop2);
   eventIdInfo.cannotRepeatFlagId = !hasStaticLoopCount;
-  eventIdInfo.isCVPipeline = true;
   return eventIdInfo;
 }
 
@@ -991,7 +990,6 @@ SyncSolverBase::checkCVPreloadingEventIdInfo(Occurrence *occ1, Occurrence *occ2,
       eventIdInfo.cvPreloadingInfo =
           CVPreloadingInfo(parentCVPipeliningLoop1, parentScope1, parentScope2,
                            preloadOffset1, preloadOffset2);
-      eventIdInfo.isCVPreload = true;
       return eventIdInfo;
     }
 
@@ -1008,7 +1006,6 @@ SyncSolverBase::checkCVPreloadingEventIdInfo(Occurrence *occ1, Occurrence *occ2,
         eventIdInfo.cvPreloadingInfo =
             CVPreloadingInfo(parentCVPipeliningLoop1, parentScope1,
                              parentScope2, preloadOffset1, preloadOffset2);
-        eventIdInfo.isCVPreload = true;
         return eventIdInfo;
       }
     } else {
@@ -1018,7 +1015,6 @@ SyncSolverBase::checkCVPreloadingEventIdInfo(Occurrence *occ1, Occurrence *occ2,
         eventIdInfo.cvPreloadingInfo =
             CVPreloadingInfo(parentCVPipeliningLoop1, parentScope1,
                              parentScope2, preloadOffset1, preloadOffset2);
-        eventIdInfo.isCVPreload = true;
         return eventIdInfo;
       } else if (multibufferNum == 1) {
         // instead of inserting outside of the scopes, use the unlikely trick
@@ -1027,7 +1023,6 @@ SyncSolverBase::checkCVPreloadingEventIdInfo(Occurrence *occ1, Occurrence *occ2,
             CVPreloadingInfo(parentCVPipeliningLoop1, parentScope1,
                              parentScope2, preloadOffset1, preloadOffset2);
         eventIdInfo.cvPreloadingInfo->useUnlikely = true;
-        eventIdInfo.isCVPreload = true;
         return eventIdInfo;
       }
     }
@@ -1043,27 +1038,44 @@ SyncSolverBase::checkCVPreloadingEventIdInfo(Occurrence *occ1, Occurrence *occ2,
   return defaultEventIdInfo;
 }
 
-EventIdInfo SyncSolverBase::getEventIdInfo(Occurrence *occ1, Occurrence *occ2,
-                                           RWOperation *rwOp1,
-                                           RWOperation *rwOp2,
-                                           CorePipeInfo corePipeSrc,
-                                           CorePipeInfo corePipeDst) {
+std::tuple<EventIdInfo, SetWaitPairInfo>
+SyncSolverBase::getEventIdSetWaitPairInfo(Occurrence *occ1, Occurrence *occ2,
+                                          RWOperation *rwOp1,
+                                          RWOperation *rwOp2,
+                                          CorePipeInfo corePipeSrc,
+                                          CorePipeInfo corePipeDst) {
   assert(occ1 != nullptr && occ2 != nullptr);
   assert(rwOp1 != nullptr && rwOp2 != nullptr);
-  if (auto eventIdInfo =
+
+  EventIdInfo ret(1);
+  if (auto tryEventIdInfo =
           checkCVPipeliningEventIdInfo(occ1, occ2, rwOp1, rwOp2)) {
-    return eventIdInfo.value();
+    ret = tryEventIdInfo.value();
+  } else if (auto eventIdInfo =
+                 checkCVPreloadingEventIdInfo(occ1, occ2, rwOp1, rwOp2)) {
+    ret = eventIdInfo.value();
+  } else if (auto eventIdInfo =
+                 checkMultiBufferEventIdInfo(occ1, occ2, rwOp1, rwOp2)) {
+    ret = eventIdInfo.value();
   }
-  if (auto eventIdInfo =
-          checkCVPreloadingEventIdInfo(occ1, occ2, rwOp1, rwOp2)) {
-    return eventIdInfo.value();
+
+  auto setWaitPairInfo = getSetWaitOcc(occ1, occ2, ret);
+
+  if (corePipeSrc != corePipeDst) {
+    EventIdInfo singleEventId(1);
+    if (ret.cvPipeliningInfo) {
+      if (!setWaitPairInfo.isCVPipelining) {
+        ret = singleEventId;
+      }
+    }
+    if (ret.cvPreloadingInfo) {
+      if (!setWaitPairInfo.isCVPreloading) {
+        ret = singleEventId;
+      }
+    }
   }
-  if (auto eventIdInfo =
-          checkMultiBufferEventIdInfo(occ1, occ2, rwOp1, rwOp2)) {
-    return eventIdInfo.value();
-  }
-  EventIdInfo singleEventId(1);
-  return singleEventId;
+
+  return std::make_tuple(ret, setWaitPairInfo);
 }
 
 EventIdNode *
@@ -1109,8 +1121,7 @@ void SyncSolverBase::memorizeReusedSyncedPair(
 
 SetWaitPairInfo
 SyncSolverBase::getFixedSetWaitOcc(Occurrence *occ1, Occurrence *occ2,
-                                   std::optional<EventIdInfo> eventIdInfo,
-                                   bool sinkSyncIntoCVLoops) {
+                                   std::optional<EventIdInfo> eventIdInfo) {
   SetWaitPairInfo ret;
   // - get setOcc waitOcc where:
   // setOcc->op->parent = waitOcc->op->parent = lca(occ1, occ2)->op
@@ -1134,8 +1145,7 @@ SyncSolverBase::getFixedSetWaitOcc(Occurrence *occ1, Occurrence *occ2,
   //   waitOcc
   //   op2
   // } {unroll=x}
-  if (sinkSyncIntoCVLoops && eventIdInfo.has_value() &&
-      eventIdInfo->cvPipeliningInfo.has_value()) {
+  if (eventIdInfo.has_value() && eventIdInfo->cvPipeliningInfo.has_value()) {
     assert(ret.setOcc->op != nullptr && ret.waitOcc->op != nullptr);
     auto *loopOp1 = llvm::dyn_cast_if_present<Loop>(ret.setOcc->op);
     auto *loopOp2 = llvm::dyn_cast_if_present<Loop>(ret.waitOcc->op);
@@ -1368,15 +1378,14 @@ SyncSolverBase::getUnlikelyCondSetWaitOcc(Occurrence *occ1, Occurrence *occ2) {
 
 SetWaitPairInfo
 SyncSolverBase::getSetWaitOcc(Occurrence *occ1, Occurrence *occ2,
-                              std::optional<EventIdInfo> eventIdInfo,
-                              bool sinkSyncIntoCVLoops) {
+                              std::optional<EventIdInfo> eventIdInfo) {
   if (auto functionBlockOpt = getFunctionBlockSetWaitOcc(occ1, occ2)) {
     std::tie(occ1, occ2) = functionBlockOpt.value();
   }
   if (auto unlikelyOpt = getUnlikelyCondSetWaitOcc(occ1, occ2)) {
     std::tie(occ1, occ2) = unlikelyOpt.value();
   }
-  return getFixedSetWaitOcc(occ1, occ2, eventIdInfo, sinkSyncIntoCVLoops);
+  return getFixedSetWaitOcc(occ1, occ2, eventIdInfo);
 }
 
 Occurrence *
@@ -1748,7 +1757,8 @@ bool SyncSolverBase::checkSkipCVPreloadingPair(Occurrence *occ1,
 // cross-core, cv).
 ConflictPair *SyncSolverBase::handleSetWaitConflict(
     Occurrence *occ1, Occurrence *occ2, CorePipeInfo corePipeSrc,
-    CorePipeInfo corePipeDst, EventIdInfo eventIdInfo, bool isUseless) {
+    CorePipeInfo corePipeDst, EventIdInfo eventIdInfo,
+    SetWaitPairInfo setWaitPairInfo, bool isUseless) {
   assert(occ1 != nullptr && occ2 != nullptr);
   auto *rwOp1 = llvm::dyn_cast_if_present<RWOperation>(occ1->op);
   auto *rwOp2 = llvm::dyn_cast_if_present<RWOperation>(occ2->op);
@@ -1756,8 +1766,6 @@ ConflictPair *SyncSolverBase::handleSetWaitConflict(
   assert(corePipeSrc != corePipeDst);
   assert(tempInsertedConflictPairs.empty());
 
-  // get set/wait occs
-  auto setWaitPairInfo = getSetWaitOcc(occ1, occ2, eventIdInfo, true);
   auto [setOcc, waitOcc] =
       std::tie(setWaitPairInfo.setOcc, setWaitPairInfo.waitOcc);
   if (setWaitPairInfo.isCVPreloading) {
@@ -1766,21 +1774,9 @@ ConflictPair *SyncSolverBase::handleSetWaitConflict(
     }
   }
 
-  if (auto cvPipeliningInfo = eventIdInfo.cvPipeliningInfo) {
-    if (!setWaitPairInfo.isCVPipelining) {
-      eventIdInfo = EventIdInfo(1);
-    }
-  } else if (auto cvPreloadingInfo = eventIdInfo.cvPreloadingInfo) {
-    if (!setWaitPairInfo.isCVPreloading) {
-      eventIdInfo = EventIdInfo(1);
-    }
-  }
-  if (!setWaitPairInfo.isCVPipelining && !setWaitPairInfo.isCVPreloading) {
-    if (!setWaitPairInfo.isBackwardPair ||
-        disabledMultiEventIdPairs.contains({corePipeSrc, corePipeDst})) {
-      eventIdInfo.setEventIdNum(1);
-    }
-  }
+  assert((!setWaitPairInfo.isForwardPair || !setWaitPairInfo.isBackwardPair) ||
+         setWaitPairInfo.isCVPipelining || setWaitPairInfo.isCVPreloading ||
+         options.enableUnitFlagFeature);
 
   Loop *parentLCALoopOp{nullptr};
   Occurrence *parentLCALoopOcc{nullptr};
@@ -1790,12 +1786,8 @@ ConflictPair *SyncSolverBase::handleSetWaitConflict(
   // calc norm scope occs
   Occurrence *parOcc1 = setOcc->parentOcc;
   Occurrence *parOcc2 = waitOcc->parentOcc;
-  assert(setWaitPairInfo.isCVPreloading || setWaitPairInfo.isCVPipelining ||
-         parOcc1->op == parOcc2->op);
-
-  assert(!setWaitPairInfo.isForwardPair || !setWaitPairInfo.isBackwardPair ||
-         setWaitPairInfo.isCVPipelining || setWaitPairInfo.isCVPreloading ||
-         options.enableUnitFlagFeature);
+  assert(parOcc1->op == parOcc2->op || setWaitPairInfo.isCVPreloading ||
+         setWaitPairInfo.isCVPipelining);
 
   // create set/wait conflict-pair
   auto conflictPair = std::make_unique<ConflictPair>(
@@ -1853,8 +1845,9 @@ ConflictPair *SyncSolverBase::handleSetWaitConflict(
     conflictPair->updateSetWaitOccs(setOcc, waitOcc);
   }
 
-  bool keepMultiEventId = conflictPair->eventIdInfo.isCVPipeline ||
-                          conflictPair->eventIdInfo.isCVPreload;
+  bool keepMultiEventId =
+      conflictPair->eventIdInfo.cvPipeliningInfo.has_value() ||
+      conflictPair->eventIdInfo.cvPreloadingInfo.has_value();
   if (!conflictPair->isInnerBackward ||
       (!keepMultiEventId &&
        disabledMultiEventIdPairs.contains({corePipeSrc, corePipeDst}))) {
@@ -2034,6 +2027,7 @@ ConflictPair *SyncSolverBase::handleBarrierConflict(
     isUseless = true;
   }
 
+  eventIdInfo.setEventIdNum(1);
   auto *waitOcc = getBarrierWaitOcc(occ1, occ2, eventIdInfo);
 
   auto conflictPair = std::make_unique<ConflictPair>(

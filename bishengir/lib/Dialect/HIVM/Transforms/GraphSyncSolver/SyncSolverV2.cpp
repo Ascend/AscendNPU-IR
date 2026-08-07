@@ -132,8 +132,10 @@ bool SyncSolverV2::insertTempConflictPair(ConflictPair *conflictPair,
 
 std::unique_ptr<GraphSolverBase> &
 SyncSolverV2::getGraphSolverRef(Occurrence *occ1, Occurrence *occ2,
-                                int64_t eventIdNum) {
-  auto key = std::make_tuple(occ1, occ2, eventIdNum);
+                                const EventIdInfo &eventIdInfo) {
+  int64_t eventIdNum = eventIdInfo.getEventIdNum();
+  int16_t isCVPreloading = eventIdInfo.cvPreloadingInfo.has_value();
+  auto key = std::make_tuple(occ1, occ2, eventIdNum, isCVPreloading);
   if (!graphSolverMap.contains(key)) {
     GraphSolverInfo graphSolverInfo;
     if (options.enableUnitFlagFeature) {
@@ -155,6 +157,20 @@ SyncSolverV2::getGraphSolverRef(Occurrence *occ1, Occurrence *occ2,
     }
     if (eventIdNum < conflictPair->eventIdInfo.getEventIdNum()) {
       return;
+    }
+    if (isCVPreloading) {
+      if (conflictPair->isBackwardPair) {
+        if (!conflictPair->setWaitPairInfo.has_value() ||
+            !conflictPair->setWaitPairInfo->isCVPreloading) {
+          return;
+        }
+      }
+    }
+    if (conflictPair->setWaitPairInfo.has_value() &&
+        conflictPair->setWaitPairInfo->isCVPreloading) {
+      if (!isCVPreloading) {
+        return;
+      }
     }
     if (parOcc1 == parOcc2) {
       if (!parOcc1->isAncestor(occ1) && !parOcc1->isAncestor(occ2)) {
@@ -223,8 +239,8 @@ bool SyncSolverV2::checkGraphConflict(
     endIndex = occ2->startIndex;
   }
 
-  auto &graphSolver = getGraphSolverRef(occ1->parentOcc, occ2->parentOcc,
-                                        eventIdInfo.getEventIdNum());
+  auto &graphSolver =
+      getGraphSolverRef(occ1->parentOcc, occ2->parentOcc, eventIdInfo);
 
   if (graphSolver->checkAnyBarrierAllBetween(startIndex.value(),
                                              endIndex.value())) {
@@ -372,11 +388,10 @@ SyncSolverV2::getIntersectingEventIdNodes(ConflictPair *conflictPair) {
   return intersectingNodes.takeVector();
 }
 
-ConflictPair *
-SyncSolverV2::handleConflict(Occurrence *occ1, Occurrence *occ2,
-                             RWOperation *rwOp1, RWOperation *rwOp2,
-                             CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst,
-                             EventIdInfo eventIdInfo, bool isUseless) {
+ConflictPair *SyncSolverV2::handleConflict(
+    Occurrence *occ1, Occurrence *occ2, RWOperation *rwOp1, RWOperation *rwOp2,
+    CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst, EventIdInfo eventIdInfo,
+    SetWaitPairInfo setWaitPairInfo, bool isUseless) {
   this->perfInfo.handledConflictsNum += 1;
   LLVM_DEBUG({
     llvm::dbgs() << "conflict found: "
@@ -388,7 +403,6 @@ SyncSolverV2::handleConflict(Occurrence *occ1, Occurrence *occ2,
                  << occ2->endIndex << ' ' << rwOp2->str(0, false) << '\n';
   });
   if (corePipeSrc == corePipeDst) {
-    eventIdInfo.setEventIdNum(1);
     return handleBarrierConflict(occ1, occ2, corePipeSrc, corePipeDst,
                                  eventIdInfo, isUseless);
   } else if (auto unitFlagInfo = checkUnitFlagPatterns(occ1, occ2)) {
@@ -396,7 +410,7 @@ SyncSolverV2::handleConflict(Occurrence *occ1, Occurrence *occ2,
                                   unitFlagInfo.value(), isUseless);
   } else {
     return handleSetWaitConflict(occ1, occ2, corePipeSrc, corePipeDst,
-                                 eventIdInfo, isUseless);
+                                 eventIdInfo, setWaitPairInfo, isUseless);
   }
 }
 
@@ -431,11 +445,11 @@ void SyncSolverV2::processOrder(Occurrence *occ1, Occurrence *occ2,
     if (options.alwaysUsePipeSAsWaitingPipe) {
       corePipeDst.pipe = hivm::PIPE::PIPE_S;
     }
-    auto eventIdInfo =
-        getEventIdInfo(occ1, occ2, rwOp1, rwOp2, corePipeSrc, corePipeDst);
+    auto [eventIdInfo, setWaitPairInfo] = getEventIdSetWaitPairInfo(
+        occ1, occ2, rwOp1, rwOp2, corePipeSrc, corePipeDst);
     if (checkGraphConflict(occ1, occ2, corePipeSrc, corePipeDst, eventIdInfo)) {
       handleConflict(occ1, occ2, rwOp1, rwOp2, corePipeSrc, corePipeDst,
-                     eventIdInfo, isUseless);
+                     eventIdInfo, setWaitPairInfo, isUseless);
     }
   }
 }
@@ -491,8 +505,8 @@ bool SyncSolverV2::processOrder(ProcessingOrderV2 processingOrder) {
   if (options.alwaysUsePipeSAsWaitingPipe) {
     corePipeDst.pipe = hivm::PIPE::PIPE_S;
   }
-  auto eventIdInfo =
-      getEventIdInfo(occ1, occ2, rwOp1, rwOp2, corePipeSrc, corePipeDst);
+  auto [eventIdInfo, setWaitPairInfo] = getEventIdSetWaitPairInfo(
+      occ1, occ2, rwOp1, rwOp2, corePipeSrc, corePipeDst);
   if (!checkGraphConflict(occ1, occ2, corePipeSrc, corePipeDst, eventIdInfo)) {
     if (!checkGraphConflict(parOcc1, parOcc2, corePipeSrc, corePipeDst,
                             EventIdInfo(1))) {
@@ -501,8 +515,9 @@ bool SyncSolverV2::processOrder(ProcessingOrderV2 processingOrder) {
     return false;
   }
 
-  auto *conflictPair = handleConflict(occ1, occ2, rwOp1, rwOp2, corePipeSrc,
-                                      corePipeDst, eventIdInfo, isUseless);
+  auto *conflictPair =
+      handleConflict(occ1, occ2, rwOp1, rwOp2, corePipeSrc, corePipeDst,
+                     eventIdInfo, setWaitPairInfo, isUseless);
   if (conflictPair == nullptr || conflictPair->couldNotRun ||
       conflictPair->setOnLastIterOnly || conflictPair->waitOnFirstIterOnly) {
     return false;
