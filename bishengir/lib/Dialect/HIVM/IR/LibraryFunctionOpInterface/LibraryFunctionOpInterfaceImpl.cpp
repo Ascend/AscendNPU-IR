@@ -1703,7 +1703,7 @@ void bishengir::hivm::detail::registerLibraryFunctionOpInterfaceExtension(
     REGISTER_NO_LIBRARY_FUNCTION(BatchMmadL1Op);
 
     // Other ops
-    REGISTER_STATIC_MAX_RANK(DebugOp, 4);
+    REGISTER_STATIC_MAX_RANK(DebugOp, 8);
     REGISTER_NO_MAX_RANK(FinishDebugOp);
     REGISTER_NO_MAX_RANK(InitDebugOp);
     REGISTER_STATIC_MAX_RANK(EmbeddingGatherOp, 3);
