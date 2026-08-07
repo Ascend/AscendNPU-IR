@@ -1,6 +1,8 @@
 // REQUIRES: asserts
 // RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend950PR_950z -hivm-plan-memory -split-input-file -verify-diagnostics | FileCheck %s
 // RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend950PR_950z -hivm-plan-memory --debug-only="vf-inplace-reuse" -split-input-file -verify-diagnostics 2>&1 | FileCheck %s -check-prefix=CHECK-DEBUG
+// RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend950PR_950z -hivm-plan-memory=disable-vf-reachable-check=true -split-input-file -verify-diagnostics | FileCheck %s -check-prefix=CHECK-NO-REACHABLE-CHECK
+
 // -----
 
 func.func @read_once_and_write_once_0(
@@ -475,6 +477,46 @@ module {
       %store = memref.alloc() : memref<64xf32, #hivm.address_space<ub>>
       func.call @vf_b(%gen, %store) {hivm.vector_function, no_inline} : (memref<64xf32, #hivm.address_space<ub>>, memref<64xf32, #hivm.address_space<ub>>) -> ()
       hivm.hir.store ins(%store : memref<64xf32, #hivm.address_space<ub>>) outs(%gm : memref<64xf32, #hivm.address_space<gm>>)
+    }
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @vf_a(%kill_1: memref<30720xf32, #hivm.address_space<ub>>, %gen: memref<30720xf32, #hivm.address_space<ub>>) attributes {hivm.vector_function, no_inline} {
+    %c0 = arith.constant 0 : index
+    %cst = arith.constant 0.000000e+00 : f32
+    %0 = vector.transfer_read %kill_1[%c0], %cst {in_bounds = [true]} : memref<30720xf32, #hivm.address_space<ub>>, vector<30720xf32>
+    vector.transfer_write %0, %gen[%c0] {in_bounds = [true]} : vector<30720xf32>, memref<30720xf32, #hivm.address_space<ub>>
+    return
+  }
+
+  func.func @vf_b(%kill: memref<30720xf32, #hivm.address_space<ub>>, %gen: memref<30720xf32, #hivm.address_space<ub>>) attributes {hivm.vector_function, no_inline} {
+    %c0 = arith.constant 0 : index
+    %cst = arith.constant 0.000000e+00 : f32
+    %0 = vector.transfer_read %kill[%c0], %cst {in_bounds = [true]} : memref<30720xf32, #hivm.address_space<ub>>, vector<30720xf32>
+    vector.transfer_write %0, %gen[%c0] {in_bounds = [true]} : vector<30720xf32>, memref<30720xf32, #hivm.address_space<ub>>
+    return
+  }
+  // CHECK-LABEL: func.func @test_no_reachable_check
+  // CHECK-NO-REACHABLE-CHECK-LABEL: func.func @test_no_reachable_check
+  func.func @test_no_reachable_check(%gm: memref<30720xf32, #hivm.address_space<gm>>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vf_mode = #hivm.vf_mode<SIMD>} {
+    // CHECK-DAG: %{{.*}} = arith.constant 0 : i64
+    // CHECK-DAG: %{{.*}} = arith.constant 122880 : i64
+    // CHECK-NO-REACHABLE-CHECK-NOT: %{{.*}} = arith.constant 122880 : i64
+    %c64 = arith.constant 64 : index
+    %c0 = arith.constant 0 : index
+    %c256 = arith.constant 256 : index
+    scf.for %iv = %c0 to %c256 step %c64 {
+      %kill_1 = memref.alloc() : memref<30720xf32, #hivm.address_space<ub>>
+      hivm.hir.load ins(%gm : memref<30720xf32, #hivm.address_space<gm>>) outs(%kill_1 : memref<30720xf32, #hivm.address_space<ub>>) eviction_policy = <EvictFirst>
+      %gen = memref.alloc() : memref<30720xf32, #hivm.address_space<ub>>
+      func.call @vf_a(%kill_1, %gen) {hivm.vector_function, no_inline} : (memref<30720xf32, #hivm.address_space<ub>>, memref<30720xf32, #hivm.address_space<ub>>) -> ()
+      %store = memref.alloc() : memref<30720xf32, #hivm.address_space<ub>>
+      func.call @vf_b(%gen, %store) {hivm.vector_function, no_inline} : (memref<30720xf32, #hivm.address_space<ub>>, memref<30720xf32, #hivm.address_space<ub>>) -> ()
+      hivm.hir.store ins(%store : memref<30720xf32, #hivm.address_space<ub>>) outs(%gm : memref<30720xf32, #hivm.address_space<gm>>)
     }
     return
   }

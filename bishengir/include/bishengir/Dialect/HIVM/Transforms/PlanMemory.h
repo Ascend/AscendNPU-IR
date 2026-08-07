@@ -591,9 +591,6 @@ public:
   /// enable memory display tools.
   bool enableMemoryDisplay;
 
-  /// Strategy for reordering storage entries during plan memory.
-  PlanMemoryStrategy planMemoryStrategy;
-
   /// when plan memory failed, record error info
   DenseMap<hivm::AddressSpace, std::string> errorInfo;
 
@@ -629,6 +626,9 @@ private:
 
   /// Disable VF load/store reachability check for inplace reuse.
   bool disableVFReachableCheck;
+
+  /// Strategy for reordering storage entries during plan memory.
+  PlanMemoryStrategy planMemoryStrategy;
 
   /// inplace-reuse info for the vf call.
   VFCallInplaceReuseInfo *vfInplaceReuseInfo;
