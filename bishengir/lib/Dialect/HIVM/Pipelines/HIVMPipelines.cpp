@@ -57,6 +57,7 @@ hivmNormSyncPipeline(OpPassManager &pm,
       !hivmPipelineOptions.disableHIVMAutoInjectSync) {
     GraphSyncSolverOptions gssOptions;
     gssOptions.enableUnitFlag = hivmPipelineOptions.enableHIVMUnitFlagSync;
+    gssOptions.solverVersion = hivmPipelineOptions.hivmSyncSolverVersion;
     pm.nest<func::FuncOp>().addPass(createGraphSyncSolverPass(gssOptions));
   } else if (!hivmPipelineOptions.disableHIVMAutoInjectSync) {
     InjectSyncOptions syncOptions;
@@ -82,7 +83,11 @@ hivmCrossCoreSyncPipeline(OpPassManager &pm,
   if (hivmPipelineOptions.enableHIVMCrossCoreGSS &&
       !hivmPipelineOptions.enableHIVMInjectBlockAllSync &&
       !hivmPipelineOptions.disableAutoInjectBlockSync) {
-    pm.nest<func::FuncOp>().addPass(createCrossCoreGSSPass());
+    CrossCoreGSSOptions crossCoreGSSOptions;
+    crossCoreGSSOptions.solverVersion =
+        hivmPipelineOptions.hivmSyncSolverVersion;
+    pm.nest<func::FuncOp>().addPass(
+        createCrossCoreGSSPass(crossCoreGSSOptions));
   } else {
     InjectBlockSyncOptions blockSyncOption;
     blockSyncOption.blockAllSync =
