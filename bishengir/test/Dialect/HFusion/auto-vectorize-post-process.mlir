@@ -1,7 +1,7 @@
 // RUN: bishengir-opt %s -hfusion-auto-vectorize -hfusion-pull-slice-into-vector-function | FileCheck %s
 
 module {
-  // Passthrough Scenario 2 is disabled: VF still pulls the full tensor as
+  // Passthrough pull is not supported: VF still pulls the full tensor as
   // input and extracts inside, but returns the sliced type (no insert_slice).
   // CHECK-LABEL: func @test_vectorization_post_process_outlined_vf_0(
   // CHECK-SAME: tensor<256x256xf32>

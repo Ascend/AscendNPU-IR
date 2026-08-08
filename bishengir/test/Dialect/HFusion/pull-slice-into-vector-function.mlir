@@ -2,10 +2,10 @@
 
 // -----
 
-// Passthrough / identity-like return pull (former Scenario 2 in the pass) is
-// temporarily disabled. The slice operand is still pulled as input-only: the
-// VF takes the full tensor + offsets and extracts inside, but still returns
-// the sliced type (no extract_slice on the call result).
+// Passthrough / identity-like return pull is not supported. The slice operand
+// is still pulled as input-only: the VF takes the full tensor + offsets and
+// extracts inside, but still returns the sliced type (no extract_slice on the
+// call result).
 // Uses stride [2,1] for non-standard stride.
 //
 // Before: %slice = extract_slice(%full); %x = call @vf(%slice); return %x
