@@ -74,36 +74,11 @@ namespace {
 //
 //     return %new_full
 //
-// [Scenario 2: Passthrough / identity-like return]
+// [Scenario 2: Passthrough / identity-like return] — TEMPORARILY DISABLED
 //
-//   Caller before:
-//
-//     %slice = tensor.extract_slice %full[%i, 0, 0]
-//       [1, 32, 64] [1, 1, 1]
-//       : tensor<2x32x64xf32> to tensor<32x64xf32>
-//
-//     %ret_slice = func.call @vf(%slice)
-//       : (tensor<32x64xf32>) -> tensor<32x64xf32>
-//
-//   The VF result is traced back to the slice argument, for example:
-//
-//     func.func @vf(%arg0: tensor<32x64xf32>) -> tensor<32x64xf32> {
-//       %0 = scf.for ... iter_args(%iter = %arg0) ...
-//       return %0 : tensor<32x64xf32>
-//     }
-//
-//   Caller after:
-//
-//     %ret_full = func.call @vf(%full, %i, ...)
-//       : (tensor<2x32x64xf32>, index, ...)
-//         -> tensor<2x32x64xf32>
-//
-//     %ret_slice = tensor.extract_slice %ret_full[%i, 0, 0]
-//       [1, 32, 64] [1, 1, 1]
-//       : tensor<2x32x64xf32> to tensor<32x64xf32>
-//
-//   VF after extracts the slice at entry and returns the corresponding full
-//   tensor result. The caller still needs extract_slice on the full result.
+//   Was: pull slice so VF returns full tensor; caller extract_slice on result.
+//   Disabled due to CV1:2 precision failure when that post-call extract_slice
+//   loses dynamic offset across one-shot-bufferize / VF call casts.
 
 /// Match result for slice pull: describes which operand/result to rewrite and
 /// how.
@@ -304,39 +279,33 @@ private:
         }
       }
 
-      // [Scenario 2: Passthrough / identity-like return]
+      // [Scenario 2: Passthrough / identity-like return] — temporarily disabled.
       //
-      // Example:
+      // Pulling a passthrough slice makes the VF return the full tensor and
+      // inserts extract_slice on the call result. After one-shot-bufferize that
+      // extract becomes a dynamic-offset memref.subview; when scf.if then
+      // widens the layout to strided<[?], offset: ?> and the next VF call
+      // casts away the offset (fold_offset_into_ptr requires static strides),
+      // sub-block >= 1 silently reads the wrong half (CV1:2 precision bug on
+      // chunk_kda_bwd_kernel_wy_dqkg_fused after TileAndBindSubBlock).
       //
-      //   %slice = tensor.extract_slice %src[%i, ...]
-      //   %ret_slice = func.call @vf(%slice)
+      // Keep Scenario 1 (read-modify-write) and input-only operand pull.
       //
-      // and inside VF:
+      // auto returnOp =
+      //     cast<func::ReturnOp>(callee.getBody().front().getTerminator());
       //
-      //   func.func @vf(%arg0: tensor<32x64xf32>)
-      //       -> tensor<32x64xf32> {
-      //     %0 = scf.for ... iter_args(%iter = %arg0) ...
-      //     return %0 : tensor<32x64xf32>
+      // int64_t fullTensorResultIdx = -1;
+      // for (auto [resIdx, retVal] : llvm::enumerate(returnOp.getOperands())) {
+      //   if (traceValueToFuncArg(retVal) == static_cast<int64_t>(idx)) {
+      //     fullTensorResultIdx = static_cast<int64_t>(resIdx);
+      //     break;
       //   }
+      // }
       //
-      // The result flows from the slice arg. After pulling, the call returns a
-      // full tensor and the caller extracts the corresponding slice from that
-      // full result.
-      auto returnOp =
-          cast<func::ReturnOp>(callee.getBody().front().getTerminator());
-
-      int64_t fullTensorResultIdx = -1;
-      for (auto [resIdx, retVal] : llvm::enumerate(returnOp.getOperands())) {
-        if (traceValueToFuncArg(retVal) == static_cast<int64_t>(idx)) {
-          fullTensorResultIdx = static_cast<int64_t>(resIdx);
-          break;
-        }
-      }
-
-      if (fullTensorResultIdx != -1) {
-        return SlicePullMatch{extractSlice, idx, fullTensorResultIdx,
-                              nullptr};
-      }
+      // if (fullTensorResultIdx != -1) {
+      //   return SlicePullMatch{extractSlice, idx, fullTensorResultIdx,
+      //                         nullptr};
+      // }
 
       // Input-only slice operand. There is no related call result to rewrite,
       // but pulling the extract_slice into VF can still expose a better
@@ -452,29 +421,17 @@ private:
       Value fullTensorResult = newCall.getResult(match.fullTensorResultIdx);
       rewriter.replaceAllUsesWith(insertOp.getResult(), fullTensorResult);
       rewriter.eraseOp(insertOp);
-    } else if (match.fullTensorResultIdx != -1) {
-      // [Scenario 2: Passthrough / identity-like return]
-      //
-      // Matched caller pattern before pulling:
-      //
-      //   %slice = tensor.extract_slice %full[offsets...]
-      //   %ret_slice = func.call @vf(..., %slice, ...)
-      //
-      // There is no insert_slice user in the caller. The VF result is traced
-      // back to the sliced argument, so after pulling the slice into VF the
-      // call returns a full tensor:
-      //
-      //   %ret_full = func.call @vf(..., %full, offsets...)
-      //
-      // The original users still expect the sliced result type, so extract the
-      // same slice from the full call result.
-      newResults[match.fullTensorResultIdx] =
-          rewriter.create<tensor::ExtractSliceOp>(
-              call.getLoc(), extractSlice.getType(),
-              newResults[match.fullTensorResultIdx],
-              extractSlice.getMixedOffsets(), extractSlice.getMixedSizes(),
-              extractSlice.getMixedStrides());
     }
+    // Scenario 2 (passthrough) caller rewrite temporarily disabled — see
+    // tryMatchSliceOperand. fullTensorResultIdx is only set for Scenario 1 now.
+    // else if (match.fullTensorResultIdx != -1) {
+    //   newResults[match.fullTensorResultIdx] =
+    //       rewriter.create<tensor::ExtractSliceOp>(
+    //           call.getLoc(), extractSlice.getType(),
+    //           newResults[match.fullTensorResultIdx],
+    //           extractSlice.getMixedOffsets(), extractSlice.getMixedSizes(),
+    //           extractSlice.getMixedStrides());
+    // }
 
     rewriter.replaceOp(call, newResults);
     return newCall;
