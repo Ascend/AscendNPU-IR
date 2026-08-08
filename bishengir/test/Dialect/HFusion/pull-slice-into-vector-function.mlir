@@ -2,11 +2,14 @@
 
 // -----
 
-// Test Scenario 1 (passthrough): return flows from arg via scf.for iter_args;
-// pattern inserts extract_slice on call result. Uses stride [2,1] for non-standard stride.
+// Passthrough / identity-like return pull is not supported. The slice operand
+// is still pulled as input-only: the VF takes the full tensor + offsets and
+// extracts inside, but still returns the sliced type (no extract_slice on the
+// call result).
+// Uses stride [2,1] for non-standard stride.
 //
 // Before: %slice = extract_slice(%full); %x = call @vf(%slice); return %x
-// After:  call @vf(%full, ...) returns full; pattern inserts extract_slice on result
+// After:  %x = call @vf(%full, ...); return %x
 module {
   // CHECK-LABEL: func @vf_passthrough(
   // CHECK-SAME: tensor<16x32xf32>
@@ -29,8 +32,8 @@ module {
   // CHECK-LABEL: func @test_pull_extract_insert_slice_scenario_1(
   // CHECK: %[[CALL:.*]] = call @vf_passthrough(%arg0
   // CHECK-SAME: {hivm.vector_function}
-  // CHECK: %[[SLICE:.*]] = tensor.extract_slice %[[CALL]]
-  // CHECK: return %[[SLICE]]
+  // CHECK-NOT: tensor.extract_slice %[[CALL]]
+  // CHECK: return %[[CALL]]
   func.func @test_pull_extract_insert_slice_scenario_1(%arg0: tensor<16x32xf32>) -> tensor<4x8xf32> {
     %slice = tensor.extract_slice %arg0[0, 0] [4, 8] [2, 1]
         : tensor<16x32xf32> to tensor<4x8xf32>

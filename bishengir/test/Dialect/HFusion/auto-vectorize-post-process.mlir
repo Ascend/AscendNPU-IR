@@ -1,9 +1,13 @@
 // RUN: bishengir-opt %s -hfusion-auto-vectorize -hfusion-pull-slice-into-vector-function | FileCheck %s
 
 module {
+  // Passthrough pull is not supported: VF still pulls the full tensor as
+  // input and extracts inside, but returns the sliced type (no insert_slice).
   // CHECK-LABEL: func @test_vectorization_post_process_outlined_vf_0(
+  // CHECK-SAME: tensor<256x256xf32>
   // CHECK:       tensor.extract_slice
-  // CHECK:       tensor.insert_slice
+  // CHECK-NOT:   tensor.insert_slice
+  // CHECK:       return
   func.func @test_vectorization_post_process_outlined_vf_0(%arg0: tensor<?x?xf32>) -> tensor<?x?xf32> attributes {hivm.vector_function} {
     %c1 = arith.constant 1 : index
     %c0 = arith.constant 0 : index
@@ -19,8 +23,10 @@ module {
   }
 
   // CHECK-LABEL: func @test_vectorization_post_process(
-  // CHECK: func.call @test_vectorization_post_process_outlined_vf_0(
-  // CHECK: tensor.extract_slice
+  // CHECK: %[[CALL:.*]] = func.call @test_vectorization_post_process_outlined_vf_0(
+  // CHECK-SAME: {hivm.vector_function}
+  // CHECK-NOT: tensor.extract_slice %[[CALL]]
+  // CHECK: scf.yield %[[CALL]]
   func.func @test_vectorization_post_process(%arg0: tensor<256x256xf32>) {
     %c6 = arith.constant 6 : index
     %c5 = arith.constant 5 : index
