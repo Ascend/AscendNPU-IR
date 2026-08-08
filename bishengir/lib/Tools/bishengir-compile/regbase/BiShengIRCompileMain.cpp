@@ -452,12 +452,6 @@ bishengir::regbase::runRegBasePipeline(ModuleOp mod,
              << ", fallback with disabled VF reachable check");
         config.setDisableVFReachableCheck(true);
         collectedDiagnostics.clear();
-      } else if (hasUboverflow && !config.getDisableTightCoupledBuffer()) {
-        LDBG("ub overflow detected at attempt "
-             << (i + 1) << "/" << tryTimes
-             << ", fallback with MixCV GM path");
-        config.setDisableTightCoupledBuffer(true);
-        collectedDiagnostics.clear();
       }
     }
 
