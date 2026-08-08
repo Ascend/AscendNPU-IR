@@ -2942,3 +2942,106 @@ func.func @indirect_load_dual_store_mix_aiv(%arg0: memref<?xf32> {tt.divisibilit
   hivm.hir.store ins(%17 : tensor<16xf32>) outs(%reinterpret_cast_1 : memref<16xf32, strided<[1], offset: ?>>)
   return
 }
+
+// -----
+
+// CHECK-LABEL: func.func @diamond_broadcast_operand_order(
+// CHECK:         scf.for
+// CHECK:           memref.subview %{{.*}}[0, %{{.*}}] [64, 32] [1, 1]
+// CHECK:           hivm.hir.vmul ins(%{{.*}}, %{{.*}} : tensor<64x32xf32>, tensor<1x32xf32>)
+// CHECK-SAME:        broadcast = [0] -> tensor<64x32xf32>
+// CHECK:           hivm.hir.store{{.*}} {tiled_op}
+// CHECK:           hivm.hir.store{{.*}} {tiled_op}
+// CHECK:           hivm.hir.store{{.*}} {tiled_op}
+// CHECK:         } {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  // expected-remark @+1{{Selected tiling dim might have broadcast two different axis. Automatically disables strict mode.}}
+  func.func @diamond_broadcast_operand_order(
+      %arg0: tensor<64x64xf32>,
+      %arg1: tensor<64xf32>,
+      %arg2: tensor<64xi32>,
+      %arg3: memref<64x64xf32>,
+      %arg4: memref<64xf32>,
+      %arg5: memref<64x64xi32>)
+      attributes {
+        hacc.function_kind = #hacc.function_kind<DEVICE>,
+        hivm.func_core_type = #hivm.func_core_type<AIV>,
+        hivm.part_of_mix,
+        mix_mode = "mix"
+      } {
+    %zero = arith.constant 0.000000e+00 : f32
+    %int_empty = tensor.empty() : tensor<64x64xi32>
+    %mask_empty = tensor.empty() : tensor<64x64xi1>
+    %result_empty = tensor.empty() : tensor<64x64xf32>
+    %column = tensor.expand_shape %arg2 [[0, 1]] output_shape [64, 1]
+      : tensor<64xi32> into tensor<64x1xi32>
+    %column_broadcast = hivm.hir.vbrc
+      ins(%column : tensor<64x1xi32>)
+      outs(%int_empty : tensor<64x64xi32>) broadcast_dims = [1]
+      -> tensor<64x64xi32>
+    %row = tensor.expand_shape %arg2 [[0, 1]] output_shape [1, 64]
+      : tensor<64xi32> into tensor<1x64xi32>
+    %row_broadcast = hivm.hir.vbrc
+      ins(%row : tensor<1x64xi32>)
+      outs(%int_empty : tensor<64x64xi32>) broadcast_dims = [0]
+      -> tensor<64x64xi32>
+    %mask = hivm.hir.vcmp
+      ins(%column_broadcast, %row_broadcast
+        : tensor<64x64xi32>, tensor<64x64xi32>)
+      outs(%mask_empty : tensor<64x64xi1>) compare_mode = <gt>
+      -> tensor<64x64xi1>
+    %expanded = tensor.expand_shape %arg1 [[0, 1]] output_shape [1, 64]
+      : tensor<64xf32> into tensor<1x64xf32>
+    %product = hivm.hir.vmul
+      ins(%arg0, %expanded : tensor<64x64xf32>, tensor<1x64xf32>)
+      outs(%result_empty : tensor<64x64xf32>) broadcast = [0]
+      -> tensor<64x64xf32>
+    %result = hivm.hir.vsel
+      ins(%mask, %product, %zero
+        : tensor<64x64xi1>, tensor<64x64xf32>, f32)
+      outs(%result_empty : tensor<64x64xf32>)
+      -> tensor<64x64xf32>
+    hivm.hir.store ins(%result : tensor<64x64xf32>)
+      outs(%arg3 : memref<64x64xf32>)
+    hivm.hir.store ins(%arg1 : tensor<64xf32>)
+      outs(%arg4 : memref<64xf32>)
+    hivm.hir.store ins(%row_broadcast : tensor<64x64xi32>)
+      outs(%arg5 : memref<64x64xi32>)
+    return
+  }
+}
+
+// -----
+
+// Candidate dimensions from both stores collapse into one group. Preserve all
+// group members when selecting the tiling dimension despite the two-axis
+// broadcast constraint.
+// CHECK-LABEL: func.func @broadcast_merged_candidate_groups(
+// CHECK:       scf.for
+// CHECK:         hivm.hir.vsub {{.*}} broadcast = [0, 1] -> tensor<32x64xf32>
+// CHECK:         hivm.hir.store {{.*}} {tiled_op}
+// CHECK:         hivm.hir.store {{.*}} {tiled_op}
+// CHECK:       } {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+// expected-remark @+1{{Selected tiling dim might have broadcast two different axis. Automatically disables strict mode.}}
+func.func @broadcast_merged_candidate_groups(
+    %arg0: tensor<1x64xf32>,
+    %arg1: tensor<64x128xf32>,
+    %arg2: memref<64x64xf32>,
+    %arg3: memref<64x128xf32>) attributes {
+      hacc.function_kind = #hacc.function_kind<DEVICE>,
+      hivm.func_core_type = #hivm.func_core_type<AIV>,
+      hivm.part_of_mix,
+      mix_mode = "mix"
+    } {
+  %0 = tensor.collapse_shape %arg0 [[0, 1]] : tensor<1x64xf32> into tensor<64xf32>
+  %expanded = tensor.expand_shape %0 [[0, 1]] output_shape [64, 1] : tensor<64xf32> into tensor<64x1xf32>
+  %1 = tensor.empty() : tensor<64x128xf32>
+  %2 = hivm.hir.vmul ins(%arg1, %expanded : tensor<64x128xf32>, tensor<64x1xf32>) outs(%1 : tensor<64x128xf32>) broadcast = [1] -> tensor<64x128xf32>
+  %expanded_0 = tensor.expand_shape %arg0 [[0], [1, 2]] output_shape [1, 64, 1] : tensor<1x64xf32> into tensor<1x64x1xf32>
+  %collapsed = tensor.collapse_shape %expanded_0 [[0, 1], [2]] : tensor<1x64x1xf32> into tensor<64x1xf32>
+  %3 = tensor.empty() : tensor<64x64xf32>
+  %4 = hivm.hir.vsub ins(%collapsed, %arg0 : tensor<64x1xf32>, tensor<1x64xf32>) outs(%3 : tensor<64x64xf32>) broadcast = [0, 1] -> tensor<64x64xf32>
+  hivm.hir.store ins(%4 : tensor<64x64xf32>) outs(%arg2 : memref<64x64xf32>)
+  hivm.hir.store ins(%2 : tensor<64x128xf32>) outs(%arg3 : memref<64x128xf32>)
+  return
+}
