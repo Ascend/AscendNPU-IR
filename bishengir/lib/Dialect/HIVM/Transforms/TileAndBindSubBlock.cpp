@@ -592,8 +592,9 @@ public:
 
   LogicalResult matchAndRewrite(hivm::VReduceOp op,
                                 PatternRewriter &rewriter) const override {
-    if (op->hasAttrOfType<UnitAttr>(tiledOp) || op->getNumResults() == 0u ||
-        op.getDst().size() == 2u)
+    if (op->hasAttrOfType<UnitAttr>(tiledOp) ||
+        op->hasAttrOfType<UnitAttr>(tileAndSliceFailure) ||
+        op->getNumResults() == 0u || op.getDst().size() == 2u)
       return failure();
 
     int64_t tilingDim = analyzer.getTilingDim(op.getSrc());
@@ -738,6 +739,7 @@ private:
         loc, dstType, loadedValue, dst, op.getTempBuffer(), op.getArithAttr(),
         op.getUnsignedSrcAttr(), op.getTieBreakLeftAttr(),
         op.getReduceDimsAttr(), op.getIndices());
+    newReduceOp->setAttr(tileAndSliceFailure, rewriter.getUnitAttr());
     rewriter.create<scope::ReturnOp>(loc, newReduceOp->getResult(0));
     return success();
   }
@@ -1250,7 +1252,7 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
   bool isFailed = true;
   newFunc->walk([&isFailed](Operation *op) {
     if (!isa<hivm::StoreOp, hivm::CopyOp, hivm::IndirectStoreOp,
-             hivm::StrideStoreOp>(op)) {
+             hivm::StrideStoreOp, hivm::VReduceOp>(op)) {
       return WalkResult::advance();
     }
     if (op->hasAttr(tileAndSliceFailure)) {
@@ -1287,7 +1289,7 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
 
   PassManager pm2(newFunc->getContext());
   populateBindSubBlockBubbleUpPassManager(pm2, strictMode,
-                                         newFunc->getParentOfType<ModuleOp>());
+                                          newFunc->getParentOfType<ModuleOp>());
 
   LogicalResult bubbleUpResult = pm2.run(newFunc);
   if (bubbleUpResult.failed() || newFunc.verify().failed() ||

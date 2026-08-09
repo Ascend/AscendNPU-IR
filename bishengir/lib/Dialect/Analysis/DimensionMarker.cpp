@@ -195,7 +195,8 @@ void DimensionAnalyzerBase::createDummyRefIfNotExist(ArrayRef<Value> values) {
   for (auto curVal : values) {
     if (valueToDimIndicesIndex_.contains(curVal))
       continue;
-    LDBG("[Create] Creating dummy for value: " << curVal);
+    LDBG("[Create] Creating dummy for value(" << curVal.getAsOpaquePointer()
+                                               << "): " << curVal);
     // init elements
     auto [rank, shape] = utils::getValueShapeInfo(curVal).value_or(
         std::make_pair(0, DimensionShape{}));
