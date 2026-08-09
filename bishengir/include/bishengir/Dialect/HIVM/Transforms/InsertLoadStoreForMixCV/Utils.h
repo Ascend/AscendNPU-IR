@@ -229,6 +229,7 @@ insertTightCoupledBufferToUB(Value value, Location loc,
 /// Insert a fixpipe that rematerializes `value` with matching element type.
 hivm::FixpipeOp insertFixpipe(Value value, Location loc,
                               PatternRewriter &rewriter,
+                              hivm::AddressSpace addressSpace,
                               bool inferFixpipeDmaMode);
 
 /// Insert empty op that rematerializes `value` with matching element type.

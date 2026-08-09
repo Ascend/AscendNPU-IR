@@ -29,6 +29,7 @@
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/Casting.h"
@@ -367,21 +368,71 @@ bool isAccumulation(Operation *op) {
   return false;
 }
 
-static FixpipeOp insertFixpipe(PatternRewriter &rewriter, Operation *point,
-                               Value src) {
-
+static FixpipeOp insertFixpipeToL1(PatternRewriter &rewriter, Operation *point,
+                                   Value src) {
   rewriter.setInsertionPointAfter(point);
 
-  auto dst = utils::createEmptyOp(rewriter, point->getLoc(), src);
   MLIRContext *ctx = rewriter.getContext();
-  FixpipeDMAModeAttr dmaModeAttr =
-      FixpipeDMAModeAttr::get(ctx, FixpipeDMAMode::NZ2ND);
+  auto tensorType = cast<RankedTensorType>(src.getType());
+  int64_t M = tensorType.getDimSize(0);
+  int64_t N = tensorType.getDimSize(1);
+  static constexpr int32_t alignM = 16;
+  auto numElemPerBlock = mlir::utils::getNumPerBlock(tensorType);
+  int64_t M1 = M / alignM;
+  int64_t N1 = N / numElemPerBlock;
+  auto dstTy = RankedTensorType::get({N1, M1, alignM, numElemPerBlock},
+                                     tensorType.getElementType());
 
-  auto fixpipe = rewriter.create<FixpipeOp>(
-      point->getLoc(), /*result_tensor=*/dst.getType(), src, dst, dmaModeAttr,
-      /*dual_dst_mode=*/nullptr,
-      /*sub_block_idx=*/nullptr,
-      /*pre_quant=*/nullptr, /*pre_relu=*/nullptr, /*channel_split=*/nullptr);
+  // FixpipeOp with channel_split enabled may split each channel (C0) in two
+  // parts in destination.
+  bool channelSplit = numElemPerBlock == alignM / 2;
+  Value fixpipeInit = rewriter.create<mlir::tensor::EmptyOp>(
+      point->getLoc(), dstTy, mlir::ValueRange{});
+  FixpipeDMAModeAttr dmaModeAttr =
+      FixpipeDMAModeAttr::get(ctx, FixpipeDMAMode::NZ2NZ);
+
+  return rewriter.create<FixpipeOp>(
+      point->getLoc(), /*result_tensor=*/fixpipeInit.getType(), src,
+      fixpipeInit, dmaModeAttr,
+      /*dual_dst_mode=*/nullptr, /*sub_block_idx=*/nullptr,
+      /*pre_quant=*/nullptr, /*pre_relu=*/nullptr,
+      /*channel_split=*/rewriter.getBoolAttr(channelSplit));
+}
+
+static bool isInsertingFixpipeToL1(Value src) {
+  if (src.use_empty())
+    return false;
+  // used by L1 / cube macro ops (same set as HIVMMacroOps GET_OP_LIST).
+  // Keep the op list explicit so this .cpp has no #include after using-namespace
+  // (G.INC.08-CPP).
+  return llvm::all_of(src.getUsers(), [](Operation *user) {
+    return isa<BatchMmadL1Op, Conv1DL1Op, Conv2DL1Op, Conv3DL1Op, MatmulOp,
+               MixGroupMatmulOp, MixMatmulOp, MmadL1Op, MmadMxL1Op>(user);
+  });
+}
+
+static FixpipeOp insertFixpipe(PatternRewriter &rewriter, Operation *point,
+                               Value src) {
+  rewriter.setInsertionPointAfter(point);
+
+  bool isMovingToL1 =
+      hacc::utils::isRegBasedArch(point->getParentOfType<ModuleOp>()) &&
+      isInsertingFixpipeToL1(src);
+
+  FixpipeOp fixpipe;
+  if (isMovingToL1) {
+    fixpipe = insertFixpipeToL1(rewriter, point, src);
+  } else {
+    auto dst = utils::createEmptyOp(rewriter, point->getLoc(), src);
+    MLIRContext *ctx = rewriter.getContext();
+    FixpipeDMAModeAttr dmaModeAttr =
+        FixpipeDMAModeAttr::get(ctx, FixpipeDMAMode::NZ2ND);
+    fixpipe = rewriter.create<FixpipeOp>(
+        point->getLoc(), /*result_tensor=*/dst.getType(), src, dst, dmaModeAttr,
+        /*dual_dst_mode=*/nullptr,
+        /*sub_block_idx=*/nullptr,
+        /*pre_quant=*/nullptr, /*pre_relu=*/nullptr, /*channel_split=*/nullptr);
+  }
 
   SmallPtrSet<Operation *, 4> exceptedOps;
   exceptedOps.insert(fixpipe);
