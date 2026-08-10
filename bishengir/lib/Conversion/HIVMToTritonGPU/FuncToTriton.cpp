@@ -6,6 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "bishengir/Conversion/HIVMToTritonGPU/HIVMToTritonGPU.h"
+#include "bishengir/Conversion/HIVMToTritonGPU/MemRefDescriptor.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 
 #include "triton/Dialect/Triton/IR/Dialect.h"
@@ -48,15 +49,34 @@ static Value narrowABIIndexArg(ConversionPatternRewriter &rewriter,
   return narrowed;
 }
 
+// Stage 1 leaves a placeholder cast for every MemRef block argument it could
+// not see through:
+//     %p, %ap, %off, %sz.., %st.. = unrealized_conversion_cast %memrefArg
+// Its results stand for the argument's descriptor fields. Map them onto the
+// real ones and report that the cast itself must not be cloned.
+static bool resolveDescriptorPlaceholder(
+    UnrealizedConversionCastOp cast,
+    const DenseMap<Value, SmallVector<Value>> &argDescriptors,
+    IRMapping &argMapper) {
+  if (cast.getInputs().size() != 1)
+    return false;
+  auto it = argDescriptors.find(cast.getInputs().front());
+  if (it == argDescriptors.end())
+    return false;
+  if (cast.getNumResults() != it->second.size())
+    return false;
+
+  for (auto [res, field] : llvm::zip_equal(cast.getResults(), it->second))
+    argMapper.map(res, field);
+  return true;
+}
+
 class FuncOpPattern : public OpConversionPattern<func::FuncOp> {
 public:
   using OpConversionPattern::OpConversionPattern;
   LogicalResult
   matchAndRewrite(func::FuncOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    // Get memref_attr from func attributes
-    auto memrefAttr =
-        dyn_cast_or_null<DenseI32ArrayAttr>(op->getAttr("memref_attr"));
     TypeConverter::SignatureConversion result(op.getNumArguments());
     auto ttConverter = getTypeConverter<TritonTypeConverter>();
     // Perserve index of memref argument with shared attribute
@@ -102,51 +122,52 @@ public:
     IRMapping argMapper;
 
     // Update block argument types in new tt.func and build the map from old
-    // block argument to new block argument
+    // block argument to new block argument.
     auto newArgs = newEntryBlock->getArguments();
     auto &oldEntryBlock = op.getBody().front();
+    DenseMap<Value, SmallVector<Value>> argDescriptors;
     for (auto [idx, oldArg] : llvm::enumerate(oldEntryBlock.getArguments())) {
+      auto mapping = result.getInputMapping(idx);
+      if (!mapping)
+        continue;
       if (auto memrefTy = mlir::dyn_cast<MemRefType>(oldArg.getType())) {
-        // In SignatureConversion, inputNo is the index of memref argument
-        // in tt.func signature.
-        auto dataPtr1 = newArgs[result.getInputMapping(idx)->inputNo];
-        Value offset;
-        if (result.getInputMapping(idx)->size > 1)
-          offset = newArgs[result.getInputMapping(idx)->inputNo + 2];
-        bool hasOffset = memrefAttr && (int64_t)idx < memrefAttr.size()
-                         && memrefAttr[idx] != 0;
-        Value newPtr = dataPtr1;
-        // Map the old memref data pointer to new tt.ptr
-        if (hasOffset) {
-          // Try to get static offset from memref type
-          int64_t staticOffset;
-          SmallVector<int64_t> strides;
-          if (succeeded(getStridesAndOffset(memrefTy, strides, staticOffset)) &&
-              staticOffset != ShapedType::kDynamic && staticOffset != 0) {
-            // Static non-zero offset: create a constant and add to pointer
-            auto constOffset = rewriter.create<arith::ConstantIntOp>(op.getLoc(), staticOffset, 64);
-            newPtr = rewriter.create<triton::AddPtrOp>(
-              op.getLoc(), dataPtr1.getType(), newPtr, constOffset);
-          } else if (result.getInputMapping(idx)->size > 1) {
-            // Dynamic offset: use the runtime offset argument. This is only
-            // available with the descriptor-based calling convention; with the
-            // bare-ptr convention (size == 1) there is no separate offset
-            // argument, so the offset is assumed to be folded into the pointer.
-            newPtr = rewriter.create<triton::AddPtrOp>(
-              op.getLoc(), dataPtr1.getType(), newPtr, offset);
-          }
+        SmallVector<Value> fields;
+        if (mapping->size == getDescriptorSize(memrefTy.getRank())) {
+          // Descriptor calling convention: the fields are the arguments.
+          for (unsigned i = 0; i < mapping->size; ++i)
+            fields.push_back(newArgs[mapping->inputNo + i]);
+        } else {
+          // Bare-pointer calling convention: rebuild the descriptor from the type
+          SmallVector<int64_t> staticStrides;
+          int64_t staticOffset = 0;
+          if (failed(getStridesAndOffset(memrefTy, staticStrides, staticOffset)))
+            return rewriter.notifyMatchFailure(
+                op, "bare-pointer MemRef argument has no strided layout");
+          auto isDyn = [](int64_t v) { return ShapedType::isDynamic(v); };
+          if (!memrefTy.hasStaticShape() || isDyn(staticOffset) ||
+              llvm::any_of(staticStrides, isDyn))
+            return rewriter.notifyMatchFailure(
+                op, "bare-pointer MemRef argument has a dynamic layout field");
+          Value ptr = newArgs[mapping->inputNo];
+          auto i64 = [&](int64_t v) -> Value {
+            return rewriter.create<arith::ConstantIntOp>(op.getLoc(), v, 64);
+          };
+          fields.push_back(ptr);
+          fields.push_back(ptr);
+          fields.push_back(i64(staticOffset));
+          for (int64_t dim : memrefTy.getShape())
+            fields.push_back(i64(dim));
+          for (int64_t stride : staticStrides)
+            fields.push_back(i64(stride));
         }
-        // Skip over the full rank-aware descriptor emitted above; the cloned
-        // body still models the original memref value through its data pointer.
-        argMapper.map(oldArg, newPtr);
+        argDescriptors[oldArg] = fields;
+        argMapper.map(oldArg, fields[1]);
       } else if (isa<IndexType>(oldArg.getType())) {
-        auto narrowedArg = narrowABIIndexArg(rewriter,
-            op.getLoc(),
-            newArgs[result.getInputMapping(idx)->inputNo],
-            oldArg.getType());
+        auto narrowedArg = narrowABIIndexArg(rewriter, op.getLoc(),
+            newArgs[mapping->inputNo], oldArg.getType());
         argMapper.map(oldArg, narrowedArg);
       } else {
-        argMapper.map(oldArg, newArgs[result.getInputMapping(idx)->inputNo]);
+        argMapper.map(oldArg, newArgs[mapping->inputNo]);
       }
     }
 
@@ -159,6 +180,12 @@ public:
       if (isa<func::ReturnOp>(oldOp)) {
         rewriter.create<triton::ReturnOp>(op.getLoc());
         continue;
+      }
+      // Wire the descriptor placeholder's results onto the real fields instead
+      // of cloning the cast itself.
+      if (auto cast = dyn_cast<UnrealizedConversionCastOp>(oldOp)) {
+        if (resolveDescriptorPlaceholder(cast, argDescriptors, argMapper))
+          continue;
       }
       rewriter.clone(oldOp, argMapper);
     }

@@ -9,6 +9,8 @@
 #ifndef BISHENGIR_CONVERSION_HIVMTOTRITONGPU_H
 #define BISHENGIR_CONVERSION_HIVMTOTRITONGPU_H
 
+#include "mlir/Transforms/DialectConversion.h"
+
 #include <memory>
 #include "mlir/Conversion/LLVMCommon/TypeConverter.h"
 #include "mlir/IR/BuiltinTypes.h"
@@ -47,9 +49,7 @@ class TritonTypeConverter : public mlir::LLVMTypeConverter {
  public:
   TritonTypeConverter(mlir::MLIRContext *ctx,
       const LowerToTritonGPUOptions &options,
-      const mlir::DataLayoutAnalysis *analysis = nullptr)
-      : mlir::LLVMTypeConverter(ctx, analysis), options(options) {
-  }
+      const mlir::DataLayoutAnalysis *analysis = nullptr);
 
   /// Converts a Triton function signature, expanding MemRef arguments into
   /// bare pointers or descriptor fields based on the calling convention.
@@ -94,15 +94,16 @@ class TritonTypeConverter : public mlir::LLVMTypeConverter {
 };
 
 Type HIVMToTritonTypeConvert(Type ty);
-void populateHIVMToTritonPatterns(RewritePatternSet &patterns);
+void populateHIVMToTritonPatterns(TritonTypeConverter &converter,
+                                  RewritePatternSet &patterns);
 void populateFuncToTritonPatterns(
     TritonTypeConverter &converter, RewritePatternSet &patterns);
-void populateBufferizationToTritonPatterns(RewritePatternSet &patterns);
+void populateBufferizationToTritonPatterns(TritonTypeConverter &converter,
+                                           RewritePatternSet &patterns);
 void populateTensorToTritonPatterns(RewritePatternSet &patterns);
 void populateAffineToTritonPatterns(RewritePatternSet &patterns);
-void populateMemRefLoadToTritonPatterns(RewritePatternSet &patterns);
-void populateReinterpretCastToUnrealizedCastPatterns(RewritePatternSet &patterns);
-void populateExtractAlignedPointerToTritonPatterns(RewritePatternSet &patterns);
+void populateMemRefToTritonPatterns(TritonTypeConverter &converter,
+                                    RewritePatternSet &patterns);
 
 /// Callback to convert function argument types. It converts a MemRef function
 /// argument to a list of non-aggregate types containing descriptor

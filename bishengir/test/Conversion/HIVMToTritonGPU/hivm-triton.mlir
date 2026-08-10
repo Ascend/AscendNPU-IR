@@ -1,16 +1,27 @@
 // RUN: bishengir-opt -convert-hivm-to-tritongpu %s -split-input-file -verify-diagnostics | FileCheck %s
 
 // CHECK-LABEL: tt.func @simple_indirect_load_kernel_scope_0(%arg0: !tt.ptr<i64>, %arg1: !tt.ptr<i64>, %arg2: i64, %arg3: i64, %arg4: i64, %arg5: !tt.ptr<i64>, %arg6: !tt.ptr<i64>, %arg7: i64, %arg8: i64, %arg9: i64, %arg10: !tt.ptr<f32>, %arg11: !tt.ptr<f32>, %arg12: i64, %arg13: i64, %arg14: i64, %arg15: i32, %arg16: !tt.ptr<f32>, %arg17: !tt.ptr<f32>, %arg18: i64, %arg19: i64, %arg20: i64)
+// CHECK-NEXT: %c0_i64 = arith.constant 0 : i64
+// CHECK-NEXT: %c1_i64 = arith.constant 1 : i64
+// CHECK-NEXT: %c0_i64_0 = arith.constant 0 : i64
+// CHECK-NEXT: %c8_i64 = arith.constant 8 : i64
+// CHECK-NEXT: %c1_i64_1 = arith.constant 1 : i64
+// CHECK-NEXT: %c0_i64_2 = arith.constant 0 : i64
+// CHECK-NEXT: %c1_i64_3 = arith.constant 1 : i64
 // CHECK-NEXT: %0 = tt.make_range {end = 8 : i32, start = 0 : i32} : tensor<8xi32>
-// CHECK-NEXT: %1 = tt.splat %arg0 : !tt.ptr<i64> -> tensor<8x!tt.ptr<i64>>
+// CHECK-NEXT: %1 = tt.splat %arg1 : !tt.ptr<i64> -> tensor<8x!tt.ptr<i64>>
 // CHECK-NEXT: %2 = tt.addptr %1, %0 : tensor<8x!tt.ptr<i64>>, tensor<8xi32>
 // CHECK-NEXT: %3 = tt.load %2 evictionPolicy = evict_first : tensor<8x!tt.ptr<i64>>
 // CHECK-NEXT: %4 = tensor.empty() : tensor<8xf32>
-// CHECK-NEXT: %5 = tt.splat %arg10 : !tt.ptr<f32> -> tensor<8x!tt.ptr<f32>>
+// CHECK-NEXT: %c0_i64_4 = arith.constant 0 : i64
+// CHECK-NEXT: %c1_i64_5 = arith.constant 1 : i64
+// CHECK-NEXT: %5 = tt.splat %arg11 : !tt.ptr<f32> -> tensor<8x!tt.ptr<f32>>
 // CHECK-NEXT: %6 = tt.addptr %5, %3 : tensor<8x!tt.ptr<f32>>, tensor<8xi64>
 // CHECK-NEXT: %7 = tt.load %6 evictionPolicy = evict_last : tensor<8x!tt.ptr<f32>>
+// CHECK-NEXT: %c0_i64_6 = arith.constant 0 : i64
+// CHECK-NEXT: %c1_i64_7 = arith.constant 1 : i64
 // CHECK-NEXT: %8 = tt.make_range {end = 8 : i32, start = 0 : i32} : tensor<8xi32>
-// CHECK-NEXT: %9 = tt.splat %arg16 : !tt.ptr<f32> -> tensor<8x!tt.ptr<f32>>
+// CHECK-NEXT: %9 = tt.splat %arg17 : !tt.ptr<f32> -> tensor<8x!tt.ptr<f32>>
 // CHECK-NEXT: %10 = tt.addptr %9, %8 : tensor<8x!tt.ptr<f32>>, tensor<8xi32>
 // CHECK-NEXT: tt.store %10, %7 : tensor<8x!tt.ptr<f32>>
 // CHECK-NEXT: tt.return
@@ -29,15 +40,26 @@ module {
 
 // -----
 // CHECK-LABEL: tt.func @simple_indirect_store_kernel_scope_0(%arg0: !tt.ptr<i64>, %arg1: !tt.ptr<i64>, %arg2: i64, %arg3: i64, %arg4: i64, %arg5: !tt.ptr<i64>, %arg6: !tt.ptr<i64>, %arg7: i64, %arg8: i64, %arg9: i64, %arg10: !tt.ptr<f32>, %arg11: !tt.ptr<f32>, %arg12: i64, %arg13: i64, %arg14: i64, %arg15: !tt.ptr<f32>, %arg16: !tt.ptr<f32>, %arg17: i64, %arg18: i64, %arg19: i64, %arg20: i32)
+// CHECK-NEXT: %c0_i64 = arith.constant 0 : i64
+// CHECK-NEXT: %c1_i64 = arith.constant 1 : i64
+// CHECK-NEXT: %c0_i64_0 = arith.constant 0 : i64
+// CHECK-NEXT: %c8_i64 = arith.constant 8 : i64
+// CHECK-NEXT: %c1_i64_1 = arith.constant 1 : i64
+// CHECK-NEXT: %c0_i64_2 = arith.constant 0 : i64
+// CHECK-NEXT: %c1_i64_3 = arith.constant 1 : i64
 // CHECK-NEXT: %0 = tt.make_range {end = 8 : i32, start = 0 : i32} : tensor<8xi32>
-// CHECK-NEXT: %1 = tt.splat %arg0 : !tt.ptr<i64> -> tensor<8x!tt.ptr<i64>>
+// CHECK-NEXT: %1 = tt.splat %arg1 : !tt.ptr<i64> -> tensor<8x!tt.ptr<i64>>
 // CHECK-NEXT: %2 = tt.addptr %1, %0 : tensor<8x!tt.ptr<i64>>, tensor<8xi32>
 // CHECK-NEXT: %3 = tt.load %2 evictionPolicy = evict_first : tensor<8x!tt.ptr<i64>>
+// CHECK-NEXT: %c0_i64_4 = arith.constant 0 : i64
+// CHECK-NEXT: %c1_i64_5 = arith.constant 1 : i64
 // CHECK-NEXT: %4 = tt.make_range {end = 8 : i32, start = 0 : i32} : tensor<8xi32>
-// CHECK-NEXT: %5 = tt.splat %arg10 : !tt.ptr<f32> -> tensor<8x!tt.ptr<f32>>
+// CHECK-NEXT: %5 = tt.splat %arg11 : !tt.ptr<f32> -> tensor<8x!tt.ptr<f32>>
 // CHECK-NEXT: %6 = tt.addptr %5, %4 : tensor<8x!tt.ptr<f32>>, tensor<8xi32>
 // CHECK-NEXT: %7 = tt.load %6 : tensor<8x!tt.ptr<f32>>
-// CHECK-NEXT: %8 = tt.splat %arg15 : !tt.ptr<f32> -> tensor<8x!tt.ptr<f32>>
+// CHECK-NEXT: %c0_i64_6 = arith.constant 0 : i64
+// CHECK-NEXT: %c1_i64_7 = arith.constant 1 : i64
+// CHECK-NEXT: %8 = tt.splat %arg16 : !tt.ptr<f32> -> tensor<8x!tt.ptr<f32>>
 // CHECK-NEXT: %9 = tt.addptr %8, %3 : tensor<8x!tt.ptr<f32>>, tensor<8xi64>
 // CHECK-NEXT: tt.store %9, %7 evictionPolicy = evict_last : tensor<8x!tt.ptr<f32>>
 // CHECK-NEXT: tt.return
@@ -56,35 +78,55 @@ module {
 
 // -----
 // CHECK-LABEL: tt.func @load_check_strided_2d(%arg0: !tt.ptr<f32>, %arg1: !tt.ptr<f32>, %arg2: i64, %arg3: i64, %arg4: i64, %arg5: i64, %arg6: i64, %arg7: !tt.ptr<f32>, %arg8: !tt.ptr<f32>, %arg9: i64, %arg10: i64, %arg11: i64, %arg12: !tt.ptr<f32>, %arg13: !tt.ptr<f32>, %arg14: i64, %arg15: i64, %arg16: i64)
+// CHECK-NEXT: %c0_i64 = arith.constant 0 : i64
+// CHECK-NEXT: %c1_i64 = arith.constant 1 : i64
+// CHECK-NEXT: %c32_i64 = arith.constant 32 : i64
+// CHECK-NEXT: %c16_i64 = arith.constant 16 : i64
+// CHECK-NEXT: %c16_i64_0 = arith.constant 16 : i64
+// CHECK-NEXT: %c64_i64 = arith.constant 64 : i64
+// CHECK-NEXT: %c4_i64 = arith.constant 4 : i64
+// CHECK-NEXT: %c32_i64_1 = arith.constant 32 : i64
+// CHECK-NEXT: %c64_i64_2 = arith.constant 64 : i64
+// CHECK-NEXT: %c4_i64_3 = arith.constant 4 : i64
 // CHECK-NEXT: %0 = tt.make_range {end = 16 : i32, start = 0 : i32} : tensor<16xi32>
 // CHECK-NEXT: %1 = tt.reshape %0 : tensor<16xi32> -> tensor<16x1xi32>
 // CHECK-NEXT: %cst = arith.constant dense<64> : tensor<16x1xi32>
 // CHECK-NEXT: %2 = arith.muli %1, %cst : tensor<16x1xi32>
-// CHECK-NEXT: %cst_0 = arith.constant dense<32> : tensor<16x1xi32>
-// CHECK-NEXT: %3 = arith.addi %2, %cst_0 : tensor<16x1xi32>
-// CHECK-NEXT: %4 = tt.splat %arg7 : !tt.ptr<f32> -> tensor<16x1x!tt.ptr<f32>>
+// CHECK-NEXT: %cst_4 = arith.constant dense<32> : tensor<16x1xi32>
+// CHECK-NEXT: %3 = arith.addi %2, %cst_4 : tensor<16x1xi32>
+// CHECK-NEXT: %4 = tt.splat %arg8 : !tt.ptr<f32> -> tensor<16x1x!tt.ptr<f32>>
 // CHECK-NEXT: %5 = tt.addptr %4, %3 : tensor<16x1x!tt.ptr<f32>>, tensor<16x1xi32>
 // CHECK-NEXT: %6 = tt.make_range {end = 16 : i32, start = 0 : i32} : tensor<16xi32>
 // CHECK-NEXT: %7 = tt.reshape %6 : tensor<16xi32> -> tensor<1x16xi32>
-// CHECK-NEXT: %cst_1 = arith.constant dense<4> : tensor<1x16xi32>
-// CHECK-NEXT: %8 = arith.muli %7, %cst_1 : tensor<1x16xi32>
+// CHECK-NEXT: %cst_5 = arith.constant dense<4> : tensor<1x16xi32>
+// CHECK-NEXT: %8 = arith.muli %7, %cst_5 : tensor<1x16xi32>
 // CHECK-NEXT: %9 = tt.broadcast %5 : tensor<16x1x!tt.ptr<f32>> -> tensor<16x16x!tt.ptr<f32>>
 // CHECK-NEXT: %10 = tt.broadcast %8 : tensor<1x16xi32> -> tensor<16x16xi32>
 // CHECK-NEXT: %11 = tt.addptr %9, %10 : tensor<16x16x!tt.ptr<f32>>, tensor<16x16xi32>
 // CHECK-NEXT: %12 = tt.load %11 evictionPolicy = evict_first : tensor<16x16x!tt.ptr<f32>>
+// CHECK-NEXT: %c0_i64_6 = arith.constant 0 : i64
+// CHECK-NEXT: %c1_i64_7 = arith.constant 1 : i64
+// CHECK-NEXT: %c32_i64_8 = arith.constant 32 : i64
+// CHECK-NEXT: %c16_i64_9 = arith.constant 16 : i64
+// CHECK-NEXT: %c16_i64_10 = arith.constant 16 : i64
+// CHECK-NEXT: %c64_i64_11 = arith.constant 64 : i64
+// CHECK-NEXT: %c4_i64_12 = arith.constant 4 : i64
 // CHECK-NEXT: %13 = tensor.empty() : tensor<16x16xf32>
+// CHECK-NEXT: %c32_i64_13 = arith.constant 32 : i64
+// CHECK-NEXT: %c64_i64_14 = arith.constant 64 : i64
+// CHECK-NEXT: %c4_i64_15 = arith.constant 4 : i64
 // CHECK-NEXT: %14 = tt.make_range {end = 16 : i32, start = 0 : i32} : tensor<16xi32>
 // CHECK-NEXT: %15 = tt.reshape %14 : tensor<16xi32> -> tensor<16x1xi32>
-// CHECK-NEXT: %cst_2 = arith.constant dense<64> : tensor<16x1xi32>
-// CHECK-NEXT: %16 = arith.muli %15, %cst_2 : tensor<16x1xi32>
-// CHECK-NEXT: %cst_3 = arith.constant dense<32> : tensor<16x1xi32>
-// CHECK-NEXT: %17 = arith.addi %16, %cst_3 : tensor<16x1xi32>
-// CHECK-NEXT: %18 = tt.splat %arg12 : !tt.ptr<f32> -> tensor<16x1x!tt.ptr<f32>>
+// CHECK-NEXT: %cst_16 = arith.constant dense<64> : tensor<16x1xi32>
+// CHECK-NEXT: %16 = arith.muli %15, %cst_16 : tensor<16x1xi32>
+// CHECK-NEXT: %cst_17 = arith.constant dense<32> : tensor<16x1xi32>
+// CHECK-NEXT: %17 = arith.addi %16, %cst_17 : tensor<16x1xi32>
+// CHECK-NEXT: %18 = tt.splat %arg13 : !tt.ptr<f32> -> tensor<16x1x!tt.ptr<f32>>
 // CHECK-NEXT: %19 = tt.addptr %18, %17 : tensor<16x1x!tt.ptr<f32>>, tensor<16x1xi32>
 // CHECK-NEXT: %20 = tt.make_range {end = 16 : i32, start = 0 : i32} : tensor<16xi32>
 // CHECK-NEXT: %21 = tt.reshape %20 : tensor<16xi32> -> tensor<1x16xi32>
-// CHECK-NEXT: %cst_4 = arith.constant dense<4> : tensor<1x16xi32>
-// CHECK-NEXT: %22 = arith.muli %21, %cst_4 : tensor<1x16xi32>
+// CHECK-NEXT: %cst_18 = arith.constant dense<4> : tensor<1x16xi32>
+// CHECK-NEXT: %22 = arith.muli %21, %cst_18 : tensor<1x16xi32>
 // CHECK-NEXT: %23 = tt.broadcast %19 : tensor<16x1x!tt.ptr<f32>> -> tensor<16x16x!tt.ptr<f32>>
 // CHECK-NEXT: %24 = tt.broadcast %22 : tensor<1x16xi32> -> tensor<16x16xi32>
 // CHECK-NEXT: %25 = tt.addptr %23, %24 : tensor<16x16x!tt.ptr<f32>>, tensor<16x16xi32>
@@ -111,10 +153,23 @@ module {
 
 // -----
 // CHECK-LABEL: tt.func @check_store_atomicadd(%arg0: !tt.ptr<i32>, %arg1: !tt.ptr<i32>, %arg2: !tt.ptr<i32>)
+// CHECK-NEXT: %c0_i64 = arith.constant 0 : i64
+// CHECK-NEXT: %c16_i64 = arith.constant 16 : i64
+// CHECK-NEXT: %c1_i64 = arith.constant 1 : i64
+// CHECK-NEXT: %c0_i64_0 = arith.constant 0 : i64
+// CHECK-NEXT: %c16_i64_1 = arith.constant 16 : i64
+// CHECK-NEXT: %c1_i64_2 = arith.constant 1 : i64
+// CHECK-NEXT: %c0_i64_3 = arith.constant 0 : i64
+// CHECK-NEXT: %c16_i64_4 = arith.constant 16 : i64
+// CHECK-NEXT: %c1_i64_5 = arith.constant 1 : i64
+// CHECK-NEXT: %c0_i64_6 = arith.constant 0 : i64
+// CHECK-NEXT: %c1_i64_7 = arith.constant 1 : i64
 // CHECK-NEXT: %0 = tt.make_range {end = 16 : i32, start = 0 : i32} : tensor<16xi32>
 // CHECK-NEXT: %1 = tt.splat %arg1 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
 // CHECK-NEXT: %2 = tt.addptr %1, %0 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
 // CHECK-NEXT: %3 = tt.load %2 : tensor<16x!tt.ptr<i32>>
+// CHECK-NEXT: %c0_i64_8 = arith.constant 0 : i64
+// CHECK-NEXT: %c1_i64_9 = arith.constant 1 : i64
 // CHECK-NEXT: %4 = tt.make_range {end = 16 : i32, start = 0 : i32} : tensor<16xi32>
 // CHECK-NEXT: %5 = tt.splat %arg2 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
 // CHECK-NEXT: %6 = tt.addptr %5, %4 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
@@ -130,10 +185,23 @@ func.func @check_store_atomicadd(%arg0: memref<16xi32> , %arg1: memref<16xi32>, 
 
 // -----
 // CHECK-LABEL: tt.func @check_store_atomicmax(%arg0: !tt.ptr<i32>, %arg1: !tt.ptr<i32>, %arg2: !tt.ptr<i32>)
+// CHECK-NEXT: %c0_i64 = arith.constant 0 : i64
+// CHECK-NEXT: %c16_i64 = arith.constant 16 : i64
+// CHECK-NEXT: %c1_i64 = arith.constant 1 : i64
+// CHECK-NEXT: %c0_i64_0 = arith.constant 0 : i64
+// CHECK-NEXT: %c16_i64_1 = arith.constant 16 : i64
+// CHECK-NEXT: %c1_i64_2 = arith.constant 1 : i64
+// CHECK-NEXT: %c0_i64_3 = arith.constant 0 : i64
+// CHECK-NEXT: %c16_i64_4 = arith.constant 16 : i64
+// CHECK-NEXT: %c1_i64_5 = arith.constant 1 : i64
+// CHECK-NEXT: %c0_i64_6 = arith.constant 0 : i64
+// CHECK-NEXT: %c1_i64_7 = arith.constant 1 : i64
 // CHECK-NEXT: %0 = tt.make_range {end = 16 : i32, start = 0 : i32} : tensor<16xi32>
 // CHECK-NEXT: %1 = tt.splat %arg1 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
 // CHECK-NEXT: %2 = tt.addptr %1, %0 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
 // CHECK-NEXT: %3 = tt.load %2 : tensor<16x!tt.ptr<i32>>
+// CHECK-NEXT: %c0_i64_8 = arith.constant 0 : i64
+// CHECK-NEXT: %c1_i64_9 = arith.constant 1 : i64
 // CHECK-NEXT: %4 = tt.make_range {end = 16 : i32, start = 0 : i32} : tensor<16xi32>
 // CHECK-NEXT: %5 = tt.splat %arg2 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
 // CHECK-NEXT: %6 = tt.addptr %5, %4 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
@@ -149,10 +217,23 @@ func.func @check_store_atomicmax(%arg0: memref<16xi32> , %arg1: memref<16xi32>, 
 
 // -----
 // CHECK-LABEL: tt.func @check_store_atomicmin(%arg0: !tt.ptr<i32>, %arg1: !tt.ptr<i32>, %arg2: !tt.ptr<i32>)
+// CHECK-NEXT: %c0_i64 = arith.constant 0 : i64
+// CHECK-NEXT: %c16_i64 = arith.constant 16 : i64
+// CHECK-NEXT: %c1_i64 = arith.constant 1 : i64
+// CHECK-NEXT: %c0_i64_0 = arith.constant 0 : i64
+// CHECK-NEXT: %c16_i64_1 = arith.constant 16 : i64
+// CHECK-NEXT: %c1_i64_2 = arith.constant 1 : i64
+// CHECK-NEXT: %c0_i64_3 = arith.constant 0 : i64
+// CHECK-NEXT: %c16_i64_4 = arith.constant 16 : i64
+// CHECK-NEXT: %c1_i64_5 = arith.constant 1 : i64
+// CHECK-NEXT: %c0_i64_6 = arith.constant 0 : i64
+// CHECK-NEXT: %c1_i64_7 = arith.constant 1 : i64
 // CHECK-NEXT: %0 = tt.make_range {end = 16 : i32, start = 0 : i32} : tensor<16xi32>
 // CHECK-NEXT: %1 = tt.splat %arg1 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
 // CHECK-NEXT: %2 = tt.addptr %1, %0 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
 // CHECK-NEXT: %3 = tt.load %2 : tensor<16x!tt.ptr<i32>>
+// CHECK-NEXT: %c0_i64_8 = arith.constant 0 : i64
+// CHECK-NEXT: %c1_i64_9 = arith.constant 1 : i64
 // CHECK-NEXT: %4 = tt.make_range {end = 16 : i32, start = 0 : i32} : tensor<16xi32>
 // CHECK-NEXT: %5 = tt.splat %arg2 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
 // CHECK-NEXT: %6 = tt.addptr %5, %4 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
@@ -168,10 +249,23 @@ func.func @check_store_atomicmin(%arg0: memref<16xi32> , %arg1: memref<16xi32>, 
 
 // -----
 // CHECK-LABEL: tt.func @check_store_atomicand(%arg0: !tt.ptr<i32>, %arg1: !tt.ptr<i32>, %arg2: !tt.ptr<i32>)
+// CHECK-NEXT: %c0_i64 = arith.constant 0 : i64
+// CHECK-NEXT: %c16_i64 = arith.constant 16 : i64
+// CHECK-NEXT: %c1_i64 = arith.constant 1 : i64
+// CHECK-NEXT: %c0_i64_0 = arith.constant 0 : i64
+// CHECK-NEXT: %c16_i64_1 = arith.constant 16 : i64
+// CHECK-NEXT: %c1_i64_2 = arith.constant 1 : i64
+// CHECK-NEXT: %c0_i64_3 = arith.constant 0 : i64
+// CHECK-NEXT: %c16_i64_4 = arith.constant 16 : i64
+// CHECK-NEXT: %c1_i64_5 = arith.constant 1 : i64
+// CHECK-NEXT: %c0_i64_6 = arith.constant 0 : i64
+// CHECK-NEXT: %c1_i64_7 = arith.constant 1 : i64
 // CHECK-NEXT: %0 = tt.make_range {end = 16 : i32, start = 0 : i32} : tensor<16xi32>
 // CHECK-NEXT: %1 = tt.splat %arg1 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
 // CHECK-NEXT: %2 = tt.addptr %1, %0 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
 // CHECK-NEXT: %3 = tt.load %2 : tensor<16x!tt.ptr<i32>>
+// CHECK-NEXT: %c0_i64_8 = arith.constant 0 : i64
+// CHECK-NEXT: %c1_i64_9 = arith.constant 1 : i64
 // CHECK-NEXT: %4 = tt.make_range {end = 16 : i32, start = 0 : i32} : tensor<16xi32>
 // CHECK-NEXT: %5 = tt.splat %arg2 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
 // CHECK-NEXT: %6 = tt.addptr %5, %4 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
@@ -187,10 +281,23 @@ func.func @check_store_atomicand(%arg0: memref<16xi32> , %arg1: memref<16xi32>, 
 
 // -----
 // CHECK-LABEL: tt.func @check_store_atomicor(%arg0: !tt.ptr<i32>, %arg1: !tt.ptr<i32>, %arg2: !tt.ptr<i32>)
+// CHECK-NEXT: %c0_i64 = arith.constant 0 : i64
+// CHECK-NEXT: %c16_i64 = arith.constant 16 : i64
+// CHECK-NEXT: %c1_i64 = arith.constant 1 : i64
+// CHECK-NEXT: %c0_i64_0 = arith.constant 0 : i64
+// CHECK-NEXT: %c16_i64_1 = arith.constant 16 : i64
+// CHECK-NEXT: %c1_i64_2 = arith.constant 1 : i64
+// CHECK-NEXT: %c0_i64_3 = arith.constant 0 : i64
+// CHECK-NEXT: %c16_i64_4 = arith.constant 16 : i64
+// CHECK-NEXT: %c1_i64_5 = arith.constant 1 : i64
+// CHECK-NEXT: %c0_i64_6 = arith.constant 0 : i64
+// CHECK-NEXT: %c1_i64_7 = arith.constant 1 : i64
 // CHECK-NEXT: %0 = tt.make_range {end = 16 : i32, start = 0 : i32} : tensor<16xi32>
 // CHECK-NEXT: %1 = tt.splat %arg1 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
 // CHECK-NEXT: %2 = tt.addptr %1, %0 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
 // CHECK-NEXT: %3 = tt.load %2 : tensor<16x!tt.ptr<i32>>
+// CHECK-NEXT: %c0_i64_8 = arith.constant 0 : i64
+// CHECK-NEXT: %c1_i64_9 = arith.constant 1 : i64
 // CHECK-NEXT: %4 = tt.make_range {end = 16 : i32, start = 0 : i32} : tensor<16xi32>
 // CHECK-NEXT: %5 = tt.splat %arg2 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
 // CHECK-NEXT: %6 = tt.addptr %5, %4 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
@@ -206,10 +313,23 @@ func.func @check_store_atomicor(%arg0: memref<16xi32> , %arg1: memref<16xi32>, %
 
 // -----
 // CHECK-LABEL: tt.func @check_store_atomicxor(%arg0: !tt.ptr<i32>, %arg1: !tt.ptr<i32>, %arg2: !tt.ptr<i32>)
+// CHECK-NEXT: %c0_i64 = arith.constant 0 : i64
+// CHECK-NEXT: %c16_i64 = arith.constant 16 : i64
+// CHECK-NEXT: %c1_i64 = arith.constant 1 : i64
+// CHECK-NEXT: %c0_i64_0 = arith.constant 0 : i64
+// CHECK-NEXT: %c16_i64_1 = arith.constant 16 : i64
+// CHECK-NEXT: %c1_i64_2 = arith.constant 1 : i64
+// CHECK-NEXT: %c0_i64_3 = arith.constant 0 : i64
+// CHECK-NEXT: %c16_i64_4 = arith.constant 16 : i64
+// CHECK-NEXT: %c1_i64_5 = arith.constant 1 : i64
+// CHECK-NEXT: %c0_i64_6 = arith.constant 0 : i64
+// CHECK-NEXT: %c1_i64_7 = arith.constant 1 : i64
 // CHECK-NEXT: %0 = tt.make_range {end = 16 : i32, start = 0 : i32} : tensor<16xi32>
 // CHECK-NEXT: %1 = tt.splat %arg1 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
 // CHECK-NEXT: %2 = tt.addptr %1, %0 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
 // CHECK-NEXT: %3 = tt.load %2 : tensor<16x!tt.ptr<i32>>
+// CHECK-NEXT: %c0_i64_8 = arith.constant 0 : i64
+// CHECK-NEXT: %c1_i64_9 = arith.constant 1 : i64
 // CHECK-NEXT: %4 = tt.make_range {end = 16 : i32, start = 0 : i32} : tensor<16xi32>
 // CHECK-NEXT: %5 = tt.splat %arg2 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
 // CHECK-NEXT: %6 = tt.addptr %5, %4 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
@@ -241,17 +361,19 @@ module {
 
 // -----
 
+// The staging buffer is a function argument, not a memref.alloc: buffers are
+// hoisted out of the function before this pass, and Triton has no MemRef
+// semantics for one to lower to.
 // CHECK-LABEL: tt.func @merge_16x16_to_64x64_inverse_kernel_mix_mix_aiv_scope_0
-// CHECK-NOT: memref.alloc()
+// CHECK-NOT: memref.
 module {
-  func.func @merge_16x16_to_64x64_inverse_kernel_mix_mix_aiv_scope_0(%arg0: i32, %arg12: index, %arg13: memref<?xf32, #hivm.address_space<gm>> {hivm.memory_effect = #hivm.memory_effect<read>, hivm.simt_mem_scope_hint = #hivm.simt_mem_scope_hint<gm>}, %arg14: memref<16xf32, #hivm.address_space<ub>> {hivm.memory_effect = #hivm.memory_effect<write>, hivm.simt_mem_scope_hint = #hivm.simt_mem_scope_hint<ub>}) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.tcore_type = #hivm.tcore_type<VECTOR>, hivm.vf_mode = #hivm.vf_mode<SIMT>, no_inline, noinline, outline, vector_type = "simt"} {
+  func.func @merge_16x16_to_64x64_inverse_kernel_mix_mix_aiv_scope_0(%arg0: i32, %arg12: index, %arg13: memref<?xf32, #hivm.address_space<gm>> {hivm.memory_effect = #hivm.memory_effect<read>, hivm.simt_mem_scope_hint = #hivm.simt_mem_scope_hint<gm>}, %arg14: memref<16xf32, #hivm.address_space<ub>> {hivm.memory_effect = #hivm.memory_effect<write>, hivm.simt_mem_scope_hint = #hivm.simt_mem_scope_hint<ub>}, %arg15: memref<16xf32, #hivm.address_space<ub>> {hivm.memory_effect = #hivm.memory_effect<write>, hivm.simt_mem_scope_hint = #hivm.simt_mem_scope_hint<ub>}) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.tcore_type = #hivm.tcore_type<VECTOR>, hivm.vf_mode = #hivm.vf_mode<SIMT>, no_inline, noinline, outline, vector_type = "simt"} {
     %cst_1 = arith.constant -1.000000e+00 : f32
     %218 = arith.index_cast %arg0 : i32 to index
     %219 = affine.apply affine_map<()[s0, s1] -> (s0 + s1)>()[%arg12, %218]
     %reinterpret_cast = memref.reinterpret_cast %arg13 to offset: [%219], sizes: [16], strides: [1] : memref<?xf32, #hivm.address_space<gm>> to memref<16xf32, strided<[1], offset: ?>, #hivm.address_space<gm>>
-    %alloc = memref.alloc() : memref<16xf32, #hivm.address_space<ub>>
-    hivm.hir.load ins(%reinterpret_cast : memref<16xf32, strided<[1], offset: ?>, #hivm.address_space<gm>>) outs(%alloc : memref<16xf32, #hivm.address_space<ub>>) eviction_policy = <EvictFirst> core_type = <VECTOR>
-    %220 = bufferization.to_tensor %alloc restrict writable : memref<16xf32, #hivm.address_space<ub>>
+    hivm.hir.load ins(%reinterpret_cast : memref<16xf32, strided<[1], offset: ?>, #hivm.address_space<gm>>) outs(%arg15 : memref<16xf32, #hivm.address_space<ub>>) eviction_policy = <EvictFirst> core_type = <VECTOR>
+    %220 = bufferization.to_tensor %arg15 restrict writable : memref<16xf32, #hivm.address_space<ub>>
     %221 = tensor.empty() : tensor<16xf32>
     %222 = hivm.hir.vmul ins(%220, %cst_1 : tensor<16xf32>, f32) outs(%221 : tensor<16xf32>) -> tensor<16xf32>
     hivm.hir.local_store ins(%arg14 : memref<16xf32, #hivm.address_space<ub>>, %222 : tensor<16xf32>)

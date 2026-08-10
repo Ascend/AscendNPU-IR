@@ -7,12 +7,13 @@
 // CHECK-LABEL: tt.func @alias_outs_to_tensor_operand
 // CHECK: %[[C3:.*]] = arith.constant 3 : i64
 // CHECK: %[[IDX:.*]] = tt.make_range {end = 8 : i32, start = 0 : i32} : tensor<8xi32>
-// CHECK: %[[BASE:.*]] = tt.splat %arg0 : !tt.ptr<i64> -> tensor<8x!tt.ptr<i64>>
+// CHECK: %[[BASE:.*]] = tt.splat %arg1 : !tt.ptr<i64> -> tensor<8x!tt.ptr<i64>>
 // CHECK: %[[PTRS:.*]] = tt.addptr %[[BASE]], %[[IDX]] : tensor<8x!tt.ptr<i64>>, tensor<8xi32>
 // CHECK: %[[LOAD:.*]] = tt.load %[[PTRS]] evictionPolicy = evict_first : tensor<8x!tt.ptr<i64>>
 // CHECK: %[[BRC3:.*]] = tt.splat %[[C3]] : i64 -> tensor<8xi64>
 // CHECK: %[[OR:.*]] = arith.ori %[[LOAD]], %[[BRC3]] : tensor<8xi64>
-// CHECK: %[[GBASE:.*]] = tt.splat %arg10 : !tt.ptr<f32> -> tensor<8x!tt.ptr<f32>>
+// CHECK-NOT: tt.addptr %arg11, %arg12
+// CHECK: %[[GBASE:.*]] = tt.splat %arg11 : !tt.ptr<f32> -> tensor<8x!tt.ptr<f32>>
 // CHECK: %[[GPTR:.*]] = tt.addptr %[[GBASE]], %[[OR]] : tensor<8x!tt.ptr<f32>>, tensor<8xi64>
 module {
   func.func @alias_outs_to_tensor_operand(%arg0: memref<?xi64>, %arg1: memref<8xi64>, %arg2: memref<?xf32>, %arg3: i32, %arg4: memref<8xf32>) attributes {no_inline, outline, vector_function, vf_mode = #hivm.vf_mode<SIMT>} {

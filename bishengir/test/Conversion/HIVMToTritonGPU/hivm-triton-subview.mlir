@@ -3,7 +3,7 @@
 // -----
 
 // CHECK-LABEL: tt.func @subview_dynamic_offset_load
-// CHECK-SAME:  %[[ARG0:[a-zA-Z0-9_]+]]: !tt.ptr<i64>,
+// CHECK-SAME:  %{{[a-zA-Z0-9_]+}}: !tt.ptr<i64>, %[[ARG0:[a-zA-Z0-9_]+]]: !tt.ptr<i64>,
 // CHECK:       %[[ROWRANGE:.*]] = tt.make_range {end = 32 : i32, start = 0 : i32} : tensor<32xi32>
 // CHECK:       %[[ROWCOL:.*]] = tt.reshape %[[ROWRANGE]] : tensor<32xi32> -> tensor<32x1xi32>
 // CHECK:       %[[ROWSTRIDE:.*]] = arith.constant dense<16> : tensor<32x1xi32>
@@ -36,7 +36,7 @@ module {
 // -----
 
 // CHECK-LABEL: tt.func @subview_static_offset_load
-// CHECK-SAME:  %[[ARG0:[a-zA-Z0-9_]+]]: !tt.ptr<f32>,
+// CHECK-SAME:  %{{[a-zA-Z0-9_]+}}: !tt.ptr<f32>, %[[ARG0:[a-zA-Z0-9_]+]]: !tt.ptr<f32>,
 // CHECK:       %{{.*}} = tt.make_range {end = 16 : i32, start = 0 : i32} : tensor<16xi32>
 // CHECK:       %{{.*}} = tt.reshape %{{.*}} : tensor<16xi32> -> tensor<16x1xi32>
 // CHECK:       %{{.*}} = arith.constant dense<16> : tensor<16x1xi32>
@@ -95,18 +95,18 @@ module {
 
 // -----
 
+// memref<8xi64> pins offset 0 / stride 1, so the index*stride term folds and
+// only the subview's dynamic offset survives into the tile.
 // CHECK-LABEL: tt.func @subview_to_tensor_dynamic_offset
-// CHECK-SAME:  %[[BASE:[a-zA-Z0-9_]+]]: !tt.ptr<i64, 6>,
-// CHECK:       %{{.*}} = arith.muli %{{.*}}, %{{.*}} : index
+// CHECK-SAME:  %[[BASE:arg[0-9]+]]: !tt.ptr<i64, 6>,
+// CHECK:       %[[OFF:.*]] = arith.addi %{{.*}}, %{{c0_i64[_0-9]*}} : i64
 // CHECK:       %[[RANGE:.*]] = tt.make_range {end = 2 : i32, start = 0 : i32} : tensor<2xi32>
-// CHECK-NEXT:  %[[OFFSET:.*]] = arith.index_cast {{.*}} : index to i32
-// CHECK-NEXT:  %[[OFFSET_TENSOR:.*]] = tt.splat %[[OFFSET]] : i32 -> tensor<2xi32>
-// CHECK-NEXT:  %[[OFFSETS:.*]] = arith.addi %[[RANGE]], %[[OFFSET_TENSOR]] : tensor<2xi32>
-// CHECK-NEXT:  %[[BASE_TENSOR:.*]] = tt.splat %[[BASE]] : !tt.ptr<i64, 6> -> tensor<2x!tt.ptr<i64, 6>>
-// CHECK-NEXT:  %[[PTRS:.*]] = tt.addptr %[[BASE_TENSOR]], %[[OFFSETS]] : tensor<2x!tt.ptr<i64, 6>>, tensor<2xi32>
-// CHECK-NEXT:  tt.load %[[PTRS]] : tensor<2x!tt.ptr<i64, 6>>
-// CHECK-NOT:   builtin.unrealized_conversion_cast
-// CHECK:       tt.return
+// CHECK:       %[[O32:.*]] = arith.trunci %[[OFF]] : i64 to i32
+// CHECK-NEXT:  %[[SPL:.*]] = tt.splat %[[O32]] : i32 -> tensor<2xi32>
+// CHECK-NEXT:  %[[IDX:.*]] = arith.addi %[[RANGE]], %[[SPL]] : tensor<2xi32>
+// CHECK-NEXT:  %[[BT:.*]] = tt.splat %[[BASE]] : !tt.ptr<i64, 6> -> tensor<2x!tt.ptr<i64, 6>>
+// CHECK-NEXT:  %[[PTRS:.*]] = tt.addptr %[[BT]], %[[IDX]]
+// CHECK-NEXT:  tt.load %[[PTRS]]
 
 module {
   func.func @subview_to_tensor_dynamic_offset(%arg0: memref<8xi64, #hivm.address_space<ub>>, %arg1: index, %arg2: memref<2xi64, #hivm.address_space<ub>>) attributes {no_inline, outline, vector_function, vf_mode = #hivm.vf_mode<SIMT>} {
@@ -120,16 +120,16 @@ module {
 
 // -----
 
+// srcStride(1) * subviewStride(2) folds to the constant tile stride 2, and the
+// zero offset disappears entirely.
 // CHECK-LABEL: tt.func @subview_to_tensor_static_stride
-// CHECK-SAME:  %[[BASE:[a-zA-Z0-9_]+]]: !tt.ptr<i64, 6>,
-// CHECK-NEXT:  %[[RANGE:.*]] = tt.make_range {end = 2 : i32, start = 0 : i32} : tensor<2xi32>
-// CHECK-NEXT:  %[[STRIDE:.*]] = arith.constant dense<2> : tensor<2xi32>
-// CHECK-NEXT:  %[[OFFSETS:.*]] = arith.muli %[[RANGE]], %[[STRIDE]] : tensor<2xi32>
-// CHECK-NEXT:  %[[BASE_TENSOR:.*]] = tt.splat %[[BASE]] : !tt.ptr<i64, 6> -> tensor<2x!tt.ptr<i64, 6>>
-// CHECK-NEXT:  %[[PTRS:.*]] = tt.addptr %[[BASE_TENSOR]], %[[OFFSETS]] : tensor<2x!tt.ptr<i64, 6>>, tensor<2xi32>
-// CHECK-NEXT:  tt.load %[[PTRS]] : tensor<2x!tt.ptr<i64, 6>>
-// CHECK-NOT:   builtin.unrealized_conversion_cast
-// CHECK:       tt.return
+// CHECK-SAME:  %[[BASE:arg[0-9]+]]: !tt.ptr<i64, 6>,
+// CHECK:       %[[RANGE:.*]] = tt.make_range {end = 2 : i32, start = 0 : i32} : tensor<2xi32>
+// CHECK:       %[[C2:.*]] = arith.constant dense<2> : tensor<2xi32>
+// CHECK-NEXT:  %[[IDX:.*]] = arith.muli %[[RANGE]], %[[C2]] : tensor<2xi32>
+// CHECK-NEXT:  %[[BT:.*]] = tt.splat %[[BASE]] : !tt.ptr<i64, 6> -> tensor<2x!tt.ptr<i64, 6>>
+// CHECK-NEXT:  %[[PTRS:.*]] = tt.addptr %[[BT]], %[[IDX]]
+// CHECK-NEXT:  tt.load %[[PTRS]]
 
 module {
   func.func @subview_to_tensor_static_stride(%arg0: memref<8xi64, #hivm.address_space<ub>>, %arg1: memref<2xi64, #hivm.address_space<ub>>) attributes {no_inline, outline, vector_function, vf_mode = #hivm.vf_mode<SIMT>} {
@@ -142,20 +142,16 @@ module {
 
 // -----
 
+// memref<4x8xi64> pins strides [8, 1]: the row offset scales by 8, the row tile
+// by dense<8>, and the unit column stride folds away.
 // CHECK-LABEL: tt.func @subview_to_tensor_dynamic_offset_2d
-// CHECK-SAME:  %[[BASE:[a-zA-Z0-9_]+]]: !tt.ptr<i64, 6>,
-// CHECK:       %{{.*}} = arith.muli {{.*}} : index
-// CHECK-NEXT:  %{{.*}} = tt.make_range {end = 2 : i32, start = 0 : i32} : tensor<2xi32>
-// CHECK-NEXT:  %{{.*}} = tt.reshape {{.*}} : tensor<2xi32> -> tensor<2x1xi32>
-// CHECK-NEXT:  %{{.*}} = arith.constant dense<8> : tensor<2x1xi32>
-// CHECK-NEXT:  %{{.*}} = arith.muli {{.*}} : tensor<2x1xi32>
-// CHECK-NEXT:  %{{.*}} = arith.index_cast {{.*}} : index to i32
-// CHECK:       %{{.*}} = arith.addi {{.*}} : tensor<2x1xi32>
-// CHECK-NEXT:  %{{.*}} = tt.splat %[[BASE]] : !tt.ptr<i64, 6> -> tensor<2x1x!tt.ptr<i64, 6>>
-// CHECK-NEXT:  %[[PTRS:.*]] = tt.addptr {{.*}} : tensor<2x1x!tt.ptr<i64, 6>>, tensor<2x1xi32>
+// CHECK-SAME:  %[[BASE:arg[0-9]+]]: !tt.ptr<i64, 6>,
+// CHECK:       %[[TERM:.*]] = arith.muli %{{.*}}, %{{c8_i64[_0-9]*}} : i64
+// CHECK-NEXT:  %[[OFF:.*]] = arith.addi %[[TERM]], %{{c0_i64[_0-9]*}} : i64
+// CHECK:       %{{.*}} = arith.constant dense<8> : tensor<2x1xi32>
+// CHECK:       %{{.*}} = arith.trunci %[[OFF]] : i64 to i32
+// CHECK:       %{{.*}} = tt.splat %[[BASE]] : !tt.ptr<i64, 6> -> tensor<2x1x!tt.ptr<i64, 6>>
 // CHECK:       tt.load {{.*}} : tensor<2x8x!tt.ptr<i64, 6>>
-// CHECK-NOT:   builtin.unrealized_conversion_cast
-// CHECK:       tt.return
 
 module {
   func.func @subview_to_tensor_dynamic_offset_2d(%arg0: memref<4x8xi64, #hivm.address_space<ub>>, %arg1: index, %arg2: memref<2x8xi64, #hivm.address_space<ub>>) attributes {no_inline, outline, vector_function, vf_mode = #hivm.vf_mode<SIMT>} {
@@ -168,15 +164,16 @@ module {
 
 // -----
 
+// memref<4x2x8xi64> pins strides [16, 8, 1]. Dim 0 is rank-reduced, so it
+// contributes idx*16 to the offset but leaves no stride entry; the surviving
+// 2x8 tile is indexed by 8 and by the folded unit stride.
 // CHECK-LABEL: tt.func @subview_to_tensor_dynamic_offset_rank_reduced
-// CHECK:       %{{.*}} = arith.constant 16 : index
-// CHECK-NEXT:  %{{.*}} = arith.muli {{.*}} : index
-// CHECK-NEXT:  %{{.*}} = tt.make_range {end = 2 : i32, start = 0 : i32} : tensor<2xi32>
-// CHECK-NEXT:  %{{.*}} = tt.reshape {{.*}} : tensor<2xi32> -> tensor<2x1xi32>
-// CHECK-NEXT:  %{{.*}} = arith.constant dense<8> : tensor<2x1xi32>
-// CHECK:       %{{.*}} = tt.load {{.*}} : tensor<2x8x!tt.ptr<i64, 6>>
-// CHECK-NOT:   builtin.unrealized_conversion_cast
-// CHECK:       tt.return
+// CHECK-SAME:  %[[BASE:arg[0-9]+]]: !tt.ptr<i64, 6>,
+// CHECK:       %[[TERM:.*]] = arith.muli %{{.*}}, %{{c16_i64[_0-9]*}} : i64
+// CHECK-NEXT:  %[[OFF:.*]] = arith.addi %[[TERM]], %{{c0_i64[_0-9]*}} : i64
+// CHECK:       %{{.*}} = arith.constant dense<8> : tensor<2x1xi32>
+// CHECK:       %{{.*}} = arith.trunci %[[OFF]] : i64 to i32
+// CHECK:       tt.load {{.*}} : tensor<2x8x!tt.ptr<i64, 6>>
 
 module {
   func.func @subview_to_tensor_dynamic_offset_rank_reduced(%arg0: memref<4x2x8xi64, #hivm.address_space<ub>>, %arg1: index, %arg2: memref<2x8xi64, #hivm.address_space<ub>>) attributes {no_inline, outline, vector_function, vf_mode = #hivm.vf_mode<SIMT>} {
@@ -197,15 +194,7 @@ module {
 
 // CHECK-LABEL: tt.func @subview_memref_load_scalar
 // CHECK-SAME:  %[[ARG0:[a-zA-Z0-9_]+]]: !tt.ptr<f16, 6>,
-// CHECK:       %[[C0:[^ ]+]] = arith.constant 0 : i64
-// CHECK:       %[[C1:[^ ]+]] = arith.constant 1 : i64
-// CHECK:       %[[OFF0:[^ ]+]] = arith.muli %[[C0]], %[[C1]] : i64
-// CHECK:       %[[C0_2:[^ ]+]] = arith.constant 0 : i64
-// CHECK:       %[[C1_2:[^ ]+]] = arith.constant 1 : i64
-// CHECK:       %[[OFF1:[^ ]+]] = arith.muli %[[C0_2]], %[[C1_2]] : i64
-// CHECK:       %[[TOTAL_OFF:[^ ]+]] = arith.addi %[[OFF0]], %[[OFF1]] : i64
-// CHECK:       %[[ADDR:[^ ]+]] = tt.addptr %[[ARG0]], %[[TOTAL_OFF]] : !tt.ptr<f16, 6>, i64
-// CHECK:       %[[VAL:[^ ]+]] = tt.load %[[ADDR]] : !tt.ptr<f16, 6>
+// CHECK:       %[[VAL:[^ ]+]] = tt.load %[[ARG0]] : !tt.ptr<f16, 6>
 // CHECK-NOT:   builtin.unrealized_conversion_cast
 // CHECK:       tt.return
 
@@ -229,14 +218,9 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
 
 // CHECK-LABEL: tt.func @subview_memref_load_dynamic_offset
 // CHECK-SAME:  %[[ARG0:[a-zA-Z0-9_]+]]: !tt.ptr<f16, 6>,
-// CHECK:       %[[IDX:[^ ]+]] = arith.index_cast {{.*}} : index to i64
-// CHECK:       %[[C1:[^ ]+]] = arith.constant 1 : i64
-// CHECK:       %[[OFF0:[^ ]+]] = arith.muli %[[IDX]], %[[C1]] : i64
-// CHECK:       %[[C0:[^ ]+]] = arith.constant 0 : i64
-// CHECK:       %[[C1_2:[^ ]+]] = arith.constant 1 : i64
-// CHECK:       %[[OFF1:[^ ]+]] = arith.muli %[[C0]], %[[C1_2]] : i64
-// CHECK:       %[[TOTAL_OFF:[^ ]+]] = arith.addi %[[OFF0]], %[[OFF1]] : i64
-// CHECK:       %[[ADDR:[^ ]+]] = tt.addptr %[[ARG0]], %[[TOTAL_OFF]] : !tt.ptr<f16, 6>, i64
+// CHECK:       %[[IDX:[^ ]+]] = arith.index_cast %{{.*}} : index to i64
+// CHECK:       %[[OFF:[^ ]+]] = arith.addi %[[IDX]], %{{.*}} : i64
+// CHECK:       %[[ADDR:[^ ]+]] = tt.addptr %[[ARG0]], %[[OFF]] : !tt.ptr<f16, 6>, i64
 // CHECK:       %[[VAL:[^ ]+]] = tt.load %[[ADDR]] : !tt.ptr<f16, 6>
 // CHECK-NOT:   builtin.unrealized_conversion_cast
 // CHECK:       tt.return
