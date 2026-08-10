@@ -114,7 +114,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   MemoryDisplay.cpp
   NormalizeBitwiseSelect.cpp
   NormalizeConvOps.cpp
-  NormalizeLoopIterator.cpp
+  TensorCopyInsertion.cpp
   NormalizeMatmul.cpp
   OptMemPlanForPipeline.cpp
   OutlineAllocInVF.cpp

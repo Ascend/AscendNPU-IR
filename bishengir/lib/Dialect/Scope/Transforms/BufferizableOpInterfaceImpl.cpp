@@ -16,16 +16,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/Scope/Transforms/BufferizableOpInterfaceImpl.h"
-
 #include "bishengir/Dialect/Scope/IR/Scope.h"
+
 #include "mlir/Dialect/Bufferization/IR/BufferizableOpInterface.h"
-#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
-#include "mlir/Dialect/Bufferization/IR/UnstructuredControlFlow.h"
 #include "mlir/Dialect/Bufferization/Transforms/Bufferize.h"
-#include "mlir/Dialect/Bufferization/Transforms/OneShotAnalysis.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
-#include "mlir/Dialect/Tensor/IR/Tensor.h"
-#include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/Dialect.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/PatternMatch.h"
@@ -37,7 +32,6 @@ using namespace mlir::scope;
 namespace mlir {
 namespace scope {
 namespace {
-
 static Value castBuffer(OpBuilder &b, Value buffer, Type type) {
   assert(isa<BaseMemRefType>(type) && "expected BaseMemRefType");
   assert(isa<BaseMemRefType>(buffer.getType()) && "expected BaseMemRefType");

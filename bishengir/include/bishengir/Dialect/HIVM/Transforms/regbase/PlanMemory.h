@@ -21,7 +21,7 @@
 #include "bishengir/Dialect/HACC/IR/HACCInterfaces.h"
 #include "bishengir/Dialect/HIVM/Analysis/VFInplaceReuseAnalyzer.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
-#include "bishengir/Dialect/HIVM/Transforms/VFInplaceReuseReachability.h"
+#include "bishengir/Dialect/HIVM/Transforms/InplaceReuseReachableMap.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/HIVM/Transforms/OptMemPlanForPipeline.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
@@ -788,14 +788,11 @@ protected:
 
   /// the vf call `op` that can reuse dst address `gen` and src address `kill`
   /// in limited situation
-  bool IsReuseVFCall(Value gen, Value kill,
-                     InplaceReuseReachableMap &reachableMap) const;
+  bool IsReuseVFCall(Value gen, Value kill);
 
-  /// Determines whether the value `src` is reachable to an operand of a
-  /// `DstOpType` operation.
-  template <typename DstOpType>
-  bool IsInplaceReuseReachable(Value src,
-                               InplaceReuseReachableMap &reachableMap) const;
+  /// Determines whether the value `src` is reachable to an operand of an
+  /// operation with pipe type `Pipe`.
+  template <PIPE Pipe> bool IsInplaceReuseReachable(Value allocValue);
 
   /// Get overlap buffer life.
   DenseMap<ValuePair, BufferLife>
@@ -890,6 +887,9 @@ protected:
 
   /// Memory dma pipe first plan optimization.
   OptMemPlanForDma dmaFirstPipelineOpt;
+
+  /// Inplace reuse reachable map for checking if a buffer is used by hivmPipeOp
+  InplaceReuseReachableMap reachableMap;
 
   /// Map from the storage entry pair to its pipeDma conflict info.
   DenseMap<StorageEntryPair, bool> pipeDmaConflictMap;

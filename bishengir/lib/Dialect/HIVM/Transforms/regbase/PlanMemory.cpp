@@ -1271,36 +1271,44 @@ bool MemPlanRegBase::IsReuseHIVMOp(Operation *op, const Value &genBuffer,
   return isReusableOperands(op, hivmOp);
 }
 
-template <typename DstOpType>
-bool MemPlanRegBase::IsInplaceReuseReachable(
-    Value src, InplaceReuseReachableMap &reachableMap) const {
-  LDBG("-- start visiting inplace-reuse path from: "
-       << src << ", to: " << DstOpType::getOperationName() << "\n");
-  DenseSet<Value> visited;
-  return VisitInplaceReuseReachable<DstOpType>(
-      src, vfInplaceReuseInfo, visited, reachableMap,
-      disableVFReachableCheck ? noneVFReachableOpCheck
-                              : defaultVFReachableOpCheck);
+template <PIPE Pipe>
+bool MemPlanRegBase::IsInplaceReuseReachable(Value allocValue) {
+  if (disableVFReachableCheck) {
+    return false;
+  }
+  if (auto computedReachable = reachableMap.get<Pipe>(allocValue)) {
+    return computedReachable.value();
+  }
+  if (dmaFirstPipelineOpt.IsDmaBuffer(Pipe, allocValue)) {
+    reachableMap.put<Pipe>(allocValue, true);
+    LDBG(allocValue << " is reachable to " << stringifyPIPE(Pipe) << "\n");
+    return true;
+  }
+  reachableMap.put<Pipe>(allocValue, false);
+  LDBG(allocValue << " is not reachable to " << stringifyPIPE(Pipe) << "\n");
+  return false;
 }
 
-bool MemPlanRegBase::IsReuseVFCall(Value gen, Value kill,
-                            InplaceReuseReachableMap &reachableMap) const {
+bool MemPlanRegBase::IsReuseVFCall(Value gen, Value kill) {
   auto genAlloc = utils::tracebackMemRefToAlloc(gen);
   auto killAlloc = utils::tracebackMemRefToAlloc(kill);
   if (!genAlloc.has_value() || !killAlloc.has_value()) {
     return false;
   }
+  auto genRoot = genAlloc.value().getResult();
+  auto killRoot = killAlloc.value().getResult();
+  auto genReachStore = IsInplaceReuseReachable<PIPE::PIPE_MTE3>(genRoot);
+  auto killReachLoad = IsInplaceReuseReachable<PIPE::PIPE_MTE2>(killRoot);
+  auto loopParent = genAlloc.value()->getParentOfType<LoopLikeOpInterface>();
 
   // When `gen` reaches `store` and `kill` reaches `load`, inplace-reuse for
   // `gen` and `kill` can cause mte2/mte3 pipeline stalls, because we need extra
   // synchronization on the same ub address between loop interations.
-  //
-  // Note that we can still do inplace-reuse if it is only reachable from
-  // one-side, because there will be synchronization inside other vf functions.
-  if (IsInplaceReuseReachable<hivm::StoreOp>(genAlloc.value(), reachableMap) &&
-      IsInplaceReuseReachable<hivm::LoadOp>(killAlloc.value(), reachableMap)) {
+  if (genReachStore && killReachLoad && loopParent) {
+    LDBG("can't reuse " << genRoot << " and " << killRoot << "\n");
     return false;
   }
+  LDBG("can reuse " << genRoot << " and " << killRoot << "\n");
   return true;
 }
 
@@ -1309,7 +1317,6 @@ SmallVector<ValuePair> MemPlanRegBase::GenerateInplaceList() {
   DenseMap<Operation *, bool> hasTouchOp;
   inplaceList.insert(inplaceList.end(), inplacePairList.begin(),
                      inplacePairList.end());
-  InplaceReuseReachableMap reachableMap;
   for (auto &operationSeq : linearOperation) {
     auto it = genKillMap.find(operationSeq.get());
     if (it == genKillMap.end())
@@ -1335,7 +1342,7 @@ SmallVector<ValuePair> MemPlanRegBase::GenerateInplaceList() {
         return cached->second;
       }
       return vfReuseCache
-          .try_emplace(pair, IsReuseVFCall(genBuffer, killBuffer, reachableMap))
+          .try_emplace(pair, IsReuseVFCall(genBuffer, killBuffer))
           .first->second;
     };
 
@@ -1552,9 +1559,9 @@ void MemPlanRegBase::MergeInplaceSE() {
 }
 
 PlanStatus MemPlanRegBase::PlanLocalMemAddress() {
+  dmaFirstPipelineOpt.build(func_);
   // merge from the first storage entry
   MergeInplaceSE();
-  dmaFirstPipelineOpt.build(func_);
   ExpandMultiBufferStorageEntry();
   MergeSameScopeSE();
   return PlanMemAddressOfWholeLocalBuffer();
@@ -2838,17 +2845,17 @@ public:
   void runOnOperation() override;
 
 private:
-  void PopulateBufferAddressToAllocOp(
-      RewritePatternSet &patterns,
-      DenseMap<Value, SmallVector<uint64_t>> buffer2Offsets) {
+  LogicalResult PopulateBufferAddressToAllocOp(
+      func::FuncOp &funcOp,
+      const DenseMap<Value, SmallVector<uint64_t>> &buffer2Offsets) {
     if (this->memMode == MemPlanMode::LOCAL_MEM_PLAN) {
-      patterns.add<MemrefAllocaOpToPointerCastOpPattern>(patterns.getContext(),
-                                                         buffer2Offsets);
-    } else {
-      assert(this->memMode == MemPlanMode::GLOBAL_WORKSPACE_PLAN);
-      patterns.add<UpdateWorkSpaceAllocaOpOffsetPattern>(patterns.getContext(),
-                                                         buffer2Offsets);
+      // Convert every memref.alloc into an hivm.hir.pointer_cast bound to its
+      // planned address(es).
+      return walkAllocToPointerCast(funcOp, buffer2Offsets);
     }
+    assert(this->memMode == MemPlanMode::GLOBAL_WORKSPACE_PLAN);
+    // Attach the planned offset(s) to every memref_ext.alloc_workspace.
+    return walkUpdateAllocWorkspaceOffset(funcOp, buffer2Offsets);
   }
 
   void UpdateId2Offsets(func::FuncOp &funcOp,
@@ -3202,9 +3209,7 @@ void PlanMemoryPass::runOnOperation() {
   for (auto [funcOp, buffer2Offsets] : buffer2OffsetMap) {
     LDBG("\n------------funcOp : " << funcOp.getName() << "---------------\n");
     UpdateBuffer2OffsetsForFuncOp(funcOp, buffer2Offsets, id2Offsets);
-    RewritePatternSet patterns(&getContext());
-    PopulateBufferAddressToAllocOp(patterns, buffer2Offsets);
-    if (failed(applyPatternsGreedily(funcOp, std::move(patterns)))) {
+    if (failed(PopulateBufferAddressToAllocOp(funcOp, buffer2Offsets))) {
       signalPassFailure();
       return;
     }

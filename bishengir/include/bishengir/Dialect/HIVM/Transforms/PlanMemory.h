@@ -18,9 +18,10 @@
 #define BISHENG_DIALECT_HIVM_TRANSFORMS_PLAN_MEMORY_H
 
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
+#include "bishengir/Dialect/HACC/IR/HACCInterfaces.h"
 #include "bishengir/Dialect/HIVM/Analysis/VFInplaceReuseAnalyzer.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
-#include "bishengir/Dialect/HIVM/Transforms/VFInplaceReuseReachability.h"
+#include "bishengir/Dialect/HIVM/Transforms/InplaceReuseReachableMap.h"
 #include "bishengir/Dialect/HIVM/Transforms/OptMemPlanForPipeline.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
@@ -95,6 +96,12 @@ struct BufferInfo {
   /// other buffer due to wrong lifetime.
   /// TODO: Modify the lifetime of A and C and allow them to be inplaced further
   bool ignoreInplace{false};
+  /// Buffer will use unique memory and will not share memory with other buffers
+  bool memoryUnique{false};
+  /// CV mix id from HIVMTightlyCoupledBufferAttr (-1 = not a tightly-coupled
+  /// CV buffer). Used by the cross-scope tightly-coupled CV-buffer reuse
+  /// analysis to identify a sharing pair.
+  int32_t cvMixId{-1};
 };
 
 /// linear operation info.
@@ -268,9 +275,11 @@ using BufferCondPair = std::pair<Value, bool>;
 class MemLivenessAnalysis {
 public:
   MemLivenessAnalysis(func::FuncOp func, MemPlanMode planMode,
+                      bool disableTightlyCoupledBufferReuse,
                       uint32_t randomSeed = 0)
-      : func_(func), planMode(planMode), randomSeed(randomSeed),
-        randomGenerator(this->randomSeed) {}
+      : func_(func), planMode(planMode),
+        disableTightlyCoupledBufferReuse(disableTightlyCoupledBufferReuse),
+        randomSeed(randomSeed), randomGenerator(this->randomSeed) {}
 
   void build();
 
@@ -414,7 +423,7 @@ private:
   bool isSkippableOp(Operation *op) const;
 
   /// Update multi buffer information.
-  void UpdateMultiBufferInfo(annotation::MarkOp markOp);
+  void UpdateMultiBufferInfo(annotation::MarkOp markOp, Value memrefVal);
 
   /// Update store op information.
   void UpdateStoreOpInfo(OpInfo *opInfo, const Value storeValue, Liveness live);
@@ -462,6 +471,15 @@ private:
   void ProcessMarkOp(annotation::MarkOp markOp, OpInfo *curOpInfo,
                      Liveness live);
 
+  /// Process AllocOp that don't need to plan memory and if return allocOp, we
+  /// need to run UpdateOpGenInfo manually.
+  bool ProcessMarkOpForTightlyCoupledCV(annotation::MarkOp markOp,
+                                        memref::AllocOp allocOp);
+
+  /// Update bufferInfos for AllocOp which need to plan unique memory.
+  void UpdateMemoryUniqueBufferInfo(annotation::MarkOp markOp,
+                                    memref::AllocOp allocOp);
+
   /// If buffer is used by multi vector scope, update buffer's gen and kill to
   /// the start and end of `for` op which is the parent op of `scope` op.
   void UpdatePreloadBuffersGenKillMap();
@@ -489,6 +507,9 @@ private:
   /// different mode for mem plan.
   MemPlanMode planMode;
 
+  /// Disable tightly coupled buffer reuse. Default is false
+  bool disableTightlyCoupledBufferReuse;
+
   /// Gen-kill status corresponding to buffer.
   DenseMap<Value, BufferStatus> buffer2status;
 
@@ -502,6 +523,10 @@ private:
 
   /// random generator for shuffle operation order in plan memory.
   std::mt19937 randomGenerator;
+
+  /// record AllocOp that don't need to plan memory. For example, in
+  /// CV-separated architectures, we don't need to plan UB address in AIC func.
+  DenseSet<Value> skipMemPlan;
 };
 
 /// Pair of StorageEntry.
@@ -511,11 +536,12 @@ class MemPlan {
 public:
   MemPlan(MemPlanMode planMode, bool enableGlobalReuse,
           bool enableMemoryDisplay, bool restrictInplaceAsISA,
-          bool disableVFReachableCheck,
+          int simtVFDynamicSize, bool disableVFReachableCheck,
           PlanMemoryStrategy planMemoryStrategy = PlanMemoryStrategy::DEFAULT)
       : enableMemoryDisplay(enableMemoryDisplay), planMode(planMode),
         enableGlobalReuse(enableGlobalReuse),
         restrictInplaceAsISA(restrictInplaceAsISA),
+        simtVFDynamicSize(simtVFDynamicSize),
         disableVFReachableCheck(disableVFReachableCheck),
         planMemoryStrategy(planMemoryStrategy),
         vfInplaceReuseInfo(nullptr) {}
@@ -557,13 +583,13 @@ public:
     vfInplaceReuseInfo = inplaceReuseInfo;
   }
 
+  /// Setup the device's storage specs
+  LogicalResult InitMemSpecsFromModule(func::FuncOp funcOp);
+
   func::FuncOp func_;
 
   /// enable memory display tools.
   bool enableMemoryDisplay;
-
-  /// Strategy for reordering storage entries during plan memory.
-  PlanMemoryStrategy planMemoryStrategy;
 
   /// when plan memory failed, record error info
   DenseMap<hivm::AddressSpace, std::string> errorInfo;
@@ -595,8 +621,14 @@ private:
   /// enable HIVM op plan memory inplace
   bool restrictInplaceAsISA;
 
+  /// Dynamic ub size(KB) for simt VF. Default is 216
+  int simtVFDynamicSize;
+
   /// Disable VF load/store reachability check for inplace reuse.
   bool disableVFReachableCheck;
+
+  /// Strategy for reordering storage entries during plan memory.
+  PlanMemoryStrategy planMemoryStrategy;
 
   /// inplace-reuse info for the vf call.
   VFCallInplaceReuseInfo *vfInplaceReuseInfo;
@@ -740,6 +772,12 @@ private:
   PlanStatus ApplyFailStrategy(StatusWrapper &statusWrapper,
                                const size_t maxBits);
 
+  /// Dynamically set the UB space size based on VFModeAttr, which is set by the
+  /// InferVFModePass.
+  LogicalResult
+  DynamicSetUbSpaceSize(hacc::HACCTargetDeviceSpecInterface specInterface,
+                        func::FuncOp funcOp);
+
   void RollBackForAllocFail(StatusWrapper &statusWrapper, const size_t maxBits);
 
   /// Check if memory plan can be rolled back.
@@ -787,14 +825,11 @@ private:
 
   /// the vf call that can reuse dst address `gen` and src address `kill` in
   /// limited situation
-  bool IsReuseVFCall(Value gen, Value kill,
-                     InplaceReuseReachableMap &reachableMap) const;
+  bool IsReuseVFCall(Value gen, Value kill);
 
-  /// Determines whether the value `src` is reachable to an operand of a
-  /// `DstOpType` operation.
-  template <typename DstOpType>
-  bool IsInplaceReuseReachable(Value src,
-                               InplaceReuseReachableMap &reachableMap) const;
+  /// Determines whether the value `src` is reachable to an operand of an
+  /// operation with pipe type `Pipe`.
+  template <PIPE Pipe> bool IsInplaceReuseReachable(Value allocValue);
 
   /// Get overlap buffer life.
   DenseMap<ValuePair, BufferLife>
@@ -895,6 +930,9 @@ private:
   /// Memory dma pipe first plan optimization.
   OptMemPlanForDma dmaFirstPipelineOpt;
 
+  /// Inplace reuse reachable map for checking if a buffer is used by hivmPipeOp
+  InplaceReuseReachableMap reachableMap;
+
   /// Map from the storage entry pair to its pipeDma conflict info.
   DenseMap<StorageEntryPair, bool> pipeDmaConflictMap;
 
@@ -920,6 +958,33 @@ private:
   /// when plan memory success, map from each scope to its root StorageEntry.
   llvm::MapVector<hivm::AddressSpace, StorageEntry *>
       memscope2rootSuccessStorageEntry;
+
+  /// The device's UB storage size
+  int ubSpaceSize{0};
+
+  /// The device's L1 storage size
+  int l1SpaceSize{0};
+
+  /// The device's L0A storage size
+  int l0aSpaceSize{0};
+
+  /// The device's L0B storage size
+  int l0bSpaceSize{0};
+
+  /// The device's L0C storage size
+  int l0cSpaceSize{0};
+
+  /// The device's UB align size
+  int ubAlignSize{0};
+
+  /// The device's L1 align size
+  int l1AlignSize{0};
+
+  /// The device's L0C align size
+  int l0cAlignSize{0};
+
+  /// The device's work space align size
+  int workSpaceAlignSize{32 * 8};
 };
 
 } // namespace hivm

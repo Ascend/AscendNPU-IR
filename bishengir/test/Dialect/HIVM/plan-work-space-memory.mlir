@@ -1,4 +1,4 @@
-// RUN: bishengir-opt %s -hivm-plan-memory="mem-plan-mode=global-work-space-plan" -split-input-file -verify-diagnostics | FileCheck %s
+// RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend910B1 -hivm-plan-memory="mem-plan-mode=global-work-space-plan" -split-input-file -verify-diagnostics | FileCheck %s
 
 // -----
 module {
@@ -53,6 +53,7 @@ module {
 
 // -----
 module {
+  // CHECK-NOT-LABEL: func.func @test_mem_global_workspace_without_load
   func.func @test_mem_global_workspace_without_load(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>},
                                                     %arg1: memref<1xi32>) {
     // expected-error@+1 {{'memref_ext.alloc_workspace' op error: read before first write}}

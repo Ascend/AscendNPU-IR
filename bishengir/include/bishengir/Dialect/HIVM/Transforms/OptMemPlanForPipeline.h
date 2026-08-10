@@ -33,6 +33,9 @@ public:
   /// Check if buf1 and buf2 is dma and scalar pipe conflict.
   bool BufferPipeConflict(const Value buf1, const Value buf2) const;
 
+  /// Is the current buffer used by pipe
+  bool IsDmaBuffer(hivm::PIPE pipe, const Value buf) const;
+
   /// Is the current buffer used by DMA instructions.
   bool IsDmaBuffer(const Value buf) const;
 
@@ -42,8 +45,8 @@ private:
   /// Verify that HIVMOpPipe has a pipe type.
   LogicalResult VerifyExistHivmPipe(hivm::OpPipeInterface hivmPipeOp) const;
 
-  /// Update the buffers for MTE2 and MTE3.
-  void UpdateDmaBuffers(SmallVector<Value> dpsOperand);
+  /// Update pipe2DmaBuffers Map.
+  void UpdatePipe2DmaBuffers(hivm::PIPE, SmallVector<Value> dpsOperand);
 
   template <typename OP>
   typename std::enable_if<std::is_same_v<OP, memref::LoadOp> ||
@@ -53,8 +56,8 @@ private:
 
   void UpdateScalarBuffersForLowerToLoops(Operation *operands);
 
-  /// Buffer in MTE2 and MTE3.
-  DenseSet<Value> DmaBuffers;
+  /// Map from pipe types to sets of DMA buffers.
+  DenseMap<hivm::PIPE, DenseSet<Value>> pipe2DmaBuffers;
 
   /// Buffer in Scalar.
   DenseSet<Value> ScalarBuffers;
