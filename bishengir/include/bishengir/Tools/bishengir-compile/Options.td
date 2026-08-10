@@ -986,6 +986,14 @@ def EnableAutoVectorizeV2 : FeatureControlOptions<
   let passGroup = ["HFUSION"];
 }
 
+def EnableVFFusion : FeatureControlOptions<
+  "Enable vf fusion",
+  "bool",
+  "true"
+> {
+  let passGroup = ["HFUSION"];
+}
+
 def EnableVFStackLimit : FeatureControlOptions<
   "Enable conservative vector function stack slot limit",
   "bool",
