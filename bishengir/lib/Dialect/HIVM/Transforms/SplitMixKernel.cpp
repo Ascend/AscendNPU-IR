@@ -341,10 +341,6 @@ struct SplitMixKernelPass
     : public impl::SplitMixKernelBase<SplitMixKernelPass> {
   void filterMixFunc(OpBuilder &builder, func::FuncOp mixedFunc,
                      enum TCoreType filterCoreType);
-  void filterMixFuncA3(OpBuilder &builder, func::FuncOp mixedFunc,
-                       enum TCoreType filterCoreType);
-  void filterMixFuncCurrent(OpBuilder &builder, func::FuncOp mixedFunc,
-                            enum TCoreType filterCoreType);
   void splitMixKernel(func::FuncOp &funcOp);
   void runOnOperation() override;
   void generateMixKernelDecl(func::FuncOp &funcOp);
@@ -575,57 +571,7 @@ static void filterEmptyScopesPreOrder(OpBuilder &builder,
 }
 
 // erase ops of given core type from function
-void SplitMixKernelPass::filterMixFunc(OpBuilder &builder,
-                                       func::FuncOp mixedFunc,
-                                       enum TCoreType filterCoreType) {
-  // TODO: Unify the SplitMixKernel filtering logic for MemBase and RegBase
-  // architectures.
-  if (hacc::utils::isMemBasedArch(getOperation())) {
-    filterMixFuncA3(builder, mixedFunc, filterCoreType);
-    return;
-  }
-  filterMixFuncCurrent(builder, mixedFunc, filterCoreType);
-}
-
-void SplitMixKernelPass::filterMixFuncA3(OpBuilder &builder,
-                                         func::FuncOp mixedFunc,
-                                         enum TCoreType filterCoreType) {
-  const enum TCoreType coreType =
-      filterCoreType == TCoreType::CUBE ? TCoreType::VECTOR : TCoreType::CUBE;
-
-  inferDistributedCoreType(mixedFunc);
-  mixedFunc.walk<WalkOrder::PostOrder>([&](Operation *op) {
-    if (auto forOp = dyn_cast<scf::ForOp>(op)) {
-      if (isLoopOfCoreType(forOp, filterCoreType)) {
-        forOp.setUpperBound(forOp.getLowerBound());
-        return;
-      }
-    }
-
-    FailureOr<bool> res = isCoreTypeOp(op, filterCoreType);
-    if (isa<scope::ScopeOp>(op)) {
-      if (auto coreTypeAttr = op->getAttrOfType<hivm::TCoreTypeAttr>(
-              hivm::kPipelinedLoopCoreTypeAttrName)) {
-        res = coreTypeAttr.getTcoretype() == filterCoreType;
-      }
-    }
-
-    if (failed(res)) {
-      signalPassFailure();
-      return;
-    }
-    if (res.value()) {
-      annotateOpOperand(builder, op, coreType);
-      if (failed(replaceResultWithInitOperand(op))) {
-        signalPassFailure();
-        return;
-      }
-      op->erase();
-    }
-  });
-}
-
-void SplitMixKernelPass::filterMixFuncCurrent(
+void SplitMixKernelPass::filterMixFunc(
     OpBuilder &builder, func::FuncOp mixedFunc,
     enum TCoreType filterCoreType) {
   // `coreType` is the core that remains after filtering `filterCoreType` out.
