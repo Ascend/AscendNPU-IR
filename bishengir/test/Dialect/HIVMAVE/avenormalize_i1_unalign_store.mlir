@@ -1,6 +1,13 @@
 // RUN: bishengir-opt %s -ave-normalize-ops | FileCheck %s
 // CHECK-NOT: element_alignment_bit_width
 
+// CHECK-LABEL: func.func @normalize_pge_all_to_vl64
+func.func @normalize_pge_all_to_vl64() -> vector<64xi1> attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
+  // CHECK: ave.hir.pge <VL64> {functionType = #ave.func_dist_type<pb8>} : vector<64xi1>
+  %mask = ave.hir.pge <ALL> {functionType = #ave.func_dist_type<pb8>} : vector<64xi1>
+  return %mask : vector<64xi1>
+}
+
 //===----------------------------------------------------------------------===//
 // i1 unaligned store tests
 //===----------------------------------------------------------------------===//

@@ -149,6 +149,7 @@ def LoadOp : HIVM_DmaOp<"load", [
     (`->` type($result_tensor)^)?
   }];
   let hasFolder = 1;
+  let hasCanonicalizer = 1;
   let hasVerifier = 1; // verify parameter according to hardware version
   let extraClassDeclaration = DmaOpBaseDecl;
 }

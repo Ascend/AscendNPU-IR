@@ -99,13 +99,9 @@ static LogicalResult bufferizeDestinationStyleOpInterface(
 struct MmadL1OpInterface
     : public DstBufferizableOpInterfaceExternalModel<MmadL1OpInterface,
                                                      hivm::MmadL1Op> {
+
   bool bufferizesToMemoryRead(Operation *op, OpOperand &opOperand,
                               const AnalysisState &state) const {
-    // For regbase: use precise DPS input check.
-    // For membase: fall back to conservative default (always true).
-    auto moduleOp = op->getParentOfType<ModuleOp>();
-    if (!hacc::utils::isRegBasedArch(moduleOp))
-      return true;
     auto dpsOp = cast<DestinationStyleOpInterface>(op);
     return dpsOp.isDpsInput(&opOperand);
   }
@@ -351,6 +347,12 @@ template <typename CopyOrStoreOpT>
 struct HIVMCopyOrStoreOpInterface
     : public DstBufferizableOpInterfaceExternalModel<
           HIVMCopyOrStoreOpInterface<CopyOrStoreOpT>, CopyOrStoreOpT> {
+  bool bufferizesToMemoryRead(Operation *op, OpOperand &opOperand,
+                              const AnalysisState &state) const {
+    auto dpsOp = cast<DestinationStyleOpInterface>(op);
+    return dpsOp.isDpsInput(&opOperand);
+  }
+  
   LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
                           const BufferizationOptions &options) const {
     auto dpsOp = cast<DestinationStyleOpInterface>(op);
@@ -401,11 +403,6 @@ struct HIVMMatmulOpInterface
                                                      hivm::MatmulOp> {
   bool bufferizesToMemoryRead(Operation *op, OpOperand &opOperand,
                               const AnalysisState &state) const {
-    // For regbase: use precise DPS input check.
-    // For membase: fall back to conservative default (always true).
-    auto moduleOp = op->getParentOfType<ModuleOp>();
-    if (!hacc::utils::isRegBasedArch(moduleOp))
-      return true;
     auto dpsOp = cast<DestinationStyleOpInterface>(op);
     return dpsOp.isDpsInput(&opOperand);
   }
@@ -644,7 +641,7 @@ struct BitcastOpInterface
 
 struct IndirectStoreOpInterface
     : public BufferizableOpInterface::ExternalModel<IndirectStoreOpInterface,
-                                                  hivm::IndirectStoreOp> {
+                                                    hivm::IndirectStoreOp> {
   bool bufferizesToMemoryRead(Operation *op, OpOperand &opOperand,
                               const AnalysisState &state) const {
     return opOperand.getOperandNumber() > 0;

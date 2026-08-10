@@ -54,6 +54,31 @@ namespace mlir {
 
 namespace {
 
+/// Recursively traces backward through defining ops to find whether a tensor
+/// value originates from a bufferization::ToTensorOp (i.e., a memref→tensor
+/// conversion). Returns the ToTensorOp if found, or nullptr otherwise.
+/// The visited set prevents infinite loops in cyclic IR.
+static Operation* canTraceToMemRefToTensor(
+    Value tensor, SmallPtrSetImpl<Operation *> &visited) {
+  // Skip block arguments (no defining op).
+  Operation *def = tensor.getDefiningOp();
+  if (!def)
+    return nullptr;
+  if (!visited.insert(def).second)
+    return nullptr;
+  // Found the source: memref→tensor conversion.
+  if (auto toTensor = dyn_cast<bufferization::ToTensorOp>(def)) {
+    return toTensor;
+  }
+
+  // Recursively trace through operands of the current defining op.
+  for (auto operand : def->getOperands()) {
+    if (auto toTensor = canTraceToMemRefToTensor(operand, visited))
+      return toTensor;
+  }
+  return nullptr;
+}
+
 SmallVector<Value> tracebackImpl(Value memrefVal) {
   // case 1: v is the iter_arg of a scf.for
   SmallVector<Value> result;
@@ -144,7 +169,20 @@ SmallVector<Value> tracebackImpl(Value memrefVal) {
 #else
   } else if (auto op = dyn_cast<bufferization::ToBufferOp>(def)) {
 #endif
-    result.emplace_back(op.getTensor());
+    llvm::SmallPtrSet<Operation *, 16> visited;
+    // For the tensor from to_memref, if it could be traced back to to_tensor,
+    // we use the memref from to_tensor as the new source to trace
+    if (auto toTensor = canTraceToMemRefToTensor(op.getTensor(), visited)) {
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+      result.emplace_back(
+          dyn_cast<bufferization::ToTensorOp>(toTensor).getMemref());
+#else
+      result.emplace_back(
+          dyn_cast<bufferization::ToTensorOp>(toTensor).getBuffer());
+#endif
+    } else {
+      result.emplace_back(op.getTensor());
+    }
   }
 
   return result;
@@ -314,7 +352,6 @@ Value createEmptyOp(OpBuilder &builder, Location loc, Value source) {
   }
   return memref::createMemRefAllocOp(builder, loc, source);
 }
-
 
 tensor::EmptyOp createStaticShapeEmptyOp(OpBuilder &builder, Location loc,
                                          TensorType targetTensorType) {
@@ -1305,10 +1342,27 @@ utils::tracebackMemRefToAllocOrBlockArgument(Value memrefVal) {
 }
 
 SmallVector<Value> utils::tracebackMemRefAllocAndAlias(Value memrefVal) {
-  return utils::tracebackMemRefVecByTargetFn(memrefVal, [](Value val) {
-    return utils::isAllocLikeOp(val) || utils::isCollapseShapeOp(val) ||
-           utils::isExpandShapeOp(val);
-  });
+  auto allocOpAliases =
+      utils::tracebackMemRefVecByTargetFn(memrefVal, [](Value val) {
+        return utils::isAllocLikeOp(val) || utils::isCollapseShapeOp(val) ||
+               utils::isExpandShapeOp(val);
+      });
+
+  // If there is alloc ->... ->collapse ->... ->copy, the annotations marked on
+  // alloc will be lost.
+  SmallVector<Value> roots;
+  for (Value alias : allocOpAliases) {
+    if (utils::isAllocLikeOp(alias))
+      continue;
+    for (Value root : utils::tracebackMemRefVec(alias)) {
+      if (utils::isAllocLikeOp(root) &&
+          !llvm::is_contained(allocOpAliases, root) &&
+          !llvm::is_contained(roots, root))
+        roots.push_back(root);
+    }
+  }
+  allocOpAliases.append(roots);
+  return allocOpAliases;
 }
 
 namespace reshape_utils {

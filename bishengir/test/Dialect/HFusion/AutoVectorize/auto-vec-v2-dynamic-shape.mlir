@@ -1,5 +1,3 @@
-// REQUIRES: regbase
-// TODO: enable after migrating HFusion AutoVectorizeV2 (-hfusion-auto-vectorize-v2).
 // RUN: bishengir-opt %s --hfusion-auto-vectorize-v2 --outline-vector-function -split-input-file | FileCheck %s
 // CHECK-LABEL: func.func
 // CHECK: scf.for {{%.*}} = {{%.*}} to {{%.*}} step {{%.*}} iter_args({{%.*}} = [[ARG1:%.+]], {{%.*}} = [[ARG2:%.+]]) -> (tensor<?x8xi8>, tensor<?x8xi8>) {

@@ -99,6 +99,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   InsertNZ2NDForDebug.cpp
   InsertL12UBForDebug.cpp
   InsertWorkSpaceForMixCV.cpp
+  LegalizeBoolForSimtVF.cpp
   LiftLowestStride.cpp
   LiftZeroRank.cpp
   LowerCreateSyncBlockLock.cpp
@@ -113,7 +114,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   MemoryDisplay.cpp
   NormalizeBitwiseSelect.cpp
   NormalizeConvOps.cpp
-  NormalizeLoopIterator.cpp
+  TensorCopyInsertion.cpp
   NormalizeMatmul.cpp
   OptMemPlanForPipeline.cpp
   OutlineAllocInVF.cpp

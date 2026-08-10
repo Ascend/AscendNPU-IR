@@ -146,6 +146,10 @@ bufferizationPipeline(OpPassManager &pm,
       };
   oneShotOptions.analysisHeuristic =
       bufferization::OneShotBufferizationOptions::AnalysisHeuristic::TopDown;
+  // Run a first round of analysis + tensor copy insertion. The inserted
+  // copies (and the HIVM copy/store op's `to_be_replaced` cleanup in
+  // resolveConflicts) can expose conflicts that were previously masked.
+  pm.addPass(hivm::createTensorCopyInsertionPass(oneShotOptions));
   pm.addPass(bufferization::createOneShotBufferizePass(oneShotOptions));
   canonicalizationHIVMPipeline(pm);
   if (hivmPipelineOptions.enableTritonKernelCompile) {
@@ -219,10 +223,9 @@ static void hivmPreBufferizationOptimizationPipeline(
   // A3 mem-based path still needs InsertFixpipe (MR 2052 / compile-bisheng-distributed).
   pm.addPass(mlir::hivm::createInsertFixpipePass());
   {
-    InlineFixpipeOptions inlineFixpipeOpts;
-    inlineFixpipeOpts.inlineQuantScale =
-        hivmPipelineOptions.inlineQuantScaleInFixpipe;
-    pm.addPass(mlir::hivm::createInlineFixpipePass(inlineFixpipeOpts));
+    InlineFixpipeOptions opts;
+    opts.inlineQuantScale = hivmPipelineOptions.inlineQuantScaleInFixpipe;
+    pm.addPass(mlir::hivm::createInlineFixpipePass(opts));
   }
   if (!hivmPipelineOptions.disableAutoCVWorkSpaceManage) {
     hivmAutoInsertLdStForMixCVPipeline(pm, hivmPipelineOptions);
@@ -239,10 +242,9 @@ static void hivmPreBufferizationOptimizationPipeline(
   pm.addPass(createInsertNZ2NDForDebugPass());
   pm.addPass(mlir::hivm::createInsertFixpipePass());
   {
-    InlineFixpipeOptions inlineFixpipeOpts;
-    inlineFixpipeOpts.inlineQuantScale =
-        hivmPipelineOptions.inlineQuantScaleInFixpipe;
-    pm.addPass(mlir::hivm::createInlineFixpipePass(inlineFixpipeOpts));
+    InlineFixpipeOptions opts;
+    opts.inlineQuantScale = hivmPipelineOptions.inlineQuantScaleInFixpipe;
+    pm.addPass(mlir::hivm::createInlineFixpipePass(opts));
   }
 
   if (!hivmPipelineOptions.disableAutoCVWorkSpaceManage) {
@@ -474,6 +476,8 @@ static void hivmPostBufferizationOptimizationPipeline(
   PlanMemoryOptions planMemoryOption;
   planMemoryOption.enableMemoryDisplay =
       hivmPipelineOptions.enableMemoryDisplay;
+  planMemoryOption.disableTightlyCoupledBufferReuse =
+      hivmPipelineOptions.disableTightlyCoupledBufferReuse;
   planMemoryOption.planMemoryStrategy =
       hivmPipelineOptions.planMemoryStrategy;
   pm.addPass(createPlanMemoryPass(planMemoryOption));

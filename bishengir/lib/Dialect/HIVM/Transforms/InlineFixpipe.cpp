@@ -29,7 +29,6 @@
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
-#include "mlir/IR/BuiltinOps.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/Casting.h"
@@ -368,71 +367,21 @@ bool isAccumulation(Operation *op) {
   return false;
 }
 
-static FixpipeOp insertFixpipeToL1(PatternRewriter &rewriter, Operation *point,
-                                   Value src) {
-  rewriter.setInsertionPointAfter(point);
-
-  MLIRContext *ctx = rewriter.getContext();
-  auto tensorType = cast<RankedTensorType>(src.getType());
-  int64_t M = tensorType.getDimSize(0);
-  int64_t N = tensorType.getDimSize(1);
-  static constexpr int32_t alignM = 16;
-  auto numElemPerBlock = mlir::utils::getNumPerBlock(tensorType);
-  int64_t M1 = M / alignM;
-  int64_t N1 = N / numElemPerBlock;
-  auto dstTy = RankedTensorType::get({N1, M1, alignM, numElemPerBlock},
-                                     tensorType.getElementType());
-
-  // FixpipeOp with channel_split enabled may split each channel (C0) in two
-  // parts in destination.
-  bool channelSplit = numElemPerBlock == alignM / 2;
-  Value fixpipeInit = rewriter.create<mlir::tensor::EmptyOp>(
-      point->getLoc(), dstTy, mlir::ValueRange{});
-  FixpipeDMAModeAttr dmaModeAttr =
-      FixpipeDMAModeAttr::get(ctx, FixpipeDMAMode::NZ2NZ);
-
-  return rewriter.create<FixpipeOp>(
-      point->getLoc(), /*result_tensor=*/fixpipeInit.getType(), src,
-      fixpipeInit, dmaModeAttr,
-      /*dual_dst_mode=*/nullptr, /*sub_block_idx=*/nullptr,
-      /*pre_quant=*/nullptr, /*pre_relu=*/nullptr,
-      /*channel_split=*/rewriter.getBoolAttr(channelSplit));
-}
-
-static bool isInsertingFixpipeToL1(Value src) {
-  if (src.use_empty())
-    return false;
-  // used by L1 / cube macro ops (same set as HIVMMacroOps GET_OP_LIST).
-  // Keep the op list explicit so this .cpp has no #include after using-namespace
-  // (G.INC.08-CPP).
-  return llvm::all_of(src.getUsers(), [](Operation *user) {
-    return isa<BatchMmadL1Op, Conv1DL1Op, Conv2DL1Op, Conv3DL1Op, MatmulOp,
-               MixGroupMatmulOp, MixMatmulOp, MmadL1Op, MmadMxL1Op>(user);
-  });
-}
-
 static FixpipeOp insertFixpipe(PatternRewriter &rewriter, Operation *point,
                                Value src) {
+
   rewriter.setInsertionPointAfter(point);
 
-  bool isMovingToL1 =
-      hacc::utils::isRegBasedArch(point->getParentOfType<ModuleOp>()) &&
-      isInsertingFixpipeToL1(src);
+  auto dst = utils::createEmptyOp(rewriter, point->getLoc(), src);
+  MLIRContext *ctx = rewriter.getContext();
+  FixpipeDMAModeAttr dmaModeAttr =
+      FixpipeDMAModeAttr::get(ctx, FixpipeDMAMode::NZ2ND);
 
-  FixpipeOp fixpipe;
-  if (isMovingToL1) {
-    fixpipe = insertFixpipeToL1(rewriter, point, src);
-  } else {
-    auto dst = utils::createEmptyOp(rewriter, point->getLoc(), src);
-    MLIRContext *ctx = rewriter.getContext();
-    FixpipeDMAModeAttr dmaModeAttr =
-        FixpipeDMAModeAttr::get(ctx, FixpipeDMAMode::NZ2ND);
-    fixpipe = rewriter.create<FixpipeOp>(
-        point->getLoc(), /*result_tensor=*/dst.getType(), src, dst, dmaModeAttr,
-        /*dual_dst_mode=*/nullptr,
-        /*sub_block_idx=*/nullptr,
-        /*pre_quant=*/nullptr, /*pre_relu=*/nullptr, /*channel_split=*/nullptr);
-  }
+  auto fixpipe = rewriter.create<FixpipeOp>(
+      point->getLoc(), /*result_tensor=*/dst.getType(), src, dst, dmaModeAttr,
+      /*dual_dst_mode=*/nullptr,
+      /*sub_block_idx=*/nullptr,
+      /*pre_quant=*/nullptr, /*pre_relu=*/nullptr, /*channel_split=*/nullptr);
 
   SmallPtrSet<Operation *, 4> exceptedOps;
   exceptedOps.insert(fixpipe);
@@ -947,19 +896,6 @@ private:
         matched = true;
         swapFixpipeAndExtractSliceOp(rewriter, loc, op, extractSliceOp);
       }
-    } else if (auto insertSliceOp =
-                   dyn_cast_if_present<tensor::InsertSliceOp>(curOp);
-               insertSliceOp &&
-               (!isRegBasedArch(op) ||
-                hasCompatibleShape(op.getSource(),
-                                   insertSliceOp.getSource()))) {
-      // change to fixpipe op + insert_slice + store op to insert_slice +
-      // fixpipe op + store op, and besides store op, there is no anther user
-      // for insert_slice
-      if (traceDownStoreOpWithSingleChain(insertSliceOp.getResult())) {
-        matched = true;
-        swapFixpipeAndInsertSliceOp(rewriter, loc, op, insertSliceOp);
-      }
     } else if (isa<scf::YieldOp>(curOp) &&
                isa<scf::ForOp>(curOp->getParentOp()) &&
                !op->getAttr(fixpipeDoNotMoveOutOfScfFor)) {
@@ -1160,38 +1096,6 @@ private:
     rewriter.replaceOp(extractSliceOp, newFixpipeOp.getResultTensor());
     rewriter.eraseOp(op);
     LDBG("InlineFixpipeWithExtractSliceReshape");
-  }
-
-  void swapFixpipeAndInsertSliceOp(PatternRewriter &rewriter, Location loc,
-                                   hivm::FixpipeOp op,
-                                   tensor::InsertSliceOp insertSliceOp) const {
-    rewriter.setInsertionPointAfter(insertSliceOp);
-    auto fixpipeSrc = op.getDpsInputOperand(0)->get();
-
-    auto newInsertSliceOp = rewriter.create<tensor::InsertSliceOp>(
-        insertSliceOp.getLoc(), fixpipeSrc, insertSliceOp.getDest(),
-        insertSliceOp.getMixedOffsets(), insertSliceOp.getMixedSizes(),
-        insertSliceOp.getMixedStrides());
-
-    auto newInsertSliceResult = newInsertSliceOp->getResult(0);
-    auto quantModeAttr = op.getPreQuantAttr();
-    auto reluModeAttr = op.getPreReluAttr();
-    Value fixpipeInit = utils::createEmptyOpWithTargetElemType(
-        rewriter, insertSliceOp.getLoc(), newInsertSliceResult,
-        getInitType(newInsertSliceResult, op.getPreQuant(), rewriter));
-    MLIRContext *ctx = rewriter.getContext();
-    bool regBased = isRegBasedArch(op);
-    FixpipeDMAModeAttr dmaModeAttr =
-        regBased ? op.getDmaModeAttr()
-                 : FixpipeDMAModeAttr::get(ctx, FixpipeDMAMode::NZ2ND);
-    auto newFixpipeOp = rewriter.create<FixpipeOp>(
-        insertSliceOp.getLoc(), TypeRange{fixpipeInit}, newInsertSliceResult,
-        fixpipeInit, dmaModeAttr, op.getDualDstModeAttr(),
-        op.getSubBlockIdxAttr(), quantModeAttr, reluModeAttr,
-        op.getChannelSplitAttr(), op.getQuantScale());
-    rewriter.replaceOp(insertSliceOp, newFixpipeOp.getResultTensor());
-    rewriter.eraseOp(op);
-    LDBG("InlineFixpipeWithInsertSliceOpReshape");
   }
 
   bool traceDownStoreOpWithSingleChain(Value v) const {

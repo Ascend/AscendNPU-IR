@@ -362,7 +362,6 @@ memref::StoreOp createSinglePointStore(
 /// Create tensor.empty or memref.alloc op with the same type as source
 Value createEmptyOp(OpBuilder &builder, Location loc, Value source);
 
-
 ///  Create tensor.empty or memref.alloc op with the same shape as source
 ///  but with element type targetElemType
 Value createEmptyOpWithTargetElemType(

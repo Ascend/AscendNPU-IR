@@ -27,8 +27,7 @@ using namespace mlir::hivm;
 
 namespace mlir::hivm {
 
-template <typename HIVMOP>
-bool shouldCumOpLowerToScalarLoops(HIVMOP op) {
+template <typename HIVMOP> bool shouldCumOpLowerToScalarLoops(HIVMOP op) {
   if (!op.hasPureBufferSemantics()) {
     return false;
   }
@@ -59,8 +58,7 @@ bool shouldCumOpLowerToScalarLoops(HIVMOP op) {
 
 namespace mlir::hivm {
 
-template <typename HIVMOP>
-bool shouldModOpLowerToScalarLoops(HIVMOP op) {
+template <typename HIVMOP> bool shouldModOpLowerToScalarLoops(HIVMOP op) {
   if (!op.hasPureBufferSemantics()) {
     return false;
   }
@@ -110,18 +108,138 @@ ENABLE_DEFAULT_OP_SHOULD_LOWER_TO_SCALAR_LOOPS_IMPL(VMinOp)
 ENABLE_DEFAULT_OP_SHOULD_LOWER_TO_SCALAR_LOOPS_IMPL(VMaxOp)
 ENABLE_DEFAULT_OP_SHOULD_LOWER_TO_SCALAR_LOOPS_IMPL(VAbsOp)
 ENABLE_DEFAULT_OP_SHOULD_LOWER_TO_SCALAR_LOOPS_IMPL(VShLOp)
-ENABLE_DEFAULT_OP_SHOULD_LOWER_TO_SCALAR_LOOPS_IMPL(VShROp)
 ENABLE_DEFAULT_OP_SHOULD_LOWER_TO_SCALAR_LOOPS_IMPL(VDivOp)
 #undef ENABLE_DEFAULT_OP_SHOULD_LOWER_TO_SCALAR_LOOPS_IMPL
 
-ENABLE_CUM_OP_SHOULD_LOWER_TO_SCALAR_LOOPS_IMPL(VCumprodOp)
-ENABLE_CUM_OP_SHOULD_LOWER_TO_SCALAR_LOOPS_IMPL(VCumsumOp)
-ENABLE_CUM_OP_SHOULD_LOWER_TO_SCALAR_LOOPS_IMPL(VCummaxOp)
-ENABLE_CUM_OP_SHOULD_LOWER_TO_SCALAR_LOOPS_IMPL(VCumminOp)
+//===----------------------------------------------------------------------===//
+// VShROp
+//===----------------------------------------------------------------------===//
+
+bool VShROp::shouldLowerToScalarLoops() {
+  if (!hasPureBufferSemantics()) {
+    return false;
+  }
+
+  if (util::isSIMTVF(getOperation()) || hasHWUnsupportedScalarOperand())
+    return true;
+
+  auto elemType = getElementTypeOrSelf(getOperandTypes()[0]);
+  if (elemType.isInteger(64))
+    return true;
+
+  // Mem-based (A3): ConvertHIVMToStandard would emit `vshr_*` library calls for
+  // shaped / broadcast shift amounts, but those symbols are not provided on A3.
+  // Lower them to scalar loops instead. Reg-based (A5) keeps the HIVM op for the
+  // AVE / template path.
+  auto mod = getOperation()->getParentOfType<ModuleOp>();
+  if (!hacc::utils::isRegBasedArch(mod)) {
+    auto inputs = getDpsInputs();
+    if (inputs.size() > 1 && isa<ShapedType>(inputs[1].getType()))
+      return true;
+  }
+
+  return false;
+}
+
+// TODO: Use unified method to decide if we should lower to loops
 #undef ENABLE_CUM_OP_SHOULD_LOWER_TO_SCALAR_LOOPS_IMPL
 
 ENABLE_MOD_OP_SHOULD_LOWER_TO_SCALAR_LOOPS_IMPL(VModOp)
 #undef ENABLE_MOD_OP_SHOULD_LOWER_TO_SCALAR_LOOPS_IMPL
+
+//===----------------------------------------------------------------------===//
+// VCumsumOp
+//===----------------------------------------------------------------------===//
+
+// Shared by cum ops lowered to rank/dim-specialized library calls
+// (vcumsum/vcummax/vcummin): only i64 falls back to scalar loops.
+template <typename HIVMOP>
+static bool shouldCumOpWithTempLowerToScalarLoops(HIVMOP op) {
+  if (!op.hasPureBufferSemantics()) {
+    return false;
+  }
+  auto cumDims = op.getCumDims();
+  if (cumDims.size() > 1) {
+    // only support to lower to scalar ops for cum op with unique cum dim
+    return false;
+  }
+
+  auto elemType = getElementTypeOrSelf(op.getDst());
+  return elemType.isInteger(64);
+}
+
+bool VCumsumOp::shouldLowerToScalarLoops() {
+  auto moduleOp = (*this)->getParentOfType<ModuleOp>();
+  if (!hacc::utils::isRegBasedArch(moduleOp)) {
+    return shouldCumOpLowerToScalarLoops(*this);
+  }
+
+  if (!hasPureBufferSemantics()) {
+    return false;
+  }
+  auto cumDims = getCumDims();
+  if (cumDims.size() > 1) {
+    return false;
+  }
+  auto elemType = getElementTypeOrSelf(getDst());
+  // i64 vector register is unsupported on hardware; the 1D dim0 path uses the
+  // SIMT Sklansky library call (warp scan + cross-block carry) instead.
+  // Gate on the (src,dst) pairs that actually have a bc symbol:
+  //   (i64,i64)    -> cumsum_1d_int64_t_dim0
+  //   (i32,i64)    -> cumsum_1d_int32_t_to_int64_t_dim0
+  // Other i64-dst mixes (i1/i8/i16/u8/u16/u32 src) would fall through the
+  // library-call path and fail at link time (no bc symbol), so they stay on
+  // the scalar-loop fallback here.
+  auto srcType = dyn_cast<ShapedType>(getSrc().getType());
+  if (elemType.isInteger(64) && srcType && srcType.getRank() == 1 &&
+      !cumDims.empty() && cumDims[0] == 0) {
+    auto srcElemType = getElementTypeOrSelf(getSrc());
+    if (srcElemType.isInteger(64) || srcElemType.isInteger(32)) {
+      return false;
+    }
+  }
+  return shouldCumOpWithTempLowerToScalarLoops(*this);
+}
+
+bool VCummaxOp::shouldLowerToScalarLoops() {
+  auto moduleOp = (*this)->getParentOfType<ModuleOp>();
+  if (!hacc::utils::isRegBasedArch(moduleOp)) {
+    return shouldCumOpLowerToScalarLoops(*this);
+  }
+  return shouldCumOpWithTempLowerToScalarLoops(*this);
+}
+
+bool VCumminOp::shouldLowerToScalarLoops() {
+  auto moduleOp = (*this)->getParentOfType<ModuleOp>();
+  if (!hacc::utils::isRegBasedArch(moduleOp)) {
+    return shouldCumOpLowerToScalarLoops(*this);
+  }
+  return shouldCumOpWithTempLowerToScalarLoops(*this);
+}
+
+//===----------------------------------------------------------------------===//
+// VCumprodOp
+//===----------------------------------------------------------------------===//
+
+bool VCumprodOp::shouldLowerToScalarLoops() {
+  auto moduleOp = (*this)->getParentOfType<ModuleOp>();
+  if (!hacc::utils::isRegBasedArch(moduleOp)) {
+    return shouldCumOpLowerToScalarLoops(*this);
+  }
+
+  if (!hasPureBufferSemantics()) {
+    return false;
+  }
+  auto cumDims = getCumDims();
+  if (cumDims.size() > 1) {
+    return false;
+  }
+  auto elemType = getElementTypeOrSelf(getDst());
+  if (elemType.isInteger(64)) {
+    return true;
+  }
+  return false;
+}
 
 //===----------------------------------------------------------------------===//
 // VCmpOp

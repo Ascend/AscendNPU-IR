@@ -17,6 +17,7 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/Support/LogicalResult.h"
+#include <cstddef>
 #include <cstdint>
 
 namespace mlir::analysis {
@@ -25,6 +26,11 @@ namespace mlir::analysis {
 using VFFusionBlockList = SmallVector<VFFusionBlock>;
 
 class FusionKindBase {
+  struct FusionCandidate {
+    VFFusionBlock block;
+    Operation *insertionPoint = nullptr;
+  };
+
 public:
   virtual FailureOr<VFFusionBlockList> analyzeBlockImpl(Block &block) {
     llvm::report_fatal_error("analyze block is not implemented");
@@ -55,45 +61,30 @@ public:
       return failure();
     VFFusionBlockList &fusionBlocks = maybeFusionBlocks.value();
     for (auto &fusionBlock : fusionBlocks) {
-      SmallVector<VFFusionBlock> candidateFusionBlocks;
+      if (fusionBlock.getOps().empty())
+        continue;
+
+      SmallVector<FusionCandidate> candidates;
       if (option.maxVFParams < 0 && !option.enableVFStackLimit) {
-        candidateFusionBlocks.push_back(fusionBlock);
+        if (shouldOutlineCandidate(fusionBlock))
+          candidates.push_back(
+              {fusionBlock, fusionBlock.getOps().back()->getNextNode()});
       } else {
-        candidateFusionBlocks = splitByMaxFuncParams(fusionBlock);
+        candidates = splitByMaxFuncParams(fusionBlock);
       }
 
-      for (VFFusionBlock &candidateBlock : candidateFusionBlocks) {
-        // Skip if the candidate wraps the entire function body.
-        if (candidateBlock.getOps().size() == block.getOperations().size())
-          continue;
-
-        // Filter out for ops which make sense for fusion
-        SmallVector<Operation *> computeOps =
-            getComputeOps(SmallVector<Operation*>(candidateBlock.getOps()));
-        // When a fusion block contains at most one op, the normal fusion
-        // path is bypassed (continue).  However, certain ops that are known
-        // to be processed by a dedicated downstream pass (e.g. reduce-sum
-        // ops handled by TreeReduceV2) must still be *outlined* into a
-        // standalone vector function so that the downstream pass can
-        // recognise and transform them.  shouldSkipFusion() gates this:
-        //   - returns true  → outline this single-op block (skip fusion,
-        //                     but keep the op isolated for later handling)
-        //   - returns false → skip entirely (no outline, no fusion)
-        if (computeOps.size() <= 1) {
-          if (computeOps.empty() ||
-              !shouldSkipFusion(computeOps.front(), option))
-            continue;
-        }
-
+      for (FusionCandidate &candidate : candidates) {
         func::FuncOp funcOp =
             block.getParent()->getParentOfType<func::FuncOp>();
         auto maybeFusedFunction =
-            outliner.outline(funcOp, candidateBlock, builder);
+            outliner.outline(funcOp, candidate.block, builder);
         if (failed(maybeFusedFunction))
           return failure();
-        auto maybeCallOp = outliner.createInvoke(maybeFusedFunction.value(),
-                                                 candidateBlock, builder);
-        if (failed(maybeCallOp))
+
+        // outline() changes the builder position to the new function body.
+        builder.setInsertionPoint(candidate.insertionPoint);
+        if (failed(outliner.createInvoke(maybeFusedFunction.value(),
+                                         candidate.block, builder)))
           return failure();
       }
     }
@@ -116,9 +107,12 @@ protected:
     return totalCost;
   }
 
-  SmallVector<VFFusionBlock> splitByMaxFuncParams(VFFusionBlock &fusionBlock) {
+  SmallVector<FusionCandidate>
+  splitByMaxFuncParams(VFFusionBlock &fusionBlock) {
     VFStackInfoBuilder stackInfoBuilder(option.enableVFStackLimit);
-    SmallVector<VFFusionBlock> splitBlocks;
+    SmallVector<FusionCandidate> candidates;
+    // The candidate suffix starting here shares the next surviving boundary.
+    size_t pendingBegin = 0;
     VFFusionBlock currentBlock;
     bool hasCurrentBlock = false;
     auto fits = [&](const VFFusionBlock &blk) {
@@ -137,7 +131,7 @@ protected:
       // Overflows: roll back it.
       currentBlock.unfuseOp(op);
       if (hasCurrentBlock)
-        splitBlocks.push_back(std::move(currentBlock));
+        appendSplitBlock(std::move(currentBlock), candidates, pendingBegin);
 
       currentBlock = VFFusionBlock();
       currentBlock.fuseOp(op);
@@ -146,13 +140,18 @@ protected:
       } else {
         currentBlock = VFFusionBlock();
         hasCurrentBlock = false;
+        assignPendingInsertionPoint(candidates, pendingBegin, op);
       }
     }
 
     if (hasCurrentBlock)
-      splitBlocks.push_back(std::move(currentBlock));
+      appendSplitBlock(std::move(currentBlock), candidates, pendingBegin);
 
-    return splitBlocks;
+    // Inserting before the next op is equivalent to inserting after the parent
+    // tail and naturally preserves the order of candidates sharing this anchor.
+    assignPendingInsertionPoint(candidates, pendingBegin,
+                                fusionBlock.getOps().back()->getNextNode());
+    return candidates;
   }
 
   static int64_t getParamRegisterCost(Value value) {
@@ -178,6 +177,52 @@ protected:
   const VFFusionKindOption option;
 
 private:
+  // Keep the original whole-block and single-compute-op outline filtering.
+  bool shouldOutlineCandidate(const VFFusionBlock &candidateBlock) const {
+    // Skip if the candidate wraps the entire function body.
+    if (candidateBlock.getOps().size() ==
+        candidateBlock.getOps().front()->getBlock()->getOperations().size())
+      return false;
+    // Filter out for ops which make sense for fusion
+    SmallVector<Operation *> computeOps =
+        getComputeOps(SmallVector<Operation *>(candidateBlock.getOps()));
+    // When a fusion block contains at most one op, the normal fusion
+    // path is bypassed (continue).  However, certain ops that are known
+    // to be processed by a dedicated downstream pass (e.g. reduce-sum
+    // ops handled by TreeReduceV2) must still be *outlined* into a
+    // standalone vector function so that the downstream pass can
+    // recognise and transform them.  shouldSkipFusion() gates this:
+    //   - returns true  → outline this single-op block (skip fusion,
+    //                     but keep the op isolated for later handling)
+    //   - returns false → skip entirely (no outline, no fusion)
+    if (computeOps.size() > 1)
+      return true;
+    return !computeOps.empty() &&
+           shouldSkipFusion(computeOps.front(), option);
+  }
+
+  void appendSplitBlock(VFFusionBlock &&splitBlock,
+                        SmallVectorImpl<FusionCandidate> &candidates,
+                        size_t &pendingBegin) {
+    if (!shouldOutlineCandidate(splitBlock)) {
+      // The skipped block survives and anchors the preceding outline run.
+      assignPendingInsertionPoint(candidates, pendingBegin,
+                                  splitBlock.getOps().front());
+      return;
+    }
+
+    candidates.push_back({std::move(splitBlock), nullptr});
+  }
+
+  static void assignPendingInsertionPoint(
+      SmallVectorImpl<FusionCandidate> &candidates, size_t &pendingBegin,
+      Operation *insertionPoint) {
+    for (size_t index = pendingBegin; index < candidates.size(); ++index) {
+      candidates[index].insertionPoint = insertionPoint;
+    }
+    pendingBegin = candidates.size();
+  }
+
   static SmallVector<Operation *>
   getComputeOps(SmallVector<Operation *> allOps) {
     SmallVector<Operation *> res;

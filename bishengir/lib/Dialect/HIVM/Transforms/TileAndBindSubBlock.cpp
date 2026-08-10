@@ -24,6 +24,7 @@
 #include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/AutoScheduleBase.h"
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/Analysis/DimensionAnalyzer.h"
+#include "bishengir/Dialect/HIVM/IR/CustomOp/DistributedTransformUtils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/HoistAffine.h"
@@ -591,8 +592,9 @@ public:
 
   LogicalResult matchAndRewrite(hivm::VReduceOp op,
                                 PatternRewriter &rewriter) const override {
-    if (op->hasAttrOfType<UnitAttr>(tiledOp) || op->getNumResults() == 0u ||
-        op.getDst().size() == 2u)
+    if (op->hasAttrOfType<UnitAttr>(tiledOp) ||
+        op->hasAttrOfType<UnitAttr>(tileAndSliceFailure) ||
+        op->getNumResults() == 0u || op.getDst().size() == 2u)
       return failure();
 
     int64_t tilingDim = analyzer.getTilingDim(op.getSrc());
@@ -737,6 +739,7 @@ private:
         loc, dstType, loadedValue, dst, op.getTempBuffer(), op.getArithAttr(),
         op.getUnsignedSrcAttr(), op.getTieBreakLeftAttr(),
         op.getReduceDimsAttr(), op.getIndices());
+    newReduceOp->setAttr(tileAndSliceFailure, rewriter.getUnitAttr());
     rewriter.create<scope::ReturnOp>(loc, newReduceOp->getResult(0));
     return success();
   }
@@ -898,6 +901,13 @@ public:
 
     if (op->template hasAttrOfType<UnitAttr>(tiledOp))
       return failure();
+
+    if constexpr (std::is_same_v<hivm::CustomOp, OpType>) {
+      if (isDistributedTypeCustomOp(op.getOperation()) &&
+          op->getNumResults() > op.getOutputs().size()) {
+        return failure();
+      }
+    }
 
     // Copy operations on A2/A3 represent ub-to-ub transfers, whereas on A5 they
     // can be either ub-to-ub or ub-to-l1, with only ub-to-l1 used for CV1:1.
@@ -1242,7 +1252,7 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
   bool isFailed = true;
   newFunc->walk([&isFailed](Operation *op) {
     if (!isa<hivm::StoreOp, hivm::CopyOp, hivm::IndirectStoreOp,
-             hivm::StrideStoreOp>(op)) {
+             hivm::StrideStoreOp, hivm::VReduceOp>(op)) {
       return WalkResult::advance();
     }
     if (op->hasAttr(tileAndSliceFailure)) {
@@ -1279,7 +1289,7 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
 
   PassManager pm2(newFunc->getContext());
   populateBindSubBlockBubbleUpPassManager(pm2, strictMode,
-                                         newFunc->getParentOfType<ModuleOp>());
+                                          newFunc->getParentOfType<ModuleOp>());
 
   LogicalResult bubbleUpResult = pm2.run(newFunc);
   if (bubbleUpResult.failed() || newFunc.verify().failed() ||

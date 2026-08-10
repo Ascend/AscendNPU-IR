@@ -1,4 +1,4 @@
-//===- HFusionGeneralize.cpp ---- convert hfusionOp To linalg.generic -----===//
+//===- HFusionGeneralize.cpp ---- convert hfusionOp To linalg.generic ------------------===//
 //
 // Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,8 +18,12 @@
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/IR/PatternMatch.h"
 namespace mlir {
 #define GEN_PASS_DEF_HFUSIONGENERALIZEPASS
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h.inc"
@@ -55,6 +59,7 @@ void HFusionGeneralizePass::runOnOperation() {
     int64_t rank = resTy.getRank(), dim = cumDims[0];
     if (!((rank == 2 && dim == 0) || (rank == 3 && (dim == 0 || dim == 1))))
       return;
+
     auto isSubOp = [](Operation *op) {
       if (!op)
         return false;
@@ -65,12 +70,87 @@ void HFusionGeneralizePass::runOnOperation() {
       return false;
     };
 
+    auto isBufferizationOp = [](hfusion::CumsumOp cumsumOp) {
+      // 1. Trace Backward to find the input subview and copy
+      auto toTensorOp = cumsumOp.getOperand().getDefiningOp<bufferization::ToTensorOp>();
+      if (!toTensorOp) return false;
+
+      Value allocMemref = toTensorOp.getMemref();
+      memref::CopyOp copyOp = nullptr;
+      memref::SubViewOp srcSubView = nullptr;
+
+      // Find the copy operation populating the alloc
+      for (auto user : allocMemref.getUsers()) {
+        if (auto subViewDst = dyn_cast<memref::SubViewOp>(user)) {
+          for (auto subViewUser : subViewDst.getResult().getUsers()) {
+            if (auto copy = dyn_cast<mlir::memref::CopyOp>(subViewUser)) {
+              if (copy.getTarget() == subViewDst.getResult()) {
+                copyOp = copy;
+                srcSubView = copy.getSource().getDefiningOp<memref::SubViewOp>();
+                break;
+              }
+            }
+          }
+        }
+        if (copyOp) break;
+      }
+      if (!copyOp || !srcSubView) return false;
+
+      // 2. Trace Forward through users to find the valid destination chain
+      // This explicitly handles the "multiple users of cumsum" condition
+      bufferization::MaterializeInDestinationOp matchingMatOp = nullptr;
+
+      for (auto user : cumsumOp.getResult().getUsers()) {
+        if (auto extractSliceOp = dyn_cast<tensor::ExtractSliceOp>(user)) {
+          // Check if this slice feeds into a materialize operation
+          for (auto sliceUser : extractSliceOp.getResult().getUsers()) {
+            if (auto matOp = dyn_cast<bufferization::MaterializeInDestinationOp>(sliceUser)) {
+              if (matOp.getSource() == extractSliceOp.getResult()) {
+                if (auto dstSubView = matOp.getDest().getDefiningOp<memref::SubViewOp>()) {
+                  // 1. Get the subview representing the local destination slot of the copy operation
+                  auto localAllocDstSubview = copyOp.getTarget().getDefiningOp<memref::SubViewOp>();
+                  if (!localAllocDstSubview) continue;
+
+                  // 2. Strict size & stride equality across all domains
+                  // (They must all slice a block of the same dimensions)
+                  const bool sizesMatch = (srcSubView.getMixedSizes() == extractSliceOp.getMixedSizes() &&
+                                           dstSubView.getMixedSizes() == extractSliceOp.getMixedSizes());
+
+                  const bool stridesMatch = (srcSubView.getMixedStrides() == extractSliceOp.getMixedStrides() &&
+                                             dstSubView.getMixedStrides() == extractSliceOp.getMixedStrides());
+
+                  // 3. Offset cross-verification:
+                  // The offset into the scratchpad %alloc during the copy step MUST match the 
+                  // offset extracted from the tensor domain after the cumsum step.
+                  const bool offsetsMatch = (localAllocDstSubview.getMixedOffsets() == extractSliceOp.getMixedOffsets());
+
+                  if (sizesMatch && stridesMatch && offsetsMatch) {
+                      // Found a valid sub-graph matching the pattern
+                      matchingMatOp = matOp;
+                      break;
+                  }
+                }
+              }
+            }
+          }
+        }
+        if (matchingMatOp) break;
+      }
+
+      return matchingMatOp ? true : false;
+    };
+
     bool cancel = isSubOp(c.getInput().getDefiningOp());
     for (Operation *user : c->getResult(0).getUsers()) {
       if (cancel)
         break;
       cancel = isSubOp(user);
     }
+
+    if (!cancel) {
+      cancel = isBufferizationOp(c);
+    }
+
     if (cancel)
       c->setAttr("needs_compensation", UnitAttr::get(c->getContext()));
   });

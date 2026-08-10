@@ -36,25 +36,41 @@ namespace {
 
 /// Body block of a multi-buffer-supported LoopLike op (for / while).
 ///   - scf.for   : the single body block (`forOp.getBody()`).
-///   - scf.while : the after-region single block (where the actual iteration
-///                 body lives; the before-region only carries the predicate
-///                 `scf.condition`).
+///   - scf.while : the before or after region that contains `anchor`, or the
+///                 builder insertion point when `anchor` is null. The latter
+///                 supports GSS, which selects events from a LoopLike handle.
+///                 After is the fallback when neither context is available.
 /// Returns nullptr for any unsupported loop type, which lets callers fail
 /// gracefully (the adapter's `create()` factory also gates on the same types).
-Block *getLoopBodyBlock(LoopLikeOpInterface loop) {
+Block *getLoopBodyBlock(LoopLikeOpInterface loop, Operation *anchor,
+                        Block *insertionBlock) {
   if (!loop)
     return nullptr;
   Operation *op = loop.getOperation();
   if (auto forOp = dyn_cast<scf::ForOp>(op))
     return forOp.getBody();
-  if (auto whileOp = dyn_cast<scf::WhileOp>(op))
+  if (auto whileOp = dyn_cast<scf::WhileOp>(op)) {
+    Region *region = anchor ? anchor->getParentRegion()
+                            : insertionBlock
+                                  ? insertionBlock->getParent()
+                                  : nullptr;
+    if (region) {
+      while (region && region->getParentOp() != whileOp.getOperation())
+        region = region->getParentOp()->getParentRegion();
+      if (region == &whileOp.getBefore())
+        return &whileOp.getBefore().front();
+      if (region == &whileOp.getAfter())
+        return &whileOp.getAfter().front();
+    }
     return &whileOp.getAfter().front();
+  }
   return nullptr;
 }
 
-/// Locate the shared counter op for `loop`. Returns nullptr if none exists yet.
-hivm::MultiBufferCounterOp findExistingCounterOp(LoopLikeOpInterface loop) {
-  Block *body = getLoopBodyBlock(loop);
+/// Locate the shared counter op for `loop` in `body`. Returns nullptr if none
+/// exists yet. Counters in the sibling while region are intentionally ignored:
+/// before/after SSA values do not dominate each other.
+hivm::MultiBufferCounterOp findExistingCounterOp(Block *body) {
   if (!body)
     return {};
   for (auto &op : *body) {
@@ -80,21 +96,28 @@ MultiBufferLoopAdapter::create(LoopLikeOpInterface loop) {
   return MultiBufferLoopAdapter(loop);
 }
 
-void MultiBufferLoopAdapter::ensureCounterMaterialized(OpBuilder &builder) {
-  Block *body = getLoopBodyBlock(loop_);
+void MultiBufferLoopAdapter::ensureCounterMaterialized(OpBuilder &builder,
+                                                       Operation *anchor) {
+  Block *body =
+      getLoopBodyBlock(loop_, anchor, builder.getInsertionBlock());
   if (!body)
     llvm::report_fatal_error("ensureCounterMaterialized only valid for scf.for / "
                      "scf.while; adapter::create gates on this invariant.");
   if (cachedCounter_) {
-    builder.setInsertionPointAfter(cachedCounter_.getDefiningOp());
-    return;
+    // Cached counter must dominate the call site; only reuse when it lives in
+    // the resolved body block (same while region / for body).
+    if (cachedCounter_.getParentBlock() == body) {
+      builder.setInsertionPointAfter(cachedCounter_.getDefiningOp());
+      return;
+    }
+    cachedCounter_ = {};
   }
 
   Location loc = loop_->getLoc();
   Type i64Ty = builder.getI64Type();
 
-  // ---- Reuse path: a counter op already anchors this loop. ----
-  if (auto existing = findExistingCounterOp(loop_)) {
+  // ---- Reuse path: a counter op already anchors this loop body block. ----
+  if (auto existing = findExistingCounterOp(body)) {
     cachedCounter_ = existing.getResult();
     builder.setInsertionPointAfter(existing);
     return;
@@ -109,10 +132,11 @@ void MultiBufferLoopAdapter::ensureCounterMaterialized(OpBuilder &builder) {
   builder.setInsertionPointAfter(counter);
 }
 
-Value MultiBufferLoopAdapter::getIterationCounter(OpBuilder &builder) {
+Value MultiBufferLoopAdapter::getIterationCounter(OpBuilder &builder,
+                                                  Operation *anchor) {
   // Unified counter-op path for both scf.for and scf.while. The concrete
   // memref-based counter is emitted later by LowerMultiBufferCounter.
-  ensureCounterMaterialized(builder);
+  ensureCounterMaterialized(builder, anchor);
   Location loc = loop_->getLoc();
   // cachedCounter_ is i64; convert to index so the surface API stays parity
   // with the previous (iv-lb)/step affine.apply value that returned
@@ -122,11 +146,12 @@ Value MultiBufferLoopAdapter::getIterationCounter(OpBuilder &builder) {
 }
 
 Value MultiBufferLoopAdapter::getModuloIndex(OpBuilder &builder,
-                                             int64_t modular) {
+                                             int64_t modular,
+                                             Operation *anchor) {
   // Unified counter-op path for both scf.for and scf.while (see note in
   // getIterationCounter). slot = counter mod modular, where counter is
   // lowered to a monotonically increasing function-scoped alloca counter.
-  ensureCounterMaterialized(builder);
+  ensureCounterMaterialized(builder, anchor);
   Location loc = loop_->getLoc();
   Type i64Ty = builder.getI64Type();
 #if !defined(__LLVM_MAJOR_VERSION_22_COMPATIBLE__) &&                          \
@@ -142,9 +167,10 @@ Value MultiBufferLoopAdapter::getModuloIndex(OpBuilder &builder,
   return builder.create<arith::IndexCastOp>(loc, builder.getIndexType(), remui);
 }
 
-void MultiBufferLoopAdapter::finalizeIncrement(OpBuilder &builder) {
+void MultiBufferLoopAdapter::finalizeIncrement(OpBuilder &builder,
+                                               Operation *anchor) {
   // The concrete increment is produced by LowerMultiBufferCounter. This entry
   // point is retained as a safety/no-op hook so client passes can call it
   // without conditionals.
-  ensureCounterMaterialized(builder);
+  ensureCounterMaterialized(builder, anchor);
 }

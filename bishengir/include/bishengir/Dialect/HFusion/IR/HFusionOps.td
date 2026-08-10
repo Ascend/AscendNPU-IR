@@ -305,7 +305,7 @@ def IsFiniteOp : HFusion_Op<"isfinite", [Pure, SameOperandsAndResultRank,
 //===----------------------------------------------------------------------===//
 
 def CumsumOp : HFusion_Op<"cumsum",
-    [Pure, SameOperandsAndResultRank, AllTypesMatch<["output"]>]> {
+    [Pure, SameOperandsAndResultRank]> {
   let summary = [{
     Calculate cumulative sum on a certain dim of the input tensor
   }];
@@ -313,6 +313,9 @@ def CumsumOp : HFusion_Op<"cumsum",
     The cumsum operation calculates cumulative sum on a certain dim of the input
     tensor.  The reverse argument specifies the direction of the cumulative sum.
     Currently only support one cumulation dim.
+
+    Supports i32→i64 mixed-type promotion (1D, cum_dim=0) by folding the cast
+    into the SIMT library call — see CumsumFuseSextInput.
   }];
   let arguments = (ins RankedTensorOf<[BF16, F16, F32, I8, I16, I32, I64, F8E4M3FN, F8E5M2]>:$input,
                        ConfinedAttr<DenseI64ArrayAttr,
@@ -321,6 +324,7 @@ def CumsumOp : HFusion_Op<"cumsum",
   let results = (outs RankedTensorOf<[BF16, F16, F32, I8, I16, I32, I64, F8E4M3FN, F8E5M2]>:$output);
   let assemblyFormat = "$input attr-dict `:` type($input) `cum_dims` `=` $cum_dims `reverse` `=` $reverse `->` type($output)";
   let hasVerifier = 1;
+  let hasCanonicalizer = 1;
 }
 
 //===----------------------------------------------------------------------===//

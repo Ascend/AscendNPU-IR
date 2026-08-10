@@ -26,10 +26,15 @@ using namespace mlir::hivm;
 using namespace mlir::triton;
 
 namespace {
-static Type getTritonABIType(Type type) {
-  if (isa<IndexType>(type))
-    return IntegerType::get(type.getContext(), 64);
-  return HIVMToTritonTypeConvert(type);
+/// Collects all discardable attributes from a function op into the output
+/// vector. These are attributes that are not part of any registered dialect
+/// interface (e.g. FunctionOpInterface) and can be freely transferred to
+/// the converted triton function.
+static void filterFuncAttributes(
+    FunctionOpInterface func, SmallVectorImpl<NamedAttribute> &result) {
+  for (const NamedAttribute &attr : func->getDiscardableAttrs()) {
+    result.push_back(attr);
+  }
 }
 
 static Value narrowABIIndexArg(ConversionPatternRewriter &rewriter,
@@ -49,96 +54,96 @@ public:
   LogicalResult
   matchAndRewrite(func::FuncOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    auto oldFuncTy = op.getFunctionType();
-    // Convert function type which contains parameter types
-    // Note: The function can only be simt vf, and no return value.
-    SmallVector<Type> newInputTypes;
-    std::optional<int> sharedIdx = std::nullopt;
-    // Collect fractal layout attributes to propagate to expanded args.
-    SmallVector<std::pair<int, Attribute>> fractalArgAttrs;
-    int newArgCounter = 0;
-    static constexpr int FixCount = 3;
-    for (auto [idx, inputTy] : llvm::enumerate(oldFuncTy.getInputs())) {
-      if (auto memrefTy = dyn_cast<MemRefType>(inputTy)) {
-        // The following conversion logic should be consistent with
-        // 'LLVMTypeConverter::convertMemRefType'
-        auto ptrTy = HIVMToTritonTypeConvert(inputTy);
-        auto indexTy = rewriter.getI64Type();
+    // Get memref_attr from func attributes
+    auto memrefAttr =
+        dyn_cast_or_null<DenseI32ArrayAttr>(op->getAttr("memref_attr"));
+    TypeConverter::SignatureConversion result(op.getNumArguments());
+    auto ttConverter = getTypeConverter<TritonTypeConverter>();
+    // Perserve index of memref argument with shared attribute
+    SmallVector<std::optional<int>> sharedIds;
+    // Perserve index of memref argument with fractal_layout attribute
+    SmallVector<std::pair<int, Attribute>> fractalAttrArgIds;
+    FunctionType ttFuncType = ttConverter->convertTTFunctionSignature(op,
+        ttConverter->getOptions().useBarePtrCallConv,
+        result,
+        sharedIds,
+        fractalAttrArgIds);
+    if (!ttFuncType)
+      return rewriter.notifyMatchFailure(op, "Could not convert funcop");
 
-        // Expand the memref descriptor into TTIR-friendly scalars:
-        //   base ptr, aligned ptr, offset, sizes[rank], strides[rank].
-        // Multi-dimensional memrefs need per-dimension metadata here because
-        // TTIR cannot carry the original LLVM descriptor struct directly.
-        newInputTypes.push_back(ptrTy);
-        newInputTypes.push_back(ptrTy);
-        newInputTypes.push_back(indexTy);
+    SmallVector<NamedAttribute, 8> attributes;
+    filterFuncAttributes(op, attributes);
 
-        auto rank = memrefTy.getRank();
-        for (int i = 0; i < rank; ++i)
-          newInputTypes.push_back(indexTy); // sizes
-        for (int i = 0; i < rank; ++i)
-          newInputTypes.push_back(indexTy); // strides
+    auto newTTFunc = rewriter.create<triton::FuncOp>(
+        op.getLoc(), op.getName(), ttFuncType, attributes);
 
-        // Record the index of the shared memory base pointer.
-        if (op.getArgAttr(idx, SharedMemoryAttr::name)) {
-          if (sharedIdx) {
-            llvm::report_fatal_error("Duplicate shared memory base pointer");
-          }
-          sharedIdx = newArgCounter;
-        }
-        // Record fractal layout attribute for propagation.
-        if (auto fractalAttr = op.getArgAttr(idx, "hivm.fractal_layout")) {
-          fractalArgAttrs.push_back({newArgCounter, fractalAttr});
-        }
-        newArgCounter += FixCount;
-        newArgCounter += rank;
-        newArgCounter += rank;
-      } else {
-        newInputTypes.push_back(getTritonABIType(inputTy));
-        newArgCounter++;
-      }
+    cast<FunctionOpInterface>(newTTFunc.getOperation())
+        .setVisibility(op.getVisibility());
+    newTTFunc->setAttr(hivm::TFuncCoreTypeAttr::name,
+        hivm::TFuncCoreTypeAttr::get(
+            newTTFunc->getContext(), hivm::TFuncCoreType::AIV));
+
+    // Reset shared and fractal_layout attribute for converged tt function argument
+    for (auto idx : sharedIds) {
+      if (idx)
+        newTTFunc.setArgAttr(result.getInputMapping(*idx)->inputNo,
+            SharedMemoryAttr::name,
+            rewriter.getUnitAttr());
     }
 
-    auto funcType = FunctionType::get(op.getContext(), newInputTypes,
-                                      oldFuncTy.getResults());
-    auto newFunc =
-        rewriter.create<triton::FuncOp>(op.getLoc(), op.getName(), funcType);
-    newFunc->setAttr(hivm::TFuncCoreTypeAttr::name,
-                     hivm::TFuncCoreTypeAttr::get(newFunc->getContext(),
-                                                  hivm::TFuncCoreType::AIV));
-    if (sharedIdx) {
-      newFunc.setArgAttr(*sharedIdx, SharedMemoryAttr::name,
-                         rewriter.getUnitAttr());
+    for (auto idx_attr : fractalAttrArgIds) {
+      newTTFunc.setArgAttr(result.getInputMapping(idx_attr.first)->inputNo,
+          "hivm.fractal_layout",
+          idx_attr.second);
     }
-    for (auto &[argIdx, attr] : fractalArgAttrs) {
-      newFunc.setArgAttr(argIdx, "hivm.fractal_layout", attr);
-    }
-    auto *newEntryBlock = newFunc.addEntryBlock();
 
+    auto *newEntryBlock = newTTFunc.addEntryBlock();
     rewriter.setInsertionPointToStart(newEntryBlock);
     IRMapping argMapper;
 
     // Update block argument types in new tt.func and build the map from old
     // block argument to new block argument
-    int argIdx = 0;
     auto newArgs = newEntryBlock->getArguments();
     auto &oldEntryBlock = op.getBody().front();
     for (auto [idx, oldArg] : llvm::enumerate(oldEntryBlock.getArguments())) {
       if (auto memrefTy = mlir::dyn_cast<MemRefType>(oldArg.getType())) {
-        auto dataPtr1 = newArgs[argIdx];
-        auto rank = memrefTy.getRank();
+        // In SignatureConversion, inputNo is the index of memref argument
+        // in tt.func signature.
+        auto dataPtr1 = newArgs[result.getInputMapping(idx)->inputNo];
+        Value offset;
+        if (result.getInputMapping(idx)->size > 1)
+          offset = newArgs[result.getInputMapping(idx)->inputNo + 2];
+        bool hasOffset = memrefAttr && (int64_t)idx < memrefAttr.size()
+                         && memrefAttr[idx] != 0;
+        Value newPtr = dataPtr1;
+        // Map the old memref data pointer to new tt.ptr
+        if (hasOffset) {
+          // Try to get static offset from memref type
+          int64_t staticOffset;
+          SmallVector<int64_t> strides;
+          if (succeeded(getStridesAndOffset(memrefTy, strides, staticOffset)) &&
+              staticOffset != ShapedType::kDynamic && staticOffset != 0) {
+            // Static non-zero offset: create a constant and add to pointer
+            auto constOffset = rewriter.create<arith::ConstantIntOp>(op.getLoc(), staticOffset, 64);
+            newPtr = rewriter.create<triton::AddPtrOp>(
+              op.getLoc(), dataPtr1.getType(), newPtr, constOffset);
+          } else {
+            // Dynamic offset: use the runtime offset argument
+            newPtr = rewriter.create<triton::AddPtrOp>(
+              op.getLoc(), dataPtr1.getType(), newPtr, offset);
+          }
+        }
         // Skip over the full rank-aware descriptor emitted above; the cloned
         // body still models the original memref value through its data pointer.
-        argIdx += FixCount;
-        argIdx += rank;
-        argIdx += rank;
-        argMapper.map(oldArg, dataPtr1);
+        argMapper.map(oldArg, newPtr);
       } else if (isa<IndexType>(oldArg.getType())) {
-        auto narrowedArg = narrowABIIndexArg(
-            rewriter, op.getLoc(), newArgs[argIdx++], oldArg.getType());
+        auto narrowedArg = narrowABIIndexArg(rewriter,
+            op.getLoc(),
+            newArgs[result.getInputMapping(idx)->inputNo],
+            oldArg.getType());
         argMapper.map(oldArg, narrowedArg);
       } else {
-        argMapper.map(oldArg, newArgs[argIdx++]);
+        argMapper.map(oldArg, newArgs[result.getInputMapping(idx)->inputNo]);
       }
     }
 
@@ -160,7 +165,8 @@ public:
 };
 } // namespace
 
-void mlir::hivm::populateFuncToTritonPatterns(RewritePatternSet &patterns) {
+void mlir::hivm::populateFuncToTritonPatterns(
+    TritonTypeConverter &converter, RewritePatternSet &patterns) {
   auto *context = patterns.getContext();
-  patterns.add<FuncOpPattern>(context);
+  patterns.add<FuncOpPattern>(converter, context);
 }

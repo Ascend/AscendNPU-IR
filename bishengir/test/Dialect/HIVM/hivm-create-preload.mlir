@@ -709,6 +709,57 @@ module {
 }
 // -----
 
+// Synchronization operations that are direct children of a preload loop
+// coordinate the expanded loop. They must remain single operations instead of
+// being cloned once for every preload mapping.
+
+// CHECK-LABEL: func.func @test_sync_outside_preload_scope
+// CHECK: scf.for %[[NEW_IV:.*]] =
+// CHECK-COUNT-1: hivm.hir.sync_block_set[<CUBE>, <PIPE_S>, <PIPE_S>] flag = 15
+// CHECK-COUNT-1: hivm.hir.sync_block_wait[<CUBE>, <PIPE_S>, <PIPE_S>] flag = 14
+// CHECK-COUNT-1: hivm.hir.set_flag[<PIPE_MTE1>, <PIPE_MTE3>, <EVENT_ID0>]
+// CHECK-COUNT-1: hivm.hir.wait_flag[<PIPE_MTE1>, <PIPE_MTE3>, <EVENT_ID0>]
+// CHECK-COUNT-1: hivm.hir.pipe_barrier[<PIPE_ALL>]
+// CHECK-COUNT-1: %[[DYNAMIC_FLAG:.*]] = arith.extsi %[[NEW_IV]] : i32 to i64
+// CHECK-COUNT-1: hivm.hir.sync_block_set[<CUBE>, <PIPE_MTE1>, <PIPE_MTE3>] flag = %[[DYNAMIC_FLAG]]
+func.func @test_sync_outside_preload_scope() {
+  %c0 = arith.constant 0 : i32
+  %c4 = arith.constant 4 : i32
+  %c1 = arith.constant 1 : i32
+
+  scf.for %i = %c0 to %c4 step %c1 : i32 {
+    scope.scope : () -> () {
+      "test.stage1"(%i) : (i32) -> ()
+      scope.return
+    } {
+      no_inline,
+      hivm.preload_num = 1 : i32,
+      hivm.max_preload_num = 2 : i32
+    }
+
+    hivm.hir.sync_block_set[<CUBE>, <PIPE_S>, <PIPE_S>] flag = 15
+    hivm.hir.sync_block_wait[<CUBE>, <PIPE_S>, <PIPE_S>] flag = 14
+    hivm.hir.set_flag[<PIPE_MTE1>, <PIPE_MTE3>, <EVENT_ID0>]
+    hivm.hir.wait_flag[<PIPE_MTE1>, <PIPE_MTE3>, <EVENT_ID0>]
+    hivm.hir.pipe_barrier[<PIPE_ALL>]
+    %dynamic_flag = arith.extsi %i : i32 to i64
+    hivm.hir.sync_block_set[<CUBE>, <PIPE_MTE1>, <PIPE_MTE3>]
+      flag = %dynamic_flag
+
+    scope.scope : () -> () {
+      "test.stage0"(%i) : (i32) -> ()
+      scope.return
+    } {
+      no_inline,
+      hivm.preload_num = 0 : i32,
+      hivm.max_preload_num = 2 : i32
+    }
+  }
+  return
+}
+
+// -----
+
 // Each parent loop must use its own declared preload depth. Collecting preload
 // numbers module-wide would truncate the second loop to depth 2 and drop stage 3.
 
@@ -764,20 +815,21 @@ func.func @test_nested_subview_local_buffer_result() {
   %a2 = arith.constant 69888 : i64
   // CHECK: scf.for
   scf.for %i = %c0 to %c16 step %c1  : i32 {
-    // CHECK-DAG: %[[BUF0:.*]] = hivm.hir.pointer_cast
-    // CHECK-DAG: %[[BUF1:.*]] = hivm.hir.pointer_cast
+    // CHECK: %[[MAPPING0_BUFFER:.*]] = hivm.hir.pointer_cast
     %buf = hivm.hir.pointer_cast(%a0, %a1, %a2) : memref<64x256x1xi1, #hivm.address_space<ub>>
     annotation.mark %buf {hivm.preload_local_buffer = 1 : i32, hivm.multi_buffer = 3 : i32} : memref<64x256x1xi1, #hivm.address_space<ub>>
     // CHECK: scf.if
-    // CHECK: } else {
-    // CHECK: %[[RE0:.*]] = memref.subview %[[BUF1]]
+    // CHECK: %[[RE0:.*]] = memref.subview %[[MAPPING0_BUFFER]]
     // CHECK: %[[RE1:.*]] = memref.subview %[[RE0]]
-    // CHECK: scf.yield %[[RE1]]
+    // CHECK: "test.consume"(%[[RE1]])
     %s0 = scope.scope : () -> memref<64x64xi1, strided<[256, 1]>, #hivm.address_space<ub>> {
-      %sv0 = memref.subview %buf[0, 0, 0] [64, 128, 1] [1, 1, 1] : memref<64x256x1xi1, #hivm.address_space<ub>> to memref<64x128x1xi1, strided<[256, 1, 1]>, #hivm.address_space<ub>>
-      %sv1 = memref.subview %sv0[0, 0, 0] [64, 64, 1] [1, 1, 1] : memref<64x128x1xi1, strided<[256, 1, 1]>, #hivm.address_space<ub>> to memref<64x64xi1, strided<[256, 1]>, #hivm.address_space<ub>>
-      "test.use"(%sv1) : (memref<64x64xi1, strided<[256, 1]>, #hivm.address_space<ub>>) -> ()
-      scope.return %sv1 : memref<64x64xi1, strided<[256, 1]>, #hivm.address_space<ub>>
+      %nested = scope.scope : () -> memref<64x64xi1, strided<[256, 1]>, #hivm.address_space<ub>> {
+        %sv0 = memref.subview %buf[0, 0, 0] [64, 128, 1] [1, 1, 1] : memref<64x256x1xi1, #hivm.address_space<ub>> to memref<64x128x1xi1, strided<[256, 1, 1]>, #hivm.address_space<ub>>
+        %sv1 = memref.subview %sv0[0, 0, 0] [64, 64, 1] [1, 1, 1] : memref<64x128x1xi1, strided<[256, 1, 1]>, #hivm.address_space<ub>> to memref<64x64xi1, strided<[256, 1]>, #hivm.address_space<ub>>
+        "test.use"(%sv1) : (memref<64x64xi1, strided<[256, 1]>, #hivm.address_space<ub>>) -> ()
+        scope.return %sv1 : memref<64x64xi1, strided<[256, 1]>, #hivm.address_space<ub>>
+      }
+      scope.return %nested : memref<64x64xi1, strided<[256, 1]>, #hivm.address_space<ub>>
     } {no_inline, hivm.preload_num = 0 : i32, hivm.max_preload_num = 2 : i32}
     "test.consume"(%s0) : (memref<64x64xi1, strided<[256, 1]>, #hivm.address_space<ub>>) -> ()
   }

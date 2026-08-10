@@ -925,6 +925,7 @@ module {
 }
 // -----
 module attributes {hacc.target = #hacc.target<"Ascend910B1">} {
+// CHECK-LABEL: func.func @mm_with_add
 func.func @mm_with_add(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf16> {tt.divisibility = 16 : i32}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32}, %arg4: memref<?xf32> {tt.divisibility = 16 : i32}, %arg5: memref<?xf32> {tt.divisibility = 16 : i32}, %arg6: i32, %arg7: i32, %arg8: i32) attributes {WorkspaceArgIdx = 0 : i64, func_dyn_memref_args = dense<[false, true, true, true, true, true, false, false, false]> : vector<9xi1>, global_kernel = "local", hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "mix"} {
   %true = arith.constant true
   %cst = arith.constant 0.000000e+00 : f32
@@ -961,6 +962,7 @@ func.func @mm_with_add(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_addr
   %alloc_4 = memref.alloc() : memref<768xf32>
   hivm.hir.load ins(%reinterpret_cast_1 : memref<768xf32, strided<[1]>>) outs(%alloc_4 : memref<768xf32>)
   %13 = bufferization.to_tensor %alloc_4 restrict writable : memref<768xf32>
+  // CHECK: %[[LOOP_RESULT:.*]] = scf.for
   %14 = scf.for %arg9 = %c0_i32 to %c768_i32 step %c256_i32 iter_args(%arg10 = %6) -> (tensor<29x768xf32>)  : i32 {
     %20 = arith.index_cast %arg9 : i32 to index
     %extracted_slice_5 = tensor.extract_slice %12[0, %20] [128, 256] [1, 1] : tensor<128x768xf16> to tensor<128x256xf16>
@@ -970,10 +972,13 @@ func.func @mm_with_add(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_addr
     %c29_7 = arith.constant 29 : index
     %c128_8 = arith.constant 128 : index
     %c256 = arith.constant 256 : index
-    // CHECK: hivm.hir.mmadL1 {fixpipe_for_result_already_inserted = true}
+    // CHECK: %[[MMAD:.*]] = hivm.hir.mmadL1
     %22 = hivm.hir.mmadL1 ins(%11, %extracted_slice_5, %true, %c29_7, %c128_8, %c256, %extracted_slice_6 : tensor<29x128xf16>, tensor<128x256xf16>, i1, index, index, index, tensor<1x256xf32>) outs(%21 : tensor<29x256xf32>) -> tensor<29x256xf32>
-    // CHECK-NOT: hivm.hir.fixpipe
+    // CHECK: %[[FIXPIPE:.*]] = hivm.hir.fixpipe
+    // CHECK-SAME: ins(%[[MMAD]]
+    // CHECK: %[[INSERTED:.*]] = tensor.insert_slice %[[FIXPIPE]]
     %inserted_slice = tensor.insert_slice %22 into %arg10[0, %20] [29, 256] [1, 1] : tensor<29x256xf32> into tensor<29x768xf32>
+    // CHECK: scf.yield %[[INSERTED]]
     scf.yield %inserted_slice : tensor<29x768xf32>
   }
   %15 = arith.addi %8, %c29 : index
@@ -983,7 +988,10 @@ func.func @mm_with_add(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_addr
   %19 = arith.minsi %18, %c29 : index
   %extracted_slice = tensor.extract_slice %14[0, 0] [%19, 768] [1, 1] : tensor<29x768xf32> to tensor<?x768xf32>
   %subview = memref.subview %reinterpret_cast_2[0, 0] [%19, 768] [1, 1] : memref<29x768xf32, strided<[768, 1], offset: ?>> to memref<?x768xf32, strided<[768, 1], offset: ?>>
-  // CHECK: hivm.hir.fixpipe
+  // CHECK: tensor.extract_slice %[[LOOP_RESULT]]
+  // CHECK: memref.subview
+  // CHECK-NOT: hivm.hir.fixpipe
+  // CHECK: hivm.hir.store
   hivm.hir.store ins(%extracted_slice : tensor<?x768xf32>) outs(%subview : memref<?x768xf32, strided<[768, 1], offset: ?>>)
   return
 }
@@ -1701,5 +1709,3 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9599">} {
     return
   }
 }
-
-// -----

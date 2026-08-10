@@ -93,6 +93,14 @@ static Value traceToRootMemref(Value v) {
   return Value();
 }
 
+static scope::ScopeOp traceToParentScope(Operation *op) {
+  // Trace to the innermost ScopeOp enclosing `op`, if any.
+  for (Operation *p = op->getParentOp(); p; p = p->getParentOp())
+    if (auto scopeOp = dyn_cast<scope::ScopeOp>(p))
+      return scopeOp;
+  return nullptr;
+}
+
 bool hasWrite(Operation *op, Value targetMemref) {
   if (isa<scope::ScopeOp>(op)) {
     return false;
@@ -156,14 +164,13 @@ void traceToScopes(Operation *op, SmallVectorImpl<scope::ScopeOp> &scopes, Dense
   if (isa<annotation::MarkOp>(op)) {
     return;
   }
-  if (auto scopeOp = dyn_cast<scope::ScopeOp>(op->getParentOp())) {
+  if (auto scopeOp = traceToParentScope(op)) {
     scopes.push_back(scopeOp);
     return;
   }
   for (OpResult res : op->getResults()) {
     for (Operation *user : res.getUsers()) {
-      Operation *parent = user->getParentOp();
-      if (auto scopeOp = dyn_cast<scope::ScopeOp>(parent)) {
+      if (auto scopeOp = traceToParentScope(user)) {
         scopes.push_back(scopeOp);
       } else {
         traceToScopes(user, scopes, visited);

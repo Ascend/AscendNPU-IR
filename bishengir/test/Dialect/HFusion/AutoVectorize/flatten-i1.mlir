@@ -38,10 +38,10 @@ func.func private @where_mask_no_collapse(
 // -----
 
 
-// CHECK-LABEL: func.func private @where_mask_byte_collapse(
-// CHECK: tensor.collapse_shape %{{.*}} {{\[\[}}0, 1]] : tensor<8x8xi1> into tensor<64xi1>
-// CHECK: hfusion.select ins({{.*}} : tensor<64xi1>, f16, f16)
-func.func private @where_mask_byte_collapse(
+// CHECK-LABEL: func.func private @where_mask_byte_no_collapse(
+// CHECK-NOT: into tensor<64xi1>
+// CHECK: hfusion.select ins({{.*}} : tensor<8x8xi1>, f16, f16)
+func.func private @where_mask_byte_no_collapse(
     %mask: tensor<8x8xi1>, %f0: tensor<8x8xf16>,
     %f1: tensor<8x8x2xf16>, %m1: tensor<8x8x2xi1>,
     %c2: tensor<2xi1>, %f2: tensor<2xf16>,

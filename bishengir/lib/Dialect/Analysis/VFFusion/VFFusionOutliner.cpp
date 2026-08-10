@@ -127,8 +127,6 @@ LogicalResult VFFusionOutliner::createInvoke(func::FuncOp fusedFunction,
   SmallVector<Operation *> vectorOps(fusedBlock.getOps());
   SetVector<Operation *> ops(vectorOps.begin(), vectorOps.end());
 
-  // last ops of the fusedBlock
-  builder.setInsertionPointAfter(vectorOps.back());
   func::CallOp callOp =
       builder.create<func::CallOp>(vectorOps.back()->getLoc(), fusedFunction,
                                    fusedBlock.recomputeInputs().takeVector());

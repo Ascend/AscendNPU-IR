@@ -1433,6 +1433,41 @@ func.func @extract_slice_rank_reduced2() -> tensor<4x12x16xf32> {
 }
 
 // -----
+// CHECK-LABEL: func.func @extract_insert_slice_noncanonical_rank_reduction(
+// CHECK: %[[SLICE:.*]] = tensor.extract_slice {{.*}} : tensor<1x2x1x2x1x2x1x2xf32> to tensor<1x2x1x2x1x2xf32>
+// CHECK: tensor.insert_slice %[[SLICE]] into {{.*}} : tensor<1x2x1x2x1x2xf32> into tensor<1x2x1x2x1x2x2xf32>
+func.func @extract_insert_slice_noncanonical_rank_reduction() -> tensor<1x2x1x2x1x2x2xf32> {
+  %source = tensor.empty() : tensor<1x2x1x2x1x2x1x2xf32>
+  %source_reduce_init = tensor.empty() : tensor<1x1x1x1xf32>
+  %source_reduce = linalg.reduce ins(%source : tensor<1x2x1x2x1x2x1x2xf32>) outs(%source_reduce_init : tensor<1x1x1x1xf32>) dimensions = [1, 3, 5, 7]
+    (%in: f32, %init: f32) {
+      %sum = arith.addf %in, %init : f32
+      linalg.yield %sum : f32
+    }
+
+  %slice = tensor.extract_slice %source[0, 0, 0, 0, 0, 0, 0, 0] [1, 2, 1, 2, 1, 1, 1, 2] [1, 1, 1, 1, 1, 1, 1, 1]
+    : tensor<1x2x1x2x1x2x1x2xf32> to tensor<1x2x1x2x1x2xf32>
+  %slice_reduce_init = tensor.empty() : tensor<1x1x1xf32>
+  %slice_reduce = linalg.reduce ins(%slice : tensor<1x2x1x2x1x2xf32>) outs(%slice_reduce_init : tensor<1x1x1xf32>) dimensions = [1, 3, 5]
+    (%in: f32, %init: f32) {
+      %sum = arith.addf %in, %init : f32
+      linalg.yield %sum : f32
+    }
+
+  %dest = tensor.empty() : tensor<1x2x1x2x1x2x2xf32>
+  %dest_reduce_init = tensor.empty() : tensor<1x1x1x2xf32>
+  %dest_reduce = linalg.reduce ins(%dest : tensor<1x2x1x2x1x2x2xf32>) outs(%dest_reduce_init : tensor<1x1x1x2xf32>) dimensions = [1, 3, 5]
+    (%in: f32, %init: f32) {
+      %sum = arith.addf %in, %init : f32
+      linalg.yield %sum : f32
+    }
+
+  %inserted = tensor.insert_slice %slice into %dest[0, 0, 0, 0, 0, 0, 0] [1, 2, 1, 2, 1, 1, 2] [1, 1, 1, 1, 1, 1, 1]
+    : tensor<1x2x1x2x1x2xf32> into tensor<1x2x1x2x1x2x2xf32>
+  return %inserted : tensor<1x2x1x2x1x2x2xf32>
+}
+
+// -----
 // CHECK-LABEL: func.func @hivm_store(
 // CHECK: hivm.hir.store ins({{.*}} : tensor<4x8xf32>) outs({{.*}} : memref<4x8xf32>)
 func.func @hivm_store(%arg0: tensor<4xf32>, %arg8: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 2 : i32}) {
@@ -1486,4 +1521,25 @@ func.func @flatten_scf_if_scalar_result(%arg0: memref<?xi32> {tt.divisibility = 
   %reinterpret_cast_0 = memref.reinterpret_cast %arg0 to offset: [0], sizes: [1], strides: [1] : memref<?xi32> to memref<1xi32, strided<[1]>>
   bufferization.materialize_in_destination %1 in writable %reinterpret_cast_0 : (tensor<1xi32>, memref<1xi32, strided<[1]>>) -> ()
   return
+}
+
+// -----
+// CHECK-LABEL: func.func @test_arange_multidim_extract_slice(
+// CHECK-SAME:                                     %[[ARG0:.*]]: tensor<100x2xi32>) -> tensor<100x2xi32>
+// CHECK: %[[ARG0_COLLAPSED:.*]] = tensor.collapse_shape %[[ARG0]] {{\[\[}}0, 1]] : tensor<100x2xi32> into tensor<200xi32>
+// CHECK: %[[ARANGE:.*]] = hfusion.arange offset[%[[C0:.*]]] strides[%[[C1:.*]]] outs({{.*}} : tensor<256xi32>) -> tensor<256xi32>
+// CHECK: %[[SLICE:.*]] = tensor.extract_slice %[[ARANGE]][0] [200] [1] : tensor<256xi32> to tensor<200xi32>
+// CHECK: %[[ADDED:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%[[ARG0_COLLAPSED]], %[[SLICE]] : tensor<200xi32>, tensor<200xi32>)
+// CHECK: %[[EXPANDED:.*]] = tensor.expand_shape %[[ADDED]] {{\[\[}}0, 1]] output_shape {{\[}}100, 2] : tensor<200xi32> into tensor<100x2xi32>
+// CHECK: return %[[EXPANDED]] : tensor<100x2xi32>
+func.func @test_arange_multidim_extract_slice(%arg0: tensor<100x2xi32>) -> tensor<100x2xi32> {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c2 = arith.constant 2 : index
+  %0 = tensor.empty() : tensor<128x2xi32>
+  %1 = hfusion.arange offset[%c0] strides[%c2, %c1] outs(%0 : tensor<128x2xi32>) -> tensor<128x2xi32>
+  %2 = tensor.extract_slice %1[0, 0] [100, 2] [1, 1] : tensor<128x2xi32> to tensor<100x2xi32>
+  %3 = tensor.empty() : tensor<100x2xi32>
+  %4 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%arg0, %2 : tensor<100x2xi32>, tensor<100x2xi32>) outs(%3 : tensor<100x2xi32>) -> tensor<100x2xi32>
+  return %4 : tensor<100x2xi32>
 }

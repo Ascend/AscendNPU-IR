@@ -16,6 +16,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/AlignBuffer/Util.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
@@ -23,6 +24,7 @@
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Dominance.h"
 #include "mlir/IR/Value.h"
 #include "llvm/Support/LogicalResult.h"
@@ -550,6 +552,8 @@ LogicalResult propagateDownAlignInfo(
             })
             .Case([&rewriter, &v, &alignDims, &alignBytes, &alignDimAttrName,
                    &alignBytesAttrName](scf::YieldOp scfYieldOp) {
+              if (hacc::utils::isRegBasedArch(scfYieldOp->getParentOfType<ModuleOp>()))
+                return failure();
               return propagateAlignDown(rewriter, scfYieldOp, v, alignDims,
                                         alignBytes, alignDimAttrName,
                                         alignBytesAttrName);
@@ -813,7 +817,8 @@ mlir::LogicalResult propagateAlignUp(
           DenseI32ArrayAttr::get(rewriter.getContext(), unionAlignBytes));
     });
 
-    if (failed(processYieldOp(rewriter, markedOp, alignDims, alignBytes,
+    if (!hacc::utils::isRegBasedArch(markedOp->getParentOfType<ModuleOp>()) &&
+        failed(processYieldOp(rewriter, markedOp, alignDims, alignBytes,
                                 alignDimAttrName, alignBytesAttrName))) {
         return failure();
     }
@@ -1213,9 +1218,8 @@ FailureOrCastVec propagateScopeReturnOp(RewriterBase &rewriter,
   auto alignedType = alignedValue.getType();
   auto origType = conversionOp.getResult(0).getType();
 
-  rewriter.modifyOpInPlace(returnOp, [&]() {
-    returnOp.setOperand(operandIndex, alignedValue);
-  });
+  rewriter.modifyOpInPlace(
+      returnOp, [&]() { returnOp.setOperand(operandIndex, alignedValue); });
 
   // Update scope.scope result type to aligned type
   auto scopeResult = scopeOp.getResult(operandIndex);
@@ -1554,7 +1558,7 @@ void mlir::hivm::handlePropagateFailure(RewriterBase &rewriter,
     auto src = conversion.getInputs()[0];
     SmallVector<Operation *> writeSrc;
     findWriteOp(src, writeSrc);
-    for (OpOperand &use : conversion->getUses()) {
+    for (OpOperand &use : make_early_inc_range(conversion->getUses())) {
       Operation *user = use.getOwner();
       if (!user->hasAttr(propagateFailureName))
         continue;
@@ -1593,6 +1597,52 @@ void mlir::hivm::handlePropagateFailure(RewriterBase &rewriter,
       op->removeAttr(propagateFailureName);
     return WalkResult::advance();
   });
+}
+
+void mlir::hivm::materializeRemainingStaticUBLayoutCasts(RewriterBase &rewriter,
+                                                         func::FuncOp funcOp) {
+  SmallVector<UnrealizedConversionCastOp> conversions;
+  funcOp.walk([&](UnrealizedConversionCastOp conversion) {
+    conversions.push_back(conversion);
+  });
+
+  for (UnrealizedConversionCastOp conversion : conversions) {
+    if (conversion->use_empty()) {
+      rewriter.eraseOp(conversion);
+      continue;
+    }
+    if (conversion.getInputs().size() != 1 ||
+        conversion.getOutputs().size() != 1)
+      continue;
+    Value src = conversion.getInputs()[0];
+    Value dst = conversion.getOutputs()[0];
+    auto srcType = dyn_cast<MemRefType>(src.getType());
+    auto dstType = dyn_cast<MemRefType>(dst.getType());
+    if (!srcType || !dstType)
+      continue;
+    auto srcSpace =
+        dyn_cast_or_null<hivm::AddressSpaceAttr>(srcType.getMemorySpace());
+    auto dstSpace =
+        dyn_cast_or_null<hivm::AddressSpaceAttr>(dstType.getMemorySpace());
+    auto srcLayout = dyn_cast<StridedLayoutAttr>(srcType.getLayout());
+    assert(!srcType.getElementType().isInteger(1) &&
+           "PropagateAlignUtil: i1 type is not supported");
+    if (!srcSpace || !dstSpace ||
+        srcSpace.getAddressSpace() != hivm::AddressSpace::UB ||
+        dstSpace.getAddressSpace() != hivm::AddressSpace::UB ||
+        srcType.getShape() != dstType.getShape() ||
+        srcType.getElementType() != dstType.getElementType() ||
+        !srcType.hasStaticShape())
+      continue;
+
+    rewriter.setInsertionPoint(conversion);
+    Value newDst =
+        rewriter.create<memref::AllocOp>(conversion.getLoc(), dstType);
+    rewriter.create<hivm::CopyOp>(conversion.getLoc(), TypeRange{}, src,
+                                  newDst);
+    rewriter.replaceAllUsesWith(dst, newDst);
+    rewriter.eraseOp(conversion);
+  }
 }
 
 void mlir::hivm::populatePropagateAlignUpToRootAllocationPattern(
@@ -1748,10 +1798,11 @@ LogicalResult mlir::hivm::replaceAndPropagateMemRefType(RewriterBase &rewriter,
                 auto res = propagateSubViewOp(rewriter, conversion, subviewOp);
                 return UnrealizedCastOpVec{res};
               })
-              .Case([&rewriter,
-                     &conversion](memref::CollapseShapeOp collapseOp) {
-                return propagateCollapseShapeOp(rewriter, conversion, collapseOp);
-              })
+              .Case(
+                  [&rewriter, &conversion](memref::CollapseShapeOp collapseOp) {
+                    return propagateCollapseShapeOp(rewriter, conversion,
+                                                    collapseOp);
+                  })
               .Case([&rewriter, &conversion](memref::ExpandShapeOp expandOp) {
                 auto res =
                     propagateExpandShapeOp(rewriter, conversion, expandOp);
@@ -1776,9 +1827,9 @@ LogicalResult mlir::hivm::replaceAndPropagateMemRefType(RewriterBase &rewriter,
                                         use->getOperandNumber());
               })
               .Case([&rewriter, &conversion, &use](scope::ReturnOp returnOp) {
- 	              return propagateScopeReturnOp(rewriter, conversion, returnOp,
- 	                                            use->getOperandNumber());
- 	            })
+                return propagateScopeReturnOp(rewriter, conversion, returnOp,
+                                              use->getOperandNumber());
+              })
               .Case([&rewriter,
                      &conversion](UnrealizedConversionCastOp conversionOp) {
                 return propagateUnrealizedConversionCastOp(rewriter, conversion,

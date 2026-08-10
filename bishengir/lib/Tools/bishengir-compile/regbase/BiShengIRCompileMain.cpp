@@ -362,7 +362,7 @@ bishengir::regbase::runRegBasePipeline(ModuleOp mod,
   });
 
   bool hirCompileSuccess = false;
-  int tryTimes = 5;
+  int tryTimes = 6;
   // triton compile has nothing to do with HFusion auto schedule, so we don't
   // need to tune for it.
   //
@@ -451,12 +451,6 @@ bishengir::regbase::runRegBasePipeline(ModuleOp mod,
              << (i + 1) << "/" << tryTimes
              << ", fallback with disabled VF reachable check");
         config.setDisableVFReachableCheck(true);
-        collectedDiagnostics.clear();
-      } else if (hasUboverflow && !config.getDisableTightCoupledBuffer()) {
-        LDBG("ub overflow detected at attempt "
-             << (i + 1) << "/" << tryTimes
-             << ", fallback with MixCV GM path");
-        config.setDisableTightCoupledBuffer(true);
         collectedDiagnostics.clear();
       }
     }

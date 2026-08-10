@@ -1,5 +1,3 @@
-// REQUIRES: regbase
-// TODO: enable after migrating HFusion AutoVectorizeV2 (-hfusion-auto-vectorize-v2).
 // RUN: bishengir-opt %s --hfusion-auto-vectorize-v2 --outline-vector-function
 
 // Two independent chains with different dim0 prevent 7/9 cross-group:

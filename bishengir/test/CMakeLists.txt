@@ -29,6 +29,16 @@ set(BISHENGIR_TEST_DEPENDS
   opt llc llvm-dis
 )
 
+# Tests using mlir-cpu-runner (REQUIRES: execution-engine) need the runner
+# and its runtime support libraries built before lit runs.
+if(MLIR_ENABLE_EXECUTION_ENGINE)
+  list(APPEND BISHENGIR_TEST_DEPENDS
+    mlir-cpu-runner
+    mlir_runner_utils
+    mlir_c_runner_utils
+  )
+endif()
+
 if(MLIR_ENABLE_BINDINGS_PYTHON)
   list(APPEND BISHENGIR_TEST_DEPENDS
     MLIRPythonModules

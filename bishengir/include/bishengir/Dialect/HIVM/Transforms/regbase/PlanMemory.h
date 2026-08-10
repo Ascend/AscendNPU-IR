@@ -21,7 +21,7 @@
 #include "bishengir/Dialect/HACC/IR/HACCInterfaces.h"
 #include "bishengir/Dialect/HIVM/Analysis/VFInplaceReuseAnalyzer.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
-#include "bishengir/Dialect/HIVM/Transforms/VFInplaceReuseReachability.h"
+#include "bishengir/Dialect/HIVM/Transforms/InplaceReuseReachableMap.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/HIVM/Transforms/OptMemPlanForPipeline.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
@@ -304,7 +304,10 @@ public:
   SmallVector<ValuePair> inplacePairList;
 
   /// record marked buffer used in multi scope operations.
-  SmallVector<Value> preloadBuffers;
+  SetVector<Value> preloadBuffers;
+
+  /// record preload buffers by their enclosing preload loop.
+  DenseMap<Operation *, SetVector<Value>> preloadLoop2Buffers;
 
   /// Sorted positions (in scope-time units, mirroring
   /// GenerateBufferLife()'s scopeTime) of hivm sync ops in this func. Used
@@ -438,11 +441,13 @@ protected:
   /// Check if a buffer is a preload buffer.
   bool IsPreloadBuffer(Value buffer);
 
-  /// Update gen info of preload buffer to parent for op.
-  void UpdatePreloadBuffersGenInfo(OpInfo *opInfo);
+  /// Update gen info of preload buffers at their enclosing loop entry.
+  void UpdatePreloadBuffersGenInfo(
+      OpInfo *opInfo, const SetVector<Value> &preloadBufferValues);
 
-  /// Update kill info of preload buffer to parent for op.
-  void UpdatePreloadBuffersKillInfo(OpInfo *opInfo);
+  /// Update kill info of preload buffers at their enclosing loop exit.
+  void UpdatePreloadBuffersKillInfo(
+      OpInfo *opInfo, const SetVector<Value> &preloadBufferValues);
 
   /// Extend preload buffer lifetime from scope to parent for.
   void UpdatePreloadBuffersGenKillMap();
@@ -783,14 +788,11 @@ protected:
 
   /// the vf call `op` that can reuse dst address `gen` and src address `kill`
   /// in limited situation
-  bool IsReuseVFCall(Value gen, Value kill,
-                     InplaceReuseReachableMap &reachableMap) const;
+  bool IsReuseVFCall(Value gen, Value kill);
 
-  /// Determines whether the value `src` is reachable to an operand of a
-  /// `DstOpType` operation.
-  template <typename DstOpType>
-  bool IsInplaceReuseReachable(Value src,
-                               InplaceReuseReachableMap &reachableMap) const;
+  /// Determines whether the value `src` is reachable to an operand of an
+  /// operation with pipe type `Pipe`.
+  template <PIPE Pipe> bool IsInplaceReuseReachable(Value allocValue);
 
   /// Get overlap buffer life.
   DenseMap<ValuePair, BufferLife>
@@ -885,6 +887,9 @@ protected:
 
   /// Memory dma pipe first plan optimization.
   OptMemPlanForDma dmaFirstPipelineOpt;
+
+  /// Inplace reuse reachable map for checking if a buffer is used by hivmPipeOp
+  InplaceReuseReachableMap reachableMap;
 
   /// Map from the storage entry pair to its pipeDma conflict info.
   DenseMap<StorageEntryPair, bool> pipeDmaConflictMap;

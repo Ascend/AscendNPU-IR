@@ -272,3 +272,102 @@ module {
     return %reduced_0 : tensor<27xi32>
   }
 }
+
+// -----
+
+//===----------------------------------------------------------------------===//
+// CumsumFuseSextInput — fold hfusion.cast i32→i64 (cast_signed) into cumsum
+//===----------------------------------------------------------------------===//
+// The pattern folds a cast_signed i32→i64 producer into the following cumsum
+// (1D dim0 i64 only) so the SIMT library call reads i32 directly and the
+// standalone cast is dropped. Cases below cover each match point.
+
+// Match: cast_signed i32→i64 + cumsum 1D dim0 i64 -> fold + erase dead cast.
+// CHECK-LABEL: func.func @test_cast_fold_success
+// CHECK-SAME: (%[[ARG:.*]]: tensor<16xi32>) -> tensor<16xi64>
+// CHECK-NOT: hfusion.cast
+// CHECK: hfusion.cumsum %[[ARG]] : tensor<16xi32> cum_dims = [0] reverse = false -> tensor<16xi64>
+func.func @test_cast_fold_success(%arg0 : tensor<16xi32>) -> tensor<16xi64> {
+  %out_cast = tensor.empty() : tensor<16xi64>
+  %cast = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>} ins(%arg0 : tensor<16xi32>) outs(%out_cast : tensor<16xi64>) -> tensor<16xi64>
+  %r = hfusion.cumsum %cast : tensor<16xi64> cum_dims = [0] reverse = false -> tensor<16xi64>
+  return %r : tensor<16xi64>
+}
+
+// -----
+
+// No-fold: cumsum input is i32 (pattern requires i64).
+// CHECK-LABEL: func.func @test_no_fold_i32_cumsum
+// CHECK: hfusion.cast
+// CHECK: hfusion.cumsum {{.*}} -> tensor<16xi32>
+func.func @test_no_fold_i32_cumsum(%arg0 : tensor<16xi8>) -> tensor<16xi32> {
+  %out_cast = tensor.empty() : tensor<16xi32>
+  %cast = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>} ins(%arg0 : tensor<16xi8>) outs(%out_cast : tensor<16xi32>) -> tensor<16xi32>
+  %r = hfusion.cumsum %cast : tensor<16xi32> cum_dims = [0] reverse = false -> tensor<16xi32>
+  return %r : tensor<16xi32>
+}
+
+// -----
+
+// No-fold: cumsum is 2D (pattern only fires for 1D dim0).
+// CHECK-LABEL: func.func @test_no_fold_2d_cumsum
+// CHECK: hfusion.cast
+// CHECK: hfusion.cumsum {{.*}} -> tensor<4x16xi64>
+func.func @test_no_fold_2d_cumsum(%arg0 : tensor<4x16xi32>) -> tensor<4x16xi64> {
+  %out_cast = tensor.empty() : tensor<4x16xi64>
+  %cast = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>} ins(%arg0 : tensor<4x16xi32>) outs(%out_cast : tensor<4x16xi64>) -> tensor<4x16xi64>
+  %r = hfusion.cumsum %cast : tensor<4x16xi64> cum_dims = [1] reverse = false -> tensor<4x16xi64>
+  return %r : tensor<4x16xi64>
+}
+
+// -----
+
+// No-fold: cumsum input has no CastOp producer (function arg directly).
+// CHECK-LABEL: func.func @test_no_fold_producer_not_cast
+// CHECK-NOT: hfusion.cast
+// CHECK: hfusion.cumsum {{.*}} -> tensor<16xi64>
+func.func @test_no_fold_producer_not_cast(%arg0 : tensor<16xi64>) -> tensor<16xi64> {
+  %r = hfusion.cumsum %arg0 : tensor<16xi64> cum_dims = [0] reverse = false -> tensor<16xi64>
+  return %r : tensor<16xi64>
+}
+
+// -----
+
+// No-fold: producer is cast_unsigned (pattern requires cast_signed).
+// CHECK-LABEL: func.func @test_no_fold_cast_unsigned
+// CHECK: hfusion.cast {{.*type_fn<cast_unsigned>}}
+// CHECK: hfusion.cumsum
+func.func @test_no_fold_cast_unsigned(%arg0 : tensor<16xi32>) -> tensor<16xi64> {
+  %out_cast = tensor.empty() : tensor<16xi64>
+  %cast = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, round_mode = #hfusion.round_mode<rint>} ins(%arg0 : tensor<16xi32>) outs(%out_cast : tensor<16xi64>) -> tensor<16xi64>
+  %r = hfusion.cumsum %cast : tensor<16xi64> cum_dims = [0] reverse = false -> tensor<16xi64>
+  return %r : tensor<16xi64>
+}
+
+// -----
+
+// No-fold: producer input element type is i16 (pattern requires i32).
+// CHECK-LABEL: func.func @test_no_fold_producer_input_i16
+// CHECK: hfusion.cast
+// CHECK: hfusion.cumsum
+func.func @test_no_fold_producer_input_i16(%arg0 : tensor<16xi16>) -> tensor<16xi64> {
+  %out_cast = tensor.empty() : tensor<16xi64>
+  %cast = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>} ins(%arg0 : tensor<16xi16>) outs(%out_cast : tensor<16xi64>) -> tensor<16xi64>
+  %r = hfusion.cumsum %cast : tensor<16xi64> cum_dims = [0] reverse = false -> tensor<16xi64>
+  return %r : tensor<16xi64>
+}
+
+// -----
+
+// Fold keeps producer alive: cast has another user besides cumsum.
+// Verifies the `!producer->use_empty()` branch — cast must remain after fold.
+// CHECK-LABEL: func.func @test_cast_fold_keeps_live_producer
+// CHECK-SAME: (%[[ARG:.*]]: tensor<16xi32>) -> (tensor<16xi64>, tensor<16xi64>)
+// CHECK: hfusion.cast {{.*}} ins(%[[ARG]] : tensor<16xi32>) outs({{.*}} : tensor<16xi64>) -> tensor<16xi64>
+// CHECK: hfusion.cumsum %[[ARG]] : tensor<16xi32> cum_dims = [0] reverse = false -> tensor<16xi64>
+func.func @test_cast_fold_keeps_live_producer(%arg0 : tensor<16xi32>) -> (tensor<16xi64>, tensor<16xi64>) {
+  %out_cast = tensor.empty() : tensor<16xi64>
+  %cast = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>} ins(%arg0 : tensor<16xi32>) outs(%out_cast : tensor<16xi64>) -> tensor<16xi64>
+  %r = hfusion.cumsum %cast : tensor<16xi64> cum_dims = [0] reverse = false -> tensor<16xi64>
+  return %r, %cast : tensor<16xi64>, tensor<16xi64>
+}

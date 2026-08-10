@@ -341,8 +341,7 @@ copy_matrix_cc_to_cbuf_normal_4d_to_4d_core(
   uint16_t src_n_size = l0c->sizes[0] * l0c->sizes[3];
   // We assume fully contiguous and use m,n to compute strides
   uint16_t src_stride = src_m_size; //in unit of C0
-  uint16_t C0 = (channel_split) ? (FRACTAL_BLOCK_NUM / 2) : FRACTAL_BLOCK_NUM;
-  uint16_t dst_stride = dst_m_size * C0; // in unit of element
+  uint16_t dst_stride = dst_m_size * FRACTAL_BLOCK_NUM; // in unit of element
 
   set_pre_quant_scale<DST_TYPE>(quant_scale);
 
@@ -552,9 +551,14 @@ copy_matrix_cc_to_ubuf_nz2dn_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
   uint16_t n_size = (DualDst == DualDstMode::COLUMN_SPLIT)
                         ? ubuf->sizes[0] * 2
                         : ubuf->sizes[0];
-  uint16_t m_size = (DualDst == DualDstMode::ROW_SPLIT) ? ubuf->sizes[1] * 2
-                                                         : ubuf->sizes[1];
+  uint16_t m_size = ubuf->sizes[1];
   uint32_t dst_D = ubuf->strides[0];
+
+  if (DualDst == DualDstMode::ROW_SPLIT) {
+    m_size *= 2;
+  } else if (m_size < dst_D) {
+    m_size = dst_D;
+  }
   
   set_nd_para(1,1,1);
   set_pre_quant_scale<DST_TYPE>(quant_scale);
@@ -608,6 +612,8 @@ copy_matrix_cc_to_cbuf_nz2dn_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
   uint16_t n_size = cbuf->sizes[0];
   uint16_t m_size = cbuf->sizes[1];
   uint32_t dst_D = cbuf->strides[0];
+  
+  if (m_size < dst_D) m_size = dst_D;
   
   set_nd_para(1,1,1);
   set_pre_quant_scale<DST_TYPE>(quant_scale);

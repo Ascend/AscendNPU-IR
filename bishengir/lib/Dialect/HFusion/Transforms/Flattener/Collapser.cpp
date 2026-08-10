@@ -776,11 +776,15 @@ void Flattener::adjustCumOp(T cumOp, OpBuilder &builder) {
   llvm::SmallVector<int64_t> newCumDims = {newCumDim};
   cumOp.setCumDims(newCumDims);
 
-  // the output type should be the same with input
-  auto inputTy = cumOp.getInput().getType();
+  // Preserve output element type (cumsum may promote i32 → i64) while
+  // flattening the output shape to the input's collapsed shape.
+  auto inputTy = cast<ShapedType>(cumOp.getInput().getType());
   auto res = cumOp.getResult();
+  auto outTy = cast<ShapedType>(res.getType());
+  RankedTensorType newOutTy =
+      RankedTensorType::get(inputTy.getShape(), outTy.getElementType());
   updatePreviousType(res);
-  res.setType(inputTy);
+  res.setType(newOutTy);
 }
 
 std::optional<SmallVector<int64_t>>
@@ -1097,14 +1101,14 @@ void Flattener::adjustExtractSliceOp(tensor::ExtractSliceOp extractSliceOp,
   SmallVector<OpFoldResult> newMixedStrides;
   computeNewSlicingOperands(extractSliceOp, newMixedOffsets, newMixedSizes,
                             newMixedStrides, builder);
-  auto sourceRankedTensorType =
-      llvm::cast<RankedTensorType>(extractSliceOp.getSource().getType());
   auto collapseGroups = getCollapseGroup(extractSliceOp.getResult());
-  auto resultSize = collapseGroups.size();
-  RankedTensorType resultType = llvm::cast<RankedTensorType>(
-      tensor::ExtractSliceOp::inferCanonicalRankReducedResultType(
-          resultSize, sourceRankedTensorType, newMixedOffsets, newMixedSizes,
-          newMixedStrides));
+  auto oldResultType =
+      llvm::cast<RankedTensorType>(extractSliceOp.getResult().getType());
+  RankedTensorType resultType = oldResultType;
+  if (!collapseGroups.empty()) {
+    resultType = tensor::CollapseShapeOp::inferCollapsedType(oldResultType,
+                                                             collapseGroups);
+  }
   // get which one to collapse together
   builder.setInsertionPoint(extractSliceOp);
   auto newExtractSliceOp = builder.create<tensor::ExtractSliceOp>(
@@ -1287,6 +1291,7 @@ void Flattener::adjustArangeOp(hfusion::ArangeOp arangeOp,
   auto result = arangeOp.getResultTensor();
   if (result == nullptr)
     return;
+  auto previousResultType = cast<ShapedType>(result.getType());
   result.setType(newType);
   SmallVector<Value> newStrides;
   const SmallVector<Value> oldStrides = arangeOp.getStrides();
@@ -1300,7 +1305,7 @@ void Flattener::adjustArangeOp(hfusion::ArangeOp arangeOp,
   auto newArangeOp = builder.create<hfusion::ArangeOp>(
       arangeOp->getLoc(), arangeOp.getOffset(), newStrides, arangeOp.getInit());
   collapsePropagateOrVerify(newArangeOp.getResult(0), result);
-  updatePreviousType(newArangeOp.getResult(0), result.getType());
+  updatePreviousType(newArangeOp.getResult(0), previousResultType);
   replaceOpUsage(arangeOp, newArangeOp);
   eraseOp(arangeOp);
 }

@@ -1,5 +1,4 @@
 add_bishengir_library(BiShengIRTensorTransforms
-  BufferizableOpInterfaceImpl.cpp
   BubblePadUp.cpp
   BubbleUpExtractSlice.cpp
   CanonicalizeTensorReshape.cpp
@@ -35,7 +34,6 @@ add_bishengir_library(BiShengIRTensorTransforms
   BiShengIRDialectUtils
   BiShengIRMemRefTransforms
   BiShengIRTensorUtils
-  MLIRBufferizationTransforms
   MLIRControlFlowDialect
   MLIRTensorDialect
   MLIRLinalgDialect

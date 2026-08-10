@@ -35,11 +35,16 @@ namespace tensor {
 class SwapCollapseExpand
     : public mlir::OpRewritePattern<tensor::ExpandShapeOp> {
 public:
-  explicit SwapCollapseExpand(MLIRContext *context)
-      : OpRewritePattern<tensor::ExpandShapeOp>(context, /*benefit=*/1) {}
+  explicit SwapCollapseExpand(MLIRContext *context,
+                              PropagateReshapeOptions opts)
+      : OpRewritePattern<tensor::ExpandShapeOp>(context, /*benefit=*/1),
+        options(opts) {}
 
   LogicalResult matchAndRewrite(tensor::ExpandShapeOp expandOp,
                                 PatternRewriter &rewriter) const override;
+
+private:
+  PropagateReshapeOptions options;
 };
 
 } // namespace tensor

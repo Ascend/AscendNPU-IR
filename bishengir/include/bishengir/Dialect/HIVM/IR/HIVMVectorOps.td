@@ -1077,7 +1077,7 @@ def VShLOp : HIVM_ElementwiseBinaryOp<"vshl",
 def VShROp : HIVM_ElementwiseBinaryOp<"vshr",
     [SameOperandsElementType,
      OperElemTypeConstraints<[0, 1], [I8, I16, I32, I64]>,
-     VectorOnlyTrait<0>, ScalarOnlyHWTrait<1>,
+     VectorOnlyTrait<0>,
      DeclareOpInterfaceMethods<ExtraBufferOpInterface,
        ["getExtraBufferSize"]>,
      DeclareOpInterfaceMethods<ImplByScalarOpInterface>,
@@ -1087,7 +1087,10 @@ def VShROp : HIVM_ElementwiseBinaryOp<"vshr",
   let description = baseClassDescription # [{
     Additional constraints:
       1. The input vector and result have the same element type.
-      2. Support only Vector - Scalar operation.
+      2. Vector-scalar and vector/broadcast shift amounts are allowed.
+         Mem-based (A3) lowers shaped shift amounts to scalar loops because
+         `vshr_*` template symbols are unavailable; reg-based (A5) keeps the
+         HIVM op for the AVE / template path.
       3. If `round` is set to true, rounding is applied during arithmetic
          shift right.
   }];
@@ -2003,8 +2006,7 @@ def VCumprodOp : HIVM_VectorOp<"vcumprod",
 //===----------------------------------------------------------------------===//
 
 def VCumsumOp : HIVM_VectorOp<"vcumsum",
-    [SameOperandsElementType,
-     OperElemTypeConstraints<[0], [I1, I8, I16, I32, I64, F16, F32, BF16]>,
+    [OperElemTypeConstraints<[0], [I1, I8, I16, I32, I64, F16, F32, BF16]>,
      DeclareOpInterfaceMethods<HIVMStructuredOpInterface,
        ["getIteratorTypesArray"]>,
      UniformReassociationFlattenTrait,

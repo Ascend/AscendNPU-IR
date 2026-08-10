@@ -45,7 +45,8 @@ template <typename T>
 inline constexpr bool kCumsumIsInt =
     std::is_same_v<T, int8_t> || std::is_same_v<T, uint8_t> ||
     std::is_same_v<T, int16_t> || std::is_same_v<T, uint16_t> ||
-    std::is_same_v<T, int32_t> || std::is_same_v<T, uint32_t>;
+    std::is_same_v<T, int32_t> || std::is_same_v<T, uint32_t> ||
+    std::is_same_v<T, int64_t> || std::is_same_v<T, uint64_t>;
 
 template <typename T>
 __aiv__ __attribute__((always_inline)) void
@@ -532,40 +533,44 @@ __simt_vf__ LAUNCH_BOUND(1024) __aiv__
 }
 // ---- cross-block carry adder ----
 // Adds carryPtr[0] to every element of blk[0..len-1] with stride `stride`.
-template <typename T>
+// T_dst only: carry runs on the post-cast dst type.
+template <typename T_dst>
 __simt_vf__ LAUNCH_BOUND(1024) __aiv__
     __attribute__((always_inline)) static void simt_add_carry_block(
-        __ubuf__ T *blk, int len, __ubuf__ T *carryPtr) {
-  T carry = carryPtr[0];
+        __ubuf__ T_dst *blk, int len, __ubuf__ T_dst *carryPtr) {
+  T_dst carry = carryPtr[0];
   int tid = threadIdx.y * CUMSUM_WARP + threadIdx.x;
   if (tid < len)
     blk[tid] += carry;
 }
 
-template <typename T>
+// T_src → T_dst: read src as T_src, promote to T_dst so one kernel serves
+// same-type and mixed-type (e.g. i32 → i64) cumsum.
+template <typename T_src, typename T_dst = T_src>
 __simt_vf__ LAUNCH_BOUND(1024) __aiv__
     __attribute__((always_inline)) static void simt_sklansky_scan_1d_block_int(
-        __ubuf__ T *src, __ubuf__ T *dst, int L, int reverse,
-        __ubuf__ T *scratch) {
+        __ubuf__ T_src *src, __ubuf__ T_dst *dst, int L, int reverse,
+        __ubuf__ T_dst *scratch) {
   int lane = threadIdx.x;
   int warpId = threadIdx.y;
   int numWarps = blockDim.y;
   int gid = warpId * CUMSUM_WARP + lane;
   int pos = reverse ? (L - 1 - gid) : gid;
   bool active = gid < L;
-  T v = active ? src[pos] : T(0);
+  // Promote src to T_dst on read (no-op when T_src==T_dst).
+  T_dst v = active ? static_cast<T_dst>(src[pos]) : T_dst(0);
   // Per-warp scratch: a single slice scratch[0..numWarps-1] holds the per-warp
   // inclusive totals. Integer-only path: addition is associative, so this fast
   // two-level scan yields the exact same result as the layered float path —
   // summation order is irrelevant for integers. Same 32-slot scratch footprint
   // as simt_sklansky_scan_1d_block, so dispatch needs no extra buffer space.
-  __ubuf__ T *warpTotals = scratch;
+  __ubuf__ T_dst *warpTotals = scratch;
 
   // stage 1: intra-warp inclusive scan
   for (int h = 1; h < CUMSUM_WARP; h <<= 1) {
     int span = h << 1;
     int boundary = (lane & ~(span - 1)) + h - 1;
-    T u = wsh_idx(v, boundary);
+    T_dst u = wsh_idx(v, boundary);
     if ((lane & (span - 1)) >= h)
       v += u;
   }
@@ -577,7 +582,7 @@ __simt_vf__ LAUNCH_BOUND(1024) __aiv__
     if (activeLanes != 0)
       lastLane = activeLanes - 1;
   }
-  T warpTotal = wsh_idx(v, lastLane);
+  T_dst warpTotal = wsh_idx(v, lastLane);
   if (lane == 0) {
     warpTotals[warpId] = warpTotal;
   }
@@ -586,11 +591,11 @@ __simt_vf__ LAUNCH_BOUND(1024) __aiv__
   // stage 2: warp 0 scans the per-warp totals into inclusive per-warp totals
   // (in-place; the scan runs in registers so there is no read/write hazard).
   if (warpId == 0) {
-    T t = (lane < numWarps) ? warpTotals[lane] : T(0);
+    T_dst t = (lane < numWarps) ? warpTotals[lane] : T_dst(0);
     for (int h = 1; h < CUMSUM_WARP; h <<= 1) {
       int span = h << 1;
       int boundary = (lane & ~(span - 1)) + h - 1;
-      T u = wsh_idx(t, boundary);
+      T_dst u = wsh_idx(t, boundary);
       if ((lane & (span - 1)) >= h)
         t += u;
     }
@@ -611,38 +616,43 @@ __simt_vf__ LAUNCH_BOUND(1024) __aiv__
 // ---- 1D entry point ----
 // L ≤ 1024: single block, two-level Sklansky.
 // L > 1024: tile into 1024-element blocks + serial cross-block carry.
-template <typename T>
+// T_src defaults to T_dst so same-type callers keep their ABI; mixed-type
+// callers (e.g. i32 src → i64 dst) pass <T_dst, T_src> explicitly.
+template <typename T_dst, typename T_src = T_dst>
 __aiv__ __attribute__((always_inline)) void
-simt_sklansky_cumsum_1d(memref_t<__ubuf__ T, 1> *src,
-                        memref_t<__ubuf__ T, 1> *dst,
-                        memref_t<__ubuf__ T, 1> *temp, bool reverse) {
+simt_sklansky_cumsum_1d(memref_t<__ubuf__ T_src, 1> *src,
+                        memref_t<__ubuf__ T_dst, 1> *dst,
+                        memref_t<__ubuf__ T_dst, 1> *temp, bool reverse) {
   int L = src->sizes[0];
-  __ubuf__ T *sp = src->aligned + src->offset;
-  __ubuf__ T *dp = dst->aligned + dst->offset;
+  __ubuf__ T_src *sp = src->aligned + src->offset;
+  __ubuf__ T_dst *dp = dst->aligned + dst->offset;
   constexpr int BLK = CUMSUM_WARP * CUMSUM_WARP; // 1024 elements per block
 
   // Per-warp scratch: the op-allocated temp buffer (ceil(N/32) slots).
   pipe_barrier(PIPE_ALL);
-  __ubuf__ T *scratch = temp->aligned + temp->offset;
+  __ubuf__ T_dst *scratch = temp->aligned + temp->offset;
   if (L <= BLK) {
     if (L <= 64) {
-      if (reverse)
-        sklansky_regbuf_16_reverse<T>(sp, dp, static_cast<int>(L));
-      else
-        sklansky_regbuf_16<T>(sp, dp, static_cast<int>(L));
-      pipe_barrier(PIPE_ALL);
-      return;
+      // regbuf path is same-type only; mixed types fall through to warp scan.
+      if constexpr (std::is_same_v<T_src, T_dst>) {
+        if (reverse)
+          sklansky_regbuf_16_reverse<T_dst>(sp, dp, static_cast<int>(L));
+        else
+          sklansky_regbuf_16<T_dst>(sp, dp, static_cast<int>(L));
+        pipe_barrier(PIPE_ALL);
+        return;
+      }
     }
     unsigned nw = (L + CUMSUM_WARP - 1) / CUMSUM_WARP;
     if (nw < 1)
       nw = 1;
     // Integer dtypes use the fast two-level scan (order-independent); floats
     // use the layered scan to preserve canonical Sklansky parenthesization.
-    if constexpr (kCumsumIsInt<T>) {
-      cce::async_invoke<simt_sklansky_scan_1d_block_int<T>>(
+    if constexpr (kCumsumIsInt<T_dst>) {
+      cce::async_invoke<simt_sklansky_scan_1d_block_int<T_src, T_dst>>(
           cce::dim3{CUMSUM_WARP, nw, 1}, sp, dp, L, reverse ? 1 : 0, scratch);
     } else {
-      cce::async_invoke<simt_sklansky_scan_1d_block_unroll_p2<T>>(
+      cce::async_invoke<simt_sklansky_scan_1d_block_unroll_p2<T_dst>>(
           cce::dim3{CUMSUM_WARP, nw, 1}, sp, dp, L, reverse ? 1 : 0, scratch);
     }
     pipe_barrier(PIPE_ALL);
@@ -674,12 +684,12 @@ simt_sklansky_cumsum_1d(memref_t<__ubuf__ T, 1> *src,
     int len = (c < C - 1) ? BLK : rem;
     int base = reverse ? ((c < C - 1) ? (L - (c + 1) * BLK) : 0) : (c * BLK);
     unsigned nw = (len + CUMSUM_WARP - 1) / CUMSUM_WARP;
-    if constexpr (kCumsumIsInt<T>) {
-      cce::async_invoke<simt_sklansky_scan_1d_block_int<T>>(
+    if constexpr (kCumsumIsInt<T_dst>) {
+      cce::async_invoke<simt_sklansky_scan_1d_block_int<T_src, T_dst>>(
           cce::dim3{CUMSUM_WARP, nw, 1}, sp + base, dp + base, len,
           reverse ? 1 : 0, scratch + c * CUMSUM_WARP);
     } else {
-      cce::async_invoke<simt_sklansky_scan_1d_block_unroll_p2<T>>(
+      cce::async_invoke<simt_sklansky_scan_1d_block_unroll_p2<T_dst>>(
           cce::dim3{CUMSUM_WARP, nw, 1}, sp + base, dp + base, len,
           reverse ? 1 : 0, scratch + c * CUMSUM_WARP);
     }
@@ -702,9 +712,10 @@ simt_sklansky_cumsum_1d(memref_t<__ubuf__ T, 1> *src,
                         ? ((boundary < C - 1) ? (L - (boundary + 1) * BLK) : 0)
                         : (boundary * BLK);
         int olen = (boundary < C - 1) ? BLK : rem;
-        __ubuf__ T *carryPtr = reverse ? (dp + obase) : (dp + obase + olen - 1);
+        __ubuf__ T_dst *carryPtr =
+            reverse ? (dp + obase) : (dp + obase + olen - 1);
         unsigned nwc = (blen + CUMSUM_WARP - 1) / CUMSUM_WARP;
-        cce::async_invoke<simt_add_carry_block<T>>(
+        cce::async_invoke<simt_add_carry_block<T_dst>>(
             cce::dim3{CUMSUM_WARP, nwc, 1}, dp + bbase, blen, carryPtr);
       }
       pipe_barrier(PIPE_ALL);
@@ -742,6 +753,19 @@ DECLARE_CUMSUM_WITHOUT_DEFAULT_VALUE(1, float, 0) {
 }
 DECLARE_CUMSUM_WITHOUT_DEFAULT_VALUE(1, bfloat16_t, 0) {
   simt_sklansky_cumsum_1d<bfloat16_t>(src, dst, temp, reverse);
+}
+DECLARE_CUMSUM_WITHOUT_DEFAULT_VALUE(1, int64_t, 0) {
+  simt_sklansky_cumsum_1d<int64_t>(src, dst, temp, reverse);
+}
+
+// Mixed i32 src → i64 dst entry: folds the cast into the per-thread read so
+// the cumsum(i32) path skips the separate outlined_vf_0 cast kernel.
+__aiv__ __attribute__((always_inline)) void
+_mlir_ciface_cumsum_1d_int32_t_to_int64_t_dim0(
+    memref_t<__ubuf__ int32_t, 1> *src,
+    memref_t<__ubuf__ int64_t, 1> *dst,
+    memref_t<__ubuf__ int64_t, 1> *temp, bool reverse) {
+  simt_sklansky_cumsum_1d<int64_t, int32_t>(src, dst, temp, reverse);
 }
 }
 

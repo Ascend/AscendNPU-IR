@@ -1,7 +1,3 @@
-// REQUIRES: regbase
-// TODO: enable this testcase after fixing the crash in AutoVectorizeV2's
-// enable-multiple-consumer-fusion path ('scf.for' op trying to schedule a
-// pass on an operation not marked as 'IsolatedFromAbove')
 // RUN: bishengir-opt %s --hfusion-pre-vectorization-fusion --hfusion-auto-vectorize-v2 -split-input-file | FileCheck %s --check-prefix=CHECK-DEFAULT
 // RUN: bishengir-opt %s --hfusion-pre-vectorization-fusion --hfusion-auto-vectorize-v2="enable-multiple-consumer-fusion=true" -split-input-file | FileCheck %s --check-prefix=CHECK-ENABLE
 

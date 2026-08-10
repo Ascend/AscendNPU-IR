@@ -55,15 +55,20 @@ public:
   /// where counter is produced by the shared hivm.hir.multi_buffer_counter op
   /// for both scf.for and scf.while. Counter-op materialization is done
   /// idempotently on the first call.
-  Value getModuloIndex(OpBuilder &builder, int64_t modular);
+  ///
+  /// For scf.while, `anchor` selects before vs after. When null, the builder
+  /// insertion point selects the region, falling back to after if unavailable.
+  Value getModuloIndex(OpBuilder &builder, int64_t modular,
+                       Operation *anchor = nullptr);
 
   /// Returns the raw counter SSA value (no modulo), index-typed, from the
   /// shared hivm.hir.multi_buffer_counter op for both for and while.
-  Value getIterationCounter(OpBuilder &builder);
+  /// See getModuloIndex for the while before/after `anchor` rule.
+  Value getIterationCounter(OpBuilder &builder, Operation *anchor = nullptr);
 
   /// Idempotent. Ensures the shared counter op exists. The concrete increment
   /// store is produced by the lowering pass.
-  void finalizeIncrement(OpBuilder &builder);
+  void finalizeIncrement(OpBuilder &builder, Operation *anchor = nullptr);
 
   LoopLikeOpInterface loop() const { return loop_; }
   // Important: dyn_cast on the LoopLikeOpInterface wrapper itself does *not*
@@ -86,9 +91,9 @@ private:
   explicit MultiBufferLoopAdapter(LoopLikeOpInterface loop) : loop_(loop) {}
 
   /// Find or create the shared counter op in the loop body. Works uniformly for
-  /// both scf.for (body = forOp.getBody()) and scf.while (body =
-  /// whileOp.getAfter().front()).
-  void ensureCounterMaterialized(OpBuilder &builder);
+  /// both scf.for (body = forOp.getBody()) and scf.while (before or after
+  /// region selected by `anchor` or the builder insertion point).
+  void ensureCounterMaterialized(OpBuilder &builder, Operation *anchor);
 
   LoopLikeOpInterface loop_;
   Value cachedCounter_ = {};

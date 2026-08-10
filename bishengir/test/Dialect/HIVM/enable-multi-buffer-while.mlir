@@ -67,3 +67,51 @@ module {
     return
   }
 }
+
+// -----
+// Multi-buffer pointer_cast in the while *before* region: counter load/select
+// live in before, and the +1 store is before scf.condition (not scf.yield).
+
+module {
+// CHECK-LABEL: func.func @while_enable_before_region(
+  func.func @while_enable_before_region(
+      %arg0: memref<16xf16, #hivm.address_space<gm>>,
+      %arg1: memref<16xf16, #hivm.address_space<gm>>) {
+    // CHECK-DAG: hivm.hir.pointer_cast(%{{.*}}) : memref<16xf16, #hivm.address_space<ub>>
+    // CHECK-DAG: hivm.hir.pointer_cast(%{{.*}}) : memref<16xf16, #hivm.address_space<ub>>
+    // CHECK-DAG: %[[CTR:.*]] = memref.alloca() : memref<1xi64>
+    // CHECK-DAG: memref.store %{{.*}}, %[[CTR]]
+
+    %c0_i64 = arith.constant 0 : i64
+    %c16_i64 = arith.constant 16 : i64
+    %c128_i64 = arith.constant 128 : i64
+    %c144_i64 = arith.constant 144 : i64
+    %true = arith.constant true
+
+    // CHECK: scf.while {{.*}} : (i1) -> i1
+    %r = scf.while (%cond = %true) : (i1) -> i1 {
+      // CHECK: %[[CUR:.*]] = memref.load %{{.*}}
+      // CHECK: %[[REM:.*]] = arith.remui %[[CUR]], %{{.*}} : i64
+      // CHECK: arith.select {{.*}} : memref<16xf16, #hivm.address_space<ub>>
+      %0 = hivm.hir.pointer_cast(%c0_i64, %c16_i64) [] : memref<16xf16, #hivm.address_space<ub>>
+      annotation.mark %0 {hivm.multi_buffer = 2 : i32} : memref<16xf16, #hivm.address_space<ub>>
+      hivm.hir.pipe_barrier[<PIPE_ALL>]
+      %1 = hivm.hir.pointer_cast(%c128_i64, %c144_i64) [] : memref<16xf16, #hivm.address_space<ub>>
+      hivm.hir.load ins(%arg0 : memref<16xf16, #hivm.address_space<gm>>)
+                    outs(%0 : memref<16xf16, #hivm.address_space<ub>>)
+      hivm.hir.store ins(%1 : memref<16xf16, #hivm.address_space<ub>>)
+                     outs(%arg1 : memref<16xf16, #hivm.address_space<gm>>)
+      // CHECK: arith.addi {{.*}}, %{{.*}} : i64
+      // CHECK: memref.store {{.*}} : memref<1xi64>
+      // CHECK: scf.condition
+      scf.condition(%cond) %cond : i1
+    } do {
+    ^bb0(%cin: i1):
+      // CHECK: ^bb0
+      // CHECK-NOT: memref.load
+      // CHECK: scf.yield
+      scf.yield %cin : i1
+    }
+    return
+  }
+}

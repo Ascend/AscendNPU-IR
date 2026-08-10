@@ -1965,7 +1965,7 @@ struct HIVMBroadcastScalarOpLowering
                   VFBroadcastScalarOp::Adaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     auto loc = broadcast.getLoc();
-    Value src = broadcast.getSrc();
+    Value src = adaptor.getSrc();
     VectorType vType = cast<VectorType>(broadcast.getResult().getType());
     Type srcType = src.getType();
     auto vlType = createVLVectorType(srcType);
@@ -2012,10 +2012,12 @@ struct HIVMBroadcastScalarOpLowering
       vbr = rewriter.create<VbrInstrOp>(loc, vlType, src);
     } else if (srcType.isF32()) {
       vbr = rewriter.create<VbrInstrOp>(loc, vlType, src);
-    } else if (isa<Float8E4M3FNType>(srcType)) {
-      vbr = rewriter.create<VbrInstrOp>(loc, vlType, src);
-    } else if (isa<Float8E5M2Type>(srcType)) {
-      vbr = rewriter.create<VbrInstrOp>(loc, vlType, src);
+    } else if (srcType.isFloat8E4M3FN() || srcType.isFloat8E5M2()) {
+      Type i8Type = rewriter.getI8Type();
+      VectorType i8VLType = createVLVectorType(i8Type);
+      Value i8Src = rewriter.create<LLVM::BitcastOp>(loc, i8Type, src);
+      Value i8Vbr = rewriter.create<VbrInstrOp>(loc, i8VLType, i8Src);
+      vbr = rewriter.create<LLVM::BitcastOp>(loc, vlType, i8Vbr);
     } else {
       return rewriter.notifyMatchFailure(broadcast, "cannot legalize op");
     }

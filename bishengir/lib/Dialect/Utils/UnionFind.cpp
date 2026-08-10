@@ -24,6 +24,9 @@
 #define DEBUG_TYPE "UnionFind"
 
 int UnionFindBase::find(int x) {
+  if (x < 0)
+    return x;
+
   allocateMinimum(x);
   if (parent_[x] < 0)
     return x;
