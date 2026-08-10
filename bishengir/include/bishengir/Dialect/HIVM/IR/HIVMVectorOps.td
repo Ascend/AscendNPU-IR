@@ -2006,8 +2006,7 @@ def VCumprodOp : HIVM_VectorOp<"vcumprod",
 //===----------------------------------------------------------------------===//
 
 def VCumsumOp : HIVM_VectorOp<"vcumsum",
-    [SameOperandsElementType,
-     OperElemTypeConstraints<[0], [I1, I8, I16, I32, I64, F16, F32, BF16]>,
+    [OperElemTypeConstraints<[0], [I1, I8, I16, I32, I64, F16, F32, BF16]>,
      DeclareOpInterfaceMethods<HIVMStructuredOpInterface,
        ["getIteratorTypesArray"]>,
      UniformReassociationFlattenTrait,
