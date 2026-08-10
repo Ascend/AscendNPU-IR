@@ -127,8 +127,11 @@ public:
             auto constOffset = rewriter.create<arith::ConstantIntOp>(op.getLoc(), staticOffset, 64);
             newPtr = rewriter.create<triton::AddPtrOp>(
               op.getLoc(), dataPtr1.getType(), newPtr, constOffset);
-          } else {
-            // Dynamic offset: use the runtime offset argument
+          } else if (result.getInputMapping(idx)->size > 1) {
+            // Dynamic offset: use the runtime offset argument. This is only
+            // available with the descriptor-based calling convention; with the
+            // bare-ptr convention (size == 1) there is no separate offset
+            // argument, so the offset is assumed to be folded into the pointer.
             newPtr = rewriter.create<triton::AddPtrOp>(
               op.getLoc(), dataPtr1.getType(), newPtr, offset);
           }
