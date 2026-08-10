@@ -261,3 +261,26 @@ module {
     return
   }
 }
+
+// -----
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  // CHECK-LABEL: func.func @test_for_scope_markmultibuffer_in_scf_if_region
+  func.func @test_for_scope_markmultibuffer_in_scf_if_region(%cond: i1, %fixpipe_input: tensor<8x8x16x16xf32>, %out: memref<128x128xf32, #hivm.address_space<gm>>) {
+    // CHECK: annotation.mark
+    // CHECK-SAME: hivm.multi_buffer = 2 : i32
+    // CHECK-SAME: hivm.preload_local_buffer = 1 : i32
+    %alloc = memref.alloc() : memref<128x128xf32, #hivm.address_space<ub>>
+    scope.scope : () -> () {
+      annotation.mark %alloc {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>} : memref<128x128xf32, #hivm.address_space<ub>>
+      hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%fixpipe_input : tensor<8x8x16x16xf32>) outs(%alloc : memref<128x128xf32, #hivm.address_space<ub>>)
+      scope.return
+    } {hivm.loop_core_type = #hivm.tcore_type<CUBE>, hivm.max_preload_num = 4 : i32, hivm.preload_num = 1 : i32, no_inline}
+    scope.scope : () -> () {
+      scf.if %cond {
+        hivm.hir.store ins(%alloc : memref<128x128xf32, #hivm.address_space<ub>>) outs(%out : memref<128x128xf32, #hivm.address_space<gm>>)
+      }
+      scope.return
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.max_preload_num = 4 : i32, hivm.preload_num = 0 : i32, no_inline}
+    return
+  }
+}
