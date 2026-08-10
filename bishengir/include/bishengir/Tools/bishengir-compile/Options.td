@@ -414,6 +414,12 @@ def EnableLoopInvariantPromotion : HFusionOptimizationControlOptions<
   "true"
 >;
 
+def EnableVFUnrollAndForward : HFusionOptimizationControlOptions<
+  "Enable the vf-unroll-and-forward pass",
+  "bool",
+  "true"
+>;
+
 def HfusionMaxHorizontalFusionSize : HFusionOptimizationControlOptions<
   "Number of horizontal fusion attempt (Default: unlimited).",
   "int32_t",
