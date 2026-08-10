@@ -253,7 +253,7 @@ LogicalResult InsertFixpipeDstPropagateUp::matchAndRewrite(
 
     auto toAddrSpace = cast<AddressSpaceAttr>(dstMemorySpace).getAddressSpace();
     if ((!dstMemorySpace) || (toAddrSpace != AddressSpace::UB)) {
-      return success();
+      return failure();
     }
 
     auto maybeAllocOp = traceDefOp<memref::AllocOp>(dst);
