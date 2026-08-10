@@ -74,6 +74,26 @@ struct WorkItem {
   /// ScopeOp wrapper for skew-mode preload pipelining.
   scope::ScopeOp scopeOp;
 
+  /// Skew-mode lazy-load counter privatization record. When a load-like op is
+  /// cloned into several work items, the GM address counter chain comes along,
+  /// so more than one scope would read and advance the same loop iter_arg while
+  /// only one can own the yield slot. Each extra reader gets a private iter_arg
+  /// described here.
+  struct PrivateCounter {
+    /// The (shared) advance value, i.e. the original `arith.addi` result that
+    /// `markOutputs` registered in `yieldedOutputs`.
+    Value advanceVal;
+    /// Iter-arg index of the shared counter in the pipeline loop.
+    unsigned sharedArgIdx;
+    /// The shared iter_arg this item must stop reading.
+    BlockArgument sharedIterArg;
+    /// The private iter_arg this item reads instead.
+    BlockArgument privateIterArg;
+    /// scf.yield operand index this item writes its own advance value to.
+    unsigned privateYieldIdx;
+  };
+  SmallVector<PrivateCounter> privateCounters;
+
   // The containing for loop
   scf::ForOp parentFor;
 

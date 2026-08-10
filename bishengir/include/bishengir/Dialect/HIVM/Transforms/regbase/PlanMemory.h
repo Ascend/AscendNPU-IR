@@ -304,7 +304,10 @@ public:
   SmallVector<ValuePair> inplacePairList;
 
   /// record marked buffer used in multi scope operations.
-  SmallVector<Value> preloadBuffers;
+  SetVector<Value> preloadBuffers;
+
+  /// record preload buffers by their enclosing preload loop.
+  DenseMap<Operation *, SetVector<Value>> preloadLoop2Buffers;
 
   /// Sorted positions (in scope-time units, mirroring
   /// GenerateBufferLife()'s scopeTime) of hivm sync ops in this func. Used
@@ -438,11 +441,13 @@ protected:
   /// Check if a buffer is a preload buffer.
   bool IsPreloadBuffer(Value buffer);
 
-  /// Update gen info of preload buffer to parent for op.
-  void UpdatePreloadBuffersGenInfo(OpInfo *opInfo);
+  /// Update gen info of preload buffers at their enclosing loop entry.
+  void UpdatePreloadBuffersGenInfo(
+      OpInfo *opInfo, const SetVector<Value> &preloadBufferValues);
 
-  /// Update kill info of preload buffer to parent for op.
-  void UpdatePreloadBuffersKillInfo(OpInfo *opInfo);
+  /// Update kill info of preload buffers at their enclosing loop exit.
+  void UpdatePreloadBuffersKillInfo(
+      OpInfo *opInfo, const SetVector<Value> &preloadBufferValues);
 
   /// Extend preload buffer lifetime from scope to parent for.
   void UpdatePreloadBuffersGenKillMap();
