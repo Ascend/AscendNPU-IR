@@ -9,7 +9,7 @@
 // The compilation may succeed or fail downstream (depending on hivmc version),
 // but the key assertion is absence of UB overflow.
 //
-// RUN: bishengir-compile %s -target=Ascend950PR_9589 -enable-hfusion-compile=true -enable-triton-kernel-compile=true -enable-vf-fusion -vf-fusion-mode=ub-aware-op -o %t > %t.out 2>&1 || true
+// RUN: bishengir-compile %s -target=Ascend950PR_9589 -enable-hfusion-compile=true -enable-triton-kernel-compile=true -vf-fusion-mode=ub-aware-op -o %t > %t.out 2>&1 || true
 // RUN: FileCheck %s < %t.out
 //
 // CHECK-NOT: ub overflow

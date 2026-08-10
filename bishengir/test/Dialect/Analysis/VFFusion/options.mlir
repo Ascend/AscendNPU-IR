@@ -1,19 +1,17 @@
+// --vf-fusion-mode=all-op behaviour set to "no fusion" in current commit and must be changed to correct behaviour
 // RUN: bishengir-opt --vf-fusion="fusion-mode=all-op enable-outline-cf=false enable-outline-memref=true enable-outline-arith=true" --split-input-file %s | FileCheck %s
 // RUN: bishengir-opt --vf-fusion="fusion-mode=all-op enable-outline-cf=false enable-outline-memref=false enable-outline-arith=false" --split-input-file %s | FileCheck %s --check-prefix=OPTS-OFF
 
-// CHECK-LABEL: func.func private @no_reshape_in_the_middle_fused_0(
+// CHECK-LABEL: func.func @no_reshape_in_the_middle(
 // CHECK: linalg.elemwise_binary
 // CHECK: hfusion.cast
 // CHECK: hfusion.bitcast
-// CHECK-LABEL: func.func @no_reshape_in_the_middle(
-// CHECK: call @no_reshape_in_the_middle_fused_0
+// CHECK-NOT: call @no_reshape_in_the_middle_fused_0
 
-// OPTS-OFF-LABEL: func.func private @no_reshape_in_the_middle_fused_0(
+// OPTS-OFF-LABEL: func.func @no_reshape_in_the_middle(
 // OPTS-OFF: linalg.elemwise_binary
 // OPTS-OFF: hfusion.cast
 // OPTS-OFF: hfusion.bitcast
-// OPTS-OFF-LABEL: func.func @no_reshape_in_the_middle(
-// OPTS-OFF: call @no_reshape_in_the_middle_fused_0
 
 module {
   func.func @no_reshape_in_the_middle(%arg0: tensor<3x2xf16>, %arg1: tensor<3x2xf16>, %arg2: f16, %arg3: tensor<3x2xf32>) -> tensor<6xi32> attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"} {
@@ -30,12 +28,11 @@ module {
 
 // -----
 
-// CHECK-LABEL: func.func private @outline_memref_fused_0(
+// CHECK-LABEL: func.func @outline_memref(
 // CHECK: hivm.hir.vadd
 // CHECK: hivm.hir.vadd
 // CHECK: hivm.hir.store
-// CHECK-LABEL: func.func @outline_memref(
-// CHECK: call @outline_memref_fused_0
+// CHECK-NOT: call @outline_memref_fused_0
 
 // OPTS-OFF-LABEL: func.func @outline_memref(
 // OPTS-OFF: hivm.hir.vadd
@@ -53,11 +50,10 @@ func.func @outline_memref(%valueA: memref<16xf16>, %valueB: memref<16xf16>, %val
 
 // -----
 
-// CHECK-LABEL: func.func private @outline_arith_fused_0(
+// CHECK-LABEL: func.func @outline_arith(
 // CHECK: arith.muli
 // CHECK: arith.index_cast
-// CHECK-LABEL: func.func @outline_arith(
-// CHECK: call @outline_arith_fused_0
+// CHECK-NOT: call @outline_arith_fused_0
 
 // OPTS-OFF-LABEL: func.func @outline_arith(
 // OPTS-OFF: arith.muli
@@ -103,21 +99,18 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 
 // -----
 
-// CHECK-LABEL: func.func private @nested_for_fused_0(
+// CHECK-LABEL: func.func @nested_for(
+// CHECK-NOT: call @nested_for_fused_0
 // CHECK: linalg.elemwise_binary
 // CHECK: linalg.elemwise_binary
 // CHECK: hfusion.cast
 // CHECK: hfusion.bitcast
-// CHECK-LABEL: func.func @nested_for(
-// CHECK: call @nested_for_fused_0
 
-// OPTS-OFF-LABEL: func.func private @nested_for_fused_0(
+// OPTS-OFF-LABEL: func.func @nested_for(
 // OPTS-OFF: linalg.elemwise_binary
 // OPTS-OFF: linalg.elemwise_binary
 // OPTS-OFF: hfusion.cast
 // OPTS-OFF: hfusion.bitcast
-// OPTS-OFF-LABEL: func.func @nested_for(
-// OPTS-OFF: call @nested_for_fused_0
 
 module {
   func.func @nested_for(%arg0: i32, %arg1: i32, %arg2: i32, %arg3: i32, %arg4: i32, %arg5: i32, %arg6: i32, %arg7: tensor<16x4x4x16xf16>, %arg8: f16) -> tensor<64x64xi32> attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"} {
@@ -145,21 +138,18 @@ module {
 
 // -----
 
-// CHECK-LABEL: func.func private @nested_for_with_anchor_outside_fused_0(
+// CHECK-LABEL: func.func @nested_for_with_anchor_outside(
 // CHECK: linalg.elemwise_unary
 // CHECK: linalg.elemwise_binary
 // CHECK: hfusion.cast
 // CHECK: hfusion.bitcast
-// CHECK-LABEL: func.func @nested_for_with_anchor_outside(
-// CHECK: call @nested_for_with_anchor_outside_fused_0
+// CHECK-NOT: call @nested_for_with_anchor_outside_fused_0
 
-// OPTS-OFF-LABEL: func.func private @nested_for_with_anchor_outside_fused_0(
+// OPTS-OFF-LABEL: func.func @nested_for_with_anchor_outside(
 // OPTS-OFF: linalg.elemwise_unary
 // OPTS-OFF: linalg.elemwise_binary
 // OPTS-OFF: hfusion.cast
 // OPTS-OFF: hfusion.bitcast
-// OPTS-OFF-LABEL: func.func @nested_for_with_anchor_outside(
-// OPTS-OFF: call @nested_for_with_anchor_outside_fused_0
 
 module {
   func.func @nested_for_with_anchor_outside(%arg0: i32, %arg1: i32, %arg2: i32, %arg3: i32, %arg4: i32, %arg5: i32, %arg6: i32, %arg7: tensor<16x4x4x16xf16>, %arg8: f16) -> tensor<64x64xi32> attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"} {

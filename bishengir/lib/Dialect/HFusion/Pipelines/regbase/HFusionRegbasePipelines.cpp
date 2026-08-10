@@ -585,7 +585,7 @@ void buildHFusionRegBasePipeline(OpPassManager &pm,
 }
 
 bool enableSIMDVFFusion(const HFusionPipelineOptions &options) {
-  return options.enableTritonKernelCompile && options.enableVFFusion;
+  return options.enableTritonKernelCompile;
 }
 
 //===----------------------------------------------------------------------===//
