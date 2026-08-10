@@ -1347,6 +1347,72 @@ struct HIVMToTTReduceOp: public OpRewritePattern<hivm::VReduceOp> {
     }
 };
 
+// Convert hivm.hir.cumsum to tt.scan {add}
+// Before:
+// %cumsum = hivm.hir.vcumsum ins(%0) outs(%0) cum_dims=[0] reverse = false -> tensor<100xf32>
+
+// After:
+// %cumsum = "tt.scan" (%0) <{axis=0:i32, reverse = false}> ({
+//     ^bb0(%1,%2):
+//      %3 = arith,addf %1,%2
+//      tt.scan.return %3
+// }): tensor<100xf32> -> tensor<100xf32>
+struct HIVMToTTScanOp : public OpRewritePattern<hivm::VCumsumOp> {
+    using OpRewritePattern<hivm::VCumsumOp>::OpRewritePattern;
+    LogicalResult matchAndRewrite(hivm::VCumsumOp op,
+                                  PatternRewriter &rewriter) const final {
+      auto loc = op.getLoc();
+      Value src = op.getSrc();
+
+      if (isa<MemRefType>(src.getType())) {
+          return op.emitOpError("memref source is not supported currently");
+      }
+      auto srcType = cast<RankedTensorType>(src.getType());
+      auto elemType = srcType.getElementType();
+
+      auto cumDims = op.getCumDims();
+      if (cumDims.empty()) {
+          return failure();
+      }
+
+      bool reverse = op.getReverse();
+
+      Value finalResult = src;
+
+      for (auto axis64 : cumDims) {
+        int axis = static_cast<int>(axis64);
+
+        auto scanOp = rewriter.create<triton::ScanOp>(
+            loc, ValueRange{finalResult}, axis, reverse);
+
+        Region &combineRegion = scanOp.getCombineOp();
+        rewriter.createBlock(&combineRegion);
+        Block &block = combineRegion.front();
+        block.addArgument(elemType, loc);
+        block.addArgument(elemType, loc);
+
+        rewriter.setInsertionPointToEnd(&block);
+        Value arg0 = block.getArgument(0);
+        Value arg1 = block.getArgument(1);
+        Value addResult;
+
+        if (isa<FloatType>(elemType)) {
+            addResult = rewriter.create<arith::AddFOp>(loc, arg0, arg1);
+        } else {
+            addResult = rewriter.create<arith::AddIOp>(loc, arg0, arg1);
+        }
+
+        rewriter.create<triton::ScanReturnOp>(loc, addResult);
+        rewriter.setInsertionPointAfter(scanOp);
+
+        finalResult = scanOp->getResult(0);
+      }
+
+      rewriter.replaceOp(op, finalResult);
+      return success();
+    }
+};
+
 } // namespace
 
 FailureOr<Value> mlir::hivm::buildMemRefTensorPointers(
@@ -1369,5 +1435,5 @@ void mlir::hivm::populateHIVMToTritonPatterns(RewritePatternSet &patterns) {
       .add<GetBlockIdxOpPattern, GatherLoadOpPattern, ScatterStoreOpPattern,
            HIVMLoadOpPattern, HIVMStoreOpPattern, HIVMLoalLoadOpPattern,
            HIVMLoalStoreOpPattern, VArangeOpPattern, VBrcOpPattern,
-           HIVMToTTReduceOp>(context);
+           HIVMToTTReduceOp, HIVMToTTScanOp>(context);
 }
