@@ -81,3 +81,24 @@ module {
     return %4 : tensor<3x2xf16>
   }
 }
+
+// -----
+// FUSE-LABEL: func.func private @split_candidates_keep_parent_anchor_fused_0(
+// FUSE-LABEL: func.func private @split_candidates_keep_parent_anchor_fused_1(
+// FUSE-LABEL: func.func @split_candidates_keep_parent_anchor(
+// FUSE: %[[ANCHOR:.*]] = arith.constant 0 : i32
+// FUSE: %[[FIRST:.*]] = {{(func\.)?call}} @split_candidates_keep_parent_anchor_fused_0(
+// FUSE: %[[SECOND:.*]] = {{(func\.)?call}} @split_candidates_keep_parent_anchor_fused_1(
+// FUSE: return %[[SECOND]], %[[ANCHOR]] : tensor<1xi16>, i32
+func.func @split_candidates_keep_parent_anchor(
+    %arg0: tensor<1xi16>, %arg1: tensor<1xi16>,
+    %arg2: tensor<1xi16>, %arg3: tensor<1xi16>,
+    %arg4: tensor<1xi16>, %arg5: tensor<1xi16>)
+    -> (tensor<1xi16>, i32) {
+  %0 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%arg0, %arg1 : tensor<1xi16>, tensor<1xi16>) outs(%arg5 : tensor<1xi16>) -> tensor<1xi16>
+  %1 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%0, %arg2 : tensor<1xi16>, tensor<1xi16>) outs(%arg5 : tensor<1xi16>) -> tensor<1xi16>
+  %c0_i32 = arith.constant 0 : i32
+  %2 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%1, %arg3 : tensor<1xi16>, tensor<1xi16>) outs(%arg5 : tensor<1xi16>) -> tensor<1xi16>
+  %3 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%2, %arg4 : tensor<1xi16>, tensor<1xi16>) outs(%arg5 : tensor<1xi16>) -> tensor<1xi16>
+  return %3, %c0_i32 : tensor<1xi16>, i32
+}
