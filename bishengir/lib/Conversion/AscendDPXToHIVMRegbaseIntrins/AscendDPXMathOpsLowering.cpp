@@ -438,6 +438,7 @@ void addAscendDPXMathOpsLoweringPatterns(RewritePatternSet &patterns,
   patterns.add<
       // clang-format off
 BinaryDirect<DivOp, LLVM::SDivOp, LLVM::FDivOp>,
+BinaryDirect<FDivOp, LLVM::FDivOp>,
 BinaryDirect<UDivOp, LLVM::UDivOp>,
 Exp2OpLowering,
 LibCallLowering<UmulhiOp>,

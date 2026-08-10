@@ -1316,7 +1316,7 @@ module attributes {"ttg.enable-bishengir-simt-optimization" = 900101 : i32, "ttg
     %4 = tt.load %3 : tensor<1x!tt.ptr<f16>, #blocked>
     %5 = tt.extern_elementwise %4 {libname = "", libpath = "", pure = true, symbol = "__hmf_half2float_fp16"} : (tensor<1xf16, #blocked>) -> tensor<1xf32, #blocked>
     %6 = tt.splat %tag : !tt.ptr<i8> -> tensor<1x!tt.ptr<i8>, #blocked>
-    %7 = tt.extern_elementwise %6 {libname = "", libpath = "", pure = true, symbol = "__hmf_nanf_fp32"} : (tensor<1x!tt.ptr<i8>, #blocked>) -> tensor<1xf32, #blocked>
+    %7 = tt.extern_elementwise %6 {libname = "", libpath = "", pure = true, symbol = "__hmf_nan_fp32"} : (tensor<1x!tt.ptr<i8>, #blocked>) -> tensor<1xf32, #blocked>
     %8 = tt.splat %out16 : !tt.ptr<f16> -> tensor<1x!tt.ptr<f16>, #blocked>
     tt.store %8, %2 : tensor<1x!tt.ptr<f16>, #blocked>
     %9 = tt.splat %out32 : !tt.ptr<f32> -> tensor<1x!tt.ptr<f32>, #blocked>

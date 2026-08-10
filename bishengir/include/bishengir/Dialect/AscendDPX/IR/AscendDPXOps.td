@@ -351,6 +351,7 @@ class AscendDPX_BinaryMathOp<string mnemonic>
 }
 
 def DivOp : AscendDPX_BinaryMathOp<"div">;
+def FDivOp : AscendDPX_BinaryMathOp<"fdiv">;
 def UDivOp : AscendDPX_BinaryMathOp<"udiv">;
 def PowOp : AscendDPX_BinaryMathOp<"pow">;
 def UmulhiOp : AscendDPX_BinaryMathOp<"umulhi">;
