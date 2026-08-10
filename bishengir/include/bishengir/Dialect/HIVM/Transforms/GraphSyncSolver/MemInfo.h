@@ -115,11 +115,45 @@ struct AllocLikeInfo {
                             const AllocLikeInfo &allocLikeInfo2);
 };
 
+struct SubviewInfo {
+  Value source{nullptr};
+  unsigned rank{0};
+  // Stored consecutively as offsets, sizes, and strides to keep MemInfo small.
+  llvm::SmallVector<OpFoldResult, 0> parameters;
+
+  SubviewInfo() = default;
+  explicit SubviewInfo(memref::SubViewOp subviewOp);
+
+  bool operator==(const SubviewInfo &other) const {
+    return std::tie(source, rank, parameters) ==
+           std::tie(other.source, other.rank, other.parameters);
+  }
+  bool operator!=(const SubviewInfo &other) const { return !(*this == other); }
+
+  std::string str();
+
+  ArrayRef<OpFoldResult> getOffsets() const {
+    return ArrayRef(parameters).take_front(rank);
+  }
+  ArrayRef<OpFoldResult> getSizes() const {
+    return ArrayRef(parameters).slice(rank, rank);
+  }
+  ArrayRef<OpFoldResult> getStrides() const {
+    return ArrayRef(parameters).take_back(rank);
+  }
+
+  static std::optional<SubviewInfo> tryGet(Value value);
+
+  static bool checkConflict(const SubviewInfo &subviewInfo1,
+                            const SubviewInfo &subviewInfo2);
+};
+
 struct MemInfo {
   Value value{nullptr};
   std::optional<FuncArgInfo> funcArgInfo;
   std::optional<PointerLikeInfo> pointerLikeInfo;
   std::optional<AllocLikeInfo> allocLikeInfo;
+  std::optional<SubviewInfo> subviewInfo;
   std::optional<PIPE> pipe;
 
   MemInfo() = default;
@@ -140,9 +174,10 @@ struct MemInfo {
       : value(value), allocLikeInfo(allocLikeInfo), pipe(pipe) {}
 
   bool operator==(const MemInfo &other) const {
-    return std::tie(value, funcArgInfo, pointerLikeInfo, allocLikeInfo, pipe) ==
+    return std::tie(value, funcArgInfo, pointerLikeInfo, allocLikeInfo,
+                    subviewInfo, pipe) ==
            std::tie(other.value, other.funcArgInfo, other.pointerLikeInfo,
-                    other.allocLikeInfo, other.pipe);
+                    other.allocLikeInfo, other.subviewInfo, other.pipe);
   }
   bool operator!=(const MemInfo &other) const { return !(*this == other); }
 
@@ -167,7 +202,8 @@ struct MemInfo {
   checkConflict(const MemInfo &memInfo1, const MemInfo &memInfo2,
                 std::optional<int64_t> lcmLen = {},
                 std::optional<int64_t> eventIdNum = {},
-                std::optional<std::pair<int64_t, int64_t>> offsetPair = {});
+                std::optional<std::pair<int64_t, int64_t>> offsetPair = {},
+                bool enableSubviewConflictRefinement = true);
 };
 
 } // namespace mlir::hivm::syncsolver
