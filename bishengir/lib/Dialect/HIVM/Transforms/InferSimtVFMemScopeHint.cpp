@@ -66,7 +66,9 @@ bool isMemScopeHintAnchor(Value val) {
     auto *parentOp = bbArg.getOwner()->getParentOp();
     return isa<func::FuncOp>(parentOp);
   }
-  return isa_and_nonnull<hivm::PointerCastOp>(val.getDefiningOp());
+  // tensor.insert_slice are kept outside the SIMT scope by
+  // AutoScope (dynamic sizes unsupported). Treat them as anchors returning UB.
+  return isa_and_nonnull<tensor::InsertSliceOp, hivm::PointerCastOp>(val.getDefiningOp());
 }
 
 std::optional<AddressSpaceAttr> inferMemScopeFromAnchor(Value root) {
@@ -95,7 +97,10 @@ std::optional<AddressSpaceAttr> inferMemScopeFromAnchor(Value root) {
       return getAddressSpaceAttr(root.getContext(), hivm::AddressSpace::UB);
     }
 
-    if (isa<tensor::EmptyOp>(defOp)) {
+    // tensor.empty and tensor.insert_slice all produce
+    // tensor values that default to UB; the are kept outside the
+    // SIMT scope by AutoScope (dynamic sizes unsupported by RewriteSliceOpToTriton).
+    if (isa<tensor::EmptyOp, tensor::InsertSliceOp>(defOp)) {
       return getAddressSpaceAttr(root.getContext(), hivm::AddressSpace::UB);
     }
   }

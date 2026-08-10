@@ -97,3 +97,38 @@ module {
     return %2 : tensor<8xf32>
   }
 }
+
+// -----
+
+module {
+  // CHECK-LABEL: func.func @dynamic_insert_slice_excluded
+  // CHECK:       %[[INSERT:.*]] = tensor.insert_slice
+  // CHECK:       %[[SCOPE:.*]] = scope.scope
+  // CHECK-NOT:     tensor.insert_slice
+  // CHECK:         hivm.hir.gather_load
+  // CHECK:         scope.return
+  func.func @dynamic_insert_slice_excluded(%base: memref<?xf32>, %src: tensor<?xi64>, %dst: tensor<8xi64>, %dyn_size: index) {
+    %c1_i32 = arith.constant 1 : i32
+    %inserted = tensor.insert_slice %src into %dst[0] [%dyn_size] [1] : tensor<?xi64> into tensor<8xi64>
+    %empty = tensor.empty() : tensor<8xf32>
+    %gather = hivm.hir.gather_load ins(%base : memref<?xf32>, %inserted : tensor<8xi64>, %c1_i32 : i32) outs(%empty : tensor<8xf32>) -> tensor<8xf32>
+    return
+  }
+}
+
+// -----
+
+module {
+  // CHECK-LABEL: func.func @static_insert_slice_included
+  // CHECK:       %[[SCOPE:.*]] = scope.scope
+  // CHECK:         tensor.insert_slice
+  // CHECK:         hivm.hir.gather_load
+  // CHECK:         scope.return
+  func.func @static_insert_slice_included(%base: memref<?xf32>, %src: tensor<4xi64>, %dst: tensor<8xi64>) {
+    %c1_i32 = arith.constant 1 : i32
+    %inserted = tensor.insert_slice %src into %dst[0] [4] [1] : tensor<4xi64> into tensor<8xi64>
+    %empty = tensor.empty() : tensor<8xf32>
+    %gather = hivm.hir.gather_load ins(%base : memref<?xf32>, %inserted : tensor<8xi64>, %c1_i32 : i32) outs(%empty : tensor<8xf32>) -> tensor<8xf32>
+    return
+  }
+}
