@@ -1313,7 +1313,6 @@ LogicalResult CVPipelineImpl::expandOutputInits(WorkItem *item) {
 
 LogicalResult CVPipelineImpl::expandOutputInitsForPreload(WorkItem *item) {
   OpBuilder::InsertionGuard g(builder);
-  builder.setInsertionPointToStart(pipelineLoop.getBody());
   for (auto &[output, expanded] : item->localOutputs) {
     Operation *defining = output.getDefiningOp();
     if (!defining)
@@ -1353,6 +1352,10 @@ LogicalResult CVPipelineImpl::expandOutputInitsForPreload(WorkItem *item) {
     auto memspace = origTy.getMemorySpace();
     auto newType = MemRefType::get(origTy.getShape(), origTy.getElementType(),
                                    MemRefLayoutAttrInterface(), memspace);
+    // Refresh the insertion point for every replacement. The previous
+    // iteration may have erased the operation that was at the start of the
+    // block, invalidating the builder's stored iterator.
+    builder.setInsertionPointToStart(pipelineLoop.getBody());
     expanded = builder.create<memref::AllocOp>(loc, newType, ValueRange(),
                                                alloc.getAlignmentAttr());
     alloc.replaceAllUsesWith(expanded);
