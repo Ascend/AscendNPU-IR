@@ -1231,6 +1231,12 @@ handleMaterializeInDestinationOp(tensor::CollapseShapeOp collapseOp,
 LogicalResult
 PropagateCollapseDown::matchAndRewrite(tensor::CollapseShapeOp collapseOp,
                                        PatternRewriter &rewriter) const {
+  if (options.forRegbased &&
+      exceedsUnitDimPropagationLimit(collapseOp.getSrcType().getShape(),
+                                     options.maxUnitDimsForPropagation)) {
+    return rewriter.notifyMatchFailure(
+        collapseOp, "collapse source exceeds the unit-dimension threshold");
+  }
   Value result = collapseOp.getResult();
   auto userRange = result.getUsers();
   SmallVector<Operation *> users(userRange.begin(), userRange.end());

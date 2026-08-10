@@ -413,6 +413,39 @@ func.func @insert_slice_dropped_dims(%arg0: tensor<2x2xf32>, %arg1: tensor<2x1x3
 
 // -----
 
+// CHECK-LABEL: func.func @insert_slice_defined_static_source
+// CHECK-NOT: tensor<64x2x1xf32>
+// CHECK: tensor.insert_slice %{{.*}} into %{{.*}}[0, 0] [64, 1] [1, 1] : tensor<64xf32> into tensor<64x2xf32>
+func.func @insert_slice_defined_static_source(%arg0: tensor<128xf32>) -> tensor<64x2xf32> {
+  %cst = arith.constant 0.0 : f32
+  %empty = tensor.empty() : tensor<64xf32>
+  %filled = linalg.fill ins(%cst : f32) outs(%empty : tensor<64xf32>) -> tensor<64xf32>
+  %expanded = tensor.expand_shape %arg0 [[0, 1, 2]] output_shape [64, 2, 1]
+    : tensor<128xf32> into tensor<64x2x1xf32>
+  %inserted = tensor.insert_slice %filled into %expanded[0, 0, 0] [64, 1, 1] [1, 1, 1]
+    : tensor<64xf32> into tensor<64x2x1xf32>
+  %collapsed = tensor.collapse_shape %inserted [[0], [1, 2]]
+    : tensor<64x2x1xf32> into tensor<64x2xf32>
+  return %collapsed : tensor<64x2xf32>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @deinterleave_trailing_unit_dim
+// CHECK-NOT: tensor<64x1xf32>
+// CHECK: %[[FLAT:.*]] = tensor.collapse_shape %[[ARG:.*]] {{\[\[}}0, 1]] : tensor<64x2xf32> into tensor<128xf32>
+// CHECK: %[[DEINTERLEAVED:.*]] = hfusion.deinterleave %[[FLAT]] channel<0> : tensor<128xf32> -> tensor<64xf32>
+// CHECK: return %[[DEINTERLEAVED]] : tensor<64xf32>
+func.func @deinterleave_trailing_unit_dim(%arg0: tensor<64x2xf32>) -> tensor<64xf32> {
+  %0 = hfusion.deinterleave %arg0 channel<0>
+    : tensor<64x2xf32> -> tensor<64x1xf32>
+  %1 = tensor.collapse_shape %0 [[0, 1]]
+    : tensor<64x1xf32> into tensor<64xf32>
+  return %1 : tensor<64xf32>
+}
+
+// -----
+
 // CHECK-LABEL: func.func @rank_reduce_insert_slice
 // CHECK: tensor.insert_slice %{{.*}} into %{{.*}}[0, 0, 0] [1, 2, 1] [1, 1, 1] : tensor<2xf32> into tensor<3x2x4xf32>
 func.func @rank_reduce_insert_slice(%arg0: tensor<1x2x1xf32>, %arg1: tensor<3x2x4xf32>) -> tensor<3x2x4xf32> {

@@ -83,7 +83,11 @@ def PropagateReshape : Pass<"propagate-reshape", "func::FuncOp"> {
              "Do propagate reshape for register based, which has special behavior">,
       Option<"skipScope", "skip-scope", "bool",
              /*default=*/"true",
-             "Skip this pass when the function contains scope operations">
+             "Skip this pass when the function contains scope operations">,
+      Option<"maxUnitDimsForPropagation", "max-unit-dims-for-propagation",
+             "unsigned", /*default=*/"10",
+             "Stop register-based reshape propagation when a shape contains "
+             "more unit dimensions than this threshold">
   ];
   let constructor = "mlir::tensor::createPropagateReshapePass()";
   let dependentDialects = [

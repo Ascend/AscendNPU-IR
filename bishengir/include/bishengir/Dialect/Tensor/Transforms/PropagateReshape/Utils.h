@@ -38,6 +38,14 @@ namespace mlir {
 namespace tensor {
 namespace reshape_utils {
 
+/// FIXME: Unit dimensions can be repeatedly propagated through reshape
+/// patterns without changing the element count, so rank is not bounded by the
+/// usual shape-factorization argument. This threshold is only a temporary
+/// safeguard against non-termination; replace it with a semantic termination
+/// condition once the intended handling of unit dimensions is defined.
+bool exceedsUnitDimPropagationLimit(ArrayRef<int64_t> shape,
+                                    unsigned maxUnitDims);
+
 /// Update dimensional operations
 template <class OpDimTy>
 void updateDimensionalOp(OpDimTy op, PatternRewriter &rewriter,

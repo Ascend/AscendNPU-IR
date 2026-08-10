@@ -80,6 +80,13 @@ SwapCollapseExpand::matchAndRewrite(tensor::ExpandShapeOp expandOp,
     return failure();
   }
 
+  if (options.forRegbased &&
+      exceedsUnitDimPropagationLimit(newExpandShape,
+                                     options.maxUnitDimsForPropagation)) {
+    return rewriter.notifyMatchFailure(
+        expandOp, "common refinement exceeds the unit-dimension threshold");
+  }
+
   renumberReassociation(newReassociationExpand);
   renumberReassociation(newReassociationCollapse);
   rewriter.setInsertionPointAfter(expandOp);
