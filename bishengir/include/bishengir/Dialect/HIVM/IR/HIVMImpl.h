@@ -66,6 +66,10 @@ int64_t getUsersNum(Value v);
 
 bool isLocalMatmulInit(Operation *op, Value v);
 
+/// Return true if any user of \p v can reach a LocalMatmulLikeOpInterface
+/// outs/init operand (MatmulC).
+bool anyUserReachesMatmulOuts(Value v);
+
 /// to trace op in isMatchedOp way and check whether op is single chain
 bool traceSingleChainUser(
     Value v, const std::function<bool(Operation *, Value v)> &isMatchedOp);
