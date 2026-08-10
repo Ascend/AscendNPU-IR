@@ -1,7 +1,3 @@
-// REQUIRES: regbase
-// TODO: enable this testcase after the target device spec uses A3-valid
-// hardware fields (currently uses A5 dav-c310-specific entries like
-// MINIMAL_D_CACHE_SIZE/MAXIMUM_D_CACHE_SIZE that A3's DLTI parser rejects)
 // RUN: bishengir-opt %s --hfusion-auto-vectorize-v2 --canonicalize | FileCheck %s
 
 // CHECK: %2:2 = scf.for %arg10 = %c0 to %c13 step %c1 iter_args(%arg11 = %1, %arg12 = %1) -> (tensor<13x151xi64>, tensor<13x151xi64>) {

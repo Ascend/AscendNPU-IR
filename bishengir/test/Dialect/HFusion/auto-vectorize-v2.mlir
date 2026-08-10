@@ -1,5 +1,3 @@
-// REQUIRES: regbase
-// TODO: enable after migrating HFusion AutoVectorizeV2 (-hfusion-auto-vectorize-v2).
 // RUN: bishengir-opt %s --hfusion-auto-vectorize-v2 --outline-vector-function | FileCheck %s
 
 // CHECK-LABEL: func @test_hfusion_indirect_load(

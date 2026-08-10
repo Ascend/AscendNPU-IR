@@ -1,0 +1,18 @@
+[<modules>] <short description>
+
+<optional body: motivation, design, risks>
+
+<Assisted-by: <AGENT_NAME>:<MODEL_VERSION>>
+# ===== Usage =====
+# 1. Delete placeholder lines above, replace with your commit message
+# 2. First line = title (~50 chars, imperative mood)
+# 3. Blank line + optional body (~72 chars per line)
+# 4. Optional modules: 
+#    PlanMemory|HIVM|AVE|VFFusion|HFusion|SIMT|CVPipeline|Autoblockify|...
+# 5. Assisted agent samples as below, delete this line if it's completely
+#    human written
+#    Assisted-by: GLM 5.1
+#    Assisted-by: Trae GLM 5.1
+#    Assisted-by: Claude-opus-4.8
+#    Assisted-by: Codex 5.3
+# ========================================================================

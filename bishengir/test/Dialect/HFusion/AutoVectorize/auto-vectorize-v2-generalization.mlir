@@ -1,5 +1,3 @@
-// REQUIRES: regbase
-// TODO: enable after migrating HFusion AutoVectorizeV2 (-hfusion-auto-vectorize-v2).
 // RUN: bishengir-opt %s --hfusion-pre-vectorization-fusion --hfusion-auto-vectorize-v2 -outline-vector-function -split-input-file | FileCheck %s
 //
 //==============================================================================
