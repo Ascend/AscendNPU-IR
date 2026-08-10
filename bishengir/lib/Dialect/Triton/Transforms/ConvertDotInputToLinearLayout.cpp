@@ -37,7 +37,6 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Debug.h"
 #include <algorithm>
-#include <limits>
 
 #define DEBUG_TYPE "convert-dot-input-to-linear-layout"
 
@@ -129,55 +128,11 @@ struct BasisVec {
   unsigned originalIndex = 0;
 };
 
-static int64_t getKContribution(ArrayRef<int32_t> v, unsigned kOutDimIdx) {
-  if (kOutDimIdx >= v.size())
-    return 0;
-  return static_cast<int64_t>(v[kOutDimIdx]);
-}
-
 // Generic version: returns the contribution of any output dimension, not just K.
 static int64_t getDimContribution(ArrayRef<int32_t> v, unsigned dimIdx) {
   if (dimIdx >= v.size())
     return 0;
   return static_cast<int64_t>(v[dimIdx]);
-}
-
-// Score a candidate basis ordering.
-//
-// kOutDimIdx:    tensor dimension index of K (reduction axis). Used only for
-//                the lane-penalty term (penalize K in lanes).
-// fastRegDimIdx: tensor dimension index that should vary fastest within the
-//                register portion (innermost register dimension).
-//                - For A [M, K]: fastRegDimIdx = 1 (K, same as kOutDimIdx).
-//                - For B [K, N]: fastRegDimIdx = 1 (N, NOT K) so that
-//                  consecutive N elements at a fixed k are sequential in the
-//                  struct ordinal, enabling efficient N-tile extraction.
-static int64_t scoreCandidate(ArrayRef<BasisVec> ordered, unsigned nRegBases,
-                              unsigned kOutDimIdx, unsigned fastRegDimIdx) {
-  // Higher is better.
-  // Reward fast-dim-heavy bases in the register prefix; penalize K in lanes.
-  int64_t score = 0;
-  for (unsigned i = 0; i < ordered.size(); ++i) {
-    const auto &b = ordered[i];
-    int64_t fast = getDimContribution(b.vec, fastRegDimIdx);
-    int64_t k    = getKContribution(b.vec, kOutDimIdx);
-
-    if (i < nRegBases) {
-      // Reward fast dimension in registers.
-      score += 1000 * (fast > 0 ? 1 : 0);
-      score += 10 * fast;
-    } else {
-      // Penalize K-heavy bases falling into lane (K must stay in registers
-      // for FMA to work without cross-thread reduction).
-      score -= 250 * (k > 0 ? 1 : 0);
-      score -= 2 * k;
-    }
-
-    // Mild stability bias: prefer preserving original order.
-    score -= static_cast<int64_t>(std::abs(
-        static_cast<int64_t>(i) - static_cast<int64_t>(b.originalIndex)));
-  }
-  return score;
 }
 
 static SmallVector<BasisVec> collectBases(const LinearLayout &ll,
@@ -203,6 +158,71 @@ static std::vector<std::vector<int32_t>> toVecOfVec(ArrayRef<BasisVec> in) {
   for (const auto &b : in)
     out.emplace_back(b.vec.begin(), b.vec.end());
   return out;
+}
+
+static SmallVector<BasisVec>
+buildFMAOrdinalOrdering(ArrayRef<BasisVec> regBases,
+                        ArrayRef<BasisVec> laneBases, unsigned nRegBases,
+                        unsigned kDimIdx, unsigned fastRegDimIdx,
+                        unsigned kBits, bool isBOperand) {
+  SmallVector<BasisVec> pool;
+  pool.append(regBases.begin(), regBases.end());
+  pool.append(laneBases.begin(), laneBases.end());
+
+  SmallVector<bool> used(pool.size(), false);
+  SmallVector<BasisVec> registers;
+
+  auto hasDim = [](const BasisVec &b, unsigned dim) {
+    return dim < b.vec.size() && b.vec[dim] != 0;
+  };
+  auto take = [&](unsigned dim, unsigned count) {
+    SmallVector<unsigned> candidates;
+    for (unsigned i = 0; i < pool.size(); ++i)
+      if (!used[i] && hasDim(pool[i], dim))
+        candidates.push_back(i);
+    llvm::sort(candidates, [&](unsigned a, unsigned b) {
+      return getDimContribution(pool[a].vec, dim) <
+             getDimContribution(pool[b].vec, dim);
+    });
+    for (unsigned i : candidates) {
+      if (registers.size() >= nRegBases || count == 0)
+        break;
+      used[i] = true;
+      registers.push_back(pool[i]);
+      --count;
+    }
+  };
+
+  // FMADotUtility extracts struct element i as a flattened per-thread tile.
+  // A is [M,K] with K-fastest; B is [K,N] with N-fastest, followed by K.
+  // The old pass only permuted bases inside their original input dimension,
+  // which left B's K bits in lanes and made extractvalue ordinal 0/1 select
+  // different N values instead of successive K values.
+  if (isBOperand) {
+    unsigned nFastBits = nRegBases > kBits ? nRegBases - kBits : 0;
+    take(fastRegDimIdx, nFastBits);
+    take(kDimIdx, kBits);
+  } else {
+    take(kDimIdx, kBits);
+    take(fastRegDimIdx, nRegBases - registers.size());
+  }
+
+  // Fill any remaining register slots deterministically. This handles
+  // degenerate/non-power-of-two source layouts without dropping bases.
+  for (unsigned i = 0; i < pool.size() && registers.size() < nRegBases; ++i)
+    if (!used[i]) {
+      used[i] = true;
+      registers.push_back(pool[i]);
+    }
+
+  SmallVector<BasisVec> remaining;
+  for (unsigned i = 0; i < pool.size(); ++i)
+    if (!used[i])
+      remaining.push_back(pool[i]);
+
+  SmallVector<BasisVec> ordered = registers;
+  ordered.append(remaining.begin(), remaining.end());
+  return ordered;
 }
 
 static LinearLayout buildLayoutFromOrdering(MLIRContext *ctx,
@@ -251,12 +271,48 @@ static LinearLayout buildLayoutFromOrdering(MLIRContext *ctx,
   return LinearLayout(newBases, outDims, /*requireSurjective=*/true);
 }
 
-static LinearLayout buildShuffleCompatibleFMALayout(MLIRContext *ctx,
-                                                    const LinearLayout &srcLL,
-                                                    unsigned kOutDimIdx,
-                                                    unsigned fastRegDimIdx,
-                                                    RankedTensorType srcTy,
-                                                    Attribute srcEnc) {
+// Verify the ABI consumed by FMADotUtility.  A cost-classification result is
+// insufficient: a layout can be reachable by a warp shuffle and still put a
+// different logical element in a given LLVM struct slot.
+static bool isFMARegisterOrdinalLayout(const LinearLayout &ll,
+                                       unsigned kDimIdx, unsigned kBits,
+                                       bool isBOperand) {
+  auto *ctx = ll.getBases().begin()->first.getContext();
+  auto reg = StringAttr::get(ctx, "register");
+  auto lane = StringAttr::get(ctx, "lane");
+  auto warp = StringAttr::get(ctx, "warp");
+  auto block = StringAttr::get(ctx, "block");
+  unsigned regBits = ll.getBases().lookup(reg).size();
+  if (regBits < kBits || regBits >= 31)
+    return false;
+
+  unsigned numRegs = 1u << regBits;
+  unsigned kMask = (1u << kBits) - 1u;
+  unsigned nBits = regBits - kBits;
+  unsigned nMask = nBits ? ((1u << nBits) - 1u) : 0u;
+
+  for (unsigned i = 0; i < numRegs; ++i) {
+    SmallVector<std::pair<StringAttr, int32_t>> inputs = {
+        {reg, static_cast<int32_t>(i)}, {lane, 0}, {warp, 0}, {block, 0}};
+    auto outputs = ll.apply(inputs);
+    if (outputs.size() <= kDimIdx)
+      return false;
+
+    unsigned expectedK = isBOperand ? (i >> nBits) : (i & kMask);
+    unsigned nonKDim = isBOperand ? 1u : 0u;
+    unsigned expectedNonK = isBOperand ? (i & nMask) : (i >> kBits);
+    if (outputs[kDimIdx].second != static_cast<int32_t>(expectedK) ||
+        outputs.size() <= nonKDim ||
+        outputs[nonKDim].second != static_cast<int32_t>(expectedNonK))
+      return false;
+  }
+  return true;
+}
+
+static LinearLayout buildShuffleCompatibleFMALayout(
+    MLIRContext *ctx, const LinearLayout &srcLL, unsigned kOutDimIdx,
+    unsigned fastRegDimIdx, unsigned kBits, bool isBOperand,
+    RankedTensorType srcTy, Attribute srcEnc) {
   auto kRegister = StringAttr::get(ctx, "register");
   auto kLane = StringAttr::get(ctx, "lane");
 
@@ -267,50 +323,16 @@ static LinearLayout buildShuffleCompatibleFMALayout(MLIRContext *ctx,
 
   unsigned nRegBases = regBases.size();
 
-  // Baseline ordered pool: source order.
-  SmallVector<BasisVec> sourceOrder;
-  sourceOrder.append(regBases.begin(), regBases.end());
-  sourceOrder.append(laneBases.begin(), laneBases.end());
-
-  // Sort bases by their contribution to fastRegDimIdx (descending).
-  // For A: fastRegDimIdx == kOutDimIdx (K), so behaviour is unchanged.
-  // For B: fastRegDimIdx == N dim, so we sort N-contribution high first,
-  //        giving N-innermost register ordering that pairs with the k-outer
-  //        N-tile loop in FMADotUtility.
-  auto makeSorted = [&](ArrayRef<BasisVec> in) {
-    SmallVector<BasisVec> v(in.begin(), in.end());
-    std::stable_sort(v.begin(), v.end(),
-                     [fastRegDimIdx](const BasisVec &a, const BasisVec &b) {
-                       int64_t af = getDimContribution(a.vec, fastRegDimIdx);
-                       int64_t bf = getDimContribution(b.vec, fastRegDimIdx);
-                       if (af != bf)
-                         return af > bf;
-                       return a.originalIndex < b.originalIndex;
-                     });
-    return v;
-  };
-
-  // Candidate A: global K-first.
-  SmallVector<BasisVec> candGlobal = makeSorted(sourceOrder);
-
-  // Candidate B: preserve register order, K-sort lane bases.
-  SmallVector<BasisVec> candRegStable = regBases;
-  {
-    SmallVector<BasisVec> laneSorted = makeSorted(laneBases);
-    candRegStable.append(laneSorted.begin(), laneSorted.end());
-  }
-
-  // Candidate C: K-sort register bases, preserve lane order.
-  SmallVector<BasisVec> candLaneStable = makeSorted(regBases);
-  candLaneStable.append(laneBases.begin(), laneBases.end());
-
-  // Candidate D: pure source order.
-  SmallVector<BasisVec> candSource = sourceOrder;
+  SmallVector<BasisVec> canonicalOrder = buildFMAOrdinalOrdering(
+      regBases, laneBases, nRegBases, kOutDimIdx,
+      /*B's ordinal-fast dimension is always N, even when N==1 and the
+       * cost-model fallback uses K as fastRegDimIdx.*/
+      isBOperand ? 1u : fastRegDimIdx, kBits, isBOperand);
 
   struct Candidate {
     LinearLayout layout;
-    int64_t score = std::numeric_limits<int64_t>::min();
-    bool valid = false;
+    bool ordinalValid = false;
+    bool conversionValid = false;
     bool warpShuffle = false;
     StringRef name;
   };
@@ -323,56 +345,37 @@ static LinearLayout buildShuffleCompatibleFMALayout(MLIRContext *ctx,
     auto dstTy = RankedTensorType::get(srcTy.getShape(), srcTy.getElementType(),
                                        LinearEncodingAttr::get(ctx, c.layout));
 
-    c.valid = isAtMostWarpShuffle(srcTy, dstTy);
+    bool ordinalValid = isFMARegisterOrdinalLayout(
+        c.layout, kOutDimIdx, kBits, isBOperand);
+    c.ordinalValid = ordinalValid;
+    c.conversionValid = isAtMostWarpShuffle(srcTy, dstTy);
     c.warpShuffle = cvtNeedsWarpShuffle(srcTy, dstTy);
-    c.score = scoreCandidate(ordered, nRegBases, kOutDimIdx, fastRegDimIdx);
 
     LLVM_DEBUG({
       llvm::dbgs() << "  [FMA] candidate " << name << ": "
-                   << (c.valid ? "valid" : "reject(shared-memory)") << ", kind="
+                   << (c.conversionValid ? "fast" : "shared-memory")
+                   << ", ordinal="
+                   << (c.ordinalValid ? "valid" : "invalid") << ", kind="
                    << (c.warpShuffle ? "warp-shuffle" : "register-reorder")
-                   << ", score=" << c.score << "\n";
+                   << "\n";
       llvm::dbgs() << "        srcEnc=" << srcEnc << "\n";
       llvm::dbgs() << "        dstTy=" << dstTy << "\n";
     });
     return c;
   };
 
-  Candidate best;
-  auto consider = [&](Candidate c) {
-    if (!c.valid)
-      return;
-    // Tiebreak: prefer register-reorder (cheaper) over warp-shuffle.
-    // Previously this condition was inverted (c.warpShuffle &&
-    // !best.warpShuffle), which incorrectly replaced a cheaper register-reorder
-    // best with a more expensive warp-shuffle candidate of equal score.
-    if (!best.valid || c.score > best.score ||
-        (c.score == best.score && !c.warpShuffle && best.warpShuffle)) {
-      best = std::move(c);
-    }
-  };
-
-  // Search from most aggressive to most conservative.
-  consider(evalCandidate("global-k-first", candGlobal));
-  consider(evalCandidate("register-stable", candRegStable));
-  consider(evalCandidate("lane-stable", candLaneStable));
-  consider(evalCandidate("source-order", candSource));
-
-  if (!best.valid) {
-    // This should be rare. Fall back to source order so we do not invent a
-    // layout that forces shared-memory conversion.
-    LLVM_DEBUG(
-        llvm::dbgs()
-        << "  [FMA] no non-shared candidate found; using source order\n");
-    return buildLayoutFromOrdering(ctx, srcLL, sourceOrder, nRegBases);
-  }
-
-  LLVM_DEBUG(
-      llvm::dbgs() << "  [FMA] selected candidate: " << best.name
-                   << " (score=" << best.score << ", kind="
-                   << (best.warpShuffle ? "warp-shuffle" : "register-reorder")
-                   << ")\n");
-  return best.layout;
+  // The canonical candidate is mandatory: the FMA lowering's extractvalue
+  // ordinals are part of the ABI of this layout, not merely a cost heuristic.
+  Candidate canonical = evalCandidate("fma-ordinal", canonicalOrder);
+  LLVM_DEBUG({
+    llvm::dbgs() << "  [FMA] selected candidate: fma-ordinal"
+                 << (canonical.ordinalValid
+                         ? (canonical.conversionValid ? " (fast conversion)"
+                                                       : " (shared-memory conversion)")
+                         : " (ordinal validation failed)")
+                 << "\n";
+  });
+  return canonical.layout;
 }
 
 // ─── FMA LinearEncoding creation ─────────────────────────────────────────────
@@ -395,12 +398,16 @@ static LinearLayout buildShuffleCompatibleFMALayout(MLIRContext *ctx,
 static Attribute createFMALinearEncoding(MLIRContext *ctx,
                                          RankedTensorType inputType,
                                          unsigned kDimIdx,
-                                         unsigned fastRegDimIdx) {
+                                         unsigned fastRegDimIdx,
+                                         bool isBOperand) {
   auto inputLL = toLinearLayout(inputType.getShape(), inputType.getEncoding());
-  auto fmaLL = buildShuffleCompatibleFMALayout(ctx, inputLL, kDimIdx,
-                                               fastRegDimIdx, inputType,
-                                               inputType.getEncoding());
-
+  unsigned kBits = 0;
+  for (int64_t extent = inputType.getShape()[kDimIdx]; extent > 1;
+       extent >>= 1)
+    ++kBits;
+  auto fmaLL = buildShuffleCompatibleFMALayout(
+      ctx, inputLL, kDimIdx, fastRegDimIdx, kBits, isBOperand, inputType,
+      inputType.getEncoding());
   LLVM_DEBUG(
       llvm::dbgs() << "  [FMA] built candidate linear layout for kDimIdx="
                    << kDimIdx << ", fastRegDimIdx=" << fastRegDimIdx << "\n");
@@ -474,6 +481,12 @@ struct ConvertDotInputToLinearPattern : public OpRewritePattern<DotOp> {
     Value a = dotOp.getA(), b = dotOp.getB(), c = dotOp.getC();
     auto aType = cast<RankedTensorType>(a.getType());
     auto bType = cast<RankedTensorType>(b.getType());
+    // The Ascend FMA microkernel below uses the 2-D per-thread ordinal
+    // contract. Batched/high-rank dots use the normal dot lowering until a
+    // batch-aware ordinal layout is implemented.
+    if (aType.getRank() != 2 || bType.getRank() != 2 ||
+        resultType.getRank() != 2)
+      return failure();
     int64_t kForA = aType.getShape()[1]; // A[M, K]
     int64_t kForB = bType.getShape()[0]; // B[K, N]
 
@@ -510,9 +523,17 @@ struct ConvertDotInputToLinearPattern : public OpRewritePattern<DotOp> {
       unsigned fastRegA = (aType.getShape()[1] == 1) ? 0u : 1u;
       unsigned fastRegB = (bType.getShape()[1] == 1) ? 0u : 1u;
       fmaEncA = createFMALinearEncoding(ctx, aType, /*kDimIdx=*/1,
-                                         /*fastRegDimIdx=*/fastRegA);
+                                         /*fastRegDimIdx=*/fastRegA,
+                                         /*isBOperand=*/false);
       fmaEncB = createFMALinearEncoding(ctx, bType, /*kDimIdx=*/0,
-                                         /*fastRegDimIdx=*/fastRegB);
+                                         /*fastRegDimIdx=*/fastRegB,
+                                         /*isBOperand=*/true);
+    }
+
+    if (!fmaEncA || !fmaEncB) {
+      LLVM_DEBUG(llvm::dbgs()
+                 << "[FMA] skip: no shuffle-compatible ordinal layout\n");
+      return failure();
     }
 
     // Guard: FMADotUtility requires aElems.size() % K == 0 and

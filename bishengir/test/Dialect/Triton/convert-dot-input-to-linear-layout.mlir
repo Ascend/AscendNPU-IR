@@ -35,6 +35,33 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
 
 // -----
 
+// Simplified dot3 regression: A is [M,K] and B is [K,N].  The B layout must
+// keep N as the fastest FMA ordinal (register basis), with K in the next
+// basis; swapping these bases corrupts the lowered multiply-add inputs.
+#blocked = #ttg.blocked<{sizePerThread = [1, 4], threadsPerWarp = [32, 1], warpsPerCTA = [1, 1], order = [1, 0]}>
+#dot_op_a = #ttg.dot_op<{opIdx = 0, parent = #blocked}>
+#dot_op_b = #ttg.dot_op<{opIdx = 1, parent = #blocked}>
+
+// CHECK{LITERAL}: #linear = #ttg.linear<{register = [[0, 1], [0, 2], [0, 4], [0, 8], [32, 0]], lane = [[1, 0], [2, 0], [4, 0], [8, 0], [16, 0]], warp = [], block = []}>
+// CHECK{LITERAL}: #linear1 = #ttg.linear<{register = [[0, 1], [0, 2], [0, 4], [0, 8], [1, 0], [2, 0], [4, 0], [8, 0]], lane = [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0]], warp = [], block = []}>
+// CHECK-LABEL: @test_dot3_fma_layout
+module attributes {"ttg.num-warps" = 1 : i32, "ttg.threads-per-warp" = 32 : i32} {
+  tt.func public @test_dot3_fma_layout(
+      %a: tensor<64x16xf32, #blocked>,
+      %b: tensor<16x16xf32, #blocked>,
+      %c: tensor<64x16xf32, #blocked>) -> tensor<64x16xf32, #blocked> {
+    %ad = ttg.convert_layout %a : tensor<64x16xf32, #blocked> -> tensor<64x16xf32, #dot_op_a>
+    %bd = ttg.convert_layout %b : tensor<16x16xf32, #blocked> -> tensor<16x16xf32, #dot_op_b>
+    // CHECK: ttg.convert_layout %{{.*}} : tensor<64x16xf32, #blocked> -> tensor<64x16xf32, #linear>
+    // CHECK: ttg.convert_layout %{{.*}} : tensor<16x16xf32, #blocked> -> tensor<16x16xf32, #linear1>
+    // CHECK: tt.dot {{.*}} {dot.propagated, fma.converted}
+    %d = tt.dot %ad, %bd, %c : tensor<64x16xf32, #dot_op_a> * tensor<16x16xf32, #dot_op_b> -> tensor<64x16xf32, #blocked>
+    tt.return %d : tensor<64x16xf32, #blocked>
+  }
+}
+
+// -----
+
 #blocked = #ttg.blocked<{sizePerThread = [1, 1], threadsPerWarp = [32, 1], warpsPerCTA = [1, 1], order = [1, 0]}>
 #blocked1 = #ttg.blocked<{sizePerThread = [1, 1], threadsPerWarp = [2, 16], warpsPerCTA = [1, 1], order = [1, 0]}>
 #blocked2 = #ttg.blocked<{sizePerThread = [2, 2], threadsPerWarp = [4, 8], warpsPerCTA = [1, 1], order = [1, 0]}>
