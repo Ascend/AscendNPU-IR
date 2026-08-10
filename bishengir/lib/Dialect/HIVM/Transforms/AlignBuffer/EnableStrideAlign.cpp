@@ -245,13 +245,8 @@ LogicalResult processAlignPropagationAmongOperationOperands(
   }
 
   bool isChanged = false;
-  const bool isCopy = isa<hivm::CopyOp>(op);
-  for (auto [idx, pair] : llvm::enumerate(
-           llvm::zip(maybeMarkOps, tobeStrideAlignOperands))) {
-    if (isCopy && idx == 0) {
-      continue;
-    }
-    auto [maybeMarkOp, tobeStrideAlignOperand] = pair;
+  for (auto [maybeMarkOp, tobeStrideAlignOperand] :
+       llvm::zip(maybeMarkOps, tobeStrideAlignOperands)) {
     if (!maybeMarkOp.has_value()) {
       // no storage align info, just create new one to add info
       isChanged =
@@ -477,7 +472,6 @@ void populatePropagateAlignAmongOpOperandsPatterns(
 #define GET_OP_LIST
 #include "bishengir/Dialect/HIVM/IR/HIVMVectorOps.cpp.inc"
       >(patterns);
-  registerOne<::mlir::hivm::CopyOp>(patterns);
 }
 
 bool isSame(std::map<Operation *, std::unique_ptr<util::AlignInfo>> *lhs,
