@@ -1389,6 +1389,11 @@ def PropagateConvertLayout : Pass<"hivm-propagate-convert-layout", "func::FuncOp
                         "Enable elementwise convert layout propagation patterns.">];
 }
 
+def LegalizeBoolForSimtVF : Pass<"legalize-bool-for-simtvf"> {
+  let summary = "Legalize bool value used in simt vf";
+  let constructor = "mlir::hivm::createLegalizeBoolForSimtVFPass()";
+}
+
 def InsertMemSemanticForSimtVF : Pass<"insert-memory-semantic-for-simtvf"> {
   let summary = "Insert memory semantic for simt vf";
   let constructor = "mlir::hivm::createInsertMemSemanticForSimtVFPass()";
