@@ -21,6 +21,7 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "llvm/ADT/STLExtras.h"
 #include <cstddef>
+#include <string>
 #include <utility>
 
 namespace mlir {
@@ -155,6 +156,8 @@ public:
         {unitFlagModeFirstIter, unitFlagModeLastIter, unitFlagModeMidIters},
         compress);
   }
+
+  std::string str() const;
 
   std::optional<std::pair<SmallVector<UNIT_FLAG>, SmallVector<mlir::Value>>>
   getUnitFlagArgs(Operation *op, IRRewriter &rewriter);

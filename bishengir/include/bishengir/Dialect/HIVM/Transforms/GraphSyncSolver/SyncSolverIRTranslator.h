@@ -63,7 +63,7 @@ public:
 
   // Set of RW operations that expose unit-flag feature and need special
   // handling.
-  llvm::DenseSet<RWOperation *> unitFlagFeaturedOps;
+  llvm::SetVector<RWOperation *> unitFlagFeaturedOps;
 
   // Map op -> list of occurrences in syncIr (quick lookup for an op's
   // occurrences).

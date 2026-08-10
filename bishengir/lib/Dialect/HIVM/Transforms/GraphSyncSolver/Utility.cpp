@@ -37,6 +37,37 @@ using namespace hivm::syncsolver;
 int ConflictPair::globalIdCounter = 0;
 int EventIdNode::globalIdCounter = 0;
 
+std::string UnitFlagInfo::str() const {
+  std::string unitFlag = UnitFlagInfoBase::str();
+  if (conflictPairIdAsSet != -1) {
+    std::string idStr;
+    llvm::raw_string_ostream ss(idStr);
+    ss << "conflictPairIdAsSet(" << conflictPairIdAsSet << ")";
+    unitFlag += (!unitFlag.empty() ? " " : "") + ss.str();
+  }
+  if (conflictPairIdAsWait != -1) {
+    std::string idStr;
+    llvm::raw_string_ostream ss(idStr);
+    ss << "conflictPairIdAsWait(" << conflictPairIdAsWait << ")";
+    unitFlag += (!unitFlag.empty() ? " " : "") + ss.str();
+  }
+  return unitFlag;
+}
+
+std::string Occurrence::str() const {
+  std::string ret;
+  llvm::raw_string_ostream ss(ret);
+  ss << std::string(depth, ' ');
+  ss << op->id << ' ' << syncIrIndex << ' ' << startIndex << ' ' << endIndex
+     << '\n';
+  ss << op->str(depth, /*recursive=*/false);
+  std::string unitFlag = unitFlagInfo.str();
+  if (!unitFlag.empty()) {
+    ss << '\n' << std::string(depth + 2, ' ') << unitFlag;
+  }
+  return ss.str();
+}
+
 bool Occurrence::sameScope(Occurrence *occ1, Occurrence *occ2) {
   assert(occ1 != nullptr && occ1->parentOcc != nullptr);
   assert(occ2 != nullptr && occ2->parentOcc != nullptr);

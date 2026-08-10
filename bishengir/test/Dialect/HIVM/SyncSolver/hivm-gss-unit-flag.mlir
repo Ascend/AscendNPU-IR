@@ -1,5 +1,3 @@
-// REQUIRES: disabled
-
 // RUN: bishengir-opt -split-input-file %s -pass-pipeline="builtin.module(func.func(hivm-inject-sync{enable-unit-flag=true}))" | FileCheck %s --check-prefixes="CHECK,CHECK-UF-ON"
 // RUN: bishengir-opt -split-input-file %s -pass-pipeline="builtin.module(func.func(hivm-inject-sync{enable-unit-flag=false}))" | FileCheck %s --check-prefixes="CHECK,CHECK-UF-OFF"
 // RUN: bishengir-opt -split-input-file %s -pass-pipeline="builtin.module(func.func(hivm-graph-sync-solver{solver-version=v1 enable-unit-flag=false ignore-workspace-func-args=true}))" | FileCheck %s --check-prefixes="CHECK,CHECK-UF-OFF"

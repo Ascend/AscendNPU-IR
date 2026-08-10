@@ -312,27 +312,8 @@ std::string RWOperation::str(int indent, bool recursive) const {
   } else {
     pipesStr = "[<" + stringifyPIPE(this->pipeRead).str() + ">]";
   }
-  std::string unitFlag;
-  if (!mergedUnitFlagInfo.disabledAsSet()) {
-    std::string iteratorsStr;
-    llvm::raw_string_ostream ss(iteratorsStr);
-    ss << "unitFlagAsSet(";
-    llvm::interleaveComma(
-        mergedUnitFlagInfo.getUnitFlagModesAsSet(/*compress=*/true), ss);
-    ss << ")";
-    unitFlag += ss.str();
-  }
-  if (!mergedUnitFlagInfo.disabledAsWait()) {
-    std::string iteratorsStr;
-    llvm::raw_string_ostream ss(iteratorsStr);
-    ss << "unitFlagAsWait(";
-    llvm::interleaveComma(
-        mergedUnitFlagInfo.getUnitFlagModesAsWait(/*compress=*/true), ss);
-    ss << ")";
-    unitFlag += (!unitFlag.empty() ? " " : "") + ss.str();
-  }
   ret += std::string(indent, ' ') + opStr + " " + coreTypeStr + " " + pipesStr +
-         " " + unitFlag + "\n";
+         " " + mergedUnitFlagInfo.str() + "\n";
   if (indent) {
     for (auto memInfo : this->readMemInfo) {
       ret += std::string(indent + 2, ' ') + "read: " + memInfo.str() + "\n";

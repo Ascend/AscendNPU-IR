@@ -167,6 +167,8 @@ class UnitFlagInfo : public UnitFlagInfoBase {
 public:
   Occurrence *linkedElementAsSet{nullptr};
   Occurrence *linkedElementAsWait{nullptr};
+  int64_t conflictPairIdAsSet{-1};
+  int64_t conflictPairIdAsWait{-1};
 
 public:
   UnitFlagInfo() = default;
@@ -179,7 +181,11 @@ public:
     UnitFlagInfoBase::reset();
     linkedElementAsSet = nullptr;
     linkedElementAsWait = nullptr;
+    conflictPairIdAsSet = -1;
+    conflictPairIdAsWait = -1;
   }
+
+  std::string str() const;
 
   void merge(const UnitFlagInfo &other, Occurrence *occ1, Occurrence *occ2,
              bool asSet = true, bool asWait = true) {
@@ -213,6 +219,8 @@ struct Occurrence {
       : op(op), parentOcc(parentOcc), depth(depth), syncIrIndex(syncIrIndex),
         startIndex(startIndex), endIndex(endIdx),
         memInfoTree1(this, syncIrIndex), memInfoTree2(this, syncIrIndex) {}
+
+  std::string str() const;
 
   // Return true if occ1 and occ2 have the same immediate parent occurrence.
   static bool sameScope(Occurrence *occ1, Occurrence *occ2);

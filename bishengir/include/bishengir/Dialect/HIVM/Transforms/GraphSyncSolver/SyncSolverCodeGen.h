@@ -29,6 +29,7 @@
 #include "mlir/Interfaces/LoopLikeInterface.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include <memory>
 #include <utility>
@@ -47,9 +48,13 @@ public:
   // In-memory hierarchical IR (Function -> Scopes -> Ops) used by the solver.
   std::unique_ptr<OperationBase> funcIr;
 
+  // Linearized occurrence sequence (syncIr): each Occurrence is one appearance
+  // of an operation in analysis order.
+  std::vector<std::unique_ptr<Occurrence>> syncIr;
+
   // Set of RW operations that expose unit-flag feature and need special
   // handling.
-  llvm::DenseSet<RWOperation *> unitFlagFeaturedOps;
+  llvm::SetVector<RWOperation *> unitFlagFeaturedOps;
 
   // Map sync ops to before/after operations.
   SyncMap syncMapBefore, syncMapAfter;
@@ -69,10 +74,10 @@ private:
       bufferSelectedMem;
 
   // Per-MMAD L1 op arguments collected during sync codegen insertion.
-  llvm::DenseMap<hivm::MmadL1Op, MmadL1SyncArgs> mmadl1SyncArgsMap;
+  llvm::MapVector<hivm::MmadL1Op, MmadL1SyncArgs> mmadl1SyncArgsMap;
 
   // Per-MMAD MxL1 op arguments collected during sync codegen insertion.
-  llvm::DenseMap<hivm::MmadMxL1Op, MmadMxL1SyncArgs> mmadMxL1SyncArgsMap;
+  llvm::MapVector<hivm::MmadMxL1Op, MmadMxL1SyncArgs> mmadMxL1SyncArgsMap;
 
   // Mapping to cache loop DB conditions used during codegen insertion.
   llvm::DenseMap<LoopLikeOpInterface, Value> loopDBCondMap;
@@ -93,6 +98,7 @@ public:
     syncMapAfter = std::move(syncAfter);
     funcOp = solver->funcOp;
     funcIr = std::move(solver->funcIr);
+    syncIr = std::move(solver->syncIr);
     unitFlagFeaturedOps = std::move(solver->unitFlagFeaturedOps);
     customMacroCodegen.setResolvedSlotEventIds(
         std::move(solver->customMacroSync.resolvedSlotEventIds()));

@@ -94,10 +94,7 @@ void GraphSyncSolverPass::runOnOperation() {
 
   DEBUG_WITH_TYPE("gss-print-unrolled-sync-ir", {
     for (auto &occ : solver->syncIr) {
-      llvm::dbgs() << std::string(occ->depth, ' ') << occ->op->id << ' '
-                   << occ->syncIrIndex << ' ' << occ->startIndex << ' '
-                   << occ->endIndex << '\n';
-      llvm::dbgs() << occ->op->str(occ->depth, false) << '\n';
+      llvm::dbgs() << occ->str() << '\n';
     }
   });
 
@@ -114,12 +111,17 @@ void GraphSyncSolverPass::runOnOperation() {
     return signalPassFailure();
   }
 
-  CodeGenerator codeGen(std::move(solver));
-  codeGen.generateResultOps();
+  auto codeGen = std::make_unique<CodeGenerator>(std::move(solver));
+  codeGen->generateResultOps();
 
   LLVM_DEBUG({
-    codeGen.generateFuncIrResultOps();
-    llvm::dbgs() << "after:\n" << codeGen.funcIr->str(0, true) << '\n';
+    codeGen->generateFuncIrResultOps();
+    llvm::dbgs() << "after:\n" << codeGen->funcIr->str(0, true) << '\n';
+  });
+  DEBUG_WITH_TYPE("gss-print-unrolled-sync-ir", {
+    for (auto &occ : codeGen->syncIr) {
+      llvm::dbgs() << occ->str() << '\n';
+    }
   });
 }
 

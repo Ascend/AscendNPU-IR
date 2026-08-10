@@ -60,7 +60,7 @@ public:
   std::vector<std::unique_ptr<Occurrence>> syncIr;
 
   // RW ops that can use unit-flag sync operations.
-  llvm::DenseSet<RWOperation *> unitFlagFeaturedOps;
+  llvm::SetVector<RWOperation *> unitFlagFeaturedOps;
 
   // Chosen ConflictPairs (and persistent / erased variants kept across passes).
   std::vector<std::unique_ptr<ConflictPair>> chosenConflictedPairs,

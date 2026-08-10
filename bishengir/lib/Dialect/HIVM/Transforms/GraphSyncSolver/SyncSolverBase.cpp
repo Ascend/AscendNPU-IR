@@ -2062,6 +2062,16 @@ ConflictPair *SyncSolverBase::handleUnitFlagConflict(
 
   auto *setOcc = occ1;
   auto *waitOcc = occ2;
+  Occurrence *parOcc1 = setOcc->parentOcc;
+  Occurrence *parOcc2 = waitOcc->parentOcc;
+  if (isa<MmadL0Operation>(setOcc->op)) {
+    parOcc1 = parOcc1->getNthParent(3);
+    parOcc1 = parOcc1->parentOcc;
+  }
+  if (isa<MmadL0Operation>(waitOcc->op)) {
+    parOcc2 = parOcc2->getNthParent(3);
+    parOcc2 = parOcc2->parentOcc;
+  }
 
   auto conflictPair = std::make_unique<ConflictPair>(
       rwOp1, rwOp2, setOcc->op, waitOcc->op, setOcc, waitOcc, corePipeSrc,
@@ -2074,6 +2084,8 @@ ConflictPair *SyncSolverBase::handleUnitFlagConflict(
   conflictPair->replacedWithUnitFlag = true;
   conflictPair->dontCheckForConflict = true;
   conflictPair->isInnerBackward = isBackwardSync(setOcc, waitOcc);
+  conflictPair->parOcc1 = parOcc1;
+  conflictPair->parOcc2 = parOcc2;
 
 #ifndef NDEBUG
   Occurrence *parentLCALoopOcc{nullptr};
@@ -2091,6 +2103,9 @@ ConflictPair *SyncSolverBase::handleUnitFlagConflict(
     }
   });
 #endif
+
+  occ1->unitFlagInfo.conflictPairIdAsSet = conflictPair->id;
+  occ2->unitFlagInfo.conflictPairIdAsWait = conflictPair->id;
 
   occ1->unitFlagInfo.merge(unitFlagInfo, occ1, occ2,
                            /*asSet=*/true, /*asWait=*/false);
