@@ -1522,3 +1522,24 @@ func.func @flatten_scf_if_scalar_result(%arg0: memref<?xi32> {tt.divisibility = 
   bufferization.materialize_in_destination %1 in writable %reinterpret_cast_0 : (tensor<1xi32>, memref<1xi32, strided<[1]>>) -> ()
   return
 }
+
+// -----
+// CHECK-LABEL: func.func @test_arange_multidim_extract_slice(
+// CHECK-SAME:                                     %[[ARG0:.*]]: tensor<100x2xi32>) -> tensor<100x2xi32>
+// CHECK: %[[ARG0_COLLAPSED:.*]] = tensor.collapse_shape %[[ARG0]] {{\[\[}}0, 1]] : tensor<100x2xi32> into tensor<200xi32>
+// CHECK: %[[ARANGE:.*]] = hfusion.arange offset[%[[C0:.*]]] strides[%[[C1:.*]]] outs({{.*}} : tensor<256xi32>) -> tensor<256xi32>
+// CHECK: %[[SLICE:.*]] = tensor.extract_slice %[[ARANGE]][0] [200] [1] : tensor<256xi32> to tensor<200xi32>
+// CHECK: %[[ADDED:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%[[ARG0_COLLAPSED]], %[[SLICE]] : tensor<200xi32>, tensor<200xi32>)
+// CHECK: %[[EXPANDED:.*]] = tensor.expand_shape %[[ADDED]] {{\[\[}}0, 1]] output_shape {{\[}}100, 2] : tensor<200xi32> into tensor<100x2xi32>
+// CHECK: return %[[EXPANDED]] : tensor<100x2xi32>
+func.func @test_arange_multidim_extract_slice(%arg0: tensor<100x2xi32>) -> tensor<100x2xi32> {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c2 = arith.constant 2 : index
+  %0 = tensor.empty() : tensor<128x2xi32>
+  %1 = hfusion.arange offset[%c0] strides[%c2, %c1] outs(%0 : tensor<128x2xi32>) -> tensor<128x2xi32>
+  %2 = tensor.extract_slice %1[0, 0] [100, 2] [1, 1] : tensor<128x2xi32> to tensor<100x2xi32>
+  %3 = tensor.empty() : tensor<100x2xi32>
+  %4 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%arg0, %2 : tensor<100x2xi32>, tensor<100x2xi32>) outs(%3 : tensor<100x2xi32>) -> tensor<100x2xi32>
+  return %4 : tensor<100x2xi32>
+}

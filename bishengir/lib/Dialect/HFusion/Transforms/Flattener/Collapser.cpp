@@ -1291,6 +1291,7 @@ void Flattener::adjustArangeOp(hfusion::ArangeOp arangeOp,
   auto result = arangeOp.getResultTensor();
   if (result == nullptr)
     return;
+  auto previousResultType = cast<ShapedType>(result.getType());
   result.setType(newType);
   SmallVector<Value> newStrides;
   const SmallVector<Value> oldStrides = arangeOp.getStrides();
@@ -1304,7 +1305,7 @@ void Flattener::adjustArangeOp(hfusion::ArangeOp arangeOp,
   auto newArangeOp = builder.create<hfusion::ArangeOp>(
       arangeOp->getLoc(), arangeOp.getOffset(), newStrides, arangeOp.getInit());
   collapsePropagateOrVerify(newArangeOp.getResult(0), result);
-  updatePreviousType(newArangeOp.getResult(0), result.getType());
+  updatePreviousType(newArangeOp.getResult(0), previousResultType);
   replaceOpUsage(arangeOp, newArangeOp);
   eraseOp(arangeOp);
 }
