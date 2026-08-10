@@ -1,6 +1,3 @@
-// REQUIRES: regbase
-// TODO: enable this testcase after migrating hivm.hir.anchor (AnchorOp) to
-// A3's HIVM dialect
 // RUN: bishengir-opt %s --hfusion-auto-vectorize-v2 -split-input-file | FileCheck %s
 
 // CHECK-LABEL: func.func @calc_cube_vector_mix_aiv

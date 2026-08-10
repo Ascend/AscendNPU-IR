@@ -1,4 +1,3 @@
-// REQUIRES: regbase
 // RUN: bishengir-opt --split-input-file -hfusion-auto-vectorize-v2 %s
 
 #map = affine_map<(d0, d1) -> (d0, d1)>
