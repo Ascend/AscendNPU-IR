@@ -19,3 +19,8 @@
 /bishengir/**/*MultiBuffer* @huangyujun123 @hid90099092 @tanshengshun
 /bishengir/test/**/*multi-buffer* @huangyujun123 @hid90099092 @tanshengshun
 /bishengir/test/**/*multibuffer* @huangyujun123 @hid90099092 @tanshengshun
+
+# Sync management.
+/bishengir/**/GraphSyncSolver/* @AmmarDab3an @tanzirui123123 @hi_sy @hid90099092 @tanshengshun
+/bishengir/**/InjectSync/* @AmmarDab3an @tanzirui123123 @hi_sy @hid90099092 @tanshengshun
+/bishengir/**/InjectBlockSync.* @AmmarDab3an @tanzirui123123 @hi_sy @hid90099092 @tanshengshun
