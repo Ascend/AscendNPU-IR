@@ -1,5 +1,7 @@
 set(A5_REGBASE_CUBE_SOURCES
     Copy1D.cpp
+    Copy2D.cpp
+    Copy3D.cpp
     Fixpipe.cpp
     GlobalMmad.cpp
     LocalMmad.cpp

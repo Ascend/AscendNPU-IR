@@ -27,9 +27,25 @@ check_inputs_of_load_gm_to_cbuf_2d_core(memref_t<__gm__ T, 2> *src,
   auto stride1_cbuf = dst->strides[1];
   assert(isAddress32ByteAligned(dst_ptr) &&
          "The starting address of dst must be 32byte aligned.");
+#if defined(__DAV_C310__)
+  const bool contiguous_last =
+      src->strides[1] == 1 && stride1_cbuf == 1;
+  if (contiguous_last) {
+    assert(is_gm_to_cbuf_2d_transfer_supported<T>(
+               src->sizes[0], src->sizes[1], src->strides[0],
+               stride0_cbuf) &&
+           "The L1 rows must use a valid ALIGN V2 compact or normal layout.");
+  } else {
+    assert(is_gm_to_cbuf_3d_contiguous_layout_supported<T>(
+               src->sizes[0], src->sizes[1], 1, src->strides[0],
+               src->strides[1], stride0_cbuf, stride1_cbuf) &&
+           "The decomposed L1 layout must have a valid loop axis.");
+  }
+#else
   assert(((isSizeAlignedToBlock<T>(stride0_cbuf) || stride0_cbuf == 1) &&
           (isSizeAlignedToBlock<T>(stride1_cbuf) || stride1_cbuf == 1)) &&
          "The dst strides[0]/strides[1] must be 1 or aligned to block.");
+#endif
 #endif
 }
 
@@ -94,8 +110,10 @@ REGISTE_DMA_L1_LOAD(2, int16_t);
 REGISTE_DMA_L1_LOAD(2, uint16_t);
 REGISTE_DMA_L1_LOAD(2, int32_t);
 REGISTE_DMA_L1_LOAD(2, uint32_t);
+#if !defined(__DAV_C310__)
 REGISTE_DMA_L1_LOAD(2, int64_t);
 REGISTE_DMA_L1_LOAD(2, uint64_t);
+#endif
 REGISTE_DMA_L1_LOAD(2, half);
 REGISTE_DMA_L1_LOAD(2, float);
 REGISTE_DMA_L1_LOAD(2, bfloat16_t);
