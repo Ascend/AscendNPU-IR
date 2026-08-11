@@ -147,6 +147,43 @@ public:
     return success();
   }
 };
+
+// Convert `memref.extract_aligned_pointer_as_index %src` into:
+//   %ptr    = unrealized_conversion_cast %src : memref<...> to !tt.ptr<...>
+//   %addr64 = tt.ptr_to_int %ptr : !tt.ptr<...> -> i64
+//   %addridx = arith.index_cast %addr64 : i64 to index
+//
+// The op is used to inspect whether an optional pointer argument is null.
+// Stage1 must lower it so Stage2 (FuncOpPattern) no longer sees a memref op
+// that references a memref-typed block argument.
+class ExtractAlignedPointerAsIndexOpPattern
+    : public OpConversionPattern<memref::ExtractAlignedPointerAsIndexOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(memref::ExtractAlignedPointerAsIndexOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    auto memrefTy = op.getSource().getType();
+    Type ptrTy = hivm::HIVMToTritonTypeConvert(memrefTy);
+
+    // Bridge the memref operand to a Triton pointer.
+    auto castOp = rewriter.create<UnrealizedConversionCastOp>(
+        loc, ptrTy, adaptor.getSource());
+    Value ptr = castOp.getResult(0);
+
+    // Cast the pointer to a 64-bit integer address.
+    auto i64Ty = rewriter.getI64Type();
+    auto addr64 = rewriter.create<triton::PtrToIntOp>(loc, i64Ty, ptr);
+
+    // Convert the integer address to index to match the original result type.
+    auto indexTy = rewriter.getIndexType();
+    auto addridx = rewriter.create<arith::IndexCastOp>(loc, indexTy, addr64);
+    rewriter.replaceOp(op, addridx);
+    return success();
+  }
+};
 } // namespace
 
 void mlir::hivm::populateReinterpretCastToUnrealizedCastPatterns(
@@ -158,4 +195,9 @@ void mlir::hivm::populateReinterpretCastToUnrealizedCastPatterns(
 
 void mlir::hivm::populateMemRefLoadToTritonPatterns(RewritePatternSet &patterns) {
   patterns.add<MemRefLoadOpPattern>(patterns.getContext());
+}
+
+void mlir::hivm::populateExtractAlignedPointerToTritonPatterns(
+    RewritePatternSet &patterns) {
+  patterns.add<ExtractAlignedPointerAsIndexOpPattern>(patterns.getContext());
 }
