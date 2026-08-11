@@ -96,7 +96,7 @@ CATLASS_DEVICE void copyTransposedAInTypedFormat(
   // bytes physically.
   auto l0ATileMx =
       l0ATensorMx[pingPongId * (ArchTag::L0A_SIZE / 2) /
-        sizeof(ElementAMx)];
+                   sizeof(ElementAMx)];
   auto tensorL0AMx = tla::MakeTensor(
       l0ATileMx,
       tla::MakeLayout<ElementAMx, LayoutTagL0A>(actualM, kL0Actual),
@@ -302,13 +302,24 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
 
   AscendCBisheng::LocalTensor<ElementACC> btTile = bTTensor;
 
-  uint32_t l0K =
-      RoundDown<64>(min(L0A_PINGPONG_BUF_SIZE / sizeof(ElementA) /
-                            RoundUp<L1AAlignHelper::M_ALIGNED>(actualM) /
-                            L0A_ELE_NUM_PER_C0 * L0A_ELE_NUM_PER_C0,
-                        L0B_PINGPONG_BUF_SIZE / sizeof(ElementB) /
-                            RoundUp<L1BAlignHelper::N_ALIGNED>(actualN) /
-                            L0B_ELE_NUM_PER_C0 * L0B_ELE_NUM_PER_C0));
+  bool enableDoubleBuffer = true;
+  uint32_t l0K = RoundDown<64>(
+      min(L0A_PINGPONG_BUF_SIZE / sizeof(ElementA) /
+              RoundUp<L1AAlignHelper::M_ALIGNED>(actualM) /
+              L0A_ELE_NUM_PER_C0 * L0A_ELE_NUM_PER_C0,
+          L0B_PINGPONG_BUF_SIZE / sizeof(ElementB) /
+              RoundUp<L1BAlignHelper::N_ALIGNED>(actualN) /
+              L0B_ELE_NUM_PER_C0 * L0B_ELE_NUM_PER_C0));
+  if (l0K == 0) {
+    enableDoubleBuffer = false;
+    l0K = RoundDown<64>(
+        min(2 * L0A_PINGPONG_BUF_SIZE / sizeof(ElementA) /
+                RoundUp<L1AAlignHelper::M_ALIGNED>(actualM) /
+                L0A_ELE_NUM_PER_C0 * L0A_ELE_NUM_PER_C0,
+            2 * L0B_PINGPONG_BUF_SIZE / sizeof(ElementB) /
+                RoundUp<L1BAlignHelper::N_ALIGNED>(actualN) /
+                L0B_ELE_NUM_PER_C0 * L0B_ELE_NUM_PER_C0));
+  }
 
   uint32_t kL0Loop = CeilDiv(actualK, l0K);
 
@@ -316,7 +327,7 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
     uint32_t kL0Actual =
         (kL0Idx < kL0Loop - 1) ? l0K : (actualK - kL0Idx * l0K);
     // Get ping/pong id (0 or 1) — unified with L1Mmad using ID0/ID1
-    uint32_t pingPongId = getL1MmadPingPongId();
+    uint32_t pingPongId = enableDoubleBuffer ? getL1MmadPingPongId() : 0;
     uint32_t l0EventId = !pingPongId ? EVENT_ID0 : EVENT_ID1;
 
     // Wait for mmad finished
@@ -562,22 +573,33 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
 
   AscendCBisheng::LocalTensor<ElementACC> btTile = bTTensor;
 
-  uint32_t l0K =
-      RoundDown<64>(min(L0A_PINGPONG_BUF_SIZE / sizeof(ElementA) /
-                            RoundUp<L1AAlignHelper::M_ALIGNED>(actualM) /
-                            L0A_ELE_NUM_PER_C0 * L0A_ELE_NUM_PER_C0,
-                        L0B_PINGPONG_BUF_SIZE / sizeof(ElementB) /
-                            RoundUp<L1BAlignHelper::N_ALIGNED>(actualN) /
-                            L0B_ELE_NUM_PER_C0 * L0B_ELE_NUM_PER_C0));
-
   actualK *= getMxFormatKFactor(lhsFormat);
+  bool enableDoubleBuffer = true;
+  uint32_t l0K = RoundDown<64>(
+      min(L0A_PINGPONG_BUF_SIZE / sizeof(ElementA) /
+              RoundUp<L1AAlignHelper::M_ALIGNED>(actualM) /
+              L0A_ELE_NUM_PER_C0 * L0A_ELE_NUM_PER_C0,
+          L0B_PINGPONG_BUF_SIZE / sizeof(ElementB) /
+              RoundUp<L1BAlignHelper::N_ALIGNED>(actualN) /
+              L0B_ELE_NUM_PER_C0 * L0B_ELE_NUM_PER_C0));
+  if (l0K == 0) {
+    enableDoubleBuffer = false;
+    l0K = RoundDown<64>(
+        min(2 * L0A_PINGPONG_BUF_SIZE / sizeof(ElementA) /
+                RoundUp<L1AAlignHelper::M_ALIGNED>(actualM) /
+                L0A_ELE_NUM_PER_C0 * L0A_ELE_NUM_PER_C0,
+            2 * L0B_PINGPONG_BUF_SIZE / sizeof(ElementB) /
+                RoundUp<L1BAlignHelper::N_ALIGNED>(actualN) /
+                L0B_ELE_NUM_PER_C0 * L0B_ELE_NUM_PER_C0));
+  }
+
   uint32_t kL0Loop = CeilDiv(actualK, l0K);
 
   for (int kL0Idx = 0; kL0Idx < kL0Loop; kL0Idx++) {
     uint32_t kL0Actual =
         (kL0Idx < kL0Loop - 1) ? l0K : (actualK - kL0Idx * l0K);
     // Get ping/pong id (0 or 1) — unified with L1Mmad using ID0/ID1
-    uint32_t pingPongId = getL1MmadPingPongId();
+    uint32_t pingPongId = enableDoubleBuffer ? getL1MmadPingPongId() : 0;
     uint32_t l0EventId = !pingPongId ? EVENT_ID0 : EVENT_ID1;
 
     // Wait for mmad finished
