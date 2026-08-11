@@ -146,14 +146,17 @@ static void convertMultiElemExtract(tensor::ExtractOp extractOp,
   builder.setInsertionPoint(extractOp);
   Location loc = extractOp.getLoc();
 
-  SmallVector<OpFoldResult> offsets = {extractOp.getIndices().front()};
-  SmallVector<OpFoldResult> sizes = {builder.getIndexAttr(1)};
-  SmallVector<OpFoldResult> strides = {builder.getIndexAttr(1)};
+  auto indices = extractOp.getIndices();
+  SmallVector<OpFoldResult> offsets(indices.begin(), indices.end());
+  SmallVector<OpFoldResult> sizes(indices.size(), builder.getIndexAttr(1));
+  SmallVector<OpFoldResult> strides(indices.size(), builder.getIndexAttr(1));
   Value subview = builder.create<memref::SubViewOp>(
       loc, buffer, offsets, sizes, strides);
 
   Value c0 = builder.create<arith::ConstantIndexOp>(loc, 0);
-  Value scalar = builder.create<memref::LoadOp>(loc, subview, ValueRange{c0});
+  SmallVector<Value> loadIndices(indices.size(), c0);
+  Value scalar = builder.create<memref::LoadOp>(loc, subview,
+                                                ValueRange(loadIndices));
 
   extractOp.getResult().replaceAllUsesWith(scalar);
   extractOp.erase();
