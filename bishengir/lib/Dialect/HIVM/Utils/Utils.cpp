@@ -32,8 +32,8 @@
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Tensor/Utils/Utils.h"
@@ -1149,10 +1149,91 @@ hivm::CreateSyncBlockLockOp createSyncBlockLockVar(OpBuilder &builder,
   auto elementType = builder.getI64Type();
   Type memrefType = MemRefType::get(shape, elementType);
 
-  auto createSyncBlockLockOp =
-      builder.create<hivm::CreateSyncBlockLockOp>(loc, memrefType,
-                                                  /*workspaceArg*/ Value());
-  return createSyncBlockLockOp;
+  return builder.create<hivm::CreateSyncBlockLockOp>(loc, memrefType,
+                                                     /*workspaceArg*/ Value());
+}
+
+static hivm::SyncBlockLockOrderingAttr
+getSyncBlockLockOrderingAttr(MLIRContext *ctx,
+                             hivm::SyncBlockLockOrdering ordering) {
+  return hivm::SyncBlockLockOrderingAttr::get(ctx, ordering);
+}
+
+hivm::SyncBlockLockOp
+createSyncBlockLock(OpBuilder &builder, Location loc, Value lockVar,
+                    hivm::SyncBlockLockOrdering ordering) {
+  return builder.create<hivm::SyncBlockLockOp>(
+      loc, lockVar,
+      getSyncBlockLockOrderingAttr(builder.getContext(), ordering));
+}
+
+hivm::SyncBlockUnlockOp
+createSyncBlockUnlock(OpBuilder &builder, Location loc, Value lockVar,
+                      hivm::SyncBlockLockOrdering ordering) {
+  return builder.create<hivm::SyncBlockUnlockOp>(
+      loc, lockVar,
+      getSyncBlockLockOrderingAttr(builder.getContext(), ordering));
+}
+
+hivm::SyncBlockLockOrdering getSyncBlockLockOpOrdering(Operation *op) {
+  assert(op && "expected sync block lock-related op");
+  // Legacy unit attr from older producers (Triton / AscendNPU-IR). Prefer the
+  // native `$ordering` enum for new IR; keep recognizing this until upstream
+  // migrates. Check discardable attrs explicitly: properties-based ops store
+  // this marker outside inherent `$ordering`.
+  if (op->getDiscardableAttr(SyncBlockLockUnorderedAttr::name) ||
+      op->hasAttr(SyncBlockLockUnorderedAttr::name))
+    return hivm::SyncBlockLockOrdering::Unordered;
+
+  if (auto lockOp = dyn_cast<hivm::SyncBlockLockOp>(op))
+    return lockOp.getOrdering();
+  if (auto unlockOp = dyn_cast<hivm::SyncBlockUnlockOp>(op))
+    return unlockOp.getOrdering();
+  if (auto freeOp = dyn_cast<hivm::FreeLockVarOp>(op))
+    return freeOp.getOrdering();
+  return hivm::SyncBlockLockOrdering::Ordered;
+}
+
+static std::optional<hivm::SyncBlockLockOrdering>
+getOrderingFromLockUsers(Value lockVar) {
+  for (Operation *user : lockVar.getUsers()) {
+    if (isa<hivm::SyncBlockLockOp, hivm::SyncBlockUnlockOp,
+            hivm::FreeLockVarOp>(user))
+      return getSyncBlockLockOpOrdering(user);
+  }
+  return std::nullopt;
+}
+
+hivm::SyncBlockLockOrdering getSyncBlockLockOrdering(Value lockVar) {
+  Value current = lockVar;
+  while (current) {
+    if (auto orderingFromUsers = getOrderingFromLockUsers(current))
+      return *orderingFromUsers;
+
+    if (auto createOp =
+            current.getDefiningOp<hivm::CreateSyncBlockLockOp>()) {
+      // Legacy: unordered marker on create_sync_block_lock itself.
+      return getSyncBlockLockOpOrdering(createOp);
+    }
+
+    if (auto viewOp = current.getDefiningOp<memref::ViewOp>()) {
+      current = viewOp.getViewSource();
+      continue;
+    }
+
+    if (auto castOp = current.getDefiningOp<memref::CastOp>()) {
+      current = castOp.getSource();
+      continue;
+    }
+
+    if (auto subviewOp = current.getDefiningOp<memref::SubViewOp>()) {
+      current = subviewOp.getSource();
+      continue;
+    }
+
+    break;
+  }
+  return hivm::SyncBlockLockOrdering::Ordered;
 }
 
 std::vector<std::pair<Value, Value>> getOperationAliasInfo(Operation *op) {

@@ -138,9 +138,10 @@ module {
   func.func @test_sync_block_lock_unlock_unordered() attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
     %lock = memref.alloc() : memref<1xi64>
     // CHECK: call @sync_block_lock_unordered
-    hivm.hir.sync_block_lock {hivm.sync_block_lock_unordered} lock_var(%lock : memref<1xi64>)
+    hivm.hir.sync_block_lock {ordering = #hivm.ordering<unordered>} lock_var(%lock : memref<1xi64>)
     // CHECK: call @sync_block_unlock_unordered
-    hivm.hir.sync_block_unlock {hivm.sync_block_lock_unordered} lock_var(%lock : memref<1xi64>)
+    hivm.hir.sync_block_unlock {ordering = #hivm.ordering<unordered>} lock_var(%lock : memref<1xi64>)
+    // CHECK-NOT: ordering
     return
   }
 }
@@ -150,11 +151,12 @@ module {
   func.func @test_sync_block_lock_unlock_unordered_with_subblock() attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
     %lock = memref.alloc() : memref<1xi64>
     // CHECK: call @sync_block_lock_unordered_with_subblock
-    hivm.hir.sync_block_lock {hivm.sync_block_lock_unordered, hivm.sync_block_lock_with_subblock}
+    hivm.hir.sync_block_lock {hivm.sync_block_lock_with_subblock, ordering = #hivm.ordering<unordered>}
         lock_var(%lock : memref<1xi64>)
     // CHECK: call @sync_block_unlock_unordered_with_subblock
-    hivm.hir.sync_block_unlock {hivm.sync_block_lock_unordered, hivm.sync_block_lock_with_subblock}
+    hivm.hir.sync_block_unlock {hivm.sync_block_lock_with_subblock, ordering = #hivm.ordering<unordered>}
         lock_var(%lock : memref<1xi64>)
+    // CHECK-NOT: ordering
     return
   }
 }

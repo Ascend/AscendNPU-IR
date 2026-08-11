@@ -2551,6 +2551,20 @@ module {
 }
 
 // -----
+module attributes {hacc.target = #hacc.target<"Ascend910B4">} {
+  // CHECK-LABEL: func @test_sync_block_lock_unlock_unordered
+  func.func @test_sync_block_lock_unlock_unordered() attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %lock = memref.alloc() : memref<1xi64>
+    // CHECK: call @sync_block_lock_unordered
+    hivm.hir.sync_block_lock {ordering = #hivm.ordering<unordered>} lock_var(%lock : memref<1xi64>)
+    // CHECK: call @sync_block_unlock_unordered
+    hivm.hir.sync_block_unlock {ordering = #hivm.ordering<unordered>} lock_var(%lock : memref<1xi64>)
+    // CHECK-NOT: ordering
+    return
+  }
+}
+
+// -----
 module {
   func.func @test_sort_op_check_1d() attributes {hacc.function_kind = #hacc.function_kind<DEVICE>} {
     // CHECK: @sort_1d_float
