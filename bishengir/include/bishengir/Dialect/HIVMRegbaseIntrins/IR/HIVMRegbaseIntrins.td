@@ -2456,12 +2456,12 @@ def PDintlvB32InstrOp: PDintlvInstrOp<"hivm.pdintlv.b32">;
 def PDintlvB16InstrOp: PDintlvInstrOp<"hivm.pdintlv.b16">;
 def PDintlvB8InstrOp: PDintlvInstrOp<"hivm.pdintlv.b8">;
 
-class VpackInstrOp<string mnemonic> :
-  HIVMRegbaseIntrins_Op</*string opName=*/mnemonic,
-                /*list<int> overloadedResults=*/[0],
-                /*list<int> overloadedOperands=*/[0],
-                /*list<Trait> traits=*/[],
-                /*int numResults=*/1> {
+class VpackInstrOp<string mnemonic>
+    : HIVMRegbaseIntrins_Op</*string opName=*/mnemonic,
+                            /*list<int> overloadedResults=*/[],
+                            /*list<int> overloadedOperands=*/[0],
+                            /*list<Trait> traits=*/[],
+                            /*int numResults=*/1> {
   let arguments = (ins ValidVector:$src,
                        I32:$part);
   let results = (outs ValidVector:$res);
@@ -2469,12 +2469,12 @@ class VpackInstrOp<string mnemonic> :
 
 def VpackInstrOp: VpackInstrOp<"hivm.vpack.x">;
 
-class UnpackInstrOp<string mnemonic> :
-  HIVMRegbaseIntrins_Op</*string opName=*/mnemonic,
-                /*list<int> overloadedResults=*/[0],
-                /*list<int> overloadedOperands=*/[0],
-                /*list<Trait> traits=*/[],
-                /*int numResults=*/1> {
+class UnpackInstrOp<string mnemonic>
+    : HIVMRegbaseIntrins_Op</*string opName=*/mnemonic,
+                            /*list<int> overloadedResults=*/[0],
+                            /*list<int> overloadedOperands=*/[],
+                            /*list<Trait> traits=*/[],
+                            /*int numResults=*/1> {
   let arguments = (ins ValidVector:$src,
                        I32:$part);
   let results = (outs ValidVector:$res);

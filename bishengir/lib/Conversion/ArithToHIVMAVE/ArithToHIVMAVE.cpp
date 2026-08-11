@@ -1416,7 +1416,9 @@ struct ConstantOpToHivmVCIVCPLowering
       if (!resVecType || !isOneDimLikeVecType(resVecType))
         llvm::report_fatal_error("Not a 1D-like vector");
 
-      int boundCst = resVecType.getShape().back();
+      // Only the first valueCheckRange lanes take the generated sequence; the
+      // tail must keep the padding value.
+      int boundCst = static_cast<int>(valueCheckRange);
       if (boundCst < 256) {
         auto trueShape = rewriter.create<arith::ConstantIndexOp>(loc, boundCst);
         p = rewriter.create<hivmave::VFPltOp>(

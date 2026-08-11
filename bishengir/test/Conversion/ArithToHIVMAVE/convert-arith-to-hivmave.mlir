@@ -523,3 +523,23 @@ func.func @trunci_i64_to_i8_ui2si_sat(%arg0: memref<32xi64, #hivm.address_space<
   ave.hir.masked_store <NORM_B8> %arg1[%c0], %mask, %1 : memref<32xi8, #hivm.address_space<ub>>, vector<32xi1>, vector<32xi8>
   return
 }
+
+// -----
+
+// An index constant whose arithmetic sequence (0, 32, ..., 3168) is followed
+// by a zero tail of a length with no pge pattern (100 of 128 lanes): only the
+// first 100 lanes may take the sequence, the tail must stay 0.
+// CHECK-LABEL: @tail_padding_non_pattern_prefix
+// CHECK: %[[VCI:.*]] = ave.hir.vci %{{.*}}, <INCREASE> : i16, vector<128xi16>
+// CHECK: %[[SEQ:.*]] = ave.hir.vmuls %[[VCI]], %{{.*}}, %{{.*}} : vector<128xi16>, i16, vector<128xi1>
+// CHECK: %[[ZERO:.*]] = ave.hir.broadcast
+// CHECK: %[[C100:.*]] = arith.constant 100 : index
+// CHECK: %[[PREFIX:.*]], %{{.*}} = ave.hir.plt %[[C100]] : vector<128xi1>, index
+// CHECK: ave.hir.vsel %[[PREFIX]], %[[SEQ]], %[[ZERO]] : vector<128xi1>, vector<128xi16>
+func.func @tail_padding_non_pattern_prefix(%arg0: memref<200x1xi8, strided<[16, 1]>, #hivm.address_space<ub>>) -> vector<128xi16> attributes {hivm.vector_function} {
+  %c0 = arith.constant 0 : index
+  %cst = arith.constant dense<"0x00002000400060008000A000C000E00000012001400160018001A001C001E00100022002400260028002A002C002E00200032003400360038003A003C003E00300042004400460048004A004C004E00400052005400560058005A005C005E00500062006400660068006A006C006E00600072007400760078007A007C007E00700082008400860088008A008C008E00800092009400960098009A009C009E009000A200A400A600A800AA00AC00AE00A000B200B400B600B800BA00BC00BE00B000C200C400C600C0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"> : vector<128xi16>
+  %mask = ave.hir.pge <ALL> : vector<128xi1>
+  %0 = ave.hir.vgather %arg0[%c0, %c0] [%cst], %mask : memref<200x1xi8, strided<[16, 1]>, #hivm.address_space<ub>>, vector<128xi16>, vector<128xi1> into vector<128xi16>
+  return %0 : vector<128xi16>
+}
