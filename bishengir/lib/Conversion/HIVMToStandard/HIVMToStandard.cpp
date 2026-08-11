@@ -901,11 +901,13 @@ private:
     auto dstAddrSpace =
         dyn_cast<AddressSpaceAttr>(dstMemSpaceAttr).getAddressSpace();
     if (dstAddrSpace == AddressSpace::L1) {
-      // Load GM->L1, only support 1D with continuous stride
-      // TODO: support 1,2,3d load and relax the limitation
-      MemRefType mem = dyn_cast<MemRefType>(op.getSrc().getType());
-      assert((mem.getRank() == 1) &&
-             "when Load GM->L1, only support 1D with continuous stride");
+      // Load GM->L1, supported by load_gm_to_cbuf_{1,2,3}d templates.
+      MemRefType mem = cast<MemRefType>(op.getSrc().getType());
+      int maxOpRank = cast<OpWithLibraryFunction>(op.getOperation())
+                          .getOpLibraryMaxRank()
+                          .value();
+      assert((mem.getRank() >= 1 && mem.getRank() <= maxOpRank) &&
+             "when Load GM->L1, only support up to 3D copy");
       return true;
     }
     return false;
