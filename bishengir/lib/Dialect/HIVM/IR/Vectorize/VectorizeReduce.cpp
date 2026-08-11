@@ -136,19 +136,17 @@ LogicalResult VReduceOp::vectorize(RewriterBase &rewriter,
   Value finalResult = rewriter.create<vector::ShapeCastOp>(
       loc, outputVectorType, reduced);
 
-  // Write result back
-  bool isTensorSemantics = getNumResults() > 0;
-  Value destOperand = isTensorSemantics ? getResult().front() : getDst()[0];
-
+  // Write into the DPS init; for tensor semantics replace the op result.
+  Value destOperand = getDstValue();
   auto writeOp = rewriter.create<vector::TransferWriteOp>(
       loc, TypeRange(destOperand.getType()), finalResult, destOperand,
       indices, identityMap, /*mask=*/Value(),
       rewriter.getBoolArrayAttr(inBounds));
-  if (isTensorSemantics) {
-    rewriter.replaceAllUsesWith(getResult().front(), writeOp.getResult());
-  } else {
-    rewriter.eraseOp(*this);
+  if (getNumResults() > 0) {
+    rewriter.replaceAllUsesExcept(getResult().front(), writeOp.getResult(),
+                                  writeOp);
   }
+  rewriter.eraseOp(*this);
 
   return success();
 }
