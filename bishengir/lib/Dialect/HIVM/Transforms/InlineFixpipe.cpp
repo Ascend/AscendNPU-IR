@@ -232,33 +232,20 @@ Operation *getInsertPoint(Operation *op, int &resultIndx) {
   auto users = op->getResult(resultIndx).getUsers();
   std::set<scf::YieldOp> yieldOperands;
 
-  if (isRegBasedArch(op)) {
-    int32_t count = 0;
+  int32_t count = 0;
 
-    for (auto *user : users) {
-      if (!isa<hivm::DebugOp>(user))
-        count++;
-      if (!isa<scf::YieldOp>(user) ||
-          !needYieldOut(user, op->getResult(resultIndx))) {
-        continue;
-      } else {
-        yieldOperands.emplace(user);
-      }
-    }
-    if (count > 1)
-      return op;
-  } else {
-    for (auto *user : users) {
-      // TODO: add auto tracedDownUser = traceDown(user) and use tracedDownUser
-      // to judge
-      auto forOp = user->getParentOfType<scf::ForOp>();
-      if (!isa<scf::YieldOp>(user) || !forOp) {
-        continue;
-      } else {
-        yieldOperands.emplace(user);
-      }
+  for (auto *user : users) {
+    if (!isa<hivm::DebugOp>(user))
+      count++;
+    if (!isa<scf::YieldOp>(user) ||
+        !needYieldOut(user, op->getResult(resultIndx))) {
+      continue;
+    } else {
+      yieldOperands.emplace(user);
     }
   }
+  if (count > 1)
+    return op;
 
   if (yieldOperands.empty()) {
     return op;
