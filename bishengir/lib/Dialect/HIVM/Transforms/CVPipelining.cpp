@@ -635,7 +635,15 @@ static void processWorkspaceOutputUsers(
         sliceIdx = builder.create<arith::ConstantIndexOp>(owner->getLoc(),
                                                           numMultibuffer - 1);
       } else {
-        sliceIdx = owner->getParentOfType<scf::ForOp>().getInductionVar();
+        // The nearest enclosing scf.for may be a loop cloned from the
+        // original pipeline body.  Its IV indexes data *within* one stage
+        // (for example, a 32-row tile) and must not be used to select the
+        // leading multibuffer dimension.  createNewLoops creates one
+        // top-level work-item loop directly under newLoop; its IV is the
+        // pipeline-stage index used by the corresponding producer as well.
+        Operation *workItemOp = getContainedParent(newLoop, owner);
+        auto workItemLoop = cast<scf::ForOp>(workItemOp);
+        sliceIdx = workItemLoop.getInductionVar();
       }
       Value alloc = getAllocWorkspace(operand.get());
       Value mappedTensor = expandedWorkspaceMap.lookup(alloc);

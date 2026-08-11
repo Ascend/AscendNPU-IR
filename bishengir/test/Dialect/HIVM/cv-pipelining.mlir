@@ -80,15 +80,19 @@ func.func @test_pipeline(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<wor
 // -----
 
 // Nested vector consumers (load inside inner scf.for) must still mark cube
-// fixpipe outputs as cross-workitem localOutputs.
+// fixpipe outputs as cross-workitem localOutputs.  The expanded workspace's
+// leading dimension is the pipeline-stage dimension, so it must be indexed by
+// the generated VECTOR work-item loop IV, not by the nested original loop IV.
 //
 // CHECK-LABEL: func.func @test_nested_cross_workitems
 // CHECK: scf.for
 // CHECK: scf.for
 // CHECK: hivm.loop_core_type = #hivm.tcore_type<CUBE>
-// CHECK: scf.for
-// CHECK: scf.for
-// CHECK: tensor.extract_slice
+// VECTOR work-item loop: this IV selects the multibuffer stage.
+// CHECK: scf.for %[[VECTOR_STAGE:[a-zA-Z0-9_]+]] =
+// Original nested loop: this IV only selects data within the stage.
+// CHECK:   scf.for %[[INNER_TILE:[a-zA-Z0-9_]+]] =
+// CHECK:     tensor.extract_slice {{.*}}[%[[VECTOR_STAGE]], 0, 0]
 // CHECK: pipeline.veconly
 // CHECK: hivm.loop_core_type = #hivm.tcore_type<VECTOR>
 func.func @test_nested_cross_workitems(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}) attributes {WorkspaceArgIdx = 0 : i16, func_dyn_memref_args = dense<[true]> : vector<1xi1>, global_kernel = "local", hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix"} {
