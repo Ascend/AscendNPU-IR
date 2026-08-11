@@ -705,6 +705,129 @@ module {
 // -----
 
 module {
+  func.func @init_vf(%arg0: tensor<16x16xf32>) -> tensor<16x16xf32> attributes {hivm.vector_function, no_inline} {
+    %cst = arith.constant dense<1.000000e+00> : vector<64xf32>
+    %0 = vector.constant_mask [16] : vector<64xi1>
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %1 = scf.for %arg2 = %c0 to %c16 step %c1 iter_args(%arg3 = %arg0) -> (tensor<16x16xf32>) {
+      %extracted_slice_0 = tensor.extract_slice %arg3[%arg2, %c0] [1, 16] [1, 1] : tensor<16x16xf32> to tensor<16xf32>
+      %3 = vector.transfer_write %cst, %extracted_slice_0[%c0], %0 {in_bounds = [true]} : vector<64xf32>, tensor<16xf32>
+      %inserted_slice = tensor.insert_slice %3 into %arg3[%arg2, %c0] [1, 16] [1, 1] : tensor<16xf32> into tensor<16x16xf32>
+      scf.yield %inserted_slice : tensor<16x16xf32>
+    }
+    return %1 : tensor<16x16xf32>
+  }
+
+  func.func @test_double_for_vf(%arg0: tensor<16x16xf32>, %arg1: tensor<16x16xf32>) -> tensor<16x16xf32> attributes {hivm.vector_function, no_inline} {
+    %cst = arith.constant dense<0.000000e+00> : vector<64xf32>
+    %cst_1 = arith.constant 0.000000e+00 : f32
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %0 = vector.constant_mask [16] : vector<64xi1>
+    %1 = scf.for %arg2 = %c0 to %c16 step %c1 iter_args(%arg3 = %arg1) -> (tensor<16x16xf32>) {
+      %extracted_slice = tensor.extract_slice %arg0[%arg2, %c0] [1, 16] [1, 1] : tensor<16x16xf32> to tensor<16xf32>
+      %extracted_slice_0 = tensor.extract_slice %arg3[%arg2, %c0] [1, 16] [1, 1] : tensor<16x16xf32> to tensor<16xf32>
+      %2 = vector.transfer_read %extracted_slice[%c0], %cst_1, %0 {in_bounds = [true]} : tensor<16xf32>, vector<64xf32>
+      %3 = vector.transfer_write %2, %extracted_slice_0[%c0], %0 {in_bounds = [true]} : vector<64xf32>, tensor<16xf32>
+      %inserted_slice = tensor.insert_slice %3 into %arg3[%arg2, %c0] [1, 16] [1, 1] : tensor<16xf32> into tensor<16x16xf32>
+      scf.yield %inserted_slice : tensor<16x16xf32>
+    }
+    %2 = scf.for %arg2 = %c0 to %c16 step %c1 iter_args(%arg3 = %1) -> (tensor<16x16xf32>) {
+      %extracted_slice = tensor.extract_slice %arg0[%arg2, %c0] [1, 16] [1, 1] : tensor<16x16xf32> to tensor<16xf32>
+      %extracted_slice_0 = tensor.extract_slice %arg3[%arg2, %c0] [1, 16] [1, 1] : tensor<16x16xf32> to tensor<16xf32>
+      %2 = vector.transfer_read %extracted_slice[%c0], %cst_1, %0 {in_bounds = [true]} : tensor<16xf32>, vector<64xf32>
+      %3 = vector.transfer_write %2, %extracted_slice_0[%c0], %0 {in_bounds = [true]} : vector<64xf32>, tensor<16xf32>
+      %inserted_slice = tensor.insert_slice %3 into %arg3[%arg2, %c0] [1, 16] [1, 1] : tensor<16xf32> into tensor<16x16xf32>
+      scf.yield %inserted_slice : tensor<16x16xf32>
+    }
+    return %2 : tensor<16x16xf32>
+  }
+
+  func.func @test_double_for_conflict_in_vf(%arg0: tensor<16x16xf32>, %arg1: memref<16x16xf32>) {
+    %c0_i32 = arith.constant 0 : i32
+    %c8_i32 = arith.constant 8 : i32
+    %c1_i32 = arith.constant 1 : i32
+    %0 = tensor.empty() : tensor<16x16xf32>
+    %1 = func.call @init_vf(%0) {hivm.vector_function, no_inline} : (tensor<16x16xf32>) -> tensor<16x16xf32>
+    %2 = scf.for %arg2 = %c0_i32 to %c8_i32 step %c1_i32 iter_args(%arg3 = %1) -> (tensor<16x16xf32>) : i32 {
+      %3 = tensor.empty() : tensor<16x16xf32>
+      // CHECK: %[[CALL_RESULT:.*]] = func.call @test_double_for_vf
+      %4 = func.call @test_double_for_vf(%arg3, %3) {hivm.vector_function, no_inline} : (tensor<16x16xf32>, tensor<16x16xf32>) -> tensor<16x16xf32>
+      // CHECK: memref.copy %[[CALL_RESULT]], %[[ALLOC:.*]] : memref<16x16xf32> to memref<16x16xf32>
+      // CHECK: scf.yield %[[ALLOC]] : memref<16x16xf32>
+      scf.yield %4 : tensor<16x16xf32>
+    }
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @init_vf(%arg0: tensor<16x16xf32>) -> tensor<16x16xf32> attributes {hivm.vector_function, no_inline} {
+    %cst = arith.constant dense<1.000000e+00> : vector<64xf32>
+    %0 = vector.constant_mask [16] : vector<64xi1>
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %1 = scf.for %arg1 = %c0 to %c16 step %c1 iter_args(%arg2 = %arg0) -> (tensor<16x16xf32>) {
+      %extracted_slice = tensor.extract_slice %arg2[%arg1, %c0] [1, 16] [1, 1] : tensor<16x16xf32> to tensor<16xf32>
+      %2 = vector.transfer_write %cst, %extracted_slice[%c0], %0 {in_bounds = [true]} : vector<64xf32>, tensor<16xf32>
+      %inserted_slice = tensor.insert_slice %2 into %arg2[%arg1, %c0] [1, 16] [1, 1] : tensor<16xf32> into tensor<16x16xf32>
+      scf.yield %inserted_slice : tensor<16x16xf32>
+    }
+    return %1 : tensor<16x16xf32>
+  }
+  func.func @test_double_for_vf(%arg0: tensor<16x16xf32>, %arg1: tensor<16x16xf32>, %arg2: tensor<16x16xf32>) -> tensor<16x16xf32> attributes {hivm.vector_function, no_inline} {
+    %cst = arith.constant dense<0.000000e+00> : vector<64xf32>
+    %cst_0 = arith.constant 0.000000e+00 : f32
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %0 = vector.constant_mask [16] : vector<64xi1>
+    %1 = scf.for %arg3 = %c0 to %c16 step %c1 iter_args(%arg4 = %arg2) -> (tensor<16x16xf32>) {
+      %extracted_slice = tensor.extract_slice %arg0[%arg3, %c0] [1, 16] [1, 1] : tensor<16x16xf32> to tensor<16xf32>
+      %extracted_slice_1 = tensor.extract_slice %arg4[%arg3, %c0] [1, 16] [1, 1] : tensor<16x16xf32> to tensor<16xf32>
+      %3 = vector.transfer_read %extracted_slice[%c0], %cst_0, %0 {in_bounds = [true]} : tensor<16xf32>, vector<64xf32>
+      %4 = vector.transfer_write %3, %extracted_slice_1[%c0], %0 {in_bounds = [true]} : vector<64xf32>, tensor<16xf32>
+      %inserted_slice = tensor.insert_slice %4 into %arg4[%arg3, %c0] [1, 16] [1, 1] : tensor<16xf32> into tensor<16x16xf32>
+      scf.yield %inserted_slice : tensor<16x16xf32>
+    }
+    %2 = scf.for %arg3 = %c0 to %c16 step %c1 iter_args(%arg4 = %arg1) -> (tensor<16x16xf32>) {
+      %extracted_slice = tensor.extract_slice %arg0[%arg3, %c0] [1, 16] [1, 1] : tensor<16x16xf32> to tensor<16xf32>
+      %extracted_slice_1 = tensor.extract_slice %arg4[%arg3, %c0] [1, 16] [1, 1] : tensor<16x16xf32> to tensor<16xf32>
+      %3 = vector.transfer_read %extracted_slice[%c0], %cst_0, %0 {in_bounds = [true]} : tensor<16xf32>, vector<64xf32>
+      %4 = vector.transfer_write %3, %extracted_slice_1[%c0], %0 {in_bounds = [true]} : vector<64xf32>, tensor<16xf32>
+      %inserted_slice = tensor.insert_slice %4 into %arg4[%arg3, %c0] [1, 16] [1, 1] : tensor<16xf32> into tensor<16x16xf32>
+      scf.yield %inserted_slice : tensor<16x16xf32>
+    }
+    return %2 : tensor<16x16xf32>
+  }
+  // CHECK-LABEL: func.func @test_double_for_not_conflict_in_vf
+  func.func @test_double_for_not_conflict_in_vf(%arg0: tensor<16x16xf32>, %arg1: memref<16x16xf32>) {
+    %c0_i32 = arith.constant 0 : i32
+    %c8_i32 = arith.constant 8 : i32
+    %c1_i32 = arith.constant 1 : i32
+    %0 = tensor.empty() : tensor<16x16xf32>
+    %1 = call @init_vf(%0) {hivm.vector_function, no_inline} : (tensor<16x16xf32>) -> tensor<16x16xf32>
+    %2 = scf.for %arg2 = %c0_i32 to %c8_i32 step %c1_i32 iter_args(%arg3 = %1) -> (tensor<16x16xf32>)  : i32 {
+      %3 = tensor.empty() : tensor<16x16xf32>
+      %4 = tensor.empty() : tensor<16x16xf32>
+      // CHECK: %[[CALL_RESULT:.*]] = func.call @test_double_for_vf
+      %5 = func.call @test_double_for_vf(%arg3, %3, %4) {hivm.vector_function, no_inline} : (tensor<16x16xf32>, tensor<16x16xf32>, tensor<16x16xf32>) -> tensor<16x16xf32>
+      // CHECK: scf.yield %[[CALL_RESULT]] : memref<16x16xf32>
+      scf.yield %5 : tensor<16x16xf32>
+    }
+    return
+  }
+}
+
+// -----
+
+module {
 
   func.func @init_vf(%arg0: tensor<16xf32>) -> tensor<16xf32> attributes {hivm.vector_function, no_inline} {
     %cst = arith.constant dense<1.000000e+00> : vector<64xf32>
