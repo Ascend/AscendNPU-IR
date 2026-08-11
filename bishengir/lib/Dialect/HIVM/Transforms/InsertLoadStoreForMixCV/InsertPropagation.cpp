@@ -413,7 +413,7 @@ LogicalResult TightCoupledBufferInsertionPattern::matchAndRewrite(
         PropagatorUtil::createPropagatorUp(dstOp, TCoreType::CUBE_AND_VECTOR,
                                            rewriter);
         PropagatorUtil::createPropagatorsDown(op, TCoreType::CUBE_AND_VECTOR,
-                                              hivm::AddressSpace::UB, rewriter);
+                                              rewriter);
         return success();
       })
       .Default([&](auto *op) { return failure(); });

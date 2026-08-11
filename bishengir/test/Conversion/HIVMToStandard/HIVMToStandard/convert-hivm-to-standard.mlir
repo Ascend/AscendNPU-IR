@@ -2856,8 +2856,9 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
   func.func @test_fixpipe_nz2nd_ub_sub_block_default() {
     %ubC = memref.alloc() : memref<32x32xf16, strided<[32, 1], offset: 0>, #hivm.address_space<ub>>
     %l0c = memref.alloc() : memref<2x2x16x16xf32, #hivm.address_space<cc>>
-    //   CHECK-NOT: arith.constant true
-    //       CHECK: call @fixpipe_nz2nd_float_to_half_4d_to_2d_ubuf(
+    // c0_pad_en defaults true, so a true constant is expected; sub_block stays false.
+    //   CHECK-DAG: %[[SB0:.*]] = arith.constant false
+    //       CHECK: call @fixpipe_nz2nd_float_to_half_4d_to_2d_ubuf({{.*}}, %[[SB0]]) :
     hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
       ins(%l0c : memref<2x2x16x16xf32, #hivm.address_space<cc>>)
       outs(%ubC : memref<32x32xf16, strided<[32, 1], offset: 0>, #hivm.address_space<ub>>)

@@ -590,6 +590,8 @@ private:
         rewriter.create<arith::ConstantIntOp>(op->getLoc(), preReluVal, 64);
     Value channelSplit = rewriter.create<arith::ConstantIntOp>(
         op->getLoc(), op.getChannelSplit(), 1);
+    Value c0PadEn = rewriter.create<arith::ConstantIntOp>(
+        op->getLoc(), op.getC0PadEn(), 1);
     Value unitFlagMode = op.getUnitFlagModeLibValue(rewriter);
 
     genPreQuant(op, rewriter, preQuant);
@@ -605,6 +607,7 @@ private:
           op->getLoc(), rewriter.getF32FloatAttr(1.0)));
     additionalArgs.push_back(preRelu);
     additionalArgs.push_back(channelSplit);
+    additionalArgs.push_back(c0PadEn);
     additionalArgs.push_back(unitFlagMode);
 
     if (auto dualDstAttr = op.getDualDstModeAttr()) {
