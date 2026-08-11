@@ -175,6 +175,7 @@ int main(int argc, char **argv) {
   }
   mlir::ModuleOp module = moduleRef.release();
 
+  bishengir::CompileTiming timing; // shared between reg- and membased pipeline
   // regbase pipeline entry
   if (regbase)
     return bishengir::regbase::runRegBaseCompile(module, config,
