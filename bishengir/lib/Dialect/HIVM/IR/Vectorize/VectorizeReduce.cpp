@@ -77,6 +77,9 @@ static Value createMultiDimReductionOp(RewriterT &rewriter, Location loc,
 
 LogicalResult VReduceOp::vectorize(RewriterBase &rewriter,
                                    ArrayRef<int64_t> vectorSizes) {
+  if (failed(checkVectorizePreconditions(*this, vectorSizes)))
+    return failure();
+
   Location loc = getLoc();
   Value src = getSrc();
   Value dst = getDstValue();
@@ -150,6 +153,11 @@ LogicalResult VReduceOp::vectorize(RewriterBase &rewriter,
 
   // Get reduction dimensions
   SmallVector<int64_t> reduceDims(getReduceDims());
+  if (reduceDims.empty() ||
+      llvm::any_of(reduceDims, [&](int64_t dim) {
+        return dim < 0 || dim >= rank;
+      }))
+    return failure();
 
   // Compute the result vector shape (reduced dims removed)
   SmallVector<int64_t> reducedShape;
@@ -189,15 +197,14 @@ LogicalResult VReduceOp::vectorize(RewriterBase &rewriter,
   Value finalResult =
       rewriter.create<vector::ShapeCastOp>(loc, outputVectorType, reduced);
 
-  // Write result back
-  bool isTensorSemantics = getNumResults() > 0;
-  Value destOperand = isTensorSemantics ? getResult().front() : getDst()[0];
-
+  // Write into the DPS init; for tensor semantics replace the op result.
+  Value destOperand = getDstValue();
   auto writeOp = rewriter.create<vector::TransferWriteOp>(
-      loc, TypeRange(destOperand.getType()), finalResult, destOperand, indices,
-      identityMap, /*mask=*/Value(), rewriter.getBoolArrayAttr(inBounds));
-  if (isTensorSemantics) {
-    rewriter.replaceAllUsesWith(getResult().front(), writeOp.getResult());
+      loc, TypeRange(destOperand.getType()), finalResult, destOperand,
+      indices, identityMap, /*mask=*/Value(),
+      rewriter.getBoolArrayAttr(inBounds));
+  if (getNumResults() > 0) {
+    rewriter.replaceOp(*this, writeOp.getResult());
   } else {
     rewriter.eraseOp(*this);
   }

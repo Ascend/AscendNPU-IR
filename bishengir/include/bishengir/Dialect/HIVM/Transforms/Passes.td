@@ -1213,11 +1213,12 @@ def HIVMBubbleUpExtractSlice : Pass<"hivm-bubble-up-extract-slice", "func::FuncO
 }
 
 def HIVMVectorizeOps : Pass<"hivm-vectorize-ops", "func::FuncOp"> {
-  let summary = "vectorize hivm ops";
+  let summary = "Vectorize HIVM ops in a vector function using VL packing";
   let constructor = "mlir::hivm::createHIVMVectorizeOpsPass()";
   let dependentDialects = ["arith::ArithDialect", "func::FuncDialect",
-                           "hivm::HIVMDialect", "memref::MemRefDialect",
-                           "tensor::TensorDialect", "vector::VectorDialect"];
+                           "hivm::HIVMDialect", "math::MathDialect",
+                           "memref::MemRefDialect", "tensor::TensorDialect",
+                           "vector::VectorDialect"];
 }
 
 def InsertInitAndFinishForDebug : Pass<"hivm-insert-init-and-finish-for-debug"> {

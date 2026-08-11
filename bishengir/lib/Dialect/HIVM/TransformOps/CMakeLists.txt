@@ -9,6 +9,11 @@ add_bishengir_dialect_library(BiShengIRHIVMTransformOps
 
   LINK_LIBS PUBLIC
   BiShengIRHIVMDialect
+  MLIRArithDialect
+  MLIRMathDialect
+  MLIRMemRefDialect
+  MLIRTensorDialect
   MLIRTransformDialect
   MLIRTransformDialectUtils
+  MLIRVectorDialect
   )
