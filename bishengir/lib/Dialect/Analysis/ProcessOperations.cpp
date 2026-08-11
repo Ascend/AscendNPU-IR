@@ -295,6 +295,8 @@ bool DimensionAnalyzerBase::processOperation(Operation *op, Value current) {
     processIfOp(ifOp);
   } else if (auto forOp = dyn_cast<scf::ForOp>(op)) {
     processForOp(forOp);
+  } else if (auto subviewOp = dyn_cast<memref::SubViewOp>(op)) {
+    processSubViewOp(subviewOp);
   } else {
     if (isContainerAllocator(op)) {
       processParallelOp(op, current);
@@ -693,6 +695,14 @@ void DimensionAnalyzerBase::processExtractSliceOp(
   createDummyRefIfNotExist({res, src});
   LDBG("\nProcessing extract slice ----");
   processSlicingOp(extractSliceOp);
+}
+
+void DimensionAnalyzerBase::processSubViewOp(memref::SubViewOp op) {
+  auto res = op.getResult();
+  auto src = op.getSource();
+  createDummyRefIfNotExist({res, src});
+  LDBG("\nProcessing subview ----");
+  processSlicingOp(op);
 }
 } // namespace detail
 } // namespace mlir

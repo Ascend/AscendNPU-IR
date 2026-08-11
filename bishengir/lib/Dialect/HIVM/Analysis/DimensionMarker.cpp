@@ -23,6 +23,7 @@
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
@@ -302,10 +303,11 @@ bool DimensionAnalyzer::processOperation(Operation *op, Value current) {
             }
             return true;
           })
-          .Case<tensor::CollapseShapeOp>([this](auto op) {
-            processReshapeOp(op);
-            return true;
-          })
+          .Case<tensor::CollapseShapeOp, memref::CollapseShapeOp>(
+              [this](auto op) {
+                processReshapeOp(op);
+                return true;
+              })
           .Case<scope::ScopeOp>([this](auto op) {
             processScopeOp(op);
             return true;
@@ -746,7 +748,7 @@ void DimensionAnalyzer::processMmadL1Op(hivm::MmadL1Op op, bool isTransposeA,
                                         bool isTransposeB) {
   Value operandA = op.getA();
   Value operandB = op.getB();
-  Value mmadResult = op.getResult(0);
+  Value operandC = op.getC();
   createDummyRefIfNotExist({operandA, operandB});
   auto dimRefsA = getValueDimIndices(operandA);
   auto dimRefsB = getValueDimIndices(operandB);
@@ -759,9 +761,9 @@ void DimensionAnalyzer::processMmadL1Op(hivm::MmadL1Op op, bool isTransposeA,
                                         dimRefsB[nAxisIdxB]};
   dimIndices_.push_back(resultDimRefs);
   int64_t resultRefIdx = static_cast<int64_t>(dimIndices_.size() - 1);
-  initCollapseOrVerify(mmadResult, resultRefIdx);
+  initCollapseOrVerify(operandC, resultRefIdx);
   for (Value val : op->getResults()) {
-    processValue(val, mmadResult);
+    processValue(val, operandC);
   }
 }
 
