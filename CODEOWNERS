@@ -1,15 +1,26 @@
 # This file lists reviewers that are auto-assigned when a pull request modifies
 # certain files or directories.
+# For each file, only the last successfully matched rule takes effect.
 
 # Documentation.
-/docs/ @wuying211
+/docs/ @wuying211 @hid90099092 @tanshengshun
 
 # Memory management.
-/bishengir/**/AllocToPointerCast.* @SL25 @ssy_5825
-/bishengir/**/PlanMemory.* @SL25 @ssy_5825
-/bishengir/**/*InplaceReuse* @SL25 @ssy_5825
-/bishengir/**/BufferizableOpInterfaceImpl.* @SL25 @ssy_5825
-/bishengir/**/OptMemPlanForPipeline.* @SL25 @ssy_5825
-/bishengir/test/**/*plan-memory* @SL25 @ssy_5825
-/docs/**/*PlanMemory* @SL25 @ssy_5825
-/docs/**/*plan_memory* @SL25 @ssy_5825
+/bishengir/**/AllocToPointerCast.* @SL25 @ssy_5825 @hid90099092 @tanshengshun
+/bishengir/**/PlanMemory.* @SL25 @ssy_5825 @hid90099092 @tanshengshun
+/bishengir/**/*InplaceReuse* @SL25 @ssy_5825 @hid90099092 @tanshengshun
+/bishengir/**/BufferizableOpInterfaceImpl.* @SL25 @ssy_5825 @hid90099092 @tanshengshun
+/bishengir/**/OptMemPlanForPipeline.* @SL25 @ssy_5825 @hid90099092 @tanshengshun
+/bishengir/test/**/*plan-memory* @SL25 @ssy_5825 @hid90099092 @tanshengshun
+/docs/**/*PlanMemory* @SL25 @ssy_5825 @hid90099092 @tanshengshun
+/docs/**/*plan_memory* @SL25 @ssy_5825 @hid90099092 @tanshengshun
+
+# Multi-buffering.
+/bishengir/**/*MultiBuffer* @huangyujun123 @hid90099092 @tanshengshun
+/bishengir/test/**/*multi-buffer* @huangyujun123 @hid90099092 @tanshengshun
+/bishengir/test/**/*multibuffer* @huangyujun123 @hid90099092 @tanshengshun
+
+# Sync management.
+/bishengir/**/GraphSyncSolver/* @AmmarDab3an @tanzirui123123 @hi_sy @hid90099092 @tanshengshun
+/bishengir/**/InjectSync/* @AmmarDab3an @tanzirui123123 @hi_sy @hid90099092 @tanshengshun
+/bishengir/**/InjectBlockSync.* @AmmarDab3an @tanzirui123123 @hi_sy @hid90099092 @tanshengshun

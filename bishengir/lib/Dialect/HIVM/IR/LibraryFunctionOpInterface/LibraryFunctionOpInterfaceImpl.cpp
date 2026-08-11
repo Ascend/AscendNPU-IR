@@ -79,13 +79,21 @@ template <typename OpTy> std::string getCumOpLibraryCallName(OpTy op) {
 
     if constexpr (std::is_same_v<OpTy, VCumsumOp> ||
                   std::is_same_v<OpTy, VCumprodOp>) {
+      Type dstElemType = getElementTypeOrSelf(op.getDst());
       std::stringstream ss;
       ss << baseName.data() << "_" << rank << "d_"
-         << getTypeName(op.getLoc(), elemType) << "_dim" << cumDim;
+         << getTypeName(op.getLoc(), elemType);
+      // i32 src → i64 dst 1D dim0 has a fused SIMT symbol that folds the sext
+      // into the per-thread read; other mixed shapes fall back to same-type name.
+      if (elemType.isInteger(32) && dstElemType.isInteger(64) && rank == 1 &&
+          cumDim == 0) {
+        ss << "_to_" << getTypeName(op.getLoc(), dstElemType);
+      }
+      ss << "_dim" << cumDim;
       // Cancellation dispatch: a cumsum adjacent to a subtraction (input or
       // result) tagged with "needs_compensation" routes to a TwoSum-compensated
       // template symbol (only the f32 shapes that have a "_comp" symbol).
-      if (op->hasAttr("needs_compensation") && elemType.isF32() &&
+      if (op->hasAttr("needs_compensation") && dstElemType.isF32() &&
           ((rank == 2 && cumDim == 0) ||
            (rank == 3 && (cumDim == 0 || cumDim == 1))))
         ss << "_comp";
@@ -1703,7 +1711,7 @@ void bishengir::hivm::detail::registerLibraryFunctionOpInterfaceExtension(
     REGISTER_NO_LIBRARY_FUNCTION(BatchMmadL1Op);
 
     // Other ops
-    REGISTER_STATIC_MAX_RANK(DebugOp, 4);
+    REGISTER_STATIC_MAX_RANK(DebugOp, 8);
     REGISTER_NO_MAX_RANK(FinishDebugOp);
     REGISTER_NO_MAX_RANK(InitDebugOp);
     REGISTER_STATIC_MAX_RANK(EmbeddingGatherOp, 3);

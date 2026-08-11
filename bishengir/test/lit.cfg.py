@@ -67,6 +67,24 @@ llvm_config.with_environment(
 
 tool_dirs = [config.mlir_tools_dir,
              config.llvm_tools_dir, config.bishengir_tools_dir]
+
+
+def find_runtime(name):
+    for prefix in ["", "lib"]:
+        path = os.path.join(
+            config.llvm_shlib_dir, f"{prefix}{name}{config.llvm_shlib_ext}"
+        )
+        if os.path.isfile(path):
+            return path
+    return ""
+
+
+# Searches for a runtime library with the given name and returns a tool
+# substitution of the same name and the found path.
+def add_runtime(name):
+    return ToolSubst(f"%{name}", find_runtime(name))
+
+
 tools = [
     'bishengir-compile',
     'bishengir-opt',
@@ -74,6 +92,9 @@ tools = [
     'bishengir-target-spec-tblgen',
     "bishengir-capi-ir-test",
     "bishengir-capi-pass-test",
+    'mlir-cpu-runner',
+    add_runtime("mlir_runner_utils"),
+    add_runtime("mlir_c_runner_utils"),
 ]
 
 llvm_config.add_tool_substitutions(tools, tool_dirs)
@@ -89,7 +110,23 @@ if config.enable_assertions:
 else:
     config.available_features.add('noasserts')
 
-if config.enable_execution_engine:
+# The execution-engine feature additionally requires the mlir-cpu-runner tool
+# and the runner runtime libraries to be present in the build tree, so tests
+# using them are skipped (instead of failing) in builds where they are absent.
+def find_tool(name):
+    for d in tool_dirs:
+        if not d:
+            continue
+        p = os.path.join(d, name)
+        if os.path.isfile(p):
+            return p
+    return shutil.which(name)
+
+
+if (config.enable_execution_engine
+        and find_tool("mlir-cpu-runner")
+        and find_runtime("mlir_runner_utils")
+        and find_runtime("mlir_c_runner_utils")):
     config.available_features.add("execution-engine")
 
 if config.bishengir_published:

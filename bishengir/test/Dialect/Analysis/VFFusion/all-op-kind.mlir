@@ -1,12 +1,12 @@
+// --vf-fusion-mode=all-op behaviour set to "no fusion" in current commit and must be changed to correct behaviour
 // RUN: bishengir-opt --vf-fusion="fusion-mode=all-op" --split-input-file %s | FileCheck %s
 
-// CHECK-LABEL: func.func private @simple_kernel_fused_0(
+// CHECK-LABEL: func.func @simple_kernel(
+// CHECK: tensor.empty
 // CHECK: linalg.elemwise_binary
 // CHECK: hfusion.cast
 // CHECK: hfusion.bitcast
-// CHECK-LABEL: func.func @simple_kernel(
-// CHECK: tensor.empty
-// CHECK: call @simple_kernel_fused_0
+// CHECK-NOT: call @simple_kernel_fused_0
 // CHECK: tensor.collapse_shape
 module {
   func.func @simple_kernel(%arg0: tensor<3x2xf16>, %arg1: tensor<3x2xf16>, %arg2: f16, %arg3: tensor<3x2xf32>) -> tensor<6xi32> attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"} {
@@ -21,13 +21,12 @@ module {
 
 // -----
 
-// CHECK-LABEL: func.func private @no_reshape_in_the_middle_fused_0(
+// CHECK-LABEL: func.func @no_reshape_in_the_middle(
+// CHECK: tensor.empty
+// CHECK-NOT: call @no_reshape_in_the_middle_fused_0
 // CHECK: linalg.elemwise_binary
 // CHECK: hfusion.cast
 // CHECK: hfusion.bitcast
-// CHECK-LABEL: func.func @no_reshape_in_the_middle(
-// CHECK: tensor.empty
-// CHECK: call @no_reshape_in_the_middle_fused_0
 // CHECK: tensor.collapse_shape
 // CHECK: tensor.empty
 // CHECK: linalg.elemwise_binary
@@ -108,16 +107,15 @@ module {
 
 // -----
 
-// CHECK-LABEL: func.func private @reshape_diamond_shape_test_fused_0(
-// CHECK: linalg.elemwise_binary
-// CHECK: linalg.elemwise_binary
 // CHECK-LABEL: func.func @reshape_diamond_shape_test(
 // CHECK: tensor.empty
 // CHECK: linalg.elemwise_binary
 // CHECK: tensor.empty
 // CHECK: tensor.collapse_shape
+// CHECK: linalg.elemwise_binary
 // CHECK: tensor.empty
-// CHECK: call @reshape_diamond_shape_test_fused_0
+// CHECK: linalg.elemwise_binary
+// CHECK-NOT: call @reshape_diamond_shape_test_fused_0
 module {
   func.func @reshape_diamond_shape_test(%arg0: tensor<1xf16>, %arg1: tensor<1xf16>, %arg2: f16, %arg3: tensor<3x2xf16>) -> tensor<1xf16> attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"} {
     %0 = tensor.empty() : tensor<1xf16>

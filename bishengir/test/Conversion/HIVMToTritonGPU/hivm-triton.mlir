@@ -110,13 +110,13 @@ module {
 
 
 // -----
-// CHECK-LABEL: tt.func @check_store_atomicadd(%arg0: !tt.ptr<i32>, %arg1: !tt.ptr<i32>, %arg2: i64, %arg3: i64, %arg4: i64, %arg5: !tt.ptr<i32>, %arg6: !tt.ptr<i32>, %arg7: i64, %arg8: i64, %arg9: i64, %arg10: !tt.ptr<i32>, %arg11: !tt.ptr<i32>, %arg12: i64, %arg13: i64, %arg14: i64)
+// CHECK-LABEL: tt.func @check_store_atomicadd(%arg0: !tt.ptr<i32>, %arg1: !tt.ptr<i32>, %arg2: !tt.ptr<i32>)
 // CHECK-NEXT: %0 = tt.make_range {end = 16 : i32, start = 0 : i32} : tensor<16xi32>
-// CHECK-NEXT: %1 = tt.splat %arg5 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
+// CHECK-NEXT: %1 = tt.splat %arg1 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
 // CHECK-NEXT: %2 = tt.addptr %1, %0 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
 // CHECK-NEXT: %3 = tt.load %2 : tensor<16x!tt.ptr<i32>>
 // CHECK-NEXT: %4 = tt.make_range {end = 16 : i32, start = 0 : i32} : tensor<16xi32>
-// CHECK-NEXT: %5 = tt.splat %arg10 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
+// CHECK-NEXT: %5 = tt.splat %arg2 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
 // CHECK-NEXT: %6 = tt.addptr %5, %4 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
 // CHECK-NEXT: %7 = tt.atomic_rmw add, acq_rel, gpu, %6, %3 : (tensor<16x!tt.ptr<i32>>, tensor<16xi32>) -> tensor<16xi32>
 // CHECK-NEXT: tt.return
@@ -129,13 +129,13 @@ func.func @check_store_atomicadd(%arg0: memref<16xi32> , %arg1: memref<16xi32>, 
 }
 
 // -----
-// CHECK-LABEL: tt.func @check_store_atomicmax(%arg0: !tt.ptr<i32>, %arg1: !tt.ptr<i32>, %arg2: i64, %arg3: i64, %arg4: i64, %arg5: !tt.ptr<i32>, %arg6: !tt.ptr<i32>, %arg7: i64, %arg8: i64, %arg9: i64, %arg10: !tt.ptr<i32>, %arg11: !tt.ptr<i32>, %arg12: i64, %arg13: i64, %arg14: i64)
+// CHECK-LABEL: tt.func @check_store_atomicmax(%arg0: !tt.ptr<i32>, %arg1: !tt.ptr<i32>, %arg2: !tt.ptr<i32>)
 // CHECK-NEXT: %0 = tt.make_range {end = 16 : i32, start = 0 : i32} : tensor<16xi32>
-// CHECK-NEXT: %1 = tt.splat %arg5 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
+// CHECK-NEXT: %1 = tt.splat %arg1 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
 // CHECK-NEXT: %2 = tt.addptr %1, %0 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
 // CHECK-NEXT: %3 = tt.load %2 : tensor<16x!tt.ptr<i32>>
 // CHECK-NEXT: %4 = tt.make_range {end = 16 : i32, start = 0 : i32} : tensor<16xi32>
-// CHECK-NEXT: %5 = tt.splat %arg10 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
+// CHECK-NEXT: %5 = tt.splat %arg2 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
 // CHECK-NEXT: %6 = tt.addptr %5, %4 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
 // CHECK-NEXT: %7 = tt.atomic_rmw max, acq_rel, gpu, %6, %3 : (tensor<16x!tt.ptr<i32>>, tensor<16xi32>) -> tensor<16xi32>
 // CHECK-NEXT: tt.return
@@ -148,13 +148,13 @@ func.func @check_store_atomicmax(%arg0: memref<16xi32> , %arg1: memref<16xi32>, 
 }
 
 // -----
-// CHECK-LABEL: tt.func @check_store_atomicmin(%arg0: !tt.ptr<i32>, %arg1: !tt.ptr<i32>, %arg2: i64, %arg3: i64, %arg4: i64, %arg5: !tt.ptr<i32>, %arg6: !tt.ptr<i32>, %arg7: i64, %arg8: i64, %arg9: i64, %arg10: !tt.ptr<i32>, %arg11: !tt.ptr<i32>, %arg12: i64, %arg13: i64, %arg14: i64)
+// CHECK-LABEL: tt.func @check_store_atomicmin(%arg0: !tt.ptr<i32>, %arg1: !tt.ptr<i32>, %arg2: !tt.ptr<i32>)
 // CHECK-NEXT: %0 = tt.make_range {end = 16 : i32, start = 0 : i32} : tensor<16xi32>
-// CHECK-NEXT: %1 = tt.splat %arg5 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
+// CHECK-NEXT: %1 = tt.splat %arg1 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
 // CHECK-NEXT: %2 = tt.addptr %1, %0 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
 // CHECK-NEXT: %3 = tt.load %2 : tensor<16x!tt.ptr<i32>>
 // CHECK-NEXT: %4 = tt.make_range {end = 16 : i32, start = 0 : i32} : tensor<16xi32>
-// CHECK-NEXT: %5 = tt.splat %arg10 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
+// CHECK-NEXT: %5 = tt.splat %arg2 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
 // CHECK-NEXT: %6 = tt.addptr %5, %4 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
 // CHECK-NEXT: %7 = tt.atomic_rmw min, acq_rel, gpu, %6, %3 : (tensor<16x!tt.ptr<i32>>, tensor<16xi32>) -> tensor<16xi32>
 // CHECK-NEXT: tt.return
@@ -167,13 +167,13 @@ func.func @check_store_atomicmin(%arg0: memref<16xi32> , %arg1: memref<16xi32>, 
 }
 
 // -----
-// CHECK-LABEL: tt.func @check_store_atomicand(%arg0: !tt.ptr<i32>, %arg1: !tt.ptr<i32>, %arg2: i64, %arg3: i64, %arg4: i64, %arg5: !tt.ptr<i32>, %arg6: !tt.ptr<i32>, %arg7: i64, %arg8: i64, %arg9: i64, %arg10: !tt.ptr<i32>, %arg11: !tt.ptr<i32>, %arg12: i64, %arg13: i64, %arg14: i64)
+// CHECK-LABEL: tt.func @check_store_atomicand(%arg0: !tt.ptr<i32>, %arg1: !tt.ptr<i32>, %arg2: !tt.ptr<i32>)
 // CHECK-NEXT: %0 = tt.make_range {end = 16 : i32, start = 0 : i32} : tensor<16xi32>
-// CHECK-NEXT: %1 = tt.splat %arg5 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
+// CHECK-NEXT: %1 = tt.splat %arg1 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
 // CHECK-NEXT: %2 = tt.addptr %1, %0 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
 // CHECK-NEXT: %3 = tt.load %2 : tensor<16x!tt.ptr<i32>>
 // CHECK-NEXT: %4 = tt.make_range {end = 16 : i32, start = 0 : i32} : tensor<16xi32>
-// CHECK-NEXT: %5 = tt.splat %arg10 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
+// CHECK-NEXT: %5 = tt.splat %arg2 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
 // CHECK-NEXT: %6 = tt.addptr %5, %4 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
 // CHECK-NEXT: %7 = tt.atomic_rmw and, acq_rel, gpu, %6, %3 : (tensor<16x!tt.ptr<i32>>, tensor<16xi32>) -> tensor<16xi32>
 // CHECK-NEXT: tt.return
@@ -186,13 +186,13 @@ func.func @check_store_atomicand(%arg0: memref<16xi32> , %arg1: memref<16xi32>, 
 }
 
 // -----
-// CHECK-LABEL: tt.func @check_store_atomicor(%arg0: !tt.ptr<i32>, %arg1: !tt.ptr<i32>, %arg2: i64, %arg3: i64, %arg4: i64, %arg5: !tt.ptr<i32>, %arg6: !tt.ptr<i32>, %arg7: i64, %arg8: i64, %arg9: i64, %arg10: !tt.ptr<i32>, %arg11: !tt.ptr<i32>, %arg12: i64, %arg13: i64, %arg14: i64)
+// CHECK-LABEL: tt.func @check_store_atomicor(%arg0: !tt.ptr<i32>, %arg1: !tt.ptr<i32>, %arg2: !tt.ptr<i32>)
 // CHECK-NEXT: %0 = tt.make_range {end = 16 : i32, start = 0 : i32} : tensor<16xi32>
-// CHECK-NEXT: %1 = tt.splat %arg5 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
+// CHECK-NEXT: %1 = tt.splat %arg1 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
 // CHECK-NEXT: %2 = tt.addptr %1, %0 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
 // CHECK-NEXT: %3 = tt.load %2 : tensor<16x!tt.ptr<i32>>
 // CHECK-NEXT: %4 = tt.make_range {end = 16 : i32, start = 0 : i32} : tensor<16xi32>
-// CHECK-NEXT: %5 = tt.splat %arg10 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
+// CHECK-NEXT: %5 = tt.splat %arg2 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
 // CHECK-NEXT: %6 = tt.addptr %5, %4 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
 // CHECK-NEXT: %7 = tt.atomic_rmw or, acq_rel, gpu, %6, %3 : (tensor<16x!tt.ptr<i32>>, tensor<16xi32>) -> tensor<16xi32>
 // CHECK-NEXT: tt.return
@@ -205,13 +205,13 @@ func.func @check_store_atomicor(%arg0: memref<16xi32> , %arg1: memref<16xi32>, %
 }
 
 // -----
-// CHECK-LABEL: tt.func @check_store_atomicxor(%arg0: !tt.ptr<i32>, %arg1: !tt.ptr<i32>, %arg2: i64, %arg3: i64, %arg4: i64, %arg5: !tt.ptr<i32>, %arg6: !tt.ptr<i32>, %arg7: i64, %arg8: i64, %arg9: i64, %arg10: !tt.ptr<i32>, %arg11: !tt.ptr<i32>, %arg12: i64, %arg13: i64, %arg14: i64)
+// CHECK-LABEL: tt.func @check_store_atomicxor(%arg0: !tt.ptr<i32>, %arg1: !tt.ptr<i32>, %arg2: !tt.ptr<i32>)
 // CHECK-NEXT: %0 = tt.make_range {end = 16 : i32, start = 0 : i32} : tensor<16xi32>
-// CHECK-NEXT: %1 = tt.splat %arg5 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
+// CHECK-NEXT: %1 = tt.splat %arg1 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
 // CHECK-NEXT: %2 = tt.addptr %1, %0 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
 // CHECK-NEXT: %3 = tt.load %2 : tensor<16x!tt.ptr<i32>>
 // CHECK-NEXT: %4 = tt.make_range {end = 16 : i32, start = 0 : i32} : tensor<16xi32>
-// CHECK-NEXT: %5 = tt.splat %arg10 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
+// CHECK-NEXT: %5 = tt.splat %arg2 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
 // CHECK-NEXT: %6 = tt.addptr %5, %4 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
 // CHECK-NEXT: %7 = tt.atomic_rmw xor, acq_rel, gpu, %6, %3 : (tensor<16x!tt.ptr<i32>>, tensor<16xi32>) -> tensor<16xi32>
 // CHECK-NEXT: tt.return

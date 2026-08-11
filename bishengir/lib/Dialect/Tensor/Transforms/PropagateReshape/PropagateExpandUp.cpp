@@ -1281,6 +1281,12 @@ LogicalResult handleArangeOp(tensor::ExpandShapeOp expandOp,
 LogicalResult
 PropagateExpandUp::matchAndRewrite(tensor::ExpandShapeOp expandOp,
                                    PatternRewriter &rewriter) const {
+  if (options.forRegbased &&
+      exceedsUnitDimPropagationLimit(expandOp.getResultType().getShape(),
+                                     options.maxUnitDimsForPropagation)) {
+    return rewriter.notifyMatchFailure(
+        expandOp, "expanded shape exceeds the unit-dimension threshold");
+  }
   Value source = expandOp.getSrc();
   Operation *definingOp = source.getDefiningOp();
   if (!definingOp)

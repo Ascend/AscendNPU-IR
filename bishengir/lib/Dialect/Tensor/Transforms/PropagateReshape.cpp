@@ -69,6 +69,7 @@ void PropagateReshapePass::runOnOperation() {
   options.forHIVM = forHIVM;
   options.forRegbased = forRegbased;
   options.skipScope = skipScope;
+  options.maxUnitDimsForPropagation = maxUnitDimsForPropagation;
 
   if (auto coreType = mlir::hivm::queryFuncCoreType(f);
       coreType && *coreType == mlir::hivm::TFuncCoreType::AIC)
@@ -85,7 +86,7 @@ void PropagateReshapePass::runOnOperation() {
   tensor::ExpandShapeOp::getCanonicalizationPatterns(patterns, context);
   memref::CollapseShapeOp::getCanonicalizationPatterns(patterns, context);
   memref::ExpandShapeOp::getCanonicalizationPatterns(patterns, context);
-  patterns.add<SwapCollapseExpand>(context);
+  patterns.add<SwapCollapseExpand>(context, options);
   patterns.add<PropagateExpandUp>(context, options);
   patterns.add<PropagateCollapseDown>(context, options);
   if (!options.forRegbased)

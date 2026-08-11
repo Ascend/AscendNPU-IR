@@ -108,3 +108,27 @@ module {
     return
   }
 }
+// -----
+module {
+  // CHECK-LABEL: func @test_sync_block_lock_unlock
+  func.func @test_sync_block_lock_unlock() attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %lock = memref.alloc() : memref<1xi64>
+    // CHECK: call @sync_block_lock
+    hivm.hir.sync_block_lock lock_var(%lock : memref<1xi64>)
+    // CHECK: call @sync_block_unlock
+    hivm.hir.sync_block_unlock lock_var(%lock : memref<1xi64>)
+    return
+  }
+}
+// -----
+module {
+  // CHECK-LABEL: func @test_sync_block_lock_unlock_with_subblock
+  func.func @test_sync_block_lock_unlock_with_subblock() attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %lock = memref.alloc() : memref<1xi64>
+    // CHECK: call @sync_block_lock_with_subblock
+    hivm.hir.sync_block_lock {hivm.sync_block_lock_with_subblock} lock_var(%lock : memref<1xi64>)
+    // CHECK: call @sync_block_unlock_with_subblock
+    hivm.hir.sync_block_unlock {hivm.sync_block_lock_with_subblock} lock_var(%lock : memref<1xi64>)
+    return
+  }
+}

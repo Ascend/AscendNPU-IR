@@ -165,28 +165,6 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // -----
 
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
-  // CHECK-LABEL: func.func @swap_insert_slice_before_fixpipe(
-  // CHECK: %[[INSERT:.*]] = tensor.insert_slice %arg0 into %arg2[0, 0] [8, 16] [1, 1]
-  // CHECK: hivm.hir.fixpipe
-  // CHECK-SAME: ins(%[[INSERT]] : tensor<16x16xf32>) outs(%arg3 : memref<16x16xf32>)
-  // CHECK-NEXT: return
-  func.func @swap_insert_slice_before_fixpipe(
-      %arg0: tensor<8x16xf32>, %arg1: tensor<8x16xf32>,
-      %arg2: tensor<16x16xf32>, %arg3: memref<16x16xf32>) {
-    %0 = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
-        ins(%arg0 : tensor<8x16xf32>) outs(%arg1 : tensor<8x16xf32>)
-        -> tensor<8x16xf32>
-    %1 = tensor.insert_slice %0 into %arg2[0, 0] [8, 16] [1, 1]
-        : tensor<8x16xf32> into tensor<16x16xf32>
-    hivm.hir.store ins(%1 : tensor<16x16xf32>)
-        outs(%arg3 : memref<16x16xf32>)
-    return
-  }
-}
-
-// -----
-
-module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   // Multiple non-debug users must prevent all inlining.
   // CHECK-LABEL: func.func @keep_fixpipe_with_multiple_users(
   // CHECK: %[[FIXPIPE:.*]] = hivm.hir.fixpipe

@@ -125,6 +125,10 @@ calculateAlignedShape(OpBuilder &b, const Location loc,
 
 /// Handle ops marked with propagateFailureName after allocation processing.
 void handlePropagateFailure(RewriterBase &rewriter, func::FuncOp &funcOp);
+/// Materialize final static UB layout-changing casts created by stride-align.
+/// This is required only by the reg-based (A5) lowering path.
+void materializeRemainingStaticUBLayoutCasts(RewriterBase &rewriter,
+                                             func::FuncOp funcOp);
 LogicalResult replaceAndPropagateMemRefType(RewriterBase &rewriter,
                                             const Location loc, Value from,
                                             Value to);

@@ -23,6 +23,7 @@
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/PatternMatch.h"
@@ -119,10 +120,26 @@ void collectValueDependencies(OrderedOps &simtVFOps, VisitedOps &visitedOps,
   collectOpDependencies(simtVFOps, visitedOps, defOp, seedOp, allSeedOps);
 }
 
+// Returns true for tensor.insert_slice with dynamic sizes.
+// Such ops cannot be lowered by RewriteSliceOpToTriton and should stay outside
+// the SIMT scope.
+bool hasDynamicSliceSize(Operation *op) {
+  if (!isa<tensor::InsertSliceOp>(op)) {
+    return false;
+  }
+  auto sliceOp = cast<OffsetSizeAndStrideOpInterface>(op);
+  return llvm::any_of(sliceOp.getStaticSizes(), ShapedType::isDynamic);
+}
+
 void collectOpDependencies(OrderedOps &simtVFOps, VisitedOps &visitedOps,
                            Operation *op, Operation *seedOp,
                            const SeedSet &allSeedOps) {
   if (!visitedOps.insert(op).second) {
+    return;
+  }
+  // Skip dynamic-sized slice ops; they stay outside the SIMT scope and their
+  // results become scope inputs when referenced by in-scope ops.
+  if (hasDynamicSliceSize(op)) {
     return;
   }
   for (auto operand : op->getOperands()) {

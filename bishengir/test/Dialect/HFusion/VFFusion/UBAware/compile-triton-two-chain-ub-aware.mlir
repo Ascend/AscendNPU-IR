@@ -4,7 +4,7 @@
 // Without ub-aware-op mode, both chains are merged into 1 VF that overflows UB.
 // With ub-aware-op mode, chains are split into 2 VFs that each fit within UB.
 //
-// RUN: bishengir-compile %s -target=Ascend950PR_9589 -enable-hfusion-compile=true -enable-triton-kernel-compile=true -enable-vf-fusion -vf-fusion-mode=ub-aware-op -o %t
+// RUN: bishengir-compile %s -target=Ascend950PR_9589 -enable-hfusion-compile=true -enable-triton-kernel-compile=true -vf-fusion-mode=ub-aware-op -o %t
 
 #loc = loc("test_two_chain.py":1:0)
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {

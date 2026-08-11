@@ -16,6 +16,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "llvm/ADT/SmallSet.h"
 
@@ -23,41 +24,22 @@ namespace mlir {
 namespace hivm {
 #ifndef LLVM_PROJECT_ALLOCTOPOINTERCAST_H
 #define LLVM_PROJECT_ALLOCTOPOINTERCAST_H
-class MemrefAllocaOpToPointerCastOpPattern
-    : public OpRewritePattern<memref::AllocOp> {
-public:
-  using OpRewritePattern<memref::AllocOp>::OpRewritePattern;
 
-  /// map from buffer to its allocated addresses
-  /// note: the buffer which does multibuffer n optimization will be allocated n
-  /// addresses.
-  DenseMap<Value, SmallVector<uint64_t>> buffer2Offsets;
+/// Walk every `memref.alloc` in `funcOp` and convert it into an
+/// `hivm.hir.pointer_cast` bound to its planned address(es). Interrupts and
+/// returns failure with a diagnostic if any alloc is not covered by the memory
+/// plan (read before first write).
+LogicalResult walkAllocToPointerCast(
+    func::FuncOp funcOp,
+    const DenseMap<Value, SmallVector<uint64_t>> &buffer2Offsets);
 
-  explicit MemrefAllocaOpToPointerCastOpPattern(
-      MLIRContext *context,
-      DenseMap<Value, SmallVector<uint64_t>> buffer2Offsets)
-      : OpRewritePattern<memref::AllocOp>(context),
-        buffer2Offsets(buffer2Offsets) {}
-  LogicalResult matchAndRewrite(memref::AllocOp op,
-                                PatternRewriter &rewriter) const final;
-};
+/// Walk every `memref_ext.alloc_workspace` in `funcOp` and attach its planned
+/// offset(s). Interrupts and returns failure with a diagnostic if any workspace
+/// alloc is not covered by the memory plan.
+LogicalResult walkUpdateAllocWorkspaceOffset(
+    func::FuncOp funcOp,
+    const DenseMap<Value, SmallVector<uint64_t>> &buffer2Offsets);
 
-class UpdateWorkSpaceAllocaOpOffsetPattern
-    : public OpRewritePattern<bishengir::memref_ext::AllocWorkspaceOp> {
-public:
-  using OpRewritePattern<
-      bishengir::memref_ext::AllocWorkspaceOp>::OpRewritePattern;
-
-  DenseMap<Value, SmallVector<uint64_t>> buffer2Offsets;
-
-  explicit UpdateWorkSpaceAllocaOpOffsetPattern(
-      MLIRContext *context,
-      DenseMap<Value, SmallVector<uint64_t>> buffer2Offsets)
-      : OpRewritePattern<bishengir::memref_ext::AllocWorkspaceOp>(context),
-        buffer2Offsets(buffer2Offsets) {}
-  LogicalResult matchAndRewrite(bishengir::memref_ext::AllocWorkspaceOp op,
-                                PatternRewriter &rewriter) const final;
-};
 } // namespace hivm
 } // namespace mlir
 

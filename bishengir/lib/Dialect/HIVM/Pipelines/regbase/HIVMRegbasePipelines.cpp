@@ -238,6 +238,10 @@ bufferizationPipeline(OpPassManager &pm,
   oneShotOptions.allowUnknownOps = true;
   oneShotOptions.analysisHeuristic =
       bufferization::OneShotBufferizationOptions::AnalysisHeuristic::TopDown;
+  // Run a first round of analysis + tensor copy insertion. The inserted
+  // copies (and the HIVM copy/store op's `to_be_replaced` cleanup in
+  // resolveConflicts) can expose conflicts that were previously masked.
+  pm.addPass(hivm::createTensorCopyInsertionPass(oneShotOptions));
   pm.addPass(bufferization::createOneShotBufferizePass(oneShotOptions));
   if (hivmPipelineOptions.enableVfMergeLevel == 2) {
     MergeVecScopeOptions VfMergeOpsOpt;
@@ -289,10 +293,6 @@ hivmWorkspacePipeline(OpPassManager &pm,
       hivmPipelineOptions.enableHIVMGlobalWorkspaceReuse;
   planMemoryOption.enablePrintMemoryAllocatedSize =
       hivmPipelineOptions.enablePrintMemoryAllocatedSize;
-  planMemoryOption.disableTightlyCoupledBufferReuse =
-      hivmPipelineOptions.disableTightlyCoupledBufferReuse;
-  planMemoryOption.planMemoryStrategy =
-      hivmPipelineOptions.planMemoryStrategy;
   pm.addPass(createPlanMemoryRegBasePass(planMemoryOption));
   if (hivmPipelineOptions.enableTritonKernelCompile)
     // Must place after plan-workspace-memory
@@ -415,12 +415,6 @@ static void hivmPreBufferizationOptimizationPipeline(
       hivmPipelineOptions.enableHIVMGlobalWorkspaceReuse;
   planMemoryOption.enablePrintMemoryAllocatedSize =
       hivmPipelineOptions.enablePrintMemoryAllocatedSize;
-  planMemoryOption.disableTightlyCoupledBufferReuse =
-      hivmPipelineOptions.disableTightlyCoupledBufferReuse;
-  planMemoryOption.disableVFReachableCheck =
-      hivmPipelineOptions.disableVFReachableCheck;
-  planMemoryOption.planMemoryStrategy =
-      hivmPipelineOptions.planMemoryStrategy;
   pm.addPass(createPlanMemoryRegBasePass(planMemoryOption));
 
   // Tag L1/UB allocs with tightly-coupled-buffer ids on the single MIX
@@ -619,7 +613,7 @@ static void hivmPostBufferizationOptimizationPipeline(
   pm.nest<func::FuncOp>().addPass(createHIVMDecomposeOpPass());
   // Preload code transformation for CV pipelining
   if (hivmPipelineOptions.enablePreload) {
-    pm.nest<func::FuncOp>().addPass(createCreatePreloadPass());
+    pm.addPass(createCreatePreloadPass());
   }
   // Intra-Core Auto-Sync passes (Inject-Sync, GSS)
   hivmIntraCoreSyncPipeline(pm, hivmPipelineOptions);

@@ -4249,3 +4249,45 @@ func.func @test_simt_vf_vadd_f32_map_for_to_forall(%arg0: memref<8xf32>, %arg1: 
       outs(%arg2 : memref<8xf32>)
   return
 }
+
+// -----
+
+//===----------------------------------------------------------------------===//
+// Test VCumsum SIMT-library dispatch gate
+//===----------------------------------------------------------------------===//
+// i64 vector registers are unsupported on hardware; on reg-based targets the
+// 1D dim0 path is routed to the SIMT Sklansky library call by
+// VCumsumOp::shouldLowerToScalarLoops. The bc template only instantiates
+// (src,dst) in {(i64,i64), (i32,i64)}, so the gate only leaves the op for the
+// library call on those two pairs. Other i64-dst mixes (i1/i8/i16/u8/u16/u32
+// src) fall through to the scalar-loop fallback. Production i16->i64 cumsum is
+// rewritten upstream by Triton's promote pass (i16->i32) + cast_signed
+// (i32->i64) and lands on the supported (i32,i64) case below.
+// The gate is reg-based only, hence the hacc.target attribute here; the
+// same-op tests above have no target attribute and keep the scalar loops.
+
+// Same-type i64 1D dim0: dispatched to the SIMT library (symbol exists).
+// CHECK-LABEL: func @test_cumsum_1d_i64_dispatched_to_simt
+// CHECK-NOT: scf.for
+// CHECK: hivm.hir.vcumsum
+// CHECK: return
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @test_cumsum_1d_i64_dispatched_to_simt(%src: memref<16xi64>, %dst: memref<16xi64>) attributes {hacc.entry} {
+    hivm.hir.vcumsum ins(%src : memref<16xi64>) outs(%dst : memref<16xi64>) cum_dims = [0] reverse = false
+    return
+  }
+}
+
+// -----
+
+// Mixed i32 -> i64 1D dim0: dispatched to the SIMT library (folded cast symbol).
+// CHECK-LABEL: func @test_cumsum_1d_i32_to_i64_dispatched_to_simt
+// CHECK-NOT: scf.for
+// CHECK: hivm.hir.vcumsum
+// CHECK: return
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @test_cumsum_1d_i32_to_i64_dispatched_to_simt(%src: memref<16xi32>, %dst: memref<16xi64>) attributes {hacc.entry} {
+    hivm.hir.vcumsum ins(%src : memref<16xi32>) outs(%dst : memref<16xi64>) cum_dims = [0] reverse = false
+    return
+  }
+}

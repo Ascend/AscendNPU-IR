@@ -1163,13 +1163,7 @@ struct DropUnitDimsInsertSlicePattern
     bool srcCollapsed = false;
     bool srcExpanded = false;
     Value collapsedSrc = src;
-    if (src.getDefiningOp()) {
-      auto expandOp = dyn_cast<tensor::ExpandShapeOp>(src.getDefiningOp());
-      if (!expandOp) {
-        return rewriter.notifyMatchFailure(
-            op, "[DropUnitDimsInsertSlicePattern] src's definingOp is not "
-                "tensor::ExpandShapeOp");
-      }
+    if (auto expandOp = src.getDefiningOp<tensor::ExpandShapeOp>()) {
       auto expandedShape = expandOp.getMixedOutputShape();
       auto oldSizes = op.getMixedSizes();
       LLVM_DEBUG(llvm::dbgs() << "expandOp: " << *expandOp << "\n";
@@ -1237,6 +1231,59 @@ struct DropUnitDimsInsertSlicePattern
                        "tryExpandValueWithUnitDim");
     }
 
+    return success();
+  }
+};
+
+/// Fold the unit trailing dimension produced by deinterleaving a two-element
+/// channel. For example:
+///
+///   tensor<64x2xf32> -> tensor<64x1xf32>
+///
+/// is equivalent to deinterleaving the flattened pair dimension:
+///
+///   tensor<128xf32> -> tensor<64xf32>
+///
+/// An expand_shape is kept at the replacement boundary for users that still
+/// require the original rank.
+struct DropUnitDimsDeinterleavePattern
+    : public OpRewritePattern<hfusion::DeinterleaveOp> {
+  using OpRewritePattern<hfusion::DeinterleaveOp>::OpRewritePattern;
+
+  LogicalResult
+  matchAndRewrite(hfusion::DeinterleaveOp op,
+                  PatternRewriter &rewriter) const override {
+    if (op.getOutput().size() != 1)
+      return failure();
+
+    auto inputType = dyn_cast<RankedTensorType>(op.getInput().getType());
+    auto outputType = dyn_cast<RankedTensorType>(op.getOutput()[0].getType());
+
+    if (!inputType || !outputType || inputType.getRank() <= 1 ||
+        inputType.getRank() != outputType.getRank() ||
+        outputType.getDimSize(inputType.getRank() - 1) != 1)
+      return failure();
+    int64_t lastDim = inputType.getRank() - 1;
+    assert(hfusion::DeinterleaveOp::getDeInterLeaveChannelNum() *
+               outputType.getDimSize(lastDim) ==
+           inputType.getDimSize(lastDim));
+
+    SmallVector<ReassociationIndices> reassociation;
+    reassociation.reserve(lastDim);
+    for (int64_t dim = 0; dim < lastDim - 1; ++dim)
+      reassociation.push_back({dim});
+    reassociation.push_back({lastDim - 1, lastDim});
+    Location loc = op.getLoc();
+    Value collapsedInput = rewriter.create<tensor::CollapseShapeOp>(
+        loc, op.getInput(), reassociation);
+    auto squeezedOutputType = tensor::CollapseShapeOp::inferCollapsedType(
+        outputType, reassociation);
+    auto newDeinterleave = rewriter.create<hfusion::DeinterleaveOp>(
+        loc, TypeRange{squeezedOutputType}, collapsedInput,
+        op.getChannelIndexAttr());
+    Value expandedOutput = rewriter.create<tensor::ExpandShapeOp>(
+        loc, outputType, newDeinterleave.getOutput()[0], reassociation);
+    rewriter.replaceOp(op, expandedOutput);
     return success();
   }
 };
@@ -1861,6 +1908,9 @@ void HFusionFoldUnitDimsPass::runOnOperation() {
     options.enableExperimentalDropping = true;
     options.avoidZeroRanks = true;
     patterns.add<DropUnitDimsLinalgOp>(context, shouldSkip, options);
+    patterns.add<FilteredPattern<DropUnitDimsDeinterleavePattern,
+                                 hfusion::DeinterleaveOp>>(context,
+                                                          shouldSkip);
     patterns.add<FilteredPattern<DropUnitDimsPrintOpPattern,
                                  hfusion::PrintOp>>(context, shouldSkip);
     patterns.add<FilteredPattern<DropUnitDimsSCFForPattern, scf::ForOp>>(

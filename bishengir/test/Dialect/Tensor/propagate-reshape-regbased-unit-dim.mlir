@@ -1,5 +1,5 @@
 // RUN: bishengir-opt %s -propagate-reshape="for-regbased=false" -split-input-file | FileCheck %s --check-prefix=DEFAULT
-// RUN: bishengir-opt %s -propagate-reshape="for-regbased=true" -split-input-file | FileCheck %s --check-prefix=REGBASE
+// RUN: bishengir-opt %s -propagate-reshape="for-regbased=true max-unit-dims-for-propagation=6" -split-input-file | FileCheck %s --check-prefix=REGBASE
 
 // DEFAULT-LABEL: func.func @scalar_reduce_unit_expand(
 // DEFAULT: %[[EXPANDED_INIT:.*]] = tensor.expand_shape %arg1 [] output_shape [1]
@@ -135,4 +135,37 @@ func.func @triton_cumprod_4D(
       (tensor<3x9x8xi8>,
        memref<3x9x8xi8, strided<[72, 8, 1]>>) -> ()
   return
+}
+
+// -----
+
+// REGBASE-LABEL: func.func @stop_expand_above_unit_dim_threshold(
+// REGBASE: %[[FILLED:.*]] = linalg.fill {{.*}} -> tensor<4xf32>
+// REGBASE: tensor.expand_shape %[[FILLED]] {{\[\[}}0, 1, 2, 3, 4, 5, 6, 7, 8]] output_shape [2, 1, 1, 1, 1, 1, 1, 1, 2]
+func.func @stop_expand_above_unit_dim_threshold() -> tensor<2x1x1x1x1x1x1x1x2xf32> {
+  %cst = arith.constant 0.0 : f32
+  %empty = tensor.empty() : tensor<4xf32>
+  %filled = linalg.fill ins(%cst : f32) outs(%empty : tensor<4xf32>) -> tensor<4xf32>
+  %expanded = tensor.expand_shape %filled [[0, 1, 2, 3, 4, 5, 6, 7, 8]]
+      output_shape [2, 1, 1, 1, 1, 1, 1, 1, 2]
+      : tensor<4xf32> into tensor<2x1x1x1x1x1x1x1x2xf32>
+  return %expanded : tensor<2x1x1x1x1x1x1x1x2xf32>
+}
+
+// -----
+
+// REGBASE-LABEL: func.func @stop_collapse_above_unit_dim_threshold(
+// REGBASE: %[[COLLAPSED:.*]] = tensor.collapse_shape {{.*}} : tensor<2x1x1x1x1x1x1x1x2xf32> into tensor<2x2xf32>
+// REGBASE: linalg.elemwise_unary {{.*}} ins(%[[COLLAPSED]] : tensor<2x2xf32>)
+func.func @stop_collapse_above_unit_dim_threshold() -> tensor<2x2xf32> {
+  %cst = arith.constant 0.0 : f32
+  %src_empty = tensor.empty() : tensor<2x1x1x1x1x1x1x1x2xf32>
+  %src = linalg.fill ins(%cst : f32) outs(%src_empty : tensor<2x1x1x1x1x1x1x1x2xf32>) -> tensor<2x1x1x1x1x1x1x1x2xf32>
+  %collapsed = tensor.collapse_shape %src [[0, 1, 2, 3, 4, 5, 6, 7], [8]]
+      : tensor<2x1x1x1x1x1x1x1x2xf32> into tensor<2x2xf32>
+  %dst = tensor.empty() : tensor<2x2xf32>
+  %abs = linalg.elemwise_unary {fun = #linalg.unary_fn<abs>}
+      ins(%collapsed : tensor<2x2xf32>) outs(%dst : tensor<2x2xf32>)
+      -> tensor<2x2xf32>
+  return %abs : tensor<2x2xf32>
 }

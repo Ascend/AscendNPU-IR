@@ -1,4 +1,4 @@
-// RUN: bishengir-opt %s --lower-hfusion-regbase-pipeline="enable-triton-kernel-compile enable-vf-fusion target=Ascend950PR_9589" --mlir-print-ir-after=hfusion-flatten-ops --mlir-print-ir-after-change 2>&1 | FileCheck %s
+// RUN: bishengir-opt %s --lower-hfusion-regbase-pipeline="enable-triton-kernel-compile target=Ascend950PR_9589" --mlir-print-ir-after=hfusion-flatten-ops --mlir-print-ir-after-change 2>&1 | FileCheck %s
 
 // Regression test for the layernorm case.
 // The extra flatten pass in the SIMD VFFusion path should flatten each

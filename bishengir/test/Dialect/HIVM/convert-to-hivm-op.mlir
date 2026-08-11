@@ -196,6 +196,22 @@ func.func @test_load_with_mask_other_memref_expand_shape(
 }
 
 // -----
+// CHECK-LABEL: @test_pad_const_on_alloc_through_collapse_subview
+// CHECK: %[[PAD:.*]] = arith.constant 0xFF800000 : f32
+// CHECK: hivm.hir.load {{.*}} pad_mode = <PadValue> pad_value = %[[PAD]] : f32
+func.func @test_pad_const_on_alloc_through_collapse_subview(
+  %arg0 : memref<16xf32>, %size : index) {
+  %pad = arith.constant 0xFF800000 : f32
+  %alloc = memref.alloc() : memref<1x16xf32>
+  annotation.mark %alloc keys = ["pad_const"] values = [%pad : f32] : memref<1x16xf32>
+  %subview = memref.subview %arg0[0] [%size] [1] : memref<16xf32> to memref<?xf32, strided<[1]>>
+  %subview_0 = memref.subview %alloc[0, 0] [1, %size] [1, 1] : memref<1x16xf32> to memref<1x?xf32, strided<[16, 1]>>
+  %collapse_shape = memref.collapse_shape %subview_0 [[0, 1]] : memref<1x?xf32, strided<[16, 1]>> into memref<?xf32, strided<[1]>>
+  memref.copy %subview, %collapse_shape : memref<?xf32, strided<[1]>> to memref<?xf32, strided<[1]>>
+  return
+}
+
+// -----
 module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
   memref.global "private" @tbl : memref<16xf32, #hivm.address_space<gm>> = dense<[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0]> {alignment = 32 : i64}
 

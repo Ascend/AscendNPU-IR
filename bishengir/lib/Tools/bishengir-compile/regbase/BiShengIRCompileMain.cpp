@@ -362,7 +362,7 @@ bishengir::regbase::runRegBasePipeline(ModuleOp mod,
   });
 
   bool hirCompileSuccess = false;
-  int tryTimes = 5;
+  int tryTimes = 6;
   // triton compile has nothing to do with HFusion auto schedule, so we don't
   // need to tune for it.
   //
@@ -440,11 +440,11 @@ bishengir::regbase::runRegBasePipeline(ModuleOp mod,
                 "multi buffer");
         collectedDiagnostics.clear();
         config.setEnableAutoMultiBuffer(false);
-      } else if (hasUboverflow && config.getEnableVFFusion()) {
+      } else if (hasUboverflow && config.getVfFusionMode() ==
+                                      mlir::analysis::FusionMode::MaxParallel) {
         LDBG("ub overflow detected at attempt "
-             << (i + 1) << "/" << tryTimes
-             << ", fallback with disabled vffusion");
-        config.setEnableVFFusion(false);
+             << (i + 1) << "/" << tryTimes << ", fallback with all-op mode");
+        config.setVfFusionMode(mlir::analysis::FusionMode::AllOp);
         collectedDiagnostics.clear();
       } else if (hasUboverflow && !config.getDisableVFReachableCheck()) {
         LDBG("ub overflow detected at attempt "
