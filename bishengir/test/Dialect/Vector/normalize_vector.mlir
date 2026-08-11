@@ -165,13 +165,13 @@ func.func @test_1d_multi_reduction(%arg0: memref<256xf32, #hivm.address_space<ub
     %subview_0 = memref.subview %arg1[%arg3] [64] [1] : memref<256xf32, #hivm.address_space<ub>> to memref<64xf32, strided<[1], offset: ?>, #hivm.address_space<ub>>
     %5 = vector.transfer_read %subview[%c0], %cst {in_bounds = [true]} : memref<64xf32, strided<[1], offset: ?>, #hivm.address_space<ub>>, vector<64xf32>
     %6 = vector.transfer_read %subview_0[%c0], %cst {in_bounds = [true]} : memref<64xf32, strided<[1], offset: ?>, #hivm.address_space<ub>>, vector<64xf32>
-    // CHECK-NO: vector.extractelement
+    // CHECK-NOT: vector.extractelement
     %7 = vector.extractelement %4[] : vector<f32>
     %8 = arith.addf %6, %5 : vector<64xf32>
     // CHECK: %[[REDUCTION:.*]] = vector.reduction <add>, %{{.*}}, %{{.*}} : vector<64xf32> into f32
     %9 = vector.multi_reduction <add>, %8, %7 [0] : vector<64xf32> to f32
     vector.transfer_write %8, %subview_0[%c0] {in_bounds = [true]} : vector<64xf32>, memref<64xf32, strided<[1], offset: ?>, #hivm.address_space<ub>>
-    // CHECK-NO: vector.broadcast
+    // CHECK-NOT: vector.broadcast
     %10 = vector.broadcast %9 : f32 to vector<f32>
     %11 = builtin.unrealized_conversion_cast %10 : vector<f32> to vector<64xf32>
     scf.yield %11 : vector<64xf32>
@@ -225,7 +225,7 @@ func.func @transpose_2d_outlined_vf_0(%arg0: memref<16x16xf16, #hivm.address_spa
   scf.for %arg2 = %c0 to %c16 step %c1 {
     %subview = memref.subview %arg0[0, %arg2] [16, 1] [1, 1] : memref<16x16xf16, #hivm.address_space<ub>> to memref<16x1xf16, strided<[16, 1], offset: ?>, #hivm.address_space<ub>>
     %subview_0 = memref.subview %arg1[%arg2, 0] [1, 16] [1, 1] : memref<16x16xf16, #hivm.address_space<ub>> to memref<1x16xf16, strided<[16, 1], offset: ?>, #hivm.address_space<ub>>
-    // CHECK-NO: vector.transfer_read
+    // CHECK-NOT: vector.transfer_read
     // CHECK: %[[MASK:.*]] = vector.constant_mask [16] : vector<128xi1>
     // CHECK-NEXT: %[[GATHER:.*]] = vector.gather %subview[%c0, %c0] [%[[INDEX]]], %[[MASK]], %cst : memref<16x1xf16, strided<[16, 1], offset: ?>, #hivm.address_space<ub>>, vector<128xi16>, vector<128xi1>, vector<128xf16> into vector<128xf16>
     %2 = vector.transfer_read %subview[%c0, %c0], %cst, %0 {in_bounds = [true, true], permutation_map = affine_map<(d0, d1) -> (d1, d0)>} : memref<16x1xf16, strided<[16, 1], offset: ?>, #hivm.address_space<ub>>, vector<1x128xf16>
@@ -248,7 +248,7 @@ func.func @transpose_2d_outlined_vf_1(%arg0: memref<512x16xf16, #hivm.address_sp
     scf.for %arg3 = %c0 to %c512 step %c128 {
       %subview = memref.subview %arg0[%arg3, %arg2] [128, 1] [1, 1] : memref<512x16xf16, #hivm.address_space<ub>> to memref<128x1xf16, strided<[16, 1], offset: ?>, #hivm.address_space<ub>>
       %subview_0 = memref.subview %arg1[%arg2, %arg3] [1, 128] [1, 1] : memref<16x512xf16, #hivm.address_space<ub>> to memref<1x128xf16, strided<[512, 1], offset: ?>, #hivm.address_space<ub>>
-      // CHECK-NO: vector.transfer_read
+      // CHECK-NOT: vector.transfer_read
       // CHECK: %[[MASK:.*]] = vector.constant_mask [128] : vector<128xi1>
       // CHECK-NEXT: %[[GATHER:.*]] = vector.gather %subview[%c0, %c0] [%[[INDEX]]], %[[MASK]], %cst : memref<128x1xf16, strided<[16, 1], offset: ?>, #hivm.address_space<ub>>, vector<128xi16>, vector<128xi1>, vector<128xf16> into vector<128xf16>
      %0 = vector.transfer_read %subview[%c0, %c0], %cst {in_bounds = [true, true], permutation_map = affine_map<(d0, d1) -> (d1, d0)>} : memref<128x1xf16, strided<[16, 1], offset: ?>, #hivm.address_space<ub>>, vector<1x128xf16>
@@ -259,9 +259,12 @@ func.func @transpose_2d_outlined_vf_1(%arg0: memref<512x16xf16, #hivm.address_sp
 }
 
 // -----
-// Normalize vector.transfer_read with permutation_map not into vector.gather
-// CHECK-LABEL: func.func @not_gather
-func.func @not_gather(%arg0: memref<16x16xi8, #hivm.address_space<ub>>, %arg1: memref<16x16xi8, #hivm.address_space<ub>>) attributes {hivm.vector_function} {
+// A permuted i8 read at exactly 128 elements fits a single native gather
+// (16-bit indices, one HIVM tile register holds up to 128 of them) with no
+// padding to 256 and no dual-gather at all. The result is written under a
+// mask covering just the real 16 elements, fused straight into the store
+// CHECK-LABEL: func.func @narrow_i8_transpose_gather_128_fused_into_masked_write
+func.func @narrow_i8_transpose_gather_128_fused_into_masked_write(%arg0: memref<16x16xi8, #hivm.address_space<ub>>, %arg1: memref<16x16xi8, #hivm.address_space<ub>>) attributes {hivm.vector_function} {
   %cst = arith.constant 0 : i8
   %c1 = arith.constant 1 : index
   %c16 = arith.constant 16 : index
@@ -271,10 +274,151 @@ func.func @not_gather(%arg0: memref<16x16xi8, #hivm.address_space<ub>>, %arg1: m
   scf.for %arg2 = %c0 to %c16 step %c1 {
     %subview = memref.subview %arg0[0, %arg2] [16, 1] [1, 1] : memref<16x16xi8, #hivm.address_space<ub>> to memref<16x1xi8, strided<[16, 1], offset: ?>, #hivm.address_space<ub>>
     %subview_0 = memref.subview %arg1[%arg2, 0] [1, 16] [1, 1] : memref<16x16xi8, #hivm.address_space<ub>> to memref<1x16xi8, strided<[16, 1], offset: ?>, #hivm.address_space<ub>>
-    // CHECK-NOT: vector.gather
+    // CHECK-NOT: vector.transfer_read
+    // CHECK: %[[MASK:.*]] = vector.constant_mask [16] : vector<128xi1>
+    // CHECK-NEXT: %[[GATHER:.*]] = vector.gather %subview{{.*}} : memref<16x1xi8, strided<[16, 1], offset: ?>, #hivm.address_space<ub>>, vector<128xi16>, vector<128xi1>, vector<128xi8> into vector<128xi8>
+    // CHECK-NEXT: %[[DEST:.*]] = memref.subview %subview_1{{.*}} : memref<1x16xi8, strided<[16, 1], offset: ?>, #hivm.address_space<ub>> to memref<16xi8, {{.*}}, #hivm.address_space<ub>>
+    // CHECK-NEXT: vector.maskedstore %[[DEST]][%c0], %[[MASK]], %[[GATHER]] : memref<16xi8, {{.*}}, #hivm.address_space<ub>>, vector<128xi1>, vector<128xi8>
     %2 = vector.transfer_read %subview[%c0, %c0], %cst, %0 {in_bounds = [true, true], permutation_map = affine_map<(d0, d1) -> (d1, d0)>} : memref<16x1xi8, strided<[16, 1], offset: ?>, #hivm.address_space<ub>>, vector<1x128xi8>
     vector.transfer_write %2, %subview_0[%c0, %c0], %1 {in_bounds = [true, true]} : vector<1x128xi8>, memref<1x16xi8, strided<[16, 1], offset: ?>, #hivm.address_space<ub>>
   }
+  return
+}
+
+// -----
+// A permuted i8 read narrow enough (16 elements) to fit a single native
+// gather with no padding, whose only consumer is a plain, unmasked,
+// identity vector.transfer_write.
+// CHECK-LABEL: func.func @narrow_i8_transpose_gather_16_fused_into_plain_write
+func.func @narrow_i8_transpose_gather_16_fused_into_plain_write(%arg0: memref<16x16xi8, #hivm.address_space<ub>>, %arg1: memref<16x16xi8, #hivm.address_space<ub>>) attributes {hivm.vector_function} {
+  %cst = arith.constant 0 : i8
+  %c1 = arith.constant 1 : index
+  %c16 = arith.constant 16 : index
+  %c0 = arith.constant 0 : index
+  scf.for %arg2 = %c0 to %c16 step %c1 {
+    %subview = memref.subview %arg0[0, %arg2] [16, 1] [1, 1] : memref<16x16xi8, #hivm.address_space<ub>> to memref<16x1xi8, strided<[16, 1], offset: ?>, #hivm.address_space<ub>>
+    %subview_0 = memref.subview %arg1[%arg2, 0] [1, 16] [1, 1] : memref<16x16xi8, #hivm.address_space<ub>> to memref<1x16xi8, strided<[16, 1], offset: ?>, #hivm.address_space<ub>>
+    // CHECK-NOT: vector.transfer_read
+    // CHECK: %[[MASK:.*]] = vector.constant_mask [16] : vector<16xi1>
+    // CHECK-NEXT: %[[GATHER:.*]] = vector.gather %subview{{.*}} : memref<16x1xi8, strided<[16, 1], offset: ?>, #hivm.address_space<ub>>, vector<16xi16>, vector<16xi1>, vector<16xi8> into vector<16xi8>
+    // CHECK-NEXT: %[[DEST:.*]] = memref.subview %subview_1{{.*}} : memref<1x16xi8, strided<[16, 1], offset: ?>, #hivm.address_space<ub>> to memref<16xi8, {{.*}}, #hivm.address_space<ub>>
+    // CHECK-NEXT: vector.store %[[GATHER]], %[[DEST]][%c0] : memref<16xi8, {{.*}}, #hivm.address_space<ub>>, vector<16xi8>
+    %2 = vector.transfer_read %subview[%c0, %c0], %cst {in_bounds = [true, true], permutation_map = affine_map<(d0, d1) -> (d1, d0)>} : memref<16x1xi8, strided<[16, 1], offset: ?>, #hivm.address_space<ub>>, vector<1x16xi8>
+    vector.transfer_write %2, %subview_0[%c0, %c0] {in_bounds = [true, true]} : vector<1x16xi8>, memref<1x16xi8, strided<[16, 1], offset: ?>, #hivm.address_space<ub>>
+  }
+  return
+}
+
+// -----
+// A permuted i8 read narrow enough (16 elements) to fit a single native
+// gather feeds further compute (arith.addi) before being stored
+// CHECK-LABEL: func.func @narrow_i8_transpose_gather_16_feeds_compute
+func.func @narrow_i8_transpose_gather_16_feeds_compute(%arg0: memref<16x16xi8, #hivm.address_space<ub>>, %arg1: memref<16x16xi8, #hivm.address_space<ub>>) attributes {hivm.vector_function} {
+  %cst = arith.constant 0 : i8
+  %c1 = arith.constant 1 : index
+  %c16 = arith.constant 16 : index
+  %c0 = arith.constant 0 : index
+  scf.for %arg2 = %c0 to %c16 step %c1 {
+    %subview = memref.subview %arg0[0, %arg2] [16, 1] [1, 1] : memref<16x16xi8, #hivm.address_space<ub>> to memref<16x1xi8, strided<[16, 1], offset: ?>, #hivm.address_space<ub>>
+    %subview_0 = memref.subview %arg1[%arg2, 0] [1, 16] [1, 1] : memref<16x16xi8, #hivm.address_space<ub>> to memref<1x16xi8, strided<[16, 1], offset: ?>, #hivm.address_space<ub>>
+    // CHECK: %[[GATHER:.*]] = vector.gather{{.*}} : memref<16x1xi8, strided<[16, 1], offset: ?>, #hivm.address_space<ub>>, vector<16xi16>, vector<16xi1>, vector<16xi8> into vector<16xi8>
+    // CHECK-NEXT: arith.addi %[[GATHER]], %[[GATHER]] : vector<16xi8>
+    %2 = vector.transfer_read %subview[%c0, %c0], %cst {in_bounds = [true, true], permutation_map = affine_map<(d0, d1) -> (d1, d0)>} : memref<16x1xi8, strided<[16, 1], offset: ?>, #hivm.address_space<ub>>, vector<1x16xi8>
+    %3 = arith.addi %2, %2 : vector<1x16xi8>
+    vector.transfer_write %3, %subview_0[%c0, %c0] {in_bounds = [true, true]} : vector<1x16xi8>, memref<1x16xi8, strided<[16, 1], offset: ?>, #hivm.address_space<ub>>
+  }
+  return
+}
+
+// -----
+// A permuted i8 read at exactly 256 elements  needs the dual-gather
+// reconstruction, but since it already produces exactly the logical
+// width with a fully valid mask, no narrowing is needed: the gather
+// result feeds the write directly.
+// CHECK-LABEL: func.func @narrow_i8_transpose_gather_256_dual_gather_into_write
+func.func @narrow_i8_transpose_gather_256_dual_gather_into_write(%arg0: memref<256x32xi8, #hivm.address_space<ub>>, %arg1: memref<32x256xi8, #hivm.address_space<ub>>) attributes {hivm.vector_function} {
+  %cst = arith.constant 0 : i8
+  %c1 = arith.constant 1 : index
+  %c32 = arith.constant 32 : index
+  %c0 = arith.constant 0 : index
+  %0 = vector.constant_mask [256, 1] : vector<256x1xi1>
+  %1 = vector.constant_mask [1, 256] : vector<1x256xi1>
+  scf.for %arg2 = %c0 to %c32 step %c1 {
+    %subview = memref.subview %arg0[0, %arg2] [256, 1] [1, 1] : memref<256x32xi8, #hivm.address_space<ub>> to memref<256x1xi8, strided<[32, 1], offset: ?>, #hivm.address_space<ub>>
+    %subview_0 = memref.subview %arg1[%arg2, 0] [1, 256] [1, 1] : memref<32x256xi8, #hivm.address_space<ub>> to memref<1x256xi8, strided<[256, 1], offset: ?>, #hivm.address_space<ub>>
+    // CHECK: %[[MASK:.*]] = vector.constant_mask [256] : vector<256xi1>
+    // CHECK-NEXT: %[[GATHER:.*]] = vector.gather %subview{{.*}} {secondary_index = {{.*}}} : memref<256x1xi8, strided<[32, 1], offset: ?>, #hivm.address_space<ub>>, vector<128xi16>, vector<256xi1>, vector<256xi8> into vector<256xi8>
+    // CHECK-NEXT: %[[DEST:.*]] = memref.subview %subview_1{{.*}} : memref<1x256xi8, strided<[256, 1], offset: ?>, #hivm.address_space<ub>> to memref<256xi8, {{.*}}, #hivm.address_space<ub>>
+    // CHECK-NEXT: vector.store %[[GATHER]], %[[DEST]][%c0] : memref<256xi8, {{.*}}, #hivm.address_space<ub>>, vector<256xi8>
+    %2 = vector.transfer_read %subview[%c0, %c0], %cst, %0 {in_bounds = [true, true], permutation_map = affine_map<(d0, d1) -> (d1, d0)>} : memref<256x1xi8, strided<[32, 1], offset: ?>, #hivm.address_space<ub>>, vector<1x256xi8>
+    vector.transfer_write %2, %subview_0[%c0, %c0], %1 {in_bounds = [true, true]} : vector<1x256xi8>, memref<1x256xi8, strided<[256, 1], offset: ?>, #hivm.address_space<ub>>
+  }
+  return
+}
+
+// -----
+// A permuted i8 read at exactly 256 elements feeds further compute
+// (arith.addi) instead of a direct write. The gather result is used directly,
+// same as the 16-wide compute case above, just at the dual-gather width.
+// CHECK-LABEL: func.func @narrow_i8_transpose_gather_256_feeds_compute
+func.func @narrow_i8_transpose_gather_256_feeds_compute(%arg0: memref<256x16xi8, #hivm.address_space<ub>>, %arg1: memref<16x256xi8, #hivm.address_space<ub>>) attributes {hivm.vector_function} {
+  %cst = arith.constant 0 : i8
+  %c1 = arith.constant 1 : index
+  %c16 = arith.constant 16 : index
+  %c0 = arith.constant 0 : index
+  scf.for %arg2 = %c0 to %c16 step %c1 {
+    %subview = memref.subview %arg0[0, %arg2] [256, 1] [1, 1] : memref<256x16xi8, #hivm.address_space<ub>> to memref<256x1xi8, strided<[16, 1], offset: ?>, #hivm.address_space<ub>>
+    %subview_0 = memref.subview %arg1[%arg2, 0] [1, 256] [1, 1] : memref<16x256xi8, #hivm.address_space<ub>> to memref<1x256xi8, strided<[256, 1], offset: ?>, #hivm.address_space<ub>>
+    // CHECK: %[[GATHER:.*]] = vector.gather %subview{{.*}} {secondary_index = {{.*}}} : memref<256x1xi8, strided<[16, 1], offset: ?>, #hivm.address_space<ub>>, vector<128xi16>, vector<256xi1>, vector<256xi8> into vector<256xi8>
+    // CHECK-NEXT: arith.addi %[[GATHER]], %[[GATHER]] : vector<256xi8>
+    %2 = vector.transfer_read %subview[%c0, %c0], %cst {in_bounds = [true, true], permutation_map = affine_map<(d0, d1) -> (d1, d0)>} : memref<256x1xi8, strided<[16, 1], offset: ?>, #hivm.address_space<ub>>, vector<1x256xi8>
+    %3 = arith.addi %2, %2 : vector<1x256xi8>
+    vector.transfer_write %3, %subview_0[%c0, %c0] {in_bounds = [true, true]} : vector<1x256xi8>, memref<1x256xi8, strided<[256, 1], offset: ?>, #hivm.address_space<ub>>
+  }
+  return
+}
+
+// -----
+// A permuted i8 read at 200 elements (128 < width < 256) is split into two
+// sub-gathers by index parity, each half padded to a full 128-lane index
+// register. The gather keeps the logical 200-element width, so its result
+// feeds the write (or any other consumer) directly.
+// CHECK-LABEL: func.func @narrow_i8_transpose_gather_200_into_write
+func.func @narrow_i8_transpose_gather_200_into_write(%arg0: memref<200x16xi8, #hivm.address_space<ub>>, %arg1: memref<16x200xi8, #hivm.address_space<ub>>) attributes {hivm.vector_function} {
+  %cst = arith.constant 0 : i8
+  %c1 = arith.constant 1 : index
+  %c16 = arith.constant 16 : index
+  %c0 = arith.constant 0 : index
+  scf.for %arg2 = %c0 to %c16 step %c1 {
+    %subview = memref.subview %arg0[0, %arg2] [200, 1] [1, 1] : memref<200x16xi8, #hivm.address_space<ub>> to memref<200x1xi8, strided<[16, 1], offset: ?>, #hivm.address_space<ub>>
+    %subview_0 = memref.subview %arg1[%arg2, 0] [1, 200] [1, 1] : memref<16x200xi8, #hivm.address_space<ub>> to memref<1x200xi8, strided<[200, 1], offset: ?>, #hivm.address_space<ub>>
+    // CHECK-NOT: vector.transfer_read
+    // CHECK: %[[INDEX:.*]] = arith.constant dense<"0x00002000400060008000A000C000E00000012001400160018001A001C001E00100022002400260028002A002C002E00200032003400360038003A003C003E00300042004400460048004A004C004E00400052005400560058005A005C005E00500062006400660068006A006C006E00600072007400760078007A007C007E00700082008400860088008A008C008E00800092009400960098009A009C009E009000A200A400A600A800AA00AC00AE00A000B200B400B600B800BA00BC00BE00B000C200C400C600C0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"> : vector<128xi16>
+    // CHECK: %[[MASK:.*]] = vector.constant_mask [200] : vector<200xi1>
+    // CHECK-NEXT: %[[GATHER:.*]] = vector.gather %subview[%c0, %c0] [%[[INDEX]]], %[[MASK]], %{{.*}} {secondary_index = dense<"0x10003000500070009000B000D000F00010013001500170019001B001D001F00110023002500270029002B002D002F00210033003500370039003B003D003F00310043004500470049004B004D004F00410053005500570059005B005D005F00510063006500670069006B006D006F00610073007500770079007B007D007F00710083008500870089008B008D008F00810093009500970099009B009D009F009100A300A500A700A900AB00AD00AF00A100B300B500B700B900BB00BD00BF00B100C300C500C700C0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"> : vector<128xi16>} : memref<200x1xi8, strided<[16, 1], offset: ?>, #hivm.address_space<ub>>, vector<128xi16>, vector<200xi1>, vector<200xi8> into vector<200xi8>
+    // CHECK-NEXT: %[[DEST:.*]] = memref.subview %subview_1{{.*}} : memref<1x200xi8, strided<[200, 1], offset: ?>, #hivm.address_space<ub>> to memref<200xi8, {{.*}}, #hivm.address_space<ub>>
+    // CHECK-NEXT: vector.store %[[GATHER]], %[[DEST]][%c0] : memref<200xi8, {{.*}}, #hivm.address_space<ub>>, vector<200xi8>
+    %2 = vector.transfer_read %subview[%c0, %c0], %cst {in_bounds = [true, true], permutation_map = affine_map<(d0, d1) -> (d1, d0)>} : memref<200x1xi8, strided<[16, 1], offset: ?>, #hivm.address_space<ub>>, vector<1x200xi8>
+    vector.transfer_write %2, %subview_0[%c0, %c0] {in_bounds = [true, true]} : vector<1x200xi8>, memref<1x200xi8, strided<[200, 1], offset: ?>, #hivm.address_space<ub>>
+  }
+  return
+}
+
+// -----
+// Same 200-element permuted i8 read, but feeding further compute before the
+// store: the logical-width gather result is used by arith.addi directly.
+// CHECK-LABEL: func.func @narrow_i8_transpose_gather_200_feeds_compute
+func.func @narrow_i8_transpose_gather_200_feeds_compute(%arg0: memref<200x16xi8, #hivm.address_space<ub>>, %arg1: memref<16x200xi8, #hivm.address_space<ub>>) attributes {hivm.vector_function} {
+  %cst = arith.constant 0 : i8
+  %c0 = arith.constant 0 : index
+  %subview = memref.subview %arg0[0, 0] [200, 1] [1, 1] : memref<200x16xi8, #hivm.address_space<ub>> to memref<200x1xi8, strided<[16, 1]>, #hivm.address_space<ub>>
+  %subview_0 = memref.subview %arg1[0, 0] [1, 200] [1, 1] : memref<16x200xi8, #hivm.address_space<ub>> to memref<1x200xi8, strided<[200, 1]>, #hivm.address_space<ub>>
+  // CHECK: %[[GATHER:.*]] = vector.gather {{.*}} {secondary_index = {{.*}}} : memref<200x1xi8, strided<[16, 1]>, #hivm.address_space<ub>>, vector<128xi16>, vector<200xi1>, vector<200xi8> into vector<200xi8>
+  // CHECK-NEXT: %[[SUM:.*]] = arith.addi %[[GATHER]], %[[GATHER]] : vector<200xi8>
+  // CHECK: vector.store %[[SUM]], %{{.*}}[%c0] : memref<200xi8, {{.*}}, #hivm.address_space<ub>>, vector<200xi8>
+  %0 = vector.transfer_read %subview[%c0, %c0], %cst {in_bounds = [true, true], permutation_map = affine_map<(d0, d1) -> (d1, d0)>} : memref<200x1xi8, strided<[16, 1]>, #hivm.address_space<ub>>, vector<1x200xi8>
+  %1 = arith.addi %0, %0 : vector<1x200xi8>
+  vector.transfer_write %1, %subview_0[%c0, %c0] {in_bounds = [true, true]} : vector<1x200xi8>, memref<1x200xi8, strided<[200, 1]>, #hivm.address_space<ub>>
   return
 }
 

@@ -249,18 +249,24 @@ struct HIVMVpackOpLowering : public ConvertOpToLLVMPattern<hivmave::VFVpackOp> {
                   ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
     Value src = adaptor.getSrc();
-    Value part = rewriter.create<arith::ConstantOp>(loc, rewriter.getI32IntegerAttr(adaptor.getPart()));
+    Value part = rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getI32IntegerAttr(adaptor.getPart()));
     VectorType vecType = cast<VectorType>(op.getRes().getType());
-    Type elemType = vecType.getElementType();
+    Type srcElemType = cast<VectorType>(op.getSrc().getType()).getElementType();
     Type llvmVecType = getTypeConverter()->convertType(vecType);
     if (!llvmVecType)
       return rewriter.notifyMatchFailure(
           op, "failed to convert vector type to LLVM type");
-    auto llvmVecVLType = createVLVectorType(elemType);
+
+    // src and res can legitimately differ (vpack narrows element width,
+    // widening the lane count within the same physical register), so each
+    // side needs its own canonical VL-wide type.
+    auto srcVLType = createVLVectorType(srcElemType);
+    auto resVLType = createVLVectorType(vecType.getElementType());
     UnrealizedConversionCastOp srcCasted =
-        rewriter.create<UnrealizedConversionCastOp>(loc, llvmVecVLType, src);
-    Operation *vpackOp = buildVpackOp(loc, part, srcCasted->getResult(0),
-                                      llvmVecVLType, rewriter);
+        rewriter.create<UnrealizedConversionCastOp>(loc, srcVLType, src);
+    Operation *vpackOp =
+        buildVpackOp(loc, part, srcCasted->getResult(0), resVLType, rewriter);
     if (!vpackOp)
       return rewriter.notifyMatchFailure(op, "failed to create VpackInstrOp");
     UnrealizedConversionCastOp resCasted =
