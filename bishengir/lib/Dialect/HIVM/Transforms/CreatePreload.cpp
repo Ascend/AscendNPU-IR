@@ -220,6 +220,12 @@ static Value getPreloadCondition(const PreloadInfo &info, Location loc,
   return b.create<arith::AndIOp>(loc, lowerCond, upperCond);
 }
 
+static bool isRematerializableAliasOp(Operation *op) {
+  // PointerCastOp is not ViewLikeOpInterface because it creates a memref from
+  // raw addresses, but it can still be cloned as the root of a view chain.
+  return isa_and_nonnull<ViewLikeOpInterface, hivm::PointerCastOp>(op);
+}
+
 static void rewriteScopeReturnOp(ValueRange returnResults,
                                  const PreloadInfo &info, Location loc,
                                  OpBuilder &b) {
@@ -314,7 +320,7 @@ rematerializeViewLikeResult(Value value, scope::ScopeOp scopeOp,
   }
 
   Operation *definingOp = value.getDefiningOp();
-  if (!definingOp || !isa<ViewLikeOpInterface>(definingOp)) {
+  if (!isRematerializableAliasOp(definingOp)) {
     emitRematerializationError(definingOp, scopeOp);
     return failure();
   }
