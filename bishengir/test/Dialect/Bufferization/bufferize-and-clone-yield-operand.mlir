@@ -557,6 +557,32 @@ func.func @test_clone_if_yield_operands_for_extra_uWrite(%arg0: i32, %arg1: tens
 
 // -----
 
+// CHECK-DOUBLE-LABEL: func.func @test_cross_yield_operands_in_for
+func.func @test_cross_yield_operands_in_for(%arg0: i32, %arg1 : tensor<256xf16>,
+                                                              %arg2 : tensor<256xf16>) -> (tensor<256xf16>) {
+  %cst_0 = arith.constant 0.000000e+00 : f16
+  %c4 = arith.constant 4 : index
+  %c1 = arith.constant 1 : index
+  %c0 = arith.constant 0 : index
+  %0 = tensor.empty() : tensor<256xf16>
+  %1 = hivm.hir.vbrc ins(%cst_0 : f16) outs(%0 : tensor<256xf16>) -> tensor<256xf16>
+  %6 = tensor.empty() : tensor<256xf16>
+  %5 = hivm.hir.vbrc ins(%cst_0 : f16) outs(%6 : tensor<256xf16>) -> tensor<256xf16>
+  %2:2 = scf.for %arg3 = %c0 to %c4 step %c1 iter_args(%arg4 = %1, %arg5 = %5) -> (tensor<256xf16>, tensor<256xf16>) {
+    %3 = tensor.empty() : tensor<256xf16>
+    %4 = hivm.hir.vadd ins(%arg4, %arg2 : tensor<256xf16>, tensor<256xf16>) outs(%3 : tensor<256xf16>) -> tensor<256xf16>
+    // CHECK-DOUBLE: hivm.hir.vadd
+    // CHECK-DOUBLE: hivm.hir.copy
+    // CHECK-DOUBLE: hivm.hir.copy 
+    // CHECK-DOUBLE: memref.copy
+    // CHECK-DOUBLE: scf.yield
+    scf.yield %arg5, %4 : tensor<256xf16>, tensor<256xf16>
+  }
+  return %2 : tensor<256xf16>
+}
+
+// -----
+
 func.func @test_not_clone_trace_insertSliceOp(%arg0: i32, %arg1: tensor<16x16xf32>, %arg2: tensor<16x16xf32>) -> tensor<16x16xf32> {
   %c1_i32 = arith.constant 1 : i32
   %c1 = arith.constant 1 : index

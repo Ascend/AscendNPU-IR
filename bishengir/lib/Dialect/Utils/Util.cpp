@@ -16,23 +16,25 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/Utils/Util.h"
-#include "mlir/Interfaces/CallInterfaces.h"
-#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "bishengir/Config/bishengir-config.h"
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HACC/IR/HACC.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/MemRef/IR/MemRefImpl.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
-#include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "bishengir/Dialect/Tensor/IR/TensorImpl.h"
+
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/DLTI/DLTI.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
+#include "mlir/Interfaces/CallInterfaces.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #if (!BISHENGIR_BUILD_STANDALONE_IR_ONLY)
 #include "mlir/Dialect/Linalg/IR/LinalgExtensions.h"
 #endif // BISHENGIR_BUILD_STANDALONE_IR_ONLY
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
+
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/TypeSwitch.h"
 
@@ -58,8 +60,8 @@ namespace {
 /// value originates from a bufferization::ToTensorOp (i.e., a memref→tensor
 /// conversion). Returns the ToTensorOp if found, or nullptr otherwise.
 /// The visited set prevents infinite loops in cyclic IR.
-static Operation* canTraceToMemRefToTensor(
-    Value tensor, SmallPtrSetImpl<Operation *> &visited) {
+static Operation *
+canTraceToMemRefToTensor(Value tensor, SmallPtrSetImpl<Operation *> &visited) {
   // Skip block arguments (no defining op).
   Operation *def = tensor.getDefiningOp();
   if (!def)
@@ -214,14 +216,16 @@ std::string getPrettyOpName(Operation *op) {
 } // namespace debugger
 
 /*
-* @param[in] alignTargets - target axes which need to be aligned
-* @param[out] alignUnits - vector of multipliers which make memref/tensor aligned by applying them to shape
-* @param[in] shapes - shapes of tensor/memref which needs to be aligned
-* @param[in, out] innerAlignedUnits - inner axis which are already aligned.
-* @param[in, out] shapeAccumulation - total number of elements of inner axes
-* @param[in] alignTargetDim - axis which need to be aligned
-* @param[in] alignUnitsDim - axis of alignUnits which contain multiplier to make axis aligned
-*/
+ * @param[in] alignTargets - target axes which need to be aligned
+ * @param[out] alignUnits - vector of multipliers which make memref/tensor
+ * aligned by applying them to shape
+ * @param[in] shapes - shapes of tensor/memref which needs to be aligned
+ * @param[in, out] innerAlignedUnits - inner axis which are already aligned.
+ * @param[in, out] shapeAccumulation - total number of elements of inner axes
+ * @param[in] alignTargetDim - axis which need to be aligned
+ * @param[in] alignUnitsDim - axis of alignUnits which contain multiplier to
+ * make axis aligned
+ */
 void setAlignUnits(const SmallVectorImpl<int> &alignTargets,
                    SmallVector<int> &alignUnits, ArrayRef<int64_t> shapes,
                    int &innerAlignedUnits, int &shapeAccumulation,
@@ -243,7 +247,8 @@ void setAlignUnits(const SmallVectorImpl<int> &alignTargets,
     }
     alignUnits[alignUnitsDim] = newAlignedUnits / innerAlignedUnits;
   }
-  innerAlignedUnits = std::max(innerAlignedUnits, std::lcm(shapeAccumulation, innerAlignedUnits));
+  innerAlignedUnits = std::max(innerAlignedUnits,
+                               std::lcm(shapeAccumulation, innerAlignedUnits));
   if (!ShapedType::isDynamic(shapes[alignTargetDim])) {
     shapeAccumulation = shapeAccumulation * std::lcm(shapes[alignTargetDim],
                                                      alignUnits[alignUnitsDim]);
@@ -351,6 +356,32 @@ Value createEmptyOp(OpBuilder &builder, Location loc, Value source) {
 #endif // BISHENGIR_BUILD_STANDALONE_IR_ONLY
   }
   return memref::createMemRefAllocOp(builder, loc, source);
+}
+
+Value createAllocTensorOp(OpBuilder &builder, Location loc, Value source,
+                          bool copy) {
+  if (!llvm::isa<RankedTensorType>(source.getType())) {
+    llvm::report_fatal_error("not support unranked tensor type");
+  }
+  RankedTensorType tensorType = llvm::cast<RankedTensorType>(source.getType());
+  llvm::SmallVector<Value, 2> dynamicSizes;
+  if (copy) {
+    // Create AllocTensorOp.
+    auto allocTensorOp = builder.create<bufferization::AllocTensorOp>(
+        loc, tensorType, dynamicSizes, /*copy=*/source);
+    return allocTensorOp.getResult();
+  }
+  auto targetElemType = getElementTypeOrSelf(source);
+  ArrayRef<int64_t> staticShapes = tensorType.getShape();
+  for (size_t i = 0; i < staticShapes.size(); i++) {
+    if (staticShapes[i] == ShapedType::kDynamic) {
+      Operation *dynDimOp = builder.create<tensor::DimOp>(loc, source, i);
+      dynamicSizes.push_back(dynDimOp->getResults()[0]);
+    }
+  }
+  auto allocTensorOp = builder.create<bufferization::AllocTensorOp>(
+      loc, RankedTensorType::get(staticShapes, targetElemType), dynamicSizes);
+  return allocTensorOp.getResult();
 }
 
 tensor::EmptyOp createStaticShapeEmptyOp(OpBuilder &builder, Location loc,
@@ -771,7 +802,7 @@ bool isAlignedInUB(Type type) {
     auto shape = shapedType.getShape();
     const int64_t lastDimSizeInBit =
         shape.back() * static_cast<int64_t>(
-            shapedType.getElementType().getIntOrFloatBitWidth());
+                           shapedType.getElementType().getIntOrFloatBitWidth());
     return lastDimSizeInBit % kUBAlignSizeInBits == 0;
   }
   return type.getIntOrFloatBitWidth() % kUBAlignSizeInBits == 0;
@@ -1793,7 +1824,6 @@ bool isValidTwoDimVectorType(VectorType vType) {
   return true;
 }
 
-
 void collectAllEffects(
     Operation *op, SmallVectorImpl<MemoryEffects::EffectInstance> &effects) {
   if (auto callOp = dyn_cast<CallOpInterface>(op)) {
@@ -1873,9 +1903,9 @@ bool utils::isTransferWriteSuitForStoreWithStride(Operation *op) {
 
   // support I8, I16, I32, BF16, F16, F32, F8E4M3FN, F8E5M2
   auto elementType = memrefTy.getElementType();
-  bool isSupportedFloat = isa<Float8E4M3FNType>(elementType) ||
-                          isa<Float8E5M2Type>(elementType) || elementType.isBF16() ||
-                          elementType.isF16() || elementType.isF32();
+  bool isSupportedFloat =
+      isa<Float8E4M3FNType>(elementType) || isa<Float8E5M2Type>(elementType) ||
+      elementType.isBF16() || elementType.isF16() || elementType.isF32();
   bool isSupportedInt = elementType.isInteger(32) ||
                         elementType.isInteger(16) || elementType.isInteger(8);
   if (!isSupportedFloat && !isSupportedInt) {
@@ -1899,7 +1929,6 @@ bool utils::isTransferWriteSuitForStoreWithStride(Operation *op) {
   LLVM_DEBUG(DBGS() << " matched!! for transferWriteWithStride\n");
   return true;
 }
-
 
 void utils::dumpReassociationIndicesVector(
     const SmallVector<ReassociationIndices> &reassocVec) {
