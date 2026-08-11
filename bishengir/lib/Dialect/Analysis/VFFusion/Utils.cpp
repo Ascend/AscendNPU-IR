@@ -21,7 +21,9 @@
 #include "llvm/ADT/TypeSwitch.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
+#include "mlir/IR/AffineMap.h"
 #include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/BuiltinTypes.h"
 
 #define DEBUG_TYPE "vf-fusion"
 #define DBGS() (llvm::dbgs() << "[" DEBUG_TYPE "]: ")
@@ -164,7 +166,87 @@ bool isExpandShapeOpCanFuseIntoVsstbPatternTranspose(Operation *op) {
 }
 
 //===----------------------------------------------------------------------===//
-// Fusion skip-check registry.
+// PreVectorizationFusion eliminability check
+//
+// Mirrors the two reshape-elimination paths inside PreVectorizationFusion so
+// that VFFusion can safely admit reshape ops that would be folded away by
+// the earlier pass (or by a later canonicalization/auto-vectorize run that
+// re-applies the same patterns).
+//===----------------------------------------------------------------------===//
+
+// CollapseShapeOp: the collapse feeds into a linalg::BroadcastOp.
+// PreVectorizationFusion::generalizeBroadcastOp (triggered when a broadcast's
+// input is from CollapseShapeOp) creates an inverse expand_shape on the
+// collapse; MLIR's ExpandShapeOp::fold() then cancels
+// expand_shape(collapse_shape(x)) -> x, leaving the collapse dead.
+static bool isCollapseShapeEliminable(Operation *op) {
+  auto collapseOp = dyn_cast<tensor::CollapseShapeOp>(op);
+  if (!collapseOp)
+    return false;
+  return llvm::any_of(collapseOp->getUsers(), [](Operation *user) {
+    return isa<linalg::BroadcastOp>(user);
+  });
+}
+
+// ExpandShapeOp: the expand is consumed by a linalg::LinalgOp (excluding
+// TransposeOp) where the expand only inserts unit dims (each reassociation
+// group has at most one non-unit dim — isPureUnitExpand).
+// PreVectorizationFusion generalizes named linalg ops to linalg.generic,
+// then the upstream reshape folding in populateElementwiseOpsFusionPatterns
+// folds the expand into the indexing map by projecting out the unit dims.
+//
+// Note: we check linalg::LinalgOp (not just GenericOp) because at
+// VFFusion time named ops like linalg.mul have not yet been generalized.
+// linalg::TransposeOp is excluded because PreVectorizationFusion never
+// generalizes it (HFusionGeneralizationPatterns skips TransposeOp), so
+// the upstream reshape folding cannot fire on it.
+//
+// Note: the inverse reshape pair (expand source from CollapseShapeOp) is
+// NOT checked here — it is always folded by preProcess() ->
+// applyPatternsGreedily -> ExpandShapeOp::fold() before the fusion phase.
+static bool isExpandShapeEliminable(Operation *op) {
+  auto expandOp = dyn_cast<tensor::ExpandShapeOp>(op);
+  if (!expandOp)
+    return false;
+
+  auto resType = dyn_cast<RankedTensorType>(expandOp.getResult().getType());
+  if (!resType)
+    return false;
+
+  ArrayRef<int64_t> resShape = resType.getShape();
+  auto reassoc = expandOp.getReassociationIndices();
+
+  for (Operation *user : expandOp->getUsers()) {
+    auto linalgOp = dyn_cast<linalg::LinalgOp>(user);
+    if (!linalgOp || isa<linalg::TransposeOp>(user))
+      continue;
+
+    // isPureUnitExpand: each reassociation group has at most one
+    // non-unit dim. This is the only condition needed — the upstream
+    // reshape folding projects out unit dims regardless of how they
+    // are indexed (constant 0 or dim expr).
+    bool isPureUnitExpand = true;
+    for (const auto &group : reassoc) {
+      unsigned numExtentDims = 0;
+      for (int64_t d : group)
+        if (resShape[d] != 1)
+          ++numExtentDims;
+      if (numExtentDims > 1) {
+        isPureUnitExpand = false;
+        break;
+      }
+    }
+    if (isPureUnitExpand)
+      return true;
+  }
+  return false;
+}
+
+bool isReshapeEliminableByPreVectorizationFusion(Operation *op) {
+  return isCollapseShapeEliminable(op) || isExpandShapeEliminable(op);
+}
+
+//===----------------------------------------------------------------------===//
 // Each function returns true if the op should NOT participate in fusion.
 // Add new skip categories here — no other sites need to change.
 //===----------------------------------------------------------------------===//
