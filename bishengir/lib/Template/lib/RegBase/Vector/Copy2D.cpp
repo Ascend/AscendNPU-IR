@@ -27,16 +27,9 @@ check_inputs_of_load_gm_to_ubuf_2d_core(memref_t<__gm__ T, 2> *src,
   auto stride1_ub = dst->strides[1];
   assert(isAddress32ByteAligned(dst_ptr) &&
          "The starting address of dst must be 32byte aligned.");
-#if !defined(__DAV_C310__)
   assert(((isSizeAlignedToBlock<T>(stride0_ub) || stride0_ub == 1) &&
           (isSizeAlignedToBlock<T>(stride1_ub) || stride1_ub == 1)) &&
          "The dst strides[0]/strides[1] must be 1 or aligned to block.");
-#else
-  if (!is_unpadded_gm_to_ubuf_copy<T, 2>(src, dst, left_padding_num))
-    assert(((isSizeAlignedToBlock<T>(stride0_ub) || stride0_ub == 1) &&
-            (isSizeAlignedToBlock<T>(stride1_ub) || stride1_ub == 1)) &&
-           "Padded DMA destination strides must be 1 or block aligned.");
-#endif
 #endif
 }
 
@@ -83,12 +76,14 @@ align_pad_for_load_b64_2d(memref_t<__ubuf__ T, 2> *dst, int64_t pad_value,
 
 #if defined(__DAV_C310__)
 /// Core func of loading gm -> ub, 2D
-/// A dense, unpadded copy with an unaligned UB start uses GM -> UB NDDMA.
-/// Other layouts fall back to the existing regular DMA or scalar paths.
+/// UB starting address must be 32B aligned; otherwise, it degrades to looped
+/// scalar transfer:
 /// + `UB&GM stride[1] == 1`
 ///   - `load_gm_to_ubuf_2d_core_with_contiguous_last_dim`
 /// + `UB|GM stride[1] != 1`
-///   + `UB&GM stride[0] < stride[1]`: looped scalar transfer
+///   + `UB&GM stride[0] < stride[1]`: on-the-fly transpose (load supports
+///   NDDMA)
+///     - `load_gm_to_ubuf_2d_by_nddma`
 ///   + `UB&GM stride[0] == stride[1] * size[1]`: dimension 0 is contiguous
 ///     - `newOffset2D = offset2D, newSize2D = [size2D[0] * size2D[1], 1],
 ///     newStride2D = [stride2D[1], 1]`
@@ -110,15 +105,6 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_2d_core(
     typename PadValueType<T>::type pad_value, int64_t left_padding_num,
     EvictionPolicy eviction_policy, AtomicKind atomic_kind = AtomicKind::None) {
   if (is_no_op<2>(src->sizes)) {
-    return;
-  }
-
-  auto nddma_dst_ptr = dst->aligned + dst->offset - left_padding_num;
-  if (is_unpadded_gm_to_ubuf_copy<T, 2>(src, dst, left_padding_num) &&
-      !isAddress32ByteAligned(nddma_dst_ptr)) {
-    if (!load_dense_gm_to_ubuf_by_nddma<T, 2>(
-            src, dst, static_cast<uint8_t>(eviction_policy)))
-      load_gm_to_ubuf_2d_by_scalar<T>(src, dst);
     return;
   }
 
@@ -152,7 +138,12 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_2d_core(
   }
 
   if ((stride0_gm < stride1_gm || stride0_ub < stride1_ub)) {
-    load_gm_to_ubuf_2d_by_scalar<T>(src, dst);
+    // Implicit transposition scenarios need to be moved through scalar
+    if constexpr (std::is_same_v<T, int64_t> || std::is_same_v<T, uint64_t>) {
+      load_gm_to_ubuf_2d_by_scalar<T>(src, dst);
+    } else {
+      load_gm_to_ubuf_2d_by_nddma<T>(src, dst);
+    }
     return;
   }
 
@@ -539,7 +530,7 @@ template <typename T>
 __aiv__ __attribute__((always_inline)) void
 check_inputs_of_copy_ubuf_to_ubuf_2d_core(memref_t<__ubuf__ T, 2> *src,
                                           memref_t<__ubuf__ T, 2> *dst) {
-#if defined(ENABLE_CPU_TRACE_INTRINSIC) && !defined(__DAV_C310__)
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
   const int64_t stride1_src = src->strides[1];
   const int64_t stride1_dst = dst->strides[1];
   assert((stride1_src == 1) && "Last dimension of src must be contiguous.");
@@ -659,9 +650,8 @@ check_inputs_of_copy_ubuf_to_cbuf_2d_core(memref_t<__ubuf__ T, 2> *src,
 
 /// core func of copy ub -> cbuf, 2d
 /// constraints:
-/// 1. source/destination addresses and row strides must be 32B aligned
-///    (ISA section 4.25)
-/// 2. stride1 must be 1
+/// 1. stride1 must be 1
+/// TODO: update for constraints on alignment
 template <typename T>
 __aiv__ __attribute__((always_inline)) void
 copy_ubuf_to_cbuf_2d_core(memref_t<__ubuf__ T, 2> *src,
