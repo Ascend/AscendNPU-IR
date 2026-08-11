@@ -3674,3 +3674,30 @@ func.func @test_postperchannel_vcast_after_for(%a: tensor<16x16xf16>, %b: tensor
   return %add : tensor<16x16xf32>
 }
 }
+
+// -----
+// The first result is used twice by the second mm: as its C/output operand and
+// as its optional input. Multiple SSA uses must not prevent reusing L0C.
+// CHECK-LABEL: func.func @test_reuse_l0c_with_result_as_ins_and_outs
+// CHECK: %[[FIRST:.*]] = hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C} ins({{.*}}, {{.*}}, {{.*}}, {{.*}}, {{.*}}, {{.*}}, %[[FIRST]]
+// CHECK-SAME: outs(%[[FIRST]]
+// CHECK-NOT: hivm.hir.vadd
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+func.func @test_reuse_l0c_with_result_as_ins_and_outs(
+    %a: tensor<16x16xf16>, %b: tensor<16x16xf16>) -> tensor<16x16xf32> {
+  %c16 = arith.constant 16 : index
+  %false = arith.constant false
+  %empty = tensor.empty() : tensor<16x16xf32>
+  %first = hivm.hir.mmadL1
+      ins(%a, %b, %false, %c16, %c16, %c16
+          : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index)
+      outs(%empty : tensor<16x16xf32>) -> tensor<16x16xf32>
+  %second = hivm.hir.mmadL1
+      ins(%a, %b, %false, %c16, %c16, %c16, %first
+          : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index,
+            tensor<16x16xf32>)
+      outs(%first : tensor<16x16xf32>) -> tensor<16x16xf32>
+  return %second : tensor<16x16xf32>
+}
+}
