@@ -828,3 +828,27 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
     return
   }
 }
+
+// -----
+
+module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>>>} {
+  // CHECK-VECTOR-LABEL: func @test_vector_loop_complex_control_flow
+  func.func @test_vector_loop_complex_control_flow(%lb: index, %ub: index, %cond: i1, %gm_offset: index, %gm_src: memref<4x32xf16>, %gm_dst: memref<4x32xf16>) {
+    %c1 = arith.constant 1 : index
+    // CHECK-VECTOR:     scf.for
+    scf.for %arg0 = %lb to %ub step %c1 {
+    // CHECK-VECTOR-NOT: scf.for
+      %alloc = memref.alloc() : memref<1x32xf16>
+      %subview_src = memref.subview %gm_src[%gm_offset, 0] [1, 32] [1, 1] : memref<4x32xf16> to memref<1x32xf16, strided<[32, 1], offset: ?>>
+      hivm.hir.load ins(%subview_src : memref<1x32xf16, strided<[32, 1], offset: ?>>) outs(%alloc : memref<1x32xf16>) init_out_buffer = false
+      %tensor = bufferization.to_tensor %alloc restrict writable : memref<1x32xf16>
+      %subview_outer = memref.subview %gm_dst[%gm_offset, 0] [1, 32] [1, 1] : memref<4x32xf16> to memref<1x32xf16, strided<[32, 1], offset: ?>>
+      hivm.hir.store ins(%tensor : tensor<1x32xf16>) outs(%subview_outer : memref<1x32xf16, strided<[32, 1], offset: ?>>)
+      scf.if %cond {
+        %subview_inner = memref.subview %gm_dst[%gm_offset, 0] [1, 32] [1, 1] : memref<4x32xf16> to memref<1x32xf16, strided<[32, 1], offset: ?>>
+        hivm.hir.store ins(%tensor : tensor<1x32xf16>) outs(%subview_inner : memref<1x32xf16, strided<[32, 1], offset: ?>>)
+      }
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+    return
+  }
+}
