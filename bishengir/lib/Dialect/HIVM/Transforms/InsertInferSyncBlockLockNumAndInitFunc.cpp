@@ -78,8 +78,8 @@ func::FuncOp insertInferSyncBlockLockNumFuncImpl(func::FuncOp funcOp,
   // callback ABI. The launcher derives the exact size from blockNum.
   auto syncBlockLockLayoutVal = builder.create<arith::ConstantIntOp>(
       funcOp.getLoc(), syncBlockLockLayout, 64);
-  builder.create<func::ReturnOp>(funcOp.getLoc(),
-                                 ValueRange{syncBlockLockLayoutVal.getResult()});
+  builder.create<func::ReturnOp>(
+      funcOp.getLoc(), ValueRange{syncBlockLockLayoutVal.getResult()});
   return func;
 }
 
@@ -166,7 +166,8 @@ void InsertInferSyncBlockLockNumAndInitFuncPass::runOnOperation() {
   int64_t orderedLockCount = 0;
   int64_t unorderedLockCount = 0;
   for (Operation *op : createSyncBlockLockOps) {
-    if (op->hasAttr(SyncBlockLockUnorderedAttr::name))
+    if (getSyncBlockLockOrdering(cast<CreateSyncBlockLockOp>(op).getMemref()) ==
+        SyncBlockLockOrdering::Unordered)
       ++unorderedLockCount;
     else
       ++orderedLockCount;

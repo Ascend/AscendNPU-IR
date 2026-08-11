@@ -19,6 +19,7 @@
 #define BISHENGIR_TRANSFORMS_REGBASE_NORMALIZE_NORMALIZEATOMICTEMPLATE_H
 
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -32,8 +33,6 @@
 
 namespace mlir {
 
-/// Keeps the decomposed atomic read-modify-write serialized:
-///   lock(); old = GM; new = f(old, UB); GM = new; unlock().
 struct SyncBlockLockGuard {
   hivm::CreateSyncBlockLockOp createdLock;
   OpBuilder &builder;
@@ -41,14 +40,15 @@ struct SyncBlockLockGuard {
 
   SyncBlockLockGuard(OpBuilder &builder, Location loc)
       : builder(builder), guard(builder) {
-    Type memrefi64 = MemRefType::get({1}, builder.getI64Type());
-    createdLock =
-        builder.create<hivm::CreateSyncBlockLockOp>(loc, memrefi64, Value());
-    builder.create<hivm::SyncBlockLockOp>(loc, createdLock.getResult());
+    createdLock = hivm::createSyncBlockLockVar(builder, loc);
+    hivm::createSyncBlockLock(builder, loc, createdLock.getResult(),
+                              hivm::SyncBlockLockOrdering::Unordered);
   }
 
   ~SyncBlockLockGuard() {
-    builder.create<hivm::SyncBlockUnlockOp>(createdLock.getLoc(), createdLock);
+    hivm::createSyncBlockUnlock(builder, createdLock.getLoc(),
+                                createdLock.getResult(),
+                                hivm::SyncBlockLockOrdering::Unordered);
   }
 };
 
@@ -410,18 +410,16 @@ struct NormalizeAtomicXCHGTemplate : public OpRewritePattern<AtomicXchgOpTy> {
       return rewriter.notifyMatchFailure(
           op, "expected dynamic GM memref to be a static subview");
 
-    Type memrefI64 = MemRefType::get({1}, rewriter.getI64Type());
-    auto createdLock =
-        rewriter.create<hivm::CreateSyncBlockLockOp>(loc, memrefI64, Value());
-    rewriter.create<hivm::SyncBlockLockOp>(loc, createdLock.getResult());
-    rewriter.create<memref::CopyOp>(loc, gmMemref, tmpBuffer.dBuffer);
-    if (ubMemref) {
-      rewriter.create<memref::CopyOp>(loc, ubMemref, gmMemref);
-      rewriter.create<memref::CopyOp>(loc, tmpBuffer.dBuffer, ubMemref);
-    } else {
-      gmBuffer.storeBack(ubTensor);
+    {
+      SyncBlockLockGuard lock(rewriter, loc);
+      rewriter.create<memref::CopyOp>(loc, gmMemref, tmpBuffer.dBuffer);
+      if (ubMemref) {
+        rewriter.create<memref::CopyOp>(loc, ubMemref, gmMemref);
+        rewriter.create<memref::CopyOp>(loc, tmpBuffer.dBuffer, ubMemref);
+      } else {
+        gmBuffer.storeBack(ubTensor);
+      }
     }
-    rewriter.create<hivm::SyncBlockUnlockOp>(loc, createdLock);
     if (hasReturn)
       rewriter.create<scope::ReturnOp>(loc, tmpBuffer.toLogicalTensor());
     else

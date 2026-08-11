@@ -1860,13 +1860,13 @@ func.func @test_decompose_vdeinterleave_double_f16(%src: memref<32xf16>, %even_d
 
 // -----
 // CHECK: %[[LOCK:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
-// CHECK: hivm.hir.sync_block_lock lock_var(%[[LOCK]] : memref<1xi64>)
+// CHECK: hivm.hir.sync_block_lock {ordering = #hivm.ordering<unordered>} lock_var(%[[LOCK]] : memref<1xi64>)
 // CHECK: %[[ALLOC0:.*]] = memref.alloc() : memref<16xi32>
 // CHECK: hivm.hir.load ins(%arg2 : memref<16xi32>) outs(%[[ALLOC0]] : memref<16xi32>)
 // CHECK: %[[ALLOC1:.*]] = memref.alloc() : memref<16xi32>
 // CHECK: hivm.hir.vand ins({{.*}}, %[[ALLOC0]] : memref<16xi32>, memref<16xi32>) outs(%[[ALLOC1]] : memref<16xi32>)
 // CHECK: hivm.hir.store ins(%[[ALLOC1]] : memref<16xi32>) outs(%arg2 : memref<16xi32>)
-// CHECK: hivm.hir.sync_block_unlock lock_var(%[[LOCK]] : memref<1xi64>)
+// CHECK: hivm.hir.sync_block_unlock {ordering = #hivm.ordering<unordered>} lock_var(%[[LOCK]] : memref<1xi64>)
 // CHECK: return
 func.func @test_decompose_atomic_and_op(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<16xi32>, %arg2: memref<16xi32>) {
   %alloc = memref.alloc() : memref<16xi32>
@@ -1877,13 +1877,13 @@ func.func @test_decompose_atomic_and_op(%arg0: memref<?xi8> {hacc.arg_type = #ha
 
 // -----
 // CHECK: %[[LOCK:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
-// CHECK: hivm.hir.sync_block_lock lock_var(%[[LOCK]] : memref<1xi64>)
+// CHECK: hivm.hir.sync_block_lock {ordering = #hivm.ordering<unordered>} lock_var(%[[LOCK]] : memref<1xi64>)
 // CHECK: %[[ALLOC0:.*]] = memref.alloc() : memref<16xi32>
 // CHECK: hivm.hir.load ins(%arg2 : memref<16xi32>) outs(%[[ALLOC0]] : memref<16xi32>)
 // CHECK: %[[ALLOC1:.*]] = memref.alloc() : memref<16xi32>
 // CHECK: hivm.hir.vor ins({{.*}}, %[[ALLOC0]] : memref<16xi32>, memref<16xi32>) outs(%[[ALLOC1]] : memref<16xi32>)
 // CHECK: hivm.hir.store ins(%[[ALLOC1]] : memref<16xi32>) outs(%arg2 : memref<16xi32>)
-// CHECK: hivm.hir.sync_block_unlock lock_var(%[[LOCK]] : memref<1xi64>)
+// CHECK: hivm.hir.sync_block_unlock {ordering = #hivm.ordering<unordered>} lock_var(%[[LOCK]] : memref<1xi64>)
 // CHECK: return
 func.func @test_decompose_atomic_or_op(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<16xi32>, %arg2: memref<16xi32>) {
   %alloc = memref.alloc() : memref<16xi32>
@@ -1894,13 +1894,13 @@ func.func @test_decompose_atomic_or_op(%arg0: memref<?xi8> {hacc.arg_type = #hac
 
 // -----
 // CHECK: %[[LOCK:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
-// CHECK: hivm.hir.sync_block_lock lock_var(%[[LOCK]] : memref<1xi64>)
+// CHECK: hivm.hir.sync_block_lock {ordering = #hivm.ordering<unordered>} lock_var(%[[LOCK]] : memref<1xi64>)
 // CHECK: %[[ALLOC0:.*]] = memref.alloc() : memref<16xi32>
 // CHECK: hivm.hir.load ins(%arg2 : memref<16xi32>) outs(%[[ALLOC0]] : memref<16xi32>)
 // CHECK: %[[ALLOC1:.*]] = memref.alloc() : memref<16xi32>
 // CHECK: hivm.hir.vxor ins({{.*}}, %[[ALLOC0]] : memref<16xi32>, memref<16xi32>) outs(%[[ALLOC1]] : memref<16xi32>)
 // CHECK: hivm.hir.store ins(%[[ALLOC1]] : memref<16xi32>) outs(%arg2 : memref<16xi32>)
-// CHECK: hivm.hir.sync_block_unlock lock_var(%[[LOCK]] : memref<1xi64>)
+// CHECK: hivm.hir.sync_block_unlock {ordering = #hivm.ordering<unordered>} lock_var(%[[LOCK]] : memref<1xi64>)
 // CHECK: return
 func.func @test_decompose_atomic_xor_op(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<16xi32>, %arg2: memref<16xi32>) {
   %alloc = memref.alloc() : memref<16xi32>
@@ -1911,13 +1911,13 @@ func.func @test_decompose_atomic_xor_op(%arg0: memref<?xi8> {hacc.arg_type = #ha
 
 // -----
 // CHECK: %[[LOCK:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
-// CHECK: hivm.hir.sync_block_lock lock_var(%[[LOCK]] : memref<1xi64>)
+// CHECK: hivm.hir.sync_block_lock {ordering = #hivm.ordering<unordered>} lock_var(%[[LOCK]] : memref<1xi64>)
 // CHECK: %[[ALLOC0:.*]] = memref.alloc() : memref<16xi32>
 // CHECK: hivm.hir.load ins(%arg2 : memref<16xi32>) outs(%[[ALLOC0]] : memref<16xi32>)
 // CHECK: %[[ALLOC1:.*]] = memref.alloc() : memref<16xi32>
 // CHECK: hivm.hir.vxor ins({{.*}}, %[[ALLOC0]] : memref<16xi32>, memref<16xi32>) outs(%[[ALLOC1]] : memref<16xi32>)
 // CHECK: hivm.hir.store ins(%[[ALLOC1]] : memref<16xi32>) outs(%arg2 : memref<16xi32>)
-// CHECK: hivm.hir.sync_block_unlock lock_var(%[[LOCK]] : memref<1xi64>)
+// CHECK: hivm.hir.sync_block_unlock {ordering = #hivm.ordering<unordered>} lock_var(%[[LOCK]] : memref<1xi64>)
 // CHECK: return
 func.func @test_decompose_atomic_xor_dyn_op(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<16xi32>, %arg2: memref<16xi32>) {
   %alloc = memref.alloc() : memref<16xi32>
@@ -1931,7 +1931,7 @@ func.func @test_decompose_atomic_xor_dyn_op(%arg0: memref<?xi8> {hacc.arg_type =
 // CHECK: %[[ALLOC_0:.*]] = memref.alloc() : memref<256xi16>
 // CHECK: %[[REINTERPRET_CAST:.*]] = memref.reinterpret_cast %arg1 to offset: [0], sizes: [256], strides: [1] : memref<?xi16> to memref<256xi16, strided<[1]>>
 // CHECK: %[[LOCK:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
-// CHECK: hivm.hir.sync_block_lock lock_var(%[[LOCK]] : memref<1xi64>)
+// CHECK: hivm.hir.sync_block_lock {ordering = #hivm.ordering<unordered>} lock_var(%[[LOCK]] : memref<1xi64>)
 // CHECK: %[[ALLOC_1:.*]] = memref.alloc() : memref<256xi16>
 // CHECK: hivm.hir.load ins(%[[REINTERPRET_CAST]] : memref<256xi16, strided<[1]>>) outs(%[[ALLOC_1]] : memref<256xi16>)
 // CHECK: %[[ALLOC_2:.*]] = memref.alloc() : memref<256xi1>
@@ -1945,7 +1945,7 @@ func.func @test_decompose_atomic_xor_dyn_op(%arg0: memref<?xi8> {hacc.arg_type =
 // CHECK: %[[ALLOC_6:.*]] = memref.alloc() : memref<256xi16>
 // CHECK: hivm.hir.vsel ins(%[[ALLOC_2]], %[[ALLOC]], %[[ALLOC_1]] : memref<256xi1>, memref<256xi16>, memref<256xi16>) outs(%[[ALLOC_6]] : memref<256xi16>)
 // CHECK: hivm.hir.store ins(%[[ALLOC_6]] : memref<256xi16>) outs(%[[REINTERPRET_CAST]] : memref<256xi16, strided<[1]>>)
-// CHECK: hivm.hir.sync_block_unlock lock_var(%[[LOCK]] : memref<1xi64>)
+// CHECK: hivm.hir.sync_block_unlock {ordering = #hivm.ordering<unordered>} lock_var(%[[LOCK]] : memref<1xi64>)
 // CHECK: return
 func.func @atomic_cas(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<?xi16>) {
   %alloc = memref.alloc() : memref<256xi16>
@@ -1960,12 +1960,12 @@ func.func @atomic_cas(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_b
 // CHECK: %[[VAL_2:.*]] = memref.alloc() : memref<256xi16>
 // CHECK: %[[VAL_3:.*]] = memref.reinterpret_cast %[[ARG1:.*]] to offset: [0], sizes: [256], strides: [1] : memref<?xi16> to memref<256xi16, strided<[1]>>
 // CHECK: %[[VAL_4:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
-// CHECK: hivm.hir.sync_block_lock lock_var(%[[VAL_4]] : memref<1xi64>)
+// CHECK: hivm.hir.sync_block_lock {ordering = #hivm.ordering<unordered>} lock_var(%[[VAL_4]] : memref<1xi64>)
 // CHECK: %[[VAL_5:.*]] = memref.alloc() : memref<256xi16>
 // CHECK: hivm.hir.load ins(%[[VAL_3]] : memref<256xi16, strided<[1]>>) outs(%[[VAL_5]] : memref<256xi16>)
 // CHECK: hivm.hir.store ins(%[[VAL_2]] : memref<256xi16>) outs(%[[VAL_3]] : memref<256xi16, strided<[1]>>)
 // CHECK: hivm.hir.copy ins(%[[VAL_5]] : memref<256xi16>) outs(%[[VAL_2]] : memref<256xi16>)
-// CHECK: hivm.hir.sync_block_unlock lock_var(%[[VAL_4]] : memref<1xi64>)
+// CHECK: hivm.hir.sync_block_unlock {ordering = #hivm.ordering<unordered>} lock_var(%[[VAL_4]] : memref<1xi64>)
 // CHECK: return
 func.func @atomic_xchg(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<?xi16>) {
   %alloc = memref.alloc() : memref<256xi16>
@@ -1979,7 +1979,7 @@ func.func @atomic_xchg(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_
 // CHECK: %[[ALLOC_0:.*]] = memref.alloc() : memref<8x4x2x4x4xi32>
 // CHECK: %[[REINTERPRET_CAST:.*]] = memref.reinterpret_cast %arg1 to offset: [0], sizes: [8, 4, 2, 4, 4], strides: [128, 32, 16, 4, 1] : memref<?xi32> to memref<8x4x2x4x4xi32, strided<[128, 32, 16, 4, 1]>>
 // CHECK: %[[LOCK:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
-// CHECK: hivm.hir.sync_block_lock lock_var(%[[LOCK]] : memref<1xi64>)
+// CHECK: hivm.hir.sync_block_lock {ordering = #hivm.ordering<unordered>} lock_var(%[[LOCK]] : memref<1xi64>)
 // CHECK: %[[ALLOC_1:.*]] = memref.alloc() : memref<8x4x2x4x4xi32>
 // CHECK: hivm.hir.load ins(%[[REINTERPRET_CAST]] : memref<8x4x2x4x4xi32, strided<[128, 32, 16, 4, 1]>>) outs(%[[ALLOC_1]] : memref<8x4x2x4x4xi32>)
 // CHECK: %[[ALLOC_2:.*]] = memref.alloc() : memref<8x4x2x4x4xi1>
@@ -1987,7 +1987,7 @@ func.func @atomic_xchg(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_
 // CHECK: %[[ALLOC_3:.*]] = memref.alloc() : memref<8x4x2x4x4xi32>
 // CHECK: hivm.hir.vsel ins(%[[ALLOC_2]], %[[ALLOC_0]], %[[ALLOC_1]] : memref<8x4x2x4x4xi1>, memref<8x4x2x4x4xi32>, memref<8x4x2x4x4xi32>) outs(%[[ALLOC_3]] : memref<8x4x2x4x4xi32>)
 // CHECK: hivm.hir.store ins(%[[ALLOC_3]] : memref<8x4x2x4x4xi32>) outs(%[[REINTERPRET_CAST]] : memref<8x4x2x4x4xi32, strided<[128, 32, 16, 4, 1]>>)
-// CHECK: hivm.hir.sync_block_unlock lock_var(%[[LOCK]] : memref<1xi64>)
+// CHECK: hivm.hir.sync_block_unlock {ordering = #hivm.ordering<unordered>} lock_var(%[[LOCK]] : memref<1xi64>)
 // CHECK: return
 func.func @atomic_cas(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<?xi32>) {
   %alloc = memref.alloc() : memref<8x4x2x4x4xi32>
@@ -1999,7 +1999,7 @@ func.func @atomic_cas(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_b
 
 // -----
 // CHECK: %[[LOCK:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
-// CHECK: hivm.hir.sync_block_lock lock_var(%[[LOCK]] : memref<1xi64>)
+// CHECK: hivm.hir.sync_block_lock {ordering = #hivm.ordering<unordered>} lock_var(%[[LOCK]] : memref<1xi64>)
 // CHECK: %[[ALLOC0:.*]] = memref.alloc() : memref<16xi8>
 // CHECK: hivm.hir.load ins(%arg2 : memref<16xi8>) outs(%[[ALLOC0]] : memref<16xi8>)
 // CHECK: %[[ALLOC1:.*]] = memref.alloc() : memref<16xf16>
@@ -2011,7 +2011,7 @@ func.func @atomic_cas(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_b
 // CHECK: %[[ALLOC4:.*]] = memref.alloc() : memref<16xi8>
 // CHECK: hivm.hir.vcast ins(%[[ALLOC3]] : memref<16xf16>) outs(%[[ALLOC4]] : memref<16xi8>) round_mode = <trunc> cast = <cast_unsigned>
 // CHECK: hivm.hir.store ins(%[[ALLOC4]] : memref<16xi8>) outs(%arg2 : memref<16xi8>)
-// CHECK: hivm.hir.sync_block_unlock lock_var(%[[LOCK]] : memref<1xi64>)
+// CHECK: hivm.hir.sync_block_unlock {ordering = #hivm.ordering<unordered>} lock_var(%[[LOCK]] : memref<1xi64>)
 // CHECK: return
 func.func @test_decompose_atomic_max_ui8(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<16xi8>, %arg2: memref<16xi8>) {
   %alloc = memref.alloc() : memref<16xi8>
@@ -2022,7 +2022,7 @@ func.func @test_decompose_atomic_max_ui8(%arg0: memref<?xi8> {hacc.arg_type = #h
 
 // -----
 // CHECK: %[[LOCK:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
-// CHECK: hivm.hir.sync_block_lock lock_var(%[[LOCK]] : memref<1xi64>)
+// CHECK: hivm.hir.sync_block_lock {ordering = #hivm.ordering<unordered>} lock_var(%[[LOCK]] : memref<1xi64>)
 // CHECK: %[[ALLOC0:.*]] = memref.alloc() : memref<16xi8>
 // CHECK: hivm.hir.load ins(%arg2 : memref<16xi8>) outs(%[[ALLOC0]] : memref<16xi8>)
 // CHECK: %[[ALLOC1:.*]] = memref.alloc() : memref<16xf16>
@@ -2034,7 +2034,7 @@ func.func @test_decompose_atomic_max_ui8(%arg0: memref<?xi8> {hacc.arg_type = #h
 // CHECK: %[[ALLOC4:.*]] = memref.alloc() : memref<16xi8>
 // CHECK: hivm.hir.vcast ins(%[[ALLOC3]] : memref<16xf16>) outs(%[[ALLOC4]] : memref<16xi8>) round_mode = <trunc> cast = <cast_unsigned>
 // CHECK: hivm.hir.store ins(%[[ALLOC4]] : memref<16xi8>) outs(%arg2 : memref<16xi8>)
-// CHECK: hivm.hir.sync_block_unlock lock_var(%[[LOCK]] : memref<1xi64>)
+// CHECK: hivm.hir.sync_block_unlock {ordering = #hivm.ordering<unordered>} lock_var(%[[LOCK]] : memref<1xi64>)
 // CHECK: return
 func.func @test_decompose_atomic_min_ui8(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<16xi8>, %arg2: memref<16xi8>) {
   %alloc = memref.alloc() : memref<16xi8>
@@ -2048,14 +2048,14 @@ func.func @test_decompose_atomic_min_ui8(%arg0: memref<?xi8> {hacc.arg_type = #h
 // CHECK: %[[VAL_3:.*]] = memref.alloc() : memref<256xi16>
 // CHECK: %[[VAL_4:.*]] = memref.reinterpret_cast %[[ARG1:.*]] to offset: [0], sizes: [256], strides: [1] : memref<?xi16> to memref<256xi16, strided<[1]>>
 // CHECK: %[[VAL_5:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
-// CHECK: hivm.hir.sync_block_lock lock_var(%[[VAL_5]] : memref<1xi64>)
+// CHECK: hivm.hir.sync_block_lock {ordering = #hivm.ordering<unordered>} lock_var(%[[VAL_5]] : memref<1xi64>)
 // CHECK: %[[VAL_6:.*]] = memref.alloc() : memref<256xi16>
 // CHECK: hivm.hir.load ins(%[[VAL_4]] : memref<256xi16, strided<[1]>>) outs(%[[VAL_6]] : memref<256xi16>)
 // CHECK: %[[VAL_8:.*]] = memref.alloc() : memref<256xi16>
 // CHECK: hivm.hir.vsel ins(%[[ARG2:.*]], %[[VAL_3]], %[[VAL_6]] : memref<256xi1>, memref<256xi16>, memref<256xi16>) outs(%[[VAL_8]] : memref<256xi16>)
 // CHECK: hivm.hir.vsel ins(%[[ARG2]], %[[VAL_6]], %[[VAL_3]] : memref<256xi1>, memref<256xi16>, memref<256xi16>) outs(%[[VAL_3]] : memref<256xi16>)
 // CHECK: hivm.hir.store ins(%[[VAL_8]] : memref<256xi16>) outs(%[[VAL_4]] : memref<256xi16, strided<[1]>>)
-// CHECK: hivm.hir.sync_block_unlock lock_var(%[[VAL_5]] : memref<1xi64>)
+// CHECK: hivm.hir.sync_block_unlock {ordering = #hivm.ordering<unordered>} lock_var(%[[VAL_5]] : memref<1xi64>)
 // CHECK: return
 func.func @atomic_masked_xchg(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<?xi16>, %mask: memref<256xi1>) {
   %alloc = memref.alloc() : memref<256xi16>
@@ -2091,10 +2091,10 @@ func.func @test_set_atomic_NONE_f32() {
 // CHECK: hivm.hir.load ins(%arg1 : memref<16xi8>) outs(%[[ALLOC]] : memref<16xi8>)
 // CHECK: %[[ALLOC2:.*]] = memref.alloc() : memref<16xi8>
 // CHECK: %[[VAL:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
-// CHECK: hivm.hir.sync_block_lock lock_var(%[[VAL]] : memref<1xi64>)
+// CHECK: hivm.hir.sync_block_lock {ordering = #hivm.ordering<unordered>} lock_var(%[[VAL]] : memref<1xi64>)
 // CHECK: hivm.hir.load ins(%arg2 : memref<16xi8>) outs(%[[ALLOC2]] : memref<16xi8>)
 // CHECK: hivm.hir.store ins(%[[ALLOC]] : memref<16xi8>) outs(%arg2 : memref<16xi8>) {already_sync} atomic = <add>
-// CHECK: hivm.hir.sync_block_unlock lock_var(%[[VAL]] : memref<1xi64>)
+// CHECK: hivm.hir.sync_block_unlock {ordering = #hivm.ordering<unordered>} lock_var(%[[VAL]] : memref<1xi64>)
 // CHECK: hivm.hir.store ins(%[[ALLOC2]] : memref<16xi8>) outs(%arg3 : memref<16xi8>)
 // CHECK: return
 func.func @test_atomic_add_with_retuned_value(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<16xi8>, %arg2: memref<16xi8>, %arg3: memref<16xi8>) {
@@ -2112,10 +2112,10 @@ func.func @test_atomic_add_with_retuned_value(%arg0: memref<?xi8> {hacc.arg_type
 // CHECK: hivm.hir.load ins(%arg1 : memref<16xi8>) outs(%[[ALLOC]] : memref<16xi8>)
 // CHECK: %[[ALLOC2:.*]] = memref.alloc() : memref<16xi8>
 // CHECK: %[[VAL:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
-// CHECK: hivm.hir.sync_block_lock lock_var(%[[VAL]] : memref<1xi64>)
+// CHECK: hivm.hir.sync_block_lock {ordering = #hivm.ordering<unordered>} lock_var(%[[VAL]] : memref<1xi64>)
 // CHECK: hivm.hir.load ins(%arg2 : memref<16xi8>) outs(%[[ALLOC2]] : memref<16xi8>)
 // CHECK: hivm.hir.store ins(%[[ALLOC]] : memref<16xi8>) outs(%arg2 : memref<16xi8>) {already_sync} atomic = <min>
-// CHECK: hivm.hir.sync_block_unlock lock_var(%[[VAL]] : memref<1xi64>)
+// CHECK: hivm.hir.sync_block_unlock {ordering = #hivm.ordering<unordered>} lock_var(%[[VAL]] : memref<1xi64>)
 // CHECK: hivm.hir.store ins(%[[ALLOC2]] : memref<16xi8>) outs(%arg3 : memref<16xi8>)
 // CHECK: return
 func.func @test_atomic_min_with_retuned_value(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<16xi8>, %arg2: memref<16xi8>, %arg3: memref<16xi8>) {
@@ -2133,10 +2133,10 @@ func.func @test_atomic_min_with_retuned_value(%arg0: memref<?xi8> {hacc.arg_type
 // CHECK: hivm.hir.load ins(%arg1 : memref<16xi8>) outs(%[[ALLOC]] : memref<16xi8>)
 // CHECK: %[[ALLOC2:.*]] = memref.alloc() : memref<16xi8>
 // CHECK: %[[VAL:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
-// CHECK: hivm.hir.sync_block_lock lock_var(%[[VAL]] : memref<1xi64>)
+// CHECK: hivm.hir.sync_block_lock {ordering = #hivm.ordering<unordered>} lock_var(%[[VAL]] : memref<1xi64>)
 // CHECK: hivm.hir.load ins(%arg2 : memref<16xi8>) outs(%[[ALLOC2]] : memref<16xi8>)
 // CHECK: hivm.hir.store ins(%[[ALLOC]] : memref<16xi8>) outs(%arg2 : memref<16xi8>) {already_sync} atomic = <max>
-// CHECK: hivm.hir.sync_block_unlock lock_var(%[[VAL]] : memref<1xi64>)
+// CHECK: hivm.hir.sync_block_unlock {ordering = #hivm.ordering<unordered>} lock_var(%[[VAL]] : memref<1xi64>)
 // CHECK: hivm.hir.store ins(%[[ALLOC2]] : memref<16xi8>) outs(%arg3 : memref<16xi8>)
 // CHECK: return
 func.func @test_atomic_max_with_retuned_value(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<16xi8>, %arg2: memref<16xi8>, %arg3: memref<16xi8>) {
