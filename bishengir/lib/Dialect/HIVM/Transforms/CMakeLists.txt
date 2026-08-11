@@ -122,6 +122,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   PlanMemory.cpp
   regbase/PlanMemory.cpp
   RecognizeDeinterleaveOp.cpp
+  RecognizeDiscontiguousStore.cpp
   ReduceRankSubview.cpp
   RemoveHIVMDataLayoutAnnotation.cpp
   RemoveCopyOps.cpp

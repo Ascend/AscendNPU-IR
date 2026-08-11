@@ -77,8 +77,12 @@ scalar_deinterleave_1d(memref_t<__ubuf__ T, 1> *src,
     for (int64_t i = 0; i < dst_size0; ++i) {
       dst_ptr[i * dst_stride0] = src_ptr[(2 * i + 1) * src_stride0];
     }
+  } else if constexpr (MODE == DeinterleaveMode::CHANNEL_0_FROM_N_CHANNELS) {
+    for (int64_t i = 0; i < dst_size0; ++i) {
+      dst_ptr[i * dst_stride0] = src_ptr[i * src_stride0];
+    }
   } else {
-      static_assert("deinterleave op's unsupported mode");
+    static_assert("deinterleave op's unsupported mode");
   }
   INTRINSIC(set_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
@@ -99,8 +103,10 @@ is_unaligned_deinterleave_1d(memref_t<__ubuf__ T, 1> *src,
   bool is_offset_aligned = isAddress32ByteAligned<T>(src_ptr) && isAddress32ByteAligned<T>(dst_ptr);
 
   if constexpr (MODE == DeinterleaveMode::CHANNEL_0_FROM_2_CHANNELS ||
-                      MODE == DeinterleaveMode::CHANNEL_1_FROM_2_CHANNELS) {
+                MODE == DeinterleaveMode::CHANNEL_1_FROM_2_CHANNELS) {
     return !is_offset_aligned || !(src_stride0 == 1) || !(dst_stride0 == 1);
+  } else if constexpr (MODE == DeinterleaveMode::CHANNEL_0_FROM_N_CHANNELS) {
+    return !is_offset_aligned || (src_stride0 % num_per_block != 0);
   } else {
     static_assert("donnot support unaligned scene of other mode");
     return false;

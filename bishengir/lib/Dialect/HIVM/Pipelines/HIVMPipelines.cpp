@@ -418,6 +418,7 @@ static void hivmPostBufferizationOptimizationPipeline(
 
   // Transform uncontinuous access to deinterleave op
   pm.nest<func::FuncOp>().addPass(createHIVMRecognizeDeinterleaveOpPass());
+  pm.nest<func::FuncOp>().addPass(createHIVMRecognizeDisContinuousStorePass());
   decomposeOption.decomposePhase =
       bishengir::DecomposePhase::AFTER_RECOGNIZE_DEINTERLEAVE;
   pm.nest<func::FuncOp>().addPass(

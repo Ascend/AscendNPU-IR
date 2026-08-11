@@ -173,6 +173,9 @@ std::unique_ptr<Pass> createHIVMLowerToLoopsPass();
 /// create a pass to opt uncontinuous access to deinterleave
 std::unique_ptr<Pass> createHIVMRecognizeDeinterleaveOpPass();
 
+/// create a pass to construct 32B-aligned view for ub->gm store
+std::unique_ptr<Pass> createHIVMRecognizeDisContinuousStorePass();
+
 /// create a pass to opt single point operation
 std::unique_ptr<Pass> createHIVMOptSinglePointPass();
 

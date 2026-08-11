@@ -591,6 +591,18 @@ def HIVMRecognizeDeinterleaveOp : Pass<"hivm-recognize-deinterleave-op", "func::
                            "tensor::TensorDialect"];
 }
 
+def HIVMRecognizeDisContinuousStore : Pass<"hivm-recognize-discontinuous-store", "func::FuncOp"> {
+  let summary = "construct 32B-aligned view for ub->gm store.";
+  let description = [{
+    This pass constructs a 32B-aligned view of ub src(last dim continuous)
+    via expand_shape+VBrcOp+subview+collapse so that store writes to gm dst
+    (last dim uncontinuous) with hardware-mappable last-dim stride.
+  }];
+  let constructor = "mlir::hivm::createHIVMRecognizeDisContinuousStorePass()";
+  let dependentDialects = ["hivm::HIVMDialect", "memref::MemRefDialect",
+                           "tensor::TensorDialect"];
+}
+
 def HIVMOptSinglePointOp : Pass<"hivm-opt-single-point", "func::FuncOp"> {
   let summary = "optimize single point hivm op by scalar operation.";
   let description =

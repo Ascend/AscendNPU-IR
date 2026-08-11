@@ -152,3 +152,19 @@ func.func @recognize_deinterleave_for_i8_tensor(%arg0: index, %arg1: memref<128x
 }
 // CHECK:   hivm.hir.load ins(%subview : memref<?xi8, strided<[2], offset: ?>, #hivm.address_space<gm>>) outs(%[[VAL_8:.+]] : memref<?xi8, strided<[1]>, #hivm.address_space<ub>>)
 // CHECK:   hivm.hir.vdeinterleave ins(%[[VAL_8]] : memref<?xi8, strided<[1]>, #hivm.address_space<ub>>) outs(%subview_0 : memref<?xi8, strided<[1]>, #hivm.address_space<ub>>) channel_num = 32 index_mode = <CHANNEL_0>
+
+// -----
+ 	 
+// CHECK-LABEL: recognize_deinterleave_for_load_non_zero_offset
+// CHECK: hivm.hir.vdeinterleave {{.*}} channel_num = {{[0-9]+}} index_mode = <CHANNEL_0>
+func.func @recognize_deinterleave_for_load_non_zero_offset(%arg0: memref<?xf16, #hivm.address_space<gm>>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, mix_mode = "aiv"} {
+  %c0 = arith.constant 0 : index
+  %cst = arith.constant 0.000000e+00 : f16
+  %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [0], sizes: [4, 64], strides: [8320, 130] : memref<?xf16, #hivm.address_space<gm>> to memref<4x64xf16, strided<[8320, 130], offset: ?>, #hivm.address_space<gm>>
+  %alloc = memref.alloc() : memref<4x64xf16, #hivm.address_space<ub>>
+  annotation.mark %alloc : memref<4x64xf16, #hivm.address_space<ub>>
+  %subview = memref.subview %reinterpret_cast[1, 16] [2, 32] [1, 1] : memref<4x64xf16, strided<[8320, 130], offset: ?>, #hivm.address_space<gm>> to memref<2x32xf16, strided<[8320, 130], offset: ?>, #hivm.address_space<gm>>
+  %subview_0 = memref.subview %alloc[1, 16] [2, 32] [1, 1] : memref<4x64xf16, #hivm.address_space<ub>> to memref<2x32xf16, strided<[64, 1], offset: 80>, #hivm.address_space<ub>>
+  hivm.hir.load ins(%subview : memref<2x32xf16, strided<[8320, 130], offset: ?>, #hivm.address_space<gm>>) outs(%subview_0 : memref<2x32xf16, strided<[64, 1], offset: 80>, #hivm.address_space<ub>>) pad_mode = <PadValue> pad_value = %cst : f16 left_padding_num = %c0 : index
+  return
+}
