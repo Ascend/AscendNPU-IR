@@ -608,6 +608,8 @@ private:
         newShape.push_back(s);
       }
     }
+    if (newShape.empty())
+      newShape.push_back(1);
 
     auto sourceMemRef = oldSubview.getSource();
     auto sourceTy = llvm::cast<MemRefType>(sourceMemRef.getType());

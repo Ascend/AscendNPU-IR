@@ -258,3 +258,20 @@ func.func @test_preserve_attrbutes_0(%arg0: memref<2x32xf32, #hivm.address_space
   vector.transfer_write %1, %arg1[%c0, %c0] {in_bounds = [true, true]} : vector<2x32xbf16>, memref<2x32xbf16, #hivm.address_space<ub>>
   return
 }
+
+// -----
+
+// Regression for rank-reducing subview when all memref dims are 1.
+// CHECK-LABEL: func.func @flatten_unit_subview_rank_reduce
+// CHECK: memref.subview {{.*}} to memref<1xi32
+// CHECK: vector.transfer_read {{.*}} memref<1xi32{{.*}} vector<4xi32>
+func.func @flatten_unit_subview_rank_reduce(%arg0: memref<1x4xi32, #hivm.address_space<ub>>) attributes {hivm.vector_function} {
+  %c0_i32 = arith.constant 0 : i32
+  %c0 = arith.constant 0 : index
+  %subview = memref.subview %arg0[0, 0] [1, 1] [1, 1] : memref<1x4xi32, #hivm.address_space<ub>> to memref<1x1xi32, strided<[4, 1]>, #hivm.address_space<ub>>
+  %mask = vector.constant_mask [1, 1] : vector<4x1xi1>
+  %read = vector.transfer_read %subview[%c0, %c0], %c0_i32, %mask {in_bounds = [true, true]} : memref<1x1xi32, strided<[4, 1]>, #hivm.address_space<ub>>, vector<4x1xi32>
+  %cast = vector.shape_cast %read : vector<4x1xi32> to vector<4xi32>
+  vector.print %cast : vector<4xi32>
+  return
+}
