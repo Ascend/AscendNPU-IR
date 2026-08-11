@@ -122,6 +122,10 @@ def SyncThreadsOp : AscendDPX_Op<"sync_threads"> {
   let assemblyFormat = "attr-dict";
 }
 
+def YieldOp : AscendDPX_Op<"yield"> {
+  let assemblyFormat = "attr-dict";
+}
+
 class WarpShuffleOp<string mnemonic> : 
   AscendDPX_Op<mnemonic> {
   let arguments = (ins LLVM_Type:$src,
