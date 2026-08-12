@@ -72,3 +72,24 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     return %10 : tensor<16x16xf32>
   }
 }
+
+// -----
+
+// M < 16 must pad M1 via ceilDiv (not truncating M/16 == 0).
+// CHECK-LABEL: func.func @dotdot_f32_m1
+// CHECK: %[[ARG0:.*]] = hivm.hir.fixpipe {channel_split = true} ins(%{{.*}} : tensor<1x256xf32>) outs(%{{.*}} : tensor<32x1x16x8xf32>) -> tensor<32x1x16x8xf32>
+// CHECK: %[[ARG1:.*]] = hivm.hir.mmadL1 {fixpipe_for_result_already_inserted = true} ins(%[[ARG0]]
+// CHECK-NOT: tensor<{{.*}}x0x{{.*}}>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @dotdot_f32_m1(%4: tensor<1x256xf32>, %e4: tensor<1x256xf32>, %e5: tensor<256x16xf32>) -> tensor<1x16xf32> {
+    %true = arith.constant true
+    %c1 = arith.constant 1 : index
+    %c256 = arith.constant 256 : index
+    %c16 = arith.constant 16 : index
+    %7 = tensor.empty() : tensor<1x256xf32>
+    %8 = hivm.hir.mmadL1 ins(%4, %e4, %true, %c1, %c256, %c256 : tensor<1x256xf32>, tensor<1x256xf32>, i1, index, index, index) outs(%7 : tensor<1x256xf32>) -> tensor<1x256xf32>
+    %9 = tensor.empty() : tensor<1x16xf32>
+    %10 = hivm.hir.mmadL1 ins(%8, %e5, %true, %c1, %c16, %c256 : tensor<1x256xf32>, tensor<256x16xf32>, i1, index, index, index) outs(%9 : tensor<1x16xf32>) -> tensor<1x16xf32>
+    return %10 : tensor<1x16xf32>
+  }
+}
