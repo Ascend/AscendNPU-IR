@@ -33,6 +33,7 @@
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/Casting.h"
+#include "llvm/Support/MathExtras.h"
 
 namespace mlir {
 #define GEN_PASS_DEF_INSERTFIXPIPE
@@ -362,24 +363,36 @@ bool isAccumulation(Operation *op) {
   return false;
 }
 
+/// NZ fractal dest type for L1 fixpipe: [N1, M1, 16, C0].
+/// Use ceilDiv so M/N below the fractal tile (e.g. M=1) pad instead of
+/// producing a zero-sized dimension (M1 = M/16 == 0).
+static RankedTensorType computeNz2NzL1DstType(RankedTensorType ndType) {
+  int64_t M = ndType.getDimSize(0);
+  int64_t N = ndType.getDimSize(1);
+  static constexpr int64_t alignM = 16;
+  auto numElemPerBlock = mlir::utils::getNumPerBlock(ndType);
+  int64_t M1 = static_cast<int64_t>(llvm::divideCeil(M, alignM));
+  int64_t N1 = static_cast<int64_t>(llvm::divideCeil(N, numElemPerBlock));
+  return RankedTensorType::get({N1, M1, alignM, numElemPerBlock},
+                               ndType.getElementType());
+}
+
+static bool shouldEnableChannelSplit(RankedTensorType ndType) {
+  static constexpr int64_t alignM = 16;
+  return mlir::utils::getNumPerBlock(ndType) == alignM / 2;
+}
+
 static FixpipeOp insertFixpipeToL1(PatternRewriter &rewriter, Operation *point,
                                    Value src) {
   rewriter.setInsertionPointAfter(point);
 
   MLIRContext *ctx = rewriter.getContext();
   auto tensorType = cast<RankedTensorType>(src.getType());
-  int64_t M = tensorType.getDimSize(0);
-  int64_t N = tensorType.getDimSize(1);
-  static constexpr int32_t alignM = 16;
-  auto numElemPerBlock = mlir::utils::getNumPerBlock(tensorType);
-  int64_t M1 = M / alignM;
-  int64_t N1 = N / numElemPerBlock;
-  auto dstTy = RankedTensorType::get({N1, M1, alignM, numElemPerBlock},
-                                     tensorType.getElementType());
+  auto dstTy = computeNz2NzL1DstType(tensorType);
 
   // FixpipeOp with channel_split enabled may split each channel (C0) in two
   // parts in destination.
-  bool channelSplit = numElemPerBlock == alignM / 2;
+  bool channelSplit = shouldEnableChannelSplit(tensorType);
   Value fixpipeInit =
       rewriter.create<tensor::EmptyOp>(point->getLoc(), dstTy,
                                        /*dynamicSizes=*/ValueRange{});
@@ -996,18 +1009,11 @@ private:
 
         MLIRContext *ctx = rewriter.getContext();
         auto tensorType = cast<RankedTensorType>(op.getDst().getType());
-        int64_t M = tensorType.getDimSize(0);
-        int64_t N = tensorType.getDimSize(1);
-        static constexpr int32_t alignM = 16;
-        auto numElemPerBlock = mlir::utils::getNumPerBlock(tensorType);
-        int64_t M1 = M / alignM;
-        int64_t N1 = N / numElemPerBlock;
-        auto dstTy = RankedTensorType::get({N1, M1, alignM, numElemPerBlock},
-                                           tensorType.getElementType());
+        auto dstTy = computeNz2NzL1DstType(tensorType);
 
         // FixpipeOp with channel_split enabled may split each channel (C0) in
         // two parts in destination.
-        bool channelSplit = numElemPerBlock == alignM / 2;
+        bool channelSplit = shouldEnableChannelSplit(tensorType);
         Value fixpipeInit = rewriter.create<mlir::tensor::EmptyOp>(
             op->getLoc(), dstTy, mlir::ValueRange{});
         FixpipeDMAModeAttr dmaModeAttr =
