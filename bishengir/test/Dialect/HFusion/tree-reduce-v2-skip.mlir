@@ -1,7 +1,3 @@
-// REQUIRES: regbase
-// TODO: enable this testcase after the target device spec uses A3-valid
-// hardware fields (currently uses A5 dav-c310-specific entries like
-// MINIMAL_D_CACHE_SIZE/MAXIMUM_D_CACHE_SIZE that A3's DLTI parser rejects)
 // RUN: bishengir-opt --tree-reduce-v2="enable-ar enable-ra" %s | FileCheck %s
 
 // Test that TreeReduceV2 skips modules containing functions with hivm.part_of_mix attribute.

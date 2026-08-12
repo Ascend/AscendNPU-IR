@@ -1,10 +1,3 @@
-// REQUIRES: regbase
-// TODO: This regbase-only guard is temporary. With the master target-spec
-// implementation, parsing fails before -outline-vector-function runs because
-// this A5 fixture uses regbase-only DLTI entries such as
-// MINIMAL_D_CACHE_SIZE/MAXIMUM_D_CACHE_SIZE/ARCH. The test should be enabled
-// again after the fixture is rewritten to master-valid device specs or the
-// regbase spec entries are supported in the local HACC parser.
 // RUN: bishengir-opt %s -outline-vector-function -o %t.mlir
 // RUN: cat %t.mlir | FileCheck %s
 

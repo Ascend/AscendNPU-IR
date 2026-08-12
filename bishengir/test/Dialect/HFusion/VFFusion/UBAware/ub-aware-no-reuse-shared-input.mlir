@@ -14,11 +14,42 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
 
 // op1(shared1, shared2) and op2(t1, shared3) must NOT merge: each shared input
 // has an external consumer, so reuse is denied and 512B > 448B budget.
+// CHECK-LABEL: func.func private @test_no_reuse_shared_fused_0(
+// CHECK:         memref.copy
+// CHECK:         bufferization.to_tensor
+// CHECK-LABEL: func.func private @test_no_reuse_shared_fused_1(
+// CHECK:         memref.copy
+// CHECK:         bufferization.to_tensor
+// CHECK-LABEL: func.func private @test_no_reuse_shared_fused_2(
+// CHECK:         memref.copy
+// CHECK:         bufferization.to_tensor
+// CHECK-LABEL: func.func private @test_no_reuse_shared_fused_3(
+// CHECK:         memref.copy
+// CHECK:         bufferization.to_tensor
+// CHECK:         linalg.generic
+// CHECK:           arith.addf
+// CHECK-LABEL: func.func private @test_no_reuse_shared_fused_4(
+// CHECK:         memref.copy
+// CHECK:         bufferization.to_tensor
+// CHECK:         linalg.generic
+// CHECK:           arith.mulf
+// CHECK-LABEL: func.func private @test_no_reuse_shared_fused_5(
+// CHECK:         memref.copy
+// CHECK:         bufferization.to_tensor
+// CHECK:         linalg.generic
+// CHECK:           arith.subf
 // CHECK-LABEL: func.func @test_no_reuse_shared(
+// CHECK:         call @test_no_reuse_shared_fused_0
+// CHECK:         call @test_no_reuse_shared_fused_1
+// CHECK:         call @test_no_reuse_shared_fused_2
 // CHECK:         linalg.generic
 // CHECK:           arith.addf
 // CHECK:         linalg.generic
 // CHECK:           arith.mulf
+// CHECK:         call @test_no_reuse_shared_fused_3
+// CHECK:         call @test_no_reuse_shared_fused_4
+// CHECK:         call @test_no_reuse_shared_fused_5
+// CHECK:         return
 func.func @test_no_reuse_shared(
     %arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>},
     %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>},

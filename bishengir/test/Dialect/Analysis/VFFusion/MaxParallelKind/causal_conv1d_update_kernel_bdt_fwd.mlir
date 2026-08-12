@@ -1,5 +1,3 @@
-
-
 // RUN: bishengir-opt --hacc-append-device-spec="target=Ascend910_9579" --vf-fusion="fusion-mode=max-parallel" --split-input-file %s | FileCheck %s
 
 // CHECK-LABEL: func.func private @causal_conv1d_update_kernel_bdt_fwd_fused_0
