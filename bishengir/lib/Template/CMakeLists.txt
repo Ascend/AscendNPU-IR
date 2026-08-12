@@ -7,6 +7,40 @@ else()
     message("-- No CMAKE_SYSROOT specified. Omitting sysroot flag.")
 endif()
 
+# Track headers used by the template sources. ccec is invoked as a custom
+# command rather than through CMake's native C++ rules, so CMake cannot infer
+# header dependencies from compiler-generated depfiles here.
+file(GLOB_RECURSE BISHENGIR_TEMPLATE_HEADERS CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/*.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/*.hh"
+    "${CMAKE_CURRENT_SOURCE_DIR}/*.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/*.hxx"
+    "${PROJECT_SOURCE_DIR}/third-party/shmem/*.h"
+    "${PROJECT_SOURCE_DIR}/third-party/shmem/*.hh"
+    "${PROJECT_SOURCE_DIR}/third-party/shmem/*.hpp"
+    "${PROJECT_SOURCE_DIR}/third-party/shmem/*.hxx")
+
+# Create an ALL custom target in the current (subdir) scope that depends on the
+# given .bc outputs. CMake only emits an add_custom_command(OUTPUT ...) rule
+# into the build when its output is consumed by some target *in the same
+# directory*. Without a same-dir consumer the per-file rules registered by
+# compile_*_to_bc (which run in subdir scope) are not emitted, and the parent
+# link targets would fail with "<file>.bc missing, no known rule to make it".
+# This target provides that same-dir consumer; its name is also recorded
+# globally so link targets can add_dependencies on it (target->target, which is
+# resolved across directories).
+function(bishengir_register_bcgen_target outputs)
+    if(NOT outputs)
+        return()
+    endif()
+    string(MD5 call_id "${outputs}")
+    set(bcgen_target "bishengir_bcgen_${call_id}")
+    if(NOT TARGET ${bcgen_target})
+        add_custom_target(${bcgen_target} ALL DEPENDS ${outputs})
+    endif()
+    set_property(GLOBAL APPEND PROPERTY bishengir_bcgen_targets "${bcgen_target}")
+endfunction()
+
 #[[Compile single xx.cpp to xx.bc
  Core_type: "aic" "aiv" "host"
  Platform_type: "Ascend910B"]]
@@ -83,26 +117,42 @@ function(compile_single_cpp_to_bc cpp_with_path core_type platform_type)
     endif ()
     list(APPEND bisheng_args -I ${INCLUDE_PATH})
     list(APPEND bisheng_args -o ${bc_name})
-    
+
     # Conditionally append sysroot if it exists
     if(CMAKE_SYSROOT)
         list(APPEND bisheng_args --sysroot=${CMAKE_SYSROOT})
     endif()
 
+    # Derive a tag for grouping .bc outputs by (core_type, arch) for the link step.
+    if (${core_type} STREQUAL "host")
+        set(bc_arch_tag "host")
+    else ()
+        string(REPLACE "." "_" arch_suffix_tok "${bc_arch_suffix}")
+        set(bc_arch_tag "${core_type}${arch_suffix_tok}")
+    endif ()
+
+    set(bc_output "${CMAKE_CURRENT_BINARY_DIR}/${bc_name}")
     string(REGEX REPLACE ";" " " compile_command "${BISHENG_TOOL} ${bisheng_args}")
     message("-- command of compile cpp to bc is ${compile_command}")
 
-    execute_process(
-            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-            COMMAND ${BISHENG_TOOL} ${bisheng_args}
+    # A custom command is not invalidated when its COMMAND arguments change.
+    # Generate a content-addressed command signature and depend on it so a
+    # changed ccec flag, compiler path, include path, or sysroot rebuilds this
+    # output. file(GENERATE) updates the file only when its content changes.
+    string(REPLACE ";" "\n" compile_signature_content "${BISHENG_TOOL}\n${bisheng_args}")
+    set(compile_signature "${bc_output}.ccec.args")
+    file(GENERATE OUTPUT "${compile_signature}" CONTENT "${compile_signature_content}\n")
+
+    add_custom_command(
+        OUTPUT "${bc_output}"
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+        COMMAND ${BISHENG_TOOL} ${bisheng_args}
+        DEPENDS "${cpp_with_path}" ${BISHENGIR_TEMPLATE_HEADERS} "${compile_signature}"
+        COMMENT "[ccec] ${cpp_name} -> ${bc_name}"
+        VERBATIM
     )
-
-
-    if (NOT EXISTS "${CMAKE_CURRENT_BINARY_DIR}/${bc_name}")
-        message(FATAL_ERROR "Compile ${cpp_with_path} failed, please check \
-${CMAKE_CURRENT_BINARY_DIR}/${bc_name} exist or not!")
-    endif ()
-
+    set_property(GLOBAL APPEND PROPERTY bishengir_bc_outputs_${bc_arch_tag} "${bc_output}")
+    set(bc_output "${bc_output}" PARENT_SCOPE)
 endfunction()
 
 function(compile_shmem_to_bc cpp_with_path core_type platform_type)
@@ -173,27 +223,38 @@ function(compile_shmem_to_bc cpp_with_path core_type platform_type)
     list(APPEND bisheng_args -I $ENV{ASCEND_HOME_PATH}/compiler/tikcpp/tikcfw/)
     list(APPEND bisheng_args -I $ENV{ASCEND_HOME_PATH}/compiler/tikcpp/tikcfw/impl)
     list(APPEND bisheng_args -I $ENV{ASCEND_HOME_PATH}/compiler/tikcpp/tikcfw/interface)
+    list(APPEND bisheng_args -I ${INCLUDE_PATH})
     list(APPEND bisheng_args -o ${bc_name})
-    
+
     # Conditionally append sysroot if it exists
     if(CMAKE_SYSROOT)
         list(APPEND bisheng_args --sysroot=${CMAKE_SYSROOT})
     endif()
 
+    # Shmem may be built for both C220 and C310. Keep each architecture in
+    # its matching meta_op group; mixing them makes hivmc consume C310 device
+    # bitcode while compiling an Ascend910B module.
+    string(REPLACE "." "_" arch_suffix_tok "${bc_arch_suffix}")
+    set(bc_arch_tag "${core_type}${arch_suffix_tok}")
+
+    set(bc_output "${CMAKE_CURRENT_BINARY_DIR}/${bc_name}")
     string(REGEX REPLACE ";" " " compile_command "${BISHENG_TOOL} ${bisheng_args}")
     message("-- command of compile cpp to bc is ${compile_command}")
 
-    execute_process(
-            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-            COMMAND ${BISHENG_TOOL} ${bisheng_args}
+    string(REPLACE ";" "\n" compile_signature_content "${BISHENG_TOOL}\n${bisheng_args}")
+    set(compile_signature "${bc_output}.ccec.args")
+    file(GENERATE OUTPUT "${compile_signature}" CONTENT "${compile_signature_content}\n")
+
+    add_custom_command(
+        OUTPUT "${bc_output}"
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+        COMMAND ${BISHENG_TOOL} ${bisheng_args}
+        DEPENDS "${cpp_with_path}" ${BISHENGIR_TEMPLATE_HEADERS} "${compile_signature}"
+        COMMENT "[ccec] ${cpp_name} -> ${bc_name}"
+        VERBATIM
     )
-
-
-    if (NOT EXISTS "${CMAKE_CURRENT_BINARY_DIR}/${bc_name}")
-        message(FATAL_ERROR "Compile ${cpp_with_path} failed, please check \
-${CMAKE_CURRENT_BINARY_DIR}/${bc_name} exist or not!")
-    endif ()
-
+    set_property(GLOBAL APPEND PROPERTY bishengir_bc_outputs_${bc_arch_tag} "${bc_output}")
+    bishengir_register_bcgen_target("${bc_output}")
 endfunction()
 
 #[[Compile single xx.cpp to xx_debug.bc
@@ -224,19 +285,34 @@ function(compile_single_cpp_to_bc_debug cpp_with_path core_type platform_type)
     list(APPEND bisheng_args -DENABLE_CPU_TRACE_INTRINSIC)
     list(APPEND bisheng_args -o ${bc_name})
 
+    # Debug-mode .bc files (no arch suffix) are not linked into meta_op:
+    # link_all_to_meta_op only handles c220/c310/host. Tag host outputs as
+    # "host" so they participate in the host link; aic/aiv debug outputs are
+    # tagged separately and left unlinked, matching the old behavior.
+    if (${core_type} STREQUAL "host")
+        set(bc_arch_tag "host")
+    else ()
+        set(bc_arch_tag "${core_type}_debug")
+    endif ()
+
+    set(bc_output "${CMAKE_CURRENT_BINARY_DIR}/${bc_name}")
     string(REGEX REPLACE ";" " " compile_command "${BISHENG_TOOL} ${bisheng_args}")
     message("-- command of compile cpp to bc is ${compile_command}")
 
-    execute_process(
-            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-            COMMAND ${BISHENG_TOOL} ${bisheng_args}
+    string(REPLACE ";" "\n" compile_signature_content "${BISHENG_TOOL}\n${bisheng_args}")
+    set(compile_signature "${bc_output}.ccec.args")
+    file(GENERATE OUTPUT "${compile_signature}" CONTENT "${compile_signature_content}\n")
+
+    add_custom_command(
+        OUTPUT "${bc_output}"
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+        COMMAND ${BISHENG_TOOL} ${bisheng_args}
+        DEPENDS "${cpp_with_path}" ${BISHENGIR_TEMPLATE_HEADERS} "${compile_signature}"
+        COMMENT "[ccec] ${cpp_name} -> ${bc_name}"
+        VERBATIM
     )
-
-    if (NOT EXISTS "${CMAKE_CURRENT_BINARY_DIR}/${bc_name}")
-        message(FATAL_ERROR "Compile ${cpp_with_path} failed, please check \
-${CMAKE_CURRENT_BINARY_DIR}/${bc_name} exist or not!")
-    endif ()
-
+    set_property(GLOBAL APPEND PROPERTY bishengir_bc_outputs_${bc_arch_tag} "${bc_output}")
+    set(bc_output "${bc_output}" PARENT_SCOPE)
 endfunction()
 
 #[[Compile multi xx.cpp to multi xx.bc
@@ -264,8 +340,9 @@ function(compile_cpp_to_bc)
         endforeach ()
         set(cpp_list ${explicit_cpp_list})
     else ()
-        file(GLOB cpp_list "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
+        file(GLOB cpp_list CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
     endif ()
+    set(this_call_outputs "")
     foreach (cpp_with_path ${cpp_list})
         if (ENABLE_CPU_TRACE_INTRINSIC AND
             (NOT ${core_type} STREQUAL "mix_aic") AND
@@ -274,70 +351,39 @@ function(compile_cpp_to_bc)
         else ()
             compile_single_cpp_to_bc(${cpp_with_path} ${core_type} ${platform_type})
         endif ()
+        list(APPEND this_call_outputs ${bc_output})
     endforeach ()
+    bishengir_register_bcgen_target("${this_call_outputs}")
 endfunction()
 
-# Link all bitcode files of a given architecture into meta_op files.
-# `arch` is the arch suffix in the .bc filenames ("" for c220, "c310" for c310).
-# `output_suffix` is the suffix appended to output meta_op filenames
-# ("" for c220, ".c310" for c310).
-function(link_one_arch_to_meta_op arch output_suffix)
-    set(BITCODE_OUTPUT_DIR "${CMAKE_BINARY_DIR}/lib")
-
-    if("${arch}" STREQUAL "")
-        set(aic_glob "*.aic.bc")
-        set(aiv_glob "*.aiv.bc")
-        set(mix_aic_glob "*.mix.aic.bc")
-        set(mix_aiv_glob "*.mix.aiv.bc")
-    else()
-        set(aic_glob "*.aic.${arch}.bc")
-        set(aiv_glob "*.aiv.${arch}.bc")
-        set(mix_aic_glob "*.mix.aic.${arch}.bc")
-        set(mix_aiv_glob "*.mix.aiv.${arch}.bc")
+# Register a link rule that merges all per-file .bc registered under
+# bishengir_bc_outputs_<tag> (populated by compile_*_to_bc) into `out_file`.
+# Using add_custom_command(OUTPUT ...) makes the link incremental: ninja skips
+# llvm-link when `out_file` is newer than its .bc inputs. The DEPENDS on the
+# subdir .bc files resolves because the bcgen targets created in each subdir
+# (bishengir_register_bcgen_target) make those custom-command rules emitted
+# into the build. The ALL driver target just triggers the custom command.
+# Each group is its own ALL target so ninja can run the link steps in parallel.
+function(link_one_group_to_meta_op tag out_file)
+    get_property(inputs GLOBAL PROPERTY bishengir_bc_outputs_${tag})
+    if(NOT inputs)
+        message(STATUS "No .bc files registered for ${tag}, skip linking ${out_file}")
+        return()
     endif()
-
-    file(GLOB_RECURSE aic_op_list     "${CMAKE_CURRENT_BINARY_DIR}/${aic_glob}")
-    file(GLOB_RECURSE aiv_op_list     "${CMAKE_CURRENT_BINARY_DIR}/${aiv_glob}")
-    file(GLOB_RECURSE mix_aic_op_list "${CMAKE_CURRENT_BINARY_DIR}/${mix_aic_glob}")
-    file(GLOB_RECURSE mix_aiv_op_list "${CMAKE_CURRENT_BINARY_DIR}/${mix_aiv_glob}")
-    list(REMOVE_ITEM aic_op_list ${mix_aic_op_list})
-    list(REMOVE_ITEM aiv_op_list ${mix_aiv_op_list})
-
-    set(output_aic_file_name     "${BITCODE_OUTPUT_DIR}/meta_op.aic${output_suffix}.bc")
-    set(output_aiv_file_name     "${BITCODE_OUTPUT_DIR}/meta_op.aiv${output_suffix}.bc")
-    set(output_mix_aic_file_name "${BITCODE_OUTPUT_DIR}/meta_op.mix.aic${output_suffix}.bc")
-    set(output_mix_aiv_file_name "${BITCODE_OUTPUT_DIR}/meta_op.mix.aiv${output_suffix}.bc")
-
-    foreach(pair "aic_op_list;${output_aic_file_name};${aic_glob}"
-                 "aiv_op_list;${output_aiv_file_name};${aiv_glob}"
-                 "mix_aic_op_list;${output_mix_aic_file_name};${mix_aic_glob}"
-                 "mix_aiv_op_list;${output_mix_aiv_file_name};${mix_aiv_glob}")
-        list(GET pair 0 list_var)
-        list(GET pair 1 out_file)
-        list(GET pair 2 glob_pat)
-        set(current_files ${${list_var}})
-        if(NOT current_files)
-            message(STATUS "No ${glob_pat} files found, skip linking ${out_file}")
-            continue()
-        endif()
-        set(link_args ${current_files} "-o" ${out_file})
-        string(REGEX REPLACE ";" " " link_command "${LLVM_LINK_TOOL} ${link_args}")
-        message("-- command of link multi ${glob_pat} to ${out_file} is ${link_command}")
-        execute_process(
-                COMMAND ${LLVM_LINK_TOOL} ${link_args}
-                RESULT_VARIABLE llvm_link_result
-        )
-        if(NOT llvm_link_result EQUAL 0)
-            message(FATAL_ERROR "llvm-link failed for ${out_file} with exit code ${llvm_link_result}")
-        endif()
-        if (NOT EXISTS "${out_file}")
-            message(FATAL_ERROR "llvm-link failed, \
-please check ${out_file} exist or not!")
-        endif ()
-        execute_process(
-                COMMAND rm ${current_files}
-        )
-    endforeach()
+    string(REGEX REPLACE "[^0-9A-Za-z_]" "_" target_suffix "${tag}")
+    set(link_target "bishengir_link_${target_suffix}")
+    string(REPLACE ";" "\n" link_signature_content "${LLVM_LINK_TOOL}\n${inputs}\n-o\n${out_file}")
+    set(link_signature "${out_file}.llvm-link.args")
+    file(GENERATE OUTPUT "${link_signature}" CONTENT "${link_signature_content}\n")
+    add_custom_command(
+        OUTPUT "${out_file}"
+        COMMAND ${LLVM_LINK_TOOL} ${inputs} -o "${out_file}"
+        DEPENDS ${inputs} "${link_signature}"
+        COMMENT "[llvm-link] ${tag} -> ${out_file}"
+        VERBATIM
+    )
+    add_custom_target(${link_target} ALL DEPENDS "${out_file}")
+    set_property(GLOBAL APPEND PROPERTY bishengir_meta_op_targets "${link_target}")
 endfunction()
 
 function(link_all_to_meta_op)
@@ -345,34 +391,23 @@ function(link_all_to_meta_op)
     file(MAKE_DIRECTORY ${BITCODE_OUTPUT_DIR})
 
     # c220 (Ascend910B / A3): use .c220 suffix.
-    link_one_arch_to_meta_op("c220" ".c220")
+    link_one_group_to_meta_op("aic_c220"     "${BITCODE_OUTPUT_DIR}/meta_op.aic.c220.bc")
+    link_one_group_to_meta_op("aiv_c220"     "${BITCODE_OUTPUT_DIR}/meta_op.aiv.c220.bc")
+    link_one_group_to_meta_op("mix_aic_c220" "${BITCODE_OUTPUT_DIR}/meta_op.mix.aic.c220.bc")
+    link_one_group_to_meta_op("mix_aiv_c220" "${BITCODE_OUTPUT_DIR}/meta_op.mix.aiv.c220.bc")
 
     # c310 (Ascend910D / A5): use .c310 suffix.
-    link_one_arch_to_meta_op("c310" ".c310")
+    link_one_group_to_meta_op("aic_c310"     "${BITCODE_OUTPUT_DIR}/meta_op.aic.c310.bc")
+    link_one_group_to_meta_op("aiv_c310"     "${BITCODE_OUTPUT_DIR}/meta_op.aiv.c310.bc")
+    link_one_group_to_meta_op("mix_aic_c310" "${BITCODE_OUTPUT_DIR}/meta_op.mix.aic.c310.bc")
+    link_one_group_to_meta_op("mix_aiv_c310" "${BITCODE_OUTPUT_DIR}/meta_op.mix.aiv.c310.bc")
 
-    # Link host bitcode (arch-agnostic).
-    file(GLOB_RECURSE all_host_op_list "${CMAKE_CURRENT_BINARY_DIR}/*.host.bc")
-    set(output_host_file_name "${BITCODE_OUTPUT_DIR}/host.bc")
-    set(host_link_args ${all_host_op_list} "-o" ${output_host_file_name})
-    string(REGEX REPLACE ";" " " host_link_command "${LLVM_LINK_TOOL} ${host_link_args}")
-    message("-- command of link multi .host.bc to host.bc is ${host_link_command}")
-    execute_process(
-            COMMAND ${LLVM_LINK_TOOL} ${host_link_args}
-            RESULT_VARIABLE host_link_result
-    )
-    if(NOT host_link_result EQUAL 0)
-        message(FATAL_ERROR "llvm-link failed for ${output_host_file_name} with exit code ${host_link_result}")
-    endif()
+    # Host bitcode (arch-agnostic).
+    link_one_group_to_meta_op("host" "${BITCODE_OUTPUT_DIR}/host.bc")
 
-    if (NOT EXISTS "${output_host_file_name}")
-        message(FATAL_ERROR "llvm-link failed, \
-please check ${output_host_file_name} exist or not!")
-    endif ()
-
-    execute_process(
-            COMMAND rm ${all_host_op_list}
-    )
-
+    # NOTE: the install-component -> link-target dependency is wired after the
+    # install() call below (the install-bishengir-publish-products target only
+    # exists once install(FILES ... COMPONENT bishengir-publish-products) runs).
 endfunction()
 
 if (BISHENGIR_BUILD_TEMPLATE STREQUAL "ON")
@@ -402,6 +437,17 @@ please check ${BISHENG_TOOL} or ${LLVM_LINK_TOOL} exist or not!")
             ${CMAKE_BINARY_DIR}/lib/host.bc
             DESTINATION lib
             COMPONENT bishengir-publish-products)
+    # Wire the install component to depend on every link target so that
+    # `cmake --build . --target install-bishengir-publish-products` builds the
+    # .bc files first. Done here (after install()) because the install-<component>
+    # target only comes into existence once the install() call above is processed.
+    # build.sh always runs `ninja` (ALL) before install, so this is extra safety.
+    get_property(_bishengir_link_targets GLOBAL PROPERTY bishengir_meta_op_targets)
+    if(TARGET install-bishengir-publish-products)
+        foreach(_t ${_bishengir_link_targets})
+            add_dependencies(install-bishengir-publish-products ${_t})
+        endforeach()
+    endif()
 endif ()
 
 option(ENABLE_SYCL "If enable sycl, use bishengcpp. Otherwise use bisheng." OFF)
