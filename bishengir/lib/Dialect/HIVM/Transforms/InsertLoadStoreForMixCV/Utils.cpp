@@ -391,6 +391,130 @@ void createPropagatorsDown(Operation *op,
   createPropagatorsDown(op, coreType, addressSpace, rewriter);
 }
 
+namespace {
+
+struct RegionFlowEdge {
+  OpOperand *operand;
+  Value input;
+};
+
+static SmallVector<OpOperand *> operandsToOpOperands(OperandRange operands) {
+  OpOperand *values = operands.getBase();
+  SmallVector<OpOperand *> opOperands;
+  opOperands.reserve(operands.size());
+  for (unsigned i = 0, e = operands.size(); i < e; ++i)
+    opOperands.push_back(&values[i]);
+  return opOperands;
+}
+
+static void appendRegionFlowEdges(OperandRange operands, ValueRange inputs,
+                                  SmallVectorImpl<RegionFlowEdge> &edges) {
+  if (operands.empty() || inputs.empty())
+    return;
+  assert(operands.size() == inputs.size() &&
+         "RegionBranch forwarded operands and successor inputs must match");
+  for (auto [operand, input] :
+       llvm::zip(operandsToOpOperands(operands), inputs))
+    edges.push_back({operand, input});
+}
+
+static void collectRegionFlowEdges(RegionBranchOpInterface branch,
+                                   SmallVectorImpl<RegionFlowEdge> &edges) {
+  SmallVector<RegionSuccessor, 2> entrySuccessors;
+  branch.getSuccessorRegions(RegionBranchPoint::parent(), entrySuccessors);
+  for (RegionSuccessor &entrySuccessor : entrySuccessors) {
+    appendRegionFlowEdges(branch.getEntrySuccessorOperands(entrySuccessor),
+                          entrySuccessor.getSuccessorInputs(), edges);
+  }
+
+  for (Region &region : branch->getRegions()) {
+    SmallVector<RegionSuccessor, 2> successorRegions;
+    branch.getSuccessorRegions(region, successorRegions);
+    for (RegionSuccessor &successorRegion : successorRegions) {
+      for (Block &block : region) {
+        auto terminator = dyn_cast<RegionBranchTerminatorOpInterface>(
+            block.getTerminator());
+        if (!terminator)
+          continue;
+        appendRegionFlowEdges(terminator.getSuccessorOperands(successorRegion),
+                              successorRegion.getSuccessorInputs(), edges);
+      }
+    }
+  }
+}
+
+static DenseSet<Value> collectComponentValues(ArrayRef<RegionFlowEdge> edges,
+                                              Value seed) {
+  DenseSet<Value> visited;
+  SmallVector<Value> worklist{seed};
+  visited.insert(seed);
+  while (!worklist.empty()) {
+    Value cur = worklist.pop_back_val();
+    for (const RegionFlowEdge &edge : edges) {
+      Value other;
+      if (edge.operand->get() == cur)
+        other = edge.input;
+      else if (edge.input == cur)
+        other = edge.operand->get();
+      else
+        continue;
+      if (visited.insert(other).second)
+        worklist.push_back(other);
+    }
+  }
+  return visited;
+}
+
+static PropagatorSiteSet
+buildSiteSetForComponent(ArrayRef<RegionFlowEdge> edges,
+                         const DenseSet<Value> &component) {
+  PropagatorSiteSet sites;
+  for (const RegionFlowEdge &edge : edges) {
+    if (!component.contains(edge.operand->get()) &&
+        !component.contains(edge.input))
+      continue;
+    sites.addUp(edge.operand);
+    sites.addDown(edge.input);
+  }
+  return sites;
+}
+
+} // namespace
+
+FailureOr<PropagatorSiteSet>
+collectRelatedPropagatorSites(RegionBranchOpInterface branch, Value seed) {
+  SmallVector<RegionFlowEdge> edges;
+  collectRegionFlowEdges(branch, edges);
+
+  bool seedOnEdge = llvm::any_of(edges, [&](const RegionFlowEdge &edge) {
+    return edge.operand->get() == seed || edge.input == seed;
+  });
+  if (!seedOnEdge)
+    return failure();
+
+  return buildSiteSetForComponent(edges, collectComponentValues(edges, seed));
+}
+
+SmallVector<PropagatorSiteSet>
+collectIndependentPropagatorSiteGroups(RegionBranchOpInterface branch) {
+  SmallVector<RegionFlowEdge> edges;
+  collectRegionFlowEdges(branch, edges);
+
+  DenseSet<Value> covered;
+  SmallVector<PropagatorSiteSet> groups;
+  for (const RegionFlowEdge &edge : edges) {
+    for (Value seed : {edge.operand->get(), edge.input}) {
+      if (!seed || covered.contains(seed))
+        continue;
+      DenseSet<Value> component = collectComponentValues(edges, seed);
+      for (Value v : component)
+        covered.insert(v);
+      groups.push_back(buildSiteSetForComponent(edges, component));
+    }
+  }
+  return groups;
+}
+
 TCoreType getCoreType(UnrealizedConversionCastOp op) {
   auto coreTypeAttr =
       op->getAttrOfType<hivm::TCoreTypeAttr>(hivm::TCoreTypeAttr::name);
@@ -417,13 +541,52 @@ UnrealizedConversionCastOp getUpPropagator(OpOperand *operand) {
   return nullptr;
 }
 
-UnrealizedConversionCastOp getDownPropagator(OpResult res) {
-  if (!res.hasOneUse())
+UnrealizedConversionCastOp getDownPropagator(OpResult result) {
+  if (!result.hasOneUse())
     return nullptr;
-  auto uccOp = dyn_cast<UnrealizedConversionCastOp>(*res.user_begin());
-  if (uccOp && uccOp->hasAttr(kPropagateDownAttr))
-    return uccOp;
+  auto propagateOp =
+      dyn_cast<UnrealizedConversionCastOp>(*result.user_begin());
+  if (propagateOp && propagateOp->hasAttr(kPropagateDownAttr))
+    return propagateOp;
   return nullptr;
+}
+
+UnrealizedConversionCastOp getDownPropagator(Value value) {
+  if (auto propagateOp =
+          value.getDefiningOp<UnrealizedConversionCastOp>();
+      propagateOp && propagateOp->hasAttr(kPropagateDownAttr))
+    return propagateOp;
+  for (Operation *user : value.getUsers()) {
+    auto propagateOp = dyn_cast<UnrealizedConversionCastOp>(user);
+    if (propagateOp && propagateOp->hasAttr(kPropagateDownAttr))
+      return propagateOp;
+  }
+  return nullptr;
+}
+
+UnrealizedConversionCastOp getUpSiteRequirement(OpOperand *operand) {
+  if (auto up = getUpPropagator(operand))
+    return up;
+  auto defOp = operand->get().getDefiningOp<UnrealizedConversionCastOp>();
+  if (defOp && defOp->hasAttr(kPropagateDownAttr))
+    return defOp;
+  return nullptr;
+}
+
+UnrealizedConversionCastOp getDownSiteRequirement(Value value) {
+  if (auto down = getDownPropagator(value))
+    return down;
+  for (Operation *user : value.getUsers()) {
+    auto propagateOp = dyn_cast<UnrealizedConversionCastOp>(user);
+    if (propagateOp && propagateOp->hasAttr(kPropagateUpAttr))
+      return propagateOp;
+  }
+  return nullptr;
+}
+
+bool haveSamePropagation(UnrealizedConversionCastOp lhs,
+                         UnrealizedConversionCastOp rhs) {
+  return extractPropagatorInfo(lhs) == extractPropagatorInfo(rhs);
 }
 
 hivm::StoreOp insertStore(Value value, Location loc, PatternRewriter &rewriter,

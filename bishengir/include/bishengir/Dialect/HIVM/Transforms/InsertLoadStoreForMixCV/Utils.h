@@ -22,8 +22,10 @@
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/Interfaces/ControlFlowInterfaces.h"
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/LogicalResult.h"
 #include <optional>
@@ -191,6 +193,59 @@ void createPropagatorsDown(Operation *op,
                            UnrealizedConversionCastOp propagateOp,
                            PatternRewriter &rewriter);
 
+/// Tracks unique propagate_up / propagate_down sites so each can be queried
+/// and applied independently.
+struct PropagatorSiteSet {
+public:
+  /// Record `operand` as an up site. Returns true if it was newly added.
+  bool addUp(OpOperand *operand) {
+    return operand && upSites.insert(operand).second;
+  }
+
+  /// Record `value` as a down site. Returns true if it was newly added.
+  bool addDown(Value value) {
+    return value && downSites.insert(value).second;
+  }
+
+  bool containsUp(OpOperand *operand) const {
+    return operand && upSites.contains(operand);
+  }
+
+  bool containsDown(Value value) const {
+    return value && downSites.contains(value);
+  }
+
+  const DenseSet<OpOperand *> &getUpSites() const { return upSites; }
+  const DenseSet<Value> &getDownSites() const { return downSites; }
+
+private:
+  DenseSet<OpOperand *> upSites;
+  DenseSet<Value> downSites;
+};
+
+/// Collect unique propagate_up operands and propagate_down values reachable
+/// from `seed` along RegionBranch forwarded edges of `branch`.
+///
+/// Returns failure if `seed` is not on any forwarded edge (e.g. scf.for IV).
+/// While before/after channels stay separate because they share no edges.
+///
+/// Example for `scf.for` seed = init operand value:
+///   getUpSites()   -> {init operand, yield operand}
+///   getDownSites() -> {iter_arg, loop result}
+FailureOr<PropagatorSiteSet>
+collectRelatedPropagatorSites(RegionBranchOpInterface branch, Value seed);
+
+/// Partition all RegionBranch forwarded edges of `branch` into independent
+/// up/down site groups (connected components).
+///
+/// Each group is a `PropagatorSiteSet` whose ups/downs are mutually reachable
+/// and disjoint from other groups. Typical examples:
+/// - `scf.for` with N iter_args -> N groups (one per carried value)
+/// - `scf.while` -> before-channel groups + after-channel groups
+/// - `scf.if` / `scope` with N results -> N groups
+SmallVector<PropagatorSiteSet>
+collectIndependentPropagatorSiteGroups(RegionBranchOpInterface branch);
+
 /// Get propagated core type from cast op, defaulting to CUBE_OR_VECTOR.
 TCoreType getCoreType(UnrealizedConversionCastOp op);
 
@@ -201,7 +256,25 @@ SmallVector<AddressSpace, 2> getAddressSpace(UnrealizedConversionCastOp op);
 UnrealizedConversionCastOp getUpPropagator(OpOperand *operand);
 
 /// Return the down-propagator attached to a result, if present.
-UnrealizedConversionCastOp getDownPropagator(OpResult res);
+UnrealizedConversionCastOp getDownPropagator(OpResult result);
+
+/// Return the down-propagator attached to an arbitrary value, if present.
+UnrealizedConversionCastOp getDownPropagator(Value value);
+
+/// Requirement present at an up site (yield / region predecessor operand).
+/// Producers often leave a `propagate_down` value here before control-flow has
+/// mirrored a matching `propagate_up`.
+UnrealizedConversionCastOp getUpSiteRequirement(OpOperand *operand);
+
+/// Requirement present at a down site (result / block argument). Consumers
+/// often attach a `propagate_up` user here before control-flow has mirrored a
+/// matching `propagate_down`.
+UnrealizedConversionCastOp getDownSiteRequirement(Value value);
+
+/// Return whether two propagators carry the same core and address-space
+/// requirement.
+bool haveSamePropagation(UnrealizedConversionCastOp lhs,
+                         UnrealizedConversionCastOp rhs);
 
 /// Insert a store that materializes `value` into a local buffer. UB targets use
 /// memref.alloc; GM workspace targets use memref_ext.alloc_workspace.
