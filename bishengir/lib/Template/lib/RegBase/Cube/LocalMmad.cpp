@@ -23,14 +23,6 @@
 #include "ascendc_bisheng/ascendc_bisheng.hpp"
 #include "Synchronization/SyncUtils.h"
 
-template <typename T, size_t Dim> struct memref_t {
-  T *allocated;
-  T *aligned;
-  int64_t offset;
-  int64_t sizes[Dim];
-  int64_t strides[Dim];
-};
-
 namespace Catlass::Gemm {
 
 template <bool Trans>
@@ -282,6 +274,13 @@ mma_tile_core(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
 
   if (unit_flag_mode != UNIT_FLAG::DISABLED) {
     auto &unit_flag_is_bad = getUnitFlagIsBadRef(unit_flag_group_id);
+    // When unit_flag is enabled, matmul may act as consumer for previous
+    // fixpipe, unit_flag_is_bad means previous fixpipe will disable unit-flag,
+    // so conservatively add FIX->M set/wait pair    
+    if (unit_flag_is_bad) {
+      INTRINSIC(set_flag, PIPE_FIX, PIPE_M, LIB_EVENT_ID0);
+      INTRINSIC(wait_flag, PIPE_FIX, PIPE_M, LIB_EVENT_ID0);
+    }    
     if (unit_flag_mode == UNIT_FLAG::ENABLED_WITHOUT_UPDATE) {
       if (unit_flag_is_bad) {
         unit_flag_is_bad = false;
@@ -293,10 +292,6 @@ mma_tile_core(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
         unit_flag_is_bad = true;
         unit_flag_mode = UNIT_FLAG::ENABLED_WITHOUT_UPDATE;
       }
-    }
-    if (unit_flag_is_bad) {
-      INTRINSIC(set_flag, PIPE_FIX, PIPE_M, LIB_EVENT_ID0);
-      INTRINSIC(wait_flag, PIPE_FIX, PIPE_M, LIB_EVENT_ID0);
     }
   }
 
@@ -346,6 +341,13 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
 
   if (unit_flag_mode != UNIT_FLAG::DISABLED) {
     auto &unit_flag_is_bad = getUnitFlagIsBadRef(unit_flag_group_id);
+    // When unit_flag is enabled, matmul may act as consumer for previous
+    // fixpipe, unit_flag_is_bad means previous fixpipe will disable unit-flag,
+    // so conservatively add FIX->M set/wait pair    
+    if (unit_flag_is_bad) {
+      INTRINSIC(set_flag, PIPE_FIX, PIPE_M, LIB_EVENT_ID0);
+      INTRINSIC(wait_flag, PIPE_FIX, PIPE_M, LIB_EVENT_ID0);
+    }
     if (unit_flag_mode == UNIT_FLAG::ENABLED_WITHOUT_UPDATE) {
       if (unit_flag_is_bad) {
         unit_flag_is_bad = false;
@@ -357,10 +359,6 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
         unit_flag_is_bad = true;
         unit_flag_mode = UNIT_FLAG::ENABLED_WITHOUT_UPDATE;
       }
-    }
-    if (unit_flag_is_bad) {
-      INTRINSIC(set_flag, PIPE_FIX, PIPE_M, LIB_EVENT_ID0);
-      INTRINSIC(wait_flag, PIPE_FIX, PIPE_M, LIB_EVENT_ID0);
     }
   }
 

@@ -372,6 +372,13 @@ mma_tile(memref_t<__cbuf__ SRC_TYPE, 4> *ma, memref_t<__cbuf__ SRC_TYPE, 4> *mb,
 
   if (unit_flag_mode != UNIT_FLAG::DISABLED) {
     auto &unit_flag_is_bad = getUnitFlagIsBadRef(unit_flag_group_id);
+    // When unit_flag is enabled, matmul may act as consumer for previous
+    // fixpipe, unit_flag_is_bad means previous fixpipe will disable unit-flag,
+    // so conservatively add FIX->M set/wait pair
+    if (unit_flag_is_bad) {
+      INTRINSIC(set_flag, PIPE_FIX, PIPE_M, LIB_EVENT_ID0);
+      INTRINSIC(wait_flag, PIPE_FIX, PIPE_M, LIB_EVENT_ID0);
+    }    
     if (unit_flag_mode == UNIT_FLAG::ENABLED_WITHOUT_UPDATE) {
       if (unit_flag_is_bad) {
         unit_flag_is_bad = false;
@@ -383,10 +390,6 @@ mma_tile(memref_t<__cbuf__ SRC_TYPE, 4> *ma, memref_t<__cbuf__ SRC_TYPE, 4> *mb,
         unit_flag_is_bad = true;
         unit_flag_mode = UNIT_FLAG::ENABLED_WITHOUT_UPDATE;
       }
-    }
-    if (unit_flag_is_bad) {
-      INTRINSIC(set_flag, PIPE_FIX, PIPE_M, LIB_EVENT_ID0);
-      INTRINSIC(wait_flag, PIPE_FIX, PIPE_M, LIB_EVENT_ID0);
     }
   }
 

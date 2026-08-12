@@ -28,6 +28,7 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Casting.h"
@@ -694,15 +695,38 @@ bool SyncSolverBase::checkMemoryConflictBetweenOccExclusive(
   auto *rwOp1 = llvm::dyn_cast_if_present<RWOperation>(occ1->op);
   auto *rwOp2 = llvm::dyn_cast_if_present<RWOperation>(occ2->op);
   assert(rwOp1 != nullptr && rwOp2 != nullptr);
+
+  // Check conflicts only on CC-relevant buffer combinations:
+  //   MmadL1 × MmadL1 → WAW  (both write same CC)
+  //   MmadL1 × Fixpipe → RAW  (MmadL1 writes CC, Fixpipe reads CC)
+  //   Fixpipe × MmadL1 → WAR  (Fixpipe reads CC, MmadL1 writes CC)
+  //   Fixpipe × Fixpipe → skip (RAR, neither writes CC; WAW on output
+  //                              side is irrelevant to unit-flag)
+  auto checkCCConflict = [this](RWOperation *rwOp,
+                                RWOperation *otherOp) -> bool {
+    if (isa_and_present<hivm::MmadL1Op>(rwOp->op)) {
+      if (isa_and_present<hivm::MmadL1Op>(otherOp->op))
+        return checkMemInfoConflict(rwOp, otherOp, rwOp->writeMemInfo,
+                                     otherOp->writeMemInfo);
+      if (isa_and_present<hivm::FixpipeOp>(otherOp->op))
+        return checkMemInfoConflict(rwOp, otherOp, rwOp->writeMemInfo,
+                                     otherOp->readMemInfo);
+    } else if (isa_and_present<hivm::FixpipeOp>(rwOp->op)) {
+      if (isa_and_present<hivm::MmadL1Op>(otherOp->op))
+        return checkMemInfoConflict(rwOp, otherOp, rwOp->readMemInfo,
+                                     otherOp->writeMemInfo);
+      // Fixpipe × Fixpipe: RAR on CC — no conflict relevant to unit-flag
+    }
+    return false;
+  };
+
   for (int i = occ1->syncIrEndIndex; i < occ2->syncIrIndex; i++) {
     if (auto *otherOp = llvm::dyn_cast_if_present<RWOperation>(syncIr[i]->op)) {
-      if (!filter(otherOp)) {
+      if (!filter(otherOp))
         continue;
-      }
-      if (checkMemoryConflicts(rwOp1, otherOp) ||
-          checkMemoryConflicts(rwOp2, otherOp)) {
+      if (checkCCConflict(rwOp1, otherOp) ||
+          checkCCConflict(rwOp2, otherOp))
         return true;
-      }
     }
   }
   return false;
@@ -2185,18 +2209,25 @@ void SyncSolverBase::collectBackwardSyncEventIds() {
 void SyncSolverBase::collectUnitFlagGroupIds() {
   auto conflictPairs = getAllChosenConflictPairs();
   UnionFind<RWOperation *> unionFind;
-  llvm::DenseSet<RWOperation *> unitFlagOps;
+  // Use a SetVector to deduplicate while preserving insertion order, then sort
+  // by the stable OperationBase::id so that group-id assignment is independent
+  // of DenseSet pointer hashing and reproducible across compiler runs.
+  llvm::SetVector<RWOperation *> unitFlagOpsSet;
   for (auto *conflictPair : conflictPairs) {
     if (!conflictPair->replacedWithUnitFlag) {
       continue;
     }
     assert(conflictPair->op1 != nullptr && conflictPair->op2 != nullptr);
-    unitFlagOps.insert(conflictPair->op1);
-    unitFlagOps.insert(conflictPair->op2);
+    unitFlagOpsSet.insert(conflictPair->op1);
+    unitFlagOpsSet.insert(conflictPair->op2);
     auto *op1 = unionFind.find(conflictPair->op1);
     auto *op2 = unionFind.find(conflictPair->op2);
     unionFind.join(op1, op2);
   }
+  SmallVector<RWOperation *, 16> unitFlagOps(unitFlagOpsSet.begin(),
+                                             unitFlagOpsSet.end());
+  std::sort(unitFlagOps.begin(), unitFlagOps.end(),
+            [](RWOperation *a, RWOperation *b) { return a->id < b->id; });
 
   int64_t globalUnitFlagGroupIndex = 0;
   for (auto *rwOp : unitFlagOps) {

@@ -567,7 +567,10 @@ public:
     if (a == b) {
       return false;
     }
-    if (rand() & 1) {
+    // Deterministic tiebreak: the smaller pointer becomes the child, so the
+    // resulting root and tree shape depend only on the input set, not on rand()
+    // or call order. Keeps group-id assignment reproducible across runs.
+    if (a > b) {
       std::swap(a, b);
     }
     parent[a] = b;
