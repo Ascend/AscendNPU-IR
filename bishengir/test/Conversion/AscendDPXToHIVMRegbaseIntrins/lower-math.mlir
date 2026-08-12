@@ -263,6 +263,12 @@ func.func @ascend_dpx_binary_libcall_lowering_int(%arg1 : i8, %arg2 : i8) {
     %7 = ascend_dpx.hadd %arg1_i32, %arg2_i32 : (i32, i32) -> i32
     // CHECK: _mlir_ciface_simt_rhadd_int32_t
     %8 = ascend_dpx.rhadd %arg1_i32, %arg2_i32 : (i32, i32) -> i32
+    // CHECK: _mlir_ciface_simt_umul24_uint32_t
+    %9 = ascend_dpx.umul24 %arg1_i32, %arg2_i32 : (i32, i32) -> i32
+    // CHECK: _mlir_ciface_simt_uhadd_uint32_t
+    %10 = ascend_dpx.uhadd %arg1_i32, %arg2_i32 : (i32, i32) -> i32
+    // CHECK: _mlir_ciface_simt_urhadd_uint32_t
+    %11 = ascend_dpx.urhadd %arg1_i32, %arg2_i32 : (i32, i32) -> i32
     return
 }
 
@@ -346,6 +352,8 @@ func.func @ascend_dpx_ternary_libcall_lowering_int(%arg1 : i8, %arg2 : i8, %arg3
     %0 = ascend_dpx.byte_perm %arg1_i32, %arg2_i32, %arg3_i32 : (i32, i32, i32) -> i32
     // CHECK: @_mlir_ciface_simt_sad_int32_t
     %1 = ascend_dpx.sad %arg1_i32, %arg2_i32, %arg3_i32 : (i32, i32, i32) -> i32
+    // CHECK: @_mlir_ciface_simt_usad_uint32_t
+    %2 = ascend_dpx.usad %arg1_i32, %arg2_i32, %arg3_i32 : (i32, i32, i32) -> i32
     return
 }
  

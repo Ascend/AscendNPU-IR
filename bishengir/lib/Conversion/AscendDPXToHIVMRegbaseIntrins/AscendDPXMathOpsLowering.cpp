@@ -351,6 +351,10 @@ TCCC *libFuncName<Ull2FloatRzOp> = "_mlir_ciface_simt_ull2float_rz_float";
 TCCC *libFuncName<Ull2FloatRdOp> = "_mlir_ciface_simt_ull2float_rd_float";
 TCCC *libFuncName<Ull2FloatRuOp> = "_mlir_ciface_simt_ull2float_ru_float";
 TCCC *libFuncName<UmulhiOp> = "_mlir_ciface_simt_umulhi_uint32_t";
+TCCC *libFuncName<Umul24Op> = "_mlir_ciface_simt_umul24_uint32_t";
+TCCC *libFuncName<UhaddOp> = "_mlir_ciface_simt_uhadd_uint32_t";
+TCCC *libFuncName<UrhaddOp> = "_mlir_ciface_simt_urhadd_uint32_t";
+TCCC *libFuncName<UsadOp> = "_mlir_ciface_simt_usad_uint32_t";
 TCCC *libFuncName<Y0Op> = "_mlir_ciface_simt_y0_float";
 TCCC *libFuncName<Y1Op> = "_mlir_ciface_simt_y1_float";
 TCCC *libFuncName<YnOp> = "_mlir_ciface_simt_yn_float";
@@ -442,6 +446,10 @@ BinaryDirect<FDivOp, LLVM::FDivOp>,
 BinaryDirect<UDivOp, LLVM::UDivOp>,
 Exp2OpLowering,
 LibCallLowering<UmulhiOp>,
+LibCallLowering<Umul24Op>,
+LibCallLowering<UhaddOp>,
+LibCallLowering<UrhaddOp>,
+LibCallLowering<UsadOp>,
 LibCallLowering<AbsOp>,
 LibCallLowering<AcosOp>,
 LibCallLowering<AcoshOp>,

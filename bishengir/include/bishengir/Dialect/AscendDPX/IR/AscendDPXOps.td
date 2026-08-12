@@ -359,6 +359,9 @@ def FDivOp : AscendDPX_BinaryMathOp<"fdiv">;
 def UDivOp : AscendDPX_BinaryMathOp<"udiv">;
 def PowOp : AscendDPX_BinaryMathOp<"pow">;
 def UmulhiOp : AscendDPX_BinaryMathOp<"umulhi">;
+def Umul24Op : AscendDPX_BinaryMathOp<"umul24">;
+def UhaddOp : AscendDPX_BinaryMathOp<"uhadd">;
+def UrhaddOp : AscendDPX_BinaryMathOp<"urhadd">;
 def LdExpOp : AscendDPX_BinaryMathOp<"ldexp">;
 def CopysignOp : AscendDPX_BinaryMathOp<"copysign">;
 def Atan2Op : AscendDPX_BinaryMathOp<"atan2">;
@@ -412,6 +415,7 @@ def FmaOp : AscendDPX_TernaryMathOp<"fma">;
 def Norm3dOp : AscendDPX_TernaryMathOp<"norm3d">;
 def Rnorm3dOp : AscendDPX_TernaryMathOp<"rnorm3d">;
 def SadOp : AscendDPX_TernaryMathOp<"sad">;
+def UsadOp : AscendDPX_TernaryMathOp<"usad">;
 
 class AscendDPX_QuaternaryMathOp<string mnemonic>
     : AscendDPX_Op<mnemonic> {
