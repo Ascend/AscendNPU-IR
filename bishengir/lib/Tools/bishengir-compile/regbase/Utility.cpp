@@ -33,7 +33,16 @@ namespace bishengir {
 namespace regbase {
 namespace {
 
+static bool isMLIRTimingOption(StringRef s) {
+  auto isTiming = s == "mlir-timing";
+  auto isTimingDisplay = s == "mlir-timing-display";
+  auto isOutputFormat = s == "mlir-output-format";
+  return isTiming || isTimingDisplay || isOutputFormat;
+}
+
 static bool isSharedWithDownstreamToolchain(StringRef argName) {
+  if (isMLIRTimingOption(argName))
+    return true;
   auto &opts = llvm::cl::getRegisteredOptions();
   auto it = opts.find(argName);
   if (it == opts.end())
