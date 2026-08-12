@@ -102,6 +102,7 @@ void populateTensorToTritonPatterns(RewritePatternSet &patterns);
 void populateAffineToTritonPatterns(RewritePatternSet &patterns);
 void populateMemRefLoadToTritonPatterns(RewritePatternSet &patterns);
 void populateReinterpretCastToUnrealizedCastPatterns(RewritePatternSet &patterns);
+void populateExtractAlignedPointerToTritonPatterns(RewritePatternSet &patterns);
 
 /// Callback to convert function argument types. It converts a MemRef function
 /// argument to a list of non-aggregate types containing descriptor

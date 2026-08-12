@@ -708,10 +708,10 @@ void FixpipeOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                       FixpipeSubBlockAttr sub_block_idx,
                       FixpipePreQuantModeAttr pre_quant,
                       FixpipePreReluModeAttr pre_relu, BoolAttr channel_split,
-                      Value quant_scale) {
+                      BoolAttr c0_pad_en, Value quant_scale) {
   build(odsBuilder, odsState, result, src, dst, /*unit_flag_cond=*/ValueRange{},
-        dma_mode, /*dual_dst_mode=*/dual_dst_mode,  sub_block_idx, pre_quant, pre_relu,
-        channel_split,
+        dma_mode, /*dual_dst_mode=*/dual_dst_mode, sub_block_idx, pre_quant,
+        pre_relu, channel_split, c0_pad_en,
         /*unit_flag_mode=*/ArrayAttr{}, quant_scale);
 }
 
@@ -722,10 +722,10 @@ void FixpipeOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                       FixpipeSubBlockAttr sub_block_idx,
                       FixpipePreQuantModeAttr pre_quant,
                       FixpipePreReluModeAttr pre_relu, BoolAttr channel_split,
-                      Value quant_scale) {
+                      BoolAttr c0_pad_en, Value quant_scale) {
   build(odsBuilder, odsState, result, src, dst, /*unit_flag_cond=*/ValueRange{},
-        dma_mode, /*dual_dst_mode=*/dual_dst_mode, sub_block_idx, pre_quant, pre_relu,
-        channel_split,
+        dma_mode, /*dual_dst_mode=*/dual_dst_mode, sub_block_idx, pre_quant,
+        pre_relu, channel_split, c0_pad_en,
         /*unit_flag_mode=*/ArrayAttr{}, quant_scale);
 }
 

@@ -223,9 +223,10 @@ static void hivmPreBufferizationOptimizationPipeline(
   // A3 mem-based path still needs InsertFixpipe (MR 2052 / compile-bisheng-distributed).
   pm.addPass(mlir::hivm::createInsertFixpipePass());
   {
-    InlineFixpipeOptions opts;
-    opts.inlineQuantScale = hivmPipelineOptions.inlineQuantScaleInFixpipe;
-    pm.addPass(mlir::hivm::createInlineFixpipePass(opts));
+    InlineFixpipeOptions inlineFixpipeOpts;
+    inlineFixpipeOpts.inlineQuantScale =
+        hivmPipelineOptions.inlineQuantScaleInFixpipe;
+    pm.addPass(mlir::hivm::createInlineFixpipePass(inlineFixpipeOpts));
   }
   if (!hivmPipelineOptions.disableAutoCVWorkSpaceManage) {
     hivmAutoInsertLdStForMixCVPipeline(pm, hivmPipelineOptions);
@@ -242,9 +243,10 @@ static void hivmPreBufferizationOptimizationPipeline(
   pm.addPass(createInsertNZ2NDForDebugPass());
   pm.addPass(mlir::hivm::createInsertFixpipePass());
   {
-    InlineFixpipeOptions opts;
-    opts.inlineQuantScale = hivmPipelineOptions.inlineQuantScaleInFixpipe;
-    pm.addPass(mlir::hivm::createInlineFixpipePass(opts));
+    InlineFixpipeOptions inlineFixpipeOpts;
+    inlineFixpipeOpts.inlineQuantScale =
+        hivmPipelineOptions.inlineQuantScaleInFixpipe;
+    pm.addPass(mlir::hivm::createInlineFixpipePass(inlineFixpipeOpts));
   }
 
   if (!hivmPipelineOptions.disableAutoCVWorkSpaceManage) {
@@ -416,6 +418,7 @@ static void hivmPostBufferizationOptimizationPipeline(
 
   // Transform uncontinuous access to deinterleave op
   pm.nest<func::FuncOp>().addPass(createHIVMRecognizeDeinterleaveOpPass());
+  pm.nest<func::FuncOp>().addPass(createHIVMRecognizeDisContinuousStorePass());
   decomposeOption.decomposePhase =
       bishengir::DecomposePhase::AFTER_RECOGNIZE_DEINTERLEAVE;
   pm.nest<func::FuncOp>().addPass(

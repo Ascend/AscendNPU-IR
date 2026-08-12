@@ -1,4 +1,4 @@
-file(GLOB cpp_list "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
+file(GLOB cpp_list CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
 
 foreach (cpp_with_path ${cpp_list})
     compile_shmem_to_bc(${cpp_with_path} "aic" "Ascend910B")

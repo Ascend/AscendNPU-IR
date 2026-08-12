@@ -1813,7 +1813,6 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // CHECK-LABEL: @a5_inferred_load_tcoretype_vector_only
 // CHECK: %[[VEC_LOAD:.*]] = hivm.hir.load ins(%{{.*}} : tensor<16x16xf16>) outs(%{{.*}} : tensor<16x16xf16>) {"hivm.inserted-load"} core_type = <VECTOR> -> tensor<16x16xf16>
 // CHECK: %[[CUBE_LOAD:.*]] = hivm.hir.load ins(%{{.*}} : tensor<16x16xf16>) outs(%2 : tensor<16x16xf16>) {"hivm.inserted-load"} -> tensor<16x16xf16>
-
 // CHECK-NOT: %[[CUBE_LOAD]]{{.*}}core_type = <CUBE>
 // CHECK: hivm.hir.mmadL1 ins(%[[CUBE_LOAD]]
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
@@ -1928,5 +1927,166 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     }
     %4 = hivm.hir.vadd ins(%3, %arg6 : tensor<64x64xf32>, tensor<64x64xf32>) outs(%1 : tensor<64x64xf32>) -> tensor<64x64xf32>
     return %4 : tensor<64x64xf32>
+  }
+}
+
+// -----
+
+// Fractal fixpipe feeding mmadL1 must not rewrite through unused L0C->L1
+// (no cbuf alloc / void fixpipe to L1 memref); keep tensor fixpipe result.
+// CHECK-LABEL: @fixpipe_fractal_rhs_no_convert_layout(
+// CHECK-NOT: {"hivm.inserted-copy"}
+// CHECK-NOT: hivm.hir.vtranspose
+// CHECK-NOT: memref.alloc(){{.*}}#hivm.address_space<cbuf>
+// CHECK: %[[LHS_LOAD:.*]] = hivm.hir.load ins(%arg0 : tensor<2x1x16x8xf32>) outs(%{{.*}} : tensor<2x1x16x8xf32>) {"hivm.inserted-load"} -> tensor<2x1x16x8xf32>
+// CHECK: %[[FIX:.*]] = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%arg1 : tensor<2x1x16x8xf32>) outs(%{{.*}} : tensor<2x1x16x8xf32>) -> tensor<2x1x16x8xf32>
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C} ins(%[[LHS_LOAD]], %[[FIX]], %true, %c16, %c16, %c16 : tensor<2x1x16x8xf32>, tensor<2x1x16x8xf32>, i1, index, index, index) outs(%{{.*}} : tensor<1x1x16x16xf32>) -> tensor<1x1x16x16xf32>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @fixpipe_fractal_rhs_no_convert_layout(
+      %lhs: tensor<2x1x16x8xf32>, %rhs: tensor<2x1x16x8xf32>) -> tensor<1x1x16x16xf32>
+      attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %c16 = arith.constant 16 : index
+    %true = arith.constant true
+    %fix_out = tensor.empty() : tensor<2x1x16x8xf32>
+    %fix = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+        ins(%rhs : tensor<2x1x16x8xf32>) outs(%fix_out : tensor<2x1x16x8xf32>)
+        -> tensor<2x1x16x8xf32>
+    %out = tensor.empty() : tensor<1x1x16x16xf32>
+    %mmad = hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
+        ins(%lhs, %fix, %true, %c16, %c16, %c16
+            : tensor<2x1x16x8xf32>, tensor<2x1x16x8xf32>, i1, index, index, index)
+        outs(%out : tensor<1x1x16x16xf32>) -> tensor<1x1x16x16xf32>
+    return %mmad : tensor<1x1x16x16xf32>
+  }
+}
+
+// -----
+
+// Contrast: rank-2/ND fixpipe result still needs UB->L1 layout conversion.
+// CHECK-LABEL: @fixpipe_nd_rhs_gets_convert_layout(
+// CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+// CHECK: hivm.hir.vtranspose
+// CHECK: %[[TENSOR:.*]] = tensor.empty() {hivm.address_space = #hivm.address_space<cbuf>, "hivm.inserted-tensor"} : tensor<2x1x16x8xf32>
+// CHECK: %[[COPY:.*]] = hivm.hir.copy ins(%{{.*}} : tensor<2x1x16x8xf32>) outs(%[[TENSOR]] : tensor<2x1x16x8xf32>) {"hivm.inserted-copy"}
+// CHECK: hivm.hir.mmadL1 {{.*}} ins(%{{.*}}, %[[COPY]]
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @fixpipe_nd_rhs_gets_convert_layout(
+      %lhs: tensor<16x16xf16>, %rhs: tensor<16x16xf32>) -> tensor<16x16xf32>
+      attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %c16 = arith.constant 16 : index
+    %true = arith.constant true
+    %fix_out = tensor.empty() : tensor<16x16xf32>
+    %fix = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+        ins(%rhs : tensor<16x16xf32>) outs(%fix_out : tensor<16x16xf32>)
+        -> tensor<16x16xf32>
+    %out = tensor.empty() : tensor<16x16xf32>
+    %mmad = hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
+        ins(%lhs, %fix, %true, %c16, %c16, %c16
+            : tensor<16x16xf16>, tensor<16x16xf32>, i1, index, index, index)
+        outs(%out : tensor<16x16xf32>) -> tensor<16x16xf32>
+    return %mmad : tensor<16x16xf32>
+  }
+}
+
+// -----
+
+// NZ2NZ (default/normal) fixpipe already writes NZ layout; skip UB->L1
+// convert_layout and unused L0C->L1 cbuf rewrite even when the result is rank-2.
+// CHECK-LABEL: @fixpipe_nz2nz_rhs_no_convert_layout(
+// CHECK-NOT: {"hivm.inserted-copy"}
+// CHECK-NOT: hivm.hir.vtranspose
+// CHECK-NOT: memref.alloc(){{.*}}#hivm.address_space<cbuf>
+// CHECK: %[[LHS_LOAD:.*]] = hivm.hir.load ins(%arg0 : tensor<16x16xf16>) outs(%{{.*}} : tensor<16x16xf16>) {"hivm.inserted-load"} -> tensor<16x16xf16>
+// CHECK: %[[FIX:.*]] = hivm.hir.fixpipe {{.*}}ins(%arg1 : tensor<16x16xf32>) outs(%{{.*}} : tensor<16x16xf32>) -> tensor<16x16xf32>
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C} ins(%[[LHS_LOAD]], %[[FIX]], %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf32>, i1, index, index, index) outs(%{{.*}} : tensor<16x16xf32>) -> tensor<16x16xf32>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @fixpipe_nz2nz_rhs_no_convert_layout(
+      %lhs: tensor<16x16xf16>, %rhs: tensor<16x16xf32>) -> tensor<16x16xf32>
+      attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %c16 = arith.constant 16 : index
+    %true = arith.constant true
+    %fix_out = tensor.empty() : tensor<16x16xf32>
+    // dma_mode omitted defaults to NZ2NZ (normal).
+    %fix = hivm.hir.fixpipe
+        ins(%rhs : tensor<16x16xf32>) outs(%fix_out : tensor<16x16xf32>)
+        -> tensor<16x16xf32>
+    %out = tensor.empty() : tensor<16x16xf32>
+    %mmad = hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
+        ins(%lhs, %fix, %true, %c16, %c16, %c16
+            : tensor<16x16xf16>, tensor<16x16xf32>, i1, index, index, index)
+        outs(%out : tensor<16x16xf32>) -> tensor<16x16xf32>
+    return %mmad : tensor<16x16xf32>
+  }
+}
+
+// -----
+
+// Chained mmad with intermediate NZ2NZ fixpipe (default dma_mode) must not
+// insert convert_layout / transpose, and must not rewrite fixpipe through the
+// unused L0C->L1 path (cbuf alloc + void fixpipe to L1 memref).
+// CHECK-LABEL: @fixpipe_nz2nz_chain_no_convert_layout(
+// CHECK-NOT: {"hivm.inserted-copy"}
+// CHECK-NOT: hivm.hir.vtranspose
+// CHECK-NOT: memref.alloc(){{.*}}#hivm.address_space<cbuf>
+// CHECK: %[[MMAD0:.*]] = hivm.hir.mmadL1
+// CHECK: %[[FIX:.*]] = hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<S322I8>} ins(%[[MMAD0]] : tensor<32x32xi32>) outs(%{{.*}} : tensor<32x32xi8>) -> tensor<32x32xi8>
+// CHECK: hivm.hir.mmadL1 {{.*}} ins(%[[FIX]],
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @fixpipe_nz2nz_chain_no_convert_layout(
+      %a: tensor<32x32xi8>, %b: tensor<32x32xi8>) -> tensor<32x32xi32>
+      attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %true = arith.constant true
+    %c32 = arith.constant 32 : index
+    %out0 = tensor.empty() : tensor<32x32xi32>
+    %mmad0 = hivm.hir.mmadL1 {already_set_real_mkn, fixpipe_for_result_already_inserted = true, normalized_in_L0C}
+        ins(%a, %b, %true, %c32, %c32, %c32
+            : tensor<32x32xi8>, tensor<32x32xi8>, i1, index, index, index)
+        outs(%out0 : tensor<32x32xi32>) -> tensor<32x32xi32>
+    %fix_out = tensor.empty() : tensor<32x32xi8>
+    %fix = hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<S322I8>}
+        ins(%mmad0 : tensor<32x32xi32>) outs(%fix_out : tensor<32x32xi8>)
+        -> tensor<32x32xi8>
+    %out1 = tensor.empty() : tensor<32x32xi32>
+    %mmad1 = hivm.hir.mmadL1 {already_set_real_mkn, fixpipe_for_result_already_inserted = true, normalized_in_L0C}
+        ins(%fix, %b, %true, %c32, %c32, %c32
+            : tensor<32x32xi8>, tensor<32x32xi8>, i1, index, index, index)
+        outs(%out1 : tensor<32x32xi32>) -> tensor<32x32xi32>
+    return %mmad1 : tensor<32x32xi32>
+  }
+}
+
+// -----
+
+// channel_split fractal fixpipe between mmadL1s must keep a tensor result and
+// feed the next mmad directly — no unused L0C->L1 tight-coupled buffer rewrite.
+// CHECK-LABEL: @no_l0c_to_l1_for_channel_split_fixpipe_mmad_chain(
+// CHECK-NOT: {"hivm.inserted-copy"}
+// CHECK-NOT: hivm.hir.vtranspose
+// CHECK-NOT: memref.alloc(){{.*}}#hivm.address_space<cbuf>
+// CHECK: %[[MMAD0:.*]] = hivm.hir.mmadL1
+// CHECK: %[[FIX:.*]] = hivm.hir.fixpipe {channel_split = true} ins(%[[MMAD0]] : tensor<16x16xf32>) outs(%{{.*}} : tensor<2x1x16x8xf32>) -> tensor<2x1x16x8xf32>
+// CHECK: hivm.hir.mmadL1 {{.*}} ins(%[[FIX]],
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @no_l0c_to_l1_for_channel_split_fixpipe_mmad_chain(
+      %a: tensor<16x16xf32>, %b: tensor<16x16xf32>, %c: tensor<16x16xf32>)
+      -> tensor<16x16xf32>
+      attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %true = arith.constant true
+    %c16 = arith.constant 16 : index
+    %out0 = tensor.empty() : tensor<16x16xf32>
+    %mmad0 = hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
+        ins(%a, %b, %true, %c16, %c16, %c16
+            : tensor<16x16xf32>, tensor<16x16xf32>, i1, index, index, index)
+        outs(%out0 : tensor<16x16xf32>) -> tensor<16x16xf32>
+    %fix_out = tensor.empty() : tensor<2x1x16x8xf32>
+    %fix = hivm.hir.fixpipe {channel_split = true}
+        ins(%mmad0 : tensor<16x16xf32>) outs(%fix_out : tensor<2x1x16x8xf32>)
+        -> tensor<2x1x16x8xf32>
+    %out1 = tensor.empty() : tensor<16x16xf32>
+    %mmad1 = hivm.hir.mmadL1 {already_set_real_mkn, fixpipe_for_result_already_inserted = true, normalized_in_L0C}
+        ins(%fix, %c, %true, %c16, %c16, %c16
+            : tensor<2x1x16x8xf32>, tensor<16x16xf32>, i1, index, index, index)
+        outs(%out1 : tensor<16x16xf32>) -> tensor<16x16xf32>
+    return %mmad1 : tensor<16x16xf32>
   }
 }

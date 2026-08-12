@@ -62,7 +62,9 @@ enum DualDstMode {
   REQUIRE_1(WRAP(f, uint8_t, l2_cache_ctl, 0), D_C310) \
   REQUIRE_2(WRAP(f, uint8_t, clip_relu_pre, 0), D_C310, D_M300)
 
-#define FIXPIPE_XT2_ARG_LIST(f, NZ2DN_INIT) \
+// Extended XT2 list: NZ2DN_INIT and C0_PAD_INIT are selectable; all other
+// fields keep the existing defaults.
+#define FIXPIPE_XT2_ARG_LIST_EX(f, NZ2DN_INIT, C0_PAD_INIT) \
   REQUIRE_2(WRAP(f, uint64_t, quant_post, 0), D_C310, D_M300) \
   REQUIRE_2(WRAP(f, uint8_t, relu_post, 0), D_C310, D_M300) \
   REQUIRE_2(WRAP(f, bool, clip_relu_post, false), D_C310, D_M300) \
@@ -71,10 +73,14 @@ enum DualDstMode {
   REQUIRE_1(WRAP(f, uint8_t, eltwise_antq_cfg, 0), D_M300) \
   REQUIRE_1(WRAP(f, bool, eltwise_antq_en, false), D_C310) \
   REQUIRE_1(WRAP(f, bool, loop_enhance_merge_en, false), D_C310) \
-  REQUIRE_2(WRAP(f, bool, C0_pad_en, false), D_C310, D_M300) \
+  REQUIRE_2(WRAP(f, bool, C0_pad_en, C0_PAD_INIT), D_C310, D_M300) \
   REQUIRE_1(WRAP(f, bool, wino_post_en, false), D_C310) \
   REQUIRE_1(WRAP(f, bool, broadcast_en, false), D_C310) \
-  REQUIRE_1(WRAP(f, bool, NZ2DN_en, NZ2DN_INIT), D_C310) \
+  REQUIRE_1(WRAP(f, bool, NZ2DN_en, NZ2DN_INIT), D_C310)
+
+// Default XT2 list: C0_pad_en remains false for compatibility.
+#define FIXPIPE_XT2_ARG_LIST(f, NZ2DN_INIT) \
+  FIXPIPE_XT2_ARG_LIST_EX(f, NZ2DN_INIT, false)
 
 #define STRUCTDEF(type, name, initval) type name;
 struct copy_matrix_cc_to_gm_ub_intrin_args_xt_1_ub {
@@ -102,7 +108,10 @@ struct copy_matrix_cc_to_gm_ub_intrin_args_xt_2 {
 #define FIXPIPE_ARGS_XT1_VALUES_TO_GM { FIXPIPE_XT1_ARG_LIST_TO_GM(FIXPIPE_ARG_GET_VALUE) },
 #define FIXPIPE_ARGS_XT1_VALUES_TO_UB(dual_init, sub_block_init) { FIXPIPE_XT1_ARG_LIST_TO_UB(FIXPIPE_ARG_GET_VALUE, dual_init, sub_block_init) },
 #define FIXPIPE_ARGS_XT1_VALUES_TO_L1 { FIXPIPE_XT1_ARG_LIST_TO_L1(FIXPIPE_ARG_GET_VALUE) },
-#define FIXPIPE_ARGS_XT2_VALUES(nz2dn_init) ,{ FIXPIPE_XT2_ARG_LIST(FIXPIPE_ARG_GET_VALUE, nz2dn_init) }
+#define FIXPIPE_ARGS_XT2_VALUES(nz2dn_init) \
+  , { FIXPIPE_XT2_ARG_LIST(FIXPIPE_ARG_GET_VALUE, nz2dn_init) }
+#define FIXPIPE_ARGS_XT2_VALUES_WITH_C0_PAD(nz2dn_init, c0_pad_init) \
+  , { FIXPIPE_XT2_ARG_LIST_EX(FIXPIPE_ARG_GET_VALUE, nz2dn_init, c0_pad_init) }
 
 template <typename SRC_TYPE, typename DST_TYPE>
 struct copy_matrix_cc_to_gm_intrin_args {
@@ -322,6 +331,17 @@ copy_matrix_cc_to_ubuf_nz2nd_4d_to_2d_core(
 #define FIXPIPE_SBARG_ubuf , sub_blockid
 #define FIXPIPE_SBARG(dst_scope) FIXPIPE_SBARG_##dst_scope
 
+// Forward c0_pad_en only to cbuf cores (GM/UB accept but ignore it).
+#define FIXPIPE_C0PAD_FWD_gm
+#define FIXPIPE_C0PAD_FWD_cbuf , c0_pad_en
+#define FIXPIPE_C0PAD_FWD_ubuf
+#define FIXPIPE_C0PAD_FWD(dst_scope) FIXPIPE_C0PAD_FWD_##dst_scope
+
+#define FIXPIPE_C0PAD_UNUSED_gm (void)c0_pad_en;
+#define FIXPIPE_C0PAD_UNUSED_cbuf
+#define FIXPIPE_C0PAD_UNUSED_ubuf (void)c0_pad_en;
+#define FIXPIPE_C0PAD_UNUSED(dst_scope) FIXPIPE_C0PAD_UNUSED_##dst_scope
+
 #define DECLARE_FIXPIPE(src_scope, dst_scope, src_dim, dst_dim, src_type,                                         \
                         dst_type, mode_name, transform_mode)                                                      \
   __aicore__ __attribute__((always_inline)) void                                                                  \
@@ -329,16 +349,18 @@ copy_matrix_cc_to_ubuf_nz2nd_4d_to_2d_core(
           memref_t<__##src_scope##__ src_type, src_dim> *src,                                                     \
           memref_t<__##dst_scope##__ dst_type, dst_dim> *dst,                                                     \
           int64_t pre_quant, float32_t quant_scale, int64_t pre_relu,                                             \
-          bool channel_split, uint8_t unit_flag FIXPIPE_SBPARAM(dst_scope))
+          bool channel_split, bool c0_pad_en, uint8_t unit_flag                                                   \
+              FIXPIPE_SBPARAM(dst_scope))
 
 #define REGISTE_FIXPIPE(src_scope, dst_scope, src_dim, dst_dim, src_type,         \
                         dst_type, mode_name, transform_mode)                      \
   DECLARE_FIXPIPE(src_scope, dst_scope, src_dim, dst_dim, src_type, dst_type,     \
                   mode_name, transform_mode) {                                    \
+    FIXPIPE_C0PAD_UNUSED(dst_scope)                                               \
     copy_matrix_##src_scope##_to_##dst_scope##_##src_dim##d_to_##dst_dim##d_core< \
         src_type, dst_type, transform_mode>(                                      \
         src, dst, pre_quant, quant_scale, pre_relu, channel_split,               \
-        unit_flag FIXPIPE_SBARG(dst_scope));                                     \
+        unit_flag FIXPIPE_SBARG(dst_scope) FIXPIPE_C0PAD_FWD(dst_scope));        \
   }
 
 #define DECLARE_FIXPIPE_NOSUFFIX(src_scope, dst_scope, src_dim, dst_dim,                            \
@@ -349,7 +371,7 @@ copy_matrix_cc_to_ubuf_nz2nd_4d_to_2d_core(
           memref_t<__##src_scope##__ src_type, src_dim> *src,                                       \
           memref_t<__##dst_scope##__ dst_type, dst_dim> *dst,                                       \
           int64_t pre_quant, float32_t quant_scale, int64_t pre_relu,                               \
-          bool channel_split, uint8_t unit_flag, uint8_t dual_dst)
+          bool channel_split, bool c0_pad_en, uint8_t unit_flag, uint8_t dual_dst)
 
 #define REGISTE_FIXPIPE_NOSUFFIX(src_scope, dst_scope, src_dim, dst_dim,                                        \
                                  src_type, dst_type, mode_name,                                                 \
@@ -357,7 +379,8 @@ copy_matrix_cc_to_ubuf_nz2nd_4d_to_2d_core(
   DECLARE_FIXPIPE_NOSUFFIX(src_scope, dst_scope, src_dim, dst_dim, src_type,                                    \
                            dst_type, mode_name, transform_mode) {                                               \
     _mlir_ciface_fixpipe_##mode_name##_##src_type##_to_##dst_type##_##src_dim##d_to_##dst_dim##d##_##dst_scope( \
-        src, dst, pre_quant, quant_scale, pre_relu, channel_split, unit_flag);                                  \
+        src, dst, pre_quant, quant_scale, pre_relu, channel_split, c0_pad_en,                                   \
+        unit_flag);                                                                                             \
   }
 
 #define DECLARE_FIXPIPE_DUAL(src_scope, dst_scope, src_dim, dst_dim, src_type,                                         \
@@ -367,12 +390,13 @@ copy_matrix_cc_to_ubuf_nz2nd_4d_to_2d_core(
           memref_t<__##src_scope##__ src_type, src_dim> *src,                                                          \
           memref_t<__##dst_scope##__ dst_type, dst_dim> *dst,                                                          \
           int64_t pre_quant, float32_t quant_scale, int64_t pre_relu,                                                  \
-          bool channel_split, uint8_t unit_flag, uint8_t dual_dst)
+          bool channel_split, bool c0_pad_en, uint8_t unit_flag, uint8_t dual_dst)
 
 #define REGISTE_FIXPIPE_DUAL(src_scope, dst_scope, src_dim, dst_dim, src_type,      \
                              dst_type, mode_name, transform_mode)                   \
   DECLARE_FIXPIPE_DUAL(src_scope, dst_scope, src_dim, dst_dim, src_type,            \
                        dst_type, mode_name, transform_mode) {                       \
+    (void)c0_pad_en;                                                               \
     if (dual_dst == static_cast<uint8_t>(DualDstMode::NO_DUAL)) {                   \
       copy_matrix_##src_scope##_to_##dst_scope##_##src_dim##d_to_##dst_dim##d##_core< \
           src_type, dst_type, transform_mode, DualDstMode::NO_DUAL>(               \
@@ -505,6 +529,8 @@ DECLARE_FIXPIPE_DUAL(cc, ubuf, 4, 4, int32_t, int32_t, normal, TransformMode::NO
 DECLARE_FIXPIPE(cc, cbuf, 4, 4, float, half, normal, TransformMode::NORMAL);
 DECLARE_FIXPIPE(cc, cbuf, 4, 4, float, bfloat16_t, normal, TransformMode::NORMAL);
 DECLARE_FIXPIPE(cc, cbuf, 4, 4, float, float, normal, TransformMode::NORMAL);
+DECLARE_FIXPIPE(cc, cbuf, 4, 4, int32_t, int32_t, normal, TransformMode::NORMAL);
+DECLARE_FIXPIPE(cc, cbuf, 4, 4, int32_t, int8_t, normal, TransformMode::NORMAL);
 
 //===-------------------------------------------------------------------===//
 // fixpipe, 4 dim to 2 dim, nz2dn

@@ -485,3 +485,61 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9599">} {
     return
   }
 }
+
+// -----
+
+// Fold Fixpipe(NZ2NZ) + convert_layout(Fractal→Fractal) into a rank-4 Fixpipe.
+// CHECK-LABEL: func.func @fold_fixpipe_nz2nz_fractal_to_fractal
+// CHECK-NOT: hivm.hir.convert_layout
+// CHECK: %[[FIX:.*]] = hivm.hir.fixpipe {{.*}}-> tensor<2x1x16x8xf32>
+// CHECK: return %[[FIX]] : tensor<2x1x16x8xf32>
+func.func @fold_fixpipe_nz2nz_fractal_to_fractal(%src: tensor<16x16xf32>) -> tensor<2x1x16x8xf32> {
+  %dst = tensor.empty() : tensor<16x16xf32>
+  %fix = hivm.hir.fixpipe
+      ins(%src : tensor<16x16xf32>) outs(%dst : tensor<16x16xf32>)
+      -> tensor<16x16xf32>
+  %fr = hivm.hir.convert_layout %fix output_shape [2, 1, 16, 8]
+      {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 8]>,
+       srcLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 8]>}
+      : (tensor<16x16xf32>) -> tensor<2x1x16x8xf32>
+  return %fr : tensor<2x1x16x8xf32>
+}
+
+// -----
+
+// Leftover ND→Fractal on an NZ2NZ Fixpipe is also folded into a rank-4 Fixpipe.
+// CHECK-LABEL: func.func @fold_fixpipe_nz2nz_nd_to_fractal
+// CHECK-NOT: hivm.hir.convert_layout
+// CHECK: %[[FIX:.*]] = hivm.hir.fixpipe {{.*}}-> tensor<2x1x16x8xf32>
+// CHECK: return %[[FIX]] : tensor<2x1x16x8xf32>
+func.func @fold_fixpipe_nz2nz_nd_to_fractal(%src: tensor<16x16xf32>) -> tensor<2x1x16x8xf32> {
+  %dst = tensor.empty() : tensor<16x16xf32>
+  %fix = hivm.hir.fixpipe
+      ins(%src : tensor<16x16xf32>) outs(%dst : tensor<16x16xf32>)
+      -> tensor<16x16xf32>
+  %fr = hivm.hir.convert_layout %fix output_shape [2, 1, 16, 8]
+      {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 8]>,
+       srcLayout = #hivm.data_layout<ND>}
+      : (tensor<16x16xf32>) -> tensor<2x1x16x8xf32>
+  return %fr : tensor<2x1x16x8xf32>
+}
+
+// -----
+
+// Channel-merge: NZ2NZ Fixpipe with S322I8 (i32 L0C → i8) + Fractal→Fractal
+// marker folds into a rank-4 i8 Fixpipe (Ascend950 A tile [16, 32]).
+// CHECK-LABEL: func.func @fold_channel_merge_fixpipe_nz2nz_i8
+// CHECK-NOT: hivm.hir.convert_layout
+// CHECK: %[[FIX:.*]] = hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<S322I8>}{{.*}}-> tensor<1x2x16x32xi8>
+// CHECK: return %[[FIX]] : tensor<1x2x16x32xi8>
+func.func @fold_channel_merge_fixpipe_nz2nz_i8(%src: tensor<32x32xi32>) -> tensor<1x2x16x32xi8> {
+  %dst = tensor.empty() : tensor<32x32xi8>
+  %fix = hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<S322I8>}
+      ins(%src : tensor<32x32xi32>) outs(%dst : tensor<32x32xi8>)
+      -> tensor<32x32xi8>
+  %fr = hivm.hir.convert_layout %fix output_shape [1, 2, 16, 32]
+      {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 32]>,
+       srcLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 32]>}
+      : (tensor<32x32xi8>) -> tensor<1x2x16x32xi8>
+  return %fr : tensor<1x2x16x32xi8>
+}

@@ -37,10 +37,8 @@ namespace detail {
 
 // Step 2: BFS argument list and creating segments
 void DimensionAnalyzerBase::processBFS() {
-  LLVM_DEBUG(
-    llvm::dbgs() << DEBUG_LINE_BEG("Flatten-processBFS");
-    llvm::dbgs() << "argumentList_: \n";
-  );
+  LLVM_DEBUG(llvm::dbgs() << DEBUG_LINE_BEG("Flatten-processBFS");
+             llvm::dbgs() << "argumentList_: \n";);
   std::queue<Value> bfsQueue;
   for (const auto &arg : argumentList_) {
     LLVM_DEBUG(llvm::dbgs() << arg << "\n");
@@ -53,14 +51,14 @@ void DimensionAnalyzerBase::processBFS() {
   size_t processedCount = 0;
   while (!bfsQueue.empty()) {
     Value current = bfsQueue.front();
-    if (options.registerBased) separateMemref(current);
+    if (options.registerBased)
+      separateMemref(current);
     bfsQueue.pop();
 
     LLVM_DEBUG({
       llvm::dbgs() << "\n════════════════════════════════════════\n";
       llvm::dbgs() << "BFS Step #" << (++processedCount)
-                  << " | Queue Size: " << bfsQueue.size()
-                  << "\n";
+                   << " | Queue Size: " << bfsQueue.size() << "\n";
       llvm::dbgs() << "Processing: [" << current << "]\n";
       if (current.getDefiningOp()) {
         llvm::dbgs() << "Defined by: " << *current.getDefiningOp() << "\n";
@@ -68,7 +66,7 @@ void DimensionAnalyzerBase::processBFS() {
       llvm::dbgs() << "════════════════════════════════════════\n";
     });
 
-    SmallVector<Operation*> users(current.user_begin(), current.user_end());
+    SmallVector<Operation *> users(current.user_begin(), current.user_end());
 
     LLVM_DEBUG({
       if (users.empty()) {
@@ -82,7 +80,8 @@ void DimensionAnalyzerBase::processBFS() {
       Operation *user = users[i];
 
       LLVM_DEBUG({
-        llvm::dbgs() << "    ├─ User [" << (i+1) << "/" << users.size() << "]:\n";
+        llvm::dbgs() << "    ├─ User [" << (i + 1) << "/" << users.size()
+                     << "]:\n";
         llvm::dbgs() << "    │   Operation: " << *user << "\n";
         llvm::dbgs() << "    │   Location: " << user->getLoc() << "\n";
       });
@@ -101,15 +100,14 @@ void DimensionAnalyzerBase::processBFS() {
         updatePreviousType(result);
 
         LLVM_DEBUG({
-          llvm::dbgs() << "    │   ├─ Result [" << (j+1) << "]: ["
-                      << result << "]\n";
+          llvm::dbgs() << "    │   ├─ Result [" << (j + 1) << "]: [" << result
+                       << "]\n";
         });
 
         if (visited.insert(result).second) {
           bfsQueue.push(result);
-          LLVM_DEBUG({
-            llvm::dbgs() << "    │   │   └─ ADDED to BFS queue (new)\n";
-          });
+          LLVM_DEBUG(
+              { llvm::dbgs() << "    │   │   └─ ADDED to BFS queue (new)\n"; });
         } else {
           LLVM_DEBUG({
             llvm::dbgs() << "    │   │   └─ Already visited (skipped)\n";
@@ -118,14 +116,14 @@ void DimensionAnalyzerBase::processBFS() {
       }
 
       if (auto loopLikeOp = dyn_cast<LoopLikeOpInterface>(user)) {
-        LLVM_DEBUG({
-          llvm::dbgs() << "    │   └─ Loop-like operation detected\n";
-        });
+        LLVM_DEBUG(
+            { llvm::dbgs() << "    │   └─ Loop-like operation detected\n"; });
 
         auto iterArgs = loopLikeOp.getRegionIterArgs();
         LLVM_DEBUG({
           if (!iterArgs.empty()) {
-            llvm::dbgs() << "    │       Iteration args (" << iterArgs.size() << "):\n";
+            llvm::dbgs() << "    │       Iteration args (" << iterArgs.size()
+                         << "):\n";
           }
         });
 
@@ -134,24 +132,23 @@ void DimensionAnalyzerBase::processBFS() {
           updatePreviousType(iterArg);
 
           LLVM_DEBUG({
-            llvm::dbgs() << "    │       ├─ IterArg [" << (k+1) << "]: ["
-                        << iterArg << "]\n";
+            llvm::dbgs() << "    │       ├─ IterArg [" << (k + 1) << "]: ["
+                         << iterArg << "]\n";
           });
 
           if (visited.insert(iterArg).second) {
             bfsQueue.push(iterArg);
-            LLVM_DEBUG({
-              llvm::dbgs() << "    │       │   └─ ADDED to BFS queue\n";
-            });
+            LLVM_DEBUG(
+                { llvm::dbgs() << "    │       │   └─ ADDED to BFS queue\n"; });
           } else {
-            LLVM_DEBUG({
-              llvm::dbgs() << "    │       │   └─ Already visited\n";
-            });
+            LLVM_DEBUG(
+                { llvm::dbgs() << "    │       │   └─ Already visited\n"; });
           }
         }
       }
 
-      if (auto terminatorOp = dyn_cast<RegionBranchTerminatorOpInterface>(user)) {
+      if (auto terminatorOp =
+              dyn_cast<RegionBranchTerminatorOpInterface>(user)) {
         auto parentOp = terminatorOp->getParentOp();
 
         if (!parentOp) {
@@ -161,7 +158,8 @@ void DimensionAnalyzerBase::processBFS() {
 
         LLVM_DEBUG({
           llvm::dbgs() << "    │   └─ Region terminator detected\n";
-          llvm::dbgs() << "    │       Parent op: " << (parentOp ? *parentOp : *terminatorOp) << "\n";
+          llvm::dbgs() << "    │       Parent op: "
+                       << (parentOp ? *parentOp : *terminatorOp) << "\n";
         });
 
         processOperation(parentOp, current);
@@ -170,29 +168,28 @@ void DimensionAnalyzerBase::processBFS() {
         LLVM_DEBUG({
           if (!parentResults.empty()) {
             llvm::dbgs() << "    │       Parent results ("
-                        << parentResults.size() << "):\n";
+                         << parentResults.size() << "):\n";
           }
         });
 
         for (size_t l = 0; l < parentResults.size(); ++l) {
           Value result = parentResults[l];
-          if (options.registerBased) separateMemref(result);
+          if (options.registerBased)
+            separateMemref(result);
           updatePreviousType(result);
 
           LLVM_DEBUG({
-            llvm::dbgs() << "    │       ├─ Result [" << (l+1) << "]: ["
-                        << result << "]\n";
+            llvm::dbgs() << "    │       ├─ Result [" << (l + 1) << "]: ["
+                         << result << "]\n";
           });
 
           if (visited.insert(result).second) {
             bfsQueue.push(result);
-            LLVM_DEBUG({
-              llvm::dbgs() << "    │       │   └─ ADDED to BFS queue\n";
-            });
+            LLVM_DEBUG(
+                { llvm::dbgs() << "    │       │   └─ ADDED to BFS queue\n"; });
           } else {
-            LLVM_DEBUG({
-              llvm::dbgs() << "    │       │   └─ Already visited\n";
-            });
+            LLVM_DEBUG(
+                { llvm::dbgs() << "    │       │   └─ Already visited\n"; });
           }
         }
       }
@@ -204,20 +201,12 @@ void DimensionAnalyzerBase::processBFS() {
       });
     }
   }
-  LLVM_DEBUG(
-    llvm::dbgs() << DEBUG_LINE_END("Flatten-processBFS");
-  );
-  LLVM_DEBUG(
-    llvm::dbgs() << DEBUG_LINE_BEG("Flatten-After-processBFS");
-    llvm::dbgs() << "equivalentDsu_:\n";
-    equivalentDsu_->dump();
-    llvm::dbgs() << "structuralDsu_:\n";
-    structuralDsu_->dump();
-    dumpArgumentsRefPointer();
-    dumpArgumentsRef();
-    dumpIsConnected();
-    llvm::dbgs() << DEBUG_LINE_END("Flatten-After-processBFS");
-  );
+  LLVM_DEBUG(llvm::dbgs() << DEBUG_LINE_END("Flatten-processBFS"););
+  LLVM_DEBUG(llvm::dbgs() << DEBUG_LINE_BEG("Flatten-After-processBFS");
+             llvm::dbgs() << "equivalentDsu_:\n"; equivalentDsu_->dump();
+             llvm::dbgs() << "structuralDsu_:\n"; structuralDsu_->dump();
+             dumpArgumentsRefPointer(); dumpArgumentsRef(); dumpIsConnected();
+             llvm::dbgs() << DEBUG_LINE_END("Flatten-After-processBFS"););
 }
 
 void DimensionAnalyzerBase::processPreOrderWalk() {
@@ -295,6 +284,8 @@ bool DimensionAnalyzerBase::processOperation(Operation *op, Value current) {
     processIfOp(ifOp);
   } else if (auto forOp = dyn_cast<scf::ForOp>(op)) {
     processForOp(forOp);
+  } else if (auto subviewOp = dyn_cast<memref::SubViewOp>(op)) {
+    processSubViewOp(subviewOp);
   } else {
     if (isContainerAllocator(op)) {
       processParallelOp(op, current);
@@ -354,11 +345,9 @@ void DimensionAnalyzerBase::processParallelOp(Operation *op, Value current) {
 void DimensionAnalyzerBase::processValue(Value v, Value current) {
   if (v == current)
     return;
-  LLVM_DEBUG(
-    llvm::dbgs() << "Trying to bind two values \n"
-                 << "left  = " << v << "\n"
-                 << "right = " << current << "\n";
-  );
+  LLVM_DEBUG(llvm::dbgs() << "Trying to bind two values \n"
+                          << "left  = " << v << "\n"
+                          << "right = " << current << "\n";);
   size_t vRank = utils::getShapeRank(v).value_or(0);
   size_t currentRank = utils::getShapeRank(current).value_or(0);
   // Can actually assert the shape too if the rank is the same
@@ -499,11 +488,11 @@ void DimensionAnalyzerBase::processBatchMatmulOp(
 
 void DimensionAnalyzerBase::processMatmulMxOp(Operation *op) {
   processMatmulOp(op, false, false);
- 
+
   auto matmulOp = dyn_cast<DestinationStyleOpInterface>(op);
   auto inputs = matmulOp.getDpsInputs();
   assert(inputs.size() == 4);
- 
+
   createDummyRefIfNotExist({inputs[2], inputs[3]});
   auto arg2 = getValueDimIndices(inputs[2]);
   auto arg3 = getValueDimIndices(inputs[3]);
@@ -574,7 +563,8 @@ void DimensionAnalyzerBase::processSlicingOp(T slicingOp) {
   auto src = slicingOp.getSource();
   auto res = slicingOp.getResult();
   Value superview, subview;
-  if (std::is_same_v<T, tensor::ExtractSliceOp>) {
+  if (std::is_same_v<T, tensor::ExtractSliceOp> ||
+      std::is_same_v<T, memref::SubViewOp>) {
     superview = src;
     subview = res;
   } else {
@@ -693,6 +683,14 @@ void DimensionAnalyzerBase::processExtractSliceOp(
   createDummyRefIfNotExist({res, src});
   LDBG("\nProcessing extract slice ----");
   processSlicingOp(extractSliceOp);
+}
+
+void DimensionAnalyzerBase::processSubViewOp(memref::SubViewOp op) {
+  auto res = op.getResult();
+  auto src = op.getSource();
+  createDummyRefIfNotExist({res, src});
+  LDBG("\nProcessing subview ----");
+  processSlicingOp(op);
 }
 } // namespace detail
 } // namespace mlir

@@ -256,13 +256,15 @@ protected:
 
   template <class T, typename = std::enable_if_t<
                          std::is_same_v<T, tensor::ExtractSliceOp> ||
-                         std::is_same_v<T, tensor::InsertSliceOp>>>
+                         std::is_same_v<T, tensor::InsertSliceOp> ||
+                         std::is_same_v<T, memref::SubViewOp>>>
   void processSlicingOp(T slicingOp);
   void processExtractSliceOp(tensor::ExtractSliceOp extractSliceOp);
   void processIfOp(scf::IfOp op);
   void processForOp(scf::ForOp op);
   void processInsertOp(tensor::InsertOp insertOp);
   void processInsertSliceOp(tensor::InsertSliceOp insertSliceOp);
+  void processSubViewOp(memref::SubViewOp op);
 
   /// Union two SSA values in the value-group DSU.
   ///

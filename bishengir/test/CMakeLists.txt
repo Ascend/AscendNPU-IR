@@ -71,4 +71,15 @@ add_lit_testsuite(check-bishengir "Running the bishengir regression tests"
   DEPENDS ${BISHENGIR_TEST_DEPENDS}
 )
 
+# The HIVM compile tests consume the linked template bitcode. Since the
+# bitcode is built by ccec/llvm-link custom commands, make it an explicit
+# dependency of the test target.
+get_property(bishengir_template_bitcode_targets GLOBAL
+  PROPERTY bishengir_meta_op_targets)
+foreach(template_bitcode_target ${bishengir_template_bitcode_targets})
+  if(TARGET ${template_bitcode_target})
+    add_dependencies(check-bishengir ${template_bitcode_target})
+  endif()
+endforeach()
+
 set_target_properties(check-bishengir PROPERTIES FOLDER "Tests")

@@ -44,7 +44,7 @@ transform::SequenceOp buildTransformSequenceOp(OpBuilder &builder,
 //===----------------------------------------------------------------------===//
 
 bool isOpInBlock(Operation *op, Block *block) {
-  return op && op->getParentOp() == block->getParentOp();
+  return op && block && op->getBlock() == block;
 }
 
 bool isMemrefLinalgOp(Operation *op) {

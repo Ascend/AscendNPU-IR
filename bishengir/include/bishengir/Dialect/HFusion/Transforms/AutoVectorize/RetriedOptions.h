@@ -1,4 +1,5 @@
-//===- RetriedOptions.h - Auto vectorization retry options -------------*- C++ -*-===//
+//===- RetriedOptions.h - Auto vectorization retry options -------------*- C++
+//-*-===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -25,4 +26,4 @@ struct RetriedOptions {
 } // namespace hfusion
 } // namespace mlir
 
-#endif // BISHENGIR_DIALECT_HFUSION_TRANSFORMS_AUTOVECTORIZE_CONTEXT_H
+#endif // BISHENGIR_DIALECT_HFUSION_TRANSFORMS_AUTOVECTORIZE_RETRIEDOPTIONS_H

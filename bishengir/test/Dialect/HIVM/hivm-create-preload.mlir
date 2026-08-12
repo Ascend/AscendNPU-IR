@@ -890,3 +890,43 @@ func.func @test_preload_local_view_uses_mapping() {
 // CHECK: }
 // CHECK: %[[MAPPING0_VIEW:.*]] = memref.subview %[[MAPPING0_BUFFER]]
 // CHECK: "test.consume"(%[[MAPPING0_VIEW]])
+
+// -----
+
+// A scope result may be a view rooted at a pointer_cast created inside the
+// scope. The preload skip branch must rematerialize the complete alias chain;
+// accepting only ViewLikeOpInterface would reject the pointer_cast and abort
+// with "Unhandled scope result case".
+
+// CHECK-LABEL: func.func @test_pointer_cast_alias_rematerialization
+// CHECK: scf.for
+// CHECK: %[[ADDR0:.*]] = arith.extsi
+// CHECK: %[[ADDR1:.*]] = arith.extsi
+// CHECK: scf.if
+// CHECK:   %[[ACTIVE_PTR:.*]] = hivm.hir.pointer_cast(%[[ADDR0]])
+// CHECK:   %[[ACTIVE_VIEW:.*]] = memref.subview %[[ACTIVE_PTR]]
+// CHECK:   "test.use"(%[[ACTIVE_VIEW]])
+// CHECK-NEXT: }
+// CHECK: %[[PRELOAD0_PTR:.*]] = hivm.hir.pointer_cast(%[[ADDR0]])
+// CHECK: %[[PRELOAD0_VIEW:.*]] = memref.subview %[[PRELOAD0_PTR]]
+// CHECK: %[[PRELOAD1_PTR:.*]] = hivm.hir.pointer_cast(%[[ADDR1]])
+// CHECK: %[[PRELOAD1_VIEW:.*]] = memref.subview %[[PRELOAD1_PTR]]
+// CHECK: "test.consume"(%[[PRELOAD0_VIEW]])
+// CHECK: "test.consume"(%[[PRELOAD1_VIEW]])
+func.func @test_pointer_cast_alias_rematerialization() {
+  %c0 = arith.constant 0 : i32
+  %c4 = arith.constant 4 : i32
+  %c1 = arith.constant 1 : i32
+
+  scf.for %i = %c0 to %c4 step %c1 : i32 {
+    %addr = arith.extsi %i : i32 to i64
+    %view = scope.scope : () -> memref<32x64xi1, strided<[256, 1]>, #hivm.address_space<ub>> {
+      %buffer = hivm.hir.pointer_cast(%addr) : memref<32x256x1xi1, #hivm.address_space<ub>>
+      %subview = memref.subview %buffer[0, 0, 0] [32, 64, 1] [1, 1, 1] : memref<32x256x1xi1, #hivm.address_space<ub>> to memref<32x64xi1, strided<[256, 1]>, #hivm.address_space<ub>>
+      "test.use"(%subview) : (memref<32x64xi1, strided<[256, 1]>, #hivm.address_space<ub>>) -> ()
+      scope.return %subview : memref<32x64xi1, strided<[256, 1]>, #hivm.address_space<ub>>
+    } {no_inline, hivm.preload_num = 0 : i32, hivm.max_preload_num = 2 : i32}
+    "test.consume"(%view) : (memref<32x64xi1, strided<[256, 1]>, #hivm.address_space<ub>>) -> ()
+  }
+  return
+}
