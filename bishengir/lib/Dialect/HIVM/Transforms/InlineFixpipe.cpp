@@ -994,7 +994,7 @@ Type getInitType(Value v, hivm::FixpipePreQuantMode quant,
   llvm::report_fatal_error("unsupported QuantMode");
 }
 
-int64_t getSiftedUsersNum(Value v) {
+static int64_t getSiftedUsersNum(Value v) {
   const DenseSet<Operation *> container(v.getUsers().begin(),
                                         v.getUsers().end());
   auto filteredRange = llvm::make_filter_range(container, [](Operation *op) {
@@ -1803,6 +1803,152 @@ void populateInsertFixpipePatterns(RewritePatternSet &patterns) {
   patterns.add<InsertFixpipeForConvOpPattern<hivm::Conv3DL1Op>>(ctx);
 }
 
+/// Move fixpipe from inside scf.for to after the loop when its result is
+/// yielded from the loop body.
+///
+/// Before:
+///   %res = scf.for ... {
+///     %fix = hivm.hir.fixpipe ins(%mmad) ...
+///     scf.yield %fix
+///   }
+///
+/// After:
+///   %res = scf.for ... {
+///     scf.yield %mmad
+///   }
+///   %fix = hivm.hir.fixpipe ins(%res) ...
+struct MoveFixpipeOutOfScfForPattern : public OpRewritePattern<FixpipeOp> {
+  using OpRewritePattern<FixpipeOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(FixpipeOp fixpipe,
+                                PatternRewriter &rewriter) const override {
+    if (fixpipe->getAttr(fixpipeDoNotMoveOutOfScfFor))
+      return failure();
+
+    auto fixpipeResTensor = fixpipe.getResultTensor();
+    if (!fixpipeResTensor)
+      return failure();
+
+    if (getSiftedUsersNum(fixpipeResTensor) != 1)
+      return failure();
+
+    Operation *user = nullptr;
+    for (Operation *maybeDebugOp : fixpipeResTensor.getUsers()) {
+      if (isa<hivm::DebugOp>(maybeDebugOp))
+        continue;
+      user = maybeDebugOp;
+    }
+    if (!user || !isa<scf::YieldOp>(user))
+      return failure();
+
+    auto scfForOp = dyn_cast<scf::ForOp>(user->getParentOp());
+    if (!scfForOp)
+      return failure();
+
+    SmallVector<Value> yieldValues =
+        llvm::to_vector(scfForOp.getYieldedValues());
+    auto idx = findIdx(yieldValues, fixpipeResTensor);
+    if (!idx.has_value())
+      return failure();
+
+    LDBG("MoveFixpipeOutOfScfFor for " << fixpipe);
+    rewriter.replaceAllUsesWith(fixpipeResTensor,
+                                fixpipe.getDpsInputOperand(0)->get());
+
+    rewriter.setInsertionPointAfter(scfForOp);
+    auto fixpipeInit =
+        utils::createEmptyOp(rewriter, scfForOp->getLoc(), fixpipeResTensor);
+    MLIRContext *ctx = rewriter.getContext();
+    FixpipeDMAModeAttr dmaModeAttr =
+        FixpipeDMAModeAttr::get(ctx, FixpipeDMAMode::NZ2ND);
+    SmallVector<Value> oprs({scfForOp->getResult(idx.value()), fixpipeInit});
+    if (auto quantScale = fixpipe.getQuantScale())
+      oprs.push_back(quantScale);
+    auto newFixpipeOp = rewriter.create<FixpipeOp>(
+        fixpipe.getLoc(), TypeRange{fixpipeInit}, oprs, fixpipe->getAttrs());
+    newFixpipeOp.setDmaModeAttr(dmaModeAttr);
+    rewriter.replaceAllUsesExcept(scfForOp->getResult(idx.value()),
+                                  newFixpipeOp.getResultTensor(), newFixpipeOp);
+    rewriter.eraseOp(fixpipe);
+    return success();
+  }
+};
+
+/// Move fixpipe from after scf.for into the scf.if branch that yields the loop
+/// result.
+///
+/// Before:
+///   %res = scf.for ... { scf.yield %mmad }
+///   %fix = hivm.hir.fixpipe ins(%res) ...
+///   %if = scf.if ... {
+///     ...
+///   } else {
+///     scf.yield %res
+///   }
+///
+/// After:
+///   %res = scf.for ... { scf.yield %mmad }
+///   %if = scf.if ... {
+///     ...
+///   } else {
+///     %fix = hivm.hir.fixpipe ins(%res) ...
+///     scf.yield %fix
+///   }
+struct MoveFixpipeIntoScfIfBranchPattern : public OpRewritePattern<FixpipeOp> {
+  using OpRewritePattern<FixpipeOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(FixpipeOp fixpipe,
+                                PatternRewriter &rewriter) const override {
+    if (fixpipe->getParentOfType<scf::ForOp>() ||
+        fixpipe->getParentOfType<scf::IfOp>())
+      return failure();
+
+    auto fixpipeResTensor = fixpipe.getResultTensor();
+    if (!fixpipeResTensor)
+      return failure();
+
+    auto forResult = dyn_cast<OpResult>(fixpipe.getSource());
+    if (!forResult || !isa<scf::ForOp>(forResult.getOwner()))
+      return failure();
+
+    scf::YieldOp yieldOp = nullptr;
+    for (Operation *user : fixpipeResTensor.getUsers()) {
+      if (auto yield = dyn_cast<scf::YieldOp>(user)) {
+        if (yield->getParentOfType<scf::IfOp>()) {
+          yieldOp = yield;
+          break;
+        }
+      }
+    }
+    if (!yieldOp)
+      return failure();
+
+    auto ifOp = dyn_cast<scf::IfOp>(yieldOp->getParentOp());
+    if (!ifOp)
+      return failure();
+
+    auto yieldIdx =
+        findIdx(llvm::to_vector(yieldOp.getOperands()), fixpipeResTensor);
+    if (!yieldIdx.has_value())
+      return failure();
+
+    // Only move when the loop result is consumed by this fixpipe.
+    if (!forResult.hasOneUse() ||
+        *forResult.user_begin() != fixpipe.getOperation())
+      return failure();
+
+    LDBG("MoveFixpipeIntoScfIfBranch for " << fixpipe);
+    rewriter.moveOpBefore(fixpipe, yieldOp);
+    return success();
+  }
+};
+
+void populateMoveFixpipePatterns(RewritePatternSet &patterns) {
+  MLIRContext *ctx = patterns.getContext();
+  patterns.add<MoveFixpipeOutOfScfForPattern>(ctx);
+  patterns.add<MoveFixpipeIntoScfIfBranchPattern>(ctx);
+}
+
 void populateInlineFixpipePatterns(RewritePatternSet &patterns,
                                    bool inlineQuantScale) {
   patterns.add<InlineFixpipeOpPattern>(patterns.getContext(), inlineQuantScale);
@@ -1832,6 +1978,13 @@ void InsertFixpipe::runOnOperation() {
   if (failed(applyPatternsGreedily(getOperation(), std::move(patterns)))) {
     signalPassFailure();
     return;
+  }
+
+  RewritePatternSet moveFixpipePatterns(&getContext());
+  mlir::hivm::populateMoveFixpipePatterns(moveFixpipePatterns);
+  if (failed(applyPatternsGreedily(getOperation(),
+                                   std::move(moveFixpipePatterns)))) {
+    signalPassFailure();
   }
 
   RewritePatternSet insertFixpipeForDevicePrintPattern(&getContext());
