@@ -20,6 +20,7 @@
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HFusion/IR/HFusionImpl.h"
+#include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
@@ -845,6 +846,15 @@ bool hasUnpropagateableCase(Operation *const op, bool skipScope) {
     found |= hasScope(op);
   }
   return found;
+}
+
+bool shouldApplyFlattenOpsPass(func::FuncOp func) {
+  auto coreType = mlir::hivm::queryFuncCoreType(func);
+  if (!coreType.has_value())
+    return true;
+  // Don't apply flattening for pure AIC/AIV funcs.
+  return coreType.value() != mlir::hivm::TFuncCoreType::AIC &&
+         coreType.value() != mlir::hivm::TFuncCoreType::AIV;
 }
 
 /// trace value and judge if it is function argument

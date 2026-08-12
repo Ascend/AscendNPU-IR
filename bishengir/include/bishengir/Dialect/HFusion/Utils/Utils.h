@@ -394,6 +394,8 @@ bool hasScope(Operation *funcOp);
 
 bool hasUnpropagateableCase(Operation *op, bool skipScope);
 
+bool shouldApplyFlattenOpsPass(func::FuncOp);
+
 bool isFromFunctionArg(mlir::Value v);
 
 } // namespace util
