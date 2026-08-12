@@ -78,7 +78,9 @@ template <typename OpTy> std::string getCumOpLibraryCallName(OpTy op) {
     int rank = srcVecType.getRank();
 
     if constexpr (std::is_same_v<OpTy, VCumsumOp> ||
-                  std::is_same_v<OpTy, VCumprodOp>) {
+                  std::is_same_v<OpTy, VCumprodOp> ||
+                  std::is_same_v<OpTy, VCummaxOp> ||
+                  std::is_same_v<OpTy, VCumminOp>) {
       Type dstElemType = getElementTypeOrSelf(op.getDst());
       std::stringstream ss;
       ss << baseName.data() << "_" << rank << "d_"
