@@ -128,13 +128,30 @@ static bool isCrossCoreCopy(Operation *copy) {
   return memSpaceAttr.getAddressSpace() == AddressSpace::L1;
 }
 
+static bool isCrossCoreFixpipe(Operation *op) {
+  auto fixpipe = dyn_cast<FixpipeOp>(op);
+  if (!fixpipe)
+    return false;
+  Value dst = fixpipe.getDst();
+  Operation *def = traceValueDef(dst).getDefiningOp();
+  if (!isa_and_nonnull<memref::AllocOp, AllocWorkspaceOp>(def))
+    return false;
+  auto memSpaceAttr = dyn_cast_or_null<AddressSpaceAttr>(
+      cast<MemRefType>(def->getResult(0).getType()).getMemorySpace());
+  if (!memSpaceAttr)
+    return false;
+
+  AddressSpace as = memSpaceAttr.getAddressSpace();
+  return  as == AddressSpace::UB || as == AddressSpace::GM;
+}
+
 /// True if `op` is a CV-pipelining "separator" — a store-like op that forms a
 /// boundary between vector and cube workitems. Splitting the pipeline loop on
 /// these ops yields the per-core workitems that CVPipelining schedules.
 /// Covers `hivm.hir.fixpipe`, `hivm.hir.store`, and the cross-core variant of
 /// `hivm.hir.copy`.
 static bool isSeparator(Operation *op) {
-  return isa<FixpipeOp, StoreOp>(op) || isCrossCoreCopy(op);
+  return isa<StoreOp>(op) || isCrossCoreCopy(op) || isCrossCoreFixpipe(op);
 }
 
 /// Check to see if op is what we consider a "core op" that is only available on
