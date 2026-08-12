@@ -28,6 +28,9 @@ namespace mlir {
 #include "bishengir/Dialect/Scope/Transforms/Passes.h.inc"
 namespace scope {
 
+/// Create a pass to transform operations for SIMT execution.
+std::unique_ptr<Pass> createTransformOpForSIMTPass();
+
 /// Create a pass to outline scope within ScopeOp's region
 std::unique_ptr<Pass> createOutlineScopePass();
 

@@ -510,6 +510,7 @@ void buildBiShengHIRPipeline(OpPassManager &pm,
       pm.addPass(hivm::createAutoScopePass());
       pm.addPass(hivm::createLegalizeBoolForSimtVFPass());
       pm.addPass(hivm::createInsertMemSemanticForSimtVFPass());
+      pm.addPass(scope::createTransformOpForSIMTPass());
       pm.addPass(scope::createOutlineScopePass());
       pm.addPass(hivm::createInsertAllocBasePlaceholderPass());
       pm.addPass(hivm::createInferSimtVFMemEffectPass());
