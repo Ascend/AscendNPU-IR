@@ -3946,3 +3946,74 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
     return
   }
 }
+
+// -----
+
+// Rank-reduced memref.subview (2x64x64 -> 64x64) combined with dual
+// memref.reinterpret_cast views (64x64 matrix + 64-vector) on the same
+// underlying buffer must not unify the pipeline axis with the tileable
+// length-64 axis. Otherwise the dimension analyzer marks the column dim
+// RankReduced and hivm-bind-sub-block reverts because the tightly-coupled
+// UB buffer gets hivm.tiling_dim = -1.
+//
+// CHECK-LABEL:   func.func @rank_reduced_subview_dual_reinterpret_mix_aiv(
+// CHECK-DAG:       %[[C0:.*]] = arith.constant 0 : index
+// CHECK-DAG:       %[[C1:.*]] = arith.constant 1 : index
+// CHECK-DAG:       %[[C2:.*]] = arith.constant 2 : index
+// CHECK:           scf.for %{{.*}} = %[[C0]] to %[[C2]] step %[[C1]] {
+// CHECK:           %[[UB:.*]] = memref.alloc() : memref<2x64x32xf32, #hivm.address_space<ub>>
+// CHECK:           annotation.mark %[[UB]] {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>, hivm.tiling_dim = 2 : index, tiledAlloc} : memref<2x64x32xf32, #hivm.address_space<ub>>
+// CHECK:           scf.for %[[IV:.*]] = %[[C0]] to %[[C2]] step %[[C1]] {
+// CHECK:             memref.subview %{{.*}}[%[[IV]], 0, 0] [1, 64, 32] [1, 1, 1] : memref<2x64x32xf32> to memref<64x32xf32, strided<[32, 1], offset: ?>>
+// CHECK:             hivm.hir.store ins(%{{.*}} : tensor<32xf32>) outs(%{{.*}} : memref<32xf32, strided<[1], offset: ?>>) {tiled_op}
+// CHECK:           }
+// CHECK:           } {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+module attributes {hacc.target = #hacc.target<"Ascend910_9589">, hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @rank_reduced_subview_dual_reinterpret_mix_aiv(
+      %arg0: memref<?xf32>,
+      %arg1: memref<64xf32>,
+      %arg2: i32, %arg3: i32, %arg4: i32)
+      attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>,
+                  hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %0 = arith.muli %arg2, %arg3 : i32
+    %1 = arith.muli %0, %arg4 : i32
+    annotation.mark %1 {logical_block_num} : i32
+    %alloc_ub = memref.alloc() : memref<2x64x64xf32, #hivm.address_space<ub>>
+    annotation.mark %alloc_ub {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>} : memref<2x64x64xf32, #hivm.address_space<ub>>
+    annotation.mark %alloc_ub {hivm.cv_pipelined_multi_buffer} : memref<2x64x64xf32, #hivm.address_space<ub>>
+    %memspacecast_ub = memref.memory_space_cast %alloc_ub : memref<2x64x64xf32, #hivm.address_space<ub>> to memref<2x64x64xf32>
+    %tensor_ub = bufferization.to_tensor %memspacecast_ub restrict writable : memref<2x64x64xf32>
+    %alloc_4 = memref.alloc() : memref<2x64x64xf32>
+    annotation.mark %alloc_4 {hivm.cv_pipelined_multi_buffer} : memref<2x64x64xf32>
+    scf.for %i = %c0 to %c2 step %c1 {
+      %subview_11 = memref.subview %alloc_4[%i, 0, 0] [1, 64, 64] [1, 1, 1] : memref<2x64x64xf32> to memref<64x64xf32, strided<[64, 1], offset: ?>>
+      %reinterpret_cast_20 = memref.reinterpret_cast %arg0 to offset: [0], sizes: [64, 64], strides: [256, 1] : memref<?xf32> to memref<64x64xf32, strided<[256, 1]>>
+      %reinterpret_cast_21 = memref.reinterpret_cast %arg0 to offset: [0], sizes: [64], strides: [1] : memref<?xf32> to memref<64xf32, strided<[1]>>
+      %alloc_24 = memref.alloc() : memref<64xf32>
+      hivm.hir.load ins(%reinterpret_cast_21 : memref<64xf32, strided<[1]>>) outs(%alloc_24 : memref<64xf32>) core_type = <VECTOR>
+      %102 = bufferization.to_tensor %alloc_24 restrict writable : memref<64xf32>
+      %alloc_27 = memref.alloc() : memref<64x64xf32>
+      %subview_28 = memref.subview %reinterpret_cast_20[0, 0] [64, 64] [1, 1] : memref<64x64xf32, strided<[256, 1]>> to memref<64x64xf32, strided<[256, 1]>>
+      %subview_29 = memref.subview %alloc_27[0, 0] [64, 64] [1, 1] : memref<64x64xf32> to memref<64x64xf32, strided<[64, 1]>>
+      hivm.hir.load ins(%subview_28 : memref<64x64xf32, strided<[256, 1]>>) outs(%subview_29 : memref<64x64xf32, strided<[64, 1]>>) core_type = <VECTOR>
+      %105 = bufferization.to_tensor %alloc_27 restrict writable : memref<64x64xf32>
+      %expanded_30 = tensor.expand_shape %102 [[0, 1]] output_shape [1, 64] : tensor<64xf32> into tensor<1x64xf32>
+      %78 = tensor.empty() : tensor<64x64xf32>
+      %106 = hivm.hir.vsub ins(%expanded_30, %105 : tensor<1x64xf32>, tensor<64x64xf32>) outs(%78 : tensor<64x64xf32>) broadcast = [0] -> tensor<64x64xf32>
+      %107 = hivm.hir.vexp ins(%106 : tensor<64x64xf32>) outs(%78 : tensor<64x64xf32>) -> tensor<64x64xf32>
+      %67 = tensor.empty() : tensor<64x64xf32>
+      %104 = bufferization.to_tensor %subview_11 restrict writable : memref<64x64xf32, strided<[64, 1], offset: ?>>
+      %81 = hivm.hir.vmul ins(%107, %104 : tensor<64x64xf32>, tensor<64x64xf32>) outs(%67 : tensor<64x64xf32>) -> tensor<64x64xf32>
+      %extracted_slice = tensor.extract_slice %tensor_ub[%i, 0, 0] [1, 64, 64] [1, 1, 1] : tensor<2x64x64xf32> to tensor<64x64xf32>
+      %82 = hivm.hir.vmul ins(%81, %extracted_slice : tensor<64x64xf32>, tensor<64x64xf32>) outs(%67 : tensor<64x64xf32>) -> tensor<64x64xf32>
+      %expanded = tensor.empty() : tensor<1x64xf32>
+      %83 = hivm.hir.vreduce <sum> ins(%82 : tensor<64x64xf32>) outs(%expanded : tensor<1x64xf32>) reduce_dims = [0] -> tensor<1x64xf32>
+      %collapsed = tensor.collapse_shape %83 [[0, 1]] : tensor<1x64xf32> into tensor<64xf32>
+      hivm.hir.store ins(%collapsed : tensor<64xf32>) outs(%arg1 : memref<64xf32>)
+    }
+    return
+  }
+}
