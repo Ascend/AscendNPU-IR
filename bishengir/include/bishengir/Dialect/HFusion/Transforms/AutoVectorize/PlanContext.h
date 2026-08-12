@@ -110,6 +110,10 @@ public:
     return llvm::make_range(opInfoMap.begin(), opInfoMap.end());
   }
 
+  auto *tryGetNode(Operation *op) const {
+    return hasOpInfo(op) ? getInfo(op).fusedNode.get() : nullptr;
+  }
+
   // Populate op info from `func`: label fusable ops, compute shapes, build
   // conflict lists. This is the main entry point for initializing PlanContext
   // from a device function before fusion planning.
