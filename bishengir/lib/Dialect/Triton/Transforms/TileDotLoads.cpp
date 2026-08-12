@@ -342,9 +342,9 @@ static LogicalResult emitKTilingBlockPtr(triton::DotOp dot,
         loc, pB, loadB.getBoundaryCheck(), loadB.getPadding(), loadB.getCache(),
         loadB.getEvict(), loadB.getIsVolatile());
 
-    Value newAcc = rewriter.create<triton::DotOp>(loc, dTy, tA, tB, acc,
-                                                  dot.getInputPrecision(),
-                                                  dot.getMaxNumImpreciseAcc());
+    Value newAcc = rewriter.create<triton::DotOp>(
+        loc, dTy, tA, tB, acc, dot.getInputPrecision(),
+        dot.getMaxNumImpreciseAcc());
 
     // Advance: A by [0, kTile], B by [kTile, 0].
     auto i32 = rewriter.getI32Type();
@@ -547,12 +547,13 @@ emitKTilingBlockPtrFromBase(triton::DotOp dot, triton::LoadOp loadA,
         loc, bPtr, loadB.getBoundaryCheck(), loadB.getPadding(),
         loadB.getCache(), loadB.getEvict(), loadB.getIsVolatile());
 
-    auto newAcc = rewriter.create<triton::DotOp>(loc, dTy, tA, tB, acc,
-                                                 dot.getInputPrecision(),
-                                                 dot.getMaxNumImpreciseAcc());
-    newAcc->setAttr(tagAttrName, rewriter.getUnitAttr());
+    Value newAcc = rewriter.create<triton::DotOp>(
+        loc, dTy, tA, tB, acc, dot.getInputPrecision(),
+        dot.getMaxNumImpreciseAcc());
+    if (Operation *op = newAcc.getDefiningOp())
+      op->setAttr(tagAttrName, rewriter.getUnitAttr());
 
-    rewriter.create<scf::YieldOp>(loc, ValueRange{newAcc.getResult()});
+    rewriter.create<scf::YieldOp>(loc, ValueRange{newAcc});
   }
 
   rewriter.replaceOp(dot, forOp.getResult(0));
@@ -650,6 +651,26 @@ static Value cloneChainWithTiledRange(Value loadPtr,
   return mapping.lookupOrNull(loadPtr);
 }
 
+/// Re-emit a tt.splat or splat-constant at a different shape; nullptr
+/// for non-splat values.
+static Value resplatToShape(Value v, ArrayRef<int64_t> newShape,
+                            PatternRewriter &rewriter, Location loc) {
+  auto rt = dyn_cast<RankedTensorType>(v.getType());
+  if (!rt)
+    return nullptr;
+  auto newTy = RankedTensorType::get(newShape, rt.getElementType());
+  if (auto splat = v.getDefiningOp<triton::SplatOp>())
+    return rewriter.create<triton::SplatOp>(loc, newTy, splat.getSrc());
+  if (auto cst = v.getDefiningOp<arith::ConstantOp>()) {
+    if (auto da = dyn_cast<DenseElementsAttr>(cst.getValue())) {
+      if (da.isSplat())
+        return rewriter.create<arith::ConstantOp>(loc, newTy,
+                                                  da.resizeSplat(newTy));
+    }
+  }
+  return nullptr;
+}
+
 static LogicalResult emitKTilingTensorOfPtrs(triton::DotOp dot,
                                              triton::LoadOp loadA,
                                              triton::LoadOp loadB,
@@ -660,8 +681,8 @@ static LogicalResult emitKTilingTensorOfPtrs(triton::DotOp dot,
   auto dTy = cast<RankedTensorType>(dot.getResult().getType());
 
   auto aTy = cast<RankedTensorType>(loadA.getResult().getType());
+  auto bTy = cast<RankedTensorType>(loadB.getResult().getType());
   int64_t K = aTy.getDimSize(1);
-
   triton::MakeRangeOp mrA = findMakeRange(loadA.getPtr(), K);
   triton::MakeRangeOp mrB = findMakeRange(loadB.getPtr(), K);
   if (!mrA || !mrB)
@@ -680,8 +701,9 @@ static LogicalResult emitKTilingTensorOfPtrs(triton::DotOp dot,
     Value iv = forOp.getInductionVar();
     Value acc = forOp.getRegionIterArgs()[0];
 
-  Value kTileVal = rewriter.create<arith::ConstantOp>(
-      loc, rewriter.getI32Type(), rewriter.getI32IntegerAttr(static_cast<int32_t>(kTile)));
+    Value kTileVal = rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getI32Type(),
+        rewriter.getI32IntegerAttr(static_cast<int32_t>(kTile)));
     Value ivI32 =
         rewriter.create<arith::IndexCastOp>(loc, rewriter.getI32Type(), iv);
     Value kBase = rewriter.create<arith::MulIOp>(loc, ivI32, kTileVal);
@@ -704,16 +726,66 @@ static LogicalResult emitKTilingTensorOfPtrs(triton::DotOp dot,
     if (!tiledPtrA || !tiledPtrB)
       return failure();
 
-    Value tA = rewriter.create<triton::LoadOp>(loc, tiledPtrA, loadA.getCache(),
-                                               loadA.getEvict(),
-                                               loadA.getIsVolatile());
-    Value tB = rewriter.create<triton::LoadOp>(loc, tiledPtrB, loadB.getCache(),
-                                               loadB.getEvict(),
-                                               loadB.getIsVolatile());
+    Value tiledAMask;
+    if (loadA.getMask()) {
+      tiledAMask = cloneChainWithTiledRange(loadA.getMask(), mrA, tiledRangeA,
+                                            rewriter, loc, K, kTile, true);
+      if (!tiledAMask)
+        return failure();
+    }
+    Value tiledAOther;
+    if (loadA.getOther()) {
+      tiledAOther = resplatToShape(loadA.getOther(), {aTy.getDimSize(0), kTile},
+                                   rewriter, loc);
+      if (!tiledAOther)
+        return failure();
+    }
 
-    Value newAcc = rewriter.create<triton::DotOp>(loc, dTy, tA, tB, acc,
-                                                  dot.getInputPrecision(),
-                                                  dot.getMaxNumImpreciseAcc());
+    Value tiledBMask;
+    if (loadB.getMask()) {
+      tiledBMask = cloneChainWithTiledRange(loadB.getMask(), mrB, tiledRangeB,
+                                            rewriter, loc, K, kTile, false);
+      if (!tiledBMask)
+        return failure();
+    }
+    Value tiledBOther;
+    if (loadB.getOther()) {
+      tiledBOther = resplatToShape(loadB.getOther(), {kTile, bTy.getDimSize(1)},
+                                   rewriter, loc);
+      if (!tiledBOther)
+        return failure();
+    }
+
+    Value tA;
+    if (tiledAMask && tiledAOther)
+      tA = rewriter.create<triton::LoadOp>(loc, tiledPtrA, tiledAMask,
+                                           tiledAOther, loadA.getCache(),
+                                           loadA.getEvict(), loadA.getIsVolatile());
+    else if (tiledAMask)
+      tA = rewriter.create<triton::LoadOp>(loc, tiledPtrA, tiledAMask,
+                                           loadA.getCache(), loadA.getEvict(),
+                                           loadA.getIsVolatile());
+    else
+      tA = rewriter.create<triton::LoadOp>(loc, tiledPtrA, loadA.getCache(),
+                                           loadA.getEvict(), loadA.getIsVolatile());
+
+    Value tB;
+    if (tiledBMask && tiledBOther)
+      tB = rewriter.create<triton::LoadOp>(loc, tiledPtrB, tiledBMask,
+                                           tiledBOther, loadB.getCache(),
+                                           loadB.getEvict(), loadB.getIsVolatile());
+    else if (tiledBMask)
+      tB = rewriter.create<triton::LoadOp>(loc, tiledPtrB, tiledBMask,
+                                           loadB.getCache(), loadB.getEvict(),
+                                           loadB.getIsVolatile());
+    else
+      tB = rewriter.create<triton::LoadOp>(loc, tiledPtrB, loadB.getCache(),
+                                           loadB.getEvict(), loadB.getIsVolatile());
+
+    Value newAcc = rewriter.create<triton::DotOp>(
+        loc, dTy, tA, tB, acc, dot.getInputPrecision(),
+        dot.getMaxNumImpreciseAcc());
+    newAcc.getDefiningOp()->setAttr(kTiledAttr, rewriter.getUnitAttr());
     rewriter.create<scf::YieldOp>(loc, ValueRange{newAcc});
   }
 
@@ -739,26 +811,6 @@ static LogicalResult emitKTilingTensorOfPtrs(triton::DotOp dot,
 //                        P_loK = addptr(splat(scalar),
 //                                       [muli(]expand_dims(K_idx,1)[,stride])
 //===----------------------------------------------------------------------===//
-
-/// Re-emit a tt.splat or splat-constant at a different shape; nullptr
-/// for non-splat values.
-static Value resplatToShape(Value v, ArrayRef<int64_t> newShape,
-                            PatternRewriter &rewriter, Location loc) {
-  auto rt = dyn_cast<RankedTensorType>(v.getType());
-  if (!rt)
-    return nullptr;
-  auto newTy = RankedTensorType::get(newShape, rt.getElementType());
-  if (auto splat = v.getDefiningOp<triton::SplatOp>())
-    return rewriter.create<triton::SplatOp>(loc, newTy, splat.getSrc());
-  if (auto cst = v.getDefiningOp<arith::ConstantOp>()) {
-    if (auto da = dyn_cast<DenseElementsAttr>(cst.getValue())) {
-      if (da.isSplat())
-        return rewriter.create<arith::ConstantOp>(loc, newTy,
-                                                  da.resizeSplat(newTy));
-    }
-  }
-  return nullptr;
-}
 
 /// Decompose `andi(broadcast(maskLo), broadcast(maskLo))` (commutative) into
 /// the K-axis half and the other-axis half.  Also accepts a single broadcast
@@ -1235,9 +1287,9 @@ emitKTilingTensorOfPtrsCanonical(triton::DotOp dot, DotLoadInfo aInfo,
           loc, bDotTileTy, tBUnder, rewriter.getDenseI32ArrayAttr(order));
     }
 
-    Value newAcc = rewriter.create<triton::DotOp>(loc, dTy, tA, tB, acc,
-                                                  dot.getInputPrecision(),
-                                                  dot.getMaxNumImpreciseAcc());
+    Value newAcc = rewriter.create<triton::DotOp>(
+        loc, dTy, tA, tB, acc, dot.getInputPrecision(),
+        dot.getMaxNumImpreciseAcc());
     rewriter.create<scf::YieldOp>(loc, ValueRange{newAcc});
   }
   rewriter.replaceOp(dot, forOp.getResult(0));
@@ -1372,8 +1424,9 @@ struct TileDotPattern : public OpRewritePattern<triton::DotOp> {
       }
     } else if (pA == PtrStyle::TensorOfPtrs && pB == PtrStyle::TensorOfPtrs) {
       // Canonical matmul/mask-aware emitter first; chain-walking fallback.
-      res = emitKTilingTensorOfPtrsCanonical(dot, aInfo, bInfo, info.tileSize,
-                                             rewriter);
+      if (info.tileSize >= 16)
+        res = emitKTilingTensorOfPtrsCanonical(dot, aInfo, bInfo,
+                                               info.tileSize, rewriter);
       // Fallback only when neither operand has a tt.trans (the fallback
       // emitter doesn't yet support trans look-through).
       if (failed(res) && !aInfo.trans && !bInfo.trans)
