@@ -15,13 +15,13 @@
 // analysis to catch conflicts that were exposed by the first round's copy
 // insertion.
 //
-// The inserted `bufferization.alloc_tensor`(copy...) is converted into a
-// `tensor.empty` + `hivm.hir.copy` pair afterwards: `alloc_tensor` has no
-// in-place write, so a subsequent One-Shot Bufferization analysis cannot
-// see/deal with the write it represents, which blocks the conflict analysis.
-// In contrast, `hivm.hir.copy` carries an in-place write, so rewriting the
-// alloc_tensor into `tensor.empty` + `hivm.hir.copy` keeps the write visible
-// to the following conflict analysis.
+// The inserted `bufferization.alloc_tensor (copy...)` is converted into a
+// `bufferization.alloc_tensor` + `hivm.hir.copy` pair afterwards: `alloc_tensor
+// (copy...)` has no in-place write, so a subsequent One-Shot Bufferization
+// analysis cannot see/deal with the write it represents, which blocks the
+// conflict analysis. In contrast, `hivm.hir.copy` carries an in-place write, so
+// rewriting the `alloc_tensor (copy...)` into `bufferization.alloc_tensor` +
+// `hivm.hir.copy` keeps the write visible to the following conflict analysis.
 //
 //===----------------------------------------------------------------------===//
 
@@ -60,8 +60,8 @@ parseHeuristicOption(const std::string &s) {
 }
 
 namespace {
-/// Rewrite `bufferization.alloc_tensor`(copy=...) into a `tensor.empty`
-/// followed by an `hivm.hir.copy` from the copy source into the empty tensor.
+/// Rewrite `bufferization.alloc_tensor (copy...)` into a
+/// `bufferization.alloc_tensor` + `hivm.hir.copy` pair.
 struct ConvertAllocTensorCopyToHIVMCopy
     : public OpRewritePattern<bufferization::AllocTensorOp> {
   using OpRewritePattern<bufferization::AllocTensorOp>::OpRewritePattern;
@@ -73,9 +73,9 @@ struct ConvertAllocTensorCopyToHIVMCopy
       return failure();
     rewriter.setInsertionPoint(allocTensorOp);
     Location loc = allocTensorOp.getLoc();
-    auto emptyValue = utils::createEmptyOp(rewriter, loc, copySrc);
+    auto value = utils::createAllocTensorOp(rewriter, loc, copySrc);
     auto copyOp = rewriter.create<hivm::CopyOp>(loc, allocTensorOp.getType(),
-                                                copySrc, emptyValue);
+                                                copySrc, value);
     rewriter.replaceOp(allocTensorOp, copyOp.getResult(0));
     return success();
   }
@@ -107,8 +107,9 @@ struct TensorCopyInsertionPass
     if (failed(insertTensorCopies(moduleOp, opt)))
       return signalPassFailure();
 
-    // Convert every `bufferization.alloc_tensor`(copy...) inserted by
-    // insertTensorCopies into a `tensor.empty` + `hivm.hir.copy` pair.
+    // Convert `bufferization.alloc_tensor (copy...)` inserted by
+    // insertTensorCopies into a `bufferization.alloc_tensor` + `hivm.hir.copy`
+    // pair.
     RewritePatternSet patterns(&getContext());
     patterns.add<ConvertAllocTensorCopyToHIVMCopy>(&getContext());
     if (failed(applyPatternsGreedily(moduleOp, std::move(patterns))))
