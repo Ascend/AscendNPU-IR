@@ -29,13 +29,14 @@
 #include "mlir/Interfaces/DestinationStyleOpInterface.h"
 #include "llvm/ADT/TypeSwitch.h"
 
-static constexpr char DEBUG_TYPE[] = "cv-pipelining";
+#define DEBUG_TYPE "cv-pipelining"
 
 using llvm::dbgs;
 
 namespace mlir {
 using namespace hivm;
 using hivm::detail::queryCoreTypeHelper;
+using bishengir::memref_ext::AllocWorkspaceOp;
 
 static constexpr llvm::StringLiteral CubeOnlyAttrName = "pipeline.cubeonly";
 static constexpr llvm::StringLiteral VecOnlyAttrName = "pipeline.veconly";
@@ -336,10 +337,10 @@ static void memrefDFS(Value memrefVal, SmallVector<Operation *> &users) {
 // Populates allocs map with workspace memory operations
 static LogicalResult
 markWorkspaceOps(Operation *op,
-                 DenseMap<bishengir::memref_ext::AllocWorkspaceOp, WorkspaceAllocParams> &allocs,
+                 DenseMap<AllocWorkspaceOp, WorkspaceAllocParams> &allocs,
                  unsigned multibuffer) {
   if (auto mark = dyn_cast<annotation::MarkOp>(op)) {
-    if (auto alloc = llvm::dyn_cast_if_present<bishengir::memref_ext::AllocWorkspaceOp>(
+    if (auto alloc = llvm::dyn_cast_if_present<AllocWorkspaceOp>(
             mark.getSrc().getDefiningOp())) {
       if (allocs.contains(alloc)) {
         allocs[alloc].multibuffer = multibuffer;
@@ -350,7 +351,7 @@ markWorkspaceOps(Operation *op,
     }
   }
   if (auto toTensor = dyn_cast<bufferization::ToTensorOp>(op)) {
-    auto alloc = llvm::dyn_cast_if_present<bishengir::memref_ext::AllocWorkspaceOp>(
+    auto alloc = llvm::dyn_cast_if_present<AllocWorkspaceOp>(
         toTensor.getOperand().getDefiningOp());
     if (!alloc)
       return success();
@@ -755,7 +756,7 @@ WorklistBuilder::traceMemrefSubnet(Operation &start,
     if (!scopeOp->isAncestor(defining))
       break;
     traceStart = defining;
-    if (isa<memref::AllocOp, bishengir::memref_ext::AllocWorkspaceOp>(defining))
+    if (isa<memref::AllocOp, AllocWorkspaceOp>(defining))
       break;
     if (isa<memref::CastOp, memref::ReinterpretCastOp,
             memref::MemorySpaceCastOp, memref::CollapseShapeOp,
@@ -1382,13 +1383,13 @@ FailureOr<WorklistBuildResult> WorklistBuilder::build() {
   if (!isLoopMode)
     computeLocalOutputs();
 
-  DenseMap<bishengir::memref_ext::AllocWorkspaceOp, WorkspaceAllocParams> workspaceAllocs;
+  DenseMap<AllocWorkspaceOp, WorkspaceAllocParams> workspaceAllocs;
   if (isLoopMode) {
     for (Operation &op : targetBlock->getOperations()) {
       if (failed(markWorkspaceOps(&op, workspaceAllocs, numMultibuffer)))
         return failure();
     }
-    SmallVector<bishengir::memref_ext::AllocWorkspaceOp> incomplete;
+    SmallVector<AllocWorkspaceOp> incomplete;
     for (auto &[alloc, info] : workspaceAllocs) {
       if (!info.marker && !info.toTensor)
         incomplete.push_back(alloc);
