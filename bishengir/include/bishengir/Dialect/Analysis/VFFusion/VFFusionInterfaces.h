@@ -62,7 +62,9 @@ public:
         candidateFusionBlocks = splitByMaxFuncParams(fusionBlock);
       }
 
-      for (VFFusionBlock &candidateBlock : candidateFusionBlocks) {
+      OpBuilder::InsertionGuard guard(builder);
+      func::CallOp nextCall = nullptr;
+      for (VFFusionBlock &candidateBlock : reverse(candidateFusionBlocks)) {
         // Skip if the candidate wraps the entire function body.
         if (candidateBlock.getOps().size() == block.getOperations().size())
           continue;
@@ -91,10 +93,17 @@ public:
             outliner.outline(funcOp, candidateBlock, builder);
         if (failed(maybeFusedFunction))
           return failure();
+        if (!nextCall) {
+          // last ops of the fusedBlocks
+          builder.setInsertionPointAfter(candidateBlock.getOps().back());
+        } else {
+          builder.setInsertionPoint(nextCall);
+        }
         auto maybeCallOp = outliner.createInvoke(maybeFusedFunction.value(),
                                                  candidateBlock, builder);
         if (failed(maybeCallOp))
           return failure();
+        nextCall = *maybeCallOp;
       }
     }
     return success();
