@@ -250,7 +250,8 @@ bool Solver::checkMemInfoConflict(
     std::optional<int64_t> eventIdNum,
     std::optional<std::pair<int64_t, int64_t>> offsetPair) {
   return MemInfo::checkConflict(memInfo1, memInfo2, lcmLen, eventIdNum,
-                                offsetPair);
+                                offsetPair,
+                                options.enableSubviewConflictRefinement);
 }
 
 bool Solver::checkMemInfoConflict(

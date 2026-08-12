@@ -161,6 +161,18 @@ llvm::SmallVector<Value> IRTranslator::tracebackMemVals(Value val) {
     auto curVal = que.front();
     que.pop();
 
+    // Refine only when the original memory operand is a subview directly
+    // backed by a pointer_cast. Nested views keep the existing traceback.
+    if (options.enableSubviewConflictRefinement && options.isIntraCoreMode() &&
+        curVal == val) {
+      if (auto subviewOp = curVal.getDefiningOp<memref::SubViewOp>()) {
+        if (subviewOp.getViewSource().getDefiningOp<hivm::PointerCastOp>()) {
+          collectedValsSet.insert(curVal);
+          continue;
+        }
+      }
+    }
+
     auto nextVals = tracebackMemValsStep(curVal);
     if (!nextVals.empty()) {
       for (auto nextVal : nextVals) {

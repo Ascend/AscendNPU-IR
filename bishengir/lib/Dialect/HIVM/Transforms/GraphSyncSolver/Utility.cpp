@@ -23,6 +23,7 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/Value.h"
+#include "llvm/Support/CheckedArithmetic.h"
 #include "llvm/Support/ErrorHandling.h"
 #include <cstdint>
 #include <numeric>
@@ -525,6 +526,54 @@ llvm::SmallVector<int64_t> getAddresses(const llvm::SmallVector<Value> &addrs) {
     }
   }
   return offsets;
+}
+
+FailureOr<bool>
+areOverlappingStaticSlices(const HyperrectangularSlice &slice1,
+                           const HyperrectangularSlice &slice2) {
+  auto offsets1 = slice1.getMixedOffsets();
+  auto sizes1 = slice1.getMixedSizes();
+  auto strides1 = slice1.getMixedStrides();
+  auto offsets2 = slice2.getMixedOffsets();
+  auto sizes2 = slice2.getMixedSizes();
+  auto strides2 = slice2.getMixedStrides();
+  if (offsets1.size() != sizes1.size() ||
+      offsets1.size() != strides1.size() ||
+      offsets1.size() != offsets2.size() || sizes1.size() != sizes2.size() ||
+      strides1.size() != strides2.size()) {
+    return failure();
+  }
+
+  bool foundDynamicValue = false;
+  for (size_t i = 0; i < offsets1.size(); ++i) {
+    auto offset1 = getConstantIntValue(offsets1[i]);
+    auto size1 = getConstantIntValue(sizes1[i]);
+    auto stride1 = getConstantIntValue(strides1[i]);
+    auto offset2 = getConstantIntValue(offsets2[i]);
+    auto size2 = getConstantIntValue(sizes2[i]);
+    auto stride2 = getConstantIntValue(strides2[i]);
+    if (!offset1 || !size1 || !stride1 || !offset2 || !size2 || !stride2 ||
+        *size1 < 0 || *size2 < 0 || *stride1 <= 0 || *stride2 <= 0) {
+      foundDynamicValue = true;
+      continue;
+    }
+    if (*size1 == 0 || *size2 == 0) {
+      return false;
+    }
+    auto end1 = llvm::checkedMulAdd(*size1, *stride1, *offset1);
+    auto end2 = llvm::checkedMulAdd(*size2, *stride2, *offset2);
+    if (!end1 || !end2) {
+      foundDynamicValue = true;
+      continue;
+    }
+    if (*end1 <= *offset2 || *end2 <= *offset1) {
+      return false;
+    }
+  }
+  if (foundDynamicValue) {
+    return failure();
+  }
+  return true;
 }
 
 } // namespace mlir::hivm::syncsolver
