@@ -163,7 +163,8 @@ EventIdNode *EventIdSolver::getNode(ConflictPair *conflictPair) {
 }
 
 std::unique_ptr<EventIdSolver> EventIdSolver::clone() {
-  auto clonedEventIdSolver = std::make_unique<EventIdSolver>(eventIdsNumMax);
+  auto clonedEventIdSolver =
+      std::make_unique<EventIdSolver>(eventIdsNumMax, roundRobinEventIds);
   llvm::DenseMap<EventIdNode *, EventIdNode *> mp;
   for (auto &node : nodes) {
     auto clonedNode = node->clone();
@@ -310,6 +311,26 @@ EventIdSolver::getChosenEventIds(EventIdNode *node, int64_t eventIdMax) {
   return chosenEventIds;
 }
 
+llvm::SmallVector<int64_t>
+EventIdSolver::getRoundRobinEventIds(EventIdNode *node, int64_t &nextEventId) {
+  assert(eventIdsNumMax > 0);
+  assert(node->eventIdNum <= eventIdsNumMax);
+  if (node->initConflictPair && node->initConflictPair->pinnedEventId &&
+      node->eventIdNum == 1) {
+    int64_t pinnedEventId = *node->initConflictPair->pinnedEventId;
+    nextEventId = (pinnedEventId + 1) % eventIdsNumMax;
+    return {pinnedEventId};
+  }
+
+  if (nextEventId + node->eventIdNum > eventIdsNumMax) {
+    nextEventId = 0;
+  }
+  llvm::SmallVector<int64_t> eventIds(node->eventIdNum);
+  std::iota(eventIds.begin(), eventIds.end(), nextEventId);
+  nextEventId = (nextEventId + node->eventIdNum) % eventIdsNumMax;
+  return eventIds;
+}
+
 std::optional<int64_t>
 EventIdSolver::allocateUnusedEventId(int64_t eventIdMax) {
   llvm::SmallVector<int64_t> usedEventIds;
@@ -329,6 +350,13 @@ EventIdSolver::allocateUnusedEventId(int64_t eventIdMax) {
 }
 
 void EventIdSolver::calcEventIds() {
+  calcDefaultEventIds();
+  if (roundRobinEventIds && hasRepeatedEventIdSequence()) {
+    calcRoundRobinEventIds();
+  }
+}
+
+void EventIdSolver::calcDefaultEventIds() {
   auto cmp = [](const std::pair<int64_t, EventIdNode *> &a,
                 const std::pair<int64_t, EventIdNode *> &b) {
     if (a.first != b.first) {
@@ -374,6 +402,69 @@ void EventIdSolver::calcEventIds() {
     LLVM_DEBUG({ llvm::dbgs() << node->str(false) << '\n'; });
   }
 
+  assignNeedRecalc(false);
+}
+
+bool EventIdSolver::hasRepeatedEventIdSequence() {
+  constexpr size_t minRepeatedNodeCount = 4;
+
+  llvm::SmallVector<EventIdNode *> orderedNodes;
+  orderedNodes.reserve(nodes.size());
+  for (auto &node : nodes) {
+    orderedNodes.emplace_back(node.get());
+  }
+  llvm::sort(orderedNodes, [](EventIdNode *lhs, EventIdNode *rhs) {
+    assert(lhs->initConflictPair != nullptr &&
+           rhs->initConflictPair != nullptr);
+    if (lhs->initConflictPair->startIndex !=
+        rhs->initConflictPair->startIndex) {
+      return lhs->initConflictPair->startIndex <
+             rhs->initConflictPair->startIndex;
+    }
+    if (lhs->initConflictPair->endIndex != rhs->initConflictPair->endIndex) {
+      return lhs->initConflictPair->endIndex < rhs->initConflictPair->endIndex;
+    }
+    return lhs->id < rhs->id;
+  });
+
+  size_t repeatedNodeCount = 1;
+  for (size_t i = 1; i < orderedNodes.size(); ++i) {
+    if (orderedNodes[i]->getEventIds() == orderedNodes[i - 1]->getEventIds()) {
+      if (++repeatedNodeCount >= minRepeatedNodeCount) {
+        return true;
+      }
+    } else {
+      repeatedNodeCount = 1;
+    }
+  }
+  return false;
+}
+
+void EventIdSolver::calcRoundRobinEventIds() {
+  llvm::SmallVector<EventIdNode *> orderedNodes;
+  orderedNodes.reserve(nodes.size());
+  for (auto &node : nodes) {
+    assignEventIds(node.get(), {});
+    orderedNodes.emplace_back(node.get());
+  }
+  llvm::sort(orderedNodes, [](EventIdNode *lhs, EventIdNode *rhs) {
+    assert(lhs->initConflictPair != nullptr &&
+           rhs->initConflictPair != nullptr);
+    if (lhs->initConflictPair->startIndex !=
+        rhs->initConflictPair->startIndex) {
+      return lhs->initConflictPair->startIndex <
+             rhs->initConflictPair->startIndex;
+    }
+    if (lhs->initConflictPair->endIndex != rhs->initConflictPair->endIndex) {
+      return lhs->initConflictPair->endIndex < rhs->initConflictPair->endIndex;
+    }
+    return lhs->id < rhs->id;
+  });
+
+  int64_t nextEventId = 0;
+  for (auto *node : orderedNodes) {
+    assignEventIds(node, getRoundRobinEventIds(node, nextEventId));
+  }
   assignNeedRecalc(false);
 }
 
