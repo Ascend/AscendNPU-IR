@@ -15,6 +15,7 @@
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Scope/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
+#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -254,6 +255,137 @@ void computeConflictListsForCopyOpOperand(PlanContext &ctx,
   }
 }
 
+struct GMAccessRange {
+  Value root;
+  std::optional<int64_t> begin;
+  std::optional<int64_t> end;
+};
+
+struct StaticView {
+  Value root;
+  int64_t offset;
+  int64_t stride;
+  int64_t size;
+};
+
+static std::optional<int64_t> getStaticInt(OpFoldResult value) {
+  return getConstantIntValue(value);
+}
+
+// Resolve the common rank-1 view forms used by scalar GM accesses.  For an
+// unsupported or dynamic view we retain the root and leave the range unknown;
+// callers must treat that as a possible alias rather than guessing.
+static std::optional<StaticView> getStaticRankOneView(Value value) {
+  auto root = mlir::utils::tracebackMemRefToAllocOrBlockArgument(value);
+  if (!root)
+    return std::nullopt;
+
+  if (value == *root)
+    return StaticView{*root, 0, 1, ShapedType::kDynamic};
+
+  if (auto cast = value.getDefiningOp<memref::CastOp>())
+    return getStaticRankOneView(cast.getSource());
+
+  if (auto cast = value.getDefiningOp<memref::MemorySpaceCastOp>())
+    return getStaticRankOneView(cast.getSource());
+
+  auto composeView = [&](Value source, ArrayRef<OpFoldResult> offsets,
+                         ArrayRef<OpFoldResult> sizes,
+                         ArrayRef<OpFoldResult> strides) {
+    if (offsets.size() != 1 || sizes.size() != 1 || strides.size() != 1)
+      return std::optional<StaticView>();
+    auto parent = getStaticRankOneView(source);
+    auto offset = getStaticInt(offsets.front());
+    auto size = getStaticInt(sizes.front());
+    auto stride = getStaticInt(strides.front());
+    if (!parent || !offset || !size || !stride || *stride < 0)
+      return std::optional<StaticView>();
+    return std::optional<StaticView>(StaticView{parent->root,
+                                                parent->offset + *offset * parent->stride,
+                                                parent->stride * *stride, *size});
+  };
+
+  if (auto subview = value.getDefiningOp<memref::SubViewOp>())
+    return composeView(subview.getSource(), subview.getMixedOffsets(),
+                       subview.getMixedSizes(), subview.getMixedStrides());
+
+  if (auto reinterpret = value.getDefiningOp<memref::ReinterpretCastOp>())
+    return composeView(reinterpret.getSource(), reinterpret.getMixedOffsets(),
+                       reinterpret.getMixedSizes(), reinterpret.getMixedStrides());
+
+  return std::nullopt;
+}
+
+static GMAccessRange getGMAccessRange(memref::LoadOp load) {
+  auto root = mlir::utils::tracebackMemRefToAllocOrBlockArgument(load.getMemRef());
+  if (!root)
+    return {};
+  auto view = getStaticRankOneView(load.getMemRef());
+  if (!view || load.getIndices().size() != 1)
+    return {*root, std::nullopt, std::nullopt};
+  auto index = getConstantIntValue(load.getIndices().front());
+  if (!index || *index < 0)
+    return {view->root, std::nullopt, std::nullopt};
+  int64_t position = view->offset + *index * view->stride;
+  return {view->root, position, position};
+}
+
+static GMAccessRange
+getGMAccessRange(bufferization::MaterializeInDestinationOp materialize) {
+  auto root = mlir::utils::tracebackMemRefToAllocOrBlockArgument(
+      materialize.getDest());
+  if (!root)
+    return {};
+  auto view = getStaticRankOneView(materialize.getDest());
+  if (!view || ShapedType::isDynamic(view->size) || view->size < 0)
+    return {*root, std::nullopt, std::nullopt};
+  if (view->size == 0)
+    return {view->root, 1, 0};
+  int64_t last = view->offset + (view->size - 1) * view->stride;
+  return {view->root, std::min(view->offset, last), std::max(view->offset, last)};
+}
+
+static bool mayOverlap(const GMAccessRange &lhs, const GMAccessRange &rhs) {
+  if (!lhs.root || !rhs.root || lhs.root != rhs.root)
+    return false;
+  if (!lhs.begin || !lhs.end || !rhs.begin || !rhs.end)
+    return true;
+  return *lhs.begin <= *rhs.end && *rhs.begin <= *lhs.end;
+}
+
+static void findNearestUpstreamFusableOps(Operation *op, Block *block,
+                                          DenseSet<Operation *> &result,
+                                          DenseSet<Operation *> &visited) {
+  if (!op || !visited.insert(op).second)
+    return;
+  for (Value operand : op->getOperands()) {
+    Operation *def = operand.getDefiningOp();
+    if (!def || !isOpInBlock(def, block))
+      continue;
+    if (isFusableOp(def)) {
+      result.insert(def);
+      continue;
+    }
+    findNearestUpstreamFusableOps(def, block, result, visited);
+  }
+}
+
+static void findNearestDownstreamFusableOps(Operation *op, Block *block,
+                                            DenseSet<Operation *> &result,
+                                            DenseSet<Operation *> &visited) {
+  if (!op || !visited.insert(op).second)
+    return;
+  for (Operation *user : op->getUsers()) {
+    if (!isOpInBlock(user, block))
+      continue;
+    if (isFusableOp(user)) {
+      result.insert(user);
+      continue;
+    }
+    findNearestDownstreamFusableOps(user, block, result, visited);
+  }
+}
+
 } // namespace
 
 void PlanContext::dissolvePivot(Operation *newOp, const FusedNode *node,
@@ -373,6 +505,36 @@ void PlanContext::computeConflictLists(func::FuncOp func) {
             for (auto previousOp : previousOps) {
               for (auto followingOp : followingOps) {
                 addSyncConflict(previousOp, followingOp);
+              }
+            }
+          }
+        }
+
+        // A GM RAW dependence is not represented in the tensor SSA graph.
+        // Prevent only the producer and consumer adjacent to an overlapping
+        // GM access from entering one VF; broad graph traversal here blocks
+        // unrelated fusion opportunities.
+        if (auto loadOp = dyn_cast<memref::LoadOp>(op)) {
+          GMAccessRange loadRange = getGMAccessRange(loadOp);
+          if (!loadRange.root)
+            return;
+          for (Operation *prev = op->getPrevNode(); prev;
+               prev = prev->getPrevNode()) {
+            auto matOp =
+                dyn_cast<bufferization::MaterializeInDestinationOp>(prev);
+            if (!matOp || !mayOverlap(getGMAccessRange(matOp), loadRange))
+              continue;
+            DenseSet<Operation *> producerFusableOps;
+            DenseSet<Operation *> visitedProducers;
+            findNearestUpstreamFusableOps(matOp, block, producerFusableOps,
+                                          visitedProducers);
+            DenseSet<Operation *> consumerFusableOps;
+            DenseSet<Operation *> visitedConsumers;
+            findNearestDownstreamFusableOps(loadOp, block, consumerFusableOps,
+                                            visitedConsumers);
+            for (auto *prodOp : producerFusableOps) {
+              for (auto *consOp : consumerFusableOps) {
+                addCopyConflict(prodOp, consOp);
               }
             }
           }
