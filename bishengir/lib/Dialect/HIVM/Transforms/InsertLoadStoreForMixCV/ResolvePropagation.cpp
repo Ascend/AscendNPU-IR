@@ -272,40 +272,18 @@ static LogicalResult resolveL1ToUB(UnrealizedConversionCastOp downPropOp,
 LogicalResult TightCoupledBufferResolvePropagationPattern::resolveL0CToL1(
     UnrealizedConversionCastOp downPropOp, UnrealizedConversionCastOp upPropOp,
     PatternRewriter &rewriter) const {
-  auto fixpipeOp = downPropOp.getInputs()[0].getDefiningOp<FixpipeOp>();
-  if (!fixpipeOp)
-    return failure();
-  ArrayRef<int64_t> maybeStaticTotalSize =
-      fixpipeOp.getDstOperandType().getShape();
-  // Replicate InsertCVTightCoupledBuffer.cpp: Trace fixpipe src to Mmad and use
-  // Mmad type as static shaped type
-  if (!fixpipeOp.getDstOperandType().hasStaticShape()) {
-    if (auto maybeMmadOp = traceDefOp<hivm::MmadL1Op>(fixpipeOp.getSrc())) {
-      LDBG("traced to mmad op " << maybeMmadOp);
-      mlir::Type mmadType =
-          dyn_cast<MmadL1Op>(maybeMmadOp.value())->getResultTypes()[0];
-      if (auto shapedMmadType = dyn_cast<ShapedType>(mmadType))
-        maybeStaticTotalSize = shapedMmadType.getShape();
-    }
-  }
-  auto [coupledBuffer, toTensorOp] =
-      PropagatorUtil::insertTightCoupledBufferToL1(
-          fixpipeOp.getDst(), downPropOp.getLoc(), rewriter,
-          maybeStaticTotalSize);
-  Value bufferizedValue = toTensorOp.getResult();
-  // Create new fixpipe writing to L1 memref (returns void)
-  SmallVector<Value> oprs({fixpipeOp.getSrc(), coupledBuffer.spacedMemref});
-  if (auto quantScale = fixpipeOp.getQuantScale())
-    oprs.push_back(quantScale);
-  rewriter.create<FixpipeOp>(downPropOp.getLoc(), TypeRange{}, oprs,
-                             fixpipeOp->getAttrs());
-  rewriter.replaceOp(fixpipeOp, toTensorOp.getResult());
-
-  rewriter.modifyOpInPlace(
-      upPropOp, [&]() { upPropOp.getInputsMutable()[0].set(bufferizedValue); });
-  PropagatorUtil::createPropagatorUp(&toTensorOp.getMemrefMutable(), downPropOp,
+  auto fixpipeOp = PropagatorUtil::insertFixpipe(
+      downPropOp->getResult(0), downPropOp.getLoc(), rewriter,
+      hivm::AddressSpace::L1, inferFixpipeDmaMode);
+  rewriter.modifyOpInPlace(upPropOp, [&]() {
+    upPropOp.getInputsMutable()[0].set(fixpipeOp.getResultTensor());
+  });
+  rewriter.setInsertionPointAfter(fixpipeOp);
+  PropagatorUtil::createPropagatorUp(&fixpipeOp.getSrcMutable(), downPropOp,
                                      rewriter);
-  PropagatorUtil::createPropagatorsDown(toTensorOp, upPropOp, rewriter);
+  PropagatorUtil::createPropagatorUp(&fixpipeOp.getDstMutable(), upPropOp,
+                                     rewriter);
+  PropagatorUtil::createPropagatorsDown(fixpipeOp, upPropOp, rewriter);
   return success();
 }
 
@@ -347,6 +325,13 @@ LogicalResult TightCoupledBufferResolvePropagationPattern::matchAndRewrite(
   rewriter.setInsertionPointAfter(downPropOp);
   if (llvm::find(downAddressSpace, hivm::AddressSpace::L0C) !=
           downAddressSpace.end() &&
+      llvm::find(upAddressSpace, hivm::AddressSpace::L1) !=
+          upAddressSpace.end()) {
+    LDBG("Resolving L0C to L1: " << downPropOp << "\n" << upPropOp << "\n");
+    return resolveL0CToL1(downPropOp, upPropOp, rewriter);
+  }
+  if (llvm::find(downAddressSpace, hivm::AddressSpace::L0C) !=
+          downAddressSpace.end() &&
       llvm::find(upAddressSpace, hivm::AddressSpace::UB) !=
           upAddressSpace.end()) {
     LDBG("Resolving CC to UB: " << downPropOp << "\n" << upPropOp << "\n");
@@ -363,12 +348,6 @@ LogicalResult TightCoupledBufferResolvePropagationPattern::matchAndRewrite(
           upAddressSpace.end()) {
     LDBG("Resolving Local to UB: " << downPropOp << "\n" << upPropOp << "\n");
     return resolveGMtoLocal(downPropOp, upPropOp, rewriter);
-  }
-  if (downCoreType == TCoreType::CUBE_AND_VECTOR &&
-      llvm::find(upAddressSpace, hivm::AddressSpace::L1) !=
-          upAddressSpace.end()) {
-    LDBG("Resolving L0C to L1: " << downPropOp << "\n" << upPropOp << "\n");
-    return resolveL0CToL1(downPropOp, upPropOp, rewriter);
   }
   if (downCoreType != TCoreType::CUBE_AND_VECTOR &&
       upCoreType != TCoreType::CUBE_AND_VECTOR &&

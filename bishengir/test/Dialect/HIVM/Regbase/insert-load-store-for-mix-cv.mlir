@@ -2120,3 +2120,32 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     return %mmad1 : tensor<16x16xf32>
   }
 }
+
+// -----
+
+// CHECK-LABEL: func.func @insert_fixpipe_l0c_to_l1(
+// CHECK: %[[MMAD:.*]] = hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
+// CHECK: %[[OUT:.*]] = tensor.empty() {hivm.address_space = #hivm.address_space<cbuf>, "hivm.inserted-tensor"} : tensor<16x16xf32>
+// CHECK: %[[FIX:.*]] = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, "hivm.inserted-fixpipe"} ins(%[[MMAD]] : tensor<16x16xf32>) outs(%[[OUT]] : tensor<16x16xf32>) -> tensor<16x16xf32>
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, fixpipe_for_result_already_inserted = true, normalized_in_L0C} ins(%[[FIX]], 
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @insert_fixpipe_l0c_to_l1(
+      %a: tensor<16x16xf32>, %b: tensor<16x16xf32>, %c: tensor<16x16xf32>)
+      -> tensor<16x16xf32>
+      attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %true = arith.constant true
+    %false = arith.constant false
+    %c16 = arith.constant 16 : index
+    %out0 = tensor.empty() : tensor<16x16xf32>
+    %mmad0 = hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
+        ins(%a, %b, %true, %c16, %c16, %c16
+            : tensor<16x16xf32>, tensor<16x16xf32>, i1, index, index, index)
+        outs(%out0 : tensor<16x16xf32>) -> tensor<16x16xf32>
+    %out1 = tensor.empty() : tensor<16x16xf32>
+    %mmad1 = hivm.hir.mmadL1 {already_set_real_mkn, fixpipe_for_result_already_inserted = true, normalized_in_L0C}
+        ins(%mmad0, %c, %false, %c16, %c16, %c16
+            : tensor<16x16xf32>, tensor<16x16xf32>, i1, index, index, index)
+        outs(%out1 : tensor<16x16xf32>) -> tensor<16x16xf32>
+    return %mmad1 : tensor<16x16xf32>
+  }
+}
