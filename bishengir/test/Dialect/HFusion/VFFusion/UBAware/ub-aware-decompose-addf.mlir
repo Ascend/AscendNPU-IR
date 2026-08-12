@@ -11,14 +11,25 @@
 module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 1 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 1 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 1 : i32>, #dlti.dl_entry<"UB_SIZE", 4096 : i32>, #dlti.dl_entry<"L1_SIZE", 4194304 : i32>, #dlti.dl_entry<"L0A_SIZE", 524288 : i32>, #dlti.dl_entry<"L0B_SIZE", 524288 : i32>, #dlti.dl_entry<"L0C_SIZE", 2097152 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L1_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L0C_ALIGN_SIZE", 4096 : i32>, #dlti.dl_entry<"MINIMAL_D_CACHE_SIZE", 262144 : i32>, #dlti.dl_entry<"MAXIMUM_D_CACHE_SIZE", 983040 : i32>, #dlti.dl_entry<"ARCH", "dav-c310">>>, hacc.target = #hacc.target<"Ascend910_9579">, hivm.module_core_type = #hivm.module_core_type<MIX>} {
 
 // Each mulf branch is outlined; the root addf stays inline in the caller.
-// CHECK: func.func private @test_decompose_addf_fused_0
-// CHECK:   arith.mulf
-// CHECK: func.func private @test_decompose_addf_fused_1
-// CHECK:   arith.mulf
+// CHECK-LABEL: func.func private @test_decompose_addf_fused_0
+// CHECK:         memref.copy
+// CHECK:         bufferization.to_tensor
+// CHECK:         memref.copy
+// CHECK:         bufferization.to_tensor
+// CHECK:         linalg.generic
+// CHECK:           arith.mulf
+// CHECK-LABEL: func.func private @test_decompose_addf_fused_1
+// CHECK:         memref.copy
+// CHECK:         bufferization.to_tensor
+// CHECK:         memref.copy
+// CHECK:         bufferization.to_tensor
+// CHECK:         linalg.generic
+// CHECK:           arith.mulf
 // CHECK-LABEL: func.func @test_decompose_addf(
-// CHECK:         call @test_decompose_addf_fused_
-// CHECK:         call @test_decompose_addf_fused_
-// CHECK:         arith.addf
+// CHECK:         call @test_decompose_addf_fused_0
+// CHECK:         call @test_decompose_addf_fused_1
+// CHECK:         linalg.generic
+// CHECK:           arith.addf
 func.func @test_decompose_addf(
     %arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>},
     %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>},

@@ -1,7 +1,3 @@
-// REQUIRES: regbase
-// TODO: enable this testcase after investigating a behavioral divergence:
-// PreVectorizationFusion does not preserve the extract_slice/insert_slice
-// DPS pair on A3 (not a missing dependency, root cause not yet identified)
 // RUN: bishengir-opt %s -hfusion-pre-vectorization-fusion | FileCheck %s
 
 // CHECK-LABEL: func.func @preserve_slice_pair_after_pre_vectorization_fusion

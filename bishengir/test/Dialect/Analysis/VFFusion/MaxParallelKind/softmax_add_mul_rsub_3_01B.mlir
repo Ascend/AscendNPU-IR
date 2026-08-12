@@ -1,4 +1,3 @@
-// REQUIRES: regbase
 // RUN: bishengir-opt --hacc-append-device-spec="target=Ascend910_9579" --vf-fusion="fusion-mode=max-parallel" --split-input-file %s | FileCheck %s
 
 // TODO(regbase): Non-regbase VFFusion uses different fused-function boundaries
@@ -69,6 +68,8 @@
 // CHECK: return
 
 // CHECK-LABEL: func.func @triton_unk_fused__softmax_add_mul_rsub_3_01B(
+// CHECK: hfusion.arange
+// CHECK: call @triton_unk_fused__softmax_add_mul_rsub_3_01B_fused_5
 // CHECK: scf.for
 // CHECK: memref.reinterpret_cast
 // CHECK: memref.alloc
@@ -77,6 +78,7 @@
 // CHECK: memref.copy
 // CHECK: bufferization.to_tensor
 // CHECK: func.call @triton_unk_fused__softmax_add_mul_rsub_3_01B_fused_0
+// CHECK: linalg.fill
 // CHECK: func.call @triton_unk_fused__softmax_add_mul_rsub_3_01B_fused_1
 // CHECK: func.call @triton_unk_fused__softmax_add_mul_rsub_3_01B_fused_2
 // CHECK: func.call @triton_unk_fused__softmax_add_mul_rsub_3_01B_fused_3

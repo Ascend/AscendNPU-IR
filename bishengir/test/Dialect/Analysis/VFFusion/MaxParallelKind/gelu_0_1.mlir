@@ -1,4 +1,3 @@
-// REQUIRES: regbase
 // RUN: bishengir-opt --hacc-append-device-spec="target=Ascend910_9579" --vf-fusion="fusion-mode=max-parallel" --split-input-file %s | FileCheck %s
 
 // TODO(regbase): Non-regbase VFFusion groups this GELU case into 3 fused
