@@ -24,3 +24,6 @@
 /bishengir/**/GraphSyncSolver/* @AmmarDab3an @tanzirui123123 @hi_sy @hid90099092 @tanshengshun
 /bishengir/**/InjectSync/* @AmmarDab3an @tanzirui123123 @hi_sy @hid90099092 @tanshengshun
 /bishengir/**/InjectBlockSync.* @AmmarDab3an @tanzirui123123 @hi_sy @hid90099092 @tanshengshun
+
+# Submodule:llvm-project (ensure synchronization with hivmc)
+/third-party/llvm-project @NoBBAI @hid90099092 @tanshengshun
