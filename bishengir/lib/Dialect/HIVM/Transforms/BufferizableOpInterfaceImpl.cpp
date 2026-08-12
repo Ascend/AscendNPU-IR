@@ -327,11 +327,6 @@ struct HIVMLoadOpInterface
   FailureOr<BaseMemRefType>
   getBufferType(Operation *op, Value value, const BufferizationOptions &options,
                 SmallVector<Value> &invocationStack) const {
-    // For membase: fall back to the default buffer type computation.
-    auto moduleOp = op->getParentOfType<ModuleOp>();
-    if (!hacc::utils::isRegBasedArch(moduleOp))
-      return bufferization::getBufferType(value, options, invocationStack);
-    // For regbase: use static identity layout when dst is a tensor.empty.
     auto loadOp = cast<hivm::LoadOp>(op);
     auto dst = loadOp.getDst();
     if (dst.getDefiningOp<tensor::EmptyOp>())
