@@ -164,6 +164,16 @@ struct StorageEntry {
   /// This vector stores all additional entries (multiBufferNum - 1 entries).
   SmallVector<StorageEntry *> otherBufferRelationEntries;
 
+  /// For an expanded multi-buffer "other" slot, points back to the first
+  /// buffer of the same multi-buffer set. Null for the first buffer / single
+  /// buffer entries.
+  StorageEntry *firstBufferRelationEntry{nullptr};
+
+  /// Speculative plan level last successfully applied to this entry via
+  /// UpdateOutline. Used so multi-buffer siblings planned at the same level
+  /// can be rolled back together.
+  int appliedSpecLevel{-1};
+
   /// The number of multibuffer optimization.
   /// note: default 1 which means single buffer and does not do multibuffer
   /// optimization.
@@ -782,6 +792,9 @@ private:
 
   /// Check if memory plan can be rolled back.
   bool ContinueRollBack(const StatusWrapper &statusWrapper) const;
+
+  /// Check if multibuffer-slots should be rolled back together 
+  bool ShouldRollbackMuiltiBuffer(const PlanRecord& r) const;
 
   /// Memory plan fallback information processing.
   void RollBackForAllocFailInner(StatusWrapper &statusWrapper,
