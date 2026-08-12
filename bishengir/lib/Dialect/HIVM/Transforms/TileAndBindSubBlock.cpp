@@ -722,10 +722,11 @@ private:
 
     auto syncSubBlockMode = rewriter.getAttr<hivm::SyncBlockModeAttr>(
         hivm::SyncBlockMode::ALL_SUB_VECTOR);
-    auto vectorPipeAttr =
-        rewriter.getAttr<hivm::PipeAttr>(hivm::PIPE::PIPE_ALL);
+    auto tPipeAttr = rewriter.getAttr<hivm::PipeAttr>(hivm::PIPE::PIPE_MTE3);
+    auto PipeAttr = rewriter.getAttr<hivm::PipeAttr>(hivm::PIPE::PIPE_MTE2);
     rewriter.create<hivm::SyncBlockOp>(loc, syncSubBlockMode, nullptr, Value{},
-                                       hivm::PipeAttr{}, vectorPipeAttr);
+                                       hivm::PipeAttr{}, hivm::PipeAttr{},
+                                       tPipeAttr, PipeAttr);
     auto localBuffer = utils::createEmptyOp(rewriter, loc, workspaceOp);
     auto loadOp = rewriter.create<hivm::LoadOp>(loc, TypeRange{}, workspaceOp,
                                                 localBuffer);

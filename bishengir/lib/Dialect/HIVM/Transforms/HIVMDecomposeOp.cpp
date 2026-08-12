@@ -435,9 +435,11 @@ struct SyncBlockOpLowering : public OpRewritePattern<SyncBlockOp> {
     Value fftsBaseAddr = op.getFftsBaseAddr();
 
     auto tcubePipeAttr = op.getTcubePipeAttr();
-    auto cubePipeAttr = op.getTcubePipeAttr();
+    auto cubePipeAttr = op.getCubePipeAttr() ? op.getCubePipeAttr()
+                                              : op.getTcubePipeAttr();
     auto tvectorPipeAttr = op.getTvectorPipeAttr();
-    auto vectorPipeAttr = op.getTvectorPipeAttr();
+    auto vectorPipeAttr = op.getVectorPipeAttr() ? op.getVectorPipeAttr()
+                                                 : op.getTvectorPipeAttr();
 
     auto cubeCoreAttr = TCoreTypeAttr::get(ctx, TCoreType::CUBE);
     auto vectorCoreAttr = TCoreTypeAttr::get(ctx, TCoreType::VECTOR);
@@ -534,10 +536,13 @@ struct SyncBlockOpLowering : public OpRewritePattern<SyncBlockOp> {
             ? flagIdAttrOpt.value()
             : IntegerAttr::get(IntegerType::get(ctx, 64), interCubeSyncFlagId);
     auto tpipeAttr = op.getTcubePipeAttr();
-    auto pipeAttr = op.getTcubePipeAttr();
+    auto pipeAttr = op.getCubePipeAttr() ? op.getCubePipeAttr()
+                                         : op.getTcubePipeAttr();
     rewriter.create<PipeBarrierOp>(loc, tpipeAttr);
     if (tpipeAttr.getPipe() == PIPE::PIPE_ALL) {
       tpipeAttr = PipeAttr::get(ctx, PIPE::PIPE_FIX);
+    }
+    if (pipeAttr.getPipe() == PIPE::PIPE_ALL) {
       pipeAttr = PipeAttr::get(ctx, PIPE::PIPE_S);
     }
     insertBlockSyncOperations(rewriter, loc, cubeCoreAttr, cubeCoreAttr,
@@ -558,10 +563,13 @@ struct SyncBlockOpLowering : public OpRewritePattern<SyncBlockOp> {
                                   : IntegerAttr::get(IntegerType::get(ctx, 64),
                                                      interVectorSyncFlagId);
     auto tpipeAttr = op.getTvectorPipeAttr();
-    auto pipeAttr = op.getTvectorPipeAttr();
+    auto pipeAttr = op.getVectorPipeAttr() ? op.getVectorPipeAttr()
+                                           : op.getTvectorPipeAttr();
     rewriter.create<PipeBarrierOp>(loc, tpipeAttr);
     if (tpipeAttr.getPipe() == PIPE::PIPE_ALL) {
       tpipeAttr = PipeAttr::get(ctx, PIPE::PIPE_MTE3);
+    }
+    if (pipeAttr.getPipe() == PIPE::PIPE_ALL) {
       pipeAttr = PipeAttr::get(ctx, PIPE::PIPE_S);
     }
     insertBlockSyncOperations(rewriter, loc, vectorCoreAttr, vectorCoreAttr,
@@ -583,10 +591,13 @@ struct SyncBlockOpLowering : public OpRewritePattern<SyncBlockOp> {
                                   : IntegerAttr::get(IntegerType::get(ctx, 64),
                                                      interVectorSyncFlagId);
     auto tpipeAttr = op.getTvectorPipeAttr();
-    auto pipeAttr = op.getTvectorPipeAttr();
+    auto pipeAttr = op.getVectorPipeAttr() ? op.getVectorPipeAttr()
+                                           : op.getTvectorPipeAttr();
     rewriter.create<PipeBarrierOp>(loc, tpipeAttr);
     if (tpipeAttr.getPipe() == PIPE::PIPE_ALL) {
       tpipeAttr = PipeAttr::get(ctx, PIPE::PIPE_MTE3);
+    }
+    if (pipeAttr.getPipe() == PIPE::PIPE_ALL) {
       pipeAttr = PipeAttr::get(ctx, PIPE::PIPE_S);
     }
     insertBlockSyncOperations(rewriter, loc, vectorCoreAttr, vectorCoreAttr,

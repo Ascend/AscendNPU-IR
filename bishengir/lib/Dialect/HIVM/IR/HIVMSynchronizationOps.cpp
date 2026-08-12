@@ -248,6 +248,14 @@ void SyncBlockWaitOp::build(OpBuilder &odsBuilder, OperationState &odsState,
 // SyncBlockOp
 //===----------------------------------------------------------------------===//
 
+void SyncBlockOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                        SyncBlockModeAttr sync_block_mode, IntegerAttr flag_id,
+                        Value ffts_base_addr, PipeAttr tcube_pipe,
+                        PipeAttr tvector_pipe) {
+  build(odsBuilder, odsState, sync_block_mode, flag_id, ffts_base_addr,
+        tcube_pipe, tcube_pipe, tvector_pipe, tvector_pipe);
+}
+
 LogicalResult SyncBlockOp::verify() {
   auto synBlockMode = getSyncBlockModeAttr().getSyncMode();
   if (synBlockMode == SyncBlockMode::BARRIER_CUBE ||
@@ -258,6 +266,12 @@ LogicalResult SyncBlockOp::verify() {
     if (getTcubePipeAttr() != nullptr) {
       return emitOpError("tcube_pipe should not be defined!");
     }
+    if (getVectorPipeAttr() != nullptr) {
+      return emitOpError("vector_pipe should not be defined!");
+    }
+    if (getCubePipeAttr() != nullptr) {
+      return emitOpError("cube_pipe should not be defined!");
+    }
   }
   if (synBlockMode == SyncBlockMode::ALL_CUBE ||
       synBlockMode == SyncBlockMode::ALL) {
@@ -267,6 +281,19 @@ LogicalResult SyncBlockOp::verify() {
     if (!checkPipeInferredCoreType(getTcubePipeAttr().getPipe(),
                                    TCoreType::CUBE)) {
       return emitOpError("tcube_pipe of should match CUBE core type!");
+    }
+    if (getCubePipeAttr() &&
+        !checkPipeInferredCoreType(getCubePipeAttr().getPipe(),
+                                   TCoreType::CUBE)) {
+      return emitOpError("cube_pipe should match CUBE core type!");
+    }
+    if (synBlockMode == SyncBlockMode::ALL_CUBE) {
+      if (getTvectorPipeAttr() != nullptr) {
+        return emitOpError("tvector_pipe should not be defined!");
+      }
+      if (getVectorPipeAttr() != nullptr) {
+        return emitOpError("vector_pipe should not be defined!");
+      }
     }
   }
   if (synBlockMode == SyncBlockMode::ALL_VECTOR ||
@@ -279,6 +306,20 @@ LogicalResult SyncBlockOp::verify() {
                                    TCoreType::VECTOR)) {
       return emitOpError(
           "tvector_pipe of ALL_VECTOR should match VECTOR core type!");
+    }
+    if (getVectorPipeAttr() &&
+        !checkPipeInferredCoreType(getVectorPipeAttr().getPipe(),
+                                   TCoreType::VECTOR)) {
+      return emitOpError("vector_pipe should match VECTOR core type!");
+    }
+    if (synBlockMode == SyncBlockMode::ALL_VECTOR ||
+        synBlockMode == SyncBlockMode::ALL_SUB_VECTOR) {
+      if (getTcubePipeAttr() != nullptr) {
+        return emitOpError("tcube_pipe should not be defined!");
+      }
+      if (getCubePipeAttr() != nullptr) {
+        return emitOpError("cube_pipe should not be defined!");
+      }
     }
   }
   return success();
