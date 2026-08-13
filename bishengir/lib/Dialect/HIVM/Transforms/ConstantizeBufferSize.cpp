@@ -140,7 +140,7 @@ struct ResolvedDim {
 
 /// Walk the SSA chain of a dynamic dimension value and try to resolve it to a
 /// constant or at least an upper bound.  Handles arith.minsi (upper bound),
-/// arith.maxsi, affine.apply, arith.{constant,addi,subi,muli},
+/// arith.maxsi, affine.{apply,min,max}, arith.{constant,addi,subi,muli},
 /// arith.index_cast.  Returns the resolved bound or std::nullopt on failure.
 std::optional<ResolvedDim> resolveDynamicDimToBoundImpl(Value dim) {
   if (!dim)
@@ -237,6 +237,74 @@ std::optional<ResolvedDim> resolveDynamicDimToBoundImpl(Value dim) {
     bool isExact = llvm::all_of(resolvedOps,
                                 [](const ResolvedDim &r) { return r.isExact; });
     return ResolvedDim{maxVal, isExact};
+  }
+
+  // --- affine.min: UB = min of available branch UBs.
+  // min(a, b) <= a always holds, so any bounded branch yields a sound upper
+  // bound; branches whose UB is unknown are ignored. If no branch is bounded,
+  // fail. isExact only when every branch is bounded and exact (otherwise the
+  // runtime value may be smaller than the bound).
+  if (auto minOp = dyn_cast<affine::AffineMinOp>(defOp)) {
+    AffineMap map = minOp.getAffineMap();
+    ValueRange operands = minOp.getMapOperands();
+    std::optional<int64_t> bound;
+    bool isExact = true;
+    for (AffineExpr expr : map.getResults()) {
+      std::optional<ResolvedDim> branch;
+      if (auto constExpr = dyn_cast<AffineConstantExpr>(expr)) {
+        branch = ResolvedDim{constExpr.getValue(), /*isExact=*/true};
+      } else {
+        Value operand = getOperandForDimOrSymbol(expr, map, operands);
+        if (operand)
+          branch = resolveDynamicDimToBoundImpl(operand);
+      }
+      if (!branch) {
+        isExact = false;
+        continue;
+      }
+      bound = bound.has_value() ? std::min(*bound, branch->value)
+                                : branch->value;
+      if (!branch->isExact)
+        isExact = false;
+    }
+    if (!bound.has_value())
+      return std::nullopt;
+    return ResolvedDim{*bound, isExact};
+  }
+
+  // --- affine.max: UB = max of ALL non-constant branch UBs.
+  // max(a, b) <= U requires both a <= U and b <= U; if any non-constant branch
+  // is unbounded the max is unbounded -> fail. Constant branches are lower
+  // bounds and are folded into the running max for the all-constant case.
+  if (auto maxOp = dyn_cast<affine::AffineMaxOp>(defOp)) {
+    AffineMap affineMap = maxOp.getAffineMap();
+    ValueRange mapOperands = maxOp.getMapOperands();
+    std::optional<int64_t> upperBound;
+    bool isExact = true;
+    for (AffineExpr expr : affineMap.getResults()) {
+      if (auto constExpr = dyn_cast<AffineConstantExpr>(expr)) {
+        int64_t constValue = constExpr.getValue();
+        upperBound = upperBound.has_value() ? std::max(*upperBound, constValue)
+                                            : constValue;
+        continue;
+      }
+      Value branchOperand =
+          getOperandForDimOrSymbol(expr, affineMap, mapOperands);
+      if (!branchOperand)
+        return std::nullopt;
+      std::optional<ResolvedDim> branchBound =
+          resolveDynamicDimToBoundImpl(branchOperand);
+      if (!branchBound)
+        return std::nullopt;
+      upperBound = upperBound.has_value()
+                       ? std::max(*upperBound, branchBound->value)
+                       : branchBound->value;
+      if (!branchBound->isExact)
+        isExact = false;
+    }
+    if (!upperBound.has_value())
+      return std::nullopt;
+    return ResolvedDim{*upperBound, isExact};
   }
 
   // --- addi(a, b): max = max(a) + max(b) (non-negative assumed) ---
@@ -366,7 +434,7 @@ public:
     int64_t totalBytes = static_cast<int64_t>(
         llvm::divideCeil(totalBits.value(), utils::kBitsToByte));
     auto newType =
-        MemRefType::get({totalBytes}, rewriter.getI8Type(), mlir::AffineMap{},
+        MemRefType::get({totalBytes}, rewriter.getI8Type(), mlir::AffineMap {},
                         currentMemRefType.getMemorySpace());
     Location loc = op->getLoc();
     auto newAlloc = rewriter.create<AllocLikeOp>(loc, newType);
