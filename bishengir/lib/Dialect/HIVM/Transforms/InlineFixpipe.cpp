@@ -553,6 +553,28 @@ public:
 
 static bool isRegBasedArch(Operation *op);
 
+/// Skip inserting outer fixpipe after an accumulation loop when the mmad
+/// result is yielded back to outs and the loop stays in L0C.
+static bool shouldSkipOuterFixpipeForAccumulation(Operation *opInst,
+                                                  Value mmadLikeOpRes) {
+  if (!isAccumulation(opInst))
+    return false;
+  if (!anyUserReachesMatmulOuts(mmadLikeOpRes))
+    return false;
+
+  int resultIndx = 0;
+  Operation *insertAfterOp = getInsertPoint(opInst, resultIndx);
+  Value loopResult = insertAfterOp->getResult(resultIndx);
+  if (loopResult == mmadLikeOpRes)
+    return false;
+
+  auto forOp = dyn_cast<scf::ForOp>(insertAfterOp);
+  if (!forOp)
+    return false;
+
+  return forOp->getAttr(hivm::RemainInL0CAttr::name) != nullptr;
+}
+
 /// Check whether every meaningful user reaches a fixpipe, tracing through
 /// extract_slice chains. This covers branch fan-out where a single-user-chain
 /// query cannot detect that fixpipes have already been inserted.
@@ -608,40 +630,44 @@ public:
     if (opInst->getAttr(mmadFixpipeForResultAlreadyInserted))
       return failure();
 
-    if (isRegBasedArch(opInst) && allUsersReachFixpipe(mmadLikeOpRes))
-      return failure();
+    bool changed = false;
+    if (!shouldSkipOuterFixpipeForAccumulation(opInst, mmadLikeOpRes)) {
+      if (isRegBasedArch(opInst) && allUsersReachFixpipe(mmadLikeOpRes))
+        return failure();
 
-    auto isMatchedOp = [](Operation *op, Value v) {
-      LDBG("Matching this current op " << *op);
-      if (isa<hivm::FixpipeOp>(op))
-        return true;
-      if (isLocalMatmulInit(op, v)) {
-        // no need to insert fixpipe because the single user can directly use
-        // result stay in local buffer.
-        return true;
+      auto isMatchedOp = [](Operation *op, Value v) {
+        LDBG("Matching this current op " << *op);
+        if (isa<hivm::FixpipeOp>(op))
+          return true;
+        if (isLocalMatmulInit(op, v)) {
+          // no need to insert fixpipe because the single user can directly use
+          // result stay in local buffer.
+          return true;
+        }
+        return false;
+      };
+      if (traceSingleChainUser(mmadLikeOpRes, isMatchedOp))
+        return failure();
+
+      int resultIndx = 0;
+      Operation *insertAfterOp = nullptr;
+      if (isAccumulation(opInst)) {
+        // only insert fixpipe outside of the for loop when it is an accumulation
+        // loop
+        insertAfterOp = getInsertPoint(opInst, resultIndx);
+      } else {
+        insertAfterOp = getInsertPointOutOfIf(opInst, resultIndx);
       }
-      return false;
-    };
-    if (traceSingleChainUser(mmadLikeOpRes, isMatchedOp))
-      return failure();
+      rewriter.setInsertionPointAfter(insertAfterOp);
 
-    int resultIndx = 0;
-    Operation *insertAfterOp = nullptr;
-    if (isAccumulation(opInst)) {
-      // only insert fixpipe outside of the for loop when it is an accumulation
-      // loop
-      insertAfterOp = getInsertPoint(opInst, resultIndx);
-    } else {
-      insertAfterOp = getInsertPointOutOfIf(opInst, resultIndx);
+      LDBG("Replacing fix pipe for " << op);
+      Value result = insertAfterOp->getResult(resultIndx);
+      if (!tryInsertFractalOutputFixpipe(rewriter, insertAfterOp, result))
+        insertFixpipe(rewriter, insertAfterOp, result);
+      op->setAttr(mmadFixpipeForResultAlreadyInserted,
+                  rewriter.getBoolAttr(true));
+      changed = true;
     }
-    rewriter.setInsertionPointAfter(insertAfterOp);
-
-    LDBG("Replacing fix pipe for " << op);
-    Value result = insertAfterOp->getResult(resultIndx);
-    if (!tryInsertFractalOutputFixpipe(rewriter, insertAfterOp, result))
-      insertFixpipe(rewriter, insertAfterOp, result);
-    op->setAttr(mmadFixpipeForResultAlreadyInserted,
-                rewriter.getBoolAttr(true));
 
     // When the mmad-like op is an accumulation, the fixpipe above only serves
     // external consumers of the loop's final accumulated value. If the mmad
@@ -685,9 +711,10 @@ public:
           });
         }
         LDBG("Insert in-loop fixpipe for Vector consumer of accumulation mmad");
+        changed = true;
       }
     }
-    return success();
+    return changed ? success() : failure();
   }
 };
 
