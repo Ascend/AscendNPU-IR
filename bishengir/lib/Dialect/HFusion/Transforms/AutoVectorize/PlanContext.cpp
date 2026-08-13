@@ -55,16 +55,13 @@ void PlanContext::registerAndAnalyzeOp(Operation *op,
   if (auto linalgOp = dyn_cast<linalg::LinalgOp>(op)) {
     opInfo.numReductionLoops = linalgOp.getNumReductionLoops();
     opInfo.numLoops = linalgOp.getNumLoops();
-    // For LinalgOp, its shape corresponds to the shape of operand/result type
-    // whose rank is equal to its numLoops.
-    for (Type ty : allTypes) {
-      if (auto shapedType = dyn_cast<ShapedType>(ty)) {
-        if (shapedType.getRank() == opInfo.numLoops) {
-          opInfo.shape.append(shapedType.getShape().begin(),
-                              shapedType.getShape().end());
-          break;
-        }
-      }
+    if (isa<linalg::TransposeOp>(op) &&
+        analysis::isVsstbPatternTransposeOp(op)) {
+      auto transpose = cast<linalg::TransposeOp>(op);
+      auto shape = transpose.getInput().getType().getShape();
+      opInfo.shape.append(shape.begin(), shape.end());
+    } else {
+      opInfo.shape = linalgOp.getStaticLoopRanges();
     }
     Block *body = &linalgOp->getRegion(0).front();
     body->walk([&](Operation *op) {
