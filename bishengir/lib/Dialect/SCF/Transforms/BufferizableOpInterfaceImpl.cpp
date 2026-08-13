@@ -7,10 +7,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/SCF/Transforms/BufferizableOpInterfaceImpl.h"
-#include "bishengir/Dialect/Utils/OpInterfaceUtils.h"
-#include "bishengir/Dialect/HIVM/Utils/RegbaseUtils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/Utils/RegbaseUtils.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
+#include "bishengir/Dialect/Utils/OpInterfaceUtils.h"
 
 #include "mlir/Dialect/Bufferization/IR/BufferizableOpInterface.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
@@ -121,11 +121,13 @@ AliasingOpOperandList getAliasingOpOperands(Operation *op, Value value,
   return {{yieldOpOperand, BufferRelation::Equivalent}};
 }
 
-// We believe there should not be conflict casued by forOp. Conlict in VF should
-// be caused by read or write ops.
+// We believe that forOp's result should not be conflict with ops in for's
+// region. Conlict in VF should be caused by read or write ops.
 bool isNotConflicting(Operation *op, OpOperand *uRead, OpOperand *uWrite,
-                             const AnalysisState &state) {
-  return hivm::isVF(op->getParentOfType<func::FuncOp>());
+                      const AnalysisState &state) {
+  return hivm::isVF(op->getParentOfType<func::FuncOp>()) &&
+         op->isAncestor(uRead->getOwner()) &&
+         op->isAncestor(uWrite->getOwner());
 }
 } // namespace ForOpInterfaceForOpReuseInPlanMemory
 
@@ -184,7 +186,7 @@ bool mustBufferizeInPlace(Operation *op, OpOperand &opOperand,
 /// Without this interface, all opOperands of "scf.yield %4, %4, %4" will
 /// bufferize out-of-place. And now, the last opOperand will bufferize in-place.
 bool isNotConflicting(Operation *op, OpOperand *uRead, OpOperand *uWrite,
-                             const AnalysisState &state) {
+                      const AnalysisState &state) {
   return uRead->get() == uWrite->get() &&
          uRead->getOwner() == uWrite->getOwner() &&
          uRead->getOperandNumber() < uWrite->getOperandNumber() &&

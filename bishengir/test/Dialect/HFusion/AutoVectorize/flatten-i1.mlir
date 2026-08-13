@@ -1,4 +1,3 @@
-// REQUIRES: regbase
 // RUN: bishengir-opt %s --hfusion-flatten-ops="flatten-mode=tidy register-based=true" 2>&1 | FileCheck %s
 
 // -----

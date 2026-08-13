@@ -20,8 +20,10 @@
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/MemInfo.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/Utility.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/IR/AsmState.h"
 #include "mlir/IR/SymbolTable.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/raw_ostream.h"
 #include <string>
 
 using namespace mlir;
@@ -118,6 +120,47 @@ std::string AllocLikeInfo::str() {
   return ret;
 }
 
+static std::string valueAsOperandStr(Value value) {
+  std::string ret;
+  llvm::raw_string_ostream os(ret);
+  value.printAsOperand(os, OpPrintingFlags());
+  return ret;
+}
+
+static std::string opFoldResultStr(OpFoldResult ofr) {
+  if (auto attr = dyn_cast<Attribute>(ofr)) {
+    if (auto intAttr = dyn_cast<IntegerAttr>(attr)) {
+      return std::to_string(intAttr.getInt());
+    }
+    std::string ret;
+    llvm::raw_string_ostream os(ret);
+    attr.print(os);
+    return ret;
+  }
+  return valueAsOperandStr(cast<Value>(ofr));
+}
+
+static std::string opFoldResultListStr(ArrayRef<OpFoldResult> values) {
+  std::string ret = "[";
+  Comma comma;
+  for (auto value : values) {
+    ret += comma.get();
+    ret += opFoldResultStr(value);
+  }
+  ret += "]";
+  return ret;
+}
+
+std::string SubviewInfo::str() {
+  std::string ret = "SubviewInfo(";
+  ret += "source=" + valueAsOperandStr(source);
+  ret += ", offsets=" + opFoldResultListStr(getOffsets());
+  ret += ", sizes=" + opFoldResultListStr(getSizes());
+  ret += ", strides=" + opFoldResultListStr(getStrides());
+  ret += ")";
+  return ret;
+}
+
 std::string MemInfo::str() {
   std::string ret = "MemInfo";
   if (this->pipe) {
@@ -140,6 +183,10 @@ std::string MemInfo::str() {
   if (this->allocLikeInfo) {
     ret += comma.get();
     ret += this->allocLikeInfo->str();
+  }
+  if (this->subviewInfo) {
+    ret += comma.get();
+    ret += this->subviewInfo->str();
   }
   ret += ")";
   return ret;

@@ -22,21 +22,22 @@
 
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/BuiltinTypes.h"
-#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/IR/TypeRange.h"
-#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 
 #include "llvm/Support/raw_ostream.h"
 
 #include <numeric>
 
-#define CEIL_FACTOR(x, y) (((x) + ((y)-1)) / (y) * (y))
-#define CEIL_DIV(x, y) (((x) + ((y)-1)) / (y))
+#define CEIL_FACTOR(x, y) (((x) + ((y) - 1)) / (y) * (y))
+#define CEIL_DIV(x, y) (((x) + ((y) - 1)) / (y))
 #define UINT8_WIDTH 8
 #define DEBUG_LINE_BEG(m) "===[" #m "]===[BEG]>>>\n"
 #define DEBUG_LINE_END(m) "<<<[" #m "]===[END]===\n"
@@ -95,16 +96,19 @@ struct IsLLVMContainer<T, std::void_t<decltype(std::declval<T>().begin()),
     : public std::true_type {};
 
 // Type trait to check if T supports indexing
-template <typename T, typename = void> struct HasSubscript : public std::false_type {};
+template <typename T, typename = void>
+struct HasSubscript : public std::false_type {};
 
 template <typename T>
 struct HasSubscript<T, std::void_t<decltype(std::declval<T>()[0])>>
     : public std::true_type {};
 
-template <typename T, typename = void> struct IsPrintable : public std::false_type {};
+template <typename T, typename = void>
+struct IsPrintable : public std::false_type {};
 
 template <typename T>
-struct IsPrintable<T, std::void_t<decltype(std::declval<llvm::raw_ostream>() << std::declval<T>())>>
+struct IsPrintable<T, std::void_t<decltype(std::declval<llvm::raw_ostream>()
+                                           << std::declval<T>())>>
     : public std::true_type {};
 
 template <typename T>
@@ -362,6 +366,10 @@ memref::StoreOp createSinglePointStore(
 /// Create tensor.empty or memref.alloc op with the same type as source
 Value createEmptyOp(OpBuilder &builder, Location loc, Value source);
 
+/// Create bufferization.alloc_tensor op with the same type as source
+Value createAllocTensorOp(OpBuilder &builder, Location loc, Value source,
+                          bool copy = false);
+
 ///  Create tensor.empty or memref.alloc op with the same shape as source
 ///  but with element type targetElemType
 Value createEmptyOpWithTargetElemType(
@@ -462,8 +470,8 @@ SmallVector<Value> tracebackMemRefAllocAndAlias(Value memrefVal);
 void fillAncestorOfOperation(SmallPtrSet<Operation *, 3> &container,
                              Operation *op);
 
-/// Returns all operations of specified type from \p scffor. If \p withNested is false
-/// nested scf::ForOp regions are ignored.
+/// Returns all operations of specified type from \p scffor. If \p withNested is
+/// false nested scf::ForOp regions are ignored.
 template <typename T>
 SmallVector<T> collectScfForBodyOperations(scf::ForOp scffor, bool withNested) {
   SmallVector<T> ops;
@@ -481,11 +489,12 @@ SmallVector<T> collectScfForBodyOperations(scf::ForOp scffor, bool withNested) {
 }
 
 /// Trace back \p value operand dependencies to \p block arguments.
-SmallVector<BlockArgument> tracebackOperandsToBlockArguments(Value value, Block* block);
+SmallVector<BlockArgument> tracebackOperandsToBlockArguments(Value value,
+                                                             Block *block);
 
 template <typename... StopOpTys>
-std::optional<Operation*> valueCalculatedUsingOperationInsideBlockImpl(
-  Value value, DenseSet<Value> &visited, Operation *op, Block *block) {
+std::optional<Operation *> valueCalculatedUsingOperationInsideBlockImpl(
+    Value value, DenseSet<Value> &visited, Operation *op, Block *block) {
 
   if (!visited.insert(value).second) {
     return std::nullopt;
@@ -503,7 +512,9 @@ std::optional<Operation*> valueCalculatedUsingOperationInsideBlockImpl(
     }
 
     for (auto operand : defOp->getOperands()) {
-      if (auto foundOp = valueCalculatedUsingOperationInsideBlockImpl<StopOpTys...>(operand, visited, op, block)) {
+      if (auto foundOp =
+              valueCalculatedUsingOperationInsideBlockImpl<StopOpTys...>(
+                  operand, visited, op, block)) {
         return foundOp;
       }
     }
@@ -516,12 +527,15 @@ std::optional<Operation*> valueCalculatedUsingOperationInsideBlockImpl(
 /// Block arguments in \p block are not expanded (loop-carried iter_args are
 /// treated as dependency boundaries).
 template <typename... StopOpTys>
-std::optional<Operation*> valueCalculatedUsingOperationInsideBlock(Value value, Operation *op, Block *block) {
+std::optional<Operation *>
+valueCalculatedUsingOperationInsideBlock(Value value, Operation *op,
+                                         Block *block) {
   if (value.getDefiningOp() == op) {
     return op;
   } else {
     DenseSet<Value> visited;
-    return valueCalculatedUsingOperationInsideBlockImpl<StopOpTys...>(value, visited, op, block);
+    return valueCalculatedUsingOperationInsideBlockImpl<StopOpTys...>(
+        value, visited, op, block);
   }
 }
 
@@ -549,7 +563,8 @@ template <typename T> FailureOr<T> getArithConstantOpValue(Value value) {
   } else if (auto valFPAttr = dyn_cast<FloatAttr>(valueAttr)) {
     v = static_cast<T>(valFPAttr.getValueAsDouble());
   } else {
-    llvm::report_fatal_error("getArithConstantOpValue supports only IntOrFloat");
+    llvm::report_fatal_error(
+        "getArithConstantOpValue supports only IntOrFloat");
   }
   return v;
 }
@@ -660,9 +675,8 @@ void dumpReassociationIndicesVector(
 
 bool isUnstructuredMemAccLoop(Operation *op);
 
-void collectAllEffects(
-    Operation *op,
-    SmallVectorImpl<MemoryEffects::EffectInstance> &effects);
+void collectAllEffects(Operation *op,
+                       SmallVectorImpl<MemoryEffects::EffectInstance> &effects);
 
 int64_t getNumPerRepeat(Type t);
 

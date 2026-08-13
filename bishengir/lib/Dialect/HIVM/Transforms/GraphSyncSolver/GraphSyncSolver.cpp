@@ -76,6 +76,8 @@ void GraphSyncSolverPass::runOnOperation() {
   options.enableUnitFlagFeature = this->enableUnitFlag;
   options.intraCoreIgnoreWorkSpaceFunctionArguments =
       this->ignoreWorkSpaceFunctionArguments;
+  options.enableSubviewConflictRefinement =
+      this->enableSubviewConflictRefinement;
 
   auto irTranslator = std::make_unique<IRTranslator>(funcOp, options);
 

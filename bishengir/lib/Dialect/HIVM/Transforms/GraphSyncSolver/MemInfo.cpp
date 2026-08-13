@@ -24,6 +24,7 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/Value.h"
+#include "mlir/Interfaces/ValueBoundsOpInterface.h"
 #include "llvm/Support/ErrorHandling.h"
 #include <cstdint>
 
@@ -216,7 +217,46 @@ bool AllocLikeInfo::checkConflict(const AllocLikeInfo &allocLikeInfo1,
   return allocLikeInfo1.op == allocLikeInfo2.op;
 }
 
-bool MemInfo::checkConflict(
+SubviewInfo::SubviewInfo(memref::SubViewOp subviewOp)
+    : source(subviewOp.getViewSource()), rank(subviewOp.getMixedSizes().size()) {
+  assert(source.getDefiningOp<hivm::PointerCastOp>() &&
+         "expected subview to be directly backed by a pointer_cast");
+  auto mixedOffsets = subviewOp.getMixedOffsets();
+  auto mixedSizes = subviewOp.getMixedSizes();
+  auto mixedStrides = subviewOp.getMixedStrides();
+  parameters.reserve(3 * rank);
+  parameters.append(mixedOffsets.begin(), mixedOffsets.end());
+  parameters.append(mixedSizes.begin(), mixedSizes.end());
+  parameters.append(mixedStrides.begin(), mixedStrides.end());
+}
+
+std::optional<SubviewInfo> SubviewInfo::tryGet(Value value) {
+  if (auto subviewOp = value.getDefiningOp<memref::SubViewOp>()) {
+    if (subviewOp.getViewSource().getDefiningOp<hivm::PointerCastOp>()) {
+      return SubviewInfo(subviewOp);
+    }
+  }
+  return {};
+}
+
+bool SubviewInfo::checkConflict(const SubviewInfo &subviewInfo1,
+                                const SubviewInfo &subviewInfo2) {
+  if (subviewInfo1.source != subviewInfo2.source) {
+    return true;
+  }
+
+  HyperrectangularSlice slice1(subviewInfo1.getOffsets(),
+                               subviewInfo1.getSizes(),
+                               subviewInfo1.getStrides());
+  HyperrectangularSlice slice2(subviewInfo2.getOffsets(),
+                               subviewInfo2.getSizes(),
+                               subviewInfo2.getStrides());
+  FailureOr<bool> overlapping = areOverlappingStaticSlices(slice1, slice2);
+  // Unknown or dynamic bounds deliberately remain conflicting.
+  return failed(overlapping) || *overlapping;
+}
+
+static bool checkUnderlyingMemoryConflict(
     const MemInfo &memInfo1, const MemInfo &memInfo2,
     std::optional<int64_t> lcmLen, std::optional<int64_t> eventIdNum,
     std::optional<std::pair<int64_t, int64_t>> offsetPair) {
@@ -226,9 +266,9 @@ bool MemInfo::checkConflict(
   }
   if (memInfo1.pointerLikeInfo.has_value() &&
       memInfo2.pointerLikeInfo.has_value()) {
-    return PointerLikeInfo::checkConflict(memInfo1.pointerLikeInfo.value(),
-                                          memInfo2.pointerLikeInfo.value(),
-                                          lcmLen, eventIdNum, offsetPair);
+    return PointerLikeInfo::checkConflict(
+        memInfo1.pointerLikeInfo.value(), memInfo2.pointerLikeInfo.value(),
+        lcmLen, eventIdNum, offsetPair);
   }
   if (memInfo1.allocLikeInfo.has_value() &&
       memInfo2.allocLikeInfo.has_value()) {
@@ -236,6 +276,27 @@ bool MemInfo::checkConflict(
                                         memInfo2.allocLikeInfo.value());
   }
   return memInfo1.value == memInfo2.value;
+}
+
+static bool checkSubviewConflict(const MemInfo &memInfo1,
+                                 const MemInfo &memInfo2) {
+  if (!memInfo1.subviewInfo.has_value() ||
+      !memInfo2.subviewInfo.has_value()) {
+    return true;
+  }
+  return SubviewInfo::checkConflict(memInfo1.subviewInfo.value(),
+                                    memInfo2.subviewInfo.value());
+}
+
+bool MemInfo::checkConflict(
+    const MemInfo &memInfo1, const MemInfo &memInfo2,
+    std::optional<int64_t> lcmLen, std::optional<int64_t> eventIdNum,
+    std::optional<std::pair<int64_t, int64_t>> offsetPair,
+    bool enableSubviewConflictRefinement) {
+  return checkUnderlyingMemoryConflict(memInfo1, memInfo2, lcmLen, eventIdNum,
+                                       offsetPair) &&
+         (!enableSubviewConflictRefinement ||
+          checkSubviewConflict(memInfo1, memInfo2));
 }
 
 MemInfo MemInfo::getMemInfo(Value value, std::optional<PIPE> pipe) {
@@ -247,6 +308,15 @@ MemInfo MemInfo::getMemInfo(Value value, std::optional<PIPE> pipe) {
   }
   if (auto allocLikeInfo = AllocLikeInfo::tryGet(value)) {
     return MemInfo(value, allocLikeInfo.value(), pipe);
+  }
+
+  if (auto subviewInfo = SubviewInfo::tryGet(value)) {
+    auto pointerLikeInfo = PointerLikeInfo::tryGet(subviewInfo->source);
+    assert(pointerLikeInfo.has_value() &&
+           "expected subview source to have pointer-like info");
+    MemInfo memInfo(subviewInfo->source, pointerLikeInfo.value(), pipe);
+    memInfo.subviewInfo = std::move(subviewInfo);
+    return memInfo;
   }
   return MemInfo(value, pipe);
 }

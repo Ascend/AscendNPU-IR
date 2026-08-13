@@ -139,17 +139,21 @@ module {
 // -----
 
 // CHECK-LABEL: func.func @nested_for_with_anchor_outside(
+// CHECK: linalg.fill
 // CHECK: linalg.elemwise_unary
 // CHECK: linalg.elemwise_binary
 // CHECK: hfusion.cast
 // CHECK: hfusion.bitcast
 // CHECK-NOT: call @nested_for_with_anchor_outside_fused_0
+// CHECK: return
 
 // OPTS-OFF-LABEL: func.func @nested_for_with_anchor_outside(
+// OPTS-OFF: linalg.fill
 // OPTS-OFF: linalg.elemwise_unary
 // OPTS-OFF: linalg.elemwise_binary
 // OPTS-OFF: hfusion.cast
 // OPTS-OFF: hfusion.bitcast
+// OPTS-OFF: return
 
 module {
   func.func @nested_for_with_anchor_outside(%arg0: i32, %arg1: i32, %arg2: i32, %arg3: i32, %arg4: i32, %arg5: i32, %arg6: i32, %arg7: tensor<16x4x4x16xf16>, %arg8: f16) -> tensor<64x64xi32> attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"} {
@@ -178,12 +182,14 @@ module {
 // -----
 
 // CHECK-LABEL: func.func @nested_for_with_outside_use(
+// CHECK: linalg.fill
 // CHECK: scf.for
 // CHECK: scf.for
 // CHECK: linalg.elemwise_unary
 // CHECK: linalg.elemwise_unary
 
 // OPTS-OFF-LABEL: func.func @nested_for_with_outside_use(
+// OPTS-OFF: linalg.fill
 // OPTS-OFF: scf.for
 // OPTS-OFF: scf.for
 // OPTS-OFF: linalg.elemwise_unary

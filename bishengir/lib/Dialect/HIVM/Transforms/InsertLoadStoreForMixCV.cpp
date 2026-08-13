@@ -1040,6 +1040,8 @@ InsertLoadStoreForMixCVPass::runPropagateOpPatterns(func::FuncOp funcOp,
   GreedyRewriteConfig rewriteConfig;
   patterns.add<PropagateUpPattern>(patterns.getContext(), step, isA5Target());
   patterns.add<PropagateDownPattern>(patterns.getContext(), step);
+  if (step != PropagationStep::LOCAL && step != PropagationStep::ALL)
+    patterns.add<ControlFlowPropagatePattern>(patterns.getContext(), step);
   patterns.add<ResolvePropagationPattern, RemoveRedundantPropagationPattern>(
       patterns.getContext());
   rewriteConfig.fold = false;
@@ -1091,11 +1093,7 @@ InsertLoadStoreForMixCVPass::insertPropagationOp(func::FuncOp funcOp) {
 
 SmallVector<PropagationStep>
 InsertLoadStoreForMixCVPass::getPropagationSteps() {
-  if (isA5Target()) {
-    return {PropagationStep::L0C, PropagationStep::LOCAL, PropagationStep::UB,
-            PropagationStep::L1, PropagationStep::ALL};
-  }
-  return {PropagationStep::LOCAL, PropagationStep::GM, PropagationStep::UB,
+  return {PropagationStep::L0C, PropagationStep::LOCAL, PropagationStep::UB,
           PropagationStep::L1, PropagationStep::ALL};
 }
 

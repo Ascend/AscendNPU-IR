@@ -13,8 +13,13 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/Utils/Utils.h"
+#include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
+#include "mlir/IR/AffineExpr.h"
+#include "mlir/IR/AffineMap.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+
+#include <optional>
 
 #define DEBUG_TYPE "ave-i1op-soft-impl"
 #define LDBG(X) LLVM_DEBUG(llvm::dbgs() << X << "\n")
@@ -31,12 +36,17 @@ using namespace mlir::hivmave;
 static constexpr llvm::StringLiteral i1ProcessedAttr = "1xi1 processed";
 
 namespace {
+/// Describes a singleton i1 access as a root memref plus the corresponding
+/// linearized bit offset inside that root storage.
 struct LinearizedI1Access {
   Value rootMemref;
   Value linearBitOffset;
+  std::optional<OpFoldResult> linearBitSize;
 };
 } // namespace
 
+/// Returns the static strides of a memref. Falls back to row-major strides
+/// if the layout map does not expose explicit stride information.
 static SmallVector<int64_t> getStaticStrides(MemRefType memRefTy) {
   SmallVector<int64_t> strides(memRefTy.getRank());
   int64_t offset = 0;
@@ -55,6 +65,179 @@ static SmallVector<int64_t> getStaticStrides(MemRefType memRefTy) {
   return strides;
 }
 
+/// Returns whether a memref is a unit-stride rank-1 byte buffer that can
+/// legally serve as the base of memref.view.
+static bool isSupportedByteViewSource(MemRefType memRefTy) {
+  if (memRefTy.getRank() != 1 || !memRefTy.getElementType().isInteger(8))
+    return false;
+  if (memRefTy.getLayout().isIdentity())
+    return true;
+
+  SmallVector<int64_t> strides(memRefTy.getRank());
+  int64_t offset = 0;
+  if (failed(getStridesAndOffset(memRefTy, strides, offset)))
+    return false;
+  return offset == 0 && strides[0] == 1;
+}
+
+static Value buildStridedLinearOffset(PatternRewriter &rewriter, Location loc,
+                                      OpFoldResult baseOffset,
+                                      ValueRange indices,
+                                      ArrayRef<OpFoldResult> strides) {
+  Value linearOffset =
+      getValueOrCreateConstantIndexOp(rewriter, loc, baseOffset);
+  for (auto [index, stride] : llvm::zip(indices, strides)) {
+    Value strideValue = getValueOrCreateConstantIndexOp(rewriter, loc, stride);
+    Value scaledIndex = rewriter.create<arith::MulIOp>(loc, index, strideValue);
+    linearOffset =
+        rewriter.create<arith::AddIOp>(loc, linearOffset, scaledIndex);
+  }
+  return linearOffset;
+}
+
+static OpFoldResult buildStridedStorageSpan(PatternRewriter &rewriter,
+                                            Location loc,
+                                            OpFoldResult baseOffset,
+                                            ArrayRef<OpFoldResult> sizes,
+                                            ArrayRef<OpFoldResult> strides) {
+  bool allStatic = true;
+  int64_t staticSpan = 1;
+  if (auto staticOffset = mlir::getConstantIntValue(baseOffset)) {
+    staticSpan += *staticOffset;
+  } else {
+    allStatic = false;
+  }
+
+  for (auto [size, stride] : llvm::zip(sizes, strides)) {
+    auto staticSize = mlir::getConstantIntValue(size);
+    auto staticStride = mlir::getConstantIntValue(stride);
+    if (!staticSize || !staticStride) {
+      allStatic = false;
+      break;
+    }
+    staticSpan += (*staticSize - 1) * *staticStride;
+  }
+
+  if (allStatic)
+    return rewriter.getIndexAttr(staticSpan);
+
+  Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+  Value span = rewriter.create<arith::AddIOp>(
+      loc, getValueOrCreateConstantIndexOp(rewriter, loc, baseOffset), one);
+  for (auto [size, stride] : llvm::zip(sizes, strides)) {
+    Value sizeValue = getValueOrCreateConstantIndexOp(rewriter, loc, size);
+    Value strideValue = getValueOrCreateConstantIndexOp(rewriter, loc, stride);
+    Value dimMinusOne = rewriter.create<arith::SubIOp>(loc, sizeValue, one);
+    Value dimSpan =
+        rewriter.create<arith::MulIOp>(loc, dimMinusOne, strideValue);
+    span = rewriter.create<arith::AddIOp>(loc, span, dimSpan);
+  }
+  return getAsOpFoldResult(span);
+}
+
+static OpFoldResult buildByteBufferBitSize(PatternRewriter &rewriter,
+                                           Location loc, Value byteBuffer,
+                                           MemRefType byteBufferTy) {
+  if (byteBufferTy.hasStaticShape())
+    return rewriter.getIndexAttr(byteBufferTy.getDimSize(0) *
+                                 util::BITS_PER_BYTE);
+
+  Value byteSize = rewriter.create<memref::DimOp>(loc, byteBuffer, 0);
+  Value bitsPerByte =
+      rewriter.create<arith::ConstantIndexOp>(loc, util::BITS_PER_BYTE);
+  Value bitSize = rewriter.create<arith::MulIOp>(loc, byteSize, bitsPerByte);
+  return getAsOpFoldResult(bitSize);
+}
+
+/// Returns the row-major logical strides of a shaped value based only on shape.
+///
+/// Unlike getStaticStrides(), this helper intentionally ignores the memref
+/// layout map. It is used for shape-changing ops whose semantics preserve the
+/// logical element order while changing rank/shape.
+static SmallVector<int64_t> getLogicalRowMajorStrides(ArrayRef<int64_t> shape) {
+  SmallVector<int64_t> strides(shape.size());
+  int64_t runningStride = 1;
+  for (int64_t i = static_cast<int64_t>(shape.size()) - 1; i >= 0; --i) {
+    strides[i] = runningStride;
+    runningStride *= shape[i];
+  }
+  return strides;
+}
+
+/// Computes the row-major logical linear index for a set of indices.
+///
+/// This is different from computeLinearMemRefOffset(): it ignores the current
+/// layout map and only follows the logical shape order of the memref.
+static FailureOr<Value> computeLogicalLinearIndex(PatternRewriter &rewriter,
+                                                  Location loc,
+                                                  MemRefType memRefTy,
+                                                  ValueRange indices) {
+  if (!memRefTy.hasStaticShape() ||
+      indices.size() != static_cast<size_t>(memRefTy.getRank()))
+    return failure();
+
+  SmallVector<int64_t> strides = getLogicalRowMajorStrides(memRefTy.getShape());
+  Value linearIndex = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+  for (auto [dim, index] : llvm::enumerate(indices)) {
+    Value strideVal =
+        rewriter.create<arith::ConstantIndexOp>(loc, strides[dim]);
+    Value scaledIndex = rewriter.create<arith::MulIOp>(loc, index, strideVal);
+    linearIndex = rewriter.create<arith::AddIOp>(loc, linearIndex, scaledIndex);
+  }
+  return linearIndex;
+}
+
+/// Reconstructs source indices from a logical linear index and the source
+/// shape, assuming row-major logical element order.
+static FailureOr<SmallVector<Value>>
+buildIndicesFromLogicalLinearIndex(PatternRewriter &rewriter, Location loc,
+                                   MemRefType sourceTy, Value linearIndex) {
+  if (!sourceTy.hasStaticShape())
+    return failure();
+
+  SmallVector<Value> sourceIndices;
+  sourceIndices.reserve(sourceTy.getRank());
+  if (sourceTy.getRank() == 0)
+    return sourceIndices;
+
+  SmallVector<int64_t> strides = getLogicalRowMajorStrides(sourceTy.getShape());
+  Value remaining = linearIndex;
+  for (int64_t dim = 0, e = sourceTy.getRank(); dim < e; ++dim) {
+    Value indexAtDim = remaining;
+    if (dim + 1 < e) {
+      Value strideVal =
+          rewriter.create<arith::ConstantIndexOp>(loc, strides[dim]);
+      indexAtDim = rewriter.create<arith::DivSIOp>(loc, remaining, strideVal);
+      Value consumed =
+          rewriter.create<arith::MulIOp>(loc, indexAtDim, strideVal);
+      remaining = rewriter.create<arith::SubIOp>(loc, remaining, consumed);
+    }
+    sourceIndices.push_back(indexAtDim);
+  }
+  return sourceIndices;
+}
+
+/// Maps a shape-changing result access back to the source indices by going
+/// through the shared row-major logical linear index.
+static FailureOr<SmallVector<Value>>
+buildShapeChangingSourceIndices(PatternRewriter &rewriter, Location loc,
+                                MemRefType resultTy, ValueRange resultIndices,
+                                MemRefType sourceTy) {
+  if (!resultTy.hasStaticShape() || !sourceTy.hasStaticShape() ||
+      resultTy.getNumElements() != sourceTy.getNumElements())
+    return failure();
+
+  auto linearIndex =
+      computeLogicalLinearIndex(rewriter, loc, resultTy, resultIndices);
+  if (failed(linearIndex))
+    return failure();
+  return buildIndicesFromLogicalLinearIndex(rewriter, loc, sourceTy,
+                                            *linearIndex);
+}
+
+/// Recursively traces a singleton i1 access through supported view-like ops
+/// and returns the root memref plus the linearized bit offset of the unique
+/// accessed element.
 static FailureOr<LinearizedI1Access>
 linearizeSingleElementI1Access(PatternRewriter &rewriter, Location loc,
                                Value baseMemref, ValueRange indices) {
@@ -65,11 +248,16 @@ linearizeSingleElementI1Access(PatternRewriter &rewriter, Location loc,
 
   Operation *defOp = baseMemref.getDefiningOp();
   if (!defOp) {
-    return LinearizedI1Access{baseMemref,
-                              computeLinearMemRefOffset(
-                                  rewriter, loc, baseMemref, indices,
-                                  rewriter.getIndexType())};
+    return LinearizedI1Access{
+        baseMemref,
+        computeLinearMemRefOffset(rewriter, loc, baseMemref, indices,
+                                  rewriter.getIndexType()),
+        std::nullopt};
   }
+
+  if (auto castOp = dyn_cast<memref::CastOp>(defOp))
+    return linearizeSingleElementI1Access(rewriter, loc, castOp.getSource(),
+                                          indices);
 
   if (auto subViewOp = dyn_cast<memref::SubViewOp>(defOp)) {
     SmallVector<Value> sourceIndices;
@@ -99,61 +287,181 @@ linearizeSingleElementI1Access(PatternRewriter &rewriter, Location loc,
                                           sourceIndices);
   }
 
-  if (auto castOp = dyn_cast<memref::CastOp>(defOp))
-    return linearizeSingleElementI1Access(rewriter, loc, castOp.getSource(),
-                                          indices);
+  if (auto transposeOp = dyn_cast<memref::TransposeOp>(defOp)) {
+    auto sourceTy = cast<MemRefType>(transposeOp.getIn().getType());
+    SmallVector<Value> sourceIndices(sourceTy.getRank());
+    AffineMap permutation = transposeOp.getPermutation();
+    for (auto [resultDim, expr] : llvm::enumerate(permutation.getResults())) {
+      unsigned sourceDim = cast<AffineDimExpr>(expr).getPosition();
+      sourceIndices[sourceDim] = indices[resultDim];
+    }
+    return linearizeSingleElementI1Access(rewriter, loc, transposeOp.getIn(),
+                                          sourceIndices);
+  }
 
-  return LinearizedI1Access{baseMemref,
-                            computeLinearMemRefOffset(
-                                rewriter, loc, baseMemref, indices,
-                                rewriter.getIndexType())};
+  if (auto collapseOp = dyn_cast<memref::CollapseShapeOp>(defOp)) {
+    MemRefType sourceTy = collapseOp.getSrcType();
+    auto sourceIndices = buildShapeChangingSourceIndices(
+        rewriter, loc, memRefTy, indices, sourceTy);
+    if (failed(sourceIndices))
+      return failure();
+    return linearizeSingleElementI1Access(rewriter, loc, collapseOp.getSrc(),
+                                          *sourceIndices);
+  }
+
+  if (auto expandOp = dyn_cast<memref::ExpandShapeOp>(defOp)) {
+    MemRefType sourceTy = expandOp.getSrcType();
+    auto sourceIndices = buildShapeChangingSourceIndices(
+        rewriter, loc, memRefTy, indices, sourceTy);
+    if (failed(sourceIndices))
+      return failure();
+    return linearizeSingleElementI1Access(rewriter, loc, expandOp.getSrc(),
+                                          *sourceIndices);
+  }
+
+  if (auto reshapeOp = dyn_cast<memref::ReshapeOp>(defOp)) {
+    auto sourceTy = dyn_cast<MemRefType>(reshapeOp.getSource().getType());
+    if (!sourceTy)
+      return failure();
+    auto sourceIndices = buildShapeChangingSourceIndices(
+        rewriter, loc, memRefTy, indices, sourceTy);
+    if (failed(sourceIndices))
+      return failure();
+    return linearizeSingleElementI1Access(rewriter, loc, reshapeOp.getSource(),
+                                          *sourceIndices);
+  }
+
+  if (auto reinterpretCastOp = dyn_cast<memref::ReinterpretCastOp>(defOp)) {
+    auto sourceTy =
+        dyn_cast<MemRefType>(reinterpretCastOp.getSource().getType());
+    if (!sourceTy || !memRefTy.getElementType().isInteger(1))
+      return failure();
+
+    SmallVector<OpFoldResult> mixedOffsets =
+        reinterpretCastOp.getMixedOffsets();
+    SmallVector<OpFoldResult> mixedSizes = reinterpretCastOp.getMixedSizes();
+    SmallVector<OpFoldResult> mixedStrides =
+        reinterpretCastOp.getMixedStrides();
+
+    Value linearOffset = buildStridedLinearOffset(
+        rewriter, loc, mixedOffsets.front(), indices, mixedStrides);
+    OpFoldResult linearSize = buildStridedStorageSpan(
+        rewriter, loc, mixedOffsets.front(), mixedSizes, mixedStrides);
+    return LinearizedI1Access{reinterpretCastOp.getSource(), linearOffset,
+                              linearSize};
+  }
+
+  if (auto viewOp = dyn_cast<memref::ViewOp>(defOp)) {
+    auto sourceTy = cast<MemRefType>(viewOp.getSource().getType());
+    if (!memRefTy.getElementType().isInteger(1))
+      return failure();
+
+    Value byteShift =
+        getValueOrCreateConstantIndexOp(rewriter, loc, viewOp.getByteShift());
+    Value bitsPerByte =
+        rewriter.create<arith::ConstantIndexOp>(loc, util::BITS_PER_BYTE);
+    Value bitShift =
+        rewriter.create<arith::MulIOp>(loc, byteShift, bitsPerByte);
+    Value viewElementOffset = computeLinearMemRefOffset(
+        rewriter, loc, baseMemref, indices, rewriter.getIndexType());
+    Value linearOffset =
+        rewriter.create<arith::AddIOp>(loc, bitShift, viewElementOffset);
+    OpFoldResult linearSize =
+        buildByteBufferBitSize(rewriter, loc, viewOp.getSource(), sourceTy);
+    return LinearizedI1Access{viewOp.getSource(), linearOffset, linearSize};
+  }
+
+  return LinearizedI1Access{
+      baseMemref, computeLinearMemRefOffset(rewriter, loc, baseMemref, indices,
+                                            rewriter.getIndexType()),
+      std::nullopt};
 }
 
-static FailureOr<Value> buildRawLinearI1View(PatternRewriter &rewriter,
-                                             Location loc, Value rootMemref) {
+/// Reinterprets the root singleton source as a linear 1D i1 memref so the
+/// aligned VL load path can be reused for higher-rank or unaligned accesses.
+static FailureOr<Value>
+buildRawLinearI1View(PatternRewriter &rewriter, Location loc, Value rootMemref,
+                     std::optional<OpFoldResult> linearBitSize = std::nullopt) {
   auto rootTy = dyn_cast<MemRefType>(rootMemref.getType());
-  if (!rootTy || !rootTy.hasStaticShape())
+  if (!rootTy)
     return failure();
 
-  SmallVector<int64_t> strides = getStaticStrides(rootTy);
-  bool hasDynamicStride = false;
-  for (int64_t stride : strides) {
-    if (ShapedType::isDynamic(stride)) {
-      hasDynamicStride = true;
-      break;
+  if (rootTy.getElementType().isInteger(1)) {
+    int64_t staticSpan = ShapedType::kDynamic;
+    SmallVector<OpFoldResult> linearSizes;
+
+    if (linearBitSize) {
+      staticSpan = mlir::getConstantIntValue(*linearBitSize)
+                       .value_or(ShapedType::kDynamic);
+      linearSizes.push_back(*linearBitSize);
+    } else {
+      if (!rootTy.hasStaticShape())
+        return failure();
+
+      SmallVector<int64_t> strides = getStaticStrides(rootTy);
+      bool hasDynamicStride = false;
+      for (int64_t stride : strides) {
+        if (ShapedType::isDynamic(stride)) {
+          hasDynamicStride = true;
+          break;
+        }
+      }
+
+      if (!hasDynamicStride) {
+        staticSpan = 1;
+        for (auto [dim, stride] : llvm::zip(rootTy.getShape(), strides))
+          staticSpan += (dim - 1) * stride;
+        linearSizes.push_back(rewriter.getIndexAttr(staticSpan));
+      }
     }
+
+    auto metadata =
+        rewriter.create<memref::ExtractStridedMetadataOp>(loc, rootMemref);
+    if (linearSizes.empty()) {
+      Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+      Value span = one;
+      for (auto [size, stride] :
+           llvm::zip(metadata.getSizes(), metadata.getStrides())) {
+        Value dimMinusOne = rewriter.create<arith::SubIOp>(loc, size, one);
+        Value dimSpan =
+            rewriter.create<arith::MulIOp>(loc, dimMinusOne, stride);
+        span = rewriter.create<arith::AddIOp>(loc, span, dimSpan);
+      }
+      linearSizes.push_back(span);
+    }
+
+    auto linearTy =
+        MemRefType::get({staticSpan}, rootTy.getElementType(),
+                        StridedLayoutAttr::get(rewriter.getContext(),
+                                               ShapedType::kDynamic, {1}),
+                        rootTy.getMemorySpace());
+    auto rawView = rewriter.create<memref::ReinterpretCastOp>(
+        loc, linearTy, metadata.getBaseBuffer(),
+        getAsOpFoldResult(metadata.getOffset()), linearSizes,
+        SmallVector<OpFoldResult>{rewriter.getIndexAttr(1)});
+    return rawView.getResult();
   }
 
-  int64_t staticSpan = ShapedType::kDynamic;
-  SmallVector<OpFoldResult> linearSizes;
-  if (!hasDynamicStride) {
-    staticSpan = 1;
-    for (auto [dim, stride] : llvm::zip(rootTy.getShape(), strides))
-      staticSpan += (dim - 1) * stride;
-    linearSizes.push_back(rewriter.getIndexAttr(staticSpan));
-  }
-  auto linearTy = MemRefType::get(
-      {staticSpan}, rootTy.getElementType(),
-      StridedLayoutAttr::get(rewriter.getContext(), ShapedType::kDynamic, {1}),
-      rootTy.getMemorySpace());
-  auto metadata =
-      rewriter.create<memref::ExtractStridedMetadataOp>(loc, rootMemref);
-  if (linearSizes.empty()) {
-    Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
-    Value span = one;
-    for (auto [size, stride] :
-         llvm::zip(metadata.getSizes(), metadata.getStrides())) {
-      Value dimMinusOne = rewriter.create<arith::SubIOp>(loc, size, one);
-      Value dimSpan = rewriter.create<arith::MulIOp>(loc, dimMinusOne, stride);
-      span = rewriter.create<arith::AddIOp>(loc, span, dimSpan);
-    }
-    linearSizes.push_back(span);
-  }
-  auto rawView = rewriter.create<memref::ReinterpretCastOp>(
-      loc, linearTy, metadata.getBaseBuffer(), getAsOpFoldResult(metadata.getOffset()),
-      linearSizes,
-      SmallVector<OpFoldResult>{rewriter.getIndexAttr(1)});
-  return rawView.getResult();
+  if (!rootTy.getElementType().isInteger(8) ||
+      !isSupportedByteViewSource(rootTy))
+    return failure();
+
+  OpFoldResult bitSize =
+      linearBitSize ? *linearBitSize
+                    : buildByteBufferBitSize(rewriter, loc, rootMemref, rootTy);
+  int64_t staticBitSize =
+      mlir::getConstantIntValue(bitSize).value_or(ShapedType::kDynamic);
+  SmallVector<Value> dynamicSizes;
+  if (ShapedType::isDynamic(staticBitSize))
+    dynamicSizes.push_back(
+        getValueOrCreateConstantIndexOp(rewriter, loc, bitSize));
+
+  auto linearBitTy = MemRefType::get({staticBitSize}, rewriter.getI1Type(),
+                                     AffineMap(), rootTy.getMemorySpace());
+  Value zero = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+  auto rawBitView = rewriter.create<memref::ViewOp>(
+      loc, linearBitTy, rootMemref, zero, dynamicSizes);
+  return rawBitView.getResult();
 }
 
 // Decompose a memory offset into a VL-aligned base and an intra-VL offset.
@@ -274,20 +582,27 @@ struct loadBroadcastPattern : public OpRewritePattern<hivmave::VFLoadOp> {
     loadOp->setAttr(i1ProcessedAttr, rewriter.getUnitAttr());
   }
 
+  /// Rewrites a singleton i1 load by:
+  ///   1. tracing the load back to a supported root memref,
+  ///   2. building a raw 1D i1 view on that root storage,
+  ///   3. reloading from a VL-aligned base, and
+  ///   4. reusing convertI1ToPreg() with offsetInVL to broadcast the selected
+  ///      bit into the final predicate vector.
   LogicalResult rewriteLoadI1Linearized(mlir::hivmave::VFLoadOp loadOp,
                                         PatternRewriter &rewriter) const {
     Location loc = loadOp.getLoc();
     rewriter.setInsertionPointAfter(loadOp);
-    auto linearized =
-        linearizeSingleElementI1Access(rewriter, loc, loadOp.getBase(),
-                                       loadOp.getIndices());
+    auto linearized = linearizeSingleElementI1Access(
+        rewriter, loc, loadOp.getBase(), loadOp.getIndices());
     if (failed(linearized))
       return failure();
-    auto rawLinearView =
-        buildRawLinearI1View(rewriter, loc, linearized->rootMemref);
+    auto rawLinearView = buildRawLinearI1View(
+        rewriter, loc, linearized->rootMemref, linearized->linearBitSize);
     if (failed(rawLinearView))
       return failure();
 
+    // Split the linearized bit position into a VL-aligned base and the lane
+    // offset inside that loaded VL chunk.
     auto [baseIndices, offsetInVL] =
         getBaseAndOffetInVL(rewriter, loc, linearized->linearBitOffset);
     VectorType orgVectorTy = loadOp.getVectorType();

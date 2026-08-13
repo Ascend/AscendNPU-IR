@@ -1,4 +1,3 @@
-// REQUIRES: regbase
 // RUN: bishengir-opt --hacc-append-device-spec="target=Ascend910_9579" --vf-fusion="fusion-mode=max-parallel enable-ar enable-ra enable-ar" --split-input-file %s | FileCheck %s
 
 // TODO(regbase): Non-regbase target_device_spec parsing rejects regbase-only

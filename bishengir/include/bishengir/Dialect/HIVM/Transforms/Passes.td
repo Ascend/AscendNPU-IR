@@ -397,6 +397,10 @@ def GraphSyncSolver : Pass<"hivm-graph-sync-solver", "func::FuncOp"> {
                         "Ignore workspace function arguments.">,
                  Option<"enableTesterMode", "enable-tester-mode", "bool",
                         /*default=*/"false", "Enable sync-tester mode">,
+                 Option<"enableSubviewConflictRefinement",
+                        "enable-subview-conflict-refinement", "bool",
+                        /*default=*/"true",
+                        "Use disjoint direct subviews to refine memory conflicts">,
                  ListOption<"syncTesterOptions", "sync-tester-options",
                             "int64_t",
                             "Sync-tester options (num_runs, init_seed, "

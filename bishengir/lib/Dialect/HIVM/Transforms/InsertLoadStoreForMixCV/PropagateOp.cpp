@@ -17,12 +17,15 @@
 
 #include "bishengir/Dialect/HIVM/Transforms/InsertLoadStoreForMixCV/PropagateOp.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/InsertLoadStoreForMixCV/Utils.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/Interfaces/ControlFlowInterfaces.h"
 
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/LogicalResult.h"
@@ -33,6 +36,7 @@
 #define LDBG(X) LLVM_DEBUG(DBGS() << X << "\n")
 
 namespace mlir::hivm {
+namespace {
 
 static bool checkPropagate(PropagationStep step,
                            UnrealizedConversionCastOp propagateOp) {
@@ -56,203 +60,121 @@ static bool checkPropagate(PropagationStep step,
   }
 }
 
-// %19 = scf.if %7 -> (tensor<32xf32>) {
-//   %30 = builtin.unrealized_conversion_cast %29 : tensor<32xf32> to
-//   tensor<32xf32> {hivm.address_space = [#hivm.address_space<ub>],
-//   hivm.tcore_type = #hivm.tcore_type<VECTOR>, propagate_up} scf.yield %30 :
-//   tensor<32xf32>
-// } else {
-//   %31 = builtin.unrealized_conversion_cast %30 : tensor<32xf32> to
-//   tensor<32xf32> {hivm.address_space = [#hivm.address_space<ub>],
-//   hivm.tcore_type = #hivm.tcore_type<VECTOR>, propagate_up} scf.yield %31 :
-//   tensor<32xf32>
-// }
-// %20 = builtin.unrealized_conversion_cast %19 : tensor<32xf32> to
-// tensor<32xf32> {hivm.address_space = [#hivm.address_space<ub>],
-// hivm.tcore_type = #hivm.tcore_type<VECTOR>, propagate_down}
-static LogicalResult propagateIfOp(scf::IfOp op, OpResult res,
-                                   UnrealizedConversionCastOp propagateOp,
-                                   PatternRewriter &rewriter) {
-  auto resIdx = res.getResultNumber();
-  PropagatorUtil::createPropagatorDown(res, propagateOp, rewriter);
-  PropagatorUtil::createPropagatorUp(
-      &op.thenYield().getResultsMutable()[resIdx], propagateOp, rewriter);
-  PropagatorUtil::createPropagatorUp(
-      &op.elseYield().getResultsMutable()[resIdx], propagateOp, rewriter);
-  return success();
-}
-
+/// Mirror propagate markers across the RegionBranch connected component of
+/// `seed`. While before/after channels stay separate because they share no
+/// edges. Returns failure if `seed` is not on any forwarded edge (e.g. for IV).
 static LogicalResult
-propagateIndexSwitchOp(scf::IndexSwitchOp op, OpResult res,
-                       UnrealizedConversionCastOp propagateOp,
-                       PatternRewriter &rewriter) {
-  auto resIdx = res.getResultNumber();
-  PropagatorUtil::createPropagatorDown(res, propagateOp, rewriter);
-  for (auto &region : op->getRegions()) {
-    auto yieldOp = cast<scf::YieldOp>(region.front().getTerminator());
-    PropagatorUtil::createPropagatorUp(&yieldOp.getResultsMutable()[resIdx],
-                                       propagateOp, rewriter);
-  }
-  return success();
-}
-
-// %229 = builtin.unrealized_conversion_cast %228 : tensor<32x64xbf16> to
-// tensor<32x64xbf16> {hivm.address_space = [#hivm.address_space<ub>],
-// hivm.tcore_type = #hivm.tcore_type<VECTOR>, propagate_up} %230 = scf.for ...
-// iter_args(%arg31 = %229) -> (tensor<32x64xbf16>) {
-//   %280 = builtin.unrealized_conversion_cast %arg31 : tensor<32x64xbf16> to
-//   tensor<32x64xbf16> {hivm.address_space = [#hivm.address_space<ub>],
-//   hivm.tcore_type = #hivm.tcore_type<VECTOR>, propagate_down}
-//   ...
-//   %284 = builtin.unrealized_conversion_cast %283 : tensor<32x64xbf16> to
-//   tensor<32x64xbf16> {hivm.address_space = [#hivm.address_space<ub>],
-//   hivm.tcore_type = #hivm.tcore_type<VECTOR>, propagate_up} scf.yield %284 :
-//   tensor<32x64xbf16>
-// }
-// %231 = builtin.unrealized_conversion_cast %230 : tensor<32x64xbf16> to
-// tensor<32x64xbf16> {hivm.address_space = [#hivm.address_space<ub>],
-// hivm.tcore_type = #hivm.tcore_type<VECTOR>, propagate_down
-static LogicalResult propagateForOp(scf::ForOp op, OpOperand &operand,
-                                    UnrealizedConversionCastOp propagateOp,
-                                    PatternRewriter &rewriter) {
-  PropagatorUtil::createPropagatorUp(&operand, propagateOp, rewriter);
-
-  auto regionIterArg = op.getTiedLoopRegionIterArg(&operand);
-  if (regionIterArg) {
-    PropagatorUtil::createPropagatorDown(regionIterArg, propagateOp, rewriter);
-
-    auto *yield = op.getTiedLoopYieldedValue(regionIterArg);
-    PropagatorUtil::createPropagatorUp(yield, propagateOp, rewriter);
-
-    auto res = op.getTiedLoopResult(&operand);
-    PropagatorUtil::createPropagatorDown(res, propagateOp, rewriter);
-  }
-  return success();
-}
-
-// %16 = builtin.unrealized_conversion_cast %15 : tensor<128xf32> to
-// tensor<128xf32> {hivm.address_space = [#hivm.address_space<cbuf>],
-// hivm.tcore_type = #hivm.tcore_type<CUBE>, propagate_up} %17:2 = scf.while
-// (%arg8 = %16, %arg9 = %c0_i32) : (tensor<128xf32>, i32) -> (tensor<128xf32>,
-// i32) {
-//   %18 = builtin.unrealized_conversion_cast %arg8 : tensor<128xf32> to
-//   tensor<128xf32> {hivm.address_space = [#hivm.address_space<cbuf>],
-//   hivm.tcore_type = #hivm.tcore_type<CUBE>, propagate_down}
-//   ...
-//   %20 = builtin.unrealized_conversion_cast %18 : tensor<128xf32> to
-//   tensor<128xf32> {hivm.address_space = [#hivm.address_space<ub>],
-//   hivm.tcore_type = #hivm.tcore_type<VECTOR>, propagate_up}
-//   scf.condition(%19) %20, %arg9 : tensor<128xf32>, i32
-// } do {
-// ^bb0(%arg8: tensor<128xf32>, %arg9: i32):
-//   %18 = builtin.unrealized_conversion_cast %arg8 : tensor<128xf32> to
-//   tensor<128xf32> {hivm.address_space = [#hivm.address_space<ub>],
-//   hivm.tcore_type = #hivm.tcore_type<VECTOR>, propagate_down}
-//   ...
-//   %40 = builtin.unrealized_conversion_cast %39 : tensor<128xf32> to
-//   tensor<128xf32> {hivm.address_space = [#hivm.address_space<cbuf>],
-//   hivm.tcore_type = #hivm.tcore_type<CUBE>, propagate_up} scf.yield %40, %38
-//   : tensor<128xf32>, i32
-// }
-// %18 = builtin.unrealized_conversion_cast %17#0 : tensor<128xf32> to
-// tensor<128xf32> {hivm.address_space = [#hivm.address_space<ub>],
-// hivm.tcore_type = #hivm.tcore_type<VECTOR>, propagate_down}
-static LogicalResult
-propagateWhileOpOperand(scf::WhileOp op, size_t operandNumber,
-                        UnrealizedConversionCastOp propagateOp,
-                        PatternRewriter &rewriter) {
-  auto &initArg = op.getInitsMutable()[operandNumber];
-  PropagatorUtil::createPropagatorUp(&initArg, propagateOp, rewriter);
-  auto beforeArg = op.getBeforeArguments()[operandNumber];
-  PropagatorUtil::createPropagatorDown(beforeArg, propagateOp, rewriter);
-  auto &yield = op.getYieldOp().getResultsMutable()[operandNumber];
-  PropagatorUtil::createPropagatorUp(&yield, propagateOp, rewriter);
-  return success();
-}
-
-static LogicalResult
-propagateWhileOpResult(scf::WhileOp op, size_t resultNumber,
-                       UnrealizedConversionCastOp propagateOp,
-                       PatternRewriter &rewriter) {
-  auto res = op->getResult(resultNumber);
-  PropagatorUtil::createPropagatorDown(res, propagateOp, rewriter);
-  auto beforeArg = op.getAfterArguments()[resultNumber];
-  PropagatorUtil::createPropagatorDown(beforeArg, propagateOp, rewriter);
-  auto &condArg = op.getConditionOp().getArgsMutable()[resultNumber];
-  PropagatorUtil::createPropagatorUp(&condArg, propagateOp, rewriter);
-  return success();
-}
-
-static LogicalResult propagateScopeOp(scope::ScopeOp op, size_t resultNumber,
-                                      UnrealizedConversionCastOp propagateOp,
-                                      PatternRewriter &rewriter) {
-  auto res = op->getResult(resultNumber);
-  PropagatorUtil::createPropagatorDown(res, propagateOp, rewriter);
-  auto &scopeBody = op.getRegion().front();
-  auto returnOp = cast<scope::ReturnOp>(scopeBody.getTerminator());
-  auto &operand = returnOp.getResultsMutable()[resultNumber];
-  PropagatorUtil::createPropagatorUp(&operand, propagateOp, rewriter);
-  return success();
-}
-
-LogicalResult
-PropagateDownPattern::propagateDownForOp(scf::ForOp op, OpOperand &operand,
-                                         UnrealizedConversionCastOp propagateOp,
-                                         PatternRewriter &rewriter) const {
-  return propagateForOp(op, operand, propagateOp, rewriter);
-}
-
-LogicalResult PropagateDownPattern::propagateDownWhileOp(
-    scf::WhileOp op, OpOperand &operand, UnrealizedConversionCastOp propagateOp,
-    PatternRewriter &rewriter) const {
-  return propagateWhileOpOperand(op, operand.getOperandNumber(), propagateOp,
-                                 rewriter);
-}
-
-LogicalResult PropagateDownPattern::propagateDownYieldOp(
-    scf::YieldOp op, OpOperand &operand, UnrealizedConversionCastOp propagateOp,
-    PatternRewriter &rewriter) const {
-  return TypeSwitch<Operation *, LogicalResult>(op->getParentOp())
-      .Case([&](scf::ForOp forOp) {
-        auto *init = &forOp.getInitArgsMutable()[operand.getOperandNumber()];
-        return propagateForOp(forOp, *init, propagateOp, rewriter);
-      })
-      .Case([&](scf::WhileOp whileOp) {
-        return propagateWhileOpOperand(whileOp, operand.getOperandNumber(),
-                                       propagateOp, rewriter);
-      })
-      .Case([&](scf::IfOp ifOp) {
-        return propagateIfOp(ifOp, ifOp->getResult(operand.getOperandNumber()),
-                             propagateOp, rewriter);
-      })
-      .Case([&](scf::IndexSwitchOp indexSwitchOp) {
-        return propagateIndexSwitchOp(
-            indexSwitchOp, indexSwitchOp->getResult(operand.getOperandNumber()),
-            propagateOp, rewriter);
-      })
-      .Default([&](auto *op) {
-        llvm::report_fatal_error("Unhandled YieldOp");
-        return failure();
-      });
-}
-
-LogicalResult PropagateDownPattern::propagateDownConditionOp(
-    scf::ConditionOp op, OpOperand &operand,
-    UnrealizedConversionCastOp propagateOp, PatternRewriter &rewriter) const {
-  auto whileOp = cast<scf::WhileOp>(op->getParentOp());
-  auto oprNum = operand.getOperandNumber();
-  if (oprNum == 0) {
+propagateAlongRegionEdges(RegionBranchOpInterface branch, Value seed,
+                          UnrealizedConversionCastOp propagateOp,
+                          PatternRewriter &rewriter) {
+  auto maybeSites =
+      PropagatorUtil::collectRelatedPropagatorSites(branch, seed);
+  if (failed(maybeSites))
     return failure();
-  }
-  return propagateWhileOpResult(whileOp, oprNum - 1, propagateOp, rewriter);
+
+  for (auto *opr : maybeSites->getUpSites())
+    PropagatorUtil::createPropagatorUp(opr, propagateOp, rewriter);
+  for (auto arg : maybeSites->getDownSites())
+    PropagatorUtil::createPropagatorDown(arg, propagateOp, rewriter);
+  LDBG("Propagated along RegionBranch edges from seed in " << branch
+       << " (up=" << maybeSites->getUpSites().size()
+       << ", down=" << maybeSites->getDownSites().size() << ")");
+  return success();
 }
 
-LogicalResult PropagateDownPattern::propagateDownReturnOp(
-    scope::ReturnOp op, OpOperand &operand,
-    UnrealizedConversionCastOp propagateOp, PatternRewriter &rewriter) const {
-  auto scopeOp = cast<scope::ScopeOp>(op->getParentOp());
-  return propagateScopeOp(scopeOp, operand.getOperandNumber(), propagateOp,
-                          rewriter);
+struct Candidate {
+  UnrealizedConversionCastOp propagator;
+  size_t count = 0;
+};
+
+} // namespace
+
+
+LogicalResult ControlFlowPropagatePattern::matchAndRewrite(
+    RegionBranchOpInterface branch, PatternRewriter &rewriter) const {
+  if (step == PropagationStep::LOCAL || step == PropagationStep::ALL)
+    return failure();
+
+  bool changed = false;
+  for (const PropagatorUtil::PropagatorSiteSet &sites :
+       PropagatorUtil::collectIndependentPropagatorSiteGroups(branch)) {
+
+    SmallVector<Candidate> candidates;
+    size_t shapedSiteCount = 0;
+
+    auto countPropagator = [&](UnrealizedConversionCastOp propagator) {
+      if (!propagator || !checkPropagate(step, propagator))
+        return;
+      auto *candidate = llvm::find_if(candidates, [&](const Candidate &other) {
+        return PropagatorUtil::haveSamePropagation(propagator,
+                                                   other.propagator);
+      });
+      if (candidate == candidates.end())
+        candidates.push_back({propagator, 1});
+      else
+        ++candidate->count;
+    };
+
+    for (OpOperand *operand : sites.getUpSites()) {
+      if (!isa<ShapedType>(operand->get().getType()))
+        continue;
+      ++shapedSiteCount;
+      countPropagator(PropagatorUtil::getUpSiteRequirement(operand));
+    }
+    for (Value value : sites.getDownSites()) {
+      if (!isa<ShapedType>(value.getType()) || value.use_empty())
+        continue;
+      ++shapedSiteCount;
+      countPropagator(PropagatorUtil::getDownSiteRequirement(value));
+    }
+    if (shapedSiteCount == 0 || candidates.empty())
+      continue;
+
+    Candidate *majority = nullptr;
+    bool tied = false;
+    for (Candidate &candidate : candidates) {
+      if (!majority || candidate.count > majority->count) {
+        majority = &candidate;
+        tied = false;
+      } else if (candidate.count == majority->count) {
+        tied = true;
+      }
+    }
+    if (tied || majority->count * 2 < shapedSiteCount ||
+        majority->count == shapedSiteCount)
+      continue;
+
+    bool groupChanged = false;
+    for (OpOperand *operand : sites.getUpSites()) {
+      if (!isa<ShapedType>(operand->get().getType()))
+        continue;
+      auto existing = PropagatorUtil::getUpPropagator(operand);
+      if (existing && PropagatorUtil::haveSamePropagation(
+                          existing, majority->propagator))
+        continue;
+      PropagatorUtil::createPropagatorUp(operand, majority->propagator,
+                                         rewriter);
+      groupChanged = true;
+    }
+    for (Value value : sites.getDownSites()) {
+      if (!isa<ShapedType>(value.getType()) || value.use_empty())
+        continue;
+      auto existing = PropagatorUtil::getDownPropagator(value);
+      if (existing && PropagatorUtil::haveSamePropagation(
+                          existing, majority->propagator))
+        continue;
+      PropagatorUtil::createPropagatorDown(value, majority->propagator,
+                                           rewriter);
+      groupChanged = true;
+    }
+    if (!groupChanged)
+      continue;
+    changed = true;
+    LDBG("Propagated majority requirement across RegionBranch group in "
+         << branch << " (count=" << majority->count
+         << ", sites=" << shapedSiteCount << ")");
+  }
+  return success(changed);
 }
 
 LogicalResult PropagateDownPattern::propagateDownDmaOp(
@@ -283,78 +205,6 @@ LogicalResult PropagateDownPattern::propagateDownDmaOp(
     return success();
   }
   return failure();
-}
-
-LogicalResult PropagateUpPattern::propagateUpBlockArgument(
-    BlockArgument blockArgument, UnrealizedConversionCastOp propagateOp,
-    PatternRewriter &rewriter) const {
-  auto *parentBlock = blockArgument.getOwner();
-  return TypeSwitch<Operation *, LogicalResult>(parentBlock->getParentOp())
-      .Case([&](scf::ForOp forOp) {
-        if (auto res = forOp.getTiedLoopResult(blockArgument))
-          return propagateUpForOp(forOp, res, propagateOp, rewriter);
-        PropagatorUtil::createPropagatorDown(blockArgument, propagateOp,
-                                             rewriter);
-        return success();
-      })
-      .Case([&](scf::WhileOp whileOp) {
-        if (whileOp.getBeforeBody() == parentBlock) {
-          return propagateWhileOpOperand(whileOp, blockArgument.getArgNumber(),
-                                         propagateOp, rewriter);
-        }
-        if (whileOp.getAfterBody() == parentBlock) {
-          return propagateWhileOpResult(whileOp, blockArgument.getArgNumber(),
-                                        propagateOp, rewriter);
-        }
-        llvm::report_fatal_error("WhileOp should have either before body or after body");
-        return failure();
-      })
-      .Default([&](auto *parentOp) {
-        PropagatorUtil::createPropagatorDown(blockArgument, propagateOp,
-                                             rewriter);
-        return success();
-      });
-}
-
-LogicalResult
-PropagateUpPattern::propagateUpIfOp(scf::IfOp op, OpResult res,
-                                    UnrealizedConversionCastOp propagateOp,
-                                    PatternRewriter &rewriter) const {
-  return propagateIfOp(op, res, propagateOp, rewriter);
-}
-
-LogicalResult PropagateUpPattern::propagateUpIndexSwitchOp(
-    scf::IndexSwitchOp op, OpResult res, UnrealizedConversionCastOp propagateOp,
-    PatternRewriter &rewriter) const {
-  return propagateIndexSwitchOp(op, res, propagateOp, rewriter);
-}
-
-LogicalResult
-PropagateUpPattern::propagateUpForOp(scf::ForOp op, OpResult res,
-                                     UnrealizedConversionCastOp propagateOp,
-                                     PatternRewriter &rewriter) const {
-  auto *init = op.getTiedLoopInit(res);
-  if (op->hasAttr("ExtractedLoadOrStore") &&
-      !op->getParentOp()->hasAttr("ExtractedLoadOrStore")) {
-    // Unstructured load case should propagated from the inside
-    return failure();
-  }
-  return propagateForOp(op, *init, propagateOp, rewriter);
-}
-
-LogicalResult
-PropagateUpPattern::propagateUpWhileOp(scf::WhileOp op, OpResult res,
-                                       UnrealizedConversionCastOp propagateOp,
-                                       PatternRewriter &rewriter) const {
-  return propagateWhileOpResult(op, res.getResultNumber(), propagateOp,
-                                rewriter);
-}
-
-LogicalResult
-PropagateUpPattern::propagateUpScopeOp(scope::ScopeOp op, OpResult res,
-                                       UnrealizedConversionCastOp propagateOp,
-                                       PatternRewriter &rewriter) const {
-  return propagateScopeOp(op, res.getResultNumber(), propagateOp, rewriter);
 }
 
 LogicalResult
@@ -389,32 +239,25 @@ PropagateDownPattern::matchAndRewrite(UnrealizedConversionCastOp propagateOp,
       continue;
     auto newRes =
         TypeSwitch<Operation *, LogicalResult>(user)
-            .Case([&](scf::ForOp op) {
-              if (step == PropagationStep::LOCAL)
+            .Case([&](RegionBranchOpInterface branch) {
+              if (step != PropagationStep::ALL)
                 return failure();
-              return propagateDownForOp(op, *use, propagateOp, rewriter);
+              return propagateAlongRegionEdges(branch, use->get(), propagateOp,
+                                               rewriter);
             })
-            .Case([&](scf::WhileOp op) {
-              if (step == PropagationStep::LOCAL || step == PropagationStep::GM)
+            .Case([&](RegionBranchTerminatorOpInterface terminator) {
+              Operation *parent = terminator->getParentOp();
+              if (step != PropagationStep::ALL)
                 return failure();
-              return propagateDownWhileOp(op, *use, propagateOp, rewriter);
-            })
-            .Case([&](scf::YieldOp op) {
-              if (step == PropagationStep::LOCAL ||
-                  (step == PropagationStep::GM &&
-                   isa<scf::WhileOp>(op->getParentOp())))
+              // Condition predicate is not a forwarded successor operand.
+              if (isa<scf::ConditionOp>(terminator.getOperation()) &&
+                  use->getOperandNumber() == 0)
                 return failure();
-              return propagateDownYieldOp(op, *use, propagateOp, rewriter);
-            })
-            .Case([&](scf::ConditionOp op) {
-              if (step == PropagationStep::LOCAL)
+              auto branch = dyn_cast<RegionBranchOpInterface>(parent);
+              if (!branch)
                 return failure();
-              return propagateDownConditionOp(op, *use, propagateOp, rewriter);
-            })
-            .Case([&](scope::ReturnOp op) {
-              if (step == PropagationStep::LOCAL)
-                return failure();
-              return propagateDownReturnOp(op, *use, propagateOp, rewriter);
+              return propagateAlongRegionEdges(branch, use->get(), propagateOp,
+                                               rewriter);
             })
             .Case<
 #define GET_OP_LIST
@@ -457,36 +300,41 @@ PropagateUpPattern::matchAndRewrite(UnrealizedConversionCastOp propagateOp,
     if (step == PropagationStep::LOCAL)
       return failure();
     auto blockArgument = cast<BlockArgument>(input);
-    return propagateUpBlockArgument(blockArgument, propagateOp, rewriter);
+    Operation *parentOp = blockArgument.getOwner()->getParentOp();
+    if (auto branch = dyn_cast<RegionBranchOpInterface>(parentOp)) {
+      if (step != PropagationStep::ALL)
+        return failure();
+      auto maybeSites =
+          PropagatorUtil::collectRelatedPropagatorSites(branch, blockArgument);
+      if (failed(maybeSites)) {
+        // Non-forwarded block args (e.g. scf.for induction var).
+        PropagatorUtil::createPropagatorDown(blockArgument, propagateOp,
+                                             rewriter);
+        return success();
+      }
+      for (auto *opr : maybeSites->getUpSites())
+        PropagatorUtil::createPropagatorUp(opr, propagateOp, rewriter);
+      for (auto arg : maybeSites->getDownSites())
+        PropagatorUtil::createPropagatorDown(arg, propagateOp, rewriter);
+      return success();
+    }
+    PropagatorUtil::createPropagatorDown(blockArgument, propagateOp, rewriter);
+    return success();
   }
   auto *defOp = res.getDefiningOp();
   if (!defOp || defOp->hasAttr(kPropagateDownAttr))
     return failure();
   return TypeSwitch<Operation *, LogicalResult>(defOp)
-      .Case([&](scf::IfOp op) {
-        if (step == PropagationStep::LOCAL)
+      .Case([&](RegionBranchOpInterface branch) {
+        if (step != PropagationStep::ALL)
           return failure();
-        return propagateUpIfOp(op, res, propagateOp, rewriter);
-      })
-      .Case([&](scf::IndexSwitchOp op) {
-        if (step == PropagationStep::LOCAL)
-          return failure();
-        return propagateUpIndexSwitchOp(op, res, propagateOp, rewriter);
-      })
-      .Case([&](scf::ForOp op) {
-        if (step == PropagationStep::LOCAL)
-          return failure();
-        return propagateUpForOp(op, res, propagateOp, rewriter);
-      })
-      .Case([&](scf::WhileOp op) {
-        if (step == PropagationStep::LOCAL)
-          return failure();
-        return propagateUpWhileOp(op, res, propagateOp, rewriter);
-      })
-      .Case([&](scope::ScopeOp op) {
-        if (step == PropagationStep::LOCAL)
-          return failure();
-        return propagateUpScopeOp(op, res, propagateOp, rewriter);
+        // Unstructured load case should be propagated from the inside.
+        if (auto forOp = dyn_cast<scf::ForOp>(branch.getOperation())) {
+          if (forOp->hasAttr(ExtractLoadStoreAttr) &&
+              !forOp->getParentOp()->hasAttr(ExtractLoadStoreAttr))
+            return failure();
+        }
+        return propagateAlongRegionEdges(branch, res, propagateOp, rewriter);
       })
       .Case<
 #define GET_OP_LIST

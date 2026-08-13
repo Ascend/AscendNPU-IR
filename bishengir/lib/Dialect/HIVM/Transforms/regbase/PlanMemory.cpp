@@ -1652,6 +1652,7 @@ void MemPlanRegBase::ExpandMultiBufferStorageEntry() {
         entry->alignedConstBits = StorageEntryVec[i]->alignedConstBits;
         entry->inplaceBuffers = StorageEntryVec[i]->inplaceBuffers;
         entry->multiBufferNum = StorageEntryVec[i]->multiBufferNum;
+        entry->firstBufferRelationEntry = StorageEntryVec[i].get();
         // Store the entry pointer
         StorageEntryVec[i]->otherBufferRelationEntries.push_back(entry.get());
         StorageEntryVec.push_back(std::move(entry));
@@ -1806,16 +1807,22 @@ PlanStatus MemPlanRegBase::PlanMemAddressOfWholeLocalBuffer() {
         PlanStatus as = ApplyFailStrategy(statusWrapper, maxBits);
         if (as == PlanStatus::RESTART_NEW_PLAN) {
           // Restart plan.
+          LDBG("[PlanLocal] ApplyFailStrategy -> RESTART_NEW_PLAN "
+               "(splitOutline enabled); reset SpecInfo to defaults\n");
           si = SpecInfo();
           curEntry = rootStorageEntry;
           continue;
         }
         if (as == PlanStatus::PLAN_FAILED) {
+          LDBG("[PlanLocal] ApplyFailStrategy -> PLAN_FAILED.\n");
           ReportAllocatedEntryDebugInfo(rootStorageEntry, true);
           failApplyBufferInfo[memScope] =
               PlanMemAddressForSingleLevel(rootStorageEntry, SPEC_LEVEL_0);
           return as;
         }
+        LDBG("[PlanLocal] ApplyFailStrategy -> CONTINUE_PLAN "
+             "specLevel=" << si.specLevel << " childIdx=" << si.childIdx
+             << "\n");
       }
       if (si.childIdx >= childrenNum) {
         break;
@@ -1990,17 +1997,32 @@ MemPlanRegBase::GetBufferSpaceInfo(hivm::AddressSpace &space) const {
 LogicalResult MemPlanRegBase::MultiSpecPlan(SpecInfo &si, MemBoundList &outline,
                                      PlanRecHis &history, StorageEntry *entry) {
   LogicalResult planResult = failure();
+  LDBG("[MultiSpecPlan] try entry childIdx="
+       << si.childIdx << " needBits=" << entry->alignedConstBits
+       << " from level=" << si.specLevel << " down to minLevel=" << si.minLevel
+       << " historySize=" << history.size() << "\n");
   for (int i = si.specLevel; i >= si.minLevel; i--) {
     planResult = SpecAlloc(outline, history, entry, si, i);
     if (succeeded(planResult)) {
+      LDBG("[MultiSpecPlan] SUCCESS at level="
+           << i << " offset=" << entry->bitsOffset
+           << " (stop here; lower levels NOT tried for this entry)\n");
       if (si.childIdx == si.specStartIdx) {
         // In roll back plan, when the specified specStartIdx is reached,
         // the subsequent plan still adopts the maxLevel strategy.
+        LDBG("[MultiSpecPlan] reached specStartIdx="
+             << si.specStartIdx << ", reset specLevel to maxLevel="
+             << si.maxLevel << "\n");
         si.specLevel = si.maxLevel;
       }
       si.childIdx++;
       break;
     }
+    LDBG("[MultiSpecPlan] FAIL at level=" << i << "\n");
+  }
+  if (failed(planResult)) {
+    LDBG("[MultiSpecPlan] ALL levels failed for this entry; "
+         "will invoke ApplyFailStrategy\n");
   }
   return planResult;
 }
@@ -2082,7 +2104,6 @@ LogicalResult MemPlanRegBase::SpecAlloc(MemBoundList &outline, PlanRecHis &his,
         for (uint64_t otherBufferOffset : otherBufferOffsets)
           SpecAllocRelationOtherBufferEntry(outline, his, e, otherBufferOffset);
       }
-      LDBG("APPLY_SPEC_LEVEL:  " << localLevel << "\n");
       RecordAllocatedEntry(e);
       return success();
     }
@@ -2451,6 +2472,7 @@ void MemPlanRegBase::UpdateOutline(MemBoundList &outline, PlanRecHis &his,
                               splitBound[0],
                               {},
                               outlineInfo.isDirectlyRollback});
+  e->appliedSpecLevel = localLevel;
   PlanRecord &r = his.back();
   r.replaced.splice(r.replaced.begin(), outline, start, end);
 }
@@ -2775,6 +2797,26 @@ bool MemPlanRegBase::ContinueRollBack(const StatusWrapper &statusWrapper) const 
          (!statusWrapper.history.empty() && (!statusWrapper.outline.empty()));
 }
 
+// Level-1 jointly allocated other slots (isDirectlyRollback) always roll
+// with the first buffer. Independently planned mb-other slots roll with
+// the first buffer only when both were planned at the same level; if the
+// levels differ they may be retried independently (e.g. other at L2 while
+// first already at L0).
+bool MemPlanRegBase::ShouldRollbackMuiltiBuffer(const PlanRecord &r) const {
+  if (r.isDirectlyRollback) {
+    return true;
+  }
+  if (r.entry->multiBufferNum > 1 &&
+      r.entry->otherBufferRelationEntries.empty()) {
+    StorageEntry *first = r.entry->firstBufferRelationEntry;
+    if (first && first->appliedSpecLevel >= SPEC_LEVEL_0 &&
+        r.specLevel == first->appliedSpecLevel) {
+      return true;
+    }
+  }
+  return false;
+}
+
 void MemPlanRegBase::RollBackForAllocFailInner(StatusWrapper &statusWrapper,
                                         const size_t maxBits) {
   auto &si = statusWrapper.si;
@@ -2789,8 +2831,7 @@ void MemPlanRegBase::RollBackForAllocFailInner(StatusWrapper &statusWrapper,
     if (iter != firstBufferEntry2RelationOtherBufferEntry.end()) {
       firstBufferEntry2RelationOtherBufferEntry.erase(iter);
     }
-    if (r.isDirectlyRollback || (r.entry->multiBufferNum > 1 &&
-                                 r.entry->otherBufferRelationEntries.empty())) {
+    if (ShouldRollbackMuiltiBuffer(r)) {
       continue;
     }
     si->childIdx = r.childIdx;

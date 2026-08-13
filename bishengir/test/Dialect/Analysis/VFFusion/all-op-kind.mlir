@@ -131,7 +131,11 @@ module {
 
 // -----
 
-// CHECK-NOT: call @cast_with_annotation_test_fused_0
+// CHECK-LABEL: func.func @cast_with_annotation_test(
+// CHECK: tensor.empty
+// CHECK: tensor.empty
+// CHECK: hfusion.cast
+// CHECK: annotation.mark
 module {
   func.func @cast_with_annotation_test() -> tensor<9xi8> {
     %0 = tensor.empty() : tensor<9xi64>

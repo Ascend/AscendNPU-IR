@@ -12,7 +12,21 @@
 module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 1 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 1 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 1 : i32>, #dlti.dl_entry<"UB_SIZE", 3584 : i32>, #dlti.dl_entry<"L1_SIZE", 4194304 : i32>, #dlti.dl_entry<"L0A_SIZE", 524288 : i32>, #dlti.dl_entry<"L0B_SIZE", 524288 : i32>, #dlti.dl_entry<"L0C_SIZE", 2097152 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L1_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L0C_ALIGN_SIZE", 4096 : i32>, #dlti.dl_entry<"MINIMAL_D_CACHE_SIZE", 262144 : i32>, #dlti.dl_entry<"MAXIMUM_D_CACHE_SIZE", 983040 : i32>, #dlti.dl_entry<"ARCH", "dav-c310">>>, hacc.target = #hacc.target<"Ascend910_9579">, hivm.module_core_type = #hivm.module_core_type<MIX>} {
 
 // op2 (2-output mulf+subf generic) must remain inline — not merged with op1.
+// CHECK-LABEL: func.func private @test_no_reuse_wrong_init_fused_0(
+// CHECK:         memref.copy
+// CHECK:         bufferization.to_tensor
+// CHECK-LABEL: func.func private @test_no_reuse_wrong_init_fused_1(
+// CHECK:         memref.copy
+// CHECK:         bufferization.to_tensor
+// CHECK-LABEL: func.func private @test_no_reuse_wrong_init_fused_2(
+// CHECK:         memref.copy
+// CHECK:         bufferization.to_tensor
+// CHECK:         linalg.generic
+// CHECK:           arith.addf
 // CHECK-LABEL: func.func @test_no_reuse_wrong_init(
+// CHECK:         call @test_no_reuse_wrong_init_fused_0
+// CHECK:         call @test_no_reuse_wrong_init_fused_1
+// CHECK:         call @test_no_reuse_wrong_init_fused_2
 // CHECK:         linalg.generic
 // CHECK:           arith.mulf
 // CHECK:           arith.subf

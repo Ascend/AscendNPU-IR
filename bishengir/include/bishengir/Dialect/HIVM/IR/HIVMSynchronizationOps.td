@@ -89,11 +89,12 @@ def SyncBlockOp : HIVM_SynchronizationOp<"sync_block"> {
   let description = [{
     There are three sync block modes:
       - ALL_CUBE : All cube are synchronized to a same point.
-                   `tcube_pipe` needs to be set to the pipe that
-                   the cube core is waiting for.
+                   `tcube_pipe` and `cube_pipe` need to be set to the pipes
+                   used for cube block synchronization (analogous to
+                   `tpipe` and `pipe` in `sync_block_set`/`sync_block_wait`).
       - ALL_VECTOR : All vector are synchronized to a same point.
-                   `tvector_pipe` needs to be set to the pipe that the
-                   vector core is waiting for.
+                   `tvector_pipe` and `vector_pipe` need to be set to the
+                   pipes used for vector block synchronization.
       - ALL_SUB_VECTOR : All sub vector are synchronized to a same point.
       - BARRIER_CUBE : Used for cube-cube synchronization, it's going to
                    be lowered to a barrie.pipe_all and would only be
@@ -102,8 +103,7 @@ def SyncBlockOp : HIVM_SynchronizationOp<"sync_block"> {
                    be lowered to a barrie.pipe_all and  would only be
                    copied the aiv kernel.
       - ALL : All aic/aiv are synchronized to same point.
-              `tvector_pipe` needs to be set to the pipe that the
-              vector core is waiting for.
+              Both cube and vector pipe pairs need to be set.
 
     Note:
       - SyncBlockOp can only use after data is moved to gm.
@@ -115,14 +115,25 @@ def SyncBlockOp : HIVM_SynchronizationOp<"sync_block"> {
                        OptionalAttr<Builtin_IntegerAttr>:$flag_id,
                        Optional<I64>:$ffts_base_addr,
                        OptionalAttr<HIVM_PipeAttr>:$tcube_pipe,
-                       OptionalAttr<HIVM_PipeAttr>:$tvector_pipe
+                       OptionalAttr<HIVM_PipeAttr>:$cube_pipe,
+                       OptionalAttr<HIVM_PipeAttr>:$tvector_pipe,
+                       OptionalAttr<HIVM_PipeAttr>:$vector_pipe
   );
   let assemblyFormat = [{
     attr-dict `[` $sync_block_mode (`,` $flag_id^)?`]`
     (`ffts_base_addr` `=` $ffts_base_addr^)?
     (`tcube_pipe` `=` $tcube_pipe^)?
+    (`cube_pipe` `=` $cube_pipe^)?
     (`tvector_pipe` `=` $tvector_pipe^)?
+    (`vector_pipe` `=` $vector_pipe^)?
   }];
+  let builders = [
+    OpBuilder<(ins "SyncBlockModeAttr":$sync_block_mode,
+                   CArg<"IntegerAttr", "{}">:$flag_id,
+                   CArg<"Value", "{}">:$ffts_base_addr,
+                   CArg<"PipeAttr", "{}">:$tcube_pipe,
+                   CArg<"PipeAttr", "{}">:$tvector_pipe)>
+  ];
   let hasVerifier = 1;
 }
 

@@ -24,6 +24,7 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Iterators.h"
 #include "mlir/IR/Location.h"
+#include "mlir/Interfaces/ValueBoundsOpInterface.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include <climits>
@@ -144,6 +145,9 @@ struct SyncSolverOptions {
 
   // Ignore workspace function arguments.
   bool intraCoreIgnoreWorkSpaceFunctionArguments{false};
+
+  // Use disjoint direct subviews to refine memory conflicts.
+  bool enableSubviewConflictRefinement{true};
 
   // Build unrolled sync IR.
   bool buildUnrolledSyncIR{true};
@@ -590,6 +594,12 @@ bool isEmptyScope(Scope *scope);
 bool isWorkSpaceFuncArgument(func::FuncOp funcOp, BlockArgument funcArg);
 
 llvm::SmallVector<int64_t> getAddresses(const llvm::SmallVector<Value> &addrs);
+
+// Return true if the slices are statically known to overlap, false if a static
+// dimension proves that they are disjoint, and failure if the result depends
+// on a dynamic offset, size, or stride.
+FailureOr<bool> areOverlappingStaticSlices(const HyperrectangularSlice &slice1,
+                                           const HyperrectangularSlice &slice2);
 
 } // namespace mlir::hivm::syncsolver
 

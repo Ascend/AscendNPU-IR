@@ -214,6 +214,8 @@ void setupHIVMAVEPipelineOptions(
       config.getEnableHivmNd2nzOnVector();
   hivmAVEPipelineOptions.enableFusedMultiplyAdd =
       config.getEnableFusedMultiplyAdd();
+  hivmAVEPipelineOptions.enableAveLoopOptimize =
+      config.getEnableAveLoopOptimize();
   hivmAVEPipelineOptions.enablePrintMemoryAllocatedSize =
       config.getEnablePrintMemoryAllocatedSize();
   hivmAVEPipelineOptions.maxReductionSplitNum = config.getMaxReductionSplit();
@@ -510,6 +512,7 @@ void buildBiShengHIRPipeline(OpPassManager &pm,
       pm.addPass(hivm::createAutoScopePass());
       pm.addPass(hivm::createLegalizeBoolForSimtVFPass());
       pm.addPass(hivm::createInsertMemSemanticForSimtVFPass());
+      pm.addPass(scope::createTransformOpForSIMTPass());
       pm.addPass(scope::createOutlineScopePass());
       pm.addPass(hivm::createInsertAllocBasePlaceholderPass());
       pm.addPass(hivm::createInferSimtVFMemEffectPass());

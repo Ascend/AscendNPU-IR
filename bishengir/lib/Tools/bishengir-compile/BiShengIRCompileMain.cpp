@@ -264,8 +264,6 @@ LogicalResult runExternalHIVMC(ModuleOp module,
 FailureOr<OwningModuleRef>
 bishengir::runBiShengIRPipeline(ModuleOp mod,
                                 BiShengIRCompileMainConfig config) {
-  CompileTiming timing;
-
   MLIRContext *ctx = mod->getContext();
   mlir::DiagnosticEngine &diagEngine = ctx->getDiagEngine();
   std::vector<std::unique_ptr<Diagnostic>> collectedDiagnostics;

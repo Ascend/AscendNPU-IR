@@ -1,4 +1,5 @@
 add_bishengir_dialect_library(MLIRAVEUtils
+  AveLoopAnalysis.cpp
   Utils.cpp
 
   ADDITIONAL_HEADER_DIRS
@@ -6,5 +7,8 @@ add_bishengir_dialect_library(MLIRAVEUtils
 
   LINK_LIBS PUBLIC
   MLIRAffineDialect
+  MLIRArithDialect
   MLIRAVEDialect
+  MLIRMemRefDialect
+  MLIRSCFDialect
 )

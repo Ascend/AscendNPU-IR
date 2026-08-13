@@ -20,8 +20,6 @@
 
 #include "bishengir/Dialect/HIVM/Transforms/InsertLoadStoreForMixCV/Utils.h"
 
-#include "bishengir/Dialect/Scope/IR/Scope.h"
-#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/LogicalResult.h"
 
@@ -29,6 +27,7 @@ namespace mlir {
 namespace hivm {
 
 enum PropagatePriority : uint8_t {
+  ControlFlowPropagate = 50,
   DefaultPropagateDown = 40,
   RegbasePropagateDown = 41,
   DefaultPropagateUp = 30,
@@ -62,19 +61,18 @@ enum class PropagationStep {
 /// }
 /// ```
 ///
-/// The propagation rewrite mirrors the marker across the region boundary so the
-/// producer, block argument, yield operand, and loop result agree on where
-/// load/store materialization or later layout conversion should happen.
+/// Region-carrying ops are only crossed directly during the final `ALL` step.
+/// Earlier steps leave control-flow propagation to
+/// `ControlFlowPropagatePattern`, which requires a majority agreement.
 ///
 /// `step` gates which core type is propagated in the current rewrite round:
-/// step LOCAL handles mixed cube/vector markers, step UB handles vector markers, and
-/// step L1 handles cube markers.
+/// step LOCAL handles mixed cube/vector markers, step UB handles vector markers,
+/// and step L1 handles cube markers.
 ///
 /// Rewrites a down-propagator from a value to each operation that consumes it.
-/// For region-carrying ops this means walking from an operand into tied block
-/// arguments, terminator operands, and results. For HIVM structured ops it also
-/// propagates through DPS inputs/inits so later passes can insert the required
-/// loads and stores at the operation boundary.
+/// For region-carrying ops this means walking RegionBranch edges. For HIVM
+/// structured ops it also propagates through DPS inputs/inits so later passes
+/// can insert the required loads and stores at the operation boundary.
 struct PropagateDownPattern
     : public OpRewritePattern<UnrealizedConversionCastOp> {
 public:
@@ -89,27 +87,6 @@ private:
   LogicalResult matchAndRewrite(UnrealizedConversionCastOp propagateOp,
                                 PatternRewriter &rewriter) const override;
 
-  LogicalResult propagateDownForOp(scf::ForOp op, OpOperand &operand,
-                                   UnrealizedConversionCastOp propagateOp,
-                                   PatternRewriter &rewriter) const;
-
-  LogicalResult propagateDownWhileOp(scf::WhileOp op, OpOperand &operand,
-                                     UnrealizedConversionCastOp propagateOp,
-                                     PatternRewriter &rewriter) const;
-
-  LogicalResult propagateDownYieldOp(scf::YieldOp op, OpOperand &operand,
-                                     UnrealizedConversionCastOp propagateOp,
-                                     PatternRewriter &rewriter) const;
-
-  LogicalResult propagateDownConditionOp(scf::ConditionOp op,
-                                         OpOperand &operand,
-                                         UnrealizedConversionCastOp propagateOp,
-                                         PatternRewriter &rewriter) const;
-
-  LogicalResult propagateDownReturnOp(scope::ReturnOp op, OpOperand &operand,
-                                      UnrealizedConversionCastOp propagateOp,
-                                      PatternRewriter &rewriter) const;
-
   LogicalResult propagateDownDmaOp(hivm::HIVMStructuredOp op,
                                    OpOperand &operand,
                                    UnrealizedConversionCastOp propagateOp,
@@ -120,9 +97,9 @@ private:
 
 /// Rewrites an up-propagator from a value back to the operation or block
 /// argument that produced it. This is the counterpart of
-/// `PropagateDownPattern`: it walks from results into tied operands and region
-/// terminators for `scf.for`, `scf.while`, `scf.if`, `scf.index_switch`, and
-/// `scope.scope`, and mirrors requirements across HIVM structured op results.
+/// `PropagateDownPattern`: region boundaries are walked through
+/// `RegionBranchOpInterface`, and requirements are mirrored across HIVM
+/// structured op results.
 struct PropagateUpPattern
     : public OpRewritePattern<UnrealizedConversionCastOp> {
 public:
@@ -138,36 +115,31 @@ public:
                                 PatternRewriter &rewriter) const override;
 
 private:
-  LogicalResult propagateUpBlockArgument(BlockArgument blockArgument,
-                                         UnrealizedConversionCastOp propagateOp,
-                                         PatternRewriter &rewriter) const;
-
-  LogicalResult propagateUpIfOp(scf::IfOp op, OpResult res,
-                                UnrealizedConversionCastOp propagateOp,
-                                PatternRewriter &rewriter) const;
-
-  LogicalResult propagateUpIndexSwitchOp(scf::IndexSwitchOp op, OpResult res,
-                                         UnrealizedConversionCastOp propagateOp,
-                                         PatternRewriter &rewriter) const;
-
-  LogicalResult propagateUpForOp(scf::ForOp op, OpResult res,
-                                 UnrealizedConversionCastOp propagateOp,
-                                 PatternRewriter &rewriter) const;
-
-  LogicalResult propagateUpWhileOp(scf::WhileOp op, OpResult res,
-                                   UnrealizedConversionCastOp propagateOp,
-                                   PatternRewriter &rewriter) const;
-
-  LogicalResult propagateUpScopeOp(scope::ScopeOp op, OpResult res,
-                                   UnrealizedConversionCastOp propagateOp,
-                                   PatternRewriter &rewriter) const;
-
   LogicalResult propagateUpDmaOp(hivm::HIVMStructuredOp op, OpResult res,
                                  UnrealizedConversionCastOp propagateOp,
                                  PatternRewriter &rewriter) const;
 
   PropagationStep step;
   bool isRegBaseTarget;
+};
+
+/// Propagates an agreed requirement across each independent forwarded-value
+/// group of a RegionBranch operation. A requirement must be the unique most
+/// common propagator and occur at no fewer than half of the group's shaped
+/// up/down sites.
+struct ControlFlowPropagatePattern
+    : public OpInterfaceRewritePattern<RegionBranchOpInterface> {
+public:
+  explicit ControlFlowPropagatePattern(MLIRContext *ctx, PropagationStep step)
+      : OpInterfaceRewritePattern(
+            ctx, /*benefit=*/PropagatePriority::ControlFlowPropagate),
+        step(step) {}
+
+private:
+  LogicalResult matchAndRewrite(RegionBranchOpInterface branch,
+                                PatternRewriter &rewriter) const override;
+
+  PropagationStep step;
 };
 
 } // namespace hivm
