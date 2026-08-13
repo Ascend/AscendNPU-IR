@@ -106,6 +106,10 @@ public:
                                      Value value, IntegerType targetElemType,
                                      Value shapeLike);
 
+  static Value castReduceValueTensor(PatternRewriter &rewriter, Location loc,
+                                     Value value, IntegerType targetElemType,
+                                     Value shapeLike);
+
   static Value createGather1DOp(PatternRewriter &rewriter, Location loc,
                                 Value source, Value indices);
 

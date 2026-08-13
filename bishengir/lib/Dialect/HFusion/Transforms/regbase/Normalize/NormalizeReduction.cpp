@@ -131,6 +131,20 @@ public:
   }
 };
 
+/// HFusion hooks for routing i1 (bool) value tensors through an i32 reduction
+/// kernel. i1 is bit-packed, so a scalar `memref.load` lowers to a per-bit GEP
+/// the backend cannot address (wrong values); all other integer widths have a
+/// legal byte-granular scalar load and are left alone here.
+struct HFusionNormalizeReduceValueToI32Traits
+    : public hfusion::NormalizeTraitsBase {
+public:
+  static bool shouldNormalizeReduceValueToI32(hfusion::ReduceWithIndexOp op) {
+    if (!hasNonI32ReductionValueResult(op))
+      return false;
+    return getReductionValueResultElementType(op).isInteger(1);
+  }
+};
+
 using NormalizeArgMinMaxOpRegBase = NormalizeArgMinMaxOpTemplate<
     hfusion::ReduceWithIndexOp, HFusionNormalizeArgMinMaxTraits>;
 using NormalizeF16ReduceSumRegBase =
@@ -145,6 +159,9 @@ using NormalizeReduceWithIndexInitsAndInputsRegBase =
 using NormalizeReduceIndexToI32RegBase =
     NormalizeReduceIndexToI32Template<hfusion::ReduceWithIndexOp,
                                       HFusionNormalizeReduceIndexToI32Traits>;
+using NormalizeReduceValueToI32RegBase =
+    NormalizeReduceValueToI32Template<hfusion::ReduceWithIndexOp,
+                                      HFusionNormalizeReduceValueToI32Traits>;
 
 } // namespace mlir
 
@@ -189,6 +206,7 @@ void populateNormalizePreReductionPatterns(RewritePatternSet &patterns) {
   }
   if (archIsRegbased) {
     patterns.add<NormalizeReduceWithIndexInitsAndInputsRegBase>(ctx);
+    patterns.add<NormalizeReduceValueToI32RegBase>(ctx, /*benefit=*/2);
     patterns.add<NormalizeReduceIndexToI32RegBase>(ctx);
   }
 }
