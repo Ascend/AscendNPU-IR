@@ -150,6 +150,22 @@ func.func @inline_fill_to_hfusion_vand_i32(%arg0: tensor<64x64xi32>) -> tensor<6
 
 // -----
 
+// CHECK-LABEL: func.func @inline_fill_to_hfusion_vor_i32(
+// CHECK: %[[MASK:.*]] = arith.constant 2147483647 : i32
+// CHECK-NOT: linalg.fill
+// CHECK-NOT: linalg.map
+// CHECK: hfusion.elemwise_binary {fun = #hfusion.binary_fn<vor>} ins({{.*}}, %[[MASK]] : tensor<64x64xi32>, i32)
+// CHECK-NOT: linalg.map
+func.func @inline_fill_to_hfusion_vor_i32(%arg0: tensor<64x64xi32>) -> tensor<64x64xi32> {
+    %empty = tensor.empty() : tensor<64x64xi32>
+    %mask = arith.constant 2147483647 : i32
+    %filled = linalg.fill ins(%mask : i32) outs(%empty : tensor<64x64xi32>) -> tensor<64x64xi32>
+    %result = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vor>} ins(%arg0, %filled : tensor<64x64xi32>, tensor<64x64xi32>) outs(%empty : tensor<64x64xi32>) -> tensor<64x64xi32>
+    return %result : tensor<64x64xi32>
+}
+
+// -----
+
 // CHECK-LABEL: func.func @inline_fill_to_linalg_add_mul(
 // CHECK: %[[SCALAR:.*]] = arith.constant 2.000000e+00 : f32
 // CHECK-NOT: linalg.fill

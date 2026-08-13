@@ -2015,8 +2015,6 @@ struct ConvertHIVMToUpstream
                        hivm::VCumminOp, arith::MinSIOp, arith::MinimumFOp,
                        CumIdentityKind::LargestValue, arith::MinNumFOp>>(&ctx);
     }
-    patterns.add<RewriteFromGenericToGeneric<hivm::StoreOp, linalg::CopyOp>>(
-        &ctx);
     // Signed-aware patterns: always needed for VMaxOp/VMinOp to handle
     // signed/unsigned semantics correctly (linalg::MaxOp/MinOp always use
     // signed comparison, which is wrong for unsigned integers)

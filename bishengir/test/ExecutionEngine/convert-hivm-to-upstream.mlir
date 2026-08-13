@@ -271,6 +271,25 @@ func.func @scalar_vbrc_vand_lowering(%arg0: tensor<64xi32>) -> tensor<64xi32> {
 
 // -----
 
+// COMMON-LABEL: func.func @scalar_vbrc_vor_lowering(
+// COMMON: %[[MASK:.*]] = arith.constant 2147483647 : i32
+// COMMON-NOT: linalg.fill
+// COMMON-NOT: linalg.map
+// COMMON: %[[VOR:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vor>} ins(%{{.*}}, %[[MASK]] : tensor<64xi32>, i32)
+// COMMON-NOT: linalg.fill
+// COMMON-NOT: linalg.map
+// COMMON: return %[[VOR]]
+func.func @scalar_vbrc_vor_lowering(%arg0: tensor<64xi32>) -> tensor<64xi32> {
+  %mask = arith.constant 2147483647 : i32
+  %brc_empty = tensor.empty() : tensor<64xi32>
+  %brc = hivm.hir.vbrc ins(%mask : i32) outs(%brc_empty : tensor<64xi32>) -> tensor<64xi32>
+  %result_empty = tensor.empty() : tensor<64xi32>
+  %result = hivm.hir.vor ins(%arg0, %brc : tensor<64xi32>, tensor<64xi32>) outs(%result_empty : tensor<64xi32>) -> tensor<64xi32>
+  return %result : tensor<64xi32>
+}
+
+// -----
+
 // COMMON-LABEL: func.func @integer_bitwise_same_shape_lowering
 // COMMON-NOT: linalg.map
 // COMMON-NOT: linalg.generic
