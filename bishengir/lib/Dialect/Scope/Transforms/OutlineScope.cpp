@@ -20,10 +20,14 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Scope/Transforms/Passes.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Transform/Interfaces/TransformInterfaces.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/SymbolTable.h"
@@ -49,6 +53,18 @@ public:
   void runOnOperation() final;
 };
 
+// Add subblock-if outside the simt scope
+// Before:
+//     scope {
+//        ...
+//     } { hivm.vf_mode = #hivm.vf_mode<SIMT>}
+// After:
+//     %0 = hivm.hir.get_sub_block_idx -> i64
+//     %1 = arith.index_cast %0 : i64 to index
+//     %2 = arith.cmpi eq, %1, 0 : index
+//     scf.if %2 {
+//        func.call xxx_scope()
+//     } {limit_sub_block_id0}
 class OutlineScopeOp : public OpRewritePattern<scope::ScopeOp> {
   static bool isExternalToScope(ScopeOp scopeOp, Value val) {
     if (auto blockArg = dyn_cast<BlockArgument>(val))
@@ -209,11 +225,44 @@ class OutlineScopeOp : public OpRewritePattern<scope::ScopeOp> {
     LDBG("Replacing invoke with callOp");
     SetVector<Operation *> ops = getOpsOfScopeOp(scopeOp);
     rewriter.setInsertionPoint(scopeOp);
-    func::CallOp callOp = rewriter.create<func::CallOp>(
-        scopeOp->getLoc(), funcOp, getInputs(scopeOp));
 
-    LDBG("created callOp: " << callOp);
-    rewriter.replaceOp(scopeOp, callOp);
+    auto inputs = getInputs(scopeOp);
+    Location loc = scopeOp->getLoc();
+
+    // For SIMT scopes, wrap the call in an scf.if guard that checks
+    // get_sub_block_idx() == 0
+    if (hivm::util::isSIMTVF(scopeOp)) {
+      LDBG("Wrapping SIMT scope call in scf.if guard");
+
+      // Build condition: get_sub_block_idx() == 0
+      auto subBlockIdxOp =
+          rewriter.create<hivm::GetSubBlockIdxOp>(loc, rewriter.getI64Type());
+      Value subBlockIndex =
+          rewriter
+              .create<arith::IndexCastOp>(loc, rewriter.getIndexType(),
+                                          subBlockIdxOp.getResult())
+              .getResult();
+      Value zero = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+      Value cond = rewriter.create<arith::CmpIOp>(
+          loc, rewriter.getI1Type(), arith::CmpIPredicate::eq, subBlockIndex,
+          zero);
+
+      // Create scf.if with the call inside
+      auto ifOp = rewriter.create<scf::IfOp>(loc, scopeOp->getResultTypes(),
+                                             cond, /*withElseRegion=*/false);
+      ifOp->setAttr("limit_sub_block_id0", rewriter.getUnitAttr());
+      rewriter.setInsertionPointToStart(ifOp.thenBlock());
+      rewriter.create<func::CallOp>(loc, funcOp, inputs);
+
+      // Replace scope op with if op results
+      rewriter.replaceOp(scopeOp, ifOp.getResults());
+    } else {
+      func::CallOp callOp =
+          rewriter.create<func::CallOp>(loc, funcOp, inputs);
+      LDBG("created callOp: " << callOp);
+      rewriter.replaceOp(scopeOp, callOp);
+    }
+
     return success();
   }
 
