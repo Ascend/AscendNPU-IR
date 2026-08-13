@@ -126,7 +126,7 @@ void collectValueDependencies(OrderedOps &simtVFOps, VisitedOps &visitedOps,
   }
   auto defOp = val.getDefiningOp();
   if (!defOp || llvm::isa<scope::ScopeOp>(defOp) ||
-      (allSeedOps.contains(defOp) && defOp != seedOp) || (defOp->getNumRegions() != 0 && hasSeedOp(defOp))) {
+      (allSeedOps.contains(defOp) && defOp != seedOp) || hasSeedOp(defOp)) {
     return;
   }
   collectOpDependencies(simtVFOps, visitedOps, defOp, seedOp, allSeedOps);
