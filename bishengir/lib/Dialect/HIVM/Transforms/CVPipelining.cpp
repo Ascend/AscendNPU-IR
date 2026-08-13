@@ -570,7 +570,9 @@ static Value createWorkspaceSubview(OpBuilder &builder, Location loc,
 static void
 processWorkspaceOutputs(OpBuilder &builder, WorkItem *item,
                         DenseMap<Value, Value> &expandedWorkspaceMap,
-                        const IRMapping &loopMap) {
+                        const IRMapping &loopMap,
+                        IRMapping &globalIRMap,
+                        const SetVector<Value> &yieldedVals) {
   scf::ForOp forOp = item->forOp;
   for (Operation *output : item->workspaceOutputs) {
     auto dpsOp = cast<DestinationStyleOpInterface>(output);
@@ -614,6 +616,18 @@ processWorkspaceOutputs(OpBuilder &builder, WorkItem *item,
       operand->set(sliceOp);
     }
     store->erase();
+
+    for (Value result : output->getResults()) {
+      if (yieldedVals.contains(result)) {
+        builder.setInsertionPointAfter(forOp);
+        int64_t lastSlot = cast<ShapedType>(newAlloc.getType()).getDimSize(0) - 1;
+        Value lastSlotIdx = builder.create<arith::ConstantIndexOp>(
+            loc, lastSlot);
+        Value sliceOp = createExtractSlice(builder, loc, workspaceOp,
+                                           result.getType(), lastSlotIdx);
+        globalIRMap.map(result, sliceOp);
+      }
+    }
   }
 }
 
@@ -628,12 +642,18 @@ static void processWorkspaceOutputUsers(
       Operation *owner = operand.getOwner();
       if (opToWorkItemMap.contains(owner) || !newLoop->isAncestor(owner))
         continue;
-
+      if (!newLoop->isAncestor(owner))
+        // Only need to handle users of operations in the new, pipelined loop
+        continue;
       builder.setInsertionPoint(owner);
+      auto alloc = getAllocWorkspace(operand.get());
+      Value mappedTensor = expandedWorkspaceMap.lookup(alloc);
       Value sliceIdx;
       if (isa<scf::YieldOp>(owner)) {
-        sliceIdx = builder.create<arith::ConstantIndexOp>(owner->getLoc(),
-                                                          numMultibuffer - 1);
+        int64_t lastSlot =
+            cast<ShapedType>(mappedTensor.getType()).getDimSize(0) - 1;
+        sliceIdx = builder.create<arith::ConstantIndexOp>(
+            owner->getLoc(), lastSlot);
       } else {
         // The nearest enclosing scf.for may be a loop cloned from the
         // original pipeline body.  Its IV indexes data *within* one stage
@@ -645,8 +665,6 @@ static void processWorkspaceOutputUsers(
         auto workItemLoop = cast<scf::ForOp>(workItemOp);
         sliceIdx = workItemLoop.getInductionVar();
       }
-      Value alloc = getAllocWorkspace(operand.get());
-      Value mappedTensor = expandedWorkspaceMap.lookup(alloc);
       Value slice = createExtractSlice(builder, owner->getLoc(), mappedTensor,
                                        operand.get().getType(), sliceIdx);
       replacements.emplace_back(&operand, slice);
@@ -1102,15 +1120,25 @@ LogicalResult CVPipelineImpl::checkWorkItemDependencies() {
   // arithmetic) are replicated onto every stage and never form a cross-core
   // data hazard, so they are ignored.
   DenseMap<unsigned, const WorkItem *> producerByIterArg;
-  for (const auto &item : worklist)
+  for (const auto &item : worklist) {
     for (auto &yielded : item->yieldedOutputs)
       producerByIterArg[yielded.second] = item.get();
+    for (Operation *output : item->workspaceOutputs) {
+      for (Value result : output->getResults()) {
+        if (yieldedVals.contains(result)) {
+          unsigned opNumber = static_cast<unsigned>(std::distance(
+              yieldedVals.begin(), llvm::find(yieldedVals, result)));
+          producerByIterArg[opNumber] = item.get();
+        }
+      }
+    }
+  }
 
-  // Collect the cross-core consuming ops of an iter_arg, paired with the core
+  // Collect the cross-core consuming ops of an iter_arg, paired with the WorkItem
   // they run on. An op mapped in opToWorkItemMap is the consuming work item; an
   // unmapped glue op (view / cast / index math) is followed to its own users.
   auto consumerUses = [this](BlockArgument iterArg) {
-    SmallVector<std::pair<TCoreType, Operation *>> uses;
+    SmallVector<std::pair<const WorkItem *, Operation *>> uses;
     DenseSet<Operation *> visited;
     SmallVector<Operation *> stack(iterArg.getUsers().begin(),
                                    iterArg.getUsers().end());
@@ -1121,7 +1149,7 @@ LogicalResult CVPipelineImpl::checkWorkItemDependencies() {
       auto it = opToWorkItemMap.find(top);
       if (it != opToWorkItemMap.end()) {
         for (const WorkItem *wi : it->second)
-          uses.push_back({wi->core, top});
+          uses.push_back({wi, top});
         continue; // stop at the consuming work item; don't walk past it
       }
       for (Operation *next : top->getUsers())
@@ -1139,32 +1167,23 @@ LogicalResult CVPipelineImpl::checkWorkItemDependencies() {
     auto prodIt = producerByIterArg.find(pos);
     if (prodIt == producerByIterArg.end())
       continue; // not produced by a work item (e.g. forwarded unchanged)
-    TCoreType producerCore = prodIt->second->core;
-    if (producerCore != TCoreType::CUBE && producerCore != TCoreType::VECTOR)
-      continue;
-    for (auto [consumerCore, consumerOp] : consumerUses(iterArg)) {
-      if (consumerCore != TCoreType::CUBE && consumerCore != TCoreType::VECTOR)
-        continue;
-      if (consumerCore == producerCore)
-        continue;
-      // Name the offending iter_arg and the two cores, and point at the ops
-      // that produce and consume the carried value so the user can locate the
-      // dependency in a larger kernel.
-      InFlightDiagnostic diag =
-          pipelineLoop->emitWarning()
-          << "[cv-pipelining] cannot pipeline loop: loop-carried tensor "
-             "iter_arg #"
-          << pos << " is produced on the " << stringifyTCoreType(producerCore)
-          << " core but consumed on the " << stringifyTCoreType(consumerCore)
-          << " core across the iteration boundary; skipping pipelining";
-      if (Operation *producerOp = yieldedValues[pos].getDefiningOp())
-        diag.attachNote(producerOp->getLoc())
-            << "loop-carried value produced here on the "
-            << stringifyTCoreType(producerCore) << " core";
-      diag.attachNote(consumerOp->getLoc())
-          << "and consumed here on the " << stringifyTCoreType(consumerCore)
-          << " core the next iteration";
-      return diag;
+    const WorkItem *producerItem = prodIt->second;
+
+    for (auto [consumerItem, consumerOp] : consumerUses(iterArg)) {
+      if (consumerItem != producerItem) {
+        InFlightDiagnostic diag =
+            pipelineLoop->emitWarning()
+            << "[cv-pipelining] cannot pipeline loop: loop-carried tensor "
+               "iter_arg #"
+            << pos << " is produced by one work item but consumed by another "
+               "work item across the iteration boundary; skipping pipelining";
+        if (Operation *producerOp = yieldedValues[pos].getDefiningOp())
+          diag.attachNote(producerOp->getLoc())
+              << "loop-carried value produced here";
+        diag.attachNote(consumerOp->getLoc())
+            << "and consumed here by another work item in the next iteration";
+        return diag;
+      }
     }
   }
   return success();
@@ -1561,7 +1580,7 @@ LogicalResult CVPipelineImpl::migrateOps() {
 
     // Replace workspace stores in c220
     processWorkspaceOutputs(builder, item.get(), expandedWorkspaceMap,
-                            item->irMap);
+                            item->irMap, globalIRMap, yieldedVals);
 
     auto *argIt =
         item->forOp.getRegionIterArgs().begin() + item->yieldedOutputs.size();
