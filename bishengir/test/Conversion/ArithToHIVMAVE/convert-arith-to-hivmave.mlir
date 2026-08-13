@@ -316,11 +316,13 @@ func.func @test_mului_extended(%arg0: vector<64xi64>, %arg1: vector<64xi64>) -> 
 // -----
 
 // CHECK-LABEL: @lower_fma
-// CHECK: ave.hir.vmula
-// CHECK-SAME: vector<8xf32>
-func.func @lower_fma(%a: vector<8xf32>, %b: vector<8xf32>, %c: vector<8xf32>) -> vector<8xf32> {
-  %result = math.fma %a, %b, %c : vector<8xf32>
-  return %result: vector<8xf32>
+// CHECK-SAME: (%[[A:.*]]: vector<64xf32>, %[[B:.*]]: vector<64xf32>, %[[C:.*]]: vector<64xf32>)
+// CHECK: %[[MASK:.*]] = ave.hir.pge <ALL> : vector<64xi1>
+// CHECK: ave.hir.vmula %[[C]], %[[A]], %[[B]], %[[MASK]]
+// CHECK-SAME: vector<64xf32>
+func.func @lower_fma(%a: vector<64xf32>, %b: vector<64xf32>, %c: vector<64xf32>) -> vector<64xf32> {
+  %result = math.fma %a, %b, %c : vector<64xf32>
+  return %result: vector<64xf32>
 }
 
 // -----
@@ -384,4 +386,3 @@ func.func @nan_splat_f32() -> vector<64xf32> {
   return %cst : vector<64xf32>
 }
 // -----
-

@@ -1962,11 +1962,20 @@ struct FmaOpLowering : public OpConversionPattern<math::FmaOp> {
     if (!resVecType || resVecType.getShape().size() != 1) {
       return failure();
     }
+    Type elementType = resVecType.getElementType();
+    if (!elementType.isF16() && !elementType.isBF16() &&
+        !elementType.isF32()) {
+      return rewriter.notifyMatchFailure(
+          op, "AVE vmula supports only f16, bf16, and f32");
+    }
 
     Value mask =
         hivmave::findReuseableMaskOrCreateOne(op, resVecType, rewriter);
 
-    auto res = rewriter.create<hivmave::VFMulaOp>(loc, resType, a, b, c, mask);
+    // AVE vmula uses its first operand as the accumulator:
+    //   dst = src1 * src2 + dst
+    // Preserve math.fma(a, b, c) by passing c as dst.
+    auto res = rewriter.create<hivmave::VFMulaOp>(loc, resType, c, a, b, mask);
     rewriter.replaceOp(op, res);
     return success();
   }
