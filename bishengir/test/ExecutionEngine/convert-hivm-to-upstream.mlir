@@ -71,7 +71,7 @@ func.func @tensor_direct_linalg_lowering(%a: tensor<1x?x10xf32>, %b: tensor<?x5x
     // CHECK-FALSE: linalg.elemwise_unary {fun = #linalg.unary_fn<erf>}
     %15 = hivm.hir.verf ins(%14: tensor<5x?x10xf32>) outs(%0: tensor<5x?x10xf32>) -> tensor<5x?x10xf32>
  
-    // COMMON: linalg.copy
+    // COMMON: hivm.hir.store
     %16 = hivm.hir.store ins(%15: tensor<5x?x10xf32>) outs(%d: tensor<5x?x10xf32>) -> tensor<5x?x10xf32>
 
     // COMMON: linalg.transpose
