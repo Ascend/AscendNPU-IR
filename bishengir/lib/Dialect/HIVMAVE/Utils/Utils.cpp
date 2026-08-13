@@ -459,7 +459,14 @@ uint32_t hivmave::getNumfromPgePattern(VFPgeOp pge) {
   case PgePattern::VL128:
     res = 128;
     break;
-  case PgePattern::H:
+  case PgePattern::H: {
+    if (auto width = getBitWidthFromAttr(pge); width != -1) {
+      res = static_cast<uint32_t>(mlir::hivm::util::VL_BITS / width) / 2;
+      break;
+    }
+    llvm::report_fatal_error(
+        "can not get bit width from attr on ave.hir.pge<H>.");
+  }
   case PgePattern::ALL: {
     res =
         static_cast<uint32_t>(cast<VectorType>(pge.getType()).getNumElements());
