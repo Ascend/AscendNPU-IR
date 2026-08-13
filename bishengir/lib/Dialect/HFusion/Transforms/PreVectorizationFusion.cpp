@@ -861,23 +861,39 @@ void InsertPadConstMark(Operation *moduleOp) {
       if (!isCopyFromGM(copyOp))
         return WalkResult::skip();
       auto dst = copyOp.getTarget();
-      auto maybeAlloc = utils::tracebackMemRefToAlloc(dst);
-      if (!maybeAlloc)
+      auto allocOpAliases = utils::tracebackMemRefAllocAndAlias(dst);
+      if (allocOpAliases.empty())
         return WalkResult::skip();
-      for (auto *user : maybeAlloc.value()->getUsers()) {
-        if (auto fillOp = llvm::dyn_cast<linalg::FillOp>(user)) {
-          // check if op for load-padding-value
-          Value inputVal = fillOp.getDpsInputs()[0];
-          if (inputVal.getType().isIntOrFloat()) {
-            Value val_alloc = fillOp.getDpsInits()[0];
-            OpBuilder b(op);
-            ArrayAttr keysVec = b.getStrArrayAttr({utils::padConst});
-            SmallVector<Value> valuesVec = {inputVal};
-            b.setInsertionPoint(fillOp);
-            b.create<annotation::MarkOp>(fillOp->getLoc(), val_alloc, valuesVec,
-                                         keysVec);
-          }
+      bool foundFill = false;
+      for (Value alias : allocOpAliases) {
+        if (foundFill)
           break;
+        for (auto *user : alias.getUsers()) {
+          if (auto fillOp = llvm::dyn_cast<linalg::FillOp>(user)) {
+            // check if op for load-padding-value
+            Value inputVal = fillOp.getDpsInputs()[0];
+            if (inputVal.getType().isIntOrFloat()) {
+              Value val_alloc = nullptr;
+              for (Value candidate : allocOpAliases)
+                if (utils::isAllocLikeOp(candidate)) {
+                  val_alloc = candidate;
+                  break;
+                }
+              if (!val_alloc)
+                val_alloc = fillOp.getDpsInits()[0];
+              OpBuilder b(op);
+              ArrayAttr keysVec = b.getStrArrayAttr({utils::padConst});
+              SmallVector<Value> valuesVec = {inputVal};
+              if (Operation *allocDef = val_alloc.getDefiningOp())
+                b.setInsertionPointAfter(allocDef);
+              else
+                b.setInsertionPoint(fillOp);
+              b.create<annotation::MarkOp>(fillOp->getLoc(), val_alloc,
+                                           valuesVec, keysVec);
+            }
+            foundFill = true;
+            break;
+          }
         }
       }
     }
