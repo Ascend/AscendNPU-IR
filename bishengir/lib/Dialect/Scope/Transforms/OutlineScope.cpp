@@ -21,6 +21,7 @@
 
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/Helper.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Scope/Transforms/Passes.h"
@@ -53,18 +54,6 @@ public:
   void runOnOperation() final;
 };
 
-// Add subblock-if outside the simt scope
-// Before:
-//     scope {
-//        ...
-//     } { hivm.vf_mode = #hivm.vf_mode<SIMT>}
-// After:
-//     %0 = hivm.hir.get_sub_block_idx -> i64
-//     %1 = arith.index_cast %0 : i64 to index
-//     %2 = arith.cmpi eq, %1, 0 : index
-//     scf.if %2 {
-//        func.call xxx_scope()
-//     } {limit_sub_block_id0}
 class OutlineScopeOp : public OpRewritePattern<scope::ScopeOp> {
   static bool isExternalToScope(ScopeOp scopeOp, Value val) {
     if (auto blockArg = dyn_cast<BlockArgument>(val))
@@ -230,8 +219,14 @@ class OutlineScopeOp : public OpRewritePattern<scope::ScopeOp> {
     Location loc = scopeOp->getLoc();
 
     // For SIMT scopes, wrap the call in an scf.if guard that checks
-    // get_sub_block_idx() == 0
-    if (hivm::util::isSIMTVF(scopeOp)) {
+    // get_sub_block_idx() == 0. Also apply this guard when sub-block tiling
+    // was reverted in TileAndBindSubBlockPass: the reverted function only
+    // produces valid results on sub-block 0, so the call must be guarded the
+    // same way as a SIMT scope.
+    auto mod = scopeOp->getParentOfType<ModuleOp>();
+    bool subBlockTilingReverted =
+        mod && mod->hasAttr(hivm::kTileAndBindSubBlockRevertedAttrName);
+    if (hivm::util::isSIMTVF(scopeOp) && subBlockTilingReverted) {
       LDBG("Wrapping SIMT scope call in scf.if guard");
 
       // Build condition: get_sub_block_idx() == 0

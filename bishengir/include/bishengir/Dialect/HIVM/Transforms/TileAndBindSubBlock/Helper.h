@@ -38,6 +38,11 @@ inline constexpr llvm::StringLiteral batchMatmulAttr = "batch_matmul";
 inline constexpr llvm::StringLiteral tileAndSliceFailure =
     "tile_and_slice_failure";
 constexpr llvm::StringLiteral tiledOp = "tiled_op";
+// Module-level marker set by TileAndBindSubBlockPass when a tiling attempt is
+// reverted via failAndRevert. Subsequent passes (e.g. OutlineScope) can check
+// this attribute to fall back to sub-block 0 only behavior.
+inline constexpr llvm::StringLiteral kTileAndBindSubBlockRevertedAttrName =
+    "hivm.tile_and_bind_subblock_reverted";
 static constexpr int kSubBlockDim = 2;
 static constexpr int kMaxIterations = 50;
 
