@@ -100,8 +100,12 @@ bool DimensionAnalyzer::processOperation(Operation *op, Value current) {
           [&](auto interleaveOp) { processInterleaveOp(interleaveOp); })
       .Case<hfusion::DeinterleaveOp>(
           [&](auto deinterleaveOp) { processDeinterleaveOp(deinterleaveOp); })
-          // TODO: Support hfusion::CummaxOp, hfusion::CumminOp
-      .Case<hfusion::CumsumOp, hfusion::CumprodOp>([&](auto cumOp) { processCumOp(cumOp); })
+      .Case<hfusion::CumsumOp, hfusion::CumprodOp>(
+          [&](auto cumOp) { processCumOp(cumOp); })
+      .Case<hfusion::CummaxOp, hfusion::CumminOp>([&](auto cumOp) {
+        if (hacc::utils::isRegBasedArch(op->getParentOfType<ModuleOp>()))
+          processCumOp(cumOp);
+      })
       .Case<hfusion::FlipOp>([&](auto flipOp) { processFlipOp(flipOp); })
       .Case<hfusion::SortOp>([&](auto sortOp) { processSortOp(sortOp); })
       .Case<hfusion::EmbeddingGatherOp>([&](auto embeddingGatherOp) {
