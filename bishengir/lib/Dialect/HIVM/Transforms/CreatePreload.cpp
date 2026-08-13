@@ -61,6 +61,9 @@ struct PreloadInfo {
   Value step;
   // Kernel info
   TFuncCoreType funcCoreType;
+  // Planned pointer roots for preload-local buffers and their physical buffer
+  // counts. The annotation may be attached to a view of the planned root.
+  DenseMap<Value, size_t> preloadLocalBuffers;
   // IRMapping for rewriting
   SmallVector<IRMapping> mappings;
 };
@@ -91,24 +94,53 @@ static std::optional<hivm::PointerCastOp> getLocalBuffer(Value v) {
   return std::nullopt;
 }
 
-static std::optional<size_t> getMultiBufferNum(Value value) {
-  auto markOp = utils::getAnnotateOpWithAttr(value, hivm::MultiBufferAttr::name);
-  if (!markOp) {
-    return std::nullopt;
-  }
+static void collectPreloadLocalBuffers(func::FuncOp funcOp, PreloadInfo &info) {
+  auto isPointerCast = [](Value value) {
+    return static_cast<bool>(value.getDefiningOp<hivm::PointerCastOp>());
+  };
 
-  auto attr = (*markOp)->getAttrOfType<IntegerAttr>(hivm::MultiBufferAttr::name);
-  if (!attr || attr.getInt() == 0) {
-    return std::nullopt;
-  }
+  funcOp.walk([&](annotation::MarkOp markOp) {
+    if (!utils::isAnnotationWithAttr(markOp,
+                                     hivm::PreloadLocalBufferAttr::name))
+      return;
 
-  return static_cast<size_t>(attr.getInt());
+    auto roots =
+        utils::tracebackMemRefVecByTargetFn(markOp.getSrc(), isPointerCast);
+    if (roots.size() != 1)
+      return;
+
+    auto pointerCastOp = roots.front().getDefiningOp<hivm::PointerCastOp>();
+    if (!pointerCastOp || pointerCastOp.getAddrs().empty())
+      return;
+
+    // PlanMemory materializes one address per physical buffer, so the address
+    // list is authoritative even when max_preload_num is larger.
+    info.preloadLocalBuffers[pointerCastOp.getResult()] =
+        pointerCastOp.getAddrs().size();
+  });
+}
+
+static std::optional<size_t> getPreloadLocalBufferNum(hivm::PointerCastOp op,
+                                                      const PreloadInfo &info) {
+  auto it = info.preloadLocalBuffers.find(op.getResult());
+  if (it != info.preloadLocalBuffers.end())
+    return it->second;
+
+  // Preserve support for the legacy form that stores the marker directly on
+  // the pointer_cast operation instead of using annotation.mark.
+  if (op->hasAttr(hivm::PreloadLocalBufferAttr::name) && !op.getAddrs().empty())
+    return op.getAddrs().size();
+
+  return std::nullopt;
 }
 
 static Value cloneLocalBuffer(Value oldValue, hivm::PointerCastOp op,
                               size_t preloadNum, PreloadInfo &info,
                               OpBuilder &b) {
-  size_t bufferNum = getMultiBufferNum(op).value_or(info.maxPreloadNum);
+  auto maybeBufferNum = getPreloadLocalBufferNum(op, info);
+  assert(maybeBufferNum && *maybeBufferNum > 0 &&
+         "expected a preload-local buffer with planned addresses");
+  size_t bufferNum = *maybeBufferNum;
   SmallVector<Value> addrs(bufferNum);
 
   size_t preloadIdx = preloadNum % bufferNum;
@@ -190,8 +222,7 @@ preprocessLoopArgs(scf::ForOp forOp, SmallVector<Value> &newInitArgs,
   for (auto [initArg, iterArg] :
        llvm::zip_equal(forOp.getInitArgs(), forOp.getRegionIterArgs())) {
     if (auto pointerCastOp = initArg.getDefiningOp<hivm::PointerCastOp>();
-        pointerCastOp &&
-        pointerCastOp->hasAttr(hivm::PreloadLocalBufferAttr::name)) {
+        pointerCastOp && getPreloadLocalBufferNum(pointerCastOp, info)) {
       valueToAdapt[iterArg] = pointerCastOp;
     } else {
       newInitArgs.push_back(initArg);
@@ -242,7 +273,7 @@ static void rewriteScopeReturnOp(ValueRange returnResults,
 static void rewriteBody(Block *body, PreloadInfo &info, OpBuilder &b) {
   for (auto &op : body->without_terminator()) {
     if (auto pointerCastOp = dyn_cast<hivm::PointerCastOp>(&op);
-        pointerCastOp && getLocalBuffer(pointerCastOp)) {
+        pointerCastOp && getPreloadLocalBufferNum(pointerCastOp, info)) {
       cloneLocalBuffer(pointerCastOp, pointerCastOp, info.preloadNum, info, b);
     } else if (auto subviewOp = dyn_cast<memref::SubViewOp>(&op);
               subviewOp && isPreloadWorkspaceSubview(subviewOp)) {
@@ -413,6 +444,7 @@ static void rewritePreloadLoop(scf::ForOp forOp,
       info.ub.getLoc(),
       rewriter.getIntegerAttr(info.ub.getType(), info.maxPreloadNum));
   info.mappings.resize(maxPreloadNum);
+  collectPreloadLocalBuffers(forOp->getParentOfType<func::FuncOp>(), info);
 
   SmallVector<Value> newInitArgs;
   DenseMap<Value, hivm::PointerCastOp> valueToAdapt;
@@ -456,7 +488,7 @@ static void rewritePreloadLoop(scf::ForOp forOp,
               continue;
             }
             if (auto pointerCastOp = dyn_cast<hivm::PointerCastOp>(&bodyOp)) {
-              if (getLocalBuffer(pointerCastOp)) {
+              if (getPreloadLocalBufferNum(pointerCastOp, info)) {
                 for (int64_t preloadNum = maxPreloadNum - 1; preloadNum >= 0;
                      preloadNum--) {
                   cloneLocalBuffer(pointerCastOp, pointerCastOp, preloadNum,
