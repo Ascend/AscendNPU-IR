@@ -306,6 +306,7 @@ Value divWithRoundModeAndCastType(
 bool isFillOp(Operation *op);
 
 bool shouldUseTileReductionUsingForV2(Operation *op);
+bool shouldUseTreeReduction(Operation *Op);
 
 bool isSimtOps(Operation *op);
 

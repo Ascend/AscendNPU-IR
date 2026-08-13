@@ -27,6 +27,7 @@
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Debug.h"
 
+#include "mlir/Analysis/SliceAnalysis.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/PatternMatch.h"
@@ -1707,6 +1708,8 @@ bool hfusion::isFP8(Type type, Builder builder) {
 /// see issue: AscendNPU-IR/issues/307
 /// So we still use tile_using_for instead for these context.
 bool hfusion::shouldUseTileReductionUsingForV2(Operation *op) {
+  if (shouldUseTreeReduction(op))
+    return false;
   if (!isa<linalg::LinalgOp>(op))
     return false;
 
@@ -1728,4 +1731,33 @@ bool hfusion::shouldUseTileReductionUsingForV2(Operation *op) {
       return false;
   }
   return true;
+}
+
+bool hfusion::shouldUseTreeReduction(Operation *op) {
+  if (!isa<linalg::LinalgOp>(op))
+    return false;
+  auto linalgOp = cast<linalg::LinalgOp>(op);
+  if (linalgOp.getNumParallelLoops() == 0)
+    return false;
+  if (linalgOp.getNumReductionLoops() != 1)
+    return false;
+  if (linalgOp.getRegionOutputArgs().size() > 1)
+    return false;
+
+  SmallVector<Operation *, 1> combinerOps;
+  Value reducedValue =
+      matchReduction(linalgOp.getRegionOutputArgs(), /*redPos=*/0, combinerOps);
+
+  if (!reducedValue || combinerOps.size() != 1)
+    return false;
+
+  Operation *combiner = combinerOps.front();
+  if (!isa<arith::AddFOp>(combiner))
+    return false;
+
+  SmallVector<unsigned> reductionDims;
+  linalgOp.getReductionDims(reductionDims);
+
+  // Now supports only RA case
+  return reductionDims.front() < linalgOp.getNumLoops() - 1;
 }
