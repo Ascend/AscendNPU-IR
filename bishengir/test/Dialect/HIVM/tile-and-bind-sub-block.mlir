@@ -5632,7 +5632,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">, hivm.module_c
 // CHECK-LABEL: func.func @if_to_tensor_bubble_up_slice_aiv
 // CHECK: scf.if {{.*}} -> (tensor<16xi32>) {
 // CHECK: bufferization.to_tensor {{.*}} restrict writable : memref<16xi32>
-// CHECK: {tiled_op}
+// CHECK: hivm.hir.copy ins({{.*}} : tensor<32x16xf32>) outs({{.*}} : memref<32x16xf32, strided<[32, 1], offset: ?>>) {tiled_op}
 // CHECK: map_for_to_forall
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">, hivm.module_core_type = #hivm.module_core_type<MIX>} {
   func.func @if_to_tensor_bubble_up_slice_aiv() attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, hivm.vf_mode = #hivm.vf_mode<SIMD>, mix_mode = "mix", parallel_mode = "simd"} {
@@ -5641,12 +5641,14 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">, hivm.module_c
     %c32_i32 = arith.constant 32 : i32
     %c64_i32 = arith.constant 64 : i32
     %empty_i32 = tensor.empty() : tensor<32xi32>
-    %alloc = memref.alloc() : memref<32xi32, #hivm.address_space<ub>>
-    %mc0 = memref.memory_space_cast %alloc : memref<32xi32, #hivm.address_space<ub>> to memref<32xi32>
+    %alloc = memref.alloc() : memref<32xi32, #hivm.address_space<cbuf>>
+    annotation.mark %alloc {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<1>} : memref<32xi32, #hivm.address_space<cbuf>>
+    %mc0 = memref.memory_space_cast %alloc : memref<32xi32, #hivm.address_space<cbuf>> to memref<32xi32>
     %alloc1 = memref.alloc() : memref<32xi32, #hivm.address_space<ub>>
     %mc1 = memref.memory_space_cast %alloc1 : memref<32xi32, #hivm.address_space<ub>> to memref<32xi32>
-    %alloc_ub = memref.alloc() : memref<32x32xf32, #hivm.address_space<ub>>
-    %mc_ub = memref.memory_space_cast %alloc_ub : memref<32x32xf32, #hivm.address_space<ub>> to memref<32x32xf32>
+    %alloc_cbuf = memref.alloc() : memref<32x32xf32, #hivm.address_space<cbuf>>
+    annotation.mark %alloc_cbuf {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>} : memref<32x32xf32, #hivm.address_space<cbuf>>
+    %mc_cbuf = memref.memory_space_cast %alloc_cbuf : memref<32x32xf32, #hivm.address_space<cbuf>> to memref<32x32xf32>
     scf.for %i = %c0_i32 to %c64_i32 step %c32_i32 : i32 {
       hivm.hir.copy ins(%empty_i32 : tensor<32xi32>) outs(%mc0 : memref<32xi32>)
       %parity = arith.remsi %i, %c2_i32 : i32
@@ -5663,7 +5665,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">, hivm.module_c
       %brc = hivm.hir.vbrc {hivm.tcore_type = #hivm.tcore_type<VECTOR>} ins(%expanded : tensor<1x32xi32>) outs(%empty_brc : tensor<32x32xi32>) broadcast_dims = [0] -> tensor<32x32xi32>
       %empty_f32 = tensor.empty() : tensor<32x32xf32>
       %cast = hivm.hir.vcast ins(%brc : tensor<32x32xi32>) outs(%empty_f32 : tensor<32x32xf32>) -> tensor<32x32xf32>
-      hivm.hir.copy ins(%cast : tensor<32x32xf32>) outs(%mc_ub : memref<32x32xf32>)
+      hivm.hir.copy ins(%cast : tensor<32x32xf32>) outs(%mc_cbuf : memref<32x32xf32>)
     }
     return
   }
@@ -5685,8 +5687,9 @@ module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
     %lim2 = arith.minsi %lim, %c32_i32 : i32
     %empty = tensor.empty() : tensor<32x32xf32>
     %init = hivm.hir.vbrc ins(%cst : f32) outs(%empty : tensor<32x32xf32>) -> tensor<32x32xf32>
-    %alloc = memref.alloc() : memref<32x32xf32, #hivm.address_space<ub>>
-    %cast = memref.memory_space_cast %alloc : memref<32x32xf32, #hivm.address_space<ub>> to memref<32x32xf32>
+    %alloc = memref.alloc() : memref<32x32xf32, #hivm.address_space<cbuf>>
+    annotation.mark %alloc {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>} : memref<32x32xf32, #hivm.address_space<cbuf>>
+    %cast = memref.memory_space_cast %alloc : memref<32x32xf32, #hivm.address_space<cbuf>> to memref<32x32xf32>
     %w:2 = scf.while (%t = %init, %c = %c0_i32) : (tensor<32x32xf32>, i32) -> (tensor<32x32xf32>, i32) {
       %cond = arith.cmpi slt, %c, %lim2 : i32
       scf.condition(%cond) %t, %c : tensor<32x32xf32>, i32

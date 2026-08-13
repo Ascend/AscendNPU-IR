@@ -18,6 +18,7 @@
 #include "bishengir/Dialect/HIVM/Analysis/DimensionAnalyzer.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
+#include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -74,6 +75,15 @@ template <typename StoreOpTy> static Value getStoreLikeDst(StoreOpTy storeOp) {
     return storeOp.getAddr();
   else
     return storeOp.getDst();
+}
+
+static bool isUbToL1Copy(hivm::CopyOp op) {
+  auto dstOrig = utils::tracebackMemRef(op.getDst());
+  if (!dstOrig.getDefiningOp<memref::AllocOp>())
+    return false;
+  auto maybeAddressSpace = GetBufferSpaceAttr(dstOrig);
+  return maybeAddressSpace.has_value() &&
+         maybeAddressSpace->getAddressSpace() == hivm::AddressSpace::L1;
 }
 
 bool DimensionAnalyzer::isParallelDim(Dimension dim) {
@@ -570,6 +580,9 @@ void DimensionAnalyzer::collectTilingDimImpl(
     SmallVector<Value> sources;
     if constexpr (std::is_same_v<StoreOpTy, scf::YieldOp>) {
       sources = llvm::to_vector(op.getResults());
+    } else if constexpr (std::is_same_v<StoreOpTy, hivm::CopyOp>) {
+      if (isUbToL1Copy(op))
+        sources.push_back(getTilingTarget(op));
     } else {
       sources.push_back(getTilingTarget(op));
     }
