@@ -18,6 +18,7 @@
 
 #include "bishengir/Dialect/Analysis/VFFusion/CostModelInfo/CostModelInfoUtils.h"
 #include "bishengir/Dialect/Analysis/VFFusion/VFFusionAnalyzer.h"
+#include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Visitors.h"
@@ -524,12 +525,19 @@ bool MaxParallelAnalyzer::canFuseGroups(int producerGroupId,
                                         int consumerIndex) {
   Operation *const candidateOp = opsInBlock[producerIndex];
   auto &consumerGroup = AllFusedGroupBlocks[consumerGroupId];
-  if (tryFuseByCastStrategy(producerGroupId, consumerGroupId, producerIndex,
-                            consumerIndex))
+  // enableCastOpt only takes effect in max-parallel mode.
+  if (this->option.enableCastOpt) {
+    if (tryFuseByCastStrategy(producerGroupId, consumerGroupId, producerIndex,
+                              consumerIndex))
+      return true;
+  } else if (isa<hfusion::CastOp>(candidateOp)) {
+    LDBG("candidateOp is Cast");
     return true;
+  }
 
   if (stage == 1) {
-    if (useNarrowingCastInConsumer(producerIndex, consumerIndex)) {
+    if (this->option.enableCastOpt &&
+        useNarrowingCastInConsumer(producerIndex, consumerIndex)) {
       return false;
     }
     // TODO Perhaps we can cache the computation state of operation, but we
@@ -646,26 +654,24 @@ bool MaxParallelAnalyzer::isIOBoundGroup(int groupId) {
 
 static int getElementByteWidth(Type elementType) {
   if (auto floatType = dyn_cast<FloatType>(elementType))
-    return static_cast<int>(floatType.getWidth() / 8);
+    return static_cast<int>(floatType.getWidth() / mlir::utils::INTR_BITS_PER_BYTE);
   if (auto intType = dyn_cast<IntegerType>(elementType))
-    return static_cast<int>(intType.getWidth() / 8);
+    return static_cast<int>(intType.getWidth() / mlir::utils::INTR_BITS_PER_BYTE);
   return 0;
 }
 
-static int computeOpShapeScore(Operation &op) {
+static int computeOpInstNum(Operation &op) {
   int64_t maxElements = 0;
   int byteWidth = 0;
   auto checkRankedTensor = [&](Value val) {
     auto tensorType = dyn_cast<RankedTensorType>(val.getType());
     if (!tensorType)
       return;
-    // Fix 1: only consider static shapes; skip if any dimension is dynamic.
     if (!tensorType.hasStaticShape())
       return;
     int elemByteWidth = getElementByteWidth(tensorType.getElementType());
     if (elemByteWidth == 0)
       return;
-    // Fix 2: element count is only meaningful for static shapes.
     int64_t numElements = tensorType.getNumElements();
     if (numElements * elemByteWidth > maxElements * byteWidth) {
       maxElements = numElements;
@@ -686,24 +692,24 @@ static int computeOpShapeScore(Operation &op) {
   }
   if (maxElements == 0 || byteWidth == 0)
     return 0;
-  return static_cast<int>(maxElements * byteWidth / 256);
+  return static_cast<int>(maxElements * byteWidth / mlir::hfusion::util::VL);
 }
 
 template <typename RangeT>
-static int computeGroupShapeScore(const RangeT &group) {
-  int totalScore = 0;
+static int computeGroupInstNum(const RangeT &group) {
+  int totalInstNum = 0;
   for (auto *op : group)
-    totalScore += computeOpShapeScore(*op);
-  return totalScore;
+    totalInstNum += computeOpInstNum(*op);
+  return totalInstNum;
 }
 
 bool MaxParallelAnalyzer::isSmallShapeGroup(int groupId) {
   if (AllFusedGroupBlocks[groupId].empty()) {
     return false;
   }
-  int shapeScore = computeGroupShapeScore(AllFusedGroupBlocks[groupId]);
-  LDBG("isSmallShapeGroup: group " << groupId << " shapeScore=" << shapeScore);
-  return shapeScore < kIssueQueueLen;
+  int instNum = computeGroupInstNum(AllFusedGroupBlocks[groupId]);
+  LDBG("isSmallShapeGroup: group " << groupId << " instNum=" << instNum);
+  return instNum < kIssueQueueLen;
 }
 
 bool MaxParallelAnalyzer::mergeGroups(const int producerGroupId,

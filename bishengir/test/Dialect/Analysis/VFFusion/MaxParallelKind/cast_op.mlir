@@ -1,4 +1,4 @@
-// RUN: bishengir-opt --hacc-append-device-spec="target=Ascend910_9579" --vf-fusion="fusion-mode=max-parallel" --split-input-file %s | FileCheck %s
+// RUN: bishengir-opt --hacc-append-device-spec="target=Ascend910_9579" --vf-fusion="fusion-mode=max-parallel enable-cast-opt=true" --split-input-file %s | FileCheck %s
 
 // Narrowing f32 -> bf16 followed by transpose.
 // CHECK-LABEL: func.func private @narrowing_cast_f322bf16_with_transpose_fused_0(
