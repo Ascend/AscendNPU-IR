@@ -79,15 +79,22 @@ void LegalizeBoolForSimtVFPass::dealWithReferenceOutOfScope(
       // we need to extend the tensor to i8 when the element type is i1.
       if (llvm::isa<RankedTensorType>(operand.getType())
           && !scopeOp->isAncestor(defOp)) {
-        auto defOpElemTy =
-            llvm::dyn_cast<RankedTensorType>(defOp->getResult(0).getType())
-                .getElementType();
+        auto opResult = llvm::dyn_cast<OpResult>(operand);
+        if (!opResult)
+          continue;
+        // Tensor used inside scope may from op with multi results, for example:
+        // scf.if -> (i32, f32, tensor, i64, tensor)
+        unsigned operandIdx = opResult.getResultNumber();
+        auto defOpElemTy = llvm::dyn_cast<RankedTensorType>(
+            defOp->getResult(operandIdx).getType())
+                               .getElementType();
         if (!defOpElemTy.isInteger(1))
           continue;
         builder.setInsertionPointAfter(defOp);
         // Cast the i1 tensor to i8 tensor followed its defining op.
-        Value extVal = getVCastOpWithEmpty(
-            IntegerType::get(&getContext(), 8), defOp->getResult(0), builder);
+        Value extVal = getVCastOpWithEmpty(IntegerType::get(&getContext(), 8),
+            defOp->getResult(operandIdx),
+            builder);
         builder.setInsertionPoint(op);
         // Inside the scope, cast back to i1 tensor to keep consistent with
         // the original type.
