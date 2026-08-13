@@ -1728,6 +1728,36 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 
 // -----
 
+// Non-scalar vbrc (e.g. broadcast tensor<1x32> -> tensor<16x32>) used by mmad
+// must run on VECTOR and insert a copy into cbuf for the cube user. Contrast
+// with scalar vbrc + mmad, which stays on cube and skips convert_layout.
+// CHECK-LABEL: @vbrc_nonscalar_mmad_lhs(
+// CHECK: %[[VBRC:.*]] = hivm.hir.vbrc {hivm.tcore_type = #hivm.tcore_type<VECTOR>}
+// CHECK-SAME: broadcast_dims = [0]
+// CHECK: %[[TENSOR:.*]] = tensor.empty() {hivm.address_space = #hivm.address_space<cbuf>, "hivm.inserted-tensor"} : tensor<16x32xbf16>
+// CHECK: %[[COPY:.*]] = hivm.hir.copy ins(%[[VBRC]] : tensor<16x32xbf16>) outs(%[[TENSOR]] : tensor<16x32xbf16>) {"hivm.inserted-copy"}
+// CHECK: hivm.hir.mmadL1 {{.*}} ins(%[[COPY]],
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @vbrc_nonscalar_mmad_lhs(%row: tensor<1x32xbf16>, %rhs: tensor<32x32xbf16>)
+      -> tensor<16x32xf32>
+      attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %c16 = arith.constant 16 : index
+    %c32 = arith.constant 32 : index
+    %true = arith.constant true
+    %bcast_out = tensor.empty() : tensor<16x32xbf16>
+    %vbrc = hivm.hir.vbrc ins(%row : tensor<1x32xbf16>) outs(%bcast_out : tensor<16x32xbf16>)
+        broadcast_dims = [0] -> tensor<16x32xbf16>
+    %out = tensor.empty() : tensor<16x32xf32>
+    %mmad = hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
+        ins(%vbrc, %rhs, %true, %c16, %c32, %c32
+            : tensor<16x32xbf16>, tensor<32x32xbf16>, i1, index, index, index)
+        outs(%out : tensor<16x32xf32>) -> tensor<16x32xf32>
+    return %mmad : tensor<16x32xf32>
+  }
+}
+
+// -----
+
 // CHECK-LABEL: @a5_parallel_loop_memref_load_propagation
 // CHECK: scf.for
 // CHECK: hivm.hir.load
