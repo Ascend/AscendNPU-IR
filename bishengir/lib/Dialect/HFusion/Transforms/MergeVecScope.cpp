@@ -1304,7 +1304,7 @@ void MergeVecScopePass::mergeNoBetween(func::FuncOp root, func::FuncOp vf1,
   std::string newName = baseName + "_0";
   unsigned counter = 0;
   while (symbolTable.lookup(newName)) {
-    newName = baseName + "_" + std::to_string(counter++);
+    newName = baseName + "_" + std::to_string(++counter);
   }
 
   auto getFuncCoreType = [](func::FuncOp f) -> hivm::TFuncCoreType {
@@ -1446,7 +1446,7 @@ void MergeVecScopePass::mergeNoMemory(
   std::string newName = baseName + "_0";
   unsigned counter = 0;
   while (symbolTable.lookup(newName)) {
-    newName = baseName + "_" + std::to_string(counter++);
+    newName = baseName + "_" + std::to_string(++counter);
   }
 
   SmallVector<Type> newArgTypes;

@@ -1053,6 +1053,7 @@ void AutoVectorizeV2::runOnOperation() {
   for (auto callee : allInlined)
     rewriter.eraseOp(callee);
 
+  SmallVector<std::string> failedFuncNames;
   for (func::FuncOp func : fusableFuncList) {
     RetriedOptions retryCtx{maxFusedOps, enableMultipleConsumerFusion,
                             enableCrossIfFusion, enableVFStackLimit,
@@ -1078,9 +1079,11 @@ void AutoVectorizeV2::runOnOperation() {
       func.emitWarning()
           << (retried ? "AutoVectorizeV2 retry failed"
                       : "AutoVectorizeV2 failed")
-          << "; falling back to legacy HFusionAutoVectorize pass";
+          << "; falling back to legacy HFusionAutoVectorize pass for this "
+             "function";
       fallback = true;
-      break;
+      failedFuncNames.push_back(func.getSymName().str());
+      continue;
     }
   }
 
@@ -1092,7 +1095,12 @@ void AutoVectorizeV2::runOnOperation() {
     // vectorization.
     vecOptions.maxVectorizeAxes = 2;
     vecOptions.treeReduce = treeReduce;
-    pm.addPass(hfusion::createHFusionAutoVectorizePass());
+    // Scope the legacy pass to just the function(s) AutoVectorizeV2 failed
+    // on: functions it already vectorized above must not be reprocessed,
+    // since both paths outline vector functions using the same naming
+    // scheme and would otherwise collide on the same names.
+    vecOptions.restrictToFuncNames = failedFuncNames;
+    pm.addPass(hfusion::createHFusionAutoVectorizePass(vecOptions));
     std::ignore = pm.run(op);
   }
 }
