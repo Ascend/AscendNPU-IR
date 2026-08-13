@@ -19,16 +19,16 @@
 // PotentialPaddingRequirements>: For each non power of 2 tensor value, keeps
 // track of:
 //   - The Value's immediate users that have a padding requirement (and which
-//   operands have which padding requirement)
+//     operands have which padding requirement)
 //   - The Value's downstream users that have a padding requirement (and which
-//   operands have which padding requirement)
+//     operands have which padding requirement)
 // DenseMap<Value, SmallVector<std::pair<TypedAttr, SmallPtrSet<OpOperand*,
 // 2>>>>:
 //   For each non power of 2 tensor value, keeps track of:
 //   - The Value's required paddings that have been chosen to be set at this
-//   value in the final codegen stage (TypedAttr)
+//     value in the final codegen stage (TypedAttr)
 //   - The Operands that require the specific padding for each padding type
-//   (SmallPtrSet<OpOperand*, 2>)
+//     (SmallPtrSet<OpOperand*, 2>)
 //
 // Overall Steps:
 // 1: Scan for non power of 2 tensor ops that are not supported by this pass
@@ -58,70 +58,77 @@
 // triton::ReduceOp:
 //   - No change if the reduce axis was a power of 2
 //   - For each input tensor (or 'lane') tries to find an identity for the math
-//   calculation
-//     For example, if one tensor gets reduced by arith.addf, finds the identity
-//     0.0
+//     calculation. For example, if one tensor gets reduced by arith.addf, finds
+//     the identity 0.0
 //       - Limitations: Only supports reduction algorithms that have one
-//       operation (and have an identity), and must only access its own
-//       accumulator and value argument
+//         operation (and have an identity), and must only access its own
+//         accumulator and value argument
 //   - If able to find an identity, requests that the tensor corresponding to
-//   that reduction algorithm is padded with the identity element
+//     that reduction algorithm is padded with the identity element
 //   - Otherwise, adds the mask tensor as an argument and uses it to mask out
-//   unwanted elements
+//     unwanted elements
 //
 // triton::ScanOp:
 //   - Very similar implementation to triton::ReduceOp, except:
 //     Only care about padding/masking if reverse=true currently
 //     - If reverse=false, then the elements at the end are padding and don't
-//     affect calculations
+//       affect calculations
 //
 // triton::LoadOp/triton::StoreOp/triton::AtomicRMWOp:
 //   - For load/store op's that accept a tensor<sizex!tt.ptr<>> argument, we add
-//   an initial mask (all true)
+//     an initial mask (all true)
 //      - Note that masks are NOT added if the load/store op accepts a
-//      !tt.ptr<tensor> arg
+//        !tt.ptr<tensor> arg
+//      - Instead, boundaryCheck attrs are added along non power of two dims
+//   - For store op's that accept a !tt.ptr<tensor> arg, if the original
+//     tt.make_tensor_ptr op could not make its size operand smaller for
+//     masking, first load from the ptr, then use select to insert the new data
+//     before storing it to preserve correctness
 //   - No other changes, these are treated as 'general tensor ops'
 //
 // triton::ReshapeOp:
 //   - If just updating the operand and result shape results in the data being
-//   in the wrong locations,
-//     instead reshapes to 1D and uses slice ops to move around data before
-//     reshaping to result shape
+//     in the wrong locations, instead reshapes to 1D and uses slice ops to move
+//     around data before reshaping to result shape
 //
 // tensor::ExtractSliceOp/tensor::InsertSliceOp:
 //   - Supports cases where only the tensors are only sliced along one dimension
 //   - Needed for tensor::InsertSliceOp correctness, RewriteSliceOpToTriton.cpp
-//   also has this restriction
+//     also has this restriction
 //   - Sometimes needs to split the insert_slice/extract_slice into multiple
-//   slice ops which have powers of two dimensions along the slice axis
+//     slice ops which have powers of two dimensions along the slice axis
 //     - slice ops are split when the offset is dynamic or the offset + expanded
-//     result axis dim > expanded source axis dim
+//       result axis dim > expanded source axis dim
 //        - insert_slice ops are also split when the slice axis of the insert
-//        tensor is not a power of 2, and expanding would override original data
+//          tensor is not a power of 2, and expanding would override original
+//          data
 //
 // arith::ConstantOp:
 //   - Note that constant ops in the form `arith.constant dense<[1, 2, 3]>` for
-//   example with non power of two dimensions are not supported
+//     example with non power of two dimensions are not supported
 //   - This is because of a restriction that requires arith.constant dense ops
-//   declared this way to have num elements == num threads per warp
+//     declared this way to have num elements == num threads per warp
 //
 // triton::MakeTensorPtrOp:
-//   - Just updates the size of the output tensor
-//   - When this tensor is loaded, relies on MakeTensorPtrOp's lowering to
-//   provide masking/valid ptrs
+//   - Updates the size of the output tensor
+//   - If result is not an operand to tt.advance ops, or tt.advance ops only
+//     advance along non power of two dimensions, update the shape operand along
+//     non power of two dimensions for load/store masking
+//   - When this tensor ptr is used to load/store, relies on MakeTensorPtrOp's
+//     lowering to provide masking/valid ptrs
 //
 // General Tensor Ops: (see isGeneralTensorOp(Operation* op) for which ops are
 // categorized as a general tensor op)
 //   - Note that some ops that implement the InferTypeOpInterface are not
-//   supported yet
+//     supported yet
 //   - These are ops that implement the InferTypeOpInterface/have the
-//   elementwise trait and some manually added ones
+//     elementwise trait and some manually added ones
 //       - For these ops, we just need to update some operand/return types
 //   - Ex: elementwise ops, triton::MakeTensorPtrOp, scf::ForOp, triton::LoadOp,
-//   triton::StoreOp, etc
+//     triton::StoreOp, etc
 //
 //   - Sometimes used as a cleanup step to finish modifying more complex ops
-//   (Ex: tt.reduce, tt.scan)
+//     (Ex: tt.reduce, tt.scan)
 //
 // Other notes:
 // data shape refers to the shape of tensors before the pass
@@ -148,7 +155,6 @@
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Interfaces/CallInterfaces.h"
-#include "mlir/Interfaces/CastInterfaces.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Interfaces/InferTypeOpInterface.h"
 #include "mlir/Pass/Pass.h"
@@ -591,41 +597,16 @@ std::vector<bool> getFlattenedDataLocs(ArrayRef<int64_t> dataShape,
 std::optional<std::pair<std::vector<bool>, std::vector<bool>>>
 getComplexReshapeDataLocs(const LocalTensorShapeData &operandData,
                           const LocalTensorShapeData &resultData) {
-  size_t operandIdx = 0;
-  size_t resultIdx = 0;
-  ArrayRef<int64_t> operandShape = operandData.localVirtualShape;
-  ArrayRef<int64_t> resultShape = resultData.localVirtualShape;
   std::vector<bool> sourceDataLocs = getFlattenedDataLocs(
       operandData.dataShape, operandData.localVirtualShapeSize);
   std::vector<bool> resultDataLocs = getFlattenedDataLocs(
       resultData.dataShape, resultData.localVirtualShapeSize);
 
-  std::pair<std::vector<bool>, std::vector<bool>> result{sourceDataLocs,
-                                                         resultDataLocs};
-
-  // Checks the dimensions are equal while skipping over dimensions of size 1
-  while (resultIdx < resultShape.size() && operandIdx < operandShape.size()) {
-    while (operandIdx < operandShape.size() && operandShape[operandIdx] == 1) {
-      operandIdx += 1;
-    }
-
-    while (resultIdx < resultShape.size() && resultShape[resultIdx] == 1) {
-      resultIdx += 1;
-    }
-
-    if (operandIdx == operandShape.size() && resultIdx == resultShape.size()) {
-      return std::nullopt;
-    }
-
-    if (operandShape[operandIdx] != resultShape[resultIdx]) {
-      return result;
-    }
-
-    operandIdx += 1;
-    resultIdx += 1;
+  if (sourceDataLocs == resultDataLocs) {
+    return std::nullopt;
+  } else {
+    return std::make_pair(sourceDataLocs, resultDataLocs);
   }
-
-  return result;
 }
 
 bool isSupportedSliceOp(Operation *op) {
@@ -834,12 +815,25 @@ void addMasksToLoadAndStores(FuncOp &mod) {
   while (!tensorPtrWorkQueue.empty()) {
     auto [cur, type] = tensorPtrWorkQueue.front();
     tensorPtrWorkQueue.pop();
-    IRRewriter builder(cur);
 
-    SmallVector<int32_t> boundDims;
-    for (int64_t i = 0; i < type.getRank(); i++) {
-      if (!llvm::isPowerOf2_64(i)) {
-        boundDims.push_back(i);
+    ArrayRef<int64_t> shape = type.getShape();
+    ArrayRef<int32_t> prevBoundDims;
+    if (auto loadOp = dyn_cast<triton::LoadOp>(cur)) {
+      prevBoundDims = loadOp.getBoundaryCheck();
+    } else if (auto storeOp = dyn_cast<triton::StoreOp>(cur)) {
+      prevBoundDims = storeOp.getBoundaryCheck();
+    }
+
+    SmallVector<int32_t> boundDims(prevBoundDims);
+    size_t curIndex = 0;
+    for (int32_t i = 0; i < type.getRank(); i++) {
+      if (curIndex < boundDims.size() && i == boundDims[curIndex]) {
+        curIndex += 1;
+        continue;
+      }
+      if (!llvm::isPowerOf2_64(shape[i])) {
+        boundDims.insert(boundDims.begin() + curIndex, i);
+        curIndex += 1;
       }
     }
     DenseI32ArrayAttr boundaryCheckAttr =
@@ -1233,6 +1227,39 @@ getPaddingRequirements(OpBuilder &builder, Operation *op,
   return res;
 }
 
+// Gets all triton::AdvanceOp's that stem from a triton::MakeTensorPtrOp
+SmallVector<triton::AdvanceOp> getChildAdvanceOps(triton::MakeTensorPtrOp op) {
+  SmallVector<triton::AdvanceOp> advanceOps;
+  std::queue<Operation *> workQueue;
+  workQueue.push(op);
+
+  while (!workQueue.empty()) {
+    Operation *cur = workQueue.front();
+    workQueue.pop();
+
+    for (Operation *user : cur->getUsers()) {
+      if (auto advanceOp = dyn_cast<triton::AdvanceOp>(user)) {
+        advanceOps.push_back(advanceOp);
+      }
+      workQueue.push(user);
+    }
+  }
+
+  return advanceOps;
+}
+
+// Gets the root triton::MakeTensorPtrOp source given a tensor ptr value
+// If the chain contains anything but tt.make_tensor_ptr and tt.advance returns
+// nullptr
+triton::MakeTensorPtrOp getParentMakeTensorPtrOp(Value ptrVal) {
+  Operation *cur = ptrVal.getDefiningOp();
+
+  while (isa<triton::AdvanceOp>(cur)) {
+    cur = cur->getOperand(0).getDefiningOp();
+  }
+  return dyn_cast_if_present<triton::MakeTensorPtrOp>(cur);
+}
+
 // Assumes builder's insertion point is already set
 // Given the data shape and virtual shape of an op's result, creates a mask
 // which is true where the original elements are in the padded shape Is used
@@ -1420,9 +1447,70 @@ void updateBroadcastOp(IRRewriter &rewriter, triton::BroadcastOp op,
   rewriter.modifyOpInPlace(op, [&]() { op.getResult().setType(newType); });
 }
 
-// Updates the return shape of a triton MakeTensorPtrOp
+// Updates the return shape of a triton MakeTensorPtrOp, and changes its shape
+// operand if possible to allow masking via boundaryCheck
 void updateMakeTensorPtrOp(IRRewriter &rewriter, triton::MakeTensorPtrOp op,
                            const LocalTensorShapeData &data) {
+  rewriter.setInsertionPoint(op);
+  Location loc = op->getLoc();
+  ArrayRef<int64_t> resultShape = data.dataShape;
+  auto oldShape = op.getShape();
+  SmallVector<Value> newShape;
+  newShape.reserve(oldShape.size());
+  bool changeShape = true;
+  SmallVector<triton::AdvanceOp> advanceOps = getChildAdvanceOps(op);
+
+  for (auto advanceOp : advanceOps) {
+    auto offsets = advanceOp.getOffsets();
+    for (size_t i = 0; i < offsets.size(); i++) {
+      if (llvm::isPowerOf2_64(resultShape[i])) {
+        continue;
+      }
+
+      // if at a non power 2 dim but offset is 0, skip
+      Value offset = offsets[i];
+      if (auto constOp = dyn_cast<arith::ConstantOp>(offset.getDefiningOp())) {
+        if (auto intAttr = dyn_cast<IntegerAttr>(constOp.getValue())) {
+          if (intAttr.getInt() == 0) {
+            continue;
+          }
+        }
+      }
+
+      // otherwise need to use load -> select -> store pattern
+      changeShape = false;
+    }
+  }
+
+  auto offsets = op.getOffsets();
+
+  if (changeShape) {
+    for (size_t i = 0; i < resultShape.size(); i++) {
+      if (llvm::isPowerOf2_64(resultShape[i])) {
+        newShape.push_back(oldShape[i]);
+      } else {
+        Value idxOffset = offsets[i];
+        Value newDimSize = nullptr;
+        if (auto constOp = dyn_cast_if_present<arith::ConstantOp>(
+                idxOffset.getDefiningOp())) {
+          int64_t offsetVal = cast<IntegerAttr>(constOp.getValue()).getInt();
+          TypedAttr attr =
+              rewriter.getI64IntegerAttr(resultShape[i] + offsetVal);
+          newDimSize = rewriter.create<arith::ConstantOp>(loc, attr);
+        } else {
+          TypedAttr attr = rewriter.getI64IntegerAttr(resultShape[i]);
+          Value constAttr = rewriter.create<arith::ConstantOp>(loc, attr);
+          Value i64Offset = rewriter.create<arith::ExtSIOp>(
+              loc, rewriter.getI64Type(), idxOffset);
+          newDimSize =
+              rewriter.create<arith::AddIOp>(loc, i64Offset, constAttr);
+        }
+
+        newShape.push_back(newDimSize);
+      }
+    }
+  }
+
   triton::PointerType oldPtrType = cast<triton::PointerType>(op.getType());
   RankedTensorType oldPtrTensorType =
       cast<RankedTensorType>(oldPtrType.getPointeeType());
@@ -1433,7 +1521,12 @@ void updateMakeTensorPtrOp(IRRewriter &rewriter, triton::MakeTensorPtrOp op,
   triton::PointerType newPtrType =
       triton::PointerType::get(newPtrTensorType, oldPtrType.getAddressSpace());
 
-  rewriter.modifyOpInPlace(op, [&]() { op.getResult().setType(newPtrType); });
+  rewriter.modifyOpInPlace(op, [&]() {
+    if (changeShape) {
+      op.getShapeMutable().assign(newShape);
+    }
+    op.getResult().setType(newPtrType);
+  });
 }
 
 // Updates the return shape of an InferTypeOpInterface op
@@ -1762,6 +1855,72 @@ triton::ScanOp getReplacementScanOp(IRRewriter &rewriter, triton::ScanOp scanOp,
   updateInferTypeOp(rewriter, newOp);
 
   return newOp;
+}
+
+// Returns true if a store op has a !tt.ptr<tensor> operand, and cannot rely on
+// the boundary check attr to mask extra data.
+// Happens when the tt.make_tensor_ptr root of the tensor ptr operand is
+// eventually used in a tt.advance op that changes a non power two dimension
+bool storeOpNeedsLoadSelectPattern(triton::StoreOp storeOp,
+                                   const LocalTensorShapeData &operandData) {
+  if (!isa<triton::PointerType>(storeOp.getPtr().getType())) {
+    return false;
+  }
+
+  bool addLoad = false;
+  ArrayRef<int64_t> shape = operandData.dataShape;
+  triton::MakeTensorPtrOp rootPtrSource =
+      getParentMakeTensorPtrOp(storeOp.getPtr());
+  SmallVector<triton::AdvanceOp> advanceOps = getChildAdvanceOps(rootPtrSource);
+
+  for (triton::AdvanceOp advanceOp : advanceOps) {
+    // if the advance op modifies non power of two dimensions, need load
+    auto offsets = advanceOp.getOffsets();
+    for (size_t i = 0; i < offsets.size(); i++) {
+      if (llvm::isPowerOf2_64(shape[i])) {
+        continue;
+      }
+
+      // if at a non power 2 dim but offset is 0, skip
+      Value offset = offsets[i];
+      if (auto constOp = dyn_cast<arith::ConstantOp>(offset.getDefiningOp())) {
+        if (auto intAttr = dyn_cast<IntegerAttr>(constOp.getValue())) {
+          if (intAttr.getInt() == 0) {
+            continue;
+          }
+        }
+      }
+
+      // otherwise need to use load -> select -> store pattern
+      addLoad = true;
+      break;
+    }
+    if (addLoad) {
+      break;
+    }
+  }
+
+  return addLoad;
+}
+
+// Adds a load select store pattern to a store op that has a !tt.ptr<tensor> ptr
+// operand to preserve correctness
+void addLoadSelectPatternToStoreOp(OpBuilder &builder, triton::StoreOp storeOp,
+                                   const LocalTensorShapeData &operandData) {
+  Location loc = storeOp->getLoc();
+  ArrayRef<int32_t> boundDims = storeOp.getBoundaryCheck();
+
+  builder.setInsertionPoint(storeOp);
+  Value loadRes = builder.create<triton::LoadOp>(
+      loc, storeOp.getPtr(), boundDims, std::nullopt,
+      triton::CacheModifier::NONE, triton::EvictionPolicy::NORMAL, false);
+  Value mask = createPaddingMask(builder, storeOp, operandData.dataShape,
+                                 operandData.localVirtualShape, false);
+  Value storeVal =
+      builder.create<arith::SelectOp>(loc, mask, storeOp.getValue(), loadRes);
+  builder.create<triton::StoreOp>(loc, storeOp.getPtr(), storeVal, boundDims,
+                                  storeOp.getCache(), storeOp.getEvict());
+  storeOp->erase();
 }
 
 // Creates a replacement tensor creation op (arith::ConstantOp, triton::SplatOp,
@@ -2275,6 +2434,13 @@ void finalCodegen(
         replaceOpSafely(rewriter, op, replacements, shapeMap, chosenPadding,
                         resOp);
       }
+    } else if (auto storeOp = dyn_cast<triton::StoreOp>(op)) {
+      const LocalTensorShapeData &operandData = shapeMap.at(storeOp.getValue());
+      if (storeOpNeedsLoadSelectPattern(storeOp, operandData)) {
+        addLoadSelectPatternToStoreOp(rewriter, storeOp, operandData);
+      }
+      // Don't check if results need to be padded (store ops have no results)
+      continue;
     } else if (auto reshapeOp = dyn_cast<triton::ReshapeOp>(op)) {
       const LocalTensorShapeData &operandData = shapeMap.at(reshapeOp.getSrc());
       const LocalTensorShapeData &resultData =
