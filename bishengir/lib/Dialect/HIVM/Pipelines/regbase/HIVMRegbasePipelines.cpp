@@ -12,8 +12,8 @@
 #include "bishengir/Conversion/TensorToHIVM/TensorToHIVM.h"
 #include "bishengir/Dialect/Annotation/Transforms/Passes.h"
 #include "bishengir/Dialect/Arith/Transforms/Passes.h"
-#include "bishengir/Dialect/HFusion/Transforms/Passes.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/HFusion/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Pipelines/ConvertToHIVMPipeline.h"
 #include "bishengir/Dialect/HIVM/Pipelines/regbase/Passes.h"
@@ -419,6 +419,14 @@ static void hivmPreBufferizationOptimizationPipeline(
     }
   }
 
+  if (hivmPipelineOptions.partitionAndBindSubBlock !=
+      PartitionAndBindSubBlockMode::Off) {
+    PartitionAndBindSubBlockOptions partitionOptions;
+    partitionOptions.enableLoadBalanced =
+        hivmPipelineOptions.partitionAndBindSubBlock ==
+        PartitionAndBindSubBlockMode::LoadBalanced;
+    pm.addPass(createPartitionAndBindSubBlockPass(partitionOptions));
+  }
   pm.nest<func::FuncOp>().addPass(createInferVFModePass());
 
   PlanMemoryRegBaseOptions planMemoryOption;
@@ -612,8 +620,7 @@ static void hivmPostBufferizationOptimizationPipeline(
   if (hivmPipelineOptions.enableVFOperandSubstitution) {
     pm.addPass(createVFOperandSubstitutionPass());
   }
-  planMemoryOption.planMemoryStrategy =
-      hivmPipelineOptions.planMemoryStrategy;
+  planMemoryOption.planMemoryStrategy = hivmPipelineOptions.planMemoryStrategy;
   pm.addPass(createPlanMemoryRegBasePass(planMemoryOption));
 
   // Cross-Core Auto-Sync passes STEP=2
@@ -686,6 +693,9 @@ void buildHIVMTensorOptimizations(
 void buildLowerHIVMPipelines(OpPassManager &pm,
                              const HIVMPipelineOptions &hivmPipelineOptions) {
   bufferizationPipeline(pm, hivmPipelineOptions);
+  if (hivmPipelineOptions.partitionAndBindSubBlock !=
+      PartitionAndBindSubBlockMode::Off)
+    pm.addPass(createSubBlockGuardCleanupPass());
   hivmPostBufferizationOptimizationPipeline(pm, hivmPipelineOptions);
   // Optimizations that relies on scope should be done after this point. Inline
   // all `scope.scope` ops.

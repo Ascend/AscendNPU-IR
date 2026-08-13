@@ -124,3 +124,26 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
     return
   }
 }
+// -----
+
+// An op the partition pass already bound to a sub-block (it carries the
+// already_sub_block_bound attr SubBlockLowering stamps inside its guards)
+// must NOT be re-wrapped in an scf.if(get_sub_block_idx() == 0) guard
+// CHECK-LABEL:   func.func @partition_bound_store_not_reguarded(
+// CHECK-NOT:       scf.if
+// CHECK:           hivm.hir.store
+// CHECK-SAME:        already_sub_block_bound
+// CHECK:           scf.if
+// CHECK:             hivm.hir.store
+// CHECK:           {limit_sub_block_id0}
+module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 32 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 32 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 64 : i32>, #dlti.dl_entry<"UB_SIZE", 2031616 : i32>, #dlti.dl_entry<"L1_SIZE", 4194304 : i32>, #dlti.dl_entry<"L0A_SIZE", 524288 : i32>, #dlti.dl_entry<"L0B_SIZE", 524288 : i32>, #dlti.dl_entry<"L0C_SIZE", 2097152 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L1_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L0C_ALIGN_SIZE", 4096 : i32>, #dlti.dl_entry<"ARCH", "dav-c310">>>, hacc.target = #hacc.target<"Ascend910_9589">, hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @partition_bound_store_not_reguarded(%arg0: memref<?xf32>, %arg1: memref<?xf32>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+    %alloc = memref.alloc() : memref<16x16xf32>
+    %0 = bufferization.to_tensor %alloc restrict writable : memref<16x16xf32>
+    %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf32> to memref<16x16xf32, strided<[16, 1]>>
+    hivm.hir.store ins(%0 : tensor<16x16xf32>) outs(%reinterpret_cast : memref<16x16xf32, strided<[16, 1]>>) {already_sub_block_bound}
+    %reinterpret_cast_0 = memref.reinterpret_cast %arg1 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf32> to memref<16x16xf32, strided<[16, 1]>>
+    hivm.hir.store ins(%0 : tensor<16x16xf32>) outs(%reinterpret_cast_0 : memref<16x16xf32, strided<[16, 1]>>)
+    return
+  }
+}
