@@ -198,39 +198,47 @@ LogicalResult markAllocAlign(func::FuncOp funcOp) {
 }
 
 void AlignAllocSizePass::runOnOperation() {
-  auto funcOp = getOperation();
-  if (hacc::utils::isHost(funcOp))
-    return;
+  auto mod = getOperation();
 
-  // step 1: mark size align info
-  if (failed(markAllocAlign(funcOp))) {
-    return signalPassFailure();
-  }
+  mod->walk([&](func::FuncOp funcOp) {
+    if (hacc::utils::isHost(funcOp))
+      return WalkResult::advance();
 
-  LDBG("IR after marking alloc align");
-  LDBG(funcOp);
+    // step 1: mark size align info
+    if (failed(markAllocAlign(funcOp))) {
+      signalPassFailure();
+      return WalkResult::interrupt();
+    }
 
-  // step 2: propagate up align info to root memref.alloc
-  RewritePatternSet patterns(&getContext());
-  populatePropagateAlignUpToRootAllocationPattern(
-      patterns, hivm::AllocAlignDimsAttr::name.str(),
-      hivm::AllocAlignValueInByteAttr::name.str());
-  if (failed(applyPatternsGreedily(funcOp, std::move(patterns)))) {
-    return signalPassFailure();
-  }
+    LDBG("IR after marking alloc align");
+    LDBG(funcOp);
 
-  LDBG("IR after propagating up alloc size to root memref.alloc");
-  LDBG(funcOp);
+    // step 2: propagate up align info to root memref.alloc
+    RewritePatternSet patterns(&getContext());
+    populatePropagateAlignUpToRootAllocationPattern(
+        patterns, hivm::AllocAlignDimsAttr::name.str(),
+        hivm::AllocAlignValueInByteAttr::name.str());
+    if (failed(applyPatternsGreedily(funcOp, std::move(patterns)))) {
+      signalPassFailure();
+      return WalkResult::interrupt();
+    }
 
-  // step 3: modify the alloc and do size alignment
-  patterns.clear();
-  populateAlignAllocAlignPattern(patterns);
-  if (failed(applyPatternsGreedily(funcOp, std::move(patterns)))) {
-    return signalPassFailure();
-  }
+    LDBG("IR after propagating up alloc size to root memref.alloc");
+    LDBG(funcOp);
 
-  LDBG("IR after modifying the alloc size");
-  LDBG(funcOp);
+    // step 3: modify the alloc and do size alignment
+    patterns.clear();
+    populateAlignAllocAlignPattern(patterns);
+    if (failed(applyPatternsGreedily(funcOp, std::move(patterns)))) {
+      signalPassFailure();
+      return WalkResult::interrupt();
+    }
+
+    LDBG("IR after modifying the alloc size");
+    LDBG(funcOp);
+
+    return WalkResult::advance();
+  });
 }
 
 std::unique_ptr<Pass> mlir::hivm::createAlignAllocSizePass() {

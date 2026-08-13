@@ -371,7 +371,7 @@ static void hivmPreBufferizationOptimizationPipeline(
 static void
 alignStoragePipeline(OpPassManager &pm,
                      const HIVMPipelineOptions &hivmPipelineOptions) {
-  pm.nest<func::FuncOp>().addPass(createAlignAllocSizePass());
+  pm.addPass(createAlignAllocSizePass());
   if (hivmPipelineOptions.enableHIVMAutoStorageAlign) {
     pm.nest<func::FuncOp>().addPass(createMarkStrideAlignPass());
   }
