@@ -19,10 +19,9 @@
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
-#include "bishengir/Dialect/HIVM/Interfaces/LocalMatmulLikeOpInterface.h"
 #include "bishengir/Dialect/HIVM/Transforms/DistributedTransformUtils.h"
+#include "bishengir/Dialect/HIVM/Interfaces/LocalMatmulLikeOpInterface.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
-#include "bishengir/Dialect/HIVM/Transforms/TightlyCoupledBufferUtils.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
@@ -30,15 +29,11 @@
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
-#include "mlir/IR/BuiltinTypes.h"
-#include "mlir/IR/Operation.h"
-#include "mlir/IR/Value.h"
 #include "mlir/Interfaces/DestinationStyleOpInterface.h"
+#include "mlir/IR/Operation.h"
 #include "mlir/Pass/Pass.h"
 
 #include "llvm/ADT/TypeSwitch.h"
-#include "llvm/Support/Casting.h"
-#include "llvm/Support/LogicalResult.h"
 
 #include <cassert>
 
@@ -627,46 +622,6 @@ hivm::inferAndPropagateMemScopeForPointerCast(hivm::PointerCastOp op) {
   return success();
 }
 
-static LogicalResult inferAndPropagateIfResultsToBranches(scf::IfOp ifOp) {
-  MemScopeInferAndPropagateHelper helper;
-  for (auto result : ifOp->getOpResults()) {
-    auto memrefType = llvm::dyn_cast<BaseMemRefType>(result.getType());
-    if (!memrefType)
-      continue;
-    auto addressSpaceAttr = memrefType.getMemorySpace();
-    if (!addressSpaceAttr)
-      continue;
-
-    auto memScope = getHIVMAddressSpaceAttr(memrefType);
-    auto propagateThroughYield = [&helper, memScope](scf::YieldOp yieldOp,
-                                                     unsigned int valIdx) {
-      auto val = yieldOp->getOperand(valIdx);
-
-      // we are safe to assume the values are memref types here - otherwise
-      // the input is incorrect
-      auto yieldMemrefType = llvm::cast<BaseMemRefType>(val.getType());
-      if (yieldMemrefType.getMemorySpace())
-        return success();
-      for (auto sourceVal : utils::tracebackMemRefVec(val)) {
-        if (llvm::failed(helper.Run(sourceVal, memScope))) {
-          return llvm::failure();
-        }
-      }
-
-      return llvm::success();
-    };
-
-    // An ifOp with result must have both then and else block, and each must has
-    // a terminator (yieldOp)
-    auto valIdx = result.getResultNumber();
-    if (llvm::failed(propagateThroughYield(ifOp.thenYield(), valIdx)))
-      return llvm::failure();
-    if (llvm::failed(propagateThroughYield(ifOp.elseYield(), valIdx)))
-      return llvm::failure();
-  }
-  return llvm::success();
-}
-
 LogicalResult hivm::inferAndPropagateMemScopeForAlloc(memref::AllocOp op, hivm::AddressSpace space) {
   LDBG("Begin infer and propagate memory scope for: " << *op);
   auto memorySpace = op.getType().getMemorySpace();
@@ -751,15 +706,6 @@ void InferHIVMMemScopePass::runOnOperation() {
     func->walk([&](hivm::PointerCastOp op) {
       if (failed(hivm::inferAndPropagateMemScopeForPointerCast(op)))
         signalPassFailure();
-    });
-
-    // Propagate the memory scope across then/else blocks - if any is
-    // determined, the result is as well
-    // TODO: properly support this by propagating up and down
-    func->walk([&](scf::IfOp ifOp) {
-      if (failed(inferAndPropagateIfResultsToBranches(ifOp))) {
-        signalPassFailure();
-      }
     });
 
     // Finally, set the remaining memory scope in the device kernel.
