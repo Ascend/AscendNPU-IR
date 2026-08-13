@@ -877,6 +877,210 @@ struct FoldFixpipeConvertLayoutPattern
   }
 };
 
+//===----------------------------------------------------------------------===//
+// Fold Fixpipe (nz2nd) + ToTensor + ConvertLayout (ND -> Fractal)
+//
+// An inserted fixpipe stores the mmad (nZ fractal) result into an L1 buffer
+// with dma_mode = nz2nd, materializing ND data that is then converted back to
+// a (possibly different) fractal layout on the tensor side. the fixpipe can
+// re-tile the fractal inline with dma_mode = nz2nz and channel_split
+//
+// Matches (%buf is either a memref.memory_space_cast of the alloc or the
+// alloc itself):
+//   %alloc = memref.alloc() : memref<MxNxelem, #hivm.address_space<cbuf>>
+//   %buf = memref.memory_space_cast %alloc  // optional
+//       : memref<MxNxelem, #hivm.address_space<cbuf>> to memref<MxNxelem>
+//   %nd = bufferization.to_tensor %buf restrict writable : memref<MxNxelem>
+//   %fractal = hivm.hir.convert_layout %nd
+//       {srcLayout = ND, dstLayout = Fractal}
+//       : tensor<MxNxelem> -> tensor<n1'xm1'xm0'xn0'xelem>
+//   hivm.hir.fixpipe {dma_mode = nz2nd} ins(%src : tensor<n1xm1xm0xn0xelem>)
+//       outs(%buf : memref<MxNxelem>)
+//
+// Transforms to (the memory_space_cast is recreated only if present before):
+//   %alloc = memref.alloc() : memref<n1'xm1'xm0'xn0'xelem,
+//       #hivm.address_space<cbuf>>
+//   %buf = memref.memory_space_cast %alloc  // optional
+//       : memref<n1'xm1'xm0'xn0'xelem, #hivm.address_space<cbuf>>
+//       to memref<n1'xm1'xm0'xn0'xelem>
+//   %fractal = bufferization.to_tensor %buf restrict writable
+//       : memref<n1'xm1'xm0'xn0'xelem>
+//   hivm.hir.fixpipe {dma_mode = nz2nz, channel_split}
+//       ins(%src : tensor<n1xm1xm0xn0xelem>)
+//       outs(%buf : memref<n1'xm1'xm0'xn0'xelem>)
+//===----------------------------------------------------------------------===//
+
+struct FoldFixpipeStoreConvertLayoutPattern
+    : public OpRewritePattern<ConvertLayoutOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  struct FixpipeStoreConvertMatch {
+    bufferization::ToTensorOp toTensorOp;
+    memref::AllocOp allocOp;
+    memref::MemorySpaceCastOp
+        spaceCast; // null when the alloc is stored directly
+    FixpipeOp fixpipeOp;
+    ConvertLayoutProducerUseInfo useInfo;
+    bool channelSplit = false;
+  };
+
+  /// Return the single nz2nd fixpipe storing `bufferMemref` (the to_tensor is
+  /// the only other allowed user).
+  FailureOr<FixpipeOp>
+  matchSingleStoringFixpipe(ConvertLayoutOp op, Value bufferMemref,
+                            bufferization::ToTensorOp toTensorOp,
+                            PatternRewriter &rewriter) const {
+    FixpipeOp fixpipeOp = nullptr;
+    for (Operation *user : bufferMemref.getUsers()) {
+      if (user == toTensorOp)
+        continue;
+      auto candidate = dyn_cast<FixpipeOp>(user);
+      if (!candidate || fixpipeOp)
+        return rewriter.notifyMatchFailure(
+            user, "unexpected user of convert_layout buffer");
+      fixpipeOp = candidate;
+    }
+    if (!fixpipeOp || fixpipeOp.getDst() != bufferMemref)
+      return rewriter.notifyMatchFailure(op, "no fixpipe stores the buffer");
+    if (fixpipeOp.getDmaMode() != FixpipeDMAMode::NZ2ND)
+      return rewriter.notifyMatchFailure(fixpipeOp, "dma_mode is not nz2nd");
+    if (fixpipeOp.getResultTensor())
+      return rewriter.notifyMatchFailure(
+          fixpipeOp, "fixpipe with tensor result is not supported");
+    return fixpipeOp;
+  }
+
+  /// The fixpipe src is an nZ fractal [n1, m1, m0, n0] of the same MxN matrix
+  /// as the ND buffer; the convert result re-fractalizes it to
+  /// [n1', m1', m0', n0']. Returns whether the fixpipe needs channel_split to
+  /// re-tile the src fractal channels into the smaller dst fractal channels.
+  FailureOr<bool> getFixpipeStoreChannelSplit(ConvertLayoutOp op,
+                                              FixpipeOp fixpipeOp,
+                                              MemRefType bufferTy,
+                                              MemRefType allocTy,
+                                              PatternRewriter &rewriter) const {
+    auto srcTy = dyn_cast<RankedTensorType>(fixpipeOp.getSrc().getType());
+    auto resultTy = dyn_cast<RankedTensorType>(op.getType());
+    if (!srcTy || !resultTy || srcTy.getRank() != 4 ||
+        bufferTy.getRank() != 2 || resultTy.getRank() != 4 ||
+        !srcTy.hasStaticShape() || !bufferTy.hasStaticShape() ||
+        !resultTy.hasStaticShape())
+      return rewriter.notifyMatchFailure(op, "expected static 4D->2D->4D");
+
+    // If its strided then its probably dangerous
+    if (!bufferTy.getLayout().isIdentity() || !allocTy.getLayout().isIdentity())
+      return rewriter.notifyMatchFailure(op, "buffer has a non-default layout");
+
+    // channel_split re-tiles the src fractal channels into the smaller dst
+    // fractal channels; the row fractal size must stay the same.
+    bool channelSplit = srcTy.getShape()[2] != resultTy.getShape()[2] ||
+                        srcTy.getShape()[3] != resultTy.getShape()[3];
+    if (channelSplit && (srcTy.getShape()[2] != resultTy.getShape()[2] ||
+                         srcTy.getShape()[3] % resultTy.getShape()[3] != 0))
+      return rewriter.notifyMatchFailure(
+          op, "unsupported fractal re-tiling for channel_split");
+    return channelSplit;
+  }
+
+  FailureOr<FixpipeStoreConvertMatch>
+  matchFixpipeStoreConvertLayout(ConvertLayoutOp op,
+                                 PatternRewriter &rewriter) const {
+    if (!isMatrixND2NZConversion(op))
+      return rewriter.notifyMatchFailure(op, "not an ND->Fractal conversion");
+
+    auto toTensorOp = op.getSource().getDefiningOp<bufferization::ToTensorOp>();
+    if (!toTensorOp)
+      return rewriter.notifyMatchFailure(op, "source is not a to_tensor");
+
+    ConvertLayoutProducerUseInfo useInfo =
+        getConvertLayoutProducerUseInfo(toTensorOp.getResult(), op);
+    if (!useInfo.canEraseProducerChain)
+      return rewriter.notifyMatchFailure(
+          op, "to_tensor result has users besides convert_layout");
+
+    // The stored buffer may be a plain-address-space cast of the alloc.
+    Value bufferMemref = toTensorOp.getMemref();
+    auto spaceCast = bufferMemref.getDefiningOp<memref::MemorySpaceCastOp>();
+    auto allocOp = (spaceCast ? spaceCast.getSource() : bufferMemref)
+                       .getDefiningOp<memref::AllocOp>();
+    if (!allocOp)
+      return rewriter.notifyMatchFailure(op, "buffer is not a memref.alloc");
+    if (spaceCast && !allocOp->hasOneUse())
+      return rewriter.notifyMatchFailure(op, "alloc has multiple uses");
+
+    auto fixpipeOp =
+        matchSingleStoringFixpipe(op, bufferMemref, toTensorOp, rewriter);
+    if (failed(fixpipeOp))
+      return failure();
+
+    auto channelSplit = getFixpipeStoreChannelSplit(
+        op, *fixpipeOp, cast<MemRefType>(bufferMemref.getType()),
+        allocOp.getType(), rewriter);
+    if (failed(channelSplit))
+      return failure();
+
+    return FixpipeStoreConvertMatch{toTensorOp, allocOp, spaceCast,
+                                    *fixpipeOp, useInfo, *channelSplit};
+  }
+
+  LogicalResult
+  rewriteFixpipeStoreConvertLayout(ConvertLayoutOp op,
+                                   PatternRewriter &rewriter,
+                                   FixpipeStoreConvertMatch match) const {
+    auto resultTy = cast<RankedTensorType>(op.getType());
+    auto newBufferTy =
+        MemRefType::get(resultTy.getShape(), resultTy.getElementType());
+
+    rewriter.setInsertionPoint(match.allocOp);
+    auto newAllocTy = MemRefType::get(
+        newBufferTy.getShape(), newBufferTy.getElementType(),
+        MemRefLayoutAttrInterface(), match.allocOp.getType().getMemorySpace());
+    auto newAllocOp =
+        rewriter.create<memref::AllocOp>(match.allocOp.getLoc(), newAllocTy);
+    newAllocOp->setAttrs(match.allocOp->getAttrs());
+
+    Value newBuffer = newAllocOp.getResult();
+    if (match.spaceCast) {
+      rewriter.setInsertionPoint(match.spaceCast);
+      auto newSpaceCast = rewriter.create<memref::MemorySpaceCastOp>(
+          match.spaceCast.getLoc(), newBufferTy, newBuffer);
+      newSpaceCast->setAttrs(match.spaceCast->getAttrs());
+      newBuffer = newSpaceCast.getResult();
+    }
+
+    rewriter.setInsertionPoint(match.toTensorOp);
+    auto newToTensorOp = rewriter.create<bufferization::ToTensorOp>(
+        match.toTensorOp.getLoc(), newBuffer);
+    newToTensorOp->setAttrs(match.toTensorOp->getAttrs());
+
+    FixpipeOp fixpipeOp = match.fixpipeOp;
+    rewriter.modifyOpInPlace(fixpipeOp, [&]() {
+      fixpipeOp.getDstMutable().assign(newBuffer);
+      fixpipeOp.setDmaModeAttr(FixpipeDMAModeAttr::get(rewriter.getContext(),
+                                                       FixpipeDMAMode::NZ2NZ));
+      if (match.channelSplit)
+        fixpipeOp.setChannelSplitAttr(rewriter.getBoolAttr(true));
+    });
+
+    repointAnnotationMarks(rewriter, match.useInfo.annotationUsers,
+                           match.toTensorOp.getResult(),
+                           newToTensorOp.getResult());
+    rewriter.replaceOp(op, newToTensorOp.getResult());
+    rewriter.eraseOp(match.toTensorOp);
+    if (match.spaceCast)
+      rewriter.eraseOp(match.spaceCast);
+    rewriter.eraseOp(match.allocOp);
+    return success();
+  }
+  LogicalResult matchAndRewrite(ConvertLayoutOp op,
+                                PatternRewriter &rewriter) const override {
+    auto match = matchFixpipeStoreConvertLayout(op, rewriter);
+    if (failed(match))
+      return failure();
+    return rewriteFixpipeStoreConvertLayout(op, rewriter, *match);
+  }
+};
+
 // Fold ND-to-Fractal convert_layout through GM workspace for K-padded vectors.
 //
 // A convert_layout(ND→Fractal) whose result is copied into an L1 (cbuf)
@@ -978,14 +1182,19 @@ struct RouteVectorFractalizeViaGMPattern
 void populateCombineOptimizedConvertLayoutPatterns(RewritePatternSet &patterns,
                                                    MLIRContext *context) {
   ConvertLayoutOp::getCanonicalizationPatterns(patterns, context);
-  patterns
-      .add<FoldDirectLoadToND2NZPattern, FoldDirectLoadToLoadMXScalePattern,
-           FoldSubviewLoadToND2NZPattern, FoldSubviewLoadToLoadMXScalePattern,
-           FoldTensorLoadToND2NZPattern, FoldTensorLoadToLoadMXScalePattern,
-           FoldFixpipeNz2NzToFractalConvertLayoutPattern,
-           FoldFixpipeConvertLayoutPattern, FoldConvertLayoutFixpipePattern,
-           FoldConvertLayoutExtractSliceFixpipePattern,
-           RouteVectorFractalizeViaGMPattern>(context);
+  patterns.add<FoldDirectLoadToND2NZPattern,
+               FoldDirectLoadToLoadMXScalePattern,
+               FoldSubviewLoadToND2NZPattern,
+               FoldSubviewLoadToLoadMXScalePattern,
+               FoldFixpipeNz2NzToFractalConvertLayoutPattern,
+               FoldTensorLoadToND2NZPattern,
+               FoldTensorLoadToND2NZPattern,
+               FoldTensorLoadToLoadMXScalePattern,
+               FoldFixpipeConvertLayoutPattern,
+               FoldConvertLayoutFixpipePattern,
+               FoldConvertLayoutExtractSliceFixpipePattern,
+               FoldFixpipeStoreConvertLayoutPattern,
+               RouteVectorFractalizeViaGMPattern>(context);
 }
 
 } // namespace

@@ -1450,10 +1450,6 @@ void addTailFallback(PatternRewriter &rewriter, Operation &op,
 
 // Check if previous L0C could be reuse
 bool couldReuse(Value ccfInVal) {
-  // Check the user of previous L0C is only one
-  if (!ccfInVal.hasOneUse())
-    return false;
-
   // check the user of previous L0C is mmadL1
   if (auto mmadOp = ccfInVal.getDefiningOp<hivm::MmadL1Op>()) {
     return true;

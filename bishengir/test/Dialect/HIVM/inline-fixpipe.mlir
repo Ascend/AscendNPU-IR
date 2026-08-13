@@ -101,26 +101,26 @@ func.func @matmul(%arg0: memref<?xf16> {tt.divisibility = 16 : i32}, %arg1: memr
 }
 // -----
 module attributes {hacc.target = #hacc.target<"Ascend910B1">} {
-// CHECK-LABEL: func.func @test_batchMmadL1_fixpipe
-func.func @test_batchMmadL1_fixpipe(%ma : tensor<2x256x128xf16>, %mb : tensor<2x128x256xf16>, %dst : memref<2x256x256xf16>){
+  // CHECK-LABEL: func.func @test_batchMmadL1_fixpipe
+  func.func @test_batchMmadL1_fixpipe(%ma : tensor<2x256x128xf16>, %mb : tensor<2x128x256xf16>, %dst : memref<2x256x256xf16>){
 
-  %mc = tensor.empty() : tensor<2x256x256xf32>
-  %true = arith.constant true
-  %M = arith.constant 256 : index
-  %K = arith.constant 128 : index
-  %N = arith.constant 256 : index
-  // CHECK: %[[RET:.*]] = hivm.hir.batchMmadL1 {fixpipe_for_result_already_inserted = true}
-  %ret = hivm.hir.batchMmadL1 ins(%ma, %mb, %true, %M, %K, %N: tensor<2x256x128xf16>, tensor<2x128x256xf16>, i1, index, index, index)
-                              outs(%mc: tensor<2x256x256xf32>) -> tensor<2x256x256xf32>
-  %mc_cast = tensor.empty() : tensor<2x256x256xf16>
-  %casted = hivm.hir.vcast ins(%ret : tensor<2x256x256xf32>) outs(%mc_cast : tensor<2x256x256xf16>) round_mode = <rint> -> tensor<2x256x256xf16>
-  // CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>}
-  // CHECK-SAME: ins(%[[RET]] : tensor<2x256x256xf32>) outs({{.*}} : memref<2x256x256xf16>)
-  hivm.hir.store ins(%casted : tensor<2x256x256xf16>) outs(%dst : memref<2x256x256xf16>)
-  return
+    %mc = tensor.empty() : tensor<2x256x256xf32>
+    %true = arith.constant true
+    %M = arith.constant 256 : index
+    %K = arith.constant 128 : index
+    %N = arith.constant 256 : index
+    // CHECK: %[[RET:.*]] = hivm.hir.batchMmadL1 {fixpipe_for_result_already_inserted = true}
+    %ret = hivm.hir.batchMmadL1 ins(%ma, %mb, %true, %M, %K, %N: tensor<2x256x128xf16>, tensor<2x128x256xf16>, i1, index, index, index)
+                                outs(%mc: tensor<2x256x256xf32>) -> tensor<2x256x256xf32>
+    %mc_cast = tensor.empty() : tensor<2x256x256xf16>
+    %casted = hivm.hir.vcast ins(%ret : tensor<2x256x256xf32>) outs(%mc_cast : tensor<2x256x256xf16>) round_mode = <rint> -> tensor<2x256x256xf16>
+    // CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>}
+    // CHECK-SAME: ins(%[[RET]] : tensor<2x256x256xf32>) outs({{.*}} : memref<2x256x256xf16>)
+    hivm.hir.store ins(%casted : tensor<2x256x256xf16>) outs(%dst : memref<2x256x256xf16>)
+    return
+  }
 }
 
-}
 // -----
 module attributes {hacc.target = #hacc.target<"Ascend910B1">} {
 // CHECK-LABEL: func.func @matmul_kernel

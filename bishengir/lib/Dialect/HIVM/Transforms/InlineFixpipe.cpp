@@ -31,6 +31,7 @@
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/MathExtras.h"
@@ -436,6 +437,20 @@ static bool isInsertingFixpipeToL1(Value src) {
   });
 }
 
+/// Return true when \p v is consumed only as the C init of a single local
+/// matmul. If \p v also feeds that matmul's A/B inputs, fixpipe is still
+/// required to move the L0C result to L1 for the input operand.
+static bool isExclusiveLocalMatmulInit(Operation *op, Value v) {
+  if (!isLocalMatmulInit(op, v))
+    return false;
+  unsigned usesOnOp = 0;
+  for (OpOperand &use : v.getUses()) {
+    if (use.getOwner() == op)
+      ++usesOnOp;
+  }
+  return usesOnOp == 1;
+}
+
 static FixpipeOp insertFixpipe(PatternRewriter &rewriter, Operation *point,
                                Value src) {
   rewriter.setInsertionPointAfter(point);
@@ -447,15 +462,23 @@ static FixpipeOp insertFixpipe(PatternRewriter &rewriter, Operation *point,
   auto fixpipe = (isMovingToL1 ? insertFixpipeToL1
                                : insertFixpipeToLocal)(rewriter, point, src);
 
-  SmallPtrSet<Operation *, 4> exceptedOps;
-  exceptedOps.insert(fixpipe);
-  for (Operation *use : src.getUsers()) {
-    if (isa<DebugOp>(use) || isa<FixpipeOp>(use) ||
-        isa<annotation::MarkOp>(use)) {
-      exceptedOps.insert(use);
-    }
-  }
-  rewriter.replaceAllUsesExcept(src, fixpipe.getResultTensor(), exceptedOps);
+  rewriter.replaceUsesWithIf(
+      src, fixpipe.getResultTensor(), [&isMovingToL1](OpOperand &use) {
+        auto *op = use.getOwner();
+        if (isa<DebugOp>(op) || isa<FixpipeOp>(op) ||
+            isa<annotation::MarkOp>(op)) {
+          return false;
+        }
+        if (auto mmadOp = dyn_cast<hivm::MmadL1Op>(op);
+            isMovingToL1 && mmadOp) {
+          return !(llvm::any_of(
+              mmadOp.getDpsInitsMutable(), [&use](OpOperand &init) {
+                return &use == &init &&
+                       init.get().getDefiningOp<hivm::MmadL1Op>();
+              }));
+        }
+        return true;
+      });
   return fixpipe;
 }
 
@@ -639,7 +662,7 @@ public:
         LDBG("Matching this current op " << *op);
         if (isa<hivm::FixpipeOp>(op))
           return true;
-        if (isLocalMatmulInit(op, v)) {
+        if (isExclusiveLocalMatmulInit(op, v)) {
           // no need to insert fixpipe because the single user can directly use
           // result stay in local buffer.
           return true;
