@@ -1976,8 +1976,7 @@ apply_padding_b64(memref_t<__ubuf__ T, DIM> *dst, int64_t offset,
   const int64_t factor = sizeof(T) / sizeof(uint32_t);
   constexpr int num_per_block = INTR_BYTES_PER_BLOCK / sizeof(T);
   int64_t size = dst->sizes[DIM - 1];
-  int64_t size_aligned =
-      (DIM == 2) ? dst->strides[0] : CEIL_FACTOR(size, num_per_block);
+  int64_t size_aligned = CEIL_FACTOR(size, num_per_block);
   int shift_num = size_aligned - num_per_block;
   int64_t align_pad = size_aligned - size;
   if (align_pad == 0) {
@@ -1988,7 +1987,8 @@ apply_padding_b64(memref_t<__ubuf__ T, DIM> *dst, int64_t offset,
   uint32_t vl_val = num_per_block - align_pad;
   __VEC_SCOPE__ {
     for (uint16_t i = 0; i < static_cast<uint16_t>(repeat); ++i) {
-      __ubuf__ T *till_block_ptr = i * size_aligned + block_ptr + shift_num;
+      __ubuf__ T *till_block_ptr =
+          i * dst->strides[0] + block_ptr + shift_num;
       // make mask
       vector_bool mask_all = plt_2xvl_b64(vl_all, POST_UPDATE);
       vector_bool mask_val = plt_2xvl_b64(vl_val, POST_UPDATE);
