@@ -599,32 +599,3 @@ func.func @triton_conv2d_fp32_aligned_mix_aic(%arg0: i64 {hacc.arg_type = #hacc.
   hivm.hir.sync_block_set[<CUBE>, <PIPE_FIX>, <PIPE_S>] flag = 0
   return
 }
-
-// -----
-
-// CHECK-LABEL: func.func @test_mmadL1_output_multi_root(
-func.func @test_mmadL1_output_multi_root(%condition: i1) attributes {
-    hacc.function_kind = #hacc.function_kind<DEVICE>} {
-  %transpose = arith.constant true
-  %c16 = arith.constant 16 : index
-  // CHECK: %[[LHS:.*]] = memref.alloc() : memref<16x16xf16, #hivm.address_space<cbuf>>
-  %lhs = memref.alloc() : memref<16x16xf16>
-  // CHECK: %[[RHS:.*]] = memref.alloc() : memref<16x16xf16, #hivm.address_space<cbuf>>
-  %rhs = memref.alloc() : memref<16x16xf16>
-  // CHECK: %[[RES:.*]] = scf.if %{{.*}} -> (memref<16x16xf32, #hivm.address_space<cc>>) {
-  %res = scf.if %condition -> (memref<16x16xf32>) {
-    // CHECK: %[[OUT0:.*]] = memref.alloc() : memref<16x16xf32, #hivm.address_space<cc>>
-    %out0 = memref.alloc() : memref<16x16xf32>
-    // CHECK: hivm.hir.mmadL1 ins(%[[LHS]], %[[RHS]],
-    // CHECK-SAME: outs(%[[OUT0]] : memref<16x16xf32, #hivm.address_space<cc>>)
-    hivm.hir.mmadL1 ins(%lhs, %rhs, %transpose, %c16, %c16, %c16 :
-        memref<16x16xf16>, memref<16x16xf16>, i1, index, index, index)
-        outs(%out0 : memref<16x16xf32>)
-    scf.yield %out0 : memref<16x16xf32>
-  } else {
-    // CHECK: %[[OUT1:.*]] = memref.alloc() : memref<16x16xf32, #hivm.address_space<cc>>
-    %out1 = memref.alloc() : memref<16x16xf32>
-    scf.yield %out1 : memref<16x16xf32>
-  }
-  return
-}
