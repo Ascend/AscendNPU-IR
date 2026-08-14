@@ -385,10 +385,10 @@ static void syncBlockLockPipeline(OpPassManager &pm,
   if (phase == SyncBlockLockPipelinePhase::Prepare) {
     pm.nest<func::FuncOp>().addPass(createSyncBlockHoistingPass());
     pm.nest<func::FuncOp>().addPass(createBindSyncBlockLockArgPass());
+  } else if (phase == SyncBlockLockPipelinePhase::Finalize) {
     pm.nest<func::FuncOp>().addPass(
         createInsertInferSyncBlockLockNumAndInitFuncPass());
     pm.nest<func::FuncOp>().addPass(createSyncBlockLockLoweringPass());
-  } else if (phase == SyncBlockLockPipelinePhase::Finalize) {
     pm.addPass(createMarkSyncBlockLockWithSubblockPass());
     pm.addPass(createInsertFreeLockVarBeforeReturnPass());
   }
@@ -409,6 +409,7 @@ static void hivmPostBufferizationOptimizationPipeline(
   pm.addPass(createInferHIVMMemScopePass());
   // Decompose copy_ub_to_ub after inferHIVMMemScope
   pm.nest<func::FuncOp>().addPass(createHIVMDecomposeOpPass());
+  syncBlockLockPipeline(pm, SyncBlockLockPipelinePhase::Prepare);
   HIVMAggregatedDecomposeOpOptions decomposeOption;
   // Currently no Ops decompose in this phase
   decomposeOption.decomposePhase =
@@ -489,6 +490,8 @@ static void hivmPostBufferizationOptimizationPipeline(
   pm.nest<func::FuncOp>().addPass(createHIVMLowerToLoopsPass());
   // TODO: move DecomposeI32ScalarExtOp etc. to interface
   pm.nest<func::FuncOp>().addPass(createHIVMDecomposeOpPass());
+  syncBlockLockPipeline(pm, SyncBlockLockPipelinePhase::Prepare);
+  pm.addPass(createInferHIVMMemScopePass());
   if (hivmPipelineOptions.enablePreload) {
     pm.addPass(createCreatePreloadPass());
   }
