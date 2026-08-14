@@ -447,7 +447,7 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
       vecOptions.maxFusedOps =
           static_cast<unsigned>(
               hfusionOptions.hfusionMaxFusedOpsInAutoVectorizeV2);
-    vecOptions.treeReduce = hfusionOptions.enableTreeReduce;
+    vecOptions.treeReduce = hfusionOptions.enableTreeReduce && !hfusionOptions.enableTreeReduceV2;
     vecOptions.enableCrossIfFusion = hfusionOptions.hfusionEnableCrossIfFusion;
     pm.addPass(createHFusionAutoVectorizeV2Pass(vecOptions));
     pm.addPass(createOutlineVectorFunctionPass());
@@ -457,11 +457,11 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
     // TODO: Remove this constraint after e2e support for multi axes
     // vectorization.
     vecOptions.maxVectorizeAxes = 2;
-    vecOptions.treeReduce = hfusionOptions.enableTreeReduce;
+    vecOptions.treeReduce = hfusionOptions.enableTreeReduce && !hfusionOptions.enableTreeReduceV2;
     pm.addPass(createHFusionAutoVectorizePass(vecOptions));
   }
   pm.addPass(createAutoVectorizeVerifierPass());
-  if (!hfusionOptions.enableAutoVectorizeV2) {
+  if (hfusionOptions.enableTreeReduceV2) {
     pm.addPass(createTreeReduceV2Pass(treeReduceOptions));
   }
   pm.addPass(mlir::createHFusionToVectorConversionPass());

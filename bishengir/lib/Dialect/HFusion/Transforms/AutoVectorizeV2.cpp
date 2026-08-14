@@ -387,40 +387,6 @@ findBestFusedNodeForProducer(Block *block, Operation *producer,
   return bestFusedNode;
 }
 
-static void applyCleanUp(OpBuilder &builder,
-                                   transform::SequenceOp seqOp) {
-  auto loopLikeAttr = transform::MatchInterfaceEnumAttr::get(
-      builder.getContext(), transform::MatchInterfaceEnum::LoopLikeInterface);
-  Value loopLikeHandle = builder
-                             .create<transform::MatchOp>(
-                                 builder.getInsertionPoint()->getLoc(),
-                                 builder.getType<transform::AnyOpType>(),
-                                 seqOp.getBodyBlock()->getArguments().front(),
-                                 ArrayAttr(), loopLikeAttr, DictionaryAttr(),
-                                 DictionaryAttr{}, TypeAttr{}, ArrayAttr{})
-                             .getResults();
-  builder.create<transform::ApplyLoopInvariantCodeMotionOp>(
-      loopLikeHandle.getLoc(), loopLikeHandle);
-
-  Value funcHandle = builder.create<transform::MatchOp>(
-      builder.getInsertionPoint()->getLoc(),
-      seqOp.getBodyBlock()->getArguments().front(),
-      ArrayRef<StringRef>({func::FuncOp::getOperationName()}));
-  auto bodyBuilder = [](OpBuilder &innerBuilder, Location loc) {
-    innerBuilder.create<transform::ApplyCanonicalizationPatternsOp>(loc);
-    innerBuilder
-        .create<transform::ApplyMergeConsecutiveInsertExtractSlicePatternsOp>(
-            loc);
-  };
-  transform::ApplyPatternsOp applyPatternsOp =
-      builder.create<transform::ApplyPatternsOp>(funcHandle.getLoc(),
-                                                 /*target=*/funcHandle,
-                                                 /*bodyBuilder=*/bodyBuilder);
-  applyPatternsOp.setApplyCse(true);
-  applyPatternsOp.setDisablePatternsAttr(builder.getArrayAttr(
-      SmallVector<Attribute>{builder.getStringAttr("SimplifyTrivialLoops")}));
-}
-
 static Value tileReductionOpTreeReduce(
     OpBuilder &builder, transform::SequenceOp seqOp, Operation *op,
     Value &linalgOpHandle, SmallVector<int64_t> tileSize, std::string label,
@@ -706,6 +672,7 @@ private:
       PlanContext &result,
       SmallVector<std::pair<std::string, SmallVector<int64_t>>>
           &otherVectorizableOps);
+  void applyCleanUp(OpBuilder &builder, transform::SequenceOp seqOp);
   void sortFunc(func::FuncOp func);
   transform::SequenceOp buildTransformSequence(func::FuncOp func,
                                                RetriedOptions &retryCtx,
@@ -880,7 +847,7 @@ void AutoVectorizeV2::tileAndFuseSiblingForLeafNodes(
         tiledLoopHandles.push_back(tileReductionOp(
             builder, seqOp, leafNode, leafNodeHandle, leafNodeInfo.tileSize,
             leafNodeInfo.label, otherVectorizableOps));
-      } else if (hfusion::shouldUseTreeReduction(leafNode)) {
+      } else if (treeReduce && hfusion::shouldUseTreeReduction(leafNode)) {
         tiledLoopHandles.push_back(tileReductionOpTreeReduce(
             builder, seqOp, leafNode, leafNodeHandle, leafNodeInfo.tileSize,
             leafNodeInfo.label, otherVectorizableOps));
@@ -962,7 +929,7 @@ void AutoVectorizeV2::fuseProducersIntoConsumers(
         tileReductionOp(builder, seqOp, producer, fusedOp,
                         producerInfo.tileSize, producerInfo.label,
                         otherVectorizableOps);
-      } else if (hfusion::shouldUseTreeReduction(producer)) {
+      } else if (treeReduce && hfusion::shouldUseTreeReduction(producer)) {
         tileReductionOpTreeReduce(builder, seqOp, producer, fusedOp,
                                   producerInfo.tileSize, producerInfo.label,
                                   otherVectorizableOps);
@@ -1056,6 +1023,40 @@ void AutoVectorizeV2::buildVectorizeTransformSequence(
         SmallVector<Value>(), vectorizableOp.second, nullptr,
         SmallVector<bool>(vectorizableOp.second.size(), false));
   }
+}
+
+void AutoVectorizeV2::applyCleanUp(OpBuilder &builder,
+                                   transform::SequenceOp seqOp) {
+  auto loopLikeAttr = transform::MatchInterfaceEnumAttr::get(
+      builder.getContext(), transform::MatchInterfaceEnum::LoopLikeInterface);
+  Value loopLikeHandle = builder
+                             .create<transform::MatchOp>(
+                                 builder.getInsertionPoint()->getLoc(),
+                                 builder.getType<transform::AnyOpType>(),
+                                 seqOp.getBodyBlock()->getArguments().front(),
+                                 ArrayAttr(), loopLikeAttr, DictionaryAttr(),
+                                 DictionaryAttr{}, TypeAttr{}, ArrayAttr{})
+                             .getResults();
+  builder.create<transform::ApplyLoopInvariantCodeMotionOp>(
+      loopLikeHandle.getLoc(), loopLikeHandle);
+
+  Value funcHandle = builder.create<transform::MatchOp>(
+      builder.getInsertionPoint()->getLoc(),
+      seqOp.getBodyBlock()->getArguments().front(),
+      ArrayRef<StringRef>({func::FuncOp::getOperationName()}));
+  auto bodyBuilder = [](OpBuilder &innerBuilder, Location loc) {
+    innerBuilder.create<transform::ApplyCanonicalizationPatternsOp>(loc);
+    innerBuilder
+        .create<transform::ApplyMergeConsecutiveInsertExtractSlicePatternsOp>(
+            loc);
+  };
+  transform::ApplyPatternsOp applyPatternsOp =
+      builder.create<transform::ApplyPatternsOp>(funcHandle.getLoc(),
+                                                 /*target=*/funcHandle,
+                                                 /*bodyBuilder=*/bodyBuilder);
+  applyPatternsOp.setApplyCse(true);
+  applyPatternsOp.setDisablePatternsAttr(builder.getArrayAttr(
+      SmallVector<Attribute>{builder.getStringAttr("SimplifyTrivialLoops")}));
 }
 
 transform::SequenceOp AutoVectorizeV2::buildTransformSequence(
