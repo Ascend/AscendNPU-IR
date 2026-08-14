@@ -54,24 +54,18 @@ def ProcessVsstb : Pass<"ave-process-vsstb", "func::FuncOp"> {
 }
 
 def AveLoopOptimize : Pass<"ave-loop-optimize", "func::FuncOp"> {
-  let summary = "Merge AVE small-width chains and optimize SCF For loops";
+  let summary = "Optimize AVE SCF For loops (unroll wide vextf loops, peel epilogues, canonicalize)";
   let description = [{
-    This pass first peels partial iterations, then derives a natural factor of
-    2 or 4 from supported vector conversions, annotates and unrolls the full
-    loop, and merges small-width loads, elementwise operations and stores with
-    vintlv/vdintlv trees. Remaining cleanup iterations keep their original
-    vector width before SCF/Affine canonicalization.
+    This pass matches specific SCF For loops with vextf,
+    unrolls them by factor 2, peels epilogue loops, and applies
+    scf::ForOp / AffineApplyOp canonicalization.
   }];
   let constructor = "mlir::hivmave::createAveLoopOptimizePass()";
-  let dependentDialects = [
+    let dependentDialects = [
     "hivmave::AVEDialect",
     "arith::ArithDialect",
-    "hivm::HIVMDialect"
-  ];
-  let options = [
-    Option<"maxSmallWidthMergeFactor", "max-small-width-merge-factor",
-           "unsigned", "4",
-           "Maximum natural small-width merge factor (2 or 4)">
+    "hivm::HIVMDialect",
+    "mlir::annotation::AnnotationDialect"
   ];
 }
 
