@@ -27,13 +27,15 @@ struct VFFusionKindOption {
                      const bool enableOutlineCube, int64_t ubBudgetBytes = 0,
                      int64_t ubAlignBytes = 0, const bool enableRA = false,
                      const bool enableAR = false, int64_t maxVFParams = -1,
-                     const bool enableVFStackLimit = false)
+                     const bool enableVFStackLimit = false,
+                     const bool enableCastOpt = false)
       : enableOutlineCF(enableOutlineCF),
         enableOutlineMemref(enableOutlineMemref),
         enableOutlineArith(enableOutlineArith),
         enableOutlineCube(enableOutlineCube), ubBudgetBytes(ubBudgetBytes),
         ubAlignBytes(ubAlignBytes), enableRA(enableRA), enableAR(enableAR),
-        maxVFParams(maxVFParams), enableVFStackLimit(enableVFStackLimit) {};
+        maxVFParams(maxVFParams), enableVFStackLimit(enableVFStackLimit),
+        enableCastOpt(enableCastOpt) {};
 
   VFFusionKindOption(const VFFusionKindOption &option) = default;
 
@@ -49,6 +51,7 @@ struct VFFusionKindOption {
   const bool enableAR;
   const int64_t maxVFParams;
   const bool enableVFStackLimit;
+  const bool enableCastOpt;
 };
 
 bool isReshapeOp(Operation *op);
@@ -68,6 +71,27 @@ bool isVsstbPatternTransposeOp(Operation *op);
 bool userCanFuseIntoVsstbPatternTransposeOp(Operation *op);
 
 bool isExpandShapeOpCanFuseIntoVsstbPatternTranspose(Operation *op);
+
+/// Checks whether a reshape operation (tensor::CollapseShapeOp or
+/// tensor::ExpandShapeOp) would be eliminated by PreVectorizationFusion.
+///
+/// CollapseShapeOp: eliminated when its result feeds into a
+///   linalg::BroadcastOp — generalizeBroadcastOp creates an inverse
+///   expand_shape, then MLIR fold cancels the pair.
+///
+/// ExpandShapeOp: eliminated when consumed by a linalg::LinalgOp (not
+///   TransposeOp) where the expand only inserts unit dims (each
+///   reassociation group has at most one non-unit dim) —
+///   PreVectorizationFusion generalizes named ops to linalg.generic,
+///   then the upstream reshape folding in
+///   populateElementwiseOpsFusionPatterns projects out the unit dims
+///   and folds the expand into the indexing map.
+///
+/// Note: inverse reshape pairs (expand source from CollapseShapeOp) are
+/// not checked here — they are always folded by preProcess() ->
+/// applyPatternsGreedily -> ExpandShapeOp::fold() before the fusion
+/// phase, so they never reach areReshapesValidIfFused.
+bool isReshapeEliminableByPreVectorizationFusion(Operation *op);
 
 bool shouldSkipFusion(Operation *op, const VFFusionKindOption &option);
 

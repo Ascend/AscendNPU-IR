@@ -18,6 +18,7 @@
 
 #include "bishengir/Dialect/Analysis/VFFusion/CostModelInfo/CostModelInfoUtils.h"
 #include "bishengir/Dialect/Analysis/VFFusion/VFFusionAnalyzer.h"
+#include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Visitors.h"
@@ -87,7 +88,7 @@ static bool isReductionOp(Operation *innerOp, Operation *outterOp) {
 
 static bool isInFusionWhiteList(Operation *op) {
   return isReshapeOp(op) || isa<tensor::ExtractSliceOp>(op) ||
-         isa<tensor::ExtractOp>(op) ||
+         isa<tensor::ExtractOp>(op) || isa<tensor::InsertSliceOp>(op) ||
          isValidLinalgOp(dyn_cast<linalg::LinalgOp>(op));
 }
 
@@ -283,6 +284,60 @@ bool MaxParallelAnalyzer::hasReductionToConsumer(const int producerIndex,
   return false;
 }
 
+bool MaxParallelAnalyzer::useNarrowingCastInConsumer(const int producerIndex,
+                                                 const int consumerIndex) {
+  if (!opToGroupIndex.count(opsInBlock[producerIndex]) ||
+      !opToGroupIndex.count(opsInBlock[consumerIndex])) {
+    return false;
+  }
+ 
+  auto &producerGroupNodes =
+        AllFusedGroupBlocks[opToGroupIndex[opsInBlock[producerIndex]]];
+  auto &consumerGroupNodes =
+        AllFusedGroupBlocks[opToGroupIndex[opsInBlock[consumerIndex]]];
+ 
+  SmallVector<hfusion::CastOp> producerCasts;
+  for (auto *node : producerGroupNodes) {
+    auto cast = dyn_cast<hfusion::CastOp>(node);
+    if (cast)
+      producerCasts.emplace_back(cast);
+  }
+  if (producerCasts.size() == 0)
+    return false;
+  
+  auto producerOp = dyn_cast<linalg::LinalgOp>(opsInBlock[producerIndex]);
+  if (!isValidLinalgOp(producerOp))
+    return false;
+ 
+  auto getTypeWidth = [](Value output) -> uint32_t {
+    auto outType = dyn_cast<RankedTensorType>(output.getType());
+    if (!outType)
+      return 0;
+    Type elemType = outType.getElementType();
+    if (!isa<IntegerType, FloatType>(elemType))
+      return 0;
+    return elemType.getIntOrFloatBitWidth();
+  };
+  
+  for (auto cast : producerCasts) {
+    auto castWidth = getTypeWidth(cast.getOutputs()[0]);
+    if (llvm::all_of(cast->getUsers(),[&consumerGroupNodes](Operation *user) {
+      return !consumerGroupNodes.contains(user);
+    }))
+      continue;
+    for (auto *user : producerOp->getUsers()) {
+      if (!consumerGroupNodes.contains(user))
+        continue;
+      if (llvm::any_of(user->getOperands(), [&getTypeWidth, &castWidth] (Value operand) {
+          return getTypeWidth(operand) > castWidth;
+      })) {
+        return true;
+      }
+    }
+  }  
+  return false;
+}
+ 
 bool MaxParallelAnalyzer::areFusibleOps(const int producerIndex,
                                         const int consumerIndex) {
   auto producerOp = opsInBlock[producerIndex];
@@ -327,8 +382,11 @@ bool MaxParallelAnalyzer::areFusibleOps(const int producerIndex,
     return false;
 
   // Prevent reduction op having a consumer in the fused group
-  if (hasReductionToConsumer(producerIndex, consumerIndex))
+  if (stage == 1 && hasReductionToConsumer(producerIndex, consumerIndex)) {
+    LDBG("areFusibleOps reject: group " << producerGroupId
+         << " contains reduction op for consumer group " << consumerGroupId);
     return false;
+  }
 
   return true;
 }
@@ -399,19 +457,89 @@ MaxParallelAnalyzer::getOpMetrics(Operation *op) {
   return linalgOpMetrics[op];
 }
 
+bool MaxParallelAnalyzer::tryFuseByCastStrategy(int producerGroupId,
+                                                 int consumerGroupId,
+                                                 int producerIndex,
+                                                 int consumerIndex) {
+  auto &producerGroup = AllFusedGroupBlocks[producerGroupId];
+  auto &consumerGroup = AllFusedGroupBlocks[consumerGroupId];
+  Operation *const candidateOp = opsInBlock[producerIndex];
+  Operation *const consumerOp = opsInBlock[consumerIndex];
+
+  // Classify a cast as widening (inBits <= outBits) or narrowing
+  // (inBits > outBits); false for non-cast / non-numeric types.
+  auto checkCast = [](Operation *op, bool checkWidening) -> bool {
+    if (!op || !isa<hfusion::CastOp>(op))
+      return false;
+    auto castOp = cast<hfusion::CastOp>(op);
+    auto outType = dyn_cast<RankedTensorType>(castOp.getOutputs()[0].getType());
+    auto inType = dyn_cast<RankedTensorType>(castOp.getInputs()[0].getType());
+    if (!outType || !inType)
+      return false;
+    Type outElemType = outType.getElementType();
+    Type inElemType = inType.getElementType();
+    if (!isa<IntegerType, FloatType>(outElemType) ||
+        !isa<IntegerType, FloatType>(inElemType))
+      return false;
+    unsigned inBits = inElemType.getIntOrFloatBitWidth();
+    unsigned outBits = outElemType.getIntOrFloatBitWidth();
+    return checkWidening ? (inBits <= outBits) : (inBits > outBits);
+  };
+
+  // 1. Producer cast (widening): fuse with consumer when the cast is the sole
+  //    producer op and one of: widening, consumer is a vsstb-pattern transpose
+  //    chain, the cast has no available producer to pair with, or fusing
+  //    relieves an invalid dependency.
+  if (isa<hfusion::CastOp>(candidateOp) && producerGroup.size() == 1) {
+    LDBG("candidateOp is Cast");
+    bool isWideningCast = checkCast(candidateOp, /*checkWidening=*/true);
+    Operation *castInputDef = candidateOp->getOperand(0).getDefiningOp();
+    bool noAvailableCastProdOp = !castInputDef || !opToIndex.count(castInputDef);
+    bool hasInvalidDep =
+        castInputDef && opToIndex.count(castInputDef) &&
+        hasInvalidDependencyIfFused(opToIndex[castInputDef], producerIndex);
+    bool castConsumerIsTranspose =
+        isa<linalg::TransposeOp>(consumerOp) ||
+        (isa<tensor::ExpandShapeOp>(consumerOp) &&
+         llvm::any_of(consumerOp->getUsers(), [](Operation *op) {
+           return isa<linalg::TransposeOp>(op);
+         }));
+    return isWideningCast || castConsumerIsTranspose ||
+           noAvailableCastProdOp || hasInvalidDep;
+  }
+
+  // 2. Consumer cast (narrowing): fuse with producer when the cast is the sole
+  //    consumer op and it is a narrowing cast.
+  if (isa<hfusion::CastOp>(consumerOp) && consumerGroup.size() == 1) {
+    LDBG("consumerOp is Cast");
+    if (checkCast(consumerOp, /*checkWidening=*/false))
+      return true;
+  }
+
+  return false;
+}
+
 bool MaxParallelAnalyzer::canFuseGroups(int producerGroupId,
                                         int consumerGroupId,
-                                        int producerIndex) {
-
-  auto &consumerGroup = AllFusedGroupBlocks[consumerGroupId];
-
-  // Calculate scores for individual groups
+                                        int producerIndex,
+                                        int consumerIndex) {
   Operation *const candidateOp = opsInBlock[producerIndex];
-  if (isa<hfusion::CastOp>(candidateOp)) {
+  auto &consumerGroup = AllFusedGroupBlocks[consumerGroupId];
+  // enableCastOpt only takes effect in max-parallel mode.
+  if (this->option.enableCastOpt) {
+    if (tryFuseByCastStrategy(producerGroupId, consumerGroupId, producerIndex,
+                              consumerIndex))
+      return true;
+  } else if (isa<hfusion::CastOp>(candidateOp)) {
     LDBG("candidateOp is Cast");
     return true;
   }
+
   if (stage == 1) {
+    if (this->option.enableCastOpt &&
+        useNarrowingCastInConsumer(producerIndex, consumerIndex)) {
+      return false;
+    }
     // TODO Perhaps we can cache the computation state of operation, but we
     // cannot estimate the memory overhead as each operation consumes 208 bytes
     // of memory.
@@ -524,6 +652,66 @@ bool MaxParallelAnalyzer::isIOBoundGroup(int groupId) {
   return ioScores + kEpsilon > computeScores;
 }
 
+static int getElementByteWidth(Type elementType) {
+  if (auto floatType = dyn_cast<FloatType>(elementType))
+    return static_cast<int>(floatType.getWidth() / mlir::utils::INTR_BITS_PER_BYTE);
+  if (auto intType = dyn_cast<IntegerType>(elementType))
+    return static_cast<int>(intType.getWidth() / mlir::utils::INTR_BITS_PER_BYTE);
+  return 0;
+}
+
+static int computeOpInstNum(Operation &op) {
+  int64_t maxElements = 0;
+  int byteWidth = 0;
+  auto checkRankedTensor = [&](Value val) {
+    auto tensorType = dyn_cast<RankedTensorType>(val.getType());
+    if (!tensorType)
+      return;
+    if (!tensorType.hasStaticShape())
+      return;
+    int elemByteWidth = getElementByteWidth(tensorType.getElementType());
+    if (elemByteWidth == 0)
+      return;
+    int64_t numElements = tensorType.getNumElements();
+    if (numElements * elemByteWidth > maxElements * byteWidth) {
+      maxElements = numElements;
+      byteWidth = elemByteWidth;
+    }
+  };
+  // Check linalg op inputs and outputs.
+  if (auto linalgOp = dyn_cast<linalg::LinalgOp>(&op)) {
+    for (auto input : linalgOp.getDpsInputs())
+      checkRankedTensor(input);
+    for (auto output : linalgOp->getResults())
+      checkRankedTensor(output);
+  } else {
+    for (auto operand : op.getOperands())
+      checkRankedTensor(operand);
+    for (auto result : op.getResults())
+      checkRankedTensor(result);
+  }
+  if (maxElements == 0 || byteWidth == 0)
+    return 0;
+  return static_cast<int>(maxElements * byteWidth / mlir::hfusion::util::VL);
+}
+
+template <typename RangeT>
+static int computeGroupInstNum(const RangeT &group) {
+  int totalInstNum = 0;
+  for (auto *op : group)
+    totalInstNum += computeOpInstNum(*op);
+  return totalInstNum;
+}
+
+bool MaxParallelAnalyzer::isSmallShapeGroup(int groupId) {
+  if (AllFusedGroupBlocks[groupId].empty()) {
+    return false;
+  }
+  int instNum = computeGroupInstNum(AllFusedGroupBlocks[groupId]);
+  LDBG("isSmallShapeGroup: group " << groupId << " instNum=" << instNum);
+  return instNum < kIssueQueueLen;
+}
+
 bool MaxParallelAnalyzer::mergeGroups(const int producerGroupId,
                                       const int consumerGroupId) {
   auto &producerGroup = AllFusedGroupBlocks[producerGroupId];
@@ -597,7 +785,7 @@ bool MaxParallelAnalyzer::isFusibleImpl(const int producerIndex,
     return true;
   }
 
-  if (canFuseGroups(producerGroupId, consumerGroupId, producerIndex)) {
+  if (canFuseGroups(producerGroupId, consumerGroupId, producerIndex, consumerIndex)) {
     LDBG("groups can be fused based on cost model");
     return true;
   }
@@ -656,23 +844,24 @@ bool MaxParallelAnalyzer::fuseProducerConsumerImpl(Block &block) {
   return hasFused;
 }
 
-bool MaxParallelAnalyzer::fuseIOBoundGroupsWithNearestConsumer() {
+bool MaxParallelAnalyzer::fuseGroupsWithNearestConsumer(
+    bool (MaxParallelAnalyzer::*isTargetGroup)(int), const char *groupKind) {
   bool hasFused = false;
   bool madeProgress = true;
 
   while (madeProgress) {
     madeProgress = false;
 
-    // Find all IO-bound groups
-    std::vector<int> ioBoundGroupIds;
+    // Find all target groups
+    std::vector<int> targetGroupIds;
     for (auto &[id, ops] : AllFusedGroupBlocks) {
-      if (!ops.empty() && isIOBoundGroup(id)) {
-        ioBoundGroupIds.push_back(id);
+      if (!ops.empty() && (this->*isTargetGroup)(id)) {
+        targetGroupIds.push_back(id);
       }
     }
 
-    for (int producerGroupId : ioBoundGroupIds) {
-      LDBG("IO-bound group " << producerGroupId);
+    for (int producerGroupId : targetGroupIds) {
+      LDBG(groupKind << " group " << producerGroupId);
       auto &producerGroup = AllFusedGroupBlocks[producerGroupId];
       if (producerGroup.empty())
         continue;
@@ -698,8 +887,8 @@ bool MaxParallelAnalyzer::fuseIOBoundGroupsWithNearestConsumer() {
           if (AllFusedGroupBlocks[foundGroupId].empty())
             continue;
 
-          int foundGroupMaxIndex =
-              dsu.getMaxIndexUnion(static_cast<int>(opToIndex[consumerOp]));
+          int foundGroupMaxIndex = static_cast<int>(
+              dsu.getMaxIndexUnion(static_cast<int>(opToIndex[consumerOp])));
           if (consumerGroupId < 0 ||
               foundGroupMaxIndex < consumerGroupMinIndex) {
             consumerGroupId = foundGroupId;
@@ -712,8 +901,8 @@ bool MaxParallelAnalyzer::fuseIOBoundGroupsWithNearestConsumer() {
       if (AllFusedGroupBlocks[consumerGroupId].empty())
         continue;
 
-      LDBG("IO-bound group " << producerGroupId << " -> consumer group "
-                             << consumerGroupId);
+      LDBG(groupKind << " group " << producerGroupId << " -> consumer group "
+                     << consumerGroupId);
 
       auto &consumerGroup = AllFusedGroupBlocks[consumerGroupId];
 
@@ -735,13 +924,23 @@ bool MaxParallelAnalyzer::fuseIOBoundGroupsWithNearestConsumer() {
                         consumerGroupId)) {
         hasFused = true;
         madeProgress = true;
-        LDBG("IO-bound group " << producerGroupId
-                               << " fused with consumer group "
-                               << consumerGroupId);
+        LDBG(groupKind << " group " << producerGroupId
+                       << " fused with consumer group "
+                       << consumerGroupId);
       }
     }
   }
   return hasFused;
+}
+
+bool MaxParallelAnalyzer::fuseIOBoundGroupsWithNearestConsumer() {
+  return fuseGroupsWithNearestConsumer(&MaxParallelAnalyzer::isIOBoundGroup,
+                                       "IO-bound");
+}
+
+bool MaxParallelAnalyzer::fuseShapeBoundGroupsWithNearestConsumer() {
+  return fuseGroupsWithNearestConsumer(&MaxParallelAnalyzer::isSmallShapeGroup,
+                                       "Small-shape");
 }
 
 void MaxParallelAnalyzer::printValidGroupCount() {
@@ -783,6 +982,9 @@ LogicalResult MaxParallelAnalyzer::fuseImpl(Block &block) {
   stage = 2;
   if (fuseIOBoundGroupsWithNearestConsumer())
     LDBG("=== Phase 2: find IO bound group to be merged ===");
+  stage = 3;
+  if (fuseShapeBoundGroupsWithNearestConsumer())
+    LDBG("=== Phase 3: find small shape group to be merged ===");
   printValidGroupCount();
   return success();
 }
