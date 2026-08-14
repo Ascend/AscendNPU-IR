@@ -2800,9 +2800,9 @@ struct HIVMVmullOpLowering : public ConvertOpToLLVMPattern<hivmave::VFVMULLOp> {
     Type vmullType = LLVM::LLVMStructType::getLiteral(
         rewriter.getContext(), {llvmVecVLType, llvmVecVLType});
 
-    Operation *vmullOp =
-        createVmullIntrinsic(rewriter, loc, vmullType, src1Casted->getResult(0),
-                             src2Casted->getResult(0), elemType, mask);
+    Operation *vmullOp = createVmullIntrinsic(
+        rewriter, loc, vmullType, src1Casted->getResult(0),
+        src2Casted->getResult(0), elemType, mask, op.getCast());
     if (!vmullOp)
       return rewriter.notifyMatchFailure(op,
                                          "Unsupported vector type for vmull");
@@ -2829,11 +2829,16 @@ private:
 
   Operation *createVmullIntrinsic(ConversionPatternRewriter &rewriter,
                                   Location loc, Type vecType, Value src1,
-                                  Value src2, Type elemType, Value mask) const {
-    if (elemType.isSignedInteger(32) || elemType.isSignlessInteger(32)) {
+                                  Value src2, Type elemType, Value mask,
+                                  TypeFn cast) const {
+    if (!elemType.isInteger(32))
+      return nullptr;
+
+    if (cast == TypeFn::cast_signed) {
       return rewriter.create<VmullV64S32InstrOp>(loc, vecType, src1, src2,
                                                  mask);
-    } else if (elemType.isUnsignedInteger(32)) {
+    }
+    if (cast == TypeFn::cast_unsigned) {
       return rewriter.create<VmullV64U32InstrOp>(loc, vecType, src1, src2,
                                                  mask);
     }

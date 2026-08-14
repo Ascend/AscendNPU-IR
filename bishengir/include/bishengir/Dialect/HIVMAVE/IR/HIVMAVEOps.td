@@ -79,7 +79,9 @@ class AVE_VmullBinaryOp<string mnemonic, list<Trait> traits = []> :
   let summary = "Ave binary op " # mnemonic # ".";
   let arguments = (ins AveExtValidVector:$src1,
                        AveExtValidVector:$src2,
-                       AveMaskType:$mask);
+                       AveMaskType:$mask,
+                       DefaultValuedAttr<HIVM_TypeFnAttr,
+                           "hivm::TypeFn::cast_signed">:$cast);
   let results = (outs AveExtValidVector:$res1,
                       AveExtValidVector:$res2);
 
