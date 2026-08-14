@@ -454,8 +454,7 @@ void buildBiShengTTIRPipeline(OpPassManager &pm,
 
 void buildBiShengHIRFinishPipeline(mlir::OpPassManager &pm,
                                    const BiShengIRCompileMainConfig &config) {
-  // TODO(regbase)
-  // pm.addPass(hivm::createWriteBackSharedPass());
+  pm.addPass(hivm::createWriteBackSharedPass());
 }
 
 void buildBiShengHIRPipeline(OpPassManager &pm,

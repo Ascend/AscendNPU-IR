@@ -15,6 +15,7 @@
 //
 //============================================================================//
 
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "mlir/AsmParser/AsmParser.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -219,8 +220,18 @@ SmallVector<hivm::IteratorType> VGatherOp::getIteratorTypesArray() {
   int64_t rank = getRankFromShapedTypeValue(getDst());
   auto iteratorTypes =
       SmallVector<hivm::IteratorType>(rank, hivm::IteratorType::kParallel);
-  // hivm gather op only support last gather axis now
-  iteratorTypes.back() = hivm::IteratorType::kGather;
+  auto moduleOp = getOperation()->getParentOfType<ModuleOp>();
+  if (moduleOp && hacc::utils::isRegBasedArch(moduleOp)) {
+    // Regbase SIMT gather supports an arbitrary gather axis.
+    int64_t gatherAxis = rank - 1;
+    auto axisAttr = getGatherAxis();
+    if (axisAttr.has_value() && static_cast<int64_t>(*axisAttr) != -1)
+      gatherAxis = static_cast<int64_t>(*axisAttr);
+    iteratorTypes[gatherAxis] = hivm::IteratorType::kGather;
+  } else {
+    // Membase gather supports only the last gather axis.
+    iteratorTypes.back() = hivm::IteratorType::kGather;
+  }
   return iteratorTypes;
 }
 

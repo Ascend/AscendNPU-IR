@@ -701,6 +701,23 @@ using AscendDPXShflButterflyOpLowering =
                             ShflBflyOpI64, ShflBflyOpF32, ShflBflyOpF16,
                             ShflBflyOpV2F16>;
 
+struct AscendDPXPermuteOpLowering
+    : public ConvertOpToLLVMPattern<ascend_dpx::PermuteOp> {
+  explicit AscendDPXPermuteOpLowering(LLVMTypeConverter &converter)
+      : mlir::ConvertOpToLLVMPattern<ascend_dpx::PermuteOp>(converter) {}
+
+  LogicalResult
+  matchAndRewrite(ascend_dpx::PermuteOp op,
+                  ascend_dpx::PermuteOp::Adaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    rewriter.replaceOpWithNewOp<hivm_regbaseintrins::PermuteOp>(
+        op, op.getResult().getType(), adaptor.getSrc1(), adaptor.getSrc2(),
+        adaptor.getSelector());
+    return success();
+  }
+};
+
 template <typename ReduxOp, typename ReduxOpI32, typename ReduxOpF32,
           typename ReduxOpF16>
 struct AscendDPXReduxOpLowering : public ConvertOpToLLVMPattern<ReduxOp> {
@@ -1650,7 +1667,7 @@ struct AscendDPXToHIVMRegbaseIntrins
              AscendDPXAtomicCASOpLowering, AscendDPXReduceAddOpLowering,
              AscendDPXReduceMaxOpLowering, AscendDPXReduceMinOpLowering,
              AscendDPXReduceUMaxOpLowering, AscendDPXReduceUMinOpLowering,
-             AscendDPXCastOpLowering>(converter);
+             AscendDPXCastOpLowering, AscendDPXPermuteOpLowering>(converter);
     addAscendDPXMathOpsLoweringPatterns(patterns, converter);
     if (failed(applyPartialConversion(moduleOp, target, std::move(patterns))))
       signalPassFailure();

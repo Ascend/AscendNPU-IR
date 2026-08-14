@@ -543,3 +543,87 @@ func.func @fold_channel_merge_fixpipe_nz2nz_i8(%src: tensor<32x32xi32>) -> tenso
       : (tensor<32x32xi8>) -> tensor<1x2x16x32xi8>
   return %fr : tensor<1x2x16x32xi8>
 }
+
+// -----
+
+// Fold fixpipe(nz2nd) storing into an L1 ND buffer followed by
+// to_tensor + convert_layout(ND->Fractal): the fixpipe re-tiles inline with
+// nz2nz + channel_split (src fractal 16x16 -> dst fractal 16x8) and the
+// buffer is re-shaped to the fractal layout.
+// CHECK-LABEL: func.func @fold_fixpipe_store_convert_layout_channel_split
+// CHECK-SAME: %[[SRC:.*]]: tensor<4x4x16x16xf32>
+// CHECK-NOT: hivm.hir.convert_layout
+// CHECK: %[[ALLOC:.*]] = memref.alloc() : memref<8x4x16x8xf32, #hivm.address_space<cbuf>>
+// CHECK: %[[CAST:.*]] = memref.memory_space_cast %[[ALLOC]] : memref<8x4x16x8xf32, #hivm.address_space<cbuf>> to memref<8x4x16x8xf32>
+// CHECK: %[[TENSOR:.*]] = bufferization.to_tensor %[[CAST]] restrict writable : memref<8x4x16x8xf32>
+// CHECK: hivm.hir.fixpipe {channel_split = true, "hivm.inserted-fixpipe"} ins(%[[SRC]] : tensor<4x4x16x16xf32>) outs(%[[CAST]] : memref<8x4x16x8xf32>)
+// CHECK: return %[[TENSOR]] : tensor<8x4x16x8xf32>
+module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
+  func.func @fold_fixpipe_store_convert_layout_channel_split(%src: tensor<4x4x16x16xf32>) -> tensor<8x4x16x8xf32> {
+    %alloc = memref.alloc() : memref<64x64xf32, #hivm.address_space<cbuf>>
+    %cast = memref.memory_space_cast %alloc : memref<64x64xf32, #hivm.address_space<cbuf>> to memref<64x64xf32>
+    %nd = bufferization.to_tensor %cast restrict writable : memref<64x64xf32>
+    %fractal = hivm.hir.convert_layout %nd output_shape [8, 4, 16, 8] {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 8]>, srcLayout = #hivm.data_layout<ND>} : (tensor<64x64xf32>) -> tensor<8x4x16x8xf32>
+    hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, "hivm.inserted-fixpipe"} ins(%src : tensor<4x4x16x16xf32>) outs(%cast : memref<64x64xf32>)
+    return %fractal : tensor<8x4x16x8xf32>
+  }
+}
+
+// -----
+// Same fold without a memory_space_cast and with matching fractal sizes:
+// plain nz2nz, no channel_split.
+// CHECK-LABEL: func.func @fold_fixpipe_store_convert_layout_same_fractal
+// CHECK-SAME: %[[SRC:.*]]: tensor<4x4x16x16xf32>
+// CHECK-NOT: hivm.hir.convert_layout
+// CHECK: %[[ALLOC:.*]] = memref.alloc() : memref<4x4x16x16xf32>
+// CHECK: %[[TENSOR:.*]] = bufferization.to_tensor %[[ALLOC]] restrict writable : memref<4x4x16x16xf32>
+// CHECK: hivm.hir.fixpipe ins(%[[SRC]] : tensor<4x4x16x16xf32>) outs(%[[ALLOC]] : memref<4x4x16x16xf32>)
+// CHECK: return %[[TENSOR]] : tensor<4x4x16x16xf32>
+func.func @fold_fixpipe_store_convert_layout_same_fractal(%src: tensor<4x4x16x16xf32>) -> tensor<4x4x16x16xf32> {
+  %alloc = memref.alloc() : memref<64x64xf32>
+  %nd = bufferization.to_tensor %alloc restrict writable : memref<64x64xf32>
+  %fractal = hivm.hir.convert_layout %nd output_shape [4, 4, 16, 16] {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>, srcLayout = #hivm.data_layout<ND>} : (tensor<64x64xf32>) -> tensor<4x4x16x16xf32>
+  hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%src : tensor<4x4x16x16xf32>) outs(%alloc : memref<64x64xf32>)
+  return %fractal : tensor<4x4x16x16xf32>
+}
+
+// -----
+// No fold when the stored buffer is written by more than one fixpipe.
+// CHECK-LABEL: func.func @no_fold_fixpipe_store_multi_writer
+// CHECK: hivm.hir.convert_layout
+// CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>
+// CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>
+func.func @no_fold_fixpipe_store_multi_writer(%src: tensor<4x4x16x16xf32>) -> tensor<8x4x16x8xf32> {
+  %alloc = memref.alloc() : memref<64x64xf32>
+  %nd = bufferization.to_tensor %alloc restrict writable : memref<64x64xf32>
+  %fractal = hivm.hir.convert_layout %nd output_shape [8, 4, 16, 8] {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 8]>, srcLayout = #hivm.data_layout<ND>} : (tensor<64x64xf32>) -> tensor<8x4x16x8xf32>
+  hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%src : tensor<4x4x16x16xf32>) outs(%alloc : memref<64x64xf32>)
+  hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%src : tensor<4x4x16x16xf32>) outs(%alloc : memref<64x64xf32>)
+  return %fractal : tensor<8x4x16x8xf32>
+}
+
+// -----
+// No fold when the fixpipe storing the buffer is not in nz2nd mode.
+// CHECK-LABEL: func.func @no_fold_fixpipe_store_not_nz2nd
+// CHECK: hivm.hir.convert_layout
+// CHECK: hivm.hir.fixpipe ins
+func.func @no_fold_fixpipe_store_not_nz2nd(%src: tensor<4x4x16x16xf32>) -> tensor<8x4x16x8xf32> {
+  %alloc = memref.alloc() : memref<64x64xf32>
+  %nd = bufferization.to_tensor %alloc restrict writable : memref<64x64xf32>
+  %fractal = hivm.hir.convert_layout %nd output_shape [8, 4, 16, 8] {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 8]>, srcLayout = #hivm.data_layout<ND>} : (tensor<64x64xf32>) -> tensor<8x4x16x8xf32>
+  hivm.hir.fixpipe ins(%src : tensor<4x4x16x16xf32>) outs(%alloc : memref<64x64xf32>)
+  return %fractal : tensor<8x4x16x8xf32>
+}
+
+// -----
+// No fold when the ND tensor has users other than the convert_layout.
+// CHECK-LABEL: func.func @no_fold_fixpipe_store_tensor_multi_use
+// CHECK: hivm.hir.convert_layout
+// CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>
+func.func @no_fold_fixpipe_store_tensor_multi_use(%src: tensor<4x4x16x16xf32>) -> (tensor<8x4x16x8xf32>, tensor<64x64xf32>) {
+  %alloc = memref.alloc() : memref<64x64xf32>
+  %nd = bufferization.to_tensor %alloc restrict writable : memref<64x64xf32>
+  %fractal = hivm.hir.convert_layout %nd output_shape [8, 4, 16, 8] {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 8]>, srcLayout = #hivm.data_layout<ND>} : (tensor<64x64xf32>) -> tensor<8x4x16x8xf32>
+  hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%src : tensor<4x4x16x16xf32>) outs(%alloc : memref<64x64xf32>)
+  return %fractal, %nd : tensor<8x4x16x8xf32>, tensor<64x64xf32>
+}

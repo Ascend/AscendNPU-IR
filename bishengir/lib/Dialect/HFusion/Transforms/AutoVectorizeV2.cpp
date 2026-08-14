@@ -283,17 +283,21 @@ findBestFusedNodeForProducer(Block *block, Operation *producer,
   if (isVsstbPatternTransposeOp(producer))
     return nullptr;
 
-  // A standalone loop would not yield the tiled intermediate back to other
-  // consumers; they would still read the original untiled tensor, producing
-  // wrong slices. Keep it in-place so every consumer extract_slices from the
-  // full tensor directly.
-  if (isExpandShapeOpCanFuseIntoVsstbPatternTranspose(producer) &&
+  // Multi-consumer fusion (hasManyUsers && !hasFusionOpportunity) requires the
+  // containing loop to yield the tiled result back to outside consumers, but
+  // upstream replaceForWithNewSignature only supports linalg::GenericOp.
+  //
+  // Allowing fusion for a non-GenericOp producer leaves both the untiled
+  // original and the tiled clone alive with the same label, causing vectorize
+  // to abort on the untiled one (its iteration space no longer matches the tile
+  // sizes).
+  //
+  // So bail out for non-GenericOp. Remove this guard once
+  // replaceForWithNewSignature supports more producer types. The producer
+  // stays in place regardless.
+  if ((!ctx.getEnableMultipleConsumerFusion() ||
+       !isa<linalg::GenericOp>(producer)) &&
       hasManyUsers(producer) && !hasFusionOpportunity(producer, ctx)) {
-    return nullptr;
-  }
-
-  if (!ctx.getEnableMultipleConsumerFusion() && hasManyUsers(producer) &&
-      !hasFusionOpportunity(producer, ctx)) {
     return nullptr;
   }
 
@@ -1053,6 +1057,7 @@ void AutoVectorizeV2::runOnOperation() {
   for (auto callee : allInlined)
     rewriter.eraseOp(callee);
 
+  SmallVector<std::string> failedFuncNames;
   for (func::FuncOp func : fusableFuncList) {
     RetriedOptions retryCtx{maxFusedOps, enableMultipleConsumerFusion,
                             enableCrossIfFusion, enableVFStackLimit,
@@ -1078,9 +1083,11 @@ void AutoVectorizeV2::runOnOperation() {
       func.emitWarning()
           << (retried ? "AutoVectorizeV2 retry failed"
                       : "AutoVectorizeV2 failed")
-          << "; falling back to legacy HFusionAutoVectorize pass";
+          << "; falling back to legacy HFusionAutoVectorize pass for this "
+             "function";
       fallback = true;
-      break;
+      failedFuncNames.push_back(func.getSymName().str());
+      continue;
     }
   }
 
@@ -1092,7 +1099,12 @@ void AutoVectorizeV2::runOnOperation() {
     // vectorization.
     vecOptions.maxVectorizeAxes = 2;
     vecOptions.treeReduce = treeReduce;
-    pm.addPass(hfusion::createHFusionAutoVectorizePass());
+    // Scope the legacy pass to just the function(s) AutoVectorizeV2 failed
+    // on: functions it already vectorized above must not be reprocessed,
+    // since both paths outline vector functions using the same naming
+    // scheme and would otherwise collide on the same names.
+    vecOptions.restrictToFuncNames = failedFuncNames;
+    pm.addPass(hfusion::createHFusionAutoVectorizePass(vecOptions));
     std::ignore = pm.run(op);
   }
 }

@@ -246,6 +246,51 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
   }
 }
 
+// -----
+module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
+  func.func @load_gm_to_cbuf_1d() {
+    // CHECK: func.func private @load_gm_to_cbuf_1d_float(memref<{{.*}}, #hivm.address_space<gm>>,
+    // CHECK: memref<{{.*}}, #hivm.address_space<cbuf>>, i32, i32)
+    %src = memref.alloc() : memref<256xf32, #hivm.address_space<gm>>
+    %dst = memref.alloc() : memref<256xf32, #hivm.address_space<cbuf>>
+    // CHECK: call @load_gm_to_cbuf_1d_float(%{{.*}}, %{{.*}}, %c0_i32, %c0_i32)
+    hivm.hir.load ins(%src : memref<256xf32, #hivm.address_space<gm>>)
+                  outs(%dst : memref<256xf32, #hivm.address_space<cbuf>>)
+    return
+  }
+}
+
+// -----
+module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
+  func.func @load_gm_to_cbuf_2d() {
+    // CHECK: func.func private @load_gm_to_cbuf_2d_float(memref<{{.*}}, #hivm.address_space<gm>>,
+    // CHECK: memref<{{.*}}, #hivm.address_space<cbuf>>, i32, i32)
+    %src = memref.alloc() : memref<16x16xf32, #hivm.address_space<gm>>
+    %dst = memref.alloc() : memref<16x16xf32, #hivm.address_space<cbuf>>
+    // CHECK: call @load_gm_to_cbuf_2d_float(%{{.*}}, %{{.*}}, %c0_i32, %c0_i32)
+    hivm.hir.load ins(%src : memref<16x16xf32, #hivm.address_space<gm>>)
+                  outs(%dst : memref<16x16xf32, #hivm.address_space<cbuf>>)
+    return
+  }
+}
+
+// -----
+module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
+  func.func @load_gm_to_cbuf_3d() {
+    // CHECK: func.func private @load_gm_to_cbuf_3d_half(memref<{{.*}}, #hivm.address_space<gm>>,
+    // CHECK: memref<{{.*}}, #hivm.address_space<cbuf>>, i32, i32)
+    %val = arith.constant 1.0 : f16
+    %src = memref.alloc() : memref<2x4x8xf16, #hivm.address_space<gm>>
+    %dst = memref.alloc() : memref<2x4x8xf16, #hivm.address_space<cbuf>>
+    // CHECK: call @load_gm_to_cbuf_3d_half(%{{.*}}, %{{.*}}, %c2_i32, %c0_i32)
+    hivm.hir.load ins(%src : memref<2x4x8xf16, #hivm.address_space<gm>>)
+                  outs(%dst : memref<2x4x8xf16, #hivm.address_space<cbuf>>)
+                  pad_mode = #hivm.padmode<PadValue>
+                  pad_value = %val : f16
+    return
+  }
+}
+
 
 // -----
 module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {

@@ -629,9 +629,11 @@ public:
       if (allInteger)
         return builder.create<arith::CeilDivUIOp>(arg0.getLoc(), arg0, arg1);
       llvm::report_fatal_error("unsupported type for ceildivui");
-    // TODO-A5: make an appropriate port
     case BinaryFn::divfhp:
-      return builder.create<arith::DivFOp>(arg0.getLoc(), arg0, arg1);
+      if (allFloatingPoint)
+        return builder.create<mathExt::DivFHPOp>(arg0.getLoc(), arg0.getType(),
+                                                 arg0, arg1);
+      llvm::report_fatal_error("unsupported type for divfhp");
     }
     llvm::report_fatal_error("unsupported binary function");
   }

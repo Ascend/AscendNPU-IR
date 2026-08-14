@@ -33,11 +33,11 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     %alloc_4 = memref.alloc() : memref<2x2xf32, #hivm.address_space<ub>>
     %memspacecast = memref.memory_space_cast %alloc_4 : memref<2x2xf32, #hivm.address_space<ub>> to memref<2x2xf32>
     %7 = bufferization.to_tensor %memspacecast restrict writable : memref<2x2xf32>
-    // expected-warning@+1 {{loop-carried tensor iter_arg #0 is produced on the CUBE core but consumed on the VECTOR core across the iteration boundary}}
+    // expected-warning@+1 {{loop-carried tensor iter_arg #0 is produced by one work item but consumed by another work item across the iteration boundary; skipping pipelining}}
     %8 = scf.for %arg9 = %c0_i32 to %c2_i32 step %c1_i32 iter_args(%arg10 = %7) -> (tensor<2x2xf32>)  : i32 {
       %11 = tensor.empty() : tensor<16x8xf32>
       %12 = hivm.hir.vbrc ins(%cst : f32) outs(%11 : tensor<16x8xf32>) -> tensor<16x8xf32>
-      // expected-note@+1 {{and consumed here on the VECTOR core the next iteration}}
+      // expected-note@+1 {{and consumed here by another work item in the next iteration}}
       %inserted_slice = tensor.insert_slice %arg10 into %12[0, 0] [2, 2] [1, 1] : tensor<2x2xf32> into tensor<16x8xf32>
       %expanded = tensor.expand_shape %inserted_slice [[0], [1, 2]] output_shape [16, 1, 8] : tensor<16x8xf32> into tensor<16x1x8xf32>
       %13 = tensor.empty() : tensor<1x16x8xf32>
@@ -51,7 +51,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
       %17 = hivm.hir.mmadL1 {already_set_real_mkn, fixpipe_for_result_already_inserted = true, normalized_in_L0C} ins(%15, %3, %true, %c2, %c2, %c2 : tensor<1x1x16x8xf32>, tensor<1x1x16x8xf32>, i1, index, index, index) outs(%16 : tensor<1x1x16x16xf32>) -> tensor<1x1x16x16xf32>
       %alloc_9 = memref.alloc() : memref<2x2xf32, #hivm.address_space<ub>>
       %memspacecast_10 = memref.memory_space_cast %alloc_9 : memref<2x2xf32, #hivm.address_space<ub>> to memref<2x2xf32>
-      // expected-note@+1 {{loop-carried value produced here on the CUBE core}}
+      // expected-note@+1 {{loop-carried value produced here}}
       %18 = bufferization.to_tensor %memspacecast_10 restrict writable : memref<2x2xf32>
       hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, do_not_move_out_of_scffor = true} ins(%17 : tensor<1x1x16x16xf32>) outs(%alloc_9 : memref<2x2xf32, #hivm.address_space<ub>>)
       scf.yield %18 : tensor<2x2xf32>

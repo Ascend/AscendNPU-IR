@@ -1030,6 +1030,24 @@ func.func @test_gather() {
 
 // -----
 
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+  // CHECK-LABEL: @test_gather_middle_axis_regbase(
+  // CHECK-NOT: memref.collapse_shape
+  // CHECK: hivm.hir.vgather ins(%{{.*}} : memref<100x7x4xf16, strided<[112, 16, 1]>>) indices(%{{.*}} : memref<100x6x4xi32, strided<[48, 8, 1]>>) outs(%{{.*}} : memref<100x6x4xf16, strided<[96, 16, 1]>>) gather_axis = 1
+  func.func @test_gather_middle_axis_regbase(
+      %src: memref<100x7x4xf16, strided<[112, 16, 1]>>,
+      %indices: memref<100x6x4xi32, strided<[48, 8, 1]>>,
+      %dst: memref<100x6x4xf16, strided<[96, 16, 1]>>) {
+    hivm.hir.vgather ins(%src : memref<100x7x4xf16, strided<[112, 16, 1]>>)
+                      indices(%indices : memref<100x6x4xi32, strided<[48, 8, 1]>>)
+                      outs(%dst : memref<100x6x4xf16, strided<[96, 16, 1]>>)
+                      gather_axis = 1
+    return
+  }
+}
+
+// -----
+
 // CHECK-LABEL: @test_arange_2d_remains(
 // CHECK-NOT: memref.collapse_shape
 func.func @test_arange_2d_remains() {

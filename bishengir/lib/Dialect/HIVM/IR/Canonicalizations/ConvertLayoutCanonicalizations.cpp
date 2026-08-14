@@ -51,9 +51,11 @@ struct EliminateRedundantConversionPattern : public OpRewritePattern<
       return rewriter.notifyMatchFailure(
           op, "layouts are not inverse conversions");
 
-    if (!sourceOp.getResult().hasOneUse())
+    // Size computation has possibility to be different if it's manually
+    // written, adding this for an extra check
+    if (op.getResult().getType() != sourceOp.getSource().getType())
       return rewriter.notifyMatchFailure(
-          op, "source conversion has multiple uses");
+          op, "roundtrip result type differs from original source type");
 
     rewriter.replaceOp(op, sourceOp.getSource());
     return success();

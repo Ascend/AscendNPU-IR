@@ -26,6 +26,7 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/TypeUtilities.h"
+#include "mlir/Interfaces/ControlFlowInterfaces.h"
 
 #define DEBUG_TYPE "hivm-impl"
 #define DBGS() (llvm::dbgs() << "[" DEBUG_TYPE "]: ")
@@ -79,6 +80,85 @@ bool isLocalMatmulInit(Operation *op, Value v) {
   if (auto matmulOp = dyn_cast_if_present<hivm::LocalMatmulLikeOpInterface>(op))
     return matmulOp.getMatmulC() == v;
   return false;
+}
+
+static ValueRange getForwardedOperands(Operation *terminator) {
+  if (auto condOp = dyn_cast<scf::ConditionOp>(terminator))
+    return condOp.getArgs();
+  return terminator->getOperands();
+}
+
+static void getTerminatorSuccessorRegions(
+    Operation *terminator, RegionBranchOpInterface branchOp,
+    SmallVectorImpl<RegionSuccessor> &successors) {
+  SmallVector<Attribute> operandAttrs(terminator->getNumOperands());
+  if (auto termIface = dyn_cast<RegionBranchTerminatorOpInterface>(terminator)) {
+    termIface.getSuccessorRegions(operandAttrs, successors);
+    return;
+  }
+  branchOp.getSuccessorRegions(terminator->getParentRegion(), successors);
+}
+
+static bool userCanReachMatmulOuts(Value current,
+                                   SmallPtrSet<Value, 16> &visited) {
+  if (!visited.insert(current).second)
+    return false;
+
+  for (Operation *user : current.getUsers()) {
+    if (isa<DebugOp, annotation::MarkOp, tensor::DimOp>(user))
+      continue;
+    if (isa<FixpipeOp>(user))
+      continue;
+
+    if (isLocalMatmulInit(user, current))
+      return true;
+    if (isa<hivm::LocalMatmulLikeOpInterface>(user))
+      continue;
+
+    if (user->hasTrait<OpTrait::ReturnLike>() ||
+        isa<RegionBranchTerminatorOpInterface>(user)) {
+      auto branchOp = dyn_cast<RegionBranchOpInterface>(user->getParentOp());
+      if (!branchOp)
+        continue;
+
+      auto idx = findIdx(llvm::to_vector(getForwardedOperands(user)), current);
+      if (!idx.has_value())
+        continue;
+
+      SmallVector<RegionSuccessor> successors;
+      getTerminatorSuccessorRegions(user, branchOp, successors);
+      for (const RegionSuccessor &successor : successors) {
+        ValueRange inputs = successor.getSuccessorInputs();
+        if (idx.value() >= inputs.size())
+          continue;
+        if (userCanReachMatmulOuts(inputs[idx.value()], visited))
+          return true;
+      }
+      continue;
+    }
+
+    if (auto extractSliceOp = dyn_cast<tensor::ExtractSliceOp>(user)) {
+      if (userCanReachMatmulOuts(extractSliceOp.getResult(), visited))
+        return true;
+      continue;
+    }
+
+    if (auto insertSliceOp = dyn_cast<tensor::InsertSliceOp>(user)) {
+      if (userCanReachMatmulOuts(insertSliceOp.getResult(), visited))
+        return true;
+      continue;
+    }
+
+    if (user->getNumResults() == 1 &&
+        userCanReachMatmulOuts(user->getResult(0), visited))
+      return true;
+  }
+  return false;
+}
+
+bool anyUserReachesMatmulOuts(Value v) {
+  SmallPtrSet<Value, 16> visited;
+  return userCanReachMatmulOuts(v, visited);
 }
 
 bool traceSingleChainUser(

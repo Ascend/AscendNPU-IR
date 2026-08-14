@@ -141,6 +141,13 @@ def ShflDownOp : WarpShuffleOp<"shfl.down">;
 def ShflButterflyOp : WarpShuffleOp<"shfl.bfly">;
 def ShflIndexOp : WarpShuffleOp<"shfl.idx">;
 
+def PermuteOp : AscendDPX_Op<"permute"> {
+  let arguments = (ins LLVM_Type:$src1, LLVM_Type:$src2,
+                    I32:$selector);
+  let results = (outs LLVM_Type:$res);
+  let assemblyFormat = "$src1 `,` $src2 `,` $selector attr-dict `:` functional-type(operands, results)";
+}
+
 //===----------------------------------------------------------------------===//
 // Warp Reduction Ops
 //===----------------------------------------------------------------------===//

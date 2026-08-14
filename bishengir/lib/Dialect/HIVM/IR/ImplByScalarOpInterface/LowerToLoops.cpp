@@ -269,6 +269,34 @@ createScalarCumulativeComputeOp(RewriterBase &rewriter, HIVMOP op,
                           rewriter, op.getLoc(), scalarInputs)
                     : getScalarResult<hivm::VCumprodOp, arith::MulFOp>(
                           rewriter, op.getLoc(), scalarInputs);
+  } else if constexpr (std::is_same<hivm::VCummaxOp, HIVMOP>::value) {
+    auto moduleOp = op->template getParentOfType<ModuleOp>();
+    if (!hacc::utils::isRegBasedArch(moduleOp))
+      llvm::report_fatal_error("Unsupport op type.");
+    if (elemType.isInteger()) {
+      resTensor = getScalarResult<hivm::VCummaxOp, arith::MaxSIOp>(
+          rewriter, op.getLoc(), scalarInputs);
+    } else if (op.getPropagateNan()) {
+      resTensor = getScalarResult<hivm::VCummaxOp, arith::MaximumFOp>(
+          rewriter, op.getLoc(), scalarInputs);
+    } else {
+      resTensor = getScalarResult<hivm::VCummaxOp, arith::MaxNumFOp>(
+          rewriter, op.getLoc(), scalarInputs);
+    }
+  } else if constexpr (std::is_same<hivm::VCumminOp, HIVMOP>::value) {
+    auto moduleOp = op->template getParentOfType<ModuleOp>();
+    if (!hacc::utils::isRegBasedArch(moduleOp))
+      llvm::report_fatal_error("Unsupport op type.");
+    if (elemType.isInteger()) {
+      resTensor = getScalarResult<hivm::VCumminOp, arith::MinSIOp>(
+          rewriter, op.getLoc(), scalarInputs);
+    } else if (op.getPropagateNan()) {
+      resTensor = getScalarResult<hivm::VCumminOp, arith::MinimumFOp>(
+          rewriter, op.getLoc(), scalarInputs);
+    } else {
+      resTensor = getScalarResult<hivm::VCumminOp, arith::MinNumFOp>(
+          rewriter, op.getLoc(), scalarInputs);
+    }
   } else {
     llvm::report_fatal_error("Unsupport op type.");
   }

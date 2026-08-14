@@ -103,6 +103,12 @@ def AutoVectorize : Pass<"hfusion-auto-vectorize", "ModuleOp"> {
            "Max number of inner-most axes to vectorize."
            "Default value -1 means no limit on the max vectorize axes">,
     Option<"treeReduce", "tree-reduce", "bool", "false", "use tree reduce">,
+    ListOption<"restrictToFuncNames", "restrict-to-func-names", "std::string",
+               "If non-empty, only process functions with one of these names "
+               "instead of every vectorizable function in the module. Used by "
+               "AutoVectorizeV2's legacy fallback to scope it to just the "
+               "function(s) it failed on, instead of reprocessing the whole "
+               "module.">,
   ];
 }
 

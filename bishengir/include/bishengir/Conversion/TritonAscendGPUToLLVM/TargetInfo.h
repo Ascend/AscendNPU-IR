@@ -10,6 +10,7 @@
 #define TRITON_CONVERSION_TRITONASCENDGPUTOLLVM_TARGETINFO_H
 
 #include "bishengir/Dialect/AscendDPX/IR/AscendDPX.h"
+#include "bishengir/Dialect/HIVMRegbaseIntrins/IR/HIVMRegbaseIntrins.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
 #include "mlir/Dialect/LLVMIR/NVVMDialect.h"
@@ -60,8 +61,10 @@ public:
 
   Value shuffleIdx(RewriterBase &, Location, Value, Value) const override;
 
-  Value permute(RewriterBase &, Location, Value, Value, Value) const override {
-    llvm::report_fatal_error("not implemented");
+  Value permute(RewriterBase &rewriter, Location loc, Value a, Value b,
+                Value selector) const override {
+    return rewriter.create<ascend_dpx::PermuteOp>(loc, a.getType(), b, a,
+                                                  selector);
   }
 
   Value programId(RewriterBase &, Location, ModuleOp,

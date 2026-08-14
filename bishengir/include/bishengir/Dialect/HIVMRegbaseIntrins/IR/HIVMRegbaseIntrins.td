@@ -2832,6 +2832,12 @@ def YieldOp : HIVMRegbaseIntrinsSIMT_IntrOp<"yield", "yield", 0> {
   let assemblyFormat = "attr-dict";
 }
 
+def PermuteOp : 
+  HIVMRegbaseIntrins_Op<"hivm.prmt", [], [], [], 1> {
+  let arguments = (ins I32:$src1, I32:$src2, I32:$selector);
+  let results = (outs I32:$res);
+}
+
 class ReduceOp<string mnemonic, Type opType> : 
   HIVMRegbaseIntrins_Op<mnemonic, [], [], [], 1> {
   let arguments = (ins opType:$src);

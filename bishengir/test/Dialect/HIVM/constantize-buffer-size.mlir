@@ -124,3 +124,43 @@ module attributes {hacc.target = #hacc.target<"Ascend910B4">} {
     return %alloc : memref<?xf32>
   }
 }
+
+// -----
+
+// affine.min with a constant branch that is the minimum: UB = 16.
+// "blockade" (unregistered op) breaks ValueBoundsConstraintSet, forcing
+// fallback to resolveDynamicDimToBoundImpl, which recurses through
+// arith.index_cast (line 351) into the affine.min branch (248-275).
+// CHECK-LABEL: func.func @affine_min_constant_branch
+func.func @affine_min_constant_branch(%arg0 : index) {
+  // CHECK: %[[ALLOC:.*]] = memref.alloc() : memref<1024xi8>
+  // CHECK: %[[VIEW:.*]] = memref.view %[[ALLOC]]
+  // CHECK: "some_use"(%[[VIEW]])
+  %size = affine.min affine_map<(d0) -> (16, d0)>(%arg0)
+  %ic = arith.index_cast %size : index to i64
+  %size2 = arith.index_cast %ic : i64 to index
+  %alloc = memref.alloc(%size2) : memref<?x16xi32>
+  annotation.mark %alloc {buffer_size_in_byte = 16384 : i64} : memref<?x16xi32>
+  "some_use"(%alloc) : (memref<?x16xi32>) -> ()
+}
+
+// -----
+
+// affine.max with every non-constant branch bounded by affine.min:
+// max(min(16,d0), min(32,d1)) -> UB = max(16, 32) = 32.
+// arith.index_cast breaks ValueBoundsConstraintSet, forcing fallback to
+// resolveDynamicDimToBoundImpl -> affine.max branch (279-307).
+// CHECK-LABEL: func.func @affine_max_all_branches_bounded
+func.func @affine_max_all_branches_bounded(%arg0 : index, %arg1 : index) {
+  // CHECK: %[[ALLOC:.*]] = memref.alloc() : memref<2048xi8>
+  // CHECK: %[[VIEW:.*]] = memref.view %[[ALLOC]]
+  // CHECK: "some_use"(%[[VIEW]])
+  %m0 = affine.min affine_map<(d0) -> (16, d0)>(%arg0)
+  %m1 = affine.min affine_map<(d0) -> (32, d0)>(%arg1)
+  %size = affine.max affine_map<(d0, d1) -> (d0, d1)>(%m0, %m1)
+  %ic = arith.index_cast %size : index to i64
+  %size2 = arith.index_cast %ic : i64 to index
+  %alloc = memref.alloc(%size2) : memref<?x16xi32>
+  annotation.mark %alloc {buffer_size_in_byte = 16384 : i64} : memref<?x16xi32>
+  "some_use"(%alloc) : (memref<?x16xi32>) -> ()
+}
