@@ -165,6 +165,8 @@ protected:
   /// parallel
   void markDimensions();
 
+  /// Heuristic only: mark transposed dimensions for layout-conversion
+  /// transposes.
   void markTransposedDim(hivm::VTransposeOp op);
   void markUnalignedDim(hivm::CopyOp op);
 

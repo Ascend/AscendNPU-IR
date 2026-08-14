@@ -1038,6 +1038,10 @@ void DimensionAnalyzer::markTransposedDim(hivm::VTransposeOp op) {
   auto srcRef = getValueDimIndices(src);
   auto dstRef = getValueDimIndices(dst);
   auto perm = op.getPermutation();
+  // Heuristic only: analyze layout-conversion transposes. Rank-2 permutations
+  // are true transposes, not layout conversion, so skip them.
+  if (perm.size() == 2)
+    return;
   LDBG("Marking transposed dim: " << op);
   for (auto [dimIdx, parentIdx] : llvm::enumerate(dstRef)) {
     auto srcSolverIdx = equivalentDsu_->find(srcRef[perm[dimIdx]]);
