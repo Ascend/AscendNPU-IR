@@ -126,9 +126,30 @@ void InsertInferTaskTypeFuncPass::runOnOperation() {
     case hivm::TFuncCoreType::AIV:
       taskType = util::TaskType::VectorOnly;
       break;
-    case hivm::TFuncCoreType::MIX:
-      taskType = util::TaskType::CubeVectorMix_1_2;
+    case hivm::TFuncCoreType::MIX: {
+      static const DenseMap<std::pair<int32_t, int32_t>, util::TaskType>
+          kRatioToTaskType = {
+              {{0, 1}, util::TaskType::CubeVectorMix_0_1},
+              {{1, 0}, util::TaskType::CubeVectorMix_1_0},
+              {{1, 1}, util::TaskType::CubeVectorMix_1_1},
+              {{1, 2}, util::TaskType::CubeVectorMix_1_2},
+          };
+
+      auto ratio = hivm::CoreRatio::getEffective(entryFunc);
+      if (failed(ratio)) {
+        signalPassFailure();
+        return;
+      }
+      auto it = kRatioToTaskType.find({ratio->cube, ratio->vector});
+      if (it == kRatioToTaskType.end()) {
+        entryFunc->emitError()
+            << "Invalid ratio <" << ratio->cube << ":" << ratio->vector << ">";
+        signalPassFailure();
+        return;
+      }
+      taskType = it->second;
       break;
+    }
     default:
       taskType = util::TaskType::Unknown;
       break;

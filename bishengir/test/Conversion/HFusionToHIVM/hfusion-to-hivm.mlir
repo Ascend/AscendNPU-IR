@@ -1122,3 +1122,36 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
     return %res : tensor<4x16xf32>
   }
 }
+
+// -----
+
+// `setSubBlockMapping` spreads the loop across the two vector sub-blocks, which
+// needs the block to have two. A hivm.core_ratio with vector < 2 gives one, so
+// every iteration mapped to the second sub-block would be dropped. The hint and
+// the ratio both come from the frontend, so this is contradictory input: warn,
+// drop the hint, and leave the loop sequential on the single AIV.
+// CHECK-LABEL: func.func @bind_sub_block_ratio_1_1
+func.func @bind_sub_block_ratio_1_1(%arg0: tensor<64x64xf32> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg1: memref<32x64xf16>) attributes {WorkspaceArgIdx = 0 : i64, global_kernel = "local", hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.core_ratio = #hivm.core_ratio<1, 1>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+  %cst = arith.constant 1.000000e+00 : f32
+  %c2 = arith.constant 2 : index
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c32_i32 = arith.constant 32 : i32
+  %0 = tensor.empty() : tensor<32x64xf32>
+  // expected-warning@+1 {{gives fewer than two vector sub-blocks per block}}
+  scf.for %arg2 = %c0 to %c2 step %c1 {
+    %1 = arith.index_cast %arg2 : index to i32
+    %2 = arith.muli %1, %c32_i32 : i32
+    %3 = arith.index_cast %2 : i32 to index
+    %extracted_slice = tensor.extract_slice %arg0[%3, 0] [32, 64] [1, 1] : tensor<64x64xf32> to tensor<32x64xf32>
+    %4 = hivm.hir.vadd ins(%extracted_slice, %cst : tensor<32x64xf32>, f32) outs(%0 : tensor<32x64xf32>) -> tensor<32x64xf32>
+    %5 = tensor.empty() : tensor<32x64xf16>
+    %6 = hivm.hir.vcast ins(%4 : tensor<32x64xf32>) outs(%5 : tensor<32x64xf16>) -> tensor<32x64xf16>
+    bufferization.materialize_in_destination %6 in writable %arg1 : (tensor<32x64xf16>, memref<32x64xf16>) -> ()
+  } {hfusion.bind_sub_block}
+  // The bind_sub_block hint is consumed, but no sub-block mapping is attached.
+  // CHECK-NOT: map_for_to_forall
+  // CHECK-NOT: #hivm.sub_block<x>
+  // CHECK-NOT: hfusion.bind_sub_block
+  return
+}

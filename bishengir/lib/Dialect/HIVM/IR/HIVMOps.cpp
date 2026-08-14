@@ -95,6 +95,22 @@ DataLayoutAttr::verify(::llvm::function_ref<InFlightDiagnostic()> emitError,
 }
 
 //===----------------------------------------------------------------------===//
+// TCoreRatioAttr
+//===----------------------------------------------------------------------===//
+
+LogicalResult
+TCoreRatioAttr::verify(::llvm::function_ref<InFlightDiagnostic()> emitError,
+                       int cube, int vector) {
+  if (CoreRatio::isValid({cube, vector})) {
+    return success();
+  } else {
+    return emitError() << "Invalid core ratio: " << cube << ":" << vector
+                       << ", expected one of "
+                       << CoreRatio::getValidRatiosStr();
+  }
+}
+
+//===----------------------------------------------------------------------===//
 // HIVM Device Mapping Attributes
 //===----------------------------------------------------------------------===//
 

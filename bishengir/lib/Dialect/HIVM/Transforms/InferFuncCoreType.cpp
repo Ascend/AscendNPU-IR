@@ -136,6 +136,35 @@ public:
         inferredModuleCoreType = hivm::TModuleCoreType::AIV;
       }
 
+      if (auto legacy = func->getAttrOfType<DenseI32ArrayAttr>(
+              hivm::TCoreRatioAttr::name)) {
+        if (legacy.size() != 2) {
+          func->emitError() << "hivm.core_ratio must have exactly 2 entries";
+          fail = true;
+        } else if (failed(hivm::setCoreRatioAttr(func, legacy[0], legacy[1]))) {
+          fail = true;
+        }
+      }
+
+      // A declared core-ratio attr always makes this a mix kernel.
+      if (auto coreRatio = hivm::getCoreRatioAttr(func)) {
+        // Check the func is not annotated with AIV/AIC if there is also a
+        // core_ratio setting.
+        auto annotated = func->getAttrOfType<hivm::TFuncCoreTypeAttr>(
+            hivm::TFuncCoreTypeAttr::name);
+        if (annotated &&
+            annotated.getFuncCoreType() != hivm::TFuncCoreType::MIX) {
+          func->emitError()
+              << "hivm.core_ratio is only valid on a MIX "
+                 "function, but hivm.func_core_type is "
+              << stringifyTFuncCoreType(annotated.getFuncCoreType());
+          fail = true;
+        }
+        // set the func type
+        e = hivm::TFuncCoreType::MIX;
+        inferredModuleCoreType = hivm::TModuleCoreType::MIX;
+      }
+
       func->setAttr(hivm::TFuncCoreTypeAttr::name,
                     hivm::TFuncCoreTypeAttr::get(func->getContext(), e));
 

@@ -86,7 +86,13 @@ FailureOr<int> getPhysicalBlockNum(func::FuncOp funcOp) {
       !maybeSpecInterface.has_value())
     return failure();
   auto specInterface = maybeSpecInterface.value();
-  auto aPhysicalBlockNum = (funcCoreType == TFuncCoreType::AIV)
+
+  bool oneVectorCorePerBlock = funcCoreType == TFuncCoreType::AIV;
+  if (funcCoreType == TFuncCoreType::MIX) {
+    auto coreRatio = hivm::getCoreRatioAttr(funcOp);
+    oneVectorCorePerBlock = coreRatio && coreRatio.getCube() == 0;
+  }
+  auto aPhysicalBlockNum = oneVectorCorePerBlock
                                ? specInterface.getSpecForIdentifierEnum(
                                      hacc::DeviceSpec::VECTOR_CORE_COUNT)
                                : specInterface.getSpecForIdentifierEnum(

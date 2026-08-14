@@ -57,6 +57,73 @@ FailureOr<bool> isCoreTypeOp(Operation *op, enum TCoreType coreType) {
   return res == coreType;
 }
 
+FailureOr<bool> hasRequiredCoreWork(func::FuncOp func,
+                                    hivm::TCoreType requiredCore) {
+  bool foundWork = false;
+  bool hasFailed = false;
+
+  func.walk([&](Operation *op) {
+    if (op == func.getOperation())
+      return WalkResult::advance();
+
+    FailureOr<hivm::TCoreType> coreType = hivm::getCoreType(op);
+    if (failed(coreType)) {
+      hasFailed = true;
+      return WalkResult::interrupt();
+    }
+
+    if (*coreType == requiredCore ||
+        *coreType == hivm::TCoreType::CUBE_AND_VECTOR) {
+      foundWork = true;
+      return WalkResult::interrupt();
+    }
+
+    return WalkResult::advance();
+  });
+
+  if (hasFailed)
+    return failure();
+
+  return foundWork;
+}
+
+/// Verify that a core half has no required work when its core_ratio is zero.
+LogicalResult verifyCoreRatio(func::FuncOp half) {
+  auto ratio = hivm::getCoreRatioAttr(half);
+  auto coreType = half->getAttrOfType<hivm::TFuncCoreTypeAttr>(
+      hivm::TFuncCoreTypeAttr::name);
+  if (!ratio || !coreType)
+    return success();
+
+  if (coreType.getFuncCoreType() == TFuncCoreType::AIC &&
+      ratio.getCube() == 0) {
+    auto hasCube = hasRequiredCoreWork(half, hivm::TCoreType::CUBE);
+    if (failed(hasCube)) {
+      return failure();
+    }
+    if (*hasCube) {
+      return half->emitError()
+             << "hivm.core_ratio<0, " << ratio.getVector()
+             << "> reserves no cube core, but the kernel has cube work";
+    }
+  }
+
+  if (coreType.getFuncCoreType() == TFuncCoreType::AIV &&
+      ratio.getVector() == 0) {
+    auto hasVec = hasRequiredCoreWork(half, hivm::TCoreType::VECTOR);
+    if (failed(hasVec)) {
+      return failure();
+    }
+    if (*hasVec) {
+      return half->emitError()
+             << "hivm.core_ratio<" << ratio.getCube()
+             << ", 0> reserves no vector core, but the kernel has vector work";
+    }
+  }
+
+  return success();
+}
+
 // mark the operands if the defining op is of given core type
 void annotateOpOperand(OpBuilder builder, Operation *op,
                        enum TCoreType coreType) {
@@ -705,6 +772,9 @@ void SplitMixKernelPass::generateMixKernelDecl(func::FuncOp &funcOp) {
   funcDeclOp->setAttr(
       hivm::TFuncCoreTypeAttr::name,
       hivm::TFuncCoreTypeAttr::get(&getContext(), hivm::TFuncCoreType::MIX));
+  // Clone the core_ratio
+  if (auto coreRatio = hivm::getCoreRatioAttr(funcOp))
+    funcDeclOp->setAttr(hivm::TCoreRatioAttr::name, coreRatio);
   if (hacc::utils::isDeviceEntry(funcOp))
     funcDeclOp->setAttr(
         hacc::stringifyEnum(hacc::HACCToLLVMIRTranslateAttr::MIX_ENTRY),
@@ -772,6 +842,16 @@ void SplitMixKernelPass::runOnOperation() {
   for (auto &func : funcList) {
     splitMixKernel(func);
   }
+
+  // validate CV ratio against what each half actually needs.
+  auto res = getOperation()->walk([](func::FuncOp func) {
+    if (!func->hasAttr(hivm::TPartOfMixAttr::name))
+      return WalkResult::advance();
+    return failed(verifyCoreRatio(func)) ? WalkResult::interrupt()
+                                         : WalkResult::advance();
+  });
+  if (res.wasInterrupted())
+    signalPassFailure();
 }
 
 std::unique_ptr<Pass> mlir::hivm::createSplitMixKernelPass() {

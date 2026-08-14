@@ -1535,6 +1535,26 @@ struct HFusionBindSubBlockAttrLowing : public OpRewritePattern<scf::ForOp> {
                                 PatternRewriter &rewriter) const override {
     if (!forOp->hasAttrOfType<UnitAttr>(hfusion::BindSubBlockAttr::name))
       return failure();
+
+    // The func requires two vectors in order for us to spread 
+    // the loop across two vec sub-blocks.
+    // It make no sense to perform the spread if vec < 2.
+    // In this case, raise a warning and fallback.
+    auto parentFunc = forOp->getParentOfType<func::FuncOp>();
+    auto coreRatio =
+        parentFunc ? hivm::getCoreRatioAttr(parentFunc) : TCoreRatioAttr();
+    if (coreRatio && coreRatio.getVector() < 2) {
+      forOp->emitWarning(
+          "[hfusion-bind-sub-block]: hivm.core_ratio<" +
+          std::to_string(coreRatio.getCube()) + ", " +
+          std::to_string(coreRatio.getVector()) +
+          "> gives fewer than two vector sub-blocks per block; sub-block "
+          "binding needs two, dropping the bind_sub_block hint");
+      rewriter.modifyOpInPlace(
+          forOp, [&]() { forOp->removeAttr(hfusion::BindSubBlockAttr::name); });
+      return success();
+    }
+
     rewriter.modifyOpInPlace(
         forOp, [&]() { forOp->removeAttr(hfusion::BindSubBlockAttr::name); });
     setSubBlockMapping(rewriter, forOp);

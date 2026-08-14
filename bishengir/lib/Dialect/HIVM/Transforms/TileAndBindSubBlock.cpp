@@ -1394,6 +1394,13 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
 static bool shouldLimitAllAivToSubBlock0(ArrayRef<func::FuncOp> aivFunctions,
                                          ArrayRef<func::FuncOp> aicFunctions,
                                          ModuleOp moduleOp) {
+  // if core_ratio is already x:1
+  if (llvm::any_of(aivFunctions, [](func::FuncOp aivFunc) {
+        auto ratio = getCoreRatioAttr(aivFunc);
+        return ratio && ratio.getVector() < 2;
+      }))
+    return true;
+
   // Custom ops may have side effects and variadic outs/results, and must never
   // be cloned into the 1:2 sub-block loop.
   // TODO: wait for sych of
