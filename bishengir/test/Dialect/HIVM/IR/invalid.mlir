@@ -510,3 +510,14 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
     return
   }
 }
+
+// -----
+
+func.func @test_vxor_rejects_fp(%lhs: tensor<32xf32>,
+                                %rhs: tensor<32xf32>,
+                                %dst: tensor<32xf32>) {
+  // expected-error@+1 {{failed to verify that operand at idx 0 and 1 should have element type}}
+  %0 = hivm.hir.vxor ins(%lhs, %rhs : tensor<32xf32>, tensor<32xf32>)
+      outs(%dst : tensor<32xf32>) -> tensor<32xf32>
+  return
+}
