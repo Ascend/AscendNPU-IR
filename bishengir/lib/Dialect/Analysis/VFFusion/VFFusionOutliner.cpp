@@ -120,13 +120,11 @@ FailureOr<func::FuncOp> VFFusionOutliner::outline(func::FuncOp funcOp,
 }
 
 // classic logic of FunctionOp creation.
-LogicalResult VFFusionOutliner::createInvoke(func::FuncOp fusedFunction,
-                                             VFFusionBlock &fusedBlock,
-                                             OpBuilder &builder) {
+FailureOr<func::CallOp>
+VFFusionOutliner::createInvoke(func::FuncOp fusedFunction,
+                               VFFusionBlock &fusedBlock, OpBuilder &builder) {
   LDBG("Replacing invoke with callOp");
   SmallVector<Operation *> vectorOps(fusedBlock.getOps());
-  SetVector<Operation *> ops(vectorOps.begin(), vectorOps.end());
-
   func::CallOp callOp =
       builder.create<func::CallOp>(vectorOps.back()->getLoc(), fusedFunction,
                                    fusedBlock.recomputeInputs().takeVector());
@@ -142,7 +140,7 @@ LogicalResult VFFusionOutliner::createInvoke(func::FuncOp fusedFunction,
   for (Operation *op : reverse(vectorOps))
     op->erase();
   LDBG(*callOp->getParentOfType<ModuleOp>());
-  return success();
+  return callOp;
 }
 
 } // namespace analysis

@@ -74,9 +74,9 @@ func.func @param_count_over_limit(%arg0: tensor<1xi16>, %arg1: tensor<1xi16>,
 // FUSE-SAME: %{{.*}}: tensor{{.*}}, %{{.*}}: tensor{{.*}}, %{{.*}}: tensor{{.*}}, %{{.*}}: tensor{{.*}}
 // FUSE-LABEL: func.func @simple_kernel(
 // FUSE-SAME: %[[ARG0:.*]]: tensor{{.*}}, %[[ARG1:.*]]: tensor{{.*}}, %[[ARG2:.*]]: tensor{{.*}}, %[[ARG3:.*]]: tensor{{.*}}, %[[ARG4:.*]]: tensor{{.*}}, %[[ARG5:.*]]: tensor{{.*}}, %[[ARG6:.*]]: tensor{{.*}}
-// FUSE: %[[FUSED0:.*]] = {{(func\.)?call}} @simple_kernel_fused_0(%[[ARG0]], %[[ARG1]], %[[ARG6]], %[[ARG2]])
-// FUSE: %[[FUSED1:.*]] = {{(func\.)?call}} @simple_kernel_fused_1(%[[FUSED0]], %[[ARG3]], %[[ARG6]], %[[ARG4]])
-// FUSE: %[[OUT:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%[[FUSED1]], %[[ARG5]] : tensor{{.*}}, tensor{{.*}}) outs(%[[ARG6]] : tensor{{.*}}) -> tensor{{.*}}
+// FUSE: %[[FUSED1:.*]] = {{(func\.)?call}} @simple_kernel_fused_1(%[[ARG0]], %[[ARG1]], %[[ARG6]], %[[ARG2]])
+// FUSE: %[[FUSED0:.*]] = {{(func\.)?call}} @simple_kernel_fused_0(%[[FUSED1]], %[[ARG3]], %[[ARG6]], %[[ARG4]])
+// FUSE: %[[OUT:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%[[FUSED0]], %[[ARG5]] : tensor{{.*}}, tensor{{.*}}) outs(%[[ARG6]] : tensor{{.*}}) -> tensor{{.*}}
 // FUSE: return %[[OUT]] : tensor<3x2xf16>
 
 module {
@@ -102,8 +102,8 @@ module {
 // FUSE-LABEL: func.func @split_candidates_keep_parent_anchor(
 // FUSE-SAME: %[[ARG0:.*]]: tensor<1xi16>, %[[ARG1:.*]]: tensor<1xi16>, %[[ARG2:.*]]: tensor<1xi16>, %[[ARG3:.*]]: tensor<1xi16>, %[[ARG4:.*]]: tensor<1xi16>, %[[ARG5:.*]]: tensor<1xi16>
 // FUSE: %[[ANCHOR:.*]] = arith.constant 0 : i32
-// FUSE: %[[FIRST:.*]] = {{(func\.)?call}} @split_candidates_keep_parent_anchor_fused_0(%[[ARG0]], %[[ARG1]], %[[ARG5]], %[[ARG2]])
-// FUSE: %[[SECOND:.*]] = {{(func\.)?call}} @split_candidates_keep_parent_anchor_fused_1(%[[FIRST]], %[[ARG3]], %[[ARG5]], %[[ARG4]])
+// FUSE: %[[FIRST:.*]] = {{(func\.)?call}} @split_candidates_keep_parent_anchor_fused_1(%[[ARG0]], %[[ARG1]], %[[ARG5]], %[[ARG2]])
+// FUSE: %[[SECOND:.*]] = {{(func\.)?call}} @split_candidates_keep_parent_anchor_fused_0(%[[FIRST]], %[[ARG3]], %[[ARG5]], %[[ARG4]])
 // FUSE: return %[[SECOND]], %[[ANCHOR]] : tensor<1xi16>, i32
 func.func @split_candidates_keep_parent_anchor(
     %arg0: tensor<1xi16>, %arg1: tensor<1xi16>,

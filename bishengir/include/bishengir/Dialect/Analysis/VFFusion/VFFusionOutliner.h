@@ -28,9 +28,9 @@ protected:
 public:
   virtual FailureOr<func::FuncOp>
   outline(func::FuncOp funcOp, VFFusionBlock &fusedBlock, OpBuilder &builder);
-  virtual LogicalResult createInvoke(func::FuncOp fusedFunction,
-                                     VFFusionBlock &fusedBlock,
-                                     OpBuilder &builder);
+  virtual FailureOr<func::CallOp> createInvoke(func::FuncOp fusedFunction,
+                                               VFFusionBlock &fusedBlock,
+                                               OpBuilder &builder);
   VFFusionOutliner() = default;
   virtual ~VFFusionOutliner() = default;
 };
