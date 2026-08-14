@@ -148,6 +148,58 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">, hivm.module_c
 
 // -----
 
+// Regression test for a write hidden behind an outlined vector-function call.
+// The collapse_shape cannot represent the aligned layout, so the pass creates
+// a dense mirror. The fill writes the aligned source directly, while the
+// following partial load writes only 17 of the mirror's 32 elements. The
+// aligned source must be copied to the mirror after the fill, otherwise the
+// partial load's copy-back overwrites the +inf padding with uninitialized data.
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">, hivm.module_core_type = #hivm.module_core_type<AIV>} {
+  func.func private @read_only(%arg0: memref<2x2x2x2x2xf32, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
+    %c0 = arith.constant 0 : index
+    %zero = arith.constant 0.000000e+00 : f32
+    %mask = vector.constant_mask [1, 1, 1, 1, 2] : vector<1x1x1x1x64xi1>
+    %unused = vector.transfer_read %arg0[%c0, %c0, %c0, %c0, %c0], %zero, %mask {in_bounds = [true, true, true, true, true]} : memref<2x2x2x2x2xf32, #hivm.address_space<ub>>, vector<1x1x1x1x64xf32>
+    return
+  }
+
+  func.func private @fill_inf(%arg0: memref<2x2x2x2x2xf32, #hivm.address_space<ub>>) attributes {hfusion.has_fill, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
+    %c0 = arith.constant 0 : index
+    %cst = arith.constant dense<0x7F800000> : vector<1x1x1x1x64xf32>
+    %mask = vector.constant_mask [1, 1, 1, 1, 2] : vector<1x1x1x1x64xi1>
+    %subview = memref.subview %arg0[0, 0, 0, 0, 0] [1, 1, 1, 1, 2] [1, 1, 1, 1, 1] : memref<2x2x2x2x2xf32, #hivm.address_space<ub>> to memref<1x1x1x1x2xf32, strided<[16, 8, 4, 2, 1]>, #hivm.address_space<ub>>
+    vector.transfer_write %cst, %subview[%c0, %c0, %c0, %c0, %c0], %mask {in_bounds = [true, true, true, true, true]} : vector<1x1x1x1x64xf32>, memref<1x1x1x1x2xf32, strided<[16, 8, 4, 2, 1]>, #hivm.address_space<ub>>
+    return
+  }
+
+  // CHECK-LABEL: func.func @fill_then_partial_load
+  // CHECK: %[[ALIGNED_ALLOC:.*]] = memref.alloc() : memref<2x2x2x2x8x1xf32, #hivm.address_space<ub>>
+  // CHECK: %[[ALIGNED:.*]] = memref.subview %[[ALIGNED_ALLOC]]
+  // CHECK-SAME: memref<2x2x2x2x2xf32, strided<[64, 32, 16, 8, 1]>, #hivm.address_space<ub>>
+  // CHECK: %[[DENSE:.*]] = memref.alloc() : memref<2x2x2x2x2xf32, #hivm.address_space<ub>>
+  // CHECK: hivm.hir.copy ins(%[[ALIGNED]]{{.*}}) outs(%[[DENSE]]
+  // CHECK: %[[FLAT:.*]] = memref.collapse_shape %[[DENSE]]
+  // CHECK: call @read_only(%[[ALIGNED]])
+  // CHECK-NEXT: call @fill_inf(%[[ALIGNED]])
+  // CHECK-NEXT: hivm.hir.copy ins(%[[ALIGNED]]{{.*}}) outs(%[[DENSE]]
+  // CHECK: %[[TAIL:.*]] = memref.subview %[[FLAT]][0] [17] [1]
+  // CHECK: hivm.hir.load {{.*}} outs(%[[TAIL]]
+  // CHECK-NEXT: hivm.hir.copy ins(%[[DENSE]]{{.*}}) outs(%[[ALIGNED]]
+  func.func @fill_then_partial_load(%arg0: memref<17xf32, #hivm.address_space<gm>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>} {
+    %inf = arith.constant 0x7F800000 : f32
+    %alloc = memref.alloc() : memref<2x2x2x2x2xf32, #hivm.address_space<ub>>
+    annotation.mark %alloc {hivm.stride_align_dims = array<i32: 4>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<2x2x2x2x2xf32, #hivm.address_space<ub>>
+    %flat = memref.collapse_shape %alloc [[0, 1, 2, 3, 4]] : memref<2x2x2x2x2xf32, #hivm.address_space<ub>> into memref<32xf32, #hivm.address_space<ub>>
+    func.call @read_only(%alloc) {hivm.vector_function, no_inline} : (memref<2x2x2x2x2xf32, #hivm.address_space<ub>>) -> ()
+    func.call @fill_inf(%alloc) {hivm.vector_function, no_inline} : (memref<2x2x2x2x2xf32, #hivm.address_space<ub>>) -> ()
+    %tail = memref.subview %flat[0] [17] [1] : memref<32xf32, #hivm.address_space<ub>> to memref<17xf32, #hivm.address_space<ub>>
+    hivm.hir.load ins(%arg0 : memref<17xf32, #hivm.address_space<gm>>) outs(%tail : memref<17xf32, #hivm.address_space<ub>>) pad_mode = <PadValue> pad_value = %inf : f32
+    return
+  }
+}
+
+// -----
+
 // CHECK-LABEL: func @propagate_scf_for_yield_with_plain_init
 func.func @propagate_scf_for_yield_with_plain_init() -> memref<1x7xf32, #hivm.address_space<ub>> {
   %c0 = arith.constant 0 : index

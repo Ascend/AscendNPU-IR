@@ -1476,6 +1476,56 @@ static std::optional<int32_t> getTightlyCoupledBufferId(Value value) {
   return std::nullopt;
 }
 
+static bool mayWriteThroughFuncArg(Value mem, DenseSet<Value> &visited) {
+  if (!visited.insert(mem).second)
+    return false;
+
+  for (OpOperand &use : mem.getUses()) {
+    Operation *user = use.getOwner();
+    if (isa<ViewLikeOpInterface>(user)) {
+      for (Value result : user->getResults()) {
+        if (mayWriteThroughFuncArg(result, visited))
+          return true;
+      }
+      continue;
+    }
+
+    if (auto callOp = dyn_cast<func::CallOp>(user)) {
+      auto callee = utils::getCalledFunction<func::FuncOp>(callOp);
+      unsigned argIdx = use.getOperandNumber();
+      // Be conservative for unresolved/external calls because their memory
+      // effects are unavailable to this analysis.
+      if (!callee || callee.isExternal() || argIdx >= callee.getNumArguments())
+        return true;
+      if (mayWriteThroughFuncArg(callee.getArgument(argIdx), visited))
+        return true;
+      continue;
+    }
+
+    if (auto memOp = dyn_cast<MemoryEffectOpInterface>(user)) {
+      if (isa<annotation::MarkOp>(user))
+        continue;
+      SmallVector<MemoryEffects::EffectInstance> effects;
+      memOp.getEffectsOnValue(mem, effects);
+      if (llvm::any_of(effects, [](const auto &effect) {
+            return isa<MemoryEffects::Write>(effect.getEffect());
+          }))
+        return true;
+    }
+  }
+  return false;
+}
+
+static bool callOperandMayBeWritten(func::CallOp callOp,
+                                    unsigned operandNumber) {
+  auto callee = utils::getCalledFunction<func::FuncOp>(callOp);
+  if (!callee || callee.isExternal() ||
+      operandNumber >= callee.getNumArguments())
+    return true;
+  DenseSet<Value> visited;
+  return mayWriteThroughFuncArg(callee.getArgument(operandNumber), visited);
+}
+
 static void findWriteOp(Value mem, SmallVector<Operation *> &writeOps) {
   SmallVector<Value, 8> worklist;
   worklist.push_back(mem);
@@ -1486,6 +1536,11 @@ static void findWriteOp(Value mem, SmallVector<Operation *> &writeOps) {
       if (isa<ViewLikeOpInterface>(user)) {
         for (Value r : user->getResults())
           worklist.push_back(r);
+        continue;
+      }
+      if (auto callOp = dyn_cast<func::CallOp>(user)) {
+        if (callOperandMayBeWritten(callOp, use.getOperandNumber()))
+          writeOps.push_back(user);
         continue;
       }
       if (auto memOp = dyn_cast<MemoryEffectOpInterface>(user)) {
