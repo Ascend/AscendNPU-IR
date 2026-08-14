@@ -179,7 +179,6 @@ module {
 
 module {
   // CHECK-LABEL: func.func @test_scf_for_no_seed
-  // CHECK: %[[FOR_RES:.*]]:3 = scf.for
   // CHECK: %[[SCOPE0:.*]] = scope.scope
   // CHECK-NOT: scope.scope
   // CHECK: %[[FOR_RES:.*]]:3 = scf.for
