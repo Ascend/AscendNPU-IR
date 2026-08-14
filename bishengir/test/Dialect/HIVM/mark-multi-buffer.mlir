@@ -252,11 +252,36 @@ module {
     %c16 = arith.constant 16 : index
     scf.for %i0 = %c0 to %c16 step %c4 {
       // CHECK: %[[ALLOCA:.*]] = memref.alloca() : memref<8xf32, #hivm.address_space<ub>>
-      // CHECK: annotation.mark %[[ALLOCA]] {effects = ["write", "read"], hivm.multi_buffer = 2 : i32, hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<2>}
+      // CHECK: annotation.mark %[[ALLOCA]] {hivm.multi_buffer = 2 : i32}
+      // CHECK: annotation.mark %[[ALLOCA]] {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<2>}
       %tmp = memref.alloca() : memref<8xf32, #hivm.address_space<ub>>
       annotation.mark %tmp {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<2>} : memref<8xf32, #hivm.address_space<ub>>
       hivm.hir.load ins(%in : memref<8xf32, #hivm.address_space<gm>>) outs(%tmp : memref<8xf32, #hivm.address_space<ub>>)
       hivm.hir.store ins(%tmp : memref<8xf32, #hivm.address_space<ub>>) outs(%out : memref<8xf32, #hivm.address_space<gm>>)
+    }
+    return
+  }
+}
+
+// -----
+module {
+  // CHECK-LABEL: func.func @test_slice_load_mark_keeps_separate_multibuffer_mark
+  func.func @test_slice_load_mark_keeps_separate_multibuffer_mark(
+      %in : memref<64xbf16, #hivm.address_space<gm>>)
+      attributes {global_kernel = "local", hacc.entry = "", hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    scf.for %j = %c0 to %c4 step %c1 {
+      // CHECK: %[[ALLOC:.*]] = memref.alloc() : memref<4x64xbf16, #hivm.address_space<ub>>
+      // CHECK-NEXT: annotation.mark %[[ALLOC]] {hivm.multi_buffer = 2 : i32}
+      %alloc = memref.alloc() : memref<4x64xbf16, #hivm.address_space<ub>>
+      scf.for %i = %c0 to %c4 step %c1 {
+        %sub = memref.subview %alloc[%i, 0] [1, 64] [1, 1] : memref<4x64xbf16, #hivm.address_space<ub>> to memref<64xbf16, strided<[1], offset: ?>, #hivm.address_space<ub>>
+        // CHECK: annotation.mark %[[ALLOC]] {hivm.slice_load}
+        annotation.mark %alloc {hivm.slice_load} keys = [] values = [%sub : memref<64xbf16, strided<[1], offset: ?>, #hivm.address_space<ub>>] : memref<4x64xbf16, #hivm.address_space<ub>>
+        hivm.hir.load ins(%in : memref<64xbf16, #hivm.address_space<gm>>) outs(%sub : memref<64xbf16, strided<[1], offset: ?>, #hivm.address_space<ub>>)
+      }
     }
     return
   }
