@@ -75,6 +75,29 @@ func.func @hfusion_elemwise(%arg0: memref<32x7xf32>, %arg1: memref<32x7xf32>) {
     return
 }
 
+// CHECK-LABEL: func.func @test_simplify_collapse
+func.func @test_simplify_collapse(%arg0: tensor<32x1xf32>, %arg1: tensor<32x1xf32>, %cst: f32) -> tensor<32x1xf32> {
+
+  // CHECK: %[[FROM_ELEMENTS:.*]] = tensor.from_elements
+  %from_elements = tensor.from_elements 
+    %cst, %cst, %cst, %cst, %cst, %cst, %cst, %cst,
+    %cst, %cst, %cst, %cst, %cst, %cst, %cst, %cst,
+    %cst, %cst, %cst, %cst, %cst, %cst, %cst, %cst,
+    %cst, %cst, %cst, %cst, %cst, %cst, %cst, %cst : tensor<32x1xf32>
+
+  // CHECK-DAG: %[[COLLAPSED_ARG0:.*]] = tensor.collapse_shape %arg0 {{\[\[}}0, 1]] : tensor<32x1xf32> into tensor<32xf32>
+  // CHECK-DAG: %[[COLLAPSED_FROM_ELEMS:.*]] = tensor.collapse_shape %[[FROM_ELEMENTS]] {{\[\[}}0, 1]] : tensor<32x1xf32> into tensor<32xf32>
+  // CHECK-DAG: %[[COLLAPSED_OUTS:.*]] = tensor.collapse_shape %arg1 {{\[\[}}0, 1]] : tensor<32x1xf32> into tensor<32xf32>
+
+  // CHECK: %[[RESULT_1D:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[COLLAPSED_ARG0]], %[[COLLAPSED_FROM_ELEMS]] : tensor<32xf32>, tensor<32xf32>) outs(%[[COLLAPSED_OUTS]] : tensor<32xf32>) -> tensor<32xf32>
+
+  // CHECK: %[[EXPANDED:.*]] = tensor.expand_shape %[[RESULT_1D]] {{\[\[}}0, 1]] output_shape [32, 1] : tensor<32xf32> into tensor<32x1xf32>
+  %0 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%arg0, %from_elements : tensor<32x1xf32>, tensor<32x1xf32>) outs(%arg1 : tensor<32x1xf32>) -> tensor<32x1xf32>
+
+  // CHECK: return %[[EXPANDED]]
+  return %0 : tensor<32x1xf32>
+}
+
 // -----
  
 func.func @dot_scale_kernel_2D(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf8E5M2> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg3: i32 {tt.divisibility = 16 : i32}, %arg4: memref<?xi8> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg5: memref<?xf8E5M2> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg6: i32 {tt.divisibility = 16 : i32}, %arg7: memref<?xi8> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg8: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg9: i32 {tt.divisibility = 16 : i32}, %arg10: i32, %arg11: i32, %arg12: i32, %arg13: i32, %arg14: i32, %arg15: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, parallel_mode = "simd"} {

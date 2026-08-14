@@ -120,7 +120,8 @@ bool DimensionAnalyzerBase::isHeadOperation(Operation *op) {
            isa_and_present<memref::AllocaOp, memref::AllocOp,
                            memref::ReinterpretCastOp,
                            arith::ConstantOp, memref::ExpandShapeOp,
-                           memref::CollapseShapeOp, hivm::PointerCastOp>(op);
+                           memref::CollapseShapeOp, hivm::PointerCastOp,
+                           tensor::FromElementsOp>(op);
   }
   return reshape_utils::isArgOp(op);
 }
