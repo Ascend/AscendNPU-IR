@@ -1733,15 +1733,41 @@ bool hfusion::shouldUseTileReductionUsingForV2(Operation *op) {
   return true;
 }
 
+/// The reshape-based split-reduction transform supports direct iteration
+/// dimensions, including projections and permutations. Keep broadcasts,
+/// repeated dimensions and other affine expressions on the established path.
+static bool hasProjectedPermutationIndexingMaps(linalg::LinalgOp op) {
+  return llvm::all_of(op.getIndexingMapsArray(), [](AffineMap map) {
+    return map.isProjectedPermutation();
+  });
+}
+
 bool hfusion::shouldUseTreeReduction(Operation *op) {
   if (!isa<linalg::LinalgOp>(op))
     return false;
   auto linalgOp = cast<linalg::LinalgOp>(op);
+  if (!linalgOp.hasPureTensorSemantics())
+    return false;
   if (linalgOp.getNumParallelLoops() == 0)
     return false;
   if (linalgOp.getNumReductionLoops() != 1)
     return false;
-  if (linalgOp.getRegionOutputArgs().size() > 1)
+  if (linalgOp.getNumDpsInputs() == 0 || linalgOp.getNumDpsInits() != 1)
+    return false;
+  if (!hasProjectedPermutationIndexingMaps(linalgOp))
+    return false;
+
+  SmallVector<unsigned> reductionDims;
+  linalgOp.getReductionDims(reductionDims);
+  auto initType = dyn_cast<RankedTensorType>(
+      linalgOp.getDpsInitOperand(0)->get().getType());
+  if (!initType || reductionDims.front() > initType.getRank())
+    return false;
+  int64_t reductionSize = linalgOp.getStaticLoopRanges()[reductionDims.front()];
+  if (ShapedType::isDynamic(reductionSize) || reductionSize <= 0)
+    return false;
+
+  if (linalgOp.getRegionOutputArgs().size() != 1)
     return false;
 
   SmallVector<Operation *, 1> combinerOps;
@@ -1754,9 +1780,6 @@ bool hfusion::shouldUseTreeReduction(Operation *op) {
   Operation *combiner = combinerOps.front();
   if (!isa<arith::AddFOp>(combiner))
     return false;
-
-  SmallVector<unsigned> reductionDims;
-  linalgOp.getReductionDims(reductionDims);
 
   // Now supports only RA case
   return reductionDims.front() < linalgOp.getNumLoops() - 1;
