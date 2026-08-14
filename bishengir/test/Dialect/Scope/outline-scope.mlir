@@ -148,3 +148,73 @@ module {
     return
   }
 }
+
+// -----
+
+// Test: SIMT scope with sub-block tiling reverted attribute should be wrapped
+// in scf.if guard with limit_sub_block_id0.
+// CHECK-LABEL: func.func @test_simt_scope_with_reverted_attr_scope_0(
+// CHECK: memref.store
+// CHECK: return
+
+// CHECK-LABEL: func.func @test_simt_scope_with_reverted_attr(
+// CHECK: hivm.hir.get_sub_block_idx
+// CHECK: arith.index_cast
+// CHECK: arith.cmpi eq
+// CHECK: scf.if
+// CHECK: call @test_simt_scope_with_reverted_attr_scope_0
+// CHECK: limit_sub_block_id0
+module attributes {"hivm.tile_and_bind_subblock_reverted"} {
+  func.func @test_simt_scope_with_reverted_attr(%arg0: memref<f32>) {
+    %cst = arith.constant 1.0 : f32
+    scope.scope : () -> () {
+      memref.store %cst, %arg0[] : memref<f32>
+      scope.return
+    } {hivm.vf_mode = #hivm.vf_mode<SIMT>}
+    return
+  }
+}
+
+// -----
+
+// Test: SIMT scope without the reverted attribute should produce a plain call
+// (no scf.if guard).
+// CHECK-LABEL: func.func @test_simt_scope_without_reverted_attr_scope_0(
+// CHECK: memref.store
+// CHECK: return
+
+// CHECK-LABEL: func.func @test_simt_scope_without_reverted_attr(
+// CHECK-NOT: hivm.hir.get_sub_block_idx
+// CHECK: call @test_simt_scope_without_reverted_attr_scope_0
+module {
+  func.func @test_simt_scope_without_reverted_attr(%arg0: memref<f32>) {
+    %cst = arith.constant 1.0 : f32
+    scope.scope : () -> () {
+      memref.store %cst, %arg0[] : memref<f32>
+      scope.return
+    } {hivm.vf_mode = #hivm.vf_mode<SIMT>}
+    return
+  }
+}
+
+// -----
+
+// Test: Non-SIMT scope with the reverted attribute should produce a plain call
+// (no scf.if guard) because both conditions (SIMT AND reverted) must hold.
+// CHECK-LABEL: func.func @test_non_simt_scope_with_reverted_attr_scope_0(
+// CHECK: memref.store
+// CHECK: return
+
+// CHECK-LABEL: func.func @test_non_simt_scope_with_reverted_attr(
+// CHECK-NOT: hivm.hir.get_sub_block_idx
+// CHECK: call @test_non_simt_scope_with_reverted_attr_scope_0
+module attributes {"hivm.tile_and_bind_subblock_reverted"} {
+  func.func @test_non_simt_scope_with_reverted_attr(%arg0: memref<f32>) {
+    %cst = arith.constant 1.0 : f32
+    scope.scope : () -> () {
+      memref.store %cst, %arg0[] : memref<f32>
+      scope.return
+    }
+    return
+  }
+}
