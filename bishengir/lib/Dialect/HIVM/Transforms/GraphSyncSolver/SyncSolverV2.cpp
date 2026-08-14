@@ -1,10 +1,12 @@
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolver.h"
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/Support/Debug.h"
 
 #include <queue>
+#include <tuple>
 
 #define DEBUG_TYPE "hivm-gss-solver"
 
@@ -582,6 +584,7 @@ void SyncSolverV2::generateProcessingOrders(
     MemInfoOccElement occElement2;
     MemInfoOccElementList::iterator occElementIt1;
     MemInfoOccElementList::iterator occElementIt2;
+    bool runSecondPath{true};
 
     QueueElement(MemInfoNode *node1, MemInfoNode *node2,
                  MemInfoOccElement occElement1, MemInfoOccElement occElement2,
@@ -643,7 +646,8 @@ void SyncSolverV2::generateProcessingOrders(
             continue;
           }
           for (auto &[corePipeDst, nodeList2] : map2) {
-            if (checkSkipCrossCorePair(corePipeSrc.coreType,
+            if (checkSkipIntraCorePair(corePipeSrc.pipe, corePipeDst.pipe) ||
+                checkSkipCrossCorePair(corePipeSrc.coreType,
                                        corePipeDst.coreType)) {
               continue;
             }
@@ -725,17 +729,20 @@ void SyncSolverV2::generateProcessingOrders(
         auto next = current;
         next.occElement1 = *nextIt1;
         next.occElementIt1 = nextIt1;
+        next.runSecondPath = false;
         queue.push(next);
       }
     }
 
-    auto *nextIt2 = std::next(current.occElementIt2);
-    if (nextIt2 != current.node2->occElements.end() &&
-        nextIt2->occIndex < rIndex2) {
-      auto next = current;
-      next.occElement2 = *nextIt2;
-      next.occElementIt2 = nextIt2;
-      queue.push(next);
+    if (current.runSecondPath) {
+      auto *nextIt2 = std::next(current.occElementIt2);
+      if (nextIt2 != current.node2->occElements.end() &&
+          nextIt2->occIndex < rIndex2) {
+        auto next = current;
+        next.occElement2 = *nextIt2;
+        next.occElementIt2 = nextIt2;
+        queue.push(next);
+      }
     }
   }
 }

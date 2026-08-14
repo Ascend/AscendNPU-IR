@@ -270,6 +270,9 @@ protected:
   Occurrence *getFirstIterOcc(Occurrence *occ, Occurrence *parOcc);
   Occurrence *getLastIterOcc(Occurrence *occ, Occurrence *parOcc);
 
+  // Whether a intra-core pipe pair should be skipped.
+  bool checkSkipIntraCorePair(hivm::PIPE pipeSrc, hivm::PIPE pipeDst);
+
   // Whether a cross-core pipe / occurrence pair should be skipped.
   bool checkSkipCrossCorePair(hivm::TCoreType coreTypeSrc,
                               hivm::TCoreType coreTypeDst);

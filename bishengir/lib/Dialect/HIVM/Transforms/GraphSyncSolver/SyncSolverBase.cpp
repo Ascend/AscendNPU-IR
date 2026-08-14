@@ -247,6 +247,24 @@ Occurrence *SyncSolverBase::getLastIterOcc(Occurrence *occ,
   return *it;
 }
 
+bool SyncSolverBase::checkSkipIntraCorePair(hivm::PIPE pipeSrc,
+                                            hivm::PIPE pipeDst) {
+  if (!options.isIntraCoreMode()) {
+    return false;
+  }
+  if (pipeSrc == pipeDst) {
+    if (pipeSrc == hivm::PIPE::PIPE_S) {
+      return true;
+    }
+    if (options.isRegBasedArch) {
+      if (pipeSrc == hivm::PIPE::PIPE_V) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 bool SyncSolverBase::checkSkipCrossCorePair(hivm::TCoreType coreTypeSrc,
                                             hivm::TCoreType coreTypeDst) {
   if (!options.isCrossCoreMode()) {
