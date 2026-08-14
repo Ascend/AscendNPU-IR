@@ -29,9 +29,9 @@ jobs:
 
       - name: Download and extract CANN toolkit
         run: |
-          curl -LO https://ascend-repo.obs.cn-east-2.myhuaweicloud.com/CANN/CANN%209.0.0/Ascend-cann-toolkit_9.0.0_linux-aarch64.run
-          bash ./Ascend-cann-toolkit_9.0.0_linux-aarch64.run --noexec --extract=cann900
-          bash cann900/run_package/cann-bisheng-compiler_*.run --noexec --extract=bisheng_toolkit
+          curl -LO https://ascend-repo.obs.cn-east-2.myhuaweicloud.com/CANN/CANN%209.1.0/Ascend-cann-toolkit_9.1.0_linux-aarch64.run
+          bash ./Ascend-cann-toolkit_9.1.0_linux-aarch64.run --noexec --extract=cann910
+          bash cann910/run_package/cann-bisheng-compiler_*.run --noexec --extract=bisheng_toolkit
           echo "--- 验证 bisheng compiler ---"
           test -f bisheng_toolkit/bisheng_compiler/bin/bisheng || echo "ERROR: bisheng not found"
           bisheng_toolkit/bisheng_compiler/bin/bisheng --version
