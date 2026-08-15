@@ -366,10 +366,12 @@ markWorkspaceOps(Operation *op,
           "Expecting alloc_workspace and its tensor to only have one user "
           "(excluding annotation.mark)");
 
-    if (allocs.contains(alloc))
+    if (allocs.contains(alloc)) {
       allocs[alloc].toTensor = toTensor;
-    else
-      allocs[alloc] = {0, nullptr, toTensor};
+      if (allocs[alloc].multibuffer == 0)
+        allocs[alloc].multibuffer = multibuffer;
+    } else
+      allocs[alloc] = {multibuffer, nullptr, toTensor};
   }
   return success();
 }
@@ -1388,8 +1390,10 @@ FailureOr<WorklistBuildResult> WorklistBuilder::build() {
     }
     SmallVector<bishengir::memref_ext::AllocWorkspaceOp> incomplete;
     for (auto &[alloc, info] : workspaceAllocs) {
-      if (!info.marker)
+      if (!info.marker && !info.toTensor)
         incomplete.push_back(alloc);
+      else if (!info.marker && info.toTensor && info.multibuffer == 0)
+        info.multibuffer = numMultibuffer;
     }
     for (auto alloc : incomplete)
       workspaceAllocs.erase(alloc);

@@ -556,6 +556,28 @@ static Value createWorkspaceSubview(OpBuilder &builder, Location loc,
   }
   strides.append(newType.getRank(), const1);
 
+  if (newType.getRank() == 2 && newType.getDimSize(1) == 1) {
+    SmallVector<int64_t> layoutStrides;
+    int64_t offset;
+    auto targetTy = MemRefType::get({1}, newType.getElementType());
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+    if (succeeded(getStridesAndOffset(targetTy, layoutStrides, offset))) {
+#else
+    if (succeeded(targetTy.getStridesAndOffset(layoutStrides, offset))) {
+#endif
+      auto layout = StridedLayoutAttr::get(builder.getContext(),
+                                           ShapedType::kDynamic, layoutStrides);
+      auto resultTy = MemRefType::Builder(targetTy)
+                          .setLayout(layout)
+                          .setMemorySpace(newType.getMemorySpace());
+      auto subview = builder.create<memref::SubViewOp>(loc, resultTy, from,
+                                                       offsets, sizes, strides);
+      if (isPreload)
+        createAttrForPreloadWS(builder, subview);
+      return subview;
+    }
+  }
+
   auto subview =
       builder.create<memref::SubViewOp>(loc, from, offsets, sizes, strides);
   if (isPreload)
@@ -579,10 +601,11 @@ processWorkspaceOutputs(OpBuilder &builder, WorkItem *item,
     Value original = getAllocWorkspace(dpsOp.getDpsInitOperand(0)->get());
     Value newAlloc = expandedWorkspaceMap.lookup(original);
     Operation *store = loopMap.lookupOrDefault(output);
-    builder.setInsertionPoint(store);
+    builder.setInsertionPointToStart(forOp.getBody());
     Location loc = store->getLoc();
     Value newDst =
         createWorkspaceSubview(builder, loc, newAlloc, forOp.getInductionVar());
+    builder.setInsertionPoint(store);
     if (auto storeOp = dyn_cast<StoreOp>(store))
       builder.create<StoreOp>(loc, TypeRange{}, storeOp.getSrc(), newDst);
     else if (auto fixpipe = dyn_cast<FixpipeOp>(store))
@@ -595,7 +618,7 @@ processWorkspaceOutputs(OpBuilder &builder, WorkItem *item,
     // Before forOp so to_tensor dominates in-loop and later consumers.
     builder.setInsertionPoint(forOp);
     auto workspaceOp = builder.create<bufferization::ToTensorOp>(
-        loc, newAlloc, /*restrict*/ true);
+        loc, newAlloc, /*restrict*/ true, /*writable*/ true);
     expandedWorkspaceMap[original] = workspaceOp;
 
     Value sliceIdx = forOp.getInductionVar();
@@ -935,9 +958,15 @@ void CVPipelineImpl::expandWorkspace(OpBuilder &builder) {
 
     expandedWorkspaceMap[alloc] = newAlloc;
 
-    info.marker.getSrcMutable().set(newAlloc);
-    info.marker->removeAttr(MultiBufferAttr::name);
-    info.marker->setAttr(hivm::PreloadWorkspaceAttr::name, builder.getUnitAttr());
+    if (info.marker) {
+      info.marker.getSrcMutable().set(newAlloc);
+      info.marker->removeAttr(MultiBufferAttr::name);
+      info.marker->setAttr(hivm::PreloadWorkspaceAttr::name, builder.getUnitAttr());
+    } else {
+      auto markOp = builder.create<annotation::MarkOp>(loc, newAlloc);
+      markOp->setAttr(hivm::CVPipelinedMultiBufferAttr::name,
+                      UnitAttr::get(builder.getContext()));
+    }
 
     toErase.insert(alloc);
     toErase.insert(info.toTensor);
@@ -1714,6 +1743,7 @@ LogicalResult CVPipelineImpl::migrateOps() {
           innerToTensor = dyn_cast_if_present<bufferization::ToTensorOp>(
               internalDef.getDefiningOp());
         }
+        // Workspace scalar store: `hivm.hir.store` writing through a
         // Workspace scalar store: `hivm.hir.store` writing through a
         // `to_tensor` of an `alloc_workspace`. Rewire the cloned store to
         // write directly into the per-slot memref subview of `expanded` and
