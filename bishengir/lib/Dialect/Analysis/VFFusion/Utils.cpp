@@ -17,6 +17,7 @@
 
 #include "bishengir/Dialect/Analysis/VFFusion/Utils.h"
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
+#include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -191,19 +192,29 @@ static bool isCollapseShapeEliminable(Operation *op) {
 // ExpandShapeOp: the expand is consumed by a linalg::LinalgOp (excluding
 // TransposeOp) where the expand only inserts unit dims (each reassociation
 // group has at most one non-unit dim — isPureUnitExpand).
-// PreVectorizationFusion generalizes named linalg ops to linalg.generic,
-// then the upstream reshape folding in populateElementwiseOpsFusionPatterns
-// folds the expand into the indexing map by projecting out the unit dims.
+// PreVectorizationFusion generalizes named linalg ops (linalg.mul,
+// linalg.elemwise_*, ...) to linalg.generic, then folds the expand into the
+// indexing map by projecting out the unit dims.
 //
-// Note: we check linalg::LinalgOp (not just GenericOp) because at
-// VFFusion time named ops like linalg.mul have not yet been generalized.
+// hfusion.cast / hfusion.bitcast are EXCLUDED: although they implement the
+// LinalgOp interface, their consumers are type-conversion ops that
+// ExpandShapeToImplicitBrcInGenericPattern does not fold (identity map, no
+// constant-0 broadcast axis), so admitting an expand feeding them would leave
+// the reshape surviving inside the VF. linalg.* named elementwise ops (mul,
+// elemwise_binary/unary, ...) are still admitted.
+//
+// all_of (not any_of): the expand is folded away only if EVERY user is a
+// foldable LinalgOp; a single non-foldable user (e.g. func.return, or a second
+// consumer that is not generalized) keeps the expand alive, so admitting it
+// would leave the reshape surviving inside the VF.
+//
 // linalg::TransposeOp is excluded because PreVectorizationFusion never
-// generalizes it (HFusionGeneralizationPatterns skips TransposeOp), so
-// the upstream reshape folding cannot fire on it.
+// generalizes it (HFusionGeneralizationPatterns skips TransposeOp), so the
+// reshape folding cannot fire on it.
 //
 // Note: the inverse reshape pair (expand source from CollapseShapeOp) is
-// NOT checked here — it is always folded by preProcess() ->
-// applyPatternsGreedily -> ExpandShapeOp::fold() before the fusion phase.
+// always folded by preProcess() -> applyPatternsGreedily -> ExpandShapeOp::fold()
+// before the fusion phase, so it is not handled here.
 static bool isExpandShapeEliminable(Operation *op) {
   auto expandOp = dyn_cast<tensor::ExpandShapeOp>(op);
   if (!expandOp)
@@ -216,30 +227,33 @@ static bool isExpandShapeEliminable(Operation *op) {
   ArrayRef<int64_t> resShape = resType.getShape();
   auto reassoc = expandOp.getReassociationIndices();
 
-  for (Operation *user : expandOp->getUsers()) {
-    auto linalgOp = dyn_cast<linalg::LinalgOp>(user);
-    if (!linalgOp || isa<linalg::TransposeOp>(user))
-      continue;
-
-    // isPureUnitExpand: each reassociation group has at most one
-    // non-unit dim. This is the only condition needed — the upstream
-    // reshape folding projects out unit dims regardless of how they
-    // are indexed (constant 0 or dim expr).
-    bool isPureUnitExpand = true;
-    for (const auto &group : reassoc) {
-      unsigned numExtentDims = 0;
-      for (int64_t d : group)
-        if (resShape[d] != 1)
-          ++numExtentDims;
-      if (numExtentDims > 1) {
-        isPureUnitExpand = false;
-        break;
-      }
+  // isPureUnitExpand: each reassociation group has at most one non-unit dim.
+  bool isPureUnitExpand = true;
+  for (const auto &group : reassoc) {
+    unsigned numExtentDims = 0;
+    for (int64_t d : group)
+      if (resShape[d] != 1)
+        ++numExtentDims;
+    if (numExtentDims > 1) {
+      isPureUnitExpand = false;
+      break;
     }
-    if (isPureUnitExpand)
-      return true;
   }
-  return false;
+  if (!isPureUnitExpand)
+    return false;
+
+  // The expand is folded away only if EVERY user is a foldable LinalgOp (so the
+  // expand goes dead). all_of, not any_of: a single non-foldable user keeps it
+  // alive. hfusion.cast/bitcast are rejected (see header comment).
+  if (expandOp->getUsers().empty())
+    return false;
+  return llvm::all_of(expandOp->getUsers(), [](Operation *user) {
+    if (isa<hfusion::CastOp, hfusion::BitcastOp>(user))
+      return false;
+    if (isa<linalg::TransposeOp>(user))
+      return false;
+    return isa<linalg::LinalgOp>(user);
+  });
 }
 
 bool isReshapeEliminableByPreVectorizationFusion(Operation *op) {

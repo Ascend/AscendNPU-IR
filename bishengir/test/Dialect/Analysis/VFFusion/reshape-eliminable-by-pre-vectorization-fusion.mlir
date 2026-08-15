@@ -82,3 +82,57 @@ module {
     return %3 : tensor<64x64xf32>
   }
 }
+
+// -----
+
+// Negative: expand_shape consumed by hfusion.cast. hfusion.cast implements the
+// LinalgOp interface but is a type-conversion op that
+// ExpandShapeToImplicitBrcInGenericPattern does not fold (identity map, no
+// constant-0 broadcast axis). isExpandShapeEliminable rejects it, so the expand
+// is NOT fused into a VF and stays in the caller.
+
+// CHECK-LABEL: func.func @expand_cast
+// CHECK: tensor.expand_shape
+module {
+  func.func @expand_cast(%arg0: tensor<64xf32>, %arg1: tensor<64x1xf16>) -> tensor<64x1xf16> attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"} {
+    %expanded = tensor.expand_shape %arg0 [[0, 1]] output_shape [64, 1] : tensor<64xf32> into tensor<64x1xf32>
+    %0 = hfusion.cast {round_mode = #hfusion.round_mode<rint>} ins(%expanded : tensor<64x1xf32>) outs(%arg1 : tensor<64x1xf16>) -> tensor<64x1xf16>
+    return %0 : tensor<64x1xf16>
+  }
+}
+
+// -----
+
+// Negative: expand_shape consumed by hfusion.bitcast. Same rationale as cast:
+// bitcast is a type-conversion op that the reshape-folding pattern does not fold.
+
+// CHECK-LABEL: func.func @expand_bitcast
+// CHECK: tensor.expand_shape
+module {
+  func.func @expand_bitcast(%arg0: tensor<64xf32>, %arg1: tensor<64x1xi32>) -> tensor<64x1xi32> attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"} {
+    %expanded = tensor.expand_shape %arg0 [[0, 1]] output_shape [64, 1] : tensor<64xf32> into tensor<64x1xf32>
+    %0 = hfusion.bitcast ins(%expanded : tensor<64x1xf32>) outs(%arg1 : tensor<64x1xi32>) -> tensor<64x1xi32>
+    return %0 : tensor<64x1xi32>
+  }
+}
+
+// -----
+
+// Negative: expand_shape has TWO users — a foldable linalg.generic (broadcast
+// map, which alone WOULD be admitted) and a func.return (not foldable). all_of
+// rejects the expand because not EVERY user is foldable, so it stays in the
+// caller even though one user is foldable.
+
+// CHECK-LABEL: func.func @expand_multi_user
+// CHECK: tensor.expand_shape
+module {
+  func.func @expand_multi_user(%arg0: tensor<64xf32>, %arg1: tensor<64x64xf32>, %arg2: tensor<64x1xf32>) -> (tensor<64x64xf32>, tensor<64x1xf32>) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"} {
+    %expanded = tensor.expand_shape %arg0 [[0, 1]] output_shape [64, 1] : tensor<64xf32> into tensor<64x1xf32>
+    %0 = tensor.empty() : tensor<64x64xf32>
+    %1 = linalg.generic {indexing_maps = [affine_map<(d0, d1) -> (d0, 0)>, affine_map<(d0, d1) -> (d0, d1)>], iterator_types = ["parallel", "parallel"]} ins(%expanded : tensor<64x1xf32>) outs(%0 : tensor<64x64xf32>) {
+    ^bb0(%in: f32, %out: f32):
+      linalg.yield %in : f32
+    } -> tensor<64x64xf32>
+    return %1, %expanded : tensor<64x64xf32>, tensor<64x1xf32>
+  }
+}
