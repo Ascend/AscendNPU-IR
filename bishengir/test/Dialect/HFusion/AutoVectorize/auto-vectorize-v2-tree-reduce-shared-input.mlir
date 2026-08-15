@@ -18,55 +18,55 @@
 #dim1 = affine_map<(d0, d1) -> (d0)>
 
 module {
-  func.func @shared_reduction_input(%arg0: tensor<32x32xf32>)
-      -> (tensor<32xf32>, tensor<32xf32>)
+  func.func @shared_reduction_input(%arg0: tensor<16x16xf32>)
+      -> (tensor<16xf32>, tensor<16xf32>)
       attributes {
         hacc.entry,
         hacc.function_kind = #hacc.function_kind<DEVICE>,
         hfusion.fusion_kind = #hfusion.fusion_kind<ANY_PBR>
       } {
     %c0 = arith.constant 0.0 : f32
-    %empty = tensor.empty() : tensor<32xf32>
-    %init = linalg.fill ins(%c0 : f32) outs(%empty : tensor<32xf32>)
-        -> tensor<32xf32>
+    %empty = tensor.empty() : tensor<16xf32>
+    %init = linalg.fill ins(%c0 : f32) outs(%empty : tensor<16xf32>)
+        -> tensor<16xf32>
     %dim0_sum = linalg.generic {
         indexing_maps = [#identity, #dim0],
         iterator_types = ["reduction", "parallel"]
-      } ins(%arg0 : tensor<32x32xf32>) outs(%init : tensor<32xf32>) {
+      } ins(%arg0 : tensor<16x16xf32>) outs(%init : tensor<16xf32>) {
     ^bb0(%in: f32, %out: f32):
       %sum = arith.addf %in, %out : f32
       linalg.yield %sum : f32
-    } -> tensor<32xf32>
+    } -> tensor<16xf32>
     %dim1_sum = linalg.generic {
         indexing_maps = [#identity, #dim1],
         iterator_types = ["parallel", "reduction"]
-      } ins(%arg0 : tensor<32x32xf32>) outs(%init : tensor<32xf32>) {
+      } ins(%arg0 : tensor<16x16xf32>) outs(%init : tensor<16xf32>) {
     ^bb0(%in: f32, %out: f32):
       %sum = arith.addf %in, %out : f32
       linalg.yield %sum : f32
-    } -> tensor<32xf32>
-    return %dim0_sum, %dim1_sum : tensor<32xf32>, tensor<32xf32>
+    } -> tensor<16xf32>
+    return %dim0_sum, %dim1_sum : tensor<16xf32>, tensor<16xf32>
   }
 
-  func.func @standalone_reduction_input(%arg0: tensor<32x32xf32>)
-      -> tensor<32xf32>
+  func.func @standalone_reduction_input(%arg0: tensor<16x16xf32>)
+      -> tensor<16xf32>
       attributes {
         hacc.entry,
         hacc.function_kind = #hacc.function_kind<DEVICE>,
         hfusion.fusion_kind = #hfusion.fusion_kind<ANY_PBR>
       } {
     %c0 = arith.constant 0.0 : f32
-    %empty = tensor.empty() : tensor<32xf32>
-    %init = linalg.fill ins(%c0 : f32) outs(%empty : tensor<32xf32>)
-        -> tensor<32xf32>
+    %empty = tensor.empty() : tensor<16xf32>
+    %init = linalg.fill ins(%c0 : f32) outs(%empty : tensor<16xf32>)
+        -> tensor<16xf32>
     %sum = linalg.generic {
         indexing_maps = [#identity, #dim0],
         iterator_types = ["reduction", "parallel"]
-      } ins(%arg0 : tensor<32x32xf32>) outs(%init : tensor<32xf32>) {
+      } ins(%arg0 : tensor<16x16xf32>) outs(%init : tensor<16xf32>) {
     ^bb0(%in: f32, %out: f32):
       %next = arith.addf %in, %out : f32
       linalg.yield %next : f32
-    } -> tensor<32xf32>
-    return %sum : tensor<32xf32>
+    } -> tensor<16xf32>
+    return %sum : tensor<16xf32>
   }
 }

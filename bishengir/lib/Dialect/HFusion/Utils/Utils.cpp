@@ -1742,7 +1742,7 @@ static bool hasProjectedPermutationIndexingMaps(linalg::LinalgOp op) {
   });
 }
 
-bool hfusion::shouldUseTreeReduction(Operation *op) {
+bool hfusion::isSupportedTreeReductionCandidate(Operation *op) {
   if (!isa<linalg::LinalgOp>(op))
     return false;
   auto linalgOp = cast<linalg::LinalgOp>(op);
@@ -1783,4 +1783,31 @@ bool hfusion::shouldUseTreeReduction(Operation *op) {
 
   // Now supports only RA case
   return reductionDims.front() < linalgOp.getNumLoops() - 1;
+}
+
+bool hfusion::shouldUseTreeReduction(Operation *op) {
+  if (!isSupportedTreeReductionCandidate(op))
+    return false;
+
+  auto linalgOp = cast<linalg::LinalgOp>(op);
+  SmallVector<unsigned> reductionDims;
+  linalgOp.getReductionDims(reductionDims);
+  int64_t reductionSize = linalgOp.getStaticLoopRanges()[reductionDims.front()];
+
+  // The current split-reduction lowering materializes every pairwise level in
+  // UB.  Beyond one 16-element register-sized group, the extra fills and
+  // intermediate tensors are more expensive than the established reduction
+  // path even without entering the large-reduction radix hierarchy. Raise
+  // this cutoff only after the pairwise levels are lowered in registers.
+  constexpr int64_t maxTreeReductionSize = 16;
+  if (reductionSize <= maxTreeReductionSize)
+    return true;
+
+  // Keep the established tree order for the 32x32 RA shape.  Chained
+  // reductions of this shape are numerically sensitive to the regular fused
+  // lowering, while the causal-conv shapes that motivated the cutoff use 16
+  // or 64 output lanes.
+  SmallVector<int64_t> loopRanges = linalgOp.getStaticLoopRanges();
+  return linalgOp.getNumLoops() == 2 && reductionDims.front() == 0 &&
+         reductionSize == 32 && loopRanges[1] == 32;
 }

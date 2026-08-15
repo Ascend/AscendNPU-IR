@@ -50,39 +50,39 @@
 
 module {
   func.func @tree_reduce_with_elementwise_sibling(
-      %arg0: tensor<64x64xf32>, %arg1: tensor<64x64xf32>)
-      -> (tensor<64x64xf32>, tensor<64xf32>)
+      %arg0: tensor<16x64xf32>, %arg1: tensor<16x64xf32>)
+      -> (tensor<16x64xf32>, tensor<64xf32>)
       attributes {
         hacc.entry,
         hacc.function_kind = #hacc.function_kind<DEVICE>,
         hfusion.fusion_kind = #hfusion.fusion_kind<ANY_PBR>
       } {
     %zero = arith.constant 0.0 : f32
-    %matrix_empty = tensor.empty() : tensor<64x64xf32>
+    %matrix_empty = tensor.empty() : tensor<16x64xf32>
     %vector_empty = tensor.empty() : tensor<64xf32>
     %init = linalg.fill ins(%zero : f32) outs(%vector_empty : tensor<64xf32>)
         -> tensor<64xf32>
     %elementwise = linalg.generic {
         indexing_maps = [#identity, #identity],
         iterator_types = ["parallel", "parallel"]
-      } ins(%arg0 : tensor<64x64xf32>)
-        outs(%matrix_empty : tensor<64x64xf32>) {
+      } ins(%arg0 : tensor<16x64xf32>)
+        outs(%matrix_empty : tensor<16x64xf32>) {
     ^bb0(%in: f32, %out: f32):
       %sum = arith.addf %in, %out : f32
       linalg.yield %sum : f32
-    } -> tensor<64x64xf32>
+    } -> tensor<16x64xf32>
     %reduced = linalg.generic {
         indexing_maps = [#identity, #project_first],
         iterator_types = ["reduction", "parallel"]
-      } ins(%arg1 : tensor<64x64xf32>) outs(%init : tensor<64xf32>) {
+      } ins(%arg1 : tensor<16x64xf32>) outs(%init : tensor<64xf32>) {
     ^bb0(%in: f32, %out: f32):
       %sum = arith.addf %in, %out : f32
       linalg.yield %sum : f32
     } -> tensor<64xf32>
-    return %elementwise, %reduced : tensor<64x64xf32>, tensor<64xf32>
+    return %elementwise, %reduced : tensor<16x64xf32>, tensor<64xf32>
   }
 
-  func.func @computed_reduction_value(%arg0: tensor<64x64xf32>)
+  func.func @computed_reduction_value(%arg0: tensor<16x64xf32>)
       -> tensor<64xf32>
       attributes {
         hacc.entry,
@@ -96,7 +96,7 @@ module {
     %reduced = linalg.generic {
         indexing_maps = [#identity, #project_first],
         iterator_types = ["reduction", "parallel"]
-      } ins(%arg0 : tensor<64x64xf32>) outs(%init : tensor<64xf32>) {
+      } ins(%arg0 : tensor<16x64xf32>) outs(%init : tensor<64xf32>) {
     ^bb0(%in: f32, %out: f32):
       %square = arith.mulf %in, %in : f32
       %sum = arith.addf %square, %out : f32
@@ -106,8 +106,8 @@ module {
   }
 
   func.func @opposite_reduction_siblings(
-      %arg0: tensor<32x64xf32>, %arg1: tensor<32x64xf32>)
-      -> (tensor<64xf32>, tensor<32xf32>)
+      %arg0: tensor<16x64xf32>, %arg1: tensor<16x64xf32>)
+      -> (tensor<64xf32>, tensor<16xf32>)
       attributes {
         hacc.entry,
         hacc.function_kind = #hacc.function_kind<DEVICE>,
@@ -115,15 +115,15 @@ module {
       } {
     %zero = arith.constant 0.0 : f32
     %ra_empty = tensor.empty() : tensor<64xf32>
-    %ar_empty = tensor.empty() : tensor<32xf32>
+    %ar_empty = tensor.empty() : tensor<16xf32>
     %ra_init = linalg.fill ins(%zero : f32)
         outs(%ra_empty : tensor<64xf32>) -> tensor<64xf32>
     %ar_init = linalg.fill ins(%zero : f32)
-        outs(%ar_empty : tensor<32xf32>) -> tensor<32xf32>
+        outs(%ar_empty : tensor<16xf32>) -> tensor<16xf32>
     %ra = linalg.generic {
         indexing_maps = [#identity, #project_first],
         iterator_types = ["reduction", "parallel"]
-      } ins(%arg0 : tensor<32x64xf32>) outs(%ra_init : tensor<64xf32>) {
+      } ins(%arg0 : tensor<16x64xf32>) outs(%ra_init : tensor<64xf32>) {
     ^bb0(%in: f32, %out: f32):
       %sum = arith.addf %in, %out : f32
       linalg.yield %sum : f32
@@ -131,16 +131,16 @@ module {
     %ar = linalg.generic {
         indexing_maps = [#identity, #project_second],
         iterator_types = ["parallel", "reduction"]
-      } ins(%arg1 : tensor<32x64xf32>) outs(%ar_init : tensor<32xf32>) {
+      } ins(%arg1 : tensor<16x64xf32>) outs(%ar_init : tensor<16xf32>) {
     ^bb0(%in: f32, %out: f32):
       %sum = arith.addf %in, %out : f32
       linalg.yield %sum : f32
-    } -> tensor<32xf32>
-    return %ra, %ar : tensor<64xf32>, tensor<32xf32>
+    } -> tensor<16xf32>
+    return %ra, %ar : tensor<64xf32>, tensor<16xf32>
   }
 
   func.func @parallel_tree_reduction_siblings(
-      %arg0: tensor<32x64xf32>, %arg1: tensor<32x64xf32>)
+      %arg0: tensor<16x64xf32>, %arg1: tensor<16x64xf32>)
       -> (tensor<64xf32>, tensor<64xf32>)
       attributes {
         hacc.entry,
@@ -157,7 +157,7 @@ module {
     %sum0 = linalg.generic {
         indexing_maps = [#identity, #project_first],
         iterator_types = ["reduction", "parallel"]
-      } ins(%arg0 : tensor<32x64xf32>) outs(%init0 : tensor<64xf32>) {
+      } ins(%arg0 : tensor<16x64xf32>) outs(%init0 : tensor<64xf32>) {
     ^bb0(%in: f32, %out: f32):
       %sum = arith.addf %in, %out : f32
       linalg.yield %sum : f32
@@ -165,7 +165,7 @@ module {
     %sum1 = linalg.generic {
         indexing_maps = [#identity, #project_first],
         iterator_types = ["reduction", "parallel"]
-      } ins(%arg1 : tensor<32x64xf32>) outs(%init1 : tensor<64xf32>) {
+      } ins(%arg1 : tensor<16x64xf32>) outs(%init1 : tensor<64xf32>) {
     ^bb0(%in: f32, %out: f32):
       %sum = arith.addf %in, %out : f32
       linalg.yield %sum : f32
@@ -174,7 +174,7 @@ module {
   }
 
   func.func @producer_tree_reduction_sibling(
-      %arg0: tensor<64x32x64xf32>, %arg1: tensor<64x32x64xf32>)
+      %arg0: tensor<64x16x64xf32>, %arg1: tensor<64x16x64xf32>)
       -> tensor<64x64xf32>
       attributes {
         hacc.entry,
@@ -192,7 +192,7 @@ module {
     %sum0 = linalg.generic {
         indexing_maps = [#identity_3d, #project_middle],
         iterator_types = ["parallel", "reduction", "parallel"]
-      } ins(%arg0 : tensor<64x32x64xf32>)
+      } ins(%arg0 : tensor<64x16x64xf32>)
         outs(%init0 : tensor<64x64xf32>) {
     ^bb0(%in: f32, %out: f32):
       %sum = arith.addf %in, %out : f32
@@ -201,7 +201,7 @@ module {
     %sum1 = linalg.generic {
         indexing_maps = [#identity_3d, #project_middle],
         iterator_types = ["parallel", "reduction", "parallel"]
-      } ins(%arg1 : tensor<64x32x64xf32>)
+      } ins(%arg1 : tensor<64x16x64xf32>)
         outs(%init1 : tensor<64x64xf32>) {
     ^bb0(%in: f32, %out: f32):
       %sum = arith.addf %in, %out : f32

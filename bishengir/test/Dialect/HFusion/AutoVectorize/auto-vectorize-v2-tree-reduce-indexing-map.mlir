@@ -50,7 +50,7 @@ module {
   }
 
   func.func @tree_reduce_permuted_input(
-      %arg0: tensor<8x32xf32>) -> tensor<8xf32>
+      %arg0: tensor<8x16xf32>) -> tensor<8xf32>
       attributes {
         hacc.entry,
         hacc.function_kind = #hacc.function_kind<DEVICE>,
@@ -63,7 +63,7 @@ module {
     %result = linalg.generic {
         indexing_maps = [#permuted, #output_map],
         iterator_types = ["reduction", "parallel"]
-      } ins(%arg0 : tensor<8x32xf32>) outs(%init : tensor<8xf32>) {
+      } ins(%arg0 : tensor<8x16xf32>) outs(%init : tensor<8xf32>) {
     ^bb0(%in: f32, %out: f32):
       %sum = arith.addf %in, %out : f32
       linalg.yield %sum : f32
