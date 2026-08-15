@@ -339,9 +339,12 @@ public:
 private:
   std::vector<OpOperand *> getSortedConsumerOperands(Operation *producerOp);
   bool hasReductionToConsumer(const int producerIndex, const int consumerIndex);
-  bool useNarrowingCastInConsumer(const int producerIndex, const int consumerIndex);
+  bool useNarrowingCastInConsumer(const int producerIndex,
+                                  const int consumerIndex);
   bool areFusibleOps(const int producerIndex, const int consumerIndex);
   bool fuseProducerConsumerImpl(Block &block);
+  bool fuseSpecialPatterns(Block &block);
+  bool fusePredicateSelectPattern(Block &block);
   bool fuseIOBoundGroupsWithNearestConsumer();
   bool isIOBoundGroup(int groupId);
   bool fuseGroupsWithNearestConsumer(
