@@ -845,6 +845,127 @@ bool MaxParallelAnalyzer::fuseProducerConsumerImpl(Block &block) {
   return hasFused;
 }
 
+// Pattern: predicate (producer) + select (consumer) co-location.
+// If compare and select are split into separate groups, OVF will outline them
+// into different VFs. The i1 data read from UB memory must be converted from
+// vector register format to predicate register format via RV_MOVVP before
+// VSEL can use it. Forcing them into the same group keeps the predicate
+// in-register.
+bool MaxParallelAnalyzer::fusePredicateSelectPattern(Block &block) {
+  bool hasFused = false;
+
+  // Pre-build hasPredicate/hasSelect caches in a single pass over all groups.
+  // This avoids re-scanning on every iteration and every consumer candidate
+  // check.
+  DenseMap<int, bool> hasPredicate, hasSelect;
+  for (auto &[id, ops] : AllFusedGroupBlocks) {
+    if (ops.empty())
+      continue;
+    bool pred = false, sel = false;
+    for (auto *op : ops) {
+      if (isa<hfusion::CompareOp>(op))
+        pred = true;
+      if (isa<hfusion::SelectOp>(op))
+        sel = true;
+    }
+    hasPredicate[static_cast<int>(id)] = pred;
+    hasSelect[static_cast<int>(id)] = sel;
+  }
+
+  // Worklist: only groups with predicate producers are potential producers.
+  // After a merge, only the consumer group's flags may change, so we
+  // only re-process the consumer — not all groups.
+  std::set<int> worklist;
+  for (auto &[id, pred] : hasPredicate)
+    if (pred)
+      worklist.insert(id);
+
+  while (!worklist.empty()) {
+    int producerGroupId = *worklist.begin();
+    worklist.erase(worklist.begin());
+    auto &producerGroup = AllFusedGroupBlocks[producerGroupId];
+    if (producerGroup.empty())
+      continue;
+
+    LDBG("Special pattern (predicate+select): producer group "
+         << producerGroupId);
+
+    // Find nearest select consumer using cache (O(1) lookup).
+    int consumerGroupId = -1;
+    int consumerGroupMinIndex = -1;
+    for (auto *producerOp : producerGroup) {
+      if (!opToIndex.contains(producerOp))
+        continue;
+      std::vector<OpOperand *> validUses =
+          getSortedConsumerOperands(producerOp);
+      for (auto *opOperandPtr : validUses) {
+        auto *consumerOp = opOperandPtr->getOwner();
+        if (!opToGroupIndex.contains(consumerOp))
+          continue;
+        int foundGroupId = static_cast<int>(opToGroupIndex[consumerOp]);
+        if (foundGroupId == producerGroupId)
+          continue;
+        if (AllFusedGroupBlocks[foundGroupId].empty())
+          continue;
+        if (!hasSelect.lookup(foundGroupId))
+          continue;
+        int foundGroupMaxIndex = static_cast<int>(
+            dsu.getMaxIndexUnion(static_cast<int>(opToIndex[consumerOp])));
+        if (consumerGroupId < 0 || foundGroupMaxIndex < consumerGroupMinIndex) {
+          consumerGroupId = foundGroupId;
+          consumerGroupMinIndex = foundGroupMaxIndex;
+        }
+      }
+    }
+    if (consumerGroupId < 0)
+      continue;
+    if (AllFusedGroupBlocks[consumerGroupId].empty())
+      continue;
+
+    LDBG("Special pattern: group " << producerGroupId << " -> consumer group "
+                                   << consumerGroupId);
+    auto &consumerGroup = AllFusedGroupBlocks[consumerGroupId];
+    auto *producerOp = *producerGroup.begin();
+    auto *consumerOp = *consumerGroup.begin();
+    if (!opToIndex.contains(producerOp) || !opToIndex.contains(consumerOp))
+      continue;
+    int producerIndex = static_cast<int>(opToIndex[producerOp]);
+    int consumerIndex = static_cast<int>(opToIndex[consumerOp]);
+
+    if (!areFusibleOps(producerIndex, consumerIndex)) {
+      LDBG("areFusibleOps returned false for special pattern");
+      continue;
+    }
+    if (tryFuseGroups(producerIndex, consumerIndex, producerGroupId,
+                      consumerGroupId)) {
+      hasFused = true;
+      // Incrementally update caches: producer's ops are now in consumer.
+      // No need to re-scan inner ops — just OR the flags.
+      hasPredicate[consumerGroupId] =
+          hasPredicate[consumerGroupId] || hasPredicate[producerGroupId];
+      hasSelect[consumerGroupId] =
+          hasSelect[consumerGroupId] || hasSelect[producerGroupId];
+      hasPredicate.erase(producerGroupId);
+      hasSelect.erase(producerGroupId);
+      // Consumer may now have predicate ops (from producer) → re-add to
+      // worklist so it can find its own select consumers.
+      if (hasPredicate[consumerGroupId])
+        worklist.insert(consumerGroupId);
+      LDBG("Special pattern: group " << producerGroupId << " fused with group "
+                                     << consumerGroupId);
+    }
+  }
+  return hasFused;
+}
+
+bool MaxParallelAnalyzer::fuseSpecialPatterns(Block &block) {
+  bool hasFused = false;
+  // Each pattern function is self-contained and iterates to fixpoint.
+  // New patterns can be added here as the framework grows.
+  hasFused |= fusePredicateSelectPattern(block);
+  return hasFused;
+}
+
 bool MaxParallelAnalyzer::fuseGroupsWithNearestConsumer(
     bool (MaxParallelAnalyzer::*isTargetGroup)(int), const char *groupKind) {
   bool hasFused = false;
@@ -974,6 +1095,13 @@ void MaxParallelAnalyzer::printValidGroupCount() {
 LogicalResult MaxParallelAnalyzer::fuseImpl(Block &block) {
   LDBG("MaxParallel Fusing" << block << "\n");
   initialize(block);
+  // Stage 0: Special pattern pre-fusion — perform early fusion of critical
+  // patterns before the cost model, so that ops with strong hardware-level
+  // co-location requirements are guaranteed to land in the same group.
+  stage = 0;
+  if (fuseSpecialPatterns(block))
+    LDBG("=== Phase 0: special pattern fusion ===");
+  // Stage 1: Cost-model-based producer-consumer fusion.
   stage = 1;
   // Perform producer-consumer fusion until no more fusions occur.
   while (fuseProducerConsumerImpl(block)) {

@@ -55,7 +55,8 @@ public:
   /// @param block The block containing operations to analyze for fusion.
   /// @return Success if fusion analysis completes, failure otherwise.
   LogicalResult fuseImpl(Block &block) {
-    llvm::report_fatal_error("missing implementation fuseImpl for the specified FusionKind");
+    llvm::report_fatal_error(
+        "missing implementation fuseImpl for the specified FusionKind");
   }
 
   /// Retrieves the fused operation blocks after fusion analysis.
@@ -142,8 +143,8 @@ protected:
     assert(opToIndex.contains(x) && "missing operation in opToIndex");
     assert(opToIndex.contains(y) && "missing operation in opToIndex");
 
-    // For CV affinity cases: split-mix-kernel is unavailable before vffusion pass.
-    // Temporarily avoid vectorizing into vf functions via isInCubeScope
+    // For CV affinity cases: split-mix-kernel is unavailable before vffusion
+    // pass. Temporarily avoid vectorizing into vf functions via isInCubeScope
     // for vector ops in cube scope.
     if (scope::utils::isInCubeScope(x) || scope::utils::isInCubeScope(y))
       return false;
@@ -302,7 +303,7 @@ public:
   LogicalResult fuseImpl(Block &block);
 
   explicit MaxParallelAnalyzer(const VFFusionKindOption &option)
-      : VFFusionAnalyzerBase<MaxParallelAnalyzer>(option){};
+      : VFFusionAnalyzerBase<MaxParallelAnalyzer>(option) {};
   ~MaxParallelAnalyzer() override = default;
 
   struct CostMetrics {
@@ -339,13 +340,17 @@ public:
 private:
   std::vector<OpOperand *> getSortedConsumerOperands(Operation *producerOp);
   bool hasReductionToConsumer(const int producerIndex, const int consumerIndex);
-  bool useNarrowingCastInConsumer(const int producerIndex, const int consumerIndex);
+  bool useNarrowingCastInConsumer(const int producerIndex,
+                                  const int consumerIndex);
   bool areFusibleOps(const int producerIndex, const int consumerIndex);
   bool fuseProducerConsumerImpl(Block &block);
+  bool fuseSpecialPatterns(Block &block);
+  bool fusePredicateSelectPattern(Block &block);
   bool fuseIOBoundGroupsWithNearestConsumer();
   bool isIOBoundGroup(int groupId);
-  bool fuseGroupsWithNearestConsumer(
-      bool (MaxParallelAnalyzer::*isTargetGroup)(int), const char *groupKind);
+  bool
+  fuseGroupsWithNearestConsumer(bool (MaxParallelAnalyzer::*isTargetGroup)(int),
+                                const char *groupKind);
   bool fuseShapeBoundGroupsWithNearestConsumer();
   bool isSmallShapeGroup(int groupId);
   bool parallelismSubModel(const CostMetrics &, const CostMetrics &) const;
