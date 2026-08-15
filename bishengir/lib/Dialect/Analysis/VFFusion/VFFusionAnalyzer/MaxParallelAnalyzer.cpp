@@ -88,7 +88,7 @@ static bool isReductionOp(Operation *innerOp, Operation *outterOp) {
 
 static bool isInFusionWhiteList(Operation *op) {
   return isReshapeOp(op) || isa<tensor::ExtractSliceOp>(op) ||
-         isa<tensor::ExtractOp>(op) || isa<tensor::InsertSliceOp>(op) ||
+         isa<tensor::ExtractOp>(op) ||
          isValidLinalgOp(dyn_cast<linalg::LinalgOp>(op));
 }
 
