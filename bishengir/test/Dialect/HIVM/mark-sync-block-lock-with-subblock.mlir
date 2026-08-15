@@ -60,6 +60,23 @@ module attributes {hacc.hivmc_version = #hacc.hivmc_version<"0.1.0">} {
 
 // -----
 
+// Regbase modules may not have hivmc_version; mix kernels should still get the
+// with_subblock marker.
+// CHECK-LABEL: func.func @marks_without_hivmc_version_on_regbase
+// CHECK: hivm.hir.sync_block_lock {hivm.sync_block_lock_with_subblock} lock_var(
+// CHECK: hivm.hir.sync_block_unlock {hivm.sync_block_lock_with_subblock} lock_var(
+// CHECK: return
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+  func.func @marks_without_hivmc_version_on_regbase() attributes {mix_mode = "mix", hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %lock = hivm.hir.create_sync_block_lock : memref<1xi64>
+    hivm.hir.sync_block_lock lock_var(%lock : memref<1xi64>)
+    hivm.hir.sync_block_unlock lock_var(%lock : memref<1xi64>)
+    return
+  }
+}
+
+// -----
+
 // CHECK-LABEL: func.func @skips_ops_already_tagged
 // CHECK: hivm.hir.sync_block_lock {hivm.sync_block_lock_with_subblock} lock_var(
 // CHECK: return
