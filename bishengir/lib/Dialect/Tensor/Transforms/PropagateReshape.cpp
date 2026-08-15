@@ -71,8 +71,11 @@ void PropagateReshapePass::runOnOperation() {
   options.skipScope = skipScope;
   options.maxUnitDimsForPropagation = maxUnitDimsForPropagation;
 
+  // Do not apply pass if flattening will not be applied.
   if (auto coreType = mlir::hivm::queryFuncCoreType(f);
-      coreType && *coreType == mlir::hivm::TFuncCoreType::AIC)
+      coreType.has_value() &&
+      (coreType.value() == mlir::hivm::TFuncCoreType::AIC ||
+       coreType.value() == mlir::hivm::TFuncCoreType::AIV))
     return;
 
   if (options.forRegbased && options.skipScope && hasScopeOperation(f))
