@@ -33,6 +33,24 @@ module attributes {hacc.hivmc_version = #hacc.hivmc_version<"0.1.0">} {
 
 // -----
 
+// Regbase modules do not carry hivmc_version today; the pass should still
+// insert free_lock_var instead of bailing out on the version check.
+// CHECK-LABEL: func.func @inserts_without_hivmc_version_on_regbase
+// CHECK: %[[LOCK:.*]] = hivm.hir.create_sync_block_lock
+// CHECK: hivm.hir.sync_block_lock lock_var(%[[LOCK]] :
+// CHECK: hivm.hir.free_lock_var lock_var(%[[LOCK]] :
+// CHECK-NEXT: return
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+  func.func @inserts_without_hivmc_version_on_regbase() attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %lock = hivm.hir.create_sync_block_lock : memref<1xi64>
+    hivm.hir.sync_block_lock lock_var(%lock : memref<1xi64>)
+    hivm.hir.sync_block_unlock lock_var(%lock : memref<1xi64>)
+    return
+  }
+}
+
+// -----
+
 // CHECK-LABEL: func.func @skips_without_hacc_entry
 // CHECK: hivm.hir.sync_block_lock
 // CHECK-NOT: hivm.hir.free_lock_var
