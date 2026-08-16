@@ -631,36 +631,43 @@ void SyncSolverV2::generateProcessingOrders(
 
   for (auto &[memoryEffect1, map1] : lcaOcc1->memInfoTree1.nodeListMap) {
     for (auto &[corePipeSrc, nodeList1] : map1) {
-      for (auto &node1 : nodeList1) {
-        auto *it1 =
-            node1.lower_bound(MemInfoOccElement(nullptr, nullptr, rIndex1, -1));
-        if (it1 == node1.occElements.begin()) {
+      for (auto &[memoryEffect2, map2] : lcaOcc2->memInfoTree2.nodeListMap) {
+        if (memoryEffect1 == MemoryEffect::READ &&
+            memoryEffect2 == MemoryEffect::READ) {
           continue;
         }
-        it1 = std::prev(it1);
-        if (it1->occIndex < lIndex1) {
-          continue;
-        }
-
-        for (auto &[memoryEffect2, map2] : lcaOcc2->memInfoTree2.nodeListMap) {
-          if (memoryEffect1 == MemoryEffect::READ &&
-              memoryEffect2 == MemoryEffect::READ) {
+        for (auto &[corePipeDst, nodeList2] : map2) {
+          if (checkSkipIntraCorePair(corePipeSrc.pipe, corePipeDst.pipe) ||
+              checkSkipCrossCorePair(corePipeSrc.coreType,
+                                     corePipeDst.coreType)) {
             continue;
           }
-          for (auto &[corePipeDst, nodeList2] : map2) {
-            if (checkSkipIntraCorePair(corePipeSrc.pipe, corePipeDst.pipe) ||
-                checkSkipCrossCorePair(corePipeSrc.coreType,
-                                       corePipeDst.coreType)) {
+          auto [corePipeInfo1, corePipeInfo2] =
+              getFixedCorePipeInfoPair(corePipeSrc, corePipeDst);
+
+          for (auto &node1 : nodeList1) {
+            auto *it1 = node1.lower_bound(
+                MemInfoOccElement(nullptr, nullptr, rIndex1, -1));
+            if (it1 == node1.occElements.begin()) {
               continue;
             }
-            auto [corePipeInfo1, corePipeInfo2] =
-                getFixedCorePipeInfoPair(corePipeSrc, corePipeDst);
+            it1 = std::prev(it1);
+            if (it1->occIndex < lIndex1) {
+              continue;
+            }
+
             for (auto &node2 : nodeList2) {
+              if (!checkMemInfoConflict(/*rwOp1=*/nullptr, /*rwOp2=*/nullptr,
+                                        node1.rootMemInfo, node2.rootMemInfo)) {
+                continue;
+              }
+
               auto *it2 = node2.lower_bound(
                   MemInfoOccElement(nullptr, nullptr, lIndex2, -1));
               if (it2 == node2.occElements.end() || it2->occIndex >= rIndex2) {
                 continue;
               }
+              perfInfo.priorityQueuePushNum += 1;
               queue.emplace(&node1, &node2, corePipeInfo1, corePipeInfo2, *it1,
                             *it2, it1, it2);
             }
@@ -671,22 +678,15 @@ void SyncSolverV2::generateProcessingOrders(
   }
 
   auto handle = [&](const QueueElement &queueElement) -> bool {
-    auto &memInfo1 = queueElement.node1->rootMemInfo;
     auto corePipeSrc = queueElement.corePipeInfo1;
     auto *occ1 = queueElement.occElement1.occ;
     auto *rwOp1 = dyn_cast<RWOperation>(occ1->op);
     assert(rwOp1 != nullptr);
 
-    auto &memInfo2 = queueElement.node2->rootMemInfo;
     auto corePipeDst = queueElement.corePipeInfo2;
     auto *occ2 = queueElement.occElement2.occ;
     auto *rwOp2 = dyn_cast<RWOperation>(occ2->op);
     assert(rwOp2 != nullptr);
-
-    if (!checkMemInfoConflict(/*rwOp1=*/nullptr, /*rwOp2=*/nullptr, memInfo1,
-                              memInfo2)) {
-      return false;
-    }
 
     DEBUG_WITH_TYPE("hivm-gss-orders", {
       llvm::dbgs() << "handling: " << queueElement.occElement1.occIndex << ' '
@@ -735,6 +735,7 @@ void SyncSolverV2::generateProcessingOrders(
         next.occElement1 = *nextIt1;
         next.occElementIt1 = nextIt1;
         next.runSecondPath = false;
+        perfInfo.priorityQueuePushNum += 1;
         queue.push(next);
       }
     }
@@ -746,6 +747,7 @@ void SyncSolverV2::generateProcessingOrders(
         auto next = current;
         next.occElement2 = *nextIt2;
         next.occElementIt2 = nextIt2;
+        perfInfo.priorityQueuePushNum += 1;
         queue.push(next);
       }
     }

@@ -81,6 +81,7 @@ public:
     int64_t graphConflictPairsCheckedNum{0};
     int64_t solverSkipNum{0};
     int64_t checkGraphConflictSkipDijNum{0};
+    int64_t priorityQueuePushNum{0};
 
     void print() {
       llvm::dbgs() << "processing orders checked: " << ordersCheckedNum << '\n';
@@ -95,6 +96,7 @@ public:
       llvm::dbgs() << "graph conflict pairs skipped Dijkstra: "
                    << checkGraphConflictSkipDijNum << '\n';
       llvm::dbgs() << "solver skipped: " << solverSkipNum << '\n';
+      llvm::dbgs() << "priority queue pushes: " << priorityQueuePushNum << '\n';
     }
   } perfInfo;
 
