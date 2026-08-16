@@ -17,6 +17,7 @@
 #ifndef BISHENG_DIALECT_HIVM_TRANSFORMS_GRAPHSYNCSOLVER_SYNCSOLVER_H
 #define BISHENG_DIALECT_HIVM_TRANSFORMS_GRAPHSYNCSOLVER_SYNCSOLVER_H
 
+#include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/CorePipeInfo.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/CustomMacroSync.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/EventIdSolver.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/GraphSolver.h"
@@ -269,6 +270,9 @@ protected:
   // Map an occurrence to the first/last loop-iteration copy under parOcc.
   Occurrence *getFirstIterOcc(Occurrence *occ, Occurrence *parOcc);
   Occurrence *getLastIterOcc(Occurrence *occ, Occurrence *parOcc);
+
+  std::pair<CorePipeInfo, CorePipeInfo>
+  getFixedCorePipeInfoPair(CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst);
 
   // Whether a intra-core pipe pair should be skipped.
   bool checkSkipIntraCorePair(hivm::PIPE pipeSrc, hivm::PIPE pipeDst);

@@ -831,6 +831,9 @@ void DelayedCrossCoreGSSPass::crossCoreGssRunOnOperation(
   // remainder of this function fans those decisions out to all three
   // kernels.
   mixSolver->solve();
+
+  DEBUG_WITH_TYPE("hivm-gss-profile", { mixSolver->perfInfo.print(); });
+
   auto [mixSyncBeforeMap, mixSyncAfterMap] =
       mixSolver->getBeforeAfterSyncMaps();
   SyncBeforeAfterMap newMixSyncBeforeAfterMap;

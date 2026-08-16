@@ -1,3 +1,4 @@
+#include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/CorePipeInfo.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolver.h"
 
 #include "llvm/ADT/DenseMap.h"
@@ -444,13 +445,13 @@ void SyncSolverV2::processOrder(Occurrence *occ1, Occurrence *occ2,
   this->perfInfo.conflictsProcessedNum += 1;
   for (auto [corePipeSrc, corePipeDst] : getMemoryConflicts(rwOp1, rwOp2)) {
     this->perfInfo.memoryConflictsFoundNum += 1;
-    if (options.alwaysUsePipeSAsWaitingPipe) {
-      corePipeDst.pipe = hivm::PIPE::PIPE_S;
-    }
+    auto [corePipeInfo1, corePipeInfo2] =
+        getFixedCorePipeInfoPair(corePipeSrc, corePipeDst);
     auto [eventIdInfo, setWaitPairInfo] = getEventIdSetWaitPairInfo(
-        occ1, occ2, rwOp1, rwOp2, corePipeSrc, corePipeDst);
-    if (checkGraphConflict(occ1, occ2, corePipeSrc, corePipeDst, eventIdInfo)) {
-      handleConflict(occ1, occ2, rwOp1, rwOp2, corePipeSrc, corePipeDst,
+        occ1, occ2, rwOp1, rwOp2, corePipeInfo1, corePipeInfo2);
+    if (checkGraphConflict(occ1, occ2, corePipeInfo1, corePipeInfo2,
+                           eventIdInfo)) {
+      handleConflict(occ1, occ2, rwOp1, rwOp2, corePipeInfo1, corePipeInfo2,
                      eventIdInfo, setWaitPairInfo, isUseless);
     }
   }
@@ -475,7 +476,7 @@ bool SyncSolverV2::processOrder(ProcessingOrderV2 processingOrder) {
   });
   if (checkImpossibleOccPair(occ1, occ2) || checkAlreadySynced(occ1, occ2) ||
       skipMMad1DecomposedLoopOpt(occ1, occ2) ||
-      checkSkipParallelLoop(occ1, occ2) || checkSkipCrossCorePair(occ1, occ2)) {
+      checkSkipParallelLoop(occ1, occ2)) {
     this->perfInfo.failedInitialChecksNum += 1;
     return false;
   }
@@ -504,9 +505,6 @@ bool SyncSolverV2::processOrder(ProcessingOrderV2 processingOrder) {
 
   this->perfInfo.conflictsProcessedNum += 1;
   this->perfInfo.memoryConflictsFoundNum += 1;
-  if (options.alwaysUsePipeSAsWaitingPipe) {
-    corePipeDst.pipe = hivm::PIPE::PIPE_S;
-  }
   auto [eventIdInfo, setWaitPairInfo] = getEventIdSetWaitPairInfo(
       occ1, occ2, rwOp1, rwOp2, corePipeSrc, corePipeDst);
   if (!checkGraphConflict(occ1, occ2, corePipeSrc, corePipeDst, eventIdInfo)) {
@@ -580,6 +578,8 @@ void SyncSolverV2::generateProcessingOrders(
   struct QueueElement {
     MemInfoNode *node1{nullptr};
     MemInfoNode *node2{nullptr};
+    CorePipeInfo corePipeInfo1;
+    CorePipeInfo corePipeInfo2;
     MemInfoOccElement occElement1;
     MemInfoOccElement occElement2;
     MemInfoOccElementList::iterator occElementIt1;
@@ -587,10 +587,12 @@ void SyncSolverV2::generateProcessingOrders(
     bool runSecondPath{true};
 
     QueueElement(MemInfoNode *node1, MemInfoNode *node2,
+                 CorePipeInfo corePipeInfo1, CorePipeInfo corePipeInfo2,
                  MemInfoOccElement occElement1, MemInfoOccElement occElement2,
                  MemInfoOccElementList::iterator occElementIt1,
                  MemInfoOccElementList::iterator occElementIt2)
-        : node1(node1), node2(node2), occElement1(occElement1),
+        : node1(node1), node2(node2), corePipeInfo1(corePipeInfo1),
+          corePipeInfo2(corePipeInfo2), occElement1(occElement1),
           occElement2(occElement2), occElementIt1(occElementIt1),
           occElementIt2(occElementIt2) {}
   };
@@ -651,13 +653,16 @@ void SyncSolverV2::generateProcessingOrders(
                                        corePipeDst.coreType)) {
               continue;
             }
+            auto [corePipeInfo1, corePipeInfo2] =
+                getFixedCorePipeInfoPair(corePipeSrc, corePipeDst);
             for (auto &node2 : nodeList2) {
               auto *it2 = node2.lower_bound(
                   MemInfoOccElement(nullptr, nullptr, lIndex2, -1));
               if (it2 == node2.occElements.end() || it2->occIndex >= rIndex2) {
                 continue;
               }
-              queue.emplace(&node1, &node2, *it1, *it2, it1, it2);
+              queue.emplace(&node1, &node2, corePipeInfo1, corePipeInfo2, *it1,
+                            *it2, it1, it2);
             }
           }
         }
@@ -665,16 +670,15 @@ void SyncSolverV2::generateProcessingOrders(
     }
   }
 
-  llvm::DenseSet<std::tuple<CorePipeInfo, CorePipeInfo>> handledCorePipePairs;
   auto handle = [&](const QueueElement &queueElement) -> bool {
     auto &memInfo1 = queueElement.node1->rootMemInfo;
-    auto corePipeSrc = queueElement.node1->corePipeInfo;
+    auto corePipeSrc = queueElement.corePipeInfo1;
     auto *occ1 = queueElement.occElement1.occ;
     auto *rwOp1 = dyn_cast<RWOperation>(occ1->op);
     assert(rwOp1 != nullptr);
 
     auto &memInfo2 = queueElement.node2->rootMemInfo;
-    auto corePipeDst = queueElement.node2->corePipeInfo;
+    auto corePipeDst = queueElement.corePipeInfo2;
     auto *occ2 = queueElement.occElement2.occ;
     auto *rwOp2 = dyn_cast<RWOperation>(occ2->op);
     assert(rwOp2 != nullptr);
@@ -705,21 +709,22 @@ void SyncSolverV2::generateProcessingOrders(
                    << "[<" << stringifyTCoreType(corePipeDst.coreType).str()
                    << ">, <" << stringifyPIPE(corePipeDst.pipe).str() << ">]\n";
     });
-    handledCorePipePairs.insert(std::make_tuple(corePipeSrc, corePipeDst));
     return true;
   };
 
+  llvm::DenseSet<std::tuple<CorePipeInfo, CorePipeInfo>> handledCorePipePairs;
   while (!queue.empty()) {
     auto current = queue.top();
     queue.pop();
 
-    auto key = std::make_tuple(current.node1->corePipeInfo,
-                               current.node2->corePipeInfo);
+    auto key = std::make_tuple(current.corePipeInfo1, current.corePipeInfo2);
     if (handledCorePipePairs.contains(key)) {
       continue;
     }
+
     if (handle(current)) {
       perfInfo.solverSkipNum += 1;
+      handledCorePipePairs.insert(key);
       continue;
     }
 
