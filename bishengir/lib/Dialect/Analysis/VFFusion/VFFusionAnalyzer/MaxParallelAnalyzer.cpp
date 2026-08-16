@@ -88,7 +88,7 @@ static bool isReductionOp(Operation *innerOp, Operation *outterOp) {
 
 static bool isInFusionWhiteList(Operation *op) {
   return isReshapeOp(op) || isa<tensor::ExtractSliceOp>(op) ||
-         isa<tensor::ExtractOp>(op) || isa<tensor::InsertSliceOp>(op) ||
+         isa<tensor::ExtractOp>(op) ||
          isValidLinalgOp(dyn_cast<linalg::LinalgOp>(op));
 }
 
@@ -653,11 +653,10 @@ bool MaxParallelAnalyzer::isIOBoundGroup(int groupId) {
 }
 
 static int getElementByteWidth(Type elementType) {
-  if (auto floatType = dyn_cast<FloatType>(elementType))
-    return static_cast<int>(floatType.getWidth() / mlir::utils::INTR_BITS_PER_BYTE);
-  if (auto intType = dyn_cast<IntegerType>(elementType))
-    return static_cast<int>(intType.getWidth() / mlir::utils::INTR_BITS_PER_BYTE);
-  return 0;
+  if (!elementType.isIntOrFloat())
+    return 0;
+  return static_cast<int>(llvm::divideCeil(
+      elementType.getIntOrFloatBitWidth(), mlir::utils::INTR_BITS_PER_BYTE));
 }
 
 static int computeOpInstNum(Operation &op) {
