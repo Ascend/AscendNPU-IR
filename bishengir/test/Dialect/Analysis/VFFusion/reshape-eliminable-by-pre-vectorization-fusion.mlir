@@ -27,29 +27,23 @@ module {
 
 // -----
 
-// Test: tensor.expand_shape consumed by linalg.generic where the expand
-// only inserts a unit dim and that unit dim is indexed by constant 0 in the
-// generic's indexing map. PreVectorizationFusion's
-// ExpandShapeToImplicitBrcInGenericPattern would fold the expand into the
-// indexing map. isReshapeEliminableByPreVectorizationFusion detects this
-// pattern and admits the expand into the fusion group.
+// Positive: expand_shape consumed by a named elementwise op (linalg.mul) that
+// has a constant operand. The constant broadcasts, so the expand's unit dim is
+// removable; isExpandShapeEliminable admits the expand into the VF.
 
-// CHECK-LABEL: func.func private @expand_generic_fused_0(
+// CHECK-LABEL: func.func private @expand_named_const_fused_0(
 // CHECK: tensor.expand_shape
-// CHECK-LABEL: func.func @expand_generic(
-// CHECK: call @expand_generic_fused_0
-// CHECK-NOT: call @expand_generic_fused_{{[1-9]}}
+// CHECK-LABEL: func.func @expand_named_const(
+// CHECK: call @expand_named_const_fused_0
+// CHECK-NOT: call @expand_named_const_fused_{{[1-9]}}
 module {
-  func.func @expand_generic(%arg0: tensor<64xf32>, %arg1: tensor<64x64xf32>) -> tensor<64x64xf32> attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"} {
+  func.func @expand_named_const(%arg0: tensor<64xf32>, %arg1: tensor<64x1xf32>) -> tensor<64x1xf32> attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"} {
     %0 = tensor.empty() : tensor<64xf32>
     %1 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%arg0, %arg0 : tensor<64xf32>, tensor<64xf32>) outs(%0 : tensor<64xf32>) -> tensor<64xf32>
     %expanded = tensor.expand_shape %1 [[0, 1]] output_shape [64, 1] : tensor<64xf32> into tensor<64x1xf32>
-    %2 = tensor.empty() : tensor<64x64xf32>
-    %3 = linalg.generic {indexing_maps = [affine_map<(d0, d1) -> (d0, 0)>, affine_map<(d0, d1) -> (d0, d1)>], iterator_types = ["parallel", "parallel"]} ins(%expanded : tensor<64x1xf32>) outs(%2 : tensor<64x64xf32>) {
-    ^bb0(%in: f32, %out: f32):
-      linalg.yield %in : f32
-    } -> tensor<64x64xf32>
-    return %3 : tensor<64x64xf32>
+    %cst = arith.constant 1.000000e+00 : f32
+    %2 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%expanded, %cst : tensor<64x1xf32>, f32) outs(%arg1 : tensor<64x1xf32>) -> tensor<64x1xf32>
+    return %2 : tensor<64x1xf32>
   }
 }
 
@@ -85,11 +79,48 @@ module {
 
 // -----
 
-// Negative: expand_shape consumed by hfusion.cast. hfusion.cast implements the
-// LinalgOp interface but is a type-conversion op that
-// ExpandShapeToImplicitBrcInGenericPattern does not fold (identity map, no
-// constant-0 broadcast axis). isExpandShapeEliminable rejects it, so the expand
-// is NOT fused into a VF and stays in the caller.
+// Negative: expand_shape consumed by a linalg.generic with NO constant
+// operand. Under the constant-operand gate the generic is rejected (even
+// though its map has a constant-0 broadcast axis), so the expand stays in
+// the caller and is NOT fused into a VF.
+
+// CHECK-LABEL: func.func @expand_generic
+// CHECK: tensor.expand_shape
+module {
+  func.func @expand_generic(%arg0: tensor<64xf32>, %arg1: tensor<64x64xf32>) -> tensor<64x64xf32> attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"} {
+    %0 = tensor.empty() : tensor<64xf32>
+    %1 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%arg0, %arg0 : tensor<64xf32>, tensor<64xf32>) outs(%0 : tensor<64xf32>) -> tensor<64xf32>
+    %expanded = tensor.expand_shape %1 [[0, 1]] output_shape [64, 1] : tensor<64xf32> into tensor<64x1xf32>
+    %2 = tensor.empty() : tensor<64x64xf32>
+    %3 = linalg.generic {indexing_maps = [affine_map<(d0, d1) -> (d0, 0)>, affine_map<(d0, d1) -> (d0, d1)>], iterator_types = ["parallel", "parallel"]} ins(%expanded : tensor<64x1xf32>) outs(%2 : tensor<64x64xf32>) {
+    ^bb0(%in: f32, %out: f32):
+      linalg.yield %in : f32
+    } -> tensor<64x64xf32>
+    return %3 : tensor<64x64xf32>
+  }
+}
+
+// -----
+
+// Negative: expand_shape consumed by a named elementwise op (mul) with only
+// tensor operands (no constant). Every operand carries the unit dim, so the
+// expand is not removable; isExpandShapeEliminable rejects it.
+
+// CHECK-LABEL: func.func @expand_mul_no_const
+// CHECK: tensor.expand_shape
+module {
+  func.func @expand_mul_no_const(%arg0: tensor<64xf32>, %arg1: tensor<64x1xf32>) -> tensor<64x1xf32> attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"} {
+    %expanded = tensor.expand_shape %arg0 [[0, 1]] output_shape [64, 1] : tensor<64xf32> into tensor<64x1xf32>
+    %0 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%expanded, %arg1 : tensor<64x1xf32>, tensor<64x1xf32>) outs(%arg1 : tensor<64x1xf32>) -> tensor<64x1xf32>
+    return %0 : tensor<64x1xf32>
+  }
+}
+
+// -----
+
+// Negative: expand_shape consumed by hfusion.cast. cast is a type-conversion
+// op with a single input (the expand) and no constant operand, so the
+// constant-operand gate rejects it; the expand stays in the caller.
 
 // CHECK-LABEL: func.func @expand_cast
 // CHECK: tensor.expand_shape
@@ -104,7 +135,7 @@ module {
 // -----
 
 // Negative: expand_shape consumed by hfusion.bitcast. Same rationale as cast:
-// bitcast is a type-conversion op that the reshape-folding pattern does not fold.
+// single input, no constant operand -> rejected.
 
 // CHECK-LABEL: func.func @expand_bitcast
 // CHECK: tensor.expand_shape
@@ -118,21 +149,18 @@ module {
 
 // -----
 
-// Negative: expand_shape has TWO users — a foldable linalg.generic (broadcast
-// map, which alone WOULD be admitted) and a func.return (not foldable). all_of
-// rejects the expand because not EVERY user is foldable, so it stays in the
-// caller even though one user is foldable.
+// Negative: expand_shape has TWO users — an admissible mul (with a constant
+// operand) and a func.return (not a LinalgOp). all_of rejects the expand
+// because not EVERY user is admissible; the return keeps it alive, so it
+// stays in the caller even though the mul alone would be admissible.
 
 // CHECK-LABEL: func.func @expand_multi_user
 // CHECK: tensor.expand_shape
 module {
-  func.func @expand_multi_user(%arg0: tensor<64xf32>, %arg1: tensor<64x64xf32>, %arg2: tensor<64x1xf32>) -> (tensor<64x64xf32>, tensor<64x1xf32>) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"} {
+  func.func @expand_multi_user(%arg0: tensor<64xf32>, %arg1: tensor<64x1xf32>) -> (tensor<64x1xf32>, tensor<64x1xf32>) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"} {
     %expanded = tensor.expand_shape %arg0 [[0, 1]] output_shape [64, 1] : tensor<64xf32> into tensor<64x1xf32>
-    %0 = tensor.empty() : tensor<64x64xf32>
-    %1 = linalg.generic {indexing_maps = [affine_map<(d0, d1) -> (d0, 0)>, affine_map<(d0, d1) -> (d0, d1)>], iterator_types = ["parallel", "parallel"]} ins(%expanded : tensor<64x1xf32>) outs(%0 : tensor<64x64xf32>) {
-    ^bb0(%in: f32, %out: f32):
-      linalg.yield %in : f32
-    } -> tensor<64x64xf32>
-    return %1, %expanded : tensor<64x64xf32>, tensor<64x1xf32>
+    %cst = arith.constant 1.000000e+00 : f32
+    %0 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%expanded, %cst : tensor<64x1xf32>, f32) outs(%arg1 : tensor<64x1xf32>) -> tensor<64x1xf32>
+    return %0, %expanded : tensor<64x1xf32>, tensor<64x1xf32>
   }
 }
