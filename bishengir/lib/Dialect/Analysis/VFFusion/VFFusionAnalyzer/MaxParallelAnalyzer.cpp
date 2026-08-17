@@ -1111,6 +1111,9 @@ LogicalResult MaxParallelAnalyzer::fuseImpl(Block &block) {
   stage = 2;
   if (fuseIOBoundGroupsWithNearestConsumer())
     LDBG("=== Phase 2: find IO bound group to be merged ===");
+  stage = 3; 
+  if (fuseShapeBoundGroupsWithNearestConsumer()) 
+    LDBG("=== Phase 3: find small shape group to be merged ===");
   printValidGroupCount();
   return success();
 }
