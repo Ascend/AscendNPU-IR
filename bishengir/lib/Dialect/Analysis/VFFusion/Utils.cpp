@@ -19,12 +19,12 @@
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/Utils/Util.h"
-#include "llvm/ADT/TypeSwitch.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/IR/AffineMap.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
+#include "llvm/ADT/TypeSwitch.h"
 
 #define DEBUG_TYPE "vf-fusion"
 #define DBGS() (llvm::dbgs() << "[" DEBUG_TYPE "]: ")
@@ -189,32 +189,30 @@ static bool isCollapseShapeEliminable(Operation *op) {
   });
 }
 
-// ExpandShapeOp: the expand is consumed by a linalg::LinalgOp (excluding
-// TransposeOp) where the expand only inserts unit dims (each reassociation
-// group has at most one non-unit dim — isPureUnitExpand).
-// PreVectorizationFusion generalizes named linalg ops (linalg.mul,
-// linalg.elemwise_*, ...) to linalg.generic, then folds the expand into the
-// indexing map by projecting out the unit dims.
+// ExpandShapeOp: the expand only inserts unit dims (each reassociation group
+// has at most one non-unit dim — isPureUnitExpand) and is consumed by a named
+// linalg/hfusion op. At VFFusion time the consumer is still a named op
+// (linalg.mul / elemwise_* / hfusion.cast / bitcast / ...); it generalizes to
+// an IDENTITY-map generic that ExpandShapeToImplicitBrcInGenericPattern does
+// NOT fold (no constant-0 broadcast axis).
 //
-// hfusion.cast / hfusion.bitcast are EXCLUDED: although they implement the
-// LinalgOp interface, their consumers are type-conversion ops that
-// ExpandShapeToImplicitBrcInGenericPattern does not fold (identity map, no
-// constant-0 broadcast axis), so admitting an expand feeding them would leave
-// the reshape surviving inside the VF. linalg.* named elementwise ops (mul,
-// elemwise_binary/unary, ...) are still admitted.
+// Admit rule: admit only when the consumer has a constant operand. The
+// constant broadcasts, so the expand's unit dim is removable by later passes
+// (flatten / vectorization). Without a constant, every operand carries the
+// unit dim and the expand survives in the VF -> reject. This also rejects
+// hfusion.cast/bitcast (single input, no constant operand).
 //
-// all_of (not any_of): the expand is folded away only if EVERY user is a
-// foldable LinalgOp; a single non-foldable user (e.g. func.return, or a second
-// consumer that is not generalized) keeps the expand alive, so admitting it
-// would leave the reshape surviving inside the VF.
+// all_of (not any_of): the expand is folded away only if EVERY user is
+// admissible; a single non-admissible user (e.g. func.return, or a named op
+// without a constant operand) keeps the expand alive.
 //
 // linalg::TransposeOp is excluded because PreVectorizationFusion never
 // generalizes it (HFusionGeneralizationPatterns skips TransposeOp), so the
 // reshape folding cannot fire on it.
 //
 // Note: the inverse reshape pair (expand source from CollapseShapeOp) is
-// always folded by preProcess() -> applyPatternsGreedily -> ExpandShapeOp::fold()
-// before the fusion phase, so it is not handled here.
+// always folded by preProcess() -> applyPatternsGreedily ->
+// ExpandShapeOp::fold() before the fusion phase, so it is not handled here.
 static bool isExpandShapeEliminable(Operation *op) {
   auto expandOp = dyn_cast<tensor::ExpandShapeOp>(op);
   if (!expandOp)
@@ -242,17 +240,33 @@ static bool isExpandShapeEliminable(Operation *op) {
   if (!isPureUnitExpand)
     return false;
 
-  // The expand is folded away only if EVERY user is a foldable LinalgOp (so the
-  // expand goes dead). all_of, not any_of: a single non-foldable user keeps it
-  // alive. hfusion.cast/bitcast are rejected (see header comment).
+  // The expand is folded away only if EVERY user is admissible (so the expand
+  // goes dead). all_of, not any_of: a single non-admissible user keeps it
+  // alive.
   if (expandOp->getUsers().empty())
     return false;
-  return llvm::all_of(expandOp->getUsers(), [](Operation *user) {
-    if (isa<hfusion::CastOp, hfusion::BitcastOp>(user))
-      return false;
+  return llvm::all_of(expandOp->getUsers(), [&](Operation *user) {
     if (isa<linalg::TransposeOp>(user))
       return false;
-    return isa<linalg::LinalgOp>(user);
+    auto linalgOp = dyn_cast<linalg::LinalgOp>(user);
+    if (!linalgOp)
+      return false;
+    // At VFFusion time the consumer is a named op (linalg.mul / elemwise_* /
+    // hfusion.cast / bitcast / ...); it generalizes to an identity-map generic
+    // that ExpandShapeToImplicitBrcInGenericPattern does NOT fold. Admit only
+    // when the op has a constant operand: the constant broadcasts, so the
+    // expand's unit dim is removable by later passes (flatten / vectorization).
+    // Without a constant, every operand carries the unit dim and the expand
+    // survives -> reject. This also rejects hfusion.cast/bitcast (single input,
+    // no constant operand).
+    for (Value input : linalgOp.getDpsInputs()) {
+      if (input.getDefiningOp() == expandOp)
+        continue;
+      if (Operation *defOp = input.getDefiningOp())
+        if (defOp->hasTrait<OpTrait::ConstantLike>())
+          return true;
+    }
+    return false;
   });
 }
 
@@ -311,7 +325,8 @@ static bool shouldSkipSumReduction(Operation *op,
   if (!linalgOp || linalgOp.getNumDpsInputs() == 0)
     return false;
 
-  std::optional<size_t> dimOpt = getReductionDim<arith::AddFOp, arith::AddIOp>(op);
+  std::optional<size_t> dimOpt =
+      getReductionDim<arith::AddFOp, arith::AddIOp>(op);
   if (!dimOpt)
     return false;
   size_t dim = *dimOpt;
@@ -324,17 +339,15 @@ static bool shouldSkipSumReduction(Operation *op,
   if (!llvm::isa<Float32Type, Float16Type, BFloat16Type>(elemType))
     return false;
 
-  LLVM_DEBUG(llvm::dbgs()
-             << "[" DEBUG_TYPE
-             << "] shouldSkipFusion: sum-reduce dim=" << dim
-             << " rank=" << inputType.getRank()
-             << " enableRA=" << option.enableRA
-             << " enableAR=" << option.enableAR << "\n");
+  LLVM_DEBUG(llvm::dbgs() << "[" DEBUG_TYPE
+                          << "] shouldSkipFusion: sum-reduce dim=" << dim
+                          << " rank=" << inputType.getRank()
+                          << " enableRA=" << option.enableRA
+                          << " enableAR=" << option.enableAR << "\n");
 
   // 1D reduction is not handled by RA/AR.
   if (inputType.getRank() == 1) {
-    LLVM_DEBUG(llvm::dbgs()
-               << " -> allow fusion (1D reduce)\n");
+    LLVM_DEBUG(llvm::dbgs() << " -> allow fusion (1D reduce)\n");
     return false;
   }
 
@@ -342,36 +355,28 @@ static bool shouldSkipSumReduction(Operation *op,
   if (inputType.getRank() == 2) {
     // RA: reduce along dim 0.
     if (dim == 0 && option.enableRA) {
-      LLVM_DEBUG(llvm::dbgs()
-                 << " -> skip fusion (2D RA)\n");
+      LLVM_DEBUG(llvm::dbgs() << " -> skip fusion (2D RA)\n");
       return true;
     }
 
     // AR: reduce along dim 1.
     if (dim == 1 && option.enableAR) {
-      LLVM_DEBUG(llvm::dbgs()
-                 << " -> skip fusion (2D AR)\n");
+      LLVM_DEBUG(llvm::dbgs() << " -> skip fusion (2D AR)\n");
       return true;
     }
   }
 
-  LLVM_DEBUG(llvm::dbgs()
-             << " -> allow fusion\n");
+  LLVM_DEBUG(llvm::dbgs() << " -> allow fusion\n");
   return false;
 }
 
 bool shouldSkipFusion(Operation *op, const VFFusionKindOption &option) {
   return llvm::TypeSwitch<Operation *, bool>(op)
-      .Case<linalg::GenericOp, linalg::ReduceOp>([&](auto /*typedOp*/) {
-        return shouldSkipSumReduction(op, option);
-      })
-      .Default([](Operation *) {
-        return false;
-      });
+      .Case<linalg::GenericOp, linalg::ReduceOp>(
+          [&](auto /*typedOp*/) { return shouldSkipSumReduction(op, option); })
+      .Default([](Operation *) { return false; });
 }
 
-bool isComputeOp(Operation* op) {
-  return !isa<annotation::MarkOp>(op);
-}
+bool isComputeOp(Operation *op) { return !isa<annotation::MarkOp>(op); }
 
 } // namespace mlir::analysis
