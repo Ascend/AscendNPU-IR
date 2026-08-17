@@ -18,8 +18,8 @@
 #include "bishengir/Config/bishengir-config.h"
 #include "bishengir/Dialect/Analysis/VFFusion/Utils.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
-#include "bishengir/Tools/bishengir-compile/Config.h"
 #include "bishengir/Tools/Utils/Utils.h"
+#include "bishengir/Tools/bishengir-compile/Config.h"
 
 #if BISHENGIR_ENABLE_TRITON_COMPILE
 #include "proton/Dialect/include/Conversion/ProtonToProtonGPU/Passes.h"
@@ -28,9 +28,9 @@
 #include "mlir/Support/LLVM.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/CommandLine.h"
-#include "llvm/Support/ManagedStatic.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/ErrorHandling.h" // report_fatal_error
+#include "llvm/Support/ManagedStatic.h"
 
 using namespace bishengir;
 using namespace llvm;
@@ -131,8 +131,7 @@ struct BiShengIRCompileMainConfigCLOptions : public BiShengIRCompileMainConfig {
                  "— Triton-Ascend owns the policy (env var, default) and "
                  "always forwards a resolved value. Set to a negative value "
                  "to disable the check; 0 is a valid (strict) limit."),
-        cl::value_desc("bytes-per-thread"),
-        cl::location(simtStackLimitFlag),
+        cl::value_desc("bytes-per-thread"), cl::location(simtStackLimitFlag),
         cl::cat(sharedWithDownstreamToolchainCategory));
 
     // when enableSanitizer/enableMemoryDisplay is true, enable
@@ -262,7 +261,6 @@ void BiShengIRCompileMainConfig::collectHIVMCArgs() {
   clOptionsConfig->setHIVMCArgs(collectedArgs);
 }
 
-
 void BiShengIRCompileMainConfig::collectHIVMCArgs(
     BiShengIRCompileMainConfig &config) {
   std::vector<std::string> collectedArgs;
@@ -297,7 +295,7 @@ void BiShengIRCompileMainConfig::collectHIVMCArgs(
 
     for (auto arg : llvm::split(args, " "))
       if (!arg.empty())
-      collectedArgs.push_back(arg.str());
+        collectedArgs.push_back(arg.str());
   }
 
   std::vector<std::string> filteredArgs;
@@ -335,9 +333,10 @@ bool BiShengIRCompileMainConfig::isSharedWithDownstreamToolchain(
   if (it == opts.end())
     return true;
 
-  return llvm::any_of(it->second->Categories, [](const cl::OptionCategory *cat) {
-    return cat == &sharedWithDownstreamToolchainCategory;
-  });
+  return llvm::any_of(it->second->Categories,
+                      [](const cl::OptionCategory *cat) {
+                        return cat == &sharedWithDownstreamToolchainCategory;
+                      });
 }
 
 void BiShengIRCompileMainConfig::registerCLOptions() {
@@ -350,16 +349,24 @@ void BiShengIRCompileMainConfig::registerCLOptions() {
 /// `--set-workspace-multibuffer` keeps the TableGen default of 4 for A3, but
 /// Ascend950/RegBase defaults to 2 (double-buffer) to match A5 CV-pipelining
 /// depth and avoid cbuf OOM in PlanMemory. Explicit CLI values are preserved.
-static void applyArchDependentCompileDefaults(
-    BiShengIRCompileMainConfig &config) {
+///
+/// `--limit-auto-multi-buffer-buffer` keeps only-cube on A3/membase. On
+/// Ascend950/RegBase, MixCV vector-side buffers are included by default
+/// (no-limit) unless the user explicitly set the flag.
+static bool hasExplicitCLOption(llvm::StringRef name) {
   auto &opts = cl::getRegisteredOptions();
-  auto it = opts.find("set-workspace-multibuffer");
-  bool hasExplicit =
-      it != opts.end() && it->second->getNumOccurrences() != 0;
-  if (hasExplicit)
+  auto it = opts.find(name);
+  return it != opts.end() && it->second->getNumOccurrences() != 0;
+}
+
+static void
+applyArchDependentCompileDefaults(BiShengIRCompileMainConfig &config) {
+  if (!mlir::hacc::utils::isRegBasedArch(config.getTarget()))
     return;
-  if (mlir::hacc::utils::isRegBasedArch(config.getTarget()))
+  if (!hasExplicitCLOption("set-workspace-multibuffer"))
     config.setSetWorkspaceMultibuffer(2);
+  if (!hasExplicitCLOption("limit-auto-multi-buffer-buffer"))
+    config.setLimitAutoMultiBufferBuffer(MultiBufferStrategy::NO_LIMIT);
 }
 
 BiShengIRCompileMainConfig BiShengIRCompileMainConfig::createFromCLOptions() {

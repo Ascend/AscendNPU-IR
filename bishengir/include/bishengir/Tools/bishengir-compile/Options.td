@@ -488,7 +488,9 @@ def DisableMultiBufferOnL1 : HIVMOptimizationControlOptions<
 >;
 
 def LimitAutoMultiBufferBuffer : HIVMOptimizationControlOptions<
-  "When enable-auto-multi-buffer = true, limit it to only cube, only vector or no limit.",
+  "When enable-auto-multi-buffer = true, limit it to only cube, only vector or no limit. "
+  "TableGen/CLI default is only-cube (A3/membase); Ascend950/RegBase applies "
+  "no-limit when this flag is not explicitly set.",
   "MultiBufferStrategy",
   "MultiBufferStrategy::ONLY_CUBE"
 > {
