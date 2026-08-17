@@ -24,8 +24,6 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/PatternMatch.h"
-#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
-
 namespace mlir {
 #define GEN_PASS_DEF_HFUSIONGENERALIZEPASS
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h.inc"
@@ -40,31 +38,6 @@ struct HFusionGeneralizePass
     : public impl::HFusionGeneralizePassBase<HFusionGeneralizePass> {
 public:
   void runOnOperation() override;
-};
-
-struct GeneralizeFPBitwiseElemwiseBinaryPattern
-    : public OpInterfaceRewritePattern<mlir::linalg::LinalgOp> {
-  using OpInterfaceRewritePattern<
-      mlir::linalg::LinalgOp>::OpInterfaceRewritePattern;
-
-  LogicalResult matchAndRewrite(linalg::LinalgOp op,
-                                PatternRewriter &rewriter) const override {
-    auto elemwiseOp = dyn_cast<hfusion::ElemwiseBinaryOp>(op.getOperation());
-    if (!elemwiseOp)
-      return failure();
-
-    auto fun = elemwiseOp.getFun();
-    if (fun != hfusion::BinaryFn::vand && fun != hfusion::BinaryFn::vor)
-      return failure();
-
-    Type elementType =
-        getElementTypeOrSelf(elemwiseOp.getInputs().front().getType());
-    if (!elementType.isF16() && !elementType.isBF16() &&
-        !elementType.isF32())
-      return failure();
-
-    return generalizeNamedOp(rewriter, op);
-  }
 };
 
 void HFusionGeneralizePass::runOnOperation() {
@@ -186,11 +159,6 @@ void HFusionGeneralizePass::runOnOperation() {
     rewriter.setInsertionPoint(op);
     (void)generalizeNamedOp(rewriter, op);
   });
-
-  RewritePatternSet patterns(&getContext());
-  patterns.add<GeneralizeFPBitwiseElemwiseBinaryPattern>(&getContext());
-  if (failed(applyPatternsGreedily(module, std::move(patterns))))
-    signalPassFailure();
 }
 } // anonymous namespace
 

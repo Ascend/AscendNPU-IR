@@ -534,47 +534,6 @@ public:
     llvm::report_fatal_error("unsupported type for not");
   }
 
-  template <typename BitwiseOp>
-  Value buildBitwiseBinaryFn(OpBuilder &builder, Value arg0, Value arg1) {
-    if (isInteger(arg0) && isInteger(arg1)) {
-      auto integerType = mlir::cast<IntegerType>(arg0.getType());
-      if (integerType.isSignless())
-        return builder.create<BitwiseOp>(arg0.getLoc(), arg0, arg1);
-
-      // Arith bitwise operations accept signless integers only. Preserve the
-      // signedness of HFusion's element type around the bitwise operation.
-      Type signlessType = builder.getIntegerType(integerType.getWidth());
-      Value lhs = builder
-          .create<UnrealizedConversionCastOp>(arg0.getLoc(), signlessType,
-                                              arg0)
-          .getResult(0);
-      Value rhs = builder
-          .create<UnrealizedConversionCastOp>(arg1.getLoc(), signlessType,
-                                              arg1)
-          .getResult(0);
-      Value result = builder.create<BitwiseOp>(arg0.getLoc(), lhs, rhs);
-      return builder
-          .create<UnrealizedConversionCastOp>(arg0.getLoc(), arg0.getType(),
-                                              result)
-          .getResult(0);
-    }
-
-    Type elementType = arg0.getType();
-    if (!(elementType.isF16() || elementType.isBF16() ||
-          elementType.isF32()))
-      llvm_unreachable("unsupported floating-point bitwise type");
-
-    Type integerType =
-        builder.getIntegerType(elementType.getIntOrFloatBitWidth());
-    Value lhs = builder.create<arith::BitcastOp>(arg0.getLoc(), integerType,
-                                                 arg0);
-    Value rhs = builder.create<arith::BitcastOp>(arg1.getLoc(), integerType,
-                                                 arg1);
-    Value result = builder.create<BitwiseOp>(arg0.getLoc(), lhs, rhs);
-    return builder.create<arith::BitcastOp>(arg0.getLoc(), elementType,
-                                            result);
-  }
-
   // Build the binary functions defined by OpDSL.
   Value buildBinaryFn(BinaryFn binaryFn, Value arg0, Value arg1) {
     bool allComplex = isComplex(arg0) && isComplex(arg1);
@@ -585,11 +544,17 @@ public:
     OpBuilder builder = getBuilder();
     switch (binaryFn) {
     case BinaryFn::vor:
-      return buildBitwiseBinaryFn<arith::OrIOp>(builder, arg0, arg1);
+      if (allInteger)
+        return builder.create<arith::OrIOp>(arg0.getLoc(), arg0, arg1);
+      llvm::report_fatal_error("unsupported type for vor");
     case BinaryFn::vxor:
-      return buildBitwiseBinaryFn<arith::XOrIOp>(builder, arg0, arg1);
+      if (allInteger)
+        return builder.create<arith::XOrIOp>(arg0.getLoc(), arg0, arg1);
+      llvm::report_fatal_error("unsupported type for vxor");
     case BinaryFn::vand:
-      return buildBitwiseBinaryFn<arith::AndIOp>(builder, arg0, arg1);
+      if (allInteger)
+        return builder.create<arith::AndIOp>(arg0.getLoc(), arg0, arg1);
+      llvm::report_fatal_error("unsupported type for vand");
     case BinaryFn::minf:
       if (allFloatingPoint) {
         return builder.create<arith::MinimumFOp>(arg0.getLoc(), arg0, arg1);

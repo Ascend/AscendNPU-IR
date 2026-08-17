@@ -12,7 +12,6 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
-#include "bishengir/Dialect/HFusion/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/MathExt/IR/MathExt.h"
@@ -352,169 +351,74 @@ struct RewriteSignedAwareBinaryToLinalg final
   }
 };
 
-template <typename FromOp, hfusion::BinaryFn namedFun, typename ArithToOp,
-          bool namedOpSupportsFloat>
-// RegBase/A5 bitwise lowering supports HFusion named ops and scalar broadcast.
-struct RewriteVBitwiseLogicOpA5 final
-    : public OpRewritePattern<FromOp> {
-  using Base = OpRewritePattern<FromOp>;
-  using Base::Base;
-
-  static SmallVector<AffineMap>
-  getIndexingMaps(FromOp op, PatternRewriter &rewriter, int64_t rank) {
-    if (op.getTranspose().empty()) {
-      SmallVector<AffineMap> indexingMaps = op.getIndexingMapsArray();
-      indexingMaps.resize(op.getSrc().size() + op.getDst().size());
-      return indexingMaps;
-    }
-
-    SmallVector<AffineExpr> inputExprs(rank);
-    for (auto [outputDim, inputDim] :
-         llvm::enumerate(op.getPermutationArray()))
-      inputExprs[inputDim] = rewriter.getAffineDimExpr(outputDim);
-
-    AffineMap inputMap =
-        AffineMap::get(rank, 0, inputExprs, rewriter.getContext());
-    AffineMap outputMap = rewriter.getMultiDimIdentityMap(rank);
-    SmallVector<AffineMap> indexingMaps(op.getSrc().size(), inputMap);
-    indexingMaps.append(op.getDst().size(), outputMap);
-    return indexingMaps;
-  }
-
-  LogicalResult matchAndRewrite(FromOp op,
-                                PatternRewriter &rewriter) const final {
-    Type opElementType =
-        getElementTypeOrSelf(op.getSrc().front().getType());
-    auto integerType = dyn_cast<IntegerType>(opElementType);
-
-    if (!op.hasPureBufferSemantics() && !op.hasPureTensorSemantics()) {
-      OpOperand *initOperand = op.getDpsInitOperand(0);
-      if (op.getNumDpsInits() != 1 ||
-          !isa<MemRefType>(initOperand->get().getType()))
-        return op.emitError(
-            "has to be composed of either pure tensors or pure memrefs");
-
-      Value tensor = rewriter.create<bufferization::ToTensorOp>(
-          op.getLoc(), initOperand->get());
-      initOperand->set(tensor);
-    }
-
-    bool hasTransform =
-        !op.getBroadcast().empty() || !op.getTranspose().empty();
-    bool useGeneric =
-        hasTransform || (isa<FloatType>(opElementType) &&
-                         !namedOpSupportsFloat);
-    // arith bitwise ops require signless integer types. Same-shape unsigned
-    // operands can stay in the HFusion named-op form and must not be rejected.
-    if (useGeneric && integerType && !integerType.isSignless())
-      return failure();
-    if (useGeneric) {
-      assert(op.getDst().size() == 1);
-      auto resultType = cast<ShapedType>(op.getDst().front().getType());
-      rewriter.replaceOpWithNewOp<linalg::GenericOp>(
-          op, op.getResultTypes(), op.getSrc(), op.getDst(),
-          getIndexingMaps(op, rewriter, resultType.getRank()),
-          SmallVector<utils::IteratorType>(resultType.getRank(),
-                                           utils::IteratorType::parallel),
-          [](OpBuilder &rewriter, Location loc, ValueRange operands) {
-            Value lhs = operands[0];
-            Value rhs = operands[1];
-            Type elementType = lhs.getType();
-
-            if (isa<FloatType>(elementType)) {
-              Type integerType = rewriter.getIntegerType(
-                  elementType.getIntOrFloatBitWidth());
-              lhs = rewriter.create<arith::BitcastOp>(loc, integerType, lhs);
-              rhs = rewriter.create<arith::BitcastOp>(loc, integerType, rhs);
-            }
-
-            Value result = rewriter.create<ArithToOp>(loc, lhs, rhs);
-            if (isa<FloatType>(elementType))
-              result = rewriter.create<arith::BitcastOp>(loc, elementType,
-                                                         result);
-            rewriter.create<linalg::YieldOp>(loc, result);
-          });
-      return success();
-    }
-
-    rewriter.replaceOpWithNewOp<hfusion::ElemwiseBinaryOp>(
-        op, op.getResultTypes(), op.getSrc(), op.getDst(),
-        ArrayRef{rewriter.getNamedAttr(
-            "fun", rewriter.getAttr<hfusion::BinaryFnAttr>(namedFun))});
-    return success();
-  }
-};
-
-// Keep the memory-based A3 path on its original map/arith lowering.
 template <typename From>
-struct RewriteUsingMapOpA3 : public GenericPreprocessAndRewrite<From> {
+struct RewriteUsingMapOp : public GenericPreprocessAndRewrite<From> {
+  using Base = RewriteUsingMapOp<From>;
   using FromOp = From;
-  using GenericPreprocessAndRewrite<From>::GenericPreprocessAndRewrite;
 
-  LogicalResult rewriteFromGeneric(
-      FromOp op, SmallVector<Value> &&preprocessedOperands,
-      PatternRewriter &rewriter) const final {
+  using GenericPreprocessAndRewrite<From>::GenericPreprocessAndRewrite;
+  ~RewriteUsingMapOp() override = default;
+  LogicalResult rewriteFromGeneric(FromOp op,
+                                   SmallVector<Value> &&preprocessedOperands,
+                                   PatternRewriter &rewriter) const final {
     assert(op.getDst().size() == 1);
     rewriter.replaceOpWithNewOp<linalg::MapOp>(
         op, preprocessedOperands, op.getDst()[0],
-        [this, &op](OpBuilder &builder, Location loc, ValueRange operands) {
-          builder.create<linalg::YieldOp>(
-              loc, ValueRange(rewriteFromMap(builder, loc, operands, op)));
+        [this, &op](OpBuilder &rewriter, const Location loc, ValueRange operands) {
+          rewriter.create<linalg::YieldOp>(
+              loc, ValueRange(rewriteFromMap(rewriter, loc, operands, op)));
         });
     return success();
   }
 
-  virtual Value rewriteFromMap(OpBuilder &builder, Location loc,
-                               ValueRange operands, FromOp &op) const = 0;
+  virtual Value rewriteFromMap(OpBuilder &rewriter, Location loc,
+                               ValueRange operands, FromOp& op) const = 0;
 };
 
 template <typename FromOp>
-struct RewriteVBitwiseOpA3 : public RewriteUsingMapOpA3<FromOp> {
-  using RewriteUsingMapOpA3<FromOp>::RewriteUsingMapOpA3;
+struct RewriteVBitwiseOp : public RewriteUsingMapOp<FromOp> {
+  using RewriteUsingMapOp<FromOp>::RewriteUsingMapOp;
 
-  Value rewriteFromMap(OpBuilder &builder, Location loc, ValueRange operands,
-                       FromOp &op) const final {
+  Value rewriteFromMap(OpBuilder &rewriter, const Location loc,
+                       ValueRange operands, FromOp& fromOp) const final {
     assert(operands.size() == 2);
-    Value lhs = operands[0];
-    Value rhs = operands[1];
+    Value lhs = operands[0], rhs = operands[1];
 
     if (auto floatType = dyn_cast<FloatType>(lhs.getType())) {
-      lhs = builder.create<arith::BitcastOp>(
-          loc, builder.getIntegerType(floatType.getWidth()), lhs);
-      rhs = builder.create<arith::BitcastOp>(
-          loc, builder.getIntegerType(floatType.getWidth()), rhs);
+      lhs = rewriter.create<arith::BitcastOp>(
+          loc, rewriter.getIntegerType(floatType.getWidth()), lhs);
+      rhs = rewriter.create<arith::BitcastOp>(
+          loc, rewriter.getIntegerType(floatType.getWidth()), rhs);
     }
 
-    Value result = createToOp(builder, loc, lhs, rhs, op);
-    if (auto floatType = dyn_cast<FloatType>(operands[0].getType()))
-      result = builder.create<arith::BitcastOp>(loc, floatType, result);
+    Value result = createToOp(rewriter, loc, lhs, rhs, fromOp);
+
+    if (const auto type = dyn_cast<FloatType>(operands[0].getType()))
+      result = rewriter.create<arith::BitcastOp>(loc, type, result);
     return result;
   }
 
-  virtual Value createToOp(OpBuilder &builder, Location loc, Value lhs,
-                           Value rhs, FromOp &op) const = 0;
+  virtual Value createToOp(OpBuilder &rewriter, const Location loc, Value lhs, Value rhs, FromOp &fromOp) const = 0;
 };
 
 template <typename FromOp, typename ToOp>
-struct RewriteVBitwiseLogicOpA3 final : public RewriteVBitwiseOpA3<FromOp> {
-  using RewriteVBitwiseOpA3<FromOp>::RewriteVBitwiseOpA3;
+struct RewriteVBitwiseLogicOp final : public RewriteVBitwiseOp<FromOp> {
+  using RewriteVBitwiseOp<FromOp>::RewriteVBitwiseOp;
 
-  Value createToOp(OpBuilder &builder, Location loc, Value lhs, Value rhs,
-                   FromOp &op) const final {
-    return builder.create<ToOp>(loc, lhs, rhs);
+  Value createToOp(OpBuilder &rewriter, const Location loc, Value lhs, Value rhs, FromOp& fromOp) const override {
+    return rewriter.create<ToOp>(loc, lhs, rhs);
   }
 };
 
 template <typename SignedOp, typename UnsignedOp>
-struct RewriteVBitwiseShiftOpA3 final
-    : public RewriteVBitwiseOpA3<hivm::VShROp> {
-  using RewriteVBitwiseOpA3<hivm::VShROp>::RewriteVBitwiseOpA3;
+struct RewriteVBitwiseShiftOp final : public RewriteVBitwiseOp<hivm::VShROp> {
+  using RewriteVBitwiseOp<hivm::VShROp>::RewriteVBitwiseOp;
 
-  Value createToOp(OpBuilder &builder, Location loc, Value lhs, Value rhs,
-                   hivm::VShROp &op) const final {
-    if (op.getIsSigned())
-      return builder.create<SignedOp>(loc, lhs, rhs);
-    return builder.create<UnsignedOp>(loc, lhs, rhs);
+  Value createToOp(OpBuilder &rewriter, const Location loc, Value lhs, Value rhs, FromOp& fromOp) const override {
+    if (fromOp.getIsSigned()) {
+      return rewriter.create<SignedOp>(loc, lhs, rhs);
+    }
+    return rewriter.create<UnsignedOp>(loc, lhs, rhs);
   }
 };
 
@@ -523,9 +427,9 @@ struct RewriteVDivOp final
   using Base = GenericPreprocessAndRewrite<hivm::VDivOp>;
   using Base::Base;
 
-  LogicalResult rewriteFromGeneric(
-      hivm::VDivOp op, SmallVector<Value> &&preprocessedOperands,
-      PatternRewriter &rewriter) const final {
+  LogicalResult rewriteFromGeneric(hivm::VDivOp op,
+                                   SmallVector<Value> &&preprocessedOperands,
+                                   PatternRewriter &rewriter) const final {
     if (op.getIsHP()) {
       rewriter.replaceOpWithNewOp<linalg::MapOp>(
           op, preprocessedOperands, op.getDst()[0],
@@ -537,111 +441,19 @@ struct RewriteVDivOp final
       return success();
     }
 
-    if (op.getIsSigned())
-      rewriter.replaceOpWithNewOp<linalg::DivOp>(
-          op, op.getResultTypes(), preprocessedOperands, op.getDpsInits());
-    else
-      rewriter.replaceOpWithNewOp<linalg::DivUnsignedOp>(
-          op, op.getResultTypes(), preprocessedOperands, op.getDpsInits());
+    if (op.getIsSigned()) {
+      rewriter.replaceOpWithNewOp<linalg::DivOp>(op, op.getResultTypes(),
+                                      preprocessedOperands, op.getDpsInits());
+    } else {
+      rewriter.replaceOpWithNewOp<linalg::DivUnsignedOp>(op, op.getResultTypes(),
+                                      preprocessedOperands, op.getDpsInits());
+      
+    }
     return success();
   }
 };
 
 struct RewriteNamedVDivOp final
-    : public GenericPreprocessAndRewrite<hivm::VDivOp> {
-  using Base = GenericPreprocessAndRewrite<hivm::VDivOp>;
-  using Base::Base;
-
-  LogicalResult rewriteFromGeneric(
-      hivm::VDivOp op, SmallVector<Value> &&preprocessedOperands,
-      PatternRewriter &rewriter) const final {
-    if (op.getIsHP()) {
-      rewriter.replaceOpWithNewOp<hfusion::ElemwiseBinaryOp>(
-          op, op.getResultTypes(), preprocessedOperands, op.getDst(),
-          ArrayRef{rewriter.getNamedAttr(
-              "fun", rewriter.getAttr<hfusion::BinaryFnAttr>(
-                         hfusion::BinaryFn::divfhp))});
-      return success();
-    }
-
-    linalg::BinaryFn equivalentFn = op.getIsSigned()
-                                        ? linalg::BinaryFn::div
-                                        : linalg::BinaryFn::div_unsigned;
-    rewriter.replaceOpWithNewOp<linalg::ElemwiseBinaryOp>(
-        op, op.getResultTypes(), preprocessedOperands, op.getDst(),
-        ArrayRef{rewriter.getNamedAttr(
-            "fun", rewriter.getAttr<linalg::BinaryFnAttr>(equivalentFn))});
-    return success();
-  }
-};
-
-template <typename From, typename To>
-struct RewriteVModOp : public OpRewritePattern<From> {
-  using OpRewritePattern<From>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(From op,
-                                PatternRewriter &rewriter) const final {
-    const auto resultType = cast<ShapedType>(op.getDst()[0].getType());
-    rewriter.replaceOpWithNewOp<linalg::GenericOp>(
-        op, op.getResultTypes(), op.getSrc(), op.getDst(),
-        op.getIndexingMapsArray(),
-        SmallVector<utils::IteratorType>(resultType.getRank(),
-                                         utils::IteratorType::parallel),
-        [](OpBuilder &builder, Location loc, ValueRange operands) {
-          auto result = builder.create<To>(loc, operands[0], operands[1]);
-          builder.create<linalg::YieldOp>(loc, ValueRange{result});
-        });
-    return success();
-  }
-};
-
-struct RewriteVShROpToHFusion final
-    : public GenericPreprocessAndRewrite<hivm::VShROp> {
-  using Base = GenericPreprocessAndRewrite<hivm::VShROp>;
-  using Base::Base;
-
-  LogicalResult rewriteFromGeneric(hivm::VShROp op,
-                                   SmallVector<Value> &&preprocessedOperands,
-                                   PatternRewriter &rewriter) const final {
-    hfusion::BinaryFn fn = op.getIsSigned() ? hfusion::BinaryFn::shrsi
-                                            : hfusion::BinaryFn::shrui;
-    rewriter.replaceOpWithNewOp<hfusion::ElemwiseBinaryOp>(
-        op, op.getResultTypes(), preprocessedOperands, op.getDst(),
-        ArrayRef{rewriter.getNamedAttr(
-            "fun", rewriter.getAttr<hfusion::BinaryFnAttr>(fn))});
-    return success();
-  }
-};
-
-struct RewriteVDivOpNamed final
-    : public GenericPreprocessAndRewrite<hivm::VDivOp> {
-  using Base = GenericPreprocessAndRewrite<hivm::VDivOp>;
-  using Base::Base;
-
-  LogicalResult rewriteFromGeneric(hivm::VDivOp op,
-                                   SmallVector<Value> &&preprocessedOperands,
-                                   PatternRewriter &rewriter) const final {
-    if (op.getIsHP()) {
-      rewriter.replaceOpWithNewOp<hfusion::ElemwiseBinaryOp>(
-          op, op.getResultTypes(), preprocessedOperands, op.getDst(),
-          ArrayRef{rewriter.getNamedAttr(
-              "fun", rewriter.getAttr<hfusion::BinaryFnAttr>(
-                         hfusion::BinaryFn::divfhp))});
-      return success();
-    }
-
-    if (op.getIsSigned()) {
-      rewriter.replaceOpWithNewOp<linalg::DivOp>(
-          op, op.getResultTypes(), preprocessedOperands, op.getDpsInits());
-    } else {
-      rewriter.replaceOpWithNewOp<linalg::DivUnsignedOp>(
-          op, op.getResultTypes(), preprocessedOperands, op.getDpsInits());
-    }
-    return success();
-  }
-};
-
-struct RewriteVDivOpElemwise final
     : public GenericPreprocessAndRewrite<hivm::VDivOp> {
   using Base = GenericPreprocessAndRewrite<hivm::VDivOp>;
   using Base::Base;
@@ -1040,7 +852,7 @@ struct RewriteVBrcOp : public OpRewritePattern<hivm::VBrcOp> {
 };
 
 template <typename From, typename To>
-struct RewriteToLinalgGenericOp : public OpRewritePattern<From> {
+struct RewriteVModOp : public OpRewritePattern<From> {
   using OpRewritePattern<From>::OpRewritePattern;
   LogicalResult matchAndRewrite(From op,
                                 PatternRewriter &rewriter) const final {
@@ -1872,11 +1684,10 @@ struct ConvertHIVMToUpstream
                                    hfusion::UnaryFn::relu>,
                  RewriteElemwiseOp<hivm::VNotOp, hfusion::ElemwiseUnaryOp,
                                    hfusion::UnaryFn::vnot>>(&ctx);
-    patterns.add<RewriteVBitwiseLogicOpA3<hivm::VAndOp, arith::AndIOp>,
-                 RewriteVBitwiseLogicOpA3<hivm::VOrOp, arith::OrIOp>,
-                 RewriteVBitwiseLogicOpA3<hivm::VXorOp, arith::XOrIOp>,
-                 RewriteVBitwiseShiftOpA3<arith::ShRSIOp, arith::ShRUIOp>>(
-        &ctx);
+    patterns.add<RewriteVBitwiseLogicOp<hivm::VAndOp, arith::AndIOp>,
+                 RewriteVBitwiseLogicOp<hivm::VOrOp, arith::OrIOp>,
+                 RewriteVBitwiseLogicOp<hivm::VXorOp, arith::XOrIOp>,
+                  RewriteVBitwiseShiftOp<arith::ShRSIOp, arith::ShRUIOp>>(&ctx);
     if (convertToNamedOp) {
       patterns
           .add<RewriteVCumOpToHFusion<hivm::VCumprodOp, hfusion::CumprodOp>,
@@ -1905,6 +1716,7 @@ struct ConvertHIVMToUpstream
                  RewriteVModOp<hivm::VModOp, arith::RemSIOp>, RewriteInterleave,
                  RewriteDeinterleave, HIVMToHfusionBitcastOp,
                  RewriteAtomicCasOp>(&ctx);
+
     ConversionTarget target(ctx);
     target.addIllegalDialect<hivm::HIVMDialect>();
     target.addLegalDialect<
@@ -1934,7 +1746,7 @@ struct ConvertHIVMToUpstream
     auto *moduleOp = getOperation();
     SmallVector<func::FuncOp> functions;
     moduleOp->walk([&functions](func::FuncOp funcOp) {
-      if (hacc::utils::isHost(funcOp)) {
+      if(hacc::utils::isHost(funcOp)){
         return;
       }
       std::optional<mlir::hivm::TFuncCoreType> funcCoreType =
@@ -1947,108 +1759,69 @@ struct ConvertHIVMToUpstream
     });
     RewritePatternSet patterns(&ctx);
     if (convertToNamedOp) {
-      // Unary ops
-      patterns
-          .add<RewriteFromGenericToGeneric<hivm::VAbsOp, linalg::AbsOp>,
-               RewriteFromGenericToGeneric<hivm::VExpOp, linalg::ExpOp>,
-               RewriteFromGenericToGeneric<hivm::VLnOp, linalg::LogOp>,
-               RewriteFromGenericToGeneric<hivm::VRsqrtOp, linalg::RsqrtOp>,
-               RewriteFromGenericToGeneric<hivm::VSqrtOp, linalg::SqrtOp>,
-               RewriteFromGenericToGeneric<hivm::VTanhOp, linalg::TanhOp>,
-               RewriteFromGenericToGeneric<hivm::VRecOp, linalg::ReciprocalOp>,
-               RewriteFromGenericToGeneric<hivm::VErfOp, linalg::ErfOp>>(&ctx);
-      // Binary ops
-      patterns.add<RewriteFromGenericToGeneric<hivm::VAddOp, linalg::AddOp>,
-                   RewriteFromGenericToGeneric<hivm::VSubOp, linalg::SubOp>,
-                   RewriteFromGenericToGeneric<hivm::VMulOp, linalg::MulOp>>(
-          &ctx);
-      // Ternary ops
-      patterns.add<RewriteFromGenericToGeneric<hivm::VSelOp, linalg::SelectOp>>(
-          &ctx);
-
       patterns.add<RewriteElemwiseOp<hivm::VShLOp, hfusion::ElemwiseBinaryOp,
                                      hfusion::BinaryFn::shli>>(&ctx);
-      patterns.add<RewriteVDivOpNamed>(&ctx);
-      // Cumulative ops
-      patterns.add<RewriteVCumOpToHFusion<hivm::VCumprodOp, hfusion::CumprodOp>,
-                   RewriteVCumOpToHFusion<hivm::VCumsumOp, hfusion::CumsumOp>,
-                   RewriteVCumOpToHFusion<hivm::VCummaxOp, hfusion::CummaxOp>,
-                   RewriteVCumOpToHFusion<hivm::VCumminOp, hfusion::CumminOp>>(
-          &ctx);
+      patterns.add<RewriteNamedVDivOp>(&ctx);
     } else {
-      patterns.add<RewriteElemwiseOp<hivm::VAbsOp, linalg::ElemwiseUnaryOp,
-                                     linalg::UnaryFn::abs>,
-                   RewriteElemwiseOp<hivm::VExpOp, linalg::ElemwiseUnaryOp,
-                                     linalg::UnaryFn::exp>,
-                   RewriteElemwiseOp<hivm::VLnOp, linalg::ElemwiseUnaryOp,
-                                     linalg::UnaryFn::log>,
-                   RewriteElemwiseOp<hivm::VRsqrtOp, linalg::ElemwiseUnaryOp,
-                                     linalg::UnaryFn::rsqrt>,
-                   RewriteElemwiseOp<hivm::VSqrtOp, linalg::ElemwiseUnaryOp,
-                                     linalg::UnaryFn::sqrt>,
-                   RewriteElemwiseOp<hivm::VTanhOp, linalg::ElemwiseUnaryOp,
-                                     linalg::UnaryFn::tanh>,
-                   RewriteElemwiseOp<hivm::VRecOp, linalg::ElemwiseUnaryOp,
-                                     linalg::UnaryFn::reciprocal>,
-                   RewriteElemwiseOp<hivm::VErfOp, linalg::ElemwiseUnaryOp,
-                                     linalg::UnaryFn::erf>,
-                   RewriteElemwiseOp<hivm::VAddOp, linalg::ElemwiseBinaryOp,
-                                     linalg::BinaryFn::add>,
-                   RewriteElemwiseOp<hivm::VSubOp, linalg::ElemwiseBinaryOp,
-                                     linalg::BinaryFn::sub>,
-                   RewriteElemwiseOp<hivm::VMulOp, linalg::ElemwiseBinaryOp,
-                                     linalg::BinaryFn::mul>>(&ctx);
-      patterns
-          .add<RewriteFromGenericToGeneric<hivm::VSelOp, hfusion::SelectOp>>(
-              &ctx);
-      patterns.add<RewriteToLinalgGenericOp<hivm::VShLOp, arith::ShLIOp>>(&ctx);
-      patterns.add<RewriteVDivOpElemwise>(&ctx);
-      // Cumulative ops
-      patterns.add<RewriteVCumOpToGeneric<hivm::VCumprodOp, arith::MulIOp,
-                                          arith::MulFOp, CumIdentityKind::One>,
-                   RewriteVCumOpToGeneric<hivm::VCumsumOp, arith::AddIOp,
-                                          arith::AddFOp, CumIdentityKind::Zero>,
-                   RewriteVCumOpToGeneric<
-                       hivm::VCummaxOp, arith::MaxSIOp, arith::MaximumFOp,
-                       CumIdentityKind::LowestValue, arith::MaxNumFOp>,
-                   RewriteVCumOpToGeneric<
-                       hivm::VCumminOp, arith::MinSIOp, arith::MinimumFOp,
-                       CumIdentityKind::LargestValue, arith::MinNumFOp>>(&ctx);
+      patterns.add<RewriteVModOp<hivm::VShLOp, arith::ShLIOp>>(&ctx);
+      patterns.add<RewriteVDivOp>(&ctx);
     }
-    // Signed-aware patterns: always needed for VMaxOp/VMinOp to handle
-    // signed/unsigned semantics correctly (linalg::MaxOp/MinOp always use
-    // signed comparison, which is wrong for unsigned integers)
-    patterns.add<RewriteSignedAwareBinaryToLinalg<
-                     hivm::VMaxOp, linalg::MaxOp, linalg::BinaryFn::max_signed,
-                     linalg::BinaryFn::max_unsigned>,
-                 RewriteSignedAwareBinaryToLinalg<
-                     hivm::VMinOp, linalg::MinOp, linalg::BinaryFn::min_signed,
-                     linalg::BinaryFn::min_unsigned>>(&ctx);
-    patterns.add<RewriteVShROpToHFusion>(&ctx);
+    patterns
+        .add<RewriteFromGenericToGeneric<hivm::VAbsOp, linalg::AbsOp>,
+             RewriteFromGenericToGeneric<hivm::VAddOp, linalg::AddOp>,
+             RewriteFromGenericToGeneric<hivm::VSubOp, linalg::SubOp>,
+             RewriteFromGenericToGeneric<hivm::VMulOp, linalg::MulOp>,
+             RewriteFromGenericToGeneric<hivm::VExpOp, linalg::ExpOp>,
+             RewriteFromGenericToGeneric<hivm::VLnOp, linalg::LogOp>,
+             RewriteFromGenericToGeneric<hivm::VRsqrtOp, linalg::RsqrtOp>,
+             RewriteFromGenericToGeneric<hivm::VSqrtOp, linalg::SqrtOp>,
+             RewriteFromGenericToGeneric<hivm::VTanhOp, linalg::TanhOp>,
+             RewriteFromGenericToGeneric<hivm::VRecOp, linalg::ReciprocalOp>,
+             RewriteFromGenericToGeneric<hivm::VSelOp, linalg::SelectOp>,
+             RewriteFromGenericToGeneric<hivm::VErfOp, linalg::ErfOp>>(&ctx);
+    patterns.add<
+        RewriteSignedAwareBinaryToLinalg<hivm::VMaxOp, linalg::MaxOp,
+                                         linalg::BinaryFn::max_signed,
+                                         linalg::BinaryFn::max_unsigned>,
+        RewriteSignedAwareBinaryToLinalg<hivm::VMinOp, linalg::MinOp,
+                                         linalg::BinaryFn::min_signed,
+                                         linalg::BinaryFn::min_unsigned>>(&ctx);
     patterns.add<RewriteElemwiseOp<hivm::VReluOp, hfusion::ElemwiseUnaryOp,
                                    hfusion::UnaryFn::relu>,
                  RewriteElemwiseOp<hivm::VNotOp, hfusion::ElemwiseUnaryOp,
-                                   hfusion::UnaryFn::vnot>,
-                 RewriteElemwiseOp<hivm::VSinOp, hfusion::ElemwiseUnaryOp,
-                                   hfusion::UnaryFn::sin>,
-                 RewriteElemwiseOp<hivm::VCosOp, hfusion::ElemwiseUnaryOp,
-                                   hfusion::UnaryFn::cos>,
-                 RewriteElemwiseOp<hivm::VModUIOp, hfusion::ElemwiseBinaryOp,
-                                   hfusion::BinaryFn::modui>,
-                 RewriteElemwiseOp<hivm::VModOp, hfusion::ElemwiseBinaryOp,
-                                   hfusion::BinaryFn::mod>>(&ctx);
-    patterns.add<RewriteVBitwiseLogicOpA5<hivm::VAndOp, hfusion::BinaryFn::vand,
-                                         arith::AndIOp, true>,
-                 RewriteVBitwiseLogicOpA5<hivm::VOrOp, hfusion::BinaryFn::vor,
-                                         arith::OrIOp, true>,
-                 RewriteVBitwiseLogicOpA5<hivm::VXorOp, hfusion::BinaryFn::vxor,
-                                         arith::XOrIOp, false>>(&ctx);
+                                   hfusion::UnaryFn::vnot>>(&ctx);
+    patterns.add<RewriteVBitwiseLogicOp<hivm::VAndOp, arith::AndIOp>,
+                 RewriteVBitwiseLogicOp<hivm::VOrOp, arith::OrIOp>,
+                 RewriteVBitwiseLogicOp<hivm::VXorOp, arith::XOrIOp>,
+                  RewriteVBitwiseShiftOp<arith::ShRSIOp, arith::ShRUIOp>>(&ctx);
+    if (convertToNamedOp) {
+      patterns
+          .add<RewriteVCumOpToHFusion<hivm::VCumprodOp, hfusion::CumprodOp>,
+               RewriteVCumOpToHFusion<hivm::VCumsumOp, hfusion::CumsumOp>,
+               RewriteVCumOpToHFusion<hivm::VCummaxOp, hfusion::CummaxOp>,
+               RewriteVCumOpToHFusion<hivm::VCumminOp, hfusion::CumminOp>>(
+              &ctx);
+    }
+    patterns
+        .add<RewriteVCumOpToGeneric<hivm::VCumprodOp, arith::MulIOp,
+                                    arith::MulFOp, CumIdentityKind::One>,
+             RewriteVCumOpToGeneric<hivm::VCumsumOp, arith::AddIOp,
+                                    arith::AddFOp, CumIdentityKind::Zero>,
+             RewriteVCumOpToGeneric<hivm::VCummaxOp, arith::MaxSIOp,
+                                    arith::MaximumFOp,
+                                    CumIdentityKind::LowestValue,
+                                    arith::MaxNumFOp>,
+             RewriteVCumOpToGeneric<hivm::VCumminOp, arith::MinSIOp,
+                                    arith::MinimumFOp,
+                                    CumIdentityKind::LargestValue,
+                                    arith::MinNumFOp>>(&ctx);
     // TODO: delete RewriteLoadOp, relate to issue:897
     patterns.add<RewriteVBrcOp, RewriteVTransposeOp, RewriteVArangeOp,
                  RewriteVConcatOp, RewriteVReduceOp, RewriteCastOp,
-                 RewriteVCmpOp, RewriteInterleave, RewriteDeinterleave,
-                 HIVMToHfusionBitcastOp, RewriteAtomicCasOp>(&ctx);
-    hfusion::populateHFusionInlineBrcPatterns(patterns);
+                 RewriteVCmpOp, RewriteVModOp<hivm::VModUIOp, arith::RemUIOp>,
+                 RewriteVModOp<hivm::VModOp, arith::RemSIOp>, RewriteInterleave,
+                 RewriteDeinterleave, HIVMToHfusionBitcastOp,
+                 RewriteAtomicCasOp>(&ctx);
 
     for (func::FuncOp func : functions) {
       if (func.getBody().empty())
