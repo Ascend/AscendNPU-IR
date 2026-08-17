@@ -86,7 +86,6 @@ template <typename T, size_t Dim> struct memref_t {
   int64_t strides[Dim];
 };
 
-
 template <typename IntType> struct FpTraits;
 
 // Unit Flag Mode for Synchronization
@@ -117,8 +116,9 @@ isAddress32ByteAligned(__ubuf__ T *ptr) {
 
 #if defined(__DAV_C310__)
 template <typename T>
-__simt_callee__ __aiv__ __attribute__((always_inline)) T
-UintDivImpl(T dividend, T magic, T shift) {
+__simt_callee__ __aiv__ __attribute__((always_inline)) T UintDivImpl(T dividend,
+                                                                     T magic,
+                                                                     T shift) {
   static_assert(std::is_same<T, uint32_t>::value ||
                     std::is_same<T, uint64_t>::value,
                 "Input type T only supports uint32_t, uint64_t.");
@@ -206,8 +206,8 @@ GetUintDivMagicAndShiftImpl(T &magic, T &shift, T divisor) {
 }
 
 template <typename DTYPE>
-__simt_callee__ __aiv__ __attribute__((always_inline)) 
-constexpr DTYPE MakeSentinelNegOne() {
+__simt_callee__ __aiv__ __attribute__((always_inline)) constexpr DTYPE
+MakeSentinelNegOne() {
   if constexpr (std::is_same<DTYPE, half2>::value) {
     return half2{static_cast<half>(-1), static_cast<half>(-1)};
   } else if constexpr (std::is_same<DTYPE, bfloat16x2_t>::value) {

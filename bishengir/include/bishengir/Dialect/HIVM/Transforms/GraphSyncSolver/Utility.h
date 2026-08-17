@@ -26,9 +26,9 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Iterators.h"
 #include "mlir/IR/Location.h"
-#include "llvm/ADT/DenseMap.h"
 #include "mlir/Interfaces/ValueBoundsOpInterface.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Debug.h"
@@ -567,7 +567,7 @@ public:
     if (a == b) {
       return false;
     }
-    //TODO : Can have some check to balance the union-set
+    // TODO : Can have some check to balance the union-set
     parent[a] = b;
     return true;
   }

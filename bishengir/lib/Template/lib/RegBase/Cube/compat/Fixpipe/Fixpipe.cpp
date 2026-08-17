@@ -26,8 +26,10 @@ set_pre_quant_scale(float32_t quant_scale) {
   // QUANT PRE[31 : 13] are for the scale value, in the format of (1, 8, 10)
   constexpr const uint64_t scaleBitMask = (1ull << 32) - (1ull << 13);
   // it will only consider the first 19 bits for TensorFloat32
-  INTRINSIC(set_quant_pre,
-            (static_cast<uint64_t>(*reinterpret_cast<uint32_t *>(&quant_scale)) & scaleBitMask) | (isSignedI8 << 46));
+  INTRINSIC(set_quant_pre, (static_cast<uint64_t>(
+                                *reinterpret_cast<uint32_t *>(&quant_scale)) &
+                            scaleBitMask) |
+                               (isSignedI8 << 46));
 #endif
 }
 
@@ -67,13 +69,10 @@ resolveUnitFlagMode(UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id) {
 
 template <typename SRC_TYPE, typename DST_TYPE>
 __aicore__ __attribute__((always_inline)) void
-copy_matrix_cc_to_gm_normal_2d_to_2d_core(memref_t<__cc__ SRC_TYPE, 2> *l0c,
-                                          memref_t<__gm__ DST_TYPE, 2> *gm,
-                                          int64_t pre_quant,
-                                          float32_t quant_scale,
-                                          int64_t pre_relu, bool channel_split,
-                                          UNIT_FLAG unit_flag_mode,
-                                          int64_t unit_flag_group_id) {
+copy_matrix_cc_to_gm_normal_2d_to_2d_core(
+    memref_t<__cc__ SRC_TYPE, 2> *l0c, memref_t<__gm__ DST_TYPE, 2> *gm,
+    int64_t pre_quant, float32_t quant_scale, int64_t pre_relu,
+    bool channel_split, UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id) {
   __gm__ DST_TYPE *gm_ptr = gm->aligned + gm->offset;
   __cc__ SRC_TYPE *l0c_ptr = l0c->aligned + l0c->offset;
 
@@ -94,27 +93,23 @@ copy_matrix_cc_to_gm_normal_2d_to_2d_core(memref_t<__cc__ SRC_TYPE, 2> *l0c,
           gm_ptr, l0c_ptr,
           0, // sid
           n_size, m_size,
-          src_stride,                     // dstStride_dst_D
-          src_stride,                     // srcStride
-          FIXPIPE_ARGS_XT1_VALUES_TO_GM
-          unit_flag,                     // UnitFlagMode
-          quant_mode,                     // QuantPRE
-          static_cast<uint8_t>(pre_relu), // ReLUPRE
+          src_stride,                              // dstStride_dst_D
+          src_stride,                              // srcStride
+          FIXPIPE_ARGS_XT1_VALUES_TO_GM unit_flag, // UnitFlagMode
+          quant_mode,                              // QuantPRE
+          static_cast<uint8_t>(pre_relu),          // ReLUPRE
           channel_split,
-          false // NZ2ND_EN
-          FIXPIPE_ARGS_XT2_VALUES(false)  // with NZ2DN_EN control
+          false                          // NZ2ND_EN
+          FIXPIPE_ARGS_XT2_VALUES(false) // with NZ2DN_EN control
       });
 }
 
 template <typename SRC_TYPE, typename DST_TYPE>
 __aicore__ __attribute__((always_inline)) void
-copy_matrix_cc_to_gm_normal_4d_to_4d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
-                                          memref_t<__gm__ DST_TYPE, 4> *gm,
-                                          int64_t pre_quant,
-                                          float32_t quant_scale,
-                                          int64_t pre_relu, bool channel_split,
-                                          UNIT_FLAG unit_flag_mode,
-                                          int64_t unit_flag_group_id) {
+copy_matrix_cc_to_gm_normal_4d_to_4d_core(
+    memref_t<__cc__ SRC_TYPE, 4> *l0c, memref_t<__gm__ DST_TYPE, 4> *gm,
+    int64_t pre_quant, float32_t quant_scale, int64_t pre_relu,
+    bool channel_split, UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id) {
   __gm__ DST_TYPE *gm_ptr = gm->aligned + gm->offset;
   __cc__ SRC_TYPE *l0c_ptr = l0c->aligned + l0c->offset;
 
@@ -124,7 +119,7 @@ copy_matrix_cc_to_gm_normal_4d_to_4d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
 
   uint16_t src_n_size = l0c->sizes[0] * l0c->sizes[3];
   // We assume fully contiguous and use m,n to compute strides
-  uint16_t src_stride = src_m_size; //in unit of C0
+  uint16_t src_stride = src_m_size;                     // in unit of C0
   uint16_t dst_stride = dst_m_size * FRACTAL_BLOCK_NUM; // in unit of element
 
   set_pre_quant_scale<DST_TYPE>(quant_scale);
@@ -137,15 +132,14 @@ copy_matrix_cc_to_gm_normal_4d_to_4d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
           gm_ptr, l0c_ptr,
           0, // sid
           src_n_size, src_m_size,
-          dst_stride,                     // dstStride_dst_D
-          src_stride,                     // srcStride
-          FIXPIPE_ARGS_XT1_VALUES_TO_GM
-          unit_flag,                     // UnitFlagMode
-          quant_mode,                     // QuantPRE
-          static_cast<uint8_t>(pre_relu), // ReLUPRE
+          dst_stride,                              // dstStride_dst_D
+          src_stride,                              // srcStride
+          FIXPIPE_ARGS_XT1_VALUES_TO_GM unit_flag, // UnitFlagMode
+          quant_mode,                              // QuantPRE
+          static_cast<uint8_t>(pre_relu),          // ReLUPRE
           channel_split,
-          false // NZ2ND_EN
-          FIXPIPE_ARGS_XT2_VALUES(false)  // with NZ2DN_EN control
+          false                          // NZ2ND_EN
+          FIXPIPE_ARGS_XT2_VALUES(false) // with NZ2DN_EN control
       });
 }
 
@@ -201,8 +195,7 @@ __aicore__ __attribute__((always_inline)) void copy_matrix_cc_to_ubuf_split(
     // NZ2DN L0C source keeps M padded to tile stride; use src_stride when
     // jumping to the second N half.
     // TODO: need to check whether all case need to use src_stride.
-    uint32_t offset_elements =
-        n_size_half1 * (nz2dn_xt2 ? src_stride : m_size);
+    uint32_t offset_elements = n_size_half1 * (nz2dn_xt2 ? src_stride : m_size);
     copy_matrix_cc_to_ubuf_intrin(
         copy_matrix_cc_to_ubuf_intrin_args<SRC_TYPE, DST_TYPE>{
             ubuf_ptr, l0c_ptr + offset_elements,
@@ -220,7 +213,8 @@ __aicore__ __attribute__((always_inline)) void
 copy_matrix_cc_to_ubuf_normal_2d_to_2d_core(
     memref_t<__cc__ SRC_TYPE, 2> *l0c, memref_t<__ubuf__ DST_TYPE, 2> *ubuf,
     int64_t pre_quant, float32_t quant_scale, int64_t pre_relu,
-    bool channel_split, UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id, bool sub_blockid) {
+    bool channel_split, UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id,
+    bool sub_blockid) {
   __ubuf__ DST_TYPE *ubuf_ptr = ubuf->aligned + ubuf->offset;
   __cc__ SRC_TYPE *l0c_ptr = l0c->aligned + l0c->offset;
 
@@ -270,7 +264,8 @@ __aicore__ __attribute__((always_inline)) void
 copy_matrix_cc_to_ubuf_normal_4d_to_4d_core(
     memref_t<__cc__ SRC_TYPE, 4> *l0c, memref_t<__ubuf__ DST_TYPE, 4> *ubuf,
     int64_t pre_quant, float32_t quant_scale, int64_t pre_relu,
-    bool channel_split, UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id, bool sub_blockid) {
+    bool channel_split, UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id,
+    bool sub_blockid) {
   __ubuf__ DST_TYPE *ubuf_ptr = ubuf->aligned + ubuf->offset;
   __cc__ SRC_TYPE *l0c_ptr = l0c->aligned + l0c->offset;
 
@@ -280,7 +275,7 @@ copy_matrix_cc_to_ubuf_normal_4d_to_4d_core(
 
   uint16_t src_n_size = l0c->sizes[0] * l0c->sizes[3];
   // We assume fully contiguous and use m,n to compute strides
-  uint16_t src_stride = src_m_size; //in unit of C0
+  uint16_t src_stride = src_m_size;                     // in unit of C0
   uint16_t dst_stride = dst_m_size * FRACTAL_BLOCK_NUM; // in unit of element
 
   set_pre_quant_scale<DST_TYPE>(quant_scale);
@@ -344,8 +339,7 @@ copy_matrix_cc_to_cbuf_normal_2d_to_2d_core(
           0, // sid
           n_size, m_size, src_stride,
           src_stride,                              // srcStride
-          FIXPIPE_ARGS_XT1_VALUES_TO_L1
-          unit_flag,                               // UnitFlagMode
+          FIXPIPE_ARGS_XT1_VALUES_TO_L1 unit_flag, // UnitFlagMode
           quant_mode,                              // QuantPRE
           static_cast<uint8_t>(pre_relu),          // ReLUPRE
           channel_split,
@@ -370,17 +364,16 @@ copy_matrix_cc_to_cbuf_normal_4d_to_4d_core(
 
   uint16_t src_n_size = l0c->sizes[0] * l0c->sizes[3];
   // We assume fully contiguous and use m,n to compute strides
-  uint16_t src_stride = src_m_size; //in unit of C0
+  uint16_t src_stride = src_m_size; // in unit of C0
 
   // C0 width for dst_stride:
   //   channel_split -> C0/2 (16 -> 8)
   //   int8 channel merge (DST_TYPE int8 via quant) -> C0*2 (16 -> 32)
   //   otherwise -> C0 (16)
   constexpr bool channel_merge = std::is_same<DST_TYPE, int8_t>::value;
-  uint16_t C0 = channel_split
-                    ? (FRACTAL_BLOCK_NUM / 2)
-                    : (channel_merge ? (FRACTAL_BLOCK_NUM * 2)
-                                     : FRACTAL_BLOCK_NUM);
+  uint16_t C0 = channel_split ? (FRACTAL_BLOCK_NUM / 2)
+                              : (channel_merge ? (FRACTAL_BLOCK_NUM * 2)
+                                               : FRACTAL_BLOCK_NUM);
   uint16_t dst_stride = dst_m_size * C0; // in unit of element
 
   set_pre_quant_scale<DST_TYPE>(quant_scale);
@@ -389,32 +382,26 @@ copy_matrix_cc_to_cbuf_normal_4d_to_4d_core(
 
   QuantMode_t quant_mode = get_quant_mode(pre_quant);
   copy_matrix_cc_to_cbuf_intrin(
-    copy_matrix_cc_to_cbuf_intrin_args<SRC_TYPE, DST_TYPE> {
-      cbuf_ptr, l0c_ptr,
-      0, //sid
-      src_n_size, src_m_size,
-      dst_stride,
-      src_stride,                     // srcStride
-      FIXPIPE_ARGS_XT1_VALUES_TO_L1
-      unit_flag,                      // UnitFlagMode
-      quant_mode,                     // QuantPRE
-      static_cast<uint8_t>(pre_relu), // ReLUPRE
-      channel_split,
-      false // NZ2ND_EN
-      // NZ2DN_en=false; C0_pad_en selected by caller (default false).
-      FIXPIPE_ARGS_XT2_VALUES_WITH_C0_PAD(false, c0_pad_en)
-    });
+      copy_matrix_cc_to_cbuf_intrin_args<SRC_TYPE, DST_TYPE>{
+          cbuf_ptr, l0c_ptr,
+          0, // sid
+          src_n_size, src_m_size, dst_stride,
+          src_stride,                              // srcStride
+          FIXPIPE_ARGS_XT1_VALUES_TO_L1 unit_flag, // UnitFlagMode
+          quant_mode,                              // QuantPRE
+          static_cast<uint8_t>(pre_relu),          // ReLUPRE
+          channel_split,
+          false // NZ2ND_EN
+          // NZ2DN_en=false; C0_pad_en selected by caller (default false).
+          FIXPIPE_ARGS_XT2_VALUES_WITH_C0_PAD(false, c0_pad_en)});
 }
 
 template <typename SRC_TYPE, typename DST_TYPE>
 __aicore__ __attribute__((always_inline)) void
-copy_matrix_cc_to_gm_nz2nd_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
-                                         memref_t<__gm__ DST_TYPE, 2> *gm,
-                                         int64_t pre_quant,
-                                         float32_t quant_scale,
-                                         int64_t pre_relu, bool channel_split,
-                                         UNIT_FLAG unit_flag_mode,
-                                         int64_t unit_flag_group_id) {
+copy_matrix_cc_to_gm_nz2nd_4d_to_2d_core(
+    memref_t<__cc__ SRC_TYPE, 4> *l0c, memref_t<__gm__ DST_TYPE, 2> *gm,
+    int64_t pre_quant, float32_t quant_scale, int64_t pre_relu,
+    bool channel_split, UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id) {
   __gm__ DST_TYPE *gm_ptr = gm->aligned + gm->offset;
   __cc__ SRC_TYPE *l0c_ptr = l0c->aligned + l0c->offset;
 
@@ -434,15 +421,14 @@ copy_matrix_cc_to_gm_nz2nd_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
           gm_ptr, l0c_ptr,
           0, // sid
           n_size, m_size,
-          dst_D,                          // dstStride_dst_D
-          m_tile_ceil,                    // srcStride
-          FIXPIPE_ARGS_XT1_VALUES_TO_GM
-          unit_flag,                     // UnitFlagMode
-          quant_mode,                     // QuantPRE
-          static_cast<uint8_t>(pre_relu), // ReLUPRE
+          dst_D,                                   // dstStride_dst_D
+          m_tile_ceil,                             // srcStride
+          FIXPIPE_ARGS_XT1_VALUES_TO_GM unit_flag, // UnitFlagMode
+          quant_mode,                              // QuantPRE
+          static_cast<uint8_t>(pre_relu),          // ReLUPRE
           channel_split,
-          true  // NZ2ND_EN
-          FIXPIPE_ARGS_XT2_VALUES(false)  // with NZ2DN_EN control
+          true                           // NZ2ND_EN
+          FIXPIPE_ARGS_XT2_VALUES(false) // with NZ2DN_EN control
       });
 }
 
@@ -451,13 +437,14 @@ __aicore__ __attribute__((always_inline)) void
 copy_matrix_cc_to_ubuf_nz2nd_4d_to_2d_core(
     memref_t<__cc__ SRC_TYPE, 4> *l0c, memref_t<__ubuf__ DST_TYPE, 2> *ubuf,
     int64_t pre_quant, float32_t quant_scale, int64_t pre_relu,
-    bool channel_split, UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id, bool sub_blockid) {
+    bool channel_split, UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id,
+    bool sub_blockid) {
   __ubuf__ DST_TYPE *ubuf_ptr = ubuf->aligned + ubuf->offset;
   __cc__ SRC_TYPE *l0c_ptr = l0c->aligned + l0c->offset;
 
   uint16_t m_tile_ceil = l0c->strides[0] / l0c->strides[2];
-  uint16_t m_size = (DualDst == DualDstMode::ROW_SPLIT) ? ubuf->sizes[0] * 2
-                                                         : ubuf->sizes[0];
+  uint16_t m_size =
+      (DualDst == DualDstMode::ROW_SPLIT) ? ubuf->sizes[0] * 2 : ubuf->sizes[0];
   uint16_t n_size = ubuf->sizes[1];
   uint32_t dst_D = ubuf->strides[0];
 
@@ -467,7 +454,7 @@ copy_matrix_cc_to_ubuf_nz2nd_4d_to_2d_core(
     n_size = dst_D;
   }
 
-  set_nd_para(1,1,1);
+  set_nd_para(1, 1, 1);
   set_pre_quant_scale<DST_TYPE>(quant_scale);
   unit_flag_mode = resolveUnitFlagMode(unit_flag_mode, unit_flag_group_id);
   uint8_t unit_flag = static_cast<uint8_t>(unit_flag_mode);
@@ -505,13 +492,10 @@ copy_matrix_cc_to_ubuf_nz2nd_4d_to_2d_core(
 
 template <typename SRC_TYPE, typename DST_TYPE>
 __aicore__ __attribute__((always_inline)) void
-copy_matrix_cc_to_cbuf_nz2nd_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
-                                         memref_t<__cbuf__ DST_TYPE, 2> *cbuf,
-                                         int64_t pre_quant,
-                                         float32_t quant_scale,
-                                         int64_t pre_relu, bool channel_split,
-                                         UNIT_FLAG unit_flag_mode,
-                                         int64_t unit_flag_group_id) {
+copy_matrix_cc_to_cbuf_nz2nd_4d_to_2d_core(
+    memref_t<__cc__ SRC_TYPE, 4> *l0c, memref_t<__cbuf__ DST_TYPE, 2> *cbuf,
+    int64_t pre_quant, float32_t quant_scale, int64_t pre_relu,
+    bool channel_split, UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id) {
   __cbuf__ DST_TYPE *cbuf_ptr = cbuf->aligned + cbuf->offset;
   __cc__ SRC_TYPE *l0c_ptr = l0c->aligned + l0c->offset;
 
@@ -520,7 +504,8 @@ copy_matrix_cc_to_cbuf_nz2nd_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
   uint16_t n_size = cbuf->sizes[1];
   uint32_t dst_D = cbuf->strides[0];
 
-  if (n_size < dst_D) n_size = dst_D;
+  if (n_size < dst_D)
+    n_size = dst_D;
 
   set_nd_para(1, 1, 1);
   set_pre_quant_scale<DST_TYPE>(quant_scale);
@@ -533,36 +518,32 @@ copy_matrix_cc_to_cbuf_nz2nd_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
           cbuf_ptr, l0c_ptr,
           0, // sid
           n_size, m_size,
-          dst_D,                          // dstStride_dst_D
-          m_tile_ceil,                    // srcStride
-          FIXPIPE_ARGS_XT1_VALUES_TO_L1
-          unit_flag,                     // UnitFlagMode
-          quant_mode,                     // QuantPRE
-          static_cast<uint8_t>(pre_relu), // ReLUPRE
+          dst_D,                                   // dstStride_dst_D
+          m_tile_ceil,                             // srcStride
+          FIXPIPE_ARGS_XT1_VALUES_TO_L1 unit_flag, // UnitFlagMode
+          quant_mode,                              // QuantPRE
+          static_cast<uint8_t>(pre_relu),          // ReLUPRE
           channel_split,
-          true  // NZ2ND_EN
-          FIXPIPE_ARGS_XT2_VALUES(false)  // with NZ2DN_EN control
+          true                           // NZ2ND_EN
+          FIXPIPE_ARGS_XT2_VALUES(false) // with NZ2DN_EN control
       });
 }
 
 template <typename SRC_TYPE, typename DST_TYPE>
 __aicore__ __attribute__((always_inline)) void
-copy_matrix_cc_to_gm_nz2dn_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
-                                         memref_t<__gm__ DST_TYPE, 2> *gm,
-                                         int64_t pre_quant,
-                                         float32_t quant_scale,
-                                         int64_t pre_relu, bool channel_split,
-                                         UNIT_FLAG unit_flag_mode,
-                                         int64_t unit_flag_group_id) {
+copy_matrix_cc_to_gm_nz2dn_4d_to_2d_core(
+    memref_t<__cc__ SRC_TYPE, 4> *l0c, memref_t<__gm__ DST_TYPE, 2> *gm,
+    int64_t pre_quant, float32_t quant_scale, int64_t pre_relu,
+    bool channel_split, UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id) {
   __gm__ DST_TYPE *gm_ptr = gm->aligned + gm->offset;
   __cc__ SRC_TYPE *l0c_ptr = l0c->aligned + l0c->offset;
 
   uint16_t m_tile_ceil = l0c->strides[0] / l0c->strides[2]; // srcStride
   uint16_t n_size = gm->sizes[0];
   uint16_t m_size = gm->sizes[1];
-  uint32_t dst_D = gm->strides[0];                         // dstStride_dst_D
+  uint32_t dst_D = gm->strides[0]; // dstStride_dst_D
 
-  set_nd_para(1,1,1);
+  set_nd_para(1, 1, 1);
   set_pre_quant_scale<DST_TYPE>(quant_scale);
   unit_flag_mode = resolveUnitFlagMode(unit_flag_mode, unit_flag_group_id);
   uint8_t unit_flag = static_cast<uint8_t>(unit_flag_mode);
@@ -577,35 +558,30 @@ copy_matrix_cc_to_gm_nz2dn_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
           gm_ptr, l0c_ptr,
           0, // sid
           n_size, m_size,
-          dst_D,                          // dstStride_dst_D
-          m_tile_ceil,                    // srcStride
-          FIXPIPE_ARGS_XT1_VALUES_TO_GM
-          unit_flag,                     // UnitFlagMode
-          quant_mode,                     // QuantPRE
-          static_cast<uint8_t>(pre_relu), // ReLUPRE
-          channel_split, 
-          false   //  NZ2ND_EN
-          FIXPIPE_ARGS_XT2_VALUES(true)   // with NZ2DN_EN control
-    });
+          dst_D,                                   // dstStride_dst_D
+          m_tile_ceil,                             // srcStride
+          FIXPIPE_ARGS_XT1_VALUES_TO_GM unit_flag, // UnitFlagMode
+          quant_mode,                              // QuantPRE
+          static_cast<uint8_t>(pre_relu),          // ReLUPRE
+          channel_split,
+          false                         //  NZ2ND_EN
+          FIXPIPE_ARGS_XT2_VALUES(true) // with NZ2DN_EN control
+      });
 }
 
 template <typename SRC_TYPE, typename DST_TYPE, DualDstMode DualDst>
 __aicore__ __attribute__((always_inline)) void
-copy_matrix_cc_to_ubuf_nz2dn_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
-                                           memref_t<__ubuf__ DST_TYPE, 2> *ubuf,
-                                           int64_t pre_quant,
-                                           float32_t quant_scale,
-                                           int64_t pre_relu, bool channel_split,
-                                           UNIT_FLAG unit_flag_mode,
-                                           int64_t unit_flag_group_id,
-                                           bool sub_blockid) {
+copy_matrix_cc_to_ubuf_nz2dn_4d_to_2d_core(
+    memref_t<__cc__ SRC_TYPE, 4> *l0c, memref_t<__ubuf__ DST_TYPE, 2> *ubuf,
+    int64_t pre_quant, float32_t quant_scale, int64_t pre_relu,
+    bool channel_split, UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id,
+    bool sub_blockid) {
   __ubuf__ DST_TYPE *ubuf_ptr = ubuf->aligned + ubuf->offset;
   __cc__ SRC_TYPE *l0c_ptr = l0c->aligned + l0c->offset;
 
   uint16_t m_tile_ceil = l0c->strides[0] / l0c->strides[2];
-  uint16_t n_size = (DualDst == DualDstMode::COLUMN_SPLIT)
-                        ? ubuf->sizes[0] * 2
-                        : ubuf->sizes[0];
+  uint16_t n_size = (DualDst == DualDstMode::COLUMN_SPLIT) ? ubuf->sizes[0] * 2
+                                                           : ubuf->sizes[0];
   uint16_t m_size = ubuf->sizes[1];
   uint32_t dst_D = ubuf->strides[0];
 
@@ -614,8 +590,8 @@ copy_matrix_cc_to_ubuf_nz2dn_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
   } else if (m_size < dst_D) {
     m_size = dst_D;
   }
-  
-  set_nd_para(1,1,1);
+
+  set_nd_para(1, 1, 1);
   set_pre_quant_scale<DST_TYPE>(quant_scale);
   unit_flag_mode = resolveUnitFlagMode(unit_flag_mode, unit_flag_group_id);
   uint8_t unit_flag = static_cast<uint8_t>(unit_flag_mode);
@@ -623,7 +599,7 @@ copy_matrix_cc_to_ubuf_nz2dn_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
   uint64_t src_dn_stride = 1;
   uint64_t channel_para = (src_dn_stride & 0xffff) << 48;
   set_channel_para(channel_para);
-  
+
   QuantMode_t quant_mode = get_quant_mode(pre_quant);
 
   if ((DualDst != DualDstMode::NO_DUAL) &&
@@ -644,7 +620,8 @@ copy_matrix_cc_to_ubuf_nz2dn_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
           n_size, m_size,
           dst_D,       // dstStride_dst_D
           m_tile_ceil, // srcStride
-          FIXPIPE_ARGS_XT1_VALUES_TO_UB(/*dual dst=*/0, /*sub_blockid=*/sub_blockid)
+          FIXPIPE_ARGS_XT1_VALUES_TO_UB(/*dual dst=*/0,
+                                        /*sub_blockid=*/sub_blockid)
               unit_flag,                  // UnitFlagMode
           quant_mode,                     // QuantPRE
           static_cast<uint8_t>(pre_relu), // ReLUPRE
@@ -656,13 +633,10 @@ copy_matrix_cc_to_ubuf_nz2dn_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
 
 template <typename SRC_TYPE, typename DST_TYPE>
 __aicore__ __attribute__((always_inline)) void
-copy_matrix_cc_to_cbuf_nz2dn_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
-                                           memref_t<__cbuf__ DST_TYPE, 2> *cbuf,
-                                           int64_t pre_quant,
-                                           float32_t quant_scale,
-                                           int64_t pre_relu, bool channel_split,
-                                           UNIT_FLAG unit_flag_mode,
-                                           int64_t unit_flag_group_id) {
+copy_matrix_cc_to_cbuf_nz2dn_4d_to_2d_core(
+    memref_t<__cc__ SRC_TYPE, 4> *l0c, memref_t<__cbuf__ DST_TYPE, 2> *cbuf,
+    int64_t pre_quant, float32_t quant_scale, int64_t pre_relu,
+    bool channel_split, UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id) {
   __cbuf__ DST_TYPE *cbuf_ptr = cbuf->aligned + cbuf->offset;
   __cc__ SRC_TYPE *l0c_ptr = l0c->aligned + l0c->offset;
 
@@ -670,33 +644,33 @@ copy_matrix_cc_to_cbuf_nz2dn_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
   uint16_t n_size = cbuf->sizes[0];
   uint16_t m_size = cbuf->sizes[1];
   uint32_t dst_D = cbuf->strides[0];
-  
-  if (m_size < dst_D) m_size = dst_D;
-  
-  set_nd_para(1,1,1);
+
+  if (m_size < dst_D)
+    m_size = dst_D;
+
+  set_nd_para(1, 1, 1);
   set_pre_quant_scale<DST_TYPE>(quant_scale);
   unit_flag_mode = resolveUnitFlagMode(unit_flag_mode, unit_flag_group_id);
   uint8_t unit_flag = static_cast<uint8_t>(unit_flag_mode);
 
-  uint64_t src_dn_stride = 1;    
+  uint64_t src_dn_stride = 1;
   uint64_t channel_para = (src_dn_stride & 0xffff) << 48;
   set_channel_para(channel_para);
-  
+
   QuantMode_t quant_mode = get_quant_mode(pre_quant);
   copy_matrix_cc_to_cbuf_intrin(
-      copy_matrix_cc_to_cbuf_intrin_args<SRC_TYPE, DST_TYPE> {
-         cbuf_ptr, l0c_ptr,
-             0,  // sid
-             n_size, m_size, 
-             dst_D,        // dstStride_dst_D
-             m_tile_ceil,  // srcStride
-             FIXPIPE_ARGS_XT1_VALUES_TO_L1
-             unit_flag,                    // UnitFlagMode
-             quant_mode,                     // QuantPRE
-             static_cast<uint8_t>(pre_relu), // ReLUPRE
-             channel_split, 
-             false   // NZ2ND_EN
-             FIXPIPE_ARGS_XT2_VALUES(true)   // with NZ2DN_EN control
+      copy_matrix_cc_to_cbuf_intrin_args<SRC_TYPE, DST_TYPE>{
+          cbuf_ptr, l0c_ptr,
+          0, // sid
+          n_size, m_size,
+          dst_D,                                   // dstStride_dst_D
+          m_tile_ceil,                             // srcStride
+          FIXPIPE_ARGS_XT1_VALUES_TO_L1 unit_flag, // UnitFlagMode
+          quant_mode,                              // QuantPRE
+          static_cast<uint8_t>(pre_relu),          // ReLUPRE
+          channel_split,
+          false                         // NZ2ND_EN
+          FIXPIPE_ARGS_XT2_VALUES(true) // with NZ2DN_EN control
       });
 }
 
@@ -714,7 +688,7 @@ copy_matrix_cc_to_gm_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
         unit_flag_mode, unit_flag_group_id);
     return;
   }
-  
+
   if constexpr (MODE == TransformMode::NZ_2_DN) {
     copy_matrix_cc_to_gm_nz2dn_4d_to_2d_core<SRC_TYPE, DST_TYPE>(
         l0c, gm, pre_quant, quant_scale, pre_relu, channel_split,
@@ -831,8 +805,8 @@ copy_matrix_cc_to_cbuf_2d_to_2d_core(memref_t<__cc__ SRC_TYPE, 2> *l0c,
         unit_flag_mode, unit_flag_group_id);
     return;
   }
-    
-    static_assert("fixpipe 2d unsupport this transform mode");
+
+  static_assert("fixpipe 2d unsupport this transform mode");
 }
 
 template <typename SRC_TYPE, typename DST_TYPE, TransformMode MODE>
@@ -892,8 +866,10 @@ extern "C" {
 //===-------------------------------------------------------------------===//
 REGISTE_FIXPIPE(cc, gm, 2, 2, float, half, normal, TransformMode::NORMAL)
 REGISTE_FIXPIPE(cc, gm, 2, 2, float, bfloat16_t, normal, TransformMode::NORMAL)
-REGISTE_FIXPIPE_NOSUFFIX(cc, gm, 2, 2, float, half, normal, TransformMode::NORMAL)
-REGISTE_FIXPIPE_NOSUFFIX(cc, gm, 2, 2, float, bfloat16_t, normal, TransformMode::NORMAL)
+REGISTE_FIXPIPE_NOSUFFIX(cc, gm, 2, 2, float, half, normal,
+                         TransformMode::NORMAL)
+REGISTE_FIXPIPE_NOSUFFIX(cc, gm, 2, 2, float, bfloat16_t, normal,
+                         TransformMode::NORMAL)
 
 //===-------------------------------------------------------------------===//
 // fixpipe, 4 dim to 2 dim, nz2nd
@@ -903,21 +879,28 @@ REGISTE_FIXPIPE(cc, gm, 4, 2, float, bfloat16_t, nz2nd, TransformMode::NZ_2_ND)
 REGISTE_FIXPIPE(cc, gm, 4, 2, float, float, nz2nd, TransformMode::NZ_2_ND)
 REGISTE_FIXPIPE(cc, gm, 4, 2, int32_t, int32_t, nz2nd, TransformMode::NZ_2_ND)
 
-REGISTE_FIXPIPE_NOSUFFIX(cc, gm, 4, 2, float, half, nz2nd, TransformMode::NZ_2_ND)
-REGISTE_FIXPIPE_NOSUFFIX(cc, gm, 4, 2, float, bfloat16_t, nz2nd, TransformMode::NZ_2_ND)
-REGISTE_FIXPIPE_NOSUFFIX(cc, gm, 4, 2, float, float, nz2nd, TransformMode::NZ_2_ND)
-REGISTE_FIXPIPE_NOSUFFIX(cc, gm, 4, 2, int32_t, int32_t, nz2nd, TransformMode::NZ_2_ND)
+REGISTE_FIXPIPE_NOSUFFIX(cc, gm, 4, 2, float, half, nz2nd,
+                         TransformMode::NZ_2_ND)
+REGISTE_FIXPIPE_NOSUFFIX(cc, gm, 4, 2, float, bfloat16_t, nz2nd,
+                         TransformMode::NZ_2_ND)
+REGISTE_FIXPIPE_NOSUFFIX(cc, gm, 4, 2, float, float, nz2nd,
+                         TransformMode::NZ_2_ND)
+REGISTE_FIXPIPE_NOSUFFIX(cc, gm, 4, 2, int32_t, int32_t, nz2nd,
+                         TransformMode::NZ_2_ND)
 
 #if !defined(__DAV_M300__)
 REGISTE_FIXPIPE(cc, gm, 4, 2, int32_t, int8_t, nz2nd, TransformMode::NZ_2_ND)
 REGISTE_FIXPIPE(cc, gm, 4, 2, int32_t, half, nz2nd, TransformMode::NZ_2_ND)
 
-REGISTE_FIXPIPE_NOSUFFIX(cc, gm, 4, 2, int32_t, int8_t, nz2nd, TransformMode::NZ_2_ND)
-REGISTE_FIXPIPE_NOSUFFIX(cc, gm, 4, 2, int32_t, half, nz2nd, TransformMode::NZ_2_ND)
+REGISTE_FIXPIPE_NOSUFFIX(cc, gm, 4, 2, int32_t, int8_t, nz2nd,
+                         TransformMode::NZ_2_ND)
+REGISTE_FIXPIPE_NOSUFFIX(cc, gm, 4, 2, int32_t, half, nz2nd,
+                         TransformMode::NZ_2_ND)
 
 #if !defined(__DAV_C310__)
 REGISTE_FIXPIPE(cc, gm, 4, 2, int32_t, int16_t, nz2nd, TransformMode::NZ_2_ND)
-REGISTE_FIXPIPE_NOSUFFIX(cc, gm, 4, 2, int32_t, int16_t, nz2nd, TransformMode::NZ_2_ND)
+REGISTE_FIXPIPE_NOSUFFIX(cc, gm, 4, 2, int32_t, int16_t, nz2nd,
+                         TransformMode::NZ_2_ND)
 #endif // !defined(__DAV_C310__)
 #endif // !defined(__DAV_M300__)
 }

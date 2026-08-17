@@ -1288,9 +1288,8 @@ private:
 
     rewriter.setInsertionPointAfter(vMulOp);
     auto newFixpipe = rewriter.create<FixpipeOp>(
-        op.getLoc(), dst.getType(), op.getSource(), dst,
-        op.getUnitFlagCond(), op.getDmaModeAttr(), op.getDualDstModeAttr(),
-        op.getSubBlockIdxAttr(),
+        op.getLoc(), dst.getType(), op.getSource(), dst, op.getUnitFlagCond(),
+        op.getDmaModeAttr(), op.getDualDstModeAttr(), op.getSubBlockIdxAttr(),
         FixpipePreQuantModeAttr::get(rewriter.getContext(), preQuant),
         op.getPreReluAttr(), op.getChannelSplitAttr(), op.getC0PadEnAttr(),
         quantScale, op.getUnitFlagModeAttr(), op.getUnitFlagGroupIdAttr());

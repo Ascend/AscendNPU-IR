@@ -16,8 +16,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HIVM/Transforms/UnitFlagInfoBase.h"
-#include "llvm/Support/raw_ostream.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolverIR.h"
+#include "llvm/Support/raw_ostream.h"
 #include <string>
 #include <tuple>
 
@@ -147,7 +147,7 @@ UnitFlagInfoBase::getUnitFlagLinkedLoopArgs(Operation *op,
   }
   if (linkedLoopAsSet && linkedLoopAsWait) {
     Value cond = rewriter.create<arith::AndIOp>(op->getLoc(), unitFlagConds[0],
-                                               unitFlagConds[1]);
+                                                unitFlagConds[1]);
     unitFlagConds.insert(unitFlagConds.begin(), cond);
   } else {
     auto i1Ty = rewriter.getI1Type();

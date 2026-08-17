@@ -132,14 +132,11 @@ free_lock_var_unordered(memref_t<__gm__ int64_t, 1> *lock_var);
       memref_t<__gm__ int64_t, 1> *lock_var)
 
 #define REGISTE_SYNCBLOCKUNLOCK_UNORDERED()                                    \
-  DECLARE_SYNCBLOCKUNLOCK_UNORDERED() {                                        \
-    sync_block_unlock_unordered(lock_var);                                     \
-  }
+  DECLARE_SYNCBLOCKUNLOCK_UNORDERED() { sync_block_unlock_unordered(lock_var); }
 
 #define DECLARE_FREE_LOCK_VAR_UNORDERED()                                      \
   __aiv__ __attribute__((always_inline)) void                                  \
-  _mlir_ciface_free_lock_var_unordered(                                        \
-      memref_t<__gm__ int64_t, 1> *lock_var)
+  _mlir_ciface_free_lock_var_unordered(memref_t<__gm__ int64_t, 1> *lock_var)
 
 #define REGISTE_FREE_LOCK_VAR_UNORDERED()                                      \
   DECLARE_FREE_LOCK_VAR_UNORDERED() { free_lock_var_unordered(lock_var); }

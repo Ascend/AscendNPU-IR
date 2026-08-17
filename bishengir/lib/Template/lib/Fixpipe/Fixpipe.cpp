@@ -44,7 +44,8 @@ copy_matrix_cc_to_gm_normal_2d_to_2d_core(memref_t<__cc__ SRC_TYPE, 2> *l0c,
                                           memref_t<__gm__ DST_TYPE, 2> *gm,
                                           int64_t pre_quant, int64_t pre_relu,
                                           bool channel_split,
-                                          UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id) {
+                                          UNIT_FLAG unit_flag_mode,
+                                          int64_t unit_flag_group_id) {
   __gm__ DST_TYPE *gm_ptr = gm->aligned + gm->offset;
   __cc__ SRC_TYPE *l0c_ptr = l0c->aligned + l0c->offset;
 
@@ -82,7 +83,8 @@ copy_matrix_cc_to_gm_nz2nd_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
                                          memref_t<__gm__ DST_TYPE, 2> *gm,
                                          int64_t pre_quant, int64_t pre_relu,
                                          bool channel_split,
-                                         UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id) {
+                                         UNIT_FLAG unit_flag_mode,
+                                         int64_t unit_flag_group_id) {
   __gm__ DST_TYPE *gm_ptr = gm->aligned + gm->offset;
   __cc__ SRC_TYPE *l0c_ptr = l0c->aligned + l0c->offset;
 
@@ -116,10 +118,12 @@ __aicore__ __attribute__((always_inline)) void
 copy_matrix_cc_to_gm_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
                                    memref_t<__gm__ DST_TYPE, 2> *gm,
                                    int64_t pre_quant, int64_t pre_relu,
-                                   bool channel_split, UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id) {
+                                   bool channel_split, UNIT_FLAG unit_flag_mode,
+                                   int64_t unit_flag_group_id) {
   if constexpr (MODE == TransformMode::NZ_2_ND) {
     copy_matrix_cc_to_gm_nz2nd_4d_to_2d_core<SRC_TYPE, DST_TYPE>(
-        l0c, gm, pre_quant, pre_relu, channel_split, unit_flag_mode, unit_flag_group_id);
+        l0c, gm, pre_quant, pre_relu, channel_split, unit_flag_mode,
+        unit_flag_group_id);
     return;
   }
 
@@ -131,10 +135,12 @@ __aicore__ __attribute__((always_inline)) void
 copy_matrix_cc_to_gm_2d_to_2d_core(memref_t<__cc__ SRC_TYPE, 2> *l0c,
                                    memref_t<__gm__ DST_TYPE, 2> *gm,
                                    int64_t pre_quant, int64_t pre_relu,
-                                   bool channel_split, UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id) {
+                                   bool channel_split, UNIT_FLAG unit_flag_mode,
+                                   int64_t unit_flag_group_id) {
   if constexpr (MODE == TransformMode::NORMAL) {
     copy_matrix_cc_to_gm_normal_2d_to_2d_core<SRC_TYPE, DST_TYPE>(
-        l0c, gm, pre_quant, pre_relu, channel_split, unit_flag_mode, unit_flag_group_id);
+        l0c, gm, pre_quant, pre_relu, channel_split, unit_flag_mode,
+        unit_flag_group_id);
     return;
   }
 

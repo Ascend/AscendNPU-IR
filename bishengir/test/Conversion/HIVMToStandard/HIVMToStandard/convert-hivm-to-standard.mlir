@@ -1656,7 +1656,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
   func.func @test_reduce_op_check_with_rank_reducing() {
     // CHECK: %[[CST2:.*]] = arith.constant 2147483647 : i32
     // CHECK: %[[CST1:.*]] = arith.constant -2147483648 : i32
-    
+
     // CHECK-COUNT-5: scf.for
     // CHECK-COUNT-2: memref.subview
     // CHECK: call @reduce_max_ra0a1_int32_t({{.*}}, %[[CST1:.*]])

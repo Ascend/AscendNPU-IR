@@ -364,9 +364,8 @@ protected:
   // filter and check function).
   bool checkMemoryConflictBetweenOccExclusive(
       Occurrence *occ1, Occurrence *occ2,
-      std::function<bool(RWOperation *)> filter = [](RWOperation *) {
-        return true;
-      },
+      std::function<bool(RWOperation *)> filter =
+          [](RWOperation *) { return true; },
       std::function<bool(RWOperation *, RWOperation *)> checkConflict =
           nullptr);
 

@@ -689,18 +689,18 @@ SyncSolverBase::getMemoryConflicts(RWOperation *rwOp1, RWOperation *rwOp2) {
 }
 
 bool SyncSolverBase::checkCCUnitFlagConflict(RWOperation *rwOp,
-                                     RWOperation *otherOp) {
+                                             RWOperation *otherOp) {
   if (isa_and_present<hivm::MmadL1Op>(rwOp->op)) {
     if (isa_and_present<hivm::MmadL1Op>(otherOp->op))
       return checkMemInfoConflict(rwOp, otherOp, rwOp->writeMemInfo,
-                                   otherOp->writeMemInfo);
+                                  otherOp->writeMemInfo);
     if (isa_and_present<hivm::FixpipeOp>(otherOp->op))
       return checkMemInfoConflict(rwOp, otherOp, rwOp->writeMemInfo,
-                                   otherOp->readMemInfo);
+                                  otherOp->readMemInfo);
   } else if (isa_and_present<hivm::FixpipeOp>(rwOp->op)) {
     if (isa_and_present<hivm::MmadL1Op>(otherOp->op))
       return checkMemInfoConflict(rwOp, otherOp, rwOp->readMemInfo,
-                                   otherOp->writeMemInfo);
+                                  otherOp->writeMemInfo);
     // Fixpipe × Fixpipe: RAR on CC — no conflict relevant to unit-flag
   }
   return false;
@@ -726,8 +726,7 @@ bool SyncSolverBase::checkMemoryConflictBetweenOccExclusive(
     if (auto *otherOp = llvm::dyn_cast_if_present<RWOperation>(syncIr[i]->op)) {
       if (!filter(otherOp))
         continue;
-      if (checkConflict(rwOp1, otherOp) ||
-          checkConflict(rwOp2, otherOp))
+      if (checkConflict(rwOp1, otherOp) || checkConflict(rwOp2, otherOp))
         return true;
     }
   }
