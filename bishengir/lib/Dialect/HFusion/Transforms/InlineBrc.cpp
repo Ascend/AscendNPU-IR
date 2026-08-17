@@ -159,8 +159,6 @@ public:
   LogicalResult matchAndRewrite(linalg::BroadcastOp brcOp,
                                 PatternRewriter &rewriter) const override {
     LDBG("Got BroadcastOp: " << brcOp);
-    if (brcOp->getNumResults() != 1)
-      return failure();
     Value input = brcOp.getInput();
     return replaceBrcWithInput(brcOp, brcOp->getResult(0), input,
                                brcOp->getLoc(), rewriter);
@@ -188,101 +186,14 @@ public:
   }
 };
 
-template <typename BinaryOp>
-struct InlineScalarFillInBinaryOp : public OpRewritePattern<BinaryOp> {
-  using OpRewritePattern<BinaryOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(BinaryOp op,
-                                PatternRewriter &rewriter) const override {
-    SmallVector<Value> inputs;
-    bool changed = false;
-    for (Value input : op.getDpsInputs()) {
-      auto fillOp = input.getDefiningOp<linalg::FillOp>();
-      if (!fillOp || fillOp->getNumResults() != 1 ||
-          fillOp.getInputs().size() != 1 ||
-          !utils::isScalarLike(fillOp.getInputs().front())) {
-        inputs.push_back(input);
-        continue;
-      }
-
-      auto scalar = utils::extractScalarValue(
-          rewriter, fillOp.getLoc(), fillOp.getInputs().front());
-      if (!scalar.has_value()) {
-        inputs.push_back(input);
-        continue;
-      }
-      inputs.push_back(scalar.value());
-      changed = true;
-    }
-    if (!changed)
-      return failure();
-
-    auto funAttr = op->getAttr("fun");
-    if (!funAttr)
-      return failure();
-    auto funNamedAttr = rewriter.getNamedAttr("fun", funAttr);
-    rewriter.replaceOpWithNewOp<BinaryOp>(
-        op, op.getResultTypes(), inputs, op.getDpsInits(),
-        ArrayRef{funNamedAttr});
-    return success();
-  }
-};
-
-template <typename NamedOp, linalg::BinaryFn fun>
-struct ConvertScalarFillNamedBinaryOp : public OpRewritePattern<NamedOp> {
-  using OpRewritePattern<NamedOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(NamedOp op,
-                                PatternRewriter &rewriter) const override {
-    SmallVector<Value> inputs;
-    bool changed = false;
-    for (Value input : op.getDpsInputs()) {
-      auto fillOp = input.getDefiningOp<linalg::FillOp>();
-      if (!fillOp || fillOp->getNumResults() != 1 ||
-          fillOp.getInputs().size() != 1 ||
-          !utils::isScalarLike(fillOp.getInputs().front())) {
-        inputs.push_back(input);
-        continue;
-      }
-
-      auto scalar = utils::extractScalarValue(
-          rewriter, fillOp.getLoc(), fillOp.getInputs().front());
-      if (!scalar.has_value()) {
-        inputs.push_back(input);
-        continue;
-      }
-      inputs.push_back(scalar.value());
-      changed = true;
-    }
-    if (!changed)
-      return failure();
-
-    auto fnAttr = rewriter.getNamedAttr(
-        "fun", rewriter.getAttr<linalg::BinaryFnAttr>(fun));
-    rewriter.replaceOpWithNewOp<linalg::ElemwiseBinaryOp>(
-        op, op.getResultTypes(), inputs, op.getDpsInits(), ArrayRef{fnAttr});
-    return success();
-  }
-};
-
-void mlir::hfusion::populateHFusionInlineBrcPatterns(
-    RewritePatternSet &patterns) {
-  patterns.add<
-      ConvertScalarFillNamedBinaryOp<linalg::AddOp, linalg::BinaryFn::add>,
-      ConvertScalarFillNamedBinaryOp<linalg::MulOp, linalg::BinaryFn::mul>,
-      InlineScalarFillInBinaryOp<linalg::ElemwiseBinaryOp>,
-      InlineScalarFillInBinaryOp<hfusion::ElemwiseBinaryOp>,
-      InlineBroadcastOpWithScalarInput, InlineFillOpWithScalarInput>(
-      patterns.getContext());
-}
-
 namespace {
 struct HFusionInlineBrcPass
     : public impl::HFusionInlineBrcBase<HFusionInlineBrcPass> {
 public:
   void runOnOperation() override {
     RewritePatternSet patterns(&getContext());
-    populateHFusionInlineBrcPatterns(patterns);
+    patterns.add<InlineBroadcastOpWithScalarInput>(patterns.getContext());
+    patterns.add<InlineFillOpWithScalarInput>(patterns.getContext());
     if (failed(applyPatternsGreedily(getOperation(), std::move(patterns)))) {
       signalPassFailure();
     }

@@ -1,21 +1,5 @@
 // RUN: bishengir-opt -convert-linalg-to-hfusion %s -split-input-file -verify-diagnostics | FileCheck %s
 
-// CHECK-LABEL: func.func @test_bitwise_maps
-// CHECK-NOT: linalg.map
-// CHECK: %[[VAND:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vand>}
-// CHECK: %[[VOR:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vor>}
-// CHECK: %[[VXOR:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vxor>}
-// CHECK-NOT: linalg.map
-// CHECK: return %[[VXOR]]
-func.func @test_bitwise_maps(%lhs: tensor<32xi32>, %rhs: tensor<32xi32>, %dst: tensor<32xi32>) -> tensor<32xi32> {
-  %0 = linalg.map { arith.andi } ins(%lhs, %rhs : tensor<32xi32>, tensor<32xi32>) outs(%dst : tensor<32xi32>)
-  %1 = linalg.map { arith.ori } ins(%0, %rhs : tensor<32xi32>, tensor<32xi32>) outs(%dst : tensor<32xi32>)
-  %2 = linalg.map { arith.xori } ins(%1, %rhs : tensor<32xi32>, tensor<32xi32>) outs(%dst : tensor<32xi32>)
-  return %2 : tensor<32xi32>
-}
-
-// -----
-
 // COM: the referenced ocl function should be removed by following symbol-dce pass
 func.func private @__hmf_reluDh(f16) -> f16 attributes {llvm.readnone}
 // CHECK-LABEL: func.func @test_relu

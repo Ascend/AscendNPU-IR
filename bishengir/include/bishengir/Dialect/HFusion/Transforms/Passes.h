@@ -28,7 +28,6 @@
 #include "mlir/Dialect/Shape/IR/Shape.h"
 #include "mlir/Dialect/Transform/Interfaces/TransformInterfaces.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
-#include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
 
 namespace mlir {
@@ -180,10 +179,6 @@ createHFusionNormalizeSliceOpsPass(bool skipAlignedSlice = false);
 
 /// Create a pass to inline broadcast-like op
 std::unique_ptr<Pass> createHFusionInlineBrcPass();
-
-/// Populate patterns to inline scalar broadcast-like operands into supported
-/// elementwise users.
-void populateHFusionInlineBrcPatterns(RewritePatternSet &patterns);
 
 /// Create a pass to pack tiling data.
 std::unique_ptr<Pass>

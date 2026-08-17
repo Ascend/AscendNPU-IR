@@ -60,33 +60,6 @@ struct LinalgMapToHFusionPattern : public OpRewritePattern<linalg::MapOp> {
         2) // only process maximum operations inside linalg map of 2
       return failure();
     auto &mapped = *block.getOperations().begin();
-    std::optional<hfusion::BinaryFn> bitwiseFn;
-    if (isa<arith::AndIOp>(mapped))
-      bitwiseFn = hfusion::BinaryFn::vand;
-    else if (isa<arith::OrIOp>(mapped))
-      bitwiseFn = hfusion::BinaryFn::vor;
-    else if (isa<arith::XOrIOp>(mapped))
-      bitwiseFn = hfusion::BinaryFn::vxor;
-
-    if (bitwiseFn) {
-      // Keep bitwise maps as named ops so InlineBrc can scalarize fill inputs.
-      auto yieldOp = dyn_cast<linalg::YieldOp>(block.getTerminator());
-      if (op.getInputs().size() != 2 || block.getNumArguments() != 2 ||
-          mapped.getNumOperands() != 2 || mapped.getNumResults() != 1 ||
-          mapped.getOperand(0) != block.getArgument(0) ||
-          mapped.getOperand(1) != block.getArgument(1) || !yieldOp ||
-          yieldOp.getValues().size() != 1 ||
-          yieldOp.getValues().front() != mapped.getResult(0))
-        return failure();
-
-      auto binaryAttr =
-          rewriter.getAttr<hfusion::BinaryFnAttr>(*bitwiseFn);
-      auto fnAttr = rewriter.getNamedAttr("fun", binaryAttr);
-      rewriter.replaceOpWithNewOp<hfusion::ElemwiseBinaryOp>(
-          op, op.getInputs(), ValueRange{op.getInit()}, ArrayRef{fnAttr});
-      return success();
-    }
-
     auto callOp = dyn_cast<func::CallOp>(mapped);
     if (callOp == nullptr)
       return failure();
