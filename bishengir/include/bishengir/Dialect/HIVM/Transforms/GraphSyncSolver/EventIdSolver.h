@@ -183,6 +183,8 @@ public:
 
   void addConflicts(ConflictPair *conflictPairSrc,
                     const std::vector<ConflictPair *> &conflictPairsDst);
+  void addConflicts(EventIdNode *nodeSrc,
+                    const llvm::SmallVector<EventIdNode *> &nodesDst);
 
   void calcEventIds();
 

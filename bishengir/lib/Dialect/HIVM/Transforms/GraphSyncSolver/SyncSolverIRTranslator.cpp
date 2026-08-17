@@ -914,112 +914,6 @@ std::unique_ptr<Scope> IRTranslator::funcIrBuilder(Region &region,
   return scopeOp;
 }
 
-bool IRTranslator::skipLaterIterations(Occurrence *occ1, Occurrence *occ2) {
-  assert(occ1 != nullptr && occ2 != nullptr);
-  if (occ1->parentOcc != nullptr) {
-    if (isa<Loop>(occ1->parentOcc->op)) {
-      if (occ1->syncIrIndex < occ1->parentOcc->loopSplitIndex &&
-          occ1->parentOcc->loopSplitIndex <= occ2->syncIrIndex) {
-        return true;
-      }
-    }
-  }
-  if (occ2->parentOcc != nullptr) {
-    if (isa<Loop>(occ2->parentOcc->op)) {
-      if (occ1->syncIrIndex < occ2->parentOcc->loopSplitIndex &&
-          occ2->parentOcc->loopSplitIndex <= occ2->syncIrIndex) {
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
-void IRTranslator::generateProcessingOrders(Occurrence *occ1, Occurrence *occ2,
-                                            bool isUseless) {
-  assert(occ1 != nullptr && occ2 != nullptr);
-  if (skipLaterIterations(occ1, occ2)) {
-    return;
-  }
-  if (isa<Scope>(occ1->op) && isa<Scope>(occ2->op)) {
-    generateProcessingOrders(occ1->childOccs, occ2->childOccs, isUseless);
-  }
-  if (isa<RWOperation>(occ1->op) && isa<Scope>(occ2->op)) {
-    generateProcessingOrders({occ1}, occ2->childOccs, isUseless);
-  }
-  if (isa<Scope>(occ1->op) && isa<RWOperation>(occ2->op)) {
-    generateProcessingOrders(occ1->childOccs, {occ2}, isUseless);
-  }
-  if (auto *rwOp1 = dyn_cast<RWOperation>(occ1->op)) {
-    if (auto *rwOp2 = dyn_cast<RWOperation>(occ2->op)) {
-      generateProcessingOrders(rwOp1, rwOp2, occ1, occ2, isUseless);
-    }
-  }
-}
-
-void IRTranslator::generateProcessingOrders(
-    const llvm::SmallVector<Occurrence *> &occs, bool isUseless) {
-  int64_t occsNum = static_cast<int64_t>(occs.size());
-  for (int64_t i = 0; i < occsNum; i++) {
-    for (int64_t j = i - 1; j >= 0; j--) {
-      auto *occ1 = occs[j];
-      auto *occ2 = occs[i];
-      generateProcessingOrders(occ1, occ2, isUseless);
-    }
-  }
-}
-
-void IRTranslator::generateProcessingOrders(
-    const llvm::SmallVector<Occurrence *> &occs1,
-    const llvm::SmallVector<Occurrence *> &occs2, bool isUseless) {
-  for (auto *occ2 : occs2) {
-    for (auto *occ1 : llvm::reverse(occs1)) {
-      generateProcessingOrders(occ1, occ2, isUseless);
-    }
-  }
-}
-
-void IRTranslator::generateProcessingOrders(Scope *scopeOp, Occurrence *occ,
-                                            bool isUseless) {
-  assert(scopeOp != nullptr && occ != nullptr);
-  assert(occ->op == scopeOp);
-  generateProcessingOrders(occ->childOccs, isUseless);
-}
-
-void IRTranslator::generateProcessingOrders(Loop *loopOp, Occurrence *occ,
-                                            bool isUseless) {
-  assert(loopOp != nullptr && occ != nullptr);
-  assert(occ->op == loopOp);
-  assert(occ->loopSplitIndex != -1);
-  int64_t childNum = static_cast<int64_t>(occ->childOccs.size());
-  assert(childNum % 2 == 0);
-  assert(childNum == 2 || childNum == 4);
-  SmallVector<Occurrence *> firstLoopIteration(
-      occ->childOccs.begin(), occ->childOccs.begin() + childNum / 2);
-  SmallVector<Occurrence *> secondLoopIteration(
-      occ->childOccs.begin() + childNum / 2, occ->childOccs.end());
-  generateProcessingOrders(firstLoopIteration, isUseless);
-  generateProcessingOrders(secondLoopIteration, true);
-  for (auto *scopeOcc2 : secondLoopIteration) {
-    for (auto *scopeOcc1 : llvm::reverse(firstLoopIteration)) {
-      generateProcessingOrders(scopeOcc1->childOccs, scopeOcc2->childOccs,
-                               isUseless);
-    }
-  }
-}
-
-void IRTranslator::generateProcessingOrders(RWOperation *rwOp1,
-                                            RWOperation *rwOp2,
-                                            Occurrence *occ1, Occurrence *occ2,
-                                            bool isUseless) {
-  assert(rwOp1 != nullptr && occ1 != nullptr);
-  assert(rwOp2 != nullptr && occ2 != nullptr);
-  assert(occ1->op == rwOp1);
-  assert(occ2->op == rwOp2);
-  ProcessingOrder processingOrder(occ1, occ2, rwOp1, rwOp2, isUseless);
-  processingOrders.push_back(processingOrder);
-}
-
 // Build the linearized sync IR (syncIr) and record occurrence ranges for
 // analysis.
 void IRTranslator::syncIrBuilder(OperationBase *op, Occurrence *parentOcc,
@@ -1036,8 +930,9 @@ void IRTranslator::syncIrBuilder(OperationBase *op, Occurrence *parentOcc,
   }
 
   int startIndex = globalIndex++;
-  auto occ = std::make_unique<Occurrence>(op, parentOcc, depth, startIndex, -1);
-  occ->syncIrIndex = static_cast<int>(syncIr.size());
+  int syncIrIndex = static_cast<int>(syncIr.size());
+  auto occ = std::make_unique<Occurrence>(op, parentOcc, depth, syncIrIndex,
+                                          startIndex, /*endIdx=*/-1);
   if (auto *rwOp = dyn_cast<RWOperation>(op)) {
     occ->hasUnitFlagFeat = rwOp->hasUnitFlagFeat;
   }
@@ -1056,15 +951,14 @@ void IRTranslator::syncIrBuilder(OperationBase *op, Occurrence *parentOcc,
     for (auto &op : loopOp->body) {
       syncIrBuilder(op.get(), occPtr, depth + 1, true);
     }
-    generateProcessingOrders(loopOp, occPtr, isUseless);
   } else if (auto *scopeOp = dyn_cast<Scope>(op)) {
     for (auto &op : scopeOp->body) {
       syncIrBuilder(op.get(), occPtr, depth + 1, isUseless);
     }
-    generateProcessingOrders(scopeOp, occPtr, isUseless);
   }
 
   int endIndex = globalIndex++;
   occPtr->endIndex = endIndex;
   occPtr->syncIrEndIndex = static_cast<int>(syncIr.size());
+  occPtr->initMemInfoTree();
 }

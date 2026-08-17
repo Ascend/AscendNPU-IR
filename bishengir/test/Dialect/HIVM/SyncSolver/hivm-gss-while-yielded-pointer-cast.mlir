@@ -1,4 +1,5 @@
-// RUN: bishengir-opt -hivm-graph-sync-solver -split-input-file %s | FileCheck %s
+// RUN: bishengir-opt -hivm-graph-sync-solver=solver-version=v1 -split-input-file %s | FileCheck %s
+// RUN: bishengir-opt -hivm-graph-sync-solver=solver-version=v2 -split-input-file %s | FileCheck %s
 
 // A pointer_cast result that is loop-carried and yielded by an scf.while used
 // to abort getParentLoop (WhileOp::getLoopResults() is std::nullopt). The

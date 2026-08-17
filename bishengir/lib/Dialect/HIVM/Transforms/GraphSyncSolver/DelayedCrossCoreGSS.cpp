@@ -740,6 +740,7 @@ void DelayedCrossCoreGSSPass::crossCoreGssRunOnOperation(
   if (this->blockAllSync) {
     options.enableBlockAllMode = true;
   }
+  options.solverVersion = parseSyncSolverVersion(this->solverVersion);
 
   // Build the synthetic mix IR (consuming cube and vector translators in the
   // process) and hand its translators off so we can talk to live IR later.
@@ -814,7 +815,7 @@ void DelayedCrossCoreGSSPass::crossCoreGssRunOnOperation(
     }
   };
 
-  auto mixSolver = std::make_unique<Solver>(std::move(mixIRTranslator));
+  auto mixSolver = createSolver(std::move(mixIRTranslator));
 
   DEBUG_WITH_TYPE("gss-print-unrolled-sync-ir", {
     for (auto &occ : mixSolver->syncIr) {

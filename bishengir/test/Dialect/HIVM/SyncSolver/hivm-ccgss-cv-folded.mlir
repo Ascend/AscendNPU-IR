@@ -1,4 +1,5 @@
-// RUN: bishengir-opt -pass-pipeline="builtin.module(func.func(hivm-cross-core-gss{force-is-reg-based=true}))" -split-input-file -verify-diagnostics %s | FileCheck %s
+// RUN: bishengir-opt -pass-pipeline="builtin.module(func.func(hivm-cross-core-gss{solver-version=v1 force-is-reg-based=true}))" -split-input-file -verify-diagnostics %s | FileCheck %s
+// RUN: bishengir-opt -pass-pipeline="builtin.module(func.func(hivm-cross-core-gss{solver-version=v2 force-is-reg-based=true}))" -split-input-file -verify-diagnostics %s | FileCheck %s
 
 // Regression for cv-pipelining when the outer cv-unrolled (K) loop is folded
 // away (e.g. its trip count is 1). The producer (VECTOR) and consumer (CUBE)
@@ -12,38 +13,6 @@
 // exactly `loopCount` (3) sets/waits per id and keep both ids.
 
 // CHECK-LABEL: func.func @dot_scale_kernel_2D
-
-// Preamble: WAR buffer-free init. Two distinct ids (0 and 1) prove multi-id is
-// kept; each id repeats exactly the loop trip count (3), not the depth (4).
-// CHECK:      hivm.hir.sync_block_set[<CUBE>, <PIPE_MTE2>, <PIPE_MTE3>] flag = 0
-// CHECK-NEXT: hivm.hir.sync_block_set[<CUBE>, <PIPE_MTE2>, <PIPE_MTE3>] flag = 0
-// CHECK-NEXT: hivm.hir.sync_block_set[<CUBE>, <PIPE_MTE2>, <PIPE_MTE3>] flag = 0
-// CHECK-NEXT: hivm.hir.sync_block_set[<CUBE>, <PIPE_MTE2>, <PIPE_MTE3>] flag = 1
-// CHECK-NEXT: hivm.hir.sync_block_set[<CUBE>, <PIPE_MTE2>, <PIPE_MTE3>] flag = 1
-// CHECK-NEXT: hivm.hir.sync_block_set[<CUBE>, <PIPE_MTE2>, <PIPE_MTE3>] flag = 1
-// CHECK-NEXT: scf.for
-
-// Producer (VECTOR) loop: each store waits on its own buffer-free id (1 then 0)
-// before reusing the slot, then signals data-ready (RAW) on PIPE_MTE3.
-// CHECK:      hivm.hir.sync_block_wait[<VECTOR>, <PIPE_MTE2>, <PIPE_MTE3>] flag = 1
-// CHECK-NEXT: hivm.hir.store
-// CHECK:      hivm.hir.sync_block_set[<VECTOR>, <PIPE_MTE3>, <PIPE_MTE2>] flag = 3
-// CHECK:      hivm.hir.sync_block_wait[<VECTOR>, <PIPE_MTE2>, <PIPE_MTE3>] flag = 0
-// CHECK-NEXT: hivm.hir.store
-// CHECK:      hivm.hir.sync_block_set[<VECTOR>, <PIPE_MTE3>, <PIPE_MTE2>] flag = 2
-
-// Consumer (CUBE) loop: after consuming, frees the slot back with matching
-// distinct ids (1 then 0).
-// CHECK:      hivm.hir.sync_block_set[<CUBE>, <PIPE_MTE2>, <PIPE_MTE3>] flag = 1
-// CHECK:      hivm.hir.sync_block_set[<CUBE>, <PIPE_MTE2>, <PIPE_MTE3>] flag = 0
-
-// Epilogue: drain the buffer-free waits, again two ids each repeated 3x.
-// CHECK:      hivm.hir.sync_block_wait[<VECTOR>, <PIPE_MTE2>, <PIPE_MTE3>] flag = 0
-// CHECK-NEXT: hivm.hir.sync_block_wait[<VECTOR>, <PIPE_MTE2>, <PIPE_MTE3>] flag = 0
-// CHECK-NEXT: hivm.hir.sync_block_wait[<VECTOR>, <PIPE_MTE2>, <PIPE_MTE3>] flag = 0
-// CHECK-NEXT: hivm.hir.sync_block_wait[<VECTOR>, <PIPE_MTE2>, <PIPE_MTE3>] flag = 1
-// CHECK-NEXT: hivm.hir.sync_block_wait[<VECTOR>, <PIPE_MTE2>, <PIPE_MTE3>] flag = 1
-// CHECK-NEXT: hivm.hir.sync_block_wait[<VECTOR>, <PIPE_MTE2>, <PIPE_MTE3>] flag = 1
 module {
   func.func @dot_scale_kernel_2D(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg2: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg4: i32 {tt.divisibility = 16 : i32}, %arg5: memref<?xi8> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg6: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg7: i32, %arg8: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg9: i32, %arg10: i32, %arg11: i32, %arg12: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, func_dyn_memref_args = dense<[false, true, true, true, false, true, true, false, true, false, false, false, false]> : vector<13xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix", parallel_mode = "simd"} {
     hivm.hir.set_ffts_base_addr %arg0
@@ -68,6 +37,13 @@ module {
     annotation.mark %1 {logical_block_num} : i32
     %2 = hivm.hir.get_block_idx -> i64
     %3 = arith.trunci %2 : i64 to i32
+    // CHECK:      hivm.hir.sync_block_set[<CUBE>, <PIPE_MTE2>, <PIPE_MTE3>] flag = 0
+    // CHECK-NEXT: hivm.hir.sync_block_set[<CUBE>, <PIPE_MTE2>, <PIPE_MTE3>] flag = 0
+    // CHECK-NEXT: hivm.hir.sync_block_set[<CUBE>, <PIPE_MTE2>, <PIPE_MTE3>] flag = 0
+    // CHECK-NEXT: hivm.hir.sync_block_set[<CUBE>, <PIPE_MTE2>, <PIPE_MTE3>] flag = 1
+    // CHECK-NEXT: hivm.hir.sync_block_set[<CUBE>, <PIPE_MTE2>, <PIPE_MTE3>] flag = 1
+    // CHECK-NEXT: hivm.hir.sync_block_set[<CUBE>, <PIPE_MTE2>, <PIPE_MTE3>] flag = 1
+    // CHECK-NEXT: scf.for
     scf.for %arg13 = %3 to %1 step %c20_i32  : i32 {
       hivm.hir.set_mask_norm
       %4 = arith.divsi %arg13, %arg12 : i32
@@ -134,10 +110,16 @@ module {
         %67 = hivm.hir.vmul {vector_producer_to_fuse_0} ins(%38, %66 : tensor<16x32xf16>, tensor<16x32xf16>) outs(%42 : tensor<16x32xf16>) -> tensor<16x32xf16>
         %subview_7 = memref.subview %12[%arg14, 0, 0] [1, 16, 32] [1, 1, 1] : memref<4x16x32xf16> to memref<1x16x32xf16, strided<[512, 32, 1], offset: ?>>
         %collapse_shape = memref.collapse_shape %subview_7 [[0, 1], [2]] : memref<1x16x32xf16, strided<[512, 32, 1], offset: ?>> into memref<16x32xf16, strided<[32, 1], offset: ?>>
+        // CHECK:      hivm.hir.sync_block_wait[<VECTOR>, <PIPE_MTE2>, <PIPE_MTE3>] flag = [[EVENT0:[0-9]+]]
+        // CHECK-NEXT: hivm.hir.store
         hivm.hir.store ins(%67 : tensor<16x32xf16>) outs(%collapse_shape : memref<16x32xf16, strided<[32, 1], offset: ?>>) {hivm.tcore_type = #hivm.tcore_type<VECTOR>, op_to_tile_0_0}
+        // CHECK:      hivm.hir.sync_block_set[<VECTOR>, <PIPE_MTE3>, <PIPE_MTE2>] flag = [[EVENT1:[0-9]+]]
         %subview_8 = memref.subview %13[%arg14, 0, 0] [1, 16, 32] [1, 1, 1] : memref<4x16x32xf16> to memref<1x16x32xf16, strided<[512, 32, 1], offset: ?>>
         %collapse_shape_9 = memref.collapse_shape %subview_8 [[0, 1], [2]] : memref<1x16x32xf16, strided<[512, 32, 1], offset: ?>> into memref<16x32xf16, strided<[32, 1], offset: ?>>
+        // CHECK:      hivm.hir.sync_block_wait[<VECTOR>, <PIPE_MTE2>, <PIPE_MTE3>] flag = [[EVENT2:[0-9]+]]
+        // CHECK-NEXT: hivm.hir.store
         hivm.hir.store ins(%67 : tensor<16x32xf16>) outs(%collapse_shape_9 : memref<16x32xf16, strided<[32, 1], offset: ?>>) {hivm.tcore_type = #hivm.tcore_type<VECTOR>, op_to_tile_0_1}
+        // CHECK:      hivm.hir.sync_block_set[<VECTOR>, <PIPE_MTE3>, <PIPE_MTE2>] flag = [[EVENT3:[0-9]+]]
       } {cv_pipeline_idx = 1 : i64, hivm.loop_core_type = #hivm.tcore_type<VECTOR>, multibuffer_unroll_factor = 4 : i32}
       %14 = bufferization.to_tensor %13 restrict : memref<4x16x32xf16>
       %15 = bufferization.to_tensor %12 restrict : memref<4x16x32xf16>
@@ -163,9 +145,15 @@ module {
         %40 = bufferization.to_tensor %alloc restrict writable : memref<32x16xf16>
         %41 = tensor.empty() : tensor<16x32xf16>
         %extracted_slice_3 = tensor.extract_slice %15[%arg14, 0, 0] [1, 16, 32] [1, 1, 1] {hivm.tcore_type = #hivm.tcore_type<CUBE>} : tensor<4x16x32xf16> to tensor<16x32xf16>
+        // CHECK:      hivm.hir.sync_block_wait[<CUBE>, <PIPE_MTE3>, <PIPE_MTE2>] flag = [[EVENT1]]
+        // CHECK-NEXT: hivm.hir.load
         %42 = hivm.hir.load ins(%extracted_slice_3 : tensor<16x32xf16>) outs(%41 : tensor<16x32xf16>) {hivm.tcore_type = #hivm.tcore_type<CUBE>, "inserted-load"} init_out_buffer = false may_implicit_transpose_with_last_axis = false core_type = <CUBE> -> tensor<16x32xf16>
+        // CHECK:      hivm.hir.sync_block_set[<CUBE>, <PIPE_MTE2>, <PIPE_MTE3>] flag = [[EVENT0]]
         %extracted_slice_4 = tensor.extract_slice %14[%arg14, 0, 0] [1, 16, 32] [1, 1, 1] {hivm.tcore_type = #hivm.tcore_type<CUBE>} : tensor<4x16x32xf16> to tensor<16x32xf16>
+        // CHECK:      hivm.hir.sync_block_wait[<CUBE>, <PIPE_MTE3>, <PIPE_MTE2>] flag = [[EVENT3]]
+        // CHECK-NEXT: hivm.hir.load
         %43 = hivm.hir.load ins(%extracted_slice_4 : tensor<16x32xf16>) outs(%41 : tensor<16x32xf16>) {hivm.tcore_type = #hivm.tcore_type<CUBE>, "inserted-load"} init_out_buffer = false may_implicit_transpose_with_last_axis = false core_type = <CUBE> -> tensor<16x32xf16>
+        // CHECK:      hivm.hir.sync_block_set[<CUBE>, <PIPE_MTE2>, <PIPE_MTE3>] flag = [[EVENT2]]
         %44 = arith.cmpi eq, %28, %c0_i32 : i32
         %45 = hivm.hir.mmadL1 ins(%42, %40, %44, %c16, %c32, %37 : tensor<16x32xf16>, tensor<32x16xf16>, i1, index, index, index) outs(%arg15 : tensor<16x16xf32>) -> tensor<16x16xf32>
         %46 = hivm.hir.mmadL1 {fixpipe_already_inserted = true} ins(%43, %40, %false, %c16, %c32, %37 : tensor<16x32xf16>, tensor<32x16xf16>, i1, index, index, index) outs(%45 : tensor<16x16xf32>) -> tensor<16x16xf32>
@@ -186,6 +174,13 @@ module {
       %subview = memref.subview %reinterpret_cast[0, 0] [%25, %26] [1, 1] : memref<16x16xf16, strided<[?, 1], offset: ?>> to memref<?x?xf16, strided<[?, 1], offset: ?>>
       hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%extracted_slice : tensor<?x?xf32>) outs(%subview : memref<?x?xf16, strided<[?, 1], offset: ?>>)
     } {cv_unrolled_loop, autoblockify.subloop}
+    // CHECK:      hivm.hir.sync_block_wait[<VECTOR>, <PIPE_MTE2>, <PIPE_MTE3>] flag = 0
+    // CHECK-NEXT: hivm.hir.sync_block_wait[<VECTOR>, <PIPE_MTE2>, <PIPE_MTE3>] flag = 0
+    // CHECK-NEXT: hivm.hir.sync_block_wait[<VECTOR>, <PIPE_MTE2>, <PIPE_MTE3>] flag = 0
+    // CHECK-NEXT: hivm.hir.sync_block_wait[<VECTOR>, <PIPE_MTE2>, <PIPE_MTE3>] flag = 1
+    // CHECK-NEXT: hivm.hir.sync_block_wait[<VECTOR>, <PIPE_MTE2>, <PIPE_MTE3>] flag = 1
+    // CHECK-NEXT: hivm.hir.sync_block_wait[<VECTOR>, <PIPE_MTE2>, <PIPE_MTE3>] flag = 1
+    // CHECK-NEXT: return
     return
   }
 }

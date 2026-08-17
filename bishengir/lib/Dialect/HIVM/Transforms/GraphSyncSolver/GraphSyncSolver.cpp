@@ -54,7 +54,11 @@ void GraphSyncSolverPass::runOnOperation() {
   if (this->enableTesterMode) {
     auto testerOptions = SmallVector<int64_t>(this->syncTesterOptions.begin(),
                                               this->syncTesterOptions.end());
-    SyncTester::runTestMode(testerOptions);
+    SyncSolverOptions solverOptions(SyncMode::INTRA_CORE_SYNC,
+                                    /*isMemBasedArch=*/false,
+                                    /*isRegBasedArch=*/false);
+    solverOptions.solverVersion = parseSyncSolverVersion(this->solverVersion);
+    SyncTester::runTestMode(testerOptions, solverOptions);
     return;
   }
 
@@ -78,6 +82,7 @@ void GraphSyncSolverPass::runOnOperation() {
       this->ignoreWorkSpaceFunctionArguments;
   options.enableSubviewConflictRefinement =
       this->enableSubviewConflictRefinement;
+  options.solverVersion = parseSyncSolverVersion(this->solverVersion);
 
   auto irTranslator = std::make_unique<IRTranslator>(funcOp, options);
 
@@ -85,14 +90,11 @@ void GraphSyncSolverPass::runOnOperation() {
     llvm::dbgs() << "before:\n" << irTranslator->funcIr->str(0, true) << '\n';
   });
 
-  auto solver = std::make_unique<Solver>(std::move(irTranslator));
+  auto solver = createSolver(std::move(irTranslator));
 
   DEBUG_WITH_TYPE("gss-print-unrolled-sync-ir", {
     for (auto &occ : solver->syncIr) {
-      llvm::dbgs() << std::string(occ->depth, ' ') << occ->op->id << ' '
-                   << occ->syncIrIndex << ' ' << occ->startIndex << ' '
-                   << occ->endIndex << '\n';
-      llvm::dbgs() << occ->op->str(occ->depth, false) << '\n';
+      llvm::dbgs() << occ->str() << '\n';
     }
   });
 
@@ -102,18 +104,24 @@ void GraphSyncSolverPass::runOnOperation() {
   }
 
   solver->solve();
+  DEBUG_WITH_TYPE("hivm-gss-profile", { solver->perfInfo.print(); });
 
   if (solver->hasCustomMacroEventIdConflict()) {
     funcOp.emitError() << solver->getCustomMacroEventIdConflictMsg();
     return signalPassFailure();
   }
 
-  CodeGenerator codeGen(std::move(solver));
-  codeGen.generateResultOps();
+  auto codeGen = std::make_unique<CodeGenerator>(std::move(solver));
+  codeGen->generateResultOps();
 
   LLVM_DEBUG({
-    codeGen.generateFuncIrResultOps();
-    llvm::dbgs() << "after:\n" << codeGen.funcIr->str(0, true) << '\n';
+    codeGen->generateFuncIrResultOps();
+    llvm::dbgs() << "after:\n" << codeGen->funcIr->str(0, true) << '\n';
+  });
+  DEBUG_WITH_TYPE("gss-print-unrolled-sync-ir", {
+    for (auto &occ : codeGen->syncIr) {
+      llvm::dbgs() << occ->str() << '\n';
+    }
   });
 }
 

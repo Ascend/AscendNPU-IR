@@ -1,4 +1,5 @@
-// RUN: bishengir-opt -hivm-graph-sync-solver -split-input-file %s | FileCheck %s
+// RUN: bishengir-opt -hivm-graph-sync-solver=solver-version=v1 -split-input-file %s | FileCheck %s
+// RUN: bishengir-opt -hivm-graph-sync-solver=solver-version=v2 -split-input-file %s | FileCheck %s
 
 // Double-buffered load/store in the inner loop of a nest: the multibuffer
 // rotation loop is the inner loop (the direct parent of both the load and the

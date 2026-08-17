@@ -1,4 +1,5 @@
-// RUN: bishengir-opt -pass-pipeline="builtin.module(func.func(hivm-cross-core-gss{always-use-pipe-s=true use-different-multibuffer-flag-ids=true}))" -split-input-file -verify-diagnostics %s | FileCheck %s
+// RUN: bishengir-opt -pass-pipeline="builtin.module(func.func(hivm-cross-core-gss{solver-version=v1 always-use-pipe-s=true use-different-multibuffer-flag-ids=true}))" -split-input-file -verify-diagnostics %s | FileCheck %s
+// RUN: bishengir-opt -pass-pipeline="builtin.module(func.func(hivm-cross-core-gss{solver-version=v2 always-use-pipe-s=true use-different-multibuffer-flag-ids=true}))" -split-input-file -verify-diagnostics %s | FileCheck %s
 
 #map = affine_map<()[s0] -> (s0 * 64)>
 #map1 = affine_map<()[s0, s1] -> (s0 + s1)>

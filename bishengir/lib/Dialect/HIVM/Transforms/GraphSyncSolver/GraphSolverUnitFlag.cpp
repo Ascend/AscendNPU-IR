@@ -1,4 +1,4 @@
-//===----------- GraphSolver.cpp ---- Graph Sync Solver -------------------===//
+//===------ GraphSolverUnitFlag.cpp ---- Graph Sync Solver ----------------===//
 //
 // Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,7 +29,7 @@
 using namespace mlir;
 using namespace hivm::syncsolver;
 
-void GraphSolver::clearAdjList(bool isTemp) {
+void GraphSolverUnitFlag::clearAdjList(bool isTemp) {
   if (isTemp) {
     tempAdjacencyList.clear();
   } else {
@@ -37,9 +37,11 @@ void GraphSolver::clearAdjList(bool isTemp) {
   }
 }
 
-void GraphSolver::insertEdge(CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst,
-                             ConflictPair *conflictPair, bool isTemp) {
-  Edge edge(conflictPair->startIndex, conflictPair->endIndex);
+void GraphSolverUnitFlag::insertEdge(CorePipeInfo corePipeSrc,
+                                     CorePipeInfo corePipeDst,
+                                     ConflictPair *conflictPair, bool isTemp) {
+  Edge edge(conflictPair->startIndex, conflictPair->endIndex,
+            conflictPair->replacedWithUnitFlag, conflictPair);
   if (isTemp) {
     tempAdjacencyList[corePipeSrc][corePipeDst].emplace_back(std::move(edge));
   } else {
@@ -47,9 +49,11 @@ void GraphSolver::insertEdge(CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst,
   }
 }
 
-void GraphSolver::eraseEdge(CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst,
-                            ConflictPair *conflictPair, bool isTemp) {
-  Edge edge(conflictPair->startIndex, conflictPair->endIndex);
+void GraphSolverUnitFlag::eraseEdge(CorePipeInfo corePipeSrc,
+                                    CorePipeInfo corePipeDst,
+                                    ConflictPair *conflictPair, bool isTemp) {
+  Edge edge(conflictPair->startIndex, conflictPair->endIndex,
+            conflictPair->replacedWithUnitFlag, conflictPair);
   if (isTemp) {
     auto it = llvm::find(tempAdjacencyList[corePipeSrc][corePipeDst], edge);
     assert(it != tempAdjacencyList[corePipeSrc][corePipeDst].end());
@@ -65,46 +69,45 @@ void GraphSolver::eraseEdge(CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst,
   }
 }
 
-std::optional<int> GraphSolver::runDijkstra(CorePipeInfo corePipeSrc,
-                                            CorePipeInfo corePipeDst,
-                                            int startIndex, int endIndex,
-                                            Occurrence *occ1,
-                                            Occurrence *occ2) {
-  (void)occ1;
-  (void)occ2;
-  llvm::DenseMap<CorePipeInfo, int> distance;
+std::optional<int> GraphSolverUnitFlag::runDijkstra(
+    CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst, int startIndex,
+    int endIndex, Occurrence *occ1, Occurrence *occ2) {
+  using DistKey = std::tuple<int, int, CorePipeInfo>;
   struct QueElement {
     int index{-1};
-    CorePipeInfo corePipe;
-    QueElement(int index, CorePipeInfo corePipe)
-        : index(index), corePipe(corePipe) {}
+    DistKey distKey;
+    QueElement(int index, const DistKey &distKey)
+        : index(index), distKey(distKey) {}
     bool operator>(const QueElement &other) const {
       return index > other.index;
     }
   };
+
+  llvm::DenseMap<DistKey, int> distance;
   std::priority_queue<QueElement, std::vector<QueElement>,
                       std::greater<QueElement>>
       que;
-  que.emplace(QueElement(startIndex, corePipeSrc));
-
+  que.emplace(QueElement(startIndex, DistKey(false, false, corePipeSrc)));
   LLVM_DEBUG(llvm::dbgs() << "dij-start-end-indices: " << startIndex << ' '
                           << endIndex << '\n');
 
   while (!que.empty()) {
     auto curElement = que.top();
     auto curIndex = curElement.index;
-    auto curCorePipe = curElement.corePipe;
+    auto curDistKey = curElement.distKey;
+    auto [curIsUnitFlag, curIsOccDst, curCorePipe] = curDistKey;
     que.pop();
 
     LLVM_DEBUG(llvm::dbgs() << "dij-step: " << curCorePipe.coreType << ' '
-                            << curCorePipe.pipe << ' ' << curIndex << '\n');
+                            << curCorePipe.pipe << ' ' << curIsUnitFlag << ' '
+                            << curIsOccDst << ' ' << curIndex << '\n');
 
-    auto curDistIt = distance.find(curCorePipe);
+    auto curDistIt = distance.find(curDistKey);
     if (curDistIt != distance.end()) {
       if (curDistIt->second < curIndex) {
         continue;
       }
-      if (curCorePipe == corePipeDst) {
+      if (curCorePipe == corePipeDst && !(curIsUnitFlag && !curIsOccDst)) {
         return curIndex;
       }
     }
@@ -134,11 +137,18 @@ std::optional<int> GraphSolver::runDijkstra(CorePipeInfo corePipeSrc,
           if (edge.startIndex < curIndex || edge.endIndex > endIndex) {
             continue;
           }
-          auto [nextIt, isInserted] =
-              distance.insert({endCorePipe, edge.endIndex});
+          if (edge.isUnitFlag) {
+            if (curIndex == startIndex && edge.startIndex != startIndex) {
+              continue;
+            }
+          }
+          assert(edge.conflictPair != nullptr);
+          DistKey nextKey(edge.isUnitFlag, (edge.conflictPair->waitOcc == occ2),
+                          endCorePipe);
+          auto [nextIt, isInserted] = distance.insert({nextKey, edge.endIndex});
           if (isInserted || (nextIt->second > edge.endIndex)) {
             nextIt->second = edge.endIndex;
-            que.emplace(QueElement(edge.endIndex, endCorePipe));
+            que.emplace(QueElement(edge.endIndex, nextKey));
           }
         }
       }
@@ -149,5 +159,24 @@ std::optional<int> GraphSolver::runDijkstra(CorePipeInfo corePipeSrc,
     }
   }
 
-  return {};
+  std::optional<int> retDist;
+  if (auto it = distance.find(
+          DistKey(/*isUnitFlag=*/false, /*isOccDst=*/false, corePipeDst));
+      it != distance.end()) {
+    retDist = retDist.has_value() ? std::min(retDist.value(), it->second)
+                                  : it->second;
+  }
+  if (auto it = distance.find(
+          DistKey(/*isUnitFlag=*/false, /*isOccDst=*/true, corePipeDst));
+      it != distance.end()) {
+    retDist = retDist.has_value() ? std::min(retDist.value(), it->second)
+                                  : it->second;
+  }
+  if (auto it = distance.find(
+          DistKey(/*isUnitFlag=*/true, /*isOccDst=*/true, corePipeDst));
+      it != distance.end()) {
+    retDist = retDist.has_value() ? std::min(retDist.value(), it->second)
+                                  : it->second;
+  }
+  return retDist;
 }

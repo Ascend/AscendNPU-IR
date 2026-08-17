@@ -16,9 +16,32 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HIVM/Transforms/UnitFlagInfoBase.h"
+#include "llvm/Support/raw_ostream.h"
+#include <string>
 
 using namespace mlir;
 using namespace mlir::hivm;
+
+std::string UnitFlagInfoBase::str() const {
+  std::string unitFlag;
+  if (!disabledAsSet()) {
+    std::string iteratorsStr;
+    llvm::raw_string_ostream ss(iteratorsStr);
+    ss << "unitFlagAsSet(";
+    llvm::interleaveComma(getUnitFlagModesAsSet(/*compress=*/true), ss);
+    ss << ")";
+    unitFlag += ss.str();
+  }
+  if (!disabledAsWait()) {
+    std::string iteratorsStr;
+    llvm::raw_string_ostream ss(iteratorsStr);
+    ss << "unitFlagAsWait(";
+    llvm::interleaveComma(getUnitFlagModesAsWait(/*compress=*/true), ss);
+    ss << ")";
+    unitFlag += (!unitFlag.empty() ? " " : "") + ss.str();
+  }
+  return unitFlag;
+}
 
 std::optional<std::pair<SmallVector<UNIT_FLAG>, SmallVector<mlir::Value>>>
 UnitFlagInfoBase::getUnitFlagLoopAwareArgs(Operation *op,

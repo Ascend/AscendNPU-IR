@@ -23,8 +23,11 @@
 #include "mlir/IR/AsmState.h"
 #include "mlir/IR/SymbolTable.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 #include <string>
+
+#define DEBUG_TYPE "hivm-gss-ir"
 
 using namespace mlir;
 using namespace hivm::syncsolver;
@@ -32,6 +35,16 @@ using namespace hivm::syncsolver;
 namespace mlir::hivm::syncsolver {
 
 int OperationBase::globalIndex = 0;
+
+namespace {
+
+std::string getDebugOpIdSuffix(int id) {
+  std::string suffix;
+  LLVM_DEBUG(suffix = std::to_string(id););
+  return suffix;
+}
+
+} // namespace
 
 // Map OpType enum to human-readable strings for debugging output.
 std::string getOpTypeStr(OpType opType) {
@@ -199,7 +212,7 @@ std::string PlaceHolder::str(int indent, bool recursive) const {
       (op != nullptr
            ? op2str(op)
            : llvm::convertToCamelFromSnakeCase(getOpTypeStr(this->opType))) +
-      std::to_string(this->id);
+      getDebugOpIdSuffix(this->id);
   return std::string(indent, ' ') + opStr;
 }
 
@@ -207,7 +220,7 @@ std::string Anchor::str(int indent, bool recursive) const {
   std::string ret =
       std::string(indent, ' ') +
       llvm::convertToCamelFromSnakeCase(getOpTypeStr(this->opType)) +
-      std::to_string(this->id);
+      getDebugOpIdSuffix(this->id);
   ret += " (anchor-id=" + std::to_string(this->anchorId) + ")";
   return ret;
 }
@@ -216,7 +229,7 @@ std::string Scope::str(int indent, bool recursive) const {
   std::string ret =
       std::string(indent, ' ') +
       llvm::convertToCamelFromSnakeCase(getOpTypeStr(this->opType)) +
-      std::to_string(this->id);
+      getDebugOpIdSuffix(this->id);
   if (maxPreloadNum.has_value()) {
     ret += " max-preload-num=" + std::to_string(maxPreloadNum.value());
   }
@@ -237,7 +250,7 @@ std::string Loop::str(int indent, bool recursive) const {
   std::string ret =
       std::string(indent, ' ') +
       llvm::convertToCamelFromSnakeCase(getOpTypeStr(this->opType)) +
-      std::to_string(this->id);
+      getDebugOpIdSuffix(this->id);
   if (isParallel) {
     ret += " parallel-loop";
   }
@@ -262,7 +275,7 @@ std::string Condition::str(int indent, bool recursive) const {
   std::string ret =
       std::string(indent, ' ') +
       llvm::convertToCamelFromSnakeCase(getOpTypeStr(this->opType)) +
-      std::to_string(this->id);
+      getDebugOpIdSuffix(this->id);
   if (isUnlikely) {
     ret += " unlikely-cond";
   }
@@ -287,7 +300,7 @@ std::string RWOperation::str(int indent, bool recursive) const {
       (op != nullptr
            ? op2str(op)
            : llvm::convertToCamelFromSnakeCase(getOpTypeStr(this->opType))) +
-      std::to_string(this->id);
+      getDebugOpIdSuffix(this->id);
   std::string coreTypeStr;
   if (coreType != hivm::TCoreType::CUBE_OR_VECTOR) {
     coreTypeStr = "[<" + stringifyTCoreType(coreType).str() + ">]";
@@ -299,27 +312,8 @@ std::string RWOperation::str(int indent, bool recursive) const {
   } else {
     pipesStr = "[<" + stringifyPIPE(this->pipeRead).str() + ">]";
   }
-  std::string unitFlag;
-  if (!mergedUnitFlagInfo.disabledAsSet()) {
-    std::string iteratorsStr;
-    llvm::raw_string_ostream ss(iteratorsStr);
-    ss << "unitFlagAsSet(";
-    llvm::interleaveComma(
-        mergedUnitFlagInfo.getUnitFlagModesAsSet(/*compress=*/true), ss);
-    ss << ")";
-    unitFlag += ss.str();
-  }
-  if (!mergedUnitFlagInfo.disabledAsWait()) {
-    std::string iteratorsStr;
-    llvm::raw_string_ostream ss(iteratorsStr);
-    ss << "unitFlagAsWait(";
-    llvm::interleaveComma(
-        mergedUnitFlagInfo.getUnitFlagModesAsWait(/*compress=*/true), ss);
-    ss << ")";
-    unitFlag += (!unitFlag.empty() ? " " : "") + ss.str();
-  }
   ret += std::string(indent, ' ') + opStr + " " + coreTypeStr + " " + pipesStr +
-         " " + unitFlag + "\n";
+         " " + mergedUnitFlagInfo.str() + "\n";
   if (indent) {
     for (auto memInfo : this->readMemInfo) {
       ret += std::string(indent + 2, ' ') + "read: " + memInfo.str() + "\n";
@@ -336,7 +330,7 @@ std::string SetFlagOp::str(int indent, bool recursive) const {
   std::string ret;
   ret += std::string(indent, ' ') +
          llvm::convertToCamelFromSnakeCase(getOpTypeStr(this->opType)) +
-         std::to_string(this->id);
+         getDebugOpIdSuffix(this->id);
   if (this->debugId.has_value()) {
     ret += " [" + std::to_string(this->debugId.value()) + "]";
   }
@@ -367,7 +361,7 @@ std::string WaitFlagOp::str(int indent, bool recursive) const {
   std::string ret;
   ret += std::string(indent, ' ') +
          llvm::convertToCamelFromSnakeCase(getOpTypeStr(this->opType)) +
-         std::to_string(this->id);
+         getDebugOpIdSuffix(this->id);
   if (this->debugId.has_value()) {
     ret += " [" + std::to_string(this->debugId.value()) + "]";
   }
@@ -398,7 +392,7 @@ std::string BarrierOp::str(int indent, bool recursive) const {
   std::string ret;
   ret += std::string(indent, ' ') +
          llvm::convertToCamelFromSnakeCase(getOpTypeStr(this->opType)) +
-         std::to_string(this->id);
+         getDebugOpIdSuffix(this->id);
   if (this->debugId.has_value()) {
     ret += " [" + std::to_string(this->debugId.value()) + "]";
   }
