@@ -558,13 +558,15 @@ module attributes {hacc.target = #hacc.target<"Ascend910B4">} {
 }
 
 // -----
-// A3: batchMmadL1 accumulating in a CCF -- `couldReuse` must accept it too.
+// A3: mem-based BatchMmadL1 is skipped by the CCF pattern (the pass only
+// sets real MKN here): no L0C reuse, no normalize_matmul_counter, no vadd.
 // CHECK-LABEL: func.func @test_a3_batchMmadL1_reuse_l0c
-// CHECK: %[[C:.*]] = hivm.hir.batchMmadL1 {already_set_real_mkn, hivm.remain_in_l0c}
-// CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32}
+// CHECK-DAG: %[[C64:.*]] = arith.constant 64 : index
+// CHECK-DAG: %[[C32:.*]] = arith.constant 32 : index
+// CHECK: %[[C:.*]] = hivm.hir.batchMmadL1 {already_set_real_mkn} ins({{.*}}, {{.*}}, %true, %[[C64]], %[[C32]], %[[C32]] : tensor<2x64x32xf16>, tensor<2x32x32xf16>, i1, index, index, index) outs(%{{.*}} : tensor<2x64x32xf32>) -> tensor<2x64x32xf32>
 // CHECK: scf.for {{.*}} iter_args(%[[ARG1:.*]] = %[[C]])
-// CHECK: hivm.hir.batchMmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
-// CHECK: } {normalized_in_L0C = [0 : i32]}
+// CHECK: hivm.hir.batchMmadL1 {already_set_real_mkn} ins({{.*}}, {{.*}}, %false, %[[C64]], %[[C32]], %[[C32]] : tensor<2x64x32xf16>, tensor<2x32x32xf16>, i1, index, index, index) outs(%[[ARG1]] : tensor<2x64x32xf32>) -> tensor<2x64x32xf32>
+// CHECK-NOT: normalize_matmul_counter
 // CHECK-NOT: hivm.hir.vadd
 // CHECK: return
 module attributes {hacc.target = #hacc.target<"Ascend910B4">} {
@@ -3186,21 +3188,18 @@ func.func @test_mmadL1_membase_keeps_vtranspose(%a: tensor<64x16xf16>, %b: tenso
 
 
 //===----------------------------------------------------------------------===//
-// A3 / mem-based (Ascend910B4): per-channel bias MUST NOT be folded into
-// MmadL1Op when A or B is transposed. The mem-based backend only registers
-// the non-transposed mma_tile BIAS symbol variants, so folding bias into a
-// transposed mmad would later lower to an undefined library call. The bias
-// is kept as a separate hivm.hir.vadd instead.
+// A3 / mem-based (Ascend910B4): per-channel bias on a transposed MmadL1Op
+// is folded into the `per_channel_bias` operand and the vbrc/vadd pair is
+// removed (normalized_init_or_bias marks the fold).
 //===----------------------------------------------------------------------===//
 
 // -----
 // CHECK-LABEL: func.func @test_madL1_perChannelAdd_b_transpose_keeps_vadd(
-// On mem-based arch with b_transpose, per-channel bias must NOT fold into
-// mmadL1 (no BIAS_TB symbol exists on 910B); the bias stays materialised as
-// a separate hivm.hir.vadd taking the mmad result and the bias broadcast.
-// CHECK: %[[BIAS:.*]] = hivm.hir.vbrc ins({{.*}} : tensor<1x768xf32>) outs({{.*}} : tensor<29x768xf32>) broadcast_dims = [0] -> tensor<29x768xf32>
-// CHECK: %[[MMAD:.*]] = hivm.hir.mmadL1 {already_set_real_mkn, b_transpose, normalized_in_L0C} ins({{.*}} : tensor<29x128xf16>, tensor<768x128xf16>, i1, index, index, index) outs({{.*}} : tensor<29x768xf32>) -> tensor<29x768xf32>
-// CHECK: %[[VADD:.*]] = hivm.hir.vadd ins(%[[MMAD]], %[[BIAS]] : tensor<29x768xf32>, tensor<29x768xf32>) outs({{.*}} : tensor<29x768xf32>) -> tensor<29x768xf32>
+// On mem-based arch with b_transpose the per-channel vbrc bias is folded into
+// the mmadL1 `per_channel_bias` operand; the vbrc and the vadd are removed.
+// CHECK: %[[MMAD:.*]] = hivm.hir.mmadL1 {already_set_real_mkn, b_transpose, normalized_in_L0C, normalized_init_or_bias} ins({{.*}} : tensor<29x128xf16>, tensor<768x128xf16>, i1, index, index, index, tensor<1x768xf32>) outs({{.*}} : tensor<29x768xf32>) -> tensor<29x768xf32>
+// CHECK-NOT: hivm.hir.vbrc
+// CHECK-NOT: hivm.hir.vadd
 module attributes {hacc.target = #hacc.target<"Ascend910B4">} {
 func.func @test_madL1_perChannelAdd_b_transpose_keeps_vadd(%arg2: memref<?xf16> , %arg3: memref<?xf16>, %arg4: memref<?xf16> , %arg5: memref<?xf32>) {
   %false = arith.constant false
@@ -3232,12 +3231,11 @@ func.func @test_madL1_perChannelAdd_b_transpose_keeps_vadd(%arg2: memref<?xf16> 
 }
 // -----
 // CHECK-LABEL: func.func @test_madL1_perChannelAdd_a_transpose_keeps_vadd(
-// On mem-based arch with a_transpose, per-channel bias must NOT fold into
-// mmadL1 (no BIAS_TA symbol exists on 910B); the bias stays materialised as
-// a separate hivm.hir.vadd taking the mmad result and the bias broadcast.
-// CHECK: %[[BIAS:.*]] = hivm.hir.vbrc ins({{.*}} : tensor<1x768xf32>) outs({{.*}} : tensor<29x768xf32>) broadcast_dims = [0] -> tensor<29x768xf32>
-// CHECK: %[[MMAD:.*]] = hivm.hir.mmadL1 {a_transpose, already_set_real_mkn, normalized_in_L0C} ins({{.*}} : tensor<128x29xf16>, tensor<128x768xf16>, i1, index, index, index) outs({{.*}} : tensor<29x768xf32>) -> tensor<29x768xf32>
-// CHECK: %[[VADD:.*]] = hivm.hir.vadd ins(%[[MMAD]], %[[BIAS]] : tensor<29x768xf32>, tensor<29x768xf32>) outs({{.*}} : tensor<29x768xf32>) -> tensor<29x768xf32>
+// On mem-based arch with a_transpose the per-channel vbrc bias is folded into
+// the mmadL1 `per_channel_bias` operand; the vbrc and the vadd are removed.
+// CHECK: %[[MMAD:.*]] = hivm.hir.mmadL1 {a_transpose, already_set_real_mkn, normalized_in_L0C, normalized_init_or_bias} ins({{.*}} : tensor<128x29xf16>, tensor<128x768xf16>, i1, index, index, index, tensor<1x768xf32>) outs({{.*}} : tensor<29x768xf32>) -> tensor<29x768xf32>
+// CHECK-NOT: hivm.hir.vbrc
+// CHECK-NOT: hivm.hir.vadd
 module attributes {hacc.target = #hacc.target<"Ascend910B4">} {
 func.func @test_madL1_perChannelAdd_a_transpose_keeps_vadd(%arg2: memref<?xf16> , %arg3: memref<?xf16>, %arg4: memref<?xf16> , %arg5: memref<?xf32>) {
   %false = arith.constant false
