@@ -360,7 +360,7 @@ struct RewriteUsingMapOp : public GenericPreprocessAndRewrite<From> {
   ~RewriteUsingMapOp() override = default;
   LogicalResult rewriteFromGeneric(FromOp op,
                                    SmallVector<Value> &&preprocessedOperands,
-                                   PatternRewriter &rewriter) const final {
+                                   PatternRewriter &rewriter) const override {
     assert(op.getDst().size() == 1);
     rewriter.replaceOpWithNewOp<linalg::MapOp>(
         op, preprocessedOperands, op.getDst()[0],
@@ -401,13 +401,53 @@ struct RewriteVBitwiseOp : public RewriteUsingMapOp<FromOp> {
   virtual Value createToOp(OpBuilder &rewriter, const Location loc, Value lhs, Value rhs, FromOp &fromOp) const = 0;
 };
 
+template <typename FromOp>
+constexpr hfusion::BinaryFn getEquivalentBitwiseFn() {
+  if constexpr (std::is_same_v<FromOp, hivm::VAndOp>) {
+    return hfusion::BinaryFn::vand;
+  } else if constexpr (std::is_same_v<FromOp, hivm::VOrOp>) {
+    return hfusion::BinaryFn::vor;
+  } else if constexpr (std::is_same_v<FromOp, hivm::VXorOp>) {
+    return hfusion::BinaryFn::vxor;
+  } else {
+    static_assert(std::is_same_v<FromOp, void>,
+                  "unsupported bitwise logic op");
+  }
+}
+
 template <typename FromOp, typename ToOp>
 struct RewriteVBitwiseLogicOp final : public RewriteVBitwiseOp<FromOp> {
-  using RewriteVBitwiseOp<FromOp>::RewriteVBitwiseOp;
+  using Base = RewriteVBitwiseOp<FromOp>;
+
+  RewriteVBitwiseLogicOp(MLIRContext *context, bool convertToNamedOp = false,
+                         PatternBenefit benefit = 1)
+      : Base(context, benefit), convertToNamedOp(convertToNamedOp) {}
+
+  LogicalResult rewriteFromGeneric(FromOp op,
+                                   SmallVector<Value> &&preprocessedOperands,
+                                   PatternRewriter &rewriter) const final {
+    Type elementType =
+        getElementTypeOrSelf(preprocessedOperands.front().getType());
+    if (convertToNamedOp && op.hasPureTensorSemantics() &&
+        isa<IntegerType>(elementType)) {
+      rewriter.replaceOpWithNewOp<hfusion::ElemwiseBinaryOp>(
+          op, op.getResultTypes(), preprocessedOperands, op.getDst(),
+          ArrayRef{rewriter.getNamedAttr(
+              "fun", rewriter.getAttr<hfusion::BinaryFnAttr>(
+                         getEquivalentBitwiseFn<FromOp>()))});
+      return success();
+    }
+
+    return Base::rewriteFromGeneric(op, std::move(preprocessedOperands),
+                                    rewriter);
+  }
 
   Value createToOp(OpBuilder &rewriter, const Location loc, Value lhs, Value rhs, FromOp& fromOp) const override {
     return rewriter.create<ToOp>(loc, lhs, rhs);
   }
+
+private:
+  bool convertToNamedOp;
 };
 
 template <typename SignedOp, typename UnsignedOp>
@@ -1792,8 +1832,10 @@ struct ConvertHIVMToUpstream
                                    hfusion::UnaryFn::vnot>>(&ctx);
     patterns.add<RewriteVBitwiseLogicOp<hivm::VAndOp, arith::AndIOp>,
                  RewriteVBitwiseLogicOp<hivm::VOrOp, arith::OrIOp>,
-                 RewriteVBitwiseLogicOp<hivm::VXorOp, arith::XOrIOp>,
-                  RewriteVBitwiseShiftOp<arith::ShRSIOp, arith::ShRUIOp>>(&ctx);
+                 RewriteVBitwiseLogicOp<hivm::VXorOp, arith::XOrIOp>>(
+        &ctx, convertToNamedOp);
+    patterns.add<RewriteVBitwiseShiftOp<arith::ShRSIOp, arith::ShRUIOp>>(
+        &ctx);
     if (convertToNamedOp) {
       patterns
           .add<RewriteVCumOpToHFusion<hivm::VCumprodOp, hfusion::CumprodOp>,
