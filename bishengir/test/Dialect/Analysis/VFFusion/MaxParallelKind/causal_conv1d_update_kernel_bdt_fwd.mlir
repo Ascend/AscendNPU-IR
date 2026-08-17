@@ -2,8 +2,6 @@
 
 // CHECK-LABEL: func.func private @causal_conv1d_update_kernel_bdt_fwd_fused_0
 // CHECK: tensor.extract_slice
-// CHECK: tensor.expand_shape
-// CHECK: tensor.extract_slice
 // CHECK: linalg.broadcast
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<add>}
