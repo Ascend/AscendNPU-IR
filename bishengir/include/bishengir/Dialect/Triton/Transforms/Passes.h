@@ -39,6 +39,11 @@ std::unique_ptr<mlir::Pass> createTritonRemapPass(const TritonRemapOptions &opti
 std::unique_ptr<mlir::Pass> createSetBishengirSimtOptAttrPass(
     const SetBishengirSimtOptAttrOptions &options = {});
 
+    
+/// Create a pass to add SIMT opt attribution.
+std::unique_ptr<mlir::Pass> createSetAllowGlobalScratchAttrPass(
+ 	const SetAllowGlobalScratchAttrOptions &options = {});
+
 /// Create a pass to adapt Triton IR kernel.
 std::unique_ptr<mlir::Pass> createAdaptTritonIRKernelPass(
     const AdaptTritonIRKernelOptions &options = {});
@@ -96,7 +101,7 @@ std::unique_ptr<mlir::Pass> createSIMTFastDivPass();
 
 /// Create a pass that converts tt.load/tt.store with ptr<6> to
 /// ttg.local_load/ttg.local_store with memdesc types.
-std::unique_ptr<mlir::Pass> createConvertSharedPtrToMemDescPass();
+std::unique_ptr<mlir::Pass> createLowerDotBuffersAndSharedMemPass();
 
 /// Create a pass to flatten memdesc struct args to bare pointers.
 std::unique_ptr<mlir::Pass> createFlattenMemDescArgsPass();

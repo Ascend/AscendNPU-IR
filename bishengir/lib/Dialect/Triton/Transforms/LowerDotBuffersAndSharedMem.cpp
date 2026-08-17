@@ -1,4 +1,4 @@
-//===- ConvertSharedPtrToMemDesc.cpp - ptr<6> to memdesc conversion -------===//
+//===- LowerDotBuffersAndSharedMem.cpp - ptr<6> to memdesc conversion -------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -36,9 +36,9 @@
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
 #include "llvm/Support/Debug.h"
 
-#define DEBUG_TYPE "convert-shared-ptr-to-memdesc"
+#define DEBUG_TYPE "lower-dot-buffers-and-shared-mem"
 
-#define GEN_PASS_DEF_CONVERTSHAREDPTRTOMEMDESC
+#define GEN_PASS_DEF_LOWERDOTBUFFERSANDSHAREDMEM
 #include "bishengir/Dialect/Triton/Transforms/Passes.h"
 #include "bishengir/Dialect/Triton/Transforms/Passes.h.inc"
 
@@ -102,7 +102,7 @@ buildMemDescType(MLIRContext *ctx, ArrayRef<int64_t> shape, Type elemType,
   // Build a trivial CTA layout.
   unsigned rank = shape.size();
   SmallVector<unsigned> order;
-  for (int i = rank - 1; i >= 0; --i)
+  for (int i = static_cast<int>(rank) - 1; i >= 0; --i)
     order.push_back(static_cast<unsigned>(i));
 
   SmallVector<unsigned> ones(rank, 1u);
@@ -400,9 +400,9 @@ struct BasePtrInfo {
   SmallVector<Operation *> deadOps;
 };
 
-struct ConvertSharedPtrToMemDescPass
-    : public bishengir::impl::ConvertSharedPtrToMemDescBase<
-          ConvertSharedPtrToMemDescPass> {
+struct LowerDotBuffersAndSharedMemPass
+    : public bishengir::impl::LowerDotBuffersAndSharedMemBase<
+          LowerDotBuffersAndSharedMemPass> {
 
   void runOnOperation() override {
     getOperation().walk([&](triton::FuncOp func) {
@@ -418,16 +418,80 @@ private:
     // --- Step 0: Identify scratch-acc-marked args and handle them
     //             separately (multi-shape, per-access subview).
     // The marker is set by TileDotLoads when it spills the dot-2-style
-    // accumulator into SHM (kScratchShmAttr = "bishengir.scratch_shm").
+    // accumulator into SHM (kScratchShmAttr = "bishengir.scratch_shm")
+    // or into GM (kScratchGlobalAttr = "bishengir.scratch_global").
     constexpr llvm::StringLiteral kScratchShmAttr = "bishengir.scratch_shm";
+    constexpr llvm::StringLiteral kScratchGlobalAttr = "bishengir.scratch_global";
+    constexpr llvm::StringLiteral dotAAttr = "bishengir.dot_A";
+    constexpr llvm::StringLiteral dotBAttr = "bishengir.dot_B";
     SmallVector<unsigned> scratchAccArgs;
-    for (unsigned i = 0; i < func.getNumArguments(); ++i)
-      if (func.getArgAttr(i, kScratchShmAttr))
+    SmallVector<unsigned> scratchShmAccArgs;
+    SmallVector<unsigned> scratchGlobalAccArgsA;
+    SmallVector<unsigned> scratchGlobalAccArgsB;
+    for (unsigned i = 0; i < func.getNumArguments(); ++i) {
+      if (func.getArgAttr(i, kScratchShmAttr)) {
+        scratchShmAccArgs.push_back(i);
         scratchAccArgs.push_back(i);
-    for (unsigned argIdx : scratchAccArgs) {
+      } else if (func.getArgAttr(i, kScratchGlobalAttr)) {
+        if (func.getArgAttr(i, dotAAttr)) {
+          scratchGlobalAccArgsA.push_back(i);
+        } else if (func.getArgAttr(i, dotBAttr)) {
+          scratchGlobalAccArgsB.push_back(i);
+        }
+        scratchAccArgs.push_back(i);
+      }
+    }
+    for (unsigned argIdx : scratchShmAccArgs) {
       if (failed(handleScratchAccArg(func, argIdx)))
         return failure();
     }
+
+    SmallVector<int64_t> globalScratchAccSizesA;
+    for (unsigned argIdx : scratchGlobalAccArgsA) {
+      auto intAttr = dyn_cast<IntegerAttr>(func.getArgAttr(argIdx, "bishengir.bytes_needed"));
+      assert(intAttr && "missing bishengir.bytes_needed attribute");
+      auto totalStageBytes = intAttr.getInt();
+      globalScratchAccSizesA.push_back(totalStageBytes);
+    }
+
+    SmallVector<int64_t> globalScratchAccSizesB;
+    for (unsigned argIdx : scratchGlobalAccArgsB) {
+      auto intAttr = dyn_cast<IntegerAttr>(func.getArgAttr(argIdx, "bishengir.bytes_needed"));
+      assert(intAttr && "missing bishengir.bytes_needed attribute");
+      auto totalStageBytes = intAttr.getInt();
+      globalScratchAccSizesB.push_back(totalStageBytes);
+    }
+
+    Block &entryBlock = func.getBody().front();
+    OpBuilder globalScratchMemBuilder(&entryBlock, entryBlock.begin());
+    SmallVector<triton::gpu::GlobalScratchAllocOp> globalAllocOpsA;
+    SmallVector<triton::gpu::GlobalScratchAllocOp> globalAllocOpsB;
+    if (!scratchGlobalAccArgsA.empty()) {
+      for (size_t i = 0; i < scratchGlobalAccArgsA.size(); i++) {
+        globalAllocOpsA.push_back(globalScratchMemBuilder.create<triton::gpu::GlobalScratchAllocOp>(
+            func.getLoc(), entryBlock.getArgument(scratchGlobalAccArgsA[i]).getType(), globalScratchAccSizesA[i], 256));
+      }
+    }
+    if (!scratchGlobalAccArgsB.empty()) {
+      for (size_t i = 0; i < scratchGlobalAccArgsB.size(); i++) {
+        globalAllocOpsB.push_back(globalScratchMemBuilder.create<triton::gpu::GlobalScratchAllocOp>(
+            func.getLoc(), entryBlock.getArgument(scratchGlobalAccArgsB[i]).getType(), globalScratchAccSizesB[i], 256));
+      }
+    }
+
+    for (size_t i = 0; i < globalAllocOpsA.size(); i++) {
+      auto allocOpA = globalAllocOpsA[i];
+      auto argIdx = scratchGlobalAccArgsA[i];
+      auto arg = entryBlock.getArgument(argIdx);
+      arg.replaceAllUsesWith(allocOpA);
+    }
+    for (size_t i = 0; i < globalAllocOpsB.size(); i++) {
+      auto allocOpB = globalAllocOpsB[i];
+      auto argIdx = scratchGlobalAccArgsB[i];
+      auto arg = entryBlock.getArgument(argIdx);
+      arg.replaceAllUsesWith(allocOpB);
+    }
+
     // Drop the now-converted scratch-acc args from the function signature.
     if (!scratchAccArgs.empty())
       removeFunctionArgs(func, scratchAccArgs);
@@ -610,7 +674,7 @@ private:
       auto acc = matchScratchAccess(ptrTensor);
       if (!acc) {
         LLVM_DEBUG({
-          llvm::dbgs() << "[ConvertSharedPtrToMemDesc] FAILED match on op:\n";
+          llvm::dbgs() << "[LowerDotBuffersAndSharedMem] FAILED match on op:\n";
           op->print(llvm::dbgs());
           llvm::dbgs() << "\n  ptr defining op:\n";
           if (auto def = ptrTensor.getDefiningOp())
@@ -789,7 +853,7 @@ private:
   unsigned vec = std::max<unsigned>(1u, 8u / elemBytes);
   if (static_cast<int64_t>(vec) > tileSize)
     vec = static_cast<unsigned>(std::max<int64_t>(1, tileSize));
-  while (vec > 1u && static_cast<int64_t>(tileSize % vec) != 0)
+  while (vec > 1u && tileSize % static_cast<int64_t>(vec) != 0)
     vec >>= 1;
   // maxPhase ≤ tileSize / vec (and ≤ numBanks for HW utility).
   unsigned maxPhaseCap =
@@ -1162,8 +1226,8 @@ private:
 namespace bishengir {
 namespace triton {
 
-std::unique_ptr<mlir::Pass> createConvertSharedPtrToMemDescPass() {
-  return std::make_unique<ConvertSharedPtrToMemDescPass>();
+std::unique_ptr<mlir::Pass> createLowerDotBuffersAndSharedMemPass() {
+  return std::make_unique<LowerDotBuffersAndSharedMemPass>();
 }
 
 } // namespace triton

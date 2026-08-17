@@ -364,6 +364,7 @@ void setupLowerTritonPipelineOptions(
   options.disableReorderInstruction = config.getDisableReorderInstruction();
   options.enableSinkDPXLoad = config.getEnableSinkDPXLoad();
   options.KTileSize = config.getKTileSize();
+  options.enableGlobalScratchAllocation = config.getEnableGlobalScratchAllocation();
   options.enableOptimizeMath = config.getEnableOptimizeMath();
   options.tritonMetadataOutput = config.getTritonMetadataOutput();
   options.enableSIMTAutoBlockify = config.getEnableAutoBlockifyLoop();

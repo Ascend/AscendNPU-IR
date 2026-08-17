@@ -17,16 +17,17 @@ if(BISHENGIR_ENABLE_TRITON_COMPILE)
     RemoveAnnotationMark.cpp
     RewriteSliceOpToTriton.cpp
     SetBishengirSimtOptAttr.cpp
+    SetAllowGlobalScratchAttr.cpp
     PopulateSharedMemoryOffsetToDPX.cpp
     SIMTAutoBlockify.cpp
     SIMTFastDiv.cpp
     LoopRestructureArangeOptimization.cpp
     EnableAscendDPXMMA.cpp
-    ConvertSharedPtrToMemDesc.cpp
+    LowerDotBuffersAndSharedMem.cpp
     FlattenMemDescArgs.cpp
     ConvertDotInputToLinearLayout.cpp
     TileDotLoads.cpp
-    SharedMemConflictModel.cpp
+    DotTilingCostModel.cpp
     OptimizeMath.cpp
     HoistAndFuseDotChains.cpp
   )

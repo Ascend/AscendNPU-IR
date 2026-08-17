@@ -26,6 +26,8 @@ constexpr unsigned kMaxTransferWidthBits = 128;
 constexpr unsigned kMaxVectorSize = 4;
 constexpr int kSharedMemoryAddressSpace =
     static_cast<int>(ascend_dpx::AscendDPXAddressSpace::SHARED_MEM);
+constexpr int kGlobalMemoryAddressSpace =
+    static_cast<int>(ascend_dpx::AscendDPXAddressSpace::GLOBAL_MEM);
 constexpr int64_t kConstantTruePredValue = -1;
 
 // Helper function to check if predicate is constant true
@@ -237,6 +239,186 @@ Value TargetInfo::loadDShared(RewriterBase &rewriter, Location loc, Value ptr,
     for (unsigned int i = 0; i < vec / (int)maxVec; i++) {
       auto newPtr = b.gep(ptr.getType(), elemTy, ptr, b.i32_val(i * maxVec));
       auto newVal = loadDShared(rewriter, loc, newPtr, ctaId,
+                                vec_ty(elemTy, maxVec), pred);
+      for (Value v : unpackLLVector(loc, newVal, rewriter)) {
+        vals.push_back(v);
+      }
+    }
+    return packLLVector(loc, vals, rewriter);
+  }
+
+  assert(elemBitwidth >= kMinElementWidthBits);
+  assert(elemTy.isInteger());
+  assert(1 <= vec && vec <= kMaxVectorSize);
+  assert(static_cast<unsigned int>(vec) * elemBitwidth <= kMaxTransferWidthBits);
+
+  Type loadResTy =
+      vec > 1 ? VectorType::get({static_cast<long>(vec)}, elemTy) : elemTy;
+
+  Value falseVal;
+  if (!isConstantTruePred(pred)) {
+    Value zeroVal = b.int_val(elemBitwidth, 0);
+    zeroVal = b.bitcast(zeroVal, elemTy);
+
+    if (vec == 1) {
+      falseVal = zeroVal;
+    } else {
+      Type yieldedVecTy = LLVM::getVectorType(elemTy, vec);
+      falseVal = b.undef(yieldedVecTy);
+      for (int64_t ii = 0; ii < vec; ++ii) {
+        Value idx = b.i32_val(ii);
+        falseVal = b.insert_element(yieldedVecTy, falseVal, zeroVal, idx);
+      }
+    }
+  }
+
+  Value maskToUse = isConstantTruePred(pred) ? Value() : pred;
+
+  Value loadResult = rewriter.create<ascend_dpx::LoadOp>(
+      loc, loadResTy, ptr, maskToUse, falseVal,
+      ascend_dpx::AscendDPXLoadCachePolicy::L2_CACHE_HINT_NORMAL_FV);
+
+  return loadResult;
+}
+
+void TargetInfo::storeDGlobal(RewriterBase &rewriter, Location loc, Value ptr,
+                              std::optional<Value> ctaId, Value val,
+                              Value pred) const {
+  auto b = TritonLLVMOpBuilder(loc, rewriter);
+  auto ptrTy = cast<LLVM::LLVMPointerType>(ptr.getType());
+  assert(ptrTy.getAddressSpace() == kGlobalMemoryAddressSpace &&
+         "Invalid addr space for store_dgmem");
+
+  if (!isa<VectorType>(val.getType())) {
+    storeDGlobal(rewriter, loc, ptr, ctaId, packLLVector(loc, {val}, rewriter),
+                 pred);
+    return;
+  }
+
+  auto vecTy = cast<VectorType>(val.getType());
+  Type elemTy = vecTy.getElementType();
+  unsigned int vec = static_cast<unsigned int>(vecTy.getNumElements());
+  unsigned elemBitwidth = elemTy.getIntOrFloatBitWidth();
+  assert(llvm::isPowerOf2_32(vec));
+
+  if (elemBitwidth < kMinElementWidthBits) {
+    assert(vec == 1 &&
+           "don't know how to load/store vectors of sub-byte elems");
+    SmallVector<Value> vals = unpackLLVector(loc, val, rewriter);
+    for (Value &v : vals) {
+      v = b.zext(int_ty(kMinElementWidthBits),
+                 b.bitcast(v, int_ty(elemBitwidth)));
+    }
+    storeDGlobal(rewriter, loc, ptr, ctaId, packLLVector(loc, vals, rewriter),
+                 pred);
+    return;
+  }
+
+  if (!elemTy.isInteger()) {
+    Type intVecTy = vec_ty(int_ty(elemBitwidth), vec);
+    Value asInt = b.bitcast(val, intVecTy);
+    storeDGlobal(rewriter, loc, ptr, ctaId, asInt, pred);
+    return;
+  }
+
+  // If vec > 4 and elemBitwidth < 32, pack into b32's
+  if (vec > kMaxVectorSize && elemBitwidth < kMinWordWidthBits) {
+    assert(llvm::isPowerOf2_32(vec));
+    unsigned int elemsPerPack = kMinWordWidthBits / elemBitwidth;
+    Type i32VecTy = vec_ty(i32_ty, vec / elemsPerPack);
+    Value asI32Vec = b.bitcast(val, i32VecTy);
+    storeDGlobal(rewriter, loc, ptr, ctaId, asI32Vec, pred);
+    return;
+  }
+
+  // If total width > 128, split into multiple stores
+  if (vec * elemBitwidth > kMaxTransferWidthBits) {
+    assert(llvm::isPowerOf2_32(vec));
+    assert(elemBitwidth == 32 || elemBitwidth == 64);
+    unsigned int maxVec = kMaxTransferWidthBits / elemBitwidth;
+
+    SmallVector<Value> vals = unpackLLVector(loc, val, rewriter);
+    for (unsigned int i = 0; i < vec / maxVec; i++) {
+      auto newPtr = b.gep(ptr.getType(), elemTy, ptr, b.i32_val(i * maxVec));
+      storeDGlobal(
+          rewriter, loc, newPtr, ctaId,
+          packLLVector(loc, ArrayRef(vals).slice(i * maxVec, maxVec), rewriter),
+          pred);
+    }
+    return;
+  }
+
+  assert(elemBitwidth >= kMinElementWidthBits);
+  assert(elemTy.isInteger());
+  assert(1 <= vec && vec <= kMaxVectorSize);
+  assert(vec * elemBitwidth <= kMaxTransferWidthBits);
+
+  Value maskToUse = (pred && !isConstantTruePred(pred)) ? pred : Value();
+
+  rewriter.create<ascend_dpx::StoreOp>(
+      loc, ptr, val, maskToUse,
+      ascend_dpx::AscendDPXStoreCachePolicy::L2_CACHE_HINT_NORMAL_FV);
+}
+
+Value TargetInfo::loadDGlobal(RewriterBase &rewriter, Location loc, Value ptr,
+                              std::optional<Value> ctaId, Type loadTy,
+                              Value pred, Operation *localLoadOp) const {
+  auto b = TritonLLVMOpBuilder(loc, rewriter);
+  auto ptrTy = cast<LLVM::LLVMPointerType>(ptr.getType());
+  assert(ptrTy.getAddressSpace() == kGlobalMemoryAddressSpace &&
+         "Invalid addr space for load_dgmem");
+
+  if (!isa<VectorType>(loadTy)) {
+    SmallVector<Value> values = unpackLLVector(
+        loc, loadDGlobal(rewriter, loc, ptr, ctaId, vec_ty(loadTy, 1), pred),
+        rewriter);
+    assert(values.size() == 1);
+    return values[0];
+  }
+
+  auto vecTy = cast<VectorType>(loadTy);
+  Type elemTy = vecTy.getElementType();
+  auto vec = vecTy.getNumElements();
+  unsigned elemBitwidth = elemTy.getIntOrFloatBitWidth();
+  assert(llvm::isPowerOf2_32(vec));
+
+  if (elemBitwidth < kMinElementWidthBits) {
+    assert(vec == 1 &&
+           "don't know how to load/store vectors of sub-byte elems");
+    SmallVector<Value> vals =
+        unpackLLVector(loc,
+                       loadDGlobal(rewriter, loc, ptr, ctaId,
+                                   int_ty(kMinElementWidthBits), pred),
+                       rewriter);
+    assert(vals.size() == 1);
+    return b.bitcast(b.trunc(int_ty(elemBitwidth), vals[0]), elemTy);
+  }
+
+  // We only know how to load integers
+  if (!elemTy.isInteger()) {
+    Type newLoadTy = vec_ty(int_ty(elemBitwidth), vec);
+    Value loaded = loadDGlobal(rewriter, loc, ptr, ctaId, newLoadTy, pred);
+    return b.bitcast(loaded, vecTy);
+  }
+
+  // If vec > 4 and elemBitwidth < 32, load b32's instead
+  if (vec > kMaxVectorSize && elemBitwidth < kMinWordWidthBits) {
+    auto newVec = vec / static_cast<int64_t>(kMinWordWidthBits / elemBitwidth);
+    auto newVecTy = vec_ty(i32_ty, newVec);
+    Value res = loadDGlobal(rewriter, loc, ptr, ctaId, newVecTy, pred);
+    return b.bitcast(res, vecTy);
+  }
+
+  // If total width > 128, split into multiple loads
+  if (static_cast<unsigned int>(vec) * elemBitwidth > kMaxTransferWidthBits) {
+    assert(elemBitwidth == 32 || elemBitwidth == 64);
+    assert(llvm::isPowerOf2_32(vec));
+    unsigned int maxVec = kMaxTransferWidthBits / elemBitwidth;
+
+    SmallVector<Value> vals;
+    for (unsigned int i = 0; i < vec / static_cast<int>(maxVec); i++) {
+      auto newPtr = b.gep(ptr.getType(), elemTy, ptr, b.i32_val(i * maxVec));
+      auto newVal = loadDGlobal(rewriter, loc, newPtr, ctaId,
                                 vec_ty(elemTy, maxVec), pred);
       for (Value v : unpackLLVector(loc, newVal, rewriter)) {
         vals.push_back(v);

@@ -1312,6 +1312,14 @@ def KTileSize : SIMTOptimizationControlOptions<
   bit isSharedWithDownstreamToolchain = 0;
 }
 
+def EnableGlobalScratchAllocation : SIMTOptimizationControlOptions<
+  "Enable global scratch allocation",
+  "bool",
+  "false"
+> {
+  bit isSharedWithDownstreamToolchain = 0;
+}
+
 def EnableOptimizeMath : SIMTOptimizationControlOptions<
   "Enable optimize math pass",
   "bool",

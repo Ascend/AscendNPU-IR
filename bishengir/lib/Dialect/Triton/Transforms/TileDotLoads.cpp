@@ -15,7 +15,7 @@
 //     same base ptr so they tend to hit DCache.
 //
 //   One operand is a register chain -> StageNonLoadOperandPattern: route
-//     the non-load operand through scratch SHM and emit an unrolled
+//     the non-load operand through scratch SHM/GM and emit an unrolled
 //     K-tile chain.
 //
 // Pointer styles supported
@@ -25,7 +25,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/Triton/Transforms/Passes.h"
-#include "bishengir/Dialect/Triton/Transforms/SharedMemConflictModel.h"
+#include "bishengir/Dialect/Triton/Transforms/DotTilingCostModel.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Math/IR/Math.h"
@@ -64,6 +64,8 @@ using namespace mlir::triton;
 //===----------------------------------------------------------------------===//
 // Helpers
 //===----------------------------------------------------------------------===//
+constexpr int kSharedMemoryAddressSpace = 6;
+constexpr int kGlobalMemoryAddressSpace = 1;
 
 static uint64_t floorPow2(uint64_t v) {
   if (v == 0)
@@ -1450,13 +1452,16 @@ struct TileDotPattern : public OpRewritePattern<triton::DotOp> {
 //===----------------------------------------------------------------------===//
 // StageNonLoadOperandPattern — handles over-budget dots where at least one
 // operand comes from a register chain (e.g. truncf(exp(...))) instead of
-// a tt.load. Routes the non-load operand through scratch SHM so the dot
+// a tt.load. Routes the non-load operand through scratch SHM/GM so the dot
 // can still be K-tiled.
 //
 // Steps:
-//   1. Append a `!tt.ptr<elemTy, 6>` function arg tagged
-//      `bishengir.scratch_shm`. `ConvertSharedPtrToMemDesc` lowers this
-//      into `ttg.local_alloc` + per-tile `memdesc_subslice` accesses.
+//   1. Append a `!tt.ptr<elemTy, 6>` or a `!tt.ptr<elemTy, 1>` function
+//      arg tagged `bishengir.scratch_shm` or `bishengir.scratch_global`
+//      respectively. `LowerDotBuffersAndSharedMem` lowers this
+//      into `ttg.local_alloc` + per-tile `memdesc_subslice` accesses,
+//      or into `ttg.global_scratch_alloc` + per-tile regular ptr based
+//      accesses.
 //   2. Emit one envelope-shape `tt.store` of the non-load operand into
 //      the scratch arg. Pointer chain must match `matchScratchAccess`:
 //        addptr(splat(scratch_arg), addi(rowSide, colSide))
@@ -1466,27 +1471,31 @@ struct TileDotPattern : public OpRewritePattern<triton::DotOp> {
 //      takes static offsets only.
 //===----------------------------------------------------------------------===//
 
-/// Append a `!tt.ptr<elemTy, 6>` function arg tagged `bishengir.scratch_shm`.
-static BlockArgument appendScratchShmArg(triton::FuncOp func, Type elemTy,
-                                         Location loc) {
+/// Append a `!tt.ptr<elemTy, 6>` function arg tagged `bishengir.scratch_shm`
+/// or a `!tt.ptr<elemTy, 1>` function arg tagged `bishengir.scratch_global`
+static BlockArgument appendScratchArg(triton::FuncOp func, Type elemTy,
+                                         Location loc, int addrSpace, int64_t size, int kAxis) {
   MLIRContext *ctx = func.getContext();
   unsigned newIdx = func.getNumArguments();
-  auto sharedPtrTy = triton::PointerType::get(elemTy, /*addressSpace=*/6);
+  auto scratchPtrTy = triton::PointerType::get(elemTy, /*addressSpace=*/addrSpace);
   auto unitAttr = UnitAttr::get(ctx);
   auto attrs = DictionaryAttr::get(
-      ctx, {NamedAttribute(StringAttr::get(ctx, "bishengir.scratch_shm"),
-                           unitAttr)});
-  func.insertArgument(newIdx, sharedPtrTy, attrs, loc);
+      ctx, {NamedAttribute(StringAttr::get(ctx, (addrSpace == kSharedMemoryAddressSpace) ? "bishengir.scratch_shm" : "bishengir.scratch_global"),
+                           unitAttr),
+            NamedAttribute(StringAttr::get(ctx, "bishengir.bytes_needed"), IntegerAttr::get(IntegerType::get(ctx, 64), size)),
+            NamedAttribute(StringAttr::get(ctx, (kAxis == 1) ? "bishengir.dot_A" : "bishengir.dot_B"),
+            unitAttr)});
+  func.insertArgument(newIdx, scratchPtrTy, attrs, loc);
   return func.getArgument(newIdx);
 }
 
-/// Build the scratch-shm pointer chain for one access.
-static Value emitScratchShmAccessPtr(OpBuilder &b, Location loc,
+/// Build the scratch pointer chain for one access.
+static Value emitScratchAccessPtr(OpBuilder &b, Location loc,
                                      Value scratchArg, int64_t dimOther,
                                      int64_t tileSize, int64_t envSize,
                                      int kAxis, Value tileIdxI32,
                                      int64_t startConst, Type elemTy,
-                                     int64_t otherStart = 0) {
+                                     int addrSpace, int64_t otherStart = 0) {
   Type i32 = b.getI32Type();
 
   // Tile-axis side: broadcast(expand_dims(tile_1d, axis=otherAxis)).
@@ -1545,8 +1554,8 @@ static Value emitScratchShmAccessPtr(OpBuilder &b, Location loc,
   Value offsets = b.create<arith::AddIOp>(loc, otherFull, tileFull);
 
   // ---- splat(scratch_arg) + addptr --------------------------------------
-  auto sharedPtrTy = triton::PointerType::get(elemTy, /*addressSpace=*/6);
-  auto fullPtrTy = RankedTensorType::get(fullShape, sharedPtrTy);
+  auto scratchPtrTy = triton::PointerType::get(elemTy, /*addressSpace=*/addrSpace);
+  auto fullPtrTy = RankedTensorType::get(fullShape, scratchPtrTy);
   Value baseSplat = b.create<triton::SplatOp>(loc, fullPtrTy, scratchArg);
   return b.create<triton::AddPtrOp>(loc, fullPtrTy, baseSplat, offsets);
 }
@@ -1747,9 +1756,10 @@ struct StageNonLoadOperandPattern : public OpRewritePattern<triton::DotOp> {
   /// still gates). Wired from the pass's `smem-budget-bytes` option.
   int64_t smemBudgetBytes;
   int KTileSize = 0; // 0 = auto-pick K-tile size
+  bool allowGlobalScratch;
 
-  StageNonLoadOperandPattern(MLIRContext *ctx, int64_t smemBudgetBytes, int KTileSize = 0)
-      : OpRewritePattern<triton::DotOp>(ctx), smemBudgetBytes(smemBudgetBytes), KTileSize(KTileSize) {
+  StageNonLoadOperandPattern(MLIRContext *ctx, int64_t smemBudgetBytes, int KTileSize = 0, bool allowGlobalScratch = false)
+      : OpRewritePattern<triton::DotOp>(ctx), smemBudgetBytes(smemBudgetBytes), KTileSize(KTileSize), allowGlobalScratch(allowGlobalScratch) {
   }
 
   LogicalResult matchAndRewrite(triton::DotOp dot,
@@ -1865,17 +1875,39 @@ struct StageNonLoadOperandPattern : public OpRewritePattern<triton::DotOp> {
     int64_t bEnvBytes = bLoad ? 0 : static_cast<unsigned>(N * K) * elemBytes(bElemTy);
     int64_t totalStageBytes = aEnvBytes + bEnvBytes;
 
+    int addrSpaceA = kSharedMemoryAddressSpace;
+    int addrSpaceB = kSharedMemoryAddressSpace;
     if (smemBudgetBytes > 0 && totalStageBytes > smemBudgetBytes) {
       LLVM_DEBUG(DBGS() << "[StageNonLoadOperand]   -> staging would need "
                         << totalStageBytes << " B; SRAM budget is " << smemBudgetBytes
-                        << " B; skipping" << '\n');
-      return failure();
+                        << " B" << '\n');
+      if (!allowGlobalScratch) {
+        LLVM_DEBUG(DBGS() << "[StageNonLoadOperand]   -> Global scratch memory "
+                          << "allocation not allowed; skipping\n");
+        return failure();
+      }
+      bool canStageA = (!aLoad && (aEnvBytes <= smemBudgetBytes));
+      bool canStageB = (!bLoad && (bEnvBytes <= smemBudgetBytes));
+      if (canStageA && canStageB) {
+        // Prefer staging the larger operand to smem.
+        if (aEnvBytes > bEnvBytes)
+          addrSpaceB = kGlobalMemoryAddressSpace; // stage B through GMEM
+        else
+          addrSpaceA = kGlobalMemoryAddressSpace; // stage A through GMEM
+      }
+      
+      if (!canStageA) {
+        addrSpaceA = kGlobalMemoryAddressSpace; // stage A through GMEM
+      }
+      if (!canStageB) {
+        addrSpaceB = kGlobalMemoryAddressSpace; // stage B through GMEM
+      }
     }
 
     // Conflict factor: build the post-swizzle 32-thread access pattern
-    // `ttg.local_load` will issue, then feed it to the shared model.
+    // `ttg.local_load` will issue, then feed it to the cost model.
     auto conflictFactor = [&](Type ty) -> unsigned {
-      ::bishengir::triton::AscendSmemGeometry geom;
+      ::bishengir::triton::AscendMemGeometry geom;
       unsigned eb = elemBytes(ty);
       unsigned bankCycle = geom.numBanks * geom.bankWidthBytes; // 128
       unsigned vec = std::max<unsigned>(
@@ -1900,8 +1932,8 @@ struct StageNonLoadOperandPattern : public OpRewritePattern<triton::DotOp> {
       return ::bishengir::triton::analyzeWarpAccessCycle(accesses, geom)
           .conflictFactor;
     };
-    unsigned cfA = aLoad ? 1u : conflictFactor(aElemTy);
-    unsigned cfB = bLoad ? 1u : conflictFactor(bElemTy);
+    unsigned cfA = (aLoad || addrSpaceA == kGlobalMemoryAddressSpace) ? 1u : conflictFactor(aElemTy);
+    unsigned cfB = (bLoad || addrSpaceB == kGlobalMemoryAddressSpace) ? 1u : conflictFactor(bElemTy);
     unsigned cfMax = std::max(cfA, cfB);
 
     // Spill-element estimate when NOT staging: MKN excess / warp size.
@@ -1910,17 +1942,20 @@ struct StageNonLoadOperandPattern : public OpRewritePattern<triton::DotOp> {
 
     ::bishengir::triton::StagingDecisionInputs decInputs;
     decInputs.spillElementsIfNoStaging = spillEst;
-    decInputs.roundTripBytes = static_cast<uint64_t>(2 * totalStageBytes);
+    decInputs.roundTripBytesA = static_cast<uint64_t>(2 * aEnvBytes);
+    decInputs.roundTripBytesB = static_cast<uint64_t>(2 * bEnvBytes);
     decInputs.conflictFactor = cfMax;
     decInputs.cyclesPerSpillElement =
         ::bishengir::triton::kStageSpillCyclesPerElement;
+    decInputs.smemStageA = aLoad || addrSpaceA == kSharedMemoryAddressSpace;
+    decInputs.smemStageB = bLoad || addrSpaceB == kSharedMemoryAddressSpace;
     auto decision = ::bishengir::triton::decideStaging(decInputs);
     LLVM_DEBUG(DBGS() << "[StageNonLoadOperand]   -> cost model: spill_elems="
-                      << spillEst << " smem_bytes=" << totalStageBytes << " conflict="
+                      << spillEst << " stage_bytes=" << totalStageBytes << " conflict="
                       << cfMax << " direct=" << static_cast<int64_t>(decision.directCostCycles)
                       << "c staged=" << static_cast<int64_t>(decision.stagedCostCycles) << "c"
                       << '\n');
-    if (!decision.stageThroughSmem) {
+    if (!decision.stageThroughMem) {
       LLVM_DEBUG(DBGS() << "[StageNonLoadOperand]   -> cost model says staging is not "
                         << "profitable" << '\n');
       if (KTileSize <= 0) {
@@ -1932,13 +1967,13 @@ struct StageNonLoadOperandPattern : public OpRewritePattern<triton::DotOp> {
     // ---- Stage non-load operands via a single full-envelope store ------
     BlockArgument scratchArgA;
     if (!aLoad) {
-      scratchArgA = appendScratchShmArg(func, aElemTy, loc);
+      scratchArgA = appendScratchArg(func, aElemTy, loc, addrSpaceA, /*size=*/aEnvBytes, /*kAxis=*/1);
       rewriter.setInsertionPoint(dot);
       // A:[M, K], K on innermost axis -> col-tile envelope [M, K].
-      Value envPtrs = emitScratchShmAccessPtr(
+      Value envPtrs = emitScratchAccessPtr(
           rewriter, loc, scratchArgA, /*dimOther=*/M, /*tileSize=*/K,
           /*envSize=*/K, /*kAxis=*/1, /*tileIdxI32=*/Value(),
-          /*startConst=*/0, aElemTy);
+          /*startConst=*/0, aElemTy, addrSpaceA);
       rewriter.create<triton::StoreOp>(
           loc, envPtrs, dot.getA(), /*mask=*/Value(),
           triton::CacheModifier::NONE, triton::EvictionPolicy::NORMAL);
@@ -1946,14 +1981,14 @@ struct StageNonLoadOperandPattern : public OpRewritePattern<triton::DotOp> {
 
     BlockArgument scratchArgB;
     if (!bLoad) {
-      scratchArgB = appendScratchShmArg(func, bElemTy, loc);
+      scratchArgB = appendScratchArg(func, bElemTy, loc, addrSpaceB, /*size=*/bEnvBytes, /*kAxis=*/0);
       rewriter.setInsertionPoint(dot);
       // B is [K, N] with K on axis 0 (outermost).  row-tile (kAxis=0):
       // store envelope [K, N] (tileSize=K, startConst=0).
-      Value envPtrs = emitScratchShmAccessPtr(
+      Value envPtrs = emitScratchAccessPtr(
           rewriter, loc, scratchArgB, /*dimOther=*/N, /*tileSize=*/K,
           /*envSize=*/K, /*kAxis=*/0, /*tileIdxI32=*/Value(),
-          /*startConst=*/0, bElemTy);
+          /*startConst=*/0, bElemTy, addrSpaceB);
       rewriter.create<triton::StoreOp>(
           loc, envPtrs, dot.getB(), /*mask=*/Value(),
           triton::CacheModifier::NONE, triton::EvictionPolicy::NORMAL);
@@ -2046,10 +2081,10 @@ struct StageNonLoadOperandPattern : public OpRewritePattern<triton::DotOp> {
 
     auto emitStagedTile = [&](BlockArgument scratchArg, int64_t dimOther,
                               int kAxis, Type elemTy) -> Value {
-      Value ptrs = emitScratchShmAccessPtr(
+      Value ptrs = emitScratchAccessPtr(
           rewriter, loc, scratchArg, dimOther, /*tileSize=*/kTile,
           /*envSize=*/K, kAxis, /*tileIdxI32=*/tI32,
-          /*startConst=*/0, elemTy);
+          /*startConst=*/0, elemTy, (kAxis == 1) ? addrSpaceA : addrSpaceB);
       return rewriter.create<triton::LoadOp>(
           loc, ptrs, /*mask=*/Value(), /*other=*/Value(),
           /*boundaryCheck=*/ArrayRef<int32_t>{},
@@ -2336,10 +2371,10 @@ struct TileDotLoadsPass : public impl::TileDotLoadsBase<TileDotLoadsPass> {
       (void)applyPatternsGreedily(getOperation(), std::move(p));
     }
 
-    // Stage non-load operands of over-budget dots through scratch SHM.
+    // Stage non-load operands of over-budget dots through scratch SHM/GM.
     {
       RewritePatternSet p(&getContext());
-      p.add<StageNonLoadOperandPattern>(&getContext(), this->smemBudgetBytes, this->KTileSize);
+      p.add<StageNonLoadOperandPattern>(&getContext(), this->smemBudgetBytes, this->KTileSize, this->enableGlobalScratchAllocation);
       (void)applyPatternsGreedily(getOperation(), std::move(p));
     }
 

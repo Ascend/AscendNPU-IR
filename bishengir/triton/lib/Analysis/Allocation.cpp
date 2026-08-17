@@ -4,6 +4,7 @@
 #include <limits>
 
 #include "mlir/Analysis/Liveness.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/Support/LLVM.h"
 #include "triton/Analysis/Alias.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
@@ -125,6 +126,9 @@ public:
                      AllocationAnalysisScratchSizeFn scratchSizeGetter)
       : operation(operation), funcAllocMap(funcAllocMap),
         allocation(allocation), scratchSizeGetter(scratchSizeGetter) {
+#ifdef BSPUB_DAVINCI_BISHENGIR
+    setSmemAndSuperBlockFactor();
+#endif
     run();
   }
 
@@ -462,42 +466,122 @@ private:
     using TripleMapT = std::multimap<size_t, Interval<size_t>>;
     TripleMapT tripleMap;
     tripleMap.insert(std::make_pair(0, Interval<size_t>()));
-    SmallVector<BufferT *> xBuffers = buffers;
-    while (!xBuffers.empty()) {
-      auto tripleIt = tripleMap.begin();
-      auto offset = tripleIt->first;
-      auto range = tripleIt->second;
-      tripleMap.erase(tripleIt);
-      auto bufferIt =
-          std::find_if(xBuffers.begin(), xBuffers.end(), [&](auto *buffer) {
-            auto xRange = bufferRange[buffer];
-            bool res = xRange.intersects(range);
-            for (const auto &val : tripleMap)
-              res = res &&
-                    !val.second.intersects(xRange); // only one buffer intersect
-            return res;
-          });
-      if (bufferIt != xBuffers.end()) {
-        auto buffer = *bufferIt;
-        auto xSize = buffer->size;
-        auto xRange = bufferRange.lookup(buffer);
-        // TODO(Keren): A buffer's size shouldn't be determined here, have to
-        // clean it up
-        size_t alignOffset = buffer->setOffsetAligned(offset);
-        tripleMap.insert({alignOffset + xSize,
-                          Interval{std::max(range.start(), xRange.start()),
-                                   std::min(range.end(), xRange.end())}});
-        // We could either insert (range.start, xRange.start) or (range.start,
-        // xRange.end), both are correct and determine the potential buffer
-        // offset, and the graph coloring algorithm will solve the interference,
-        // if any
-        if (range.start() < xRange.start())
-          tripleMap.insert({offset, Interval{range.start(), xRange.end()}});
-        if (xRange.end() < range.end())
-          tripleMap.insert({offset, Interval{xRange.start(), range.end()}});
-        xBuffers.erase(bufferIt);
-      }
+
+#ifdef BSPUB_DAVINCI_BISHENGIR
+    // The below code implements a naive algorithm to allocate shared memory
+    // offsets, and it prioritizes allocating shared memory to local alloc ops.
+    // It iterates through the buffers and adds their liveness ranges with their
+    // offset + size to a triple map, which keeps track of the current usage
+    // ranges of shared memory. The algorithm processes the local alloc ops first,
+    // followed by the non-local alloc ops, to ensure that local alloc ops are
+    // given priority in the allocation process.
+    // 
+    // Differenciate between buffers owned by locall alloc ops and on all other buffers
+    SmallVector<BufferT *> localAllocs;
+    SmallVector<BufferT *> nonLocalAllocs;
+    for (auto buffer : buffers) {
+      if (dyn_cast<gpu::LocalAllocOp>(buffer->owner))
+        localAllocs.push_back(buffer);
+      else
+        nonLocalAllocs.push_back(buffer);
     }
+
+    // Lambda function to process buffers and update the triple map:
+    // For every buffer, check if it intersects with any existing
+    // ranges in the triple map.
+    // If it does, update the triple map accordingly by erasing the
+    // intersecting range and inserting new ranges that account for
+    // the current buffer's size and liveness range.
+    // Also track which Convert Layout ops need to be stored to global
+    // memory if their offset exceeds the shared memory size.
+    std::function<void(const SmallVector<BufferT *> &)> processBuffers =
+        [&](const SmallVector<BufferT *> &buffers) {
+          for (auto buffer : buffers) {
+            auto xRange = bufferRange[buffer];
+            auto xSize = buffer->size;
+            TripleMapT toInsert;
+            SmallVector<TripleMapT::iterator> toErase;
+            for (auto tripleIt = tripleMap.begin(); tripleIt != tripleMap.end(); ++tripleIt) {
+              auto mapEntry = *tripleIt;
+              auto offset = mapEntry.first;
+              auto range = mapEntry.second;
+              if (!range.intersects(xRange)) {
+                continue;
+              }
+              size_t alignOffset = buffer->setOffsetAligned(offset);
+              size_t currOffset = alignOffset + xSize;
+              toInsert.insert({currOffset,
+                              Interval{std::max(range.start(), xRange.start()),
+                                        std::min(range.end(), xRange.end())}});
+
+              if (superBlockFactor > 1) {
+                currOffset = (currOffset - 1) / 16 * 16 + 16;
+              }
+              if (allowGlobalScratch && dyn_cast<gpu::ConvertLayoutOp>(buffer->owner) && smemSize > 0 && static_cast<int64_t>(currOffset) * superBlockFactor > smemSize) {
+                OpBuilder builder(buffer->owner->getContext());
+                StringAttr gmStore = builder.getStringAttr("true");
+                buffer->owner->setAttr("store_to_gmem", gmStore);
+                IntegerAttr bytes = builder.getI64IntegerAttr(buffer->size);
+                buffer->owner->setAttr("bytes", bytes);
+              }
+
+              toErase.push_back(tripleIt);
+              if (range.start() < xRange.start())
+                toInsert.insert({offset, Interval{range.start(), xRange.start()}});
+              if (xRange.end() < range.end())
+                toInsert.insert({offset, Interval{xRange.end(), range.end()}});
+            }
+
+            for (auto it = toErase.rbegin(); it != toErase.rend(); ++it) {
+              tripleMap.erase(*it);
+            }
+
+            for (auto insertion : toInsert) {
+              tripleMap.insert(insertion);
+            }
+          }
+    };
+
+    processBuffers(localAllocs);
+    processBuffers(nonLocalAllocs);
+#else
+    SmallVector<BufferT *> xBuffers = buffers;	 
+    while (!xBuffers.empty()) {	 
+      auto tripleIt = tripleMap.begin();	 
+      auto offset = tripleIt->first;	 
+      auto range = tripleIt->second;	 
+      tripleMap.erase(tripleIt);	 
+      auto bufferIt =	 
+          std::find_if(xBuffers.begin(), xBuffers.end(), [&](auto *buffer) { 
+            auto xRange = bufferRange[buffer]; 
+            bool res = xRange.intersects(range); 
+            for (const auto &val : tripleMap) 
+              res = res && 
+                    !val.second.intersects(xRange); // only one buffer intersect 
+            return res; 
+          }); 
+      if (bufferIt != xBuffers.end()) { 
+        auto buffer = *bufferIt; 
+        auto xSize = buffer->size; 
+        auto xRange = bufferRange.lookup(buffer); 
+        // TODO(Keren): A buffer's size shouldn't be determined here, have to 
+        // clean it up 
+        size_t alignOffset = buffer->setOffsetAligned(offset); 
+        tripleMap.insert({alignOffset + xSize, 
+                          Interval{std::max(range.start(), xRange.start()), 
+                                    std::min(range.end(), xRange.end())}}); 
+        // We could either insert (range.start, xRange.start) or (range.start, 
+        // xRange.end), both are correct and determine the potential buffer 
+        // offset, and the graph coloring algorithm will solve the interference, 
+        // if any 
+        if (range.start() < xRange.start()) 
+          tripleMap.insert({offset, Interval{range.start(), xRange.end()}}); 
+        if (xRange.end() < range.end()) 
+          tripleMap.insert({offset, Interval{xRange.start(), range.end()}}); 
+        xBuffers.erase(bufferIt); 
+      } 
+    }
+#endif
     LLVM_DEBUG(dumpBuffers());
   }
 
@@ -508,9 +592,17 @@ private:
     // Reset interference graph
     interference.clear();
     for (auto x : buffers) {
+#ifdef BSPUB_DAVINCI_BISHENGIR
+      // If being stored to global memory, the buffer is not allocated in
+      // shared memory and does not interfere with other buffers.
+      if (x->owner->hasAttr("store_to_gmem")) continue;
+#endif
       for (auto y : buffers) {
         if (x == y)
           continue;
+#ifdef BSPUB_DAVINCI_BISHENGIR
+        if (y->owner->hasAttr("store_to_gmem")) continue;
+#endif
         auto xStart = x->offset;
         auto yStart = y->offset;
         auto xSize = x->size;
@@ -579,6 +671,11 @@ private:
     // TODO(Keren): We are wasting memory here.
     // Nodes with color2 can actually start with 24.
     for (auto x : buffers) {
+#ifdef BSPUB_DAVINCI_BISHENGIR
+      // If being stored to global memory, the buffer is not allocated in
+      // shared memory and does not affect other buffers.
+      if (x->owner->hasAttr("store_to_gmem")) continue;
+#endif
       size_t newOffset = 0;
       for (auto y : interference.lookup(x)) {
         newOffset = std::max(newOffset, y->offset + y->size);
@@ -597,6 +694,68 @@ private:
   Allocation *allocation;
   BufferRangeMapT bufferRange;
   AllocationAnalysisScratchSizeFn scratchSizeGetter;
+
+#ifdef BSPUB_DAVINCI_BISHENGIR
+  int smemSize = 0;
+  int superBlockFactor = 1;
+  bool allowGlobalScratch = false;
+
+  void setSmemAndSuperBlockFactor() {
+    smemSize = 0;
+    superBlockFactor = 1;
+    allowGlobalScratch = false;
+
+    auto moduleOp = operation->getParentOfType<mlir::ModuleOp>();
+    if (!moduleOp) {
+      LDBG("module op not found. Skip setting.");
+      return;
+    }
+
+    // The module attribute specified for allowing global scratch allocation.
+    constexpr static char AttrAllowGlobalScratch[] = "ttg.enable-global-scratch-allocation";
+    if (auto allowGlobalScratchAttr = moduleOp->getAttr(AttrAllowGlobalScratch)) {
+      if (auto boolAttr = dyn_cast<mlir::BoolAttr>(allowGlobalScratchAttr)) {
+        allowGlobalScratch = boolAttr.getValue();
+      } else {
+        moduleOp->emitError() << AttrAllowGlobalScratch << " must be an BoolAttr, but got: "
+          << allowGlobalScratchAttr;
+        return;
+      }
+    } else {
+      LDBG(Twine(AttrAllowGlobalScratch) + " attribute missing. Skip checking.");
+      return;
+    }
+    
+    // The module attribute specified for shared memory capacity size.
+    constexpr static char AttrShared[] = "ttg.shared";
+
+    if (auto sharedMemAttr = moduleOp->getAttr(AttrShared)) {
+      if (auto intAttr = dyn_cast<mlir::IntegerAttr>(sharedMemAttr)) {
+        smemSize = intAttr.getInt();
+      } else {
+        moduleOp->emitError() << AttrShared << " must be an IntegerAttr, but got: "
+          << sharedMemAttr;
+        return;
+      }
+    } else {
+      LDBG(Twine(AttrShared) + " attribute missing. Skip checking.");
+      return;
+    }
+
+    if (smemSize < 0) {
+      moduleOp->emitError() << AttrShared << " must be non-negative, got "
+        << smemSize;
+      return;
+    } else if (smemSize == 0) {
+      LDBG("shared memory capacity is unknown. Skip checking.");
+      return;
+    }
+
+    if (auto superBlockFactorAttr = moduleOp->getAttrOfType<IntegerAttr>(
+            triton::gpu::AttrSuperBlockFactor))
+      superBlockFactor = static_cast<int>(superBlockFactorAttr.getUInt());
+  }
+#endif
 };
 
 } // namespace triton
