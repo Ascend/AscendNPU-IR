@@ -310,9 +310,15 @@ LogicalResult propagateAlignDown(
     return failure();
   }
   llvm::SmallBitVector droppedDims = subviewOp.getDroppedDims();
+  if (droppedDims.all()) {
+    return failure();
+  }
   llvm::SmallVector<int32_t> mappedAlignDims(alignDims.size());
   for (size_t i = 0; i < alignDims.size(); ++i) {
     mappedAlignDims[i] = getPostAlignDimAfterDrop(alignDims[i], droppedDims);
+    if (mappedAlignDims[i] == -1) {
+      return failure();
+    }
   }
   if (mappedAlignDims.empty()) {
     return failure();

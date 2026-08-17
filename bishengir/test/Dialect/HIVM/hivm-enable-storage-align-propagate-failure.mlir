@@ -24,3 +24,21 @@ func.func @scf_if_with_propagate_failure(%arg0: i32, %arg1: i32, %arg2: memref<3
   hivm.hir.store ins(%15:memref<32x259xf16, #hivm.address_space<ub>>) outs(%arg2: memref<32x259xf16, #hivm.address_space<gm>>)
   return
 }
+
+// -----
+
+// CHECK-LABEL: func @propagate_failure_scalar_result_type
+func.func @propagate_failure_scalar_result_type() {
+  %alloc_1 = memref.alloc() {alignment = 64 : i64} : memref<4x4xf32, #hivm.address_space<ub>>
+  annotation.mark %alloc_1 {hivm.stride_align_dims = array<i32: 1>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<4x4xf32, #hivm.address_space<ub>>
+
+  %alloc_2 = memref.alloc() {alignment = 64 : i64} : memref<1xf32, strided<[1]>, #hivm.address_space<ub>>
+  %alloc_3 = memref.alloc() {alignment = 64 : i64} : memref<4x4xf32, #hivm.address_space<ub>>
+  // CHECK: hivm.hir.copy
+  hivm.hir.copy ins(%alloc_1 : memref<4x4xf32, #hivm.address_space<ub>>) outs(%alloc_3 : memref<4x4xf32, #hivm.address_space<ub>>)
+  %subview_3 = memref.subview %alloc_3[0, 0] [1, 1] [1, 1] : memref<4x4xf32, #hivm.address_space<ub>> to memref<f32, strided<[]>, #hivm.address_space<ub>>
+  %expand_shape_3 = memref.expand_shape %subview_3 [] output_shape [1] : memref<f32, strided <[]>, #hivm.address_space<ub>> into memref<1xf32, strided<[1]>, #hivm.address_space<ub>>
+  // CHECK: hivm.hir.copy
+  hivm.hir.copy ins(%alloc_2 : memref<1xf32, strided<[1]>, #hivm.address_space<ub>>) outs(%expand_shape_3 : memref<1xf32, strided<[1]>, #hivm.address_space<ub>>)
+  return
+}
