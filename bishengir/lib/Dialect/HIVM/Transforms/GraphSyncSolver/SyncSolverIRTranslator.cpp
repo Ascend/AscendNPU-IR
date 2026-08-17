@@ -925,7 +925,7 @@ std::unique_ptr<Scope> IRTranslator::funcIrBuilder(Region &region,
 // Build the linearized sync IR (syncIr) and record occurrence ranges for
 // analysis.
 void IRTranslator::syncIrBuilder(OperationBase *op, Occurrence *parentOcc,
-                                 int depth, bool isUseless) {
+                                 bool isUseless) {
   assert(op != nullptr);
   if (op->preOrderIndex == -1) {
     op->preOrderIndex = globalPreOrderTraversalIndex++;
@@ -939,7 +939,7 @@ void IRTranslator::syncIrBuilder(OperationBase *op, Occurrence *parentOcc,
 
   int startIndex = globalIndex++;
   int syncIrIndex = static_cast<int>(syncIr.size());
-  auto occ = std::make_unique<Occurrence>(op, parentOcc, depth, syncIrIndex,
+  auto occ = std::make_unique<Occurrence>(op, parentOcc, syncIrIndex,
                                           startIndex, /*endIdx=*/-1);
   if (auto *rwOp = dyn_cast<RWOperation>(op)) {
     occ->hasUnitFlagFeat = rwOp->hasUnitFlagFeat;
@@ -953,15 +953,15 @@ void IRTranslator::syncIrBuilder(OperationBase *op, Occurrence *parentOcc,
 
   if (auto *loopOp = dyn_cast<Loop>(op)) {
     for (auto &op : loopOp->body) {
-      syncIrBuilder(op.get(), occPtr, depth + 1, isUseless);
+      syncIrBuilder(op.get(), occPtr, isUseless);
     }
     occPtr->loopSplitIndex = static_cast<int>(syncIr.size());
     for (auto &op : loopOp->body) {
-      syncIrBuilder(op.get(), occPtr, depth + 1, true);
+      syncIrBuilder(op.get(), occPtr, true);
     }
   } else if (auto *scopeOp = dyn_cast<Scope>(op)) {
     for (auto &op : scopeOp->body) {
-      syncIrBuilder(op.get(), occPtr, depth + 1, isUseless);
+      syncIrBuilder(op.get(), occPtr, isUseless);
     }
   }
 
