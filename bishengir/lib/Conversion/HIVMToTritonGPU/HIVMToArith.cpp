@@ -381,13 +381,12 @@ static bool extui_cast_condition(Type src, Type dst, hivm::TypeFn casting, hivm:
     const bool isInTypeI32 = src.isInteger(32) && dst.isInteger(64);
     const bool is_unsigned = (casting == hivm::TypeFn::cast_unsigned);
 
-    if (is_unsigned && (isInTypeI8 || isInTypeI16 ||isInTypeI32)) {
-        return true;
-    }
+    if (!is_unsigned) 
+        return false;
 
     const bool isInType1 = src.isInteger(1) && (dst.isInteger(8) || dst.isInteger(16) || dst.isInteger(32));
-    if (!is_unsigned) {
-        return isInType1;
+    if (isInType1 || isInTypeI8 || isInTypeI16 ||isInTypeI32) {
+        return true;
     }
 
     return false;

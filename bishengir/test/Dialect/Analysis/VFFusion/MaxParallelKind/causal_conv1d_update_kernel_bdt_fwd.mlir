@@ -57,8 +57,6 @@
 // CHECK: bufferization.materialize_in_destination
 // CHECK: linalg.fill
 // CHECK: scf.for
-// CHECK: tensor.extract_slice
-// CHECK: tensor.expand_shape
 // CHECK: func.call @causal_conv1d_update_kernel_bdt_fwd_fused_0
 // CHECK: scf.yield
 // CHECK: func.call @causal_conv1d_update_kernel_bdt_fwd_fused_2

@@ -571,6 +571,13 @@ struct HandleReduceWithIndexOpPattern : public OpRewritePattern<hfusion::ReduceW
     if (moduleOp && hacc::utils::isRegBasedArch(moduleOp) && !unsignedCmp) {
       return failure();
     }
+    // On regbase, defer i1 (bool) value reductions to the regbase normalize
+    // pass, which promotes the value to i32 so the reduce keeps a vectorized
+    // (vreduce) lowering instead of being scalarized here into per-bit loads.
+    if (moduleOp && hacc::utils::isRegBasedArch(moduleOp) && unsignedCmp) {
+      if (getElementTypeOrSelf(op->getOperand(0).getType()).isInteger(1))
+        return failure();
+    }
     SmallVector<unsigned> reduceDims;
     op.getReductionDims(reduceDims);
     assert(reduceDims.size() == 1 && "according to .td spec of ReduceWithIndexOp, only one reduce dim is supported");

@@ -282,6 +282,46 @@ public:
   }
 };
 
+/// Normalizes i1 (bool) reduce-with-index value operands by routing the
+/// internal reduction through i32, then casting the value result back to i1:
+///   reduce_with_index<i1>(src, idx)
+///     =>
+///   reduce_with_index<i32>(cast_i32(src), idx)
+///   cast result value back to i1
+/// i1 is bit-packed, so a scalar `memref.load` lowers to a per-bit GEP the
+/// backend cannot address; running the reduce on i32 keeps its vectorized
+/// lowering instead of being scalarized by `GenericUnroller`.
+template <typename ReduceWithIndexOpType, typename Traits>
+struct NormalizeReduceValueToI32Template
+    : public OpRewritePattern<ReduceWithIndexOpType> {
+public:
+  using OpRewritePattern<ReduceWithIndexOpType>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(ReduceWithIndexOpType op,
+                                PatternRewriter &rewriter) const override {
+    if (!Traits::shouldNormalizeReduceValueToI32(op))
+      return failure();
+
+    Location loc = op.getLoc();
+    IntegerType oldValueElemType = getReductionValueResultElementType(op);
+    IntegerType i32Type = IntegerType::get(op->getContext(), 32);
+
+    SmallVector<Value> newInputs = castReductionValueOperandsToType<Traits>(
+        rewriter, loc, op.getDpsInputs(), oldValueElemType, i32Type);
+    SmallVector<Value> newInits = castReductionValueOperandsToType<Traits>(
+        rewriter, loc, op.getDpsInits(), oldValueElemType, i32Type);
+
+    Operation *newOp = Traits::createReduceWithIndexOp(rewriter, loc, op,
+                                                       newInputs, newInits);
+    if (isReductionInitAlreadyNormalized(*op))
+      markReductionInitNormalized(*newOp);
+    SmallVector<Value> replacements = buildReduceValueReplacementValues<Traits>(
+        rewriter, loc, op, *newOp, oldValueElemType);
+    rewriter.replaceOp(op, replacements);
+    return success();
+  }
+};
+
 } // namespace mlir
 
 #endif // BISHENGIR_TRANSFORMS_REGBASE_NORMALIZE_NORMALIZEREDUCTIONTEMPLATE_H

@@ -54,7 +54,8 @@ bool isSingleResultPropagatableMemrefOp(Operation *op) {
     return false;
   if (isa<ViewLikeOpInterface>(op))
     return true;
-  if (isa<memref::TransposeOp, hivm::BitcastOp, arith::SelectOp>(op))
+  if (isa<memref::TransposeOp, hivm::BitcastOp, arith::SelectOp,
+          hivm::CreateSyncBlockLockOp>(op))
     return true;
   if (isa<bishengir::memref_ext::AllocWorkspaceOp>(op))
     return true;

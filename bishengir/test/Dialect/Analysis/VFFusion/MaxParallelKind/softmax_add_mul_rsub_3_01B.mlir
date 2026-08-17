@@ -1,8 +1,5 @@
 // RUN: bishengir-opt --hacc-append-device-spec="target=Ascend910_9579" --vf-fusion="fusion-mode=max-parallel" --split-input-file %s | FileCheck %s
 
-// TODO(regbase): Non-regbase VFFusion uses different fused-function boundaries
-// and numbering for this softmax case, so the original FileCheck fails.
-
 // CHECK-LABEL: func.func private @triton_unk_fused__softmax_add_mul_rsub_3_01B_fused_0(
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<add>}
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
@@ -79,6 +76,7 @@
 // CHECK: bufferization.to_tensor
 // CHECK: func.call @triton_unk_fused__softmax_add_mul_rsub_3_01B_fused_0
 // CHECK: linalg.fill
+// CHECK: tensor.insert_slice
 // CHECK: func.call @triton_unk_fused__softmax_add_mul_rsub_3_01B_fused_1
 // CHECK: func.call @triton_unk_fused__softmax_add_mul_rsub_3_01B_fused_2
 // CHECK: func.call @triton_unk_fused__softmax_add_mul_rsub_3_01B_fused_3

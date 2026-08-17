@@ -21,6 +21,7 @@
 // Expanded one-element workspace carries the multibuffer dim + multi-buffer mark.
 // CHECK: %[[WS:.*]] = memref_ext.alloc_workspace() : memref<2x1xf32>
 // CHECK: annotation.mark %[[WS]] {hivm.cv_pipelined_multi_buffer} : memref<2x1xf32>
+// CHECK: %[[WST:.*]] = bufferization.to_tensor %[[WS]] restrict writable : memref<2x1xf32>
 // V1 (VECTOR scalar producer): reduce, then store into a per-slot subview of %[[WS]].
 // CHECK: scf.for
 // CHECK: %[[SV:.*]] = memref.subview %[[WS]][%{{.*}}, 0] [1, 1] [1, 1]
@@ -29,7 +30,6 @@
 // CHECK: hivm.loop_core_type = #hivm.tcore_type<VECTOR>
 // C (CUBE scalar user): the cube reads the scalar back through the cloned
 // (newExtractLabel) chain rooted at the workspace re-extract, feeding mmadL1 K.
-// CHECK: %[[WST:.*]] = bufferization.to_tensor %[[WS]] restrict writable : memref<2x1xf32>
 // CHECK: scf.for
 // CHECK: %[[CESL:.*]] = tensor.extract_slice %[[WST]][%{{.*}}, 0] [1, 1] [1, 1] : tensor<2x1xf32> to tensor<1xf32>
 // CHECK: %[[CEXT:.*]] = tensor.extract %[[CESL]][%{{.*}}] {{.*}}DuplicateTensorExtractForCube::newExtractLabel{{.*}} : tensor<1xf32>

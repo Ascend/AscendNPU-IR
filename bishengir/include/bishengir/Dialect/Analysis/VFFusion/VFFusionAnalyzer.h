@@ -116,7 +116,16 @@ protected:
   /// Validates that reshape operations remain at group boundaries after fusion.
   ///
   /// Reshape operations should only appear at the beginning or end of a
-  /// fused group to maintain valid data flow transformations.
+  /// fused group to maintain valid data flow transformations. A reshape is
+  /// admitted when:
+  ///   - It feeds a vsstb-pattern transpose chain
+  ///     (isExpandShapeOpCanFuseIntoVsstbPatternTranspose), or
+  ///   - It would be eliminated by PreVectorizationFusion
+  ///     (isReshapeEliminableByPreVectorizationFusion): a CollapseShapeOp
+  ///     feeding a linalg.broadcast, or an ExpandShapeOp consumed by a
+  ///     linalg.generic with unit dims indexed by constant 0.
+  ///     (Inverse reshape pairs are not checked here — preProcess()
+  ///     folds them before the fusion phase.)
   bool areReshapesValidIfFused(const size_t xIndex, const size_t yIndex);
 
   /// Extended fusibility check (must be overridden by derived classes).
@@ -252,11 +261,13 @@ bool VFFusionAnalyzerBase<AnalyzerClass>::areReshapesValidIfFused(
     return true;
   }
   if (isReshapeOp(xOp) &&
-      isExpandShapeOpCanFuseIntoVsstbPatternTranspose(xOp)) {
+      (isExpandShapeOpCanFuseIntoVsstbPatternTranspose(xOp) ||
+       isReshapeEliminableByPreVectorizationFusion(xOp))) {
     return true;
   }
   if (isReshapeOp(yOp) &&
-      isExpandShapeOpCanFuseIntoVsstbPatternTranspose(yOp)) {
+      (isExpandShapeOpCanFuseIntoVsstbPatternTranspose(yOp) ||
+       isReshapeEliminableByPreVectorizationFusion(yOp))) {
     return true;
   }
   return false;
@@ -328,15 +339,22 @@ public:
 private:
   std::vector<OpOperand *> getSortedConsumerOperands(Operation *producerOp);
   bool hasReductionToConsumer(const int producerIndex, const int consumerIndex);
+  bool useNarrowingCastInConsumer(const int producerIndex, const int consumerIndex);
   bool areFusibleOps(const int producerIndex, const int consumerIndex);
   bool fuseProducerConsumerImpl(Block &block);
   bool fuseIOBoundGroupsWithNearestConsumer();
   bool isIOBoundGroup(int groupId);
+  bool fuseGroupsWithNearestConsumer(
+      bool (MaxParallelAnalyzer::*isTargetGroup)(int), const char *groupKind);
+  bool fuseShapeBoundGroupsWithNearestConsumer();
+  bool isSmallShapeGroup(int groupId);
   bool parallelismSubModel(const CostMetrics &, const CostMetrics &) const;
   bool execUnitUtilizationSubModel(const CostMetrics &,
                                    const CostMetrics &) const;
+  bool tryFuseByCastStrategy(int producerGroupId, int consumerGroupId,
+                             int producerIndex, int consumerIndex);
   bool canFuseGroups(int producerGroupId, int consumerGroupId,
-                     int producerIndex);
+                     int producerIndex, int consumerIndex);
   bool mergeGroups(const int producerGroupId, const int consumerGroupId);
   bool tryFuseGroups(int producerIndex, int consumerIndex, int producerGroupId,
                      int consumerGroupId);

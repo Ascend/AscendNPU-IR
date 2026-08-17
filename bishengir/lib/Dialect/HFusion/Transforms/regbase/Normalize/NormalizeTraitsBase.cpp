@@ -436,6 +436,12 @@ Value mlir::hfusion::NormalizeTraitsBase::castReduceIndexTensor(
   return hfusion::castTo(rewriter, value, targetElemType);
 }
 
+Value mlir::hfusion::NormalizeTraitsBase::castReduceValueTensor(
+    PatternRewriter &rewriter, Location, Value value, IntegerType targetElemType,
+    Value) {
+  return hfusion::castTo(rewriter, value, targetElemType);
+}
+
 mlir::Value mlir::hfusion::NormalizeTraitsBase::createSelectOp(
     PatternRewriter &rewriter, Location loc, Value cond, Value a, Value b,
     Value dst) {

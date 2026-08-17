@@ -265,7 +265,7 @@ void buildLowerToLLVMPipeline(OpPassManager &pm,
   hivmToStdOptions.isOpsAligned = config.getEnableHIVMAutoStorageAlign();
   hivmToStdOptions.markLibCallNoInline = config.getEnableLibCallNoInline();
   pm.addPass(hivm::createMarkDisableLoadPass());
-  // hivm::addSyncBlockLockFinalizePasses(pm);
+  mlir::hivm::regbase::addSyncBlockLockFinalizePasses(pm);
   pm.addPass(createConvertHIVMToStandardPass(hivmToStdOptions));
   pm.addPass(createConvertHIVMAVEToStandardPass());
   pm.nest<func::FuncOp>().addPass(createFixCallUnknownLocPass());

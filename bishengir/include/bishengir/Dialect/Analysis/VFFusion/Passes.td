@@ -81,9 +81,12 @@ def VFFusion : Pass<"vf-fusion", "mlir::ModuleOp"> {
               "Enable conservative vector function stack slot limit">,
       Option<"enableRA", "enable-ra", "bool", /*default=*/"true",
              "Skip row-reduction (dim=0) sum ops in VF fusion">,
-      Option<"enableAR", "enable-ar", "bool", /*default=*/"false",
-             "Skip column-reduction (dim!=0) sum ops in VF fusion">
-      ];
+       Option<"enableAR", "enable-ar", "bool", /*default=*/"false",
+              "Skip column-reduction (dim!=0) sum ops in VF fusion">,
+       Option<"enableCastOpt", "enable-cast-opt", "bool", /*default=*/"false",
+              "Enable the new cast fusion strategy (widening/narrowing cast); off uses simple cast admission. "
+              "Only effective in max-parallel mode">
+       ];
 }
 
 #endif // BISHENGIR_DIALECT_ANALYSIS_VFFUSION_PASSES_TD

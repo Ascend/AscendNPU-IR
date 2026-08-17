@@ -338,6 +338,81 @@ SmallVector<Value> buildReduceIndexReplacementValues(
   return replacements;
 }
 
+/// Casts value tensors that currently use `sourceElemType` to
+/// `targetElemType`; `tensor.empty` is rebuilt directly.
+template <typename Traits>
+Value castReductionValueTensorToType(PatternRewriter &rewriter, Location loc,
+                                     Value value, IntegerType sourceElemType,
+                                     IntegerType targetElemType) {
+  auto valueType = dyn_cast<RankedTensorType>(value.getType());
+  if (!valueType)
+    return value;
+
+  auto elemType = dyn_cast<IntegerType>(valueType.getElementType());
+  if (!elemType || elemType != sourceElemType)
+    return value;
+
+  if (auto emptyOp = value.getDefiningOp<tensor::EmptyOp>()) {
+    RankedTensorType newType =
+        RankedTensorType::get(valueType.getShape(), targetElemType);
+    SmallVector<Value> dynamicSizes(emptyOp.getDynamicSizes().begin(),
+                                    emptyOp.getDynamicSizes().end());
+    return rewriter.create<tensor::EmptyOp>(loc, newType, dynamicSizes);
+  }
+
+  return Traits::castReduceValueTensor(rewriter, loc, value, targetElemType,
+                                       value);
+}
+
+template <typename Traits>
+SmallVector<Value>
+castReductionValueOperandsToType(PatternRewriter &rewriter, Location loc,
+                                 ValueRange values,
+                                 IntegerType sourceElemType,
+                                 IntegerType targetElemType) {
+  SmallVector<Value> converted;
+  converted.reserve(values.size());
+  for (Value value : values) {
+    converted.push_back(castReductionValueTensorToType<Traits>(
+        rewriter, loc, value, sourceElemType, targetElemType));
+  }
+  return converted;
+}
+
+template <typename ReduceWithIndexOpType>
+bool hasNonI32ReductionValueResult(ReduceWithIndexOpType op) {
+  if (op->getNumResults() < 2)
+    return false;
+
+  auto valueType = dyn_cast<RankedTensorType>(op->getResult(0).getType());
+  if (!valueType)
+    return false;
+
+  auto valueElemType = dyn_cast<IntegerType>(valueType.getElementType());
+  return valueElemType && valueElemType.getWidth() != 32;
+}
+
+template <typename ReduceWithIndexOpType>
+IntegerType getReductionValueResultElementType(ReduceWithIndexOpType op) {
+  auto valueType = cast<RankedTensorType>(op->getResult(0).getType());
+  return cast<IntegerType>(valueType.getElementType());
+}
+
+/// Restores the public result type after the internal value reduction ran on
+/// i32:
+///   (value:i32, index) -> (cast(value, old_value_type), index)
+template <typename Traits, typename ReduceWithIndexOpType>
+SmallVector<Value> buildReduceValueReplacementValues(
+    PatternRewriter &rewriter, Location loc, ReduceWithIndexOpType op,
+    Operation &newOp, IntegerType oldValueElemType) {
+  SmallVector<Value> replacements;
+  replacements.reserve(newOp.getNumResults());
+  replacements.push_back(Traits::castReduceValueTensor(
+      rewriter, loc, newOp.getResult(0), oldValueElemType, op->getResult(0)));
+  replacements.push_back(newOp.getResult(1));
+  return replacements;
+}
+
 template <typename Traits, typename ReductionOpType>
 inline LogicalResult replacePromotedReductionResults(ReductionOpType oldOp,
                                                       Operation &newOp,

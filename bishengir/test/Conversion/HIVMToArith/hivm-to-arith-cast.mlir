@@ -120,37 +120,37 @@ func.func @test_func_vcast_i1_i32_cast_signed_extsi(%arg0:tensor<4x32x64xi1>) ->
     return %0 : tensor<4x32x64xi32>
 }
 
-// CHECK-LABEL: func.func @test_func_brc_vcast_i1_i16_cast_signed_extui
-func.func @test_func_brc_vcast_i1_i16_cast_signed_extui(%arg0:tensor<8x1x8xi1>) -> tensor<8x8x8xi16> {
+// CHECK-LABEL: func.func @test_func_brc_vcast_i1_i16_cast_unsigned_extui
+func.func @test_func_brc_vcast_i1_i16_cast_unsigned_extui(%arg0:tensor<8x1x8xi1>) -> tensor<8x8x8xi16> {
     %0 = tensor.empty():tensor<8x8x8xi16>
     //     CHECK: %[[brc1:.*]] = tt.broadcast %arg0  : tensor<8x1x8xi1> -> tensor<8x8x8xi1>
     //     CHECK: %[[RET:.*]] = arith.extui %[[brc1]] {round_mode = #hivm.round_mode<rint>} : tensor<8x8x8xi1> to tensor<8x8x8xi16>
-    hivm.hir.vcast ins(%arg0 : tensor<8x1x8xi1>) outs(%0:tensor<8x8x8xi16>) round_mode = <rint> cast = <cast_signed> broadcast = [0,1,2] -> tensor<8x8x8xi16>
+    hivm.hir.vcast ins(%arg0 : tensor<8x1x8xi1>) outs(%0:tensor<8x8x8xi16>) round_mode = <rint> cast = <cast_unsigned> broadcast = [0,1,2] -> tensor<8x8x8xi16>
     return %0 : tensor<8x8x8xi16>
 }
 
-// CHECK-LABEL: func.func @test_func_vcast_i1_i16_cast_signed_extui
-func.func @test_func_vcast_i1_i16_cast_signed_extui(%arg0:tensor<4x32x64xi1>) -> tensor<4x32x64xi16> {
+// CHECK-LABEL: func.func @test_func_vcast_i1_i16_cast_unsigned_extui
+func.func @test_func_vcast_i1_i16_cast_unsigned_extui(%arg0:tensor<4x32x64xi1>) -> tensor<4x32x64xi16> {
     %0 = tensor.empty():tensor<4x32x64xi16>
     //     CHECK: %[[RET:.*]] = arith.extui {{.*}} {round_mode = #hivm.round_mode<rint>} : tensor<4x32x64xi1> to tensor<4x32x64xi16>
-    hivm.hir.vcast ins(%arg0 : tensor<4x32x64xi1>) outs(%0:tensor<4x32x64xi16>) round_mode = <rint> cast = <cast_signed> -> tensor<4x32x64xi16>
+    hivm.hir.vcast ins(%arg0 : tensor<4x32x64xi1>) outs(%0:tensor<4x32x64xi16>) round_mode = <rint> cast = <cast_unsigned> -> tensor<4x32x64xi16>
     return %0 : tensor<4x32x64xi16>
 }
 
-// CHECK-LABEL: func.func @test_func_brc_vcast_i1_i32_cast_signed_extui
-func.func @test_func_brc_vcast_i1_i32_cast_signed_extui(%arg0:tensor<8x1x8xi1>) -> tensor<8x8x8xi32> {
+// CHECK-LABEL: func.func @test_func_brc_vcast_i1_i32_cast_unsigned_extui
+func.func @test_func_brc_vcast_i1_i32_cast_unsigned_extui(%arg0:tensor<8x1x8xi1>) -> tensor<8x8x8xi32> {
     %0 = tensor.empty():tensor<8x8x8xi32>
     //     CHECK: %[[brc1:.*]] = tt.broadcast %arg0  : tensor<8x1x8xi1> -> tensor<8x8x8xi1>
     //     CHECK: %[[RET:.*]] = arith.extui %[[brc1]] {round_mode = #hivm.round_mode<rint>} : tensor<8x8x8xi1> to tensor<8x8x8xi32>
-    hivm.hir.vcast ins(%arg0 : tensor<8x1x8xi1>) outs(%0:tensor<8x8x8xi32>) round_mode = <rint> cast = <cast_signed> broadcast = [0,1,2] -> tensor<8x8x8xi32>
+    hivm.hir.vcast ins(%arg0 : tensor<8x1x8xi1>) outs(%0:tensor<8x8x8xi32>) round_mode = <rint> cast = <cast_unsigned> broadcast = [0,1,2] -> tensor<8x8x8xi32>
     return %0 : tensor<8x8x8xi32>
 }
 
-// CHECK-LABEL: func.func @test_func_vcast_i1_i32_cast_signed_extui
-func.func @test_func_vcast_i1_i32_cast_signed_extui(%arg0:tensor<4x32x64xi1>) -> tensor<4x32x64xi32> {
+// CHECK-LABEL: func.func @test_func_vcast_i1_i32_cast_unsigned_extui
+func.func @test_func_vcast_i1_i32_cast_unsigned_extui(%arg0:tensor<4x32x64xi1>) -> tensor<4x32x64xi32> {
     %0 = tensor.empty():tensor<4x32x64xi32>
     //     CHECK: %[[RET:.*]] = arith.extui {{.*}} {round_mode = #hivm.round_mode<rint>} : tensor<4x32x64xi1> to tensor<4x32x64xi32>
-    hivm.hir.vcast ins(%arg0 : tensor<4x32x64xi1>) outs(%0:tensor<4x32x64xi32>) round_mode = <rint> cast = <cast_signed> -> tensor<4x32x64xi32>
+    hivm.hir.vcast ins(%arg0 : tensor<4x32x64xi1>) outs(%0:tensor<4x32x64xi32>) round_mode = <rint> cast = <cast_unsigned> -> tensor<4x32x64xi32>
     return %0 : tensor<4x32x64xi32>
 }
 

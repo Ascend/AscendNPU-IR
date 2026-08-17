@@ -79,10 +79,13 @@ struct MarkSyncBlockLockWithSubblockPass
 void MarkSyncBlockLockWithSubblockPass::runOnOperation() {
   ModuleOp module = getOperation();
 
-  std::optional<llvm::VersionTuple> hivmcVersion =
-      hacc::utils::getHIVMCVersion(module);
-  if (!hivmcVersion || *hivmcVersion < llvm::VersionTuple(0, 2, 0))
-    return;
+  // TODO: support hivmcVersion check on regbase
+  if (hacc::utils::isMemBasedArch(module)) {
+    std::optional<llvm::VersionTuple> hivmcVersion =
+        hacc::utils::getHIVMCVersion(module);
+    if (!hivmcVersion || *hivmcVersion < llvm::VersionTuple(0, 2, 0))
+      return;
+  }
 
   if (!isMixModule(module))
     return;

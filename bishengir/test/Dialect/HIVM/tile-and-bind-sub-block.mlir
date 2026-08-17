@@ -4017,3 +4017,60 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">, hivm.module_cor
     return
   }
 }
+
+// -----
+
+// Rank-2 true transposes mixed with rank-3 layout-conversion transposes must
+// not confuse DimensionAnalyzer transposed-dim marking during bind-sub-block.
+//
+// CHECK-LABEL: func.func @layout_conversion_transpose_mix_aiv
+// CHECK: hivm.tiling_dim = {{[01]}} : index, tiledAlloc
+// CHECK: hivm.hir.vtranspose{{.*}}permutation = [1, 0, 2]
+// CHECK: map_for_to_forall
+
+module attributes {hacc.target = #hacc.target<"Ascend910_9589">, hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @layout_conversion_transpose_mix_aiv(
+      %arg0: memref<?xf32>, %arg1: memref<32x128xf32>,
+      %arg2: i32, %arg3: i32, %arg4: i32)
+      attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>,
+                  hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %cst = arith.constant 0.000000e+00 : f32
+    %0 = arith.muli %arg2, %arg3 : i32
+    %1 = arith.muli %0, %arg4 : i32
+    annotation.mark %1 {logical_block_num} : i32
+    %7 = tensor.empty() : tensor<32x128xf32>
+    %8 = hivm.hir.vbrc ins(%cst : f32) outs(%7 : tensor<32x128xf32>) -> tensor<32x128xf32>
+    %alloc_ub = memref.alloc() : memref<2x32x128xf32, #hivm.address_space<ub>>
+    annotation.mark %alloc_ub {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>} : memref<2x32x128xf32, #hivm.address_space<ub>>
+    %memspacecast_ub = memref.memory_space_cast %alloc_ub : memref<2x32x128xf32, #hivm.address_space<ub>> to memref<2x32x128xf32>
+    %tensor_ub = bufferization.to_tensor %memspacecast_ub restrict writable : memref<2x32x128xf32>
+    %alloc32 = memref.alloc() : memref<32x32xf32>
+    scf.for %i = %c0 to %c2 step %c1 {
+      %subview32 = memref.subview %alloc32[0, 0] [32, 32] [1, 1] : memref<32x32xf32> to memref<32x32xf32, strided<[32, 1]>>
+      %reinterpret = memref.reinterpret_cast %arg0 to offset: [0], sizes: [32, 32], strides: [32, 1] : memref<?xf32> to memref<32x32xf32, strided<[32, 1]>>
+      hivm.hir.load ins(%reinterpret : memref<32x32xf32, strided<[32, 1]>>) outs(%subview32 : memref<32x32xf32, strided<[32, 1]>>) core_type = <VECTOR>
+      %loaded32 = bufferization.to_tensor %alloc32 restrict writable : memref<32x32xf32>
+      %empty2 = tensor.empty() : tensor<32x32xf32>
+      %t2 = hivm.hir.vtranspose ins(%loaded32 : tensor<32x32xf32>) outs(%empty2 : tensor<32x32xf32>) permutation = [1, 0] -> tensor<32x32xf32>
+      %expanded128 = tensor.expand_shape %8 [[0], [1, 2]] output_shape [32, 16, 8] : tensor<32x128xf32> into tensor<32x16x8xf32>
+      %empty3 = tensor.empty() : tensor<16x32x8xf32>
+      %t3 = hivm.hir.vtranspose ins(%expanded128 : tensor<32x16x8xf32>) outs(%empty3 : tensor<16x32x8xf32>) permutation = [1, 0, 2] -> tensor<16x32x8xf32>
+      %expanded4 = tensor.expand_shape %t3 [[0], [1, 2], [3]] output_shape [16, 2, 16, 8] : tensor<16x32x8xf32> into tensor<16x2x16x8xf32>
+      %alloc_cbuf = memref.alloc() : memref<16x2x16x8xf32, #hivm.address_space<cbuf>>
+      annotation.mark %alloc_cbuf {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<1>} : memref<16x2x16x8xf32, #hivm.address_space<cbuf>>
+      %cast_cbuf = memref.memory_space_cast %alloc_cbuf : memref<16x2x16x8xf32, #hivm.address_space<cbuf>> to memref<16x2x16x8xf32>
+      hivm.hir.copy ins(%expanded4 : tensor<16x2x16x8xf32>) outs(%cast_cbuf : memref<16x2x16x8xf32>)
+      %mul = hivm.hir.vmul ins(%t2, %loaded32 : tensor<32x32xf32>, tensor<32x32xf32>) outs(%empty2 : tensor<32x32xf32>) -> tensor<32x32xf32>
+      %expanded32 = tensor.expand_shape %mul [[0], [1, 2]] output_shape [32, 4, 8] : tensor<32x32xf32> into tensor<32x4x8xf32>
+      %empty3b = tensor.empty() : tensor<4x32x8xf32>
+      %t3b = hivm.hir.vtranspose ins(%expanded32 : tensor<32x4x8xf32>) outs(%empty3b : tensor<4x32x8xf32>) permutation = [1, 0, 2] -> tensor<4x32x8xf32>
+      %slice_ub = tensor.extract_slice %tensor_ub[%i, 0, 0] [1, 32, 128] [1, 1, 1] : tensor<2x32x128xf32> to tensor<32x128xf32>
+      %out = hivm.hir.vmul ins(%8, %slice_ub : tensor<32x128xf32>, tensor<32x128xf32>) outs(%7 : tensor<32x128xf32>) -> tensor<32x128xf32>
+      hivm.hir.store ins(%out : tensor<32x128xf32>) outs(%arg1 : memref<32x128xf32>)
+    }
+    return
+  }
+}

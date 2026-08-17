@@ -1,45 +1,40 @@
-// RUN: bishengir-opt --hacc-append-device-spec="target=Ascend910_9579" --vf-fusion="fusion-mode=max-parallel enable-ra=false enable-ar=false" --split-input-file %s | FileCheck %s
+// RUN: bishengir-opt --hacc-append-device-spec="target=Ascend910_9579" --vf-fusion="fusion-mode=max-parallel" --split-input-file %s | FileCheck %s
+
 // CHECK-LABEL: func.func private @triton_unk_fused__softmax_0_fused_0(
-// CHECK: arith.constant
-// CHECK: hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>}
-// CHECK: linalg.fill
+// CHECK: hfusion.cast
 // CHECK: hfusion.bitcast
-// CHECK: hfusion.elemwise_binary {fun = #hfusion.binary_fn<vand>}
-// CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<add>}
-// CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<min_signed>}
-// CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<max_signed>}
-// CHECK: hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, enable_saturate = false, round_mode = #hfusion.round_mode<rint>}
-// CHECK: hfusion.compare {compare_fn = #hfusion.compare_fn<vne>}
+// CHECK: hfusion.elemwise_binary{{.*}}vand
+// CHECK: linalg.elemwise_binary{{.*}}add
+// CHECK: linalg.elemwise_binary{{.*}}min_signed
+// CHECK: linalg.elemwise_binary{{.*}}max_signed
+// CHECK: hfusion.cast
+// CHECK: hfusion.compare{{.*}}vne
 // CHECK: hfusion.select
 // CHECK: linalg.reduce
-// CHECK: arith.maximumf
-// CHECK: linalg.yield
-
-// CHECK-LABEL: func.func private @triton_unk_fused__softmax_0_fused_1(
-// CHECK: arith.constant
 // CHECK: tensor.extract
-// CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<sub>}
-// CHECK: linalg.elemwise_unary {fun = #linalg.unary_fn<exp>}
-// CHECK: linalg.fill
+// CHECK: linalg.elemwise_binary{{.*}}sub
+// CHECK: linalg.elemwise_unary{{.*}}exp
 // CHECK: linalg.reduce
-// CHECK: arith.addf
-// CHECK: linalg.yield
-
-// CHECK-LABEL: func.func private @triton_unk_fused__softmax_0_fused_2(
 // CHECK: tensor.extract
-// CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<div>}
-// CHECK: hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>}
+// CHECK: linalg.elemwise_binary{{.*}}div
+// CHECK: hfusion.cast
+// CHECK: return
 
 // CHECK-LABEL: func.func @triton_unk_fused__softmax_0(
-// CHECK: arith.constant
 // CHECK: arith.muli
 // CHECK: arith.addi
 // CHECK: arith.minsi
 // CHECK: scf.for
+// CHECK: arith.addi
 // CHECK: arith.cmpi slt
+// CHECK: arith.muli
+// CHECK: arith.index_cast
 // CHECK: memref.reinterpret_cast
 // CHECK: memref.alloc
 // CHECK: arith.index_castui
+// CHECK: arith.muli
+// CHECK: arith.cmpi slt
+// CHECK: arith.ori
 // CHECK: scf.if
 // CHECK: linalg.fill
 // CHECK: memref.subview
@@ -47,8 +42,7 @@
 // CHECK: bufferization.to_tensor
 // CHECK: tensor.empty
 // CHECK: func.call @triton_unk_fused__softmax_0_fused_0
-// CHECK: func.call @triton_unk_fused__softmax_0_fused_1
-// CHECK: func.call @triton_unk_fused__softmax_0_fused_2
+// CHECK: tensor.extract_slice
 // CHECK: bufferization.materialize_in_destination
 // CHECK: return
 
