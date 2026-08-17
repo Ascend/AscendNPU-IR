@@ -156,6 +156,33 @@ GetCVMixIdAndAllocOpFromMarkOp(annotation::MarkOp markOp, int32_t &cvMixId) {
   return maybeAlloc;
 }
 
+/// Collapse overlapping or adjacent [alloc, free] intervals. After this call
+/// the vector is sorted by allocTime and neighboring lives satisfy
+/// next.allocTime > prev.freeTime + 1.
+inline void MergeBufferVec(BufferLifeVec &bufferLife) {
+  if (bufferLife.empty())
+    return;
+  BufferLifeVec mergedLife;
+  mergedLife.reserve(bufferLife.size());
+  std::sort(bufferLife.begin(), bufferLife.end(), CompareBufferLife());
+  int start = bufferLife[0]->allocTime;
+  int end = bufferLife[0]->freeTime;
+  Value buffer = bufferLife[0]->buffer;
+  for (size_t i = 1; i < bufferLife.size(); ++i) {
+    auto &life = bufferLife[i];
+    if (life->allocTime <= end + 1) {
+      end = end < life->freeTime ? life->freeTime : end;
+    } else {
+      mergedLife.emplace_back(std::make_unique<BufferLife>(buffer, start, end));
+      buffer = life->buffer;
+      start = life->allocTime;
+      end = life->freeTime;
+    }
+  }
+  mergedLife.emplace_back(std::make_unique<BufferLife>(buffer, start, end));
+  bufferLife.swap(mergedLife);
+}
+
 } // namespace
 
 void MemLivenessAnalysisRegBase::build() {
@@ -167,6 +194,7 @@ void MemLivenessAnalysisRegBase::build() {
   UpdatePreloadBuffersGenKillMap();
   // the lifetime of the buffer.
   GenerateBufferLife();
+  UnifyConditionalAliasBufferLife();
   InitializeInplacePairList();
 
   // Record positions of cross-core RECEIVE sync ops. Only
@@ -1131,18 +1159,17 @@ void MemLivenessAnalysisRegBase::InitializeInplacePairList() {
       LDBG("inplace pair: (buffer: "
            << buffer << ", alias buffer: " << aliasBuffer << ")"
            << " , condition: " << aliasBufferPair.second << "\n");
-      if (aliasBufferPair.second) {
-        continue;
-      }
       auto it = bufferInfos.find(aliasBuffer);
       assert(it != bufferInfos.end() && "buffer Info need define before! ");
       auto &aliasBufferInfo = it->second;
       if (aliasBufferInfo.memoryUnique || bufferInfo.memoryUnique) {
         continue;
       }
-      inplacePairList.emplace_back(std::make_pair(buffer, aliasBuffer));
       aliasBufferInfo.ignoreInplace = true;
       bufferInfo.ignoreInplace = true;
+      if (!aliasBufferPair.second) {
+        inplacePairList.emplace_back(std::make_pair(buffer, aliasBuffer));
+      }
     }
   }
 }
@@ -1170,6 +1197,45 @@ void MemLivenessAnalysisRegBase::GenerateBufferLife() {
       iter->second->freeTime = scopeTime;
     }
     scopeTime++;
+  }
+}
+
+void MemLivenessAnalysisRegBase::UnifyConditionalAliasBufferLife() {
+  // buffer2AliasVec is already transitive. A conditional edge means any alloc
+  // in that set may be the live iter-arg, so merge their lives (and cover
+  // holes between disjoint pieces) so in-loop temps cannot sit on that slot.
+  DenseSet<Value> visited;
+  for (auto &[buf, life] : buffer2Life) {
+    if (!visited.insert(buf).second)
+      continue;
+    SetVector<Value> group = GetAliasBuffers(buf);
+    group.insert(buf);
+
+    bool hasCond = false;
+    BufferLifeVec lives;
+    for (Value v : group) {
+      visited.insert(v);
+      for (const auto &[alias, cond] : GetAliasBufferCondPairs(v))
+        hasCond |= cond;
+      auto it = buffer2Life.find(v);
+      if (it != buffer2Life.end())
+        lives.push_back(it->second);
+    }
+    if (!hasCond || lives.size() < 2)
+      continue;
+
+    MergeBufferVec(lives);
+    // Merge only collapses overlap; the carried buffer stays live across
+    // gaps, so take the covering [first alloc, last free] of the merged vec.
+    int64_t start = lives.front()->allocTime;
+    int64_t end = lives.back()->freeTime;
+    for (Value v : group) {
+      auto it = buffer2Life.find(v);
+      if (it == buffer2Life.end())
+        continue;
+      it->second->allocTime = start;
+      it->second->freeTime = end;
+    }
   }
 }
 
@@ -2515,33 +2581,6 @@ inline void MemPlanRegBase::MergeBufferLife(MemBoundList::const_iterator start,
                    (*it)->bufferLifeVec.end());
   }
   MergeBufferVec(newLife);
-}
-
-void MemPlanRegBase::MergeBufferVec(BufferLifeVec &bufferLife) const {
-  if (bufferLife.empty()) {
-    return;
-  }
-  BufferLifeVec mergedLife;
-  mergedLife.reserve(bufferLife.size());
-  // sort life by alloc and free time
-  std::sort(bufferLife.begin(), bufferLife.end(), CompareBufferLife());
-  int start = bufferLife[0]->allocTime;
-  int end = bufferLife[0]->freeTime;
-  auto buffer = bufferLife[0]->buffer;
-  // merge life
-  for (size_t i = 1; i < bufferLife.size(); i++) {
-    auto &life = bufferLife[i];
-    if (life->allocTime <= end + 1) {
-      end = end < life->freeTime ? life->freeTime : end;
-    } else {
-      mergedLife.emplace_back(std::make_unique<BufferLife>(buffer, start, end));
-      buffer = life->buffer;
-      start = life->allocTime;
-      end = life->freeTime;
-    }
-  }
-  mergedLife.emplace_back(std::make_unique<BufferLife>(buffer, start, end));
-  bufferLife.swap(mergedLife);
 }
 
 bool MemPlanRegBase::IsSamePlanAsLastRollBack(uint64_t allocOffset, int curChildIdx,

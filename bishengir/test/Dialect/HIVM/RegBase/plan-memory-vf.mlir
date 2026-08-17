@@ -669,3 +669,48 @@ func.func @plan_memory_vf_no_inplace_reuse_with_reshape_user(
   }
   return
 }
+
+// -----
+
+// Select as scf.for init + VF that can inplace the yield buffer with an
+// in-loop temp. Without unifying conditional-alias lifetimes (and disabling
+// VF inplace on those buffers), tmp and acc share one UB slot, so iteration
+// N+1 overwrites the carried iter_arg.
+func.func @select_init_iter_vf_add(
+    %arg0: memref<64xf32, #hivm.address_space<ub>>,
+    %arg1: memref<64xf32, #hivm.address_space<ub>>,
+    %arg2: memref<64xf32, #hivm.address_space<ub>>) attributes {hivm.vector_function} {
+  %c0 = arith.constant 0 : index
+  %cst = arith.constant 0.000000e+00 : f32
+  %0 = vector.transfer_read %arg0[%c0], %cst {in_bounds = [true]} : memref<64xf32, #hivm.address_space<ub>>, vector<64xf32>
+  %1 = vector.transfer_read %arg1[%c0], %cst {in_bounds = [true]} : memref<64xf32, #hivm.address_space<ub>>, vector<64xf32>
+  %2 = arith.addf %0, %1 : vector<64xf32>
+  vector.transfer_write %2, %arg2[%c0] {in_bounds = [true]} : vector<64xf32>, memref<64xf32, #hivm.address_space<ub>>
+  return
+}
+
+// CHECK-LABEL: func.func @plan_memory_vf_select_init_iter_no_reuse_yield
+// CHECK: scf.for
+// CHECK: %[[TMP:.*]] = hivm.hir.pointer_cast(%[[TMP_OFF:.*]]) : memref<64xf32
+// CHECK-NOT: hivm.hir.pointer_cast(%[[TMP_OFF]]) : memref<64xf32
+// CHECK: %[[ACC:.*]] = hivm.hir.pointer_cast(%{{.*}}) : memref<64xf32
+// CHECK: func.call @select_init_iter_vf_add(%{{.*}}, %[[TMP]], %[[ACC]])
+func.func @plan_memory_vf_select_init_iter_no_reuse_yield(
+    %gm: memref<64xf32, #hivm.address_space<gm>>,
+    %cond: i1) {
+  %c0 = arith.constant 0 : index
+  %c2 = arith.constant 2 : index
+  %c1 = arith.constant 1 : index
+  %init0 = memref.alloc() : memref<64xf32, #hivm.address_space<ub>>
+  %init1 = memref.alloc() : memref<64xf32, #hivm.address_space<ub>>
+  %init = arith.select %cond, %init0, %init1 : memref<64xf32, #hivm.address_space<ub>>
+  %res = scf.for %i = %c0 to %c2 step %c1 iter_args(%arg = %init) -> (memref<64xf32, #hivm.address_space<ub>>) {
+    %tmp = memref.alloc() : memref<64xf32, #hivm.address_space<ub>>
+    %acc = memref.alloc() : memref<64xf32, #hivm.address_space<ub>>
+    func.call @select_init_iter_vf_add(%arg, %tmp, %acc) {hivm.vector_function} : (memref<64xf32, #hivm.address_space<ub>>, memref<64xf32, #hivm.address_space<ub>>, memref<64xf32, #hivm.address_space<ub>>) -> ()
+    scf.yield %acc : memref<64xf32, #hivm.address_space<ub>>
+  }
+  hivm.hir.store ins(%res : memref<64xf32, #hivm.address_space<ub>>) outs(%gm : memref<64xf32, #hivm.address_space<gm>>)
+  return
+}
+

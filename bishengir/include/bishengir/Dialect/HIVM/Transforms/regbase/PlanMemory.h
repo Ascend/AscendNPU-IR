@@ -35,6 +35,7 @@
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallSet.h"
 
+#include <algorithm>
 #include <list>
 #include <random>
 
@@ -498,6 +499,9 @@ protected:
   /// Generate buffer's life time.
   void GenerateBufferLife();
 
+  /// Share one lifetime among allocs linked by a conditional alias component.
+  void UnifyConditionalAliasBufferLife();
+
   /// initialize the buffers that must be inplaced together
   /// namely, the alias buffers of memref.alloc,
   /// e.g. for iter arg and for yield.
@@ -757,9 +761,6 @@ protected:
                               MemBoundList::const_iterator end,
                               BufferLifeVec &newLife) const;
 
-  /// merge buffers in a vector.
-  void MergeBufferVec(BufferLifeVec &bufferLife) const;
-
   /// Judge if need to restart plan memory with other strategy after
   /// plan failed.
   PlanStatus ApplyFailStrategy(StatusWrapper &statusWrapper,
@@ -840,6 +841,9 @@ protected:
 
   /// Report all tensors life time info.
   void ReportMemLifeDebugInfo(const StorageEntry *rootStorageEntry);
+
+  /// Dump per-buffer alloc/free scope times before MergeInplaceSE.
+  void ReportPreMergeBufferLifeDebugInfo() const;
 
   /// Report tensor life time for debug.
   void MemLifeDebugInfo(const StorageEntry *storageEntry) const;

@@ -35,6 +35,7 @@
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallSet.h"
 
+#include <algorithm>
 #include <list>
 #include <random>
 
@@ -497,6 +498,9 @@ private:
   /// Generate buffer's life time.
   void GenerateBufferLife();
 
+  /// Share one lifetime among allocs linked by a conditional alias component.
+  void UnifyConditionalAliasBufferLife();
+
   /// initialize the buffers that must be inplaced together
   /// namely, the alias buffers of memref.alloc,
   /// e.g. for iter arg and for yield.
@@ -773,9 +777,6 @@ private:
   inline void MergeBufferLife(MemBoundList::const_iterator start,
                               MemBoundList::const_iterator end,
                               BufferLifeVec &newLife) const;
-
-  /// merge buffers in a vector.
-  void MergeBufferVec(BufferLifeVec &bufferLife) const;
 
   /// Judge if need to restart plan memory with other strategy after
   /// plan failed.
