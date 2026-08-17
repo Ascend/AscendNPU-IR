@@ -190,10 +190,11 @@ static void cloneForOpBody(scf::ForOp oldForOp, scf::ForOp newForOp,
 
 static void combineLoopResults(scf::ForOp oldForOp, scf::ForOp &newForOp,
                                PatternRewriter &rewriter, Location loc,
-                               Operation *reductionOp,
+                               ArrayRef<Operation *> reductionOps,
                                SmallVector<Value> &finalCombinedValues) {
-  llvm::StringRef opName = reductionOp->getName().getStringRef();
   for (unsigned k = 0; k < oldForOp.getRegionIterArgs().size(); ++k) {
+    Operation *reductionOp = reductionOps[k];
+    llvm::StringRef opName = reductionOp->getName().getStringRef();
     Value resLow = newForOp.getResult(2 * k);
     Value resHigh = newForOp.getResult(2 * k + 1);
     SmallVector<Value, 4> newOperands;
@@ -289,15 +290,6 @@ struct ReduceSplitPattern : public OpRewritePattern<scf::ForOp> {
     if (!(forOp->hasAttr(REDUCTION_LOOP_ATTR))) {
       return failure();
     }
-    Operation *reductionOp = nullptr;
-    for (auto &op : forOp.getBody()->getOperations()) {
-      if (op.hasAttr(REDUCTION_OP_ATTR)) {
-        reductionOp = &op;
-      }
-    }
-    if (!reductionOp) {
-      return failure();
-    }
     int currentDepth = 0;
     if (auto attr = forOp->getAttrOfType<IntegerAttr>(SPLIT_DEPTH_ATTR)) {
       currentDepth = attr.getInt();
@@ -323,6 +315,14 @@ struct ReduceSplitPattern : public OpRewritePattern<scf::ForOp> {
     // In reductionLoop with no inits case, exists ub vl/st ops. Thus, split
     // loops can not be executed in parallel, so no need to split.
     if (currentInits.empty()) {
+      return failure();
+    }
+    SmallVector<Operation *, 4> reductionOps;
+    for (auto &op : forOp.getBody()->getOperations()) {
+      if (op.hasAttr(REDUCTION_OP_ATTR))
+        reductionOps.push_back(&op);
+    }
+    if (reductionOps.empty()) {
       return failure();
     }
     const bool isOdd = ((unsigned int)tripCount & 0x1);
@@ -356,7 +356,7 @@ struct ReduceSplitPattern : public OpRewritePattern<scf::ForOp> {
     // combine result
     rewriter.setInsertionPointAfter(newForOp);
     SmallVector<Value> finalCombinedValues;
-    combineLoopResults(forOp, newForOp, rewriter, loc, reductionOp,
+    combineLoopResults(forOp, newForOp, rewriter, loc, reductionOps,
                        finalCombinedValues);
     // handle last calculation if trip count is odd
     if (isOdd) {
