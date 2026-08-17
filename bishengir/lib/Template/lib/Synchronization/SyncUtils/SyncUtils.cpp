@@ -16,7 +16,8 @@
 
 #include "Synchronization/SyncUtils.h"
 
-__aicore__ uint8_t &getUnitFlagIsBadRef(int64_t unit_flag_group_id) {
-  static uint8_t unit_flag_is_bad[MAX_BLOCK_NUM][MAX_UNIT_FLAG_GROUP_ID] = {0};
-  return unit_flag_is_bad[get_block_idx() % MAX_BLOCK_NUM][unit_flag_group_id];
+// Currently this is a workaround, better implementation is to allocate this arrary on stack.
+__aicore__ uint8_t &getUnitFlagDisableStatus(int64_t unit_flag_group_id) {
+  static uint8_t unit_flag_disable_status[MAX_BLOCK_NUM][MAX_UNIT_FLAG_GROUP_ID] = {0};
+  return unit_flag_disable_status[get_block_idx() % MAX_BLOCK_NUM][unit_flag_group_id];
 }

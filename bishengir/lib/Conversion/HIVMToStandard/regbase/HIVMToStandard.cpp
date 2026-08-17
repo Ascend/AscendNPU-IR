@@ -594,6 +594,7 @@ private:
     Value c0PadEn = rewriter.create<arith::ConstantIntOp>(
         op->getLoc(), op.getC0PadEn(), 1);
     Value unitFlagMode = op.getUnitFlagModeLibValue(rewriter);
+    Value unitFlagGroupId = op.getUnitFlagGroupIdValue(rewriter);
 
     genPreQuant(op, rewriter, preQuant);
     additionalArgs.push_back(preQuant);
@@ -610,7 +611,7 @@ private:
     additionalArgs.push_back(channelSplit);
     additionalArgs.push_back(c0PadEn);
     additionalArgs.push_back(unitFlagMode);
-    additionalArgs.push_back(op.getUnitFlagGroupIdValue(rewriter));
+    additionalArgs.push_back(unitFlagGroupId);
 
     if (auto dualDstAttr = op.getDualDstModeAttr()) {
       const auto dualDstEnum = dualDstAttr.getDualDstMode();

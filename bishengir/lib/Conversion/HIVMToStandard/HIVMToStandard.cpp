@@ -576,13 +576,14 @@ private:
     Value channelSplit = rewriter.create<arith::ConstantIntOp>(
         op->getLoc(), op.getChannelSplit(), 1);
     Value unitFlagMode = op.getUnitFlagModeLibValue(rewriter);
+    Value unitFlagGroupId = op.getUnitFlagGroupIdValue(rewriter);
 
     genPreQuant(op, rewriter, preQuant);
     additionalArgs.push_back(preQuant);
     additionalArgs.push_back(preRelu);
     additionalArgs.push_back(channelSplit);
     additionalArgs.push_back(unitFlagMode);
-    additionalArgs.push_back(op.getUnitFlagGroupIdValue(rewriter));
+    additionalArgs.push_back(unitFlagGroupId);
 
     if (auto dualDstAttr = op.getDualDstModeAttr()) {
       const auto dualDstEnum = dualDstAttr.getDualDstMode();

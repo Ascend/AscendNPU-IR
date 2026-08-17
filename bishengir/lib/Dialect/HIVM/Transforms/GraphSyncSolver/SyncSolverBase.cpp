@@ -688,44 +688,46 @@ SyncSolverBase::getMemoryConflicts(RWOperation *rwOp1, RWOperation *rwOp2) {
   return it->second = collectedConflicts;
 }
 
+bool SyncSolverBase::checkCCUnitFlagConflict(RWOperation *rwOp,
+                                     RWOperation *otherOp) {
+  if (isa_and_present<hivm::MmadL1Op>(rwOp->op)) {
+    if (isa_and_present<hivm::MmadL1Op>(otherOp->op))
+      return checkMemInfoConflict(rwOp, otherOp, rwOp->writeMemInfo,
+                                   otherOp->writeMemInfo);
+    if (isa_and_present<hivm::FixpipeOp>(otherOp->op))
+      return checkMemInfoConflict(rwOp, otherOp, rwOp->writeMemInfo,
+                                   otherOp->readMemInfo);
+  } else if (isa_and_present<hivm::FixpipeOp>(rwOp->op)) {
+    if (isa_and_present<hivm::MmadL1Op>(otherOp->op))
+      return checkMemInfoConflict(rwOp, otherOp, rwOp->readMemInfo,
+                                   otherOp->writeMemInfo);
+    // Fixpipe × Fixpipe: RAR on CC — no conflict relevant to unit-flag
+  }
+  return false;
+}
+
 bool SyncSolverBase::checkMemoryConflictBetweenOccExclusive(
     Occurrence *occ1, Occurrence *occ2,
-    std::function<bool(RWOperation *)> filter) {
+    std::function<bool(RWOperation *)> filter,
+    std::function<bool(RWOperation *, RWOperation *)> checkConflict) {
   assert(occ1 != nullptr && occ2 != nullptr);
   auto *rwOp1 = llvm::dyn_cast_if_present<RWOperation>(occ1->op);
   auto *rwOp2 = llvm::dyn_cast_if_present<RWOperation>(occ2->op);
   assert(rwOp1 != nullptr && rwOp2 != nullptr);
 
-  // Check conflicts only on CC-relevant buffer combinations:
-  //   MmadL1 × MmadL1 → WAW  (both write same CC)
-  //   MmadL1 × Fixpipe → RAW  (MmadL1 writes CC, Fixpipe reads CC)
-  //   Fixpipe × MmadL1 → WAR  (Fixpipe reads CC, MmadL1 writes CC)
-  //   Fixpipe × Fixpipe → skip (RAR, neither writes CC; WAW on output
-  //                              side is irrelevant to unit-flag)
-  auto checkCCConflict = [this](RWOperation *rwOp,
-                                RWOperation *otherOp) -> bool {
-    if (isa_and_present<hivm::MmadL1Op>(rwOp->op)) {
-      if (isa_and_present<hivm::MmadL1Op>(otherOp->op))
-        return checkMemInfoConflict(rwOp, otherOp, rwOp->writeMemInfo,
-                                     otherOp->writeMemInfo);
-      if (isa_and_present<hivm::FixpipeOp>(otherOp->op))
-        return checkMemInfoConflict(rwOp, otherOp, rwOp->writeMemInfo,
-                                     otherOp->readMemInfo);
-    } else if (isa_and_present<hivm::FixpipeOp>(rwOp->op)) {
-      if (isa_and_present<hivm::MmadL1Op>(otherOp->op))
-        return checkMemInfoConflict(rwOp, otherOp, rwOp->readMemInfo,
-                                     otherOp->writeMemInfo);
-      // Fixpipe × Fixpipe: RAR on CC — no conflict relevant to unit-flag
-    }
-    return false;
-  };
+  // Default: check all RAW/WAR/WAW combinations between the two ops.
+  if (!checkConflict) {
+    checkConflict = [this](RWOperation *rwOp, RWOperation *otherOp) {
+      return checkMemoryConflicts(rwOp, otherOp);
+    };
+  }
 
   for (int i = occ1->syncIrEndIndex; i < occ2->syncIrIndex; i++) {
     if (auto *otherOp = llvm::dyn_cast_if_present<RWOperation>(syncIr[i]->op)) {
       if (!filter(otherOp))
         continue;
-      if (checkCCConflict(rwOp1, otherOp) ||
-          checkCCConflict(rwOp2, otherOp))
+      if (checkConflict(rwOp1, otherOp) ||
+          checkConflict(rwOp2, otherOp))
         return true;
     }
   }

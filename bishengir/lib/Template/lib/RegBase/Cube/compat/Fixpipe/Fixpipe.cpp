@@ -56,7 +56,7 @@ set_nd_para(uint64_t nd_num, uint64_t src_nd_stride, uint64_t dst_nd_stride) {
 __aicore__ __attribute__((always_inline)) UNIT_FLAG
 resolveUnitFlagMode(UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id) {
   if (unit_flag_mode != UNIT_FLAG::DISABLED) {
-    if (getUnitFlagIsBadRef(unit_flag_group_id)) {
+    if (getUnitFlagDisableStatus(unit_flag_group_id)) {
       INTRINSIC(set_flag, PIPE_M, PIPE_FIX, LIB_EVENT_ID0);
       INTRINSIC(wait_flag, PIPE_M, PIPE_FIX, LIB_EVENT_ID0);
       return UNIT_FLAG::DISABLED;

@@ -388,12 +388,6 @@ constexpr int64_t kMaxSyncBlockParticipants = 1024;
 constexpr int64_t kUnorderedSyncBlockLockCacheLines =
     1 + 2 * kMaxSyncBlockParticipants;
 
-// Maximum number of distinct unit-flag group ids. A unit-flag group id must be
-// in [0, kMaxUnitFlagGroupId]. Must match MAX_UNIT_FLAG_GROUP_ID in
-// lib/Template/include/Synchronization/SyncUtils.h (and its RegBase copies),
-// where the value is used to size the device-side `unit_flag_is_bad` table.
-constexpr int64_t kMaxUnitFlagGroupId = 99;
-
 /// get Operation alias pair.
 std::vector<std::pair<Value, Value>> getOperationAliasInfo(Operation *op);
 

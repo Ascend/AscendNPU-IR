@@ -403,8 +403,7 @@ LogicalResult verifyUnitFlagEnabledInterface(UnitFlagEnabledInterface op) {
            << "Cannot have unit-flag conditions without unit-flag modes.";
   }
   if (auto unitFlagGroupId = op.getUnitFlagGroupIndex()) {
-    if (unitFlagGroupId.value() < 0 ||
-        unitFlagGroupId.value() > kMaxUnitFlagGroupId) {
+    if (unitFlagGroupId.value() < 0) {
       return op.emitError() << "Invalid value for unit-flag group-id: "
                             << static_cast<int64_t>(unitFlagGroupId.value());
     }

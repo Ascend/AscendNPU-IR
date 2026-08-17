@@ -353,13 +353,22 @@ protected:
   llvm::SmallVector<std::pair<CorePipeInfo, CorePipeInfo>>
   getMemoryConflicts(RWOperation *rwOp1, RWOperation *rwOp2);
 
+  // Check conflicts only on CC-relevant buffer combinations for unit-flag:
+  //   MmadL1 x MmadL1 -> WAW  (both write same CC)
+  //   MmadL1 x Fixpipe -> RAW  (MmadL1 writes CC, Fixpipe reads CC)
+  //   Fixpipe x MmadL1 -> WAR  (Fixpipe reads CC, MmadL1 writes CC)
+  //   Fixpipe x Fixpipe -> skip (RAR, WAW on output side is irrelevant)
+  bool checkCCUnitFlagConflict(RWOperation *rwOp, RWOperation *otherOp);
+
   // Whether any RW under occ1 conflicts with any RW under occ2 (optional
-  // filter).
+  // filter and check function).
   bool checkMemoryConflictBetweenOccExclusive(
       Occurrence *occ1, Occurrence *occ2,
       std::function<bool(RWOperation *)> filter = [](RWOperation *) {
         return true;
-      });
+      },
+      std::function<bool(RWOperation *, RWOperation *)> checkConflict =
+          nullptr);
 
   // Innermost multibuffer scope shared by two RW ops (from explicit MemInfos).
   std::optional<Scope *>

@@ -295,7 +295,9 @@ std::optional<UnitFlagInfoBase> checkUnitFlagOpLoopOpPattern(
       return unitFlagInfo;
     }
   }
-  // Avoid unreachabel case in getUnitFlagArgs while fopOp1 and forOp2 both exist
+  // Avoid unreachabel case in getUnitFlagArgs while fopOp1 and forOp2 both
+  // exist. Considering support Outer parent loop with single inner loop like
+  // for1 { for2 { op1 }, op2} in the future.
   return {};
 }
 

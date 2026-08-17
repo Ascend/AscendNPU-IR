@@ -273,23 +273,23 @@ mma_tile_core(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
   int64_t l0c_m_size = mc->sizes[1] * mc->sizes[2];
 
   if (unit_flag_mode != UNIT_FLAG::DISABLED) {
-    auto &unit_flag_is_bad = getUnitFlagIsBadRef(unit_flag_group_id);
+    auto &unit_flag_was_disable = getUnitFlagDisableStatus(unit_flag_group_id);
     // When unit_flag is enabled, matmul may act as consumer for previous
-    // fixpipe, unit_flag_is_bad means previous fixpipe will disable unit-flag,
+    // fixpipe, unit_flag_was_disable means previous fixpipe will disable unit-flag,
     // so conservatively add FIX->M set/wait pair    
-    if (unit_flag_is_bad) {
+    if (unit_flag_was_disable) {
       INTRINSIC(set_flag, PIPE_FIX, PIPE_M, LIB_EVENT_ID0);
       INTRINSIC(wait_flag, PIPE_FIX, PIPE_M, LIB_EVENT_ID0);
     }    
     if (unit_flag_mode == UNIT_FLAG::ENABLED_WITHOUT_UPDATE) {
-      if (unit_flag_is_bad) {
-        unit_flag_is_bad = false;
+      if (unit_flag_was_disable) {
+        unit_flag_was_disable = false;
         unit_flag_mode = UNIT_FLAG::DISABLED;
       }
     } else if (unit_flag_mode == UNIT_FLAG::ENABLED_WITH_UPDATE) {
-      unit_flag_is_bad = false;
+      unit_flag_was_disable = false;
       if ((actualN != l0c_n_size) || (actualM != l0c_m_size)) {
-        unit_flag_is_bad = true;
+        unit_flag_was_disable = true;
         unit_flag_mode = UNIT_FLAG::ENABLED_WITHOUT_UPDATE;
       }
     }
@@ -340,23 +340,23 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
   int64_t l0c_m_size = mc->sizes[1] * mc->sizes[2];
 
   if (unit_flag_mode != UNIT_FLAG::DISABLED) {
-    auto &unit_flag_is_bad = getUnitFlagIsBadRef(unit_flag_group_id);
+    auto &unit_flag_was_disable = getUnitFlagDisableStatus(unit_flag_group_id);
     // When unit_flag is enabled, matmul may act as consumer for previous
-    // fixpipe, unit_flag_is_bad means previous fixpipe will disable unit-flag,
+    // fixpipe, unit_flag_was_disable means previous fixpipe will disable unit-flag,
     // so conservatively add FIX->M set/wait pair    
-    if (unit_flag_is_bad) {
+    if (unit_flag_was_disable) {
       INTRINSIC(set_flag, PIPE_FIX, PIPE_M, LIB_EVENT_ID0);
       INTRINSIC(wait_flag, PIPE_FIX, PIPE_M, LIB_EVENT_ID0);
     }
     if (unit_flag_mode == UNIT_FLAG::ENABLED_WITHOUT_UPDATE) {
-      if (unit_flag_is_bad) {
-        unit_flag_is_bad = false;
+      if (unit_flag_was_disable) {
+        unit_flag_was_disable = false;
         unit_flag_mode = UNIT_FLAG::DISABLED;
       }
     } else if (unit_flag_mode == UNIT_FLAG::ENABLED_WITH_UPDATE) {
-      unit_flag_is_bad = false;
+      unit_flag_was_disable = false;
       if ((actualN != l0c_n_size) || (actualM != l0c_m_size)) {
-        unit_flag_is_bad = true;
+        unit_flag_was_disable = true;
         unit_flag_mode = UNIT_FLAG::ENABLED_WITHOUT_UPDATE;
       }
     }
