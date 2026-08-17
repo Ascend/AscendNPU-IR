@@ -128,7 +128,10 @@ static void convertAllToHFusion(OpPassManager &pm,
                                 const HFusionPipelineOptions &options,
                                 bool shouldConvertLinalgToNamedOps = true) {
   pm.addPass(createArithToHFusionConversionPass());
-  pm.addPass(createMathToHFusionConversionPass());
+  ConvertMathToHFusionOptions mathOptions;
+  mathOptions.enableFma =
+      !options.disableHfusionVectorize && !options.enableMixedCV;
+  pm.addPass(createMathToHFusionConversionPass(mathOptions));
   // NOTE: linalg.generic should be converted to named equivalent ops after
   // dropping unit dimensions
   if (shouldConvertLinalgToNamedOps)
