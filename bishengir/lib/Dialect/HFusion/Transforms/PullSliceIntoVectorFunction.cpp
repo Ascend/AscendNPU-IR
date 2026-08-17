@@ -24,6 +24,8 @@
 #include "mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
+#include <limits>
+
 namespace mlir {
 #define GEN_PASS_DEF_PULLSLICEINTOVECTORFUNCTION
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h.inc"
@@ -574,6 +576,129 @@ private:
   }
 };
 
+/// Commute a statically aligned flat slice with a non-unit expand_shape when
+/// the expanded value is passed directly to a vector function.
+///
+///   %s = tensor.extract_slice %src[64] [4096] [1]
+///       : tensor<16384xf16> to tensor<4096xf16>
+///   %e = tensor.expand_shape %s [[0, 1]] output_shape [64, 64]
+///       : tensor<4096xf16> into tensor<64x64xf16>
+///   call @vf(%e)
+///
+/// becomes:
+///
+///   %x = tensor.expand_shape %src [[0, 1]] output_shape [256, 64]
+///       : tensor<16384xf16> into tensor<256x64xf16>
+///   %r = tensor.extract_slice %x[1, 0] [64, 64] [1, 1]
+///       : tensor<256x64xf16> to tensor<64x64xf16>
+///   call @vf(%r)
+///
+/// PullExtractInsertSliceIntoVectorFunction can then move %r into @vf.  The
+/// offset must be aligned to a complete trailing row: an unaligned flat slice
+/// cannot be represented by one rectangular extract_slice after expansion.
+struct SwapContiguousFlatSliceExpandShape
+    : public OpRewritePattern<tensor::ExpandShapeOp> {
+  using OpRewritePattern<tensor::ExpandShapeOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(tensor::ExpandShapeOp expandOp,
+                                PatternRewriter &rewriter) const override {
+    auto extractOp = expandOp.getSrc().getDefiningOp<tensor::ExtractSliceOp>();
+    if (!extractOp || !extractOp->hasOneUse())
+      return failure();
+
+    // Keep this preprocessing local to the bufferization boundary it fixes.
+    Value expanded = expandOp.getResult();
+    if (!expanded.hasOneUse())
+      return failure();
+    auto call = dyn_cast<func::CallOp>(*expanded.getUsers().begin());
+    if (!call || !call->hasAttr(mlir::hivm::VectorFunctionAttr::name))
+      return failure();
+
+    auto sourceType =
+        dyn_cast<RankedTensorType>(extractOp.getSource().getType());
+    auto sliceType = dyn_cast<RankedTensorType>(extractOp.getType());
+    auto expandedType = expandOp.getResultType();
+    if (!sourceType || !sliceType || !sourceType.hasStaticShape() ||
+        !sliceType.hasStaticShape() || !expandedType.hasStaticShape())
+      return failure();
+
+    // This is deliberately limited to the observed flat-to-shaped boundary.
+    if (sourceType.getRank() != 1 || sliceType.getRank() != 1 ||
+        expandedType.getRank() < 2)
+      return failure();
+    if (llvm::count_if(expandedType.getShape(),
+                       [](int64_t dim) { return dim > 1; }) < 2)
+      return failure();
+
+    auto reassociation = expandOp.getReassociationIndices();
+    if (reassociation.size() != 1 ||
+        reassociation.front().size() !=
+            static_cast<size_t>(expandedType.getRank()))
+      return failure();
+    for (auto [position, dim] : llvm::enumerate(reassociation.front())) {
+      if (dim != static_cast<int64_t>(position))
+        return failure();
+    }
+
+    ArrayRef<int64_t> staticOffsets = extractOp.getStaticOffsets();
+    ArrayRef<int64_t> staticSizes = extractOp.getStaticSizes();
+    ArrayRef<int64_t> staticStrides = extractOp.getStaticStrides();
+    int64_t offset = staticOffsets.front();
+    int64_t sliceSize = staticSizes.front();
+    if (ShapedType::isDynamic(offset) || ShapedType::isDynamic(sliceSize) ||
+        ShapedType::isDynamic(staticStrides.front()) ||
+        staticStrides.front() != 1 || offset <= 0)
+      return failure();
+
+    int64_t sourceSize = sourceType.getDimSize(0);
+    if (sliceSize != sliceType.getDimSize(0) || sliceSize > sourceSize ||
+        offset > sourceSize - sliceSize)
+      return failure();
+
+    ArrayRef<int64_t> resultShape = expandedType.getShape();
+    int64_t trailingSize = 1;
+    for (int64_t dim : resultShape.drop_front()) {
+      if (dim <= 0 || trailingSize > std::numeric_limits<int64_t>::max() / dim)
+        return failure();
+      trailingSize *= dim;
+    }
+    int64_t leadingSize = resultShape.front();
+    if (leadingSize <= 0 ||
+        leadingSize > std::numeric_limits<int64_t>::max() / trailingSize ||
+        leadingSize * trailingSize != sliceSize ||
+        sourceSize % trailingSize != 0 || offset % trailingSize != 0)
+      return failure();
+
+    SmallVector<int64_t> expandedSourceShape(resultShape.begin(),
+                                             resultShape.end());
+    expandedSourceShape.front() = sourceSize / trailingSize;
+    auto expandedSourceType =
+        RankedTensorType::get(expandedSourceShape, sourceType.getElementType(),
+                              sourceType.getEncoding());
+
+    SmallVector<OpFoldResult> expandedSourceOutputShape;
+    for (int64_t dim : expandedSourceShape)
+      expandedSourceOutputShape.push_back(rewriter.getIndexAttr(dim));
+    auto newExpand = rewriter.create<tensor::ExpandShapeOp>(
+        expandOp.getLoc(), expandedSourceType, extractOp.getSource(),
+        reassociation, expandedSourceOutputShape);
+
+    SmallVector<OpFoldResult> offsets, sizes, strides;
+    offsets.push_back(rewriter.getIndexAttr(offset / trailingSize));
+    sizes.push_back(rewriter.getIndexAttr(leadingSize));
+    strides.push_back(rewriter.getIndexAttr(1));
+    for (int64_t dim : resultShape.drop_front()) {
+      offsets.push_back(rewriter.getIndexAttr(0));
+      sizes.push_back(rewriter.getIndexAttr(dim));
+      strides.push_back(rewriter.getIndexAttr(1));
+    }
+
+    rewriter.replaceOpWithNewOp<tensor::ExtractSliceOp>(
+        expandOp, expandedType, newExpand, offsets, sizes, strides);
+    return success();
+  }
+};
+
 /// Swap a rank-preserving extract_slice followed by a unit-dim expand_shape
 /// into expand_shape + extract_slice.  Only handles expand_shape that inserts
 /// unit dims (size 1).
@@ -913,9 +1038,10 @@ private:
 static void preProcessShapeChangeAfterExtractSlice(MLIRContext *ctx,
                                                    Operation *op) {
   RewritePatternSet patterns(ctx);
-  patterns.add<FoldRankReducingSliceExpandShape,
-               SwapUnitDimExpandShapeOfExtractSlice,
-               SwapCollapseShapeOfExtractSlice>(ctx);
+  patterns
+      .add<FoldRankReducingSliceExpandShape, SwapContiguousFlatSliceExpandShape,
+           SwapUnitDimExpandShapeOfExtractSlice,
+           SwapCollapseShapeOfExtractSlice>(ctx);
   (void)applyPatternsGreedily(op, std::move(patterns));
 }
 

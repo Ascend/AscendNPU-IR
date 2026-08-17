@@ -355,7 +355,15 @@ static bool shouldSkipSumReduction(Operation *op,
   if (inputType.getRank() == 2) {
     // RA: reduce along dim 0.
     if (dim == 0 && option.enableRA) {
-      LLVM_DEBUG(llvm::dbgs() << " -> skip fusion (2D RA)\n");
+      if (option.enableNewTreeReducePolicy) {
+        // Only structurally supported reductions beyond the size cutoff take
+        // the regular fusion path. Keep reductions rejected by the selector
+        // on the established isolated 2-D RA path.
+        return !hfusion::isSupportedTreeReductionCandidate(op) ||
+               hfusion::shouldUseTreeReduction(op);
+      }
+      LLVM_DEBUG(llvm::dbgs()
+                 << " -> skip fusion (2D RA)\n");
       return true;
     }
 

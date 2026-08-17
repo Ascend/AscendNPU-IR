@@ -1357,6 +1357,11 @@ FailureOrCastVec propagateFuncCallOp(RewriterBase &rewriter,
                 auto res = propagateSubViewOp(rewriter, conversion, subviewOp);
                 return UnrealizedCastOpVec{res};
               })
+              .Case([&](memref::ExpandShapeOp expandOp) {
+                auto res =
+                    propagateExpandShapeOp(rewriter, conversion, expandOp);
+                return UnrealizedCastOpVec{res};
+              })
               .Default([&](Operation *op) {
                 return propagateDefaultOp(rewriter, conversion, op, user);
               });

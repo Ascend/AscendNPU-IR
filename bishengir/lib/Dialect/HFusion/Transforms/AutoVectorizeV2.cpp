@@ -13,6 +13,7 @@
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HFusion/TransformOps/HFusionTransformOps.h"
+#include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/TilingUtils.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoVectorize/Attrs.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoVectorize/PlanContext.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoVectorize/Verify.h"
@@ -42,9 +43,15 @@
 #include "mlir/IR/Dominance.h"
 #include "mlir/Interfaces/DestinationStyleOpInterface.h"
 #include "mlir/Pass/PassManager.h"
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/MathExtras.h"
 #include <cassert>
+#include <cstdint>
 #include <memory>
+#include <string>
 
 #define DEBUG_TYPE "hfusion-auto-vectorize-v2"
 
@@ -175,6 +182,91 @@ static void interchangeForLeafNodes(SmallVector<int64_t> commonAxis,
       leafNodeInfo.tileInterchange.push_back(i);
     }
   }
+}
+
+static SmallVector<unsigned> getTreeReductionParallelDims(Operation *op,
+                                                          bool treeReduce) {
+  if (!treeReduce || !hfusion::shouldUseTreeReduction(op))
+    return {};
+
+  SmallVector<unsigned> parallelDims;
+  cast<linalg::LinalgOp>(op).getParallelDims(parallelDims);
+  return parallelDims;
+}
+
+/// Tree reduction first tiles only its parallel dimensions and returns that
+/// loop nest for sibling fusion.  A regular elementwise sibling normally tiles
+/// in iteration-space order instead.  Keep such siblings in one fused node
+/// only when they can expose the same parallel loop nest.
+static bool
+canShareTreeReductionSiblingLoop(Operation *candidate,
+                                 const std::shared_ptr<FusedNode> &node,
+                                 PlanContext &ctx, bool treeReduce) {
+  Operation *treeReduction = nullptr;
+  SmallVector<unsigned> candidateTreeDims =
+      getTreeReductionParallelDims(candidate, treeReduce);
+  for (Operation *fusedOp : node->ops()) {
+    if (!getTreeReductionParallelDims(fusedOp, treeReduce).empty()) {
+      treeReduction = fusedOp;
+      break;
+    }
+  }
+  // Downstream lowering is not correctness-safe when two distinct
+  // split-reduction trees share one containing loop. Keep at most one tree in
+  // a fused node; compatible elementwise siblings may still share its loop.
+  if (treeReduction && !candidateTreeDims.empty())
+    return false;
+  if (!treeReduction && !candidateTreeDims.empty())
+    treeReduction = candidate;
+  if (!treeReduction)
+    return true;
+
+  SmallVector<unsigned> parallelDims =
+      getTreeReductionParallelDims(treeReduction, treeReduce);
+  const FusableOpInfo &treeInfo = ctx.getInfo(treeReduction);
+  auto isCompatible = [&](Operation *op) {
+    const FusableOpInfo &info = ctx.getInfo(op);
+    if (info.numLoops != treeInfo.numLoops)
+      return false;
+    for (unsigned dim : parallelDims) {
+      if (info.shape[dim] != treeInfo.shape[dim])
+        return false;
+    }
+
+    SmallVector<unsigned> opParallelDims =
+        getTreeReductionParallelDims(op, treeReduce);
+    if (!opParallelDims.empty())
+      return opParallelDims == parallelDims;
+
+    // tile_reduction_using_for also exposes a fixed parallel-only loop nest
+    // and does not consume tileInterchange.  It can share the tree sibling's
+    // loop only when both reductions expose the same parallel dimensions.
+    if (hfusion::shouldUseTileReductionUsingForV2(op)) {
+      SmallVector<unsigned> fixedParallelDims;
+      cast<linalg::LinalgOp>(op).getParallelDims(fixedParallelDims);
+      return fixedParallelDims == parallelDims;
+    }
+    return true;
+  };
+
+  return isCompatible(candidate) && llvm::all_of(node->leafOps(), isCompatible);
+}
+
+static void
+alignTreeReductionSiblingLoops(const std::shared_ptr<FusedNode> &node,
+                               PlanContext &ctx, bool treeReduce) {
+  SmallVector<unsigned> parallelDims;
+  for (Operation *leaf : node->leafOps()) {
+    parallelDims = getTreeReductionParallelDims(leaf, treeReduce);
+    if (!parallelDims.empty())
+      break;
+  }
+  if (parallelDims.empty())
+    return;
+
+  SmallVector<int64_t> commonAxes(parallelDims.begin(), parallelDims.end());
+  for (Operation *leaf : node->leafOps())
+    interchangeForLeafNodes(commonAxes, ctx.getInfo(leaf));
 }
 
 static bool isProducerConsumedImpl(Operation *target, Operation *source,
@@ -380,6 +472,181 @@ findBestFusedNodeForProducer(Block *block, Operation *producer,
   return bestFusedNode;
 }
 
+static Value tileReductionOpTreeReduce(
+    OpBuilder &builder, transform::SequenceOp seqOp, Operation *op,
+    Value &linalgOpHandle, SmallVector<int64_t> tileSize, std::string label,
+    SmallVector<std::pair<std::string, SmallVector<int64_t>>>
+        &otherVectorizableOps) {
+  assert(isa<linalg::LinalgOp>(op));
+  auto reductionOp = cast<linalg::LinalgOp>(op);
+  assert(reductionOp.getNumParallelLoops() > 0);
+  assert(reductionOp.getNumReductionLoops() == 1);
+  auto loc = seqOp->getLoc();
+  // get parallel axis and tile.
+  // get reduction axis and tile.
+  SmallVector<unsigned> reductionDims;
+  reductionOp.getReductionDims(reductionDims);
+  auto reductionDim = reductionDims[0];
+  auto reductionTileSize = tileSize[reductionDim];
+
+  int64_t reductionSize = reductionOp.getStaticLoopRanges()[reductionDim];
+  assert(reductionSize > 0 &&
+         "tree reduction requires a positive static extent");
+
+  // Creates new Vector with tile sizes
+  // where "amount" 1s are added to idx position
+  auto createExtendedTileSizes = [&](size_t idx, size_t amount) {
+    SmallVector<int64_t> res = tileSize;
+    res.insert(res.begin() + idx, amount, 1);
+
+    return res;
+  };
+
+  auto getIterationTilingIndicator = [&](size_t iterCnt) {
+    SmallVector<int64_t> tilingIndicator(reductionOp.getNumLoops() + iterCnt,
+                                         0);
+    tilingIndicator[reductionDim + iterCnt] = 1;
+
+    return tilingIndicator;
+  };
+
+  // Processes (annotate + add to other vectorizable ops vector for futher
+  // vectorization) on of auxilary ops (fill or splited reduce) created in tree
+  // reduce algo
+  auto processAuxOpTreeReduce = [&](Value opHandle, std::string opName,
+                                    size_t opIdx) {
+    auto vectorizeTileSize = createExtendedTileSizes(reductionDim, opIdx);
+    std::string splitOpLabel =
+        label + "_" + opName + "_" + std::to_string(opIdx);
+    builder.create<transform::AnnotateOp>(loc, opHandle, splitOpLabel, nullptr);
+    otherVectorizableOps.push_back(
+        std::make_pair(splitOpLabel, vectorizeTileSize));
+  };
+
+  // Tile parallel axes and patch first reduce operation to be that reduce
+  // which was generated by parallel tilining (its new operation, we can't use
+  // old one)
+  // NOTE: reductionTileSizePairs guaranteed not empty
+  SmallVector<unsigned> parallelDims;
+  reductionOp.getParallelDims(parallelDims);
+  SmallVector<int64_t> parallelAxisTileSize(reductionOp.getNumLoops(), 0);
+  for (auto i : parallelDims)
+    parallelAxisTileSize[i] = tileSize[i];
+  // Tile all parallel dims
+  transform::TileUsingForOp parallelAxisTilingResult =
+      builder.create<transform::TileUsingForOp>(loc, linalgOpHandle,
+                                                parallelAxisTileSize);
+  linalgOpHandle = parallelAxisTilingResult.getTiledLinalgOp();
+
+  // Pad non-power-of-two reductions with the neutral element instead of
+  // reducing a power-of-two prefix and merging an unbalanced tail.  Besides
+  // keeping the reduction tree balanced, this also makes its reassociation
+  // deterministic for numerically sensitive floating-point reductions.
+  auto alignedRedSize = static_cast<int64_t>(
+      llvm::PowerOf2Ceil(static_cast<uint64_t>(reductionSize)));
+  if (reductionSize != alignedRedSize) {
+    SmallVector<int64_t> reductionAxisTileSize(reductionOp.getNumLoops(), 0);
+    reductionAxisTileSize[reductionDim] = alignedRedSize;
+    auto tileReductionRes = builder.create<transform::TileReductionUsingForOp>(
+        loc, linalgOpHandle, reductionAxisTileSize);
+
+    linalgOpHandle = tileReductionRes.getCombiningLinalgOp();
+    Value fillOpHandle = tileReductionRes.getFillOp().front();
+    auto splitedReductionOp = tileReductionRes.getSplitLinalgOp();
+
+    if (alignedRedSize > reductionTileSize) {
+      auto tilingIndicator = getIterationTilingIndicator(0);
+      fillOpHandle = builder
+                         .create<transform::TileUsingForOp>(loc, fillOpHandle,
+                                                            tilingIndicator)
+                         .getTiledLinalgOp();
+      splitedReductionOp = builder
+                               .create<transform::TileUsingForOp>(
+                                   loc, splitedReductionOp, tilingIndicator)
+                               .getTiledLinalgOp();
+    }
+    processAuxOpTreeReduce(splitedReductionOp, "tile_reduce", 0);
+    processAuxOpTreeReduce(fillOpHandle, "tile_fill", 0);
+  }
+
+  SmallVector<int64_t, 4> splitedRedDims;
+
+  // For small reductions, preserve one global pairwise tree across the whole
+  // reduction axis.  Splitting a 64-element reduction directly by 32 creates
+  // the pairs (0, 32), (1, 33), ... that are expected from a balanced tree.
+  // The first split materializes at most 32 partial values per output lane.
+  // Keep the bounded radix-16 hierarchy for larger reductions to avoid an
+  // unbounded temporary tensor.
+  constexpr int64_t maxGlobalTreeReductionSize = 64;
+  if (alignedRedSize <= maxGlobalTreeReductionSize) {
+    splitedRedDims.push_back(alignedRedSize);
+  } else {
+    int64_t redRemain = alignedRedSize;
+    for (; redRemain > 16; redRemain /= 16)
+      splitedRedDims.push_back(16);
+    splitedRedDims.push_back(redRemain);
+  }
+
+  auto iterAmount = splitedRedDims.size();
+  for (auto [iterIdx, curSplitDim] :
+       llvm::enumerate(llvm::reverse(splitedRedDims))) {
+    auto curIterTilingIndicator = getIterationTilingIndicator(iterIdx);
+    auto nextIterTilingIndicator = getIterationTilingIndicator(iterIdx + 1);
+
+    Value nextLinalgOpHandle;
+    if (iterIdx != iterAmount - 1) {
+      auto splitReductionResult = builder.create<transform::SplitReductionOp>(
+          loc, linalgOpHandle, curSplitDim, reductionDim + iterIdx);
+
+      auto tiledSplitFillOp =
+          builder
+              .create<transform::TileUsingForOp>(
+                  loc, splitReductionResult.getFillOp(), curIterTilingIndicator)
+              .getTiledLinalgOp();
+      processAuxOpTreeReduce(tiledSplitFillOp, "split_fill", iterIdx);
+
+      nextLinalgOpHandle = builder
+                               .create<transform::TileUsingForOp>(
+                                   loc, splitReductionResult.getSplitLinalgOp(),
+                                   curIterTilingIndicator)
+                               .getTiledLinalgOp();
+
+      linalgOpHandle = splitReductionResult.getCombiningLinalgOp();
+    }
+
+    for (; curSplitDim > 2; curSplitDim /= 2) {
+      auto reductionTilingResult = builder.create<transform::SplitReductionOp>(
+          loc, linalgOpHandle, curSplitDim / 2, reductionDim + iterIdx, true);
+
+      auto tiledFill = builder
+                           .create<transform::TileUsingForOp>(
+                               loc, reductionTilingResult.getFillOp(),
+                               curIterTilingIndicator)
+                           .getTiledLinalgOp();
+      processAuxOpTreeReduce(tiledFill, "block_fill", iterIdx);
+
+      auto nextIterTilingResult = builder.create<transform::TileUsingForOp>(
+          loc, reductionTilingResult.getSplitLinalgOp(),
+          nextIterTilingIndicator);
+      auto curIterTilingResult = builder.create<transform::TileUsingForOp>(
+          loc, nextIterTilingResult.getTiledLinalgOp(), curIterTilingIndicator);
+      processAuxOpTreeReduce(curIterTilingResult.getTiledLinalgOp(),
+                             "block_split_reduce", iterIdx + 1);
+
+      linalgOpHandle = reductionTilingResult.getCombiningLinalgOp();
+    }
+
+    auto curIterTilingResult = builder.create<transform::TileUsingForOp>(
+        loc, linalgOpHandle, curIterTilingIndicator);
+    processAuxOpTreeReduce(curIterTilingResult.getTiledLinalgOp(),
+                           "block_combine_reduce", iterIdx);
+
+    linalgOpHandle = nextLinalgOpHandle;
+  }
+
+  return parallelAxisTilingResult.getLoops().front();
+}
+
 /// For reduction op, tile_reduction_using_for has better performance than
 /// tile_using_for. Firstly we should tile parallel axis by tile_using_for,
 /// then tile reduction axis by tile_reduction_using_for.
@@ -529,6 +796,8 @@ void AutoVectorizeV2::planFuseSiblingForLeafNodes(Block *block,
     for (auto &node : ctx.nodes()) {
       if (!node->canAccept(leafNode))
         continue;
+      if (!canShareTreeReductionSiblingLoop(leafNode, node, ctx, treeReduce))
+        continue;
       node->addLeaf(leafNode);
       isInserted = true;
       break;
@@ -581,6 +850,14 @@ void AutoVectorizeV2::planFuseProducerIntoFusedNode(Block *block,
   FusableOpInfo &producerInfo = ctx.getInfo(producer);
   std::shared_ptr<FusedNode> bestFusedNode =
       findBestFusedNodeForProducer(block, producer, ctx, vectorLength);
+  // Apply the same one-tree-per-node invariant when a reduction is accepted as
+  // a producer rather than entering the fallback-leaf path below.
+  if (bestFusedNode &&
+      !getTreeReductionParallelDims(producer, treeReduce).empty() &&
+      llvm::any_of(bestFusedNode->ops(), [&](Operation *fusedOp) {
+        return !getTreeReductionParallelDims(fusedOp, treeReduce).empty();
+      }))
+    bestFusedNode.reset();
   if (bestFusedNode) {
     bestFusedNode->addProducer(producer);
 
@@ -616,6 +893,8 @@ void AutoVectorizeV2::planFuseProducerIntoFusedNode(Block *block,
     bool isInserted = false;
     for (auto &node : ctx.nodes()) {
       if (!node->canAccept(producer, AcceptContext::FallbackLeaf))
+        continue;
+      if (!canShareTreeReductionSiblingLoop(producer, node, ctx, treeReduce))
         continue;
       if (llvm::any_of(node->leafOps(), [&](Operation *otherLeafNode) {
             return isProducerConsumed(producer, otherLeafNode);
@@ -653,6 +932,7 @@ void AutoVectorizeV2::tileAndFuseSiblingForLeafNodes(
         &otherVectorizableOps) {
   auto loc = seqOp->getLoc();
   for (auto &node : ctx.nodes()) {
+    alignTreeReductionSiblingLoops(node, ctx, treeReduce);
     SmallVector<Value> tiledLoopHandles;
     bool hasFillOp = false;
     for (Operation *leafNode : node->leafOps()) {
@@ -663,6 +943,10 @@ void AutoVectorizeV2::tileAndFuseSiblingForLeafNodes(
           getOpTransformHandle(leafNodeInfo.label, builder, seqOp);
       if (hfusion::shouldUseTileReductionUsingForV2(leafNode)) {
         tiledLoopHandles.push_back(tileReductionOp(
+            builder, seqOp, leafNode, leafNodeHandle, leafNodeInfo.tileSize,
+            leafNodeInfo.label, otherVectorizableOps));
+      } else if (treeReduce && hfusion::shouldUseTreeReduction(leafNode)) {
+        tiledLoopHandles.push_back(tileReductionOpTreeReduce(
             builder, seqOp, leafNode, leafNodeHandle, leafNodeInfo.tileSize,
             leafNodeInfo.label, otherVectorizableOps));
       } else {
@@ -743,6 +1027,10 @@ void AutoVectorizeV2::fuseProducersIntoConsumers(
         tileReductionOp(builder, seqOp, producer, fusedOp,
                         producerInfo.tileSize, producerInfo.label,
                         otherVectorizableOps);
+      } else if (treeReduce && hfusion::shouldUseTreeReduction(producer)) {
+        tileReductionOpTreeReduce(builder, seqOp, producer, fusedOp,
+                                  producerInfo.tileSize, producerInfo.label,
+                                  otherVectorizableOps);
       } else if (!isa<tensor::ExpandShapeOp>(producer)) {
         builder.create<transform::TileUsingForOp>(loc, fusedOp,
                                                   producerInfo.tileSize);

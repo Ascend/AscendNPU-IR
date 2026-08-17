@@ -22,6 +22,7 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/AffineExpr.h"
+#include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "llvm/ADT/STLExtras.h"
 #include <cassert>
@@ -291,7 +292,10 @@ bool static isOffsetAligned(Value memrefVal,
       isOffsetAlign = (staticVal * elemBits) % hwAlignBits == 0;
     }
     int64_t stride = srcStrides[i];
-    bool isStrideAlign = (stride * elemBits) % hwAlignBits == 0;
+    bool isStrideAlign = false;
+    if (stride != ShapedType::kDynamic)
+      isStrideAlign = (stride * elemBits) % hwAlignBits == 0;
+
     if (!isOffsetAlign && !isStrideAlign) {
       return false;
     }

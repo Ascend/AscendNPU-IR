@@ -973,6 +973,14 @@ def OnlyRunHIVMPipeline : FeatureControlOptions<
 def EnableTreeReduce : FeatureControlOptions<
   "Enable tree reduce",
   "bool",
+  "true"
+> {
+  let passGroup = ["HFUSION"];
+}
+
+def EnableTreeReduceV2 : FeatureControlOptions<
+  "Enable tree reduce v2",
+  "bool",
   "false"
 > {
   let passGroup = ["HFUSION"];
