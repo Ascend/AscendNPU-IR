@@ -1,36 +1,5 @@
 // RUN: bishengir-opt -hivm-insert-fixpipe %s -split-input-file | FileCheck %s
 
-// Verify fixpipe inserted inside scf.for is hoisted after the loop.
-//
-// CHECK-LABEL: func.func @move_fixpipe_out_of_scf_for
-// CHECK: scf.for
-// CHECK-NOT: hivm.hir.fixpipe
-// CHECK: scf.yield %{{.*}} : tensor<16x16xf32>
-// CHECK: } {fixpipe_for_mmad_result_already_inserted = true}
-// CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
-// CHECK-NOT: do_not_move_out_of_scffor
-func.func @move_fixpipe_out_of_scf_for() -> tensor<16x16xf32> {
-  %c0_i32 = arith.constant 0 : i32
-  %c4_i32 = arith.constant 4 : i32
-  %c1_i32 = arith.constant 1 : i32
-  %c16 = arith.constant 16 : index
-  %true = arith.constant true
-  %init_a = tensor.empty() : tensor<16x16xf16>
-  %init_b = tensor.empty() : tensor<16x16xf16>
-  %init_c = tensor.empty() : tensor<16x16xf32>
-  %for_res = scf.for %iv = %c0_i32 to %c4_i32 step %c1_i32 iter_args(%acc = %init_c) -> (tensor<16x16xf32>) : i32 {
-    %mmad = hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
-        ins(%init_a, %init_b, %true, %c16, %c16, %c16
-            : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index)
-        outs(%acc : tensor<16x16xf32>) -> tensor<16x16xf32>
-    annotation.mark %mmad : tensor<16x16xf32>
-    scf.yield %mmad : tensor<16x16xf32>
-  }
-  return %for_res : tensor<16x16xf32>
-}
-
-// -----
-
 // Verify fixpipe is moved into the scf.if branch that yields the loop result.
 //
 // CHECK-LABEL: func.func @move_fixpipe_into_scf_if_branch
