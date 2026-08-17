@@ -571,9 +571,9 @@ static void filterEmptyScopesPreOrder(OpBuilder &builder,
 }
 
 // erase ops of given core type from function
-void SplitMixKernelPass::filterMixFunc(
-    OpBuilder &builder, func::FuncOp mixedFunc,
-    enum TCoreType filterCoreType) {
+void SplitMixKernelPass::filterMixFunc(OpBuilder &builder,
+                                       func::FuncOp mixedFunc,
+                                       enum TCoreType filterCoreType) {
   // `coreType` is the core that remains after filtering `filterCoreType` out.
   const enum TCoreType coreType =
       filterCoreType == TCoreType::CUBE ? TCoreType::VECTOR : TCoreType::CUBE;

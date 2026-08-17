@@ -171,7 +171,7 @@ func.func @test_batchMmadL1_with_transpose() -> tensor<2x256x256xf32> {
   // CHECK-NOT: hivm.hir.batchMmadL1 {a_transpose}
   %ret1 = linalg.batch_matmul ins(%ma1_transpose_res, %mb_tensor : tensor<2x256x128xf16>, tensor<2x128x256xf16>)
                              outs(%mc_fill: tensor<2x256x256xf32>) -> tensor<2x256x256xf32>
-  
+
   %res_empty = tensor.empty() : tensor<2x256x256xf32>
   %res =  linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%ret1, %ret0 : tensor<2x256x256xf32>, tensor<2x256x256xf32>) outs(%res_empty : tensor<2x256x256xf32>) -> tensor<2x256x256xf32>
   return  %res : tensor<2x256x256xf32>
