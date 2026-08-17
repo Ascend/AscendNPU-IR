@@ -8,7 +8,7 @@
 module attributes {hacc.simt_module, hacc.target = #hacc.target<"Ascend910_9589">, hivm.module_core_type = #hivm.module_core_type<AIV>} {
   // CHECK-LABEL: tt.func @extract_aligned_pointer_as_index
   // CHECK-SAME: %arg0: !tt.ptr<i32>
-  // CHECK: %[[P2I:.*]] = tt.ptr_to_int %arg0 : !tt.ptr<i32> -> i64
+  // CHECK: %[[P2I:.*]] = tt.ptr_to_int %arg1 : !tt.ptr<i32> -> i64
   // CHECK: arith.index_cast %[[P2I]] : i64 to index
   // CHECK-NOT: memref.extract_aligned_pointer_as_index
   // CHECK-NOT: unrealized_conversion_cast
@@ -27,7 +27,7 @@ module attributes {hacc.simt_module, hacc.target = #hacc.target<"Ascend910_9589"
 module attributes {hacc.simt_module, hacc.target = #hacc.target<"Ascend910_9589">, hivm.module_core_type = #hivm.module_core_type<AIV>} {
   // CHECK-LABEL: tt.func @extract_aligned_pointer_null_check
   // CHECK-SAME: %arg0: !tt.ptr<i32>
-  // CHECK: %[[P2I:.*]] = tt.ptr_to_int %arg0 : !tt.ptr<i32> -> i64
+  // CHECK: %[[P2I:.*]] = tt.ptr_to_int %arg1 : !tt.ptr<i32> -> i64
   // CHECK: arith.cmpi
   // CHECK-NOT: memref.extract_aligned_pointer_as_index
   // CHECK-NOT: unrealized_conversion_cast

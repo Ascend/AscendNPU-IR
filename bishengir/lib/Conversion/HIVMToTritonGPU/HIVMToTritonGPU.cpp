@@ -44,6 +44,30 @@ struct HIVMToTritonGPUConversionPass
     : public impl::ConvertHIVMToTritonGPUBase<HIVMToTritonGPUConversionPass> {
   void runOnOperation() override;
 };
+
+/// Triton has no MemRef semantics, so once the conversion and the cast
+/// reconciliation have run, no value anywhere may still carry a MemRef type.
+LogicalResult verifyNoMemRefTypesRemain(Operation *module) {
+  auto isMemRef = [](Type ty) { return isa<BaseMemRefType>(ty); };
+
+  bool found = false;
+  module->walk([&](Operation *op) {
+    if (llvm::any_of(op->getOperandTypes(), isMemRef) ||
+        llvm::any_of(op->getResultTypes(), isMemRef)) {
+      op->emitOpError("still carries a MemRef type after HIVM to Triton "
+                      "conversion");
+      found = true;
+    }
+    for (Region &region : op->getRegions())
+      for (Block &block : region)
+        if (llvm::any_of(block.getArgumentTypes(), isMemRef)) {
+          op->emitOpError("still has a MemRef block argument after HIVM to "
+                          "Triton conversion");
+          found = true;
+        }
+  });
+  return failure(found);
+}
 } // namespace
 
 /// Converts a Triton function signature, expanding MemRef arguments into
@@ -204,6 +228,46 @@ LogicalResult hivm::bareTTPtrFuncArgTypeConverter(
   return success();
 }
 
+
+/// A MemRef VALUE in a function body converts 1:N into the same descriptor
+/// fields the signature uses, so a consumer reads an already-composed layout off
+/// its adaptor.
+TritonTypeConverter::TritonTypeConverter(mlir::MLIRContext *ctx,
+    const LowerToTritonGPUOptions &options,
+    const mlir::DataLayoutAnalysis *analysis)
+    : mlir::LLVMTypeConverter(ctx, analysis), options(options) {
+  addConversion([](RankedTensorType ty) -> std::optional<Type> { return ty; });
+
+  addConversion([this](MemRefType memrefTy, SmallVectorImpl<Type> &results)
+                    -> std::optional<LogicalResult> {
+    SmallVector<Type, 5> fields = getMemRefDescriptorFields(memrefTy);
+    if (fields.empty())
+      return failure();
+    results.append(fields.begin(), fields.end());
+    return success();
+  });
+
+  addArgumentMaterialization([](OpBuilder &builder, MemRefType resultType,
+                                ValueRange inputs,
+                                Location loc) -> std::optional<Value> {
+    return builder.create<UnrealizedConversionCastOp>(loc, resultType, inputs)
+        .getResult(0);
+  });
+
+  addTargetMaterialization([](OpBuilder &builder, TypeRange resultTypes,
+                              ValueRange inputs, Location loc,
+                              Type originalType) -> SmallVector<Value> {
+    if (inputs.size() == 1 && resultTypes.size() == 1 &&
+        isa<IndexType>(inputs.front().getType()) &&
+        isa<IntegerType>(resultTypes.front()))
+      return {builder.createOrFold<arith::IndexCastOp>(loc, resultTypes.front(),
+                                                       inputs.front())};
+    auto cast =
+        builder.create<UnrealizedConversionCastOp>(loc, resultTypes, inputs);
+    return SmallVector<Value>(cast.getResults().begin(),
+                              cast.getResults().end());
+  });
+}
 Type mlir::hivm::HIVMToTritonTypeConvert(Type ty) {
   if (auto memrefTy = dyn_cast<MemRefType>(ty)) {
     auto elemTy = memrefTy.getElementType();
@@ -226,51 +290,35 @@ void HIVMToTritonGPUConversionPass::runOnOperation() {
   auto module = getOperation();
   auto &ctx = getContext();
 
-  // FIXME: Compose the parent reinterpret_cast offset into the subview offset
-  // instead of rejecting this nested view.
-  bool hasUnsupportedNestedView = false;
-  module->walk([&](memref::SubViewOp subviewOp) {
-    auto parentCast =
-        subviewOp.getSource().getDefiningOp<memref::ReinterpretCastOp>();
-    if (!parentCast || parentCast.getStaticOffsets().front() == 0)
-      return;
-    subviewOp.emitOpError(
-        "parent memref.reinterpret_cast before memref.subview is not "
-        "supported: parent view offset is not yet composed");
-    hasUnsupportedNestedView = true;
-  });
-  if (hasUnsupportedNestedView) {
-    return signalPassFailure();
-  }
-
-  // Stage1: Convert operators in function body
+  // Stage1: convert the operations in each function body. MemRef values expand
+  // 1:N into descriptor fields here; a MemRef that is a func.func block
+  // argument cannot expand yet (func.func is still legal), so the converter
+  // leaves a placeholder cast that stage 2 resolves against the real arguments.
   ConversionTarget stage1Target(ctx);
-  stage1Target
-      .addLegalDialect<arith::ArithDialect, math::MathDialect,
-                       triton::TritonDialect, triton::gpu::TritonGPUDialect,
-                       func::FuncDialect>();
+  stage1Target.addLegalDialect<arith::ArithDialect, math::MathDialect,
+                               triton::TritonDialect,
+                               triton::gpu::TritonGPUDialect,
+                               func::FuncDialect, scf::SCFDialect>();
   stage1Target.addIllegalDialect<hivm::HIVMDialect>();
-  stage1Target.addIllegalOp<memref::ReinterpretCastOp>();
-  stage1Target.addIllegalOp<memref::SubViewOp>();
-  stage1Target.addIllegalOp<memref::LoadOp>();
-  stage1Target.addIllegalOp<memref::ExtractAlignedPointerAsIndexOp>();
-  // The TTIR path only accepts Triton ops plus tensor types
-  stage1Target.addLegalOp<tensor::EmptyOp>();
-  stage1Target.addIllegalOp<tensor::ExpandShapeOp, tensor::CollapseShapeOp>();
-  stage1Target.addIllegalOp<bufferization::ToTensorOp>();
-  stage1Target.addIllegalOp<affine::AffineApplyOp>();
-  stage1Target.addLegalOp<mlir::UnrealizedConversionCastOp>();
+  stage1Target.addLegalOp<tensor::EmptyOp, tensor::ExtractOp,
+                          tensor::ExtractSliceOp, UnrealizedConversionCastOp>();
+  stage1Target.addIllegalDialect<memref::MemRefDialect>();
+  // A memref.alloc staging buffer becomes dead once the load/store patterns
+  // forward its value
+  stage1Target.addLegalOp<memref::AllocOp>();
+  stage1Target.addIllegalOp<tensor::ExpandShapeOp, tensor::CollapseShapeOp,
+                            bufferization::ToTensorOp, affine::AffineApplyOp>();
 
+  LowerToTritonGPUOptions bodyOptions;
+  TritonTypeConverter bodyConverter(&ctx, bodyOptions);
   RewritePatternSet stage1Patterns(&ctx);
 
   populateHIVMToArithConversionPatterns(stage1Patterns);
   populateHIVMToMathConversionPatterns(stage1Patterns);
   populateTensorToTritonPatterns(stage1Patterns);
-  populateReinterpretCastToUnrealizedCastPatterns(stage1Patterns);
-  populateMemRefLoadToTritonPatterns(stage1Patterns);
-  populateExtractAlignedPointerToTritonPatterns(stage1Patterns);
-  populateHIVMToTritonPatterns(stage1Patterns);
-  populateBufferizationToTritonPatterns(stage1Patterns);
+  populateMemRefToTritonPatterns(bodyConverter, stage1Patterns);
+  populateHIVMToTritonPatterns(bodyConverter, stage1Patterns);
+  populateBufferizationToTritonPatterns(bodyConverter, stage1Patterns);
   populateAffineToTritonPatterns(stage1Patterns);
 
   if (failed(applyPartialConversion(module, stage1Target,
@@ -289,7 +337,7 @@ void HIVMToTritonGPUConversionPass::runOnOperation() {
     }
   });
 
-  // Stage2: Convert FuncOp alone
+  // Stage2: Convert FuncOp alone.
   // Note: Return values are allowed only in test scenarios.
   if (!allowReturnValue) {
     RewritePatternSet stage2Patterns(&ctx);
@@ -323,13 +371,17 @@ void HIVMToTritonGPUConversionPass::runOnOperation() {
     }
   }
 
-  // Stage3: Clean up redundant UnrealizedCastsOp
+  // Clean up redundant UnrealizedCastsOp
   OpPassManager dynPM;
   dynPM.addPass(createReconcileUnrealizedCastsPass());
   if (failed(runPipeline(dynPM, module))) {
-    module->emitError("Stage3 failed: Reconcile unrealized casts failed");
-    signalPassFailure();
+    module->emitError("Reconcile unrealized casts failed");
+    return signalPassFailure();
   }
+
+  // Every MemRef must be gone by now.
+  if (!allowReturnValue && failed(verifyNoMemRefTypesRemain(module)))
+    signalPassFailure();
 }
 
 std::unique_ptr<Pass> mlir::createHIVMToTritonGPUConversionPass() {
