@@ -69,6 +69,18 @@ bool isMemRefBoundary(Value value) {
   return llvm::isa<BaseMemRefType>(value.getType());
 }
 
+bool hasSeedOp(Operation *op) {
+  bool foundSeedOp = false;
+  op->walk([&](Operation *innerOp) {
+    if (isSimtSeedOp(innerOp)) {
+      foundSeedOp = true;
+      return WalkResult::interrupt(); 
+    }
+    return WalkResult::advance();
+  });
+  return foundSeedOp;
+}
+
 void forEachSeedDependencyValue(Operation *seedOp,
                                 llvm::function_ref<void(Value)> fn) {
   if (auto loadOp = llvm::dyn_cast<hivm::GatherLoadOp>(seedOp)) {
@@ -114,7 +126,7 @@ void collectValueDependencies(OrderedOps &simtVFOps, VisitedOps &visitedOps,
   }
   auto defOp = val.getDefiningOp();
   if (!defOp || llvm::isa<scope::ScopeOp>(defOp) ||
-      (allSeedOps.contains(defOp) && defOp != seedOp)) {
+      (allSeedOps.contains(defOp) && defOp != seedOp) || hasSeedOp(defOp)) {
     return;
   }
   collectOpDependencies(simtVFOps, visitedOps, defOp, seedOp, allSeedOps);

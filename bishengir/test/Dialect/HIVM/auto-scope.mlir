@@ -132,3 +132,83 @@ module {
     return
   }
 }
+
+// -----
+ 	 
+module {
+  // CHECK-LABEL: func.func @test_autoscope_no_nested_scope
+  // CHECK: %[[FOR_RES:.*]]:3 = scf.for
+  // CHECK: %[[SCOPE0:.*]] = scope.scope
+  // CHECK-NOT: scope.scope
+  // CHECK: hivm.hir.gather_load
+  // CHECK-NOT: scope.scope
+  // CHECK: scope.return
+  // CHECK: %[[SCOPE1:.*]] = scope.scope
+  // CHECK-NOT: scope.scope
+  // CHECK: hivm.hir.gather_load
+  // CHECK-NOT: scope.scope
+  // CHECK: scope.return
+  // CHECK: return
+
+  func.func @test_autoscope_no_nested_scope(%base0: memref<?xf32>, %base1: memref<?xf32>, %indices_gm: memref<?xi64>) -> tensor<8xf32> {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c10 = arith.constant 10 : index
+    %c1_i32 = arith.constant 1 : i32
+
+    %reinterpret_cast = memref.reinterpret_cast %indices_gm to offset: [0], sizes: [8], strides: [1] : memref<?xi64> to memref<8xi64, strided<[1]>>
+    %alloc = memref.alloc() : memref<8xi64>
+    hivm.hir.load ins(%reinterpret_cast : memref<8xi64, strided<[1]>>) outs(%alloc : memref<8xi64>)
+    %0 = bufferization.to_tensor %alloc restrict writable : memref<8xi64>
+
+    %for_res:3 = scf.for %i = %c0 to %c10 step %c1 iter_args(%arg2 = %base0, %arg3 = %base1, %arg4 = %0) -> (memref<?xf32>, memref<?xf32>, tensor<8xi64>) {
+      %tensor1 = tensor.empty() : tensor<8xf32>
+      %gather1 = hivm.hir.gather_load ins(%arg2 : memref<?xf32>, %arg4 : tensor<8xi64>, %c1_i32 : i32) outs(%tensor1 : tensor<8xf32>) -> tensor<8xf32>
+      scf.yield %arg2, %arg3, %arg4 : memref<?xf32>, memref<?xf32>, tensor<8xi64>
+    }
+
+    %cast = memref.cast %for_res#0 : memref<?xf32> to memref<?xf32>
+    %tensor2 = tensor.empty() : tensor<8xf32>
+    %gather2 = hivm.hir.gather_load ins(%cast : memref<?xf32>, %for_res#2 : tensor<8xi64>, %c1_i32 : i32) outs(%tensor2 : tensor<8xf32>) -> tensor<8xf32>
+
+    return %gather2 : tensor<8xf32>
+  }
+}
+
+// -----
+
+module {
+  // CHECK-LABEL: func.func @test_scf_for_no_seed
+  // CHECK: %[[SCOPE0:.*]] = scope.scope
+  // CHECK-NOT: scope.scope
+  // CHECK: %[[FOR_RES:.*]]:3 = scf.for
+  // CHECK-NOT: scope.scope
+  // CHECK: hivm.hir.gather_load
+  // CHECK-NOT: scope.scope
+  // CHECK: scope.return
+  // CHECK: return
+
+
+  func.func @test_scf_for_no_seed(%base0: memref<?xf32>, %base1: memref<?xf32>, %indices_gm: memref<?xi64>) -> tensor<8xf32> {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c10 = arith.constant 10 : index
+    %c1_i32 = arith.constant 1 : i32
+
+    %reinterpret_cast = memref.reinterpret_cast %indices_gm to offset: [0], sizes: [8], strides: [1] : memref<?xi64> to memref<8xi64, strided<[1]>>
+    %alloc = memref.alloc() : memref<8xi64>
+    hivm.hir.load ins(%reinterpret_cast : memref<8xi64, strided<[1]>>) outs(%alloc : memref<8xi64>)
+    %0 = bufferization.to_tensor %alloc restrict writable : memref<8xi64>
+
+    %for_res:3 = scf.for %i = %c0 to %c10 step %c1 iter_args(%arg2 = %base0, %arg3 = %base1, %arg4 = %0) -> (memref<?xf32>, memref<?xf32>, tensor<8xi64>) {
+      %tensor1 = tensor.empty() : tensor<8xf32>
+      scf.yield %arg2, %arg3, %arg4 : memref<?xf32>, memref<?xf32>, tensor<8xi64>
+    }
+
+    %cast = memref.cast %for_res#0 : memref<?xf32> to memref<?xf32>
+    %tensor2 = tensor.empty() : tensor<8xf32>
+    %gather2 = hivm.hir.gather_load ins(%cast : memref<?xf32>, %for_res#2 : tensor<8xi64>, %c1_i32 : i32) outs(%tensor2 : tensor<8xf32>) -> tensor<8xf32>
+
+    return %gather2 : tensor<8xf32>
+  }
+}
