@@ -733,12 +733,6 @@ void AutoVectorizeV2::fuseProducersIntoConsumers(
               containingLoopHandle);
       Value fusedOp = fuseIntoOp.getFusedOp();
       Value newContainingLoopHandle = fuseIntoOp.getNewContainingOp();
-      builder.create<transform::ApplyPatternsOp>(
-          loc, newContainingLoopHandle,
-          [](OpBuilder &innerBuilder, Location loc) {
-            innerBuilder.create<transform::ApplyCanonicalizationPatternsOp>(
-                loc);
-          });
       if (hfusion::shouldUseTileReductionUsingForV2(producer)) {
         tileReductionOp(builder, seqOp, producer, fusedOp,
                         producerInfo.tileSize, producerInfo.label,
