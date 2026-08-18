@@ -865,6 +865,7 @@ DECLARE_MMA_TILE_TA_TB_HF32(cbuf, cc, 4, float, float, float);
 DECLARE_MMA_TILE_TA_TB(cbuf, cc, 4, int8_t, int32_t, int32_t);
 DECLARE_MMA_TILE_BIAS(cbuf, cc, 4, half, float, half);
 DECLARE_MMA_TILE_BIAS(cbuf, cc, 4, float, float, half);
+DECLARE_MMA_TILE_BIAS_TB(cbuf, cc, 4, half, float, half);
 DECLARE_MMA_TILE_BIAS_HF32(cbuf, cc, 4, float, float, float);
 DECLARE_MMA_TILE_BIAS_TA_HF32(cbuf, cc, 4, float, float, float);
 DECLARE_MMA_TILE_BIAS_TB_HF32(cbuf, cc, 4, float, float, float);
