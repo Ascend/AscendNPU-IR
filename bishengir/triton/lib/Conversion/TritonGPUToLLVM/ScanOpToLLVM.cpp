@@ -124,6 +124,131 @@ static void storeWarpAccumulator(SmallVector<SmallVector<Value>> &srcValues,
   }
 }
 
+// Return true when the multi-warp partials have the simple one-dimensional
+// layout needed by addPartialReduceSklansky.  Keep this deliberately narrow:
+// the generic path below handles all other layouts and combine regions.
+static bool canUseMultiWarpSklansky(triton::ScanOp op,
+                                    ScanLoweringHelper &helper,
+                                    unsigned warpSize, unsigned numSrcValues) {
+  if (op.getNumOperands() != 1 || helper.getShape().size() != 1 ||
+      helper.getAxisNumElementsPerThread() != 1 ||
+      helper.getAxisNumThreadsPerWarpWithUniqueData() != warpSize ||
+      helper.getAxisNumWarpsWithUniqueData() <= 1 ||
+      helper.getAxisNumWarpsWithUniqueData() > warpSize ||
+      helper.getAxisNumBlocks() != numSrcValues)
+    return false;
+
+  Type elementType = op.getElementTypes().front();
+  if (!elementType.isF16() && !elementType.isF32())
+    return false;
+
+  Region &combineRegion = op.getCombineOp();
+  if (!llvm::hasSingleElement(combineRegion))
+    return false;
+  Block &combineBlock = combineRegion.front();
+  if (combineBlock.getNumArguments() != 2)
+    return false;
+
+  auto body = combineBlock.without_terminator();
+  if (!llvm::hasSingleElement(body))
+    return false;
+  auto add = dyn_cast<arith::AddFOp>(&*body.begin());
+  Operation *terminator = combineBlock.getTerminator();
+  return add && add.getLhs() == combineBlock.getArgument(0) &&
+         add.getRhs() == combineBlock.getArgument(1) &&
+         terminator->getNumOperands() == 1 &&
+         terminator->getOperand(0) == add.getResult();
+}
+
+// Scan one warp-total per lane with a Sklansky network.  Every data warp
+// redundantly executes the same network, so the scanned totals stay in
+// registers and no second CTA barrier is needed.  This replaces O(W) shared
+// loads per thread and per chunk with one shared load and O(log W) shuffles.
+//
+// The supported layout has one element per thread in each axis block.  Values
+// owned by the same thread in successive axis blocks are therefore separate
+// scan chunks, not thread-contiguous elements.  previousChunksTotal carries
+// the complete prefix from one such chunk into the next.
+static void addPartialReduceSklansky(SmallVector<SmallVector<Value>> &srcValues,
+                                     ConversionPatternRewriter &rewriter,
+                                     const TargetInfoBase &targetInfo,
+                                     ScanLoweringHelper &helper,
+                                     ArrayRef<Value> smemBases,
+                                     ArrayRef<Type> smemTypes, Value laneId,
+                                     Value warpId) {
+  Location loc = helper.getLoc();
+  auto b = TritonLLVMOpBuilder(loc, rewriter);
+  unsigned axisNumWarps = helper.getAxisNumWarpsWithUniqueData();
+  unsigned numScanBlocks = helper.getAxisNumBlocks();
+  assert(srcValues.size() == numScanBlocks && smemBases.size() == 1 &&
+         smemTypes.size() == 1);
+
+  Type elementType = smemTypes.front();
+  Value zero = rewriter.create<LLVM::ConstantOp>(
+      loc, elementType, rewriter.getZeroAttr(elementType));
+  Value laneHasWarpTotal = b.icmp_ult(laneId, b.i32_val(axisNumWarps));
+  // Keep the address in bounds even for lanes which only provide the additive
+  // identity to the Sklansky network.
+  Value safeLaneId = b.select(laneHasWarpTotal, laneId, b.i32_val(0));
+  Value hasPreviousWarp = b.icmp_ne(warpId, b.i32_val(0));
+  Value safePreviousWarp =
+      b.select(hasPreviousWarp, b.sub(warpId, b.i32_val(1)), b.i32_val(0));
+
+  SmallVector<Value> previousChunksTotal;
+  for (unsigned chunkId = 0; chunkId < numScanBlocks; ++chunkId) {
+    Value index = b.add(safeLaneId, b.i32_val(chunkId * axisNumWarps));
+    Value ptr = b.gep(smemBases.front().getType(), elementType,
+                      smemBases.front(), index);
+    Value partial = b.load(elementType, ptr);
+    Value total = b.select(laneHasWarpTotal, partial, zero);
+
+    // Inclusive Sklansky scan of this chunk's warp totals.  A boundary value
+    // is read with shuffleIdx and folded into the right half of each group.
+    for (unsigned h = 1; h < axisNumWarps; h <<= 1) {
+      unsigned span = h << 1;
+      Value laneInGroup = b.and_(laneId, b.i32_val(span - 1));
+      Value groupBase = b.and_(laneId, b.i32_val(-static_cast<int>(span)));
+      Value boundary = b.add(groupBase, b.i32_val(h - 1));
+      Value boundaryTotal =
+          targetInfo.shuffleIdx(rewriter, loc, total, boundary);
+      Value updated =
+          accumulate(helper, rewriter, {total}, {boundaryTotal}).front();
+      Value isRightHalf = b.icmp_sge(laneInGroup, b.i32_val(h));
+      total = b.select(isRightHalf, updated, total);
+    }
+
+    // The inclusive total at lane warpId-1 is the exclusive carry for this
+    // data warp.  Prefix it with all preceding axis chunks.
+    Value previousWarpTotal =
+        targetInfo.shuffleIdx(rewriter, loc, total, safePreviousWarp);
+    SmallVector<Value> carry;
+    if (previousChunksTotal.empty()) {
+      carry = {previousWarpTotal};
+    } else {
+      auto withPreviousWarp = accumulate(helper, rewriter, previousChunksTotal,
+                                         {previousWarpTotal});
+      carry = previousChunksTotal;
+      carry.front() = b.select(hasPreviousWarp, withPreviousWarp.front(),
+                               previousChunksTotal.front());
+    }
+
+    auto withCarry = accumulate(helper, rewriter, carry, srcValues[chunkId]);
+    if (previousChunksTotal.empty()) {
+      // The first warp of the first chunk has no prefix to add.
+      withCarry.front() =
+          b.select(hasPreviousWarp, withCarry.front(), srcValues[chunkId][0]);
+    }
+    srcValues[chunkId] = std::move(withCarry);
+
+    if (chunkId + 1 < numScanBlocks) {
+      Value chunkTotal = targetInfo.shuffleIdx(
+          rewriter, loc, total, static_cast<int>(axisNumWarps - 1));
+      previousChunksTotal =
+          accumulate(helper, rewriter, previousChunksTotal, {chunkTotal});
+    }
+  }
+}
+
 // Read the partial reductions from shared memory from each chunk of contiguous
 // elements for each warp and parallel scan. Then combine the partial reduction
 // with the right elements. Within a given contiguous element chunk we update
@@ -520,8 +645,13 @@ ScanOpConversion::emitFastScan(triton::ScanOp op, triton::ScanOpAdaptor adaptor,
     // Read back the partial reduction of each warp and accumulate them based on
     // warpId. Then update each chunk of contiguous elements by adding the
     // accumulated value from the previous lane.
-    AddPartialReduce(srcValues, rewriter, targetInfo, helper, smemBases,
-                     smemTypes, warpIdAxis, laneIdAxis, flatIdParallel);
+    if (canUseMultiWarpSklansky(op, helper, iWarpSize, srcValues.size())) {
+      addPartialReduceSklansky(srcValues, rewriter, targetInfo, helper,
+                               smemBases, smemTypes, laneId, warpIdAxis);
+    } else {
+      AddPartialReduce(srcValues, rewriter, targetInfo, helper, smemBases,
+                       smemTypes, warpIdAxis, laneIdAxis, flatIdParallel);
+    }
   } else if (srcValues.size() > 1) {
     // Fast path for the case where there is only one warp with unique data on
     // the axis.
