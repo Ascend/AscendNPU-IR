@@ -33,7 +33,8 @@ namespace mlir {
 namespace hivm {
 
 static constexpr llvm::StringLiteral toBeBubbleUpSlice = "to_be_bubbled_slice";
-static constexpr llvm::StringLiteral toBeCancelOutInsertSlice = "to_be_canceled_out_insert_slice";
+static constexpr llvm::StringLiteral toBeCancelOutInsertSlice =
+    "to_be_canceled_out_insert_slice";
 inline constexpr llvm::StringLiteral batchMatmulAttr = "batch_matmul";
 inline constexpr llvm::StringLiteral tileAndSliceFailure =
     "tile_and_slice_failure";
@@ -62,8 +63,8 @@ OpFoldResult calculateOffsetAtTilingDim(RewriterBase &rewriter, Location loc,
                                         scf::ForOp containingLoop,
                                         OpFoldResult singleTileSize);
 OpFoldResult calculateOffsetAtTilingDim(RewriterBase &rewriter, Location loc,
-                                        scf::ForOp containingLoop,
-                                        Value input, int64_t tileDimension);
+                                        scf::ForOp containingLoop, Value input,
+                                        int64_t tileDimension);
 
 /// This function calculates the tile size by dividing the dimension size
 /// by the containing loop's split factor (using ceiling division).

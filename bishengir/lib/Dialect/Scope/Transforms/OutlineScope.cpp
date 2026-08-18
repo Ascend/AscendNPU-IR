@@ -95,7 +95,8 @@ class OutlineScopeOp : public OpRewritePattern<scope::ScopeOp> {
     return inputs.takeVector();
   }
 
-  // Mark inputs that are memref has offset with attribute: e.g. %2 = memref.reinterpret_cast %0 to offset :[%1] ...: memref<?xf32>
+  // Mark inputs that are memref has offset with attribute: e.g. %2 =
+  // memref.reinterpret_cast %0 to offset :[%1] ...: memref<?xf32>
 
   SetVector<Operation *> getExternalConstantLikeOps(ScopeOp scopeOp) const {
     SetVector<Operation *> constants;
@@ -177,10 +178,10 @@ class OutlineScopeOp : public OpRewritePattern<scope::ScopeOp> {
       // constant values instead of extra outlined function arguments.
       for (Operation *constantOp : getExternalConstantLikeOps(scopeOp)) {
         auto *newConstOp = rewriter.clone(*constantOp, currentMap);
-        for (auto [oldRes, newRes] :
-             llvm::zip_equal(constantOp->getResults(), newConstOp->getResults())) {
+        for (auto [oldRes, newRes] : llvm::zip_equal(
+                 constantOp->getResults(), newConstOp->getResults())) {
           currentMap.map(oldRes, newRes);
-             }
+        }
       }
     }
 
@@ -238,9 +239,9 @@ class OutlineScopeOp : public OpRewritePattern<scope::ScopeOp> {
                                           subBlockIdxOp.getResult())
               .getResult();
       Value zero = rewriter.create<arith::ConstantIndexOp>(loc, 0);
-      Value cond = rewriter.create<arith::CmpIOp>(
-          loc, rewriter.getI1Type(), arith::CmpIPredicate::eq, subBlockIndex,
-          zero);
+      Value cond = rewriter.create<arith::CmpIOp>(loc, rewriter.getI1Type(),
+                                                  arith::CmpIPredicate::eq,
+                                                  subBlockIndex, zero);
 
       // Create scf.if with the call inside
       auto ifOp = rewriter.create<scf::IfOp>(loc, scopeOp->getResultTypes(),
@@ -252,8 +253,7 @@ class OutlineScopeOp : public OpRewritePattern<scope::ScopeOp> {
       // Replace scope op with if op results
       rewriter.replaceOp(scopeOp, ifOp.getResults());
     } else {
-      func::CallOp callOp =
-          rewriter.create<func::CallOp>(loc, funcOp, inputs);
+      func::CallOp callOp = rewriter.create<func::CallOp>(loc, funcOp, inputs);
       LDBG("created callOp: " << callOp);
       rewriter.replaceOp(scopeOp, callOp);
     }
@@ -269,7 +269,8 @@ public:
   LogicalResult matchAndRewrite(scope::ScopeOp scopeOp,
                                 PatternRewriter &rewriter) const override {
     auto mod = scopeOp->getParentOfType<ModuleOp>();
-    if ((mod && hacc::utils::isRegBasedArch(mod)) && !scopeOp->hasAttr("outline")) {
+    if ((mod && hacc::utils::isRegBasedArch(mod)) &&
+        !scopeOp->hasAttr("outline")) {
       return failure();
     }
     FailureOr<func::FuncOp> newFuncOp = outlineScope(scopeOp, rewriter);
