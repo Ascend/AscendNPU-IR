@@ -1,4 +1,4 @@
-// RUN: bishengir-opt %s -hivm-partition-and-bind-sub-block=enable-load-balanced=false -split-input-file | FileCheck %s
+// RUN: bishengir-opt %s -hivm-partition-and-bind-sub-block=pin-free-nodes=true -split-input-file | FileCheck %s
 
 // CHECK-LABEL: func.func @solve_tril_cv_pipelined
 

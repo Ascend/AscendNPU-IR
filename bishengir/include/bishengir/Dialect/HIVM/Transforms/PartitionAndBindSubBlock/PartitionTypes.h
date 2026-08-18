@@ -34,6 +34,12 @@ inline constexpr llvm::StringLiteral kSubBlockAttrName = "sub_block";
 inline constexpr llvm::StringLiteral kSubBlockBoundOpAttrName =
     "already_sub_block_bound";
 
+/// Unit attr SubBlockLowering stamps on the `get_sub_block_idx` op of every
+/// guard condition it builds. SubBlockGuardCleanup only rewrites guards whose
+/// condition traces to a stamped op.
+inline constexpr llvm::StringLiteral kPartitionGuardAttrName =
+    "partition_sub_block_guard";
+
 inline constexpr llvm::StringLiteral kVectorTypeAttrName = "vector_mode";
 
 inline constexpr llvm::StringLiteral kSimtVectorType = "simt";
@@ -119,6 +125,11 @@ bool isGuardable(Operation *op);
 Core getSubBlockCoreOf(Operation *op);
 
 bool isOperandParallelSubBlockGuard(Operation *op);
+
+/// Like `isOperandParallelSubBlockGuard`, but additionally requires the
+/// condition's get_sub_block_idx op to carry the
+/// `partition_sub_block_guard` provenance attr
+bool isMarkedOperandParallelSubBlockGuard(Operation *op);
 
 /// True if `op` is an atomic SIMT scope: a `scope.scope` tagged
 /// `vector_mode = "simt"`.

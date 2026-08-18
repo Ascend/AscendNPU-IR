@@ -46,13 +46,6 @@ enum class CVPipelineMode {
   Dynamic, // dynamic mode pipeling (developing)
 };
 
-/// partition-and-bind-sub-block mode
-enum class PartitionAndBindSubBlockMode {
-  Off = 0,
-  DefaultPin,
-  LoadBalanced,
-};
-
 namespace mlir {
 
 namespace hivm {

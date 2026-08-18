@@ -104,10 +104,14 @@ Core getSubBlockCoreOf(Operation *op) {
   return coreFromIndex(attr.getInt());
 }
 
-static bool tracesToSubBlockIdx(Value v) {
+static Operation *traceSubBlockIdxOp(Value v) {
   if (auto cast = v.getDefiningOp<arith::IndexCastOp>())
     v = cast.getIn();
-  return v.getDefiningOp<hivm::GetSubBlockIdxOp>() != nullptr;
+  return v.getDefiningOp<hivm::GetSubBlockIdxOp>();
+}
+
+static bool tracesToSubBlockIdx(Value v) {
+  return traceSubBlockIdxOp(v) != nullptr;
 }
 
 static bool definesConstant(Value v) {
@@ -123,6 +127,16 @@ bool isOperandParallelSubBlockGuard(Operation *op) {
     return false;
   return (tracesToSubBlockIdx(cmp.getLhs()) && definesConstant(cmp.getRhs())) ||
          (tracesToSubBlockIdx(cmp.getRhs()) && definesConstant(cmp.getLhs()));
+}
+
+bool isMarkedOperandParallelSubBlockGuard(Operation *op) {
+  if (!isOperandParallelSubBlockGuard(op))
+    return false;
+  auto cmp = cast<scf::IfOp>(op).getCondition().getDefiningOp<arith::CmpIOp>();
+  Operation *idxOp = traceSubBlockIdxOp(cmp.getLhs());
+  if (!idxOp)
+    idxOp = traceSubBlockIdxOp(cmp.getRhs());
+  return idxOp->hasAttr(kPartitionGuardAttrName);
 }
 
 bool isAtomicSimtScope(Operation *op) {
