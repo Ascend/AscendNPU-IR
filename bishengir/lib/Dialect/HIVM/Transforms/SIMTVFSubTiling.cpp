@@ -394,8 +394,6 @@ void populateProducerBubbleUpPatterns(RewritePatternSet &patterns) {
       std::make_shared<hivm::detail::CollapseBubbleUpStrategy>());
   strategies.push_back(
       std::make_shared<hivm::detail::ElementwiseBubbleUpStrategy>());
-  strategies.push_back(
-      std::make_shared<hivm::detail::ArithIntegerCastBubbleUpStrategy>());
   strategies.push_back(std::make_shared<hivm::detail::LoopBubbleUpStrategy>());
   strategies.push_back(
       std::make_shared<hivm::detail::LoopArgsBubbleUpStrategy>());

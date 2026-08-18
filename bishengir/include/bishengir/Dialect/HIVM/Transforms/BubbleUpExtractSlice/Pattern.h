@@ -94,15 +94,6 @@ public:
                         PatternRewriter &rewriter) const override;
 };
 
-/// Bubble an extract_slice through same-shape arith integer casts.
-class ArithIntegerCastBubbleUpStrategy : public BubbleUpStrategy {
-public:
-  bool isSupportedOperation(tensor::ExtractSliceOp sliceOp) const override;
-
-  LogicalResult execute(tensor::ExtractSliceOp sliceOp,
-                        PatternRewriter &rewriter) const override;
-};
-
 class BitcastBubbleUpStrategy : public BubbleUpStrategy {
 public:
   bool isSupportedOperation(tensor::ExtractSliceOp sliceOp) const override;
