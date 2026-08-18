@@ -98,10 +98,8 @@ template <InsertMode Mode, bool EnableND2NZ> struct InsertOpImpl {
 ///
 /// %21 = hivm.hir.mmadL1 {b_transpose} ins(...) outs(...) -> tensor<...>
 /// %alloc = memref.alloc : memref<..., #hivm.address_space<ub>>
-/// %no_ub = memref.memory_space_cast %alloc:
-///  memref<..., #hivm.address_space<ub>> to memref<...>
 /// hivm.hir.fixpipe {enable_nz2nd} ins(%21 : ...) outs(%alloc : memref<...)
-/// %to_tensor = bufferization.to_tensor %no_ub restrict writable :
+/// %to_tensor = bufferization.to_tensor %alloc restrict writable :
 /// memref<16x16xf32> %24 = tensor.empty() : tensor<16x16xi32> %25 =
 /// hivm.hir.bitcast %to_tensor : tensor<16x16xf32> -> tensor<16x16xi32>
 
@@ -140,7 +138,6 @@ struct InsertOpImpl<InsertMode::MoveToUb, EnableND2NZ> {
             hivm::AddressSpaceAttr::get(ctx, hivm::AddressSpace::UB);
         auto ubMemrefType = mlir::MemRefType::get(
             shape, elemType, /*layout=*/nullptr, ubSpaceAttr);
-        auto noUbMemrefType = mlir::MemRefType::get(shape, elemType);
         rewriter.setInsertionPoint(fixpipe);
         Location fixLoc = fixpipeOp.getLoc();
 
@@ -176,8 +173,6 @@ struct InsertOpImpl<InsertMode::MoveToUb, EnableND2NZ> {
         } else {
           alloc = rewriter.create<memref::AllocOp>(fixLoc, ubMemrefType);
         }
-        Value noUb = rewriter.create<memref::MemorySpaceCastOp>(
-            fixLoc, noUbMemrefType, alloc);
         SmallVector<Value> oprs({fixpipeOp.getSrc(), alloc});
         if (auto quantScale = fixpipeOp.getQuantScale())
           oprs.push_back(quantScale);
@@ -185,7 +180,7 @@ struct InsertOpImpl<InsertMode::MoveToUb, EnableND2NZ> {
             fixLoc, TypeRange{}, oprs, fixpipeOp->getAttrs());
         rewriter.setInsertionPointAfter(newFixpipeOp);
         auto toTensor = rewriter.create<bufferization::ToTensorOp>(
-            fixLoc, resultTensorType, noUb,
+            fixLoc, resultTensorType, alloc,
             /*restrict=*/true,
             /*writable=*/true);
         rewriter.replaceOp(fixpipeOp, toTensor.getResult());
@@ -235,22 +230,8 @@ static void ensureAllocInUbAddressSpaceIfNeeded(PatternRewriter &rewriter,
       mlir::MemRefType::get(oldType.getShape(), oldType.getElementType(),
                             oldType.getLayout(), ubSpaceAttr);
 
-  SmallVector<OpOperand *> originalUses;
-  for (OpOperand &use : allocOp.getMemref().getUses())
-    originalUses.push_back(&use);
-
-  OpBuilder::InsertionGuard guard(rewriter);
   rewriter.modifyOpInPlace(allocOp,
                            [&]() { allocOp.getMemref().setType(newType); });
-
-  rewriter.setInsertionPointAfter(allocOp);
-  Value replacement = allocOp.getMemref();
-  if (replacement.getType() != oldType) {
-    replacement = rewriter.create<memref::MemorySpaceCastOp>(
-        allocOp.getLoc(), oldType, replacement);
-  }
-  for (OpOperand *use : originalUses)
-    use->set(replacement);
 }
 
 /// pattern2
@@ -262,9 +243,7 @@ static void ensureAllocInUbAddressSpaceIfNeeded(PatternRewriter &rewriter,
 ///
 /// %53 = hivm.hir.vcast ins(%42 : tensor<16x16xf32>) outs(%19 : ...) -> ...
 /// %alloc_0 = memref.alloc() : memref<..., #hivm.address_space<cbuf>>
-/// %memspacecast_2 = memref.memory_space_cast %alloc_0
-/// : memref<..., #hivm.address_space<cbuf>> to ...
-/// %empty = bufferization.to_tensor %memspacecast_2 restrict writable : ...
+/// %empty = bufferization.to_tensor %alloc_0 restrict writable : ...
 /// %copy = hivm.hir.copy ins(%53 : ...) outs(%empty : ...) -> ...
 /// %54 = tensor.empty() : tensor<16x16xf32>
 /// %55 = hivm.hir.mmadL1 ins(%copy, %52, %true, %c16, %c16, %c16 : ...
@@ -299,20 +278,16 @@ struct InsertOpImpl<InsertMode::MoveToL1, EnableND2NZ> {
         auto l1MemrefType = mlir::MemRefType::get(tensorType.getShape(),
                                                   tensorType.getElementType(),
                                                   nullptr, l1SpaceAttr);
-        auto plainMemrefType = mlir::MemRefType::get(
-            tensorType.getShape(), tensorType.getElementType());
         Value alloc = rewriter.create<memref::AllocOp>(loc, l1MemrefType);
-        Value memspacecast = rewriter.create<memref::MemorySpaceCastOp>(
-            loc, plainMemrefType, alloc);
-        auto emptyTensor = rewriter.create<bufferization::ToTensorOp>(
-            loc, tensorType, memspacecast,
-            /*restrict=*/true,
-            /*writable=*/true);
+        auto emptyTensor =
+            rewriter.create<bufferization::ToTensorOp>(loc, tensorType, alloc,
+                                                       /*restrict=*/true,
+                                                       /*writable=*/true);
 
         rewriter.create<hivm::CopyOp>(loc,
                                       /*resultType=*/TypeRange(),
                                       /*src=*/origTensor,
-                                      /*dst=*/memspacecast);
+                                      /*dst=*/alloc);
         rewriter.modifyOpInPlace(consumerOp, [&]() {
           consumerOperand->set(emptyTensor.getResult());
         });
@@ -386,13 +361,9 @@ struct InsertOpImpl<InsertMode::MoveToL1, EnableND2NZ> {
           hivm::AddressSpaceAttr::get(ctx, hivm::AddressSpace::L1);
       auto l1MemrefType = mlir::MemRefType::get(
           nzTy.getShape(), nzTy.getElementType(), nullptr, l1SpaceAttr);
-      auto plainMemrefType =
-          mlir::MemRefType::get(nzTy.getShape(), nzTy.getElementType());
       Value alloc = rewriter.create<memref::AllocOp>(loc, l1MemrefType);
-      Value memspacecast = rewriter.create<memref::MemorySpaceCastOp>(
-          loc, plainMemrefType, alloc);
       auto emptyTensor =
-          rewriter.create<bufferization::ToTensorOp>(loc, nzTy, memspacecast,
+          rewriter.create<bufferization::ToTensorOp>(loc, nzTy, alloc,
                                                      /*restrict=*/true,
                                                      /*writable=*/true);
       Value src = nzOp.getResult();
@@ -400,7 +371,7 @@ struct InsertOpImpl<InsertMode::MoveToL1, EnableND2NZ> {
       rewriter.create<hivm::CopyOp>(loc,
                                     /*resultType=*/TypeRange(),
                                     /*src=*/src,
-                                    /*dst=*/memspacecast);
+                                    /*dst=*/alloc);
       rewriter.modifyOpInPlace(consumerOp,
                                [&]() { consumerOperand->set(dst); });
       changed = true;
@@ -457,11 +428,11 @@ tryAnnotateGatherFractalLayoutForCubeOperand(OpOperand &consumerOperand) {
 // InsertMoveUb
 //===----------------------------------------------------------------------===//
 /// pattern1 : fixpipe op + vector/vf
-/// convert into memref.alloc + memref.memory_space_cast + fixpipe op +
+/// convert into memref.alloc + fixpipe op +
 /// bufferization.to_tensor + vector/vf
 ///
 /// pattern2 : fixpipe op + tensor.extract
-/// convert into memref.alloc + memref.memory_space_cast + fixpipe op +
+/// convert into memref.alloc + fixpipe op +
 /// bufferization.to_tensor + tensor.extract
 ///
 /// Extra:
@@ -512,7 +483,7 @@ struct InsertMoveUbBetweenFixpipeAndVector : public OpRewritePattern<OpType> {
 // InsertMoveL1
 //===----------------------------------------------------------------------===//
 /// pattern2 : vector/vf(dst) + cube(dst)
-/// convert into vector +  memref.alloc + memory_space_cast +
+/// convert into vector +  memref.alloc +
 /// bufferization.to_tensor + hivm.hir.copy +cube
 ///
 /// Extra:
@@ -735,10 +706,10 @@ struct ReplaceEmptyOpByTightlyCoupledBuffer
 
     for (auto &use : llvm::make_early_inc_range(emptyOp->getUses())) {
       // create tight coupled buffer
-      std::tuple<AllocationResult, bufferization::ToTensorOp>
-          tightCoupledBuffer = insertTightCoupledBuffer(
-              emptyOp, rewriter, addressSpace.getAddressSpace());
-      auto plainMemref = std::get<0>(tightCoupledBuffer).plainMemref;
+      std::tuple<Value, bufferization::ToTensorOp> tightCoupledBuffer =
+          insertTightCoupledBuffer(emptyOp, rewriter,
+                                   addressSpace.getAddressSpace());
+      auto plainMemref = std::get<0>(tightCoupledBuffer);
       // TODO: mark tightly coupled buffer to remove MarkTightlyCoupledBuffer
       // pass
       use.assign(plainMemref);
@@ -759,14 +730,8 @@ struct ReplaceEmptyOpByTightlyCoupledBuffer
   }
 
 private:
-  /// Holds allocated memref and its plain (no address space) cast.
-  struct AllocationResult {
-    Value spacedMemref; // Memref with address space attribute
-    Value plainMemref;  // Memref without address space (after cast)
-  };
-
   /// Creates a memref allocation with the specified address space.
-  AllocationResult
+  Value
   createAddressSpaceAllocation(PatternRewriter &rewriter, Location loc,
                                ArrayRef<int64_t> shape, Type elemType,
                                ValueRange dynamicSizes, AddressSpace addrSpace,
@@ -775,15 +740,9 @@ private:
 
     auto spaceAttr = AddressSpaceAttr::get(ctx, addrSpace);
     auto spacedType = MemRefType::get(shape, elemType, nullptr, spaceAttr);
-    auto plainType = MemRefType::get(shape, elemType);
 
-    Value alloc = createAllocWithMark(rewriter, loc, spacedType, dynamicSizes,
-                                      maybeStaticAllocSize, elemType);
-
-    Value cast =
-        rewriter.create<memref::MemorySpaceCastOp>(loc, plainType, alloc);
-
-    return {alloc, cast};
+    return createAllocWithMark(rewriter, loc, spacedType, dynamicSizes,
+                               maybeStaticAllocSize, elemType);
   }
 
   Value peelTensorShapeSourceForAllocSizes(Value tensorValue) const {
@@ -796,9 +755,8 @@ private:
 
   /// Creates an allocation matching `tensorValue`'s shape, including dynamic
   /// extents.
-  AllocationResult createAllocation(PatternRewriter &rewriter,
-                                    tensor::EmptyOp emptyOp,
-                                    hivm::AddressSpace addressSpace) const {
+  Value createAllocation(PatternRewriter &rewriter, tensor::EmptyOp emptyOp,
+                         hivm::AddressSpace addressSpace) const {
     auto tensorValue = emptyOp.getResult();
     auto loc = emptyOp->getLoc();
     rewriter.setInsertionPointAfterValue(tensorValue);
@@ -811,7 +769,7 @@ private:
         dynamicSizes, addressSpace, tensorValue.getType().getShape());
   }
 
-  std::tuple<AllocationResult, bufferization::ToTensorOp>
+  std::tuple<Value, bufferization::ToTensorOp>
   insertTightCoupledBuffer(tensor::EmptyOp emptyOp, PatternRewriter &rewriter,
                            hivm::AddressSpace addressSpace) const {
     auto resultType = cast<RankedTensorType>(emptyOp.getType());
@@ -820,7 +778,7 @@ private:
 
     // Convert memref back to tensor for users
     auto toTensorOp = rewriter.create<bufferization::ToTensorOp>(
-        emptyOp->getLoc(), resultType, coupledBuffer.plainMemref,
+        emptyOp->getLoc(), resultType, coupledBuffer,
         /*restrict=*/true, /*writable=*/true);
     return std::make_tuple(coupledBuffer, toTensorOp);
   }

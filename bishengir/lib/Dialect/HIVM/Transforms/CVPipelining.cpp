@@ -512,8 +512,8 @@ static bool isTCBLocalOutput(const std::pair<Value, Value> &localOutput) {
     return false;
 
   for (Operation *user : localBuffer.getUsers())
-    if (utils::isAnnotationWithAttr(
-            user, hivm::HIVMTightlyCoupledBufferAttr::name))
+    if (utils::isAnnotationWithAttr(user,
+                                    hivm::HIVMTightlyCoupledBufferAttr::name))
       return true;
 
   return false;
@@ -567,9 +567,9 @@ static Value createWorkspaceSubview(OpBuilder &builder, Location loc,
 #endif
       auto layout = StridedLayoutAttr::get(builder.getContext(),
                                            ShapedType::kDynamic, layoutStrides);
-      auto resultTy = MemRefType::Builder(targetTy)
-                          .setLayout(layout)
-                          .setMemorySpace(newType.getMemorySpace());
+      auto resultTy =
+          MemRefType::Builder(targetTy).setLayout(layout).setMemorySpace(
+              newType.getMemorySpace());
       auto subview = builder.create<memref::SubViewOp>(loc, resultTy, from,
                                                        offsets, sizes, strides);
       if (isPreload)
@@ -592,8 +592,7 @@ static Value createWorkspaceSubview(OpBuilder &builder, Location loc,
 static void
 processWorkspaceOutputs(OpBuilder &builder, WorkItem *item,
                         DenseMap<Value, Value> &expandedWorkspaceMap,
-                        const IRMapping &loopMap,
-                        IRMapping &globalIRMap,
+                        const IRMapping &loopMap, IRMapping &globalIRMap,
                         const SetVector<Value> &yieldedVals) {
   scf::ForOp forOp = item->forOp;
   for (Operation *output : item->workspaceOutputs) {
@@ -643,9 +642,10 @@ processWorkspaceOutputs(OpBuilder &builder, WorkItem *item,
     for (Value result : output->getResults()) {
       if (yieldedVals.contains(result)) {
         builder.setInsertionPointAfter(forOp);
-        int64_t lastSlot = cast<ShapedType>(newAlloc.getType()).getDimSize(0) - 1;
-        Value lastSlotIdx = builder.create<arith::ConstantIndexOp>(
-            loc, lastSlot);
+        int64_t lastSlot =
+            cast<ShapedType>(newAlloc.getType()).getDimSize(0) - 1;
+        Value lastSlotIdx =
+            builder.create<arith::ConstantIndexOp>(loc, lastSlot);
         Value sliceOp = createExtractSlice(builder, loc, workspaceOp,
                                            result.getType(), lastSlotIdx);
         globalIRMap.map(result, sliceOp);
@@ -675,8 +675,8 @@ static void processWorkspaceOutputUsers(
       if (isa<scf::YieldOp>(owner)) {
         int64_t lastSlot =
             cast<ShapedType>(mappedTensor.getType()).getDimSize(0) - 1;
-        sliceIdx = builder.create<arith::ConstantIndexOp>(
-            owner->getLoc(), lastSlot);
+        sliceIdx =
+            builder.create<arith::ConstantIndexOp>(owner->getLoc(), lastSlot);
       } else {
         // The nearest enclosing scf.for may be a loop cloned from the
         // original pipeline body.  Its IV indexes data *within* one stage
@@ -758,10 +758,6 @@ Value CVPipelineImpl::createSubview(OpBuilder &builder, Location loc,
       srcMemSpace);
   Value subview = builder.create<memref::SubViewOp>(loc, finalTy, from, offsets,
                                                     sizes, strides);
-  if (srcMemSpace != targetTy.getMemorySpace())
-    subview = builder.create<memref::MemorySpaceCastOp>(
-        loc, MemRefType(MemRefType::Builder(finalTy).setMemorySpace(nullptr)),
-        subview);
   return subview;
 }
 
@@ -961,7 +957,8 @@ void CVPipelineImpl::expandWorkspace(OpBuilder &builder) {
     if (info.marker) {
       info.marker.getSrcMutable().set(newAlloc);
       info.marker->removeAttr(MultiBufferAttr::name);
-      info.marker->setAttr(hivm::PreloadWorkspaceAttr::name, builder.getUnitAttr());
+      info.marker->setAttr(hivm::PreloadWorkspaceAttr::name,
+                           builder.getUnitAttr());
     } else {
       auto markOp = builder.create<annotation::MarkOp>(loc, newAlloc);
       markOp->setAttr(hivm::CVPipelinedMultiBufferAttr::name,
@@ -1163,9 +1160,10 @@ LogicalResult CVPipelineImpl::checkWorkItemDependencies() {
     }
   }
 
-  // Collect the cross-core consuming ops of an iter_arg, paired with the WorkItem
-  // they run on. An op mapped in opToWorkItemMap is the consuming work item; an
-  // unmapped glue op (view / cast / index math) is followed to its own users.
+  // Collect the cross-core consuming ops of an iter_arg, paired with the
+  // WorkItem they run on. An op mapped in opToWorkItemMap is the consuming work
+  // item; an unmapped glue op (view / cast / index math) is followed to its own
+  // users.
   auto consumerUses = [this](BlockArgument iterArg) {
     SmallVector<std::pair<const WorkItem *, Operation *>> uses;
     DenseSet<Operation *> visited;
@@ -1204,7 +1202,8 @@ LogicalResult CVPipelineImpl::checkWorkItemDependencies() {
             pipelineLoop->emitWarning()
             << "[cv-pipelining] cannot pipeline loop: loop-carried tensor "
                "iter_arg #"
-            << pos << " is produced by one work item but consumed by another "
+            << pos
+            << " is produced by one work item but consumed by another "
                "work item across the iteration boundary; skipping pipelining";
         if (Operation *producerOp = yieldedValues[pos].getDefiningOp())
           diag.attachNote(producerOp->getLoc())
@@ -1225,12 +1224,6 @@ Value CVPipelineImpl::createToTensor(OpBuilder &builder, Location loc,
     pipelineLoop->emitWarning("[cv-pipelining] expected MemRefType source");
     return nullptr;
   }
-  if (memref.getMemorySpace()) {
-    auto newMemRef = MemRefType::get(memref.getShape(), memref.getElementType(),
-                                     memref.getLayout());
-    src = builder.create<memref::MemorySpaceCastOp>(loc, newMemRef, src);
-  }
-
   return builder.create<bufferization::ToTensorOp>(loc, src, /*restrict*/ true,
                                                    /*writable*/ true);
 }
@@ -1809,19 +1802,14 @@ LogicalResult CVPipelineImpl::migrateOps() {
             // copy case), leave it alone — rewriting the inner toTensor's
             // memref operand below is enough to redirect the writer.
             //
-            // The fixpipe writes to a UB-typed memref but `toTensorSubview`
-            // has been address-space-stripped to match the to_tensor's memref
-            // operand. Recover the pre-cast UB-typed subview for the writer
-            // so the fixpipe verifier and downstream codegen see the correct
-            // address space; otherwise the writer is treated as an
-            // unspecified-aspace store and the staged result is corrupted.
+            // `toTensorSubview` retains the source memref's HIVM address space
+            // (e.g. UB) so the fixpipe verifier and downstream codegen see the
+            // correct address space. NormalizeToTensorOp later inserts the
+            // `memref.memory_space_cast` before the `to_tensor` to isolate the
+            // HIVM address space from bufferization.
             if (!updatedSubview &&
                 isa<MemRefType>(initOperand->get().getType())) {
-              Value writerSubview = toTensorSubview;
-              if (auto cast = toTensorSubview
-                                  .getDefiningOp<memref::MemorySpaceCastOp>())
-                writerSubview = cast.getSource();
-              initOperand->set(writerSubview);
+              initOperand->set(toTensorSubview);
             }
             memrefOperand->set(toTensorSubview);
           }
@@ -2368,12 +2356,13 @@ LogicalResult CVPipelineImpl::preprocessCounterAllocas() {
       for (OpOperand &iterarg : clonedLoop.getInitArgsMutable()) {
         auto tensorTy = dyn_cast<TensorType>(iterarg.get().getType());
         if (!tensorTy)
-            continue;
+          continue;
         if (tensorTy.getNumDynamicDims() > 0)
           return clone->emitWarning("Cannot pipeline loop with nested counter "
                                     "loop with dynamic iter args");
         builder.setInsertionPoint(clone);
-        iterarg.set(builder.create<tensor::EmptyOp>(clone->getLoc(), tensorTy, ValueRange{}));
+        iterarg.set(builder.create<tensor::EmptyOp>(clone->getLoc(), tensorTy,
+                                                    ValueRange{}));
       }
     }
 

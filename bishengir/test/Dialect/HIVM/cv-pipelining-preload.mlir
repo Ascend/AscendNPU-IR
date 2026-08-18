@@ -94,8 +94,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   // CHECK: hivm.hir.fixpipe
   // CHECK: scope.return
   // CHECK: } {hivm.loop_core_type = #hivm.tcore_type<CUBE>
-  // CHECK: %[[TCB_CAST:.*]] = memref.memory_space_cast %[[TCB_ALLOC]] : memref<128x128xf32, #hivm.address_space<ub>> to memref<128x128xf32>
-  // CHECK-NEXT: %[[TCB_TENSOR:.*]] = bufferization.to_tensor %[[TCB_CAST]] restrict writable : memref<128x128xf32>
+  // CHECK-NEXT: %[[TCB_TENSOR:.*]] = bufferization.to_tensor %[[TCB_ALLOC]] restrict writable : memref{{.*}}
   // CHECK: scope.scope
   // CHECK: hivm.hir.load ins(%[[TCB_TENSOR]] : tensor<128x128xf32>)
   func.func @preload_tcb_fixpipe_inserted_load(%arg0: tensor<8x8x16x16xf16>, %arg1: tensor<8x8x16x16xf16>) attributes {func_dyn_memref_args = dense<[false, false]> : vector<2xi1>, global_kernel = "local", hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix"} {
