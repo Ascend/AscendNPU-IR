@@ -23,6 +23,7 @@
 #include "bishengir/Transforms/regbase/Normalize/Utils/MathTemplateHelpers.h"
 #include "bishengir/Transforms/regbase/Normalize/Utils/ScalarTemplateHelpers.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/TypeUtilities.h"
@@ -1077,8 +1078,18 @@ public:
     Value src0 = Traits::getMinMaxNumFInput0(op);
     Value src1 = Traits::getMinMaxNumFInput1(op);
 
-    Value newSrc0 = maskNanWithInf<Traits>(rewriter, loc, src0, paddingInfValue);
-    Value newSrc1 = maskNanWithInf<Traits>(rewriter, loc, src1, paddingInfValue);
+    auto maskNan = [&](Value src) {
+      auto fill = src.template getDefiningOp<linalg::FillOp>();
+      FloatAttr value;
+      // For a non-NaN splat, select(isnan(src), inf, src) is exactly src.
+      if (fill && matchPattern(fill.getInputs()[0], m_Constant(&value)) &&
+          !value.getValue().isNaN())
+        return src;
+      return maskNanWithInf<Traits>(rewriter, loc, src, paddingInfValue);
+    };
+
+    Value newSrc0 = maskNan(src0);
+    Value newSrc1 = maskNan(src1);
 
     Value result = Traits::createBinaryOp(
         rewriter, loc, newSrc0, newSrc1,
