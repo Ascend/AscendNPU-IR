@@ -29,14 +29,13 @@
 #include "mlir/Interfaces/DestinationStyleOpInterface.h"
 #include "llvm/ADT/TypeSwitch.h"
 
-#define DEBUG_TYPE "cv-pipelining"
+static constexpr char DEBUG_TYPE[] = "cv-pipelining";
 
 using llvm::dbgs;
 
 namespace mlir {
 using namespace hivm;
 using hivm::detail::queryCoreTypeHelper;
-using bishengir::memref_ext::AllocWorkspaceOp;
 
 static constexpr llvm::StringLiteral CubeOnlyAttrName = "pipeline.cubeonly";
 static constexpr llvm::StringLiteral VecOnlyAttrName = "pipeline.veconly";
@@ -128,30 +127,13 @@ static bool isCrossCoreCopy(Operation *copy) {
   return memSpaceAttr.getAddressSpace() == AddressSpace::L1;
 }
 
-static bool isCrossCoreFixpipe(Operation *op) {
-  auto fixpipe = dyn_cast<FixpipeOp>(op);
-  if (!fixpipe)
-    return false;
-  Value dst = fixpipe.getDst();
-  Operation *def = traceValueDef(dst).getDefiningOp();
-  if (!isa_and_nonnull<memref::AllocOp, AllocWorkspaceOp>(def))
-    return false;
-  auto memSpaceAttr = dyn_cast_or_null<AddressSpaceAttr>(
-      cast<MemRefType>(def->getResult(0).getType()).getMemorySpace());
-  if (!memSpaceAttr)
-    return false;
-
-  AddressSpace as = memSpaceAttr.getAddressSpace();
-  return  as == AddressSpace::UB || as == AddressSpace::GM;
-}
-
 /// True if `op` is a CV-pipelining "separator" — a store-like op that forms a
 /// boundary between vector and cube workitems. Splitting the pipeline loop on
 /// these ops yields the per-core workitems that CVPipelining schedules.
 /// Covers `hivm.hir.fixpipe`, `hivm.hir.store`, and the cross-core variant of
 /// `hivm.hir.copy`.
 static bool isSeparator(Operation *op) {
-  return isa<StoreOp>(op) || isCrossCoreCopy(op) || isCrossCoreFixpipe(op);
+  return isa<FixpipeOp, StoreOp>(op) || isCrossCoreCopy(op);
 }
 
 /// Check to see if op is what we consider a "core op" that is only available on
@@ -354,10 +336,10 @@ static void memrefDFS(Value memrefVal, SmallVector<Operation *> &users) {
 // Populates allocs map with workspace memory operations
 static LogicalResult
 markWorkspaceOps(Operation *op,
-                 DenseMap<AllocWorkspaceOp, WorkspaceAllocParams> &allocs,
+                 DenseMap<bishengir::memref_ext::AllocWorkspaceOp, WorkspaceAllocParams> &allocs,
                  unsigned multibuffer) {
   if (auto mark = dyn_cast<annotation::MarkOp>(op)) {
-    if (auto alloc = llvm::dyn_cast_if_present<AllocWorkspaceOp>(
+    if (auto alloc = llvm::dyn_cast_if_present<bishengir::memref_ext::AllocWorkspaceOp>(
             mark.getSrc().getDefiningOp())) {
       if (allocs.contains(alloc)) {
         allocs[alloc].multibuffer = multibuffer;
@@ -368,7 +350,7 @@ markWorkspaceOps(Operation *op,
     }
   }
   if (auto toTensor = dyn_cast<bufferization::ToTensorOp>(op)) {
-    auto alloc = llvm::dyn_cast_if_present<AllocWorkspaceOp>(
+    auto alloc = llvm::dyn_cast_if_present<bishengir::memref_ext::AllocWorkspaceOp>(
         toTensor.getOperand().getDefiningOp());
     if (!alloc)
       return success();
@@ -773,7 +755,7 @@ WorklistBuilder::traceMemrefSubnet(Operation &start,
     if (!scopeOp->isAncestor(defining))
       break;
     traceStart = defining;
-    if (isa<memref::AllocOp, AllocWorkspaceOp>(defining))
+    if (isa<memref::AllocOp, bishengir::memref_ext::AllocWorkspaceOp>(defining))
       break;
     if (isa<memref::CastOp, memref::ReinterpretCastOp,
             memref::MemorySpaceCastOp, memref::CollapseShapeOp,
@@ -1400,13 +1382,13 @@ FailureOr<WorklistBuildResult> WorklistBuilder::build() {
   if (!isLoopMode)
     computeLocalOutputs();
 
-  DenseMap<AllocWorkspaceOp, WorkspaceAllocParams> workspaceAllocs;
+  DenseMap<bishengir::memref_ext::AllocWorkspaceOp, WorkspaceAllocParams> workspaceAllocs;
   if (isLoopMode) {
     for (Operation &op : targetBlock->getOperations()) {
       if (failed(markWorkspaceOps(&op, workspaceAllocs, numMultibuffer)))
         return failure();
     }
-    SmallVector<AllocWorkspaceOp> incomplete;
+    SmallVector<bishengir::memref_ext::AllocWorkspaceOp> incomplete;
     for (auto &[alloc, info] : workspaceAllocs) {
       if (!info.marker && !info.toTensor)
         incomplete.push_back(alloc);
