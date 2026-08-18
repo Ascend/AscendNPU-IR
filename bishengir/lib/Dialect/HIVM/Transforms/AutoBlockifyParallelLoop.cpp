@@ -44,7 +44,8 @@ namespace mlir {
 using namespace mlir;
 using namespace mlir::hivm;
 
-static constexpr llvm::StringLiteral BlockifyLoopAttrName = "autoblockify.subloop";
+static constexpr llvm::StringLiteral BlockifyLoopAttrName =
+    "autoblockify.subloop";
 
 namespace {
 /// This pass will add a loop over the blocks when the logical block num is
@@ -104,7 +105,8 @@ FailureOr<int> getPhysicalBlockNum(func::FuncOp funcOp) {
 
 void replaceBlockIdUsers(IRRewriter &rewriter,
                          hivm::GetBlockIdxOp getBlockIdxOp, Value iv,
-                         Value logicBlockNum, Operation *castedBlockID, Value blockifyV2) {
+                         Value logicBlockNum, Operation *castedBlockID,
+                         Value blockifyV2) {
   // block idx returns i64 meanwhile all other args are i32 so we cast it
   rewriter.setInsertionPointAfterValue(iv);
   auto loc = getBlockIdxOp->getLoc();
@@ -132,8 +134,8 @@ LogicalResult loopOnLogicBlock(func::FuncOp funcOp, IRRewriter &rewriter) {
       opsToMove.push_back(&op);
     }
     if (isa<hivm::GetBlockIdxOp>(op)) {
-       getBlockIdxOp = dyn_cast<hivm::GetBlockIdxOp>(op);
-       rewriter.setInsertionPointAfter(getBlockIdxOp);
+      getBlockIdxOp = dyn_cast<hivm::GetBlockIdxOp>(op);
+      rewriter.setInsertionPointAfter(getBlockIdxOp);
     }
   }
   if (!logicBlockNum)
@@ -161,7 +163,8 @@ LogicalResult loopOnLogicBlock(func::FuncOp funcOp, IRRewriter &rewriter) {
         rewriter.create<arith::CeilDivSIOp>(loc, upperBound, blockifyV2);
   auto blockID = rewriter.create<arith::TruncIOp>(loc, rewriter.getI32Type(),
                                                   getBlockIdxOp);
-  auto forOp = rewriter.create<scf::ForOp>(loc, blockID, upperBound, physicalBlockNum);
+  auto forOp =
+      rewriter.create<scf::ForOp>(loc, blockID, upperBound, physicalBlockNum);
 
   Block *loopBody = forOp.getBody();
   Operation *yieldOp = loopBody->getTerminator();
@@ -171,7 +174,7 @@ LogicalResult loopOnLogicBlock(func::FuncOp funcOp, IRRewriter &rewriter) {
     }
   }
   replaceBlockIdUsers(rewriter, getBlockIdxOp, forOp.getInductionVar(),
-                      logicBlockNum, blockID,blockifyV2);
+                      logicBlockNum, blockID, blockifyV2);
   auto unit = UnitAttr::get(forOp->getContext());
   forOp->setAttr(BlockifyLoopAttrName, unit);
   return success();

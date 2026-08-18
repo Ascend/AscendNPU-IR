@@ -555,7 +555,7 @@ LogicalResult IndirectStoreOp::verify() {
                                        : offsetsTensorType.getShape();
 
   auto srcShape =
-    srcMemrefType ? srcMemrefType.getShape() : srcTensorType.getShape();
+      srcMemrefType ? srcMemrefType.getShape() : srcTensorType.getShape();
   if (offsetShape != srcShape) {
     return emitOpError("offsets of hivm::IndirectStoreOp must have the same "
                        "shape and rank as src");

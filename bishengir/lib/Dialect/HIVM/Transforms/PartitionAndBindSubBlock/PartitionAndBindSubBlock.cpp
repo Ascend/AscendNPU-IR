@@ -104,9 +104,9 @@ LogicalResult PartitionAndBindSubBlockPass::runOnFunc(func::FuncOp func) {
   if (!hasScope)
     return success();
 
-  // Ratio gate: nothing to partition and guard if we have core_ratio with vec < 2.
-  // The frontend made an mistake or user wrote incorrect code.
-  // Warn and fallback.
+  // Ratio gate: nothing to partition and guard if we have core_ratio with vec
+  // < 2. The frontend made an mistake or user wrote incorrect code. Warn and
+  // fallback.
   if (auto coreRatio = hivm::getCoreRatioAttr(func);
       coreRatio && coreRatio.getVector() < 2) {
     func.emitWarning(
