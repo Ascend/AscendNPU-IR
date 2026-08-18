@@ -797,8 +797,10 @@ void EnableStrideAlignPass::runOnOperation() {
     if (archIsRegbased)
       materializeRemainingStaticUBLayoutCasts(rewriter, funcOp);
 
-    // Master metadata contract.
-    funcOp->setAttr(hivm::StorageAlignedAttr::name, UnitAttr::get(context));
+    // Master metadata contract, membase only: regbase (A5) targets must not
+    // carry this attribute.
+    if (!archIsRegbased)
+      funcOp->setAttr(hivm::StorageAlignedAttr::name, UnitAttr::get(context));
     return WalkResult::advance();
   });
 
