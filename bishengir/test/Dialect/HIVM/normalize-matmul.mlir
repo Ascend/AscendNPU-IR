@@ -1476,7 +1476,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
     // CHECK: memref.store %[[C0:.*]], %[[CNT:.*]][] {hivm.tcore_type = #hivm.tcore_type<CUBE_AND_VECTOR>} : memref<i32>
     // CHECK: %[[EMPTY:.*]] = tensor.empty() : tensor<29x768xf32>
     // CHECK: %[[IFRES:.*]] = scf.if
-    // CHECK: %[[LOAD:.*]] = memref.load %[[CNT]][] : memref<i32>
+    // CHECK: %[[LOAD:.*]] = memref.load %[[CNT]][] {hivm.tcore_type = #hivm.tcore_type<CUBE_AND_VECTOR>} : memref<i32>
     // CHECK: %[[INIT:.*]] = arith.cmpi eq, %[[LOAD]], %[[C0]] : i32
     // CHECK: %[[MMAD:.*]] = hivm.hir.mmadL1
     // CHECK: scf.yield %[[MMAD]] : tensor<29x768xf32>
@@ -1818,11 +1818,11 @@ func.func @test_matmul_with_scope_matmul_limited_in_cube(%arg1: memref<16x16xf16
       %187 = arith.constant 1 : i1
 
       %189 = scf.if %187 -> tensor<64x64xf32> {
-        // CHECK: %[[LOADED:.*]] = memref.load %[[ALLOCA]][] : memref<i32>
+        // CHECK: %[[LOADED:.*]] = memref.load %[[ALLOCA]][] {hivm.tcore_type = #hivm.tcore_type<CUBE_AND_VECTOR>} : memref<i32>
         // CHECK: %[[CMP:.*]] = arith.cmpi eq, %[[LOADED]], %[[C0_I32]] : i32
         // CHECK: hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C} ins({{.*}}, {{.*}}, %[[CMP]], %[[C64]], %[[C64]], %[[C64]]
         // CHECK: %[[INCREMENTED:.*]] = arith.addi %[[LOADED]], %[[C1_I32]] : i32
-        // CHECK: memref.store %[[INCREMENTED]], %[[ALLOCA]][] : memref<i32>
+        // CHECK: memref.store %[[INCREMENTED]], %[[ALLOCA]][] {hivm.tcore_type = #hivm.tcore_type<CUBE_AND_VECTOR>} : memref<i32>
         %190 = hivm.hir.mmadL1 ins(%ma, %mb, %false, %c0, %c0, %c0 : tensor<64x64xf16>, tensor<64x64xf16>, i1, index, index, index) outs(%arg22 : tensor<64x64xf32>) -> tensor<64x64xf32>
         scf.yield %190 : tensor<64x64xf32>
       } else {
@@ -2300,11 +2300,11 @@ func.func @test_mmadmx_with_scope_matmul_limited_in_cube() {
       %187 = arith.constant 1 : i1
 
       %189 = scf.if %187 -> tensor<64x64xf32> {
-        // CHECK: %[[LOADED:.*]] = memref.load %[[ALLOCA]][] : memref<i32>
+        // CHECK: %[[LOADED:.*]] = memref.load %[[ALLOCA]][] {hivm.tcore_type = #hivm.tcore_type<CUBE_AND_VECTOR>} : memref<i32>
         // CHECK: %[[CMP:.*]] = arith.cmpi eq, %[[LOADED]], %[[C0_I32]] : i32
         // CHECK: hivm.hir.mmadmxL1 {already_set_real_mkn, normalized_in_L0C} ins({{.*}}, {{.*}}, {{.*}}, {{.*}}, %[[CMP]], %[[C64]], %[[C64]], %[[C64]]
         // CHECK: %[[INCREMENTED:.*]] = arith.addi %[[LOADED]], %[[C1_I32]] : i32
-        // CHECK: memref.store %[[INCREMENTED]], %[[ALLOCA]][] : memref<i32>
+        // CHECK: memref.store %[[INCREMENTED]], %[[ALLOCA]][] {hivm.tcore_type = #hivm.tcore_type<CUBE_AND_VECTOR>} : memref<i32>
         %190 = hivm.hir.mmadmxL1 ins(%ma, %mb, %scaleA, %scaleB, %false, %c0, %c0, %c0 : tensor<64x64xf8E4M3FN>, tensor<64x64xf8E4M3FN>, tensor<1xi8>, tensor<1xi8>, i1, index, index, index) outs(%arg22 : tensor<64x64xf32>) -> tensor<64x64xf32>
         scf.yield %190 : tensor<64x64xf32>
       } else {
@@ -3169,13 +3169,13 @@ func.func @test_mmadL1_no_fold_vtranspose_through_slice(%a: tensor<64x64xf16>, %
 }
 
 // -----
-// A3 / mem-based: NormalizeMatmul does not run the fold there, so the
-// vtranspose survives.
-// CHECK-LABEL: func.func @test_mmadL1_membase_keeps_vtranspose
-// CHECK: hivm.hir.vtranspose
-// CHECK-NOT: mmadL1 {a_transpose
+// A3 / mem-based: the vtranspose feeding A is absorbed into a_transpose here
+// as well.
+// CHECK-LABEL: func.func @test_mmadL1_membase_folds_vtranspose
+// CHECK-NOT: hivm.hir.vtranspose
+// CHECK: hivm.hir.mmadL1 {a_transpose, already_set_real_mkn} ins(%{{.*}} : tensor<64x16xf16>, tensor<64x32xf16>
 module attributes {hacc.target = #hacc.target<"Ascend910B4">} {
-func.func @test_mmadL1_membase_keeps_vtranspose(%a: tensor<64x16xf16>, %b: tensor<64x32xf16>) -> tensor<16x32xf32> {
+func.func @test_mmadL1_membase_folds_vtranspose(%a: tensor<64x16xf16>, %b: tensor<64x32xf16>) -> tensor<16x32xf32> {
   %true = arith.constant true
   %c0 = arith.constant 0 : index
   %at_init = tensor.empty() : tensor<16x64xf16>

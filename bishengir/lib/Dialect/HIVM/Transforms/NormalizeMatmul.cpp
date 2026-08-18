@@ -168,18 +168,12 @@ bool tryOptimizePad(Operation *maybeLoadOp, Value mmadSource,
     return false;
 
   LDBG("removing pad for load op: " << *loadOp);
-  // A3 lit expects `init_out_buffer = false` to remain; A5 expects the attr
-  // omitted entirely (DefaultValuedOptional).
-  bool isRegBased = isRegBasedFor(loadOp);
-  rewriter.modifyOpInPlace(loadOp, [&loadOp, isRegBased]() {
+  rewriter.modifyOpInPlace(loadOp, [&loadOp]() {
     loadOp.setPadModeAttr(hivm::PadModeAttr());
     loadOp.getPadValueMutable().clear();
     loadOp.getLeftPaddingNumMutable().clear();
     loadOp.getRightPaddingNumMutable().clear();
-    if (isRegBased)
-      loadOp.removeInitOutBufferAttr();
-    else
-      loadOp.setInitOutBuffer(false);
+    loadOp.setInitOutBuffer(false);
     loadOp.getInitConditionMutable().clear();
   });
   return true;
@@ -936,12 +930,9 @@ Value updateInitCondition(PatternRewriter &rewriter,
   Location loc = op.getLoc();
   auto curCount =
       rewriter.create<memref::LoadOp>(loc, counterBuf, ValueRange{});
-  if (!isRegBasedFor(op.getOperation())) {
-    curCount->setAttr(
-        hivm::TCoreTypeAttr::name,
-        hivm::TCoreTypeAttr::get(rewriter.getContext(),
-                                 hivm::TCoreType::CUBE_AND_VECTOR));
-  }
+  curCount->setAttr(hivm::TCoreTypeAttr::name,
+                    hivm::TCoreTypeAttr::get(rewriter.getContext(),
+                                             hivm::TCoreType::CUBE_AND_VECTOR));
   Value zeroI32 = rewriter.create<arith::ConstantIntOp>(loc, 0, 32);
   auto firstIterCond = rewriter.create<arith::CmpIOp>(
       loc, arith::CmpIPredicate::eq, curCount, zeroI32);
@@ -954,12 +945,9 @@ Value updateInitCondition(PatternRewriter &rewriter,
   Value nextCount = rewriter.create<arith::AddIOp>(loc, curCount, oneI32);
   auto storeOp = rewriter.create<memref::StoreOp>(loc, nextCount, counterBuf,
                                                   ValueRange{});
-  if (!isRegBasedFor(op.getOperation())) {
-    storeOp->setAttr(
-        hivm::TCoreTypeAttr::name,
-        hivm::TCoreTypeAttr::get(rewriter.getContext(),
-                                 hivm::TCoreType::CUBE_AND_VECTOR));
-  }
+  storeOp->setAttr(hivm::TCoreTypeAttr::name,
+                   hivm::TCoreTypeAttr::get(rewriter.getContext(),
+                                            hivm::TCoreType::CUBE_AND_VECTOR));
   return firstIterCond;
 }
 
@@ -1150,12 +1138,10 @@ Value getOrCreateCounterPrevious(PatternRewriter &rewriter, Value ccfInVal,
     rewriter.setInsertionPointAfter(defOp);
     auto postCount =
         rewriter.create<memref::LoadOp>(loc, counterBuf, ValueRange{});
-    if (!isRegBasedFor(defOp)) {
-      postCount->setAttr(
-          hivm::TCoreTypeAttr::name,
-          hivm::TCoreTypeAttr::get(rewriter.getContext(),
-                                   hivm::TCoreType::CUBE_AND_VECTOR));
-    }
+    postCount->setAttr(
+        hivm::TCoreTypeAttr::name,
+        hivm::TCoreTypeAttr::get(rewriter.getContext(),
+                                 hivm::TCoreType::CUBE_AND_VECTOR));
     Value zeroI32 = rewriter.create<arith::ConstantIntOp>(loc, 0, 32);
     auto neverRan = rewriter.create<arith::CmpIOp>(
         loc, arith::CmpIPredicate::eq, postCount, zeroI32);
@@ -1182,12 +1168,10 @@ void addTailFallback(PatternRewriter &rewriter, Operation &op,
   Location loc = op.getLoc();
   auto postCount =
       rewriter.create<memref::LoadOp>(loc, counterBuf, ValueRange{});
-  if (!isRegBasedFor(mmad.getOperation())) {
-    postCount->setAttr(
-        hivm::TCoreTypeAttr::name,
-        hivm::TCoreTypeAttr::get(rewriter.getContext(),
-                                 hivm::TCoreType::CUBE_AND_VECTOR));
-  }
+  postCount->setAttr(
+      hivm::TCoreTypeAttr::name,
+      hivm::TCoreTypeAttr::get(rewriter.getContext(),
+                               hivm::TCoreType::CUBE_AND_VECTOR));
   Value zeroI32 = rewriter.create<arith::ConstantIntOp>(loc, 0, 32);
   Value neverRan = rewriter.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq,
                                                   postCount, zeroI32);
@@ -1250,19 +1234,6 @@ bool couldReuse(Value ccfInVal) {
   }
 
   return false;
-}
-
-/// Whether a per-channel bias may be folded into `op` as a `per_channel_bias`
-/// operand. The mem-based template only registers `mma_tile` BIAS symbols for
-/// the non-transposed operand combinations, so on that arch a transposed mmad
-/// has to keep the bias as a separate vector add. Mirrors the guard in
-/// `getMatmulLikeBiasMode`, which the CCF classifier below does not go through.
-bool canFoldPerChannelBias(LocalMatmulLikeOpInterface op) {
-  if (isRegBasedFor(op.getOperation()))
-    return true;
-  if (isa<MmadMxL1Op>(op.getOperation()))
-    return true;
-  return !op.isMatmulATransposed() && !op.isMatmulBTransposed();
 }
 
 struct BrcBiasInfo {
@@ -2114,16 +2085,10 @@ void populateAddIfPattern(RewritePatternSet &patterns) {
   patterns.add<ReuseL0CAddIfPattern>(patterns.getContext());
 }
 
-LogicalResult runNormalizeMatmul(func::FuncOp funcOp, MLIRContext *context,
-                                 bool isRegBased) {
+LogicalResult runNormalizeMatmul(func::FuncOp funcOp, MLIRContext *context) {
   // Must run before SetRealMKN: folding a vtranspose into a_transpose/
   // b_transpose changes which operand dims m, k and n are read from.
-  //
-  // Reg-based only for now. The mem-based `mma_tile` template does not provide
-  // the transposed BIAS symbol variants, so folding a vtranspose into the mmad
-  // there would produce a call with no lowering; see the
-  // `test_mmadL1_membase_keeps_vtranspose` case in normalize-matmul.mlir.
-  if (isRegBased) {
+  {
     RewritePatternSet patterns(context);
     populateFoldVtransposePattern(patterns);
     GreedyRewriteConfig config = GreedyRewriteConfig();
@@ -2181,8 +2146,7 @@ void NormalizeMatmulPass::runOnOperation() {
   Operation *rootOp = getOperation();
 
   auto runOnFunc = [&](func::FuncOp funcOp) {
-    if (failed(
-            runNormalizeMatmul(funcOp, &getContext(), isRegBasedFor(funcOp))))
+    if (failed(runNormalizeMatmul(funcOp, &getContext())))
       signalPassFailure();
   };
 
