@@ -374,7 +374,8 @@ bool hfusion::isTensorManipulationOp(Operation *op) {
 
 bool hfusion::isMatmulOps(Operation *op) {
   return isa<linalg::MatmulOp>(op) || isa<linalg::MatmulTransposeAOp>(op) ||
-         isa<linalg::MatmulTransposeBOp>(op);
+         isa<linalg::MatmulTransposeBOp>(op) ||
+         isa<linalg::BatchMatmulOp>(op) || isa<hfusion::MatMulMxOp>(op);
 }
 
 bool hfusion::isSimtOps(Operation *op) {

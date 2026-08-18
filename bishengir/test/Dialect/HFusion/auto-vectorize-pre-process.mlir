@@ -43,8 +43,7 @@ func.func @triton_dot_3_None(%arg0: i64, %arg1: memref<?xi8>, %arg2: memref<?xi8
   %alloc_1 = memref.alloc() : memref<87x3x3xf32>
   memref.copy %reinterpret_cast_0, %alloc_1 : memref<87x3x3xf32, strided<[9, 3, 1]>> to memref<87x3x3xf32>
   %3 = bufferization.to_tensor %alloc_1 restrict writable : memref<87x3x3xf32>
-  // CHECK-LABEL: func.func @triton_dot_3_None
-  // CHECK: linalg.generic {{.*}}iterator_types = ["parallel", "parallel", "parallel", "reduction"]
+  // CHECK: linalg.batch_matmul
   %4 = linalg.batch_matmul {input_precison = "ieee"} ins(%2, %3 : tensor<87x4x3xf32>, tensor<87x3x3xf32>) outs(%1 : tensor<87x4x3xf32>) -> tensor<87x4x3xf32>
   %reinterpret_cast_2 = memref.reinterpret_cast %arg3 to offset: [0], sizes: [87, 4, 3], strides: [12, 3, 1] : memref<?xf32> to memref<87x4x3xf32, strided<[12, 3, 1]>>
   bufferization.materialize_in_destination %4 in writable %reinterpret_cast_2 : (tensor<87x4x3xf32>, memref<87x4x3xf32, strided<[12, 3, 1]>>) -> ()
