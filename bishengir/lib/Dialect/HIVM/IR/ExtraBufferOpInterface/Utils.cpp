@@ -263,7 +263,7 @@ refineBroadcastExtraBufferSize(ShapedType dstType, int64_t srcMaxSizeMaybe,
       bool needTempBuffer =
           ((a % srcNumPerRepeatOfVBRCBIntrin != 0) || (b != elementPerBlock)) &&
           (dstType.getElementTypeBitWidth() != 64);
-      if (!needTempBuffer) {
+      if (!needTempBuffer && dstType.hasStaticShape()) {
         // When broadcast (a, 1) to (a, b), a is multiple of
         // NumPerRepeatOfVBRCBIntrin and b is elementPerBlock, temp buffer is
         // 0(not std::nullopt, because brc Op lib fun has temp buffer param).
