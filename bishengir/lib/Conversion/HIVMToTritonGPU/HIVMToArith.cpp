@@ -317,6 +317,89 @@ struct HIVMToArithNotOp : public OpRewritePattern<hivm::VNotOp> {
 };
 
 /*
+ * vshr -> arith.shrui / arith.shrsi
+ *
+ * hivm.hir.vshr supports vector-scalar shifting. Arith shift operations
+ * require lhs, rhs and result to have the same type, so the scalar shift
+ * amount is splatted to the result tensor shape.
+ *
+ * HFusion `shrsi` / `shrui` represent regular shift operations. The non-HIVM
+ * lowering path maps them directly to `arith.shrsi` / `arith.shrui`, which do
+ * not carry rounding semantics. This conversion intentionally follows the same
+ * behavior and treats `hivm.hir.vshr` as a regular shift here, regardless of
+ * the HIVM `round` attribute default.
+ */
+struct HIVMToArithShROp : public OpRewritePattern<hivm::VShROp> {
+  using OpRewritePattern<hivm::VShROp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hivm::VShROp op,
+                                PatternRewriter &rewriter) const final {
+    if (!operateOnTensorOrScalar(op)) {
+      return op.emitOpError(
+          "expected tensor/scalar operands with at least one shaped input");
+    }
+
+    if (!operateOnTypes<IntegerType>(op)) {
+      return op.emitOpError("expected integer operands");
+    }
+
+    if (!transpose_check(op)) {
+      return op.emitOpError("unsupported transpose form");
+    }
+
+    if (!broadcast_split<hivm::VShROp>(rewriter, op)) {
+      return op.emitOpError("failed to split broadcast");
+    }
+
+    SmallVector<Value> hivmOperands = getHIVMVectorOperands(op);
+    if (hivmOperands.size() < 2) {
+      return op.emitOpError("expected source and shift operands");
+    }
+
+    Value src = hivmOperands[0];
+    Value shiftScalar = hivmOperands[1];
+
+    Type resultType = op->getResult(0).getType();
+    auto tensorType = dyn_cast<RankedTensorType>(resultType);
+    if (!tensorType) {
+      return op.emitOpError("requires a ranked tensor result");
+    }
+
+    auto elementType = dyn_cast<IntegerType>(tensorType.getElementType());
+    if (!elementType || !elementType.isSignless()) {
+      return op.emitOpError("requires signless integer result element type");
+    }
+
+    Value shift =
+        splatScalarOperand(rewriter, op.getLoc(), shiftScalar, resultType);
+    if (!shift) {
+      return op.emitOpError("failed to splat shift operand");
+    }
+
+    const bool isSigned = op.getIsSigned();
+    // Keep the stricter check documented here. It is not enabled because
+    // HFusion-created vshr currently inherits HIVM's default round=true even
+    // though HFusion shrsi/shrui have ordinary-shift semantics.
+    //
+    // if (op.getRound()) {
+    //   return op.emitOpError("rounded shift is not supported");
+    // }
+
+    Value result;
+    if (isSigned) {
+      result = rewriter.create<arith::ShRSIOp>(op.getLoc(), resultType, src,
+                                               shift);
+    } else {
+      result = rewriter.create<arith::ShRUIOp>(op.getLoc(), resultType, src,
+                                               shift);
+    }
+
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+};
+
+/*
 * vcast -> arith.extsi
 * The round_mode attribute value of the hivm.hir.vcast Op must be rint.
 * The cast attribute value of the hivm.hir.vcast Op must be cast_signed.
@@ -1065,6 +1148,7 @@ void mlir::hivm::populateHIVMToArithConversionPatterns(RewritePatternSet &patter
         HIVMToArithSelOp,
         HIVMToArithRecOp,
         HIVMToArithReluOp,
-        HIVMToArithMulExtOp
+        HIVMToArithMulExtOp,
+        HIVMToArithShROp
     >(patterns.getContext());
 }
