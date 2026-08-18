@@ -1418,3 +1418,49 @@ module {
     return
   }
 }
+
+// -----
+// scf.if yields a unit-batch ND buffer; mmad consumes a rank-reducing subview.
+// Layout must be inferred through the subview so the load is rewritten to nd2nz
+// and mmad sees 4D NZ, not 2D ND.
+// CHECK-LABEL: func.func @test_ifop_subview_to_mmad
+// CHECK: %[[IF_RES:.*]] = scf.if %{{.*}} -> (memref<?x?x?x?x?xf32, #hivm.address_space<cbuf>>)
+// CHECK:   hivm.hir.nd2nz
+// CHECK:   scf.yield
+// CHECK:   hivm.hir.nd2nz
+// CHECK:   scf.yield
+// CHECK: %[[SUB:.*]] = memref.subview %[[IF_RES]]
+// CHECK: hivm.hir.mmadL1
+// CHECK-SAME: ins(%[[SUB]],
+module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
+  func.func @test_ifop_subview_to_mmad(%cond: i1,
+      %gm: memref<1x32x32xf32, #hivm.address_space<gm>>)
+      attributes {hivm.func_core_type = #hivm.func_core_type<AIC>} {
+    %true = arith.constant true
+    %c32 = arith.constant 32 : index
+    %if_res = scf.if %cond -> (memref<1x32x32xf32, #hivm.address_space<cbuf>>) {
+      %alloc = memref.alloc() : memref<1x32x32xf32, #hivm.address_space<cbuf>>
+      hivm.hir.load ins(%gm : memref<1x32x32xf32, #hivm.address_space<gm>>)
+                    outs(%alloc : memref<1x32x32xf32, #hivm.address_space<cbuf>>)
+                    {"hivm.inserted-load"} core_type = <CUBE>
+      scf.yield %alloc : memref<1x32x32xf32, #hivm.address_space<cbuf>>
+    } else {
+      %alloc = memref.alloc() : memref<1x32x32xf32, #hivm.address_space<cbuf>>
+      hivm.hir.load ins(%gm : memref<1x32x32xf32, #hivm.address_space<gm>>)
+                    outs(%alloc : memref<1x32x32xf32, #hivm.address_space<cbuf>>)
+                    {"hivm.inserted-load"} core_type = <CUBE>
+      scf.yield %alloc : memref<1x32x32xf32, #hivm.address_space<cbuf>>
+    }
+    %a = memref.subview %if_res[0, 0, 0] [1, 32, 32] [1, 1, 1]
+        : memref<1x32x32xf32, #hivm.address_space<cbuf>>
+        to memref<32x32xf32, strided<[32, 1]>, #hivm.address_space<cbuf>>
+    %b = memref.alloc() : memref<2x2x16x8xf32, #hivm.address_space<cbuf>>
+    %c = memref.alloc() : memref<2x2x16x16xf32, #hivm.address_space<cc>>
+    hivm.hir.mmadL1 {batch_matmul} ins(%a, %b, %true, %c32, %c32, %c32 :
+        memref<32x32xf32, strided<[32, 1]>, #hivm.address_space<cbuf>>,
+        memref<2x2x16x8xf32, #hivm.address_space<cbuf>>,
+        i1, index, index, index)
+        outs(%c : memref<2x2x16x16xf32, #hivm.address_space<cc>>)
+    return
+  }
+}
