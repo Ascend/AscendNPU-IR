@@ -250,3 +250,78 @@ module {
     return
   }
 }
+
+// -----
+
+// CHECK-LABEL: func.func @tile_arith_extui(
+// CHECK: scf.for
+// CHECK: %[[SRC:.*]] = memref.subview %arg0[%{{.*}}] [4] [1]
+// CHECK: %[[INPUT:.*]] = hivm.hir.local_load ins(%[[SRC]] : memref<4xi1
+// CHECK: %[[EXTUI:.*]] = arith.extui %[[INPUT]] : tensor<4xi1> to tensor<4xi8>
+// CHECK: %[[DST:.*]] = memref.subview %arg1[%{{.*}}] [4] [1]
+// CHECK: hivm.hir.local_store ins(%[[DST]] : memref<4xi8
+// CHECK-SAME: %[[EXTUI]] : tensor<4xi8>)
+module {
+  func.func @tile_arith_extui(
+      %src: memref<8xi1, #hivm.address_space<ub>>,
+      %dst: memref<8xi8, #hivm.address_space<ub>>)
+      attributes {hivm.vf_mode = #hivm.vf_mode<SIMT>} {
+    %input = hivm.hir.local_load
+        ins(%src : memref<8xi1, #hivm.address_space<ub>>) -> tensor<8xi1>
+    %extui = arith.extui %input : tensor<8xi1> to tensor<8xi8>
+    hivm.hir.local_store
+        ins(%dst : memref<8xi8, #hivm.address_space<ub>>,
+            %extui : tensor<8xi8>)
+    return
+  }
+}
+
+// -----
+
+// CHECK-LABEL: func.func @tile_arith_extsi(
+// CHECK: scf.for
+// CHECK: %[[SRC:.*]] = memref.subview %arg0[%{{.*}}] [4] [1]
+// CHECK: %[[INPUT:.*]] = hivm.hir.local_load ins(%[[SRC]] : memref<4xi8
+// CHECK: %[[EXTSI:.*]] = arith.extsi %[[INPUT]] : tensor<4xi8> to tensor<4xi16>
+// CHECK: %[[DST:.*]] = memref.subview %arg1[%{{.*}}] [4] [1]
+// CHECK: hivm.hir.local_store ins(%[[DST]] : memref<4xi16
+// CHECK-SAME: %[[EXTSI]] : tensor<4xi16>)
+module {
+  func.func @tile_arith_extsi(
+      %src: memref<8xi8, #hivm.address_space<ub>>,
+      %dst: memref<8xi16, #hivm.address_space<ub>>)
+      attributes {hivm.vf_mode = #hivm.vf_mode<SIMT>} {
+    %input = hivm.hir.local_load
+        ins(%src : memref<8xi8, #hivm.address_space<ub>>) -> tensor<8xi8>
+    %extsi = arith.extsi %input : tensor<8xi8> to tensor<8xi16>
+    hivm.hir.local_store
+        ins(%dst : memref<8xi16, #hivm.address_space<ub>>,
+            %extsi : tensor<8xi16>)
+    return
+  }
+}
+
+// -----
+
+// CHECK-LABEL: func.func @tile_arith_trunci(
+// CHECK: scf.for
+// CHECK: %[[SRC:.*]] = memref.subview %arg0[%{{.*}}] [4] [1]
+// CHECK: %[[INPUT:.*]] = hivm.hir.local_load ins(%[[SRC]] : memref<4xi16
+// CHECK: %[[TRUNCI:.*]] = arith.trunci %[[INPUT]] : tensor<4xi16> to tensor<4xi8>
+// CHECK: %[[DST:.*]] = memref.subview %arg1[%{{.*}}] [4] [1]
+// CHECK: hivm.hir.local_store ins(%[[DST]] : memref<4xi8
+// CHECK-SAME: %[[TRUNCI]] : tensor<4xi8>)
+module {
+  func.func @tile_arith_trunci(
+      %src: memref<8xi16, #hivm.address_space<ub>>,
+      %dst: memref<8xi8, #hivm.address_space<ub>>)
+      attributes {hivm.vf_mode = #hivm.vf_mode<SIMT>} {
+    %input = hivm.hir.local_load
+        ins(%src : memref<8xi16, #hivm.address_space<ub>>) -> tensor<8xi16>
+    %trunci = arith.trunci %input : tensor<8xi16> to tensor<8xi8>
+    hivm.hir.local_store
+        ins(%dst : memref<8xi8, #hivm.address_space<ub>>,
+            %trunci : tensor<8xi8>)
+    return
+  }
+}

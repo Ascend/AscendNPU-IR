@@ -225,6 +225,59 @@ BubbleUpPattern::matchAndRewrite(tensor::ExtractSliceOp sliceOp,
   return failure();
 }
 
+bool ArithIntegerCastBubbleUpStrategy::isSupportedOperation(
+    tensor::ExtractSliceOp sliceOp) const {
+  Operation *sourceOp = sliceOp.getSource().getDefiningOp();
+  return isa_and_nonnull<arith::ExtUIOp, arith::ExtSIOp, arith::TruncIOp>(
+      sourceOp);
+}
+
+LogicalResult
+ArithIntegerCastBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
+                                          PatternRewriter &rewriter) const {
+  Operation *castOp = sliceOp.getSource().getDefiningOp();
+  if (!castOp || castOp->getNumOperands() != 1 || castOp->getNumResults() != 1)
+    return failure();
+
+  Value input = castOp->getOperand(0);
+  auto inputType = dyn_cast<RankedTensorType>(input.getType());
+  auto outputType = dyn_cast<RankedTensorType>(castOp->getResult(0).getType());
+  auto sliceType = dyn_cast<RankedTensorType>(sliceOp.getType());
+  if (!inputType || !outputType || !sliceType ||
+      inputType.getShape() != outputType.getShape())
+    return failure();
+
+  auto slicedInputType = sliceType.clone(inputType.getElementType());
+  auto slicedInput = rewriter.create<tensor::ExtractSliceOp>(
+      sliceOp.getLoc(), slicedInputType, input, sliceOp.getMixedOffsets(),
+      sliceOp.getMixedSizes(), sliceOp.getMixedStrides());
+  markCreatedExtractSliceOp(rewriter, slicedInput);
+
+  Operation *newCast = nullptr;
+  if (isa<arith::ExtUIOp>(castOp)) {
+    newCast = rewriter
+                  .create<arith::ExtUIOp>(sliceOp.getLoc(), sliceType,
+                                          slicedInput.getResult())
+                  .getOperation();
+  } else if (isa<arith::ExtSIOp>(castOp)) {
+    newCast = rewriter
+                  .create<arith::ExtSIOp>(sliceOp.getLoc(), sliceType,
+                                          slicedInput.getResult())
+                  .getOperation();
+  } else if (isa<arith::TruncIOp>(castOp)) {
+    newCast = rewriter
+                  .create<arith::TruncIOp>(sliceOp.getLoc(), sliceType,
+                                           slicedInput.getResult())
+                  .getOperation();
+  }
+  if (!newCast)
+    return failure();
+
+  newCast->setAttrs(castOp->getAttrs());
+  rewriter.replaceOp(sliceOp, newCast->getResults());
+  return success();
+}
+
 LogicalResult
 BubbleUpSubviewFromTiling::matchAndRewrite(memref::SubViewOp subviewOp,
                                            PatternRewriter &rewriter) const {
