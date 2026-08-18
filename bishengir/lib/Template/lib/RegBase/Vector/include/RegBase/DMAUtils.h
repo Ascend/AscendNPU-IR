@@ -1983,13 +1983,13 @@ apply_padding_b64(memref_t<__ubuf__ T, DIM> *dst, int64_t offset,
     return;
   }
   __ubuf__ T *block_ptr = dst->aligned + dst->offset;
-  uint32_t vl_all = num_per_block;
-  uint32_t vl_val = num_per_block - align_pad;
   __VEC_SCOPE__ {
     for (uint16_t i = 0; i < static_cast<uint16_t>(repeat); ++i) {
       __ubuf__ T *till_block_ptr =
           i * dst->strides[0] + block_ptr + shift_num;
       // make mask
+      uint32_t vl_all = num_per_block;
+      uint32_t vl_val = num_per_block - align_pad;
       vector_bool mask_all = plt_2xvl_b64(vl_all, POST_UPDATE);
       vector_bool mask_val = plt_2xvl_b64(vl_val, POST_UPDATE);
       VectorReg<T> v_src;
