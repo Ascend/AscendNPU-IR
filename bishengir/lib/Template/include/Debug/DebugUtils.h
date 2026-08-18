@@ -23,14 +23,14 @@
 
 #define DECLARE_PRINT_SCALAR(type, mem)                                        \
   [aicore] __attribute__((always_inline)) void                                 \
-      _mlir_ciface_print_scalar_##type##_##mem(                                \
-          char *prefix, const int64_t len, type arg, const int8_t hex)
+  _mlir_ciface_print_scalar_##type##_##mem(char *prefix, const int64_t len,    \
+                                           type arg, const int8_t hex)
 
 #define DECLARE_PRINT_TENSOR(dim, type, mem)                                   \
   [aicore] __attribute__((always_inline)) void                                 \
-      _mlir_ciface_print_##dim##d_##type##_##mem(                              \
-          char *prefix, const int64_t len,                                     \
-          memref_t<__##mem##__ type, dim> *arg, const int8_t hex)
+  _mlir_ciface_print_##dim##d_##type##_##mem(                                  \
+      char *prefix, const int64_t len, memref_t<__##mem##__ type, dim> *arg,   \
+      const int8_t hex)
 
 #define DECLARE_PRINT_1TO8D_TENSOR(type, mem)                                  \
   DECLARE_PRINT_TENSOR(1, type, mem);                                          \
@@ -66,20 +66,23 @@
 
 #define DECLARE_ASSERT_SCALAR(mem)                                             \
   [aicore] __attribute__((always_inline)) void                                 \
-      _mlir_ciface_assert_scalar_bool_##mem(char *prefix, const int64_t len,   \
-                                            bool arg)
+  _mlir_ciface_assert_scalar_bool_##mem(char *prefix, const int64_t len,       \
+                                        bool arg)
 
 #define DECLARE_ASSERT_TENSOR(dim, mem)                                        \
   [aicore] __attribute__((always_inline)) void                                 \
-      _mlir_ciface_assert_##dim##d_int8_t_##mem(                               \
-          char *prefix, const int64_t len,                                     \
-          memref_t<__##mem##__ int8_t, dim> *arg)
+  _mlir_ciface_assert_##dim##d_int8_t_##mem(                                   \
+      char *prefix, const int64_t len, memref_t<__##mem##__ int8_t, dim> *arg)
 
-#define DECLARE_ASSERT_1TO4D_TENSOR(mem)                                       \
+#define DECLARE_ASSERT_1TO8D_TENSOR(mem)                                       \
   DECLARE_ASSERT_TENSOR(1, mem);                                               \
   DECLARE_ASSERT_TENSOR(2, mem);                                               \
   DECLARE_ASSERT_TENSOR(3, mem);                                               \
-  DECLARE_ASSERT_TENSOR(4, mem)
+  DECLARE_ASSERT_TENSOR(4, mem);                                               \
+  DECLARE_ASSERT_TENSOR(5, mem);                                               \
+  DECLARE_ASSERT_TENSOR(6, mem);                                               \
+  DECLARE_ASSERT_TENSOR(7, mem);                                               \
+  DECLARE_ASSERT_TENSOR(8, mem);
 
 #define REGISTER_ASSERT_SCALAR(mem)                                            \
   DECLARE_ASSERT_SCALAR(mem) { assert_scalar_core(prefix, len, arg); }
@@ -89,11 +92,15 @@
     assert_nd_core<__##mem##__ int8_t, dim>(prefix, len, arg);                 \
   }
 
-#define REGISTER_ASSERT_1TO4D_TENSOR(mem)                                      \
+#define REGISTER_ASSERT_1TO8D_TENSOR(mem)                                      \
   REGISTER_ASSERT_TENSOR(1, mem)                                               \
   REGISTER_ASSERT_TENSOR(2, mem)                                               \
   REGISTER_ASSERT_TENSOR(3, mem)                                               \
-  REGISTER_ASSERT_TENSOR(4, mem)
+  REGISTER_ASSERT_TENSOR(4, mem)                                               \
+  REGISTER_ASSERT_TENSOR(5, mem)                                               \
+  REGISTER_ASSERT_TENSOR(6, mem)                                               \
+  REGISTER_ASSERT_TENSOR(7, mem)                                               \
+  REGISTER_ASSERT_TENSOR(8, mem)
 
 extern "C" {
 // declare __gm__ versions for both cube core and vector core
@@ -121,7 +128,7 @@ DECLARE_PRINT_1TO8D_TENSOR(bfloat16_t, gm);
 DECLARE_PRINT_1TO8D_TENSOR(float, gm);
 DECLARE_PRINT_1TO8D_TENSOR(bool, gm);
 DECLARE_ASSERT_SCALAR(gm);
-DECLARE_ASSERT_1TO4D_TENSOR(gm);
+DECLARE_ASSERT_1TO8D_TENSOR(gm);
 
 // declare __ubuf__ versions for vector core
 // Note: bisheng uses the following macro for both print and assert
@@ -150,7 +157,7 @@ DECLARE_PRINT_1TO8D_TENSOR(bfloat16_t, ubuf);
 DECLARE_PRINT_1TO8D_TENSOR(float, ubuf);
 DECLARE_PRINT_1TO8D_TENSOR(bool, ubuf);
 DECLARE_ASSERT_SCALAR(ubuf);
-DECLARE_ASSERT_1TO4D_TENSOR(ubuf);
+DECLARE_ASSERT_1TO8D_TENSOR(ubuf);
 #endif
 
 [aicore] __attribute__((always_inline)) void
