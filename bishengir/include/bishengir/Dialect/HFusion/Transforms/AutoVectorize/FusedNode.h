@@ -45,11 +45,17 @@ enum class AcceptContext {
   FallbackLeaf,
 };
 
+/// A fusion group that simulates the fused result as a single operator.
+/// Members are kept contiguous and block-ordered, so later planning sees the
+/// post-fusion order; consolidateToTail() restores this after each insertion.
+/// Contiguity and order are stable regardless of the planning scheme.
 class FusedNode : public std::enable_shared_from_this<FusedNode> {
   PlanContext &ctx;
   std::string loopLabel;
   SetVector<Operation *> leaf;
   SetVector<Operation *> producers;
+  // Mirror of leaf + producers, in block order; mutated only by insertOrdered().
+  SmallVector<Operation *> opsOrdered;
 
 public:
   FusedNode(PlanContext &ctx, const std::string &loopLabel)
@@ -65,11 +71,19 @@ public:
     return containsLeaf(op) || containsProducer(op);
   }
 
-  auto ops() const { return llvm::concat<Operation *const>(leaf, producers); }
+  auto ops() const {
+    return llvm::make_range(opsOrdered.begin(), opsOrdered.end());
+  }
+  auto rops() const {
+    return llvm::make_range(opsOrdered.rbegin(), opsOrdered.rend());
+  }
   auto leafOps() const { return llvm::make_range(leaf.begin(), leaf.end()); }
   auto producerOps() const {
     return llvm::make_range(producers.begin(), producers.end());
   }
+
+  void moveAfter(Operation *pos) const;
+  void moveBefore(Operation *pos) const;
 
   void addProducer(Operation *op);
   void addLeaf(Operation *op);
@@ -109,6 +123,7 @@ private:
 
   void consolidateToTail() const;
   void updateConflicts(Operation *newOp) const;
+  void insertOrdered(Operation *op);
 
   bool useAsDpsInits(Operation *op) const;
 };
