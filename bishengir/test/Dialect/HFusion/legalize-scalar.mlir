@@ -94,7 +94,7 @@ func.func @test_scalar_sub_bf16(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %arg2:
 }
 
 // -----
- 
+
 // CHECK-LABEL: func.func @test_scalar_bf16_i8(
 // CHECK: tensor.from_elements {{.*}} : tensor<1xbf16>
 // CHECK: arith.fptosi {{.*}} : tensor<1xbf16> to tensor<1xi32>
@@ -108,9 +108,9 @@ func.func @test_scalar_bf16_i8(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %arg2: 
   bufferization.materialize_in_destination %2 in writable %reinterpret_cast : (tensor<6x5x15xi8>, memref<6x5x15xi8, strided<[75, 15, 1]>>) -> ()
   return
 }
- 
+
 // -----
- 
+
 // CHECK-LABEL: func.func @test_scalar_i8_bf16(
 // CHECK: tensor.from_elements {{.*}} : tensor<1xi8>
 // CHECK: arith.sitofp {{.*}} : tensor<1xi8> to tensor<1xbf16>
@@ -123,9 +123,9 @@ func.func @test_scalar_i8_bf16(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %arg2: 
   bufferization.materialize_in_destination %2 in writable %reinterpret_cast : (tensor<6x5x15xbf16>, memref<6x5x15xbf16, strided<[75, 15, 1]>>) -> ()
   return
 }
- 
+
 // -----
- 
+
 // CHECK-LABEL: func.func @test_scalar_i32_bf16(
 // CHECK: tensor.from_elements {{.*}} : tensor<1xi32>
 // CHECK: arith.sitofp {{.*}} : tensor<1xi32> to tensor<1xbf16>
@@ -138,9 +138,9 @@ func.func @test_scalar_i32_bf16(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %arg2:
   bufferization.materialize_in_destination %2 in writable %reinterpret_cast : (tensor<6x5x15xbf16>, memref<6x5x15xbf16, strided<[75, 15, 1]>>) -> ()
   return
 }
- 
+
 // -----
- 
+
 // CHECK-LABEL: func.func @test_scalar_u8_bf16(
 // CHECK: tensor.from_elements {{.*}} : tensor<1xi8>
 // CHECK: arith.uitofp {{.*}} : tensor<1xi8> to tensor<1xbf16>
@@ -153,9 +153,9 @@ func.func @test_scalar_u8_bf16(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %arg2: 
   bufferization.materialize_in_destination %2 in writable %reinterpret_cast : (tensor<6x5x15xbf16>, memref<6x5x15xbf16, strided<[75, 15, 1]>>) -> ()
   return
 }
- 
+
 // -----
- 
+
 // CHECK-LABEL: func.func @test_scalar_u32_bf16(
 // CHECK: tensor.from_elements {{.*}} : tensor<1xi32>
 // CHECK: arith.uitofp {{.*}} : tensor<1xi32> to tensor<1xbf16>
@@ -294,4 +294,29 @@ func.func @cast_kernel(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %arg2: memref<?
   %reinterpret_cast_0 = memref.reinterpret_cast %arg3 to offset: [0], sizes: [1], strides: [1] : memref<?xbf16> to memref<1xbf16, strided<[1]>>
   bufferization.materialize_in_destination %inserted in writable %reinterpret_cast_0 : (tensor<1xbf16>, memref<1xbf16, strided<[1]>>) -> ()
   return
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_scalar_cmpf_bf16
+// CHECK-DAG: tensor.from_elements {{.*}} : tensor<1xbf16>
+// CHECK-DAG: arith.constant dense<0.000000e+00> : tensor<1xbf16>
+// CHECK: arith.cmpf oeq, {{.*}}, {{.*}} : tensor<1xbf16>
+// CHECK: tensor.extract {{.*}} : tensor<1xi1>
+func.func @test_scalar_cmpf_bf16(%arg0: bf16) -> i1 {
+  %cst = arith.constant 0.000000e+00 : bf16
+  %0 = arith.cmpf oeq, %arg0, %cst : bf16
+  return %0 : i1
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_scalar_cmpf_bf16_two_args
+// CHECK: tensor.from_elements {{.*}} : tensor<1xbf16>
+// CHECK: tensor.from_elements {{.*}} : tensor<1xbf16>
+// CHECK: arith.cmpf oeq, {{.*}}, {{.*}} : tensor<1xbf16>
+// CHECK: tensor.extract {{.*}} : tensor<1xi1>
+func.func @test_scalar_cmpf_bf16_two_args(%arg0: bf16, %arg1: bf16) -> i1 {
+  %0 = arith.cmpf oeq, %arg0, %arg1 : bf16
+  return %0 : i1
 }

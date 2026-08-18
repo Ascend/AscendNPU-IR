@@ -11,10 +11,10 @@
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
-#include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Linalg/Utils/Utils.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Tosa/Utils/ConversionUtils.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
@@ -37,9 +37,9 @@ public:
     Location loc = op.getLoc();
     Value lhs = op.getLhs();
     Value rhs = op.getRhs();
-    Type elemType = op.getResult().getType();
+    Type elemType = lhs.getType();
 
-    if(op->template getParentOfType<linalg::LinalgOp>()) {
+    if (op->template getParentOfType<linalg::LinalgOp>()) {
       return failure();
     }
 
@@ -63,6 +63,10 @@ public:
       if (!(elemType.isF16() || elemType.isBF16() || elemType.isF32())) {
         return failure();
       }
+    } else if constexpr (std::is_same_v<arith::CmpFOp, OpType>) {
+      if (!elemType.isBF16()) {
+        return failure();
+      }
     }
 
     auto tensorTy = RankedTensorType::get({1}, elemType);
@@ -70,13 +74,18 @@ public:
         rewriter.create<tensor::FromElementsOp>(loc, tensorTy, lhs);
     Value rhsTensor =
         rewriter.create<tensor::FromElementsOp>(loc, tensorTy, rhs);
- 
-    Value tensorOp = rewriter.create<OpType>(loc, lhsTensor, rhsTensor);
+
+    Value tensorOp;
+    if constexpr (std::is_same_v<arith::CmpFOp, OpType>) {
+      tensorOp = rewriter.create<arith::CmpFOp>(loc, op.getPredicate(),
+                                                lhsTensor, rhsTensor);
+    } else {
+      tensorOp = rewriter.create<OpType>(loc, lhsTensor, rhsTensor);
+    }
     auto extractIndex = rewriter.create<arith::ConstantIndexOp>(loc, 0);
     SmallVector<Value> indices = {extractIndex};
-    auto extractOp = rewriter.create<tensor::ExtractOp>(
-        loc, tensorOp, indices);
-    
+    auto extractOp = rewriter.create<tensor::ExtractOp>(loc, tensorOp, indices);
+
     rewriter.replaceOp(op, extractOp);
     return success();
   }
@@ -85,7 +94,8 @@ public:
 struct LegalizeSelectLikeUiToFp : public OpRewritePattern<arith::UIToFPOp> {
   using OpRewritePattern<arith::UIToFPOp>::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(arith::UIToFPOp op, PatternRewriter &rewriter) const override {
+  LogicalResult matchAndRewrite(arith::UIToFPOp op,
+                                PatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
     Value input = op.getIn();
     Value output = op.getOut();
@@ -102,7 +112,7 @@ struct LegalizeSelectLikeUiToFp : public OpRewritePattern<arith::UIToFPOp> {
       return failure();
     }
     auto inputRank = inputType.getRank();
-    
+
     if (!inputType.getElementType().isInteger(1)) {
       return failure();
     }
@@ -124,18 +134,23 @@ struct LegalizeSelectLikeUiToFp : public OpRewritePattern<arith::UIToFPOp> {
     auto zeros = createFilledTensor(rewriter, loc, outputType, 0);
     auto ones = createFilledTensor(rewriter, loc, outputType, 1);
     auto outEmpty = utils::createEmptyOp(rewriter, loc, output);
-    auto select = rewriter.create<hfusion::SelectOp>(loc, TypeRange{outputType}, ValueRange{input, ones, zeros}, ValueRange{outEmpty});
+    auto select = rewriter.create<hfusion::SelectOp>(
+        loc, TypeRange{outputType}, ValueRange{input, ones, zeros},
+        ValueRange{outEmpty});
 
     rewriter.replaceOp(op, select);
     return success();
   }
 
 private:
-  static Value createFilledTensor(PatternRewriter &rewriter, Location loc, RankedTensorType type, double value) {
+  static Value createFilledTensor(PatternRewriter &rewriter, Location loc,
+                                  RankedTensorType type, double value) {
     auto elementType = cast<FloatType>(type.getElementType());
-    
-    Value scalar = rewriter.create<arith::ConstantOp>(loc, rewriter.getFloatAttr(elementType, value));
-    Value empty = rewriter.create<tensor::EmptyOp>(loc, type.getShape(), elementType);
+
+    Value scalar = rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getFloatAttr(elementType, value));
+    Value empty =
+        rewriter.create<tensor::EmptyOp>(loc, type.getShape(), elementType);
     return rewriter.create<linalg::FillOp>(loc, scalar, empty).getResult(0);
   }
 };
@@ -150,7 +165,7 @@ public:
     Value input = op.getOperand();
     Type elemType = op.getResult().getType();
 
-    if(op->template getParentOfType<linalg::LinalgOp>()) {
+    if (op->template getParentOfType<linalg::LinalgOp>()) {
       return failure();
     }
 
@@ -163,12 +178,11 @@ public:
     auto tensorTy = RankedTensorType::get({1}, elemType);
     Value inputTensor =
         rewriter.create<tensor::FromElementsOp>(loc, tensorTy, input);
- 
+
     Value tensorOp = rewriter.create<OpType>(loc, inputTensor);
     auto extractIndex = rewriter.create<arith::ConstantIndexOp>(loc, 0);
     SmallVector<Value> indices = {extractIndex};
-    auto extractOp = rewriter.create<tensor::ExtractOp>(
-        loc, tensorOp, indices);
+    auto extractOp = rewriter.create<tensor::ExtractOp>(loc, tensorOp, indices);
 
     rewriter.replaceOp(op, extractOp);
     return success();
@@ -186,14 +200,14 @@ public:
     Type inType = input.getType();
     Type outType = op.getResult().getType();
 
-    if(op->template getParentOfType<linalg::LinalgOp>()) {
+    if (op->template getParentOfType<linalg::LinalgOp>()) {
       return failure();
     }
 
     if constexpr (std::is_same_v<arith::SIToFPOp, OpType>) {
       const bool isI8ToBF16 = inType.isInteger(8) && outType.isBF16();
       const bool isI32ToBF16 = inType.isInteger(32) && outType.isBF16();
-      if (!( isI8ToBF16 || isI32ToBF16)) {
+      if (!(isI8ToBF16 || isI32ToBF16)) {
         return failure();
       }
     } else if constexpr (std::is_same_v<arith::FPToSIOp, OpType>) {
@@ -210,7 +224,7 @@ public:
         return failure();
       }
     } else if constexpr (std::is_same_v<arith::FPToUIOp, OpType>) {
-      const bool isBF16ToU8 = inType.isBF16() && outType.isInteger(8) ;
+      const bool isBF16ToU8 = inType.isBF16() && outType.isInteger(8);
       const bool isBF16ToU16 = inType.isBF16() && outType.isInteger(16);
       if (!(isBF16ToU8 || isBF16ToU16)) {
         return failure();
@@ -220,35 +234,34 @@ public:
     auto inTensorTy = RankedTensorType::get({1}, inType);
     auto outTensorTy = RankedTensorType::get({1}, outType);
     auto i32TensorTy = RankedTensorType::get({1}, rewriter.getI32Type());
-    Value inTensor = rewriter.create<tensor::FromElementsOp>(
-        loc, inTensorTy, input);
- 
+    Value inTensor =
+        rewriter.create<tensor::FromElementsOp>(loc, inTensorTy, input);
+
     Value tensorOp;
     if constexpr (std::is_same_v<arith::FPToSIOp, OpType>) {
       const bool isBF16ToI8 = inType.isBF16() && outType.isInteger(8);
       const bool isBF16ToI16 = inType.isBF16() && outType.isInteger(16);
       if (isBF16ToI8 || isBF16ToI16) {
-        Value i32TensorOp = rewriter.create<arith::FPToSIOp>(
-            loc, i32TensorTy, inTensor);
-        tensorOp = rewriter.create<arith::TruncIOp>(
-            loc, outTensorTy, i32TensorOp);
+        Value i32TensorOp =
+            rewriter.create<arith::FPToSIOp>(loc, i32TensorTy, inTensor);
+        tensorOp =
+            rewriter.create<arith::TruncIOp>(loc, outTensorTy, i32TensorOp);
       }
     } else if constexpr (std::is_same_v<arith::FPToUIOp, OpType>) {
       const bool isBF16ToU8 = inType.isBF16() && outType.isInteger(8);
       const bool isBF16ToU16 = inType.isBF16() && outType.isInteger(16);
       if (isBF16ToU8 || isBF16ToU16) {
-        Value i32TensorOp = rewriter.create<arith::FPToUIOp>(
-            loc, i32TensorTy, inTensor);
-        tensorOp = rewriter.create<arith::TruncIOp>(
-            loc, outTensorTy, i32TensorOp);
+        Value i32TensorOp =
+            rewriter.create<arith::FPToUIOp>(loc, i32TensorTy, inTensor);
+        tensorOp =
+            rewriter.create<arith::TruncIOp>(loc, outTensorTy, i32TensorOp);
       }
     } else {
       tensorOp = rewriter.create<OpType>(loc, outTensorTy, inTensor);
     }
     auto extractIndex = rewriter.create<arith::ConstantIndexOp>(loc, 0);
     SmallVector<Value> indices = {extractIndex};
-    auto extractOp = rewriter.create<tensor::ExtractOp>(
-        loc, tensorOp, indices);
+    auto extractOp = rewriter.create<tensor::ExtractOp>(loc, tensorOp, indices);
 
     rewriter.replaceOp(op, extractOp);
     return success();
@@ -297,8 +310,7 @@ struct LegalizeNarrowUIToBF16 : public OpRewritePattern<arith::UIToFPOp> {
         rewriter.create<arith::UIToFPOp>(loc, outTensorTy, inTensor);
     auto extractIndex = rewriter.create<arith::ConstantIndexOp>(loc, 0);
     SmallVector<Value> indices = {extractIndex};
-    auto extractOp =
-        rewriter.create<tensor::ExtractOp>(loc, tensorOp, indices);
+    auto extractOp = rewriter.create<tensor::ExtractOp>(loc, tensorOp, indices);
 
     rewriter.replaceOp(op, extractOp);
     return success();
@@ -347,8 +359,7 @@ struct LegalizeNarrowSIToBF16 : public OpRewritePattern<arith::SIToFPOp> {
         rewriter.create<arith::SIToFPOp>(loc, outTensorTy, inTensor);
     auto extractIndex = rewriter.create<arith::ConstantIndexOp>(loc, 0);
     SmallVector<Value> indices = {extractIndex};
-    auto extractOp =
-        rewriter.create<tensor::ExtractOp>(loc, tensorOp, indices);
+    auto extractOp = rewriter.create<tensor::ExtractOp>(loc, tensorOp, indices);
 
     rewriter.replaceOp(op, extractOp);
     return success();
@@ -384,8 +395,7 @@ struct LegalizeWideSIToNarrowFP : public OpRewritePattern<arith::SIToFPOp> {
 
     Value f32Val =
         rewriter.create<arith::SIToFPOp>(loc, f32Type, op.getOperand());
-    Value bf16Val =
-        rewriter.create<arith::TruncFOp>(loc, resultType, f32Val);
+    Value bf16Val = rewriter.create<arith::TruncFOp>(loc, resultType, f32Val);
 
     rewriter.replaceOp(op, bf16Val);
     return success();
@@ -428,21 +438,20 @@ struct LegalizeWideUIToNarrowFP : public OpRewritePattern<arith::UIToFPOp> {
 
     Value f32Val =
         rewriter.create<arith::UIToFPOp>(loc, f32Type, op.getOperand());
-    Value truncVal =
-        rewriter.create<arith::TruncFOp>(loc, resultType, f32Val);
+    Value truncVal = rewriter.create<arith::TruncFOp>(loc, resultType, f32Val);
 
     rewriter.replaceOp(op, truncVal);
     return success();
   }
 };
 
-void populateLegalizeScalarConversionPatterns(
-    RewritePatternSet &patterns) {
+void populateLegalizeScalarConversionPatterns(RewritePatternSet &patterns) {
   patterns.add<LegalizeScalarArithOps<arith::AddFOp>>(patterns.getContext());
   patterns.add<LegalizeScalarArithOps<arith::SubFOp>>(patterns.getContext());
   patterns.add<LegalizeScalarArithOps<arith::MulFOp>>(patterns.getContext());
   patterns.add<LegalizeScalarArithOps<arith::DivFOp>>(patterns.getContext());
   patterns.add<LegalizeScalarArithOps<arith::RemFOp>>(patterns.getContext());
+  patterns.add<LegalizeScalarArithOps<arith::CmpFOp>>(patterns.getContext());
   patterns.add<LegalizeScalarMathOps<math::SqrtOp>>(patterns.getContext());
   patterns.add<LegalizeScalarCastOps<arith::SIToFPOp>>(patterns.getContext());
   patterns.add<LegalizeScalarCastOps<arith::FPToSIOp>>(patterns.getContext());
@@ -454,14 +463,14 @@ void populateLegalizeScalarConversionPatterns(
   patterns.add<LegalizeWideSIToNarrowFP>(patterns.getContext());
   patterns.add<LegalizeWideUIToNarrowFP>(patterns.getContext());
 }
- 
+
 namespace {
 struct LegalizeScalarPass
     : public impl::LegalizeScalarPassBase<LegalizeScalarPass> {
   void runOnOperation() override;
 };
 } // namespace
- 
+
 void LegalizeScalarPass::runOnOperation() {
   auto module = getOperation();
   RewritePatternSet patterns(&getContext());
