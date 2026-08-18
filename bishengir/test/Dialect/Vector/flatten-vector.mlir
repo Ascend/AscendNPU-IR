@@ -275,3 +275,30 @@ func.func @flatten_unit_subview_rank_reduce(%arg0: memref<1x4xi32, #hivm.address
   vector.print %cast : vector<4xi32>
   return
 }
+
+// -----
+// CHECK-LABEL: func.func @merge_16x16_to_64x64_inverse_kernel_mix_aiv_outlined_merged_merged_vf_2(
+// CHECK-SAME:    %[[ARG0:.*]]: memref<8x16xf32, #hivm.address_space<ub>>
+// CHECK-SAME:    %[[ARG1:.*]]: memref<8x16xf32, strided<[16, 1], offset: ?>, #hivm.address_space<ub>>
+// CHECK:         scf.for %[[ITER:.*]] =
+// CHECK-DAG:       %[[SUBVIEW_R:.*]] = memref.subview %[[ARG0]][%[[ITER]], 0] {{.*}} memref<8x16xf32, #hivm.address_space<ub>> to memref<4x16xf32, strided<[16, 1], offset: ?>, #hivm.address_space<ub>>
+// CHECK-DAG:       %[[READ:.*]] = vector.transfer_read %[[SUBVIEW_R]][%c0, %c0]
+// CHECK-DAG:       %[[READ_CAST:.*]] = vector.shape_cast %[[READ]] : vector<4x16xf32> to vector<64xf32>
+// CHECK-DAG:       %[[COLL:.*]] = memref.collapse_shape %[[ARG1]] {{.*}} memref<8x16xf32, strided<[16, 1], offset: ?>, #hivm.address_space<ub>> into memref<128xf32, strided<[1], offset: ?>, #hivm.address_space<ub>>
+// CHECK-DAG:       %[[OFF:.*]] = arith.muli %[[ITER]], %c16 : index
+// CHECK-DAG:       %[[SUBVIEW_W:.*]] = memref.subview %[[COLL]][%[[OFF]]] {{.*}} memref<128xf32, strided<[1], offset: ?>, #hivm.address_space<ub>> to memref<64xf32, strided<[1], offset: ?>, #hivm.address_space<ub>>
+// CHECK-DAG:       vector.transfer_write %[[READ_CAST]], %[[SUBVIEW_W]][%c0] {{.*}} vector<64xf32>, memref<64xf32, strided<[1], offset: ?>, #hivm.address_space<ub>>
+// CHECK:         return
+func.func @merge_16x16_to_64x64_inverse_kernel_mix_aiv_outlined_merged_merged_vf_2(%arg0: memref<8x16xf32, #hivm.address_space<ub>>, %arg1: memref<8x16xf32, strided<[16, 1], offset: ?>, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.storage_aligned, hivm.vector_function} {
+  %c4 = arith.constant 4 : index
+  %c8 = arith.constant 8 : index
+  %c0 = arith.constant 0 : index
+  %cst = arith.constant 0.000000e+00 : f32
+  scf.for %arg2 = %c0 to %c8 step %c4 {
+    %subview_0 = memref.subview %arg0[%arg2, 0] [4, 16] [1, 1] : memref<8x16xf32, #hivm.address_space<ub>> to memref<4x16xf32, strided<[16, 1], offset: ?>, #hivm.address_space<ub>>
+    %subview_2 = memref.subview %arg1[%arg2, 0] [4, 16] [1, 1] : memref<8x16xf32, strided<[16, 1], offset: ?>, #hivm.address_space<ub>> to memref<4x16xf32, strided<[16, 1], offset: ?>, #hivm.address_space<ub>>
+    %0 = vector.transfer_read %subview_0[%c0, %c0], %cst {in_bounds = [true, true]} : memref<4x16xf32, strided<[16, 1], offset: ?>, #hivm.address_space<ub>>, vector<4x16xf32>
+    vector.transfer_write %0, %subview_2[%c0, %c0] {in_bounds = [true, true]} : vector<4x16xf32>, memref<4x16xf32, strided<[16, 1], offset: ?>, #hivm.address_space<ub>>
+  }
+  return
+}

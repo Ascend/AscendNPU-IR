@@ -103,27 +103,35 @@ std::optional<Value> collapseAllDims(Value value, OpBuilder &builder,
     return value;
   }
 
-  int64_t collapsedDimSize = 1;
-  bool isStatic = true;
-  for (int64_t dim : inputShape) {
-    if (dim == ShapedType::kDynamic) {
-      collapsedDimSize = ShapedType::kDynamic;
-      isStatic = false;
-      break;
-    }
-    collapsedDimSize *= dim;
-  }
-  if (!isStatic) {
+  // Flattening requires static shapes; dynamic dims cannot be collapsed.
+  if (llvm::any_of(inputShape,
+                   [](int64_t dim) { return ShapedType::isDynamic(dim); })) {
     return std::nullopt;
   }
 
   MLIRContext *ctx = builder.getContext();
-  auto resultType =
-      mlir::MemRefType::get({collapsedDimSize}, inputType.getElementType());
-  Type typeWithAttr = setUBMemScopeAttr(resultType, ctx);
-
   SmallVector<ReassociationIndices> reassociations = {
       llvm::to_vector(llvm::seq<int64_t>(0, rank))};
+  // Reject non-contiguous strided sources: collapsing them is not guaranteed,
+  // and computeCollapsedType asserts on the failure below. Identity layouts are
+  // always collapsible, so this preserves the original behavior for the common
+  // contiguous/identity cases.
+  if (!memref::CollapseShapeOp::isGuaranteedCollapsible(inputType,
+                                                        reassociations)) {
+    return std::nullopt;
+  }
+  // Preserve the strided layout and dynamic offset of the source (e.g. a
+  // rank-reduced subview) when collapsing to 1D; a plain MemRefType::get()
+  // would drop them and produce an invalid collapse_shape.
+  auto resultType =
+      memref::CollapseShapeOp::computeCollapsedType(inputType, reassociations);
+  // computeCollapsedType already preserves the source address space. In the
+  // normalize-vector pipeline the source is always UB (VF args are inferred UB
+  // by InferHIVMMemScope, and OutlineAllocInVF guarantees no allocs in VFs), so
+  // this call is effectively a no-op. Keep it as a defensive fallback for a
+  // hypothetical source that has not yet had its memory scope inferred.
+  Type typeWithAttr = setUBMemScopeAttr(resultType, ctx);
+
   Value collapse = builder.create<memref::CollapseShapeOp>(
       loc, typeWithAttr, value, reassociations);
   setUBMemScopeAttr(collapse, ctx);
