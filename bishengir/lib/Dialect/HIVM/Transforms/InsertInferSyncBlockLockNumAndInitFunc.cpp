@@ -61,7 +61,7 @@ SmallVector<Operation *> collectCreateSyncBlockLockOp(func::FuncOp funcOp) {
 
 func::FuncOp insertInferSyncBlockLockNumFuncImpl(func::FuncOp funcOp,
                                                  StringRef funcName,
-                                                 int64_t syncBlockLockNum) {
+                                                 int64_t syncBlockLockLayout) {
   OpBuilder builder(funcOp.getContext());
   builder.setInsertionPoint(funcOp);
 
@@ -74,17 +74,17 @@ func::FuncOp insertInferSyncBlockLockNumFuncImpl(func::FuncOp funcOp,
   Block *entryBlock = func.addEntryBlock();
   builder.setInsertionPointToStart(entryBlock);
 
-  // To avoid more than 1 lock_vars in 1 cache-line, every lock_var will use a
-  // whole cache-line(64B, which is 8xi64)
-  auto lockNumVal = builder.create<arith::ConstantIntOp>(
-      funcOp.getLoc(), syncBlockLockNum * 8, 64);
+  // Pack ordered and unordered lock counts into one i64 to preserve the host
+  // callback ABI. The launcher derives the exact size from blockNum.
+  auto syncBlockLockLayoutVal = builder.create<arith::ConstantIntOp>(
+      funcOp.getLoc(), syncBlockLockLayout, 64);
   builder.create<func::ReturnOp>(funcOp.getLoc(),
-                                 ValueRange{lockNumVal.getResult()});
+                                 ValueRange{syncBlockLockLayoutVal.getResult()});
   return func;
 }
 
 void insertInferSyncBlockLockNumFunc(func::FuncOp funcOp,
-                                     int64_t syncBlockLockNum) {
+                                     int64_t syncBlockLockLayout) {
   std::string baseKernelName =
       getBaseKernelNameForHostFunc(funcOp.getSymName());
   std::string callbackFuncName = hacc::constructHostFunctionName(
@@ -95,7 +95,7 @@ void insertInferSyncBlockLockNumFunc(func::FuncOp funcOp,
     return; // Already inserted by sibling (e.g., kernel_mix_aic when processing
             // kernel_mix_aiv)
   func::FuncOp callbackFunc = insertInferSyncBlockLockNumFuncImpl(
-      funcOp, callbackFuncName, syncBlockLockNum);
+      funcOp, callbackFuncName, syncBlockLockLayout);
   hacc::utils::setHost(callbackFunc);
   hacc::utils::setHostFuncType(
       callbackFunc, hacc::HostFuncType::kInferSyncBlockLockNumFunction);
@@ -163,17 +163,21 @@ void InsertInferSyncBlockLockNumAndInitFuncPass::runOnOperation() {
     return;
 
   // Calculate total sync block lock num in cache-line units.
-  int64_t syncBlockLockNum = 0;
+  int64_t orderedLockCount = 0;
+  int64_t unorderedLockCount = 0;
   for (Operation *op : createSyncBlockLockOps) {
-    int64_t cacheLinesPerLock =
-        op->hasAttr(SyncBlockLockUnorderedAttr::name)
-            ? hivm::kUnorderedSyncBlockLockCacheLines
-            : 1;
-    syncBlockLockNum += cacheLinesPerLock;
+    if (op->hasAttr(SyncBlockLockUnorderedAttr::name))
+      ++unorderedLockCount;
+    else
+      ++orderedLockCount;
   }
 
-  // 2. Insert host callback func to return sync block lock num
-  insertInferSyncBlockLockNumFunc(funcOp, syncBlockLockNum);
+  // Keep the existing callback ABI while returning both counts. The launcher
+  // computes the exact GM size from launch-time blockNum.
+  constexpr int64_t countBits = 32;
+  int64_t syncBlockLockLayout =
+      (unorderedLockCount << countBits) | orderedLockCount;
+  insertInferSyncBlockLockNumFunc(funcOp, syncBlockLockLayout);
 
   // 2. Insert host callback func to return sync block lock init
   insertInferSyncBlockLockInitFunc(funcOp, 0);

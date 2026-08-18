@@ -1,7 +1,7 @@
 // RUN: bishengir-opt --hivm-insert-infer-sync-block-lock-num-and-init-func -split-input-file %s | FileCheck %s
 
 // CHECK: func.func @unordered_single_lock_infer_sync_block_lock_num_function() -> i64
-// CHECK: %[[NUM:.*]] = arith.constant 16392 : i64
+// CHECK: %[[NUM:.*]] = arith.constant 4294967296 : i64
 // CHECK: return %[[NUM]]
 // CHECK: func.func @unordered_single_lock_infer_sync_block_lock_init_function() -> i64
 // CHECK: %[[INIT:.*]] = arith.constant 0 : i64
@@ -17,7 +17,7 @@ func.func @unordered_single_lock(
 // -----
 
 // CHECK: func.func @unordered_two_locks_infer_sync_block_lock_num_function() -> i64
-// CHECK: %[[NUM:.*]] = arith.constant 32784 : i64
+// CHECK: %[[NUM:.*]] = arith.constant 8589934592 : i64
 // CHECK: return %[[NUM]]
 // CHECK: func.func @unordered_two_locks_infer_sync_block_lock_init_function() -> i64
 // CHECK: %[[INIT:.*]] = arith.constant 0 : i64

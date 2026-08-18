@@ -19,3 +19,24 @@ module {
     return %res : tensor<1xi64>
   }
 }
+
+// -----
+// CHECK-LABEL: func.func @test_unordered_lock_mix_subblock_stride
+// CHECK: %[[BLOCK_NUM:.*]] = hivm.hir.get_block_num
+// CHECK: %[[SUBBLOCK_NUM:.*]] = hivm.hir.get_sub_block_num
+// CHECK: %[[PARTICIPANT_NUM:.*]] = arith.muli %[[BLOCK_NUM]], %[[SUBBLOCK_NUM]]
+// CHECK: memref.view
+module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @test_unordered_lock_mix_subblock_stride(
+      %arg0: memref<?xi8>) -> (tensor<1xi64>, tensor<1xi64>) {
+    %lock0 = hivm.hir.create_sync_block_lock from %arg0
+        {hivm.sync_block_lock_unordered} :
+        from memref<?xi8> to memref<1xi64>
+    %lock1 = hivm.hir.create_sync_block_lock from %arg0
+        {hivm.sync_block_lock_unordered} :
+        from memref<?xi8> to memref<1xi64>
+    %res0 = bufferization.to_tensor %lock0 restrict writable : memref<1xi64>
+    %res1 = bufferization.to_tensor %lock1 restrict writable : memref<1xi64>
+    return %res0, %res1 : tensor<1xi64>, tensor<1xi64>
+  }
+}
