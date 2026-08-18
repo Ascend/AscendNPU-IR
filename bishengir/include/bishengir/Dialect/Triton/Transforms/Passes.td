@@ -151,6 +151,21 @@ def ConvertDotInputToLinearLayout
   ];
 }
 
+def GroupDotChainsForOverlap
+   : Pass<"group-dot-chains-for-overlap", "mlir::triton::FuncOp"> {
+  let summary = "Direct dot-chain overlap grouping";
+  let description = [{
+    Walks tt.dot ops in a function and marks direct producer-to-consumer
+    chains.  C-chains are marked with `bishengir.dot.c_grouped_for_overlap`;
+    direct A/B chains are analyzed but currently not marked.
+    Pairing is only by direct dot operands; no layout look-through or DAG
+    budgeting is performed.
+  }];
+  let constructor = "bishengir::triton::createGroupDotChainsForOverlapPass()";
+  let dependentDialects = [
+    "mlir::triton::TritonDialect",
+  ];
+}
 
 def TileDotLoads
    : Pass<"tile-dot-loads", "mlir::triton::FuncOp"> {

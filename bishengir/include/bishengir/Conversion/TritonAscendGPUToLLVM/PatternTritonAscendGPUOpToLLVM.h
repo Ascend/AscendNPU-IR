@@ -12,6 +12,7 @@ namespace mlir::triton::ascend {
 
 void populateDotOpToLLVMPatterns(LLVMTypeConverter &typeConverter,
                                  RewritePatternSet &patterns,
+                                 bool enableCGroupingDotTileLowering,
                                  PatternBenefit benefit);
 
 void populateAscendReduceOpToLLVMPatterns(LLVMTypeConverter &typeConverter,

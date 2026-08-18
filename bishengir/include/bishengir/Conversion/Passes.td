@@ -239,6 +239,12 @@ def ConvertTritonAscendGPUToLLVM : Pass<"convert-triton-ascend-gpu-to-llvm", "ml
   }];
   let constructor = "mlir::triton::createConvertTritonAscendGPUToLLVMPass()";
 
+  let options = [
+    Option<"enableCGroupingDotTileLowering", "enable-c-grouping-dot-tile-lowering",
+           "bool", /*default*/"false",
+           "enable grouped dot tile lowering during LLVM conversion">,
+  ];
+
   let dependentDialects = [
     "mlir::LLVM::LLVMDialect",
     "mlir::NVVM::NVVMDialect",

@@ -385,6 +385,8 @@ void setupLowerTritonPipelineOptions(
   // encode our own compile optimization
   options.simtOptimizationMode =
       config.getSimtOptimizationMode();
+  options.enableCGroupingDotTileLowering =
+      config.getEnableCGroupingDotTileLowering();
 #endif
 #if BISHENGIR_ENABLE_TRITON_COMPILE
   options.protonGPUCompileConfig = getProtonGPUCompileConfig();

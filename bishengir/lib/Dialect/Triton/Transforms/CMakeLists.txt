@@ -29,6 +29,7 @@ if(BISHENGIR_ENABLE_TRITON_COMPILE)
     DotTilingCostModel.cpp
     OptimizeMath.cpp
     HoistAndFuseDotChains.cpp
+    GroupDotChainsForOverlap.cpp
   )
 endif()
 
