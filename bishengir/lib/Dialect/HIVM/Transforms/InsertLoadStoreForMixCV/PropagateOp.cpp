@@ -26,6 +26,7 @@
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/LogicalResult.h"
@@ -58,6 +59,33 @@ static bool checkPropagate(PropagationStep step,
   default:
     return true;
   }
+}
+
+/// True when `result` of `branch` must stay in L0C, so propagate-up must not
+/// cross the region boundary for that result.
+///
+/// `normalized_in_L0C` on a RegionBranch is an ArrayAttr of result indices
+/// (set by NormalizeMatmul). Results whose indices are not listed may still
+/// be propagated. A UnitAttr form, or `hivm.remain_in_l0c`, applies to every
+/// result of the op.
+static bool isRegionResultRequiredInL0C(RegionBranchOpInterface branch,
+                                        OpResult result) {
+  if (branch->hasAttr(RemainInL0CAttr::name))
+    return true;
+
+  Attribute attr = branch->getAttr(kNormalizedInL0CAttr);
+  if (!attr)
+    return false;
+
+  auto arrayAttr = dyn_cast<ArrayAttr>(attr);
+  if (!arrayAttr)
+    return true;
+
+  uint64_t idx = result.getResultNumber();
+  return llvm::any_of(arrayAttr, [idx](Attribute element) {
+    auto intAttr = dyn_cast<IntegerAttr>(element);
+    return intAttr && intAttr.getValue().getZExtValue() == idx;
+  });
 }
 
 /// Mirror propagate markers across the RegionBranch connected component of
@@ -328,9 +356,7 @@ PropagateUpPattern::matchAndRewrite(UnrealizedConversionCastOp propagateOp,
         if (step != PropagationStep::ALL)
           return failure();
 
-        // TODO: refactor this logic.
-        if (branch->hasAttr(RemainInL0CAttr::name) ||
-            branch->hasAttr("normalized_in_L0C"))
+        if (isRegionResultRequiredInL0C(branch, res))
           return failure();
         // Unstructured load case should be propagated from the inside.
         if (auto forOp = dyn_cast<scf::ForOp>(branch.getOperation())) {

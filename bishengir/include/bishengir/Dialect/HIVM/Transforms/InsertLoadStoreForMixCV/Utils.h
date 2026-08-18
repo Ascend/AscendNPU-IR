@@ -35,14 +35,16 @@ namespace hivm {
 
 constexpr llvm::StringLiteral kPropagateUpAttr = "propagate_up";
 constexpr llvm::StringLiteral kPropagateDownAttr = "propagate_down";
+constexpr llvm::StringLiteral kNormalizedInL0CAttr = "normalized_in_L0C";
 
 namespace PropagatorUtil {
 
-const llvm::SmallDenseMap<hivm::AddressSpace, TCoreType, 2> kAddressSpace2CoreType = {
-  {hivm::AddressSpace::UB, TCoreType::VECTOR},
-  {hivm::AddressSpace::L1, TCoreType::CUBE},
-  {hivm::AddressSpace::GM, TCoreType::CUBE_OR_VECTOR},
-  {hivm::AddressSpace::L0C, TCoreType::CUBE_OR_VECTOR},
+const llvm::SmallDenseMap<hivm::AddressSpace, TCoreType, 2>
+    kAddressSpace2CoreType = {
+        {hivm::AddressSpace::UB, TCoreType::VECTOR},
+        {hivm::AddressSpace::L1, TCoreType::CUBE},
+        {hivm::AddressSpace::GM, TCoreType::CUBE_OR_VECTOR},
+        {hivm::AddressSpace::L0C, TCoreType::CUBE_OR_VECTOR},
 };
 
 /// Holds allocated memref and its plain (no address space) cast.
@@ -203,9 +205,7 @@ public:
   }
 
   /// Record `value` as a down site. Returns true if it was newly added.
-  bool addDown(Value value) {
-    return value && downSites.insert(value).second;
-  }
+  bool addDown(Value value) { return value && downSites.insert(value).second; }
 
   bool containsUp(OpOperand *operand) const {
     return operand && upSites.contains(operand);
