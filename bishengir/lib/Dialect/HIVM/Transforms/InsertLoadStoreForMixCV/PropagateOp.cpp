@@ -67,8 +67,7 @@ static LogicalResult
 propagateAlongRegionEdges(RegionBranchOpInterface branch, Value seed,
                           UnrealizedConversionCastOp propagateOp,
                           PatternRewriter &rewriter) {
-  auto maybeSites =
-      PropagatorUtil::collectRelatedPropagatorSites(branch, seed);
+  auto maybeSites = PropagatorUtil::collectRelatedPropagatorSites(branch, seed);
   if (failed(maybeSites))
     return failure();
 
@@ -76,8 +75,8 @@ propagateAlongRegionEdges(RegionBranchOpInterface branch, Value seed,
     PropagatorUtil::createPropagatorUp(opr, propagateOp, rewriter);
   for (auto arg : maybeSites->getDownSites())
     PropagatorUtil::createPropagatorDown(arg, propagateOp, rewriter);
-  LDBG("Propagated along RegionBranch edges from seed in " << branch
-       << " (up=" << maybeSites->getUpSites().size()
+  LDBG("Propagated along RegionBranch edges from seed in "
+       << branch << " (up=" << maybeSites->getUpSites().size()
        << ", down=" << maybeSites->getDownSites().size() << ")");
   return success();
 }
@@ -89,9 +88,9 @@ struct Candidate {
 
 } // namespace
 
-
-LogicalResult ControlFlowPropagatePattern::matchAndRewrite(
-    RegionBranchOpInterface branch, PatternRewriter &rewriter) const {
+LogicalResult
+ControlFlowPropagatePattern::matchAndRewrite(RegionBranchOpInterface branch,
+                                             PatternRewriter &rewriter) const {
   if (step == PropagationStep::LOCAL || step == PropagationStep::ALL)
     return failure();
 
@@ -149,8 +148,8 @@ LogicalResult ControlFlowPropagatePattern::matchAndRewrite(
       if (!isa<ShapedType>(operand->get().getType()))
         continue;
       auto existing = PropagatorUtil::getUpPropagator(operand);
-      if (existing && PropagatorUtil::haveSamePropagation(
-                          existing, majority->propagator))
+      if (existing &&
+          PropagatorUtil::haveSamePropagation(existing, majority->propagator))
         continue;
       PropagatorUtil::createPropagatorUp(operand, majority->propagator,
                                          rewriter);
@@ -160,8 +159,8 @@ LogicalResult ControlFlowPropagatePattern::matchAndRewrite(
       if (!isa<ShapedType>(value.getType()) || value.use_empty())
         continue;
       auto existing = PropagatorUtil::getDownPropagator(value);
-      if (existing && PropagatorUtil::haveSamePropagation(
-                          existing, majority->propagator))
+      if (existing &&
+          PropagatorUtil::haveSamePropagation(existing, majority->propagator))
         continue;
       PropagatorUtil::createPropagatorDown(value, majority->propagator,
                                            rewriter);
@@ -327,6 +326,11 @@ PropagateUpPattern::matchAndRewrite(UnrealizedConversionCastOp propagateOp,
   return TypeSwitch<Operation *, LogicalResult>(defOp)
       .Case([&](RegionBranchOpInterface branch) {
         if (step != PropagationStep::ALL)
+          return failure();
+
+        // TODO: refactor this logic.
+        if (branch->hasAttr(RemainInL0CAttr::name) ||
+            branch->hasAttr("normalized_in_L0C"))
           return failure();
         // Unstructured load case should be propagated from the inside.
         if (auto forOp = dyn_cast<scf::ForOp>(branch.getOperation())) {
