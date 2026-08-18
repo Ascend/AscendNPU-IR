@@ -849,17 +849,19 @@ std::optional<EventIdInfo> SyncSolverBase::getMultiBufferEventIdInfo(
     return {};
   }
 
-  for (auto *conditionOp = rwOp1->getParentOfType<Condition>(); conditionOp;
-       conditionOp = conditionOp->getParentOfType<Condition>()) {
-    if (conditionOp->isProperAncestor(rwOp2) &&
-        !conditionOp->isProperAncestor(multibufferScope)) {
-      return {};
-    }
-  }
-
   auto eventIdNum = getMultiBufferEventIdNum(rwOp1, rwOp2, offsetPair);
   if (!eventIdNum.has_value()) {
     return {};
+  }
+
+  if(eventIdNum.value() > 2){
+    for (auto *conditionOp = rwOp1->getParentOfType<Condition>(); conditionOp;
+         conditionOp = conditionOp->getParentOfType<Condition>()) {
+      if (conditionOp->isProperAncestor(rwOp2) &&
+          !conditionOp->isProperAncestor(multibufferScope)) {
+        return {};
+      }
+    }
   }
 
   EventIdInfo eventIdInfo;
