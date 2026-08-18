@@ -223,7 +223,8 @@ func.func @fixpipe_nz2nd_still_gets_nd_to_fractal(
 
 // Channel-merge style chain (simplified from E2E):
 //   mmadL1(i8,i8)->i32  --NZ2NZ fixpipe + S322I8-->  i8  -->  mmadL1(i8,i8)->i32
-// On Ascend950, i8 A uses fractalSizes [16, 32] so 32x32 → 1x2x16x32.
+// On Ascend950, i8 A uses fractalSizes [16, 32] so 32x32 → 1x2x16x32,
+// while i8 B (zN) uses fractalSizes [32, 32] so 32x32 → 1x1x32x32.
 // The NZ2NZ i8 Fixpipe must be retargeted to fractal; no ND→Fractal on it.
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // CHECK-LABEL: func.func @channel_merge_fixpipe_nz2nz_i8_i32(
@@ -231,7 +232,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // CHECK: %[[ACC_ND:.*]] = hivm.hir.convert_layout %[[MMAD0]] output_shape [32, 32]
 // CHECK: %[[FIX:.*]] = hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<S322I8>} ins(%[[ACC_ND]] : tensor<32x32xi32>){{.*}}-> tensor<1x2x16x32xi8>
 // CHECK-NOT: hivm.hir.convert_layout %[[FIX]]
-// CHECK: %[[MMAD1:.*]] = hivm.hir.mmadL1 {{.*}} ins(%[[FIX]], %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}} : tensor<1x2x16x32xi8>, tensor<1x2x16x32xi8>, i1, index, index, index)
+// CHECK: %[[MMAD1:.*]] = hivm.hir.mmadL1 {{.*}} ins(%[[FIX]], %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}} : tensor<1x2x16x32xi8>, tensor<1x1x32x32xi8>, i1, index, index, index)
 // CHECK: %[[RES:.*]] = hivm.hir.convert_layout %[[MMAD1]]
 // CHECK: return %[[RES]] : tensor<32x32xi32>
   func.func @channel_merge_fixpipe_nz2nz_i8_i32(
@@ -269,10 +270,10 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // CHECK: %[[FIX:.*]] = hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<S322I8>} ins(%[[ACC_ND]] : tensor<32x32xi32>){{.*}}-> tensor<32x32xi8>
 // CHECK: %[[FIX_FR0:.*]] = hivm.hir.convert_layout %[[FIX]] output_shape [1, 2, 16, 32]
 // CHECK-SAME: {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 32]>, srcLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 32]>}
-// CHECK: %[[MMAD1:.*]] = hivm.hir.mmadL1 {{.*}} ins(%[[FIX_FR0]], %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}} : tensor<1x2x16x32xi8>, tensor<1x2x16x32xi8>, i1, index, index, index)
+// CHECK: %[[MMAD1:.*]] = hivm.hir.mmadL1 {{.*}} ins(%[[FIX_FR0]], %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}} : tensor<1x2x16x32xi8>, tensor<1x1x32x32xi8>, i1, index, index, index)
 // CHECK: %[[FIX_FR1:.*]] = hivm.hir.convert_layout %[[FIX]] output_shape [1, 2, 16, 32]
 // CHECK-SAME: {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 32]>, srcLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 32]>}
-// CHECK: %[[MMAD2:.*]] = hivm.hir.mmadL1 {{.*}} ins(%[[FIX_FR1]], %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}} : tensor<1x2x16x32xi8>, tensor<1x2x16x32xi8>, i1, index, index, index)
+// CHECK: %[[MMAD2:.*]] = hivm.hir.mmadL1 {{.*}} ins(%[[FIX_FR1]], %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}} : tensor<1x2x16x32xi8>, tensor<1x1x32x32xi8>, i1, index, index, index)
   func.func @fixpipe_nz2nz_multi_use_inserts_fractal_marker(
       %a: tensor<32x32xi8>, %b0: tensor<32x32xi8>, %b1: tensor<32x32xi8>)
       -> (tensor<32x32xi32>, tensor<32x32xi32>) {
