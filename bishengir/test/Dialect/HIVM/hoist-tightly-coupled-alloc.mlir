@@ -115,16 +115,19 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   // Multi-level scf.for, but hoist only one level: the inner for yields the alloc
   // value, and the outer for consumes that result through a non-view op. Since the
   // same value is not yielded farther out, the alloc should be moved only to the
-  // outer for body, not to the function body.
+  // outer for body, not to the function body. It is inserted immediately before
+  // the inner for (after the preceding %seed), not at the outer body front, so
+  // the hoisted buffer's live range does not span unrelated earlier ops.
   // CHECK-LABEL: func.func @hoist_for_one_level
   func.func @hoist_for_one_level(%lb: i32, %ub: i32, %step: i32,
                                  %init: tensor<64x32xf32>) -> tensor<64x32xf32>
       attributes {hivm.func_core_type = #hivm.func_core_type<MIX>} {
     // CHECK: scf.for
     %outer = scf.for %i = %lb to %ub step %step iter_args(%oa = %init) -> (tensor<64x32xf32>) : i32 {
-      // CHECK: %[[ALLOC:.*]] = memref.alloc() : memref<64x32xf32, #hivm.address_space<ub>>
-      // CHECK: annotation.mark %[[ALLOC]]
-      // CHECK: scf.for
+      // CHECK: hivm.hir.vadd
+      // CHECK-NEXT: %[[ALLOC:.*]] = memref.alloc() : memref<64x32xf32, #hivm.address_space<ub>>
+      // CHECK-NEXT: annotation.mark %[[ALLOC]]
+      // CHECK-NEXT: scf.for
       %seed = hivm.hir.vadd ins(%oa, %oa : tensor<64x32xf32>, tensor<64x32xf32>) outs(%oa : tensor<64x32xf32>) -> tensor<64x32xf32>
       %inner = scf.for %j = %lb to %ub step %step iter_args(%ia = %seed) -> (tensor<64x32xf32>) : i32 {
         // CHECK-NOT: memref.alloc() : memref<64x32xf32, #hivm.address_space<ub>>
@@ -523,6 +526,43 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
       scf.yield %oa : tensor<64x32xf32>
     }
     return %outer : tensor<64x32xf32>
+  }
+}
+
+// -----
+
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  // A tightly-coupled UB alloc yielded out of an scf.if inside a loop body is
+  // inserted immediately before the scf.if, not at the loop body front. The
+  // preceding loop-body ops (vbrc here) must stay before the alloc so the
+  // buffer's live range does not span the whole loop body (UB overflow in
+  // PlanMemory otherwise).
+  // CHECK-LABEL: func.func @hoist_if_yield_insert_before_if
+  func.func @hoist_if_yield_insert_before_if(%lb: i32, %ub: i32, %step: i32,
+                                             %cond: i1, %init: tensor<64x32xf32>)
+      attributes {hivm.func_core_type = #hivm.func_core_type<MIX>} {
+    // CHECK: scf.for
+    scf.for %i = %lb to %ub step %step : i32 {
+      // CHECK: hivm.hir.vbrc
+      // CHECK-NEXT: %[[ALLOC:.*]] = memref.alloc() : memref<64x32xf32, #hivm.address_space<ub>>
+      // CHECK-NEXT: annotation.mark %[[ALLOC]]
+      // CHECK-NEXT: scf.if
+      %zero = arith.constant 0.000000e+00 : f32
+      %keep_init = tensor.empty() : tensor<64x32xf32>
+      %keep = hivm.hir.vbrc ins(%zero : f32) outs(%keep_init : tensor<64x32xf32>) -> tensor<64x32xf32>
+      %res = scf.if %cond -> (tensor<64x32xf32>) {
+        %alloc = memref.alloc() : memref<64x32xf32, #hivm.address_space<ub>>
+        annotation.mark %alloc {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>} : memref<64x32xf32, #hivm.address_space<ub>>
+        %cast = memref.memory_space_cast %alloc : memref<64x32xf32, #hivm.address_space<ub>> to memref<64x32xf32>
+        %t = bufferization.to_tensor %cast restrict writable : memref<64x32xf32>
+        scf.yield %t : tensor<64x32xf32>
+      } else {
+        scf.yield %keep : tensor<64x32xf32>
+      }
+      %use = hivm.hir.vadd ins(%res, %keep : tensor<64x32xf32>, tensor<64x32xf32>) outs(%keep : tensor<64x32xf32>) -> tensor<64x32xf32>
+      scf.yield
+    }
+    return
   }
 }
 

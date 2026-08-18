@@ -386,6 +386,49 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 
 // -----
 
+// Sink store into fallback_not_exec if, then let greedy fold Cube-side
+// vcast / vtranspose / store into fixpipe (L0C -> GM, nz2dn + pre_quant).
+// CHECK-LABEL: func.func @inline_fixpipe_fallback_not_exec_cast_transpose_store
+// CHECK: scf.if %{{.*}} {
+// CHECK:   hivm.hir.vbrc
+// CHECK:   hivm.hir.vcast
+// CHECK:   hivm.hir.vtranspose
+// CHECK:   hivm.hir.store
+// CHECK: } else {
+// CHECK:   hivm.hir.fixpipe
+// CHECK-SAME: dma_mode = #hivm.dma_mode<nz2dn>
+// CHECK-SAME: outs(%{{.*}} : memref<16x16xf16
+// CHECK-NOT: hivm.hir.store
+// CHECK: } {fallback_not_exec
+
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @inline_fixpipe_fallback_not_exec_cast_transpose_store(
+      %cond: i1,
+      %l0c: tensor<16x16xf32>,
+      %gm: memref<16x16xf16, strided<[16, 1]>>) {
+    %cst = arith.constant 0.000000e+00 : f32
+    %brc_init = tensor.empty() : tensor<16x16xf32>
+    %res = scf.if %cond -> (tensor<16x16xf32>) {
+      %brc = hivm.hir.vbrc ins(%cst : f32) outs(%brc_init : tensor<16x16xf32>) -> tensor<16x16xf32>
+      scf.yield %brc : tensor<16x16xf32>
+    } else {
+      %ub = tensor.empty() : tensor<16x16xf32>
+      %fix = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+          ins(%l0c : tensor<16x16xf32>) outs(%ub : tensor<16x16xf32>)
+          -> tensor<16x16xf32>
+      scf.yield %fix : tensor<16x16xf32>
+    } {fallback_not_exec}
+    %cast_init = tensor.empty() : tensor<16x16xf16>
+    %cast = hivm.hir.vcast ins(%res : tensor<16x16xf32>) outs(%cast_init : tensor<16x16xf16>) -> tensor<16x16xf16>
+    %tr_init = tensor.empty() : tensor<16x16xf16>
+    %tr = hivm.hir.vtranspose ins(%cast : tensor<16x16xf16>) outs(%tr_init : tensor<16x16xf16>) permutation = [1, 0] -> tensor<16x16xf16>
+    hivm.hir.store ins(%tr : tensor<16x16xf16>) outs(%gm : memref<16x16xf16, strided<[16, 1]>>)
+    return
+  }
+}
+
+// -----
+
 // CHECK-LABEL: func.func @used_at_input_and_init
 // CHECK: %[[MMAD0:.*]] = hivm.hir.mmadL1
 // CHECK: %[[FIX:.*]] = hivm.hir.fixpipe {channel_split = true} ins(%[[MMAD0]] : tensor<16x16xf32>)
@@ -400,5 +443,252 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     %2 = hivm.hir.mmadL1 ins(%arg2, %arg3, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%1 : tensor<16x16xf32>) -> tensor<16x16xf32>
     %3 = hivm.hir.mmadL1 ins(%2, %arg4, %true, %c16, %c16, %c16 : tensor<16x16xf32>, tensor<16x16xf16>, i1, index, index, index) outs(%2 : tensor<16x16xf32>) -> tensor<16x16xf32>
     return %3 : tensor<16x16xf32>
+  }
+}
+
+// -----
+
+  // Sink cast + transpose + extract_slice + store; greedy swaps extract_slice
+  // onto L0C then folds store into fixpipe (nz2dn + pre_quant -> GM subview).
+  // CHECK-LABEL: func.func @inline_fixpipe_fallback_not_exec_cast_transpose_slice_store
+  // CHECK: scf.if %{{.*}} {
+  // CHECK:   hivm.hir.vbrc
+  // CHECK:   hivm.hir.vcast
+  // CHECK:   hivm.hir.vtranspose
+  // CHECK:   tensor.extract_slice
+  // CHECK:   hivm.hir.store
+  // CHECK: } else {
+  // CHECK:   %[[SLICE:.*]] = tensor.extract_slice
+  // CHECK-SAME: : tensor<16x16xf32> to tensor<8x8xf32>
+  // CHECK:   hivm.hir.fixpipe
+  // CHECK-SAME: dma_mode = #hivm.dma_mode<nz2dn>
+  // CHECK-SAME: ins(%[[SLICE]] : tensor<8x8xf32>)
+  // CHECK-SAME: outs(%{{.*}} : memref<8x8xf16
+  // CHECK-NOT: hivm.hir.store
+  // CHECK: } {fallback_not_exec
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @inline_fixpipe_fallback_not_exec_cast_transpose_slice_store(
+      %cond: i1,
+      %l0c: tensor<16x16xf32>,
+      %gm: memref<16x16xf16, strided<[16, 1]>>) {
+    %cst = arith.constant 0.000000e+00 : f32
+    %brc_init = tensor.empty() : tensor<16x16xf32>
+    %res = scf.if %cond -> (tensor<16x16xf32>) {
+      %brc = hivm.hir.vbrc ins(%cst : f32) outs(%brc_init : tensor<16x16xf32>) -> tensor<16x16xf32>
+      scf.yield %brc : tensor<16x16xf32>
+    } else {
+      %ub = tensor.empty() : tensor<16x16xf32>
+      %fix = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+          ins(%l0c : tensor<16x16xf32>) outs(%ub : tensor<16x16xf32>)
+          -> tensor<16x16xf32>
+      scf.yield %fix : tensor<16x16xf32>
+    } {fallback_not_exec}
+    %cast_init = tensor.empty() : tensor<16x16xf16>
+    %cast = hivm.hir.vcast ins(%res : tensor<16x16xf32>) outs(%cast_init : tensor<16x16xf16>) -> tensor<16x16xf16>
+    %tr_init = tensor.empty() : tensor<16x16xf16>
+    %tr = hivm.hir.vtranspose ins(%cast : tensor<16x16xf16>) outs(%tr_init : tensor<16x16xf16>) permutation = [1, 0] -> tensor<16x16xf16>
+    %slice = tensor.extract_slice %tr[0, 0] [8, 8] [1, 1]
+        : tensor<16x16xf16> to tensor<8x8xf16>
+    %gm_subview = memref.subview %gm[0, 0] [8, 8] [1, 1]
+        : memref<16x16xf16, strided<[16, 1]>> to memref<8x8xf16, strided<[16, 1]>>
+    hivm.hir.store ins(%slice : tensor<8x8xf16>) outs(%gm_subview : memref<8x8xf16, strided<[16, 1]>>)
+    return
+  }
+}
+
+// -----
+
+// Basic fallback_not_exec sink: store only (no cast / transpose / slice).
+// CHECK-LABEL: func.func @inline_fixpipe_fallback_not_exec_store
+// CHECK: scf.if %{{.*}} {
+// CHECK:   %[[BRC:.*]] = hivm.hir.vbrc
+// CHECK:   hivm.hir.store ins(%[[BRC]]
+// CHECK: } else {
+// CHECK:   hivm.hir.fixpipe
+// CHECK-SAME: outs(%{{.*}} : memref<16x16xf32
+// CHECK-NOT: hivm.hir.store
+// CHECK: } {fallback_not_exec
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @inline_fixpipe_fallback_not_exec_store(
+      %cond: i1,
+      %l0c: tensor<16x16xf32>,
+      %gm: memref<16x16xf32, strided<[16, 1]>>) {
+    %cst = arith.constant 0.000000e+00 : f32
+    %brc_init = tensor.empty() : tensor<16x16xf32>
+    %res = scf.if %cond -> (tensor<16x16xf32>) {
+      %brc = hivm.hir.vbrc ins(%cst : f32) outs(%brc_init : tensor<16x16xf32>) -> tensor<16x16xf32>
+      scf.yield %brc : tensor<16x16xf32>
+    } else {
+      %ub = tensor.empty() : tensor<16x16xf32>
+      %fix = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+          ins(%l0c : tensor<16x16xf32>) outs(%ub : tensor<16x16xf32>)
+          -> tensor<16x16xf32>
+      scf.yield %fix : tensor<16x16xf32>
+    } {fallback_not_exec}
+    hivm.hir.store ins(%res : tensor<16x16xf32>) outs(%gm : memref<16x16xf32, strided<[16, 1]>>)
+    return
+  }
+}
+
+// -----
+
+// Without fallback_not_exec the sink must not apply: store stays outside the if.
+// CHECK-LABEL: func.func @inline_fixpipe_no_fallback_not_exec_no_sink
+// CHECK: %[[RES:.*]] = scf.if %{{.*}} -> (tensor<16x16xf32>) {
+// CHECK:   hivm.hir.vbrc
+// CHECK:   scf.yield
+// CHECK: } else {
+// CHECK:   hivm.hir.fixpipe
+// CHECK:   scf.yield
+// CHECK: }
+// CHECK-NOT: fallback_not_exec
+// CHECK: hivm.hir.store ins(%[[RES]]
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @inline_fixpipe_no_fallback_not_exec_no_sink(
+      %cond: i1,
+      %l0c: tensor<16x16xf32>,
+      %gm: memref<16x16xf32, strided<[16, 1]>>) {
+    %cst = arith.constant 0.000000e+00 : f32
+    %brc_init = tensor.empty() : tensor<16x16xf32>
+    %res = scf.if %cond -> (tensor<16x16xf32>) {
+      %brc = hivm.hir.vbrc ins(%cst : f32) outs(%brc_init : tensor<16x16xf32>) -> tensor<16x16xf32>
+      scf.yield %brc : tensor<16x16xf32>
+    } else {
+      %ub = tensor.empty() : tensor<16x16xf32>
+      %fix = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+          ins(%l0c : tensor<16x16xf32>) outs(%ub : tensor<16x16xf32>)
+          -> tensor<16x16xf32>
+      scf.yield %fix : tensor<16x16xf32>
+    }
+    hivm.hir.store ins(%res : tensor<16x16xf32>) outs(%gm : memref<16x16xf32, strided<[16, 1]>>)
+    return
+  }
+}
+
+// -----
+
+// fallback_not_exec if + store nested inside scf.for.
+// CHECK-LABEL: func.func @inline_fixpipe_fallback_not_exec_inside_for
+// CHECK: scf.for
+// CHECK:   scf.if %{{.*}} {
+// CHECK:     %[[BRC:.*]] = hivm.hir.vbrc
+// CHECK:     hivm.hir.store ins(%[[BRC]]
+// CHECK:   } else {
+// CHECK:     hivm.hir.fixpipe
+// CHECK-SAME: outs(%{{.*}} : memref<16x16xf32
+// CHECK-NOT: hivm.hir.store
+// CHECK:   } {fallback_not_exec
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @inline_fixpipe_fallback_not_exec_inside_for(
+      %lb: index, %ub: index, %step: index,
+      %cond: i1,
+      %l0c: tensor<16x16xf32>,
+      %gm: memref<16x16xf32, strided<[16, 1]>>) {
+    %cst = arith.constant 0.000000e+00 : f32
+    %brc_init = tensor.empty() : tensor<16x16xf32>
+    scf.for %i = %lb to %ub step %step {
+      %res = scf.if %cond -> (tensor<16x16xf32>) {
+        %brc = hivm.hir.vbrc ins(%cst : f32) outs(%brc_init : tensor<16x16xf32>) -> tensor<16x16xf32>
+        scf.yield %brc : tensor<16x16xf32>
+      } else {
+        %empty = tensor.empty() : tensor<16x16xf32>
+        %fix = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+            ins(%l0c : tensor<16x16xf32>) outs(%empty : tensor<16x16xf32>)
+            -> tensor<16x16xf32>
+        scf.yield %fix : tensor<16x16xf32>
+      } {fallback_not_exec}
+      hivm.hir.store ins(%res : tensor<16x16xf32>) outs(%gm : memref<16x16xf32, strided<[16, 1]>>)
+    }
+    return
+  }
+}
+
+// -----
+
+// annotation.mark on the fallback_not_exec if-result is ignored when walking
+// the store chain (same as hivm.debug / tensor.dim): it does not count as a
+// second user, so the sink still applies. After the rewrite the if is
+// resultless, so the mark on the old if-result is erased. Marks on values
+// that still exist (e.g. the L0C source) are left in place.
+// CHECK-LABEL: func.func @inline_fixpipe_fallback_not_exec_markop
+// CHECK: annotation.mark %{{.*}} : tensor<16x16xf32>
+// CHECK: scf.if %{{.*}} {
+// CHECK:   %[[BRC:.*]] = hivm.hir.vbrc
+// CHECK:   hivm.hir.store ins(%[[BRC]]
+// CHECK: } else {
+// CHECK:   hivm.hir.fixpipe
+// CHECK-SAME: outs(%{{.*}} : memref<16x16xf32
+// CHECK-NOT: hivm.hir.store
+// CHECK: } {fallback_not_exec
+// CHECK-NOT: annotation.mark %{{.*}} : tensor<16x16xf32>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @inline_fixpipe_fallback_not_exec_markop(
+      %cond: i1,
+      %l0c: tensor<16x16xf32>,
+      %gm: memref<16x16xf32, strided<[16, 1]>>) {
+    %cst = arith.constant 0.000000e+00 : f32
+    %brc_init = tensor.empty() : tensor<16x16xf32>
+    annotation.mark %l0c : tensor<16x16xf32>
+    %res = scf.if %cond -> (tensor<16x16xf32>) {
+      %brc = hivm.hir.vbrc ins(%cst : f32) outs(%brc_init : tensor<16x16xf32>) -> tensor<16x16xf32>
+      scf.yield %brc : tensor<16x16xf32>
+    } else {
+      %ub = tensor.empty() : tensor<16x16xf32>
+      %fix = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+          ins(%l0c : tensor<16x16xf32>) outs(%ub : tensor<16x16xf32>)
+          -> tensor<16x16xf32>
+      scf.yield %fix : tensor<16x16xf32>
+    } {fallback_not_exec}
+    // expected-warning @below {{dropping annotation.mark on fallback_not_exec if result; the tensor no longer exists after InlineFixpipe sink}}
+    annotation.mark %res : tensor<16x16xf32>
+    hivm.hir.store ins(%res : tensor<16x16xf32>) outs(%gm : memref<16x16xf32, strided<[16, 1]>>)
+    return
+  }
+}
+
+// -----
+
+// Dynamic extract_slice offsets/sizes (and the matching GM subview) sit after
+// the if; the sink hoists those effect-free defs so they dominate uses inside
+// both branches.
+// CHECK-LABEL: func.func @inline_fixpipe_fallback_not_exec_dynamic_slice_store
+// CHECK: scf.if %{{.*}} {
+// CHECK:   hivm.hir.vbrc
+// CHECK:   tensor.extract_slice
+// CHECK:   hivm.hir.store
+// CHECK: } else {
+// CHECK:   tensor.extract_slice
+// CHECK: } {fallback_not_exec
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @inline_fixpipe_fallback_not_exec_dynamic_slice_store(
+      %cond: i1,
+      %l0c: tensor<16x16xf32>,
+      %gm: memref<16x16xf16, strided<[16, 1]>>,
+      %off: index,
+      %sz: index) {
+    %cst = arith.constant 0.000000e+00 : f32
+    %c0 = arith.constant 0 : index
+    %brc_init = tensor.empty() : tensor<16x16xf32>
+    %res = scf.if %cond -> (tensor<16x16xf32>) {
+      %brc = hivm.hir.vbrc ins(%cst : f32) outs(%brc_init : tensor<16x16xf32>) -> tensor<16x16xf32>
+      scf.yield %brc : tensor<16x16xf32>
+    } else {
+      %ub = tensor.empty() : tensor<16x16xf32>
+      %fix = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+          ins(%l0c : tensor<16x16xf32>) outs(%ub : tensor<16x16xf32>)
+          -> tensor<16x16xf32>
+      scf.yield %fix : tensor<16x16xf32>
+    } {fallback_not_exec}
+    %cast_init = tensor.empty() : tensor<16x16xf16>
+    %cast = hivm.hir.vcast ins(%res : tensor<16x16xf32>) outs(%cast_init : tensor<16x16xf16>) -> tensor<16x16xf16>
+    %tr_init = tensor.empty() : tensor<16x16xf16>
+    %tr = hivm.hir.vtranspose ins(%cast : tensor<16x16xf16>) outs(%tr_init : tensor<16x16xf16>) permutation = [1, 0] -> tensor<16x16xf16>
+    %off0 = arith.addi %off, %c0 : index
+    %slice = tensor.extract_slice %tr[%off0, %off0] [%sz, %sz] [1, 1]
+        : tensor<16x16xf16> to tensor<?x?xf16>
+    %gm_subview = memref.subview %gm[%off0, %off0] [%sz, %sz] [1, 1]
+        : memref<16x16xf16, strided<[16, 1]>> to memref<?x?xf16, strided<[16, 1], offset: ?>>
+    hivm.hir.store ins(%slice : tensor<?x?xf16>) outs(%gm_subview : memref<?x?xf16, strided<[16, 1], offset: ?>>)
+    return
   }
 }

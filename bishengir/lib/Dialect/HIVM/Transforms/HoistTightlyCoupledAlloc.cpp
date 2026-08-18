@@ -31,6 +31,13 @@
 // escapes to) makes the buffer live at the same loop level on both cores, so
 // the two anchors agree again.
 //
+// Within that target region the alloc is inserted immediately before the
+// operation the value escaped through (the enclosing scf.if / scf.for /
+// scf.while), not at the region front. Both placements satisfy the anchor
+// agreement, but inserting at the escape point avoids extending the buffer's
+// live range across unrelated earlier ops in the region (e.g. a whole
+// pipelined loop body), which can otherwise overflow UB in PlanMemory.
+//
 // This runs on the MIX function before SplitMixKernel, so both AIC/AIV clones
 // inherit the hoisted placement.
 //
@@ -84,22 +91,31 @@ static unsigned getBlockDepth(Block *block) {
   return depth;
 }
 
-static Block *getOuterBlock(Block *lhs, Block *rhs) {
-  if (!lhs)
+/// Where a hoisted alloc must be placed: the block the traced value escapes
+/// to, and the operation in that block the value escaped through. The alloc is
+/// inserted immediately before `insertBefore` (see file header) so hoisting
+/// does not stretch the buffer's live range across the whole target block.
+struct HoistTarget {
+  Block *block = nullptr;
+  Operation *insertBefore = nullptr;
+};
+
+static HoistTarget getOuterTarget(HoistTarget lhs, HoistTarget rhs) {
+  if (!lhs.block)
     return rhs;
-  if (!rhs)
+  if (!rhs.block)
     return lhs;
-  return getBlockDepth(lhs) <= getBlockDepth(rhs) ? lhs : rhs;
+  return getBlockDepth(lhs.block) <= getBlockDepth(rhs.block) ? lhs : rhs;
 }
 
-static Block *findHoistTargetBlock(Value carried, Block *curBlock);
+static HoistTarget findHoistTarget(Value carried, Block *curBlock);
 
 /// Follow the escape chains of the `scf.while` iteration slot `idx` and return
-/// the outermost block, seeded with the while op's own block.
-static Block *traceWhileSlot(scf::WhileOp whileOp, int idx, bool traceInit,
-                             bool traceResult) {
+/// the outermost target, seeded with the while op's own block.
+static HoistTarget traceWhileSlot(scf::WhileOp whileOp, int idx, bool traceInit,
+                                  bool traceResult) {
   Block *whileBlock = whileOp->getBlock();
-  Block *best = whileBlock;
+  HoistTarget best{whileBlock, whileOp.getOperation()};
   if (idx < 0)
     return best;
 
@@ -123,22 +139,23 @@ static Block *traceWhileSlot(scf::WhileOp whileOp, int idx, bool traceInit,
 
   if ((traceInit || forwarded) &&
       idx < static_cast<int>(whileOp.getInits().size()))
-    best = getOuterBlock(
-        best, findHoistTargetBlock(whileOp.getInits()[idx], whileBlock));
+    best = getOuterTarget(
+        best, findHoistTarget(whileOp.getInits()[idx], whileBlock));
 
   if ((traceResult || forwarded) &&
       idx < static_cast<int>(whileOp->getNumResults()))
-    best = getOuterBlock(
-        best, findHoistTargetBlock(whileOp.getResult(idx), whileBlock));
+    best = getOuterTarget(
+        best, findHoistTarget(whileOp.getResult(idx), whileBlock));
 
   return best;
 }
 
 /// Walk outward from `alloc`, following the chain of yields that carry a value
-/// derived from the alloc, and return the outermost block the value escapes to.
-/// Returns nullptr when the alloc's view is not yielded anywhere (no hoist).
-static Block *findHoistTargetBlock(Value carried, Block *curBlock) {
-  Block *targetBlock = nullptr;
+/// derived from the alloc, and return the outermost target the value escapes
+/// to. Returns an empty target when the alloc's view is not yielded anywhere
+/// (no hoist).
+static HoistTarget findHoistTarget(Value carried, Block *curBlock) {
+  HoistTarget target;
 
   while (curBlock) {
     if (auto blockArg = dyn_cast<BlockArgument>(carried)) {
@@ -148,21 +165,23 @@ static Block *findHoistTargetBlock(Value carried, Block *curBlock) {
       if (auto whileOp = dyn_cast_if_present<scf::WhileOp>(argParent)) {
         int idx = static_cast<int>(blockArg.getArgNumber());
         if (argBlock == whileOp.getBeforeBody())
-          return getOuterBlock(targetBlock,
-                               traceWhileSlot(whileOp, idx, /*traceInit=*/true,
-                                              /*traceResult=*/false));
+          return getOuterTarget(target,
+                                traceWhileSlot(whileOp, idx, /*traceInit=*/true,
+                                               /*traceResult=*/false));
         if (argBlock == whileOp.getAfterBody())
-          return getOuterBlock(targetBlock,
-                               traceWhileSlot(whileOp, idx, /*traceInit=*/false,
-                                              /*traceResult=*/true));
+          return getOuterTarget(target,
+                                traceWhileSlot(whileOp, idx, /*traceInit=*/false,
+                                               /*traceResult=*/true));
       }
 
       auto loopOp = dyn_cast_if_present<LoopLikeOpInterface>(argParent);
       if (OpOperand *initOperand =
               loopOp ? loopOp.getTiedLoopInit(blockArg) : nullptr) {
-        Block *iterArgLoopBlock = loopOp->getBlock();
-        targetBlock = getOuterBlock(targetBlock, iterArgLoopBlock);
-        curBlock = iterArgLoopBlock;
+        // The value is carried by a loop iter_arg, so the alloc must dominate
+        // the loop op itself.
+        Operation *loop = loopOp.getOperation();
+        target = getOuterTarget(target, {loop->getBlock(), loop});
+        curBlock = loop->getBlock();
         carried = initOperand->get();
         continue;
       }
@@ -182,12 +201,12 @@ static Block *findHoistTargetBlock(Value carried, Block *curBlock) {
         break;
 
       Block *forBlock = parent->getBlock();
-      Block *bestTarget = forBlock;
-      bestTarget = getOuterBlock(
-          bestTarget, findHoistTargetBlock(forOp.getInitArgs()[idx], forBlock));
-      bestTarget = getOuterBlock(
-          bestTarget, findHoistTargetBlock(forOp.getResult(idx), forBlock));
-      return bestTarget;
+      HoistTarget best{forBlock, forOp.getOperation()};
+      best = getOuterTarget(best,
+                            findHoistTarget(forOp.getInitArgs()[idx], forBlock));
+      best = getOuterTarget(best,
+                            findHoistTarget(forOp.getResult(idx), forBlock));
+      return best;
     }
     if (auto ifOp = dyn_cast<scf::IfOp>(parent)) {
       auto yieldOp = dyn_cast<scf::YieldOp>(curBlock->getTerminator());
@@ -205,9 +224,9 @@ static Block *findHoistTargetBlock(Value carried, Block *curBlock) {
         int idx = findTracedIndex(yieldOp.getOperands(), carried);
         if (idx < 0)
           break;
-        return getOuterBlock(targetBlock,
-                             traceWhileSlot(whileOp, idx, /*traceInit=*/true,
-                                            /*traceResult=*/false));
+        return getOuterTarget(target,
+                              traceWhileSlot(whileOp, idx, /*traceInit=*/true,
+                                             /*traceResult=*/false));
       }
       if (curBlock == whileOp.getBeforeBody()) {
         auto condOp = dyn_cast<scf::ConditionOp>(curBlock->getTerminator());
@@ -216,25 +235,28 @@ static Block *findHoistTargetBlock(Value carried, Block *curBlock) {
         int idx = findTracedIndex(condOp.getArgs(), carried);
         if (idx < 0)
           break;
-        return getOuterBlock(targetBlock,
-                             traceWhileSlot(whileOp, idx, /*traceInit=*/false,
-                                            /*traceResult=*/true));
+        return getOuterTarget(target,
+                              traceWhileSlot(whileOp, idx, /*traceInit=*/false,
+                                             /*traceResult=*/true));
       }
       break;
     } else {
       break;
     }
 
-    targetBlock = parent->getBlock();
-    curBlock = targetBlock;
+    // The value escaped through `parent`; inserting right before it dominates
+    // both the in-region uses and the escaped result without spanning the
+    // whole parent block.
+    target = {parent->getBlock(), parent};
+    curBlock = target.block;
     carried = nextCarried;
   }
 
-  return targetBlock;
+  return target;
 }
 
-static Block *findHoistTargetBlock(memref::AllocOp alloc) {
-  return findHoistTargetBlock(alloc.getResult(), alloc->getBlock());
+static HoistTarget findHoistTarget(memref::AllocOp alloc) {
+  return findHoistTarget(alloc.getResult(), alloc->getBlock());
 }
 
 struct HoistTightlyCoupledAllocPass
@@ -267,14 +289,17 @@ void HoistTightlyCoupledAllocPass::runOnOperation() {
   });
 
   for (memref::AllocOp allocOp : worklist) {
-    Block *target = findHoistTargetBlock(allocOp);
-    if (!target || target == allocOp->getBlock())
+    HoistTarget target = findHoistTarget(allocOp);
+    if (!target.block || target.block == allocOp->getBlock())
       continue;
     LLVM_DEBUG(llvm::dbgs()
                << "[" DEBUG_TYPE "]: "
                << "hoisting tightly-coupled alloc: " << allocOp << "\n");
     auto maybeMark = getTightlyCoupledMark(allocOp.getMemref());
-    allocOp->moveBefore(&target->front());
+    if (target.insertBefore)
+      allocOp->moveBefore(target.insertBefore);
+    else
+      allocOp->moveBefore(&target.block->front());
     if (maybeMark.has_value())
       (*maybeMark)->moveAfter(allocOp);
   }
