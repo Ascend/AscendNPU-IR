@@ -1734,9 +1734,9 @@ void MemPlan::MergeInplaceSE() {
     }
     // remove the alloc info of dst after successful merging
     auto *e = std::find_if(StorageEntryVec.begin(), StorageEntryVec.end(),
-                          [genSE](std::unique_ptr<StorageEntry> &se) {
-                            return se.get() == genSE;
-                          });
+                           [genSE](std::unique_ptr<StorageEntry> &se) {
+                             return se.get() == genSE;
+                           });
     StorageEntryVec.erase(e);
   }
 }
@@ -2006,8 +2006,8 @@ PlanStatus MemPlan::PlanMemAddressOfWholeLocalBuffer() {
           return as;
         }
         LDBG("[PlanLocal] ApplyFailStrategy -> CONTINUE_PLAN "
-             "specLevel=" << si.specLevel << " childIdx=" << si.childIdx
-             << "\n");
+             "specLevel="
+             << si.specLevel << " childIdx=" << si.childIdx << "\n");
       }
       if (si.childIdx >= childrenNum) {
         break;
@@ -2196,8 +2196,8 @@ LogicalResult MemPlan::MultiSpecPlan(SpecInfo &si, MemBoundList &outline,
         // In roll back plan, when the specified specStartIdx is reached,
         // the subsequent plan still adopts the maxLevel strategy.
         LDBG("[MultiSpecPlan] reached specStartIdx="
-             << si.specStartIdx << ", reset specLevel to maxLevel="
-             << si.maxLevel << "\n");
+             << si.specStartIdx
+             << ", reset specLevel to maxLevel=" << si.maxLevel << "\n");
         si.specLevel = si.maxLevel;
       }
       si.childIdx++;
@@ -2988,7 +2988,7 @@ bool MemPlan::ContinueRollBack(const StatusWrapper &statusWrapper) const {
 // the first buffer only when both were planned at the same level; if the
 // levels differ they may be retried independently (e.g. other at L2 while
 // first already at L0).
-bool MemPlan::ShouldRollbackMuiltiBuffer(const PlanRecord& r) const {
+bool MemPlan::ShouldRollbackMuiltiBuffer(const PlanRecord &r) const {
   if (r.isDirectlyRollback) {
     return true;
   }

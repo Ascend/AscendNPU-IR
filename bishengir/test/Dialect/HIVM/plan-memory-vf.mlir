@@ -66,7 +66,7 @@ func.func @plan_memory_vf_best_inplace_pair_outlined_vf_1(
 // CHECK: hivm.hir.pointer_cast(%[[F8_OFFSET]]) : memref<31744xf8E4M3FN, #hivm.address_space<ub>>
 // CHECK: hivm.hir.pointer_cast(%[[F32_OFFSET]]) : memref<31744xf32, #hivm.address_space<ub>>
 func.func @plan_memory_vf_best_inplace_pair(
-    %arg3: memref<?xf8E4M3FN, #hivm.address_space<gm>>) 
+    %arg3: memref<?xf8E4M3FN, #hivm.address_space<gm>>)
     attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vf_mode = #hivm.vf_mode<SIMD>} {
   %alloc_0 = memref.alloc() {alignment = 64 : i64} : memref<31744xf32, #hivm.address_space<ub>>
   hivm.hir.debug {debugtype = "print", hex = false, prefix = " x0: ", tcoretype = #hivm.tcore_type<CUBE_OR_VECTOR>} %alloc_0 : memref<31744xf32, #hivm.address_space<ub>>
@@ -544,9 +544,8 @@ func.func @select_init_iter_vf_add(
 // CHECK-LABEL: func.func @plan_memory_vf_select_init_iter_no_reuse_yield
 // CHECK: scf.for
 // CHECK: %[[TMP:.*]] = hivm.hir.pointer_cast(%[[TMP_OFF:.*]]) : memref<64xf32
-// CHECK-NOT: hivm.hir.pointer_cast(%[[TMP_OFF]]) : memref<64xf32
-// CHECK: %[[ACC:.*]] = hivm.hir.pointer_cast(%{{.*}}) : memref<64xf32
-// CHECK: func.call @select_init_iter_vf_add(%{{.*}}, %[[TMP]], %[[ACC]])
+// CHECK-NOT: hivm.hir.pointer_cast(%[[TMP_OFF]])
+// CHECK: func.call @select_init_iter_vf_add(%{{.*}}, %[[TMP]], %[[ACC:.*]])
 func.func @plan_memory_vf_select_init_iter_no_reuse_yield(
     %gm: memref<64xf32, #hivm.address_space<gm>>,
     %cond: i1) {
