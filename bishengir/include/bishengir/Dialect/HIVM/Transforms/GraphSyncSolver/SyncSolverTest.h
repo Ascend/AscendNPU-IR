@@ -22,12 +22,12 @@
 
 namespace mlir::hivm::syncsolver {
 
-class SolverTest : public Solver {
+class SolverTest : public SyncSolverV1 {
 public:
   SolverTest() = delete;
 
   SolverTest(std::unique_ptr<IRTranslator> irTranslator)
-      : Solver(std::move(irTranslator)) {}
+      : SyncSolverV1(std::move(irTranslator)) {}
 };
 
 } // namespace mlir::hivm::syncsolver

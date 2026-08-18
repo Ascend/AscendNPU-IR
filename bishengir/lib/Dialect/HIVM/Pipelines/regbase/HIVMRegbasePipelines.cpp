@@ -102,6 +102,7 @@ hivmIntraCoreSyncPipeline(OpPassManager &pm,
       !hivmPipelineOptions.enableHIVMInjectBarrierAllSync) {
     GraphSyncSolverOptions gssOptions;
     gssOptions.enableUnitFlag = hivmPipelineOptions.enableHIVMUnitFlagSync;
+    gssOptions.solverVersion = hivmPipelineOptions.hivmSyncSolverVersion;
     pm.nest<func::FuncOp>().addPass(createGraphSyncSolverPass(gssOptions));
   } else {
     InjectSyncOptions syncOptions;
@@ -147,7 +148,11 @@ hivmCrossCoreAutoSyncGSSPipeline(OpPassManager &pm,
   if (mode == CrossCoreAutoSyncMode::CCGSS_STEP_1) {
     canonicalizationHIVMPipeline(pm);
     pm.addPass(createMarkRealCoreTypePass());
-    pm.nest<func::FuncOp>().addPass(createCrossCoreGSSPass());
+    CrossCoreGSSOptions crossCoreGSSOptions;
+    crossCoreGSSOptions.solverVersion =
+        hivmPipelineOptions.hivmSyncSolverVersion;
+    pm.nest<func::FuncOp>().addPass(
+        createCrossCoreGSSPass(crossCoreGSSOptions));
     MarkRealCoreTypeOptions markRealCoreTypeOptions;
     markRealCoreTypeOptions.removeCoreTypeAttrs = true;
     pm.addPass(createMarkRealCoreTypePass(markRealCoreTypeOptions));
@@ -164,9 +169,12 @@ static void hivmDelayedCrossCoreAutoSyncGSSPipeline(
     // delayed cross-core autosync flow. Remove this once auto-vectorize no
     // longer depends on the presence of sync ops to preserve those boundaries.
     pm.addPass(createMarkRealCoreTypePass());
-    CrossCoreGSSOptions options;
-    options.enableCVPatterns = false;
-    pm.nest<func::FuncOp>().addPass(createCrossCoreGSSPass(options));
+    CrossCoreGSSOptions crossCoreGSSOptions;
+    crossCoreGSSOptions.enableCVPatterns = false;
+    crossCoreGSSOptions.solverVersion =
+        hivmPipelineOptions.hivmSyncSolverVersion;
+    pm.nest<func::FuncOp>().addPass(
+        createCrossCoreGSSPass(crossCoreGSSOptions));
     InsertAnchorsAndBackupOptions insertAnchorsAndBackupOptions;
     insertAnchorsAndBackupOptions.insertAnchorOnlyBeforeCubeOps = false;
     insertAnchorsAndBackupOptions.insertAnchorBeforeCubeAndVectorOps = true;
@@ -180,6 +188,8 @@ static void hivmDelayedCrossCoreAutoSyncGSSPipeline(
     DelayedCrossCoreGSSOptions delayedcrossCoreGSSOptions;
     delayedcrossCoreGSSOptions.blockAllSync =
         hivmPipelineOptions.enableHIVMInjectBlockAllSync;
+    delayedcrossCoreGSSOptions.solverVersion =
+        hivmPipelineOptions.hivmSyncSolverVersion;
     pm.addPass(createDelayedCrossCoreGSSPass(delayedcrossCoreGSSOptions));
     MarkRealCoreTypeOptions markRealCoreTypeOptions;
     markRealCoreTypeOptions.removeCoreTypeAttrs = true;

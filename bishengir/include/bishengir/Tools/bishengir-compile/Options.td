@@ -201,6 +201,14 @@ def EnableHIVMGraphSyncSolver : FeatureControlOptions<
   let passGroup = ["HIVM"];
 }
 
+def HIVMSyncSolverVersion : FeatureControlOptions<
+  "Specify the version of hivm sync-solver used for auto-sync passes.",
+  "std::string",
+  "\"v1\""
+> {
+  let passGroup = ["HIVM"];
+}
+
 def DisableAutoCVWorkSpaceManage : FeatureControlOptions<
   "In combination with the disableAutoInjectBlockSync option.",
   "bool",
@@ -966,6 +974,14 @@ def EnableTreeReduce : FeatureControlOptions<
   "Enable tree reduce",
   "bool",
   "false"
+> {
+  let passGroup = ["HFUSION"];
+}
+
+def EnableTreeReduceV2 : FeatureControlOptions<
+  "Enable tree reduce v2",
+  "bool",
+  "true"
 > {
   let passGroup = ["HFUSION"];
 }

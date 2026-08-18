@@ -38,6 +38,8 @@ void populateScalarMathPromotionPatterns(RewritePatternSet &patterns);
 
 /// Creates a pass to convert the HFusion dialect to the HIVM dialect.
 std::unique_ptr<Pass> createMathToHFusionConversionPass();
+std::unique_ptr<Pass>
+createMathToHFusionConversionPass(const ConvertMathToHFusionOptions &options);
 
 } // namespace mlir
 

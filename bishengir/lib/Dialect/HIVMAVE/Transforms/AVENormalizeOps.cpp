@@ -683,7 +683,7 @@ static void adaptBitWidthForStore(IRRewriter &rewriter,
       if (result != srcVec) {
         LDBG("add dintlv for unaligned store");
         // set new src vector of store
-        store.setOperand(3, result);
+        store->setOperand(store->getNumOperands() - 1, result);
       }
     }
     // If data bits = 1/4 * ElementAlignment, because vlds/vsts

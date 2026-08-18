@@ -6,8 +6,8 @@
 
 module {
   // CHECK-LABEL: add(
-  func.func private @add(%arg0: tensor<64x64xf16>, %arg1: tensor<64x64xf16>, 
-                         %arg2: tensor<64x64xf16> {hacc.arg_type = #hacc.arg_type<output>}) -> tensor<64x64xf16> 
+  func.func private @add(%arg0: tensor<64x64xf16>, %arg1: tensor<64x64xf16>,
+                         %arg2: tensor<64x64xf16> {hacc.arg_type = #hacc.arg_type<output>}) -> tensor<64x64xf16>
   attributes {hivm.func_core_type = #hivm.func_core_type<AIV>}
 
   // CHECK-LABEL: mul_add_mix_aic({{.*}} attributes {hivm.func_core_type = #hivm.func_core_type<AIC>, hivm.part_of_mix}
@@ -111,24 +111,24 @@ module {
 
 // -----
 
-// CHECK-LABEL: @test_callee_arg_with_inconsistent_order_mix_aic({{.*}}: i64, {{.*}}: tensor<128x256xf32>, 
-// CHECK-SAME: {{.*}}: tensor<256xf32>, {{.*}}: tensor<768x256xf32>, %[[arg4:.*]]: tensor<128xf32>, %[[arg5:.*]]: tensor<128x1xf32>, 
+// CHECK-LABEL: @test_callee_arg_with_inconsistent_order_mix_aic({{.*}}: i64, {{.*}}: tensor<128x256xf32>,
+// CHECK-SAME: {{.*}}: tensor<256xf32>, {{.*}}: tensor<768x256xf32>, %[[arg4:.*]]: tensor<128xf32>, %[[arg5:.*]]: tensor<128x1xf32>,
 // CHECK-SAME: {{.*}}: tensor<128x768xf32>, {{.*}}: tensor<128x256xf32>)
 // CHECK: return %[[arg4]], %[[arg5]], {{.*}} : tensor<128xf32>, tensor<128x1xf32>, tensor<128x768xf32>
 module {
   func.func @callee_arg_with_inconsistent_order(
-    %arg0: tensor<128xf32> {hacc.arg_type = #hacc.arg_type<output>}, 
-    %arg1: tensor<128x1xf32> {hacc.arg_type = #hacc.arg_type<output>}, 
-    %arg2: tensor<128x256xf32>, 
-    %arg3: tensor<256xf32>, 
+    %arg0: tensor<128xf32> {hacc.arg_type = #hacc.arg_type<output>},
+    %arg1: tensor<128x1xf32> {hacc.arg_type = #hacc.arg_type<output>},
+    %arg2: tensor<128x256xf32>,
+    %arg3: tensor<256xf32>,
     %arg4: tensor<128x256xf32> {hacc.arg_type = #hacc.arg_type<output>}) -> (tensor<128xf32>, tensor<128x1xf32>, tensor<128x256xf32>) attributes {hacc.always_inline, hacc.function_kind = #hacc.function_kind<DEVICE>, hacc.tiling_func = "", hacc.block_dim = 1 : i64, hfusion.fusion_kind = #hfusion.fusion_kind<LAST_AXIS_PBR>, hivm.func_core_type = #hivm.func_core_type<AIV>} {
       return %arg0, %arg1, %arg4 : tensor<128xf32>, tensor<128x1xf32>, tensor<128x256xf32>
   }
   func.func @test_callee_arg_with_inconsistent_order(
-    %arg0: i64, %arg1: tensor<128x256xf32>, %arg2: tensor<256xf32>, %arg3: tensor<768x256xf32>, %arg4: tensor<128xf32>, 
+    %arg0: i64, %arg1: tensor<128x256xf32>, %arg2: tensor<256xf32>, %arg3: tensor<768x256xf32>, %arg4: tensor<128xf32>,
     %arg5: tensor<128x1xf32>, %arg6: tensor<128x768xf32>, %arg7: tensor<128x256xf32>) -> (tensor<128xf32>, tensor<128x1xf32>, tensor<128x768xf32>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hfusion.fusion_kind = #hfusion.fusion_kind<SHALLOW_CV>, hivm.func_core_type = #hivm.func_core_type<MIX>} {
-      %0:3 = call @callee_arg_with_inconsistent_order(%arg4, %arg5, %arg1, %arg2, %arg7) : 
-        (tensor<128xf32>, tensor<128x1xf32>, tensor<128x256xf32>, tensor<256xf32>, tensor<128x256xf32>) 
+      %0:3 = call @callee_arg_with_inconsistent_order(%arg4, %arg5, %arg1, %arg2, %arg7) :
+        (tensor<128xf32>, tensor<128x1xf32>, tensor<128x256xf32>, tensor<256xf32>, tensor<128x256xf32>)
         -> (tensor<128xf32>, tensor<128x1xf32>, tensor<128x256xf32>)
       %1 = hivm.hir.mix_matmul ins(%0#2, %arg3 : tensor<128x256xf32>, tensor<768x256xf32>) outs(%arg6 : tensor<128x768xf32>) b_transpose -> tensor<128x768xf32>
         return %0#0, %0#1, %1 : tensor<128xf32>, tensor<128x1xf32>, tensor<128x768xf32>
@@ -166,8 +166,8 @@ module {
 // CHECK:     %[[EXT2:.*]] = tensor.extract_slice %[[VADD2]]
 // CHECK:     scf.yield %[[EXT2]]
 // CHECK:   scf.yield %[[ACC_CUBE_V]], %[[RES_INNER1_V]], %[[RES_INNER2_V]]
-func.func @test_split_and_cleanup(%A: tensor<64x128xf16>, 
-                                  %B: tensor<256x128xf16>, 
+func.func @test_split_and_cleanup(%A: tensor<64x128xf16>,
+                                  %B: tensor<256x128xf16>,
                                   %C_init: tensor<64x256xf32>,
                                   %V_init: tensor<64x256xf32>,
                                   %V_reduce_init: tensor<64xf32>) -> (tensor<64x256xf32>, tensor<64x256xf32>, tensor<64xf32>) attributes {hivm.func_core_type = #hivm.func_core_type<MIX>} {
@@ -249,7 +249,7 @@ func.func @test_scope_tensor(%ext_tensor: tensor<128x128xf32>, %ext_val: i32) ->
     %local_int_v = arith.constant 100 : i32
     scope.return %vadd, %ext_tensor, %local_int_v : tensor<128x128xf32>, tensor<128x128xf32>, i32
   } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
-  return %cube_res#0, %cube_res#1, %cube_res#2, %vec_res#0, %vec_res#1, %vec_res#2 
+  return %cube_res#0, %cube_res#1, %cube_res#2, %vec_res#0, %vec_res#1, %vec_res#2
     : tensor<128x128xf32>, tensor<128x128xf32>, i32, tensor<128x128xf32>, tensor<128x128xf32>, i32
 }
 
@@ -266,7 +266,7 @@ module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
   // CHECK:           %[[STORE:.*]] = hivm.hir.store ins(%[[VADD_INNER]] : tensor<128x128xf32>)
   // CHECK-NEXT:      annotation.mark %[[STORE]] : tensor<128x128xf32>
   // CHECK-NOT:       annotation.mark
-  func.func @test_true_marks(%arg0: tensor<128x128xf32>, %arg1: tensor<128x128xf32>) 
+  func.func @test_true_marks(%arg0: tensor<128x128xf32>, %arg1: tensor<128x128xf32>)
       attributes {hivm.func_core_type = #hivm.func_core_type<MIX>} {
     %cst = arith.constant 1.0 : f32
     %true = arith.constant true
@@ -476,17 +476,17 @@ func.func @triton_dot_2(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_add
 // -----
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   // CHECK-LABEL: _attn_fwd_mix_aic(
-  // CHECK: memref.alloc()
-  // CHECK: annotation.mark {{.*}} {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>}
+  // CHECK: %[[CBUF:.*]] = memref.alloc() {alignment = 64 : i64} : memref<16x16xf16, #hivm.address_space<cbuf>>
+  // CHECK: annotation.mark %[[CBUF]] {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<1>} : memref<16x16xf16, #hivm.address_space<cbuf>>
   // CHECK: bufferization.to_tensor
   // CHECK: hivm.hir.mmadL1
-  // CHECK: %[[VAL_1:.*]]  = memref.alloc() : memref<16x16xf32, #hivm.address_space<ub>>
-  // CHECK: annotation.mark %[[VAL_1]] {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<1>} : memref<16x16xf32, #hivm.address_space<ub>>
-  // CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins({{.*}} : tensor<16x16xf32>) outs(%[[VAL_1:.*]] : memref<16x16xf32, #hivm.address_space<ub>>)
+  // CHECK: %[[UB:.*]] = memref.alloc() : memref<16x16xf32, #hivm.address_space<ub>>
+  // CHECK: annotation.mark %[[UB]] {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>} : memref<16x16xf32, #hivm.address_space<ub>>
+  // CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins({{.*}} : tensor<16x16xf32>) outs(%[[UB]] : memref<16x16xf32, #hivm.address_space<ub>>)
   // CHECK-LABEL: _attn_fwd_mix_aiv(
-  // CHECK: annotation.mark {{.*}} {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>} : memref<16x16xf16, #hivm.address_space<cbuf>>
+  // CHECK: annotation.mark {{.*}} {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<1>} : memref<16x16xf16, #hivm.address_space<cbuf>>
   // CHECK: memref.alloc() : memref<16x16xf32, #hivm.address_space<ub>>
-  // CHECK: annotation.mark {{.*}} {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<1>} : memref<16x16xf32, #hivm.address_space<ub>>
+  // CHECK: annotation.mark {{.*}} {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>} : memref<16x16xf32, #hivm.address_space<ub>>
   func.func @_attn_fwd(%arg0: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg1: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg2: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg4: f32, %arg5: i32, %arg6: i32, %arg7: i32) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix"} {
     %c16 = arith.constant 16 : index
     %c16_i32 = arith.constant 16 : i32
@@ -558,6 +558,10 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     // Two new UB allocs without TCB mark.
     %new0 = memref.alloc() : memref<8x8xf32, #hivm.address_space<ub>>
     %new1 = memref.alloc() : memref<32xf32, #hivm.address_space<ub>>
+    %tensor_8x8 = tensor.empty() : tensor<8x8xf32>
+    %tensor_32 = tensor.empty() : tensor<32xf32>
+    hivm.hir.fixpipe {enable_nz2nd} ins(%tensor_8x8 : tensor<8x8xf32>) outs(%new0 : memref<8x8xf32, #hivm.address_space<ub>>)
+    hivm.hir.fixpipe {enable_nz2nd} ins(%tensor_32 : tensor<32xf32>) outs(%new1 : memref<32xf32, #hivm.address_space<ub>>)
 
     return
   }

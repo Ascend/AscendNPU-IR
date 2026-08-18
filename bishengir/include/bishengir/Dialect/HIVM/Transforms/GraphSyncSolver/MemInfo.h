@@ -69,7 +69,13 @@ struct PointerLikeInfo {
   PointerLikeInfo() = default;
   explicit PointerLikeInfo(Operation *op) : op(op) {}
 
-  bool operator==(const PointerLikeInfo &other) const { return op == other.op; }
+  bool operator==(const PointerLikeInfo &other) const {
+    return (op != nullptr && op == other.op) ||
+           (std::tie(addresses, allocateSize, addressSpace, parentLoop,
+                     parentCounterScope) ==
+            std::tie(other.addresses, other.allocateSize, other.addressSpace,
+                     other.parentLoop, other.parentCounterScope));
+  }
   bool operator!=(const PointerLikeInfo &other) const {
     return !(*this == other);
   }
@@ -111,8 +117,12 @@ struct AllocLikeInfo {
 
   static std::optional<AllocLikeInfo> tryGet(Value value);
 
-  static bool checkConflict(const AllocLikeInfo &allocLikeInfo1,
-                            const AllocLikeInfo &allocLikeInfo2);
+  static bool
+  checkConflict(const AllocLikeInfo &allocLikeInfo1,
+                const AllocLikeInfo &allocLikeInfo2,
+                std::optional<int64_t> lcmLen = {},
+                std::optional<int64_t> eventIdNum = {},
+                std::optional<std::pair<int64_t, int64_t>> offsetPair = {});
 };
 
 struct SubviewInfo {
@@ -174,10 +184,11 @@ struct MemInfo {
       : value(value), allocLikeInfo(allocLikeInfo), pipe(pipe) {}
 
   bool operator==(const MemInfo &other) const {
-    return std::tie(value, funcArgInfo, pointerLikeInfo, allocLikeInfo,
-                    subviewInfo, pipe) ==
-           std::tie(other.value, other.funcArgInfo, other.pointerLikeInfo,
-                    other.allocLikeInfo, other.subviewInfo, other.pipe);
+    return (value != nullptr && value == other.value) ||
+           (std::tie(funcArgInfo, pointerLikeInfo, allocLikeInfo,
+                     other.subviewInfo, pipe) ==
+            std::tie(other.funcArgInfo, other.pointerLikeInfo,
+                     other.allocLikeInfo, other.subviewInfo, other.pipe));
   }
   bool operator!=(const MemInfo &other) const { return !(*this == other); }
 

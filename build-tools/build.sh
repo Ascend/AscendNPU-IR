@@ -210,8 +210,7 @@ usage() {
       --torch-mlir-source-dir DIR          Torch-MLIR project's root directory. (Default: 'third-party/torch-mlir')
       --enable-cpu-runner                  Enable the compilation of CPU runner targets
       --enable-bspub                       Enable BSPUB DaVinci BiShengIR build. (Default: disabled)
-      --collect-binary [OUTPUT_DIR]      Collect built binaries and bc files to OUTPUT_DIR. Automatically
-                                           detects A5 build artifacts in bishengir-a5-src/build-a5/install/.
+      --collect-binary [OUTPUT_DIR]      Collect built binaries and bc files to OUTPUT_DIR.
                                            This is a standalone mode that skips the build process.
                                            (Default: bishengir-output)
       "
@@ -698,32 +697,31 @@ cmake_install() {
 
 collect_binary() {
   local output_dir="$1"
-  local a3_install_dir="${BUILD_DIR}/install"
-  local a5_build_dir="${GIT_ROOT}/bishengir-a5-src/build-a5"
+  local install_dir="${BUILD_DIR}/install"
 
   echo "Collecting binaries to ${output_dir}..."
 
-  if [[ ! -d "${a3_install_dir}" ]]; then
-    echo "Error: A3 install directory not found at ${a3_install_dir}"
+  if [[ ! -d "${install_dir}" ]]; then
+    echo "Error: install directory not found at ${install_dir}"
     exit 1
   fi
 
   mkdir -p "${output_dir}/bin" || { echo "Failed to create ${output_dir}/bin"; exit 1; }
   mkdir -p "${output_dir}/lib" || { echo "Failed to create ${output_dir}/lib"; exit 1; }
 
-  echo "Collecting A3 binaries..."
-  if [[ -d "${a3_install_dir}/bin" ]]; then
-    cp "${a3_install_dir}/bin/bishengir-compile" "${output_dir}/bin/" || { echo "Failed to copy bishengir-compile"; exit 1; }
-    cp "${a3_install_dir}/bin/bishengir-opt" "${output_dir}/bin/" || { echo "Failed to copy bishengir-opt"; exit 1; }
+  echo "Collecting binaries..."
+  if [[ -d "${install_dir}/bin" ]]; then
+    cp "${install_dir}/bin/bishengir-compile" "${output_dir}/bin/" || { echo "Failed to copy bishengir-compile"; exit 1; }
+    cp "${install_dir}/bin/bishengir-opt" "${output_dir}/bin/" || { echo "Failed to copy bishengir-opt"; exit 1; }
     echo "  Copied bishengir-compile, bishengir-opt"
   else
-    echo "Warning: A3 bin directory not found at ${a3_install_dir}/bin"
+    echo "Warning: bin directory not found at ${install_dir}/bin"
   fi
 
-  echo "Collecting A3 bc files..."
-  if [[ -d "${a3_install_dir}/lib" ]]; then
+  echo "Collecting bc files..."
+  if [[ -d "${install_dir}/lib" ]]; then
     local bc_count=0
-    for f in "${a3_install_dir}/lib/"*.bc; do
+    for f in "${install_dir}/lib/"*.bc; do
       if [[ -f "$f" ]]; then
         cp "$f" "${output_dir}/lib/"
         bc_count=$((bc_count + 1))
@@ -731,40 +729,7 @@ collect_binary() {
     done
     echo "  Copied ${bc_count} bc files"
   else
-    echo "Warning: A3 lib directory not found at ${a3_install_dir}/lib"
-  fi
-
-  if [[ -d "${a5_build_dir}" ]]; then
-    echo "Detected A5 build artifacts at ${a5_build_dir}"
-    echo "Collecting A5 binaries..."
-    if [[ -d "${a5_build_dir}/bin" ]]; then
-      if [[ -f "${a5_build_dir}/bin/bishengir-compile" ]]; then
-        cp "${a5_build_dir}/bin/bishengir-compile" "${output_dir}/bin/bishengir-compile-a5" || { echo "Failed to copy bishengir-compile-a5"; exit 1; }
-        echo "  Copied bishengir-compile-a5"
-      fi
-      if [[ -f "${a5_build_dir}/bin/bishengir-opt" ]]; then
-        cp "${a5_build_dir}/bin/bishengir-opt" "${output_dir}/bin/bishengir-opt-a5" || { echo "Failed to copy bishengir-opt-a5"; exit 1; }
-        echo "  Copied bishengir-opt-a5"
-      fi
-    else
-      echo "Warning: A5 bin directory not found at ${a5_build_dir}/bin"
-    fi
-
-    echo "Collecting A5 bc files..."
-    if [[ -d "${a5_build_dir}/lib" ]]; then
-      local a5_bc_count=0
-      for f in "${a5_build_dir}/lib/"*.bc; do
-        if [[ -f "$f" ]]; then
-          cp "$f" "${output_dir}/lib/"
-          a5_bc_count=$((a5_bc_count + 1))
-        fi
-      done
-      echo "  Copied ${a5_bc_count} A5 bc files"
-    else
-      echo "Warning: A5 lib directory not found at ${a5_build_dir}/lib"
-    fi
-  else
-    echo "No A5 build artifacts detected, skipping A5 collection"
+    echo "Warning: lib directory not found at ${install_dir}/lib"
   fi
 
   echo "Binary collection complete. Output directory: ${output_dir}"

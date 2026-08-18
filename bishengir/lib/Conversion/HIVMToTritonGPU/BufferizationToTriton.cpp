@@ -5,8 +5,8 @@
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
-#include "HIVMToTritonUtils.h"
 #include "bishengir/Conversion/HIVMToTritonGPU/HIVMToTritonGPU.h"
+#include "bishengir/Conversion/HIVMToTritonGPU/HIVMToTritonUtils.h"
 
 #include "triton/Dialect/Triton/IR/Dialect.h"
 
@@ -25,8 +25,9 @@ class ToTensorOpReplacementPattern
 
 public:
   using OpConversionPattern::OpConversionPattern;
+  using OpConversionPattern<bufferization::ToTensorOp>::OneToNOpAdaptor;
   LogicalResult
-  matchAndRewrite(bufferization::ToTensorOp op, OpAdaptor adaptor,
+  matchAndRewrite(bufferization::ToTensorOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     auto memrefVal = op.getMemref();
     auto memrefTy = dyn_cast<MemRefType>(memrefVal.getType());
@@ -39,8 +40,13 @@ public:
           op, "Unsupport unranked or dynamic shape tensor");
     }
 
-    FailureOr<Value> maybePtrs = buildMemRefTensorPointers(
-        rewriter, op.getLoc(), memrefVal, adaptor.getMemref(), memrefTy,
+    FailureOr<MemRefDescriptor> desc =
+        getMemRefDescriptor(rewriter, op.getLoc(), memrefTy,
+                            adaptor.getMemref());
+    if (failed(desc) || desc->getRank() != tensorTy.getRank())
+      return rewriter.notifyMatchFailure(op, "no descriptor for memref");
+    FailureOr<Value> maybePtrs = buildMemRefDescriptorPointers(
+        rewriter, op.getLoc(), *desc, HIVMToTritonTypeConvert(memrefTy),
         tensorTy.getShape());
     if (failed(maybePtrs)) {
       return rewriter.notifyMatchFailure(
@@ -59,7 +65,7 @@ public:
 } // namespace
 
 void mlir::hivm::populateBufferizationToTritonPatterns(
-    RewritePatternSet &patterns) {
+    TritonTypeConverter &converter, RewritePatternSet &patterns) {
   auto *ctx = patterns.getContext();
-  patterns.add<ToTensorOpReplacementPattern>(ctx);
+  patterns.add<ToTensorOpReplacementPattern>(converter, ctx);
 }

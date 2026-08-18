@@ -71,7 +71,8 @@ VFFusionKindOption VFFusionPass::getFusionOption() const {
   return VFFusionKindOption(enableOutlineCF, enableOutlineMemref,
                             enableOutlineArith, enableOutlineCube,
                             ubBudgetBytes_, ubAlignBytes_, enableRA, enableAR,
-                            maxVFParams, enableVFStackLimit, enableCastOpt);
+                            maxVFParams, enableVFStackLimit, enableCastOpt,
+                            enableNewTreeReducePolicy);
 }
 
 template <typename FusionKind>

@@ -83,6 +83,9 @@ def VFFusion : Pass<"vf-fusion", "mlir::ModuleOp"> {
              "Skip row-reduction (dim=0) sum ops in VF fusion">,
        Option<"enableAR", "enable-ar", "bool", /*default=*/"false",
               "Skip column-reduction (dim!=0) sum ops in VF fusion">,
+       Option<"enableNewTreeReducePolicy", "enable-new-tree-reduce-policy",
+              "bool", /*default=*/"false",
+              "Apply the new TreeReduce-aware row-reduction fusion policy">,
        Option<"enableCastOpt", "enable-cast-opt", "bool", /*default=*/"false",
               "Enable the new cast fusion strategy (widening/narrowing cast); off uses simple cast admission. "
               "Only effective in max-parallel mode">

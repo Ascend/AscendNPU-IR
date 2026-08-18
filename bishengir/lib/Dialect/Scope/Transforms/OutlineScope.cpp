@@ -91,43 +91,6 @@ class OutlineScopeOp : public OpRewritePattern<scope::ScopeOp> {
   }
 
   // Mark inputs that are memref has offset with attribute: e.g. %2 = memref.reinterpret_cast %0 to offset :[%1] ...: memref<?xf32>
-  SmallVector<int32_t> analyzeMemrefInput(SmallVector<Value> &inputs) const {
-    SmallVector<int32_t> memrefInputsInfo;
-    for (auto [idx, input] : llvm::enumerate(inputs)) {
-      auto *defOp = input.getDefiningOp();
-      if (!defOp) {
-        memrefInputsInfo.push_back(0);
-        continue;
-      }
-      int32_t attr_val = 0;
-      if (auto reinterpretCast = dyn_cast<memref::ReinterpretCastOp>(defOp)) {
-        // Check if any offset is dynamic
-        auto mixedOffsets = reinterpretCast.getMixedOffsets();
-        for (auto offset : mixedOffsets) {
-          // If offset is a Value (not a static attribute), it's dynamic
-          if (offset.is<Value>()) {
-            attr_val = 1;
-            break;
-          }
-          // Check if the offset is static
-          if (auto attr = dyn_cast<IntegerAttr>(offset.get<Attribute>())) {
-            // Check if static offset is dynamic (ShapedType::kDynamic)
-            if (attr.getInt() == ShapedType::kDynamic) {
-              attr_val = 1;
-              break;
-            }
-            // Check if static offset is non-zero constant
-            if (attr.getInt() != 0) {
-              attr_val = 1;
-              break;
-            }
-          }
-        }
-      }
-      memrefInputsInfo.push_back(attr_val);
-    }
-    return memrefInputsInfo;
-  }
 
   SetVector<Operation *> getExternalConstantLikeOps(ScopeOp scopeOp) const {
     SetVector<Operation *> constants;
@@ -162,22 +125,13 @@ class OutlineScopeOp : public OpRewritePattern<scope::ScopeOp> {
 
     SetVector<Operation *> ops = getOpsOfScopeOp(scopeOp);
     SmallVector<Value> inputs = getInputs(scopeOp);
-    SmallVector<int32_t> memrefAttr = analyzeMemrefInput(inputs);
 
     rewriter.setInsertionPoint(parF);
     FunctionType funcTy = FunctionType::get(
         moduleOp.getContext(), TypeRange(inputs), scopeOp->getResultTypes());
 
-    // Also attach memref attribute to the function
     func::FuncOp newFuncOp = rewriter.create<func::FuncOp>(
         moduleOp->getLoc(), prefixFunctionName, funcTy, scopeOp->getAttrs());
-    // Attach memref input information as function attribute
-    // The following pass will use memref_attr[i] to check if the input is memref with offset or not
-    if (!memrefAttr.empty()) {
-      SmallVector<int32_t> memrefAttrInt(memrefAttr.begin(), memrefAttr.end());
-      newFuncOp->setAttr("memref_attr",
-                        rewriter.getDenseI32ArrayAttr(memrefAttrInt));
-    }
     auto isRegBasedArch = moduleOp && hacc::utils::isRegBasedArch(moduleOp);
     if (isRegBasedArch) {
       // transfer layout attribute from scopeOp to funcOp if exists

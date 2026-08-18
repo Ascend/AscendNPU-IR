@@ -63,15 +63,11 @@ public:
 
   // Set of RW operations that expose unit-flag feature and need special
   // handling.
-  llvm::DenseSet<RWOperation *> unitFlagFeaturedOps;
+  llvm::SetVector<RWOperation *> unitFlagFeaturedOps;
 
   // Map op -> list of occurrences in syncIr (quick lookup for an op's
   // occurrences).
   llvm::DenseMap<OperationBase *, std::vector<Occurrence *>> opAllOccurrences;
-
-  // Processing order list created from syncIr that drives pairwise conflict
-  // checks.
-  std::vector<ProcessingOrder> processingOrders;
 
   // Aliases for block arguments collected from cf::CondBranchOp and
   // cf::BranchOp operations.
@@ -117,23 +113,6 @@ protected:
 
   std::unique_ptr<OperationBase>
   getDecomposedMmadMxL1(hivm::MmadMxL1Op mmadMxL1Op, OperationBase *parentOp);
-
-  // Generate processing orders (various flavors) used by the main algorithm.
-  void generateProcessingOrders(Occurrence *occ1, Occurrence *occ2,
-                                bool isUseless);
-  void generateProcessingOrders(Loop *loopOp, Occurrence *occ, bool isUseless);
-  void generateProcessingOrders(Scope *scopeOp, Occurrence *occ,
-                                bool isUseless);
-  void generateProcessingOrders(const llvm::SmallVector<Occurrence *> &occs,
-                                bool isUseless);
-  void generateProcessingOrders(const llvm::SmallVector<Occurrence *> &occs1,
-                                const llvm::SmallVector<Occurrence *> &occs2,
-                                bool isUseless);
-  void generateProcessingOrders(RWOperation *rwOp1, RWOperation *rwOp2,
-                                Occurrence *occ1, Occurrence *occ2,
-                                bool isUseless);
-
-  bool skipLaterIterations(Occurrence *occ1, Occurrence *occ2);
 
   // Build sync IR occurrences from the operation tree.
   void syncIrBuilder(OperationBase *op, Occurrence *parentOcc = nullptr,

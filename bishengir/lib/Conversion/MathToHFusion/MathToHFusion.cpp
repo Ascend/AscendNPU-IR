@@ -132,14 +132,35 @@ struct ElementwiseOpToHFusionBinary : public OpRewritePattern<BinaryOp> {
   }
 };
 
-struct MathFmaToComposeBinaryOp : public OpRewritePattern<math::FmaOp> {
-  using OpRewritePattern<math::FmaOp>::OpRewritePattern;
+static bool isSupportedFmaType(Type type) {
+  Type elementType = getElementTypeOrSelf(type);
+  return elementType.isF16() || elementType.isBF16() || elementType.isF32();
+}
+
+struct MathFmaLowering : public OpRewritePattern<math::FmaOp> {
+  MathFmaLowering(MLIRContext *context, bool enableFma)
+      : OpRewritePattern<math::FmaOp>(context), enableFma(enableFma) {}
 
   LogicalResult matchAndRewrite(math::FmaOp op,
                                 PatternRewriter &rewriter) const final {
-    if (!operateOnTensors(op)) {
+    if (!operateOnTensors(op))
       return failure();
+
+    if (enableFma && isSupportedFmaType(op.getType())) {
+      SmallVector<Value> dsts;
+      if (failed(
+              tensor::getOrCreateDestinations(rewriter, op.getLoc(), op, dsts)))
+        return failure();
+
+      auto *fmaOp = hfusion::createTernaryOp<
+          hfusion::ElemwiseTernaryOp, hfusion::TernaryFn,
+          hfusion::TernaryFnAttr>(
+          rewriter, op.getLoc(), hfusion::TernaryFn::fma,
+          ValueRange{op.getA(), op.getB(), op.getC()}, dsts);
+      rewriter.replaceOp(op, fmaOp);
+      return success();
     }
+
     auto input0 = op.getA();
     auto input1 = op.getB();
     auto input2 = op.getC();
@@ -158,6 +179,9 @@ struct MathFmaToComposeBinaryOp : public OpRewritePattern<math::FmaOp> {
     rewriter.replaceOp(op, addOp);
     return success();
   }
+
+private:
+  bool enableFma;
 };
 
 /// @brief
@@ -208,12 +232,14 @@ static void populateMathToHFusionConversionPatterns_membase(
       ElementwiseOpToHFusionUnary<math::Exp2Op, hfusion::UnaryFn::exp2>,
       ElementwiseOpToHFusionUnary<math::ExpM1Op, hfusion::UnaryFn::expm1>,
       ElementwiseOpToHFusionUnary<mathExt::IlogbOp, hfusion::UnaryFn::ilogb>,
-      ElementwiseOpToHFusionUnary<mathExt::LgammaOp, hfusion::UnaryFn::lgamma>,
-      MathFmaToComposeBinaryOp>(patterns.getContext());
+      ElementwiseOpToHFusionUnary<mathExt::LgammaOp, hfusion::UnaryFn::lgamma>>(
+      patterns.getContext());
+  patterns.add<MathFmaLowering>(patterns.getContext(),
+                                /*enableFma=*/false);
 }
 
 static void populateMathToHFusionConversionPatterns_regbase(
-    RewritePatternSet &patterns) {
+    RewritePatternSet &patterns, bool enableFma) {
   // regbase subset: drops Atan2/Atanh/Asin/Acos/Sinh/Acosh/Lgamma
   // (regbase HFusionEnums.td lacks those enum cases).
   patterns.add<
@@ -243,14 +269,16 @@ static void populateMathToHFusionConversionPatterns_regbase(
       ElementwiseOpToHFusionUnary<math::Log1pOp, hfusion::UnaryFn::log1p>,
       ElementwiseOpToHFusionUnary<math::Exp2Op, hfusion::UnaryFn::exp2>,
       ElementwiseOpToHFusionUnary<math::ExpM1Op, hfusion::UnaryFn::expm1>,
-      ElementwiseOpToHFusionUnary<mathExt::IlogbOp, hfusion::UnaryFn::ilogb>,
-      MathFmaToComposeBinaryOp>(patterns.getContext());
+      ElementwiseOpToHFusionUnary<mathExt::IlogbOp, hfusion::UnaryFn::ilogb>>(
+      patterns.getContext());
+  patterns.add<MathFmaLowering>(patterns.getContext(), enableFma);
 }
 
 void mlir::hfusion::populateMathToHFusionConversionPatterns(
     RewritePatternSet &patterns, ModuleOp moduleOp) {
   if (moduleOp && hacc::utils::isRegBasedArch(moduleOp))
-    populateMathToHFusionConversionPatterns_regbase(patterns);
+    populateMathToHFusionConversionPatterns_regbase(
+        patterns, /*enableFma=*/false);
   else
     populateMathToHFusionConversionPatterns_membase(patterns);
 }
@@ -258,6 +286,7 @@ void mlir::hfusion::populateMathToHFusionConversionPatterns(
 namespace {
 struct MathToHFusionConversionPass
     : public impl::ConvertMathToHFusionBase<MathToHFusionConversionPass> {
+  using Base::Base;
   void runOnOperation() override;
 };
 } // namespace
@@ -286,7 +315,13 @@ void MathToHFusionConversionPass::runOnOperation() {
       [](Operation *op) { return !operateOnTensors(op); });
 
   RewritePatternSet patterns(&getContext());
-  populateMathToHFusionConversionPatterns(patterns, moduleOp);
+  bool shouldEnableFma =
+      moduleOp && hacc::utils::isAscend950(moduleOp) && enableFma;
+  if (moduleOp && hacc::utils::isRegBasedArch(moduleOp))
+    populateMathToHFusionConversionPatterns_regbase(patterns,
+                                                     shouldEnableFma);
+  else
+    populateMathToHFusionConversionPatterns_membase(patterns);
   if (failed(applyPartialConversion(module, target, std::move(patterns)))) {
     signalPassFailure();
   }
@@ -294,4 +329,9 @@ void MathToHFusionConversionPass::runOnOperation() {
 
 std::unique_ptr<Pass> mlir::createMathToHFusionConversionPass() {
   return std::make_unique<MathToHFusionConversionPass>();
+}
+
+std::unique_ptr<Pass> mlir::createMathToHFusionConversionPass(
+    const ConvertMathToHFusionOptions &options) {
+  return std::make_unique<MathToHFusionConversionPass>(options);
 }

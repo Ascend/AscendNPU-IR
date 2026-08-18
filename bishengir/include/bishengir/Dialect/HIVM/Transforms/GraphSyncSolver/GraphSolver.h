@@ -18,68 +18,129 @@
 #define BISHENG_DIALECT_HIVM_TRANSFORMS_GRAPHSYNCSOLVER_GRAPHSOLVER_H
 
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/Utility.h"
-#include <set>
+#include "llvm/ADT/SmallVector.h"
 
 namespace mlir::hivm::syncsolver {
 
-class GraphSolver {
+class GraphSolverBase {
 public:
-  struct Edge {
-    ConflictPair *const conflictPair;
-    const CorePipeInfo corePipeSrc;
-    const CorePipeInfo corePipeDst;
-    const int startIndex;
-    const int endIndex;
-    const bool isUnitFlag;
-    Edge() = delete;
-    Edge(ConflictPair *conflictPair, CorePipeInfo corePipeSrc,
-         CorePipeInfo corePipeDst, int startIndex, int endIndex,
-         bool isUnitFlag)
-        : conflictPair(conflictPair), corePipeSrc(corePipeSrc),
-          corePipeDst(corePipeDst), startIndex(startIndex), endIndex(endIndex),
-          isUnitFlag(isUnitFlag) {}
-    Edge(CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst, int startIndex,
-         int endIndex)
-        : Edge(nullptr, corePipeSrc, corePipeDst, startIndex, endIndex, false) {
-    }
-    bool operator<(const Edge &other) const;
-  };
-
   // Configuration options.
   const SyncSolverOptions options;
 
-  // adjacencyList[pipeSrc][pipeDst] stores a set of Edge objects representing
-  // directed transitions from pipeSrc to pipeDst that are valid for a given
-  // (startIndex,endIndex) lifetime. Used by runDijkstra to compute minimum
-  // distance paths between two pipe ids taking ordering constraints into
-  // account.
-  llvm::DenseMap<CorePipeInfo, llvm::DenseMap<CorePipeInfo, std::set<Edge>>>
-      adjacencyList;
+  llvm::SmallVector<int> barrierAllIndexes, tempBarrierAllIndexes;
+  llvm::DenseMap<CorePipeInfo, llvm::SmallVector<int>> barrierIndexes,
+      tempBarrierIndexes;
 
-  GraphSolver(const SyncSolverOptions &options) : options(options) {}
+  virtual ~GraphSolverBase() = default;
+  GraphSolverBase(const SyncSolverOptions &options) : options(options) {}
 
-  // Add a pipe-pair edge annotated with its active index interval.
-  void addPair(ConflictPair *conflictPair, CorePipeInfo corePipeSrc,
-               CorePipeInfo corePipeDst, int startIndex, int endIndex,
-               bool isUnitFlag = false);
+  void clearBarrierIndexes();
 
   // Build adjacency list from a ConflictPair by decomposing it into edges.
-  void addConflictPair(syncsolver::ConflictPair *conflictPair);
+  void insertConflictPair(syncsolver::ConflictPair *conflictPair,
+                          bool isTemp = false);
+  void eraseConflictPair(syncsolver::ConflictPair *conflictPair,
+                         bool isTemp = false);
 
-  // Compact or merge overlapping edges to speed up Dijkstra queries.
-  void optimizeAdjacencyList();
+  bool checkAnyBarrierAllBetween(int startIndex, int endIndex);
+  bool checkAnyBarrierBetween(CorePipeInfo corePipe, int startIndex,
+                              int endIndex);
+
+  virtual void clearAdjList(bool isTemp) = 0;
+
+  // Add a pipe-pair edge annotated with its active index interval.
+  virtual void insertEdge(CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst,
+                          ConflictPair *conflictPair, bool isTemp = false) = 0;
+  virtual void eraseEdge(CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst,
+                         ConflictPair *conflictPair, bool isTemp = false) = 0;
 
   // Run shortest-path search (Dijkstra-like) with ordering constraints to find
   // the minimal reachable index for a path from startPipe to endPipe.
+  virtual std::optional<int> runDijkstra(CorePipeInfo corePipeSrc,
+                                         CorePipeInfo corePipeDst,
+                                         int startIndex, int endIndex,
+                                         Occurrence *occ1 = nullptr,
+                                         Occurrence *occ2 = nullptr) = 0;
+};
+
+class GraphSolver : public GraphSolverBase {
+public:
+  struct Edge {
+    int startIndex{-1};
+    int endIndex{-1};
+
+    Edge() = delete;
+    Edge(int startIndex, int endIndex)
+        : startIndex(startIndex), endIndex(endIndex) {}
+
+    bool operator==(const Edge &other) const {
+      return std::tie(startIndex, endIndex) ==
+             std::tie(other.startIndex, other.endIndex);
+    }
+
+    bool operator!=(const Edge &other) const { return !(*this == other); }
+  };
+
+  llvm::DenseMap<CorePipeInfo,
+                 llvm::DenseMap<CorePipeInfo, llvm::SmallVector<Edge>>>
+      adjacencyList, tempAdjacencyList;
+
+  GraphSolver(const SyncSolverOptions &options) : GraphSolverBase(options) {}
+
+  void clearAdjList(bool isTemp = false) override;
+
+  void insertEdge(CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst,
+                  ConflictPair *conflictPair, bool isTemp = false) override;
+  void eraseEdge(CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst,
+                 ConflictPair *conflictPair, bool isTemp = false) override;
+
   std::optional<int> runDijkstra(CorePipeInfo corePipeSrc,
                                  CorePipeInfo corePipeDst, int startIndex,
-                                 int endIndex);
+                                 int endIndex, Occurrence *occ1 = nullptr,
+                                 Occurrence *occ2 = nullptr) override;
+};
 
-  std::optional<int> runDijkstraUnitFlagEnabled(Occurrence *occ1,
-                                                Occurrence *occ2,
-                                                CorePipeInfo corePipeSrc,
-                                                CorePipeInfo corePipeDst,
-                                                int startIndex, int endIndex);
+class GraphSolverUnitFlag : public GraphSolverBase {
+public:
+  struct Edge {
+    int startIndex{-1};
+    int endIndex{-1};
+    bool isUnitFlag{false};
+    ConflictPair *conflictPair{nullptr};
+
+    Edge() = delete;
+    Edge(int startIndex, int endIndex, bool isUnitFlag,
+         ConflictPair *conflictPair = nullptr)
+        : startIndex(startIndex), endIndex(endIndex), isUnitFlag(isUnitFlag),
+          conflictPair(conflictPair) {}
+
+    bool operator==(const Edge &other) const {
+      return std::tie(startIndex, endIndex, isUnitFlag, conflictPair) ==
+             std::tie(other.startIndex, other.endIndex, other.isUnitFlag,
+                      other.conflictPair);
+    }
+
+    bool operator!=(const Edge &other) const { return !(*this == other); }
+  };
+
+  llvm::DenseMap<CorePipeInfo,
+                 llvm::DenseMap<CorePipeInfo, llvm::SmallVector<Edge>>>
+      adjacencyList, tempAdjacencyList;
+
+  GraphSolverUnitFlag(const SyncSolverOptions &options)
+      : GraphSolverBase(options) {}
+
+  void clearAdjList(bool isTemp = false) override;
+
+  void insertEdge(CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst,
+                  ConflictPair *conflictPair, bool isTemp = false) override;
+  void eraseEdge(CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst,
+                 ConflictPair *conflictPair, bool isTemp = false) override;
+
+  std::optional<int> runDijkstra(CorePipeInfo corePipeSrc,
+                                 CorePipeInfo corePipeDst, int startIndex,
+                                 int endIndex, Occurrence *occ1 = nullptr,
+                                 Occurrence *occ2 = nullptr) override;
 };
 } // namespace mlir::hivm::syncsolver
 

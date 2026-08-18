@@ -37,6 +37,37 @@ using namespace hivm::syncsolver;
 int ConflictPair::globalIdCounter = 0;
 int EventIdNode::globalIdCounter = 0;
 
+std::string UnitFlagInfo::str() const {
+  std::string unitFlag = UnitFlagInfoBase::str();
+  if (conflictPairIdAsSet != -1) {
+    std::string idStr;
+    llvm::raw_string_ostream ss(idStr);
+    ss << "conflictPairIdAsSet(" << conflictPairIdAsSet << ")";
+    unitFlag += (!unitFlag.empty() ? " " : "") + ss.str();
+  }
+  if (conflictPairIdAsWait != -1) {
+    std::string idStr;
+    llvm::raw_string_ostream ss(idStr);
+    ss << "conflictPairIdAsWait(" << conflictPairIdAsWait << ")";
+    unitFlag += (!unitFlag.empty() ? " " : "") + ss.str();
+  }
+  return unitFlag;
+}
+
+std::string Occurrence::str() const {
+  std::string ret;
+  llvm::raw_string_ostream ss(ret);
+  ss << std::string(depth, ' ');
+  ss << op->id << ' ' << syncIrIndex << ' ' << startIndex << ' ' << endIndex
+     << '\n';
+  ss << op->str(depth, /*recursive=*/false);
+  std::string unitFlag = unitFlagInfo.str();
+  if (!unitFlag.empty()) {
+    ss << '\n' << std::string(depth + 2, ' ') << unitFlag;
+  }
+  return ss.str();
+}
+
 bool Occurrence::sameScope(Occurrence *occ1, Occurrence *occ2) {
   assert(occ1 != nullptr && occ1->parentOcc != nullptr);
   assert(occ2 != nullptr && occ2->parentOcc != nullptr);
@@ -45,7 +76,8 @@ bool Occurrence::sameScope(Occurrence *occ1, Occurrence *occ2) {
 
 int Occurrence::getDepth(Occurrence *occ) {
   int ret = 0;
-  while (occ != nullptr) {
+  assert(occ != nullptr);
+  while (occ->parentOcc != nullptr) {
     occ = occ->parentOcc;
     ret++;
   }
@@ -131,6 +163,10 @@ Occurrence *Occurrence::getUnlikelyParentCondition(Occurrence *occ) {
     return occ->getParentWithOp(parentConditionOp, /*assertExists=*/true);
   }
   return nullptr;
+}
+
+bool Occurrence::isAncestor(Occurrence *occ) {
+  return occ == this || isProperAncestor(occ);
 }
 
 bool Occurrence::isProperAncestor(Occurrence *occ) {
@@ -283,23 +319,6 @@ OperationBase *OperationBase::getUnlikelyParentCondition(OperationBase *op) {
 }
 
 namespace mlir::hivm::syncsolver {
-
-// Check if two integer ranges intersect (half-open semantics: [l, r) )
-bool checkRangesIntersect(int l1, int r1, int l2, int r2) {
-  // return !(r1 <= l2 || r2 <= l1);
-  return r1 > l2 && r2 > l1;
-}
-
-// Return explicit integer ranges covered by a conflict pair (barrier -> empty).
-std::vector<std::pair<int, int>> getRanges(ConflictPair *conflictPair) {
-  assert(conflictPair != nullptr);
-  if (conflictPair->isBarrier()) {
-    return {};
-  }
-  std::vector<std::pair<int, int>> ret;
-  ret.emplace_back(conflictPair->startIndex, conflictPair->endIndex);
-  return ret;
-}
 
 // Return the hardware-available EVENT ids for a given (setPipe, waitPipe) pair.
 // Respects reserved ids for special pipe pairs and returns a vector of usable

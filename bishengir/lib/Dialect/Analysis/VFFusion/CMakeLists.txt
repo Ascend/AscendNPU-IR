@@ -19,6 +19,7 @@ add_bishengir_dialect_library(BiShengIRVFFusion
   BiShengIRDialectUtils
   BiShengIRHACCDialect
   BiShengIRHACCUtils
+  BiShengIRHFusionUtils
   MLIRArithDialect
   MLIRFuncDialect
   MLIRMemRefDialect

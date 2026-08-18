@@ -183,6 +183,73 @@ module {
 
 // -----
 
+// Test: a statically aligned contiguous flat slice is expanded to a
+// multi-dimensional VF operand. Commute the shape change with the slice so
+// that the slice can be pulled into the VF and the caller passes a compatible
+// zero-offset expanded view.
+module {
+  // CHECK-LABEL: func @vf_flat_slice_expand(
+  // CHECK-SAME: tensor<4x64xf16>
+  // CHECK: tensor.extract_slice %{{.*}}[1, 0] [2, 64] [1, 1]
+  // CHECK-SAME: tensor<4x64xf16> to tensor<2x64xf16>
+  func.func @vf_flat_slice_expand(%arg0: tensor<2x64xf16>)
+      -> tensor<2x64xf16> attributes {hivm.vector_function} {
+    %c0 = arith.constant 0 : index
+    %cst = arith.constant 0.000000e+00 : f16
+    %0 = vector.transfer_read %arg0[%c0, %c0], %cst
+        {in_bounds = [true, true]} : tensor<2x64xf16>, vector<2x64xf16>
+    %1 = vector.transfer_write %0, %arg0[%c0, %c0]
+        {in_bounds = [true, true]} : vector<2x64xf16>, tensor<2x64xf16>
+    return %1 : tensor<2x64xf16>
+  }
+
+  // CHECK-LABEL: func @test_flat_slice_expand(
+  // CHECK: %[[EXPANDED:.*]] = tensor.expand_shape %arg0 {{\[\[}}0, 1]] output_shape [4, 64]
+  // CHECK-SAME: tensor<256xf16> into tensor<4x64xf16>
+  // CHECK-NOT: tensor.extract_slice
+  // CHECK: call @vf_flat_slice_expand(%[[EXPANDED]])
+  // CHECK-SAME: {hivm.vector_function}
+  // CHECK-SAME: (tensor<4x64xf16>) -> tensor<2x64xf16>
+  func.func @test_flat_slice_expand(%arg0: tensor<256xf16>) {
+    %slice = tensor.extract_slice %arg0[64] [128] [1]
+        : tensor<256xf16> to tensor<128xf16>
+    %expanded = tensor.expand_shape %slice [[0, 1]] output_shape [2, 64]
+        : tensor<128xf16> into tensor<2x64xf16>
+    %x = func.call @vf_flat_slice_expand(%expanded) {hivm.vector_function}
+        : (tensor<2x64xf16>) -> tensor<2x64xf16>
+    return
+  }
+}
+
+// -----
+
+// An offset in the middle of a trailing row cannot be represented as one
+// rectangular extract_slice after expansion and must not be commuted.
+module {
+  func.func @vf_unaligned_flat_slice_expand(%arg0: tensor<2x64xf16>)
+      -> tensor<2x64xf16> attributes {hivm.vector_function} {
+    return %arg0 : tensor<2x64xf16>
+  }
+
+  // CHECK-LABEL: func @test_unaligned_flat_slice_expand(
+  // CHECK: %[[SLICE:.*]] = tensor.extract_slice %arg0[32] [128] [1]
+  // CHECK: %[[EXPANDED:.*]] = tensor.expand_shape %[[SLICE]] {{\[\[}}0, 1]] output_shape [2, 64]
+  // CHECK: call @vf_unaligned_flat_slice_expand(%[[EXPANDED]])
+  // CHECK-SAME: (tensor<2x64xf16>) -> tensor<2x64xf16>
+  func.func @test_unaligned_flat_slice_expand(%arg0: tensor<256xf16>) {
+    %slice = tensor.extract_slice %arg0[32] [128] [1]
+        : tensor<256xf16> to tensor<128xf16>
+    %expanded = tensor.expand_shape %slice [[0, 1]] output_shape [2, 64]
+        : tensor<128xf16> into tensor<2x64xf16>
+    %x = func.call @vf_unaligned_flat_slice_expand(%expanded)
+        {hivm.vector_function}
+        : (tensor<2x64xf16>) -> tensor<2x64xf16>
+    return
+  }
+}
+
+// -----
+
 // Test: Swap extract_slice + expand_shape into expand_shape + extract_slice,
 // then pull the extract_slice into VF.  Covers both rank-restore (2D→1D→2D)
 // and rank-increase (2D→2D→3D) scenarios.

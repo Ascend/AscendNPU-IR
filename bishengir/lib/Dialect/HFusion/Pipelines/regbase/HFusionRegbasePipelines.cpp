@@ -128,7 +128,10 @@ static void convertAllToHFusion(OpPassManager &pm,
                                 const HFusionPipelineOptions &options,
                                 bool shouldConvertLinalgToNamedOps = true) {
   pm.addPass(createArithToHFusionConversionPass());
-  pm.addPass(createMathToHFusionConversionPass());
+  ConvertMathToHFusionOptions mathOptions;
+  mathOptions.enableFma =
+      !options.disableHfusionVectorize && !options.enableMixedCV;
+  pm.addPass(createMathToHFusionConversionPass(mathOptions));
   // NOTE: linalg.generic should be converted to named equivalent ops after
   // dropping unit dimensions
   if (shouldConvertLinalgToNamedOps)
@@ -414,6 +417,10 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
     vfFusionOptions.fusionMode = hfusionOptions.vfFusionMode;
     vfFusionOptions.enableRA = treeReduceFlags.enableRA;
     vfFusionOptions.enableAR = treeReduceFlags.enableAR;
+    vfFusionOptions.enableNewTreeReducePolicy =
+        hfusionOptions.enableAutoVectorizeV2 &&
+        hfusionOptions.enableTreeReduce &&
+        !hfusionOptions.enableTreeReduceV2 && treeReduceFlags.enableRA;
     vfFusionOptions.enableVFStackLimit = hfusionOptions.enableVFStackLimit;
     pm.addPass(analysis::createVFFusionPass(vfFusionOptions));
     if (runRegBasePasses && hfusionOptions.enableFlatten) {
@@ -444,7 +451,9 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
       vecOptions.maxFusedOps =
           static_cast<unsigned>(
               hfusionOptions.hfusionMaxFusedOpsInAutoVectorizeV2);
-    vecOptions.treeReduce = hfusionOptions.enableTreeReduce;
+    vecOptions.treeReduce = hfusionOptions.enableTreeReduce &&
+                            !hfusionOptions.enableTreeReduceV2 &&
+                            treeReduceFlags.enableRA;
     vecOptions.enableCrossIfFusion = hfusionOptions.hfusionEnableCrossIfFusion;
     pm.addPass(createHFusionAutoVectorizeV2Pass(vecOptions));
     pm.addPass(createOutlineVectorFunctionPass());
@@ -454,11 +463,14 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
     // TODO: Remove this constraint after e2e support for multi axes
     // vectorization.
     vecOptions.maxVectorizeAxes = 2;
-    vecOptions.treeReduce = hfusionOptions.enableTreeReduce;
+    vecOptions.treeReduce =
+        hfusionOptions.enableTreeReduce && !hfusionOptions.enableTreeReduceV2;
     pm.addPass(createHFusionAutoVectorizePass(vecOptions));
   }
   pm.addPass(createAutoVectorizeVerifierPass());
-  pm.addPass(createTreeReduceV2Pass(treeReduceOptions));
+  if (hfusionOptions.enableTreeReduceV2) {
+    pm.addPass(createTreeReduceV2Pass(treeReduceOptions));
+  }
   pm.addPass(mlir::createHFusionToVectorConversionPass());
   pm.nest<func::FuncOp>().addPass(
       createRemoveMaskFromUnalignedReductionLoopPass());

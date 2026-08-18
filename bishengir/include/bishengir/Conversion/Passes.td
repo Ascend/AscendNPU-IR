@@ -48,6 +48,10 @@ def ConvertMathToHFusion : Pass<"convert-math-to-hfusion"> {
   let summary = "Convert math ops to HFusion ops";
   let constructor = "mlir::createMathToHFusionConversionPass()";
   let dependentDialects = ["linalg::LinalgDialect", "hfusion::HFusionDialect"];
+  let options = [
+    Option<"enableFma", "enable-fma", "bool", /*default=*/"false",
+           "Preserve supported FMA operations for vector lowering">
+  ];
 }
 
 //===----------------------------------------------------------------------===//
