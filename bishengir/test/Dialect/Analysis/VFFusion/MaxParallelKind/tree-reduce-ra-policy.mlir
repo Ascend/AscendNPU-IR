@@ -5,13 +5,17 @@
 // NEW-SAME: %{{.*}}: tensor<16x8xf32>, %{{.*}}: tensor<8xf32>)
 // NEW-NEXT: %{{.*}} = linalg.reduce
 // NEW-LABEL: func.func private @ra17_fused_0(
-// NEW: linalg.elemwise_binary
-// NEW: linalg.fill
-// NEW: linalg.reduce
+// NEW-SAME: %{{.*}}: tensor<17x8xf32>, %{{.*}}: tensor<8xf32>)
+// NEW-NEXT: %{{.*}} = linalg.reduce
+// NEW: module attributes {hfusion.regular_tree_reduction_scope, hfusion.tree_reduction_selection_frozen}
+// NEW-NOT: hfusion.legacy_tree_reduction_scope
+// NEW-LABEL: func.func private @mixed_ra_ar_fused_0(
+// NEW: %{{.*}} = linalg.reduce
+// NEW-LABEL: func.func private @mixed_ra_ar_fused_1(
+// NEW: %{{.*}} = linalg.reduce
 // NEW-LABEL: func.func private @ra64_fused_0(
-// NEW: linalg.elemwise_binary
-// NEW: linalg.fill
-// NEW: linalg.reduce
+// NEW-SAME: %{{.*}}: tensor<64x8xf32>, %{{.*}}: tensor<8xf32>)
+// NEW-NEXT: %{{.*}} = linalg.reduce
 // NEW-LABEL: func.func private @ra65_fused_0(
 // NEW: linalg.elemwise_binary
 // NEW: linalg.fill
@@ -77,6 +81,48 @@ module {
         linalg.yield %sum : f32
       }
     return %result : tensor<8xf32>
+  }
+}
+
+// -----
+
+// A scope containing several canonical RA candidates plus another reduction
+// is not a safe TreeReduceV2 scope: that pass replaces a surrounding loop.
+// Keep it on the regular path while preserving reduction isolation.
+module {
+  func.func @mixed_ra_ar(%arg0: tensor<16x32xf32>)
+      -> (tensor<32xf32>, tensor<32xf32>, tensor<16xf32>)
+      attributes {hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %c0 = arith.constant 0.0 : f32
+    %empty0 = tensor.empty() : tensor<32xf32>
+    %init0 = linalg.fill ins(%c0 : f32) outs(%empty0 : tensor<32xf32>)
+        -> tensor<32xf32>
+    %result0 = linalg.reduce ins(%arg0 : tensor<16x32xf32>)
+        outs(%init0 : tensor<32xf32>) dimensions = [0]
+      (%in: f32, %out: f32) {
+        %sum = arith.addf %in, %out : f32
+        linalg.yield %sum : f32
+      }
+    %empty1 = tensor.empty() : tensor<32xf32>
+    %init1 = linalg.fill ins(%c0 : f32) outs(%empty1 : tensor<32xf32>)
+        -> tensor<32xf32>
+    %result1 = linalg.reduce ins(%arg0 : tensor<16x32xf32>)
+        outs(%init1 : tensor<32xf32>) dimensions = [0]
+      (%in: f32, %out: f32) {
+        %sum = arith.addf %in, %out : f32
+        linalg.yield %sum : f32
+      }
+    %empty2 = tensor.empty() : tensor<16xf32>
+    %init2 = linalg.fill ins(%c0 : f32) outs(%empty2 : tensor<16xf32>)
+        -> tensor<16xf32>
+    %result2 = linalg.reduce ins(%arg0 : tensor<16x32xf32>)
+        outs(%init2 : tensor<16xf32>) dimensions = [1]
+      (%in: f32, %out: f32) {
+        %sum = arith.addf %in, %out : f32
+        linalg.yield %sum : f32
+      }
+    return %result0, %result1, %result2
+        : tensor<32xf32>, tensor<32xf32>, tensor<16xf32>
   }
 }
 
@@ -177,5 +223,47 @@ module {
       linalg.yield %scaled : f32
     } -> tensor<8xf32>
     return %result : tensor<8xf32>
+  }
+}
+
+// -----
+
+// Two bounded register candidates cannot be rewritten by the single-loop
+// direct strategy. Keep the whole scope on the established TreeReduceV2 path;
+// regular fusion changes the summation order of this accuracy-sensitive case.
+// NEW: module attributes {hfusion.legacy_tree_reduction_scope, hfusion.tree_reduction_selection_frozen}
+// NEW-LABEL: func.func private @two_ra32_fused_0(
+// NEW-NEXT: %{{.*}} = linalg.reduce
+// NEW-LABEL: func.func private @two_ra32_fused_1(
+// NEW-NEXT: %{{.*}} = linalg.reduce
+// LEGACY-LABEL: func.func private @two_ra32_fused_0(
+// LEGACY-NEXT: %{{.*}} = linalg.reduce
+// LEGACY-LABEL: func.func private @two_ra32_fused_1(
+// LEGACY-NEXT: %{{.*}} = linalg.reduce
+
+module {
+  func.func @two_ra32(%arg0: tensor<32x32xf32>)
+      -> (tensor<32xf32>, tensor<32xf32>)
+      attributes {hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %c0 = arith.constant 0.0 : f32
+    %empty0 = tensor.empty() : tensor<32xf32>
+    %init0 = linalg.fill ins(%c0 : f32) outs(%empty0 : tensor<32xf32>)
+        -> tensor<32xf32>
+    %result0 = linalg.reduce ins(%arg0 : tensor<32x32xf32>)
+        outs(%init0 : tensor<32xf32>) dimensions = [0]
+      (%in: f32, %out: f32) {
+        %sum = arith.addf %in, %out : f32
+        linalg.yield %sum : f32
+      }
+    %empty1 = tensor.empty() : tensor<32xf32>
+    %init1 = linalg.fill ins(%c0 : f32) outs(%empty1 : tensor<32xf32>)
+        -> tensor<32xf32>
+    %result1 = linalg.reduce ins(%arg0 : tensor<32x32xf32>)
+        outs(%init1 : tensor<32xf32>) dimensions = [0]
+      (%in: f32, %out: f32) {
+        %sum = arith.addf %in, %out : f32
+        linalg.yield %sum : f32
+      }
+    return %result0, %result1 : tensor<32xf32>, tensor<32xf32>
   }
 }
