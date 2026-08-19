@@ -137,7 +137,8 @@ struct BiShengIRCompileMainConfigCLOptions : public BiShengIRCompileMainConfig {
     // when enableSanitizer/enableMemoryDisplay is true, enable
     // printDebugInfoOpt
     auto &opts = cl::getRegisteredOptions();
-    if ((enableSanitizer || enableMemoryDisplay || enableDebugInfo) &&
+    if ((enableSanitizer || enableMemoryDisplay || enableDebugInfo ||
+         enableDebugVariables) &&
         (opts.count("mlir-print-debuginfo") != 0)) {
       static_cast<cl::opt<bool> *>(opts["mlir-print-debuginfo"])
           ->setValue(true);
