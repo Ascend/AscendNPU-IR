@@ -145,7 +145,13 @@
 // CHECK: %[[SIGNED:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[POLY]], %[[SIGN_F]] : tensor<5xf32>, tensor<5xf32>) outs(%[[E_F32_8]] : tensor<5xf32>) -> tensor<5xf32>
 // CHECK: %[[E_F32_9:.*]] = tensor.empty() : tensor<5xf32>
 // CHECK: %[[OUT:.*]] = hfusion.select ins(%[[IS_NAN_INF]], %[[QNAN_F32]], %[[SIGNED]] : tensor<5xi1>, f32, tensor<5xf32>) outs(%[[E_F32_9]] : tensor<5xf32>) -> tensor<5xf32>
-// CHECK: %[[EXPAND:.*]] = tensor.expand_shape %[[OUT]] {{\[}}[0, 1]{{\]}} output_shape {{\[}}5, 1{{\]}} : tensor<5xf32> into tensor<5x1xf32>
+// CHECK: %[[E_F32_10:.*]] = tensor.empty() : tensor<5xf32>
+// CHECK: %[[XSQ:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[COLLAPSED]], %[[COLLAPSED]] : tensor<5xf32>, tensor<5xf32>) outs(%[[E_F32_10]] : tensor<5xf32>) -> tensor<5xf32>
+// CHECK: %[[E_I1_2:.*]] = tensor.empty() : tensor<5xi1>
+// CHECK: %[[IS_TINY:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<vlt>} ins(%[[XSQ]], %{{.*}} : tensor<5xf32>, f32) outs(%[[E_I1_2]] : tensor<5xi1>) -> tensor<5xi1>
+// CHECK: %[[E_F32_11:.*]] = tensor.empty() : tensor<5xf32>
+// CHECK: %[[FINAL:.*]] = hfusion.select ins(%[[IS_TINY]], %[[COLLAPSED]], %[[OUT]] : tensor<5xi1>, tensor<5xf32>, tensor<5xf32>) outs(%[[E_F32_11]] : tensor<5xf32>) -> tensor<5xf32>
+// CHECK: %[[EXPAND:.*]] = tensor.expand_shape %[[FINAL]] {{\[}}[0, 1]{{\]}} output_shape {{\[}}5, 1{{\]}} : tensor<5xf32> into tensor<5x1xf32>
 // CHECK: return %[[EXPAND]] : tensor<5x1xf32>
 // CHECK: }
 func.func @test_NormalizeSin_hfusion_sin_ops(%arg0 : tensor<5x1xf32>) ->  tensor<5x1xf32> {
@@ -309,7 +315,13 @@ func.func @test_NormalizeSin_hfusion_sin_ops_rank1_f16(%arg0 : tensor<7xf16>) ->
 // CHECK: %[[SIGNED:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[POLY]], %[[SIGN_F]] : tensor<5xf32>, tensor<5xf32>) outs(%[[E_F32_7]] : tensor<5xf32>) -> tensor<5xf32>
 // CHECK: %[[E_F32_8:.*]] = tensor.empty() : tensor<5xf32>
 // CHECK: %[[OUT_F32:.*]] = hfusion.select ins(%[[IS_NAN_INF]], %[[QNAN]], %[[SIGNED]] : tensor<5xi1>, f32, tensor<5xf32>) outs(%[[E_F32_8]] : tensor<5xf32>) -> tensor<5xf32>
-// CHECK: %[[EXPAND:.*]] = tensor.expand_shape %[[OUT_F32]] {{\[}}[0, 1]{{\]}} output_shape {{\[}}5, 1{{\]}} : tensor<5xf32> into tensor<5x1xf32>
+// CHECK: %[[E_F32_9:.*]] = tensor.empty() : tensor<5xf32>
+// CHECK: %[[XSQ_F32:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[COLLAPSED]], %[[COLLAPSED]] : tensor<5xf32>, tensor<5xf32>) outs(%[[E_F32_9]] : tensor<5xf32>) -> tensor<5xf32>
+// CHECK: %[[E_I1_2:.*]] = tensor.empty() : tensor<5xi1>
+// CHECK: %[[IS_TINY_F32:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<vlt>} ins(%[[XSQ_F32]], %{{.*}} : tensor<5xf32>, f32) outs(%[[E_I1_2]] : tensor<5xi1>) -> tensor<5xi1>
+// CHECK: %[[E_F32_10:.*]] = tensor.empty() : tensor<5xf32>
+// CHECK: %[[FINAL_F32:.*]] = hfusion.select ins(%[[IS_TINY_F32]], %[[CST_POS1]], %[[OUT_F32]] : tensor<5xi1>, f32, tensor<5xf32>) outs(%[[E_F32_10]] : tensor<5xf32>) -> tensor<5xf32>
+// CHECK: %[[EXPAND:.*]] = tensor.expand_shape %[[FINAL_F32]] {{\[}}[0, 1]{{\]}} output_shape {{\[}}5, 1{{\]}} : tensor<5xf32> into tensor<5x1xf32>
 // CHECK: %[[E_F16:.*]] = tensor.empty() : tensor<5x1xf16>
 // CHECK: %[[OUT_F16:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<round>} ins(%[[EXPAND]] : tensor<5x1xf32>) outs(%[[E_F16]] : tensor<5x1xf16>) -> tensor<5x1xf16>
 // CHECK: return %[[OUT_F16]] : tensor<5x1xf16>
