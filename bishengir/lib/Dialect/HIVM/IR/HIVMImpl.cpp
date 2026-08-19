@@ -27,6 +27,7 @@
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/TypeUtilities.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
+#include "mlir/Interfaces/LoopLikeInterface.h"
 
 #define DEBUG_TYPE "hivm-impl"
 #define DBGS() (llvm::dbgs() << "[" DEBUG_TYPE "]: ")
@@ -88,11 +89,13 @@ static ValueRange getForwardedOperands(Operation *terminator) {
   return terminator->getOperands();
 }
 
-static void getTerminatorSuccessorRegions(
-    Operation *terminator, RegionBranchOpInterface branchOp,
-    SmallVectorImpl<RegionSuccessor> &successors) {
+static void
+getTerminatorSuccessorRegions(Operation *terminator,
+                              RegionBranchOpInterface branchOp,
+                              SmallVectorImpl<RegionSuccessor> &successors) {
   SmallVector<Attribute> operandAttrs(terminator->getNumOperands());
-  if (auto termIface = dyn_cast<RegionBranchTerminatorOpInterface>(terminator)) {
+  if (auto termIface =
+          dyn_cast<RegionBranchTerminatorOpInterface>(terminator)) {
     termIface.getSuccessorRegions(operandAttrs, successors);
     return;
   }
@@ -528,7 +531,8 @@ VCastOp castTo(OpBuilder &builder, Location loc, Value src,
   } else if (isa<MemRefType>(src.getType())) {
     resultTypeRange = TypeRange({});
   } else {
-    llvm::report_fatal_error("Cast src is neither in tensor type nor in memref type");
+    llvm::report_fatal_error(
+        "Cast src is neither in tensor type nor in memref type");
     return nullptr;
   }
   mlir::hivm::VCastOp VCastOp = builder.create<hivm::VCastOp>(
@@ -670,7 +674,7 @@ FailureOr<std::string> stringfyConstantIntOpValue(Value value) {
 }
 
 static bool shouldMapToUnsigned(IntegerType::SignednessSemantics val,
-                         hivm::TypeFn casting) {
+                                hivm::TypeFn casting) {
   if (hivm::TypeFn::cast_unsigned == casting)
     return true;
 
@@ -684,8 +688,7 @@ static bool shouldMapToUnsigned(IntegerType::SignednessSemantics val,
   llvm::report_fatal_error("Unexpected IntegerType::SignednessSemantics");
 }
 
-std::string getTypeName(Location loc, Type type,
-                                      hivm::TypeFn casting) {
+std::string getTypeName(Location loc, Type type, hivm::TypeFn casting) {
   std::string unknown = "UNKNOWN";
   if (auto iType = dyn_cast<IntegerType>(type)) {
     switch (BitWidth(iType.getWidth())) {
@@ -740,17 +743,16 @@ static LogicalResult getCastSrcUnAlignSizeInfo(
     return failure();
   }
 
-
   // collect unalign info of src if cast src dims are not aligned.
   auto hwAlignBytes = maybeHwAlignBytes.value();
   auto elemTypeBytes = getElementTypeOrSelf(srcType).getIntOrFloatBitWidth() /
-                      mlir::utils::INTR_BITS_PER_BYTE;
-  #ifndef NDEBUG
+                       mlir::utils::INTR_BITS_PER_BYTE;
+#ifndef NDEBUG
   const int b16InByte = 2;
   const int b32InByte = 4;
   assert((elemTypeBytes == b16InByte || elemTypeBytes == b32InByte) &&
-      "Src only supports b32/b16 in cast overflow.");
-  #endif
+         "Src only supports b32/b16 in cast overflow.");
+#endif
   auto shape = cast<ShapedType>(src.getType()).getShape();
   int64_t numElemPerBlock = mlir::utils::INTR_BYTES_PER_BLOCK / elemTypeBytes;
   int64_t numElemPerBlockForDst = numElemPerBlock * bytesFactor;
@@ -769,11 +771,11 @@ static LogicalResult getCastSrcUnAlignSizeInfo(
     // corresponding 2D scene to implement.
     if (!ShapedType::isDynamic(shape[0]) && shape[0] <= numElemPerBlockForDst) {
       hwAlignBytes = static_cast<unsigned>(
-        CEIL_FACTOR(shape[0] * bytesFactor, numElemPerBlockForDst) *
-        numElemPerBlockForDst);
+          CEIL_FACTOR(shape[0] * bytesFactor, numElemPerBlockForDst) *
+          numElemPerBlockForDst);
     } else {
       hwAlignBytes = static_cast<unsigned>(numElemPerBlockForDst *
-                                          numElemPerBlockForDst * bytesFactor);
+                                           numElemPerBlockForDst * bytesFactor);
     }
     if (ShapedType::isDynamic(shape[0]) ||
         (shape[0] * elemTypeBytes) % hwAlignBytes != 0) {
@@ -781,11 +783,11 @@ static LogicalResult getCastSrcUnAlignSizeInfo(
       operAlignInfoList->push_back(std::move(srcAlignInfo));
     }
   } else {
-  #ifndef NDEBUG
+#ifndef NDEBUG
     const int supportedCastAlignDimSize = 2;
     assert(castAlignDims.size() == supportedCastAlignDimSize &&
-        "When cast rank >= 2, castAlignDims size must be equal to 2");
-  #endif
+           "When cast rank >= 2, castAlignDims size must be equal to 2");
+#endif
     // Align the second axis in castAlignDims.
     if (ShapedType::isDynamic(shape[castAlignDims[1]]) ||
         (shape[castAlignDims[1]] * elemTypeBytes) % hwAlignBytes != 0) {
@@ -797,8 +799,8 @@ static LogicalResult getCastSrcUnAlignSizeInfo(
     hwAlignBytes = static_cast<unsigned>(numElemPerBlockForDst * bytesFactor);
     if (ShapedType::isDynamic(shape[castAlignDims[0]]) ||
         (static_cast<uint64_t>(shape[castAlignDims[0]]) * elemTypeBytes) %
-        hwAlignBytes !=
-        0) {
+                hwAlignBytes !=
+            0) {
       auto srcAlignInfo =
           std::make_unique<OperAlignInfo>(src, castAlignDims[0], hwAlignBytes);
       operAlignInfoList->push_back(std::move(srcAlignInfo));
@@ -806,7 +808,6 @@ static LogicalResult getCastSrcUnAlignSizeInfo(
   }
   return success();
 }
-
 
 static LogicalResult getCastDstUnAlignSizeInfo(
     Value dst, SmallVector<int64_t> castAlignDims,
@@ -818,11 +819,10 @@ static LogicalResult getCastDstUnAlignSizeInfo(
     return failure();
   }
 
-
   // collect unalign info of dst if cast dst dims are not aligned
   auto hwAlignBytes = maybeHwAlignBytes.value();
   auto elemTypeBytes = getElementTypeOrSelf(dstType).getIntOrFloatBitWidth() /
-                      mlir::utils::INTR_BITS_PER_BYTE;
+                       mlir::utils::INTR_BITS_PER_BYTE;
   assert(elemTypeBytes == 1 && "Dst only supports b8 in cast overflow.");
   auto shape = cast<ShapedType>(dst.getType()).getShape();
   uint64_t numElemPerBlock = mlir::utils::INTR_BYTES_PER_BLOCK / elemTypeBytes;
@@ -844,8 +844,8 @@ static LogicalResult getCastDstUnAlignSizeInfo(
   for (auto checkDim : castAlignDims) {
     if (ShapedType::isDynamic(shape[checkDim]) ||
         (static_cast<uint64_t>(shape[checkDim]) * elemTypeBytes) %
-        hwAlignBytes !=
-        0) {
+                hwAlignBytes !=
+            0) {
       auto dstAlignInfo =
           std::make_unique<OperAlignInfo>(dst, checkDim, hwAlignBytes);
       operAlignInfoList->push_back(std::move(dstAlignInfo));
@@ -888,7 +888,6 @@ LogicalResult getUnAlignSizeInfo(
       mlir::utils::INTR_BITS_PER_BYTE;
   auto bytesFactor = srcElemTypeBytes / dstElemTypeBytes;
 
-
   // Get the cast axis that needs to be aligned.
   SmallVector<int64_t> castAlignDims;
   int64_t rank = srcType.getRank();
@@ -901,15 +900,14 @@ LogicalResult getUnAlignSizeInfo(
     llvm::report_fatal_error("cast op rank need lager than 0.");
   }
 
-
   // Get the unalign information of the axis corresponding to cast src.
   if (failed(getCastSrcUnAlignSizeInfo(op.getSrc()[0], castAlignDims,
-                                      bytesFactor, operAlignInfoList))) {
+                                       bytesFactor, operAlignInfoList))) {
     return failure();
   }
   // Get the unalign information of the axis corresponding to cast dst.
   if (failed(getCastDstUnAlignSizeInfo(op.getDst()[0], castAlignDims,
-                                      operAlignInfoList))) {
+                                       operAlignInfoList))) {
     return failure();
   }
   return success();

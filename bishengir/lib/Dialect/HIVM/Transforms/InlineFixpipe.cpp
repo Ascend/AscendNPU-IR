@@ -585,26 +585,33 @@ public:
 
 static bool isRegBasedArch(Operation *op);
 
-/// Skip inserting outer fixpipe after an accumulation loop when the mmad
-/// result is yielded back to outs and the loop stays in L0C.
+/// Skip inserting outer fixpipe after an accumulation loop when that *loop
+/// result* stays in L0C for a later matmul outs. The in-loop mmad result
+/// always cycles back to iter_arg outs, so consulting it would skip every
+/// remain_in_l0c accumulation, including results consumed by Vector ops
+/// such as vsel. remain_in_l0c is loop-wide; normalized_in_L0C names the
+/// result indices that actually stay in L0C.
 static bool shouldSkipOuterFixpipeForAccumulation(Operation *opInst,
                                                   Value mmadLikeOpRes) {
   if (!isAccumulation(opInst))
     return false;
-  if (!anyUserReachesMatmulOuts(mmadLikeOpRes))
-    return false;
 
   int resultIndx = 0;
   Operation *insertAfterOp = getInsertPoint(opInst, resultIndx);
-  Value loopResult = insertAfterOp->getResult(resultIndx);
-  if (loopResult == mmadLikeOpRes)
+  OpResult loopResult = insertAfterOp->getResult(resultIndx);
+  if (Value(loopResult) == mmadLikeOpRes)
     return false;
 
   auto forOp = dyn_cast<scf::ForOp>(insertAfterOp);
   if (!forOp)
     return false;
+  if (forOp->getAttr(hivm::RemainInL0CAttr::name) == nullptr)
+    return false;
+  if (!isRegionResultRequiredInL0C(cast<RegionBranchOpInterface>(insertAfterOp),
+                                   loopResult))
+    return false;
 
-  return forOp->getAttr(hivm::RemainInL0CAttr::name) != nullptr;
+  return anyUserReachesMatmulOuts(loopResult);
 }
 
 /// Check whether every meaningful user reaches a fixpipe, tracing through
