@@ -900,7 +900,7 @@ module {
                                     %c1_i32 : i32)
           outs(%gather_dst : tensor<8xf32>) -> tensor<8xf32>
       scope.return %2 : tensor<8xf32>
-    } {noinline, vector_type = "simt"}
+    } {noinline, vector_mode = "simt"}
     %1 = hivm.hir.matmul
          ins(%lhs, %rhs : tensor<8x8xf16>, tensor<8x8xf16>)
          outs(%matmul_dst : tensor<8x8xf16>) -> tensor<8x8xf16>

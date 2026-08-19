@@ -391,15 +391,15 @@ func.func @diamond_free_nodes(%ts: tensor<16x16xf32>, %sc: f32, %tin: tensor<16x
 // CHECK:         scf.if
 // CHECK-NEXT:      scope.scope
 // CHECK:             hivm.hir.vmul
-// CHECK:           vector_type = "simt"
+// CHECK:           vector_mode = "simt"
 // CHECK:         scf.if
 // CHECK-NEXT:      scope.scope
 // CHECK:             hivm.hir.vmul
-// CHECK:           vector_type = "simt"
+// CHECK:           vector_mode = "simt"
 // CHECK:         scf.if
 // CHECK-NEXT:      scope.scope
 // CHECK:             hivm.hir.vmul
-// CHECK:           vector_type = "simt"
+// CHECK:           vector_mode = "simt"
 // CHECK:         hivm.hir.mmadL1
 func.func @free_simt_scope_pinned(%vin: tensor<16x16xf32>, %sc: f32,
                                   %ca: tensor<32x64xf16>, %cb: tensor<64x16xf16>, %cc: tensor<32x16xf32>,
@@ -409,7 +409,7 @@ func.func @free_simt_scope_pinned(%vin: tensor<16x16xf32>, %sc: f32,
     %s = scope.scope : () -> tensor<16x16xf32> {
       %v = hivm.hir.vmul ins(%vin, %sc : tensor<16x16xf32>, f32) outs(%e0 : tensor<16x16xf32>) -> tensor<16x16xf32>
       scope.return %v : tensor<16x16xf32>
-    } {noinline, vector_type = "simt"}
+    } {noinline, vector_mode = "simt"}
     scope.return %s : tensor<16x16xf32>
   } {noinline, sub_block = 0 : i32}
   %e1 = tensor.empty() : tensor<16x16xf32>
@@ -417,14 +417,14 @@ func.func @free_simt_scope_pinned(%vin: tensor<16x16xf32>, %sc: f32,
     %s = scope.scope : () -> tensor<16x16xf32> {
       %v = hivm.hir.vmul ins(%vin, %sc : tensor<16x16xf32>, f32) outs(%e1 : tensor<16x16xf32>) -> tensor<16x16xf32>
       scope.return %v : tensor<16x16xf32>
-    } {noinline, vector_type = "simt"}
+    } {noinline, vector_mode = "simt"}
     scope.return %s : tensor<16x16xf32>
   } {noinline, sub_block = 1 : i32}
   %e2 = tensor.empty() : tensor<16x16xf32>
   %free = scope.scope : () -> tensor<16x16xf32> {
     %v = hivm.hir.vmul ins(%vin, %sc : tensor<16x16xf32>, f32) outs(%e2 : tensor<16x16xf32>) -> tensor<16x16xf32>
     scope.return %v : tensor<16x16xf32>
-  } {noinline, vector_type = "simt"}
+  } {noinline, vector_mode = "simt"}
   %mm = hivm.hir.mmadL1 ins(%ca, %cb, %flag, %m, %k, %n : tensor<32x64xf16>, tensor<64x16xf16>, i1, index, index, index) outs(%cc : tensor<32x16xf32>) -> tensor<32x16xf32>
   return
 }
@@ -436,7 +436,7 @@ func.func @free_simt_scope_pinned(%vin: tensor<16x16xf32>, %sc: f32,
 // CHECK:         scope.scope
 // CHECK-NEXT:      hivm.hir.vmul
 // CHECK-NEXT:      scope.return
-// CHECK-NEXT:    } {noinline, vector_type = "simt"}
+// CHECK-NEXT:    } {noinline, vector_mode = "simt"}
 // CHECK:         scf.if
 func.func @free_simt_scope_both(%vin: tensor<16x16xf32>, %sc: f32,
                                 %ca: tensor<32x64xf16>, %cb: tensor<64x16xf16>, %cc: tensor<32x16xf32>,
@@ -445,13 +445,13 @@ func.func @free_simt_scope_both(%vin: tensor<16x16xf32>, %sc: f32,
   %shared = scope.scope : () -> tensor<16x16xf32> {
     %v = hivm.hir.vmul ins(%vin, %sc : tensor<16x16xf32>, f32) outs(%e2 : tensor<16x16xf32>) -> tensor<16x16xf32>
     scope.return %v : tensor<16x16xf32>
-  } {noinline, vector_type = "simt"}
+  } {noinline, vector_mode = "simt"}
   %e0 = tensor.empty() : tensor<16x16xf32>
   %a0 = scope.scope : () -> tensor<16x16xf32> {
     %s = scope.scope : () -> tensor<16x16xf32> {
       %v = hivm.hir.vmul ins(%shared, %sc : tensor<16x16xf32>, f32) outs(%e0 : tensor<16x16xf32>) -> tensor<16x16xf32>
       scope.return %v : tensor<16x16xf32>
-    } {noinline, vector_type = "simt"}
+    } {noinline, vector_mode = "simt"}
     scope.return %s : tensor<16x16xf32>
   } {noinline, sub_block = 0 : i32}
   %e1 = tensor.empty() : tensor<16x16xf32>
@@ -459,7 +459,7 @@ func.func @free_simt_scope_both(%vin: tensor<16x16xf32>, %sc: f32,
     %s = scope.scope : () -> tensor<16x16xf32> {
       %v = hivm.hir.vmul ins(%shared, %sc : tensor<16x16xf32>, f32) outs(%e1 : tensor<16x16xf32>) -> tensor<16x16xf32>
       scope.return %v : tensor<16x16xf32>
-    } {noinline, vector_type = "simt"}
+    } {noinline, vector_mode = "simt"}
     scope.return %s : tensor<16x16xf32>
   } {noinline, sub_block = 1 : i32}
   %mm = hivm.hir.mmadL1 ins(%ca, %cb, %flag, %m, %k, %n : tensor<32x64xf16>, tensor<64x16xf16>, i1, index, index, index) outs(%cc : tensor<32x16xf32>) -> tensor<32x16xf32>

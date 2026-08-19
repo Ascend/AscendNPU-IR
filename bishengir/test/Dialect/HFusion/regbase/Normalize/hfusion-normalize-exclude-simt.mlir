@@ -6,6 +6,6 @@ func.func @test_Normalize_bcst_i1(%arg0: tensor<64xi1>, %arg1: tensor<64x128xi32
         %1 = tensor.empty() : tensor<64x128xi1>
         %2 = linalg.broadcast ins(%arg0 : tensor<64xi1>) outs(%1 : tensor<64x128xi1>) dimensions = [1] 
         scope.return %2 : tensor<64x128xi1>
-    } {noinline, vector_type = "simt"}
+    } {noinline, vector_mode = "simt"}
     return %3 : tensor<64x128xi1>
 }

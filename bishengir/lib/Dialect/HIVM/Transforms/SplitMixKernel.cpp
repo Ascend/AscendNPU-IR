@@ -546,8 +546,8 @@ static void filterEmptyScopesPreOrder(OpBuilder &builder,
     if (!scopeOp)
       return WalkResult::advance();
 
-    if (auto vectorType = scopeOp->getAttrOfType<StringAttr>("vector_type")) {
-      if (vectorType.getValue() == "simt") {
+    if (auto vectorMode = scopeOp->getAttrOfType<StringAttr>("vector_mode")) {
+      if (vectorMode.getValue() == "simt") {
         scopeOp->setAttr(
             hivm::TCoreTypeAttr::name,
             hivm::TCoreTypeAttr::get(builder.getContext(), TCoreType::VECTOR));
