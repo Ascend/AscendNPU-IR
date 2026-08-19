@@ -25,7 +25,6 @@
 // CHECK: return
 
 // CHECK-LABEL: func.func private @triton_unk_fused__softmax_add_mul_rsub_3_01B_fused_1(
-// CHECK: linalg.fill
 // CHECK: linalg.broadcast
 // CHECK: hfusion.compare {compare_fn = #hfusion.compare_fn<vle>}
 // CHECK: hfusion.cast
@@ -76,6 +75,8 @@
 // CHECK: memref.copy
 // CHECK: bufferization.to_tensor
 // CHECK: func.call @triton_unk_fused__softmax_add_mul_rsub_3_01B_fused_0
+// CHECK: linalg.fill
+// CHECK: tensor.insert_slice
 // CHECK: func.call @triton_unk_fused__softmax_add_mul_rsub_3_01B_fused_1
 // CHECK: func.call @triton_unk_fused__softmax_add_mul_rsub_3_01B_fused_2
 // CHECK: func.call @triton_unk_fused__softmax_add_mul_rsub_3_01B_fused_3
