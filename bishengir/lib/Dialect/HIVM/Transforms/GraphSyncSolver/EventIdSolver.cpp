@@ -313,22 +313,62 @@ EventIdSolver::getChosenEventIds(EventIdNode *node, int64_t eventIdMax) {
 
 llvm::SmallVector<int64_t>
 EventIdSolver::getRoundRobinEventIds(EventIdNode *node, int64_t &nextEventId) {
-  assert(eventIdsNumMax > 0);
-  assert(node->eventIdNum <= eventIdsNumMax);
+  // Honor a user-pinned id carried on the originating conflict pair.
   if (node->initConflictPair && node->initConflictPair->pinnedEventId &&
       node->eventIdNum == 1) {
-    int64_t pinnedEventId = *node->initConflictPair->pinnedEventId;
-    nextEventId = (pinnedEventId + 1) % eventIdsNumMax;
-    return {pinnedEventId};
+    return {*node->initConflictPair->pinnedEventId};
   }
 
-  if (nextEventId + node->eventIdNum > eventIdsNumMax) {
-    nextEventId = 0;
+  llvm::SmallVector<int64_t> chosenEventIds;
+  llvm::SmallVector<int64_t> usedEventIds = getAdjNodesUsedEventIds(node);
+  usedEventIds.append(reservedEventIds.begin(), reservedEventIds.end());
+  llvm::sort(usedEventIds);
+  usedEventIds.erase(std::unique(usedEventIds.begin(), usedEventIds.end()),
+                     usedEventIds.end());
+
+  int64_t curEventId = nextEventId;
+  auto *it = usedEventIds.begin();
+  while (curEventId <= this->eventIdsNumMax && static_cast<int64_t>(chosenEventIds.size()) < node->eventIdNum) {
+    while ((it != usedEventIds.end()) && ((*it) < curEventId)) {
+      it++;
+    }
+    if ((it != usedEventIds.end()) && ((*it) == curEventId)) {
+      it++;
+    } else {
+      chosenEventIds.push_back(curEventId);
+    }
+    curEventId++;
   }
-  llvm::SmallVector<int64_t> eventIds(node->eventIdNum);
-  std::iota(eventIds.begin(), eventIds.end(), nextEventId);
-  nextEventId = (nextEventId + node->eventIdNum) % eventIdsNumMax;
-  return eventIds;
+
+  if (static_cast<int64_t>(chosenEventIds.size()) < node->eventIdNum) {
+    chosenEventIds.clear();
+    it = usedEventIds.begin();
+    curEventId = 0;
+    while (curEventId <= this->eventIdsNumMax &&
+            static_cast<int64_t>(chosenEventIds.size()) < node->eventIdNum) {
+      while ((it != usedEventIds.end()) && ((*it) < curEventId)) {
+        it++;
+      }
+      if ((it != usedEventIds.end()) && ((*it) == curEventId)) {
+        it++;
+      } else {
+        chosenEventIds.push_back(curEventId);
+      }
+      curEventId++;
+    }
+  }
+  if (!chosenEventIds.empty()) {
+    nextEventId = (chosenEventIds.back() + 1) % eventIdsNumMax;
+  }
+  LLVM_DEBUG({
+    llvm::dbgs() << "round robin chosen-event-ids: ";
+    for (auto e : chosenEventIds)
+      llvm::dbgs() << e << ' ';
+    llvm::dbgs() << '\n';
+  });
+  assert(node->eventIdNum == static_cast<int64_t>(chosenEventIds.size()));
+  assert(llvm::is_sorted(chosenEventIds));
+  return chosenEventIds;
 }
 
 std::optional<int64_t>
