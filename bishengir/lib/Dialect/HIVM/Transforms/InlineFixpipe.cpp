@@ -1424,6 +1424,16 @@ private:
         return rewriter.notifyMatchFailure(
             notifyOp, "fallback_not_exec consumer chain is not single-use");
 
+      // The whole chain must sit in the same block as the fallback if. If it
+      // is nested in another region (e.g. a guarding scf.if / scf.for), its
+      // external operands (store dst, dynamic slice indices) are defined in
+      // that region and cannot dominate the sunk if, and sinking the store
+      // would also drop the guarding condition.
+      if (user->getBlock() != notifyOp->getBlock())
+        return rewriter.notifyMatchFailure(
+            user,
+            "fallback_not_exec consumer chain is nested in another region");
+
       if (auto storeOp = dyn_cast<hivm::StoreOp>(user)) {
         // TODO: share this atomic-kind whitelist with the greedy store-fusion
         // path in inlineFixpipeOp (NONE/ADD/MAX/MIN). No helper exists yet.
