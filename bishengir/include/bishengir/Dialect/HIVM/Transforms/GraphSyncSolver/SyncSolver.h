@@ -255,9 +255,10 @@ protected:
   // Whether the hazard is a backward (cross-iteration) sync operation.
   bool isBackwardSync(Occurrence *occ1, Occurrence *occ2);
 
-  // Placeholder occurrences used when placing sync operations around a region.
-  Occurrence *getBeforePlaceHolderOcc(Occurrence *occ);
-  Occurrence *getAfterPlaceHolderOcc(Occurrence *occ);
+  // Returns nullptr if no matching before/after placeholder is found. Asserts
+  // that a placeholder exists when occ->op is a Loop.
+  Occurrence *tryGetBeforePlaceHolderOcc(Occurrence *occ);
+  Occurrence *tryGetAfterPlaceHolderOcc(Occurrence *occ);
   Occurrence *getScopeBeginPlaceHolderOcc(Occurrence *occ);
   Occurrence *getScopeEndPlaceHolderOcc(Occurrence *occ);
 
