@@ -1246,14 +1246,6 @@ def EnableFusedMultiplyAdd : HIVMOptimizationControlOptions<
   let passGroup = ["HIVM"];
 }
 
-def EnableAveLoopOptimize : HIVMOptimizationControlOptions<
-  "Enable AVE small-width loop optimization.",
-  "bool",
-  "true"
-> {
-  let passGroup = ["HIVM"];
-}
-
 def MaxReductionSplit : HIVMOptimizationControlOptions<
   "Max split times for reductionLoop.",
   "int",
