@@ -127,6 +127,7 @@ init_variables() {
   SKIP_RPATH_OPTION="FALSE"
   CMAKE_OPTIONS=""
   INSTALL_PREFIX=""
+  COVERAGE="OFF"
   SHMEM_BUILD_TEMPLATE="OFF"
   COLLECT_BINARY="OFF"
   ENABLE_BSPUB="ON"
@@ -178,6 +179,7 @@ usage() {
                 [--safety-ld-options]
                 [--skip-rpath]
                 [--enable-cpu-runner]
+                [--coverage]
                 [--enable-bspub]
                 [--collect-binary OUTPUT_DIR]
 
@@ -209,6 +211,8 @@ usage() {
       --skip-rpath                         Disable the Run-time Search Path option. (Default: disabled)
       --torch-mlir-source-dir DIR          Torch-MLIR project's root directory. (Default: 'third-party/torch-mlir')
       --enable-cpu-runner                  Enable the compilation of CPU runner targets
+      --coverage                           Build with gcov-compatible coverage instrumentation
+                                         (adds -fprofile-arcs -ftest-coverage -fprofile-update=atomic). (Default: disabled)
       --enable-bspub                       Enable BSPUB DaVinci BiShengIR build. (Default: disabled)
       --collect-binary [OUTPUT_DIR]      Collect built binaries and bc files to OUTPUT_DIR.
                                            This is a standalone mode that skips the build process.
@@ -401,6 +405,10 @@ parse_arguments() {
                 SAFETY_LD_OPTIONS="-s -Wl,-z,relro,-z,now"
                 shift
                 ;;
+            --coverage)
+                COVERAGE="ON"
+                shift
+                ;;
             --skip-rpath)
                 SKIP_RPATH_OPTION="TRUE"
                 shift
@@ -590,6 +598,15 @@ cmake_generate() {
   C_FLAGS="${SAFETY_OPTIONS} ${COMMON_FLAGS} -Wstrict-prototypes"
   CXX_FLAGS="${SAFETY_OPTIONS} ${COMMON_FLAGS} -Wnon-virtual-dtor -Wno-unknown-warning-option"
 
+  # Coverage flags
+  if [ "${COVERAGE}" = "ON" ]; then
+    local coverage_compile_flags="-fprofile-arcs -ftest-coverage -fprofile-update=atomic"
+    local coverage_link_flags="--coverage"
+    C_FLAGS="${C_FLAGS} ${coverage_compile_flags}"
+    CXX_FLAGS="${CXX_FLAGS} ${coverage_compile_flags}"
+    LD_FLAGS="${LD_FLAGS} ${coverage_link_flags}"
+  fi
+
   # Linker flags by OS
   if [[ "$OS_TYPE" == "Darwin" ]]; then
     LD_FLAGS="${SAFETY_LD_OPTIONS}"
@@ -698,7 +715,7 @@ cmake_install() {
 collect_binary() {
   local output_dir="$1"
   local install_dir="${BUILD_DIR}/install"
-
+  
   echo "Collecting binaries to ${output_dir}..."
 
   if [[ ! -d "${install_dir}" ]]; then
@@ -730,7 +747,7 @@ collect_binary() {
     echo "  Copied ${bc_count} bc files"
   else
     echo "Warning: lib directory not found at ${install_dir}/lib"
-  fi
+    fi
 
   echo "Binary collection complete. Output directory: ${output_dir}"
   echo "Contents:"
