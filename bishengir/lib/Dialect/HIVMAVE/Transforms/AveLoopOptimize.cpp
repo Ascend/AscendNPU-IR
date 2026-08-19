@@ -859,21 +859,9 @@ buildMergePlan(scf::ForOp forOp, unsigned maxMergeFactor,
   SmallVector<SmallWidthGroup, 8> candidates =
       buildGroups(forOp, maxMergeFactor, nextGroupId);
   SmallWidthMergePlan plan{0, {}, false};
-  llvm::DenseSet<Operation *> plannedOperations;
   for (SmallWidthGroup &group : candidates) {
     if (!hasCloneEquivalentScalars(group, forOp))
       continue;
-
-    // Multiple narrowing conversions can feed the same elementwise/store
-    // tail. One group already packs the other narrow operands separately, so
-    // selecting another group for the shared tail would both rewrite and
-    // subtract the same operations twice.
-    if (llvm::any_of(group.nodes, [&](Operation *op) {
-          return plannedOperations.contains(op);
-        }))
-      continue;
-    plannedOperations.insert(group.nodes.begin(), group.nodes.end());
-
     plan.unrollFactor = std::max(plan.unrollFactor, group.factor);
     plan.groups.push_back(std::move(group));
   }
