@@ -248,7 +248,12 @@ SmallVector<Value> getMemRefAllocs(Value operand) {
     return results;
   }
 
-  // -- fallback: single user case (alloc, subview, for, etc.) --
+  // -- if operand is a view, walk through such ops so a subview/cast
+  // -- of an scf.if or select still finds the branch allocs --
+  if (auto viewLike = operand.getDefiningOp<ViewLikeOpInterface>())
+    return getMemRefAllocs(viewLike.getViewSource());
+
+  // -- fallback: single user case (alloc, for, etc.) --
   FailureOr<memref::AllocOp> alloc = getMemRefAlloc(operand);
   if (failed(alloc))
     return {};
