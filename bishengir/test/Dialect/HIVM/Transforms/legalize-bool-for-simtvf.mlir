@@ -43,7 +43,7 @@ module {
       %7 = tensor.empty() : tensor<128xi1>
       %8 = hivm.hir.vand ins(%3, %5 : tensor<128xi1>, tensor<128xi1>) outs(%7 : tensor<128xi1>) -> tensor<128xi1>
       scope.return %8 : tensor<128xi1>
-    } {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vf_mode = #hivm.vf_mode<SIMT>, no_inline, noinline, outline, vector_type = "simt"}
+    } {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vf_mode = #hivm.vf_mode<SIMT>, no_inline, noinline, outline, vector_mode = "simt"}
     %9 = tensor.empty() : tensor<128xi1>
     %10 = hivm.hir.vand ins(%5, %6 : tensor<128xi1>, tensor<128xi1>) outs(%9 : tensor<128xi1>) -> tensor<128xi1>
     return

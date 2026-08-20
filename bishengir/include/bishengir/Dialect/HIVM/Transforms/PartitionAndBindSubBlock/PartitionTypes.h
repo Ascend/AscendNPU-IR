@@ -34,7 +34,7 @@ inline constexpr llvm::StringLiteral kSubBlockAttrName = "sub_block";
 inline constexpr llvm::StringLiteral kSubBlockBoundOpAttrName =
     "already_sub_block_bound";
 
-inline constexpr llvm::StringLiteral kVectorTypeAttrName = "vector_type";
+inline constexpr llvm::StringLiteral kVectorTypeAttrName = "vector_mode";
 
 inline constexpr llvm::StringLiteral kSimtVectorType = "simt";
 
@@ -121,7 +121,7 @@ Core getSubBlockCoreOf(Operation *op);
 bool isOperandParallelSubBlockGuard(Operation *op);
 
 /// True if `op` is an atomic SIMT scope: a `scope.scope` tagged
-/// `vector_type = "simt"`.
+/// `vector_mode = "simt"`.
 bool isAtomicSimtScope(Operation *op);
 
 /// True if `op` sits strictly inside an atomic SIMT scope.
