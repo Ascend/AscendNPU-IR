@@ -262,10 +262,21 @@ llvm::VersionTuple findHIVMCVersion(llvm::StringRef content) {
           "\\(([0-9a-fA-F]{6,40}) "          // commit hash
           "([0-9]{4}-[0-9]{2}-[0-9]{2})\\)$" // build date
   );
+
+  // additional version pattern check
+  // this handles the case when we have --version like this:
+  //                hivmc 0.3.0
+  // the first regex check will fail, however the version
+  // can still be parsed, so use RSimple pattern
+  Regex RSimple("^(hivmc) "                 // name
+              "([0-9]+\\.[0-9]+\\.[0-9]+)" // version
+              );
+
   SmallVector<StringRef, 4> M;
-  if (!R.match(versionLine, &M)) {
-    return llvm::VersionTuple();
-  }
+  if (!R.match(versionLine, &M) &&
+      !RSimple.match(versionLine, &M)) {
+      return llvm::VersionTuple();
+    }
 
   StringRef versionStr = M[2];
   auto version = bishengir::parseHIVMCVersion(versionStr);
