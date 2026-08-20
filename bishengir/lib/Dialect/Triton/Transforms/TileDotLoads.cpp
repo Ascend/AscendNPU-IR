@@ -1452,7 +1452,8 @@ struct TileDotPattern : public OpRewritePattern<triton::DotOp> {
 //===----------------------------------------------------------------------===//
 // StageNonLoadOperandPattern — handles over-budget dots where at least one
 // operand comes from a register chain (e.g. truncf(exp(...))) instead of
-// a tt.load. Routes the non-load operand through scratch SHM/GM so the dot
+// a tt.load, or when both operands are from a tt.load but weren't tiled by
+// TileDotLoads. Routes the staged operand(s) through scratch SHM/GM so the dot
 // can still be K-tiled.
 //
 // Steps:
@@ -1462,7 +1463,7 @@ struct TileDotPattern : public OpRewritePattern<triton::DotOp> {
 //      into `ttg.local_alloc` + per-tile `memdesc_subslice` accesses,
 //      or into `ttg.global_scratch_alloc` + per-tile regular ptr based
 //      accesses.
-//   2. Emit one envelope-shape `tt.store` of the non-load operand into
+//   2. Emit one envelope-shape `tt.store` of the operand to stage into
 //      the scratch arg. Pointer chain must match `matchScratchAccess`:
 //        addptr(splat(scratch_arg), addi(rowSide, colSide))
 //      where colSide = broadcast(expand_dims(make_range(0, K), axis=0)).
@@ -1780,9 +1781,6 @@ struct StageNonLoadOperandPattern : public OpRewritePattern<triton::DotOp> {
 
     auto aLoad = dot.getA().getDefiningOp<triton::LoadOp>();
     auto bLoad = dot.getB().getDefiningOp<triton::LoadOp>();
-    // TileDotPattern owns the both-loads case.
-    if (aLoad && bLoad)
-      return failure();
 
     // Largest power-of-two divisor of K with per-tile M*kTile*N <= budget.
     int64_t kTile;
@@ -1794,12 +1792,12 @@ struct StageNonLoadOperandPattern : public OpRewritePattern<triton::DotOp> {
       while (kTile > 1 && K % kTile != 0)
         kTile /= 2;
       if (kTile <= 0 || kTile >= K) {
-        LLVM_DEBUG(DBGS() << "[StageNonLoadOperand]   -> couldn't pick a kTile that "
+        LLVM_DEBUG(DBGS() << "[StageNonLoadOperand] couldn't pick a kTile that "
                           << "divides K and stays in budget" << '\n');
         return failure();
       }
     } else if (K % KTileSize != 0) {
-      LLVM_DEBUG(DBGS() << "  -> skip (KTileSize=" << KTileSize
+      LLVM_DEBUG(DBGS() << "[StageNonLoadOperand] skip (KTileSize=" << KTileSize
                         << " does not divide K=" << K << ")" << '\n');
       return failure();
     } else {
@@ -1842,15 +1840,28 @@ struct StageNonLoadOperandPattern : public OpRewritePattern<triton::DotOp> {
     if (bLoad && !bMk) {
       bTopInfo = decomposeTensorOfPtrsBKAxis0(bLoad, K, N);
     }
+
+    // If a load operand wasn't tiled by TileDotLoads, or if it cannot be
+    // tiled by StageNonLoadOperand, then we can treat it as a non-load
+    // operand and stage it anyways, in order to support K-Tiling. This is
+    // often necessary to manage UB Overflows
+    triton::LoadOp nullLoad;
     if ((aLoad && !aMk) || (bLoad && !bMk && !bTopInfo)) {
-      LLVM_DEBUG(DBGS() << "[StageNonLoadOperand]   -> a load operand isn't block-ptr "
-                        << "or canonical tensor-of-ptrs style; skipping" << '\n');
-      return failure();
+      LLVM_DEBUG(DBGS() << "[StageNonLoadOperand] a load operand isn't block-ptr "
+                        << "or canonical tensor-of-ptrs style" << '\n');
+      if (aLoad && !aMk) {
+        LLVM_DEBUG(DBGS() << "[StageNonLoadOperand] Staging A despite it being from LoadOp" << '\n');
+        aLoad = nullLoad;
+      }
+      if (bLoad && !bMk && !bTopInfo) {
+        LLVM_DEBUG(DBGS() << "[StageNonLoadOperand] Staging B despite it being from LoadOp" << '\n');
+        bLoad = nullLoad;
+      }
     }
 
     auto func = dot->getParentOfType<triton::FuncOp>();
     if (!func) {
-      LLVM_DEBUG(DBGS() << "[StageNonLoadOperand]   -> dot is not inside a tt.func"
+      LLVM_DEBUG(DBGS() << "[StageNonLoadOperand] dot is not inside a tt.func"
                         << '\n');
       return failure();
     }
@@ -2371,7 +2382,7 @@ struct TileDotLoadsPass : public impl::TileDotLoadsBase<TileDotLoadsPass> {
       (void)applyPatternsGreedily(getOperation(), std::move(p));
     }
 
-    // Stage non-load operands of over-budget dots through scratch SHM/GM.
+    // Stage non-load operands (or load operands that weren't tiled) of over-budget dots through scratch SHM/GM.
     {
       RewritePatternSet p(&getContext());
       p.add<StageNonLoadOperandPattern>(&getContext(), this->smemBudgetBytes, this->KTileSize, this->enableGlobalScratchAllocation);
