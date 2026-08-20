@@ -119,33 +119,39 @@ bool SyncSolverBase::isBackwardSync(Occurrence *occ1, Occurrence *occ2) {
   return parOcc1->parentOcc->op != parOp1->parentOp;
 }
 
-Occurrence *SyncSolverBase::getBeforePlaceHolderOcc(Occurrence *occ) {
+Occurrence *SyncSolverBase::tryGetBeforePlaceHolderOcc(Occurrence *occ) {
   assert(occ != nullptr);
   assert(llvm::isa_and_present<Scope>(occ->op));
   int index = occ->syncIrIndex - 1;
-  assert(0 <= index && index < static_cast<int>(syncIr.size()));
-  auto *placeHolderOcc = syncIr[index].get();
-#ifndef NDEBUG
-  auto *placeHolderOp = llvm::dyn_cast<PlaceHolder>(placeHolderOcc->op);
-  assert(placeHolderOp != nullptr);
-  assert(placeHolderOp->beforeOp == occ->op);
-#endif
+  Occurrence *placeHolderOcc = nullptr;
+  if (0 <= index && index < static_cast<int>(syncIr.size())) {
+    placeHolderOcc = syncIr[index].get();
+    auto *placeHolderOp =
+        llvm::dyn_cast_or_null<PlaceHolder>(placeHolderOcc->op);
+    if (placeHolderOp == nullptr || placeHolderOp->beforeOp != occ->op)
+      placeHolderOcc = nullptr;
+  }
+  assert(placeHolderOcc != nullptr || !llvm::isa_and_present<Loop>(occ->op));
   return placeHolderOcc;
 }
 
-Occurrence *SyncSolverBase::getAfterPlaceHolderOcc(Occurrence *occ) {
+
+Occurrence *SyncSolverBase::tryGetAfterPlaceHolderOcc(Occurrence *occ) {
   assert(occ != nullptr);
   assert(llvm::isa_and_present<Scope>(occ->op));
   int index = occ->syncIrEndIndex;
-  assert(0 <= index && index < static_cast<int>(syncIr.size()));
-  auto *placeHolderOcc = syncIr[index].get();
-#ifndef NDEBUG
-  auto *placeHolderOp = llvm::dyn_cast<PlaceHolder>(placeHolderOcc->op);
-  assert(placeHolderOp != nullptr);
-  assert(placeHolderOp->afterOp == occ->op);
-#endif
+  Occurrence *placeHolderOcc = nullptr;
+  if (0 <= index && index < static_cast<int>(syncIr.size())) {
+    placeHolderOcc = syncIr[index].get();
+    auto *placeHolderOp =
+        llvm::dyn_cast_or_null<PlaceHolder>(placeHolderOcc->op);
+    if (placeHolderOp == nullptr || placeHolderOp->afterOp != occ->op)
+      placeHolderOcc = nullptr;
+  }
+  assert(placeHolderOcc != nullptr || !llvm::isa_and_present<Loop>(occ->op));
   return placeHolderOcc;
 }
+
 
 Occurrence *SyncSolverBase::getScopeBeginPlaceHolderOcc(Occurrence *occ) {
   assert(occ != nullptr);
@@ -864,6 +870,15 @@ std::optional<EventIdInfo> SyncSolverBase::getMultiBufferEventIdInfo(
     }
   }
 
+  auto [setOcc, waitOcc] = getSetWaitLCAPairOcc(occ1, occ2);
+  assert(setOcc != nullptr && waitOcc != nullptr);
+  if (setOcc->op->getParentOfType<Loop>() != multibufferScope) {
+    return {};
+  }
+  if (waitOcc->op->getParentOfType<Loop>() != multibufferScope) {
+    return {};
+  }
+  
   EventIdInfo eventIdInfo;
   eventIdInfo.eventIdNum = eventIdNum.value();
   eventIdInfo.multiBufferInfo = MultiBufferInfo(multibufferScope);
@@ -1329,11 +1344,13 @@ SyncSolverBase::getFixedSetWaitOcc(Occurrence *occ1, Occurrence *occ2,
   //   waitOcc
   //   op2
   // }
-  if (llvm::isa_and_present<Loop>(ret.setOcc->op)) {
-    ret.setOcc = getAfterPlaceHolderOcc(ret.setOcc);
+  if (llvm::isa_and_present<Scope>(ret.setOcc->op)) {
+    if (auto *placeHolderOcc = tryGetAfterPlaceHolderOcc(ret.setOcc))
+      ret.setOcc = placeHolderOcc;
   }
-  if (llvm::isa_and_present<Loop>(ret.waitOcc->op)) {
-    ret.waitOcc = getBeforePlaceHolderOcc(ret.waitOcc);
+  if (llvm::isa_and_present<Scope>(ret.waitOcc->op)) {
+    if (auto *placeHolderOcc = tryGetBeforePlaceHolderOcc(ret.waitOcc))
+      ret.waitOcc = placeHolderOcc;
   }
 
   assert(ret.setOcc->op != nullptr && ret.waitOcc->op != nullptr);
@@ -1842,9 +1859,9 @@ ConflictPair *SyncSolverBase::handleSetWaitConflict(
     assert(parentLCALoopOp != nullptr);
     conflictPair->backwardSyncLoopOp = parentLCALoopOp;
 
-    parentLCALoopBeforePHOcc = getBeforePlaceHolderOcc(parentLCALoopOcc);
+    parentLCALoopBeforePHOcc = tryGetBeforePlaceHolderOcc(parentLCALoopOcc);
     assert(parentLCALoopBeforePHOcc != nullptr);
-    parentLCALoopAfterPHOcc = getAfterPlaceHolderOcc(parentLCALoopOcc);
+    parentLCALoopAfterPHOcc = tryGetAfterPlaceHolderOcc(parentLCALoopOcc);
     assert(parentLCALoopAfterPHOcc != nullptr);
   }
 
@@ -2534,8 +2551,8 @@ void SyncSolverBase::insertMergedBackwardSyncPairs() {
         auto startIndex = scopeOcc->startIndex;
         auto endIndex = scopeOcc->endIndex;
         if (isa<Loop>(scopeOp)) {
-          setOcc = getBeforePlaceHolderOcc(scopeOcc);
-          waitOcc = getAfterPlaceHolderOcc(scopeOcc);
+          setOcc = tryGetBeforePlaceHolderOcc(scopeOcc);
+          waitOcc = tryGetAfterPlaceHolderOcc(scopeOcc);
           startIndex = setOcc->endIndex;
           endIndex = waitOcc->startIndex;
         }
