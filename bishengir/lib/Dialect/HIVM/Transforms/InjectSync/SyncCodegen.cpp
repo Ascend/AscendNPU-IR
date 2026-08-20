@@ -111,7 +111,8 @@ void SyncCodegen::HandleUnitFlagEnabledOp(
     UnitFlagInfo unitFlagInfo) const {
   if (auto unitFlagArgsOpt =
           unitFlagInfo.getUnitFlagArgs(unitFlagEnabledOp, rewriter)) {
-    auto [unitFlagModes, unitFlagConds] = unitFlagArgsOpt.value();
+    auto [unitFlagModes, unitFlagConds, unitFlagGroupId] =
+        unitFlagArgsOpt.value();
     assert(unitFlagModes.size() <= 1 ||
            unitFlagModes.size() == unitFlagConds.size());
     if (!unitFlagModes.empty()) {
@@ -593,15 +594,19 @@ Value SyncCodegen::GetBufferSelected(IRRewriter &rewriter, Operation *op,
     Value counter;
     unsigned eventIdCount = sync->eventIds.size();
     // Use map structure: loop2BufferCounter[loop, eventIdCount]
-    std::pair<LoopLikeOpInterface, unsigned> counterKey = std::make_pair(parentLoop, eventIdCount);
+    std::pair<LoopLikeOpInterface, unsigned> counterKey =
+        std::make_pair(parentLoop, eventIdCount);
     auto iter = loop2BufferCounter.find(counterKey);
     if (iter != loop2BufferCounter.end()) {
-        counter = iter->second;
+      counter = iter->second;
     } else {
-        // Construct a modular expression for select using the eventIdCount as modular
-        Value modularIndex = createNestedIndexModular(rewriter, defineOp, eventIdCount);
-        counter = rewriter.create<arith::IndexCastOp>(modularIndex.getLoc(), rewriter.getI64Type(), modularIndex);
-        loop2BufferCounter[counterKey] = counter;
+      // Construct a modular expression for select using the eventIdCount as
+      // modular
+      Value modularIndex =
+          createNestedIndexModular(rewriter, defineOp, eventIdCount);
+      counter = rewriter.create<arith::IndexCastOp>(
+          modularIndex.getLoc(), rewriter.getI64Type(), modularIndex);
+      loop2BufferCounter[counterKey] = counter;
     }
     // Insert selector after the defined value.
     rewriter.setInsertionPointAfter(counter.getDefiningOp());
@@ -609,8 +614,8 @@ Value SyncCodegen::GetBufferSelected(IRRewriter &rewriter, Operation *op,
 
     // Support multi-buffer selection for arbitrary buffer counts (>=2)
     if (eventIdCount >= 2) {
-      // For multi buffers selection, create array of event IDs and use the counter variable directly
-      // Create constants for each event ID
+      // For multi buffers selection, create array of event IDs and use the
+      // counter variable directly Create constants for each event ID
       SmallVector<Value> eventValues;
       for (int eventId : sync->eventIds) {
 #ifndef BSPUB_DAVINCI_BISHENGIR_A5
@@ -638,7 +643,8 @@ Value SyncCodegen::GetBufferSelected(IRRewriter &rewriter, Operation *op,
         Value cond = rewriter.create<arith::CmpIOp>(
             locDefineOp, arith::CmpIPredicate::eq, counter, iVal);
         selectedValue = rewriter.create<arith::SelectOp>(
-            locDefineOp, eventValues[0].getType(), cond, eventValues[i], selectedValue);
+            locDefineOp, eventValues[0].getType(), cond, eventValues[i],
+            selectedValue);
       }
       bufferSelected = selectedValue;
     } else {

@@ -129,7 +129,8 @@ class HIVM_LocalMmadOp<string mnemonic, list<Trait> traits = []> :
                        Arg<OptionalAttr<UnitAttr>, [{
                         Was i4 -> i8 conversion
                        }]>:$enable_I4,
-                       OptionalAttr<UnitFlagArrayAttr>:$unit_flag_mode
+                       OptionalAttr<UnitFlagArrayAttr>:$unit_flag_mode,
+                       OptionalAttr<I64Attr>:$unit_flag_group_id
                        );
   let results = (outs Variadic<AnyRankedTensor>:$result_tensors);
   code localMmadBaseDecls = [{
@@ -240,7 +241,7 @@ def BatchMmadL1Op : HIVM_LocalMmadOp<"batchMmadL1",
 //===----------------------------------------------------------------------===//
 // HIVM Local MMADMx op definitions.
 //===----------------------------------------------------------------------===//
- 
+
 class HIVM_LocalMmadMxOp<string mnemonic, list<Trait> traits = []> :
   HIVM_MacroOp<mnemonic, !listconcat([HIVMLocalMatmulLikeOpTraits], traits)> {
   let arguments = !con((ins
@@ -326,10 +327,10 @@ class HIVM_LocalMmadMxOp<string mnemonic, list<Trait> traits = []> :
                    CArg<"UnitAttr", "{}">:$b_transpose,
                    CArg<"Value", "{}">:$per_channel_bias)>
   ];
- 
+
   let hasVerifier = 0;
 }
- 
+
 def MmadMxL1Op
     : HIVM_LocalMmadMxOp<"mmadmxL1", [NoMaxRankTrait,
         DeclareOpInterfaceMethods<OpLayoutInterface,
@@ -340,10 +341,10 @@ def MmadMxL1Op
   let description = localMmadBaseDes#[{
     Note: the rank of A, B, and C Matrix must be two.
   }];
- 
+
   let extraClassDeclaration = localMmadMxBaseDecls#[{
     static StringRef getOpName() { return "mmadmxL1"; }
- 
+
     // Declare functions necessary for OpLayoutInterface.
     FailureOr<DataLayoutAttr> getOperandALayout() const;
     FailureOr<DataLayoutAttr> getOperandBLayout() const;
@@ -761,7 +762,7 @@ def Conv1DL1Op : HIVM_MacroOp<"Conv1dL1",[
     }
     bool isInitConstant(std::optional<bool> cst = std::nullopt);
     void setInitCondition(Value init);
-  
+
     static StringRef getOpName() { return "Conv1dL1"; }
 
     FailureOr<DataLayoutAttr> getInputLayout();
@@ -839,7 +840,7 @@ def Conv2DL1Op : HIVM_MacroOp<"Conv2dL1",[
     }
     bool isInitConstant(std::optional<bool> cst = std::nullopt);
     void setInitCondition(Value init);
-  
+
     static StringRef getOpName() { return "Conv2dL1"; }
 
     FailureOr<DataLayoutAttr> getInputLayout();
@@ -922,5 +923,5 @@ def Conv3DL1Op : HIVM_MacroOp<"Conv3dL1",[
   }];
   let hasVerifier = 1;
 }
- 	 
+
 #endif // BISHENGIR_DIALECT_HIVM_IR_HIVMMACROOPS_TD

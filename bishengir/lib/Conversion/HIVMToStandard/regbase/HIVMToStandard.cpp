@@ -162,7 +162,8 @@ static func::CallOp createLibCall(PatternRewriter &rewriter, Operation *op,
           break;
         case hivm::TCoreType::CUBE_OR_VECTOR:
         case hivm::TCoreType::CUBE_AND_VECTOR:
-          llvm::report_fatal_error("standard library call shouldn't have mix core type!");
+          llvm::report_fatal_error(
+              "standard library call shouldn't have mix core type!");
           break;
         }
       }
@@ -329,9 +330,8 @@ reduceMemrefsToNestedForUsingAxes(PatternRewriter &rewriter, Location loc,
         }
       }
 
-      MemRefType reducedType =
-          cast<MemRefType>(inferRankReducedResultType(
-              reducedSize, vecType, viewOffset, viewSize, viewStride, reducedAxes));
+      MemRefType reducedType = cast<MemRefType>(inferRankReducedResultType(
+          reducedSize, vecType, viewOffset, viewSize, viewStride, reducedAxes));
 
       reducedVals.push_back(rewriter.create<memref::SubViewOp>(
           loc, reducedType, val, viewOffset, viewSize, viewStride));
@@ -404,7 +404,8 @@ public:
     libParams.append(additionalArgs.begin(), additionalArgs.end());
 
     replaceWithLibCall(rewriter, op,
-                       cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
+                       cast<OpWithLibraryFunction>(op.getOperation())
+                           .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
                        libParams, {});
     return success();
   }
@@ -425,6 +426,7 @@ private:
               std::back_inserter(additionalArgs));
 
     additionalArgs.push_back(op.getUnitFlagModeLibValue(rewriter));
+    additionalArgs.push_back(op.getUnitFlagGroupIdValue(rewriter));
   }
 };
 
@@ -445,7 +447,8 @@ public:
     libParams.append(additionalArgs.begin(), additionalArgs.end());
 
     replaceWithLibCall(rewriter, op,
-                       cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
+                       cast<OpWithLibraryFunction>(op.getOperation())
+                           .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
                        libParams, {});
     return success();
   }
@@ -479,7 +482,8 @@ public:
     }
 
     replaceWithLibCall(rewriter, op,
-                       cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
+                       cast<OpWithLibraryFunction>(op.getOperation())
+                           .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
                        op->getOperands(), {});
     return success();
   }
@@ -493,7 +497,8 @@ public:
                                 PatternRewriter &rewriter) const final {
 
     replaceWithLibCall(rewriter, op,
-                       cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
+                       cast<OpWithLibraryFunction>(op.getOperation())
+                           .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
                        op->getOperands(), {});
     return success();
   }
@@ -506,7 +511,8 @@ class NZ2NDOpToLibraryCallPattern : public OpRewritePattern<hivm::NZ2NDOp> {
                                 PatternRewriter &rewriter) const final {
     // TODO: merge this with ND2NZOpToLibraryCallPattern
     replaceWithLibCall(rewriter, op,
-                       cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
+                       cast<OpWithLibraryFunction>(op.getOperation())
+                           .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
                        op->getOperands(), {});
     return success();
   }
@@ -519,7 +525,8 @@ class L12UBOpToLibraryCallPattern : public OpRewritePattern<hivm::L12UBOp> {
                                 PatternRewriter &rewriter) const final {
     // TODO: merge this with L12UBOpToLibraryCallPattern
     replaceWithLibCall(rewriter, op,
-                       cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
+                       cast<OpWithLibraryFunction>(op.getOperation())
+                           .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
                        op->getOperands(), {});
     return success();
   }
@@ -539,7 +546,8 @@ public:
     libCallOperands.append(additionalArgs);
 
     replaceWithLibCall(rewriter, op,
-                       cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
+                       cast<OpWithLibraryFunction>(op.getOperation())
+                           .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
                        libCallOperands, /*resultTypes=*/{});
     return success();
   }
@@ -590,17 +598,17 @@ private:
         rewriter.create<arith::ConstantIntOp>(op->getLoc(), preReluVal, 64);
     Value channelSplit = rewriter.create<arith::ConstantIntOp>(
         op->getLoc(), op.getChannelSplit(), 1);
-    Value c0PadEn = rewriter.create<arith::ConstantIntOp>(
-        op->getLoc(), op.getC0PadEn(), 1);
+    Value c0PadEn =
+        rewriter.create<arith::ConstantIntOp>(op->getLoc(), op.getC0PadEn(), 1);
     Value unitFlagMode = op.getUnitFlagModeLibValue(rewriter);
+    Value unitFlagGroupId = op.getUnitFlagGroupIdValue(rewriter);
 
     genPreQuant(op, rewriter, preQuant);
     additionalArgs.push_back(preQuant);
     if (quantScale) {
       if (quantScale.getType() != rewriter.getF32Type())
-        quantScale = rewriter.create<arith::ExtFOp>(op->getLoc(),
-                                                     rewriter.getF32Type(),
-                                                     quantScale);
+        quantScale = rewriter.create<arith::ExtFOp>(
+            op->getLoc(), rewriter.getF32Type(), quantScale);
       additionalArgs.push_back(quantScale);
     } else
       additionalArgs.push_back(rewriter.create<arith::ConstantOp>(
@@ -609,6 +617,7 @@ private:
     additionalArgs.push_back(channelSplit);
     additionalArgs.push_back(c0PadEn);
     additionalArgs.push_back(unitFlagMode);
+    additionalArgs.push_back(unitFlagGroupId);
 
     if (auto dualDstAttr = op.getDualDstModeAttr()) {
       const auto dualDstEnum = dualDstAttr.getDualDstMode();
@@ -699,7 +708,8 @@ public:
 
   LogicalResult matchAndRewrite(CumOpWithTemp op,
                                 PatternRewriter &rewriter) const final {
-    assert(op.hasPureBufferSemantics() && "Operating on tensor, please bufferize.");
+    assert(op.hasPureBufferSemantics() &&
+           "Operating on tensor, please bufferize.");
 
     auto src = op.getSrc();
     auto dst = op.getDst();
@@ -729,7 +739,8 @@ public:
       operands.push_back(propagateNanValue);
     }
 
-    auto libCallName = cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
+    auto libCallName = cast<OpWithLibraryFunction>(op.getOperation())
+                           .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
     createLibCall(rewriter, op, mod, libCallName, operands, {});
     rewriter.eraseOp(op);
     return success();
@@ -768,7 +779,8 @@ public:
       libParams.push_back(op.getTilingParams());
     }
     replaceWithLibCall(rewriter, op,
-                       cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
+                       cast<OpWithLibraryFunction>(op.getOperation())
+                           .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
                        libParams, {});
     return success();
   }
@@ -808,7 +820,8 @@ public:
       libParams.push_back(op.getCommParams());
     }
     replaceWithLibCall(rewriter, op,
-                       cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
+                       cast<OpWithLibraryFunction>(op.getOperation())
+                           .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
                        libParams, {});
     return success();
   }
@@ -854,7 +867,8 @@ public:
       libParams.push_back(op.getCommParams());
     }
     replaceWithLibCall(rewriter, op,
-                       cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
+                       cast<OpWithLibraryFunction>(op.getOperation())
+                           .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
                        libParams, {});
     return success();
   }
@@ -877,9 +891,13 @@ public:
     MemRefType srcType = dyn_cast<MemRefType>(op.getSrcOperandType());
 
     int64_t rank = srcType.getRank();
-    std::string fnName = cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
+    std::string fnName =
+        cast<OpWithLibraryFunction>(op.getOperation())
+            .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
 
-    int maxOpRank = cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryMaxRank().value();
+    int maxOpRank = cast<OpWithLibraryFunction>(op.getOperation())
+                        .getOpLibraryMaxRank()
+                        .value();
     if (rank <= maxOpRank) {
       // Directly create library calls when doing 1d/2d/3d copy.
       replaceWithLibCall(rewriter, op, fnName,
@@ -978,7 +996,8 @@ private:
                                       rewriter.getIntegerType(width));
               })
               .Case([&](FloatType floatType) {
-                if (isa<Float8E4M3FNType>(floatType) || isa<Float8E5M2Type>(floatType)) {
+                if (isa<Float8E4M3FNType>(floatType) ||
+                    isa<Float8E5M2Type>(floatType)) {
                   auto constantOp = rewriter.create<arith::ConstantOp>(
                       op.getLoc(),
                       rewriter.getFloatAttr(rewriter.getF32Type(), 0.0));
@@ -1087,7 +1106,9 @@ public:
 
     MemRefType srcVecType = cast<MemRefType>(op.getSrc().getType());
     uint64_t rank = static_cast<uint64_t>(srcVecType.getRank());
-    std::string fnName = cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
+    std::string fnName =
+        cast<OpWithLibraryFunction>(op.getOperation())
+            .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
     SmallVector<Value> operands = {op.getSrc(), op.getDst()};
     auto axisRange = llvm::seq<int>(0, rank);
     std::set<int> reducedAxes(axisRange.begin(), axisRange.end());
@@ -1136,8 +1157,12 @@ public:
     assert(op.hasPureBufferSemantics() &&
            "Operating on tensor, please bufferize.");
     int64_t rank = op.getNumLoops();
-    int maxOpRank = cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryMaxRank().value();
-    std::string fnName = cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
+    int maxOpRank = cast<OpWithLibraryFunction>(op.getOperation())
+                        .getOpLibraryMaxRank()
+                        .value();
+    std::string fnName =
+        cast<OpWithLibraryFunction>(op.getOperation())
+            .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
     if (rank <= maxOpRank) {
       auto operandVec = this->getLibraryCallOperands(rewriter, op);
       // Directly create library calls when doing 1d/2d/3d/4d vector ops.
@@ -1232,13 +1257,15 @@ private:
     SmallVector<Value> operands =
         VectorOpToLibraryCallPattern<hivm::VGatherOp>::getLibraryCallOperands(
             rewriter, op, includeExtraBuffer);
-    // All gather operations pass the axis as a runtime operand for the SIMT template.
+    // All gather operations pass the axis as a runtime operand for the SIMT
+    // template.
     int64_t axis = cast<ShapedType>(gatherOp.getSrc().getType()).getRank() - 1;
     auto axisAttr = gatherOp.getGatherAxis();
     if (axisAttr.has_value() && static_cast<int64_t>(*axisAttr) != -1) {
       axis = static_cast<int64_t>(*axisAttr);
     }
-    Value axisVal = rewriter.create<arith::ConstantIntOp>(op->getLoc(), axis, 32);
+    Value axisVal =
+        rewriter.create<arith::ConstantIntOp>(op->getLoc(), axis, 32);
     operands.push_back(axisVal);
     return operands;
   }
@@ -1258,8 +1285,12 @@ public:
     assert(op.hasPureBufferSemantics() &&
            "Operating on tensor, please bufferize.");
     int64_t rank = op.getNumLoops();
-    int maxOpRank = cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryMaxRank().value();
-    std::string fnName = cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
+    int maxOpRank = cast<OpWithLibraryFunction>(op.getOperation())
+                        .getOpLibraryMaxRank()
+                        .value();
+    std::string fnName =
+        cast<OpWithLibraryFunction>(op.getOperation())
+            .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
     if (rank <= maxOpRank) {
       auto operandVec = this->getLibraryCallOperands(rewriter, op);
       if (!op.getOffset()) {
@@ -1342,8 +1373,12 @@ public:
            "Operating on tensor, please bufferize.");
     MemRefType srcType = cast<MemRefType>(op.getSingleSrc().getType());
     int64_t rank = srcType.getRank();
-    int maxOpRank = cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryMaxRank().value();
-    std::string fnName = cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
+    int maxOpRank = cast<OpWithLibraryFunction>(op.getOperation())
+                        .getOpLibraryMaxRank()
+                        .value();
+    std::string fnName =
+        cast<OpWithLibraryFunction>(op.getOperation())
+            .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
 
     if (rank <= maxOpRank) {
       // Directly create library calls when doing 1d/2d/3d/4d cast ops.
@@ -1416,7 +1451,8 @@ public:
     Type srcType = op.getSrc().getType();
     MemRefType dstVecType = cast<MemRefType>(op.getDst().getType());
     int rank = dstVecType.getRank();
-    int maxLibraryRank = cast<OpWithLibraryFunction>(op.getOperation()).inferOpLibraryMaxRank();
+    int maxLibraryRank =
+        cast<OpWithLibraryFunction>(op.getOperation()).inferOpLibraryMaxRank();
     int exceedRank = rank - maxLibraryRank;
     int rankRangeShift = 0;
     int rankRangeEnd = exceedRank;
@@ -1553,7 +1589,8 @@ public:
 
     if (reducedRank == rank) {
       std::string libFnName =
-          cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
+          cast<OpWithLibraryFunction>(op.getOperation())
+              .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
       SmallVector<Value> operands = getLibraryCallOperands(rewriter, op);
       replaceWithLibCall(rewriter, op, libFnName, operands, {});
       return success();
@@ -1562,7 +1599,8 @@ public:
     rewriter.setInsertionPointAfter(
         convertedVals[convertedVals.size() - 1].getDefiningOp());
     std::string libFnName =
-        cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
+        cast<OpWithLibraryFunction>(op.getOperation())
+            .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
 
     auto moduleOp = op->getParentOfType<ModuleOp>();
     if (hacc::utils::isRegBasedArch(moduleOp)) {
@@ -1652,9 +1690,11 @@ public:
     auto src = op.getSrc();
     auto dst = op.getDst();
     ModuleOp mod = op->getParentOfType<ModuleOp>();
-    auto libCallName = cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
+    auto libCallName = cast<OpWithLibraryFunction>(op.getOperation())
+                           .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
     auto perm = op.getPermutation();
-    auto dim = cast<OpWithLibraryFunction>(op.getOperation()).inferOpLibraryMaxRank();
+    auto dim =
+        cast<OpWithLibraryFunction>(op.getOperation()).inferOpLibraryMaxRank();
     if (static_cast<int>(perm.size()) == dim) {
       SmallVector<Value> operands = getLibraryCallOperands(rewriter, op);
       createLibCall(rewriter, op, mod, libCallName, operands, {});
@@ -1723,8 +1763,12 @@ public:
     assert(op.hasPureBufferSemantics() &&
            "Operating on tensor, please bufferize.");
     int64_t rank = op.getNumLoops();
-    int maxOpRank = cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryMaxRank().value();
-    std::string fnName = cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
+    int maxOpRank = cast<OpWithLibraryFunction>(op.getOperation())
+                        .getOpLibraryMaxRank()
+                        .value();
+    std::string fnName =
+        cast<OpWithLibraryFunction>(op.getOperation())
+            .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
     if (rank <= maxOpRank) {
       // Directly create library calls when doing 1d interleave op.
       replaceWithLibCall(rewriter, op, fnName,
@@ -1765,7 +1809,9 @@ public:
     assert(op.hasPureBufferSemantics() &&
            "Operating on tensor, please bufferize.");
 
-    std::string fnName = cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
+    std::string fnName =
+        cast<OpWithLibraryFunction>(op.getOperation())
+            .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
 
     replaceWithLibCall(rewriter, op, fnName,
                        this->getLibraryCallOperands(rewriter, op), {});
@@ -1830,7 +1876,8 @@ class DebugOpToLibraryCallPattern : public OpRewritePattern<hivm::DebugOp> {
 
     // dispatch to different lib calls for assert/print
     std::string libCallName =
-        cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
+        cast<OpWithLibraryFunction>(op.getOperation())
+            .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
     if (op.getDebugtype() == HIVMDebugTypePrint) {
       // Convert the hex attr to an argument of the print lib call
       auto hexBool = op.getHex();
@@ -1885,7 +1932,8 @@ class PlainOpToLibraryCallPattern : public OpRewritePattern<T> {
   using OpRewritePattern<T>::OpRewritePattern;
   LogicalResult matchAndRewrite(T op, PatternRewriter &rewriter) const final {
     replaceWithLibCall(rewriter, op,
-                       cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
+                       cast<OpWithLibraryFunction>(op.getOperation())
+                           .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
                        {}, {});
     return success();
   }
@@ -1914,7 +1962,8 @@ public:
   LogicalResult matchAndRewrite(OpTy op,
                                 PatternRewriter &rewriter) const final {
     replaceWithLibCall(rewriter, op,
-                       cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
+                       cast<OpWithLibraryFunction>(op.getOperation())
+                           .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
                        op->getOperands(), {});
     return success();
   }
@@ -1927,7 +1976,8 @@ public:
   LogicalResult matchAndRewrite(CustomOpTy op,
                                 PatternRewriter &rewriter) const final {
     replaceWithLibCall(rewriter, op,
-                       cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
+                       cast<OpWithLibraryFunction>(op.getOperation())
+                           .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
                        op->getOperands(), {});
     return success();
   }

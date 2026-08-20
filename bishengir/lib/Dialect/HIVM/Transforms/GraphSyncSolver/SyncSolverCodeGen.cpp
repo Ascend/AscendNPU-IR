@@ -682,8 +682,9 @@ llvm::LogicalResult CodeGenerator::handleMmadL1SyncOps(IRRewriter &rewriter,
 
 // Attempt to attach sync args to MmadMxL1 ops by recognizing special load
 // L0 / L1 patterns for A, B, ScaleA, ScaleB independently.
-llvm::LogicalResult CodeGenerator::handleMmadMxL1SyncOps(
-    IRRewriter &rewriter, OperationBase *opBase, SyncOp *syncOp) {
+llvm::LogicalResult CodeGenerator::handleMmadMxL1SyncOps(IRRewriter &rewriter,
+                                                         OperationBase *opBase,
+                                                         SyncOp *syncOp) {
   if (opBase->parentOp == nullptr || opBase->parentOp->parentOp == nullptr) {
     return llvm::failure();
   }
@@ -819,14 +820,14 @@ void CodeGenerator::insertMmadMxL1SyncArgs(IRRewriter &rewriter) {
     auto defaultValue = rewriter.create<arith::ConstantIntOp>(
         mmadMxL1Op->getLoc(), rewriter.getI64Type(), -1);
     SmallVector<Value> newArgs;
-    newArgs.push_back(syncArgs.l0WaitL1AEvent);       // [0]
-    newArgs.push_back(syncArgs.l0WaitL1ScaleAEvent);   // [1]
-    newArgs.push_back(syncArgs.l0WaitL1BEvent);         // [2]
-    newArgs.push_back(syncArgs.l0WaitL1ScaleBEvent);    // [3]
-    newArgs.push_back(syncArgs.l1AWaitL0Event);         // [4]
-    newArgs.push_back(syncArgs.l1ScaleAWaitL0Event);    // [5]
-    newArgs.push_back(syncArgs.l1BWaitL0Event);         // [6]
-    newArgs.push_back(syncArgs.l1ScaleBWaitL0Event);    // [7]
+    newArgs.push_back(syncArgs.l0WaitL1AEvent);      // [0]
+    newArgs.push_back(syncArgs.l0WaitL1ScaleAEvent); // [1]
+    newArgs.push_back(syncArgs.l0WaitL1BEvent);      // [2]
+    newArgs.push_back(syncArgs.l0WaitL1ScaleBEvent); // [3]
+    newArgs.push_back(syncArgs.l1AWaitL0Event);      // [4]
+    newArgs.push_back(syncArgs.l1ScaleAWaitL0Event); // [5]
+    newArgs.push_back(syncArgs.l1BWaitL0Event);      // [6]
+    newArgs.push_back(syncArgs.l1ScaleBWaitL0Event); // [7]
     for (auto &val : newArgs) {
       if (!val || val == Value{}) {
         val = defaultValue;
@@ -844,12 +845,15 @@ void CodeGenerator::handleUnitFlagEnabledOps(IRRewriter &rewriter) {
     assert(unitFlagEnabledOp != nullptr);
     if (auto unitFlagArgsOpt =
             unitFlagInfo.getUnitFlagArgs(unitFlagEnabledOp, rewriter)) {
-      auto [unitFlagModes, unitFlagConds] = unitFlagArgsOpt.value();
+      auto [unitFlagModes, unitFlagConds, unitFlagGroupId] =
+          unitFlagArgsOpt.value();
       assert(unitFlagModes.size() <= 1 ||
              unitFlagModes.size() == unitFlagConds.size());
+      assert(unitFlagGroupId != -1);
       if (!unitFlagModes.empty()) {
         unitFlagEnabledOp.setUnitFlagModes(unitFlagModes);
         unitFlagEnabledOp.setUnitFlagConditions(unitFlagConds);
+        unitFlagEnabledOp.setUnitFlagGroupIndex(unitFlagGroupId);
       }
     }
   }

@@ -22,13 +22,26 @@
 #include "llvm/ADT/STLExtras.h"
 #include <cstddef>
 #include <string>
+#include <tuple>
 #include <utility>
 
 namespace mlir {
 namespace hivm {
 
+struct UnitFlagArgs {
+  SmallVector<UNIT_FLAG> unitFlagModes;
+  SmallVector<mlir::Value> unitFlagConds;
+  int64_t unitFlagGroupId;
+  UnitFlagArgs(const SmallVector<UNIT_FLAG> &unitFlagModes,
+               const SmallVector<mlir::Value> &unitFlagConds,
+               const int64_t &unitFlagGroupId)
+      : unitFlagModes(unitFlagModes), unitFlagConds(unitFlagConds),
+        unitFlagGroupId(unitFlagGroupId) {};
+};
+
 class UnitFlagInfoBase {
 public:
+  int64_t unitFlagGroupId{-1};
   UNIT_FLAG asSetFirstIter{UNIT_FLAG::DISABLED};
   UNIT_FLAG asSetMidIters{UNIT_FLAG::DISABLED};
   UNIT_FLAG asSetLastIter{UNIT_FLAG::DISABLED};
@@ -58,6 +71,7 @@ public:
         asWaitMidIters(asWaitMidIters), asWaitLastIter(asWaitLastIter) {}
 
   void reset() {
+    unitFlagGroupId = -1;
     asSetFirstIter = UNIT_FLAG::DISABLED;
     asSetMidIters = UNIT_FLAG::DISABLED;
     asSetLastIter = UNIT_FLAG::DISABLED;
@@ -159,14 +173,14 @@ public:
 
   std::string str() const;
 
-  std::optional<std::pair<SmallVector<UNIT_FLAG>, SmallVector<mlir::Value>>>
-  getUnitFlagArgs(Operation *op, IRRewriter &rewriter);
+  std::optional<UnitFlagArgs> getUnitFlagArgs(Operation *op,
+                                              IRRewriter &rewriter);
 
-  std::optional<std::pair<SmallVector<UNIT_FLAG>, SmallVector<mlir::Value>>>
-  getUnitFlagLoopAwareArgs(Operation *op, IRRewriter &rewriter);
+  std::optional<UnitFlagArgs> getUnitFlagLoopAwareArgs(Operation *op,
+                                                       IRRewriter &rewriter);
 
-  std::optional<std::pair<SmallVector<UNIT_FLAG>, SmallVector<mlir::Value>>>
-  getUnitFlagLinkedLoopArgs(Operation *op, IRRewriter &rewriter);
+  std::optional<UnitFlagArgs> getUnitFlagLinkedLoopArgs(Operation *op,
+                                                        IRRewriter &rewriter);
 };
 
 std::optional<UnitFlagInfoBase> checkUnitFlagSameBlockPattern(

@@ -25,8 +25,10 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Casting.h"
@@ -453,6 +455,19 @@ SyncSolverBase::checkUnitFlagPatterns(Occurrence *occ1, Occurrence *occ2) {
         rwOp2->op->getParentOp() != parentLCALoopOcc->op->op) {
       return {};
     }
+  } else {
+    // For forward sync: reject UF when both ops are inside the same ForOp
+    // but not direct children (e.g. ForOp{If{M,F}}). The backward sync
+    // cross-iteration pairs would still require SetWait, which conflicts
+    // with the invisibility of UF edges in the graph search.
+    auto loop1 = rwOp1->op->getParentOfType<scf::ForOp>();
+    auto loop2 = rwOp2->op->getParentOfType<scf::ForOp>();
+    if (loop1 && loop1 == loop2) {
+      if (rwOp1->op->getParentOp() != loop1 ||
+          rwOp2->op->getParentOp() != loop1) {
+        return {};
+      }
+    }
   }
   if (auto unitFlagInfo = checkUnitFlagSameBlockPattern(
           occ1->op->op, occ2->op->op, rwOp1->mergedUnitFlagInfo,
@@ -673,22 +688,46 @@ SyncSolverBase::getMemoryConflicts(RWOperation *rwOp1, RWOperation *rwOp2) {
   return it->second = collectedConflicts;
 }
 
+bool SyncSolverBase::checkCCUnitFlagConflict(RWOperation *rwOp,
+                                             RWOperation *otherOp) {
+  if (isa_and_present<hivm::MmadL1Op>(rwOp->op)) {
+    if (isa_and_present<hivm::MmadL1Op>(otherOp->op))
+      return checkMemInfoConflict(rwOp, otherOp, rwOp->writeMemInfo,
+                                  otherOp->writeMemInfo);
+    if (isa_and_present<hivm::FixpipeOp>(otherOp->op))
+      return checkMemInfoConflict(rwOp, otherOp, rwOp->writeMemInfo,
+                                  otherOp->readMemInfo);
+  } else if (isa_and_present<hivm::FixpipeOp>(rwOp->op)) {
+    if (isa_and_present<hivm::MmadL1Op>(otherOp->op))
+      return checkMemInfoConflict(rwOp, otherOp, rwOp->readMemInfo,
+                                  otherOp->writeMemInfo);
+    // Fixpipe × Fixpipe: RAR on CC — no conflict relevant to unit-flag
+  }
+  return false;
+}
+
 bool SyncSolverBase::checkMemoryConflictBetweenOccExclusive(
     Occurrence *occ1, Occurrence *occ2,
-    std::function<bool(RWOperation *)> filter) {
+    std::function<bool(RWOperation *)> filter,
+    std::function<bool(RWOperation *, RWOperation *)> checkConflict) {
   assert(occ1 != nullptr && occ2 != nullptr);
   auto *rwOp1 = llvm::dyn_cast_if_present<RWOperation>(occ1->op);
   auto *rwOp2 = llvm::dyn_cast_if_present<RWOperation>(occ2->op);
   assert(rwOp1 != nullptr && rwOp2 != nullptr);
+
+  // Default: check all RAW/WAR/WAW combinations between the two ops.
+  if (!checkConflict) {
+    checkConflict = [this](RWOperation *rwOp, RWOperation *otherOp) {
+      return checkMemoryConflicts(rwOp, otherOp);
+    };
+  }
+
   for (int i = occ1->syncIrEndIndex; i < occ2->syncIrIndex; i++) {
     if (auto *otherOp = llvm::dyn_cast_if_present<RWOperation>(syncIr[i]->op)) {
-      if (!filter(otherOp)) {
+      if (!filter(otherOp))
         continue;
-      }
-      if (checkMemoryConflicts(rwOp1, otherOp) ||
-          checkMemoryConflicts(rwOp2, otherOp)) {
+      if (checkConflict(rwOp1, otherOp) || checkConflict(rwOp2, otherOp))
         return true;
-      }
     }
   }
   return false;
@@ -2141,6 +2180,17 @@ ConflictPair *SyncSolverBase::handleUnitFlagConflict(
   return newConflictPair;
 }
 
+std::vector<ConflictPair *> SyncSolverBase::getAllChosenConflictPairs() {
+  std::vector<ConflictPair *> conflictPairs;
+  for (auto &conflictPair : chosenConflictedPairs) {
+    conflictPairs.push_back(conflictPair.get());
+  }
+  for (auto &conflictPair : persistentChosenConflictedPairs) {
+    conflictPairs.push_back(conflictPair.get());
+  }
+  return conflictPairs;
+}
+
 void SyncSolverBase::collectBackwardSyncEventIds() {
   LLVM_DEBUG(llvm::dbgs() << "collectBackwardSyncEventIds\n";);
   for (auto &conflictPair : chosenConflictedPairs) {
@@ -2157,6 +2207,44 @@ void SyncSolverBase::collectBackwardSyncEventIds() {
   }
 }
 
+void SyncSolverBase::collectUnitFlagGroupIds() {
+  auto conflictPairs = getAllChosenConflictPairs();
+  UnionFind<RWOperation *> unionFind;
+  // Use a SetVector to deduplicate while preserving insertion order, then sort
+  // by the stable OperationBase::id so that group-id assignment is independent
+  // of DenseSet pointer hashing and reproducible across compiler runs.
+  llvm::SetVector<RWOperation *> unitFlagOpsSet;
+  for (auto *conflictPair : conflictPairs) {
+    if (!conflictPair->replacedWithUnitFlag) {
+      continue;
+    }
+    assert(conflictPair->op1 != nullptr && conflictPair->op2 != nullptr);
+    unitFlagOpsSet.insert(conflictPair->op1);
+    unitFlagOpsSet.insert(conflictPair->op2);
+    auto *op1 = unionFind.find(conflictPair->op1);
+    auto *op2 = unionFind.find(conflictPair->op2);
+    unionFind.join(op1, op2);
+  }
+  SmallVector<RWOperation *, 16> unitFlagOps(unitFlagOpsSet.begin(),
+                                             unitFlagOpsSet.end());
+  std::sort(unitFlagOps.begin(), unitFlagOps.end(),
+            [](RWOperation *a, RWOperation *b) { return a->id < b->id; });
+
+  int64_t globalUnitFlagGroupIndex = 0;
+  for (auto *rwOp : unitFlagOps) {
+    if (unionFind.find(rwOp) == rwOp) {
+      rwOp->mergedUnitFlagInfo.unitFlagGroupId = globalUnitFlagGroupIndex++;
+    }
+  }
+  for (auto *rwOp : unitFlagOps) {
+    auto *parentOp = unionFind.find(rwOp);
+    assert(parentOp->mergedUnitFlagInfo.unitFlagGroupId != -1);
+    if (unionFind.find(rwOp) != rwOp) {
+      rwOp->mergedUnitFlagInfo.unitFlagGroupId =
+          parentOp->mergedUnitFlagInfo.unitFlagGroupId;
+    }
+  }
+}
 std::set<std::pair<int64_t, SetWaitOp *>> &
 SyncSolverBase::getSetWaitOpsIndexRef(hivm::PIPE pipeSrc, hivm::PIPE pipeDst,
                                       int64_t eventId) {
@@ -2440,16 +2528,9 @@ void SyncSolverBase::calcAllEventIds() {
 
 SyncBeforeAfterMap SyncSolverBase::getBeforeAfterSyncMaps() {
   calcAllEventIds();
+  collectUnitFlagGroupIds();
   SyncMap syncMapBefore, syncMapAfter;
-  std::vector<ConflictPair *> conflictPairs;
-  for (auto &conflictPair : chosenConflictedPairs) {
-    conflictPairs.push_back(conflictPair.get());
-  }
-  for (auto &conflictPair : persistentChosenConflictedPairs) {
-    conflictPairs.push_back(conflictPair.get());
-  }
-
-  for (auto *conflictPair : conflictPairs) {
+  for (auto *conflictPair : getAllChosenConflictPairs()) {
     if (conflictPair->isUseless) {
       continue;
     }

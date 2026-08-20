@@ -28,6 +28,7 @@
 #include "mlir/IR/Location.h"
 #include "mlir/Interfaces/ValueBoundsOpInterface.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Debug.h"
@@ -541,6 +542,35 @@ struct MmadL1SyncArgs {
   Value kLoopDBCond;
   Value bwdPipeMPipeMTE1Event0;
   Value bwdPipeMPipeMTE1Event1;
+};
+
+template <typename T> struct UnionFind {
+public:
+  UnionFind() {};
+  ~UnionFind() = default;
+
+private:
+  llvm::DenseMap<T, T> parent;
+
+public:
+  T find(T x) {
+    auto [it, isInserted] = parent.insert({x, x});
+    if (isInserted || it->second == x) {
+      return x;
+    }
+    return it->second = find(it->second);
+  }
+
+  bool join(T a, T b) {
+    a = find(a);
+    b = find(b);
+    if (a == b) {
+      return false;
+    }
+    // TODO : Can have some check to balance the union-set
+    parent[a] = b;
+    return true;
+  }
 };
 
 struct MmadMxL1SyncArgs {

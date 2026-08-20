@@ -49,37 +49,37 @@ enum DualDstMode {
 #define REQUIRE_2(x, D1, D2) D1(x) D2(x)
 #define REQUIRE_3(x, D1, D2, D3) D1(x) D2(x) D3(x)
 
-#define FIXPIPE_XT1_ARG_LIST_TO_UB(f, DUAL_DST_INIT, SUB_BLOCKID_INIT) \
-  REQUIRE_1(WRAP(f, uint8_t, dual_dst_ctl, DUAL_DST_INIT), D_C310) \
-  REQUIRE_1(WRAP(f, bool, sub_blockid, SUB_BLOCKID_INIT), D_C310) \
+#define FIXPIPE_XT1_ARG_LIST_TO_UB(f, DUAL_DST_INIT, SUB_BLOCKID_INIT)         \
+  REQUIRE_1(WRAP(f, uint8_t, dual_dst_ctl, DUAL_DST_INIT), D_C310)             \
+  REQUIRE_1(WRAP(f, bool, sub_blockid, SUB_BLOCKID_INIT), D_C310)              \
   REQUIRE_2(WRAP(f, uint8_t, clip_relu_pre, 0), D_C310, D_M300)
 
-#define FIXPIPE_XT1_ARG_LIST_TO_L1(f) \
-  REQUIRE_1(WRAP(f, uint8_t, l2_cache_ctl, 0), D_C310) \
+#define FIXPIPE_XT1_ARG_LIST_TO_L1(f)                                          \
+  REQUIRE_1(WRAP(f, uint8_t, l2_cache_ctl, 0), D_C310)                         \
   REQUIRE_2(WRAP(f, uint8_t, clip_relu_pre, 0), D_C310, D_M300)
 
-#define FIXPIPE_XT1_ARG_LIST_TO_GM(f) \
-  REQUIRE_1(WRAP(f, uint8_t, l2_cache_ctl, 0), D_C310) \
+#define FIXPIPE_XT1_ARG_LIST_TO_GM(f)                                          \
+  REQUIRE_1(WRAP(f, uint8_t, l2_cache_ctl, 0), D_C310)                         \
   REQUIRE_2(WRAP(f, uint8_t, clip_relu_pre, 0), D_C310, D_M300)
 
 // Extended XT2 list: NZ2DN_INIT and C0_PAD_INIT are selectable; all other
 // fields keep the existing defaults.
-#define FIXPIPE_XT2_ARG_LIST_EX(f, NZ2DN_INIT, C0_PAD_INIT) \
-  REQUIRE_2(WRAP(f, uint64_t, quant_post, 0), D_C310, D_M300) \
-  REQUIRE_2(WRAP(f, uint8_t, relu_post, 0), D_C310, D_M300) \
-  REQUIRE_2(WRAP(f, bool, clip_relu_post, false), D_C310, D_M300) \
-  REQUIRE_1(WRAP(f, bool, loop_enhance_en, false), D_C310) \
-  REQUIRE_2(WRAP(f, uint8_t, eltwise_op, 0), D_C310, D_M300) \
-  REQUIRE_1(WRAP(f, uint8_t, eltwise_antq_cfg, 0), D_M300) \
-  REQUIRE_1(WRAP(f, bool, eltwise_antq_en, false), D_C310) \
-  REQUIRE_1(WRAP(f, bool, loop_enhance_merge_en, false), D_C310) \
-  REQUIRE_2(WRAP(f, bool, C0_pad_en, C0_PAD_INIT), D_C310, D_M300) \
-  REQUIRE_1(WRAP(f, bool, wino_post_en, false), D_C310) \
-  REQUIRE_1(WRAP(f, bool, broadcast_en, false), D_C310) \
+#define FIXPIPE_XT2_ARG_LIST_EX(f, NZ2DN_INIT, C0_PAD_INIT)                    \
+  REQUIRE_2(WRAP(f, uint64_t, quant_post, 0), D_C310, D_M300)                  \
+  REQUIRE_2(WRAP(f, uint8_t, relu_post, 0), D_C310, D_M300)                    \
+  REQUIRE_2(WRAP(f, bool, clip_relu_post, false), D_C310, D_M300)              \
+  REQUIRE_1(WRAP(f, bool, loop_enhance_en, false), D_C310)                     \
+  REQUIRE_2(WRAP(f, uint8_t, eltwise_op, 0), D_C310, D_M300)                   \
+  REQUIRE_1(WRAP(f, uint8_t, eltwise_antq_cfg, 0), D_M300)                     \
+  REQUIRE_1(WRAP(f, bool, eltwise_antq_en, false), D_C310)                     \
+  REQUIRE_1(WRAP(f, bool, loop_enhance_merge_en, false), D_C310)               \
+  REQUIRE_2(WRAP(f, bool, C0_pad_en, C0_PAD_INIT), D_C310, D_M300)             \
+  REQUIRE_1(WRAP(f, bool, wino_post_en, false), D_C310)                        \
+  REQUIRE_1(WRAP(f, bool, broadcast_en, false), D_C310)                        \
   REQUIRE_1(WRAP(f, bool, NZ2DN_en, NZ2DN_INIT), D_C310)
 
 // Default XT2 list: C0_pad_en remains false for compatibility.
-#define FIXPIPE_XT2_ARG_LIST(f, NZ2DN_INIT) \
+#define FIXPIPE_XT2_ARG_LIST(f, NZ2DN_INIT)                                    \
   FIXPIPE_XT2_ARG_LIST_EX(f, NZ2DN_INIT, false)
 
 #define STRUCTDEF(type, name, initval) type name;
@@ -97,20 +97,28 @@ struct copy_matrix_cc_to_gm_ub_intrin_args_xt_2 {
 };
 #undef STRUCTDEF
 
-#define FIXPIPE_ARG_LIST_HANDLER_XT1(type, name, initval) args.xt1. name,
-#define FIXPIPE_ARG_LIST_HANDLER_XT2(type, name, initval) , args.xt2. name
-#define FIXPIPE_ARGS_XT1_TO_GM FIXPIPE_XT1_ARG_LIST_TO_GM(FIXPIPE_ARG_LIST_HANDLER_XT1)
-#define FIXPIPE_ARGS_XT1_TO_UB FIXPIPE_XT1_ARG_LIST_TO_UB(FIXPIPE_ARG_LIST_HANDLER_XT1, 0, false)
-#define FIXPIPE_ARGS_XT1_TO_L1 FIXPIPE_XT1_ARG_LIST_TO_L1(FIXPIPE_ARG_LIST_HANDLER_XT1)
-#define FIXPIPE_ARGS_XT2 FIXPIPE_XT2_ARG_LIST(FIXPIPE_ARG_LIST_HANDLER_XT2, false)
+#define FIXPIPE_ARG_LIST_HANDLER_XT1(type, name, initval) args.xt1.name,
+#define FIXPIPE_ARG_LIST_HANDLER_XT2(type, name, initval) , args.xt2.name
+#define FIXPIPE_ARGS_XT1_TO_GM                                                 \
+  FIXPIPE_XT1_ARG_LIST_TO_GM(FIXPIPE_ARG_LIST_HANDLER_XT1)
+#define FIXPIPE_ARGS_XT1_TO_UB                                                 \
+  FIXPIPE_XT1_ARG_LIST_TO_UB(FIXPIPE_ARG_LIST_HANDLER_XT1, 0, false)
+#define FIXPIPE_ARGS_XT1_TO_L1                                                 \
+  FIXPIPE_XT1_ARG_LIST_TO_L1(FIXPIPE_ARG_LIST_HANDLER_XT1)
+#define FIXPIPE_ARGS_XT2                                                       \
+  FIXPIPE_XT2_ARG_LIST(FIXPIPE_ARG_LIST_HANDLER_XT2, false)
 
 #define FIXPIPE_ARG_GET_VALUE(type, name, initval) initval,
-#define FIXPIPE_ARGS_XT1_VALUES_TO_GM { FIXPIPE_XT1_ARG_LIST_TO_GM(FIXPIPE_ARG_GET_VALUE) },
-#define FIXPIPE_ARGS_XT1_VALUES_TO_UB(dual_init, sub_block_init) { FIXPIPE_XT1_ARG_LIST_TO_UB(FIXPIPE_ARG_GET_VALUE, dual_init, sub_block_init) },
-#define FIXPIPE_ARGS_XT1_VALUES_TO_L1 { FIXPIPE_XT1_ARG_LIST_TO_L1(FIXPIPE_ARG_GET_VALUE) },
-#define FIXPIPE_ARGS_XT2_VALUES(nz2dn_init) \
+#define FIXPIPE_ARGS_XT1_VALUES_TO_GM                                          \
+  {FIXPIPE_XT1_ARG_LIST_TO_GM(FIXPIPE_ARG_GET_VALUE)},
+#define FIXPIPE_ARGS_XT1_VALUES_TO_UB(dual_init, sub_block_init)               \
+  {FIXPIPE_XT1_ARG_LIST_TO_UB(FIXPIPE_ARG_GET_VALUE, dual_init,                \
+                              sub_block_init)},
+#define FIXPIPE_ARGS_XT1_VALUES_TO_L1                                          \
+  {FIXPIPE_XT1_ARG_LIST_TO_L1(FIXPIPE_ARG_GET_VALUE)},
+#define FIXPIPE_ARGS_XT2_VALUES(nz2dn_init)                                    \
   , { FIXPIPE_XT2_ARG_LIST(FIXPIPE_ARG_GET_VALUE, nz2dn_init) }
-#define FIXPIPE_ARGS_XT2_VALUES_WITH_C0_PAD(nz2dn_init, c0_pad_init) \
+#define FIXPIPE_ARGS_XT2_VALUES_WITH_C0_PAD(nz2dn_init, c0_pad_init)           \
   , { FIXPIPE_XT2_ARG_LIST_EX(FIXPIPE_ARG_GET_VALUE, nz2dn_init, c0_pad_init) }
 
 template <typename SRC_TYPE, typename DST_TYPE>
@@ -134,7 +142,7 @@ struct copy_matrix_cc_to_gm_intrin_args {
 template <typename SRC_TYPE, typename DST_TYPE>
 struct copy_matrix_cc_to_ubuf_intrin_args {
   __ubuf__ DST_TYPE *dst;
-  __cc__   SRC_TYPE *src;
+  __cc__ SRC_TYPE *src;
   uint8_t sid;
   uint16_t n_size;
   uint16_t m_size;
@@ -152,7 +160,7 @@ struct copy_matrix_cc_to_ubuf_intrin_args {
 template <typename SRC_TYPE, typename DST_TYPE>
 struct copy_matrix_cc_to_cbuf_intrin_args {
   __cbuf__ DST_TYPE *dst;
-  __cc__   SRC_TYPE *src;
+  __cc__ SRC_TYPE *src;
   uint8_t sid;
   uint16_t n_size;
   uint16_t m_size;
@@ -172,11 +180,11 @@ get_quant_mode(int64_t pre_quant) {
   if (pre_quant == static_cast<int64_t>(QuantMode_t::F322F16)) {
     return QuantMode_t::F322F16;
   }
-  #if defined(__DAV_C310__)
+#if defined(__DAV_C310__)
   if (pre_quant == static_cast<int64_t>(QuantMode_t::QF322F32_PRE)) {
     return QuantMode_t::QF322F32_PRE;
   }
-  #endif
+#endif
   if (pre_quant == static_cast<int64_t>(QuantMode_t::F322BF16)) {
     return QuantMode_t::F322BF16;
   }
@@ -227,12 +235,12 @@ __aicore__ __attribute__((always_inline)) void copy_matrix_cc_to_gm_intrin(
 
 template <typename SRC_TYPE, typename DST_TYPE>
 __aicore__ __attribute__((always_inline)) void copy_matrix_cc_to_cbuf_intrin(
-     copy_matrix_cc_to_cbuf_intrin_args<SRC_TYPE, DST_TYPE> args) {
+    copy_matrix_cc_to_cbuf_intrin_args<SRC_TYPE, DST_TYPE> args) {
 #undef FIXPIPE_ARGS_XT1
 #define FIXPIPE_ARGS_XT1 FIXPIPE_ARGS_XT1_TO_L1
   INTRINSIC(copy_matrix_cc_to_cbuf, FIXPIPE_ARGS);
 #undef FIXPIPE_ARGS_XT1
-     }
+}
 
 template <typename SRC_TYPE, typename DST_TYPE>
 __aicore__ __attribute__((always_inline)) void copy_matrix_cc_to_ubuf_intrin(
@@ -249,77 +257,68 @@ template <typename SRC_TYPE, typename DST_TYPE>
 __aicore__ __attribute__((always_inline)) void copy_matrix_cc_to_ubuf_split(
     __ubuf__ DST_TYPE *ubuf_ptr, __cc__ SRC_TYPE *l0c_ptr, uint16_t n_size,
     uint16_t m_size, uint32_t dst_d, uint16_t src_stride, bool nz2nd_en,
-    bool nz2dn_xt2, uint8_t unit_flag, QuantMode_t quant_mode, uint8_t pre_relu,
-    bool channel_split, uint8_t dual_dst);
+    bool nz2dn_xt2, UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id,
+    QuantMode_t quant_mode, uint8_t pre_relu, bool channel_split,
+    uint8_t dual_dst);
 
 template <typename SRC_TYPE, typename DST_TYPE>
 __aicore__ __attribute__((always_inline)) void
-copy_matrix_cc_to_gm_normal_2d_to_2d_core(memref_t<__cc__ SRC_TYPE, 2> *l0c,
-                                          memref_t<__gm__ DST_TYPE, 2> *gm,
-                                          int64_t pre_quant,
-                                          float32_t quant_scale,
-                                          int64_t pre_relu, bool channel_split,
-                                          uint8_t unit_flag);
+copy_matrix_cc_to_gm_normal_2d_to_2d_core(
+    memref_t<__cc__ SRC_TYPE, 2> *l0c, memref_t<__gm__ DST_TYPE, 2> *gm,
+    int64_t pre_quant, float32_t quant_scale, int64_t pre_relu,
+    bool channel_split, UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id);
 
 template <typename SRC_TYPE, typename DST_TYPE>
 __aicore__ __attribute__((always_inline)) void
-copy_matrix_cc_to_gm_nz2nd_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
-                                         memref_t<__gm__ DST_TYPE, 2> *gm,
-                                         int64_t pre_quant,
-                                         float32_t quant_scale,
-                                         int64_t pre_relu, bool channel_split,
-                                         uint8_t unit_flag);
+copy_matrix_cc_to_gm_nz2nd_4d_to_2d_core(
+    memref_t<__cc__ SRC_TYPE, 4> *l0c, memref_t<__gm__ DST_TYPE, 2> *gm,
+    int64_t pre_quant, float32_t quant_scale, int64_t pre_relu,
+    bool channel_split, UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id);
 
 template <typename SRC_TYPE, typename DST_TYPE>
 __aicore__ __attribute__((always_inline)) void
-copy_matrix_cc_to_cbuf_nz2nd_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
-                                           memref_t<__cbuf__ DST_TYPE, 2> *cbuf,
-                                           int64_t pre_quant,
-                                           float32_t quant_scale,
-                                           int64_t pre_relu, bool channel_split,
-                                           uint8_t unit_flag);
+copy_matrix_cc_to_cbuf_nz2nd_4d_to_2d_core(
+    memref_t<__cc__ SRC_TYPE, 4> *l0c, memref_t<__cbuf__ DST_TYPE, 2> *cbuf,
+    int64_t pre_quant, float32_t quant_scale, int64_t pre_relu,
+    bool channel_split, UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id);
 
 template <typename SRC_TYPE, typename DST_TYPE>
 __aicore__ __attribute__((always_inline)) void
-copy_matrix_cc_to_gm_nz2dn_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
-                                         memref_t<__ubuf__ DST_TYPE, 2> *gm,
-                                         int64_t pre_quant,
-                                         float32_t quant_scale,
-                                         int64_t pre_relu, bool channel_split,
-                                         uint8_t unit_flag);
+copy_matrix_cc_to_gm_nz2dn_4d_to_2d_core(
+    memref_t<__cc__ SRC_TYPE, 4> *l0c, memref_t<__ubuf__ DST_TYPE, 2> *gm,
+    int64_t pre_quant, float32_t quant_scale, int64_t pre_relu,
+    bool channel_split, UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id);
 
 template <typename SRC_TYPE, typename DST_TYPE, DualDstMode DualDst>
 __aicore__ __attribute__((always_inline)) void
-copy_matrix_cc_to_ubuf_nz2dn_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
-                                           memref_t<__ubuf__ DST_TYPE, 2> *ubuf,
-                                           int64_t pre_quant,
-                                           float32_t quant_scale,
-                                           int64_t pre_relu, bool channel_split,
-                                           uint8_t unit_flag,
-                                           bool sub_blockid);
+copy_matrix_cc_to_ubuf_nz2dn_4d_to_2d_core(
+    memref_t<__cc__ SRC_TYPE, 4> *l0c, memref_t<__ubuf__ DST_TYPE, 2> *ubuf,
+    int64_t pre_quant, float32_t quant_scale, int64_t pre_relu,
+    bool channel_split, UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id,
+    bool sub_blockid);
 
 template <typename SRC_TYPE, typename DST_TYPE>
 __aicore__ __attribute__((always_inline)) void
-copy_matrix_cc_to_cbuf_nz2dn_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
-                                           memref_t<__cbuf__ DST_TYPE, 2> *cbuf,
-                                           int64_t pre_quant,
-                                           float32_t quant_scale,
-                                           int64_t pre_relu, bool channel_split,
-                                           uint8_t unit_flag);
+copy_matrix_cc_to_cbuf_nz2dn_4d_to_2d_core(
+    memref_t<__cc__ SRC_TYPE, 4> *l0c, memref_t<__cbuf__ DST_TYPE, 2> *cbuf,
+    int64_t pre_quant, float32_t quant_scale, int64_t pre_relu,
+    bool channel_split, UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id);
 
 template <typename SRC_TYPE, typename DST_TYPE, DualDstMode DualDst>
 __aicore__ __attribute__((always_inline)) void
 copy_matrix_cc_to_ubuf_normal_2d_to_2d_core(
     memref_t<__cc__ SRC_TYPE, 2> *l0c, memref_t<__ubuf__ DST_TYPE, 2> *ubuf,
     int64_t pre_quant, float32_t quant_scale, int64_t pre_relu,
-    bool channel_split, uint8_t unit_flag, bool sub_blockid);
+    bool channel_split, UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id,
+    bool sub_blockid);
 
 template <typename SRC_TYPE, typename DST_TYPE, DualDstMode DualDst>
 __aicore__ __attribute__((always_inline)) void
 copy_matrix_cc_to_ubuf_nz2nd_4d_to_2d_core(
     memref_t<__cc__ SRC_TYPE, 4> *l0c, memref_t<__ubuf__ DST_TYPE, 2> *ubuf,
     int64_t pre_quant, float32_t quant_scale, int64_t pre_relu,
-    bool channel_split, uint8_t unit_flag, bool sub_blockid);
+    bool channel_split, UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id,
+    bool sub_blockid);
 
 #define FIXPIPE_SBPARAM_gm
 #define FIXPIPE_SBPARAM_cbuf
@@ -332,6 +331,10 @@ copy_matrix_cc_to_ubuf_nz2nd_4d_to_2d_core(
 #define FIXPIPE_SBARG(dst_scope) FIXPIPE_SBARG_##dst_scope
 
 // Forward c0_pad_en only to cbuf cores (GM/UB accept but ignore it).
+// copy_matrix_* cores take c0_pad_en as the last param (with default = true);
+// ciface exposes c0_pad_en right after channel_split. The macros below splice
+// c0_pad_en to the tail of the copy_matrix_* call for cbuf, and suppress it
+// (with (void)c0_pad_en) for gm/ubuf.
 #define FIXPIPE_C0PAD_FWD_gm
 #define FIXPIPE_C0PAD_FWD_cbuf , c0_pad_en
 #define FIXPIPE_C0PAD_FWD_ubuf
@@ -349,8 +352,8 @@ copy_matrix_cc_to_ubuf_nz2nd_4d_to_2d_core(
           memref_t<__##src_scope##__ src_type, src_dim> *src,                                                     \
           memref_t<__##dst_scope##__ dst_type, dst_dim> *dst,                                                     \
           int64_t pre_quant, float32_t quant_scale, int64_t pre_relu,                                             \
-          bool channel_split, bool c0_pad_en, uint8_t unit_flag                                                   \
-              FIXPIPE_SBPARAM(dst_scope))
+          bool channel_split, bool c0_pad_en, UNIT_FLAG unit_flag_mode,                                           \
+          int64_t unit_flag_group_id FIXPIPE_SBPARAM(dst_scope))
 
 #define REGISTE_FIXPIPE(src_scope, dst_scope, src_dim, dst_dim, src_type,         \
                         dst_type, mode_name, transform_mode)                      \
@@ -359,8 +362,10 @@ copy_matrix_cc_to_ubuf_nz2nd_4d_to_2d_core(
     FIXPIPE_C0PAD_UNUSED(dst_scope)                                               \
     copy_matrix_##src_scope##_to_##dst_scope##_##src_dim##d_to_##dst_dim##d_core< \
         src_type, dst_type, transform_mode>(                                      \
-        src, dst, pre_quant, quant_scale, pre_relu, channel_split,               \
-        unit_flag FIXPIPE_SBARG(dst_scope) FIXPIPE_C0PAD_FWD(dst_scope));        \
+        src, dst, pre_quant, quant_scale, pre_relu, channel_split,                \
+        unit_flag_mode,                                                           \
+        unit_flag_group_id FIXPIPE_C0PAD_FWD(dst_scope)                           \
+            FIXPIPE_SBARG(dst_scope));                                            \
   }
 
 #define DECLARE_FIXPIPE_NOSUFFIX(src_scope, dst_scope, src_dim, dst_dim,                            \
@@ -371,7 +376,8 @@ copy_matrix_cc_to_ubuf_nz2nd_4d_to_2d_core(
           memref_t<__##src_scope##__ src_type, src_dim> *src,                                       \
           memref_t<__##dst_scope##__ dst_type, dst_dim> *dst,                                       \
           int64_t pre_quant, float32_t quant_scale, int64_t pre_relu,                               \
-          bool channel_split, bool c0_pad_en, uint8_t unit_flag, uint8_t dual_dst)
+          bool channel_split, bool c0_pad_en, UNIT_FLAG unit_flag_mode,                             \
+          int64_t unit_flag_group_id, uint8_t dual_dst)
 
 #define REGISTE_FIXPIPE_NOSUFFIX(src_scope, dst_scope, src_dim, dst_dim,                                        \
                                  src_type, dst_type, mode_name,                                                 \
@@ -380,7 +386,7 @@ copy_matrix_cc_to_ubuf_nz2nd_4d_to_2d_core(
                            dst_type, mode_name, transform_mode) {                                               \
     _mlir_ciface_fixpipe_##mode_name##_##src_type##_to_##dst_type##_##src_dim##d_to_##dst_dim##d##_##dst_scope( \
         src, dst, pre_quant, quant_scale, pre_relu, channel_split, c0_pad_en,                                   \
-        unit_flag);                                                                                             \
+        unit_flag_mode, unit_flag_group_id);                                                                    \
   }
 
 #define DECLARE_FIXPIPE_DUAL(src_scope, dst_scope, src_dim, dst_dim, src_type,                                         \
@@ -390,26 +396,30 @@ copy_matrix_cc_to_ubuf_nz2nd_4d_to_2d_core(
           memref_t<__##src_scope##__ src_type, src_dim> *src,                                                          \
           memref_t<__##dst_scope##__ dst_type, dst_dim> *dst,                                                          \
           int64_t pre_quant, float32_t quant_scale, int64_t pre_relu,                                                  \
-          bool channel_split, bool c0_pad_en, uint8_t unit_flag, uint8_t dual_dst)
+          bool channel_split, bool c0_pad_en, UNIT_FLAG unit_flag_mode,                                                \
+          int64_t unit_flag_group_id, uint8_t dual_dst)
 
-#define REGISTE_FIXPIPE_DUAL(src_scope, dst_scope, src_dim, dst_dim, src_type,      \
-                             dst_type, mode_name, transform_mode)                   \
-  DECLARE_FIXPIPE_DUAL(src_scope, dst_scope, src_dim, dst_dim, src_type,            \
-                       dst_type, mode_name, transform_mode) {                       \
-    (void)c0_pad_en;                                                               \
-    if (dual_dst == static_cast<uint8_t>(DualDstMode::NO_DUAL)) {                   \
+#define REGISTE_FIXPIPE_DUAL(src_scope, dst_scope, src_dim, dst_dim, src_type,        \
+                             dst_type, mode_name, transform_mode)                     \
+  DECLARE_FIXPIPE_DUAL(src_scope, dst_scope, src_dim, dst_dim, src_type,              \
+                       dst_type, mode_name, transform_mode) {                         \
+    (void)c0_pad_en;                                                                  \
+    if (dual_dst == static_cast<uint8_t>(DualDstMode::NO_DUAL)) {                     \
       copy_matrix_##src_scope##_to_##dst_scope##_##src_dim##d_to_##dst_dim##d##_core< \
-          src_type, dst_type, transform_mode, DualDstMode::NO_DUAL>(               \
-          src, dst, pre_quant, quant_scale, pre_relu, channel_split, unit_flag);   \
-    } else if (dual_dst == static_cast<uint8_t>(DualDstMode::ROW_SPLIT)) {         \
+          src_type, dst_type, transform_mode, DualDstMode::NO_DUAL>(                  \
+          src, dst, pre_quant, quant_scale, pre_relu, channel_split,                  \
+          unit_flag_mode, unit_flag_group_id);                                        \
+    } else if (dual_dst == static_cast<uint8_t>(DualDstMode::ROW_SPLIT)) {            \
       copy_matrix_##src_scope##_to_##dst_scope##_##src_dim##d_to_##dst_dim##d##_core< \
-          src_type, dst_type, transform_mode, DualDstMode::ROW_SPLIT>(             \
-          src, dst, pre_quant, quant_scale, pre_relu, channel_split, unit_flag);   \
-    } else {                                                                       \
+          src_type, dst_type, transform_mode, DualDstMode::ROW_SPLIT>(                \
+          src, dst, pre_quant, quant_scale, pre_relu, channel_split,                  \
+          unit_flag_mode, unit_flag_group_id);                                        \
+    } else {                                                                          \
       copy_matrix_##src_scope##_to_##dst_scope##_##src_dim##d_to_##dst_dim##d##_core< \
-          src_type, dst_type, transform_mode, DualDstMode::COLUMN_SPLIT>(          \
-          src, dst, pre_quant, quant_scale, pre_relu, channel_split, unit_flag);     \
-    }                                                                              \
+          src_type, dst_type, transform_mode, DualDstMode::COLUMN_SPLIT>(             \
+          src, dst, pre_quant, quant_scale, pre_relu, channel_split,                  \
+          unit_flag_mode, unit_flag_group_id);                                        \
+    }                                                                                 \
   }
 
 extern "C" {
@@ -444,71 +454,102 @@ DECLARE_FIXPIPE_NOSUFFIX(cc, gm, 4, 2, int32_t, int32_t, nz2nd,
 DECLARE_FIXPIPE(cc, gm, 4, 2, int32_t, int8_t, nz2nd, TransformMode::NZ_2_ND);
 DECLARE_FIXPIPE(cc, gm, 4, 2, int32_t, half, nz2nd, TransformMode::NZ_2_ND);
 
-DECLARE_FIXPIPE_NOSUFFIX(cc, gm, 4, 2, int32_t, int8_t, nz2nd, TransformMode::NZ_2_ND);
-DECLARE_FIXPIPE_NOSUFFIX(cc, gm, 4, 2, int32_t, half, nz2nd, TransformMode::NZ_2_ND);
+DECLARE_FIXPIPE_NOSUFFIX(cc, gm, 4, 2, int32_t, int8_t, nz2nd,
+                         TransformMode::NZ_2_ND);
+DECLARE_FIXPIPE_NOSUFFIX(cc, gm, 4, 2, int32_t, half, nz2nd,
+                         TransformMode::NZ_2_ND);
 #if !defined(__DAV_C310__)
 DECLARE_FIXPIPE(cc, gm, 4, 2, int32_t, int16_t, nz2nd, TransformMode::NZ_2_ND);
-DECLARE_FIXPIPE_NOSUFFIX(cc, gm, 4, 2, int32_t, int16_t, nz2nd, TransformMode::NZ_2_ND);
+DECLARE_FIXPIPE_NOSUFFIX(cc, gm, 4, 2, int32_t, int16_t, nz2nd,
+                         TransformMode::NZ_2_ND);
 #endif // !defined(__DAV_C310__)
 #endif // !defined(__DAV_M300__)
 
 #if defined(__DAV_M300__) || defined(__DAV_C310__)
 DECLARE_FIXPIPE(cc, ubuf, 4, 2, float, half, nz2nd, TransformMode::NZ_2_ND);
-DECLARE_FIXPIPE(cc, ubuf, 4, 2, float, bfloat16_t, nz2nd, TransformMode::NZ_2_ND);
+DECLARE_FIXPIPE(cc, ubuf, 4, 2, float, bfloat16_t, nz2nd,
+                TransformMode::NZ_2_ND);
 DECLARE_FIXPIPE(cc, ubuf, 4, 2, float, int8_t, nz2nd, TransformMode::NZ_2_ND);
 DECLARE_FIXPIPE(cc, ubuf, 4, 2, float, uint8_t, nz2nd, TransformMode::NZ_2_ND);
 DECLARE_FIXPIPE(cc, ubuf, 4, 2, float, float, nz2nd, TransformMode::NZ_2_ND);
 
 DECLARE_FIXPIPE(cc, ubuf, 4, 2, int32_t, half, nz2nd, TransformMode::NZ_2_ND);
 DECLARE_FIXPIPE(cc, ubuf, 4, 2, int32_t, int8_t, nz2nd, TransformMode::NZ_2_ND);
-DECLARE_FIXPIPE(cc, ubuf, 4, 2, int32_t, uint8_t, nz2nd, TransformMode::NZ_2_ND);
-DECLARE_FIXPIPE(cc, ubuf, 4, 2, int32_t, int32_t, nz2nd, TransformMode::NZ_2_ND);
+DECLARE_FIXPIPE(cc, ubuf, 4, 2, int32_t, uint8_t, nz2nd,
+                TransformMode::NZ_2_ND);
+DECLARE_FIXPIPE(cc, ubuf, 4, 2, int32_t, int32_t, nz2nd,
+                TransformMode::NZ_2_ND);
 #endif // defined(__DAV_M300__)
 
 #if defined(__DAV_C310__)
-DECLARE_FIXPIPE_DUAL(cc, ubuf, 4, 2, float, half, nz2nd, TransformMode::NZ_2_ND);
-DECLARE_FIXPIPE_DUAL(cc, ubuf, 4, 2, float, bfloat16_t, nz2nd, TransformMode::NZ_2_ND);
-DECLARE_FIXPIPE_DUAL(cc, ubuf, 4, 2, float, int8_t, nz2nd, TransformMode::NZ_2_ND);
-DECLARE_FIXPIPE_DUAL(cc, ubuf, 4, 2, float, uint8_t, nz2nd, TransformMode::NZ_2_ND);
-DECLARE_FIXPIPE_DUAL(cc, ubuf, 4, 2, float, float, nz2nd, TransformMode::NZ_2_ND);
+DECLARE_FIXPIPE_DUAL(cc, ubuf, 4, 2, float, half, nz2nd,
+                     TransformMode::NZ_2_ND);
+DECLARE_FIXPIPE_DUAL(cc, ubuf, 4, 2, float, bfloat16_t, nz2nd,
+                     TransformMode::NZ_2_ND);
+DECLARE_FIXPIPE_DUAL(cc, ubuf, 4, 2, float, int8_t, nz2nd,
+                     TransformMode::NZ_2_ND);
+DECLARE_FIXPIPE_DUAL(cc, ubuf, 4, 2, float, uint8_t, nz2nd,
+                     TransformMode::NZ_2_ND);
+DECLARE_FIXPIPE_DUAL(cc, ubuf, 4, 2, float, float, nz2nd,
+                     TransformMode::NZ_2_ND);
 
-DECLARE_FIXPIPE_DUAL(cc, ubuf, 4, 2, int32_t, half, nz2nd, TransformMode::NZ_2_ND);
-DECLARE_FIXPIPE_DUAL(cc, ubuf, 4, 2, int32_t, int8_t, nz2nd, TransformMode::NZ_2_ND);
-DECLARE_FIXPIPE_DUAL(cc, ubuf, 4, 2, int32_t, uint8_t, nz2nd, TransformMode::NZ_2_ND);
-DECLARE_FIXPIPE_DUAL(cc, ubuf, 4, 2, int32_t, int32_t, nz2nd, TransformMode::NZ_2_ND);
+DECLARE_FIXPIPE_DUAL(cc, ubuf, 4, 2, int32_t, half, nz2nd,
+                     TransformMode::NZ_2_ND);
+DECLARE_FIXPIPE_DUAL(cc, ubuf, 4, 2, int32_t, int8_t, nz2nd,
+                     TransformMode::NZ_2_ND);
+DECLARE_FIXPIPE_DUAL(cc, ubuf, 4, 2, int32_t, uint8_t, nz2nd,
+                     TransformMode::NZ_2_ND);
+DECLARE_FIXPIPE_DUAL(cc, ubuf, 4, 2, int32_t, int32_t, nz2nd,
+                     TransformMode::NZ_2_ND);
 
-DECLARE_FIXPIPE_DUAL(cc, ubuf, 4, 2, float, half, nz2dn, TransformMode::NZ_2_DN);
-DECLARE_FIXPIPE_DUAL(cc, ubuf, 4, 2, float, bfloat16_t, nz2dn, TransformMode::NZ_2_DN);
-DECLARE_FIXPIPE_DUAL(cc, ubuf, 4, 2, float, int8_t, nz2dn, TransformMode::NZ_2_DN);
-DECLARE_FIXPIPE_DUAL(cc, ubuf, 4, 2, float, uint8_t, nz2dn, TransformMode::NZ_2_DN);
+DECLARE_FIXPIPE_DUAL(cc, ubuf, 4, 2, float, half, nz2dn,
+                     TransformMode::NZ_2_DN);
+DECLARE_FIXPIPE_DUAL(cc, ubuf, 4, 2, float, bfloat16_t, nz2dn,
+                     TransformMode::NZ_2_DN);
+DECLARE_FIXPIPE_DUAL(cc, ubuf, 4, 2, float, int8_t, nz2dn,
+                     TransformMode::NZ_2_DN);
+DECLARE_FIXPIPE_DUAL(cc, ubuf, 4, 2, float, uint8_t, nz2dn,
+                     TransformMode::NZ_2_DN);
 
-DECLARE_FIXPIPE_DUAL(cc, ubuf, 4, 2, float, float, nz2dn, TransformMode::NZ_2_DN);
-DECLARE_FIXPIPE_DUAL(cc, ubuf, 4, 2, int32_t, half, nz2dn, TransformMode::NZ_2_DN);
-DECLARE_FIXPIPE_DUAL(cc, ubuf, 4, 2, int32_t, int8_t, nz2dn, TransformMode::NZ_2_DN);
-DECLARE_FIXPIPE_DUAL(cc, ubuf, 4, 2, int32_t, uint8_t, nz2dn, TransformMode::NZ_2_DN);
-DECLARE_FIXPIPE_DUAL(cc, ubuf, 4, 2, int32_t, int32_t, nz2dn, TransformMode::NZ_2_DN);
+DECLARE_FIXPIPE_DUAL(cc, ubuf, 4, 2, float, float, nz2dn,
+                     TransformMode::NZ_2_DN);
+DECLARE_FIXPIPE_DUAL(cc, ubuf, 4, 2, int32_t, half, nz2dn,
+                     TransformMode::NZ_2_DN);
+DECLARE_FIXPIPE_DUAL(cc, ubuf, 4, 2, int32_t, int8_t, nz2dn,
+                     TransformMode::NZ_2_DN);
+DECLARE_FIXPIPE_DUAL(cc, ubuf, 4, 2, int32_t, uint8_t, nz2dn,
+                     TransformMode::NZ_2_DN);
+DECLARE_FIXPIPE_DUAL(cc, ubuf, 4, 2, int32_t, int32_t, nz2dn,
+                     TransformMode::NZ_2_DN);
 DECLARE_FIXPIPE(cc, cbuf, 4, 2, float, half, nz2nd, TransformMode::NZ_2_ND);
-DECLARE_FIXPIPE(cc, cbuf, 4, 2, float, bfloat16_t, nz2nd, TransformMode::NZ_2_ND);
+DECLARE_FIXPIPE(cc, cbuf, 4, 2, float, bfloat16_t, nz2nd,
+                TransformMode::NZ_2_ND);
 DECLARE_FIXPIPE(cc, cbuf, 4, 2, float, int8_t, nz2nd, TransformMode::NZ_2_ND);
 DECLARE_FIXPIPE(cc, cbuf, 4, 2, float, uint8_t, nz2nd, TransformMode::NZ_2_ND);
 DECLARE_FIXPIPE(cc, cbuf, 4, 2, float, float, nz2nd, TransformMode::NZ_2_ND);
 
 DECLARE_FIXPIPE(cc, cbuf, 4, 2, int32_t, half, nz2nd, TransformMode::NZ_2_ND);
 DECLARE_FIXPIPE(cc, cbuf, 4, 2, int32_t, int8_t, nz2nd, TransformMode::NZ_2_ND);
-DECLARE_FIXPIPE(cc, cbuf, 4, 2, int32_t, uint8_t, nz2nd, TransformMode::NZ_2_ND);
-DECLARE_FIXPIPE(cc, cbuf, 4, 2, int32_t, int32_t, nz2nd, TransformMode::NZ_2_ND);
+DECLARE_FIXPIPE(cc, cbuf, 4, 2, int32_t, uint8_t, nz2nd,
+                TransformMode::NZ_2_ND);
+DECLARE_FIXPIPE(cc, cbuf, 4, 2, int32_t, int32_t, nz2nd,
+                TransformMode::NZ_2_ND);
 
 //===-------------------------------------------------------------------===//
 // fixpipe, 2 dim to 2 dim, nz2nz normal
 //===-------------------------------------------------------------------===//
 DECLARE_FIXPIPE(cc, ubuf, 2, 2, float, half, normal, TransformMode::NORMAL);
-DECLARE_FIXPIPE(cc, ubuf, 2, 2, float, bfloat16_t, normal, TransformMode::NORMAL);
+DECLARE_FIXPIPE(cc, ubuf, 2, 2, float, bfloat16_t, normal,
+                TransformMode::NORMAL);
 
-DECLARE_FIXPIPE_DUAL(cc, ubuf, 2, 2, float, half, normal, TransformMode::NORMAL);
-DECLARE_FIXPIPE_DUAL(cc, ubuf, 2, 2, float, bfloat16_t, normal, TransformMode::NORMAL);
+DECLARE_FIXPIPE_DUAL(cc, ubuf, 2, 2, float, half, normal,
+                     TransformMode::NORMAL);
+DECLARE_FIXPIPE_DUAL(cc, ubuf, 2, 2, float, bfloat16_t, normal,
+                     TransformMode::NORMAL);
 
 DECLARE_FIXPIPE(cc, cbuf, 2, 2, float, half, normal, TransformMode::NORMAL);
-DECLARE_FIXPIPE(cc, cbuf, 2, 2, float, bfloat16_t, normal, TransformMode::NORMAL);
+DECLARE_FIXPIPE(cc, cbuf, 2, 2, float, bfloat16_t, normal,
+                TransformMode::NORMAL);
 
 //===-------------------------------------------------------------------===//
 // fixpipe, 4 dim to 4 dim, nz2nz normal
@@ -519,18 +560,23 @@ DECLARE_FIXPIPE(cc, gm, 4, 4, float, float, normal, TransformMode::NORMAL);
 DECLARE_FIXPIPE(cc, gm, 4, 4, int32_t, int32_t, normal, TransformMode::NORMAL);
 
 DECLARE_FIXPIPE(cc, ubuf, 4, 4, float, half, normal, TransformMode::NORMAL);
-DECLARE_FIXPIPE(cc, ubuf, 4, 4, float, bfloat16_t, normal, TransformMode::NORMAL);
+DECLARE_FIXPIPE(cc, ubuf, 4, 4, float, bfloat16_t, normal,
+                TransformMode::NORMAL);
 DECLARE_FIXPIPE(cc, ubuf, 4, 4, float, float, normal, TransformMode::NORMAL);
 DECLARE_FIXPIPE(cc, ubuf, 4, 4, int32_t, int32_t, normal,
                 TransformMode::NORMAL);
 
-DECLARE_FIXPIPE_DUAL(cc, ubuf, 4, 4, float, float, normal, TransformMode::NORMAL);
-DECLARE_FIXPIPE_DUAL(cc, ubuf, 4, 4, int32_t, int32_t, normal, TransformMode::NORMAL);
+DECLARE_FIXPIPE_DUAL(cc, ubuf, 4, 4, float, float, normal,
+                     TransformMode::NORMAL);
+DECLARE_FIXPIPE_DUAL(cc, ubuf, 4, 4, int32_t, int32_t, normal,
+                     TransformMode::NORMAL);
 
 DECLARE_FIXPIPE(cc, cbuf, 4, 4, float, half, normal, TransformMode::NORMAL);
-DECLARE_FIXPIPE(cc, cbuf, 4, 4, float, bfloat16_t, normal, TransformMode::NORMAL);
+DECLARE_FIXPIPE(cc, cbuf, 4, 4, float, bfloat16_t, normal,
+                TransformMode::NORMAL);
 DECLARE_FIXPIPE(cc, cbuf, 4, 4, float, float, normal, TransformMode::NORMAL);
-DECLARE_FIXPIPE(cc, cbuf, 4, 4, int32_t, int32_t, normal, TransformMode::NORMAL);
+DECLARE_FIXPIPE(cc, cbuf, 4, 4, int32_t, int32_t, normal,
+                TransformMode::NORMAL);
 DECLARE_FIXPIPE(cc, cbuf, 4, 4, int32_t, int8_t, normal, TransformMode::NORMAL);
 
 //===-------------------------------------------------------------------===//
@@ -542,17 +588,21 @@ DECLARE_FIXPIPE(cc, gm, 4, 2, float, float, nz2dn, TransformMode::NZ_2_DN);
 DECLARE_FIXPIPE(cc, gm, 4, 2, int32_t, int32_t, nz2dn, TransformMode::NZ_2_DN);
 
 DECLARE_FIXPIPE(cc, ubuf, 4, 2, float, half, nz2dn, TransformMode::NZ_2_DN);
-DECLARE_FIXPIPE(cc, ubuf, 4, 2, float, bfloat16_t, nz2dn, TransformMode::NZ_2_DN);
+DECLARE_FIXPIPE(cc, ubuf, 4, 2, float, bfloat16_t, nz2dn,
+                TransformMode::NZ_2_DN);
 DECLARE_FIXPIPE(cc, ubuf, 4, 2, float, int8_t, nz2dn, TransformMode::NZ_2_DN);
 DECLARE_FIXPIPE(cc, ubuf, 4, 2, float, uint8_t, nz2dn, TransformMode::NZ_2_DN);
 DECLARE_FIXPIPE(cc, ubuf, 4, 2, float, float, nz2dn, TransformMode::NZ_2_DN);
 DECLARE_FIXPIPE(cc, ubuf, 4, 2, int32_t, half, nz2dn, TransformMode::NZ_2_DN);
 DECLARE_FIXPIPE(cc, ubuf, 4, 2, int32_t, int8_t, nz2dn, TransformMode::NZ_2_DN);
-DECLARE_FIXPIPE(cc, ubuf, 4, 2, int32_t, uint8_t, nz2dn, TransformMode::NZ_2_DN);
-DECLARE_FIXPIPE(cc, ubuf, 4, 2, int32_t, int32_t, nz2dn, TransformMode::NZ_2_DN);
+DECLARE_FIXPIPE(cc, ubuf, 4, 2, int32_t, uint8_t, nz2dn,
+                TransformMode::NZ_2_DN);
+DECLARE_FIXPIPE(cc, ubuf, 4, 2, int32_t, int32_t, nz2dn,
+                TransformMode::NZ_2_DN);
 
 DECLARE_FIXPIPE(cc, cbuf, 4, 2, float, half, nz2dn, TransformMode::NZ_2_DN);
-DECLARE_FIXPIPE(cc, cbuf, 4, 2, float, bfloat16_t, nz2dn, TransformMode::NZ_2_DN);
+DECLARE_FIXPIPE(cc, cbuf, 4, 2, float, bfloat16_t, nz2dn,
+                TransformMode::NZ_2_DN);
 #endif // defined(__DAV_C310__)
 }
 #endif // HIVM_MLIR_TEMPLATE_FIXPIPE_UTILS_H
