@@ -2130,7 +2130,8 @@ module {
       // CHECK: hivm.hir.pointer_cast(%[[CONST1:.*]])
       %alloc_0 = memref.alloc() : memref<16xf16, #hivm.address_space<ub>>
       hivm.hir.load ins(%arg1 : memref<16xf16, #hivm.address_space<gm>>) outs(%alloc_0 : memref<16xf16, #hivm.address_space<ub>>)
-      // CHECK: hivm.hir.pointer_cast(%[[CONST0]])
+      // Conditional branch alias: yield buffer is not inplaced with the incoming arg.
+      // CHECK: hivm.hir.pointer_cast(%[[CONST3:.*]])
       %alloc_1 = memref.alloc() : memref<16xf16, #hivm.address_space<ub>>
       hivm.hir.vadd ins(%arg10, %alloc_0 : memref<16xf16, #hivm.address_space<ub>>, memref<16xf16, #hivm.address_space<ub>>)
         outs(%alloc_1 : memref<16xf16, #hivm.address_space<ub>>)
@@ -2139,13 +2140,13 @@ module {
       // CHECK: hivm.hir.pointer_cast(%[[CONST2:.*]])
       %alloc_2 = memref.alloc() : memref<16xf16, #hivm.address_space<ub>>
       hivm.hir.load ins(%arg1 : memref<16xf16, #hivm.address_space<gm>>) outs(%alloc_2 : memref<16xf16, #hivm.address_space<ub>>)
-      // CHECK: hivm.hir.pointer_cast(%[[CONST2]])
+      // CHECK: hivm.hir.pointer_cast(%[[CONST4:.*]])
       %alloc_3 = memref.alloc() : memref<16xf16, #hivm.address_space<ub>>
       hivm.hir.vsub ins(%arg11, %alloc_2 : memref<16xf16, #hivm.address_space<ub>>, memref<16xf16, #hivm.address_space<ub>>)
         outs(%alloc_3 : memref<16xf16, #hivm.address_space<ub>>)
       cf.br ^bb3(%alloc_3 : memref<16xf16, #hivm.address_space<ub>>)
     ^bb3(%arg12 : memref<16xf16, #hivm.address_space<ub>>):
-      // CHECK: hivm.hir.pointer_cast(%[[CONST0]])
+      // CHECK: hivm.hir.pointer_cast(%[[CONST5:.*]])
       %alloc_4 = memref.alloc() : memref<16xf16, #hivm.address_space<ub>>
       hivm.hir.vadd ins(%arg12, %arg12 : memref<16xf16, #hivm.address_space<ub>>, memref<16xf16, #hivm.address_space<ub>>)
                   outs(%alloc_4 : memref<16xf16, #hivm.address_space<ub>>)
@@ -2171,7 +2172,8 @@ module {
       // CHECK: hivm.hir.pointer_cast(%[[CONST1:.*]])
       %alloc_0 = memref.alloc() : memref<16xf16, #hivm.address_space<ub>>
       hivm.hir.load ins(%arg1 : memref<16xf16, #hivm.address_space<gm>>) outs(%alloc_0 : memref<16xf16, #hivm.address_space<ub>>)
-      // CHECK: hivm.hir.pointer_cast(%[[CONST1]])
+      // Conditional branch alias: yield buffer is not inplaced with the incoming arg.
+      // CHECK: hivm.hir.pointer_cast(%[[CONST3:.*]])
       %alloc_1 = memref.alloc() : memref<16xf16, #hivm.address_space<ub>>
       hivm.hir.vadd ins(%arg10, %alloc_0 : memref<16xf16, #hivm.address_space<ub>>, memref<16xf16, #hivm.address_space<ub>>)
         outs(%alloc_1 : memref<16xf16, #hivm.address_space<ub>>)
@@ -2180,13 +2182,13 @@ module {
       // CHECK: hivm.hir.pointer_cast(%[[CONST2:.*]])
       %alloc_2 = memref.alloc() : memref<16xf16, #hivm.address_space<ub>>
       hivm.hir.load ins(%arg1 : memref<16xf16, #hivm.address_space<gm>>) outs(%alloc_2 : memref<16xf16, #hivm.address_space<ub>>)
-      // CHECK: hivm.hir.pointer_cast(%[[CONST2]])
+      // CHECK: hivm.hir.pointer_cast(%[[CONST4:.*]])
       %alloc_3 = memref.alloc() : memref<16xf16, #hivm.address_space<ub>>
       hivm.hir.vsub ins(%arg11, %alloc_2 : memref<16xf16, #hivm.address_space<ub>>, memref<16xf16, #hivm.address_space<ub>>)
         outs(%alloc_3 : memref<16xf16, #hivm.address_space<ub>>)
       cf.br ^bb3(%alloc_3, %arg11 : memref<16xf16, #hivm.address_space<ub>>, memref<16xf16, #hivm.address_space<ub>>)
     ^bb3(%arg12 : memref<16xf16, #hivm.address_space<ub>>, %arg13 : memref<16xf16, #hivm.address_space<ub>>):
-      // CHECK: hivm.hir.pointer_cast(%[[CONST0]])
+      // CHECK: hivm.hir.pointer_cast(%[[CONST5:.*]])
       %alloc_4 = memref.alloc() : memref<16xf16, #hivm.address_space<ub>>
       hivm.hir.vadd ins(%arg12, %arg13 : memref<16xf16, #hivm.address_space<ub>>, memref<16xf16, #hivm.address_space<ub>>)
                   outs(%alloc_4 : memref<16xf16, #hivm.address_space<ub>>)
@@ -2625,7 +2627,7 @@ func.func @test_reuse_dma_buffer_warning(%arg0: memref<16x32x128xf16, #hivm.addr
 }
 
 // -----
-// This test demonstrates that reordering the memory plan can reduce the total UB usage. 
+// This test demonstrates that reordering the memory plan can reduce the total UB usage.
 
 // CHECK-LABEL: func.func @test_change_mem_plan_order
 // CHECK: %[[CONST0:.*]] = arith.constant 147456 : i64

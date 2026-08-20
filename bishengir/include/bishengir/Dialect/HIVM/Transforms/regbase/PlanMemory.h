@@ -22,10 +22,10 @@
 #include "bishengir/Dialect/HIVM/Analysis/VFInplaceReuseAnalyzer.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/InplaceReuseReachableMap.h"
-#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/HIVM/Transforms/OptMemPlanForPipeline.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Analysis/Liveness.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -35,6 +35,7 @@
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallSet.h"
 
+#include <algorithm>
 #include <list>
 #include <random>
 
@@ -284,8 +285,8 @@ using BufferCondPair = std::pair<Value, bool>;
 class MemLivenessAnalysisRegBase {
 public:
   MemLivenessAnalysisRegBase(func::FuncOp func, MemPlanMode planMode,
-                      bool disableTightlyCoupledBufferReuse = false,
-                      uint32_t randomSeed = 0)
+                             bool disableTightlyCoupledBufferReuse = false,
+                             uint32_t randomSeed = 0)
       : func_(func), planMode(planMode),
         disableTightlyCoupledBufferReuse(disableTightlyCoupledBufferReuse),
         randomSeed(randomSeed), randomGenerator(this->randomSeed) {}
@@ -445,19 +446,19 @@ protected:
                                 scope::ReturnOp returnOp);
 
   /// Update preload buffer info from mark op.
-  void UpdatePreloadBuffers(annotation::MarkOp markOp,
-                            memref::AllocOp allocOp);
+  void UpdatePreloadBuffers(annotation::MarkOp markOp, memref::AllocOp allocOp);
 
   /// Check if a buffer is a preload buffer.
   bool IsPreloadBuffer(Value buffer);
 
   /// Update gen info of preload buffers at their enclosing loop entry.
-  void UpdatePreloadBuffersGenInfo(
-      OpInfo *opInfo, const SetVector<Value> &preloadBufferValues);
+  void UpdatePreloadBuffersGenInfo(OpInfo *opInfo,
+                                   const SetVector<Value> &preloadBufferValues);
 
   /// Update kill info of preload buffers at their enclosing loop exit.
-  void UpdatePreloadBuffersKillInfo(
-      OpInfo *opInfo, const SetVector<Value> &preloadBufferValues);
+  void
+  UpdatePreloadBuffersKillInfo(OpInfo *opInfo,
+                               const SetVector<Value> &preloadBufferValues);
 
   /// Extend preload buffer lifetime from scope to parent for.
   void UpdatePreloadBuffersGenKillMap();
@@ -497,6 +498,9 @@ protected:
 
   /// Generate buffer's life time.
   void GenerateBufferLife();
+
+  /// Share one lifetime among allocs linked by a conditional alias component.
+  void UnifyConditionalAliasBufferLife();
 
   /// initialize the buffers that must be inplaced together
   /// namely, the alias buffers of memref.alloc,
@@ -545,17 +549,17 @@ using StorageEntryPair = std::pair<const StorageEntry *, const StorageEntry *>;
 
 class MemPlanRegBase {
 public:
-MemPlanRegBase(MemPlanMode planMode, bool enableGlobalReuse,
-           bool enablePrintMemoryAllocatedSize, bool restrictInplaceAsISA,
-           int simtVFDynamicSize, bool disableVFReachableCheck,
-           PlanMemoryStrategy planMemoryStrategy = PlanMemoryStrategy::DEFAULT)
+  MemPlanRegBase(
+      MemPlanMode planMode, bool enableGlobalReuse,
+      bool enablePrintMemoryAllocatedSize, bool restrictInplaceAsISA,
+      int simtVFDynamicSize, bool disableVFReachableCheck,
+      PlanMemoryStrategy planMemoryStrategy = PlanMemoryStrategy::DEFAULT)
       : planMode(planMode), enableGlobalReuse(enableGlobalReuse),
         enablePrintMemoryAllocatedSize(enablePrintMemoryAllocatedSize),
         restrictInplaceAsISA(restrictInplaceAsISA),
         simtVFDynamicSize(simtVFDynamicSize),
         disableVFReachableCheck(disableVFReachableCheck),
-        planMemoryStrategy(planMemoryStrategy),
-        vfInplaceReuseInfo(nullptr) {}
+        planMemoryStrategy(planMemoryStrategy), vfInplaceReuseInfo(nullptr) {}
 
   LogicalResult plan(bool emitErrors = true);
 
@@ -598,8 +602,8 @@ MemPlanRegBase(MemPlanMode planMode, bool enableGlobalReuse,
     syncBlockPositions = std::move(positions);
   }
 
-  inline void SetCVMixIdReuseAllowedPairs(
-      DenseSet<std::pair<int32_t, int32_t>> pairs) {
+  inline void
+  SetCVMixIdReuseAllowedPairs(DenseSet<std::pair<int32_t, int32_t>> pairs) {
     cvMixIdReuseAllowedPairs = std::move(pairs);
   }
 
@@ -757,9 +761,6 @@ protected:
                               MemBoundList::const_iterator end,
                               BufferLifeVec &newLife) const;
 
-  /// merge buffers in a vector.
-  void MergeBufferVec(BufferLifeVec &bufferLife) const;
-
   /// Judge if need to restart plan memory with other strategy after
   /// plan failed.
   PlanStatus ApplyFailStrategy(StatusWrapper &statusWrapper,
@@ -822,7 +823,8 @@ protected:
                                const StorageEntry *e) const;
 
   /// Assign otherbuffer storage entry address(es). Assigns
-  /// otherBufferRelationEntries[i]->bitsOffset = otherBufferOffsets[i] for each i.
+  /// otherBufferRelationEntries[i]->bitsOffset = otherBufferOffsets[i] for each
+  /// i.
   void PlanRelationOtherBufferEntryAddress(
       llvm::ArrayRef<uint64_t> otherBufferOffsets, StorageEntry *e);
 
@@ -840,6 +842,9 @@ protected:
 
   /// Report all tensors life time info.
   void ReportMemLifeDebugInfo(const StorageEntry *rootStorageEntry);
+
+  /// Dump per-buffer alloc/free scope times before MergeInplaceSE.
+  void ReportPreMergeBufferLifeDebugInfo() const;
 
   /// Report tensor life time for debug.
   void MemLifeDebugInfo(const StorageEntry *storageEntry) const;

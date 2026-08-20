@@ -35,6 +35,7 @@
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallSet.h"
 
+#include <algorithm>
 #include <list>
 #include <random>
 
@@ -474,8 +475,9 @@ private:
 
   /// Update Kill information for multi scope used buffers and their alias
   /// buffers.
-  void UpdatePreloadBuffersKillInfo(OpInfo *opInfo,
-                                    const SetVector<Value> &preloadBufferValues);
+  void
+  UpdatePreloadBuffersKillInfo(OpInfo *opInfo,
+                               const SetVector<Value> &preloadBufferValues);
 
   /// Process mark op and update buffer's gen and kill.
   void ProcessMarkOp(annotation::MarkOp markOp, OpInfo *curOpInfo,
@@ -496,6 +498,9 @@ private:
 
   /// Generate buffer's life time.
   void GenerateBufferLife();
+
+  /// Share one lifetime among allocs linked by a conditional alias component.
+  void UnifyConditionalAliasBufferLife();
 
   /// initialize the buffers that must be inplaced together
   /// namely, the alias buffers of memref.alloc,
@@ -553,8 +558,7 @@ public:
         restrictInplaceAsISA(restrictInplaceAsISA),
         simtVFDynamicSize(simtVFDynamicSize),
         disableVFReachableCheck(disableVFReachableCheck),
-        planMemoryStrategy(planMemoryStrategy),
-        vfInplaceReuseInfo(nullptr) {}
+        planMemoryStrategy(planMemoryStrategy), vfInplaceReuseInfo(nullptr) {}
 
   LogicalResult plan(bool emitErrors = true);
 
@@ -774,9 +778,6 @@ private:
                               MemBoundList::const_iterator end,
                               BufferLifeVec &newLife) const;
 
-  /// merge buffers in a vector.
-  void MergeBufferVec(BufferLifeVec &bufferLife) const;
-
   /// Judge if need to restart plan memory with other strategy after
   /// plan failed.
   PlanStatus ApplyFailStrategy(StatusWrapper &statusWrapper,
@@ -793,8 +794,8 @@ private:
   /// Check if memory plan can be rolled back.
   bool ContinueRollBack(const StatusWrapper &statusWrapper) const;
 
-  /// Check if multibuffer-slots should be rolled back together 
-  bool ShouldRollbackMuiltiBuffer(const PlanRecord& r) const;
+  /// Check if multibuffer-slots should be rolled back together
+  bool ShouldRollbackMuiltiBuffer(const PlanRecord &r) const;
 
   /// Memory plan fallback information processing.
   void RollBackForAllocFailInner(StatusWrapper &statusWrapper,
