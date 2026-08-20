@@ -487,7 +487,7 @@ bool isInitFirstLoopIterForLocalMmadOp(LocalMmadTy *localMatmulOp) {
       auto cmpConst = getConstantFromDefine(cmpOp.getRhs());
       bool isConstantRhs = true;
       // If rhs of cmpOp is not a constant, check if lhs is constant
-      if (cmpConst.has_value()) {
+      if (!cmpConst.has_value()) {
         cmpConst = getConstantFromDefine(cmpOp.getLhs());
         isConstantRhs = false;
       }

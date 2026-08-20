@@ -171,6 +171,18 @@ def HIVMLocalMatmulLikeOpInterface
       /*methodName=*/"shouldDecomposeBiasByElementAdd",
       /*args=*/(ins)>,
     InterfaceMethod<
+      /*desc=*/[{
+        Return whether a loop-carried bias should be decomposed by hoisting a
+        zero fill out of the loop and adding the bias back after it. Only the
+        mem-based path detects this mode, so ops that never see it (MmadMx)
+        keep the default.
+      }],
+      /*retTy=*/"bool",
+      /*methodName=*/"shouldDecomposeBiasByCrossLoopElementAdd",
+      /*args=*/(ins),
+      /*methodBody=*/"",
+      /*defaultImplementation=*/[{ return false; }]>,
+    InterfaceMethod<
       /*desc=*/"Return whether scale operands are present.",
       /*retTy=*/"bool",
       /*methodName=*/"supportsScaleOperands",
