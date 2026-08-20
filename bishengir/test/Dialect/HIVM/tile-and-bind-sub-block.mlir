@@ -2257,7 +2257,10 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">, hivm.module_cor
 // CHECK-LABEL: func.func @reduce_dim_subblock_aiv(
 // CHECK: hivm.hir.vreduce {tiled_op} <sum> ins(%{{.*}} : tensor<2048xf32>)
 // CHECK: memref_ext.alloc_workspace() : memref<2xf32>
-// CHECK: hivm.hir.sync_block[<ALL_SUB_VECTOR>] tvector_pipe = <PIPE_MTE3> vector_pipe = <PIPE_MTE2>
+// CHECK: hivm.hir.sync_block[<ALL_SUB_VECTOR>, 15 : i64] tvector_pipe = <PIPE_MTE2> vector_pipe = <PIPE_MTE3>
+// CHECK: hivm.hir.store
+// CHECK: hivm.hir.sync_block[<ALL_SUB_VECTOR>, 14 : i64] tvector_pipe = <PIPE_MTE3> vector_pipe = <PIPE_MTE2>
+// CHECK: hivm.hir.load
 // CHECK: %[[FINAL:.*]] = hivm.hir.vreduce <sum> ins(%{{.*}} : tensor<2xf32>)
 // CHECK: scope.return %[[FINAL]] : tensor<1xf32>
 // CHECK: annotation.mark
