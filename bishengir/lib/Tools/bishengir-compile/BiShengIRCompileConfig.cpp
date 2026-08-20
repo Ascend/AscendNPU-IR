@@ -356,6 +356,9 @@ void BiShengIRCompileMainConfig::registerCLOptions() {
 ///
 /// `--enable-hivm-unit-flag-sync` is enabled by default on Ascend950/RegBase
 /// unless the user explicitly set the flag.
+///
+/// `--enable-preload` is enabled by default on Ascend950/RegBase, but disabled
+/// on A3/membase. Explicit CLI values are preserved.
 static bool hasExplicitCLOption(llvm::StringRef name) {
   auto &opts = cl::getRegisteredOptions();
   auto it = opts.find(name);
@@ -372,6 +375,8 @@ applyArchDependentCompileDefaults(BiShengIRCompileMainConfig &config) {
     config.setLimitAutoMultiBufferBuffer(MultiBufferStrategy::NO_LIMIT);
   if (!hasExplicitCLOption("enable-hivm-unit-flag-sync"))
     config.setEnableHIVMUnitFlagSync(true);
+  if (!hasExplicitCLOption("enable-preload"))
+    config.setEnablePreload(true);
 }
 
 BiShengIRCompileMainConfig BiShengIRCompileMainConfig::createFromCLOptions() {
