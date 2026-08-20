@@ -516,6 +516,7 @@ DECLARE_FIXPIPE(cc, cbuf, 2, 2, float, bfloat16_t, normal, TransformMode::NORMAL
 DECLARE_FIXPIPE(cc, gm, 4, 4, float, half, normal, TransformMode::NORMAL);
 DECLARE_FIXPIPE(cc, gm, 4, 4, float, bfloat16_t, normal, TransformMode::NORMAL);
 DECLARE_FIXPIPE(cc, gm, 4, 4, float, float, normal, TransformMode::NORMAL);
+DECLARE_FIXPIPE(cc, gm, 4, 4, int32_t, int32_t, normal, TransformMode::NORMAL);
 
 DECLARE_FIXPIPE(cc, ubuf, 4, 4, float, half, normal, TransformMode::NORMAL);
 DECLARE_FIXPIPE(cc, ubuf, 4, 4, float, bfloat16_t, normal, TransformMode::NORMAL);
