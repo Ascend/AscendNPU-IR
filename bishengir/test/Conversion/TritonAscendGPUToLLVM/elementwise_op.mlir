@@ -1351,4 +1351,32 @@ module attributes {"ttg.enable-bishengir-simt-optimization" = 900101 : i32, "ttg
     tt.store %13, %11 : tensor<1x!tt.ptr<i32>, #blocked>
     tt.return
   }
+
+  // CHECK-LABEL: @test_unsigned_integer_ops
+  // CHECK: ascend_dpx.umulhi {{.*}} : (i32, i32) -> i32
+  // CHECK: ascend_dpx.umul24 {{.*}} : (i32, i32) -> i32
+  // CHECK: ascend_dpx.uhadd {{.*}} : (i32, i32) -> i32
+  // CHECK: ascend_dpx.urhadd {{.*}} : (i32, i32) -> i32
+  // CHECK: ascend_dpx.usad {{.*}} : (i32, i32, i32) -> i32
+  tt.func public @test_unsigned_integer_ops(%out: !tt.ptr<i32>, %a: !tt.ptr<i32>, %b: !tt.ptr<i32>, %c: !tt.ptr<i32>) attributes {noinline = false} {
+    %0 = tt.splat %a : !tt.ptr<i32> -> tensor<1x!tt.ptr<i32>, #blocked>
+    %1 = tt.load %0 : tensor<1x!tt.ptr<i32>, #blocked>
+    %2 = tt.splat %b : !tt.ptr<i32> -> tensor<1x!tt.ptr<i32>, #blocked>
+    %3 = tt.load %2 : tensor<1x!tt.ptr<i32>, #blocked>
+    %4 = tt.splat %c : !tt.ptr<i32> -> tensor<1x!tt.ptr<i32>, #blocked>
+    %5 = tt.load %4 : tensor<1x!tt.ptr<i32>, #blocked>
+    %6 = tt.extern_elementwise %1, %3 {libname = "", libpath = "", pure = true, symbol = "__hmf_umulhi_u32"} : (tensor<1xi32, #blocked>, tensor<1xi32, #blocked>) -> tensor<1xi32, #blocked>
+    %7 = tt.extern_elementwise %1, %3 {libname = "", libpath = "", pure = true, symbol = "__hmf_umul24_u32"} : (tensor<1xi32, #blocked>, tensor<1xi32, #blocked>) -> tensor<1xi32, #blocked>
+    %8 = tt.extern_elementwise %1, %3 {libname = "", libpath = "", pure = true, symbol = "__hmf_uhadd_u32"} : (tensor<1xi32, #blocked>, tensor<1xi32, #blocked>) -> tensor<1xi32, #blocked>
+    %9 = tt.extern_elementwise %1, %3 {libname = "", libpath = "", pure = true, symbol = "__hmf_urhadd_u32"} : (tensor<1xi32, #blocked>, tensor<1xi32, #blocked>) -> tensor<1xi32, #blocked>
+    %10 = tt.extern_elementwise %1, %3, %5 {libname = "", libpath = "", pure = true, symbol = "__hmf_usad_u32"} : (tensor<1xi32, #blocked>, tensor<1xi32, #blocked>, tensor<1xi32, #blocked>) -> tensor<1xi32, #blocked>
+    %11 = tt.splat %out : !tt.ptr<i32> -> tensor<1x!tt.ptr<i32>, #blocked>
+    tt.store %11, %6 : tensor<1x!tt.ptr<i32>, #blocked>
+    tt.store %11, %7 : tensor<1x!tt.ptr<i32>, #blocked>
+    tt.store %11, %8 : tensor<1x!tt.ptr<i32>, #blocked>
+    tt.store %11, %9 : tensor<1x!tt.ptr<i32>, #blocked>
+    tt.store %11, %10 : tensor<1x!tt.ptr<i32>, #blocked>
+    tt.return
+  }
+
 }

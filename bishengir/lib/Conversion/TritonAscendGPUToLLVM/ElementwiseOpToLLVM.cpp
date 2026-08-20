@@ -987,6 +987,21 @@ private:
                           return rewriter.create<ascend_dpx::UmulhiOp>(
                               loc, elemTy, lhs, rhs);
                         })
+                  .Case("__hmf_umul24_u32",
+                        [&] {
+                          return rewriter.create<ascend_dpx::Umul24Op>(
+                              loc, elemTy, lhs, rhs);
+                        })
+                  .Case("__hmf_uhadd_u32",
+                        [&] {
+                          return rewriter.create<ascend_dpx::UhaddOp>(
+                              loc, elemTy, lhs, rhs);
+                        })
+                  .Case("__hmf_urhadd_u32",
+                        [&] {
+                          return rewriter.create<ascend_dpx::UrhaddOp>(
+                              loc, elemTy, lhs, rhs);
+                        })
                   .Case("__hmf_div_rn_fp32",
                         [&] {
                           return rewriter.create<ascend_dpx::DivRnOp>(
@@ -1237,6 +1252,11 @@ private:
                   .Case("__hmf_sad_i32",
                         [&] {
                           return rewriter.create<ascend_dpx::SadOp>(
+                              loc, elemTy, op1, op2, op3);
+                        })
+                  .Case("__hmf_usad_u32",
+                        [&] {
+                          return rewriter.create<ascend_dpx::UsadOp>(
                               loc, elemTy, op1, op2, op3);
                         })
                   .Case("__hmf_fma_rn_fp32",
