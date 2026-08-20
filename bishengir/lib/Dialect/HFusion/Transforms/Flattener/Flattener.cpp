@@ -144,6 +144,9 @@ void Flattener::breakSubByteI1CollapseBoundaries() {
     if (args.size() < 2 || shape.size() != args.size())
       continue;
 
+    int64_t innerAxis = shape.back();
+    if (!ShapedType::isDynamic(innerAxis) && innerAxis % utils::kBitsToByte == 0)
+      continue;
     for (size_t j = 1; j < args.size(); ++j)
       disconnect(args[j - 1], args[j]);
   }
