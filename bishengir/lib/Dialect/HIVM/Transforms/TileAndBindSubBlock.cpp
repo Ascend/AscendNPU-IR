@@ -29,6 +29,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/HoistAffine.h"
 #include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/Pattern.h"
+#include "bishengir/Dialect/HIVM/Transforms/PartitionAndBindSubBlock/PartitionTypes.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/Helper.h"
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/TileUtils.h"
@@ -895,6 +896,11 @@ public:
 
   LogicalResult matchAndRewrite(OpType op,
                                 PatternRewriter &rewriter) const override {
+    // Skip ops the partition pass already bound to a sub-block.
+    if (op->template hasAttrOfType<UnitAttr>(
+            mlir::hivm::partition_and_bind::kSubBlockBoundOpAttrName))
+      return failure();
+
     if (auto ifOpOld = dyn_cast_if_present<scf::IfOp>(op->getParentOp())) {
       if (ifOpOld->template hasAttrOfType<UnitAttr>(kLimitedSubBlockOpAttrName))
         return failure();
