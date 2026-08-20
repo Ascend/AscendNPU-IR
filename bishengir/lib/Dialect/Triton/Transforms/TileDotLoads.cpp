@@ -959,6 +959,7 @@ emitKTilingTensorOfPtrsCanonical(triton::DotOp dot, DotLoadInfo aInfo,
   Value bPLoK, bOLo;
   Value bBaseScalar, bStrideSplat;
   RankedTensorType bPLoTy;
+  Value bLoopStrideAddition;
   // Trans-B-only state (left null in direct-B path).
   Value bPLo_trans, bOLo_trans;
   RankedTensorType bPLoTy_trans;
@@ -991,16 +992,40 @@ emitKTilingTensorOfPtrsCanonical(triton::DotOp dot, DotLoadInfo aInfo,
         if (e.getAxis() != 1)
           return failure();
         bStrideSplat = rhs;
+        if (auto addiOp = e.getSrc().getDefiningOp<arith::AddIOp>()) {
+          Value addLhs = addiOp.getLhs(), addRhs = addiOp.getRhs();
+          if (auto loopSplat = addLhs.getDefiningOp<triton::SplatOp>()) {
+            bLoopStrideAddition = loopSplat.getSrc();
+          } else if (auto loopSplat = addRhs.getDefiningOp<triton::SplatOp>()) {
+            bLoopStrideAddition = loopSplat.getSrc();
+          }
+        }
       } else if (auto e = rhs.getDefiningOp<triton::ExpandDimsOp>()) {
         if (e.getAxis() != 1)
           return failure();
         bStrideSplat = lhs;
+        if (auto addiOp = e.getSrc().getDefiningOp<arith::AddIOp>()) {
+          Value addLhs = addiOp.getLhs(), addRhs = addiOp.getRhs();
+          if (auto loopSplat = addLhs.getDefiningOp<triton::SplatOp>()) {
+            bLoopStrideAddition = loopSplat.getSrc();
+          } else if (auto loopSplat = addRhs.getDefiningOp<triton::SplatOp>()) {
+            bLoopStrideAddition = loopSplat.getSrc();
+          }
+        }
       } else {
         return failure();
       }
     } else if (auto e = bRowOff.getDefiningOp<triton::ExpandDimsOp>()) {
       if (e.getAxis() != 1)
         return failure();
+      if (auto addiOp = e.getSrc().getDefiningOp<arith::AddIOp>()) {
+        Value addLhs = addiOp.getLhs(), addRhs = addiOp.getRhs();
+        if (auto loopSplat = addLhs.getDefiningOp<triton::SplatOp>()) {
+          bLoopStrideAddition = loopSplat.getSrc();
+        } else if (auto loopSplat = addRhs.getDefiningOp<triton::SplatOp>()) {
+          bLoopStrideAddition = loopSplat.getSrc();
+        }
+      }
     } else {
       return failure();
     }
@@ -1086,6 +1111,13 @@ emitKTilingTensorOfPtrsCanonical(triton::DotOp dot, DotLoadInfo aInfo,
         rewriter.create<triton::BroadcastOp>(loc, bUnderPtrTyTrans, bPLo_trans);
   }
 
+  Value tiledBLoopStrideAddition;
+  if (bLoopStrideAddition) {
+    auto tiledBLoopStrideAdditionTy = RankedTensorType::get({kTile, 1}, i32);
+    tiledBLoopStrideAddition = rewriter.create<triton::SplatOp>(
+        loc, tiledBLoopStrideAdditionTy, bLoopStrideAddition);
+  }
+  
   auto forOp = rewriter.create<scf::ForOp>(loc, c0, cNumTiles, c1,
                                            ValueRange{dot.getC()});
   {
@@ -1161,13 +1193,16 @@ emitKTilingTensorOfPtrsCanonical(triton::DotOp dot, DotLoadInfo aInfo,
       Value tiledBKIdx2D = rewriter.create<triton::ExpandDimsOp>(
           loc, bKIdx2DTiledTy, tiledKRange1D, /*axis=*/1);
       Value tiledBRowOff = tiledBKIdx2D;
+      if (tiledBLoopStrideAddition) {
+        tiledBRowOff = rewriter.create<arith::AddIOp>(loc, tiledBRowOff, tiledBLoopStrideAddition);
+      }
       if (bStrideSplat) {
         Value tiledStride =
             resplatToShape(bStrideSplat, {kTile, 1}, rewriter, loc);
         if (!tiledStride)
           return failure();
         tiledBRowOff =
-            rewriter.create<arith::MulIOp>(loc, tiledBKIdx2D, tiledStride);
+            rewriter.create<arith::MulIOp>(loc, tiledBRowOff, tiledStride);
       }
       auto bPLoKTiledTy =
           RankedTensorType::get({kTile, 1}, bPLoTy.getElementType());
