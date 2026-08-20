@@ -123,6 +123,9 @@ struct SyncSolverOptions {
   // Enable CV patterns.
   bool enableCVPatterns{false};
 
+  // Process EventId nodes in program order and rotate IDs between allocations.
+  bool roundRobinEventIds{false};
+
   // Select which SyncSolver implementation to use.
   SyncSolverVersion solverVersion{SyncSolverVersion::V1};
 
