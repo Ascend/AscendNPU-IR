@@ -52,13 +52,12 @@ static void hivmAVEOptimizationPipeline(
     optimizeReductionLoopOptions.maxSplit =
         hivmAVEPipelineOptions.maxReductionSplitNum;
     // Vsstb packing depends on adjacent store order; reduction splitting may
-    // pair non-adjacent IVs (e.g. i and i + half) and hide that pattern.
+ 	// pair non-adjacent IVs (e.g. i and i + half) and hide that pattern.
     pm.nest<func::FuncOp>().addPass(hivmave::createProcessVsstbPass());
     pm.nest<func::FuncOp>().addPass(
         hivmave::createOptimizeReductionLoopHIVMAVEPass(
             optimizeReductionLoopOptions));
-    if (hivmAVEPipelineOptions.enableAveLoopOptimize)
-      pm.nest<func::FuncOp>().addPass(hivmave::createAveLoopOptimizePass());
+    pm.nest<func::FuncOp>().addPass(hivmave::createAveLoopOptimizePass());
     pm.nest<func::FuncOp>().addPass(hivmave::createLegalizeOptHIVMAVEPass());
     pm.nest<func::FuncOp>().addPass(
         hivmave::createReplaceWithVectorScalarPass());

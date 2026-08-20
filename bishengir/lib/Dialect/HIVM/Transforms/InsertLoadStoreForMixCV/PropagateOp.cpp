@@ -26,6 +26,7 @@
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/LogicalResult.h"
@@ -60,6 +61,33 @@ static bool checkPropagate(PropagationStep step,
   }
 }
 
+/// True when `result` of `branch` must stay in L0C, so propagate-up must not
+/// cross the region boundary for that result.
+///
+/// `normalized_in_L0C` on a RegionBranch is an ArrayAttr of result indices
+/// (set by NormalizeMatmul). Results whose indices are not listed may still
+/// be propagated. A UnitAttr form, or `hivm.remain_in_l0c`, applies to every
+/// result of the op.
+static bool isRegionResultRequiredInL0C(RegionBranchOpInterface branch,
+                                        OpResult result) {
+  if (branch->hasAttr(RemainInL0CAttr::name))
+    return true;
+
+  Attribute attr = branch->getAttr(kNormalizedInL0CAttr);
+  if (!attr)
+    return false;
+
+  auto arrayAttr = dyn_cast<ArrayAttr>(attr);
+  if (!arrayAttr)
+    return true;
+
+  uint64_t idx = result.getResultNumber();
+  return llvm::any_of(arrayAttr, [idx](Attribute element) {
+    auto intAttr = dyn_cast<IntegerAttr>(element);
+    return intAttr && intAttr.getValue().getZExtValue() == idx;
+  });
+}
+
 /// Mirror propagate markers across the RegionBranch connected component of
 /// `seed`. While before/after channels stay separate because they share no
 /// edges. Returns failure if `seed` is not on any forwarded edge (e.g. for IV).
@@ -67,8 +95,7 @@ static LogicalResult
 propagateAlongRegionEdges(RegionBranchOpInterface branch, Value seed,
                           UnrealizedConversionCastOp propagateOp,
                           PatternRewriter &rewriter) {
-  auto maybeSites =
-      PropagatorUtil::collectRelatedPropagatorSites(branch, seed);
+  auto maybeSites = PropagatorUtil::collectRelatedPropagatorSites(branch, seed);
   if (failed(maybeSites))
     return failure();
 
@@ -76,8 +103,8 @@ propagateAlongRegionEdges(RegionBranchOpInterface branch, Value seed,
     PropagatorUtil::createPropagatorUp(opr, propagateOp, rewriter);
   for (auto arg : maybeSites->getDownSites())
     PropagatorUtil::createPropagatorDown(arg, propagateOp, rewriter);
-  LDBG("Propagated along RegionBranch edges from seed in " << branch
-       << " (up=" << maybeSites->getUpSites().size()
+  LDBG("Propagated along RegionBranch edges from seed in "
+       << branch << " (up=" << maybeSites->getUpSites().size()
        << ", down=" << maybeSites->getDownSites().size() << ")");
   return success();
 }
@@ -89,9 +116,9 @@ struct Candidate {
 
 } // namespace
 
-
-LogicalResult ControlFlowPropagatePattern::matchAndRewrite(
-    RegionBranchOpInterface branch, PatternRewriter &rewriter) const {
+LogicalResult
+ControlFlowPropagatePattern::matchAndRewrite(RegionBranchOpInterface branch,
+                                             PatternRewriter &rewriter) const {
   if (step == PropagationStep::LOCAL || step == PropagationStep::ALL)
     return failure();
 
@@ -149,8 +176,8 @@ LogicalResult ControlFlowPropagatePattern::matchAndRewrite(
       if (!isa<ShapedType>(operand->get().getType()))
         continue;
       auto existing = PropagatorUtil::getUpPropagator(operand);
-      if (existing && PropagatorUtil::haveSamePropagation(
-                          existing, majority->propagator))
+      if (existing &&
+          PropagatorUtil::haveSamePropagation(existing, majority->propagator))
         continue;
       PropagatorUtil::createPropagatorUp(operand, majority->propagator,
                                          rewriter);
@@ -160,8 +187,8 @@ LogicalResult ControlFlowPropagatePattern::matchAndRewrite(
       if (!isa<ShapedType>(value.getType()) || value.use_empty())
         continue;
       auto existing = PropagatorUtil::getDownPropagator(value);
-      if (existing && PropagatorUtil::haveSamePropagation(
-                          existing, majority->propagator))
+      if (existing &&
+          PropagatorUtil::haveSamePropagation(existing, majority->propagator))
         continue;
       PropagatorUtil::createPropagatorDown(value, majority->propagator,
                                            rewriter);
@@ -327,6 +354,9 @@ PropagateUpPattern::matchAndRewrite(UnrealizedConversionCastOp propagateOp,
   return TypeSwitch<Operation *, LogicalResult>(defOp)
       .Case([&](RegionBranchOpInterface branch) {
         if (step != PropagationStep::ALL)
+          return failure();
+
+        if (isRegionResultRequiredInL0C(branch, res))
           return failure();
         // Unstructured load case should be propagated from the inside.
         if (auto forOp = dyn_cast<scf::ForOp>(branch.getOperation())) {

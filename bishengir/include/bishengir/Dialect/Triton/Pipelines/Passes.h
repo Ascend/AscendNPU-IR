@@ -57,6 +57,10 @@ struct LowerTritonPipelineOptions
       *this, "k-tile-size",
       llvm::cl::desc("custom tile size for k tiling (must perfectly divide K)"),
       llvm::cl::init(0)};
+  PassOptions::Option<bool> enableGlobalScratchAllocation{
+ 	  *this, "enable-global-scratch-allocation",
+ 	  llvm::cl::desc("enable the use of global scratch memory"),
+      llvm::cl::init(false)};
   PassOptions::Option<bool> enableSimtReorderInstruction{
       *this, "enable-simt-reorder-instruction",
       llvm::cl::desc("enable simt reorder instruction pattern"),

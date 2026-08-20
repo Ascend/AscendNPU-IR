@@ -1,5 +1,6 @@
 #include "triton/Conversion/TritonGPUToLLVM/Utility.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Dialect/LLVMIR/LLVMTypes.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/Transforms/RegionUtils.h"
 #include "triton/Analysis/Allocation.h"
@@ -560,6 +561,55 @@ largestVectorisation(MLIRContext *ctx, const LinearLayout &cvt, int bitwidth,
 }
 } // namespace
 
+#ifdef BSPUB_DAVINCI_BISHENGIR
+SmallVector<Value>
+lowerLdStShared(Location loc, MLIRContext *ctx, LinearLayout cvt,
+                ArrayRef<Value> valsArray, // Input for store, output for load
+                Type llvmElemTy, Value smemBase,
+                std::function<Value(Value)> calcPaddedOffset,
+                Value affineOffset, uint64_t maskSpanAffineOffset,
+                RewriterBase &rewriter, const TargetInfoBase &targetInfo,
+                Operation *localLoadOp, bool switchToGM) {
+
+  bool isStore = !valsArray.empty();
+  auto b = TritonLLVMOpBuilder(loc, rewriter);
+
+  auto emitLdSt = [&](RewriterBase &rewriter, Location loc,
+                      ArrayRef<Value> vals, Value shmemAddr, int idx,
+                      VectorType vecTy) -> SmallVector<Value> {
+    auto length = vecTy.getNumElements();
+    if (isStore) {
+      Value valsVec =
+          packLLVector(loc, ArrayRef<Value>(vals).slice(idx, length), rewriter);
+      if (switchToGM) {
+        targetInfo.storeDGlobal(rewriter, loc, shmemAddr, std::nullopt,
+                                valsVec, /*pred=*/b.true_val());
+      } else {
+        targetInfo.storeDShared(rewriter, loc, shmemAddr, std::nullopt,
+                                valsVec, /*pred=*/b.true_val());
+      }
+      return {};
+    } else {
+      assert(vals.empty());
+      Value valsVec;
+      if (switchToGM) {
+        valsVec =
+            targetInfo.loadDGlobal(rewriter, loc, shmemAddr, std::nullopt, vecTy,
+                                   /*pred=*/b.true_val(), localLoadOp);
+      } else {
+        valsVec =
+            targetInfo.loadDShared(rewriter, loc, shmemAddr, std::nullopt, vecTy,
+                                   /*pred=*/b.true_val(), localLoadOp);
+      }
+      return unpackLLVector(loc, valsVec, rewriter);
+    }
+  };
+  auto [laneId, warpId] = getLaneAndWarpId(rewriter, loc);
+  return lowerLdSt(loc, ctx, cvt, valsArray, llvmElemTy, smemBase,
+                   calcPaddedOffset, affineOffset, maskSpanAffineOffset, laneId,
+                   warpId, rewriter, targetInfo, {}, emitLdSt);
+}
+#else
 SmallVector<Value>
 lowerLdStShared(Location loc, MLIRContext *ctx, LinearLayout cvt,
                 ArrayRef<Value> valsArray, // Input for store, output for load
@@ -579,14 +629,14 @@ lowerLdStShared(Location loc, MLIRContext *ctx, LinearLayout cvt,
     if (isStore) {
       Value valsVec =
           packLLVector(loc, ArrayRef<Value>(vals).slice(idx, length), rewriter);
-      targetInfo.storeDShared(rewriter, loc, shmemAddr, std::nullopt, valsVec,
-                              /*pred=*/b.true_val());
+      targetInfo.storeDShared(rewriter, loc, shmemAddr, std::nullopt,
+                              valsVec, /*pred=*/b.true_val());
       return {};
     } else {
       assert(vals.empty());
-      Value valsVec =
-          targetInfo.loadDShared(rewriter, loc, shmemAddr, std::nullopt, vecTy,
-                                 /*pred=*/b.true_val(), localLoadOp);
+      Value valsVec =	 
+          targetInfo.loadDShared(rewriter, loc, shmemAddr, std::nullopt, vecTy,	 
+                                /*pred=*/b.true_val(), localLoadOp);
       return unpackLLVector(loc, valsVec, rewriter);
     }
   };
@@ -595,6 +645,7 @@ lowerLdStShared(Location loc, MLIRContext *ctx, LinearLayout cvt,
                    calcPaddedOffset, affineOffset, maskSpanAffineOffset, laneId,
                    warpId, rewriter, targetInfo, {}, emitLdSt);
 }
+#endif
 
 SmallVector<Value> lowerLdSt(
     Location loc, MLIRContext *ctx, LinearLayout cvt,
@@ -610,7 +661,13 @@ SmallVector<Value> lowerLdSt(
   auto vals = to_vector(valsArray);
   bool isStore = !vals.empty();
   auto b = TritonLLVMOpBuilder(loc, rewriter);
+#ifdef BSPUB_DAVINCI_BISHENGIR
+  assert(smemBase.getType().isa<LLVM::LLVMPointerType>() &&
+         "smemBase must be a pointer type");
+  auto smemPtrTy = dyn_cast<LLVM::LLVMPointerType>(smemBase.getType());
+#else
   auto smemPtrTy = ptr_ty(ctx, 3);
+#endif
   auto kReg = str_attr("register");
   auto kLane = str_attr("lane");
   auto kWarp = str_attr("warp");

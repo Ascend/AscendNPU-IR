@@ -1173,7 +1173,7 @@ func.func @multi_scope_user_propagator(%arg0: memref<?xf32>, %arg1: index, %arg2
 // CHECK-SAME: %[[ARG0:.*]]: tensor<16x16xf32>,
 // CHECK-SAME: %[[GM:.*]]: memref<?xf16>,
 // CHECK-SAME: %[[ARG2:.*]]: tensor<16x16xi64>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
-// CHECK: %[[LOAD:.*]] = hivm.hir.load ins(%[[ARG2]] : tensor<16x16xi64>) 
+// CHECK: %[[LOAD:.*]] = hivm.hir.load ins(%[[ARG2]] : tensor<16x16xi64>)
 // CHECK: %[[MMAD:.*]] = hivm.hir.mmadL1
 // CHECK: %[[ALLOC:.*]] = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
 // CHECK: %[[CAST:.*]] = memref.memory_space_cast %[[ALLOC]] : memref<16x16xf16, #hivm.address_space<ub>> to memref<16x16xf16>
@@ -2127,7 +2127,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // CHECK: %[[MMAD:.*]] = hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
 // CHECK: %[[OUT:.*]] = tensor.empty() {hivm.address_space = #hivm.address_space<cbuf>, "hivm.inserted-tensor"} : tensor<16x16xf32>
 // CHECK: %[[FIX:.*]] = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, "hivm.inserted-fixpipe"} ins(%[[MMAD]] : tensor<16x16xf32>) outs(%[[OUT]] : tensor<16x16xf32>) -> tensor<16x16xf32>
-// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, fixpipe_for_result_already_inserted = true, normalized_in_L0C} ins(%[[FIX]], 
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, fixpipe_for_result_already_inserted = true, normalized_in_L0C} ins(%[[FIX]],
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   func.func @insert_fixpipe_l0c_to_l1(
       %a: tensor<16x16xf32>, %b: tensor<16x16xf32>, %c: tensor<16x16xf32>)
@@ -2147,5 +2147,75 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
             : tensor<16x16xf32>, tensor<16x16xf32>, i1, index, index, index)
         outs(%out1 : tensor<16x16xf32>) -> tensor<16x16xf32>
     return %mmad1 : tensor<16x16xf32>
+  }
+}
+
+// -----
+
+// scf.if carries an L0C accumulator (result 0, listed in normalized_in_L0C)
+// and a vector value (result 1, not listed). On A5, the cube consumer of
+// result 1 inserts convert_layout after the if (vtranspose + copy to L1),
+// not store+load before yield. Result 0 stays in L0C through the if and
+// gets an inserted fixpipe after for the vector consumer.
+// CHECK-LABEL: @propagate_up_non_normalized_l0c_if_result
+// CHECK: %[[IF:.*]]:2 = scf.if %{{.*}} -> (tensor<16x16xf32>, tensor<16x16xf32>) {
+// CHECK: %[[L0C_THEN:.*]] = hivm.hir.mmadL1 {{.*}}hivm.remain_in_l0c, normalized_in_L0C
+// CHECK: %[[VADD:.*]] = hivm.hir.vadd
+// CHECK-NOT: {"hivm.inserted-store"}
+// CHECK: scf.yield %[[L0C_THEN]], %[[VADD]]
+// CHECK: } else {
+// CHECK: %[[L0C_ELSE:.*]] = hivm.hir.mmadL1 {{.*}}hivm.remain_in_l0c, normalized_in_L0C
+// CHECK: hivm.hir.mmadL1 {fixpipe_already_inserted = true}
+// CHECK: %[[ELSE_VEC:.*]] = bufferization.to_tensor
+// CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+// CHECK: scf.yield %[[L0C_ELSE]], %[[ELSE_VEC]]
+// CHECK: } {normalized_in_L0C = [0 : i32]}
+// CHECK: %[[FIX:.*]] = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, "hivm.inserted-fixpipe"} ins(%[[IF]]#0
+// CHECK: tensor.expand_shape %[[IF]]#1
+// CHECK: hivm.hir.vtranspose
+// CHECK: %[[COPY:.*]] = hivm.hir.copy {{.*}}{"hivm.inserted-copy"}
+// CHECK: hivm.hir.mmadL1 {{.*}}ins(%[[COPY]]
+// CHECK: hivm.hir.vadd ins(%[[FIX]]
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @propagate_up_non_normalized_l0c_if_result(
+      %arg0: tensor<16x16xf32>, %arg1: tensor<16x16xf32>,
+      %arg2: tensor<16x16xf32>, %pred: i1,
+      %out0: memref<16x16xf32>, %out1: memref<16x16xf32>)
+      attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %c16 = arith.constant 16 : index
+    %true = arith.constant true
+    %l0c, %if_res = scf.if %pred -> (tensor<16x16xf32>, tensor<16x16xf32>) {
+      %empty_l0c = tensor.empty() : tensor<16x16xf32>
+      %mmad_l0c = hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
+          ins(%arg0, %arg1, %true, %c16, %c16, %c16 : tensor<16x16xf32>, tensor<16x16xf32>, i1, index, index, index)
+          outs(%empty_l0c : tensor<16x16xf32>) -> tensor<16x16xf32>
+      %empty_v = tensor.empty() : tensor<16x16xf32>
+      %v = hivm.hir.vadd ins(%arg0, %arg1 : tensor<16x16xf32>, tensor<16x16xf32>)
+          outs(%empty_v : tensor<16x16xf32>) -> tensor<16x16xf32>
+      scf.yield %mmad_l0c, %v : tensor<16x16xf32>, tensor<16x16xf32>
+    } else {
+      %empty_l0c = tensor.empty() : tensor<16x16xf32>
+      %mmad_l0c = hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
+          ins(%arg0, %arg1, %true, %c16, %c16, %c16 : tensor<16x16xf32>, tensor<16x16xf32>, i1, index, index, index)
+          outs(%empty_l0c : tensor<16x16xf32>) -> tensor<16x16xf32>
+      %empty1 = tensor.empty() : tensor<16x16xf32>
+      %mm = hivm.hir.mmadL1 {fixpipe_already_inserted = true}
+          ins(%arg0, %arg1, %true, %c16, %c16, %c16 : tensor<16x16xf32>, tensor<16x16xf32>, i1, index, index, index)
+          outs(%empty1 : tensor<16x16xf32>) -> tensor<16x16xf32>
+      %empty2 = tensor.empty() : tensor<16x16xf32>
+      %fp = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+          ins(%mm : tensor<16x16xf32>) outs(%empty2 : tensor<16x16xf32>) -> tensor<16x16xf32>
+      scf.yield %mmad_l0c, %fp : tensor<16x16xf32>, tensor<16x16xf32>
+    } {normalized_in_L0C = [0 : i32]}
+    %empty3 = tensor.empty() : tensor<16x16xf32>
+    %res = hivm.hir.mmadL1 {fixpipe_already_inserted = true}
+        ins(%if_res, %arg2, %true, %c16, %c16, %c16 : tensor<16x16xf32>, tensor<16x16xf32>, i1, index, index, index)
+        outs(%empty3 : tensor<16x16xf32>) -> tensor<16x16xf32>
+    %empty4 = tensor.empty() : tensor<16x16xf32>
+    %vadd2 = hivm.hir.vadd ins(%l0c, %arg2 : tensor<16x16xf32>, tensor<16x16xf32>)
+        outs(%empty4 : tensor<16x16xf32>) -> tensor<16x16xf32>
+    hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%res : tensor<16x16xf32>) outs(%out0 : memref<16x16xf32>)
+    hivm.hir.store ins(%vadd2 : tensor<16x16xf32>) outs(%out1 : memref<16x16xf32>)
+    return
   }
 }

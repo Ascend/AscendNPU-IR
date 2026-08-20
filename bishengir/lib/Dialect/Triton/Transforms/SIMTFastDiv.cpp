@@ -331,10 +331,9 @@ public:
       unsigned rank = 1;
       if (d.isTensor)
         rank = cast<RankedTensorType>(d.op->getResultTypes()[0]).getRank();
-      MagicInfo &mi =
-          d.isConst
-              ? constToMagic[{d.constVal, rank}]
-              : argToMagic[{d.divisorArg.getArgNumber(), rank}];
+      MagicInfo &mi = d.isConst
+                          ? constToMagic[{d.constVal, rank}]
+                          : argToMagic[{d.divisorArg.getArgNumber(), rank}];
       builder.setInsertionPoint(d.op);
       bool isSigned = isa<arith::DivSIOp>(d.op) || isa<arith::RemSIOp>(d.op);
 
@@ -364,11 +363,8 @@ public:
         Value hi32 = builder.create<mlir::ascend_dpx::UmulhiOp>(
             loc, i32Ty, dividend, mi.magicScalar);
         Value sum = builder.create<arith::AddIOp>(loc, hi32, dividend);
-        quotient =
-            isSigned ? builder.create<arith::ShRSIOp>(loc, sum, mi.shiftScalar)
-                           .getResult()
-                     : builder.create<arith::ShRUIOp>(loc, sum, mi.shiftScalar)
-                           .getResult();
+        quotient = builder.create<arith::ShRUIOp>(loc, sum, mi.shiftScalar)
+                       .getResult();
 
       } else {
         // ---- Tensor<Nxi32> ---------------------------------------------
@@ -385,11 +381,8 @@ public:
         Value hi32 =
             builder.create<triton::MulhiUIOp>(loc, dividend, magicTensor);
         Value sum = builder.create<arith::AddIOp>(loc, hi32, dividend);
-        quotient = isSigned
-                       ? builder.create<arith::ShRSIOp>(loc, sum, shiftTensor)
-                             .getResult()
-                       : builder.create<arith::ShRUIOp>(loc, sum, shiftTensor)
-                             .getResult();
+        quotient =
+            builder.create<arith::ShRUIOp>(loc, sum, shiftTensor).getResult();
       }
 
       // For division the result is the quotient directly.

@@ -920,6 +920,8 @@ namespace triton {
 
 inline const char AttrEnableBishengirSimtOptimizationName[] =
     "ttg.enable-bishengir-simt-optimization";
+inline const char AttrEnableGlobalScratchAllocationName[] =
+    "ttg.enable-global-scratch-allocation";
 
 namespace util {
 LLVM::LLVMFuncOp createLLVMFuncDecl(OpBuilder &b, Location loc, StringRef name,

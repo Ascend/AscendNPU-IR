@@ -29,6 +29,7 @@ namespace hfusion {
 
 void FusedNode::addProducer(Operation *op) {
   producers.insert(op);
+  insertOrdered(op);
   ctx.getInfo(op).fusedNode = shared_from_this();
   consolidateToTail();
   updateConflicts(op);
@@ -36,9 +37,51 @@ void FusedNode::addProducer(Operation *op) {
 
 void FusedNode::addLeaf(Operation *op) {
   leaf.insert(op);
+  insertOrdered(op);
   ctx.getInfo(op).fusedNode = shared_from_this();
   consolidateToTail();
   updateConflicts(op);
+}
+
+void FusedNode::insertOrdered(Operation *op) {
+  // The node is contiguous at entry (consolidateToTail ran on the previous
+  // insert), so op is either before front() or after back(); insert at the
+  // matching end to keep block order.
+  if (opsOrdered.empty() || op->isBeforeInBlock(opsOrdered.front()))
+    opsOrdered.insert(opsOrdered.begin(), op);
+  else
+    opsOrdered.push_back(op);
+  assert(opsOrdered.size() == size());
+}
+
+// Move the group as a unit, preserving order and contiguity. pos is pinned to
+// an extreme of the node containing it so the sweep never splits that node:
+//   a member anchor becomes this group's head;
+//   an anchor in another node is pinned to that node's tail, so this group
+//   lands wholly after it.
+void FusedNode::moveAfter(Operation *pos) const {
+  if (contains(pos))
+    pos = opsOrdered.front();
+  else if (auto *node = ctx.tryGetNode(pos))
+    pos = node->opsOrdered.back();
+  for (auto *op : rops())
+    if (op != pos)
+      op->moveAfter(pos);
+}
+
+// Move the group as a unit, preserving order and contiguity. pos is pinned to
+// an extreme of the node containing it so the sweep never splits that node:
+//   a member anchor becomes this group's tail;
+//   an anchor in another node is pinned to that node's head, so this group
+//   lands wholly before it.
+void FusedNode::moveBefore(Operation *pos) const {
+  if (contains(pos))
+    pos = opsOrdered.back();
+  else if (auto *node = ctx.tryGetNode(pos))
+    pos = node->opsOrdered.front();
+  for (auto *op : ops())
+    if (op != pos)
+      op->moveBefore(pos);
 }
 
 bool FusedNode::hasCommonAxis(Operation *op) const {
@@ -97,46 +140,81 @@ bool FusedNode::canAccept(Operation *candidate, AcceptContext actx) const {
 // Helpers for consolidateToTail
 //===----------------------------------------------------------------------===//
 
-static void climbedForwardSlice(Operation *op,
-                                SetVector<Operation *> &forwardSlice,
+using SuperOpTy = llvm::PointerUnion<Operation *, FusedNode const *>;
+
+static void climbedForwardSlice(PlanContext &ctx, SuperOpTy sop,
+                                SetVector<SuperOpTy> &forwardSlice,
+                                DenseSet<SuperOpTy> &visited,
                                 const DominanceInfo &domInfo,
-                                Operation *fusedLoop) {
-  while (op->getParentOp() != fusedLoop->getParentOp())
-    op = op->getParentOp();
-  if (forwardSlice.count(op) || domInfo.dominates(fusedLoop, op))
-    return;
-  for (Operation *userOp : op->getUsers())
-    climbedForwardSlice(userOp, forwardSlice, domInfo, fusedLoop);
-  forwardSlice.insert(op);
+                                Operation *anchor) {
+  if (!visited.insert(sop).second)
+    llvm::report_fatal_error(
+        "Find circular dependency between the fused nodes.");
+
+  auto climb = [anchor](auto *op) {
+    return anchor->getBlock()->findAncestorOpInBlock(*op);
+  };
+  auto visit = [&](auto *op) {
+    if (domInfo.dominates(anchor, op))
+      return;
+    FusedNode const *node = ctx.tryGetNode(op);
+    SuperOpTy user = node ? SuperOpTy(node) : SuperOpTy(op);
+    if (forwardSlice.count(user))
+      return;
+    climbedForwardSlice(ctx, user, forwardSlice, visited, domInfo, anchor);
+  };
+
+  if (auto *node = sop.dyn_cast<FusedNode const *>()) {
+    for (auto *op : node->rops()) {
+      for (Operation *userOp : map_range(op->getUsers(), climb)) {
+        if (node->contains(userOp))
+          continue;
+        visit(userOp);
+      }
+    }
+  } else {
+    auto *op = sop.get<Operation *>();
+    for (Operation *userOp : map_range(op->getUsers(), climb))
+      visit(userOp);
+  }
+
+  forwardSlice.insert(sop);
 }
 
-// NOTE: Called after each addLeaf/addProducer, so DominanceInfo is recomputed
-// per call. Fused-node sizes are bounded by maxFusedOps (small), so the
-// overhead is negligible in practice.
+// Restore contiguity after an insertion: move the node's forward-slice users
+// past the tail, then pull the node's own ops back together before it.
 void FusedNode::consolidateToTail() const {
-  SmallVector<Operation *> opGroup{ops().begin(), ops().end()};
-  if (opGroup.size() == 1)
+  if (opsOrdered.size() == 1)
     return;
 
-  // Sort in reverse block order so that opGroup.front() is the last op in the
-  // block and iteration proceeds from back to front, gathering each earlier op
-  // and its forward-slice users toward the tail of the block.
-  llvm::sort(opGroup,
-             [](Operation *a, Operation *b) { return b->isBeforeInBlock(a); });
-  Operation *firstOp = opGroup.front();
-  Operation *lastOp = opGroup.front();
+  // opsOrdered is maintained in block order by insertOrdered, so back() is the
+  // node tail.
+  Operation *lastOp = opsOrdered.back();
 
-  DominanceInfo domInfo(opGroup.back());
-  for (auto *curr : llvm::drop_begin(opGroup)) {
-    SetVector<Operation *> forwardSlice;
-    climbedForwardSlice(curr, forwardSlice, domInfo, firstOp);
+  DominanceInfo domInfo(opsOrdered.front());
+  DenseSet<SuperOpTy> visited;
+  SetVector<SuperOpTy> forwardSlice;
+  climbedForwardSlice(ctx, this, forwardSlice, visited, domInfo, lastOp);
 
-    for (auto *userOp : drop_end(forwardSlice))
-      userOp->moveAfter(lastOp);
-    curr->moveBefore(firstOp);
-    firstOp = curr;
+  // drop_end skips the node itself.
+  for (auto userOp : drop_end(forwardSlice)) {
+    if (auto *node = userOp.dyn_cast<FusedNode const *>()) {
+      node->moveAfter(lastOp);
+      continue;
+    }
+    auto *op = userOp.get<Operation *>();
+    op->moveAfter(lastOp);
   }
-  if (failed(verify(opGroup.back()->getParentOp())))
+  moveBefore(lastOp);
+
+  // Guard the contiguity invariant insertOrdered depends on.
+  for (auto node : ctx.nodes())
+    for (auto [prev, next] :
+         zip(drop_end(node->ops()), drop_begin(node->ops())))
+      if (prev->getNextNode() != next)
+        llvm::report_fatal_error(StringRef(
+            "consolidateToTail make wrong order in " + node->loopLabel));
+  if (failed(verify(opsOrdered.back()->getParentOp())))
     llvm::report_fatal_error("consolidateToTail produced invalid IR");
 }
 

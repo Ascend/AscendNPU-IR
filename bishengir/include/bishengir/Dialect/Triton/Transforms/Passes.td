@@ -46,6 +46,21 @@ def SetBishengirSimtOptAttr
   ];
 }
 
+def SetAllowGlobalScratchAttr
+    : Pass<"set-allow-global-scratch-attr", "mlir::ModuleOp"> {
+  let summary = "Set allow global scratch attribute";
+  let description = [{
+    Sets the module attribute controlling whether global scratch is allowed.
+  }];
+  let constructor = "bishengir::triton::createSetAllowGlobalScratchAttrPass()";
+
+  let options = [
+    Option<"enableGlobalScratchAllocation", "enable-global-scratch-allocation",
+          "bool", /*default*/"false",
+          "enable global scratch allocation">,
+  ];
+}
+
 def AdaptTritonIRKernel
    : Pass<"adapt-triton-ir-kernel", "mlir::triton::FuncOp"> {
   let constructor = "bishengir::triton::createAdaptTritonIRKernelPass()";
@@ -148,7 +163,7 @@ def TileDotLoads
     tensor-of-pointers styles are supported.
 
     The non-load-operand staging path (StageNonLoadOperandPattern) is
-    self-gated by `SharedMemConflictModel::decideStaging`, but it also
+    self-gated by `DotTilingCostModel::decideStaging`, but it also
     respects the `smem-budget-bytes` ceiling: dots whose predicted staged
     buffer size exceeds the budget bail without touching IR.  Pass the
     launch-time SHM size (the same value threaded into
@@ -164,6 +179,9 @@ def TileDotLoads
            /*default*/"0",
            "Custom tile size for k tiling of dot operations.  0 enables "
            "standard calculation for tile size.">,
+    Option<"enableGlobalScratchAllocation", "enable-global-scratch-allocation", "bool",
+            /*default*/"false",
+            "Whether to allow using global scratch memory for staging.">,
   ];
   let dependentDialects = [
     "mlir::scf::SCFDialect",
@@ -330,8 +348,8 @@ def SIMTFastDiv : Pass<"simt-fast-div", "mlir::triton::FuncOp"> {
                            "mlir::triton::gpu::TritonGPUDialect"];
 }
 
-def ConvertSharedPtrToMemDesc
-    : Pass<"convert-shared-ptr-to-memdesc", "mlir::ModuleOp"> {
+def LowerDotBuffersAndSharedMem
+    : Pass<"lower-dot-buffers-and-shared-mem", "mlir::ModuleOp"> {
   let summary = "Convert tt.load/tt.store with ptr<6> to ttg.local_load/local_store with memdesc";
   let description = [{
     Runs after ConvertTritonToTritonGPU.  Finds tt.load / tt.store operations
@@ -340,7 +358,7 @@ def ConvertSharedPtrToMemDesc
     corresponding function arguments are changed from !tt.ptr<T, 6> to
     !ttg.memdesc<...>.
   }];
-  let constructor = "bishengir::triton::createConvertSharedPtrToMemDescPass()";
+  let constructor = "bishengir::triton::createLowerDotBuffersAndSharedMemPass()";
   let dependentDialects = [
     "mlir::triton::gpu::TritonGPUDialect",
     "mlir::triton::TritonDialect",

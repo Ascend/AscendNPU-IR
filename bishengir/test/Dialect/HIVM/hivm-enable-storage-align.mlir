@@ -1,7 +1,10 @@
 // RUN: bishengir-opt -hivm-enable-stride-align -split-input-file %s | FileCheck %s
 
 module {
+  // No hacc.target attr: defaults to 910B (membase), so the pass must stamp
+  // the hivm.storage_aligned metadata contract on device functions.
   // CHECK-LABEL: @test_elementwise_unary_op_unaligned
+  // CHECK-SAME: hivm.storage_aligned
   func.func @test_elementwise_unary_op_unaligned(%arg0: index, %arg1: index) {
     // CHECK-DAG: %[[C16:.*]] = arith.constant 16 : index
     // CHECK-DAG: %[[C15:.*]] = arith.constant 15 : index

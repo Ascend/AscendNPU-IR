@@ -22,19 +22,6 @@
 using namespace mlir;
 using namespace mlir::hivm;
 
-namespace mlir::hivm {
-llvm::SmallVector<int64_t> getBlockSizes(mlir::Value oper) {
-  llvm::SmallVector<int64_t> kBlockSizes;
-  auto elementType = getElementTypeOrSelf(oper.getType());
-  size_t kBlockSize =
-      utils::INTR_BYTES_PER_BLOCK /
-      (elementType.getIntOrFloatBitWidth() / utils::kBitsToByte);
-  kBlockSizes.push_back(utils::FRACTAL_BLOCK_NUM);
-  kBlockSizes.push_back(kBlockSize);
-  return kBlockSizes;
-}
-} // namespace mlir::hivm
-
 //===----------------------------------------------------------------------===//
 // MmadL1Op
 //===----------------------------------------------------------------------===//
@@ -69,7 +56,7 @@ llvm::SmallDenseMap<Value, DataLayoutAttr> MmadL1Op::getOperandsTargetLayout() {
 
   auto operA = getA();
   bool isATranspose = getATranspose().has_value();
-  auto aBlockSizes = getBlockSizes(operA);
+  auto aBlockSizes = getBlockSizesTile(operA, isATranspose, /*isA=*/true);
   auto mALayoutAttr = DataLayoutAttr::get(
       getContext(), isATranspose ? DataLayout::nZ : DataLayout::zN, nullptr,
       mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(aBlockSizes)));
@@ -77,7 +64,7 @@ llvm::SmallDenseMap<Value, DataLayoutAttr> MmadL1Op::getOperandsTargetLayout() {
 
   auto operB = getB();
   bool isBTranspose = getBTranspose().has_value();
-  auto bBlockSizes = getBlockSizes(operB);
+  auto bBlockSizes = getBlockSizesTile(operB, isBTranspose, /*isA=*/false);
   auto mBLayoutAttr = DataLayoutAttr::get(
       getContext(), isBTranspose ? DataLayout::nZ : DataLayout::zN, nullptr,
       mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(bBlockSizes)));
@@ -103,13 +90,15 @@ FractalOperandLayouts MmadL1Op::getOperandsTargetFractalLayout() {
   FractalOperandLayouts layouts;
 
   auto operA = getA();
-  auto aBlockSizes = getBlockSizes(operA);
+  auto aBlockSizes = getBlockSizesTile(operA, getATranspose().has_value(),
+                                       /*isA=*/true);
   layouts.a = DataLayoutAttr::get(
       getContext(), DataLayout::Fractal, nullptr,
       mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(aBlockSizes)));
 
   auto operB = getB();
-  auto bBlockSizes = getBlockSizes(operB);
+  auto bBlockSizes = getBlockSizesTile(operB, getBTranspose().has_value(),
+                                       /*isA=*/false);
   layouts.b = DataLayoutAttr::get(
       getContext(), DataLayout::Fractal, nullptr,
       mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(bBlockSizes)));

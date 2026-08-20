@@ -611,6 +611,7 @@ REGISTER_MMA_TILE_BIAS_TB(cbuf, cc, 4, half, float, float);
 REGISTER_MMA_TILE_BIAS_TB(cbuf, cc, 4, bfloat16_t, float, float);
 REGISTER_MMA_TILE_BIAS_TB(cbuf, cc, 4, float, float, float);
 REGISTER_MMA_TILE_BIAS_TB(cbuf, cc, 4, int8_t, int32_t, int32_t);
+REGISTER_MMA_TILE_BIAS_TB(cbuf, cc, 4, half, float, half);
 REGISTER_MMA_TILE_BIAS_TA_TB(cbuf, cc, 4, half, float, float);
 REGISTER_MMA_TILE_BIAS_TA_TB(cbuf, cc, 4, bfloat16_t, float, float);
 REGISTER_MMA_TILE_BIAS_TA_TB(cbuf, cc, 4, float, float, float);

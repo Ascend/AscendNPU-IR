@@ -162,11 +162,6 @@ struct HIVMAVEPipelineOptions
       *this, "enable-fused-multiply-add",
       llvm::cl::desc("Enable fused multiply add"), llvm::cl::init(false)};
 
-  PassOptions::Option<bool> enableAveLoopOptimize{
-      *this, "enable-ave-loop-optimize",
-      llvm::cl::desc("Enable AVE small-width loop optimization"),
-      llvm::cl::init(true)};
-
   PassOptions::Option<bool> enableND2NZOnVector{
       *this, "enable-hivm-nd2nz-on-vector",
       llvm::cl::desc("Enable hivm nd2nz on vector"), llvm::cl::init(false)};

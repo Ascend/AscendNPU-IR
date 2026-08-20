@@ -20,10 +20,15 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/Helper.h"
+#include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Scope/Transforms/Passes.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Transform/Interfaces/TransformInterfaces.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/SymbolTable.h"
@@ -90,7 +95,8 @@ class OutlineScopeOp : public OpRewritePattern<scope::ScopeOp> {
     return inputs.takeVector();
   }
 
-  // Mark inputs that are memref has offset with attribute: e.g. %2 = memref.reinterpret_cast %0 to offset :[%1] ...: memref<?xf32>
+  // Mark inputs that are memref has offset with attribute: e.g. %2 =
+  // memref.reinterpret_cast %0 to offset :[%1] ...: memref<?xf32>
 
   SetVector<Operation *> getExternalConstantLikeOps(ScopeOp scopeOp) const {
     SetVector<Operation *> constants;
@@ -172,10 +178,10 @@ class OutlineScopeOp : public OpRewritePattern<scope::ScopeOp> {
       // constant values instead of extra outlined function arguments.
       for (Operation *constantOp : getExternalConstantLikeOps(scopeOp)) {
         auto *newConstOp = rewriter.clone(*constantOp, currentMap);
-        for (auto [oldRes, newRes] :
-             llvm::zip_equal(constantOp->getResults(), newConstOp->getResults())) {
+        for (auto [oldRes, newRes] : llvm::zip_equal(
+                 constantOp->getResults(), newConstOp->getResults())) {
           currentMap.map(oldRes, newRes);
-             }
+        }
       }
     }
 
@@ -209,11 +215,49 @@ class OutlineScopeOp : public OpRewritePattern<scope::ScopeOp> {
     LDBG("Replacing invoke with callOp");
     SetVector<Operation *> ops = getOpsOfScopeOp(scopeOp);
     rewriter.setInsertionPoint(scopeOp);
-    func::CallOp callOp = rewriter.create<func::CallOp>(
-        scopeOp->getLoc(), funcOp, getInputs(scopeOp));
 
-    LDBG("created callOp: " << callOp);
-    rewriter.replaceOp(scopeOp, callOp);
+    auto inputs = getInputs(scopeOp);
+    Location loc = scopeOp->getLoc();
+
+    // For SIMT scopes, wrap the call in an scf.if guard that checks
+    // get_sub_block_idx() == 0. Also apply this guard when sub-block tiling
+    // was reverted in TileAndBindSubBlockPass: the reverted function only
+    // produces valid results on sub-block 0, so the call must be guarded the
+    // same way as a SIMT scope.
+    auto mod = scopeOp->getParentOfType<ModuleOp>();
+    bool subBlockTilingReverted =
+        mod && mod->hasAttr(hivm::kTileAndBindSubBlockRevertedAttrName);
+    if (hivm::util::isSIMTVF(scopeOp) && subBlockTilingReverted) {
+      LDBG("Wrapping SIMT scope call in scf.if guard");
+
+      // Build condition: get_sub_block_idx() == 0
+      auto subBlockIdxOp =
+          rewriter.create<hivm::GetSubBlockIdxOp>(loc, rewriter.getI64Type());
+      Value subBlockIndex =
+          rewriter
+              .create<arith::IndexCastOp>(loc, rewriter.getIndexType(),
+                                          subBlockIdxOp.getResult())
+              .getResult();
+      Value zero = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+      Value cond = rewriter.create<arith::CmpIOp>(loc, rewriter.getI1Type(),
+                                                  arith::CmpIPredicate::eq,
+                                                  subBlockIndex, zero);
+
+      // Create scf.if with the call inside
+      auto ifOp = rewriter.create<scf::IfOp>(loc, scopeOp->getResultTypes(),
+                                             cond, /*withElseRegion=*/false);
+      ifOp->setAttr("limit_sub_block_id0", rewriter.getUnitAttr());
+      rewriter.setInsertionPointToStart(ifOp.thenBlock());
+      rewriter.create<func::CallOp>(loc, funcOp, inputs);
+
+      // Replace scope op with if op results
+      rewriter.replaceOp(scopeOp, ifOp.getResults());
+    } else {
+      func::CallOp callOp = rewriter.create<func::CallOp>(loc, funcOp, inputs);
+      LDBG("created callOp: " << callOp);
+      rewriter.replaceOp(scopeOp, callOp);
+    }
+
     return success();
   }
 
@@ -225,7 +269,8 @@ public:
   LogicalResult matchAndRewrite(scope::ScopeOp scopeOp,
                                 PatternRewriter &rewriter) const override {
     auto mod = scopeOp->getParentOfType<ModuleOp>();
-    if ((mod && hacc::utils::isRegBasedArch(mod)) && !scopeOp->hasAttr("outline")) {
+    if ((mod && hacc::utils::isRegBasedArch(mod)) &&
+        !scopeOp->hasAttr("outline")) {
       return failure();
     }
     FailureOr<func::FuncOp> newFuncOp = outlineScope(scopeOp, rewriter);

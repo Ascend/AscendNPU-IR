@@ -121,6 +121,14 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_3d_core(
   const int64_t stride1_ub = dst->strides[1];
   const int64_t stride0_gm = src->strides[0];
   const int64_t stride1_gm = src->strides[1];
+  // nddma_desc::loop_desc holds strides in unsigned bitfields, so a negative
+  // stride (e.g. a flipped axis) would be reinterpreted as a huge positive
+  // offset. Keep those on the scalar path.
+  if (stride0_gm < 0 || stride1_gm < 0 || stride2_gm < 0 || stride0_ub < 0 ||
+      stride1_ub < 0 || stride2_ub < 0) [[unlikely]] {
+    load_gm_to_ubuf_3d_by_scalar<T>(src, dst);
+    return;
+  }
   if (((stride0_gm < stride1_gm || stride1_gm < stride2_gm) ||
        (stride0_ub < stride1_ub || stride1_ub < stride2_ub))) {
     // Implicit transposition scenarios

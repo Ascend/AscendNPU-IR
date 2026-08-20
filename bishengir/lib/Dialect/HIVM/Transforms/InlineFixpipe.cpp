@@ -30,6 +30,11 @@
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/BuiltinTypeInterfaces.h"
+#include "mlir/IR/IRMapping.h"
+#include "mlir/IR/PatternMatch.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
+#include "mlir/Support/LLVM.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/TypeSwitch.h"
@@ -56,6 +61,11 @@ static constexpr llvm::StringLiteral fixpipeDoNotMoveOutOfScfFor =
 
 static constexpr llvm::StringLiteral scfforFixpipeForMMADResultAlreadyInserted =
     "fixpipe_for_mmad_result_already_inserted";
+
+/// Attribute stamped by Normalize Matmul on scf.if / scf.for when the matmul
+/// may not execute in some iterations. Used by Inline Fixpipe to sink store
+/// (and related consumers) into the if and split Cube vs Vector data paths.
+constexpr llvm::StringLiteral kFallbackNotExec = "fallback_not_exec";
 
 /// Return true when \p op is nested in a scope marked for the vector core.
 /// Fixpipe must not be fused with a store in such scopes: fusion would place
@@ -984,7 +994,7 @@ Type getInitType(Value v, hivm::FixpipePreQuantMode quant,
   llvm::report_fatal_error("unsupported QuantMode");
 }
 
-int64_t getSiftedUsersNum(Value v) {
+static int64_t getSiftedUsersNum(Value v) {
   const DenseSet<Operation *> container(v.getUsers().begin(),
                                         v.getUsers().end());
   auto filteredRange = llvm::make_filter_range(container, [](Operation *op) {
@@ -1142,6 +1152,15 @@ private:
       matched = true;
       auto scfForOp = dyn_cast_if_present<scf::ForOp>(curOp->getParentOp());
       moveFixpipeOutOfScfFor(rewriter, loc, op, scfForOp, op.getResultTensor());
+    } else if (isa<scf::YieldOp>(curOp) &&
+               isa<scf::IfOp>(curOp->getParentOp()) &&
+               curOp->getParentOp()->hasAttr(kFallbackNotExec)) {
+      // Sink the outer consumer chain into both fallback_not_exec branches.
+      // Cast / transpose / extract_slice / store fusion is left to the
+      // existing greedy InlineFixpipe patterns on the Cube-side fixpipe.
+      if (succeeded(inlineFixpipeThroughMayNotExecIf(
+              rewriter, loc, op, cast<scf::IfOp>(curOp->getParentOp()))))
+        matched = true;
     }
     return matched ? success() : failure();
   }
@@ -1384,6 +1403,344 @@ private:
   }
 
   const bool inlineQuantScale;
+
+  struct MayNotExecConsumerChain {
+    SmallVector<Operation *> ops; // from if-result toward store (exclusive)
+    hivm::StoreOp store;
+  };
+
+  /// Collect a single-use chain from if-result to StoreOp through ops that the
+  /// existing InlineFixpipe patterns already know how to fold (Cube path) or
+  /// that are valid to replay as vector ops (no_exec path). This pattern only
+  /// sinks the chain; fusion is left to greedy rewrite.
+  FailureOr<MayNotExecConsumerChain>
+  collectMayNotExecStoreChain(PatternRewriter &rewriter, Operation *notifyOp,
+                              hivm::FixpipeOp fixpipe, Value ifResult) const {
+    MayNotExecConsumerChain chain;
+    Value cur = ifResult;
+    while (true) {
+      Operation *user = getSingleSiftedUser(cur);
+      if (!user)
+        return rewriter.notifyMatchFailure(
+            notifyOp, "fallback_not_exec consumer chain is not single-use");
+
+      // The whole chain must sit in the same block as the fallback if. If it
+      // is nested in another region (e.g. a guarding scf.if / scf.for), its
+      // external operands (store dst, dynamic slice indices) are defined in
+      // that region and cannot dominate the sunk if, and sinking the store
+      // would also drop the guarding condition.
+      if (user->getBlock() != notifyOp->getBlock())
+        return rewriter.notifyMatchFailure(
+            user,
+            "fallback_not_exec consumer chain is nested in another region");
+
+      if (auto storeOp = dyn_cast<hivm::StoreOp>(user)) {
+        // TODO: share this atomic-kind whitelist with the greedy store-fusion
+        // path in inlineFixpipeOp (NONE/ADD/MAX/MIN). No helper exists yet.
+        auto storeAttr = storeOp.getAtomicKindAttr();
+        hivm::AtomicKind atomicKind = hivm::AtomicKind::NONE;
+        if (storeAttr)
+          atomicKind = storeAttr.getValue();
+        if (atomicKind != AtomicKind::NONE && atomicKind != AtomicKind::ADD &&
+            atomicKind != AtomicKind::MAX && atomicKind != AtomicKind::MIN)
+          return rewriter.notifyMatchFailure(
+              storeOp, "fallback_not_exec store has unsupported atomic kind");
+        if (isInsideVectorScope(storeOp))
+          return rewriter.notifyMatchFailure(
+              storeOp, "fallback_not_exec store is inside a vector scope");
+        chain.store = storeOp;
+        return chain;
+      }
+
+      if (auto castOp = dyn_cast<hivm::VCastOp>(user)) {
+        // getQuantMode includes isVcastInlinableIntoFixpipe check
+        if (!getQuantMode(castOp).has_value())
+          return rewriter.notifyMatchFailure(
+              castOp, "fallback_not_exec vcast is not inlinable as pre_quant");
+        if (castOp.getSrc()[0] != cur)
+          return rewriter.notifyMatchFailure(
+              castOp, "fallback_not_exec vcast src is not the chain value");
+        chain.ops.push_back(castOp);
+        cur = castOp.getResult()[0];
+        continue;
+      }
+
+      if (auto reluOp = dyn_cast<hivm::VReluOp>(user)) {
+        if (!getReluMode(reluOp).has_value())
+          return rewriter.notifyMatchFailure(
+              reluOp, "fallback_not_exec vrelu is not inlinable as pre_relu");
+        if (reluOp.getSrc()[0] != cur)
+          return rewriter.notifyMatchFailure(
+              reluOp, "fallback_not_exec vrelu src is not the chain value");
+        chain.ops.push_back(reluOp);
+        cur = reluOp.getResult()[0];
+        continue;
+      }
+
+      if (isa<hivm::VTransposeOp>(user)) {
+        if (!isUserTransposeInlinable(fixpipe, user))
+          return rewriter.notifyMatchFailure(
+              user, "fallback_not_exec vtranspose is not inlinable into fixpipe");
+        auto transposeOp = cast<hivm::VTransposeOp>(user);
+        if (transposeOp.getSrc() != cur)
+          return rewriter.notifyMatchFailure(
+              transposeOp,
+              "fallback_not_exec vtranspose src is not the chain value");
+        chain.ops.push_back(transposeOp);
+        cur = transposeOp.getResult()[0];
+        continue;
+      }
+
+      if (auto extractSliceOp = dyn_cast<tensor::ExtractSliceOp>(user)) {
+        if (extractSliceOp.getSource() != cur)
+          return rewriter.notifyMatchFailure(
+              extractSliceOp,
+              "fallback_not_exec extract_slice source is not the chain value");
+        chain.ops.push_back(extractSliceOp);
+        cur = extractSliceOp.getResult();
+        continue;
+      }
+
+      return rewriter.notifyMatchFailure(
+          user, "unsupported op in fallback_not_exec consumer chain");
+    }
+  }
+
+  /// Replay \p chain after \p src (branch-local value) and emit the terminal
+  /// store. Used identically for both fallback_not_exec branches.
+  void emitSunkConsumerChainAndStore(PatternRewriter &rewriter, Location loc,
+                                     Value src,
+                                     const MayNotExecConsumerChain &chain)
+      const {
+    Value cur = src;
+    for (Operation *op : chain.ops) {
+      if (auto castOp = dyn_cast<hivm::VCastOp>(op)) {
+        Value init =
+            utils::createEmptyOp(rewriter, loc, castOp.getResult()[0]);
+        IRMapping mapping;
+        mapping.map(castOp.getSrc()[0], cur);
+        mapping.map(castOp.getDst()[0], init);
+        auto *cloned = rewriter.clone(*castOp, mapping);
+        cur = cloned->getResult(0);
+        continue;
+      }
+      if (auto reluOp = dyn_cast<hivm::VReluOp>(op)) {
+        Value init =
+            utils::createEmptyOp(rewriter, loc, reluOp.getResult()[0]);
+        IRMapping mapping;
+        mapping.map(reluOp.getSrc()[0], cur);
+        mapping.map(reluOp.getDst()[0], init);
+        auto *cloned = rewriter.clone(*reluOp, mapping);
+        cur = cloned->getResult(0);
+        continue;
+      }
+      if (auto transposeOp = dyn_cast<hivm::VTransposeOp>(op)) {
+        Value init =
+            utils::createEmptyOp(rewriter, loc, transposeOp.getResult()[0]);
+        auto newTranspose = rewriter.create<hivm::VTransposeOp>(
+            transposeOp.getLoc(), TypeRange{init.getType()}, cur, init,
+            transposeOp.getPermutationAttr());
+        cur = newTranspose.getResult()[0];
+        continue;
+      }
+      if (auto extractSliceOp = dyn_cast<tensor::ExtractSliceOp>(op)) {
+        auto newExtract = rewriter.create<tensor::ExtractSliceOp>(
+            extractSliceOp.getLoc(), extractSliceOp.getResultType(), cur,
+            extractSliceOp.getMixedOffsets(), extractSliceOp.getMixedSizes(),
+            extractSliceOp.getMixedStrides());
+        cur = newExtract.getResult();
+        continue;
+      }
+      llvm_unreachable("unexpected fallback_not_exec consumer op");
+    }
+
+    auto storeOp = chain.store;
+    auto newStore = rewriter.create<hivm::StoreOp>(storeOp.getLoc(), TypeRange{},
+                                                   cur, storeOp.getDst());
+    if (auto atomicAttr = storeOp.getAtomicKindAttr())
+      newStore.setAtomicKindAttr(atomicAttr);
+  }
+
+  /// Clone ops from \p srcBlock into the builder's current block, excluding
+  /// the terminator. Returns the mapped value of \p yieldedValue.
+  Value cloneBlockBodyExceptTerminator(PatternRewriter &rewriter, Block &srcBlock,
+                                       Value yieldedValue) const {
+    IRMapping mapping;
+    for (Operation &op : srcBlock.without_terminator())
+      rewriter.clone(op, mapping);
+    return mapping.lookupOrDefault(yieldedValue);
+  }
+
+  /// Values from the sunk chain that are external to the if-result pipeline
+  /// (store dst, dynamic extract_slice indices). These must dominate the new
+  /// if after the sink.
+  void collectMayNotExecExternalValues(const MayNotExecConsumerChain &chain,
+                                       SmallVectorImpl<Value> &values) const {
+    // StoreOp::getDst() is non-const; copy the lightweight handle first.
+    hivm::StoreOp storeOp = chain.store;
+    values.push_back(storeOp.getDst());
+    for (Operation *op : chain.ops) {
+      auto extractSliceOp = dyn_cast<tensor::ExtractSliceOp>(op);
+      if (!extractSliceOp)
+        continue;
+      // Source is the chain value; only offsets/sizes/strides are external.
+      values.append(extractSliceOp.getOffsets().begin(),
+                    extractSliceOp.getOffsets().end());
+      values.append(extractSliceOp.getSizes().begin(),
+                    extractSliceOp.getSizes().end());
+      values.append(extractSliceOp.getStrides().begin(),
+                    extractSliceOp.getStrides().end());
+    }
+  }
+
+  /// Hoist effect-free defs of \p values (and their deps) that sit after
+  /// \p ifOp in the same block so they dominate uses sunk into the if.
+  /// Returns failure if a required def cannot be safely hoisted.
+  LogicalResult
+  hoistValuesBeforeIf(PatternRewriter &rewriter, scf::IfOp ifOp,
+                      ArrayRef<Value> values) const {
+    Block *block = ifOp->getBlock();
+    SmallVector<Operation *> toHoist;
+    SmallPtrSet<Operation *, 8> seen;
+
+    std::function<LogicalResult(Value)> collect = [&](Value v) -> LogicalResult {
+      Operation *def = v.getDefiningOp();
+      if (!def)
+        return success(); // block/arg — already dominates
+      if (def->getBlock() != block)
+        return success(); // defined in a dominating block
+      if (def->isBeforeInBlock(ifOp))
+        return success();
+      if (!seen.insert(def).second)
+        return success();
+      if (!isMemoryEffectFree(def))
+        return rewriter.notifyMatchFailure(
+            ifOp,
+            "cannot hoist side-effecting def before fallback_not_exec if");
+      for (Value operand : def->getOperands())
+        if (failed(collect(operand)))
+          return failure();
+      toHoist.push_back(def);
+      return success();
+    };
+
+    for (Value v : values)
+      if (failed(collect(v)))
+        return failure();
+
+    for (Operation *op : toHoist)
+      rewriter.moveOpBefore(op, ifOp);
+    return success();
+  }
+
+  /// Sink the outer consumer chain into a resultless fallback_not_exec if.
+  ///
+  /// After this rewrite the Cube branch still has the original UB-dest
+  /// fixpipe followed by the sunk cast/transpose/extract_slice/store ops.
+  /// Subsequent greedy applications of the existing InlineFixpipe patterns
+  /// fold those consumers into fixpipe (including extract_slice swap, which
+  /// only requires same-block dominance — satisfied after the sink).
+  ///
+  /// TODO: consider the wrap-around-store alternative: keep the original
+  /// scf.if, move it to just before the outer store, and rebuild it in place
+  /// as a resultless if containing the sunk chain in both branches. That
+  /// removes the need for hoistValuesBeforeIf
+  LogicalResult
+  inlineFixpipeThroughMayNotExecIf(PatternRewriter &rewriter, Location loc,
+                                   hivm::FixpipeOp fixpipe,
+                                   scf::IfOp ifOp) const {
+    if (ifOp.getElseRegion().empty())
+      return rewriter.notifyMatchFailure(
+          ifOp, "fallback_not_exec if has no else region");
+    // v1: only handle single-result ifs so we can rewrite to a void if.
+    if (ifOp.getNumResults() != 1)
+      return rewriter.notifyMatchFailure(
+          ifOp, "fallback_not_exec if does not have exactly one result");
+
+    Value fixpipeRes = fixpipe.getResultTensor();
+    if (!fixpipeRes)
+      return rewriter.notifyMatchFailure(
+          fixpipe, "fallback_not_exec fixpipe has no result tensor");
+
+    Value thenYielded = ifOp.thenYield().getOperand(0);
+    Value elseYielded = ifOp.elseYield().getOperand(0);
+
+    bool fixpipeInThen = thenYielded == fixpipeRes;
+    bool fixpipeInElse = elseYielded == fixpipeRes;
+    if (fixpipeInThen == fixpipeInElse)
+      return rewriter.notifyMatchFailure(
+          ifOp, "fixpipe is yielded by both branches or by neither");
+
+    Value vectorYielded = fixpipeInThen ? elseYielded : thenYielded;
+    if (vectorYielded.getDefiningOp<hivm::FixpipeOp>())
+      return rewriter.notifyMatchFailure(
+          ifOp, "fixpipe found in both branches");
+
+    Value ifResult = ifOp.getResult(0);
+    auto maybeChain =
+        collectMayNotExecStoreChain(rewriter, ifOp, fixpipe, ifResult);
+    if (failed(maybeChain))
+      return failure();
+    MayNotExecConsumerChain chain = *maybeChain;
+
+    SmallVector<Value> externalValues;
+    collectMayNotExecExternalValues(chain, externalValues);
+    // Store dst (e.g. memref.subview) and dynamic slice indices often sit
+    // between the if and the outer store; hoist them before the if so sunk
+    // uses dominate.
+    if (failed(hoistValuesBeforeIf(rewriter, ifOp, externalValues)))
+      return failure();
+
+    LDBG("InlineFixpipeThroughMayNotExecIf");
+
+    SmallVector<Operation *> toErase;
+    toErase.push_back(chain.store);
+    for (Operation *op : llvm::reverse(chain.ops))
+      toErase.push_back(op);
+
+    OpBuilder::InsertionGuard g(rewriter);
+    rewriter.setInsertionPoint(ifOp);
+    auto newIf = rewriter.create<scf::IfOp>(loc, TypeRange{}, ifOp.getCondition(),
+                                            /*withElseRegion=*/true);
+    newIf->setAttr(kFallbackNotExec, rewriter.getUnitAttr());
+
+    // Resultless scf.if already has empty scf.yield terminators from the
+    // builder (ensureTerminator). Insert branch bodies before those yields;
+    // do not create a second terminator.
+    auto populateBranch = [this, &rewriter, &loc, &chain](Block *destBlock,
+                                                          Block &srcBlock,
+                                                          Value yielded) {
+      rewriter.setInsertionPointToStart(destBlock);
+      Value mapped =
+          cloneBlockBodyExceptTerminator(rewriter, srcBlock, yielded);
+      emitSunkConsumerChainAndStore(rewriter, loc, mapped, chain);
+    };
+
+    populateBranch(newIf.thenBlock(), ifOp.getThenRegion().front(),
+                   thenYielded);
+    populateBranch(newIf.elseBlock(), ifOp.getElseRegion().front(),
+                   elseYielded);
+
+    // Erase outer consumer chain (store first), ignored users of the if
+    // result, then the old if (which owns the original in-branch fixpipe).
+    // Marks / debug / dim on the if-result cannot be preserved: the rewrite
+    // deletes that SSA value. Warn so the drop is visible, but do not fail.
+    for (Operation *op : toErase)
+      rewriter.eraseOp(op);
+    SmallVector<Operation *> ignoredUsers(ifResult.getUsers().begin(),
+                                          ifResult.getUsers().end());
+    for (Operation *user : ignoredUsers) {
+      if (isa<annotation::MarkOp, hivm::DebugOp, tensor::DimOp>(user)) {
+        user->emitWarning()
+            << "dropping " << user->getName()
+            << " on fallback_not_exec if result; the tensor no longer exists "
+               "after InlineFixpipe sink";
+        rewriter.eraseOp(user);
+      }
+    }
+    rewriter.eraseOp(ifOp);
+    return success();
+  }
 };
 
 //===----------------------------------------------------------------------===//
@@ -1480,6 +1837,87 @@ void populateInsertFixpipePatterns(RewritePatternSet &patterns) {
   patterns.add<InsertFixpipeForConvOpPattern<hivm::Conv3DL1Op>>(ctx);
 }
 
+/// Move fixpipe from after scf.for into the scf.if branch that yields the loop
+/// result.
+///
+/// Before:
+///   %res = scf.for ... { scf.yield %mmad }
+///   %fix = hivm.hir.fixpipe ins(%res) ...
+///   %if = scf.if ... {
+///     ...
+///   } else {
+///     scf.yield %res
+///   }
+///
+/// After:
+///   %res = scf.for ... { scf.yield %mmad }
+///   %if = scf.if ... {
+///     ...
+///   } else {
+///     %fix = hivm.hir.fixpipe ins(%res) ...
+///     scf.yield %fix
+///   }
+struct MoveFixpipeIntoScfIfBranchPattern : public OpRewritePattern<FixpipeOp> {
+  using OpRewritePattern<FixpipeOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(FixpipeOp fixpipe,
+                                PatternRewriter &rewriter) const override {
+    if (fixpipe->getParentOfType<scf::ForOp>() ||
+        fixpipe->getParentOfType<scf::IfOp>())
+      return rewriter.notifyMatchFailure(
+          fixpipe, "fixpipe is already inside scf.for or scf.if");
+
+    auto fixpipeResTensor = fixpipe.getResultTensor();
+    if (!fixpipeResTensor)
+      return rewriter.notifyMatchFailure(
+          fixpipe, "fixpipe has no result tensor");
+
+    auto forResult = dyn_cast<OpResult>(fixpipe.getSource());
+    if (!forResult || !isa<scf::ForOp>(forResult.getOwner()))
+      return rewriter.notifyMatchFailure(
+          fixpipe, "fixpipe source is not an scf.for result");
+
+    scf::YieldOp yieldOp = nullptr;
+    for (Operation *user : fixpipeResTensor.getUsers()) {
+      if (auto yield = dyn_cast<scf::YieldOp>(user)) {
+        if (yield->getParentOfType<scf::IfOp>()) {
+          yieldOp = yield;
+          break;
+        }
+      }
+    }
+    if (!yieldOp)
+      return rewriter.notifyMatchFailure(
+          fixpipe, "fixpipe result is not yielded by an scf.if");
+
+    auto ifOp = dyn_cast<scf::IfOp>(yieldOp->getParentOp());
+    if (!ifOp)
+      return rewriter.notifyMatchFailure(
+          yieldOp, "fixpipe yield parent is not scf.if");
+
+    auto yieldIdx =
+        findIdx(llvm::to_vector(yieldOp.getOperands()), fixpipeResTensor);
+    if (!yieldIdx.has_value())
+      return rewriter.notifyMatchFailure(
+          yieldOp, "fixpipe result is not a yield operand");
+
+    // Only move when the loop result is consumed by this fixpipe.
+    if (!forResult.hasOneUse() ||
+        *forResult.user_begin() != fixpipe.getOperation())
+      return rewriter.notifyMatchFailure(
+          fixpipe, "scf.for result has uses other than this fixpipe");
+
+    LDBG("MoveFixpipeIntoScfIfBranch for " << fixpipe);
+    rewriter.moveOpBefore(fixpipe, yieldOp);
+    return success();
+  }
+};
+
+void populateMoveFixpipePatterns(RewritePatternSet &patterns) {
+  MLIRContext *ctx = patterns.getContext();
+  patterns.add<MoveFixpipeIntoScfIfBranchPattern>(ctx);
+}
+
 void populateInlineFixpipePatterns(RewritePatternSet &patterns,
                                    bool inlineQuantScale) {
   patterns.add<InlineFixpipeOpPattern>(patterns.getContext(), inlineQuantScale);
@@ -1509,6 +1947,13 @@ void InsertFixpipe::runOnOperation() {
   if (failed(applyPatternsGreedily(getOperation(), std::move(patterns)))) {
     signalPassFailure();
     return;
+  }
+
+  RewritePatternSet moveFixpipePatterns(&getContext());
+  mlir::hivm::populateMoveFixpipePatterns(moveFixpipePatterns);
+  if (failed(applyPatternsGreedily(getOperation(),
+                                   std::move(moveFixpipePatterns)))) {
+    signalPassFailure();
   }
 
   RewritePatternSet insertFixpipeForDevicePrintPattern(&getContext());

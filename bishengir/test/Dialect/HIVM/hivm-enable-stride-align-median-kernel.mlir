@@ -3,13 +3,14 @@
 // Regression test: EnableStrideAlign must run to completion (no crash/assert)
 // on a real median kernel consisting of 43 outlined vector functions operating
 // on strided subviews of UB memrefs. The pass introduces explicit strided
-// memref argument types and the `hivm.storage_aligned` function attribute.
-// This test only guards against crashes / silent skips: it asserts the pass
-// produces output and applies the attribute on the first function.
+// memref argument types. This test only guards against crashes / silent skips:
+// it asserts the pass produces output. The `hivm.storage_aligned` attribute is
+// a membase-only metadata contract, so on this Ascend950 (regbase) target it
+// must NOT be stamped.
 
 // CHECK-LABEL: func.func @median_small_flat_kernel_fused_0_outlined_vf_0
 // CHECK-SAME: strided<[256, 128, 64, 32, 16, 1]>
-// CHECK-SAME: hivm.storage_aligned
+// CHECK-NOT: hivm.storage_aligned
 // CHECK-NOT: unrealized_conversion_cast
 
 #map = affine_map<(d0) -> (0, d0)>

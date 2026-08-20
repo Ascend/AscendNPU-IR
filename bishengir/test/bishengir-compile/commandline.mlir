@@ -8,7 +8,6 @@
 // CHECK: BiShengIR General Optimization Options:
 // CHECK: BiShengIR HFusion Optimization Options:
 // CHECK: BiShengIR HIVM Optimization Options:
-// CHECK: --enable-ave-loop-optimize
 // CHECK: BiShengIR Target Options:
 // CHECK: Options Shared with HIVMC:
 // CHECK-NOT: BiShengIR

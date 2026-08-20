@@ -713,9 +713,32 @@ Value buildSinOrCosCalc(OpBuilder &b, Location loc,
       b.create<hfusion::SelectOp>(loc, TypeRange(outMaskedInit.getType()),
                                   ValueRange({is_special, nan_f, result}),
                                   ValueRange(outMaskedInit))
-          ->getResult(0);
+          .getResult(0);
 
-  return result_nan;
+  // 11) Fast path for tiny |x|: sin(x) ~= x, cos(x) ~= 1.
+  // The Payne-Hanek reduction quantizes y_float to a 31-bit fraction (step
+  // 2^-31), so the reduced angle y0 = y_float * pi has a ~1.46e-9
+  // quantization step that collapses tiny arguments (e.g. sin(1e-12) -> 0,
+  // sin(1.4e-8) -> 0.93*x). Below |x| < 2^-10 (~9.77e-4) the identity
+  // sin(x)~=x (rel err x^2/6 < 1.6e-7) / cos(x)~=1 (err x^2/2 < 4.8e-7) is
+  // far more accurate than the quantized reduction, so bypass it.
+  // Compared via x*x < (2^-10)^2 = 2^-20 to avoid a separate abs().
+  Value tinySq = cF32(b, loc, 9.5367431640625e-7f); // 2^-20
+  Value xSquared =
+      createLinalgElemwiseBinaryOp(b, loc, linalg::BinaryFn::mul, in, in)
+          ->getResult(0);
+  Value isTiny =
+      createCmpOp(b, loc, xSquared, tinySq, CompareFn::vlt)->getResult(0);
+  Value fastVal = (mode == CalcMode::SIN) ? in : cF32(b, loc, 1.0f);
+  Value fastInit =
+      utils::createEmptyOpWithTargetElemType(b, loc, in, b.getF32Type());
+  Value finalResult =
+      b.create<hfusion::SelectOp>(loc, TypeRange(fastInit.getType()),
+                                  ValueRange({isTiny, fastVal, result_nan}),
+                                  ValueRange(fastInit))
+          .getResult(0);
+
+  return finalResult;
 }
 /*
  * Goal:

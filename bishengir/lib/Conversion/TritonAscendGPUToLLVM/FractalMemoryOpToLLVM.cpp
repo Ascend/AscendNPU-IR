@@ -231,7 +231,7 @@ private:
 // linear-traversal order — i.e., its actual byte-stride equals the product
 // of all inner dims.
 //
-// `ConvertSharedPtrToMemDesc` emits 3D scratch envelopes with shape
+// `LowerDotBuffersAndSharedMem` emits 3D scratch envelopes with shape
 // `[numTiles, dimOther, tileSize]` and `order=[2,0,1]` so the 3D byte
 // layout matches the 2D row-major envelope STORE.  With that order, dim 0
 // (numTiles) is NOT the slowest — its actual byte-stride is `tileSize`,

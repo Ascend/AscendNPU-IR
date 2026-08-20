@@ -488,7 +488,9 @@ def DisableMultiBufferOnL1 : HIVMOptimizationControlOptions<
 >;
 
 def LimitAutoMultiBufferBuffer : HIVMOptimizationControlOptions<
-  "When enable-auto-multi-buffer = true, limit it to only cube, only vector or no limit.",
+  "When enable-auto-multi-buffer = true, limit it to only cube, only vector or no limit. "
+  "TableGen/CLI default is only-cube (A3/membase); Ascend950/RegBase applies "
+  "no-limit when this flag is not explicitly set.",
   "MultiBufferStrategy",
   "MultiBufferStrategy::ONLY_CUBE"
 > {
@@ -1244,14 +1246,6 @@ def EnableFusedMultiplyAdd : HIVMOptimizationControlOptions<
   let passGroup = ["HIVM"];
 }
 
-def EnableAveLoopOptimize : HIVMOptimizationControlOptions<
-  "Enable AVE small-width loop optimization.",
-  "bool",
-  "true"
-> {
-  let passGroup = ["HIVM"];
-}
-
 def MaxReductionSplit : HIVMOptimizationControlOptions<
   "Max split times for reductionLoop.",
   "int",
@@ -1308,6 +1302,14 @@ def KTileSize : SIMTOptimizationControlOptions<
   "Custom tile size for k tiling (must perfectly divide K)",
   "int",
   "2"
+> {
+  bit isSharedWithDownstreamToolchain = 0;
+}
+
+def EnableGlobalScratchAllocation : SIMTOptimizationControlOptions<
+  "Enable global scratch allocation",
+  "bool",
+  "false"
 > {
   bit isSharedWithDownstreamToolchain = 0;
 }

@@ -52,6 +52,14 @@ public:
   Value loadDShared(RewriterBase &rewriter, Location loc, Value ptr,
                     std::optional<Value> ctaId, Type loadTy, Value pred,
                     Operation *localLoadOp = nullptr) const override;
+  
+  void storeDGlobal(RewriterBase &rewriter, Location loc, Value ptr,
+                    std::optional<Value> ctaId, Value val,
+                    Value pred) const override;
+
+  Value loadDGlobal(RewriterBase &rewriter, Location loc, Value ptr,
+                    std::optional<Value> ctaId, Type loadTy, Value pred,
+                    Operation *localLoadOp = nullptr) const override;        
 
   Value shuffleXor(RewriterBase &, Location, Value, int) const override;
 

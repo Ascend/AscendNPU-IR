@@ -9,11 +9,11 @@
 #include "bishengir/Tools/bishengir-compile/regbase/PassPipeline.h"
 
 #include "bishengir/Config/bishengir-config.h"
-#include "bishengir/Conversion/Passes.h"
-#include "bishengir/Conversion/HIVMAVEToStandard/HIVMAVEToStandard.h"
 #include "bishengir/Conversion/FixCallUnknownLoc/FixCallUnknownLoc.h"
-#include "bishengir/Conversion/HIVMToStandard/HIVMToStandard.h"
 #include "bishengir/Conversion/HIVMAVEToAVEIntrin/HIVMAVEToAVEIntrin.h"
+#include "bishengir/Conversion/HIVMAVEToStandard/HIVMAVEToStandard.h"
+#include "bishengir/Conversion/HIVMToStandard/HIVMToStandard.h"
+#include "bishengir/Conversion/Passes.h"
 #include "bishengir/Dialect/Annotation/Transforms/Passes.h"
 #include "bishengir/Dialect/AscendDPX/Transforms/Passes.h"
 #include "bishengir/Dialect/HACC/IR/HACC.h"
@@ -96,8 +96,9 @@ void setupHFusionPipelineOptions(
       hacc::stringifyTargetDeviceEnum(config.getTarget()).str();
 }
 
-void setupHIVMPipelineOptions(hivm::regbase::HIVMPipelineOptions &hivmPipelineOptions,
-                              const BiShengIRCompileMainConfig &config) {
+void setupHIVMPipelineOptions(
+    hivm::regbase::HIVMPipelineOptions &hivmPipelineOptions,
+    const BiShengIRCompileMainConfig &config) {
   auto &options = hivmPipelineOptions;
 #define GEN_HIVM_OPTION_SETUP
 #include "bishengir/Tools/bishengir-compile/ConfigUtils.cpp.inc"
@@ -116,9 +117,8 @@ void setupHIVMPipelineOptions(hivm::regbase::HIVMPipelineOptions &hivmPipelineOp
   {
     auto &registeredOptions = llvm::cl::getRegisteredOptions();
     auto wsMbOpt = registeredOptions.find("set-workspace-multibuffer");
-    bool hasExplicit =
-        wsMbOpt != registeredOptions.end() &&
-        wsMbOpt->second->getNumOccurrences() != 0;
+    bool hasExplicit = wsMbOpt != registeredOptions.end() &&
+                       wsMbOpt->second->getNumOccurrences() != 0;
     if (!hasExplicit && hacc::utils::isRegBasedArch(config.getTarget()))
       options.setWorkspaceMultibuffer = 2;
   }
@@ -188,9 +188,8 @@ void setupHIVMAVEPipelineOptions(
     unsigned wsMb = config.getSetWorkspaceMultibuffer();
     auto &registeredOptions = llvm::cl::getRegisteredOptions();
     auto wsMbOpt = registeredOptions.find("set-workspace-multibuffer");
-    bool hasExplicit =
-        wsMbOpt != registeredOptions.end() &&
-        wsMbOpt->second->getNumOccurrences() != 0;
+    bool hasExplicit = wsMbOpt != registeredOptions.end() &&
+                       wsMbOpt->second->getNumOccurrences() != 0;
     if (!hasExplicit && hacc::utils::isRegBasedArch(config.getTarget()))
       wsMb = 2;
     hivmAVEPipelineOptions.workspaceMultiBufferNum = wsMb;
@@ -214,8 +213,6 @@ void setupHIVMAVEPipelineOptions(
       config.getEnableHivmNd2nzOnVector();
   hivmAVEPipelineOptions.enableFusedMultiplyAdd =
       config.getEnableFusedMultiplyAdd();
-  hivmAVEPipelineOptions.enableAveLoopOptimize =
-      config.getEnableAveLoopOptimize();
   hivmAVEPipelineOptions.enablePrintMemoryAllocatedSize =
       config.getEnablePrintMemoryAllocatedSize();
   hivmAVEPipelineOptions.maxReductionSplitNum = config.getMaxReductionSplit();
@@ -264,6 +261,11 @@ void buildLowerToLLVMPipeline(OpPassManager &pm,
   ConvertHIVMToStandardOptions hivmToStdOptions;
   hivmToStdOptions.isOpsAligned = config.getEnableHIVMAutoStorageAlign();
   hivmToStdOptions.markLibCallNoInline = config.getEnableLibCallNoInline();
+  // In DFX debugging, missing inline may cause the tool to not work as
+  // expected.
+  if (config.getEnableSanitizer() || config.getEnableDebugInfo()) {
+    hivmToStdOptions.markLibCallNoInline = false;
+  }
   pm.addPass(hivm::createMarkDisableLoadPass());
   mlir::hivm::regbase::addSyncBlockLockFinalizePasses(pm);
   pm.addPass(createConvertHIVMToStandardPass(hivmToStdOptions));
@@ -364,6 +366,8 @@ void setupLowerTritonPipelineOptions(
   options.disableReorderInstruction = config.getDisableReorderInstruction();
   options.enableSinkDPXLoad = config.getEnableSinkDPXLoad();
   options.KTileSize = config.getKTileSize();
+  options.enableGlobalScratchAllocation =
+      config.getEnableGlobalScratchAllocation();
   options.enableOptimizeMath = config.getEnableOptimizeMath();
   options.tritonMetadataOutput = config.getTritonMetadataOutput();
   options.enableSIMTAutoBlockify = config.getEnableAutoBlockifyLoop();

@@ -20,6 +20,7 @@ add_bishengir_dialect_library(BiShengIRScopeTransforms
   MLIRDialect
   MLIRFuncDialect
   MLIRMemRefDialect
+  MLIRSCFDialect
   MLIRTensorDialect
   MLIRIR
   MLIRPass
