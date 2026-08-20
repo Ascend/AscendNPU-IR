@@ -35,7 +35,6 @@ namespace hivm {
 
 constexpr llvm::StringLiteral kPropagateUpAttr = "propagate_up";
 constexpr llvm::StringLiteral kPropagateDownAttr = "propagate_down";
-constexpr llvm::StringLiteral kNormalizedInL0CAttr = "normalized_in_L0C";
 
 namespace PropagatorUtil {
 

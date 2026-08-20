@@ -195,6 +195,26 @@ LoopLikeOpInterface getParentLoopImpl(Value val,
 }
 } // namespace
 
+bool isRegionResultRequiredInL0C(RegionBranchOpInterface branch,
+                                 OpResult result) {
+  if (branch->hasAttr(RemainInL0CAttr::name))
+    return true;
+
+  Attribute attr = branch->getAttr("normalized_in_L0C");
+  if (!attr)
+    return false;
+
+  auto arrayAttr = dyn_cast<ArrayAttr>(attr);
+  if (!arrayAttr)
+    return true;
+
+  uint64_t idx = result.getResultNumber();
+  return llvm::any_of(arrayAttr, [idx](Attribute element) {
+    auto intAttr = dyn_cast<IntegerAttr>(element);
+    return intAttr && intAttr.getValue().getZExtValue() == idx;
+  });
+}
+
 FailureOr<memref::AllocOp> getMemRefAlloc(Value operand) {
   if (auto bbArg = dyn_cast<BlockArgument>(operand)) {
     return getMemRefForBlockArgument(bbArg);
@@ -418,7 +438,7 @@ bool isSsbuffer(std::optional<AddressSpaceAttr> memorySpaceAttr) {
   if (!memorySpaceAttr.has_value()) {
     return false;
   }
-  
+
   return memorySpaceAttr.value().getAddressSpace() == AddressSpace::SSBUF;
 }
 
