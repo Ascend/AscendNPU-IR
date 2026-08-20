@@ -176,7 +176,7 @@ void InsertInferSyncBlockLockNumAndInitFuncPass::runOnOperation() {
   // computes the exact GM size from launch-time blockNum.
   constexpr int64_t countBits = 32;
   int64_t syncBlockLockLayout =
-      (unorderedLockCount << countBits) | orderedLockCount;
+      (unorderedLockCount << countBits) | (orderedLockCount * 8);
   insertInferSyncBlockLockNumFunc(funcOp, syncBlockLockLayout);
 
   // 2. Insert host callback func to return sync block lock init
