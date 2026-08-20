@@ -1324,7 +1324,7 @@ static TileInfo chooseTile(triton::DotOp dot, int KTileSize, int64_t realKSize) 
   int64_t N = dTy.getDimSize(1);
   int64_t K = aTy.getDimSize(1);
 
-  if (M * K * N <= kMKNBudget && (KTileSize <= 0 || KTileSize == K))
+  if ((M * K * N <= kMKNBudget && KTileSize <= 0) || KTileSize == K)
     return {};
 
   // Look through a single `tt.trans` between load and dot operand.
@@ -1783,7 +1783,7 @@ struct StageNonLoadOperandPattern : public OpRewritePattern<triton::DotOp> {
     int64_t K = aTy.getDimSize(1);
     if (bTy.getDimSize(0) != K)
       return failure();
-    if (M * K * N <= kMKNBudget && (KTileSize <= 0 || KTileSize == K))
+    if ((M * K * N <= kMKNBudget && KTileSize <= 0) || KTileSize == K)
       return failure();
 
     int64_t realKSize = K;
