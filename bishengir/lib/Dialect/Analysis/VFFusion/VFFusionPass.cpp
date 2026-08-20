@@ -130,14 +130,61 @@ void VFFusionPass::runOnOperation() {
   if (enableOutlineCF)
     llvm::report_fatal_error("unsupported at the moment");
 
+  auto freezeRegisterTreeSelection = [&]() {
+    if (!enableNewTreeReducePolicy || !enableRA)
+      return;
+    moduleOp->removeAttr(hfusion::kTreeReductionSelectionFrozenAttr);
+    moduleOp->removeAttr(hfusion::kRegularTreeReductionScopeAttr);
+    moduleOp->removeAttr(hfusion::kLegacyTreeReductionScopeAttr);
+    SmallVector<Operation *> registerCandidates;
+    moduleOp.walk([&](Operation *op) {
+      op->removeAttr(hfusion::kRegisterTreeReductionSelectedAttr);
+      op->removeAttr(hfusion::kRegularTreeReductionSelectedAttr);
+      if (hfusion::isRegisterTreeReductionCandidate(op))
+        registerCandidates.push_back(op);
+    });
+    bool selectedAllRegisterTrees = true;
+    bool selectedAnyLegacyTree = false;
+    for (Operation *op : registerCandidates) {
+      bool selected = hfusion::shouldUseRegisterTreeReduction(op);
+      selectedAllRegisterTrees &= selected;
+      selectedAnyLegacyTree |= hfusion::shouldUseLegacyTreeReductionScope(op);
+      llvm::StringLiteral selectedAttr =
+          selected ? hfusion::kRegisterTreeReductionSelectedAttr
+                   : hfusion::kRegularTreeReductionSelectedAttr;
+      op->setAttr(selectedAttr, UnitAttr::get(&getContext()));
+    }
+    if (selectedAnyLegacyTree)
+      moduleOp->setAttr(hfusion::kLegacyTreeReductionScopeAttr,
+                        UnitAttr::get(&getContext()));
+    else if (!registerCandidates.empty() && !selectedAllRegisterTrees)
+      moduleOp->setAttr(hfusion::kRegularTreeReductionScopeAttr,
+                        UnitAttr::get(&getContext()));
+    // Later nested function passes may run in parallel and may also create
+    // canonical linalg ops.  From this point on, consumers must use only the
+    // per-op decisions above instead of walking a module which is being
+    // rewritten concurrently.
+    moduleOp->setAttr(hfusion::kTreeReductionSelectionFrozenAttr,
+                      UnitAttr::get(&getContext()));
+  };
+
   // for CV cases, temporarily bypass vffusion
-  if (isCVCases(moduleOp))
+  if (isCVCases(moduleOp)) {
+    freezeRegisterTreeSelection();
     return;
+  }
 
   if (failed(preProcess())) {
     signalPassFailure();
     return;
   }
+
+  // Freeze the register-tree cost decision after preprocessing but before
+  // fusion starts mutating the graph.  Linalg attributes are preserved by
+  // VFFusion's outlining clones, so AutoVectorizeV2 observes the same
+  // decision even when several reductions are split into separate private
+  // functions.
+  freezeRegisterTreeSelection();
 
   ubBudgetBytes_ = 0;
   ubAlignBytes_ = 0;

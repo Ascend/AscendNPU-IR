@@ -878,11 +878,119 @@ private:
                TreeReductionBuilder &builder, scf::ForOp targetForOp,
                Value inputTensor, int64_t dimR, int64_t dimA,
                RankedTensorType accTensorType) const;
+  void buildDirectRegisterRA(IRRewriter &rewriter, Location loc,
+                             TreeReductionBuilder &builder,
+                             scf::ForOp targetForOp, Value inputTensor,
+                             int64_t dimR, int64_t dimA,
+                             RankedTensorType accTensorType) const;
   void buildAR(IRRewriter &rewriter, Location loc,
                TreeReductionBuilder &builder, scf::ForOp targetForOp,
                Value inputTensor, int64_t dimR, int64_t dimA,
                RankedTensorType accTensorType) const;
 };
+
+void TreeReduceV2Pass::buildDirectRegisterRA(
+    IRRewriter &rewriter, Location loc, TreeReductionBuilder &builder,
+    scf::ForOp targetForOp, Value inputTensor, int64_t dimR, int64_t dimA,
+    RankedTensorType accTensorType) const {
+  assert(accTensorType.getRank() == 1 &&
+         "direct register RA expects a rank-1 accumulator");
+  assert(dimR > 0 && dimR <= 64 &&
+         "direct register RA supports one bounded tree");
+
+  auto wrapperLoop =
+      rewriter.create<scf::ForOp>(loc, builder.c0, builder.c1, builder.c1,
+                                  ValueRange{targetForOp.getInitArgs()[0]});
+  rewriter.setInsertionPointToStart(wrapperLoop.getBody());
+  Value initAcc = wrapperLoop.getRegionIterArg(0);
+
+  AffineMap minMap = AffineMap::get(
+      1, 1,
+      {rewriter.getAffineConstantExpr(builder.vectorLength),
+       rewriter.getAffineSymbolExpr(0) - rewriter.getAffineDimExpr(0)},
+      rewriter.getContext());
+  auto loopA = rewriter.create<scf::ForOp>(loc, builder.c0, builder.dimAVal,
+                                           builder.c64, ValueRange{initAcc});
+  rewriter.setInsertionPointToStart(loopA.getBody());
+  Value loopAcc = loopA.getRegionIterArg(0);
+  Value ivA = loopA.getInductionVar();
+  Value minA = rewriter.create<affine::AffineMinOp>(
+      loc, minMap, ValueRange{ivA, builder.dimAVal});
+  Value mask = builder.createLoopMask1D(minA);
+
+  uint64_t alignedR = llvm::PowerOf2Ceil(static_cast<uint64_t>(dimR));
+  auto buildRegisterTree = [&](auto &&self, uint64_t start, uint64_t stride,
+                               uint64_t count) -> Value {
+    if (count == 1) {
+      if (start >= static_cast<uint64_t>(dimR))
+        return rewriter.create<vector::SplatOp>(loc, builder.vec1DComputeTy,
+                                                builder.computeCstZero);
+      Value rIdx = rewriter.create<arith::ConstantIndexOp>(loc, start);
+      Value row =
+          builder.readSliceMaskedRA(inputTensor, rIdx, ivA, mask,
+                                    builder.vec1DInTy, builder.inputCstZero);
+      return builder.castToComputeTy(row);
+    }
+
+    // SplitReductionOp pairs the lower and upper halves at every level.  Walk
+    // that tree depth-first so the generated association remains identical,
+    // while only O(log N) vector partials are live instead of all N leaves.
+    Value lhs = self(self, start, stride * 2, count / 2);
+    Value rhs = self(self, start + stride, stride * 2, count / 2);
+    return builder.createAdd(rhs, lhs);
+  };
+  auto accSliceTy =
+      RankedTensorType::get({ShapedType::kDynamic}, builder.accElemTy);
+  SmallVector<OpFoldResult> offsets = {ivA};
+  SmallVector<OpFoldResult> sizes = {minA};
+  SmallVector<OpFoldResult> strides = {rewriter.getIndexAttr(1)};
+  Value accSlice = rewriter.create<tensor::ExtractSliceOp>(
+      loc, accSliceTy, loopAcc, offsets, sizes, strides);
+  Value oldAcc = builder.read1DAccMasked(
+      accSlice, builder.c0, mask, builder.vec1DAccTy, builder.accCstZero);
+  Value oldAccCompute = builder.castToComputeTy(oldAcc);
+  Value result;
+  if (alignedR == 1) {
+    Value leaf = buildRegisterTree(buildRegisterTree, /*start=*/0,
+                                   /*stride=*/1, /*count=*/1);
+    result = builder.createAdd(leaf, oldAccCompute);
+  } else {
+    // SplitReductionOp feeds the original destination only to the final
+    // two-way combine. Preserve that association: right + (left + init).
+    // Intermediate neutral additions are deliberately omitted.
+    Value left = buildRegisterTree(buildRegisterTree, /*start=*/0,
+                                   /*stride=*/2, alignedR / 2);
+    Value right = buildRegisterTree(buildRegisterTree, /*start=*/1,
+                                    /*stride=*/2, alignedR / 2);
+    result = builder.createAdd(right, builder.createAdd(left, oldAccCompute));
+  }
+  if (builder.accElemTy != builder.computeElemTy) {
+    result =
+        isa<FloatType>(builder.accElemTy)
+            ? rewriter.create<arith::TruncFOp>(loc, builder.vec1DAccTy, result)
+                  .getResult()
+            : rewriter.create<arith::TruncIOp>(loc, builder.vec1DAccTy, result)
+                  .getResult();
+  }
+
+  auto writeMask = rewriter.create<vector::MaskOp>(
+      loc, TypeRange{accSliceTy}, mask, static_cast<Operation *>(nullptr),
+      [&builder, loc, result, accSlice](OpBuilder &b, Operation *) {
+        Value written = b.create<vector::TransferWriteOp>(
+                             loc, result, accSlice, ValueRange{builder.c0},
+                             ArrayRef<bool>{true})
+                            .getResult();
+        b.create<vector::YieldOp>(loc, written);
+      });
+  Value inserted = rewriter.create<tensor::InsertSliceOp>(
+      loc, writeMask.getResult(0), loopAcc, offsets, sizes, strides);
+  rewriter.create<scf::YieldOp>(loc, inserted);
+
+  rewriter.setInsertionPointAfter(loopA);
+  rewriter.create<scf::YieldOp>(loc, loopA.getResult(0));
+  rewriter.setInsertionPointAfter(wrapperLoop);
+  rewriter.replaceOp(targetForOp, wrapperLoop.getResult(0));
+}
 
 static bool hasUseOutsideScope(Value value, Operation *scope) {
   return llvm::any_of(value.getUses(), [scope](OpOperand &use) {
@@ -1756,10 +1864,25 @@ void TreeReduceV2Pass::runOnOperation() {
                                << " enableRA=" << enableRA
                                << " enableAR=" << enableAR << " ===");
 
+  if (directRegisterRA && !onlyMarked) {
+    moduleOp.emitError(
+        "direct-register-ra requires the only-marked safety contract");
+    signalPassFailure();
+    return;
+  }
+
   // VF fusion is fully bypassed on part_of_mix kernels,
   // so TreeReduceV2 should also skip them.
-  if (isCVCases(moduleOp)) {
+  if (isCVCases(moduleOp) && !onlyMarked && !onlyLegacyScope) {
     LDBG("=== Skipping CV case ===");
+    if (onlyLegacyScope)
+      moduleOp->removeAttr(hfusion::kLegacyTreeReductionScopeAttr);
+    return;
+  }
+
+  if (onlyLegacyScope &&
+      !moduleOp->hasAttr(hfusion::kLegacyTreeReductionScopeAttr)) {
+    LDBG("=== Skipping non-legacy tree-reduction scope ===");
     return;
   }
 
@@ -1811,8 +1934,30 @@ void TreeReduceV2Pass::runOnOperation() {
       LDBG("Skipping - no parent scf::ForOp");
       continue;
     }
-    while (auto parentFor = targetForOp->getParentOfType<scf::ForOp>())
-      targetForOp = parentFor;
+    if (onlyMarked) {
+      scf::ForOp markedLoop;
+      for (Operation *ancestor = targetReduceOp.getOperation(); ancestor;
+           ancestor = ancestor->getParentOp()) {
+        if (auto loop = dyn_cast<scf::ForOp>(ancestor);
+            loop && loop->hasAttr(hfusion::kRegisterTreeReductionLoopAttr)) {
+          markedLoop = loop;
+          break;
+        }
+        if (isa<func::FuncOp>(ancestor))
+          break;
+      }
+      if (!markedLoop) {
+        LDBG("Skipping - reduction loop is not marked for register tree");
+        continue;
+      }
+      // Replace exactly the loop selected by AutoVectorizeV2.  Climbing above
+      // the marker could erase unrelated wrapper-loop work if later pipeline
+      // changes introduce another enclosing scf.for.
+      targetForOp = markedLoop;
+    } else {
+      while (auto parentFor = targetForOp->getParentOfType<scf::ForOp>())
+        targetForOp = parentFor;
+    }
     if (targetForOp.getInitArgs().empty()) {
       LDBG("Skipping - ForOp has no init args");
       continue;
@@ -1849,7 +1994,10 @@ void TreeReduceV2Pass::runOnOperation() {
     LDBG("Building " << (isAR ? "AR" : "RA") << " reduction: dimR=" << dimR
                      << " dimA=" << dimA << " accType=" << accTensorType);
 
-    if (isAR)
+    if (directRegisterRA && !isAR && dimR <= 64 && accTensorType.getRank() == 1)
+      buildDirectRegisterRA(rewriter, loc, builder, targetForOp, inputTensor,
+                            dimR, dimA, accTensorType);
+    else if (isAR)
       buildAR(rewriter, loc, builder, targetForOp, inputTensor, dimR, dimA,
               accTensorType);
     else
@@ -1858,6 +2006,8 @@ void TreeReduceV2Pass::runOnOperation() {
 
     LDBG("--- Done processing MultiDimReductionOp");
   }
+  if (onlyLegacyScope)
+    moduleOp->removeAttr(hfusion::kLegacyTreeReductionScopeAttr);
   LDBG("=== Done processing func: " << moduleOp.getSymName() << " ===");
 }
 

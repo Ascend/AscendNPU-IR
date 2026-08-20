@@ -356,6 +356,9 @@ static bool shouldSkipSumReduction(Operation *op,
     // RA: reduce along dim 0.
     if (dim == 0 && option.enableRA) {
       if (option.enableNewTreeReducePolicy) {
+        if (auto module = op->getParentOfType<ModuleOp>();
+            module && module->hasAttr(hfusion::kLegacyTreeReductionScopeAttr))
+          return true;
         // Only structurally supported reductions beyond the size cutoff take
         // the regular fusion path. Keep reductions rejected by the selector
         // on the established isolated 2-D RA path.

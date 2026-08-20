@@ -1,13 +1,14 @@
 // RUN: bishengir-opt %s -hfusion-auto-vectorize-v2="emit-transform-sequence=true tree-reduce=true" | FileCheck %s
 
-// A non-power-of-two reduction is padded with the neutral element to the next
-// power of two.  This keeps the generated floating-point reduction tree
-// balanced instead of merging a separately reduced tail.
+// A selected canonical reduction is tiled normally and marked for the direct
+// register-tree rewrite.  That rewrite pads non-power-of-two trees with the
+// neutral element while keeping every partial in vector SSA.
 
 // CHECK-LABEL: func.func @tree_reduce_3
 // CHECK-LABEL: transform.sequence {{.*}}auto_vectorize_v2.transform.tree_reduce_3
-// CHECK: transform.structured.tile_reduction_using_for {{.*}} tile_sizes = [4, 0]
-// CHECK: transform.structured.split_reduction {{.*}} {inner_parallel, split_factor = 2 : i64}
+// CHECK: transform.structured.tile_using_for
+// CHECK: annotate {{.*}} "hfusion.register_tree_reduction"
+// CHECK-NOT: transform.structured.split_reduction
 
 #input_map = affine_map<(d0, d1) -> (d0, d1)>
 #output_map = affine_map<(d0, d1) -> (d1)>
@@ -37,12 +38,13 @@ module {
 
 // -----
 
-// Sixteen elements is the largest reduction kept on the new pairwise tree.
+// A small power-of-two reduction uses the same direct register tree.
 
 // CHECK-LABEL: func.func @tree_reduce_16
 // CHECK-LABEL: transform.sequence {{.*}}auto_vectorize_v2.transform.tree_reduce_16
-// CHECK: transform.structured.split_reduction {{.*}} {inner_parallel, split_factor = 8 : i64}
-// CHECK: transform.structured.split_reduction {{.*}} {inner_parallel, split_factor = 4 : i64}
+// CHECK: transform.structured.tile_using_for
+// CHECK: annotate {{.*}} "hfusion.register_tree_reduction"
+// CHECK-NOT: transform.structured.split_reduction
 
 module {
   func.func @tree_reduce_16(%arg0: tensor<16x8xf32>) -> tensor<8xf32>
@@ -69,11 +71,12 @@ module {
 
 // -----
 
-// Seventeen elements is the first reduction size routed to regular tiling.
+// The direct tree is not tied to the old 16-element materialization cutoff.
 
 // CHECK-LABEL: func.func @tree_reduce_17
 // CHECK-LABEL: transform.sequence {{.*}}auto_vectorize_v2.transform.tree_reduce_17
 // CHECK: transform.structured.tile_using_for
+// CHECK: annotate {{.*}} "hfusion.register_tree_reduction"
 // CHECK-NOT: transform.structured.tile_reduction_using_for
 // CHECK-NOT: transform.structured.split_reduction
 
@@ -102,11 +105,12 @@ module {
 
 // -----
 
-// Power-of-two reductions above the cutoff use the same regular path.
+// One register tree is bounded at 64 rows.
 
 // CHECK-LABEL: func.func @tree_reduce_64
 // CHECK-LABEL: transform.sequence {{.*}}auto_vectorize_v2.transform.tree_reduce_64
 // CHECK: transform.structured.tile_using_for
+// CHECK: annotate {{.*}} "hfusion.register_tree_reduction"
 // CHECK-NOT: transform.structured.tile_reduction_using_for
 // CHECK-NOT: transform.structured.split_reduction
 
