@@ -534,7 +534,10 @@ void buildOptimizeHIVMPipeline(OpPassManager &pm,
   pm.nest<func::FuncOp>().addPass(createInsertInitAndFinishForDebugPass());
   pm.addPass(createMarkDisableLoadPass());
   syncBlockLockPipeline(pm, SyncBlockLockPipelinePhase::Finalize);
-  pm.addPass(createConvertHIVMToStandardPass());
+  ConvertHIVMToStandardOptions hivmToStdOptions;
+  hivmToStdOptions.isOpsAligned = options.enableHIVMAutoStorageAlign;
+  hivmToStdOptions.markLibCallNoInline = options.enableLibCallNoInline;
+  pm.addPass(createConvertHIVMToStandardPass(hivmToStdOptions));
   pm.nest<func::FuncOp>().addPass(createFixCallUnknownLocPass());
 }
 
