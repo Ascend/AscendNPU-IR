@@ -38,7 +38,7 @@ using namespace mlir::hivm;
 namespace {
 // Element channel count fitting into alignBytes (32B block).
 static int64_t computeChannelNum(MemRefType type, int64_t alignBytes) {
-  return alignBytes / type.getElementType().getIntOrFloatBitWidth() * 8;
+  return (alignBytes * 8) / type.getElementType().getIntOrFloatBitWidth();
 }
 
 // Reassociation splitting/merging the last dim: [{0},...,{R-2},{R-1,R}].
