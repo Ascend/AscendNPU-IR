@@ -11,13 +11,12 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "bishengir/ExecutionEngine/ConvertHIVMToUpstream.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
-#include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/MathExt/IR/MathExt.h"
 #include "bishengir/Dialect/Tensor/IR/TensorImpl.h"
 #include "bishengir/Dialect/Utils/Util.h"
-#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/ExecutionEngine/Passes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
@@ -1589,6 +1588,65 @@ struct HIVMToHfusionBitcastOp : public OpRewritePattern<hivm::BitcastOp> {
   }
 };
 
+static void populateCommonPatterns(RewritePatternSet &patterns,
+                                   bool convertToNamedOp) {
+  auto *ctx = patterns.getContext();
+  if (convertToNamedOp) {
+    patterns.add<RewriteElemwiseOp<hivm::VShLOp, hfusion::ElemwiseBinaryOp,
+                                   hfusion::BinaryFn::shli>>(ctx);
+    patterns.add<RewriteNamedVDivOp>(ctx);
+  } else {
+    patterns.add<RewriteVModOp<hivm::VShLOp, arith::ShLIOp>>(ctx);
+    patterns.add<RewriteVDivOp>(ctx);
+  }
+  patterns.add<RewriteFromGenericToGeneric<hivm::VAbsOp, linalg::AbsOp>,
+               RewriteFromGenericToGeneric<hivm::VAddOp, linalg::AddOp>,
+               RewriteFromGenericToGeneric<hivm::VSubOp, linalg::SubOp>,
+               RewriteFromGenericToGeneric<hivm::VMulOp, linalg::MulOp>,
+               RewriteFromGenericToGeneric<hivm::VExpOp, linalg::ExpOp>,
+               RewriteFromGenericToGeneric<hivm::VLnOp, linalg::LogOp>,
+               RewriteFromGenericToGeneric<hivm::VRsqrtOp, linalg::RsqrtOp>,
+               RewriteFromGenericToGeneric<hivm::VSqrtOp, linalg::SqrtOp>,
+               RewriteFromGenericToGeneric<hivm::VTanhOp, linalg::TanhOp>,
+               RewriteFromGenericToGeneric<hivm::VRecOp, linalg::ReciprocalOp>,
+               RewriteFromGenericToGeneric<hivm::VSelOp, linalg::SelectOp>,
+               RewriteFromGenericToGeneric<hivm::VErfOp, linalg::ErfOp>>(ctx);
+  patterns.add<RewriteSignedAwareBinaryToLinalg<hivm::VMaxOp, linalg::MaxOp,
+                                                linalg::BinaryFn::max_signed,
+                                                linalg::BinaryFn::max_unsigned>,
+               RewriteSignedAwareBinaryToLinalg<
+                   hivm::VMinOp, linalg::MinOp, linalg::BinaryFn::min_signed,
+                   linalg::BinaryFn::min_unsigned>>(ctx);
+  patterns.add<RewriteElemwiseOp<hivm::VReluOp, hfusion::ElemwiseUnaryOp,
+                                 hfusion::UnaryFn::relu>,
+               RewriteElemwiseOp<hivm::VNotOp, hfusion::ElemwiseUnaryOp,
+                                 hfusion::UnaryFn::vnot>>(ctx);
+  patterns.add<RewriteVBitwiseShiftOp<arith::ShRSIOp, arith::ShRUIOp>>(ctx);
+  if (convertToNamedOp) {
+    patterns.add<RewriteVCumOpToHFusion<hivm::VCumprodOp, hfusion::CumprodOp>,
+                 RewriteVCumOpToHFusion<hivm::VCumsumOp, hfusion::CumsumOp>,
+                 RewriteVCumOpToHFusion<hivm::VCummaxOp, hfusion::CummaxOp>,
+                 RewriteVCumOpToHFusion<hivm::VCumminOp, hfusion::CumminOp>>(
+        ctx);
+  }
+  patterns.add<
+      RewriteVCumOpToGeneric<hivm::VCumprodOp, arith::MulIOp, arith::MulFOp,
+                             CumIdentityKind::One>,
+      RewriteVCumOpToGeneric<hivm::VCumsumOp, arith::AddIOp, arith::AddFOp,
+                             CumIdentityKind::Zero>,
+      RewriteVCumOpToGeneric<hivm::VCummaxOp, arith::MaxSIOp, arith::MaximumFOp,
+                             CumIdentityKind::LowestValue, arith::MaxNumFOp>,
+      RewriteVCumOpToGeneric<hivm::VCumminOp, arith::MinSIOp, arith::MinimumFOp,
+                             CumIdentityKind::LargestValue, arith::MinNumFOp>>(
+      ctx);
+  patterns.add<RewriteVBrcOp, RewriteVTransposeOp, RewriteVArangeOp,
+               RewriteVConcatOp, RewriteVReduceOp, RewriteCastOp, RewriteVCmpOp,
+               RewriteVModOp<hivm::VModUIOp, arith::RemUIOp>,
+               RewriteVModOp<hivm::VModOp, arith::RemSIOp>, RewriteInterleave,
+               RewriteDeinterleave, HIVMToHfusionBitcastOp, RewriteAtomicCasOp>(
+      ctx);
+}
+
 struct ConvertHIVMToUpstream
     : public impl::ExecutionEngineHIVMToUpstreamConversionBase<
           ConvertHIVMToUpstream> {
@@ -1641,8 +1699,7 @@ struct ConvertHIVMToUpstream
     return success();
   }
 
-
-  void runOnOperation_a3() {
+  void runOnOperation() override {
     auto &ctx = getContext();
 
     if (failed(applyTypeConversion())) {
@@ -1651,71 +1708,8 @@ struct ConvertHIVMToUpstream
     }
 
     RewritePatternSet patterns(&ctx);
-    if (convertToNamedOp) {
-      patterns.add<RewriteElemwiseOp<hivm::VShLOp, hfusion::ElemwiseBinaryOp,
-                                     hfusion::BinaryFn::shli>>(&ctx);
-      patterns.add<RewriteNamedVDivOp>(&ctx);
-    } else {
-      patterns.add<RewriteVModOp<hivm::VShLOp, arith::ShLIOp>>(&ctx);
-      patterns.add<RewriteVDivOp>(&ctx);
-    }
-    patterns
-        .add<RewriteFromGenericToGeneric<hivm::VAbsOp, linalg::AbsOp>,
-             RewriteFromGenericToGeneric<hivm::VAddOp, linalg::AddOp>,
-             RewriteFromGenericToGeneric<hivm::VSubOp, linalg::SubOp>,
-             RewriteFromGenericToGeneric<hivm::VMulOp, linalg::MulOp>,
-             RewriteFromGenericToGeneric<hivm::VExpOp, linalg::ExpOp>,
-             RewriteFromGenericToGeneric<hivm::VLnOp, linalg::LogOp>,
-             RewriteFromGenericToGeneric<hivm::VRsqrtOp, linalg::RsqrtOp>,
-             RewriteFromGenericToGeneric<hivm::VSqrtOp, linalg::SqrtOp>,
-             RewriteFromGenericToGeneric<hivm::VTanhOp, linalg::TanhOp>,
-             RewriteFromGenericToGeneric<hivm::VRecOp, linalg::ReciprocalOp>,
-             RewriteFromGenericToGeneric<hivm::VSelOp, linalg::SelectOp>,
-             RewriteFromGenericToGeneric<hivm::VErfOp, linalg::ErfOp>,
-             RewriteFromGenericToGeneric<hivm::StoreOp, linalg::CopyOp>>(&ctx);
-    patterns.add<
-        RewriteSignedAwareBinaryToLinalg<hivm::VMaxOp, linalg::MaxOp,
-                                         linalg::BinaryFn::max_signed,
-                                         linalg::BinaryFn::max_unsigned>,
-        RewriteSignedAwareBinaryToLinalg<hivm::VMinOp, linalg::MinOp,
-                                         linalg::BinaryFn::min_signed,
-                                         linalg::BinaryFn::min_unsigned>>(&ctx);
-    patterns.add<RewriteElemwiseOp<hivm::VReluOp, hfusion::ElemwiseUnaryOp,
-                                   hfusion::UnaryFn::relu>,
-                 RewriteElemwiseOp<hivm::VNotOp, hfusion::ElemwiseUnaryOp,
-                                   hfusion::UnaryFn::vnot>>(&ctx);
-    patterns.add<RewriteVBitwiseLogicOp<hivm::VAndOp, arith::AndIOp>,
-                 RewriteVBitwiseLogicOp<hivm::VOrOp, arith::OrIOp>,
-                 RewriteVBitwiseLogicOp<hivm::VXorOp, arith::XOrIOp>,
-                  RewriteVBitwiseShiftOp<arith::ShRSIOp, arith::ShRUIOp>>(&ctx);
-    if (convertToNamedOp) {
-      patterns
-          .add<RewriteVCumOpToHFusion<hivm::VCumprodOp, hfusion::CumprodOp>,
-               RewriteVCumOpToHFusion<hivm::VCumsumOp, hfusion::CumsumOp>,
-               RewriteVCumOpToHFusion<hivm::VCummaxOp, hfusion::CummaxOp>,
-               RewriteVCumOpToHFusion<hivm::VCumminOp, hfusion::CumminOp>>(
-              &ctx);
-    }
-    patterns
-        .add<RewriteVCumOpToGeneric<hivm::VCumprodOp, arith::MulIOp,
-                                    arith::MulFOp, CumIdentityKind::One>,
-             RewriteVCumOpToGeneric<hivm::VCumsumOp, arith::AddIOp,
-                                    arith::AddFOp, CumIdentityKind::Zero>,
-             RewriteVCumOpToGeneric<hivm::VCummaxOp, arith::MaxSIOp,
-                                    arith::MaximumFOp,
-                                    CumIdentityKind::LowestValue,
-                                    arith::MaxNumFOp>,
-             RewriteVCumOpToGeneric<hivm::VCumminOp, arith::MinSIOp,
-                                    arith::MinimumFOp,
-                                    CumIdentityKind::LargestValue,
-                                    arith::MinNumFOp>>(&ctx);
-    patterns.add<RewriteVBrcOp, RewriteVTransposeOp, RewriteVArangeOp,
-                 RewriteVConcatOp, RewriteVReduceOp, RewriteLoadOp,
-                 RewriteCastOp, RewriteVCmpOp,
-                 RewriteVModOp<hivm::VModUIOp, arith::RemUIOp>,
-                 RewriteVModOp<hivm::VModOp, arith::RemSIOp>, RewriteInterleave,
-                 RewriteDeinterleave, HIVMToHfusionBitcastOp,
-                 RewriteAtomicCasOp>(&ctx);
+    mlir::execution_engine::populateConvertHIVMToUpstreamPatterns(
+        patterns, convertToNamedOp);
 
     ConversionTarget target(ctx);
     target.addIllegalDialect<hivm::HIVMDialect>();
@@ -1729,111 +1723,31 @@ struct ConvertHIVMToUpstream
                                       std::move(patterns))))
       signalPassFailure();
   }
-
-  void runOnOperation() override {
-    if (hacc::utils::isMemBasedArch(cast<ModuleOp>(getOperation()))) {
-      runOnOperation_a3();
-      return;
-    }
-
-    auto &ctx = getContext();
-
-    // TODO: The fa and hstu compilation issues are temporarily resolved, and a
-    // formal solution will be provided after further investigation. For now,
-    // these issues are commented out instead of being deleted. This branch will
-    // only be used by native CV and will not affect other functions.
-
-    auto *moduleOp = getOperation();
-    SmallVector<func::FuncOp> functions;
-    moduleOp->walk([&functions](func::FuncOp funcOp) {
-      if(hacc::utils::isHost(funcOp)){
-        return;
-      }
-      std::optional<mlir::hivm::TFuncCoreType> funcCoreType =
-          mlir::hivm::queryFuncCoreType(funcOp);
-      if (funcCoreType.has_value() &&
-          funcCoreType.value() == mlir::hivm::TFuncCoreType::AIC) {
-        return;
-      }
-      functions.push_back(funcOp);
-    });
-    RewritePatternSet patterns(&ctx);
-    if (convertToNamedOp) {
-      patterns.add<RewriteElemwiseOp<hivm::VShLOp, hfusion::ElemwiseBinaryOp,
-                                     hfusion::BinaryFn::shli>>(&ctx);
-      patterns.add<RewriteNamedVDivOp>(&ctx);
-    } else {
-      patterns.add<RewriteVModOp<hivm::VShLOp, arith::ShLIOp>>(&ctx);
-      patterns.add<RewriteVDivOp>(&ctx);
-    }
-    patterns
-        .add<RewriteFromGenericToGeneric<hivm::VAbsOp, linalg::AbsOp>,
-             RewriteFromGenericToGeneric<hivm::VAddOp, linalg::AddOp>,
-             RewriteFromGenericToGeneric<hivm::VSubOp, linalg::SubOp>,
-             RewriteFromGenericToGeneric<hivm::VMulOp, linalg::MulOp>,
-             RewriteFromGenericToGeneric<hivm::VExpOp, linalg::ExpOp>,
-             RewriteFromGenericToGeneric<hivm::VLnOp, linalg::LogOp>,
-             RewriteFromGenericToGeneric<hivm::VRsqrtOp, linalg::RsqrtOp>,
-             RewriteFromGenericToGeneric<hivm::VSqrtOp, linalg::SqrtOp>,
-             RewriteFromGenericToGeneric<hivm::VTanhOp, linalg::TanhOp>,
-             RewriteFromGenericToGeneric<hivm::VRecOp, linalg::ReciprocalOp>,
-             RewriteFromGenericToGeneric<hivm::VSelOp, linalg::SelectOp>,
-             RewriteFromGenericToGeneric<hivm::VErfOp, linalg::ErfOp>>(&ctx);
-    patterns.add<
-        RewriteSignedAwareBinaryToLinalg<hivm::VMaxOp, linalg::MaxOp,
-                                         linalg::BinaryFn::max_signed,
-                                         linalg::BinaryFn::max_unsigned>,
-        RewriteSignedAwareBinaryToLinalg<hivm::VMinOp, linalg::MinOp,
-                                         linalg::BinaryFn::min_signed,
-                                         linalg::BinaryFn::min_unsigned>>(&ctx);
-    patterns.add<RewriteElemwiseOp<hivm::VReluOp, hfusion::ElemwiseUnaryOp,
-                                   hfusion::UnaryFn::relu>,
-                 RewriteElemwiseOp<hivm::VNotOp, hfusion::ElemwiseUnaryOp,
-                                   hfusion::UnaryFn::vnot>>(&ctx);
-    patterns.add<RewriteVBitwiseLogicOp<hivm::VAndOp, arith::AndIOp>,
-                 RewriteVBitwiseLogicOp<hivm::VOrOp, arith::OrIOp>,
-                 RewriteVBitwiseLogicOp<hivm::VXorOp, arith::XOrIOp>,
-                  RewriteVBitwiseShiftOp<arith::ShRSIOp, arith::ShRUIOp>>(&ctx);
-    if (convertToNamedOp) {
-      patterns
-          .add<RewriteVCumOpToHFusion<hivm::VCumprodOp, hfusion::CumprodOp>,
-               RewriteVCumOpToHFusion<hivm::VCumsumOp, hfusion::CumsumOp>,
-               RewriteVCumOpToHFusion<hivm::VCummaxOp, hfusion::CummaxOp>,
-               RewriteVCumOpToHFusion<hivm::VCumminOp, hfusion::CumminOp>>(
-              &ctx);
-    }
-    patterns
-        .add<RewriteVCumOpToGeneric<hivm::VCumprodOp, arith::MulIOp,
-                                    arith::MulFOp, CumIdentityKind::One>,
-             RewriteVCumOpToGeneric<hivm::VCumsumOp, arith::AddIOp,
-                                    arith::AddFOp, CumIdentityKind::Zero>,
-             RewriteVCumOpToGeneric<hivm::VCummaxOp, arith::MaxSIOp,
-                                    arith::MaximumFOp,
-                                    CumIdentityKind::LowestValue,
-                                    arith::MaxNumFOp>,
-             RewriteVCumOpToGeneric<hivm::VCumminOp, arith::MinSIOp,
-                                    arith::MinimumFOp,
-                                    CumIdentityKind::LargestValue,
-                                    arith::MinNumFOp>>(&ctx);
-    // TODO: delete RewriteLoadOp, relate to issue:897
-    patterns.add<RewriteVBrcOp, RewriteVTransposeOp, RewriteVArangeOp,
-                 RewriteVConcatOp, RewriteVReduceOp, RewriteCastOp,
-                 RewriteVCmpOp, RewriteVModOp<hivm::VModUIOp, arith::RemUIOp>,
-                 RewriteVModOp<hivm::VModOp, arith::RemSIOp>, RewriteInterleave,
-                 RewriteDeinterleave, HIVMToHfusionBitcastOp,
-                 RewriteAtomicCasOp>(&ctx);
-
-    for (func::FuncOp func : functions) {
-      if (func.getBody().empty())
-        continue;
-      if (failed(applyPatternsGreedily(func, std::move(patterns)))) {
-        signalPassFailure();
-        break;
-      }
-    }
-  }
 };
 } // namespace
+
+void mlir::execution_engine::populateConvertHIVMToUpstreamPatterns(
+    RewritePatternSet &patterns, bool convertToNamedOp) {
+  populateCommonPatterns(patterns, convertToNamedOp);
+  auto *ctx = patterns.getContext();
+  patterns.add<RewriteFromGenericToGeneric<hivm::StoreOp, linalg::CopyOp>>(ctx);
+  patterns.add<RewriteVBitwiseLogicOp<hivm::VAndOp, arith::AndIOp>,
+               RewriteVBitwiseLogicOp<hivm::VOrOp, arith::OrIOp>,
+               RewriteVBitwiseLogicOp<hivm::VXorOp, arith::XOrIOp>>(ctx);
+  // TODO: delete RewriteLoadOp, relate to issue:897
+  patterns.add<RewriteLoadOp>(ctx);
+}
+
+void mlir::execution_engine::populateConvertHIVMToHFusionPatterns(
+    RewritePatternSet &patterns, bool convertToNamedOp) {
+  populateCommonPatterns(patterns, convertToNamedOp);
+  auto *ctx = patterns.getContext();
+  // TODO: delete RewriteLoadOp, relate to issue:897
+  // hivm.hir.load must stay unconverted in the partial conversion.
+  patterns.add<RewriteVBitwiseLogicOp<hivm::VAndOp, arith::AndIOp>,
+               RewriteVBitwiseLogicOp<hivm::VOrOp, arith::OrIOp>,
+               RewriteVBitwiseLogicOp<hivm::VXorOp, arith::XOrIOp>>(ctx);
+}
 
 std::unique_ptr<Pass>
 mlir::execution_engine::createConvertHIVMToUpstreamPass(
