@@ -159,7 +159,7 @@ SyncSolverV2::getGraphSolverRef(Occurrence *occ1, Occurrence *occ2,
       return;
     }
     if (isCVPreloading) {
-      if (conflictPair->isBackwardPair) {
+      if (conflictPair->isSetWaitBackwardPair) {
         if (!conflictPair->setWaitPairInfo.has_value() ||
             !conflictPair->setWaitPairInfo->isCVPreloading) {
           return;

@@ -137,7 +137,6 @@ Occurrence *SyncSolverBase::tryGetBeforePlaceHolderOcc(Occurrence *occ) {
   return placeHolderOcc;
 }
 
-
 Occurrence *SyncSolverBase::tryGetAfterPlaceHolderOcc(Occurrence *occ) {
   assert(occ != nullptr);
   assert(llvm::isa_and_present<Scope>(occ->op));
@@ -153,7 +152,6 @@ Occurrence *SyncSolverBase::tryGetAfterPlaceHolderOcc(Occurrence *occ) {
   assert(placeHolderOcc != nullptr || !llvm::isa_and_present<Loop>(occ->op));
   return placeHolderOcc;
 }
-
 
 Occurrence *SyncSolverBase::getScopeBeginPlaceHolderOcc(Occurrence *occ) {
   assert(occ != nullptr);
@@ -217,34 +215,104 @@ SyncSolverBase::getSetWaitLCAPairOcc(Occurrence *occ1, Occurrence *occ2) {
   return std::make_pair(setOcc, waitOcc);
 }
 
-Occurrence *SyncSolverBase::getFirstIterOcc(Occurrence *occ,
-                                            Occurrence *parOcc) {
-  assert(occ != nullptr && parOcc != nullptr);
-  if (parOcc->depth + 1 < occ->depth) {
-    auto *newParOcc = getFirstIterOcc(
-        occ->getNthParent(occ->depth - parOcc->depth - 1), parOcc);
-    return getFirstIterOcc(occ, newParOcc);
+bool SyncSolverBase::isFirstIterOcc(Occurrence *occ, Occurrence *loopOcc) {
+  for (auto *scopeOcc : loopOcc->getLoopFirstIterOccs()) {
+    if (scopeOcc->isAncestor(occ)) {
+      return true;
+    }
   }
-  auto *it =
-      std::find_if(parOcc->childOccs.begin(), parOcc->childOccs.end(),
-                   [occ](Occurrence *curOcc) { return occ->op == curOcc->op; });
-  assert(it != parOcc->childOccs.end());
-  return *it;
+  return false;
+}
+
+bool SyncSolverBase::isLastIterOcc(Occurrence *occ, Occurrence *loopOcc) {
+  for (auto *scopeOcc : loopOcc->getLoopSecondIterOccs()) {
+    if (scopeOcc->isAncestor(occ)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+Occurrence *SyncSolverBase::getFirstIterOcc(Occurrence *occ,
+                                            Occurrence *loopOcc) {
+  assert(loopOcc->isAncestor(occ));
+  if (isFirstIterOcc(occ, loopOcc)) {
+    return occ;
+  }
+
+  auto firstIterScopeOccs = loopOcc->getLoopFirstIterOccs();
+  auto lastIterScopeOccs = loopOcc->getLoopSecondIterOccs();
+  assert(firstIterScopeOccs.size() == lastIterScopeOccs.size());
+
+  Occurrence *parOcc1{nullptr};
+  Occurrence *parOcc2{nullptr};
+  for (auto [scopeOcc1, scopeOcc2] :
+       llvm::zip(firstIterScopeOccs, lastIterScopeOccs)) {
+    if (scopeOcc2->isAncestor(occ)) {
+      parOcc1 = scopeOcc1;
+      parOcc2 = scopeOcc2;
+      break;
+    }
+  }
+  assert(parOcc1 != nullptr && parOcc2 != nullptr);
+
+  while (parOcc2 != occ) {
+    bool found = false;
+    for (auto [childOcc1, childOcc2] :
+         llvm::zip(parOcc1->childOccs, parOcc2->childOccs)) {
+      if (childOcc2->isAncestor(occ)) {
+        found = true;
+        parOcc1 = childOcc1;
+        parOcc2 = childOcc2;
+        break;
+      }
+    }
+    assert(found);
+  }
+
+  assert(parOcc2 == occ && parOcc1 != nullptr);
+  return parOcc1;
 }
 
 Occurrence *SyncSolverBase::getLastIterOcc(Occurrence *occ,
-                                           Occurrence *parOcc) {
-  assert(occ != nullptr && parOcc != nullptr);
-  if (parOcc->depth + 1 < occ->depth) {
-    auto *newParOcc = getLastIterOcc(
-        occ->getNthParent(occ->depth - parOcc->depth - 1), parOcc);
-    return getLastIterOcc(occ, newParOcc);
+                                           Occurrence *loopOcc) {
+  assert(loopOcc->isAncestor(occ));
+  if (isLastIterOcc(occ, loopOcc)) {
+    return occ;
   }
-  auto it =
-      std::find_if(parOcc->childOccs.rbegin(), parOcc->childOccs.rend(),
-                   [occ](Occurrence *curOcc) { return occ->op == curOcc->op; });
-  assert(it != parOcc->childOccs.rend());
-  return *it;
+
+  auto firstIterScopeOccs = loopOcc->getLoopFirstIterOccs();
+  auto lastIterScopeOccs = loopOcc->getLoopSecondIterOccs();
+  assert(firstIterScopeOccs.size() == lastIterScopeOccs.size());
+
+  Occurrence *parOcc1{nullptr};
+  Occurrence *parOcc2{nullptr};
+  for (auto [scopeOcc1, scopeOcc2] :
+       llvm::zip(firstIterScopeOccs, lastIterScopeOccs)) {
+    if (scopeOcc1->isAncestor(occ)) {
+      parOcc1 = scopeOcc1;
+      parOcc2 = scopeOcc2;
+      break;
+    }
+  }
+  assert(parOcc1 != nullptr && parOcc2 != nullptr);
+
+  while (parOcc1 != occ) {
+    bool found = false;
+    for (auto [childOcc1, childOcc2] :
+         llvm::zip(parOcc1->childOccs, parOcc2->childOccs)) {
+      if (childOcc1->isAncestor(occ)) {
+        found = true;
+        parOcc1 = childOcc1;
+        parOcc2 = childOcc2;
+        break;
+      }
+    }
+    assert(found);
+  }
+
+  assert(parOcc1 == occ && parOcc2 != nullptr);
+  return parOcc2;
 }
 
 bool SyncSolverBase::checkSkipCrossCorePair(hivm::TCoreType coreTypeSrc,
@@ -917,7 +985,7 @@ std::optional<EventIdInfo> SyncSolverBase::getMultiBufferEventIdInfo(
   if (waitOcc->op->getParentOfType<Loop>() != multibufferScope) {
     return {};
   }
-  
+
   EventIdInfo eventIdInfo;
   eventIdInfo.eventIdNum = eventIdNum.value();
   eventIdInfo.multiBufferInfo = MultiBufferInfo(multibufferScope);
@@ -1393,9 +1461,9 @@ SyncSolverBase::getFixedSetWaitOcc(Occurrence *occ1, Occurrence *occ2,
   }
 
   assert(ret.setOcc->op != nullptr && ret.waitOcc->op != nullptr);
-  ret.isForwardPair =
+  ret.isOpForwardPair =
       ret.setOcc->op->preOrderIndex < ret.waitOcc->op->preOrderIndex;
-  ret.isBackwardPair = isBackwardSync(ret.setOcc, ret.waitOcc);
+  ret.isSetWaitBackwardPair = isBackwardSync(ret.setOcc, ret.waitOcc);
   return ret;
 }
 
@@ -1414,9 +1482,6 @@ SyncSolverBase::getFunctionBlockSetWaitOcc(Occurrence *occ1, Occurrence *occ2) {
 std::optional<std::pair<Occurrence *, Occurrence *>>
 SyncSolverBase::getUnlikelyCondSetWaitOcc(Occurrence *occ1, Occurrence *occ2) {
   assert(occ1 != nullptr && occ2 != nullptr);
-  if (options.isCrossCoreMode() && isBackwardSync(occ1, occ2)) {
-    return {};
-  }
   if (auto *unlikelyParCondOcc1 =
           Occurrence::getUnlikelyParentCondition(occ1)) {
     if (!unlikelyParCondOcc1->isProperAncestor(occ2)) {
@@ -1531,7 +1596,8 @@ SyncSolverBase::getEventIdSolverRef(hivm::PIPE pipeSrc, hivm::PIPE pipeDst) {
   if (!eventIdSolver.contains(key)) {
     int64_t eventIdNumMax =
         getHWAvailableEventIdNum(options.syncMode, pipeSrc, pipeDst);
-    eventIdSolver[key] = std::make_unique<EventIdSolver>(eventIdNumMax, options.roundRobinEventIds);
+    eventIdSolver[key] = std::make_unique<EventIdSolver>(
+        eventIdNumMax, options.roundRobinEventIds);
   }
   return eventIdSolver[key];
 }
@@ -1567,7 +1633,7 @@ SyncSolverBase::checkAndApplyMmadl0LoopOpt(ConflictPair *conflictPair,
   }
   if (conflictPair->setCorePipeInfo.pipe == PIPE::PIPE_MTE2 &&
       conflictPair->waitCorePipeInfo.pipe == PIPE::PIPE_MTE1) {
-    if (!conflictPair->isInnerBackward && occ2->depth >= 3 &&
+    if (!conflictPair->isInnerBackwardPair && occ2->depth >= 3 &&
         occ2->getNthParent(3) == parOcc2 && isMmadL0LoadOp(occ2->op) &&
         isChildOfMmadLoopOp(occ2)) {
       conflictPair->waitOnFirstIterOnly = true;
@@ -1777,7 +1843,7 @@ bool SyncSolverBase::checkRepeatMultiBufferFlagId(ConflictPair *conflictPair) {
   if (conflictPair->eventIdInfo.cannotRepeatFlagId) {
     return false;
   }
-  if (!conflictPair->isBackwardPair ||
+  if (!conflictPair->isSetWaitBackwardPair ||
       conflictPair->eventIdInfo.eventIdNum <= 1 ||
       conflictPair->eventIdInfo.eventIdRepeatNum > 1 ||
       conflictPair->movedToOuterLoop) {
@@ -1840,10 +1906,12 @@ ConflictPair *SyncSolverBase::handleSetWaitConflict(
     }
   }
 
-  assert((!setWaitPairInfo.isForwardPair || !setWaitPairInfo.isBackwardPair) ||
+  assert((!setWaitPairInfo.isOpForwardPair ||
+          !setWaitPairInfo.isSetWaitBackwardPair) ||
          setWaitPairInfo.isCVPipelining || setWaitPairInfo.isCVPreloading ||
          options.enableUnitFlagFeature);
 
+  bool movedToOuterLoop{false};
   Loop *parentLCALoopOp{nullptr};
   Occurrence *parentLCALoopOcc{nullptr};
   Occurrence *parentLCALoopBeforePHOcc{nullptr};
@@ -1861,9 +1929,10 @@ ConflictPair *SyncSolverBase::handleSetWaitConflict(
       corePipeDst, setOcc->endIndex, waitOcc->startIndex);
   auto *newConflictPair = conflictPair.get();
   assert(conflictPair->startIndex <= conflictPair->endIndex);
-  conflictPair->isBackwardPair = setWaitPairInfo.isBackwardPair;
-  conflictPair->isInnerBackward =
-      !setWaitPairInfo.isForwardPair && setWaitPairInfo.isBackwardPair;
+  conflictPair->isOccBackwardPair = isBackwardSync(occ1, occ2);
+  conflictPair->isSetWaitBackwardPair = setWaitPairInfo.isSetWaitBackwardPair;
+  conflictPair->isInnerBackwardPair =
+      !setWaitPairInfo.isOpForwardPair && setWaitPairInfo.isSetWaitBackwardPair;
   conflictPair->isUseless = isUseless;
   conflictPair->eventIdInfo = eventIdInfo;
   conflictPair->setWaitPairInfo = setWaitPairInfo;
@@ -1879,7 +1948,7 @@ ConflictPair *SyncSolverBase::handleSetWaitConflict(
   }
 
   // calc parent-loop occ (for backward pairs)
-  if (conflictPair->isBackwardPair) {
+  if (conflictPair->isOccBackwardPair) {
     auto [parOcc1, parOcc2] = Occurrence::getLCAPair(occ1, occ2);
     assert(parOcc1 != nullptr && parOcc2 != nullptr);
 
@@ -1887,21 +1956,24 @@ ConflictPair *SyncSolverBase::handleSetWaitConflict(
     if (moveBackwardSyncPairsToOutmostLoop) {
       while (auto *grandParentLoopOcc =
                  parentLCALoopOcc->getParentOfType<Loop>()) {
-        conflictPair->movedToOuterLoop = true;
+        movedToOuterLoop = true;
         parentLCALoopOcc = grandParentLoopOcc;
       }
     }
     assert(parentLCALoopOcc != nullptr);
-    conflictPair->backwardSyncLoopOcc = parentLCALoopOcc;
 
     parentLCALoopOp = llvm::dyn_cast<Loop>(parentLCALoopOcc->op);
     assert(parentLCALoopOp != nullptr);
-    conflictPair->backwardSyncLoopOp = parentLCALoopOp;
 
     parentLCALoopBeforePHOcc = tryGetBeforePlaceHolderOcc(parentLCALoopOcc);
     assert(parentLCALoopBeforePHOcc != nullptr);
     parentLCALoopAfterPHOcc = tryGetAfterPlaceHolderOcc(parentLCALoopOcc);
     assert(parentLCALoopAfterPHOcc != nullptr);
+  }
+  if (conflictPair->isSetWaitBackwardPair) {
+    conflictPair->movedToOuterLoop = movedToOuterLoop;
+    conflictPair->backwardSyncLoopOcc = parentLCALoopOcc;
+    conflictPair->backwardSyncLoopOp = parentLCALoopOp;
   }
 
   // modify set/wait pairs for mmadl opt
@@ -1914,7 +1986,7 @@ ConflictPair *SyncSolverBase::handleSetWaitConflict(
   bool keepMultiEventId =
       conflictPair->eventIdInfo.cvPipeliningInfo.has_value() ||
       conflictPair->eventIdInfo.cvPreloadingInfo.has_value();
-  if (!conflictPair->isInnerBackward ||
+  if (!conflictPair->isInnerBackwardPair ||
       (!keepMultiEventId &&
        disabledMultiEventIdPairs.contains({corePipeSrc, corePipeDst}))) {
     conflictPair->eventIdInfo = EventIdInfo(1);
@@ -1939,7 +2011,7 @@ ConflictPair *SyncSolverBase::handleSetWaitConflict(
     curEventIdSolver->insertConflictPair(oldEventIdNode, conflictPair.get());
   } else {
     bool reversedPriority = false;
-    if (conflictPair->isInnerBackward) {
+    if (conflictPair->isInnerBackwardPair) {
       // Reverse the default ordering only when both occurrences are direct
       // children of the LCA loop occurrence; this identifies an intra-loop
       // backward relation at the same nesting level.
@@ -2018,7 +2090,31 @@ ConflictPair *SyncSolverBase::handleSetWaitConflict(
         std::make_pair(std::move(extraConflictPair), parentScope));
     return true;
   };
-  if (conflictPair->isBackwardPair) {
+  if (conflictPair->isOccBackwardPair && !conflictPair->isSetWaitBackwardPair) {
+    // Occurrence conflict is backward, but the inserted set/wait pair is
+    // forward because it sits in the first or last iteration (e.g. unlikely
+    // conditions). Insert a useless conflict pair on the opposite iteration so
+    // the event id stays live across the wrap-around.
+    if (isFirstIterOcc(setOcc, parentLCALoopOcc)) {
+      auto *setOccLastIter = getLastIterOcc(setOcc, parentLCALoopOcc);
+      auto *waitOccLastIter = getLastIterOcc(waitOcc, parentLCALoopOcc);
+      if (!insertExtraConflictPair(setOccLastIter, waitOccLastIter,
+                                   parentLCALoopOcc,
+                                   /*couldNotRun=*/true)) {
+        return nullptr;
+      }
+    }
+    if (isLastIterOcc(setOcc, parentLCALoopOcc)) {
+      auto *setOccFirstIter = getFirstIterOcc(setOcc, parentLCALoopOcc);
+      auto *waitOccFirstIter = getFirstIterOcc(waitOcc, parentLCALoopOcc);
+      if (!insertExtraConflictPair(setOccFirstIter, waitOccFirstIter,
+                                   parentLCALoopOcc,
+                                   /*couldNotRun=*/true)) {
+        return nullptr;
+      }
+    }
+  }
+  if (conflictPair->isSetWaitBackwardPair) {
     bool insertOuterBwdConflictPair = false;
     if (conflictPair->eventIdInfo.getEventIdNum() > 1) {
       insertOuterBwdConflictPair = true;
@@ -2043,7 +2139,7 @@ ConflictPair *SyncSolverBase::handleSetWaitConflict(
       }
     }
   }
-  if (conflictPair->isInnerBackward) {
+  if (conflictPair->isInnerBackwardPair) {
     // insert header/footer useless conflictPairs to reserve the eventIds.
     auto *loopOpOcc1 = getFirstIterOcc(waitOcc, parentLCALoopOcc);
     auto *loopOpOcc2 = getLastIterOcc(setOcc, parentLCALoopOcc);
@@ -2141,13 +2237,13 @@ ConflictPair *SyncSolverBase::handleUnitFlagConflict(
   conflictPair->dontReuse = true;
   conflictPair->replacedWithUnitFlag = true;
   conflictPair->dontCheckForConflict = true;
-  conflictPair->isInnerBackward = isBackwardSync(setOcc, waitOcc);
+  conflictPair->isInnerBackwardPair = isBackwardSync(setOcc, waitOcc);
   conflictPair->parOcc1 = parOcc1;
   conflictPair->parOcc2 = parOcc2;
 
 #ifndef NDEBUG
   Occurrence *parentLCALoopOcc{nullptr};
-  if (conflictPair->isInnerBackward) {
+  if (conflictPair->isInnerBackwardPair) {
     auto [parOcc1, parOcc2] = Occurrence::getLCAPair(occ1, occ2);
     assert(parOcc1 != nullptr && parOcc2 != nullptr);
     parentLCALoopOcc = Occurrence::getParentloop(parOcc1);
@@ -2194,7 +2290,7 @@ std::vector<ConflictPair *> SyncSolverBase::getAllChosenConflictPairs() {
 void SyncSolverBase::collectBackwardSyncEventIds() {
   LLVM_DEBUG(llvm::dbgs() << "collectBackwardSyncEventIds\n";);
   for (auto &conflictPair : chosenConflictedPairs) {
-    if (!conflictPair->isUseless && conflictPair->isInnerBackward &&
+    if (!conflictPair->isUseless && conflictPair->isInnerBackwardPair &&
         conflictPair->eventIdNode != nullptr) {
       LLVM_DEBUG(llvm::dbgs() << "  " << conflictPair->str() << "\n";);
       for (auto eventId : conflictPair->eventIdNode->getEventIds()) {
