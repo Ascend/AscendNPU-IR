@@ -899,7 +899,7 @@ std::optional<EventIdInfo> SyncSolverBase::getMultiBufferEventIdInfo(
     return {};
   }
 
-  if(eventIdNum.value() > 2){
+  if (eventIdNum.value() > 2) {
     for (auto *conditionOp = rwOp1->getParentOfType<Condition>(); conditionOp;
          conditionOp = conditionOp->getParentOfType<Condition>()) {
       if (conditionOp->isProperAncestor(rwOp2) &&
