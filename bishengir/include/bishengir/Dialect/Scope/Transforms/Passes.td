@@ -118,7 +118,11 @@ def InlineScope : Pass<"inline-scope", "mlir::ModuleOp"> {
   let constructor = "mlir::scope::createInlineScopePass()";
   let options = [
     Option<"forceInline", "force-inline", "bool", /*default=*/"false",
-          "Inline scope regardless of `no_inline` attribute.">
+          "Inline scope regardless of `no_inline` attribute.">,
+    Option<"preserveSimtScopes", "preserve-simt-scopes", "bool",
+           /*default=*/"false",
+           "Keep SIMT scopes (vector_mode = simt) outlined by marking them "
+           "no_inline.">
   ];
 }
 

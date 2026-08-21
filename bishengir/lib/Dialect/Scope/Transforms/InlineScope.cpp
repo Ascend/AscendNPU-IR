@@ -15,11 +15,11 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file implements a pass to convert scopeOp to funcOp
+// This file implements a pass to inline scope regions back into their parent
+// functions.
 //
 //===----------------------------------------------------------------------===//
 
-#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Scope/Transforms/Passes.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -55,53 +55,38 @@ static bool isSimtScope(Operation *op) {
   return false;
 }
 
-template <typename OpTy>
-class ExtractOpsFromBodyPattern : public OpRewritePattern<OpTy> {
+class ExtractOpsFromBodyPattern : public OpRewritePattern<ScopeOp> {
 public:
-  using OpRewritePattern<OpTy>::OpRewritePattern;
-  LogicalResult matchAndRewrite(OpTy regionOp,
+  using OpRewritePattern<ScopeOp>::OpRewritePattern;
+  LogicalResult matchAndRewrite(ScopeOp scopeOp,
                                 PatternRewriter &rewriter) const override {
-    if (regionOp.getNoInline())
+    if (scopeOp.getNoInline())
       return failure();
 
-    assert(regionOp->getNumRegions() == 1 &&
-           regionOp.getRegion().hasOneBlock() &&
-           "only handle case of ScopeOp with single block");
-    Region &region = regionOp.getRegion();
+    if (!scopeOp.getRegion().hasOneBlock()) {
+      return rewriter.notifyMatchFailure(
+          scopeOp, "only single-block scope regions are handled");
+    }
+
+    Region &region = scopeOp.getRegion();
     Block &block = region.front();
     auto opsToMove = llvm::make_range(block.begin(), std::prev(block.end()));
 
     for (Operation &op : llvm::make_early_inc_range(opsToMove)) {
       LLVM_DEBUG(llvm::dbgs() << "Moving " << op << "\n";);
-      rewriter.moveOpBefore(&op, regionOp);
+      rewriter.moveOpBefore(&op, scopeOp);
     }
 
     for (auto [res, opr] : llvm::zip_equal(
-             regionOp.getResults(),
-             regionOp.getRegion().front().getTerminator()->getOperands())) {
+             scopeOp.getResults(),
+             scopeOp.getRegion().front().getTerminator()->getOperands())) {
       rewriter.replaceAllUsesWith(res, opr);
     }
 
-    rewriter.eraseOp(regionOp);
+    rewriter.eraseOp(scopeOp);
     return success();
   }
 };
-
-class ExtractScopeBodyPass : public InlineScopeBase<ExtractScopeBodyPass> {
-public:
-  explicit ExtractScopeBodyPass() : InlineScopeBase() {}
-  void runOnOperation() final;
-};
-
-void ExtractScopeBodyPass::runOnOperation() {
-  ModuleOp moduleOp = getOperation();
-  RewritePatternSet patterns(&getContext());
-
-  patterns.add<ExtractOpsFromBodyPattern<ScopeOp>>(&getContext());
-  if (failed(applyPatternsGreedily(moduleOp, std::move(patterns)))) {
-    signalPassFailure();
-  }
-}
 
 class InlineScopePass : public InlineScopeBase<InlineScopePass> {
 public:
@@ -112,23 +97,29 @@ public:
 
 void InlineScopePass::runOnOperation() {
   auto moduleOp = getOperation();
-  PassManager pm(moduleOp->getContext());
 
   if (forceInline) {
     moduleOp.walk([](scope::ScopeOp op) { op.setNoInline(false); });
   }
 
-  // regbase-only: SIMT scopes should not be inlined
-  if (hacc::utils::isRegBasedArch(moduleOp)) {
+  // SIMT scopes are kept outlined: they are lowered to independent SIMT
+  // vector functions and must not be merged back into the caller.
+  if (preserveSimtScopes) {
     moduleOp.walk([](scope::ScopeOp op) {
       if (isSimtScope(op))
         op.setNoInline(true);
     });
   }
 
-  pm.addPass(std::make_unique<ExtractScopeBodyPass>());
-  pm.addPass(createInlinerPass());
+  RewritePatternSet patterns(&getContext());
+  patterns.add<ExtractOpsFromBodyPattern>(&getContext());
+  if (failed(applyPatternsGreedily(moduleOp, std::move(patterns))))
+    return signalPassFailure();
 
+  // FIXME: Consider moving it outside the pass
+  // Inline the calls that became bodyless (e.g. outlined vector functions).
+  PassManager pm(moduleOp->getContext());
+  pm.addPass(createInlinerPass());
   if (failed(pm.run(moduleOp)))
     return signalPassFailure();
 }

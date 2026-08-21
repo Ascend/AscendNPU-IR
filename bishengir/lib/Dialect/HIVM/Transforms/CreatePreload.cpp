@@ -696,7 +696,11 @@ void CreatePreloadPass::runOnOperation() {
   PassManager pm(&getContext());
   pm.addPass(createCSEPass());
   pm.addPass(createCanonicalizerPass());
-  pm.addPass(scope::createInlineScopePass());
+  // SIMT scopes only exist on RegBase so it is safe to preserve them
+  // unconditionally.
+  InlineScopeOptions inlineScopeOptions;
+  inlineScopeOptions.preserveSimtScopes = true;
+  pm.addPass(scope::createInlineScopePass(inlineScopeOptions));
 
   if (failed(pm.run(moduleOp))) {
     signalPassFailure();
