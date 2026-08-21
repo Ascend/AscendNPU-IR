@@ -87,8 +87,13 @@ static bool isReductionOp(Operation *innerOp, Operation *outterOp) {
 }
 
 static bool isInFusionWhiteList(Operation *op) {
+  if ((isa<tensor::ExtractOp>(op) || isa<tensor::ExtractSliceOp>(op)) &&
+      op->hasAttr("DuplicateTensorExtractForCube::visitedLabel"))
+    return false;
+  if (isa<linalg::TransposeOp>(op) && !isVsstbPatternTransposeOp(op))
+    return false;
   return isReshapeOp(op) || isa<tensor::ExtractSliceOp>(op) ||
-         isa<tensor::ExtractOp>(op) ||
+         isa<tensor::ExtractOp>(op) || isa<tensor::InsertSliceOp>(op) ||
          isValidLinalgOp(dyn_cast<linalg::LinalgOp>(op));
 }
 
@@ -339,17 +344,42 @@ bool MaxParallelAnalyzer::useNarrowingCastInConsumer(const int producerIndex,
   return false;
 }
 
+// Decide whether a fusion pair involving an insert_slice is allowed.
+// insert_slice as producer is always rejected; as consumer it is only
+// allowed in the bridge case, where the producer also feeds a later
+// linalg consumer so fusing the slice connects the two linalg ops.
+static bool isInsertSliceFusionAllowed(Operation *producerOp,
+                                       Operation *consumerOp) {
+  if (isa<tensor::InsertSliceOp>(producerOp))
+    return false;
+  if (!isa<tensor::InsertSliceOp>(consumerOp))
+    return true;
+  for (Operation *user : producerOp->getUsers()) {
+    if (user == consumerOp)
+      continue;
+    if (isValidLinalgOp(dyn_cast<linalg::LinalgOp>(user)) &&
+        consumerOp->isBeforeInBlock(user))
+      return true;
+  }
+  return false;
+}
+
 bool MaxParallelAnalyzer::areFusibleOps(const int producerIndex,
                                         const int consumerIndex) {
   auto producerOp = opsInBlock[producerIndex];
   auto consumerOp = opsInBlock[consumerIndex];
 
-  // If a SyncBlockSetOp is found, prohibit fusion to avoid data races
+  // If a SyncBlockSetOp is found, prohibit fusion to avoid data races.
   for (auto it = producerOp->getNextNode(); it != nullptr && it != consumerOp;
        it = it->getNextNode()) {
     if (isa<hivm::SyncBlockSetOp>(it)) {
       return false;
     }
+  }
+
+  if (!isInsertSliceFusionAllowed(producerOp, consumerOp)) {
+    LDBG("Rejecting fusion: insert_slice boundary");
+    return false;
   }
 
   // Only producer ExtractSlice/Extract Ops need to be fused to VF.
