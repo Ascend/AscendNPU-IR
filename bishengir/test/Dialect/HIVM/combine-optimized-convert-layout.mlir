@@ -627,3 +627,82 @@ func.func @no_fold_fixpipe_store_tensor_multi_use(%src: tensor<4x4x16x16xf32>) -
   hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%src : tensor<4x4x16x16xf32>) outs(%alloc : memref<64x64xf32>)
   return %fractal, %nd : tensor<8x4x16x8xf32>, tensor<64x64xf32>
 }
+
+// -----
+
+// Fold Fractal->ND convert_layout into an NZ2NZ fixpipe on reg-based A5.
+// f32 dest enables channel_split on the folded fixpipe.
+// CHECK-LABEL: func.func @fold_convert_fixpipe_channel_split_regbase
+// CHECK-SAME: %[[DST:.*]]: memref<16x16xf32
+// CHECK-NOT: hivm.hir.convert_layout
+// CHECK: hivm.hir.fixpipe {channel_split = true} ins(%{{.*}} : tensor<2x1x16x8xf32>) outs(%[[DST]] : memref<16x16xf32
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @fold_convert_fixpipe_channel_split_regbase(%dst: memref<16x16xf32, strided<[16, 1], offset: ?>>) {
+    %fractal = arith.constant dense<0.0> : tensor<2x1x16x8xf32>
+    %nd = hivm.hir.convert_layout %fractal output_shape [16, 16]
+        {dstLayout = #hivm.data_layout<ND>,
+         srcLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 8]>}
+        : (tensor<2x1x16x8xf32>) -> tensor<16x16xf32>
+    hivm.hir.fixpipe ins(%nd : tensor<16x16xf32>) outs(%dst : memref<16x16xf32, strided<[16, 1], offset: ?>>)
+    return
+  }
+}
+
+// -----
+
+// Same fold on reg-based A5 with f16 dest: no channel_split.
+// CHECK-LABEL: func.func @fold_convert_fixpipe_no_channel_split_f16_regbase
+// CHECK-SAME: %[[DST:.*]]: memref<16x16xf16
+// CHECK-NOT: hivm.hir.convert_layout
+// CHECK-NOT: channel_split = true
+// CHECK: hivm.hir.fixpipe ins(%{{.*}} : tensor<1x1x16x16xf16>) outs(%[[DST]] : memref<16x16xf16
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @fold_convert_fixpipe_no_channel_split_f16_regbase(%dst: memref<16x16xf16, strided<[16, 1], offset: ?>>) {
+    %fractal = arith.constant dense<0.0> : tensor<1x1x16x16xf16>
+    %nd = hivm.hir.convert_layout %fractal output_shape [16, 16]
+        {dstLayout = #hivm.data_layout<ND>,
+         srcLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>}
+        : (tensor<1x1x16x16xf16>) -> tensor<16x16xf16>
+    hivm.hir.fixpipe ins(%nd : tensor<16x16xf16>) outs(%dst : memref<16x16xf16, strided<[16, 1], offset: ?>>)
+    return
+  }
+}
+
+// -----
+
+// Reduced from chunk_kda_bwd_kernel_wy_dqkg_fused: fractal mmad ->
+// convert_layout{Fractal->ND f32} -> fixpipe F322F16 into fractal f16 that
+// feeds the next mmad. Channel-split must follow the fixpipe dest type (f16),
+// not the convert_layout result (f32).
+// CHECK-LABEL: func.func @fold_convert_fixpipe_f322f16_fractal_no_channel_split
+// CHECK-NOT: hivm.hir.convert_layout
+// CHECK: %[[MMAD0:.*]] = hivm.hir.mmadL1
+// CHECK: %[[FP:.*]] = hivm.hir.fixpipe
+// CHECK-NOT: channel_split = true
+// CHECK: ins(%[[MMAD0]] : tensor<4x4x16x16xf32>) outs(%{{.*}} : tensor<4x4x16x16xf16>) -> tensor<4x4x16x16xf16>
+// CHECK: hivm.hir.mmadL1 {{.*}}ins(%{{.*}}, %[[FP]]
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @fold_convert_fixpipe_f322f16_fractal_no_channel_split(
+      %a: tensor<4x4x16x16xf16>,
+      %b: tensor<4x4x16x16xf16>) -> tensor<4x4x16x16xf32> {
+    %true = arith.constant true
+    %c64 = arith.constant 64 : index
+    %empty0 = tensor.empty() : tensor<4x4x16x16xf32>
+    %mmad0 = hivm.hir.mmadL1 {already_set_real_mkn, b_transpose, fixpipe_for_result_already_inserted = true, normalized_in_L0C}
+        ins(%a, %b, %true, %c64, %c64, %c64 : tensor<4x4x16x16xf16>, tensor<4x4x16x16xf16>, i1, index, index, index)
+        outs(%empty0 : tensor<4x4x16x16xf32>) -> tensor<4x4x16x16xf32>
+    %nd = hivm.hir.convert_layout %mmad0 output_shape [64, 64]
+        {dstLayout = #hivm.data_layout<ND>,
+         srcLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>}
+        : (tensor<4x4x16x16xf32>) -> tensor<64x64xf32>
+    %fp_dst = tensor.empty() : tensor<4x4x16x16xf16>
+    %fp = hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>}
+        ins(%nd : tensor<64x64xf32>) outs(%fp_dst : tensor<4x4x16x16xf16>)
+        -> tensor<4x4x16x16xf16>
+    %empty1 = tensor.empty() : tensor<4x4x16x16xf32>
+    %mmad1 = hivm.hir.mmadL1 {a_transpose, already_set_real_mkn, fixpipe_for_result_already_inserted = true, normalized_in_L0C}
+        ins(%a, %fp, %true, %c64, %c64, %c64 : tensor<4x4x16x16xf16>, tensor<4x4x16x16xf16>, i1, index, index, index)
+        outs(%empty1 : tensor<4x4x16x16xf32>) -> tensor<4x4x16x16xf32>
+    return %mmad1 : tensor<4x4x16x16xf32>
+  }
+}

@@ -58,6 +58,9 @@ struct ValueComparator {
 
 namespace hivm {
 
+bool shouldEnableChannelSplit(Type dstType);
+bool shouldEnableChannelMerge(Type dstType);
+
 /// Plan memory strategy for storage entry reorder.
 enum class PlanMemoryStrategy {
   DEFAULT,       // keep original storage entry order without sorting

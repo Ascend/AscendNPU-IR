@@ -73,6 +73,26 @@
 namespace mlir {
 namespace hivm {
 
+bool shouldEnableChannelSplit(Type dstType) {
+  const int64_t alignM = 16;
+  const int64_t numElemPerBlock = mlir::utils::getNumPerBlock(dstType);
+  if (!getElementTypeOrSelf(dstType).isF32())
+    return false;
+  if (numElemPerBlock * 2 != alignM)
+    return false;
+  return true;
+}
+
+bool shouldEnableChannelMerge(Type dstType) {
+  const int64_t alignM = 16;
+  const int64_t numElemPerBlock = mlir::utils::getNumPerBlock(dstType);
+  if (!getElementTypeOrSelf(dstType).isInteger(8))
+    return false;
+  if (numElemPerBlock != alignM * 2)
+    return false;
+  return true;
+}
+
 namespace {
 /// Find the root memerf alloc for the input block argument.
 FailureOr<memref::AllocOp> getMemRefForBlockArgument(BlockArgument bbArg) {
