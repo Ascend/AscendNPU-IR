@@ -1386,6 +1386,53 @@ SyncSolverBase::getFixedSetWaitOcc(Occurrence *occ1, Occurrence *occ2,
   // loop(iter-1){
   //   condition{
   //     true-scope{}
+  //     setOcc(1)
+  //     false-scope{}
+  //     setOcc(2)
+  //   }
+  // }
+  // loop(iter-2){
+  //   condition{
+  //     waitOcc(2)
+  //     true-scope{}
+  //     waitOcc(1)
+  //     false-scope{}
+  //   }
+  // }
+  // - and fix it to be:
+  // loop(iter-1){
+  //   condition{
+  //     true-scope{
+  //       setOcc(1)
+  //       waitOcc(1)
+  //     }
+  //     false-scope{
+  //       setOcc(2)
+  //       waitOcc(2)
+  //     }
+  //   }
+  // }
+  // loop(iter-2){
+  //   condition{
+  //     true-scope{}
+  //     false-scope{}
+  //   }
+  // }
+  if (!eventIdInfo.has_value() || eventIdInfo->getEventIdNum() < 2) {
+    if (ret.setOcc->parentOcc != nullptr) {
+      if (isBackwardSync(ret.setOcc, ret.waitOcc)) {
+        if (llvm::isa_and_present<Condition>(ret.setOcc->parentOcc->op)) {
+          occ2 = getScopeEndPlaceHolderOcc(ret.setOcc);
+          std::tie(ret.setOcc, ret.waitOcc) = getSetWaitLCAPairOcc(occ1, occ2);
+        }
+      }
+    }
+  }
+
+  // - check if it's the case of:
+  // loop(iter-1){
+  //   condition{
+  //     true-scope{}
   //     setOcc()
   //     false-scope{}
   //   }
