@@ -19,7 +19,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/Helper.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
@@ -41,16 +40,19 @@
 #define DBGS() (llvm::dbgs() << "[" DEBUG_TYPE "]: ")
 #define LDBG(X) LLVM_DEBUG(DBGS() << X << "\n")
 
+namespace mlir {
 #define GEN_PASS_DEF_OUTLINESCOPE
 #include "bishengir/Dialect/Scope/Transforms/Passes.h.inc"
+} // namespace mlir
 
-using namespace impl;
+using namespace mlir;
+using namespace mlir::impl;
 namespace mlir {
 namespace scope {
 
 class OutlineScopePass : public OutlineScopeBase<OutlineScopePass> {
 public:
-  explicit OutlineScopePass() : OutlineScopeBase() {}
+  using OutlineScopeBase::OutlineScopeBase;
   void runOnOperation() final;
 };
 
@@ -71,9 +73,11 @@ class OutlineScopeOp : public OpRewritePattern<scope::ScopeOp> {
     return defOp;
   }
 
+  const bool outlineMarkedScopesOnly;
+
   SmallVector<Value> getInputs(ScopeOp scopeOp) const {
     SetVector<Value> inputs;
-    scopeOp.walk<WalkOrder::PreOrder>([&inputs, &scopeOp](Operation *op) {
+    scopeOp.walk<WalkOrder::PreOrder>([&inputs, &scopeOp, this](Operation *op) {
       for (auto &opr : op->getOpOperands()) {
         auto val = opr.get();
 
@@ -81,13 +85,10 @@ class OutlineScopeOp : public OpRewritePattern<scope::ScopeOp> {
         if (!isExternalToScope(scopeOp, val))
           continue;
 
-        auto mod = op->getParentOfType<ModuleOp>();
-        if (mod && hacc::utils::isRegBasedArch(mod)) {
-          // External constants are cloned into the outlined function body, so
-          // they do not need to be modeled as function inputs.
-          if (getConstantLikeDefiningOp(val))
-            continue;
-        }
+        // External constants are cloned into the outlined function body, so
+        // they do not need to be modeled as function inputs.
+        if (getConstantLikeDefiningOp(val))
+          continue;
 
         inputs.insert(val);
       }
@@ -113,13 +114,8 @@ class OutlineScopeOp : public OpRewritePattern<scope::ScopeOp> {
     return constants;
   }
 
-  SetVector<Operation *> getOpsOfScopeOp(ScopeOp scopeOp) const {
-    SetVector<Operation *> ops;
-    scopeOp.getRegion().walk([&](Operation *op) { ops.insert(op); });
-    return ops;
-  }
-
   FailureOr<func::FuncOp> outlineScope(scope::ScopeOp scopeOp,
+                                       ArrayRef<Value> inputs,
                                        PatternRewriter &rewriter) const {
     ModuleOp moduleOp = scopeOp->getParentOfType<ModuleOp>();
     func::FuncOp parF = scopeOp->getParentOfType<func::FuncOp>();
@@ -129,29 +125,23 @@ class OutlineScopeOp : public OpRewritePattern<scope::ScopeOp> {
     const std::string prefixFunctionName =
         scopeOp->getParentOfType<func::FuncOp>().getSymName().str() + "_scope";
 
-    SetVector<Operation *> ops = getOpsOfScopeOp(scopeOp);
-    SmallVector<Value> inputs = getInputs(scopeOp);
-
-    rewriter.setInsertionPoint(parF);
     FunctionType funcTy = FunctionType::get(
         moduleOp.getContext(), TypeRange(inputs), scopeOp->getResultTypes());
 
     func::FuncOp newFuncOp = rewriter.create<func::FuncOp>(
         moduleOp->getLoc(), prefixFunctionName, funcTy, scopeOp->getAttrs());
-    auto isRegBasedArch = moduleOp && hacc::utils::isRegBasedArch(moduleOp);
-    if (isRegBasedArch) {
-      // transfer layout attribute from scopeOp to funcOp if exists
-      for (auto [idx, input] : llvm::enumerate(inputs)) {
-        if (isa<BlockArgument>(input)) {
-          continue;
-        }
-        auto defOp = input.getDefiningOp();
-        if (!defOp) {
-          continue;
-        }
-        if (auto attr = defOp->getAttr("hivm.fractal_layout")) {
-          newFuncOp.setArgAttr(idx, "hivm.fractal_layout", attr);
-        }
+    // Transfer layout attribute from the defining op of an input to the
+    // outlined function argument, if present.
+    for (auto [idx, input] : llvm::enumerate(inputs)) {
+      if (isa<BlockArgument>(input)) {
+        continue;
+      }
+      auto defOp = input.getDefiningOp();
+      if (!defOp) {
+        continue;
+      }
+      if (auto attr = defOp->getAttr("hivm.fractal_layout")) {
+        newFuncOp.setArgAttr(idx, "hivm.fractal_layout", attr);
       }
     }
 
@@ -173,15 +163,13 @@ class OutlineScopeOp : public OpRewritePattern<scope::ScopeOp> {
       currentMap.map(oldIn, newIn);
     }
 
-    if (isRegBasedArch) {
-      // Materialize external constants first so cloned scope ops keep seeing
-      // constant values instead of extra outlined function arguments.
-      for (Operation *constantOp : getExternalConstantLikeOps(scopeOp)) {
-        auto *newConstOp = rewriter.clone(*constantOp, currentMap);
-        for (auto [oldRes, newRes] : llvm::zip_equal(
-                 constantOp->getResults(), newConstOp->getResults())) {
-          currentMap.map(oldRes, newRes);
-        }
+    // Materialize external constants first so cloned scope ops keep seeing
+    // constant values instead of extra outlined function arguments.
+    for (Operation *constantOp : getExternalConstantLikeOps(scopeOp)) {
+      auto *newConstOp = rewriter.clone(*constantOp, currentMap);
+      for (auto [oldRes, newRes] : llvm::zip_equal(
+               constantOp->getResults(), newConstOp->getResults())) {
+        currentMap.map(oldRes, newRes);
       }
     }
 
@@ -193,10 +181,6 @@ class OutlineScopeOp : public OpRewritePattern<scope::ScopeOp> {
       auto *newOp = rewriter.clone(*op, currentMap);
       if (isa<scope::ReturnOp>(op))
         newScopeReturnOp = &*newOp;
-    }
-
-    if (isRegBasedArch) {
-      assert(newScopeReturnOp != nullptr && "scope::ReturnOp is not cloned");
     }
 
     if (!newScopeReturnOp)
@@ -211,12 +195,11 @@ class OutlineScopeOp : public OpRewritePattern<scope::ScopeOp> {
 
   LogicalResult replaceScopeWithInvoke(scope::ScopeOp scopeOp,
                                        func::FuncOp funcOp,
+                                       ArrayRef<Value> inputs,
                                        PatternRewriter &rewriter) const {
     LDBG("Replacing invoke with callOp");
-    SetVector<Operation *> ops = getOpsOfScopeOp(scopeOp);
     rewriter.setInsertionPoint(scopeOp);
 
-    auto inputs = getInputs(scopeOp);
     Location loc = scopeOp->getLoc();
 
     // For SIMT scopes, wrap the call in an scf.if guard that checks
@@ -262,23 +245,21 @@ class OutlineScopeOp : public OpRewritePattern<scope::ScopeOp> {
   }
 
 public:
-  using OpRewritePattern<scope::ScopeOp>::OpRewritePattern;
-  explicit OutlineScopeOp(MLIRContext *context)
-      : OpRewritePattern<scope::ScopeOp>(context) {}
+  explicit OutlineScopeOp(MLIRContext *context, bool outlineMarkedScopesOnly)
+      : OpRewritePattern<scope::ScopeOp>(context),
+        outlineMarkedScopesOnly(outlineMarkedScopesOnly) {}
 
   LogicalResult matchAndRewrite(scope::ScopeOp scopeOp,
                                 PatternRewriter &rewriter) const override {
-    auto mod = scopeOp->getParentOfType<ModuleOp>();
-    if ((mod && hacc::utils::isRegBasedArch(mod)) &&
-        !scopeOp->hasAttr("outline")) {
+    if (outlineMarkedScopesOnly && !scopeOp->hasAttr("outline"))
       return failure();
-    }
-    FailureOr<func::FuncOp> newFuncOp = outlineScope(scopeOp, rewriter);
+    SmallVector<Value> inputs = getInputs(scopeOp);
+    FailureOr<func::FuncOp> newFuncOp = outlineScope(scopeOp, inputs, rewriter);
     if (failed(newFuncOp))
       return failure();
-    if (failed(replaceScopeWithInvoke(scopeOp, newFuncOp.value(), rewriter))) {
+    if (failed(replaceScopeWithInvoke(scopeOp, newFuncOp.value(), inputs,
+                                      rewriter)))
       return failure();
-    }
     return success();
   }
 };
@@ -287,15 +268,16 @@ void OutlineScopePass::runOnOperation() {
   ModuleOp module = getOperation();
   RewritePatternSet patterns(&getContext());
 
-  patterns.add<OutlineScopeOp>(&getContext());
+  patterns.add<OutlineScopeOp>(&getContext(), outlineMarkedScopesOnly);
 
   if (failed(applyPatternsGreedily(module, std::move(patterns)))) {
     signalPassFailure();
   }
 }
 
-std::unique_ptr<Pass> createOutlineScopePass() {
-  return std::make_unique<OutlineScopePass>();
+std::unique_ptr<Pass>
+createOutlineScopePass(const OutlineScopeOptions &options) {
+  return std::make_unique<OutlineScopePass>(options);
 }
 
 } // namespace scope

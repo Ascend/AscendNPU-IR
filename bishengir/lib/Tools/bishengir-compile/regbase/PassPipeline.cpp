@@ -519,7 +519,11 @@ void buildBiShengHIRPipeline(OpPassManager &pm,
       pm.addPass(hivm::createLegalizeBoolForSimtVFPass());
       pm.addPass(hivm::createInsertMemSemanticForSimtVFPass());
       pm.addPass(scope::createTransformOpForSIMTPass());
-      pm.addPass(scope::createOutlineScopePass());
+      // Only AutoScope-marked scopes are outlined;
+      // cube/vector leftovers stay inline.
+      OutlineScopeOptions outlineScopeOptions;
+      outlineScopeOptions.outlineMarkedScopesOnly = true;
+      pm.addPass(scope::createOutlineScopePass(outlineScopeOptions));
       pm.addPass(hivm::createInsertAllocBasePlaceholderPass());
       pm.addPass(hivm::createInferSimtVFMemEffectPass());
       // Infer per-argument mem scope hints from the mixed call boundary first;
