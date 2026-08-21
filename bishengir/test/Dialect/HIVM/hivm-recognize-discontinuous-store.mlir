@@ -10,7 +10,7 @@
 // dynamic src size.
 //
 // CHECK: %[[expand:.*]] = memref.expand_shape
-// CHECK: %[[alloc:.*]] = memref.alloc() : memref<64x8xf32, strided<[8, 1]>, #hivm.address_space<ub>>
+// CHECK: %[[alloc:.*]] = memref.alloc() : memref<64x8xf32, #hivm.address_space<ub>>
 // CHECK: %[[subview2:.*]] = memref.subview %[[alloc]][0, 0] [%arg1, 8] [1, 1]
 // CHECK: hivm.hir.vbrc ins(%[[expand]] : {{.*}}) outs(%[[subview2]] : {{.*}}) broadcast_dims = [1]
 // CHECK: %[[subview3:.*]] = memref.subview %[[subview2]][0, 0] [%arg1, 1] [1, 1]
@@ -30,7 +30,7 @@ func.func @store_brc_f32_collapse_shape_dyn_offsets(%arg0: index, %arg1: index, 
 
 // CHECK-LABEL: func.func @store_brc_f32_dynamic_dst_offset
 // CHECK: %[[expand:.*]] = memref.expand_shape
-// CHECK: %[[alloc:.*]] = memref.alloc() : memref<64x8xf32, strided<[8, 1]>, #hivm.address_space<ub>>
+// CHECK: %[[alloc:.*]] = memref.alloc() : memref<64x8xf32, #hivm.address_space<ub>>
 // CHECK: hivm.hir.vbrc ins(%[[expand]] : {{.*}}) outs(%[[alloc]] : {{.*}}) broadcast_dims = [1]
 // CHECK: %[[subview:.*]] = memref.subview %[[alloc]][0, 0] [64, 1] [1, 1]
 // CHECK: %[[collapse:.*]] = memref.collapse_shape %[[subview]] {{\[\[}}0, 1{{\]\]}}
