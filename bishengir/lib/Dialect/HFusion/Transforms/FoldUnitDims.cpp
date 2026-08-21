@@ -168,8 +168,6 @@ bool isDefinedByMulChainUsingInputs(Value out, SmallVector<Value> &ins) {
 bool checkProductRelation(
     SmallVectorImpl<OpFoldResult> &outs, SmallVectorImpl<OpFoldResult> &ins,
     SmallVectorImpl<ReassociationIndices> &reassocIdxVec) {
-  bool anyGroupMatched = false;
-
   for (auto [i, reassoc] : llvm::enumerate(reassocIdxVec)) {
     auto out = outs[i];
     auto outVal = llvm::dyn_cast_if_present<Value>(out);
@@ -189,13 +187,11 @@ bool checkProductRelation(
 
     bool isMatched = isDefinedByMulChainUsingInputs(outVal, insVal);
     if (isMatched && insVal.empty()) {
-      anyGroupMatched = true;
-    } else if (llvm::any_of(insVal, [](Value v) { return mlir::isa<IndexType>(v.getType()); })) {
-      return false; // Dynamic elements are unhandled in this group, reject!
+      return true;
     }
   }
 
-  return anyGroupMatched;
+  return false;
 }
 
 /**
@@ -269,69 +265,6 @@ std::optional<Value> checkValueMatchPattern(Value val,
   } else {
     return std::nullopt;
   }
-}
-
-// clang-format off
-/**
- * @brief Compute a safe collapsed MemRef type, sanitizing unsafe static strides on dynamic dimensions
- * @details Infers the target MemRefType for a CollapseShapeOp using upstream MLIR utilities, 
- * then audits the resulting strided layout. If a dimension is dynamic but upstream type inference 
- * calculates a static stride greater than 2, the stride is downgraded to dynamic to avoid unsafe 
- * memory gaps during hardware address generation.
- *
- * IR Type Transformation Example:
- * - Before Audit: memref<?x16xf32, strided<[4, 1], offset: ?>> (where dim 0 became dynamic)
- * - After Audit:  memref<?x16xf32, strided<[?, 1], offset: ?>> (stride 4 sanitized to kDynamic)
- *
- * @note This custom inference relaxes the strict structural constraints of 
- *       memref::CollapseShapeOp::isGuaranteedCollapsible to properly handle dynamic layout
- *       folding targeting Ascend NPU hardware without causing compiler verifier failures.
- *
- * @param[in] oldMemrefTy The original, uncollapsed source MemRef type
- * @param[in] squeezedShape The target shape array with unit dimensions removed
- * @param[in] reassocIdxVec Reassociation indices mapping source dimensions to target dimensions
- * @return MemRefType The audited and sanitized target MemRef configuration
- */
-// clang-format on
-static MemRefType
-computeSafeCollapsedType(MemRefType oldMemrefTy,
-                         ArrayRef<int64_t> squeezedShape,
-                         ArrayRef<ReassociationIndices> reassocIdxVec) {
-  // 1. Compute the baseline inferred type using standard MLIR utilities
-  MemRefType inferredType =
-      memref::CollapseShapeOp::computeCollapsedType(oldMemrefTy, reassocIdxVec);
-
-  // 2. Check if the inferred layout contains strided attributes
-  auto stridedLayout =
-      llvm::dyn_cast<StridedLayoutAttr>(inferredType.getLayout());
-  if (!stridedLayout)
-    return inferredType;
-
-  SmallVector<int64_t> collapsedStrides(stridedLayout.getStrides().begin(),
-                                        stridedLayout.getStrides().end());
-  bool hasUnsafeStride = false;
-
-  // 3. Verify against unsafe element gaps (> 2) while maintaining innermost
-  // unit strides
-  for (int64_t i = 0; i < inferredType.getRank(); ++i) {
-    if (inferredType.isDynamicDim(i) &&
-        collapsedStrides[i] != ShapedType::kDynamic &&
-        collapsedStrides[i] > 2) {
-      collapsedStrides[i] = ShapedType::kDynamic;
-      hasUnsafeStride = true;
-    }
-  }
-
-  // 4. Reconstruct the layout with sanitized dynamic strides if a mismatch was
-  // caught
-  if (hasUnsafeStride) {
-    auto safeLayout = StridedLayoutAttr::get(
-        oldMemrefTy.getContext(), stridedLayout.getOffset(), collapsedStrides);
-    inferredType = MemRefType::get(squeezedShape, oldMemrefTy.getElementType(),
-                                   safeLayout, oldMemrefTy.getMemorySpace());
-  }
-
-  return inferredType;
 }
 
 // clang-format off
@@ -441,16 +374,13 @@ FailureOr<Value> tryCollapseValue(Value oldVal, OpBuilder &builder,
     LLVM_DEBUG(llvm::dbgs() << "[tryCollapseValue] reassocIdxVec is\n";
                utils::dumpReassociationIndicesVector(reassocIdxVec););
     if (auto oldMemrefTy = dyn_cast<MemRefType>(oldTy)) {
-      // Calculate the inferred type using the extracted safe function
-      auto inferredType = computeSafeCollapsedType(oldMemrefTy, squeezedShape, reassocIdxVec);
-      
       // Why not using memref::CollapseShapeOp::isGuaranteedCollapsible?
       // Because it is strict when dealing with the dynamic shape.
       // We do not use such strict rule to collapse.
       // In fact, memref<1x?xf32, strided<[5, 1], offset: ?>> could be collapsed
       // to memref<?xf32, strided<[1], offset: ?>>.
       newVal =
-          builder.create<memref::CollapseShapeOp>(loc, inferredType, oldVal, reassocIdxVec);
+          builder.create<memref::CollapseShapeOp>(loc, oldVal, reassocIdxVec);
     } else if (auto oldTensorTy = dyn_cast<RankedTensorType>(oldTy)) {
       auto newTy = tensor::CollapseShapeOp::inferCollapsedType(oldTensorTy,
                                                                reassocIdxVec);
@@ -539,12 +469,12 @@ tryExpandValueWithUnitDim(Value oldVal, Value refVal,
   Operation *expandOp;
   if (auto newMemrefTy = dyn_cast<MemRefType>(refTy)) {
     if (reassocIdxVecIsGenerated) {
-      expandOp = builder.create<memref::ExpandShapeOp>(loc, newMemrefTy, oldVal,
+      expandOp = builder.create<memref::ExpandShapeOp>(loc, newShape, oldVal,
                                                        reassocIdxVec);
     } else {
       auto outputShape = memref::getMixedSizes(builder, loc, refVal);
       expandOp = builder.create<memref::ExpandShapeOp>(
-          loc, newMemrefTy, oldVal, reassocIdxVec, outputShape);
+          loc, newShape, oldVal, reassocIdxVec, outputShape);
     }
   } else if (auto newTensorTy = dyn_cast<RankedTensorType>(refTy)) {
     if (reassocIdxVecIsGenerated) {
@@ -1207,42 +1137,6 @@ struct DropUnitDimsSubViewPattern : public OpRewritePattern<SubViewOp> {
     }
 
     auto res = op.getResult();
-    auto resTy = res.getType();
-
-    if (auto memrefTy = llvm::dyn_cast<MemRefType>(resTy)) {
-      SmallVector<int64_t> strides;
-      int64_t offset;
-#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
-      if (succeeded(getStridesAndOffset(memrefTy, strides, offset))) {
-#else
-      if (succeeded(memrefTy.getStridesAndOffset(strides, offset))) {
-#endif
-        bool hasUnsafeStride = false;
-        for (size_t i = 0; i < strides.size(); ++i) {
-          if (strides[i] != ShapedType::kDynamic && strides[i] > 1) {
-            strides[i] = ShapedType::kDynamic;
-            hasUnsafeStride = true;
-          }
-        }
-        if (hasUnsafeStride) {
-          auto safeLayout = StridedLayoutAttr::get(memrefTy.getContext(), offset, strides);
-          auto safeMemrefTy = MemRefType::get(memrefTy.getShape(), memrefTy.getElementType(),
-                                             safeLayout, memrefTy.getMemorySpace());
-          
-          // Retrieve the true explicit layout limits from the original subview operation
-          auto outputShape = memref::getMixedSizes(rewriter, loc, op.getResult());
-          
-          // Invoke the specific explicit builder overload to completely bypass the internal inference check
-          Value safeExpand = rewriter.create<memref::ExpandShapeOp>(
-              loc, safeMemrefTy, expandSrc, reassocIdxVec, outputShape);
-              
-          rewriter.replaceAllUsesWith(op.getResult(), safeExpand);
-          return success();
-        }
-      }
-    }
-
-    // Fallback for standard clean types / RankedTensorType operands
     auto maybeNewDst =
         tryExpandValueWithUnitDim(expandSrc, res, reassocIdxVec, rewriter, loc);
     if (maybeNewDst.has_value()) {
@@ -1860,64 +1754,34 @@ struct RankReducedInsertSliceOp : public OpRewritePattern<InsertOpTy> {
   }
 };
 
-/// Helper function to extract strides and offset from srcType,
-/// while sanitizing strides to dynamic if the corresponding dimension in
-/// srcType is dynamic.
-static LogicalResult
-getSanitizedStridesAndOffset(MemRefType srcType, MemRefType resType,
-                             SmallVectorImpl<int64_t> &sanitizedStrides,
-                             int64_t &resOffset) {
-  SmallVector<int64_t> srcStrides, resStrides;
-  int64_t srcOffset;
-
-  // 1. Extract strides and offsets handling LLVM version compatibility
-#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
-  if (failed(getStridesAndOffset(srcType, srcStrides, srcOffset)) ||
-      failed(getStridesAndOffset(resType, resStrides, resOffset))) {
-    return failure();
-  }
-#else
-  if (failed(srcType.getStridesAndOffset(srcStrides, srcOffset)) ||
-      failed(resType.getStridesAndOffset(resStrides, resOffset))) {
-    return failure();
-  }
-#endif
-
-  // 2. Sanitize strides based on the source type's shape dimensions
-  sanitizedStrides = srcStrides;
-  ArrayRef<int64_t> srcShape = srcType.getShape();
-
-  for (size_t i = 0; i < srcShape.size(); ++i) {
-    if (srcType.isDynamicDim(i) &&
-        sanitizedStrides[i] != ShapedType::kDynamic) {
-      sanitizedStrides[i] = ShapedType::kDynamic;
-    }
-  }
-
-  return success();
-}
-
 struct RepairMemRefCastPattern : public OpRewritePattern<memref::CastOp> {
   using OpRewritePattern<memref::CastOp>::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(memref::CastOp op,
-                                PatternRewriter &rewriter) const override {
+  LogicalResult
+  matchAndRewrite(memref::CastOp op,
+                  PatternRewriter &rewriter) const override {
     auto srcType = cast<MemRefType>(op.getSource().getType());
     auto resType = cast<MemRefType>(op.getResult().getType());
 
     if (memref::CastOp::areCastCompatible(srcType, resType))
       return failure();
 
-    SmallVector<int64_t> sanitizedStrides;
-    int64_t resOffset;
-
-    // Sanitize strides
-    if (failed(getSanitizedStridesAndOffset(srcType, resType, sanitizedStrides,
-                                            resOffset)))
+    SmallVector<int64_t> srcStrides, resStrides;
+    int64_t srcOffset, resOffset;
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+    if (failed(getStridesAndOffset(srcType, srcStrides, srcOffset)) ||
+#else
+    if (failed(srcType.getStridesAndOffset(srcStrides, srcOffset)) ||
+#endif
+        #ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+        failed(getStridesAndOffset(resType, resStrides, resOffset)))
+        #else
+        failed(resType.getStridesAndOffset(resStrides, resOffset)))
+        #endif
       return failure();
 
     auto newLayout =
-        StridedLayoutAttr::get(op->getContext(), resOffset, sanitizedStrides);
+        StridedLayoutAttr::get(op->getContext(), resOffset, srcStrides);
     auto newResType =
         MemRefType::get(srcType.getShape(), srcType.getElementType(),
                         newLayout, srcType.getMemorySpace());
