@@ -147,6 +147,7 @@ public:
         &enableHivmNd2nzOnVector,
         &enableLayoutOptimization,
         &enableSanitizer,
+        &enableDebugVariables,
         &enableMemoryDisplay,
         &enableStaticBarePtr,
         &enableTritonKernelCompile,

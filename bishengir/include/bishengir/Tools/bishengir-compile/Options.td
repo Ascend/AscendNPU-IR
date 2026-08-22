@@ -291,7 +291,7 @@ def EnableSanitizer : DFXControlOptions<
 }
 
 def EnableDebugVariables : DFXControlOptions<
-  "Enable ascend debug variables",
+  "Enable ascend debug variables.",
   "bool",
   "false"
 > {
