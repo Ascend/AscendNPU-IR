@@ -443,6 +443,11 @@ static void hivmPostBufferizationOptimizationPipeline(
       bishengir::DecomposePhase::AFTER_HIVM_STRIDE_ALIGNMENT;
   pm.nest<func::FuncOp>().addPass(
       createHIVMAggregatedDecomposeOpPass(decomposeOption));
+  // Fold load chains whose buffers are collapsed back to matrix form by
+  // their consumers (e.g. shared-load tiles rank-raised to [d0, 1, d2]),
+  // so layout classification sees genuine ranks.
+  pm.nest<func::FuncOp>().addPass(
+      tensor::createFoldCollapseIntoAllocWithLoadPass());
   // convert copyOp to nd2nzOp
   pm.nest<func::FuncOp>().addPass(createInferHIVMDataLayoutPass());
   pm.nest<func::FuncOp>().addPass(createRemoveHIVMDataLayoutAnnotationPass());
