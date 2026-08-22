@@ -118,6 +118,51 @@ static bool isCVCases(ModuleOp moduleOp) {
   return result.wasInterrupted();
 }
 
+/// TODO: Detect CV-specific patterns that require skipping VFFusion.
+static bool hasCVSpecialPatternsSkip(ModuleOp moduleOp) {
+  // Pattern 1: linalg.fill → linalg.mul → linalg.fill → linalg.add → linalg.exp
+  // (DPS chain, all ops writing to the same output tensor).
+  // VFFusion outlines this chain into a fused function, but the
+  // function boundary changes the sync structure and downstream
+  // extract_slice/insert_slice handling, causing scheduling gaps.
+  bool hasFillMulFillAddExpPattern = false;
+  moduleOp.walk([&](linalg::ExpOp expOp) {
+    if (hasFillMulFillAddExpPattern)
+      return;
+    // exp's input should come from linalg.add
+    Operation *addOp = expOp.getOperand(0).getDefiningOp();
+    if (!addOp || !isa<linalg::AddOp>(addOp))
+      return;
+    // add's inputs: one from linalg.mul, one from linalg.fill
+    Operation *lhs = addOp->getOperand(0).getDefiningOp();
+    Operation *rhs = addOp->getOperand(1).getDefiningOp();
+    Operation *mulOp = nullptr;
+    if (isa<linalg::MulOp>(lhs) && isa<linalg::FillOp>(rhs)) {
+      mulOp = lhs;
+    } else if (isa<linalg::FillOp>(lhs) && isa<linalg::MulOp>(rhs)) {
+      mulOp = rhs;
+    } else {
+      return;
+    }
+    // mul's input should include a linalg.fill
+    for (Value operand : mulOp->getOperands()) {
+      if (Operation *op = operand.getDefiningOp()) {
+        if (isa<linalg::FillOp>(op)) {
+          hasFillMulFillAddExpPattern = true;
+          return;
+        }
+      }
+    }
+  });
+  if (hasFillMulFillAddExpPattern) {
+    LDBG("Skipping VFFusion: detected fill→mul→fill→add→exp "
+         "pattern in CV case");
+    return true;
+  }
+
+  return false;
+}
+
 void VFFusionPass::runOnOperation() {
   // TODO: dirty hack to make behaviour of AllOp same as disabled vf-fusion
   if (fusionMode == FusionMode::AllOp) {
@@ -179,6 +224,10 @@ void VFFusionPass::runOnOperation() {
                                                   : WalkResult::advance();
             })
             .wasInterrupted()) {
+      freezeRegisterTreeSelection();
+      return;
+    }
+    if (hasCVSpecialPatternsSkip(moduleOp)) {
       freezeRegisterTreeSelection();
       return;
     }
