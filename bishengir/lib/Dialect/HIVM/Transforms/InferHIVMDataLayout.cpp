@@ -750,7 +750,18 @@ DataLayoutInferAndPropagateHelper::propagateDataLayoutToUsers(
         .Case<bishengir::memref_ext::AllocWorkspaceOp>(
             [&](bishengir::memref_ext::AllocWorkspaceOp op) {
               // Do not overwrite layouts already set by MarkOp / anchors.
-              populateLayout(op->getResults(), info, changed);
+              for (Value result : op->getResults()) {
+                if (!isa<BaseMemRefType>(result.getType()))
+                  continue;
+                // Seed blocked GM values as Fractal so downstream copies skip
+                // nd2nz, same as the ViewLikeOpInterface case above.
+                LayoutInfo resultInfo = info;
+                if (isGlobalMemory(result))
+                  if (auto fractal = blockedFractalLayout(result))
+                    resultInfo = LayoutInfo{fractal, fractal};
+                if (populateLayoutIfAbsent(result, resultInfo))
+                  changed.push_back(result);
+              }
             })
         // TODO: adapt custom op's infer data layout in V2
         .Case<hivm::CustomOp>(
