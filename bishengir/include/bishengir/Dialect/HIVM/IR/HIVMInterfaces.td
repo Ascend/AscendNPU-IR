@@ -727,8 +727,8 @@ def HIVMUnitFlagEnabledInterface : OpInterface<"UnitFlagEnabledInterface"> {
       //===------------------------------------------------------------------===//
       InterfaceMethod<
           /*desc=*/[{
-        Return unit-flag input value. It should be manually added to the 
-        Operator input arguments named 'unit_flag_mode' and assembly format. 
+        Return unit-flag input value. It should be manually added to the
+        Operator input arguments named 'unit_flag_mode' and assembly format.
       }],
           /*retTy=*/
           "::std::optional<::llvm::SmallVector<::mlir::hivm::UnitFlagAttr>>",
@@ -759,8 +759,8 @@ def HIVMUnitFlagEnabledInterface : OpInterface<"UnitFlagEnabledInterface"> {
       }]>,
       InterfaceMethod<
           /*desc=*/[{
-        Return unit-flag input value. It should be manually added to the 
-        Operator input arguments named 'unit_flag_mode' and assembly format. 
+        Return unit-flag input value. It should be manually added to the
+        Operator input arguments named 'unit_flag_mode' and assembly format.
       }],
           /*retTy=*/"::std::optional<::llvm::SmallVector<::mlir::Value>>",
           /*methodName=*/"getUnitFlagConditions",
@@ -784,8 +784,31 @@ def HIVMUnitFlagEnabledInterface : OpInterface<"UnitFlagEnabledInterface"> {
         }
       }]>,
       InterfaceMethod<
+          /*desc=*/"Get Unit-Flag Group Id",
+          /*retTy=*/"::std::optional<int64_t>",
+          /*methodName=*/"getUnitFlagGroupIndex",
+          /*args=*/(ins),
+          /*methodBody=*/[{
+            auto ret = $_op.getUnitFlagGroupId();
+            return ret.has_value() ?
+                static_cast<int64_t>(ret.value()) :
+                ::std::optional<int64_t>();
+          }]>,
+      InterfaceMethod<
+          /*desc=*/"Set Unit-Flag Group Id",
+          /*retTy=*/"void",
+          /*methodName=*/"setUnitFlagGroupIndex",
+          /*args=*/
+          (ins "::std::optional<int64_t>":$attrValue),
+          /*methodBody=*/[{
+            $_op.setUnitFlagGroupId(attrValue.has_value() ?
+                static_cast<uint64_t>(attrValue.value()) :
+                ::std::optional<uint64_t>()
+              );
+          }]>,
+      InterfaceMethod<
           /*desc=*/[{
-        Return unit-flag mode value needed to be passed to the standard library 
+        Return unit-flag mode value needed to be passed to the standard library
         call. It should be one of the possible values for unit-flag (0b00, 0b10, 0b11).
       }],
           /*retTy=*/"::mlir::Value",
@@ -794,6 +817,18 @@ def HIVMUnitFlagEnabledInterface : OpInterface<"UnitFlagEnabledInterface"> {
           /*methodBody=*/"",
           /*defaultImplementation=*/[{
         return ::mlir::hivm::detail::getUnitFlagModeLibValueImpl($_op, rewriter);
+      }]>,
+      InterfaceMethod<
+          /*desc=*/[{
+        Return unit-flag group-id value needed to be passed to the standard library
+        call.
+      }],
+          /*retTy=*/"::mlir::Value",
+          /*methodName=*/"getUnitFlagGroupIdValue",
+          /*args=*/(ins "::mlir::PatternRewriter&":$rewriter),
+          /*methodBody=*/"",
+          /*defaultImplementation=*/[{
+        return ::mlir::hivm::detail::getUnitFlagGroupIdValueImpl($_op, rewriter);
       }]>];
   let verify =
       [{ return detail::verifyUnitFlagEnabledInterface(cast<UnitFlagEnabledInterface>($_op)); }];

@@ -118,9 +118,7 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_2d_core(
     INTRINSIC(set_mov_pad_val, 0);
   }
 
-  // The aligned DMA starts before the logical destination when left padding is
-  // present. Check the actual DMA start address instead of the logical one.
-  auto dst_ptr = dst->aligned + dst->offset - left_padding_num;
+  auto dst_ptr = dst->aligned + dst->offset;
   if (!isAddress32ByteAligned(dst_ptr)) {
     load_gm_to_ubuf_2d_by_scalar<T>(src, dst);
     return;

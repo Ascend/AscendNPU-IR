@@ -10,7 +10,7 @@ module {
       %1 = arith.muli %0, %0 : tensor<i32>
       hivm.hir.store ins(%1 : tensor<i32>) outs(%arg2 : memref<i32>)
       scope.return
-    } { vector_type = "simt"}
+    } { vector_mode = "simt"}
     return
   }
 }

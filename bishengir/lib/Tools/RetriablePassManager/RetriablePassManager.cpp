@@ -21,6 +21,7 @@
 #include "bishengir/Tools/Utils/Utils.h"
 #include "bishengir/Transforms/InjectIRInstrumentation.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/Verifier.h"
 #include "mlir/Pass/PassManager.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Debug.h"
@@ -99,6 +100,8 @@ RetriablePassManager::runOnce(ModuleOp mod,
                                    ModuleOp::getOperationName(),
                                    OpPassManager::Nesting::Implicit);
   buildPipeline(passManager);
+  auto verifyEach = config.getVerifyEach();
+  passManager.enableVerifier(verifyEach);
 
   (void)mlir::applyPassManagerCLOptions(passManager);
   (void)bishengir::applyPassManagerCLOptions(passManager);
@@ -116,6 +119,10 @@ RetriablePassManager::runOnce(ModuleOp mod,
         config.getPrintPassId(), config.getInjectIrBefore(),
         config.getInjectIrAfter()));
   }
+
+  if (!verifyEach && failed(mlir::verify(mod)))
+    return mod->emitError("Verification failed after " + pipelineName +
+                          " pipeline\n");
 
   if (failed(passManager.run(mod)))
     return mod->emitError("Failed to run " + pipelineName.str() +

@@ -18,7 +18,7 @@ func.func @test_mmad_accumulation_remain_in_l0c_no_outer_fixpipe(%A: tensor<64x6
       outs(%C_curr : tensor<64x64xf32>) -> tensor<64x64xf32>
     // CHECK: scf.yield %[[MMAD]]
     scf.yield %mmad : tensor<64x64xf32>
-  } {hivm.remain_in_l0c}
+  } {hivm.remain_in_l0c, normalized_in_L0C = [0 : i32]}
   // CHECK-NOT: hivm.hir.fixpipe {{.*}} ins(%[[ACC_RES]]
   // CHECK: %[[INNER_RES:.*]] = scf.for
   // CHECK-NOT: hivm.hir.fixpipe {{.*}} ins(%[[ACC_RES]]
@@ -61,7 +61,7 @@ func.func @test_mmad_accumulation_scf_if_no_outer_fixpipe(%A: tensor<64x64xf16>,
     }
     // CHECK: scf.yield %{{.*}}
     scf.yield %if_res : tensor<64x64xf32>
-  } {hivm.remain_in_l0c}
+  } {hivm.remain_in_l0c, normalized_in_L0C = [0 : i32]}
   // CHECK-NOT: hivm.hir.fixpipe {{.*}} ins(%[[ACC_RES]]
   // CHECK: %[[INNER_RES:.*]] = scf.for
   %inner_res = scf.for %j = %c0 to %c2 step %c1 iter_args(%C_next = %acc_res) -> (tensor<64x64xf32>) {

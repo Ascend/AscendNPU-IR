@@ -2257,7 +2257,10 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">, hivm.module_cor
 // CHECK-LABEL: func.func @reduce_dim_subblock_aiv(
 // CHECK: hivm.hir.vreduce {tiled_op} <sum> ins(%{{.*}} : tensor<2048xf32>)
 // CHECK: memref_ext.alloc_workspace() : memref<2xf32>
-// CHECK: hivm.hir.sync_block[<ALL_SUB_VECTOR>] tvector_pipe = <PIPE_MTE3> vector_pipe = <PIPE_MTE2>
+// CHECK: hivm.hir.sync_block[<ALL_SUB_VECTOR>, 15 : i64] tvector_pipe = <PIPE_MTE2> vector_pipe = <PIPE_MTE3>
+// CHECK: hivm.hir.store
+// CHECK: hivm.hir.sync_block[<ALL_SUB_VECTOR>, 14 : i64] tvector_pipe = <PIPE_MTE3> vector_pipe = <PIPE_MTE2>
+// CHECK: hivm.hir.load
 // CHECK: %[[FINAL:.*]] = hivm.hir.vreduce <sum> ins(%{{.*}} : tensor<2xf32>)
 // CHECK: scope.return %[[FINAL]] : tensor<1xf32>
 // CHECK: annotation.mark
@@ -4071,6 +4074,53 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">, hivm.module_cor
       %out = hivm.hir.vmul ins(%8, %slice_ub : tensor<32x128xf32>, tensor<32x128xf32>) outs(%7 : tensor<32x128xf32>) -> tensor<32x128xf32>
       hivm.hir.store ins(%out : tensor<32x128xf32>) outs(%arg1 : memref<32x128xf32>)
     }
+    return
+  }
+}
+
+
+// -----
+
+// A fixpipe whose dst is a memory_space_cast of the tightly-coupled UB alloc
+// (as inserted by InsertLoadStoreForMixCV) must still get the dual-dst
+// ROW_SPLIT treatment when the AIV consumer is sub-block-tiled. Regression
+// test: the dst-space check used to read the cast result type (no address
+// space) and silently bailed, leaving the fixpipe single-dst while the AIV
+// read was tiled -- both sub-blocks then read the same first-half tile.
+// CHECK-LABEL:   func.func @check_memspacecast_row_split_aic(
+// CHECK:           hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%{{.*}} : tensor<1x4x16x16xf32>) outs(%{{.*}} : memref<32x16xf32>) dual_dst_mode = <ROW_SPLIT>
+// CHECK-LABEL:   func.func @check_memspacecast_row_split_aiv(
+// CHECK:           scf.for {{.*}} {
+// CHECK:           } {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">, hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @check_memspacecast_row_split_aic() attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIC>, hivm.part_of_mix, hivm.vf_mode = #hivm.vf_mode<SIMD>, mix_mode = "mix", parallel_mode = "simd"} {
+    %alloc = memref.alloc() : memref<64x16xf32, #hivm.address_space<ub>>
+    annotation.mark %alloc {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>} : memref<64x16xf32, #hivm.address_space<ub>>
+    %memspacecast = memref.memory_space_cast %alloc : memref<64x16xf32, #hivm.address_space<ub>> to memref<64x16xf32>
+    %0 = tensor.empty() : tensor<1x4x16x16xf32>
+    hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%0 : tensor<1x4x16x16xf32>) outs(%memspacecast : memref<64x16xf32>)
+    return
+  }
+  func.func @check_memspacecast_row_split_aiv(%arg0: memref<?xf32>, %arg1: i32, %arg2: i32) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, hivm.vf_mode = #hivm.vf_mode<SIMD>, mix_mode = "mix", parallel_mode = "simd"} {
+    %c16 = arith.constant 16 : index
+    %c64 = arith.constant 64 : index
+    %0 = hivm.hir.get_block_idx -> i64
+    %1 = arith.trunci %0 : i64 to i32
+    %2 = arith.muli %arg2, %arg1 : i32
+    %3 = arith.divsi %1, %2 : i32
+    %alloc = memref.alloc() : memref<64x16xf32, #hivm.address_space<ub>>
+    annotation.mark %alloc {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>} : memref<64x16xf32, #hivm.address_space<ub>>
+    %memspacecast = memref.memory_space_cast %alloc : memref<64x16xf32, #hivm.address_space<ub>> to memref<64x16xf32>
+    %4 = bufferization.to_tensor %memspacecast restrict writable : memref<64x16xf32>
+    %5 = arith.index_cast %2 : i32 to index
+    %6 = arith.muli %5, %c64 : index
+    %7 = arith.index_cast %3 : i32 to index
+    %8 = arith.addi %6, %7 : index
+    %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [%8], sizes: [64, 16], strides: [16, 1] : memref<?xf32> to memref<64x16xf32, strided<[16, 1], offset: ?>>
+    %9 = arith.minsi %5, %c64 : index
+    %extracted_slice = tensor.extract_slice %4[0, 0] [%9, %c16] [1, 1] : tensor<64x16xf32> to tensor<?x?xf32>
+    %subview = memref.subview %reinterpret_cast[0, 0] [%9, %c16] [1, 1] : memref<64x16xf32, strided<[16, 1], offset: ?>> to memref<?x?xf32, strided<[16, 1], offset: ?>>
+    hivm.hir.store ins(%extracted_slice : tensor<?x?xf32>) outs(%subview : memref<?x?xf32, strided<[16, 1], offset: ?>>)
     return
   }
 }

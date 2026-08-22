@@ -39,7 +39,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
       // CHECK-SAME:                index,
       // CHECK-SAME:                memref<?x?xf32, strided<[?, ?], offset: ?>>,
       // CHECK-SAME:                i64, i64, i64, i64, i64, i64, i64,
-      // CHECK-SAME:                i8) -> ()
+      // CHECK-SAME:                i8, i64) -> ()
       hivm.hir.mmadL1 ins(%ma, %mb, %init_condition, %c256, %c128, %c256 :
                             memref<256x128xf16>, memref<128x256xf16>, i1, index, index, index)
                       outs(%mc : memref<256x256xf32>)
@@ -1656,7 +1656,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
   func.func @test_reduce_op_check_with_rank_reducing() {
     // CHECK: %[[CST2:.*]] = arith.constant 2147483647 : i32
     // CHECK: %[[CST1:.*]] = arith.constant -2147483648 : i32
-    
+
     // CHECK-COUNT-5: scf.for
     // CHECK-COUNT-2: memref.subview
     // CHECK: call @reduce_max_ra0a1_int32_t({{.*}}, %[[CST1:.*]])

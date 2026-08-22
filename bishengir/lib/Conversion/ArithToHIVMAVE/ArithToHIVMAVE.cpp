@@ -135,7 +135,7 @@ struct BinaryOpPattern : public OpConversionPattern<ArithBinaryOp> {
   }
 };
 
-template <typename ArithMulExtendOp, typename HivmVFVMULLOp>
+template <typename ArithMulExtendOp, typename HivmVFVMULLOp, TypeFn Cast>
 struct ArithMulExtendOpPattern : public OpConversionPattern<ArithMulExtendOp> {
   using OpConversionPattern<ArithMulExtendOp>::OpConversionPattern;
 
@@ -163,8 +163,8 @@ struct ArithMulExtendOpPattern : public OpConversionPattern<ArithMulExtendOp> {
     Value mask =
         hivmave::findReuseableMaskOrCreateOne(op, lowResVecType, rewriter);
 
-    HivmVFVMULLOp res =
-        rewriter.create<HivmVFVMULLOp>(loc, resType, lhs, rhs, mask);
+    HivmVFVMULLOp res = rewriter.create<HivmVFVMULLOp>(
+        loc, resType, lhs, rhs, mask, TypeFnAttr::get(op->getContext(), Cast));
     rewriter.replaceOp(op, {res->getResult(0), res->getResult(1)});
     return success();
   }
@@ -2002,8 +2002,10 @@ void mlir::hivmave::populateArithToHIVMAVEConversionPatterns(
       BinaryOpPattern<arith::MaximumFOp, hivmave::VFMaxOp>,
       BinaryOpPattern<arith::MinimumFOp, hivmave::VFMinOp>,
       BinaryOpPattern<mathExt::DivFHPOp, hivmave::VFDivFHPOp>,
-      ArithMulExtendOpPattern<arith::MulSIExtendedOp, hivmave::VFVMULLOp>,
-      ArithMulExtendOpPattern<arith::MulUIExtendedOp, hivmave::VFVMULLOp>,
+      ArithMulExtendOpPattern<arith::MulSIExtendedOp, hivmave::VFVMULLOp,
+                              TypeFn::cast_signed>,
+      ArithMulExtendOpPattern<arith::MulUIExtendedOp, hivmave::VFVMULLOp,
+                              TypeFn::cast_unsigned>,
       LogicOpLowering<arith::AndIOp>, LogicOpLowering<arith::OrIOp>,
       XOrIOpLowering, ShiftOpLowering<arith::ShLIOp>,
       ShiftOpLowering<arith::ShRSIOp>, ShiftOpLowering<arith::ShRUIOp>,

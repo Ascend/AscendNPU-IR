@@ -220,8 +220,8 @@ private:
   bool isSIMTScope(Operation *op) const {
     // Skip anchor-insert in simt scope
     if (auto scopeOp = dyn_cast<scope::ScopeOp>(op)) {
-      if (auto vectorType = scopeOp->getAttrOfType<StringAttr>("vector_type")) {
-        if (vectorType.getValue() == "simt") {
+      if (auto vectorMode = scopeOp->getAttrOfType<StringAttr>("vector_mode")) {
+        if (vectorMode.getValue() == "simt") {
           return true;
         }
       }

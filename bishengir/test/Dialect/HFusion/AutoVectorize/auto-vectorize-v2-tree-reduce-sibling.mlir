@@ -1,10 +1,9 @@
 // RUN: bishengir-opt %s -hfusion-auto-vectorize-v2="tree-reduce=true" -outline-vector-function -hfusion-auto-vectorize-verifier 2>&1 | FileCheck %s
 // RUN: bishengir-opt %s -hfusion-auto-vectorize-v2="emit-transform-sequence=true tree-reduce=true" | FileCheck %s --check-prefix=TRANSFORM
 
-// A reduction over the leading axis and an independent elementwise result have
-// the same iteration shape, so AutoVectorizeV2 places them in one sibling
-// fusion group.  Tree reduction tiles only the parallel axis; the elementwise
-// sibling must use that axis as its outer loop as well.
+// A direct register tree gets a dedicated containing loop.  An independent
+// elementwise sibling must remain outside it because the post-vectorization
+// rewrite replaces that whole loop.
 
 // CHECK-NOT: operations cannot be fused
 // CHECK-NOT: AutoVectorizeV2 failed
@@ -15,14 +14,16 @@
 // outlined separately even though their full iteration shapes match.
 // CHECK-COUNT-2: func.func @opposite_reduction_siblings_outlined_vf_
 
-// Two split-reduction trees also keep distinct containing loops. The first
-// outlined function initializes both outputs; the reduction function must
-// contain two independent one-result outer loops.
+// Multiple direct-tree candidates in one vector function stay on the compact
+// regular lowering so horizontal fusion is preserved.  Both reductions share
+// one outer loop and one parallel-tile loop with two iter_args/results.
 // CHECK-LABEL: func.func @parallel_tree_reduction_siblings_outlined_vf_1
+// CHECK: %[[PAR_C1:[0-9A-Za-z_]+]] = arith.constant 1 : index
+// CHECK: %[[PAR_C16:[0-9A-Za-z_]+]] = arith.constant 16 : index
 // CHECK: %[[PAR_C64:[0-9A-Za-z_]+]] = arith.constant 64 : index
-// CHECK: %[[PAR_TREE0:[0-9A-Za-z_]+]] = scf.for {{.*}} to %[[PAR_C64]] step %[[PAR_C64]] iter_args({{.*}}) -> (tensor<64xf32>) {
-// CHECK: %[[PAR_TREE1:[0-9A-Za-z_]+]] = scf.for {{.*}} to %[[PAR_C64]] step %[[PAR_C64]] iter_args({{.*}}) -> (tensor<64xf32>) {
-// CHECK: return %[[PAR_TREE0]], %[[PAR_TREE1]] : tensor<64xf32>, tensor<64xf32>
+// CHECK: %[[PAR_OUTER:[0-9A-Za-z_]+]]:2 = scf.for {{.*}} to %[[PAR_C16]] step %[[PAR_C1]] iter_args({{.*}}) -> (tensor<64xf32>, tensor<64xf32>) {
+// CHECK: %{{[0-9A-Za-z_]+}}:2 = scf.for {{.*}} to %[[PAR_C64]] step %[[PAR_C64]] iter_args({{.*}}) -> (tensor<64xf32>, tensor<64xf32>) {
+// CHECK: return %[[PAR_OUTER]]#0, %[[PAR_OUTER]]#1 : tensor<64xf32>, tensor<64xf32>
 
 // The same invariant applies when a node acquires one tree through producer
 // fusion and then considers a second tree producer for the same consumer.
@@ -33,9 +34,10 @@
 // CHECK: %[[PROD_CONSUMER:[0-9A-Za-z_]+]] = scf.for {{.*}} to %[[PROD_C64]] step %[[PROD_C1]] iter_args({{.*}}) -> (tensor<64x64xf32>) {
 // CHECK: return %[[PROD_CONSUMER]] : tensor<64x64xf32>
 
-// A direct add(input, accumulator) is the canonical tree-reduction payload.
+// A direct add(input, accumulator) is selected for the register tree.
 // TRANSFORM-LABEL: transform.sequence {{.*}}auto_vectorize_v2.transform.tree_reduce_with_elementwise_sibling
-// TRANSFORM: transform.structured.split_reduction
+// TRANSFORM: annotate {{.*}} "hfusion.register_tree_reduction"
+// TRANSFORM-NOT: transform.structured.split_reduction
 
 // A value computed inside the reduction body is supported: the extent comes
 // from the iteration domain rather than from a particular input operand.

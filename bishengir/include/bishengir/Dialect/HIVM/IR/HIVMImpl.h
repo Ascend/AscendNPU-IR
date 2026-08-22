@@ -37,7 +37,8 @@ namespace mlir {
 namespace hivm {
 static constexpr llvm::StringLiteral usedForDebugOp = "used_for_debug_op";
 
-static constexpr llvm::StringLiteral ExtractLoadStoreAttr = "ExtractedLoadOrStore";
+static constexpr llvm::StringLiteral ExtractLoadStoreAttr =
+    "ExtractedLoadOrStore";
 static constexpr llvm::StringLiteral VgatherDecomposeAttr = "VgatherDecompose";
 
 /// Enum to control trace result matching behavior for multi-source cases
@@ -676,7 +677,7 @@ LogicalResult getUnAlignSizeInfo(
     std::vector<std::unique_ptr<OperAlignInfo>> *operAlignInfoList);
 
 LogicalResult getUnAlignSizeInfo(
-  VCastOp op, std::vector<std::unique_ptr<OperAlignInfo>> *operAlignInfoList);
+    VCastOp op, std::vector<std::unique_ptr<OperAlignInfo>> *operAlignInfoList);
 
 LogicalResult getUnAlignSizeInfo(
     VSortOp op, std::vector<std::unique_ptr<OperAlignInfo>> *operAlignInfoList);

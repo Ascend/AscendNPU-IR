@@ -436,6 +436,11 @@ def CrossCoreGSS : Pass<"hivm-cross-core-gss", "func::FuncOp"> {
        Option<"solverVersion", "solver-version", "std::string",
               /*default=*/"\"v1\"",
               "Select SyncSolver implementation.">,
+       Option<"roundRobinEventIds", "round-robin-event-ids", "bool",
+              /*default=*/"true",
+              "On memory-based architectures, retry EventId allocation in "
+              "program order when the default strategy repeatedly assigns "
+              "the same IDs.">,
        Option<"forceIsMemBased", "force-is-mem-based", "bool",
               /*default=*/"false",
               "Force memory based ai-core architecture mode.">,

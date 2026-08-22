@@ -49,8 +49,8 @@ namespace mlir {
 namespace scope {
 
 static bool isSimtScope(Operation *op) {
-  if (auto vectorType = op->getAttrOfType<StringAttr>("vector_type")) {
-    return vectorType.getValue() == "simt";
+  if (auto vectorMode = op->getAttrOfType<StringAttr>("vector_mode")) {
+    return vectorMode.getValue() == "simt";
   }
   return false;
 }

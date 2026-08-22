@@ -1,17 +1,19 @@
 // RUN: bishengir-opt %s -hfusion-auto-vectorize-v2="emit-transform-sequence=true tree-reduce=true" | FileCheck %s
 
 // The reductions share a source but expose opposite fixed parallel loop nests.
-// Keep them in separate sibling groups: dim-0 still uses the split tree and
-// dim-1 keeps its normal tile_reduction_using_for path.
+// A function containing both RA and AR reductions stays in the established
+// mixed-reduction scope: dim-0 uses ordinary tiling and dim-1 keeps its normal
+// tile_reduction_using_for path.
 
 // CHECK-LABEL: transform.sequence {{.*}}auto_vectorize_v2.transform.shared_reduction_input
-// CHECK: transform.structured.split_reduction
+// CHECK: transform.structured.tile_using_for
 // CHECK: transform.structured.tile_reduction_using_for
+// CHECK-NOT: "hfusion.register_tree_reduction"
 
-// A standalone dim-0 sum still uses the new pairwise tree.
+// A standalone canonical dim-0 sum uses the direct register tree.
 
 // CHECK-LABEL: transform.sequence {{.*}}auto_vectorize_v2.transform.standalone_reduction_input
-// CHECK: transform.structured.split_reduction
+// CHECK: annotate {{.*}} "hfusion.register_tree_reduction"
 
 #identity = affine_map<(d0, d1) -> (d0, d1)>
 #dim0 = affine_map<(d0, d1) -> (d1)>

@@ -29,6 +29,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/HoistAffine.h"
 #include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/Pattern.h"
+#include "bishengir/Dialect/HIVM/Transforms/PartitionAndBindSubBlock/PartitionTypes.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/Helper.h"
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/TileUtils.h"
@@ -98,6 +99,13 @@ static constexpr llvm::StringLiteral kLimitedSubBlockOpAttrName =
     "limit_sub_block_id0";
 static constexpr llvm::StringLiteral tileAndBindLeaf =
     "hivm.tile_and_bind_leaf";
+
+// Explicit flag ids for the two sub-block barriers around the tiled vreduce
+// store. They must differ: sharing one id collapses both halves and deadlocks.
+// 14 matches HIVMDecomposeOp's default inter-vector flag (ALL_VECTOR /
+// ALL_SUB_VECTOR). 15 matches its default inter-cube flag.
+static constexpr int64_t kInterSubBlockRawSyncFlagId = 14;
+static constexpr int64_t kInterSubBlockWarSyncFlagId = 15;
 } // namespace
 
 namespace {
@@ -716,17 +724,30 @@ private:
         rewriter, loc, containingLoop, workspaceOp, tilingDim);
     Value curWorkspace = rewriter.create<memref::SubViewOp>(
         loc, workspaceOp, mixedOffsets, mixedSizes, mixedStrides);
+
+    auto syncSubBlockMode = rewriter.getAttr<hivm::SyncBlockModeAttr>(
+        hivm::SyncBlockMode::ALL_SUB_VECTOR);
+    auto mte3PipeAttr = rewriter.getAttr<hivm::PipeAttr>(hivm::PIPE::PIPE_MTE3);
+    auto mte2PipeAttr = rewriter.getAttr<hivm::PipeAttr>(hivm::PIPE::PIPE_MTE2);
+
+    // The exchange workspace is reused across iterations of the containing
+    // loop, so the store below overwrites data that the peer sub-block reads
+    // through the load further down. Rendezvous before the store to close that
+    // write-after-read window.
+    rewriter.create<hivm::SyncBlockOp>(
+        loc, syncSubBlockMode,
+        rewriter.getI64IntegerAttr(kInterSubBlockWarSyncFlagId), Value{},
+        hivm::PipeAttr{}, hivm::PipeAttr{}, mte2PipeAttr, mte3PipeAttr);
+
     auto storeOp = rewriter.create<hivm::StoreOp>(
         loc, TypeRange{}, op->getResult(0), curWorkspace);
     storeOp->setAttr(tiledOp, rewriter.getUnitAttr());
 
-    auto syncSubBlockMode = rewriter.getAttr<hivm::SyncBlockModeAttr>(
-        hivm::SyncBlockMode::ALL_SUB_VECTOR);
-    auto tPipeAttr = rewriter.getAttr<hivm::PipeAttr>(hivm::PIPE::PIPE_MTE3);
-    auto PipeAttr = rewriter.getAttr<hivm::PipeAttr>(hivm::PIPE::PIPE_MTE2);
-    rewriter.create<hivm::SyncBlockOp>(loc, syncSubBlockMode, nullptr, Value{},
-                                       hivm::PipeAttr{}, hivm::PipeAttr{},
-                                       tPipeAttr, PipeAttr);
+    // Read-after-write: make the peer sub-block's store visible to the load.
+    rewriter.create<hivm::SyncBlockOp>(
+        loc, syncSubBlockMode,
+        rewriter.getI64IntegerAttr(kInterSubBlockRawSyncFlagId), Value{},
+        hivm::PipeAttr{}, hivm::PipeAttr{}, mte3PipeAttr, mte2PipeAttr);
     auto localBuffer = utils::createEmptyOp(rewriter, loc, workspaceOp);
     auto loadOp = rewriter.create<hivm::LoadOp>(loc, TypeRange{}, workspaceOp,
                                                 localBuffer);
@@ -895,6 +916,11 @@ public:
 
   LogicalResult matchAndRewrite(OpType op,
                                 PatternRewriter &rewriter) const override {
+    // Skip ops the partition pass already bound to a sub-block.
+    if (op->template hasAttrOfType<UnitAttr>(
+            mlir::hivm::partition_and_bind::kSubBlockBoundOpAttrName))
+      return failure();
+
     if (auto ifOpOld = dyn_cast_if_present<scf::IfOp>(op->getParentOp())) {
       if (ifOpOld->template hasAttrOfType<UnitAttr>(kLimitedSubBlockOpAttrName))
         return failure();

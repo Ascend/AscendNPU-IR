@@ -137,7 +137,7 @@ def ConvertHIVMToStandard : Pass<"convert-hivm-to-std", "ModuleOp"> {
              "Regard All Ops already dims aligned except last axis of "
              "brc and reduce">,
       Option<"markLibCallNoInline", "mark-libcall-noinline", "bool",
-             /*default*/"false",
+             /*default*/"true",
              "Mark generated library-call declarations as hacc.noinline "
              "instead of hacc.always_inline.">
   ];

@@ -25,8 +25,10 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Casting.h"
@@ -119,33 +121,39 @@ bool SyncSolverBase::isBackwardSync(Occurrence *occ1, Occurrence *occ2) {
   return parOcc1->parentOcc->op != parOp1->parentOp;
 }
 
-Occurrence *SyncSolverBase::getBeforePlaceHolderOcc(Occurrence *occ) {
+Occurrence *SyncSolverBase::tryGetBeforePlaceHolderOcc(Occurrence *occ) {
   assert(occ != nullptr);
   assert(llvm::isa_and_present<Scope>(occ->op));
   int index = occ->syncIrIndex - 1;
-  assert(0 <= index && index < static_cast<int>(syncIr.size()));
-  auto *placeHolderOcc = syncIr[index].get();
-#ifndef NDEBUG
-  auto *placeHolderOp = llvm::dyn_cast<PlaceHolder>(placeHolderOcc->op);
-  assert(placeHolderOp != nullptr);
-  assert(placeHolderOp->beforeOp == occ->op);
-#endif
+  Occurrence *placeHolderOcc = nullptr;
+  if (0 <= index && index < static_cast<int>(syncIr.size())) {
+    placeHolderOcc = syncIr[index].get();
+    auto *placeHolderOp =
+        llvm::dyn_cast_or_null<PlaceHolder>(placeHolderOcc->op);
+    if (placeHolderOp == nullptr || placeHolderOp->beforeOp != occ->op)
+      placeHolderOcc = nullptr;
+  }
+  assert(placeHolderOcc != nullptr || !llvm::isa_and_present<Loop>(occ->op));
   return placeHolderOcc;
 }
 
-Occurrence *SyncSolverBase::getAfterPlaceHolderOcc(Occurrence *occ) {
+
+Occurrence *SyncSolverBase::tryGetAfterPlaceHolderOcc(Occurrence *occ) {
   assert(occ != nullptr);
   assert(llvm::isa_and_present<Scope>(occ->op));
   int index = occ->syncIrEndIndex;
-  assert(0 <= index && index < static_cast<int>(syncIr.size()));
-  auto *placeHolderOcc = syncIr[index].get();
-#ifndef NDEBUG
-  auto *placeHolderOp = llvm::dyn_cast<PlaceHolder>(placeHolderOcc->op);
-  assert(placeHolderOp != nullptr);
-  assert(placeHolderOp->afterOp == occ->op);
-#endif
+  Occurrence *placeHolderOcc = nullptr;
+  if (0 <= index && index < static_cast<int>(syncIr.size())) {
+    placeHolderOcc = syncIr[index].get();
+    auto *placeHolderOp =
+        llvm::dyn_cast_or_null<PlaceHolder>(placeHolderOcc->op);
+    if (placeHolderOp == nullptr || placeHolderOp->afterOp != occ->op)
+      placeHolderOcc = nullptr;
+  }
+  assert(placeHolderOcc != nullptr || !llvm::isa_and_present<Loop>(occ->op));
   return placeHolderOcc;
 }
+
 
 Occurrence *SyncSolverBase::getScopeBeginPlaceHolderOcc(Occurrence *occ) {
   assert(occ != nullptr);
@@ -447,6 +455,19 @@ SyncSolverBase::checkUnitFlagPatterns(Occurrence *occ1, Occurrence *occ2) {
         rwOp2->op->getParentOp() != parentLCALoopOcc->op->op) {
       return {};
     }
+  } else {
+    // For forward sync: reject UF when both ops are inside the same ForOp
+    // but not direct children (e.g. ForOp{If{M,F}}). The backward sync
+    // cross-iteration pairs would still require SetWait, which conflicts
+    // with the invisibility of UF edges in the graph search.
+    auto loop1 = rwOp1->op->getParentOfType<scf::ForOp>();
+    auto loop2 = rwOp2->op->getParentOfType<scf::ForOp>();
+    if (loop1 && loop1 == loop2) {
+      if (rwOp1->op->getParentOp() != loop1 ||
+          rwOp2->op->getParentOp() != loop1) {
+        return {};
+      }
+    }
   }
   if (auto unitFlagInfo = checkUnitFlagSameBlockPattern(
           occ1->op->op, occ2->op->op, rwOp1->mergedUnitFlagInfo,
@@ -667,22 +688,46 @@ SyncSolverBase::getMemoryConflicts(RWOperation *rwOp1, RWOperation *rwOp2) {
   return it->second = collectedConflicts;
 }
 
+bool SyncSolverBase::checkCCUnitFlagConflict(RWOperation *rwOp,
+                                             RWOperation *otherOp) {
+  if (isa_and_present<hivm::MmadL1Op>(rwOp->op)) {
+    if (isa_and_present<hivm::MmadL1Op>(otherOp->op))
+      return checkMemInfoConflict(rwOp, otherOp, rwOp->writeMemInfo,
+                                  otherOp->writeMemInfo);
+    if (isa_and_present<hivm::FixpipeOp>(otherOp->op))
+      return checkMemInfoConflict(rwOp, otherOp, rwOp->writeMemInfo,
+                                  otherOp->readMemInfo);
+  } else if (isa_and_present<hivm::FixpipeOp>(rwOp->op)) {
+    if (isa_and_present<hivm::MmadL1Op>(otherOp->op))
+      return checkMemInfoConflict(rwOp, otherOp, rwOp->readMemInfo,
+                                  otherOp->writeMemInfo);
+    // Fixpipe × Fixpipe: RAR on CC — no conflict relevant to unit-flag
+  }
+  return false;
+}
+
 bool SyncSolverBase::checkMemoryConflictBetweenOccExclusive(
     Occurrence *occ1, Occurrence *occ2,
-    std::function<bool(RWOperation *)> filter) {
+    std::function<bool(RWOperation *)> filter,
+    std::function<bool(RWOperation *, RWOperation *)> checkConflict) {
   assert(occ1 != nullptr && occ2 != nullptr);
   auto *rwOp1 = llvm::dyn_cast_if_present<RWOperation>(occ1->op);
   auto *rwOp2 = llvm::dyn_cast_if_present<RWOperation>(occ2->op);
   assert(rwOp1 != nullptr && rwOp2 != nullptr);
+
+  // Default: check all RAW/WAR/WAW combinations between the two ops.
+  if (!checkConflict) {
+    checkConflict = [this](RWOperation *rwOp, RWOperation *otherOp) {
+      return checkMemoryConflicts(rwOp, otherOp);
+    };
+  }
+
   for (int i = occ1->syncIrEndIndex; i < occ2->syncIrIndex; i++) {
     if (auto *otherOp = llvm::dyn_cast_if_present<RWOperation>(syncIr[i]->op)) {
-      if (!filter(otherOp)) {
+      if (!filter(otherOp))
         continue;
-      }
-      if (checkMemoryConflicts(rwOp1, otherOp) ||
-          checkMemoryConflicts(rwOp2, otherOp)) {
+      if (checkConflict(rwOp1, otherOp) || checkConflict(rwOp2, otherOp))
         return true;
-      }
     }
   }
   return false;
@@ -864,6 +909,15 @@ std::optional<EventIdInfo> SyncSolverBase::getMultiBufferEventIdInfo(
     }
   }
 
+  auto [setOcc, waitOcc] = getSetWaitLCAPairOcc(occ1, occ2);
+  assert(setOcc != nullptr && waitOcc != nullptr);
+  if (setOcc->op->getParentOfType<Loop>() != multibufferScope) {
+    return {};
+  }
+  if (waitOcc->op->getParentOfType<Loop>() != multibufferScope) {
+    return {};
+  }
+  
   EventIdInfo eventIdInfo;
   eventIdInfo.eventIdNum = eventIdNum.value();
   eventIdInfo.multiBufferInfo = MultiBufferInfo(multibufferScope);
@@ -1329,11 +1383,13 @@ SyncSolverBase::getFixedSetWaitOcc(Occurrence *occ1, Occurrence *occ2,
   //   waitOcc
   //   op2
   // }
-  if (llvm::isa_and_present<Loop>(ret.setOcc->op)) {
-    ret.setOcc = getAfterPlaceHolderOcc(ret.setOcc);
+  if (llvm::isa_and_present<Scope>(ret.setOcc->op)) {
+    if (auto *placeHolderOcc = tryGetAfterPlaceHolderOcc(ret.setOcc))
+      ret.setOcc = placeHolderOcc;
   }
-  if (llvm::isa_and_present<Loop>(ret.waitOcc->op)) {
-    ret.waitOcc = getBeforePlaceHolderOcc(ret.waitOcc);
+  if (llvm::isa_and_present<Scope>(ret.waitOcc->op)) {
+    if (auto *placeHolderOcc = tryGetBeforePlaceHolderOcc(ret.waitOcc))
+      ret.waitOcc = placeHolderOcc;
   }
 
   assert(ret.setOcc->op != nullptr && ret.waitOcc->op != nullptr);
@@ -1475,7 +1531,7 @@ SyncSolverBase::getEventIdSolverRef(hivm::PIPE pipeSrc, hivm::PIPE pipeDst) {
   if (!eventIdSolver.contains(key)) {
     int64_t eventIdNumMax =
         getHWAvailableEventIdNum(options.syncMode, pipeSrc, pipeDst);
-    eventIdSolver[key] = std::make_unique<EventIdSolver>(eventIdNumMax);
+    eventIdSolver[key] = std::make_unique<EventIdSolver>(eventIdNumMax, options.roundRobinEventIds);
   }
   return eventIdSolver[key];
 }
@@ -1842,9 +1898,9 @@ ConflictPair *SyncSolverBase::handleSetWaitConflict(
     assert(parentLCALoopOp != nullptr);
     conflictPair->backwardSyncLoopOp = parentLCALoopOp;
 
-    parentLCALoopBeforePHOcc = getBeforePlaceHolderOcc(parentLCALoopOcc);
+    parentLCALoopBeforePHOcc = tryGetBeforePlaceHolderOcc(parentLCALoopOcc);
     assert(parentLCALoopBeforePHOcc != nullptr);
-    parentLCALoopAfterPHOcc = getAfterPlaceHolderOcc(parentLCALoopOcc);
+    parentLCALoopAfterPHOcc = tryGetAfterPlaceHolderOcc(parentLCALoopOcc);
     assert(parentLCALoopAfterPHOcc != nullptr);
   }
 
@@ -2124,6 +2180,17 @@ ConflictPair *SyncSolverBase::handleUnitFlagConflict(
   return newConflictPair;
 }
 
+std::vector<ConflictPair *> SyncSolverBase::getAllChosenConflictPairs() {
+  std::vector<ConflictPair *> conflictPairs;
+  for (auto &conflictPair : chosenConflictedPairs) {
+    conflictPairs.push_back(conflictPair.get());
+  }
+  for (auto &conflictPair : persistentChosenConflictedPairs) {
+    conflictPairs.push_back(conflictPair.get());
+  }
+  return conflictPairs;
+}
+
 void SyncSolverBase::collectBackwardSyncEventIds() {
   LLVM_DEBUG(llvm::dbgs() << "collectBackwardSyncEventIds\n";);
   for (auto &conflictPair : chosenConflictedPairs) {
@@ -2140,6 +2207,44 @@ void SyncSolverBase::collectBackwardSyncEventIds() {
   }
 }
 
+void SyncSolverBase::collectUnitFlagGroupIds() {
+  auto conflictPairs = getAllChosenConflictPairs();
+  UnionFind<RWOperation *> unionFind;
+  // Use a SetVector to deduplicate while preserving insertion order, then sort
+  // by the stable OperationBase::id so that group-id assignment is independent
+  // of DenseSet pointer hashing and reproducible across compiler runs.
+  llvm::SetVector<RWOperation *> unitFlagOpsSet;
+  for (auto *conflictPair : conflictPairs) {
+    if (!conflictPair->replacedWithUnitFlag) {
+      continue;
+    }
+    assert(conflictPair->op1 != nullptr && conflictPair->op2 != nullptr);
+    unitFlagOpsSet.insert(conflictPair->op1);
+    unitFlagOpsSet.insert(conflictPair->op2);
+    auto *op1 = unionFind.find(conflictPair->op1);
+    auto *op2 = unionFind.find(conflictPair->op2);
+    unionFind.join(op1, op2);
+  }
+  SmallVector<RWOperation *, 16> unitFlagOps(unitFlagOpsSet.begin(),
+                                             unitFlagOpsSet.end());
+  std::sort(unitFlagOps.begin(), unitFlagOps.end(),
+            [](RWOperation *a, RWOperation *b) { return a->id < b->id; });
+
+  int64_t globalUnitFlagGroupIndex = 0;
+  for (auto *rwOp : unitFlagOps) {
+    if (unionFind.find(rwOp) == rwOp) {
+      rwOp->mergedUnitFlagInfo.unitFlagGroupId = globalUnitFlagGroupIndex++;
+    }
+  }
+  for (auto *rwOp : unitFlagOps) {
+    auto *parentOp = unionFind.find(rwOp);
+    assert(parentOp->mergedUnitFlagInfo.unitFlagGroupId != -1);
+    if (unionFind.find(rwOp) != rwOp) {
+      rwOp->mergedUnitFlagInfo.unitFlagGroupId =
+          parentOp->mergedUnitFlagInfo.unitFlagGroupId;
+    }
+  }
+}
 std::set<std::pair<int64_t, SetWaitOp *>> &
 SyncSolverBase::getSetWaitOpsIndexRef(hivm::PIPE pipeSrc, hivm::PIPE pipeDst,
                                       int64_t eventId) {
@@ -2423,16 +2528,9 @@ void SyncSolverBase::calcAllEventIds() {
 
 SyncBeforeAfterMap SyncSolverBase::getBeforeAfterSyncMaps() {
   calcAllEventIds();
+  collectUnitFlagGroupIds();
   SyncMap syncMapBefore, syncMapAfter;
-  std::vector<ConflictPair *> conflictPairs;
-  for (auto &conflictPair : chosenConflictedPairs) {
-    conflictPairs.push_back(conflictPair.get());
-  }
-  for (auto &conflictPair : persistentChosenConflictedPairs) {
-    conflictPairs.push_back(conflictPair.get());
-  }
-
-  for (auto *conflictPair : conflictPairs) {
+  for (auto *conflictPair : getAllChosenConflictPairs()) {
     if (conflictPair->isUseless) {
       continue;
     }
@@ -2534,8 +2632,8 @@ void SyncSolverBase::insertMergedBackwardSyncPairs() {
         auto startIndex = scopeOcc->startIndex;
         auto endIndex = scopeOcc->endIndex;
         if (isa<Loop>(scopeOp)) {
-          setOcc = getBeforePlaceHolderOcc(scopeOcc);
-          waitOcc = getAfterPlaceHolderOcc(scopeOcc);
+          setOcc = tryGetBeforePlaceHolderOcc(scopeOcc);
+          waitOcc = tryGetAfterPlaceHolderOcc(scopeOcc);
           startIndex = setOcc->endIndex;
           endIndex = waitOcc->startIndex;
         }

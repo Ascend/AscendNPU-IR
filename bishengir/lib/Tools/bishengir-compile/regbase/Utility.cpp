@@ -64,8 +64,8 @@ LogicalResult inferMixedCV(ModuleOp &module,
     // not suppress MixedCV auto inference. Keep the old early exit for other
     // scoped IR(especially the scope in CV affinity scenarios), which is still
     // treated as hand-written/special-case input.
-    if (auto vectorType = scopeOp->getAttrOfType<StringAttr>("vector_type");
-        vectorType && vectorType.getValue() == "simt")
+    if (auto vectorMode = scopeOp->getAttrOfType<StringAttr>("vector_mode");
+        vectorMode && vectorMode.getValue() == "simt")
       return mlir::WalkResult::advance();
     return mlir::WalkResult::interrupt();
   });

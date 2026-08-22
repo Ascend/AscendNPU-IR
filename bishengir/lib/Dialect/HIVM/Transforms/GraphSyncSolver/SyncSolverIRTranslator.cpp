@@ -879,7 +879,15 @@ std::unique_ptr<Scope> IRTranslator::funcIrBuilder(Region &region,
           auto regionOp = funcIrBuilder(region, curScopeOp.get());
           curScopeOp->body.push_back(std::move(regionOp));
         }
+        auto beforePlaceHolderOp =
+            std::make_unique<PlaceHolder>(nullptr, curScopeOp->parentOp);
+        beforePlaceHolderOp->beforeOp = curScopeOp.get();
+        auto afterPlaceHolderOp =
+            std::make_unique<PlaceHolder>(nullptr, curScopeOp->parentOp);
+        afterPlaceHolderOp->afterOp = curScopeOp.get();
+        parScope->body.push_back(std::move(beforePlaceHolderOp));
         parScope->body.push_back(std::move(curScopeOp));
+        parScope->body.push_back(std::move(afterPlaceHolderOp));
         continue;
       }
       if (auto branchOp = dyn_cast<cf::BranchOp>(op)) {

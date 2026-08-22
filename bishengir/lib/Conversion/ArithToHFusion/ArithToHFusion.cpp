@@ -133,19 +133,9 @@ struct ElementwiseOpToHFusionBinary : public OpRewritePattern<BinaryOp> {
   }
 };
 
-template <typename BinaryOp>
+template <typename BinaryOp, typename HFusionMulExtOp>
 struct MulExtendedOpLowering : public OpRewritePattern<BinaryOp> {
   using OpRewritePattern<BinaryOp>::OpRewritePattern;
-
-  Operation *createMulExtOp(PatternRewriter &rewriter, Location loc,
-                            Type resultType, Value lhs, Value rhs,
-                            bool isUnsigned) const {
-    return isUnsigned
-               ? rewriter.create<hfusion::MulExtUiOp>(loc, resultType,
-                                                      resultType, lhs, rhs)
-               : rewriter.create<hfusion::MulExtOp>(loc, resultType, resultType,
-                                                    lhs, rhs);
-  }
 
   LogicalResult matchAndRewrite(BinaryOp op,
                                 PatternRewriter &rewriter) const final {
@@ -155,20 +145,8 @@ struct MulExtendedOpLowering : public OpRewritePattern<BinaryOp> {
     Value rhs = op.getRhs();
     auto resultType = op.getLow().getType();
 
-    auto module = op->template getParentOfType<ModuleOp>();
-    Operation *mulExtOp = nullptr;
-    if (module && hacc::utils::isRegBasedArch(module)) {
-      // Adapt to reg-based arch, use hfusion.mulext instead of hfusion.mulextui
-      // TODO: can remove this dispatch after fully support MulExtUiOp in
-      // regbase pipeline
-      mulExtOp = rewriter.create<hfusion::MulExtOp>(op->getLoc(), resultType,
-                                                    resultType, lhs, rhs);
-    } else {
-      constexpr bool isUnsigned =
-          std::is_same_v<BinaryOp, arith::MulUIExtendedOp>;
-      mulExtOp = createMulExtOp(rewriter, op->getLoc(), resultType, lhs, rhs,
-                                isUnsigned);
-    }
+    Operation *mulExtOp = rewriter.create<HFusionMulExtOp>(
+        op->getLoc(), resultType, resultType, lhs, rhs);
     rewriter.replaceOp(op, mulExtOp);
     return success();
   }
@@ -554,8 +532,8 @@ void mlir::hfusion::populateArithToHFusionConversionPatterns(
       ElementwiseOpToHFusionCompare<arith::CmpFOp>,
       ElementwiseOpToHFusionCompare<arith::CmpIOp>,
       ElementwiseOpToHFusionSelect<arith::SelectOp>,
-      MulExtendedOpLowering<arith::MulSIExtendedOp>,
-      MulExtendedOpLowering<arith::MulUIExtendedOp>,
+      MulExtendedOpLowering<arith::MulSIExtendedOp, hfusion::MulExtOp>,
+      MulExtendedOpLowering<arith::MulUIExtendedOp, hfusion::MulExtUiOp>,
       BitcastOpToHFusionBitcastOp>(patterns.getContext());
 }
 

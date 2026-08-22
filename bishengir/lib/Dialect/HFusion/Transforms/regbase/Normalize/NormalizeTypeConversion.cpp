@@ -1390,8 +1390,8 @@ private:
     auto scopeOp = op->getParentOfType<scope::ScopeOp>();
     if (!scopeOp)
       return false;
-    if (auto vectorType = scopeOp->getAttrOfType<StringAttr>("vector_type"))
-      return vectorType.getValue() == "simt";
+    if (auto vectorMode = scopeOp->getAttrOfType<StringAttr>("vector_mode"))
+      return vectorMode.getValue() == "simt";
     return false;
   }
 };
