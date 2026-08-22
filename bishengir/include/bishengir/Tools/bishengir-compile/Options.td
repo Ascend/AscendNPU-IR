@@ -290,6 +290,14 @@ def EnableSanitizer : DFXControlOptions<
   bit isSharedWithDownstreamToolchain = 1;
 }
 
+def EnableDebugVariables : DFXControlOptions<
+  "Enable ascend debug variables",
+  "bool",
+  "false"
+> {
+  bit isSharedWithDownstreamToolchain = 1;
+}
+
 def EnableMemoryDisplay : DFXControlOptions<
   "Enable ascend memory display tools.",
   "bool",
