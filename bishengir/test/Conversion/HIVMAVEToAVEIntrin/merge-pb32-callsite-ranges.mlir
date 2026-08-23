@@ -294,43 +294,6 @@ func.func @caller_offset_unit_overflow(%a: vector<64xi8>, %b: vector<64xi8>) {
 // -----
 
 // Both arguments originate from allocation base 0; the store offset is 128B.
-// The marked cast folds offset 64 into the source pointer. The VF load
-// is at [128, 192), overlapping the first store at [128, 136).
-// CHECK-LABEL: func.func @marked_cast_source_offset(
-// CHECK: "hivm_regbaseintrins.intr.hivm.pstu.b32"
-// CHECK: "hivm_regbaseintrins.intr.hivm.pstu.b32"
-// CHECK: return
-func.func @marked_cast_source_offset(%dst: memref<2048xi1, #hivm.address_space<ub>>, %src: memref<256xi8, #hivm.address_space<ub>>, %a: vector<64xi8>, %b: vector<64xi8>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
-  %c0 = arith.constant 0 : index
-  %mask = ave.hir.pge <ALL> {functionType = #ave.func_dist_type<pb32>} : vector<64xi1>
-  %p0 = ave.hir.vcmp <NE> %a, %b, %mask : vector<64xi8>, vector<64xi1> -> vector<64xi1>
-  %d0 = memref.reinterpret_cast %dst to offset: [1024], sizes: [64], strides: [1] : memref<2048xi1, #hivm.address_space<ub>> to memref<64xi1, strided<[1], offset: ?>, #hivm.address_space<ub>>
-  ave.hir.masked_store <NORM_B8> %d0[%c0], %mask, %p0 {ave.unaligned_ub_access = #ave.unaligned_ub_access, functionType = #ave.func_dist_type<pb32>} : memref<64xi1, strided<[1], offset: ?>, #hivm.address_space<ub>>, vector<64xi1>, vector<64xi1>
-  %s = memref.reinterpret_cast %src to offset: [64], sizes: [64], strides: [1] : memref<256xi8, #hivm.address_space<ub>> to memref<64xi8, strided<[1], offset: ?>, #hivm.address_space<ub>>
-  %x = ave.hir.vload <UNPK4_B8> %s[%c0] {functionType = #ave.func_dist_type<pk4>} : memref<64xi8, strided<[1], offset: ?>, #hivm.address_space<ub>> into vector<64xi8>
-  %p1 = ave.hir.vcmp <NE> %x, %b, %mask : vector<64xi8>, vector<64xi1> -> vector<64xi1>
-  %d1 = memref.reinterpret_cast %dst to offset: [1088], sizes: [64], strides: [1] : memref<2048xi1, #hivm.address_space<ub>> to memref<64xi1, strided<[1], offset: ?>, #hivm.address_space<ub>>
-  ave.hir.masked_store <NORM_B8> %d1[%c0], %mask, %p1 {ave.unaligned_ub_access = #ave.unaligned_ub_access, functionType = #ave.func_dist_type<pb32>} : memref<64xi1, strided<[1], offset: ?>, #hivm.address_space<ub>>, vector<64xi1>, vector<64xi1>
-  return
-}
-// CHECK-LABEL: func.func @caller_marked_cast_source_offset(
-// CHECK: call @marked_cast_source_offset(
-// CHECK: return
-func.func @caller_marked_cast_source_offset(%a: vector<64xi8>, %b: vector<64xi8>) {
-  %dc = arith.constant 0 : i64
-  %sc = arith.constant 0 : i64
-  %d = hivm.hir.pointer_cast(%dc) : memref<2048xi1, #hivm.address_space<ub>>
-  %sbase = hivm.hir.pointer_cast(%sc) : memref<256xi8, #hivm.address_space<ub>>
-  %off = arith.constant 64 : index
-  %sview = memref.reinterpret_cast %sbase to offset: [%off], sizes: [256], strides: [1] : memref<256xi8, #hivm.address_space<ub>> to memref<256xi8, strided<[1], offset: ?>, #hivm.address_space<ub>>
-  %folded = memref.cast %sview {fold_offset_into_ptr} : memref<256xi8, strided<[1], offset: ?>, #hivm.address_space<ub>> to memref<256xi8, #hivm.address_space<ub>>
-  func.call @marked_cast_source_offset(%d, %folded, %a, %b) : (memref<2048xi1, #hivm.address_space<ub>>, memref<256xi8, #hivm.address_space<ub>>, vector<64xi8>, vector<64xi8>) -> ()
-  return
-}
-
-// -----
-
-// Both arguments originate from allocation base 0; the store offset is 128B.
 // An ordinary cast preserves aligned_ptr. The VF reinterpret_cast replaces
 // offset 64, so the load is at [64, 128), disjoint from the store at 128.
 // CHECK-LABEL: func.func @ordinary_cast_source_offset(

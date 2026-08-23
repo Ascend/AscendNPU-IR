@@ -365,29 +365,3 @@ func.func @stop_at_read_of_second_store(%dst: memref<1024xi8, #hivm.address_spac
   ave.hir.masked_store <NORM_B8> %v2[%c0], %m2, %a2 {ave.unaligned_ub_access = #ave.unaligned_ub_access, functionType = #ave.func_dist_type<norm>} : memref<64xi8, strided<[1], offset: ?>, #hivm.address_space<ub>>, vector<256xi1>, vector<256xi8>
   return %read : vector<64xi8>
 }
-
-// -----
-
-// A marked cast changes aligned_ptr: the two stores cover [3, 67) and
-// [131, 259). Combining their flushes would fill the gap and shift the data.
-// CHECK-LABEL: func.func @keep_folded_pointer_gap(
-// CHECK: "hivm_regbaseintrins.intr.hivm.vstus.post.s8"(%arg1,
-// CHECK: "hivm_regbaseintrins.intr.hivm.vstas"
-// CHECK: "hivm_regbaseintrins.intr.hivm.vstus.post.s8"(%arg2,
-// CHECK: "hivm_regbaseintrins.intr.hivm.vstas"
-// CHECK-NOT: hivm.vstus
-// CHECK-NOT: hivm.vstas
-// CHECK: return
-func.func @keep_folded_pointer_gap(%dst: memref<1024xi8, #hivm.address_space<ub>>, %a0: vector<256xi8>, %a1: vector<256xi8>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
-  %c0 = arith.constant 0 : index
-  %m0 = ave.hir.pge <VL64> {functionType = #ave.func_dist_type<pb8>} : vector<256xi1>
-  %v0 = memref.reinterpret_cast %dst to offset: [3], sizes: [64], strides: [1] : memref<1024xi8, #hivm.address_space<ub>> to memref<64xi8, strided<[1], offset: ?>, #hivm.address_space<ub>>
-  ave.hir.masked_store <NORM_B8> %v0[%c0], %m0, %a0 {ave.unaligned_ub_access = #ave.unaligned_ub_access, functionType = #ave.func_dist_type<norm>} : memref<64xi8, strided<[1], offset: ?>, #hivm.address_space<ub>>, vector<256xi1>, vector<256xi8>
-  %off = arith.constant 64 : index
-  %shifted = memref.reinterpret_cast %dst to offset: [%off], sizes: [1024], strides: [1] : memref<1024xi8, #hivm.address_space<ub>> to memref<1024xi8, strided<[1], offset: ?>, #hivm.address_space<ub>>
-  %folded = memref.cast %shifted {fold_offset_into_ptr} : memref<1024xi8, strided<[1], offset: ?>, #hivm.address_space<ub>> to memref<1024xi8, #hivm.address_space<ub>>
-  %m1 = ave.hir.pge <VL128> {functionType = #ave.func_dist_type<pb8>} : vector<256xi1>
-  %v1 = memref.reinterpret_cast %folded to offset: [67], sizes: [128], strides: [1] : memref<1024xi8, #hivm.address_space<ub>> to memref<128xi8, strided<[1], offset: ?>, #hivm.address_space<ub>>
-  ave.hir.masked_store <NORM_B8> %v1[%c0], %m1, %a1 {ave.unaligned_ub_access = #ave.unaligned_ub_access, functionType = #ave.func_dist_type<norm>} : memref<128xi8, strided<[1], offset: ?>, #hivm.address_space<ub>>, vector<256xi1>, vector<256xi8>
-  return
-}

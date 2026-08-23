@@ -224,8 +224,8 @@ private:
 //
 // Passthrough / identity-like return (VF result traced to the slice argument,
 // then extract_slice on the full call result) is intentionally not supported:
-// that form loses dynamic offset across one-shot-bufferize / VF call casts
-// (fold_offset_into_ptr needs static strides) and breaks CV1:2 precision.
+// that form loses dynamic offset across one-shot-bufferize / VF call casts and
+// breaks CV1:2 precision.
 // Input-only operand pull (fullTensorResultIdx == -1) remains supported.
 
 /// Match result for slice pull: describes which operand/result to rewrite and
