@@ -3,6 +3,7 @@
 func.func private @vf(memref<32x64xf16>, memref<32x64xf16>)
 
 // CHECK-LABEL: func @detected_by_predicate
+//   CHECK-NOT:   partition_sub_block_guard
 //       CHECK:   scf.if %{{.*}} {
 //       CHECK:     func.call @vf(%{{.*}}, %[[OUT:.*]]) :
 //       CHECK:   }
@@ -10,7 +11,7 @@ func.func private @vf(memref<32x64xf16>, memref<32x64xf16>)
 //       CHECK:   memref.copy %[[OUT]], %{{.*}}
 func.func @detected_by_predicate(%in: memref<32x64xf16>, %dst: memref<32x64xf16>) {
   %c0 = arith.constant 0 : index
-  %i = hivm.hir.get_sub_block_idx -> i64
+  %i = hivm.hir.get_sub_block_idx {partition_sub_block_guard} -> i64
   %idx = arith.index_cast %i : i64 to index
   %cond = arith.cmpi eq, %idx, %c0 : index
   %init = memref.alloc() : memref<32x64xf16>
@@ -35,7 +36,7 @@ func.func private @vf(memref<32x64xf16>, memref<32x64xf16>)
 //   CHECK-NOT:   else
 func.func @already_result_free(%in: memref<32x64xf16>, %out: memref<32x64xf16>) {
   %c0 = arith.constant 0 : index
-  %i = hivm.hir.get_sub_block_idx -> i64
+  %i = hivm.hir.get_sub_block_idx {partition_sub_block_guard} -> i64
   %idx = arith.index_cast %i : i64 to index
   %cond = arith.cmpi eq, %idx, %c0 : index
   scf.if %cond {
@@ -58,7 +59,7 @@ func.func private @vf(memref<32x64xf16>, memref<32x64xf16>)
 //       CHECK:   }
 func.func @preserves_else_anchor(%in: memref<32x64xf16>, %dst: memref<32x64xf16>) {
   %c0 = arith.constant 0 : index
-  %i = hivm.hir.get_sub_block_idx -> i64
+  %i = hivm.hir.get_sub_block_idx {partition_sub_block_guard} -> i64
   %idx = arith.index_cast %i : i64 to index
   %cond = arith.cmpi eq, %idx, %c0 : index
   %init = memref.alloc() : memref<32x64xf16>
@@ -84,7 +85,7 @@ func.func @preserves_else_anchor(%in: memref<32x64xf16>, %dst: memref<32x64xf16>
 //       CHECK:     hivm.hir.copy ins(%arg0 : memref<16x16xf32>) outs(%[[A]]
 //   CHECK-NOT:   else
 func.func @resfree_nonhoist(%arg0: memref<16x16xf32>, %m: memref<16x16xf32>) attributes {hacc.entry} {
-  %idx = hivm.hir.get_sub_block_idx -> i64
+  %idx = hivm.hir.get_sub_block_idx {partition_sub_block_guard} -> i64
   %i = arith.index_cast %idx : i64 to index
   %c0 = arith.constant 0 : index
   %cond = arith.cmpi eq, %i, %c0 : index
@@ -93,5 +94,33 @@ func.func @resfree_nonhoist(%arg0: memref<16x16xf32>, %m: memref<16x16xf32>) att
   } else {
     scf.yield %m : memref<16x16xf32>
   }
+  return
+}
+
+// -----
+
+// A structurally matching value-returning guard whose get_sub_block_idx is
+// NOT stamped (e.g. emitted by TileAndBindSubBlock, whose else-yield is the
+// live DPS init read on the other sub-block; bufferization strips any attr
+// TileAndBind put on the scf.if itself) must be left untouched
+// CHECK-LABEL: func @tileandbind_guard_untouched
+//       CHECK:   %{{.*}} = scf.if
+//       CHECK:   } else {
+//       CHECK:   memref.copy
+func.func private @vf(memref<32x64xf16>, memref<32x64xf16>)
+
+func.func @tileandbind_guard_untouched(%in: memref<32x64xf16>, %init: memref<32x64xf16>, %dst: memref<32x64xf16>) {
+  %c0 = arith.constant 0 : index
+  %i = hivm.hir.get_sub_block_idx -> i64
+  %idx = arith.index_cast %i : i64 to index
+  %cond = arith.cmpi eq, %idx, %c0 : index
+  %r = scf.if %cond -> (memref<32x64xf16>) {
+    %out = memref.alloc() : memref<32x64xf16>
+    func.call @vf(%in, %out) : (memref<32x64xf16>, memref<32x64xf16>) -> ()
+    scf.yield %out : memref<32x64xf16>
+  } else {
+    scf.yield %init : memref<32x64xf16>
+  }
+  memref.copy %r, %dst : memref<32x64xf16> to memref<32x64xf16>
   return
 }

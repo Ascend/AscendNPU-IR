@@ -306,14 +306,7 @@ static void hivmPreBufferizationOptimizationPipeline(
 
   // Partition after CV pipelining so it sees the IR cv-pipeline actually
   // emits.
-  if (hivmPipelineOptions.partitionAndBindSubBlock !=
-      PartitionAndBindSubBlockMode::Off) {
-    PartitionAndBindSubBlockOptions partitionOptions;
-    partitionOptions.enableLoadBalanced =
-        hivmPipelineOptions.partitionAndBindSubBlock ==
-        PartitionAndBindSubBlockMode::LoadBalanced;
-    pm.addPass(createPartitionAndBindSubBlockPass(partitionOptions));
-  }
+  pm.addPass(createPartitionAndBindSubBlockPass());
 
   if (hivmPipelineOptions.enableUbufSaving) {
     pm.nest<func::FuncOp>().addPass(createCloneTensorEmptyPass());
@@ -519,8 +512,9 @@ void buildOptimizeHIVMPipeline(OpPassManager &pm,
   if (!options.disableHIVMTensorCompile) {
     hivmPreBufferizationOptimizationPipeline(pm, options);
     bufferizationPipeline(pm, options);
-    if (options.partitionAndBindSubBlock != PartitionAndBindSubBlockMode::Off)
-      pm.addPass(createSubBlockGuardCleanupPass());
+    // Self-gated: only rewrites guards whose get_sub_block_idx carries the
+    // partition provenance stamp; a no-op in non-partitioned modules.
+    pm.addPass(createSubBlockGuardCleanupPass());
   }
   hivmPostBufferizationOptimizationPipeline(pm, options);
   // Optimizations that relies on scope should be done after this point. Inline

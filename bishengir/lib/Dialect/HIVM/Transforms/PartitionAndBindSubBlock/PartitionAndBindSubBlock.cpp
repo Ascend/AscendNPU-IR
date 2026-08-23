@@ -141,13 +141,14 @@ LogicalResult PartitionAndBindSubBlockPass::runOnFunc(func::FuncOp func) {
     return success();
   }
 
-  // (2) Resolve the core assignment.
+  // (2) Resolve the core assignment. The IR hints only pin the hinted cones;
+  // free nodes are load-balanced across both sub-cores unless the
+  // testing-only pin-free-nodes option asks for the pinned baseline.
   DefaultFreeNodePlacementPolicy defaultPolicy;
   LoadBalancedFreeNodePlacementPolicy balancedPolicy;
   FreeNodePlacementPolicy &placementPolicy =
-      enableLoadBalanced
-          ? static_cast<FreeNodePlacementPolicy &>(balancedPolicy)
-          : static_cast<FreeNodePlacementPolicy &>(defaultPolicy);
+      pinFreeNodes ? static_cast<FreeNodePlacementPolicy &>(defaultPolicy)
+                   : static_cast<FreeNodePlacementPolicy &>(balancedPolicy);
   CoreDependencyAnalysis analysis(func, placementPolicy);
   CoreAssignment assignment = analysis.run();
 
