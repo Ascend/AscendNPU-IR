@@ -231,7 +231,10 @@ struct SpecInfo {
   int minLevel = SPEC_LEVEL_0;
   int specLevel = SPEC_LEVEL_3;
   int childIdx = -1;
-  int specStartIdx = 0;
+  /// The child index at which recovery mode begins. After a rollback, the
+  /// specLevel is lowered to retry the failed entry; once childIdx catches up
+  /// to this index, specLevel is restored to maxLevel.
+  int rollBackStopIdx = 0;
   int rollbackIdx = -1;
   uint64_t rollbackAddr = UINT64_MAX;
 };
@@ -279,6 +282,54 @@ struct StatusWrapper {
   StorageEntry *RootE;
 };
 
+/// Example IR for preload buffer reuse:
+/// 1:  func.func {
+/// 2:    scf.for {
+/// 3:      %alloc = memref.alloc()
+/// 4:      annotation.mark %alloc {hivm.preload_local_buffer = 1 : i32}
+/// 5:      scope.scope : () -> () {
+/// 6:        ops
+/// 7:        hivm.hir.load outs(%alloc)
+/// 8:        ops
+/// 9:      } {preload_num = 1}
+/// 10:     scope.scope : () -> () {
+/// 11:       %alloc_0 = memref.alloc()
+/// 12:       func.call @vf_reuse_direct(%alloc, %alloc_0)
+/// 13:       read %alloc_0
+/// 14:       scope.return
+/// 15:     } {preload_num = 0}
+/// 16:   }
+/// 17:   return
+/// 18: }
+///
+/// Preload buffer %alloc is generated at line 7 (hivm.hir.load) and killed at
+/// line 12 (func.call). A preload buffer is alive across scopes, so the two
+/// idle intervals within each scope can be reused by other buffers:
+///   - genScope before genOp (line 6): %alloc is allocated but not yet loaded,
+///     so its storage is free before line 7.
+///   - killScope after killOp (line 13): %alloc has been consumed by the call,
+///     so its storage is free after line 12.
+///
+/// These two reusable intervals are recorded as reuseableBufferLifeBeforeGen
+/// and reuseableBufferLifeAfterKill respectively.
+/// Besides, genScope and killScope must have different preload_num.
+struct PreloadBufferReuseableInfo {
+  /// preload Buffer
+  Value preloadBuffer;
+  /// gen opInfo
+  OpInfo *genInfo;
+  /// reuseable buffer life in genScope before genOp
+  std::shared_ptr<BufferLife> reuseableBufferLifeBeforeGen;
+  /// gen scope preload num
+  int64_t genScopePreloadNum;
+  /// kill opInfo
+  OpInfo *killInfo;
+  /// reuseable buffer life in killScope after killOp
+  std::shared_ptr<BufferLife> reuseableBufferLifeAfterKill;
+  /// kill scope preload num
+  int64_t killScopePreloadNum;
+};
+
 /// Pair of alias buffer and whether the alias buffer is conditional
 using BufferCondPair = std::pair<Value, bool>;
 
@@ -301,6 +352,9 @@ public:
 
   /// map from buffer to its lifetime.
   DenseMap<Value, std::shared_ptr<BufferLife>> buffer2Life;
+
+  /// map from preload buffer to its reuseable info
+  DenseMap<Value, PreloadBufferReuseableInfo> preloadBufferReuseableInfo;
 
   /// map from operation to its gen and kill buffer.
   DenseMap<OpInfo *, GenKillEntry> genKillMap;
@@ -420,10 +474,10 @@ private:
                                                      Value aliasValue);
 
   /// Get alias buffer information.
-  SmallVector<BufferCondPair> GetAliasBufferCondPairs(Value aliasBuffer);
+  SmallVector<BufferCondPair> GetAliasBufferCondPairs(Value aliasBuffer) const;
 
   /// Get alias buffers.
-  SetVector<Value> GetAliasBuffers(Value aliasBuffer);
+  SetVector<Value> GetAliasBuffers(Value aliasBuffer) const;
 
   /// Check whether there is an unknown operation with buffer
   /// information.
@@ -461,21 +515,27 @@ private:
   /// ancestor of op1.
   bool isParentOpDominate(Operation *op1, Operation *op2) const;
 
-  /// Check whether operand is marked buffer used in multi scope operations.
-  bool IsPreloadBuffer(Value operand);
+  /// Check if a buffer is a preload buffer.
+  bool IsPreloadBuffer(Value buffer) const;
 
   /// Check whether operand is marked buffer used in multi scope operations.
   void UpdatePreloadBuffers(annotation::MarkOp markOp, memref::AllocOp allocOp);
 
-  /// Update Gen information for multi scope used buffers and their alias
-  /// buffers.
-  void UpdatePreloadBuffersGenInfo(OpInfo *opInfo,
-                                   const SetVector<Value> &preloadBufferValues);
+  /// Update gen info of preload buffers to their enclosing loop op.
+  void UpdatePreloadBuffersGenInfo(OpInfo *opInfo);
 
-  /// Update Kill information for multi scope used buffers and their alias
-  /// buffers.
-  void UpdatePreloadBuffersKillInfo(OpInfo *opInfo,
-                                    const SetVector<Value> &preloadBufferValues);
+  /// Update kill info of preload buffers to their enclosing loop op.
+  void UpdatePreloadBuffersKillInfo(OpInfo *opInfo);
+
+  /// Generate preload buffer reuseable lifetime vector.
+  void GeneratePreloadBufferReuseableInfo();
+
+  /// Generate preload buffers reuseable info and extend preload buffer lifetime
+  /// from scope to parent for.
+  void PreprocessPreloadBuffersBufferLife();
+
+  /// Dump preload buffer reuseable info for debugging.
+  void DumpPreloadBufferReuseableInfo() const;
 
   /// Process mark op and update buffer's gen and kill.
   void ProcessMarkOp(annotation::MarkOp markOp, OpInfo *curOpInfo,
@@ -553,8 +613,7 @@ public:
         restrictInplaceAsISA(restrictInplaceAsISA),
         simtVFDynamicSize(simtVFDynamicSize),
         disableVFReachableCheck(disableVFReachableCheck),
-        planMemoryStrategy(planMemoryStrategy),
-        vfInplaceReuseInfo(nullptr) {}
+        planMemoryStrategy(planMemoryStrategy), vfInplaceReuseInfo(nullptr) {}
 
   LogicalResult plan(bool emitErrors = true);
 
@@ -591,6 +650,11 @@ public:
 
   inline void SetVFInplaceReuseInfo(VFCallInplaceReuseInfo *inplaceReuseInfo) {
     vfInplaceReuseInfo = inplaceReuseInfo;
+  }
+
+  inline void SetPreloadBufferReuseableInfo(
+      DenseMap<Value, PreloadBufferReuseableInfo> info) {
+    preloadBufferReuseableInfo = info;
   }
 
   /// Setup the device's storage specs
@@ -794,7 +858,7 @@ private:
   bool ContinueRollBack(const StatusWrapper &statusWrapper) const;
 
   /// Check if multibuffer-slots should be rolled back together
-  bool ShouldRollbackMuiltiBuffer(const PlanRecord& r) const;
+  bool ShouldRollbackMuiltiBuffer(const PlanRecord &r) const;
 
   /// Memory plan fallback information processing.
   void RollBackForAllocFailInner(StatusWrapper &statusWrapper,
@@ -892,6 +956,15 @@ private:
   void ReportAllocatedEntryDebugInfo(const StorageEntry *rootStorageEntry,
                                      bool isFail) const;
 
+  /// Check if preload buffer can be reused.
+  bool IsPreloadBufferReuseable(PreloadBufferReuseableInfo &info,
+                                std::shared_ptr<BufferLife> &life2);
+
+  void GeneratePreloadReuseableSE();
+
+  /// Check inplaced buffer contained in preloadBuffer2Life
+  bool IsPreloadStorageEntry(const StorageEntry *storageEntry);
+
 private:
   /// The buffer corresponding to each operation.
   SmallVector<std::unique_ptr<OpInfo>> linearOperation;
@@ -963,6 +1036,11 @@ private:
 
   /// The scope of the buffer applied memory fail and the max bits it applied.
   llvm::MapVector<hivm::AddressSpace, uint64_t> failApplyBufferInfo;
+
+  /// map from preload buffer to its lifetime.
+  DenseMap<Value, PreloadBufferReuseableInfo> preloadBufferReuseableInfo;
+
+  SetVector<StorageEntryPair> reuseablePreloadSEPair;
 
   /// when plan memory fail, map from each scope to its root StorageEntry.
   llvm::MapVector<hivm::AddressSpace, StorageEntry *>
