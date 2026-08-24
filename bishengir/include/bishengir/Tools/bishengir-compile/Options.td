@@ -532,6 +532,12 @@ def EnableAutoBindSubBlock : HIVMOptimizationControlOptions<
   "true"
 >;
 
+def SkipHIVMBindSubBlockPass : HIVMOptimizationControlOptions<
+  "Skip the hivm-bind-sub-block pass.",
+  "bool",
+  "false"
+>;
+
 def EnableCodeMotion : HIVMOptimizationControlOptions<
   "Enable code-motion/subset-hoist.",
   "bool",

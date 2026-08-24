@@ -90,6 +90,12 @@ Dimension Analyzer的核心功能在于其选轴算法。该算法通过对目�
 
 `--enable-auto-bind-sub-block=False`为关闭此特性。
 
+`--skip-hivm-bind-sub-block-pass=True`为完全跳过`hivm-bind-sub-block` Pass
+（默认为`False`）。
+
+`--enable-auto-bind-sub-block=False`仍会运行该Pass，但会关闭切分并将AIV工作限制在子块0上。
+仅当该Pass本身不应运行时，使用`--skip-hivm-bind-sub-block-pass=True`。
+
 ## 使用约束
 
 如果尝试切分失败，或中间转换失败，会自动回退到1:1，保证功能正确性。
