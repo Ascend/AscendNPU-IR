@@ -23,6 +23,7 @@
 #ifndef BISHENGIR_DIALECT_HIVM_UTILS_WORKLISTBUILDER_H
 #define BISHENGIR_DIALECT_HIVM_UTILS_WORKLISTBUILDER_H
 #include "bishengir/Dialect/HIVM/Utils/WorkItem.h"
+#include <memory>
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
@@ -151,6 +152,7 @@ private:
   void populateLoopCarriedDependencies();
   LogicalResult extractAvailableOps(SmallVector<Operation *> &extractedOps,
                                     TCoreType &core);
+  LogicalResult runRoundExtraction();
   LogicalResult populateWorkItem(SmallVector<Operation *> &availableOps,
                                  TCoreType core);
   LogicalResult traceDependentOps(WorkItem &item);
@@ -185,14 +187,19 @@ private:
   bool isLoopMode = false;
   int numMultibuffer = -1;
   bool enableLazyLoading = false;
+  bool useLcdBackup = false;
 
   DenseSet<Operation *> toBePipelined;
   SmallVector<Operation *> separators;
 
   // Counter alloca value -> vector-safe clone advancing it (set by CV pipeline).
   DenseMap<Value, Operation *> counterClones;
-  DenseMap<Operation *, DenseSet<Operation *>> dependenceMap;
-  DenseMap<Operation *, DenseSet<Operation *>> loopCarriedDependenceMap;
+  // Use DenseMap with std::unique_ptr<DenseSet> to avoid large inline value-type
+  // overhead during DenseMap hash bucket resizing while maintaining fast lookup.
+  DenseMap<Operation *, std::unique_ptr<DenseSet<Operation *>>> dependenceMap;
+  DenseMap<Operation *, std::unique_ptr<DenseSet<Operation *>>>
+      loopCarriedDependenceMap;
+  DenseSet<Operation *> loopCarriedDependentOps;
   SetVector<Value> yieldedVals;
 
   DenseMap<Operation *, SmallVector<WorkItem *>> opToWorkItemMap;
