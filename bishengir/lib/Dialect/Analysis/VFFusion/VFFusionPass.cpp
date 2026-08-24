@@ -160,6 +160,65 @@ static bool hasCVSpecialPatternsSkip(ModuleOp moduleOp) {
     return true;
   }
 
+  // Pattern 2: hfusion.cast feeds two linalg.broadcast ops (one directly,
+  // one through a tensor.extract_slice of the cast result); both broadcasts
+  // feed linalg.sub → linalg.exp.
+  // VFFusion outlining this chain breaks the shared cast + slice
+  // relationship (the slice has a dynamic index and carries a
+  // to_be_bubbled_slice hint), causing scheduling gaps downstream.
+  bool hasCastBroadcastSubExpPattern = false;
+  moduleOp.walk([&](linalg::ExpOp expOp) {
+    if (hasCastBroadcastSubExpPattern)
+      return;
+    // exp's input should come from linalg.sub
+    Operation *subOp = expOp.getOperand(0).getDefiningOp();
+    if (!subOp || !isa<linalg::SubOp>(subOp))
+      return;
+    // sub's inputs: both should be linalg.broadcast
+    Operation *lhsBrc = subOp->getOperand(0).getDefiningOp();
+    Operation *rhsBrc = subOp->getOperand(1).getDefiningOp();
+    if (!lhsBrc || !isa<linalg::BroadcastOp>(lhsBrc) || !rhsBrc ||
+        !isa<linalg::BroadcastOp>(rhsBrc))
+      return;
+    // Resolve the defining op behind each broadcast's input:
+    //  - one should be a tensor.extract_slice whose source is a hfusion.cast
+    //  - the other should be the hfusion.cast directly
+    Operation *lhsSrc = lhsBrc->getOperand(0).getDefiningOp();
+    Operation *rhsSrc = rhsBrc->getOperand(0).getDefiningOp();
+    if (!lhsSrc || !rhsSrc)
+      return;
+    Operation *lhsCast = nullptr;
+    Operation *rhsCast = nullptr;
+    bool lhsViaSlice = false;
+    bool rhsViaSlice = false;
+    if (auto sliceOp = dyn_cast<tensor::ExtractSliceOp>(lhsSrc)) {
+      lhsCast = sliceOp.getSource().getDefiningOp();
+      lhsViaSlice = true;
+    } else {
+      lhsCast = lhsSrc;
+    }
+    if (auto sliceOp = dyn_cast<tensor::ExtractSliceOp>(rhsSrc)) {
+      rhsCast = sliceOp.getSource().getDefiningOp();
+      rhsViaSlice = true;
+    } else {
+      rhsCast = rhsSrc;
+    }
+    if (!lhsCast || !rhsCast)
+      return;
+    // Both sources must resolve to the same hfusion.cast
+    if (!isa<hfusion::CastOp>(lhsCast) || lhsCast != rhsCast)
+      return;
+    // One broadcast reaches the cast via extract_slice, the other directly
+    if (lhsViaSlice == rhsViaSlice)
+      return;
+    hasCastBroadcastSubExpPattern = true;
+  });
+  if (hasCastBroadcastSubExpPattern) {
+    LDBG("Skipping VFFusion: detected cast→broadcast(×2)→sub→exp "
+         "pattern in CV case");
+    return true;
+  }
+
   return false;
 }
 
