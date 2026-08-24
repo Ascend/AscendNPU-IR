@@ -133,7 +133,20 @@ static Value createZeroOrEmptyStub(OpBuilder &builder, Location loc,
       .Default([&](Type t) { return Value(); });
 }
 
-static SmallVector<Value> getOutOperands(Operation *op) {
+/// An op preserved by the split keeps its region skeleton, so it still defines
+/// every result it defined in the mixed function. Only core-local data is
+/// meaningless on the filtered side; a scalar result is a counter or address
+/// arithmetic that the surrounding control flow reads, and the skeleton still
+/// computes it. Stubbing it out makes the two split functions disagree: in skew
+/// mode CVPipelining gives each preload stage a private copy of a shared loop
+/// counter (see privatizeSharedCounterIterArgs) while code outside the loop
+/// keeps reading the copy owned by the first stage, so zeroing that copy leaves
+/// AIC and AIV with different trip counts and deadlocks their handshakes.
+static bool shouldKeepScalarResult(bool opIsPreserved, Value result) {
+  return opIsPreserved && !isa<ShapedType>(result.getType());
+}
+
+static SmallVector<Value> getOutOperands(Operation *op, bool opIsPreserved) {
   if (op->getResults().empty()) {
     return {};
   }
@@ -248,8 +261,8 @@ static SmallVector<Value> getOutOperands(Operation *op) {
     Operation *terminator = scopeOp.getBody()->getTerminator();
     SmallVector<Value> outVals;
     for (auto [index, result] : llvm::enumerate(scopeOp.getResults())) {
-      if (result.use_empty()) {
-        // Sentinel: result has no uses, no replacement needed.
+      if (result.use_empty() || shouldKeepScalarResult(opIsPreserved, result)) {
+        // Sentinel: no replacement needed.
         outVals.push_back(Value());
         continue;
       }
@@ -310,14 +323,15 @@ static SmallVector<Value> getOutOperands(Operation *op) {
   llvm::report_fatal_error("unsupported op to get out operands");
 }
 
-LogicalResult replaceResultWithInitOperand(Operation *op) {
+LogicalResult replaceResultWithInitOperand(Operation *op,
+                                           bool opIsPreserved = false) {
   // replace uses of op result with out operand
   auto numResults = op->getNumResults();
   if (numResults == 0 || isa<tensor::EmptyOp, memref::AllocOp>(op)) {
     return success();
   }
 
-  SmallVector<Value> outOperands = getOutOperands(op);
+  SmallVector<Value> outOperands = getOutOperands(op, opIsPreserved);
   if (outOperands.size() != numResults) {
     return op->emitError()
            << "out operands and numResults mismatch when replacing results ("
@@ -327,8 +341,8 @@ LogicalResult replaceResultWithInitOperand(Operation *op) {
   for (size_t i = 0; i < numResults; i++) {
     OpResult res = op->getResult(i);
     if (!outOperands[i]) {
-      // Null sentinel is only valid when the result has no uses.
-      if (!res.use_empty())
+      // Null sentinel is only valid when the result needs no replacement.
+      if (!res.use_empty() && !shouldKeepScalarResult(opIsPreserved, res))
         return failure();
       continue;
     }
@@ -629,7 +643,7 @@ void SplitMixKernelPass::filterMixFunc(OpBuilder &builder,
     if (shouldPreserveForSplit(op)) {
       // Replace any result uses on the filtered side, but retain the region
       // skeleton so its anchors keep the same nesting and ids as the backup.
-      (void)replaceResultWithInitOperand(op);
+      (void)replaceResultWithInitOperand(op, /*opIsPreserved=*/true);
       return WalkResult::advance();
     }
 
