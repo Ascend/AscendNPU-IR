@@ -68,7 +68,7 @@ constexpr const int SPEC_LEVEL_1 = 1;
 /// dma.
 constexpr const int SPEC_LEVEL_2 = 2;
 
-/// do not reuse buffer when pipe conflicts.
+/// do not reuse buffer when pipe conflicts and in different pipelined loop.
 constexpr const int SPEC_LEVEL_3 = 3;
 
 /// plan information of alloc buffer.
@@ -768,35 +768,39 @@ private:
 
   /// Check whether current buffer conflicts with the history buffers.
   bool VerifyConflictStageCommon(
-      PlanRecHis &his, const StorageEntry *e, MemBoundListConstIter &start,
-      const MemBoundList &outline,
+      PlanRecHis &his, const StorageEntry *e, uint64_t offset,
       std::function<bool(const StorageEntry *, const StorageEntry *)>
           conflictChecker);
 
   /// spec_level == SPEC_LEVEL_3, do not reuse buffer when pipe conflicts.
   bool VerifyConflictStage3(PlanRecHis &his, const StorageEntry *e,
-                            int specLevel, MemBoundListConstIter &start,
-                            const MemBoundList &outline);
+                            uint64_t firstBufferOffset,
+                            SmallVector<uint64_t, 3> otherBufferOffsets);
 
   /// spec_level == SPEC_LEVEL_2, do not reuse the buffer in same loop when pipe
   /// conflicts between vector and dma.
   bool VerifyConflictStage2(PlanRecHis &his, const StorageEntry *e,
-                            int specLevel, MemBoundListConstIter &start,
-                            const MemBoundList &outline);
+                            uint64_t firstBufferOffset,
+                            SmallVector<uint64_t, 3> otherBufferOffsets);
 
   /// spec_level == SPEC_LEVEL_1, pure single can reuse with mb.
   /// otherBufferOffsets will contain multiBufferNum - 1 elements.
   bool VerifyConflictStage1(MemBoundList &outline, PlanRecHis &his,
-                            StorageEntry *e,
+                            StorageEntry *e, int specLevel,
                             const OutlineSectionInfo &outlineInfo,
                             SmallVectorImpl<uint64_t> &otherBufferOffsets);
 
   /// check if e1 and e2 has pipe conflict.
-  bool PipeConflict(const StorageEntry *e1, const StorageEntry *e2,
-                    DenseMap<StorageEntryPair, bool> &conflictMap);
+  bool PipeConflict(const StorageEntry *e1, const StorageEntry *e2);
+
+  /// Get pipelined loop(loop for preload, CV pipieline).
+  scf::ForOp getPipelinedLoop(const SmallVector<Value> &buffers);
+
+  /// check if e1 and e2 are not in same pipelined loop.
+  bool InDifferentPipelinedLoop(const StorageEntry *e1, const StorageEntry *e2);
 
   /// check if e1 and e2 has same parent loop.
-  bool PipeConflictInSameLoop(const StorageEntry *e1, const StorageEntry *e2);
+  bool InSameLoop(const StorageEntry *e1, const StorageEntry *e2);
 
   /// spec_level == SPEC_LEVEL_3, MTE2/MTE3 is pipe conflict with all existing
   /// allocation. check if current entry has OptDmaPipe-conflict with buffers
@@ -813,7 +817,7 @@ private:
 
   /// spec_level == SPEC_LEVEL_0, life time reuse.
   inline bool
-  VerifyConflictStage0(StorageEntry *e,
+  VerifyConflictStage0(StorageEntry *e, int specLevel,
                        const std::shared_ptr<MemoryBound> &last,
                        SmallVector<ValuePair> &stallPipelineInplacePairs);
 
@@ -930,7 +934,8 @@ private:
 
   /// Processing otherbuffer Storage Entry Information.
   void SpecAllocRelationOtherBufferEntry(MemBoundList &outline, PlanRecHis &his,
-                                         StorageEntry *e, uint64_t offset);
+                                         StorageEntry *e, int specLevel,
+                                         uint64_t offset);
 
   /// Get relative otherbuffer storage entry when the current reuse bound
   /// storage entry is of type mb.
@@ -960,7 +965,12 @@ private:
   bool IsPreloadBufferReuseable(PreloadBufferReuseableInfo &info,
                                 std::shared_ptr<BufferLife> &life2);
 
+  /// collect all the preload buffer reuseable info and generate the map from
+  /// local storage entry to its reuseable preload storage entry.
   void GeneratePreloadReuseableSE();
+
+  /// Reuse the local buffer with the preload buffer if it is reuseable.
+  void LocalBufferReusePreloadBuffer(StorageEntry *entry, PlanRecHis &history);
 
   /// Check inplaced buffer contained in preloadBuffer2Life
   bool IsPreloadStorageEntry(const StorageEntry *storageEntry);
@@ -1040,7 +1050,8 @@ private:
   /// map from preload buffer to its lifetime.
   DenseMap<Value, PreloadBufferReuseableInfo> preloadBufferReuseableInfo;
 
-  SetVector<StorageEntryPair> reuseablePreloadSEPair;
+  /// map from local storage entry to its reuseable preload storage entry.
+  DenseMap<StorageEntry *, StorageEntry *> localSE2ReuseablePreloadSE;
 
   /// when plan memory fail, map from each scope to its root StorageEntry.
   llvm::MapVector<hivm::AddressSpace, StorageEntry *>
