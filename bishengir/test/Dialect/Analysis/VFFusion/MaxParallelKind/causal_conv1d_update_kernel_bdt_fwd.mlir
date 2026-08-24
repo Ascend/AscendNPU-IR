@@ -8,14 +8,6 @@
 // CHECK: return
 
 // CHECK-LABEL: func.func private @causal_conv1d_update_kernel_bdt_fwd_fused_1
-// CHECK: linalg.transpose
-// CHECK: tensor.extract_slice
-// CHECK: linalg.transpose
-// CHECK: return
-
-// CHECK-LABEL: func.func private @causal_conv1d_update_kernel_bdt_fwd_fused_2
-// CHECK: linalg.transpose
-// CHECK: linalg.transpose
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
 // CHECK: linalg.elemwise_unary {fun = #linalg.unary_fn<exp>}
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<add>}
@@ -50,7 +42,9 @@
 // CHECK: tensor.extract_slice
 // CHECK: tensor.concat
 // CHECK: linalg.transpose
-// CHECK: func.call @causal_conv1d_update_kernel_bdt_fwd_fused_1
+// CHECK: linalg.transpose
+// CHECK: tensor.extract_slice
+// CHECK: linalg.transpose
 // CHECK: memref.reinterpret_cast
 // CHECK: tensor.extract_slice
 // CHECK: memref.subview
@@ -59,7 +53,9 @@
 // CHECK: scf.for
 // CHECK: func.call @causal_conv1d_update_kernel_bdt_fwd_fused_0
 // CHECK: scf.yield
-// CHECK: func.call @causal_conv1d_update_kernel_bdt_fwd_fused_2
+// CHECK: linalg.transpose
+// CHECK: linalg.transpose
+// CHECK: func.call @causal_conv1d_update_kernel_bdt_fwd_fused_1
 // CHECK: tensor.extract_slice
 // CHECK: memref.subview
 // CHECK: bufferization.materialize_in_destination
