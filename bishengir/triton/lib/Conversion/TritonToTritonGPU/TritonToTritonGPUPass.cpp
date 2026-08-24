@@ -118,6 +118,7 @@ void populateMathPatternsAndLegality(TritonGPUTypeConverter &typeConverter,
   // Rewrite rule
   patterns.add<GenericOpPattern<math::ExpOp>, GenericOpPattern<math::Exp2Op>,
                GenericOpPattern<math::FloorOp>, GenericOpPattern<math::CeilOp>,
+               GenericOpPattern<math::RoundOp>,
                GenericOpPattern<math::CosOp>, GenericOpPattern<math::SinOp>,
                GenericOpPattern<math::LogOp>, GenericOpPattern<math::Log2Op>,
                GenericOpPattern<math::ErfOp>, GenericOpPattern<math::AbsFOp>,
