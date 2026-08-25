@@ -119,7 +119,6 @@ createTypeCanonicalizedMemRefOperands(OpBuilder &b, Location loc,
   }
   return res;
 }
-static bool gMarkLibCallNoInline = false;
 
 static func::CallOp createLibCall(PatternRewriter &rewriter, Operation *op,
                                   ModuleOp mod, const std::string &libCallName,
@@ -177,8 +176,8 @@ static func::CallOp createLibCall(PatternRewriter &rewriter, Operation *op,
     // Only mark AIV lib calls as noinline by default; other lib calls are
     // always inlined. HIVM custom ops default to noinline unless explicitly
     // marked always_inline with hivm.inline_mode.
-    bool markNoInline =
-        gMarkLibCallNoInline && funcCoreType == hivm::TFuncCoreType::AIV;
+    bool markNoInline = hivm::detail::getMarkLibCallNoInline() &&
+                        funcCoreType == hivm::TFuncCoreType::AIV;
     std::optional<hivm::InlineMode> inlineMode;
     if (auto customOp = dyn_cast<hivm::CustomOp>(op))
       inlineMode =
@@ -2061,7 +2060,7 @@ void populateHIVMToStandardConversionPatternsRegBase(
 
 LogicalResult ConvertHIVMToStandardRegBasePass::runOnOperation(
     ModuleOp module, bool isOpsAligned, bool markLibCallNoInline) {
-  gMarkLibCallNoInline = markLibCallNoInline;
+  hivm::detail::setMarkLibCallNoInline(markLibCallNoInline);
   ConversionTarget target(*module->getContext());
   target.addLegalDialect<func::FuncDialect, memref::MemRefDialect,
                          arith::ArithDialect, scf::SCFDialect,

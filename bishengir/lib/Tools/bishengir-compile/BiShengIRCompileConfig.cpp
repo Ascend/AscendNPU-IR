@@ -360,6 +360,9 @@ void BiShengIRCompileMainConfig::registerCLOptions() {
 ///
 /// `--enable-preload` is enabled by default on Ascend950/RegBase, but disabled
 /// on A3/membase. Explicit CLI values are preserved.
+///
+/// `--enable-lib-call-no-inline` is enabled by default on RegBase, but disabled
+/// on membase. Explicit CLI values are preserved.
 static bool hasExplicitCLOption(llvm::StringRef name) {
   auto &opts = cl::getRegisteredOptions();
   auto it = opts.find(name);
@@ -378,6 +381,8 @@ applyArchDependentCompileDefaults(BiShengIRCompileMainConfig &config) {
     config.setEnableHIVMUnitFlagSync(true);
   if (!hasExplicitCLOption("enable-preload"))
     config.setEnablePreload(true);
+  if (!hasExplicitCLOption("enable-lib-call-no-inline"))
+    config.setEnableLibCallNoInline(true);
 }
 
 BiShengIRCompileMainConfig BiShengIRCompileMainConfig::createFromCLOptions() {
