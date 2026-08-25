@@ -376,7 +376,11 @@ def Conv1DOp
       / [N, oC, oW] (batch size, output channel count, output width)
 
     Configurable parameters (with default values):
+    - stride: Convolution stride. Accepts an integer scalar in [1, 255],
+      default=1
     - padding: Number of zero-padding elements on both sides, default=0
+    - dilation: Kernel dilation, default=1. Currently only dilation=1 is
+      supported.
     - groups: Number of groups for grouped convolution, default=1
     }];
   let arguments = (ins AnyShaped:$input,
@@ -449,8 +453,7 @@ def Conv2DOp
 
     Configurable parameters (with default values):
     - stride: Convolution stride. Accepts an integer scalar or a 2-element
-      integer array [strideH, strideW], default=1. Currently only stride=1
-      is supported.
+      integer array [strideH, strideW], with each value in [1, 255], default=1.
     - padding: Number of zero-padding elements. Accepts an integer scalar or a
       2-element integer array [paddingH, paddingW], default=0. A scalar applies
       to both H and W directions.
@@ -535,8 +538,8 @@ def Conv3DOp
 
     Configurable parameters (with default values):
     - stride: Convolution stride. Accepts an integer scalar or a 3-element
-      integer array [strideD, strideH, strideW], default=1. Currently only
-      stride=1 is supported.
+      integer array [strideD, strideH, strideW], default=1. Currently strideD
+      must be 1; strideH and strideW must be in [1, 255].
     - padding: Number of zero-padding elements. Accepts an integer scalar or a
       3-element integer array [paddingD, paddingH, paddingW], default=0. A
       scalar applies to all D/H/W directions.

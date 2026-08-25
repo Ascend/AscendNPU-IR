@@ -1847,7 +1847,9 @@ class AtomicXchgOpLowering : public OpRewritePattern<hivm::AtomicXchgOp> {
 ///   Conv3d:
 ///     Y[n, oc, od, oh, ow] =
 ///       sum_{kd, ic, kh, kw}
-///         X[n, od + kd, ic, oh + kh - padH, ow + kw - padW] *
+///         X[n, od + kd, ic,
+///           oh * strideH + kh - padH,
+///           ow * strideW + kw - padW] *
 ///         W[kd, ic, kh, kw, oc]
 ///
 ///   Decomposed form:
@@ -1858,7 +1860,8 @@ class AtomicXchgOpLowering : public OpRewritePattern<hivm::AtomicXchgOp> {
 ///         weight2d = W[kd, :, :, :, :]
 ///         init = original init_condition when kd == 0, otherwise false
 ///         Conv2dL1(input2d, weight2d, acc,
-///                  padding = [padH, padW], init_condition = init)
+///                  padding = [padH, padW],
+///                  stride = [strideH, strideW], init_condition = init)
 ///
 ///   Each Conv2dL1 accumulates one kernel-depth slice into the same rank-2
 ///   accumulator. After all kd slices are processed, the accumulator is
@@ -1879,6 +1882,8 @@ class AtomicXchgOpLowering : public OpRewritePattern<hivm::AtomicXchgOp> {
 ///   - The pattern intentionally does not match Conv3d with bias.
 ///   - D padding is consumed by NormalizeConvOps; H/W logical padding is
 ///     forwarded to Conv2dL1 as [padH, padW].
+///   - D stride must be 1. H/W strides are forwarded to Conv2dL1 as
+///     [strideH, strideW].
 struct DecomposeConv3dOp
     : public OpRewritePattern<hivm::Conv3DL1Op> {
 public:
@@ -1954,12 +1959,27 @@ public:
     if (padD > 0 && !depthAlreadyPadded) {
       return failure();
     }
+
+    std::array<int64_t, 3> strideValues = {1, 1, 1};
+    if (Attribute strideAttr = op.getStrideAttr()) {
+      auto stride = getConvIntArrayAttr<3>(strideAttr);
+      if (failed(stride)) {
+        return failure();
+      }
+      strideValues = *stride;
+    }
+    const int64_t strideD = strideValues[0];
+    const int64_t strideH = strideValues[1];
+    const int64_t strideW = strideValues[2];
+    if (strideD != 1 || strideH <= 0 || strideW <= 0) {
+      return failure();
+    }
     if (iD < wD || h + 2 * padH < wH || w + 2 * padW < wW) {
       return failure();
     }
     const int64_t expectedOD = iD - wD + 1;
-    const int64_t expectedOH = h + 2 * padH - wH + 1;
-    const int64_t expectedOW = w + 2 * padW - wW + 1;
+    const int64_t expectedOH = (h + 2 * padH - wH) / strideH + 1;
+    const int64_t expectedOW = (w + 2 * padW - wW) / strideW + 1;
 
     const int64_t oD = expectedOD;
     const int64_t fusedND = n * expectedOD;
@@ -1982,6 +2002,16 @@ public:
             ? op.getPaddingAttr()
             : rewriter.getArrayAttr({rewriter.getI64IntegerAttr(padH),
                                      rewriter.getI64IntegerAttr(padW)});
+    Attribute conv2DStride;
+    if (!op.getStrideAttr()) {
+      conv2DStride = rewriter.getI32IntegerAttr(1);
+    } else if (isa<IntegerAttr>(op.getStrideAttr())) {
+      conv2DStride = op.getStrideAttr();
+    } else {
+      conv2DStride =
+          rewriter.getArrayAttr({rewriter.getI64IntegerAttr(strideH),
+                                 rewriter.getI64IntegerAttr(strideW)});
+    }
 
     auto collapseShape =
         [&](Value src, ArrayRef<ReassociationIndices> reassociation)
@@ -2081,7 +2111,8 @@ public:
 
       auto conv2D = rewriter.create<hivm::Conv2DL1Op>(
           loc, TypeRange{}, *input2D, *weight2D, Value(), iterAcc,
-          initCondition, ValueRange{}, conv2DPadding, op.getGroupsAttr());
+          initCondition, ValueRange{}, conv2DStride, conv2DPadding,
+          op.getGroupsAttr());
       (void)conv2D;
       return iterAcc;
     };

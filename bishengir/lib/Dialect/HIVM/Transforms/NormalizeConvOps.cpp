@@ -1184,20 +1184,13 @@ public:
     auto input = op.getInput();
     auto weight = op.getWeight();
     auto initCondition = op.getInitCondition();
+    auto stride = op.getStrideAttr();
     auto padding = op.getPaddingAttr();
     auto groups = op.getGroupsAttr();
 
-    auto newConv =
-        rewriter.create<ConvOpType>(loc, TypeRange{fp32ResultType},
-                                    input,         // input
-                                    weight,        // weight
-                                    newBias,       // bias
-                                    init,          // init
-                                    initCondition, // init_condition
-                                    ValueRange{},  // sync_related_args
-                                    padding,       // padding
-                                    groups         // groups
-        );
+    auto newConv = rewriter.create<ConvOpType>(
+        loc, TypeRange{fp32ResultType}, input, weight, newBias, init,
+        initCondition, ValueRange{}, stride, padding, groups);
 
     auto castInit = rewriter.create<tensor::EmptyOp>(loc, shape, elemType);
     auto roundAttr = getRoundAttr(rewriter, fp32Ty, elemType);
@@ -1283,6 +1276,7 @@ public:
     auto input = op.getInput();
     auto weight = op.getWeight();
     auto initCondition = op.getInitCondition();
+    auto stride = op.getStrideAttr();
     auto padding = op.getPaddingAttr();
     auto groups = op.getGroupsAttr();
 
@@ -1294,17 +1288,9 @@ public:
     auto convNoBiasInit =
         rewriter.create<tensor::EmptyOp>(loc, shape, elemType);
 
-    auto newConv =
-        rewriter.create<ConvOpType>(loc, TypeRange{resultType},
-                                    input,              // input
-                                    weight,             // weight
-                                    /* bias */ Value(), // remove bias
-                                    convNoBiasInit,     // init
-                                    initCondition,      // init_condition
-                                    ValueRange{},       // sync_related_args
-                                    padding,            // padding
-                                    groups              // groups
-        );
+    auto newConv = rewriter.create<ConvOpType>(
+        loc, TypeRange{resultType}, input, weight, /*bias=*/Value(),
+        convNoBiasInit, initCondition, ValueRange{}, stride, padding, groups);
 
     Value convResult = newConv.getResultTensors()[0];
     SmallVector<int64_t> vaddShape(shape.begin(), shape.end());
@@ -1473,6 +1459,7 @@ public:
     auto bias = op.getBias();
     auto init = op.getInit();
     auto initCondition = op.getInitCondition();
+    auto stride = op.getStrideAttr();
     auto padding = op.getPaddingAttr();
     auto groups = op.getGroupsAttr();
     int64_t groupsVal = groups.getInt();
@@ -1614,17 +1601,8 @@ public:
     // === create new ConvOp with result of new shape ===
     Value convBias = useFusedConv3DBiasAdd ? Value() : bias;
     auto newConvOp = rewriter.create<ConvOpType>(
-        loc,           // location
-        newResultType, // result type: [oHWCeil, fusedOCCeil]
-        input,         // input
-        weight,        // weight
-        convBias,      // bias
-        newEmpty,      // init: [oHWCeil, fusedOCCeil]
-        initCondition, // init condition
-        ValueRange{},  // sync_related_args
-        padding,       // padding attribute
-        groups         // groups attribute
-    );
+        loc, newResultType, input, weight, convBias, newEmpty, initCondition,
+        ValueRange{}, stride, padding, groups);
     if (op->hasAttr(conv3dDepthPadded)) {
       // Preserve depth-padding contract across op replacement.
       newConvOp->setAttr(conv3dDepthPadded, rewriter.getUnitAttr());

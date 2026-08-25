@@ -732,6 +732,7 @@ def Conv1DL1Op : HIVM_MacroOp<"Conv1dL1",[
                         synchronization instructions, they are
                         managed by inject-sync passes.
                       }]>:$sync_related_args,
+                      I32Attr:$stride,
                       I32Attr:$padding,
                       I32Attr:$groups
                       );
@@ -778,6 +779,7 @@ def Conv1DL1Op : HIVM_MacroOp<"Conv1dL1",[
     SmallVector<Value> getInputOperands(bool includeSyncRelatedArgs = true);
     SmallVector<Value> getLibraryCallOperands(PatternRewriter &rewriter);
   }];
+  let hasVerifier = 1;
 }
 
 //===----------------------------------------------------------------------===//
@@ -804,6 +806,12 @@ def Conv2DL1Op : HIVM_MacroOp<"Conv2dL1",[
                         synchronization instructions, they are
                         managed by inject-sync passes.
                       }]>:$sync_related_args,
+                      Arg<AnyAttr, [{
+                        Convolution stride for Conv2d. Accepts an integer
+                        scalar or a 2-element integer array
+                        [strideH, strideW]. A scalar applies to both H and W
+                        directions.
+                      }]>:$stride,
                       Arg<AnyAttr, [{
                         Zero-padding for Conv2d. Accepts an integer scalar or a
                         2-element integer array [paddingH, paddingW]. A scalar
@@ -882,6 +890,12 @@ def Conv3DL1Op : HIVM_MacroOp<"Conv3dL1",[
                         synchronization instructions, they are
                         managed by inject-sync passes.
                       }]>:$sync_related_args,
+                      Arg<OptionalAttr<AnyAttr>, [{
+                        Convolution stride for Conv3d. Accepts an integer
+                        scalar or a 3-element integer array
+                        [strideD, strideH, strideW]. A scalar applies to all
+                        D/H/W directions. If omitted, the stride defaults to 1.
+                      }]>:$stride,
                       Arg<AnyAttr, [{
                         Zero-padding for Conv3d. Accepts an integer scalar or a
                         3-element integer array [paddingD, paddingH, paddingW].

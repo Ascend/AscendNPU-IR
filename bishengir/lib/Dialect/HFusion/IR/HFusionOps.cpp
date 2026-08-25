@@ -3942,10 +3942,13 @@ LogicalResult Conv1DOp::verify() {
   int64_t stride = getStride();
   int64_t dilation = getDilation();
 
-  // Currently only support stride == 1 and dilation == 1
-  if (stride != 1 || dilation != 1)
+  if (stride <= 0 || stride > 255)
+    return emitOpError() << "requires stride to be in the range [1, 255]";
+
+  // Currently only support dilation == 1.
+  if (dilation != 1)
     return emitOpError()
-           << "currently does not support stride != 1 or dilation != 1";
+           << "currently does not support dilation != 1";
 
   // Check output width oW
   // oW = floor((iW + 2 * padding - dilation * (wW - 1) - 1) / stride + 1)
@@ -4225,11 +4228,15 @@ LogicalResult Conv2DOp::verify() {
   if (failed(stride) || failed(dilation) || failed(padding))
     return failure();
 
-  // Currently only support stride == 1 and dilation == 1
-  if ((*stride)[0] != 1 || (*stride)[1] != 1 || (*dilation)[0] != 1 ||
-      (*dilation)[1] != 1)
+  if ((*stride)[0] <= 0 || (*stride)[0] > 255 || (*stride)[1] <= 0 ||
+      (*stride)[1] > 255)
     return emitOpError()
-           << "currently does not support stride != 1 or dilation != 1";
+           << "requires stride values to be in the range [1, 255]";
+
+  // Currently only support dilation == 1.
+  if ((*dilation)[0] != 1 || (*dilation)[1] != 1)
+    return emitOpError()
+           << "currently does not support dilation != 1";
 
   // Check output height oH
   // oH = floor((iH + 2 * paddingH - dilationH * (wH - 1) - 1) / strideH + 1)
@@ -4545,11 +4552,17 @@ LogicalResult Conv3DOp::verify() {
   if (failed(stride) || failed(dilation) || failed(padding))
     return failure();
 
-  // Currently only support stride == 1 and dilation == 1
-  if ((*stride)[0] != 1 || (*stride)[1] != 1 || (*stride)[2] != 1 ||
-      (*dilation)[0] != 1 || (*dilation)[1] != 1 || (*dilation)[2] != 1)
+  // DecomposeConv3d batches consecutive output-depth planes, so only the
+  // depth stride is restricted to one. H/W strides are forwarded to Conv2d.
+  if ((*stride)[0] != 1)
+    return emitOpError() << "currently requires strideD to be 1";
+  if ((*stride)[1] <= 0 || (*stride)[1] > 255 || (*stride)[2] <= 0 ||
+      (*stride)[2] > 255)
     return emitOpError()
-           << "currently does not support stride != 1 or dilation != 1";
+           << "requires strideH and strideW to be in the range [1, 255]";
+  if ((*dilation)[0] != 1 || (*dilation)[1] != 1 || (*dilation)[2] != 1)
+    return emitOpError()
+           << "currently does not support dilation != 1";
 
   // Check output depth/height/width
   // oX = floor((iX + 2 * paddingX - dilationX * (wX - 1) - 1) / strideX + 1)

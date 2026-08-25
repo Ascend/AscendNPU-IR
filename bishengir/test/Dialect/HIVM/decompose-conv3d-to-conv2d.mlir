@@ -6,15 +6,15 @@
 // CHECK-NOT: hivm.hir.Conv3dL1
 // CHECK: memref.subview %{{.*}}[0, 0] [64, 96]
 // CHECK: %[[INPUT_2D:.*]] = memref.collapse_shape %{{.*}} {{\[\[}}0, 1], [2], [3], [4], [5]] : memref<1x6x2x10x13x16xf16
-// CHECK: hivm.hir.Conv2dL1 {groups = 1 : i32, padding = 0 : i32}
+// CHECK: hivm.hir.Conv2dL1 {groups = 1 : i32, padding = 0 : i32, stride = 1 : i32}
 // CHECK-SAME: ins(%[[INPUT_2D]]
 // CHECK-SAME: outs(%{{.*}} : memref<64x96xf16
 // CHECK: scf.for
-// CHECK: hivm.hir.Conv2dL1 {groups = 1 : i32, padding = 0 : i32}
+// CHECK: hivm.hir.Conv2dL1 {groups = 1 : i32, padding = 0 : i32, stride = 1 : i32}
 // CHECK-SAME: outs(%{{.*}} : memref<64x96xf16
 // CHECK: memref.subview %{{.*}}[0, 96] [64, 96]
 // CHECK: memref.subview %{{.*}}[1, 0, 0, 0, 0, 0] [1, 6, 2, 10, 13, 16]
-// CHECK: hivm.hir.Conv2dL1 {groups = 1 : i32, padding = 0 : i32}
+// CHECK: hivm.hir.Conv2dL1 {groups = 1 : i32, padding = 0 : i32, stride = 1 : i32}
 // CHECK-SAME: outs(%{{.*}} : memref<64x96xf16
 // CHECK: return
 func.func @decompose_conv3d_rank2_memref_g1_p0(
@@ -33,14 +33,14 @@ func.func @decompose_conv3d_rank2_memref_g1_p0(
 // CHECK-LABEL: func.func @decompose_conv3d_rank2_memref_g1_p1_depth_padded
 // CHECK-NOT: hivm.hir.Conv3dL1
 // CHECK: memref.subview %{{.*}}[0, 0] [112, 128]
-// CHECK: hivm.hir.Conv2dL1 {groups = 1 : i32, padding = 1 : i32}
+// CHECK: hivm.hir.Conv2dL1 {groups = 1 : i32, padding = 1 : i32, stride = 1 : i32}
 // CHECK-SAME: outs(%{{.*}} : memref<112x128xf16
 // CHECK: scf.for
-// CHECK: hivm.hir.Conv2dL1 {groups = 1 : i32, padding = 1 : i32}
+// CHECK: hivm.hir.Conv2dL1 {groups = 1 : i32, padding = 1 : i32, stride = 1 : i32}
 // CHECK-SAME: outs(%{{.*}} : memref<112x128xf16
 // CHECK: memref.subview %{{.*}}[0, 128] [112, 128]
 // CHECK: memref.subview %{{.*}}[1, 0, 0, 0, 0, 0] [1, 8, 2, 10, 13, 16]
-// CHECK: hivm.hir.Conv2dL1 {groups = 1 : i32, padding = 1 : i32}
+// CHECK: hivm.hir.Conv2dL1 {groups = 1 : i32, padding = 1 : i32, stride = 1 : i32}
 // CHECK-SAME: outs(%{{.*}} : memref<112x128xf16
 // CHECK: return
 func.func @decompose_conv3d_rank2_memref_g1_p1_depth_padded(
@@ -59,13 +59,13 @@ func.func @decompose_conv3d_rank2_memref_g1_p1_depth_padded(
 // CHECK-LABEL: func.func @decompose_conv3d_rank2_memref_dhw_padding
 // CHECK-NOT: hivm.hir.Conv3dL1
 // CHECK: memref.subview %{{.*}}[0, 0] [176, 128]
-// CHECK: hivm.hir.Conv2dL1 {groups = 1 : i32, padding = [2, 3]}
+// CHECK: hivm.hir.Conv2dL1 {groups = 1 : i32, padding = [2, 3], stride = 1 : i32}
 // CHECK-SAME: outs(%{{.*}} : memref<176x128xf16
 // CHECK: scf.for
-// CHECK: hivm.hir.Conv2dL1 {groups = 1 : i32, padding = [2, 3]}
+// CHECK: hivm.hir.Conv2dL1 {groups = 1 : i32, padding = [2, 3], stride = 1 : i32}
 // CHECK-SAME: outs(%{{.*}} : memref<176x128xf16
 // CHECK: memref.subview %{{.*}}[0, 128] [176, 128]
-// CHECK: hivm.hir.Conv2dL1 {groups = 1 : i32, padding = [2, 3]}
+// CHECK: hivm.hir.Conv2dL1 {groups = 1 : i32, padding = [2, 3], stride = 1 : i32}
 // CHECK-SAME: outs(%{{.*}} : memref<176x128xf16
 // CHECK: return
 func.func @decompose_conv3d_rank2_memref_dhw_padding(
@@ -81,17 +81,41 @@ func.func @decompose_conv3d_rank2_memref_dhw_padding(
 
 // -----
 
+// CHECK-LABEL: func.func @decompose_conv3d_hw_stride
+// CHECK-NOT: hivm.hir.Conv3dL1
+// CHECK: memref.subview %{{.*}}[0, 0] [16, 80]
+// CHECK: memref.subview %{{.*}}[0, 0, 0, 0, 0, 0] [1, 5, 2, 10, 13, 16]
+// CHECK: hivm.hir.Conv2dL1 {groups = 1 : i32, padding = 0 : i32, stride = [2, 3]}
+// CHECK-SAME: outs(%{{.*}} : memref<16x80xf16
+// CHECK: scf.for
+// CHECK: hivm.hir.Conv2dL1 {groups = 1 : i32, padding = 0 : i32, stride = [2, 3]}
+// CHECK-NOT: hivm.hir.Conv3dL1
+// CHECK: return
+func.func @decompose_conv3d_hw_stride(
+    %input: memref<1x7x2x10x13x16xf16>,
+    %weight: memref<3x2x4x5x11x16xf16>,
+    %init: memref<16x80xf16>) {
+  %true = arith.constant true
+  hivm.hir.Conv3dL1 {groups = 1 : i32, padding = 0 : i32,
+                     stride = [1, 2, 3]}
+      ins(%input, %weight, %true : memref<1x7x2x10x13x16xf16>, memref<3x2x4x5x11x16xf16>, i1)
+      outs(%init : memref<16x80xf16>)
+  return
+}
+
+// -----
+
 // CHECK-LABEL: func.func @decompose_conv3d_rank2_memref_g2_p0
 // CHECK-NOT: hivm.hir.Conv3dL1
 // CHECK: memref.subview %{{.*}}[0, 0] [64, 192]
-// CHECK: hivm.hir.Conv2dL1 {groups = 2 : i32, padding = 0 : i32}
+// CHECK: hivm.hir.Conv2dL1 {groups = 2 : i32, padding = 0 : i32, stride = 1 : i32}
 // CHECK-SAME: outs(%{{.*}} : memref<64x192xf32
 // CHECK: scf.for
-// CHECK: hivm.hir.Conv2dL1 {groups = 2 : i32, padding = 0 : i32}
+// CHECK: hivm.hir.Conv2dL1 {groups = 2 : i32, padding = 0 : i32, stride = 1 : i32}
 // CHECK-SAME: outs(%{{.*}} : memref<64x192xf32
 // CHECK: memref.subview %{{.*}}[0, 192] [64, 192]
 // CHECK: memref.subview %{{.*}}[1, 0, 0, 0, 0, 0] [1, 6, 4, 10, 13, 8]
-// CHECK: hivm.hir.Conv2dL1 {groups = 2 : i32, padding = 0 : i32}
+// CHECK: hivm.hir.Conv2dL1 {groups = 2 : i32, padding = 0 : i32, stride = 1 : i32}
 // CHECK-SAME: outs(%{{.*}} : memref<64x192xf32
 // CHECK: return
 func.func @decompose_conv3d_rank2_memref_g2_p0(
@@ -110,14 +134,14 @@ func.func @decompose_conv3d_rank2_memref_g2_p0(
 // CHECK-LABEL: func.func @decompose_conv3d_rank2_memref_g2_p1_depth_padded
 // CHECK-NOT: hivm.hir.Conv3dL1
 // CHECK: memref.subview %{{.*}}[0, 0] [112, 256]
-// CHECK: hivm.hir.Conv2dL1 {groups = 2 : i32, padding = 1 : i32}
+// CHECK: hivm.hir.Conv2dL1 {groups = 2 : i32, padding = 1 : i32, stride = 1 : i32}
 // CHECK-SAME: outs(%{{.*}} : memref<112x256xf32
 // CHECK: scf.for
-// CHECK: hivm.hir.Conv2dL1 {groups = 2 : i32, padding = 1 : i32}
+// CHECK: hivm.hir.Conv2dL1 {groups = 2 : i32, padding = 1 : i32, stride = 1 : i32}
 // CHECK-SAME: outs(%{{.*}} : memref<112x256xf32
 // CHECK: memref.subview %{{.*}}[0, 256] [112, 256]
 // CHECK: memref.subview %{{.*}}[1, 0, 0, 0, 0, 0] [1, 8, 4, 10, 13, 8]
-// CHECK: hivm.hir.Conv2dL1 {groups = 2 : i32, padding = 1 : i32}
+// CHECK: hivm.hir.Conv2dL1 {groups = 2 : i32, padding = 1 : i32, stride = 1 : i32}
 // CHECK-SAME: outs(%{{.*}} : memref<112x256xf32
 // CHECK: return
 func.func @decompose_conv3d_rank2_memref_g2_p1_depth_padded(
@@ -181,4 +205,19 @@ func.func @keep_tensor_conv3d_unchanged(
       ins(%input, %weight, %true, %bias : tensor<2x8x2x10x13x16xf16>, tensor<3x2x4x5x11x16xf16>, i1, tensor<11xf16>)
       outs(%init : tensor<2x6x11x7x9xf16>) -> tensor<2x6x11x7x9xf16>
   return %0 : tensor<2x6x11x7x9xf16>
+}
+
+// -----
+
+func.func @reject_conv3d_non_unit_depth_stride(
+    %input: memref<1x7x2x10x13x16xf16>,
+    %weight: memref<3x2x4x5x11x16xf16>,
+    %init: memref<16x48xf16>) {
+  %true = arith.constant true
+  // expected-error@+1 {{'hivm.hir.Conv3dL1' op currently requires strideD to be 1}}
+  hivm.hir.Conv3dL1 {groups = 1 : i32, padding = 0 : i32,
+                     stride = [2, 1, 1]}
+      ins(%input, %weight, %true : memref<1x7x2x10x13x16xf16>, memref<3x2x4x5x11x16xf16>, i1)
+      outs(%init : memref<16x48xf16>)
+  return
 }
