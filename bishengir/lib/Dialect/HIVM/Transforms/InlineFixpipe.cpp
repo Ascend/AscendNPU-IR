@@ -1064,6 +1064,8 @@ private:
 
     if (isRegBasedArch(op) && op.getDmaMode() != FixpipeDMAMode::NZ2NZ) {
       if (all_of(op->getUsers(), [](auto *user) {
+            if (isa<annotation::MarkOp>(user))
+              return true;
             return isa<
 #define GET_OP_LIST
 #include "bishengir/Dialect/HIVM/IR/HIVMMacroOps.cpp.inc"

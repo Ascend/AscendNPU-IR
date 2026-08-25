@@ -503,6 +503,73 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 
 // -----
 
+// Two-layer i8 mmad (1x1 x 1x1024, then 1x1024 x 1024x1) with an i32->f32->f16->i8
+// vcast chain between them. Intermediate fusion uses overall i32->i8 as S322I8
+// and channel-merges to fractal 32x1x16x32 (M=1 padded). Final store of i32 is
+// fused into NZ2ND fixpipe. annotation.mark on the i8 result is preserved.
+// CHECK-LABEL: func.func @chain_matmul_i32_to_i8_via_float_1x1024
+// CHECK-NOT: hivm.hir.vcast
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @chain_matmul_i32_to_i8_via_float_1x1024(
+      %a: tensor<1x1xi8>,
+      %b: tensor<1x1024xi8>,
+      %c: tensor<1024x1xi8>,
+      %dst: memref<1x1xi32, strided<[1, 1]>>) {
+    %true = arith.constant true
+    %c1 = arith.constant 1 : index
+    %c1024 = arith.constant 1024 : index
+    %empty0 = tensor.empty() : tensor<1x1024xi32>
+    %mmad0 = hivm.hir.mmadL1 {fixpipe_for_result_already_inserted = true}
+        ins(%a, %b, %true, %c1, %c1, %c1024
+            : tensor<1x1xi8>, tensor<1x1024xi8>, i1, index, index, index)
+        outs(%empty0 : tensor<1x1024xi32>) -> tensor<1x1024xi32>
+    %fp0_dst = tensor.empty() : tensor<1x1024xi32>
+    %fp0 = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+        ins(%mmad0 : tensor<1x1024xi32>) outs(%fp0_dst : tensor<1x1024xi32>)
+        -> tensor<1x1024xi32>
+    %f32_dst = tensor.empty() : tensor<1x1024xf32>
+    %cast_f32 = hivm.hir.vcast {
+        enable_overflow = false, enable_saturate = false,
+        hivm.unsigned_mode = #hivm.unsigned_mode<si2si>}
+        ins(%fp0 : tensor<1x1024xi32>) outs(%f32_dst : tensor<1x1024xf32>)
+        round_mode = <trunc> -> tensor<1x1024xf32>
+    %f16_dst = tensor.empty() : tensor<1x1024xf16>
+    %cast_f16 = hivm.hir.vcast {
+        enable_overflow = false, enable_saturate = false,
+        hivm.unsigned_mode = #hivm.unsigned_mode<si2si>}
+        ins(%cast_f32 : tensor<1x1024xf32>) outs(%f16_dst : tensor<1x1024xf16>)
+        round_mode = <trunc> -> tensor<1x1024xf16>
+    %i8_dst = tensor.empty() : tensor<1x1024xi8>
+    %cast_i8 = hivm.hir.vcast {
+        enable_overflow = false, enable_saturate = true,
+        hivm.unsigned_mode = #hivm.unsigned_mode<si2si>}
+        ins(%cast_f16 : tensor<1x1024xf16>) outs(%i8_dst : tensor<1x1024xi8>)
+        round_mode = <trunc> -> tensor<1x1024xi8>
+    annotation.mark %cast_i8 : tensor<1x1024xi8>
+    // Intermediate: fused S322I8 dest is i8, so channel merge retargets to fractal.
+    // CHECK: %[[FP0:.*]] = hivm.hir.fixpipe {{.*pre_quant = #hivm.fixpipe_pre_quant_mode<S322I8>.*}} ins(%{{.*}} : tensor<1x1024xi32>) outs(%{{.*}} : tensor<32x1x16x32xi8>) -> tensor<32x1x16x32xi8>
+    // CHECK: annotation.mark %[[FP0]]
+    // CHECK: %[[MMAD1:.*]] = hivm.hir.mmadL1 {{.*}}ins(%[[FP0]]
+    %empty1 = tensor.empty() : tensor<1x1xi32>
+    %mmad1 = hivm.hir.mmadL1 {fixpipe_for_result_already_inserted = true}
+        ins(%cast_i8, %c, %true, %c1, %c1024, %c1
+            : tensor<1x1024xi8>, tensor<1024x1xi8>, i1, index, index, index)
+        outs(%empty1 : tensor<1x1xi32>) -> tensor<1x1xi32>
+    %fp1_dst = tensor.empty() : tensor<1x1xi32>
+    %fp1 = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+        ins(%mmad1 : tensor<1x1xi32>) outs(%fp1_dst : tensor<1x1xi32>)
+        -> tensor<1x1xi32>
+    // Final: fuse store into NZ2ND fixpipe (no extra quant).
+    // CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%[[MMAD1]] : tensor<1x1xi32>) outs(%{{.*}} : memref<1x1xi32, strided<[1, 1]>>)
+    // CHECK-NOT: hivm.hir.store
+    hivm.hir.store ins(%fp1 : tensor<1x1xi32>)
+        outs(%dst : memref<1x1xi32, strided<[1, 1]>>)
+    return
+  }
+}
+
+// -----
+
 // When mmad0's result feeds mmad1 as the A-matrix input while mmad1's outs
 // (accumulator init) comes from a different mmad, insertFixpipe must replace
 // only the ins use with the fixpipe result and leave the outs init on the
