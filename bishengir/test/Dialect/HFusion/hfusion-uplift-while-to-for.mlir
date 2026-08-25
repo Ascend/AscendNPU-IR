@@ -3,11 +3,9 @@
 // Thin downstream wrapper around upstream
 // scf::populateUpliftWhileToForPatterns (see
 // third-party/llvm-project/.../UpliftWhileToFor.cpp and
-// mlir/test/Dialect/SCF/uplift-while.mlir). These tests verify the
-// downstream pass binding (`hfusion-uplift-while-to-for`) hits both the
-// pattern-matching uplift case AND the non-matching fallback case
-// (data-driven exit, must stay as scf.while so the downstream
-// MultiBufferLoopAdapter alloca-based counter path can still kick in).
+// mlir/test/Dialect/SCF/uplift-while.mlir). The upstream implementation
+// preserves the exit induction variable computed by scf.while. These tests
+// verify the downstream pass binding and the non-matching fallback case.
 
 // -----
 // Canonical for-shaped while: `before` block is a single arith.cmpi slt
@@ -20,6 +18,9 @@
 //       CHECK: scf.for %[[I:.*]] = %[[BEGIN]] to %[[END]] step %[[STEP]] {
 //       CHECK:   "test.body"(%[[I]]) : (index) -> ()
 //       CHECK: }
+//       CHECK: %[[HAS_ITERATIONS:.*]] = arith.cmpi slt, %[[BEGIN]], %[[END]] : index
+//       CHECK: %[[RESULT:.*]] = arith.select %[[HAS_ITERATIONS]], %{{.*}}, %[[BEGIN]] : index
+//       CHECK: return %[[RESULT]] : index
 func.func @uplift_for_shaped_while_slt(%arg0: index, %arg1: index, %arg2: index) -> index {
   %0 = scf.while (%arg3 = %arg0) : (index) -> (index) {
     %1 = arith.cmpi slt, %arg3, %arg1 : index
@@ -114,6 +115,85 @@ func.func @uplift_for_shaped_while_i64(%arg0: i64, %arg1: i64, %arg2: i64) -> i6
     scf.yield %added : i64
   }
   return %0 : i64
+}
+
+// -----
+// Regression: the while result is the IV observed by the failing condition
+// check, not the IV at the beginning of the last executed iteration. The store
+// must remain reachable for 0 -> 1 -> ... -> 5.
+//
+// CHECK-LABEL: func.func @preserve_exit_iv_unit_step
+//   CHECK-NOT: scf.while
+//       CHECK: arith.constant true
+//       CHECK: "test.store"() : () -> ()
+func.func @preserve_exit_iv_unit_step() {
+  %c0 = arith.constant 0 : i32
+  %c1 = arith.constant 1 : i32
+  %c5 = arith.constant 5 : i32
+  %result = scf.while (%iv = %c0) : (i32) -> i32 {
+    %condition = arith.cmpi slt, %iv, %c5 : i32
+    scf.condition(%condition) %iv : i32
+  } do {
+  ^bb0(%iv: i32):
+    %next = arith.addi %iv, %c1 : i32
+    scf.yield %next : i32
+  }
+  %is_five = arith.cmpi eq, %result, %c5 : i32
+  scf.if %is_five {
+    "test.store"() : () -> ()
+  }
+  return
+}
+
+// -----
+// A non-divisible trip count exits at 6 rather than the last body IV 4.
+//
+// CHECK-LABEL: func.func @preserve_exit_iv_non_divisible_step
+//   CHECK-NOT: scf.while
+//       CHECK: arith.constant true
+//       CHECK: "test.store"() : () -> ()
+func.func @preserve_exit_iv_non_divisible_step() {
+  %c0 = arith.constant 0 : i32
+  %c2 = arith.constant 2 : i32
+  %c5 = arith.constant 5 : i32
+  %c6 = arith.constant 6 : i32
+  %result = scf.while (%iv = %c0) : (i32) -> i32 {
+    %condition = arith.cmpi slt, %iv, %c5 : i32
+    scf.condition(%condition) %iv : i32
+  } do {
+  ^bb0(%iv: i32):
+    %next = arith.addi %iv, %c2 : i32
+    scf.yield %next : i32
+  }
+  %is_six = arith.cmpi eq, %result, %c6 : i32
+  scf.if %is_six {
+    "test.store"() : () -> ()
+  }
+  return
+}
+
+// -----
+// A zero-trip loop returns its initial IV.
+//
+// CHECK-LABEL: func.func @preserve_exit_iv_zero_trip
+//   CHECK-NOT: scf.while
+//       CHECK: "test.store"() : () -> ()
+func.func @preserve_exit_iv_zero_trip() {
+  %c1 = arith.constant 1 : i32
+  %c5 = arith.constant 5 : i32
+  %result = scf.while (%iv = %c5) : (i32) -> i32 {
+    %condition = arith.cmpi slt, %iv, %c5 : i32
+    scf.condition(%condition) %iv : i32
+  } do {
+  ^bb0(%iv: i32):
+    %next = arith.addi %iv, %c1 : i32
+    scf.yield %next : i32
+  }
+  %is_five = arith.cmpi eq, %result, %c5 : i32
+  scf.if %is_five {
+    "test.store"() : () -> ()
+  }
+  return
 }
 
 // -----

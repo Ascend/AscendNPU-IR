@@ -1,5 +1,6 @@
 // RUN: bishengir-opt -lower-hfusion-pipeline --split-input-file %s | FileCheck %s
 // RUN: bishengir-opt -lower-hfusion-pipeline="block-dim=40" --split-input-file %s | FileCheck %s -check-prefix=CHECK-BLOCK-DIM
+// RUN: bishengir-opt -lower-hfusion-pipeline="enable-triton-kernel-compile=true" --split-input-file --mlir-print-ir-after=hfusion-uplift-while-to-for --mlir-print-ir-after-change %s 2>&1 | FileCheck %s --check-prefix=UPLIFT
 
 module {
 // CHECK-DAG: test_0_0
@@ -154,5 +155,31 @@ module {
     %1 = tensor.empty() : tensor<2x4x768x1152xf32>
     %2 = hfusion.select ins(%broadcasted, %arg1, %arg2 : tensor<2x4x768x1152xi1>, tensor<2x4x768x1152xf32>, tensor<2x4x768x1152xf32>) outs(%1 : tensor<2x4x768x1152xf32>) -> tensor<2x4x768x1152xf32>
     return %2 : tensor<2x4x768x1152xf32>
+  }
+}
+
+// -----
+
+// Verify that lower-hfusion-pipeline runs hfusion-uplift-while-to-for during
+// preprocessing. Check the IR immediately after the pass so later HFusion
+// transformations do not affect this assertion.
+// UPLIFT: IR Dump After UpliftWhileToFor (hfusion-uplift-while-to-for)
+// UPLIFT-LABEL: func.func @uplift_while_in_hfusion_pipeline
+// UPLIFT-NOT: scf.while
+// UPLIFT: scf.for %[[IV:.*]] = %[[BEGIN:.*]] to %[[END:.*]] step %[[STEP:.*]] {
+// UPLIFT:   "test.body"(%[[IV]]) : (index) -> ()
+module {
+  func.func @uplift_while_in_hfusion_pipeline(%begin: index, %end: index,
+                                               %step: index) -> index {
+    %result = scf.while (%iv = %begin) : (index) -> index {
+      %condition = arith.cmpi slt, %iv, %end : index
+      scf.condition(%condition) %iv : index
+    } do {
+    ^bb0(%iv: index):
+      "test.body"(%iv) : (index) -> ()
+      %next = arith.addi %iv, %step : index
+      scf.yield %next : index
+    }
+    return %result : index
   }
 }
