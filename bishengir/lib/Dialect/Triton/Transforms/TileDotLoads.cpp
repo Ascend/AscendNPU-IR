@@ -1117,7 +1117,7 @@ emitKTilingTensorOfPtrsCanonical(triton::DotOp dot, DotLoadInfo aInfo,
     tiledBLoopStrideAddition = rewriter.create<triton::SplatOp>(
         loc, tiledBLoopStrideAdditionTy, bLoopStrideAddition);
   }
-  
+
   auto forOp = rewriter.create<scf::ForOp>(loc, c0, cNumTiles, c1,
                                            ValueRange{dot.getC()});
   {
@@ -1399,7 +1399,7 @@ static TileInfo chooseTile(triton::DotOp dot, int KTileSize, int64_t realKSize) 
   } else {
     kTile = KTileSize;
   }
-  
+
   return {TileStrategy::K, kTile, (realKSize + kTile - 1) / kTile};
 }
 

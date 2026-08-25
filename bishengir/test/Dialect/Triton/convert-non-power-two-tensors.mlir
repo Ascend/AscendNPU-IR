@@ -757,7 +757,7 @@ tt.func @advanceTensorPtr(%ptr0: !tt.ptr<f32>, %ptr1: !tt.ptr<f32>) {
 
 // -----
 // CHECK-LABEL: @AtomicRMWOp
-// CHECK: %[[RANGE:.*]] = tt.make_range 
+// CHECK: %[[RANGE:.*]] = tt.make_range
 // CHECK: %[[SPLAT_PTR:.*]] = tt.splat
 // CHECK: %[[PTR:.*]] = tt.addptr %[[SPLAT_PTR]], %[[RANGE]]
 // CHECK: %[[SPLAT_VAL:.*]] = tt.splat
