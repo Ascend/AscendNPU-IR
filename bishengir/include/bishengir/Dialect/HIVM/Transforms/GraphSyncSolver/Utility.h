@@ -218,19 +218,14 @@ struct Occurrence {
   MemInfoTree memInfoTree1;
   MemInfoTree memInfoTree2;
 
-  Occurrence(OperationBase *op, Occurrence *parentOcc, int depth,
-             int syncIrIndex, int startIndex, int endIdx)
-      : op(op), parentOcc(parentOcc), depth(depth), syncIrIndex(syncIrIndex),
-        startIndex(startIndex), endIndex(endIdx),
+  Occurrence(OperationBase *op, Occurrence *parentOcc, int syncIrIndex,
+             int startIndex, int endIdx)
+      : op(op), parentOcc(parentOcc),
+        depth(parentOcc != nullptr ? parentOcc->depth + 1 : 0),
+        syncIrIndex(syncIrIndex), startIndex(startIndex), endIndex(endIdx),
         memInfoTree1(this, syncIrIndex), memInfoTree2(this, syncIrIndex) {}
 
   std::string str() const;
-
-  // Return true if occ1 and occ2 have the same immediate parent occurrence.
-  static bool sameScope(Occurrence *occ1, Occurrence *occ2);
-
-  // Return depth (number of ancestors + 1) for the given occurrence.
-  static int getDepth(Occurrence *occ);
 
   // Walk up parents to find the first ancestor occurrence associated with 'op'.
   Occurrence *getParentWithOp(Operation *op, bool assertExists = true);

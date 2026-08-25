@@ -315,6 +315,46 @@ Occurrence *SyncSolverBase::getLastIterOcc(Occurrence *occ,
   return parOcc2;
 }
 
+std::pair<CorePipeInfo, CorePipeInfo>
+SyncSolverBase::getFixedCorePipeInfoPair(CorePipeInfo corePipeSrc,
+                                         CorePipeInfo corePipeDst) {
+  if (options.isCrossCoreMode()) {
+    assert(corePipeSrc.coreType != corePipeDst.coreType);
+    if (corePipeSrc.coreType == TCoreType::CUBE_AND_VECTOR) {
+      corePipeSrc.coreType = getOppositeCoreType(corePipeDst.coreType);
+    }
+    assert(corePipeSrc.coreType == hivm::TCoreType::VECTOR ||
+           corePipeSrc.coreType == hivm::TCoreType::CUBE);
+    if (corePipeDst.coreType == TCoreType::CUBE_AND_VECTOR) {
+      corePipeDst.coreType = getOppositeCoreType(corePipeSrc.coreType);
+    }
+    assert(corePipeDst.coreType == hivm::TCoreType::VECTOR ||
+           corePipeDst.coreType == hivm::TCoreType::CUBE);
+    if (options.alwaysUsePipeSAsWaitingPipe) {
+      corePipeDst.pipe = hivm::PIPE::PIPE_S;
+    }
+  }
+  return std::make_pair(corePipeSrc, corePipeDst);
+}
+
+bool SyncSolverBase::checkSkipIntraCorePair(hivm::PIPE pipeSrc,
+                                            hivm::PIPE pipeDst) {
+  if (!options.isIntraCoreMode()) {
+    return false;
+  }
+  if (pipeSrc == pipeDst) {
+    if (pipeSrc == hivm::PIPE::PIPE_S) {
+      return true;
+    }
+    if (options.isRegBasedArch) {
+      if (pipeSrc == hivm::PIPE::PIPE_V) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 bool SyncSolverBase::checkSkipCrossCorePair(hivm::TCoreType coreTypeSrc,
                                             hivm::TCoreType coreTypeDst) {
   if (!options.isCrossCoreMode()) {
@@ -716,16 +756,6 @@ SyncSolverBase::getMemoryConflicts(RWOperation *rwOp1, RWOperation *rwOp2) {
   }
   auto coreSrc = rwOp1->coreType;
   auto coreDst = rwOp2->coreType;
-  if (options.isCrossCoreMode()) {
-    if (coreDst == hivm::TCoreType::CUBE_AND_VECTOR) {
-      coreDst = (coreSrc == hivm::TCoreType::VECTOR) ? hivm::TCoreType::CUBE
-                                                     : hivm::TCoreType::VECTOR;
-    }
-    assert(coreSrc == hivm::TCoreType::VECTOR ||
-           coreSrc == hivm::TCoreType::CUBE);
-    assert(coreDst == hivm::TCoreType::VECTOR ||
-           coreDst == hivm::TCoreType::CUBE);
-  }
   llvm::SetVector<std::pair<CorePipeInfo, CorePipeInfo>> collectedConflictsSet;
   auto choosePipe = [](const MemInfo *memInfo, PIPE pipe) {
     return memInfo->pipe ? memInfo->pipe.value() : pipe;

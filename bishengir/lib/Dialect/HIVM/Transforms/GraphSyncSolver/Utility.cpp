@@ -68,22 +68,6 @@ std::string Occurrence::str() const {
   return ss.str();
 }
 
-bool Occurrence::sameScope(Occurrence *occ1, Occurrence *occ2) {
-  assert(occ1 != nullptr && occ1->parentOcc != nullptr);
-  assert(occ2 != nullptr && occ2->parentOcc != nullptr);
-  return occ1->parentOcc == occ2->parentOcc;
-}
-
-int Occurrence::getDepth(Occurrence *occ) {
-  int ret = 0;
-  assert(occ != nullptr);
-  while (occ->parentOcc != nullptr) {
-    occ = occ->parentOcc;
-    ret++;
-  }
-  return ret;
-}
-
 Occurrence *Occurrence::getParentWithOp(OperationBase *op, bool assertExists) {
   assert(op != nullptr);
   Occurrence *occ = this;
@@ -123,8 +107,8 @@ Occurrence *Occurrence::getNthParent(int dist) {
 std::pair<Occurrence *, Occurrence *> Occurrence::getLCAPair(Occurrence *occ1,
                                                              Occurrence *occ2) {
   assert(occ1 != nullptr && occ2 != nullptr);
-  int depth1 = getDepth(occ1);
-  int depth2 = getDepth(occ2);
+  int depth1 = occ1->depth;
+  int depth2 = occ2->depth;
   if (depth1 < depth2) {
     occ2 = occ2->getNthParent(depth2 - depth1);
   } else if (depth1 > depth2) {
@@ -170,13 +154,8 @@ bool Occurrence::isAncestor(Occurrence *occ) {
 }
 
 bool Occurrence::isProperAncestor(Occurrence *occ) {
-  assert(occ != nullptr);
-  int depth1 = getDepth(this);
-  int depth2 = getDepth(occ);
-  if (depth1 >= depth2) {
-    return false;
-  }
-  return occ->getNthParent(depth2 - depth1) == this;
+  return this->syncIrIndex < occ->syncIrIndex &&
+         occ->syncIrIndex < this->syncIrEndIndex;
 }
 
 llvm::SmallVector<Occurrence *> Occurrence::getAllParents() {
@@ -556,8 +535,7 @@ areOverlappingStaticSlices(const HyperrectangularSlice &slice1,
   auto offsets2 = slice2.getMixedOffsets();
   auto sizes2 = slice2.getMixedSizes();
   auto strides2 = slice2.getMixedStrides();
-  if (offsets1.size() != sizes1.size() ||
-      offsets1.size() != strides1.size() ||
+  if (offsets1.size() != sizes1.size() || offsets1.size() != strides1.size() ||
       offsets1.size() != offsets2.size() || sizes1.size() != sizes2.size() ||
       strides1.size() != strides2.size()) {
     return failure();

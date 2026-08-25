@@ -537,10 +537,9 @@ void SyncSolverV1::processConflict(Occurrence *occ1, Occurrence *occ2,
   this->perfInfo.conflictsProcessedNum += 1;
   for (auto [corePipeSrc, corePipeDst] : getMemoryConflicts(rwOp1, rwOp2)) {
     this->perfInfo.memoryConflictsFoundNum += 1;
-    if (options.alwaysUsePipeSAsWaitingPipe) {
-      corePipeDst.pipe = hivm::PIPE::PIPE_S;
-    }
-    handleConflict(occ1, occ2, rwOp1, rwOp2, corePipeSrc, corePipeDst,
+    auto [corePipeInfo1, corePipeInfo2] =
+        getFixedCorePipeInfoPair(corePipeSrc, corePipeDst);
+    handleConflict(occ1, occ2, rwOp1, rwOp2, corePipeInfo1, corePipeInfo2,
                    isUseless);
   }
 }
