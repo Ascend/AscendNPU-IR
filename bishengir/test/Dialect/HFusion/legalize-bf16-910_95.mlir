@@ -1,5 +1,28 @@
 // RUN: bishengir-opt -hfusion-legalize-bf16 %s -split-input-file -verify-diagnostics | FileCheck %s
 
+// CHECK-LABEL: func.func @test_conv1d_bf16_not_to_f32
+// CHECK-NOT: hfusion.cast
+// CHECK: hfusion.conv1d
+// CHECK-SAME: tensor<2x32x128xbf16>, tensor<32x32x3xbf16>, tensor<32xbf16>
+// CHECK-SAME: tensor<2x32x128xbf16>) -> tensor<2x32x128xbf16>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_957b">} {
+  func.func @test_conv1d_bf16_not_to_f32(
+      %input: tensor<2x32x128xbf16>,
+      %weight: tensor<32x32x3xbf16>,
+      %bias: tensor<32xbf16>,
+      %init: tensor<2x32x128xbf16>) -> tensor<2x32x128xbf16> {
+    %result = hfusion.conv1d
+        {dilation = 1 : i32, groups = 1 : i32, padding = 1 : i32,
+         stride = 1 : i32}
+        ins(%input, %weight, %bias
+            : tensor<2x32x128xbf16>, tensor<32x32x3xbf16>, tensor<32xbf16>)
+        outs(%init : tensor<2x32x128xbf16>) -> tensor<2x32x128xbf16>
+    return %result : tensor<2x32x128xbf16>
+  }
+}
+
+// -----
+
 // CHECK-LABEL: func.func @test_floor_bf16_not_to_f32
 // CHECK-NOT: hfusion.cast
 module attributes {hacc.target = #hacc.target<"Ascend950PR_957b">} {
@@ -72,5 +95,53 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_957b">} {
         linalg.yield %18, %19 : bf16, i32
       }
     return %reduced#1 : tensor<2x51x3x13xi32>
+  }
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_conv2d_bf16_not_to_f32
+// CHECK-NOT: hfusion.cast
+// CHECK: hfusion.conv2d
+// CHECK-SAME: tensor<2x32x128x128xbf16>, tensor<32x32x3x3xbf16>, tensor<32xbf16>
+// CHECK-SAME: tensor<2x32x128x128xbf16>) -> tensor<2x32x128x128xbf16>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_957b">} {
+  func.func @test_conv2d_bf16_not_to_f32(
+      %input: tensor<2x32x128x128xbf16>,
+      %weight: tensor<32x32x3x3xbf16>,
+      %bias: tensor<32xbf16>,
+      %init: tensor<2x32x128x128xbf16>) -> tensor<2x32x128x128xbf16> {
+    %result = hfusion.conv2d
+        {dilation = 1 : i32, groups = 1 : i32, padding = 1 : i32,
+         stride = 1 : i32}
+        ins(%input, %weight, %bias
+            : tensor<2x32x128x128xbf16>, tensor<32x32x3x3xbf16>, tensor<32xbf16>)
+        outs(%init : tensor<2x32x128x128xbf16>) -> tensor<2x32x128x128xbf16>
+    return %result : tensor<2x32x128x128xbf16>
+  }
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_conv3d_bf16_not_to_f32
+// CHECK-NOT: hfusion.cast
+// CHECK: hfusion.conv3d
+// CHECK-SAME: tensor<2x32x8x128x128xbf16>, tensor<32x32x3x3x3xbf16>, tensor<32xbf16>
+// CHECK-SAME: tensor<2x32x8x128x128xbf16>) -> tensor<2x32x8x128x128xbf16>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_957b">} {
+  func.func @test_conv3d_bf16_not_to_f32(
+      %input: tensor<2x32x8x128x128xbf16>,
+      %weight: tensor<32x32x3x3x3xbf16>,
+      %bias: tensor<32xbf16>,
+      %init: tensor<2x32x8x128x128xbf16>)
+      -> tensor<2x32x8x128x128xbf16> {
+    %result = hfusion.conv3d
+        {dilation = 1 : i32, groups = 1 : i32, padding = 1 : i32,
+         stride = 1 : i32}
+        ins(%input, %weight, %bias
+            : tensor<2x32x8x128x128xbf16>, tensor<32x32x3x3x3xbf16>, tensor<32xbf16>)
+        outs(%init : tensor<2x32x8x128x128xbf16>)
+        -> tensor<2x32x8x128x128xbf16>
+    return %result : tensor<2x32x8x128x128xbf16>
   }
 }

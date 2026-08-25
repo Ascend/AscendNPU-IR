@@ -430,6 +430,40 @@ private:
   }
 };
 
+class Conv1DL1OpToLibraryCallPattern
+    : public OpRewritePattern<hivm::Conv1DL1Op> {
+public:
+  using OpRewritePattern<hivm::Conv1DL1Op>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hivm::Conv1DL1Op op,
+                                PatternRewriter &rewriter) const final {
+    SmallVector<Value> libParams = op.getLibraryCallOperands(rewriter);
+    replaceWithLibCall(
+        rewriter, op,
+        cast<OpWithLibraryFunction>(op.getOperation())
+            .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
+        libParams, {});
+    return success();
+  }
+};
+
+class Conv2DL1OpToLibraryCallPattern
+    : public OpRewritePattern<hivm::Conv2DL1Op> {
+public:
+  using OpRewritePattern<hivm::Conv2DL1Op>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hivm::Conv2DL1Op op,
+                                PatternRewriter &rewriter) const final {
+    SmallVector<Value> libParams = op.getLibraryCallOperands(rewriter);
+    replaceWithLibCall(
+        rewriter, op,
+        cast<OpWithLibraryFunction>(op.getOperation())
+            .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
+        libParams, {});
+    return success();
+  }
+};
+
 class MMmadMxL1OpToLibraryCallPattern
     : public OpRewritePattern<hivm::MmadMxL1Op> {
 public:
@@ -1987,6 +2021,8 @@ void populateHIVMToStandardConversionPatternsRegBase(
     RewritePatternSet &patterns, bool isOpsAligned) {
   // clang-format off
   patterns.add<MmadL1OpToLibraryCallPattern,
+               Conv1DL1OpToLibraryCallPattern,
+               Conv2DL1OpToLibraryCallPattern,
                MMmadMxL1OpToLibraryCallPattern,
                ND2NZOpToLibraryCallPattern,
                LoadMXScaleOpToLibraryCallPattern,
