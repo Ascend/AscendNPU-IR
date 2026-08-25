@@ -632,11 +632,11 @@ DelayedCrossCoreIRTranslator::buildDelayedFuncIr() {
                 .get();
         if (auto mixPlaceHolderOp = dyn_cast<PlaceHolder>(mixBlockFrontOp)) {
           auto *cubePlaceHolderOp =
-              dyn_cast<Scope>(vectorAnchorInfo.anchorAfter->parentOp)
+              dyn_cast<Scope>(cubeAnchorInfo.anchorAfter->parentOp)
                   ->body.front()
                   .get();
           auto *vectorPlaceHolderOp =
-              dyn_cast<Scope>(cubeAnchorInfo.anchorAfter->parentOp)
+              dyn_cast<Scope>(vectorAnchorInfo.anchorAfter->parentOp)
                   ->body.front()
                   .get();
           assert(isa<PlaceHolder>(cubePlaceHolderOp));
@@ -681,11 +681,11 @@ DelayedCrossCoreIRTranslator::buildDelayedFuncIr() {
                 .get();
         if (auto mixPlaceHolderOp = dyn_cast<PlaceHolder>(mixBlockBackOp)) {
           auto *cubePlaceHolderOp =
-              dyn_cast<Scope>(vectorAnchorInfo.anchorBefore->parentOp)
+              dyn_cast<Scope>(cubeAnchorInfo.anchorBefore->parentOp)
                   ->body.back()
                   .get();
           auto *vectorPlaceHolderOp =
-              dyn_cast<Scope>(cubeAnchorInfo.anchorBefore->parentOp)
+              dyn_cast<Scope>(vectorAnchorInfo.anchorBefore->parentOp)
                   ->body.back()
                   .get();
           assert(isa<PlaceHolder>(cubePlaceHolderOp));

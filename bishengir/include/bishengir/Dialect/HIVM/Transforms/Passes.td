@@ -1160,10 +1160,10 @@ def PartitionAndBindSubBlock
       "Lower {sub_block = n} scope.scope regions to operand-parallel guards";
   let constructor = "mlir::hivm::createPartitionAndBindSubBlockPass()";
   let options = [
-    Option<"enableLoadBalanced", "enable-load-balanced", "bool",
+    Option<"pinFreeNodes", "pin-free-nodes", "bool",
            /*default=*/"false",
-           "Sub-block binding method. false: pin every free op to sub-block 0"
-           "true: spread independent fixpipe across both sub-cores">
+           "Testing only: pin every free op to sub-block 0 instead of "
+           "load-balancing across both AIV sub-cores">
   ];
   let dependentDialects = [
     "scope::ScopeDialect",

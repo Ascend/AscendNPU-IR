@@ -176,7 +176,20 @@ struct HFusionGeneralizationPatterns
         return failure();
       return success();
     }
-    return generalizeNamedOp(rewriter, op);
+    Attribute registerTreeSelection =
+        op->getAttr(hfusion::kRegisterTreeReductionSelectedAttr);
+    Attribute regularTreeSelection =
+        op->getAttr(hfusion::kRegularTreeReductionSelectedAttr);
+    FailureOr<linalg::GenericOp> generic = generalizeNamedOp(rewriter, op);
+    if (failed(generic))
+      return failure();
+    if (registerTreeSelection)
+      (*generic)->setAttr(hfusion::kRegisterTreeReductionSelectedAttr,
+                          registerTreeSelection);
+    if (regularTreeSelection)
+      (*generic)->setAttr(hfusion::kRegularTreeReductionSelectedAttr,
+                          regularTreeSelection);
+    return success();
   }
 };
 

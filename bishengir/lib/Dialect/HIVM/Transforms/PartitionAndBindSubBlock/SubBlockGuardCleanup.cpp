@@ -43,13 +43,18 @@ struct SubBlockGuardCleanupPass
 
     llvm::SmallVector<scf::IfOp, 8> guards;
     getOperation().walk([&](scf::IfOp ifOp) {
-      if (ifOp.getNumResults() > 0 && isOperandParallelSubBlockGuard(ifOp))
+      if (ifOp.getNumResults() > 0 &&
+          isMarkedOperandParallelSubBlockGuard(ifOp))
         guards.push_back(ifOp);
     });
     for (scf::IfOp ifOp : guards) {
       // Make the guard result-free.
       makeSubBlockGuardResultFree(ifOp);
     }
+
+    getOperation().walk([](hivm::GetSubBlockIdxOp idxOp) {
+      idxOp->removeAttr(kPartitionGuardAttrName);
+    });
   }
 };
 

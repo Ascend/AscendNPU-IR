@@ -1,10 +1,10 @@
-// RUN: bishengir-opt %s -hivm-partition-and-bind-sub-block=enable-load-balanced=false -split-input-file | FileCheck %s
-// RUN: bishengir-opt %s -hivm-partition-and-bind-sub-block=enable-load-balanced=true  -split-input-file | FileCheck %s --check-prefix=BAL
+// RUN: bishengir-opt %s -hivm-partition-and-bind-sub-block -split-input-file | FileCheck %s --check-prefix=BAL
+// RUN: bishengir-opt %s -hivm-partition-and-bind-sub-block=pin-free-nodes=true -split-input-file | FileCheck %s
 
 // CHECK-LABEL: func.func @shared_value_both
 // CHECK-NOT:     scf.if
 // CHECK:         %[[P:.*]] = hivm.hir.vmul ins(%{{[0-9a-z_]+}}, %{{[0-9a-z_]+}} : tensor<32x64xf16>, f16)
-// CHECK:         %[[I0:.*]] = hivm.hir.get_sub_block_idx
+// CHECK:         %[[I0:.*]] = hivm.hir.get_sub_block_idx {partition_sub_block_guard}
 // CHECK:         %[[C0:.*]] = arith.constant 0 : index
 // CHECK:         %[[CND0:.*]] = arith.cmpi eq, %{{.*}}, %[[C0]]
 // CHECK:         scf.if %[[CND0]]

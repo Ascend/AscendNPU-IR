@@ -172,6 +172,27 @@ func.func @bitwise_like_lowering(%a: tensor<?x5x10xf32>, %aT: tensor<5x?x10xf32>
 
 // -----
 
+// COMMON-LABEL: func.func @integer_tensor_bitwise_named_lowering
+module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
+  func.func @integer_tensor_bitwise_named_lowering(%a: tensor<16xi32>, %b: tensor<16xi32>, %dst: tensor<16xi32>) -> tensor<16xi32> {
+      // CHECK-TRUE: %[[AND:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vand>}
+      // CHECK-FALSE: %[[AND:.*]] = linalg.map { arith.andi }
+      %0 = hivm.hir.vand ins(%a, %b : tensor<16xi32>, tensor<16xi32>) outs(%dst : tensor<16xi32>) -> tensor<16xi32>
+
+      // CHECK-TRUE: %[[OR:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vor>}
+      // CHECK-FALSE: %[[OR:.*]] = linalg.map { arith.ori }
+      %1 = hivm.hir.vor ins(%0, %b : tensor<16xi32>, tensor<16xi32>) outs(%dst : tensor<16xi32>) -> tensor<16xi32>
+
+      // CHECK-TRUE: %[[XOR:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vxor>}
+      // CHECK-FALSE: %[[XOR:.*]] = linalg.map { arith.xori }
+      %2 = hivm.hir.vxor ins(%1, %b : tensor<16xi32>, tensor<16xi32>) outs(%dst : tensor<16xi32>) -> tensor<16xi32>
+
+      func.return %2 : tensor<16xi32>
+  }
+}
+
+// -----
+
 // COMMON-LABEL: func.func @shift_like_lowering
 func.func @shift_like_lowering(%a: tensor<5x10xi32>, %b: tensor<5x10xi32>, %dst: tensor<5x10xi32>) -> (tensor<5x10xi32>, tensor<5x10xi32>) attributes {hacc.function_kind = #hacc.function_kind<HOST>, hacc.host_func_type = #hacc.host_func_type<host_entry>} {
 

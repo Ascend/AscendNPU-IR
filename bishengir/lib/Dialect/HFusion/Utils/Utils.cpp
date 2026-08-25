@@ -1834,7 +1834,8 @@ bool hfusion::isRegisterTreeReductionCandidate(Operation *op) {
 
 static int64_t getRegisterTreeReductionCost(Operation *op,
                                             unsigned &candidateCount,
-                                            unsigned &totalReductionCount) {
+                                            unsigned &totalReductionCount,
+                                            unsigned &cumsumCount) {
   auto currentFunc = op->getParentOfType<func::FuncOp>();
   auto module = op->getParentOfType<ModuleOp>();
   if (!currentFunc || !module)
@@ -1864,6 +1865,7 @@ static int64_t getRegisterTreeReductionCost(Operation *op,
   int64_t cost = 0;
   candidateCount = 0;
   totalReductionCount = 0;
+  cumsumCount = 0;
   SmallVector<func::FuncOp> worklist{rootFunc};
   SmallPtrSet<Operation *, 8> visitedFunctions;
   while (!worklist.empty()) {
@@ -1878,6 +1880,8 @@ static int64_t getRegisterTreeReductionCost(Operation *op,
       if (auto linalgOp = dyn_cast<linalg::LinalgOp>(nestedOp);
           linalgOp && linalgOp.getNumReductionLoops() != 0)
         ++totalReductionCount;
+      if (isa<hfusion::CumsumOp>(nestedOp))
+        ++cumsumCount;
       if (!hfusion::isRegisterTreeReductionCandidate(nestedOp))
         return;
       ++candidateCount;
@@ -1946,9 +1950,15 @@ bool hfusion::shouldUseRegisterTreeReduction(Operation *op) {
   constexpr int64_t maxRegisterTreeReductionCost = 128;
   unsigned candidateCount = 0;
   unsigned totalReductionCount = 0;
-  int64_t cost =
-      getRegisterTreeReductionCost(op, candidateCount, totalReductionCount);
-  return candidateCount == 1 && totalReductionCount == 1 &&
+  unsigned cumsumCount = 0;
+  int64_t cost = getRegisterTreeReductionCost(op, candidateCount,
+                                              totalReductionCount, cumsumCount);
+  // The backend spills a fully expanded 64-row direct tree beyond its
+  // 6144-byte VF stack. Select the established TreeReduceV2 route below;
+  // smaller direct trees remain enabled.
+  bool needsLegacyTreeForRegisterPressure = reductionSize == 64;
+  return !needsLegacyTreeForRegisterPressure && cumsumCount == 0 &&
+         candidateCount == 1 && totalReductionCount == 1 &&
          cost <= maxRegisterTreeReductionCost;
 }
 
@@ -1960,14 +1970,11 @@ bool hfusion::shouldUseLegacyTreeReductionScope(Operation *op) {
   SmallVector<unsigned> reductionDims;
   linalgOp.getReductionDims(reductionDims);
   int64_t reductionSize = linalgOp.getStaticLoopRanges()[reductionDims.front()];
-  constexpr int64_t maxLegacyTreeReductionSize = 64;
-  if (reductionSize > maxLegacyTreeReductionSize)
-    return false;
-
   unsigned candidateCount = 0;
   unsigned totalReductionCount = 0;
-  int64_t cost =
-      getRegisterTreeReductionCost(op, candidateCount, totalReductionCount);
+  unsigned cumsumCount = 0;
+  int64_t cost = getRegisterTreeReductionCost(op, candidateCount,
+                                              totalReductionCount, cumsumCount);
   constexpr int64_t maxLegacyTreeReductionCost = 128;
   // A bounded scope with more than one canonical RA reduction cannot use the
   // single-loop direct rewrite safely. Preserve the established TreeReduceV2
@@ -1981,7 +1988,25 @@ bool hfusion::shouldUseLegacyTreeReductionScope(Operation *op) {
       candidateCount > 1 && candidateCount == totalReductionCount;
   bool singleCandidateMixedScope =
       candidateCount == 1 && totalReductionCount > 1;
-  return (allReductionsAreRegisterCandidates || singleCandidateMixedScope) &&
+  // A cumsum followed by the block-total reduction is accuracy-sensitive to
+  // the reduction association. Preserve the pre-policy TreeReduceV2 route for
+  // this exact one-scan/one-reduction shape, including its 128-element tile.
+  bool cumsumWithSingleReduction =
+      cumsumCount == 1 && candidateCount == 1 && totalReductionCount == 1;
+  // A single canonical 64-row RA reduction would otherwise use the direct
+  // register tree and exceed VF stack. Keep it on the established
+  // TreeReduceV2 lowering.
+  bool registerPressureFallback =
+      reductionSize == 64 && cumsumCount == 0 && candidateCount == 1 &&
+      totalReductionCount == 1;
+  constexpr int64_t maxLegacyTreeReductionSize = 64;
+  constexpr int64_t maxCumsumTreeReductionSize = 128;
+  bool supportedSize = reductionSize <= maxLegacyTreeReductionSize ||
+                       (cumsumWithSingleReduction &&
+                        reductionSize <= maxCumsumTreeReductionSize);
+  return supportedSize &&
+         (allReductionsAreRegisterCandidates || singleCandidateMixedScope ||
+          cumsumWithSingleReduction || registerPressureFallback) &&
          cost <= maxLegacyTreeReductionCost;
 }
 

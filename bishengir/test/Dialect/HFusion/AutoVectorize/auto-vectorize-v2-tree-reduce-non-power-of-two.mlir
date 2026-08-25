@@ -105,12 +105,14 @@ module {
 
 // -----
 
-// One register tree is bounded at 64 rows.
+// A 64-row reduction uses the established TreeReduceV2 fallback.  Keeping it
+// out of the direct register tree avoids the beta.3 CCEC stack overflow.
 
 // CHECK-LABEL: func.func @tree_reduce_64
+// CHECK-NOT: "hfusion.register_tree_reduction"
 // CHECK-LABEL: transform.sequence {{.*}}auto_vectorize_v2.transform.tree_reduce_64
 // CHECK: transform.structured.tile_using_for
-// CHECK: annotate {{.*}} "hfusion.register_tree_reduction"
+// CHECK-NOT: "hfusion.register_tree_reduction"
 // CHECK-NOT: transform.structured.tile_reduction_using_for
 // CHECK-NOT: transform.structured.split_reduction
 

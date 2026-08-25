@@ -7,15 +7,18 @@
 // NEW-LABEL: func.func private @ra17_fused_0(
 // NEW-SAME: %{{.*}}: tensor<17x8xf32>, %{{.*}}: tensor<8xf32>)
 // NEW-NEXT: %{{.*}} = linalg.reduce
+// NEW-SAME: hfusion.register_tree_reduction_selected
 // NEW: module attributes {hfusion.regular_tree_reduction_scope, hfusion.tree_reduction_selection_frozen}
 // NEW-NOT: hfusion.legacy_tree_reduction_scope
 // NEW-LABEL: func.func private @mixed_ra_ar_fused_0(
 // NEW: %{{.*}} = linalg.reduce
 // NEW-LABEL: func.func private @mixed_ra_ar_fused_1(
 // NEW: %{{.*}} = linalg.reduce
+// NEW: module attributes {hfusion.legacy_tree_reduction_scope, hfusion.tree_reduction_selection_frozen}
 // NEW-LABEL: func.func private @ra64_fused_0(
 // NEW-SAME: %{{.*}}: tensor<64x8xf32>, %{{.*}}: tensor<8xf32>)
 // NEW-NEXT: %{{.*}} = linalg.reduce
+// NEW-SAME: hfusion.regular_tree_reduction_selected
 // NEW-LABEL: func.func private @ra65_fused_0(
 // NEW: linalg.elemwise_binary
 // NEW: linalg.fill
@@ -265,5 +268,34 @@ module {
         linalg.yield %sum : f32
       }
     return %result0, %result1 : tensor<32xf32>, tensor<32xf32>
+  }
+}
+
+// -----
+
+// A cumulative scan and its block-total reduction must retain the established
+// TreeReduceV2 association. This compatibility route is deliberately bounded
+// to one scan, one canonical reduction, and the largest supported tile.
+// NEW: module attributes {hfusion.legacy_tree_reduction_scope, hfusion.tree_reduction_selection_frozen}
+// NEW-LABEL: func.func private @cumsum_ra128_fused_0(
+// NEW: linalg.reduce
+
+module {
+  func.func @cumsum_ra128(%arg0: tensor<128x8xf32>)
+      -> (tensor<128x8xf32>, tensor<8xf32>)
+      attributes {hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %scan = hfusion.cumsum %arg0 : tensor<128x8xf32> cum_dims = [0]
+        reverse = false -> tensor<128x8xf32>
+    %c0 = arith.constant 0.0 : f32
+    %empty = tensor.empty() : tensor<8xf32>
+    %init = linalg.fill ins(%c0 : f32) outs(%empty : tensor<8xf32>)
+        -> tensor<8xf32>
+    %result = linalg.reduce ins(%arg0 : tensor<128x8xf32>)
+        outs(%init : tensor<8xf32>) dimensions = [0]
+      (%in: f32, %out: f32) {
+        %sum = arith.addf %in, %out : f32
+        linalg.yield %sum : f32
+      }
+    return %scan, %result : tensor<128x8xf32>, tensor<8xf32>
   }
 }
