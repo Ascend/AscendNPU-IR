@@ -4169,3 +4169,35 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">, hivm.module_c
     return
   }
 }
+
+// -----
+// scf.while carrying a tensor plus i32 counters must tile the tensor to 16x32.
+// Inner scf.for with hivm.hir.copy is not required once the outer loop is gone.
+// CHECK-LABEL: func.func @tile_and_bind_while_carried_tensor
+// CHECK: scf.while
+// CHECK-SAME: tensor<16x32xf32>
+// CHECK-NOT: tile_and_bind_subblock_reverted
+
+module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @tile_and_bind_while_carried_tensor(%lim: i32) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix} {
+    %c0_i32 = arith.constant 0 : i32
+    %c32_i32 = arith.constant 32 : i32
+    %cst = arith.constant 0.0 : f32
+    %lim2 = arith.minsi %lim, %c32_i32 : i32
+    %empty = tensor.empty() : tensor<32x32xf32>
+    %init = hivm.hir.vbrc ins(%cst : f32) outs(%empty : tensor<32x32xf32>) -> tensor<32x32xf32>
+    %alloc = memref.alloc() : memref<32x32xf32, #hivm.address_space<ub>>
+    %cast = memref.memory_space_cast %alloc : memref<32x32xf32, #hivm.address_space<ub>> to memref<32x32xf32>
+    %w:2 = scf.while (%t = %init, %c = %c0_i32) : (tensor<32x32xf32>, i32) -> (tensor<32x32xf32>, i32) {
+      %cond = arith.cmpi slt, %c, %lim2 : i32
+      scf.condition(%cond) %t, %c : tensor<32x32xf32>, i32
+    } do {
+    ^bb0(%t: tensor<32x32xf32>, %c: i32):
+      hivm.hir.copy ins(%t : tensor<32x32xf32>) outs(%cast : memref<32x32xf32>)
+      %ub = bufferization.to_tensor %cast restrict writable : memref<32x32xf32>
+      %nc = arith.addi %c, %c32_i32 : i32
+      scf.yield %ub, %nc : tensor<32x32xf32>, i32
+    }
+    return
+  }
+}
