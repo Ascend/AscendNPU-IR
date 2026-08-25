@@ -40,6 +40,14 @@ public:
   explicit DimensionAnalyzer(Operation *op, int64_t tilingSize = 2);
   LogicalResult initialize() override;
 
+  /// Annotates operations under \c op_ with temporary \c value_group attributes,
+  /// dumps \c op_, then removes those attributes.
+  void dumpOpWithValueGroups();
+
+  /// Annotates operations under \c op_ with temporary \c structural_group
+  /// attributes, dumps \c op_, then removes those attributes.
+  void dumpOpWithStructuralGroups();
+
   //===--------------------------------------------------------------------===//
   // Dimension Analyzer API.
   //===--------------------------------------------------------------------===//
@@ -188,6 +196,15 @@ protected:
 
   int64_t getHigherDimCounts(ArrayRef<Dimension> candidate,
                              SmallVectorImpl<int64_t> *candidateDims = nullptr);
+
+  /// Merges tiling candidate groups that were marked incompatible during
+  /// dimension analysis but must be reconciled for broadcast-axis tiling.
+  void processInvalidUpdates(
+      DenseMap<int64_t, DenseMap<int64_t, SmallVector<Dimension>>>
+          &parallelDimMaps,
+      mlir::detail::SimpleUnionFind &candGroupDSU,
+      MutableArrayRef<int64_t> candidateGroupSize,
+      SmallVector<DenseSet<int64_t>> &candidateExclusiveDimIdx);
 
   bool isValidTilingSize(int64_t dim) const;
   /// Tells us if we can still treat axis \p i as a tiling candidate for every
