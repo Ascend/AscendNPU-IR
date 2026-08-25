@@ -433,7 +433,7 @@ std::string ConflictPair::str() const {
   Comma comma;
   ret += " {";
   ret += (isBarrier() ? (comma.get() + "is-barrier") : "");
-  ret += (isInnerBackward ? (comma.get() + "is-backward") : "");
+  ret += (isInnerBackwardPair ? (comma.get() + "is-backward") : "");
   ret += (isUseless ? (comma.get() + "is-useless") : "");
   ret +=
       (replacedWithUnitFlag ? (comma.get() + "replaced-with-unit-flag") : "");

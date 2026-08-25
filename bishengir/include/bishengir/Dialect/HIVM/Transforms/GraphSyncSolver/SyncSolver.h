@@ -267,8 +267,10 @@ protected:
                                                              Occurrence *occ2);
 
   // Map an occurrence to the first/last loop-iteration copy under parOcc.
-  Occurrence *getFirstIterOcc(Occurrence *occ, Occurrence *parOcc);
-  Occurrence *getLastIterOcc(Occurrence *occ, Occurrence *parOcc);
+  bool isFirstIterOcc(Occurrence *occ, Occurrence *loopOcc);
+  bool isLastIterOcc(Occurrence *occ, Occurrence *loopOcc);
+  Occurrence *getFirstIterOcc(Occurrence *occ, Occurrence *loopOcc);
+  Occurrence *getLastIterOcc(Occurrence *occ, Occurrence *loopOcc);
 
   // Whether a cross-core pipe / occurrence pair should be skipped.
   bool checkSkipCrossCorePair(hivm::TCoreType coreTypeSrc,

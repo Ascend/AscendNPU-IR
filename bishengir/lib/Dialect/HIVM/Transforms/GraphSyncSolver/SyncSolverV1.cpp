@@ -140,14 +140,14 @@ bool SyncSolverV1::checkGraphConflict(
         conflictPair->startIndex > endIndex.value()) {
       return;
     }
-    if (conflictPair->isInnerBackward) {
+    if (conflictPair->isInnerBackwardPair) {
       if (eventIdInfo.getEventIdNum() <
           conflictPair->eventIdInfo.getEventIdNum()) {
         return;
       }
     }
     if (eventIdInfo.cvPreloadingInfo) {
-      if (conflictPair->isBackwardPair) {
+      if (conflictPair->isSetWaitBackwardPair) {
         if (!conflictPair->setWaitPairInfo.has_value() ||
             !conflictPair->setWaitPairInfo->isCVPreloading) {
           return;
