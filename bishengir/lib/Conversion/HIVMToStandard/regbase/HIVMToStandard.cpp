@@ -689,14 +689,10 @@ public:
     SmallVector<Value> additionalArgs;
     genAdditionalFunctionArgs(op, additionalArgs, rewriter);
 
-    auto srcType = dyn_cast<MemRefType>(op.getSrc().getType());
-    auto dstType = dyn_cast<MemRefType>(op.getDst().getType());
-    if (srcType && dstType && srcType.getRank() == 5 &&
-        dstType.getRank() == 3) {
-      lowerBatchFixpipe(op, additionalArgs, rewriter);
-      return success();
-    }
-
+    // A rank-5 L0C draining into a rank-3 GM buffer resolves to the batched
+    // library function, which walks the batch via ND_PARA. That keeps one
+    // fixpipe paired with the single unit flag update BatchL1Mmad raises on
+    // its final mmad.
     SmallVector<Value> libCallOperands;
     libCallOperands.push_back(op.getSrc());
     libCallOperands.push_back(op.getDst());
@@ -710,56 +706,6 @@ public:
   }
 
 private:
-  static Value createBatchSlice(Value value, Value batchIndex,
-                                PatternRewriter &rewriter, Location loc) {
-    auto type = cast<MemRefType>(value.getType());
-    SmallVector<OpFoldResult> offsets{batchIndex};
-    SmallVector<OpFoldResult> sizes{rewriter.getIndexAttr(1)};
-    SmallVector<OpFoldResult> strides{rewriter.getIndexAttr(1)};
-    SmallVector<int64_t> reducedShape;
-    for (int64_t dim = 1; dim < type.getRank(); ++dim) {
-      offsets.push_back(rewriter.getIndexAttr(0));
-      sizes.push_back(memref::getMixedSize(rewriter, loc, value, dim));
-      strides.push_back(rewriter.getIndexAttr(1));
-      reducedShape.push_back(type.getDimSize(dim));
-    }
-
-    auto reducedType = cast<MemRefType>(inferRankReducedResultType(
-        reducedShape, type, offsets, sizes, strides, {0}));
-    return rewriter.create<memref::SubViewOp>(
-        loc, reducedType, value, offsets, sizes, strides);
-  }
-
-  static void lowerBatchFixpipe(FixpipeOp op, ValueRange additionalArgs,
-                                PatternRewriter &rewriter) {
-    Location loc = op.getLoc();
-    Value zero = rewriter.create<arith::ConstantIndexOp>(loc, 0);
-    Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
-    Value batch = rewriter.create<memref::DimOp>(loc, op.getSrc(), 0);
-    auto loop = rewriter.create<scf::ForOp>(loc, zero, batch, one);
-
-    rewriter.setInsertionPointToStart(loop.getBody());
-    Value srcSlice =
-        createBatchSlice(op.getSrc(), loop.getInductionVar(), rewriter, loc);
-    Value dstSlice =
-        createBatchSlice(op.getDst(), loop.getInductionVar(), rewriter, loc);
-
-    SmallVector<Value> operands{srcSlice, dstSlice};
-    operands.append(additionalArgs.begin(), additionalArgs.end());
-    std::string fnName =
-        cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryCallName(
-            /*isOpsAligned=*/std::nullopt);
-    size_t rankSuffix = fnName.rfind("_5d_to_3d");
-    assert(rankSuffix != std::string::npos &&
-           "expected rank suffix in batch fixpipe library name");
-    fnName.replace(rankSuffix, std::string("_5d_to_3d").size(),
-                   "_4d_to_2d");
-    ModuleOp mod = op->getParentOfType<ModuleOp>();
-    createLibCall(rewriter, op, mod, fnName, operands, {});
-
-    rewriter.eraseOp(op);
-  }
-
   static void genPreQuant(FixpipeOp op, PatternRewriter &rewriter,
                           Value &preQuant) {
     // TODO, after inlinefipipe finish, delete this func

@@ -399,9 +399,11 @@ CATLASS_DEVICE void BatchL1Mmad(
     params.disableGemv = true;
 #endif
     for (uint32_t batchIdx = 0; batchIdx < actualBatch; ++batchIdx) {
-      const bool isLastMmad = batchBegin + batchIdx + 1 == batchCount;
-      params.unitFlag =
-          isLastMmad ? static_cast<uint8_t>(unitFlag) : static_cast<uint8_t>(0);
+      // No mmad here may update the unit flag: the batch is drained by a single
+      // Fixpipe that cannot pair up with per-mmad updates. batch_mma_tile_core
+      // already downgraded the mode so that M->FIX ordering comes from an
+      // explicit set_flag/wait_flag pair instead.
+      params.unitFlag = static_cast<uint8_t>(unitFlag);
       AscendCBisheng::Mmad(
           l0CTensor[(batchBegin + batchIdx) * l0CElems],
           l0ATensor[batchIdx * l0AElems], l0BTensor[batchIdx * l0BElems],
@@ -460,7 +462,11 @@ __aicore__ __attribute__((always_inline)) void batch_mma_tile_core(
       unit_flag_was_disable = false;
       int64_t l0cN = mc->sizes[1] * mc->sizes[4];
       int64_t l0cM = mc->sizes[2] * mc->sizes[3];
-      if ((n != l0cN) || (m != l0cM)) {
+      // A batch is drained by one Fixpipe covering every matrix at once, which
+      // cannot pair up with a per-mmad flag update. Marking the group disabled
+      // hands the M->FIX ordering back to the explicit set_flag/wait_flag pair
+      // that Fixpipe emits for a disabled group.
+      if ((ma->sizes[0] > 1) || (n != l0cN) || (m != l0cM)) {
         unit_flag_was_disable = true;
         unit_flag_mode = UNIT_FLAG::ENABLED_WITHOUT_UPDATE;
       }
