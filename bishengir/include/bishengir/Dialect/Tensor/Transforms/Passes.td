@@ -96,6 +96,26 @@ def PropagateReshape : Pass<"propagate-reshape", "func::FuncOp"> {
   ];
 }
 
+def FoldCollapseIntoAllocWithLoad : Pass<"fold-collapse-into-alloc-with-load", "func::FuncOp"> {
+  let summary = "Fold load chains whose buffers are collapsed back "
+                "to matrix form by their consumers.";
+  let description = [{
+    Matches hivm loads whose destination buffer carries foldable dims (e.g.
+    [d0, 1, d2] produced by rank-raising reshape propagation into a shared
+    load) and whose alloc also feeds a collapse merging those dims. The
+    collapse proves that every consumer wants the plain matrix form, so the
+    dims are folded out of the local chain (alloc / subview / load src)
+    and the collapse is erased. Runs before HIVM data-layout inference so
+    layout classification sees the genuine matrix rank.
+  }];
+  let constructor = "mlir::tensor::createFoldCollapseIntoAllocWithLoadPass()";
+  let dependentDialects = [
+    "mlir::func::FuncDialect",
+    "mlir::memref::MemRefDialect",
+    "mlir::hivm::HIVMDialect"
+  ];
+}
+
 def TrickleConcatDown : Pass<"trickle-concat-down", "func::FuncOp"> {
 let summary = "Trickle tensor concat down";
   let constructor = "mlir::tensor::createTrickleConcatDownPass()";
