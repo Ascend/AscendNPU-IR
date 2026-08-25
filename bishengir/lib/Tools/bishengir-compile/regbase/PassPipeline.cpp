@@ -522,6 +522,10 @@ void buildBiShengHIRPipeline(OpPassManager &pm,
       pm.addPass(hivm::createInsertMemSemanticForSimtVFPass());
       pm.addPass(scope::createTransformOpForSIMTPass());
       pm.addPass(scope::createOutlineScopePass());
+      // Propagate the SIMT VF mode from outlined SIMT VFs to their callers
+      // so later passes (mem effect/scope hint inference, SIMT module
+      // splitting) observe the correct caller vf_mode.
+      pm.addPass(scope::createPropagateSIMTModePass());
       pm.addPass(hivm::createInsertAllocBasePlaceholderPass());
       pm.addPass(hivm::createInferSimtVFMemEffectPass());
       // Infer per-argument mem scope hints from the mixed call boundary first;
