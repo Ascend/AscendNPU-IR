@@ -338,6 +338,7 @@ static void buildDelayedHFusionRegBaseVectorizePipeline(
                                   ? hfusion::MmMapMode::MacroInstr
                                   : hfusion::MmMapMode::CoreOp;
   pm.addPass(createHFusionToHIVMConversionPass(hfs2hivmOptions));
+  pm.addPass(createTensorToHIVMConversionPass());
 }
 
 void buildFinalHIVMPipelines(mlir::OpPassManager &pm,

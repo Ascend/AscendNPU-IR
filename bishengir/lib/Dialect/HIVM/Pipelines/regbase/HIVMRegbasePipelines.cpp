@@ -331,6 +331,7 @@ static void hivmPreBufferizationOptimizationPipeline(
 
   pm.addPass(mlir::scf::createRemoveRedundantLoopInitPass());
   pm.addPass(mlir::hivm::createNormalizeMatmulPass());
+  pm.addPass(mlir::hivm::createNormalizeConvOpsPass());
   pm.addPass(mlir::hivm::createInsertFixpipePass());
   {
     InlineFixpipeOptions inlineFixpipeOpts;

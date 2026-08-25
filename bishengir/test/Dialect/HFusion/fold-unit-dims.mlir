@@ -516,3 +516,22 @@ func.func @test_fold_print_op() {
   hfusion.print " x0: " {hex = false} %t : tensor<49152x1xf8E4M3FN>
   return
 }
+
+// -----
+
+// HFusion convolution dimensions have fixed semantics. In particular, the
+// unit IC-per-group dimension of a depthwise convolution must be preserved.
+// CHECK-LABEL: func.func @keep_hfusion_depthwise_conv2d_unit_channel
+// CHECK: hfusion.conv2d
+// CHECK-SAME: ins(%{{.*}}, %{{.*}} : tensor<16x8x8xf16>, tensor<16x1x3x3xf16>)
+// CHECK-SAME: outs(%{{.*}} : tensor<16x6x6xf16>)
+func.func @keep_hfusion_depthwise_conv2d_unit_channel(
+    %input: tensor<16x8x8xf16>, %weight: tensor<16x1x3x3xf16>,
+    %init: tensor<16x6x6xf16>) -> tensor<16x6x6xf16> {
+  %result = hfusion.conv2d {
+      dilation = array<i64: 1, 1>, groups = 16 : i32,
+      padding = array<i64: 0, 0>, stride = array<i64: 1, 1>}
+      ins(%input, %weight : tensor<16x8x8xf16>, tensor<16x1x3x3xf16>)
+      outs(%init : tensor<16x6x6xf16>) -> tensor<16x6x6xf16>
+  return %result : tensor<16x6x6xf16>
+}
