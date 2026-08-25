@@ -1953,7 +1953,12 @@ bool hfusion::shouldUseRegisterTreeReduction(Operation *op) {
   unsigned cumsumCount = 0;
   int64_t cost = getRegisterTreeReductionCost(op, candidateCount,
                                               totalReductionCount, cumsumCount);
-  return cumsumCount == 0 && candidateCount == 1 && totalReductionCount == 1 &&
+  // The backend spills a fully expanded 64-row direct tree beyond its
+  // 6144-byte VF stack. Select the established TreeReduceV2 route below;
+  // smaller direct trees remain enabled.
+  bool needsLegacyTreeForRegisterPressure = reductionSize == 64;
+  return !needsLegacyTreeForRegisterPressure && cumsumCount == 0 &&
+         candidateCount == 1 && totalReductionCount == 1 &&
          cost <= maxRegisterTreeReductionCost;
 }
 
@@ -1988,6 +1993,12 @@ bool hfusion::shouldUseLegacyTreeReductionScope(Operation *op) {
   // this exact one-scan/one-reduction shape, including its 128-element tile.
   bool cumsumWithSingleReduction =
       cumsumCount == 1 && candidateCount == 1 && totalReductionCount == 1;
+  // A single canonical 64-row RA reduction would otherwise use the direct
+  // register tree and exceed VF stack. Keep it on the established
+  // TreeReduceV2 lowering.
+  bool registerPressureFallback =
+      reductionSize == 64 && cumsumCount == 0 && candidateCount == 1 &&
+      totalReductionCount == 1;
   constexpr int64_t maxLegacyTreeReductionSize = 64;
   constexpr int64_t maxCumsumTreeReductionSize = 128;
   bool supportedSize = reductionSize <= maxLegacyTreeReductionSize ||
@@ -1995,7 +2006,7 @@ bool hfusion::shouldUseLegacyTreeReductionScope(Operation *op) {
                         reductionSize <= maxCumsumTreeReductionSize);
   return supportedSize &&
          (allReductionsAreRegisterCandidates || singleCandidateMixedScope ||
-          cumsumWithSingleReduction) &&
+          cumsumWithSingleReduction || registerPressureFallback) &&
          cost <= maxLegacyTreeReductionCost;
 }
 
