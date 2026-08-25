@@ -281,9 +281,11 @@ LogicalResult VCastOp::allocExtraBuffersIfPossible() {
 
     SmallVector<int64_t> extraBufSizes;
     if (!useExtraScheme) {
-      std::optional<int64_t> srcAllocTotalSize =
-          utils::traceToAllocMaxSize(this->getSrc()[0]);
-      extraBufSizes = {srcAllocTotalSize.value() * 2};
+      // The overflow-cast template splits this buffer in half.  Each half must
+      // accommodate a block-aligned vnchwconv result, which can be larger than
+      // the logical/root allocation when a cast axis is not 32-byte aligned.
+      int64_t alignedSrcSize = getAlignedSrcSizeForCast(*this);
+      extraBufSizes = {alignedSrcSize * 2};
     } else {
       int64_t alignedSrcSize = getAlignedSrcSizeForCast(*this);
       // Reserve 3 times the "aligned src size" for subsequent template
