@@ -7,15 +7,18 @@
 // NEW-LABEL: func.func private @ra17_fused_0(
 // NEW-SAME: %{{.*}}: tensor<17x8xf32>, %{{.*}}: tensor<8xf32>)
 // NEW-NEXT: %{{.*}} = linalg.reduce
+// NEW-SAME: hfusion.register_tree_reduction_selected
 // NEW: module attributes {hfusion.regular_tree_reduction_scope, hfusion.tree_reduction_selection_frozen}
 // NEW-NOT: hfusion.legacy_tree_reduction_scope
 // NEW-LABEL: func.func private @mixed_ra_ar_fused_0(
 // NEW: %{{.*}} = linalg.reduce
 // NEW-LABEL: func.func private @mixed_ra_ar_fused_1(
 // NEW: %{{.*}} = linalg.reduce
+// NEW: module attributes {hfusion.legacy_tree_reduction_scope, hfusion.tree_reduction_selection_frozen}
 // NEW-LABEL: func.func private @ra64_fused_0(
 // NEW-SAME: %{{.*}}: tensor<64x8xf32>, %{{.*}}: tensor<8xf32>)
 // NEW-NEXT: %{{.*}} = linalg.reduce
+// NEW-SAME: hfusion.regular_tree_reduction_selected
 // NEW-LABEL: func.func private @ra65_fused_0(
 // NEW: linalg.elemwise_binary
 // NEW: linalg.fill
