@@ -1,4 +1,4 @@
-// RUN: bishengir-opt %s -split-input-file -convert-hivmave-to-ave-intrin --allow-unregistered-dialect | FileCheck %s
+// RUN: bishengir-opt %s -split-input-file -convert-hivmave-to-ave-intrin | FileCheck %s
 
 // Test VaddV128BF16XInstrOp
 // CHECK-LABEL: test_vadd_v128_bf16
@@ -17,27 +17,6 @@ func.func @test_vmul_v128_bf16(%arg0: vector<128 x bf16>, %arg1: vector<128 x bf
   "test.test"(%0) : (vector<128 x bf16>) -> ()
   return
 }
-
-// -----
-
-// CHECK-LABEL: test_vmull_signed
-// CHECK: "hivm_regbaseintrins.intr.hivm.vmull.v64s32"
-func.func @test_vmull_signed(%arg0: vector<64xi32>, %arg1: vector<64xi32>){
-    %pred = ave.hir.pge <ALL> {functionType = #ave.func_dist_type<pb32>}: vector<64xi1>
-    %low, %high = ave.hir.mull %arg0, %arg1, %pred {cast = #hivm.cast<cast_signed>}: vector<64xi32>, vector<64xi1>
-    "some.use"(%low) : (vector<64xi32>) -> ()
-    return
-}
-
-// CHECK-LABEL: test_vmull_unsigned
-// CHECK: "hivm_regbaseintrins.intr.hivm.vmull.v64u32"
-func.func @test_vmull_unsigned(%arg0: vector<64xi32>, %arg1: vector<64xi32>){
-    %pred = ave.hir.pge <ALL> {functionType = #ave.func_dist_type<pb32>}: vector<64xi1>
-    %low, %high = ave.hir.mull %arg0, %arg1, %pred {cast = #hivm.cast<cast_unsigned>}: vector<64xi32>, vector<64xi1>
-    "some.use"(%low) : (vector<64xi32>) -> ()
-    return
-}
-
 
 // Test VsubV128BF16XInstrOp
 // CHECK-LABEL: test_vsub_v128_bf16

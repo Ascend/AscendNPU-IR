@@ -126,8 +126,8 @@ bool DimensionAnalyzer::processOperation(Operation *op, Value current) {
             options.registerBased &&
             isa_and_present<memref::CopyOp, hivm::CopyOp, hivm::StoreOp,
                             bufferization::MaterializeInDestinationOp,
-                            hfusion::MulExtOp, hfusion::MulExtUiOp,
-                            memref::MemorySpaceCastOp, annotation::MarkOp>(op);
+                            hfusion::MulExtOp, memref::MemorySpaceCastOp,
+                            annotation::MarkOp>(op);
         if (isAllParallelOp(op) || isParallelRegbased) {
           processParallelOp(op, current);
         } else {
