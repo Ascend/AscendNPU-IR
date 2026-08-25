@@ -5,15 +5,17 @@
 // RUN: bishengir-opt -ave-process-vsstb -ave-loop-optimize="max-small-width-merge-factor=4" -hacc-append-device-spec=target=Ascend910_9589 -analyze-vector-layout -canonicalize -ave-normalize-ops -remove-vector-layout-attr -convert-hivmave-to-ave-intrin %s --split-input-file | FileCheck %s --check-prefix=LOWER
 
 // The short full chain is execute-bound. Saving one load/store does not cover
-// the added vintlv/vdintlv work, so the loop must remain unchanged.
+// the added vintlv/vdintlv work, so reject the merge but retain the legacy
+// factor-2 widening unroll.
 // CHECK-LABEL: func.func @factor2_full_chain
-// CHECK: scf.for {{.*}} step %c64
+// CHECK: scf.for {{.*}} step %c128
 // CHECK: ave.hir.vload <NORM> {{.*}} into vector<64xf16>
 // CHECK-NOT: ave.hir.vintlv
 // CHECK-NOT: ave.hir.vdintlv
 // CHECK: ave.hir.masked_store <NORM_B16> {{.*}} vector<64xi1>, vector<64xf16>
 // CHECK-NOT: __ave_small_width
 // MAX2-LABEL: func.func @factor2_full_chain
+// MAX2: scf.for {{.*}} step %c128
 // MAX2: ave.hir.vload <NORM> {{.*}} into vector<64xf16>
 // MAX2-NOT: ave.hir.vintlv
 // MAX2-NOT: ave.hir.vdintlv
@@ -693,6 +695,47 @@ func.func @reject_compute_bound_store_merge(
     ave.hir.masked_store <NORM_B16> %dst[%iv], %mask, %narrow
         : memref<128xf16, #hivm.address_space<ub>>,
           vector<64xi1>, vector<64xf16>
+  }
+  return
+}
+
+// -----
+
+// Tree reduction may produce two narrowing roots with one shared vsub/store
+// tail. The tail must be planned only once; otherwise its IO cost is removed
+// twice and both groups may try to rewrite the same operations.
+// CHECK-LABEL: func.func @reject_overlapping_narrow_roots
+// CHECK: scf.for {{.*}} step %c64
+// CHECK-COUNT-2: ave.hir.vtrunci
+// CHECK-NOT: ave.hir.vdintlv
+// CHECK-COUNT-1: ave.hir.vsub
+// CHECK-COUNT-1: ave.hir.masked_store <NORM_B8> {{.*}} vector<64xi1>, vector<64xi8>
+// CHECK-NOT: __ave_small_width
+func.func @reject_overlapping_narrow_roots(
+    %src0: memref<256xi32, #hivm.address_space<ub>>,
+    %src1: memref<256xi32, #hivm.address_space<ub>>,
+    %dst: memref<256xi8, #hivm.address_space<ub>>)
+    attributes {hivm.vector_function} {
+  %c0 = arith.constant 0 : index
+  %c64 = arith.constant 64 : index
+  %c256 = arith.constant 256 : index
+  scf.for %iv = %c0 to %c256 step %c64 {
+    %lhs = ave.hir.vload <NORM> %src0[%iv]
+        : memref<256xi32, #hivm.address_space<ub>> into vector<64xi32>
+    %rhs = ave.hir.vload <NORM> %src1[%iv]
+        : memref<256xi32, #hivm.address_space<ub>> into vector<64xi32>
+    %mask = ave.hir.pge <ALL> : vector<64xi1>
+    %narrowLhs = ave.hir.vtrunci %lhs, false, %mask
+        {pp = #ave.vcvt_pp_type<pp0>}
+        : vector<64xi32>, vector<64xi8>, vector<64xi1>
+    %narrowRhs = ave.hir.vtrunci %rhs, false, %mask
+        {pp = #ave.vcvt_pp_type<pp0>}
+        : vector<64xi32>, vector<64xi8>, vector<64xi1>
+    %difference = ave.hir.vsub %narrowLhs, %narrowRhs, %mask
+        : vector<64xi8>, vector<64xi1>
+    ave.hir.masked_store <NORM_B8> %dst[%iv], %mask, %difference
+        : memref<256xi8, #hivm.address_space<ub>>,
+          vector<64xi1>, vector<64xi8>
   }
   return
 }

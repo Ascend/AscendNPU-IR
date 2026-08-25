@@ -103,6 +103,9 @@ namespace {
 constexpr llvm::StringLiteral kGroupAttr = "__ave_small_width_group_id";
 constexpr llvm::StringLiteral kNodeAttr = "__ave_small_width_node_id";
 constexpr llvm::StringLiteral kCloneAttr = "__ave_small_width_clone_index";
+constexpr llvm::StringLiteral kLegacyFallbackAttr =
+    "__ave_loop_optimize_legacy_fallback";
+constexpr llvm::StringLiteral kPeeledLoopAttr = "__peeled_loop__";
 constexpr llvm::StringLiteral kContinuousAttr = "hivm.is_continuous";
 
 enum class GroupKind {
@@ -128,7 +131,6 @@ struct SmallWidthGroup {
 struct SmallWidthMergePlan {
   unsigned unrollFactor;
   SmallVector<SmallWidthGroup, 8> groups;
-  bool peelPartialIteration;
 };
 
 struct PackedAccess {
@@ -327,9 +329,71 @@ static bool hasContinuousOnePointStore(scf::ForOp forOp) {
   return found;
 }
 
-static bool canUnrollLoop(scf::ForOp forOp, unsigned factor,
-                          bool &peelPartialIteration) {
-  peelPartialIteration = false;
+static bool hasLegacyWideningCast(scf::ForOp forOp) {
+  bool found = false;
+  forOp.walk([&found](VFExtFOp extf) {
+    auto srcType = cast<VectorType>(extf.getSrc().getType());
+    auto dstType = cast<VectorType>(extf.getRes().getType());
+    if (srcType.getElementTypeBitWidth() != 16 ||
+        dstType.getElementTypeBitWidth() != 32)
+      return WalkResult::advance();
+    found = true;
+    return WalkResult::interrupt();
+  });
+  return found;
+}
+
+static bool shouldRunLegacyUnroll(scf::ForOp forOp) {
+  if (!forOp->hasAttr(kLegacyFallbackAttr) || !isInnermostLoop(forOp) ||
+      hasContinuousOnePointStore(forOp))
+    return false;
+
+  auto lowerBound = hivmave::getConstantIntValue(forOp.getLowerBound());
+  auto upperBound = hivmave::getConstantIntValue(forOp.getUpperBound());
+  auto step = hivmave::getConstantIntValue(forOp.getStep());
+  if (!lowerBound || !upperBound || !step || *step != 64)
+    return false;
+
+  int64_t range = *upperBound - *lowerBound;
+  return range > 128 && range % 128 == 0 && hasLegacyWideningCast(forOp);
+}
+
+/// Preserve the pass's original factor-2 widening unroll when no small-width
+/// merge plan is selected. This fallback intentionally does not merge data.
+struct LegacyWideVextfUnrollPattern : public OpRewritePattern<scf::ForOp> {
+  using OpRewritePattern<scf::ForOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(scf::ForOp forOp,
+                                PatternRewriter &rewriter) const override {
+    if (!shouldRunLegacyUnroll(forOp))
+      return failure();
+    return succeeded(loopUnrollByFactor(forOp, /*unrollFactor=*/2,
+                                        /*annotateFn=*/nullptr))
+               ? success()
+               : failure();
+  }
+};
+
+/// Peel a partial data iteration before analyzing either the small-width merge
+/// or the legacy fallback. The marker prevents the generated tail loop from
+/// being peeled again by the greedy rewrite driver.
+struct PeelEpiloguePattern : public OpRewritePattern<scf::ForOp> {
+  using OpRewritePattern<scf::ForOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(scf::ForOp forOp,
+                                PatternRewriter &rewriter) const override {
+    if (forOp->hasAttr(kPeeledLoopAttr))
+      return failure();
+    scf::ForOp partialIteration;
+    if (failed(scf::peelForLoopAndSimplifyBounds(rewriter, forOp,
+                                                 partialIteration)))
+      return failure();
+    partialIteration->setAttr(kPeeledLoopAttr, rewriter.getUnitAttr());
+    return success();
+  }
+};
+
+static bool canUnrollLoop(scf::ForOp forOp, unsigned factor) {
   auto lowerBound = hivmave::getConstantIntValue(forOp.getLowerBound());
   auto upperBound = hivmave::getConstantIntValue(forOp.getUpperBound());
   auto step = hivmave::getConstantIntValue(forOp.getStep());
@@ -339,16 +403,15 @@ static bool canUnrollLoop(scf::ForOp forOp, unsigned factor,
     return false;
   int64_t range = *upperBound - *lowerBound;
   int64_t fullTripCount = range / *step;
-  peelPartialIteration = range % *step != 0;
   const int64_t factorAsInt64 = static_cast<int64_t>(factor);
-  // Only complete iterations participate in a merge group. A partial data
-  // iteration is peeled after the candidate passes profitability; the unroller
-  // then owns any remaining complete iteration that cannot fill a group.
+  // Partial data iterations have already been peeled. The unroller owns any
+  // remaining complete iteration that cannot fill a factor-sized group.
   return fullTripCount >= factorAsInt64;
 }
 
 static bool isTemporaryAttr(StringRef name) {
-  return name == kGroupAttr || name == kNodeAttr || name == kCloneAttr;
+  return name == kGroupAttr || name == kNodeAttr || name == kCloneAttr ||
+         name == kLegacyFallbackAttr || name == kPeeledLoopAttr;
 }
 
 static void copyNonTemporaryAttrs(Operation &from, Operation &to) {
@@ -362,6 +425,7 @@ static void removeTemporaryAttrs(Operation &root) {
   root.removeAttr(kGroupAttr);
   root.removeAttr(kNodeAttr);
   root.removeAttr(kCloneAttr);
+  root.removeAttr(kLegacyFallbackAttr);
   for (Region &region : root.getRegions())
     for (Block &block : region)
       for (Operation &operation : block)
@@ -858,16 +922,27 @@ buildMergePlan(scf::ForOp forOp, unsigned maxMergeFactor,
                int64_t &nextGroupId) {
   SmallVector<SmallWidthGroup, 8> candidates =
       buildGroups(forOp, maxMergeFactor, nextGroupId);
-  SmallWidthMergePlan plan{0, {}, false};
+  SmallWidthMergePlan plan{0, {}};
+  llvm::DenseSet<Operation *> plannedOperations;
   for (SmallWidthGroup &group : candidates) {
     if (!hasCloneEquivalentScalars(group, forOp))
       continue;
+
+    // Tree reduction can produce multiple narrowing roots that share one
+    // elementwise/store tail. Select that tail once: otherwise it is rewritten
+    // and subtracted from the cost model more than once.
+    if (llvm::any_of(group.nodes,
+                     [&plannedOperations](Operation *const &operation) {
+                       return plannedOperations.contains(operation);
+                     }))
+      continue;
+    plannedOperations.insert(group.nodes.begin(), group.nodes.end());
+
     plan.unrollFactor = std::max(plan.unrollFactor, group.factor);
     plan.groups.push_back(std::move(group));
   }
 
-  if (plan.groups.empty() ||
-      !canUnrollLoop(forOp, plan.unrollFactor, plan.peelPartialIteration))
+  if (plan.groups.empty() || !canUnrollLoop(forOp, plan.unrollFactor))
     return std::nullopt;
 
   AVECostModel costModel(*forOp.getOperation());
@@ -911,16 +986,6 @@ static LogicalResult optimizeLoop(scf::ForOp forOp, unsigned maxMergeFactor,
       buildMergePlan(forOp, maxMergeFactor, nextGroupId);
   if (!plan)
     return failure();
-
-  // Peeling changes the IR, so defer it until the complete candidate has passed
-  // the cost model. The original loop is updated in place; its body operations
-  // (and therefore the plan's operation pointers) remain valid.
-  if (plan->peelPartialIteration) {
-    scf::ForOp partialIteration;
-    if (failed(scf::peelForLoopAndSimplifyBounds(rewriter, forOp,
-                                                 partialIteration)))
-      return failure();
-  }
 
   unsigned unrollFactor = plan->unrollFactor;
   annotateGroups(plan->groups, rewriter);
@@ -1009,6 +1074,13 @@ struct aveLoopOptimizePass
     if (!hivm::isVF(funcOp))
       return;
 
+    // Normalize partial data tails first. Both the small-width merge and the
+    // legacy fallback then analyze the same complete-iteration main loop.
+    RewritePatternSet peelPatterns(&getContext());
+    peelPatterns.add<PeelEpiloguePattern>(&getContext());
+    if (failed(applyPatternsGreedily(funcOp, std::move(peelPatterns))))
+      return signalPassFailure();
+
     SmallVector<scf::ForOp, 8> loops;
     funcOp.walk([&](scf::ForOp forOp) {
       if (isInnermostLoop(forOp))
@@ -1021,9 +1093,19 @@ struct aveLoopOptimizePass
       if (!forOp || !forOp->getBlock())
         continue;
       if (failed(optimizeLoop(forOp, maxSmallWidthMergeFactor, nextGroupId,
-                              rewriter)))
+                              rewriter))) {
         removeTemporaryAttrs(*forOp.getOperation());
+        forOp->setAttr(kLegacyFallbackAttr, rewriter.getUnitAttr());
+      }
     }
+
+    // The cost model controls only the new merge. If it rejects a plan, retain
+    // the pass's pre-existing widening-unroll behavior on the peeled main loop.
+    RewritePatternSet fallbackPatterns(&getContext());
+    fallbackPatterns.add<LegacyWideVextfUnrollPattern>(&getContext());
+    if (failed(applyPatternsGreedily(funcOp, std::move(fallbackPatterns))))
+      return signalPassFailure();
+
     removeTemporaryAttrs(*funcOp.getOperation());
 
     RewritePatternSet canonicalizationPatterns(&getContext());

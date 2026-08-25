@@ -2,8 +2,10 @@
 // RUN: cat %t.mlir | FileCheck %s
 
 // CHECK-LABEL: func.func @causal_conv1d_update_kernel_bdt_fwd_outlined_vf_3
-// CHECK: scf.for {{.*}} = %c0 to %c256 step %c64
-// CHECK: ave.hir.vload <NORM> {{.*}} {ave.unaligned_ub_access = #ave.unaligned_ub_access} : {{.*}} into vector<64xf16>
+// The merge is rejected because the source rows are not contiguous. Keep the
+// original pass behavior and unroll the widening loop without merging loads.
+// CHECK: scf.for {{.*}} = %c0 to %c256 step %c128
+// CHECK-COUNT-2: ave.hir.vload <NORM> {{.*}} {ave.unaligned_ub_access = #ave.unaligned_ub_access} : {{.*}} into vector<64xf16>
 // CHECK-NOT: vector<128xf16>
 // CHECK-NOT: ave.hir.vintlv
 func.func @causal_conv1d_update_kernel_bdt_fwd_outlined_vf_3(
@@ -91,9 +93,9 @@ func.func @peel_epilogue_canon_test(
 
 // -----
 
-// The factor tail is legal, but the short load-to-store chain is not
-// profitable after charging both layout trees. Do not peel a loop unless its
-// main loop will actually be optimized.
+// This loop contains only complete data iterations, so the pre-peel stage does
+// not change it. The short load-to-store chain remains unchanged when the cost
+// model rejects the merge.
 // CHECK-LABEL: func.func @factor_tail_full_chain
 // CHECK: scf.for {{.*}} = %c0 to %c320 step %c64
 // CHECK: ave.hir.vload <NORM> {{.*}} into vector<64xf16>
@@ -132,17 +134,18 @@ func.func @factor_tail_full_chain(
 
 // -----
 
-// Profitability rejects this short chain. The pass must not peel the partial
-// data iteration as a side effect when no merge will be applied.
+// The partial data iteration is peeled before profitability analysis. It stays
+// peeled even when the cost model rejects the small-width merge.
 // CHECK-LABEL: func.func @unprofitable_partial_tail
-// CHECK: %[[C200:.*]] = arith.constant 200 : index
-// CHECK-NOT: arith.constant 192 : index
-// CHECK: scf.for {{.*}} = {{.*}} to %[[C200]] step {{.*}}
+// CHECK: %[[C192:.*]] = arith.constant 192 : index
+// CHECK: scf.for {{.*}} = %{{.*}} to %[[C192]] step %{{.*}}
 // CHECK: ave.hir.vload <NORM> {{.*}} into vector<64xf16>
 // CHECK-NOT: vector<128xf16>
 // CHECK-NOT: ave.hir.vintlv
 // CHECK-NOT: ave.hir.vdintlv
 // CHECK: ave.hir.masked_store <NORM_B16> {{.*}} vector<64xi1>, vector<64xf16>
+// CHECK: ave.hir.vload <NORM> {{.*}}[%[[C192]]] {{.*}} into vector<64xf16>
+// CHECK: ave.hir.masked_store <NORM_B16> {{.*}}[%[[C192]]]{{.*}} vector<64xi1>, vector<64xf16>
 func.func @unprofitable_partial_tail(
     %src: memref<256xf16, #hivm.address_space<ub>>,
     %dst: memref<256xf16, #hivm.address_space<ub>>)
@@ -165,6 +168,42 @@ func.func @unprofitable_partial_tail(
     ave.hir.masked_store <NORM_B16> %dst[%iv], %mask, %narrow
         : memref<256xf16, #hivm.address_space<ub>>,
           vector<64xi1>, vector<64xf16>
+  }
+  return
+}
+
+// -----
+
+// Peel the partial data iteration at iv=256 first. The remaining 0..256 main
+// loop is then eligible for the legacy factor-2 widening unroll.
+// CHECK-LABEL: func.func @fallback_unroll_after_prepeel
+// CHECK-DAG: %[[C128:.*]] = arith.constant 128 : index
+// CHECK-DAG: %[[C256:.*]] = arith.constant 256 : index
+// CHECK: scf.for {{.*}} = %{{.*}} to %[[C256]] step %[[C128]]
+// CHECK-COUNT-2: ave.hir.vload <NORM> {{.*}} into vector<64xf16>
+// CHECK-NOT: vector<128xf16>
+// CHECK-NOT: ave.hir.vintlv
+// CHECK: ave.hir.vload <NORM> {{.*}}[%[[C256]]] {{.*}} into vector<64xf16>
+func.func @fallback_unroll_after_prepeel(
+    %src: memref<320xf16, #hivm.address_space<ub>>,
+    %dst: memref<320xf32, #hivm.address_space<ub>>)
+    attributes {
+      hivm.func_core_type = #hivm.func_core_type<AIV>,
+      hivm.vector_function,
+      no_inline
+    } {
+  %c0 = arith.constant 0 : index
+  %c64 = arith.constant 64 : index
+  %c264 = arith.constant 264 : index
+  scf.for %iv = %c0 to %c264 step %c64 {
+    %loaded = ave.hir.vload <NORM> %src[%iv]
+        : memref<320xf16, #hivm.address_space<ub>> into vector<64xf16>
+    %mask = ave.hir.pge <ALL> : vector<64xi1>
+    %wide = ave.hir.vextf %loaded, <part_even>, %mask
+        : vector<64xf16>, vector<64xf32>, vector<64xi1>
+    ave.hir.masked_store <NORM_B32> %dst[%iv], %mask, %wide
+        : memref<320xf32, #hivm.address_space<ub>>,
+          vector<64xi1>, vector<64xf32>
   }
   return
 }
