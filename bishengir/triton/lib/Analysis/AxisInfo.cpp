@@ -638,6 +638,56 @@ public:
   }
 };
 
+class ReshapeOpAxisInfoVisitor final
+    : public AxisInfoVisitorImpl<triton::ReshapeOp> {
+public:
+  using AxisInfoVisitorImpl<triton::ReshapeOp>::AxisInfoVisitorImpl;
+
+  AxisInfo
+  getAxisInfo(triton::ReshapeOp op,
+              ArrayRef<const dataflow::Lattice<AxisInfo> *> operands) override {
+    auto srcInfo = operands[0]->getValue();
+    auto srcShape = cast<RankedTensorType>(op.getSrc().getType()).getShape();
+    auto dstShape =
+        cast<RankedTensorType>(op.getResult().getType()).getShape();
+    int rank = dstShape.size();
+
+    // Compute total contiguous elements from source.
+    // In row-major layout, contiguous elements are at the innermost dims.
+    int64_t srcNumElems = 1;
+    for (auto d : srcShape)
+      srcNumElems *= d;
+    int64_t totalContig = 1;
+    for (int d = srcInfo.getRank() - 1; d >= 0; --d) {
+      totalContig *= srcInfo.getContiguity(d);
+      if (totalContig >= srcNumElems)
+        break;
+    }
+    totalContig = std::min(totalContig, srcNumElems);
+
+    // In row-major layout, only the innermost dimension has stride 1.
+    // All outer dimensions have stride > 1, so their contiguity is 1.
+    // The innermost dimension gets min(totalContig, innermostDimSize).
+    AxisInfo::DimVectorT contiguity(rank, 1);
+    if (rank > 0)
+      contiguity[rank - 1] = std::min(totalContig, dstShape[rank - 1]);
+
+    // Divisibility: conservatively use GCD of source divisibility
+    AxisInfo::DimVectorT divisibility(rank);
+    int64_t srcDiv = srcInfo.getDivisibility(0);
+    for (int d = 1; d < srcInfo.getRank(); ++d)
+      srcDiv = gcd(srcDiv, srcInfo.getDivisibility(d));
+    for (int d = 0; d < rank; ++d)
+      divisibility[d] = srcDiv;
+
+    // Constancy: conservatively set to 1
+    AxisInfo::DimVectorT constancy(rank, 1);
+
+    return AxisInfo(contiguity, divisibility, constancy,
+                    srcInfo.getConstantValue());
+  }
+};
+
 class BroadcastOpAxisInfoVisitor final
     : public AxisInfoVisitorImpl<triton::BroadcastOp> {
 public:
@@ -1040,6 +1090,7 @@ AxisInfoAnalysis::AxisInfoAnalysis(DataFlowSolver &solver,
   visitors.append<BroadcastOpAxisInfoVisitor>();
   visitors.append<SplatOpAxisInfoVisitor>();
   visitors.append<ExpandDimsOpAxisInfoVisitor>();
+  visitors.append<ReshapeOpAxisInfoVisitor>();
   visitors.append<CmpOpAxisInfoVisitor<arith::CmpIOp>>();
   visitors.append<LogicalOpAxisInfoVisitor<arith::AndIOp>,
                   LogicalOpAxisInfoVisitor<arith::OrIOp>,

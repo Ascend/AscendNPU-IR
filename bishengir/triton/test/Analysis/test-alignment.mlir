@@ -961,5 +961,88 @@ tt.func @dead_op_pessimistic() {
   %c5 = arith.constant dense<5> : tensor<4xi32>
   %c7 = arith.constant dense<7> : tensor<4xi32>
   %false = arith.constant false
-  scf.if %false {
+  %result = scf.if %false -> (tensor<4xi32>) {
     // expected-remark @below {{contiguity = [1], divisibility = [1], constancy = [1], constant_value = <none>}}
+    %dead = arith.addi %c5, %c7 : tensor<4xi32>
+    scf.yield %dead : tensor<4xi32>
+  } else {
+    // expected-remark @below {{contiguity = [1], divisibility = [1], constancy = [1], constant_value = <none>}}
+    %live = arith.addi %c5, %c5 : tensor<4xi32>
+    scf.yield %live : tensor<4xi32>
+  }
+  tt.return
+}
+
+// -----
+
+// Reshape 1D→2D: fully contiguous source.
+// Source contiguity [128] → totalContig=128, capped by innermost dst dim 32.
+// Divisibility propagated from source.
+tt.func @reshape_1d_to_2d() {
+  // expected-remark @below {{contiguity = [128], divisibility = [1073741824], constancy = [1], constant_value = <none>}}
+  %0 = tt.make_range {end = 128 : i32, start = 0 : i32} : tensor<128xi32>
+  // expected-remark @below {{contiguity = [1, 32], divisibility = [1073741824, 1073741824], constancy = [1, 1], constant_value = <none>}}
+  %1 = tt.reshape %0 : tensor<128xi32> -> tensor<4x32xi32>
+  tt.return
+}
+
+// -----
+
+// Reshape 2D→3D: source has partial contiguity on innermost dim.
+// Source contiguity [1, 32] → totalContig=32, capped by innermost dst dim 32.
+// Divisibility = GCD(1, 1073741824) = 1.
+tt.func @reshape_2d_to_3d() {
+  // expected-remark @below {{contiguity = [32], divisibility = [1073741824], constancy = [1], constant_value = <none>}}
+  %0 = tt.make_range {end = 32 : i32, start = 0 : i32} : tensor<32xi32>
+  // expected-remark @below {{contiguity = [1, 32], divisibility = [1, 1073741824], constancy = [1, 1], constant_value = <none>}}
+  %1 = tt.expand_dims %0 {axis = 0 : i32} : tensor<32xi32> -> tensor<1x32xi32>
+  // expected-remark @below {{contiguity = [1, 32], divisibility = [1, 1073741824], constancy = [4, 1], constant_value = <none>}}
+  %2 = tt.broadcast %1 : tensor<1x32xi32> -> tensor<4x32xi32>
+  // expected-remark @below {{contiguity = [1, 1, 16], divisibility = [1, 1, 1], constancy = [1, 1, 1], constant_value = <none>}}
+  %3 = tt.reshape %2 : tensor<4x32xi32> -> tensor<2x4x16xi32>
+  tt.return
+}
+
+// -----
+
+// Reshape 2D→1D: flatten a 2D tensor.
+// Source contiguity [1, 128] → totalContig=128, dst innermost=128.
+// Divisibility = GCD(1, 1073741824) = 1.
+tt.func @reshape_2d_to_1d() {
+  // expected-remark @below {{contiguity = [128], divisibility = [1073741824], constancy = [1], constant_value = <none>}}
+  %0 = tt.make_range {end = 128 : i32, start = 0 : i32} : tensor<128xi32>
+  // expected-remark @below {{contiguity = [1, 128], divisibility = [1, 1073741824], constancy = [1, 1], constant_value = <none>}}
+  %1 = tt.expand_dims %0 {axis = 0 : i32} : tensor<128xi32> -> tensor<1x128xi32>
+  // expected-remark @below {{contiguity = [1, 128], divisibility = [1, 1073741824], constancy = [4, 1], constant_value = <none>}}
+  %2 = tt.broadcast %1 : tensor<1x128xi32> -> tensor<4x128xi32>
+  // expected-remark @below {{contiguity = [128], divisibility = [1], constancy = [1], constant_value = <none>}}
+  %3 = tt.reshape %2 : tensor<4x128xi32> -> tensor<512xi32>
+  tt.return
+}
+
+// -----
+
+// Reshape divisibility: GCD of source divisibility.
+// Source divisibility [1, 1073741824] → GCD = 1.
+tt.func @reshape_divisibility() {
+  // expected-remark @below {{contiguity = [32], divisibility = [1073741824], constancy = [1], constant_value = <none>}}
+  %0 = tt.make_range {end = 32 : i32, start = 0 : i32} : tensor<32xi32>
+  // expected-remark @below {{contiguity = [1, 32], divisibility = [1, 1073741824], constancy = [1, 1], constant_value = <none>}}
+  %1 = tt.expand_dims %0 {axis = 1 : i32} : tensor<32xi32> -> tensor<32x1xi32>
+  // expected-remark @below {{contiguity = [1, 32], divisibility = [1, 1073741824], constancy = [1, 8], constant_value = <none>}}
+  %2 = tt.broadcast %1 : tensor<32x1xi32> -> tensor<32x8xi32>
+  // expected-remark @below {{contiguity = [32], divisibility = [1], constancy = [1], constant_value = <none>}}
+  %3 = tt.reshape %2 : tensor<32x8xi32> -> tensor<256xi32>
+  tt.return
+}
+
+// -----
+
+// Reshape preserves constant value.
+tt.func @reshape_constancy() {
+  // expected-remark @below {{contiguity = [1, 1], divisibility = [1, 1], constancy = [2, 4], constant_value = 5}}
+  %cst = arith.constant dense<5> : tensor<2x4xi32>
+  // expected-remark @below {{contiguity = [1], divisibility = [1], constancy = [1], constant_value = 5}}
+  %0 = tt.reshape %cst : tensor<2x4xi32> -> tensor<8xi32>
+  tt.return
+}
