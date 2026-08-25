@@ -4124,3 +4124,48 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">, hivm.module_c
     return
   }
 }
+
+// -----
+// Nested scf.if yields bufferization.to_tensor from ping-pong UB buffers.
+// Sub-block tiling requires bubbling slices through those to_tensor ops;
+// until that succeeds the pass reverts rather than leaving a tiled loop
+// with full tensor<32xi32> if results.
+// CHECK: hivm.tile_and_bind_subblock_reverted
+// CHECK-LABEL: func.func @if_to_tensor_bubble_up_slice_aiv
+// CHECK: scf.if {{.*}} -> (tensor<32xi32>) {
+// CHECK: bufferization.to_tensor {{.*}} restrict writable : memref<32xi32>
+// CHECK-NOT: map_for_to_forall
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">, hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @if_to_tensor_bubble_up_slice_aiv() attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, hivm.vf_mode = #hivm.vf_mode<SIMD>, mix_mode = "mix", parallel_mode = "simd"} {
+    %c0_i32 = arith.constant 0 : i32
+    %c2_i32 = arith.constant 2 : i32
+    %c32_i32 = arith.constant 32 : i32
+    %c64_i32 = arith.constant 64 : i32
+    %empty_i32 = tensor.empty() : tensor<32xi32>
+    %alloc = memref.alloc() : memref<32xi32, #hivm.address_space<ub>>
+    %mc0 = memref.memory_space_cast %alloc : memref<32xi32, #hivm.address_space<ub>> to memref<32xi32>
+    %alloc1 = memref.alloc() : memref<32xi32, #hivm.address_space<ub>>
+    %mc1 = memref.memory_space_cast %alloc1 : memref<32xi32, #hivm.address_space<ub>> to memref<32xi32>
+    %alloc_ub = memref.alloc() : memref<32x32xf32, #hivm.address_space<ub>>
+    %mc_ub = memref.memory_space_cast %alloc_ub : memref<32x32xf32, #hivm.address_space<ub>> to memref<32x32xf32>
+    scf.for %i = %c0_i32 to %c64_i32 step %c32_i32 : i32 {
+      hivm.hir.copy ins(%empty_i32 : tensor<32xi32>) outs(%mc0 : memref<32xi32>)
+      %parity = arith.remsi %i, %c2_i32 : i32
+      %use_first = arith.cmpi eq, %parity, %c0_i32 : i32
+      %loaded = scf.if %use_first -> (tensor<32xi32>) {
+        %t = bufferization.to_tensor %mc0 restrict writable : memref<32xi32>
+        scf.yield %t : tensor<32xi32>
+      } else {
+        %t = bufferization.to_tensor %mc1 restrict writable : memref<32xi32>
+        scf.yield %t : tensor<32xi32>
+      }
+      %expanded = tensor.expand_shape %loaded [[0, 1]] output_shape [1, 32] : tensor<32xi32> into tensor<1x32xi32>
+      %empty_brc = tensor.empty() : tensor<32x32xi32>
+      %brc = hivm.hir.vbrc {hivm.tcore_type = #hivm.tcore_type<VECTOR>} ins(%expanded : tensor<1x32xi32>) outs(%empty_brc : tensor<32x32xi32>) broadcast_dims = [0] -> tensor<32x32xi32>
+      %empty_f32 = tensor.empty() : tensor<32x32xf32>
+      %cast = hivm.hir.vcast ins(%brc : tensor<32x32xi32>) outs(%empty_f32 : tensor<32x32xf32>) -> tensor<32x32xf32>
+      hivm.hir.copy ins(%cast : tensor<32x32xf32>) outs(%mc_ub : memref<32x32xf32>)
+    }
+    return
+  }
+}
