@@ -744,3 +744,50 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     return
   }
 }
+
+// -----
+
+// Ping-pong: mmad0 result is both stored (non-MacroOp user, so InsertFixpipe
+// takes NZ2ND not L0C->L1) and used as mmad1's L0C accumulator init.
+// isNz2NzSupported must still skip rewriting that outs use, otherwise mmad1
+// would accumulate into the fixpipe tensor instead of L0C.
+// CHECK-LABEL: func.func @remain_in_l0c_store_and_accumulate
+// CHECK: %[[MMAD0:.*]] = hivm.hir.mmadL1
+// CHECK: %[[SLICE0:.*]] = tensor.extract_slice %[[MMAD0]]
+// CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%[[SLICE0]]
+// CHECK: hivm.hir.mmadL1 {{.*}}outs(%[[MMAD0]] : tensor<16x16xf32>)
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @remain_in_l0c_store_and_accumulate(
+      %a: tensor<16x16xf32>,
+      %b: tensor<16x16xf32>,
+      %dst0: memref<16x16xf32, strided<[16, 1]>>,
+      %dst1: memref<16x16xf32, strided<[16, 1]>>,
+      %off: index,
+      %sz: index) {
+    %true = arith.constant true
+    %false = arith.constant false
+    %c16 = arith.constant 16 : index
+    %empty = tensor.empty() : tensor<16x16xf32>
+    %mmad0 = hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
+        ins(%a, %b, %true, %c16, %c16, %c16
+            : tensor<16x16xf32>, tensor<16x16xf32>, i1, index, index, index)
+        outs(%empty : tensor<16x16xf32>) -> tensor<16x16xf32>
+    %slice0 = tensor.extract_slice %mmad0[%off, 0] [%sz, 16] [1, 1]
+        : tensor<16x16xf32> to tensor<?x16xf32>
+    %sub0 = memref.subview %dst0[0, 0] [%sz, 16] [1, 1]
+        : memref<16x16xf32, strided<[16, 1]>> to memref<?x16xf32, strided<[16, 1]>>
+    hivm.hir.store ins(%slice0 : tensor<?x16xf32>)
+        outs(%sub0 : memref<?x16xf32, strided<[16, 1]>>)
+    %mmad1 = hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
+        ins(%a, %b, %false, %c16, %c16, %c16
+            : tensor<16x16xf32>, tensor<16x16xf32>, i1, index, index, index)
+        outs(%mmad0 : tensor<16x16xf32>) -> tensor<16x16xf32>
+    %slice1 = tensor.extract_slice %mmad1[%off, 0] [%sz, 16] [1, 1]
+        : tensor<16x16xf32> to tensor<?x16xf32>
+    %sub1 = memref.subview %dst1[0, 0] [%sz, 16] [1, 1]
+        : memref<16x16xf32, strided<[16, 1]>> to memref<?x16xf32, strided<[16, 1]>>
+    hivm.hir.store ins(%slice1 : tensor<?x16xf32>)
+        outs(%sub1 : memref<?x16xf32, strided<[16, 1]>>)
+    return
+  }
+}
