@@ -237,6 +237,10 @@ FailureOr<scf::ForOp> findContainingSubblockLoop(Operation *op);
 /// If val is yielded by the parent loop, need to get parent of parent loop.
 LoopLikeOpInterface getParentLoop(Value val);
 
+// Get tied loop block argument for opoperand
+BlockArgument getTiedBlockArgument(LoopLikeOpInterface loopOp,
+                                   OpOperand &operand);
+
 /// Flatten ptrCastOp's parent and ancestor loops into one dimension and then
 /// modulo modular.
 /// In the position of ptrCastOp, affineApply and indexCastOp would be
