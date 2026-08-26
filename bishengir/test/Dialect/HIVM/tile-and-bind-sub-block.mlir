@@ -4141,14 +4141,13 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">, hivm.module_c
 
 // -----
 // Nested scf.if yields bufferization.to_tensor from ping-pong UB buffers.
-// Sub-block tiling requires bubbling slices through those to_tensor ops;
-// until that succeeds the pass reverts rather than leaving a tiled loop
-// with full tensor<32xi32> if results.
-// CHECK: hivm.tile_and_bind_subblock_reverted
+// Sub-block tiling must bubble slices through those to_tensor ops and tile
+// the ping-pong buffers along dim 0 (32 -> 16 per sub-block).
 // CHECK-LABEL: func.func @if_to_tensor_bubble_up_slice_aiv
-// CHECK: scf.if {{.*}} -> (tensor<32xi32>) {
-// CHECK: bufferization.to_tensor {{.*}} restrict writable : memref<32xi32>
-// CHECK-NOT: map_for_to_forall
+// CHECK: scf.if {{.*}} -> (tensor<16xi32>) {
+// CHECK: bufferization.to_tensor {{.*}} restrict writable : memref<16xi32>
+// CHECK: {tiled_op}
+// CHECK: map_for_to_forall
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">, hivm.module_core_type = #hivm.module_core_type<MIX>} {
   func.func @if_to_tensor_bubble_up_slice_aiv() attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, hivm.vf_mode = #hivm.vf_mode<SIMD>, mix_mode = "mix", parallel_mode = "simd"} {
     %c0_i32 = arith.constant 0 : i32
