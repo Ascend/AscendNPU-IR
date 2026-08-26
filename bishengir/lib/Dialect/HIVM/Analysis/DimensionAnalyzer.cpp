@@ -38,6 +38,44 @@ namespace mlir {
 namespace hivm {
 namespace detail {
 
+template <typename StoreOpTy> static Value getTilingTarget(StoreOpTy storeOp) {
+  if constexpr (std::is_same_v<StoreOpTy,
+                               bufferization::MaterializeInDestinationOp>)
+    return storeOp.getSource();
+  else if constexpr (std::is_same_v<StoreOpTy, hivm::LocalStoreOp>)
+    return storeOp.getData();
+  else if constexpr (std::is_same_v<StoreOpTy, hivm::DebugOp>)
+    return storeOp.getArg();
+  else if constexpr (std::is_same_v<StoreOpTy, hivm::FixpipeOp>)
+    return storeOp.getDst();
+  else
+    return storeOp.getSrc();
+}
+
+template <typename StoreOpTy> static Value getStoreLikeSrc(StoreOpTy storeOp) {
+  if constexpr (std::is_same_v<StoreOpTy,
+                               bufferization::MaterializeInDestinationOp>)
+    return storeOp.getSource();
+  else if constexpr (std::is_same_v<StoreOpTy, hivm::LocalStoreOp>)
+    return storeOp.getData();
+  else if constexpr (std::is_same_v<StoreOpTy, hivm::DebugOp>)
+    return storeOp.getArg();
+  else
+    return storeOp.getSrc();
+}
+
+template <typename StoreOpTy> static Value getStoreLikeDst(StoreOpTy storeOp) {
+  if constexpr (std::is_same_v<StoreOpTy,
+                               bufferization::MaterializeInDestinationOp>)
+    return storeOp.getDest();
+  else if constexpr (std::is_same_v<StoreOpTy, hivm::VReduceOp>)
+    return storeOp.getDstValue();
+  else if constexpr (std::is_same_v<StoreOpTy, hivm::LocalStoreOp>)
+    return storeOp.getAddr();
+  else
+    return storeOp.getDst();
+}
+
 bool DimensionAnalyzer::isParallelDim(Dimension dim) {
   createDummyRefIfNotExist({dim.first});
   auto args = getValueDimIndices(dim.first);
@@ -190,42 +228,6 @@ void DimensionAnalyzer::applyInvalidUpdateMerge(
   mergeCandidateGroupConnections(invalidConnection, repRoot, idxRoot);
   mergeCandidateGroupConnections(candidateExclusiveDimIdx, repRoot, idxRoot);
   candidateGroupSize[candGroupDSU_->find(repIdx)] = totalSize;
-}
-
-template <typename StoreOpTy> Value getStoreLikeSrc(StoreOpTy storeOp) {
-  if constexpr (std::is_same_v<StoreOpTy,
-                               bufferization::MaterializeInDestinationOp>)
-    return storeOp.getSource();
-  else if constexpr (std::is_same_v<StoreOpTy, hivm::LocalStoreOp>)
-    return storeOp.getData();
-  else if constexpr (std::is_same_v<StoreOpTy, hivm::DebugOp>)
-    return storeOp.getArg();
-  else if constexpr (std::is_same_v<StoreOpTy, hivm::FixpipeOp>)
-    return storeOp.getDst();
-  else
-    return storeOp.getSrc();
-}
-
-template <typename StoreOpTy> Value getStoreLikeDst(StoreOpTy storeOp) {
-  if constexpr (std::is_same_v<StoreOpTy,
-                               bufferization::MaterializeInDestinationOp>)
-    return storeOp.getDest();
-  else if constexpr (std::is_same_v<StoreOpTy, hivm::VReduceOp>)
-    return storeOp.getDstValue();
-  else if constexpr (std::is_same_v<StoreOpTy, hivm::LocalStoreOp>)
-    return storeOp.getAddr();
-  else
-    return storeOp.getDst();
-}
-
-template <typename StoreOpTy>
-Value getStoreLikeGroupValue(StoreOpTy storeOp, Value tilingValue) {
-  // Membase Fixpipe destinations are memrefs and are not tracked by the value
-  // group DSU. Keep branch grouping anchored at the tensor source while using
-  // the destination dimensions as tiling candidates.
-  if constexpr (std::is_same_v<StoreOpTy, hivm::FixpipeOp>)
-    return storeOp.getSrc();
-  return tilingValue;
 }
 
 void DimensionAnalyzer::processInvalidUpdates(
@@ -496,11 +498,7 @@ bool DimensionAnalyzer::isValidTilingSize(int64_t dim) const {
 template <typename StoreOpTy>
 bool DimensionAnalyzer::checkTileableMaskedStore(StoreOpTy storeOp,
                                                  size_t i) const {
-  Value src = [&]() -> Value {
-    if constexpr (std::is_same_v<StoreOpTy, hivm::FixpipeOp>)
-      return storeOp.getSrc();
-    return getStoreLikeSrc(storeOp);
-  }();
+  auto src = getStoreLikeSrc(storeOp);
   auto dst = getStoreLikeDst(storeOp);
 
   int64_t srcOrigDim = ShapedType::kDynamic;
@@ -573,7 +571,7 @@ void DimensionAnalyzer::collectTilingDimImpl(
     if constexpr (std::is_same_v<StoreOpTy, scf::YieldOp>) {
       sources = llvm::to_vector(op.getResults());
     } else {
-      sources.push_back(getStoreLikeSrc(op));
+      sources.push_back(getTilingTarget(op));
     }
     for (auto src : sources) {
       collectedTilingOps.emplace_back(op.getOperation(), src);
@@ -586,7 +584,7 @@ void DimensionAnalyzer::collectTilingDimImpl(
       // there will only be 1 group.
       if (rank == 0)
         return;
-      auto groupIndex = getValueGroupIndex(getStoreLikeGroupValue(op, src));
+      auto groupIndex = getValueGroupIndex(src);
       numStoreOps[groupIndex]++;
       LDBG("Checking operation: " << op << " in group " << groupIndex);
       auto shape = utils::getShape(src.getType());
