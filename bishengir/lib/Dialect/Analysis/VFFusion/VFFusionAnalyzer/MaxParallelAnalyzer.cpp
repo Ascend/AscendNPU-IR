@@ -483,10 +483,10 @@ bool MaxParallelAnalyzer::areFusibleOps(const int producerIndex,
     }
   }
 
-  // if (stage == 1 && !isInsertSliceFusionAllowed(producerOp, consumerOp)) {
-  //   LDBG("Rejecting fusion: insert_slice boundary");
-  //   return false;
-  // }
+  if (!option.isMixCV && !isInsertSliceFusionAllowed(producerOp, consumerOp)) {
+    LDBG("Rejecting fusion: insert_slice boundary");
+    return false;
+  }
 
   // Only producer ExtractSlice/Extract Ops need to be fused to VF.
   // Similar to hasInvalidDependencyIfFused, if the number of ops in a group is
@@ -506,7 +506,8 @@ bool MaxParallelAnalyzer::areFusibleOps(const int producerIndex,
       if (!consumerGroup.count(user) && !producerGroup.count(user))
         return false;
 
-  if (!isInFusionWhiteList(producerOp) || !isInFusionWhiteList(consumerOp))
+  if (!isInFusionWhiteList(producerOp) ||
+      !isInFusionWhiteList(consumerOp))
     return false;
 
   auto producerLinalgOp = dyn_cast<linalg::LinalgOp>(producerOp);
