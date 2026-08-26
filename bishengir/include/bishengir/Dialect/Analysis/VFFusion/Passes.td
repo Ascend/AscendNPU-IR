@@ -88,7 +88,11 @@ def VFFusion : Pass<"vf-fusion", "mlir::ModuleOp"> {
               "Apply the new TreeReduce-aware row-reduction fusion policy">,
        Option<"enableCastOpt", "enable-cast-opt", "bool", /*default=*/"false",
               "Enable the new cast fusion strategy (widening/narrowing cast); off uses simple cast admission. "
-              "Only effective in max-parallel mode">
+              "Only effective in max-parallel mode">,
+       Option<"enablePredicateSinkAcrossSync",
+              "enable-predicate-sink-across-sync", "bool", /*default=*/"true",
+              "Allow a pure compare/i1 pass-through predicate chain to sink "
+              "across SyncBlockSet into its select consumer">
        ];
 }
 

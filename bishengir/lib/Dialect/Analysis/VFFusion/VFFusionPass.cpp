@@ -73,7 +73,8 @@ VFFusionKindOption VFFusionPass::getFusionOption() const {
                             enableOutlineArith, enableOutlineCube,
                             ubBudgetBytes_, ubAlignBytes_, enableRA, enableAR,
                             maxVFParams, enableVFStackLimit, enableCastOpt,
-                            enableNewTreeReducePolicy);
+                            enableNewTreeReducePolicy,
+                            enablePredicateSinkAcrossSync);
 }
 
 template <typename FusionKind>
