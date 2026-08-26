@@ -34,8 +34,6 @@
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "mlir/Transforms/LoopInvariantCodeMotionUtils.h"
 #include "llvm/ADT/STLExtras.h"
-#include "llvm/Support/Casting.h"
-#include "llvm/Support/LogicalResult.h"
 #include <functional>
 #include <memory>
 #include <optional>
@@ -539,8 +537,10 @@ static Value materializeFilledVector(OpBuilder &builder,
   Attribute paddingAttr;
   if (matchPattern(padding, m_Constant(&paddingAttr)) && paddingAttr == value)
     return filled;
-  Value padded = builder.create<vector::BroadcastOp>(loc, vecTy, padding);
-  return builder.create<arith::SelectOp>(loc, mask, filled, padded);
+  Value padded = builder.createOrFold<vector::BroadcastOp>(loc, vecTy, padding);
+  Value brcMask = builder.createOrFold<vector::BroadcastOp>(
+      loc, vecTy.cloneWith(/*shape=*/std::nullopt, builder.getI1Type()), mask);
+  return builder.create<arith::SelectOp>(loc, brcMask, filled, padded);
 }
 
 // The folded case (the reader has exactly one call site):
