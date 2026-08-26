@@ -351,6 +351,7 @@ void setupLowerTritonPipelineOptions(
   options.useDPX = config.getUseDPX();
   options.disableDecomposeReduction = config.getDisableDecomposeReduction();
   options.disableReorderInstruction = config.getDisableReorderInstruction();
+  options.disableSliceOptimizations = config.getDisableSliceOptimizations();
   options.enableSinkDPXLoad = config.getEnableSinkDPXLoad();
   options.KTileSize = config.getKTileSize();
   options.enableGlobalScratchAllocation =

@@ -14,6 +14,7 @@ if(BISHENGIR_ENABLE_TRITON_COMPILE)
     OptimizeLayoutsAnalysis.cpp
     OptimizeLoads.cpp
     RemoveAnnotationMark.cpp
+    RewriteSliceOpToMemoryOps.cpp
     RewriteSliceOpToTriton.cpp
     SetBishengirSimtOptAttr.cpp
     SetAllowGlobalScratchAttr.cpp

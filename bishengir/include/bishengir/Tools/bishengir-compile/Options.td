@@ -1299,6 +1299,14 @@ def DisableReorderInstruction : SIMTOptimizationControlOptions<
   bit isSharedWithDownstreamToolchain = 1;
 }
 
+def DisableSliceOptimizations : SIMTOptimizationControlOptions<
+  "Disable RewriteSliceOpToMemoryOps pass",
+  "bool",
+  "false"
+> {
+  bit isSharedWithDownstreamToolchain = 0;
+}
+
 def EnableSinkDPXLoad : SIMTOptimizationControlOptions<
   "Enable post-lowering instruction scheduling that reduces register pressure by interleaving load-compute-store chains",
   "bool",
