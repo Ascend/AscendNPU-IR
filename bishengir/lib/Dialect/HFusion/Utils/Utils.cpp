@@ -1962,6 +1962,86 @@ bool hfusion::shouldUseRegisterTreeReduction(Operation *op) {
          cost <= maxRegisterTreeReductionCost;
 }
 
+static bool isF32ZeroFill(Value value) {
+  auto fill = value.getDefiningOp<linalg::FillOp>();
+  if (!fill || !getElementTypeOrSelf(value).isF32())
+    return false;
+  auto constant = fill->getOperand(0).getDefiningOp<arith::ConstantOp>();
+  if (!constant)
+    return false;
+  auto floatValue = dyn_cast<FloatAttr>(constant.getValue());
+  return floatValue && floatValue.getValue().isZero();
+}
+
+// Return true for the exact long chunked-sum dataflow whose accuracy regressed
+// on the regular AV2 path.  The regular lowering forms a 1024-deep sequential
+// add chain, and the surrounding loop accumulates that rounding difference for
+// at least 64 chunks.  TreeReduceV2 keeps the established hierarchical
+// association.  The deliberately strict use/shape/module checks keep this
+// module-wide compatibility route from changing unrelated reductions.
+static bool isLoopCarriedF32ChunkedSum(linalg::LinalgOp reductionOp,
+                                      int64_t reductionSize) {
+  constexpr int64_t problematicChunkSize = 1024;
+  constexpr int64_t minChunkCount = 64;
+  if (reductionSize != problematicChunkSize ||
+      !getElementTypeOrSelf(reductionOp.getDpsInputOperand(0)->get()).isF32() ||
+      !isF32ZeroFill(reductionOp.getDpsInitOperand(0)->get()))
+    return false;
+
+  auto outerLoop = reductionOp->getParentOfType<scf::ForOp>();
+  if (!outerLoop || reductionOp->getBlock() != outerLoop.getBody())
+    return false;
+  std::optional<int64_t> lower = getConstantIntValue(outerLoop.getLowerBound());
+  std::optional<int64_t> upper = getConstantIntValue(outerLoop.getUpperBound());
+  std::optional<int64_t> step = getConstantIntValue(outerLoop.getStep());
+  if (!lower || *lower != 0 || !upper || !step || *step != reductionSize ||
+      *upper < minChunkCount * problematicChunkSize)
+    return false;
+
+  // The legacy selector is module-scoped.  Allow it only when there is no
+  // second reduction or cumsum in another function that could be rerouted as
+  // a side effect.
+  auto module = reductionOp->getParentOfType<ModuleOp>();
+  if (!module)
+    return false;
+  unsigned moduleReductionCount = 0;
+  unsigned moduleCumsumCount = 0;
+  module.walk([&](Operation *nestedOp) {
+    if (auto linalgOp = dyn_cast<linalg::LinalgOp>(nestedOp);
+        linalgOp && linalgOp.getNumReductionLoops() != 0)
+      ++moduleReductionCount;
+    if (isa<hfusion::CumsumOp>(nestedOp))
+      ++moduleCumsumCount;
+  });
+  if (moduleReductionCount != 1 || moduleCumsumCount != 0 ||
+      reductionOp->getNumResults() != 1)
+    return false;
+
+  Value reduced = reductionOp->getResult(0);
+  if (!reduced.hasOneUse())
+    return false;
+  auto add =
+      dyn_cast<linalg::ElemwiseBinaryOp>(*reduced.getUsers().begin());
+  if (!add || add.getFun() != linalg::BinaryFn::add ||
+      add->getBlock() != outerLoop.getBody() || add.getNumDpsInputs() != 2 ||
+      add->getNumResults() != 1 || !add->getResult(0).hasOneUse())
+    return false;
+
+  ValueRange iterArgs = outerLoop.getRegionIterArgs();
+  ValueRange initArgs = outerLoop.getInitArgs();
+  ValueRange yieldedValues = outerLoop.getYieldedValues();
+  Value lhs = add.getDpsInputOperand(0)->get();
+  Value rhs = add.getDpsInputOperand(1)->get();
+  for (auto [index, iterArg] : llvm::enumerate(iterArgs)) {
+    bool addsReducedChunk = (lhs == reduced && rhs == iterArg) ||
+                            (rhs == reduced && lhs == iterArg);
+    if (addsReducedChunk && isF32ZeroFill(initArgs[index]) &&
+        yieldedValues[index] == add->getResult(0))
+      return true;
+  }
+  return false;
+}
+
 bool hfusion::shouldUseLegacyTreeReductionScope(Operation *op) {
   if (!isRegisterTreeReductionCandidate(op))
     return false;
@@ -1975,6 +2055,16 @@ bool hfusion::shouldUseLegacyTreeReductionScope(Operation *op) {
   unsigned cumsumCount = 0;
   int64_t cost = getRegisterTreeReductionCost(op, candidateCount,
                                               totalReductionCount, cumsumCount);
+  // This fallback must precede the direct-register cost limit below.  A large
+  // reduction has a correspondingly large direct-tree cost, while the legacy
+  // path selected here uses a bounded hierarchical tree instead of fully
+  // expanding every leaf in registers.
+  bool singleChunkReduction =
+      candidateCount == 1 && totalReductionCount == 1 && cumsumCount == 0;
+  if (singleChunkReduction &&
+      isLoopCarriedF32ChunkedSum(linalgOp, reductionSize))
+    return true;
+
   constexpr int64_t maxLegacyTreeReductionCost = 128;
   // A bounded scope with more than one canonical RA reduction cannot use the
   // single-loop direct rewrite safely. Preserve the established TreeReduceV2
