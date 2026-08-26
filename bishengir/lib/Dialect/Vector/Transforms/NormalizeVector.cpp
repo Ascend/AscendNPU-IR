@@ -1716,6 +1716,14 @@ struct ScalarChainBroadcastToVectorPattern
     if (chain.empty())
       return failure();
 
+    // Only fire when the chain actually contains a bitcast. Vectorizing a
+    // chain of, say, pure arithmetic ops that happen to end in a broadcast is
+    // not necessary (the scalar form lowers fine to LLVM) and could mask a
+    // genuine remaining scalar bitcast elsewhere.
+    if (!llvm::any_of(chain,
+                      [](Operation *op) { return isa<arith::BitcastOp>(op); }))
+      return failure();
+
     Location loc = brcOp.getLoc();
     VectorType rootVecType = VectorType::get({64}, cur.getType());
     Value curVec = isa<BlockArgument>(cur)
@@ -1756,6 +1764,24 @@ struct ScalarChainBroadcastToVectorPattern
         curVec = rewriter.create<arith::MaxSIOp>(
             loc, opVecType, curVec,
             broadcastOrCast(rewriter, loc, maxsi.getRhs(), opVecType));
+      } else if (auto cmpi = dyn_cast<arith::CmpIOp>(op)) {
+        // CmpIOp result is i1; operands carry the comparison value type.
+        // curVec and the rhs operand are vectorized at the operand's element
+        // type, not the i1 result type.
+        VectorType cmpOperandVecType =
+            VectorType::get({64}, cmpi.getLhs().getType());
+        curVec = rewriter.create<arith::CmpIOp>(
+            loc, opVecType, cmpi.getPredicate(),
+            curVec, broadcastOrCast(rewriter, loc, cmpi.getRhs(),
+                                     cmpOperandVecType));
+      } else if (auto select = dyn_cast<arith::SelectOp>(op)) {
+        // Select is a fork: spine continues on the condition (operand 0);
+        // true_val/false_val are side inputs broadcast/cast to the result
+        // element type.
+        curVec = rewriter.create<arith::SelectOp>(
+            loc, opVecType, curVec,
+            broadcastOrCast(rewriter, loc, select.getTrueValue(), opVecType),
+            broadcastOrCast(rewriter, loc, select.getFalseValue(), opVecType));
       } else if (isa<math::AbsFOp>(op)) {
         curVec = rewriter.create<math::AbsFOp>(loc, opVecType, curVec);
       } else {
@@ -1772,7 +1798,8 @@ struct ScalarChainBroadcastToVectorPattern
 private:
   static bool isScalarChainOp(Operation *op) {
     return isa<arith::BitcastOp, arith::AndIOp, arith::AddIOp, arith::MinSIOp,
-               arith::MaxSIOp, arith::SubIOp, arith::MulIOp, math::AbsFOp>(op);
+               arith::MaxSIOp, arith::SubIOp, arith::MulIOp, math::AbsFOp,
+               arith::SelectOp, arith::CmpIOp>(op);
   }
 
   static Value broadcastOrCast(PatternRewriter &rewriter, Location loc,
