@@ -594,6 +594,11 @@ mma_tile(memref_t<__cbuf__ SRC_TYPE, 4> *ma, memref_t<__cbuf__ SRC_TYPE, 4> *mb,
   if (back_pipe_m_pipe_mte1_db_event1 == -1) {
     INTRINSIC(wait_flag, PIPE_M, PIPE_MTE1, EVENT_ID1);
   }
+
+  if (bias) {
+    INTRINSIC(set_flag, PIPE_M, PIPE_MTE1, EVENT_ID7);
+    INTRINSIC(wait_flag, PIPE_M, PIPE_MTE1, EVENT_ID7);
+  }
 }
 
 template <typename SRC_TYPE, typename DST_TYPE, typename BIAS_TYPE, bool TA,
