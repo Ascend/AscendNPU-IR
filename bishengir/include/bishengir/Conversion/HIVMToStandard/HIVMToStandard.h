@@ -32,11 +32,17 @@ namespace hivm {
 /// Populate the given list with patterns that convert from HIVM to Standard.
 void populateHIVMToStandardConversionPatterns(RewritePatternSet &patterns,
                                               bool isOpsAligned = false);
+
+namespace detail {
+bool getMarkLibCallNoInline();
+void setMarkLibCallNoInline(bool value);
+} // namespace detail
 } // namespace hivm
 
 /// Create a pass to convert HIVM operations to the Standard dialect.
+std::unique_ptr<OperationPass<ModuleOp>> createConvertHIVMToStandardPass();
 std::unique_ptr<OperationPass<ModuleOp>> createConvertHIVMToStandardPass(
-    const ConvertHIVMToStandardOptions &options = {});
+    const ConvertHIVMToStandardOptions &options);
 
 struct ConvertHIVMToStandardRegBasePass {
   static LogicalResult runOnOperation(ModuleOp module, bool isOpsAligned,
