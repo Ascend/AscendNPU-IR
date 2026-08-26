@@ -52,7 +52,7 @@ get_scalar_operation_init_value(__ubuf__ T *src0_ptr,
 // - Large size (>= num_per_repeat): dichotomy to num_per_repeat, then pairwise to 1
 template <ReduceOpTy OP, typename T>
 __aiv__ __attribute__((always_inline))
-std::enable_if_t<(OP == ReduceOpTy::REDUCE_SUM && 
+std::enable_if_t<(OP == ReduceOpTy::REDUCE_SUM &&
                   (std::is_same<half, T>() || std::is_same<float, T>())), void>
 reduce_ar_scalar_core(memref_t<__ubuf__ T, 2> *src,
                        memref_t<__ubuf__ T, 2> *dst_value,
@@ -72,7 +72,7 @@ reduce_ar_scalar_core(memref_t<__ubuf__ T, 2> *src,
   for (int64_t i = 0; i < size0; ++i) {
     __ubuf__ T *row_ptr = src_ptr + i * src_stride0;
     __ubuf__ T *dst_ptr = dst_value_ptr + i * dst_stride0;
-    
+
     T result;
     if (size1 < num_per_repeat) {
       T local_buf[(num_per_repeat + 1) / 2];
@@ -88,8 +88,8 @@ reduce_ar_scalar_core(memref_t<__ubuf__ T, 2> *src,
 
 template <ReduceOpTy OP, typename T>
 __aiv__ __attribute__((always_inline))
-std::enable_if_t<(OP == ReduceOpTy::REDUCE_PROD || 
-                   (OP == ReduceOpTy::REDUCE_SUM && 
+std::enable_if_t<(OP == ReduceOpTy::REDUCE_PROD ||
+                   (OP == ReduceOpTy::REDUCE_SUM &&
                     !(std::is_same<half, T>() || std::is_same<float, T>()))), void>
 reduce_ar_scalar_core(memref_t<__ubuf__ T, 2> *src,
                        memref_t<__ubuf__ T, 2> *dst_value,
@@ -213,7 +213,7 @@ is_unaligned_reduce(memref_t<__ubuf__ T, 2> *src0, memref_t<__ubuf__ T, 2> *dst,
   bool is_special_scene_use_vcgadd_vcpadd = (size1 <= num_per_block && src_stride0 == size1 &&
                                             dst_stride0 == 1 && OP == ReduceOpTy::REDUCE_SUM &&
                                           (std::is_same<T, half>::value || std::is_same<T, float>::value));
-  bool is_stride_aligned = is32ByteAligned<T>(src_stride0) || 
+  bool is_stride_aligned = is32ByteAligned<T>(src_stride0) ||
                            (is_special_scene_use_vcgadd_vcpadd && (size1 & (size1 - 1)) == 0) ||
                            ((((OP == ReduceOpTy::REDUCE_XOR || OP == ReduceOpTy::REDUCE_OR ||
                            OP == ReduceOpTy::REDUCE_AND) && std::is_same<T, int8_t>::value) ||

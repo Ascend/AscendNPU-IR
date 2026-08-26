@@ -422,7 +422,7 @@ module {
       %slice = tensor.extract_slice %iter_arg[0, 0] [1, 32] [1, 1] : tensor<32x32xf32> to tensor<1x32xf32>
       %res_slice = hivm.hir.vadd ins(%slice, %slice : tensor<1x32xf32>, tensor<1x32xf32>) outs(%slice : tensor<1x32xf32>) -> tensor<1x32xf32>
       %res = tensor.insert_slice %res_slice into %iter_arg[0, 0] [1, 32] [1, 1] : tensor<1x32xf32> into tensor<32x32xf32>
-      
+
       scf.yield %res : tensor<32x32xf32>
     }
 

@@ -114,7 +114,7 @@ func.func @test_normalize_i8_elemwise_unary_relu(%arg0: tensor<16xi8>) -> tensor
 // CHECK: %[[cast0:.*]] =  hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>}
 // CHECK: %[[cast1:.*]] =  hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>}
 // CHECK: %[[unary_rec:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<rec>} ins(%[[cast1]] : tensor<16xf32>) outs({{.*}} : tensor<16xf32>)
-// CHECK:  hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<trunc>} 
+// CHECK:  hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<trunc>}
 // CHECK:  hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<truncwithoverflow>}
 func.func @test_normalize_i8_elemwise_unary_rec(%arg0: tensor<16xi8>) -> tensor<16xi8> {
   %dst = tensor.empty() : tensor<16xi8>

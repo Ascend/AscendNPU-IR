@@ -273,9 +273,9 @@ module {
 
 // -----
 
-module {  
+module {
   // CHECK-LABEL: @test_output_num_from_call_result
-  // CHECK: %[[ARG0:.*]]: tensor<128x256xf32>, %[[ARG1:.*]]: tensor<256xf32>, %[[ARG2:.*]]: tensor<768x256xf32>, 
+  // CHECK: %[[ARG0:.*]]: tensor<128x256xf32>, %[[ARG1:.*]]: tensor<256xf32>, %[[ARG2:.*]]: tensor<768x256xf32>,
   // CHECK: %[[ARG3:.*]]: tensor<128xf32> {hacc.arg_type = #hacc.arg_type<output>, hacc.output_idx = #hacc.output_idx<0>},
   // CHECK: %[[ARG4:.*]]: tensor<128x1xf32> {hacc.arg_type = #hacc.arg_type<output>, hacc.output_idx = #hacc.output_idx<1>},
   // CHECK: %[[ARG5:.*]]: tensor<128x768xf32> {hacc.arg_type = #hacc.arg_type<output>, hacc.output_idx = #hacc.output_idx<2>}

@@ -52,15 +52,15 @@ SSA_RE_STR = "[0-9]+|[a-zA-Z$._-][a-zA-Z0-9$._-]*"
 SSA_RE = re.compile(SSA_RE_STR)
 
 # Regex matching the left-hand side of an assignment
-SSA_RESULTS_STR = r'\s*(%' + SSA_RE_STR + r')(\s*,\s*(%' + SSA_RE_STR + r'))*\s*='
+SSA_RESULTS_STR = r"\s*(%" + SSA_RE_STR + r")(\s*,\s*(%" + SSA_RE_STR + r"))*\s*="
 SSA_RESULTS_RE = re.compile(SSA_RESULTS_STR)
 
 # Regex matching attributes
-ATTR_RE_STR = r'(#[a-zA-Z._-][a-zA-Z0-9._-]*)'
+ATTR_RE_STR = r"(#[a-zA-Z._-][a-zA-Z0-9._-]*)"
 ATTR_RE = re.compile(ATTR_RE_STR)
 
 # Regex matching the left-hand side of an attribute definition
-ATTR_DEF_RE_STR = r'\s*' + ATTR_RE_STR + r'\s*='
+ATTR_DEF_RE_STR = r"\s*" + ATTR_RE_STR + r"\s*="
 ATTR_DEF_RE = re.compile(ATTR_DEF_RE_STR)
 
 
@@ -76,7 +76,7 @@ class VariableNamer:
         self.generate_in_parent_scope_left = 0
 
         # Parse variable names
-        self.variable_names = [name.upper() for name in variable_names.split(',')]
+        self.variable_names = [name.upper() for name in variable_names.split(",")]
         self.used_variable_names = set()
 
     # Generate the following 'n' variable names in the parent scope.
@@ -87,8 +87,10 @@ class VariableNamer:
     def generate_name(self, source_variable_name):
 
         # Compute variable name
-        variable_name = self.variable_names.pop(0) if len(self.variable_names) > 0 else ''
-        if variable_name == '':
+        variable_name = (
+            self.variable_names.pop(0) if len(self.variable_names) > 0 else ""
+        )
+        if variable_name == "":
             variable_name = "VAL_" + str(self.name_counter)
             self.name_counter += 1
 
@@ -97,11 +99,11 @@ class VariableNamer:
         if self.generate_in_parent_scope_left > 0:
             self.generate_in_parent_scope_left -= 1
             scope = len(self.scopes) - 2
-        assert (scope >= 0)
+        assert scope >= 0
 
         # Save variable
         if variable_name in self.used_variable_names:
-            raise RuntimeError(variable_name + ': duplicate variable name')
+            raise RuntimeError(variable_name + ": duplicate variable name")
         self.scopes[scope][source_variable_name] = variable_name
         self.used_variable_names.add(variable_name)
 
@@ -129,7 +131,7 @@ class AttributeNamer:
 
     def __init__(self, attribute_names):
         self.name_counter = 0
-        self.attribute_names = [name.upper() for name in attribute_names.split(',')]
+        self.attribute_names = [name.upper() for name in attribute_names.split(",")]
         self.map = {}
         self.used_attribute_names = set()
 
@@ -137,17 +139,19 @@ class AttributeNamer:
     def generate_name(self, source_attribute_name):
 
         # Compute FileCheck name
-        attribute_name = self.attribute_names.pop(0) if len(self.attribute_names) > 0 else ''
-        if attribute_name == '':
+        attribute_name = (
+            self.attribute_names.pop(0) if len(self.attribute_names) > 0 else ""
+        )
+        if attribute_name == "":
             attribute_name = "ATTR_" + str(self.name_counter)
             self.name_counter += 1
 
         # Prepend global symbol
-        attribute_name = '$' + attribute_name
+        attribute_name = "$" + attribute_name
 
         # Save attribute
         if attribute_name in self.used_attribute_names:
-            raise RuntimeError(attribute_name + ': duplicate attribute name')
+            raise RuntimeError(attribute_name + ": duplicate attribute name")
         self.map[source_attribute_name] = attribute_name
         self.used_attribute_names.add(attribute_name)
         return attribute_name
@@ -162,7 +166,7 @@ class AttributeNamer:
 # The function returns 0 if there are no results.
 def get_num_ssa_results(input_line):
     m = SSA_RESULTS_RE.match(input_line)
-    return m.group().count('%') if m else 0
+    return m.group().count("%") if m else 0
 
 
 # Process a line of input that has been split at each SSA identifier '%'.
@@ -172,7 +176,7 @@ def process_line(line_chunks, variable_namer):
     # Process the rest that contained an SSA value name.
     for chunk in line_chunks:
         m = SSA_RE.match(chunk)
-        ssa_name = m.group(0) if m is not None else ''
+        ssa_name = m.group(0) if m is not None else ""
 
         # Check if an existing variable exists for this name.
         variable = None
@@ -190,7 +194,7 @@ def process_line(line_chunks, variable_namer):
             output_line += "%[[" + variable + ":.*]]"
 
         # Append the non named group.
-        output_line += chunk[len(ssa_name):]
+        output_line += chunk[len(ssa_name) :]
 
     return output_line.rstrip() + "\n"
 
@@ -219,13 +223,19 @@ def process_attribute_definition(line, attribute_namer, output):
     m = ATTR_DEF_RE.match(line)
     if m:
         attribute_name = attribute_namer.generate_name(m.group(1))
-        line = '// CHECK: #[[' + attribute_name + ':.+]] =' + line[len(m.group(0)):] + '\n'
+        line = (
+            "// CHECK: #[["
+            + attribute_name
+            + ":.+]] ="
+            + line[len(m.group(0)) :]
+            + "\n"
+        )
         output.append(line)
 
 
 def process_attribute_references(line, attribute_namer):
 
-    output_line = ''
+    output_line = ""
     components = ATTR_RE.split(line)
     for component in components:
         m = ATTR_RE.match(component)
@@ -233,8 +243,8 @@ def process_attribute_references(line, attribute_namer):
         if name is None:
             output_line += component
         else:
-            output_line += '#[[' + name + ']]'
-            output_line += component[len(m.group()):]
+            output_line += "#[[" + name + "]]"
+            output_line += component[len(m.group()) :]
     return output_line
 
 
@@ -254,10 +264,18 @@ def preprocess_line(line):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
-    parser.add_argument("--check-prefix", default="CHECK", help="Prefix to use from check file.")
-    parser.add_argument("-o", "--output", nargs="?", type=argparse.FileType("w"), default=None)
-    parser.add_argument("input", nargs="?", type=argparse.FileType("r"), default=sys.stdin)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawTextHelpFormatter
+    )
+    parser.add_argument(
+        "--check-prefix", default="CHECK", help="Prefix to use from check file."
+    )
+    parser.add_argument(
+        "-o", "--output", nargs="?", type=argparse.FileType("w"), default=None
+    )
+    parser.add_argument(
+        "input", nargs="?", type=argparse.FileType("r"), default=sys.stdin
+    )
     parser.add_argument(
         "--source",
         type=str,
@@ -275,14 +293,21 @@ def main():
     )
     parser.add_argument("-i", "--inplace", action="store_true", default=False)
     parser.add_argument(
-        "--variable_names", type=str, default='',
+        "--variable_names",
+        type=str,
+        default="",
         help="Names to be used in FileCheck regular expression to represent SSA "
         "variables in the order they are encountered. Separate names with commas, "
-        "and leave empty entries for default names (e.g.: 'DIM,,SUM,RESULT')")
+        "and leave empty entries for default names (e.g.: 'DIM,,SUM,RESULT')",
+    )
     parser.add_argument(
-        "--attribute_names", type=str, default='', help="Names to be used in FileCheck regular expression to represent "
+        "--attribute_names",
+        type=str,
+        default="",
+        help="Names to be used in FileCheck regular expression to represent "
         "attributes in the order they are defined. Separate names with commas,"
-        "commas, and leave empty entries for default names (e.g.: 'MAP0,,,MAP1')")
+        "commas, and leave empty entries for default names (e.g.: 'MAP0,,,MAP1')",
+    )
 
     args = parser.parse_args()
 
@@ -296,7 +321,9 @@ def main():
 
     source_segments = None
     if args.source:
-        source_segments = process_source_lines([l.rstrip() for l in open(args.source, "r")], autogenerated_note, args)
+        source_segments = process_source_lines(
+            [l.rstrip() for l in open(args.source, "r")], autogenerated_note, args
+        )
 
     if args.inplace:
         assert args.output is None
@@ -389,7 +416,10 @@ def main():
 
     # Write the output.
     if source_segments:
-        assert len(output_segments) == len(source_segments), (len(output_segments), len(source_segments))
+        assert len(output_segments) == len(source_segments), (
+            len(output_segments),
+            len(source_segments),
+        )
         for check_segment, source_segment in zip(output_segments, source_segments):
             for line in check_segment:
                 output.write(line)

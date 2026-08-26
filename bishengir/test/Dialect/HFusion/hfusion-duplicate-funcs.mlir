@@ -5,7 +5,7 @@
 // CHECK: func.func @main
 // CHECK: func.func @main_single_outlined_0_0_outs_infershape_func
 // CHECK-NOT: func.func @main_single_outlined_15_0_outs_infershape_func
-module {  
+module {
   func.func @main_single_outlined_0_0(%arg0: tensor<256x4096xf16>) -> tensor<256x4096xf32> attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hacc.infer_output_shape_function = #hacc.infer_output_shape_function<@main_single_outlined_0_0_outs_infershape_func>, hfusion.fusion_kind = #hfusion.fusion_kind<PURE_ELEMWISE>} {
     %0 = tensor.empty() : tensor<256x4096xf32>
     %1 = hfusion.cast {round_mode = #hfusion.round_mode<rint>} ins(%arg0 : tensor<256x4096xf16>) outs(%0 : tensor<256x4096xf32>) -> tensor<256x4096xf32>

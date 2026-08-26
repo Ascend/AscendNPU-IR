@@ -249,7 +249,7 @@ void TransformOpForSIMTPass::runOnOperation() {
           if (isScalarTensor(tensorType)) {
             // Scalar tensor (shape=[1]): move extract and backward slice outside scope
             moveScalarExtractOutsideScope(extractOp, scopeOp);
-          } 
+          }
           else {
             // Multi-elem tensor: use local_store + subview + load pattern
             convertMultiElemExtract(extractOp, scopeOp, tensorToBuffer, builder);

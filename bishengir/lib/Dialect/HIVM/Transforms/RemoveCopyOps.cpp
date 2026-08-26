@@ -245,7 +245,7 @@ void RemoveCopyOpsPass::runOnOperation() {
     if (checkReachedUses != -1) {
       assert(vf && "Must discover a vf Op");
       allocReachVF(builder, allocOp, copyOp, copyBack, vf, src);
-    } 
+    }
   });
 }
 

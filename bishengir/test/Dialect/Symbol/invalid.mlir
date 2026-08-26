@@ -57,4 +57,3 @@ func.func @test_bind_symbolic_shape() {
   symbol.bind_symbolic_shape %some_value, [], affine_map<()[] -> (16)> : tensor<32x16xf32>
   return
 }
-

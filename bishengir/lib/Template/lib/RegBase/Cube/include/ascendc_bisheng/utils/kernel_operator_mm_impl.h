@@ -26,7 +26,7 @@ __aicore__ inline void LoadData2DGM2L0ACal(__ca__ T *dst, __gm__ T *src, const L
     ASCENDC_ASSERT((false), { KERNEL_LOG(KERNEL_ERROR,
         "unsupported loaddata_2d from gm to A2 on current device"); });
 }
- 
+
 template <typename T>
 __aicore__ inline void LoadData2DGM2L0BCal(__cb__ T *dst, __gm__ T *src, const LoadData2DParams &loadDataParam,
     const uint8_t cacheMode = 0)
@@ -34,7 +34,7 @@ __aicore__ inline void LoadData2DGM2L0BCal(__cb__ T *dst, __gm__ T *src, const L
     ASCENDC_ASSERT((false), { KERNEL_LOG(KERNEL_ERROR,
         "unsupported loaddata_2d from gm to B2 on current device"); });
 }
- 
+
 template <typename T>
 __aicore__ inline void LoadData2DGM2L1Cal(__cbuf__ T* dst, __gm__ T* src, const LoadData2DParams& loadDataParam,
     const uint8_t cacheMode = 0)
@@ -65,7 +65,7 @@ __aicore__ inline void LoadData2DL12L0ACal(__ca__ T* dst, __cbuf__ T* src, const
         uint8_t kStep = loadDataParam.repeatTimes;
         int16_t srcStride = static_cast<int16_t>(loadDataParam.srcStride);
         uint16_t dstStride = loadDataParam.dstGap + 1;
- 
+
         if (loadDataParam.ifTranspose) {
             load_cbuf_to_ca(dst, src, mStartPosition, kStartPosition, mStep, kStep, srcStride, dstStride, 1);
         } else {
@@ -86,7 +86,7 @@ __aicore__ inline void LoadData2DL12L0BCal(__cb__ T* dst, __cbuf__ T* src, const
         uint8_t kStep = loadDataParam.repeatTimes;
         int16_t srcStride = static_cast<int16_t>(loadDataParam.srcStride);
         uint16_t dstStride = loadDataParam.dstGap + 1;
- 
+
         if (loadDataParam.ifTranspose) {
             load_cbuf_to_cb(dst, src, mStartPosition, kStartPosition, mStep, kStep, srcStride, dstStride, 1);
         } else {
@@ -280,7 +280,7 @@ __aicore__ inline void LoadData2DL12L0BCal(__cb__ U *dst, __cbuf__ T *src0, __cb
     const LoadData2DParamsV2 &loadDataParam, const LoadData2DMxParams &loadMxDataParams)
 {
     static_assert(SupportType<T, fp4x2_e2m1_t, fp4x2_e1m2_t>() ||
-        SupportType<Tuple<U, T>, 
+        SupportType<Tuple<U, T>,
                     Tuple<mx_fp8_e4m3_t, fp8_e4m3fn_t>,
                     Tuple<mx_fp8_e5m2_t, fp8_e5m2_t>>(),
         "LoadData 2dv2 with scale matrix only support fp4/fp8 dtype on current device!");
@@ -399,7 +399,7 @@ __aicore__ inline void LoadData2DL12L0ATransposeCal(__ca__ T *dst, __cbuf__ T *s
  * Mmad                                             *
  * ************************************************************************************************* */
 
-#if defined(__DAV_310R6__) 
+#if defined(__DAV_310R6__)
 template <typename DstT, typename Src0T, typename Src1T>
 __aicore__ inline void MmadCal(__cc__ DstT* c, __ca__ Src0T* a, __cb__ Src1T* b, const MmadParams& mmadParams)
 {
@@ -432,7 +432,7 @@ __aicore__ inline void MmadCal(__cc__ DstT* c, __ca__ Src0T* a, __cb__ Src1T* b,
         }
     }
 }
- 
+
 template <typename DstT, typename Src0T, typename Src1T>
 __aicore__ inline void MmadCal(
     __cc__ DstT* c, __ca__ Src0T* a, __cb__ Src1T* b, uint64_t bias, const MmadParams& mmadParams, bool cmatrixSource)

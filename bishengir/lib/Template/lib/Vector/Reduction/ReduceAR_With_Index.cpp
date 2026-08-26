@@ -101,7 +101,7 @@ __aiv__ void reduce_with_index_scalar_iml(memref_t<__ubuf__ T, 2> *src,
   for (int64_t i = 0; i < num_rows; ++i) {
     __ubuf__ T* dst_val_ptr = dst_value_ptr + i * dst_value_stride0;
     __ubuf__ int32_t* dst_idx_ptr = dst_index_ptr + i * dst_index_stride0;
-    
+
     T tmp_extreme = *(src_ptr + i * src_stride0);
     int32_t tmp_idx = 0;
 

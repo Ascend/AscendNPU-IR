@@ -220,10 +220,10 @@ bool isLegalToAutoVectorizeReduce(linalg::ReduceOp op);
 
 bool isSkippable(linalg::ReduceOp op);
 
-/// linalg.generic is considered "reduce-like" iff 
+/// linalg.generic is considered "reduce-like" iff
 /// - two inputs, one output
 /// - along at least one of axis iterator type is "reduce"
-/// - op have trivial layout maps 
+/// - op have trivial layout maps
 bool isLegalReduceOp(linalg::ReduceOp op);
 
 } // namespace hacc

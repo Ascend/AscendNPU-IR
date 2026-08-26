@@ -224,9 +224,9 @@ struct AllocateAscendSharedMemory
     if (auto superBlockFactorAttr = mod->getAttrOfType<IntegerAttr>(
             triton::gpu::AttrSuperBlockFactor))
       superBlockFactor = superBlockFactorAttr.getUInt();
-    
+
     size_t newSharedMemAmount = allocation.getSharedMemorySize();
-    
+
     if (superBlockFactor > 1) {
       // Pad memory for each block up to the nearest multiple of 16
       newSharedMemAmount = ((newSharedMemAmount + 15) / 16 * 16) * superBlockFactor;

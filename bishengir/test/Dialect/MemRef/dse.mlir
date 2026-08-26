@@ -373,7 +373,7 @@ module {
     %returned:2 = call @indirect_changes_0(%alloc) : (memref<4xf32>) -> (f32, f32)
 // CHECK: memref.load
     %load_3 = memref.load %alloc[%c0]: memref<4xf32>
-// CHECK: return 
+// CHECK: return
     return %load_1, %load_2, %load_3 : f32, f32, f32
   }
 }
@@ -416,7 +416,7 @@ func.func @memref_view_subview(%arg1 : memref<4xi8>) -> (i8, i8) {
 // CHECK: %[[C0:.*]] = arith.constant 0 : i32
 // CHECK: %[[C1:.*]] = arith.constant 1 : i32
 // CHECK: %[[ALLOC:.*]] = memref.alloc
-// CHECK: memref.store %[[C1]], %[[ALLOC]] 
+// CHECK: memref.store %[[C1]], %[[ALLOC]]
 // CHECK: %[[ALIAS:.*]] = memref.expand_shape %[[ALLOC]]
 // CHECK: memref.store %[[C0]], %[[ALIAS]]
 // CHECK: %[[ALLOC_0:.*]] = memref.alloc

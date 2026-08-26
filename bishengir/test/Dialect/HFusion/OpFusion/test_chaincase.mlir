@@ -197,4 +197,3 @@ module {
     return %8 : tensor<f32>
   }
 }
-

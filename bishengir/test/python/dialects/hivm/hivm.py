@@ -35,6 +35,7 @@ module {
 }
     """
 
+
 # CHECK-LABEL: testHIVMPipeline
 @run
 def testHIVMPipeline():
@@ -45,7 +46,7 @@ def testHIVMPipeline():
         pm.enable_ir_printing()
         pm.add("optimize-hivm-pipeline")
         pm.run(module.operation)
-        print('--- module: ', module)
+        print("--- module: ", module)
 
 
 # CHECK-LABEL: testHIVMPlanMemory
@@ -58,7 +59,8 @@ def testHIVMPlanMemory():
         pm.enable_ir_printing()
         pm.add("hivm-plan-memory")
         pm.run(module.operation)
-        print('--- module: ', module)
+        print("--- module: ", module)
+
 
 # CHECK-LABEL: testHIVMPlanMemoryPMParse
 @run
@@ -69,4 +71,4 @@ def testHIVMPlanMemoryPMParse():
         pm = PassManager.parse("builtin.module(hivm-plan-memory)")
         pm.enable_ir_printing()
         pm.run(module.operation)
-        print('--- module: ', module)
+        print("--- module: ", module)

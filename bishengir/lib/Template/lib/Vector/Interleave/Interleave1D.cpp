@@ -57,7 +57,7 @@ template <typename T>
 __aiv__ __attribute__((always_inline)) void vector_interleave_1d_core(
     memref_t<__ubuf__ T, 1> *src0, memref_t<__ubuf__ T, 1> *src1,
     memref_t<__ubuf__ T, 1> *dst, memref_t<__ubuf__ T, 1> *temp) {
-  
+
   // Input parameter constraints assert.
   check_inputs_of_vector_eltwise_vv_1d(src0, src1, dst);
 
@@ -269,7 +269,7 @@ is_unaligned_interleave_1d(memref_t<__ubuf__ T, 1> *src0,
   __ubuf__ T *src0_ptr = src0->aligned + src0->offset;
   __ubuf__ T *src1_ptr = src1->aligned + src1->offset;
   __ubuf__ T *dst_ptr = dst->aligned + dst->offset;
-  
+
   // Check offset alignment
   bool is_offset_aligned = isAddress32ByteAligned<T>(src0_ptr) &&
                           isAddress32ByteAligned<T>(src1_ptr) &&
@@ -278,7 +278,7 @@ is_unaligned_interleave_1d(memref_t<__ubuf__ T, 1> *src0,
   bool is_stride_aligned = (src0->strides[0] == 1) &&
                           (src1->strides[0] == 1) &&
                           (dst->strides[0] == 1);
-  
+
   return !is_offset_aligned || !is_stride_aligned;
 }
 

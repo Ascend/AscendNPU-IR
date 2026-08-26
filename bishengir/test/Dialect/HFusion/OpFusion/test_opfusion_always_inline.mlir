@@ -20,4 +20,3 @@ func.func @test_graph_a(%arg0: tensor<?x?xf32>) -> (tensor<?x?xf32>, tensor<?x?x
   %11 = linalg.elemwise_binary {add, fun = #linalg.binary_fn<add>} ins(%5, %9 : tensor<?x?xf32>, tensor<?x?xf32>) outs(%10 : tensor<?x?xf32>) -> tensor<?x?xf32>
   return %11, %7 : tensor<?x?xf32>, tensor<?x?xf32>
 }
-

@@ -104,7 +104,7 @@ module attributes {transform.with_named_sequence} {
 // CHECK: return %[[expanded_4]], %[[expanded]]
 #map = affine_map<(d0)[s0] -> (-d0 + 3072, s0)>
 func.func @fuse_sibling_when_source_before_target_and_have_different_expanded_size(
-      %arg0: tensor<1x224x3072xbf16>, %arg2: tensor<1x224x3072xbf16>, 
+      %arg0: tensor<1x224x3072xbf16>, %arg2: tensor<1x224x3072xbf16>,
       %arg3: tensor<1x224x3072xbf16>, %arg4: tensor<1x1x3072xf32>,
       %arg5: tensor<1x224x3072xbf16>, %arg9: i64) -> (tensor<1x1x3072xf32>, tensor<1x224x3072xbf16>) {
     %c3072 = arith.constant 3072 : index
@@ -116,22 +116,22 @@ func.func @fuse_sibling_when_source_before_target_and_have_different_expanded_si
     %16 = arith.index_cast %arg9 : i64 to index
     %collapsed = tensor.collapse_shape %arg0 [[0, 1], [2]] : tensor<1x224x3072xbf16> into tensor<224x3072xbf16>
     %collapsed_1 = tensor.collapse_shape %arg2 [[0, 1], [2]] : tensor<1x224x3072xbf16> into tensor<224x3072xbf16>
-    %6 = hfusion.load {__intermediate_producer__, __reduction0_fusible_producer__, __result1_fusible_producer__, __result2_fusible_producer__} 
+    %6 = hfusion.load {__intermediate_producer__, __reduction0_fusible_producer__, __result1_fusible_producer__, __result2_fusible_producer__}
                   ins(%collapsed_1 : tensor<224x3072xbf16>) outs(%0 : tensor<224x3072xbf16>) -> tensor<224x3072xbf16>
     %collapsed_2 = tensor.collapse_shape %arg3 [[0, 1], [2]] : tensor<1x224x3072xbf16> into tensor<224x3072xbf16>
-    %7 = hfusion.load {__intermediate_producer__, __reduction0_fusible_producer__, __result1_fusible_producer__, __result2_fusible_producer__} 
+    %7 = hfusion.load {__intermediate_producer__, __reduction0_fusible_producer__, __result1_fusible_producer__, __result2_fusible_producer__}
                   ins(%collapsed_2 : tensor<224x3072xbf16>) outs(%0 : tensor<224x3072xbf16>) -> tensor<224x3072xbf16>
     %collapsed_3 = tensor.collapse_shape %arg4 [[0, 1, 2]] : tensor<1x1x3072xf32> into tensor<3072xf32>
     %collapsed_4 = tensor.collapse_shape %arg5 [[0, 1], [2]] : tensor<1x224x3072xbf16> into tensor<224x3072xbf16>
-    %4 = hfusion.load {__intermediate_producer__, __reduction0_fusible_producer__} 
+    %4 = hfusion.load {__intermediate_producer__, __reduction0_fusible_producer__}
                   ins(%collapsed : tensor<224x3072xbf16>) outs(%0 : tensor<224x3072xbf16>) -> tensor<224x3072xbf16>
     %8 = hfusion.cast {__intermediate_producer__, __reduction0_fusible_producer__, round_mode = #hfusion.round_mode<rint>}
                   ins(%4 : tensor<224x3072xbf16>) outs(%1 : tensor<224x3072xf32>) -> tensor<224x3072xf32>
-    %10 = hfusion.cast {__intermediate_producer__, __reduction0_fusible_producer__, __result1_fusible_producer__, __result2_fusible_producer__, round_mode = #hfusion.round_mode<rint>} 
+    %10 = hfusion.cast {__intermediate_producer__, __reduction0_fusible_producer__, __result1_fusible_producer__, __result2_fusible_producer__, round_mode = #hfusion.round_mode<rint>}
                   ins(%6 : tensor<224x3072xbf16>) outs(%1 : tensor<224x3072xf32>) -> tensor<224x3072xf32>
-    %11 = hfusion.cast {__intermediate_producer__, __reduction0_fusible_producer__, __result1_fusible_producer__, __result2_fusible_producer__, round_mode = #hfusion.round_mode<rint>} 
+    %11 = hfusion.cast {__intermediate_producer__, __reduction0_fusible_producer__, __result1_fusible_producer__, __result2_fusible_producer__, round_mode = #hfusion.round_mode<rint>}
                   ins(%7 : tensor<224x3072xbf16>) outs(%1 : tensor<224x3072xf32>) -> tensor<224x3072xf32>
-    %12 = linalg.elemwise_binary {__intermediate_producer__, __reduction0_fusible_producer__, __result1_fusible_producer__, __result2_fusible_producer__, fun = #linalg.binary_fn<add>} 
+    %12 = linalg.elemwise_binary {__intermediate_producer__, __reduction0_fusible_producer__, __result1_fusible_producer__, __result2_fusible_producer__, fun = #linalg.binary_fn<add>}
                   ins(%11, %10 : tensor<224x3072xf32>, tensor<224x3072xf32>) outs(%1 : tensor<224x3072xf32>) -> tensor<224x3072xf32>
     %13 = hfusion.cast {__intermediate_producer__, __result1_fusible_producer__, round_mode = #hfusion.round_mode<rint>}
                   ins(%12 : tensor<224x3072xf32>) outs(%0 : tensor<224x3072xbf16>) -> tensor<224x3072xbf16>

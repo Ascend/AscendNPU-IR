@@ -734,7 +734,7 @@ struct VSelOpLowering : public OpRewritePattern<hivm::VSelOp> {
     if (!op.hasPureBufferSemantics()) {
       return failure();
     }
-    
+
     // [[Guard 1]] Quit if vsel has wrongly typed arguments.
     Value condUB = nullptr;
     {
@@ -803,7 +803,7 @@ struct VSelOpLowering : public OpRewritePattern<hivm::VSelOp> {
         Value(cmpAlloc), cmpOp.getCompareModeAttr(),
         cmpOp.getTransposeAttr(), cmpOp.getBroadcastAttr());
     rewriter.replaceOp(cmpOp, newCmpOp);
-    
+
     // [[Step 3]] Update the original vsel to use the i8-typed result of vcmp.
     rewriter.setInsertionPointAfter(op);
     hivm::VSelOp newSelOp = rewriter.create<hivm::VSelOp>(op.getLoc(), TypeRange(),
@@ -881,7 +881,7 @@ struct DecomposeI32ScalarExtOp : public OpRewritePattern<ExtOp> {
 
   Value createExtOp(PatternRewriter &rewriter, Location loc,
                     Value value, bool isUnsigned) const {
-    return isUnsigned ? 
+    return isUnsigned ?
         rewriter.create<arith::ExtUIOp>(loc, rewriter.getI64Type(), value).getResult() :
         rewriter.create<arith::ExtSIOp>(loc, rewriter.getI64Type(), value).getResult();
   }
@@ -1452,7 +1452,7 @@ private:
     return false;
   }
 
-  LogicalResult addSyncForReturnedValue(hivm::StoreOp op, 
+  LogicalResult addSyncForReturnedValue(hivm::StoreOp op,
                                         PatternRewriter &rewriter, Location loc) const {
     static constexpr llvm::StringLiteral kAlreadySync =
         "already_sync";
@@ -1469,7 +1469,7 @@ private:
     op->setAttr(kAlreadySync, UnitAttr::get(op->getContext()));
     return success();
   }
-  
+
   /// implement atomic by software way
   /// e.g.store ins(% res_ub) outs(% res_gm) with atomic XOR is converted to
   /// % lock_var = create_sync_lock()

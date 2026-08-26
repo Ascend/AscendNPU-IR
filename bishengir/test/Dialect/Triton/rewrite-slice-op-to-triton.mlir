@@ -259,7 +259,7 @@ func.func @insert3DConstIndices(%src: tensor<8x1x4xbf16>, %val: bf16) -> tensor<
 }
 
 // -----
- 	 
+
 // 1-D dynamic offset.
 // CHECK-LABEL: @rank1_dyn_offset
 // CHECK-SAME:  (%[[SRC:.*]]: tensor<8xf32>, %[[OFF:.*]]: index)

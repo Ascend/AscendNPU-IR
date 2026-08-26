@@ -221,7 +221,7 @@ def CloneTensorEmpty : Pass<"hivm-clone-tensor-empty", "func::FuncOp"> {
 def InferHIVMDataLayout : Pass<"hivm-infer-data-layout", "func::FuncOp"> {
   let summary = "Infer data layout for HIVM Ops";
   let constructor = "mlir::hivm::createInferHIVMDataLayoutPass()";
-  let dependentDialects = ["affine::AffineDialect", "hivm::HIVMDialect", 
+  let dependentDialects = ["affine::AffineDialect", "hivm::HIVMDialect",
                            "annotation::AnnotationDialect",
   ];
 }
@@ -803,7 +803,7 @@ def HIVMCanonicalizationPipeline
   let summary = "Run HIVM canonicalization pass pipeline on one function";
   let constructor = "mlir::hivm::createHIVMCanonicalizationPipelinePass()";
   let dependentDialects = ["hivm::HIVMDialect", "func::FuncDialect",
-                           "arith::ArithDialect", "memref::MemRefDialect", 
+                           "arith::ArithDialect", "memref::MemRefDialect",
                            "scf::SCFDialect"];
 }
 
@@ -1103,7 +1103,7 @@ def InsertWorkSpaceForMixCV : Pass<"insert-workspace-for-mix-cv"> {
   let constructor = "mlir::hivm::createInsertWorkSpaceForMixCVPass()";
   let dependentDialects = [
     "hivm::HIVMDialect", "bishengir::memref_ext::MemRefExtDialect",
-                         "bufferization::BufferizationDialect", 
+                         "bufferization::BufferizationDialect",
                          "annotation::AnnotationDialect"
   ];
 }

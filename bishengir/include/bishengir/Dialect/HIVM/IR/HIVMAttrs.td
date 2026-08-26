@@ -224,7 +224,7 @@ def HIVM_AddressSpaceEnum : HIVM_I32Enum<
     HIVM_AddressSpace_L0B,
     HIVM_AddressSpace_L0C,
     HIVM_AddressSpace_UB,
-    HIVM_AddressSpace_SSBUF    
+    HIVM_AddressSpace_SSBUF
   ]>;
 
 def HIVM_AddressSpaceAttr : HIVM_Attr<"AddressSpace", "address_space",

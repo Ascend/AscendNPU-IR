@@ -34,6 +34,7 @@ def test_example():
 
         # Your test code here
         with InsertionPoint(m.body):
+
             @func.FuncOp.from_py_func(tensor_type, tensor_type, tensor_type)
             def none_return(a, b, c):
                 result = hfusion.ElemwiseBinaryOp.create(
@@ -41,14 +42,11 @@ def test_example():
                     input_tensor1=a,
                     input_tensor2=b,
                     output_tensor=c,
-                    fun="vor"
+                    fun="vor",
                 )
 
                 result_2 = hfusion.ElemwiseUnaryOp.create(
-                    result_type=tensor_type,
-                    input_tensor=c,
-                    output_tensor=c,
-                    fun="vnot"
+                    result_type=tensor_type, input_tensor=c, output_tensor=c, fun="vnot"
                 )
 
                 return result, result_2
@@ -69,18 +67,17 @@ def test_full_bisheng_compile():
         m = builtin.ModuleOp()
         with InsertionPoint(m.body):
             tensor_type = RankedTensorType.get(
-                (ShapedType.get_dynamic_size(),), F32Type.get())
+                (ShapedType.get_dynamic_size(),), F32Type.get()
+            )
 
             @func.FuncOp.from_py_func(tensor_type, tensor_type, tensor_type)
             def host_elemwise(arg0, arg1, out):
                 result = linalg.elemwise_binary(
-                    arg0, arg1, outs=[out],
-                    fun=BinaryFn.add
+                    arg0, arg1, outs=[out], fun=BinaryFn.add
                 )
                 return result
 
-            hacc.HACCHelper.add_function_kind_attribute(
-                host_elemwise.func_op, "HOST")
+            hacc.HACCHelper.add_function_kind_attribute(host_elemwise.func_op, "HOST")
 
         BiShengIRHelper.print(m)
 
@@ -89,6 +86,7 @@ def test_full_bisheng_compile():
             "bishengir-compile{enable-hfusion-compile=true "
             "enable-hivm-compile=true "
             "enable-lir-compile=false "
-            "o=/tmp/tmp}")
+            "o=/tmp/tmp}"
+        )
         pm.run(m.operation)
         BiShengIRHelper.print(m)

@@ -163,10 +163,10 @@ std::string VFTruncIOp::getOpLibraryCallName() {
     if (auto uniAttr = getUni()) {
       auto uni = *uniAttr;
       if (uni == hivm::UnsignedMode::SI2UI) {
-        libName = "_mlir_ciface_" + baseCallName + "_" + 
+        libName = "_mlir_ciface_" + baseCallName + "_" +
                   elemTypeName0 + "_to_" + "u" + elemTypeName1 + "_sat";
       } else if (uni == hivm::UnsignedMode::UI2SI) {
-        libName = "_mlir_ciface_" + baseCallName + "_" + "u" + 
+        libName = "_mlir_ciface_" + baseCallName + "_" + "u" +
                 elemTypeName0 + "_to_" + elemTypeName1 + "_sat";
       } else if (uni == hivm::UnsignedMode::UI2UI) {
         libName = "_mlir_ciface_" + baseCallName + "_" + "u" +

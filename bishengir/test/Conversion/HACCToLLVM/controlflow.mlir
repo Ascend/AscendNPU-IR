@@ -1,7 +1,7 @@
 // RUN: bishengir-opt %s -convert-hacc-to-llvm -split-input-file | FileCheck %s
 
 // CHECK-LABEL:  llvm.func @Fused_Add_fusion_17734579009022343263
-// CHECK: llvm.switch 
+// CHECK: llvm.switch
 // CHECK: 2: ^bb1,
 // CHECK: 1: ^bb2,
 // CHECK: 0: ^bb3

@@ -377,7 +377,7 @@ private:
         // Store accumulator result into shared memory at the threadId spot.
         for (size_t i = 0; i < op.getNumOperands(); i++) {
           auto elemTy = getElementType(op, i);
-          Value writeOffset = 
+          Value writeOffset =
               b.add(threadId, b.i32_val(AccIdx * accOffset));
           Value resultPtr =
               b.gep(smemBases[i].getType(), elemTy, smemBases[i], writeOffset);
@@ -564,11 +564,11 @@ private:
     unsigned elemsPerThread = std::max<unsigned>(elems / numThreads, 1);
 
     if (!ReplaceButterflyReduction) {
-      LDBG(" * Using original implementation."); 
-      LDBG(" * elems = " << elems); 
-      LDBG(" * sizeInterWarps = " << sizeInterWarps); 
-      LDBG(" * axis = " << op.getAxis()); 
-      LDBG(" * numLanes = " << triton::gpu::TritonGPUDialect::getThreadsPerWarp(mod)); 
+      LDBG(" * Using original implementation.");
+      LDBG(" * elems = " << elems);
+      LDBG(" * sizeInterWarps = " << sizeInterWarps);
+      LDBG(" * axis = " << op.getAxis());
+      LDBG(" * numLanes = " << triton::gpu::TritonGPUDialect::getThreadsPerWarp(mod));
       LDBG(" * numWarps = " << triton::gpu::lookupNumWarps(op));
       Value threadIsNeeded = b.icmp_slt(threadId, b.i32_val(elems));
       Value readOffset = threadId;
@@ -622,7 +622,7 @@ private:
       LDBG(" * stride = " << stride);
       LDBG(" * axis = " << axis);
       LDBG(" * redAxisSize = " << reductionAxisSize);
-      LDBG(" * numLanes = " << triton::gpu::TritonGPUDialect::getThreadsPerWarp(mod)); 
+      LDBG(" * numLanes = " << triton::gpu::TritonGPUDialect::getThreadsPerWarp(mod));
       LDBG(" * numWarps = " << triton::gpu::lookupNumWarps(op));
       LDBG(" * maxThreadsNeeded = " << maxThreadsNeeded);
       LDBG(" * elements = " << elems);

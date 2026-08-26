@@ -131,4 +131,3 @@ module attributes {hacc.hivmc_version = #hacc.hivmc_version<"0.2.0">} {
     return
   }
 }
-

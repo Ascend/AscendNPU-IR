@@ -45,7 +45,7 @@ module {
     %expanded = tensor.expand_shape %collapsed [[0], [1, 2], [3]] output_shape [24, 32, 4, 49152] : tensor<24x128x49152xf32> into tensor<24x32x4x49152xf32>
     %4 = tensor.empty() : tensor<24x32xf32>
     %5 = linalg.fill ins(%cst : f32) outs(%4 : tensor<24x32xf32>) -> tensor<24x32xf32>
-    %reduced = linalg.reduce ins(%expanded : tensor<24x32x4x49152xf32>) outs(%5 : tensor<24x32xf32>) dimensions = [2, 3] 
+    %reduced = linalg.reduce ins(%expanded : tensor<24x32x4x49152xf32>) outs(%5 : tensor<24x32xf32>) dimensions = [2, 3]
       (%in: f32, %init: f32) {
         %22 = arith.addf %in, %init : f32
         linalg.yield %22 : f32
@@ -56,13 +56,13 @@ module {
     %8 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%expanded_4, %7 : tensor<24x32x1x1xf32>, tensor<24x32x1x1xf32>) outs(%6 : tensor<24x32x1x1xf32>) -> tensor<24x32x1x1xf32>
     %9 = tensor.empty() : tensor<24x32x4x49152xf32>
     %collapsed_5 = tensor.collapse_shape %8 [[0], [1, 2, 3]] : tensor<24x32x1x1xf32> into tensor<24x32xf32>
-    %broadcasted = linalg.broadcast ins(%collapsed_5 : tensor<24x32xf32>) outs(%9 : tensor<24x32x4x49152xf32>) dimensions = [2, 3] 
+    %broadcasted = linalg.broadcast ins(%collapsed_5 : tensor<24x32xf32>) outs(%9 : tensor<24x32x4x49152xf32>) dimensions = [2, 3]
     %10 = linalg.fill ins(%cst_2 : f32) outs(%9 : tensor<24x32x4x49152xf32>) -> tensor<24x32x4x49152xf32>
     %11 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%broadcasted, %10 : tensor<24x32x4x49152xf32>, tensor<24x32x4x49152xf32>) outs(%9 : tensor<24x32x4x49152xf32>) -> tensor<24x32x4x49152xf32>
     %12 = linalg.elemwise_binary {fun = #linalg.binary_fn<sub>} ins(%expanded, %11 : tensor<24x32x4x49152xf32>, tensor<24x32x4x49152xf32>) outs(%9 : tensor<24x32x4x49152xf32>) -> tensor<24x32x4x49152xf32>
     %13 = linalg.fill ins(%cst_3 : f32) outs(%9 : tensor<24x32x4x49152xf32>) -> tensor<24x32x4x49152xf32>
     %14 = hfusion.elemwise_binary {fun = #hfusion.binary_fn<powf>} ins(%12, %13 : tensor<24x32x4x49152xf32>, tensor<24x32x4x49152xf32>) outs(%9 : tensor<24x32x4x49152xf32>) -> tensor<24x32x4x49152xf32>
-    %reduced_6 = linalg.reduce ins(%14 : tensor<24x32x4x49152xf32>) outs(%5 : tensor<24x32xf32>) dimensions = [2, 3] 
+    %reduced_6 = linalg.reduce ins(%14 : tensor<24x32x4x49152xf32>) outs(%5 : tensor<24x32xf32>) dimensions = [2, 3]
       (%in: f32, %init: f32) {
         %22 = arith.addf %in, %init : f32
         linalg.yield %22 : f32
@@ -205,7 +205,7 @@ func.func @collapse_reduce(%arg0: tensor<2x3x4x5x6x7x8x9x10xf32>) -> tensor<2x5x
   %zero = arith.constant 0.0 : f32
 
   %unary = linalg.elemwise_unary {fun = #linalg.unary_fn<negf>} ins(%arg0 : tensor<2x3x4x5x6x7x8x9x10xf32>) outs(%arg0 : tensor<2x3x4x5x6x7x8x9x10xf32>) -> tensor<2x3x4x5x6x7x8x9x10xf32>
-  %collapsed = tensor.collapse_shape %unary [[0], [1, 2], [3], [4, 5, 6], [7], [8]] : 
+  %collapsed = tensor.collapse_shape %unary [[0], [1, 2], [3], [4, 5, 6], [7], [8]] :
     tensor<2x3x4x5x6x7x8x9x10xf32> into tensor<2x12x5x336x9x10xf32>
 
   %reduced = linalg.reduce ins(%collapsed : tensor<2x12x5x336x9x10xf32>)
@@ -416,18 +416,18 @@ func.func @model_24(%arg0: tensor<24x48x48xf32>, %arg1: tensor<24x48x1xf32>, %ar
   %cst = arith.constant 1.000000e+00 : f32
   %0 = tensor.empty() : tensor<24x48x48xf32>
   %collapsed = tensor.collapse_shape %arg1 [[0], [1, 2]] : tensor<24x48x1xf32> into tensor<24x48xf32>
-  %broadcasted = linalg.broadcast ins(%collapsed : tensor<24x48xf32>) outs(%0 : tensor<24x48x48xf32>) dimensions = [2] 
+  %broadcasted = linalg.broadcast ins(%collapsed : tensor<24x48xf32>) outs(%0 : tensor<24x48x48xf32>) dimensions = [2]
   %1 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%broadcasted, %cst : tensor<24x48x48xf32>, f32) outs(%0 : tensor<24x48x48xf32>) -> tensor<24x48x48xf32>
   %2 = linalg.elemwise_binary {fun = #linalg.binary_fn<sub>} ins(%arg0, %1 : tensor<24x48x48xf32>, tensor<24x48x48xf32>) outs(%0 : tensor<24x48x48xf32>) -> tensor<24x48x48xf32>
   %3 = linalg.elemwise_unary {fun = #linalg.unary_fn<exp>} ins(%2 : tensor<24x48x48xf32>) outs(%0 : tensor<24x48x48xf32>) -> tensor<24x48x48xf32>
   %collapsed_0 = tensor.collapse_shape %arg2 [[0], [1, 2]] : tensor<24x48x1xf32> into tensor<24x48xf32>
-  %reduced = linalg.reduce ins(%3 : tensor<24x48x48xf32>) outs(%collapsed_0 : tensor<24x48xf32>) dimensions = [2] 
+  %reduced = linalg.reduce ins(%3 : tensor<24x48x48xf32>) outs(%collapsed_0 : tensor<24x48xf32>) dimensions = [2]
     (%in: f32, %init: f32) {
       %6 = arith.addf %in, %init : f32
       linalg.yield %6 : f32
     }
   %expanded = tensor.expand_shape %reduced [[0], [1, 2]] output_shape [24, 48, 1] : tensor<24x48xf32> into tensor<24x48x1xf32>
-  %broadcasted_1 = linalg.broadcast ins(%reduced : tensor<24x48xf32>) outs(%0 : tensor<24x48x48xf32>) dimensions = [2] 
+  %broadcasted_1 = linalg.broadcast ins(%reduced : tensor<24x48xf32>) outs(%0 : tensor<24x48x48xf32>) dimensions = [2]
   %4 = linalg.elemwise_binary {fun = #linalg.binary_fn<div>} ins(%3, %broadcasted_1 : tensor<24x48x48xf32>, tensor<24x48x48xf32>) outs(%arg3 : tensor<24x48x48xf32>) -> tensor<24x48x48xf32>
   %5 = hfusion.cast {round_mode = #hfusion.round_mode<rint>} ins(%4 : tensor<24x48x48xf32>) outs(%arg4 : tensor<24x48x48xbf16>) -> tensor<24x48x48xbf16>
   return %expanded, %4, %5 : tensor<24x48x1xf32>, tensor<24x48x48xf32>, tensor<24x48x48xbf16>
@@ -440,9 +440,9 @@ func.func @model_24(%arg0: tensor<24x48x48xf32>, %arg1: tensor<24x48x1xf32>, %ar
 // CHECK: return
 func.func @collapse_down_out(%arg0: tensor<24x10x48xf32>, %arg1: tensor<3x1x8x48x2x5x48x4x5xf32>, %arg2: tensor<24x48x10x48x20xf32>, %arg3: tensor<24x69x48x10x48x69x20xf32>) -> (tensor<24x48x10x48x20xf32>, tensor<24x48x10x48x20xf32>, tensor<24x48x10x48x20xf32>, tensor<24x48x10x48x20xf32>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
   %collapsed_0 = tensor.collapse_shape %arg1 [[0, 1, 2], [3], [4, 5], [6], [7, 8]] : tensor<3x1x8x48x2x5x48x4x5xf32> into tensor<24x48x10x48x20xf32>
-  %broadcasted_1 = linalg.broadcast ins(%arg0 : tensor<24x10x48xf32>) outs(%collapsed_0 : tensor<24x48x10x48x20xf32>) dimensions = [1, 4] 
+  %broadcasted_1 = linalg.broadcast ins(%arg0 : tensor<24x10x48xf32>) outs(%collapsed_0 : tensor<24x48x10x48x20xf32>) dimensions = [1, 4]
   %unary = linalg.elemwise_unary {fun = #linalg.unary_fn<exp>} ins(%collapsed_0 : tensor<24x48x10x48x20xf32>) outs(%collapsed_0 : tensor<24x48x10x48x20xf32>) -> tensor<24x48x10x48x20xf32>
-  %reduced = linalg.reduce ins(%arg3 : tensor<24x69x48x10x48x69x20xf32>) outs(%collapsed_0 : tensor<24x48x10x48x20xf32>) dimensions = [1, 5] 
+  %reduced = linalg.reduce ins(%arg3 : tensor<24x69x48x10x48x69x20xf32>) outs(%collapsed_0 : tensor<24x48x10x48x20xf32>) dimensions = [1, 5]
   (%in: f32, %init: f32) {
     %6 = arith.addf %in, %init : f32
     linalg.yield %6 : f32
@@ -1524,7 +1524,7 @@ func.func @collapse_transpose(%arg0: tensor<2x3x4x5x6x7x8xf32>) -> tensor<5x6x4x
   %cst = arith.constant 0.000000e+00 : f32
   %unary = linalg.elemwise_unary {fun = #linalg.unary_fn<negf>} ins(%arg0 : tensor<2x3x4x5x6x7x8xf32>) outs(%arg0 : tensor<2x3x4x5x6x7x8xf32>) -> tensor<2x3x4x5x6x7x8xf32>
   %collapsed = tensor.collapse_shape %unary [[0, 1], [2], [3], [4, 5], [6]] : tensor<2x3x4x5x6x7x8xf32> into tensor<6x4x5x42x8xf32>
-  %transposed = linalg.transpose ins(%collapsed : tensor<6x4x5x42x8xf32>) outs(%0 : tensor<5x6x4x8x42xf32>) permutation = [2, 0, 1, 4, 3] 
+  %transposed = linalg.transpose ins(%collapsed : tensor<6x4x5x42x8xf32>) outs(%0 : tensor<5x6x4x8x42xf32>) permutation = [2, 0, 1, 4, 3]
   return %transposed : tensor<5x6x4x8x42xf32>
 }
 
@@ -1644,10 +1644,10 @@ func.func @collapse_arange(%arg:tensor<2x2x4x8xi32>) -> tensor<2x8x8xi32> attrib
 // CHECK: Valid
 // CHECK-LABEL: @test_expand_up_interleave
 func.func @test_expand_up_interleave(%arg1: tensor<30x14x13xf32>, %arg2: tensor<30x14x13xf32>) -> (tensor<6x5x7x2x13x2xf32>, tensor<30x14x52xf32>) {
-  
+
   %a = hfusion.interleave %arg1, %arg2 : tensor<30x14x13xf32>, tensor<30x14x13xf32> -> tensor<30x14x26xf32>
   %b = tensor.expand_shape %a [[0, 1], [2, 3], [4, 5]] output_shape [6, 5, 7, 2, 13, 2] : tensor<30x14x26xf32> into tensor<6x5x7x2x13x2xf32>
-  
+
   %c = tensor.empty() : tensor<30x14x26xf32>
   %e = hfusion.interleave %a, %c : tensor<30x14x26xf32>, tensor<30x14x26xf32> -> tensor<30x14x52xf32>
   %em = tensor.empty() : tensor<6x5x7x2x13x2xf32>
@@ -1684,7 +1684,7 @@ func.func @test_collapse_down_interleave(%a: tensor<2x3x5x7x11xf32>, %b: tensor<
 func.func @main_expand_up_deinterleave(%arg: tensor<30x14x52xf32>) -> (tensor<6x5x7x2x13x2xf32>, tensor<6x5x7x2x13x2xf32>, tensor<30x14x26xf32>) {
   %em = tensor.empty() : tensor<30x14x52xf32>
   %A = linalg.elemwise_unary {fun = #linalg.unary_fn<log>} ins(%arg : tensor<30x14x52xf32>) outs(%em : tensor<30x14x52xf32>) -> tensor<30x14x52xf32>
-  
+
   %a = hfusion.deinterleave %A channel<0> : tensor<30x14x52xf32> -> tensor<30x14x26xf32>
   %b = tensor.expand_shape %a [[0, 1], [2, 3], [4, 5]] output_shape [6, 5, 7, 2, 13, 2] : tensor<30x14x26xf32> into tensor<6x5x7x2x13x2xf32>
 
@@ -1693,7 +1693,7 @@ func.func @main_expand_up_deinterleave(%arg: tensor<30x14x52xf32>) -> (tensor<6x
   %h0 = linalg.elemwise_unary {fun = #linalg.unary_fn<log>} ins(%g0 : tensor<30x14x26xf32>) outs(%em0 : tensor<30x14x26xf32>) -> tensor<30x14x26xf32>
   %em1 = tensor.empty() : tensor<6x5x7x2x13x2xf32>
   %g1 = linalg.elemwise_unary {fun = #linalg.unary_fn<log>} ins(%b : tensor<6x5x7x2x13x2xf32>) outs(%em1 : tensor<6x5x7x2x13x2xf32>) -> tensor<6x5x7x2x13x2xf32>
-  %h1 = linalg.elemwise_unary {fun = #linalg.unary_fn<log>} ins(%g1 : tensor<6x5x7x2x13x2xf32>) outs(%em1 : tensor<6x5x7x2x13x2xf32>) -> tensor<6x5x7x2x13x2xf32>  
+  %h1 = linalg.elemwise_unary {fun = #linalg.unary_fn<log>} ins(%g1 : tensor<6x5x7x2x13x2xf32>) outs(%em1 : tensor<6x5x7x2x13x2xf32>) -> tensor<6x5x7x2x13x2xf32>
   return %h1, %b, %h0 : tensor<6x5x7x2x13x2xf32>, tensor<6x5x7x2x13x2xf32>, tensor<30x14x26xf32>
 }
 
@@ -1703,10 +1703,10 @@ func.func @main_expand_up_deinterleave(%arg: tensor<30x14x52xf32>) -> (tensor<6x
 func.func @test_collapse_down_deinterleave(%arg: tensor<6x5x7x2x26x2xf32>) -> (tensor<30x14x26xf32>, tensor<30x14x26xf32>, tensor<30x14x52xf32>) {
   %em = tensor.empty() : tensor<6x5x7x2x26x2xf32>
   %A = linalg.elemwise_unary {fun = #linalg.unary_fn<log>} ins(%arg : tensor<6x5x7x2x26x2xf32>) outs(%em : tensor<6x5x7x2x26x2xf32>) -> tensor<6x5x7x2x26x2xf32>
-  
+
   %a = tensor.collapse_shape %A [[0, 1], [2, 3], [4, 5]] : tensor<6x5x7x2x26x2xf32> into tensor<30x14x52xf32>
   %b = hfusion.deinterleave %a channel<0> : tensor<30x14x52xf32> -> tensor<30x14x26xf32>
-  
+
   %em0 = tensor.empty() : tensor<30x14x26xf32>
   %g0 = linalg.elemwise_unary {fun = #linalg.unary_fn<log>} ins(%b : tensor<30x14x26xf32>) outs(%em0 : tensor<30x14x26xf32>) -> tensor<30x14x26xf32>
   %h0 = linalg.elemwise_unary {fun = #linalg.unary_fn<log>} ins(%g0 : tensor<30x14x26xf32>) outs(%em0 : tensor<30x14x26xf32>) -> tensor<30x14x26xf32>

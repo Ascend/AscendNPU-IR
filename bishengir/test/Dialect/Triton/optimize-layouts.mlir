@@ -103,4 +103,4 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
     tt.store %61, %62, %63 : tensor<1x1x16x!tt.ptr<i32>, #ttg.blocked<{sizePerThread = [1, 1, 1], threadsPerWarp = [1, 2, 16], warpsPerCTA = [1, 32, 1], order = [2, 0, 1]}>>
     tt.return
   }
-}
+}

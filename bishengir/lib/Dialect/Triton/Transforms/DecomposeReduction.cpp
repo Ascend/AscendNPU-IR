@@ -469,7 +469,7 @@ public:
       // Early abort: multi-result reductions are not supported.
       if (reduceOp->getNumResults() > 1)
         return WalkResult::advance();
-	    
+
       Operation *convertLayoutOp = reductionFeedingLayoutConvert(reduceOp);
       Value reduceOperand = reduceOp.getOperands()[0];
       auto srcType = cast<RankedTensorType>(reduceOperand.getType());

@@ -15,8 +15,8 @@ func.func @test_hfusion_indirect_load(%arg0: memref<?xi8> {hacc.arg_type = #hacc
   %c1_i64 = arith.constant 1 : i64
   %empty_4 = tensor.empty() : tensor<2x32xi64>
   %empty_5 = tensor.empty() : tensor<2x32xi64>
-  %4 = linalg.fill ins(%c0_i64 : i64) outs(%empty_4 : tensor<2x32xi64>) -> tensor<2x32xi64>  
-  %5 = linalg.fill ins(%c1_i64 : i64) outs(%empty_5 : tensor<2x32xi64>) -> tensor<2x32xi64>  
+  %4 = linalg.fill ins(%c0_i64 : i64) outs(%empty_4 : tensor<2x32xi64>) -> tensor<2x32xi64>
+  %5 = linalg.fill ins(%c1_i64 : i64) outs(%empty_5 : tensor<2x32xi64>) -> tensor<2x32xi64>
   %empty_6 = tensor.empty() : tensor<2x32xi64>
   %6 = linalg.fill ins(%c0_i64 : i64) outs(%empty_6 : tensor<2x32xi64>) -> tensor<2x32xi64>
   %7 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%4, %5 : tensor<2x32xi64>, tensor<2x32xi64>) outs(%6 : tensor<2x32xi64>) -> tensor<2x32xi64>
@@ -24,12 +24,12 @@ func.func @test_hfusion_indirect_load(%arg0: memref<?xi8> {hacc.arg_type = #hacc
   %c1_f32 = arith.constant 1.0 : f32
   %empty_8 = tensor.empty() : tensor<2x32xf32>
   %empty_9 = tensor.empty() : tensor<2x32xf32>
-  %8 = linalg.fill ins(%c0_f32 : f32) outs(%empty_8 : tensor<2x32xf32>) -> tensor<2x32xf32>  
-  %9 = linalg.fill ins(%c0_f32 : f32) outs(%empty_9 : tensor<2x32xf32>) -> tensor<2x32xf32> 
+  %8 = linalg.fill ins(%c0_f32 : f32) outs(%empty_8 : tensor<2x32xf32>) -> tensor<2x32xf32>
+  %9 = linalg.fill ins(%c0_f32 : f32) outs(%empty_9 : tensor<2x32xf32>) -> tensor<2x32xf32>
   %10 = hfusion.indirect_load ins(%arg3 : memref<?xf32>, %7 : tensor<2x32xi64>, %3 : tensor<2x32xi8>, %8 : tensor<2x32xf32>) outs(%9 : tensor<2x32xf32>) -> tensor<2x32xf32>
   %empty_11 = tensor.empty() : tensor<2x32xf32>
   %empty_12 = tensor.empty() : tensor<2x32xf32>
-  %11 = linalg.fill ins(%c1_f32 : f32) outs(%empty_11 : tensor<2x32xf32>) -> tensor<2x32xf32>  
+  %11 = linalg.fill ins(%c1_f32 : f32) outs(%empty_11 : tensor<2x32xf32>) -> tensor<2x32xf32>
   %12 = linalg.fill ins(%c0_f32 : f32) outs(%empty_12 : tensor<2x32xf32>) -> tensor<2x32xf32>
   %13 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%10, %11 : tensor<2x32xf32>, tensor<2x32xf32>) outs(%12 : tensor<2x32xf32>) -> tensor<2x32xf32>
   %14 = memref.alloc() : memref<2x32xf32>
@@ -87,12 +87,12 @@ func.func @test_hfusion_indirect_store(%arg0: memref<?xi8> {hacc.arg_type = #hac
   %c1_i32 = arith.constant 1 : i32
   %empty_4 = tensor.empty() : tensor<4x32xi32>
   %empty_5 = tensor.empty() : tensor<4x32xi32>
-  %4 = linalg.fill ins(%c0_i32 : i32) outs(%empty_4 : tensor<4x32xi32>) -> tensor<4x32xi32>  
-  %5 = linalg.fill ins(%c1_i32 : i32) outs(%empty_5 : tensor<4x32xi32>) -> tensor<4x32xi32>  
+  %4 = linalg.fill ins(%c0_i32 : i32) outs(%empty_4 : tensor<4x32xi32>) -> tensor<4x32xi32>
+  %5 = linalg.fill ins(%c1_i32 : i32) outs(%empty_5 : tensor<4x32xi32>) -> tensor<4x32xi32>
   %empty_6 = tensor.empty() : tensor<4x32xi32>
   %6 = linalg.fill ins(%c0_i32 : i32) outs(%empty_6 : tensor<4x32xi32>) -> tensor<4x32xi32>
   %7 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%4, %5 : tensor<4x32xi32>, tensor<4x32xi32>) outs(%6 : tensor<4x32xi32>) -> tensor<4x32xi32>
-  hfusion.indirect_store ins(%3 : tensor<4x32xf32>, %7 : tensor<4x32xi32>) outs(%arg3 : memref<4x32xf32>)     
+  hfusion.indirect_store ins(%3 : tensor<4x32xf32>, %7 : tensor<4x32xi32>) outs(%arg3 : memref<4x32xf32>)
   return
 }
 
@@ -114,8 +114,8 @@ func.func @test_hfusion_index_put(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg
   %c1_i32 = arith.constant 1 : i32
   %empty_4 = tensor.empty() : tensor<2xi64>
   %empty_5 = tensor.empty() : tensor<2xi64>
-  %4 = linalg.fill ins(%c0_i32 : i32) outs(%empty_4 : tensor<2xi64>) -> tensor<2xi64>  
-  %5 = linalg.fill ins(%c1_i32 : i32) outs(%empty_5 : tensor<2xi64>) -> tensor<2xi64>  
+  %4 = linalg.fill ins(%c0_i32 : i32) outs(%empty_4 : tensor<2xi64>) -> tensor<2xi64>
+  %5 = linalg.fill ins(%c1_i32 : i32) outs(%empty_5 : tensor<2xi64>) -> tensor<2xi64>
   %empty_6 = tensor.empty() : tensor<2xi64>
   %6 = linalg.fill ins(%c0_i32 : i32) outs(%empty_6 : tensor<2xi64>) -> tensor<2xi64>
   %7 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%4, %5 : tensor<2xi64>, tensor<2xi64>) outs(%6 : tensor<2xi64>) -> tensor<2xi64>
@@ -138,15 +138,15 @@ func.func @test_hfusion_scatterT(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_
   %c1_i32 = arith.constant 1 : i32
   %empty_4 = tensor.empty() : tensor<4x32xi32>
   %empty_5 = tensor.empty() : tensor<4x32xi32>
-  %4 = linalg.fill ins(%c0_i32 : i32) outs(%empty_4 : tensor<4x32xi32>) -> tensor<4x32xi32>  
-  %5 = linalg.fill ins(%c1_i32 : i32) outs(%empty_5 : tensor<4x32xi32>) -> tensor<4x32xi32>  
+  %4 = linalg.fill ins(%c0_i32 : i32) outs(%empty_4 : tensor<4x32xi32>) -> tensor<4x32xi32>
+  %5 = linalg.fill ins(%c1_i32 : i32) outs(%empty_5 : tensor<4x32xi32>) -> tensor<4x32xi32>
   %empty_6 = tensor.empty() : tensor<4x32xi32>
   %6 = linalg.fill ins(%c0_i32 : i32) outs(%empty_6 : tensor<4x32xi32>) -> tensor<4x32xi32>
   %7 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%4, %5 : tensor<4x32xi32>, tensor<4x32xi32>) outs(%6 : tensor<4x32xi32>) -> tensor<4x32xi32>
   %c4_i32 = arith.constant 4 : i32
   %c32_i32 = arith.constant 32 : i32
   hfusion.scatterT ins(%arg3 : memref<4x32xf32>, %3 : tensor<4x32xf32>, %7 : tensor<4x32xi32>, %c32_i32 : i32, %c1_i32 : i32, [%c32_i32, %c1_i32 : i32, i32], [%c4_i32, %c32_i32 : i32, i32], [%c0_i32, %c0_i32 : i32, i32])
-  return 
+  return
 }
 
 // CHECK-LABEL: func @test_hfusion_embedding_gather(
@@ -155,8 +155,8 @@ func.func @test_hfusion_embedding_gather(%arg0: memref<?xi8> {hacc.arg_type = #h
   %c1_i32 = arith.constant 1 : i32
   %empty_4 = tensor.empty() : tensor<16x400xi32>
   %empty_5 = tensor.empty() : tensor<16x400xi32>
-  %4 = linalg.fill ins(%c0_i32 : i32) outs(%empty_4 : tensor<16x400xi32>) -> tensor<16x400xi32>  
-  %5 = linalg.fill ins(%c1_i32 : i32) outs(%empty_5 : tensor<16x400xi32>) -> tensor<16x400xi32>  
+  %4 = linalg.fill ins(%c0_i32 : i32) outs(%empty_4 : tensor<16x400xi32>) -> tensor<16x400xi32>
+  %5 = linalg.fill ins(%c1_i32 : i32) outs(%empty_5 : tensor<16x400xi32>) -> tensor<16x400xi32>
   %empty_6 = tensor.empty() : tensor<16x400xi32>
   %6 = linalg.fill ins(%c0_i32 : i32) outs(%empty_6 : tensor<16x400xi32>) -> tensor<16x400xi32>
   %7 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%4, %5 : tensor<16x400xi32>, tensor<16x400xi32>) outs(%6 : tensor<16x400xi32>) -> tensor<16x400xi32>
@@ -174,8 +174,8 @@ func.func @test_hfusion_gatherT(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_t
   %c1_i32 = arith.constant 1 : i32
   %empty_4 = tensor.empty() : tensor<2x2xi64>
   %empty_5 = tensor.empty() : tensor<2x2xi64>
-  %4 = linalg.fill ins(%c0_i32 : i32) outs(%empty_4 : tensor<2x2xi64>) -> tensor<2x2xi64>  
-  %5 = linalg.fill ins(%c1_i32 : i32) outs(%empty_5 : tensor<2x2xi64>) -> tensor<2x2xi64>  
+  %4 = linalg.fill ins(%c0_i32 : i32) outs(%empty_4 : tensor<2x2xi64>) -> tensor<2x2xi64>
+  %5 = linalg.fill ins(%c1_i32 : i32) outs(%empty_5 : tensor<2x2xi64>) -> tensor<2x2xi64>
   %empty_6 = tensor.empty() : tensor<2x2xi64>
   %6 = linalg.fill ins(%c0_i32 : i32) outs(%empty_6 : tensor<2x2xi64>) -> tensor<2x2xi64>
   %7 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%4, %5 : tensor<2x2xi64>, tensor<2x2xi64>) outs(%6 : tensor<2x2xi64>) -> tensor<2x2xi64>
@@ -194,7 +194,7 @@ func.func @test_hfusion_gatherT(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_t
 // The two linalg.generic ops should be split into two separate outlined functions
 // CHECK-LABEL: func @test_memref_copy_barrier_outlined_vf_0
 // CHECK: scf.for
-// CHECK-LABEL: func @test_memref_copy_barrier_outlined_vf_1  
+// CHECK-LABEL: func @test_memref_copy_barrier_outlined_vf_1
 // CHECK: scf.for
 // CHECK-LABEL: func @test_memref_copy_barrier
 // CHECK: call @test_memref_copy_barrier_outlined_vf_0

@@ -30,4 +30,3 @@ func.func @unordered_two_locks(
   hivm.hir.create_sync_block_lock from %arg1 {hivm.sync_block_lock_unordered} : from memref<?xi8> to memref<1xi64>
   return
 }
-

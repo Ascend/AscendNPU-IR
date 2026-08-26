@@ -133,7 +133,7 @@ struct PropagateConvertLayoutScfIfYieldDown
 
     if (failed(verifyIfWithElseAndResults(ifOp, rewriter, convertOp)))
       return failure();
-      
+
     if (!ifOp.thenBlock() || !ifOp.elseBlock()) {
       return rewriter.notifyMatchFailure(convertOp, "scf.if block is null");
     }

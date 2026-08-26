@@ -8,27 +8,27 @@
  * BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE. See LICENSE in the root of
  * the software repository for the full text of the License.
  */
- 
+
 #ifndef CATLASS_EPILOGUE_FUSION_VISITOR_IMPL_HPP
 #define CATLASS_EPILOGUE_FUSION_VISITOR_IMPL_HPP
- 
+
 #include "catlass/epilogue/fusion/visitor_impl_base.hpp"
 #include "catlass/layout/layout.hpp"
 #include "tla/int_tuple.hpp"
- 
+
 namespace Catlass::Epilogue::Fusion {
- 
+
 // 空回调（用于叶子节点）
 struct EmptyCallbacks {
     CATLASS_DEVICE void begin_epilogue() {}
     CATLASS_DEVICE void end_epilogue() {}
 };
- 
+
 template <class... Ops>
 struct VisitorImpl : VisitorImplBase<Ops...> {
     using VisitorImplBase<Ops...>::VisitorImplBase;
     using VisitorImplBase<Ops...>::ops;
- 
+
     // 为所有节点提供一个标准的空实现：按需可被覆盖
     template <class ProblemShape, class OpArgs>
     static Catlass::Status initialize_workspace(
@@ -36,23 +36,23 @@ struct VisitorImpl : VisitorImplBase<Ops...> {
     ) {
         return Catlass::Status::kSuccess;
     }
- 
+
     template <class CallbacksTuple>
     struct Callbacks {
         CallbacksTuple callbacks_tuple;
- 
+
         CATLASS_DEVICE
         Callbacks(CallbacksTuple&& cbs) : callbacks_tuple(static_cast<CallbacksTuple&&>(cbs)) {}
- 
+
         CATLASS_DEVICE void begin_epilogue() {
             tla::for_each(callbacks_tuple, [](auto& cb) { cb.begin_epilogue(); });
         }
- 
+
         CATLASS_DEVICE void end_epilogue() {
             tla::for_each(callbacks_tuple, [](auto& cb) { cb.end_epilogue(); });
         }
     };
- 
+
     template <class ArchTag, int... Is>
     CATLASS_DEVICE auto get_callbacks_impl(
         Arch::Resource<ArchTag>& resource,
@@ -67,7 +67,7 @@ struct VisitorImpl : VisitorImplBase<Ops...> {
         );
         return Callbacks<decltype(tuple_cbs)>(static_cast<decltype(tuple_cbs)&&>(tuple_cbs));
     }
- 
+
     template <class ArchTag>
     CATLASS_DEVICE auto get_callbacks(
         Arch::Resource<ArchTag>& resource,
@@ -80,7 +80,7 @@ struct VisitorImpl : VisitorImplBase<Ops...> {
         );
     }
 };
- 
+
 } // namespace Catlass::Epilogue::Fusion
- 
+
 #endif

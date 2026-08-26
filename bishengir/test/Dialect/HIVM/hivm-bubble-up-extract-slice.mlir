@@ -545,7 +545,7 @@ func.func @bubble_up_hivm_vbrc_dyn_0(%arg0: tensor<1x4xf32>, %offset0: index, %o
 // CHECK:         }
 func.func @bubble_up_hivm_vbrc_dyn_1(%arg0: tensor<1x4xf32>,%0 : tensor<?x4xf32>, %offset0: index, %offset1: index, %size0: index, %size1: index) -> tensor<?x?xf32> {
   %cst = arith.constant 0.000000e+00 : f32
-  
+
   %1 = hivm.hir.vbrc ins(%arg0 : tensor<1x4xf32>) outs(%0 : tensor<?x4xf32>) broadcast_dims = [0] -> tensor<?x4xf32>
   %extracted_slice = tensor.extract_slice %1[%offset0, %offset1] [%size0, %size1] [1,1] {to_be_bubbled_slice} : tensor<?x4xf32> to tensor<?x?xf32>
   return %extracted_slice : tensor<?x?xf32>
@@ -573,7 +573,7 @@ func.func @bubble_up_hivm_vbrc_dyn_2(%arg0: tensor<1xf32>,%offset0: index, %size
 // CHECK:         }
 func.func @bubble_up_hivm_vbrc_dyn_3(%arg0: tensor<1xf32>,%0 : tensor<?xf32>, %offset0: index, %size0: index) -> tensor<?xf32> {
     %cst = arith.constant 0.000000e+00 : f32
-    
+
     %35 = hivm.hir.vbrc ins(%arg0 : tensor<1xf32>) outs(%0 : tensor<?xf32>) broadcast_dims = [0] -> tensor<?xf32>
     %extracted_slice = tensor.extract_slice %35[%offset0] [%size0] [1] {to_be_bubbled_slice} : tensor<?xf32> to tensor<?xf32>
     return %extracted_slice : tensor<?xf32>
@@ -844,7 +844,7 @@ func.func @bubble_up_hivm_reduce(%arg0: tensor<5x4xf32>) -> tensor<2xf32> {
 // CHECK:        }
 func.func @bubble_up_varange(%arg0 : tensor<128xi32>) -> tensor<64xi32> {
     %c0 = arith.constant 0 : index
-    %c1 = arith.constant 1 : index 
+    %c1 = arith.constant 1 : index
     %14 = hivm.hir.varange offset[%c0] strides[%c1] outs(%arg0 : tensor<128xi32>) -> tensor<128xi32>
     %extracted_slice = tensor.extract_slice %14[64] [64] [1] {to_be_bubbled_slice} : tensor<128xi32> to tensor<64xi32>
     return %extracted_slice : tensor<64xi32>
@@ -1453,7 +1453,7 @@ func.func @bubble_up_parallel_dim(%arg0 : memref<?xf32>, %offset : index) {
     %extracted_slice = tensor.extract_slice %1[%0, 0] [32, 32] [1, 1] {to_be_bubbled_slice} : tensor<64x32xf32> to tensor<32x32xf32>
     annotation.mark %extracted_slice : tensor<32x32xf32>
   } {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
-  return 
+  return
 }
 
 // -----

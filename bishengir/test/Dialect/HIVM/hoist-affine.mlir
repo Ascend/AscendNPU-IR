@@ -289,7 +289,7 @@ func.func @test_hoistaffine_7(%arg0: tensor<512xf32>, %arg1: memref<256xf32>) at
     %2 = affine.apply affine_map<()[s0] -> (s0 * 256)>()[%arg2]
     %extracted_slice = tensor.extract_slice %arg0[%2] [256] [1] {to_be_bubbled_slice} : tensor<512xf32> to tensor<256xf32>
     %3 = scf.for %arg3 = %c0 to %c8 step %c1 iter_args(%arg4 = %extracted_slice) -> (tensor<256xf32>) {
-      %4 = affine.apply affine_map<()[s0] -> (s0 * 32)>()[%arg3] 
+      %4 = affine.apply affine_map<()[s0] -> (s0 * 32)>()[%arg3]
       %5 = tensor.empty() : tensor<512xf32>
       %inserted_slice = tensor.insert_slice %arg4 into %5[%2] [256] [1] : tensor<256xf32> into tensor<512xf32>
       %6 = affine.apply affine_map<()[s0, s1] -> (s0 * 32 + s1 * 64)>()[%arg2, %arg3]

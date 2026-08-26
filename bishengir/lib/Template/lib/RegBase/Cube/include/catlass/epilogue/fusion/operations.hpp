@@ -8,14 +8,14 @@
  * BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE. See LICENSE in the root of
  * the software repository for the full text of the License.
  */
- 
+
 #ifndef CATLASS_EPILOGUE_FUSION_OPERATIONS_HPP
 #define CATLASS_EPILOGUE_FUSION_OPERATIONS_HPP
- 
+
 #include "catlass/catlass.hpp"
- 
+
 namespace Catlass::Epilogue::Fusion {
- 
+
 // 一元
 template <typename T>
 struct Exp {
@@ -27,8 +27,8 @@ struct Exp {
         AscendC::Exp(dst, src, compute_length);
     }
 };
- 
- 
+
+
 template <typename T>
 struct Relu {
     CATLASS_DEVICE
@@ -40,7 +40,7 @@ struct Relu {
         AscendC::Relu(dst, src, compute_length);
     }
 };
- 
+
 template <typename T>
 struct Rsqrt {
     CATLASS_DEVICE
@@ -52,11 +52,11 @@ struct Rsqrt {
         AscendC::Rsqrt(dst, src, compute_length);
     }
 };
- 
+
 template <typename T>
 struct LeakyRelu {
     T scalar;
- 
+
     CATLASS_DEVICE
     void operator()(
         AscendC::LocalTensor<T>& dst,
@@ -66,7 +66,7 @@ struct LeakyRelu {
         AscendC::LeakyRelu(dst, src, scalar, compute_length);
     }
 };
- 
+
 template <
     typename T,
     typename S,
@@ -83,7 +83,7 @@ struct Cast {
         AscendC::Cast(dst, src, RoundMode, compute_length);
     }
 };
- 
+
 template <typename T>
 struct Silu {
     CATLASS_DEVICE
@@ -94,7 +94,7 @@ struct Silu {
         AscendC::Silu(dst, src, compute_length);
     }
 };
- 
+
 template <typename T>
 struct Sigmoid {
     CATLASS_DEVICE
@@ -111,7 +111,7 @@ struct Sigmoid {
         AscendC::Divs(dst, T(1), dst, compute_length);
     }
 };
- 
+
 // 二元
 template <typename T>
 struct Mul {
@@ -131,11 +131,11 @@ struct Mul {
         }
     }
 };
- 
+
 template <typename T>
 struct Muls {
     T scalarValue;
-    
+
     CATLASS_DEVICE
     void operator()(
         AscendC::LocalTensor<T>& dst,
@@ -145,7 +145,7 @@ struct Muls {
         AscendC::Muls(dst, src, scalarValue, compute_length);
     }
 };
- 
+
 template <typename T>
 struct Add {
     template <typename... Inputs>
@@ -164,11 +164,11 @@ struct Add {
         }
     }
 };
- 
+
 template <typename T>
 struct Adds {
     T scalarValue;
-    
+
     CATLASS_DEVICE
     void operator()(
         AscendC::LocalTensor<T>& dst,
@@ -178,7 +178,7 @@ struct Adds {
         AscendC::Adds(dst, src, scalarValue, compute_length);
     }
 };
- 
+
 template <typename T>
 struct Sub {
     template <typename... Inputs>
@@ -197,7 +197,7 @@ struct Sub {
         }
     }
 };
- 
+
 template <typename T>
 struct Div {
     template <typename... Inputs>
@@ -216,7 +216,7 @@ struct Div {
         }
     }
 };
- 
+
 template <typename T>
 struct Max {
     template <typename... Inputs>
@@ -233,9 +233,9 @@ struct Max {
             AscendC::PipeBarrier<PIPE_V>();
             operator()(dst, compute_length, dst, rest...);
         }
-    }   
+    }
 };
- 
+
 template <typename T>
 struct Min {
     template <typename... Inputs>
@@ -254,7 +254,7 @@ struct Min {
         }
     }
 };
- 
+
 //其他类op
 template <typename T>
 struct AddRelu {
@@ -270,7 +270,7 @@ struct AddRelu {
         AscendC::Relu(dst, dst, compute_length);
     }
 };
- 
+
 #if defined(CATLASS_ARCH_A5_ENABLED)
 //Prelu
 template <typename T>
@@ -286,7 +286,7 @@ struct Prelu {
     }
 };
 #endif
- 
+
 } // namespace Catlass::Epilogue::Fusion
- 
+
 #endif

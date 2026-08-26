@@ -21,7 +21,7 @@ func.func @device_func1() attributes {hacc.function_kind = #hacc.function_kind<D
 }
 
 //===----------------------------------------------------------------------===//
-// Test HACC_KernelArgTypeAttr 
+// Test HACC_KernelArgTypeAttr
 //===----------------------------------------------------------------------===//
 
 func.func @kernel_arg_type() {

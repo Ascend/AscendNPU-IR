@@ -1,6 +1,6 @@
 // RUN: bishengir-opt -split-input-file  %s -loop-restructure-arange-optimization | FileCheck %s
 
-// This checks only the major ops, not all the new ops that are created as this pass basically clones all the ops in kernel 
+// This checks only the major ops, not all the new ops that are created as this pass basically clones all the ops in kernel
 
 // CHECK-LABEL: tt.func public @triton_unk_fused_cat_12
 
@@ -303,4 +303,4 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
     }
     tt.return
   }
-} 
+}

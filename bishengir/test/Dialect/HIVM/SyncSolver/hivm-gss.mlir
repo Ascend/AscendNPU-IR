@@ -103,7 +103,7 @@ module {
         }
       }
       // CHECK: hivm.hir.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
-      
+
       // CHECK: hivm.hir.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
       // CHECK-NEXT: hivm.hir.load
       hivm.hir.load ins(%arg1 : memref<16x16x16xf16, #hivm.address_space<gm>>) outs(%0 : memref<16x16x16xf16, #hivm.address_space<ub>>)
@@ -863,7 +863,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589"> } {
     // CHECK-NEXT: hivm.hir.set_flag[<PIPE_FIX>, <PIPE_MTE1>, <EVENT_ID0>]
 
     %7 = hivm.hir.pointer_cast(%c1024_i64) : memref<1x1x16x16xf32, #hivm.address_space<cc>>
-    
+
     // CHECK: hivm.hir.wait_flag[<PIPE_FIX>, <PIPE_MTE1>, <EVENT_ID0>]
     // CHECK-NEXT: hivm.hir.mmadL1
     hivm.hir.mmadL1 {already_set_real_mkn, fixpipe_for_result_already_inserted = true, normalized_in_L0C} ins(%6, %3, %true, %c16, %c16, %c16 : memref<2x1x16x8xf32, #hivm.address_space<cbuf>>, memref<2x1x16x8xf32, #hivm.address_space<cbuf>>, i1, index, index, index) outs(%7 : memref<1x1x16x16xf32, #hivm.address_space<cc>>)

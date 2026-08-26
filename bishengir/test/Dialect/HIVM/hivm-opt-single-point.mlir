@@ -108,7 +108,7 @@ func.func @test_one_write(%arg0: memref<24x32x4xf32, #hivm.address_space<gm>>, %
 // CHECK-LABEL: func.func @test_one_read
 // CHECK: memref.load
 // CHECK: memref.store
-func.func @test_one_read(%arg0: memref<24x32x4xf32, #hivm.address_space<gm>>, %arg1: index, %arg2: index) 
+func.func @test_one_read(%arg0: memref<24x32x4xf32, #hivm.address_space<gm>>, %arg1: index, %arg2: index)
 attributes {hacc.no_io_alias} {
   %collapse_shape = memref.collapse_shape %arg0 [[0, 1], [2]] : memref<24x32x4xf32, #hivm.address_space<gm>> into memref<768x4xf32, #hivm.address_space<gm>>
   %subview = memref.subview %collapse_shape[%arg1, %arg2] [1, 1] [1, 1] : memref<768x4xf32, #hivm.address_space<gm>> to memref<1x1xf32, strided<[4, 1], offset: ?>, #hivm.address_space<gm>>
@@ -127,7 +127,7 @@ attributes {hacc.no_io_alias} {
 // CHECK: memref.store
 // CHECK: memref.load
 // CHECK: memref.store
-func.func @test_many_read(%arg0: memref<24x32x4xf32, #hivm.address_space<gm>>, %arg1: index, %arg2: index) 
+func.func @test_many_read(%arg0: memref<24x32x4xf32, #hivm.address_space<gm>>, %arg1: index, %arg2: index)
 attributes {hacc.no_io_alias} {
   %collapse_shape = memref.collapse_shape %arg0 [[0, 1], [2]] : memref<24x32x4xf32, #hivm.address_space<gm>> into memref<768x4xf32, #hivm.address_space<gm>>
   %subview = memref.subview %collapse_shape[%arg1, %arg2] [1, 1] [1, 1] : memref<768x4xf32, #hivm.address_space<gm>> to memref<1x1xf32, strided<[4, 1], offset: ?>, #hivm.address_space<gm>>

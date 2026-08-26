@@ -42,7 +42,7 @@ attributes {hacc.function_kind = #hacc.function_kind<DEVICE>} {
 // CHECK: %[[VAL_10:.*]] = hivm.hir.store ins(%[[VAL_9]] : tensor<8x?xf32>) outs(%{{.*}} : tensor<8x?xf32>) -> tensor<8x?xf32>
 // CHECK: return %[[VAL_10]] : tensor<8x?xf32>
 // CHECK: }
-func.func @concat_store_dynamic(%arg0 : tensor<8x?xf32>, %arg1 : tensor<8x?xf32>, %arg2 : tensor<8x?xf32>) -> tensor<8x?xf32> 
+func.func @concat_store_dynamic(%arg0 : tensor<8x?xf32>, %arg1 : tensor<8x?xf32>, %arg2 : tensor<8x?xf32>) -> tensor<8x?xf32>
 attributes {hacc.function_kind = #hacc.function_kind<DEVICE>} {
   %c1 = arith.constant 1 : index
   %dynsize = tensor.dim %arg2 , %c1 : tensor<8x?xf32>

@@ -930,7 +930,7 @@ module {
 // CHECK: scf.if
 // CHECK: hivm.hir.store
 // CHECK: limit_sub_block_id0
-module attributes {hacc.target = #hacc.target<"Ascend910_9579">, hivm.module_core_type = #hivm.module_core_type<MIX>} { 
+module attributes {hacc.target = #hacc.target<"Ascend910_9579">, hivm.module_core_type = #hivm.module_core_type<MIX>} {
   func.func @check_column_split_aic(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<?xi8>, %arg2: memref<?xi32>, %arg3: memref<?xi8>, %arg4: memref<?xi8>, %arg5: i32, %arg6: i32, %arg7: i32) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIC>, hivm.part_of_mix, hivm.vf_mode = #hivm.vf_mode<SIMD>, mix_mode = "mix", parallel_mode = "simd"} {
     %0 = tensor.empty() : tensor<16x16xi32>
     %alloc = memref.alloc() : memref<16x16xi32, #hivm.address_space<ub>>
@@ -3162,7 +3162,7 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
 }
 
 // -----
- 	 
+
 // CHECK-LABEL:   func.func @indirect_load_dual_store_mix_aiv(
 // CHECK:           scf.for
 // CHECK:             hivm.hir.indirect_load ins(%{{.*}} : memref<?xf32>, %{{.*}} : tensor<8xi64>, %{{.*}} : tensor<8xi8>, %{{.*}} : tensor<8xf32>) outs(%{{.*}} : tensor<8xf32>) {hivm.vf_mode = #hivm.vf_mode<SIMT>}

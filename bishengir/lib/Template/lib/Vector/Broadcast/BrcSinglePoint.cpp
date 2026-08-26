@@ -34,7 +34,7 @@ __aiv__ __attribute__((always_inline)) void
 brc_scalar_core_1d(T src_val, __ubuf__ T *dst_ptr, int64_t count) {
   static_assert((sizeof(T) == 2 || sizeof(T) == 4 || sizeof(T) == 8) &&
                 "Brc_scalar_core_1d do not support this data type");
-  
+
   if constexpr (sizeof(T) == 2 || sizeof(T) == 4) {
     INTRINSIC_NO_ARGS(set_mask_count);
     INTRINSIC(set_vector_mask, 0x0, count); // in counter mode

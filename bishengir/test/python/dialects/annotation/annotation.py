@@ -26,7 +26,7 @@ module {
       %2 = arith.addf %1, %arg3 : f32
       annotation.mark %2 {attr = 2 : i32} : f32
       return %2 : f32
-  }                                               
+  }
 }
     """
         )

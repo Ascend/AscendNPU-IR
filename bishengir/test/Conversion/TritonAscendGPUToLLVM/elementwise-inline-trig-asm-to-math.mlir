@@ -38,4 +38,4 @@ module attributes {"ttg.enable-bishengir-simt-optimization" = 900101 : i32, "ttg
 
         // CHECK-NOT: %{{.*}} = tt.elementwise_inline_asm
     }
-}
+}

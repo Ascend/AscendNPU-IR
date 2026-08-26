@@ -74,7 +74,7 @@ bool hasSeedOp(Operation *op) {
   op->walk([&](Operation *innerOp) {
     if (isSimtSeedOp(innerOp)) {
       foundSeedOp = true;
-      return WalkResult::interrupt(); 
+      return WalkResult::interrupt();
     }
     return WalkResult::advance();
   });

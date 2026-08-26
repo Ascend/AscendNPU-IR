@@ -89,7 +89,7 @@ struct SplitkReduceAdd {
                 for (uint32_t i = 0; i < splitkFactor; ++i) {
                     AscendC::DataCopyExtParams dataCopyParams(1, actualTileLen * sizeof(ElementAccumulator), 0, 0, 0);
                     AscendC::DataCopyPad(
-                        accumulatorBuffer[bufferIndex][i * RoundUp(actualTileLen, ELE_NUM_ALIGN)], 
+                        accumulatorBuffer[bufferIndex][i * RoundUp(actualTileLen, ELE_NUM_ALIGN)],
                         src[srcOffset + i * elementCount], dataCopyParams, padParams);
                 }
             }
@@ -129,7 +129,7 @@ struct SplitkReduceAdd {
 
         for (uint32_t i = 0; i < STAGES; ++i) {
             AscendC::WaitFlag<AscendCBisheng::HardEvent::MTE3_MTE2>(eventIds[i]);
-        }            
+        }
     }
 
 private:
