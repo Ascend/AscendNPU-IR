@@ -1,4 +1,5 @@
 // RUN: bishengir-opt --hacc-append-device-spec="target=Ascend910_9579" --vf-fusion="fusion-mode=max-parallel" --split-input-file %s | FileCheck %s
+// RUN: bishengir-opt --hacc-append-device-spec="target=Ascend910_9579" --vf-fusion="fusion-mode=max-parallel enable-predicate-sink-across-sync=false" --split-input-file %s | FileCheck %s --check-prefix=NO-SINK
 
 // Stage 0 special pattern: predicate (producer) + select (consumer) co-location.
 // All i1-producing ops (compare, isinf, isnan, isfinite) must be fused into the
@@ -81,6 +82,56 @@ module {
     %16 = hfusion.select ins(%15, %broadcasted_0, %12 : tensor<8x16xi1>, tensor<8x16xf32>, tensor<8x16xf32>) outs(%7 : tensor<8x16xf32>) -> tensor<8x16xf32>
     %reinterpret_cast_1 = memref.reinterpret_cast %arg3 to offset: [0], sizes: [8, 16], strides: [16, 1] : memref<?xf32> to memref<8x16xf32, strided<[16, 1]>>
     bufferization.materialize_in_destination %16 in writable %reinterpret_cast_1 : (tensor<8x16xf32>, memref<8x16xf32, strided<[16, 1]>>) -> ()
+    return
+  }
+}
+
+// -----
+
+// A SyncBlockSet between compare and its linalg.select must not force the
+// predicate through UB. The pure compare -> expand_shape predicate chain can
+// be sunk to the select and outlined into the same VF.
+
+// CHECK-LABEL: func.func private @compare_linalg_select_across_sync_kernel_fused_0(
+// CHECK: hfusion.compare
+// CHECK: tensor.expand_shape
+// CHECK: linalg.select
+// CHECK: return
+
+// CHECK-LABEL: func.func @compare_linalg_select_across_sync_kernel(
+// CHECK: hivm.hir.sync_block_set
+// CHECK: call @compare_linalg_select_across_sync_kernel_fused_0
+
+// NO-SINK-LABEL: func.func private @compare_linalg_select_across_sync_kernel_fused_0(
+// NO-SINK: hfusion.compare
+// NO-SINK-NOT: linalg.select
+// NO-SINK: return
+
+// NO-SINK-LABEL: func.func private @compare_linalg_select_across_sync_kernel_fused_1(
+// NO-SINK-NOT: hfusion.compare
+// NO-SINK: linalg.select
+// NO-SINK: return
+
+// NO-SINK-LABEL: func.func @compare_linalg_select_across_sync_kernel(
+// NO-SINK: call @compare_linalg_select_across_sync_kernel_fused_0
+// NO-SINK: hivm.hir.sync_block_set
+// NO-SINK: call @compare_linalg_select_across_sync_kernel_fused_1
+
+module {
+  func.func @compare_linalg_select_across_sync_kernel(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf32> {tt.tensor_kind = 0 : i32}, %arg3: memref<?xf32> {tt.tensor_kind = 1 : i32}, %arg4: i32, %arg5: i32, %arg6: i32, %arg7: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"} {
+    %cst = arith.constant 1.000000e+00 : f32
+    %cst_0 = arith.constant 0.000000e+00 : f32
+    %c0_i32 = arith.constant 0 : i32
+    %0 = tensor.empty() : tensor<32xi32>
+    %1 = tensor.empty() : tensor<32xi1>
+    %2 = tensor.empty() : tensor<32x1xf32>
+    %3 = linalg.fill ins(%arg4 : i32) outs(%0 : tensor<32xi32>) -> tensor<32xi32>
+    %4 = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins(%3, %c0_i32 : tensor<32xi32>, i32) outs(%1 : tensor<32xi1>) -> tensor<32xi1>
+    hivm.hir.sync_block_set[<VECTOR>, <PIPE_V>, <PIPE_FIX>] flag = 3
+    %expanded = tensor.expand_shape %4 [[0, 1]] output_shape [32, 1] : tensor<32xi1> into tensor<32x1xi1>
+    %5 = linalg.select ins(%expanded, %cst, %cst_0 : tensor<32x1xi1>, f32, f32) outs(%2 : tensor<32x1xf32>) -> tensor<32x1xf32>
+    %reinterpret_cast = memref.reinterpret_cast %arg3 to offset: [0], sizes: [32, 1], strides: [1, 1] : memref<?xf32> to memref<32x1xf32, strided<[1, 1]>>
+    bufferization.materialize_in_destination %5 in writable %reinterpret_cast : (tensor<32x1xf32>, memref<32x1xf32, strided<[1, 1]>>) -> ()
     return
   }
 }

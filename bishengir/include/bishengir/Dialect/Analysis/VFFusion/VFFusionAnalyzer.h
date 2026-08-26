@@ -343,6 +343,9 @@ private:
   bool useNarrowingCastInConsumer(const int producerIndex,
                                   const int consumerIndex);
   bool areFusibleOps(const int producerIndex, const int consumerIndex);
+  bool canSinkPredicateGroupAcrossSync(int producerGroupId,
+                                       int consumerGroupId,
+                                       Operation *consumerOp);
   bool fuseProducerConsumerImpl(Block &block);
   bool fuseSpecialPatterns(Block &block);
   bool fusePredicateSelectPattern(Block &block);
