@@ -270,7 +270,8 @@ protected:
   ///
   /// This DSU is value-level (over \c valueToDimIndicesIndex_ ids) and is
   /// intentionally separate from dimension-level DSUs (\c equivalentDsu_ and
-  /// \c structuralDsu_).
+  /// \c structuralDsu_). Skips merging when either value is a function entry
+  /// block argument with unbounded rank-1 memref type (\c memref<?xT>).
   void joinValueGroup(Value a, Value b);
 
   /// Get the value-group DSU representative index for \p v.
