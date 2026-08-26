@@ -87,9 +87,6 @@ static bool isReductionOp(Operation *innerOp, Operation *outterOp) {
 }
 
 static bool isInFusionWhiteList(Operation *op) {
-  if ((isa<tensor::ExtractOp>(op) || isa<tensor::ExtractSliceOp>(op)) &&
-      op->hasAttr("DuplicateTensorExtractForCube::visitedLabel"))
-    return false;
   if (isa<linalg::TransposeOp>(op) && !isVsstbPatternTransposeOp(op))
     return false;
   return isReshapeOp(op) || isa<tensor::ExtractSliceOp>(op) ||
@@ -348,12 +345,43 @@ bool MaxParallelAnalyzer::useNarrowingCastInConsumer(const int producerIndex,
 // insert_slice as producer is always rejected; as consumer it is only
 // allowed in the bridge case, where the producer also feeds a later
 // linalg consumer so fusing the slice connects the two linalg ops.
+//
+// Multi-buffer write-back exemption: when insert_slice writes back into a
+// double-buffered tensor (dest leading dim >= 2) and the producer's result
+// is solely consumed by this insert_slice, allow fusion so the fused VF
+// directly operates on the multi-buffered tensor.  This prevents the
+// outliner from producing a single-buffered VF signature that would later
+// require an explicit copy_ubuf_to_ubuf (MOV_UB_TO_UB) to fill the
+// ping-pong slot.
 static bool isInsertSliceFusionAllowed(Operation *producerOp,
                                        Operation *consumerOp) {
   if (isa<tensor::InsertSliceOp>(producerOp))
     return false;
   if (!isa<tensor::InsertSliceOp>(consumerOp))
     return true;
+
+  // Multi-buffer write-back: when insert_slice writes back into a
+  // multi-buffered tensor whose dest is a loop-carried iter_arg
+  // (BlockArgument) with a leading dimension >= 2, and the producer
+  // result is the sole input to this insert_slice, allow fusion.
+  // This keeps the 2x prefix in the VF signature and avoids later
+  // copy_ubuf_to_ubuf (MOV_UB_TO_UB) to fill the ping-pong slot.
+  auto insertOp = cast<tensor::InsertSliceOp>(consumerOp);
+  Value dest = insertOp.getDest();
+  if (auto blockArg = dyn_cast<BlockArgument>(dest)) {
+    if (auto destType = dyn_cast<RankedTensorType>(dest.getType())) {
+      if (!destType.getShape().empty() && destType.getShape()[0] >= 2) {
+        bool soleConsumer =
+            llvm::all_of(producerOp->getResults(), [&](Value res) {
+              return res.hasOneUse() && *res.getUsers().begin() == consumerOp;
+            });
+        if (soleConsumer)
+          return true;
+      }
+    }
+  }
+
+  // Bridge case: producer also feeds a later linalg consumer.
   for (Operation *user : producerOp->getUsers()) {
     if (user == consumerOp)
       continue;
@@ -917,7 +945,8 @@ bool MaxParallelAnalyzer::fusePredicateSelectPattern(Block &block) {
     if (producerGroup.empty())
       continue;
 
-    LDBG("Special pattern (predicate+select): producer group " << producerGroupId);
+    LDBG("Special pattern (predicate+select): producer group "
+         << producerGroupId);
 
     // Find nearest select consumer using cache (O(1) lookup).
     int consumerGroupId = -1;
@@ -940,8 +969,7 @@ bool MaxParallelAnalyzer::fusePredicateSelectPattern(Block &block) {
           continue;
         int foundGroupMaxIndex = static_cast<int>(
             dsu.getMaxIndexUnion(static_cast<int>(opToIndex[consumerOp])));
-        if (consumerGroupId < 0 ||
-            foundGroupMaxIndex < consumerGroupMinIndex) {
+        if (consumerGroupId < 0 || foundGroupMaxIndex < consumerGroupMinIndex) {
           consumerGroupId = foundGroupId;
           consumerGroupMinIndex = foundGroupMaxIndex;
         }
@@ -952,13 +980,12 @@ bool MaxParallelAnalyzer::fusePredicateSelectPattern(Block &block) {
     if (AllFusedGroupBlocks[consumerGroupId].empty())
       continue;
 
-    LDBG("Special pattern: group " << producerGroupId
-           << " -> consumer group " << consumerGroupId);
+    LDBG("Special pattern: group " << producerGroupId << " -> consumer group "
+                                   << consumerGroupId);
     auto &consumerGroup = AllFusedGroupBlocks[consumerGroupId];
     auto *producerOp = *producerGroup.begin();
     auto *consumerOp = *consumerGroup.begin();
-    if (!opToIndex.contains(producerOp) ||
-        !opToIndex.contains(consumerOp))
+    if (!opToIndex.contains(producerOp) || !opToIndex.contains(consumerOp))
       continue;
     int producerIndex = static_cast<int>(opToIndex[producerOp]);
     int consumerIndex = static_cast<int>(opToIndex[consumerOp]);
@@ -982,8 +1009,8 @@ bool MaxParallelAnalyzer::fusePredicateSelectPattern(Block &block) {
       // worklist so it can find its own select consumers.
       if (hasPredicate[consumerGroupId])
         worklist.insert(consumerGroupId);
-      LDBG("Special pattern: group " << producerGroupId
-             << " fused with group " << consumerGroupId);
+      LDBG("Special pattern: group " << producerGroupId << " fused with group "
+                                     << consumerGroupId);
     }
   }
   return hasFused;
@@ -1141,8 +1168,8 @@ LogicalResult MaxParallelAnalyzer::fuseImpl(Block &block) {
   stage = 2;
   if (fuseIOBoundGroupsWithNearestConsumer())
     LDBG("=== Phase 2: find IO bound group to be merged ===");
-  stage = 3; 
-  if (fuseShapeBoundGroupsWithNearestConsumer()) 
+  stage = 3;
+  if (fuseShapeBoundGroupsWithNearestConsumer())
     LDBG("=== Phase 3: find small shape group to be merged ===");
   printValidGroupCount();
   return success();
