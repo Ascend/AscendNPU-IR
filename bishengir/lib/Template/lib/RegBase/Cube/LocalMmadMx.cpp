@@ -65,6 +65,11 @@ CATLASS_DEVICE inline uint32_t getMxFormatKFactor(HIVMMatmulDataformat format) {
   return isFp4Format(format) ? 2 : 1;
 }
 
+CATLASS_DEVICE inline uint32_t toMxStorageK(uint32_t logicalK,
+                                            HIVMMatmulDataformat format) {
+  return isFp4Format(format) ? CeilDiv<2>(logicalK) : logicalK;
+}
+
 template <class ElementAMx, class ArchTag, class LayoutTagL1A,
           class LayoutTagL0A, class TensorMxScale>
 CATLASS_DEVICE void copyTransposedAInTypedFormat(
@@ -608,12 +613,15 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
     // Locate the current tile on L0A
     auto l0ATile =
         l0ATensor[pingPongId * L0A_PINGPONG_BUF_SIZE / sizeof(ElementA)];
+    const uint32_t kL0AStorageActual = toMxStorageK(kL0Actual, lhsFormat);
     auto layoutAInL0 =
-        tla::MakeLayout<ElementA, LayoutTagL0A>(actualM, kL0Actual);
+        tla::MakeLayout<ElementA, LayoutTagL0A>(actualM, kL0AStorageActual);
     auto tensorL0A = tla::MakeTensor(l0ATile, layoutAInL0, Arch::PositionL0A{});
     // Locate the current tile of matrix A on L1
-    auto tensorTileL1A = GetTile(tensorL1A, tla::MakeCoord(0, kL0Idx * l0K),
-                                 tla::MakeShape(actualM, kL0Actual));
+    auto tensorTileL1A = GetTile(
+        tensorL1A,
+        tla::MakeCoord(0, toMxStorageK(kL0Idx * l0K, lhsFormat)),
+        tla::MakeShape(actualM, kL0AStorageActual));
     // Locate the current tile of matrix mxScaleA on L1
     auto tensorTileL1MxScaleA = GetTile(
         tensorL1MxScaleA, tla::MakeCoord(0, kL0Idx * l0K / MX_SCALE_GROUP_NUM),
@@ -658,11 +666,14 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
     // Locate the current tile on L0B
     auto l0BTile =
         l0BTensor[pingPongId * L0B_PINGPONG_BUF_SIZE / sizeof(ElementB)];
+    const uint32_t kL0BStorageActual = toMxStorageK(kL0Actual, rhsFormat);
     auto layoutBInL0 =
-        tla::MakeLayout<ElementB, LayoutTagL0B>(kL0Actual, actualN);
+        tla::MakeLayout<ElementB, LayoutTagL0B>(kL0BStorageActual, actualN);
     auto tensorL0B = tla::MakeTensor(l0BTile, layoutBInL0, Arch::PositionL0B{});
-    auto tensorTileL1B = GetTile(tensorL1B, tla::MakeCoord(kL0Idx * l0K, 0),
-                                 tla::MakeShape(kL0Actual, actualN));
+    auto tensorTileL1B = GetTile(
+        tensorL1B,
+        tla::MakeCoord(toMxStorageK(kL0Idx * l0K, rhsFormat), 0),
+        tla::MakeShape(kL0BStorageActual, actualN));
     auto tensorTileL1MxScaleB = GetTile(
         tensorL1MxScaleB, tla::MakeCoord(kL0Idx * l0K / MX_SCALE_GROUP_NUM, 0),
         tla::MakeShape(CeilDiv<MX_SCALE_GROUP_NUM>(kL0Actual), actualN));
