@@ -23,6 +23,7 @@
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
@@ -68,6 +69,10 @@ private:
   propagateUpReinterpretCast(memref::ReinterpretCastOp castOp,
                              UnrealizedConversionCastOp propagateOp,
                              PatternRewriter &rewriter) const;
+
+  LogicalResult propagateUpSelect(arith::SelectOp selectOp,
+                                  UnrealizedConversionCastOp propagateOp,
+                                  PatternRewriter &rewriter) const;
 };
 
 /// Propagate sliced shape requirements down to memref users.
