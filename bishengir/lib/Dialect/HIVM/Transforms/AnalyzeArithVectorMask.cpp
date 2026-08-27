@@ -20,6 +20,7 @@
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/ErrorHandling.h"
 #include <cassert>
 
@@ -176,7 +177,17 @@ void ArithVectorMaskAnalysisPass::runOnOperation() {
   // them but should create a new mask with PgePattern::ALL, so here we erase
   // the reachedMaskOpsIdx. After this stage, all utils::reachedMaskOpsIdx
   // markOp has only one element.
+  SmallVector<annotation::MarkOp> reachedMaskMarks;
   Func.walk([&](annotation::MarkOp markOp) {
+    if (markOp.isAnnotatedByStaticAttr(utils::reachedMaskOpsIdx))
+      reachedMaskMarks.push_back(markOp);
+  });
+
+  // Process marks on a use-def chain from use to def. This relies on:
+  // 1. Marks being inserted immediately after the marked op.
+  // 2. SSA dependencies not crossing blocks under MLIR region barrier ops.
+  DominanceInfo domInfo;
+  for (annotation::MarkOp markOp : llvm::reverse(reachedMaskMarks)) {
     if (markOp.isAnnotatedByStaticAttr(utils::reachedMaskOpsIdx)) {
       auto markedIdxArray =
           markOp->template getAttrOfType<ArrayAttr>(utils::reachedMaskOpsIdx)
@@ -184,7 +195,6 @@ void ArithVectorMaskAnalysisPass::runOnOperation() {
       if (markedIdxArray.size() == 1) {
         auto maskOpMark = maskOpMarkIdx.find(
             dyn_cast<IntegerAttr>(markedIdxArray[0]).getInt());
-        DominanceInfo domInfo;
         if (domInfo.properlyDominates(
                 markOp.getOperation(), // reached_mask_ops_idx
                 maskOpMark->second)) { // mask_op_idx
@@ -255,7 +265,7 @@ void ArithVectorMaskAnalysisPass::runOnOperation() {
         rewriter.eraseOp(markOp);
       }
     }
-  });
+  }
 }
 
 std::unique_ptr<Pass> hivm::createArithVectorMaskAnalysisPass() {
