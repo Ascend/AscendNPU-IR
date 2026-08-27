@@ -1473,7 +1473,7 @@ struct ElementwiseInlineAsmOpConversion
                   ConversionPatternRewriter &rewriter) const override {
     Location loc = op->getLoc();
 
-    // We check if its a elementwise trig operation 
+    // We check if its a elementwise trig operation
     // which we replace with the equivalent from the math dialect
 
     AsmOperation asmCode = stringToAsmOp(op.getAsmString().str());

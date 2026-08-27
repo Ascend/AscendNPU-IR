@@ -50,7 +50,7 @@ public:
 
   /// Register the options as global LLVM command line options.
   static void registerCLOptions();
-  
+
   /// Create a new config with the default set from the CL options.
   static BiShengIRCompileMainConfig createFromCLOptions();
   static BiShengIRCompileMainConfig createFromCLOptions(bool regbase);
@@ -72,7 +72,7 @@ public:
   bool isUBAwareVfFusion() const {
     return getVfFusionMode() == mlir::analysis::FusionMode::UBAwareOp;
   }
-  
+
   BiShengIRCompileMainConfig &updateMaxInputParamsSizeInBytes(size_t size) {
     deviceMaxInputParamSizeInBytesFlag =
         std::max(size, deviceMaxInputParamSizeInBytesFlag);

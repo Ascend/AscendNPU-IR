@@ -9,7 +9,7 @@ module attributes {ttg.global_scratch_memory_alignment = 1 : i32, ttg.global_scr
     // CHECK-DAG: [[BLOCKED2:#.*]] = #ttg.blocked<{sizePerThread = [1, 4], threadsPerWarp = [4, 8], warpsPerCTA = [16, 1], order = [1, 0]}>
     // CHECK-NOT: tt.reshape
     // CHECK: %[[C0:.+]] = ttg.convert_layout [[CST:%.*]] : tensor<128x32xf32, [[BLOCKED]]> -> tensor<128x32xf32, [[BLOCKED2]]>
-    // CHECK-NEXT: %[[REDUCE:.*]] = "tt.reduce"(%[[C0]]) <{axis = 1 : i32}>  
+    // CHECK-NEXT: %[[REDUCE:.*]] = "tt.reduce"(%[[C0]]) <{axis = 1 : i32}>
     %13 = "tt.reduce"(%cst) <{axis = 1 : i32}> ({
     ^bb0(%arg2: f32, %arg3: f32):
       %18 = arith.addf %arg2, %arg3 : f32
@@ -45,9 +45,9 @@ module attributes {"ttg.enable-bishengir-simt-optimization" = 1 : i32, "ttg.num-
     // CHECK-DAG: [[BLOCKED2:#.*]] = #ttg.blocked<{sizePerThread = [1, 1, 4], threadsPerWarp = [1, 4, 8], warpsPerCTA = [16, 2, 1], order = [2, 1, 0]}>
     // CHECK-DAG: [[BLOCKED3:#.*]] = #ttg.blocked<{sizePerThread = [1, 4], threadsPerWarp = [4, 8], warpsPerCTA = [32, 1], order = [1, 0]}>
     // CHECK: [[RESHAPE2:%.*]] = tt.reshape [[RESHAPE:%.*]] : tensor<128x256xf32, [[BLOCKED]]> -> tensor<128x8x32xf32, [[BLOCKED2]]>
-    // CHECK-NEXT: %[[REDUCE:.*]] = "tt.reduce"([[RESHAPE2]]) <{axis = 2 : i32}>  
+    // CHECK-NEXT: %[[REDUCE:.*]] = "tt.reduce"([[RESHAPE2]]) <{axis = 2 : i32}>
     // CHECK: %[[REDUCE2:.+]] = ttg.convert_layout [[REDUCE:%.*]] :  tensor<128x8xf32, #ttg.slice<{dim = 2, parent = [[BLOCKED2]]}>> -> tensor<128x8xf32, [[BLOCKED3]]>
-    // CHECK-NEXT: %[[REDUCE3:.*]] = "tt.reduce"(%[[REDUCE2]]) <{axis = 1 : i32}>  
+    // CHECK-NEXT: %[[REDUCE3:.*]] = "tt.reduce"(%[[REDUCE2]]) <{axis = 1 : i32}>
     %13 = "tt.reduce"(%12) <{axis = 1 : i32}> ({
     ^bb0(%arg2: f32, %arg3: f32):
       %18 = arith.addf %arg2, %arg3 : f32
@@ -81,13 +81,13 @@ module attributes {"ttg.enable-bishengir-simt-optimization" = 1 : i32, ttg.globa
     %10 = tt.splat %arg0 : !tt.ptr<f32> -> tensor<128x2048x!tt.ptr<f32>, #blocked>
     %11 = tt.addptr %10, %9 : tensor<128x2048x!tt.ptr<f32>, #blocked>, tensor<128x2048xi32, #blocked>
     %12 = tt.load %11 : tensor<128x2048x!tt.ptr<f32>, #blocked>
-    // CHECK: tt.reshape 
-    // CHECK-NEXT: %[[REDUCE:.*]] = "tt.reduce"({{%.*}}) <{axis = 2 : i32}>  
+    // CHECK: tt.reshape
+    // CHECK-NEXT: %[[REDUCE:.*]] = "tt.reduce"({{%.*}}) <{axis = 2 : i32}>
     // CHECK: ttg.convert_layout
-    // CHECK: tt.reshape 
-    // CHECK-NEXT: %[[REDUCE:.*]] = "tt.reduce"({{%.*}}) <{axis = 2 : i32}>  
+    // CHECK: tt.reshape
+    // CHECK-NEXT: %[[REDUCE:.*]] = "tt.reduce"({{%.*}}) <{axis = 2 : i32}>
     // CHECK: ttg.convert_layout
-    // CHECK-NEXT: %[[REDUCE:.*]] = "tt.reduce"({{%.*}}) <{axis = 1 : i32}>  
+    // CHECK-NEXT: %[[REDUCE:.*]] = "tt.reduce"({{%.*}}) <{axis = 1 : i32}>
     %13 = "tt.reduce"(%12) <{axis = 1 : i32}> ({
     ^bb0(%arg2: f32, %arg3: f32):
       %18 = arith.addf %arg2, %arg3 : f32
@@ -125,7 +125,7 @@ module attributes {"ttg.enable-bishengir-simt-optimization" = 1 : i32, ttg.globa
     // CHECK-DAG: [[BLOCKED2:#.*]] = #ttg.blocked<{sizePerThread = [1, 4], threadsPerWarp = [4, 8], warpsPerCTA = [32, 1], order = [1, 0]}>
     // CHECK-NOT: tt.reshape
     // CHECK: %[[C0:.+]] = ttg.convert_layout [[CST:%.*]] : tensor<128x32xf32, [[BLOCKED]]> -> tensor<128x32xf32, [[BLOCKED2]]>
-    // CHECK-NEXT: %[[REDUCE:.*]] = "tt.reduce"(%[[C0]]) <{axis = 1 : i32}>  
+    // CHECK-NEXT: %[[REDUCE:.*]] = "tt.reduce"(%[[C0]]) <{axis = 1 : i32}>
     %13 = "tt.reduce"(%12) <{axis = 1 : i32}> ({
     ^bb0(%arg2: f32, %arg3: f32):
       %18 = arith.addf %arg2, %arg3 : f32
@@ -177,7 +177,7 @@ module attributes {"ttg.enable-bishengir-simt-optimization" = 1 : i32, ttg.globa
     %19 = tt.addptr %18, %9 : tensor<128x32x!tt.ptr<f32>, #blocked>, tensor<128x32xi32, #blocked>
     %20 = tt.load %19 : tensor<128x32x!tt.ptr<f32>, #blocked>
     // CHECK: %[[C0:.+]] = ttg.convert_layout [[CST:%.*]] : tensor<128x32xf32, [[BLOCKED]]> -> tensor<128x32xf32, [[BLOCKED2]]>
-    // CHECK-NEXT: %[[REDUCE:.*]] = "tt.reduce"(%[[C0]]) <{axis = 1 : i32}>  
+    // CHECK-NEXT: %[[REDUCE:.*]] = "tt.reduce"(%[[C0]]) <{axis = 1 : i32}>
     %21 = "tt.reduce"(%20) <{axis = 1 : i32}> ({
     ^bb0(%arg4: f32, %arg5: f32):
       %26 = arith.addf %arg4, %arg5 : f32
@@ -250,7 +250,7 @@ module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 32 : i32, ttg.tar
 
 
 // -----
-// FIX-ME: PR1781 introduce a guard to disable pass for srcShape[gReductionAxis] < gNumThreads to fix precision error. 
+// FIX-ME: PR1781 introduce a guard to disable pass for srcShape[gReductionAxis] < gNumThreads to fix precision error.
 // Remove test case after real fix is implemented.
 #blocked = #ttg.blocked<{sizePerThread = [1, 1, 2], threadsPerWarp = [2, 1, 16], warpsPerCTA = [2, 16, 1], order = [2, 0, 1]}>
 #blocked1 = #ttg.blocked<{sizePerThread = [1, 1, 1], threadsPerWarp = [1, 1, 32], warpsPerCTA = [4, 8, 1], order = [2, 0, 1]}>

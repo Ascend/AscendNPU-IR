@@ -246,4 +246,3 @@ func.func @fold_subbyte_aligned_offset_insert_slice(
       : tensor<1xi4> into tensor<64xi4>
   return %inserted_slice : tensor<64xi4>
 }
-

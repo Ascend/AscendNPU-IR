@@ -293,7 +293,7 @@ struct LoadCopyInlinePattern : public OpRewritePattern<hivm::CopyOp> {
       return rewriter.notifyMatchFailure(
           copyOp, "Cannot optimize, middle buffer is used");
     }
-    
+
     Value loadSrcA = matchedLoad.getSrc();
     bool loadSrcEffected =
         hasInterveningMemoryEffect(loadSrcA, matchedLoad, copyOp, BufferRole::LoadSrc);

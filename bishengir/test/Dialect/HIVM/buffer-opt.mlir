@@ -188,7 +188,7 @@ func.func @testE(%arg0: memref<?x?xf32>, %arg1: memref<?x?xf32>, %arg2: memref<?
 // CHECK-NOT: call @testE_0(
   linalg.matmul ins(%arg1, %arg2 : memref<?x?xf32>, memref<?x?xf32>) outs(%alloc_3 : memref<?x?xf32>)
 // CHECK: return
-// CHECK-SAME: memref<?x?xf32> 
+// CHECK-SAME: memref<?x?xf32>
 // CHECK-NOT: ,
   return %arg0, %alloc_3, %arg1 : memref<?x?xf32>, memref<?x?xf32>, memref<?x?xf32>
 }

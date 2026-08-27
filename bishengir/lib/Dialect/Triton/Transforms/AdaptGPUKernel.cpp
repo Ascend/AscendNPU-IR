@@ -376,7 +376,7 @@ struct AdaptGPUKernelPass
               moduleOp->getAttr(triton::gpu::AttrNumThreadsPerWarp))
         if (auto intAttr = dyn_cast<IntegerAttr>(numThreadAttr))
           numThreadPerWarp = intAttr.getInt();
-      
+
       if (numThreadPerWarp < 0) {
         moduleOp->emitError()
             << "Number of threads per warp missing";

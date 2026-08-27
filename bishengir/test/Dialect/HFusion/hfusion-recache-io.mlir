@@ -8,7 +8,7 @@
 // CHECK-DAG: %[[extracted0:.*]] = tensor.extract_slice %[[collapsed]]{{\[}}1] {{\[}}2047] {{\[}}1]
 // CHECK-DAG: %[[load1:.*]] = hfusion.load ins(%[[extracted0]] : tensor<2047xi32>)
 // CHECK-DAG: %[[extracted1:.*]] = tensor.extract_slice %[[load0]]{{\[}}0] {{\[}}2047] {{\[}}1]
-func.func @test_recache_unaligned_access(%arg0: tensor<1x2048xi32>, %arg1: tensor<1x2047x2047xf32>) -> tensor<1x2047x2047xf32> 
+func.func @test_recache_unaligned_access(%arg0: tensor<1x2048xi32>, %arg1: tensor<1x2047x2047xf32>) -> tensor<1x2047x2047xf32>
 attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hfusion.fusion_kind = #hfusion.fusion_kind<ANY_PB>} {
   %0 = tensor.empty() : tensor<2047x2047xi32>
   %1 = tensor.empty() : tensor<2047x2047xf32>
@@ -17,9 +17,9 @@ attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hfusio
   %3 = hfusion.load ins(%collapsed : tensor<2048xi32>) outs(%2 : tensor<2048xi32>) -> tensor<2048xi32>
   %collapsed_0 = tensor.collapse_shape %arg1 [[0, 1], [2]] : tensor<1x2047x2047xf32> into tensor<2047x2047xf32>
   %extracted_slice = tensor.extract_slice %3[1] [2047] [1] : tensor<2048xi32> to tensor<2047xi32>
-  %broadcasted = linalg.broadcast ins(%extracted_slice : tensor<2047xi32>) outs(%0 : tensor<2047x2047xi32>) dimensions = [1] 
+  %broadcasted = linalg.broadcast ins(%extracted_slice : tensor<2047xi32>) outs(%0 : tensor<2047x2047xi32>) dimensions = [1]
   %extracted_slice_1 = tensor.extract_slice %3[0] [2047] [1] : tensor<2048xi32> to tensor<2047xi32>
-  %broadcasted_2 = linalg.broadcast ins(%extracted_slice_1 : tensor<2047xi32>) outs(%0 : tensor<2047x2047xi32>) dimensions = [0] 
+  %broadcasted_2 = linalg.broadcast ins(%extracted_slice_1 : tensor<2047xi32>) outs(%0 : tensor<2047x2047xi32>) dimensions = [0]
   %4 = linalg.elemwise_binary {fun = #linalg.binary_fn<sub>} ins(%broadcasted, %broadcasted_2 : tensor<2047x2047xi32>, tensor<2047x2047xi32>) outs(%0 : tensor<2047x2047xi32>) -> tensor<2047x2047xi32>
   %5 = hfusion.cast {round_mode = #hfusion.round_mode<trunc>} ins(%4 : tensor<2047x2047xi32>) outs(%1 : tensor<2047x2047xf32>) -> tensor<2047x2047xf32>
   %6 = hfusion.store ins(%5 : tensor<2047x2047xf32>) outs(%collapsed_0 : tensor<2047x2047xf32>) -> tensor<2047x2047xf32>
@@ -31,7 +31,7 @@ attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hfusio
 // CHECK-LABEL: @recache_equal_split_two_slices
 // CHECK: hfusion.load
 // CHECK: hfusion.load
-func.func @recache_equal_split_two_slices(%arg0: tensor<4096x36864xbf16>, %arg1: tensor<4096x18432xbf16>) -> tensor<4096x18432xbf16> 
+func.func @recache_equal_split_two_slices(%arg0: tensor<4096x36864xbf16>, %arg1: tensor<4096x18432xbf16>) -> tensor<4096x18432xbf16>
 attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hfusion.fusion_kind = #hfusion.fusion_kind<PURE_ELEMWISE>} {
   %0 = tensor.empty() : tensor<4096x36864xbf16>
   %1 = tensor.empty() : tensor<4096x18432xf32>
@@ -130,7 +130,7 @@ attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hfusio
 // CHECK: hfusion.load
 // CHECK: hfusion.load
 // CHECK-NOT: hfusion.load
-func.func @recache_partial_split_multiple_dims_0(%arg0: tensor<16x18432xf32>, %arg1: tensor<16x77x3072xf32>) -> tensor<16x77x3072xf32> 
+func.func @recache_partial_split_multiple_dims_0(%arg0: tensor<16x18432xf32>, %arg1: tensor<16x77x3072xf32>) -> tensor<16x77x3072xf32>
 attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hfusion.fusion_kind = #hfusion.fusion_kind<ANY_PB>} {
   %0 = tensor.empty() : tensor<16x18432xf32>
   %1 = tensor.empty() : tensor<16x77x3072xf32>

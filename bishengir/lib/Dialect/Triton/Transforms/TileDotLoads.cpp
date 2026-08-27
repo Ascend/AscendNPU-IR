@@ -206,7 +206,7 @@ static bool collectChain(Value root, Value end,
       continue;
     if (!seen.insert(def).second)
       continue;
-    
+
     // If we see and expand_dims on the K_Line, we are no longer on the K_Line (K-Line is only 2D).
     // NOTE: checkA == cur_notTransposed is functionally the same as checkA XOR cur_notTransposed
     // checkA = true and not being transposed vs checkA = false and being transposed both mean that
@@ -613,7 +613,7 @@ static Value cloneChainWithTiledRange(Value loadPtr,
           } else {
             LLVM_DEBUG(DBGS() << "Unsupported constant type in tiled chain" << '\n');
           }
-          
+
         cloned = rewriter.create<arith::ConstantOp>(cloned->getLoc(), tiled, newAttr);
       } else {
         tiled = oneDimTiledType(orig, K, kTile);
@@ -1056,7 +1056,7 @@ emitKTilingTensorOfPtrsCanonical(triton::DotOp dot, DotLoadInfo aInfo,
   // Hoist loop-invariant pieces (the static `make_range`, the kTile
   // constant, and the K-invariant pointer broadcasts) out of the K-tile
   // loop body so PrefetchLoopLoads' prologue chain-clone doesn't reach
-  // into the loop body for them 
+  // into the loop body for them
   auto i32 = rewriter.getI32Type();
   auto i1 = rewriter.getI1Type();
   auto kRange1DTy = RankedTensorType::get({kTile}, i32);
@@ -1362,7 +1362,7 @@ static TileInfo chooseTile(triton::DotOp dot, int KTileSize) {
   } else {
     kTile = KTileSize;
   }
-  
+
   return {TileStrategy::K, kTile, K / kTile};
 }
 
@@ -1895,7 +1895,7 @@ struct StageNonLoadOperandPattern : public OpRewritePattern<triton::DotOp> {
         else
           addrSpaceA = kGlobalMemoryAddressSpace; // stage A through GMEM
       }
-      
+
       if (!canStageA) {
         addrSpaceA = kGlobalMemoryAddressSpace; // stage A through GMEM
       }
@@ -1963,7 +1963,7 @@ struct StageNonLoadOperandPattern : public OpRewritePattern<triton::DotOp> {
       }
     }
 
-    
+
     // ---- Stage non-load operands via a single full-envelope store ------
     BlockArgument scratchArgA;
     if (!aLoad) {
@@ -2030,7 +2030,7 @@ struct StageNonLoadOperandPattern : public OpRewritePattern<triton::DotOp> {
     Value accInit = dot.getC();
 
     // Hoist the static K-tile range AND every loop-invariant piece of the
-    // tensor-of-ptrs per-tile B load outside the K-tile loop 
+    // tensor-of-ptrs per-tile B load outside the K-tile loop
     Value hoistedKRangeBase;
     std::optional<TensorOfPtrsBKAxis0Hoisted> bHoisted;
     if (bTopInfo) {
@@ -2342,7 +2342,7 @@ struct TileDotLoadsPass : public impl::TileDotLoadsBase<TileDotLoadsPass> {
   using impl::TileDotLoadsBase<TileDotLoadsPass>::TileDotLoadsBase;
   void runOnOperation() override {
     auto fn = getOperation();
-    
+
     static constexpr llvm::StringLiteral kSharedMemDynamicSizeAttr =
         "bishengir.shared-mem-dynamic-size";
 
@@ -2353,7 +2353,7 @@ struct TileDotLoadsPass : public impl::TileDotLoadsBase<TileDotLoadsPass> {
       module->setAttr(kSharedMemDynamicSizeAttr,
                       b.getI32IntegerAttr(this->smemBudgetBytes));
     }
-                      
+
     LLVM_DEBUG(DBGS() << "=== TileDotLoads running on function: " << fn.getName()
                       << " ===" << '\n');
 

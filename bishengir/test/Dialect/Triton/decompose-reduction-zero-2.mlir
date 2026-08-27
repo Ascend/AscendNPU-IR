@@ -71,7 +71,7 @@ module attributes {"ttg.enable-bishengir-simt-optimization" = 31 : i32, "ttg.num
     // CHECK{LITERAL}: #linear = #ttg.linear<{register = [], lane = [[0, 0, 1], [0, 0, 2], [0, 0, 0], [0, 0, 0], [0, 0, 0]], warp = [[0, 0, 4], [0, 0, 8], [0, 0, 16], [0, 0, 32], [0, 0, 64]], block = []}>
     // CHECK-NOT: tt.reshape
     // CHECK: %[[C0:.+]] = ttg.convert_layout [[CST:%.*]] : tensor<1x64x128xf32, [[BLOCKED]]> -> tensor<1x64x128xf32, [[BLOCKED2]]>
-    // CHECK-NEXT: %[[REDUCE:.*]] = "tt.reduce"(%[[C0]]) <{axis = 1 : i32}>  
+    // CHECK-NEXT: %[[REDUCE:.*]] = "tt.reduce"(%[[C0]]) <{axis = 1 : i32}>
     // CHECK: %[[RESHAPE:.*]] = tt.reshape %[[REDUCE:.*]] : tensor<1x128xf32, #ttg.slice<{dim = 1, parent = [[BLOCKED2]]}>> -> tensor<1x1x128xf32, #linear>
     // CHECK: ttg.convert_layout %[[RESHAPE:.*]] :
     %47 = "tt.reduce"(%46) <{axis = 1 : i32}> ({
@@ -90,4 +90,3 @@ module attributes {"ttg.enable-bishengir-simt-optimization" = 31 : i32, "ttg.num
     tt.return
   }
 }
-

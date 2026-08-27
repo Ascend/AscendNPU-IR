@@ -12,10 +12,7 @@
 func.func @test_gathermask(%src:memref<16xf16>, %mask:memref<16xi1>) {
   %init_data = memref.alloc() : memref<16xf16>
   %init_size = memref.alloc() : memref<1xi32>
-  hfusion.gather_mask ins(%src, %mask : memref<16xf16>, memref<16xi1>) 
+  hfusion.gather_mask ins(%src, %mask : memref<16xf16>, memref<16xi1>)
                       outs(%init_data, %init_size : memref<16xf16>, memref<1xi32>)
   return
 }
-
-
-

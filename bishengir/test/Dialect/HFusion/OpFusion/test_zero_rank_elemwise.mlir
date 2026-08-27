@@ -16,7 +16,7 @@ func.func @test_zero_dimension(%arg0: tensor<1536xbf16>) -> tensor<1xbf16> attri
   %2 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%1, %1 : tensor<1536xf32>, tensor<1536xf32>) outs(%0 : tensor<1536xf32>) -> tensor<1536xf32>
   %3 = tensor.empty() : tensor<f32>
   %4 = linalg.fill ins(%cst : f32) outs(%3 : tensor<f32>) -> tensor<f32>
-  %reduced = linalg.reduce ins(%2 : tensor<1536xf32>) outs(%4 : tensor<f32>) dimensions = [0] 
+  %reduced = linalg.reduce ins(%2 : tensor<1536xf32>) outs(%4 : tensor<f32>) dimensions = [0]
     (%in: f32, %init: f32) {
       %7 = arith.addf %in, %init : f32
       linalg.yield %7 : f32
@@ -47,7 +47,7 @@ module {
     %collapsed = tensor.collapse_shape %arg0 [[0, 1]] : tensor<?x2xf32> into tensor<?xf32>
     %0 = tensor.empty() : tensor<f32>
     %1 = linalg.fill ins(%cst_0 : f32) outs(%0 : tensor<f32>) -> tensor<f32>
-    %reduced = linalg.reduce ins(%collapsed : tensor<?xf32>) outs(%1 : tensor<f32>) dimensions = [0] 
+    %reduced = linalg.reduce ins(%collapsed : tensor<?xf32>) outs(%1 : tensor<f32>) dimensions = [0]
       (%in: f32, %init: f32) {
         %5 = arith.addf %in, %init : f32
         linalg.yield %5 : f32

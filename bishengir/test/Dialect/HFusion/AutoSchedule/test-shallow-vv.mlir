@@ -29,7 +29,7 @@ module {
     %2 = hfusion.cast {round_mode = #hfusion.round_mode<rint>} ins(%arg0 : tensor<7x4096xf16>) outs(%1 : tensor<7x4096xf32>) -> tensor<7x4096xf32>
     %3 = tensor.empty() : tensor<7xf32>
     %4 = hfusion.cast {round_mode = #hfusion.round_mode<rint>} ins(%arg1 : tensor<7xf16>) outs(%3 : tensor<7xf32>) -> tensor<7xf32>
-    %reduced = linalg.reduce { arith.addf } ins(%2 : tensor<7x4096xf32>) outs(%4 : tensor<7xf32>) dimensions = [1] 
+    %reduced = linalg.reduce { arith.addf } ins(%2 : tensor<7x4096xf32>) outs(%4 : tensor<7xf32>) dimensions = [1]
     %5 = hfusion.cast {round_mode = #hfusion.round_mode<rint>} ins(%reduced : tensor<7xf32>) outs(%0 : tensor<7xf16>) -> tensor<7xf16>
     %6 = linalg.elemwise_unary {fun = #linalg.unary_fn<log>} ins(%5 : tensor<7xf16>) outs(%0 : tensor<7xf16>) -> tensor<7xf16>
     %expanded = tensor.expand_shape %6 [[0, 1]] output_shape [7, 1] : tensor<7xf16> into tensor<7x1xf16>

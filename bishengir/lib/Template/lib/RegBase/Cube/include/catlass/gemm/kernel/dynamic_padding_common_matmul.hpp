@@ -21,7 +21,7 @@
 
 namespace Catlass::Gemm::Kernel {
 
-template <class PrologueA_, class PrologueB_, class BlockMmad_, 
+template <class PrologueA_, class PrologueB_, class BlockMmad_,
     class BlockEpilogue_, class BlockScheduler_, class RemovePaddingC_>
 class DynamicPaddingCommonMatmul {
 public:

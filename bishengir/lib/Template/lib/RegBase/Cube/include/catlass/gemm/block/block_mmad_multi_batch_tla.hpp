@@ -162,7 +162,7 @@ public:
             AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::MTE1_MTE2>(l1BEventList[i]);
             AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::M_MTE1>(l0ABEventList[i]);
         }
-        
+
         // init L0C buffers with L0C_STAGES
         for (uint32_t i = 0; i < L0C_STAGES; i++) {
             l0CTensor[i] = resource.l0CBuf.template GetBufferByByte<ElementAccumulator>(ArchTag::L0C_SIZE / L0C_STAGES * i);

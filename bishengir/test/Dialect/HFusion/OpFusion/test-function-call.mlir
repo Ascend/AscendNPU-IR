@@ -5,5 +5,5 @@ func.func @test(%A: tensor<?x4096xf16>, %B: tensor<14336x4096xf16>, %C: tensor<?
 }
 
 func.func @callee(%A: tensor<?x4096xf16>, %B: tensor<14336x4096xf16>, %C: tensor<?x14336xf16>,  %D: memref<12xi64>) -> () {
-  return 
+  return
 }

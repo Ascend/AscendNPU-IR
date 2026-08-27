@@ -29,7 +29,7 @@ tt.func @loadStore1DUnmasked(%ptr1: !tt.ptr<f32>, %ptr2: !tt.ptr<f32>) {
 
 // CHECK-LABEL: @loadStore1DMasked
 // CHECK-NOT: arith.constant dense<0.0{{.*}}>
-// CHECK: %[[ORIG_MASK:.*]] = arith.constant dense<false> 
+// CHECK: %[[ORIG_MASK:.*]] = arith.constant dense<false>
 // CHECK: %[[PADDING:.*]] = arith.constant dense<false>
 // CHECK: %[[MASK:.*]] = arith.select %{{.*}}, %[[ORIG_MASK]], %[[PADDING]]
 // CHECK: tt.load %{{.*}}, %[[MASK]]
@@ -51,10 +51,10 @@ tt.func @loadStore1DMasked(%ptr1: !tt.ptr<bf16>, %ptr2: !tt.ptr<bf16>) {
 
 // CHECK-LABEL: @loadStore1DMaskedWithOther
 // CHECK-NOT: arith.constant dense<0.0{{.*}}>
-// CHECK: %[[ORIG_MASK:.*]] = arith.constant dense<false> 
+// CHECK: %[[ORIG_MASK:.*]] = arith.constant dense<false>
 // CHECK: %[[MASK_PADDING:.*]] = arith.constant dense<false>
 // CHECK: %[[MASK:.*]] = arith.select %{{.*}}, %[[ORIG_MASK]], %[[MASK_PADDING]]
-// CHECK: %[[PADDING:.*]] = arith.constant dense<1.0{{.*}}> 
+// CHECK: %[[PADDING:.*]] = arith.constant dense<1.0{{.*}}>
 // CHECK: tt.load %{{.*}}, %[[MASK]], %[[PADDING]]
 // CHECK: tt.store %{{.*}}, %{{.*}}, %[[MASK]]
 tt.func @loadStore1DMaskedWithOther(%ptr1: !tt.ptr<bf16>, %ptr2: !tt.ptr<bf16>) {
@@ -234,7 +234,7 @@ tt.func @reduce1D_2Tensors_Mixed(%ptr1: !tt.ptr<f32>) -> f32 {
       %res1 = arith.mulf %tmp, %cst2 : f32
       "tt.reduce.return"(%res0, %res1) : (f32, f32) -> ()
     }) : (tensor<3xf32>, tensor<3xf32>) -> (f32, f32)
-  
+
   %4 = arith.addf %first, %second : f32
 
   tt.return %4 : f32
@@ -292,7 +292,7 @@ tt.func @reduce2D(%ptr1: !tt.ptr<f32>, %ptr2: !tt.ptr<f32>) {
       %tmp = arith.mulf %arg0, %arg1 : f32
       "tt.reduce.return"(%tmp) : (f32) -> ()
     }) : (tensor<8x3xf32>) -> tensor<8xf32>
-  
+
   %5 = tt.make_tensor_ptr %ptr2, [%0, %0], [%0, %1], [%2, %2] {order = array<i32: 1, 0>} : !tt.ptr<tensor<8xf32>>
   tt.store %5, %res : !tt.ptr<tensor<8xf32>>
   tt.return
@@ -322,7 +322,7 @@ tt.func @reduce2D_PowerTwoAxis(%ptr1: !tt.ptr<f32>, %ptr2: !tt.ptr<f32>) {
       %res0 = arith.mulf %arg0, %arg1 : f32
       "tt.reduce.return"(%res0) : (f32) -> ()
     }) : (tensor<2x3xf32>) -> tensor<3xf32>
-  
+
   %12 = tt.make_range {end = 3 : i32, start = 0 : i32} : tensor<3xi32>
   %13 = tt.splat %ptr2 : !tt.ptr<f32> -> tensor<3x!tt.ptr<f32>>
   %14 = tt.addptr %13, %12 : tensor<3x!tt.ptr<f32>>, tensor<3xi32>
@@ -349,7 +349,7 @@ tt.func @scan1D_1Tensor_NoPad(%ptr1: !tt.ptr<f32>, %ptr2: !tt.ptr<f32>) {
       %res0 = arith.minnumf %arg0, %arg1 : f32
       "tt.scan.return"(%res0) : (f32) -> ()
     }) : (tensor<3xf32>) -> tensor<3xf32>
-  
+
   %4 = tt.make_range {end = 3 : i32, start = 0 : i32} : tensor<3xi32>
   %5 = tt.splat %ptr2 : !tt.ptr<f32> -> tensor<3x!tt.ptr<f32>>
   %6 = tt.addptr %5, %4 : tensor<3x!tt.ptr<f32>>, tensor<3xi32>
@@ -377,7 +377,7 @@ tt.func @scan1D_1Tensor_Identity(%ptr1: !tt.ptr<f32>, %ptr2: !tt.ptr<f32>) {
       %res0 = arith.maximumf %arg0, %arg1 : f32
       "tt.scan.return"(%res0) : (f32) -> ()
     }) : (tensor<3xf32>) -> tensor<3xf32>
-  
+
   %4 = tt.make_range {end = 3 : i32, start = 0 : i32} : tensor<3xi32>
   %5 = tt.splat %ptr2 : !tt.ptr<f32> -> tensor<3x!tt.ptr<f32>>
   %6 = tt.addptr %5, %4 : tensor<3x!tt.ptr<f32>>, tensor<3xi32>
@@ -406,7 +406,7 @@ tt.func @scan1D_1Tensor_NoIdentity(%ptr1: !tt.ptr<f32>, %ptr2: !tt.ptr<f32>) {
       %res0 = arith.addf %tmp, %cst1 : f32
       "tt.scan.return"(%res0) : (f32) -> ()
     }) : (tensor<3xf32>) -> tensor<3xf32>
-  
+
   %4 = tt.make_range {end = 3 : i32, start = 0 : i32} : tensor<3xi32>
   %5 = tt.splat %ptr2 : !tt.ptr<f32> -> tensor<3x!tt.ptr<f32>>
   %6 = tt.addptr %5, %4 : tensor<3x!tt.ptr<f32>>, tensor<3xi32>
@@ -441,7 +441,7 @@ tt.func @scan1D_2Tensors_NoPad(%ptr1: !tt.ptr<f32>, %ptr2: !tt.ptr<f32>, %ptr3: 
       %scanRes1 = arith.maximumf %arg1, %arg3 : f32
       "tt.scan.return"(%scanRes0, %scanRes1) : (f32, f32) -> ()
     }) : (tensor<3xf32>, tensor<3xf32>) -> (tensor<3xf32>, tensor<3xf32>)
-  
+
   %res = arith.addf %res0, %res1 : tensor<3xf32>
 
   %8 = tt.make_range {end = 3 : i32, start = 0 : i32} : tensor<3xi32>
@@ -480,7 +480,7 @@ tt.func @scan1D_2Tensors_Identities(%ptr1: !tt.ptr<i32>, %ptr2: !tt.ptr<i1>, %pt
 
   %other = tt.make_range {end = 3 : i32, start = 0 : i32} : tensor<3xi32>
   %res = arith.select %res1, %res0, %other : tensor<3xi1>, tensor<3xi32>
-  
+
   %8 = tt.make_range {end = 3 : i32, start = 0 : i32} : tensor<3xi32>
   %9 = tt.splat %ptr3 : !tt.ptr<i32> -> tensor<3x!tt.ptr<i32>>
   %10 = tt.addptr %9, %8 : tensor<3x!tt.ptr<i32>>, tensor<3xi32>
@@ -515,7 +515,7 @@ tt.func @scan1D_2Tensors_Mixed(%ptr1: !tt.ptr<f32>, %ptr2: !tt.ptr<f32>, %ptr3: 
       %scanRes1 = arith.mulf %arg1, %arg3 : f32
       "tt.scan.return"(%scanRes0, %scanRes1) : (f32, f32) -> ()
     }) : (tensor<3xf32>, tensor<3xf32>) -> (tensor<3xf32>, tensor<3xf32>)
-  
+
   %res = arith.addf %res0, %res1 : tensor<3xf32>
 
   %8 = tt.make_range {end = 3 : i32, start = 0 : i32} : tensor<3xi32>
@@ -551,7 +551,7 @@ tt.func @scan2D_PowerTwoAxis(%ptr1: !tt.ptr<f32>, %ptr2: !tt.ptr<f32>) {
       %res0 = arith.mulf %arg0, %arg1 : f32
       "tt.scan.return"(%res0) : (f32) -> ()
     }) : (tensor<2x3xf32>) -> tensor<2x3xf32>
-  
+
   %12 = tt.splat %ptr2 : !tt.ptr<f32> -> tensor<2x3x!tt.ptr<f32>>
   %13 = tt.addptr %12, %8 : tensor<2x3x!tt.ptr<f32>>, tensor<2x3xi32>
   tt.store %13, %res : tensor<2x3x!tt.ptr<f32>>
@@ -577,7 +577,7 @@ tt.func @scan2D_Identity(%ptr1: !tt.ptr<f32>, %ptr2: !tt.ptr<f32>) {
       %tmp = arith.mulf %arg0, %arg1 : f32
       "tt.scan.return"(%tmp) : (f32) -> ()
     }) : (tensor<8x3xf32>) -> tensor<8x3xf32>
-  
+
   %5 = tt.make_tensor_ptr %ptr2, [%0, %0], [%0, %1], [%2, %2] {order = array<i32: 1, 0>} : !tt.ptr<tensor<8x3xf32>>
   tt.store %5, %res : !tt.ptr<tensor<8x3xf32>>
   tt.return
@@ -754,7 +754,7 @@ tt.func @advanceTensorPtr(%ptr0: !tt.ptr<f32>, %ptr1: !tt.ptr<f32>) {
 
 // -----
 
-// CHECK: %[[RANGE:.*]] = tt.make_range 
+// CHECK: %[[RANGE:.*]] = tt.make_range
 // CHECK: %[[SPLAT_PTR:.*]] = tt.splat
 // CHECK: %[[PTR:.*]] = tt.addptr %[[SPLAT_PTR]], %[[RANGE]]
 // CHECK: %[[SPLAT_VAL:.*]] = tt.splat
@@ -777,7 +777,7 @@ tt.func @AtomicRMWOp(%ptr: !tt.ptr<f32>, %val: !tt.ptr<f32>) {
 
 // -----
 
-// CHECK: %[[RANGE:.*]] = tt.make_range 
+// CHECK: %[[RANGE:.*]] = tt.make_range
 // CHECK: %[[SPLAT_PTR:.*]] = tt.splat
 // CHECK: %[[PTR:.*]] = tt.addptr %[[SPLAT_PTR]], %[[RANGE]]
 // CHECK: %[[SPLAT_VAL:.*]] = tt.splat
@@ -822,7 +822,7 @@ tt.func @dotOp(%ptr1: !tt.ptr<f32>, %ptr2: !tt.ptr<f32>) -> f32 {
   %4 = tt.expand_dims %3 {axis = 0 : i32} : tensor<3xf32> -> tensor<1x3xf32>
   %5 = tt.expand_dims %3 {axis = 1 : i32} : tensor<3xf32> -> tensor<3x1xf32>
   %6 = arith.constant dense<0.0> : tensor<1x1xf32>
-  %7 = tt.dot %4, %5, %6 : tensor<1x3xf32> * tensor<3x1xf32> -> tensor<1x1xf32> 
+  %7 = tt.dot %4, %5, %6 : tensor<1x3xf32> * tensor<3x1xf32> -> tensor<1x1xf32>
   %8 = tt.unsplat %7 : tensor<1x1xf32>
   tt.return %8 : f32
 }
@@ -845,7 +845,7 @@ tt.func @dotOpDiffElementTypes(%ptr1: !tt.ptr<f16>, %ptr2: !tt.ptr<f32>) -> f32 
   %4 = tt.expand_dims %3 {axis = 0 : i32} : tensor<3xf16> -> tensor<1x3xf16>
   %5 = tt.expand_dims %3 {axis = 1 : i32} : tensor<3xf16> -> tensor<3x1xf16>
   %6 = arith.constant dense<0.0> : tensor<1x1xf32>
-  %7 = tt.dot %4, %5, %6 : tensor<1x3xf16> * tensor<3x1xf16> -> tensor<1x1xf32> 
+  %7 = tt.dot %4, %5, %6 : tensor<1x3xf16> * tensor<3x1xf16> -> tensor<1x1xf32>
   %8 = tt.unsplat %7 : tensor<1x1xf32>
   tt.return %8 : f32
 }
@@ -978,7 +978,7 @@ tt.func @simpleReshapeDataLocs(%ptr0: !tt.ptr<f32>, %ptr1: !tt.ptr<f32>) {
   %9 = arith.constant dense<2> : tensor<3xi32>
   %10 = arith.muli %8, %9 : tensor<3xi32>
   %11 = tt.expand_dims %10 {axis = 1 : i32} : tensor<3xi32> -> tensor<3x1xi32>
-  %12 = tt.broadcast %11 : tensor<3x1xi32> -> tensor<3x2xi32>  
+  %12 = tt.broadcast %11 : tensor<3x1xi32> -> tensor<3x2xi32>
 
   %13 = arith.addi %7, %12 : tensor<3x2xi32>
   %14 = tt.splat %ptr1 : !tt.ptr<f32> -> tensor<3x2x!tt.ptr<f32>>
@@ -1000,7 +1000,7 @@ tt.func @simpleReshapeOnes(%ptr0: !tt.ptr<f32>, %ptr1: !tt.ptr<f32>) {
   %2 = tt.addptr %1, %0 : tensor<3x!tt.ptr<f32>>, tensor<3xi32>
   %3 = tt.reshape %2 : tensor<3x!tt.ptr<f32>> -> tensor<1x3x1x1x!tt.ptr<f32>>
   %4 = tt.load %3 : tensor<1x3x1x1x!tt.ptr<f32>>
-  
+
   %5 = tt.make_range {end = 3 : i32, start = 0 : i32} : tensor<3xi32>
   %6 = tt.reshape %5 : tensor<3xi32> -> tensor<1x3x1x1xi32>
   %7 = tt.splat %ptr1 : !tt.ptr<f32> -> tensor<1x3x1x1x!tt.ptr<f32>>
@@ -1031,7 +1031,7 @@ tt.func @complexReshapeSameLogicalSize(%ptr0: !tt.ptr<f32>, %ptr1: !tt.ptr<f32>)
   %10 = arith.constant dense<2> : tensor<3xi32>
   %11 = arith.muli %9, %10 : tensor<3xi32>
   %12 = tt.expand_dims %11 {axis = 1 : i32} : tensor<3xi32> -> tensor<3x1xi32>
-  %13 = tt.broadcast %12 : tensor<3x1xi32> -> tensor<3x2xi32>  
+  %13 = tt.broadcast %12 : tensor<3x1xi32> -> tensor<3x2xi32>
 
   %14 = arith.addi %8, %13 : tensor<3x2xi32>
   %15 = tt.splat %ptr1 : !tt.ptr<f32> -> tensor<3x2x!tt.ptr<f32>>
@@ -1055,11 +1055,11 @@ tt.func @complexReshapeLargerSource(%ptr0: !tt.ptr<f32>, %ptr1: !tt.ptr<f32>) {
   %4 = arith.constant dense<9> : tensor<3xi32>
   %5 = arith.muli %3, %4 : tensor<3xi32>
   %6 = tt.expand_dims %5 {axis = 1 : i32} : tensor<3xi32> -> tensor<3x1xi32>
-  %7 = tt.broadcast %6 : tensor<3x1xi32> -> tensor<3x9xi32> 
+  %7 = tt.broadcast %6 : tensor<3x1xi32> -> tensor<3x9xi32>
   %8 = arith.addi %2, %7 : tensor<3x9xi32>
   %9 = tt.splat %ptr0 : !tt.ptr<f32> -> tensor<3x9x!tt.ptr<f32>>
   %10 = tt.addptr %9, %8 : tensor<3x9x!tt.ptr<f32>>, tensor<3x9xi32>
-  %11 = tt.load %10 : tensor<3x9x!tt.ptr<f32>> 
+  %11 = tt.load %10 : tensor<3x9x!tt.ptr<f32>>
   %12 = tt.reshape %11 : tensor<3x9xf32> -> tensor<27xf32>
 
   %13 = tt.make_range {end = 27 : i32, start = 0 : i32} : tensor<27xi32>
@@ -1087,7 +1087,7 @@ tt.func @complexReshapeLargerResult(%ptr0: !tt.ptr<f32>, %ptr1: !tt.ptr<f32>) {
   %11 = arith.constant dense<9> : tensor<3xi32>
   %12 = arith.muli %10, %11 : tensor<3xi32>
   %13 = tt.expand_dims %12 {axis = 1 : i32} : tensor<3xi32> -> tensor<3x1xi32>
-  %14 = tt.broadcast %13 : tensor<3x1xi32> -> tensor<3x9xi32>  
+  %14 = tt.broadcast %13 : tensor<3x1xi32> -> tensor<3x9xi32>
 
   %15 = arith.addi %9, %14 : tensor<3x9xi32>
   %16 = tt.splat %ptr1 : !tt.ptr<f32> -> tensor<3x9x!tt.ptr<f32>>
@@ -1417,7 +1417,7 @@ tt.func @power_of_two_ops(%ptr: !tt.ptr<f32>, %out_ptr: !tt.ptr<i32>) {
   %out_offsets = tt.make_range {end = 8 : i32, start = 0 : i32} : tensor<8xi32>
   %splat_out_ptr = tt.splat %out_ptr : !tt.ptr<i32> -> tensor<8x!tt.ptr<i32>>
   %output_ptrs = tt.addptr %splat_out_ptr, %out_offsets : tensor<8x!tt.ptr<i32>>, tensor<8xi32>
-  
+
   tt.store %output_ptrs, %inserted : tensor<8x!tt.ptr<i32>>
 
   tt.return

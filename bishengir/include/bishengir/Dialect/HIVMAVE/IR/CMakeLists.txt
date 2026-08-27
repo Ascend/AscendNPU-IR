@@ -27,4 +27,3 @@ add_public_tablegen_target(MLIRAVETypesIncGen)
 add_dependencies(mlir-headers MLIRAVETypesIncGen)
 
 add_mlir_doc(AVEDoc AVEDialect Dialects/ -gen-dialect-doc -dialect=ave)
-

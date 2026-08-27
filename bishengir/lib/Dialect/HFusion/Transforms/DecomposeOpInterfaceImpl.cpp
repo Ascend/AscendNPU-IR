@@ -341,13 +341,13 @@ void emitAtomicXchgBody(OpBuilder &rewriter, Location loc, Value input,
 
   auto doAtomicExchange = [&](OpBuilder &b, Location bodyLoc) {
       Type elementType = cast<MemRefType>(dst.getType()).getElementType();
-      
+
       b.create<memref::AtomicRMWOp>(
-          bodyLoc, 
-          elementType, 
-          arith::AtomicRMWKind::assign, 
-          srcVal, 
-          dst, 
+          bodyLoc,
+          elementType,
+          arith::AtomicRMWKind::assign,
+          srcVal,
+          dst,
           indices);
   };
 

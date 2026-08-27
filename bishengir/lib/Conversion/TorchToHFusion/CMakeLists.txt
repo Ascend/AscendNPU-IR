@@ -6,7 +6,7 @@ add_bishengir_conversion_library(BiShengIRTorchToHFusion
   Uncategorized.cpp
   TensorConstructors.cpp
   Utils.cpp
-  
+
   ADDITIONAL_HEADER_DIRS
   ${BISHENGIR_MAIN_INCLUDE_DIR}/bishengir/Conversion/TorchToHFusion
   ${TORCH_MLIR_INCLUDE_DIRS}

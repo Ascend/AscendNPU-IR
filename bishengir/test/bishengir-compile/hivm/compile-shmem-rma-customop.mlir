@@ -27,7 +27,7 @@ func.func @shmem_rma_smoke (
     attributes {
       hfusion.fusion_kind = #hfusion.fusion_kind<MIX_CV>,
       hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>
-      } 
+      }
   {
     %c64_i32 = arith.constant 64 : i32
     %c0_i32 = arith.constant 0 : i32

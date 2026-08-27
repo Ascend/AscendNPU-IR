@@ -13,6 +13,7 @@
 
 import sys
 
+
 class BiShengIRHelper:
     print_debug = False
 
@@ -36,7 +37,7 @@ class BiShengIRHelper:
             tmp = list(op.attributes)
             BiShengIRHelper.print("Entire Attributes: ", tmp)
             for i, att in enumerate(tmp):
-                BiShengIRHelper.print(f' --> Attr {i}: {att.name} | {att.attr} - ')
+                BiShengIRHelper.print(f" --> Attr {i}: {att.name} | {att.attr} - ")
         else:
             BiShengIRHelper.print(f"Warning: No attributes")
 

@@ -434,8 +434,8 @@ func.func @triton_conv1d_2d_fp16_nobias_ocunaligned(%arg0: tensor<32x128xf16>, %
 // CHECK:             %{{.*}} = tensor.insert_slice %{{.*}} into %{{.*}}[%{{.*}}, 0] [15, 128] [1, 1] : tensor<15x128xf16> into tensor<60x128xf16>
 // CHECK:             scf.yield %{{.*}} : tensor<60x128xf16>
 // CHECK:           }
-// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [60, 126] [1, 1] : tensor<60x128xf16> to tensor<60x126xf16>
-// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [2, 30, 126] : tensor<60x126xf16> into tensor<2x30x126xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [2, 30, 128] : tensor<60x128xf16> into tensor<2x30x128xf16>
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0, 0] [2, 30, 126] [1, 1, 1] : tensor<2x30x128xf16> to tensor<2x30x126xf16>
 // CHECK:         }
 func.func @triton_conv1d_3d_fp16_nobias_ocunaligned(%arg0: tensor<2x32x128xf16>, %arg1: tensor<30x16x5xf16>, %arg2: tensor<2x30x126xf16>) -> tensor<2x30x126xf16> {
   %true = arith.constant true
@@ -518,8 +518,8 @@ func.func @triton_conv1d_2d_bf16_nobias_ocunaligned(%arg0: tensor<32x128xbf16>, 
 // CHECK:             %{{.*}} = tensor.insert_slice %{{.*}} into %{{.*}}[%{{.*}}, 0] [15, 128] [1, 1] : tensor<15x128xbf16> into tensor<60x128xbf16>
 // CHECK:             scf.yield %{{.*}} : tensor<60x128xbf16>
 // CHECK:           }
-// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [60, 126] [1, 1] : tensor<60x128xbf16> to tensor<60x126xbf16>
-// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [2, 30, 126] : tensor<60x126xbf16> into tensor<2x30x126xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [2, 30, 128] : tensor<60x128xbf16> into tensor<2x30x128xbf16>
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0, 0] [2, 30, 126] [1, 1, 1] : tensor<2x30x128xbf16> to tensor<2x30x126xbf16>
 // CHECK:         }
 func.func @triton_conv1d_3d_bf16_nobias_ocunaligned(%arg0: tensor<2x32x128xbf16>, %arg1: tensor<30x16x5xbf16>, %arg2: tensor<2x30x126xbf16>) -> tensor<2x30x126xbf16> {
   %true = arith.constant true
@@ -600,8 +600,8 @@ func.func @triton_conv1d_2d_fp32_nobias_ocunaligned(%arg0: tensor<32x128xf32>, %
 // CHECK:             %{{.*}} = tensor.insert_slice %{{.*}} into %{{.*}}[%{{.*}}, 0] [15, 128] [1, 1] : tensor<15x128xf32> into tensor<60x128xf32>
 // CHECK:             scf.yield %{{.*}} : tensor<60x128xf32>
 // CHECK:           }
-// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [60, 126] [1, 1] : tensor<60x128xf32> to tensor<60x126xf32>
-// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [2, 30, 126] : tensor<60x126xf32> into tensor<2x30x126xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [2, 30, 128] : tensor<60x128xf32> into tensor<2x30x128xf32>
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0, 0] [2, 30, 126] [1, 1, 1] : tensor<2x30x128xf32> to tensor<2x30x126xf32>
 // CHECK:         }
 func.func @triton_conv1d_3d_fp32_nobias_ocunaligned(%arg0: tensor<2x32x128xf32>, %arg1: tensor<30x16x5xf32>, %arg2: tensor<2x30x126xf32>) -> tensor<2x30x126xf32> {
   %true = arith.constant true
@@ -686,8 +686,8 @@ func.func @triton_conv1d_2d_fp16_bias_ocunaligned(%arg0: tensor<32x128xf16>, %ar
 // CHECK:             %{{.*}} = tensor.insert_slice %{{.*}} into %{{.*}}[%{{.*}}, 0] [15, 128] [1, 1] : tensor<15x128xf16> into tensor<60x128xf16>
 // CHECK:             scf.yield %{{.*}} : tensor<60x128xf16>
 // CHECK:           }
-// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [60, 126] [1, 1] : tensor<60x128xf16> to tensor<60x126xf16>
-// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [2, 30, 126] : tensor<60x126xf16> into tensor<2x30x126xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [2, 30, 128] : tensor<60x128xf16> into tensor<2x30x128xf16>
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0, 0] [2, 30, 126] [1, 1, 1] : tensor<2x30x128xf16> to tensor<2x30x126xf16>
 // CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1, 2]] output_shape [1, 30, 1] : tensor<30xf16> into tensor<1x30x1xf16>
 // CHECK:           %{{.*}} = hivm.hir.vadd ins(%{{.*}}, %{{.*}} : tensor<2x30x126xf16>, tensor<1x30x1xf16>) outs(%{{.*}} : tensor<2x30x126xf16>) broadcast = [0, 2] -> tensor<2x30x126xf16>
 // CHECK:         }
@@ -775,8 +775,8 @@ func.func @triton_conv1d_2d_bf16_bias_ocunaligned(%arg0: tensor<32x128xbf16>, %a
 // CHECK:             %{{.*}} = tensor.insert_slice %{{.*}} into %{{.*}}[%{{.*}}, 0] [15, 128] [1, 1] : tensor<15x128xf32> into tensor<60x128xf32>
 // CHECK:             scf.yield %{{.*}} : tensor<60x128xf32>
 // CHECK:           }
-// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [60, 126] [1, 1] : tensor<60x128xf32> to tensor<60x126xf32>
-// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [2, 30, 126] : tensor<60x126xf32> into tensor<2x30x126xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [2, 30, 128] : tensor<60x128xf32> into tensor<2x30x128xf32>
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0, 0] [2, 30, 126] [1, 1, 1] : tensor<2x30x128xf32> to tensor<2x30x126xf32>
 // CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1, 2]] output_shape [1, 30, 1] : tensor<30xf32> into tensor<1x30x1xf32>
 // CHECK:           %{{.*}} = hivm.hir.vadd ins(%{{.*}}, %{{.*}} : tensor<2x30x126xf32>, tensor<1x30x1xf32>) outs(%{{.*}} : tensor<2x30x126xf32>) broadcast = [0, 2] -> tensor<2x30x126xf32>
 // CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<2x30x126xf32>) outs(%{{.*}} : tensor<2x30x126xbf16>) -> tensor<2x30x126xbf16>
@@ -862,8 +862,8 @@ func.func @triton_conv1d_2d_fp32_bias_ocunaligned(%arg0: tensor<32x128xf32>, %ar
 // CHECK:             %{{.*}} = tensor.insert_slice %{{.*}} into %{{.*}}[%{{.*}}, 0] [15, 128] [1, 1] : tensor<15x128xf32> into tensor<60x128xf32>
 // CHECK:             scf.yield %{{.*}} : tensor<60x128xf32>
 // CHECK:           }
-// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [60, 126] [1, 1] : tensor<60x128xf32> to tensor<60x126xf32>
-// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [2, 30, 126] : tensor<60x126xf32> into tensor<2x30x126xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [2, 30, 128] : tensor<60x128xf32> into tensor<2x30x128xf32>
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0, 0] [2, 30, 126] [1, 1, 1] : tensor<2x30x128xf32> to tensor<2x30x126xf32>
 // CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1, 2]] output_shape [1, 30, 1] : tensor<30xf32> into tensor<1x30x1xf32>
 // CHECK:           %{{.*}} = hivm.hir.vadd ins(%{{.*}}, %{{.*}} : tensor<2x30x126xf32>, tensor<1x30x1xf32>) outs(%{{.*}} : tensor<2x30x126xf32>) broadcast = [0, 2] -> tensor<2x30x126xf32>
 // CHECK:         }
@@ -1487,8 +1487,8 @@ func.func @triton_conv2d_3d_fp16_nobias_ocunaligned(%arg0: tensor<32x128x128xf16
 // CHECK:             %{{.*}} = tensor.insert_slice %{{.*}} into %{{.*}}[%{{.*}}, 0] [15, 15888] [1, 1] : tensor<15x15888xf16> into tensor<60x15888xf16>
 // CHECK:             scf.yield %{{.*}} : tensor<60x15888xf16>
 // CHECK:           }
-// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [60, 15876] [1, 1] : tensor<60x15888xf16> to tensor<60x15876xf16>
-// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [2, 30, 15876] : tensor<60x15876xf16> into tensor<2x30x15876xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [2, 30, 15888] : tensor<60x15888xf16> into tensor<2x30x15888xf16>
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0, 0] [2, 30, 15876] [1, 1, 1] : tensor<2x30x15888xf16> to tensor<2x30x15876xf16>
 // CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] output_shape [2, 30, 126, 126] : tensor<2x30x15876xf16> into tensor<2x30x126x126xf16>
 // CHECK:         }
 func.func @triton_conv2d_4d_fp16_nobias_ocunaligned(%arg0: tensor<2x32x128x128xf16>, %arg1: tensor<30x16x5x5xf16>, %arg2: tensor<2x30x126x126xf16>) -> tensor<2x30x126x126xf16> {
@@ -1577,8 +1577,8 @@ func.func @triton_conv2d_3d_bf16_nobias_ocunaligned(%arg0: tensor<32x128x128xbf1
 // CHECK:             %{{.*}} = tensor.insert_slice %{{.*}} into %{{.*}}[%{{.*}}, 0] [15, 15888] [1, 1] : tensor<15x15888xbf16> into tensor<60x15888xbf16>
 // CHECK:             scf.yield %{{.*}} : tensor<60x15888xbf16>
 // CHECK:           }
-// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [60, 15876] [1, 1] : tensor<60x15888xbf16> to tensor<60x15876xbf16>
-// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [2, 30, 15876] : tensor<60x15876xbf16> into tensor<2x30x15876xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [2, 30, 15888] : tensor<60x15888xbf16> into tensor<2x30x15888xbf16>
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0, 0] [2, 30, 15876] [1, 1, 1] : tensor<2x30x15888xbf16> to tensor<2x30x15876xbf16>
 // CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] output_shape [2, 30, 126, 126] : tensor<2x30x15876xbf16> into tensor<2x30x126x126xbf16>
 // CHECK:         }
 func.func @triton_conv2d_4d_bf16_nobias_ocunaligned(%arg0: tensor<2x32x128x128xbf16>, %arg1: tensor<30x16x5x5xbf16>, %arg2: tensor<2x30x126x126xbf16>) -> tensor<2x30x126x126xbf16> {
@@ -1665,8 +1665,8 @@ func.func @triton_conv2d_3d_fp32_nobias_ocunaligned(%arg0: tensor<32x128x128xf32
 // CHECK:             %{{.*}} = tensor.insert_slice %{{.*}} into %{{.*}}[%{{.*}}, 0] [15, 15888] [1, 1] : tensor<15x15888xf32> into tensor<60x15888xf32>
 // CHECK:             scf.yield %{{.*}} : tensor<60x15888xf32>
 // CHECK:           }
-// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [60, 15876] [1, 1] : tensor<60x15888xf32> to tensor<60x15876xf32>
-// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [2, 30, 15876] : tensor<60x15876xf32> into tensor<2x30x15876xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [2, 30, 15888] : tensor<60x15888xf32> into tensor<2x30x15888xf32>
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0, 0] [2, 30, 15876] [1, 1, 1] : tensor<2x30x15888xf32> to tensor<2x30x15876xf32>
 // CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] output_shape [2, 30, 126, 126] : tensor<2x30x15876xf32> into tensor<2x30x126x126xf32>
 // CHECK:         }
 func.func @triton_conv2d_4d_fp32_nobias_ocunaligned(%arg0: tensor<2x32x128x128xf32>, %arg1: tensor<30x16x5x5xf32>, %arg2: tensor<2x30x126x126xf32>) -> tensor<2x30x126x126xf32> {
@@ -1757,8 +1757,8 @@ func.func @triton_conv2d_3d_fp16_bias_ocunaligned(%arg0: tensor<32x128x128xf16>,
 // CHECK:             %{{.*}} = tensor.insert_slice %{{.*}} into %{{.*}}[%{{.*}}, 0] [15, 15888] [1, 1] : tensor<15x15888xf16> into tensor<60x15888xf16>
 // CHECK:             scf.yield %{{.*}} : tensor<60x15888xf16>
 // CHECK:           }
-// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [60, 15876] [1, 1] : tensor<60x15888xf16> to tensor<60x15876xf16>
-// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [2, 30, 15876] : tensor<60x15876xf16> into tensor<2x30x15876xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [2, 30, 15888] : tensor<60x15888xf16> into tensor<2x30x15888xf16>
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0, 0] [2, 30, 15876] [1, 1, 1] : tensor<2x30x15888xf16> to tensor<2x30x15876xf16>
 // CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1, 2]] output_shape [1, 30, 1] : tensor<30xf16> into tensor<1x30x1xf16>
 // CHECK:           %{{.*}} = hivm.hir.vadd ins(%{{.*}}, %{{.*}} : tensor<2x30x15876xf16>, tensor<1x30x1xf16>) outs(%{{.*}} : tensor<2x30x15876xf16>) broadcast = [0, 2] -> tensor<2x30x15876xf16>
 // CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] output_shape [2, 30, 126, 126] : tensor<2x30x15876xf16> into tensor<2x30x126x126xf16>
@@ -1852,8 +1852,8 @@ func.func @triton_conv2d_3d_bf16_bias_ocunaligned(%arg0: tensor<32x128x128xbf16>
 // CHECK:             %{{.*}} = tensor.insert_slice %{{.*}} into %{{.*}}[%{{.*}}, 0] [15, 15888] [1, 1] : tensor<15x15888xf32> into tensor<60x15888xf32>
 // CHECK:             scf.yield %{{.*}} : tensor<60x15888xf32>
 // CHECK:           }
-// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [60, 15876] [1, 1] : tensor<60x15888xf32> to tensor<60x15876xf32>
-// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [2, 30, 15876] : tensor<60x15876xf32> into tensor<2x30x15876xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [2, 30, 15888] : tensor<60x15888xf32> into tensor<2x30x15888xf32>
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0, 0] [2, 30, 15876] [1, 1, 1] : tensor<2x30x15888xf32> to tensor<2x30x15876xf32>
 // CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1, 2]] output_shape [1, 30, 1] : tensor<30xf32> into tensor<1x30x1xf32>
 // CHECK:           %{{.*}} = hivm.hir.vadd ins(%{{.*}}, %{{.*}} : tensor<2x30x15876xf32>, tensor<1x30x1xf32>) outs(%{{.*}} : tensor<2x30x15876xf32>) broadcast = [0, 2] -> tensor<2x30x15876xf32>
 // CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] output_shape [2, 30, 126, 126] : tensor<2x30x15876xf32> into tensor<2x30x126x126xf32>
@@ -1945,8 +1945,8 @@ func.func @triton_conv2d_3d_fp32_bias_ocunaligned(%arg0: tensor<32x128x128xf32>,
 // CHECK:             %{{.*}} = tensor.insert_slice %{{.*}} into %{{.*}}[%{{.*}}, 0] [15, 15888] [1, 1] : tensor<15x15888xf32> into tensor<60x15888xf32>
 // CHECK:             scf.yield %{{.*}} : tensor<60x15888xf32>
 // CHECK:           }
-// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [60, 15876] [1, 1] : tensor<60x15888xf32> to tensor<60x15876xf32>
-// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [2, 30, 15876] : tensor<60x15876xf32> into tensor<2x30x15876xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [2, 30, 15888] : tensor<60x15888xf32> into tensor<2x30x15888xf32>
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0, 0] [2, 30, 15876] [1, 1, 1] : tensor<2x30x15888xf32> to tensor<2x30x15876xf32>
 // CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1, 2]] output_shape [1, 30, 1] : tensor<30xf32> into tensor<1x30x1xf32>
 // CHECK:           %{{.*}} = hivm.hir.vadd ins(%{{.*}}, %{{.*}} : tensor<2x30x15876xf32>, tensor<1x30x1xf32>) outs(%{{.*}} : tensor<2x30x15876xf32>) broadcast = [0, 2] -> tensor<2x30x15876xf32>
 // CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] output_shape [2, 30, 126, 126] : tensor<2x30x15876xf32> into tensor<2x30x126x126xf32>
@@ -3060,3 +3060,64 @@ func.func @triton_conv3d_4d_bf16_nobias_ocaligned(%arg0: tensor<32x8x10x13xbf16>
 }
 
 // -----
+
+// CHECK-LABEL: func.func @normalize_conv1d_a5(
+// CHECK-NOT: hivm.hir.store
+// CHECK-NOT: hivm.hir.load
+// CHECK: hivm.hir.Conv1dL1
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @normalize_conv1d_a5(%input: tensor<32x128xf16>,
+                                %weight: tensor<32x16x5xf16>,
+                                %output: tensor<32x126xf16>)
+      -> tensor<32x126xf16> {
+    %true = arith.constant true
+    %result = hivm.hir.Conv1dL1 {groups = 2 : i32, padding = 1 : i32}
+        ins(%input, %weight, %true
+            : tensor<32x128xf16>, tensor<32x16x5xf16>, i1)
+        outs(%output : tensor<32x126xf16>) -> tensor<32x126xf16>
+    return %result : tensor<32x126xf16>
+  }
+}
+
+// -----
+
+// CHECK-LABEL: func.func @normalize_grouped_unaligned_oc_a5(
+// CHECK: tensor.expand_shape {{.*}} output_shape [1, 1, 5, 2, 10, 16] : tensor<1x1x5x20x16xf16> into tensor<1x1x5x2x10x16xf16>
+// CHECK: hivm.hir.vbrc {{.*}} outs({{.*}} : tensor<1x1x5x2x6x16xf16>)
+// CHECK: hivm.hir.vconcat dim(4) ins({{.*}} : tensor<1x1x5x2x10x16xf16>, tensor<1x1x5x2x6x16xf16>) outs({{.*}} : tensor<1x1x5x2x16x16xf16>) -> tensor<1x1x5x2x16x16xf16>
+// CHECK: tensor.collapse_shape {{.*}} : tensor<1x1x5x2x16x16xf16> into tensor<1x1x5x32x16xf16>
+// CHECK: hivm.hir.Conv1dL1 {{.*}} tensor<1x1x5x32x16xf16>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @normalize_grouped_unaligned_oc_a5(
+      %input: tensor<32x128xf16>, %weight: tensor<20x16x5xf16>,
+      %output: tensor<20x126xf16>) -> tensor<20x126xf16> {
+    %true = arith.constant true
+    %result = hivm.hir.Conv1dL1 {groups = 2 : i32, padding = 1 : i32}
+        ins(%input, %weight, %true
+            : tensor<32x128xf16>, tensor<20x16x5xf16>, i1)
+        outs(%output : tensor<20x126xf16>) -> tensor<20x126xf16>
+    return %result : tensor<20x126xf16>
+  }
+}
+
+// -----
+
+// CHECK-LABEL: func.func @normalize_conv1d_a3(
+// CHECK: hivm.hir.store
+// CHECK: hivm.hir.load
+// CHECK: hivm.hir.store
+// CHECK: hivm.hir.load
+// CHECK: hivm.hir.Conv1dL1
+module attributes {hacc.target = #hacc.target<"Ascend910B4">} {
+  func.func @normalize_conv1d_a3(%input: tensor<32x128xf16>,
+                                %weight: tensor<32x16x5xf16>,
+                                %output: tensor<32x126xf16>)
+      -> tensor<32x126xf16> {
+    %true = arith.constant true
+    %result = hivm.hir.Conv1dL1 {groups = 2 : i32, padding = 1 : i32}
+        ins(%input, %weight, %true
+            : tensor<32x128xf16>, tensor<32x16x5xf16>, i1)
+        outs(%output : tensor<32x126xf16>) -> tensor<32x126xf16>
+    return %result : tensor<32x126xf16>
+  }
+}

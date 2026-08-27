@@ -27,6 +27,7 @@
 #include "bishengir/Dialect/HIVM/IR/CustomOp/DistributedTransformUtils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
+#include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/BubbleUpUtils.h"
 #include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/HoistAffine.h"
 #include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/Pattern.h"
 #include "bishengir/Dialect/HIVM/Transforms/PartitionAndBindSubBlock/PartitionTypes.h"
@@ -122,6 +123,34 @@ private:
 };
 } // namespace
 
+static bool isUbToUbCopy(Operation *op) {
+  auto copyOp = dyn_cast<hivm::CopyOp>(op);
+  if (!copyOp)
+    return false;
+  auto dstOrig = utils::tracebackMemRef(copyOp.getDst());
+  if (!dstOrig.getDefiningOp<memref::AllocOp>())
+    return false;
+  auto maybeAddressSpace = GetBufferSpaceAttr(dstOrig);
+  return !maybeAddressSpace.has_value() ||
+         maybeAddressSpace->getAddressSpace() == hivm::AddressSpace::UB;
+}
+
+static void insertBubblePropagatorUpLinkForSlicedOperand(
+    PatternRewriter &rewriter, OpOperand *operand,
+    ArrayRef<OpFoldResult> mixedOffsets, ArrayRef<OpFoldResult> mixedSize,
+    ArrayRef<int64_t> newShape, int64_t tilingDim) {
+  Value operandValue = operand->get();
+  auto memrefType = cast<MemRefType>(operandValue.getType());
+  auto slicedMemrefType = hivm::detail::getSlicedMemRefType(
+      memrefType,
+      RankedTensorType::get(newShape, memrefType.getElementType()));
+  auto upLink = hivm::detail::createBubblePropagatorUpLink(
+      operandValue, slicedMemrefType, mixedOffsets[tilingDim],
+      mixedSize[tilingDim], tilingDim, rewriter);
+  operand->set(upLink.getResult(0));
+  hivm::detail::markTiledTightlyCoupledAllocIfNeeded(rewriter, operandValue);
+}
+
 static void modifyOpToSliced(RewriterBase &rewriter, OpOperand *operand,
                              SmallVector<OpFoldResult, 4> mixedOffsets,
                              SmallVector<OpFoldResult, 4> mixedSize,
@@ -136,7 +165,7 @@ static void modifyOpToSliced(RewriterBase &rewriter, OpOperand *operand,
         loc, operandValue, mixedOffsets, mixedSize, mixedStrides);
     operand->set(slicedValue);
     markCreatedExtractSliceOp(rewriter, slicedValue);
-  } else if (auto memrefType = dyn_cast<MemRefType>(newType)) {
+  } else if (isa<MemRefType>(newType)) {
     auto slicedValue = rewriter.create<memref::SubViewOp>(
         loc, operandValue, mixedOffsets, mixedSize, mixedStrides);
     operand->set(slicedValue);
@@ -182,8 +211,13 @@ LogicalResult modifyStoreCopyOp(OpType Op, int64_t tilingDim, OpOperand *srcOpr,
   } else {
     rewriter.setInsertionPointAfterValue(offsetAtTileDim.template get<Value>());
   }
-  modifyOpToSliced(rewriter, dstOpr, mixedOffsets, mixedSize, mixedStrides,
-                   newShape);
+  if (isUbToUbCopy(Op) && isa<MemRefType>(dstOpr->get().getType())) {
+    insertBubblePropagatorUpLinkForSlicedOperand(
+        rewriter, dstOpr, mixedOffsets, mixedSize, newShape, tilingDim);
+  } else {
+    modifyOpToSliced(rewriter, dstOpr, mixedOffsets, mixedSize, mixedStrides,
+                     newShape);
+  }
   rewriter.modifyOpInPlace(Op, [&]() {
     if (Op->getNumResults() > 0)
       Op->getResult(0).setType(Op.getDst().getType());

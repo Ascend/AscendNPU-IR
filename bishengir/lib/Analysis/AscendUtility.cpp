@@ -177,7 +177,7 @@ bool AscendReduceOpHelper::isSharedMemoryReductionPreferred() {
     return false;
 
   unsigned numAccs = getAccumulatorCount();
-   
+
   // Determine if size is multiple of 128, which would result in shared
   // memory reduction without bank conflicts on data access. Also, check if
   // the number of working threads is a multiple of 128.

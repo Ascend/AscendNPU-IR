@@ -23,14 +23,16 @@ from typing import Any, List, Union
 from bishengir.dialects import arith, func, builtin, hfusion, linalg, math
 from bishengir.helper import *
 
+
 class HACCHelper:
     @staticmethod
     def add_function_kind_attribute(func_op, kind):
-        allowed_kinds = {'HOST', 'DEVICE'}
+        allowed_kinds = {"HOST", "DEVICE"}
         if kind not in allowed_kinds:
             raise ValueError(f"Invalid function kind: {kind}")
-        attr = Attribute.parse(f'#hacc.function_kind<{kind}>')
+        attr = Attribute.parse(f"#hacc.function_kind<{kind}>")
         func_op.attributes["hacc.function_kind"] = attr
+
 
 # Usage example:
 # HACCHelper.add_function_kind_attribute(host_elemwise_func, "HOST")

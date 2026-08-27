@@ -11,4 +11,4 @@ module {
     tt.store %1, %0 : !tt.ptr<i32>
     tt.return
   }
-}
+}

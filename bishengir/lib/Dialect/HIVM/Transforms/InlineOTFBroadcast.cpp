@@ -110,7 +110,7 @@ struct VBrcInlinePattern : public OpRewritePattern<hivm::VBrcOp> {
     if (!vbrcOp.hasPureTensorSemantics()) {
       return failure();
     }
-    
+
     Value src = vbrcOp.getSrc();
     Value dst = vbrcOp.getResult()[0];
     if (!isa<TensorType>(src.getType()))

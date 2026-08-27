@@ -13,7 +13,7 @@ module {
     %2 = hfusion.elemwise_binary {fun = #hfusion.binary_fn<powf>} ins(%arg0, %1 : tensor<1x2047x2048xf32>, tensor<1x2047x2048xf32>) outs(%0 : tensor<1x2047x2048xf32>) -> tensor<1x2047x2048xf32>
     %3 = tensor.empty() : tensor<1x2047xf32>
     %4 = linalg.fill ins(%cst : f32) outs(%3 : tensor<1x2047xf32>) -> tensor<1x2047xf32>
-    %reduced = linalg.reduce ins(%2 : tensor<1x2047x2048xf32>) outs(%4 : tensor<1x2047xf32>) dimensions = [2] 
+    %reduced = linalg.reduce ins(%2 : tensor<1x2047x2048xf32>) outs(%4 : tensor<1x2047xf32>) dimensions = [2]
       (%in: f32, %init: f32) {
         %18 = arith.addf %in, %init : f32
         linalg.yield %18 : f32
@@ -32,7 +32,7 @@ module {
     %15 = linalg.fill ins(%14 : f32) outs(%5 : tensor<1x2047x1xf32>) -> tensor<1x2047x1xf32>
     %16 = linalg.elemwise_binary {fun = #linalg.binary_fn<max_signed>} ins(%13, %15 : tensor<1x2047x1xf32>, tensor<1x2047x1xf32>) outs(%5 : tensor<1x2047x1xf32>) -> tensor<1x2047x1xf32>
     %collapsed = tensor.collapse_shape %16 [[0], [1, 2]] : tensor<1x2047x1xf32> into tensor<1x2047xf32>
-    %broadcasted = linalg.broadcast ins(%collapsed : tensor<1x2047xf32>) outs(%0 : tensor<1x2047x2048xf32>) dimensions = [2] 
+    %broadcasted = linalg.broadcast ins(%collapsed : tensor<1x2047xf32>) outs(%0 : tensor<1x2047x2048xf32>) dimensions = [2]
     %17 = linalg.elemwise_binary {fun = #linalg.binary_fn<div>} ins(%arg0, %broadcasted : tensor<1x2047x2048xf32>, tensor<1x2047x2048xf32>) outs(%0 : tensor<1x2047x2048xf32>) -> tensor<1x2047x2048xf32>
     return %expanded, %17 : tensor<1x2047x1xf32>, tensor<1x2047x2048xf32>
   }

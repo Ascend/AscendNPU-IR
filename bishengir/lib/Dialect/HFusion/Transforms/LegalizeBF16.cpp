@@ -90,7 +90,8 @@ static bool shouldLegalizeBF16Op(Operation *op) {
                       isa<linalg::BatchMatmulOp>(op) ||
                       isa<linalg::TransposeOp>(op) || isa<hfusion::LoadOp>(op) ||
                       isa<hfusion::StoreOp>(op) || isa<hfusion::BitcastOp>(op) ||
-                      isCopysignOp(op);
+                      isa<hfusion::Conv1DOp>(op) || isa<hfusion::Conv2DOp>(op) ||
+                      isa<hfusion::Conv3DOp>(op) || isCopysignOp(op);
 
     if (isAscend950Arch) {
       // Ascend 950 supports hardware instructions for BF16 floor operations.

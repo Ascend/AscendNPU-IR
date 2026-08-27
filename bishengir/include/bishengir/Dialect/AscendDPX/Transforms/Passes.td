@@ -27,7 +27,7 @@ def DPXDivOptimization : Pass<"dpx-div-optimization", "ModuleOp"> {
         "ascend_dpx::AscendDPXDialect", "LLVM::LLVMDialect"
     ];
 }
- 	 
+
 def HoistCallScalarToCaller
     : Pass<"hoist-call-scalar-to-caller", "ModuleOp"> {
     let summary = "Hoist ascend_dpx.call_scalar ops from callees to call sites";

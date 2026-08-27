@@ -46,7 +46,7 @@ module {
 // CHECK-DEBUG-500:  linalg.reduce {{.*}} {__intermediate_producer__, __reduction0__}
 // CHECK-DEBUG-500:  hfusion.store
 //
-// When max-buffer-count-tuning=500, tiling case is 2. 
+// When max-buffer-count-tuning=500, tiling case is 2.
 //
 // Tiling factor for output tensor<16xf32> is [1] because tiling key = 2.
 // CHECK-DEBUG-500:  %[[TILING_FACTOR_2:.*]] = transform.func.get_func_argument {{.*}}[8]

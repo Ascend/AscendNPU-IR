@@ -23,13 +23,13 @@ include "mlir/Pass/PassBase.td"
 def PropagateSymbol : Pass<"propagate-symbol", "func::FuncOp"> {
   let summary = "Propagate symbols through operations.";
   let description = [{
-    Propagate symbols bound for argument by replacing the usage of 
-    `tensor.dim`, to make the relationships between tensor dynamic 
+    Propagate symbols bound for argument by replacing the usage of
+    `tensor.dim`, to make the relationships between tensor dynamic
     dims more explicit.
 
     1. bind `symbolic_int` to func arguments (if not already bound)
        ensures each dynamic dim is represented by a symbol
-    2. use `reifyResultShapes` to bind each op's tensor result with 
+    2. use `reifyResultShapes` to bind each op's tensor result with
        `bind_symbolic_shape`, with dynamic output dims represented
        by `tensor.dim`, or `affine.apply` with `tensor.dim` operands
     3. propagate symbol by replacing `tensor.dim` with `symbolic_int`.
@@ -53,7 +53,7 @@ def PropagateSymbol : Pass<"propagate-symbol", "func::FuncOp"> {
     %S0 = symbol.symbolic_int @S0 : index
     %S1 = symbol.symbolic_int @S1 [%S0, %S0], affine_map<()[s0, s1] -> (s0 + s1)>
     symbol.bind_symbolic_shape %arg0, [%S0]
-    
+
     %out0 = tensor.empty(%S0) : tensor<?x640xf16>
     symbol.bind_symbolic_shape %0, [%S0]
     %add0 = linalg.elemwise_binary ins(%arg0, %arg0) outs(%out0)

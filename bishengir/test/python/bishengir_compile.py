@@ -13,6 +13,7 @@ def run(f):
         f()
     return f
 
+
 def compileCase1():
     module = Module.parse(
         r"""
@@ -33,8 +34,10 @@ module {
     pm.add(
         "bishengir-compile{enable-hfusion-compile=true "
         "enable-hivm-compile=true "
-        "enable-lir-compile=false}")
+        "enable-lir-compile=false}"
+    )
     pm.run(module.operation)
+
 
 # CHECK: IR Dump After bishengir::BiShengIRCompilePass (bishengir-compile)
 def compileCaseDB():
@@ -45,12 +48,12 @@ module {
         %c0 = arith.constant 0 : index
         %c4 = arith.constant 4 : index
         %c16 = arith.constant 16 : index
-        
+
         scf.for %i0 = %c0 to %c16 step %c4 {
           %tmp_ub = memref.alloc() : memref<16xf16, #hivm.address_space<ub>>
           hivm.hir.load ins(%in_gm : memref<16xf16, #hivm.address_space<gm>>)
                         outs(%tmp_ub : memref<16xf16, #hivm.address_space<ub>> )
-        
+
         }
         return
     }
@@ -63,9 +66,9 @@ module {
         "bishengir-compile{enable-hfusion-compile=false "
         "enable-hivm-compile=true "
         "enable-lir-compile=false "
-        "enable-auto-multi-buffer=true}")
+        "enable-auto-multi-buffer=true}"
+    )
     pm.run(module.operation)
-
 
 
 # CHECK: IR Dump After bishengir::BiShengIRCompilePass (bishengir-compile)
@@ -183,7 +186,8 @@ module {
     pm.add(
         "bishengir-compile{enable-hfusion-compile=true "
         "enable-hivm-compile=true "
-        "enable-lir-compile=false}")
+        "enable-lir-compile=false}"
+    )
     pm.run(module.operation)
 
 

@@ -697,13 +697,49 @@ DelayedCrossCoreIRTranslator::buildDelayedFuncIr() {
     }
     if (depthBefore == depthAfter && mixAnchorInfo.anchorBefore->parentOp !=
                                          mixAnchorInfo.anchorAfter->parentOp) {
-      if (isa<Anchor>(mixAnchorInfo.anchorAfter)) {
-        createRWOperationBlockBegin(anchorId, mixAnchorInfo, cubeAnchorInfo,
-                                    vectorAnchorInfo);
-      }
       if (isa<Anchor>(mixAnchorInfo.anchorBefore)) {
         createRWOperationBlockEnd(anchorId, mixAnchorInfo, cubeAnchorInfo,
                                   vectorAnchorInfo);
+        auto *mixBlockBackOp =
+            dyn_cast<Scope>(mixAnchorInfo.anchorBefore->parentOp)
+                ->body.back()
+                .get();
+        if (auto *mixPlaceHolderOp = dyn_cast<PlaceHolder>(mixBlockBackOp)) {
+          auto *cubePlaceHolderOp =
+              dyn_cast<Scope>(cubeAnchorInfo.anchorBefore->parentOp)
+                  ->body.back()
+                  .get();
+          auto *vectorPlaceHolderOp =
+              dyn_cast<Scope>(vectorAnchorInfo.anchorBefore->parentOp)
+                  ->body.back()
+                  .get();
+          assert(isa<PlaceHolder>(cubePlaceHolderOp));
+          assert(isa<PlaceHolder>(vectorPlaceHolderOp));
+          mixPlaceHolderOp->cubeAnchorInfo = AnchorInfo(cubePlaceHolderOp);
+          mixPlaceHolderOp->vectorAnchorInfo = AnchorInfo(vectorPlaceHolderOp);
+        }
+      }
+      if (isa<Anchor>(mixAnchorInfo.anchorAfter)) {
+        createRWOperationBlockBegin(anchorId, mixAnchorInfo, cubeAnchorInfo,
+                                    vectorAnchorInfo);
+        auto *mixBlockFrontOp =
+            dyn_cast<Scope>(mixAnchorInfo.anchorAfter->parentOp)
+                ->body.front()
+                .get();
+        if (auto *mixPlaceHolderOp = dyn_cast<PlaceHolder>(mixBlockFrontOp)) {
+          auto *cubePlaceHolderOp =
+              dyn_cast<Scope>(cubeAnchorInfo.anchorAfter->parentOp)
+                  ->body.front()
+                  .get();
+          auto *vectorPlaceHolderOp =
+              dyn_cast<Scope>(vectorAnchorInfo.anchorAfter->parentOp)
+                  ->body.front()
+                  .get();
+          assert(isa<PlaceHolder>(cubePlaceHolderOp));
+          assert(isa<PlaceHolder>(vectorPlaceHolderOp));
+          mixPlaceHolderOp->cubeAnchorInfo = AnchorInfo(cubePlaceHolderOp);
+          mixPlaceHolderOp->vectorAnchorInfo = AnchorInfo(vectorPlaceHolderOp);
+        }
       }
     }
   }
@@ -831,6 +867,9 @@ void DelayedCrossCoreGSSPass::crossCoreGssRunOnOperation(
   // remainder of this function fans those decisions out to all three
   // kernels.
   mixSolver->solve();
+
+  DEBUG_WITH_TYPE("hivm-gss-profile", { mixSolver->perfInfo.print(); });
+
   auto [mixSyncBeforeMap, mixSyncAfterMap] =
       mixSolver->getBeforeAfterSyncMaps();
   SyncBeforeAfterMap newMixSyncBeforeAfterMap;

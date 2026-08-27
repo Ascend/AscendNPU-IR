@@ -37,6 +37,7 @@
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/ManagedStatic.h"
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
@@ -52,6 +53,18 @@ namespace mlir {
 
 using namespace mlir;
 using namespace mlir::hivm;
+
+namespace {
+llvm::ManagedStatic<bool> markLibCallNoInline;
+} // namespace
+
+bool mlir::hivm::detail::getMarkLibCallNoInline() {
+  return *markLibCallNoInline;
+}
+
+void mlir::hivm::detail::setMarkLibCallNoInline(bool value) {
+  *markLibCallNoInline = value;
+}
 
 static MemRefType makeStridedLayoutAndShapeDynamic(MemRefType type) {
   return MemRefType::Builder(type)
@@ -124,10 +137,44 @@ static func::CallOp createLibCall(PatternRewriter &rewriter, Operation *op,
     funcOp->setAttr(LLVM::LLVMDialect::getEmitCWrapperAttrName(),
                     UnitAttr::get(ctx));
 
-    // Default: always_inline for standard library calls. HIVM custom ops
-    // default to noinline unless explicitly marked always_inline via
-    // hivm.inline_mode.
-    bool markNoInline = false;
+    funcOp.setPrivate();
+
+    // Determine the func core type of the lib call decl, based on either
+    // special cases such as debug helper functions or the core
+    // type of original op.
+    std::optional<hivm::TFuncCoreType> funcCoreType;
+    if (llvm::StringRef(libCallName).starts_with("_mlir_ciface_init_debug") ||
+        llvm::StringRef(libCallName).starts_with("_mlir_ciface_finish_debug")) {
+      funcCoreType = hivm::TFuncCoreType::AIC_OR_AIV;
+    } else if (auto infer = dyn_cast<CoreTypeInterface>(op)) {
+      auto coreTypeMaybe = infer.getCoreType();
+      if (coreTypeMaybe) {
+        switch (coreTypeMaybe.value()) {
+        case hivm::TCoreType::CUBE:
+          funcCoreType = hivm::TFuncCoreType::AIC;
+          break;
+        case hivm::TCoreType::VECTOR:
+          funcCoreType = hivm::TFuncCoreType::AIV;
+          break;
+        case hivm::TCoreType::CUBE_OR_VECTOR:
+        case hivm::TCoreType::CUBE_AND_VECTOR:
+          llvm::report_fatal_error(
+              "standard library call shouldn't have mix core type!");
+          break;
+        }
+      }
+    }
+
+    if (funcCoreType)
+      funcOp->setAttr(
+          mlir::hivm::TFuncCoreTypeAttr::name,
+          hivm::TFuncCoreTypeAttr::get(op->getContext(), *funcCoreType));
+
+    // Only mark AIV lib calls as noinline by default; other lib calls are
+    // always inlined. HIVM custom ops default to noinline unless explicitly
+    // marked always_inline with hivm.inline_mode.
+    bool markNoInline = hivm::detail::getMarkLibCallNoInline() &&
+                        funcCoreType == hivm::TFuncCoreType::AIV;
     std::optional<hivm::InlineMode> inlineMode;
     if (auto customOp = dyn_cast<hivm::CustomOp>(op))
       inlineMode =
@@ -155,40 +202,6 @@ static func::CallOp createLibCall(PatternRewriter &rewriter, Operation *op,
       funcOp->setAttr(
           hacc::HACCFuncTypeAttr::name,
           hacc::HACCFuncTypeAttr::get(ctx, hacc::HACCFuncType::DEVICE));
-
-    funcOp.setPrivate();
-
-    // label a func core type attribute to the lib call decl, based on either
-    // special cases such as debug helper functions or the core
-    // type of original op.
-    if (llvm::StringRef(libCallName).starts_with("_mlir_ciface_init_debug") ||
-        llvm::StringRef(libCallName).starts_with("_mlir_ciface_finish_debug")) {
-      funcOp->setAttr(
-          mlir::hivm::TFuncCoreTypeAttr::name,
-          hivm::TFuncCoreTypeAttr::get(funcOp->getContext(),
-                                       hivm::TFuncCoreType::AIC_OR_AIV));
-    } else if (auto infer = dyn_cast<CoreTypeInterface>(op)) {
-      auto coreTypeMaybe = infer.getCoreType();
-      if (coreTypeMaybe) {
-        hivm::TFuncCoreType fc{};
-        switch (coreTypeMaybe.value()) {
-        case hivm::TCoreType::CUBE:
-          fc = hivm::TFuncCoreType::AIC;
-          break;
-        case hivm::TCoreType::VECTOR:
-          fc = hivm::TFuncCoreType::AIV;
-          break;
-        case hivm::TCoreType::CUBE_OR_VECTOR:
-        case hivm::TCoreType::CUBE_AND_VECTOR:
-          llvm::report_fatal_error(
-              "standard library call shouldn't have mix core type!");
-          break;
-        }
-
-        funcOp->setAttr(mlir::hivm::TFuncCoreTypeAttr::name,
-                        hivm::TFuncCoreTypeAttr::get(op->getContext(), fc));
-      }
-    }
   }
 
   return rewriter.create<func::CallOp>(
@@ -1962,22 +1975,33 @@ void mlir::hivm::populateHIVMToStandardConversionPatterns(
 namespace {
 struct ConvertHIVMToStandardPass
     : public impl::ConvertHIVMToStandardBase<ConvertHIVMToStandardPass> {
+  ConvertHIVMToStandardPass() : useArchDependentNoInlineDefault(true) {}
+
   explicit ConvertHIVMToStandardPass(
       const ConvertHIVMToStandardOptions &options)
       : ConvertHIVMToStandardBase(options) {}
 
   void runOnOperation() override;
+
+private:
+  bool useArchDependentNoInlineDefault = false;
 };
 } // namespace
 
 void ConvertHIVMToStandardPass::runOnOperation() {
   auto module = getOperation();
+  bool effectiveMarkLibCallNoInline = markLibCallNoInline;
+  if (useArchDependentNoInlineDefault &&
+      markLibCallNoInline.getNumOccurrences() == 0) {
+    effectiveMarkLibCallNoInline = hacc::utils::isRegBasedArch(module);
+  }
   if (hacc::utils::isRegBasedArch(module)) {
     if (failed(ConvertHIVMToStandardRegBasePass::runOnOperation(
-            module, isOpsAligned, markLibCallNoInline)))
+            module, isOpsAligned, effectiveMarkLibCallNoInline)))
       signalPassFailure();
     return;
   }
+  hivm::detail::setMarkLibCallNoInline(effectiveMarkLibCallNoInline);
   ConversionTarget target(getContext());
   target.addLegalDialect<func::FuncDialect, memref::MemRefDialect,
                          arith::ArithDialect, scf::SCFDialect,
@@ -2087,6 +2111,11 @@ void ConvertHIVMToStandardPass::runOnOperation() {
     }
     return WalkResult::advance();
   });
+}
+
+std::unique_ptr<OperationPass<ModuleOp>>
+mlir::createConvertHIVMToStandardPass() {
+  return std::make_unique<ConvertHIVMToStandardPass>();
 }
 
 std::unique_ptr<OperationPass<ModuleOp>> mlir::createConvertHIVMToStandardPass(

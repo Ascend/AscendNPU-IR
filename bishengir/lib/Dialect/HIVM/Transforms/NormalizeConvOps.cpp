@@ -15,6 +15,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
@@ -165,6 +166,11 @@ static constexpr llvm::StringLiteral conv3dDepthPadded =
 //   Explicit contract between normalize and decompose for Conv3d. When D
 //   padding > 0, normalize materializes depth padding and tags the op, while
 //   decompose relies on this tag and keeps H/W padding on Conv2d attributes.
+
+bool isRegBasedArch(Operation *op) {
+  auto moduleOp = op->getParentOfType<ModuleOp>();
+  return moduleOp && hacc::utils::isRegBasedArch(moduleOp);
+}
 
 template <size_t Rank>
 FailureOr<std::array<int64_t, Rank>> getConvIntArrayAttr(Attribute attr) {
@@ -602,6 +608,14 @@ insertPadExpandTransToFormatInput(ConvOpType op, PatternRewriter &rewriter,
     finalVal = vtranspose.getResult()[0];
   }
 
+  // Keep the normalized input in the tensor dataflow so that InsertLoadStore
+  // can later use tightly-coupled buffer DMA for the UB-to-L1 transfer.
+  // A3 lacks this pathway and relies on explicit store/load instead.
+  if (isRegBasedArch(op)) {
+    op->replaceUsesOfWith(input, finalVal);
+    return success();
+  }
+
   // Step 6: insert store + load
   Type type = finalVal.getType();
   Type elemType = getElementTypeOrSelf(type);
@@ -824,6 +838,88 @@ insertPadExpandTransToFormatWeight(ConvOpType op, PatternRewriter &rewriter,
         op->getLoc(), TypeRange{dst.getType()}, finalVal, dst.getResult(),
         rewriter.getDenseI64ArrayAttr(permutation));
     finalVal = vtranspose.getResult()[0];
+  }
+
+  // Keep the normalized weight in the tensor dataflow so that InsertLoadStore
+  // can later use tightly-coupled buffer DMA for the UB-to-L1 transfer.
+  // A3 lacks this pathway and relies on explicit store/load instead.
+  if (isRegBasedArch(op)) {
+    // Align per-group oC to the fractal boundary required by L1-to-L0B DMA.
+    // Split oC into [groups, oC/groups], pad the inner dim to a multiple of
+    // FRACTAL_BLOCK_NUM, then collapse back so the combined oC is
+    // group-aligned.
+    if (groups <= 0 || oC % groups != 0) {
+      return failure();
+    }
+    int64_t oCPerGroup = oC / groups;
+    int64_t oCPerGroupCeil =
+        CEIL_FACTOR(oCPerGroup, utils::FRACTAL_BLOCK_NUM);
+    if (oCPerGroup != oCPerGroupCeil) {
+      auto packedType = dyn_cast<RankedTensorType>(finalVal.getType());
+      if (!packedType || !packedType.hasStaticShape()) {
+        return failure();
+      }
+
+      // Packed weight is [..., oC, C0].  Split oC into [G, oC/G], pad the
+      // inner per-group dimension, then collapse it back to a physically
+      // group-aligned oC dimension.
+      int64_t oCDim = packedType.getRank() - 2;
+      SmallVector<int64_t> groupedShape;
+      SmallVector<ReassociationIndices> reassoc;
+      for (int64_t srcDim = 0, dstDim = 0; srcDim < packedType.getRank();
+           ++srcDim) {
+        if (srcDim == oCDim) {
+          groupedShape.push_back(groups);
+          groupedShape.push_back(oCPerGroup);
+          reassoc.push_back({dstDim, dstDim + 1});
+          dstDim += 2;
+        } else {
+          groupedShape.push_back(packedType.getDimSize(srcDim));
+          reassoc.push_back({dstDim++});
+        }
+      }
+
+      auto groupedType = RankedTensorType::get(groupedShape, elementType);
+      Value groupedWeight = rewriter.create<tensor::ExpandShapeOp>(
+          op->getLoc(), groupedType, finalVal, reassoc);
+
+      SmallVector<int64_t> paddedGroupedShape(groupedShape);
+      int64_t perGroupDim = oCDim + 1;
+      paddedGroupedShape[perGroupDim] = oCPerGroupCeil;
+      auto paddedGroupedType =
+          RankedTensorType::get(paddedGroupedShape, elementType);
+
+      SmallVector<int64_t> padShape(groupedShape);
+      padShape[perGroupDim] = oCPerGroupCeil - oCPerGroup;
+      Value padInit = rewriter.create<tensor::EmptyOp>(
+          op->getLoc(), padShape, elementType);
+      Value zero = rewriter.create<arith::ConstantOp>(
+          op->getLoc(), rewriter.getZeroAttr(elementType));
+      Value zeroPad =
+          rewriter
+              .create<hivm::VBrcOp>(
+                  op->getLoc(), TypeRange{padInit.getType()}, zero, padInit,
+                  rewriter.getDenseI64ArrayAttr(ArrayRef<int64_t>{}))
+              ->getResult(0);
+      Value concatInit = rewriter.create<tensor::EmptyOp>(
+          op->getLoc(), paddedGroupedShape, elementType);
+      Value paddedGroupedWeight =
+          rewriter
+              .create<hivm::VConcatOp>(
+                  op->getLoc(), TypeRange{paddedGroupedType},
+                  rewriter.getI64IntegerAttr(perGroupDim),
+                  ValueRange{groupedWeight, zeroPad}, concatInit)
+              ->getResult(0);
+
+      SmallVector<int64_t> paddedPackedShape(packedType.getShape());
+      paddedPackedShape[oCDim] = oCPerGroupCeil * groups;
+      finalVal = rewriter.create<tensor::CollapseShapeOp>(
+          op->getLoc(),
+          RankedTensorType::get(paddedPackedShape, elementType),
+          paddedGroupedWeight, reassoc);
+    }
+    op->replaceUsesOfWith(weight, finalVal);
+    return success();
   }
 
   // Step 8: insert store + load & mark with layout
@@ -1667,37 +1763,37 @@ public:
       }
 
       Value slicedResult = forOp.getResult(0);
-
-      // step 4: extract_slice slicedResult: [fusedOC, oHWCeil] -> [fusedOC,
-      // oHW]
-      SmallVector<OpFoldResult, 2> offsets{
-          rewriter.getIndexAttr(0),
-          rewriter.getIndexAttr(0),
-      };
-      SmallVector<OpFoldResult, 2> sizes{
-          rewriter.getIndexAttr(fusedOC),
-          rewriter.getIndexAttr(oHW),
-      };
-      SmallVector<OpFoldResult, 2> strides{
-          rewriter.getIndexAttr(1),
-          rewriter.getIndexAttr(1),
-      };
-
-      auto finalType = RankedTensorType::get({fusedOC, oHW}, newTargetType);
-      auto extractSliceOp = rewriter.create<tensor::ExtractSliceOp>(
-          loc, finalType, slicedResult, offsets, sizes, strides);
-
-      newResult = extractSliceOp.getResult();
+      newResult = slicedResult;
     }
 
-    // === batch reshape ===
-    // Conv1D/Conv2D reach this point as [B * oC, oHW]. Conv3D carries depth
+    // === batch reshape + deferred oHW trim ===
+    // Restore the batch dimension and trim oHW padding. Two sub-steps:
+    //   step 1: expand_shape  [fusedOC, oHWCeil]   -> [batch, oC, oHWCeil]
+    //   step 2: extract_slice [batch, oC, oHWCeil] -> [batch, oC, oHW]
+    //
+    // Original order was extract_slice first, then expand_shape. Swapped
+    // because A5 VF func bufferization cannot handle the
+    // extract_slice + expand_shape + vadd pattern (the non-contiguous tensor
+    // from extract_slice, after expand_shape, is passed directly to an
+    // outlined VF function whose signature expects a contiguous tensor,
+    // causing a CallOp cast-incompatible assert). With the swapped order,
+    // expand_shape operates on the padded (contiguous) tensor and the
+    // subsequent extract_slice on the 3D tensor can be tiled into the
+    // consumer (vadd) loop by the VF outliner, avoiding the issue.
+    //
+    // Conv1D/Conv2D reach this point as [B * oC, oHW] (direct path) or
+    // [B * oC, oHWCeil] (non-direct path, trim deferred). Conv3D carries depth
     // in the leading dimension as [B * oD * oC, oHW], so it must keep that
     // shape for the dedicated D-axis restore below.
     bool needsGenericBatchRestore = hasBatch && baseDims != 4;
+    bool needHWTrim = !useDirectSlicePath;
+
+    // === batch reshape ===
+    // Restore the batch dimension: [fusedOC, oHW(oHWCeil)] -> [batch, oC, oHW(oHWCeil)]
     if (needsGenericBatchRestore) {
+      int64_t hwDim = needHWTrim ? oHWCeil : oHW;
       auto batchReshapedType =
-          RankedTensorType::get({batch, oC, oHW}, newTargetType);
+          RankedTensorType::get({batch, oC, hwDim}, newTargetType);
 
       SmallVector<ReassociationIndices> reassoc = {
           {0, 1}, // B * oC
@@ -1706,6 +1802,41 @@ public:
 
       newResult = rewriter.create<tensor::ExpandShapeOp>(loc, batchReshapedType,
                                                          newResult, reassoc);
+    }
+
+    // === deferred oHW trim ===
+    // Trim oHWCeil -> oHW to strip the padding.
+    if (needHWTrim) {
+      if (needsGenericBatchRestore) {
+        // [batch, oC, oHWCeil] -> [batch, oC, oHW]
+        SmallVector<OpFoldResult, 3> trimOffsets{
+            rewriter.getIndexAttr(0), rewriter.getIndexAttr(0),
+            rewriter.getIndexAttr(0)};
+        SmallVector<OpFoldResult, 3> trimSizes{
+            rewriter.getIndexAttr(batch), rewriter.getIndexAttr(oC),
+            rewriter.getIndexAttr(oHW)};
+        SmallVector<OpFoldResult, 3> trimStrides{
+            rewriter.getIndexAttr(1), rewriter.getIndexAttr(1),
+            rewriter.getIndexAttr(1)};
+        auto trimType =
+            RankedTensorType::get({batch, oC, oHW}, newTargetType);
+        newResult = rewriter.create<tensor::ExtractSliceOp>(
+            loc, trimType, newResult, trimOffsets, trimSizes,
+            trimStrides).getResult();
+      } else {
+        // [fusedOC, oHWCeil] -> [fusedOC, oHW]
+        SmallVector<OpFoldResult, 2> trimOffsets{
+            rewriter.getIndexAttr(0), rewriter.getIndexAttr(0)};
+        SmallVector<OpFoldResult, 2> trimSizes{
+            rewriter.getIndexAttr(fusedOC), rewriter.getIndexAttr(oHW)};
+        SmallVector<OpFoldResult, 2> trimStrides{
+            rewriter.getIndexAttr(1), rewriter.getIndexAttr(1)};
+        auto trimType =
+            RankedTensorType::get({fusedOC, oHW}, newTargetType);
+        newResult = rewriter.create<tensor::ExtractSliceOp>(
+            loc, trimType, newResult, trimOffsets, trimSizes,
+            trimStrides).getResult();
+      }
     }
 
     // === oHW split ===

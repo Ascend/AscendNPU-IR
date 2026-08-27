@@ -293,7 +293,7 @@ def SetFFTSBaseAddrOp : HIVM_Op<"set_ffts_base_addr", [CubeVectorCoreTypeTrait]>
 //===----------------------------------------------------------------------===//
 
 def DebugOp :
-  HIVM_Op<"debug", 
+  HIVM_Op<"debug",
           [MemoryEffects<[MemRead, MemWrite]>,
            DeclareOpInterfaceMethods<HIVMInferCoreTypeInterface, ["inferCoreType"]>]>,
   Arguments<(ins StrAttr:$debugtype,

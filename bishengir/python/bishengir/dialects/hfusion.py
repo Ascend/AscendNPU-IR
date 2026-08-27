@@ -23,8 +23,10 @@ from typing import Any, List, Union
 from bishengir.dialects import arith, func, builtin, hfusion, linalg, math
 from bishengir.helper import *
 
+
 def create_hfusion_attr(attr_type, value):
     return Attribute.parse(f"#hfusion.{attr_type}<{value}>")
+
 
 @_ods_cext.register_operation(_Dialect, replace=True)
 class ElemwiseUnaryOp(ElemwiseUnaryOp):
@@ -33,7 +35,9 @@ class ElemwiseUnaryOp(ElemwiseUnaryOp):
         return self.results[0].type
 
     @classmethod
-    def create(cls, result_type, input_tensor, output_tensor, fun, cast=None, loc=None, ip=None):
+    def create(
+        cls, result_type, input_tensor, output_tensor, fun, cast=None, loc=None, ip=None
+    ):
         op = cls(
             result_tensors=[result_type],
             inputs=[input_tensor],
@@ -41,15 +45,17 @@ class ElemwiseUnaryOp(ElemwiseUnaryOp):
             fun=create_hfusion_attr("unary_fn", fun),
             cast=cast,
             loc=loc,
-            ip=ip
+            ip=ip,
         )
         cls.add_region(op, result_type.element_type, fun)
         return op
 
     @classmethod
     def add_region(cls, op, element_type, fun):
-        block = Block.create_at_start(op.operation.regions[0], [element_type, element_type])
-        
+        block = Block.create_at_start(
+            op.operation.regions[0], [element_type, element_type]
+        )
+
         with InsertionPoint(block):
             arg0, arg1 = block.arguments
             result = cls.create_unary_op(fun, arg0)
@@ -73,6 +79,7 @@ class ElemwiseUnaryOp(ElemwiseUnaryOp):
         else:
             raise ValueError(f"Unsupported unary function: {fun}")
 
+
 @_ods_cext.register_operation(_Dialect, replace=True)
 class ElemwiseBinaryOp(ElemwiseBinaryOp):
     @property
@@ -80,7 +87,17 @@ class ElemwiseBinaryOp(ElemwiseBinaryOp):
         return self.results[0].type
 
     @classmethod
-    def create(cls, result_type, input_tensor1, input_tensor2, output_tensor, fun, cast=None, loc=None, ip=None):
+    def create(
+        cls,
+        result_type,
+        input_tensor1,
+        input_tensor2,
+        output_tensor,
+        fun,
+        cast=None,
+        loc=None,
+        ip=None,
+    ):
         op = cls(
             result_tensors=[result_type],
             inputs=[input_tensor1, input_tensor2],
@@ -88,15 +105,17 @@ class ElemwiseBinaryOp(ElemwiseBinaryOp):
             fun=create_hfusion_attr("binary_fn", fun),
             cast=cast,
             loc=loc,
-            ip=ip
+            ip=ip,
         )
         cls.add_region(op, result_type.element_type, fun)
         return op
 
     @classmethod
     def add_region(cls, op, element_type, fun):
-        block = Block.create_at_start(op.operation.regions[0], [element_type, element_type, element_type])
-        
+        block = Block.create_at_start(
+            op.operation.regions[0], [element_type, element_type, element_type]
+        )
+
         with InsertionPoint(block):
             arg0, arg1, arg2 = block.arguments
             result = cls.create_binary_op(fun, arg0, arg1)

@@ -475,24 +475,24 @@ vector_cast_1d_with_overflow(memref_t<__ubuf__ SRC_T, 1> *src,
   memref_t<__ubuf__ SRC_T, 2> src_2d;
   memref_t<__ubuf__ DST_T, 2> dst_2d;
   if (src->sizes[0] <= num_per_block_dst) {
-    src_2d = {src->aligned,
-              src->allocated,
+    src_2d = {src->allocated,
+              src->aligned,
               src->offset,
               {1, src->sizes[0]},
               {CEIL_FACTOR(src->sizes[0], num_per_block_src), 1}};
-    dst_2d = {dst->aligned,
-              dst->allocated,
+    dst_2d = {dst->allocated,
+              dst->aligned,
               dst->offset,
               {1, src->sizes[0]},
               {CEIL_FACTOR(src->sizes[0], num_per_block_dst), 1}};
   } else {
-    src_2d = {src->aligned,
-              src->allocated,
+    src_2d = {src->allocated,
+              src->aligned,
               src->offset,
               {CEIL_DIV(dst->sizes[0], num_per_block_dst), num_per_block_dst},
               {num_per_block_dst, 1}};
-    dst_2d = {dst->aligned,
-              dst->allocated,
+    dst_2d = {dst->allocated,
+              dst->aligned,
               dst->offset,
               {CEIL_DIV(dst->sizes[0], num_per_block_dst), num_per_block_dst},
               {num_per_block_dst, 1}};

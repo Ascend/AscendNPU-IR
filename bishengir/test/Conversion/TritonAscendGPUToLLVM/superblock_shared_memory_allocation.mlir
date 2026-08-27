@@ -10,11 +10,11 @@ module @superBlockFactor1_20 attributes {"bishengir.shared-mem-dynamic-size" = 1
     %0 = ttg.local_alloc : () -> !ttg.memdesc<4xi32, #shared, #smem, mutable>
     %1 = ttg.local_alloc : () -> !ttg.memdesc<1xi32, #shared, #smem, mutable>
 
-    ttg.local_dealloc %0 : !ttg.memdesc<4xi32, #shared, #smem, mutable> 
+    ttg.local_dealloc %0 : !ttg.memdesc<4xi32, #shared, #smem, mutable>
     ttg.local_dealloc %1 : !ttg.memdesc<1xi32, #shared, #smem, mutable>
     tt.return
   }
-}  
+}
 
 // -----
 
@@ -27,10 +27,10 @@ module @superBlockFactor1_16 attributes {"bishengir.shared-mem-dynamic-size" = 1
   tt.func public @kernel(%arg0: !tt.ptr<f32> {tt.divisibility = 16 : i32}, %arg1: !tt.ptr<f32> {tt.divisibility = 16 : i32}, %arg2: i32, %arg3: i32 {gpu.block = #gpu.block<x>, tt.divisibility = 1 : i32}, %arg4: i32 {gpu.block = #gpu.block<y>, tt.divisibility = 1 : i32}, %arg5: i32 {gpu.block = #gpu.block<z>, tt.divisibility = 1 : i32}) attributes {noinline = false} {
     %0 = ttg.local_alloc : () -> !ttg.memdesc<4xi32, #shared, #smem, mutable>
 
-    ttg.local_dealloc %0 : !ttg.memdesc<4xi32, #shared, #smem, mutable> 
+    ttg.local_dealloc %0 : !ttg.memdesc<4xi32, #shared, #smem, mutable>
     tt.return
   }
-}  
+}
 
 // -----
 
@@ -44,11 +44,11 @@ module @superBlockFactor2_pad attributes {"bishengir.shared-mem-dynamic-size" = 
     %0 = ttg.local_alloc : () -> !ttg.memdesc<4xi32, #shared, #smem, mutable>
     %1 = ttg.local_alloc : () -> !ttg.memdesc<1xi32, #shared, #smem, mutable>
 
-    ttg.local_dealloc %0 : !ttg.memdesc<4xi32, #shared, #smem, mutable> 
+    ttg.local_dealloc %0 : !ttg.memdesc<4xi32, #shared, #smem, mutable>
     ttg.local_dealloc %1 : !ttg.memdesc<1xi32, #shared, #smem, mutable>
     tt.return
   }
-}  
+}
 
 // -----
 
@@ -61,10 +61,10 @@ module @superBlockFactor2_noPad attributes {"bishengir.shared-mem-dynamic-size" 
   tt.func public @kernel(%arg0: !tt.ptr<f32> {tt.divisibility = 16 : i32}, %arg1: !tt.ptr<f32> {tt.divisibility = 16 : i32}, %arg2: i32, %arg3: i32 {gpu.block = #gpu.block<x>, tt.divisibility = 1 : i32}, %arg4: i32 {gpu.block = #gpu.block<y>, tt.divisibility = 1 : i32}, %arg5: i32 {gpu.block = #gpu.block<z>, tt.divisibility = 1 : i32}) attributes {noinline = false} {
     %0 = ttg.local_alloc : () -> !ttg.memdesc<4xi32, #shared, #smem, mutable>
 
-    ttg.local_dealloc %0 : !ttg.memdesc<4xi32, #shared, #smem, mutable> 
+    ttg.local_dealloc %0 : !ttg.memdesc<4xi32, #shared, #smem, mutable>
     tt.return
   }
-}  
+}
 
 // -----
 
@@ -78,11 +78,11 @@ module @superBlockFactor4_pad attributes {"bishengir.shared-mem-dynamic-size" = 
     %0 = ttg.local_alloc : () -> !ttg.memdesc<4xi32, #shared, #smem, mutable>
     %1 = ttg.local_alloc : () -> !ttg.memdesc<1xi32, #shared, #smem, mutable>
 
-    ttg.local_dealloc %0 : !ttg.memdesc<4xi32, #shared, #smem, mutable> 
+    ttg.local_dealloc %0 : !ttg.memdesc<4xi32, #shared, #smem, mutable>
     ttg.local_dealloc %1 : !ttg.memdesc<1xi32, #shared, #smem, mutable>
     tt.return
   }
-}  
+}
 
 // -----
 
@@ -95,7 +95,7 @@ module @superBlockFactor4_noPad attributes {"bishengir.shared-mem-dynamic-size" 
   tt.func public @kernel(%arg0: !tt.ptr<f32> {tt.divisibility = 16 : i32}, %arg1: !tt.ptr<f32> {tt.divisibility = 16 : i32}, %arg2: i32, %arg3: i32 {gpu.block = #gpu.block<x>, tt.divisibility = 1 : i32}, %arg4: i32 {gpu.block = #gpu.block<y>, tt.divisibility = 1 : i32}, %arg5: i32 {gpu.block = #gpu.block<z>, tt.divisibility = 1 : i32}) attributes {noinline = false} {
     %0 = ttg.local_alloc : () -> !ttg.memdesc<4xi32, #shared, #smem, mutable>
 
-    ttg.local_dealloc %0 : !ttg.memdesc<4xi32, #shared, #smem, mutable> 
+    ttg.local_dealloc %0 : !ttg.memdesc<4xi32, #shared, #smem, mutable>
     tt.return
   }
-}  
+}

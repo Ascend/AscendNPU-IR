@@ -359,7 +359,7 @@ static void hfusionAutoSchedulePipeline(OpPassManager &pm,
 static void postProcess(OpPassManager &pm,
                         const HFusionPipelineOptions &options) {
   pm.nest<func::FuncOp>().addPass(createHFusionInlineBrcPass());
-  
+
   // normalize should be called after auto schedule:
   // - tile reduction may generate unsupported elemwise op requiring normalize
   NormalizeOptions normalizeOptions;

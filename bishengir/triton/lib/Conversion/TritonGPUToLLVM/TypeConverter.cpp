@@ -36,7 +36,7 @@ TritonGPUToLLVMTypeConverter::TritonGPUToLLVMTypeConverter(
   });
 
   // Remove conversions from fp8 to i8
-  
+
 }
 
 Type TritonGPUToLLVMTypeConverter::convertTritonTensorType(

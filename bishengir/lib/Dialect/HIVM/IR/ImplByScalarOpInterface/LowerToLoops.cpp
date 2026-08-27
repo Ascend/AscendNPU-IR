@@ -911,9 +911,9 @@ void decomposeVReduceOpToScalarOpImpl(RewriterBase &rewriter, VReduceOp op) {
     llvm::SmallVector<Value> resTensors = createScalarReduceComputeOp(
         rewriter, op, scalarInputs, scalarIndx, indexes[indexVal]);
 
-    for (size_t i = 0; i < resTensors.size(); ++i) {	
-      createSinglePointStore(rewriter, op.getLoc(), resTensors[i],	
-                             op.getDpsInits()[i], dstIndexes);	
+    for (size_t i = 0; i < resTensors.size(); ++i) {
+      createSinglePointStore(rewriter, op.getLoc(), resTensors[i],
+                             op.getDpsInits()[i], dstIndexes);
     }
   };
 
@@ -932,8 +932,8 @@ void decomposeVReduceOpToScalarOpImpl(RewriterBase &rewriter, VReduceOp op) {
                                                   int64_t reduceDim) -> void {
       auto loadedIndex = createSinglePointLoad(rewriter, op.getLoc(),
                                                 op.getDpsInits()[1], dstIndexes).getResult();
-      auto idxIndex = rewriter.create<arith::IndexCastOp>(op.getLoc(), 
-                                                        TypeRange{rewriter.getIndexType()}, 
+      auto idxIndex = rewriter.create<arith::IndexCastOp>(op.getLoc(),
+                                                        TypeRange{rewriter.getIndexType()},
                                                         ValueRange{loadedIndex}).getResult();
       llvm::SmallVector<Value> idxIndexes(dstIndexes);
       idxIndexes[reduceDim] = idxIndex;
@@ -941,7 +941,7 @@ void decomposeVReduceOpToScalarOpImpl(RewriterBase &rewriter, VReduceOp op) {
                                             op.getIndices(), idxIndexes).getResult();
       createSinglePointStore(rewriter, op.getLoc(), resIndex, op.getDpsInits()[1], dstIndexes);
     };
-    
+
     if (loopDims.size() == 1) {
       auto constZero = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 0);
       llvm::SmallVector<Value> dstIndexes = {constZero};

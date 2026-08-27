@@ -36,4 +36,3 @@ copy_gm_to_cbuf_1d_core(memref_t<__gm__ T, 1> *src,
 
   static_assert("not implemented non-contiguous last dimension.");
 }
-

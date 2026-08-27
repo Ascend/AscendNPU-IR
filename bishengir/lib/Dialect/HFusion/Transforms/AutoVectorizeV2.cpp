@@ -1371,7 +1371,6 @@ void AutoVectorizeV2::runOnOperation() {
   MLIRContext *context = op->getContext();
   IRRewriter rewriter(context);
   OpBuilder builder(context);
-  bool fallback = false;
 
   SmallVector<func::FuncOp> fusableFuncList;
   collectFusableFuncInModule(op, fusableFuncList);
@@ -1390,7 +1389,6 @@ void AutoVectorizeV2::runOnOperation() {
   for (auto callee : allInlined)
     rewriter.eraseOp(callee);
 
-  SmallVector<std::string> failedFuncNames;
   for (func::FuncOp func : fusableFuncList) {
     RetriedOptions retryCtx{maxFusedOps, enableMultipleConsumerFusion,
                             enableCrossIfFusion, enableVFStackLimit,
@@ -1403,51 +1401,11 @@ void AutoVectorizeV2::runOnOperation() {
     }
 
     LogicalResult result = runAttempt(func, retryCtx, builder, rewriter);
-    bool retried = false;
-    if (failed(result) && retryCtx.enableMultipleConsumerFusion) {
-      func.emitWarning() << "AutoVectorizeV2 failed; "
-                            "retrying with enableMultipleConsumerFusion=false";
-      retryCtx.enableMultipleConsumerFusion = false;
-      result = runAttempt(func, retryCtx, builder, rewriter);
-      retried = true;
-    }
-
     if (failed(result)) {
-      func.emitWarning()
-          << (retried ? "AutoVectorizeV2 retry failed"
-                      : "AutoVectorizeV2 failed")
-          << "; falling back to legacy HFusionAutoVectorize pass for this "
-             "function";
-      fallback = true;
-      failedFuncNames.push_back(func.getSymName().str());
-      continue;
+      func.emitWarning() << "AutoVectorizeV2 failed;";
+      signalPassFailure();
     }
   }
-
-  if (fallback) {
-    PassManager pm(context);
-    AutoVectorizeOptions vecOptions;
-    // Set maxVectorizeAxes to be 1 for compatiblity.
-    // TODO: Remove this constraint after e2e support for multi axes
-    // vectorization.
-    vecOptions.maxVectorizeAxes = 2;
-    // A regular or legacy scope already has an explicit post-VFFusion route.
-    // Re-enabling the old unfiltered tree pattern in the per-function fallback
-    // would undo that decision (and rematerialize every reduction level).
-    // Scopes without a frozen route retain the previous fallback behavior for
-    // general/non-canonical tree reductions.
-    vecOptions.treeReduce =
-        treeReduce && !op->hasAttr(hfusion::kRegularTreeReductionScopeAttr) &&
-        !op->hasAttr(hfusion::kLegacyTreeReductionScopeAttr);
-    // Scope the legacy pass to just the function(s) AutoVectorizeV2 failed
-    // on: functions it already vectorized above must not be reprocessed,
-    // since both paths outline vector functions using the same naming
-    // scheme and would otherwise collide on the same names.
-    vecOptions.restrictToFuncNames = failedFuncNames;
-    pm.addPass(hfusion::createHFusionAutoVectorizePass(vecOptions));
-    std::ignore = pm.run(op);
-  }
-
   // Cost-selection attributes are internal communication between VFFusion
   // and AutoVectorizeV2.  Do not leak them into the lowered module.
   op->removeAttr(hfusion::kTreeReductionSelectionFrozenAttr);

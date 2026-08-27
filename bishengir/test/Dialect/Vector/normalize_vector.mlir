@@ -210,7 +210,7 @@ func.func @test_xori_reduction(%arg0: memref<?x128xi32, #hivm.address_space<ub>>
 }
 
 // -----
-// Normalize vector.transfer_read with permutation_map into vector.gather 
+// Normalize vector.transfer_read with permutation_map into vector.gather
 
 // This test is to normalize vector.transfer_read with a mask
 // CHECK-LABEL: func.func @transpose_2d_outlined_vf_0
@@ -427,7 +427,7 @@ func.func @test_drop_unit_dim_mulsi_extended(%arg0: vector<1x4xi32>, %arg1: vect
   return %high : vector<1x4xi32>
 }
 
-// -----  
+// -----
 // CHECK-LABEL: func.func @test_drop_unit_dim_mului_extended
 // CHECK: %{{.*}} = vector.shape_cast %arg0 : vector<1x4xi32> to vector<4xi32>
 // CHECK: %{{.*}} = vector.shape_cast %arg1 : vector<1x4xi32> to vector<4xi32>

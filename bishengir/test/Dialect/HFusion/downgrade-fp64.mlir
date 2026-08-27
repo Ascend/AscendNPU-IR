@@ -16,15 +16,15 @@ module {
     %expanded_2 = tensor.expand_shape %arg2 [[0], [1, 2]] output_shape [24, 32, 1] : tensor<24x32xf32> into tensor<24x32x1xf32>
     %2 = tensor.empty() : tensor<24x32x8xf32>
     %collapsed_3 = tensor.collapse_shape %expanded_2 [[0], [1, 2]] : tensor<24x32x1xf32> into tensor<24x32xf32>
-    %broadcasted = linalg.broadcast ins(%collapsed_3 : tensor<24x32xf32>) outs(%2 : tensor<24x32x8xf32>) dimensions = [2] 
+    %broadcasted = linalg.broadcast ins(%collapsed_3 : tensor<24x32xf32>) outs(%2 : tensor<24x32x8xf32>) dimensions = [2]
     %expanded_4 = tensor.expand_shape %arg3 [[0, 1, 2]] output_shape [1, 32, 8] : tensor<256xf32> into tensor<1x32x8xf32>
     %collapsed_5 = tensor.collapse_shape %expanded_4 [[0, 1], [2]] : tensor<1x32x8xf32> into tensor<32x8xf32>
-    %broadcasted_6 = linalg.broadcast ins(%collapsed_5 : tensor<32x8xf32>) outs(%2 : tensor<24x32x8xf32>) dimensions = [0] 
+    %broadcasted_6 = linalg.broadcast ins(%collapsed_5 : tensor<32x8xf32>) outs(%2 : tensor<24x32x8xf32>) dimensions = [0]
     %3 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%broadcasted, %broadcasted_6 : tensor<24x32x8xf32>, tensor<24x32x8xf32>) outs(%2 : tensor<24x32x8xf32>) -> tensor<24x32x8xf32>
     %expanded_7 = tensor.expand_shape %3 [[0], [1], [2, 3]] output_shape [24, 32, 8, 1] : tensor<24x32x8xf32> into tensor<24x32x8x1xf32>
     %4 = tensor.empty() : tensor<24x32x8x768xf32>
     %collapsed_8 = tensor.collapse_shape %expanded_7 [[0], [1], [2, 3]] : tensor<24x32x8x1xf32> into tensor<24x32x8xf32>
-    %broadcasted_9 = linalg.broadcast ins(%collapsed_8 : tensor<24x32x8xf32>) outs(%4 : tensor<24x32x8x768xf32>) dimensions = [3] 
+    %broadcasted_9 = linalg.broadcast ins(%collapsed_8 : tensor<24x32x8xf32>) outs(%4 : tensor<24x32x8x768xf32>) dimensions = [3]
     %5 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%expanded, %broadcasted_9 : tensor<24x32x8x768xf32>, tensor<24x32x8x768xf32>) outs(%4 : tensor<24x32x8x768xf32>) -> tensor<24x32x8x768xf32>
     %expanded_10 = tensor.expand_shape %arg4 [[0], [1, 2], [3]] output_shape [24, 32, 8, 768] : tensor<24x256x768xf32> into tensor<24x32x8x768xf32>
     %6 = tensor.empty() : tensor<24x32xf32>
@@ -40,7 +40,7 @@ module {
     %16 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%13, %15 : tensor<24x32xf32>, tensor<24x32xf32>) outs(%6 : tensor<24x32xf32>) -> tensor<24x32xf32>
     %expanded_11 = tensor.expand_shape %16 [[0], [1, 2, 3]] output_shape [24, 32, 1, 1] : tensor<24x32xf32> into tensor<24x32x1x1xf32>
     %collapsed_12 = tensor.collapse_shape %expanded_11 [[0], [1, 2, 3]] : tensor<24x32x1x1xf32> into tensor<24x32xf32>
-    %broadcasted_13 = linalg.broadcast ins(%collapsed_12 : tensor<24x32xf32>) outs(%4 : tensor<24x32x8x768xf32>) dimensions = [2, 3] 
+    %broadcasted_13 = linalg.broadcast ins(%collapsed_12 : tensor<24x32xf32>) outs(%4 : tensor<24x32x8x768xf32>) dimensions = [2, 3]
     %17 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%expanded_10, %broadcasted_13 : tensor<24x32x8x768xf32>, tensor<24x32x8x768xf32>) outs(%4 : tensor<24x32x8x768xf32>) -> tensor<24x32x8x768xf32>
     %18 = linalg.fill ins(%cst_0 : f32) outs(%4 : tensor<24x32x8x768xf32>) -> tensor<24x32x8x768xf32>
     %19 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%17, %18 : tensor<24x32x8x768xf32>, tensor<24x32x8x768xf32>) outs(%4 : tensor<24x32x8x768xf32>) -> tensor<24x32x8x768xf32>
@@ -53,7 +53,7 @@ module {
     %26 = linalg.elemwise_binary {fun = #linalg.binary_fn<sub>} ins(%22, %25 : tensor<24x32xf32>, tensor<24x32xf32>) outs(%6 : tensor<24x32xf32>) -> tensor<24x32xf32>
     %expanded_14 = tensor.expand_shape %26 [[0], [1, 2, 3]] output_shape [24, 32, 1, 1] : tensor<24x32xf32> into tensor<24x32x1x1xf32>
     %collapsed_15 = tensor.collapse_shape %expanded_14 [[0], [1, 2, 3]] : tensor<24x32x1x1xf32> into tensor<24x32xf32>
-    %broadcasted_16 = linalg.broadcast ins(%collapsed_15 : tensor<24x32xf32>) outs(%4 : tensor<24x32x8x768xf32>) dimensions = [2, 3] 
+    %broadcasted_16 = linalg.broadcast ins(%collapsed_15 : tensor<24x32xf32>) outs(%4 : tensor<24x32x8x768xf32>) dimensions = [2, 3]
     %27 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%broadcasted_16, %18 : tensor<24x32x8x768xf32>, tensor<24x32x8x768xf32>) outs(%4 : tensor<24x32x8x768xf32>) -> tensor<24x32x8x768xf32>
     %28 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%20, %27 : tensor<24x32x8x768xf32>, tensor<24x32x8x768xf32>) outs(%4 : tensor<24x32x8x768xf32>) -> tensor<24x32x8x768xf32>
     %collapsed_17 = tensor.collapse_shape %28 [[0], [1, 2], [3]] : tensor<24x32x8x768xf32> into tensor<24x256x768xf32>

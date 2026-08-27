@@ -451,7 +451,7 @@ public:
     if (!srcType || !dstType || !srcType.hasStaticShape() || !dstType.hasStaticShape()) {
       return failure();
     }
-    
+
     std::optional<int64_t> srcTotalSize = mlir::utils::getStaticTotalSize(srcType.getShape());
     std::optional<int64_t> dstTotalSize = mlir::utils::getStaticTotalSize(dstType.getShape());
     if (!srcTotalSize || !dstTotalSize || srcTotalSize.value() != dstTotalSize.value()) {

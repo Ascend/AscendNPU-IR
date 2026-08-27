@@ -119,7 +119,6 @@ createTypeCanonicalizedMemRefOperands(OpBuilder &b, Location loc,
   }
   return res;
 }
-static bool gMarkLibCallNoInline = false;
 
 static func::CallOp createLibCall(PatternRewriter &rewriter, Operation *op,
                                   ModuleOp mod, const std::string &libCallName,
@@ -177,8 +176,8 @@ static func::CallOp createLibCall(PatternRewriter &rewriter, Operation *op,
     // Only mark AIV lib calls as noinline by default; other lib calls are
     // always inlined. HIVM custom ops default to noinline unless explicitly
     // marked always_inline with hivm.inline_mode.
-    bool markNoInline =
-        gMarkLibCallNoInline && funcCoreType == hivm::TFuncCoreType::AIV;
+    bool markNoInline = hivm::detail::getMarkLibCallNoInline() &&
+                        funcCoreType == hivm::TFuncCoreType::AIV;
     std::optional<hivm::InlineMode> inlineMode;
     if (auto customOp = dyn_cast<hivm::CustomOp>(op))
       inlineMode =
@@ -427,6 +426,40 @@ private:
 
     additionalArgs.push_back(op.getUnitFlagModeLibValue(rewriter));
     additionalArgs.push_back(op.getUnitFlagGroupIdValue(rewriter));
+  }
+};
+
+class Conv1DL1OpToLibraryCallPattern
+    : public OpRewritePattern<hivm::Conv1DL1Op> {
+public:
+  using OpRewritePattern<hivm::Conv1DL1Op>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hivm::Conv1DL1Op op,
+                                PatternRewriter &rewriter) const final {
+    SmallVector<Value> libParams = op.getLibraryCallOperands(rewriter);
+    replaceWithLibCall(
+        rewriter, op,
+        cast<OpWithLibraryFunction>(op.getOperation())
+            .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
+        libParams, {});
+    return success();
+  }
+};
+
+class Conv2DL1OpToLibraryCallPattern
+    : public OpRewritePattern<hivm::Conv2DL1Op> {
+public:
+  using OpRewritePattern<hivm::Conv2DL1Op>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hivm::Conv2DL1Op op,
+                                PatternRewriter &rewriter) const final {
+    SmallVector<Value> libParams = op.getLibraryCallOperands(rewriter);
+    replaceWithLibCall(
+        rewriter, op,
+        cast<OpWithLibraryFunction>(op.getOperation())
+            .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
+        libParams, {});
+    return success();
   }
 };
 
@@ -1987,6 +2020,8 @@ void populateHIVMToStandardConversionPatternsRegBase(
     RewritePatternSet &patterns, bool isOpsAligned) {
   // clang-format off
   patterns.add<MmadL1OpToLibraryCallPattern,
+               Conv1DL1OpToLibraryCallPattern,
+               Conv2DL1OpToLibraryCallPattern,
                MMmadMxL1OpToLibraryCallPattern,
                ND2NZOpToLibraryCallPattern,
                LoadMXScaleOpToLibraryCallPattern,
@@ -2061,7 +2096,7 @@ void populateHIVMToStandardConversionPatternsRegBase(
 
 LogicalResult ConvertHIVMToStandardRegBasePass::runOnOperation(
     ModuleOp module, bool isOpsAligned, bool markLibCallNoInline) {
-  gMarkLibCallNoInline = markLibCallNoInline;
+  hivm::detail::setMarkLibCallNoInline(markLibCallNoInline);
   ConversionTarget target(*module->getContext());
   target.addLegalDialect<func::FuncDialect, memref::MemRefDialect,
                          arith::ArithDialect, scf::SCFDialect,

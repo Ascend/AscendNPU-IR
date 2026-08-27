@@ -24,7 +24,7 @@ module attributes { transform.with_named_sequence } {
     return
   }
 
-  transform.named_sequence @__transform_main(%arg0: !transform.any_op {transform.readonly}) {  
+  transform.named_sequence @__transform_main(%arg0: !transform.any_op {transform.readonly}) {
     %0 = transform.structured.match ops{["scf.for"]} attributes{loop_1} in %arg0 : (!transform.any_op) -> !transform.any_op
     %2:2 = transform.loop.tile %0 [10] : (!transform.any_op) -> (!transform.any_op, !transform.any_op)
     transform.yield
@@ -58,7 +58,7 @@ module attributes { transform.with_named_sequence } {
     return
   }
 
-  transform.named_sequence @__transform_main(%arg0: !transform.any_op {transform.readonly}) {  
+  transform.named_sequence @__transform_main(%arg0: !transform.any_op {transform.readonly}) {
     %0 = transform.structured.match ops{["scf.for"]} attributes{loop_2} in %arg0 : (!transform.any_op) -> !transform.any_op
     %2:2 = transform.loop.tile %0 [1280] : (!transform.any_op) -> (!transform.any_op, !transform.any_op)
     transform.yield
@@ -90,7 +90,7 @@ module attributes { transform.with_named_sequence } {
     return %1 : tensor<256xf32>
   }
 
-  transform.named_sequence @__transform_main(%arg0: !transform.any_op {transform.readonly}) {  
+  transform.named_sequence @__transform_main(%arg0: !transform.any_op {transform.readonly}) {
     %0 = transform.structured.match ops{["scf.for"]} in %arg0 : (!transform.any_op) -> !transform.any_op
     %2:2 = transform.loop.tile %0 [20] : (!transform.any_op) -> (!transform.any_op, !transform.any_op)
     transform.yield
@@ -126,7 +126,7 @@ module attributes { transform.with_named_sequence } {
 
   func.func private @get_dynamic_tile_size() -> index
 
-  transform.named_sequence @__transform_main(%arg0: !transform.any_op {transform.readonly}) {  
+  transform.named_sequence @__transform_main(%arg0: !transform.any_op {transform.readonly}) {
     %1 = transform.structured.match ops{["func.call"]} in %arg0 : (!transform.any_op) -> !transform.any_op
     %3 = transform.structured.match ops{["scf.for"]} attributes{loop_1} in %arg0 : (!transform.any_op) -> !transform.any_op
     %4:2 = transform.loop.tile %3 [%1] : (!transform.any_op, !transform.any_op) -> (!transform.any_op, !transform.any_op)
@@ -203,7 +203,7 @@ module attributes { transform.with_named_sequence } {
     return %1 : tensor<256xf32>
   }
 
-  transform.named_sequence @__transform_main(%arg0: !transform.any_op {transform.readonly}) {  
+  transform.named_sequence @__transform_main(%arg0: !transform.any_op {transform.readonly}) {
     %0 = transform.structured.match ops{["scf.for"]} in %arg0 : (!transform.any_op) -> !transform.any_op
     %2:2 = transform.loop.tile %0 [20] {is_reorder_mode = true} : (!transform.any_op) -> (!transform.any_op, !transform.any_op)
     transform.yield
@@ -236,7 +236,7 @@ module attributes { transform.with_named_sequence } {
     return %1 : tensor<256xf32>
   }
 
-  transform.named_sequence @__transform_main(%arg0: !transform.any_op {transform.readonly}) {  
+  transform.named_sequence @__transform_main(%arg0: !transform.any_op {transform.readonly}) {
     %0 = transform.structured.match ops{["scf.for"]} in %arg0 : (!transform.any_op) -> !transform.any_op
     %2:2 = transform.loop.tile %0 [20] {is_npart_mode = true} : (!transform.any_op) -> (!transform.any_op, !transform.any_op)
     transform.yield

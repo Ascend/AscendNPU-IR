@@ -6,9 +6,9 @@ func.func @test_sqrt_op(%arg0: tensor<6x4xf32>) -> tensor<6x4xf32> {
   %0 = tensor.empty() : tensor<6x4xf32>
   // CHECK: hfusion.elemwise_unary {fun = #hfusion.unary_fn<sqrt>}
   %1 = linalg.generic {
-    indexing_maps = [#map, #map], 
+    indexing_maps = [#map, #map],
     iterator_types = ["parallel", "parallel"]
-  } ins(%arg0 : tensor<6x4xf32>) 
+  } ins(%arg0 : tensor<6x4xf32>)
     outs(%0 : tensor<6x4xf32>) {
   ^bb0(%in: f32, %out: f32):
     %2 = math.sqrt %in : f32
@@ -25,9 +25,9 @@ func.func @test_rsqrt_op(%arg0: tensor<6x4xf32>) -> tensor<6x4xf32> {
   %0 = tensor.empty() : tensor<6x4xf32>
   // CHECK: hfusion.elemwise_unary {fun = #hfusion.unary_fn<rsqrt>}
   %1 = linalg.generic {
-    indexing_maps = [#map, #map], 
+    indexing_maps = [#map, #map],
     iterator_types = ["parallel", "parallel"]
-  } ins(%arg0 : tensor<6x4xf32>) 
+  } ins(%arg0 : tensor<6x4xf32>)
     outs(%0 : tensor<6x4xf32>) {
   ^bb0(%in: f32, %out: f32):
     %2 = math.rsqrt %in : f32
@@ -44,9 +44,9 @@ func.func @test_reciprocal_op(%arg0: tensor<6x4xf32>) -> tensor<6x4xf32> {
   %0 = tensor.empty() : tensor<6x4xf32>
   // CHECK: hfusion.elemwise_unary {fun = #hfusion.unary_fn<rec>}
   %1 = linalg.generic {
-    indexing_maps = [#map, #map], 
+    indexing_maps = [#map, #map],
     iterator_types = ["parallel", "parallel"]
-  } ins(%arg0 : tensor<6x4xf32>) 
+  } ins(%arg0 : tensor<6x4xf32>)
     outs(%0 : tensor<6x4xf32>) {
   ^bb0(%in: f32, %out: f32):
     %cst = arith.constant 1.000000e+00 : f32
@@ -64,9 +64,9 @@ func.func @test_relu_op(%arg0: tensor<6x4xf32>) -> tensor<6x4xf32> {
   %0 = tensor.empty() : tensor<6x4xf32>
   // CHECK: hfusion.elemwise_unary {fun = #hfusion.unary_fn<relu>}
   %1 = linalg.generic {
-    indexing_maps = [#map, #map], 
+    indexing_maps = [#map, #map],
     iterator_types = ["parallel", "parallel"]
-  } ins(%arg0 : tensor<6x4xf32>) 
+  } ins(%arg0 : tensor<6x4xf32>)
     outs(%0 : tensor<6x4xf32>) {
   ^bb0(%in: f32, %out: f32):
     %cst = arith.constant 0.000000e+00 : f32
@@ -114,9 +114,9 @@ func.func @test_minimumf_op(%arg0: tensor<6xf32>, %arg1: tensor<6xf32>) -> tenso
 func.func @test_vxor_op_unary(%arg0: tensor<6x4xi1>) -> tensor<6x4xi1> {
   %0 = tensor.empty() : tensor<6x4xi1>
   %1 = linalg.generic {
-    indexing_maps = [#map, #map], 
+    indexing_maps = [#map, #map],
     iterator_types = ["parallel", "parallel"]
-  } ins(%arg0 : tensor<6x4xi1>) 
+  } ins(%arg0 : tensor<6x4xi1>)
     outs(%0 : tensor<6x4xi1>) {
   ^bb0(%in: i1, %out: i1):
     %cst = arith.constant 1 : i1
@@ -135,10 +135,10 @@ func.func @test_vxor_op_unary(%arg0: tensor<6x4xi1>) -> tensor<6x4xi1> {
 func.func @test_vxor_op_binary(%arg0: tensor<6x4xi1>, %arg1: tensor<6x4xi1>) -> tensor<6x4xi1> {
   %0 = tensor.empty() : tensor<6x4xi1>
   %1 = linalg.generic {
-    indexing_maps = [#map, #map, #map], 
+    indexing_maps = [#map, #map, #map],
     iterator_types = ["parallel", "parallel"]
-  } 
-  ins(%arg0, %arg1 : tensor<6x4xi1>, tensor<6x4xi1>) 
+  }
+  ins(%arg0, %arg1 : tensor<6x4xi1>, tensor<6x4xi1>)
     outs(%0 : tensor<6x4xi1>) {
   ^bb0(%in: i1, %in_0: i1, %out: i1):
     %2 = arith.xori %in, %in_0 : i1
@@ -155,9 +155,9 @@ func.func @test_and_op(%arg0: tensor<6x4xi32>, %arg1: tensor<6x4xi32>) -> tensor
   %0 = tensor.empty() : tensor<6x4xi32>
   // CHECK: hfusion.elemwise_binary {fun = #hfusion.binary_fn<vand>}
   %1 = linalg.generic {
-    indexing_maps = [#map, #map, #map], 
+    indexing_maps = [#map, #map, #map],
     iterator_types = ["parallel", "parallel"]
-  } ins(%arg0, %arg1 : tensor<6x4xi32>, tensor<6x4xi32>) 
+  } ins(%arg0, %arg1 : tensor<6x4xi32>, tensor<6x4xi32>)
     outs(%0 : tensor<6x4xi32>) {
   ^bb0(%in: i32, %in_0: i32, %out: i32):
     %2 = arith.andi %in, %in_0 : i32
@@ -174,9 +174,9 @@ func.func @test_or_op(%arg0: tensor<6x4xi32>, %arg1: tensor<6x4xi32>) -> tensor<
   %0 = tensor.empty() : tensor<6x4xi32>
   // CHECK: hfusion.elemwise_binary {fun = #hfusion.binary_fn<vor>}
   %1 = linalg.generic {
-    indexing_maps = [#map, #map, #map], 
+    indexing_maps = [#map, #map, #map],
     iterator_types = ["parallel", "parallel"]
-  } ins(%arg0, %arg1 : tensor<6x4xi32>, tensor<6x4xi32>) 
+  } ins(%arg0, %arg1 : tensor<6x4xi32>, tensor<6x4xi32>)
     outs(%0 : tensor<6x4xi32>) {
   ^bb0(%in: i32, %in_0: i32, %out: i32):
     %2 = arith.ori %in, %in_0 : i32
@@ -194,9 +194,9 @@ func.func @test_reciprocal_outer_vector_scalar_op(%arg0: tensor<6x4xf32>) -> ten
   %0 = tensor.empty() : tensor<6x4xf32>
   // CHECK: hfusion.elemwise_unary {fun = #hfusion.unary_fn<rec>}
   %1 = linalg.generic {
-    indexing_maps = [#map, #map], 
+    indexing_maps = [#map, #map],
     iterator_types = ["parallel", "parallel"]
-  } ins(%arg0 : tensor<6x4xf32>) 
+  } ins(%arg0 : tensor<6x4xf32>)
     outs(%0 : tensor<6x4xf32>) {
   ^bb0(%in: f32, %out: f32):
     %2 = arith.divf %cst, %in : f32
@@ -215,9 +215,9 @@ func.func @test_reciprocal_inline_vector_scalar_op(%arg0: tensor<6x4xf32>) -> te
   %0 = tensor.empty() : tensor<6x4xf32>
   // CHECK: hfusion.elemwise_unary {fun = #hfusion.unary_fn<rec>}
   %1 = linalg.generic {
-    indexing_maps = [#map1, #map, #map], 
+    indexing_maps = [#map1, #map, #map],
     iterator_types = ["parallel", "parallel"]
-  } ins(%cst, %arg0 : f32, tensor<6x4xf32>) 
+  } ins(%cst, %arg0 : f32, tensor<6x4xf32>)
     outs(%0 : tensor<6x4xf32>) {
   ^bb0(%in_0: f32, %in: f32, %out: f32):
     %2 = arith.divf %in_0, %in : f32

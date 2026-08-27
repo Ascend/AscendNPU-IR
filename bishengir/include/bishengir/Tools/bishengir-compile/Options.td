@@ -201,11 +201,10 @@ def EnableHIVMGraphSyncSolver : FeatureControlOptions<
   let passGroup = ["HIVM"];
 }
 
-def HIVMSyncSolverVersion : FeatureControlOptions<
-  "Specify the version of hivm sync-solver used for auto-sync passes.",
-  "std::string",
-  "\"v1\""
-> {
+def HIVMSyncSolverVersion
+    : FeatureControlOptions<
+          "Specify the version of hivm sync-solver used for auto-sync passes.",
+          "std::string", "\"v2\""> {
   let passGroup = ["HIVM"];
 }
 
@@ -1059,7 +1058,7 @@ def HfusionEnableCrossIfFusion : FeatureControlOptions<
 def HfusionEnableMultipleConsumerFusion : FeatureControlOptions<
   "Enable multiple consumer fusion in AutoVectorizeV2",
   "bool",
-  "false"
+  "true"
 > {
   let passGroup = ["HFUSION"];
 }
@@ -1142,9 +1141,10 @@ def VerifyEach : DFXControlOptions<
 
 def EnableLibCallNoInline : DFXControlOptions<
   "Mark the library-call function declarations generated during HIVM-to-"
-  "Standard conversion as hacc.noinline instead of hacc.always_inline.",
+  "Standard conversion as hacc.noinline instead of hacc.always_inline. "
+  "Enabled by default on RegBase and disabled by default on membase.",
   "bool",
-  "true"
+  "false"
 >;
 
 def InjectIrBefore : DFXControlOptions<

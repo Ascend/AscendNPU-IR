@@ -1,5 +1,5 @@
-// RUN: bishengir-opt %s --hfusion-auto-vectorize-v2="enable-cross-if-fusion=true" -split-input-file | FileCheck %s
-// RUN: bishengir-opt %s --hfusion-auto-vectorize-v2="enable-cross-if-fusion=false" -split-input-file | FileCheck %s --check-prefix=CLOSE
+// RUN: bishengir-opt %s --hfusion-auto-vectorize-v2="enable-cross-if-fusion=true enable-multiple-consumer-fusion=false" -split-input-file | FileCheck %s
+// RUN: bishengir-opt %s --hfusion-auto-vectorize-v2="enable-cross-if-fusion=false enable-multiple-consumer-fusion=false" -split-input-file | FileCheck %s --check-prefix=CLOSE
 
 // -----
 // body_with_sync_barrier: scf.for body contains sync set.

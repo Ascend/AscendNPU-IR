@@ -695,7 +695,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // CHECK-LABEL: func.func @test_pipeline_tensor_load_init
 // CHECK: scf.for
 // CHECK: scf.for
-// CHECK: hivm.hir.store 
+// CHECK: hivm.hir.store
 // CHECK: {{.*}}hivm.loop_core_type = #hivm.tcore_type<VECTOR>
 // CHECK: scf.for
 // CHECK: %[[LOAD_INIT:.*]] = tensor.empty() : tensor<16x16xf16>
@@ -1148,17 +1148,17 @@ func.func @test_pipeline_nested_static_counter() {
       %count = memref.load %counter[] : memref<i32>
       %next = arith.addi %count, %c1_i32 : i32
       memref.store %next, %counter[] : memref<i32>
-      
+
       %first = arith.cmpi eq, %count, %c0_i32 : i32
       %dot = hivm.hir.mmadL1 ins(%input, %input, %first, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%input : tensor<16x16xf16>) -> tensor<16x16xf16>
-      
+
       scf.yield %iter : tensor<16xf16>
     }
-    
+
     hivm.hir.fixpipe ins(%input : tensor<16x16xf16>) outs(%out : memref<16x16xf16, #hivm.address_space<ub>>)
     %out_cast = memref.memory_space_cast %out : memref<16x16xf16, #hivm.address_space<ub>> to memref<16x16xf16>
     %tensor = bufferization.to_tensor %out_cast : memref<16x16xf16>
-    
+
     %vdest = tensor.empty() : tensor<16x16xi32>
     %ext_read = memref.load %counter[] : memref<i32>
     %vector = hivm.hir.vbrc ins(%ext_read : i32) outs(%vdest : tensor<16x16xi32>) -> tensor<16x16xi32>

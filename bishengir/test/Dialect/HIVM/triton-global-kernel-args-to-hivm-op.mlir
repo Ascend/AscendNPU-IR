@@ -20,7 +20,7 @@
 // CHECK: arith.muli %[[ProgX_ID]]
 // CHECK: arith.muli %[[ProgY_ID]]
 // CHECK: arith.addi %[[ProgZ_ID]]
-// A5 / reg-based: x-fastest program_id decode.
+// x-fastest program_id decode.
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
   func.func @test_args_to_hivm_op(%arg0: memref<*xf16>, %arg1: memref<*xf16>, %arg2: memref<*xf16>, %arg3: i32, %arg4: i32, %arg5: i32, %arg6: i32, %arg7: i32, %arg8: i32) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
     // cur_idx = tl.program_id(0) * tl.num_programs(1) * tl.num_programs(2)
@@ -70,7 +70,7 @@ module {
 // -----
 
 // CHECK-LABEL: func.func @test_args_for_scf_if
-// A5 / reg-based: x-fastest program_id decode.
+// x-fastest program_id decode.
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
   // CHECK: %arg2: memref<?xf32>, %[[ProgNumX:.*]]: i32, %[[ProgNumY:.*]]: i32, %[[ProgNumZ:.*]]: i32)
   func.func @test_args_for_scf_if(%arg0: memref<?xf32>, %arg1: memref<?xf32> , %arg2: memref<?xf32>, %arg3: i32, %arg4: i32, %arg5: i32, %arg6: i32, %arg7: i32, %arg8: i32) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
@@ -117,7 +117,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 
 // -----
 
-// A3 / mem-based (Ascend910B3): legacy z-fastest program_id decode.
+// Mem-based target (Ascend910B3) also uses the x-fastest program_id decode.
 // CHECK-LABEL: func @test_args_to_hivm_op_a3(
 // CHECK: %[[A:.*]]: memref<*xf16>, %[[B:.*]]: memref<*xf16>, %[[C:.*]]: memref<*xf16>,
 // CHECK-SAME: %[[ProgNumX:.*]]: i32, %[[ProgNumY:.*]]: i32, %[[ProgNumZ:.*]]: i32)
@@ -126,15 +126,15 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // CHECK: annotation.mark %[[LOGIC_BLOCK_NUM]] {logical_block_num}
 // CHECK: %[[BLOCK_IDX:.+]] = hivm.hir.get_block_idx -> i64
 // CHECK: %[[CAST_OP_ID:.+]] = arith.trunci %[[BLOCK_IDX]] : i64 to i32
-// CHECK: %[[ACCSHAPE_Z:.+]] = arith.constant 1 : i32
-// CHECK: %[[TOTALINDEX_Z:.+]] = arith.divsi %[[CAST_OP_ID]], %[[ACCSHAPE_Z]]
-// CHECK: %[[ProgZ_ID:.+]] = arith.remsi %[[TOTALINDEX_Z]], %[[ProgNumZ]]
-// CHECK: %[[ACCSHAPE_Y:.+]] = arith.muli %[[ACCSHAPE_Z]], %[[ProgNumZ]]
-// CHECK: %[[TOTALINDEX_Y:.+]] = arith.divsi %[[CAST_OP_ID]], %[[ACCSHAPE_Y]]
-// CHECK: %[[ProgY_ID:.+]] = arith.remsi %[[TOTALINDEX_Y]], %[[ProgNumY]]
-// CHECK: %[[ACCSHAPE_X:.+]] = arith.muli %[[ACCSHAPE_Y]], %[[ProgNumY]]
+// CHECK: %[[ACCSHAPE_X:.+]] = arith.constant 1 : i32
 // CHECK: %[[TOTALINDEX_X:.+]] = arith.divsi %[[CAST_OP_ID]], %[[ACCSHAPE_X]]
 // CHECK: %[[ProgX_ID:.+]] = arith.remsi %[[TOTALINDEX_X]], %[[ProgNumX]]
+// CHECK: %[[ACCSHAPE_Y:.+]] = arith.muli %[[ACCSHAPE_X]], %[[ProgNumX]]
+// CHECK: %[[TOTALINDEX_Y:.+]] = arith.divsi %[[CAST_OP_ID]], %[[ACCSHAPE_Y]]
+// CHECK: %[[ProgY_ID:.+]] = arith.remsi %[[TOTALINDEX_Y]], %[[ProgNumY]]
+// CHECK: %[[ACCSHAPE_Z:.+]] = arith.muli %[[ACCSHAPE_Y]], %[[ProgNumY]]
+// CHECK: %[[TOTALINDEX_Z:.+]] = arith.divsi %[[CAST_OP_ID]], %[[ACCSHAPE_Z]]
+// CHECK: %[[ProgZ_ID:.+]] = arith.remsi %[[TOTALINDEX_Z]], %[[ProgNumZ]]
 // CHECK: arith.muli %[[ProgX_ID]]
 // CHECK: arith.muli %[[ProgY_ID]]
 // CHECK: arith.addi %[[ProgZ_ID]]

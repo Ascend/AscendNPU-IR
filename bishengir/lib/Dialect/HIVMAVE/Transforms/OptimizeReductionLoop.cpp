@@ -8,7 +8,7 @@
 #include "bishengir/Dialect/HIVMAVE/IR/HIVMAVE.h"
 #include "bishengir/Dialect/HIVMAVE/Transforms/Passes.h"
 #include "bishengir/Dialect/Utils/Util.h"
-#include "mlir/Conversion/LLVMCommon/Pattern.h"
+#include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -163,7 +163,26 @@ struct RemoveRedundantVselPattern : public OpRewritePattern<scf::ForOp> {
         return tailOps.find(user) == tailOps.end();
       });
     }
+
     return success();
+  }
+};
+
+/// Fold an `affine.min` inside an scf.for into a constant (or one of its
+/// operands) when the loop bounds make that value provably the minimum.
+///
+/// Correctness: delegated to scf::canonicalizeMinMaxOpInLoop, which builds a
+/// FlatAffineValueConstraints that models the discrete IV range
+/// (`iv = lb + step*q`, `iv <= lastIV`) and rewrites the min only when it can
+/// *prove* one result is <= all the others. Sound for mod/floordiv; it refuses
+/// when it cannot prove.
+struct FoldAffineMinToStepPattern
+    : public OpRewritePattern<affine::AffineMinOp> {
+  using OpRewritePattern<affine::AffineMinOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(affine::AffineMinOp op,
+                                PatternRewriter &rewriter) const override {
+    return scf::canonicalizeMinMaxOpInLoop(rewriter, op, scf::matchForLikeLoop);
   }
 };
 
@@ -435,6 +454,7 @@ public:
   void runOnOperation() override {
     RewritePatternSet patterns(&getContext());
     patterns.add<RemoveRedundantVselPattern>(patterns.getContext());
+    patterns.add<FoldAffineMinToStepPattern>(patterns.getContext());
     patterns.add<ReduceSplitPattern>(patterns.getContext(), this->maxSplit);
     patterns.add<EliminateReductionLoopInitPattern>(patterns.getContext());
     if (failed(applyPatternsGreedily(getOperation(), std::move(patterns))))

@@ -18,16 +18,16 @@
 
  #include "__clang_cce_simt_intrinsics.h"
  #include "RegBase/VecUtils.h"
- 
+
  constexpr unsigned int MAX_THREAD_NUM = 1024;
- 
+
  enum class IndirectAtomicOp { Add, Min, Max, Or, And, XOr, Xchg, Cas };
- 
+
  template <typename DTYPE>
  inline constexpr bool kAtomicHalfPrecVoidReturn =
      std::is_same<DTYPE, half>::value ||
      std::is_same<DTYPE, bfloat16_t>::value;
- 
+
  template <IndirectAtomicOp Op, typename DTYPE>
  __simt_callee__ __aiv__ __attribute__((always_inline)) static void
  indirectAtomicInvokeVoid(__gm__ DTYPE *addr, DTYPE val) {
@@ -47,7 +47,7 @@
      atomicExch(addr, val);
    }
  }
- 
+
  template <IndirectAtomicOp Op, typename DTYPE>
  __simt_callee__ __aiv__ __attribute__((always_inline)) static DTYPE
  indirectAtomicInvoke(__gm__ DTYPE *addr, DTYPE val) {
@@ -67,13 +67,13 @@
      return atomicExch(addr, val);
    }
  }
- 
+
  template <IndirectAtomicOp Op, typename DTYPE, typename ITYPE>
  __simt_vf__ LAUNCH_BOUND(MAX_THREAD_NUM)
  __aiv__ __attribute__((always_inline)) static void SimtIndirectAtomic(
      __gm__ DTYPE *src, __ubuf__ ITYPE *offsets, __ubuf__ DTYPE *value,
      __ubuf__ int8_t *mask, __ubuf__ DTYPE *out, const int64_t indicesSize,
-     const int64_t offsetStride, const int64_t valueStride, const int64_t maskStride, 
+     const int64_t offsetStride, const int64_t valueStride, const int64_t maskStride,
      const int64_t outStride) {
    for (uint64_t idx = threadIdx.x; idx < indicesSize; idx += blockDim.x) {
      if (mask[idx * maskStride]) {
@@ -93,7 +93,7 @@
      }
    }
  }
- 
+
  template <IndirectAtomicOp Op, typename DTYPE, typename ITYPE>
  __simt_vf__ LAUNCH_BOUND(MAX_THREAD_NUM)
  __aiv__ __attribute__((always_inline)) static void SimtIndirectAtomicWithoutMask(
@@ -114,7 +114,7 @@
      }
    }
  }
- 
+
  template <typename DTYPE, typename ITYPE>
  __simt_vf__ LAUNCH_BOUND(MAX_THREAD_NUM)
  __aiv__ __attribute__((always_inline)) static void SimtIndirectAtomicCas(
@@ -129,7 +129,7 @@
      out[idx * outStride] = oldValue;
    }
  }
- 
+
  template <typename T>
  inline constexpr bool kIsValidItype =
      std::is_same_v<T, int32_t> || std::is_same_v<T, int64_t>;
@@ -160,7 +160,7 @@
      return false;
    }
  }
- 
+
  template <IndirectAtomicOp Op, typename DTYPE, typename ITYPE>
  __aiv__ __attribute__((always_inline)) static void indirect_atomic_impl(
      memref_t<__gm__ DTYPE, 1> *src, memref_t<__ubuf__ ITYPE, 1> *offsets,
@@ -175,7 +175,7 @@
        offsets->sizes[0], offsets->strides[0], value->strides[0],
        mask->strides[0], out->strides[0]);
  }
- 
+
  template <IndirectAtomicOp Op, typename DTYPE, typename ITYPE>
  __aiv__ __attribute__((always_inline)) static void indirect_atomic_no_mask_impl(
      memref_t<__gm__ DTYPE, 1> *src, memref_t<__ubuf__ ITYPE, 1> *offsets,
@@ -188,7 +188,7 @@
        offsets->sizes[0], offsets->strides[0], value->strides[0],
        out->strides[0]);
  }
- 
+
  template <typename DTYPE, typename ITYPE>
  __aiv__ __attribute__((always_inline)) static void indirect_atomic_cas_impl(
      memref_t<__gm__ DTYPE, 1> *src, memref_t<__ubuf__ ITYPE, 1> *offsets,
@@ -203,7 +203,7 @@
        offsets->sizes[0], offsets->strides[0], comp->strides[0],
        value->strides[0], out->strides[0]);
  }
- 
+
  template <typename DTYPE, typename ITYPE,
            std::enable_if_t<isValidAtomicOpDtype<IndirectAtomicOp::Cas,
                                                  DTYPE>() &&
@@ -215,7 +215,7 @@
      memref_t<__ubuf__ DTYPE, 1> *out) {
    indirect_atomic_cas_impl<DTYPE, ITYPE>(src, offsets, comp, value, out);
  }
- 
+
  #define DEFINE_INDIRECT_ATOMIC_WRAPPER(op, opEnum)                             \
   template <typename DTYPE, typename ITYPE,                                    \
             std::enable_if_t<                                                  \
@@ -255,7 +255,7 @@
  DEFINE_INDIRECT_ATOMIC_WRAPPER(xchg, Xchg)
 
  #undef DEFINE_INDIRECT_ATOMIC_WRAPPER
- 
+
  extern "C" {
    REGISTE_INDIRECT_ATOMIC(add, float, int32_t);
    REGISTE_INDIRECT_ATOMIC(add, bfloat16_t, int32_t);
@@ -293,7 +293,7 @@
    REGISTE_INDIRECT_ATOMIC_NO_MASK(add, int64_t, int64_t);
    REGISTE_INDIRECT_ATOMIC_NO_MASK(add, uint32_t, int64_t);
    REGISTE_INDIRECT_ATOMIC_NO_MASK(add, uint64_t, int64_t);
- 
+
    REGISTE_INDIRECT_ATOMIC(min, float, int32_t);
    REGISTE_INDIRECT_ATOMIC(min, bfloat16_t, int32_t);
    REGISTE_INDIRECT_ATOMIC(min, bfloat16x2_t, int32_t);
@@ -330,7 +330,7 @@
    REGISTE_INDIRECT_ATOMIC_NO_MASK(min, int64_t, int64_t);
    REGISTE_INDIRECT_ATOMIC_NO_MASK(min, uint32_t, int64_t);
    REGISTE_INDIRECT_ATOMIC_NO_MASK(min, uint64_t, int64_t);
- 
+
    REGISTE_INDIRECT_ATOMIC(max, float, int32_t);
    REGISTE_INDIRECT_ATOMIC(max, bfloat16_t, int32_t);
    REGISTE_INDIRECT_ATOMIC(max, bfloat16x2_t, int32_t);
@@ -367,7 +367,7 @@
    REGISTE_INDIRECT_ATOMIC_NO_MASK(max, int64_t, int64_t);
    REGISTE_INDIRECT_ATOMIC_NO_MASK(max, uint32_t, int64_t);
    REGISTE_INDIRECT_ATOMIC_NO_MASK(max, uint64_t, int64_t);
- 
+
    REGISTE_INDIRECT_ATOMIC(or, int32_t, int32_t);
    REGISTE_INDIRECT_ATOMIC(or, int64_t, int32_t);
    REGISTE_INDIRECT_ATOMIC(or, uint32_t, int32_t);
@@ -384,7 +384,7 @@
    REGISTE_INDIRECT_ATOMIC_NO_MASK(or, int64_t, int64_t);
    REGISTE_INDIRECT_ATOMIC_NO_MASK(or, uint32_t, int64_t);
    REGISTE_INDIRECT_ATOMIC_NO_MASK(or, uint64_t, int64_t);
- 
+
    REGISTE_INDIRECT_ATOMIC(and, int32_t, int32_t);
    REGISTE_INDIRECT_ATOMIC(and, int64_t, int32_t);
    REGISTE_INDIRECT_ATOMIC(and, uint32_t, int32_t);
@@ -401,7 +401,7 @@
    REGISTE_INDIRECT_ATOMIC_NO_MASK(and, int64_t, int64_t);
    REGISTE_INDIRECT_ATOMIC_NO_MASK(and, uint32_t, int64_t);
    REGISTE_INDIRECT_ATOMIC_NO_MASK(and, uint64_t, int64_t);
- 
+
    REGISTE_INDIRECT_ATOMIC(xor, int32_t, int32_t);
    REGISTE_INDIRECT_ATOMIC(xor, int64_t, int32_t);
    REGISTE_INDIRECT_ATOMIC(xor, uint32_t, int32_t);
@@ -418,7 +418,7 @@
    REGISTE_INDIRECT_ATOMIC_NO_MASK(xor, int64_t, int64_t);
    REGISTE_INDIRECT_ATOMIC_NO_MASK(xor, uint32_t, int64_t);
    REGISTE_INDIRECT_ATOMIC_NO_MASK(xor, uint64_t, int64_t);
- 
+
    REGISTE_INDIRECT_ATOMIC(xchg, float, int32_t);
    REGISTE_INDIRECT_ATOMIC(xchg, bfloat16x2_t, int32_t);
    REGISTE_INDIRECT_ATOMIC(xchg, half2, int32_t);
@@ -447,7 +447,7 @@
    REGISTE_INDIRECT_ATOMIC_NO_MASK(xchg, int64_t, int64_t);
    REGISTE_INDIRECT_ATOMIC_NO_MASK(xchg, uint32_t, int64_t);
    REGISTE_INDIRECT_ATOMIC_NO_MASK(xchg, uint64_t, int64_t);
- 
+
    REGISTE_INDIRECT_ATOMIC_CAS(float, int32_t);
    REGISTE_INDIRECT_ATOMIC_CAS(bfloat16x2_t, int32_t);
    REGISTE_INDIRECT_ATOMIC_CAS(half2, int32_t);
@@ -463,5 +463,5 @@
    REGISTE_INDIRECT_ATOMIC_CAS(uint32_t, int64_t);
    REGISTE_INDIRECT_ATOMIC_CAS(uint64_t, int64_t);
  }
- 
+
 #endif

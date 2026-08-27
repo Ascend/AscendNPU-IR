@@ -58,12 +58,12 @@ def LoopTileOp : Op<Transform_Dialect, "loop.tile", [
   FunctionalStyleTransformOpTrait,
   DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
   TransformOpInterface]> {
-  
+
   // FIXME: Add description
   let description = [{
     Indicates that the given `target` loop should be tiled with the given sizes.
     This transform generates a loop nest.
-    
+
     Currently tiling is limited to `scf.ForOp`, and the number of tile size
     can only be one (i.e., only support tiling one loop into two).
 
@@ -133,7 +133,7 @@ def ForToForallOp : Op<Transform_Dialect, "loop.for_to_forall", [
 
     If non-empty, the `mapping` is added as an attribute to the
     resulting `scf.forall`.
-    
+
     Note that the given loop can either yield no results, or only yield values
     produced by `tensor.insert_slice` ops. In that case, insert slices will be
     mapped to `tensor.parallel_insert_slice` ops.
@@ -175,7 +175,7 @@ def ForToForallOp : Op<Transform_Dialect, "loop.for_to_forall", [
 //===----------------------------------------------------------------------===//
 
 def LoopNormalizeOp : Op<Transform_Dialect, "loop.normalize",
-    [FunctionalStyleTransformOpTrait, 
+    [FunctionalStyleTransformOpTrait,
      DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
      TransformOpInterface]> {
   let summary = "Normalizes the given scf.for loop";

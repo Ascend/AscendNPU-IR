@@ -120,7 +120,7 @@ void HFusionGeneralizePass::runOnOperation() {
                                              dstSubView.getMixedStrides() == extractSliceOp.getMixedStrides());
 
                   // 3. Offset cross-verification:
-                  // The offset into the scratchpad %alloc during the copy step MUST match the 
+                  // The offset into the scratchpad %alloc during the copy step MUST match the
                   // offset extracted from the tensor domain after the cumsum step.
                   const bool offsetsMatch = (localAllocDstSubview.getMixedOffsets() == extractSliceOp.getMixedOffsets());
 

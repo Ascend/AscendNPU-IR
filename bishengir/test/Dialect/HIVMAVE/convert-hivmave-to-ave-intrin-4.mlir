@@ -41,7 +41,7 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
     return
   }
   func.func private @_mlir_ciface_cast_uint32_t_to_int64_t(!llvm.ptr, vector<64xi32>, vector<256xi1>) attributes {hacc.always_inline, hivm.func_core_type = #hivm.func_core_type<AIV>, llvm.emit_c_interface}
-  func.func private @masked_store_NORM_B64_int64_t_rank1(memref<?xi64, strided<[?], offset: ?>, #hivm.address_space<ub>>, i64, vector<256xi1>, !llvm.ptr) attributes {hacc.always_inline, hivm.func_core_type = #hivm.func_core_type<AIV>, llvm.emit_c_interface} 
+  func.func private @masked_store_NORM_B64_int64_t_rank1(memref<?xi64, strided<[?], offset: ?>, #hivm.address_space<ub>>, i64, vector<256xi1>, !llvm.ptr) attributes {hacc.always_inline, hivm.func_core_type = #hivm.func_core_type<AIV>, llvm.emit_c_interface}
 }
 
 // -----

@@ -59,9 +59,9 @@ func.func @multiple_init_vreduce(%src: memref<1x10x1x10xf32>, %dst: memref<1x1x1
 // CHECK: %[[SUBVIEW_DST:.*]] = memref.subview %[[DST]][0, 0, 0] [%[[DIM_0]], 1, %[[DIM_1]]] [1, 1, 1] : memref<?x1x?xf32, strided<[?, ?, 1], offset: ?>> to memref<?x?xf32, strided<[?, 1], offset: ?>>
 // CHECK: hivm.hir.vbrc ins(%[[SUBVIEW_SRC:.*]] : memref<?x1xf32, strided<[8, 1]>>) outs(%[[SUBVIEW_DST:.*]] : memref<?x?xf32, strided<[?, 1], offset: ?>>) broadcast_dims = [1]
 func.func @test_brc_drop_correct_dim(
-    %src: memref<?x1x1xf32, strided<[8, 8, 1]>>, 
+    %src: memref<?x1x1xf32, strided<[8, 8, 1]>>,
     %dst: memref<?x1x?xf32, strided<[?, ?, 1], offset: ?>>) {
-    hivm.hir.vbrc ins(%src : memref<?x1x1xf32, strided<[8, 8, 1]>>) 
+    hivm.hir.vbrc ins(%src : memref<?x1x1xf32, strided<[8, 8, 1]>>)
                   outs(%dst : memref<?x1x?xf32, strided<[?, ?, 1], offset: ?>>) broadcast_dims = [2]
   return
 }
@@ -167,4 +167,3 @@ func.func @load_nonzero_padding_subview_offset_nonzero_reduce_rank(%src: memref<
   hivm.hir.load ins(%src : memref<1x1x8xf16>) outs(%dst : memref<1x1x8xf16, strided<[16, 16, 1], offset: 4>>) left_padding_num = %c4 : index
   return
 }
-

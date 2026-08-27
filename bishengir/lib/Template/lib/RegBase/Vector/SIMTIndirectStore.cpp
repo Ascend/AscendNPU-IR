@@ -206,7 +206,7 @@ __aiv__ __attribute__((always_inline)) static void SIMTIndirectStore4D(
         uint32_t i2 = elem_idx % indice_size2; elem_idx /= indice_size2;
         uint32_t i1 = elem_idx % indice_size1; elem_idx /= indice_size1;
         uint32_t i0 = elem_idx;
-        
+
         if (mask[i0*mask_stride0 + i1*mask_stride1 + i2*mask_stride2 + i3*mask_stride3])
         {
             ITYPE dstIdx = indices[i0*indice_stride0 + i1*indice_stride1 + i2*indice_stride2 + i3*indice_stride3];
@@ -368,7 +368,7 @@ __aiv__ __attribute__((always_inline)) void indirect_store(
     unsigned int block_dim_x = 1;
     unsigned int block_dim_y = 1;
     unsigned int block_dim_z = 1;
-    
+
     if constexpr (DIM == 1) {
         cce::async_invoke<SIMTIndirectStore1D<DTYPE, ITYPE>>(cce::dim3{MAX_THREAD_NUM},
             reinterpret_cast<__gm__ DTYPE*> (dst->aligned),
@@ -470,7 +470,7 @@ __aiv__ __attribute__((always_inline)) void indirect_store_no_mask(
     unsigned int block_dim_x = 1;
     unsigned int block_dim_y = 1;
     unsigned int block_dim_z = 1;
-    
+
     if constexpr (DIM == 1) {
         cce::async_invoke<SIMTIndirectStore1DWithOutMask<DTYPE, ITYPE>>(cce::dim3{MAX_THREAD_NUM},
             reinterpret_cast<__gm__ DTYPE*> (dst->aligned),
@@ -545,7 +545,7 @@ REGISTER_INDIRECT_STORE(1, float8_e4m3_t, int32_t);
 REGISTER_INDIRECT_STORE(1, float8_e5m2_t, int32_t);
 // REGISTER_INDIRECT_STORE(1, float4_e2m1_t, int32_t);
 // REGISTER_INDIRECT_STORE(1, float4_e1m2_t, int32_t);
- 
+
 REGISTER_INDIRECT_STORE(1, float, int64_t);
 REGISTER_INDIRECT_STORE(1, half, int64_t);
 REGISTER_INDIRECT_STORE(1, bfloat16_t, int64_t);
@@ -564,7 +564,7 @@ REGISTER_INDIRECT_STORE(1, float8_e4m3_t, int64_t);
 REGISTER_INDIRECT_STORE(1, float8_e5m2_t, int64_t);
 // REGISTER_INDIRECT_STORE(1, float4_e2m1_t, int64_t);
 // REGISTER_INDIRECT_STORE(1, float4_e1m2_t, int64_t);
- 
+
 REGISTER_INDIRECT_STORE(2, float, int32_t);
 REGISTER_INDIRECT_STORE(2, half, int32_t);
 REGISTER_INDIRECT_STORE(2, bfloat16_t, int32_t);
@@ -583,7 +583,7 @@ REGISTER_INDIRECT_STORE(2, float8_e4m3_t, int32_t);
 REGISTER_INDIRECT_STORE(2, float8_e5m2_t, int32_t);
 // REGISTER_INDIRECT_STORE(2, float4_e2m1_t, int32_t);
 // REGISTER_INDIRECT_STORE(2, float4_e1m2_t, int32_t);
- 
+
 REGISTER_INDIRECT_STORE(2, float, int64_t);
 REGISTER_INDIRECT_STORE(2, half, int64_t);
 REGISTER_INDIRECT_STORE(2, bfloat16_t, int64_t);
@@ -602,7 +602,7 @@ REGISTER_INDIRECT_STORE(2, float8_e4m3_t, int64_t);
 REGISTER_INDIRECT_STORE(2, float8_e5m2_t, int64_t);
 // REGISTER_INDIRECT_STORE(2, float4_e2m1_t, int64_t);
 // REGISTER_INDIRECT_STORE(2, float4_e1m2_t, int64_t);
- 
+
 REGISTER_INDIRECT_STORE(3, float, int32_t);
 REGISTER_INDIRECT_STORE(3, half, int32_t);
 REGISTER_INDIRECT_STORE(3, bfloat16_t, int32_t);
@@ -621,7 +621,7 @@ REGISTER_INDIRECT_STORE(3, float8_e4m3_t, int32_t);
 REGISTER_INDIRECT_STORE(3, float8_e5m2_t, int32_t);
 // REGISTER_INDIRECT_STORE(3, float4_e2m1_t, int32_t);
 // REGISTER_INDIRECT_STORE(3, float4_e1m2_t, int32_t);
- 
+
 REGISTER_INDIRECT_STORE(3, float, int64_t);
 REGISTER_INDIRECT_STORE(3, half, int64_t);
 REGISTER_INDIRECT_STORE(3, bfloat16_t, int64_t);
@@ -640,7 +640,7 @@ REGISTER_INDIRECT_STORE(3, float8_e4m3_t, int64_t);
 REGISTER_INDIRECT_STORE(3, float8_e5m2_t, int64_t);
 // REGISTER_INDIRECT_STORE(3, float4_e2m1_t, int64_t);
 // REGISTER_INDIRECT_STORE(3, float4_e1m2_t, int64_t);
- 
+
 REGISTER_INDIRECT_STORE(4, float, int32_t);
 REGISTER_INDIRECT_STORE(4, half, int32_t);
 REGISTER_INDIRECT_STORE(4, bfloat16_t, int32_t);
@@ -659,7 +659,7 @@ REGISTER_INDIRECT_STORE(4, float8_e4m3_t, int32_t);
 REGISTER_INDIRECT_STORE(4, float8_e5m2_t, int32_t);
 // REGISTER_INDIRECT_STORE(4, float4_e2m1_t, int32_t);
 // REGISTER_INDIRECT_STORE(4, float4_e1m2_t, int32_t);
- 
+
 REGISTER_INDIRECT_STORE(4, float, int64_t);
 REGISTER_INDIRECT_STORE(4, half, int64_t);
 REGISTER_INDIRECT_STORE(4, bfloat16_t, int64_t);
@@ -678,7 +678,7 @@ REGISTER_INDIRECT_STORE(4, float8_e4m3_t, int64_t);
 REGISTER_INDIRECT_STORE(4, float8_e5m2_t, int64_t);
 // REGISTER_INDIRECT_STORE(4, float4_e2m1_t, int64_t);
 // REGISTER_INDIRECT_STORE(4, float4_e1m2_t, int64_t);
- 
+
 REGISTER_INDIRECT_STORE(5, float, int32_t);
 REGISTER_INDIRECT_STORE(5, half, int32_t);
 REGISTER_INDIRECT_STORE(5, bfloat16_t, int32_t);
@@ -697,7 +697,7 @@ REGISTER_INDIRECT_STORE(5, float8_e4m3_t, int32_t);
 REGISTER_INDIRECT_STORE(5, float8_e5m2_t, int32_t);
 // REGISTER_INDIRECT_STORE(5, float4_e2m1_t, int32_t);
 // REGISTER_INDIRECT_STORE(5, float4_e1m2_t, int32_t);
- 
+
 REGISTER_INDIRECT_STORE(5, float, int64_t);
 REGISTER_INDIRECT_STORE(5, half, int64_t);
 REGISTER_INDIRECT_STORE(5, bfloat16_t, int64_t);
@@ -736,7 +736,7 @@ REGISTER_INDIRECT_STORE_NO_MASK(1, float8_e4m3_t, int32_t);
 REGISTER_INDIRECT_STORE_NO_MASK(1, float8_e5m2_t, int32_t);
 // REGISTER_INDIRECT_STORE_NO_MASK(1, float4_e2m1_t, int32_t);
 // REGISTER_INDIRECT_STORE_NO_MASK(1, float4_e1m2_t, int32_t);
- 
+
 REGISTER_INDIRECT_STORE_NO_MASK(1, float, int64_t);
 REGISTER_INDIRECT_STORE_NO_MASK(1, half, int64_t);
 REGISTER_INDIRECT_STORE_NO_MASK(1, bfloat16_t, int64_t);
@@ -755,7 +755,7 @@ REGISTER_INDIRECT_STORE_NO_MASK(1, float8_e4m3_t, int64_t);
 REGISTER_INDIRECT_STORE_NO_MASK(1, float8_e5m2_t, int64_t);
 // REGISTER_INDIRECT_STORE_NO_MASK(1, float4_e2m1_t, int64_t);
 // REGISTER_INDIRECT_STORE_NO_MASK(1, float4_e1m2_t, int64_t);
- 
+
 REGISTER_INDIRECT_STORE_NO_MASK(2, float, int32_t);
 REGISTER_INDIRECT_STORE_NO_MASK(2, half, int32_t);
 REGISTER_INDIRECT_STORE_NO_MASK(2, bfloat16_t, int32_t);
@@ -774,7 +774,7 @@ REGISTER_INDIRECT_STORE_NO_MASK(2, float8_e4m3_t, int32_t);
 REGISTER_INDIRECT_STORE_NO_MASK(2, float8_e5m2_t, int32_t);
 // REGISTER_INDIRECT_STORE_NO_MASK(2, float4_e2m1_t, int32_t);
 // REGISTER_INDIRECT_STORE_NO_MASK(2, float4_e1m2_t, int32_t);
- 
+
 REGISTER_INDIRECT_STORE_NO_MASK(2, float, int64_t);
 REGISTER_INDIRECT_STORE_NO_MASK(2, half, int64_t);
 REGISTER_INDIRECT_STORE_NO_MASK(2, bfloat16_t, int64_t);
@@ -793,7 +793,7 @@ REGISTER_INDIRECT_STORE_NO_MASK(2, float8_e4m3_t, int64_t);
 REGISTER_INDIRECT_STORE_NO_MASK(2, float8_e5m2_t, int64_t);
 // REGISTER_INDIRECT_STORE_NO_MASK(2, float4_e2m1_t, int64_t);
 // REGISTER_INDIRECT_STORE_NO_MASK(2, float4_e1m2_t, int64_t);
- 
+
 REGISTER_INDIRECT_STORE_NO_MASK(3, float, int32_t);
 REGISTER_INDIRECT_STORE_NO_MASK(3, half, int32_t);
 REGISTER_INDIRECT_STORE_NO_MASK(3, bfloat16_t, int32_t);
@@ -812,7 +812,7 @@ REGISTER_INDIRECT_STORE_NO_MASK(3, float8_e4m3_t, int32_t);
 REGISTER_INDIRECT_STORE_NO_MASK(3, float8_e5m2_t, int32_t);
 // REGISTER_INDIRECT_STORE_NO_MASK(3, float4_e2m1_t, int32_t);
 // REGISTER_INDIRECT_STORE_NO_MASK(3, float4_e1m2_t, int32_t);
- 
+
 REGISTER_INDIRECT_STORE_NO_MASK(3, float, int64_t);
 REGISTER_INDIRECT_STORE_NO_MASK(3, half, int64_t);
 REGISTER_INDIRECT_STORE_NO_MASK(3, bfloat16_t, int64_t);
@@ -831,7 +831,7 @@ REGISTER_INDIRECT_STORE_NO_MASK(3, float8_e4m3_t, int64_t);
 REGISTER_INDIRECT_STORE_NO_MASK(3, float8_e5m2_t, int64_t);
 // REGISTER_INDIRECT_STORE_NO_MASK(3, float4_e2m1_t, int64_t);
 // REGISTER_INDIRECT_STORE_NO_MASK(3, float4_e1m2_t, int64_t);
- 
+
 REGISTER_INDIRECT_STORE_NO_MASK(4, float, int32_t);
 REGISTER_INDIRECT_STORE_NO_MASK(4, half, int32_t);
 REGISTER_INDIRECT_STORE_NO_MASK(4, bfloat16_t, int32_t);
@@ -850,7 +850,7 @@ REGISTER_INDIRECT_STORE_NO_MASK(4, float8_e4m3_t, int32_t);
 REGISTER_INDIRECT_STORE_NO_MASK(4, float8_e5m2_t, int32_t);
 // REGISTER_INDIRECT_STORE_NO_MASK(4, float4_e2m1_t, int32_t);
 // REGISTER_INDIRECT_STORE_NO_MASK(4, float4_e1m2_t, int32_t);
- 
+
 REGISTER_INDIRECT_STORE_NO_MASK(4, float, int64_t);
 REGISTER_INDIRECT_STORE_NO_MASK(4, half, int64_t);
 REGISTER_INDIRECT_STORE_NO_MASK(4, bfloat16_t, int64_t);
@@ -869,7 +869,7 @@ REGISTER_INDIRECT_STORE_NO_MASK(4, float8_e4m3_t, int64_t);
 REGISTER_INDIRECT_STORE_NO_MASK(4, float8_e5m2_t, int64_t);
 // REGISTER_INDIRECT_STORE_NO_MASK(4, float4_e2m1_t, int64_t);
 // REGISTER_INDIRECT_STORE_NO_MASK(4, float4_e1m2_t, int64_t);
- 
+
 REGISTER_INDIRECT_STORE_NO_MASK(5, float, int32_t);
 REGISTER_INDIRECT_STORE_NO_MASK(5, half, int32_t);
 REGISTER_INDIRECT_STORE_NO_MASK(5, bfloat16_t, int32_t);
@@ -888,7 +888,7 @@ REGISTER_INDIRECT_STORE_NO_MASK(5, float8_e4m3_t, int32_t);
 REGISTER_INDIRECT_STORE_NO_MASK(5, float8_e5m2_t, int32_t);
 // REGISTER_INDIRECT_STORE_NO_MASK(5, float4_e2m1_t, int32_t);
 // REGISTER_INDIRECT_STORE_NO_MASK(5, float4_e1m2_t, int32_t);
- 
+
 REGISTER_INDIRECT_STORE_NO_MASK(5, float, int64_t);
 REGISTER_INDIRECT_STORE_NO_MASK(5, half, int64_t);
 REGISTER_INDIRECT_STORE_NO_MASK(5, bfloat16_t, int64_t);
