@@ -48,13 +48,6 @@ using namespace mlir::impl;
 namespace mlir {
 namespace scope {
 
-static bool isSimtScope(Operation *op) {
-  if (auto vectorMode = op->getAttrOfType<StringAttr>("vector_mode")) {
-    return vectorMode.getValue() == "simt";
-  }
-  return false;
-}
-
 class ExtractOpsFromBodyPattern : public OpRewritePattern<ScopeOp> {
 public:
   using OpRewritePattern<ScopeOp>::OpRewritePattern;
@@ -100,15 +93,6 @@ void InlineScopePass::runOnOperation() {
 
   if (forceInline) {
     moduleOp.walk([](scope::ScopeOp op) { op.setNoInline(false); });
-  }
-
-  // SIMT scopes are kept outlined: they are lowered to independent SIMT
-  // vector functions and must not be merged back into the caller.
-  if (preserveSimtScopes) {
-    moduleOp.walk([](scope::ScopeOp op) {
-      if (isSimtScope(op))
-        op.setNoInline(true);
-    });
   }
 
   RewritePatternSet patterns(&getContext());

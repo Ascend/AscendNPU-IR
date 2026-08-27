@@ -456,9 +456,10 @@ static void hivmPreBufferizationOptimizationPipeline(
   // Split mix kernel is done before bufferization because it depends on
   // tensor SSA property.
   pm.addPass(createSplitMixKernelPass());
-  InlineScopeOptions inlineScopeOptions;
-  inlineScopeOptions.preserveSimtScopes = true;
-  pm.addPass(scope::createInlineScopePass(inlineScopeOptions));
+  // SIMT scopes must stay outlined, so mark them `no_inline` before the
+  // inline-scope below runs.
+  pm.addPass(createMarkSimtScopeNoInlinePass());
+  pm.addPass(scope::createInlineScopePass());
   TileAndBindSubBlockOptions tileOptions;
   tileOptions.enableTile = hivmPipelineOptions.enableAutoBindSubBlock;
   pm.addPass(createTileAndBindSubBlockPass(tileOptions));
@@ -524,9 +525,7 @@ static void hivmPostBufferizationOptimizationPipeline(
     pm.addPass(bufferization::createDropEquivalentBufferResultsPass());
     // make sure VFFusion function can be inlined
     // so InferHIVMMemScope can work correctly
-    InlineScopeOptions inlineScopeOptions;
-    inlineScopeOptions.preserveSimtScopes = true;
-    pm.addPass(scope::createInlineScopePass(inlineScopeOptions));
+    pm.addPass(scope::createInlineScopePass());
   }
   // Bind buffer should be done after outline alloc in vf because the source
   // allocs might be inside the VF.
@@ -697,10 +696,8 @@ void buildLowerHIVMPipelines(OpPassManager &pm,
   hivmPostBufferizationOptimizationPipeline(pm, hivmPipelineOptions);
   // Optimizations that relies on scope should be done after this point. Inline
   // all `scope.scope` ops.
-  InlineScopeOptions inlineScopeOptions;
-  inlineScopeOptions.forceInline = true;
-  inlineScopeOptions.preserveSimtScopes = true;
-  pm.addPass(scope::createInlineScopePass(inlineScopeOptions));
+  pm.addPass(
+      scope::createInlineScopePass(InlineScopeOptions{/*forceInline=*/true}));
   pm.addPass(
       bishengir::createInjectIRPass(hivmPipelineOptions.injectIRFromFile));
 }

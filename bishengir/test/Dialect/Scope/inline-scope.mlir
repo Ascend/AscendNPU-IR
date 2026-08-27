@@ -1,6 +1,5 @@
 // RUN: bishengir-opt --inline-scope --split-input-file %s | FileCheck %s
 // RUN: bishengir-opt --inline-scope="force-inline=true" --split-input-file %s | FileCheck --check-prefix=CHECK-FORCE %s
-// RUN: bishengir-opt --inline-scope="preserve-simt-scopes=true" --split-input-file %s | FileCheck --check-prefix=CHECK-SIMT %s
 
 // CHECK:   func.func @inline_func(%[[ARG_0:.*]]: tensor<64x128xf32>)
 // CHECK-DAG:           %[[END_2:.*]] = arith.constant {debug = 12 : index} 4096 : index
@@ -133,7 +132,7 @@ module {
     %0 = scope.scope : () -> tensor<i32> {
       %r = arith.addi %arg0, %arg1 : tensor<i32>
       scope.return %r : tensor<i32>
-    } {vector_mode = "simt"}
+    } {no_inline, vector_mode = "simt"}
     return %0 : tensor<i32>
   }
 
