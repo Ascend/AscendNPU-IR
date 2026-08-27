@@ -330,13 +330,6 @@ def TritonGPUReorderInstructions: Pass<"tritongpu-reorder-instructions", "mlir::
 
   let dependentDialects = ["mlir::triton::gpu::TritonGPUDialect",
                            "mlir::triton::TritonDialect"];
-#ifdef BSPUB_DAVINCI_BISHENGIR
-  let options = [
-    Option<"enableSimtReorderInstruction", "enable-simt-reorder-instruction",
-           "bool", /*default*/"false",
-           "enable reorder instruction pattern">
-  ];
-#endif
 }
 
 def TritonGPUReduceDataDuplication: Pass<"tritongpu-reduce-data-duplication", "mlir::ModuleOp"> {

@@ -13,7 +13,7 @@ module attributes {
     "ttg.num-warps"        = 4 : i32,
     "ttg.threads-per-warp" = 32 : i32,
     ttg.shared             = 4096 : i32,
-    "ttg.enable-bishengir-simt-optimization" = 111 : i32
+    "ttg.simt-optimization-mode" = 111 : i32
 } {
   // CHECK-LABEL: @matmul_fma_f32
   tt.func public @matmul_fma_f32(

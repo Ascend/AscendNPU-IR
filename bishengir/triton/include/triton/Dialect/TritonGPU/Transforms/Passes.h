@@ -15,7 +15,7 @@ namespace gpu {
 
 #if BSPUB_DAVINCI_BISHENGIR
 std::unique_ptr<mlir::Pass>
-createTritonGPUReorderInstructionsPass(const TritonGPUReorderInstructionsOptions &options = {});
+createTritonGPUReorderInstructionsPass();
 #endif
 
 /// Generate the code for registering passes.

@@ -182,11 +182,6 @@ struct HIVMAVEPipelineOptions
       llvm::cl::desc("Enable SIMT lowering through DPX Dialect."),
       llvm::cl::init(true)};
 
-  PassOptions::Option<int> enableBishengirSimtOptimization{
-      *this, "enable-bishengir-simt-optimization",
-      llvm::cl::desc("Enable bishengir simt optimization"),
-      llvm::cl::init(900101)};
-
   PassOptions::Option<int> disableDecomposeReduction{
       *this, "disable-decompose-reduction",
       llvm::cl::desc("Disable decompose reduction"), llvm::cl::init(false)};

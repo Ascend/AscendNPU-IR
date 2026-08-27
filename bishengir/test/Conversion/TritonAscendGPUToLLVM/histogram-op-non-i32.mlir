@@ -10,7 +10,7 @@ module attributes {
     ttg.shared             = 0 : i32,
     ttg.target             = "cuda:80",
     hacc.target            = #hacc.target<"Ascend910_9589">,
-    "ttg.enable-bishengir-simt-optimization" = 111 : i32
+    "ttg.simt-optimization-mode" = 111 : i32
 } {
   // CHECK-LABEL: @histogram_non_i32
   tt.func public @histogram_non_i32(

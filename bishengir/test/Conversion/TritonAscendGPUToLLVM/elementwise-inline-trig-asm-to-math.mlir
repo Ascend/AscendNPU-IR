@@ -2,7 +2,7 @@
 
 #blocked = #ttg.blocked<{sizePerThread = [1], threadsPerWarp = [32], warpsPerCTA = [16], order = [0]}>
 
-module attributes {"ttg.enable-bishengir-simt-optimization" = 900101 : i32, "ttg.num-warps" = 16 : i32} {
+module attributes {"ttg.simt-optimization-mode" = 900101 : i32, "ttg.num-warps" = 16 : i32} {
     // CHECK-LABEL: sinTest
     tt.func @sinTest(%arg0: tensor<64xf32, #blocked>) {
         // CHECK: %{{.*}} = ascend_dpx.sin

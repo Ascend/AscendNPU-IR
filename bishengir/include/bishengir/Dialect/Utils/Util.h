@@ -917,8 +917,8 @@ namespace mlir {
 
 namespace triton {
 
-inline const char AttrEnableBishengirSimtOptimizationName[] =
-    "ttg.enable-bishengir-simt-optimization";
+inline const char AttrSimtOptimizationModeName[] =
+    "ttg.simt-optimization-mode";
 inline const char AttrEnableGlobalScratchAllocationName[] =
     "ttg.enable-global-scratch-allocation";
 

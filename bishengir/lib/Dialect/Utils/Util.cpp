@@ -1955,7 +1955,7 @@ int getPassColumnDigit(Operation *opCtx, llvm::StringRef passName) {
   }
 
   // get attribute
-  Attribute rawAttr = module->getAttr(AttrEnableBishengirSimtOptimizationName);
+  Attribute rawAttr = module->getAttr(AttrSimtOptimizationModeName);
   if (!rawAttr) {
     return 0;
   }
@@ -1991,6 +1991,8 @@ int getPassColumnDigit(Operation *opCtx, llvm::StringRef passName) {
     idx = 4;
   else if (passName == "loop-restructure-arange-optimization")
     idx = 5;
+  else if (passName == "tritongpu-reorder-instructions")
+    idx = 6;
   else {
     idx = 0;
   }
