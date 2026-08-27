@@ -257,6 +257,70 @@ module {
 
 // -----
 
+// Regression: scf.while whose condition is a before-arg (not a computed value).
+// Inits/before-args (4) exceed condition-forwarded/result count (3): the
+// condition slot has no matching after-arg or result. Previously this caused an
+// out-of-bounds index into after-args/results and a verifier type-mismatch.
+// CHECK-LABEL: test_infer_mem_scope_while_cond_is_before_arg
+module {
+  func.func @test_infer_mem_scope_while_cond_is_before_arg(%arg0 : memref<128xi32>) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>} {
+    %true = arith.constant true
+    %false = arith.constant false
+    // CHECK: %[[INIT:.*]] = memref.alloc() {alignment = 64 : i64} : memref<128xi32, #hivm.address_space<ub>>
+    %alloc_0 = memref.alloc() {alignment = 64 : i64} : memref<128xi32>
+    // before-args: %arg1(memref), %arg2(i1 cond), %arg3(memref)  -> results: 2 memrefs
+    // CHECK: %[[RES:.*]]:2 = scf.while
+    // CHECK-SAME: -> (memref<128xi32, #hivm.address_space<ub>>, memref<128xi32, #hivm.address_space<ub>>)
+    %1:2 = scf.while(%arg1 = %alloc_0, %arg2 = %true, %arg3 = %alloc_0) : (memref<128xi32>, i1, memref<128xi32>) -> (memref<128xi32>, memref<128xi32>) {
+      // condition forwards the two memref before-args, skipping the i1 %arg2
+      scf.condition(%arg2) %arg1, %arg3 : memref<128xi32>, memref<128xi32>
+    } do {
+    // CHECK: ^bb0(%[[A1:.*]]: memref<128xi32, #hivm.address_space<ub>>, %[[A3:.*]]: memref<128xi32, #hivm.address_space<ub>>):
+    ^bb0(%arg1: memref<128xi32>, %arg3: memref<128xi32>):
+      // after-yield feeds all three before-args; the new alloc sets scope on
+      // its after-yield, which routes back to the before-arg and results.
+      // CHECK: %[[A4:.*]] = memref.alloc() : memref<128xi32, #hivm.address_space<ub>>
+      %alloc_1 = memref.alloc() : memref<128xi32>
+      scf.yield %alloc_1, %false, %alloc_1 : memref<128xi32>, i1, memref<128xi32>
+    }
+    // results carry the propagated scope
+    // CHECK: hivm.hir.copy ins(%[[RES]]#0 : memref<128xi32, #hivm.address_space<ub>>) outs(%[[RES]]#1 : memref<128xi32, #hivm.address_space<ub>>)
+    hivm.hir.copy ins(%1#0 : memref<128xi32>) outs(%1#1 : memref<128xi32>)
+    return
+  }
+}
+
+// -----
+
+// Regression: commiter scenario - the init/before chain and the
+// cond/after/results chain are independent; yield must not overwrite GM
+// scopes set by the cond chain.
+// CHECK-LABEL: test_infer_mem_scope_while_separate_chains
+module {
+  func.func @test_infer_mem_scope_while_separate_chains(%arg0 : memref<128xi32>) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>} {
+    %true = arith.constant true
+    // CHECK: %[[INIT:.*]] = memref.alloc() {alignment = 64 : i64} : memref<128xi32, #hivm.address_space<ub>>
+    %alloc_0 = memref.alloc() {alignment = 64 : i64} : memref<128xi32>
+    // before chain: %alloc_0 -> %arg1 (UB); cond chain: %arg0(gm) -> results/after
+    // CHECK: %[[RES:.*]]:2 = scf.while
+    // CHECK-SAME: -> (memref<128xi32, #hivm.address_space<gm>>, i1)
+    %1:2 = scf.while(%arg1 = %alloc_0, %arg2 = %true) : (memref<128xi32>, i1) -> (memref<128xi32>, i1) {
+      scf.condition(%arg2) %arg0, %arg2 : memref<128xi32>, i1
+    } do {
+    // CHECK: ^bb0(%[[AFTER0:.*]]: memref<128xi32, #hivm.address_space<gm>>, %[[AFTER1:.*]]: i1):
+    ^bb0(%after0: memref<128xi32>, %after1: i1):
+      // after-arg keeps GM; yield a fresh UB alloc back to the before chain.
+      // CHECK: %[[YIELD_ALLOC:.*]] = memref.alloc() : memref<128xi32, #hivm.address_space<ub>>
+      %alloc_1 = memref.alloc() : memref<128xi32>
+      // CHECK: scf.yield %[[YIELD_ALLOC]], %[[AFTER1]] : memref<128xi32, #hivm.address_space<ub>>, i1
+      scf.yield %alloc_1, %after1 : memref<128xi32>, i1
+    }
+    return
+  }
+}
+
+// -----
+
 // CHECK-LABEL: test_infer_mem_scope_while
 module {
   func.func @test_infer_mem_scope_while(%arg0 : memref<128xi32>) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>} {
@@ -274,6 +338,30 @@ module {
     // CHECK:           ^bb0(%[[VAL_9:.*]]: memref<128xi32, #hivm.address_space<ub>>, %[[VAL_10:.*]]: i1):
     ^bb0(%arg1: memref<128xi32>, %arg2: i1):
       scf.yield %arg1, %arg2 : memref<128xi32>, i1
+    }
+    return
+  }
+}
+
+// -----
+
+// Regression: loop-invariant yield (after yields init) cycled through
+// init -> before-arg -> after-yield; guard stops the re-walk.
+// CHECK-LABEL: test_infer_mem_scope_while_yield_cycle
+module {
+  func.func @test_infer_mem_scope_while_yield_cycle() attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>} {
+    %true = arith.constant true
+    // CHECK: %[[INIT:.*]] = memref.alloc() {alignment = 64 : i64} : memref<128xi32, #hivm.address_space<ub>>
+    %alloc_0 = memref.alloc() {alignment = 64 : i64} : memref<128xi32>
+    // CHECK: %[[RES:.*]]:2 = scf.while
+    // CHECK-SAME: -> (memref<128xi32, #hivm.address_space<ub>>, i1)
+    %1:2 = scf.while(%arg1 = %alloc_0, %arg2 = %true) : (memref<128xi32>, i1) -> (memref<128xi32>, i1) {
+      scf.condition(%arg2) %arg1, %arg2 : memref<128xi32>, i1
+    } do {
+    // CHECK: ^bb0(%[[INV:.*]]: memref<128xi32, #hivm.address_space<ub>>, %[[INV1:.*]]: i1):
+    ^bb0(%after0: memref<128xi32>, %after1: i1):
+      // CHECK: scf.yield %[[INIT]], %[[INV1]] : memref<128xi32, #hivm.address_space<ub>>, i1
+      scf.yield %alloc_0, %after1 : memref<128xi32>, i1
     }
     return
   }
