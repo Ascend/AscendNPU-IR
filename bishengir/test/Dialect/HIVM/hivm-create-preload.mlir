@@ -986,3 +986,105 @@ func.func @test_pointer_cast_alias_rematerialization() {
   }
   return
 }
+
+// -----
+
+// Test that loops with multiple scope.scope ops having the same preload_num (e.g. preload_num = 0)
+// are all properly recognized as preload scopes and converted to scf.if, without unindexed scopes
+// being duplicated by fallback cloning.
+
+// CHECK-LABEL: func.func @test_multiple_scopes_same_preload_num
+// CHECK: scf.for
+// CHECK:   %[[COND1:.*]] = arith.andi
+// CHECK:   scf.if %[[COND1]] {
+// CHECK:     "test.stage1_op"
+// CHECK:   }
+// CHECK:   %[[COND0:.*]] = arith.andi
+// CHECK:   scf.if %[[COND0]] {
+// CHECK:     "test.stage0_op_a"
+// CHECK:     "test.stage0_op_b"
+// CHECK:   }
+// CHECK-NOT: "test.stage0_op_a"
+// CHECK-NOT: "test.stage0_op_b"
+func.func @test_multiple_scopes_same_preload_num() {
+  %c0 = arith.constant 0 : i32
+  %c4 = arith.constant 4 : i32
+  %c1 = arith.constant 1 : i32
+
+  scf.for %i = %c0 to %c4 step %c1 : i32 {
+    scope.scope : () -> () {
+      "test.stage1_op"() : () -> ()
+      scope.return
+    } {no_inline, hivm.preload_num = 1 : i32, hivm.max_preload_num = 2 : i32}
+
+    scope.scope : () -> () {
+      "test.stage0_op_a"() : () -> ()
+      scope.return
+    } {no_inline, hivm.preload_num = 0 : i32, hivm.max_preload_num = 2 : i32}
+
+    scope.scope : () -> () {
+      "test.stage0_op_b"() : () -> ()
+      scope.return
+    } {no_inline, hivm.preload_num = 0 : i32, hivm.max_preload_num = 2 : i32}
+  }
+  return
+}
+
+// -----
+
+// Test that multiple scopes with the same non-zero preload_num (e.g. preload_num = 1 or 2)
+// are all properly recognized, mapped to that preload level, and converted to guarded scf.if.
+
+// CHECK-LABEL: func.func @test_multiple_scopes_nonzero_preload_num
+// CHECK: scf.for
+// CHECK:   %[[COND2:.*]] = arith.andi
+// CHECK:   scf.if %[[COND2]] {
+// CHECK:     "test.stage2_op_a"
+// CHECK:     "test.stage2_op_b"
+// CHECK:   }
+// CHECK:   %[[COND1:.*]] = arith.andi
+// CHECK:   scf.if %[[COND1]] {
+// CHECK:     "test.stage1_op_a"
+// CHECK:     "test.stage1_op_b"
+// CHECK:   }
+// CHECK:   %[[COND0:.*]] = arith.andi
+// CHECK:   scf.if %[[COND0]] {
+// CHECK:     "test.stage0_op"
+// CHECK:   }
+// CHECK-NOT: "test.stage2_op_a"
+// CHECK-NOT: "test.stage2_op_b"
+// CHECK-NOT: "test.stage1_op_a"
+// CHECK-NOT: "test.stage1_op_b"
+func.func @test_multiple_scopes_nonzero_preload_num() {
+  %c0 = arith.constant 0 : i32
+  %c4 = arith.constant 4 : i32
+  %c1 = arith.constant 1 : i32
+
+  scf.for %i = %c0 to %c4 step %c1 : i32 {
+    scope.scope : () -> () {
+      "test.stage2_op_a"() : () -> ()
+      scope.return
+    } {no_inline, hivm.preload_num = 2 : i32, hivm.max_preload_num = 3 : i32}
+
+    scope.scope : () -> () {
+      "test.stage2_op_b"() : () -> ()
+      scope.return
+    } {no_inline, hivm.preload_num = 2 : i32, hivm.max_preload_num = 3 : i32}
+
+    scope.scope : () -> () {
+      "test.stage1_op_a"() : () -> ()
+      scope.return
+    } {no_inline, hivm.preload_num = 1 : i32, hivm.max_preload_num = 3 : i32}
+
+    scope.scope : () -> () {
+      "test.stage1_op_b"() : () -> ()
+      scope.return
+    } {no_inline, hivm.preload_num = 1 : i32, hivm.max_preload_num = 3 : i32}
+
+    scope.scope : () -> () {
+      "test.stage0_op"() : () -> ()
+      scope.return
+    } {no_inline, hivm.preload_num = 0 : i32, hivm.max_preload_num = 3 : i32}
+  }
+  return
+}
