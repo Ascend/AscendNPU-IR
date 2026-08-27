@@ -41,7 +41,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // -----
 
 // CHECK-LABEL: func.func @dotdot_f16f16
-// CHECK: %[[ARG0:.*]] = hivm.hir.fixpipe ins(%{{.*}} : tensor<16x16xf16>) outs(%{{.*}} : tensor<1x1x16x16xf16>) -> tensor<1x1x16x16xf16>
+// CHECK: %[[ARG0:.*]] = hivm.hir.fixpipe ins(%{{.*}} : tensor<16x16xf16>) outs(%{{.*}} : tensor<16x16xf16>) -> tensor<16x16xf16>
 // CHECK: %[[ARG1:.*]] = hivm.hir.mmadL1 {fixpipe_for_result_already_inserted = true} ins(%[[ARG0]]
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   func.func @dotdot_f16f16(%4: tensor<16x16xf16>, %e4: tensor<16x16xf16>, %e5: tensor<16x16xf16>) -> tensor<16x16xf16> {

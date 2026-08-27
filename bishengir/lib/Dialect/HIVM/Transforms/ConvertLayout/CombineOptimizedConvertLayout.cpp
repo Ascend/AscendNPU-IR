@@ -16,7 +16,9 @@
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Dominance.h"
+#include "mlir/Support/LLVM.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
 #include <bishengir/Dialect/Tensor/Transforms/PropagateReshape/Utils.h>
@@ -143,13 +145,12 @@ LogicalResult verifyLoadMXScaleSource(Value src, PatternRewriter &rewriter,
   return success();
 }
 
-using CreateFusedMemrefDmaFn =
-    llvm::function_ref<void(PatternRewriter &, Location, LoadOp, Value /*src*/,
-                            Value /*dst*/)>;
+using CreateFusedMemrefDmaFn = llvm::function_ref<void(
+    PatternRewriter &, Location, LoadOp, Value /*src*/, Value /*dst*/)>;
 
-using CreateFusedTensorDmaFn = llvm::function_ref<Value(
-    PatternRewriter &, Location, LoadOp, Value /*empty*/,
-    RankedTensorType /*resultTy*/)>;
+using CreateFusedTensorDmaFn =
+    llvm::function_ref<Value(PatternRewriter &, Location, LoadOp,
+                             Value /*empty*/, RankedTensorType /*resultTy*/)>;
 
 void createND2NZMemrefDma(PatternRewriter &rewriter, Location loc,
                           LoadOp loadOp, Value src, Value dst) {
@@ -187,8 +188,7 @@ struct DirectLoadConvertMatch {
 
 FailureOr<DirectLoadConvertMatch>
 matchDirectLoadConvertLayout(ConvertLayoutOp op, PatternRewriter &rewriter) {
-  auto toTensorOp =
-      op.getSource().getDefiningOp<bufferization::ToTensorOp>();
+  auto toTensorOp = op.getSource().getDefiningOp<bufferization::ToTensorOp>();
   if (!toTensorOp)
     return rewriter.notifyMatchFailure(
         op, "source is not from a to_tensor operation");
@@ -261,8 +261,7 @@ struct SubviewLoadConvertMatch {
 
 FailureOr<SubviewLoadConvertMatch>
 matchSubviewLoadConvertLayout(ConvertLayoutOp op, PatternRewriter &rewriter) {
-  auto toTensorOp =
-      op.getSource().getDefiningOp<bufferization::ToTensorOp>();
+  auto toTensorOp = op.getSource().getDefiningOp<bufferization::ToTensorOp>();
   if (!toTensorOp)
     return rewriter.notifyMatchFailure(
         op, "source is not from a to_tensor operation");
@@ -287,8 +286,8 @@ matchSubviewLoadConvertLayout(ConvertLayoutOp op, PatternRewriter &rewriter) {
       subviewOut = sv;
       continue;
     }
-    return rewriter.notifyMatchFailure(
-        user, "unexpected non-subview user of alloc");
+    return rewriter.notifyMatchFailure(user,
+                                       "unexpected non-subview user of alloc");
   }
   if (!subviewOut)
     return rewriter.notifyMatchFailure(op, "no subview user found on alloc");
@@ -343,8 +342,8 @@ rewriteSubviewLoadConvertLayout(ConvertLayoutOp op, PatternRewriter &rewriter,
 
   SmallVector<OpFoldResult> fractalStrides(resultTensorType.getRank(),
                                            rewriter.getIndexAttr(1));
-  auto newAllocOp = rewriter.create<memref::AllocOp>(
-      match.origAllocOp.getLoc(), fractalAllocType);
+  auto newAllocOp = rewriter.create<memref::AllocOp>(match.origAllocOp.getLoc(),
+                                                     fractalAllocType);
   auto newSubviewOut = rewriter.create<memref::SubViewOp>(
       match.subviewOut.getLoc(), newAllocOp.getResult(),
       *fractalOffsetsOrFailure, *fractalSizesOrFailure, fractalStrides);
@@ -383,9 +382,8 @@ rewriteTensorLoadConvertLayout(ConvertLayoutOp op, PatternRewriter &rewriter,
       getConvertLayoutProducerUseInfo(loadOp.getResult(0), op);
   auto resultTensorType = cast<RankedTensorType>(op.getType());
   rewriter.setInsertionPointAfter(loadOp);
-  auto emptyOp =
-      rewriter.create<tensor::EmptyOp>(op.getLoc(), op.getMixedOutputShape(),
-                                       resultTensorType.getElementType());
+  auto emptyOp = rewriter.create<tensor::EmptyOp>(
+      op.getLoc(), op.getMixedOutputShape(), resultTensorType.getElementType());
 
   Value fusedResult = createFusedDma(rewriter, op.getLoc(), loadOp,
                                      emptyOp.getResult(), resultTensorType);
@@ -448,8 +446,7 @@ rewriteTensorLoadConvertLayout(ConvertLayoutOp op, PatternRewriter &rewriter,
 // movement and layout conversion in a single fused operation.
 //===----------------------------------------------------------------------===//
 
-struct FoldDirectLoadToND2NZPattern
-    : public OpRewritePattern<ConvertLayoutOp> {
+struct FoldDirectLoadToND2NZPattern : public OpRewritePattern<ConvertLayoutOp> {
   using OpRewritePattern::OpRewritePattern;
 
   LogicalResult matchAndRewrite(ConvertLayoutOp op,
@@ -476,7 +473,8 @@ struct FoldDirectLoadToLoadMXScalePattern
     auto match = matchDirectLoadConvertLayout(op, rewriter);
     if (failed(match))
       return failure();
-    if (failed(verifyLoadMXScaleSource(match->loadOp.getSource(), rewriter, op)))
+    if (failed(
+            verifyLoadMXScaleSource(match->loadOp.getSource(), rewriter, op)))
       return failure();
     return rewriteDirectLoadConvertLayout(op, rewriter, *match,
                                           createLoadMXScaleMemrefDma);
@@ -511,15 +509,15 @@ struct FoldSubviewLoadToLoadMXScalePattern
     auto match = matchSubviewLoadConvertLayout(op, rewriter);
     if (failed(match))
       return failure();
-    if (failed(verifyLoadMXScaleSource(match->loadOp.getSource(), rewriter, op)))
+    if (failed(
+            verifyLoadMXScaleSource(match->loadOp.getSource(), rewriter, op)))
       return failure();
     return rewriteSubviewLoadConvertLayout(op, rewriter, *match,
                                            createLoadMXScaleMemrefDma);
   }
 };
 
-struct FoldTensorLoadToND2NZPattern
-    : public OpRewritePattern<ConvertLayoutOp> {
+struct FoldTensorLoadToND2NZPattern : public OpRewritePattern<ConvertLayoutOp> {
   using OpRewritePattern::OpRewritePattern;
 
   LogicalResult matchAndRewrite(ConvertLayoutOp op,
@@ -581,7 +579,7 @@ struct FoldConvertLayoutFixpipePattern
 
     bool changed = false;
     for (Operation *user :
-        llvm::make_early_inc_range(op.getResult().getUsers())) {
+         llvm::make_early_inc_range(op.getResult().getUsers())) {
       auto fixpipeOp = dyn_cast<FixpipeOp>(user);
       if (!fixpipeOp)
         continue;
@@ -591,14 +589,20 @@ struct FoldConvertLayoutFixpipePattern
           fixpipeOp.getDmaMode() != FixpipeDMAMode::NZ2NZ)
         continue;
 
-      rewriter.modifyOpInPlace(
-          fixpipeOp, [&]() { fixpipeOp.getSrcMutable().assign(op.getSource()); });
+      rewriter.modifyOpInPlace(fixpipeOp, [&]() {
+        if (fixpipeOp.getDmaMode() == FixpipeDMAMode::NZ2NZ &&
+            hacc::utils::isRegBasedArch(op->getParentOfType<ModuleOp>())) {
+          if (shouldEnableChannelSplit(fixpipeOp.getDstOperandType()))
+            fixpipeOp.setChannelSplit(true);
+        }
+        fixpipeOp.getSrcMutable().assign(op.getSource());
+      });
       changed = true;
     }
 
     if (!changed)
-      return rewriter.notifyMatchFailure(
-          op, "no compatible fixpipe user to fold");
+      return rewriter.notifyMatchFailure(op,
+                                         "no compatible fixpipe user to fold");
 
     if (op.getResult().use_empty())
       rewriter.eraseOp(op);
@@ -1112,8 +1116,7 @@ struct RouteVectorFractalizeViaGMPattern
 
     if (!op.getResult().hasOneUse())
       return rewriter.notifyMatchFailure(op, "convert result has many uses");
-    auto copyOp =
-        dyn_cast<CopyOp>(*op.getResult().getUsers().begin());
+    auto copyOp = dyn_cast<CopyOp>(*op.getResult().getUsers().begin());
     if (!copyOp || copyOp.getSrc() != op.getResult())
       return rewriter.notifyMatchFailure(op, "result not consumed by a copy");
     if (!isa<MemRefType>(copyOp.getDst().getType()))
@@ -1156,9 +1159,9 @@ struct RouteVectorFractalizeViaGMPattern
     Value padValue = vbrc.getSrc();
     // Collect the K-pad chain for erasure, ordered users-before-defs.
     SmallVector<Operation *> padOpsToErase{
-        padCopy.getOperation(), toMemref.getOperation(), vbrc.getOperation(),
-        subView.getOperation(), toTensor.getOperation(),
-        padAlloc.getDefiningOp()};
+        padCopy.getOperation(),  toMemref.getOperation(),
+        vbrc.getOperation(),     subView.getOperation(),
+        toTensor.getOperation(), padAlloc.getDefiningOp()};
 
     Location loc = op.getLoc();
     rewriter.setInsertionPoint(copyOp);
@@ -1182,19 +1185,16 @@ struct RouteVectorFractalizeViaGMPattern
 void populateCombineOptimizedConvertLayoutPatterns(RewritePatternSet &patterns,
                                                    MLIRContext *context) {
   ConvertLayoutOp::getCanonicalizationPatterns(patterns, context);
-  patterns.add<FoldDirectLoadToND2NZPattern,
-               FoldDirectLoadToLoadMXScalePattern,
-               FoldSubviewLoadToND2NZPattern,
-               FoldSubviewLoadToLoadMXScalePattern,
-               FoldFixpipeNz2NzToFractalConvertLayoutPattern,
-               FoldTensorLoadToND2NZPattern,
-               FoldTensorLoadToND2NZPattern,
-               FoldTensorLoadToLoadMXScalePattern,
-               FoldFixpipeConvertLayoutPattern,
-               FoldConvertLayoutFixpipePattern,
-               FoldConvertLayoutExtractSliceFixpipePattern,
-               FoldFixpipeStoreConvertLayoutPattern,
-               RouteVectorFractalizeViaGMPattern>(context);
+  patterns
+      .add<FoldDirectLoadToND2NZPattern, FoldDirectLoadToLoadMXScalePattern,
+           FoldSubviewLoadToND2NZPattern, FoldSubviewLoadToLoadMXScalePattern,
+           FoldFixpipeNz2NzToFractalConvertLayoutPattern,
+           FoldTensorLoadToND2NZPattern, FoldTensorLoadToND2NZPattern,
+           FoldTensorLoadToLoadMXScalePattern, FoldFixpipeConvertLayoutPattern,
+           FoldConvertLayoutFixpipePattern,
+           FoldConvertLayoutExtractSliceFixpipePattern,
+           FoldFixpipeStoreConvertLayoutPattern,
+           RouteVectorFractalizeViaGMPattern>(context);
 }
 
 } // namespace
