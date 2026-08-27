@@ -465,6 +465,7 @@ static void hivmPreBufferizationOptimizationPipeline(
     tileOptions.enableTile = hivmPipelineOptions.enableAutoBindSubBlock;
     pm.addPass(createTileAndBindSubBlockPass(tileOptions));
   }
+  canonicalizationHIVMPipeline(pm);
   hivmWorkspacePipeline(pm, hivmPipelineOptions);
   pm.nest<func::FuncOp>().addPass(tensor::createFoldTensorEmptyPass());
   canonicalizationHIVMPipeline(pm);

@@ -28,6 +28,8 @@ using namespace mlir::annotation;
 namespace {
 static constexpr llvm::StringLiteral kBufferSizeInByteAttr =
     "buffer_size_in_byte";
+static constexpr llvm::StringLiteral kMayImplicitTransposeWithLastAxis =
+    "MayImplicitTransposeWithLastAxis";
 } // namespace
 
 //===----------------------------------------------------------------------===//
@@ -119,6 +121,28 @@ struct FoldUselessBufferSizeMarkOp
   }
 };
 
+struct EraseDeadTransposeMarkAndSrc
+    : public OpRewritePattern<annotation::MarkOp> {
+  using OpRewritePattern<annotation::MarkOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(annotation::MarkOp markOp,
+                                PatternRewriter &rewriter) const override {
+    if (!markOp.isAnnotatedByStaticAttr(
+            kMayImplicitTransposeWithLastAxis))
+      return failure();
+
+    auto srcVal = markOp.getSrc();
+    if (!llvm::hasSingleElement(srcVal.getUses()))
+      return failure();
+
+    auto *definingOp = srcVal.getDefiningOp();
+    rewriter.eraseOp(markOp);
+    if (definingOp && definingOp->use_empty())
+      rewriter.eraseOp(definingOp);
+    return success();
+  }
+};
+
 // TODO: Temporarily disabled because of SplitMixKernel not migrated.
 struct FoldRedundantMarkOp : public OpRewritePattern<annotation::MarkOp> {
   using OpRewritePattern<annotation::MarkOp>::OpRewritePattern;
@@ -152,6 +176,7 @@ struct FoldRedundantMarkOp : public OpRewritePattern<annotation::MarkOp> {
 void MarkOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                          MLIRContext *context) {
   results.add<FoldUselessBufferSizeMarkOp>(context);
+  results.add<EraseDeadTransposeMarkAndSrc>(context);
 }
 
 bool MarkOp::isAnnotatedBy(StringRef key) {
