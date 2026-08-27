@@ -4201,3 +4201,69 @@ module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
     return
   }
 }
+
+// -----
+// Odd 1:2 sub-block split on 210x112 (105-wide tiles): nested dynamic
+// extract-of-extract must bubble so load reaches workspace block arg.
+// CHECK-LABEL: func.func @triton_dot_inner_tile_mix_aiv
+// CHECK-NOT: tile_and_bind_subblock_reverted
+// CHECK: scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} {
+// CHECK:   %{{.*}} = affine.apply
+// CHECK:   %{{.*}} = memref.subview %{{.*}}{{\[}}%{{.*}}, 0] [105, 112] [1, 1] {to_be_bubbled_slice}
+// CHECK:   %{{.*}} = tensor.extract_slice %{{.*}}{{\[}}%{{.*}}, 0] [105, 112] [1, 1] {to_be_bubbled_slice}
+// CHECK:   scf.for %{{.*}} iter_args(
+// CHECK:     scf.for %{{.*}} iter_args(
+// CHECK:       %[[WS:.*]] = tensor.extract_slice %{{.*}}[0, %{{.*}}, 0] [4, 105, 112] [1, 1, 1] {to_be_bubbled_slice}
+// CHECK:       %[[TILE:.*]] = tensor.extract_slice %[[WS]]
+// CHECK:       %[[ODD:.*]] = tensor.extract_slice %[[TILE]]{{\[}}%{{.*}}, 0] {{\[}}%{{.*}}, 112] [1, 1] : tensor<105x112xf32> to tensor<?x112xf32>
+// CHECK:       hivm.hir.load ins(%[[ODD]] : tensor<?x112xf32>)
+// CHECK:       scf.yield
+// CHECK:     scf.yield
+// CHECK:   hivm.hir.store ins(%{{.*}} : tensor<105x112xf32>) outs(%{{.*}} : memref<105x112xf32, strided<[112, 1], offset: ?>>) {tiled_op}
+// CHECK: } {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @triton_dot_inner_tile_mix_aiv(
+      %workspace: tensor<4x210x112xf32>,
+      %other: tensor<210x112xf32>,
+      %init: tensor<210x112xf32>,
+      %out: memref<210x112xf32>) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix", parallel_mode = "simd"} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c105 = arith.constant 105 : index
+    %c210 = arith.constant 210 : index
+    %empty105 = tensor.empty() : tensor<105x112xf32>
+    %acc_init = tensor.empty() : tensor<210x112xf32>
+    %result:2 = scf.for %outer = %c0 to %c2 step %c1 iter_args(%acc0 = %init, %acc1 = %acc_init) -> (tensor<210x112xf32>, tensor<210x112xf32>) {
+      %ws_full = tensor.extract_slice %workspace[%outer, 0, 0] [1, 210, 112] [1, 1, 1]
+          : tensor<4x210x112xf32> to tensor<210x112xf32>
+      %inner:2 = scf.for %iv = %c0 to %c210 step %c105 iter_args(%a0 = %acc0, %a1 = %acc_init) -> (tensor<210x112xf32>, tensor<210x112xf32>) {
+        %tile_ws = tensor.extract_slice %ws_full[%iv, 0] [105, 112] [1, 1]
+            : tensor<210x112xf32> to tensor<105x112xf32>
+        %loaded = hivm.hir.load ins(%tile_ws : tensor<105x112xf32>) outs(%empty105 : tensor<105x112xf32>) -> tensor<105x112xf32>
+        %tile_other = tensor.extract_slice %other[%iv, 0] [105, 112] [1, 1]
+            : tensor<210x112xf32> to tensor<105x112xf32>
+        %tile_acc0 = tensor.extract_slice %a0[%iv, 0] [105, 112] [1, 1]
+            : tensor<210x112xf32> to tensor<105x112xf32>
+        %v0 = hivm.hir.vadd ins(%loaded, %tile_other : tensor<105x112xf32>, tensor<105x112xf32>)
+            outs(%tile_acc0 : tensor<105x112xf32>) -> tensor<105x112xf32>
+        %ins0 = tensor.insert_slice %v0 into %a0[%iv, 0] [105, 112] [1, 1]
+            : tensor<105x112xf32> into tensor<210x112xf32>
+        %tile_acc1 = tensor.extract_slice %a1[%iv, 0] [105, 112] [1, 1]
+            : tensor<210x112xf32> to tensor<105x112xf32>
+        %v1 = hivm.hir.vadd ins(%v0, %tile_other : tensor<105x112xf32>, tensor<105x112xf32>)
+            outs(%empty105 : tensor<105x112xf32>) -> tensor<105x112xf32>
+        %v2 = hivm.hir.vadd ins(%tile_acc1, %v1 : tensor<105x112xf32>, tensor<105x112xf32>)
+            outs(%tile_acc1 : tensor<105x112xf32>) -> tensor<105x112xf32>
+        %ins1 = tensor.insert_slice %v2 into %a1[%iv, 0] [105, 112] [1, 1]
+            : tensor<105x112xf32> into tensor<210x112xf32>
+        scf.yield %ins0, %ins1 : tensor<210x112xf32>, tensor<210x112xf32>
+      }
+      scf.yield %inner#0, %inner#1 : tensor<210x112xf32>, tensor<210x112xf32>
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, multibuffer_unroll_factor = 4 : i32}
+    %extracted = tensor.extract_slice %result#1[%c0, %c0] [210, 112] [1, 1]
+        : tensor<210x112xf32> to tensor<210x112xf32>
+    hivm.hir.store ins(%extracted : tensor<210x112xf32>) outs(%out : memref<210x112xf32>)
+    return
+  }
+}
