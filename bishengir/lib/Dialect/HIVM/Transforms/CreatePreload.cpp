@@ -429,7 +429,7 @@ static bool isSynchronizationOp(Operation *op) {
 }
 
 static void rewritePreloadLoop(scf::ForOp forOp,
-                               SmallVector<scope::ScopeOp, 4> scopes,
+                               const DenseMap<Operation *, size_t> &scopeToIdx,
                                size_t maxPreloadNum) {
   IRRewriter rewriter(forOp.getContext());
   PreloadInfo info;
@@ -450,14 +450,6 @@ static void rewritePreloadLoop(scf::ForOp forOp,
   DenseMap<Value, hivm::PointerCastOp> valueToAdapt;
   Value newUpperbound =
       preprocessLoopArgs(forOp, newInitArgs, valueToAdapt, info, rewriter);
-
-  DenseMap<Operation *, size_t> scopeToIdx;
-  for (size_t preloadNum = 0; preloadNum < scopes.size(); preloadNum++) {
-    auto scopeOp = scopes[preloadNum];
-    if (!scopeOp)
-      continue;
-    scopeToIdx[scopeOp] = preloadNum;
-  }
 
   auto newForOp = rewriter.create<scf::ForOp>(
       forOp.getLoc(), info.lb, newUpperbound, info.step, newInitArgs,
@@ -648,39 +640,36 @@ static void cleanupPreloadWorkspaceMarks(Operation &op) {
 
 void CreatePreloadPass::runOnOperation() {
   auto moduleOp = getOperation();
-  DenseMap<scf::ForOp, SmallVector<scope::ScopeOp, 4>> preload;
+  DenseMap<scf::ForOp, DenseMap<Operation *, size_t>> loopToScopes;
+  DenseMap<scf::ForOp, size_t> loopToMaxPreloadNum;
   moduleOp->walk([&](scope::ScopeOp scopeOp) {
+    auto parentForOp = dyn_cast<scf::ForOp>(scopeOp->getParentOp());
+    if (!parentForOp)
+      return;
     if (auto maxPreloadNumAttr = scopeOp->getAttrOfType<IntegerAttr>(
             hivm::MaxPreloadNumAttr::name)) {
-      auto parentForOp = cast<scf::ForOp>(scopeOp->getParentOp());
-      preload[parentForOp].resize(maxPreloadNumAttr.getInt(), nullptr);
+      loopToMaxPreloadNum[parentForOp] =
+          std::max(loopToMaxPreloadNum[parentForOp],
+                   static_cast<size_t>(maxPreloadNumAttr.getInt()));
     }
     if (auto preloadNumAttr =
             scopeOp->getAttrOfType<IntegerAttr>(hivm::PreloadNumAttr::name)) {
-      auto parentForOp = cast<scf::ForOp>(scopeOp->getParentOp());
       auto preloadNum = preloadNumAttr.getInt();
-      auto &preloadVec = preload[parentForOp];
       assert(preloadNum >= 0 && "PreloadNum must be non-negative integer");
-      assert(preloadNum < static_cast<int64_t>(preloadVec.size()) &&
-             "MaxPreloadNumAttr must be set");
-      preloadVec[preloadNum] = scopeOp;
+      loopToScopes[parentForOp][scopeOp] = static_cast<size_t>(preloadNum);
     }
   });
 
-  if (preload.empty())
+  if (loopToScopes.empty())
     return;
 
-  for (auto &[forOp, scopes] : preload) {
+  for (auto &[forOp, scopeToIdx] : loopToScopes) {
     LDBG("Processing preload:\n" << forOp);
-    auto scopeIt = llvm::find_if(scopes, [](scope::ScopeOp scopeOp) {
-      return static_cast<bool>(scopeOp);
-    });
-    assert(scopeIt != scopes.end() && "Expected at least one preload scope");
-    auto maxPreloadNumAttr = (*scopeIt)->getAttrOfType<IntegerAttr>(
-        hivm::MaxPreloadNumAttr::name);
-    assert(maxPreloadNumAttr && "MaxPreloadNumAttr must be set");
-    rewritePreloadLoop(forOp, scopes,
-                       static_cast<size_t>(maxPreloadNumAttr.getInt()));
+    assert(loopToMaxPreloadNum.contains(forOp) &&
+           "MaxPreloadNumAttr must be set");
+    size_t maxPreloadNum = loopToMaxPreloadNum[forOp];
+    assert(maxPreloadNum > 0 && "MaxPreloadNum must be positive");
+    rewritePreloadLoop(forOp, scopeToIdx, maxPreloadNum);
   }
 
   cleanupPreloadWorkspaceMarks(*moduleOp);
