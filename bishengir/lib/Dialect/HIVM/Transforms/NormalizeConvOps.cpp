@@ -34,7 +34,6 @@
 
 #include "llvm/Support/Casting.h"
 
-#include <array>
 #include <cstdint>
 #include <memory>
 
@@ -170,41 +169,6 @@ static constexpr llvm::StringLiteral conv3dDepthPadded =
 bool isRegBasedArch(Operation *op) {
   auto moduleOp = op->getParentOfType<ModuleOp>();
   return moduleOp && hacc::utils::isRegBasedArch(moduleOp);
-}
-
-template <size_t Rank>
-FailureOr<std::array<int64_t, Rank>> getConvIntArrayAttr(Attribute attr) {
-  if (auto intAttr = dyn_cast<IntegerAttr>(attr)) {
-    int64_t value = intAttr.getInt();
-    std::array<int64_t, Rank> values;
-    values.fill(value);
-    return values;
-  }
-
-  if (auto denseAttr = dyn_cast<DenseI64ArrayAttr>(attr)) {
-    if (denseAttr.size() != Rank)
-      return failure();
-    std::array<int64_t, Rank> values;
-    for (size_t idx = 0; idx < Rank; ++idx)
-      values[idx] = denseAttr[idx];
-    return values;
-  }
-
-  if (auto arrayAttr = dyn_cast<ArrayAttr>(attr)) {
-    if (arrayAttr.size() != Rank)
-      return failure();
-
-    std::array<int64_t, Rank> values;
-    for (auto [idx, element] : llvm::enumerate(arrayAttr)) {
-      auto intAttr = dyn_cast<IntegerAttr>(element);
-      if (!intAttr)
-        return failure();
-      values[idx] = intAttr.getInt();
-    }
-    return values;
-  }
-
-  return failure();
 }
 
 inline RoundModeAttr getRoundAttr(mlir::OpBuilder &b, Type srcType,
@@ -1078,21 +1042,23 @@ public:
     }
 
     if constexpr (baseDims == 4) {
-      auto padding = getConvIntArrayAttr<3>(op.getPaddingAttr());
-      if (failed(padding)) {
+      auto paddingD = op.getPaddingD();
+      auto paddingH = op.getPaddingH();
+      auto paddingW = op.getPaddingW();
+      if (failed(paddingD) || failed(paddingH) || failed(paddingW)) {
         return rewriter.notifyMatchFailure(
             op, "Conv3d padding must be a scalar or 3-element array");
       }
-      int64_t depthPadding = (*padding)[0];
-      if (depthPadding < 0 || (*padding)[1] < 0 || (*padding)[2] < 0) {
+      if (*paddingD < 0 || *paddingH < 0 || *paddingW < 0) {
         return rewriter.notifyMatchFailure(op, "Conv3d padding must be >= 0");
       }
-      // Normalize consumes only D padding. H/W padding stays on Conv3dL1 and
-      // is converted to Conv2dL1 [paddingH, paddingW] during decompose.
-      if (!op->hasAttr(conv3dDepthPadded) && depthPadding > 0) {
+      // Normalize materializes the symmetric padding of the D dimension.
+      // H/W padding stays on Conv3dL1 and is converted to Conv2dL1
+      // [paddingH, paddingW] during decompose.
+      if (!op->hasAttr(conv3dDepthPadded) && *paddingD > 0) {
         if (failed(
                 padDepthForConv3dInput(cast<hivm::Conv3DL1Op>(op), rewriter,
-                                       depthPadding))) {
+                                       *paddingD))) {
           return rewriter.notifyMatchFailure(op,
                                              "Failed to pre-pad Conv3d depth");
         }

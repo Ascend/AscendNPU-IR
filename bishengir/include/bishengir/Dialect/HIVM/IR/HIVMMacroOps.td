@@ -766,6 +766,9 @@ def Conv1DL1Op : HIVM_MacroOp<"Conv1dL1",[
 
     static StringRef getOpName() { return "Conv1dL1"; }
 
+    int64_t getStrideW();
+    int64_t getPaddingW();
+
     FailureOr<DataLayoutAttr> getInputLayout();
     FailureOr<DataLayoutAttr> getWeightLayout();
     FailureOr<DataLayoutAttr> getBiasLayout();
@@ -851,6 +854,11 @@ def Conv2DL1Op : HIVM_MacroOp<"Conv2dL1",[
 
     static StringRef getOpName() { return "Conv2dL1"; }
 
+    FailureOr<int64_t> getStrideH();
+    FailureOr<int64_t> getStrideW();
+    FailureOr<int64_t> getPaddingH();
+    FailureOr<int64_t> getPaddingW();
+
     FailureOr<DataLayoutAttr> getInputLayout();
     FailureOr<DataLayoutAttr> getWeightLayout();
     FailureOr<DataLayoutAttr> getBiasLayout();
@@ -934,6 +942,13 @@ def Conv3DL1Op : HIVM_MacroOp<"Conv3dL1",[
     void setInitCondition(Value init);
 
     static StringRef getOpName() { return "Conv3dL1"; }
+
+    FailureOr<int64_t> getStrideD();
+    FailureOr<int64_t> getStrideH();
+    FailureOr<int64_t> getStrideW();
+    FailureOr<int64_t> getPaddingD();
+    FailureOr<int64_t> getPaddingH();
+    FailureOr<int64_t> getPaddingW();
   }];
   let hasVerifier = 1;
 }

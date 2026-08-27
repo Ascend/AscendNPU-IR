@@ -409,6 +409,10 @@ def Conv1DOp
     // Declare functions necessary for LinalgStructuredInterface.
     SmallVector<utils::IteratorType> getIteratorTypesArray();
     ArrayAttr getIndexingMaps();
+
+    int64_t getStrideW();
+    int64_t getPaddingW();
+    int64_t getDilationW();
 #ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
     static std::function<void(mlir::ImplicitLocOpBuilder &, mlir::Block &,
                               mlir::ArrayRef<mlir::NamedAttribute>)>
@@ -495,6 +499,13 @@ def Conv2DOp
     // Declare functions necessary for LinalgStructuredInterface.
     SmallVector<utils::IteratorType> getIteratorTypesArray();
     ArrayAttr getIndexingMaps();
+
+    FailureOr<int64_t> getStrideH();
+    FailureOr<int64_t> getStrideW();
+    FailureOr<int64_t> getPaddingH();
+    FailureOr<int64_t> getPaddingW();
+    FailureOr<int64_t> getDilationH();
+    FailureOr<int64_t> getDilationW();
 #ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
     static std::function<void(mlir::ImplicitLocOpBuilder &, mlir::Block &,
                               mlir::ArrayRef<mlir::NamedAttribute>)>
@@ -582,6 +593,16 @@ def Conv3DOp
     // Declare functions necessary for LinalgStructuredInterface.
     SmallVector<utils::IteratorType> getIteratorTypesArray();
     ArrayAttr getIndexingMaps();
+
+    FailureOr<int64_t> getStrideD();
+    FailureOr<int64_t> getStrideH();
+    FailureOr<int64_t> getStrideW();
+    FailureOr<int64_t> getPaddingD();
+    FailureOr<int64_t> getPaddingH();
+    FailureOr<int64_t> getPaddingW();
+    FailureOr<int64_t> getDilationD();
+    FailureOr<int64_t> getDilationH();
+    FailureOr<int64_t> getDilationW();
 #ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
     static std::function<void(mlir::ImplicitLocOpBuilder &, mlir::Block &,
                               mlir::ArrayRef<mlir::NamedAttribute>)>
