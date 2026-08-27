@@ -219,7 +219,7 @@ func.func @test_load_pad_both_dynamic(%arg0 : tensor<1x1x2047xf32>) -> tensor<40
 //CHECK-DAG: %[[padload:.*]] = hivm.hir.load ins(%[[source]] : tensor<2047xf32>) outs(%[[empty]] : tensor<4093xf32>) pad_mode = <PadValue> pad_value = %[[cst_0]]  : f32 left_padding_num = %[[cst_1020]]  : index right_padding_num = %[[cst_1026]]  : index -> tensor<4093xf32>
 //CHECK: return %[[padload]] : tensor<4093xf32>
 %left = arith.constant 1020 : index
-%right = arith.constant 1026 : index  
+%right = arith.constant 1026 : index
 %cst = arith.constant 0.000000e+00 : f32
 %src = tensor.empty() : tensor<2047xf32>
 %collapsed = tensor.collapse_shape %arg0 [[0,1,2]] : tensor<1x1x2047xf32> into tensor<2047xf32>
@@ -238,8 +238,8 @@ func.func @test_load_pad_zero_cases(%arg0 : tensor<1x1x2047xf32>) -> tensor<4093
 // CHECK-DAG: %[[empty:.*]] = tensor.empty() : tensor<4093xf32>
 // CHECK-DAG: %[[padload:.*]] = hivm.hir.load ins(%[[source]] : tensor<2047xf32>) outs(%[[empty]] : tensor<4093xf32>) pad_mode = <PadValue> pad_value = %[[cst_0]] : f32 -> tensor<4093xf32>
 // CHECK: return %[[padload]] : tensor<4093xf32>
-%cst_f = arith.constant 0.000000e+00 : f32          
-%right_dyn = arith.constant 0 : index             
+%cst_f = arith.constant 0.000000e+00 : f32
+%right_dyn = arith.constant 0 : index
 %src = tensor.collapse_shape %arg0 [[0,1,2]] : tensor<1x1x2047xf32> into tensor<2047xf32>
 %empty = tensor.empty() : tensor<2047xf32>
 %load = hivm.hir.load ins(%src : tensor<2047xf32>) outs(%empty : tensor<2047xf32>) -> tensor<2047xf32>
@@ -258,7 +258,7 @@ func.func @test_load_already_has_pad(%arg0 : tensor<1x10xf32>) -> tensor<20xf32>
   // CHECK-DAG: %[[empty_b:.*]] = tensor.empty() : tensor<20xf32>
   // CHECK-DAG: %[[padload:.*]] = hivm.hir.load ins(%[[src]] : tensor<10xf32>) outs(%[[empty_b]] : tensor<20xf32>) pad_mode = <PadValue> pad_value = %[[cst_0]] : f32 left_padding_num = %[[cst_5]] : index right_padding_num = %[[cst_5]] : index -> tensor<20xf32>
   // CHECK: %[[vpad:.*]] = hivm.hir.vpad ins(%[[padload]] : tensor<20xf32>) outs(%[[out:.*]] : tensor<20xf32>) low[0] high[0] pad_value %[[cst_0]] : f32 -> tensor<20xf32>
-  // CHECK-NOT: hivm.hir.load 
+  // CHECK-NOT: hivm.hir.load
   // CHECK: return %[[vpad]] : tensor<20xf32>
   %cst = arith.constant 0.000000e+00 : f32
   %lp  = arith.constant 5 : index
@@ -281,7 +281,7 @@ func.func @test_load_pad_multi_dim(%arg0 : tensor<1x2x5xf32>) -> tensor<2x5xf32>
   // CHECK-DAG: %[[load:.*]] = hivm.hir.load ins(%[[src]] : tensor<2x5xf32>) outs(%[[empty]] : tensor<2x5xf32>) -> tensor<2x5xf32>
   // CHECK: %[[out:.*]] = tensor.empty() : tensor<2x5xf32>
   // CHECK: %[[vpad:.*]] = hivm.hir.vpad ins(%[[load]] : tensor<2x5xf32>) outs(%[[out]] : tensor<2x5xf32>) low[0] high[0] pad_value %cst : f32 -> tensor<2x5xf32>
-  // CHECK-NOT: hivm.hir.load 
+  // CHECK-NOT: hivm.hir.load
   // CHECK: return %[[vpad]] : tensor<2x5xf32>
   %cst = arith.constant 0.000000e+00 : f32
   %src = tensor.collapse_shape %arg0 [[0,1],[2]] : tensor<1x2x5xf32> into tensor<2x5xf32>
@@ -429,7 +429,7 @@ func.func @test_tensor_cumprod_one_dim(
                          outs(%dst5 : tensor<1x1xf32>)
                          cum_dims = [0] reverse = false -> tensor<1x1xf32>
   return %0 : tensor<1x1xf32>
-} 
+}
 
 
 // CHECK-LABEL: func.func @test_tensor_cumsum_non_one_dim
@@ -470,13 +470,13 @@ func.func @test_redundant_reduce_sum_init(%arg0: tensor<128x1xf32>, %arg1: tenso
   return %t1: tensor<128x1xf32>
 }
 
-// CHECK-LABEL: func.func @test_unredundant_reduce_sum_init	 
-// CHECK-NOT: tensor.empty	 
-func.func @test_unredundant_reduce_sum_init(%arg0: tensor<128x1xf32>, %arg1: tensor<128x128xf32>) -> tensor<128x1xf32> {	 
-  %cst_0 = arith.constant 1.000000e+00 : f32	 
-  %t0 = hivm.hir.vbrc ins(%cst_0: f32) outs(%arg0: tensor<128x1xf32>) -> tensor<128x1xf32>	 
-  %t1 = hivm.hir.vreduce <max> ins(%arg1: tensor<128x128xf32>)	 
-                        outs(%t0: tensor<128x1xf32>) reduce_dims = [1] -> tensor<128x1xf32>	 
+// CHECK-LABEL: func.func @test_unredundant_reduce_sum_init
+// CHECK-NOT: tensor.empty
+func.func @test_unredundant_reduce_sum_init(%arg0: tensor<128x1xf32>, %arg1: tensor<128x128xf32>) -> tensor<128x1xf32> {
+  %cst_0 = arith.constant 1.000000e+00 : f32
+  %t0 = hivm.hir.vbrc ins(%cst_0: f32) outs(%arg0: tensor<128x1xf32>) -> tensor<128x1xf32>
+  %t1 = hivm.hir.vreduce <max> ins(%arg1: tensor<128x128xf32>)
+                        outs(%t0: tensor<128x1xf32>) reduce_dims = [1] -> tensor<128x1xf32>
   return %t1: tensor<128x1xf32>
 }
 
@@ -668,4 +668,3 @@ func.func @test_keep_load_left_pad_nonzero(%src: memref<?x256xf16, #hivm.address
   hivm.hir.load ins(%src : memref<?x256xf16, #hivm.address_space<gm>>) outs(%dst : memref<?x256xf16, #hivm.address_space<ub>>) left_padding_num = %c1 : index
   return
 }
-

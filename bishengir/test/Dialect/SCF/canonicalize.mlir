@@ -12,7 +12,7 @@ attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_typ
     %c0 = arith.constant 0 : index
     %0 = memref.load %arg3[%c0] : memref<4xi64>
     %1 = arith.index_castui %0 : i64 to index
-    %2 = scf.index_switch %1 -> memref<?x?xf16> 
+    %2 = scf.index_switch %1 -> memref<?x?xf16>
     case 0 {
         func.call @test_hoist_same_yield_callee_0(%arg0, %arg1, %arg2, %arg3) : (memref<?x1xf16>, memref<1x?xf16>, memref<?x?xf16>, memref<4xi64>) -> ()
         scf.yield %arg2 : memref<?x?xf16>
@@ -104,7 +104,7 @@ func.func @move_in_tensor_cast_to_if_specified_replacement(%arg0: index, %arg1: 
         %empty = tensor.empty(%dim_2) : tensor<?x2xf32>
         %empty_1 = tensor.empty(%dim_2) : tensor<?x2xf32>
         %2 = hivm.hir.vbrc ins(%cst_1 : f32) outs(%empty : tensor<?x2xf32>) -> tensor<?x2xf32>
-        
+
         %3 = linalg.elemwise_unary {fun = #linalg.unary_fn<log>} ins(%2: tensor<?x2xf32>) outs(%empty_1: tensor<?x2xf32>) -> tensor<?x2xf32>
         scf.yield %2, %2, %2, %3 : tensor<?x2xf32>, tensor<?x2xf32>, tensor<?x2xf32>, tensor<?x2xf32>
     }

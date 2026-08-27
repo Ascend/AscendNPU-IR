@@ -72,7 +72,7 @@ func.func @reduce_fn_mul_unroll(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_t
 
 // CHECK-LABEL: func.func @test_reduce_i1_and_to_i16_andi
 // CHECK: linalg.reduce
-func.func @test_reduce_i1_and_to_i16_andi(%arg0: tensor<1024xi1>) -> tensor<1xi8> 
+func.func @test_reduce_i1_and_to_i16_andi(%arg0: tensor<1024xi1>) -> tensor<1xi8>
 attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"}{
   %cst_0 = arith.constant true
   %c0 = arith.constant 0 : index

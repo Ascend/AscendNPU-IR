@@ -201,11 +201,10 @@ def EnableHIVMGraphSyncSolver : FeatureControlOptions<
   let passGroup = ["HIVM"];
 }
 
-def HIVMSyncSolverVersion : FeatureControlOptions<
-  "Specify the version of hivm sync-solver used for auto-sync passes.",
-  "std::string",
-  "\"v1\""
-> {
+def HIVMSyncSolverVersion
+    : FeatureControlOptions<
+          "Specify the version of hivm sync-solver used for auto-sync passes.",
+          "std::string", "\"v2\""> {
   let passGroup = ["HIVM"];
 }
 
@@ -284,6 +283,14 @@ class DFXControlOptions<
 
 def EnableSanitizer : DFXControlOptions<
   "Enable ascend sanitizer.",
+  "bool",
+  "false"
+> {
+  bit isSharedWithDownstreamToolchain = 1;
+}
+
+def EnableDebugVariables : DFXControlOptions<
+  "Enable ascend debug variables.",
   "bool",
   "false"
 > {
@@ -523,25 +530,6 @@ def EnableAutoBindSubBlock : HIVMOptimizationControlOptions<
   "bool",
   "true"
 >;
-
-def PartitionAndBindSubBlock : HIVMOptimizationControlOptions<
-  "Operand-parallel partition-and-bind sub-block mode. off: disabled. "
-  "default-pin: enabled, pinning every free op to sub-block 0. "
-  "load-balanced: enabled, spreading across both AIV ",
-  "PartitionAndBindSubBlockMode",
-  "PartitionAndBindSubBlockMode::Off"
-> {
-  let passGroup = ["HIVM"];
-  let additionalOptFlags = [{
-llvm::cl::values(
-  clEnumValN(PartitionAndBindSubBlockMode::Off, "off",
-             "Disable partition-and-bind sub-block"),
-  clEnumValN(PartitionAndBindSubBlockMode::DefaultPin, "default-pin",
-             "Enable; pin every free op to sub-block 0"),
-  clEnumValN(PartitionAndBindSubBlockMode::LoadBalanced, "load-balanced",
-             "Enable; spread op across both AIV sub-cores"))
-  }];
-}
 
 def EnableCodeMotion : HIVMOptimizationControlOptions<
   "Enable code-motion/subset-hoist.",
@@ -975,7 +963,7 @@ def OnlyRunHIVMPipeline : FeatureControlOptions<
 def EnableTreeReduce : FeatureControlOptions<
   "Enable tree reduce",
   "bool",
-  "false"
+  "true"
 > {
   let passGroup = ["HFUSION"];
 }
@@ -983,7 +971,7 @@ def EnableTreeReduce : FeatureControlOptions<
 def EnableTreeReduceV2 : FeatureControlOptions<
   "Enable tree reduce v2",
   "bool",
-  "true"
+  "false"
 > {
   let passGroup = ["HFUSION"];
 }
@@ -1070,7 +1058,7 @@ def HfusionEnableCrossIfFusion : FeatureControlOptions<
 def HfusionEnableMultipleConsumerFusion : FeatureControlOptions<
   "Enable multiple consumer fusion in AutoVectorizeV2",
   "bool",
-  "false"
+  "true"
 > {
   let passGroup = ["HFUSION"];
 }
@@ -1153,9 +1141,10 @@ def VerifyEach : DFXControlOptions<
 
 def EnableLibCallNoInline : DFXControlOptions<
   "Mark the library-call function declarations generated during HIVM-to-"
-  "Standard conversion as hacc.noinline instead of hacc.always_inline.",
+  "Standard conversion as hacc.noinline instead of hacc.always_inline. "
+  "Enabled by default on RegBase and disabled by default on membase.",
   "bool",
-  "true"
+  "false"
 >;
 
 def InjectIrBefore : DFXControlOptions<

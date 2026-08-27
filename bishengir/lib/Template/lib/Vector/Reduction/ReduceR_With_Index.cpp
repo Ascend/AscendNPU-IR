@@ -93,7 +93,7 @@ reduce_r_with_index_on_scalar(memref_t<__ubuf__ T, 1> *src0,
 
   INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
-  
+
   T current_extreme = *src_ptr;
   int32_t current_index = 0;
 
@@ -122,7 +122,7 @@ reduce_r_with_index_on_scalar(memref_t<__ubuf__ T, 1> *src0,
       } else {
         static_assert("unsupport reduce op type.");
       }
-    }    
+    }
   }
 
   if (need_merge && !isnan_value(current_extreme)) {

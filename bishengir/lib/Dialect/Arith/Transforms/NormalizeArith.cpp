@@ -135,7 +135,7 @@ struct NormalizeArithMathScalarUnary : public OpRewritePattern<UnaryOp> {
                                 PatternRewriter &rewriter) const override {
 
     auto loc = op.getLoc();
-    auto hs = op.getOperand();    
+    auto hs = op.getOperand();
     if (hs.getType().isIntOrFloat()) {
       Type elementTypehs = hs.getType();
       int64_t vecSizehs =
@@ -149,7 +149,7 @@ struct NormalizeArithMathScalarUnary : public OpRewritePattern<UnaryOp> {
       return success();
     }
     return failure();
-    
+
   }
 };
 

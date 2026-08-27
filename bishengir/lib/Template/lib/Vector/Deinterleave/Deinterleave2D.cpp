@@ -103,7 +103,7 @@ vector_deinterleave_2d(memref_t<__ubuf__ T, 2> *src,
     }
     if (src_stride1 == 1 && src_stride0 % dst_stride0 == 0 &&
         (src_stride0 / dst_stride0) % num_per_block == 0) {
-      // src: memref<axnxT, strided<[n, 1]>> 
+      // src: memref<axnxT, strided<[n, 1]>>
       // dst: memref<axm/NxT, strided<[m/N, 1]>>
       int64_t repeat_times = dst_size0 * dst_stride0;
       int64_t src_repeat_stride = src_stride0 / dst_stride0 / num_per_block;

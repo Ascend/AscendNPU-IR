@@ -56,7 +56,7 @@ func.func @test_linalg_decompose_multiaxis_transpose_dyn(%arg0: tensor<?x16x8x4x
 // CHECK-LABEL: test_decompose_gather
 func.func @test_decompose_gather(%src:tensor<4x16x16x16x8xf16>, %idx:tensor<4x16x4x16x8xi32>) -> tensor<4x16x4x16x8xf16>{
   %init = tensor.empty() : tensor<4x16x4x16x8xf16>
-  
+
   // CHECK-DAG: %[[C8:[0-9a-z]+]] = arith.constant 8 : index
   // CHECK-DAG: %[[C16:[0-9a-z]+]] = arith.constant 16 : index
   // CHECK-DAG: %[[C4:[0-9a-z]+]] = arith.constant 4 : index
@@ -79,7 +79,7 @@ func.func @test_decompose_gather(%src:tensor<4x16x16x16x8xf16>, %idx:tensor<4x16
   %res = hfusion.gather ins(%src, %idx : tensor<4x16x16x16x8xf16>, tensor<4x16x4x16x8xi32>) outs(%init:tensor<4x16x4x16x8xf16>) axis = 2 -> tensor<4x16x4x16x8xf16>
   return %res : tensor<4x16x4x16x8xf16>
 }
- 
+
 // -----
 
 // CHECK-LABEL: test_decompose_gather_idx64
@@ -95,8 +95,8 @@ func.func @test_decompose_gather_idx64(%src: tensor<4x64xf32>, %idx: tensor<4x32
 // CHECK-LABEL: test_decompose_gather_src64
 func.func @test_decompose_gather_src64(%src: tensor<4x64xi64>, %idx: tensor<4x32xi32>) -> tensor<4x32xi64> {
   %init = tensor.empty() : tensor<4x32xi64>
-  // CHECK-DAG: %[[C4:[0-9a-z]+]] = arith.constant 4 : index 
-  // CHECK-DAG: %[[C32:[0-9a-z]+]] = arith.constant 32 : index 
+  // CHECK-DAG: %[[C4:[0-9a-z]+]] = arith.constant 4 : index
+  // CHECK-DAG: %[[C32:[0-9a-z]+]] = arith.constant 32 : index
   // CHECK-DAG: %[[C1:[0-9a-z]+]] = arith.constant 1 : index
   // CHECK-DAG: %[[C0:[0-9a-z]+]] = arith.constant 0 : index
   // CHECK-NOT: gather

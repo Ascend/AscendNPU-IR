@@ -292,6 +292,6 @@ module {
         scope.return
       }
     }
-    return 
+    return
   }
 }

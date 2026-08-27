@@ -631,12 +631,12 @@ struct ConvertLayoutOpConversion
 // Secondary pattern that uses the GM path for convert layout op conversions.
 struct ConvertLayoutOpConversionGM
     : public ConvertLayoutOpConversion {
-  
+
   explicit ConvertLayoutOpConversionGM(LLVMTypeConverter &typeConverter,
                                      const TargetInfoBase &targetInfo,
                                      PatternBenefit benefit = 1)
       : ConvertLayoutOpConversion(typeConverter, targetInfo, benefit, true) {}
-  
+
   void transferWithinBlockSwizzling(ConvertLayoutOp op, Value src,
                                     ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();

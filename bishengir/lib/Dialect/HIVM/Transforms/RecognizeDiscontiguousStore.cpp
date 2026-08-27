@@ -38,7 +38,7 @@ using namespace mlir::hivm;
 namespace {
 // Element channel count fitting into alignBytes (32B block).
 static int64_t computeChannelNum(MemRefType type, int64_t alignBytes) {
-  return alignBytes / type.getElementType().getIntOrFloatBitWidth() * 8;
+  return (alignBytes * 8) / type.getElementType().getIntOrFloatBitWidth();
 }
 
 // Reassociation splitting/merging the last dim: [{0},...,{R-2},{R-1,R}].
@@ -78,6 +78,32 @@ getStaticAllocUpperBounds(Value src, int64_t rank) {
       return SmallVector<int64_t>{*totalMaybe};
   }
   return std::nullopt;
+}
+
+// Build a MemRefType that uses the default contiguous layout when `strides`
+// match the row-major layout derived from `shape`, and otherwise attaches an
+// explicit StridedLayoutAttr. This keeps alloc types canonical (and avoids
+// redundant layout attributes) when the computed strides are contiguous.
+static MemRefType buildContiguousOrStridedType(ArrayRef<int64_t> shape,
+                                               ArrayRef<int64_t> strides,
+                                               Type elemType,
+                                               Attribute memSpace,
+                                               MLIRContext *ctx) {
+  assert(shape.size() == strides.size() && "shape/stride rank mismatch");
+  auto isDefaultRowMajor = [&] {
+    int64_t expected = 1;
+    for (int i = static_cast<int>(shape.size()) - 1; i >= 0; --i) {
+      if (strides[i] != expected)
+        return false;
+      expected *= shape[i];
+    }
+    return true;
+  }();
+  if (isDefaultRowMajor)
+    return MemRefType::get(shape, elemType, MemRefLayoutAttrInterface{}, memSpace);
+  return MemRefType::get(shape, elemType,
+                         StridedLayoutAttr::get(ctx, /*offset=*/0, strides),
+                         memSpace);
 }
 
 // Rewrites UB->GM store (last-dim continuous -> discontinuous) by building a
@@ -156,9 +182,8 @@ struct RecognizeDisContinuousStore : public OpRewritePattern<hivm::StoreOp> {
     }
     allocShape.push_back(channelNum);
     allocStrides.push_back(1);
-    auto allocTy = MemRefType::get(
-        allocShape, elemType,
-        StridedLayoutAttr::get(ctx, /*offset=*/0, allocStrides), memSpace);
+    auto allocTy = buildContiguousOrStridedType(allocShape, allocStrides,
+                                                elemType, memSpace, ctx);
     auto alignedAlloc = rewriter.create<memref::AllocOp>(loc, allocTy);
 
     // Narrow alloc to actual (dynamic) sizes so vbrc's non-broadcast dims match

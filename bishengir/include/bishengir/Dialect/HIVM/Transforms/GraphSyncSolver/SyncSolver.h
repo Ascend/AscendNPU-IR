@@ -17,6 +17,7 @@
 #ifndef BISHENG_DIALECT_HIVM_TRANSFORMS_GRAPHSYNCSOLVER_SYNCSOLVER_H
 #define BISHENG_DIALECT_HIVM_TRANSFORMS_GRAPHSYNCSOLVER_SYNCSOLVER_H
 
+#include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/CorePipeInfo.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/CustomMacroSync.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/EventIdSolver.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/GraphSolver.h"
@@ -80,6 +81,7 @@ public:
     int64_t graphConflictPairsCheckedNum{0};
     int64_t solverSkipNum{0};
     int64_t checkGraphConflictSkipDijNum{0};
+    int64_t priorityQueuePushNum{0};
 
     void print() {
       llvm::dbgs() << "processing orders checked: " << ordersCheckedNum << '\n';
@@ -94,6 +96,7 @@ public:
       llvm::dbgs() << "graph conflict pairs skipped Dijkstra: "
                    << checkGraphConflictSkipDijNum << '\n';
       llvm::dbgs() << "solver skipped: " << solverSkipNum << '\n';
+      llvm::dbgs() << "priority queue pushes: " << priorityQueuePushNum << '\n';
     }
   } perfInfo;
 
@@ -255,9 +258,10 @@ protected:
   // Whether the hazard is a backward (cross-iteration) sync operation.
   bool isBackwardSync(Occurrence *occ1, Occurrence *occ2);
 
-  // Placeholder occurrences used when placing sync operations around a region.
-  Occurrence *getBeforePlaceHolderOcc(Occurrence *occ);
-  Occurrence *getAfterPlaceHolderOcc(Occurrence *occ);
+  // Returns nullptr if no matching before/after placeholder is found. Asserts
+  // that a placeholder exists when occ->op is a Loop.
+  Occurrence *tryGetBeforePlaceHolderOcc(Occurrence *occ);
+  Occurrence *tryGetAfterPlaceHolderOcc(Occurrence *occ);
   Occurrence *getScopeBeginPlaceHolderOcc(Occurrence *occ);
   Occurrence *getScopeEndPlaceHolderOcc(Occurrence *occ);
 
@@ -266,8 +270,16 @@ protected:
                                                              Occurrence *occ2);
 
   // Map an occurrence to the first/last loop-iteration copy under parOcc.
-  Occurrence *getFirstIterOcc(Occurrence *occ, Occurrence *parOcc);
-  Occurrence *getLastIterOcc(Occurrence *occ, Occurrence *parOcc);
+  bool isFirstIterOcc(Occurrence *occ, Occurrence *loopOcc);
+  bool isLastIterOcc(Occurrence *occ, Occurrence *loopOcc);
+  Occurrence *getFirstIterOcc(Occurrence *occ, Occurrence *loopOcc);
+  Occurrence *getLastIterOcc(Occurrence *occ, Occurrence *loopOcc);
+
+  std::pair<CorePipeInfo, CorePipeInfo>
+  getFixedCorePipeInfoPair(CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst);
+
+  // Whether a intra-core pipe pair should be skipped.
+  bool checkSkipIntraCorePair(hivm::PIPE pipeSrc, hivm::PIPE pipeDst);
 
   // Whether a cross-core pipe / occurrence pair should be skipped.
   bool checkSkipCrossCorePair(hivm::TCoreType coreTypeSrc,
@@ -352,13 +364,21 @@ protected:
   llvm::SmallVector<std::pair<CorePipeInfo, CorePipeInfo>>
   getMemoryConflicts(RWOperation *rwOp1, RWOperation *rwOp2);
 
+  // Check conflicts only on CC-relevant buffer combinations for unit-flag:
+  //   MmadL1 x MmadL1 -> WAW  (both write same CC)
+  //   MmadL1 x Fixpipe -> RAW  (MmadL1 writes CC, Fixpipe reads CC)
+  //   Fixpipe x MmadL1 -> WAR  (Fixpipe reads CC, MmadL1 writes CC)
+  //   Fixpipe x Fixpipe -> skip (RAR, WAW on output side is irrelevant)
+  bool checkCCUnitFlagConflict(RWOperation *rwOp, RWOperation *otherOp);
+
   // Whether any RW under occ1 conflicts with any RW under occ2 (optional
-  // filter).
+  // filter and check function).
   bool checkMemoryConflictBetweenOccExclusive(
       Occurrence *occ1, Occurrence *occ2,
-      std::function<bool(RWOperation *)> filter = [](RWOperation *) {
-        return true;
-      });
+      std::function<bool(RWOperation *)> filter =
+          [](RWOperation *) { return true; },
+      std::function<bool(RWOperation *, RWOperation *)> checkConflict =
+          nullptr);
 
   // Innermost multibuffer scope shared by two RW ops (from explicit MemInfos).
   std::optional<Scope *>
@@ -472,6 +492,8 @@ protected:
   bool reuseConflictPair(ConflictPair *conflictPair, Occurrence *scopeOcc1,
                          Occurrence *scopeOcc2);
 
+  std::vector<ConflictPair *> getAllChosenConflictPairs();
+
   // Whether conflictPair should raise eventIdRepeatNum so the same flag id is
   // set/waited repeatedly (multibuffer backward case).
   bool checkRepeatMultiBufferFlagId(ConflictPair *conflictPair);
@@ -506,6 +528,7 @@ protected:
 
   // Return a mutable reference to the ordered set/wait index for
   // (pipeSrc, pipeDst, eventId).
+  void collectUnitFlagGroupIds();
   std::set<std::pair<int64_t, SetWaitOp *>> &
   getSetWaitOpsIndexRef(hivm::PIPE pipeSrc, hivm::PIPE pipeDst,
                         int64_t eventId);

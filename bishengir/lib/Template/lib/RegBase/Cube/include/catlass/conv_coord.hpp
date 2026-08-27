@@ -106,7 +106,7 @@ public:
             dilations[2]
         );
     }
-    
+
 
     //fmapShape
     CATLASS_HOST_DEVICE
@@ -133,7 +133,7 @@ public:
     Index const &kw() const { return filterFracZ3DShape_[3]; }
     CATLASS_HOST_DEVICE
     Index const khkw() const
-    { 
+    {
         return filterFracZ3DShape_[2] * filterFracZ3DShape_[3];
     }
     CATLASS_HOST_DEVICE
@@ -194,7 +194,7 @@ public:
     Index const &dW() const { return dilations_[2]; }
     CATLASS_HOST_DEVICE
     Index const dilatedKernelW() const { return 1 + (filterFracZ3DShape_[3] - 1) * dilations_[2]; }
-    
+
     ///// used in block
     CATLASS_HOST_DEVICE
     Index const howo() const { return out6HDShape_[3] * out6HDShape_[4]; }
@@ -206,7 +206,7 @@ public:
     Index const khkwcin0() const { return filterFracZ3DShape_[2] * filterFracZ3DShape_[3] * filterFracZ3DShape_[6]; }
     CATLASS_HOST_DEVICE
     Index const alignCinKhKwKd() const
-    { 
+    {
         return filterFracZ3DShape_[0] * filterFracZ3DShape_[1] * filterFracZ3DShape_[2] * filterFracZ3DShape_[3] * filterFracZ3DShape_[6];
     }
     CATLASS_HOST_DEVICE
@@ -678,7 +678,7 @@ public:
     Index const &ho() const {
         return this->At(HO_INDEX);
     }
-    
+
     CATLASS_HOST_DEVICE
     Index &ho() {
         return this->At(HO_INDEX);
@@ -688,7 +688,7 @@ public:
     Index const &wo() const {
         return this->At(WO_INDEX);
     }
-    
+
     CATLASS_HOST_DEVICE
     Index &wo() {
         return this->At(WO_INDEX);
@@ -840,7 +840,7 @@ public:
     Conv2dFilterParams(ShortIndex kh = 0, ShortIndex kw = 0,
         ShortIndex padLeft = 0, ShortIndex padRight = 0, ShortIndex padTop = 0, ShortIndex padBottom = 0,
         ShortIndex strideH = 0, ShortIndex strideW = 0, ShortIndex dilationH = 0, ShortIndex dilationW = 0)
-    : ks(MakeCoord(kh, kw)), pads(MakeCoord(padLeft, padRight, padTop, padBottom)), 
+    : ks(MakeCoord(kh, kw)), pads(MakeCoord(padLeft, padRight, padTop, padBottom)),
       strides(MakeCoord(strideH, strideW)), dilations(MakeCoord(dilationH, dilationW)) {}
 
     CATLASS_HOST_DEVICE

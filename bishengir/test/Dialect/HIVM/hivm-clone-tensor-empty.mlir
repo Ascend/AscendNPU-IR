@@ -142,7 +142,7 @@ func.func @test_sink_empty() -> tensor<16xf32>{
     // CLONE-NOT: memref.copy
     scf.yield %res : tensor<16xf32>
   }
-  
+
   return %ret : tensor<16xf32>
 }
 

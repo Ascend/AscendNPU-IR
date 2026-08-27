@@ -103,20 +103,20 @@ attributes {hivm.entry, hivm.dso_local, hivm.spir_kernel} {
   %dim = tensor.dim %arg0, %c1 : tensor<5x?x6xf32>
   %0 = tensor.empty(%dim) : tensor<5x?x6xf32>
   %1 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%arg0, %arg2 : tensor<5x?x6xf32>, tensor<5x?x6xf32>) outs(%0 : tensor<5x?x6xf32>) -> tensor<5x?x6xf32>
-  
+
   %2 = tensor.empty(%dim) : tensor<?x6xf32>
   %3 = linalg.reduce ins(%arg0 : tensor<5x?x6xf32>) outs(%2 : tensor<?x6xf32>) dimensions = [0]
       (%in: f32, %init: f32) {
         %9 = arith.addf %in, %init : f32
         linalg.yield %9 : f32
       }
-  
+
   %4 = tensor.empty(%dim) : tensor<?x6xf32>
   %5 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%3, %arg1 : tensor<?x6xf32>, tensor<?x6xf32>) outs(%4 : tensor<?x6xf32>) -> tensor<?x6xf32>
-  
+
   %6 = tensor.empty(%dim) : tensor<5x?x6xf32>
   %7 = linalg.broadcast ins(%5 : tensor<?x6xf32>) outs(%6 : tensor<5x?x6xf32>) dimensions = [0]
-  
+
   return %1, %7 : tensor<5x?x6xf32>, tensor<5x?x6xf32>
 }
 

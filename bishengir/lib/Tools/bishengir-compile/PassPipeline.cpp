@@ -147,6 +147,7 @@ public:
         &enableHivmNd2nzOnVector,
         &enableLayoutOptimization,
         &enableSanitizer,
+        &enableDebugVariables,
         &enableMemoryDisplay,
         &enableStaticBarePtr,
         &enableTritonKernelCompile,
@@ -171,11 +172,6 @@ public:
         sharedWithHIVMCompileMultiBuffer = {
             &limitAutoMultiBufferOfLocalBuffer,
             &limitAutoMultiBufferBuffer,
-        };
-
-    SmallVector<Pass::Option<PartitionAndBindSubBlockMode> *>
-        sharedWithHIVMCompilePartitionAndBindSubBlock = {
-            &partitionAndBindSubBlock,
         };
 
     SmallVector<Pass::Option<mlir::hacc::TargetDevice> *>
@@ -208,17 +204,6 @@ public:
     for (auto &opt : sharedWithHIVMCompileMultiBuffer) {
       std::string arg = opt->getArgStr().str() + "=" +
                         multibufferStrategy2str.at(opt->getValue());
-      collectedArgs.push_back(arg);
-    }
-    const std::map<PartitionAndBindSubBlockMode, std::string>
-        partitionAndBindSubBlockMode2str = {
-            {PartitionAndBindSubBlockMode::Off, "off"},
-            {PartitionAndBindSubBlockMode::DefaultPin, "default-pin"},
-            {PartitionAndBindSubBlockMode::LoadBalanced, "load-balanced"},
-        };
-    for (auto &opt : sharedWithHIVMCompilePartitionAndBindSubBlock) {
-      std::string arg = opt->getArgStr().str() + "=" +
-                        partitionAndBindSubBlockMode2str.at(opt->getValue());
       collectedArgs.push_back(arg);
     }
     for (auto &opt : sharedWithHIVMCompileTargetDevice) {

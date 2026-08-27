@@ -2,10 +2,10 @@
 // RUN: bishengir-opt %t/stack-limit.mlir --hfusion-auto-vectorize-v2="enable-multiple-consumer-fusion=true enable-vf-stack-limit=false emit-transform-sequence=true" | FileCheck %s --check-prefix=FUSE
 // RUN: bishengir-opt %t/stack-limit.mlir --hfusion-auto-vectorize-v2="enable-multiple-consumer-fusion=true enable-vf-stack-limit=true emit-transform-sequence=true" | FileCheck %s --check-prefix=LIMIT
 // RUN: bishengir-opt %t/empty.mlir --lower-hfusion-regbase-pipeline="target=Ascend950PR_9589 enable-triton-kernel-compile=true disable-ffts=true" --dump-pass-pipeline -o /dev/null 2>&1 | FileCheck %s --check-prefix=PIPELINE-DEFAULT
-// RUN: bishengir-opt %t/empty.mlir --lower-hfusion-regbase-pipeline="target=Ascend950PR_9589 enable-triton-kernel-compile=true disable-ffts=true hfusion-enable-multiple-consumer-fusion=true" --dump-pass-pipeline -o /dev/null 2>&1 | FileCheck %s --check-prefix=PIPELINE-MULTI-CONSUMER
+// RUN: bishengir-opt %t/empty.mlir --lower-hfusion-regbase-pipeline="target=Ascend950PR_9589 enable-triton-kernel-compile=true disable-ffts=true hfusion-enable-multiple-consumer-fusion=false" --dump-pass-pipeline -o /dev/null 2>&1 | FileCheck %s --check-prefix=PIPELINE-MULTI-CONSUMER
 
-// PIPELINE-DEFAULT: hfusion-auto-vectorize-v2{{.*}}enable-multiple-consumer-fusion=false enable-vf-stack-limit=false
-// PIPELINE-MULTI-CONSUMER: hfusion-auto-vectorize-v2{{.*}}enable-multiple-consumer-fusion=true enable-vf-stack-limit=true
+// PIPELINE-DEFAULT: hfusion-auto-vectorize-v2{{.*}}enable-multiple-consumer-fusion=true enable-vf-stack-limit=true
+// PIPELINE-MULTI-CONSUMER: hfusion-auto-vectorize-v2{{.*}}enable-multiple-consumer-fusion=false enable-vf-stack-limit=false
 
 // FUSE-LABEL: func.func @vf_stack_limit_multi_consumer
 // FUSE: hivm.hir.vgather

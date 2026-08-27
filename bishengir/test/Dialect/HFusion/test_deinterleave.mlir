@@ -15,19 +15,19 @@
 // RUN: FileCheck %s
 
 module {
- 	 
+
  	 func.func @deinterleave_even(%arg0: memref<8xf32>) -> tensor<4xf32> {
  	   %0 = bufferization.to_tensor %arg0 restrict writable : memref<8xf32>
  	   %1 = hfusion.deinterleave %0 channel<0> : tensor<8xf32> -> tensor<4xf32>
  	   return %1 : tensor<4xf32>
  	 }
- 	 
+
  	 func.func @deinterleave_odd(%arg0: memref<8xf32>) -> tensor<4xf32> {
  	   %0 = bufferization.to_tensor %arg0 restrict writable : memref<8xf32>
  	   %1 = hfusion.deinterleave %0 channel<1> : tensor<8xf32> -> tensor<4xf32>
  	   return %1 : tensor<4xf32>
  	 }
- 	 
+
  	 func.func @main() {
  	   %c0 = arith.constant 0 : index
  	   %c1 = arith.constant 1 : index
@@ -37,9 +37,9 @@ module {
  	   %c5 = arith.constant 5 : index
  	   %c6 = arith.constant 6 : index
  	   %c7 = arith.constant 7 : index
- 	 
+
  	   %m = memref.alloc() : memref<8xf32>
- 	 
+
  	   // input: [1, 2, 3, 4, 5, 6, 7, 8]
  	   %f1 = arith.constant 1.0 : f32
  	   %f2 = arith.constant 2.0 : f32
@@ -57,27 +57,27 @@ module {
  	   memref.store %f6, %m[%c5] : memref<8xf32>
  	   memref.store %f7, %m[%c6] : memref<8xf32>
  	   memref.store %f8, %m[%c7] : memref<8xf32>
- 	 
+
  	   // print
  	   %in_u = memref.cast %m : memref<8xf32> to memref<*xf32>
  	   func.call @printMemrefF32(%in_u) : (memref<*xf32>) -> ()
- 	 
+
  	   // even: 0,2,4,6 → [1, 3, 5, 7]
  	   %even_t = func.call @deinterleave_even(%m) : (memref<8xf32>) -> tensor<4xf32>
  	   %even_m = bufferization.to_memref %even_t : memref<4xf32>
  	   %even_u = memref.cast %even_m : memref<4xf32> to memref<*xf32>
  	   func.call @printMemrefF32(%even_u) : (memref<*xf32>) -> ()
- 	 
+
  	   // odd: 1,3,5,7 → [2, 4, 6, 8]
  	   %odd_t = func.call @deinterleave_odd(%m) : (memref<8xf32>) -> tensor<4xf32>
  	   %odd_m = bufferization.to_memref %odd_t : memref<4xf32>
  	   %odd_u = memref.cast %odd_m : memref<4xf32> to memref<*xf32>
  	   func.call @printMemrefF32(%odd_u) : (memref<*xf32>) -> ()
- 	 
+
  	   memref.dealloc %m : memref<8xf32>
  	   return
  	 }
- 	 
+
  	 func.func private @printMemrefF32(memref<*xf32>)
  	 }
  	 // CHECK: [1,  2,  3,  4,  5,  6,  7,  8]

@@ -7,11 +7,11 @@ def generate_color_from_text(text):
     """Generate a consistent color based on instruction text"""
     hash_object = hashlib.md5(text.encode())
     hash_hex = hash_object.hexdigest()
-    
+
     r = int(hash_hex[:2], 16)
     g = int(hash_hex[2:4], 16)
     b = int(hash_hex[4:6], 16)
-    
+
     # Adjust colors to make them lighter
     r = int((r + 255) / 2)
     g = int((g + 255) / 2)

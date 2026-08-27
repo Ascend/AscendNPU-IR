@@ -202,6 +202,20 @@ static bool
 canShareTreeReductionSiblingLoop(Operation *candidate,
                                  const std::shared_ptr<FusedNode> &node,
                                  PlanContext &ctx, bool treeReduce) {
+  bool candidateUsesRegisterTree =
+      treeReduce && hfusion::shouldUseRegisterTreeReduction(candidate);
+  bool nodeUsesRegisterTree =
+      treeReduce && llvm::any_of(node->ops(), [](Operation *op) {
+        return hfusion::shouldUseRegisterTreeReduction(op);
+      });
+
+  // The direct register lowering replaces its containing tiled loop.  Keep
+  // that loop dedicated to the reduction so no sibling computation can be
+  // dropped by the replacement.  This is a structural rule, independent of
+  // the concrete reduction shape.
+  if (candidateUsesRegisterTree || nodeUsesRegisterTree)
+    return false;
+
   Operation *treeReduction = nullptr;
   SmallVector<unsigned> candidateTreeDims =
       getTreeReductionParallelDims(candidate, treeReduce);
@@ -650,6 +664,23 @@ static Value tileReductionOpTreeReduce(
   return parallelAxisTilingResult.getLoops().front();
 }
 
+/// Tile a canonical RA reduction normally, but mark its dedicated loop for
+/// the post-vectorization direct register-tree rewrite.  Unlike
+/// tileReductionOpTreeReduce this does not create tensor.empty/fill/split
+/// intermediates for the pairwise levels.
+static Value
+tileReductionOpRegisterTree(OpBuilder &builder, transform::SequenceOp seqOp,
+                            Value linalgOpHandle, ArrayRef<int64_t> tileSize,
+                            ArrayRef<int64_t> tileInterchange = {}) {
+  auto tilingResult = builder.create<transform::TileUsingForOp>(
+      seqOp.getLoc(), linalgOpHandle, tileSize, tileInterchange);
+  Value loop = tilingResult.getLoops().front();
+  builder.create<transform::AnnotateOp>(
+      seqOp.getLoc(), loop,
+      builder.getStringAttr(hfusion::kRegisterTreeReductionLoopAttr), nullptr);
+  return loop;
+}
+
 /// For reduction op, tile_reduction_using_for has better performance than
 /// tile_using_for. Firstly we should tile parallel axis by tile_using_for,
 /// then tile reduction axis by tile_reduction_using_for.
@@ -855,12 +886,20 @@ void AutoVectorizeV2::planFuseProducerIntoFusedNode(Block *block,
       findBestFusedNodeForProducer(block, producer, ctx, vectorLength);
   // Apply the same one-tree-per-node invariant when a reduction is accepted as
   // a producer rather than entering the fallback-leaf path below.
-  if (bestFusedNode &&
-      !getTreeReductionParallelDims(producer, treeReduce).empty() &&
-      llvm::any_of(bestFusedNode->ops(), [&](Operation *fusedOp) {
-        return !getTreeReductionParallelDims(fusedOp, treeReduce).empty();
-      }))
-    bestFusedNode.reset();
+  if (bestFusedNode) {
+    bool producerUsesRegisterTree =
+        treeReduce && hfusion::shouldUseRegisterTreeReduction(producer);
+    bool nodeUsesRegisterTree =
+        treeReduce && llvm::any_of(bestFusedNode->ops(), [](Operation *op) {
+          return hfusion::shouldUseRegisterTreeReduction(op);
+        });
+    if (producerUsesRegisterTree || nodeUsesRegisterTree ||
+        (!getTreeReductionParallelDims(producer, treeReduce).empty() &&
+         llvm::any_of(bestFusedNode->ops(), [&](Operation *fusedOp) {
+           return !getTreeReductionParallelDims(fusedOp, treeReduce).empty();
+         })))
+      bestFusedNode.reset();
+  }
   if (bestFusedNode) {
     bestFusedNode->addProducer(producer);
 
@@ -948,6 +987,11 @@ void AutoVectorizeV2::tileAndFuseSiblingForLeafNodes(
         tiledLoopHandles.push_back(tileReductionOp(
             builder, seqOp, leafNode, leafNodeHandle, leafNodeInfo.tileSize,
             leafNodeInfo.label, otherVectorizableOps));
+      } else if (treeReduce &&
+                 hfusion::shouldUseRegisterTreeReduction(leafNode)) {
+        tiledLoopHandles.push_back(tileReductionOpRegisterTree(
+            builder, seqOp, leafNodeHandle, leafNodeInfo.tileSize,
+            leafNodeInfo.tileInterchange));
       } else if (treeReduce && hfusion::shouldUseTreeReduction(leafNode)) {
         tiledLoopHandles.push_back(tileReductionOpTreeReduce(
             builder, seqOp, leafNode, leafNodeHandle, leafNodeInfo.tileSize,
@@ -1024,6 +1068,10 @@ void AutoVectorizeV2::fuseProducersIntoConsumers(
         tileReductionOp(builder, seqOp, producer, fusedOp,
                         producerInfo.tileSize, producerInfo.label,
                         otherVectorizableOps);
+      } else if (treeReduce &&
+                 hfusion::shouldUseRegisterTreeReduction(producer)) {
+        tileReductionOpRegisterTree(builder, seqOp, fusedOp,
+                                    producerInfo.tileSize);
       } else if (treeReduce && hfusion::shouldUseTreeReduction(producer)) {
         tileReductionOpTreeReduce(builder, seqOp, producer, fusedOp,
                                   producerInfo.tileSize, producerInfo.label,
@@ -1323,7 +1371,6 @@ void AutoVectorizeV2::runOnOperation() {
   MLIRContext *context = op->getContext();
   IRRewriter rewriter(context);
   OpBuilder builder(context);
-  bool fallback = false;
 
   SmallVector<func::FuncOp> fusableFuncList;
   collectFusableFuncInModule(op, fusableFuncList);
@@ -1342,7 +1389,6 @@ void AutoVectorizeV2::runOnOperation() {
   for (auto callee : allInlined)
     rewriter.eraseOp(callee);
 
-  SmallVector<std::string> failedFuncNames;
   for (func::FuncOp func : fusableFuncList) {
     RetriedOptions retryCtx{maxFusedOps, enableMultipleConsumerFusion,
                             enableCrossIfFusion, enableVFStackLimit,
@@ -1355,43 +1401,19 @@ void AutoVectorizeV2::runOnOperation() {
     }
 
     LogicalResult result = runAttempt(func, retryCtx, builder, rewriter);
-    bool retried = false;
-    if (failed(result) && retryCtx.enableMultipleConsumerFusion) {
-      func.emitWarning() << "AutoVectorizeV2 failed; "
-                            "retrying with enableMultipleConsumerFusion=false";
-      retryCtx.enableMultipleConsumerFusion = false;
-      result = runAttempt(func, retryCtx, builder, rewriter);
-      retried = true;
-    }
-
     if (failed(result)) {
-      func.emitWarning()
-          << (retried ? "AutoVectorizeV2 retry failed"
-                      : "AutoVectorizeV2 failed")
-          << "; falling back to legacy HFusionAutoVectorize pass for this "
-             "function";
-      fallback = true;
-      failedFuncNames.push_back(func.getSymName().str());
-      continue;
+      func.emitWarning() << "AutoVectorizeV2 failed;";
+      signalPassFailure();
     }
   }
-
-  if (fallback) {
-    PassManager pm(context);
-    AutoVectorizeOptions vecOptions;
-    // Set maxVectorizeAxes to be 1 for compatiblity.
-    // TODO: Remove this constraint after e2e support for multi axes
-    // vectorization.
-    vecOptions.maxVectorizeAxes = 2;
-    vecOptions.treeReduce = treeReduce;
-    // Scope the legacy pass to just the function(s) AutoVectorizeV2 failed
-    // on: functions it already vectorized above must not be reprocessed,
-    // since both paths outline vector functions using the same naming
-    // scheme and would otherwise collide on the same names.
-    vecOptions.restrictToFuncNames = failedFuncNames;
-    pm.addPass(hfusion::createHFusionAutoVectorizePass(vecOptions));
-    std::ignore = pm.run(op);
-  }
+  // Cost-selection attributes are internal communication between VFFusion
+  // and AutoVectorizeV2.  Do not leak them into the lowered module.
+  op->removeAttr(hfusion::kTreeReductionSelectionFrozenAttr);
+  op->removeAttr(hfusion::kRegularTreeReductionScopeAttr);
+  op.walk([](Operation *nestedOp) {
+    nestedOp->removeAttr(hfusion::kRegisterTreeReductionSelectedAttr);
+    nestedOp->removeAttr(hfusion::kRegularTreeReductionSelectedAttr);
+  });
 }
 
 } // namespace

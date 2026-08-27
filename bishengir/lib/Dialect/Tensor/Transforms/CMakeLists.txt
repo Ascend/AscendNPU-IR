@@ -11,6 +11,7 @@ add_bishengir_library(BiShengIRTensorTransforms
   OptimizeDpsOpWithYieldedInsertSlice.cpp
   PropagateReshape.cpp
   PropagateReshape/PropagateCollapseDown.cpp
+  PropagateReshape/FoldCollapseIntoAllocWithLoadPattern.cpp
   PropagateReshape/PropagateExpandUp.cpp
   PropagateReshape/PropagateNearEndExpandDown.cpp
   PropagateReshape/PropagateOp/AnnotationMark.cpp

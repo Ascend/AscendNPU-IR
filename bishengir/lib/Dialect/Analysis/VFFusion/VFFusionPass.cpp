@@ -17,6 +17,7 @@
 
 #include "bishengir/Dialect/Analysis/VFFusion/Passes.h"
 #include "bishengir/Dialect/Analysis/VFFusion/Transforms/Transforms.h"
+#include "bishengir/Dialect/Analysis/VFFusion/Utils.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
@@ -72,7 +73,8 @@ VFFusionKindOption VFFusionPass::getFusionOption() const {
                             enableOutlineArith, enableOutlineCube,
                             ubBudgetBytes_, ubAlignBytes_, enableRA, enableAR,
                             maxVFParams, enableVFStackLimit, enableCastOpt,
-                            enableNewTreeReducePolicy);
+                            enableNewTreeReducePolicy,
+                            enablePredicateSinkAcrossSync);
 }
 
 template <typename FusionKind>
@@ -130,14 +132,70 @@ void VFFusionPass::runOnOperation() {
   if (enableOutlineCF)
     llvm::report_fatal_error("unsupported at the moment");
 
-  // for CV cases, temporarily bypass vffusion
-  if (isCVCases(moduleOp))
-    return;
+  auto freezeRegisterTreeSelection = [&]() {
+    if (!enableNewTreeReducePolicy || !enableRA)
+      return;
+    moduleOp->removeAttr(hfusion::kTreeReductionSelectionFrozenAttr);
+    moduleOp->removeAttr(hfusion::kRegularTreeReductionScopeAttr);
+    moduleOp->removeAttr(hfusion::kLegacyTreeReductionScopeAttr);
+    SmallVector<Operation *> registerCandidates;
+    moduleOp.walk([&](Operation *op) {
+      op->removeAttr(hfusion::kRegisterTreeReductionSelectedAttr);
+      op->removeAttr(hfusion::kRegularTreeReductionSelectedAttr);
+      if (hfusion::isRegisterTreeReductionCandidate(op))
+        registerCandidates.push_back(op);
+    });
+    bool selectedAllRegisterTrees = true;
+    bool selectedAnyLegacyTree = false;
+    for (Operation *op : registerCandidates) {
+      bool selected = hfusion::shouldUseRegisterTreeReduction(op);
+      selectedAllRegisterTrees &= selected;
+      selectedAnyLegacyTree |= hfusion::shouldUseLegacyTreeReductionScope(op);
+      llvm::StringLiteral selectedAttr =
+          selected ? hfusion::kRegisterTreeReductionSelectedAttr
+                   : hfusion::kRegularTreeReductionSelectedAttr;
+      op->setAttr(selectedAttr, UnitAttr::get(&getContext()));
+    }
+    if (selectedAnyLegacyTree)
+      moduleOp->setAttr(hfusion::kLegacyTreeReductionScopeAttr,
+                        UnitAttr::get(&getContext()));
+    else if (!registerCandidates.empty() && !selectedAllRegisterTrees)
+      moduleOp->setAttr(hfusion::kRegularTreeReductionScopeAttr,
+                        UnitAttr::get(&getContext()));
+    // Later nested function passes may run in parallel and may also create
+    // canonical linalg ops.  From this point on, consumers must use only the
+    // per-op decisions above instead of walking a module which is being
+    // rewritten concurrently.
+    moduleOp->setAttr(hfusion::kTreeReductionSelectionFrozenAttr,
+                      UnitAttr::get(&getContext()));
+  };
+
+  // For CV cases, bypass vffusion entirely when any op should skip fusion
+  // (e.g. RA/AR sum-reductions handled by dedicated downstream passes).
+  if (isCVCases(moduleOp)) {
+    VFFusionKindOption option = getFusionOption();
+    if (moduleOp
+            .walk([&](Operation *op) -> WalkResult {
+              return shouldSkipFusion(op, option) ? WalkResult::interrupt()
+                                                  : WalkResult::advance();
+            })
+            .wasInterrupted()) {
+      freezeRegisterTreeSelection();
+      return;
+    }
+  }
 
   if (failed(preProcess())) {
     signalPassFailure();
     return;
   }
+
+  // Freeze the register-tree cost decision after preprocessing but before
+  // fusion starts mutating the graph.  Linalg attributes are preserved by
+  // VFFusion's outlining clones, so AutoVectorizeV2 observes the same
+  // decision even when several reductions are split into separate private
+  // functions.
+  freezeRegisterTreeSelection();
 
   ubBudgetBytes_ = 0;
   ubAlignBytes_ = 0;

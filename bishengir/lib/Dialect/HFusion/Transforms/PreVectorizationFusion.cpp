@@ -176,24 +176,30 @@ struct HFusionGeneralizationPatterns
         return failure();
       return success();
     }
-    return generalizeNamedOp(rewriter, op);
+    Attribute registerTreeSelection =
+        op->getAttr(hfusion::kRegisterTreeReductionSelectedAttr);
+    Attribute regularTreeSelection =
+        op->getAttr(hfusion::kRegularTreeReductionSelectedAttr);
+    FailureOr<linalg::GenericOp> generic = generalizeNamedOp(rewriter, op);
+    if (failed(generic))
+      return failure();
+    if (registerTreeSelection)
+      (*generic)->setAttr(hfusion::kRegisterTreeReductionSelectedAttr,
+                          registerTreeSelection);
+    if (regularTreeSelection)
+      (*generic)->setAttr(hfusion::kRegularTreeReductionSelectedAttr,
+                          regularTreeSelection);
+    return success();
   }
 };
 
-template <typename ArithMulExtOp>
-static void buildMulExtBody(OpBuilder &builder, Location loc, ValueRange args) {
-  auto mulExt = builder.create<ArithMulExtOp>(
-      loc, builder.getI32Type(), builder.getI32Type(), args[0], args[1]);
-  builder.create<linalg::YieldOp>(
-      loc, ValueRange{mulExt.getLow(), mulExt.getHigh()});
-}
-
-// Converts signed or unsigned HFusion extended multiplication into a
-// linalg.generic operation while preserving its arithmetic semantics.
-template <typename HFusionMulExtOp, typename ArithMulExtOp>
-struct GeneralizeMulextPattern : public OpRewritePattern<HFusionMulExtOp> {
-  using OpRewritePattern<HFusionMulExtOp>::OpRewritePattern;
-  LogicalResult matchAndRewrite(HFusionMulExtOp op,
+// The GeneralizeMulextPattern is a transformation pattern that
+// converts Hfusion::MulExtOp (a custom multiply-extended operation)
+// into a linalg.generic operation that performs element-wise
+// multiplication with extended precision using VMULL.
+struct GeneralizeMulextPattern : public OpRewritePattern<hfusion::MulExtOp> {
+  using OpRewritePattern<hfusion::MulExtOp>::OpRewritePattern;
+  LogicalResult matchAndRewrite(hfusion::MulExtOp op,
                                 PatternRewriter &rewriter) const override {
     Value lhs = op.getLhs();
     Value rhs = op.getRhs();
@@ -224,13 +230,35 @@ struct GeneralizeMulextPattern : public OpRewritePattern<HFusionMulExtOp> {
     Value highEmpty = rewriter.create<tensor::EmptyOp>(
         op.getLoc(), shape, getElementTypeOrSelf(highType));
 
+    auto lhsElemType = getElementTypeOrSelf(lhsType);
+    bool isSigned = lhsElemType.isSignlessInteger() || lhsElemType.isSignedInteger();
+
     // create linalg.generic
     auto genericOp = rewriter.create<linalg::GenericOp>(
-        op.getLoc(), TypeRange{lowType, highType}, ValueRange{lhs, rhs},
-        ValueRange{lowEmpty, highEmpty}, indexingMaps, iteratorTypes,
-        [](OpBuilder &builder, Location loc, ValueRange args) {
-          buildMulExtBody<ArithMulExtOp>(builder, loc, args);
-        });
+      op.getLoc(),
+      TypeRange{lowType, highType},
+      ValueRange{lhs, rhs},
+      ValueRange{lowEmpty, highEmpty},
+      indexingMaps,
+      iteratorTypes,
+      [&](OpBuilder &b, Location loc, ValueRange args) {
+        Value lhsElem = args[0];
+        Value rhsElem = args[1];
+        Value low, high;
+        if (isSigned) {
+          auto mulExt = b.create<arith::MulSIExtendedOp>(
+              loc, b.getI32Type(), b.getI32Type(), lhsElem, rhsElem);
+          low = mulExt.getLow();
+          high = mulExt.getHigh();
+        } else {
+          auto mulExt = b.create<arith::MulUIExtendedOp>(
+              loc, b.getI32Type(), b.getI32Type(), lhsElem, rhsElem);
+          low = mulExt.getLow();
+          high = mulExt.getHigh();
+        }
+        // use arith.mulsi_extended
+        b.create<linalg::YieldOp>(loc, ValueRange{low, high});
+      });
     rewriter.replaceOp(op, genericOp->getResults());
     return success();
   }
@@ -818,10 +846,7 @@ struct ZeroDimToOneDimGenericPattern
 static void populatePreVectorizationFusionPatterns(RewritePatternSet &patterns,
                                                    int maxFusedElementwiseOps,
                                                    bool enableVFStackLimit) {
-  patterns.add<
-      GeneralizeMulextPattern<hfusion::MulExtOp, arith::MulSIExtendedOp>,
-      GeneralizeMulextPattern<hfusion::MulExtUiOp, arith::MulUIExtendedOp>>(
-      patterns.getContext());
+  patterns.add<GeneralizeMulextPattern>(patterns.getContext());
   patterns.add<HFusionGeneralizationPatterns>(patterns.getContext());
   patterns.add<ExtractInlinePattern>(patterns.getContext());
   patterns.add<ExpandShapeToImplicitBrcInGenericPattern>(patterns.getContext());

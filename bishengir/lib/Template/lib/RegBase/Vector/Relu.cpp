@@ -13,16 +13,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
- 
+
 #include "RegBase/SimtUtils.h"
 #include "Utils.h"
- 
+
 #if defined(__DAV_C310__)
 template <typename TYPE>
 __aicore__ __attribute__((always_inline)) TYPE simt_relu(TYPE src) {
   return (TYPE)(max((TYPE)0, src));
 }
- 
+
 extern "C" {
 REGISTER_SIMT_OP(relu, half, half);
 REGISTER_SIMT_OP(relu, float, float);

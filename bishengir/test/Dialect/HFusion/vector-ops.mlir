@@ -4,20 +4,20 @@
 func.func @test_elemwise_unary_ops(
   %src : memref<6x6xf32>, %dst : memref<6x6xf32>) {
   //CHECK: hfusion.elemwise_unary {fun = #hfusion.unary_fn<sqrt>}
-  hfusion.elemwise_unary {fun = #hfusion.unary_fn<sqrt>} 
-    ins(%src : memref<6x6xf32>) 
+  hfusion.elemwise_unary {fun = #hfusion.unary_fn<sqrt>}
+    ins(%src : memref<6x6xf32>)
     outs(%dst : memref<6x6xf32>)
   //CHECK: hfusion.elemwise_unary {fun = #hfusion.unary_fn<rsqrt>}
-  hfusion.elemwise_unary {fun = #hfusion.unary_fn<rsqrt>} 
-    ins(%src : memref<6x6xf32>) 
+  hfusion.elemwise_unary {fun = #hfusion.unary_fn<rsqrt>}
+    ins(%src : memref<6x6xf32>)
     outs(%dst : memref<6x6xf32>)
   //CHECK: hfusion.elemwise_unary {fun = #hfusion.unary_fn<relu>}
-  hfusion.elemwise_unary {fun = #hfusion.unary_fn<relu>} 
-    ins(%src : memref<6x6xf32>) 
+  hfusion.elemwise_unary {fun = #hfusion.unary_fn<relu>}
+    ins(%src : memref<6x6xf32>)
     outs(%dst : memref<6x6xf32>)
   //CHECK: hfusion.elemwise_unary {fun = #hfusion.unary_fn<rec>}
-  hfusion.elemwise_unary {fun = #hfusion.unary_fn<rec>} 
-    ins(%src : memref<6x6xf32>) 
+  hfusion.elemwise_unary {fun = #hfusion.unary_fn<rec>}
+    ins(%src : memref<6x6xf32>)
     outs(%dst : memref<6x6xf32>)
   return
 }
@@ -52,12 +52,12 @@ func.func @test_tensor_elemwise_unary_ops(
 func.func @test_elemwise_integer_unary_ops(
   %src : memref<6x6xi32>, %dst : memref<6x6xi32>) {
   //CHECK: hfusion.elemwise_unary {fun = #hfusion.unary_fn<relu>}
-  hfusion.elemwise_unary {fun = #hfusion.unary_fn<relu>} 
-    ins(%src : memref<6x6xi32>) 
+  hfusion.elemwise_unary {fun = #hfusion.unary_fn<relu>}
+    ins(%src : memref<6x6xi32>)
     outs(%dst : memref<6x6xi32>)
   //CHECK: hfusion.elemwise_unary {fun = #hfusion.unary_fn<rec>}
-  hfusion.elemwise_unary {fun = #hfusion.unary_fn<rec>} 
-    ins(%src : memref<6x6xi32>) 
+  hfusion.elemwise_unary {fun = #hfusion.unary_fn<rec>}
+    ins(%src : memref<6x6xi32>)
     outs(%dst : memref<6x6xi32>)
   return
 }
@@ -84,8 +84,8 @@ func.func @test_tensor_elemwise_integer_unary_ops(
 func.func @test_not_op(
   %src : memref<6x6xi1>, %dst : memref<6x6xi1>) {
   //CHECK: hfusion.elemwise_unary {fun = #hfusion.unary_fn<vnot>}
-  hfusion.elemwise_unary {fun = #hfusion.unary_fn<vnot>} 
-    ins(%src : memref<6x6xi1>) 
+  hfusion.elemwise_unary {fun = #hfusion.unary_fn<vnot>}
+    ins(%src : memref<6x6xi1>)
     outs(%dst : memref<6x6xi1>)
   return
 }
@@ -107,13 +107,13 @@ func.func @test_tensor_not_op(
 // CHECK-LABEL: func.func @test_elemwise_binary_ops
 func.func @test_elemwise_binary_ops(
   %src1 : memref<6x6xi32>, %src2 : i1, %dst : memref<6x6xi32>) {
-  //CHECK: hfusion.elemwise_binary {fun = #hfusion.binary_fn<vor>} 
-  hfusion.elemwise_binary {fun = #hfusion.binary_fn<vor>} 
-    ins(%src1, %src2 : memref<6x6xi32>, i1) 
+  //CHECK: hfusion.elemwise_binary {fun = #hfusion.binary_fn<vor>}
+  hfusion.elemwise_binary {fun = #hfusion.binary_fn<vor>}
+    ins(%src1, %src2 : memref<6x6xi32>, i1)
     outs(%dst : memref<6x6xi32>)
-  //CHECK: hfusion.elemwise_binary {fun = #hfusion.binary_fn<vand>} 
-  hfusion.elemwise_binary {fun = #hfusion.binary_fn<vand>} 
-    ins(%src1, %src2 : memref<6x6xi32>, i1) 
+  //CHECK: hfusion.elemwise_binary {fun = #hfusion.binary_fn<vand>}
+  hfusion.elemwise_binary {fun = #hfusion.binary_fn<vand>}
+    ins(%src1, %src2 : memref<6x6xi32>, i1)
     outs(%dst : memref<6x6xi32>)
   return
 }
@@ -292,8 +292,8 @@ func.func @test_tensor_selectfi_ops(
 func.func @test_selectf_ops(
   %src1 : memref<6x6xi1>, %src2 : memref<6x6xf32>, %src3 : memref<6x6xf32>, %dst : memref<6x6xf32>) {
   //CHECK: hfusion.select
-    hfusion.select 
-    ins(%src1, %src2, %src3 : memref<6x6xi1>, memref<6x6xf32>, memref<6x6xf32>) 
+    hfusion.select
+    ins(%src1, %src2, %src3 : memref<6x6xi1>, memref<6x6xf32>, memref<6x6xf32>)
     outs(%dst : memref<6x6xf32>)
   return
 }
@@ -316,7 +316,7 @@ func.func @test_tensor_selectf_ops(
 func.func @test_cast_f32_f16(
   %src : memref<6x6xf32>, %dst : memref<6x6xf16>) {
   //CHECK: hfusion.cast {mode = #hfusion.round_mode<rint>}
-  hfusion.cast {mode = #hfusion.round_mode<rint>} 
+  hfusion.cast {mode = #hfusion.round_mode<rint>}
     ins(%src : memref<6x6xf32>)
     outs(%dst : memref<6x6xf16>)
   return
@@ -340,7 +340,7 @@ func.func @test_tensor_cast_f32_f16(
 func.func @test_cast_f32_bf16(
   %src : memref<6x6xf32>, %dst : memref<6x6xbf16>) {
   //CHECK: hfusion.cast {mode = #hfusion.round_mode<rint>}
-  hfusion.cast {mode = #hfusion.round_mode<rint>} 
+  hfusion.cast {mode = #hfusion.round_mode<rint>}
     ins(%src : memref<6x6xf32>)
     outs(%dst : memref<6x6xbf16>)
   return
@@ -364,7 +364,7 @@ func.func @test_tensor_cast_f32_bf16(
 func.func @test_cast_f16_f32(
   %src : memref<6x6xf16>, %dst : memref<6x6xf32>) {
   //CHECK: hfusion.cast {mode = #hfusion.round_mode<rint>}
-  hfusion.cast {mode = #hfusion.round_mode<rint>} 
+  hfusion.cast {mode = #hfusion.round_mode<rint>}
     ins(%src : memref<6x6xf16>)
     outs(%dst : memref<6x6xf32>)
   return
@@ -388,7 +388,7 @@ func.func @test_tensor_cast_f16_f32(
 func.func @test_cast_bf16_f32(
   %src : memref<6x6xbf16>, %dst : memref<6x6xf32>) {
   //CHECK: hfusion.cast {mode = #hfusion.round_mode<rint>}
-  hfusion.cast {mode = #hfusion.round_mode<rint>} 
+  hfusion.cast {mode = #hfusion.round_mode<rint>}
     ins(%src : memref<6x6xbf16>)
     outs(%dst : memref<6x6xf32>)
   return
@@ -412,7 +412,7 @@ func.func @test_tensor_cast_bf16_f32(
 func.func @test_cast_f32_i32(
   %src : memref<6x6xf32>, %dst : memref<6x6xi32>) {
   //CHECK: hfusion.cast {mode = #hfusion.round_mode<trunc>}
-  hfusion.cast {mode = #hfusion.round_mode<trunc>} 
+  hfusion.cast {mode = #hfusion.round_mode<trunc>}
     ins(%src : memref<6x6xf32>)
     outs(%dst : memref<6x6xi32>)
   return
@@ -436,7 +436,7 @@ func.func @test_tensor_cast_f32_i32(
 func.func @test_cast_i32_f32(
   %src : memref<6x6xi32>, %dst : memref<6x6xf32>) {
   //CHECK: hfusion.cast {mode = #hfusion.round_mode<trunc>}
-  hfusion.cast {mode = #hfusion.round_mode<trunc>} 
+  hfusion.cast {mode = #hfusion.round_mode<trunc>}
     ins(%src : memref<6x6xi32>)
     outs(%dst : memref<6x6xf32>)
   return
@@ -461,7 +461,7 @@ func.func @test_reduce_with_index_without_index_input(
   %input : memref<6x7xf32>,
   %output : memref<6xf32>, %output_index : memref<6xi32>) {
   // CHECK: hfusion.reduce_with_index {tie_break_left = true} <min>
-  hfusion.reduce_with_index {tie_break_left = true} <min> 
+  hfusion.reduce_with_index {tie_break_left = true} <min>
     ins(%input : memref<6x7xf32>)
     outs(%output, %output_index : memref<6xf32>, memref<6xi32>)
     dimensions = [1]
@@ -490,7 +490,7 @@ func.func @test_reduce_with_index_with_index_input(
   %input : memref<6x7xf32>, %input_index : memref<6x7xi32>,
   %output : memref<7xf32>, %output_index : memref<7xi32>) {
   // CHECK: hfusion.reduce_with_index {tie_break_left = true} <max>
-  hfusion.reduce_with_index {tie_break_left = true} <max> 
+  hfusion.reduce_with_index {tie_break_left = true} <max>
     ins(%input, %input_index : memref<6x7xf32>, memref<6x7xi32>)
     outs(%output, %output_index : memref<7xf32>, memref<7xi32>)
     dimensions = [0]
@@ -519,7 +519,7 @@ func.func @test_reduce_with_index_without_index_input_int(
   %input : memref<6x7xi32>,
   %output : memref<6xi32>, %output_index : memref<6xi32>) {
   // CHECK: hfusion.reduce_with_index {tie_break_left = true} <max>
-  hfusion.reduce_with_index {tie_break_left = true} <max> 
+  hfusion.reduce_with_index {tie_break_left = true} <max>
     ins(%input : memref<6x7xi32>)
     outs(%output, %output_index : memref<6xi32>, memref<6xi32>)
     dimensions = [1]
@@ -533,7 +533,7 @@ func.func @test_reduce_with_index_with_index_input_int(
   %input : memref<6x7xi32>, %input_index : memref<6x7xi32>,
   %output : memref<7xi32>, %output_index : memref<7xi32>) {
   // CHECK: hfusion.reduce_with_index {tie_break_left = true} <min>
-  hfusion.reduce_with_index {tie_break_left = true} <min> 
+  hfusion.reduce_with_index {tie_break_left = true} <min>
     ins(%input, %input_index : memref<6x7xi32>, memref<6x7xi32>)
     outs(%output, %output_index : memref<7xi32>, memref<7xi32>)
     dimensions = [0]

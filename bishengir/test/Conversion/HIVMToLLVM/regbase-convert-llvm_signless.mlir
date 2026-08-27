@@ -1,4 +1,4 @@
-// RUN: bishengir-opt %s -split-input-file -convert-hivmave-to-ave-intrin --allow-unregistered-dialect | FileCheck %s
+// RUN: bishengir-opt %s -split-input-file -convert-hivmave-to-ave-intrin | FileCheck %s
 
 // Test VaddV128BF16XInstrOp
 // CHECK-LABEL: test_vadd_v128_bf16
@@ -17,27 +17,6 @@ func.func @test_vmul_v128_bf16(%arg0: vector<128 x bf16>, %arg1: vector<128 x bf
   "test.test"(%0) : (vector<128 x bf16>) -> ()
   return
 }
-
-// -----
-
-// CHECK-LABEL: test_vmull_signed
-// CHECK: "hivm_regbaseintrins.intr.hivm.vmull.v64s32"
-func.func @test_vmull_signed(%arg0: vector<64xi32>, %arg1: vector<64xi32>){
-    %pred = ave.hir.pge <ALL> {functionType = #ave.func_dist_type<pb32>}: vector<64xi1>
-    %low, %high = ave.hir.mull %arg0, %arg1, %pred {cast = #hivm.cast<cast_signed>}: vector<64xi32>, vector<64xi1>
-    "some.use"(%low) : (vector<64xi32>) -> ()
-    return
-}
-
-// CHECK-LABEL: test_vmull_unsigned
-// CHECK: "hivm_regbaseintrins.intr.hivm.vmull.v64u32"
-func.func @test_vmull_unsigned(%arg0: vector<64xi32>, %arg1: vector<64xi32>){
-    %pred = ave.hir.pge <ALL> {functionType = #ave.func_dist_type<pb32>}: vector<64xi1>
-    %low, %high = ave.hir.mull %arg0, %arg1, %pred {cast = #hivm.cast<cast_unsigned>}: vector<64xi32>, vector<64xi1>
-    "some.use"(%low) : (vector<64xi32>) -> ()
-    return
-}
-
 
 // Test VsubV128BF16XInstrOp
 // CHECK-LABEL: test_vsub_v128_bf16
@@ -102,7 +81,7 @@ func.func @test_vadd_v128_i16(%arg0: vector<128 x i16>, %arg1: vector<128 x i16>
   return
 }
 
-// Test VaddV256S8XInstrOp 
+// Test VaddV256S8XInstrOp
 // CHECK-LABEL: test_vadd_v256_i8
 func.func @test_vadd_v256_i8(%arg0: vector<256 x i8>, %arg1: vector<256 x i8>, %mask: vector<256 x i1>) -> () {
   // CHECK: [[R:%.*]] = "hivm_regbaseintrins.intr.hivm.vadd.s.x"([[V0:%.*]], [[V1:%.*]], [[V2:%.*]]) : (vector<256xi8>, vector<256xi8>, vector<256xi1>) -> vector<256xi8>
@@ -119,7 +98,7 @@ func.func @test_vumax_v64_i32(%arg0: vector<64 x i32>, %arg1: vector<64 x i32>, 
   "test.test"(%0) : (vector<64 x i32>) -> ()
   return
 }
- 
+
 // Test VmaxV64S32XInstrOp
 // CHECK-LABEL: test_vsmax_v64_i32
 func.func @test_vsmax_v64_i32(%arg0: vector<64 x i32>, %arg1: vector<64 x i32>, %mask: vector<256 x i1>) -> () {

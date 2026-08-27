@@ -181,7 +181,7 @@ struct MmadAtlasA2Small : public MmadAtlasA2 {
 };
 
 // Now ENABLE_UNIT_FLAG_ must be false when intput element is int8
-template <class ArchTag_, bool ENABLE_UNIT_FLAG_ = false, bool USE_HF32_MODE_ = false, 
+template <class ArchTag_, bool ENABLE_UNIT_FLAG_ = false, bool USE_HF32_MODE_ = false,
     uint32_t L0C_STAGES_ = 1, bool ENABLE_L1_RESIDENT_ = false>
 struct MmadPingpong : public MmadBase<ArchTag_, false> {
     static constexpr uint32_t STAGES = 2;

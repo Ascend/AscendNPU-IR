@@ -35,8 +35,8 @@
 #include "bishengir/Dialect/HIVM/IR/HIVMInterfaces.cpp.inc"
 #include "bishengir/Dialect/HIVM/Interfaces/ExtraBufferOpInterface.cpp.inc"
 #include "bishengir/Dialect/HIVM/Interfaces/FlattenInterface.cpp.inc"
-#include "bishengir/Dialect/HIVM/Interfaces/LocalMatmulLikeOpInterface.cpp.inc"
 #include "bishengir/Dialect/HIVM/Interfaces/ImplByScalarOpInterface.cpp.inc"
+#include "bishengir/Dialect/HIVM/Interfaces/LocalMatmulLikeOpInterface.cpp.inc"
 #include "bishengir/Dialect/HIVM/Interfaces/OpLayoutInterface.cpp.inc"
 #include "bishengir/Dialect/HIVM/Interfaces/OpPipeInterface.cpp.inc"
 #include "bishengir/Dialect/HIVM/Interfaces/VectorizableOpInterface.cpp.inc"
@@ -402,6 +402,12 @@ LogicalResult verifyUnitFlagEnabledInterface(UnitFlagEnabledInterface op) {
     return op.emitError()
            << "Cannot have unit-flag conditions without unit-flag modes.";
   }
+  if (auto unitFlagGroupId = op.getUnitFlagGroupIndex()) {
+    if (unitFlagGroupId.value() < 0) {
+      return op.emitError() << "Invalid value for unit-flag group-id: "
+                            << static_cast<int64_t>(unitFlagGroupId.value());
+    }
+  }
   return llvm::success();
 }
 
@@ -440,6 +446,19 @@ Value getUnitFlagModeLibValueImpl(UnitFlagEnabledInterface op,
     retValue = selectOp;
   }
   return retValue;
+}
+
+Value getUnitFlagGroupIdValueImpl(UnitFlagEnabledInterface op,
+                                  PatternRewriter &rewriter) {
+  ::std::optional<int64_t> unitFlagGroupId = op.getUnitFlagGroupIndex();
+  if (!unitFlagGroupId.has_value()) {
+    unitFlagGroupId = 0;
+  }
+  OpBuilder::InsertionGuard guard(rewriter);
+  rewriter.setInsertionPoint(op);
+  return rewriter.create<arith::ConstantOp>(
+      op->getLoc(), rewriter.getI64Type(),
+      rewriter.getI64IntegerAttr(unitFlagGroupId.value()));
 }
 
 } // namespace detail

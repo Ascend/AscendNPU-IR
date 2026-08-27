@@ -49,4 +49,3 @@ func.func @triton_test_fn_reduce_inner(%arg0: memref<?xf32> {tt.divisibility = 1
   return
 }
 }
-

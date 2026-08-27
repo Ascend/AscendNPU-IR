@@ -232,7 +232,7 @@ __aiv__ __attribute__((always_inline)) void scalar_eltwise_3d(
   int64_t src0_stride2 = 0;
   int64_t src1_stride2 = 0;
 
-  // In some cases, planmemory may cause dst to reuse the address of src. 
+  // In some cases, planmemory may cause dst to reuse the address of src.
   // If dst->offset > src->offset, the result will overwrite src, which causes precision failure.
   // Therefore, reverse calculation is required.
   bool reverse = false;

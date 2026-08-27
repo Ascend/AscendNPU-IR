@@ -72,8 +72,8 @@ vector_cast_with_overflow(memref_t<__ubuf__ SRC_T, 2> *src,
   memref_t<__ubuf__ DST_T, 1> tmp_as_dst_t;
   view_as<SRC_T, DST_T, 1>(tmp, &tmp_as_dst_t);
   memref_t<__ubuf__ DST_T, 2> tmp_2d_as_dst_t{
-      tmp_as_dst_t.aligned,
       tmp_as_dst_t.allocated,
+      tmp_as_dst_t.aligned,
       tmp_as_dst_t.offset,
       {src_as_dst_t_size1, src_as_dst_t_size0},
       {CEIL_FACTOR(src_as_dst_t_size0, num_per_block_dst), 1}};
@@ -99,8 +99,8 @@ vector_cast_with_overflow(memref_t<__ubuf__ SRC_T, 2> *src,
     // step3: Transpose tmp to tmp.
     // The second half of tmp is used to store temporary tranpose results.
     memref_t<__ubuf__ DST_T, 2> tmp_for_transpose{
-        tmp_as_dst_t.aligned,
         tmp_as_dst_t.allocated,
+        tmp_as_dst_t.aligned,
         tmp_as_dst_t.offset + tmp->sizes[0] * bits_factor / 2,
         {dst->sizes[0], dst->sizes[1]},
         {CEIL_FACTOR(dst->sizes[1], num_per_block_dst), 1}};

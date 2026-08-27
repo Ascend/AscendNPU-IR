@@ -27,15 +27,17 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Interfaces/DestinationStyleOpInterface.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "llvm/ADT/TypeSwitch.h"
 
-static constexpr char DEBUG_TYPE[] = "cv-pipelining";
+#define DEBUG_TYPE "cv-pipelining"
 
 using llvm::dbgs;
 
 namespace mlir {
 using namespace hivm;
 using hivm::detail::queryCoreTypeHelper;
+using bishengir::memref_ext::AllocWorkspaceOp;
 
 static constexpr llvm::StringLiteral CubeOnlyAttrName = "pipeline.cubeonly";
 static constexpr llvm::StringLiteral VecOnlyAttrName = "pipeline.veconly";
@@ -127,13 +129,47 @@ static bool isCrossCoreCopy(Operation *copy) {
   return memSpaceAttr.getAddressSpace() == AddressSpace::L1;
 }
 
+static bool isCrossCoreFixpipe(Operation *op) {
+  auto fixpipe = dyn_cast<FixpipeOp>(op);
+  if (!fixpipe)
+    return false;
+  Value dst = fixpipe.getDst();
+  Value root = traceValueDef(dst);
+
+  // dst traces back to a function argument — function args live in GM,
+  // so writing GM is inherently cross-core and qualifies as a separator.
+  if (auto blkArg = dyn_cast<BlockArgument>(root)) {
+    if (isa_and_nonnull<func::FuncOp>(blkArg.getOwner()->getParentOp()))
+      return true;
+  }
+
+  // dst traces back to memref.alloc / alloc_workspace — classify by address
+  // space attribute.
+  Operation *def = root.getDefiningOp();
+  if (!isa_and_nonnull<memref::AllocOp, AllocWorkspaceOp>(def))
+    return false;
+
+  // alloc_workspace always allocates GM, so treat any fixpipe writing
+  // to a workspace alloc as a cross-core separator.
+  if (isa<AllocWorkspaceOp>(def))
+    return true;
+
+  auto memSpaceAttr = dyn_cast_or_null<AddressSpaceAttr>(
+      cast<MemRefType>(def->getResult(0).getType()).getMemorySpace());
+  if (!memSpaceAttr)
+    return false;
+
+  AddressSpace as = memSpaceAttr.getAddressSpace();
+  return as == AddressSpace::UB || as == AddressSpace::GM;
+}
+
 /// True if `op` is a CV-pipelining "separator" — a store-like op that forms a
 /// boundary between vector and cube workitems. Splitting the pipeline loop on
 /// these ops yields the per-core workitems that CVPipelining schedules.
 /// Covers `hivm.hir.fixpipe`, `hivm.hir.store`, and the cross-core variant of
 /// `hivm.hir.copy`.
 static bool isSeparator(Operation *op) {
-  return isa<FixpipeOp, StoreOp>(op) || isCrossCoreCopy(op);
+  return isa<StoreOp>(op) || isCrossCoreCopy(op) || isCrossCoreFixpipe(op);
 }
 
 /// Check to see if op is what we consider a "core op" that is only available on
@@ -333,13 +369,133 @@ static void memrefDFS(Value memrefVal, SmallVector<Operation *> &users) {
   }
 }
 
+/// Admit only view operations and the four operands needed by the same-GM
+/// alias deferral:
+///   * Load source and Store destination on the GM alias tree;
+///   * Load destination and to_tensor source on the local-buffer alias tree.
+/// Any extra or unknown access makes the deferral fail closed.
+static bool hasOnlySameGMAliasDeferralUses(Operation *scope, Value gmRoot,
+                                           Value localRoot, LoadOp load,
+                                           bufferization::ToTensorOp toTensor,
+                                           StoreOp store) {
+  SmallVector<OpOperand *, 4> endpoints{
+      &load.getSrcMutable(), &load.getDstMutable(),
+      &toTensor->getOpOperand(0), &store.getDstMutable()};
+  WalkResult result = scope->walk([&](Operation *op) -> WalkResult {
+    for (OpOperand &use : op->getOpOperands()) {
+      if (!isa<MemRefType>(use.get().getType()))
+        continue;
+      Value root = traceValueDef(use.get());
+      if (root != gmRoot && root != localRoot)
+        continue;
+      if (llvm::is_contained(endpoints, &use))
+        continue;
+      if (isa<memref::CastOp, memref::CollapseShapeOp, memref::ExpandShapeOp,
+              memref::MemorySpaceCastOp, memref::ReinterpretCastOp,
+              memref::ReshapeOp, memref::SubViewOp, memref::ViewOp>(op) &&
+          &use == &op->getOpOperand(0))
+        continue;
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
+  });
+  return !result.wasInterrupted();
+}
+
+/// Describe a narrowly matched same-GM alias deferral:
+///
+///   GM view -> Load -> local alloc -> to_tensor -> VECTOR ops -> Store
+///      ^                                                               |
+///      +---------------------- exact same SSA view --------------------+
+///
+/// This does not prove that the GM alias is safe across WorkItems or that
+/// different loop iterations access disjoint addresses. Its only purpose is
+/// to identify when the Load can be co-located with the Store, avoiding the
+/// existing cross-WorkItem GM-alias rejection. The unique, pure, VECTOR-only
+/// path prevents that scheduling-only deferral from moving unrelated effects.
+struct SameGMAliasDeferral {
+  Operation *consumerToDefer = nullptr;
+  StoreOp store;
+};
+
+static SameGMAliasDeferral findSameGMAliasDeferral(LoadOp load,
+                                                   Operation *scope) {
+  memref::AllocOp localAlloc = traceAlloc(load.getDst());
+  if (!localAlloc || localAlloc->getParentOp() != scope)
+    return {};
+  Value localRoot = localAlloc.getResult();
+
+  bufferization::ToTensorOp toTensor;
+  for (auto candidate : load->getBlock()->getOps<bufferization::ToTensorOp>()) {
+    if (traceValueDef(candidate->getOperand(0)) == localRoot) {
+      toTensor = candidate;
+      break;
+    }
+  }
+  if (!toTensor || !load->isBeforeInBlock(toTensor))
+    return {};
+
+  auto getSingleTopLevelUser = [scope](Value value) -> Operation * {
+    if (!value.hasOneUse())
+      return nullptr;
+    Operation *user = *value.getUsers().begin();
+    return user->getParentOp() == scope ? user : nullptr;
+  };
+
+  Value edge = toTensor.getResult();
+  Operation *current = getSingleTopLevelUser(edge);
+  if (!current || !isCoreOp(*current))
+    return {};
+  Operation *consumerToDefer = current;
+  // Deferring the consumer must not move an unrelated loop-local producer.
+  Region &scopeRegion = scope->getRegion(0);
+  for (Value operand : current->getOperands()) {
+    if (operand != edge && scopeRegion.isAncestor(operand.getParentRegion()))
+      return {};
+  }
+  // Follow one pure top-level path; branches, regions, and effects fail closed.
+  while (current && !isa<StoreOp>(current)) {
+    if (current->getNumRegions() != 0 || current->getNumResults() != 1 ||
+        !isa<TensorType>(current->getResult(0).getType()) ||
+        !isMemoryEffectFree(current))
+      return {};
+
+    if (auto dps = dyn_cast<DestinationStyleOpInterface>(current);
+        dps && !llvm::is_contained(dps.getDpsInputs(), edge))
+      return {};
+    if (isCoreOp(*current) &&
+        (current->hasAttr(CubeOnlyAttrName) ||
+         (!current->hasAttr(VecOnlyAttrName) &&
+          queryCoreTypeHelper(current).value_or(TCoreType::CUBE_OR_VECTOR) !=
+              TCoreType::VECTOR)))
+      return {};
+
+    edge = current->getResult(0);
+    current = getSingleTopLevelUser(edge);
+  }
+
+  StoreOp store = dyn_cast_or_null<StoreOp>(current);
+  if (!store || store.getSrc() != edge || store.getAtomicKindAttr() ||
+      load.getSrc() != store.getDst())
+    return {};
+
+  Value gmRoot = traceValueDef(load.getSrc());
+  auto funcArg = dyn_cast<BlockArgument>(gmRoot);
+  if (!funcArg || !isa<func::FuncOp>(funcArg.getOwner()->getParentOp()) ||
+      !hasOnlySameGMAliasDeferralUses(scope, gmRoot, localRoot, load, toTensor,
+                                      store))
+    return {};
+
+  return {consumerToDefer, store};
+}
+
 // Populates allocs map with workspace memory operations
 static LogicalResult
 markWorkspaceOps(Operation *op,
-                 DenseMap<bishengir::memref_ext::AllocWorkspaceOp, WorkspaceAllocParams> &allocs,
+                 DenseMap<AllocWorkspaceOp, WorkspaceAllocParams> &allocs,
                  unsigned multibuffer) {
   if (auto mark = dyn_cast<annotation::MarkOp>(op)) {
-    if (auto alloc = llvm::dyn_cast_if_present<bishengir::memref_ext::AllocWorkspaceOp>(
+    if (auto alloc = llvm::dyn_cast_if_present<AllocWorkspaceOp>(
             mark.getSrc().getDefiningOp())) {
       if (allocs.contains(alloc)) {
         allocs[alloc].multibuffer = multibuffer;
@@ -350,7 +506,7 @@ markWorkspaceOps(Operation *op,
     }
   }
   if (auto toTensor = dyn_cast<bufferization::ToTensorOp>(op)) {
-    auto alloc = llvm::dyn_cast_if_present<bishengir::memref_ext::AllocWorkspaceOp>(
+    auto alloc = llvm::dyn_cast_if_present<AllocWorkspaceOp>(
         toTensor.getOperand().getDefiningOp());
     if (!alloc)
       return success();
@@ -755,7 +911,7 @@ WorklistBuilder::traceMemrefSubnet(Operation &start,
     if (!scopeOp->isAncestor(defining))
       break;
     traceStart = defining;
-    if (isa<memref::AllocOp, bishengir::memref_ext::AllocWorkspaceOp>(defining))
+    if (isa<memref::AllocOp, AllocWorkspaceOp>(defining))
       break;
     if (isa<memref::CastOp, memref::ReinterpretCastOp,
             memref::MemorySpaceCastOp, memref::CollapseShapeOp,
@@ -1097,6 +1253,27 @@ WorklistBuilder::extractAvailableOps(SmallVector<Operation *> &extractedOps,
       dfsStack.push_back(usr);
   }
 
+  // This deferral exists only to avoid the cross-WorkItem GM-alias rejection.
+  // It is not a general lazy-load scheduling optimization. Load-like ops are
+  // never extraction seeds, so defer their first VECTOR consumer instead.
+  // Once the Store is ready, the consumer and Store seed the same VECTOR
+  // WorkItem; backward dependency tracing then pulls in the Load.
+  //
+  // Keeping the exact-view Load and Store in one WorkItem preserves their
+  // original per-iteration order and avoids the cross-WorkItem GM-alias
+  // rejection. If another core op becomes ready first, ordinary dependency
+  // validation fails and CV pipelining conservatively falls back.
+  if (isLoopMode && enableLazyLoading && core == TCoreType::VECTOR) {
+    for (LoadOp load : targetBlock->getOps<LoadOp>()) {
+      SameGMAliasDeferral deferral = findSameGMAliasDeferral(load, scopeOp);
+      if (deferral.store &&
+          potentiallyAvailable.contains(deferral.consumerToDefer) &&
+          (!potentiallyAvailable.contains(deferral.store.getOperation()) ||
+           deferredOps.contains(deferral.store.getOperation())))
+        deferredOps.insert(deferral.consumerToDefer);
+    }
+  }
+
   // Coalesce same-core DPS-init chains: when an op's sole result feeds the
   // init operand of another same-core DPS core-op `usr` that is still
   // unavailable this round, defer the producer so it lands in the same
@@ -1382,13 +1559,13 @@ FailureOr<WorklistBuildResult> WorklistBuilder::build() {
   if (!isLoopMode)
     computeLocalOutputs();
 
-  DenseMap<bishengir::memref_ext::AllocWorkspaceOp, WorkspaceAllocParams> workspaceAllocs;
+  DenseMap<AllocWorkspaceOp, WorkspaceAllocParams> workspaceAllocs;
   if (isLoopMode) {
     for (Operation &op : targetBlock->getOperations()) {
       if (failed(markWorkspaceOps(&op, workspaceAllocs, numMultibuffer)))
         return failure();
     }
-    SmallVector<bishengir::memref_ext::AllocWorkspaceOp> incomplete;
+    SmallVector<AllocWorkspaceOp> incomplete;
     for (auto &[alloc, info] : workspaceAllocs) {
       if (!info.marker && !info.toTensor)
         incomplete.push_back(alloc);

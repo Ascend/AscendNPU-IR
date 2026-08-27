@@ -175,8 +175,8 @@ func.func @elementwise_expand_shape_full_slice(%arg0: tensor<128x16xf32>) -> ten
 // CHECK-LABEL:   func.func @elementwise_expand_shape_full_slice(
 // CHECK:           tensor.empty() : tensor<128x16xf32>
 // CHECK:           linalg.elemwise_unary
-// CHECK:           tensor.expand_shape 
-// CHECK:           return 
+// CHECK:           tensor.expand_shape
+// CHECK:           return
 
 // -----
 
@@ -202,4 +202,3 @@ func.func @collapse_shape_full_slice(%arg0: tensor<1x2x1024xf32>) -> tensor<2x10
 // CHECK:           linalg.elemwise_unary
 // CHECK:           return
 // CHECK:         }
-

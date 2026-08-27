@@ -15,6 +15,6 @@ transform.named_sequence @__transform_main(%arg0: !transform.any_op {transform.r
   %0 = transform.structured.match ops{["func.func"]} in %arg0 : (!transform.any_op) -> !transform.any_op
   %1 = transform.func.get_func_argument %0[all] : (!transform.any_op) -> !transform.any_value
   %2 = transform.structured.cache_read %1 : (!transform.any_value) -> !transform.any_op
-  transform.yield 
+  transform.yield
 }
 }

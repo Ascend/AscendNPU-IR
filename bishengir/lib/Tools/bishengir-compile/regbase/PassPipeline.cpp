@@ -338,6 +338,7 @@ static void buildDelayedHFusionRegBaseVectorizePipeline(
                                   ? hfusion::MmMapMode::MacroInstr
                                   : hfusion::MmMapMode::CoreOp;
   pm.addPass(createHFusionToHIVMConversionPass(hfs2hivmOptions));
+  pm.addPass(createTensorToHIVMConversionPass());
 }
 
 void buildFinalHIVMPipelines(mlir::OpPassManager &pm,
@@ -412,8 +413,10 @@ void buildBiShengTTIRPipeline(OpPassManager &pm,
   }
 
   if (!config.getCompileHost()) {
-    pm.addPass(hacc::createAppendDeviceSpecPass(
-        hacc::AppendTargetDeviceSpecOptions{config.getTarget()}));
+    pm.addPass(
+        hacc::createAppendDeviceSpecPass(hacc::AppendTargetDeviceSpecOptions{
+            config.getTarget(), config.getCustomAICNumber(),
+            config.getCustomAIVNumber(), config.getHIVMCVersion()}));
   }
   pm.addPass(createCanonicalizeModulePass());
   triton::LowerTritonPipelineOptions lowerTritonPipelineOptions;
@@ -464,8 +467,10 @@ void buildBiShengHIRFinishPipeline(mlir::OpPassManager &pm,
 void buildBiShengHIRPipeline(OpPassManager &pm,
                              const BiShengIRCompileMainConfig &config) {
   if (!config.getCompileHost()) {
-    pm.addPass(hacc::createAppendDeviceSpecPass(
-        hacc::AppendTargetDeviceSpecOptions{config.getTarget()}));
+    pm.addPass(
+        hacc::createAppendDeviceSpecPass(hacc::AppendTargetDeviceSpecOptions{
+            config.getTarget(), config.getCustomAICNumber(),
+            config.getCustomAIVNumber(), config.getHIVMCVersion()}));
   }
 
   pm.addPass(createCanonicalizeModulePass());

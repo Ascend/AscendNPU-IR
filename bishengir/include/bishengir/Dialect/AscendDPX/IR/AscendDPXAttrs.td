@@ -119,7 +119,7 @@ def AscendDPX_VolatileOptionAttr : EnumAttr<AscendDPX_Dialect, AscendDPX_Volatil
 
 def AscendDPX_AddressSpace : I32EnumAttr<"AscendDPXAddressSpace",
     "Address Spaces",
-    [ 
+    [
       I32EnumAttrCase<"GLOBAL_MEM", 1>,
       I32EnumAttrCase<"SHARED_MEM", 3>,
     ]> {

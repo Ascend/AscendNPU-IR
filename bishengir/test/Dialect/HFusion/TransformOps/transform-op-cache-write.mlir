@@ -4,7 +4,7 @@ module attributes { transform.with_named_sequence } {
 // CHECK-LABEL: @cache_write
 // CHECK: %[[RES:.*]] = linalg.elemwise_unary
 // CHECK: %[[CACHE_INIT:.*]] = tensor.empty({{.*}}) : tensor<?xf32>
-// CHECK: %[[CACHE_RESULT:.*]] = hfusion.store ins(%[[RES]] : tensor<?xf32>) 
+// CHECK: %[[CACHE_RESULT:.*]] = hfusion.store ins(%[[RES]] : tensor<?xf32>)
 // CHECK-SAME:                               outs(%[[CACHE_INIT]] : tensor<?xf32>)
 // CHECK: return %[[CACHE_RESULT]] : tensor<?xf32>
 func.func @cache_write(%arg0 : tensor<?xf32>, %dim : index) -> tensor<?xf32> {
@@ -17,7 +17,7 @@ transform.named_sequence @__transform_main(%arg0: !transform.any_op {transform.r
   %0 = transform.structured.match ops{["func.return"]} in %arg0 : (!transform.any_op) -> !transform.any_op
   %1 = transform.get_operand %0 [0] : (!transform.any_op) -> !transform.any_value
   %2 = transform.structured.cache_write %1 : (!transform.any_value) -> !transform.any_op
-  transform.yield 
+  transform.yield
 }
 }
 
@@ -27,7 +27,7 @@ module attributes { transform.with_named_sequence } {
 // CHECK-LABEL: @cache_write_intermediate_output
 // CHECK: %[[RES:.*]] = linalg.elemwise_unary
 // CHECK: %[[CACHE_INIT:.*]] = tensor.empty({{.*}}) : tensor<?xf32>
-// CHECK: %[[CACHE_RESULT:.*]] = hfusion.store ins(%[[RES]] : tensor<?xf32>) 
+// CHECK: %[[CACHE_RESULT:.*]] = hfusion.store ins(%[[RES]] : tensor<?xf32>)
 // CHECK-SAME:                               outs(%[[CACHE_INIT]] : tensor<?xf32>)
 // CHECK: linalg.elemwise_unary ins(%[[CACHE_RESULT]]
 func.func @cache_write_intermediate_output(%arg0 : tensor<?xf32>, %dim : index) -> (tensor<?xf32>, tensor<?xf32>) {
@@ -43,7 +43,7 @@ transform.named_sequence @__transform_main(%arg0: !transform.any_op {transform.r
   %2 = transform.structured.cache_write %1 : (!transform.any_value) -> !transform.any_op
   %3 = transform.get_operand %0 [1] : (!transform.any_op) -> !transform.any_value
   %4 = transform.structured.cache_write %3 : (!transform.any_value) -> !transform.any_op
-  transform.yield 
+  transform.yield
 }
 }
 
@@ -53,7 +53,7 @@ module attributes { transform.with_named_sequence } {
 // CHECK-LABEL: @cache_write_output_only
 // CHECK: %[[RES:.*]] = linalg.elemwise_unary
 // CHECK: %[[CACHE_INIT:.*]] = tensor.empty({{.*}}) : tensor<?xf32>
-// CHECK: %[[CACHE_RESULT:.*]] = hfusion.store ins(%[[RES]] : tensor<?xf32>) 
+// CHECK: %[[CACHE_RESULT:.*]] = hfusion.store ins(%[[RES]] : tensor<?xf32>)
 // CHECK-SAME:                               outs(%[[CACHE_INIT]] : tensor<?xf32>)
 // CHECK: linalg.elemwise_unary ins(%[[RES]]
 func.func @cache_write_output_only(%arg0 : tensor<?xf32>, %dim : index) -> (tensor<?xf32>, tensor<?xf32>) {
@@ -69,7 +69,7 @@ transform.named_sequence @__transform_main(%arg0: !transform.any_op {transform.r
   %2 = transform.structured.cache_write %1 {output_only = true} : (!transform.any_value) -> !transform.any_op
   %3 = transform.get_operand %0 [1] : (!transform.any_op) -> !transform.any_value
   %4 = transform.structured.cache_write %3 {output_only = true} : (!transform.any_value) -> !transform.any_op
-  transform.yield 
+  transform.yield
 }
 }
 

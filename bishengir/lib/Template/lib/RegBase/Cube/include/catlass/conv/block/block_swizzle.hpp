@@ -113,13 +113,13 @@ struct Conv3dIdentityBlockSwizzle {
     {
         uint32_t nActual = (blockCoord.n() == loops.n() - 1) ?
             (outShape[0] - dimStartIdx.n()) : coreTileShape.n();
-        
+
         uint32_t doActual = (blockCoord.d() == loops.d() - 1) ?
             (outShape[1] - dimStartIdx.d()) : coreTileShape.d();
-        
+
         uint32_t c1Actual = (blockCoord.c1() == loops.c1() - 1) ?
             (outShape[2] - dimStartIdx.c1()) : coreTileShape.c1();
-        
+
         uint32_t hwActual = (blockCoord.hw() == loops.hw() - 1) ?
             (outShape[3] - dimStartIdx.hw()) : coreTileShape.hw();
         return Conv3d6HdCoord{nActual, doActual, c1Actual, hwActual};
@@ -142,7 +142,7 @@ struct Conv2dIdentityBlockSwizzle {
     CATLASS_DEVICE
     Conv2dIdentityBlockSwizzle(Conv2dCoord const &problemShape_, Conv2dHoWoCoCoord const &tiles_)
         : problemShape(problemShape_), tiles(tiles_) {
-        loops = CeilDiv(Conv2dHoWoCoCoord(problemShape.GetHoWoCoCoord()), tiles);      
+        loops = CeilDiv(Conv2dHoWoCoCoord(problemShape.GetHoWoCoCoord()), tiles);
     }
 
     CATLASS_DEVICE
@@ -166,12 +166,12 @@ struct Conv2dIdentityBlockSwizzle {
 
     CATLASS_DEVICE
     uint32_t GetCoreLoops() const {
-        return loops.ho() * loops.wo() * loops.cout(); 
+        return loops.ho() * loops.wo() * loops.cout();
     }
 
     CATLASS_DEVICE
     uint32_t GetLoops() const {
-        return problemShape.batch() * this->GetCoreLoops(); 
+        return problemShape.batch() * this->GetCoreLoops();
     }
 
     CATLASS_DEVICE
@@ -222,11 +222,11 @@ struct Conv2dIdentityBlockSwizzle {
 
     CATLASS_DEVICE
     Conv2dCoord GetActualBlockShape(Conv2dCoord blockCoord) {
-        uint32_t hoActual = (blockCoord.h() == loops.ho() - 1) ? 
+        uint32_t hoActual = (blockCoord.h() == loops.ho() - 1) ?
             (problemShape.h() - blockCoord.h() * tiles.ho()) : tiles.ho();
-        uint32_t woActual = (blockCoord.w() == loops.wo() - 1) ? 
+        uint32_t woActual = (blockCoord.w() == loops.wo() - 1) ?
             (problemShape.w() - blockCoord.w() * tiles.wo()) : tiles.wo();
-        uint32_t coutActual = (blockCoord.cout() == loops.cout() - 1) ? 
+        uint32_t coutActual = (blockCoord.cout() == loops.cout() - 1) ?
             (problemShape.cout() - blockCoord.cout() * tiles.cout()) : tiles.cout();
         uint32_t cin1Actual = problemShape.cin1();
         return Conv2dCoord{1, hoActual, woActual, coutActual, cin1Actual};

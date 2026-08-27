@@ -324,8 +324,9 @@ def FixpipeOp : HIVM_DmaOp<"fixpipe", [
                          "FixpipePreReluMode::NO_RELU">:$pre_relu,
                        DefaultValuedOptionalAttr<BoolAttr, "false">:$channel_split,
                        DefaultValuedOptionalAttr<BoolAttr, "true">:$c0_pad_en,
+                       Optional<AnyFloat>:$quant_scale,
                        OptionalAttr<UnitFlagArrayAttr>:$unit_flag_mode,
-                       Optional<AnyFloat>:$quant_scale
+                       OptionalAttr<I64Attr>:$unit_flag_group_id
   );
   let results = (outs Optional<AnyRankedTensor>:$result_tensor);
   let builders = [

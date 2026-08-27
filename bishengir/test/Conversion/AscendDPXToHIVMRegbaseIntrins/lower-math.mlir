@@ -8,19 +8,19 @@
 // CHECK-LABEL: @ascend_dpx_unary_direct_lowering_f32
 // CHECK-SAME: %[[ARG:.*]]: f32
 func.func @ascend_dpx_unary_direct_lowering_f32(%arg1 : f32) {
-    // CHECK: hivm_regbaseintrins.ceilf 
+    // CHECK: hivm_regbaseintrins.ceilf
     // CHECK-SAME: %[[ARG]]
     %0 = ascend_dpx.ceil %arg1 : (f32) -> f32
     // CHECK: llvm.intr.exp
     // CHECK-SAME: %[[ARG]]
     %1 = ascend_dpx.exp %arg1 : (f32) -> f32
-    // CHECK: hivm_regbaseintrins.floorf 
+    // CHECK: hivm_regbaseintrins.floorf
     // CHECK-SAME: %[[ARG]]
     %2 = ascend_dpx.floor %arg1 : (f32) -> f32
     // CHECK: llvm.intr.log
     // CHECK-SAME: %[[ARG]]
     %3 = ascend_dpx.log %arg1 : (f32) -> f32
-    // CHECK: hivm_regbaseintrins.rintf 
+    // CHECK: hivm_regbaseintrins.rintf
     // CHECK-SAME: %[[ARG]]
     %4 = ascend_dpx.rint %arg1 : (f32) -> f32
     // CHECK: llvm.intr.sqrt
@@ -32,16 +32,16 @@ func.func @ascend_dpx_unary_direct_lowering_f32(%arg1 : f32) {
 // CHECK-LABEL: @ascend_dpx_unary_direct_lowering_f16
 // CHECK-SAME: %[[ARG:.*]]: f16
 func.func @ascend_dpx_unary_direct_lowering_f16(%arg1 : f16) {
-    // CHECK: hivm_regbaseintrins.ceilh 
+    // CHECK: hivm_regbaseintrins.ceilh
     // CHECK-SAME: %[[ARG]]
     %0 = ascend_dpx.ceil %arg1 : (f16) -> f16
-    // CHECK: hivm_regbaseintrins.floorh 
+    // CHECK: hivm_regbaseintrins.floorh
     // CHECK-SAME: %[[ARG]]
     %1 = ascend_dpx.floor %arg1 : (f16) -> f16
     // CHECK: llvm.intr.log
     // CHECK-SAME: %[[ARG]]
     %2 = ascend_dpx.log %arg1 : (f16) -> f16
-    // CHECK: hivm_regbaseintrins.rinth 
+    // CHECK: hivm_regbaseintrins.rinth
     // CHECK-SAME: %[[ARG]]
     %3 = ascend_dpx.rint %arg1 : (f16) -> f16
     // CHECK: llvm.intr.sqrt
@@ -236,7 +236,7 @@ func.func @ascend_dpx_unary_libcall_lowering_int(%arg : i8) {
     %4 = ascend_dpx.popc %arg_i32 : (i32) -> i32
     return
 }
- 
+
 // CHECK-LABEL: @ascend_dpx_binary_libcall_lowering_int
 func.func @ascend_dpx_binary_libcall_lowering_int(%arg1 : i8, %arg2 : i8) {
     %arg1_i16 = arith.extsi %arg1 : i8 to i16
@@ -347,7 +347,7 @@ func.func @ascend_dpx_ternary_libcall_lowering_int(%arg1 : i8, %arg2 : i8, %arg3
     %arg1_i32 = arith.extsi %arg1 : i8 to i32
     %arg2_i32 = arith.extsi %arg2 : i8 to i32
     %arg3_i32 = arith.extsi %arg3 : i8 to i32
-    
+
     // CHECK: @_mlir_ciface_simt_byte_perm_int32_t
     %0 = ascend_dpx.byte_perm %arg1_i32, %arg2_i32, %arg3_i32 : (i32, i32, i32) -> i32
     // CHECK: @_mlir_ciface_simt_sad_int32_t
@@ -356,7 +356,7 @@ func.func @ascend_dpx_ternary_libcall_lowering_int(%arg1 : i8, %arg2 : i8, %arg3
     %2 = ascend_dpx.usad %arg1_i32, %arg2_i32, %arg3_i32 : (i32, i32, i32) -> i32
     return
 }
- 
+
 // CHECK-LABEL: @ascend_dpx_ternary_libcall_lowering_f32
 // CHECK-SAME: %[[ARG1:.*]]: f32, %[[ARG2:.*]]: f32, %[[ARG3:.*]]: f32
 func.func @ascend_dpx_ternary_libcall_lowering_f32(%arg1 : f32, %arg2 : f32, %arg3 : f32) {

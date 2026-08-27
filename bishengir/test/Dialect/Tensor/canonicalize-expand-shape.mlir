@@ -39,11 +39,11 @@ func.func @expand_shape_constant_fold_with_extract_slice(%arg0 : index) -> tenso
 // CHECK-NOT: memref.collapse_shape
 func.func @test_expand_dyn_within_single_reassociation_group(%arg0: memref<32x4xf32>, %arg1: index, %arg2: index) -> memref<?x4xf32, strided<[4, 1], offset: ?>>{
   %subview = memref.subview %arg0[%arg1, 0] [%arg2, 4] [1, 1] : memref<32x4xf32> to memref<?x4xf32, strided<[4, 1], offset: ?>>
-  %expand_shape_1 = memref.expand_shape %subview [[0, 1], [2]] 
-                    output_shape [1, %arg2, 4] : memref<?x4xf32, strided<[4, 1], offset: ?>> 
+  %expand_shape_1 = memref.expand_shape %subview [[0, 1], [2]]
+                    output_shape [1, %arg2, 4] : memref<?x4xf32, strided<[4, 1], offset: ?>>
                     into memref<1x?x4xf32, strided<[?, 4, 1], offset: ?>>
-  %collapse_shape = memref.collapse_shape %expand_shape_1 [[0, 1], [2]] 
-                    : memref<1x?x4xf32, strided<[?, 4, 1], offset: ?>> 
+  %collapse_shape = memref.collapse_shape %expand_shape_1 [[0, 1], [2]]
+                    : memref<1x?x4xf32, strided<[?, 4, 1], offset: ?>>
                     into memref<?x4xf32, strided<[4, 1], offset: ?>>
   return %collapse_shape: memref<?x4xf32, strided<[4, 1], offset: ?>>
 }

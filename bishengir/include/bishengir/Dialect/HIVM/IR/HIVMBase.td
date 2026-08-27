@@ -75,7 +75,7 @@ class HIVM_Op<string mnemonic, list<Trait> traits = []>
 }
 
 class HIVM_StructuredOp<string mnemonic, list<Trait> traits = []>
-    : HIVM_Op<mnemonic, 
+    : HIVM_Op<mnemonic,
       !listconcat([
         HIVMStructuredOpInterface,
         MemoryEffectsOpInterface,

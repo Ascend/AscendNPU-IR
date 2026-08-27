@@ -139,7 +139,8 @@ def ConvertHIVMToStandard : Pass<"convert-hivm-to-std", "ModuleOp"> {
       Option<"markLibCallNoInline", "mark-libcall-noinline", "bool",
              /*default*/"false",
              "Mark generated library-call declarations as hacc.noinline "
-             "instead of hacc.always_inline.">
+             "instead of hacc.always_inline. When omitted, use the target "
+             "architecture default.">
   ];
 }
 

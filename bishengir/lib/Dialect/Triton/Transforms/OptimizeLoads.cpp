@@ -714,7 +714,7 @@ static void optimizeLoadMasks(triton::StoreOp storeOp,
     });
 
     if (info.loadOp.use_empty())
-      rewriter.eraseOp(info.loadOp);        
+      rewriter.eraseOp(info.loadOp);
   }
   return;
 }

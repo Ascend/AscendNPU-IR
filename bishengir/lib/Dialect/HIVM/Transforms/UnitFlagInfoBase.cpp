@@ -16,8 +16,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HIVM/Transforms/UnitFlagInfoBase.h"
+#include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolverIR.h"
 #include "llvm/Support/raw_ostream.h"
 #include <string>
+#include <tuple>
 
 using namespace mlir;
 using namespace mlir::hivm;
@@ -43,7 +45,7 @@ std::string UnitFlagInfoBase::str() const {
   return unitFlag;
 }
 
-std::optional<std::pair<SmallVector<UNIT_FLAG>, SmallVector<mlir::Value>>>
+std::optional<UnitFlagArgs>
 UnitFlagInfoBase::getUnitFlagLoopAwareArgs(Operation *op,
                                            IRRewriter &rewriter) {
   if (disabled()) {
@@ -93,10 +95,10 @@ UnitFlagInfoBase::getUnitFlagLoopAwareArgs(Operation *op,
     unitFlagConds.push_back(constantTrueValue);
   }
 
-  return std::make_pair(unitFlagModes, unitFlagConds);
+  return UnitFlagArgs(unitFlagModes, unitFlagConds, unitFlagGroupId);
 }
 
-std::optional<std::pair<SmallVector<UNIT_FLAG>, SmallVector<mlir::Value>>>
+std::optional<UnitFlagArgs>
 UnitFlagInfoBase::getUnitFlagLinkedLoopArgs(Operation *op,
                                             IRRewriter &rewriter) {
   if (disabled()) {
@@ -144,8 +146,8 @@ UnitFlagInfoBase::getUnitFlagLinkedLoopArgs(Operation *op,
     unitFlagConds.push_back(cond);
   }
   if (linkedLoopAsSet && linkedLoopAsWait) {
-    Value cond = rewriter.create<arith::OrIOp>(op->getLoc(), unitFlagConds[0],
-                                               unitFlagConds[1]);
+    Value cond = rewriter.create<arith::AndIOp>(op->getLoc(), unitFlagConds[0],
+                                                unitFlagConds[1]);
     unitFlagConds.insert(unitFlagConds.begin(), cond);
   } else {
     auto i1Ty = rewriter.getI1Type();
@@ -162,10 +164,11 @@ UnitFlagInfoBase::getUnitFlagLinkedLoopArgs(Operation *op,
     unitFlagModes.pop_back();
     unitFlagConds.pop_back();
   }
-  return std::make_pair(unitFlagModes, unitFlagConds);
+
+  return UnitFlagArgs(unitFlagModes, unitFlagConds, unitFlagGroupId);
 }
 
-std::optional<std::pair<SmallVector<UNIT_FLAG>, SmallVector<mlir::Value>>>
+std::optional<UnitFlagArgs>
 UnitFlagInfoBase::getUnitFlagArgs(Operation *op, IRRewriter &rewriter) {
   if (disabled()) {
     return {};
@@ -175,7 +178,8 @@ UnitFlagInfoBase::getUnitFlagArgs(Operation *op, IRRewriter &rewriter) {
   if (!hasParentLoop && !hasLinkedLoop) {
     auto unitFlagModes = getUnitFlagModesAsSetAsWait(/*compress=*/true);
     assert(unitFlagModes.size() <= 1);
-    return std::make_pair(unitFlagModes, SmallVector<mlir::Value>());
+    return UnitFlagArgs(unitFlagModes, SmallVector<mlir::Value>(),
+                        unitFlagGroupId);
   }
   if (hasParentLoop && !hasLinkedLoop) {
     return getUnitFlagLoopAwareArgs(op, rewriter);
@@ -263,18 +267,13 @@ std::optional<UnitFlagInfoBase> checkUnitFlagOpLoopOpPattern(
   auto unitFlagAsSet = UNIT_FLAG::ENABLED_WITH_UPDATE;
   auto unitFlagAsWait = mmadL1OpIsFrontOp ? UNIT_FLAG::ENABLED_WITH_UPDATE
                                           : UNIT_FLAG::ENABLED_WITHOUT_UPDATE;
-  if (forOp1 && forOp2) {
-    if (forOp1->getParentRegion() == forOp2->getParentRegion()) {
-      UnitFlagInfoBase unitFlagInfo(unitFlagDisabled, unitFlagDisabled,
-                                    unitFlagAsSet, unitFlagAsWait,
-                                    unitFlagDisabled, unitFlagDisabled);
-      unitFlagInfo.linkedLoopAsWait = forOp1;
-      unitFlagInfo.linkedLoopAsSet = forOp2;
-      unitFlagInfo.parentLoopAsSet = forOp1;
-      unitFlagInfo.parentLoopAsWait = forOp2;
-      return unitFlagInfo;
-    }
-  } else if (forOp1) {
+  if (forOp1 && !forOp2) {
+    // Reject when op2 has an outer for-loop ancestor (e.g.
+    // for1 { if { for2 { op1 }, op2 } }) — the outer loop is not
+    // captured by getParentOp() and unit-flag currently donot model the
+    // cross-iteration dependency except SameBlockPattern.
+    if (op2->getParentOfType<scf::ForOp>() != nullptr)
+      return {};
     if (forOp1->getParentRegion() == op2->getParentRegion()) {
       UnitFlagInfoBase unitFlagInfo(unitFlagDisabled, unitFlagDisabled,
                                     unitFlagAsSet, unitFlagAsWait,
@@ -283,7 +282,10 @@ std::optional<UnitFlagInfoBase> checkUnitFlagOpLoopOpPattern(
       unitFlagInfo.parentLoopAsSet = forOp1;
       return unitFlagInfo;
     }
-  } else if (forOp2) {
+  }
+  if (forOp2 && !forOp1) {
+    if (op1->getParentOfType<scf::ForOp>() != nullptr)
+      return {};
     if (forOp2->getParentRegion() == op1->getParentRegion()) {
       UnitFlagInfoBase unitFlagInfo(unitFlagAsSet, unitFlagAsSet, unitFlagAsSet,
                                     unitFlagAsWait, unitFlagDisabled,
@@ -293,6 +295,9 @@ std::optional<UnitFlagInfoBase> checkUnitFlagOpLoopOpPattern(
       return unitFlagInfo;
     }
   }
+  // Avoid unreachabel case in getUnitFlagArgs while fopOp1 and forOp2 both
+  // exist. Considering support Outer parent loop with single inner loop like
+  // for1 { for2 { op1 }, op2} in the future.
   return {};
 }
 

@@ -72,6 +72,8 @@ struct DuplicateTensorExtractForCube
       "DuplicateTensorExtractForCube::replacementLabel";
   constexpr static llvm::StringRef cubeErasureLabel =
       "DuplicateTensorExtractForCube::cubeErasureLabel";
+  constexpr static llvm::StringRef extractedLoadStoreLabel =
+      "ExtractedLoadOrStore";
 
   void markCoreType(PatternRewriter &rewriter, Location location, Value value,
                     TCoreType tCoreType) const {
@@ -161,6 +163,12 @@ struct DuplicateTensorExtractForCube
     // the for loop should be atomic, don't insert any other op.
     auto forOp = extractOp->getParentOfType<scf::ForOp>();
     if (forOp && forOp->hasAttrOfType<UnitAttr>(hivm::ParallelLoopAttr::name)) {
+      return failure();
+    }
+
+    // if the extractOp is in for loop, and the for loop is extractedLoadStore
+    // loop, the for loop should be in AIV, don't insert any other op.
+    if (forOp && forOp->getAttr(extractedLoadStoreLabel)) {
       return failure();
     }
 

@@ -27,5 +27,5 @@ add_bishengir_dialect_library(MLIRAVEDialect
   MLIRVectorDialect
   MLIRTransformUtils
   MLIRViewLikeInterface
-  BiShengIRDialectUtils 
+  BiShengIRDialectUtils
 )

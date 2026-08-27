@@ -46,6 +46,8 @@ namespace {
 Value buildSubBlockEqCond(OpBuilder &builder, Location loc, int64_t core) {
   auto subBlockIdxOp =
       builder.create<hivm::GetSubBlockIdxOp>(loc, builder.getI64Type());
+  // Provenance for stage-2 cleanup. It lives on the get_sub_block_idx op
+  subBlockIdxOp->setAttr(kPartitionGuardAttrName, builder.getUnitAttr());
   Value subBlockIndex =
       builder
           .create<arith::IndexCastOp>(loc, builder.getIndexType(),
@@ -334,8 +336,8 @@ LogicalResult SubBlockLowering::lowerSupernode(const Supernode &node) {
   }
   elseBuilder.create<scf::YieldOp>(loc, elseYields);
 
-  // (6) Replace the scope results over to the scf.if results. Stage-3 cleanup
-  // re-identifies the guard structurally by its get_sub_block_idx predicate.
+  // (6) Replace the scope results over to the scf.if results. Stage-2 cleanup
+  // re-identifies the guard structurally by its get_sub_block_idx attribute.
   loweredScopeGuards.insert(ifOp);
   scopeOp.getResults().replaceAllUsesWith(ifOp.getResults());
   scopeOp.erase();

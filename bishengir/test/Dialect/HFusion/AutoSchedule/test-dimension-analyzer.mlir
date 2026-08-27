@@ -43,15 +43,15 @@ func.func @rank_increase_and_decrease(%arg0: tensor<10x16x4x128xf16>, %arg1: ten
   %3 = tensor.empty() : tensor<10x16x256x4xf16>
   %4 = tensor.empty() : tensor<10x16x256x4x128xf32>
   %5 = tensor.empty() : tensor<10x16x256x4xf32>
-  %broadcasted = linalg.broadcast ins(%arg1 : tensor<10x16x4xf16>) outs(%0 : tensor<10x16x4x128xf16>) dimensions = [3] 
-  %broadcasted_0 = linalg.broadcast ins(%arg3 : tensor<10x256x4xf16>) outs(%1 : tensor<10x256x4x128xf16>) dimensions = [3] 
+  %broadcasted = linalg.broadcast ins(%arg1 : tensor<10x16x4xf16>) outs(%0 : tensor<10x16x4x128xf16>) dimensions = [3]
+  %broadcasted_0 = linalg.broadcast ins(%arg3 : tensor<10x256x4xf16>) outs(%1 : tensor<10x256x4x128xf16>) dimensions = [3]
   %6 = linalg.elemwise_binary {fun = #linalg.binary_fn<div>} ins(%arg0, %broadcasted : tensor<10x16x4x128xf16>, tensor<10x16x4x128xf16>) outs(%0 : tensor<10x16x4x128xf16>) -> tensor<10x16x4x128xf16>
   %7 = linalg.elemwise_binary {fun = #linalg.binary_fn<div>} ins(%arg2, %broadcasted_0 : tensor<10x256x4x128xf16>, tensor<10x256x4x128xf16>) outs(%1 : tensor<10x256x4x128xf16>) -> tensor<10x256x4x128xf16>
-  %broadcasted_1 = linalg.broadcast ins(%6 : tensor<10x16x4x128xf16>) outs(%2 : tensor<10x16x256x4x128xf16>) dimensions = [2] 
-  %broadcasted_2 = linalg.broadcast ins(%7 : tensor<10x256x4x128xf16>) outs(%2 : tensor<10x16x256x4x128xf16>) dimensions = [1] 
+  %broadcasted_1 = linalg.broadcast ins(%6 : tensor<10x16x4x128xf16>) outs(%2 : tensor<10x16x256x4x128xf16>) dimensions = [2]
+  %broadcasted_2 = linalg.broadcast ins(%7 : tensor<10x256x4x128xf16>) outs(%2 : tensor<10x16x256x4x128xf16>) dimensions = [1]
   %8 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%broadcasted_1, %broadcasted_2 : tensor<10x16x256x4x128xf16>, tensor<10x16x256x4x128xf16>) outs(%2 : tensor<10x16x256x4x128xf16>) -> tensor<10x16x256x4x128xf16>
   %9 = hfusion.cast {round_mode = #hfusion.round_mode<rint>} ins(%8 : tensor<10x16x256x4x128xf16>) outs(%4 : tensor<10x16x256x4x128xf32>) -> tensor<10x16x256x4x128xf32>
-  %reduced = linalg.reduce ins(%9 : tensor<10x16x256x4x128xf32>) outs(%5 : tensor<10x16x256x4xf32>) dimensions = [4] 
+  %reduced = linalg.reduce ins(%9 : tensor<10x16x256x4x128xf32>) outs(%5 : tensor<10x16x256x4xf32>) dimensions = [4]
     (%in: f32, %init: f32) {
       %11 = arith.addf %in, %init : f32
       linalg.yield %11 : f32
@@ -109,7 +109,7 @@ func.func @max_dynamic_anchor_dim(%arg0: tensor<1x?x2048xf32>) -> tensor<1x?x204
 func.func @test_max_shape_anchor(%arg0: tensor<2048xf32>) -> tensor<64x4096xf32> attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hfusion.fusion_kind = #hfusion.fusion_kind<ANY_PB>} {
   %cst = arith.constant 0.000000e+00 : f32
   %0 = tensor.empty() : tensor<64x2048xf32>
-  %broadcasted = linalg.broadcast ins(%arg0 : tensor<2048xf32>) outs(%0 : tensor<64x2048xf32>) dimensions = [0] 
+  %broadcasted = linalg.broadcast ins(%arg0 : tensor<2048xf32>) outs(%0 : tensor<64x2048xf32>) dimensions = [0]
   %padded = tensor.pad %broadcasted low[0, 0] high[0, 2048] {
   ^bb0(%arg1: index, %arg2: index):
     tensor.yield %cst : f32

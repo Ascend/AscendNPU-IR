@@ -277,7 +277,7 @@ func.func @test_reduce_with_index_with_index_input(%arg0 : tensor<256x64xf32>, %
 // CHECK-LABEL: func.func @test_is_inf
 func.func private @__hmf_isinff(f32) -> i1 attributes {llvm.readnone}
 func.func @test_is_inf(%arg0 : tensor<32xf32>, %arg1 : tensor<32xi1>) -> tensor<32xi1> {
-  // CHECK:       %[[RET1:.*]] = hfusion.isinf  %[[ARG0:.*]] : tensor<32xf32> -> tensor<32xi1> 
+  // CHECK:       %[[RET1:.*]] = hfusion.isinf  %[[ARG0:.*]] : tensor<32xf32> -> tensor<32xi1>
   %ret =  linalg.map { func.call {callee = @__hmf_isinff} } ins(%arg0 : tensor<32xf32>) outs(%arg1 : tensor<32xi1>)
   return %ret : tensor<32xi1>
 }
@@ -287,7 +287,7 @@ func.func @test_is_inf(%arg0 : tensor<32xf32>, %arg1 : tensor<32xi1>) -> tensor<
 // CHECK-LABEL: func.func @test_is_nan
 func.func private @__hmf_isnanf(f32) -> i1 attributes {llvm.readnone}
 func.func @test_is_nan(%arg0 : tensor<32xf32>, %arg1 : tensor<32xi1>) -> tensor<32xi1> {
-  // CHECK:       %[[RET1:.*]] = hfusion.isnan  %[[ARG0:.*]] : tensor<32xf32> -> tensor<32xi1> 
+  // CHECK:       %[[RET1:.*]] = hfusion.isnan  %[[ARG0:.*]] : tensor<32xf32> -> tensor<32xi1>
   %ret =  linalg.map { func.call {callee = @__hmf_isnanf} } ins(%arg0 : tensor<32xf32>) outs(%arg1 : tensor<32xi1>)
   return %ret : tensor<32xi1>
 }

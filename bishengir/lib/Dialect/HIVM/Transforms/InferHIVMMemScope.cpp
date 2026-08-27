@@ -87,14 +87,6 @@ LogicalResult setMemSpaceForAllocs(Operation *sourceOp,
   return success();
 }
 
-static BlockArgument getTiedWhileBodyIterArg(scf::WhileOp op,
-                                             OpOperand *opOperand) {
-  auto argsMutable = op.getInitsMutable();
-  auto *it = llvm::find(argsMutable, *opOperand);
-  if (it == argsMutable.end())
-    return {};
-  return op.getAfterArguments()[std::distance(argsMutable.begin(), it)];
-}
 } // namespace
 
 LogicalResult
@@ -125,13 +117,24 @@ MemScopeInferAndPropagateHelper::propagateMemScopeToUsers(Value val) {
     return failure();
   };
 
+  // Only infer values without a memory space; a scope pinned by the other
+  // while chain (before vs cond) is authoritative, else the while round trip
+  // recurses forever / trips setBaseMemRefTypeScope (ub/gm conflict).
+  auto propagateMemScopeIfMemRef = [this, &memrefScope](Value v) {
+    if (!isa<BaseMemRefType>(v.getType()))
+      return true;
+    if (cast<BaseMemRefType>(v.getType()).getMemorySpace())
+      return true;
+    setBaseMemRefTypeScope(v, memrefScope);
+    return propagateMemScopeToUsers(v).succeeded();
+  };
+
   auto propagateFn = [&](OpOperand &user) -> LogicalResult {
     Operation *userDefiningOp = user.getOwner();
     return TypeSwitch<Operation *, LogicalResult>(userDefiningOp)
         .Case<scf::YieldOp, scope::ReturnOp>([&](Operation *op) {
           Operation *parentOp = op->getParentOp();
           auto yieldResult = op->getOperand(user.getOperandNumber());
-          auto parentResult = parentOp->getResult(user.getOperandNumber());
 
           Type yieldType = yieldResult.getType();
           Type valType = val.getType();
@@ -144,6 +147,13 @@ MemScopeInferAndPropagateHelper::propagateMemScopeToUsers(Value val) {
           if (yieldMemRefType.getElementType() !=
               valMemRefType.getElementType())
             return success();
+
+          // yield[i] maps result[i]; while's after-yield handled elsewhere.
+          if (isa<scf::WhileOp>(parentOp))
+            return success();
+          if (user.getOperandNumber() >= parentOp->getNumResults())
+            return success();
+          auto parentResult = parentOp->getResult(user.getOperandNumber());
           setBaseMemRefTypeScope(parentResult, memrefScope);
           if (failed(propagateMemScopeToUsers(parentResult))) {
             return failure();
@@ -165,15 +175,32 @@ MemScopeInferAndPropagateHelper::propagateMemScopeToUsers(Value val) {
           auto yield = op.getTiedLoopYieldedValue(bbArg);
           if (!yield)
             return failure();
-          auto afterArg = getTiedWhileBodyIterArg(op, &user);
-          if (!afterArg)
-            return failure();
-          setBaseMemRefTypeScope(bbArg, memrefScope);
-          setBaseMemRefTypeScope(yield->get(), memrefScope);
-          setBaseMemRefTypeScope(afterArg, memrefScope);
-          return success(propagateMemScopeToUsers(afterArg).succeeded() &&
-                         propagateMemScopeToUsers(bbArg).succeeded() &&
-                         propagateMemScopeToUsers(yield->get()).succeeded());
+
+          // Propagate along the init -> before-arg -> after-yield round trip.
+          return success(propagateMemScopeIfMemRef(bbArg) &&
+                         propagateMemScopeIfMemRef(yield->get()));
+        })
+        .Case<scf::ConditionOp>([&](scf::ConditionOp op) {
+          // scf.condition's parent is always scf.while (HasParent trait).
+          auto whileOp = cast<scf::WhileOp>(op->getParentOp());
+          // cond-args map positionally to after-args/results.
+          auto condTerminator =
+              cast<RegionBranchTerminatorOpInterface>(op.getOperation());
+          OperandRange condArgs =
+              condTerminator.getSuccessorOperands(whileOp.getAfter());
+          if (user.getOperandNumber() < condArgs.getBeginOperandIndex())
+            return success(); // condition predicate
+          unsigned slot =
+              user.getOperandNumber() - condArgs.getBeginOperandIndex();
+          if (slot >= condArgs.size())
+            return success();
+
+          bool ok = true;
+          if (slot < whileOp.getAfterArguments().size())
+            ok &= propagateMemScopeIfMemRef(whileOp.getAfterArguments()[slot]);
+          if (slot < whileOp->getNumResults())
+            ok &= propagateMemScopeIfMemRef(whileOp->getResult(slot));
+          return success(ok);
         })
         .Case<memref::ExtractStridedMetadataOp>([&](auto op) {
           auto baseBuffer = op.getBaseBuffer();
@@ -352,28 +379,12 @@ LogicalResult hivm::inferAndPropagateMemScopeForConvOp(ConvOp op) {
   auto *weight = op.getDpsInputOperand(1);
   auto *output = op.getDpsInitOperand(0);
 
-  // input, weight and output must originate from an AllocOp
-  auto allocInput = utils::tracebackMemRefToAlloc(input->get());
-  auto allocWeight = utils::tracebackMemRefToAlloc(weight->get());
-  auto allocOutput = utils::tracebackMemRefToAlloc(output->get());
-
-  if (!allocInput.has_value()) {
-    emitError(op.getLoc())
-        << "Cannot find root memref.alloc for input of this op.";
-    return failure();
-  }
-
-  if (!allocWeight.has_value()) {
-    emitError(op.getLoc())
-        << "Cannot find root memref.alloc for weight of this op.";
-    return failure();
-  }
-
-  if (!allocOutput.has_value()) {
-    emitError(op.getLoc())
-        << "Cannot find root memref.alloc for output of this op.";
-    return failure();
-  }
+  // Trace back to all alloc-like roots. After memory planning, an allocation
+  // may already have been replaced by a pointer_cast; tracebackMemRefVec keeps
+  // that value as a root so repeated mem-scope inference remains valid.
+  auto allocsInput = utils::tracebackMemRefVec(input->get());
+  auto allocsWeight = utils::tracebackMemRefVec(weight->get());
+  auto allocsOutput = utils::tracebackMemRefVec(output->get());
 
   auto l1SpaceAttr =
       AddressSpaceAttr::get(op->getContext(), hivm::AddressSpace::L1);
@@ -383,21 +394,21 @@ LogicalResult hivm::inferAndPropagateMemScopeForConvOp(ConvOp op) {
   MemScopeInferAndPropagateHelper helper;
 
   // For ConvOp, operand input should be in L1.
-  if (failed(helper.Run(*allocInput, l1SpaceAttr))) {
+  if (failed(setMemSpaceForAllocs(op, helper, allocsInput, l1SpaceAttr))) {
     return op->emitOpError("Failed to infer/propagate memory scope for input");
   }
   LDBG("IR after setting mem scope for input:\n"
        << *(op->template getParentOfType<ModuleOp>()));
 
   // For ConvOp, operand weight should be in L1.
-  if (failed(helper.Run(*allocWeight, l1SpaceAttr))) {
+  if (failed(setMemSpaceForAllocs(op, helper, allocsWeight, l1SpaceAttr))) {
     return op->emitOpError("Failed to infer/propagate memory scope for weight");
   }
   LDBG("IR after setting mem scope for weight:\n"
        << *(op->template getParentOfType<ModuleOp>()));
 
   // For ConvOp, operand output should be in L0C.
-  if (failed(helper.Run(*allocOutput, l0cSpaceAttr))) {
+  if (failed(setMemSpaceForAllocs(op, helper, allocsOutput, l0cSpaceAttr))) {
     return op->emitOpError("Failed to infer/propagate memory scope for output");
   }
   LDBG("IR after setting mem scope for output:\n"

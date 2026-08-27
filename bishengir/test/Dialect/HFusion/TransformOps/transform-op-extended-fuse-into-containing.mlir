@@ -148,11 +148,11 @@ module attributes { transform.with_named_sequence } {
 
 // CHECK-LABEL: func.func @test_extract_producer_with_multiple_users(
 // CHECK: scf.for
-// CHECK: %[[fused_mul_0:.*]] = linalg.elemwise_binary {__b__, 
-// CHECK: %[[fused_extract_0:.*]] = tensor.extract %[[fused_mul_0]]{{\[}}] {__a__} 
+// CHECK: %[[fused_mul_0:.*]] = linalg.elemwise_binary {__b__,
+// CHECK: %[[fused_extract_0:.*]] = tensor.extract %[[fused_mul_0]]{{\[}}] {__a__}
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins({{.*}}, %[[fused_extract_0]] : tensor<16xf32>, f32)
-// CHECK: %[[fused_mul_1:.*]] = linalg.elemwise_binary {__b__, 
-// CHECK: %[[fused_extract_1:.*]] = tensor.extract %[[fused_mul_1]]{{\[}}] {__a__} 
+// CHECK: %[[fused_mul_1:.*]] = linalg.elemwise_binary {__b__,
+// CHECK: %[[fused_extract_1:.*]] = tensor.extract %[[fused_mul_1]]{{\[}}] {__a__}
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins({{.*}}, %[[fused_extract_1]] : tensor<16xf32>, f32)
 module attributes {transform.with_named_sequence} {
   func.func @test_extract_producer_with_multiple_users(%arg0: tensor<f32>, %arg1: tensor<32xf32>, %arg2: tensor<32xf32>) -> tensor<32xf32> {
@@ -183,7 +183,7 @@ module attributes {transform.with_named_sequence} {
     %2 = transform.structured.match attributes {__b__} in %arg0 : (!transform.any_op) -> !transform.any_op
     %3 = transform.structured.match attributes {__c__} in %arg0 : (!transform.any_op) -> !transform.any_op
     %fused_op_0, %new_containing_op_1 = transform.structured.extended_fuse_into_containing_op %2 into %3 {duplicate_producer = false} : (!transform.any_op, !transform.any_op) -> (!transform.any_op, !transform.any_op)
-    transform.yield 
+    transform.yield
   }
 }
 
@@ -191,9 +191,9 @@ module attributes {transform.with_named_sequence} {
 
 // CHECK-LABEL: func.func @test_rank0_producer_with_multiple_users(
 // CHECK: scf.for
-// CHECK: %[[fused_mul_0:.*]] = linalg.elemwise_binary {__a__, fun = #linalg.binary_fn<mul>} 
+// CHECK: %[[fused_mul_0:.*]] = linalg.elemwise_binary {__a__, fun = #linalg.binary_fn<mul>}
 // CHECK: linalg.elemwise_binary {{.*}} ins({{.*}}, %[[fused_mul_0]] : tensor<f32>, tensor<f32>)
-// CHECK: %[[fused_mul_1:.*]] = linalg.elemwise_binary {__a__, fun = #linalg.binary_fn<mul>} 
+// CHECK: %[[fused_mul_1:.*]] = linalg.elemwise_binary {__a__, fun = #linalg.binary_fn<mul>}
 // CHECK: linalg.elemwise_binary {{.*}} ins({{.*}}, %[[fused_mul_1]] : tensor<f32>, tensor<f32>)
 module attributes {transform.with_named_sequence} {
   func.func @test_rank0_producer_with_multiple_users(%arg0: tensor<f32>, %arg1: tensor<f32>, %arg2: tensor<f32>, %arg3: tensor<f32>) -> (tensor<f32>, tensor<f32>) {
@@ -219,7 +219,7 @@ module attributes {transform.with_named_sequence} {
     %2 = transform.structured.match attributes {__b__} in %arg0 : (!transform.any_op) -> !transform.any_op
     %3 = transform.structured.match attributes {__c__} in %arg0 : (!transform.any_op) -> !transform.any_op
     %fused_op_0, %new_containing_op_1 = transform.structured.extended_fuse_into_containing_op %2 into %3 {duplicate_producer = false} : (!transform.any_op, !transform.any_op) -> (!transform.any_op, !transform.any_op)
-    transform.yield 
+    transform.yield
   }
 }
 
@@ -253,7 +253,7 @@ module attributes {transform.with_named_sequence} {
     %0 = transform.structured.match attributes {__a__} in %arg0 : (!transform.any_op) -> !transform.any_op
     %1 = transform.structured.match attributes {__b__} in %arg0 : (!transform.any_op) -> !transform.any_op
     %fused_op, %new_containing_op = transform.structured.extended_fuse_into_containing_op %0 into %1 {duplicate_producer = false} : (!transform.any_op, !transform.any_op) -> (!transform.any_op, !transform.any_op)
-    transform.yield 
+    transform.yield
   }
 }
 
@@ -283,7 +283,7 @@ module attributes {transform.with_named_sequence} {
     %0 = transform.structured.match attributes {__a__} in %arg0 : (!transform.any_op) -> !transform.any_op
     %1 = transform.structured.match attributes {__b__} in %arg0 : (!transform.any_op) -> !transform.any_op
     %fused_op, %new_containing_op = transform.structured.extended_fuse_into_containing_op %0 into %1 {duplicate_producer = false} : (!transform.any_op, !transform.any_op) -> (!transform.any_op, !transform.any_op)
-    transform.yield 
+    transform.yield
   }
 }
 

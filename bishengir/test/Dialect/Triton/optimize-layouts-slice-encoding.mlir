@@ -91,4 +91,4 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
     tt.store %arg7, %29 : !tt.ptr<f32>
     tt.return
   }
-}
+}

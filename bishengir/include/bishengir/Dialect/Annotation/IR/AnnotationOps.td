@@ -42,7 +42,7 @@ def MarkOp : Op<Annotation_Dialect, "mark", [DeclareOpInterfaceMethods<MemoryEff
     ```
   }];
   let arguments = (ins AnyType:$src,
-                       DefaultValuedAttr<StrArrayAttr, 
+                       DefaultValuedAttr<StrArrayAttr,
                        "llvm::ArrayRef<StringRef>{stringifyEffectMode(EffectMode::Write)}">:$effects,
                        Variadic<AnyType>:$values,
                        OptionalAttr<StrArrayAttr>:$keys);

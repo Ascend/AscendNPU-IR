@@ -331,6 +331,7 @@ static void hivmPreBufferizationOptimizationPipeline(
 
   pm.addPass(mlir::scf::createRemoveRedundantLoopInitPass());
   pm.addPass(mlir::hivm::createNormalizeMatmulPass());
+  pm.addPass(mlir::hivm::createNormalizeConvOpsPass());
   pm.addPass(mlir::hivm::createInsertFixpipePass());
   {
     InlineFixpipeOptions inlineFixpipeOpts;
@@ -419,14 +420,7 @@ static void hivmPreBufferizationOptimizationPipeline(
     }
   }
 
-  if (hivmPipelineOptions.partitionAndBindSubBlock !=
-      PartitionAndBindSubBlockMode::Off) {
-    PartitionAndBindSubBlockOptions partitionOptions;
-    partitionOptions.enableLoadBalanced =
-        hivmPipelineOptions.partitionAndBindSubBlock ==
-        PartitionAndBindSubBlockMode::LoadBalanced;
-    pm.addPass(createPartitionAndBindSubBlockPass(partitionOptions));
-  }
+  pm.addPass(createPartitionAndBindSubBlockPass());
   pm.nest<func::FuncOp>().addPass(createInferVFModePass());
 
   PlanMemoryRegBaseOptions planMemoryOption;
@@ -693,9 +687,9 @@ void buildHIVMTensorOptimizations(
 void buildLowerHIVMPipelines(OpPassManager &pm,
                              const HIVMPipelineOptions &hivmPipelineOptions) {
   bufferizationPipeline(pm, hivmPipelineOptions);
-  if (hivmPipelineOptions.partitionAndBindSubBlock !=
-      PartitionAndBindSubBlockMode::Off)
-    pm.addPass(createSubBlockGuardCleanupPass());
+  // Self-gated: only rewrites guards whose get_sub_block_idx carries the
+  // partition provenance stamp
+  pm.addPass(createSubBlockGuardCleanupPass());
   hivmPostBufferizationOptimizationPipeline(pm, hivmPipelineOptions);
   // Optimizations that relies on scope should be done after this point. Inline
   // all `scope.scope` ops.

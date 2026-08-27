@@ -165,7 +165,7 @@ def AutoVectorizeV2 : Pass<"hfusion-auto-vectorize-v2", "ModuleOp"> {
            "Maximum number of ops allowed in one fused node.">,
     Option<"enableVFStackLimit", "enable-vf-stack-limit", "bool", "false",
            "Enable conservative vector function stack slot limit.">,
-    Option<"enableMultipleConsumerFusion", "enable-multiple-consumer-fusion", "bool", "false",
+    Option<"enableMultipleConsumerFusion", "enable-multiple-consumer-fusion", "bool", "true",
            "Enable multiple consumer fusion in AutoVectorizeV2.">,
     Option<"emitTransformSequence", "emit-transform-sequence", "bool", "false",
            "Emit AutoVectorizeV2 payload tags and transform sequence without applying it.">,
@@ -176,18 +176,24 @@ def AutoVectorizeV2 : Pass<"hfusion-auto-vectorize-v2", "ModuleOp"> {
 }
 
 def TreeReduceV2 : Pass<"tree-reduce-v2", "ModuleOp"> {
- 	   let summary = "tree-reduce-v2";
- 	   let constructor = "mlir::hfusion::createTreeReduceV2Pass()";
- 	   let dependentDialects = ["linalg::LinalgDialect",
- 	   "arith::ArithDialect",
- 	   "vector::VectorDialect"];
- 	   let options = [
- 	     Option<"enableRA", "enable-ra", "bool", "true",
- 	            "Enable RA (reduction along dim 0) in TreeReduceV2.">,
- 	     Option<"enableAR", "enable-ar", "bool", "false",
- 	            "Enable AR (reduction along dim 1) in TreeReduceV2.">,
- 	   ];
- 	 }
+  let summary = "tree-reduce-v2";
+  let constructor = "mlir::hfusion::createTreeReduceV2Pass()";
+  let dependentDialects = ["linalg::LinalgDialect",
+                           "arith::ArithDialect",
+                           "vector::VectorDialect"];
+  let options = [
+    Option<"enableRA", "enable-ra", "bool", "true",
+           "Enable RA (reduction along dim 0) in TreeReduceV2.">,
+    Option<"enableAR", "enable-ar", "bool", "false",
+           "Enable AR (reduction along dim 1) in TreeReduceV2.">,
+    Option<"onlyMarked", "only-marked", "bool", "false",
+           "Rewrite only loops marked for direct register reduction.">,
+    Option<"directRegisterRA", "direct-register-ra", "bool", "false",
+           "Use the direct balanced register-tree RA lowering.">,
+    Option<"onlyLegacyScope", "only-legacy-scope", "bool", "false",
+           "Rewrite only modules selected for the legacy tree strategy.">,
+  ];
+}
 
 def AddFFTSAddr : Pass<"hfusion-add-ffts-addr", "ModuleOp"> {
   let summary = "Add ffts base address to func param and annotation";

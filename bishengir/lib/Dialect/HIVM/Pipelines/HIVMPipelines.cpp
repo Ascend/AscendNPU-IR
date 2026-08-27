@@ -15,6 +15,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "bishengir/Conversion/FixCallUnknownLoc/FixCallUnknownLoc.h"
 #include "bishengir/Conversion/Passes.h"
 #include "bishengir/Dialect/Annotation/Transforms/Passes.h"
 #include "bishengir/Dialect/Arith/Transforms/Passes.h"
@@ -27,7 +28,6 @@
 #include "bishengir/Dialect/Scope/Transforms/Passes.h"
 #include "bishengir/Dialect/Tensor/Transforms/Passes.h"
 #include "bishengir/Transforms/Passes.h"
-#include "bishengir/Conversion/FixCallUnknownLoc/FixCallUnknownLoc.h"
 
 #include "mlir/Dialect/Bufferization/Transforms/OneShotAnalysis.h"
 #include "mlir/Dialect/Bufferization/Transforms/Passes.h"
@@ -176,7 +176,8 @@ bufferizationPipeline(OpPassManager &pm,
 static void hivmAutoInsertLdStForMixCVPipeline(
     OpPassManager &pm, const HIVMPipelineOptions &hivmPipelineOptions) {
   InsertLoadStoreForMixCVOptions options;
-  options.enableLegacy = hivmPipelineOptions.enableLegacyInsertLoadStoreForMixCV;
+  options.enableLegacy =
+      hivmPipelineOptions.enableLegacyInsertLoadStoreForMixCV;
   options.disableTightCoupledBuffer =
       hivmPipelineOptions.disableTightCoupledBuffer;
   // Non-triton paths keep the legacy insert-load-store behavior.
@@ -225,7 +226,8 @@ static void hivmPreBufferizationOptimizationPipeline(
   pm.addPass(mlir::hivm::createNormalizeConvOpsPass());
   pm.addPass(mlir::hivm::createNormalizeBitwiseSelectPass());
   // After Insert/Inline split, InlineFixpipe only folds into existing fixpipe.
-  // A3 mem-based path still needs InsertFixpipe (MR 2052 / compile-bisheng-distributed).
+  // A3 mem-based path still needs InsertFixpipe (MR 2052 /
+  // compile-bisheng-distributed).
   pm.addPass(mlir::hivm::createInsertFixpipePass());
   {
     InlineFixpipeOptions inlineFixpipeOpts;
@@ -297,20 +299,16 @@ static void hivmPreBufferizationOptimizationPipeline(
           hivmPipelineOptions.setWorkspaceMultibuffer;
       pipelineOptions.enableLazyLoading = hivmPipelineOptions.enableLazyLoading;
       pipelineOptions.pipelineMode = hivmPipelineOptions.setCVPipelineMode;
+      // Workspace allocation with dyn size, requires setbuffersize pass to get
+      // fixed size.
+      pm.nest<func::FuncOp>().addPass(createSetBufferSizePass());
       pm.nest<func::FuncOp>().addPass(createCVPipeliningPass(pipelineOptions));
     }
   }
 
   // Partition after CV pipelining so it sees the IR cv-pipeline actually
   // emits.
-  if (hivmPipelineOptions.partitionAndBindSubBlock !=
-      PartitionAndBindSubBlockMode::Off) {
-    PartitionAndBindSubBlockOptions partitionOptions;
-    partitionOptions.enableLoadBalanced =
-        hivmPipelineOptions.partitionAndBindSubBlock ==
-        PartitionAndBindSubBlockMode::LoadBalanced;
-    pm.addPass(createPartitionAndBindSubBlockPass(partitionOptions));
-  }
+  pm.addPass(createPartitionAndBindSubBlockPass());
 
   if (hivmPipelineOptions.enableUbufSaving) {
     pm.nest<func::FuncOp>().addPass(createCloneTensorEmptyPass());
@@ -330,8 +328,8 @@ static void hivmPreBufferizationOptimizationPipeline(
     planMemoryOption.memMode = MemPlanMode::GLOBAL_WORKSPACE_PLAN;
     planMemoryOption.enableGlobalReuse =
         hivmPipelineOptions.enableHIVMGlobalWorkspaceReuse;
-  planMemoryOption.planMemoryStrategy =
-      hivmPipelineOptions.planMemoryStrategy;
+    planMemoryOption.planMemoryStrategy =
+        hivmPipelineOptions.planMemoryStrategy;
     pm.addPass(createPlanMemoryPass(planMemoryOption));
   }
   // cross-core sync (inject-block-sync) passes.
@@ -440,6 +438,11 @@ static void hivmPostBufferizationOptimizationPipeline(
       bishengir::DecomposePhase::AFTER_HIVM_STRIDE_ALIGNMENT;
   pm.nest<func::FuncOp>().addPass(
       createHIVMAggregatedDecomposeOpPass(decomposeOption));
+  // Fold load chains whose buffers are collapsed back to matrix form by
+  // their consumers (e.g. shared-load tiles rank-raised to [d0, 1, d2]),
+  // so layout classification sees genuine ranks.
+  pm.nest<func::FuncOp>().addPass(
+      tensor::createFoldCollapseIntoAllocWithLoadPass());
   // convert copyOp to nd2nzOp
   pm.nest<func::FuncOp>().addPass(createInferHIVMDataLayoutPass());
   pm.nest<func::FuncOp>().addPass(createRemoveHIVMDataLayoutAnnotationPass());
@@ -487,8 +490,7 @@ static void hivmPostBufferizationOptimizationPipeline(
       hivmPipelineOptions.enableMemoryDisplay;
   planMemoryOption.disableTightlyCoupledBufferReuse =
       hivmPipelineOptions.disableTightlyCoupledBufferReuse;
-  planMemoryOption.planMemoryStrategy =
-      hivmPipelineOptions.planMemoryStrategy;
+  planMemoryOption.planMemoryStrategy = hivmPipelineOptions.planMemoryStrategy;
   pm.addPass(createPlanMemoryPass(planMemoryOption));
 
   // Lower hivm ops to loops
@@ -517,8 +519,9 @@ void buildOptimizeHIVMPipeline(OpPassManager &pm,
   if (!options.disableHIVMTensorCompile) {
     hivmPreBufferizationOptimizationPipeline(pm, options);
     bufferizationPipeline(pm, options);
-    if (options.partitionAndBindSubBlock != PartitionAndBindSubBlockMode::Off)
-      pm.addPass(createSubBlockGuardCleanupPass());
+    // Self-gated: only rewrites guards whose get_sub_block_idx carries the
+    // partition provenance stamp; a no-op in non-partitioned modules.
+    pm.addPass(createSubBlockGuardCleanupPass());
   }
   hivmPostBufferizationOptimizationPipeline(pm, options);
   // Optimizations that relies on scope should be done after this point. Inline
@@ -532,7 +535,10 @@ void buildOptimizeHIVMPipeline(OpPassManager &pm,
   pm.nest<func::FuncOp>().addPass(createInsertInitAndFinishForDebugPass());
   pm.addPass(createMarkDisableLoadPass());
   syncBlockLockPipeline(pm, SyncBlockLockPipelinePhase::Finalize);
-  pm.addPass(createConvertHIVMToStandardPass());
+  ConvertHIVMToStandardOptions hivmToStdOptions;
+  hivmToStdOptions.isOpsAligned = options.enableHIVMAutoStorageAlign;
+  hivmToStdOptions.markLibCallNoInline = options.enableLibCallNoInline;
+  pm.addPass(createConvertHIVMToStandardPass(hivmToStdOptions));
   pm.nest<func::FuncOp>().addPass(createFixCallUnknownLocPass());
 }
 

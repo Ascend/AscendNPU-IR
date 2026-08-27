@@ -7,8 +7,9 @@
 // DISABLED-NOT: transform.structured.split_reduction
 
 // ENABLED-LABEL: transform.sequence {{.*}}auto_vectorize_v2.transform.tree_reduce_option
-// ENABLED: transform.structured.tile_reduction_using_for
-// ENABLED: transform.structured.split_reduction
+// ENABLED: transform.structured.tile_using_for
+// ENABLED: annotate {{.*}} "hfusion.register_tree_reduction"
+// ENABLED-NOT: transform.structured.split_reduction
 
 #input_map = affine_map<(d0, d1) -> (d0, d1)>
 #output_map = affine_map<(d0, d1) -> (d1)>

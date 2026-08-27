@@ -221,7 +221,7 @@ func.func @hivm_transpose(%arg0: memref<1x16x8xf32>) -> memref<1x16x8xf32> {
   %3 = memref.alloc() : memref<1x16x8xf32>
   hivm.hir.vtranspose ins(%arg0 : memref<1x16x8xf32>) outs(%0 : memref<16x1x8xf32>) permutation = [1, 0, 2]
   hivm.hir.vtranspose ins(%0 : memref<16x1x8xf32>) outs(%1 : memref<8x1x16xf32>) permutation = [2, 1, 0]
-  hivm.hir.vtranspose ins(%1 : memref<8x1x16xf32>) outs(%2 : memref<1x8x16xf32>) permutation = [1, 0, 2] 
+  hivm.hir.vtranspose ins(%1 : memref<8x1x16xf32>) outs(%2 : memref<1x8x16xf32>) permutation = [1, 0, 2]
   hivm.hir.vtranspose ins(%2 : memref<1x8x16xf32>) outs(%3 : memref<1x16x8xf32>) permutation = [0, 2, 1]
   return %3 : memref<1x16x8xf32>
 }
@@ -387,7 +387,7 @@ module {
 // -----
 
 // CHECK-LABEL: func.func @brc_flatten_combine_reassociations
-func.func @brc_flatten_combine_reassociations(%src: memref<1x1x1xi16>, 
+func.func @brc_flatten_combine_reassociations(%src: memref<1x1x1xi16>,
                                               %dst1: memref<1024x1x1xi16>,
                                               %dst2: memref<1x1024x1xi16>,
                                               %dst3: memref<1x1x1024xi16>,
@@ -421,9 +421,9 @@ func.func @brc_flatten_combine_reassociations(%src: memref<1x1x1xi16>,
 // -----
 
 // CHECK-LABEL: func.func @brc_reduce_flatten_combine_reassociations
-func.func @brc_reduce_flatten_combine_reassociations(%src1: memref<1x1x1x2x4x1xi32>, 
+func.func @brc_reduce_flatten_combine_reassociations(%src1: memref<1x1x1x2x4x1xi32>,
                                                      %dst1: memref<1x1x8x2x4x8xi32>,
-                                                     %src2: memref<1x1x1x2x4x2x1x1x1xi32>, 
+                                                     %src2: memref<1x1x1x2x4x2x1x1x1xi32>,
                                                      %dst2: memref<1x1x?x2x4x2x8x8x1xi32>) {
   // CHECK: hivm.hir.vbrc ins({{.*}} memref<1x8x1xi32>) outs({{.*}} memref<8x8x8xi32>) broadcast_dims = {{\[}}0, 2]
   hivm.hir.vbrc ins(%src1: memref<1x1x1x2x4x1xi32>) outs(%dst1: memref<1x1x8x2x4x8xi32>) broadcast_dims = [2, 5]
@@ -475,9 +475,9 @@ func.func @otf_flatten_combine_reassociations(%src1: memref<1x1x1x2x4xi32>,
 // -----
 
 // CHECK-LABEL: func.func @vtranspose_flatten_combine_reassociations
-func.func @vtranspose_flatten_combine_reassociations(%src1: memref<1x2x1x8x4x2xi32>, 
+func.func @vtranspose_flatten_combine_reassociations(%src1: memref<1x2x1x8x4x2xi32>,
                                                      %dst1: memref<2x1x1x8x4x2xi32>,
-                                                     %src2: memref<4x?x8x1x8x4xi32>, 
+                                                     %src2: memref<4x?x8x1x8x4xi32>,
                                                      %dst2: memref<?x2x8x1x4x8xi32>) {
 
   // CHECK: memref.collapse_shape {{.*}} {{\[}}[0], [1, 2], [3, 4, 5]]
@@ -485,7 +485,7 @@ func.func @vtranspose_flatten_combine_reassociations(%src1: memref<1x2x1x8x4x2xi
   // CHECK: hivm.hir.vtranspose ins({{.*}} memref<1x2x64xi32>) outs({{.*}} memref<2x1x64xi32>) permutation = [1, 0, 2]
   hivm.hir.vtranspose ins(%src1 : memref<1x2x1x8x4x2xi32>) outs(%dst1 : memref<2x1x1x8x4x2xi32>) permutation = [1, 0, 2, 3, 4, 5]
   // CHECK: memref.collapse_shape {{.*}} {{\[}}[0, 1, 2, 3], [4], [5]]
-  // CHECK: memref.collapse_shape {{.*}} {{\[}}[0, 1, 2, 3], [4], [5]]  
+  // CHECK: memref.collapse_shape {{.*}} {{\[}}[0, 1, 2, 3], [4], [5]]
   // CHECK: hivm.hir.vtranspose ins({{.*}} memref<?x8x4xi32>) outs({{.*}} memref<?x4x8xi32>) permutation = [0, 2, 1]
   hivm.hir.vtranspose ins(%src2 : memref<4x?x8x1x8x4xi32>) outs(%dst2 : memref<?x2x8x1x4x8xi32>) permutation = [0, 1, 2, 3, 5, 4]
   return
@@ -496,31 +496,31 @@ func.func @vtranspose_flatten_combine_reassociations(%src1: memref<1x2x1x8x4x2xi
 // CHECK-LABEL: func.func @strided_combine_reassociations
 func.func @strided_combine_reassociations(
                                           %src0: memref<1x1x2x1x1x1xi32>, %dst0: memref<1x8x2x1x8x1xi32>,
-                                          %src1: memref<1x1x2x1x1x1xi32, strided<[?, ?, ?, ?, 1, 1]>>, 
+                                          %src1: memref<1x1x2x1x1x1xi32, strided<[?, ?, ?, ?, 1, 1]>>,
                                           %dst1: memref<1x8x2x1x8x1xi32, strided<[?, ?, ?, ?, 1, 1]>>,
-                                          %src2: memref<16x1x1x2x1x1x1xi32, strided<[?, ?, ?, ?, ?, 1, 1]>>, 
+                                          %src2: memref<16x1x1x2x1x1x1xi32, strided<[?, ?, ?, ?, ?, 1, 1]>>,
                                           %dst2: memref<16x1x8x2x1x8x1xi32, strided<[?, ?, ?, ?, ?, 1, 1]>>) {
   // CHECK: hivm.hir.vbrc ins({{.*}} memref<1x2x1xi32>) outs({{.*}} memref<8x2x8xi32>) broadcast_dims = {{\[}}0, 2]
   hivm.hir.vbrc ins(%src0: memref<1x1x2x1x1x1xi32>) outs(%dst0: memref<1x8x2x1x8x1xi32>) broadcast_dims = [1, 4]
 
   // CHECK: hivm.hir.vbrc ins({{.*}} memref<1x2x1xi32, strided<[?, ?, 1]>>)
   // CHECK-SAME: outs({{.*}} memref<8x2x8xi32, strided<[?, ?, 1]>>) broadcast_dims = {{\[}}0, 2]
-  hivm.hir.vbrc ins(%src1: memref<1x1x2x1x1x1xi32, strided<[?, ?, ?, ?, 1, 1]>>) 
+  hivm.hir.vbrc ins(%src1: memref<1x1x2x1x1x1xi32, strided<[?, ?, ?, ?, 1, 1]>>)
                 outs(%dst1: memref<1x8x2x1x8x1xi32, strided<[?, ?, ?, ?, 1, 1]>>) broadcast_dims = [1, 4]
 
   // CHECK: hivm.hir.vreduce <max> ins({{.*}} memref<8x2x8xi32, strided<[?, ?, 1]>>)
   // CHECK-SAME: outs({{.*}} memref<1x2x1xi32, strided<[?, ?, 1]>>) reduce_dims = {{\[}}0, 2]
-  hivm.hir.vreduce <max> ins(%dst1 : memref<1x8x2x1x8x1xi32, strided<[?, ?, ?, ?, 1, 1]>>) 
+  hivm.hir.vreduce <max> ins(%dst1 : memref<1x8x2x1x8x1xi32, strided<[?, ?, ?, ?, 1, 1]>>)
                          outs(%src1 : memref<1x1x2x1x1x1xi32, strided<[?, ?, ?, ?, 1, 1]>>) reduce_dims = [1, 4]
 
   // CHECK: hivm.hir.vbrc ins({{.*}} memref<16x1x2x1xi32, strided<[?, ?, ?, 1]>>)
   // CHECK-SAME: outs({{.*}} memref<16x8x2x8xi32, strided<[?, ?, ?, 1]>>) broadcast_dims = {{\[}}1, 3]
-  hivm.hir.vbrc ins(%src2: memref<16x1x1x2x1x1x1xi32, strided<[?, ?, ?, ?, ?, 1, 1]>>) 
+  hivm.hir.vbrc ins(%src2: memref<16x1x1x2x1x1x1xi32, strided<[?, ?, ?, ?, ?, 1, 1]>>)
                 outs(%dst2: memref<16x1x8x2x1x8x1xi32, strided<[?, ?, ?, ?, ?, 1, 1]>>) broadcast_dims = [2, 5]
 
   // CHECK: hivm.hir.vreduce <max> ins({{.*}} memref<16x8x2x8xi32, strided<[?, ?, ?, 1]>>)
   // CHECK-SAME: outs({{.*}} memref<16x1x2x1xi32, strided<[?, ?, ?, 1]>>) reduce_dims = {{\[}}1, 3]
-  hivm.hir.vreduce <max> ins(%dst2 : memref<16x1x8x2x1x8x1xi32, strided<[?, ?, ?, ?, ?, 1, 1]>>) 
+  hivm.hir.vreduce <max> ins(%dst2 : memref<16x1x8x2x1x8x1xi32, strided<[?, ?, ?, ?, ?, 1, 1]>>)
                          outs(%src2 : memref<16x1x1x2x1x1x1xi32, strided<[?, ?, ?, ?, ?, 1, 1]>>) reduce_dims = [2, 5]
   return
 }
@@ -528,29 +528,29 @@ func.func @strided_combine_reassociations(
 // -----
 
 // CHECK-LABEL: func.func @strided_combine_reassociations_otf
-func.func @strided_combine_reassociations_otf(%src1: memref<16x1x1x1x1x8xi32, strided<[?, ?, ?, ?, 8, 1]>>, 
+func.func @strided_combine_reassociations_otf(%src1: memref<16x1x1x1x1x8xi32, strided<[?, ?, ?, ?, 8, 1]>>,
                                               %dst1: memref<16x1x8x4x1x8xi32, strided<[?, ?, ?, ?, 8, 1]>>) {
   // CHECK: hivm.hir.vadd ins({{.*}} memref<16x1x1x8xi32, strided<[?, ?, ?, 1]>>, memref<16x1x1x8xi32, strided<[?, ?, ?, 1]>>)
   // CHECK-SAME: outs({{.*}} memref<16x8x4x8xi32, strided<[?, ?, ?, 1]>>) broadcast = {{\[}}1, 2]
-  hivm.hir.vadd ins(%src1, %src1 : memref<16x1x1x1x1x8xi32, strided<[?, ?, ?, ?, 8, 1]>>, 
+  hivm.hir.vadd ins(%src1, %src1 : memref<16x1x1x1x1x8xi32, strided<[?, ?, ?, ?, 8, 1]>>,
                                    memref<16x1x1x1x1x8xi32, strided<[?, ?, ?, ?, 8, 1]>>)
                 outs(%dst1 : memref<16x1x8x4x1x8xi32, strided<[?, ?, ?, ?, 8, 1]>>)
                 broadcast = [2, 3]
-  return  
+  return
 }
- 
+
 // -----
 
 // CHECK-LABEL: func.func @strided_combine_reassociations_transpose
-func.func @strided_combine_reassociations_transpose(%src1: memref<16x1x8x4x1x8xi32>, 
+func.func @strided_combine_reassociations_transpose(%src1: memref<16x1x8x4x1x8xi32>,
                                                     %dst1: memref<16x1x4x8x1x8xi32>,
-                                                    %src2: memref<16x1x8x4x1x8xi32, strided<[?, ?, ?, ?, 8, 1]>>, 
+                                                    %src2: memref<16x1x8x4x1x8xi32, strided<[?, ?, ?, ?, 8, 1]>>,
                                                     %dst2: memref<16x1x4x8x1x8xi32, strided<[?, ?, ?, ?, 8, 1]>>) {
   // CHECK: memref.collapse_shape {{.*}} {{\[}}[0, 1], [2], [3, 4], [5]]
   // CHECK: memref.collapse_shape {{.*}} {{\[}}[0, 1], [2], [3, 4], [5]]
-  // CHECK: hivm.hir.vadd ins({{.*}} memref<16x8x4x8xi32>, memref<16x8x4x8xi32>) 
+  // CHECK: hivm.hir.vadd ins({{.*}} memref<16x8x4x8xi32>, memref<16x8x4x8xi32>)
   // CHECK-SAME: outs({{.*}} memref<16x4x8x8xi32>) transpose = {{\[}}0, 2, 1, 3]
-  hivm.hir.vadd ins(%src1, %src1 : memref<16x1x8x4x1x8xi32>, 
+  hivm.hir.vadd ins(%src1, %src1 : memref<16x1x8x4x1x8xi32>,
                                    memref<16x1x8x4x1x8xi32>)
                 outs(%dst1 : memref<16x1x4x8x1x8xi32>)
                 transpose = [0, 1, 3, 2, 4, 5]
@@ -570,9 +570,9 @@ func.func @strided_combine_reassociations_transpose(%src1: memref<16x1x8x4x1x8xi
   // CHECK: memref.collapse_shape {{.*}} {{\[}}[0, 1], [2], [3, 4], [5]]
   // CHECK: hivm.hir.vtranspose ins({{.*}} memref<16x8x4x8xi32, strided<[?, ?, ?, 1]>>)
   // CHECK-SAME: outs({{.*}} memref<16x4x8x8xi32, strided<[?, ?, ?, 1]>>) permutation = {{\[}}0, 2, 1, 3]
-  hivm.hir.vtranspose ins(%src2 : memref<16x1x8x4x1x8xi32, strided<[?, ?, ?, ?, 8, 1]>>) 
+  hivm.hir.vtranspose ins(%src2 : memref<16x1x8x4x1x8xi32, strided<[?, ?, ?, ?, 8, 1]>>)
                       outs(%dst2 : memref<16x1x4x8x1x8xi32, strided<[?, ?, ?, ?, 8, 1]>>) permutation = [0, 1, 3, 2, 4, 5]
-  return  
+  return
 }
 
 // -----
@@ -662,9 +662,9 @@ func.func @transpose_otf(%arg0: memref<2x16x8x4x3xf32>, %arg1: memref<2x16x8x4x3
 // CHECK: hivm.hir.vadd {{.*}} memref<4x6x?xf32>, memref<4x6x?xf32>
 // CHECK-SAME: outs({{.*}} : memref<6x4x?xf32>
 // CHECK-SAME: transpose = {{\[}}1, 0, 2]
-func.func @transpose_otf_collapse_continuous(%arg0: memref<4x3x2x?x3x2xf32>, 
-                                             %arg1: memref<4x3x2x?x3x2xf32>, 
-                                             %arg2: memref<3x2x4x?x3x2xf32>) 
+func.func @transpose_otf_collapse_continuous(%arg0: memref<4x3x2x?x3x2xf32>,
+                                             %arg1: memref<4x3x2x?x3x2xf32>,
+                                             %arg2: memref<3x2x4x?x3x2xf32>)
                                                  -> memref<3x2x4x?x3x2xf32> {
   hivm.hir.vadd ins(%arg0, %arg1 : memref<4x3x2x?x3x2xf32>, memref<4x3x2x?x3x2xf32>)
                 outs(%arg2 : memref<3x2x4x?x3x2xf32>)
@@ -675,16 +675,16 @@ func.func @transpose_otf_collapse_continuous(%arg0: memref<4x3x2x?x3x2xf32>,
 // -----
 
 // CHECK-LABEL: func.func @transpose_otf_strided_collapse_continuous
-// CHECK: memref.collapse_shape {{.*}} {{\[}}[0], [1], [2], [3], [4, 5]] : memref<4x3x2x?x3x2xf32, strided<[?, ?, ?, ?, 2, 1]>> 
+// CHECK: memref.collapse_shape {{.*}} {{\[}}[0], [1], [2], [3], [4, 5]] : memref<4x3x2x?x3x2xf32, strided<[?, ?, ?, ?, 2, 1]>>
 // CHECK-SAME: into memref<4x3x2x?x6xf32, strided<[?, ?, ?, ?, 1]>>
 // CHECK: hivm.hir.vadd {{.*}} memref<4x3x2x?x6xf32, strided<[?, ?, ?, ?, 1]>>
-// CHECK-SAME: outs({{.*}} : memref<4x2x3x?x6xf32, strided<[?, ?, ?, ?, 1]>>) 
+// CHECK-SAME: outs({{.*}} : memref<4x2x3x?x6xf32, strided<[?, ?, ?, ?, 1]>>)
 // CHECK-SAME: transpose = {{\[}}0, 2, 1, 3, 4]
-func.func @transpose_otf_strided_collapse_continuous(%arg0: memref<4x3x2x?x3x2xf32, strided<[?, ?, ?, ?, 2, 1]>>, 
-                                                     %arg1: memref<4x3x2x?x3x2xf32, strided<[?, ?, ?, ?, 2, 1]>>, 
-                                                     %arg2: memref<4x2x3x?x3x2xf32, strided<[?, ?, ?, ?, 2, 1]>>) 
+func.func @transpose_otf_strided_collapse_continuous(%arg0: memref<4x3x2x?x3x2xf32, strided<[?, ?, ?, ?, 2, 1]>>,
+                                                     %arg1: memref<4x3x2x?x3x2xf32, strided<[?, ?, ?, ?, 2, 1]>>,
+                                                     %arg2: memref<4x2x3x?x3x2xf32, strided<[?, ?, ?, ?, 2, 1]>>)
                                                          -> memref<4x2x3x?x3x2xf32, strided<[?, ?, ?, ?, 2, 1]>> {
-  hivm.hir.vadd ins(%arg0, %arg1 : memref<4x3x2x?x3x2xf32, strided<[?, ?, ?, ?, 2, 1]>>, 
+  hivm.hir.vadd ins(%arg0, %arg1 : memref<4x3x2x?x3x2xf32, strided<[?, ?, ?, ?, 2, 1]>>,
                                    memref<4x3x2x?x3x2xf32, strided<[?, ?, ?, ?, 2, 1]>>)
                 outs(%arg2 : memref<4x2x3x?x3x2xf32, strided<[?, ?, ?, ?, 2, 1]>>)
                 transpose = [0, 2, 1, 3, 4, 5]
@@ -706,9 +706,9 @@ func.func @hivm_copy(%arg0: memref<8x1xf32>, %arg1: memref<8x1xf32>) {
 // -----
 
 // CHECK-LABEL: hivm_copy_strided
-func.func @hivm_copy_strided(%src0: memref<8x4x2x1xf32, strided<[8, 2, 1, 1]>>, 
+func.func @hivm_copy_strided(%src0: memref<8x4x2x1xf32, strided<[8, 2, 1, 1]>>,
                              %dst0: memref<8x4x2x1xf32, strided<[8, 2, 1, 1]>>,
-                             %src1: memref<8x4x2x1xf32, strided<[16, 2, 1, 1]>>, 
+                             %src1: memref<8x4x2x1xf32, strided<[16, 2, 1, 1]>>,
                              %dst1: memref<8x4x2x1xf32, strided<[16, 2, 1, 1]>>) {
   // CHECK-DAG: memref.collapse_shape {{.*}} {{\[}}[0, 1, 2, 3]] : memref<8x4x2x1xf32, strided<[8, 2, 1, 1]>> into memref<64xf32, strided<[1]>>
   // CHECK-DAG: memref.collapse_shape {{.*}} {{\[}}[0, 1, 2, 3]] : memref<8x4x2x1xf32, strided<[8, 2, 1, 1]>> into memref<64xf32, strided<[1]>>
@@ -745,7 +745,7 @@ func.func @hivm_copy_rank1(%arg0: memref<8xf32>, %arg1: memref<8xf32>) {
   return
 }
 
-// ----- 
+// -----
 
 // CHECK-LABEL: func.func @partial_valid_collapsible(
 // CHECK-NOT: memref.collapse_shape
@@ -760,33 +760,33 @@ func.func @partial_valid_collapsible(%arg0: memref<?xi32, #hivm.address_space<gm
   return
 }
 
-// ----- 
+// -----
 
-// Test if `isGuaranteedCollapsibleStrictly()` works as expected 
+// Test if `isGuaranteedCollapsibleStrictly()` works as expected
 // CHECK-LABEL: func.func @strictly_collapse_with_dim_of_size1(
 func.func @strictly_collapse_with_dim_of_size1(%arg0: memref<3x1xf32, strided<[2, 1]>>,
                                                %arg1: memref<1x1xf32, strided<[8, 1]>>,
                                                %arg2: memref<3x1x1x1xf32, strided<[3, 3, 3, 1]>>,
                                                %arg3: memref<3x1x1x1xf32, strided<[8, 4, 2, 1]>>) {
   // CHECK: memref.collapse_shape {{.*}} {{\[}}[0, 1]] : memref<3x1xf32, strided<[2, 1]>> into memref<3xf32, strided<[2]>>
-  hivm.hir.vadd ins(%arg0, %arg0 : memref<3x1xf32, strided<[2, 1]>>, 
-                                   memref<3x1xf32, strided<[2, 1]>>) 
+  hivm.hir.vadd ins(%arg0, %arg0 : memref<3x1xf32, strided<[2, 1]>>,
+                                   memref<3x1xf32, strided<[2, 1]>>)
                 outs(%arg0 : memref<3x1xf32, strided<[2, 1]>>)
 
   // CHECK: memref.collapse_shape {{.*}} {{\[}}[0, 1]] : memref<1x1xf32, strided<[8, 1]>> into memref<1xf32, strided<[8]>>
-  hivm.hir.vadd ins(%arg1, %arg1 : memref<1x1xf32, strided<[8, 1]>>, 
-                                   memref<1x1xf32, strided<[8, 1]>>) 
+  hivm.hir.vadd ins(%arg1, %arg1 : memref<1x1xf32, strided<[8, 1]>>,
+                                   memref<1x1xf32, strided<[8, 1]>>)
                 outs(%arg1 : memref<1x1xf32, strided<[8, 1]>>)
 
   // CHECK: memref.collapse_shape {{.*}} {{\[}}[0, 1, 2, 3]] : memref<3x1x1x1xf32, strided<[3, 3, 3, 1]>> into memref<3xf32, strided<[3]>>
   hivm.hir.vadd ins(%arg2, %arg2 : memref<3x1x1x1xf32, strided<[3, 3, 3, 1]>>,
-                                  memref<3x1x1x1xf32, strided<[3, 3, 3, 1]>>) 
+                                  memref<3x1x1x1xf32, strided<[3, 3, 3, 1]>>)
                 outs(%arg2 : memref<3x1x1x1xf32, strided<[3, 3, 3, 1]>>)
 
   // this case would trigger assert of "invalid source layout map or collapsing non-contiguous dims" if generate collapse not strictly
   // CHECK: memref.collapse_shape {{.*}} {{\[}}[0, 1, 2, 3]] : memref<3x1x1x1xf32, strided<[8, 4, 2, 1]>>
-  hivm.hir.vadd ins(%arg3, %arg3 : memref<3x1x1x1xf32, strided<[8, 4, 2, 1]>>, 
-                                   memref<3x1x1x1xf32, strided<[8, 4, 2, 1]>>) 
+  hivm.hir.vadd ins(%arg3, %arg3 : memref<3x1x1x1xf32, strided<[8, 4, 2, 1]>>,
+                                   memref<3x1x1x1xf32, strided<[8, 4, 2, 1]>>)
                 outs(%arg3 : memref<3x1x1x1xf32, strided<[8, 4, 2, 1]>>)
   return
 }
@@ -823,8 +823,8 @@ func.func @test_interleaveop(%arg0: memref<2x64xf16>, %arg1: memref<2x128xf16>) 
 // CHECK: %[[r2:.*]] = memref.collapse_shape %arg[[a2:.*]] {{\[}}{{\[}}0, 1], {{\[}}2], {{\[}}3]] : memref<1x8x4x?xi32> into memref<8x4x?xi32>
 // CHECK: hivm.hir.vadd ins(%[[r0:.*]], %[[r1:.*]] : memref<4x8x?xi32>, memref<4x8x?xi32>) outs(%[[r2:.*]] : memref<8x4x?xi32>) transpose = {{\[}}1, 0, 2]
 func.func @inline_transpose_op(
-  %arg0: memref<4x1x8x?xi32>, 
-  %arg1: memref<4x1x8x?xi32>, 
+  %arg0: memref<4x1x8x?xi32>,
+  %arg1: memref<4x1x8x?xi32>,
   %arg2: memref<1x8x4x?xi32>) {
   hivm.hir.vadd ins(%arg0, %arg1 : memref<4x1x8x?xi32>, memref<4x1x8x?xi32>) outs(%arg2 : memref<1x8x4x?xi32>) transpose = [1, 2, 0, 3]
   return
@@ -834,7 +834,7 @@ func.func @inline_transpose_op(
 
 // CHECK-LABEL: func.func @non_contiguous_stride(
 // CHECK-NOT: memref.collapse_shape
-// CHECK: hivm.hir.vreduce 
+// CHECK: hivm.hir.vreduce
 // CHECK-NEXT: return
 func.func @non_contiguous_stride(%arg0: memref<7x17x15xf16, strided<[272, 16, 1]>, #hivm.address_space<ub>>, %arg1: memref<1x17x15xf16, strided<[272, 16, 1]>, #hivm.address_space<ub>>, %arg2: memref<1x17x15xi32, strided<[272, 16, 1]>, #hivm.address_space<ub>>) {
   hivm.hir.vreduce <max_with_index_left> ins(%arg0 : memref<7x17x15xf16, strided<[272, 16, 1]>, #hivm.address_space<ub>>) outs(%arg1, %arg2 : memref<1x17x15xf16, strided<[272, 16, 1]>, #hivm.address_space<ub>>, memref<1x17x15xi32, strided<[272, 16, 1]>, #hivm.address_space<ub>>) reduce_dims = [0]
@@ -847,7 +847,7 @@ func.func @non_contiguous_stride(%arg0: memref<7x17x15xf16, strided<[272, 16, 1]
 // CHECK: memref.collapse_shape
 // CHECK: memref.collapse_shape
 // CHECK: memref.collapse_shape
-// CHECK: hivm.hir.vreduce 
+// CHECK: hivm.hir.vreduce
 // CHECK-NEXT: return
 func.func @triton_argmax_3d(%arg0: memref<7x17x15x1xf16, strided<[272, 16, 1, 1]>, #hivm.address_space<ub>>, %arg1: memref<1x17x15x1xf16, strided<[272, 16, 1, 1]>, #hivm.address_space<ub>>, %arg2: memref<1x17x15x1xi32, strided<[272, 16, 1, 1]>, #hivm.address_space<ub>>) {
   hivm.hir.vreduce <max_with_index_left> ins(%arg0 : memref<7x17x15x1xf16, strided<[272, 16, 1, 1]>, #hivm.address_space<ub>>) outs(%arg1, %arg2 : memref<1x17x15x1xf16, strided<[272, 16, 1, 1]>, #hivm.address_space<ub>>, memref<1x17x15x1xi32, strided<[272, 16, 1, 1]>, #hivm.address_space<ub>>) reduce_dims = [0]
@@ -940,7 +940,7 @@ func.func @test_vflip_op_memref() {
   %dst = memref.alloc() : memref<1x1x2x1xf16>
   hivm.hir.vflip ins(%src: memref<1x1x2x1xf16>)
                 outs(%dst : memref<1x1x2x1xf16>)
-                flip_axis = 3 
+                flip_axis = 3
   return
 }
 
@@ -1021,10 +1021,10 @@ func.func @test_gather() {
   %idx = memref.alloc() : memref<1x1x2x1xi32>
   %dst = memref.alloc() : memref<1x1x2x1xf32>
   %tmp = memref.alloc() : memref<1x1x2x1xi32>
-  hivm.hir.vgather ins(%src : memref<1x1x2x1xf32>) 
-                    indices(%idx : memref<1x1x2x1xi32>) 
-                    outs(%dst : memref<1x1x2x1xf32>) 
-                    temp_buffer(%tmp : memref<1x1x2x1xi32>) 
+  hivm.hir.vgather ins(%src : memref<1x1x2x1xf32>)
+                    indices(%idx : memref<1x1x2x1xi32>)
+                    outs(%dst : memref<1x1x2x1xf32>)
+                    temp_buffer(%tmp : memref<1x1x2x1xi32>)
   return
 }
 

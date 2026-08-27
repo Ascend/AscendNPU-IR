@@ -292,13 +292,13 @@ vector_cast_2d_with_overflow(memref_t<__ubuf__ SRC_T, 2> *src,
       INTR_TRANSPOSE_PER_REPEAT_BYTS_FOR_I8 / src_num_per_block) {
     for (int i = 0; i < src->sizes[0]; i++) {
       INTRINSIC(pipe_barrier, PIPE_V);
-      memref_t<__ubuf__ SRC_T, 1> src_1d{src->aligned,
-                                         src->allocated,
+      memref_t<__ubuf__ SRC_T, 1> src_1d{src->allocated,
+                                         src->aligned,
                                          src->offset + i * src->strides[0],
                                          {src->sizes[1]},
                                          {1}};
-      memref_t<__ubuf__ DST_T, 1> dst_1d{dst->aligned,
-                                         dst->allocated,
+      memref_t<__ubuf__ DST_T, 1> dst_1d{dst->allocated,
+                                         dst->aligned,
                                          dst->offset + i * dst->strides[0],
                                          {dst->sizes[1]},
                                          {1}};

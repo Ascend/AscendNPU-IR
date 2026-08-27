@@ -141,4 +141,4 @@ module attributes {"ttg.enable-bishengir-simt-optimization" = 1 : i32, ttg.globa
     tt.store %23, %21 : tensor<128x1x!tt.ptr<f32>, #blocked1>
     tt.return
   }
-}
+}

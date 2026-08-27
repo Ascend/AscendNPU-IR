@@ -27,6 +27,7 @@
 #include "bishengir/Dialect/HIVM/IR/CustomOp/DistributedTransformUtils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
+#include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/BubbleUpUtils.h"
 #include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/HoistAffine.h"
 #include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/Pattern.h"
 #include "bishengir/Dialect/HIVM/Transforms/PartitionAndBindSubBlock/PartitionTypes.h"
@@ -99,6 +100,13 @@ static constexpr llvm::StringLiteral kLimitedSubBlockOpAttrName =
     "limit_sub_block_id0";
 static constexpr llvm::StringLiteral tileAndBindLeaf =
     "hivm.tile_and_bind_leaf";
+
+// Explicit flag ids for the two sub-block barriers around the tiled vreduce
+// store. They must differ: sharing one id collapses both halves and deadlocks.
+// 14 matches HIVMDecomposeOp's default inter-vector flag (ALL_VECTOR /
+// ALL_SUB_VECTOR). 15 matches its default inter-cube flag.
+static constexpr int64_t kInterSubBlockRawSyncFlagId = 14;
+static constexpr int64_t kInterSubBlockWarSyncFlagId = 15;
 } // namespace
 
 namespace {
@@ -115,6 +123,34 @@ private:
 };
 } // namespace
 
+static bool isUbToUbCopy(Operation *op) {
+  auto copyOp = dyn_cast<hivm::CopyOp>(op);
+  if (!copyOp)
+    return false;
+  auto dstOrig = utils::tracebackMemRef(copyOp.getDst());
+  if (!dstOrig.getDefiningOp<memref::AllocOp>())
+    return false;
+  auto maybeAddressSpace = GetBufferSpaceAttr(dstOrig);
+  return !maybeAddressSpace.has_value() ||
+         maybeAddressSpace->getAddressSpace() == hivm::AddressSpace::UB;
+}
+
+static void insertBubblePropagatorUpLinkForSlicedOperand(
+    PatternRewriter &rewriter, OpOperand *operand,
+    ArrayRef<OpFoldResult> mixedOffsets, ArrayRef<OpFoldResult> mixedSize,
+    ArrayRef<int64_t> newShape, int64_t tilingDim) {
+  Value operandValue = operand->get();
+  auto memrefType = cast<MemRefType>(operandValue.getType());
+  auto slicedMemrefType = hivm::detail::getSlicedMemRefType(
+      memrefType,
+      RankedTensorType::get(newShape, memrefType.getElementType()));
+  auto upLink = hivm::detail::createBubblePropagatorUpLink(
+      operandValue, slicedMemrefType, mixedOffsets[tilingDim],
+      mixedSize[tilingDim], tilingDim, rewriter);
+  operand->set(upLink.getResult(0));
+  hivm::detail::markTiledTightlyCoupledAllocIfNeeded(rewriter, operandValue);
+}
+
 static void modifyOpToSliced(RewriterBase &rewriter, OpOperand *operand,
                              SmallVector<OpFoldResult, 4> mixedOffsets,
                              SmallVector<OpFoldResult, 4> mixedSize,
@@ -129,7 +165,7 @@ static void modifyOpToSliced(RewriterBase &rewriter, OpOperand *operand,
         loc, operandValue, mixedOffsets, mixedSize, mixedStrides);
     operand->set(slicedValue);
     markCreatedExtractSliceOp(rewriter, slicedValue);
-  } else if (auto memrefType = dyn_cast<MemRefType>(newType)) {
+  } else if (isa<MemRefType>(newType)) {
     auto slicedValue = rewriter.create<memref::SubViewOp>(
         loc, operandValue, mixedOffsets, mixedSize, mixedStrides);
     operand->set(slicedValue);
@@ -175,8 +211,13 @@ LogicalResult modifyStoreCopyOp(OpType Op, int64_t tilingDim, OpOperand *srcOpr,
   } else {
     rewriter.setInsertionPointAfterValue(offsetAtTileDim.template get<Value>());
   }
-  modifyOpToSliced(rewriter, dstOpr, mixedOffsets, mixedSize, mixedStrides,
-                   newShape);
+  if (isUbToUbCopy(Op) && isa<MemRefType>(dstOpr->get().getType())) {
+    insertBubblePropagatorUpLinkForSlicedOperand(
+        rewriter, dstOpr, mixedOffsets, mixedSize, newShape, tilingDim);
+  } else {
+    modifyOpToSliced(rewriter, dstOpr, mixedOffsets, mixedSize, mixedStrides,
+                     newShape);
+  }
   rewriter.modifyOpInPlace(Op, [&]() {
     if (Op->getNumResults() > 0)
       Op->getResult(0).setType(Op.getDst().getType());
@@ -717,17 +758,30 @@ private:
         rewriter, loc, containingLoop, workspaceOp, tilingDim);
     Value curWorkspace = rewriter.create<memref::SubViewOp>(
         loc, workspaceOp, mixedOffsets, mixedSizes, mixedStrides);
+
+    auto syncSubBlockMode = rewriter.getAttr<hivm::SyncBlockModeAttr>(
+        hivm::SyncBlockMode::ALL_SUB_VECTOR);
+    auto mte3PipeAttr = rewriter.getAttr<hivm::PipeAttr>(hivm::PIPE::PIPE_MTE3);
+    auto mte2PipeAttr = rewriter.getAttr<hivm::PipeAttr>(hivm::PIPE::PIPE_MTE2);
+
+    // The exchange workspace is reused across iterations of the containing
+    // loop, so the store below overwrites data that the peer sub-block reads
+    // through the load further down. Rendezvous before the store to close that
+    // write-after-read window.
+    rewriter.create<hivm::SyncBlockOp>(
+        loc, syncSubBlockMode,
+        rewriter.getI64IntegerAttr(kInterSubBlockWarSyncFlagId), Value{},
+        hivm::PipeAttr{}, hivm::PipeAttr{}, mte2PipeAttr, mte3PipeAttr);
+
     auto storeOp = rewriter.create<hivm::StoreOp>(
         loc, TypeRange{}, op->getResult(0), curWorkspace);
     storeOp->setAttr(tiledOp, rewriter.getUnitAttr());
 
-    auto syncSubBlockMode = rewriter.getAttr<hivm::SyncBlockModeAttr>(
-        hivm::SyncBlockMode::ALL_SUB_VECTOR);
-    auto tPipeAttr = rewriter.getAttr<hivm::PipeAttr>(hivm::PIPE::PIPE_MTE3);
-    auto PipeAttr = rewriter.getAttr<hivm::PipeAttr>(hivm::PIPE::PIPE_MTE2);
-    rewriter.create<hivm::SyncBlockOp>(loc, syncSubBlockMode, nullptr, Value{},
-                                       hivm::PipeAttr{}, hivm::PipeAttr{},
-                                       tPipeAttr, PipeAttr);
+    // Read-after-write: make the peer sub-block's store visible to the load.
+    rewriter.create<hivm::SyncBlockOp>(
+        loc, syncSubBlockMode,
+        rewriter.getI64IntegerAttr(kInterSubBlockRawSyncFlagId), Value{},
+        hivm::PipeAttr{}, hivm::PipeAttr{}, mte3PipeAttr, mte2PipeAttr);
     auto localBuffer = utils::createEmptyOp(rewriter, loc, workspaceOp);
     auto loadOp = rewriter.create<hivm::LoadOp>(loc, TypeRange{}, workspaceOp,
                                                 localBuffer);

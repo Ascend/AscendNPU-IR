@@ -232,33 +232,20 @@ Operation *getInsertPoint(Operation *op, int &resultIndx) {
   auto users = op->getResult(resultIndx).getUsers();
   std::set<scf::YieldOp> yieldOperands;
 
-  if (isRegBasedArch(op)) {
-    int32_t count = 0;
+  int32_t count = 0;
 
-    for (auto *user : users) {
-      if (!isa<hivm::DebugOp>(user))
-        count++;
-      if (!isa<scf::YieldOp>(user) ||
-          !needYieldOut(user, op->getResult(resultIndx))) {
-        continue;
-      } else {
-        yieldOperands.emplace(user);
-      }
-    }
-    if (count > 1)
-      return op;
-  } else {
-    for (auto *user : users) {
-      // TODO: add auto tracedDownUser = traceDown(user) and use tracedDownUser
-      // to judge
-      auto forOp = user->getParentOfType<scf::ForOp>();
-      if (!isa<scf::YieldOp>(user) || !forOp) {
-        continue;
-      } else {
-        yieldOperands.emplace(user);
-      }
+  for (auto *user : users) {
+    if (!isa<hivm::DebugOp>(user))
+      count++;
+    if (!isa<scf::YieldOp>(user) ||
+        !needYieldOut(user, op->getResult(resultIndx))) {
+      continue;
+    } else {
+      yieldOperands.emplace(user);
     }
   }
+  if (count > 1)
+    return op;
 
   if (yieldOperands.empty()) {
     return op;
@@ -585,26 +572,33 @@ public:
 
 static bool isRegBasedArch(Operation *op);
 
-/// Skip inserting outer fixpipe after an accumulation loop when the mmad
-/// result is yielded back to outs and the loop stays in L0C.
+/// Skip inserting outer fixpipe after an accumulation loop when that *loop
+/// result* stays in L0C for a later matmul outs. The in-loop mmad result
+/// always cycles back to iter_arg outs, so consulting it would skip every
+/// remain_in_l0c accumulation, including results consumed by Vector ops
+/// such as vsel. remain_in_l0c is loop-wide; normalized_in_L0C names the
+/// result indices that actually stay in L0C.
 static bool shouldSkipOuterFixpipeForAccumulation(Operation *opInst,
                                                   Value mmadLikeOpRes) {
   if (!isAccumulation(opInst))
     return false;
-  if (!anyUserReachesMatmulOuts(mmadLikeOpRes))
-    return false;
 
   int resultIndx = 0;
   Operation *insertAfterOp = getInsertPoint(opInst, resultIndx);
-  Value loopResult = insertAfterOp->getResult(resultIndx);
-  if (loopResult == mmadLikeOpRes)
+  OpResult loopResult = insertAfterOp->getResult(resultIndx);
+  if (Value(loopResult) == mmadLikeOpRes)
     return false;
 
   auto forOp = dyn_cast<scf::ForOp>(insertAfterOp);
   if (!forOp)
     return false;
+  if (forOp->getAttr(hivm::RemainInL0CAttr::name) == nullptr)
+    return false;
+  if (!isRegionResultRequiredInL0C(cast<RegionBranchOpInterface>(insertAfterOp),
+                                   loopResult))
+    return false;
 
-  return forOp->getAttr(hivm::RemainInL0CAttr::name) != nullptr;
+  return anyUserReachesMatmulOuts(loopResult);
 }
 
 /// Check whether every meaningful user reaches a fixpipe, tracing through
@@ -1294,11 +1288,11 @@ private:
 
     rewriter.setInsertionPointAfter(vMulOp);
     auto newFixpipe = rewriter.create<FixpipeOp>(
-        op.getLoc(), dst.getType(), op.getSource(), dst, op.getDmaModeAttr(),
-        op.getDualDstModeAttr(), op.getSubBlockIdxAttr(),
+        op.getLoc(), dst.getType(), op.getSource(), dst, op.getUnitFlagCond(),
+        op.getDmaModeAttr(), op.getDualDstModeAttr(), op.getSubBlockIdxAttr(),
         FixpipePreQuantModeAttr::get(rewriter.getContext(), preQuant),
         op.getPreReluAttr(), op.getChannelSplitAttr(), op.getC0PadEnAttr(),
-        quantScale);
+        quantScale, op.getUnitFlagModeAttr(), op.getUnitFlagGroupIdAttr());
     for (Operation *user : llvm::make_early_inc_range(vMulOp->getUsers())) {
       if (isa<annotation::MarkOp>(user)) {
         newFixpipe->setAttr(utils::kInlinedQuantScaleAttr,

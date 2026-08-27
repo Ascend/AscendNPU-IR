@@ -137,7 +137,8 @@ struct BiShengIRCompileMainConfigCLOptions : public BiShengIRCompileMainConfig {
     // when enableSanitizer/enableMemoryDisplay is true, enable
     // printDebugInfoOpt
     auto &opts = cl::getRegisteredOptions();
-    if ((enableSanitizer || enableMemoryDisplay || enableDebugInfo) &&
+    if ((enableSanitizer || enableMemoryDisplay || enableDebugInfo ||
+         enableDebugVariables) &&
         (opts.count("mlir-print-debuginfo") != 0)) {
       static_cast<cl::opt<bool> *>(opts["mlir-print-debuginfo"])
           ->setValue(true);
@@ -353,6 +354,15 @@ void BiShengIRCompileMainConfig::registerCLOptions() {
 /// `--limit-auto-multi-buffer-buffer` keeps only-cube on A3/membase. On
 /// Ascend950/RegBase, MixCV vector-side buffers are included by default
 /// (no-limit) unless the user explicitly set the flag.
+///
+/// `--enable-hivm-unit-flag-sync` is enabled by default on Ascend950/RegBase
+/// unless the user explicitly set the flag.
+///
+/// `--enable-preload` is enabled by default on Ascend950/RegBase, but disabled
+/// on A3/membase. Explicit CLI values are preserved.
+///
+/// `--enable-lib-call-no-inline` is enabled by default on RegBase, but disabled
+/// on membase. Explicit CLI values are preserved.
 static bool hasExplicitCLOption(llvm::StringRef name) {
   auto &opts = cl::getRegisteredOptions();
   auto it = opts.find(name);
@@ -367,6 +377,12 @@ applyArchDependentCompileDefaults(BiShengIRCompileMainConfig &config) {
     config.setSetWorkspaceMultibuffer(2);
   if (!hasExplicitCLOption("limit-auto-multi-buffer-buffer"))
     config.setLimitAutoMultiBufferBuffer(MultiBufferStrategy::NO_LIMIT);
+  if (!hasExplicitCLOption("enable-hivm-unit-flag-sync"))
+    config.setEnableHIVMUnitFlagSync(true);
+  if (!hasExplicitCLOption("enable-preload"))
+    config.setEnablePreload(true);
+  if (!hasExplicitCLOption("enable-lib-call-no-inline"))
+    config.setEnableLibCallNoInline(true);
 }
 
 BiShengIRCompileMainConfig BiShengIRCompileMainConfig::createFromCLOptions() {

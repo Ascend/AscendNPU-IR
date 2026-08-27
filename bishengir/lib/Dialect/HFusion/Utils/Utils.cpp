@@ -26,12 +26,14 @@
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/MathExtras.h"
 
 #include "mlir/Analysis/SliceAnalysis.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/PatternMatch.h"
 
+#include <limits>
 #include <optional>
 #include <unordered_set>
 
@@ -1786,8 +1788,145 @@ bool hfusion::isSupportedTreeReductionCandidate(Operation *op) {
   return reductionDims.front() < linalgOp.getNumLoops() - 1;
 }
 
-bool hfusion::shouldUseTreeReduction(Operation *op) {
+bool hfusion::isRegisterTreeReductionCandidate(Operation *op) {
   if (!isSupportedTreeReductionCandidate(op))
+    return false;
+
+  // The register lowering reads rows directly from one canonical input.  Do
+  // not trace through arbitrary GenericOp payloads here: computed reductions,
+  // projections and multi-input reductions remain on the reshape-based path.
+  auto linalgOp = cast<linalg::LinalgOp>(op);
+  if (linalgOp.getNumDpsInputs() != 1 || linalgOp.getNumDpsInits() != 1)
+    return false;
+
+  auto inputType = dyn_cast<RankedTensorType>(
+      linalgOp.getDpsInputOperand(0)->get().getType());
+  auto initType = dyn_cast<RankedTensorType>(
+      linalgOp.getDpsInitOperand(0)->get().getType());
+  if (!inputType || !initType || inputType.getRank() != 2 ||
+      initType.getRank() != 1 || !inputType.hasStaticShape() ||
+      !initType.hasStaticShape())
+    return false;
+
+  SmallVector<unsigned> reductionDims;
+  linalgOp.getReductionDims(reductionDims);
+  if (reductionDims.size() != 1 || reductionDims.front() != 0)
+    return false;
+
+  if (inputType.getDimSize(1) != initType.getDimSize(0))
+    return false;
+
+  SmallVector<Operation *, 1> combinerOps;
+  Value reducedValue =
+      matchReduction(linalgOp.getRegionOutputArgs(), /*redPos=*/0, combinerOps);
+  if (!reducedValue || combinerOps.size() != 1 ||
+      linalgOp.getRegionInputArgs().size() != 1 ||
+      reducedValue != linalgOp.getRegionInputArgs().front())
+    return false;
+
+  // VFFusion generalizes named linalg.reduce to linalg.generic before
+  // AutoVectorizeV2.  Accept that canonical form as long as the single input
+  // is indexed identically; computed/projected inputs remain excluded.
+  AffineMap inputMap =
+      linalgOp.getMatchingIndexingMap(linalgOp.getDpsInputOperand(0));
+  return inputMap.isIdentity();
+}
+
+static int64_t getRegisterTreeReductionCost(Operation *op,
+                                            unsigned &candidateCount,
+                                            unsigned &totalReductionCount,
+                                            unsigned &cumsumCount) {
+  auto currentFunc = op->getParentOfType<func::FuncOp>();
+  auto module = op->getParentOfType<ModuleOp>();
+  if (!currentFunc || !module)
+    return std::numeric_limits<int64_t>::max();
+
+  // VFFusion outlines parts of one kernel into private functions before
+  // AutoVectorizeV2 runs.  Recover the kernel root so the budget remains the
+  // same before and after outlining instead of being reset independently in
+  // every private function.
+  func::FuncOp rootFunc = currentFunc;
+  SmallPtrSet<Operation *, 4> callerSearchVisited;
+  while (callerSearchVisited.insert(rootFunc).second) {
+    func::FuncOp caller;
+    for (func::FuncOp candidate : module.getOps<func::FuncOp>()) {
+      candidate.walk([&](func::CallOp call) {
+        if (!caller && call.getCallee() == rootFunc.getSymName())
+          caller = candidate;
+      });
+      if (caller)
+        break;
+    }
+    if (!caller)
+      break;
+    rootFunc = caller;
+  }
+
+  int64_t cost = 0;
+  candidateCount = 0;
+  totalReductionCount = 0;
+  cumsumCount = 0;
+  SmallVector<func::FuncOp> worklist{rootFunc};
+  SmallPtrSet<Operation *, 8> visitedFunctions;
+  while (!worklist.empty()) {
+    func::FuncOp func = worklist.pop_back_val();
+    if (!visitedFunctions.insert(func).second)
+      continue;
+    func.walk([&](Operation *nestedOp) {
+      if (auto call = dyn_cast<func::CallOp>(nestedOp)) {
+        if (auto callee = module.lookupSymbol<func::FuncOp>(call.getCallee()))
+          worklist.push_back(callee);
+      }
+      if (auto linalgOp = dyn_cast<linalg::LinalgOp>(nestedOp);
+          linalgOp && linalgOp.getNumReductionLoops() != 0)
+        ++totalReductionCount;
+      if (isa<hfusion::CumsumOp>(nestedOp))
+        ++cumsumCount;
+      if (!hfusion::isRegisterTreeReductionCandidate(nestedOp))
+        return;
+      ++candidateCount;
+      auto linalgOp = cast<linalg::LinalgOp>(nestedOp);
+      SmallVector<unsigned> reductionDims;
+      linalgOp.getReductionDims(reductionDims);
+      int64_t reductionSize =
+          linalgOp.getStaticLoopRanges()[reductionDims.front()];
+      uint64_t alignedSize =
+          llvm::PowerOf2Ceil(static_cast<uint64_t>(reductionSize));
+      if (alignedSize >
+          static_cast<uint64_t>(std::numeric_limits<int64_t>::max() - cost)) {
+        cost = std::numeric_limits<int64_t>::max();
+        return;
+      }
+      cost += static_cast<int64_t>(alignedSize);
+    });
+  }
+  return cost;
+}
+
+bool hfusion::shouldUseRegisterTreeReduction(Operation *op) {
+  if (!isRegisterTreeReductionCandidate(op))
+    return false;
+
+  if (auto module = op->getParentOfType<ModuleOp>();
+      module && (module->hasAttr(kRegularTreeReductionScopeAttr) ||
+                 module->hasAttr(kLegacyTreeReductionScopeAttr)))
+    return false;
+
+  // VFFusion freezes this decision on the original kernel graph before it
+  // starts outlining.  Honor that stable decision after cloning instead of
+  // recomputing a scope budget on a partially rewritten call graph.
+  if (op->hasAttr(kRegularTreeReductionSelectedAttr))
+    return false;
+  if (op->hasAttr(kRegisterTreeReductionSelectedAttr))
+    return true;
+
+  // VFFusion computes the scope budget once, before outlining and nested
+  // function pipelines start mutating IR.  An unmarked op created after that
+  // point is deliberately kept off the direct register path.  Recomputing the
+  // budget here would both change the decision and race parallel function
+  // transformations while walking their call graph.
+  if (auto module = op->getParentOfType<ModuleOp>();
+      module && module->hasAttr(kTreeReductionSelectionFrozenAttr))
     return false;
 
   auto linalgOp = cast<linalg::LinalgOp>(op);
@@ -1795,20 +1934,196 @@ bool hfusion::shouldUseTreeReduction(Operation *op) {
   linalgOp.getReductionDims(reductionDims);
   int64_t reductionSize = linalgOp.getStaticLoopRanges()[reductionDims.front()];
 
-  // The current split-reduction lowering materializes every pairwise level in
-  // UB.  Beyond one 16-element register-sized group, the extra fills and
-  // intermediate tensors are more expensive than the established reduction
-  // path even without entering the large-reduction radix hierarchy. Raise
-  // this cutoff only after the pairwise levels are lowered in registers.
-  constexpr int64_t maxTreeReductionSize = 16;
-  if (reductionSize <= maxTreeReductionSize)
+  // A single register tree of at most 64 leaves maps to one vector load per
+  // row and one balanced add tree.  Larger trees need a hierarchical
+  // implementation and are left to the regular fused lowering.
+  constexpr int64_t maxRegisterTreeReductionSize = 64;
+  if (reductionSize > maxRegisterTreeReductionSize)
+    return false;
+
+  // Replacing a marked loop is intentionally a single-reduction transform.
+  // Keeping more than one direct tree in the same vector function would
+  // require either separate loops (losing horizontal fusion) or a multi-result
+  // rewrite.  Leave such regions on the compact regular fused lowering until
+  // that rewrite exists.  This is also the conservative register-pressure
+  // bound: one direct tree per outlined function.
+  constexpr int64_t maxRegisterTreeReductionCost = 128;
+  unsigned candidateCount = 0;
+  unsigned totalReductionCount = 0;
+  unsigned cumsumCount = 0;
+  int64_t cost = getRegisterTreeReductionCost(op, candidateCount,
+                                              totalReductionCount, cumsumCount);
+  // The backend spills a fully expanded 64-row direct tree beyond its
+  // 6144-byte VF stack. Select the established TreeReduceV2 route below;
+  // smaller direct trees remain enabled.
+  bool needsLegacyTreeForRegisterPressure = reductionSize == 64;
+  return !needsLegacyTreeForRegisterPressure && cumsumCount == 0 &&
+         candidateCount == 1 && totalReductionCount == 1 &&
+         cost <= maxRegisterTreeReductionCost;
+}
+
+static bool isF32ZeroFill(Value value) {
+  auto fill = value.getDefiningOp<linalg::FillOp>();
+  if (!fill || !getElementTypeOrSelf(value).isF32())
+    return false;
+  auto constant = fill->getOperand(0).getDefiningOp<arith::ConstantOp>();
+  if (!constant)
+    return false;
+  auto floatValue = dyn_cast<FloatAttr>(constant.getValue());
+  return floatValue && floatValue.getValue().isZero();
+}
+
+// Return true for the exact long chunked-sum dataflow whose accuracy regressed
+// on the regular AV2 path.  The regular lowering forms a 1024-deep sequential
+// add chain, and the surrounding loop accumulates that rounding difference for
+// at least 64 chunks.  TreeReduceV2 keeps the established hierarchical
+// association.  The deliberately strict use/shape/module checks keep this
+// module-wide compatibility route from changing unrelated reductions.
+static bool isLoopCarriedF32ChunkedSum(linalg::LinalgOp reductionOp,
+                                      int64_t reductionSize) {
+  constexpr int64_t problematicChunkSize = 1024;
+  constexpr int64_t minChunkCount = 64;
+  if (reductionSize != problematicChunkSize ||
+      !getElementTypeOrSelf(reductionOp.getDpsInputOperand(0)->get()).isF32() ||
+      !isF32ZeroFill(reductionOp.getDpsInitOperand(0)->get()))
+    return false;
+
+  auto outerLoop = reductionOp->getParentOfType<scf::ForOp>();
+  if (!outerLoop || reductionOp->getBlock() != outerLoop.getBody())
+    return false;
+  std::optional<int64_t> lower = getConstantIntValue(outerLoop.getLowerBound());
+  std::optional<int64_t> upper = getConstantIntValue(outerLoop.getUpperBound());
+  std::optional<int64_t> step = getConstantIntValue(outerLoop.getStep());
+  if (!lower || *lower != 0 || !upper || !step || *step != reductionSize ||
+      *upper < minChunkCount * problematicChunkSize)
+    return false;
+
+  // The legacy selector is module-scoped.  Allow it only when there is no
+  // second reduction or cumsum in another function that could be rerouted as
+  // a side effect.
+  auto module = reductionOp->getParentOfType<ModuleOp>();
+  if (!module)
+    return false;
+  unsigned moduleReductionCount = 0;
+  unsigned moduleCumsumCount = 0;
+  module.walk([&](Operation *nestedOp) {
+    if (auto linalgOp = dyn_cast<linalg::LinalgOp>(nestedOp);
+        linalgOp && linalgOp.getNumReductionLoops() != 0)
+      ++moduleReductionCount;
+    if (isa<hfusion::CumsumOp>(nestedOp))
+      ++moduleCumsumCount;
+  });
+  if (moduleReductionCount != 1 || moduleCumsumCount != 0 ||
+      reductionOp->getNumResults() != 1)
+    return false;
+
+  Value reduced = reductionOp->getResult(0);
+  if (!reduced.hasOneUse())
+    return false;
+  auto add =
+      dyn_cast<linalg::ElemwiseBinaryOp>(*reduced.getUsers().begin());
+  if (!add || add.getFun() != linalg::BinaryFn::add ||
+      add->getBlock() != outerLoop.getBody() || add.getNumDpsInputs() != 2 ||
+      add->getNumResults() != 1 || !add->getResult(0).hasOneUse())
+    return false;
+
+  ValueRange iterArgs = outerLoop.getRegionIterArgs();
+  ValueRange initArgs = outerLoop.getInitArgs();
+  ValueRange yieldedValues = outerLoop.getYieldedValues();
+  Value lhs = add.getDpsInputOperand(0)->get();
+  Value rhs = add.getDpsInputOperand(1)->get();
+  for (auto [index, iterArg] : llvm::enumerate(iterArgs)) {
+    bool addsReducedChunk = (lhs == reduced && rhs == iterArg) ||
+                            (rhs == reduced && lhs == iterArg);
+    if (addsReducedChunk && isF32ZeroFill(initArgs[index]) &&
+        yieldedValues[index] == add->getResult(0))
+      return true;
+  }
+  return false;
+}
+
+bool hfusion::shouldUseLegacyTreeReductionScope(Operation *op) {
+  if (!isRegisterTreeReductionCandidate(op))
+    return false;
+
+  auto linalgOp = cast<linalg::LinalgOp>(op);
+  SmallVector<unsigned> reductionDims;
+  linalgOp.getReductionDims(reductionDims);
+  int64_t reductionSize = linalgOp.getStaticLoopRanges()[reductionDims.front()];
+  unsigned candidateCount = 0;
+  unsigned totalReductionCount = 0;
+  unsigned cumsumCount = 0;
+  int64_t cost = getRegisterTreeReductionCost(op, candidateCount,
+                                              totalReductionCount, cumsumCount);
+  // This fallback must precede the direct-register cost limit below.  A large
+  // reduction has a correspondingly large direct-tree cost, while the legacy
+  // path selected here uses a bounded hierarchical tree instead of fully
+  // expanding every leaf in registers.
+  bool singleChunkReduction =
+      candidateCount == 1 && totalReductionCount == 1 && cumsumCount == 0;
+  if (singleChunkReduction &&
+      isLoopCarriedF32ChunkedSum(linalgOp, reductionSize))
     return true;
 
-  // Keep the established tree order for the 32x32 RA shape.  Chained
-  // reductions of this shape are numerically sensitive to the regular fused
-  // lowering, while the causal-conv shapes that motivated the cutoff use 16
-  // or 64 output lanes.
-  SmallVector<int64_t> loopRanges = linalgOp.getStaticLoopRanges();
-  return linalgOp.getNumLoops() == 2 && reductionDims.front() == 0 &&
-         reductionSize == 32 && loopRanges[1] == 32;
+  constexpr int64_t maxLegacyTreeReductionCost = 128;
+  // A bounded scope with more than one canonical RA reduction cannot use the
+  // single-loop direct rewrite safely. Preserve the established TreeReduceV2
+  // route when every reduction in the scope is such a candidate (the
+  // prepare_wy shape), rather than changing its summation order through
+  // regular fusion. A scope which also contains other reductions must remain
+  // on the regular path: TreeReduceV2 rewrites the surrounding loop and is
+  // not safe for that mixed graph. Retain the original one-candidate mixed
+  // scope behavior for compatibility.
+  bool allReductionsAreRegisterCandidates =
+      candidateCount > 1 && candidateCount == totalReductionCount;
+  bool singleCandidateMixedScope =
+      candidateCount == 1 && totalReductionCount > 1;
+  // A cumsum followed by the block-total reduction is accuracy-sensitive to
+  // the reduction association. Preserve the pre-policy TreeReduceV2 route for
+  // this exact one-scan/one-reduction shape, including its 128-element tile.
+  bool cumsumWithSingleReduction =
+      cumsumCount == 1 && candidateCount == 1 && totalReductionCount == 1;
+  // A single canonical 64-row RA reduction would otherwise use the direct
+  // register tree and exceed VF stack. Keep it on the established
+  // TreeReduceV2 lowering.
+  bool registerPressureFallback =
+      reductionSize == 64 && cumsumCount == 0 && candidateCount == 1 &&
+      totalReductionCount == 1;
+  constexpr int64_t maxLegacyTreeReductionSize = 64;
+  constexpr int64_t maxCumsumTreeReductionSize = 128;
+  bool supportedSize = reductionSize <= maxLegacyTreeReductionSize ||
+                       (cumsumWithSingleReduction &&
+                        reductionSize <= maxCumsumTreeReductionSize);
+  return supportedSize &&
+         (allReductionsAreRegisterCandidates || singleCandidateMixedScope ||
+          cumsumWithSingleReduction || registerPressureFallback) &&
+         cost <= maxLegacyTreeReductionCost;
+}
+
+bool hfusion::shouldUseMaterializedTreeReduction(Operation *op) {
+  if (auto module = op->getParentOfType<ModuleOp>();
+      module && (module->hasAttr(kRegularTreeReductionScopeAttr) ||
+                 module->hasAttr(kLegacyTreeReductionScopeAttr)))
+    return false;
+
+  if (!isSupportedTreeReductionCandidate(op) ||
+      isRegisterTreeReductionCandidate(op))
+    return false;
+
+  auto linalgOp = cast<linalg::LinalgOp>(op);
+  SmallVector<unsigned> reductionDims;
+  linalgOp.getReductionDims(reductionDims);
+  int64_t reductionSize = linalgOp.getStaticLoopRanges()[reductionDims.front()];
+
+  // Retain the general reshape-based implementation only for the small,
+  // non-canonical reductions that the direct register builder cannot express.
+  // Its temporary levels are bounded here and preserve the feature's support
+  // for computed/projected reduction payloads.
+  constexpr int64_t maxMaterializedTreeReductionSize = 16;
+  return reductionSize <= maxMaterializedTreeReductionSize;
+}
+
+bool hfusion::shouldUseTreeReduction(Operation *op) {
+  return shouldUseRegisterTreeReduction(op) ||
+         shouldUseMaterializedTreeReduction(op);
 }

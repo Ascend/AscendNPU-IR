@@ -37,4 +37,3 @@ func.func @test_pre_vectorize_gather_2d(%src:tensor<16x16xf16>, %idx:tensor<16x4
   %res = hfusion.gather ins(%src, %idx : tensor<16x16xf16>, tensor<16x4xi32>) outs(%init:tensor<16x4xf16>) axis = 1 -> tensor<16x4xf16>
   return %res : tensor<16x4xf16>
 }
-

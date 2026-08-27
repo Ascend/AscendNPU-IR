@@ -17,5 +17,3 @@
     %expand_shape = memref.expand_shape %collapse_shape_2 [[0, 1, 2, 3]] output_shape [2, 320, %dim_0, %dim] : memref<?xf16> into memref<2x320x?x?xf16>
     return %expand_shape : memref<2x320x?x?xf16>
   }
-
-

@@ -491,7 +491,7 @@ func.func @test_clone_use_after_write_in_SCFIf_for_buffer(%arg0: i32, %arg1 : te
 }
 
 // -----
-	 
+
 func.func @test_clone_trace_insertSliceOp(%arg0: i32, %arg1: tensor<16x16xf32>, %arg2: tensor<16x16xf32>) -> tensor<16x16xf32> {
   %c1_i32 = arith.constant 1 : i32
   %c1 = arith.constant 1 : index
@@ -573,7 +573,7 @@ func.func @test_cross_yield_operands_in_for(%arg0: i32, %arg1 : tensor<256xf16>,
     %4 = hivm.hir.vadd ins(%arg4, %arg2 : tensor<256xf16>, tensor<256xf16>) outs(%3 : tensor<256xf16>) -> tensor<256xf16>
     // CHECK-DOUBLE: hivm.hir.vadd
     // CHECK-DOUBLE: hivm.hir.copy
-    // CHECK-DOUBLE: hivm.hir.copy 
+    // CHECK-DOUBLE: hivm.hir.copy
     // CHECK-DOUBLE: memref.copy
     // CHECK-DOUBLE: scf.yield
     scf.yield %arg5, %4 : tensor<256xf16>, tensor<256xf16>

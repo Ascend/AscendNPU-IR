@@ -32,5 +32,3 @@ func.func @reduce_unit_dim_input_should_be_optimized(%arg0: tensor<2x1x3xf32>, %
   }
   return %0 : tensor<2x1xf32>
 }
-
-

@@ -1100,7 +1100,7 @@ void AxisInfoAnalysis::visitForOpInductionVar(
       getLatticeElementFor(programPoint, op.getLowerBound())->getValue();
   const auto &step =
       getLatticeElementFor(programPoint, op.getStep())->getValue();
-  // If lb or step is not yet ready, skip this operation for now. 
+  // If lb or step is not yet ready, skip this operation for now.
   if (lb.getRank() == 0 || step.getRank() == 0)
       return;
 

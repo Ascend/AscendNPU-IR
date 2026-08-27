@@ -5,7 +5,7 @@
 #map2 = affine_map<(d0)[s0] -> (-d0 + 49152, s0)>
 module {
   func.func @test_fuse_loop_for_parallel_axis_d_1(%arg2: memref<3072xf32> {hacc.arg_type = #hacc.arg_type<output>, hacc.output_idx = #hacc.output_idx<0>},
-                                                  %arg5: i64 {hacc.arg_type = #hacc.arg_type<tiling_data>}) -> memref<3072xf32> 
+                                                  %arg5: i64 {hacc.arg_type = #hacc.arg_type<tiling_data>}) -> memref<3072xf32>
                                                   attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hacc.block_dim = 48 : i64} {
     %c49152 = arith.constant 49152 : index
     %c1 = arith.constant 1 : index
@@ -44,7 +44,7 @@ module {
 #map2 = affine_map<(d0)[s0] -> (-d0 + 49152, s0)>
 module {
   func.func @test_forward_mapping(%arg2: memref<3072xf32> {hacc.arg_type = #hacc.arg_type<output>, hacc.output_idx = #hacc.output_idx<0>},
-                                                  %arg5: i64 {hacc.arg_type = #hacc.arg_type<tiling_data>}) -> memref<3072xf32> 
+                                                  %arg5: i64 {hacc.arg_type = #hacc.arg_type<tiling_data>}) -> memref<3072xf32>
                                                   attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hacc.block_dim = 48 : i64} {
     %c49152 = arith.constant 49152 : index
     %c1 = arith.constant 1 : index

@@ -270,4 +270,3 @@ void mlir::hivm::populateMemRefToTritonPatterns(TritonTypeConverter &converter,
                MemRefLoadOpPattern, MemRefStoreOpPattern,
                ExtractAlignedPointerAsIndexOpPattern>(converter, ctx);
 }
-

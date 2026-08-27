@@ -828,7 +828,7 @@ mlir::LogicalResult propagateAlignUp(
                                 alignDimAttrName, alignBytesAttrName))) {
         return failure();
     }
-    
+
     return success();
   }
   markedOp->emitWarning("Align mark on unsupported op");
@@ -860,12 +860,12 @@ static LogicalResult handlePropagateFailure(RewriterBase &rewriter,
                                             UnrealizedConversionCastOp conversionOp,
                                             OpOperand* user){
   auto loc = conversionOp.getLoc();
-  
+
   auto src = conversionOp.getInputs()[0];
   auto dst = conversionOp.getOutputs()[0];
 
   rewriter.setInsertionPoint(user->getOwner());
-  auto newDst = utils::createEmptyOp(rewriter, loc, dst);  
+  auto newDst = utils::createEmptyOp(rewriter, loc, dst);
   rewriter.create<hivm::CopyOp>(loc, TypeRange{}, src, newDst);
 
   rewriter.modifyOpInPlace(user->getOwner(), [&] { user->set(newDst); });
@@ -886,16 +886,16 @@ static FailureOrCastVec propagateCollapseShapeOp(RewriterBase &rewriter,
   auto reassociation = op.getReassociationIndices();
 
   // TODO: this condition can be rewritten using isGuaranteedCollapsibleStrictly method.
-  if (!srcBadTy.getLayout().isIdentity() && 
+  if (!srcBadTy.getLayout().isIdentity() &&
           !util::isGuaranteedCollapsibleUnStrictly(srcBadTy, reassociation))
       return failure();
 
-  MemRefType collapsedBadTy = 
+  MemRefType collapsedBadTy =
       memref::CollapseShapeOp::computeCollapsedType(srcBadTy, reassociation);
 
   auto collapsedBadOp = rewriter.create<memref::CollapseShapeOp>(op.getLoc(),
       collapsedBadTy, conversionOp.getOperand(0), reassociation);
-  
+
   if (collapsedBadTy == op.getResultType()) {
     rewriter.replaceOp(op, collapsedBadOp.getResult());
     return UnrealizedCastOpVec{conversionOp};
@@ -903,7 +903,7 @@ static FailureOrCastVec propagateCollapseShapeOp(RewriterBase &rewriter,
 
   auto newConversionOp = rewriter.create<UnrealizedConversionCastOp>(op.getLoc(),
       op.getType(), collapsedBadOp.getResult());
-  
+
   rewriter.replaceOp(op, newConversionOp.getResult(0));
   return UnrealizedCastOpVec{newConversionOp};
 }

@@ -16,7 +16,7 @@ func.func @ascend_dpx_load_lowering(%arg0 : !llvm.ptr<6>) -> i32 {
 // CHECK-SAME: %[[ARG1:.*]]: i1
 // CHECK-SAME: %[[ARG2:.*]]: i32
 func.func @ascend_dpx_predicate_load_lowering(%arg0 : !llvm.ptr<6>, %arg1 : i1, %arg2 : i32) -> i32 {
-    // CHECK-NEXT: %[[RES:.*]] = scf.if %[[ARG1]] -> (i32) 
+    // CHECK-NEXT: %[[RES:.*]] = scf.if %[[ARG1]] -> (i32)
     // CHECK-NEXT: %[[RES1:.*]] = llvm.load %arg0 : !llvm.ptr<6> -> i32
     // CHECK-NEXT: scf.yield %[[RES1]] : i32
     // CHECK-NEXT: else
@@ -32,7 +32,7 @@ func.func @ascend_dpx_predicate_load_lowering(%arg0 : !llvm.ptr<6>, %arg1 : i1, 
 func.func @ascend_dpx_cache_hint_load_lowering(%arg0 : !llvm.ptr<1>) -> i32 {
     // CHECK: %[[CONST0:.*]] =
     // CHECK-SAME: 8
-    // CHECK: %[[RES:.*]] = 
+    // CHECK: %[[RES:.*]] =
     // CHECK-SAME: "llvm.hivm.ldg.cache.s32"
     // CHECK-SAME: %[[ARG0]]
     // CHECK-SAME: %[[CONST0]]
@@ -45,7 +45,7 @@ func.func @ascend_dpx_cache_hint_load_lowering(%arg0 : !llvm.ptr<1>) -> i32 {
 func.func @ascend_dpx_cache_hint_option_load_lowering(%arg0 : !llvm.ptr<1>) -> i32 {
     // CHECK: %[[CONST0:.*]] =
     // CHECK-SAME: 8
-    // CHECK: %[[RES:.*]] = 
+    // CHECK: %[[RES:.*]] =
     // CHECK-SAME: "llvm.hivm.ldg.uncache.s32"
     // CHECK-SAME: %[[ARG0]]
     // CHECK-SAME: %[[CONST0]]

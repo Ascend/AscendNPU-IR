@@ -74,7 +74,7 @@ bool hasSeedOp(Operation *op) {
   op->walk([&](Operation *innerOp) {
     if (isSimtSeedOp(innerOp)) {
       foundSeedOp = true;
-      return WalkResult::interrupt(); 
+      return WalkResult::interrupt();
     }
     return WalkResult::advance();
   });
@@ -203,8 +203,8 @@ bool inSimtScope(Operation *op) {
   auto parentOp = op->getParentOp();
   while (parentOp) {
     if (auto scopeOp = llvm::dyn_cast<scope::ScopeOp>(parentOp)) {
-      if (auto vectorType = scopeOp->getAttrOfType<StringAttr>("vector_type")) {
-        if (vectorType.getValue() == "simt") {
+      if (auto vectorMode = scopeOp->getAttrOfType<StringAttr>("vector_mode")) {
+        if (vectorMode.getValue() == "simt") {
           return true;
         }
       }
@@ -256,8 +256,8 @@ void AutoScopePass::runOnOperation() {
 
   // Deal with existed scopeOps.
   mod->walk([&](scope::ScopeOp scopeOp) {
-    if (auto vectorType = scopeOp->getAttrOfType<StringAttr>("vector_type")) {
-      if (vectorType.getValue() == "simt") {
+    if (auto vectorMode = scopeOp->getAttrOfType<StringAttr>("vector_mode")) {
+      if (vectorMode.getValue() == "simt") {
         scopeOp->setAttr("outline", rewriter.getUnitAttr());
         scopeOp->setAttr(
             TFuncCoreTypeAttr::name,

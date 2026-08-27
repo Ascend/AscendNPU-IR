@@ -1118,7 +1118,7 @@ def VShROp : HIVM_ElementwiseBinaryOp<"vshr",
 
 def VCmpOp : HIVM_ElementwiseBinaryOp<"vcmp",
     [OperElemTypeConstraints<[0, 1],
-       [I1, F16, BF16, F32, I8, UI8, I16, UI16, I32, UI32, 
+       [I1, F16, BF16, F32, I8, UI8, I16, UI16, I32, UI32,
        I64, UI64, F8E4M3FN, F8E5M2]>,
      OperElemTypeConstraints<[/*dstIdx=*/2], [I1, I8]>,
      VectorOnlyTrait<0>,
@@ -1899,7 +1899,7 @@ def VGatherMaskOp : HIVM_VectorOp<"vgathermask",
   let summary = "Vector Gather Mask Op";
   let description = [{
     Gathers elements from the `src` tensor where the corresponding element in the `mask` tensor is True.
-    Writes the result to the pre-allocated `dst` tensor/memref (InPlace semantics), 
+    Writes the result to the pre-allocated `dst` tensor/memref (InPlace semantics),
     and returns the `dst` tensor as `result` for functional compatibility.
     The `dst`/`result` tensor will have the same shape and element type as the `src` tensor.
 
@@ -1910,20 +1910,20 @@ def VGatherMaskOp : HIVM_VectorOp<"vgathermask",
     Results:
       * `result`: the same as `dst` (functional return for compatibility)
       * `dst_size`: the actual number of elements gathered from src
-    
+
     Usage:
       result_data, result_size = vgathermask ins (%src : tensor<16xf32>) mask (%mask : tensor<16xi1>) outs (%dst_data, %dst_size : tensor<16xf32>, tensor<1xi64>)
   }];
   let arguments = (ins TensorOrMemref:$src,
                        TensorOrMemref:$mask,
-                       Variadic<TensorOrMemref>:$dst  
+                       Variadic<TensorOrMemref>:$dst
   );
   let results = (outs Variadic<AnyRankedTensor>:$result);
   let assemblyFormat = [{
     attr-dict `ins` `(` $src `:` type($src) `)`
     `mask` `(` $mask `:` type($mask) `)`
     `outs` `(` $dst `:` type($dst) `)`
-    (`->` type($result)^)?  
+    (`->` type($result)^)?
   }];
   let extraClassDeclaration = vectorOpBaseDecls # [{
     static StringRef getOpName() { return "vgathermask"; }

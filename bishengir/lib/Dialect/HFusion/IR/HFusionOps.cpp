@@ -3490,7 +3490,7 @@ FailureOr<SmallVector<Value>> HistogramOp::decomposeOperation(PatternRewriter &b
   // Upper bound: number of elements in input
   Value ub = inTy.hasStaticShape() ? cstIdx(inTy.getDimSize(0))
                                    : b.create<tensor::DimOp>(loc, input, 0);
-  
+
   // If mask is provided and is i1, extend it to i16 for later use in the loop
   Value maskI16 = mask;
   if (mask) {

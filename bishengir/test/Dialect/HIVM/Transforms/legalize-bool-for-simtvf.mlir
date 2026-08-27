@@ -43,7 +43,7 @@ module {
       %7 = tensor.empty() : tensor<128xi1>
       %8 = hivm.hir.vand ins(%3, %5 : tensor<128xi1>, tensor<128xi1>) outs(%7 : tensor<128xi1>) -> tensor<128xi1>
       scope.return %8 : tensor<128xi1>
-    } {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vf_mode = #hivm.vf_mode<SIMT>, no_inline, noinline, outline, vector_type = "simt"}
+    } {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vf_mode = #hivm.vf_mode<SIMT>, no_inline, noinline, outline, vector_mode = "simt"}
     %9 = tensor.empty() : tensor<128xi1>
     %10 = hivm.hir.vand ins(%5, %6 : tensor<128xi1>, tensor<128xi1>) outs(%9 : tensor<128xi1>) -> tensor<128xi1>
     return
@@ -129,7 +129,7 @@ module {
       %expanded = tensor.expand_shape %3#3 [[0, 1]] output_shape [32, 1] : tensor<32xi1> into tensor<32x1xi1>
       // CHECK: %[[EMPTY3:.*]] = tensor.empty() : tensor<32xi1>
       // CHECK: %[[I8_I1_BACK1:.*]] = hivm.hir.vcast ins(%[[I1_I8_CST0:.*]] : tensor<32xi8>) outs(%[[EMPTY3:.*]] : tensor<32xi1>) -> tensor<32xi1>
-      // CHECK: %expanded_0 = tensor.expand_shape  %[[I8_I1_BACK1:.*]] {{\[\[0, 1\]\]}} output_shape [32, 1] : tensor<32xi1> into tensor<32x1xi1>      
+      // CHECK: %expanded_0 = tensor.expand_shape  %[[I8_I1_BACK1:.*]] {{\[\[0, 1\]\]}} output_shape [32, 1] : tensor<32xi1> into tensor<32x1xi1>
 	    %expanded_0 = tensor.expand_shape %3#4 [[0, 1]] output_shape [32, 1] : tensor<32xi1> into tensor<32x1xi1>
       %5 = tensor.empty() : tensor<32x1xi1>
       %6 = hivm.hir.vcmp ins(%expanded, %expanded_0 : tensor<32x1xi1>, tensor<32x1xi1>) outs(%5 : tensor<32x1xi1>) compare_mode = <ne> -> tensor<32x1xi1>
@@ -145,7 +145,7 @@ module {
     // CHECK: %[[EMPTY5:.*]] = tensor.empty() : tensor<32x1xi1>
     // CHECK: %[[I8_I1_OUT1:.*]] = hivm.hir.vcast ins(%[[NEW_SCOPE:.*]]#1 : tensor<32x1xi8>) outs(%[[EMPTY5:.*]] : tensor<32x1xi1>) -> tensor<32x1xi1>
     // CHECK: %{{[0-9]+}} = hivm.hir.vand ins(%[[I8_I1_OUT0:.*]], %arg6 : tensor<32x1xi1>, tensor<32x1xi1>) outs(%{{[0-9]+}} : tensor<32x1xi1>) -> tensor<32x1xi1>
-    // CHECK: %{{[0-9]+}} = hivm.hir.vxor ins(%[[I8_I1_OUT1:.*]], %arg6 : tensor<32x1xi1>, tensor<32x1xi1>) outs(%{{[0-9]+}} : tensor<32x1xi1>) -> tensor<32x1xi1>    
+    // CHECK: %{{[0-9]+}} = hivm.hir.vxor ins(%[[I8_I1_OUT1:.*]], %arg6 : tensor<32x1xi1>, tensor<32x1xi1>) outs(%{{[0-9]+}} : tensor<32x1xi1>) -> tensor<32x1xi1>
     %9 = tensor.empty() : tensor<32x1xi1>
     %10 = hivm.hir.vand ins(%4#0, %arg6 : tensor<32x1xi1>, tensor<32x1xi1>) outs(%9 : tensor<32x1xi1>) -> tensor<32x1xi1>
     %11 = tensor.empty() : tensor<32x1xi1>

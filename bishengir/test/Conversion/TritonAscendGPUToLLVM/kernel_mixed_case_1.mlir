@@ -2,7 +2,7 @@
 //
 // In this test case the kernel comprises 2 reduction operations. This is because
 // the reduction is across 2 dimensions, so the compiler applies the reduction across
-// the first dimension (0) first causing the shape to be reduced and then applies 
+// the first dimension (0) first causing the shape to be reduced and then applies
 // another reduction to the result further reducing the shape.
 //
 // In this case, we find that the first reduction is not profiting from rewriting as
@@ -142,5 +142,3 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
     tt.return
   }
 }
-
-

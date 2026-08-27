@@ -163,7 +163,7 @@ public:
     __aicore__ inline void SetConfig0(uint64_t config0_) {
         config0 = config0_;
     };
-    
+
     __aicore__ inline uint16_t GetM() const;
     __aicore__ inline uint16_t GetK() const;
     __aicore__ inline uint16_t GetN() const;

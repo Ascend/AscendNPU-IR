@@ -15,16 +15,16 @@ func.func @foo() attributes { hacc.entry, hacc.function_kind = #hacc.function_ki
 // -----
 
 // SIMT
- 
+
 // CHECK-LABEL: @foo_infer_vf_mode_function() -> index
 // CHECK: arith.constant 1
 func.func private @bar() attributes { hivm.vf_mode = #hivm.vf_mode<SIMT> }
- 
+
 func.func @foo() attributes { hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE> } {
   call @bar() : () -> ()
   return
 }
- 
+
 // -----
 
 // MIX

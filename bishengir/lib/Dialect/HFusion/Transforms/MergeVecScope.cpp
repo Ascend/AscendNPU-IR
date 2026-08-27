@@ -115,18 +115,18 @@ bool analyzeMemrefDepdencies(Operation *op1, Operation *op2,
                              llvm::function_ref<bool(Value, Value)> isAlias) {
   SmallVector<MemoryEffects::EffectInstance> effects1;
   getEffectsOrConservative(op1, effects1);
-  
+
   if (effects1.empty()) {
     return false;
   }
-  
+
   SmallVector<MemoryEffects::EffectInstance> effects2;
   getEffectsOrConservative(op2, effects2);
-  
+
   if (effects2.empty()) {
     return false;
   }
-  
+
   bool hasDep = hasMemDependency(effects1, effects2, isAlias);
   LLVM_DEBUG(if(hasDep){
     LDBG("analyze memref dependency, op1: " << op1->getName());

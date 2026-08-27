@@ -54,7 +54,7 @@ func.func @testSingle(%arg0: tensor<3x3xf32>, %arg1: tensor<3x3xf32>) -> (tensor
   %6 = tensor.empty() : tensor<3x3xf32>
   %7 = linalg.elemwise_unary {fun = #linalg.unary_fn<floor>} ins(%5 : tensor<3x3xf32>) outs(%6 : tensor<3x3xf32>) -> tensor<3x3xf32>
   %8 = tensor.empty() : tensor<3x3xf32>
-  %9 = linalg.transpose ins(%7 : tensor<3x3xf32>) outs(%8 : tensor<3x3xf32>) permutation = [0, 1] 
+  %9 = linalg.transpose ins(%7 : tensor<3x3xf32>) outs(%8 : tensor<3x3xf32>) permutation = [0, 1]
   %10 = tensor.empty() : tensor<3x3xf32>
   %11 = linalg.transpose ins(%3 : tensor<3x3xf32>) outs(%10 : tensor<3x3xf32>) permutation = [0, 1]
   return %9, %11 : tensor<3x3xf32>, tensor<3x3xf32>
@@ -67,7 +67,7 @@ func.func @testSingle(%arg0: tensor<3x3xf32>, %arg1: tensor<3x3xf32>) -> (tensor
 // SINGLEFUSE-LABEL: func.func @tileOtherBroadcast(
 func.func @tileOtherBroadcast(%arg0: tensor<1x1x2xf32>, %arg1: tensor<1x2x2xf32>) -> tensor<1x2x2xf32> attributes {OperatorType = "Default", compute_capability = "", frontend_symbol = {input_0 = ["1", "1", "2"], output_0 = ["1", "2", "2"]}, hacc.function_kind = #hacc.function_kind<HOST>, mindspore_kernel, process = "aicore"} {
   %collapsed = tensor.collapse_shape %arg0 [[0, 1, 2]] : tensor<1x1x2xf32> into tensor<2xf32>
-  %broadcasted = linalg.broadcast ins(%collapsed : tensor<2xf32>) outs(%arg1 : tensor<1x2x2xf32>) dimensions = [0, 2] 
+  %broadcasted = linalg.broadcast ins(%collapsed : tensor<2xf32>) outs(%arg1 : tensor<1x2x2xf32>) dimensions = [0, 2]
   return %broadcasted : tensor<1x2x2xf32>
 }
 // SINGLEFUSE-LABEL: func.func @mlir_fused_clone_0(

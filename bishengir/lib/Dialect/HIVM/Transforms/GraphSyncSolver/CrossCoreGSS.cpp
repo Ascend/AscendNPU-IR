@@ -133,6 +133,7 @@ void CrossCoreGSSPass::runOnOperation() {
   if (this->enableCVPatterns) {
     options.enableCVPatterns = true;
   }
+  options.roundRobinEventIds = this->roundRobinEventIds && isMemBasedArch;
   if (this->blockAllSync) {
     options.enableBlockAllMode = true;
   }

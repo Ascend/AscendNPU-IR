@@ -71,14 +71,17 @@ copy_matrix_cc_to_gm_normal_2d_to_2d_core(memref_t<__cc__ SRC_TYPE, 2> *l0c,
                                           memref_t<__gm__ DST_TYPE, 2> *gm,
                                           int64_t pre_quant, int64_t pre_relu,
                                           bool channel_split,
-                                          uint8_t unit_flag);
+                                          UNIT_FLAG unit_flag_mode,
+                                          int64_t unit_flag_group_id);
 
 template <typename SRC_TYPE, typename DST_TYPE>
 __aicore__ __attribute__((always_inline)) void
 copy_matrix_cc_to_gm_nz2nd_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
                                          memref_t<__gm__ DST_TYPE, 2> *gm,
                                          int64_t pre_quant, int64_t pre_relu,
-                                         bool channel_split, uint8_t unit_flag);
+                                         bool channel_split,
+                                         UNIT_FLAG unit_flag_mode,
+                                         int64_t unit_flag_group_id);
 
 #define DECLARE_FIXPIPE(src_scope, dst_scope, src_dim, dst_dim, src_type,                           \
                         dst_type, mode_name, transform_mode)                                        \
@@ -87,7 +90,7 @@ copy_matrix_cc_to_gm_nz2nd_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
           memref_t<__##src_scope##__ src_type, src_dim> *src,                                       \
           memref_t<__##dst_scope##__ dst_type, dst_dim> *dst,                                       \
           int64_t pre_quant, int64_t pre_relu, bool channel_split,                                  \
-          uint8_t unit_flag)
+          UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id)
 
 #define REGISTE_FIXPIPE(src_scope, dst_scope, src_dim, dst_dim, src_type,         \
                         dst_type, mode_name, transform_mode)                      \
@@ -95,7 +98,8 @@ copy_matrix_cc_to_gm_nz2nd_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
                   mode_name, transform_mode) {                                    \
     copy_matrix_##src_scope##_to_##dst_scope##_##src_dim##d_to_##dst_dim##d_core< \
         src_type, dst_type, transform_mode>(src, dst, pre_quant, pre_relu,        \
-                                            channel_split, unit_flag);            \
+                                            channel_split, unit_flag_mode,        \
+                                            unit_flag_group_id);                  \
   }
 
 extern "C" {

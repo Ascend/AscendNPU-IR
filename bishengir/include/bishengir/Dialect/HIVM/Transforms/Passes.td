@@ -221,7 +221,7 @@ def CloneTensorEmpty : Pass<"hivm-clone-tensor-empty", "func::FuncOp"> {
 def InferHIVMDataLayout : Pass<"hivm-infer-data-layout", "func::FuncOp"> {
   let summary = "Infer data layout for HIVM Ops";
   let constructor = "mlir::hivm::createInferHIVMDataLayoutPass()";
-  let dependentDialects = ["affine::AffineDialect", "hivm::HIVMDialect", 
+  let dependentDialects = ["affine::AffineDialect", "hivm::HIVMDialect",
                            "annotation::AnnotationDialect",
   ];
 }
@@ -389,26 +389,25 @@ def GraphSyncSolver : Pass<"hivm-graph-sync-solver", "func::FuncOp"> {
   let summary = "graph sync solver ";
   let constructor = "mlir::hivm::createGraphSyncSolverPass()";
   let dependentDialects = ["affine::AffineDialect", "hivm::HIVMDialect"];
-  let options = [Option<"enableUnitFlag", "enable-unit-flag", "bool",
-                        /*default=*/"false",
-                        "Enable unit-flag modes for synchronization">,
-                 Option<"ignoreWorkSpaceFunctionArguments", "ignore-workspace-func-args", "bool",
-                        /*default=*/"false",
-                        "Ignore workspace function arguments.">,
-                 Option<"enableTesterMode", "enable-tester-mode", "bool",
-                        /*default=*/"false", "Enable sync-tester mode">,
-                 Option<"enableSubviewConflictRefinement",
-                        "enable-subview-conflict-refinement", "bool",
-                        /*default=*/"true",
-                        "Use disjoint direct subviews to refine memory conflicts">,
-                 Option<"solverVersion", "solver-version", "std::string",
-                        /*default=*/"\"v1\"",
-                        "Select SyncSolver implementation.">,
-                 ListOption<"syncTesterOptions", "sync-tester-options",
-                            "int64_t",
-                            "Sync-tester options (num_runs, init_seed, "
-                            "num_ops, num_ptrs, enable-multibuffer, "
-                            "enable-cross-core[, performance-only=0])">,
+  let options =
+      [Option<"enableUnitFlag", "enable-unit-flag", "bool",
+              /*default=*/"false",
+              "Enable unit-flag modes for synchronization">,
+       Option<"ignoreWorkSpaceFunctionArguments", "ignore-workspace-func-args",
+              "bool",
+              /*default=*/"false", "Ignore workspace function arguments.">,
+       Option<"enableTesterMode", "enable-tester-mode", "bool",
+              /*default=*/"false", "Enable sync-tester mode">,
+       Option<"enableSubviewConflictRefinement",
+              "enable-subview-conflict-refinement", "bool",
+              /*default=*/"true",
+              "Use disjoint direct subviews to refine memory conflicts">,
+       Option<"solverVersion", "solver-version", "std::string",
+              /*default=*/"\"v2\"", "Select SyncSolver implementation.">,
+       ListOption<"syncTesterOptions", "sync-tester-options", "int64_t",
+                  "Sync-tester options (num_runs, init_seed, "
+                  "num_ops, num_ptrs, enable-multibuffer, "
+                  "enable-cross-core[, performance-only=0])">,
   ];
 }
 
@@ -430,12 +429,16 @@ def CrossCoreGSS : Pass<"hivm-cross-core-gss", "func::FuncOp"> {
        Option<"useDifferentMultiBufferFlagIds",
               "use-different-multibuffer-flag-ids", "bool", /*default=*/"false",
               "Use different flag-ids for multibuffer backward sync pairs.">,
-       Option<"enableCVPatterns",
-              "enable-cv-patterns", "bool", /*default=*/"true",
+       Option<"enableCVPatterns", "enable-cv-patterns", "bool",
+              /*default=*/"true",
               "Enable CV patterns for cross-core synchronization.">,
        Option<"solverVersion", "solver-version", "std::string",
-              /*default=*/"\"v1\"",
-              "Select SyncSolver implementation.">,
+              /*default=*/"\"v2\"", "Select SyncSolver implementation.">,
+       Option<"roundRobinEventIds", "round-robin-event-ids", "bool",
+              /*default=*/"true",
+              "On memory-based architectures, retry EventId allocation in "
+              "program order when the default strategy repeatedly assigns "
+              "the same IDs.">,
        Option<"forceIsMemBased", "force-is-mem-based", "bool",
               /*default=*/"false",
               "Force memory based ai-core architecture mode.">,
@@ -474,12 +477,11 @@ def DelayedCrossCoreGSS : Pass<"hivm-delayed-cross-core-gss", "ModuleOp"> {
        Option<"useDifferentMultiBufferFlagIds",
               "use-different-multibuffer-flag-ids", "bool", /*default=*/"false",
               "Use different flag-ids for multibuffer backward sync pairs.">,
-       Option<"enableCVPatterns",
-              "enable-cv-patterns", "bool", /*default=*/"true",
+       Option<"enableCVPatterns", "enable-cv-patterns", "bool",
+              /*default=*/"true",
               "Enable CV patterns for cross-core synchronization.">,
        Option<"solverVersion", "solver-version", "std::string",
-              /*default=*/"\"v1\"",
-              "Select SyncSolver implementation.">,
+              /*default=*/"\"v2\"", "Select SyncSolver implementation.">,
        Option<"forceIsMemBased", "force-is-mem-based", "bool",
               /*default=*/"false",
               "Force memory based ai-core architecture mode.">,
@@ -801,7 +803,7 @@ def HIVMCanonicalizationPipeline
   let summary = "Run HIVM canonicalization pass pipeline on one function";
   let constructor = "mlir::hivm::createHIVMCanonicalizationPipelinePass()";
   let dependentDialects = ["hivm::HIVMDialect", "func::FuncDialect",
-                           "arith::ArithDialect", "memref::MemRefDialect", 
+                           "arith::ArithDialect", "memref::MemRefDialect",
                            "scf::SCFDialect"];
 }
 
@@ -1101,7 +1103,7 @@ def InsertWorkSpaceForMixCV : Pass<"insert-workspace-for-mix-cv"> {
   let constructor = "mlir::hivm::createInsertWorkSpaceForMixCVPass()";
   let dependentDialects = [
     "hivm::HIVMDialect", "bishengir::memref_ext::MemRefExtDialect",
-                         "bufferization::BufferizationDialect", 
+                         "bufferization::BufferizationDialect",
                          "annotation::AnnotationDialect"
   ];
 }
@@ -1155,10 +1157,10 @@ def PartitionAndBindSubBlock
       "Lower {sub_block = n} scope.scope regions to operand-parallel guards";
   let constructor = "mlir::hivm::createPartitionAndBindSubBlockPass()";
   let options = [
-    Option<"enableLoadBalanced", "enable-load-balanced", "bool",
+    Option<"pinFreeNodes", "pin-free-nodes", "bool",
            /*default=*/"false",
-           "Sub-block binding method. false: pin every free op to sub-block 0"
-           "true: spread independent fixpipe across both sub-cores">
+           "Testing only: pin every free op to sub-block 0 instead of "
+           "load-balancing across both AIV sub-cores">
   ];
   let dependentDialects = [
     "scope::ScopeDialect",

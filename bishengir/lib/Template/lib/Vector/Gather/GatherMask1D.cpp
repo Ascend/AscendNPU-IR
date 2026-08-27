@@ -30,7 +30,7 @@ gather_mask_1d(memref_t<__ubuf__ T, 1> *src,
         gather_mask_1d_scalar<T>(src, mask, dst, dst_size);
         return;
     }
-    
+
     int64_t element_count = src->sizes[0];
     int64_t mask_count = mask->sizes[0];
 
@@ -84,7 +84,7 @@ gather_mask_1d(memref_t<__ubuf__ T, 1> *src,
     *(__ubuf__ int64_t *)(dst_size_ptr) = get_rsvd_cnt();
     INTRINSIC(set_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
     INTRINSIC(wait_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
- 
+
     INTRINSIC_NO_ARGS(set_mask_norm);
     INTRINSIC(pipe_barrier, PIPE_V);
 }
@@ -100,7 +100,7 @@ gather_mask_1d_scalar(memref_t<__ubuf__ T, 1> *src,
 #endif
   int64_t element_count = src->sizes[0];
   int64_t mask_count = mask->sizes[0];
-  
+
   if (element_count <= 0 || element_count != mask_count) {
     INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
     return;
@@ -126,9 +126,9 @@ gather_mask_1d_scalar(memref_t<__ubuf__ T, 1> *src,
       int64_t global_bit = start_bit + i;
       int64_t byte_idx = global_bit / 8;
       int bit_idx = global_bit % 8;
-      
+
       bool mask_value = (mask_pt[byte_idx] >> bit_idx) & 1;
-      
+
       if (mask_value) {
           dst_ptr[write_idx * dst_stride] = src_ptr[i * src_stride];
           write_idx++;
@@ -148,14 +148,14 @@ is_unaligned_gather_mask_1d(memref_t<__ubuf__ T, 1> *src,
   __ubuf__ T *src_ptr = src->aligned + src->offset;
   int64_t mask_offset = mask->offset;
   __ubuf__ T *dst_ptr = dst->aligned + dst->offset;
-  
+
   bool is_offset_aligned = isAddress32ByteAligned<T>(src_ptr) &&
                           (mask_offset % INTR_BYTES_PER_REPEAT == 0) &&
                           isAddress32ByteAligned<T>(dst_ptr);
   bool is_stride_aligned = (src->strides[0] == 1) &&
                           (mask->strides[0] == 1) &&
                           (dst->strides[0] == 1);
-  
+
   return !is_offset_aligned || !is_stride_aligned;
 }
 

@@ -359,7 +359,7 @@ static void hfusionAutoSchedulePipeline(OpPassManager &pm,
 static void postProcess(OpPassManager &pm,
                         const HFusionPipelineOptions &options) {
   pm.nest<func::FuncOp>().addPass(createHFusionInlineBrcPass());
-  
+
   // normalize should be called after auto schedule:
   // - tile reduction may generate unsupported elemwise op requiring normalize
   NormalizeOptions normalizeOptions;
@@ -419,8 +419,8 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
     vfFusionOptions.enableAR = treeReduceFlags.enableAR;
     vfFusionOptions.enableNewTreeReducePolicy =
         hfusionOptions.enableAutoVectorizeV2 &&
-        hfusionOptions.enableTreeReduce &&
-        !hfusionOptions.enableTreeReduceV2 && treeReduceFlags.enableRA;
+        hfusionOptions.enableTreeReduce && !hfusionOptions.enableTreeReduceV2 &&
+        treeReduceFlags.enableRA;
     vfFusionOptions.enableVFStackLimit = hfusionOptions.enableVFStackLimit;
     pm.addPass(analysis::createVFFusionPass(vfFusionOptions));
     if (runRegBasePasses && hfusionOptions.enableFlatten) {
@@ -471,7 +471,21 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
     pm.addPass(createHFusionAutoVectorizePass(vecOptions));
   }
   pm.addPass(createAutoVectorizeVerifierPass());
-  if (hfusionOptions.enableTreeReduceV2) {
+  if (hfusionOptions.enableTreeReduce && !hfusionOptions.enableTreeReduceV2 &&
+      hfusionOptions.enableAutoVectorizeV2 && treeReduceFlags.enableRA) {
+    TreeReduceV2Options registerTreeOptions;
+    registerTreeOptions.enableRA = true;
+    registerTreeOptions.enableAR = false;
+    registerTreeOptions.onlyMarked = true;
+    registerTreeOptions.directRegisterRA = true;
+    pm.addPass(createTreeReduceV2Pass(registerTreeOptions));
+
+    TreeReduceV2Options legacyTreeOptions;
+    legacyTreeOptions.enableRA = treeReduceFlags.enableRA;
+    legacyTreeOptions.enableAR = treeReduceFlags.enableAR;
+    legacyTreeOptions.onlyLegacyScope = true;
+    pm.addPass(createTreeReduceV2Pass(legacyTreeOptions));
+  } else if (hfusionOptions.enableTreeReduceV2) {
     pm.addPass(createTreeReduceV2Pass(treeReduceOptions));
   }
   pm.addPass(mlir::createHFusionToVectorConversionPass());

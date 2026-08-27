@@ -17,6 +17,7 @@
 
 #include "bishengir/Tools/bishengir-compile/regbase/Utility.h"
 
+#include "bishengir/Dialect/HIVM/Transforms/PartitionAndBindSubBlock/PartitionTypes.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -64,8 +65,11 @@ LogicalResult inferMixedCV(ModuleOp &module,
     // not suppress MixedCV auto inference. Keep the old early exit for other
     // scoped IR(especially the scope in CV affinity scenarios), which is still
     // treated as hand-written/special-case input.
-    if (auto vectorType = scopeOp->getAttrOfType<StringAttr>("vector_type");
-        vectorType && vectorType.getValue() == "simt")
+    if (auto vectorMode = scopeOp->getAttrOfType<StringAttr>("vector_mode");
+        vectorMode && vectorMode.getValue() == "simt")
+      return mlir::WalkResult::advance();
+    if (scopeOp->getAttrOfType<IntegerAttr>(
+            mlir::hivm::partition_and_bind::kSubBlockAttrName))
       return mlir::WalkResult::advance();
     return mlir::WalkResult::interrupt();
   });

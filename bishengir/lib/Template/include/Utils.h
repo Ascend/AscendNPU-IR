@@ -37,9 +37,9 @@ using namespace cl::sycl;
 #endif
 #endif
 
-#define CEIL_DIV(x, y) (((x) + ((y)-1)) / (y))
+#define CEIL_DIV(x, y) (((x) + ((y) - 1)) / (y))
 // Compute the smallest value that is >= x and can divide y
-#define CEIL_FACTOR(x, y) (((x) + ((y)-1)) / (y) * (y))
+#define CEIL_FACTOR(x, y) (((x) + ((y) - 1)) / (y) * (y))
 #define FLOOR_FACTOR(x, y) ((x / y) * (y))
 // meta op library use synchronization id among 6 and 7 to avoid conflict with
 // auto sychronization of compiler which use id among 0 and 5.
@@ -69,13 +69,20 @@ constexpr int32_t L1_ALIGN_BYTES = 32;
 //===----------------------------------------------------------------------===//
 // Typedefs
 //===----------------------------------------------------------------------===//
-template <typename T, size_t Dim>
-struct memref_t {
+template <typename T, size_t Dim> struct memref_t {
   T *allocated;
   T *aligned;
   int64_t offset;
   int64_t sizes[Dim];
   int64_t strides[Dim];
+};
+
+// Unit Flag Mode for Synchronization
+enum class UNIT_FLAG : uint8_t {
+  DISABLED = 0,
+  RESERVED = 1,
+  ENABLED_WITHOUT_UPDATE = 2,
+  ENABLED_WITH_UPDATE = 3,
 };
 
 // Calculate the bit width of the current type.
@@ -97,7 +104,8 @@ __aiv__ __attribute__((always_inline)) bool isSizeAlignedToBlock(int size) {
 
 // Determine whether the starting address is 32byte aligned.
 template <typename T>
-__aiv__ __attribute__((always_inline)) bool isAddress32ByteAligned(__ubuf__ T* ptr) {
+__aiv__ __attribute__((always_inline)) bool
+isAddress32ByteAligned(__ubuf__ T *ptr) {
   auto address = reinterpret_cast<uintptr_t>(ptr);
   return (address & 0x1F) == 0;
 }
@@ -108,8 +116,8 @@ __aiv__ __attribute__((always_inline)) bool is32ByteAligned(int64_t value) {
 }
 
 template <typename T, int Dim>
-__aiv__ __attribute__((always_inline))
-bool is_memref_single_element(memref_t<__ubuf__ T, Dim> *buf) {
+__aiv__ __attribute__((always_inline)) bool
+is_memref_single_element(memref_t<__ubuf__ T, Dim> *buf) {
   for (int i = 0; i < Dim; i++) {
     if (buf->sizes[i] != 1) {
       return false;
@@ -119,14 +127,16 @@ bool is_memref_single_element(memref_t<__ubuf__ T, Dim> *buf) {
 }
 
 template <typename T, int Dim>
-__aiv__ __attribute__((always_inline)) bool is_memref_aligned(memref_t<__ubuf__ T, Dim> *buf) {
+__aiv__ __attribute__((always_inline)) bool
+is_memref_aligned(memref_t<__ubuf__ T, Dim> *buf) {
   // Check if buf pointer is null
   if (buf == nullptr) {
     return false;
   }
 
   // Calculate alignment factor: number of elements per alignment unit
-  // UB_ALIGN_BYTES * BITS_B8 converts bytes to bits, then divide by element bit width
+  // UB_ALIGN_BYTES * BITS_B8 converts bytes to bits, then divide by element bit
+  // width
   constexpr int align_factor = (UB_ALIGN_BYTES * BITS_B8) / bitwidthOf<T>();
 
   // Check if offset is aligned to the alignment factor
@@ -134,7 +144,8 @@ __aiv__ __attribute__((always_inline)) bool is_memref_aligned(memref_t<__ubuf__ 
     return false;
   }
 
-  // If the offset is aligned and the memref has only one element, take the vector path.
+  // If the offset is aligned and the memref has only one element, take the
+  // vector path.
   if (is_memref_single_element<T, Dim>(buf)) {
     return true;
   }
@@ -144,7 +155,8 @@ __aiv__ __attribute__((always_inline)) bool is_memref_aligned(memref_t<__ubuf__ 
     return false;
   }
 
-  // For 2D and higher dimensions, check alignment of second-to-last dimension stride
+  // For 2D and higher dimensions, check alignment of second-to-last dimension
+  // stride
   if constexpr (Dim >= 2) {
     return ((buf->strides[Dim - 2] % align_factor) == 0);
   }

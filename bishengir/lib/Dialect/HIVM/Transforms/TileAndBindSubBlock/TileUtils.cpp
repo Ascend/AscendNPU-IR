@@ -247,18 +247,26 @@ LogicalResult InsertFixpipeDstPropagateUp::matchAndRewrite(
     if (!dstMemrefType)
       return failure();
 
-    auto dstMemorySpace = dstMemrefType.getMemorySpace();
-    if (!dstMemorySpace)
-      return failure();
-
-    auto toAddrSpace = cast<AddressSpaceAttr>(dstMemorySpace).getAddressSpace();
-    if ((!dstMemorySpace) || (toAddrSpace != AddressSpace::UB)) {
-      return failure();
-    }
-
     auto maybeAllocOp = traceDefOp<memref::AllocOp>(dst);
     if (!maybeAllocOp)
       return failure();
+
+    // The fixpipe dst may be a memory_space_cast of the alloc (e.g. the
+    // fixpipe inserted by InsertLoadStoreForMixCV), whose result type carries
+    // no address space. Check the traced alloc's type instead so the UB check
+    // is not fooled by the cast and the dual-dst split is applied.
+    auto allocMemrefType =
+        dyn_cast<MemRefType>((*maybeAllocOp)->getResult(0).getType());
+    if (!allocMemrefType)
+      return failure();
+    auto allocMemorySpace = allocMemrefType.getMemorySpace();
+    if (!allocMemorySpace)
+      return failure();
+    auto toAddrSpace =
+        cast<AddressSpaceAttr>(allocMemorySpace).getAddressSpace();
+    if (toAddrSpace != AddressSpace::UB) {
+      return failure();
+    }
 
     memref::AllocOp allocOp = cast<memref::AllocOp>(*maybeAllocOp);
     mlir::Value allocVal = allocOp.getResult();
@@ -385,7 +393,7 @@ static LogicalResult tileAndSliceOpAIC(
     const DenseMap<int32_t, int64_t> &tightlyCoupledBufferToTilingDim) {
   RewritePatternSet patterns(func.getContext());
   // DetachFixpipeDstReadView is to handle the Op pattern by Preload
-  // Please read UT case: trace_def_ops_fixpipe_readview_mix_aic 
+  // Please read UT case: trace_def_ops_fixpipe_readview_mix_aic
   patterns.add<DetachFixpipeDstReadView>(func.getContext());
   patterns.add<InsertFixpipeDstPropagateUp>(
       func.getContext(), tightlyCoupledBufferToTilingDim);

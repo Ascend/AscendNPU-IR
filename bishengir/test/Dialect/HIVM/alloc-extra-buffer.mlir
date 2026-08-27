@@ -288,9 +288,9 @@ func.func @test_vtranspose_int64_op() {
   %src = memref.alloc() : memref<8x16xi64>
   %dst = memref.alloc() : memref<16x8xi64>
   // CHECK: hivm.hir.vtranspose{{.*}} temp_buffer({{.*}}memref<512xi64>) permutation = [1, 0]
-  hivm.hir.vtranspose 
-    ins(%src : memref<8x16xi64>) 
-    outs(%dst : memref<16x8xi64>) 
+  hivm.hir.vtranspose
+    ins(%src : memref<8x16xi64>)
+    outs(%dst : memref<16x8xi64>)
     permutation = [1, 0]
   return
 }
@@ -302,9 +302,9 @@ func.func @test_vtranspose_uint64_op() {
   %src = memref.alloc() : memref<8x16xui64>
   %dst = memref.alloc() : memref<16x8xui64>
   // CHECK: hivm.hir.vtranspose{{.*}} temp_buffer({{.*}}memref<512xui64>) permutation = [1, 0]
-  hivm.hir.vtranspose 
-    ins(%src : memref<8x16xui64>) 
-    outs(%dst : memref<16x8xui64>) 
+  hivm.hir.vtranspose
+    ins(%src : memref<8x16xui64>)
+    outs(%dst : memref<16x8xui64>)
     permutation = [1, 0]
   return
 }
@@ -1268,8 +1268,8 @@ func.func @test_vmax_2d_f16() {
 
 // -----
 func.func @test_vmul_1d_i64() {
-  %src = memref.alloc() : memref<64xi64>     
-  %scalar_mem = memref.alloc() : memref<1xi64> 
+  %src = memref.alloc() : memref<64xi64>
+  %scalar_mem = memref.alloc() : memref<1xi64>
   %dst = memref.alloc() : memref<64xi64>
   // CHECK: hivm.hir.vmul
   // CHECK-NOT: temp_buffer
@@ -1292,8 +1292,8 @@ func.func @test_reduce_min_r_b64() {
 
 
 func.func @test_vmul_1d_i32() {
-  %src = memref.alloc() : memref<64xi32>     
-  %scalar_mem = memref.alloc() : memref<1xi32> 
+  %src = memref.alloc() : memref<64xi32>
+  %scalar_mem = memref.alloc() : memref<1xi32>
   %dst = memref.alloc() : memref<64xi32>
   // CHECK:           hivm.hir.vmul{{.*}}temp_buffer{{.*}}broadcast = [0]
   hivm.hir.vmul ins(%src, %scalar_mem : memref<64xi32>, memref<1xi32>)
@@ -1304,8 +1304,8 @@ func.func @test_vmul_1d_i32() {
 
 // -----
 func.func @test_vmul_1d_i16() {
-  %src = memref.alloc() : memref<64xi16>     
-  %scalar_mem = memref.alloc() : memref<1xi16> 
+  %src = memref.alloc() : memref<64xi16>
+  %scalar_mem = memref.alloc() : memref<1xi16>
   %dst = memref.alloc() : memref<64xi16>
   // CHECK:           hivm.hir.vmul{{.*}}temp_buffer{{.*}}broadcast = [0]
   hivm.hir.vmul ins(%src, %scalar_mem : memref<64xi16>, memref<1xi16>)
@@ -1316,8 +1316,8 @@ func.func @test_vmul_1d_i16() {
 
 // -----
 func.func @test_vmul_1d_f32() {
-  %src = memref.alloc() : memref<64xf32>     
-  %scalar_mem = memref.alloc() : memref<1xf32> 
+  %src = memref.alloc() : memref<64xf32>
+  %scalar_mem = memref.alloc() : memref<1xf32>
   %dst = memref.alloc() : memref<64xf32>
   // CHECK:           hivm.hir.vmul{{.*}}temp_buffer{{.*}}broadcast = [0]
   hivm.hir.vmul ins(%src, %scalar_mem : memref<64xf32>, memref<1xf32>)
@@ -1328,8 +1328,8 @@ func.func @test_vmul_1d_f32() {
 
 // -----
 func.func @test_vmul_1d_f16() {
-  %src = memref.alloc() : memref<64xf16>     
-  %scalar_mem = memref.alloc() : memref<1xf16> 
+  %src = memref.alloc() : memref<64xf16>
+  %scalar_mem = memref.alloc() : memref<1xf16>
   %dst = memref.alloc() : memref<64xf16>
   // CHECK:           hivm.hir.vmul{{.*}}temp_buffer{{.*}}broadcast = [0]
   hivm.hir.vmul ins(%src, %scalar_mem : memref<64xf16>, memref<1xf16>)
@@ -1340,8 +1340,8 @@ func.func @test_vmul_1d_f16() {
 
 // -----
 func.func @test_vmul_2d_i64() {
-  %src = memref.alloc() : memref<64x64xi64>     
-  %scalar_mem = memref.alloc() : memref<64x1xi64> 
+  %src = memref.alloc() : memref<64x64xi64>
+  %scalar_mem = memref.alloc() : memref<64x1xi64>
   %dst = memref.alloc() : memref<64x64xi64>
   // CHECK: hivm.hir.vmul
   // CHECK-NOT: temp_buffer
@@ -1384,8 +1384,8 @@ func.func @test_reduce_xori_r_b64() {
 
 
 func.func @test_vmul_2d_i32() {
-  %src = memref.alloc() : memref<64x64xi32>     
-  %scalar_mem = memref.alloc() : memref<64x1xi32> 
+  %src = memref.alloc() : memref<64x64xi32>
+  %scalar_mem = memref.alloc() : memref<64x1xi32>
   %dst = memref.alloc() : memref<64x64xi32>
   // CHECK:           hivm.hir.vmul{{.*}}temp_buffer{{.*}}broadcast = [1]
   hivm.hir.vmul ins(%src, %scalar_mem : memref<64x64xi32>, memref<64x1xi32>)
@@ -1396,8 +1396,8 @@ func.func @test_vmul_2d_i32() {
 
 // -----
 func.func @test_vmul_2d_i16() {
-  %src = memref.alloc() : memref<64x64xi16>     
-  %scalar_mem = memref.alloc() : memref<64x1xi16> 
+  %src = memref.alloc() : memref<64x64xi16>
+  %scalar_mem = memref.alloc() : memref<64x1xi16>
   %dst = memref.alloc() : memref<64x64xi16>
   // CHECK:           hivm.hir.vmul{{.*}}temp_buffer{{.*}}broadcast = [1]
   hivm.hir.vmul ins(%src, %scalar_mem : memref<64x64xi16>, memref<64x1xi16>)
@@ -1408,8 +1408,8 @@ func.func @test_vmul_2d_i16() {
 
 // -----
 func.func @test_vmul_2d_f32() {
-  %src = memref.alloc() : memref<64x64xf32>     
-  %scalar_mem = memref.alloc() : memref<64x1xf32> 
+  %src = memref.alloc() : memref<64x64xf32>
+  %scalar_mem = memref.alloc() : memref<64x1xf32>
   %dst = memref.alloc() : memref<64x64xf32>
   // CHECK:           hivm.hir.vmul{{.*}}temp_buffer{{.*}}broadcast = [1]
   hivm.hir.vmul ins(%src, %scalar_mem : memref<64x64xf32>, memref<64x1xf32>)
@@ -1420,8 +1420,8 @@ func.func @test_vmul_2d_f32() {
 
 // -----
 func.func @test_vmul_2d_f16() {
-  %src = memref.alloc() : memref<64x64xf16>     
-  %scalar_mem = memref.alloc() : memref<64x1xf16> 
+  %src = memref.alloc() : memref<64x64xf16>
+  %scalar_mem = memref.alloc() : memref<64x1xf16>
   %dst = memref.alloc() : memref<64x64xf16>
   // CHECK:           hivm.hir.vmul{{.*}}temp_buffer{{.*}}broadcast = [1]
   hivm.hir.vmul ins(%src, %scalar_mem : memref<64x64xf16>, memref<64x1xf16>)
@@ -2543,6 +2543,22 @@ func.func @test_vreduce_vcg_temp_buffer() attributes {hivm.enable_saving_ub} {
                          outs(%dst : memref<16x1xf16>)
                          reduce_dims = [1]
 
+  return
+}
+
+// -----
+
+func.func @test_cast_s322s8_2d_size_align_extra() {
+  %src = memref.alloc() : memref<6x32xi32, #hivm.address_space<ub>>
+  %dst = memref.alloc() : memref<6x32xi8, #hivm.address_space<ub>>
+
+  // The first cast axis is padded from 6 to 32 for vnchwconv. Conservatively
+  // reserve two regions of 32 * 32 i32 elements.
+  // CHECK: memref.alloc() : memref<2048xi32>
+  // CHECK: hivm.hir.vcast{{.*}}temp_buffer({{.*}}memref<2048xi32>)
+  hivm.hir.vcast ins(%src : memref<6x32xi32, #hivm.address_space<ub>>)
+                 outs(%dst : memref<6x32xi8, #hivm.address_space<ub>>)
+                 round_mode = <truncwithoverflow>
   return
 }
 

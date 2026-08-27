@@ -16,15 +16,15 @@ module {
     %4 = tensor.empty() : tensor<256x12288xf32>
     %collapsed = tensor.collapse_shape %arg0 [[0, 1], [2]] : tensor<2x128x4096xf32> into tensor<256x4096xf32>
     %5 = hfusion.elemwise_binary {fun = #hfusion.binary_fn<powf>} ins(%collapsed, %cst_0 : tensor<256x4096xf32>, f32) outs(%0 : tensor<256x4096xf32>) -> tensor<256x4096xf32>
-    %broadcasted = linalg.broadcast ins(%arg1 : tensor<4096xf32>) outs(%0 : tensor<256x4096xf32>) dimensions = [0] 
+    %broadcasted = linalg.broadcast ins(%arg1 : tensor<4096xf32>) outs(%0 : tensor<256x4096xf32>) dimensions = [0]
     %expanded = tensor.expand_shape %2 [[0, 1]] output_shape [2, 128] : tensor<256xf32> into tensor<2x128xf32>
     %expanded_4 = tensor.expand_shape %3 [[0, 1, 2]] output_shape [2, 128, 1] : tensor<256xf32> into tensor<2x128x1xf32>
-    %reduced = linalg.reduce { arith.addf } ins(%5 : tensor<256x4096xf32>) outs(%2 : tensor<256xf32>) dimensions = [1] 
+    %reduced = linalg.reduce { arith.addf } ins(%5 : tensor<256x4096xf32>) outs(%2 : tensor<256xf32>) dimensions = [1]
     %6 = linalg.elemwise_binary {fun = #linalg.binary_fn<div>} ins(%reduced, %3 : tensor<256xf32>, tensor<256xf32>) outs(%1 : tensor<256xf32>) -> tensor<256xf32>
     %7 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%6, %cst_2 : tensor<256xf32>, f32) outs(%1 : tensor<256xf32>) -> tensor<256xf32>
     %8 = hfusion.elemwise_unary {fun = #hfusion.unary_fn<sqrt>} ins(%7 : tensor<256xf32>) outs(%1 : tensor<256xf32>) -> tensor<256xf32>
     %9 = hfusion.elemwise_unary {fun = #hfusion.unary_fn<rec>} ins(%8 : tensor<256xf32>) outs(%1 : tensor<256xf32>) -> tensor<256xf32>
-    %broadcasted_5 = linalg.broadcast ins(%9 : tensor<256xf32>) outs(%0 : tensor<256x4096xf32>) dimensions = [1] 
+    %broadcasted_5 = linalg.broadcast ins(%9 : tensor<256xf32>) outs(%0 : tensor<256x4096xf32>) dimensions = [1]
     %10 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%collapsed, %broadcasted_5 : tensor<256x4096xf32>, tensor<256x4096xf32>) outs(%0 : tensor<256x4096xf32>) -> tensor<256x4096xf32>
     %11 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%10, %broadcasted : tensor<256x4096xf32>, tensor<256x4096xf32>) outs(%0 : tensor<256x4096xf32>) -> tensor<256x4096xf32>
     %12 = linalg.matmul_transpose_b ins(%11, %arg2 : tensor<256x4096xf32>, tensor<12288x4096xf32>) outs(%4 : tensor<256x12288xf32>) -> tensor<256x12288xf32>

@@ -1625,7 +1625,7 @@ struct AscendDPXToHIVMRegbaseIntrins
 
   void runOnOperation() override {
     auto moduleOp = getOperation();
-    
+
     MLIRContext &ctx = getContext();
     LLVMConversionTarget target(ctx);
     ctx.loadDialect<hivm::HIVMDialect>();

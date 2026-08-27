@@ -39,6 +39,10 @@ std::unique_ptr<Pass> createNarrowTensorOpPass();
 std::unique_ptr<Pass>
 createPropagateReshapePass(const PropagateReshapeOptions &options = {});
 
+/// Create a pass to fold load chains back to matrix form when
+/// consumers collapse the dims away.
+std::unique_ptr<Pass> createFoldCollapseIntoAllocWithLoadPass();
+
 /// Create a pass to fold tensor empty.
 std::unique_ptr<Pass> createFoldTensorEmptyPass();
 
