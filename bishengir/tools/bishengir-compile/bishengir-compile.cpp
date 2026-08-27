@@ -105,7 +105,7 @@ int main(int argc, char **argv) {
 
   // For regbase targets (Ascend910_95* / Ascend950*):
   //  - set BISHENGIR_LEGACY_A5_REGBASE=1 to use the legacy
-  //    A5 regbase pipeline; 
+  //    A5 regbase pipeline;
   //    without it, run merged native pipeline.
   // TODO: delegation will be removed after bishengir-compile and
   // bishengir-compile-a5 are merged.

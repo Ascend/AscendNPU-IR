@@ -30,7 +30,7 @@ public:
     CATLASS_DEVICE
     Resource()
     {
-        
+
     }
 };
 

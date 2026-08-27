@@ -1725,7 +1725,7 @@ private:
 /// 5. asinh(x) = sgn * mag (Odd function symmetry)
 ///
 /// NormalizeAsinhOp: Decomposes asinh(x) into high-performance base instructions.
-/// This implementation balances precision and performance using a three-path 
+/// This implementation balances precision and performance using a three-path
 /// piecewise approach based on the input magnitude.
 struct NormalizeAsinhOp : public OpRewritePattern<hfusion::ElemwiseUnaryOp> {
   using OpRewritePattern<hfusion::ElemwiseUnaryOp>::OpRewritePattern;
@@ -1743,8 +1743,8 @@ struct NormalizeAsinhOp : public OpRewritePattern<hfusion::ElemwiseUnaryOp> {
 
     // -------------------------------------------------------------------------
     // Step 1: Precision Promotion (FP16 -> FP32)
-    // FP16 has a limited dynamic range (max 65504). Calculating x^2 can easily 
-    // cause overflow or significant rounding errors. Promoting to FP32 for 
+    // FP16 has a limited dynamic range (max 65504). Calculating x^2 can easily
+    // cause overflow or significant rounding errors. Promoting to FP32 for
     // intermediate transcendental calculations is the standard approach for NPU.
     // -------------------------------------------------------------------------
     if (inTy.isF16()) {
@@ -1790,7 +1790,7 @@ private:
   Value pathLarge(PatternRewriter &rewriter, Location loc, Value absInput) const {
     auto empty = utils::createEmptyOp(rewriter, loc, absInput);
     // Precomputed ln(2)
-    Value ln2 = f32Const(rewriter, loc, 0.69314718f); 
+    Value ln2 = f32Const(rewriter, loc, 0.69314718f);
     // Calculate log(|x|), which maps to NPU vlog instruction
     Value logX = hfusion::createUnaryOp<linalg::ElemwiseUnaryOp, linalg::UnaryFn,
                                        linalg::UnaryFnAttr>(
@@ -1806,7 +1806,7 @@ private:
   Value pathNormal(PatternRewriter &rewriter, Location loc, Value absInput) const {
     auto empty = utils::createEmptyOp(rewriter, loc, absInput);
     Value one = f32Const(rewriter, loc, 1.0f);
-    
+
     // Calculate |x|^2
     Value z2 = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
                                        linalg::BinaryFnAttr>(
@@ -1815,17 +1815,17 @@ private:
     Value z2p1 = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
                                          linalg::BinaryFnAttr>(
         rewriter, loc, linalg::BinaryFn::add, ValueRange{z2, one}, empty)->getResult(0);
-    
+
     // Calculate sqrt(|x|^2 + 1) using NPU vsqrt instruction
     Value sqrtVal = hfusion::createUnaryOp<hfusion::ElemwiseUnaryOp, hfusion::UnaryFn,
                                            hfusion::UnaryFnAttr>(
         rewriter, loc, hfusion::UnaryFn::sqrt, ValueRange{z2p1}, empty)->getResult(0);
-    
+
     // Calculate ln(|x| + sqrt(...))
     Value argLog = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
                                            linalg::BinaryFnAttr>(
         rewriter, loc, linalg::BinaryFn::add, ValueRange{absInput, sqrtVal}, empty)->getResult(0);
-    
+
     return hfusion::createUnaryOp<linalg::ElemwiseUnaryOp, linalg::UnaryFn,
                                   linalg::UnaryFnAttr>(
         rewriter, loc, linalg::UnaryFn::log, ValueRange{argLog}, empty)->getResult(0);
@@ -1847,12 +1847,12 @@ private:
     Value resNormal = pathNormal(rewriter, loc, absInput);
     // pathSmall directly reuses absInput (|x| < 2^-12)
 
-   
+
     // 3. Nested selection logic for magnitude (Magnitude = f(z))
     // Decision A: If z < 2^-12, return z (Small Path); else return normal result
     Value condSmall = createCmpOp(rewriter, loc, absInput, smallThr, CompareFn::vlt)->getResult(0);
     Value res1 = createSelect(rewriter, loc, condSmall, absInput, resNormal, empty);
-    
+
     // Decision B: If z >= 10^8, return resLarge (Large Path); else return result from Decision A
     Value condLarge = createCmpOp(rewriter, loc, absInput, largeThr, CompareFn::vge)->getResult(0);
     Value mag = createSelect(rewriter, loc, condLarge, resLarge, res1, empty);

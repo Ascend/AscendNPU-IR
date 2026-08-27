@@ -15,7 +15,7 @@ func.func @test_scalar_to_vector(%arg3: f32, %arg4: f32, %arg5: f32, %arg14: mem
   %6 = arith.mulf %5, %arg5 : f32
   %7 = vector.broadcast %6 : f32 to vector<64xf32>
   vector.transfer_write %7, %arg14[%c0] {in_bounds = [true]} : vector<64xf32>, memref<64xf32, #hivm.address_space<ub>>
-  return 
+  return
 }
 
 // -----
@@ -137,4 +137,3 @@ func.func @test_scalar_bitcast_chain_via_select(%arg0: f32, %arg1: i32, %arg2: i
   vector.transfer_write %7, %arg6[%c0] {in_bounds = [true]} : vector<64xf32>, memref<64xf32, #hivm.address_space<ub>>
   return
 }
-

@@ -308,7 +308,7 @@ reduce_r_vcg_core(memref_t<__ubuf__ T, 1> *src0, memref_t<__ubuf__ T, 1> *dst,
 // - Large size (>= num_per_repeat): dichotomy to num_per_repeat, then pairwise to 1
 template <ReduceOpTy OP, typename T>
 __aiv__ __attribute__((always_inline))
-std::enable_if_t<(OP == ReduceOpTy::REDUCE_SUM && 
+std::enable_if_t<(OP == ReduceOpTy::REDUCE_SUM &&
                   (std::is_same<half, T>() || std::is_same<float, T>())), void>
 reduce_r_core_on_scalar_impl(memref_t<__ubuf__ T, 1> *src0,
                               memref_t<__ubuf__ T, 1> *dst,
@@ -334,8 +334,8 @@ reduce_r_core_on_scalar_impl(memref_t<__ubuf__ T, 1> *src0,
 // Implementation for PROD (all types) or SUM with non-float types using dichotomy reduction
 template <ReduceOpTy OP, typename T>
 __aiv__ __attribute__((always_inline))
-std::enable_if_t<(OP == ReduceOpTy::REDUCE_PROD || 
-                   (OP == ReduceOpTy::REDUCE_SUM && 
+std::enable_if_t<(OP == ReduceOpTy::REDUCE_PROD ||
+                   (OP == ReduceOpTy::REDUCE_SUM &&
                     !(std::is_same<half, T>() || std::is_same<float, T>()))), void>
 reduce_r_core_on_scalar_impl(memref_t<__ubuf__ T, 1> *src0,
                               memref_t<__ubuf__ T, 1> *dst,

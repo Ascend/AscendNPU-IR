@@ -73,7 +73,7 @@ def LoadOp : AscendDPX_Op<"load", [AttrSizedOperandSegments, MemoryEffects<[MemR
     LLVM_AnyPointer:$ptr,
     Optional<I1>:$mask,
     Optional<LLVM_Type>:$falseVal,
-    DefaultValuedAttr<AscendDPX_LoadCachePolicyAttr, 
+    DefaultValuedAttr<AscendDPX_LoadCachePolicyAttr,
                       "::mlir::ascend_dpx::AscendDPXLoadCachePolicy::L2_CACHE_HINT_NORMAL_FV">:$cacheHint,
     DefaultValuedAttr<AscendDPX_CacheOptionAttr,
                       "::mlir::ascend_dpx::AscendDPXCacheOption::LOADCACHEOPTION_CA">:$cacheOption,
@@ -102,7 +102,7 @@ def StoreOp : AscendDPX_Op<"store",[MemoryEffects<[MemWrite]>]> {
     LLVM_AnyPointer:$ptr,
     LLVM_Type:$value,
     Optional<I1>:$mask,
-    DefaultValuedAttr<AscendDPX_StoreCachePolicyAttr, 
+    DefaultValuedAttr<AscendDPX_StoreCachePolicyAttr,
                       "::mlir::ascend_dpx::AscendDPXStoreCachePolicy::L2_CACHE_HINT_NORMAL_FV">:$cacheHint,
     DefaultValuedAttr<AscendDPX_CacheOptionAttr,
                       "::mlir::ascend_dpx::AscendDPXCacheOption::LOADCACHEOPTION_CA">:$cacheOption
@@ -126,7 +126,7 @@ def YieldOp : AscendDPX_Op<"yield"> {
   let assemblyFormat = "attr-dict";
 }
 
-class WarpShuffleOp<string mnemonic> : 
+class WarpShuffleOp<string mnemonic> :
   AscendDPX_Op<mnemonic> {
   let arguments = (ins LLVM_Type:$src,
                        I32:$lane_mask,
@@ -167,11 +167,11 @@ def ReduceUMin : WarpReduceOp<"reduce.umin">;
 //===----------------------------------------------------------------------===//
 // Atomic Ops
 //===----------------------------------------------------------------------===//
-class AscendDPX_AtomicOp<string mnemonic> : 
+class AscendDPX_AtomicOp<string mnemonic> :
   AscendDPX_Op<mnemonic> {
   let arguments = (ins LLVM_AnyPointer:$src,
                        LLVM_Type:$data,
-                       DefaultValuedAttr<AscendDPX_StoreCachePolicyAttr, 
+                       DefaultValuedAttr<AscendDPX_StoreCachePolicyAttr,
                                          "::mlir::ascend_dpx::AscendDPXStoreCachePolicy::L2_CACHE_HINT_NORMAL_FV">:$cache);
   let results = (outs LLVM_Type:$res);
   let assemblyFormat = [{$src `,` $data
@@ -195,7 +195,7 @@ def AtomicCASOp : AscendDPX_AtomicOp<"atomic_cas"> {
   let arguments = (ins LLVM_AnyPointer:$src,
                        LLVM_Type:$data,
                        LLVM_Type:$other,
-                       DefaultValuedAttr<AscendDPX_StoreCachePolicyAttr, 
+                       DefaultValuedAttr<AscendDPX_StoreCachePolicyAttr,
                                          "::mlir::ascend_dpx::AscendDPXStoreCachePolicy::L2_CACHE_HINT_NORMAL_FV">:$cache);
   let assemblyFormat = "$src `,` $data `,` $other attr-dict `:` functional-type(operands, results)";
 }
@@ -208,13 +208,13 @@ def CastOp : AscendDPX_Op<"cast"> {
   let description = [{
     Converts between compatible types while preserving structure.
   }];
-  let arguments = (ins 
+  let arguments = (ins
     LLVM_Type:$in,
-    DefaultValuedAttr<AscendDPX_CastKindAttr, 
+    DefaultValuedAttr<AscendDPX_CastKindAttr,
                       "::mlir::ascend_dpx::AscendDPXCastKind::SIGNED_TO_FLOAT">:$kind
   );
   let results = (outs LLVM_Type:$out);
-  
+
   let assemblyFormat = "$in `kind` $kind attr-dict `:` type($in) `to` type($out)";
 }
 

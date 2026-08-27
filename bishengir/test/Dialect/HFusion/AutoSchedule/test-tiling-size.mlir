@@ -3,7 +3,7 @@
 // CHECK-LABEL: func.func @test_static_min_tiling_size_dim_size_tiling_function
 // CHECK: %[[c4:.*]] = arith.constant 4 : i64
 // CHECK: return {{.*}}, %[[c4]]
-func.func @test_static_min_tiling_size_dim_size(%arg0: tensor<4xf32>, %arg1: tensor<4xbf16>) -> (tensor<f32>, tensor<f32>) 
+func.func @test_static_min_tiling_size_dim_size(%arg0: tensor<4xf32>, %arg1: tensor<4xbf16>) -> (tensor<f32>, tensor<f32>)
 attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hfusion.fusion_kind = #hfusion.fusion_kind<ANY_PBR>} {
   %cst = arith.constant 4.000000e+02 : f32
   %0 = tensor.empty() : tensor<4xf32>
@@ -11,7 +11,7 @@ attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hfusio
   %2 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%arg0, %1 : tensor<4xf32>, tensor<4xf32>) outs(%0 : tensor<4xf32>) -> tensor<4xf32>
   %3 = tensor.empty() : tensor<f32>
   %4 = linalg.fill ins(%cst : f32) outs(%3 : tensor<f32>) -> tensor<f32>
-  %reduced = linalg.reduce ins(%2 : tensor<4xf32>) outs(%4 : tensor<f32>) dimensions = [0] 
+  %reduced = linalg.reduce ins(%2 : tensor<4xf32>) outs(%4 : tensor<f32>) dimensions = [0]
     (%in: f32, %init: f32) {
       %8 = arith.addf %in, %init : f32
       linalg.yield %8 : f32
@@ -25,11 +25,11 @@ attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hfusio
 // CHECK-LABEL: func.func @test_transpose_size_alignment_0_tiling_function
 // CHECK: %[[size0:.*]] = arith.constant 16 : i64
 // CHECK: return {{.*}}, %[[size0]]
-func.func @test_transpose_size_alignment_0(%arg0: tensor<3072x3072xf32>) -> tensor<3072x3072xbf16> 
+func.func @test_transpose_size_alignment_0(%arg0: tensor<3072x3072xf32>) -> tensor<3072x3072xbf16>
 attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hfusion.fusion_kind = #hfusion.fusion_kind<PURE_ELEMWISE>} {
   %0 = tensor.empty() : tensor<3072x3072xf32>
   %1 = tensor.empty() : tensor<3072x3072xbf16>
-  %transposed = linalg.transpose ins(%arg0 : tensor<3072x3072xf32>) outs(%0 : tensor<3072x3072xf32>) permutation = [1, 0] 
+  %transposed = linalg.transpose ins(%arg0 : tensor<3072x3072xf32>) outs(%0 : tensor<3072x3072xf32>) permutation = [1, 0]
   %2 = hfusion.cast {round_mode = #hfusion.round_mode<rint>} ins(%transposed : tensor<3072x3072xf32>) outs(%1 : tensor<3072x3072xbf16>) -> tensor<3072x3072xbf16>
   return %2 : tensor<3072x3072xbf16>
 }
@@ -83,13 +83,13 @@ module {
 // CHECK-NOT:arith.constant 5 : index
 // CHECK-NOT:arith.constant 14 : index
 // CHECK: func.func @test_tile_size_greater_than_dim_size(
-func.func @test_tile_size_greater_than_dim_size(%arg0: tensor<3x5x5x7x2x1xi8>) -> tensor<5x7x2x5x3xi8> 
+func.func @test_tile_size_greater_than_dim_size(%arg0: tensor<3x5x5x7x2x1xi8>) -> tensor<5x7x2x5x3xi8>
 attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hfusion.fusion_kind = #hfusion.fusion_kind<ANY_PBR>} {
   %collapsed = tensor.collapse_shape %arg0 [[0], [1], [2], [3, 4, 5]] : tensor<3x5x5x7x2x1xi8> into tensor<3x5x5x14xi8>
   %0 = tensor.empty() : tensor<14x5x5x3xi8>
-  %transposed = linalg.transpose ins(%collapsed : tensor<3x5x5x14xi8>) outs(%0 : tensor<14x5x5x3xi8>) permutation = [3, 1, 2, 0] 
+  %transposed = linalg.transpose ins(%collapsed : tensor<3x5x5x14xi8>) outs(%0 : tensor<14x5x5x3xi8>) permutation = [3, 1, 2, 0]
   %1 = tensor.empty() : tensor<5x14x5x3xi8>
-  %transposed_0 = linalg.transpose ins(%transposed : tensor<14x5x5x3xi8>) outs(%1 : tensor<5x14x5x3xi8>) permutation = [1, 0, 2, 3] 
+  %transposed_0 = linalg.transpose ins(%transposed : tensor<14x5x5x3xi8>) outs(%1 : tensor<5x14x5x3xi8>) permutation = [1, 0, 2, 3]
   %expanded = tensor.expand_shape %transposed_0 [[0], [1, 2], [3], [4]] output_shape [5, 7, 2, 5, 3] : tensor<5x14x5x3xi8> into tensor<5x7x2x5x3xi8>
   return %expanded : tensor<5x7x2x5x3xi8>
 }

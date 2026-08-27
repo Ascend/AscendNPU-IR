@@ -346,7 +346,7 @@ func.func @copy_before_collapse() {
    %c = memref.collapse_shape %src [[0], [1, 2]]
      : memref<2x2x4xbf16, #hivm.address_space<ub>>
      into memref<2x8xbf16, #hivm.address_space<ub>>
- 
+
    %dst = memref.alloc() : memref<2x8xbf16, #hivm.address_space<ub>>
    memref.copy %c, %dst
      : memref<2x8xbf16, #hivm.address_space<ub>> to memref<2x8xbf16, #hivm.address_space<ub>>

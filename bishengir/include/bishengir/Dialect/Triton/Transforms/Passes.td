@@ -316,7 +316,7 @@ def RewriteSliceOpToTriton
                             "mlir::triton::TritonDialect"];
 }
 
-def ExpandGatherOpSources 
+def ExpandGatherOpSources
   : Pass<"expand-gather-op-sources", "mlir::ModuleOp"> {
     let summary = "Expands tt.gather op sources to the indices tensor sizes if smaller when num warps > 1 and num elements in indices tensor > 32";
     let constructor = "bishengir::triton::createExpandGatherOpSourcesPass()";

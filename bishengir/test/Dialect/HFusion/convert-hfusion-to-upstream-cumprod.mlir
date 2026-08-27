@@ -70,7 +70,7 @@ func.func @test_hfusion_cumprod_cpu_lowering(%arg0: tensor<1x2x3x4xi32>) -> tens
 // CHECK-LABEL: func.func @test_hfusion_cumprod_reverse_lowering
 func.func @test_hfusion_cumprod_reverse_lowering(%arg0: tensor<3xf32>) -> tensor<3xf32> attributes {hacc.function_kind = #hacc.function_kind<HOST>, hacc.host_func_type = #hacc.host_func_type<host_entry>} {
   // CHECK-DAG: %[[C2:[^ ]+]] = arith.constant 2 : index
-  // CHECK: scf.for %[[IV_REV:[^ ]+]] = 
+  // CHECK: scf.for %[[IV_REV:[^ ]+]] =
   // CHECK:   %[[REVERSE_IDX:[^ ]+]] = arith.subi %[[C2]], %[[IV_REV]]
   %0 = hfusion.cumprod %arg0 : tensor<3xf32> cum_dims = [0] reverse = true -> tensor<3xf32>
   return %0 : tensor<3xf32>

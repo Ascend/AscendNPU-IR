@@ -366,4 +366,3 @@ func.func @fuse_load_transfer_plain_mark(%arg0: memref<?xf16>, %arg1: index) -> 
   %transposed = linalg.transpose ins(%0 : tensor<32x64xf16>) outs(%1 : tensor<64x32xf16>) permutation = [1, 0]
   return %transposed : tensor<64x32xf16>
 }
-

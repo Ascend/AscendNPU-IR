@@ -152,34 +152,34 @@ func.func @test_unary_vector_op_bufferize() {
 
   // CHECK: hivm.hir.vexp
   // CHECK-SAME: ins({{.*}} : memref<256x256xf16>) outs({{.*}} : memref<256x256xf16>)
-  hivm.hir.vexp ins(%src : tensor<256x256xf16>) 
+  hivm.hir.vexp ins(%src : tensor<256x256xf16>)
                 outs(%dst : tensor<256x256xf16>) -> tensor<256x256xf16>
 
   // CHECK: hivm.hir.vabs
   // CHECK-SAME: ins({{.*}} : memref<256x256xf16>) outs({{.*}} : memref<256x256xf16>)
   hivm.hir.vabs ins(%src : tensor<256x256xf16>)
                 outs(%dst : tensor<256x256xf16>) -> tensor<256x256xf16>
-  
+
   // CHECK: hivm.hir.vln
   // CHECK-SAME: ins({{.*}} : memref<256x256xf16>) outs({{.*}} : memref<256x256xf16>)
   hivm.hir.vln ins(%src : tensor<256x256xf16>)
                 outs(%dst : tensor<256x256xf16>) -> tensor<256x256xf16>
-  
+
   // CHECK: hivm.hir.vrelu
   // CHECK-SAME: ins({{.*}} : memref<256x256xf16>) outs({{.*}} : memref<256x256xf16>)
   hivm.hir.vrelu ins(%src : tensor<256x256xf16>)
                 outs(%dst : tensor<256x256xf16>) -> tensor<256x256xf16>
-  
+
   // CHECK: hivm.hir.vrsqrt
   // CHECK-SAME: ins({{.*}} : memref<256x256xf16>) outs({{.*}} : memref<256x256xf16>)
   hivm.hir.vrsqrt ins(%src : tensor<256x256xf16>)
                 outs(%dst : tensor<256x256xf16>) -> tensor<256x256xf16>
-  
+
   // CHECK: hivm.hir.vsqrt
   // CHECK-SAME: ins({{.*}} : memref<256x256xf16>) outs({{.*}} : memref<256x256xf16>)
   hivm.hir.vsqrt ins(%src : tensor<256x256xf16>)
                 outs(%dst : tensor<256x256xf16>) -> tensor<256x256xf16>
-  
+
   // CHECK: hivm.hir.vrec
   // CHECK-SAME: ins({{.*}} : memref<256x256xf16>) outs({{.*}} : memref<256x256xf16>)
   hivm.hir.vrec ins(%src : tensor<256x256xf16>)
@@ -223,7 +223,7 @@ func.func @test_vbrc_bufferize() {
   hivm.hir.vbrc ins(%src1 : tensor<1x1xf16>)
                 outs(%dst1 : tensor<128x128xf16>)
                 broadcast_dims = [0, 1] -> tensor<128x128xf16>
-  
+
   %cst = arith.constant 256.0 : f16
   // CHECK: hivm.hir.vbrc
   // CHECK-SAME: ins({{.*}} : f16)

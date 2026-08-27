@@ -12,14 +12,14 @@ func.func @fuse_consecutive_reduce_ops_success(%arg0: tensor<4x2047x2047xf32>, %
   %3 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%2, %arg1 : tensor<1x4x2047x2047xf32>, tensor<1x4x2047x2047xf32>) outs(%0 : tensor<1x4x2047x2047xf32>) -> tensor<1x4x2047x2047xf32>
   %4 = tensor.empty() : tensor<2047x2047xf32>
   %5 = linalg.fill ins(%cst : f32) outs(%4 : tensor<2047x2047xf32>) -> tensor<2047x2047xf32>
-  %reduced = linalg.reduce ins(%3 : tensor<1x4x2047x2047xf32>) outs(%5 : tensor<2047x2047xf32>) dimensions = [0, 1] 
+  %reduced = linalg.reduce ins(%3 : tensor<1x4x2047x2047xf32>) outs(%5 : tensor<2047x2047xf32>) dimensions = [0, 1]
     (%in: f32, %init: f32) {
       %8 = arith.addf %in, %init : f32
       linalg.yield %8 : f32
     }
   %6 = tensor.empty() : tensor<2047xf32>
   %7 = linalg.fill ins(%cst : f32) outs(%6 : tensor<2047xf32>) -> tensor<2047xf32>
-  %reduced_1 = linalg.reduce ins(%reduced : tensor<2047x2047xf32>) outs(%7 : tensor<2047xf32>) dimensions = [0] 
+  %reduced_1 = linalg.reduce ins(%reduced : tensor<2047x2047xf32>) outs(%7 : tensor<2047xf32>) dimensions = [0]
     (%in: f32, %init: f32) {
       %8 = arith.addf %in, %init : f32
       linalg.yield %8 : f32
@@ -43,14 +43,14 @@ func.func @fuse_consecutive_reduce_ops_with_diff_regions_fail(%arg0: tensor<4x20
   %3 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%2, %arg1 : tensor<1x4x2047x2047xf32>, tensor<1x4x2047x2047xf32>) outs(%0 : tensor<1x4x2047x2047xf32>) -> tensor<1x4x2047x2047xf32>
   %4 = tensor.empty() : tensor<2047x2047xf32>
   %5 = linalg.fill ins(%cst : f32) outs(%4 : tensor<2047x2047xf32>) -> tensor<2047x2047xf32>
-  %reduced = linalg.reduce ins(%3 : tensor<1x4x2047x2047xf32>) outs(%5 : tensor<2047x2047xf32>) dimensions = [0, 1] 
+  %reduced = linalg.reduce ins(%3 : tensor<1x4x2047x2047xf32>) outs(%5 : tensor<2047x2047xf32>) dimensions = [0, 1]
     (%in: f32, %init: f32) {
       %8 = arith.addf %in, %init : f32
       linalg.yield %8 : f32
     }
   %6 = tensor.empty() : tensor<2047xf32>
   %7 = linalg.fill ins(%cst : f32) outs(%6 : tensor<2047xf32>) -> tensor<2047xf32>
-  %reduced_1 = linalg.reduce ins(%reduced : tensor<2047x2047xf32>) outs(%7 : tensor<2047xf32>) dimensions = [0] 
+  %reduced_1 = linalg.reduce ins(%reduced : tensor<2047x2047xf32>) outs(%7 : tensor<2047xf32>) dimensions = [0]
     (%in: f32, %init: f32) {
       %8 = arith.mulf %in, %init : f32
       linalg.yield %8 : f32
@@ -151,7 +151,7 @@ func.func @test_extf_dense_float128() -> tensor<16xf128> {
 func.func @test_cst_folding() -> tensor<16xf32> {
   %cst = arith.constant dense<2> : tensor<16xi64>
   %0 = tensor.empty() : tensor<16xf32>
-  %1 = hfusion.cast ins(%cst : tensor<16xi64>) outs(%0 : tensor<16xf32>) -> tensor<16xf32>    
+  %1 = hfusion.cast ins(%cst : tensor<16xi64>) outs(%0 : tensor<16xf32>) -> tensor<16xf32>
   return %1 : tensor<16xf32>
 }
 
@@ -160,7 +160,7 @@ func.func @test_cst_folding() -> tensor<16xf32> {
 func.func @test_cst_folding_same_type() -> tensor<16xf32> {
   %cst = arith.constant dense<2.8> : tensor<16xf32>
   %0 = tensor.empty() : tensor<16xf32>
-  %1 = hfusion.cast ins(%cst : tensor<16xf32>) outs(%0 : tensor<16xf32>) -> tensor<16xf32>    
+  %1 = hfusion.cast ins(%cst : tensor<16xf32>) outs(%0 : tensor<16xf32>) -> tensor<16xf32>
   return %1 : tensor<16xf32>
 }
 
@@ -172,14 +172,14 @@ func.func @test_cst_folding_same_type() -> tensor<16xf32> {
 // CHECK-DAG: %[[cst_1:.*]] = arith.constant 1.000000e+00 : f32
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins({{.*}}, %[[cst_0]]
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%[[cst_1]]
-func.func @inline_splat_dense(%arg0: tensor<1x4x2047x2047xf32>, %arg1: tensor<f32>) -> (tensor<1x4x2047x2047xf32>, tensor<f32>) 
+func.func @inline_splat_dense(%arg0: tensor<1x4x2047x2047xf32>, %arg1: tensor<f32>) -> (tensor<1x4x2047x2047xf32>, tensor<f32>)
 attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
   %cst = arith.constant dense<0.000000e+00> : tensor<1x4x2047x2047xf32>
   %cst_0 = arith.constant dense<1.000000e+00> : tensor<f32>
   %0 = tensor.empty() : tensor<1x4x2047x2047xf32>
   %1 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%arg0, %cst : tensor<1x4x2047x2047xf32>, tensor<1x4x2047x2047xf32>) outs(%0 : tensor<1x4x2047x2047xf32>) -> tensor<1x4x2047x2047xf32>
   %2 = tensor.empty() : tensor<f32>
-  %3 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%cst_0, %arg1 : tensor<f32>, tensor<f32>) 
+  %3 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%cst_0, %arg1 : tensor<f32>, tensor<f32>)
                                                              outs(%2 : tensor<f32>) -> tensor<f32>
   return %1, %3 : tensor<1x4x2047x2047xf32>, tensor<f32>
 }
@@ -189,8 +189,8 @@ attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
 // CHECK-LABEL: func.func @inline_splat_dense_to_hfusion_compare
 // CHECK: %[[cst:.*]] = arith.constant 9.99999997E-7 : f32
 // CHECK: hfusion.compare {compare_fn = #hfusion.compare_fn<vlt>} ins({{.*}}, %[[cst]] : tensor<1x2047x1xf32>, f32) outs({{.*}} : tensor<1x2047x1xi1>)
-func.func @inline_splat_dense_to_hfusion_compare(%arg0: tensor<1x2047x1xf32>, %arg1: tensor<1x2047x1xf32>, 
-                                                 %arg2: tensor<1x2047x1xf32>, %arg3: tensor<1x2047x1xf32>) -> tensor<1x2047x1xf32> 
+func.func @inline_splat_dense_to_hfusion_compare(%arg0: tensor<1x2047x1xf32>, %arg1: tensor<1x2047x1xf32>,
+                                                 %arg2: tensor<1x2047x1xf32>, %arg3: tensor<1x2047x1xf32>) -> tensor<1x2047x1xf32>
 attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
   %cst = arith.constant dense<9.99999997E-7> : tensor<1x2047x1xf32>
   %0 = tensor.empty() : tensor<1x2047x1xi1>
@@ -209,7 +209,7 @@ attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
 // CHECK-DAG: %[[cst_0:.*]] = arith.constant dense<0.000000e+00> : tensor<1x4x2047x2047xf32>
 // CHECK-DAG: %[[cst_1:.*]] = arith.constant dense<8.000000e+00> : tensor<f32>
 // CHECK: return %[[cst_0]], %[[cst_1]] : tensor<1x4x2047x2047xf32>, tensor<f32>
-func.func @inline_splat_constant_to_generic_region(%arg0: tensor<1x4x2047x2047xf32>, %arg1: tensor<f32>) -> (tensor<1x4x2047x2047xf32>, tensor<f32>) 
+func.func @inline_splat_constant_to_generic_region(%arg0: tensor<1x4x2047x2047xf32>, %arg1: tensor<f32>) -> (tensor<1x4x2047x2047xf32>, tensor<f32>)
 attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
   %cst = arith.constant dense<0.000000e+00> : tensor<1x4x2047x2047xf32>
   %cst_0 = arith.constant dense<2.000000e+00> : tensor<f32>
@@ -218,7 +218,7 @@ attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
   %0 = tensor.empty() : tensor<1x4x2047x2047xf32>
   %1 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%cst_1, %cst : tensor<1x4x2047x2047xf32>, tensor<1x4x2047x2047xf32>) outs(%0 : tensor<1x4x2047x2047xf32>) -> tensor<1x4x2047x2047xf32>
   %2 = tensor.empty() : tensor<f32>
-  %3 = hfusion.elemwise_binary {fun = #hfusion.binary_fn<powf>} ins(%cst_0, %cst_2 : tensor<f32>, tensor<f32>) 
+  %3 = hfusion.elemwise_binary {fun = #hfusion.binary_fn<powf>} ins(%cst_0, %cst_2 : tensor<f32>, tensor<f32>)
                                                              outs(%2 : tensor<f32>) -> tensor<f32>
   return %1, %3 : tensor<1x4x2047x2047xf32>, tensor<f32>
 }

@@ -115,7 +115,7 @@ __aiv__ __attribute__((always_inline)) static void simt_index_select_core_2d(
     uint32_t vidx0 = vidx1Div;
     if constexpr (isTail){
       // when idx_dim_num = 1, vidx2 = 0, end2=1, start2=0, vidx2 < endOffset2 - startOffset2
-      if (vidx0 >= endOffset0 - startOffset0 || vidx1 >= endOffset1 - startOffset1 || 
+      if (vidx0 >= endOffset0 - startOffset0 || vidx1 >= endOffset1 - startOffset1 ||
           vidx2 >= endOffset2 - startOffset2) {
         continue;
       }
@@ -171,7 +171,7 @@ __aiv__ __attribute__((always_inline)) static void simt_index_select_core_3d(
     uint32_t vidx0 = vidx1Div;
     if constexpr (isTail) {
       // when idx_dim_num = 1, vidx3 = 0, end3=1, start3=0, vidx3 < endOffset3 - startOffset3
-      if (vidx0 >= endOffset0 - startOffset0 || vidx1 >= endOffset1 - startOffset1 || 
+      if (vidx0 >= endOffset0 - startOffset0 || vidx1 >= endOffset1 - startOffset1 ||
           vidx2 >= endOffset2 - startOffset2 || vidx3 >= endOffset3 - startOffset3) {
         continue;
       }
@@ -244,7 +244,7 @@ __aiv__ __attribute__((always_inline)) static void simt_index_select_core_4d(
     uint32_t vidx0 = vidx1Div;
     if constexpr (isTail) {
       // when idx_dim_num = 1, vidx4 = 0, end4=1, start4=0, vidx4 < endOffset4 - startOffset4
-      if (vidx0 >= endOffset0 - startOffset0 || vidx1 >= endOffset1 - startOffset1 || 
+      if (vidx0 >= endOffset0 - startOffset0 || vidx1 >= endOffset1 - startOffset1 ||
           vidx2 >= endOffset2 - startOffset2 || vidx3 >= endOffset3 - startOffset3 ||
           vidx4 >= endOffset4 - startOffset4) {
         continue;
@@ -330,7 +330,7 @@ __aiv__ __attribute__((always_inline)) static void simt_index_select_core_5d(
     uint32_t vidx0 = vidx1Div;
     if constexpr (isTail) {
       // when idx_dim_num = 1, vidx5 = 0, end5=1, start5=0, vidx5 < endOffset5 - startOffset5
-      if (vidx0 >= endOffset0 - startOffset0 || vidx1 >= endOffset1 - startOffset1 || 
+      if (vidx0 >= endOffset0 - startOffset0 || vidx1 >= endOffset1 - startOffset1 ||
           vidx2 >= endOffset2 - startOffset2 || vidx3 >= endOffset3 - startOffset3 ||
           vidx4 >= endOffset4 - startOffset4 || vidx5 >= endOffset5 - startOffset5) {
         continue;
@@ -534,7 +534,7 @@ __aiv__ __attribute__((always_inline)) void simt_index_select(
                 m1, shift1, m2, shift2, m3, shift3, m4, shift4,
                 gDim[0], gDim[1], gDim[2],
                 sizes[0], sizes[1], sizes[2], sizes[3], sizes[4],
-                mappedStartOffsets[0], mappedStartOffsets[1], mappedStartOffsets[2], 
+                mappedStartOffsets[0], mappedStartOffsets[1], mappedStartOffsets[2],
                 mappedStartOffsets[3], mappedStartOffsets[4],
                 mappedEndOffsets[0], mappedEndOffsets[1], mappedEndOffsets[2],
                 mappedEndOffsets[3], mappedEndOffsets[4],
@@ -553,7 +553,7 @@ __aiv__ __attribute__((always_inline)) void simt_index_select(
           m1, shift1, m2, shift2, m3, shift3, m4, shift4,
           gDim[0], gDim[1], gDim[2],
           sizes[0], sizes[1], sizes[2], sizes[3], sizes[4],
-          mappedStartOffsets[0], mappedStartOffsets[1], mappedStartOffsets[2], 
+          mappedStartOffsets[0], mappedStartOffsets[1], mappedStartOffsets[2],
           mappedStartOffsets[3], mappedStartOffsets[4],
           mappedEndOffsets[0], mappedEndOffsets[1], mappedEndOffsets[2],
           mappedEndOffsets[3], mappedEndOffsets[4],
@@ -577,7 +577,7 @@ __aiv__ __attribute__((always_inline)) void simt_index_select(
                 m1, shift1, m2, shift2, m3, shift3, m4, shift4, m5, shift5,
                 gDim[0], gDim[1], gDim[2], gDim[3],
                 sizes[0], sizes[1], sizes[2], sizes[3], sizes[4], sizes[5],
-                mappedStartOffsets[0], mappedStartOffsets[1], mappedStartOffsets[2], 
+                mappedStartOffsets[0], mappedStartOffsets[1], mappedStartOffsets[2],
                 mappedStartOffsets[3], mappedStartOffsets[4], mappedStartOffsets[5],
                 mappedEndOffsets[0], mappedEndOffsets[1], mappedEndOffsets[2],
                 mappedEndOffsets[3], mappedEndOffsets[4], mappedEndOffsets[5],
@@ -596,7 +596,7 @@ __aiv__ __attribute__((always_inline)) void simt_index_select(
           m1, shift1, m2, shift2, m3, shift3, m4, shift4, m5, shift5,
           gDim[0], gDim[1], gDim[2], gDim[3],
           sizes[0], sizes[1], sizes[2], sizes[3], sizes[4], sizes[5],
-          mappedStartOffsets[0], mappedStartOffsets[1], mappedStartOffsets[2], 
+          mappedStartOffsets[0], mappedStartOffsets[1], mappedStartOffsets[2],
           mappedStartOffsets[3], mappedStartOffsets[4], mappedStartOffsets[5],
           mappedEndOffsets[0], mappedEndOffsets[1], mappedEndOffsets[2],
           mappedEndOffsets[3], mappedEndOffsets[4], mappedEndOffsets[5],

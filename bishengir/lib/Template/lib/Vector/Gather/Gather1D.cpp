@@ -56,7 +56,7 @@ gather_1d(memref_t<__ubuf__ T, 1> *src, memref_t<__ubuf__ int32_t, 1> *indices,
     gather_1d_scalar<T>(src, indices, dst);
     return;
   }
-  
+
   const int64_t size_src = src->sizes[0];
   const int64_t size_indices = indices->sizes[0];
   // step 1: compute the gather index ub addrs of which unit is bytes
@@ -137,7 +137,7 @@ gather_1d_scalar(memref_t<__ubuf__ T, 1> *src, memref_t<__ubuf__ int32_t, 1> *in
 
 template <typename T>
 __aiv__ __attribute__((always_inline)) bool
-is_unaligned_gather_1d(memref_t<__ubuf__ T, 1> *src, 
+is_unaligned_gather_1d(memref_t<__ubuf__ T, 1> *src,
                        memref_t<__ubuf__ int32_t, 1> *indices,
                        memref_t<__ubuf__ T, 1> *dst) {
   __ubuf__ int32_t *indices_ptr = indices->aligned + indices->offset;
@@ -146,7 +146,7 @@ is_unaligned_gather_1d(memref_t<__ubuf__ T, 1> *src,
                           isAddress32ByteAligned<T>(dst_ptr);
   bool is_stride_aligned = (indices->strides[0] == 1) &&
                           (dst->strides[0] == 1);
-  
+
   return !is_offset_aligned || !is_stride_aligned;
 }
 

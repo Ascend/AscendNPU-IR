@@ -9,7 +9,7 @@ module {
   func.func @test_hfusion_load(%arg0: tensor<6912xf32>, %arg1: tensor<1xf32>, %arg2: tensor<f32>) -> tensor<6912xf32> attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hfusion.fusion_kind = #hfusion.fusion_kind<ANY_PB>} {
     %0 = tensor.empty() : tensor<6912xf32>
     %collapsed = tensor.collapse_shape %arg1 [] : tensor<1xf32> into tensor<f32>
-    %broadcasted = linalg.broadcast ins(%collapsed : tensor<f32>) outs(%0 : tensor<6912xf32>) dimensions = [0] 
+    %broadcasted = linalg.broadcast ins(%collapsed : tensor<f32>) outs(%0 : tensor<6912xf32>) dimensions = [0]
     %1 = linalg.elemwise_binary {fun = #linalg.binary_fn<div>} ins(%arg0, %broadcasted : tensor<6912xf32>, tensor<6912xf32>) outs(%0 : tensor<6912xf32>) -> tensor<6912xf32>
     %extracted = tensor.extract %arg2[] : tensor<f32>
     %2 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%1, %extracted : tensor<6912xf32>, f32) outs(%0 : tensor<6912xf32>) -> tensor<6912xf32>
@@ -27,9 +27,9 @@ module {
     %1 = tensor.empty() : tensor<2047x2047xf32>
     %collapsed = tensor.collapse_shape %arg0 [[0, 1]] : tensor<1x2048xi32> into tensor<2048xi32>
     %extracted_slice = tensor.extract_slice %collapsed[1] [2047] [1] : tensor<2048xi32> to tensor<2047xi32>
-    %broadcasted = linalg.broadcast ins(%extracted_slice : tensor<2047xi32>) outs(%0 : tensor<2047x2047xi32>) dimensions = [1] 
+    %broadcasted = linalg.broadcast ins(%extracted_slice : tensor<2047xi32>) outs(%0 : tensor<2047x2047xi32>) dimensions = [1]
     %extracted_slice_0 = tensor.extract_slice %collapsed[0] [2047] [1] : tensor<2048xi32> to tensor<2047xi32>
-    %broadcasted_1 = linalg.broadcast ins(%extracted_slice_0 : tensor<2047xi32>) outs(%0 : tensor<2047x2047xi32>) dimensions = [0] 
+    %broadcasted_1 = linalg.broadcast ins(%extracted_slice_0 : tensor<2047xi32>) outs(%0 : tensor<2047x2047xi32>) dimensions = [0]
     %2 = linalg.elemwise_binary {fun = #linalg.binary_fn<sub>} ins(%broadcasted, %broadcasted_1 : tensor<2047x2047xi32>, tensor<2047x2047xi32>) outs(%0 : tensor<2047x2047xi32>) -> tensor<2047x2047xi32>
     %3 = hfusion.cast {round_mode = #hfusion.round_mode<trunc>} ins(%2 : tensor<2047x2047xi32>) outs(%1 : tensor<2047x2047xf32>) -> tensor<2047x2047xf32>
     %expanded = tensor.expand_shape %3 [[0, 1], [2]] output_shape [1, 2047, 2047] : tensor<2047x2047xf32> into tensor<1x2047x2047xf32>
@@ -57,8 +57,8 @@ module {
     %extracted_slice = tensor.extract_slice %4[2046] [1] [1] : tensor<2047xi32> to tensor<1xi32>
     %extracted_slice_1 = tensor.extract_slice %4[1] [2046] [1] : tensor<2047xi32> to tensor<2046xi32>
     %concat = tensor.concat dim(0) %extracted_slice_1, %extracted_slice : (tensor<2046xi32>, tensor<1xi32>) -> tensor<2047xi32>
-    %broadcasted = linalg.broadcast ins(%concat : tensor<2047xi32>) outs(%1 : tensor<2047x2047xi32>) dimensions = [1] 
-    %broadcasted_2 = linalg.broadcast ins(%4 : tensor<2047xi32>) outs(%1 : tensor<2047x2047xi32>) dimensions = [0] 
+    %broadcasted = linalg.broadcast ins(%concat : tensor<2047xi32>) outs(%1 : tensor<2047x2047xi32>) dimensions = [1]
+    %broadcasted_2 = linalg.broadcast ins(%4 : tensor<2047xi32>) outs(%1 : tensor<2047x2047xi32>) dimensions = [0]
     %5 = linalg.elemwise_binary {fun = #linalg.binary_fn<sub>} ins(%broadcasted, %broadcasted_2 : tensor<2047x2047xi32>, tensor<2047x2047xi32>) outs(%1 : tensor<2047x2047xi32>) -> tensor<2047x2047xi32>
     %6 = hfusion.cast {round_mode = #hfusion.round_mode<trunc>} ins(%5 : tensor<2047x2047xi32>) outs(%2 : tensor<2047x2047xf32>) -> tensor<2047x2047xf32>
     %7 = linalg.elemwise_unary {fun = #linalg.unary_fn<abs>} ins(%6 : tensor<2047x2047xf32>) outs(%2 : tensor<2047x2047xf32>) -> tensor<2047x2047xf32>

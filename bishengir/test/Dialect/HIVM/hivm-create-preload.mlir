@@ -536,7 +536,7 @@ func.func @test_two_scopes() -> (i32, i32) {
 
 // Test that CreatePreload can recognize a preload workspace subview whose
 // source is marked by annotation.mark, while the subview itself does not carry
-// hivm.preload_workspace. 
+// hivm.preload_workspace.
 
 module {
   // CHECK-LABEL: func.func @test_preload_workspace_subview_trace_source_mark

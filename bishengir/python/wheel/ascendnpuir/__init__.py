@@ -17,6 +17,7 @@ This package provides Python bindings for the bishengir-compile compiler.
 """
 
 from importlib.metadata import version, PackageNotFoundError
+
 try:
     __version__ = version("ascendnpu-ir")
 except PackageNotFoundError:

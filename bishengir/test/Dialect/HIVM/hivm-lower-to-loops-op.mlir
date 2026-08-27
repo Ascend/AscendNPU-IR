@@ -1464,11 +1464,11 @@ func.func @test_vmod_b64() {
 // CHECK:             %[[arg1:.*]] = arith.muli %[[arg0]], %[[C2]] : index
 // CHECK:             %[[arg2:.*]] = arith.addi %[[arg1]], %[[C1]] : index
 // CHECK:             memref.store %[[VAL_0]], %[[DST]][%[[arg1]]] : memref<32xi64>
-// CHECK:             memref.store %[[VAL_1]], %[[DST]][%[[arg2]]] : memref<32xi64> 
+// CHECK:             memref.store %[[VAL_1]], %[[DST]][%[[arg2]]] : memref<32xi64>
 // CHECK:           }
 // CHECK:           return
 // CHECK:         }
-func.func @test_decompose_vinterleave_b64(%src0: memref<16xi64>, 
+func.func @test_decompose_vinterleave_b64(%src0: memref<16xi64>,
                                           %src1: memref<16xi64>,
                                           %dst: memref<32xi64>) {
   hivm.hir.vinterleave ins(%src0, %src1: memref<16xi64>, memref<16xi64>)
@@ -1493,7 +1493,7 @@ func.func @test_decompose_vinterleave_b64(%src0: memref<16xi64>,
 // CHECK:             memref.store %[[VAL_0]], %[[EVEN]][%[[arg0]]] : memref<16xi64>
 // CHECK:             %[[arg2:.*]] = arith.addi %[[arg:.*]], %[[C1]] : index
 // CHECK:             %[[VAL_1:.*]] = memref.load {{.*}}[%[[arg2]]] : memref<32xi64>
-// CHECK:             memref.store %[[VAL_1]], %[[ODD]][%[[arg0]]] : memref<16xi64> 
+// CHECK:             memref.store %[[VAL_1]], %[[ODD]][%[[arg0]]] : memref<16xi64>
 // CHECK:           }
 // CHECK:           return
 // CHECK:         }
@@ -4039,8 +4039,8 @@ func.func @test_vmax_2d_i64() {
 // CHECK:           return
 // CHECK:         }
 func.func @test_vmul_1d_i64() {
-  %src = memref.alloc() : memref<64xi64>     
-  %scalar_mem = memref.alloc() : memref<1xi64> 
+  %src = memref.alloc() : memref<64xi64>
+  %scalar_mem = memref.alloc() : memref<1xi64>
   %dst = memref.alloc() : memref<64xi64>
   hivm.hir.vmul ins(%src, %scalar_mem : memref<64xi64>, memref<1xi64>)
                outs(%dst : memref<64xi64>) broadcast = [0]
@@ -4067,8 +4067,8 @@ func.func @test_vmul_1d_i64() {
 // CHECK:           return
 // CHECK:         }
 func.func @test_vmul_2d_i64() {
-  %src = memref.alloc() : memref<64x64xi64>     
-  %scalar_mem = memref.alloc() : memref<64x1xi64> 
+  %src = memref.alloc() : memref<64x64xi64>
+  %scalar_mem = memref.alloc() : memref<64x1xi64>
   %dst = memref.alloc() : memref<64x64xi64>
   hivm.hir.vmul ins(%src, %scalar_mem : memref<64x64xi64>, memref<64x1xi64>)
                outs(%dst : memref<64x64xi64>) broadcast = [1]

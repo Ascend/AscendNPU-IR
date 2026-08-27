@@ -634,8 +634,8 @@ lowerLdStShared(Location loc, MLIRContext *ctx, LinearLayout cvt,
       return {};
     } else {
       assert(vals.empty());
-      Value valsVec =	 
-          targetInfo.loadDShared(rewriter, loc, shmemAddr, std::nullopt, vecTy,	 
+      Value valsVec =
+          targetInfo.loadDShared(rewriter, loc, shmemAddr, std::nullopt, vecTy,
                                 /*pred=*/b.true_val(), localLoadOp);
       return unpackLLVector(loc, valsVec, rewriter);
     }

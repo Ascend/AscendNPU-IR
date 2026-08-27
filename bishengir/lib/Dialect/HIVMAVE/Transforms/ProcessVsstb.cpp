@@ -338,9 +338,9 @@ struct Unroll64F32ForLoopPattern : public OpRewritePattern<scf::ForOp> {
         auto orOp =
             rewriter.create<VFOrOp>(loc, newVecType, newTruncOp1.getRes(),
                                     newTruncOp2.getRes(), newMask);
-        newTruncOp1->setAttr(hivmave::Layout_ChangeAttr::getMnemonic(), 
+        newTruncOp1->setAttr(hivmave::Layout_ChangeAttr::getMnemonic(),
           hivmave::Layout_ChangeAttr::get(getContext(), hivmave::Layout_Change::DENSE));
-        newTruncOp2->setAttr(hivmave::Layout_ChangeAttr::getMnemonic(), 
+        newTruncOp2->setAttr(hivmave::Layout_ChangeAttr::getMnemonic(),
           hivmave::Layout_ChangeAttr::get(getContext(), hivmave::Layout_Change::DENSE));
           storeVal = orOp.getResult();
         rewriter.setInsertionPointAfter(orOp);

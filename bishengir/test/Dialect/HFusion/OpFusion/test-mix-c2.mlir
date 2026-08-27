@@ -1,5 +1,5 @@
 // RUN: bishengir-opt %s -hfusion-fuse-ops="multi-kernel=true" -split-input-file | FileCheck %s
- 
+
 module {
   // CHECK-LABEL: mesh.mesh @mesh0
   mesh.mesh @mesh0(shape = 4)
@@ -17,9 +17,9 @@ module {
     return %all_reduce : tensor<128x4096xf32>
   }
 }
- 
+
 // -----
- 
+
 module {
   // CHECK-LABEL: mesh.mesh @mesh0
   mesh.mesh @mesh0(shape = 2)

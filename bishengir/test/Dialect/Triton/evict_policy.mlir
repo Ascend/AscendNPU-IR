@@ -44,9 +44,9 @@ module attributes {ttg.global_scratch_memory_alignment = 1 : i32, ttg.global_scr
     %vals1_16 = llvm.inline_asm has_side_effects asm_dialect = att operand_attrs = [] "mov.u32 $0, 0x0;\0A\09mov.u32 $1, 0x0;\0A\09@$4 ld.global.L1::evict_last.L2::cache_hint.v2.b32 { $0, $1 }, [ $2 + 0 ], $3;", "=r,=r,l,l,b" %src_addr, %vals1, %mask : (!llvm.ptr<1>, i64, i1) -> !llvm.struct<(i32, i32)>
 // CHECK:     %[[vals1:.*]] = llvm.call_intrinsic "llvm.hivm.ldg.cache.s64"(%[[src_addr]], %[[cst_1]]) : (!llvm.ptr<1>, i32) -> i64
 // CHECK:     %[[vals1_cast:.*]] = llvm.bitcast %[[vals1]] : i64 to vector<2xi32>
-    %vals1_17 = llvm.extractvalue %vals1_16[0] : !llvm.struct<(i32, i32)> 
+    %vals1_17 = llvm.extractvalue %vals1_16[0] : !llvm.struct<(i32, i32)>
     %vals1_18 = llvm.bitcast %vals1_17 : i32 to vector<4xi8>
-    %vals1_19 = llvm.extractvalue %vals1_16[1] : !llvm.struct<(i32, i32)> 
+    %vals1_19 = llvm.extractvalue %vals1_16[1] : !llvm.struct<(i32, i32)>
     %vals1_20 = llvm.bitcast %vals1_19 : i32 to vector<4xi8>
     %vals1_21 = llvm.extractelement %vals1_18[%10 : i32] : vector<4xi8>
     %vals1_22 = llvm.extractelement %vals1_18[%3 : i32] : vector<4xi8>
@@ -58,9 +58,9 @@ module attributes {ttg.global_scratch_memory_alignment = 1 : i32, ttg.global_scr
     %vals1_28 = llvm.extractelement %vals1_20[%1 : i32] : vector<4xi8>
     %vals2 = llvm.inline_asm has_side_effects asm_dialect = att operand_attrs = [] "mov.u32 $0, 0x0;\0A\09mov.u32 $1, 0x0;\0A\09@$3 ld.global.v2.b32 { $0, $1 }, [ $2 + 0 ];", "=r,=r,l,b" %src_addr, %mask : (!llvm.ptr<1>, i1) -> !llvm.struct<(i32, i32)>
 // CHECK:     %[[vals2:.*]] = llvm.load %[[src_addr]] : !llvm.ptr<1> -> vector<2xi32>
-    %vals2_29 = llvm.extractvalue %vals2[0] : !llvm.struct<(i32, i32)> 
+    %vals2_29 = llvm.extractvalue %vals2[0] : !llvm.struct<(i32, i32)>
     %vals2_30 = llvm.bitcast %vals2_29 : i32 to vector<4xi8>
-    %vals2_31 = llvm.extractvalue %vals2[1] : !llvm.struct<(i32, i32)> 
+    %vals2_31 = llvm.extractvalue %vals2[1] : !llvm.struct<(i32, i32)>
     %vals2_32 = llvm.bitcast %vals2_31 : i32 to vector<4xi8>
     %vals2_33 = llvm.extractelement %vals2_30[%10 : i32] : vector<4xi8>
     %vals2_34 = llvm.extractelement %vals2_30[%3 : i32] : vector<4xi8>

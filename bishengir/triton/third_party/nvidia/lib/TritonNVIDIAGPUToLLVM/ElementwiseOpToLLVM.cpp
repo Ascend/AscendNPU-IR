@@ -598,7 +598,7 @@ struct SIToFPOpConversion
 
 #if BSPUB_DAVINCI_BISHENGIR
     return {rewriter.create<LLVM::SIToFPOp>(loc, elemTy, operands[0][0])};
-#else  
+#else
     Type inElemTy = getElementType(op.getIn());
     Type outElemTy = getElementType(op.getOut());
     if (outElemTy.isBF16() && inElemTy.isInteger(8) && operands.size() >= 4) {

@@ -39,7 +39,7 @@ using namespace mlir::triton;
 //   %load_0 = tt.load %ptr0[indices] : tensor<RxCxf32>
 //   // where C is the size of result tensor
 //   ...
-//   
+//
 //   %slice_i = tensor.extract_slice %load0[0, 0] [R, Size_i] [1, 1]
 //   %result_i = tensor.insert_slice %slice0 into %init[0, Offset_i] [R, Size_i] [1, 1]
 //   // where Offset_i = Sum_{k<i} Size_k
@@ -50,15 +50,15 @@ using namespace mlir::triton;
 //   %offset_i = arith.constant dense<-Offset_i> : tensor<RxCxi32>
 //   %adj_indices_i = arith.addi %base_indices, %offset_i
 //   ...
-//   
+//
 //   // Load with multiple offset patterns
 //   %load_i = tt.load %ptr_i[indices_i + offset_i]
 //   ...
-//   
+//
 //   // Generate masks based on column index boundaries
 //   %mask_i = arith.cmpi slt, %col_idx, offset_i
 //   ...
-//   
+//
 //   // Cascade of selects to multiplex sources
 //   %seli = arith.select %mask_i, %load_i, %load_i+1
 static LogicalResult rewriteStore(triton::StoreOp op,
@@ -70,7 +70,7 @@ static LogicalResult rewriteStore(triton::StoreOp op,
       op.getValue().getDefiningOp<mlir::tensor::InsertSliceOp>();
   if (!rootInsert)
     return failure();
-  
+
   // We expect a chain of insert_slice operations, all ultimately
   // inserting extracted slices into a common base tensor.
   llvm::SmallVector<std::tuple<
@@ -85,12 +85,12 @@ static LogicalResult rewriteStore(triton::StoreOp op,
   while (true) {
     LDBG(currInsertOp);
 
-    auto extractOp = 
+    auto extractOp =
       currInsertOp.getSource().getDefiningOp<mlir::tensor::ExtractSliceOp>();
     if (!extractOp)
       return failure();
     LDBG(extractOp);
-        
+
     auto loadOp = extractOp.getSource().getDefiningOp<triton::LoadOp>();
     if (!loadOp)
       return failure();
@@ -166,19 +166,19 @@ static LogicalResult rewriteStore(triton::StoreOp op,
     auto addPtr = dyn_cast<triton::AddPtrOp>(loadOp.getPtr().getDefiningOp());
     if (!addPtr || !mlir::isa<RankedTensorType>(addPtr.getType()))
       return failure();
-    
+
     auto base = addPtr.getOperand(0);
     auto ids  = addPtr.getOperand(1);
-    
+
     if (!base.getDefiningOp<triton::SplatOp>())
       return failure();
-    
+
     auto addI = dyn_cast<arith::AddIOp>(ids.getDefiningOp());
     if (!addI)
       return failure();
-    
+
     auto columns = addI.getOperand(0);
-    
+
     if (!Columns)
       Columns = columns;
     else if (Columns != columns)
@@ -196,7 +196,7 @@ static LogicalResult rewriteStore(triton::StoreOp op,
       offsetC);
 
     LDBG(columnOffsets);
-    
+
     auto newColumns = rewriter.create<arith::AddIOp>(
       loc,
       RankedTensorType::get({ySize, xSize}, rewriter.getI32Type()),
@@ -204,7 +204,7 @@ static LogicalResult rewriteStore(triton::StoreOp op,
     );
 
     LDBG(newColumns);
-    
+
     rewriter.setInsertionPointAfter(loadOp);
 
     auto newAddI = rewriter.create<arith::AddIOp>(

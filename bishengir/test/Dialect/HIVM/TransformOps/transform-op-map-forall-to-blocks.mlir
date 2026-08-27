@@ -19,7 +19,7 @@ module attributes { transform.with_named_sequence } {
   transform.named_sequence @__transform_main(%arg0: !transform.any_op {transform.readonly}) {
     %0 = transform.structured.match ops{["scf.forall"]} in %arg0 : (!transform.any_op) -> !transform.any_op
     %1 = transform.hivm.map_forall_to_blocks %0 : (!transform.any_op) -> !transform.any_op
-    transform.yield 
+    transform.yield
   }
 }
 
@@ -37,7 +37,7 @@ module attributes { transform.with_named_sequence } {
     %0 = transform.structured.match ops{["scf.forall"]} in %arg0 : (!transform.any_op) -> !transform.any_op
     // expected-error @below{{scf.forall op requires a mapping attribute}}
     %1 = transform.hivm.map_forall_to_blocks %0 : (!transform.any_op) -> !transform.any_op
-    transform.yield 
+    transform.yield
   }
 }
 
@@ -55,7 +55,7 @@ module attributes { transform.with_named_sequence } {
     %0 = transform.structured.match ops{["scf.forall"]} in %arg0 : (!transform.any_op) -> !transform.any_op
     // expected-error @below{{only support hivm block/sub_block attr}}
     %1 = transform.hivm.map_forall_to_blocks %0 : (!transform.any_op) -> !transform.any_op
-    transform.yield 
+    transform.yield
   }
 }
 
@@ -73,7 +73,7 @@ module attributes { transform.with_named_sequence } {
     %0 = transform.structured.match ops{["scf.forall"]} in %arg0 : (!transform.any_op) -> !transform.any_op
     // expected-error @below{{duplicate attribute, cannot map different loops to the same mapping id}}
     %1 = transform.hivm.map_forall_to_blocks %0 : (!transform.any_op) -> !transform.any_op
-    transform.yield 
+    transform.yield
   }
 }
 
@@ -99,6 +99,6 @@ module attributes { transform.with_named_sequence } {
     %0 = transform.structured.match ops{["scf.forall"]} in %arg0 : (!transform.any_op) -> !transform.any_op
     // expected-error @below{{only bufferized scf.forall can be mapped}}
     %1 = transform.hivm.map_forall_to_blocks %0 : (!transform.any_op) -> !transform.any_op
-    transform.yield 
+    transform.yield
   }
 }

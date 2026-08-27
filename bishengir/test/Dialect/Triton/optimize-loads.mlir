@@ -69,4 +69,4 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
     tt.store %addr6, %val4, %mask : tensor<8x512x!tt.ptr<f32>>
     tt.return
   }
-}
+}

@@ -1179,7 +1179,7 @@ void addTailFallback(PatternRewriter &rewriter, Operation &op,
   auto fallbackIf = rewriter.create<scf::IfOp>(
       loc, mmad.getOperation()->getResultTypes(), neverRan,
       /*withElseRegion=*/true);
-  
+
   fallbackIf->setAttr(kFallBackNotExec, rewriter.getUnitAttr());
 
   // Then block

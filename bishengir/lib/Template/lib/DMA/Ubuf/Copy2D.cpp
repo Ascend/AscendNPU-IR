@@ -45,7 +45,7 @@ padding_value_2d_by_scalar_on_load(T padding_value, memref_t<__ubuf__ T, 2> *dst
   INTRINSIC(wait_flag, PIPE_S, PIPE_MTE2, LIB_EVENT_ID0);
 }
 
-// Constraints: padding_num should be contained in memref.sizes. 
+// Constraints: padding_num should be contained in memref.sizes.
 template <typename T>
 __aiv__ __attribute__((always_inline)) void
 padding_value_2d_via_brc(T padding_value, memref_t<__ubuf__ T, 2> *dst) {
@@ -130,7 +130,7 @@ load_gm_to_ubuf_2d_core(memref_t<__gm__ T, 2> *src,
 
   auto dst_ptr = dst->aligned + dst->offset - left_padding_num * dst->strides[1];
   if (!isAddress32ByteAligned(dst_ptr) && dst->strides[1] != 1) {
-    load_gm_to_ubuf_2d_by_scalar<T>(src, dst, left_padding_num, pad_value);	 
+    load_gm_to_ubuf_2d_by_scalar<T>(src, dst, left_padding_num, pad_value);
     return;
   }
 
@@ -173,7 +173,7 @@ load_gm_to_ubuf_2d_core(memref_t<__gm__ T, 2> *src,
     }
   }
 
-  // step 3: update memref and continue load data to aligned dst. 
+  // step 3: update memref and continue load data to aligned dst.
   dst = &dst_memref_aligned;
   src = &src_memref_aligned;
 
@@ -183,25 +183,25 @@ load_gm_to_ubuf_2d_core(memref_t<__gm__ T, 2> *src,
   int64_t left_padding_num_main = left_padding_num - left_padding_num_tail;
   // step 1: brc paddinng
   if (left_padding_num_main > 0) {
-    // reshape dst memref for padding. 
+    // reshape dst memref for padding.
     memref_t<__ubuf__ T, 2> dst_padding_memref = {
       dst->allocated,
       dst->aligned,
-      dst->offset - left_padding_num * dst->strides[1], 
+      dst->offset - left_padding_num * dst->strides[1],
       {dst->sizes[0], left_padding_num_main},
       {dst->strides[0], dst->strides[1]}
     };
     if (dst->strides[1] == 1) [[likely]] {
       INTRINSIC(pipe_barrier, PIPE_V);
       padding_value_2d_via_brc<T>(pad_value, &dst_padding_memref);
-      
+
     } else {
       padding_value_2d_by_scalar_on_load<T>(pad_value, &dst_padding_memref);
     }
 
     int64_t span_1 = (dst->sizes[1] + left_padding_num - 1) * dst->strides[1] + 1;
     if (dst->strides[0] < span_1) {
-      // inject sync if padding and load overlap. 
+      // inject sync if padding and load overlap.
       if (dst->strides[1] == 1) {
         INTRINSIC(set_flag, PIPE_V, PIPE_MTE2, LIB_EVENT_ID0);
         INTRINSIC(wait_flag, PIPE_V, PIPE_MTE2, LIB_EVENT_ID0);
@@ -240,7 +240,7 @@ load_gm_to_ubuf_2d_core(memref_t<__gm__ T, 2> *src,
 #else
       int64_t scalar = static_cast<int64_t>(pad_value);
 #endif
-      //   Use brc padding for last dimension of dst. 
+      //   Use brc padding for last dimension of dst.
       memref_t<__ubuf__ T, 2> dst_padding_b64_memref_lp = {
         dst->allocated,
         dst->aligned,
@@ -248,11 +248,11 @@ load_gm_to_ubuf_2d_core(memref_t<__gm__ T, 2> *src,
         {dst->sizes[0], left_padding_num},
         {dst->strides[0], stride1_ub}
       };
-      padding_value_2d_via_brc<T>(pad_value, &dst_padding_b64_memref_lp); 
+      padding_value_2d_via_brc<T>(pad_value, &dst_padding_b64_memref_lp);
 
       auto load_end_ptr = (dst->aligned + dst->offset + dst->sizes[1]);
       int64_t right_padding_num = ((UB_ALIGN_BYTES - (reinterpret_cast<uintptr_t>(load_end_ptr) & 0x1F)) % UB_ALIGN_BYTES) / sizeof(T);
-      //   Use brc padding for last dimension of dst. 
+      //   Use brc padding for last dimension of dst.
       memref_t<__ubuf__ T, 2> dst_padding_b64_memref_rp = {
         dst->allocated,
         dst->aligned,

@@ -11,4 +11,3 @@
 func.func @test_func() {
   return
 }
-

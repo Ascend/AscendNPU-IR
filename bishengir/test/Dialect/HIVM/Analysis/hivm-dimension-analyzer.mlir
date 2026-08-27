@@ -145,7 +145,7 @@ func.func @_attn_fwd(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_addres
         %extracted_slice_18 = tensor.extract_slice %57[%arg23, 0, 0] [1, 128, 256] [1, 1, 1] : tensor<4x128x256xf32> to tensor<128x256xf32>
         %71 = hivm.hir.load ins(%extracted_slice_18 : tensor<128x256xf32>) outs(%70 : tensor<128x256xf32>) {to_fuse} init_out_buffer = false -> tensor<128x256xf32>
         %expanded_19 = tensor.expand_shape %10 [[0, 1]] output_shape [128, 1] : tensor<128xf32> into tensor<128x1xf32>
-        %72 = hivm.hir.vreduce {to_fuse} <max> ins(%69 : tensor<128x256xf32>) outs(%expanded_19 : tensor<128x1xf32>) reduce_dims = [1]  -> tensor<128x1xf32> 
+        %72 = hivm.hir.vreduce {to_fuse} <max> ins(%69 : tensor<128x256xf32>) outs(%expanded_19 : tensor<128x1xf32>) reduce_dims = [1]  -> tensor<128x1xf32>
         %collapsed = tensor.collapse_shape %72 [[0, 1]] {to_fuse} : tensor<128x1xf32> into tensor<128xf32>
         %73 = hivm.hir.vmul {to_fuse} ins(%collapsed, %extracted : tensor<128xf32>, f32) outs(%8 : tensor<128xf32>) -> tensor<128xf32>
         %74 = hivm.hir.vmax {to_fuse} ins(%arg24, %73 : tensor<128xf32>, tensor<128xf32>) outs(%8 : tensor<128xf32>) -> tensor<128xf32>
@@ -156,11 +156,11 @@ func.func @_attn_fwd(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_addres
         %78 = hivm.hir.vmul {to_fuse} ins(%77, %cst_0 : tensor<128x256xf32>, f32) outs(%11 : tensor<128x256xf32>) -> tensor<128x256xf32>
         %79 = hivm.hir.vexp {to_fuse} ins(%78 : tensor<128x256xf32>) outs(%11 : tensor<128x256xf32>) -> tensor<128x256xf32>
         %80 = tensor.empty() : tensor<128x256xf16>
-        %81 = hivm.hir.vcast {to_fuse} ins(%79 : tensor<128x256xf32>) outs(%80 : tensor<128x256xf16>) -> tensor<128x256xf16> 
+        %81 = hivm.hir.vcast {to_fuse} ins(%79 : tensor<128x256xf32>) outs(%80 : tensor<128x256xf16>) -> tensor<128x256xf16>
         %subview = memref.subview %51[%arg23, 0, 0] [1, 128, 256] [1, 1, 1] : memref<4x128x256xf16> to memref<1x128x256xf16, strided<[32768, 256, 1], offset: ?>>
         %collapse_shape = memref.collapse_shape %subview [[0, 1], [2]] : memref<1x128x256xf16, strided<[32768, 256, 1], offset: ?>> into memref<128x256xf16, strided<[256, 1], offset: ?>>
         hivm.hir.store ins(%81 : tensor<128x256xf16>) outs(%collapse_shape : memref<128x256xf16, strided<[256, 1], offset: ?>>) {store_to_tile}
-        %82 = hivm.hir.vbrc {to_fuse} ins(%cst_2 : f32) outs(%8 : tensor<128xf32>) -> tensor<128xf32> 
+        %82 = hivm.hir.vbrc {to_fuse} ins(%cst_2 : f32) outs(%8 : tensor<128xf32>) -> tensor<128xf32>
         %expanded_21 = tensor.expand_shape %82 [[0, 1]] output_shape [128, 1] {to_fuse} : tensor<128xf32> into tensor<128x1xf32>
         %83 = hivm.hir.vreduce {to_fuse} <sum> ins(%79 : tensor<128x256xf32>) outs(%expanded_21 : tensor<128x1xf32>) reduce_dims = [1] -> tensor<128x1xf32>
         %collapsed_22 = tensor.collapse_shape %83 [[0, 1]] {to_fuse} : tensor<128x1xf32> into tensor<128xf32>

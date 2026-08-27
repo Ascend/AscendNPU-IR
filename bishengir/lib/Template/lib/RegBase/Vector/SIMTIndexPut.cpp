@@ -23,7 +23,7 @@ constexpr unsigned int VEC_SIZE = 4;
 
 template<typename SRCTY, typename IDXTY>
 __simt_vf__ LAUNCH_BOUND(MAX_THREAD_NUM)
-__aiv__ __attribute__((always_inline)) static void 
+__aiv__ __attribute__((always_inline)) static void
 simt_index_put_core_2d(
   __ubuf__ const SRCTY *val, __ubuf__ const IDXTY *idx, __gm__ SRCTY *dst,
   const int64_t indexBoundary,
@@ -306,16 +306,16 @@ __aiv__ __attribute__((always_inline)) void simt_index_put(
       }
 
       cce::async_invoke<simt_index_put_core_2d_opt_vec<SRCTY, IDXTY> >(
-        cce::dim3{block_dim_x, block_dim_y, 1}, 
+        cce::dim3{block_dim_x, block_dim_y, 1},
         val_ptr, idx_ptr, dst_ptr,
         indexBoundary,
         size0, size1,
         startOffset0, startOffset1,
         endOffset0, endOffset1,
-        /*dst_stride0=*/dstStrides[0] / VEC_SIZE, 
+        /*dst_stride0=*/dstStrides[0] / VEC_SIZE,
         /*dst_stride1=*/dstStrides[1],
         idx_stride0,
-        val_stride0 / VEC_SIZE, 
+        val_stride0 / VEC_SIZE,
         val_stride1
       );
 
@@ -335,7 +335,7 @@ __aiv__ __attribute__((always_inline)) void simt_index_put(
       cce::async_invoke<simt_index_put_core_2d<SRCTY, IDXTY> >(
             cce::dim3{block_dim_x, block_dim_y, 1},
             val_ptr, idx_ptr, dst_ptr,
-            indexBoundary, 
+            indexBoundary,
             size0, size1,
             startOffset0, startOffset1,
             endOffset0, endOffset1,

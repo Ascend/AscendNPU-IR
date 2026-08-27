@@ -82,7 +82,7 @@ module attributes {transform.with_named_sequence} {
 //       CHECK:       %[[CONCAT:.*]] = tensor.concat dim(1) %[[SLICE0]], %[[SLICE1]], %[[SLICE2]], %[[SLICE3]]
 //       CHECK:       tensor.insert_slice %[[CONCAT]] into %[[INNER_OUT]][{{.*}}, {{.*}}] [{{.*}}, {{.*}}] [1, 1] : tensor<1x256xf32> into tensor<136x8192xf32>
 //       CHECK:   return %[[RESULT]]
-func.func @test_tile_concat_axis_1(%arg0: tensor<136x2048xf32>, %arg1: tensor<136x2048xf32>, %arg2: tensor<136x2048xf32>, 
+func.func @test_tile_concat_axis_1(%arg0: tensor<136x2048xf32>, %arg1: tensor<136x2048xf32>, %arg2: tensor<136x2048xf32>,
                                    %arg3: tensor<136x2048xf32>, %arg4: tensor<136x8192xf32>) -> (tensor<136x8192xf32>, tensor<136x8192xf32>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hfusion.fusion_kind = #hfusion.fusion_kind<ANY_PB>} {
   %cst = arith.constant 1.000000e+00 : f32
   %0 = tensor.empty() : tensor<136x2048xf32>

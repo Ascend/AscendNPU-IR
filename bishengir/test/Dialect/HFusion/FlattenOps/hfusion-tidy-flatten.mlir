@@ -24,7 +24,7 @@ attributes {hivm.entry, hivm.dso_local, hivm.spir_kernel} {
 // -----
 
 // CHECK-LABEL: func.func @broadcast_mul_onebc(
-// CHECK: %[[COLLAPSED0:.*]] = tensor.collapse_shape 
+// CHECK: %[[COLLAPSED0:.*]] = tensor.collapse_shape
 // CHECK-SAME{LITERAL}: [[0, 1]]
 // CHECK-SAME: tensor<1024x1024xf32> into tensor<1048576xf32>
 // CHECK: %[[OUT1:.*]] = tensor.collapse_shape %0 {{\[\[}}0, 1], {{\[}}2]] : tensor<1024x1024x1024xf32> into tensor<1048576x1024xf32>
@@ -59,20 +59,20 @@ func.func @complex_ops_1(%arg0: tensor<5x6x6xf32>, %arg1: tensor<6x6xf32>, %arg2
 attributes {hivm.entry, hivm.dso_local, hivm.spir_kernel} {
   %0 = tensor.empty() : tensor<5x6x6xf32>
   %1 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%arg0, %arg2 : tensor<5x6x6xf32>, tensor<5x6x6xf32>) outs(%0 : tensor<5x6x6xf32>) -> tensor<5x6x6xf32>
-  
+
   %2 = tensor.empty() : tensor<6x6xf32>
   %3 = linalg.reduce ins(%arg0 : tensor<5x6x6xf32>) outs(%2 : tensor<6x6xf32>) dimensions = [0]
       (%in: f32, %init: f32) {
         %9 = arith.addf %in, %init : f32
         linalg.yield %9 : f32
       }
-  
+
   %4 = tensor.empty() : tensor<6x6xf32>
   %5 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%3, %arg1 : tensor<6x6xf32>, tensor<6x6xf32>) outs(%4 : tensor<6x6xf32>) -> tensor<6x6xf32>
-  
+
   %6 = tensor.empty() : tensor<5x6x6xf32>
   %7 = linalg.broadcast ins(%5 : tensor<6x6xf32>) outs(%6 : tensor<5x6x6xf32>) dimensions = [0]
-  
+
   return %1, %7 : tensor<5x6x6xf32>, tensor<5x6x6xf32>
 }
 
@@ -96,15 +96,15 @@ attributes {hivm.entry, hivm.dso_local, hivm.spir_kernel} {
         %7 = arith.addf %in, %init : f32
         linalg.yield %7 : f32
       }
-  
+
   %2 = tensor.empty() : tensor<7x6xf32>
   %3 = linalg.broadcast ins(%arg1 : tensor<f32>) outs(%2 : tensor<7x6xf32>) dimensions = [0, 1]
-  
+
   %4 = tensor.empty() : tensor<7x6xf32>
   %5 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%arg0, %1 : tensor<7x6xf32>, tensor<7x6xf32>) outs(%4 : tensor<7x6xf32>) -> tensor<7x6xf32>
-  
+
   %6 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%5, %3 : tensor<7x6xf32>, tensor<7x6xf32>) outs(%4 : tensor<7x6xf32>) -> tensor<7x6xf32>
-  
+
   return %5, %6 : tensor<7x6xf32>, tensor<7x6xf32>
 }
 
@@ -122,24 +122,24 @@ func.func @complex_ops_3(%arg0: tensor<10x9x8x7xf32>, %arg1: tensor<f32>, %arg2:
 attributes {hivm.entry, hivm.dso_local, hivm.spir_kernel} {
   %0 = tensor.empty() : tensor<10x9x8x7xf32>
   %1 = linalg.broadcast ins(%arg2 : tensor<9x8xf32>) outs(%0 : tensor<10x9x8x7xf32>) dimensions = [0, 3]
-  
+
   %2 = tensor.empty() : tensor<10x9x8x7xf32>
   %3 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%arg0, %1 : tensor<10x9x8x7xf32>, tensor<10x9x8x7xf32>) outs(%2 : tensor<10x9x8x7xf32>) -> tensor<10x9x8x7xf32>
-  
+
   %4 = tensor.empty() : tensor<10x9x8x7xf32>
   %5 = linalg.broadcast ins(%arg1 : tensor<f32>) outs(%4 : tensor<10x9x8x7xf32>) dimensions = [0, 1, 2, 3]
-  
+
   %6 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%3, %5 : tensor<10x9x8x7xf32>, tensor<10x9x8x7xf32>) outs(%4 : tensor<10x9x8x7xf32>) -> tensor<10x9x8x7xf32>
-  
+
   %7 = tensor.empty() : tensor<10x9x8xf32>
   %8 = linalg.reduce ins(%6 : tensor<10x9x8x7xf32>) outs(%7 : tensor<10x9x8xf32>) dimensions = [3]
       (%in: f32, %init: f32) {
         %9 = arith.addf %in, %init : f32
         linalg.yield %9 : f32
       }
-  
+
   %10 = linalg.broadcast ins(%8 : tensor<10x9x8xf32>) outs(%4 : tensor<10x9x8x7xf32>) dimensions = [3]
-  
+
   return %10 : tensor<10x9x8x7xf32>
 }
 
@@ -160,10 +160,10 @@ func.func @complex_ops_4(%arg0: tensor<10x9x8x7xf32>, %arg1: tensor<1x2x4x9x8xf3
 attributes {hivm.entry, hivm.dso_local, hivm.spir_kernel} {
   %0 = tensor.empty() : tensor<10x9x8x7xf32>
   %1 = linalg.broadcast ins(%arg2 : tensor<9x8xf32>) outs(%0 : tensor<10x9x8x7xf32>) dimensions = [0, 3]
-  
+
   %2 = tensor.empty() : tensor<10x9x8x7xf32>
   %3 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%arg0, %1 : tensor<10x9x8x7xf32>, tensor<10x9x8x7xf32>) outs(%2 : tensor<10x9x8x7xf32>) -> tensor<10x9x8x7xf32>
-  
+
   %4 = tensor.empty() : tensor<1x2x4x6x9x8xf32>
   %tmp1 = linalg.broadcast ins(%arg1 : tensor<1x2x4x9x8xf32>) outs(%4 : tensor<1x2x4x6x9x8xf32>) dimensions = [3]
 
@@ -176,18 +176,18 @@ attributes {hivm.entry, hivm.dso_local, hivm.spir_kernel} {
 
   %empty1 = tensor.empty() : tensor<10x9x8x7xf32>
   %5 = linalg.broadcast ins(%tmp2 : tensor<9x8xf32>) outs(%empty1 : tensor<10x9x8x7xf32>) dimensions = [0, 3]
-  
+
   %6 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%3, %5 : tensor<10x9x8x7xf32>, tensor<10x9x8x7xf32>) outs(%empty1 : tensor<10x9x8x7xf32>) -> tensor<10x9x8x7xf32>
-  
+
   %7 = tensor.empty() : tensor<10x9x8xf32>
   %8 = linalg.reduce ins(%6 : tensor<10x9x8x7xf32>) outs(%7 : tensor<10x9x8xf32>) dimensions = [3]
       (%in: f32, %init: f32) {
         %9 = arith.addf %in, %init : f32
         linalg.yield %9 : f32
       }
-  
+
   %10 = linalg.broadcast ins(%8 : tensor<10x9x8xf32>) outs(%empty1 : tensor<10x9x8x7xf32>) dimensions = [3]
-  
+
   return %10 : tensor<10x9x8x7xf32>
 }
 
@@ -205,22 +205,22 @@ func.func @complex_ops_5(%arg0: tensor<15x12x10x8xf32>, %arg1: tensor<12x10xf32>
 attributes {hivm.entry, hivm.dso_local, hivm.spir_kernel} {
   %0 = tensor.empty() : tensor<15x12x10x8xf32>
   %1 = linalg.broadcast ins(%arg1 : tensor<12x10xf32>) outs(%0 : tensor<15x12x10x8xf32>) dimensions = [0, 3]
-  
+
   %2 = tensor.empty() : tensor<15x12x10x8xf32>
   %3 = linalg.elemwise_binary {fun = #linalg.binary_fn<div>} ins(%arg0, %1 : tensor<15x12x10x8xf32>, tensor<15x12x10x8xf32>) outs(%2 : tensor<15x12x10x8xf32>) -> tensor<15x12x10x8xf32>
-  
+
   %4 = tensor.empty() : tensor<15x12x10x8xf32>
   %5 = linalg.broadcast ins(%arg2 : tensor<f32>) outs(%4 : tensor<15x12x10x8xf32>) dimensions = [0, 1, 2, 3]
-  
+
   %6 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%3, %5 : tensor<15x12x10x8xf32>, tensor<15x12x10x8xf32>) outs(%4 : tensor<15x12x10x8xf32>) -> tensor<15x12x10x8xf32>
-  
+
   %7 = tensor.empty() : tensor<15x12x10xf32>
   %8 = linalg.reduce ins(%6 : tensor<15x12x10x8xf32>) outs(%7 : tensor<15x12x10xf32>) dimensions = [3]
       (%in: f32, %init: f32) {
         %9 = arith.addf %in, %init : f32
         linalg.yield %9 : f32
       }
-  
+
   return %8 : tensor<15x12x10xf32>
 }
 
@@ -234,24 +234,24 @@ func.func @complex_ops_6(%arg0: tensor<5x4x3x2xf32>, %arg1: tensor<4x3xf32>, %ar
 attributes {hivm.entry, hivm.dso_local, hivm.spir_kernel} {
   %0 = tensor.empty() : tensor<5x4x3x2xf32>
   %1 = linalg.broadcast ins(%arg1 : tensor<4x3xf32>) outs(%0 : tensor<5x4x3x2xf32>) dimensions = [0, 3]
-  
+
   %2 = tensor.empty() : tensor<5x4x3x2xf32>
   %3 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%arg0, %1 : tensor<5x4x3x2xf32>, tensor<5x4x3x2xf32>) outs(%2 : tensor<5x4x3x2xf32>) -> tensor<5x4x3x2xf32>
-  
+
   %4 = tensor.empty() : tensor<5x4x3x2xf32>
   %5 = linalg.broadcast ins(%arg2 : tensor<5x3x2xf32>) outs(%4 : tensor<5x4x3x2xf32>) dimensions = [1]
-  
+
   %6 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%3, %5 : tensor<5x4x3x2xf32>, tensor<5x4x3x2xf32>) outs(%4 : tensor<5x4x3x2xf32>) -> tensor<5x4x3x2xf32>
-  
+
   %7 = tensor.empty() : tensor<5x4x3xf32>
   %8 = linalg.reduce ins(%6 : tensor<5x4x3x2xf32>) outs(%7 : tensor<5x4x3xf32>) dimensions = [3]
       (%in: f32, %init: f32) {
         %9 = arith.addf %in, %init : f32
         linalg.yield %9 : f32
       }
-  
+
   %10 = linalg.broadcast ins(%8 : tensor<5x4x3xf32>) outs(%4 : tensor<5x4x3x2xf32>) dimensions = [3]
-  
+
   return %10 : tensor<5x4x3x2xf32>
 }
 
@@ -265,22 +265,22 @@ func.func @complex_ops_7(%arg0: tensor<8x7x6x5x4xf32>, %arg1: tensor<7x6xf32>, %
 attributes {hivm.entry, hivm.dso_local, hivm.spir_kernel} {
   %0 = tensor.empty() : tensor<8x7x6x5x4xf32>
   %1 = linalg.broadcast ins(%arg1 : tensor<7x6xf32>) outs(%0 : tensor<8x7x6x5x4xf32>) dimensions = [0, 3, 4]
-  
+
   %2 = tensor.empty() : tensor<8x7x6x5x4xf32>
   %3 = linalg.elemwise_binary {fun = #linalg.binary_fn<sub>} ins(%arg0, %1 : tensor<8x7x6x5x4xf32>, tensor<8x7x6x5x4xf32>) outs(%2 : tensor<8x7x6x5x4xf32>) -> tensor<8x7x6x5x4xf32>
-  
+
   %4 = tensor.empty() : tensor<8x7x6x5x4xf32>
   %5 = linalg.broadcast ins(%arg2 : tensor<8x7x5x4xf32>) outs(%4 : tensor<8x7x6x5x4xf32>) dimensions = [2]
-  
+
   %6 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%3, %5 : tensor<8x7x6x5x4xf32>, tensor<8x7x6x5x4xf32>) outs(%4 : tensor<8x7x6x5x4xf32>) -> tensor<8x7x6x5x4xf32>
-  
+
   %7 = tensor.empty() : tensor<8x7x6x5xf32>
   %8 = linalg.reduce ins(%6 : tensor<8x7x6x5x4xf32>) outs(%7 : tensor<8x7x6x5xf32>) dimensions = [4]
       (%in: f32, %init: f32) {
         %9 = arith.addf %in, %init : f32
         linalg.yield %9 : f32
       }
-  
+
   return %8 : tensor<8x7x6x5xf32>
 }
 
@@ -298,22 +298,22 @@ func.func @complex_ops_8(%arg0: tensor<6x5x4x3x2xf32>, %arg1: tensor<4x3xf32>, %
 attributes {hivm.entry, hivm.dso_local, hivm.spir_kernel} {
   %0 = tensor.empty() : tensor<6x5x4x3x2xf32>
   %1 = linalg.broadcast ins(%arg1 : tensor<4x3xf32>) outs(%0 : tensor<6x5x4x3x2xf32>) dimensions = [0, 1, 4]
-  
+
   %2 = tensor.empty() : tensor<6x5x4x3x2xf32>
   %3 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%arg0, %1 : tensor<6x5x4x3x2xf32>, tensor<6x5x4x3x2xf32>) outs(%2 : tensor<6x5x4x3x2xf32>) -> tensor<6x5x4x3x2xf32>
-  
+
   %4 = tensor.empty() : tensor<6x5x4x3x2xf32>
   %5 = linalg.broadcast ins(%arg2 : tensor<6x5x4x2xf32>) outs(%4 : tensor<6x5x4x3x2xf32>) dimensions = [3]
-  
+
   %6 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%3, %5 : tensor<6x5x4x3x2xf32>, tensor<6x5x4x3x2xf32>) outs(%4 : tensor<6x5x4x3x2xf32>) -> tensor<6x5x4x3x2xf32>
-  
+
   %7 = tensor.empty() : tensor<6x5x4x3xf32>
   %8 = linalg.reduce ins(%6 : tensor<6x5x4x3x2xf32>) outs(%7 : tensor<6x5x4x3xf32>) dimensions = [4]
       (%in: f32, %init: f32) {
         %9 = arith.addf %in, %init : f32
         linalg.yield %9 : f32
       }
-  
+
   return %8 : tensor<6x5x4x3xf32>
 }
 
@@ -332,22 +332,22 @@ func.func @complex_ops_9(%arg0: tensor<15x12x10x8xf32>, %arg1: tensor<12x10xf32>
 attributes {hivm.entry, hivm.dso_local, hivm.spir_kernel} {
   %0 = tensor.empty() : tensor<15x12x10x8xf32>
   %1 = linalg.broadcast ins(%arg1 : tensor<12x10xf32>) outs(%0 : tensor<15x12x10x8xf32>) dimensions = [0, 3]
-  
+
   %2 = tensor.empty() : tensor<15x12x10x8xf32>
   %3 = linalg.elemwise_binary {fun = #linalg.binary_fn<div>} ins(%arg0, %1 : tensor<15x12x10x8xf32>, tensor<15x12x10x8xf32>) outs(%2 : tensor<15x12x10x8xf32>) -> tensor<15x12x10x8xf32>
-  
+
   %4 = tensor.empty() : tensor<15x12x10x8xf32>
   %5 = linalg.broadcast ins(%arg2 : tensor<15x8xf32>) outs(%4 : tensor<15x12x10x8xf32>) dimensions = [1, 2]
-  
+
   %6 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%3, %5 : tensor<15x12x10x8xf32>, tensor<15x12x10x8xf32>) outs(%4 : tensor<15x12x10x8xf32>) -> tensor<15x12x10x8xf32>
-  
+
   %7 = tensor.empty() : tensor<15x12x10xf32>
   %8 = linalg.reduce ins(%6 : tensor<15x12x10x8xf32>) outs(%7 : tensor<15x12x10xf32>) dimensions = [3]
       (%in: f32, %init: f32) {
         %9 = arith.addf %in, %init : f32
         linalg.yield %9 : f32
       }
-  
+
   return %8 : tensor<15x12x10xf32>
 }
 
@@ -367,22 +367,22 @@ func.func @complex_ops_10(%arg0: tensor<6x5x4x3x2xf32>, %arg1: tensor<5x4x3xf32>
 attributes {hivm.entry, hivm.dso_local, hivm.spir_kernel} {
   %0 = tensor.empty() : tensor<6x5x4x3x2xf32>
   %1 = linalg.broadcast ins(%arg1 : tensor<5x4x3xf32>) outs(%0 : tensor<6x5x4x3x2xf32>) dimensions = [0, 4]
-  
+
   %2 = tensor.empty() : tensor<6x5x4x3x2xf32>
   %3 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%arg0, %1 : tensor<6x5x4x3x2xf32>, tensor<6x5x4x3x2xf32>) outs(%2 : tensor<6x5x4x3x2xf32>) -> tensor<6x5x4x3x2xf32>
-  
+
   %4 = tensor.empty() : tensor<6x5x4x3x2xf32>
   %5 = linalg.broadcast ins(%arg2 : tensor<6x5x4x2xf32>) outs(%4 : tensor<6x5x4x3x2xf32>) dimensions = [3]
-  
+
   %6 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%3, %5 : tensor<6x5x4x3x2xf32>, tensor<6x5x4x3x2xf32>) outs(%4 : tensor<6x5x4x3x2xf32>) -> tensor<6x5x4x3x2xf32>
-  
+
   %7 = tensor.empty() : tensor<6x5x4x3xf32>
   %8 = linalg.reduce ins(%6 : tensor<6x5x4x3x2xf32>) outs(%7 : tensor<6x5x4x3xf32>) dimensions = [4]
       (%in: f32, %init: f32) {
         %9 = arith.addf %in, %init : f32
         linalg.yield %9 : f32
       }
-  
+
   return %8 : tensor<6x5x4x3xf32>
 }
 
@@ -396,22 +396,22 @@ func.func @complex_ops_11(%arg0: tensor<8x7x6x5x4xf32>, %arg1: tensor<7x6xf32>, 
 attributes {hivm.entry, hivm.dso_local, hivm.spir_kernel} {
   %0 = tensor.empty() : tensor<8x7x6x5x4xf32>
   %1 = linalg.broadcast ins(%arg1 : tensor<7x6xf32>) outs(%0 : tensor<8x7x6x5x4xf32>) dimensions = [0, 3, 4]
-  
+
   %2 = tensor.empty() : tensor<8x7x6x5x4xf32>
   %3 = linalg.elemwise_binary {fun = #linalg.binary_fn<sub>} ins(%arg0, %1 : tensor<8x7x6x5x4xf32>, tensor<8x7x6x5x4xf32>) outs(%2 : tensor<8x7x6x5x4xf32>) -> tensor<8x7x6x5x4xf32>
-  
+
   %4 = tensor.empty() : tensor<8x7x6x5x4xf32>
   %5 = linalg.broadcast ins(%arg2 : tensor<8x7x5x4xf32>) outs(%4 : tensor<8x7x6x5x4xf32>) dimensions = [2]
-  
+
   %6 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%3, %5 : tensor<8x7x6x5x4xf32>, tensor<8x7x6x5x4xf32>) outs(%4 : tensor<8x7x6x5x4xf32>) -> tensor<8x7x6x5x4xf32>
-  
+
   %7 = tensor.empty() : tensor<8x7x6x5xf32>
   %8 = linalg.reduce ins(%6 : tensor<8x7x6x5x4xf32>) outs(%7 : tensor<8x7x6x5xf32>) dimensions = [4]
       (%in: f32, %init: f32) {
         %9 = arith.addf %in, %init : f32
         linalg.yield %9 : f32
       }
-  
+
   return %8 : tensor<8x7x6x5xf32>
 }
 
@@ -430,15 +430,15 @@ func.func @complex_ops_12(%arg0: tensor<15x12x10x8x9x6xf32>, %arg1: tensor<12x10
 attributes {hivm.entry, hivm.dso_local, hivm.spir_kernel} {
   %0 = tensor.empty() : tensor<15x12x10x8x9x6xf32>
   %1 = linalg.broadcast ins(%arg1 : tensor<12x10xf32>) outs(%0 : tensor<15x12x10x8x9x6xf32>) dimensions = [0, 3, 4, 5]
-  
+
   %2 = tensor.empty() : tensor<15x12x10x8x9x6xf32>
   %3 = linalg.elemwise_binary {fun = #linalg.binary_fn<div>} ins(%arg0, %1 : tensor<15x12x10x8x9x6xf32>, tensor<15x12x10x8x9x6xf32>) outs(%2 : tensor<15x12x10x8x9x6xf32>) -> tensor<15x12x10x8x9x6xf32>
-  
+
   %4 = tensor.empty() : tensor<15x12x10x8x9x6xf32>
   %5 = linalg.broadcast ins(%arg2 : tensor<15x8xf32>) outs(%4 : tensor<15x12x10x8x9x6xf32>) dimensions = [1, 2, 4, 5]
-  
+
   %6 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%3, %5 : tensor<15x12x10x8x9x6xf32>, tensor<15x12x10x8x9x6xf32>) outs(%4 : tensor<15x12x10x8x9x6xf32>) -> tensor<15x12x10x8x9x6xf32>
-  
+
   %7 = tensor.empty() : tensor<15x12x10xf32>
   %8 = linalg.reduce ins(%6 : tensor<15x12x10x8x9x6xf32>) outs(%7 : tensor<15x12x10xf32>) dimensions = [3, 4, 5]
       (%in: f32, %init: f32) {
@@ -452,7 +452,7 @@ attributes {hivm.entry, hivm.dso_local, hivm.spir_kernel} {
         %inside = arith.addf %in, %init : f32
         linalg.yield %inside : f32
       }
-  
+
   return %8, %10 : tensor<15x12x10xf32>, tensor<12x10x8x9x6xf32>
 }
 
@@ -613,7 +613,7 @@ func.func @fn_cache_slice(%arg0: memref<?xf32> {tt.divisibility = 16 : i32}, %ar
   %extracted_slice = tensor.extract_slice %6[4, 0] [1, 8] [1, 1] : tensor<16x8xf32> to tensor<1x8xf32>
   %inserted_slice = tensor.insert_slice %extracted_slice into %1[4, 0] [1, 8] [1, 1] : tensor<1x8xf32> into tensor<16x8xf32>
   %7 = tensor.empty() : tensor<8xf32>
-  %reduced = linalg.reduce ins(%inserted_slice : tensor<16x8xf32>) outs(%7 : tensor<8xf32>) dimensions = [0] 
+  %reduced = linalg.reduce ins(%inserted_slice : tensor<16x8xf32>) outs(%7 : tensor<8xf32>) dimensions = [0]
     (%in: f32, %init: f32) {
       %8 = arith.addf %in, %init : f32
       linalg.yield %8 : f32
@@ -729,7 +729,7 @@ func.func @permutation_consecutives(%arg0: tensor<1x16x8xf32>) -> tensor<1x16x8x
   %3 = tensor.empty() : tensor<1x16x8xf32>
   %4 = linalg.transpose ins(%arg0 : tensor<1x16x8xf32>) outs(%0 : tensor<16x1x8xf32>) permutation = [1, 0, 2]
   %5 = linalg.transpose ins(%4 : tensor<16x1x8xf32>) outs(%1 : tensor<8x1x16xf32>) permutation = [2, 1, 0]
-  %6 = linalg.transpose ins(%5 : tensor<8x1x16xf32>) outs(%2 : tensor<1x8x16xf32>) permutation = [1, 0, 2] 
+  %6 = linalg.transpose ins(%5 : tensor<8x1x16xf32>) outs(%2 : tensor<1x8x16xf32>) permutation = [1, 0, 2]
   %7 = linalg.transpose ins(%6 : tensor<1x8x16xf32>) outs(%3 : tensor<1x16x8xf32>) permutation = [0, 2, 1]
   return %7 : tensor<1x16x8xf32>
 }
@@ -1170,7 +1170,7 @@ func.func @matmul_transpose_b_static_dimension(%arg0: tensor<1024x20x2048x20xf16
 // -----
 
 // CHECK-LABEL: func.func @check_rank0_reduce(
-// CHECK: linalg.reduce ins(%{{.*}} : tensor<393216xf32>) outs(%{{.*}} : tensor<f32>) dimensions = [0] 
+// CHECK: linalg.reduce ins(%{{.*}} : tensor<393216xf32>) outs(%{{.*}} : tensor<f32>) dimensions = [0]
 // CHECK: return
 func.func @check_rank0_reduce(%arg0: tensor<768x512xbf16>) -> tensor<1xbf16> attributes {OperatorType = "Reduce", compute_capability = "", hacc.function_kind = #hacc.function_kind<HOST>, mindspore_kernel, process = "aicore"} {
   %cst = arith.constant 0.000000e+00 : f32

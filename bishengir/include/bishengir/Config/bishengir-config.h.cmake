@@ -48,7 +48,7 @@
 
 /* Specifies BiShengIR build mode. */
 #if defined(__GNUC__)
-/* GCC and GCC-compatible compilers define __OPTIMIZE__ when optimizations are 
+/* GCC and GCC-compatible compilers define __OPTIMIZE__ when optimizations are
    enabled. */
 # if defined(__OPTIMIZE__)
 #  define BISHENGIR_IS_DEBUG_BUILD 0

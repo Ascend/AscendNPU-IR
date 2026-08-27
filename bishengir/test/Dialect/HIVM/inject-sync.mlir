@@ -567,11 +567,11 @@ module {
 #map4 = affine_map<()[s0, s1] -> (s0 + s1 + 32)>
 module {
   func.func @matmul_x_w_bias_down_up_fused_layer_1_kernel_mix_aic(
-      %arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, 
-      %arg1: memref<?xi8, #hivm.address_space<gm>> {hacc.arg_type = #hacc.arg_type<workspace>}, 
-      %arg2: memref<?xf16, #hivm.address_space<gm>>, %arg3: memref<?xf16, #hivm.address_space<gm>>, 
-      %arg4: memref<?xf16, #hivm.address_space<gm>>, %arg5: memref<?xf16, #hivm.address_space<gm>>, 
-      %arg6: memref<?xf16, #hivm.address_space<gm>>, %arg7: memref<?xf16, #hivm.address_space<gm>>, %arg8: i32, %arg9: i32) 
+      %arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>},
+      %arg1: memref<?xi8, #hivm.address_space<gm>> {hacc.arg_type = #hacc.arg_type<workspace>},
+      %arg2: memref<?xf16, #hivm.address_space<gm>>, %arg3: memref<?xf16, #hivm.address_space<gm>>,
+      %arg4: memref<?xf16, #hivm.address_space<gm>>, %arg5: memref<?xf16, #hivm.address_space<gm>>,
+      %arg6: memref<?xf16, #hivm.address_space<gm>>, %arg7: memref<?xf16, #hivm.address_space<gm>>, %arg8: i32, %arg9: i32)
     {
     %c1 = arith.constant 1 : index
     %c20480_i64 = arith.constant 20480 : i64

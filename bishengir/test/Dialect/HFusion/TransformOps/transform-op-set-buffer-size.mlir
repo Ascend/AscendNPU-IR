@@ -19,8 +19,8 @@ module attributes { transform.with_named_sequence } {
 
   transform.named_sequence @__transform_main(%arg0: !transform.any_op {transform.readonly}) {
     %0 = transform.structured.match ops{["memref.alloc"]} in %arg0 : (!transform.any_op) -> !transform.any_op
-    transform.structured.set_buffer_size %0 static_buffer_sizes = [1000] unit_mode = "per_element" : !transform.any_op 
-    transform.yield 
+    transform.structured.set_buffer_size %0 static_buffer_sizes = [1000] unit_mode = "per_element" : !transform.any_op
+    transform.yield
   }
 }
 
@@ -45,8 +45,8 @@ module attributes { transform.with_named_sequence } {
 
   transform.named_sequence @__transform_main(%arg0: !transform.any_op {transform.readonly}) {
     %0 = transform.structured.match ops{["memref.alloca"]} in %arg0 : (!transform.any_op) -> !transform.any_op
-    transform.structured.set_buffer_size %0 static_buffer_sizes = [1000] unit_mode = "per_byte" : !transform.any_op 
-    transform.yield 
+    transform.structured.set_buffer_size %0 static_buffer_sizes = [1000] unit_mode = "per_byte" : !transform.any_op
+    transform.yield
   }
 }
 
@@ -71,10 +71,10 @@ module attributes { transform.with_named_sequence } {
 
   transform.named_sequence @__transform_main(%arg0: !transform.any_op {transform.readonly}) {
     %0 = transform.structured.match attributes {__a__} in %arg0 : (!transform.any_op) -> !transform.any_op
-    transform.structured.set_buffer_size %0 static_buffer_sizes = [1000] unit_mode = "per_byte" : !transform.any_op 
+    transform.structured.set_buffer_size %0 static_buffer_sizes = [1000] unit_mode = "per_byte" : !transform.any_op
     %1 = transform.structured.match attributes {__b__} in %arg0 : (!transform.any_op) -> !transform.any_op
-    transform.structured.set_buffer_size %1 static_buffer_sizes = [2000] unit_mode = "per_byte" : !transform.any_op 
-    transform.yield 
+    transform.structured.set_buffer_size %1 static_buffer_sizes = [2000] unit_mode = "per_byte" : !transform.any_op
+    transform.yield
   }
 }
 
@@ -94,10 +94,10 @@ module attributes { transform.with_named_sequence } {
 
   transform.named_sequence @__transform_main(%arg0: !transform.any_op {transform.readonly}) {
     %0 = transform.structured.match ops{["some_op"]} in %arg0 : (!transform.any_op) -> !transform.any_op
-    transform.structured.set_buffer_size %0 static_buffer_sizes = [1000] unit_mode = "per_byte" : !transform.any_op 
+    transform.structured.set_buffer_size %0 static_buffer_sizes = [1000] unit_mode = "per_byte" : !transform.any_op
     %1 = transform.structured.match ops{["some_other_op"]} in %arg0 : (!transform.any_op) -> !transform.any_op
-    transform.structured.set_buffer_size %1 static_buffer_sizes = [2000] unit_mode = "per_byte" : !transform.any_op 
-    transform.yield 
+    transform.structured.set_buffer_size %1 static_buffer_sizes = [2000] unit_mode = "per_byte" : !transform.any_op
+    transform.yield
   }
 }
 
@@ -114,10 +114,10 @@ module attributes { transform.with_named_sequence } {
 
   transform.named_sequence @__transform_main(%arg0: !transform.any_op {transform.readonly}) {
     %0 = transform.structured.match ops{["some_op"]} in %arg0 : (!transform.any_op) -> !transform.any_op
-    transform.structured.set_buffer_size %0 static_buffer_sizes = [1000] unit_mode = "per_byte" : !transform.any_op 
+    transform.structured.set_buffer_size %0 static_buffer_sizes = [1000] unit_mode = "per_byte" : !transform.any_op
     %1 = transform.structured.match ops{["memref.alloc"]} in %arg0 : (!transform.any_op) -> !transform.any_op
-    transform.structured.set_buffer_size %1 static_buffer_sizes = [1000] unit_mode = "per_byte" : !transform.any_op 
-    transform.yield 
+    transform.structured.set_buffer_size %1 static_buffer_sizes = [1000] unit_mode = "per_byte" : !transform.any_op
+    transform.yield
   }
 }
 
@@ -142,8 +142,8 @@ module attributes { transform.with_named_sequence } {
 
   transform.named_sequence @__transform_main(%arg0: !transform.any_op {transform.readonly}) {
     %0 = transform.structured.match ops{["memref.alloca"]} in %arg0 : (!transform.any_op) -> !transform.any_op
-    transform.structured.set_buffer_size %0 static_buffer_sizes = [1000] unit_mode = "per_byte" reference_type = i8 : !transform.any_op 
-    transform.yield 
+    transform.structured.set_buffer_size %0 static_buffer_sizes = [1000] unit_mode = "per_byte" reference_type = i8 : !transform.any_op
+    transform.yield
   }
 }
 
@@ -160,8 +160,8 @@ module attributes { transform.with_named_sequence } {
 
   transform.named_sequence @__transform_main(%arg0: !transform.any_op {transform.readonly}) {
     %0 = transform.structured.match ops{["some_op"]} in %arg0 : (!transform.any_op) -> !transform.any_op
-    transform.structured.set_buffer_size %0 static_buffer_sizes = [1000] unit_mode = "per_byte" reference_type = i8 : !transform.any_op 
-    transform.yield 
+    transform.structured.set_buffer_size %0 static_buffer_sizes = [1000] unit_mode = "per_byte" reference_type = i8 : !transform.any_op
+    transform.yield
   }
 }
 
@@ -177,8 +177,8 @@ module attributes { transform.with_named_sequence } {
 
   transform.named_sequence @__transform_main(%arg0: !transform.any_op {transform.readonly}) {
     %0 = transform.structured.match ops{["some_op"]} in %arg0 : (!transform.any_op) -> !transform.any_op
-    transform.structured.set_buffer_size %0 static_buffer_sizes = [1000] unit_mode = "per_byte" : !transform.any_op 
-    transform.yield 
+    transform.structured.set_buffer_size %0 static_buffer_sizes = [1000] unit_mode = "per_byte" : !transform.any_op
+    transform.yield
   }
 }
 

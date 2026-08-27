@@ -347,7 +347,7 @@ struct HIVMCopyOrStoreOpInterface
     auto dpsOp = cast<DestinationStyleOpInterface>(op);
     return dpsOp.isDpsInput(&opOperand);
   }
-  
+
   LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
                           const BufferizationOptions &options) const {
     auto dpsOp = cast<DestinationStyleOpInterface>(op);

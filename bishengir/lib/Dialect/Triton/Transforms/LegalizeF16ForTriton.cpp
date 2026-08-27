@@ -6,7 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// F16 has poor percisions. Need to convert F16 computations to F32 to ensure 
+// F16 has poor percisions. Need to convert F16 computations to F32 to ensure
 // good percision.
 //
 //===----------------------------------------------------------------------===//
@@ -29,10 +29,10 @@ static bool shouldLegalizeF16Op(Operation *op) {
     if (isa<BFloat16Type,Float16Type>(getElementTypeOrSelf(operand.getType()))) {
       bool isExcluded = isa<arith::FPToUIOp, arith::FPToSIOp, arith::ExtFOp, arith::TruncFOp,
                           arith::SIToFPOp, arith::UIToFPOp, arith::BitcastOp>(op);
-      return !isExcluded; 
+      return !isExcluded;
     }
   }
-  return false; 
+  return false;
 }
 
 template <typename Op>
@@ -67,7 +67,7 @@ static void createF32ElementTypeOp(Op f16Op, PatternRewriter &rewriter) {
   OperationState state(loc, Op::getOperationName());
   state.addOperands(castedOperands);
   state.addTypes(newResultTypes);
-  state.addAttributes(op->getAttrs()); 
+  state.addAttributes(op->getAttrs());
 
   Operation *newOp = rewriter.create(state);
 
@@ -92,7 +92,7 @@ static void createF32ElementTypeOp(Op f16Op, PatternRewriter &rewriter) {
         if (ext.getResult().getType() == newRes.getType())
           redundantCasts.push_back(user);
     }
- 
+
     for (Operation *cast : redundantCasts)
       rewriter.replaceOp(cast, newRes);
   }
@@ -143,10 +143,10 @@ public:
       return failure();
     }
 
-    SmallVector<Value> newInputs = 
+    SmallVector<Value> newInputs =
         normalizeSrcToTargetType(rewriter, op.getLoc(), op.getOperands());
 
-    ReduceOp newOp = 
+    ReduceOp newOp =
         createNewReduceOp(op, rewriter, newInputs);
     rewriter.setInsertionPointAfter(newOp);
     replaceF16ResultsWithF32(op, newOp, rewriter);
@@ -166,7 +166,7 @@ private:
   bool shouldComputeF16ToF32(ReduceOp op) const {
     Region &region = op.getCombineOp();
     if (region.empty()) return false;
-    
+
     Block &block = region.front();
 
     Operation *terminator = block.getTerminator();
@@ -177,16 +177,16 @@ private:
   }
 
   // upcast the input to F32
-  SmallVector<Value> normalizeSrcToTargetType(PatternRewriter &rewriter, 
+  SmallVector<Value> normalizeSrcToTargetType(PatternRewriter &rewriter,
                                               Location loc,
                                               ValueRange operands) const {
     SmallVector<Value> newOperands;
     auto f32Ty = rewriter.getF32Type();
-    
+
     for (Value operand : operands) {
       Type oldTy = operand.getType();
       Type elemTy = getElementTypeOrSelf(oldTy);
-      
+
       if (elemTy.isF16() || elemTy.isBF16()) {
         Type newTy;
         if (auto tensorTy = dyn_cast<RankedTensorType>(oldTy)) {
@@ -203,23 +203,23 @@ private:
   }
 
   // Create a new ReduceOp.
-  ReduceOp createNewReduceOp(ReduceOp oldOp, 
-                             PatternRewriter &rewriter, 
+  ReduceOp createNewReduceOp(ReduceOp oldOp,
+                             PatternRewriter &rewriter,
                              ValueRange newInputs) const {
     Location loc = oldOp.getLoc();
     auto newOp = rewriter.create<ReduceOp>(loc, newInputs, oldOp.getAxis());
 
-    newOp->setAttrs(oldOp->getAttrs());  
+    newOp->setAttrs(oldOp->getAttrs());
     Region &region = newOp.getCombineOp();
     Block *block = rewriter.createBlock(&region);
-    
+
     auto f32Ty = rewriter.getF32Type();
     unsigned numArgs = newInputs.size();
-    
+
     for (unsigned i = 0; i < 2 * numArgs; ++i) {
       block->addArgument(f32Ty, loc);
     }
-    
+
     {
       OpBuilder::InsertionGuard guard(rewriter);
       rewriter.setInsertionPointToStart(block);
@@ -231,37 +231,37 @@ private:
       }
       rewriter.create<ReduceReturnOp>(loc, results);
     }
-    
+
     return newOp;
   }
 
   // generate TruncFOp
-  void replaceF16ResultsWithF32(ReduceOp oldOp, 
-                                ReduceOp newOp, 
+  void replaceF16ResultsWithF32(ReduceOp oldOp,
+                                ReduceOp newOp,
                                 PatternRewriter &rewriter) const {
     Location loc = oldOp.getLoc();
     SmallVector<Value> finalResults;
-    auto newResults = newOp.getResults(); 
-    
+    auto newResults = newOp.getResults();
+
     for (unsigned i = 0; i < oldOp.getNumResults(); ++i) {
       Value res = newResults[i];
       Type origTy = oldOp->getResult(i).getType();
       Type elemTy = getElementTypeOrSelf(origTy);
-      
+
       if (isa<BFloat16Type,Float16Type>(elemTy)) {
         finalResults.push_back(rewriter.create<arith::TruncFOp>(loc, origTy, res));
       } else {
         finalResults.push_back(res);
       }
     }
-    
+
     rewriter.replaceOp(oldOp, finalResults);
   }
 };
 
 /**
  * Pattern: BypassRedundantReduceConversions
- * Intent: Optimize high-precision reduction chains by removing unnecessary 
+ * Intent: Optimize high-precision reduction chains by removing unnecessary
  * down-casting and up-casting between consecutive ReduceOps.
 * * * Example:
  * %in_f32 = arith.extf %src_f16 : f16 to f32
@@ -291,7 +291,7 @@ public:
       if (auto extOp = operand.getDefiningOp<arith::ExtFOp>()) {
         if (auto truncOp = extOp.getIn().getDefiningOp<arith::TruncFOp>()) {
           Value source = truncOp.getIn();
-          
+
           // Ensure the original source and the current operand have the same type (typically f32)
           if (source.getType() == operand.getType()) {
             cleaned = source;

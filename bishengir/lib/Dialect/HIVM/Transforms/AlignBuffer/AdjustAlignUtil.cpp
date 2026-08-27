@@ -141,10 +141,10 @@ getLastNotUnitDim(const SmallVectorImpl<MemRefType> &memRefTypes,
                   llvm::ArrayRef<ReassociationIndices> continuousReassociations,
                   int64_t startIdx) {
   assert(startIdx < (int64_t)continuousReassociations.size());
-  
+
   for (; startIdx >= 0; startIdx--) {
     const auto& reassociations = continuousReassociations[startIdx];
-    
+
     for (auto index : llvm::reverse(reassociations)) {
       if (llvm::all_of(memRefTypes, [index](MemRefType memRefType) {
             return memRefType.getShape()[index] == 1;

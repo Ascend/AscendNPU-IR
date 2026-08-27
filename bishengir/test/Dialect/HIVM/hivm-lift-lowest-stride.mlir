@@ -191,7 +191,7 @@ module {
 
 // -----
 module {
-  func.func @test_lift_mul_extended_op(%src0: memref<2x25xi16, strided<[800, 32]>>, %src1: memref<2x25xi16, strided<[800, 32]>>, 
+  func.func @test_lift_mul_extended_op(%src0: memref<2x25xi16, strided<[800, 32]>>, %src1: memref<2x25xi16, strided<[800, 32]>>,
                                        %dst0: memref<2x25xi16, strided<[800, 32]>>, %dst1: memref<2x25xi16, strided<[800, 32]>>) {
     // CHECK: hivm.hir.vmulextended ins(%{{.*}}, %{{.*}} : memref<2x25x1xi16, strided<[800, 32, 1]>>, memref<2x25x1xi16, strided<[800, 32, 1]>>) outs(%{{.*}}, %{{.*}} : memref<2x25x1xi16, strided<[800, 32, 1]>>, memref<2x25x1xi16, strided<[800, 32, 1]>>)
     hivm.hir.vmulextended ins(%src0, %src1 : memref<2x25xi16, strided<[800, 32]>>, memref<2x25xi16, strided<[800, 32]>>)

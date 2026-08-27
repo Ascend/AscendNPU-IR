@@ -26,7 +26,7 @@
   // CHECK: }
   // CHECK: return %[[RES]] : tensor<4xi32>
   func.func @histogram_kernel_1d(%arg0: memref<16xi32>) -> tensor<4xi32> attributes {
-    hacc.function_kind = #hacc.function_kind<HOST>, 
+    hacc.function_kind = #hacc.function_kind<HOST>,
     hacc.host_func_type = #hacc.host_func_type<host_entry>
 } {
     %0 = bufferization.to_tensor %arg0 restrict writable : memref<16xi32>
@@ -37,7 +37,7 @@
   // -----
 
   // ==========================================
-  // 2D tensor histogram 
+  // 2D tensor histogram
   // ==========================================
   // CHECK-LABEL: func.func @histogram_kernel_2d
   // CHECK: %[[IN:.*]] = bufferization.to_tensor
@@ -45,7 +45,7 @@
   // CHECK: scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} iter_args(%{{.*}} = %{{.*}}) -> (tensor<4xi32>) {
   // CHECK:   tensor.extract %[[COLLAPSED]][%{{.*}}] : tensor<32xi32>
   func.func @histogram_kernel_2d(%arg0: memref<2x16xi32>) -> tensor<4xi32> attributes {
-    hacc.function_kind = #hacc.function_kind<HOST>, 
+    hacc.function_kind = #hacc.function_kind<HOST>,
     hacc.host_func_type = #hacc.host_func_type<host_entry>
 }{
     %0 = bufferization.to_tensor %arg0 restrict writable : memref<2x16xi32>
@@ -56,14 +56,14 @@
   // -----
 
   // ==========================================
-  // 3D tensor histogram 
+  // 3D tensor histogram
   // ==========================================
   // CHECK-LABEL: func.func @histogram_kernel_3d
   // CHECK: %[[IN:.*]] = bufferization.to_tensor
   // CHECK: %[[COLLAPSED:.*]] = tensor.collapse_shape %[[IN]] {{\[\[}}0, 1, 2{{\]\]}} : tensor<2x3x16xi32> into tensor<96xi32>
   // CHECK: scf.for
   func.func @histogram_kernel_3d(%arg0: memref<2x3x16xi32>) -> tensor<4xi32> attributes {
-    hacc.function_kind = #hacc.function_kind<HOST>, 
+    hacc.function_kind = #hacc.function_kind<HOST>,
     hacc.host_func_type = #hacc.host_func_type<host_entry>
 }{
     %0 = bufferization.to_tensor %arg0 restrict writable : memref<2x3x16xi32>
@@ -80,7 +80,7 @@
   // CHECK: tensor.empty() : tensor<4xi32>
   // CHECK: scf.for
   func.func @histogram_boundary_size1(%arg0: memref<1xi32>) -> tensor<4xi32> attributes {
-    hacc.function_kind = #hacc.function_kind<HOST>, 
+    hacc.function_kind = #hacc.function_kind<HOST>,
     hacc.host_func_type = #hacc.host_func_type<host_entry>
 }{
     %0 = bufferization.to_tensor %arg0 restrict writable : memref<1xi32>
@@ -97,7 +97,7 @@
   // CHECK: tensor.empty() : tensor<1xi32>
   // CHECK: scf.for
   func.func @histogram_boundary_1_bin(%arg0: memref<16xi32>) -> tensor<1xi32> attributes {
-    hacc.function_kind = #hacc.function_kind<HOST>, 
+    hacc.function_kind = #hacc.function_kind<HOST>,
     hacc.host_func_type = #hacc.host_func_type<host_entry>
 } {
     %0 = bufferization.to_tensor %arg0 restrict writable : memref<16xi32>
@@ -116,7 +116,7 @@
   // CHECK: %[[DIM:.*]] = tensor.dim %[[IN]], %[[C0]] : tensor<?xi32>
   // CHECK: scf.for %{{.*}} = %[[C0]] to %[[DIM]] step %{{.*}}
   func.func @histogram_negative_dynamic(%arg0: memref<?xi32>) -> tensor<4xi32> attributes {
-    hacc.function_kind = #hacc.function_kind<HOST>, 
+    hacc.function_kind = #hacc.function_kind<HOST>,
     hacc.host_func_type = #hacc.host_func_type<host_entry>
 }{
     %0 = bufferization.to_tensor %arg0 restrict writable : memref<?xi32>
@@ -150,7 +150,7 @@
   // CHECK:   }
   // CHECK: }
   func.func @histogram_mask_1d(%arg0: memref<16xi32>, %arg1: memref<16xi1>) -> tensor<4xi32> attributes {
-    hacc.function_kind = #hacc.function_kind<HOST>, 
+    hacc.function_kind = #hacc.function_kind<HOST>,
     hacc.host_func_type = #hacc.host_func_type<host_entry>
 }{
     %0 = bufferization.to_tensor %arg0 restrict writable : memref<16xi32>
@@ -174,7 +174,7 @@
   // CHECK:   %[[MASK_VAL:.*]] = tensor.extract %[[FLAT_MASK]][%{{.*}}] : tensor<32xi1>
   // CHECK:   arith.andi %{{.*}}, %[[MASK_VAL]] : i1
   func.func @histogram_mask_2d(%arg0: memref<2x16xi32>, %arg1: memref<2x16xi1>) -> tensor<4xi32> attributes {
-    hacc.function_kind = #hacc.function_kind<HOST>, 
+    hacc.function_kind = #hacc.function_kind<HOST>,
     hacc.host_func_type = #hacc.host_func_type<host_entry>
 }{
     %0 = bufferization.to_tensor %arg0 restrict writable : memref<2x16xi32>

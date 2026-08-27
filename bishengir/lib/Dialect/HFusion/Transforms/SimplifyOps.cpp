@@ -1049,7 +1049,7 @@ struct HoistScalarMulFromMatmulPattern
 
     // Create the scaled version of the consumer's result
     rewriter.setInsertionPointAfter(consumerOp);
-    
+
     auto consumerResultType = cast<RankedTensorType>(consumerResult.getType());
     Type elemType = consumerResultType.getElementType();
 
@@ -1073,9 +1073,9 @@ struct HoistScalarMulFromMatmulPattern
 
     // Replace the consumer result with the scaled version, but exclude the use
     // we just created in scaledConsumer itself to avoid circular dependency
-    rewriter.replaceAllUsesExcept(consumerResult, scaledConsumer, 
+    rewriter.replaceAllUsesExcept(consumerResult, scaledConsumer,
                                   scaledConsumer.getDefiningOp());
-    
+
     // The elemOp is now dead and will be cleaned up
     return success();
   }

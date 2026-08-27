@@ -22,8 +22,8 @@ func.func @test_static_concat_last_dim() -> memref<136x4096xf32> {
 // -----
 // AFTERALIGN-LABEL: func @test_static_concat_unlast_dim
 func.func @test_static_concat_unlast_dim() -> memref<256x2048xf32> {
-  %alloc = memref.alloc() {alignment = 64 : i64} : memref<128x2048xf32> 
-  %alloc_0 = memref.alloc() {alignment = 64 : i64} : memref<128x2048xf32> 
+  %alloc = memref.alloc() {alignment = 64 : i64} : memref<128x2048xf32>
+  %alloc_0 = memref.alloc() {alignment = 64 : i64} : memref<128x2048xf32>
   %alloc_1 = memref.alloc() {alignment = 64 : i64} : memref<256x2048xf32>
   // CHECK:  %[[SUBVIEW:.*]] = memref.subview %alloc_1[0, 0] [128, 2048] [1, 1] : memref<256x2048xf32> to memref<128x2048xf32, strided<[2048, 1]>>
   // CHECK:  hivm.hir.copy ins(%[[alloc:.*]] : memref<128x2048xf32>) outs(%[[subview:.*]] : memref<128x2048xf32, strided<[2048, 1]>>)
@@ -36,8 +36,8 @@ func.func @test_static_concat_unlast_dim() -> memref<256x2048xf32> {
 // -----
 // AFTERALIGN-LABEL: func @test_static_concat_middle_dim
 func.func @test_static_concat_middle_dim() -> memref<128x768x2048xf32> {
-  %alloc = memref.alloc() {alignment = 64 : i64} : memref<128x128x2048xf32> 
-  %alloc_0 = memref.alloc() {alignment = 64 : i64} : memref<128x256x2048xf32> 
+  %alloc = memref.alloc() {alignment = 64 : i64} : memref<128x128x2048xf32>
+  %alloc_0 = memref.alloc() {alignment = 64 : i64} : memref<128x256x2048xf32>
   %alloc_1 = memref.alloc() {alignment = 64 : i64} : memref<128x384x2048xf32>
   %alloc_2 = memref.alloc() {alignment = 64 : i64} : memref<128x768x2048xf32>
   // CHECK:  %[[SUBVIEW:.*]] = memref.subview %alloc_2[0, 0, 0] [128, 128, 2048] [1, 1, 1] : memref<128x768x2048xf32> to memref<128x128x2048xf32, strided<[1572864, 2048, 1]>>
@@ -53,8 +53,8 @@ func.func @test_static_concat_middle_dim() -> memref<128x768x2048xf32> {
 // -----
 // AFTERALIGN-LABEL: func @test_dyn_concat
 func.func @test_dyn_concat(%dim0 : index, %dim1: index) attributes { enable_auto_mark_buffer_size } {
-  %alloc = memref.alloc(%dim0) {alignment = 64 : i64} : memref<?x2048xf32> 
-  %alloc_0 = memref.alloc(%dim0) {alignment = 64 : i64} : memref<?x2048xf32> 
+  %alloc = memref.alloc(%dim0) {alignment = 64 : i64} : memref<?x2048xf32>
+  %alloc_0 = memref.alloc(%dim0) {alignment = 64 : i64} : memref<?x2048xf32>
   %alloc_1 = memref.alloc(%dim1) {alignment = 64 : i64} : memref<?x2048xf32>
   %alloc_2 = memref.alloc(%dim0) {alignment = 64 : i64} : memref<?x2048xf32>
   // CHECK: %[[SUBVIEW:.*]] = memref.subview %alloc_2[0, 0] [%arg0, 2048] [1, 1] : memref<?x2048xf32> to memref<?x2048xf32, strided<[2048, 1]>>
@@ -64,7 +64,7 @@ func.func @test_dyn_concat(%dim0 : index, %dim1: index) attributes { enable_auto
   // CHECK: %[[SUBVIEW_4:.*]] = memref.subview %alloc_2[%0, 0] [%arg1, 2048] [1, 1] : memref<?x2048xf32> to memref<?x2048xf32, strided<[2048, 1], offset: ?>>
   // CHECK: hivm.hir.copy ins(%[[SUBVIEW_1:.*]] : memref<?x2048xf32>) outs(%[[SUBVIEW_4:.*]] : memref<?x2048xf32, strided<[2048, 1], offset: ?>>)
   hivm.hir.vconcat dim(0) ins(%alloc, %alloc_0, %alloc_1 : memref<?x2048xf32>, memref<?x2048xf32>, memref<?x2048xf32>) outs(%alloc_2 : memref<?x2048xf32>)
-  return 
+  return
 }
 
 // -----
@@ -149,7 +149,7 @@ func.func @test_load(%arg0: memref<256x128xf32, #hivm.address_space<gm>>) {
   // BEFOREALIGN: hivm.hir.vbrc
   // BEFOREALIGN: hivm.hir.load ins({{.*}} : memref<256x128xf32, #hivm.address_space<gm>>) outs({{.*}} : memref<256x128xf32, #hivm.address_space<ub>>) pad_mode = <PadValue> pad_value = {{.*}} : f32
   hivm.hir.load ins(%arg0: memref<256x128xf32, #hivm.address_space<gm>>) outs(%alloc: memref<256x128xf32, #hivm.address_space<ub>>) pad_mode = <PadValue> pad_value = %cst_0 : f32 left_padding_num = %c0 : index init_out_buffer = true
-  return 
+  return
 }
 
 //===----------------------------------------------------------------------===//
@@ -614,7 +614,7 @@ func.func @test_all_zero_pad(%in: memref<128x2048xf32>, %out: memref<128x2048xf3
 // BEFOREALIGN:         }
 
 //===----------------------------------------------------------------------===//
-// Test VTransposeOp Unaligned Decompose 
+// Test VTransposeOp Unaligned Decompose
 //===----------------------------------------------------------------------===//
 
 // -----
@@ -685,7 +685,7 @@ func.func @brc_tensor(%arg0: memref<16x32xf16, strided<[?, 1], offset: ?>>, %arg
   // BEFOREALIGN: scf.if
   // BEFOREALIGN: hivm.hir.vbrc
   // BEFOREALIGN: } {hivm.unlikely_condition}
-  hivm.hir.load ins(%subview : memref<?x32xf16, strided<[?, 1], offset: ?>>) outs(%subview_0 : memref<?x32xf16, strided<[32, 1]>, #hivm.address_space<ub>>) pad_mode = <PadValue> pad_value = %cst : f16 left_padding_num = %c0 : index init_out_buffer = true init_condition = %arg2 : i1 
+  hivm.hir.load ins(%subview : memref<?x32xf16, strided<[?, 1], offset: ?>>) outs(%subview_0 : memref<?x32xf16, strided<[32, 1]>, #hivm.address_space<ub>>) pad_mode = <PadValue> pad_value = %cst : f16 left_padding_num = %c0 : index init_out_buffer = true init_condition = %arg2 : i1
   %0 = bufferization.to_tensor %alloc restrict writable : memref<16x32xf16, #hivm.address_space<ub>>
   %1 = tensor.empty() : tensor<32x16xf16>
   %2 = hivm.hir.vtranspose ins(%0 : tensor<16x32xf16>) outs(%1 : tensor<32x16xf16>) permutation = [1, 0] -> tensor<32x16xf16>

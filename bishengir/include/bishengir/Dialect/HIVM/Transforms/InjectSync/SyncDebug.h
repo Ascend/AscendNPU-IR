@@ -71,7 +71,7 @@ private:
   void PrintSetWaitSync(const SyncOperation *s, raw_ostream &os);
 
   void PrintCompoundIR(const InstanceElement *e, raw_ostream &os);
-  
+
   void PrintForIR(const InstanceElement *e, raw_ostream &os);
 
   void PrintBranchIR(const InstanceElement *e, raw_ostream &os);

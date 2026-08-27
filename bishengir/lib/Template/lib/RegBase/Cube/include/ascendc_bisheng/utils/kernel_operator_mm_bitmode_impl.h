@@ -85,7 +85,7 @@ struct Load3DBitModeConfig0 {
     uint64_t mStep:16;
     uint64_t kPos:16;
     uint64_t mPos:16;
-    
+
     template <typename T>
     __aicore__ inline void Init(const LoadData3DParamsV2<T>& loadData3DParams_) {
         kStep = loadData3DParams_.kExtension;

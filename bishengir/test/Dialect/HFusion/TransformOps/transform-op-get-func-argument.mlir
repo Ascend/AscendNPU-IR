@@ -13,7 +13,7 @@ transform.named_sequence @__transform_main(%arg0: !transform.any_op {transform.r
   %0 = transform.structured.match ops{["func.func"]} in %arg0 : (!transform.any_op) -> !transform.any_op
   %1 = transform.func.get_func_argument %0[all] : (!transform.any_op) -> !transform.any_value
   transform.debug.emit_remark_at %1, "func arg" : !transform.any_value
-  transform.yield 
+  transform.yield
 }
 }
 
@@ -29,7 +29,7 @@ transform.named_sequence @__transform_main(%arg0: !transform.any_op {transform.r
   %0 = transform.structured.match ops{["arith.addi"]} in %arg0 : (!transform.any_op) -> !transform.any_op
   // expected-error @+1 {{target handle does not point to `func.func` op}}
   %1 = transform.func.get_func_argument %0[all] : (!transform.any_op) -> !transform.any_value
-  transform.yield 
+  transform.yield
 }
 }
 

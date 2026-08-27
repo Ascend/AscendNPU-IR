@@ -39,7 +39,7 @@ std::unique_ptr<mlir::Pass> createTritonRemapPass(const TritonRemapOptions &opti
 std::unique_ptr<mlir::Pass> createSetBishengirSimtOptAttrPass(
     const SetBishengirSimtOptAttrOptions &options = {});
 
-    
+
 /// Create a pass to add SIMT opt attribution.
 std::unique_ptr<mlir::Pass> createSetAllowGlobalScratchAttrPass(
  	const SetAllowGlobalScratchAttrOptions &options = {});
@@ -70,7 +70,7 @@ std::unique_ptr<mlir::Pass> createFixFusedCatPass();
 std::unique_ptr<mlir::Pass> createRewriteSliceOpToTritonPass();
 
 /// Create a pass to expand source tensors of triton::GatherOp ops when
-/// the source tensor is smaller than the indices tensor at gather axis 
+/// the source tensor is smaller than the indices tensor at gather axis
 /// and when num warps > 1, num elements of indices tensor > 32
 std::unique_ptr<mlir::Pass> createExpandGatherOpSourcesPass();
 

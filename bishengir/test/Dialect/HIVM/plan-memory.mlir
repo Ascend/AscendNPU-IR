@@ -2625,7 +2625,7 @@ func.func @test_reuse_dma_buffer_warning(%arg0: memref<16x32x128xf16, #hivm.addr
 }
 
 // -----
-// This test demonstrates that reordering the memory plan can reduce the total UB usage. 
+// This test demonstrates that reordering the memory plan can reduce the total UB usage.
 
 // CHECK-LABEL: func.func @test_change_mem_plan_order
 // CHECK: %[[CONST0:.*]] = arith.constant 147456 : i64

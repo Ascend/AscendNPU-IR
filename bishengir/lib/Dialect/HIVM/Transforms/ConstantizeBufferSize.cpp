@@ -85,7 +85,7 @@ struct DistributeAffineMaxOverMin
         return failure();
       minOp = operandMinOp;
     }
-    
+
     // Only if the maxOp is max(C, min(A, B)), we can rewrite it.
     if (!constantLowerBound.has_value() || !minOp)
       return failure();

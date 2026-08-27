@@ -309,7 +309,7 @@ __aiv__ __attribute__((always_inline)) void indirect_load(
     unsigned int block_dim_x = 1;
     unsigned int block_dim_y = 1;
     unsigned int block_dim_z = 1;
-    
+
     if constexpr (DIM == 1) {
         cce::async_invoke<simtIndirectLoad1D<DTYPE, ITYPE, IsVolatile>>(cce::dim3{MAX_THREAD_NUM},
             reinterpret_cast<typename IndirectLoadSrcPtr<DTYPE, IsVolatile>::type> (src->aligned),
@@ -337,7 +337,7 @@ __aiv__ __attribute__((always_inline)) void indirect_load(
             block_dim_x = size1;
             block_dim_y = size0;
         }
-        
+
         cce::async_invoke<simtIndirectLoad2D<DTYPE, ITYPE, IsVolatile>>(cce::dim3{block_dim_x, block_dim_y},
             reinterpret_cast<typename IndirectLoadSrcPtr<DTYPE, IsVolatile>::type> (src->aligned),
             reinterpret_cast<__ubuf__ ITYPE*> (indices->aligned + indices->offset),
@@ -379,7 +379,7 @@ __aiv__ __attribute__((always_inline)) void indirect_load(
         const uint32_t stride1 = indices->strides[1];
         const uint32_t stride2 = indices->strides[2];
         const uint32_t stride3 = indices->strides[3];
-        
+
         cce::async_invoke<simtIndirectLoad4D<DTYPE, ITYPE, IsVolatile>>(cce::dim3{MAX_THREAD_NUM4_5D},
             reinterpret_cast<typename IndirectLoadSrcPtr<DTYPE, IsVolatile>::type> (src->aligned),
             reinterpret_cast<__ubuf__ ITYPE*> (indices->aligned + indices->offset),
@@ -438,7 +438,7 @@ REGISTE_INDIRECT_LOAD(1, float8_e4m3_t, int32_t);
 REGISTE_INDIRECT_LOAD(1, float8_e5m2_t, int32_t);
 // REGISTE_INDIRECT_LOAD(1, float4_e2m1_t, int32_t);
 // REGISTE_INDIRECT_LOAD(1, float4_e1m2_t, int32_t);
- 
+
 REGISTE_INDIRECT_LOAD(1, float, int64_t);
 REGISTE_INDIRECT_LOAD(1, half, int64_t);
 REGISTE_INDIRECT_LOAD(1, bfloat16_t, int64_t);
@@ -457,7 +457,7 @@ REGISTE_INDIRECT_LOAD(1, float8_e4m3_t, int64_t);
 REGISTE_INDIRECT_LOAD(1, float8_e5m2_t, int64_t);
 // REGISTE_INDIRECT_LOAD(1, float4_e2m1_t, int64_t);
 // REGISTE_INDIRECT_LOAD(1, float4_e1m2_t, int64_t);
- 
+
 REGISTE_INDIRECT_LOAD(2, float, int32_t);
 REGISTE_INDIRECT_LOAD(2, half, int32_t);
 REGISTE_INDIRECT_LOAD(2, bfloat16_t, int32_t);
@@ -476,7 +476,7 @@ REGISTE_INDIRECT_LOAD(2, float8_e4m3_t, int32_t);
 REGISTE_INDIRECT_LOAD(2, float8_e5m2_t, int32_t);
 // REGISTE_INDIRECT_LOAD(2, float4_e2m1_t, int32_t);
 // REGISTE_INDIRECT_LOAD(2, float4_e1m2_t, int32_t);
- 
+
 REGISTE_INDIRECT_LOAD(2, float, int64_t);
 REGISTE_INDIRECT_LOAD(2, half, int64_t);
 REGISTE_INDIRECT_LOAD(2, bfloat16_t, int64_t);
@@ -495,7 +495,7 @@ REGISTE_INDIRECT_LOAD(2, float8_e4m3_t, int64_t);
 REGISTE_INDIRECT_LOAD(2, float8_e5m2_t, int64_t);
 // REGISTE_INDIRECT_LOAD(2, float4_e2m1_t, int64_t);
 // REGISTE_INDIRECT_LOAD(2, float4_e1m2_t, int64_t);
- 
+
 REGISTE_INDIRECT_LOAD(3, float, int32_t);
 REGISTE_INDIRECT_LOAD(3, half, int32_t);
 REGISTE_INDIRECT_LOAD(3, bfloat16_t, int32_t);
@@ -514,7 +514,7 @@ REGISTE_INDIRECT_LOAD(3, float8_e4m3_t, int32_t);
 REGISTE_INDIRECT_LOAD(3, float8_e5m2_t, int32_t);
 // REGISTE_INDIRECT_LOAD(3, float4_e2m1_t, int32_t);
 // REGISTE_INDIRECT_LOAD(3, float4_e1m2_t, int32_t);
- 
+
 REGISTE_INDIRECT_LOAD(3, float, int64_t);
 REGISTE_INDIRECT_LOAD(3, half, int64_t);
 REGISTE_INDIRECT_LOAD(3, bfloat16_t, int64_t);
@@ -533,7 +533,7 @@ REGISTE_INDIRECT_LOAD(3, float8_e4m3_t, int64_t);
 REGISTE_INDIRECT_LOAD(3, float8_e5m2_t, int64_t);
 // REGISTE_INDIRECT_LOAD(3, float4_e2m1_t, int64_t);
 // REGISTE_INDIRECT_LOAD(3, float4_e1m2_t, int64_t);
- 
+
 REGISTE_INDIRECT_LOAD(4, float, int32_t);
 REGISTE_INDIRECT_LOAD(4, half, int32_t);
 REGISTE_INDIRECT_LOAD(4, bfloat16_t, int32_t);
@@ -552,7 +552,7 @@ REGISTE_INDIRECT_LOAD(4, float8_e4m3_t, int32_t);
 REGISTE_INDIRECT_LOAD(4, float8_e5m2_t, int32_t);
 // REGISTE_INDIRECT_LOAD(4, float4_e2m1_t, int32_t);
 // REGISTE_INDIRECT_LOAD(4, float4_e1m2_t, int32_t);
- 
+
 REGISTE_INDIRECT_LOAD(4, float, int64_t);
 REGISTE_INDIRECT_LOAD(4, half, int64_t);
 REGISTE_INDIRECT_LOAD(4, bfloat16_t, int64_t);
@@ -571,7 +571,7 @@ REGISTE_INDIRECT_LOAD(4, float8_e4m3_t, int64_t);
 REGISTE_INDIRECT_LOAD(4, float8_e5m2_t, int64_t);
 // REGISTE_INDIRECT_LOAD(4, float4_e2m1_t, int64_t);
 // REGISTE_INDIRECT_LOAD(4, float4_e1m2_t, int64_t);
- 
+
 REGISTE_INDIRECT_LOAD(5, float, int32_t);
 REGISTE_INDIRECT_LOAD(5, half, int32_t);
 REGISTE_INDIRECT_LOAD(5, bfloat16_t, int32_t);
@@ -590,7 +590,7 @@ REGISTE_INDIRECT_LOAD(5, float8_e4m3_t, int32_t);
 REGISTE_INDIRECT_LOAD(5, float8_e5m2_t, int32_t);
 // REGISTE_INDIRECT_LOAD(5, float4_e2m1_t, int32_t);
 // REGISTE_INDIRECT_LOAD(5, float4_e1m2_t, int32_t);
- 
+
 REGISTE_INDIRECT_LOAD(5, float, int64_t);
 REGISTE_INDIRECT_LOAD(5, half, int64_t);
 REGISTE_INDIRECT_LOAD(5, bfloat16_t, int64_t);

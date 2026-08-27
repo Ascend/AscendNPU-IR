@@ -22,14 +22,14 @@ module {
 // CHECK-DEBUG-LABEL: @any_pb_arg_collapse_from_arg_0_tiling_func
 // CHECK-DEBUG-DAG: %[[dim1:.*]] = affine.apply affine_map<() -> (147456)>()
 // CHECK-DEBUG-DAG: %[[dim0:.*]] = affine.apply affine_map<() -> (24)>()
-func.func @any_pb_arg_collapse_from_arg_0(%arg0: tensor<24xi1>, %arg1: tensor<24x3x256x192xf32>, %arg2: tensor<24x3x256x192xf32>) -> tensor<24x3x256x192xf32> 
+func.func @any_pb_arg_collapse_from_arg_0(%arg0: tensor<24xi1>, %arg1: tensor<24x3x256x192xf32>, %arg2: tensor<24x3x256x192xf32>) -> tensor<24x3x256x192xf32>
 	attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hfusion.fusion_kind = #hfusion.fusion_kind<ANY_PB>} {
 	%collapsed = tensor.collapse_shape %arg2 [[0], [1, 2, 3]] : tensor<24x3x256x192xf32> into tensor<24x147456xf32>
 	%collapsed_0 = tensor.collapse_shape %arg1 [[0], [1, 2, 3]] : tensor<24x3x256x192xf32> into tensor<24x147456xf32>
 	%0 = tensor.empty() : tensor<24xf32>
 	%1 = hfusion.cast {round_mode = #hfusion.round_mode<trunc>} ins(%arg0 : tensor<24xi1>) outs(%0 : tensor<24xf32>) -> tensor<24xf32>
 	%2 = tensor.empty() : tensor<24x147456xf32>
-	%broadcasted = linalg.broadcast ins(%1 : tensor<24xf32>) outs(%2 : tensor<24x147456xf32>) dimensions = [1] 
+	%broadcasted = linalg.broadcast ins(%1 : tensor<24xf32>) outs(%2 : tensor<24x147456xf32>) dimensions = [1]
 	%3 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%broadcasted, %collapsed_0 : tensor<24x147456xf32>, tensor<24x147456xf32>) outs(%collapsed : tensor<24x147456xf32>) -> tensor<24x147456xf32>
 	%expanded = tensor.expand_shape %3 [[0], [1, 2, 3]] output_shape [24, 3, 256, 192] : tensor<24x147456xf32> into tensor<24x3x256x192xf32>
 	return %expanded : tensor<24x3x256x192xf32>
@@ -149,7 +149,7 @@ module {
 // CHECK: arith.index_cast
 #map = affine_map<()[s0] -> (s0 * 64)>
 module {
-  func.func @test_avoid_mark_index_cast_from_arg_as_producer(%arg0: tensor<64x?x?x?xi8>, %arg1: tensor<64x?x?x?xf32>, %arg2: i64, %arg3: i64, %arg4: i64) -> tensor<64x?x?x?xf32> 
+  func.func @test_avoid_mark_index_cast_from_arg_as_producer(%arg0: tensor<64x?x?x?xi8>, %arg1: tensor<64x?x?x?xf32>, %arg2: i64, %arg3: i64, %arg4: i64) -> tensor<64x?x?x?xf32>
   attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hfusion.fusion_kind = #hfusion.fusion_kind<PURE_ELEMWISE>} {
     %cst = arith.constant 0.000000e+00 : f32
     %c1 = arith.constant 1 : index

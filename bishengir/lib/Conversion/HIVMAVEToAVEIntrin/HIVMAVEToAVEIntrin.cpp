@@ -1089,7 +1089,7 @@ struct HIVMStoreOpLowering : public ConvertOpToLLVMPattern<VFMaskedStoreOp> {
 
     if (archIs910_95 && store->hasAttr(UnalignedAttr::name) &&
         !isONEPTDist(dist)) {
-      if (dElemType.isInteger(1)) {        
+      if (dElemType.isInteger(1)) {
         int pbMode = getBitWidthFromAttr(store);
         auto asResult = createPstuOp(data, dataPtr, rewriter, pbMode);
         rewriter.replaceOp(store, asResult);

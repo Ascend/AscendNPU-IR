@@ -43,9 +43,9 @@ func.func @add_mul_reduce(%arg0: tensor<?xf32>, %arg1: tensor<?xf32>, %arg2: ten
 // CHECK-SAME: attributes {hacc.function_kind = #hacc.function_kind<HOST>}
 // CHECK: call @host_elemwise_single_outlined_0
 // CHECK: return
-func.func @host_elemwise(%arg0: tensor<?xf32>, %arg1: tensor<?xf32>, %out: tensor<?xf32>) -> tensor<?xf32> 
+func.func @host_elemwise(%arg0: tensor<?xf32>, %arg1: tensor<?xf32>, %out: tensor<?xf32>) -> tensor<?xf32>
 attributes {hacc.function_kind = #hacc.function_kind<HOST>} {
-  %1 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} 
+  %1 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>}
     ins(%arg0, %arg1 : tensor<?xf32>, tensor<?xf32>) outs(%out : tensor<?xf32>) -> tensor<?xf32>
   return %1 : tensor<?xf32>
 }
@@ -60,7 +60,7 @@ attributes {hacc.function_kind = #hacc.function_kind<HOST>} {
 // CHECK-SAME: attributes {hacc.function_kind = #hacc.function_kind<HOST>}
 // CHECK: call @host_matmul_single_outlined_0
 // CHECK: return
-func.func @host_matmul(%arg0: tensor<?x?xf32>, %arg1: tensor<?x?xf32>, %arg2: tensor<?x?xf32>) -> tensor<?x?xf32> 
+func.func @host_matmul(%arg0: tensor<?x?xf32>, %arg1: tensor<?x?xf32>, %arg2: tensor<?x?xf32>) -> tensor<?x?xf32>
 attributes {hacc.function_kind = #hacc.function_kind<HOST>} {
   %0 = linalg.matmul ins(%arg0, %arg1: tensor<?x?xf32>, tensor<?x?xf32>)
     outs(%arg2: tensor<?x?xf32>) -> tensor<?x?xf32>
@@ -76,9 +76,9 @@ attributes {hacc.function_kind = #hacc.function_kind<HOST>} {
 // CHECK-SAME: attributes {hacc.function_kind = #hacc.function_kind<HOST>}
 // CHECK: call @host_reduce_single_outlined_0
 // CHECK: return
-func.func @host_reduce(%arg0: tensor<?xf32>, %arg1: tensor<f32>) -> tensor<f32> 
+func.func @host_reduce(%arg0: tensor<?xf32>, %arg1: tensor<f32>) -> tensor<f32>
 attributes {hacc.function_kind = #hacc.function_kind<HOST>} {
-  %reduced = linalg.reduce { arith.addf } 
+  %reduced = linalg.reduce { arith.addf }
     ins(%arg0 : tensor<?xf32>) outs(%arg1 : tensor<f32>) dimensions = [0]
   return %reduced : tensor<f32>
 }
@@ -92,11 +92,11 @@ attributes {hacc.function_kind = #hacc.function_kind<HOST>} {
 // CHECK-SAME: attributes {hacc.function_kind = #hacc.function_kind<HOST>}
 // CHECK: call @device_broadcast_single_outlined_0
 // CHECK: return
-func.func @device_broadcast(%arg0: tensor<?xf32>, %arg1: tensor<?x?xf32>) -> tensor<?x?xf32> 
+func.func @device_broadcast(%arg0: tensor<?xf32>, %arg1: tensor<?x?xf32>) -> tensor<?x?xf32>
 attributes {hacc.function_kind = #hacc.function_kind<HOST>} {
-  %0 = linalg.broadcast 
-    ins(%arg0 : tensor<?xf32>) 
-    outs(%arg1 : tensor<?x?xf32>) 
+  %0 = linalg.broadcast
+    ins(%arg0 : tensor<?xf32>)
+    outs(%arg1 : tensor<?x?xf32>)
     dimensions = [1]
   return %0 : tensor<?x?xf32>
 }
@@ -115,13 +115,13 @@ attributes {hacc.function_kind = #hacc.function_kind<HOST>} {
 // CHECK: call @host_multi_ops_single_outlined_0
 // CHECK: call @host_multi_ops_single_outlined_1
 // CHECK: return
-func.func @host_multi_ops(%arg0: tensor<?xf32>, %arg1: tensor<?xf32>, %arg2: tensor<?x?xf32>, %arg3: tensor<?x?xf32>, %0 : tensor<?xf32>, %3 : tensor<f32>) -> tensor<f32> 
+func.func @host_multi_ops(%arg0: tensor<?xf32>, %arg1: tensor<?xf32>, %arg2: tensor<?x?xf32>, %arg3: tensor<?x?xf32>, %0 : tensor<?xf32>, %3 : tensor<f32>) -> tensor<f32>
 attributes {hacc.function_kind = #hacc.function_kind<HOST>} {
-  %1 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} 
+  %1 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
     ins(%arg0, %arg1 : tensor<?xf32>, tensor<?xf32>) outs(%0 : tensor<?xf32>) -> tensor<?xf32>
-  %2 = linalg.matmul ins(%arg2, %arg3: tensor<?x?xf32>, tensor<?x?xf32>) 
+  %2 = linalg.matmul ins(%arg2, %arg3: tensor<?x?xf32>, tensor<?x?xf32>)
     outs(%arg2: tensor<?x?xf32>) -> tensor<?x?xf32>
-  %reduced = linalg.reduce { arith.addf } 
+  %reduced = linalg.reduce { arith.addf }
     ins(%1 : tensor<?xf32>) outs(%3 : tensor<f32>) dimensions = [0]
   return %reduced : tensor<f32>
 }
@@ -145,7 +145,7 @@ func.func @fused_with_aux(%arg0: tensor<4x3072x3072xf32>, %arg1: tensor<4x3072x3
 // CHECK-FUSE-MOVEPARAM-TRUE-LABEL: @op_fusion_select(
 // CHECK-FUSE-MOVEPARAM-TRUE: call @op_fusion_select_0
 module {
-  func.func @op_fusion_select(%arg0: tensor<2x4x1x1xi1>, %arg1: tensor<2x4x768x152xf32>, %arg2: tensor<2x4x768x152xf32>) -> tensor<2x4x768x152xf32> 
+  func.func @op_fusion_select(%arg0: tensor<2x4x1x1xi1>, %arg1: tensor<2x4x768x152xf32>, %arg2: tensor<2x4x768x152xf32>) -> tensor<2x4x768x152xf32>
   attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<HOST>, hfusion.fusion_kind = #hfusion.fusion_kind<ANY_PB>} {
     %collapsed = tensor.collapse_shape %arg0 [[0], [1, 2, 3]] : tensor<2x4x1x1xi1> into tensor<2x4xi1>
     %0 = tensor.empty() : tensor<2x4x768x152xi1>
@@ -169,7 +169,7 @@ module {
 // CHECK-SAME: hacc.function_kind<DEVICE>
 // CHECK: return {{.*}} : tensor<?xbf16>, tensor<?x?xbf16>
 module {
-  func.func @test_outline_return_only_func(%arg0: tensor<?xbf16>, %arg1: tensor<?x?xbf16>) -> (tensor<?xbf16>, tensor<?x?xbf16>) 
+  func.func @test_outline_return_only_func(%arg0: tensor<?xbf16>, %arg1: tensor<?x?xbf16>) -> (tensor<?xbf16>, tensor<?x?xbf16>)
   attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<HOST>, hfusion.fusion_kind = #hfusion.fusion_kind<ANY_PB>} {
     return %arg0, %arg1 : tensor<?xbf16>, tensor<?x?xbf16>
   }

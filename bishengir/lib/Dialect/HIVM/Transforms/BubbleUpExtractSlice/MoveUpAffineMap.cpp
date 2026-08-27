@@ -77,7 +77,7 @@ struct HoistAffinePattern : public OpRewritePattern<AffineOpTy> {
         } else {
           Block *currentBlock = ba.getParentBlock();
           Block *lastBlock = lastBlockArg.getParentBlock();
-          
+
           if (dominance.dominates(lastBlock, currentBlock)) {
             lastBlockArg = ba;
           }
@@ -97,7 +97,7 @@ struct HoistAffinePattern : public OpRewritePattern<AffineOpTy> {
     Operation *insertPoint = nullptr;
 
     // If 'lastDefOp' is null, it means that the lowest dominating value is
-    // a block argument. So we use 'lastBlockArg' as 'lastDefVal' 
+    // a block argument. So we use 'lastBlockArg' as 'lastDefVal'
     // and set the insertion point to the front of the block.
     if (!lastDefOp && lastBlockArg) {
       lastDefVal = lastBlockArg;
@@ -111,7 +111,7 @@ struct HoistAffinePattern : public OpRewritePattern<AffineOpTy> {
       return rewriter.notifyMatchFailure(
           op, "no valid operands found");
 
-    // If we have 'lastDefOp' and 'lastBlockArg' is null, 
+    // If we have 'lastDefOp' and 'lastBlockArg' is null,
     // it means all operands have defining Op,
     // we can directly use 'lastDefOp' and 'lastDefVal'
     // and set the insertion point to the next node of 'lastDefOp'.
@@ -119,7 +119,7 @@ struct HoistAffinePattern : public OpRewritePattern<AffineOpTy> {
       insertPoint = lastDefOp->getNextNode();
     }
 
-    // If we have both 'lastDefOp' and 'lastBlockArg', we might either 
+    // If we have both 'lastDefOp' and 'lastBlockArg', we might either
     // set the insertion point to the next node of 'lastDefOp' or to the front of 'argBlock',
     // so we need to verify the dominance relationship between 'defOpBlock' and 'argBlock'
     // and might update 'lastDefVal' with 'lastBlockArg'.
@@ -145,14 +145,14 @@ struct HoistAffinePattern : public OpRewritePattern<AffineOpTy> {
     // ...
     // third_use(%def)
     // ```
-    // Potential problem: If we matched the "second_use", the `insertPoint` 
-    // will be "first_use", and vice versa. Because there is no domination 
+    // Potential problem: If we matched the "second_use", the `insertPoint`
+    // will be "first_use", and vice versa. Because there is no domination
     // relationship between the two.
     // We can break the tie by moving the insertion point to end of the
     // consecutive chain of users before current op.
     auto lastDefValUser = SetVector<Operation *>{lastDefVal.getUsers().begin(),
                                                  lastDefVal.getUsers().end()};
-    
+
     while (insertPoint && lastDefValUser.contains(insertPoint))
       insertPoint = insertPoint->getNextNode();
 
@@ -187,7 +187,7 @@ struct HoistAffinePattern : public OpRewritePattern<AffineOpTy> {
 
 void populateHoistAffinePattern(RewritePatternSet &patterns) {
   patterns
-      .add<HoistAffinePattern<affine::AffineApplyOp>, 
+      .add<HoistAffinePattern<affine::AffineApplyOp>,
            HoistAffinePattern<affine::AffineMinOp>,
            HoistAffinePattern<affine::AffineMaxOp>>(patterns.getContext());
 }

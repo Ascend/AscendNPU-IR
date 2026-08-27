@@ -1395,7 +1395,7 @@ struct TruncfScalarToVector : public OpRewritePattern<arith::TruncFOp> {
 /// After conversion:
 /// ```mlir
 ///    %19 = vector.broadcast %arg3 : f32 to vector<64xf32>
-///    %20 = vector.broadcast %arg10 : f32 to vector<64xf32>           
+///    %20 = vector.broadcast %arg10 : f32 to vector<64xf32>
 ///    %21 = arith.cmpf oeq, %19, %a20 : vector<64xf32>
 /// ```
 template <typename BinaryOpType>
@@ -1425,9 +1425,9 @@ struct BinaryScalarOpToVectorPattern : public OpRewritePattern<BinaryOpType> {
       VectorType cmpVecType = VectorType::get({64}, rewriter.getF32Type());
       if constexpr (std::is_same_v<BinaryOpType, arith::CmpFOp>) {
         arith::CmpFPredicate predicate = op.getPredicate();
-        auto lhsVec = 
+        auto lhsVec =
             rewriter.create<UnrealizedConversionCastOp>(loc, cmpVecType, lhs);
-        auto rhsVec = 
+        auto rhsVec =
             rewriter.create<vector::BroadcastOp>(loc, cmpVecType, rhs);
         auto vectorCmp = rewriter.create<BinaryOpType>(
             loc, cmpVecType.clone(rewriter.getI1Type()), predicate,
@@ -1439,7 +1439,7 @@ struct BinaryScalarOpToVectorPattern : public OpRewritePattern<BinaryOpType> {
                            std::is_same_v<BinaryOpType, arith::XOrIOp> ||
                            std::is_same_v<BinaryOpType, arith::MulFOp> ||
                            std::is_same_v<BinaryOpType, arith::SubFOp>) {
-        auto lhsVec = 
+        auto lhsVec =
           rewriter.create<UnrealizedConversionCastOp>(loc, vecType, lhs);
         auto rhsVec = rewriter.create<vector::BroadcastOp>(loc, vecType, rhs);
         auto vecResult = rewriter.create<BinaryOpType>(
@@ -1451,21 +1451,21 @@ struct BinaryScalarOpToVectorPattern : public OpRewritePattern<BinaryOpType> {
       if constexpr (std::is_same_v<BinaryOpType, arith::CmpFOp>) {
         VectorType cmpVecType = VectorType::get({64}, rewriter.getF32Type());
         arith::CmpFPredicate predicate = op.getPredicate();
-        auto rhsVec = 
+        auto rhsVec =
             rewriter.create<UnrealizedConversionCastOp>(loc, cmpVecType, rhs);
-        auto lhsVec = 
+        auto lhsVec =
             rewriter.create<vector::BroadcastOp>(loc, cmpVecType, lhs);
         auto vectorCmp = rewriter.create<BinaryOpType>(
             loc, cmpVecType.clone(rewriter.getI1Type()), predicate,
             lhsVec.getResult(), rhsVec.getResult(0));
         rewriter.replaceOp(op, vectorCmp);
-        return success();  
+        return success();
       } else if constexpr (std::is_same_v<BinaryOpType, mathExt::DivFHPOp> ||
                            std::is_same_v<BinaryOpType, arith::AndIOp> ||
                            std::is_same_v<BinaryOpType, arith::XOrIOp> ||
                            std::is_same_v<BinaryOpType, arith::MulFOp> ||
                            std::is_same_v<BinaryOpType, arith::SubFOp>) {
-        auto rhsVec = 
+        auto rhsVec =
             rewriter.create<UnrealizedConversionCastOp>(loc, vecType, rhs);
         auto lhsVec = rewriter.create<vector::BroadcastOp>(loc, vecType, lhs);
         auto vecResult = rewriter.create<BinaryOpType>(
@@ -1477,9 +1477,9 @@ struct BinaryScalarOpToVectorPattern : public OpRewritePattern<BinaryOpType> {
       if constexpr (std::is_same_v<BinaryOpType, arith::CmpFOp>) {
         VectorType cmpVecType = VectorType::get({64}, rewriter.getF32Type());
         arith::CmpFPredicate predicate = op.getPredicate();
-        auto lhsVec = 
+        auto lhsVec =
               rewriter.create<UnrealizedConversionCastOp>(loc, cmpVecType, lhs);
-        auto rhsVec = 
+        auto rhsVec =
               rewriter.create<UnrealizedConversionCastOp>(loc, cmpVecType, rhs);
         auto vectorCmp = rewriter.create<BinaryOpType>(
               loc, cmpVecType.clone(rewriter.getI1Type()), predicate,
@@ -1491,9 +1491,9 @@ struct BinaryScalarOpToVectorPattern : public OpRewritePattern<BinaryOpType> {
                             std::is_same_v<BinaryOpType, arith::XOrIOp> ||
                             std::is_same_v<BinaryOpType, arith::MulFOp> ||
                             std::is_same_v<BinaryOpType, arith::SubFOp>) {
-      auto lhsVec = 
+      auto lhsVec =
           rewriter.create<UnrealizedConversionCastOp>(loc, vecType, lhs);
-      auto rhsVec = 
+      auto rhsVec =
             rewriter.create<UnrealizedConversionCastOp>(loc, vecType, rhs);
       auto vecResult = rewriter.create<BinaryOpType>(
             loc, vecType, lhsVec.getResult(0), rhsVec.getResult(0));
@@ -1504,15 +1504,15 @@ struct BinaryScalarOpToVectorPattern : public OpRewritePattern<BinaryOpType> {
       if constexpr (std::is_same_v<BinaryOpType, arith::CmpFOp>) {
         VectorType cmpVecType = VectorType::get({64}, rewriter.getF32Type());
         arith::CmpFPredicate predicate = op.getPredicate();
-        auto lhsVec = 
+        auto lhsVec =
             rewriter.create<vector::BroadcastOp>(loc, cmpVecType, lhs);
-        auto rhsVec = 
+        auto rhsVec =
             rewriter.create<vector::BroadcastOp>(loc, cmpVecType, rhs);
         auto vectorCmp = rewriter.create<BinaryOpType>(
             loc, cmpVecType.clone(rewriter.getI1Type()), predicate,
             lhsVec.getResult(), rhsVec.getResult());
         rewriter.replaceOp(op, vectorCmp);
-        return success();         
+        return success();
       } else if constexpr (std::is_same_v<BinaryOpType, mathExt::DivFHPOp> ||
                            std::is_same_v<BinaryOpType, arith::AndIOp> ||
                            std::is_same_v<BinaryOpType, arith::XOrIOp> ||
@@ -1525,7 +1525,7 @@ struct BinaryScalarOpToVectorPattern : public OpRewritePattern<BinaryOpType> {
         rewriter.replaceOp(op, vecResult);
         return success();
        }
-    }               
+    }
     return failure();
   }
 };
