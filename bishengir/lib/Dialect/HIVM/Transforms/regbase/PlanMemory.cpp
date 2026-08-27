@@ -3221,7 +3221,11 @@ PlanMemoryPass::BuildCVReuseAllowedPairs(ModuleOp moduleOp) {
 
 void PlanMemoryPass::runOnOperation() {
   ModuleOp moduleOp = getOperation();
-  cvMixIdReuseAllowedPairs_ = BuildCVReuseAllowedPairs(moduleOp);
+  // Skip the cross-scope CV reuse whitelist when the user explicitly
+  // disables tightly-coupled buffer reuse, so memoryUnique CV buffers
+  // never share addresses.
+  if (!disableTightlyCoupledBufferReuse)
+    cvMixIdReuseAllowedPairs_ = BuildCVReuseAllowedPairs(moduleOp);
   VFInplaceReuseAnalysis vfInplaceReuseAnalysis(moduleOp);
   // Map all funcs to buffer2Offsets obtained in PlanMemoryForFuncOp,
   // because in the second walk, buffer2Offset is needed to populate
