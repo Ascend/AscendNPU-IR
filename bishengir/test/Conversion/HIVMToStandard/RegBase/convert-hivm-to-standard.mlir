@@ -132,3 +132,39 @@ module {
     return
   }
 }
+// -----
+module {
+  // CHECK-LABEL: func.func @convert_conv1d(
+  // CHECK: call @conv2d_group_half_to_float(
+  // CHECK-NOT: hivm.hir.Conv1dL1
+  func.func @convert_conv1d(
+      %input: memref<1x2x1x128x16xf16, #hivm.address_space<cbuf>>,
+      %weight: memref<1x1x5x32x16xf16, #hivm.address_space<cbuf>>,
+      %output: memref<128x32xf32, #hivm.address_space<cc>>) {
+    %true = arith.constant true
+    hivm.hir.Conv1dL1 {groups = 2 : i32, padding = 1 : i32}
+        ins(%input, %weight, %true
+            : memref<1x2x1x128x16xf16, #hivm.address_space<cbuf>>,
+              memref<1x1x5x32x16xf16, #hivm.address_space<cbuf>>, i1)
+        outs(%output : memref<128x32xf32, #hivm.address_space<cc>>)
+    return
+  }
+}
+// -----
+module {
+  // CHECK-LABEL: func.func @convert_conv2d(
+  // CHECK: call @conv2d_group_half_to_float(
+  // CHECK-NOT: hivm.hir.Conv2dL1
+  func.func @convert_conv2d(
+      %input: memref<1x2x1x128x16xf16, #hivm.address_space<cbuf>>,
+      %weight: memref<1x1x5x32x16xf16, #hivm.address_space<cbuf>>,
+      %output: memref<128x32xf32, #hivm.address_space<cc>>) {
+    %true = arith.constant true
+    hivm.hir.Conv2dL1 {groups = 2 : i32, padding = 1 : i32}
+        ins(%input, %weight, %true
+            : memref<1x2x1x128x16xf16, #hivm.address_space<cbuf>>,
+              memref<1x1x5x32x16xf16, #hivm.address_space<cbuf>>, i1)
+        outs(%output : memref<128x32xf32, #hivm.address_space<cc>>)
+    return
+  }
+}

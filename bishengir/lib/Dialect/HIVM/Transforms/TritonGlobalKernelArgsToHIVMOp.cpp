@@ -15,7 +15,6 @@
 //
 //===----------------------------------------------------------------------===//
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
-#include "bishengir/Dialect/HACC/IR/HACC.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
@@ -23,8 +22,6 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Transforms/DialectConversion.h"
-
-#include <array>
 
 namespace mlir {
 #define GEN_PASS_DEF_TRITONGLOBALKERNELARGSTOHIVMOP
@@ -66,11 +63,9 @@ public:
 // is equivalent to the 3 actual args, [x, y, z], and PROGRAM_ID_ARGS will
 // later be erased from func args.
 //
-// The program_id decode order follows the launch order of the target arch.
+// The program_id decode follows Triton's x-fastest launch order:
 // idx = hivm::get_block_idx
-//
-// Reg-based (A5) keeps Triton's x-fastest launch order:
-// idx = program_id_0
+//     = program_id_0
 //     + program_id_1 * program_num_0(x)
 //     + program_id_2 * program_num_0(x) * program_num_1(y)
 // so,
@@ -78,29 +73,19 @@ public:
 // program_id_1 = idx // (x)     mod y
 // program_id_2 = idx // (x * y) mod z
 //
-// Mem-based (A3) keeps the legacy z-fastest launch order:
-// idx = program_id_0 * program_num_1(y) * program_num_2(z)
-//     + program_id_1 * program_num_2(z)
-//     + program_id_2
-// so,
-// program_id_2 = idx // (1)     mod z
-// program_id_1 = idx // (z)     mod y
-// program_id_0 = idx // (y * z) mod x
-//
 // FixMe: How to take advantage of hivm::get_block_num?
 LogicalResult replaceProgramID(func::FuncOp funOp, IRRewriter &rewriter) {
-  auto args = funOp.getArguments();
-  auto argNum = funOp.getNumArguments();
+  constexpr int kGridArgsNum = kProgramNumArgsNum + kProgramIdArgsNum;
+  const int argNum = static_cast<int>(funOp.getNumArguments());
   // Verify whether there exist final 6 args to express BLOCK info
-  if (argNum < kProgramIdArgsNum + kProgramNumArgsNum) {
+  if (argNum < kGridArgsNum) {
     funOp.emitError("arguments program id or program num are missing");
     return failure();
   }
 
   // Verify type of final 6 args.
-  for (auto itr = (args.end() - (kProgramIdArgsNum + kProgramNumArgsNum));
-       itr != args.end(); itr++) {
-    if ((*itr).getType() != rewriter.getI32Type()) {
+  for (int i = argNum - kGridArgsNum; i < argNum; ++i) {
+    if (funOp.getArgument(i).getType() != rewriter.getI32Type()) {
       funOp.emitError(
           "incompatible types of arguments program id or program num");
       return failure();
@@ -110,12 +95,13 @@ LogicalResult replaceProgramID(func::FuncOp funOp, IRRewriter &rewriter) {
   Block &block = funOp.getBody().front();
   rewriter.setInsertionPointToStart(&block);
   mlir::Location loc = block.front().getLoc();
-  auto *argEnd = args.end();
-  auto progID0 = argEnd[-(kProgramNumArgsNum + kProgramIdArgsNum)];
-  auto progID1 = argEnd[-(kProgramNumArgsNum + kProgramIdArgsNum) + 1];
-  auto progID2 = argEnd[-(kProgramNumArgsNum + kProgramIdArgsNum) + 2];
-  auto tempMul = rewriter.create<arith::MulIOp>(loc, progID0, progID1);
-  auto logicBlockNum = rewriter.create<arith::MulIOp>(loc, tempMul, progID2);
+  const int progNumBase = argNum - kGridArgsNum;
+  const int progIdBase = argNum - kProgramIdArgsNum;
+  Value progNumX = funOp.getArgument(progNumBase);
+  Value progNumY = funOp.getArgument(progNumBase + 1);
+  Value progNumZ = funOp.getArgument(progNumBase + 2);
+  auto tempMul = rewriter.create<arith::MulIOp>(loc, progNumX, progNumY);
+  auto logicBlockNum = rewriter.create<arith::MulIOp>(loc, tempMul, progNumZ);
   auto mark = rewriter.create<annotation::MarkOp>(loc, logicBlockNum);
   mark->setAttr(kLogicalBlockNumAttr, rewriter.getUnitAttr());
   // Replace used program_id args
@@ -125,27 +111,18 @@ LogicalResult replaceProgramID(func::FuncOp funOp, IRRewriter &rewriter) {
       loc, rewriter.getI32Type(), hivmOp.getResult());
   Value accumulateShape = rewriter.create<arith::ConstantOp>(
       loc, rewriter.getI32Type(), rewriter.getI32IntegerAttr(1));
-  auto argProgNumAxis0 =
-      (args.end() - (kProgramNumArgsNum + kProgramIdArgsNum));
-  // Decode axes fastest-first: x-fastest on reg-based (A5), legacy z-fastest
-  // on mem-based archs.
-  auto moduleOp = funOp->getParentOfType<ModuleOp>();
-  const bool xFastest = moduleOp && hacc::utils::isRegBasedArch(moduleOp);
-  const std::array<int, kProgramIdArgsNum> decodeOrder =
-      xFastest ? std::array<int, kProgramIdArgsNum>{0, 1, 2}
-               : std::array<int, kProgramIdArgsNum>{2, 1, 0};
-  for (int k = 0; k < kProgramIdArgsNum; ++k) {
-    const int i = decodeOrder[k];
-    auto curProgID = args.end() - (kProgramIdArgsNum) + i;
-
+  // Decode axes fastest-first, following the x-fastest launch order.
+  for (int i = 0; i < kProgramIdArgsNum; ++i) {
+    Value progNum = funOp.getArgument(progNumBase + i);
     auto indexAlongCurAxis =
         rewriter.create<arith::DivSIOp>(loc, castedBlockID, accumulateShape);
-    auto realIndexAlongCurAxis = rewriter.create<arith::RemSIOp>(
-        loc, indexAlongCurAxis, *(argProgNumAxis0 + i));
-    rewriter.replaceAllUsesWith(*curProgID, realIndexAlongCurAxis);
-    if (k != kProgramIdArgsNum - 1) {
-      accumulateShape = rewriter.create<arith::MulIOp>(loc, accumulateShape,
-                                                       *(argProgNumAxis0 + i));
+    auto realIndexAlongCurAxis =
+        rewriter.create<arith::RemSIOp>(loc, indexAlongCurAxis, progNum);
+    rewriter.replaceAllUsesWith(funOp.getArgument(progIdBase + i),
+                                realIndexAlongCurAxis);
+    if (i != kProgramIdArgsNum - 1) {
+      accumulateShape =
+          rewriter.create<arith::MulIOp>(loc, accumulateShape, progNum);
     }
   }
 
@@ -153,27 +130,20 @@ LogicalResult replaceProgramID(func::FuncOp funOp, IRRewriter &rewriter) {
 }
 
 void eraseReplacedFuncArgs(func::FuncOp funOp) {
-  auto argNum = funOp.getNumArguments();
+  const unsigned argNum = funOp.getNumArguments();
   BitVector indicesToErase(argNum);
-  for (auto argIndex : llvm::seq<int>(0, (kProgramIdArgsNum))) {
-    indicesToErase.set(argNum - 1 - argIndex);
-  }
+  indicesToErase.set(argNum - kProgramIdArgsNum, argNum);
   funOp.eraseArguments(indicesToErase);
 }
 
 void addFuncDynMemrefArgAttr(func::FuncOp funOp, IRRewriter &rewriter) {
-  auto argumentArgs = funOp.getArguments();
-  llvm::SmallVector<bool> memrefToDescriptorFlag(argumentArgs.size(), 0);
-  FunctionType funcTy = funOp.getFunctionType();
-  for (auto [idx, type] : llvm::enumerate(funcTy.getInputs())) {
+  llvm::SmallVector<bool> memrefToDescriptorFlag;
+  for (Type type : funOp.getFunctionType().getInputs()) {
     auto memref = dyn_cast<MemRefType>(type);
-    if (memref != nullptr && !memref.hasStaticShape()) {
-      memrefToDescriptorFlag[idx] = true;
-    }
+    memrefToDescriptorFlag.push_back(memref && !memref.hasStaticShape());
   }
-  funOp->setAttr(
-      hivm::HIVMFuncDynMemrefArgsAttr::getMnemonic(),
-      rewriter.getBoolVectorAttr(llvm::ArrayRef(memrefToDescriptorFlag)));
+  funOp->setAttr(hivm::HIVMFuncDynMemrefArgsAttr::getMnemonic(),
+                 rewriter.getBoolVectorAttr(memrefToDescriptorFlag));
 }
 
 void TritonGlobalKernelArgsToHIVMOpPass::runOnOperation() {

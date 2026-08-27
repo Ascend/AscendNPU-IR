@@ -77,8 +77,8 @@ vector_cast_with_overflow(memref_t<__ubuf__ SRC_T, 2> *src,
     auto src_size0 = src->sizes[0];
     auto src_size1 = src->sizes[1];
     tmp_2d_src_t = {
-      tmp->aligned,
       tmp->allocated,
+      tmp->aligned,
       tmp->offset,
       {src_size0, src_size1},
       {CEIL_FACTOR(src_size1, num_per_block_src), 1}};
@@ -88,8 +88,8 @@ vector_cast_with_overflow(memref_t<__ubuf__ SRC_T, 2> *src,
   } else {
     tmp_tail_offset = numerator / 2;
     tmp_2d_src_t = {
-      src->aligned,
       src->allocated,
+      src->aligned,
       src->offset,
       {src->sizes[0], src->sizes[1]},
       {src->strides[0], src->strides[1]}};
@@ -104,8 +104,8 @@ vector_cast_with_overflow(memref_t<__ubuf__ SRC_T, 2> *src,
   memref_t<__ubuf__ DST_T, 1> tmp_as_dst_t;
   view_as<SRC_T, DST_T, 1>(tmp, &tmp_as_dst_t);
   memref_t<__ubuf__ DST_T, 2> tmp_2d_as_dst_t{
-      tmp_as_dst_t.aligned,
       tmp_as_dst_t.allocated,
+      tmp_as_dst_t.aligned,
       tmp_as_dst_t.offset + tmp_head_offset,
       {src_as_dst_t_size1, src_as_dst_t_size0},
       {CEIL_FACTOR(src_as_dst_t_size0, num_per_block_dst), 1}};
@@ -136,8 +136,8 @@ vector_cast_with_overflow(memref_t<__ubuf__ SRC_T, 2> *src,
     // step3: Transpose tmp to tmp.
     // The second half of tmp is used to store temporary tranpose results.
     memref_t<__ubuf__ DST_T, 2> tmp_for_transpose{
-        tmp_as_dst_t.aligned,
         tmp_as_dst_t.allocated,
+        tmp_as_dst_t.aligned,
         tmp_as_dst_t.offset + tmp_tail_offset,
         {dst->sizes[0], dst->sizes[1]},
         {CEIL_FACTOR(dst->sizes[1], num_per_block_dst), 1}};

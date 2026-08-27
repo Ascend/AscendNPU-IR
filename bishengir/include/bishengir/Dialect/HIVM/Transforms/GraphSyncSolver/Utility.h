@@ -161,8 +161,8 @@ struct Occurrence;
 struct SetWaitPairInfo {
   Occurrence *setOcc{nullptr};
   Occurrence *waitOcc{nullptr};
-  bool isForwardPair{false};
-  bool isBackwardPair{false};
+  bool isOpForwardPair{false};
+  bool isSetWaitBackwardPair{false};
   bool isCVPreloading{false};
   bool isCVPipelining{false};
 };
@@ -218,19 +218,14 @@ struct Occurrence {
   MemInfoTree memInfoTree1;
   MemInfoTree memInfoTree2;
 
-  Occurrence(OperationBase *op, Occurrence *parentOcc, int depth,
-             int syncIrIndex, int startIndex, int endIdx)
-      : op(op), parentOcc(parentOcc), depth(depth), syncIrIndex(syncIrIndex),
-        startIndex(startIndex), endIndex(endIdx),
+  Occurrence(OperationBase *op, Occurrence *parentOcc, int syncIrIndex,
+             int startIndex, int endIdx)
+      : op(op), parentOcc(parentOcc),
+        depth(parentOcc != nullptr ? parentOcc->depth + 1 : 0),
+        syncIrIndex(syncIrIndex), startIndex(startIndex), endIndex(endIdx),
         memInfoTree1(this, syncIrIndex), memInfoTree2(this, syncIrIndex) {}
 
   std::string str() const;
-
-  // Return true if occ1 and occ2 have the same immediate parent occurrence.
-  static bool sameScope(Occurrence *occ1, Occurrence *occ2);
-
-  // Return depth (number of ancestors + 1) for the given occurrence.
-  static int getDepth(Occurrence *occ);
 
   // Walk up parents to find the first ancestor occurrence associated with 'op'.
   Occurrence *getParentWithOp(Operation *op, bool assertExists = true);
@@ -266,7 +261,7 @@ struct Occurrence {
 
   static Occurrence *getUnlikelyParentCondition(Occurrence *occ);
 
-  auto getLoopFirstIterOccs() {
+  llvm::ArrayRef<Occurrence *> getLoopFirstIterOccs() {
     assert(isa_and_present<Loop>(op) && loopSplitIndex != -1);
     int64_t childNum = static_cast<int64_t>(childOccs.size());
     assert(childNum % 2 == 0);
@@ -274,7 +269,7 @@ struct Occurrence {
     return llvm::ArrayRef(childOccs).slice(0, childNum / 2);
   }
 
-  auto getLoopSecondIterOccs() {
+  llvm::ArrayRef<Occurrence *> getLoopSecondIterOccs() {
     assert(isa_and_present<Loop>(op) && loopSplitIndex != -1);
     int64_t childNum = static_cast<int64_t>(childOccs.size());
     assert(childNum % 2 == 0);
@@ -360,9 +355,12 @@ struct ConflictPair {
 
   static int globalIdCounter;
 
+  // Identity + the two conflicting ops
   const int id;
   RWOperation *const op1;
   RWOperation *const op2;
+
+  // Where the set/wait is placed
   OperationBase *setOp{nullptr};
   OperationBase *waitOp{nullptr};
   Occurrence *setOcc{nullptr};
@@ -371,10 +369,27 @@ struct ConflictPair {
   const CorePipeInfo waitCorePipeInfo;
   int startIndex{-1};
   int endIndex{-1};
+
+  // LCA parents of op1/op2 in the occurrence tree
   Occurrence *parOcc1{nullptr};
   Occurrence *parOcc2{nullptr};
-  bool isInnerBackward{false};
-  bool isBackwardPair{false};
+
+  // Backward-sync classification + hoist target
+  bool isOccBackwardPair{false};
+  bool isSetWaitBackwardPair{false};
+  bool isInnerBackwardPair{false};
+  Loop *backwardSyncLoopOp{nullptr};
+  Occurrence *backwardSyncLoopOcc{nullptr};
+
+  // EventIdInfo / SetWaitPairInfo
+  EventIdInfo eventIdInfo;
+  EventIdNode *eventIdNode{nullptr};
+  // When set, GraphSyncSolver must assign this event id for the conflict
+  // (from CustomMacroOp sync_event_slots with an optional pinned event).
+  std::optional<int64_t> pinnedEventId;
+  std::optional<SetWaitPairInfo> setWaitPairInfo;
+
+  // Flags
   bool isUseless{false};
   bool dontReuse{false};
   bool dontCheckForConflict{false};
@@ -385,14 +400,6 @@ struct ConflictPair {
   bool movedToOuterLoop{false};
   bool isPersistent{false};
   bool isErased{false};
-  Loop *backwardSyncLoopOp{nullptr};
-  Occurrence *backwardSyncLoopOcc{nullptr};
-  EventIdInfo eventIdInfo;
-  EventIdNode *eventIdNode{nullptr};
-  std::optional<SetWaitPairInfo> setWaitPairInfo;
-  // When set, GraphSyncSolver must assign this event id for the conflict
-  // (from CustomMacroOp sync_event_slots with an optional pinned event).
-  std::optional<int64_t> pinnedEventId;
 
   ConflictPair(RWOperation *op1, RWOperation *op2, OperationBase *setOp,
                OperationBase *waitOp, Occurrence *setOcc, Occurrence *waitOcc,
@@ -427,10 +434,21 @@ struct ConflictPair {
     auto clonedConflictPair = std::make_unique<ConflictPair>(
         op1, op2, setOp, waitOp, setOcc, waitOcc, setCorePipeInfo,
         waitCorePipeInfo, startIndex, endIndex);
+
     clonedConflictPair->parOcc1 = parOcc1;
     clonedConflictPair->parOcc2 = parOcc2;
-    clonedConflictPair->isInnerBackward = isInnerBackward;
-    clonedConflictPair->isBackwardPair = isBackwardPair;
+
+    clonedConflictPair->isOccBackwardPair = isOccBackwardPair;
+    clonedConflictPair->isSetWaitBackwardPair = isSetWaitBackwardPair;
+    clonedConflictPair->isInnerBackwardPair = isInnerBackwardPair;
+    clonedConflictPair->backwardSyncLoopOp = backwardSyncLoopOp;
+    clonedConflictPair->backwardSyncLoopOcc = backwardSyncLoopOcc;
+
+    clonedConflictPair->eventIdInfo = eventIdInfo;
+    clonedConflictPair->eventIdNode = eventIdNode;
+    clonedConflictPair->pinnedEventId = pinnedEventId;
+    clonedConflictPair->setWaitPairInfo = setWaitPairInfo;
+
     clonedConflictPair->isUseless = isUseless;
     clonedConflictPair->dontReuse = dontReuse;
     clonedConflictPair->dontCheckForConflict = dontCheckForConflict;
@@ -441,12 +459,6 @@ struct ConflictPair {
     clonedConflictPair->movedToOuterLoop = movedToOuterLoop;
     clonedConflictPair->isPersistent = isPersistent;
     clonedConflictPair->isErased = isErased;
-    clonedConflictPair->backwardSyncLoopOp = backwardSyncLoopOp;
-    clonedConflictPair->backwardSyncLoopOcc = backwardSyncLoopOcc;
-    clonedConflictPair->eventIdInfo = eventIdInfo;
-    clonedConflictPair->eventIdNode = eventIdNode;
-    clonedConflictPair->setWaitPairInfo = setWaitPairInfo;
-    clonedConflictPair->pinnedEventId = pinnedEventId;
     return clonedConflictPair;
   }
 

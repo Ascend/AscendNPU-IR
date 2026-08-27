@@ -628,3 +628,27 @@ func.func @test_mmadL1_output_multi_root(%condition: i1) attributes {
   }
   return
 }
+
+// -----
+
+// Memory planning replaces the original allocs with pointer_cast ops. A later
+// InferHIVMMemScope invocation must accept these already-scoped roots.
+// CHECK-LABEL: func.func @test_conv1d_after_memory_planning
+func.func @test_conv1d_after_memory_planning() attributes {
+    hacc.function_kind = #hacc.function_kind<DEVICE>} {
+  %true = arith.constant true
+  %c0_i64 = arith.constant 0 : i64
+  // CHECK: %[[INPUT:.*]] = hivm.hir.pointer_cast(%{{.*}}) : memref<2x2x1x128x16xf16, #hivm.address_space<cbuf>>
+  %input = hivm.hir.pointer_cast(%c0_i64) : memref<2x2x1x128x16xf16, #hivm.address_space<cbuf>>
+  // CHECK: %[[WEIGHT:.*]] = hivm.hir.pointer_cast(%{{.*}}) : memref<1x1x3x32x16xf16, #hivm.address_space<cbuf>>
+  %weight = hivm.hir.pointer_cast(%c0_i64) : memref<1x1x3x32x16xf16, #hivm.address_space<cbuf>>
+  // CHECK: %[[OUTPUT:.*]] = hivm.hir.pointer_cast(%{{.*}}) : memref<128x64xf32, #hivm.address_space<cc>>
+  %output = hivm.hir.pointer_cast(%c0_i64) : memref<128x64xf32, #hivm.address_space<cc>>
+  // CHECK: hivm.hir.Conv1dL1
+  // CHECK-SAME: ins(%[[INPUT]], %[[WEIGHT]], %{{.*}} : memref<2x2x1x128x16xf16, #hivm.address_space<cbuf>>, memref<1x1x3x32x16xf16, #hivm.address_space<cbuf>>, i1)
+  // CHECK-SAME: outs(%[[OUTPUT]] : memref<128x64xf32, #hivm.address_space<cc>>)
+  hivm.hir.Conv1dL1 {groups = 2 : i32, padding = 0 : i32}
+      ins(%input, %weight, %true : memref<2x2x1x128x16xf16, #hivm.address_space<cbuf>>, memref<1x1x3x32x16xf16, #hivm.address_space<cbuf>>, i1)
+      outs(%output : memref<128x64xf32, #hivm.address_space<cc>>)
+  return
+}

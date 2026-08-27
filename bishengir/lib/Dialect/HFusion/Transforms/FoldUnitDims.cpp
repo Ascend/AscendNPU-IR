@@ -1624,6 +1624,7 @@ struct DropUnitDimsLinalgOp
             linalg::Mmt4DOp, linalg::BatchMmt4DOp, linalg::BatchMatmulOp,
             linalg::BatchMatmulTransposeAOp, linalg::BatchMatmulTransposeBOp,
             linalg::QuantizedBatchMatmulOp, linalg::BatchReduceMatmulOp,
+            hfusion::Conv1DOp, hfusion::Conv2DOp, hfusion::Conv3DOp,
             linalg::Conv1DOp, linalg::Conv2DOp, linalg::Conv3DOp,
             linalg::Conv1DNwcWcfOp, linalg::Conv1DNcwFcwOp,
             linalg::Conv2DNhwcHwcfOp, linalg::Conv2DNhwcFhwcOp,

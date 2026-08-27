@@ -487,10 +487,9 @@ func.func @forward_constant_fill(%arg0: tensor<64x16xf32>) -> tensor<16xf32> {
 // -----
 
 // CHECK-LABEL: func.func @masked_reader_vf
-//       CHECK:   %[[PAD:.*]] = arith.constant 0.000000e+00 : f32
 //       CHECK:   %[[MASK:.*]] = vector.constant_mask [12] : vector<16xi1>
 //       CHECK:   %[[C:.*]] = arith.constant dense<0xFF800000> : vector<16xf32>
-//       CHECK:   %[[PADV:.*]] = vector.broadcast %[[PAD]] : f32 to vector<16xf32>
+//       CHECK:   %[[PADV:.*]] = arith.constant dense<0.000000e+00> : vector<16xf32>
 //       CHECK:   arith.select %[[MASK]], %[[C]], %[[PADV]]
 //   CHECK-NOT:   vector.transfer_read
 
@@ -654,4 +653,40 @@ func.func @no_forward_shared_reader(%other: tensor<16xf32>) -> (tensor<16xf32>, 
   %r0 = call @shared_reader_vf(%f) : (tensor<16xf32>) -> tensor<16xf32>
   %r1 = call @shared_reader_vf(%other) : (tensor<16xf32>) -> tensor<16xf32>
   return %r0, %r1 : tensor<16xf32>, tensor<16xf32>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @parallel_simple_gla_bwd_kernel_mix_aiv_fused_10_outlined_vf_0
+//   CHECK-NOT:   vector.transfer_read
+//       CHECK:   arith.constant dense<0.693147182> : vector<1x32xf32>
+
+func.func @parallel_simple_gla_bwd_kernel_mix_aiv_fused_10_outlined_vf_0(%arg0: tensor<32xf32>, %arg1: tensor<32x32xf32>) -> tensor<32x32xf32> {
+  %cst = arith.constant 0.000000e+00 : f32
+  %c0 = arith.constant 0 : index
+  %0 = vector.constant_mask [32] : vector<32xi1>
+  %1 = vector.transfer_read %arg0[%c0], %cst, %0 {in_bounds = [true, true], permutation_map = affine_map<(d0) -> (0, d0)>} : tensor<32xf32>, vector<1x32xf32>
+  %extracted_slice = tensor.extract_slice %arg1[0, 0] [1, 32] [1, 1] : tensor<32x32xf32> to tensor<1x32xf32>
+  %2 = vector.constant_mask [1, 32] : vector<1x32xi1>
+  %3 = vector.transfer_write %1, %extracted_slice[%c0, %c0], %2 {in_bounds = [true, true]} : vector<1x32xf32>, tensor<1x32xf32>
+  %inserted_slice = tensor.insert_slice %3 into %arg1[0, 0] [1, 32] [1, 1] : tensor<1x32xf32> into tensor<32x32xf32>
+  return %inserted_slice : tensor<32x32xf32>
+}
+func.func @parallel_simple_gla_bwd_kernel_mix_aiv_fused_19_outlined_vf_0(%arg0: tensor<32xf32>) -> tensor<32xf32> attributes {hfusion.has_fill} {
+  %cst = arith.constant dense<0.693147182> : vector<32xf32>
+  %c0 = arith.constant 0 : index
+  %0 = vector.transfer_write %cst, %arg0[%c0] : vector<32xf32>, tensor<32xf32>
+  return %0 : tensor<32xf32>
+}
+func.func @parallel_simple_gla_bwd_kernel_mix_aiv() {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c2 = arith.constant 2 : index
+  %0 = tensor.empty() : tensor<32xf32>
+  %1 = tensor.empty() : tensor<32x32xf32>
+  %2 = call @parallel_simple_gla_bwd_kernel_mix_aiv_fused_19_outlined_vf_0(%0) {hivm.vector_function, no_inline} : (tensor<32xf32>) -> tensor<32xf32>
+  scf.for %arg0 = %c0 to %c2 step %c1 {
+    %3 = func.call @parallel_simple_gla_bwd_kernel_mix_aiv_fused_10_outlined_vf_0(%2, %1) {hivm.vector_function, no_inline} : (tensor<32xf32>, tensor<32x32xf32>) -> tensor<32x32xf32>
+  }
+  return
 }

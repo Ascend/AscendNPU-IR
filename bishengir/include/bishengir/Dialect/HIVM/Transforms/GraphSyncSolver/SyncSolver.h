@@ -17,6 +17,7 @@
 #ifndef BISHENG_DIALECT_HIVM_TRANSFORMS_GRAPHSYNCSOLVER_SYNCSOLVER_H
 #define BISHENG_DIALECT_HIVM_TRANSFORMS_GRAPHSYNCSOLVER_SYNCSOLVER_H
 
+#include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/CorePipeInfo.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/CustomMacroSync.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/EventIdSolver.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/GraphSolver.h"
@@ -80,6 +81,7 @@ public:
     int64_t graphConflictPairsCheckedNum{0};
     int64_t solverSkipNum{0};
     int64_t checkGraphConflictSkipDijNum{0};
+    int64_t priorityQueuePushNum{0};
 
     void print() {
       llvm::dbgs() << "processing orders checked: " << ordersCheckedNum << '\n';
@@ -94,6 +96,7 @@ public:
       llvm::dbgs() << "graph conflict pairs skipped Dijkstra: "
                    << checkGraphConflictSkipDijNum << '\n';
       llvm::dbgs() << "solver skipped: " << solverSkipNum << '\n';
+      llvm::dbgs() << "priority queue pushes: " << priorityQueuePushNum << '\n';
     }
   } perfInfo;
 
@@ -267,8 +270,16 @@ protected:
                                                              Occurrence *occ2);
 
   // Map an occurrence to the first/last loop-iteration copy under parOcc.
-  Occurrence *getFirstIterOcc(Occurrence *occ, Occurrence *parOcc);
-  Occurrence *getLastIterOcc(Occurrence *occ, Occurrence *parOcc);
+  bool isFirstIterOcc(Occurrence *occ, Occurrence *loopOcc);
+  bool isLastIterOcc(Occurrence *occ, Occurrence *loopOcc);
+  Occurrence *getFirstIterOcc(Occurrence *occ, Occurrence *loopOcc);
+  Occurrence *getLastIterOcc(Occurrence *occ, Occurrence *loopOcc);
+
+  std::pair<CorePipeInfo, CorePipeInfo>
+  getFixedCorePipeInfoPair(CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst);
+
+  // Whether a intra-core pipe pair should be skipped.
+  bool checkSkipIntraCorePair(hivm::PIPE pipeSrc, hivm::PIPE pipeDst);
 
   // Whether a cross-core pipe / occurrence pair should be skipped.
   bool checkSkipCrossCorePair(hivm::TCoreType coreTypeSrc,
