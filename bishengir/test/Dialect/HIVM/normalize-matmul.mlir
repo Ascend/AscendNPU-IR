@@ -2585,32 +2585,6 @@ func.func @test_mmadL1_may_not_exec_dynamic_bounds(%lb: i32, %ub: i32) -> tensor
 }
 
 // -----
-// A5: hfusion.disableHfusionVectorize skips CCF; falls back to mmad+vadd.
-// CHECK-LABEL: func.func @test_mmadL1_skip_ccf_when_disable_hfusion_vectorize
-// CHECK-NOT: normalize_matmul_counter
-// CHECK: hivm.hir.mmadL1 {already_set_real_mkn}
-// CHECK: hivm.hir.vadd
-module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">, hfusion.disableHfusionVectorize} {
-func.func @test_mmadL1_skip_ccf_when_disable_hfusion_vectorize() -> tensor<16x16xf32> {
-  %c0_i32 = arith.constant 0 : i32
-  %c1_i32 = arith.constant 1 : i32
-  %c4_i32 = arith.constant 4 : i32
-  %false = arith.constant false
-  %c0 = arith.constant 0 : index
-  %cst = arith.constant 0.0 : f32
-  %empty = tensor.empty() : tensor<16x16xf32>
-  %init = hivm.hir.vbrc ins(%cst : f32) outs(%empty : tensor<16x16xf32>) -> tensor<16x16xf32>
-  %a = tensor.empty() : tensor<16x16xf16>
-  %b = tensor.empty() : tensor<16x16xf16>
-  %0 = scf.for %i = %c0_i32 to %c4_i32 step %c1_i32 iter_args(%acc = %init) -> (tensor<16x16xf32>) : i32 {
-    %mmad = hivm.hir.mmadL1 ins(%a, %b, %false, %c0, %c0, %c0 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%acc : tensor<16x16xf32>) -> tensor<16x16xf32>
-    scf.yield %mmad : tensor<16x16xf32>
-  }
-  return %0 : tensor<16x16xf32>
-}
-}
-
-// -----
 // A5: plain scope (no matmul_limited_in_cube) skips CCF; mmad+vadd.
 // CHECK-LABEL: func.func @test_mmadL1_skip_ccf_in_plain_scope
 // CHECK-NOT: normalize_matmul_counter

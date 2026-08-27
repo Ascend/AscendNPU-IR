@@ -1584,17 +1584,8 @@ struct NormalizeMmadCCFPattern
   LogicalResult matchAndRewrite(LocalMatmulLikeOpInterface op,
                                 PatternRewriter &rewriter) const override {
     Operation *mmadOp = op.getOperation();
-    // TODO: need to be reverted when Affinity GMM supported
-    auto moduleOp = mmadOp->getParentOfType<ModuleOp>();
-    bool isDisableHfusionVectorize = false;
-    if (moduleOp) {
-      isDisableHfusionVectorize =
-          moduleOp->hasAttr("hfusion.disableHfusionVectorize");
-    }
-
     auto scopeOp = mmadOp->getParentOfType<scope::ScopeOp>();
-    if ((scopeOp && !scopeOp->hasAttr(hivm::MatmulLimitedInCubeAttr::name)) ||
-        isDisableHfusionVectorize) {
+    if (scopeOp && !scopeOp->hasAttr(hivm::MatmulLimitedInCubeAttr::name)) {
       LDBG("Affinity pattern already applied");
       return rewriter.notifyMatchFailure(mmadOp,
                                          "Affinity pattern already applied");
