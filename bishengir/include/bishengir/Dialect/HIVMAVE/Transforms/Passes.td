@@ -132,6 +132,19 @@ def HoistVstas : Pass<"hoist-vstas",  "func::FuncOp"> {
   let dependentDialects = ["hivmave::AVEDialect"];
 }
 
+def DuplicateUnitMaskBroadcast : Pass<"duplicate-unit-mask-broadcast", "func::FuncOp"> {
+  let summary = "Duplicate ave.hir.broadcast ops with vector<1xi1> mask so each result has at most one user";
+  let description = [{
+    This pass finds ave.hir.broadcast (VFBroadcastScalarMaskOp) operations whose
+    mask operand has type vector<1xi1> and whose result has multiple users.
+    For each additional user beyond the first, it creates a copy of the broadcast
+    op and places it right before the user, then replaces the operand. After this
+    pass, every matched broadcast result value has at most 1 user.
+  }];
+  let constructor = "::mlir::hivmave::createDuplicateUnitMaskBroadcastPass()";
+  let dependentDialects = ["hivmave::AVEDialect"];
+}
+
 def AnalyzeVectorLayout : Pass<"analyze-vector-layout", "func::FuncOp"> {
   let summary = "Analyze vector layout";
   let constructor = "::mlir::hivmave::createAnalyzeVectorLayoutPass()";
