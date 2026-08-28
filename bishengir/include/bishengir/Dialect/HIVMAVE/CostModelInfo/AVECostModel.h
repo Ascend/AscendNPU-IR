@@ -18,6 +18,10 @@
 namespace mlir {
 namespace hivmave {
 
+// The CostInfo representation is shared with VFFusion MaxParallel, and the
+// throughput, issue-queue parallelism and execution-unit utilization formulas
+// are derived from that model. AVE keeps rewrite-specific before/after cost
+// accounting for now; the common pieces are intended to be unified later.
 struct AVEExecutionCostEntry {
   analysis::CostInfo cost;
   int64_t count;
