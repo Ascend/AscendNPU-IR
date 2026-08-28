@@ -87,45 +87,17 @@ template <typename StoreOpTy> Value getStoreLikeDst(StoreOpTy storeOp) {
     return storeOp.getDst();
 }
 
-/// Get the optimal tiling dimension for each value in the operation.
-/// Analyzes parallel dimensions across all storeOp and selects
-/// the dimension that appears most frequently as a parallel dimension.
-/// Uses a heuristic where if the majority of stores have a higher dimension
-/// available, that dimension is chosen for tiling.
-bool DimensionAnalyzer::computeTilingDim(bool isVectorOp) {
-  DenseMap<int64_t, DenseMap<int64_t, SmallVector<Dimension>>> parallelDimMaps;
-  DenseMap<int64_t, int> numStoreOps;
-  DenseMap<int64_t, SmallVector<Dimension>> parallelDimMap;
-  bool isBroadcastAxisCase = !invalidUpdates.empty();
+void DimensionAnalyzer::processInvalidUpdates(
+    DenseMap<int64_t, DenseMap<int64_t, SmallVector<Dimension>>>
+        &parallelDimMaps,
+    mlir::detail::SimpleUnionFind &candGroupDSU,
+    MutableArrayRef<int64_t> candidateGroupSize,
+    SmallVector<DenseSet<int64_t>> &candidateExclusiveDimIdx) {
+  if (invalidUpdates.empty())
+    return;
 
-  for (auto [value, _] : valueToDimIndicesIndex_)
-    tilingDim_[value] = -1;
-
-  if (isVectorOp) {
-    computeTilingDimImpl<hivm::StoreOp>(parallelDimMaps, numStoreOps);
-    computeTilingDimImpl<hivm::CopyOp>(parallelDimMaps, numStoreOps);
-    computeTilingDimImpl<hivm::StrideStoreOp>(parallelDimMaps, numStoreOps);
-    computeTilingDimImpl<hivm::IndirectStoreOp>(parallelDimMaps, numStoreOps);
-    computeTilingDimImpl<hivm::LocalStoreOp>(parallelDimMaps, numStoreOps);
-    // FIXME: Support reduction dim slicing
-    if (isRegbased)
-      computeTilingDimImpl<hivm::VReduceOp>(parallelDimMaps, numStoreOps);
-    if (isa<scf::ForOp>(op_))
-      computeTilingDimImpl<scf::YieldOp>(parallelDimMaps, numStoreOps);
-  } else {
-    computeTilingDimImpl<hivm::FixpipeOp>(parallelDimMaps, numStoreOps);
-  }
-  computeTilingDimImpl<hivm::DebugOp>(parallelDimMaps, numStoreOps);
-
-  mlir::detail::SimpleUnionFind candGroupDSU(argumentTotalLength_);
-  SmallVector<int64_t> candidateGroupSize(argumentTotalLength_);
-  for (const auto &[groupIndex, parallelDimMap] : parallelDimMaps) {
-    for (const auto &[parentIndex, candidate] : parallelDimMap)
-      candidateGroupSize[parentIndex] = static_cast<int64_t>(candidate.size());
-  }
   LDBG("Connecting invalid updates: ");
   SmallVector<DenseSet<int64_t>> invalidConnection(argumentTotalLength_);
-  auto candidateExclusiveDimIdx = exclusiveDimIdx;
   auto hasConnection = [&](auto &connections, int lhs, int rhs) {
     lhs = candGroupDSU.find(lhs);
     rhs = candGroupDSU.find(rhs);
@@ -214,6 +186,47 @@ bool DimensionAnalyzer::computeTilingDim(bool isVectorOp) {
         addConnection(invalidConnection, repIdx, idx);
     }
   }
+}
+
+/// Get the optimal tiling dimension for each value in the operation.
+/// Analyzes parallel dimensions across all storeOp and selects
+/// the dimension that appears most frequently as a parallel dimension.
+/// Uses a heuristic where if the majority of stores have a higher dimension
+/// available, that dimension is chosen for tiling.
+bool DimensionAnalyzer::computeTilingDim(bool isVectorOp) {
+  DenseMap<int64_t, DenseMap<int64_t, SmallVector<Dimension>>> parallelDimMaps;
+  DenseMap<int64_t, int> numStoreOps;
+  DenseMap<int64_t, SmallVector<Dimension>> parallelDimMap;
+  bool isBroadcastAxisCase = !invalidUpdates.empty();
+
+  for (auto [value, _] : valueToDimIndicesIndex_)
+    tilingDim_[value] = -1;
+
+  if (isVectorOp) {
+    computeTilingDimImpl<hivm::StoreOp>(parallelDimMaps, numStoreOps);
+    computeTilingDimImpl<hivm::CopyOp>(parallelDimMaps, numStoreOps);
+    computeTilingDimImpl<hivm::StrideStoreOp>(parallelDimMaps, numStoreOps);
+    computeTilingDimImpl<hivm::IndirectStoreOp>(parallelDimMaps, numStoreOps);
+    computeTilingDimImpl<hivm::LocalStoreOp>(parallelDimMaps, numStoreOps);
+    // FIXME: Support reduction dim slicing
+    if (isRegbased)
+      computeTilingDimImpl<hivm::VReduceOp>(parallelDimMaps, numStoreOps);
+    if (isa<scf::ForOp>(op_))
+      computeTilingDimImpl<scf::YieldOp>(parallelDimMaps, numStoreOps);
+  } else {
+    computeTilingDimImpl<hivm::FixpipeOp>(parallelDimMaps, numStoreOps);
+  }
+  computeTilingDimImpl<hivm::DebugOp>(parallelDimMaps, numStoreOps);
+
+  mlir::detail::SimpleUnionFind candGroupDSU(argumentTotalLength_);
+  SmallVector<int64_t> candidateGroupSize(argumentTotalLength_);
+  for (const auto &[groupIndex, parallelDimMap] : parallelDimMaps) {
+    for (const auto &[parentIndex, candidate] : parallelDimMap)
+      candidateGroupSize[parentIndex] = static_cast<int64_t>(candidate.size());
+  }
+  auto candidateExclusiveDimIdx = exclusiveDimIdx;
+  processInvalidUpdates(parallelDimMaps, candGroupDSU, candidateGroupSize,
+                        candidateExclusiveDimIdx);
 
   for (auto [value, _] : valueToDimIndicesIndex_)
     tilingDim_[value] = -1;

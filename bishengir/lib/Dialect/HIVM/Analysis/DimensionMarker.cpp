@@ -1378,6 +1378,54 @@ void DimensionAnalyzer::joinCollapser(int a, int b) {
   }
 }
 
+static constexpr StringRef kValueGroupAttrName = "value_group";
+static constexpr StringRef kStructuralGroupAttrName = "structural_group";
+
+void DimensionAnalyzer::dumpOpWithValueGroups() {
+  op_->walk([&](Operation *op) {
+    SmallVector<Attribute> group;
+    for (auto res : op->getResults()) {
+      if (!isa<ShapedType>(res.getType()))
+        continue;
+      createDummyRefIfNotExist({res});
+      auto arg = valueToDimIndicesIndex_.at(res);
+      arg = valueGroupDSU_->find(arg);
+      group.push_back(IntegerAttr::get(IndexType::get(res.getContext()), arg));
+    }
+    op->setAttr(kValueGroupAttrName, ArrayAttr::get(op->getContext(), group));
+  });
+
+  llvm::errs() << "VALUE_GROUP: " << *op_ << "\n";
+
+  op_->walk([&](Operation *op) { op->removeAttr(kValueGroupAttrName); });
+}
+
+void DimensionAnalyzer::dumpOpWithStructuralGroups() {
+  op_->walk([&](Operation *op) {
+    SmallVector<Attribute> group;
+    for (auto res : op->getResults()) {
+      if (!isa<ShapedType>(res.getType()))
+        continue;
+      createDummyRefIfNotExist({res});
+      auto args = getValueDimIndices(res);
+      SmallVector<Attribute> argAttrs;
+      for (auto &arg : args) {
+        arg = structuralDsu_->find(arg);
+        argAttrs.push_back(
+            IntegerAttr::get(IndexType::get(res.getContext()), arg));
+      }
+      group.push_back(ArrayAttr::get(op->getContext(), argAttrs));
+    }
+    op->setAttr(kStructuralGroupAttrName,
+                ArrayAttr::get(op->getContext(), group));
+  });
+
+  llvm::errs() << "STRUCTURAL_GROUP: " << *op_ << "\n";
+
+  op_->walk(
+      [&](Operation *op) { op->removeAttr(kStructuralGroupAttrName); });
+}
+
 } // namespace detail
 } // namespace hivm
 } // namespace mlir
