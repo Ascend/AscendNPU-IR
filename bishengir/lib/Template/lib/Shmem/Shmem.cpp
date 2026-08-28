@@ -281,6 +281,26 @@ ACLSHMEM_P_WRAPPER(bfloat16, bfloat16_t)
 
 #undef ACLSHMEM_P_WRAPPER
 
+// Macro to generate wrappers for aclshmem_atomic_add_##NAME## functions
+#define ACLSHMEM_ATOMIC_ADD_WRAPPER(NAME, TYPE)                                \
+  __aicore__ __attribute__((always_inline)) void                               \
+  _mlir_ciface_aclshmem_atomic_add_##NAME(memref_t<__gm__ TYPE, 1> *dst,       \
+                                          const TYPE value, int pe) {          \
+    aclshmem_##NAME##_atomic_add(dst->aligned + dst->offset, value, pe);       \
+  }
+
+ACLSHMEM_ATOMIC_ADD_WRAPPER(int8, int8_t)
+ACLSHMEM_ATOMIC_ADD_WRAPPER(int16, int16_t)
+ACLSHMEM_ATOMIC_ADD_WRAPPER(bfloat16, bfloat16_t)
+ACLSHMEM_ATOMIC_ADD_WRAPPER(half, half)
+ACLSHMEM_ATOMIC_ADD_WRAPPER(int32, int32_t)
+ACLSHMEM_ATOMIC_ADD_WRAPPER(float, float)
+ACLSHMEM_ATOMIC_ADD_WRAPPER(uint32, uint32_t)
+ACLSHMEM_ATOMIC_ADD_WRAPPER(uint64, uint64_t)
+ACLSHMEM_ATOMIC_ADD_WRAPPER(int64, int64_t)
+
+#undef ACLSHMEM_ATOMIC_ADD_WRAPPER
+
 // Macro to generate wrappers for aclshmem_##NAME##_wait_until functions
 #define ACLSHMEM_WAIT_UNTIL_WRAPPER(NAME, TYPE)                                \
   __aicore__ __attribute__((always_inline)) void                               \
