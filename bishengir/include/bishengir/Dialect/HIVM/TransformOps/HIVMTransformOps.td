@@ -36,10 +36,10 @@ def MapForallToHIVMBlocks :
      TransformOpInterface,
      TransformEachOpTrait]> {
   let description = [{
-    The operation maps each `scf.forall` given by the target handle to 
+    The operation maps each `scf.forall` given by the target handle to
     HIVM block ops. Mapping is one-to-one and the induction
     variables of `scf.forall` are rewritten to hivm block idx ops.
-    
+
     ### Restrictions:
 
     - Non-normalized `scf.forall` ops, or the ones with dynamic trip counts are
@@ -52,7 +52,7 @@ def MapForallToHIVMBlocks :
 
     If the `target` handle points to any `scf.forall` that doesn't meet the above
     requirments, the transform definitely fails.
-    The return handle points to the block idx op. This operation consumes 
+    The return handle points to the block idx op. This operation consumes
     the target handle.
   }];
 
@@ -63,7 +63,7 @@ def MapForallToHIVMBlocks :
   let assemblyFormat = [{
     $target attr-dict `:` functional-type($target, $result)
   }];
-  
+
   let extraClassDeclaration = [{
     ::mlir::DiagnosedSilenceableFailure applyToOne(
         ::mlir::transform::TransformRewriter &rewriter,

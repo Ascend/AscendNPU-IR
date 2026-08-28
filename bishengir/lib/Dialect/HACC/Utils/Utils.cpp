@@ -425,7 +425,7 @@ resetDeclFuncLoc(LLVM::LLVMFuncOp /* don't need reference */ llvmFunc) {
   if (auto originalLoc =
           llvm::dyn_cast_if_present<FusedLoc>(llvmFunc.getLoc())) {
     auto originalAttr = cast<LLVM::DISubprogramAttr>(originalLoc.getMetadata());
-#if defined(__LLVM_MAJOR_VERSION_20_COMPATIBLE__) || defined(__LLVM_MAJOR_VERSION_22_COMPATIBLE__) 
+#if defined(__LLVM_MAJOR_VERSION_20_COMPATIBLE__) || defined(__LLVM_MAJOR_VERSION_22_COMPATIBLE__)
     auto newAttr = LLVM::DISubprogramAttr::get(
         llvmFunc->getContext(), DistinctAttr(), LLVM::DICompileUnitAttr(),
         originalAttr.getScope(), originalAttr.getName(),

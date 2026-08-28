@@ -254,7 +254,7 @@ struct GeneralizeMulextPattern : public OpRewritePattern<hfusion::MulExtOp> {
           auto mulExt = b.create<arith::MulUIExtendedOp>(
               loc, b.getI32Type(), b.getI32Type(), lhsElem, rhsElem);
           low = mulExt.getLow();
-          high = mulExt.getHigh();              
+          high = mulExt.getHigh();
         }
         // use arith.mulsi_extended
         b.create<linalg::YieldOp>(loc, ValueRange{low, high});

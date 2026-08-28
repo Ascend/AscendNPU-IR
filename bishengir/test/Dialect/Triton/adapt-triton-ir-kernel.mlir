@@ -13,4 +13,4 @@ module {
   }
   // CHECK-NOT: gpu.block
   tt.func private @abort()
-}
+}

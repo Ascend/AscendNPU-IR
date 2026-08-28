@@ -1,6 +1,6 @@
 // RUN: bishengir-opt --convert-ascend-dpx-to-hivmregbaseintrins --split-input-file %s | FileCheck %s
- 
- 
+
+
 // CHECK-LABEL: @ascend_dpx_cast_lowering_0
 func.func @ascend_dpx_cast_lowering_0(%arg0 : vector<2xbf16>) {
     // CHECK: llvm.call_intrinsic "llvm.hivm.bf16x2.to.f32x2"
@@ -11,7 +11,7 @@ func.func @ascend_dpx_cast_lowering_0(%arg0 : vector<2xbf16>) {
     %1 = ascend_dpx.cast %0 kind <fp_to_fp> : vector<2xf8E4M3FN> to vector<2xbf16>
     return
 }
- 
+
 // CHECK-LABEL: @ascend_dpx_cast_lowering_1
 func.func @ascend_dpx_cast_lowering_1(%arg0 : vector<2xf32>) {
     // CHECK: llvm.call_intrinsic "llvm.hivm.f32x2.to.f8e4m3x2"
@@ -20,7 +20,7 @@ func.func @ascend_dpx_cast_lowering_1(%arg0 : vector<2xf32>) {
     %1 = ascend_dpx.cast %0 kind <fp_to_fp> : vector<2xf8E4M3FN> to vector<2xf32>
     return
 }
- 
+
 // CHECK-LABEL: @ascend_dpx_cast_lowering_2
 func.func @ascend_dpx_cast_lowering_2(%arg0 : vector<2xbf16>) {
     // CHECK: llvm.call_intrinsic "llvm.hivm.bf16x2.to.f32x2"
@@ -31,7 +31,7 @@ func.func @ascend_dpx_cast_lowering_2(%arg0 : vector<2xbf16>) {
     %1 = ascend_dpx.cast %0 kind <fp_to_fp> : vector<2xf8E5M2> to vector<2xbf16>
     return
 }
- 
+
 // CHECK-LABEL: @ascend_dpx_cast_lowering_3
 func.func @ascend_dpx_cast_lowering_3(%arg0 : vector<2xf32>) {
     // CHECK: llvm.call_intrinsic "llvm.hivm.f32x2.to.f8e5m2x2"
@@ -39,4 +39,4 @@ func.func @ascend_dpx_cast_lowering_3(%arg0 : vector<2xf32>) {
     // CHECK: llvm.call_intrinsic "llvm.hivm.f8e5m2x2.to.f32x2"
     %1 = ascend_dpx.cast %0 kind <fp_to_fp> : vector<2xf8E5M2> to vector<2xf32>
     return
-}
+}

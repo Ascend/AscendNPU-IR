@@ -102,12 +102,12 @@ public:
         BlockEpilogue::EVG::initialize_workspace(problemShape, args.evg_args, evg_workspace);
 
         // 转换 EVG Arguments 到 Params
-        typename BlockEpilogue::EVG::Params fusion_params = 
+        typename BlockEpilogue::EVG::Params fusion_params =
             BlockEpilogue::EVG::to_underlying_arguments(
-                problemShape, args.evg_args, 
+                problemShape, args.evg_args,
                 evg_workspace  // EVG workspace 在 GEMM workspace 之后
             );
-        
+
         EpilogueParams epilogueParams{fusion_params};
         Params params{problemShape, args.ptrA, args.layoutA, args.ptrB, args.layoutB, args.ptrBias, workspace, epilogueParams};
         return params;
@@ -180,7 +180,7 @@ public:
 
             Arch::CrossCoreSetFlagWithReverse<0x2, PIPE_FIX>(flagAicFinishStore);
         }
-        
+
         if constexpr (BlockMmad::DispatchPolicy::ASYNC) {
             blockMmad.template SynchronizeBlock<decltype(tensorC)>();
         }
@@ -200,7 +200,7 @@ public:
         // Represent the full gm as TLA tensor
         AscendC::GlobalTensor<ElementC> gmC;
         gmC.SetGlobalBuffer((__gm__ ElementC*)params.ptrWorkspace);
-        
+
         // Create TLA layout for workspace C
         auto layoutC = tla::MakeLayout<ElementC, layout::RowMajor>(params.problemShape.m(), params.problemShape.n());
         auto tensorC = tla::MakeTensor(gmC, layoutC, Arch::PositionGM{});
@@ -213,12 +213,12 @@ public:
         for (uint32_t loopIdx = aicoreIndex; loopIdx < coreLoops; loopIdx += aicoreNum) {
             GemmCoord blockCoord = matmulBlockScheduler.GetBlockCoord(loopIdx);
             GemmCoord actualBlockShape = matmulBlockScheduler.GetActualBlockShape(blockCoord);
-            
+
             // 使用 GetTile 创建 tile 视图
             auto tensorBlockC = GetTile(tensorC,
                 tla::MakeCoord(blockCoord.m() * L1_TILE_M, blockCoord.n() * L1_TILE_N),
                 tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
-            
+
             Arch::CrossCoreWaitFlagWithReverse<0x2, PIPE_MTE2>(flagAicFinishStore);
             blockEpilogue(blockShape, blockCoord, actualBlockShape, tensorBlockC);
         }
@@ -236,4 +236,3 @@ private:
 } // namespace Catlass::Gemm::Kernel
 
 #endif // CATLASS_GEMM_KERNEL_BASIC_MATMUL_TLA_VISITOR_HPP
-

@@ -293,7 +293,7 @@ module {
 }
 
 // -----
- 
+
 // CHECK-LABEL: func.func @squeeze_returned_operands_on_multi_kernel_0(
 // CHECK: %[[EXPAND:.*]] = tensor.expand_shape
 // CHECK: return %[[EXPAND]]

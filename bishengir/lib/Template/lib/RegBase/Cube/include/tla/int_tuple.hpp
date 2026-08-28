@@ -76,7 +76,7 @@ auto transform_apply(T0&& t0, T1&& t1, F&& f, G&& g)
         return g(f(static_cast<T0&&>(t0), static_cast<T1&&>(t1)));
     }
 }
- 
+
 template <class T, class F>
 CATLASS_HOST_DEVICE constexpr
 void for_each(T&& t, F&& f)

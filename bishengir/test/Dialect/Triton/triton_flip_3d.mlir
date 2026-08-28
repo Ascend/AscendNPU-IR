@@ -55,5 +55,3 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
     tt.return
   }
 }
-
-

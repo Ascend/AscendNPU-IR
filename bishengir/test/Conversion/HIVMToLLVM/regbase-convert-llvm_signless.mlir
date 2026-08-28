@@ -81,7 +81,7 @@ func.func @test_vadd_v128_i16(%arg0: vector<128 x i16>, %arg1: vector<128 x i16>
   return
 }
 
-// Test VaddV256S8XInstrOp 
+// Test VaddV256S8XInstrOp
 // CHECK-LABEL: test_vadd_v256_i8
 func.func @test_vadd_v256_i8(%arg0: vector<256 x i8>, %arg1: vector<256 x i8>, %mask: vector<256 x i1>) -> () {
   // CHECK: [[R:%.*]] = "hivm_regbaseintrins.intr.hivm.vadd.s.x"([[V0:%.*]], [[V1:%.*]], [[V2:%.*]]) : (vector<256xi8>, vector<256xi8>, vector<256xi1>) -> vector<256xi8>
@@ -98,7 +98,7 @@ func.func @test_vumax_v64_i32(%arg0: vector<64 x i32>, %arg1: vector<64 x i32>, 
   "test.test"(%0) : (vector<64 x i32>) -> ()
   return
 }
- 
+
 // Test VmaxV64S32XInstrOp
 // CHECK-LABEL: test_vsmax_v64_i32
 func.func @test_vsmax_v64_i32(%arg0: vector<64 x i32>, %arg1: vector<64 x i32>, %mask: vector<256 x i1>) -> () {

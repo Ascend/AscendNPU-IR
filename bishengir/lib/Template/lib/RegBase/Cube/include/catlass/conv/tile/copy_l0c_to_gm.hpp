@@ -93,7 +93,7 @@ struct CopyL0CToGm<Catlass::Arch::AtlasA2,
         uint32_t howoRound = RoundUp<C0>(howoActual);
         // compute dstStride
         uint32_t strideHo = dstLayout.stride(2); // Wo * C0
-        uint32_t strideHoWo = dstLayout.stride(1); // Ho * Wo * C0 
+        uint32_t strideHoWo = dstLayout.stride(1); // Ho * Wo * C0
         uint32_t HoWo = strideHoWo / C0;
 
         for (int hoIdx = 0; hoIdx < hoActual; hoIdx++) {

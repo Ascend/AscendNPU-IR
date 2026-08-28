@@ -63,7 +63,7 @@ module attributes {"ttg.num-warps" = 1 : i32, "ttg.threads-per-warp" = 32 : i32}
     llvm.return
   }
   llvm.func @__nv_sinf(f32) -> f32
-  
+
   // CHECK-LABEL: @remap_cosf
   llvm.func @remap_cosf(%arg11: f32, %arg12: f32)
     attributes {nvvm.kernel = 1 : ui1} {

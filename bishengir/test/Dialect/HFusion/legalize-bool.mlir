@@ -29,7 +29,7 @@ func.func @legalize_tensor_bool(%arg0: tensor<24xi1>, %arg1: tensor<24x3x256x192
   %1 = hfusion.cast {round_mode = #hfusion.round_mode<trunc>} ins(%expanded : tensor<24x1x1x1xi1>) outs(%0 : tensor<24x1x1x1xf32>) -> tensor<24x1x1x1xf32>
   %2 = tensor.empty() : tensor<24x3x256x192xf32>
   %collapsed = tensor.collapse_shape %1 [[0, 1, 2, 3]] : tensor<24x1x1x1xf32> into tensor<24xf32>
-  %broadcasted = linalg.broadcast ins(%collapsed : tensor<24xf32>) outs(%2 : tensor<24x3x256x192xf32>) dimensions = [1, 2, 3] 
+  %broadcasted = linalg.broadcast ins(%collapsed : tensor<24xf32>) outs(%2 : tensor<24x3x256x192xf32>) dimensions = [1, 2, 3]
   %3 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%broadcasted, %arg1 : tensor<24x3x256x192xf32>, tensor<24x3x256x192xf32>) outs(%2 : tensor<24x3x256x192xf32>) -> tensor<24x3x256x192xf32>
   return %3 : tensor<24x3x256x192xf32>
 }

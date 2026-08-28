@@ -22,7 +22,7 @@ func.func @add_mul_fusion(%arg0: tensor<?xf32>, %arg1: tensor<?xf32>, %arg2: ten
   // CHECK: scf.for
   %0 = tensor.empty(%dim) : tensor<?xf32>
   %2 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%arg0, %arg1 : tensor<?xf32>, tensor<?xf32>) outs(%0 : tensor<?xf32>) -> tensor<?xf32>
-  
+
   %1 = tensor.empty(%dim) : tensor<?xf32>
   %3 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%2, %arg2 : tensor<?xf32>, tensor<?xf32>) outs(%1 : tensor<?xf32>) -> tensor<?xf32>
   return %3 : tensor<?xf32>

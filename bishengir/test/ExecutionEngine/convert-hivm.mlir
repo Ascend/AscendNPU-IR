@@ -267,11 +267,11 @@ func.func @arange_lowering(%a: tensor<5x?x10xi64>, %b: memref<5x?x10xi32>) -> te
 // -----
 
 // CHECK-LABEL: @concat_lowering
-// CHECK-SAME:      %[[a:[^:]*]]: {{[^,]*}}, 
-// CHECK-SAME:      %[[b:[^:]*]]: {{[^,]*}}, 
-// CHECK-SAME:      %[[c:[^:]*]]: {{[^,]*}}, 
-// CHECK-SAME:      %[[d:[^:]*]]: {{[^,]*}}, 
-// CHECK-SAME:      %[[e:[^:]*]]: {{[^,]*}}, 
+// CHECK-SAME:      %[[a:[^:]*]]: {{[^,]*}},
+// CHECK-SAME:      %[[b:[^:]*]]: {{[^,]*}},
+// CHECK-SAME:      %[[c:[^:]*]]: {{[^,]*}},
+// CHECK-SAME:      %[[d:[^:]*]]: {{[^,]*}},
+// CHECK-SAME:      %[[e:[^:]*]]: {{[^,]*}},
 // CHECK-SAME:      %[[f:[^:]*]]: {{[^,]*}}
 func.func @concat_lowering(%a: tensor<5x?x10xf32>, %b: tensor<?x?x10xf32>, %c: tensor<?x?x10xf32>, %d: memref<5x?x10xi32>, %e: memref<?x?x10xi32>, %f: memref<?x?x10xi32>) -> tensor<?x?x10xf32> attributes {hacc.function_kind = #hacc.function_kind<HOST>, hacc.host_func_type = #hacc.host_func_type<host_entry>} {
 

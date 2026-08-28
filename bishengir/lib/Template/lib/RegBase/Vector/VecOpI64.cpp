@@ -66,7 +66,7 @@ ave_cast_u64_to_float(vector_2xvl_s64 *src, ave_preg preg, RoundType rnd) {
     vcvt(lowPartF32, lowPartS64, ROUND_Z);
     vcvt(highPartF32, highPartS64, ROUND_Z);
   }
-  
+
   vmuls(retHighVal, highPartF32, 1LL << 32, p);
   vadd(ret, retHighVal, lowPartF32, p);
   return ret;
@@ -113,12 +113,12 @@ ave_cast_float_to_u64(vector_2xvl_u64 *sret, vector_f32 src, ave_preg preg, Roun
     vcvt(highPartI64, highPartF32, ROUND_A, RS_ENABLE);
     vcvt(highPartU64, highPartI64);
     vcvt(lowPartI64, lowPartF32, ROUND_A, RS_ENABLE);
-    vcvt(lowPartU64, lowPartI64);    
+    vcvt(lowPartU64, lowPartI64);
   } else if (rnd == RoundType::RoundF) {
     vcvt(highPartI64, highPartF32, ROUND_F, RS_ENABLE);
     vcvt(highPartU64, highPartI64);
     vcvt(lowPartI64, lowPartF32, ROUND_F, RS_ENABLE);
-    vcvt(lowPartU64, lowPartI64);  
+    vcvt(lowPartU64, lowPartI64);
   } else if (rnd == RoundType::RoundC) {
     vcvt(highPartI64, highPartF32, ROUND_C, RS_ENABLE);
     vcvt(highPartU64, highPartI64);
@@ -167,7 +167,7 @@ ave_cast_i64_to_u32_sat(vector_2xvl_s64 *src, ave_preg preg) {
   vcvt(ret, u64Sat) ;
   return ret;
 }
- 
+
 __aiv__ __attribute__((always_inline)) vector_s32
 ave_cast_u64_to_i32_sat(vector_2xvl_u64 *src, ave_preg preg) {
   vector_bool p = convertAVEPregToVecBool(preg);
@@ -182,7 +182,7 @@ ave_cast_u64_to_i32_sat(vector_2xvl_u64 *src, ave_preg preg) {
   ret = (vector_s32)u32Sat;
   return ret;
 }
- 
+
 __aiv__ __attribute__((always_inline)) vector_u32
 ave_cast_u64_to_u32_sat(vector_2xvl_u64 *src, ave_preg preg) {
   vector_bool p = convertAVEPregToVecBool(preg);
@@ -516,8 +516,8 @@ vector_dma_unalign_size_vv_1d_vf(memref_t<__ubuf__ T, 1> *src,
     VectorReg<T> srcReg;
     uint32_t sreg = size0;
     vector_bool preg;
-    using StorePattern = std::conditional_t< sizeof(T) == 1, NORM_B8_Type, 
-        std::conditional_t< sizeof(T) == 2, NORM_B16_Type, 
+    using StorePattern = std::conditional_t< sizeof(T) == 1, NORM_B8_Type,
+        std::conditional_t< sizeof(T) == 2, NORM_B16_Type,
         std::conditional_t< sizeof(T) == 4, NORM_B32_Type, void>>>;
     static_assert(!std::is_same_v<StorePattern, void>,
         "Unsupported element size");

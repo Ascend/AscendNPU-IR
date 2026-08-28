@@ -4,7 +4,7 @@
 // CHECK-LABEL: @test_fold_copy
 // CHECK-NOT: memref.copy
 module {
-  func.func @test_fold_copy(%arg0: memref<3072xf32>, %arg1: index, %arg2: index) -> memref<1x3072xf32> 
+  func.func @test_fold_copy(%arg0: memref<3072xf32>, %arg1: index, %arg2: index) -> memref<1x3072xf32>
   attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>} {
     %c1 = arith.constant 1 : index
     %subview = memref.subview %arg0[%arg1] [%arg2] [1] : memref<3072xf32> to memref<?xf32, strided<[1], offset: ?>>
@@ -27,8 +27,8 @@ module {
 // CHECK: memref.copy
 module {
   func.func @test_not_fold_copy_0(
-    %arg0: memref<24x12xf32, strided<[?, ?], offset: ?>>, %arg1: memref<12x25xf32, strided<[?, ?], offset: ?>>, 
-    %arg2: memref<24x25xf32, strided<[?, ?], offset: ?>>, 
+    %arg0: memref<24x12xf32, strided<[?, ?], offset: ?>>, %arg1: memref<12x25xf32, strided<[?, ?], offset: ?>>,
+    %arg2: memref<24x25xf32, strided<[?, ?], offset: ?>>,
     %arg3: index, %arg4: index, %arg5: index) -> memref<24x25xf32, strided<[?, ?], offset: ?>> {
     %cst = arith.constant 0.000000e+00 : f32
     %subview = memref.subview %arg0[%arg3, %arg5] [4, %arg5] [1, 1] : memref<24x12xf32, strided<[?, ?], offset: ?>> to memref<4x?xf32, strided<[?, ?], offset: ?>>
@@ -56,7 +56,7 @@ module {
 // CHECK: memref.copy
 // CHECK: memref.copy
 module {
-  func.func @test_not_fold_copy_1(%arg0: memref<3072xf32>, %arg1: memref<1x?xf32>, %arg2: index) -> memref<1x?xf32, strided<[?, 1], offset: ?>> 
+  func.func @test_not_fold_copy_1(%arg0: memref<3072xf32>, %arg1: memref<1x?xf32>, %arg2: index) -> memref<1x?xf32, strided<[?, 1], offset: ?>>
   attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>} {
     %c1 = arith.constant 1 : index
     %subview = memref.subview %arg0[%arg2] [%arg2] [1] : memref<3072xf32> to memref<?xf32, strided<[1], offset: ?>>

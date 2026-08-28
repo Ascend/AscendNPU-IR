@@ -299,6 +299,8 @@ static void hivmPreBufferizationOptimizationPipeline(
           hivmPipelineOptions.setWorkspaceMultibuffer;
       pipelineOptions.enableLazyLoading = hivmPipelineOptions.enableLazyLoading;
       pipelineOptions.pipelineMode = hivmPipelineOptions.setCVPipelineMode;
+      // Workspace allocation with dyn size, requires setbuffersize pass to get
+      // fixed size.
       pm.nest<func::FuncOp>().addPass(createSetBufferSizePass());
       pm.nest<func::FuncOp>().addPass(createCVPipeliningPass(pipelineOptions));
     }

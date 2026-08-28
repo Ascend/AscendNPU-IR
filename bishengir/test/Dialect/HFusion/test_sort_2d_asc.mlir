@@ -51,7 +51,7 @@ module {
     // 2. Entry point (main)
     func.func @main() {
         %m = memref.alloc() : memref<4x4xf32>
-        
+
         %c0 = arith.constant 0 : index
         %c1 = arith.constant 1 : index
         %c2 = arith.constant 2 : index

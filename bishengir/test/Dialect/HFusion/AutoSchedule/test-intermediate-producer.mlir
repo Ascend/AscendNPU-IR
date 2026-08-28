@@ -37,13 +37,13 @@ func.func @test_slice_from_producer(%arg0: tensor<32x16x8xf32>, %arg1: tensor<32
 
   %extracted_slice = tensor.extract_slice %arg0[0, 0, 4] [32, 16, 4] [1, 1, 1] : tensor<32x16x8xf32> to tensor<32x16x4xf32>
   %0 = tensor.empty() : tensor<32x16x4xf32>
-  %1 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%extracted_slice, %arg2 : tensor<32x16x4xf32>, tensor<32x16x4xf32>) 
+  %1 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%extracted_slice, %arg2 : tensor<32x16x4xf32>, tensor<32x16x4xf32>)
                                                              outs(%0 : tensor<32x16x4xf32>) -> tensor<32x16x4xf32>
   %2 = tensor.empty() : tensor<32x16x8xf32>
   %broadcasted = linalg.broadcast ins(%arg1 : tensor<32x16xf32>) outs(%2 : tensor<32x16x8xf32>) dimensions = [2]
   %extracted_slice_1 = tensor.extract_slice %broadcasted[0, 0, 4] [32, 16, 4] [1, 1, 1] : tensor<32x16x8xf32> to tensor<32x16x4xf32>
   %3 = tensor.empty() : tensor<32x16x4xf32>
-  %4 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%extracted_slice_1, %arg2 : tensor<32x16x4xf32>, tensor<32x16x4xf32>) 
+  %4 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%extracted_slice_1, %arg2 : tensor<32x16x4xf32>, tensor<32x16x4xf32>)
                                                              outs(%3 : tensor<32x16x4xf32>) -> tensor<32x16x4xf32>
   return %1, %4 : tensor<32x16x4xf32>, tensor<32x16x4xf32>
 }
@@ -53,7 +53,7 @@ func.func @test_slice_from_producer(%arg0: tensor<32x16x8xf32>, %arg1: tensor<32
 // CHECK-DEBUG-LABEL: @test_pad_as_producer
 // CHECK-DEBUG: tensor.pad
 // CHECK-DEBUG: {__intermediate_producer__} : tensor<16xf32> to tensor<32xf32>
-func.func @test_pad_as_producer(%arg0: tensor<16xf32>, %arg1: tensor<32xf32>) -> tensor<32xf32> 
+func.func @test_pad_as_producer(%arg0: tensor<16xf32>, %arg1: tensor<32xf32>) -> tensor<32xf32>
 attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hfusion.fusion_kind = #hfusion.fusion_kind<ANY_PB>} {
   %cst = arith.constant 0.000000e+00 : f32
   %padded = tensor.pad %arg0 low[0] high[16] {
@@ -61,7 +61,7 @@ attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hfusio
     tensor.yield %cst : f32
   } : tensor<16xf32> to tensor<32xf32>
   %0 = tensor.empty() : tensor<32xf32>
-  %1 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%padded, %arg1 : tensor<32xf32>, tensor<32xf32>) 
+  %1 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%padded, %arg1 : tensor<32xf32>, tensor<32xf32>)
                                                              outs(%0 : tensor<32xf32>) -> tensor<32xf32>
   return %1 : tensor<32xf32>
 }
@@ -71,7 +71,7 @@ attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hfusio
 // CHECK-LABEL: @test_fuse_concat_with_extract_slice_input_0
 // CHECK: scf.for
 // CHECK: tensor.concat
-func.func @test_fuse_concat_with_extract_slice_input_0(%arg0: tensor<4096x1x16x64xbf16>, %arg1: tensor<4096x1x16x192xbf16>, %arg2: tensor<4096x1x1x64xbf16>, %arg3: tensor<4096x1x1x64xbf16>) -> tensor<4096x1x16x64xbf16> 
+func.func @test_fuse_concat_with_extract_slice_input_0(%arg0: tensor<4096x1x16x64xbf16>, %arg1: tensor<4096x1x16x192xbf16>, %arg2: tensor<4096x1x1x64xbf16>, %arg3: tensor<4096x1x1x64xbf16>) -> tensor<4096x1x16x64xbf16>
 attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hfusion.fusion_kind = #hfusion.fusion_kind<ANY_PB>} {
   %cst = arith.constant 1.000000e+00 : bf16
   %extracted_slice = tensor.extract_slice %arg1[0, 0, 0, 128] [4096, 1, 16, 64] [1, 1, 1, 1] : tensor<4096x1x16x192xbf16> to tensor<4096x1x16x64xbf16>
@@ -100,7 +100,7 @@ attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hfusio
 // CHECK-LABEL: @test_fuse_concat_with_extract_slice_input_1
 // CHECK: scf.for
 // CHECK: tensor.concat
-func.func @test_fuse_concat_with_extract_slice_input_1(%arg0: tensor<4096x1x1x64xbf16>, %arg1: tensor<4096x1x1x64xbf16>, %arg2: tensor<4096x1x1x64xbf16>, %arg3: tensor<4096x1x1x64xbf16>) -> tensor<4096x1x1x64xbf16> 
+func.func @test_fuse_concat_with_extract_slice_input_1(%arg0: tensor<4096x1x1x64xbf16>, %arg1: tensor<4096x1x1x64xbf16>, %arg2: tensor<4096x1x1x64xbf16>, %arg3: tensor<4096x1x1x64xbf16>) -> tensor<4096x1x1x64xbf16>
 attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hfusion.fusion_kind = #hfusion.fusion_kind<ANY_PB>} {
   %cst = arith.constant 1.000000e+00 : bf16
   %0 = tensor.empty() : tensor<4096x1x1x64xbf16>
@@ -164,7 +164,7 @@ func.func @test_fuse_scalar_arith_op_0(%arg0: tensor<1152x4x2x2xf32>, %arg1: ten
 // CHECK-LABEL: @test_only_mark_arith_op_with_producer_operand(
 // CHECK-NOT: arith{{.*}}__intermediate_producer__
 module {
-  func.func @test_only_mark_arith_op_with_producer_operand(%arg0: tensor<?x2560xbf16>, %arg1: tensor<?x2560xbf16>, %arg2: i64) -> tensor<?x2560xbf16> 
+  func.func @test_only_mark_arith_op_with_producer_operand(%arg0: tensor<?x2560xbf16>, %arg1: tensor<?x2560xbf16>, %arg2: i64) -> tensor<?x2560xbf16>
   attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<HOST>, hfusion.fusion_kind = #hfusion.fusion_kind<PURE_ELEMWISE>} {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index

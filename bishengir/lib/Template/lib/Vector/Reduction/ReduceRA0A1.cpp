@@ -73,7 +73,7 @@ reduce_ra0a1_by_scalar(memref_t<__ubuf__ T, 3> *src0, memref_t<__ubuf__ T, 3> *d
   for (int64_t i = 1; i < size0; ++i) {
     for (int64_t j = 0; j < size1; ++j) {
       for (int64_t k = 0; k < MIN(size2, length); ++k) {
-        *(dst_ptr + j * dst_stride1 + k * dst_stride2) = 
+        *(dst_ptr + j * dst_stride1 + k * dst_stride2) =
         reduction_scalar_operation<OP, T>(*(dst_ptr + j * dst_stride1 + k * dst_stride2),
                                           *(src0_ptr + i * src0_stride0 + j * src0_stride1 + k * src0_stride2));
       }
@@ -233,7 +233,7 @@ reduce_ra0a1(memref_t<__ubuf__ T, 3> *src0, memref_t<__ubuf__ T, 3> *dst,
       return;
     }
 
-    // For the remaining blocks, use vector operations. 
+    // For the remaining blocks, use vector operations.
     memref_t<__ubuf__ T, 3> new_src0{src0->allocated,
                                      src0->aligned,
                                      src0->offset + elements_calc_by_scalar,

@@ -1,6 +1,6 @@
 // RUN: bishengir-opt "-hivm-graph-sync-solver=solver-version=v1" -split-input-file %s | FileCheck %s
 // RUN: bishengir-opt "-hivm-graph-sync-solver=solver-version=v2" -split-input-file %s | FileCheck %s
- 
+
 module {
   // CHECK: sync_solver_test_if_else_backward_pair
   func.func @sync_solver_test_if_else_backward_pair(%arg0: index) {
@@ -62,4 +62,3 @@ module {
     return
   }
 }
-

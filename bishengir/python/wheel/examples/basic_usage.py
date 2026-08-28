@@ -10,15 +10,15 @@ from ascendnpuir import compile
 def example_1_triton_add_lir():
     """
     Example 1: Triton add operation with LIR compilation
-    
+
     This example demonstrates compiling a Triton add kernel to binary
     kernel file for Ascend NPU.
-    
+
     Based on: bishengir/test/bishengir-compile/triton/compile-triton-add-lir.mlir
     Output: triton-add-exp-output.o
     """
     print("\n=== Example 1: Triton Add LIR Compilation ===")
-    
+
     mlir_code = """
 #map = affine_map<(d0) -> (d0)>
 module {
@@ -68,13 +68,10 @@ module {
   }
 }
 """
-    
+
     output_path = "triton-add-exp-output.o"
-    options = [
-        "-enable-hfusion-compile=true",
-        "-enable-triton-kernel-compile"
-    ]
-    
+    options = ["-enable-hfusion-compile=true", "-enable-triton-kernel-compile"]
+
     try:
         result = compile(mlir_code, output_path, options)
         if result.returncode == 0:
@@ -103,12 +100,12 @@ module {
 def example_2_error_handling():
     """
     Example 2: Error handling
-    
+
     This example demonstrates proper error handling for various
     error scenarios when using the compile function.
     """
     print("\n=== Example 2: Error Handling ===")
-    
+
     # Test 1: Empty input
     print("\nTest 1: Empty input")
     try:
@@ -118,7 +115,7 @@ def example_2_error_handling():
         print(f"✓ Correctly caught ValueError: {e}")
     except Exception as e:
         print(f"✗ Unexpected exception: {type(e).__name__}: {e}")
-    
+
     # Test 2: None input
     print("\nTest 2: None input")
     try:
@@ -128,7 +125,7 @@ def example_2_error_handling():
         print(f"✓ Correctly caught ValueError: {e}")
     except Exception as e:
         print(f"✗ Unexpected exception: {type(e).__name__}: {e}")
-    
+
     # Test 3: Whitespace-only input
     print("\nTest 3: Whitespace-only input")
     try:
@@ -138,7 +135,7 @@ def example_2_error_handling():
         print(f"✓ Correctly caught ValueError: {e}")
     except Exception as e:
         print(f"✗ Unexpected exception: {type(e).__name__}: {e}")
-    
+
     # Test 4: Invalid MLIR syntax
     print("\nTest 4: Invalid MLIR syntax")
     invalid_mlir = """
@@ -152,14 +149,16 @@ module {
     try:
         result = compile(invalid_mlir, "output_invalid.o", [])
         if result.returncode != 0:
-            print(f"✓ Compilation correctly failed with return code: {result.returncode}")
+            print(
+                f"✓ Compilation correctly failed with return code: {result.returncode}"
+            )
             if result.stderr:
                 print(f"  Error message: {result.stderr[:200]}...")
         else:
             print("✗ Invalid MLIR should have failed compilation")
     except Exception as e:
         print(f"✓ Correctly caught exception: {type(e).__name__}: {e}")
-    
+
     # Test 5: Missing hivmc binary (informational)
     print("\nTest 5: Missing hivmc binary")
     print("Note: This test requires hivmc to be missing from PATH")
@@ -173,10 +172,10 @@ def main():
     print("=" * 70)
     print("BiShengIR Compiler - Python Bindings Examples")
     print("=" * 70)
-    
+
     example_1_triton_add_lir()
     example_2_error_handling()
-    
+
     print("\n" + "=" * 70)
     print("All examples completed!")
     print("=" * 70)

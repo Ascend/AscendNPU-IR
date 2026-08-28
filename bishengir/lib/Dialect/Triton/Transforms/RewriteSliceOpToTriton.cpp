@@ -447,7 +447,7 @@ static Value useMaskToInsert(OpBuilder &builder, Location loc, Value large,
   const Value offset = plan.dynamicR;
   const size_t rank = largeShape.size();
 
-  
+
   // Make range
   SmallVector<int64_t> curShape;
   curShape.reserve(rank);

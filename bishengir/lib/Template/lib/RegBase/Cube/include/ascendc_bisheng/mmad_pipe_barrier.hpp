@@ -26,5 +26,5 @@ __aicore__ inline void PipeBarrier()
     PipeBarrierImpl<pipe>();
 }
 
-} 
+}
 #endif // ASCENDC_BISHENG_PIPEBARRIER_HPP

@@ -279,7 +279,7 @@ Attribute TargetSpec::getSpecEntry(DeviceSpec specEntry, OpBuilder& builder) con
 
 /// Emit a function to map string to \c DeviceTarget enum.
 
-#if defined(__LLVM_MAJOR_VERSION_20_COMPATIBLE__) || defined(__LLVM_MAJOR_VERSION_21_COMPATIBLE__) 
+#if defined(__LLVM_MAJOR_VERSION_20_COMPATIBLE__) || defined(__LLVM_MAJOR_VERSION_21_COMPATIBLE__)
 static void emitStrToSymFnForDeviceTarget(const std::vector<const Record *> &records,
                                           raw_ostream &OS) {
 #else
@@ -300,7 +300,7 @@ static void emitStrToSymFnForDeviceTarget(const std::vector<Record *> &records,
 }
 
 /// Emit a function to map \c DeviceTarget enum to string.
-#if defined(__LLVM_MAJOR_VERSION_20_COMPATIBLE__) || defined(__LLVM_MAJOR_VERSION_21_COMPATIBLE__) 
+#if defined(__LLVM_MAJOR_VERSION_20_COMPATIBLE__) || defined(__LLVM_MAJOR_VERSION_21_COMPATIBLE__)
 static void emitSymToStrFnForDeviceTarget(const std::vector<const Record *> &records,
                                           raw_ostream &OS) {
 #else

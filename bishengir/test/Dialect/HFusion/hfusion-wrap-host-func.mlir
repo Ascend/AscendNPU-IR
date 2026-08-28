@@ -80,5 +80,3 @@ module {
     return %2 : tensor<?x?xf16>
   }
 }
-
-

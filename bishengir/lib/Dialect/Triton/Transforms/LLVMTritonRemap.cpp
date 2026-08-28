@@ -1351,10 +1351,10 @@ Value castToElementType(OpBuilder &b, Location loc, Value val,
   if (auto vecTy = mlir::dyn_cast<mlir::VectorType>(elementType)) {
     int64_t length = vecTy.getDimSize(0);
     assert(length == 2 && "Only support <2x*16> type");
- 
+
     auto elemTy = vecTy.getElementType();
     unsigned dstW = elemTy.getIntOrFloatBitWidth() * 2;
- 
+
     assert(srcW == dstW && "Atomic operand cast must preserve bit width");
 
     return b.create<LLVM::BitcastOp>(loc, vecTy, val);
@@ -1362,7 +1362,7 @@ Value castToElementType(OpBuilder &b, Location loc, Value val,
     unsigned dstW = elementType.getIntOrFloatBitWidth();
     // Width must match for reinterpretation
     assert(srcW == dstW && "Atomic operand cast must preserve bit width");
- 
+
     // Only legal conversions: reinterpretation
     return b.create<arith::BitcastOp>(loc, elementType, val);
   }

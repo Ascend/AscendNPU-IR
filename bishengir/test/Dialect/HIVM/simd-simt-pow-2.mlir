@@ -13,4 +13,4 @@ func.func @simple_indirect_load_add_kernel(%arg0: memref<?xi8>, %arg1: memref<?x
     %reinterpret_cast_0 = memref.reinterpret_cast %arg4 to offset: [0], sizes: [33], strides: [1] : memref<?xf32> to memref<33xf32, strided<[1]>>
     hivm.hir.store ins(%6 : tensor<33xf32>) outs(%reinterpret_cast_0 : memref<33xf32, strided<[1]>>)
     return
-}
+}

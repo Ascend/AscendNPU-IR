@@ -162,7 +162,7 @@ void InsertInferSyncBlockLockNumAndInitFuncPass::runOnOperation() {
   if (createSyncBlockLockOps.empty())
     return;
 
-  // Calculate total sync block lock num in cache-line units. 
+  // Calculate total sync block lock num in cache-line units.
   int64_t syncBlockLockNum = 0;
   for (Operation *op : createSyncBlockLockOps) {
     int64_t cacheLinesPerLock =

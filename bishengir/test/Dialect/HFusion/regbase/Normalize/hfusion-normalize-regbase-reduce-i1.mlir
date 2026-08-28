@@ -23,7 +23,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // -----
 
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
-  func.func @test_reduce_i1_and_to_i16_andi(%arg0: tensor<1024xi1>) -> tensor<1xi8> 
+  func.func @test_reduce_i1_and_to_i16_andi(%arg0: tensor<1024xi1>) -> tensor<1xi8>
   attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"}{
     %cst_0 = arith.constant true
     %c0 = arith.constant 0 : index
@@ -46,7 +46,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // -----
 
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
-  func.func @test_reduce_i1_and_to_i16_ori(%arg0: tensor<1024xi1>) -> tensor<1xi8> 
+  func.func @test_reduce_i1_and_to_i16_ori(%arg0: tensor<1024xi1>) -> tensor<1xi8>
   attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"}{
     %cst_0 = arith.constant true
     %c0 = arith.constant 0 : index

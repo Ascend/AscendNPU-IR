@@ -45,7 +45,7 @@ class HIVMRegbaseIntrins_Op<string mnemonic, list<int> overloadedResults = [], l
           /*list<int> overloadedResults=*/overloadedResults,
           /*list<int> overloadedOperands=*/overloadOperands,
           /*list<Trait> traits=*/traits,
-          /*int numResults=*/numResults>; 
+          /*int numResults=*/numResults>;
 
 // An representation of regbased architecturte operations.
 // TODO: need to be split into a dedicated file.
@@ -253,7 +253,7 @@ class LoadX1Op<string mnemonic, int numResults> :
 class LoadX1PostOp<string mnemonic, int numResults>
     : HIVMRegbaseIntrins_Op<
           /*string opName=*/mnemonic,
-          /*list<int> overloadedResults=*/[],        
+          /*list<int> overloadedResults=*/[],
           /*list<int> overloadedOperands=*/[],
           /*list<Trait> traits=*/[],
           /*int numResults=*/numResults>,
@@ -2735,7 +2735,7 @@ def VSlideInstrOp : VSlideInstrOp<"hivm.vslide"> {
     in two consecutive vector registers. The instruction slides a
     window of the same size as the vector length over the two source vectors to
     produce the destination vector.
-    
+
     The slide amount is given by a shared register (Sm) which must be in the
     range S0-S95.
   }];
@@ -2832,13 +2832,13 @@ def YieldOp : HIVMRegbaseIntrinsSIMT_IntrOp<"yield", "yield", 0> {
   let assemblyFormat = "attr-dict";
 }
 
-def PermuteOp : 
+def PermuteOp :
   HIVMRegbaseIntrins_Op<"hivm.prmt", [], [], [], 1> {
   let arguments = (ins I32:$src1, I32:$src2, I32:$selector);
   let results = (outs I32:$res);
 }
 
-class ReduceOp<string mnemonic, Type opType> : 
+class ReduceOp<string mnemonic, Type opType> :
   HIVMRegbaseIntrins_Op<mnemonic, [], [], [], 1> {
   let arguments = (ins opType:$src);
   let results = (outs opType:$res);
@@ -2858,7 +2858,7 @@ def ReduceMinOpS32 : ReduceOp<"hivm.redux.min.s32", I32>;
 def ReduceMinOpF32 : ReduceOp<"hivm.redux.min.f32", F32>;
 def ReduceMinOpF16 : ReduceOp<"hivm.redux.min.f16", F16>;
 
-class ShflOp<string mnemonic> : 
+class ShflOp<string mnemonic> :
   HIVMRegbaseIntrins_Op</*string opName=*/mnemonic,
                 /*list<int> overloadedResults=*/[],
                 /*list<int> overloadedOperands=*/[],
@@ -2959,7 +2959,7 @@ def CeilOpF16 : HIVMRegbaseIntrinsSIMTUnary_Ops<"ceilh", "ceil_h", F16, F16>;
 def CeilOpF32 : HIVMRegbaseIntrinsSIMTUnary_Ops<"ceilf", "ceil_f", F32, F32>;
 def CeilOpBF16 : HIVMRegbaseIntrinsSIMTUnary_Ops<"ceily", "ceil_y", BF16, BF16>;
 
-def SqrtOpF32 : HIVMRegbaseIntrinsSIMTUnary_Ops<"sqrtf", "sqrt_f", F32, F32>; 
+def SqrtOpF32 : HIVMRegbaseIntrinsSIMTUnary_Ops<"sqrtf", "sqrt_f", F32, F32>;
 
 def LogOpF32 : HIVMRegbaseIntrinsSIMTUnary_Ops<"logf", "log_f", F32, F32>;
 
@@ -3039,7 +3039,7 @@ def VaddsUXInstrOp : BinaryVecScalarOp<"hivm.vadds.u.x"> {
   let description = [{
     Adds the elements of a vector registers and scalar stores the result into
     another vector register.
-    A predicate (MASK) is provided to tell which elements are added in the two vectors.  
+    A predicate (MASK) is provided to tell which elements are added in the two vectors.
   }];
 }
 def VaddsSXInstrOp : BinaryVecScalarOp<"hivm.vadds.s.x">;
@@ -3128,9 +3128,9 @@ class MemBarInstrOp<string mnemonic> :
                 /*list<int> overloadedOperands=*/[],
                 /*list<Trait> traits=*/[],
                 /*int numResults=*/0> {
-  let summary = "A V300 MemBar Instruction";  
+  let summary = "A V300 MemBar Instruction";
 }
- 
+
 def MemBarVVALLInstrOp: MemBarInstrOp<"hivm.mem.bar.vv.all">;
 def MemBarVSTVLDInstrOp: MemBarInstrOp<"hivm.mem.bar.vst.vld">;
 def MemBarVLDVSTInstrOp: MemBarInstrOp<"hivm.mem.bar.vld.vst">;
@@ -3149,4 +3149,3 @@ def MemBarLDSTInstrOp: MemBarInstrOp<"hivm.mem.bar.ld.st">;
 def MemBarSTSTInstrOp: MemBarInstrOp<"hivm.mem.bar.st.st">;
 
 #endif // HIVMREGBASEINTRINS_OPS
-

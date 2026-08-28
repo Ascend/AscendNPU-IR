@@ -82,7 +82,7 @@ vector_cast_with_overflow(memref_t<__ubuf__ SRC_T, 2> *src,
       tmp->offset,
       {src_size0, src_size1},
       {CEIL_FACTOR(src_size1, num_per_block_src), 1}};
-    
+
     copy_ubuf_to_ubuf_2d_core(src, &tmp_2d_src_t);
     INTRINSIC(pipe_barrier, PIPE_V);
   } else {
@@ -94,7 +94,7 @@ vector_cast_with_overflow(memref_t<__ubuf__ SRC_T, 2> *src,
       {src->sizes[0], src->sizes[1]},
       {src->strides[0], src->strides[1]}};
   }
-  
+
   // step1: Transpose to tmp.
   memref_t<__ubuf__ DST_T, 2> src_as_dst_t;
   view_as<SRC_T, DST_T, 2>(&tmp_2d_src_t, &src_as_dst_t);

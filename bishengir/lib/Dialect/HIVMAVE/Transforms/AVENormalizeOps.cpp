@@ -82,7 +82,7 @@ static bool breaksPB16AlignmentOnNextContinuousStore(VFMaskedStoreOp store) {
 ///     #ave.unaligned_ub_access,
 ///     functionType = #ave.func_dist_type<pb16>} : memref<64xi1,
 ///     strided<[1], offset: ?>, #hivm.address_space<ub>> into vector<64xi1>
-///    %6 = ave.hir.preg.cast %res <PK_B16> : vector<64xi1> -> vector<64xi1>  
+///    %6 = ave.hir.preg.cast %res <PK_B16> : vector<64xi1> -> vector<64xi1>
 ///    %7 = ave.hir.pge <ALL> {functionType = #ave.func_dist_type<pb8>} : vector<64xi1>
 ///    %10 = ave.hir.preg.and <b8> %5, %6, %7 : vector<64xi1>
 /// ```

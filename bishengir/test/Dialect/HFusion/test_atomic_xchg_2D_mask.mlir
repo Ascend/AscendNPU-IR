@@ -18,10 +18,10 @@ module {
     %c4 = arith.constant 4 : index
     %c1 = arith.constant 1 : index
     %c0 = arith.constant 0 : index
-    
+
     %alloc = memref.alloc() : memref<4x8xi16>
     %c7 = arith.constant 7 : i16
-    
+
     // Boundary and overflow values for i16
     %max_i16 = arith.constant 32767 : i16
     %min_i16 = arith.constant -32768 : i16
@@ -39,12 +39,12 @@ module {
     %c2_idx = arith.constant 2 : index
     memref.store %over_i16, %alloc[%c0, %c2_idx] : memref<4x8xi16>
 
-    %reinterpret_cast = memref.reinterpret_cast %arg0 
-        to offset: [0], sizes: [4, 8], strides: [8, 1] 
+    %reinterpret_cast = memref.reinterpret_cast %arg0
+        to offset: [0], sizes: [4, 8], strides: [8, 1]
         : memref<?x?xi16> to memref<4x8xi16, strided<[8, 1]>>
-    
-    hfusion.atomic_xchg ins(%alloc : memref<4x8xi16>) 
-                        outs(%reinterpret_cast : memref<4x8xi16, strided<[8, 1]>>) 
+
+    hfusion.atomic_xchg ins(%alloc : memref<4x8xi16>)
+                        outs(%reinterpret_cast : memref<4x8xi16, strided<[8, 1]>>)
                         mask(%arg1 : memref<4x8xi1>)
     return
   }
@@ -65,7 +65,7 @@ module {
     %c100 = arith.constant 100 : i16
     %true = arith.constant 1 : i1
     %false = arith.constant 0 : i1
-    
+
     scf.for %i = %c0 to %c4 step %c1 {
       scf.for %j = %c0 to %c8 step %c1 {
         memref.store %c100, %mem[%i, %j] : memref<?x?xi16>

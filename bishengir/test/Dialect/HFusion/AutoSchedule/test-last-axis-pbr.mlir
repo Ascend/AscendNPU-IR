@@ -101,12 +101,12 @@ func.func @model_1(%arg0: tensor<24x128x256xf32>,
                    %arg1: tensor<24xf32>,
                    %arg2: tensor<128xf32>,
                    %arg3: tensor<256xf32>,
-                   %arg4: tensor<24x128x256xf32>) -> tensor<24x128x256xf32> 
+                   %arg4: tensor<24x128x256xf32>) -> tensor<24x128x256xf32>
 attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hfusion.fusion_kind = #hfusion.fusion_kind<LAST_AXIS_PBR>} {
-  
+
   %empty = tensor.empty() : tensor<24x128xf32>
   %sum0 = linalg.reduce {arith.addf} ins(%arg0 : tensor<24x128x256xf32>) outs(%empty : tensor<24x128xf32>) dimensions = [2]
-  
+
   %empty1 = tensor.empty() : tensor<24x128x256xf32>
   %broadcasted = linalg.broadcast ins(%sum0 : tensor<24x128xf32>) outs(%empty1 : tensor<24x128x256xf32>) dimensions = [2]
   %broadcasted_0 = linalg.broadcast ins(%arg1 : tensor<24xf32>) outs(%empty1 : tensor<24x128x256xf32>) dimensions = [1, 2]
@@ -127,12 +127,12 @@ func.func @model_2(%arg0: tensor<24x128x25600xf32>,
                    %arg1: tensor<24xf32>,
                    %arg2: tensor<128xf32>,
                    %arg3: tensor<25600xf32>,
-                   %arg4: tensor<24x128x25600xf32>) -> tensor<24x128x25600xf32> 
+                   %arg4: tensor<24x128x25600xf32>) -> tensor<24x128x25600xf32>
 attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hfusion.fusion_kind = #hfusion.fusion_kind<LAST_AXIS_PBR>} {
-  
+
   %empty = tensor.empty() : tensor<24x128xf32>
   %sum0 = linalg.reduce {arith.addf} ins(%arg0 : tensor<24x128x25600xf32>) outs(%empty : tensor<24x128xf32>) dimensions = [2]
-  
+
   %empty1 = tensor.empty() : tensor<24x128x25600xf32>
   %broadcasted = linalg.broadcast ins(%sum0 : tensor<24x128xf32>) outs(%empty1 : tensor<24x128x25600xf32>) dimensions = [2]
   %broadcasted_0 = linalg.broadcast ins(%arg1 : tensor<24xf32>) outs(%empty1 : tensor<24x128x25600xf32>) dimensions = [1, 2]
@@ -155,15 +155,15 @@ func.func @model_28(%arg0: tensor<24x256xf32>, %arg1: tensor<256xf32>, %arg2: te
   %expanded_0 = tensor.expand_shape %arg0 [[0], [1, 2]] output_shape [24, 32, 8] : tensor<24x256xf32> into tensor<24x32x8xf32>
   %expanded_1 = tensor.expand_shape %arg2 [[0], [1, 2]] output_shape [24, 32, 8] : tensor<24x256xf32> into tensor<24x32x8xf32>
   %1 = tensor.empty() : tensor<24x32x8xf32>
-  %broadcasted = linalg.broadcast ins(%expanded : tensor<32x8xf32>) outs(%0 : tensor<24x32x8xf32>) dimensions = [0] 
+  %broadcasted = linalg.broadcast ins(%expanded : tensor<32x8xf32>) outs(%0 : tensor<24x32x8xf32>) dimensions = [0]
   %2 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%expanded_0, %broadcasted : tensor<24x32x8xf32>, tensor<24x32x8xf32>) outs(%1 : tensor<24x32x8xf32>) -> tensor<24x32x8xf32>
-  %reduced = linalg.reduce ins(%2 : tensor<24x32x8xf32>) outs(%arg3 : tensor<24x32xf32>) dimensions = [2] 
+  %reduced = linalg.reduce ins(%2 : tensor<24x32x8xf32>) outs(%arg3 : tensor<24x32xf32>) dimensions = [2]
     (%in: f32, %init: f32) {
       %4 = arith.addf %in, %init : f32
       linalg.yield %4 : f32
     }
   %3 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%expanded_1, %broadcasted : tensor<24x32x8xf32>, tensor<24x32x8xf32>) outs(%1 : tensor<24x32x8xf32>) -> tensor<24x32x8xf32>
-  %reduced_2 = linalg.reduce ins(%3 : tensor<24x32x8xf32>) outs(%arg4 : tensor<24x32xf32>) dimensions = [2] 
+  %reduced_2 = linalg.reduce ins(%3 : tensor<24x32x8xf32>) outs(%arg4 : tensor<24x32xf32>) dimensions = [2]
     (%in: f32, %init: f32) {
       %4 = arith.addf %in, %init : f32
       linalg.yield %4 : f32
@@ -246,7 +246,7 @@ module {
 // CHECK-DAG: dynamic_shape_0
 // CHECK-DAG: dynamic_shape_1
 func.func @dynamic_shape(%arg0: tensor<?x?xf32>,
-                         %arg1: tensor<?xf32>) -> tensor<?xf32> 
+                         %arg1: tensor<?xf32>) -> tensor<?xf32>
 attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hfusion.fusion_kind = #hfusion.fusion_kind<LAST_AXIS_PBR>} {
   %0 = linalg.reduce {arith.addf} ins(%arg0 : tensor<?x?xf32>) outs(%arg1 : tensor<?xf32>) dimensions = [1]
   return %0 : tensor<?xf32>

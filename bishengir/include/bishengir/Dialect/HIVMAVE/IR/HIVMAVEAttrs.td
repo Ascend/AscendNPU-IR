@@ -332,7 +332,7 @@ def AVE_VecMem_B16_2VL : I32EnumAttrCase<"B16_2VL", 6, "b16_2vl">;
 def AVE_VecMem_B8_4VL : I32EnumAttrCase<"B8_4VL", 7, "b8_4vl">;
 def AVE_VecMem_BOTTOM : I32EnumAttrCase<"BOTTOM", 8, "bottom">;
 
-def AVE_VecMemType : I32EnumAttr<"VecMemType", 
+def AVE_VecMemType : I32EnumAttr<"VecMemType",
     "Vector memory layout", [AVE_VecMem_TOP, AVE_VecMem_ANY, AVE_VecMem_B8,
     AVE_VecMem_B16, AVE_VecMem_B16_2VL,AVE_VecMem_B32, AVE_VecMem_B8_2VL,
     AVE_VecMem_B8_4VL, AVE_VecMem_BOTTOM]> {
@@ -385,7 +385,7 @@ def AVE_FunctionDistType : I32EnumAttr<"FunctionDistType",
     AVE_FunctionDist_PK, AVE_FunctionDist_PK4, AVE_FunctionDist_PB8, AVE_FunctionDist_PB16,
     AVE_FunctionDist_PB32, AVE_FunctionDist_EVEN, AVE_FunctionDist_C2C, AVE_FunctionDist_UNPK,
     AVE_FunctionDist_UNPK4, AVE_FunctionDist_PINTLV2, AVE_FunctionDist_INTLV2, AVE_FunctionDist_INTLV4,
-    AVE_FunctionDist_PINTLV4, AVE_FunctionDist_DINTLV2, AVE_FunctionDist_DINTLV4, AVE_FunctionDist_BOTTOM, 
+    AVE_FunctionDist_PINTLV4, AVE_FunctionDist_DINTLV2, AVE_FunctionDist_DINTLV4, AVE_FunctionDist_BOTTOM,
     AVE_FunctionDist_INVALID
     ]> {
   let genSpecializedAttr = 0;

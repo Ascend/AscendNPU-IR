@@ -487,7 +487,7 @@ struct RewriteVDivOp final
     } else {
       rewriter.replaceOpWithNewOp<linalg::DivUnsignedOp>(op, op.getResultTypes(),
                                       preprocessedOperands, op.getDpsInits());
-      
+
     }
     return success();
   }

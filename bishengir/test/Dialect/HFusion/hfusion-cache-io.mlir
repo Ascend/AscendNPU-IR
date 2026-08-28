@@ -35,14 +35,14 @@ func.func @duplicate_return_reshape(%arg0: tensor<24x6x256x192xbf16>) -> (tensor
   %2 = linalg.fill ins(%cst : f32) outs(%1 : tensor<144xf32>) -> tensor<144xf32>
   %collapsed = tensor.collapse_shape %arg0 [[0, 1], [2, 3]] : tensor<24x6x256x192xbf16> into tensor<144x49152xbf16>
   %3 = hfusion.cast {round_mode = #hfusion.round_mode<rint>} ins(%collapsed : tensor<144x49152xbf16>) outs(%0 : tensor<144x49152xf32>) -> tensor<144x49152xf32>
-  %reduced = linalg.reduce ins(%3 : tensor<144x49152xf32>) outs(%2 : tensor<144xf32>) dimensions = [1] 
+  %reduced = linalg.reduce ins(%3 : tensor<144x49152xf32>) outs(%2 : tensor<144xf32>) dimensions = [1]
     (%in: f32, %init: f32) {
       %4 = arith.addf %in, %init : f32
       linalg.yield %4 : f32
     }
-  // CHECK: %[[store4:.*]] = hfusion.store 
-  // CHECK: %[[store3:.*]] = hfusion.store 
-  // CHECK: %[[store2:.*]] = hfusion.store 
+  // CHECK: %[[store4:.*]] = hfusion.store
+  // CHECK: %[[store3:.*]] = hfusion.store
+  // CHECK: %[[store2:.*]] = hfusion.store
   // CHECK: %[[store1:.*]] = hfusion.store
   // CHECK: %[[expand1:.*]] = tensor.expand_shape %[[store1]]
   // CHECK: %[[expand2:.*]] = tensor.expand_shape %[[store2]]
@@ -63,19 +63,19 @@ func.func @duplicate_return_reshape_cast(%arg0: tensor<24x6x256x192xbf16>) -> (t
   %2 = linalg.fill ins(%cst : f32) outs(%1 : tensor<144xf32>) -> tensor<144xf32>
   %collapsed = tensor.collapse_shape %arg0 [[0, 1], [2, 3]] : tensor<24x6x256x192xbf16> into tensor<144x49152xbf16>
   %3 = hfusion.cast {round_mode = #hfusion.round_mode<rint>} ins(%collapsed : tensor<144x49152xbf16>) outs(%0 : tensor<144x49152xf32>) -> tensor<144x49152xf32>
-  %reduced = linalg.reduce ins(%3 : tensor<144x49152xf32>) outs(%2 : tensor<144xf32>) dimensions = [1] 
+  %reduced = linalg.reduce ins(%3 : tensor<144x49152xf32>) outs(%2 : tensor<144xf32>) dimensions = [1]
     (%in: f32, %init: f32) {
       %4 = arith.addf %in, %init : f32
       linalg.yield %4 : f32
     }
   %4 = tensor.empty() : tensor<8x3x6xbf16>
-  // CHECK: %[[store3:.*]] = hfusion.store 
-  // CHECK: %[[store2:.*]] = hfusion.store 
-  // CHECK: %[[store1:.*]] = hfusion.store 
+  // CHECK: %[[store3:.*]] = hfusion.store
+  // CHECK: %[[store2:.*]] = hfusion.store
+  // CHECK: %[[store1:.*]] = hfusion.store
   // CHECK: %[[expand1:.*]] = tensor.expand_shape %[[store1]]
   // CHECK: %[[expand2:.*]] = tensor.expand_shape %[[store2]]
   // CHECK: %[[expand3:.*]] = tensor.expand_shape %[[store3]]
-  // CHECK: %[[store5:.*]] = hfusion.store 
+  // CHECK: %[[store5:.*]] = hfusion.store
   // CHECK: %[[store4:.*]] = hfusion.store
   %expanded = tensor.expand_shape %reduced [[0, 1]] output_shape [24, 6] : tensor<144xf32> into tensor<24x6xf32>
   %expanded2 = tensor.expand_shape %expanded [[0, 1],[2]] output_shape [8, 3, 6] : tensor<24x6xf32> into tensor<8x3x6xf32>
@@ -95,7 +95,7 @@ func.func @reshape_direct_return(%arg0: tensor<24x256x1x1xbf16>) -> (tensor<1x25
   %2 = linalg.fill ins(%cst : f32) outs(%1 : tensor<256xf32>) -> tensor<256xf32>
   %collapsed = tensor.collapse_shape %arg0 [[0], [1, 2, 3]] : tensor<24x256x1x1xbf16> into tensor<24x256xbf16>
   %3 = hfusion.cast {round_mode = #hfusion.round_mode<rint>} ins(%collapsed : tensor<24x256xbf16>) outs(%0 : tensor<24x256xf32>) -> tensor<24x256xf32>
-  %reduced = linalg.reduce ins(%3 : tensor<24x256xf32>) outs(%2 : tensor<256xf32>) dimensions = [0] 
+  %reduced = linalg.reduce ins(%3 : tensor<24x256xf32>) outs(%2 : tensor<256xf32>) dimensions = [0]
     (%in: f32, %init: f32) {
       %4 = arith.addf %in, %init : f32
       linalg.yield %4 : f32
@@ -124,7 +124,7 @@ func.func @test_already_cached_io_0(%arg0: tensor<16x16xf32> {hacc.cached_io}) -
 
 // -----
 // CHECK-LABEL: func.func @test_trace_ignore_slice
-// CHECK: %[[slice:.*]] = tensor.extract_slice %{{.*}}[0, 1, 0]   
+// CHECK: %[[slice:.*]] = tensor.extract_slice %{{.*}}[0, 1, 0]
 // CHECK: hfusion.store ins(%[[slice]]
 // CHECK: hfusion.store
 func.func @test_trace_ignore_slice(%arg0: tensor<128x6912xf16>, %arg1: tensor<128x768xf16>) -> (tensor<128x768xf16>, tensor<128x1x768xf16>) {
@@ -148,14 +148,14 @@ func.func @test_reshape_used_twice(%arg0: tensor<24x6x256x192xbf16>) -> (tensor<
   %2 = linalg.fill ins(%cst : f32) outs(%1 : tensor<144xf32>) -> tensor<144xf32>
   %collapsed = tensor.collapse_shape %arg0 [[0, 1], [2, 3]] : tensor<24x6x256x192xbf16> into tensor<144x49152xbf16>
   %3 = hfusion.cast {round_mode = #hfusion.round_mode<rint>} ins(%collapsed : tensor<144x49152xbf16>) outs(%0 : tensor<144x49152xf32>) -> tensor<144x49152xf32>
-  %reduced = linalg.reduce ins(%3 : tensor<144x49152xf32>) outs(%2 : tensor<144xf32>) dimensions = [1] 
+  %reduced = linalg.reduce ins(%3 : tensor<144x49152xf32>) outs(%2 : tensor<144xf32>) dimensions = [1]
     (%in: f32, %init: f32) {
       %4 = arith.addf %in, %init : f32
       linalg.yield %4 : f32
     }
-  // CHECK: %[[store4:.*]] = hfusion.store 
-  // CHECK: %[[store3:.*]] = hfusion.store 
-  // CHECK: %[[store2:.*]] = hfusion.store 
+  // CHECK: %[[store4:.*]] = hfusion.store
+  // CHECK: %[[store3:.*]] = hfusion.store
+  // CHECK: %[[store2:.*]] = hfusion.store
   // CHECK: %[[store1:.*]] = hfusion.store
   // CHECK: %[[expand1:.*]] = tensor.expand_shape %[[store1]]
   // CHECK: %[[expand2:.*]] = tensor.expand_shape %[[store2]]

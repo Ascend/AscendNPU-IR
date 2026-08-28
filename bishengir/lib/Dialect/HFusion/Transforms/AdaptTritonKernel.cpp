@@ -127,7 +127,7 @@ struct TritonPrintToHFusionPrintPattern
     }
     rewriter.eraseOp(callOp);
     rewriter.eraseOp(funcOp);
-    
+
     return success();
   }
 };
@@ -184,7 +184,7 @@ struct TritonAssertToHFusionAssertPattern
     }
     rewriter.eraseOp(callOp);
     rewriter.eraseOp(funcOp);
-    
+
     return success();
   }
 };
@@ -232,7 +232,7 @@ struct TritonGatherToHFusionGatherPattern
         rewriter.create<hfusion::GatherOp>(loc, src, index, init, *axis);
     rewriter.replaceOp(callOp, gatherOp);
     rewriter.eraseOp(funcOp);
-    
+
     return success();
   }
 };
@@ -353,7 +353,7 @@ struct TritonCumToHFusionCumPattern : public OpRewritePattern<func::CallOp> {
       llvm::report_fatal_error("unsupport cumulative function");
     }
     rewriter.eraseOp(funcOp);
-    
+
     return success();
   }
 };
@@ -826,7 +826,7 @@ struct TritonFlipToHFusionFlipPattern : public OpRewritePattern<func::CallOp> {
     auto flipOp = rewriter.create<hfusion::FlipOp>(loc, srcTy, src, *flipAxis);
     rewriter.replaceOp(callOp, flipOp);
     rewriter.eraseOp(funcOp);
-    
+
     return success();
   }
 };
@@ -873,7 +873,7 @@ struct TritonSortToHFusionSortPattern : public OpRewritePattern<func::CallOp> {
                                                    *sortAxis);
     rewriter.replaceOp(callOp, sortOp);
     rewriter.eraseOp(funcOp);
-    
+
     return llvm::success();
   }
 };
@@ -1167,7 +1167,7 @@ void AdaptTritonKernelPass::runOnOperation() {
   MLIRContext *context = &getContext();
   RewritePatternSet patterns(context);
   ModuleOp module = getOperation();
-  
+
   if (hacc::utils::isRegBasedArch(module)) {
     patterns
         .add<TritonPrintToHFusionPrintPattern, TritonAssertToHFusionAssertPattern,

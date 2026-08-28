@@ -134,7 +134,7 @@ module {
 }
 
 // -----
- 	 
+
 module {
   // CHECK-LABEL: func.func @test_autoscope_no_nested_scope
   // CHECK: %[[FOR_RES:.*]]:3 = scf.for

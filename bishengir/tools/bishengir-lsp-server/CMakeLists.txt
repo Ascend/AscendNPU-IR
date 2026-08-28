@@ -39,8 +39,8 @@ add_mlir_tool(bishengir-lsp-server
   ${LIBS}
 )
 
-target_link_libraries(bishengir-lsp-server PRIVATE 
-  MLIRLspServerLib    
+target_link_libraries(bishengir-lsp-server PRIVATE
+  MLIRLspServerLib
   ${LIBS}
 )
 

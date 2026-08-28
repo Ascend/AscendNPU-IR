@@ -82,7 +82,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     hivm.hir.fixpipe ins(%l0c1 : memref<16x16xf16, #hivm.address_space<cc>>)
                     outs(%ub : memref<16x16xf16, #hivm.address_space<ub>>)
                     dual_dst_mode = #hivm.fixpipe_dual_dst_mode<NO_DUAL>
-    
+
     // NZ2DN data movement
     hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2dn>} ins(%l0c : memref<256x128xf16>)
                                     outs(%gmCSubview : memref<256x128xf16, strided<[2048, 1], offset: 0>>)

@@ -475,7 +475,7 @@ private:
     // ranges of shared memory. The algorithm processes the local alloc ops first,
     // followed by the non-local alloc ops, to ensure that local alloc ops are
     // given priority in the allocation process.
-    // 
+    //
     // Differenciate between buffers owned by locall alloc ops and on all other buffers
     SmallVector<BufferT *> localAllocs;
     SmallVector<BufferT *> nonLocalAllocs;
@@ -545,41 +545,41 @@ private:
     processBuffers(localAllocs);
     processBuffers(nonLocalAllocs);
 #else
-    SmallVector<BufferT *> xBuffers = buffers;	 
-    while (!xBuffers.empty()) {	 
-      auto tripleIt = tripleMap.begin();	 
-      auto offset = tripleIt->first;	 
-      auto range = tripleIt->second;	 
-      tripleMap.erase(tripleIt);	 
-      auto bufferIt =	 
-          std::find_if(xBuffers.begin(), xBuffers.end(), [&](auto *buffer) { 
-            auto xRange = bufferRange[buffer]; 
-            bool res = xRange.intersects(range); 
-            for (const auto &val : tripleMap) 
-              res = res && 
-                    !val.second.intersects(xRange); // only one buffer intersect 
-            return res; 
-          }); 
-      if (bufferIt != xBuffers.end()) { 
-        auto buffer = *bufferIt; 
-        auto xSize = buffer->size; 
-        auto xRange = bufferRange.lookup(buffer); 
-        // TODO(Keren): A buffer's size shouldn't be determined here, have to 
-        // clean it up 
-        size_t alignOffset = buffer->setOffsetAligned(offset); 
-        tripleMap.insert({alignOffset + xSize, 
-                          Interval{std::max(range.start(), xRange.start()), 
-                                    std::min(range.end(), xRange.end())}}); 
-        // We could either insert (range.start, xRange.start) or (range.start, 
-        // xRange.end), both are correct and determine the potential buffer 
-        // offset, and the graph coloring algorithm will solve the interference, 
-        // if any 
-        if (range.start() < xRange.start()) 
-          tripleMap.insert({offset, Interval{range.start(), xRange.end()}}); 
-        if (xRange.end() < range.end()) 
-          tripleMap.insert({offset, Interval{xRange.start(), range.end()}}); 
-        xBuffers.erase(bufferIt); 
-      } 
+    SmallVector<BufferT *> xBuffers = buffers;
+    while (!xBuffers.empty()) {
+      auto tripleIt = tripleMap.begin();
+      auto offset = tripleIt->first;
+      auto range = tripleIt->second;
+      tripleMap.erase(tripleIt);
+      auto bufferIt =
+          std::find_if(xBuffers.begin(), xBuffers.end(), [&](auto *buffer) {
+            auto xRange = bufferRange[buffer];
+            bool res = xRange.intersects(range);
+            for (const auto &val : tripleMap)
+              res = res &&
+                    !val.second.intersects(xRange); // only one buffer intersect
+            return res;
+          });
+      if (bufferIt != xBuffers.end()) {
+        auto buffer = *bufferIt;
+        auto xSize = buffer->size;
+        auto xRange = bufferRange.lookup(buffer);
+        // TODO(Keren): A buffer's size shouldn't be determined here, have to
+        // clean it up
+        size_t alignOffset = buffer->setOffsetAligned(offset);
+        tripleMap.insert({alignOffset + xSize,
+                          Interval{std::max(range.start(), xRange.start()),
+                                    std::min(range.end(), xRange.end())}});
+        // We could either insert (range.start, xRange.start) or (range.start,
+        // xRange.end), both are correct and determine the potential buffer
+        // offset, and the graph coloring algorithm will solve the interference,
+        // if any
+        if (range.start() < xRange.start())
+          tripleMap.insert({offset, Interval{range.start(), xRange.end()}});
+        if (xRange.end() < range.end())
+          tripleMap.insert({offset, Interval{xRange.start(), range.end()}});
+        xBuffers.erase(bufferIt);
+      }
     }
 #endif
     LLVM_DEBUG(dumpBuffers());
@@ -725,7 +725,7 @@ private:
       LDBG(Twine(AttrAllowGlobalScratch) + " attribute missing. Skip checking.");
       return;
     }
-    
+
     // The module attribute specified for shared memory capacity size.
     constexpr static char AttrShared[] = "ttg.shared";
 

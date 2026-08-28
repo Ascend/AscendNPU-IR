@@ -13,26 +13,26 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
- 
+
 #include "RegBase/SimtUtils.h"
 #include "Utils.h"
- 
+
 #if defined(__DAV_C310__)
 
 __aicore__ __attribute__((always_inline)) float div_rn_fp32(float a, float b) {
     // Standard hardware division result used for fallback in special cases (b=0, inf, etc.)
     float base_res = a / b;
 
-    // Threshold and Scale Factor: 
+    // Threshold and Scale Factor:
     // If |b| > 1.0e37, 1/b becomes a subnormal number (~2.9e-39).
     // Apply scaling: if b is too large, scale down both a and b by 0.125.
     // This preserves the ratio (a/b = (a*S)/(b*S)) while keeping 1/(b*S) normal.
     static constexpr float EPSILON = 1e-6f;
-    static constexpr float LARGE_THRESHOLD = 1.0e37f; 
-    static constexpr float SCALE_FACTOR = 0.125f; 
+    static constexpr float LARGE_THRESHOLD = 1.0e37f;
+    static constexpr float SCALE_FACTOR = 0.125f;
     static constexpr float INF_THRESHOLD = 3.40282e38f;
 
-    float abs_b = (b < 0.0f) ? -b : b; 
+    float abs_b = (b < 0.0f) ? -b : b;
 
     // Use selection instead of if-branch to maintain SIMT synchronization
     bool need_scale = (abs_b > LARGE_THRESHOLD);
@@ -52,9 +52,9 @@ __aicore__ __attribute__((always_inline)) float div_rn_fp32(float a, float b) {
 
     // Compute preliminary quotient
     float q = a_scaled * y;
-    
+
     // Check for overflow or special values in quotient
-    float abs_q = (q < 0.0f) ? -q : q; 
+    float abs_q = (q < 0.0f) ? -q : q;
 
     // Final residual correction (Markstein step) for 0-ULP accuracy
     // rem = a_scaled - b_scaled * q
@@ -79,7 +79,7 @@ __aicore__ __attribute__((always_inline)) TYPE div_rn(TYPE a, TYPE b) {
 
 template <typename TYPE>
 __aicore__ __attribute__((always_inline)) TYPE simt_divrn(const TYPE src1, const TYPE src2) {
-    return div_rn<TYPE>(src1, src2); 
+    return div_rn<TYPE>(src1, src2);
 }
 
 extern "C" {

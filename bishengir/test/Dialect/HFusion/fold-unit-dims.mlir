@@ -499,8 +499,8 @@ func.func @store_with_dropped_dims(%arg0: tensor<1x64xf32>, %arg1: memref<?x?xf3
   %c1 = arith.constant 1 : index
   %c64 = arith.constant 64 : index
   %2 = arith.maxsi %c1, %c64 : index
-  %cast_5 = memref.reinterpret_cast %arg1 to offset: [0], sizes: [1, 64], strides: [64, 1] : memref<?x?xf32> to memref<1x64xf32, strided<[64, 1], offset: ?>> 
-  %subview = memref.subview %cast_5[0, 0] [%arg2, %2] [1, 1] : memref<1x64xf32, strided<[64, 1], offset: ?>> to memref<?x?xf32, strided<[64, 1], offset: ?>> 
+  %cast_5 = memref.reinterpret_cast %arg1 to offset: [0], sizes: [1, 64], strides: [64, 1] : memref<?x?xf32> to memref<1x64xf32, strided<[64, 1], offset: ?>>
+  %subview = memref.subview %cast_5[0, 0] [%arg2, %2] [1, 1] : memref<1x64xf32, strided<[64, 1], offset: ?>> to memref<?x?xf32, strided<[64, 1], offset: ?>>
   %extracted_slice = tensor.extract_slice %arg0[0, 0] [%arg2, %2] [1, 1] : tensor<1x64xf32> to tensor<?x?xf32>
   hivm.hir.store ins(%extracted_slice : tensor<?x?xf32>) outs(%subview : memref<?x?xf32, strided<[64, 1], offset: ?>>) atomic = <add>
   return

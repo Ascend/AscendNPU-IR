@@ -52,7 +52,7 @@ struct ReduceImpl {
         vlds(cur_val, (__ubuf__ T0 *)data_UB,
              (i + 1) * src_r_stride + a * ele_per_VL, NORM);
         if constexpr (OP == ReduceOpTy::REDUCE_MAX_WITH_INDEX) {
-          if constexpr (TIE_BREAK == TieBreak::LEFT) 
+          if constexpr (TIE_BREAK == TieBreak::LEFT)
             vcmp_gt(cmp_mask, cur_val, acc_val, mask);
           else if constexpr (TIE_BREAK == TieBreak::RIGHT)
             vcmp_ge(cmp_mask, cur_val, acc_val, mask);
@@ -126,7 +126,7 @@ struct ReduceImpl {
         vbr(cur_idx, i);
 
         if constexpr (OP == ReduceOpTy::REDUCE_MAX_WITH_INDEX) {
-          if constexpr (TIE_BREAK == TieBreak::LEFT) 
+          if constexpr (TIE_BREAK == TieBreak::LEFT)
             vcmp_gt(cmp_mask, cur_val, acc_val, cur_mask);
           else if constexpr (TIE_BREAK == TieBreak::RIGHT)
             vcmp_ge(cmp_mask, cur_val, acc_val, cur_mask);
@@ -158,11 +158,11 @@ struct ReduceImpl {
       vmul(acc_idx, acc_idx, helper_idx, cmp_mask);
       vadd(acc_idx, acc_idx, tmp_idx, cmp_mask);
 
-      if constexpr (TIE_BREAK == TieBreak::LEFT) 
+      if constexpr (TIE_BREAK == TieBreak::LEFT)
         vcmin(reduced_idx, acc_idx, cmp_mask);
       else if constexpr (TIE_BREAK == TieBreak::RIGHT)
         vcmax(reduced_idx, acc_idx, cmp_mask);
-        
+
       vcadd(final_idx, reduced_idx, one_mask);
       vsts(final_idx, reduce_idx_UB, a * dst_idx_stride, ONEPT_B32, full_mask);
     }
@@ -202,7 +202,7 @@ struct ReduceImpl<OP, TIE_BREAK, T0, T1, __cce_simd::UnAlignedHint,
             ADDRESS_UNALIGNED);
 
         if constexpr (OP == ReduceOpTy::REDUCE_MAX_WITH_INDEX) {
-          if constexpr (TIE_BREAK == TieBreak::LEFT) 
+          if constexpr (TIE_BREAK == TieBreak::LEFT)
             vcmp_gt(cmp_mask, cur_val, acc_val, mask);
           else if constexpr (TIE_BREAK == TieBreak::RIGHT)
             vcmp_ge(cmp_mask, cur_val, acc_val, mask);
@@ -284,7 +284,7 @@ struct ReduceImpl<OP, TIE_BREAK, T0, T1, __cce_simd::UnAlignedHint,
         vbr(cur_idx, i);
 
         if constexpr (OP == ReduceOpTy::REDUCE_MAX_WITH_INDEX) {
-          if constexpr (TIE_BREAK == TieBreak::LEFT) 
+          if constexpr (TIE_BREAK == TieBreak::LEFT)
             vcmp_gt(cmp_mask, cur_val, acc_val, cur_mask);
           else if constexpr (TIE_BREAK == TieBreak::RIGHT)
             vcmp_ge(cmp_mask, cur_val, acc_val, cur_mask);
@@ -317,11 +317,11 @@ struct ReduceImpl<OP, TIE_BREAK, T0, T1, __cce_simd::UnAlignedHint,
       vmul(acc_idx, acc_idx, helper_idx, cmp_mask);
       vadd(acc_idx, acc_idx, tmp_idx, cmp_mask);
 
-      if constexpr (TIE_BREAK == TieBreak::LEFT) 
+      if constexpr (TIE_BREAK == TieBreak::LEFT)
         vcmin(reduced_idx, acc_idx, cmp_mask);
       else if constexpr (TIE_BREAK == TieBreak::RIGHT)
         vcmax(reduced_idx, acc_idx, cmp_mask);
-        
+
       vcadd(final_idx, reduced_idx, one_mask);
 
       // ONEPT mode vsts for scalar store
@@ -373,7 +373,7 @@ struct ReduceImpl<OP, TIE_BREAK, T0, T1, AlignedHint,
                              AlignedHint{});
 
         if constexpr (OP == ReduceOpTy::REDUCE_MAX_WITH_INDEX) {
-          if constexpr (TIE_BREAK == TieBreak::LEFT) 
+          if constexpr (TIE_BREAK == TieBreak::LEFT)
             vcmp_gt(cmp_mask, cur_val, acc_val, mask);
           else if constexpr (TIE_BREAK == TieBreak::RIGHT)
             vcmp_ge(cmp_mask, cur_val, acc_val, mask);
@@ -408,7 +408,7 @@ struct ReduceImpl<OP, TIE_BREAK, T0, T1, AlignedHint,
     constexpr int dsize = sizeof(T0);
 
     VectorReg<T0> cur_val, acc_val, reduced_val, brc_reduced_val;
-    VectorReg<T1> cur_idx, acc_idx, helper_idx, reduced_idx, tmp_idx, 
+    VectorReg<T1> cur_idx, acc_idx, helper_idx, reduced_idx, tmp_idx,
                   tmp_reduced_idx, brc_tmp_reduced_idx;
     VectorReg<int32_t> final_idx;
 
@@ -445,7 +445,7 @@ struct ReduceImpl<OP, TIE_BREAK, T0, T1, AlignedHint,
         vbr(cur_idx, i);
 
         if constexpr (OP == ReduceOpTy::REDUCE_MAX_WITH_INDEX) {
-          if constexpr (TIE_BREAK == TieBreak::LEFT) 
+          if constexpr (TIE_BREAK == TieBreak::LEFT)
             vcmp_gt(cmp_mask, cur_val, acc_val, cur_mask);
           else if constexpr (TIE_BREAK == TieBreak::RIGHT)
             vcmp_ge(cmp_mask, cur_val, acc_val, cur_mask);
@@ -475,11 +475,11 @@ struct ReduceImpl<OP, TIE_BREAK, T0, T1, AlignedHint,
       vmul(acc_idx, acc_idx, helper_idx, cmp_mask);
       vadd(acc_idx, acc_idx, tmp_idx, cmp_mask);
 
-      if constexpr (TIE_BREAK == TieBreak::LEFT) 
+      if constexpr (TIE_BREAK == TieBreak::LEFT)
         vcmin(reduced_idx, acc_idx, cmp_mask);
       else if constexpr (TIE_BREAK == TieBreak::RIGHT)
         vcmax(reduced_idx, acc_idx, cmp_mask);
-      
+
       vcadd(final_idx, reduced_idx, one_mask);
       vsts(final_idx, reduce_idx_UB, a * dst_idx_stride, ONEPT_B32, full_mask);
     }
@@ -895,7 +895,7 @@ REGISTE_REDUCE_RA0A1_WITH_INDEX(reduce_max_with_index,
 REGISTE_REDUCE_RA0A1_WITH_INDEX(reduce_max_with_index,
                                 ReduceOpTy::REDUCE_MAX_WITH_INDEX, 3, int64_t,
                                 int32_t);
-                                
+
 REGISTE_REDUCE_RA0A1_WITH_INDEX(reduce_min_with_index,
                                 ReduceOpTy::REDUCE_MIN_WITH_INDEX, 3, half,
                                 int16_t);

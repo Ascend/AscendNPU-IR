@@ -1355,7 +1355,7 @@ scalar_reduce_dichotomy_to_target(__ubuf__ T *src_ptr, int64_t stride, int64_t n
   const int64_t tail_size = n - main_size;
   constexpr int num_per_repeat = INTR_BYTES_PER_REPEAT / sizeof(T);
   int64_t half = (main_size == num_per_repeat) ? main_size : main_size / 2;
-  
+
   for (int64_t i = 0; i < half; ++i) {
       T val0 = *(src_ptr + i * stride);
       if (main_size != num_per_repeat) {
@@ -1407,11 +1407,11 @@ std::enable_if_t<(OP == ReduceOpTy::REDUCE_SUM), T>
 scalar_reduce_pairwise(__ubuf__ T *src_ptr, int64_t stride, int64_t n,
                         BufPtr tmp_buffer) {
   constexpr int num_per_repeat = INTR_BYTES_PER_REPEAT / sizeof(T);
-  
+
   if (n == 1) {
     return *src_ptr;
   }
-  
+
   int64_t current_size;
   if (n > num_per_repeat) {
     current_size = scalar_reduce_dichotomy_to_target<OP, T>(
@@ -1419,11 +1419,11 @@ scalar_reduce_pairwise(__ubuf__ T *src_ptr, int64_t stride, int64_t n,
   } else {
     current_size = pairwise_reduce_from_src<OP, T>(src_ptr, stride, n, tmp_buffer);
   }
-  
+
   while (current_size > 1) {
     current_size = pairwise_reduce_buffer<OP, T>(tmp_buffer, current_size);
   }
-  
+
   return tmp_buffer[0];
 }
 
@@ -1436,41 +1436,41 @@ std::enable_if_t<(OP == ReduceOpTy::REDUCE_SUM || OP == ReduceOpTy::REDUCE_PROD)
 scalar_reduce_two_phase(__ubuf__ T *src_ptr, int64_t stride, int64_t n,
                         __ubuf__ T *tmp_buffer) {
   constexpr int num_per_repeat = INTR_BYTES_PER_REPEAT / sizeof(T);
-  
+
   if (n == 1) {
     return *src_ptr;
   }
-  
+
   if (n <= num_per_repeat) {
     return scalar_reduce_dichotomy<OP, T, __ubuf__ T*>(src_ptr, stride, n, tmp_buffer);
   }
-  
+
   int64_t num_chunks = n / num_per_repeat;
   int64_t tail_size = n % num_per_repeat;
-  
+
   for (int64_t i = 0; i < num_per_repeat; ++i) {
     tmp_buffer[i] = *(src_ptr + i * stride);
   }
-  
+
   for (int64_t chunk = 1; chunk < num_chunks; ++chunk) {
     for (int64_t i = 0; i < num_per_repeat; ++i) {
       T val = *(src_ptr + (chunk * num_per_repeat + i) * stride);
       tmp_buffer[i] = reduction_scalar_operation<OP, T>(tmp_buffer[i], val);
     }
   }
-  
+
   if (tail_size > 0) {
     for (int64_t i = 0; i < tail_size; ++i) {
       T val = *(src_ptr + (num_chunks * num_per_repeat + i) * stride);
       tmp_buffer[i] = reduction_scalar_operation<OP, T>(tmp_buffer[i], val);
     }
   }
-  
+
   int64_t current_size = num_per_repeat;
   while (current_size > 1) {
     current_size = dichotomy_reduce_buffer<OP, T>(tmp_buffer, current_size);
   }
-  
+
   return tmp_buffer[0];
 }
 

@@ -68,7 +68,7 @@ public:
     addLegalOp<triton::gpu::WarpReturnOp>();
 #if BSPUB_DAVINCI_BISHENGIR
     addLegalDialect<scf::SCFDialect>();
-#endif    
+#endif
   }
 };
 

@@ -20,7 +20,7 @@
 #if defined(__DAV_C310__)
 template <typename TYPE>
 __aicore__ __attribute__((always_inline)) TYPE simt_umulhi(TYPE a, TYPE b) {
-  uint64_t result = static_cast<uint64_t>(static_cast<uint32_t>(a)) * 
+  uint64_t result = static_cast<uint64_t>(static_cast<uint32_t>(a)) *
                     static_cast<uint64_t>(static_cast<uint32_t>(b));
   return static_cast<TYPE>(result >> 32);
 }

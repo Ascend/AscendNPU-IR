@@ -58,7 +58,7 @@ public:
     llvm_unreachable("not implemented");
   };
 #endif
-  
+
   virtual Value shuffleXor(RewriterBase &rewriter, Location loc, Value val,
                            int i) const = 0;
   virtual Value shuffleUp(RewriterBase &rewriter, Location loc, Value val,

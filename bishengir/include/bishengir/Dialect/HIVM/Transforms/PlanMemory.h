@@ -793,7 +793,7 @@ private:
   /// Check if memory plan can be rolled back.
   bool ContinueRollBack(const StatusWrapper &statusWrapper) const;
 
-  /// Check if multibuffer-slots should be rolled back together 
+  /// Check if multibuffer-slots should be rolled back together
   bool ShouldRollbackMuiltiBuffer(const PlanRecord& r) const;
 
   /// Memory plan fallback information processing.
