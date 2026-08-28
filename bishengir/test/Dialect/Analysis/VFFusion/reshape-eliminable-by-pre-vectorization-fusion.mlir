@@ -8,7 +8,11 @@
 // admits the collapse into the fusion group.
 
 // CHECK-LABEL: func.func private @collapse_broadcast_fused_0(
+// CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
 // CHECK: tensor.collapse_shape
+// CHECK: linalg.broadcast
+// CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<add>}
+// CHECK: return
 // CHECK-LABEL: func.func @collapse_broadcast(
 // CHECK: call @collapse_broadcast_fused_0
 // CHECK-NOT: call @collapse_broadcast_fused_{{[1-9]}}
@@ -32,7 +36,10 @@ module {
 // removable; isExpandShapeEliminable admits the expand into the VF.
 
 // CHECK-LABEL: func.func private @expand_named_const_fused_0(
+// CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
 // CHECK: tensor.expand_shape
+// CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
+// CHECK: return
 // CHECK-LABEL: func.func @expand_named_const(
 // CHECK: call @expand_named_const_fused_0
 // CHECK-NOT: call @expand_named_const_fused_{{[1-9]}}
@@ -57,8 +64,11 @@ module {
 // ops fuse into a single VF without any reshape blocking.
 
 // CHECK-LABEL: func.func private @expand_from_collapse_fused_0(
+// CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
 // CHECK-NOT: tensor.collapse_shape
 // CHECK-NOT: tensor.expand_shape
+// CHECK: linalg.generic
+// CHECK: return
 // CHECK-LABEL: func.func @expand_from_collapse(
 // CHECK: call @expand_from_collapse_fused_0
 // CHECK-NOT: call @expand_from_collapse_fused_{{[1-9]}}
