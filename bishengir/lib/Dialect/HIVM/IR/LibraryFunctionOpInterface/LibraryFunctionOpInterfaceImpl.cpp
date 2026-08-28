@@ -1390,6 +1390,15 @@ std::string NoMaxRankExternalModel<ND2NZOp>::getOpLibraryCallName(
         callName = callName + "_forbias";
     }
   }
+  // A rank-3 source carries a leading batch dimension and maps to the batched
+  // library function, which folds the batch into one MTE2 descriptor. Only
+  // regbase registers that variant.
+  auto mod = op->getParentOfType<ModuleOp>();
+  auto srcType = dyn_cast<MemRefType>(concreteOp.getDpsInputs()[0].getType());
+  if (mod && hacc::utils::isRegBasedArch(mod) && srcType &&
+      srcType.getRank() == 3)
+    callName = callName + "_batch";
+
   Type eleType = getElementTypeOrSelf(concreteOp.getDpsInputs()[0].getType());
   auto elemTypeName = getTypeName(concreteOp.getLoc(), eleType);
   return callName + "_" + elemTypeName;

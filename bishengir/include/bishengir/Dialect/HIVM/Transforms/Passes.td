@@ -216,6 +216,11 @@ def InferHIVMDataLayout : Pass<"hivm-infer-data-layout", "func::FuncOp"> {
   let dependentDialects = ["affine::AffineDialect", "hivm::HIVMDialect",
                            "annotation::AnnotationDialect",
   ];
+  let options = [Option<
+    "batchMatmul", "batch-matmul", "bool",
+    /*default=*/"false",
+    "Fold a rank-3 ND2NZ into one MTE2 descriptor and honour an "
+    "l2_cache_mode annotation on a matmul operand">];
 }
 
 def NormalizeToTensorOp

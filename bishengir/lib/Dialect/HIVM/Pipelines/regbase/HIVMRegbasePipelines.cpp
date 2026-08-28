@@ -573,7 +573,12 @@ static void hivmPostBufferizationOptimizationPipeline(
       createHIVMAggregatedDecomposeOpPass(decomposeOption));
   ADD_CANONICALIZER_PASS;
   // convert copyOp to nd2nzOp
-  pm.nest<func::FuncOp>().addPass(createInferHIVMDataLayoutPass());
+  {
+    InferHIVMDataLayoutOptions dataLayoutOpts;
+    dataLayoutOpts.batchMatmul = hivmPipelineOptions.enableHIVMBatchMatmul;
+    pm.nest<func::FuncOp>().addPass(
+        createInferHIVMDataLayoutPass(dataLayoutOpts));
+  }
   decomposeOption.decomposePhase =
       bishengir::DecomposePhase::AFTER_INFER_HIVM_DATA_LAYOUT;
   pm.nest<func::FuncOp>().addPass(

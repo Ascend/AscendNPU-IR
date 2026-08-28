@@ -630,10 +630,22 @@ public:
       return failure();
     }
 
+    // The template writes this straight into the MTE2 descriptor's cache
+    // control field.  It is always passed, so the callee signature does not
+    // depend on whether the attribute was set; absent means the hardware
+    // default of 0.
+    int64_t l2CacheMode = 0;
+    if (auto modeAttr = op.getL2CacheModeAttr())
+      l2CacheMode = modeAttr.getInt();
+
+    SmallVector<Value> inputOperands(op->getOperands());
+    inputOperands.push_back(
+        rewriter.create<arith::ConstantIntOp>(op->getLoc(), l2CacheMode, 32));
+
     replaceWithLibCall(rewriter, op,
                        cast<OpWithLibraryFunction>(op.getOperation())
                            .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
-                       op->getOperands(), {});
+                       inputOperands, {});
     return success();
   }
 };

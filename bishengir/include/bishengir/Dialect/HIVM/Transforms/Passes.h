@@ -100,7 +100,8 @@ std::unique_ptr<Pass> createAllocToAllocaPass();
 std::unique_ptr<Pass> createCloneTensorEmptyPass();
 
 /// Create a pass to infer data layout information for HIVM Ops.
-std::unique_ptr<Pass> createInferHIVMDataLayoutPass();
+std::unique_ptr<Pass> createInferHIVMDataLayoutPass(
+    const InferHIVMDataLayoutOptions &options = {});
 
 /// Create a pass to infer vf mode for HIVM Ops.
 std::unique_ptr<Pass> createInferVFModePass();
