@@ -115,6 +115,8 @@ static constexpr llvm::StringLiteral kMayImplicitTransposeWithLastAxis =
 static constexpr llvm::StringLiteral kNormalizeMatmulCounterAttr =
     "normalize_matmul_counter";
 
+constexpr StringLiteral kNormalizedInL0C = "normalized_in_L0C";
+
 // The amount of data processed by the VBITSORT instruction in one repeat.
 constexpr int VBITSORT_NUM_PER_REPEAT = 32;
 
@@ -148,7 +150,7 @@ const std::map<std::string, int> membarType = {
     {"SS_ALL", 12}, {"ST_LD", 13},  {"LD_ST", 14},  {"ST_ST", 15},
 };
 
-bool isOpResultRequiredInL0C(Operation *op, OpResult result);
+bool isResultInL0C(OpResult result);
 
 /// Set the input type's memory scope to the input HIVM Address Space.
 void setBaseMemRefTypeScope(Value val, AddressSpaceAttr targetMemScope);

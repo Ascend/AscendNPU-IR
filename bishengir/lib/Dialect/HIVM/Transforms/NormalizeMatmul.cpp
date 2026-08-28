@@ -72,7 +72,6 @@ namespace {
 constexpr llvm::StringLiteral kDotPadOnlyK = "dot_pad_only_k";
 
 constexpr StringLiteral kAlreadySetRealMKN = "already_set_real_mkn";
-constexpr StringLiteral kNormalizedInL0C = "normalized_in_L0C";
 constexpr StringLiteral kNormalizedInitOrBias = "normalized_init_or_bias";
 constexpr StringLiteral kMayNotExec = "may_not_exec";
 constexpr StringLiteral kFallBackNotExec = "fallback_not_exec";

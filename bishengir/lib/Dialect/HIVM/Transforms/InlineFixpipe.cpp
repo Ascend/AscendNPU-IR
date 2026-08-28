@@ -30,10 +30,12 @@
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/PatternMatch.h"
+#include "mlir/IR/Value.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
@@ -41,6 +43,7 @@
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/MathExtras.h"
+#include <cstdint>
 
 namespace mlir {
 #define GEN_PASS_DEF_INSERTFIXPIPE
@@ -105,6 +108,44 @@ std::optional<bool> isStoreOp(Operation *dstOp) {
 }
 
 static bool isOnRegBasedArch(Operation *op);
+
+
+
+/// Walk a region result through ancestor yields. True when this result, or a
+/// result it is forwarded to, is required to stay in L0C.
+static bool isForwardedResultRequiredInL0C(OpResult result) {
+  if (isResultInL0C(result))
+    return true;
+  for (OpOperand &use : result.getUses()) {
+    auto yieldOp = dyn_cast<scf::YieldOp>(use.getOwner());
+    if (!yieldOp)
+      continue;
+    auto parent = dyn_cast<RegionBranchOpInterface>(yieldOp->getParentOp());
+    if (!parent)
+      continue;
+    if (isForwardedResultRequiredInL0C(
+            parent->getOpResult(use.getOperandNumber())))
+      return true;
+  }
+  return false;
+}
+
+/// Keep a yield on the raw L0C value when rewriting it to a fixpipe result
+/// would evict a value that must stay in L0C:
+///  1. The producer is marked remain_in_l0c (the enclosing scf.for may not
+///     carry the loop-level attribute, e.g. a nested accumulation), or
+///  2. This yield, or an ancestor yield it is forwarded to, produces a
+///     region result required in L0C.
+static bool shouldKeepYieldInL0C(OpOperand &use) {
+  if (!isa<scf::YieldOp>(use.getOwner()))
+    return false;
+  auto parentOp =
+      dyn_cast<RegionBranchOpInterface>(use.getOwner()->getParentOp());
+  if (!parentOp)
+    return false;
+  return isForwardedResultRequiredInL0C(
+      parentOp->getOpResult(use.getOperandNumber()));
+}
 
 static hivm::MmadL1Op traceAlongL0C(Value val) {
   hivm::MmadL1Op source = llvm::dyn_cast_if_present<hivm::MmadL1Op>(
@@ -208,7 +249,9 @@ static bool needYieldOut(Operation *user, Value val) {
 /// (such as annotation.mark bind_buffer) the fixpipe output rather than the
 /// value still living in L0C.
 Operation *getInsertPointOutOfIf(Operation *op, int &resultIndx) {
-  Value result = op->getResult(resultIndx);
+  OpResult result = op->getResult(resultIndx);
+  if (!op->hasAttr(RemainInL0CAttr::name))
+    return op;
   // if op has multiple users, don't push the insert point down
   int32_t count = 0;
   scf::YieldOp yieldOperand = nullptr;
@@ -219,7 +262,7 @@ Operation *getInsertPointOutOfIf(Operation *op, int &resultIndx) {
     if (!yieldOp)
       continue;
     auto ifOp = dyn_cast<scf::IfOp>(yieldOp->getParentOp());
-    if (!ifOp || isMixKernel(ifOp, result))
+    if (!ifOp || (!isResultInL0C(result) && isMixKernel(ifOp, result)))
       continue;
     yieldOperand = yieldOp;
   }
@@ -372,14 +415,22 @@ bool isAccumulation(Operation *op) {
 /// Use ceilDiv so M/N below the fractal tile (e.g. M=1) pad instead of
 /// producing a zero-sized dimension (M1 = M/16 == 0).
 static RankedTensorType computeNz2NzL1DstType(RankedTensorType ndType) {
-  int64_t M = ndType.getDimSize(0);
-  int64_t N = ndType.getDimSize(1);
+  auto rank = ndType.getRank();
+  int64_t M = ndType.getDimSize(rank - 2);
+  int64_t N = ndType.getDimSize(rank - 1);
   static constexpr int64_t alignM = 16;
   auto numElemPerBlock = mlir::utils::getNumPerBlock(ndType);
   int64_t M1 = static_cast<int64_t>(llvm::divideCeil(M, alignM));
   int64_t N1 = static_cast<int64_t>(llvm::divideCeil(N, numElemPerBlock));
-  return RankedTensorType::get({N1, M1, alignM, numElemPerBlock},
-                               ndType.getElementType());
+  SmallVector<int64_t> shape;
+  for (int64_t i = 0; i < rank - 2; i++) {
+    shape.push_back(ndType.getDimSize(i));
+  }
+  shape.push_back(N1);
+  shape.push_back(M1);
+  shape.push_back(alignM);
+  shape.push_back(numElemPerBlock);
+  return RankedTensorType::get(shape, ndType.getElementType());
 }
 
 /// Convert an NZ2ND Fixpipe to NZ2NZ. Applies channel_split or channel_merge
@@ -475,7 +526,6 @@ static FixpipeOp insertFixpipe(PatternRewriter &rewriter, Operation *point,
 
   auto fixpipe = (isMovingToL1 ? insertFixpipeToL1
                                : insertFixpipeToLocal)(rewriter, point, src);
-
   rewriter.replaceUsesWithIf(
       src, fixpipe.getResultTensor(), [](OpOperand &use) {
         auto *op = use.getOwner();
@@ -490,6 +540,12 @@ static FixpipeOp insertFixpipe(PatternRewriter &rewriter, Operation *point,
                        init.get().getDefiningOp<hivm::MmadL1Op>();
               }));
         }
+        // handle normalized_in_l0c and remain_in_l0c, including nested
+        // scf.for yields whose enclosing loop (or the mmad itself) keeps
+        // the value in L0C.
+        auto *defOp = use.get().getDefiningOp();
+        if (defOp->hasAttr(RemainInL0CAttr::name) && shouldKeepYieldInL0C(use))
+          return false;
         return true;
       });
 
@@ -622,10 +678,7 @@ static bool shouldSkipOuterFixpipeForAccumulation(Operation *opInst,
   auto forOp = dyn_cast<scf::ForOp>(insertAfterOp);
   if (!forOp)
     return false;
-  if (forOp->getAttr(hivm::RemainInL0CAttr::name) == nullptr)
-    return false;
-  if (!isOpResultRequiredInL0C(cast<RegionBranchOpInterface>(insertAfterOp),
-                               loopResult))
+  if (!isResultInL0C(loopResult))
     return false;
 
   return anyUserReachesMatmulOuts(loopResult);
@@ -677,7 +730,7 @@ public:
             (!op.isInitConstant() && isOnRegBasedArch(opInst));
       }
       skipFixpipeForBiasDecompose = skipFixpipeForBiasDecompose &&
-                                    !isOpResultRequiredInL0C(op, mmadLikeOpRes);
+                                    !isResultInL0C(mmadLikeOpRes);
     }
     if (skipFixpipeForBiasDecompose) {
       // the op will decompose to mmadL1 + vadd, so fixpipe cannot be inserted
@@ -720,11 +773,13 @@ public:
 
       LDBG("Replacing fix pipe for " << op);
       Value result = insertAfterOp->getResult(resultIndx);
-      if (!tryInsertFractalOutputFixpipe(rewriter, insertAfterOp, result))
+      if (!tryInsertFractalOutputFixpipe(rewriter, insertAfterOp, result)) {
+        LDBG("Inserting fractal output fixpipe after " << *insertAfterOp);
         insertFixpipe(rewriter, insertAfterOp, result);
-      op->setAttr(mmadFixpipeForResultAlreadyInserted,
-                  rewriter.getBoolAttr(true));
-      changed = true;
+        op->setAttr(mmadFixpipeForResultAlreadyInserted,
+                    rewriter.getBoolAttr(true));
+        changed = true;
+      }
     }
 
     // When the mmad-like op is an accumulation, the fixpipe above only serves

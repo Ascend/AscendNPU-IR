@@ -18,7 +18,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // CHECK:     scf.yield
 // CHECK:   }
 // CHECK:   scf.yield %[[IF1]]#0, %{{.*}}, %[[IF1]]#1
-// CHECK: } {fixpipe_for_mmad_result_already_inserted = true, hivm.remain_in_l0c, normalized_in_L0C = [0 : i32]}
+// CHECK: } {fixpipe_for_mmad_result_already_inserted = true, normalized_in_L0C = [0 : i32]}
 // CHECK-NOT: hivm.hir.fixpipe
 // CHECK: %[[FOR2:.*]]:3 = scf.for {{.*}} iter_args(%[[ITER_ACC:.*]] = %[[FOR1]]#0, %[[ITER_AUX:.*]] = %[[FOR1]]#1, %[[ITER_CNT:.*]] = %[[FOR1]]#2)
 // CHECK:   %[[IF2:.*]]:2 = scf.if
@@ -57,7 +57,7 @@ func.func @cascade_mmad_multiple_results_to_same_downstream_loop(
   %for1_res:3 = scf.for %i = %c0 to %c10 step %c1
       iter_args(%acc = %3, %aux_arg = %4, %cnt = %c0_i32) -> (tensor<128x128xf32>, tensor<128x128xf32>, i32) {
     %if_res:2 = scf.if %cond -> (tensor<128x128xf32>, i32) {
-      %mmad1 = hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
+      %mmad1 = hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
           ins(%0, %1, %false, %c128, %c128, %c128 : tensor<128x128xf16>, tensor<128x128xf16>, i1, index, index, index)
           outs(%acc : tensor<128x128xf32>) -> tensor<128x128xf32>
       %next_cnt = arith.addi %cnt, %c1_i32 : i32
@@ -66,13 +66,13 @@ func.func @cascade_mmad_multiple_results_to_same_downstream_loop(
       scf.yield %acc, %cnt : tensor<128x128xf32>, i32
     }
     scf.yield %if_res#0, %aux_arg, %if_res#1 : tensor<128x128xf32>, tensor<128x128xf32>, i32
-  } {hivm.remain_in_l0c, normalized_in_L0C = [0 : i32]}
+  } {normalized_in_L0C = [0 : i32]}
 
   // Second loop: consumes all 3 return values as initial iter_args
   %for2_res:3 = scf.for %j = %c0 to %c10 step %c1
       iter_args(%acc2 = %for1_res#0, %aux2 = %for1_res#1, %cnt2 = %for1_res#2) -> (tensor<128x128xf32>, tensor<128x128xf32>, i32) {
     %if_res2:2 = scf.if %cond -> (tensor<128x128xf32>, i32) {
-      %mmad2 = hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
+      %mmad2 = hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
           ins(%0, %2, %false, %c128, %c128, %c128 : tensor<128x128xf16>, tensor<128x128xf16>, i1, index, index, index)
           outs(%acc2 : tensor<128x128xf32>) -> tensor<128x128xf32>
       %next_cnt2 = arith.addi %cnt2, %c1_i32 : i32
@@ -116,7 +116,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // CHECK:     scf.yield
 // CHECK:   }
 // CHECK:   scf.yield %[[IF1_A]], %[[IF1_B]]
-// CHECK: } {fixpipe_for_mmad_result_already_inserted = true, hivm.remain_in_l0c, normalized_in_L0C = [0 : i32, 1 : i32]}
+// CHECK: } {fixpipe_for_mmad_result_already_inserted = true, normalized_in_L0C = [0 : i32, 1 : i32]}
 // CHECK-NOT: hivm.hir.fixpipe
 //
 // CHECK: %[[FOR_A:.*]] = scf.for {{.*}} iter_args(%[[ITER_A:.*]] = %[[FOR1]]#0)
@@ -168,7 +168,7 @@ func.func @cascade_mmad_multiple_results_to_different_downstream_loops(
   %for1_res:2 = scf.for %i = %c0 to %c10 step %c1
       iter_args(%acc0 = %3, %acc1 = %4) -> (tensor<128x128xf32>, tensor<128x128xf32>) {
     %res0 = scf.if %cond1 -> (tensor<128x128xf32>) {
-      %mmad0 = hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
+      %mmad0 = hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
           ins(%0, %1, %false, %c128, %c128, %c128 : tensor<128x128xf16>, tensor<128x128xf16>, i1, index, index, index)
           outs(%acc0 : tensor<128x128xf32>) -> tensor<128x128xf32>
       scf.yield %mmad0 : tensor<128x128xf32>
@@ -177,7 +177,7 @@ func.func @cascade_mmad_multiple_results_to_different_downstream_loops(
     }
 
     %res1 = scf.if %cond2 -> (tensor<128x128xf32>) {
-      %mmad1 = hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
+      %mmad1 = hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
           ins(%0, %2, %false, %c128, %c128, %c128 : tensor<128x128xf16>, tensor<128x128xf16>, i1, index, index, index)
           outs(%acc1 : tensor<128x128xf32>) -> tensor<128x128xf32>
       scf.yield %mmad1 : tensor<128x128xf32>
@@ -186,13 +186,13 @@ func.func @cascade_mmad_multiple_results_to_different_downstream_loops(
     }
 
     scf.yield %res0, %res1 : tensor<128x128xf32>, tensor<128x128xf32>
-  } {hivm.remain_in_l0c, normalized_in_L0C = [0 : i32, 1 : i32]}
+  } {normalized_in_L0C = [0 : i32, 1 : i32]}
 
   // Downstream loop A: consumes %for1_res#0
   %forA_res = scf.for %j = %c0 to %c10 step %c1
       iter_args(%accA = %for1_res#0) -> (tensor<128x128xf32>) {
     %resA = scf.if %cond1 -> (tensor<128x128xf32>) {
-      %mmadA = hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
+      %mmadA = hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
           ins(%0, %1, %false, %c128, %c128, %c128 : tensor<128x128xf16>, tensor<128x128xf16>, i1, index, index, index)
           outs(%accA : tensor<128x128xf32>) -> tensor<128x128xf32>
       scf.yield %mmadA : tensor<128x128xf32>
@@ -207,7 +207,7 @@ func.func @cascade_mmad_multiple_results_to_different_downstream_loops(
   %forB_res = scf.for %k = %c0 to %c10 step %c1
       iter_args(%accB = %for1_res#1) -> (tensor<128x128xf32>) {
     %resB = scf.if %cond2 -> (tensor<128x128xf32>) {
-      %mmadB = hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
+      %mmadB = hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
           ins(%0, %2, %false, %c128, %c128, %c128 : tensor<128x128xf16>, tensor<128x128xf16>, i1, index, index, index)
           outs(%accB : tensor<128x128xf32>) -> tensor<128x128xf32>
       scf.yield %mmadB : tensor<128x128xf32>
@@ -221,4 +221,168 @@ func.func @cascade_mmad_multiple_results_to_different_downstream_loops(
   return
 }
 
+}
+
+// -----
+
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+
+// Test 3: mmad result is both yielded from a remain_in_l0c loop and consumed
+// by a Vector op. InsertFixpipe must emit a fixpipe for vabs but leave the
+// yield on the raw L0C mmad result.
+// CHECK-LABEL: func.func @remain_in_l0c_yield_not_replaced_by_fixpipe
+// CHECK: %[[FOR:.*]]:2 = scf.for
+// CHECK:   %[[MMAD:.*]] = hivm.hir.mmadL1
+// CHECK:   %[[FIX:.*]] = hivm.hir.fixpipe {{.*}} ins(%[[MMAD]]
+// CHECK:   %[[ABS:.*]] = hivm.hir.vabs ins(%[[FIX]]
+// CHECK:   scf.yield %[[MMAD]], %[[ABS]]
+// CHECK: } {fixpipe_for_mmad_result_already_inserted = true, normalized_in_L0C = [0 : i32]}
+  func.func @remain_in_l0c_yield_not_replaced_by_fixpipe(
+      %A: tensor<64x64xf16>, %B: tensor<64x64xf16>,
+      %C_init: tensor<64x64xf32>) -> (tensor<64x64xf32>, tensor<64x64xf32>) {
+    %c0 = arith.constant 0 : index
+    %c2 = arith.constant 2 : index
+    %c1 = arith.constant 1 : index
+    %c64 = arith.constant 64 : index
+    %true = arith.constant true
+    %vec_init = tensor.empty() : tensor<64x64xf32>
+    %res:2 = scf.for %i = %c0 to %c2 step %c1
+        iter_args(%acc = %C_init, %vec = %vec_init)
+        -> (tensor<64x64xf32>, tensor<64x64xf32>) {
+      %mmad = hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
+          ins(%A, %B, %true, %c64, %c64, %c64
+              : tensor<64x64xf16>, tensor<64x64xf16>, i1, index, index, index)
+          outs(%acc : tensor<64x64xf32>) -> tensor<64x64xf32>
+      %abs = hivm.hir.vabs ins(%mmad : tensor<64x64xf32>)
+          outs(%vec : tensor<64x64xf32>) -> tensor<64x64xf32>
+      scf.yield %mmad, %abs : tensor<64x64xf32>, tensor<64x64xf32>
+    } {normalized_in_L0C = [0 : i32]}
+    return %res#0, %res#1 : tensor<64x64xf32>, tensor<64x64xf32>
+  }
+}
+
+// -----
+
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+// CHECK-LABEL: func.func @normalized_only_yield_replaced_by_fixpipe
+// CHECK: %[[FOR:.*]]:2 = scf.for
+// CHECK:   %[[MMAD:.*]] = hivm.hir.mmadL1
+// CHECK:   %[[FIX:.*]] = hivm.hir.fixpipe {{.*}} ins(%[[MMAD]]
+// CHECK:   %[[ABS:.*]] = hivm.hir.vabs ins(%[[FIX]]
+// CHECK:   scf.yield %[[MMAD]], %[[ABS]]
+  func.func @normalized_only_yield_replaced_by_fixpipe(
+      %A: tensor<64x64xf16>, %B: tensor<64x64xf16>,
+      %C_init: tensor<64x64xf32>) -> (tensor<64x64xf32>, tensor<64x64xf32>) {
+    %c0 = arith.constant 0 : index
+    %c2 = arith.constant 2 : index
+    %c1 = arith.constant 1 : index
+    %c64 = arith.constant 64 : index
+    %true = arith.constant true
+    %vec_init = tensor.empty() : tensor<64x64xf32>
+    %res:2 = scf.for %i = %c0 to %c2 step %c1
+        iter_args(%acc = %C_init, %vec = %vec_init)
+        -> (tensor<64x64xf32>, tensor<64x64xf32>) {
+      %mmad = hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c}
+          ins(%A, %B, %true, %c64, %c64, %c64
+              : tensor<64x64xf16>, tensor<64x64xf16>, i1, index, index, index)
+          outs(%acc : tensor<64x64xf32>) -> tensor<64x64xf32>
+      %abs = hivm.hir.vabs ins(%mmad : tensor<64x64xf32>)
+          outs(%vec : tensor<64x64xf32>) -> tensor<64x64xf32>
+      scf.yield %mmad, %abs : tensor<64x64xf32>, tensor<64x64xf32>
+    } {normalized_in_L0C = [0 : i32]}
+    return %res#0, %res#1 : tensor<64x64xf32>, tensor<64x64xf32>
+  }
+}
+
+// -----
+
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+
+// Test normalized_in_L0C = [0] only. Result 0 yield stays
+// on the L0C mmad; result 1 yield is rewritten to the fixpipe.
+// CHECK-LABEL: func.func @remain_in_l0c_partial_normalized_replaces_non_l0c_yield
+// CHECK: %[[FOR:.*]]:4 = scf.for
+// CHECK:   %[[M0:.*]] = hivm.hir.mmadL1
+// CHECK:   %[[F0:.*]] = hivm.hir.fixpipe {{.*}} ins(%[[M0]]
+// CHECK:   %[[A0:.*]] = hivm.hir.vabs ins(%[[F0]]
+// CHECK:   %[[M1:.*]] = hivm.hir.mmadL1
+// CHECK:   %[[F1:.*]] = hivm.hir.fixpipe {{.*}} ins(%[[M1]]
+// CHECK:   %[[A1:.*]] = hivm.hir.vabs ins(%[[F1]]
+// CHECK:   scf.yield %[[M0]], %[[F1]], %[[A0]], %[[A1]]
+  func.func @remain_in_l0c_partial_normalized_replaces_non_l0c_yield(
+      %A: tensor<64x64xf16>, %B: tensor<64x64xf16>,
+      %C0: tensor<64x64xf32>, %C1: tensor<64x64xf32>)
+      -> (tensor<64x64xf32>, tensor<64x64xf32>, tensor<64x64xf32>, tensor<64x64xf32>) {
+    %c0 = arith.constant 0 : index
+    %c2 = arith.constant 2 : index
+    %c1 = arith.constant 1 : index
+    %c64 = arith.constant 64 : index
+    %true = arith.constant true
+    %vec0 = tensor.empty() : tensor<64x64xf32>
+    %vec1 = tensor.empty() : tensor<64x64xf32>
+    %res:4 = scf.for %i = %c0 to %c2 step %c1
+        iter_args(%acc0 = %C0, %acc1 = %C1, %v0 = %vec0, %v1 = %vec1)
+        -> (tensor<64x64xf32>, tensor<64x64xf32>, tensor<64x64xf32>, tensor<64x64xf32>) {
+      %m0 = hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c}
+          ins(%A, %B, %true, %c64, %c64, %c64
+              : tensor<64x64xf16>, tensor<64x64xf16>, i1, index, index, index)
+          outs(%acc0 : tensor<64x64xf32>) -> tensor<64x64xf32>
+      %a0 = hivm.hir.vabs ins(%m0 : tensor<64x64xf32>)
+          outs(%v0 : tensor<64x64xf32>) -> tensor<64x64xf32>
+      %m1 = hivm.hir.mmadL1 {already_set_real_mkn}
+          ins(%A, %B, %true, %c64, %c64, %c64
+              : tensor<64x64xf16>, tensor<64x64xf16>, i1, index, index, index)
+          outs(%acc1 : tensor<64x64xf32>) -> tensor<64x64xf32>
+      %a1 = hivm.hir.vabs ins(%m1 : tensor<64x64xf32>)
+          outs(%v1 : tensor<64x64xf32>) -> tensor<64x64xf32>
+      scf.yield %m0, %m1, %a0, %a1 : tensor<64x64xf32>, tensor<64x64xf32>, tensor<64x64xf32>, tensor<64x64xf32>
+    } {normalized_in_L0C = [0 : i32]}
+    return %res#0, %res#1, %res#2, %res#3 : tensor<64x64xf32>, tensor<64x64xf32>, tensor<64x64xf32>, tensor<64x64xf32>
+  }
+}
+
+// -----
+
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+
+// Test 6: Nested scf.for. The inner mmad is marked remain_in_l0c; the inner
+// loop itself has no L0C attributes. The mmad result is both yielded (inner
+// iter_arg / outer remain_in_l0c result) and consumed by a Vector op.
+// InsertFixpipe must emit a fixpipe for vln but leave the inner yield on the
+// raw L0C mmad result.
+// CHECK-LABEL: func.func @nested_for_remain_in_l0c_mmad_yield_not_replaced
+// CHECK: scf.for
+// CHECK:   %[[INNER:.*]]:2 = scf.for
+// CHECK:     %[[MMAD:.*]] = hivm.hir.mmadL1
+// CHECK:     %[[FIX:.*]] = hivm.hir.fixpipe {{.*}} ins(%[[MMAD]]
+// CHECK:     %[[LN:.*]] = hivm.hir.vln ins(%[[FIX]]
+// CHECK:     scf.yield %[[MMAD]], %[[LN]]
+  func.func @nested_for_remain_in_l0c_mmad_yield_not_replaced(
+      %A: tensor<64x64xf16>, %B: tensor<64x64xf16>,
+      %C0: tensor<64x64xf32>, %C1: tensor<64x64xf32>)
+      -> tensor<64x64xf32> {
+    %c0 = arith.constant 0 : index
+    %c2 = arith.constant 2 : index
+    %c1 = arith.constant 1 : index
+    %c64 = arith.constant 64 : index
+    %true = arith.constant true
+    %vec_init = tensor.empty() : tensor<64x64xf32>
+    %res:3 = scf.for %i = %c0 to %c2 step %c1
+        iter_args(%acc0 = %C0, %acc1 = %C1, %vec = %vec_init)
+        -> (tensor<64x64xf32>, tensor<64x64xf32>, tensor<64x64xf32>) {
+      %inner:2 = scf.for %j = %c0 to %c2 step %c1
+          iter_args(%innerAcc = %acc1, %innerVec = %vec)
+          -> (tensor<64x64xf32>, tensor<64x64xf32>) {
+        %mmad = hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c}
+            ins(%A, %B, %true, %c64, %c64, %c64
+                : tensor<64x64xf16>, tensor<64x64xf16>, i1, index, index, index)
+            outs(%innerAcc : tensor<64x64xf32>) -> tensor<64x64xf32>
+        %ln = hivm.hir.vln ins(%mmad : tensor<64x64xf32>)
+            outs(%innerVec : tensor<64x64xf32>) -> tensor<64x64xf32>
+        scf.yield %mmad, %ln : tensor<64x64xf32>, tensor<64x64xf32>
+      }
+      scf.yield %acc0, %inner#0, %inner#1 : tensor<64x64xf32>, tensor<64x64xf32>, tensor<64x64xf32>
+    } {normalized_in_L0C = [0 : i32, 1 : i32]}
+    return %res#2 : tensor<64x64xf32>
+  }
 }

@@ -1,4 +1,3 @@
-// REQUIRES: regbase
 // RUN: bishengir-opt -hivm-insert-fixpipe -hivm-inline-fixpipe %s -split-input-file -verify-diagnostics | FileCheck %s
 
 // On reg-based A5 targets, mmadL1->mmadL1 inserts fixpipe directly to L1
