@@ -15,6 +15,7 @@
 //
 //============================================================================//
 
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Interfaces/FlattenInterface.h"
@@ -49,6 +50,15 @@ void VTransposeOp::adjustTargetDimensions([[maybe_unused]] OpBuilder &builder,
                                           const FlattenResult &result) {
   auto &adjustedDims = result.adjustedTargetDims;
   LDBG(to_string(adjustedDims));
+  // RegBase (A5): the transpose-like flatten puts the full flattened
+  // permutation in adjustedTargetDims. A3 (uniform-reassociation flatten):
+  // adjustedTargetDims is the two axes to swap.
+  auto moduleOp = getOperation()->getParentOfType<ModuleOp>();
+  if (hacc::utils::hasTargetAttr(moduleOp) &&
+      hacc::utils::isRegBasedArch(moduleOp)) {
+    setPermutation(adjustedDims);
+    return;
+  }
   assert(adjustedDims.size() == 2);
   auto rank = getShapeRank(getSrc());
   SmallVector<int64_t> permutation(rank.value_or(0));
