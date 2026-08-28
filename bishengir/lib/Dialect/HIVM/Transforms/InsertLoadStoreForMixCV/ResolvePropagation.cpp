@@ -35,21 +35,12 @@
 
 namespace mlir::hivm {
 
-static std::optional<hivm::AddressSpace>
-getSinglePropagatedAddressSpace(UnrealizedConversionCastOp propagateOp) {
-  auto addressSpaces = PropagatorUtil::getAddressSpace(propagateOp);
-  if (addressSpaces.size() == 1)
-    return addressSpaces[0];
-  return std::nullopt;
-}
-
 static LogicalResult
 resolveByInsertingStoreAndLoad(UnrealizedConversionCastOp downPropOp,
                                UnrealizedConversionCastOp upPropOp,
                                PatternRewriter &rewriter) {
-  auto dstAddressSpace = getSinglePropagatedAddressSpace(upPropOp);
   auto [storeOp, loadOp] = PropagatorUtil::insertStoreAndLoad(
-      downPropOp->getResult(0), downPropOp.getLoc(), rewriter, dstAddressSpace);
+      downPropOp->getResult(0), downPropOp.getLoc(), rewriter);
   auto isBufferized = isa<MemRefType>(loadOp.getDstOperandType());
   Value loadedValue;
   if (isBufferized) {
@@ -62,15 +53,14 @@ resolveByInsertingStoreAndLoad(UnrealizedConversionCastOp downPropOp,
       upPropOp, [&]() { upPropOp.getInputsMutable()[0].set(loadedValue); });
   // Recreate propagation constraints around the inserted store/load so address
   // space and core-type information can continue to propagate correctly.
-  auto intermediateAddrSpace = dstAddressSpace.value_or(hivm::AddressSpace::GM);
   PropagatorUtil::createPropagatorUp(&storeOp.getSrcMutable(), downPropOp,
                                      rewriter);
   PropagatorUtil::createPropagatorUp(&storeOp.getDstMutable(),
-                                     intermediateAddrSpace, rewriter);
-  PropagatorUtil::createPropagatorsDown(storeOp, intermediateAddrSpace,
+                                     hivm::AddressSpace::GM, rewriter);
+  PropagatorUtil::createPropagatorsDown(storeOp, hivm::AddressSpace::GM,
                                         rewriter);
   PropagatorUtil::createPropagatorUp(&loadOp.getSrcMutable(),
-                                     intermediateAddrSpace, rewriter);
+                                     hivm::AddressSpace::GM, rewriter);
   PropagatorUtil::createPropagatorUp(&loadOp.getDstMutable(), upPropOp,
                                      rewriter);
   PropagatorUtil::createPropagatorsDown(loadOp, upPropOp, rewriter);
@@ -142,9 +132,8 @@ static LogicalResult resolveGMtoLocal(UnrealizedConversionCastOp downPropOp,
 static LogicalResult resolveLocaltoGM(UnrealizedConversionCastOp downPropOp,
                                       UnrealizedConversionCastOp upPropOp,
                                       PatternRewriter &rewriter) {
-  auto dstAddressSpace = getSinglePropagatedAddressSpace(upPropOp);
   auto storeOp = PropagatorUtil::insertStore(
-      downPropOp->getResult(0), downPropOp.getLoc(), rewriter, dstAddressSpace);
+      downPropOp->getResult(0), downPropOp.getLoc(), rewriter);
   Value loadedValue;
   if (isa<RankedTensorType>(storeOp.getDstOperandType())) {
     loadedValue = storeOp.getResult(0);
