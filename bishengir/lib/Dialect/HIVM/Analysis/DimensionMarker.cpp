@@ -916,7 +916,8 @@ bool DimensionAnalyzer::isParallelOp(Operation *op) const {
               bufferization::ToBufferOp
 #endif
               ,
-              arith::SelectOp, hivm::IndirectLoadOp, hivm::IndirectStoreOp>(
+              arith::SelectOp, hivm::IndirectLoadOp, hivm::IndirectStoreOp,
+              hivm::GatherLoadOp, hivm::ScatterStoreOp>(
               op));
 }
 
