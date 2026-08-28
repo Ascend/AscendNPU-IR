@@ -136,7 +136,7 @@ protected:
   void processVCumOp(T op);
   void processYieldOp(scf::YieldOp op);
   void processForOp(scf::ForOp op);
-  void processConditionOp(scf::ConditionOp op);
+  void processWhileOp(scf::WhileOp op);
   void processExpandShapeOpLeftmostNonUnit(tensor::ExpandShapeOp op);
   void processCollapseShapeOpLeftmostNonUnit(tensor::CollapseShapeOp op);
   template <typename T, typename = std::enable_if_t<
