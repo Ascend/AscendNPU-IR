@@ -39,7 +39,6 @@
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/RWMutex.h"
 
-#include <array>
 #include <limits>
 
 namespace mlir {
@@ -56,41 +55,6 @@ using namespace utils;
 namespace {
 static constexpr llvm::StringLiteral conv3dDepthPadded =
     "conv3dDepthPadded";
-
-template <size_t Rank>
-FailureOr<std::array<int64_t, Rank>> getConvIntArrayAttr(Attribute attr) {
-  if (auto intAttr = dyn_cast<IntegerAttr>(attr)) {
-    int64_t value = intAttr.getInt();
-    std::array<int64_t, Rank> values;
-    values.fill(value);
-    return values;
-  }
-
-  if (auto denseAttr = dyn_cast<DenseI64ArrayAttr>(attr)) {
-    if (denseAttr.size() != Rank)
-      return failure();
-    std::array<int64_t, Rank> values;
-    for (size_t idx = 0; idx < Rank; ++idx)
-      values[idx] = denseAttr[idx];
-    return values;
-  }
-
-  if (auto arrayAttr = dyn_cast<ArrayAttr>(attr)) {
-    if (arrayAttr.size() != Rank)
-      return failure();
-
-    std::array<int64_t, Rank> values;
-    for (auto [idx, element] : llvm::enumerate(arrayAttr)) {
-      auto intAttr = dyn_cast<IntegerAttr>(element);
-      if (!intAttr)
-        return failure();
-      values[idx] = intAttr.getInt();
-    }
-    return values;
-  }
-
-  return failure();
-}
 
 //===----------------------------------------------------------------------===//
 // VCastOp Decompose
@@ -1847,7 +1811,9 @@ class AtomicXchgOpLowering : public OpRewritePattern<hivm::AtomicXchgOp> {
 ///   Conv3d:
 ///     Y[n, oc, od, oh, ow] =
 ///       sum_{kd, ic, kh, kw}
-///         X[n, od + kd, ic, oh + kh - padH, ow + kw - padW] *
+///         X[n, od + kd, ic,
+///           oh * strideH + kh - padH,
+///           ow * strideW + kw - padW] *
 ///         W[kd, ic, kh, kw, oc]
 ///
 ///   Decomposed form:
@@ -1858,7 +1824,8 @@ class AtomicXchgOpLowering : public OpRewritePattern<hivm::AtomicXchgOp> {
 ///         weight2d = W[kd, :, :, :, :]
 ///         init = original init_condition when kd == 0, otherwise false
 ///         Conv2dL1(input2d, weight2d, acc,
-///                  padding = [padH, padW], init_condition = init)
+///                  padding = [padH, padW],
+///                  stride = [strideH, strideW], init_condition = init)
 ///
 ///   Each Conv2dL1 accumulates one kernel-depth slice into the same rank-2
 ///   accumulator. After all kd slices are processed, the accumulator is
@@ -1879,6 +1846,8 @@ class AtomicXchgOpLowering : public OpRewritePattern<hivm::AtomicXchgOp> {
 ///   - The pattern intentionally does not match Conv3d with bias.
 ///   - D padding is consumed by NormalizeConvOps; H/W logical padding is
 ///     forwarded to Conv2dL1 as [padH, padW].
+///   - D stride must be 1. H/W strides are forwarded to Conv2dL1 as
+///     [strideH, strideW].
 struct DecomposeConv3dOp
     : public OpRewritePattern<hivm::Conv3DL1Op> {
 public:
@@ -1936,30 +1905,40 @@ public:
       return failure();
     }
 
-    auto padding = getConvIntArrayAttr<3>(op.getPaddingAttr());
-    if (failed(padding)) {
+    auto paddingD = op.getPaddingD();
+    auto paddingH = op.getPaddingH();
+    auto paddingW = op.getPaddingW();
+    if (failed(paddingD) || failed(paddingH) || failed(paddingW)) {
       return failure();
     }
-    const int64_t padD = (*padding)[0];
-    const int64_t padH = (*padding)[1];
-    const int64_t padW = (*padding)[2];
-    if (padD < 0 || padH < 0 || padW < 0) {
+    if (*paddingD < 0 || *paddingH < 0 || *paddingW < 0) {
       return failure();
     }
     const bool depthAlreadyPadded = op->hasAttr(conv3dDepthPadded);
     // Depth padding policy:
-    // Normalize materializes D padding (front/back) when padD > 0, so
+    // Normalize materializes D padding when front/back padding is nonzero, so
     // decompose expects that precondition via conv3dDepthPadded. H/W padding
     // remains logical and is forwarded to Conv2dL1.
-    if (padD > 0 && !depthAlreadyPadded) {
+    if (*paddingD > 0 && !depthAlreadyPadded) {
       return failure();
     }
-    if (iD < wD || h + 2 * padH < wH || w + 2 * padW < wW) {
+
+    auto strideD = op.getStrideD();
+    auto strideH = op.getStrideH();
+    auto strideW = op.getStrideW();
+    if (failed(strideD) || failed(strideH) || failed(strideW) ||
+        *strideD != 1 || *strideH <= 0 || *strideW <= 0) {
+      return failure();
+    }
+    if (iD < wD || h + 2 * (*paddingH) < wH ||
+        w + 2 * (*paddingW) < wW) {
       return failure();
     }
     const int64_t expectedOD = iD - wD + 1;
-    const int64_t expectedOH = h + 2 * padH - wH + 1;
-    const int64_t expectedOW = w + 2 * padW - wW + 1;
+    const int64_t expectedOH =
+        (h + 2 * (*paddingH) - wH) / *strideH + 1;
+    const int64_t expectedOW =
+        (w + 2 * (*paddingW) - wW) / *strideW + 1;
 
     const int64_t oD = expectedOD;
     const int64_t fusedND = n * expectedOD;
@@ -1980,8 +1959,18 @@ public:
     Attribute conv2DPadding =
         isa<IntegerAttr>(op.getPaddingAttr())
             ? op.getPaddingAttr()
-            : rewriter.getArrayAttr({rewriter.getI64IntegerAttr(padH),
-                                     rewriter.getI64IntegerAttr(padW)});
+            : rewriter.getArrayAttr({rewriter.getI64IntegerAttr(*paddingH),
+                                     rewriter.getI64IntegerAttr(*paddingW)});
+    Attribute conv2DStride;
+    if (!op.getStrideAttr()) {
+      conv2DStride = rewriter.getI32IntegerAttr(1);
+    } else if (isa<IntegerAttr>(op.getStrideAttr())) {
+      conv2DStride = op.getStrideAttr();
+    } else {
+      conv2DStride =
+          rewriter.getArrayAttr({rewriter.getI64IntegerAttr(*strideH),
+                                 rewriter.getI64IntegerAttr(*strideW)});
+    }
 
     auto collapseShape =
         [&](Value src, ArrayRef<ReassociationIndices> reassociation)
@@ -2081,7 +2070,8 @@ public:
 
       auto conv2D = rewriter.create<hivm::Conv2DL1Op>(
           loc, TypeRange{}, *input2D, *weight2D, Value(), iterAcc,
-          initCondition, ValueRange{}, conv2DPadding, op.getGroupsAttr());
+          initCondition, ValueRange{}, conv2DStride, conv2DPadding,
+          op.getGroupsAttr());
       (void)conv2D;
       return iterAcc;
     };

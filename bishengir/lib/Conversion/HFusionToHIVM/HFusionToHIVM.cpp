@@ -1330,6 +1330,7 @@ struct HFusionToHIVMConv1DOp : public OpRewritePattern<hfusion::Conv1DOp> {
     auto weight = op.getWeight();
     auto bias = op.getBias();
     auto group = op.getGroups();
+    auto stride = op.getStride();
     auto padding = op.getPadding();
 #ifndef BSPUB_DAVINCI_BISHENGIR_A5
     Value initCondition =
@@ -1340,7 +1341,8 @@ struct HFusionToHIVMConv1DOp : public OpRewritePattern<hfusion::Conv1DOp> {
 #endif
     rewriter.replaceOpWithNewOp<hivm::Conv1DL1Op>(op, resType, input, weight,
                                                   bias, init, initCondition,
-                                                  ValueRange{}, padding, group);
+                                                  ValueRange{}, stride, padding,
+                                                  group);
     return success();
   }
 };
@@ -1359,6 +1361,7 @@ struct HFusionToHIVMConv2DOp : public OpRewritePattern<hfusion::Conv2DOp> {
     auto weight = op.getWeight();
     auto bias = op.getBias();
     auto group = op.getGroups();
+    auto stride = op.getStrideAttr();
     auto padding = op.getPaddingAttr();
 #ifndef BSPUB_DAVINCI_BISHENGIR_A5
     Value initCondition =
@@ -1369,7 +1372,8 @@ struct HFusionToHIVMConv2DOp : public OpRewritePattern<hfusion::Conv2DOp> {
 #endif
     rewriter.replaceOpWithNewOp<hivm::Conv2DL1Op>(op, resType, input, weight,
                                                   bias, init, initCondition,
-                                                  ValueRange{}, padding, group);
+                                                  ValueRange{}, stride, padding,
+                                                  group);
     return success();
   }
 };
@@ -1388,6 +1392,7 @@ struct HFusionToHIVMConv3DOp : public OpRewritePattern<hfusion::Conv3DOp> {
     auto weight = op.getWeight();
     auto bias = op.getBias();
     auto group = op.getGroups();
+    auto stride = op.getStrideAttr();
     auto padding = op.getPaddingAttr();
 #ifndef BSPUB_DAVINCI_BISHENGIR_A5
     Value initCondition =
@@ -1398,7 +1403,8 @@ struct HFusionToHIVMConv3DOp : public OpRewritePattern<hfusion::Conv3DOp> {
 #endif
     rewriter.replaceOpWithNewOp<hivm::Conv3DL1Op>(op, resType, input, weight,
                                                   bias, init, initCondition,
-                                                  ValueRange{}, padding, group);
+                                                  ValueRange{}, stride, padding,
+                                                  group);
     return success();
   }
 };

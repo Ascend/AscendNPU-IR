@@ -38,3 +38,16 @@ func.func @deinterleave_rank0(%arg0: tensor<f32>) -> tensor<f32> {
   %res = hfusion.deinterleave %arg0 channel<0> : tensor<f32> -> tensor<f32>
   return %res : tensor<f32>
 }
+
+// -----
+
+func.func @conv3d_non_unit_depth_stride(
+    %input: tensor<32x5x64x64xf16>, %weight: tensor<16x32x2x3x3xf16>,
+    %init: tensor<16x2x62x62xf16>) -> tensor<16x2x62x62xf16> {
+  // expected-error@+1 {{'hfusion.conv3d' op currently requires strideD to be 1}}
+  %0 = hfusion.conv3d {dilation = [1, 1, 1], groups = 1 : i32,
+                       padding = [0, 0, 0], stride = [2, 1, 1]}
+      ins(%input, %weight : tensor<32x5x64x64xf16>, tensor<16x32x2x3x3xf16>)
+      outs(%init : tensor<16x2x62x62xf16>) -> tensor<16x2x62x62xf16>
+  return %0 : tensor<16x2x62x62xf16>
+}
