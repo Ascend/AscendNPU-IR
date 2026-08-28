@@ -323,11 +323,9 @@ static void buildDelayedHFusionRegBaseVectorizePipeline(
       mlir::hivm::createHIVMAggregatedDecomposeOpPass(decomposeOption));
   hfusion::HFusionPipelineOptions hfusionPipelineOptions;
   setupHFusionPipelineOptions(hfusionPipelineOptions, hfusionConfig);
-  ExecutionEngineHIVMToUpstreamConversionOptions upstreamOptions;
-  upstreamOptions.convertToNamedOp =
-      hacc::utils::isRegBasedArch(config.getTarget());
-  pm.addPass(
-      mlir::execution_engine::createConvertHIVMToUpstreamPass(upstreamOptions));
+  // Convert the vector side back to HFusion dialects;
+  // host/AIC functions and hivm.hir.load ops are preserved.
+  pm.addPass(mlir::execution_engine::createConvertHIVMToHFusionPass());
   hfusion::regbase::buildHFusionRegBasePipeline(pm, hfusionPipelineOptions);
   if (shouldInferFuncCoreType) {
     pm.addPass(mlir::hivm::createInferFuncCoreTypePass());
@@ -521,7 +519,11 @@ void buildBiShengHIRPipeline(OpPassManager &pm,
       pm.addPass(hivm::createLegalizeBoolForSimtVFPass());
       pm.addPass(hivm::createInsertMemSemanticForSimtVFPass());
       pm.addPass(scope::createTransformOpForSIMTPass());
-      pm.addPass(scope::createOutlineScopePass());
+      // Only AutoScope-marked scopes are outlined;
+      // cube/vector leftovers stay inline.
+      OutlineScopeOptions outlineScopeOptions;
+      outlineScopeOptions.outlineMarkedScopesOnly = true;
+      pm.addPass(scope::createOutlineScopePass(outlineScopeOptions));
       pm.addPass(hivm::createInsertAllocBasePlaceholderPass());
       pm.addPass(hivm::createInferSimtVFMemEffectPass());
       // Infer per-argument mem scope hints from the mixed call boundary first;

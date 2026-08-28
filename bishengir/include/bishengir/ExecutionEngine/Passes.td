@@ -107,6 +107,34 @@ def ExecutionEngineHIVMToUpstreamConversion : Pass<"execution-engine-convert-hiv
       [Option<"convertToNamedOp", "convert-to-named-op", "bool",
       "true", "Convert hir operations to named ones">];
 }
+
+def ConvertHIVMToHFusion : Pass<"convert-hivm-to-hfusion", "ModuleOp"> {
+  let summary = "Convert HIVM vector operations back to HFusion/upstream dialects";
+  let description = [{
+    Convert the vector side of HIVM operations back into upstream dialects
+    (mostly Linalg and HFusion).
+
+    Modifications made:
+      * Skip host and AIC functions: cube-side operations are preserved.
+      * Keep hivm.hir.load ops unconverted.
+      * Rewrite the remaining vector ops greedily per function.
+
+    Constraints/Assumptions:
+      * The operations have to have either tensor or buffer semantics.
+  }];
+  let constructor = "mlir::execution_engine::createConvertHIVMToHFusionPass()";
+  let dependentDialects = [
+    "arith::ArithDialect",
+    "bufferization::BufferizationDialect",
+    "hfusion::HFusionDialect",
+    "linalg::LinalgDialect",
+    "memref::MemRefDialect",
+    "tensor::TensorDialect",
+  ];
+  let options =
+      [Option<"convertToNamedOp", "convert-to-named-op", "bool",
+      "true", "Convert hir operations to named ones">];
+}
 def ExecutionEngineHFusionToUpstreamConversion : Pass<"execution-engine-convert-hfusion-to-upstream"> {
   let summary = "Convert HFusion operations to upstream dialect's equivalent for execution engine";
   let description = [{

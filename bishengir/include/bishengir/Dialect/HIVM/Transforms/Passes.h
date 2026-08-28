@@ -386,6 +386,9 @@ createSIMTVFSubTilingPass(const SIMTVFSubTilingOptions &options = {});
 // Split simt module for every simt vf
 std::unique_ptr<Pass> createSplitSimtModulePass();
 
+// Mark SIMT scopes no_inline so inline-scope keeps them outlined
+std::unique_ptr<Pass> createMarkSimtScopeNoInlinePass();
+
 // Create scope for gather_load and scatter_store
 std::unique_ptr<Pass> createAutoScopePass();
 

@@ -386,7 +386,9 @@ static void postProcess(OpPassManager &pm,
 static void hfusionVectorizeManualScopePipeline(
     OpPassManager &pm, const HFusionPipelineOptions &hfusionOptions) {
   // vectorize manual vector scope
-  pm.addPass(scope::createOutlineScopePass());
+  OutlineScopeOptions outlineScopeOptions;
+  outlineScopeOptions.outlineMarkedScopesOnly = true;
+  pm.addPass(scope::createOutlineScopePass(outlineScopeOptions));
   VectorizeOpsOptions vectorizeOptions;
   vectorizeOptions.forManualScope = true;
   pm.addPass(createHFusionVectorizeOpsPass(vectorizeOptions));
