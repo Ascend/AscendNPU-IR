@@ -22,12 +22,19 @@
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/AsmParser/AsmParser.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/TypeUtilities.h"
+#include "mlir/IR/Value.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
+#include "mlir/Support/LLVM.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/Casting.h"
+#include <algorithm>
 
 #define DEBUG_TYPE "hivm-impl"
 #define DBGS() (llvm::dbgs() << "[" DEBUG_TYPE "]: ")
@@ -107,7 +114,8 @@ static bool userCanReachMatmulOuts(Value current,
   if (!visited.insert(current).second)
     return false;
 
-  for (Operation *user : current.getUsers()) {
+  for (OpOperand &use : current.getUses()) {
+    Operation *user = use.getOwner();
     if (isa<DebugOp, annotation::MarkOp, tensor::DimOp>(user))
       continue;
     if (isa<FixpipeOp>(user))
@@ -117,6 +125,13 @@ static bool userCanReachMatmulOuts(Value current,
       return true;
     if (isa<hivm::LocalMatmulLikeOpInterface>(user))
       continue;
+
+    if (auto loopOp = dyn_cast<LoopLikeOpInterface>(user)) {
+      auto barg = getTiedBlockArgument(loopOp, use);
+      if (barg) {
+        return userCanReachMatmulOuts(barg, visited);
+      }
+    }
 
     if (user->hasTrait<OpTrait::ReturnLike>() ||
         isa<RegionBranchTerminatorOpInterface>(user)) {
