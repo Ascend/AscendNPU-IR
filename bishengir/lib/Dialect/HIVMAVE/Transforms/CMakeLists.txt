@@ -13,6 +13,7 @@ add_bishengir_dialect_library(MLIRHIVMAVETransforms
   CombineAVEOPs.cpp
   HoistVstas.cpp
   AveLoopOptimize.cpp
+  DuplicateUnitMaskBroadcast.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${MLIR_MAIN_INCLUDE_DIR}/bishengir/Dialect/HIVMAVE/Transforms
