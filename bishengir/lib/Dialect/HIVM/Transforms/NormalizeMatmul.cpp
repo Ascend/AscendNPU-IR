@@ -749,7 +749,7 @@ bool hasDebugUse(Value val) {
 
 // Find the outer res of scf.if and scf.for block
 // The %arg should be the output of op if in scf.for
-// The output only used by yield op
+// The output is carried by the corresponding yield operand.
 struct CCFInfo {
   Value inVal;
   Value outVal;
@@ -803,17 +803,12 @@ CCFInfo getOutermostCCFInfo(Operation *op, CCFInfo info) {
       }
       return CCFInfo::getFailure(info);
     }
-    // The res should only be used by yields in the for body.
-    for (OpOperand &use : info.outVal.getUses()) {
-      Operation *user = use.getOwner();
-      auto yieldOp = dyn_cast<scf::YieldOp>(user);
-      if (!yieldOp)
-        return CCFInfo::getFailure(info);
-      if (yieldOp->getBlock() != forOp.getBody())
-        return CCFInfo::getFailure(info);
-      if (use.getOperandNumber() != argIdx)
-        return CCFInfo::getFailure(info);
-    }
+    // The accumulation result must be carried by the corresponding yield
+    // operand. Other users are allowed: they observe the same logical matmul
+    // result, but do not participate in the accumulation chain.
+    auto yieldOp = cast<scf::YieldOp>(forOp.getBody()->getTerminator());
+    if (yieldOp.getOperand(argIdx) != info.outVal)
+      return CCFInfo::getFailure(info);
 
     IntegerAttr ubAttr, lbAttr;
     if (matchPattern(forOp.getUpperBound(), m_Constant(&ubAttr)) &&
