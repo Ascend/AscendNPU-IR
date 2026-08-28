@@ -308,8 +308,7 @@ AVEPipelineCost AVECostModel::estimateOperation(const Operation &op) const {
     result.addLoad();
     return result;
   }
-  if (isa<VFMaskedStoreOp, VFStoreWithStrideOp, VFUnalignedMaskedStoreOp>(
-          &op)) {
+  if (isa<VFMaskedStoreOp, VFStoreWithStrideOp>(&op)) {
     result.addStore();
     return result;
   }
