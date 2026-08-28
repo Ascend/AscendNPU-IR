@@ -1,3 +1,4 @@
+// REQUIRES: asserts
 // RUN: bishengir-opt %s -debug-only=triton-remap -triton-remap | FileCheck %s
 
 // CHECK-DAG: llvm.func @_mlir_ciface_simt_tanh_float(f32) -> f32

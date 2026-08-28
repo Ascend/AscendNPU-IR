@@ -1,3 +1,4 @@
+// REQUIRES: asserts
 // RUN: bishengir-opt %s -debug-only=triton-remap -triton-remap | FileCheck %s
 
 // CHECK-LABEL: @remap_fdiv_rn
