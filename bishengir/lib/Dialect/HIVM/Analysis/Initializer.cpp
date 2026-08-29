@@ -36,7 +36,6 @@ namespace detail {
 
 DimensionAnalyzer::DimensionAnalyzer(Operation *op, int64_t tilingSize)
     : DimensionAnalyzerBase(op), tilingSize(tilingSize) {
-  options.registerBased = true;
   assert(tilingSize > 0 && "Tiling Size must be positive integer");
 }
 
