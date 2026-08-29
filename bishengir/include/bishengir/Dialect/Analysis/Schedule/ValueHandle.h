@@ -216,9 +216,7 @@ struct NamedValueHandle : public ValueHandle {
     return T->getValueHandleKind() == ValueHandleKind::kNamed;
   }
 
-  /// Match the payload ops by the handle's identifier. The reversal of the
-  /// matched payload order (if requested) is applied by the builder through
-  /// \c createReverseOp, which is dialect-specific.
+  /// Match the payload ops by the handle's identifier.
   Value getImpl(Value matchTarget, OpBuilder &opBuilder) override;
   void reset() override { status_ = HandleStatus::kNeedsRematch; }
 

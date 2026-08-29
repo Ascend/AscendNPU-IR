@@ -141,12 +141,6 @@ Value NamedValueHandle::getImpl(Value matchTarget, OpBuilder &opBuilder) {
     return Value();
   }
 
-  if (this->needsReverse_) {
-    matchResult = opBuilder.create<transform::ReverseOp>(
-        matchResult.getLoc(),
-        /*result=*/TypeRange{opBuilder.getType<transform::AnyOpType>()},
-        /*target=*/matchResult);
-  }
   this->handle_ = matchResult;
   this->status_ = HandleStatus::kValid;
   return handle_;
