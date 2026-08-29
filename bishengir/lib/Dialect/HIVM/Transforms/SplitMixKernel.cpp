@@ -195,6 +195,25 @@ static SmallVector<Value> getOutOperands(Operation *op, bool opIsPreserved) {
   if (auto dpsOp = dyn_cast<DestinationStyleOpInterface>(op)) {
     return dpsOp.getDpsInits();
   }
+  // A result of scf.for corresponds one-to-one with an iter_args init
+  // operand. When the loop computes only for the core being filtered out,
+  // forward shaped results to those init operands so the preserved loop
+  // skeleton and its users remain valid. Preserved scalar results are loop
+  // counters or address arithmetic and must keep their computed values.
+  if (auto forOp = dyn_cast<scf::ForOp>(op)) {
+    SmallVector<Value> outOperands;
+    outOperands.reserve(forOp.getNumResults());
+    for (auto [result, initArg] :
+         llvm::zip_equal(forOp.getResults(), forOp.getInitArgs())) {
+      if (result.use_empty() ||
+          shouldKeepScalarResult(opIsPreserved, result)) {
+        outOperands.push_back(Value());
+        continue;
+      }
+      outOperands.push_back(initArg);
+    }
+    return outOperands;
+  }
   if (auto callOp = dyn_cast<func::CallOp>(op)) {
     SmallVector<Value> outOperands;
     auto funcOp =
