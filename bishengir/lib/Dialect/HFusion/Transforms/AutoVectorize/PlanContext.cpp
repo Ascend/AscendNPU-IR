@@ -246,9 +246,23 @@ void computeConflictListsForCopyOpOperand(PlanContext &ctx,
     }
   }
 
+  // TODO This strategy is conservative and requires precise optimization of the
+  // copy conflict addition strategy in the future.
+  auto CanSkipCopyConflict = [](Operation *op) {
+    auto linalgOp = dyn_cast<linalg::LinalgOp>(op);
+    if (!linalgOp || !linalgOp.getDpsInputs().empty() ||
+        linalgOp.getNumDpsInits() != 1 || op->getNumResults() != 1)
+      return false;
+    if (!linalgOp.getDpsInitOperand(0)->get().getDefiningOp<tensor::EmptyOp>())
+      return false;
+    return op->getResult(0).hasOneUse();
+  };
+
   for (auto followingOp : followingOps) {
     if (hasMemRefInOperands(followingOp, memRef)) {
       for (auto previousOp : previousOps) {
+        if (CanSkipCopyConflict(previousOp))
+          continue;
         ctx.addCopyConflict(previousOp, followingOp);
       }
     }
