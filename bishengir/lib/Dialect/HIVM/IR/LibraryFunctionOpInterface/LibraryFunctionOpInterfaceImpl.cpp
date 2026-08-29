@@ -1585,6 +1585,10 @@ std::string inferCustomOpMaxRank(Operation *op,
       return getIndirectAtomicLibraryCallName(concreteOp);
     if (concreteOp.getName() == CustomOpT::kBuiltinHistogramName)
       return getHistogramLibraryCallName(concreteOp);
+    if (concreteOp.getName() == CustomOpT::kBuiltinProtonGetSysCntName)
+      return "proton_get_sys_cnt";
+    if (concreteOp.getName() == CustomOpT::kBuiltinProtonCircularStoreName)
+      return "proton_circular_store";
     llvm::report_fatal_error("Unsupported builtin CustomOp");
   }
 

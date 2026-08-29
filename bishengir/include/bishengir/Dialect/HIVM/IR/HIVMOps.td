@@ -890,6 +890,10 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
       static constexpr StringLiteral kBuiltinIndexSelectName = "__builtin_index_select";
       static constexpr StringLiteral kBuiltinIndirectAtomicName = "__builtin_indirect_atomic";
       static constexpr StringLiteral kBuiltinHistogramName = "__builtin_histogram";
+      static constexpr StringLiteral kBuiltinProtonGetSysCntName =
+          "__builtin_proton_get_sys_cnt";
+      static constexpr StringLiteral kBuiltinProtonCircularStoreName =
+          "__builtin_proton_circular_store";
 
       static constexpr StringLiteral kExtraAttrName = "extra_attr";
 
