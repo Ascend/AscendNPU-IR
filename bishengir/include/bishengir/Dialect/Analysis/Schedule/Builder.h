@@ -234,20 +234,6 @@ public:
                           OpBuilder &opBuilder,
                           const MatchOptions &options = MatchOptions());
 
-  /// Create the op reversing the payload object order in `target`.
-  /// Creates the dialect-neutral `transform.reverse` op
-  /// (Analysis/Transforms).
-  Value createReverseOp(Value target, OpBuilder &opBuilder);
-
-  /// Annotate the IR values corresponding to \c target with \c attrName.
-  void annotateByAttr(Value target, StringRef attrName, OpBuilder &opBuilder);
-
-  /// Merge handles whose type is `handleType` and return the merged
-  /// handle's value.
-  Value mergeHandles(const SmallVectorImpl<Value> &handles,
-                     transform::TransformHandleTypeInterface handleType,
-                     OpBuilder &opBuilder);
-
   /// Split `handle` into `splitSize` parts.
   ///
   /// \note Runtime error will occur if the handle cannot be split into the
@@ -255,10 +241,34 @@ public:
   ValueHandles splitHandle(ValueHandle *handle, size_t splitSize,
                            OpBuilder &opBuilder);
 
+  //===--------------------------------------------------------------------===//
+  // Stateless transform helpers.
+  //
+  // These methods only wrap a transform op around their arguments and never
+  // read or update ScheduleBuilder state (no handle record, no transform
+  // sequence entry), so they can be called without an instance, e.g.
+  // `ScheduleBuilder::createReverseOp(...)`.
+  //===--------------------------------------------------------------------===//
+
+  /// Create the op reversing the payload object order in `target`.
+  /// Creates the dialect-neutral `transform.reverse` op
+  /// (Analysis/Transforms).
+  static Value createReverseOp(Value target, OpBuilder &opBuilder);
+
+  /// Annotate the IR values corresponding to \c target with \c attrName.
+  static void annotateByAttr(Value target, StringRef attrName,
+                             OpBuilder &opBuilder);
+
+  /// Merge handles whose type is `handleType` and return the merged
+  /// handle's value.
+  static Value mergeHandles(const SmallVectorImpl<Value> &handles,
+                            transform::TransformHandleTypeInterface handleType,
+                            OpBuilder &opBuilder);
+
   /// Construct `transform.foreachOp` and return its results.
-  ResultRange createForEachOp(Value target, TypeRange resultTypes,
-                              RegionBuilderFn regionBuilder,
-                              OpBuilder &opBuilder);
+  static ResultRange createForEachOp(Value target, TypeRange resultTypes,
+                                     RegionBuilderFn regionBuilder,
+                                     OpBuilder &opBuilder);
 
   //===--------------------------------------------------------------------===//
   // Transform op wrappers.
@@ -397,11 +407,11 @@ private:
                               const NamedValueHandleArgs &args);
 
   /// Create and record RegularValueHandle.
-  RegularValueHandle recordImpl(Value target, OpBuilder &opBuilder);
+  static RegularValueHandle recordImpl(Value target, OpBuilder &opBuilder);
 
   /// Create and record FuncArgHandle.
-  FuncArgHandle recordImpl(Value target, OpBuilder &opBuilder,
-                           size_t funcArgNum);
+  static FuncArgHandle recordImpl(Value target, OpBuilder &opBuilder,
+                                  size_t funcArgNum);
 
   /// Get handle to ops with the specified identifier information in the
   /// kernel, with additional constraints/options specified in \c options.
