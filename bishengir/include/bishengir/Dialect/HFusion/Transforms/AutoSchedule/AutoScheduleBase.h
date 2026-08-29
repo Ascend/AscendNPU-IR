@@ -17,17 +17,19 @@
 #ifndef BISHENGIR_DIALECT_HFUSION_TRANSFORMS_AUTOSCHEDULE_AUTOSCHEDULEBASE_H
 #define BISHENGIR_DIALECT_HFUSION_TRANSFORMS_AUTOSCHEDULE_AUTOSCHEDULEBASE_H
 
+#include "bishengir/Dialect/Analysis/Schedule/Builder.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HFusion/TransformOps/HFusionTransformOps.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/FusibleProducerAnalyzer.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/KernelInfo.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/TilingUtils.h"
-#include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/ValueHandle.h"
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
 
 #include "mlir/Dialect/SCF/IR/DeviceMappingInterface.h"
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/Rewrite/FrozenRewritePatternSet.h"
+
+#include "llvm/ADT/SetVector.h"
 
 namespace mlir {
 class Location;
@@ -46,56 +48,12 @@ class FuncOp;
 } // namespace func
 
 namespace hfusion {
+using namespace mlir::schedule;
+
 namespace detail {
 /// Struct to return the result of cache read/write.
 struct CacheIOResult {
   ValueHandle *cachedOps;
-};
-
-/// Struct to return the result of tiling ops using forall.
-struct ForallTilingResult {
-  ValueHandles loops;
-};
-
-/// Struct to return the result of tiling ops using for.
-struct ForTilingResult {
-  // When tiling ops using for, the number of loops returned depends
-  // on the number of "tile-able" axes.
-  SmallVector<ValueHandles> loops;
-};
-
-/// Struct to return the result of tiling reduction ops using for.
-struct ForReductionTilingResult {
-  /// The partial reduction tiled op generated.
-  ValueHandles partialReductionOp;
-  /// The final reduction operation merging all the partial reductions.
-  ValueHandles finalReductionOp;
-  /// The fill op used to initialize the neutral element.
-  /// We support tiling multi-reduce ops (i.e., reduce with multiple results),
-  /// each reduction will have its own init op.
-  SmallVector<ValueHandles> reductionInitOp;
-  /// The loop operations that iterate over the tiles.
-  ValueHandles loops;
-};
-
-/// Struct to return the results of tiling a loop.
-struct LoopTileResult {
-  ValueHandle *outerLoop;
-  ValueHandle *innerLoop;
-};
-
-/// Enum class for holding transform patterns.
-enum class TransformPatternKind : uint8_t {
-  CSE = 0,                                // ApplyPatternsOp {apply_cse}
-  CANONICALIZATION,                       // ApplyCanonicalizationPatternsOp
-  MERGE_CONSECUTIVE_INSERT_EXTRACT_SLICE, // ApplyMergeConsecutiveInsertExtractSlicePatternsOp
-  RESOLVE_RANKED_SHAPED_TYPE_RESULT_DIMS // ApplyResolveRankedShapedTypeResultDimsPatternsOp
-};
-
-/// Enum class for holding canonicalization patterns.
-enum class CanonicalizationPatternKind : uint8_t {
-  kSimplifyTrivialLoops = 0,      // SimplifyTrivialLoops
-  kFoldTransposeWithTranspose = 1 // FoldTransposeWithTranspose Pattern
 };
 
 /// Struct for specifying options when getting kernel inputs/outputs.
@@ -112,35 +70,6 @@ struct GetKernelIOOptions {
   /// the value before reshaping.
   /// \Note Cannot be used when \c isInverted is set to true.
   SetVector<int64_t> findReshapePosition{};
-};
-
-/// Struct for specifying options for matching IR values.
-struct MatchOptions {
-  /// Whether to reverse the order of payload objects in \c target.
-  bool needsReverse{false};
-  /// If set, will only match operations that are ancestors of
-  /// \c childHandleOrValue.
-  std::optional<std::variant<ValueHandle *, Value>> childHandleOrValue{};
-};
-
-/// Enum class for loop tile mode.
-enum class LoopTileMode : uint8_t { kFactorMode = 0, kNPartMode };
-
-/// Struct for specifying options for loop tiling.
-struct LoopTileOptions {
-  /// The tiling mode.
-  LoopTileMode mode{LoopTileMode::kFactorMode};
-  /// Whether reorder the tiled axis.
-  bool isReorderMode{false};
-};
-
-/// Struct for specifying options for mapping scf.for to scf.forall.
-struct MapForToForallOptions {
-  /// Device mapping attribute for the `scf.forall` op.
-  std::optional<DeviceMappingAttrInterface> mapping{std::nullopt};
-  /// Whether the transformation is effectively immediately. If not, only an
-  /// attribute is added to the `scf.for` op.
-  bool annotateOnly{false};
 };
 
 /// Struct for specifying options for set buffer size.
@@ -177,7 +106,7 @@ struct SetBufferSizeOptions {
 ///  |     | scheduled kernel #0 |      | scheduled kernel #N |             |
 ///  |     +---------------------+      +---------------------+             |
 ///  |----------------------------------------------------------------------|
-class SchedulerBase {
+class SchedulerBase : public schedule::ScheduleBuilder {
 public:
   explicit SchedulerBase(func::FuncOp f, FusionKind kind);
 
@@ -205,23 +134,9 @@ protected:
   // Type defs.
   //===--------------------------------------------------------------------===//
   using CacheIOResult = detail::CacheIOResult;
-  using ForallTilingResult = detail::ForallTilingResult;
-  using ForTilingResult = detail::ForTilingResult;
-  using ForReductionTilingResult = detail::ForReductionTilingResult;
-  using TransformPatternKind = detail::TransformPatternKind;
-  using CanonicalizationPatternKind = detail::CanonicalizationPatternKind;
-  using SetBufferSizeMode = transform::SetBufferSizeMode;
   using GetKernelIOOptions = detail::GetKernelIOOptions;
-  using MatchOptions = detail::MatchOptions;
-  using NamedValueHandleArgs = detail::NamedValueHandleArgs;
-  using LoopTileResult = detail::LoopTileResult;
-  using LoopTileMode = detail::LoopTileMode;
-  using LoopTileOptions = detail::LoopTileOptions;
-  using MapForToForallOptions = detail::MapForToForallOptions;
   using SetBufferSizeOptions = detail::SetBufferSizeOptions;
-  using Identifier = detail::Identifier;
-  using OperationIdentifier = detail::OperationIdentifier;
-  using AttributeIdentifier = detail::AttributeIdentifier;
+  using SetBufferSizeMode = transform::SetBufferSizeMode;
 
   /// Implementation of kernel analysis and verification.
   virtual LogicalResult analyzeAndVerifyKernelImpl();
@@ -249,14 +164,8 @@ protected:
   void analyzeKernelForInterchangeAndDimensions();
 
   //===--------------------------------------------------------------------===//
-  // Basic Schedule API.
+  // Basic Schedule API (HFusion-specific part).
   //===--------------------------------------------------------------------===//
-
-  /// Get handle to the kernel function.
-  ///
-  /// \param opBuilder Reference to IRBuilder instance.
-  /// \return RegularValueHandle to `func.func` op.
-  ValueHandle *getFuncHandle(OpBuilder &opBuilder);
 
   /// Get handles to the outputs of the kernel.
   ///
@@ -294,42 +203,19 @@ protected:
   ValueHandles getTilingStructHandles(SmallVector<TilingData *> s,
                                       OpBuilder &opBuilder);
 
-  /// Get handle to ops with the \c opName in the kenrel, with additional
-  /// constraints/options specified in \c options.
+  /// Tile the target linalg reduction op using \c scf.for ops by \c
+  /// tileSizes.
   ///
-  /// \param opName Target op name.
+  /// \param targets Value handles to \c linalg.reduce ops.
+  /// \param tileSizes Value handles to mixed tile sizes.
   /// \param opBuilder Reference to IRBuilder instance.
-  /// \param options Match options.
-  /// \return NamedValueHandle to the target ops.
-  ValueHandle *getOpsWithName(StringRef opName, OpBuilder &opBuilder,
-                              const MatchOptions &options = MatchOptions());
-
-  /// Get handle to ops with given attribute in the kernel, with additional
-  /// constraints/options specified in \c options.
-  ///
-  /// \param attrName Attribute name.
-  /// \param opBuilder Reference to IRBuilder instance.
-  /// \param attrValue Attribute value.
-  /// \param options Match options.
-  /// \return NamedValueHandle to the target ops.
-  ValueHandle *getOpsWithAttr(StringRef attrName, OpBuilder &opBuilder,
-                              Attribute attrValue = Attribute(),
-                              const MatchOptions &options = MatchOptions());
-
-  /// Get handle to ops with given attributes in the kernel, with additional
-  /// constraints/options specified in \c options.
-  ///
-  /// \param requiredAttrs List of required attributes.
-  /// \param opBuilder Reference to IRBuilder instance.
-  /// \param optionalAttrs List of optional attributes. If provided, at least
-  ///                      one of them have to match.
-  /// \param options Match options.
-  /// \return NamedValueHandle to the target ops.
-  ValueHandle *
-  getOpsWithAttrs(const SmallVector<NamedAttribute> &requiredAttrs,
-                  OpBuilder &opBuilder,
-                  const SmallVector<NamedAttribute> &optionalAttrs = {},
-                  const MatchOptions &options = MatchOptions());
+  /// \param multiReduceNum The number of multi-reduced tensors.
+  /// \return ForReductionTilingResult
+  /// \note The input \c targets handles are invalidated.
+  ForReductionTilingResult
+  tileReductionUsingFor(ValueHandles &targets,
+                        ValueHandleFoldResults &tileSizes, OpBuilder &opBuilder,
+                        int64_t multiReduceNum = 1);
 
   /// Perform cache read on kernel inputs.
   ///
@@ -376,106 +262,6 @@ protected:
   ForallTilingResult tileUsingForAll(ValueHandles &targets, int64_t blockDim,
                                      OpBuilder &opBuilder);
 
-  /// Tile the target linalg ops using \c scf.for ops by \c tileSizes.
-  ///
-  /// \param targets Value handles to linalg ops.
-  /// \param tileSize Value handles to mixed tile sizes.
-  /// \param opBuilder Reference to IRBuilder instance.
-  /// \return NamedValueHandles to `scf.for` ops.
-  /// \note The input `targets` handles are updated to the tiled linalg ops
-  /// and
-  ///       can be reused without invalidation.
-  ForTilingResult
-  tileUsingFor(ValueHandles &targets, ValueHandleFoldResults &tileSizes,
-               OpBuilder &opBuilder,
-               ArrayRef<int64_t> interchangeAxis = ArrayRef<int64_t>{});
-
-  /// Tile the target linalg reduction op using \c scf.for ops by \c
-  /// tileSizes.
-  ///
-  /// \param targets Value handles to \c linalg.reduce ops.
-  /// \param tileSizes Value handles to mixed tile sizes.
-  /// \param opBuilder Reference to IRBuilder instance.
-  /// \param multiReduceNum The number of multi-reduced tensors.
-  /// \return ForReductionTilingResult
-  /// \note The input \c targets handles are invalidated.
-  ForReductionTilingResult
-  tileReductionUsingFor(ValueHandles &targets,
-                        ValueHandleFoldResults &tileSizes, OpBuilder &opBuilder,
-                        int64_t multiReduceNum = 1);
-
-  /// Fuse independent loops together.
-  ///
-  /// \param loops Value handles to loops of the same type (i.e., all
-  ///        `scf.for` or all `scf.forall`)
-  /// \param opBuilder Reference to IRBuilder instance.
-  /// \return NamedValueHandles to the fused loop.
-  /// \note The input `loops` handles are invalidated.
-  ValueHandle *fuseLoops(ValueHandles &loops, OpBuilder &opBuilder);
-
-  /// Fuse independent loops for each dim together.
-  ///
-  /// \param loops Value handles to loops for each dimension
-  /// \param opBuilder Reference to IRBuilder instance.
-  /// \return vector of NamedValueHandles to the fused loop.
-  /// \note The input `loops` handles are invalidated.
-  ValueHandles fuseLoopsForEachDim(ArrayRef<ValueHandles> tiledLoopsForEachDim,
-                                   OpBuilder &builder);
-
-  /// Coalesces the perfect loop nest enclosed by \c outerMostLoop
-  ///
-  /// \param outerMostLoop Value handle to the outer most loop (must be either
-  ///                      `scf.for` or `affine.for` loop)
-  /// \param opBuilder Reference to IRBuilder instance.
-  /// \return NamedValueHandles to the coalesced loop.
-  /// \note The input \c outerMostLoop handle is invalidated.
-  ValueHandle *coalesceLoops(ValueHandle *outerMostLoop, OpBuilder &opBuilder);
-
-  /// Tile the given loop by a factor of \c tileSize.
-  ///
-  /// IR before tiling:
-  ///   for i : l to u step s
-  ///     use(i)
-  ///
-  /// When tiling mode is `LoopTile::kFactor` (default):
-  ///
-  /// IR after tiling loop i by a factor of x:
-  ///   for i.o : l to u step x
-  ///    for i.i : 0 to min(u - i.o, x) step s
-  ///      use(i.o + i.i)
-  ///
-  /// When no-min-max-bounds option is enabled:
-  ///   for i.o : l to u step x
-  ///    for i.i : 0 to x step s
-  ///     if (i.o + i.i < u)
-  ///       use(i.o + i.i)
-  ///
-  /// When tiling mode is `LoopTile::kNPart`:
-  ///
-  /// IR after tiling loop i by a factor of x:
-  ///   for i.o 0 to x step 1
-  ///     for i.i 0 to min(ceilDiv(u, x), u - i.o*(ceilDiv(u, x))) step 1
-  ///       use(i.o*(ceilDiv(u, x)) + i.i)
-  /// Note that this requires the loop to be normalized before tiling. And it
-  /// cannot be used together with no-min-max-bounds option.
-  ///
-  /// \param targetLoop Value handle to the target `scf.for` loop.
-  /// \param tileSize ValueHandleFoldResult to the Size of tiling
-  /// \param opBuilder Reference to IRBuilder instance.
-  /// \param options Loop tiling options.
-  /// \return Handles to the outer and inner loop after tiling.
-  /// \note The input \c targetLoop handle is invalidated.
-  LoopTileResult tileLoop(ValueHandle *targetLoop,
-                          ValueHandleFoldResult tileSize, OpBuilder &opBuilder,
-                          const LoopTileOptions &options = LoopTileOptions());
-
-  /// Normalize the given loop (i.e., has step 1 while preserving trip count)
-  ///
-  /// \param targetLoop Value handle to the target `scf.for` loop.
-  /// \note The input \c targetLoop handle is updated to the loop after being
-  ///       normalized.
-  void normalizeLoop(ValueHandle *targetLoop, OpBuilder &opBuilder);
-
   /// TODO: Add return value to this API.
   /// Fuse target ops into containing ops one by one.
   ///
@@ -497,72 +283,6 @@ protected:
   void fuseIntoContaining(ValueHandles &targetOps, ValueHandles &containingLoop,
                           OpBuilder &opBuilder, bool duplicateProducers = false,
                           bool applyCanonicalizeAfterEachFusion = true);
-
-  /// Split `handle` into `splitSize` parts.
-  ///
-  /// \param handle Target value handle.
-  /// \param splitSize Number of parts to split.
-  /// \param opBuilder Reference to IRBuilder instance.
-  /// \return RegularValueHandles to the splitted handles.
-  /// \note Runtime error will occur if the handle cannot be split into the
-  ///       request parts.
-  ValueHandles splitHandle(ValueHandle *handle, size_t splitSize,
-                           OpBuilder &opBuilder);
-
-  /// Apply canonicalize pass.
-  ///
-  /// \param opBuilder Reference to IRBuilder instance.
-  /// \note This function resets all handles.
-  void applyCanonicalization(OpBuilder &opBuilder);
-
-  /// Apply common subexpression elimination pass.
-  ///
-  /// \param opBuilder Reference to IRBuilder instance.
-  /// \note This function resets all handles.
-  void applyCSE(OpBuilder &opBuilder);
-
-  /// Apply `patterns` to `target`.
-  ///
-  /// \param target Target handle to apply patterns.
-  /// \param patterns List of `TransformPatternKind` to apply.
-  /// \param opBuilder Reference to IRBuilder instance.
-  /// \param disablePatterns List of `CanonicalizationPatternKind` to disable.
-  void applyPatterns(
-      ValueHandle *target, const SmallVector<TransformPatternKind> &patterns,
-      OpBuilder &opBuilder,
-      const SmallVector<CanonicalizationPatternKind> &disablePatterns = {});
-
-  /// Apply one-shot-bufferization to the kernel function.
-  ///
-  /// \param opBuilder Reference to IRBuilder instance.
-  void applyOneShotBufferization(OpBuilder &opBuilder);
-
-  /// Map `scf.for` to `scf.forall` op, with optional mapping.
-  ///
-  /// \param targetLoop Handle to `scf.for` op.
-  /// \param mapping Optional mapping for`scf.forall` op.
-  /// \param opBuilder Reference to IRBuilder instance.
-  /// \param options Map for to forall options.
-  /// \return NamedValueHandles to the `scf.forall` op if `options.annotateOnly`
-  ///         is set to true. Otherwise, its the NamedValueHandles to the
-  ///         `scf.for` op after annotation.
-  /// \note The input `targetLoop` handle is invalidated.
-  ValueHandle *mapForToForall(
-      ValueHandle *targetLoop, OpBuilder &opBuilder,
-      const MapForToForallOptions &options = MapForToForallOptions());
-
-  using RegionBuilderFn =
-      llvm::function_ref<void(ImplicitLocOpBuilder &, Block &)>;
-
-  /// Construct `transform.foreachOp` and return its results.
-  ///
-  /// \param target Target to apply `transform.foreachOp`
-  /// \param resultTypes `transform.foreachOp`'s result types.
-  /// \param regionBuilder Lambda to build `transform.foreachOp`'s body.
-  /// \param opBuilder Reference to IRBuilder instance.
-  ResultRange createForEachOp(Value target, TypeRange resultTypes,
-                              RegionBuilderFn regionBuilder,
-                              OpBuilder &opBuilder);
 
   /// Set the size of the `targets` to `bufferSize`.
   ///
@@ -629,33 +349,9 @@ protected:
       func::FuncOp target, ArrayRef<std::string> disabledPatterns = {}) const;
 
   //===--------------------------------------------------------------------===//
-  // Value Handle related API.
-  //===--------------------------------------------------------------------===//
-
-  /// Create and record handle.
-  template <class T, class... Args>
-  T *record(Value v, OpBuilder &b, Args &&...args) {
-    return handleRecord_->record<T>(
-        recordImpl(v, b, std::forward<Args>(args)...));
-  }
-
-  template <class T, class... Args>
-  std::optional<T *> tryFetchRecord(Args &&...args) {
-    static_assert(std::is_same_v<T, NamedValueHandle> &&
-                  "Only support fetching NamedValueHandle");
-    return handleRecord_->tryFetchRecordImpl(std::forward<Args>(args)...);
-  }
-
-  /// Reset all recorded handles.
-  /// \note Different value handle kind have different implementation.
-  void resetAllHandles() { return handleRecord_->resetAllHandles(); }
-
-  //===--------------------------------------------------------------------===//
   // Getter methods.
   //===--------------------------------------------------------------------===//
 
-  /// Get the handle to transform sequence's block argument.
-  Value getTransformSeqHandle() { return transformSeqBlockHandle_; }
   /// Get the enclosing module of the kernel function.
   ModuleOp getModule() { return module_; }
   /// Get a pointer to kernel info.
@@ -664,8 +360,6 @@ protected:
   TilingInfo *getTilingInfo() const { return tilingInfo_.get(); };
   /// Get MLIR Context.
   MLIRContext *getContext() const { return module_->getContext(); };
-  /// Get reference to the handle record.
-  HandleRecord *getHandleRecord() { return handleRecord_.get(); }
   /// Get the original kernel.
   func::FuncOp getOriginalKernel() {
     assert(originalKernel_);
@@ -700,10 +394,6 @@ protected:
   // Setter methods.
   //===--------------------------------------------------------------------===//
 
-  /// Update the handle to transform sequence's block argument.
-  void setTransformSeqHandle(Value newHandle) {
-    transformSeqBlockHandle_ = newHandle;
-  }
   /// Set the to-be-scheduled kernel.
   void setToBeScheduledKernel(func::FuncOp f) { toBeScheduledKernel_ = f; }
   /// Set tiling info.
@@ -732,70 +422,6 @@ private:
   //===--------------------------------------------------------------------===//
   // Utility functions for Schedule APIs.
   //===--------------------------------------------------------------------===//
-
-  /// Get value from handle.
-  ///
-  /// \param handle Pointer to a value handle instance.
-  /// \param opBuilder Reference to IRBuilder instance.
-  /// \return Value corresponding to the input handle.
-  /// \note User should guarantee that the input handle is valid, otherwise
-  ///       a runtime error is produced.
-  Value getValue(ValueHandle *handle, OpBuilder &opBuilder);
-
-  /// Get values from handles.
-  ///
-  /// \param handles Vector of pointer to a value handle instance.
-  /// \param opBuilder Reference to IRBuilder instance.
-  /// \return Values corresponding to the input handles.
-  SmallVector<Value> getValues(const ValueHandles &handle,
-                               OpBuilder &opBuilder);
-
-  /// Match and return IR values with \c identifier of type \c type, with
-  /// additional constraints/options specified in \c options.
-  ///
-  /// \param target Target to perform matching.
-  /// \param identifier Identifier information.
-  /// \param opBuilder Reference to IRBuilder instance.
-  /// \param options Match options.
-  /// \return Values corresponding to the input handles.
-  Value matchByIdentifier(Value target, const Identifier &identifier,
-                          OpBuilder &opBuilder,
-                          const MatchOptions &options = MatchOptions());
-
-  /// Merge handles whose type is `handleType` and return the merged
-  /// handle's value.
-  ///
-  /// \param handles Vector of handle values to merge.
-  /// \param handleType Handle's type.
-  /// \param opBuilder Reference to IRBuilder instance.
-  /// \return Value holding the merged handles.
-  Value mergeHandles(const SmallVectorImpl<Value> &handles,
-                     transform::TransformHandleTypeInterface handleType,
-                     OpBuilder &opBuilder);
-
-  /// Annotate the IR values corresponding to \c target with \c attrName.
-  ///
-  /// \param target Target value to annotate.
-  /// \param attrName Attribute name to add to operation's attribute list.
-  /// \param opBuilder Reference to IRBuilder instance.
-  void annotateByAttr(Value target, StringRef attrName, OpBuilder &opBuilder);
-
-  /// Get handle value to the kernel function.
-  ///
-  /// \param opBuilder Reference to IRBuilder instance.
-  /// \return Value to a handle of `func.func` op.
-  Value getFuncValue(OpBuilder &opBuilder);
-
-  /// Get handle to ops with the specified identifier information in the kernel,
-  /// with additional constraints/options specified in \c options.
-  ///
-  /// \param identifier Identifier info.
-  /// \param opBuilder Reference to IRBuilder instance.
-  /// \param options Match options.
-  /// \return NamedValueHandle to the target ops.
-  ValueHandle *
-  getOpsWithIdentifier(const Identifier &identifier, OpBuilder &opBuilder,
-                       const MatchOptions &options = MatchOptions());
 
   //===--------------------------------------------------------------------===//
   // Utility functions for Schedule.
@@ -862,27 +488,6 @@ private:
   /// Dump current schedule and kernel function for debugging purposes.
   void dumpKernelAndSchedule();
 
-  /// Helper function to convert `tensor.empty` to
-  /// `bufferization.alloc_tensor`.
-  ///
-  /// \note This function is invoked in `applyOneShotBufferization` and should
-  ///       not be called separately.
-  void bufferizeEmptyTensor(OpBuilder &opBuilder);
-
-  /// Create and record NamedValueHandle.
-  NamedValueHandle recordImpl(Value target, OpBuilder &opBuilder,
-                              const NamedValueHandleArgs &args);
-
-  /// Create and record RegularValueHandle.
-  RegularValueHandle recordImpl(Value target, OpBuilder &opBuilder);
-
-  /// Create and record FuncArgHandle.
-  FuncArgHandle recordImpl(Value target, OpBuilder &opBuilder,
-                           size_t funcArgNum);
-
-  std::pair<SmallVector<int64_t>, SmallVector<Value>>
-  unpackFoldResults(ValueHandleFoldResults &values, OpBuilder &opBuilder);
-
 private:
   /// Module enclosing the to-be-scheduled kernel.
   ModuleOp module_{nullptr};
@@ -890,14 +495,10 @@ private:
   func::FuncOp originalKernel_{nullptr};
   /// Kernel function that will be scheduled.
   func::FuncOp toBeScheduledKernel_{nullptr};
-  /// The transform sequence block argument value.
-  Value transformSeqBlockHandle_;
   /// Information regarding the to-be-scheduled kernel.
   std::unique_ptr<KernelInfo> kernelInfo_{nullptr};
   /// Information regarding the tiling.
   std::unique_ptr<TilingInfo> tilingInfo_{nullptr};
-  /// Record keeping all allocated value handles.
-  std::unique_ptr<HandleRecord> handleRecord_{nullptr};
   /// Underlying fusion kind.
   FusionKind kind_;
   /// Schedule options.

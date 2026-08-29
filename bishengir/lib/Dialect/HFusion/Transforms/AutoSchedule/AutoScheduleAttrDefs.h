@@ -35,25 +35,4 @@ inline char kFuncArgIdxFormat[] = "__arg{0}__";
 inline llvm::StringLiteral kIntermediateProducerTagName =
     "__intermediate_producer__";
 
-inline llvm::StringLiteral kTiledForAllTagName = "__tiled_forall__";
-
-inline llvm::StringLiteral kTiledForTagName = "__tiled_for__";
-
-inline llvm::StringLiteral kFusedLoopTagName = "__fused_loop__";
-
-inline llvm::StringLiteral kForallLoopTagName = "__forall__";
-
-inline llvm::StringLiteral kCoalescedLoopTagName = "__coalesced_loop__";
-
-inline llvm::StringLiteral kTileReductionPartialReductionOpTagName =
-    "__partial_reduction_op__";
-
-inline llvm::StringLiteral kTileReductionFinalReductionOpTagName =
-    "__final_reduction_op__";
-
-inline llvm::StringLiteral kTileReductionInitOpTagName =
-    "__reduction_init_op__";
-
-inline llvm::StringLiteral kTileReductionLoopTagName = "__reduction_loop__";
-
 #endif // BISHENGIR_DIALECT_HFUSION_TRANSFORMS_AUTOSCHEDULE_AUTOSCHEDULEATTRDEFS_H

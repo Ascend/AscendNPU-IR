@@ -19,7 +19,6 @@
 
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/AutoScheduleBase.h"
-#include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/ValueHandle.h"
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"

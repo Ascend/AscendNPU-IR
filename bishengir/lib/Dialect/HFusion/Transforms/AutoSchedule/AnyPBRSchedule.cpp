@@ -22,7 +22,6 @@
 
 #include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/AnyPBRSchedule.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/AutoScheduleBase.h"
-#include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/ValueHandle.h"
 #include "bishengir/Dialect/Utils/ReachabilityAnalyzer.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Debug.h"

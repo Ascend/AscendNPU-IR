@@ -20,6 +20,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/AutoScheduleBase.h"
+#include "bishengir/Dialect/Analysis/Transforms/TransformOps.h"
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HACC/IR/HACC.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
@@ -216,7 +217,6 @@ AutoScheduleOptions SchedulerBase::options_ = AutoScheduleOptions();
 SchedulerBase::SchedulerBase(func::FuncOp f, FusionKind kind) {
   kernelInfo_ = std::make_unique<KernelInfo>();
   tilingInfo_ = std::make_unique<TilingInfo>();
-  handleRecord_ = std::make_unique<HandleRecord>();
   originalKernel_ = f;
   module_ = f.getOperation()->getParentOfType<ModuleOp>();
   kind_ = kind;
@@ -228,7 +228,6 @@ SchedulerBase::SchedulerBase(func::FuncOp f,
                              std::unique_ptr<TilingInfo> &&tilingInfo) {
   kernelInfo_ = std::move(kernelInfo);
   tilingInfo_ = std::move(tilingInfo);
-  handleRecord_ = std::make_unique<HandleRecord>();
   originalKernel_ = f;
   module_ = f.getOperation()->getParentOfType<ModuleOp>();
   kind_ = kernelInfo_->getFusionKind();
@@ -238,7 +237,6 @@ SchedulerBase::SchedulerBase(func::FuncOp f,
 SchedulerBase::~SchedulerBase() {
   kernelInfo_.reset();
   tilingInfo_.reset();
-  handleRecord_.reset();
 }
 
 LogicalResult SchedulerBase::runPreScheduleProcedure(OpBuilder &opBuilder) {
@@ -1026,41 +1024,6 @@ LogicalResult SchedulerBase::fixCallSitesAndCaller(OpBuilder &opBuilder) {
   }
 
   return success();
-}
-
-NamedValueHandle SchedulerBase::recordImpl(Value target, OpBuilder &opBuilder,
-                                           const NamedValueHandleArgs &args) {
-  // If the identifier type is operation name, then it's already unique.
-  std::string uniqueName =
-      args.isNameUnique ? args.name.str()
-                        : getHandleRecord()->getAndRecordAttrName(args.name);
-
-  if (args.needsReverse)
-    target = opBuilder.create<transform::ReverseOp>(
-        target.getLoc(),
-        /*result=*/TypeRange{opBuilder.getType<transform::AnyOpType>()},
-        /*target=*/target);
-
-  if (args.needsAnnotate)
-    opBuilder.create<transform::AnnotateOp>(
-        target.getLoc(),
-        /*target=*/target,
-        /*name=*/opBuilder.getStringAttr(uniqueName),
-        /*param=*/Value{});
-
-  return NamedValueHandle(target, uniqueName, args.type, HandleStatus::kValid,
-                          args.needsReverse);
-}
-
-RegularValueHandle
-SchedulerBase::recordImpl(Value target, [[maybe_unused]] OpBuilder &opBuilder) {
-  return RegularValueHandle(target, HandleStatus::kValid);
-}
-
-FuncArgHandle SchedulerBase::recordImpl(Value target,
-                                        [[maybe_unused]] OpBuilder &opBuilder,
-                                        size_t funcArgNum) {
-  return FuncArgHandle(target, funcArgNum, HandleStatus::kValid);
 }
 
 LogicalResult

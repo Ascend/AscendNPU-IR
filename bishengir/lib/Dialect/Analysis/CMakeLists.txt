@@ -1,3 +1,5 @@
+add_subdirectory(Transforms)
+add_subdirectory(Schedule)
 add_subdirectory(VFFusion)
 
 add_bishengir_dialect_library(BiShengIRAnalysis
