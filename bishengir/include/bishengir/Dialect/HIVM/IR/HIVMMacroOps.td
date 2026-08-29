@@ -733,7 +733,11 @@ def Conv1DL1Op : HIVM_MacroOp<"Conv1dL1",[
                         managed by inject-sync passes.
                       }]>:$sync_related_args,
                       I32Attr:$stride,
-                      I32Attr:$padding,
+                      Arg<AnyAttr, [{
+                        Zero-padding for Conv1d. Accepts an integer scalar or
+                        a 2-element integer array [paddingL, paddingR]. A
+                        scalar applies to both sides.
+                      }]>:$padding,
                       I32Attr:$groups
                       );
   let results = (outs Variadic<AnyRankedTensor>:$result_tensors);
@@ -767,7 +771,8 @@ def Conv1DL1Op : HIVM_MacroOp<"Conv1dL1",[
     static StringRef getOpName() { return "Conv1dL1"; }
 
     int64_t getStrideW();
-    int64_t getPaddingW();
+    FailureOr<int64_t> getPaddingL();
+    FailureOr<int64_t> getPaddingR();
 
     FailureOr<DataLayoutAttr> getInputLayout();
     FailureOr<DataLayoutAttr> getWeightLayout();
@@ -816,11 +821,12 @@ def Conv2DL1Op : HIVM_MacroOp<"Conv2dL1",[
                         directions.
                       }]>:$stride,
                       Arg<AnyAttr, [{
-                        Zero-padding for Conv2d. Accepts an integer scalar or a
-                        2-element integer array [paddingH, paddingW]. A scalar
-                        applies to both H and W directions. During library-call
-                        lowering, paddingH is used for padT/padB and paddingW
-                        is used for padL/padR.
+                        Zero-padding for Conv2d. Accepts an integer scalar, a
+                        2-element integer array [paddingH, paddingW], or a
+                        4-element integer array
+                        [paddingT, paddingB, paddingL, paddingR]. A scalar and
+                        the 2-element form apply symmetric padding in each
+                        dimension.
                       }]>:$padding,
                       I32Attr:$groups
                       );
@@ -856,8 +862,10 @@ def Conv2DL1Op : HIVM_MacroOp<"Conv2dL1",[
 
     FailureOr<int64_t> getStrideH();
     FailureOr<int64_t> getStrideW();
-    FailureOr<int64_t> getPaddingH();
-    FailureOr<int64_t> getPaddingW();
+    FailureOr<int64_t> getPaddingT();
+    FailureOr<int64_t> getPaddingB();
+    FailureOr<int64_t> getPaddingL();
+    FailureOr<int64_t> getPaddingR();
 
     FailureOr<DataLayoutAttr> getInputLayout();
     FailureOr<DataLayoutAttr> getWeightLayout();
@@ -905,11 +913,14 @@ def Conv3DL1Op : HIVM_MacroOp<"Conv3dL1",[
                         D/H/W directions. If omitted, the stride defaults to 1.
                       }]>:$stride,
                       Arg<AnyAttr, [{
-                        Zero-padding for Conv3d. Accepts an integer scalar or a
-                        3-element integer array [paddingD, paddingH, paddingW].
-                        A scalar applies to all D/H/W directions. Normalize
-                        materializes paddingD and decompose forwards paddingH
-                        and paddingW to Conv2dL1.
+                        Zero-padding for Conv3d. Accepts an integer scalar, a
+                        3-element integer array [paddingD, paddingH, paddingW],
+                        or a 6-element integer array
+                        [paddingFront, paddingBack, paddingT, paddingB,
+                        paddingL, paddingR]. A scalar and the 3-element form
+                        apply symmetric padding in each dimension. Normalize
+                        materializes Front/Back padding and decompose forwards
+                        T/B/L/R padding to Conv2dL1.
                       }]>:$padding,
                       I32Attr:$groups
                       );
@@ -946,9 +957,12 @@ def Conv3DL1Op : HIVM_MacroOp<"Conv3dL1",[
     FailureOr<int64_t> getStrideD();
     FailureOr<int64_t> getStrideH();
     FailureOr<int64_t> getStrideW();
-    FailureOr<int64_t> getPaddingD();
-    FailureOr<int64_t> getPaddingH();
-    FailureOr<int64_t> getPaddingW();
+    FailureOr<int64_t> getPaddingFront();
+    FailureOr<int64_t> getPaddingBack();
+    FailureOr<int64_t> getPaddingT();
+    FailureOr<int64_t> getPaddingB();
+    FailureOr<int64_t> getPaddingL();
+    FailureOr<int64_t> getPaddingR();
   }];
   let hasVerifier = 1;
 }

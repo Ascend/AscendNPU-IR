@@ -131,12 +131,52 @@ getConvIntArrayAttrElement(Attribute attr, StringRef attrName, Dim dim,
   return (*values)[static_cast<size_t>(dim)];
 }
 
+FailureOr<int64_t> getConvPaddingAttrElement(
+    Attribute attr, size_t spatialRank, size_t symmetricDim,
+    size_t explicitSide, function_ref<InFlightDiagnostic()> emitError) {
+  if (auto intAttr = dyn_cast<IntegerAttr>(attr))
+    return intAttr.getInt();
+
+  SmallVector<int64_t, 6> values;
+  if (auto denseAttr = dyn_cast<DenseI64ArrayAttr>(attr)) {
+    values.append(denseAttr.asArrayRef().begin(),
+                  denseAttr.asArrayRef().end());
+  } else if (auto arrayAttr = dyn_cast<ArrayAttr>(attr)) {
+    values.reserve(arrayAttr.size());
+    for (Attribute element : arrayAttr) {
+      auto intAttr = dyn_cast<IntegerAttr>(element);
+      if (!intAttr) {
+        emitError() << "`padding` array elements must be integers";
+        return failure();
+      }
+      values.push_back(intAttr.getInt());
+    }
+  } else {
+    emitError() << "`padding` must be an integer scalar or an integer array";
+    return failure();
+  }
+
+  if (spatialRank > 1 && values.size() == spatialRank)
+    return values[symmetricDim];
+  if (values.size() == 2 * spatialRank)
+    return values[explicitSide];
+
+  auto diag = emitError();
+  diag << "`padding` must be an integer scalar";
+  if (spatialRank > 1)
+    diag << ", a " << spatialRank << "-element integer array, or a ";
+  else
+    diag << ", or a ";
+  diag << 2 * spatialRank << "-element integer array";
+  return failure();
+}
+
 LogicalResult checkConvOutputDim(Operation *op, ShapedType inputTy,
                                  ShapedType weightTy, ShapedType outputTy,
                                  int64_t inputDim, int64_t weightDim,
-                                 int64_t outputDim, int64_t padding,
-                                 int64_t dilation, int64_t stride,
-                                 StringRef dimName) {
+                                 int64_t outputDim, int64_t paddingBegin,
+                                 int64_t paddingEnd, int64_t dilation,
+                                 int64_t stride, StringRef dimName) {
   if (inputTy.isDynamicDim(inputDim) || weightTy.isDynamicDim(weightDim) ||
       outputTy.isDynamicDim(outputDim))
     return success();
@@ -144,13 +184,14 @@ LogicalResult checkConvOutputDim(Operation *op, ShapedType inputTy,
   int64_t inputSize = inputTy.getDimSize(inputDim);
   int64_t weightSize = weightTy.getDimSize(weightDim);
   int64_t expectedOutputSize =
-      (inputSize + 2 * padding - dilation * (weightSize - 1) - 1) /
+      (inputSize + paddingBegin + paddingEnd -
+       dilation * (weightSize - 1) - 1) /
           stride +
       1;
   if (outputTy.getDimSize(outputDim) != expectedOutputSize)
     return op->emitOpError()
            << "requires output " << dimName << " to be computed as: "
-           << "(inputSize + 2 * padding - dilation * "
+           << "(inputSize + paddingBegin + paddingEnd - dilation * "
               "(weightSize - 1) - 1) / stride + 1";
   return success();
 }
@@ -3894,7 +3935,17 @@ void ScatterStoreOp::getEffects(
 
 int64_t Conv1DOp::getStrideW() { return getStride(); }
 
-int64_t Conv1DOp::getPaddingW() { return getPadding(); }
+FailureOr<int64_t> Conv1DOp::getPaddingL() {
+  return getConvPaddingAttrElement(getPaddingAttr(), /*spatialRank=*/1,
+                                   /*symmetricDim=*/0, /*explicitSide=*/0,
+                                   [&]() { return emitOpError(); });
+}
+
+FailureOr<int64_t> Conv1DOp::getPaddingR() {
+  return getConvPaddingAttrElement(getPaddingAttr(), /*spatialRank=*/1,
+                                   /*symmetricDim=*/0, /*explicitSide=*/1,
+                                   [&]() { return emitOpError(); });
+}
 
 int64_t Conv1DOp::getDilationW() { return getDilation(); }
 
@@ -3982,22 +4033,27 @@ LogicalResult Conv1DOp::verify() {
            << "currently does not support dilation != 1";
 
   // Check output width oW
-  // oW = floor((iW + 2 * paddingW
+  // oW = floor((iW + paddingL + paddingR
   //             - dilation * (wW - 1) - 1) / stride + 1)
-  int64_t paddingW = getPaddingW();
+  auto paddingL = getPaddingL();
+  if (failed(paddingL))
+    return failure();
+  auto paddingR = getPaddingR();
+  if (failed(paddingR))
+    return failure();
   int64_t inputWDim = (inputRank == 2) ? 1 : 2;
   int64_t outputWDim = (initRank == 2) ? 1 : 2;
 
   return checkConvOutputDim(getOperation(), inputTy, weightTy, initTy,
-                            inputWDim, /*weightDim=*/2, outputWDim, paddingW,
-                            dilationW, strideW, "width oW");
+                            inputWDim, /*weightDim=*/2, outputWDim, *paddingL,
+                            *paddingR, dilationW, strideW, "width oW");
 }
 
 void Conv1DOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                      ValueRange inputs, Value output, int32_t stride,
-                     int32_t padding, int32_t dilation, int32_t groups) {
+                     Attribute padding, int32_t dilation, int32_t groups) {
   odsState.addAttribute("stride", odsBuilder.getI32IntegerAttr(stride));
-  odsState.addAttribute("padding", odsBuilder.getI32IntegerAttr(padding));
+  odsState.addAttribute("padding", padding);
   odsState.addAttribute("dilation", odsBuilder.getI32IntegerAttr(dilation));
   odsState.addAttribute("groups", odsBuilder.getI32IntegerAttr(groups));
   auto outType = output.getType();
@@ -4008,6 +4064,13 @@ void Conv1DOp::build(OpBuilder &odsBuilder, OperationState &odsState,
   fillStructuredOpRegion(odsBuilder, region, TypeRange(inputs),
                          TypeRange(output), odsState.attributes.getAttrs(),
                          odsState.location, getRegionBuilder());
+}
+
+void Conv1DOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                     ValueRange inputs, Value output, int32_t stride,
+                     int32_t padding, int32_t dilation, int32_t groups) {
+  build(odsBuilder, odsState, inputs, output, stride,
+        odsBuilder.getI32IntegerAttr(padding), dilation, groups);
 }
 
 MutableOperandRange Conv1DOp::getDpsInitsMutable() { return getInitMutable(); }
@@ -4180,16 +4243,28 @@ FailureOr<int64_t> Conv2DOp::getStrideW() {
       [&]() { return emitOpError(); });
 }
 
-FailureOr<int64_t> Conv2DOp::getPaddingH() {
-  return getConvIntArrayAttrElement<2>(
-      getPaddingAttr(), "padding", Conv2DDim::H,
-      [&]() { return emitOpError(); });
+FailureOr<int64_t> Conv2DOp::getPaddingT() {
+  return getConvPaddingAttrElement(getPaddingAttr(), /*spatialRank=*/2,
+                                   /*symmetricDim=*/0, /*explicitSide=*/0,
+                                   [&]() { return emitOpError(); });
 }
 
-FailureOr<int64_t> Conv2DOp::getPaddingW() {
-  return getConvIntArrayAttrElement<2>(
-      getPaddingAttr(), "padding", Conv2DDim::W,
-      [&]() { return emitOpError(); });
+FailureOr<int64_t> Conv2DOp::getPaddingB() {
+  return getConvPaddingAttrElement(getPaddingAttr(), /*spatialRank=*/2,
+                                   /*symmetricDim=*/0, /*explicitSide=*/1,
+                                   [&]() { return emitOpError(); });
+}
+
+FailureOr<int64_t> Conv2DOp::getPaddingL() {
+  return getConvPaddingAttrElement(getPaddingAttr(), /*spatialRank=*/2,
+                                   /*symmetricDim=*/1, /*explicitSide=*/2,
+                                   [&]() { return emitOpError(); });
+}
+
+FailureOr<int64_t> Conv2DOp::getPaddingR() {
+  return getConvPaddingAttrElement(getPaddingAttr(), /*spatialRank=*/2,
+                                   /*symmetricDim=*/1, /*explicitSide=*/3,
+                                   [&]() { return emitOpError(); });
 }
 
 FailureOr<int64_t> Conv2DOp::getDilationH() {
@@ -4288,11 +4363,17 @@ LogicalResult Conv2DOp::verify() {
   auto dilationW = getDilationW();
   if (failed(dilationW))
     return failure();
-  auto paddingH = getPaddingH();
-  if (failed(paddingH))
+  auto paddingT = getPaddingT();
+  if (failed(paddingT))
     return failure();
-  auto paddingW = getPaddingW();
-  if (failed(paddingW))
+  auto paddingB = getPaddingB();
+  if (failed(paddingB))
+    return failure();
+  auto paddingL = getPaddingL();
+  if (failed(paddingL))
+    return failure();
+  auto paddingR = getPaddingR();
+  if (failed(paddingR))
     return failure();
 
   if (*strideH <= 0 || *strideH > 255 || *strideW <= 0 || *strideW > 255)
@@ -4305,26 +4386,26 @@ LogicalResult Conv2DOp::verify() {
            << "currently does not support dilation != 1";
 
   // Check output height oH
-  // oH = floor((iH + 2 * paddingH
+  // oH = floor((iH + paddingT + paddingB
   //             - dilationH * (wH - 1) - 1) / strideH + 1)
   int64_t inputHDim = (inputRank == 3) ? 1 : 2;
   int64_t outputHDim = (initRank == 3) ? 1 : 2;
 
   if (failed(checkConvOutputDim(
           getOperation(), inputTy, weightTy, initTy, inputHDim,
-          /*weightDim=*/2, outputHDim, *paddingH, *dilationH, *strideH,
-          "height oH")))
+          /*weightDim=*/2, outputHDim, *paddingT, *paddingB, *dilationH,
+          *strideH, "height oH")))
     return failure();
 
   // Check output width oW
-  // oW = floor((iW + 2 * paddingW
+  // oW = floor((iW + paddingL + paddingR
   //             - dilationW * (wW - 1) - 1) / strideW + 1)
   int64_t inputWDim = (inputRank == 3) ? 2 : 3;
   int64_t outputWDim = (initRank == 3) ? 2 : 3;
 
   return checkConvOutputDim(getOperation(), inputTy, weightTy, initTy,
-                            inputWDim, /*weightDim=*/3, outputWDim, *paddingW,
-                            *dilationW, *strideW, "width oW");
+                            inputWDim, /*weightDim=*/3, outputWDim, *paddingL,
+                            *paddingR, *dilationW, *strideW, "width oW");
 }
 
 void Conv2DOp::build(OpBuilder &odsBuilder, OperationState &odsState,
@@ -4533,22 +4614,40 @@ FailureOr<int64_t> Conv3DOp::getStrideW() {
       [&]() { return emitOpError(); });
 }
 
-FailureOr<int64_t> Conv3DOp::getPaddingD() {
-  return getConvIntArrayAttrElement<3>(
-      getPaddingAttr(), "padding", Conv3DDim::D,
-      [&]() { return emitOpError(); });
+FailureOr<int64_t> Conv3DOp::getPaddingFront() {
+  return getConvPaddingAttrElement(getPaddingAttr(), /*spatialRank=*/3,
+                                   /*symmetricDim=*/0, /*explicitSide=*/0,
+                                   [&]() { return emitOpError(); });
 }
 
-FailureOr<int64_t> Conv3DOp::getPaddingH() {
-  return getConvIntArrayAttrElement<3>(
-      getPaddingAttr(), "padding", Conv3DDim::H,
-      [&]() { return emitOpError(); });
+FailureOr<int64_t> Conv3DOp::getPaddingBack() {
+  return getConvPaddingAttrElement(getPaddingAttr(), /*spatialRank=*/3,
+                                   /*symmetricDim=*/0, /*explicitSide=*/1,
+                                   [&]() { return emitOpError(); });
 }
 
-FailureOr<int64_t> Conv3DOp::getPaddingW() {
-  return getConvIntArrayAttrElement<3>(
-      getPaddingAttr(), "padding", Conv3DDim::W,
-      [&]() { return emitOpError(); });
+FailureOr<int64_t> Conv3DOp::getPaddingT() {
+  return getConvPaddingAttrElement(getPaddingAttr(), /*spatialRank=*/3,
+                                   /*symmetricDim=*/1, /*explicitSide=*/2,
+                                   [&]() { return emitOpError(); });
+}
+
+FailureOr<int64_t> Conv3DOp::getPaddingB() {
+  return getConvPaddingAttrElement(getPaddingAttr(), /*spatialRank=*/3,
+                                   /*symmetricDim=*/1, /*explicitSide=*/3,
+                                   [&]() { return emitOpError(); });
+}
+
+FailureOr<int64_t> Conv3DOp::getPaddingL() {
+  return getConvPaddingAttrElement(getPaddingAttr(), /*spatialRank=*/3,
+                                   /*symmetricDim=*/2, /*explicitSide=*/4,
+                                   [&]() { return emitOpError(); });
+}
+
+FailureOr<int64_t> Conv3DOp::getPaddingR() {
+  return getConvPaddingAttrElement(getPaddingAttr(), /*spatialRank=*/3,
+                                   /*symmetricDim=*/2, /*explicitSide=*/5,
+                                   [&]() { return emitOpError(); });
 }
 
 FailureOr<int64_t> Conv3DOp::getDilationD() {
@@ -4661,14 +4760,23 @@ LogicalResult Conv3DOp::verify() {
   auto dilationW = getDilationW();
   if (failed(dilationW))
     return failure();
-  auto paddingD = getPaddingD();
-  if (failed(paddingD))
+  auto paddingFront = getPaddingFront();
+  if (failed(paddingFront))
     return failure();
-  auto paddingH = getPaddingH();
-  if (failed(paddingH))
+  auto paddingBack = getPaddingBack();
+  if (failed(paddingBack))
     return failure();
-  auto paddingW = getPaddingW();
-  if (failed(paddingW))
+  auto paddingT = getPaddingT();
+  if (failed(paddingT))
+    return failure();
+  auto paddingB = getPaddingB();
+  if (failed(paddingB))
+    return failure();
+  auto paddingL = getPaddingL();
+  if (failed(paddingL))
+    return failure();
+  auto paddingR = getPaddingR();
+  if (failed(paddingR))
     return failure();
 
   // DecomposeConv3d batches consecutive output-depth planes, so only the
@@ -4683,7 +4791,7 @@ LogicalResult Conv3DOp::verify() {
            << "currently does not support dilation != 1";
 
   // Check output depth/height/width.
-  // oX = floor((iX + 2 * paddingX
+  // oX = floor((iX + paddingBegin + paddingEnd
   //             - dilationX * (wX - 1) - 1) / strideX + 1)
   int64_t inputDDim = (inputRank == 4) ? 1 : 2;
   int64_t inputHDim = (inputRank == 4) ? 2 : 3;
@@ -4694,16 +4802,16 @@ LogicalResult Conv3DOp::verify() {
 
   if (failed(checkConvOutputDim(
           getOperation(), inputTy, weightTy, initTy, inputDDim,
-          /*weightDim=*/2, outputDDim, *paddingD, *dilationD, *strideD,
-          "depth oD")) ||
+          /*weightDim=*/2, outputDDim, *paddingFront, *paddingBack, *dilationD,
+          *strideD, "depth oD")) ||
       failed(checkConvOutputDim(
           getOperation(), inputTy, weightTy, initTy, inputHDim,
-          /*weightDim=*/3, outputHDim, *paddingH, *dilationH, *strideH,
-          "height oH")) ||
+          /*weightDim=*/3, outputHDim, *paddingT, *paddingB, *dilationH,
+          *strideH, "height oH")) ||
       failed(checkConvOutputDim(
           getOperation(), inputTy, weightTy, initTy, inputWDim,
-          /*weightDim=*/4, outputWDim, *paddingW, *dilationW, *strideW,
-          "width oW")))
+          /*weightDim=*/4, outputWDim, *paddingL, *paddingR, *dilationW,
+          *strideW, "width oW")))
     return failure();
 
   return success();

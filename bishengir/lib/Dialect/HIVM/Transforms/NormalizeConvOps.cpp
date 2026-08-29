@@ -162,9 +162,10 @@ static constexpr llvm::StringLiteral conv3dDepthPadded =
 //   reshape/transpose cycles.
 //
 // conv3dDepthPadded:
-//   Explicit contract between normalize and decompose for Conv3d. When D
-//   padding > 0, normalize materializes depth padding and tags the op, while
-//   decompose relies on this tag and keeps H/W padding on Conv2d attributes.
+//   Explicit contract between normalize and decompose for Conv3d. When Front
+//   or Back padding is nonzero, normalize materializes depth padding and tags
+//   the op, while decompose relies on this tag and keeps T/B/L/R padding on
+//   Conv2d attributes.
 
 bool isRegBasedArch(Operation *op) {
   auto moduleOp = op->getParentOfType<ModuleOp>();
@@ -287,11 +288,12 @@ LogicalResult expandToBatch(ConvOpType op, PatternRewriter &rewriter) {
 
 LogicalResult padDepthForConv3dInput(hivm::Conv3DL1Op op,
                                      PatternRewriter &rewriter,
-                                     int64_t depthPadding) {
+                                     int64_t paddingFront,
+                                     int64_t paddingBack) {
   // Depth padding is handled explicitly here (instead of in decompose) so the
   // rest of the conv3d->conv2d lowering can assume a clean sliding window over
   // depth with no extra control-flow branches.
-  if (depthPadding <= 0) {
+  if (paddingFront <= 0 && paddingBack <= 0) {
     return success();
   }
 
@@ -321,33 +323,39 @@ LogicalResult padDepthForConv3dInput(hivm::Conv3DL1Op op,
         ->getResult(0);
   };
 
-  Value frontPad = createZeroPad(
-      ArrayRef<int64_t>{batch, channel, depthPadding, height, width});
-  Value backPad = createZeroPad(
-      ArrayRef<int64_t>{batch, channel, depthPadding, height, width});
+  Value depthPaddedInput = input;
+  int64_t paddedDepth = depth;
+  if (paddingFront > 0) {
+    Value frontPad = createZeroPad(
+        ArrayRef<int64_t>{batch, channel, paddingFront, height, width});
+    paddedDepth += paddingFront;
+    Value concatFrontInit = rewriter.create<tensor::EmptyOp>(
+        loc, ArrayRef<int64_t>{batch, channel, paddedDepth, height, width},
+        elementType);
+    depthPaddedInput =
+        rewriter
+            .create<hivm::VConcatOp>(
+                loc, TypeRange{concatFrontInit.getType()},
+                rewriter.getI64IntegerAttr(2),
+                ValueRange{frontPad, depthPaddedInput}, concatFrontInit)
+            ->getResult(0);
+  }
 
-  Value concatFrontInit = rewriter.create<tensor::EmptyOp>(
-      loc, ArrayRef<int64_t>{batch, channel, depth + depthPadding, height, width},
-      elementType);
-  Value inputWithFront =
-      rewriter
-          .create<hivm::VConcatOp>(
-              loc, TypeRange{concatFrontInit.getType()},
-              rewriter.getI64IntegerAttr(2), ValueRange{frontPad, input},
-              concatFrontInit)
-          ->getResult(0);
-
-  Value concatFullInit = rewriter.create<tensor::EmptyOp>(
-      loc,
-      ArrayRef<int64_t>{batch, channel, depth + 2 * depthPadding, height, width},
-      elementType);
-  Value depthPaddedInput =
-      rewriter
-          .create<hivm::VConcatOp>(
-              loc, TypeRange{concatFullInit.getType()},
-              rewriter.getI64IntegerAttr(2), ValueRange{inputWithFront, backPad},
-              concatFullInit)
-          ->getResult(0);
+  if (paddingBack > 0) {
+    Value backPad = createZeroPad(
+        ArrayRef<int64_t>{batch, channel, paddingBack, height, width});
+    paddedDepth += paddingBack;
+    Value concatBackInit = rewriter.create<tensor::EmptyOp>(
+        loc, ArrayRef<int64_t>{batch, channel, paddedDepth, height, width},
+        elementType);
+    depthPaddedInput =
+        rewriter
+            .create<hivm::VConcatOp>(
+                loc, TypeRange{concatBackInit.getType()},
+                rewriter.getI64IntegerAttr(2),
+                ValueRange{depthPaddedInput, backPad}, concatBackInit)
+            ->getResult(0);
+  }
 
   op->replaceUsesOfWith(input, depthPaddedInput);
   // Persist the "depth already materialized" fact for downstream decompose.
@@ -1042,23 +1050,30 @@ public:
     }
 
     if constexpr (baseDims == 4) {
-      auto paddingD = op.getPaddingD();
-      auto paddingH = op.getPaddingH();
-      auto paddingW = op.getPaddingW();
-      if (failed(paddingD) || failed(paddingH) || failed(paddingW)) {
+      auto paddingFront = op.getPaddingFront();
+      auto paddingBack = op.getPaddingBack();
+      auto paddingT = op.getPaddingT();
+      auto paddingB = op.getPaddingB();
+      auto paddingL = op.getPaddingL();
+      auto paddingR = op.getPaddingR();
+      if (failed(paddingFront) || failed(paddingBack) || failed(paddingT) ||
+          failed(paddingB) || failed(paddingL) || failed(paddingR)) {
         return rewriter.notifyMatchFailure(
-            op, "Conv3d padding must be a scalar or 3-element array");
+            op, "Conv3d padding must be a scalar, 3-element array, or "
+                "6-element array");
       }
-      if (*paddingD < 0 || *paddingH < 0 || *paddingW < 0) {
+      if (*paddingFront < 0 || *paddingBack < 0 || *paddingT < 0 ||
+          *paddingB < 0 || *paddingL < 0 || *paddingR < 0) {
         return rewriter.notifyMatchFailure(op, "Conv3d padding must be >= 0");
       }
-      // Normalize materializes the symmetric padding of the D dimension.
+      // Normalize materializes the Front/Back padding of the D dimension.
       // H/W padding stays on Conv3dL1 and is converted to Conv2dL1
-      // [paddingH, paddingW] during decompose.
-      if (!op->hasAttr(conv3dDepthPadded) && *paddingD > 0) {
+      // [paddingT, paddingB, paddingL, paddingR] during decompose.
+      if (!op->hasAttr(conv3dDepthPadded) &&
+          (*paddingFront > 0 || *paddingBack > 0)) {
         if (failed(
                 padDepthForConv3dInput(cast<hivm::Conv3DL1Op>(op), rewriter,
-                                       *paddingD))) {
+                                       *paddingFront, *paddingBack))) {
           return rewriter.notifyMatchFailure(op,
                                              "Failed to pre-pad Conv3d depth");
         }

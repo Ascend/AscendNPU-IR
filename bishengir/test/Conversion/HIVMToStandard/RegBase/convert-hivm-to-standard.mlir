@@ -153,6 +153,26 @@ module {
 }
 // -----
 module {
+  // CHECK-LABEL: func.func @convert_conv1d_asymmetric_padding(
+  // CHECK-DAG: %[[PAD1_L:.*]] = arith.constant 1 : i64
+  // CHECK-DAG: %[[PAD1_R:.*]] = arith.constant 2 : i64
+  // CHECK: call @conv2d_group_half_to_float({{.*}}, %[[PAD1_L]], %[[PAD1_R]], {{.*}})
+  // CHECK-NOT: hivm.hir.Conv1dL1
+  func.func @convert_conv1d_asymmetric_padding(
+      %input: memref<1x2x1x128x16xf16, #hivm.address_space<cbuf>>,
+      %weight: memref<1x1x5x32x16xf16, #hivm.address_space<cbuf>>,
+      %output: memref<128x32xf32, #hivm.address_space<cc>>) {
+    %true = arith.constant true
+    hivm.hir.Conv1dL1 {groups = 2 : i32, padding = [1, 2], stride = 3 : i32}
+        ins(%input, %weight, %true
+            : memref<1x2x1x128x16xf16, #hivm.address_space<cbuf>>,
+              memref<1x1x5x32x16xf16, #hivm.address_space<cbuf>>, i1)
+        outs(%output : memref<128x32xf32, #hivm.address_space<cc>>)
+    return
+  }
+}
+// -----
+module {
   // CHECK-LABEL: func.func @convert_conv2d(
   // CHECK-DAG: %[[STRIDE_H:.*]] = arith.constant 2 : i64
   // CHECK-DAG: %[[STRIDE_W:.*]] = arith.constant 3 : i64
@@ -164,6 +184,29 @@ module {
       %output: memref<128x32xf32, #hivm.address_space<cc>>) {
     %true = arith.constant true
     hivm.hir.Conv2dL1 {groups = 1 : i32, padding = 1 : i32, stride = [2, 3]}
+        ins(%input, %weight, %true
+            : memref<1x1x1x128x16xf16, #hivm.address_space<cbuf>>,
+              memref<1x1x5x32x16xf16, #hivm.address_space<cbuf>>, i1)
+        outs(%output : memref<128x32xf32, #hivm.address_space<cc>>)
+    return
+  }
+}
+
+// -----
+module {
+  // CHECK-LABEL: func.func @convert_conv2d_asymmetric_padding(
+  // CHECK-DAG: %[[PAD_T:.*]] = arith.constant 1 : i64
+  // CHECK-DAG: %[[PAD_B:.*]] = arith.constant 2 : i64
+  // CHECK-DAG: %[[PAD_L:.*]] = arith.constant 3 : i64
+  // CHECK-DAG: %[[PAD_R:.*]] = arith.constant 4 : i64
+  // CHECK: call @conv2d_group_half_to_float({{.*}}, %[[PAD_T]], %[[PAD_B]], %[[PAD_L]], %[[PAD_R]], {{.*}})
+  // CHECK-NOT: hivm.hir.Conv2dL1
+  func.func @convert_conv2d_asymmetric_padding(
+      %input: memref<1x1x1x128x16xf16, #hivm.address_space<cbuf>>,
+      %weight: memref<1x1x5x32x16xf16, #hivm.address_space<cbuf>>,
+      %output: memref<128x32xf32, #hivm.address_space<cc>>) {
+    %true = arith.constant true
+    hivm.hir.Conv2dL1 {groups = 1 : i32, padding = [1, 2, 3, 4], stride = [2, 3]}
         ins(%input, %weight, %true
             : memref<1x1x1x128x16xf16, #hivm.address_space<cbuf>>,
               memref<1x1x5x32x16xf16, #hivm.address_space<cbuf>>, i1)
