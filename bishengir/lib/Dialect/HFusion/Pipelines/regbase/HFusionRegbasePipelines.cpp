@@ -98,19 +98,6 @@ static DenseMap<int, std::vector<std::string>> phaseToDisabledMap = {
       canonicalizationEnumMap[FoldFillWithTensorReshapeExpand]}},
     {AfterAutoSchedule, {canonicalizationEnumMap[FoldTransposeWithTranspose]}}};
 
-// TODO: need to be reverted when Affinity GMM supported
-struct MarkDisableVectorizePass : public PassWrapper<MarkDisableVectorizePass,
-                                           OperationPass<mlir::ModuleOp>> {
-  const static constexpr llvm::StringLiteral kName = "hfusion.disableHfusionVectorize";
-
-  void runOnOperation() override {
-    mlir::ModuleOp module = getOperation();
-    mlir::MLIRContext *context = module.getContext();
-    if (!module->getAttr(kName))
-      module->setAttr(kName, UnitAttr::get(context));
-  }
-};
-
 static void
 canonicalizationPipeline(OpPassManager &pm,
                          const HFusionPipelineOptions &hfusionOptions,
@@ -572,11 +559,6 @@ void buildHFusionPipelines(OpPassManager &pm,
     if (!options.disableHfusionVectorize) {
       hfusionAutoVectorizePipeline(pm, options);
     }
-  }
-
-  // TODO: need to be reverted when Affinity GMM supported
-  if (options.disableHfusionVectorize) {
-    pm.addPass(std::make_unique<MarkDisableVectorizePass>());
   }
 }
 
