@@ -96,6 +96,12 @@ static void markTightlyCoupledBufferOnFunc(func::FuncOp func) {
   func.walk([&](hivm::CopyOp copyOp) {
     collectAllocsFromDst(copyOp.getDst(), AddressSpace::L1, candidateAllocs);
   });
+  // Device-print path: l12ub (CUBE) writes the UB alloc and debug (VECTOR)
+  // reads it after split-mix-kernel. Mark it so PlanMemory can pair the two
+  // sides at the same offset and the dead write on AIC survives DSE.
+  func.walk([&](hivm::L12UBOp l12ubOp) {
+    collectAllocsFromDst(l12ubOp.getDst(), AddressSpace::UB, candidateAllocs);
+  });
 
   OpBuilder builder(func.getContext());
   for (memref::AllocOp allocOp : candidateAllocs) {
