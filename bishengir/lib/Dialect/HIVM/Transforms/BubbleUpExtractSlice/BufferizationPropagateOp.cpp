@@ -223,6 +223,38 @@ LogicalResult BufferizationPropagateUpPattern::propagateUpReinterpretCast(
   return success();
 }
 
+LogicalResult BufferizationPropagateUpPattern::propagateUpSelect(
+    arith::SelectOp selectOp, UnrealizedConversionCastOp propagateOp,
+    PatternRewriter &rewriter) const {
+  auto slicedType = dyn_cast<MemRefType>(propagateOp.getResult(0).getType());
+  if (!slicedType)
+    return failure();
+
+  auto tilingDimInfo = getTilingDimInfo(propagateOp);
+
+  // Create up links on both select branches so propagation continues
+  // up each chain independently.
+  auto upTrue = createBubblePropagatorUpLink(
+      selectOp.getTrueValue(), slicedType, tilingDimInfo.offset,
+      tilingDimInfo.size, tilingDimInfo.tilingDim, rewriter);
+  auto upFalse = createBubblePropagatorUpLink(
+      selectOp.getFalseValue(), slicedType, tilingDimInfo.offset,
+      tilingDimInfo.size, tilingDimInfo.tilingDim, rewriter);
+
+  // Rebuild the select with the sliced branch results.
+  rewriter.setInsertionPoint(selectOp);
+  auto newSelect = rewriter.create<arith::SelectOp>(
+      selectOp.getLoc(), selectOp.getCondition(), upTrue->getResult(0),
+      upFalse->getResult(0));
+
+  rewriter.replaceOp(propagateOp, newSelect);
+  if (selectOp->use_empty())
+    rewriter.eraseOp(selectOp);
+
+  LDBG("Propagated up through arith.select " << selectOp);
+  return success();
+}
+
 // PropagateUp pattern should be rewritten here.
 LogicalResult BufferizationPropagateUpPattern::matchAndRewrite(
     UnrealizedConversionCastOp propagateOp, PatternRewriter &rewriter) const {
@@ -255,6 +287,9 @@ LogicalResult BufferizationPropagateUpPattern::matchAndRewrite(
       })
       .Case([&](memref::ReinterpretCastOp op) {
         return propagateUpReinterpretCast(op, propagateOp, rewriter);
+      })
+      .Case([&](arith::SelectOp op) {
+        return propagateUpSelect(op, propagateOp, rewriter);
       })
       .Default([&](Operation *) { return failure(); });
 }
