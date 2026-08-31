@@ -35,6 +35,10 @@ std::unique_ptr<Pass> createTransformOpForSIMTPass();
 std::unique_ptr<Pass>
 createOutlineScopePass(const OutlineScopeOptions &options = {});
 
+/// Create a pass to propagate the SIMT VF mode of outlined functions to
+/// their callers.
+std::unique_ptr<Pass> createPropagateSIMTModePass();
+
 // Create a pass to inline operations within the scope.scope operation to the
 // outer region.
 std::unique_ptr<Pass>

@@ -523,6 +523,7 @@ void buildBiShengHIRPipeline(OpPassManager &pm,
       OutlineScopeOptions outlineScopeOptions;
       outlineScopeOptions.outlineMarkedScopesOnly = true;
       pm.addPass(scope::createOutlineScopePass(outlineScopeOptions));
+      pm.addPass(scope::createPropagateSIMTModePass());
       pm.addPass(hivm::createInsertAllocBasePlaceholderPass());
       pm.addPass(hivm::createInferSimtVFMemEffectPass());
       // Infer per-argument mem scope hints from the mixed call boundary first;
