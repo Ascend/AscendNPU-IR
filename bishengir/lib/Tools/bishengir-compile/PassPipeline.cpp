@@ -59,8 +59,9 @@ void setupHIVMPipelineOptions(hivm::HIVMPipelineOptions &options,
                               const BiShengIRCompileMainConfig &config) {
 #define GEN_HIVM_OPTION_SETUP
 #include "bishengir/Tools/bishengir-compile/ConfigUtils.cpp.inc"
-  // Options.td defaults EnableLayoutOptimization=true for Ascend950 (A5-630/v4).
-  // Keep the A3 mem-based path historically off unless the target is Ascend950.
+  // Options.td defaults EnableLayoutOptimization=true for Ascend950
+  // (A5-630/v4). Keep the A3 mem-based path historically off unless the target
+  // is Ascend950.
   if (!mlir::hacc::utils::isAscend950(config.getTarget()))
     options.enableLayoutOptimization = false;
 }

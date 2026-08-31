@@ -460,9 +460,11 @@ static void hivmPreBufferizationOptimizationPipeline(
   // inline-scope below runs.
   pm.addPass(createMarkSimtScopeNoInlinePass());
   pm.addPass(scope::createInlineScopePass());
-  TileAndBindSubBlockOptions tileOptions;
-  tileOptions.enableTile = hivmPipelineOptions.enableAutoBindSubBlock;
-  pm.addPass(createTileAndBindSubBlockPass(tileOptions));
+  if (!hivmPipelineOptions.skipHIVMBindSubBlockPass) {
+    TileAndBindSubBlockOptions tileOptions;
+    tileOptions.enableTile = hivmPipelineOptions.enableAutoBindSubBlock;
+    pm.addPass(createTileAndBindSubBlockPass(tileOptions));
+  }
   hivmWorkspacePipeline(pm, hivmPipelineOptions);
   pm.nest<func::FuncOp>().addPass(tensor::createFoldTensorEmptyPass());
   canonicalizationHIVMPipeline(pm);
