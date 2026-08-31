@@ -673,8 +673,8 @@ ValueHandleFoldResults AnyPBRScheduler::getTilingFactors(
 }
 
 void AnyPBRScheduler::applyCanonicalization(OpBuilder &opBuilder) {
-  applyPatterns(
-      getFuncHandle(opBuilder),
+  builder().applyPatterns(
+      builder().getFuncHandle(opBuilder),
       /*patterns=*/
       SmallVector<TransformPatternKind>{
           TransformPatternKind::CSE, TransformPatternKind::CANONICALIZATION,
@@ -747,11 +747,11 @@ ValueHandle *AnyPBRScheduler::tileParallelAxesAndFuseProducers(
 
     // Tile parallel axes using `scf.for` op.
     ValueHandles opsToTile = {
-        getOpsWithAttr(hfusion::ReturnOperandNumAttr::name, opBuilder,
-                       opBuilder.getI64IntegerAttr(outputIdx))};
-    ForTilingResult tileUsingForResult =
-        tileUsingFor(opsToTile, tileSizes, opBuilder,
-                     getOpInterchangeAxes(currentInterchange));
+        builder().getOpsWithAttr(hfusion::ReturnOperandNumAttr::name, opBuilder,
+                                 opBuilder.getI64IntegerAttr(outputIdx))};
+    auto tileUsingForResult =
+        builder().tileUsingFor(opsToTile, tileSizes, opBuilder,
+                               getOpInterchangeAxes(currentInterchange));
 
     // We can take the front because there is only one hfusion.store tiled
     // each time.
@@ -762,19 +762,20 @@ ValueHandle *AnyPBRScheduler::tileParallelAxesAndFuseProducers(
   applyCanonicalization(opBuilder);
 
   // Fuse independent `scf.for` ops for every dimension.
-  ValueHandles fusedLoops = fuseLoopsForEachDim(outputTiledLoops, opBuilder);
+  ValueHandles fusedLoops =
+      builder().fuseLoopsForEachDim(outputTiledLoops, opBuilder);
   if (fusedLoops.empty())
     return nullptr;
 
   // Coalesce loops starting from outermost loop and normalize it.
-  auto *coalescedLoop = coalesceLoops(fusedLoops.front(), opBuilder);
-  normalizeLoop(coalescedLoop, opBuilder);
+  auto *coalescedLoop = builder().coalesceLoops(fusedLoops.front(), opBuilder);
+  builder().normalizeLoop(coalescedLoop, opBuilder);
 
   // Fuse producers into `scf.for` op.
-  ValueHandle *producerOps = getIntermediateProducers(opBuilder);
+  ValueHandle *producerOps = builder().getIntermediateProducers(opBuilder);
   ValueHandles targetsToFuseInto = {producerOps};
   ValueHandles fusedLoopList = {coalescedLoop};
-  fuseIntoContaining(targetsToFuseInto, fusedLoopList, opBuilder);
+  builder().fuseIntoContaining(targetsToFuseInto, fusedLoopList, opBuilder);
   // Handle to outermost loop is invalidated, needs rematching.
   coalescedLoop->setStatus(HandleStatus::kNeedsRematch);
   LDBG("Finished tiling parallel axes for outputs");
@@ -793,8 +794,8 @@ LogicalResult AnyPBRScheduler::createScheduleImpl(TilingKey key,
   }
 
   // Get handles to tiling data.
-  ValueHandles tilingDataHandles =
-      getTilingStructHandles(tilingInfo->getTilingStruct(), opBuilder);
+  ValueHandles tilingDataHandles = builder().getTilingStructHandles(
+      tilingInfo->getTilingStruct(), opBuilder);
 
   // Tile cache writes' parallel axes.
   ValueHandle *tiledParallelLoop = tileParallelAxesAndFuseProducers(
@@ -810,7 +811,7 @@ LogicalResult AnyPBRScheduler::createScheduleImpl(TilingKey key,
   }
 
   // Set buffer size.
-  ValueHandle *producerOps = getIntermediateProducers(opBuilder);
+  ValueHandle *producerOps = builder().getIntermediateProducers(opBuilder);
   ValueHandles targetsToSetBufferSize = {producerOps};
 
   if (!needToSplitReduction(key))
@@ -856,21 +857,21 @@ LogicalResult AnyPBRScheduler::createScheduleImpl(TilingKey key,
       ValueHandleFoldResults tileSizes =
           getTilingFactors(key, tilingInfo->getTilingStruct(), axisMask,
                            tilingMask, currentInterchange);
-      auto reduceHandles =
-          ValueHandles{getOpsWithAttr(consumerIdentifier.getName(), opBuilder,
-                                      consumerIdentifier.getValue())};
-      ForReductionTilingResult reductionTileResult =
-          tileReductionUsingFor(reduceHandles, tileSizes, opBuilder,
-                                /*multiReduceNum=*/reductionInfo.numResults);
+      auto reduceHandles = ValueHandles{
+          builder().getOpsWithAttr(consumerIdentifier.getName(), opBuilder,
+                                   consumerIdentifier.getValue())};
+      auto reductionTileResult = builder().tileReductionUsingFor(
+          reduceHandles, tileSizes, opBuilder,
+          /*multiReduceNum=*/reductionInfo.numResults);
       auto *tiledLoopHandle = reductionTileResult.loops.front();
       MatchOptions options = {/*needsReverse=*/true,
                               /*childHandleOrValue=*/tiledLoopHandle};
       ValueHandles producerHandles =
           mergeProducerHandles(producerIdentifiers, options, opBuilder);
       ValueHandles handles = {tiledLoopHandle};
-      fuseIntoContaining(producerHandles, handles, opBuilder,
-                         /*duplicateProducers=*/true,
-                         /*applyCanonicalizeAfterEachFusion=*/true);
+      builder().fuseIntoContaining(producerHandles, handles, opBuilder,
+                                   /*duplicateProducers=*/true,
+                                   /*applyCanonicalizeAfterEachFusion=*/true);
       tiledReduceLoop = tiledLoopHandle;
 
       for (const auto &inits : reductionTileResult.reductionInitOp)
@@ -885,12 +886,12 @@ LogicalResult AnyPBRScheduler::createScheduleImpl(TilingKey key,
       ValueHandleFoldResults tileSizes =
           getTilingFactors(key, tilingInfo->getTilingStruct(), axisMask,
                            tilingMask, currentInterchange);
-      auto cacheWriteHandles =
-          ValueHandles{getOpsWithAttr(consumerIdentifier.getName(), opBuilder,
-                                      consumerIdentifier.getValue())};
-      ForTilingResult tileResult =
-          tileUsingFor(cacheWriteHandles, tileSizes, opBuilder,
-                       getOpInterchangeAxes(currentInterchange));
+      auto cacheWriteHandles = ValueHandles{
+          builder().getOpsWithAttr(consumerIdentifier.getName(), opBuilder,
+                                   consumerIdentifier.getValue())};
+      auto tileResult =
+          builder().tileUsingFor(cacheWriteHandles, tileSizes, opBuilder,
+                                 getOpInterchangeAxes(currentInterchange));
       assert(!tileResult.loops.front().empty());
 
       // We can take the front because there is only one consumer op tiled
@@ -910,16 +911,17 @@ LogicalResult AnyPBRScheduler::createScheduleImpl(TilingKey key,
   ValueHandles fusedReductionLoop = {};
   if (!tiledReductionLoopsForOutputConsumer.empty()) {
     applyCanonicalization(opBuilder);
-    fusedReductionLoop =
-        fuseLoopsForEachDim(tiledReductionLoopsForOutputConsumer, opBuilder);
+    fusedReductionLoop = builder().fuseLoopsForEachDim(
+        tiledReductionLoopsForOutputConsumer, opBuilder);
   }
 
   ValueHandle *loopToFuseInto = nullptr;
   if (!fusedReductionLoop.empty()) {
     // can be empty if has no output consumer with tilable reduction axis
     setStatusTo(fusedReductionLoop, HandleStatus::kNeedsRematch);
-    auto *coalescedLoop = coalesceLoops(fusedReductionLoop.front(), opBuilder);
-    normalizeLoop(coalescedLoop, opBuilder);
+    auto *coalescedLoop =
+        builder().coalesceLoops(fusedReductionLoop.front(), opBuilder);
+    builder().normalizeLoop(coalescedLoop, opBuilder);
     loopToFuseInto = coalescedLoop;
   }
 
@@ -931,9 +933,10 @@ LogicalResult AnyPBRScheduler::createScheduleImpl(TilingKey key,
     ValueHandles targetProducerHandle =
         mergeProducerHandles(jointProducerIdentifier, options, opBuilder);
     ValueHandles targetLoopHandle = {loopToFuseInto};
-    fuseIntoContaining(targetProducerHandle, targetLoopHandle, opBuilder,
-                       /*duplicateProducers=*/false,
-                       /*applyCanonicalizeAfterEachFusion=*/true);
+    builder().fuseIntoContaining(targetProducerHandle, targetLoopHandle,
+                                 opBuilder,
+                                 /*duplicateProducers=*/false,
+                                 /*applyCanonicalizeAfterEachFusion=*/true);
   }
 
   if (anyPBRInfo->enableMultiCoreReduce && tiledReduceLoop) {
@@ -941,7 +944,7 @@ LogicalResult AnyPBRScheduler::createScheduleImpl(TilingKey key,
     TilingData *coreNumForReduceAxis =
         tilingInfo->getTilingData(anyPBRInfo->getReduceBlockDimTilingDataIdx());
     tiledReduceLoop->setStatus(HandleStatus::kNeedsRematch);
-    normalizeLoop(tiledReduceLoop, opBuilder);
+    builder().normalizeLoop(tiledReduceLoop, opBuilder);
     bindLoopToMulticore(tiledReduceLoop, *anyPBRInfo, opBuilder,
                         coreNumForReduceAxis);
     LDBG("bind reduction loop to multicore");
@@ -953,8 +956,8 @@ LogicalResult AnyPBRScheduler::createScheduleImpl(TilingKey key,
 ValueHandles AnyPBRScheduler::mergeProducerHandles(
     const SmallVector<NamedAttribute> &producerIdentifiers,
     const MatchOptions &options, OpBuilder &opBuilder) {
-  return {getOpsWithAttrs(/*requiredAttrs=*/{}, opBuilder, producerIdentifiers,
-                          options)};
+  return {builder().getOpsWithAttrs(/*requiredAttrs=*/{}, opBuilder,
+                                    producerIdentifiers, options)};
 }
 
 void AnyPBRScheduler::bindLoopToMulticore(ValueHandle *loop,
@@ -967,27 +970,28 @@ void AnyPBRScheduler::bindLoopToMulticore(ValueHandle *loop,
   LoopTileResult tileResult;
   // if numOfCores is not specified, we tile and bind it to all available cores
   if (!numOfCores) {
-    tileResult =
-        tileLoop(loop, ValueHandleFoldResult(kernelInfo.blockDim, getContext()),
-                 opBuilder,
-                 LoopTileOptions{/*mode=*/LoopTileMode::kFactorMode,
-                                 /*isReorderMode=*/true});
+    tileResult = builder().tileLoop(
+        loop, ValueHandleFoldResult(kernelInfo.blockDim, getContext()),
+        opBuilder,
+        LoopTileOptions{/*mode=*/LoopTileMode::kFactorMode,
+                        /*isReorderMode=*/true});
   } else if (numOfCores->isConst()) {
-    tileResult = tileLoop(
+    tileResult = builder().tileLoop(
         loop, ValueHandleFoldResult(numOfCores->getConst(), getContext()),
         opBuilder,
         LoopTileOptions{/*mode=*/LoopTileMode::kFactorMode,
                         /*isReorderMode=*/true});
   } else {
-    tileResult = tileLoop(loop, ValueHandleFoldResult{numOfCores->getHandle()},
-                          opBuilder,
-                          LoopTileOptions{/*mode=*/LoopTileMode::kFactorMode,
-                                          /*isReorderMode=*/true});
+    tileResult = builder().tileLoop(
+        loop, ValueHandleFoldResult{numOfCores->getHandle()}, opBuilder,
+        LoopTileOptions{/*mode=*/LoopTileMode::kFactorMode,
+                        /*isReorderMode=*/true});
   }
-  normalizeLoop(tileResult.outerLoop, opBuilder);
+  builder().normalizeLoop(tileResult.outerLoop, opBuilder);
   auto mapping = hivm::HIVMBlockMappingAttr::get(getContext());
-  mapForToForall(tileResult.outerLoop, opBuilder,
-                 MapForToForallOptions{mapping, /*annotate_only=*/true});
+  builder().mapForToForall(
+      tileResult.outerLoop, opBuilder,
+      MapForToForallOptions{mapping, /*annotate_only=*/true});
   loop->setStatus(HandleStatus::kNeedsRematch);
 }
 
@@ -1055,7 +1059,7 @@ AnyPBRScheduler::setBufferSize(const TilingInfo *tilingInfo,
   setStatusTo(targetsToSetBufferSize, HandleStatus::kNeedsRematch);
   SetBufferSizeOptions bufferSizeOptions{transform::SetBufferSizeMode::kPerByte,
                                          getKernelInfo()->smallestElementType};
-  SchedulerBase::setBufferSize(targetsToSetBufferSize, bufferSizeConst,
-                               opBuilder, bufferSizeOptions);
+  builder().setBufferSize(targetsToSetBufferSize, bufferSizeConst, opBuilder,
+                          bufferSizeOptions);
   return success();
 }

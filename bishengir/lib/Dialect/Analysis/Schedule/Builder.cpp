@@ -67,6 +67,45 @@ DictionaryAttr getMatchOpAttrs(const schedule::detail::Identifier &identifier,
   return attributeIdentifier->getAttrs(opBuilder, required);
 }
 
+/// Update handles to the containing loops after fusion.
+void updateHandleToContainingLoops(
+    ValueHandles &containingLoops,
+    const SmallVector<Value> &containingLoopValues,
+    bool applyCanonicalizeAfterEachFusion) {
+  for (auto it : llvm::enumerate(containingLoops)) {
+    if (applyCanonicalizeAfterEachFusion) {
+      // Currently, for ForeachOp, the payload ops of the corresponding
+      // YieldOp operand are merged and mapped to the same resulting handle.
+      // Therefore, the result value of ForeachOp corresponding to the new
+      // containing op will map to the same containing op many times. This is
+      // a bit confusing for downstream users. So we invalidate the handles
+      // for now.
+      it.value()->invalidate();
+    } else {
+      it.value()->setHandle(containingLoopValues[it.index()]);
+    }
+  }
+}
+
+transform::ExtendedFuseIntoContainingOp
+createFuseIntoContainingOp(Value producerOp,
+                           const SmallVector<Value> &containingLoopValues,
+                           bool duplicateProducers, size_t numContainingLoop,
+                           OpBuilder &opBuilder, Location loc) {
+  return opBuilder.create<transform::ExtendedFuseIntoContainingOp>(
+      loc,
+      /*fused_op=*/
+      std::vector<Type>(numContainingLoop,
+                        opBuilder.getType<transform::AnyOpType>()),
+      /*new_containing_op=*/
+      std::vector<Type>(numContainingLoop,
+                        opBuilder.getType<transform::AnyOpType>()),
+      /*producer_op=*/producerOp,
+      /*containing_op=*/containingLoopValues,
+      /*duplicate_producer=*/
+      BoolAttr::get(opBuilder.getContext(), duplicateProducers));
+}
+
 } // namespace
 
 namespace mlir {
@@ -371,6 +410,70 @@ ScheduleBuilder::ForTilingResult ScheduleBuilder::tileUsingFor(
   return ForTilingResult{/*loops=*/loopHandles};
 }
 
+ScheduleBuilder::ForReductionTilingResult
+ScheduleBuilder::tileReductionUsingFor(ValueHandles &targets,
+                                       ValueHandleFoldResults &tileSizes,
+                                       OpBuilder &opBuilder,
+                                       int64_t multiReduceNum) {
+  auto [staticTileSizes, dynamicTileSizes] =
+      unpackFoldResults(tileSizes, opBuilder);
+
+  ForReductionTilingResult result;
+
+  auto mapFnForInit = [this, &opBuilder](Value init) -> ValueHandle * {
+    return record<NamedValueHandle>(
+        init, opBuilder,
+        NamedValueHandleArgs{kTileReductionInitOpTagName,
+                             IdentifierType::kAttribute});
+  };
+
+  for (auto *targetHandle : targets) {
+    auto targetValue = getValue(targetHandle, opBuilder);
+    auto tileReductionOp = opBuilder.create<transform::TileReductionUsingForOp>(
+        targetValue.getLoc(),
+        /*fill_op=*/
+        SmallVector<Type>(multiReduceNum,
+                          opBuilder.getType<transform::AnyOpType>()),
+        /*split_linalg_op=*/opBuilder.getType<transform::AnyOpType>(),
+        /*combining_linalg_op=*/opBuilder.getType<transform::AnyOpType>(),
+        /*for_op=*/opBuilder.getType<transform::AnyOpType>(),
+        /*target=*/targetValue,
+        /*tile_sizes=*/dynamicTileSizes,
+        /*static_tile_sizes=*/opBuilder.getDenseI64ArrayAttr(staticTileSizes));
+
+    LDBG("tileReductionUsingFor result");
+    LDBG(tileReductionOp.getSplitLinalgOp());
+    LDBG(tileReductionOp.getCombiningLinalgOp());
+#ifndef NDEBUG
+    for (auto fillOp : tileReductionOp.getFillOp())
+      LDBG(fillOp);
+#endif
+    LDBG(tileReductionOp.getForOp());
+    result.partialReductionOp.emplace_back(record<NamedValueHandle>(
+        tileReductionOp.getSplitLinalgOp(), opBuilder,
+        NamedValueHandleArgs{kTileReductionPartialReductionOpTagName,
+                             IdentifierType::kAttribute}));
+
+    result.finalReductionOp.emplace_back(record<NamedValueHandle>(
+        tileReductionOp.getCombiningLinalgOp(), opBuilder,
+        NamedValueHandleArgs{kTileReductionFinalReductionOpTagName,
+                             IdentifierType::kAttribute}));
+
+    result.reductionInitOp.emplace_back(
+        llvm::map_to_vector(tileReductionOp.getFillOp(), mapFnForInit));
+
+    result.loops.emplace_back(record<NamedValueHandle>(
+        tileReductionOp.getForOp(), opBuilder,
+        NamedValueHandleArgs{kTileReductionLoopTagName,
+                             IdentifierType::kAttribute}));
+
+    // The original reduction op is decomposed into multiple ops, so the
+    // handle should be invalidated.
+    targetHandle->invalidate();
+  }
+  return result;
+}
+
 ValueHandle *ScheduleBuilder::fuseLoops(ValueHandles &loops,
                                         OpBuilder &opBuilder) {
   assert(!std::empty(loops) && "Should fuse more than one loops");
@@ -436,6 +539,72 @@ ValueHandle *ScheduleBuilder::coalesceLoops(ValueHandle *outerMostLoop,
   return record<NamedValueHandle>(
       coalescedLoopValue, opBuilder,
       NamedValueHandleArgs{kCoalescedLoopTagName, IdentifierType::kAttribute});
+}
+
+void ScheduleBuilder::fuseIntoContaining(
+    ValueHandles &targetOps, ValueHandles &containingLoops,
+    OpBuilder &opBuilder, bool duplicateProducers,
+    bool applyCanonicalizeAfterEachFusion) {
+  SmallVector<Value> containingLoopValues =
+      getValues(containingLoops, opBuilder);
+  size_t numContainingLoop = containingLoopValues.size();
+
+  SmallVector<Value> fusedLoops;
+  for (auto *targetHandle : targetOps) {
+    auto targetValue = getValue(targetHandle, opBuilder);
+    Location loc = targetValue.getLoc();
+    if (applyCanonicalizeAfterEachFusion) {
+      // Construct `transform::ForeachOp` to perform canonicalization before
+      // fusing each target op into the containing op.
+      // This is necessarily for complicated cases where the target ops
+      // are used multiple times in the containing op.
+      auto forEachRegionBuilderFn = [&](ImplicitLocOpBuilder &opBuilder,
+                                        Block &block) -> void {
+        auto blockArg = block.getArgument(0);
+
+        // disabled patterns:
+        //   a) kSimplifyTrivialLoops: in case trivial loops is simplified and
+        //      lead to invalid loop handles
+        applyPatterns(
+            getFuncHandle(opBuilder),
+            /*patterns=*/
+            SmallVector<TransformPatternKind>{
+                TransformPatternKind::CSE,
+                TransformPatternKind::CANONICALIZATION,
+                TransformPatternKind::MERGE_CONSECUTIVE_INSERT_EXTRACT_SLICE,
+                TransformPatternKind::RESOLVE_RANKED_SHAPED_TYPE_RESULT_DIMS},
+            opBuilder,
+            /*disablePatterns=*/
+            SmallVector<CanonicalizationPatternKind>{
+                CanonicalizationPatternKind::kSimplifyTrivialLoops});
+        auto op = createFuseIntoContainingOp(blockArg, containingLoopValues,
+                                             duplicateProducers,
+                                             numContainingLoop, opBuilder, loc);
+        opBuilder.create<transform::YieldOp>(op.getLoc(), op->getResults());
+      };
+
+      std::vector<Type> forEachResultTypes(
+          numContainingLoop * 2, opBuilder.getType<transform::AnyOpType>());
+      auto forEachResults = createForEachOp(targetValue, forEachResultTypes,
+                                            forEachRegionBuilderFn, opBuilder);
+      fusedLoops = {forEachResults.begin(),
+                    forEachResults.begin() + numContainingLoop};
+      // TODO: Update containingLoopValue to ForeachOp's result
+    } else {
+      auto op = createFuseIntoContainingOp(targetValue, containingLoopValues,
+                                           duplicateProducers,
+                                           numContainingLoop, opBuilder, loc);
+      fusedLoops = op.getFusedOp();
+      containingLoopValues = op.getNewContainingOp();
+    }
+    if (numContainingLoop == 1) {
+      targetHandle->setHandle(fusedLoops.front());
+    } else {
+      targetHandle->invalidate();
+    }
+  }
+  updateHandleToContainingLoops(containingLoops, containingLoopValues,
+                                applyCanonicalizeAfterEachFusion);
 }
 
 void ScheduleBuilder::applyCanonicalization(OpBuilder &opBuilder) {

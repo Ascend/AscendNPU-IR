@@ -305,6 +305,7 @@ public:
   ///
   /// \param targets Value handles to \c linalg.reduce ops.
   /// \param tileSizes Value handles to mixed tile sizes.
+  /// \param opBuilder Reference to IRBuilder instance.
   /// \param multiReduceNum The number of multi-reduced tensors.
   /// \return ForReductionTilingResult
   /// \note The input \c targets handles are invalidated.
@@ -336,6 +337,28 @@ public:
   /// \return NamedValueHandles to the coalesced loop.
   /// \note The input \c outerMostLoop handle is invalidated.
   ValueHandle *coalesceLoops(ValueHandle *outerMostLoop, OpBuilder &opBuilder);
+
+  /// TODO: Add return value to this API.
+  /// Fuse target ops into containing ops one by one.
+  ///
+  /// When target op has multiple users in the containing op, the producer
+  /// will be tiled according to the union of the users.
+  ///
+  /// \param targetOps Handles to fuse.
+  /// \param containingLoops Handles to the initial containing ops.
+  /// \param opBuilder Reference to IRBuilder instance.
+  /// \param duplicateProducers Whether to duplicate producer when it is used
+  ///        in multiple containing ops.
+  /// \param applyCanonicalizeAfterEachFusion Whether to apply canonicalize
+  ///        patterns to the IR after each fusion.
+  /// \note If `applyCanonicalizeAfterEachFusion` is set to true, all input
+  ///       handles are invalidated.
+  ///       Otherwise, the handles in `containingLoop` are automatically
+  ///       updated. The handles in `targetOps` are automatically updated if
+  ///       and only if `len(containingLoop) == 1`.
+  void fuseIntoContaining(ValueHandles &targetOps, ValueHandles &containingLoop,
+                          OpBuilder &opBuilder, bool duplicateProducers = false,
+                          bool applyCanonicalizeAfterEachFusion = true);
 
   /// Tile the given loop by a factor of \c tileSize.
   ///

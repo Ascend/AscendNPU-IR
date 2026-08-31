@@ -101,13 +101,11 @@ SmallVector<int64_t> getReturnValueTopologicalOrdering(
       [](const std::pair<Value, int64_t> &v) { return std::get<1>(v); });
 }
 
-transform::SequenceOp initScheduleSequence(OpBuilder &opBuilder,
-                                           Location loc) {
+transform::SequenceOp initScheduleSequence(OpBuilder &opBuilder, Location loc) {
   OpBuilder::InsertionGuard g(opBuilder);
   // create transform sequence op with name
   auto seqOp = opBuilder.create<transform::SequenceOp>(
-      loc, TypeRange(),
-      transform::FailurePropagationMode::Propagate,
+      loc, TypeRange(), transform::FailurePropagationMode::Propagate,
       opBuilder.getType<transform::AnyOpType>(),
       [](OpBuilder &b, Location nested, Value rootH) {
         b.create<transform::YieldOp>(nested, ValueRange());
@@ -191,8 +189,8 @@ func::FuncOp createEmptyHostTilingFunction(func::FuncOp deviceFunc,
   auto hostTilingFunc = opBuilder.create<func::FuncOp>(
       deviceFunc.getLoc(),
       /*sym_name=*/
-      hacc::constructHostFunctionName(
-          deviceFunc.getSymName().str(), hacc::HostFuncType::kTilingFunction),
+      hacc::constructHostFunctionName(deviceFunc.getSymName().str(),
+                                      hacc::HostFuncType::kTilingFunction),
       /*function_type=*/t,
       /*sym_visibility=*/StringAttr(),
       /*arg_attrs=*/deviceFunc.getArgAttrsAttr(),
@@ -662,9 +660,9 @@ void SchedulerBase::dumpKernelAndSchedule() {
 }
 
 void SchedulerBase::cleanUpAfterSchedule() {
-  getHandleRecord()->clear();
+  builder().getHandleRecord()->clear();
   setToBeScheduledKernel(nullptr);
-  setTransformSeqHandle(Value());
+  builder().setTransformSeqHandle(Value());
   for (auto *td : getTilingInfo()->getTilingStruct())
     td->setHandle(nullptr);
 }
@@ -720,7 +718,7 @@ LogicalResult SchedulerBase::initSchedule(TilingKey key, OpBuilder &opBuilder) {
   // Set insertion point to transform sequence body
   opBuilder.setInsertionPointToStart(transformBody);
   // Record transform sequence block argument
-  setTransformSeqHandle(transformBody->getArguments().front());
+  builder().setTransformSeqHandle(transformBody->getArguments().front());
 
   // Step 5. Set attributes to various functions
   auto blockDimIntAttr = opBuilder.getIntegerAttr(opBuilder.getIntegerType(64),

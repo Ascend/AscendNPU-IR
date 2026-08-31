@@ -22,6 +22,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/Analysis/Transforms/TransformOps.h"
+#include "bishengir/Transforms/Transforms.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
@@ -30,8 +31,9 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/SCF/Utils/Utils.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
-#include "mlir/Dialect/Transform/Interfaces/MatchInterfaces.h"
+#include "mlir/Dialect/Transform/IR/TransformOps.h"
 #include "mlir/Dialect/Transform/IR/TransformTypes.h"
+#include "mlir/Dialect/Transform/Interfaces/MatchInterfaces.h"
 #include "mlir/IR/Dominance.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/CallInterfaces.h"
@@ -41,9 +43,16 @@
 #include "mlir/Transforms/RegionUtils.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/ErrorHandling.h"
+
+#define DEBUG_TYPE "bishengir-analysis-transform"
+#define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] [TransformOps] ")
+
+#define GET_OP_CLASSES
+#include "bishengir/Dialect/Analysis/Transforms/TransformOps.cpp.inc"
 
 using namespace mlir;
 using namespace mlir::transform;
@@ -110,9 +119,10 @@ Value traceReshapeOrSliceSingleConsumerOrSelf(Value input) {
 }
 
 FailureOr<Value> traceReshapeOrSliceSingleConsumer(Value input) {
-  auto reshapeUsers = llvm::make_filter_range(
-      input.getUsers(),
-      [&](Operation *user) { return isReshapeOrSliceOp(user); });
+  auto reshapeUsers =
+      llvm::make_filter_range(input.getUsers(), [&](Operation *user) {
+        return isReshapeOrSliceOp(user);
+      });
   if (!llvm::hasSingleElement(reshapeUsers))
     return failure();
 
@@ -266,7 +276,6 @@ void GetFuncResultOp::getEffects(
   onlyReadsHandle(getTargetMutable(), effects);
   producesHandle(getOperation()->getOpResults(), effects);
 }
-
 
 //===---------------------------------------------------------------------===//
 // MatchAncestorOfOp
@@ -453,7 +462,6 @@ void transform::MatchAncestorOfOp::build(OpBuilder &builder,
                         op_attrs);
   result.addTypes(transform::AnyOpType::get(builder.getContext()));
 }
-
 
 //===----------------------------------------------------------------------===//
 // ExtendedLoopOutlineOp
@@ -790,7 +798,6 @@ transform::ExtendedLoopOutlineOp::apply(transform::TransformRewriter &rewriter,
   return DiagnosedSilenceableFailure::success();
 }
 
-
 //===----------------------------------------------------------------------===//
 // Helper functions for MergeProducerExtractUsesOp
 //===----------------------------------------------------------------------===//
@@ -1035,6 +1042,238 @@ void MergeProducerExtractUsesOp::getEffects(
   modifiesPayload(effects);
 }
 
+//===----------------------------------------------------------------------===//
+// ExtendedFuseIntoContainingOp
+//===----------------------------------------------------------------------===//
 
-#define GET_OP_CLASSES
-#include "bishengir/Dialect/Analysis/Transforms/TransformOps.cpp.inc"
+//===----------------------------------------------------------------------===//
+// This file contains code from the LLVM Project.
+// Original License: Apache License v2.0 with LLVM Exceptions
+// Original Copyright: NA
+// Original Source:
+// https://github.com/llvm/llvm-project/blob/main/mlir/lib/Dialect/Linalg/TransformOps/LinalgTransformOps.cpp
+//===----------------------------------------------------------------------===//
+void transform::ExtendedFuseIntoContainingOp::build(OpBuilder &builder,
+                                                    OperationState &result,
+                                                    Value producerOp,
+                                                    Value containingOp) {
+  result.addOperands({producerOp, containingOp});
+  auto resultType = transform::AnyOpType::get(builder.getContext());
+  result.addTypes({resultType, resultType});
+}
+
+bool transform::ExtendedFuseIntoContainingOp::allowsRepeatedHandleOperands() {
+  // Allow repeated handles since we are fusing everything anyway.
+  return true;
+}
+
+DiagnosedSilenceableFailure
+transform::ExtendedFuseIntoContainingOp::fuseIntoOneContaining(
+    transform::TransformRewriter &rewriter,
+    transform::TransformResults &results, transform::TransformState &state,
+    size_t index, Operation *containingOp) {
+  assert(index < getFusedOp().size());
+  assert(index < getNewContainingOp().size());
+
+  SmallVector<Operation *> fusedOps;
+  auto producerOps = state.getPayloadOps(getProducerOp());
+  // If nothing to fuse, propagate success.
+  if (std::empty(producerOps)) {
+    results.set(cast<OpResult>(getFusedOp()[index]),
+                SmallVector<mlir::Operation *>{});
+    results.set(cast<OpResult>(getNewContainingOp()[index]), {containingOp});
+    return DiagnosedSilenceableFailure::success();
+  }
+
+  SetVector<Operation *> remainingProducers(producerOps.begin(),
+                                            producerOps.end());
+  auto getNextProducer = [&]() -> FailureOr<std::pair<Operation *, size_t>> {
+    for (const auto &it : enumerate(remainingProducers)) {
+      Operation *producerOp = it.value();
+      // The containing op may be a user of producerOp: use isAncestor.
+      int64_t numUsesInContainingOp =
+          llvm::count_if(producerOp->getUsers(), [&](Operation *op) {
+            return containingOp->isAncestor(op);
+          });
+      LLVM_DEBUG(DBGS() << "producerOp: " << *producerOp << "\n");
+      LLVM_DEBUG(DBGS() << "numUsesInContainingOp: " << numUsesInContainingOp
+                        << "\n");
+      if (numUsesInContainingOp > 0) {
+        return std::make_pair(producerOp, it.index());
+      }
+    }
+    return failure();
+  };
+
+  // Helper function to erase producerOp from eraseRemainingProducer if no
+  // users.
+  auto eraseRemainingProducer = [&](Operation *producerOp, size_t pos) {
+    int64_t numUsesInContainingOp =
+        llvm::count_if(producerOp->getUsers(), [&](Operation *op) {
+          return containingOp->isAncestor(op);
+        });
+    if (numUsesInContainingOp == 0) {
+      remainingProducers.erase(remainingProducers.begin() + pos);
+    }
+  };
+
+  while (!remainingProducers.empty()) {
+    auto nextProducer = getNextProducer();
+    if (failed(nextProducer)) {
+      auto diag = mlir::emitSilenceableFailure(getLoc())
+                  << "could not find next producer to fuse into container";
+      diag.attachNote(containingOp->getLoc()) << "containing op";
+      return diag;
+    }
+
+    Operation *producerOp;
+    size_t producerIndex;
+    std::tie(producerOp, producerIndex) = *nextProducer;
+
+    // Default diagnostic, to be complemented with more failure information.
+    Diagnostic diag(producerOp->getLoc(), DiagnosticSeverity::Remark);
+    diag << "could not fuse " << *producerOp << " into " << *containingOp;
+
+    // Union the multiple consumers in containing op.
+    bishengir::unionProducerUsers(rewriter, diag, producerOp, containingOp);
+
+    auto [tiledOps, newContainingOp] = bishengir::tileAndFuseFirstExtractUse(
+        rewriter, diag, producerOp, containingOp, getDuplicateProducer());
+    if (!tiledOps.empty()) {
+      LLVM_DEBUG(DBGS() << "\nFused a direct extract use\n"
+                        << *containingOp << "\n");
+      fusedOps.append(tiledOps);
+      if (newContainingOp) {
+        // Update handles associated with the containing op so we don't need
+        // to invalidate them. This is a hack to support better composability
+        // between tiling and fusion while a proper mechanism is being
+        // investigated.
+        //
+        // DO NOT replicate this elsewhere unless you understand what you are
+        // doing.
+        LogicalResult replacementStatus =
+            rewriter.notifyPayloadOperationReplaced(containingOp,
+                                                    newContainingOp);
+        (void)replacementStatus;
+        assert(succeeded(replacementStatus) &&
+               "unable to update transform state mapping");
+        rewriter.eraseOp(containingOp);
+        containingOp = newContainingOp;
+      }
+      eraseRemainingProducer(producerOp, producerIndex);
+      continue;
+    }
+
+    SmallVector<Operation *> tiledContainingOpOperand =
+        bishengir::tileAndFuseFirstExtractUseThroughContainingOpBlockArgument(
+            rewriter, diag, producerOp, containingOp);
+    if (!tiledContainingOpOperand.empty()) {
+      LLVM_DEBUG(DBGS() << "\nFused an extract use through block argument\n"
+                        << *containingOp);
+      fusedOps.append(tiledContainingOpOperand);
+      eraseRemainingProducer(producerOp, producerIndex);
+      continue;
+    }
+
+    Operation *cloned = bishengir::cloneAndFuseFirstUse(
+        rewriter, diag, producerOp, containingOp);
+    if (cloned) {
+      LLVM_DEBUG(DBGS() << "\nFused an use by cloning\n" << *containingOp);
+      fusedOps.push_back(cloned);
+      eraseRemainingProducer(producerOp, producerIndex);
+      continue;
+    }
+    return DiagnosedSilenceableFailure::silenceableFailure(std::move(diag));
+  }
+  results.set(cast<OpResult>(getFusedOp()[index]), fusedOps);
+  results.set(cast<OpResult>(getNewContainingOp()[index]), {containingOp});
+  return DiagnosedSilenceableFailure::success();
+}
+
+DiagnosedSilenceableFailure transform::ExtendedFuseIntoContainingOp::apply(
+    transform::TransformRewriter &rewriter,
+    transform::TransformResults &results, transform::TransformState &state) {
+  auto containingOps = getContainingOp();
+  for (auto it : llvm::enumerate(containingOps)) {
+    auto containingOpPayloads = state.getPayloadOps(it.value());
+    if (!llvm::hasSingleElement(containingOpPayloads)) {
+      return emitDefiniteFailure()
+             << "requires exactly one containing_op handle (got "
+             << llvm::range_size(containingOpPayloads) << ")";
+    }
+    Operation *currentOp = *containingOpPayloads.begin();
+    auto status =
+        fuseIntoOneContaining(rewriter, results, state, it.index(), currentOp);
+    if (!status.succeeded())
+      return status;
+  }
+  return DiagnosedSilenceableFailure::success();
+}
+
+ParseResult ExtendedFuseIntoContainingOp::parse(OpAsmParser &parser,
+                                                OperationState &result) {
+  OpAsmParser::UnresolvedOperand producer;
+  SmallVector<OpAsmParser::UnresolvedOperand> containingOps;
+  FunctionType functionalType;
+  llvm::SMLoc producerLoc;
+  llvm::SMLoc containingOpsLoc;
+
+  if (parser.getCurrentLocation(&producerLoc) || parser.parseOperand(producer))
+    return ParseResult::failure();
+
+  if (parser.parseKeyword("into"))
+    return ParseResult::failure();
+
+  if (parser.getCurrentLocation(&containingOpsLoc) ||
+      parser.parseOperandList(containingOps))
+    return ParseResult::failure();
+
+  if (parser.parseOptionalAttrDict(result.attributes))
+    return ParseResult::failure();
+
+  if (result.propertiesAttr) {
+    NamedAttrList attrs = llvm::cast<DictionaryAttr>(result.propertiesAttr);
+    attrs.append("resultSegmentSizes",
+                 parser.getBuilder().getDenseI32ArrayAttr(
+                     {static_cast<int32_t>(containingOps.size()),
+                      static_cast<int32_t>(containingOps.size())}));
+    result.propertiesAttr = attrs.getDictionary(parser.getContext());
+  } else {
+    result.addAttribute("resultSegmentSizes",
+                        parser.getBuilder().getDenseI32ArrayAttr(
+                            {static_cast<int32_t>(containingOps.size()),
+                             static_cast<int32_t>(containingOps.size())}));
+  }
+
+  if (parser.parseColonType(functionalType))
+    return ParseResult::failure();
+
+  if (parser.resolveOperand(producer, functionalType.getInputs().front(),
+                            result.operands) ||
+      parser.resolveOperands(containingOps,
+                             functionalType.getInputs().drop_front(),
+                             containingOpsLoc, result.operands)) {
+    return ParseResult::failure();
+  }
+
+  result.addTypes(functionalType.getResults());
+  return ParseResult::success();
+}
+
+void ExtendedFuseIntoContainingOp::print(OpAsmPrinter &p) {
+  p << ' ' << getProducerOp();
+  p << ' ' << "into";
+  p << ' ';
+  p.printOperands(getContainingOp());
+  p.printOptionalAttrDict((*this)->getAttrs(), {"resultSegmentSizes"});
+  p << " : ";
+  p.printFunctionalType(getOperands().getTypes(), getResults().getTypes());
+}
+
+void transform::ExtendedFuseIntoContainingOp::getEffects(
+    SmallVectorImpl<MemoryEffects::EffectInstance> &effects) {
+  consumesHandle(getProducerOpMutable(), effects);
+  onlyReadsHandle(getContainingOpMutable(), effects);
+  producesHandle(getResults(), effects);
+  modifiesPayload(effects);
+}
