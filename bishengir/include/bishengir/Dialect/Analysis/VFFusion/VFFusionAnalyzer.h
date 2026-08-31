@@ -354,6 +354,8 @@ private:
   bool
   fuseGroupsWithNearestConsumer(bool (MaxParallelAnalyzer::*isTargetGroup)(int),
                                 const char *groupKind);
+  bool tryFuseReduceWithProducer(int reduceGroupId, Operation *reduceOp);
+  bool fuseReduceGroupsWithProducer();
   bool fuseShapeBoundGroupsWithNearestConsumer();
   bool isSmallShapeGroup(int groupId);
   bool parallelismSubModel(const CostMetrics &, const CostMetrics &) const;
