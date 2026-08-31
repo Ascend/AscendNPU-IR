@@ -56,6 +56,7 @@ public:
   // is computed based on these counters (which represent the locks preceding it).
   inline static size_t orderedCount = 0;
   inline static size_t unorderedCount = 0;
+  inline static size_t totalOrderedCount = 0;
 
   LogicalResult matchAndRewrite(hivm::CreateSyncBlockLockOp op,
                                 PatternRewriter &rewriter) const override {
@@ -65,51 +66,47 @@ public:
 
     auto loc = op.getLoc();
 
-    // Calculate the basic stride per lock (excluding the block_num multiplier)
-    auto bindArgTypeWith =
-        getElementTypeOrSelf(op.getLockArg()).getIntOrFloatBitWidth();
-    auto lockResTypeWith =
-        getElementTypeOrSelf(op.getMemref().getType()).getIntOrFloatBitWidth();
-    int64_t perOffset = CEIL_DIV(lockResTypeWith, bindArgTypeWith);
-    // Ordered lock stride in bytes = perOffset * 8
-    int64_t orderedStep = perOffset * 8;
-    // Unordered lock stride in bytes (without block_num) = perOffset * 8 * cacheLines
+    constexpr int64_t cacheLineBytes = 64;
     bool isUnordered = op->hasAttr(SyncBlockLockUnorderedAttr::name);
-    int64_t unorderedCacheLines = isUnordered ? hivm::kUnorderedSyncBlockLockCacheLines : 1;
-    int64_t unorderedStep = perOffset * 8 * unorderedCacheLines;
+    Value totalByte;
+    if (isUnordered) {
+      Value blockNum =
+          rewriter.create<hivm::GetBlockNumOp>(loc)->getResult(0);
+      if (hivm::isMixModule(op->getParentOfType<ModuleOp>())) {
+        Value subBlockNum = rewriter.create<hivm::GetSubBlockNumOp>(
+            loc, rewriter.getI64Type());
+        blockNum = rewriter.create<arith::MulIOp>(loc, blockNum, subBlockNum);
+      }
+      Value two = rewriter.create<arith::ConstantIntOp>(loc, 2, 64);
+      Value one = rewriter.create<arith::ConstantIntOp>(loc, 1, 64);
+      Value cacheLineBytesVal = rewriter.create<arith::ConstantIntOp>(
+          loc, cacheLineBytes, 64);
+      Value participantCacheLines = rewriter.create<arith::AddIOp>(
+          loc, rewriter.create<arith::MulIOp>(loc, blockNum, two), one);
+      Value unorderedStride = rewriter.create<arith::MulIOp>(
+          loc, participantCacheLines, cacheLineBytesVal);
+      Value unorderedIndex = rewriter.create<arith::ConstantIntOp>(
+          loc, static_cast<int64_t>(unorderedCount), 64);
+      Value unorderedPart = rewriter.create<arith::MulIOp>(
+          loc, unorderedStride, unorderedIndex);
+      Value orderedRegion = rewriter.create<arith::ConstantIntOp>(
+          loc, static_cast<int64_t>(totalOrderedCount) * cacheLineBytes, 64);
+      totalByte = rewriter.create<arith::AddIOp>(
+          loc, orderedRegion, unorderedPart);
+      ++unorderedCount;
+    } else {
+      totalByte = rewriter.create<arith::ConstantIntOp>(
+          loc, static_cast<int64_t>(orderedCount) * cacheLineBytes, 64);
+      ++orderedCount;
+    }
 
-    // ----- Compute the start offset for the current lock -----
-    // offset = orderedCount * orderedStep + unorderedCount * unorderedStep * block_num
-    // Note: unorderedStep here is the fixed stride per unordered lock (without block_num),
-    // unorderedCount * unorderedStep is the total constant stride for all preceding
-    // unordered locks (compile-time constant).
-
-    // 1. Ordered part offset in bytes (i64)
-    Value orderedPart = rewriter.create<arith::ConstantIntOp>(
-        loc, (int64_t)(orderedCount * orderedStep), 64);
-    // 2. Unordered part constant product (i64)
-    Value unorderedConst = rewriter.create<arith::ConstantIntOp>(
-        loc, (int64_t)(unorderedCount * unorderedStep), 64);
-    // 3. Get block_num
-    Value blockNum = rewriter.create<hivm::GetBlockNumOp>(loc)->getResult(0);
-    // 4. Unordered part total bytes = unorderedConst * block_num (i64)
-    Value unorderedPart = rewriter.create<arith::MulIOp>(loc, unorderedConst, blockNum);
-    // 5. Total bytes = orderedPart + unorderedPart
-    Value totalByte = rewriter.create<arith::AddIOp>(loc, orderedPart, unorderedPart);
-    // 6. Cast to index
-    Value offsetIndex = rewriter.create<arith::IndexCastOp>(loc, rewriter.getIndexType(), totalByte);
+    Value offsetIndex = rewriter.create<arith::IndexCastOp>(
+        loc, rewriter.getIndexType(), totalByte);
 
     // Create the view with dynamic byte offset
     auto viewOp = rewriter.create<memref::ViewOp>(
         loc, op.getType(), op.getLockArg(),
         /*byte_shift*/ offsetIndex, /*dynamic_sizes*/ ValueRange{});
-
-    // Update counters: the current lock has been processed, increment the corresponding counter
-    if (isUnordered) {
-      unorderedCount++;
-    } else {
-      orderedCount++;
-    }
 
     rewriter.replaceOp(op, viewOp);
     return success();
@@ -132,6 +129,11 @@ void LowerCreateSyncBlockLockPass::runOnOperation() {
   // Reset static counters
   LowerCreateSyncBlockLock::orderedCount = 0;
   LowerCreateSyncBlockLock::unorderedCount = 0;
+  LowerCreateSyncBlockLock::totalOrderedCount = 0;
+  funcOp.walk([](hivm::CreateSyncBlockLockOp op) {
+    if (!op->hasAttr(SyncBlockLockUnorderedAttr::name))
+      ++LowerCreateSyncBlockLock::totalOrderedCount;
+  });
 
   patterns.add<LowerCreateSyncBlockLock>(&getContext());
   (void)applyPatternsGreedily(funcOp, std::move(patterns));

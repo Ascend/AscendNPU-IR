@@ -144,30 +144,32 @@ free_lock_var_with_subblock(memref_t<__gm__ int64_t, 1> *lock_var) {
 }
 
 //===----------------------------------------------------------------------===//
-// Unordered lock implemented as a Lamport bakery lock over physical blocks.
-// A fixed token order is not valid here: CV kernels such as FZE can skip the
-// guarded region on some blocks, so the lock must ignore non-participants.
+// Unordered lock implemented as a Lamport bakery lock over logical
+// participants. A participant is a physical block on a single-subblock kernel,
+// or (block, subblock) on a mixed kernel. A fixed token order is not valid when
+// some participants skip the guarded region, so the lock ignores them.
 //
-// lock_var layout (sized by the host infer-num callback to
-// 1 + 2 * SYNC_LOCK_MAX_PARTICIPANTS cache lines):
+// lock_var layout for N launch-time participants (1 + 2 * N cache lines):
 //   participant_num at i64 index 0
 //   choosing[p] at i64 index (1 + p) * SYNC_LOCK_CACHELINE_I64
-//   ticket[p] at i64 index
-//       (1 + SYNC_LOCK_MAX_PARTICIPANTS + p) * SYNC_LOCK_CACHELINE_I64
+//   ticket[p] at i64 index (1 + N + p) * SYNC_LOCK_CACHELINE_I64
 // Each slot occupies a full cache line because dcci works at cache-line
 // granularity; packing slots can let one core's writeback clobber another.
-// NOTE: SYNC_LOCK_MAX_PARTICIPANTS must match kMaxSyncBlockParticipants in
-// InsertInferSyncBlockLockNumAndInitFunc.cpp.
 //===----------------------------------------------------------------------===//
 static constexpr int64_t SYNC_LOCK_CACHELINE_I64 = 8;
 static constexpr int64_t SYNC_LOCK_MAX_PARTICIPANTS = 1024;
 static constexpr int64_t SYNC_LOCK_CHOOSING_BASE_I64 =
     SYNC_LOCK_CACHELINE_I64;
-static constexpr int64_t SYNC_LOCK_TICKET_BASE_I64 =
-    (1 + SYNC_LOCK_MAX_PARTICIPANTS) * SYNC_LOCK_CACHELINE_I64;
 
 __aiv__ __attribute__((always_inline)) int64_t sync_lock_participant_id() {
   return INTRINSIC_NO_ARGS(get_block_idx);
+}
+
+__aiv__ __attribute__((always_inline)) int64_t
+sync_lock_participant_id_with_subblock() {
+  return sync_lock_participant_id() *
+             INTRINSIC_NO_ARGS(get_subblockdim) +
+         INTRINSIC_NO_ARGS(get_subblockid);
 }
 
 // Cross-core GM coherence follows the existing ordered lock's dcci pattern:
@@ -190,31 +192,31 @@ lock_gm_load_i64(volatile __gm__ int64_t *p) {
 
 __aiv__ __attribute__((always_inline)) int64_t
 sync_lock_participant_num(__gm__ int64_t *base) {
-  // The launcher writes the actual launch-time participant count here after it
-  // clamps blockNum to the target's physical block capacity. If the metadata is
-  // missing or malformed, fall back to the full buffer capacity for correctness.
+  // The launcher writes the exact launch-time participant count. Invalid
+  // metadata must not fall back beyond the dynamically allocated buffer.
   volatile __gm__ int64_t *participant_num_ptr = base;
   int64_t participant_num = lock_gm_load_i64(participant_num_ptr);
   if (participant_num <= 0 ||
       participant_num > SYNC_LOCK_MAX_PARTICIPANTS)
-    return SYNC_LOCK_MAX_PARTICIPANTS;
+    return 1;
   return participant_num;
 }
 
 __aiv__ __attribute__((always_inline)) void
-sync_block_lock_unordered(memref_t<__gm__ int64_t, 1> *lock_var) {
+sync_block_lock_unordered_impl(memref_t<__gm__ int64_t, 1> *lock_var, int64_t i) {
 #ifdef ENABLE_CPU_TRACE_INTRINSIC
 #else
-  const int64_t i = sync_lock_participant_id();
   __gm__ int64_t *base = lock_var->aligned + lock_var->offset;
   const int64_t N = sync_lock_participant_num(base);
   if (N <= 1)
     return;
+  const int64_t ticketBase =
+      (1 + N) * SYNC_LOCK_CACHELINE_I64;
 
   volatile __gm__ int64_t *choosing_i =
       base + SYNC_LOCK_CHOOSING_BASE_I64 + i * SYNC_LOCK_CACHELINE_I64;
   volatile __gm__ int64_t *ticket_i =
-      base + SYNC_LOCK_TICKET_BASE_I64 + i * SYNC_LOCK_CACHELINE_I64;
+      base + ticketBase + i * SYNC_LOCK_CACHELINE_I64;
 
   lock_gm_store_i64(choosing_i, 1);
   INTRINSIC(pipe_barrier, PIPE_ALL);
@@ -222,7 +224,7 @@ sync_block_lock_unordered(memref_t<__gm__ int64_t, 1> *lock_var) {
   int64_t max_ticket = 0;
   for (int64_t j = 0; j < N; ++j) {
     volatile __gm__ int64_t *ticket_j =
-        base + SYNC_LOCK_TICKET_BASE_I64 + j * SYNC_LOCK_CACHELINE_I64;
+        base + ticketBase + j * SYNC_LOCK_CACHELINE_I64;
     int64_t ticket = lock_gm_load_i64(ticket_j);
     if (ticket > max_ticket)
       max_ticket = ticket;
@@ -241,7 +243,7 @@ sync_block_lock_unordered(memref_t<__gm__ int64_t, 1> *lock_var) {
     volatile __gm__ int64_t *choosing_j =
         base + SYNC_LOCK_CHOOSING_BASE_I64 + j * SYNC_LOCK_CACHELINE_I64;
     volatile __gm__ int64_t *ticket_j =
-        base + SYNC_LOCK_TICKET_BASE_I64 + j * SYNC_LOCK_CACHELINE_I64;
+        base + ticketBase + j * SYNC_LOCK_CACHELINE_I64;
 
     while (lock_gm_load_i64(choosing_j) != 0) {
       continue;
@@ -263,32 +265,76 @@ sync_block_lock_unordered(memref_t<__gm__ int64_t, 1> *lock_var) {
 }
 
 __aiv__ __attribute__((always_inline)) void
-sync_block_unlock_unordered(memref_t<__gm__ int64_t, 1> *lock_var) {
+sync_block_lock_unordered(memref_t<__gm__ int64_t, 1> *lock_var) {
+  sync_block_lock_unordered_impl(lock_var, sync_lock_participant_id());
+}
+
+__aiv__ __attribute__((always_inline)) void
+sync_block_lock_unordered_with_subblock(
+    memref_t<__gm__ int64_t, 1> *lock_var) {
+  sync_block_lock_unordered_impl(
+      lock_var, sync_lock_participant_id_with_subblock());
+}
+
+__aiv__ __attribute__((always_inline)) void
+sync_block_unlock_unordered_impl(memref_t<__gm__ int64_t, 1> *lock_var, int64_t i) {
 #ifdef ENABLE_CPU_TRACE_INTRINSIC
 #else
   INTRINSIC(pipe_barrier, PIPE_ALL);
-  const int64_t i = sync_lock_participant_id();
   __gm__ int64_t *base = lock_var->aligned + lock_var->offset;
+  const int64_t N = sync_lock_participant_num(base);
+  if (N <= 1)
+    return;
+  const int64_t ticketBase =
+      (1 + N) * SYNC_LOCK_CACHELINE_I64;
   volatile __gm__ int64_t *ticket_i =
-      base + SYNC_LOCK_TICKET_BASE_I64 + i * SYNC_LOCK_CACHELINE_I64;
+      base + ticketBase + i * SYNC_LOCK_CACHELINE_I64;
   lock_gm_store_i64(ticket_i, 0);
 #endif
+}
+
+__aiv__ __attribute__((always_inline)) void
+sync_block_unlock_unordered(memref_t<__gm__ int64_t, 1> *lock_var) {
+  sync_block_unlock_unordered_impl(lock_var, sync_lock_participant_id());
+}
+
+__aiv__ __attribute__((always_inline)) void
+sync_block_unlock_unordered_with_subblock(
+    memref_t<__gm__ int64_t, 1> *lock_var) {
+  sync_block_unlock_unordered_impl(
+      lock_var, sync_lock_participant_id_with_subblock());
 }
 
 /// free_lock_var_unordered: bakery release is idempotent. Clearing an
 /// already-zero ticket is a no-op, so this is safe for paths that skipped the
 /// normal lock/unlock pair.
 __aiv__ __attribute__((always_inline)) void
-free_lock_var_unordered(memref_t<__gm__ int64_t, 1> *lock_var) {
+free_lock_var_unordered_impl(memref_t<__gm__ int64_t, 1> *lock_var, int64_t i) {
 #ifdef ENABLE_CPU_TRACE_INTRINSIC
 #else
   INTRINSIC(pipe_barrier, PIPE_ALL);
-  const int64_t i = sync_lock_participant_id();
   __gm__ int64_t *base = lock_var->aligned + lock_var->offset;
+  const int64_t N = sync_lock_participant_num(base);
+  if (N <= 1)
+    return;
+  const int64_t ticketBase =
+      (1 + N) * SYNC_LOCK_CACHELINE_I64;
   volatile __gm__ int64_t *ticket_i =
-      base + SYNC_LOCK_TICKET_BASE_I64 + i * SYNC_LOCK_CACHELINE_I64;
+      base + ticketBase + i * SYNC_LOCK_CACHELINE_I64;
   lock_gm_store_i64(ticket_i, 0);
 #endif
+}
+
+__aiv__ __attribute__((always_inline)) void
+free_lock_var_unordered(memref_t<__gm__ int64_t, 1> *lock_var) {
+  free_lock_var_unordered_impl(lock_var, sync_lock_participant_id());
+}
+
+__aiv__ __attribute__((always_inline)) void
+free_lock_var_unordered_with_subblock(
+    memref_t<__gm__ int64_t, 1> *lock_var) {
+  free_lock_var_unordered_impl(
+      lock_var, sync_lock_participant_id_with_subblock());
 }
 
 extern "C" {
@@ -338,4 +384,19 @@ REGISTE_SYNCBLOCKUNLOCK_UNORDERED();
 // free_lock_var_unordered
 //===-------------------------------------------------------------------===//
 REGISTE_FREE_LOCK_VAR_UNORDERED();
+
+//===-------------------------------------------------------------------===//
+// sync_block_lock_unordered_with_subblock
+//===-------------------------------------------------------------------===//
+REGISTE_SYNCBLOCKLOCK_UNORDERED_WITH_SUBBLOCK();
+
+//===-------------------------------------------------------------------===//
+// sync_block_unlock_unordered_with_subblock
+//===-------------------------------------------------------------------===//
+REGISTE_SYNCBLOCKUNLOCK_UNORDERED_WITH_SUBBLOCK();
+
+//===-------------------------------------------------------------------===//
+// free_lock_var_unordered_with_subblock
+//===-------------------------------------------------------------------===//
+REGISTE_FREE_LOCK_VAR_UNORDERED_WITH_SUBBLOCK();
 }

@@ -67,6 +67,18 @@ sync_block_unlock_unordered(memref_t<__gm__ int64_t, 1> *lock_var);
 __aiv__ __attribute__((always_inline)) void
 free_lock_var_unordered(memref_t<__gm__ int64_t, 1> *lock_var);
 
+__aiv__ __attribute__((always_inline)) void
+sync_block_lock_unordered_with_subblock(
+    memref_t<__gm__ int64_t, 1> *lock_var);
+
+__aiv__ __attribute__((always_inline)) void
+sync_block_unlock_unordered_with_subblock(
+    memref_t<__gm__ int64_t, 1> *lock_var);
+
+__aiv__ __attribute__((always_inline)) void
+free_lock_var_unordered_with_subblock(
+    memref_t<__gm__ int64_t, 1> *lock_var);
+
 #define DECLARE_SYNCBLOCKLOCK()                                                \
   __aiv__ __attribute__((always_inline)) void _mlir_ciface_sync_block_lock(    \
       memref_t<__gm__ int64_t, 1> *lock_var)
@@ -141,6 +153,36 @@ free_lock_var_unordered(memref_t<__gm__ int64_t, 1> *lock_var);
 #define REGISTE_FREE_LOCK_VAR_UNORDERED()                                      \
   DECLARE_FREE_LOCK_VAR_UNORDERED() { free_lock_var_unordered(lock_var); }
 
+#define DECLARE_SYNCBLOCKLOCK_UNORDERED_WITH_SUBBLOCK()                        \
+  __aiv__ __attribute__((always_inline)) void                                  \
+  _mlir_ciface_sync_block_lock_unordered_with_subblock(                        \
+      memref_t<__gm__ int64_t, 1> *lock_var)
+
+#define REGISTE_SYNCBLOCKLOCK_UNORDERED_WITH_SUBBLOCK()                        \
+  DECLARE_SYNCBLOCKLOCK_UNORDERED_WITH_SUBBLOCK() {                            \
+    sync_block_lock_unordered_with_subblock(lock_var);                         \
+  }
+
+#define DECLARE_SYNCBLOCKUNLOCK_UNORDERED_WITH_SUBBLOCK()                      \
+  __aiv__ __attribute__((always_inline)) void                                  \
+  _mlir_ciface_sync_block_unlock_unordered_with_subblock(                      \
+      memref_t<__gm__ int64_t, 1> *lock_var)
+
+#define REGISTE_SYNCBLOCKUNLOCK_UNORDERED_WITH_SUBBLOCK()                      \
+  DECLARE_SYNCBLOCKUNLOCK_UNORDERED_WITH_SUBBLOCK() {                          \
+    sync_block_unlock_unordered_with_subblock(lock_var);                       \
+  }
+
+#define DECLARE_FREE_LOCK_VAR_UNORDERED_WITH_SUBBLOCK()                        \
+  __aiv__ __attribute__((always_inline)) void                                  \
+  _mlir_ciface_free_lock_var_unordered_with_subblock(                          \
+      memref_t<__gm__ int64_t, 1> *lock_var)
+
+#define REGISTE_FREE_LOCK_VAR_UNORDERED_WITH_SUBBLOCK()                        \
+  DECLARE_FREE_LOCK_VAR_UNORDERED_WITH_SUBBLOCK() {                            \
+    free_lock_var_unordered_with_subblock(lock_var);                           \
+  }
+
 extern "C" {
 //===-------------------------------------------------------------------===//
 // sync_block_lock
@@ -186,5 +228,20 @@ DECLARE_SYNCBLOCKUNLOCK_UNORDERED();
 // free_lock_var_unordered
 //===-------------------------------------------------------------------===//
 DECLARE_FREE_LOCK_VAR_UNORDERED();
+
+//===-------------------------------------------------------------------===//
+// sync_block_lock_unordered_with_subblock
+//===-------------------------------------------------------------------===//
+DECLARE_SYNCBLOCKLOCK_UNORDERED_WITH_SUBBLOCK();
+
+//===-------------------------------------------------------------------===//
+// sync_block_unlock_unordered_with_subblock
+//===-------------------------------------------------------------------===//
+DECLARE_SYNCBLOCKUNLOCK_UNORDERED_WITH_SUBBLOCK();
+
+//===-------------------------------------------------------------------===//
+// free_lock_var_unordered_with_subblock
+//===-------------------------------------------------------------------===//
+DECLARE_FREE_LOCK_VAR_UNORDERED_WITH_SUBBLOCK();
 }
 #endif // BISHENGIR_LIB_TEMPLATE_INCLUDE_SYNC_UTILS_H
