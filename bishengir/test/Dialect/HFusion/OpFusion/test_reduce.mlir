@@ -13,9 +13,9 @@
 // CHECK-SAME: attributes {hacc.function_kind = #hacc.function_kind<HOST>}
 // CHECK: call @host_first_reduce_single_outlined_0_0
 // CHECK: return
-func.func @host_first_reduce(%arg0: tensor<?x?xf32>, %arg1: tensor<?xf32>) -> tensor<?xf32> 
+func.func @host_first_reduce(%arg0: tensor<?x?xf32>, %arg1: tensor<?xf32>) -> tensor<?xf32>
 attributes {hacc.function_kind = #hacc.function_kind<HOST>} {
-  %reduced = linalg.reduce { arith.addf } 
+  %reduced = linalg.reduce { arith.addf }
     ins(%arg0 : tensor<?x?xf32>) outs(%arg1 : tensor<?xf32>) dimensions = [0]
   return %reduced : tensor<?xf32>
 }
@@ -34,14 +34,14 @@ attributes {hacc.function_kind = #hacc.function_kind<HOST>} {
 // CHECK: call @host_multi_ops_single_outlined_0
 // CHECK: call @host_multi_ops_single_outlined_1
 // CHECK: return
-func.func @host_multi_ops(%arg0: tensor<?x?xf32>, %arg1: tensor<?x?xf32>, %arg2: tensor<?x?xf32>, %arg3: tensor<?x?xf32>, 
-                          %0 : tensor<?x?xf32>, %3 : tensor<?xf32>) -> tensor<?xf32> 
+func.func @host_multi_ops(%arg0: tensor<?x?xf32>, %arg1: tensor<?x?xf32>, %arg2: tensor<?x?xf32>, %arg3: tensor<?x?xf32>,
+                          %0 : tensor<?x?xf32>, %3 : tensor<?xf32>) -> tensor<?xf32>
 attributes {hacc.function_kind = #hacc.function_kind<HOST>} {
-  %1 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} 
+  %1 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
     ins(%arg0, %arg1 : tensor<?x?xf32>, tensor<?x?xf32>) outs(%0 : tensor<?x?xf32>) -> tensor<?x?xf32>
-  %2 = linalg.matmul ins(%arg2, %arg3: tensor<?x?xf32>, tensor<?x?xf32>) 
+  %2 = linalg.matmul ins(%arg2, %arg3: tensor<?x?xf32>, tensor<?x?xf32>)
     outs(%arg2: tensor<?x?xf32>) -> tensor<?x?xf32>
-  %reduced = linalg.reduce { arith.addf } 
+  %reduced = linalg.reduce { arith.addf }
     ins(%1 : tensor<?x?xf32>) outs(%3 : tensor<?xf32>) dimensions = [0]
   return %reduced : tensor<?xf32>
 }

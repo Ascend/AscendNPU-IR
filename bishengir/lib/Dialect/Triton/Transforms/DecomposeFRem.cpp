@@ -118,7 +118,7 @@ public:
         rewriter.create<LLVM::AndOp>(fremOp->getLoc(), exp_shifted, c255);
     Value exp =
         rewriter.create<LLVM::SubOp>(fremOp->getLoc(), exp_biased, c127);
-    
+
     // 3. condition judge
     //    is_lt0   : exp < 0
     //    is_lt23  : exp < 23

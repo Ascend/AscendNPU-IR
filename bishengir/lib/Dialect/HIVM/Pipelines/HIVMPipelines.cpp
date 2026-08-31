@@ -299,6 +299,8 @@ static void hivmPreBufferizationOptimizationPipeline(
           hivmPipelineOptions.setWorkspaceMultibuffer;
       pipelineOptions.enableLazyLoading = hivmPipelineOptions.enableLazyLoading;
       pipelineOptions.pipelineMode = hivmPipelineOptions.setCVPipelineMode;
+      // Workspace allocation with dyn size, requires setbuffersize pass to get
+      // fixed size.
       pm.nest<func::FuncOp>().addPass(createSetBufferSizePass());
       pm.nest<func::FuncOp>().addPass(createCVPipeliningPass(pipelineOptions));
     }
@@ -353,9 +355,11 @@ static void hivmPreBufferizationOptimizationPipeline(
   // tensor SSA property.
   pm.addPass(createSplitMixKernelPass());
   pm.addPass(scope::createInlineScopePass());
-  TileAndBindSubBlockOptions tileOptions;
-  tileOptions.enableTile = hivmPipelineOptions.enableAutoBindSubBlock;
-  pm.addPass(createTileAndBindSubBlockPass(tileOptions));
+  if (!hivmPipelineOptions.skipHIVMBindSubBlockPass) {
+    TileAndBindSubBlockOptions tileOptions;
+    tileOptions.enableTile = hivmPipelineOptions.enableAutoBindSubBlock;
+    pm.addPass(createTileAndBindSubBlockPass(tileOptions));
+  }
   pm.nest<func::FuncOp>().addPass(tensor::createFoldTensorEmptyPass());
   canonicalizationHIVMPipeline(pm);
   if (hivmPipelineOptions.enableCodeMotion) {

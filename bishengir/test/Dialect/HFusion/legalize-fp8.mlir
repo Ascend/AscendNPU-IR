@@ -166,12 +166,12 @@ func.func @test_floor_fp8e5m2(%src : tensor<6x4xf8E5M2>, %dst : tensor<6x4xf8E5M
 
 // CHECK-LABEL: func.func @test_cumsum_fp8e4m3
 func.func @test_cumsum_fp8e4m3(%src : tensor<22x1x1xf8E4M3FN>) -> tensor<22x1x1xf8E4M3FN> {
-  // CHECK: %[[VAL_0:.*]] = tensor.empty() : tensor<22x1x1xf32> 
+  // CHECK: %[[VAL_0:.*]] = tensor.empty() : tensor<22x1x1xf32>
   // CHECK: %[[VAL_1:.*]] =  hfusion.cast {{.*}} ins(%arg0 : tensor<22x1x1xf8E4M3FN>) outs(%[[VAL_0]] : tensor<22x1x1xf32>) -> tensor<22x1x1xf32>
   // CHECK: %[[VAL_2:.*]] = hfusion.cumsum %[[VAL_1]] : tensor<22x1x1xf32> cum_dims = [2] reverse = false -> tensor<22x1x1xf32>
-  // CHECK: %[[VAL_3:.*]] = tensor.empty() : tensor<22x1x1xf8E4M3FN> 
-  // CHECK: %[[VAL_4:.*]] =  hfusion.cast {{.*}} ins(%[[VAL_2]] : tensor<22x1x1xf32>) outs(%[[VAL_3]] : tensor<22x1x1xf8E4M3FN>) -> tensor<22x1x1xf8E4M3FN> 
-  // CHECK: return %[[VAL_4]] : tensor<22x1x1xf8E4M3FN> 
+  // CHECK: %[[VAL_3:.*]] = tensor.empty() : tensor<22x1x1xf8E4M3FN>
+  // CHECK: %[[VAL_4:.*]] =  hfusion.cast {{.*}} ins(%[[VAL_2]] : tensor<22x1x1xf32>) outs(%[[VAL_3]] : tensor<22x1x1xf8E4M3FN>) -> tensor<22x1x1xf8E4M3FN>
+  // CHECK: return %[[VAL_4]] : tensor<22x1x1xf8E4M3FN>
   %res = hfusion.cumsum %src : tensor<22x1x1xf8E4M3FN> cum_dims = [2] reverse = false -> tensor<22x1x1xf8E4M3FN>
   return %res : tensor<22x1x1xf8E4M3FN>
 }
@@ -183,9 +183,9 @@ func.func @test_cumsum_fp8e5m2(%src : tensor<22x1x1xf8E5M2>) -> tensor<22x1x1xf8
   // CHECK: %[[VAL_0:.*]] = tensor.empty() : tensor<22x1x1xf32>
   // CHECK: %[[VAL_1:.*]] =  hfusion.cast {{.*}} ins(%arg0 : tensor<22x1x1xf8E5M2>) outs(%[[VAL_0]] : tensor<22x1x1xf32>) -> tensor<22x1x1xf32>
   // CHECK: %[[VAL_2:.*]] = hfusion.cumsum %[[VAL_1]] : tensor<22x1x1xf32> cum_dims = [2] reverse = false -> tensor<22x1x1xf32>
-  // CHECK: %[[VAL_3:.*]] = tensor.empty() : tensor<22x1x1xf8E5M2> 
-  // CHECK: %[[VAL_4:.*]] =  hfusion.cast {{.*}} ins(%[[VAL_2]] : tensor<22x1x1xf32>) outs(%[[VAL_3]] : tensor<22x1x1xf8E5M2>) -> tensor<22x1x1xf8E5M2> 
-  // CHECK: return %[[VAL_4]] : tensor<22x1x1xf8E5M2> 
+  // CHECK: %[[VAL_3:.*]] = tensor.empty() : tensor<22x1x1xf8E5M2>
+  // CHECK: %[[VAL_4:.*]] =  hfusion.cast {{.*}} ins(%[[VAL_2]] : tensor<22x1x1xf32>) outs(%[[VAL_3]] : tensor<22x1x1xf8E5M2>) -> tensor<22x1x1xf8E5M2>
+  // CHECK: return %[[VAL_4]] : tensor<22x1x1xf8E5M2>
   %res = hfusion.cumsum %src : tensor<22x1x1xf8E5M2> cum_dims = [2] reverse = false -> tensor<22x1x1xf8E5M2>
   return %res : tensor<22x1x1xf8E5M2>
 }
@@ -203,7 +203,7 @@ func.func @test_reduce_with_index_fp8e5m2(%src : tensor<?x?xf8E5M2>, %src_index 
   // CHECK-SAME:  tensor<?xf32>, tensor<?xi32>
   // CHECK:  hfusion.cast
   // CHECK-SAME: tensor<?xf32>) {{.*}} -> tensor<?xf8E5M2>
-  %res:2 = hfusion.reduce_with_index {tie_break_left = true, unsigned_src = false} <max> ins(%src, %src_index : tensor<?x?xf8E5M2>, tensor<?x?xi32>) 
+  %res:2 = hfusion.reduce_with_index {tie_break_left = true, unsigned_src = false} <max> ins(%src, %src_index : tensor<?x?xf8E5M2>, tensor<?x?xi32>)
                                       outs(%dst, %dst_index : tensor<?xf8E5M2>, tensor<?xi32>) dimensions = [0]  -> tensor<?xf8E5M2>, tensor<?xi32>
   return %res#0 : tensor<?xf8E5M2>
 }
@@ -221,7 +221,7 @@ func.func @test_reduce_with_index_fp8e4m3(%src : tensor<?x?xf8E4M3FN>, %src_inde
   // CHECK-SAME:  tensor<?xf32>, tensor<?xi32>
   // CHECK:  hfusion.cast
   // CHECK-SAME: tensor<?xf32>) {{.*}} -> tensor<?xf8E4M3FN>
-  %res:2 = hfusion.reduce_with_index {tie_break_left = true, unsigned_src = false} <max> ins(%src, %src_index : tensor<?x?xf8E4M3FN>, tensor<?x?xi32>) 
+  %res:2 = hfusion.reduce_with_index {tie_break_left = true, unsigned_src = false} <max> ins(%src, %src_index : tensor<?x?xf8E4M3FN>, tensor<?x?xi32>)
                                       outs(%dst, %dst_index : tensor<?xf8E4M3FN>, tensor<?xi32>) dimensions = [0]  -> tensor<?xf8E4M3FN>, tensor<?xi32>
   return %res#0 : tensor<?xf8E4M3FN>
 }
@@ -231,22 +231,22 @@ func.func @test_reduce_with_index_fp8e4m3(%src : tensor<?x?xf8E4M3FN>, %src_inde
 // CHECK-LABEL: func.func @legalize_fp8_reduction$sum$f8E4M3FN
 // CHECK-SAME:  (%[[ARG0:.*]]: tensor<8xf8E4M3FN>, %[[ARG1:.*]]: tensor<f8E4M3FN>, %[[ARG2:.*]]: f8E4M3FN) -> tensor<f8E4M3FN> {
 // CHECK:       %[[EMPTY_F32_8:.*]] = tensor.empty() : tensor<8xf32>
-// CHECK:       %[[CAST_IN:.*]] = hfusion.cast 
+// CHECK:       %[[CAST_IN:.*]] = hfusion.cast
 // CHECK-SAME:    ins(%[[ARG0]] : tensor<8xf8E4M3FN>) outs(%[[EMPTY_F32_8]] : tensor<8xf32>) -> tensor<8xf32>
 // CHECK:       %[[EMPTY_F32_SCALAR:.*]] = tensor.empty() : tensor<f32>
-// CHECK:       %[[CAST_INIT:.*]] = hfusion.cast 
+// CHECK:       %[[CAST_INIT:.*]] = hfusion.cast
 // CHECK-SAME:    ins(%[[ARG1]] : tensor<f8E4M3FN>) outs(%[[EMPTY_F32_SCALAR]] : tensor<f32>) -> tensor<f32>
-// CHECK:       %[[REDUCED:.*]] = linalg.reduce ins(%[[CAST_IN]] : tensor<8xf32>) outs(%[[CAST_INIT]] : tensor<f32>) dimensions = [0] 
+// CHECK:       %[[REDUCED:.*]] = linalg.reduce ins(%[[CAST_IN]] : tensor<8xf32>) outs(%[[CAST_INIT]] : tensor<f32>) dimensions = [0]
 // CHECK:       (%[[IN:.*]]: f32, %[[INIT:.*]]: f32) {
 // CHECK:         %[[ADD:.*]] = arith.addf %[[IN]], %[[INIT]] : f32
 // CHECK:         linalg.yield %[[ADD]] : f32
 // CHECK:       }
 // CHECK:       %[[EMPTY_OUT:.*]] = tensor.empty() : tensor<f8E4M3FN>
-// CHECK:       %[[CAST_OUT:.*]] = hfusion.cast 
+// CHECK:       %[[CAST_OUT:.*]] = hfusion.cast
 // CHECK-SAME:    ins(%[[REDUCED]] : tensor<f32>) outs(%[[EMPTY_OUT]] : tensor<f8E4M3FN>) -> tensor<f8E4M3FN>
 // CHECK:       return %[[CAST_OUT]] : tensor<f8E4M3FN>
 func.func @legalize_fp8_reduction$sum$f8E4M3FN(%arg0: tensor<8xf8E4M3FN>, %arg1: tensor<f8E4M3FN>, %arg2: f8E4M3FN) -> tensor<f8E4M3FN> {
-  %reduced = linalg.reduce ins(%arg0 : tensor<8xf8E4M3FN>) outs(%arg1 : tensor<f8E4M3FN>) dimensions = [0] 
+  %reduced = linalg.reduce ins(%arg0 : tensor<8xf8E4M3FN>) outs(%arg1 : tensor<f8E4M3FN>) dimensions = [0]
     (%in: f8E4M3FN, %init: f8E4M3FN) {
       %1 = arith.addf %in, %init : f8E4M3FN
       linalg.yield %1 : f8E4M3FN
@@ -259,22 +259,22 @@ func.func @legalize_fp8_reduction$sum$f8E4M3FN(%arg0: tensor<8xf8E4M3FN>, %arg1:
 // CHECK-LABEL: func.func @legalize_fp8_reduction$sum$f8E5M2
 // CHECK-SAME:  (%[[ARG0:.*]]: tensor<8xf8E5M2>, %[[ARG1:.*]]: tensor<f8E5M2>, %[[ARG2:.*]]: f8E5M2) -> tensor<f8E5M2> {
 // CHECK:       %[[EMPTY_F32_8:.*]] = tensor.empty() : tensor<8xf32>
-// CHECK:       %[[CAST_IN:.*]] = hfusion.cast 
+// CHECK:       %[[CAST_IN:.*]] = hfusion.cast
 // CHECK-SAME:    ins(%[[ARG0]] : tensor<8xf8E5M2>) outs(%[[EMPTY_F32_8]] : tensor<8xf32>) -> tensor<8xf32>
 // CHECK:       %[[EMPTY_F32_SCALAR:.*]] = tensor.empty() : tensor<f32>
-// CHECK:       %[[CAST_INIT:.*]] = hfusion.cast 
+// CHECK:       %[[CAST_INIT:.*]] = hfusion.cast
 // CHECK-SAME:    ins(%[[ARG1]] : tensor<f8E5M2>) outs(%[[EMPTY_F32_SCALAR]] : tensor<f32>) -> tensor<f32>
-// CHECK:       %[[REDUCED:.*]] = linalg.reduce ins(%[[CAST_IN]] : tensor<8xf32>) outs(%[[CAST_INIT]] : tensor<f32>) dimensions = [0] 
+// CHECK:       %[[REDUCED:.*]] = linalg.reduce ins(%[[CAST_IN]] : tensor<8xf32>) outs(%[[CAST_INIT]] : tensor<f32>) dimensions = [0]
 // CHECK:       (%[[IN:.*]]: f32, %[[INIT:.*]]: f32) {
 // CHECK:         %[[ADD:.*]] = arith.addf %[[IN]], %[[INIT]] : f32
 // CHECK:         linalg.yield %[[ADD]] : f32
 // CHECK:       }
 // CHECK:       %[[EMPTY_OUT:.*]] = tensor.empty() : tensor<f8E5M2>
-// CHECK:       %[[CAST_OUT:.*]] = hfusion.cast 
+// CHECK:       %[[CAST_OUT:.*]] = hfusion.cast
 // CHECK-SAME:    ins(%[[REDUCED]] : tensor<f32>) outs(%[[EMPTY_OUT]] : tensor<f8E5M2>) -> tensor<f8E5M2>
 // CHECK:       return %[[CAST_OUT]] : tensor<f8E5M2>
 func.func @legalize_fp8_reduction$sum$f8E5M2(%arg0: tensor<8xf8E5M2>, %arg1: tensor<f8E5M2>, %arg2: f8E5M2) -> tensor<f8E5M2> {
-  %reduced = linalg.reduce ins(%arg0 : tensor<8xf8E5M2>) outs(%arg1 : tensor<f8E5M2>) dimensions = [0] 
+  %reduced = linalg.reduce ins(%arg0 : tensor<8xf8E5M2>) outs(%arg1 : tensor<f8E5M2>) dimensions = [0]
     (%in: f8E5M2, %init: f8E5M2) {
       %1 = arith.addf %in, %init : f8E5M2
       linalg.yield %1 : f8E5M2

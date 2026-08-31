@@ -72,12 +72,12 @@ module {
     %9 = arith.addi %7, %8 : tensor<16x1x64xi32>
     %10 = tt.splat %arg0 : !tt.ptr<f16> -> tensor<16x1x64x!tt.ptr<f16>>
     %11 = tt.addptr %10, %9 : tensor<16x1x64x!tt.ptr<f16>>, tensor<16x1x64xi32>
-    
+
     // CHECK: %[[LOAD:.*]] = tt.load %[[PTR:.*]] : tensor<16x1x64x!tt.ptr<f16>>
     %12 = tt.load %11 : tensor<16x1x64x!tt.ptr<f16>>
- 
+
     // CHECK-NEXT: %[[EXT:.*]] = arith.extf %[[LOAD]] : tensor<16x1x64xf16> to tensor<16x1x64xf32>
-    
+
     // CHECK-NEXT: %[[REDUCE:.*]] = "tt.reduce"(%[[EXT]]) <{axis = 0 : i32}> ({
     // CHECK-NEXT: ^bb0(%[[ARG1:.*]]: f32, %[[ARG2:.*]]: f32):
     // CHECK-NEXT:   %[[ADD:.*]] = arith.addf %[[ARG1]], %[[ARG2]] : f32
@@ -88,12 +88,12 @@ module {
       %16 = arith.addf %arg2, %arg3 : f16
       tt.reduce.return %16 : f16
     }) : (tensor<16x1x64xf16>) -> tensor<1x64xf16>
- 
+
     // CHECK-NEXT: %[[TRUNC:.*]] = arith.truncf %[[REDUCE]] : tensor<1x64xf32> to tensor<1x64xf16>
-    
+
     %14 = tt.splat %arg1 : !tt.ptr<f16> -> tensor<1x64x!tt.ptr<f16>>
     %15 = tt.addptr %14, %2 : tensor<1x64x!tt.ptr<f16>>, tensor<1x64xi32>
-    
+
     // CHECK: tt.store %[[DST:.*]], %[[TRUNC]] : tensor<1x64x!tt.ptr<f16>>
     tt.store %15, %13 : tensor<1x64x!tt.ptr<f16>>
     tt.return

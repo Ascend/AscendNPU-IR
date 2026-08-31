@@ -21,6 +21,7 @@
 
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Utils/MultiBufferLoopAdapter.h"
@@ -60,6 +61,7 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MathExtras.h"
+#include "llvm/Support/raw_ostream.h"
 
 #include <cassert>
 #include <cstdint>
@@ -72,6 +74,26 @@
 
 namespace mlir {
 namespace hivm {
+
+bool shouldEnableChannelSplit(Type dstType) {
+  const int64_t alignM = 16;
+  const int64_t numElemPerBlock = mlir::utils::getNumPerBlock(dstType);
+  if (!getElementTypeOrSelf(dstType).isF32())
+    return false;
+  if (numElemPerBlock * 2 != alignM)
+    return false;
+  return true;
+}
+
+bool shouldEnableChannelMerge(Type dstType) {
+  const int64_t alignM = 16;
+  const int64_t numElemPerBlock = mlir::utils::getNumPerBlock(dstType);
+  if (!getElementTypeOrSelf(dstType).isInteger(8))
+    return false;
+  if (numElemPerBlock != alignM * 2)
+    return false;
+  return true;
+}
 
 namespace {
 /// Find the root memerf alloc for the input block argument.
@@ -862,6 +884,46 @@ void removeModuleCoreTypeAttr(ModuleOp mod) {
   }
 }
 
+TCoreRatioAttr getCoreRatioAttr(func::FuncOp func) {
+  return dyn_cast_or_null<TCoreRatioAttr>(func->getAttr(TCoreRatioAttr::name));
+}
+
+std::string CoreRatio::getValidRatiosStr() {
+  std::string str;
+  llvm::raw_string_ostream os(str);
+  llvm::interleaveComma(getValidRatios(), os, [&](CoreRatio ratio) {
+    os << ratio.cube << ":" << ratio.vector;
+  });
+  return str;
+}
+
+FailureOr<CoreRatio> CoreRatio::getEffective(func::FuncOp func) {
+  if (auto attr = getCoreRatioAttr(func))
+    return CoreRatio{attr.getCube(), attr.getVector()};
+
+  // No declared ratio, so the default is the target's.
+  auto moduleOp = func->getParentOfType<ModuleOp>();
+  if (moduleOp && (hacc::utils::isAscend910B(moduleOp) ||
+                   hacc::utils::isAscend910_93(moduleOp) ||
+                   hacc::utils::isAscend910_95(moduleOp) ||
+                   hacc::utils::isAscend950(moduleOp)))
+    return CoreRatio{1, 2};
+
+  func->emitError() << "no default hivm.core_ratio for this target; set "
+                       "hivm.core_ratio on the function explicitly";
+  return failure();
+}
+
+LogicalResult setCoreRatioAttr(func::FuncOp func, int32_t cube,
+                               int32_t vector) {
+  auto ratio = TCoreRatioAttr::getChecked([&] { return func->emitError(); },
+                                          func.getContext(), cube, vector);
+  if (!ratio)
+    return failure();
+  func->setAttr(TCoreRatioAttr::name, ratio);
+  return success();
+}
+
 FailureOr<SmallVector<Operation *>>
 traceForPotentialMatrixC(Value v, Block *storeBlock) {
   if (llvm::isa<hivm::MmadL1Op, hivm::BatchMmadL1Op>(v.getDefiningOp())) {
@@ -1228,6 +1290,15 @@ void setSubBlockMapping(RewriterBase &rewriter, Operation *loop) {
 
 LoopLikeOpInterface getParentLoop(Value val) {
   return getParentLoopImpl(val, nullptr);
+}
+
+BlockArgument getTiedBlockArgument(LoopLikeOpInterface loopOp,
+                                   OpOperand &operand) {
+  for (auto barg : loopOp.getRegionIterArgs())
+    if (loopOp.getTiedLoopInit(barg) == &operand) {
+      return barg;
+    }
+  return nullptr;
 }
 
 Value createNestedIndexModular(OpBuilder &builder, Operation *op, int modular) {

@@ -13,7 +13,7 @@ transform.named_sequence @__transform_main(%arg0: !transform.any_op {transform.r
   %0 = transform.structured.match ops{["some_op"]} in %arg0 : (!transform.any_op) -> !transform.any_op
   %1 = transform.reverse %0 : (!transform.any_op) -> !transform.any_op
   transform.debug.emit_remark_at %1, "matched op" : !transform.any_op
-  transform.yield 
+  transform.yield
 }
 }
 

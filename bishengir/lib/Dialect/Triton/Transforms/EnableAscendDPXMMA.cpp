@@ -49,7 +49,7 @@ public:
       int64_t maxM = 64;
       int64_t maxN = 64;
       int64_t maxK = 32;
-      int64_t total = maxM * maxN * maxK; 
+      int64_t total = maxM * maxN * maxK;
 
       int64_t product = m * n * k;
       if (product > total) {

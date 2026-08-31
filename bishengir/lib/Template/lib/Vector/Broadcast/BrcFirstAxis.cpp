@@ -343,7 +343,7 @@ brc_first_axis_3d_vcopy(memref_t<__ubuf__ T, 3> *src,
   //     repeats                                      : 5
   //     elements, processed per repeat (IN ELEMENTS) : 16
   //     stride between repeats for dst (IN BLOCKS!)  : 2
-  //     stride between repeats for src (IN BLOCKS!)  : 4 
+  //     stride between repeats for src (IN BLOCKS!)  : 4
   INTRINSIC(set_vector_mask, 0x0, MIN(src->strides[1], dst->strides[1])); // in count mode
   for (int i = 0; i < dst->sizes[0]; ++i) {
     auto offset = dst->strides[0] * i;

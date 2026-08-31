@@ -31,8 +31,9 @@ func.func @store_brc_f32_collapse_shape_dyn_offsets(%arg0: index, %arg1: index, 
 // CHECK-LABEL: func.func @store_brc_f32_dynamic_dst_offset
 // CHECK: %[[expand:.*]] = memref.expand_shape
 // CHECK: %[[alloc:.*]] = memref.alloc() : memref<64x8xf32, #hivm.address_space<ub>>
-// CHECK: hivm.hir.vbrc ins(%[[expand]] : {{.*}}) outs(%[[alloc]] : {{.*}}) broadcast_dims = [1]
-// CHECK: %[[subview:.*]] = memref.subview %[[alloc]][0, 0] [64, 1] [1, 1]
+// CHECK: %[[subview_alloc:.*]] = memref.subview %[[alloc]][0, 0] [64, 8] [1, 1]
+// CHECK: hivm.hir.vbrc ins(%[[expand]] : {{.*}}) outs(%[[subview_alloc]] : {{.*}}) broadcast_dims = [1]
+// CHECK: %[[subview:.*]] = memref.subview %[[subview_alloc]][0, 0] [64, 1] [1, 1]
 // CHECK: %[[collapse:.*]] = memref.collapse_shape %[[subview]] {{\[\[}}0, 1{{\]\]}}
 // CHECK: hivm.hir.store ins(%[[collapse]] : {{.*}}) outs(%{{.*}} : {{.*}})
 func.func @store_brc_f32_dynamic_dst_offset(%arg0: index, %arg1: memref<?xf32, #hivm.address_space<gm>>) {

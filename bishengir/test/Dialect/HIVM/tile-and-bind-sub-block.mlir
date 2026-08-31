@@ -930,7 +930,7 @@ module {
 // CHECK: scf.if
 // CHECK: hivm.hir.store
 // CHECK: limit_sub_block_id0
-module attributes {hacc.target = #hacc.target<"Ascend910_9579">, hivm.module_core_type = #hivm.module_core_type<MIX>} { 
+module attributes {hacc.target = #hacc.target<"Ascend910_9579">, hivm.module_core_type = #hivm.module_core_type<MIX>} {
   func.func @check_column_split_aic(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<?xi8>, %arg2: memref<?xi32>, %arg3: memref<?xi8>, %arg4: memref<?xi8>, %arg5: i32, %arg6: i32, %arg7: i32) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIC>, hivm.part_of_mix, hivm.vf_mode = #hivm.vf_mode<SIMD>, mix_mode = "mix", parallel_mode = "simd"} {
     %0 = tensor.empty() : tensor<16x16xi32>
     %alloc = memref.alloc() : memref<16x16xi32, #hivm.address_space<ub>>
@@ -2262,8 +2262,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">, hivm.module_cor
 // CHECK: hivm.hir.sync_block[<ALL_SUB_VECTOR>, 14 : i64] tvector_pipe = <PIPE_MTE3> vector_pipe = <PIPE_MTE2>
 // CHECK: hivm.hir.load
 // CHECK: %[[FINAL:.*]] = hivm.hir.vreduce <sum> ins(%{{.*}} : tensor<2xf32>)
-// CHECK: scope.return %[[FINAL]] : tensor<1xf32>
-// CHECK: annotation.mark
+// CHECK: annotation.mark %[[FINAL]]
 module attributes {
   hacc.target = #hacc.target<"Ascend950PR_9589">,
   hivm.module_core_type = #hivm.module_core_type<MIX>
@@ -3162,7 +3161,7 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
 }
 
 // -----
- 	 
+
 // CHECK-LABEL:   func.func @indirect_load_dual_store_mix_aiv(
 // CHECK:           scf.for
 // CHECK:             hivm.hir.indirect_load ins(%{{.*}} : memref<?xf32>, %{{.*}} : tensor<8xi64>, %{{.*}} : tensor<8xi8>, %{{.*}} : tensor<8xf32>) outs(%{{.*}} : tensor<8xf32>) {hivm.vf_mode = #hivm.vf_mode<SIMT>}
@@ -3204,6 +3203,24 @@ func.func @indirect_load_dual_store_mix_aiv(%arg0: memref<?xf32> {tt.divisibilit
   %reinterpret_cast_1 = memref.reinterpret_cast %arg4 to offset: [%6], sizes: [16], strides: [1] : memref<?xf32> to memref<16xf32, strided<[1], offset: ?>>
   hivm.hir.store ins(%15 : tensor<16xf32>) outs(%reinterpret_cast_0 : memref<16xf32, strided<[1], offset: ?>>)
   hivm.hir.store ins(%17 : tensor<16xf32>) outs(%reinterpret_cast_1 : memref<16xf32, strided<[1], offset: ?>>)
+  return
+}
+
+// -----
+
+// Make sure store is guarded when CV Ratio is 0:1
+// CHECK-LABEL:   func.func @store_with_static_mask_ratio_0_1(
+// CHECK:           hivm.hir.vln ins(%{{.*}} : tensor<64xf32>)
+// CHECK:           scf.if
+// CHECK:             hivm.hir.store
+// CHECK:           } {limit_sub_block_id0}
+// CHECK-NOT:       map_for_to_forall
+func.func @store_with_static_mask_ratio_0_1(%arg0: tensor<64xf32>, %arg1: memref<64xf32>) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.core_ratio = #hivm.core_ratio<0, 1>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+  %0 = tensor.empty() : tensor<64xf32>
+  %1 = hivm.hir.vln ins(%arg0 : tensor<64xf32>) outs(%0 : tensor<64xf32>) -> tensor<64xf32>
+  %extracted_slice = tensor.extract_slice %1[0] [1] [1] : tensor<64xf32> to tensor<1xf32>
+  %subview = memref.subview %arg1[0] [1] [1] : memref<64xf32> to memref<1xf32>
+  hivm.hir.store ins(%extracted_slice : tensor<1xf32>) outs(%subview : memref<1xf32>)
   return
 }
 
@@ -3317,7 +3334,6 @@ func.func @broadcast_merged_candidate_groups(
 //
 // CHECK-LABEL: func.func @reduce_retile_mix_aiv
 // CHECK: hivm.hir.vreduce {tiled_op}
-// CHECK: scope.return
 // CHECK: map_for_to_forall
 
 #map = affine_map<()[s0, s1] -> (s0 + s1 * 32)>
@@ -4077,8 +4093,6 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">, hivm.module_cor
     return
   }
 }
-
-
 // -----
 
 // A fixpipe whose dst is a memory_space_cast of the tightly-coupled UB alloc
@@ -4127,14 +4141,13 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">, hivm.module_c
 
 // -----
 // Nested scf.if yields bufferization.to_tensor from ping-pong UB buffers.
-// Sub-block tiling requires bubbling slices through those to_tensor ops;
-// until that succeeds the pass reverts rather than leaving a tiled loop
-// with full tensor<32xi32> if results.
-// CHECK: hivm.tile_and_bind_subblock_reverted
+// Sub-block tiling must bubble slices through those to_tensor ops and tile
+// the ping-pong buffers along dim 0 (32 -> 16 per sub-block).
 // CHECK-LABEL: func.func @if_to_tensor_bubble_up_slice_aiv
-// CHECK: scf.if {{.*}} -> (tensor<32xi32>) {
-// CHECK: bufferization.to_tensor {{.*}} restrict writable : memref<32xi32>
-// CHECK-NOT: map_for_to_forall
+// CHECK: scf.if {{.*}} -> (tensor<16xi32>) {
+// CHECK: bufferization.to_tensor {{.*}} restrict writable : memref<16xi32>
+// CHECK: {tiled_op}
+// CHECK: map_for_to_forall
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">, hivm.module_core_type = #hivm.module_core_type<MIX>} {
   func.func @if_to_tensor_bubble_up_slice_aiv() attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, hivm.vf_mode = #hivm.vf_mode<SIMD>, mix_mode = "mix", parallel_mode = "simd"} {
     %c0_i32 = arith.constant 0 : i32
@@ -4168,4 +4181,139 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">, hivm.module_c
     }
     return
   }
+}
+
+// -----
+// scf.while carrying a tensor plus i32 counters must tile the tensor to 16x32.
+// Inner scf.for with hivm.hir.copy is not required once the outer loop is gone.
+// CHECK-LABEL: func.func @tile_and_bind_while_carried_tensor
+// CHECK: scf.while
+// CHECK-SAME: tensor<16x32xf32>
+// CHECK-NOT: tile_and_bind_subblock_reverted
+
+module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @tile_and_bind_while_carried_tensor(%lim: i32) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix} {
+    %c0_i32 = arith.constant 0 : i32
+    %c32_i32 = arith.constant 32 : i32
+    %cst = arith.constant 0.0 : f32
+    %lim2 = arith.minsi %lim, %c32_i32 : i32
+    %empty = tensor.empty() : tensor<32x32xf32>
+    %init = hivm.hir.vbrc ins(%cst : f32) outs(%empty : tensor<32x32xf32>) -> tensor<32x32xf32>
+    %alloc = memref.alloc() : memref<32x32xf32, #hivm.address_space<ub>>
+    %cast = memref.memory_space_cast %alloc : memref<32x32xf32, #hivm.address_space<ub>> to memref<32x32xf32>
+    %w:2 = scf.while (%t = %init, %c = %c0_i32) : (tensor<32x32xf32>, i32) -> (tensor<32x32xf32>, i32) {
+      %cond = arith.cmpi slt, %c, %lim2 : i32
+      scf.condition(%cond) %t, %c : tensor<32x32xf32>, i32
+    } do {
+    ^bb0(%t: tensor<32x32xf32>, %c: i32):
+      hivm.hir.copy ins(%t : tensor<32x32xf32>) outs(%cast : memref<32x32xf32>)
+      %ub = bufferization.to_tensor %cast restrict writable : memref<32x32xf32>
+      %nc = arith.addi %c, %c32_i32 : i32
+      scf.yield %ub, %nc : tensor<32x32xf32>, i32
+    }
+    return
+  }
+}
+
+// -----
+// Odd 1:2 sub-block split on 210x112 (105-wide tiles): nested dynamic
+// extract-of-extract must bubble so load reaches workspace block arg.
+// CHECK-LABEL: func.func @triton_dot_inner_tile_mix_aiv
+// CHECK-NOT: tile_and_bind_subblock_reverted
+// CHECK: scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} {
+// CHECK:   %{{.*}} = affine.apply
+// CHECK:   %{{.*}} = memref.subview %{{.*}}{{\[}}%{{.*}}, 0] [105, 112] [1, 1] {to_be_bubbled_slice}
+// CHECK:   %{{.*}} = tensor.extract_slice %{{.*}}{{\[}}%{{.*}}, 0] [105, 112] [1, 1] {to_be_bubbled_slice}
+// CHECK:   scf.for %{{.*}} iter_args(
+// CHECK:     scf.for %{{.*}} iter_args(
+// CHECK:       %[[WS:.*]] = tensor.extract_slice %{{.*}}[0, %{{.*}}, 0] [4, 105, 112] [1, 1, 1] {to_be_bubbled_slice}
+// CHECK:       %[[TILE:.*]] = tensor.extract_slice %[[WS]]
+// CHECK:       %[[ODD:.*]] = tensor.extract_slice %[[TILE]]{{\[}}%{{.*}}, 0] {{\[}}%{{.*}}, 112] [1, 1] : tensor<105x112xf32> to tensor<?x112xf32>
+// CHECK:       hivm.hir.load ins(%[[ODD]] : tensor<?x112xf32>)
+// CHECK:       scf.yield
+// CHECK:     scf.yield
+// CHECK:   hivm.hir.store ins(%{{.*}} : tensor<105x112xf32>) outs(%{{.*}} : memref<105x112xf32, strided<[112, 1], offset: ?>>) {tiled_op}
+// CHECK: } {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @triton_dot_inner_tile_mix_aiv(
+      %workspace: tensor<4x210x112xf32>,
+      %other: tensor<210x112xf32>,
+      %init: tensor<210x112xf32>,
+      %out: memref<210x112xf32>) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix", parallel_mode = "simd"} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c105 = arith.constant 105 : index
+    %c210 = arith.constant 210 : index
+    %empty105 = tensor.empty() : tensor<105x112xf32>
+    %acc_init = tensor.empty() : tensor<210x112xf32>
+    %result:2 = scf.for %outer = %c0 to %c2 step %c1 iter_args(%acc0 = %init, %acc1 = %acc_init) -> (tensor<210x112xf32>, tensor<210x112xf32>) {
+      %ws_full = tensor.extract_slice %workspace[%outer, 0, 0] [1, 210, 112] [1, 1, 1]
+          : tensor<4x210x112xf32> to tensor<210x112xf32>
+      %inner:2 = scf.for %iv = %c0 to %c210 step %c105 iter_args(%a0 = %acc0, %a1 = %acc_init) -> (tensor<210x112xf32>, tensor<210x112xf32>) {
+        %tile_ws = tensor.extract_slice %ws_full[%iv, 0] [105, 112] [1, 1]
+            : tensor<210x112xf32> to tensor<105x112xf32>
+        %loaded = hivm.hir.load ins(%tile_ws : tensor<105x112xf32>) outs(%empty105 : tensor<105x112xf32>) -> tensor<105x112xf32>
+        %tile_other = tensor.extract_slice %other[%iv, 0] [105, 112] [1, 1]
+            : tensor<210x112xf32> to tensor<105x112xf32>
+        %tile_acc0 = tensor.extract_slice %a0[%iv, 0] [105, 112] [1, 1]
+            : tensor<210x112xf32> to tensor<105x112xf32>
+        %v0 = hivm.hir.vadd ins(%loaded, %tile_other : tensor<105x112xf32>, tensor<105x112xf32>)
+            outs(%tile_acc0 : tensor<105x112xf32>) -> tensor<105x112xf32>
+        %ins0 = tensor.insert_slice %v0 into %a0[%iv, 0] [105, 112] [1, 1]
+            : tensor<105x112xf32> into tensor<210x112xf32>
+        %tile_acc1 = tensor.extract_slice %a1[%iv, 0] [105, 112] [1, 1]
+            : tensor<210x112xf32> to tensor<105x112xf32>
+        %v1 = hivm.hir.vadd ins(%v0, %tile_other : tensor<105x112xf32>, tensor<105x112xf32>)
+            outs(%empty105 : tensor<105x112xf32>) -> tensor<105x112xf32>
+        %v2 = hivm.hir.vadd ins(%tile_acc1, %v1 : tensor<105x112xf32>, tensor<105x112xf32>)
+            outs(%tile_acc1 : tensor<105x112xf32>) -> tensor<105x112xf32>
+        %ins1 = tensor.insert_slice %v2 into %a1[%iv, 0] [105, 112] [1, 1]
+            : tensor<105x112xf32> into tensor<210x112xf32>
+        scf.yield %ins0, %ins1 : tensor<210x112xf32>, tensor<210x112xf32>
+      }
+      scf.yield %inner#0, %inner#1 : tensor<210x112xf32>, tensor<210x112xf32>
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, multibuffer_unroll_factor = 4 : i32}
+    %extracted = tensor.extract_slice %result#1[%c0, %c0] [210, 112] [1, 1]
+        : tensor<210x112xf32> to tensor<210x112xf32>
+    hivm.hir.store ins(%extracted : tensor<210x112xf32>) outs(%out : memref<210x112xf32>)
+    return
+  }
+}
+
+// -----
+
+// 1:0 has no vector core at all, so it takes the same path as 0:1.
+// CHECK-LABEL:   func.func @store_with_static_mask_ratio_1_0(
+// CHECK:           hivm.hir.vln ins(%{{.*}} : tensor<64xf32>)
+// CHECK:           scf.if
+// CHECK:             hivm.hir.store
+// CHECK:           } {limit_sub_block_id0}
+// CHECK-NOT:       map_for_to_forall
+func.func @store_with_static_mask_ratio_1_0(%arg0: tensor<64xf32>, %arg1: memref<64xf32>) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.core_ratio = #hivm.core_ratio<1, 0>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+  %0 = tensor.empty() : tensor<64xf32>
+  %1 = hivm.hir.vln ins(%arg0 : tensor<64xf32>) outs(%0 : tensor<64xf32>) -> tensor<64xf32>
+  %extracted_slice = tensor.extract_slice %1[0] [1] [1] : tensor<64xf32> to tensor<1xf32>
+  %subview = memref.subview %arg1[0] [1] [1] : memref<64xf32> to memref<1xf32>
+  hivm.hir.store ins(%extracted_slice : tensor<1xf32>) outs(%subview : memref<1xf32>)
+  return
+}
+
+// -----
+
+// The default ratio must be indistinguishable from no ratio at all: 1:2 still
+// splits. Without this case a gate that fired on the mere presence of
+// `hivm.core_ratio` would pass every other test in this file.
+// CHECK-LABEL:   func.func @store_with_static_mask_ratio_1_2(
+// CHECK:           scf.for
+// CHECK:             hivm.hir.vln ins(%{{.*}} : tensor<32xf32>)
+// CHECK:             hivm.hir.store {{.*}} {tiled_op}
+// CHECK:           } {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+func.func @store_with_static_mask_ratio_1_2(%arg0: tensor<64xf32>, %arg1: memref<64xf32>) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.core_ratio = #hivm.core_ratio<1, 2>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+  %0 = tensor.empty() : tensor<64xf32>
+  %1 = hivm.hir.vln ins(%arg0 : tensor<64xf32>) outs(%0 : tensor<64xf32>) -> tensor<64xf32>
+  %extracted_slice = tensor.extract_slice %1[0] [1] [1] : tensor<64xf32> to tensor<1xf32>
+  %subview = memref.subview %arg1[0] [1] [1] : memref<64xf32> to memref<1xf32>
+  hivm.hir.store ins(%extracted_slice : tensor<1xf32>) outs(%subview : memref<1xf32>)
+  return
 }

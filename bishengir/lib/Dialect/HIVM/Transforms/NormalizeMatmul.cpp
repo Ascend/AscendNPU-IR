@@ -464,6 +464,41 @@ LogicalResult decomposeMatmulWithElementwiseAdd(PatternRewriter &rewriter,
   return success();
 }
 
+/// C is a direct broadcast of constant zero. The mmad's own L0C zero-init
+/// (init condition = true) already accounts for it, so no vadd / extra
+/// tensor.empty UB buffer is needed. Only the direct defining op qualifies: a
+/// loop-carried accumulator whose vbrc is just the initial value holds real
+/// data from iteration 1 on, so folding would lose the cross-loop
+/// accumulation.
+///
+/// Input IR:
+///
+/// ```
+/// %0 = tensor.empty()
+/// %1 = hivm.hir.vbrc ins(%cst_0 : f32) outs(%0 : tensor<16x32xf32>)
+///        -> tensor<16x32xf32>
+/// %2 = hivm.hir.mmadL1 ins(%a, %b, %false, %c16, %c16, %c16 : ...)
+///        outs(%1 : tensor<16x32xf32>) -> tensor<16x32xf32>
+/// ```
+///
+/// is converted into:
+/// ```
+/// %0 = tensor.empty() : tensor<16x32xf32>
+/// %1 = hivm.hir.mmadL1 ins(%a, %b, %true, %c16, %c16, %c16 : ...)
+///        outs(%0 : tensor<16x32xf32>) -> tensor<16x32xf32>
+/// ```
+LogicalResult decomposeMatmulWithZeroInitC(PatternRewriter &rewriter,
+                                           LocalMatmulLikeOpInterface op) {
+  auto newMmadInit =
+      mlir::utils::createEmptyOp(rewriter, op.getLoc(), op.getMatmulC());
+  auto newMmad = cloneLocalMatmulLikeOp(rewriter, op);
+  newMmad.setMatmulC(newMmadInit);
+  Value constTrue = rewriter.create<arith::ConstantIntOp>(op.getLoc(), 1, 1);
+  newMmad.setInitCondition(constTrue);
+  rewriter.replaceOp(op.getOperation(), newMmad.getOperation()->getResult(0));
+  return success();
+}
+
 /// Input IR:
 ///
 /// ```
@@ -1179,7 +1214,7 @@ void addTailFallback(PatternRewriter &rewriter, Operation &op,
   auto fallbackIf = rewriter.create<scf::IfOp>(
       loc, mmad.getOperation()->getResultTypes(), neverRan,
       /*withElseRegion=*/true);
-  
+
   fallbackIf->setAttr(kFallBackNotExec, rewriter.getUnitAttr());
 
   // Then block
@@ -1584,17 +1619,8 @@ struct NormalizeMmadCCFPattern
   LogicalResult matchAndRewrite(LocalMatmulLikeOpInterface op,
                                 PatternRewriter &rewriter) const override {
     Operation *mmadOp = op.getOperation();
-    // TODO: need to be reverted when Affinity GMM supported
-    auto moduleOp = mmadOp->getParentOfType<ModuleOp>();
-    bool isDisableHfusionVectorize = false;
-    if (moduleOp) {
-      isDisableHfusionVectorize =
-          moduleOp->hasAttr("hfusion.disableHfusionVectorize");
-    }
-
     auto scopeOp = mmadOp->getParentOfType<scope::ScopeOp>();
-    if ((scopeOp && !scopeOp->hasAttr(hivm::MatmulLimitedInCubeAttr::name)) ||
-        isDisableHfusionVectorize) {
+    if (scopeOp && !scopeOp->hasAttr(hivm::MatmulLimitedInCubeAttr::name)) {
       LDBG("Affinity pattern already applied");
       return rewriter.notifyMatchFailure(mmadOp,
                                          "Affinity pattern already applied");
@@ -1830,6 +1856,12 @@ struct DecomposeMatmulWithBiasPattern
       return failure();
     }
     if (op.shouldDecomposeBiasByElementAdd() && op.isInitConstant(false)) {
+      if (auto brcOp = op.getMatmulC().getDefiningOp<hivm::VBrcOp>()) {
+        if (isConstZero(brcOp.getSrc())) {
+          LDBG("decompose matmul with zero-init C");
+          return decomposeMatmulWithZeroInitC(rewriter, op);
+        }
+      }
       LDBG("decompose matmul with elemwise add");
       return decomposeMatmulWithElementwiseAdd(rewriter, op);
     }

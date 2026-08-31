@@ -18,6 +18,7 @@
 #include "bishengir/Dialect/HFusion/IR/HFusionImpl.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/MathExt/IR/MathExt.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
@@ -79,6 +80,18 @@ Value hfusion::castTo(OpBuilder &builder, Value src, Type targetElemType,
   if (!isa<TensorType>(src.getType())) {
     assert(src.getType().isIntOrIndexOrFloat());
     bool isUnsignedCast = (hfusion::TypeFn::cast_unsigned == castIntegerType);
+    Type srcElem = getElementTypeOrSelf(src.getType());
+    if (srcElem.isInteger(1) && isa<mlir::FloatType>(targetElemType)) {
+      // Only apply unsigned cast on reg-based architectures; on mem-based
+      // architectures this may introduce precision issues.
+      auto *block = builder.getInsertionBlock();
+      if (block && block->getParentOp()) {
+        if (auto moduleOp = block->getParentOp()->getParentOfType<ModuleOp>()) {
+          if (hacc::utils::isMemBasedArch(moduleOp))
+            isUnsignedCast = true;
+        }
+      }
+    }
     return convertScalarToDtype(builder, loc, src, targetElemType,
                                 isUnsignedCast);
   }

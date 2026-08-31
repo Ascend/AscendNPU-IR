@@ -76,7 +76,7 @@ module attributes {
                 : !ttg.memdesc<32x16xf32, #shared, #smem> -> tensor<32x16xf32, #dot_a>
     %B_dot = ttg.local_load %B_shared
                 : !ttg.memdesc<16x32xf32, #shared, #smem> -> tensor<16x32xf32, #dot_b>
-    
+
     // CHECK: llvm.intr.fmuladd
     %C_init = arith.constant dense<0.000000e+00> : tensor<32x32xf32, #blocked>
     %D = tt.dot %A_dot, %B_dot, %C_init, inputPrecision = ieee

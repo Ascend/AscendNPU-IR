@@ -80,32 +80,6 @@ getStaticAllocUpperBounds(Value src, int64_t rank) {
   return std::nullopt;
 }
 
-// Build a MemRefType that uses the default contiguous layout when `strides`
-// match the row-major layout derived from `shape`, and otherwise attaches an
-// explicit StridedLayoutAttr. This keeps alloc types canonical (and avoids
-// redundant layout attributes) when the computed strides are contiguous.
-static MemRefType buildContiguousOrStridedType(ArrayRef<int64_t> shape,
-                                               ArrayRef<int64_t> strides,
-                                               Type elemType,
-                                               Attribute memSpace,
-                                               MLIRContext *ctx) {
-  assert(shape.size() == strides.size() && "shape/stride rank mismatch");
-  auto isDefaultRowMajor = [&] {
-    int64_t expected = 1;
-    for (int i = static_cast<int>(shape.size()) - 1; i >= 0; --i) {
-      if (strides[i] != expected)
-        return false;
-      expected *= shape[i];
-    }
-    return true;
-  }();
-  if (isDefaultRowMajor)
-    return MemRefType::get(shape, elemType, MemRefLayoutAttrInterface{}, memSpace);
-  return MemRefType::get(shape, elemType,
-                         StridedLayoutAttr::get(ctx, /*offset=*/0, strides),
-                         memSpace);
-}
-
 // Rewrites UB->GM store (last-dim continuous -> discontinuous) by building a
 // 32B-aligned view of src: expand_shape + vbrc + subview + collapse, so the
 // store reads src with last-dim stride = channelNum.
@@ -133,6 +107,31 @@ struct RecognizeDisContinuousStore : public OpRewritePattern<hivm::StoreOp> {
     Attribute memSpace = srcTy.getMemorySpace();
     MLIRContext *ctx = rewriter.getContext();
 
+    // Static sizing decision:
+    //   - src static: alloc uses static src dims (no upper-bound tracing).
+    //   - src dynamic: must trace to static alloc (upper bounds + narrow),
+    //   else silently skip this op.
+    bool srcIsStatic = srcTy.hasStaticShape();
+    std::optional<SmallVector<int64_t>> staticUbs;
+    if (!srcIsStatic) {
+      staticUbs = getStaticAllocUpperBounds(src, rank);
+      if (!staticUbs)
+        return rewriter.notifyMatchFailure(
+            op, "dynamic src must trace to a static alloc");
+    }
+
+    // Pre-compute expand_shape type; if it fails, bail out before any IR edit.
+    auto expandReassociation = buildSplitLastDimReassociation(rank);
+    SmallVector<int64_t> expandShape(srcTy.getShape().begin(),
+                                     srcTy.getShape().end());
+    expandShape.push_back(1);
+    SmallVector<int64_t> expandStrides(srcStrides.begin(), srcStrides.end());
+    expandStrides.push_back(1);
+    auto expandTy = memref::ExpandShapeOp::computeExpandedType(
+        srcTy, expandShape, expandReassociation);
+    if (failed(expandTy))
+      return rewriter.notifyMatchFailure(op, "failed to compute expand type");
+
     OpBuilder::InsertionGuard guard(rewriter);
     rewriter.setInsertionPoint(op);
 
@@ -144,73 +143,65 @@ struct RecognizeDisContinuousStore : public OpRewritePattern<hivm::StoreOp> {
     };
 
     // expand_shape: src(R) -> R+1, append a size-1 dim at the end as brc axis.
-    auto expandReassociation = buildSplitLastDimReassociation(rank);
-    SmallVector<int64_t> expandShape(srcTy.getShape().begin(),
-                                     srcTy.getShape().end());
-    expandShape.push_back(1);
-    SmallVector<int64_t> expandStrides(srcStrides.begin(), srcStrides.end());
-    expandStrides.push_back(1);
-    auto expandTy = memref::ExpandShapeOp::computeExpandedType(
-        srcTy, expandShape, expandReassociation);
-    if (failed(expandTy))
-      return rewriter.notifyMatchFailure(op, "failed to compute expand type");
     auto expandOp = rewriter.create<memref::ExpandShapeOp>(loc, *expandTy, src,
                                                            expandReassociation);
 
-    // Static sizing decision:
-    //   - src static: use src dims, no narrowing subview.
-    //   - src dynamic: must trace to static alloc (upper bounds + narrow), else
-    //   fail.
-    bool srcIsStatic = srcTy.hasStaticShape();
-    std::optional<SmallVector<int64_t>> staticUbs;
-    if (!srcIsStatic) {
-      staticUbs = getStaticAllocUpperBounds(src, rank);
-      if (!staticUbs)
-        return rewriter.notifyMatchFailure(
-            op, "dynamic src must trace to a static alloc");
-    }
-    bool needNarrowSubview = !srcIsStatic;
-
-    // alloc: aligned buffer (.., lastDim, channelNum).
+    // alloc: aligned buffer with compact row-major layout. The vbrc dst needs
+    // strides:
+    //   strides[i] = srcStrides[i] * channelNum  (i < rank), strides[rank] = 1.
+    // For a compact row-major alloc, strides[i] = prod(allocShape[j>i]); thus
+    //   allocShape[i>0] = strides[i] / strides[i+1]
+    //   allocShape[rank] = channelNum
+    //   allocShape[0]     = dimUb(0) (outer dim not encoded in strides)
+    // then do subview narrows it to the actual src dims for vbrc.
     auto dimUb = [&](int64_t i) {
       return staticUbs ? (*staticUbs)[i] : srcTy.getDimSize(i);
     };
-    SmallVector<int64_t> allocShape, allocStrides;
-    for (int64_t i = 0; i < rank; ++i) {
-      allocShape.push_back(dimUb(i));
+    SmallVector<int64_t> allocStrides;
+    for (int64_t i = 0; i < rank; ++i)
       allocStrides.push_back(srcStrides[i] * channelNum);
+    allocStrides.push_back(1);
+    SmallVector<int64_t> allocShape;
+    allocShape.push_back(dimUb(0));
+    for (int64_t i = 1; i < rank; ++i) {
+      if (allocStrides[i + 1] == 0 ||
+          allocStrides[i] % allocStrides[i + 1] != 0)
+        return rewriter.notifyMatchFailure(
+            op, "srcStrides not perfectly nested, cannot build compact alloc");
+      allocShape.push_back(allocStrides[i] / allocStrides[i + 1]);
     }
     allocShape.push_back(channelNum);
-    allocStrides.push_back(1);
-    auto allocTy = buildContiguousOrStridedType(allocShape, allocStrides,
-                                                elemType, memSpace, ctx);
+    // allocShape is self-consistent with allocStrides -> always default
+    // row-major layout, no StridedLayoutAttr needed.
+    auto allocTy =
+        MemRefType::get(allocShape, elemType, MemRefLayoutAttrInterface{},
+                        memSpace);
     auto alignedAlloc = rewriter.create<memref::AllocOp>(loc, allocTy);
 
-    // Narrow alloc to actual (dynamic) sizes so vbrc's non-broadcast dims match
-    // the expand shape.
+    // Narrow alloc to actual (possibly dynamic) sizes so vbrc's non-broadcast
+    // dims match the expand shape. Required for dynamic src (upper bounds >
+    // actual dims); harmless for static src (narrow == full alloc).
     Value vbrcDst = alignedAlloc.getResult();
-    if (needNarrowSubview) {
-      SmallVector<OpFoldResult> narrowOffsets(rank + 1,
-                                              rewriter.getIndexAttr(0));
-      SmallVector<OpFoldResult> narrowStrides(rank + 1,
-                                              rewriter.getIndexAttr(1));
-      SmallVector<OpFoldResult> narrowSizes;
-      for (int64_t i = 0; i < rank; ++i)
-        narrowSizes.push_back(getDimSize(i));
-      narrowSizes.push_back(rewriter.getIndexAttr(channelNum));
-      SmallVector<int64_t> narrowShape(srcTy.getShape().begin(),
-                                       srcTy.getShape().end());
-      narrowShape.push_back(channelNum);
-      SmallVector<int64_t> zeros(rank + 1, 0), ones(rank + 1, 1);
-      auto narrowSubviewTy =
-          cast<MemRefType>(memref::SubViewOp::inferResultType(
-              allocTy, zeros, narrowShape, ones));
-      vbrcDst = rewriter
-                    .create<memref::SubViewOp>(
-                        loc, narrowSubviewTy, alignedAlloc.getResult(),
-                        narrowOffsets, narrowSizes, narrowStrides)
-                    .getResult();
-    }
+    SmallVector<OpFoldResult> narrowOffsets(rank + 1,
+                                            rewriter.getIndexAttr(0));
+    SmallVector<OpFoldResult> narrowStrides(rank + 1,
+                                            rewriter.getIndexAttr(1));
+    SmallVector<OpFoldResult> narrowSizes;
+    for (int64_t i = 0; i < rank; ++i)
+      narrowSizes.push_back(getDimSize(i));
+    narrowSizes.push_back(rewriter.getIndexAttr(channelNum));
+    SmallVector<int64_t> narrowShape(srcTy.getShape().begin(),
+                                     srcTy.getShape().end());
+    narrowShape.push_back(channelNum);
+    SmallVector<int64_t> zeros(rank + 1, 0), ones(rank + 1, 1);
+    auto narrowSubviewTy =
+        cast<MemRefType>(memref::SubViewOp::inferResultType(
+            allocTy, zeros, narrowShape, ones));
+    vbrcDst = rewriter
+                  .create<memref::SubViewOp>(
+                      loc, narrowSubviewTy, alignedAlloc.getResult(),
+                      narrowOffsets, narrowSizes, narrowStrides)
+                  .getResult();
 
     // vbrc: broadcast expand's last dim(1) to channelNum.
     auto brcDimsAttr = rewriter.getDenseI64ArrayAttr(ArrayRef<int64_t>{rank});

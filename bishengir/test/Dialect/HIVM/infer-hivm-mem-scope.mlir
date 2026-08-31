@@ -257,6 +257,70 @@ module {
 
 // -----
 
+// Regression: scf.while whose condition is a before-arg (not a computed value).
+// Inits/before-args (4) exceed condition-forwarded/result count (3): the
+// condition slot has no matching after-arg or result. Previously this caused an
+// out-of-bounds index into after-args/results and a verifier type-mismatch.
+// CHECK-LABEL: test_infer_mem_scope_while_cond_is_before_arg
+module {
+  func.func @test_infer_mem_scope_while_cond_is_before_arg(%arg0 : memref<128xi32>) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>} {
+    %true = arith.constant true
+    %false = arith.constant false
+    // CHECK: %[[INIT:.*]] = memref.alloc() {alignment = 64 : i64} : memref<128xi32, #hivm.address_space<ub>>
+    %alloc_0 = memref.alloc() {alignment = 64 : i64} : memref<128xi32>
+    // before-args: %arg1(memref), %arg2(i1 cond), %arg3(memref)  -> results: 2 memrefs
+    // CHECK: %[[RES:.*]]:2 = scf.while
+    // CHECK-SAME: -> (memref<128xi32, #hivm.address_space<ub>>, memref<128xi32, #hivm.address_space<ub>>)
+    %1:2 = scf.while(%arg1 = %alloc_0, %arg2 = %true, %arg3 = %alloc_0) : (memref<128xi32>, i1, memref<128xi32>) -> (memref<128xi32>, memref<128xi32>) {
+      // condition forwards the two memref before-args, skipping the i1 %arg2
+      scf.condition(%arg2) %arg1, %arg3 : memref<128xi32>, memref<128xi32>
+    } do {
+    // CHECK: ^bb0(%[[A1:.*]]: memref<128xi32, #hivm.address_space<ub>>, %[[A3:.*]]: memref<128xi32, #hivm.address_space<ub>>):
+    ^bb0(%arg1: memref<128xi32>, %arg3: memref<128xi32>):
+      // after-yield feeds all three before-args; the new alloc sets scope on
+      // its after-yield, which routes back to the before-arg and results.
+      // CHECK: %[[A4:.*]] = memref.alloc() : memref<128xi32, #hivm.address_space<ub>>
+      %alloc_1 = memref.alloc() : memref<128xi32>
+      scf.yield %alloc_1, %false, %alloc_1 : memref<128xi32>, i1, memref<128xi32>
+    }
+    // results carry the propagated scope
+    // CHECK: hivm.hir.copy ins(%[[RES]]#0 : memref<128xi32, #hivm.address_space<ub>>) outs(%[[RES]]#1 : memref<128xi32, #hivm.address_space<ub>>)
+    hivm.hir.copy ins(%1#0 : memref<128xi32>) outs(%1#1 : memref<128xi32>)
+    return
+  }
+}
+
+// -----
+
+// Regression: commiter scenario - the init/before chain and the
+// cond/after/results chain are independent; yield must not overwrite GM
+// scopes set by the cond chain.
+// CHECK-LABEL: test_infer_mem_scope_while_separate_chains
+module {
+  func.func @test_infer_mem_scope_while_separate_chains(%arg0 : memref<128xi32>) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>} {
+    %true = arith.constant true
+    // CHECK: %[[INIT:.*]] = memref.alloc() {alignment = 64 : i64} : memref<128xi32, #hivm.address_space<ub>>
+    %alloc_0 = memref.alloc() {alignment = 64 : i64} : memref<128xi32>
+    // before chain: %alloc_0 -> %arg1 (UB); cond chain: %arg0(gm) -> results/after
+    // CHECK: %[[RES:.*]]:2 = scf.while
+    // CHECK-SAME: -> (memref<128xi32, #hivm.address_space<gm>>, i1)
+    %1:2 = scf.while(%arg1 = %alloc_0, %arg2 = %true) : (memref<128xi32>, i1) -> (memref<128xi32>, i1) {
+      scf.condition(%arg2) %arg0, %arg2 : memref<128xi32>, i1
+    } do {
+    // CHECK: ^bb0(%[[AFTER0:.*]]: memref<128xi32, #hivm.address_space<gm>>, %[[AFTER1:.*]]: i1):
+    ^bb0(%after0: memref<128xi32>, %after1: i1):
+      // after-arg keeps GM; yield a fresh UB alloc back to the before chain.
+      // CHECK: %[[YIELD_ALLOC:.*]] = memref.alloc() : memref<128xi32, #hivm.address_space<ub>>
+      %alloc_1 = memref.alloc() : memref<128xi32>
+      // CHECK: scf.yield %[[YIELD_ALLOC]], %[[AFTER1]] : memref<128xi32, #hivm.address_space<ub>>, i1
+      scf.yield %alloc_1, %after1 : memref<128xi32>, i1
+    }
+    return
+  }
+}
+
+// -----
+
 // CHECK-LABEL: test_infer_mem_scope_while
 module {
   func.func @test_infer_mem_scope_while(%arg0 : memref<128xi32>) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>} {
@@ -274,6 +338,30 @@ module {
     // CHECK:           ^bb0(%[[VAL_9:.*]]: memref<128xi32, #hivm.address_space<ub>>, %[[VAL_10:.*]]: i1):
     ^bb0(%arg1: memref<128xi32>, %arg2: i1):
       scf.yield %arg1, %arg2 : memref<128xi32>, i1
+    }
+    return
+  }
+}
+
+// -----
+
+// Regression: loop-invariant yield (after yields init) cycled through
+// init -> before-arg -> after-yield; guard stops the re-walk.
+// CHECK-LABEL: test_infer_mem_scope_while_yield_cycle
+module {
+  func.func @test_infer_mem_scope_while_yield_cycle() attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>} {
+    %true = arith.constant true
+    // CHECK: %[[INIT:.*]] = memref.alloc() {alignment = 64 : i64} : memref<128xi32, #hivm.address_space<ub>>
+    %alloc_0 = memref.alloc() {alignment = 64 : i64} : memref<128xi32>
+    // CHECK: %[[RES:.*]]:2 = scf.while
+    // CHECK-SAME: -> (memref<128xi32, #hivm.address_space<ub>>, i1)
+    %1:2 = scf.while(%arg1 = %alloc_0, %arg2 = %true) : (memref<128xi32>, i1) -> (memref<128xi32>, i1) {
+      scf.condition(%arg2) %arg1, %arg2 : memref<128xi32>, i1
+    } do {
+    // CHECK: ^bb0(%[[INV:.*]]: memref<128xi32, #hivm.address_space<ub>>, %[[INV1:.*]]: i1):
+    ^bb0(%after0: memref<128xi32>, %after1: i1):
+      // CHECK: scf.yield %[[INIT]], %[[INV1]] : memref<128xi32, #hivm.address_space<ub>>, i1
+      scf.yield %alloc_0, %after1 : memref<128xi32>, i1
     }
     return
   }
@@ -501,7 +589,7 @@ module {
 // CHECK:           %{{.*}} = memref.alloc() {alignment = 64 : i64} : memref<1x1x3x32x16xf16, #hivm.address_space<cbuf>>
 // CHECK:           hivm.hir.load ins(%{{.*}} : memref<1x1x3x32x16xf16, #hivm.address_space<gm>>) outs(%{{.*}} : memref<1x1x3x32x16xf16, #hivm.address_space<cbuf>>)
 // CHECK:           %{{.*}} = memref.alloc() {alignment = 64 : i64} : memref<128x64xf32, #hivm.address_space<cc>>
-// CHECK:           hivm.hir.Conv1dL1 {fixpipe_already_inserted = true, groups = 2 : i32, outputAlreadyNormalized, padding = 0 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : memref<2x2x1x128x16xf16, #hivm.address_space<cbuf>>, memref<1x1x3x32x16xf16, #hivm.address_space<cbuf>>, i1) outs(%{{.*}} : memref<128x64xf32, #hivm.address_space<cc>>)
+// CHECK:           hivm.hir.Conv1dL1 {fixpipe_already_inserted = true, groups = 2 : i32, outputAlreadyNormalized, padding = 0 : i32, stride = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : memref<2x2x1x128x16xf16, #hivm.address_space<cbuf>>, memref<1x1x3x32x16xf16, #hivm.address_space<cbuf>>, i1) outs(%{{.*}} : memref<128x64xf32, #hivm.address_space<cc>>)
 // CHECK:           %{{.*}} = memref.subview %{{.*}}[0, 0] [126, 64] [1, 1] : memref<128x64xf32, #hivm.address_space<cc>> to memref<126x64xf32, strided<[64, 1]>, #hivm.address_space<cc>>
 // CHECK:           %{{.*}} = affine.apply #[[$ATTR_2]](){{\[}}%{{.*}}]
 // CHECK:           %{{.*}} = memref.view %{{.*}}{{\[}}%{{.*}}][] : memref<?xi8, #hivm.address_space<gm>> to memref<126x64xf16, #hivm.address_space<gm>>
@@ -533,7 +621,7 @@ func.func @triton_conv1d_mix_aic(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts
   %alloc_1 = memref.alloc() {alignment = 64 : i64} : memref<1x1x3x32x16xf16>
   hivm.hir.load ins(%view_0 : memref<1x1x3x32x16xf16>) outs(%alloc_1 : memref<1x1x3x32x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
   %alloc_2 = memref.alloc() {alignment = 64 : i64} : memref<128x64xf32>
-  hivm.hir.Conv1dL1 {fixpipe_already_inserted = true, groups = 2 : i32, outputAlreadyNormalized, padding = 0 : i32} ins(%alloc, %alloc_1, %true : memref<2x2x1x128x16xf16>, memref<1x1x3x32x16xf16>, i1) outs(%alloc_2 : memref<128x64xf32>)
+  hivm.hir.Conv1dL1 {fixpipe_already_inserted = true, groups = 2 : i32, outputAlreadyNormalized, padding = 0 : i32, stride = 1 : i32} ins(%alloc, %alloc_1, %true : memref<2x2x1x128x16xf16>, memref<1x1x3x32x16xf16>, i1) outs(%alloc_2 : memref<128x64xf32>)
   %subview = memref.subview %alloc_2[0, 0] [126, 64] [1, 1] : memref<128x64xf32> to memref<126x64xf32, strided<[64, 1]>>
   %6 = affine.apply #map2()[%3]
   %view_3 = memref.view %arg2[%6][] : memref<?xi8> to memref<126x64xf16>
@@ -562,7 +650,7 @@ func.func @triton_conv1d_mix_aic(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts
 // CHECK:           %{{.*}} = memref.alloc() {alignment = 64 : i64} : memref<2x3x3x16x8xf32, #hivm.address_space<cbuf>>
 // CHECK:           hivm.hir.load ins(%{{.*}} : memref<2x3x3x16x8xf32, #hivm.address_space<gm>>) outs(%{{.*}} : memref<2x3x3x16x8xf32, #hivm.address_space<cbuf>>)
 // CHECK:           %{{.*}} = memref.alloc() {alignment = 64 : i64} : memref<912x16xf32, #hivm.address_space<cc>>
-// CHECK:           hivm.hir.Conv2dL1 {fixpipe_already_inserted = true, groups = 1 : i32, outputAlreadyNormalized, padding = 0 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : memref<1x2x32x32x8xf32, #hivm.address_space<cbuf>>, memref<2x3x3x16x8xf32, #hivm.address_space<cbuf>>, i1) outs(%{{.*}} : memref<912x16xf32, #hivm.address_space<cc>>)
+// CHECK:           hivm.hir.Conv2dL1 {fixpipe_already_inserted = true, groups = 1 : i32, outputAlreadyNormalized, padding = 0 : i32, stride = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : memref<1x2x32x32x8xf32, #hivm.address_space<cbuf>>, memref<2x3x3x16x8xf32, #hivm.address_space<cbuf>>, i1) outs(%{{.*}} : memref<912x16xf32, #hivm.address_space<cc>>)
 // CHECK:           %{{.*}} = memref.subview %{{.*}}[0, 0] [900, 16] [1, 1] : memref<912x16xf32, #hivm.address_space<cc>> to memref<900x16xf32, strided<[16, 1]>, #hivm.address_space<cc>>
 // CHECK:           %{{.*}} = memref_ext.alloc_workspace() from %{{.*}} offset = [%{{.*}}] : from memref<?xi8, #hivm.address_space<gm>> to memref<900x16xf32, #hivm.address_space<gm>>
 // CHECK:           hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%{{.*}} : memref<900x16xf32, strided<[16, 1]>, #hivm.address_space<cc>>) outs(%{{.*}} : memref<900x16xf32, #hivm.address_space<gm>>)
@@ -591,7 +679,7 @@ func.func @triton_conv2d_fp32_aligned_mix_aic(%arg0: i64 {hacc.arg_type = #hacc.
   %alloc_0 = memref.alloc() {alignment = 64 : i64} : memref<2x3x3x16x8xf32>
   hivm.hir.load ins(%3 : memref<2x3x3x16x8xf32>) outs(%alloc_0 : memref<2x3x3x16x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
   %alloc_1 = memref.alloc() {alignment = 64 : i64} : memref<912x16xf32>
-  hivm.hir.Conv2dL1 {fixpipe_already_inserted = true, groups = 1 : i32, outputAlreadyNormalized, padding = 0 : i32} ins(%alloc, %alloc_0, %true : memref<1x2x32x32x8xf32>, memref<2x3x3x16x8xf32>, i1) outs(%alloc_1 : memref<912x16xf32>)
+  hivm.hir.Conv2dL1 {fixpipe_already_inserted = true, groups = 1 : i32, outputAlreadyNormalized, padding = 0 : i32, stride = 1 : i32} ins(%alloc, %alloc_0, %true : memref<1x2x32x32x8xf32>, memref<2x3x3x16x8xf32>, i1) outs(%alloc_1 : memref<912x16xf32>)
   %subview = memref.subview %alloc_1[0, 0] [900, 16] [1, 1] : memref<912x16xf32> to memref<900x16xf32, strided<[16, 1]>>
   %4 = memref_ext.alloc_workspace() from %arg2 offset = [%c74752] : from memref<?xi8> to memref<900x16xf32>
   hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%subview : memref<900x16xf32, strided<[16, 1]>>) outs(%4 : memref<900x16xf32>)
@@ -647,7 +735,7 @@ func.func @test_conv1d_after_memory_planning() attributes {
   // CHECK: hivm.hir.Conv1dL1
   // CHECK-SAME: ins(%[[INPUT]], %[[WEIGHT]], %{{.*}} : memref<2x2x1x128x16xf16, #hivm.address_space<cbuf>>, memref<1x1x3x32x16xf16, #hivm.address_space<cbuf>>, i1)
   // CHECK-SAME: outs(%[[OUTPUT]] : memref<128x64xf32, #hivm.address_space<cc>>)
-  hivm.hir.Conv1dL1 {groups = 2 : i32, padding = 0 : i32}
+  hivm.hir.Conv1dL1 {groups = 2 : i32, padding = 0 : i32, stride = 1 : i32}
       ins(%input, %weight, %true : memref<2x2x1x128x16xf16, #hivm.address_space<cbuf>>, memref<1x1x3x32x16xf16, #hivm.address_space<cbuf>>, i1)
       outs(%output : memref<128x64xf32, #hivm.address_space<cc>>)
   return

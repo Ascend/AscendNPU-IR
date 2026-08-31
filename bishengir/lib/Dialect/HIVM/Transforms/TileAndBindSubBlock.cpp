@@ -35,7 +35,6 @@
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/Helper.h"
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/TileUtils.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
-#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Tensor/IR/TensorImpl.h"
 #include "bishengir/Dialect/Tensor/Transforms/Passes.h"
 #include "bishengir/Dialect/Utils/Util.h"
@@ -142,8 +141,7 @@ static void insertBubblePropagatorUpLinkForSlicedOperand(
   Value operandValue = operand->get();
   auto memrefType = cast<MemRefType>(operandValue.getType());
   auto slicedMemrefType = hivm::detail::getSlicedMemRefType(
-      memrefType,
-      RankedTensorType::get(newShape, memrefType.getElementType()));
+      memrefType, RankedTensorType::get(newShape, memrefType.getElementType()));
   auto upLink = hivm::detail::createBubblePropagatorUpLink(
       operandValue, slicedMemrefType, mixedOffsets[tilingDim],
       mixedSize[tilingDim], tilingDim, rewriter);
@@ -743,12 +741,6 @@ private:
     rewriter.modifyOpInPlace(
         op, [&]() { op->setAttr(tiledOp, rewriter.getUnitAttr()); });
 
-    auto scopeOp = rewriter.create<scope::ScopeOp>(loc, dstType);
-    Region &region = scopeOp.getRegion();
-    Block *bodyBlock = rewriter.createBlock(&region);
-    rewriter.replaceAllUsesWith(op->getResult(0), scopeOp->getResult(0));
-    rewriter.moveOpBefore(op, bodyBlock, bodyBlock->end());
-
     rewriter.setInsertionPointAfter(op);
     newShape[tilingDim] = 2;
     auto workspaceOp = createAllocLocalWorkSpace(rewriter, loc, newShape,
@@ -796,7 +788,7 @@ private:
         op.getUnsignedSrcAttr(), op.getTieBreakLeftAttr(),
         op.getReduceDimsAttr(), op.getIndices());
     newReduceOp->setAttr(tileAndSliceFailure, rewriter.getUnitAttr());
-    rewriter.create<scope::ReturnOp>(loc, newReduceOp->getResult(0));
+    rewriter.replaceAllUsesExcept(op->getResult(0), newReduceOp->getResult(0), storeOp);
     return success();
   }
 };
@@ -1402,6 +1394,13 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
 static bool shouldLimitAllAivToSubBlock0(ArrayRef<func::FuncOp> aivFunctions,
                                          ArrayRef<func::FuncOp> aicFunctions,
                                          ModuleOp moduleOp) {
+  // if core_ratio is already x:1
+  if (llvm::any_of(aivFunctions, [](func::FuncOp aivFunc) {
+        auto ratio = getCoreRatioAttr(aivFunc);
+        return ratio && ratio.getVector() < 2;
+      }))
+    return true;
+
   // Custom ops may have side effects and variadic outs/results, and must never
   // be cloned into the 1:2 sub-block loop.
   // TODO: wait for sych of

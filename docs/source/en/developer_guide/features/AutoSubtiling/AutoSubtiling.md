@@ -90,6 +90,13 @@ Behavior is controlled by:
 
 --`--enable-auto-bind-sub-block=False` — disable this feature
 
+--`--skip-hivm-bind-sub-block-pass=True` — omit the
+`hivm-bind-sub-block` pass entirely (default: `False`)
+
+`--enable-auto-bind-sub-block=False` still runs the pass with tiling disabled
+so that AIV work is limited to sub-block 0. Use
+`--skip-hivm-bind-sub-block-pass=True` only when the pass itself must not run.
+
 ## Constraints and fallback
 
 If subtiling or an intermediate transformation fails, the compiler automatically falls back to 1:1 to preserve correctness.

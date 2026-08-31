@@ -82,7 +82,7 @@ module {
     } -> tensor<64x128xf16>
     %vsstb_expanded = tensor.expand_shape %sub [[0], [1, 2]] output_shape [64, 8, 16] : tensor<64x128xf16> into tensor<64x8x16xf16>
     %transposed = linalg.transpose ins(%vsstb_expanded : tensor<64x8x16xf16>) outs(%empty_transposed : tensor<8x64x16xf16>) permutation = [1, 0, 2]
-    
+
     // user 3 - ok
     %mul = linalg.generic {indexing_maps = [#map4, #map2, #map1], iterator_types = ["parallel", "parallel", "parallel"]} ins(%producer, %arg2 : tensor<64x128xf16>, tensor<64xf16>) outs(%empty_brc_to_3 : tensor<64x128x16xf16>) {
     ^bb0(%in: f16, %in_1: f16, %out: f16):

@@ -28,7 +28,7 @@ namespace mlir {
 namespace hivm {
 
 /// Known distributed shmem interpreter custom op names.
-extern const llvm::StringSet<> shmemIntp;
+extern const llvm::StringSet<> shmemCoreTypeInferFromPreOp;
 
 /// Symbol names for distributed shmem layout inference.
 extern const std::string kShmemPtr;
@@ -42,7 +42,7 @@ inline bool isDistributedTypeCustomOp(Operation *op) {
 
 /// Returns true when `op` is a shmem notify custom op.
 inline bool isShmemNotifyCustomOp(CustomOp op) {
-  return shmemIntp.contains(op.getName());
+  return shmemCoreTypeInferFromPreOp.contains(op.getSymbol());
 }
 
 } // namespace hivm

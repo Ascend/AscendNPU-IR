@@ -531,6 +531,12 @@ def EnableAutoBindSubBlock : HIVMOptimizationControlOptions<
   "true"
 >;
 
+def SkipHIVMBindSubBlockPass : HIVMOptimizationControlOptions<
+  "Skip the hivm-bind-sub-block pass.",
+  "bool",
+  "false"
+>;
+
 def EnableCodeMotion : HIVMOptimizationControlOptions<
   "Enable code-motion/subset-hoist.",
   "bool",
@@ -1141,9 +1147,10 @@ def VerifyEach : DFXControlOptions<
 
 def EnableLibCallNoInline : DFXControlOptions<
   "Mark the library-call function declarations generated during HIVM-to-"
-  "Standard conversion as hacc.noinline instead of hacc.always_inline.",
+  "Standard conversion as hacc.noinline instead of hacc.always_inline. "
+  "Enabled by default on RegBase and disabled by default on membase.",
   "bool",
-  "true"
+  "false"
 >;
 
 def InjectIrBefore : DFXControlOptions<
@@ -1230,6 +1237,14 @@ def EnableFusedMultiplyAdd : HIVMOptimizationControlOptions<
   "Enable fused multiply add",
   "bool",
   "false"
+> {
+  let passGroup = ["HIVM"];
+}
+
+def EnableAveLoopOptimize : HIVMOptimizationControlOptions<
+  "Enable AVE small-width loop optimization.",
+  "bool",
+  "true"
 > {
   let passGroup = ["HIVM"];
 }

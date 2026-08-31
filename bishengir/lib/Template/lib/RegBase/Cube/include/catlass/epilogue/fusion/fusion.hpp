@@ -8,10 +8,10 @@
  * BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE. See LICENSE in the root of
  * the software repository for the full text of the License.
  */
- 
+
 #ifndef CATLASS_EPILOGUE_FUSION_FUSION_HPP
 #define CATLASS_EPILOGUE_FUSION_FUSION_HPP
- 
+
 #include "catlass/epilogue/fusion/operations.hpp"
 #include "catlass/epilogue/fusion/visitor_impl_base.hpp"
 #include "catlass/epilogue/fusion/visitor_impl.hpp"
@@ -23,7 +23,5 @@
 #include "catlass/epilogue/fusion/visitor_row_broadcast.hpp"
 #include "catlass/epilogue/fusion/tree_visitor.hpp"
 #include "catlass/epilogue/fusion/topological_visitor.hpp"
- 
+
 #endif
- 
- 

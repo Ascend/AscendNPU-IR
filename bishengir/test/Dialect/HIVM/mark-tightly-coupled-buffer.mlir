@@ -104,3 +104,44 @@ module {
     return
   }
 }
+
+// -----
+
+// Device-print shape produced by insert-l12ub-for-debug: the l12ub (CUBE side)
+// writes a UB alloc through a subview, and the debug op (VECTOR side) reads it
+// after split-mix-kernel. The subview dst must be traced back to the alloc so
+// both split sides inherit the same tightly-coupled id.
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  // CHECK-LABEL: func.func @mark_l12ub_subview_dst
+  func.func @mark_l12ub_subview_dst() attributes {hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix"} {
+    %cbuf = memref.alloc() : memref<1x15x16x8xf32, #hivm.address_space<cbuf>>
+    // CHECK: %[[UB:.*]] = memref.alloc() : memref<234x8x1xf32, #hivm.address_space<ub>>
+    %ub = memref.alloc() : memref<234x8x1xf32, #hivm.address_space<ub>>
+    // CHECK-NEXT: annotation.mark %[[UB]] {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>} : memref<234x8x1xf32, #hivm.address_space<ub>>
+    %subview = memref.subview %ub[0, 0, 0] [234, 1, 1] [1, 1, 1] : memref<234x8x1xf32, #hivm.address_space<ub>> to memref<234x1xf32, strided<[8, 1]>, #hivm.address_space<ub>>
+    hivm.hir.l12ub ins(%cbuf : memref<1x15x16x8xf32, #hivm.address_space<cbuf>>) outs(%subview : memref<234x1xf32, strided<[8, 1]>, #hivm.address_space<ub>>)
+    // The l12ub src cbuf alloc is not a dst candidate and must stay unmarked.
+    // CHECK-NOT: annotation.mark %{{.*}} : memref<1x15x16x8xf32, #hivm.address_space<cbuf>>
+    return
+  }
+}
+
+// -----
+
+// An l12ub UB dst alloc gets a fresh id that skips ids already reserved by
+// other marked candidates in the same function.
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  // CHECK-LABEL: func.func @mark_l12ub_skips_reserved_id
+  func.func @mark_l12ub_skips_reserved_id() attributes {hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix"} {
+    %cbuf = memref.alloc() : memref<1x15x16x8xf32, #hivm.address_space<cbuf>>
+    %ub = memref.alloc() : memref<234x1xf32, #hivm.address_space<ub>>
+    %ub_fixpipe = memref.alloc() : memref<128x128xf32, #hivm.address_space<ub>>
+    annotation.mark %ub_fixpipe {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>} : memref<128x128xf32, #hivm.address_space<ub>>
+    %tensor = tensor.empty() : tensor<128x128xf32>
+    %cbuf_cast = memref.cast %cbuf : memref<1x15x16x8xf32, #hivm.address_space<cbuf>> to memref<?x?x?x?xf32, #hivm.address_space<cbuf>>
+    hivm.hir.l12ub ins(%cbuf_cast : memref<?x?x?x?xf32, #hivm.address_space<cbuf>>) outs(%ub : memref<234x1xf32, #hivm.address_space<ub>>)
+    hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%tensor : tensor<128x128xf32>) outs(%ub_fixpipe : memref<128x128xf32, #hivm.address_space<ub>>)
+    // CHECK: annotation.mark %{{.*}} {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<1>} : memref<234x1xf32, #hivm.address_space<ub>>
+    return
+  }
+}

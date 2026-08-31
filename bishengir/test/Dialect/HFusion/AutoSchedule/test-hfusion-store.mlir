@@ -13,7 +13,7 @@ module {
     %2 = linalg.fill ins(%cst : f32) outs(%1 : tensor<128xf32>) -> tensor<128xf32>
     %3 = tensor.empty() : tensor<128xbf16>
     %4 = hfusion.cast {round_mode = #hfusion.round_mode<rint>} ins(%arg0 : tensor<24x128xbf16>) outs(%0 : tensor<24x128xf32>) -> tensor<24x128xf32>
-    %reduced = linalg.reduce ins(%4 : tensor<24x128xf32>) outs(%2 : tensor<128xf32>) dimensions = [0] 
+    %reduced = linalg.reduce ins(%4 : tensor<24x128xf32>) outs(%2 : tensor<128xf32>) dimensions = [0]
       (%in: f32, %init: f32) {
         %6 = arith.addf %in, %init : f32
         linalg.yield %6 : f32

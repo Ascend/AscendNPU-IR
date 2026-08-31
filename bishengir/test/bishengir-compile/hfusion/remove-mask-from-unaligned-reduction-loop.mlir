@@ -1,6 +1,6 @@
 // RUN: bishengir-opt %s -hfusion-remove-mask-from-unaligned-reduction-loop -o %t.mlir
 // RUN: cat %t.mlir | FileCheck %s
- 
+
 #map = affine_map<(d0) -> (-d0 + 150, 64)>
 module {
   func.func @reduction_has_tail_block(%arg0: tensor<1x64xf32>, %arg1: tensor<300x150xf32>, %arg2: index, %arg3: index, %arg4: index, %arg5: index, %arg6: index, %arg7: tensor<300xf32>) -> tensor<300xf32> attributes {hivm.vector_function} {

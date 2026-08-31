@@ -278,8 +278,7 @@ bool haveSamePropagation(UnrealizedConversionCastOp lhs,
 /// Insert a store that materializes `value` into a local buffer. UB targets use
 /// memref.alloc; GM workspace targets use memref_ext.alloc_workspace.
 hivm::StoreOp
-insertStore(Value value, Location loc, PatternRewriter &rewriter,
-            std::optional<hivm::AddressSpace> dstAddressSpace = std::nullopt);
+insertStore(Value value, Location loc, PatternRewriter &rewriter);
 
 /// Insert a load that rematerializes `value` with matching element type.
 hivm::LoadOp insertLoad(Value value, Location loc, PatternRewriter &rewriter);
@@ -312,8 +311,7 @@ tensor::EmptyOp insertTensor(Value value, Location loc,
 
 /// Convenience helper to insert store followed by load for `value`.
 std::pair<hivm::StoreOp, hivm::LoadOp> insertStoreAndLoad(
-    Value value, Location loc, PatternRewriter &rewriter,
-    std::optional<hivm::AddressSpace> dstAddressSpace = std::nullopt);
+    Value value, Location loc, PatternRewriter &rewriter);
 
 } // namespace PropagatorUtil
 

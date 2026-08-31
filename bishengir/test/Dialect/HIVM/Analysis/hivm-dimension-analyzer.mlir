@@ -145,7 +145,7 @@ func.func @_attn_fwd(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_addres
         %extracted_slice_18 = tensor.extract_slice %57[%arg23, 0, 0] [1, 128, 256] [1, 1, 1] : tensor<4x128x256xf32> to tensor<128x256xf32>
         %71 = hivm.hir.load ins(%extracted_slice_18 : tensor<128x256xf32>) outs(%70 : tensor<128x256xf32>) {to_fuse} init_out_buffer = false -> tensor<128x256xf32>
         %expanded_19 = tensor.expand_shape %10 [[0, 1]] output_shape [128, 1] : tensor<128xf32> into tensor<128x1xf32>
-        %72 = hivm.hir.vreduce {to_fuse} <max> ins(%69 : tensor<128x256xf32>) outs(%expanded_19 : tensor<128x1xf32>) reduce_dims = [1]  -> tensor<128x1xf32> 
+        %72 = hivm.hir.vreduce {to_fuse} <max> ins(%69 : tensor<128x256xf32>) outs(%expanded_19 : tensor<128x1xf32>) reduce_dims = [1]  -> tensor<128x1xf32>
         %collapsed = tensor.collapse_shape %72 [[0, 1]] {to_fuse} : tensor<128x1xf32> into tensor<128xf32>
         %73 = hivm.hir.vmul {to_fuse} ins(%collapsed, %extracted : tensor<128xf32>, f32) outs(%8 : tensor<128xf32>) -> tensor<128xf32>
         %74 = hivm.hir.vmax {to_fuse} ins(%arg24, %73 : tensor<128xf32>, tensor<128xf32>) outs(%8 : tensor<128xf32>) -> tensor<128xf32>
@@ -156,11 +156,11 @@ func.func @_attn_fwd(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_addres
         %78 = hivm.hir.vmul {to_fuse} ins(%77, %cst_0 : tensor<128x256xf32>, f32) outs(%11 : tensor<128x256xf32>) -> tensor<128x256xf32>
         %79 = hivm.hir.vexp {to_fuse} ins(%78 : tensor<128x256xf32>) outs(%11 : tensor<128x256xf32>) -> tensor<128x256xf32>
         %80 = tensor.empty() : tensor<128x256xf16>
-        %81 = hivm.hir.vcast {to_fuse} ins(%79 : tensor<128x256xf32>) outs(%80 : tensor<128x256xf16>) -> tensor<128x256xf16> 
+        %81 = hivm.hir.vcast {to_fuse} ins(%79 : tensor<128x256xf32>) outs(%80 : tensor<128x256xf16>) -> tensor<128x256xf16>
         %subview = memref.subview %51[%arg23, 0, 0] [1, 128, 256] [1, 1, 1] : memref<4x128x256xf16> to memref<1x128x256xf16, strided<[32768, 256, 1], offset: ?>>
         %collapse_shape = memref.collapse_shape %subview [[0, 1], [2]] : memref<1x128x256xf16, strided<[32768, 256, 1], offset: ?>> into memref<128x256xf16, strided<[256, 1], offset: ?>>
         hivm.hir.store ins(%81 : tensor<128x256xf16>) outs(%collapse_shape : memref<128x256xf16, strided<[256, 1], offset: ?>>) {store_to_tile}
-        %82 = hivm.hir.vbrc {to_fuse} ins(%cst_2 : f32) outs(%8 : tensor<128xf32>) -> tensor<128xf32> 
+        %82 = hivm.hir.vbrc {to_fuse} ins(%cst_2 : f32) outs(%8 : tensor<128xf32>) -> tensor<128xf32>
         %expanded_21 = tensor.expand_shape %82 [[0, 1]] output_shape [128, 1] {to_fuse} : tensor<128xf32> into tensor<128x1xf32>
         %83 = hivm.hir.vreduce {to_fuse} <sum> ins(%79 : tensor<128x256xf32>) outs(%expanded_21 : tensor<128x1xf32>) reduce_dims = [1] -> tensor<128x1xf32>
         %collapsed_22 = tensor.collapse_shape %83 [[0, 1]] {to_fuse} : tensor<128x1xf32> into tensor<128xf32>
@@ -349,6 +349,34 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
   func.func @hivm_dimension_debug_op(%arg0: tensor<16x128xf32>, %arg1: tensor<16x128xbf16>, %arg2: memref<16x128xbf16, strided<[100, 1], offset: ?>>) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, func_dyn_memref_args = dense<[true, true, true, false]> : vector<4xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
     %0 = hivm.hir.vcast ins(%arg0 : tensor<16x128xf32>) outs(%arg1 : tensor<16x128xbf16>) -> tensor<16x128xbf16>
     hivm.hir.debug {debugtype = "print", hex = false, prefix = " debug: ", tcoretype = #hivm.tcore_type<VECTOR>} %0 : tensor<16x128xbf16>
+    return
+  }
+}
+
+// -----
+
+// Test that GatherLoadOp is treated as a parallel op in dimension analysis.
+// CHECK: 1 succeedFunc - Function analyzed count
+// CHECK: Tiling dim for {{.*}} is 0
+module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 24 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 24 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 48 : i32>>>, hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @hivm_dimension_gather_load(%arg0: memref<?xf32>, %arg1: tensor<8xi64>, %arg2: tensor<8xf32>, %arg3: memref<?xf32>) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, func_dyn_memref_args = dense<[true, false, false, true]> : vector<4xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+    %c1_i32 = arith.constant 1 : i32
+    %0 = hivm.hir.gather_load ins(%arg0 : memref<?xf32>, %arg1 : tensor<8xi64>, %c1_i32 : i32) outs(%arg2 : tensor<8xf32>) -> tensor<8xf32>
+    hivm.hir.store ins(%0 : tensor<8xf32>) outs(%arg3 : memref<?xf32>)
+    return
+  }
+}
+
+// -----
+
+// Test that ScatterStoreOp is treated as a parallel op in dimension analysis.
+// CHECK: 1 succeedFunc - Function analyzed count
+// CHECK: Tiling dim for {{.*}} is 0
+module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 24 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 24 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 48 : i32>>>, hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @hivm_dimension_scatter_store(%arg0: memref<?xf32>, %arg1: tensor<8xi64>, %arg2: tensor<8xf32>, %arg3: tensor<8xf32>, %arg4: memref<?xf32>) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, func_dyn_memref_args = dense<[true, false, false, false, true]> : vector<5xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+    %c1_i32 = arith.constant 1 : i32
+    hivm.hir.scatter_store ins(%arg1 : tensor<8xi64>, %arg2 : tensor<8xf32>, %c1_i32 : i32) outs(%arg0 : memref<?xf32>)
+    hivm.hir.store ins(%arg3 : tensor<8xf32>) outs(%arg4 : memref<?xf32>)
     return
   }
 }

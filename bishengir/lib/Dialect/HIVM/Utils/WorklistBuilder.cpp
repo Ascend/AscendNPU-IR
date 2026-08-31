@@ -134,16 +134,33 @@ static bool isCrossCoreFixpipe(Operation *op) {
   if (!fixpipe)
     return false;
   Value dst = fixpipe.getDst();
-  Operation *def = traceValueDef(dst).getDefiningOp();
+  Value root = traceValueDef(dst);
+
+  // dst traces back to a function argument — function args live in GM,
+  // so writing GM is inherently cross-core and qualifies as a separator.
+  if (auto blkArg = dyn_cast<BlockArgument>(root)) {
+    if (isa_and_nonnull<func::FuncOp>(blkArg.getOwner()->getParentOp()))
+      return true;
+  }
+
+  // dst traces back to memref.alloc / alloc_workspace — classify by address
+  // space attribute.
+  Operation *def = root.getDefiningOp();
   if (!isa_and_nonnull<memref::AllocOp, AllocWorkspaceOp>(def))
     return false;
+
+  // alloc_workspace always allocates GM, so treat any fixpipe writing
+  // to a workspace alloc as a cross-core separator.
+  if (isa<AllocWorkspaceOp>(def))
+    return true;
+
   auto memSpaceAttr = dyn_cast_or_null<AddressSpaceAttr>(
       cast<MemRefType>(def->getResult(0).getType()).getMemorySpace());
   if (!memSpaceAttr)
     return false;
 
   AddressSpace as = memSpaceAttr.getAddressSpace();
-  return  as == AddressSpace::UB || as == AddressSpace::GM;
+  return as == AddressSpace::UB || as == AddressSpace::GM;
 }
 
 /// True if `op` is a CV-pipelining "separator" — a store-like op that forms a

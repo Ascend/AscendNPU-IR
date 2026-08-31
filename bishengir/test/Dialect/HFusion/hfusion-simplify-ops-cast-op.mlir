@@ -34,4 +34,3 @@ func.func @looped_cast_second_iterarg(
   }
   return %r#0, %r#1 : tensor<16x16xf32>, tensor<16x16xf32>
 }
-

@@ -124,7 +124,7 @@ public:
     auto loc = op->getLoc();
     MLIRContext *context = rewriter.getContext();
     Operation *newOp = rewriter.create<ascend_dpx::BlockIdxOp>(loc, IntegerType::get(context, 32));
-    
+
     if (indexBitwidth > 32) {
       newOp = rewriter.create<LLVM::SExtOp>(
           loc, IntegerType::get(context, indexBitwidth), newOp->getResult(0));

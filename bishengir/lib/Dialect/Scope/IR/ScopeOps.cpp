@@ -119,22 +119,22 @@ struct ScopeOpDeadReturnElimination : public OpRewritePattern<ScopeOp> {
         newReturnOperands.push_back(returnOp.getOperand(idx));
       }
     }
-    
+
     rewriter.setInsertionPoint(scopeOp);
     auto newScopeOp = rewriter.create<ScopeOp>(
         scopeOp.getLoc(), newResultTypes, ValueRange(), scopeOp->getAttrs());
 
     // Move the region
     Region &newRegion = newScopeOp.getRegion();
-    rewriter.inlineRegionBefore(scopeOp.getRegion(), newRegion, 
+    rewriter.inlineRegionBefore(scopeOp.getRegion(), newRegion,
                                 newRegion.end());
-    
+
     // Update the return operation
     Block &newBlock = newRegion.front();
     auto oldReturnOp = cast<ReturnOp>(newBlock.getTerminator());
     rewriter.setInsertionPoint(oldReturnOp);
     rewriter.replaceOpWithNewOp<ReturnOp>(oldReturnOp, newReturnOperands);
-    
+
     unsigned newResultIdx = 0;
     for (unsigned oldIdx = 0; oldIdx < scopeOp.getNumResults(); ++oldIdx) {
       if (isResultDead[oldIdx]) {

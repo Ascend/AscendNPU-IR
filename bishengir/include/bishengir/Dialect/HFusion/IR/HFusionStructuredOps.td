@@ -288,13 +288,13 @@ def GatherOp
 
 
 //===----------------------------------------------------------------------===//
-// GatherMaskOp 
+// GatherMaskOp
 //===----------------------------------------------------------------------===//
 def GatherMaskOp
     : HFusionStructuredBase_Op<
           "gather_mask", [
-              AllRanksMatch<["src", "mask"]>,    
-              AllShapesMatch<["src", "mask"]>,        
+              AllRanksMatch<["src", "mask"]>,
+              AllShapesMatch<["src", "mask"]>,
               ResultOnlyIfTensor
           ]>
 {
@@ -304,28 +304,28 @@ def GatherMaskOp
 
   let description = [{
     Gathers elements from the `src` tensor where the corresponding element in the `mask` tensor is non-zero (True for bool type, 1 for int8 type).
-    Writes the result to the pre-allocated `init` tensor (equivalent to HIVM's `dst`), 
+    Writes the result to the pre-allocated `init` tensor (equivalent to HIVM's `dst`),
     and returns `init` as `result` for functional compatibility.
     The `init`/`result` tensor has the same shape and element type as the `src` tensor.
     Additionally, returns `dst_size` which represents the actual length of the gathered data.
 
     Usage:
-      result, dst_size = gather_mask(src, mask, init)  
+      result, dst_size = gather_mask(src, mask, init)
   }];
 
-  let arguments = (ins 
+  let arguments = (ins
     AnyShaped:$src,
     AnyShaped:$mask,
-    Variadic<AnyShaped>:$init  
+    Variadic<AnyShaped>:$init
   );
   let results = (outs Variadic<AnyRankedTensor>:$result);
-  let regions = (region AnyRegion:$region);  
+  let regions = (region AnyRegion:$region);
   let skipDefaultBuilders = 1;
   let builders = [
-    OpBuilder<(ins "Value":$src, "Value":$mask, "ValueRange":$init)>  
+    OpBuilder<(ins "Value":$src, "Value":$mask, "ValueRange":$init)>
   ];
-  let hasCustomAssemblyFormat = 1; 
-  let hasVerifier = 1;  
+  let hasCustomAssemblyFormat = 1;
+  let hasVerifier = 1;
   let extraClassDeclaration = structuredOpsBaseDecls#[{
     // Declare functions necessary for DestinationStyleOpInterface.
     ::mlir::MutableOperandRange getDpsInitsMutable();
@@ -357,26 +357,30 @@ def Conv1DOp
 {
 
   let description = [{
-    1D convolution operator with semantics aligned to 
+    1D convolution operator with semantics aligned to
     triton.language.extra.cann.extension.conv1d(
         input, weight, bias, groups, padding_size
     ),
-    and default parameters matching 
+    and default parameters matching
     torch.nn.functional.conv1d(
         stride=1, dilation=1, padding_mode='zeros'
     ).
 
     Dimension constraints:
-    - input: [iC, iW] (input channel count, input width) 
+    - input: [iC, iW] (input channel count, input width)
       / [N, iC, iW] (batch size, input channel count, input width)
-    - weight: [oC, iC/groups, wW] (output channel count, 
+    - weight: [oC, iC/groups, wW] (output channel count,
       input channel count per group, convolution kernel width)
     - bias (optional): [oC] (output channel bias)
-    - init/result: [oC, oW] (output channel count, output width) 
+    - init/result: [oC, oW] (output channel count, output width)
       / [N, oC, oW] (batch size, output channel count, output width)
 
     Configurable parameters (with default values):
+    - stride: Convolution stride. Accepts an integer scalar in [1, 255],
+      default=1
     - padding: Number of zero-padding elements on both sides, default=0
+    - dilation: Kernel dilation, default=1. Currently only dilation=1 is
+      supported.
     - groups: Number of groups for grouped convolution, default=1
     }];
   let arguments = (ins AnyShaped:$input,
@@ -405,6 +409,10 @@ def Conv1DOp
     // Declare functions necessary for LinalgStructuredInterface.
     SmallVector<utils::IteratorType> getIteratorTypesArray();
     ArrayAttr getIndexingMaps();
+
+    int64_t getStrideW();
+    int64_t getPaddingW();
+    int64_t getDilationW();
 #ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
     static std::function<void(mlir::ImplicitLocOpBuilder &, mlir::Block &,
                               mlir::ArrayRef<mlir::NamedAttribute>)>
@@ -429,28 +437,27 @@ def Conv2DOp
 {
 
   let description = [{
-    2D convolution operator with semantics aligned to 
+    2D convolution operator with semantics aligned to
     triton.language.extra.cann.extension.conv2d(
         input, weight, bias, groups, padding_size
     ),
-    and default parameters matching 
+    and default parameters matching
     torch.nn.functional.conv2d(
         stride=1, dilation=1, padding_mode='zeros'
     ).
 
     Dimension constraints:
-    - input: [iC, iH, iW] (input channel count, input height, input width) 
+    - input: [iC, iH, iW] (input channel count, input height, input width)
       / [N, iC, iH, iW] (batch size, input channel count, input height, input width)
-    - weight: [oC, iC/groups, wH, wW] (output channel count, 
+    - weight: [oC, iC/groups, wH, wW] (output channel count,
       input channel count per group, convolution kernel height, convolution kernel width)
     - bias (optional): [oC] (output channel bias)
-    - init/result: [oC, oH, oW] (output channel count, output height, output width) 
+    - init/result: [oC, oH, oW] (output channel count, output height, output width)
       / [N, oC, oH, oW] (batch size, output channel count, output height, output width)
 
     Configurable parameters (with default values):
     - stride: Convolution stride. Accepts an integer scalar or a 2-element
-      integer array [strideH, strideW], default=1. Currently only stride=1
-      is supported.
+      integer array [strideH, strideW], with each value in [1, 255], default=1.
     - padding: Number of zero-padding elements. Accepts an integer scalar or a
       2-element integer array [paddingH, paddingW], default=0. A scalar applies
       to both H and W directions.
@@ -492,6 +499,13 @@ def Conv2DOp
     // Declare functions necessary for LinalgStructuredInterface.
     SmallVector<utils::IteratorType> getIteratorTypesArray();
     ArrayAttr getIndexingMaps();
+
+    FailureOr<int64_t> getStrideH();
+    FailureOr<int64_t> getStrideW();
+    FailureOr<int64_t> getPaddingH();
+    FailureOr<int64_t> getPaddingW();
+    FailureOr<int64_t> getDilationH();
+    FailureOr<int64_t> getDilationW();
 #ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
     static std::function<void(mlir::ImplicitLocOpBuilder &, mlir::Block &,
                               mlir::ArrayRef<mlir::NamedAttribute>)>
@@ -535,8 +549,8 @@ def Conv3DOp
 
     Configurable parameters (with default values):
     - stride: Convolution stride. Accepts an integer scalar or a 3-element
-      integer array [strideD, strideH, strideW], default=1. Currently only
-      stride=1 is supported.
+      integer array [strideD, strideH, strideW], default=1. Currently strideD
+      must be 1; strideH and strideW must be in [1, 255].
     - padding: Number of zero-padding elements. Accepts an integer scalar or a
       3-element integer array [paddingD, paddingH, paddingW], default=0. A
       scalar applies to all D/H/W directions.
@@ -579,6 +593,16 @@ def Conv3DOp
     // Declare functions necessary for LinalgStructuredInterface.
     SmallVector<utils::IteratorType> getIteratorTypesArray();
     ArrayAttr getIndexingMaps();
+
+    FailureOr<int64_t> getStrideD();
+    FailureOr<int64_t> getStrideH();
+    FailureOr<int64_t> getStrideW();
+    FailureOr<int64_t> getPaddingD();
+    FailureOr<int64_t> getPaddingH();
+    FailureOr<int64_t> getPaddingW();
+    FailureOr<int64_t> getDilationD();
+    FailureOr<int64_t> getDilationH();
+    FailureOr<int64_t> getDilationW();
 #ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
     static std::function<void(mlir::ImplicitLocOpBuilder &, mlir::Block &,
                               mlir::ArrayRef<mlir::NamedAttribute>)>

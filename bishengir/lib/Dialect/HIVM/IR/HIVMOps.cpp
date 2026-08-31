@@ -95,6 +95,22 @@ DataLayoutAttr::verify(::llvm::function_ref<InFlightDiagnostic()> emitError,
 }
 
 //===----------------------------------------------------------------------===//
+// TCoreRatioAttr
+//===----------------------------------------------------------------------===//
+
+LogicalResult
+TCoreRatioAttr::verify(::llvm::function_ref<InFlightDiagnostic()> emitError,
+                       int cube, int vector) {
+  if (CoreRatio::isValid({cube, vector})) {
+    return success();
+  } else {
+    return emitError() << "Invalid core ratio: " << cube << ":" << vector
+                       << ", expected one of "
+                       << CoreRatio::getValidRatiosStr();
+  }
+}
+
+//===----------------------------------------------------------------------===//
 // HIVM Device Mapping Attributes
 //===----------------------------------------------------------------------===//
 
@@ -539,7 +555,7 @@ LogicalResult IndirectStoreOp::verify() {
                                        : offsetsTensorType.getShape();
 
   auto srcShape =
-    srcMemrefType ? srcMemrefType.getShape() : srcTensorType.getShape();
+      srcMemrefType ? srcMemrefType.getShape() : srcTensorType.getShape();
   if (offsetShape != srcShape) {
     return emitOpError("offsets of hivm::IndirectStoreOp must have the same "
                        "shape and rank as src");

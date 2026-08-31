@@ -6,7 +6,7 @@
 
 func.func @multicore_reduce_sum(%arg0: tensor<?x3xf32>) -> tensor<3xf32> attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hfusion.fusion_kind = #hfusion.fusion_kind<ANY_PBR>} {
   %0 = tensor.empty() : tensor<3xf32>
-  %reduced = linalg.reduce ins(%arg0 : tensor<?x3xf32>) outs(%0 : tensor<3xf32>) dimensions = [0] 
+  %reduced = linalg.reduce ins(%arg0 : tensor<?x3xf32>) outs(%0 : tensor<3xf32>) dimensions = [0]
     (%in: f32, %init: f32) {
       %1 = arith.addf %in, %init : f32
       linalg.yield %1 : f32

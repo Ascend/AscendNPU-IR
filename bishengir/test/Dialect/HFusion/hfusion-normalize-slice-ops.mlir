@@ -214,7 +214,7 @@ func.func @test_normalize_interleave_i1(%arg0 : tensor<4x2x32xi1>, %arg1 : tenso
 // CHECK: %[[expanded:.*]] = tensor.expand_shape
 // CHECK: %[[extracted:.*]] = tensor.extract_slice %[[arg0]]{{\[}}1, 0] {{\[}}1, 2] {{\[}}1, 1]
 // CHECK: tensor.concat dim(0) %[[expanded]], %[[extracted]] : (tensor<1x2xf32>, tensor<1x2xf32>) -> tensor<2x2xf32>
-func.func @normalize_insert_slice_to_concat_0(%arg0: tensor<2x2xf32>, %arg1: tensor<2xf32>) -> tensor<2x2xf32> 
+func.func @normalize_insert_slice_to_concat_0(%arg0: tensor<2x2xf32>, %arg1: tensor<2xf32>) -> tensor<2x2xf32>
 attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
   %expanded = tensor.expand_shape %arg1 [[0, 1]] output_shape [1, 2] : tensor<2xf32> into tensor<1x2xf32>
   %inserted_slice = tensor.insert_slice %expanded into %arg0[0, 0] [1, 2] [1, 1] : tensor<1x2xf32> into tensor<2x2xf32>
@@ -227,7 +227,7 @@ attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
 // CHECK-SAME: %[[arg0:.*]]: tensor<2048x32x192xbf16>, %[[arg1:.*]]: tensor<2048x32x128xbf16>
 // CHECK: %[[extracted:.*]] = tensor.extract_slice %[[arg0]]{{\[}}0, 0, 128] {{\[}}2048, 32, 64] {{\[}}1, 1, 1]
 // CHECK: tensor.concat dim(2) %[[arg1]], %[[extracted]] : (tensor<2048x32x128xbf16>, tensor<2048x32x64xbf16>) -> tensor<2048x32x192xbf16>
-func.func @normalize_insert_slice_to_concat_1(%arg0: tensor<2048x32x192xbf16>, %arg1: tensor<2048x32x128xbf16>) -> tensor<2048x32x192xbf16> 
+func.func @normalize_insert_slice_to_concat_1(%arg0: tensor<2048x32x192xbf16>, %arg1: tensor<2048x32x128xbf16>) -> tensor<2048x32x192xbf16>
 attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
   %inserted_slice = tensor.insert_slice %arg1 into %arg0[0, 0, 0] [2048, 32, 128] [1, 1, 1] : tensor<2048x32x128xbf16> into tensor<2048x32x192xbf16>
   return %inserted_slice : tensor<2048x32x192xbf16>
@@ -239,7 +239,7 @@ attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
 // CHECK-SAME: %[[arg0:.*]]: tensor<2048x32x192xbf16>, %[[arg1:.*]]: tensor<2048x32x64xbf16>
 // CHECK: %[[extracted:.*]] = tensor.extract_slice %[[arg0]]{{\[}}0, 0, 0] {{\[}}2048, 32, 128] {{\[}}1, 1, 1]
 // CHECK: tensor.concat dim(2) %[[extracted]], %[[arg1]]
-func.func @normalize_insert_slice_to_concat_2(%arg0: tensor<2048x32x192xbf16>, %arg1: tensor<2048x32x64xbf16>) -> tensor<2048x32x192xbf16> 
+func.func @normalize_insert_slice_to_concat_2(%arg0: tensor<2048x32x192xbf16>, %arg1: tensor<2048x32x64xbf16>) -> tensor<2048x32x192xbf16>
 attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
   %inserted_slice = tensor.insert_slice %arg1 into %arg0[0, 0, 128] [2048, 32, 64] [1, 1, 1] : tensor<2048x32x64xbf16> into tensor<2048x32x192xbf16>
   return %inserted_slice : tensor<2048x32x192xbf16>

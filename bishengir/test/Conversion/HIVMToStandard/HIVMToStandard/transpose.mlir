@@ -96,9 +96,9 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     %src = memref.alloc() : memref<37x5x3xui64, strided<[32, 4, 1]>, #hivm.address_space<ub>>
     %dst = memref.alloc() : memref<37x3x5xui64, strided<[32, 8, 1]>, #hivm.address_space<ub>>
     %tmp_buf = memref.alloc() : memref<512xui64, #hivm.address_space<ub>>
-    hivm.hir.vtranspose ins(%src : memref<37x5x3xui64, strided<[32, 4, 1]>, #hivm.address_space<ub>>) 
-                        outs(%dst : memref<37x3x5xui64, strided<[32, 8, 1]>, #hivm.address_space<ub>>) 
-                        temp_buffer(%tmp_buf : memref<512xui64, #hivm.address_space<ub>>) 
+    hivm.hir.vtranspose ins(%src : memref<37x5x3xui64, strided<[32, 4, 1]>, #hivm.address_space<ub>>)
+                        outs(%dst : memref<37x3x5xui64, strided<[32, 8, 1]>, #hivm.address_space<ub>>)
+                        temp_buffer(%tmp_buf : memref<512xui64, #hivm.address_space<ub>>)
                         permutation = [0, 2, 1]
     return
   }
@@ -111,9 +111,9 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     %src = memref.alloc() : memref<37x5x3xui64, #hivm.address_space<ub>>
     %dst = memref.alloc() : memref<3x5x37xui64, #hivm.address_space<ub>>
     %tmp_buf = memref.alloc() : memref<512xui64, #hivm.address_space<ub>>
-    hivm.hir.vtranspose ins(%src : memref<37x5x3xui64, #hivm.address_space<ub>>) 
-                        outs(%dst : memref<3x5x37xui64, #hivm.address_space<ub>>) 
-                        temp_buffer(%tmp_buf : memref<512xui64, #hivm.address_space<ub>>) 
+    hivm.hir.vtranspose ins(%src : memref<37x5x3xui64, #hivm.address_space<ub>>)
+                        outs(%dst : memref<3x5x37xui64, #hivm.address_space<ub>>)
+                        temp_buffer(%tmp_buf : memref<512xui64, #hivm.address_space<ub>>)
                         permutation = [2, 1, 0]
     return
   }
@@ -125,8 +125,8 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   func.func @test_vtranspose_3d_210_b16() attributes {hacc.function_kind = #hacc.function_kind<DEVICE>} {
     %src = memref.alloc() : memref<15x7x27xi16, #hivm.address_space<ub>>
     %dst = memref.alloc() : memref<27x7x15xi16, #hivm.address_space<ub>>
-    hivm.hir.vtranspose ins(%src : memref<15x7x27xi16, #hivm.address_space<ub>>) 
-                        outs(%dst : memref<27x7x15xi16, #hivm.address_space<ub>>) 
+    hivm.hir.vtranspose ins(%src : memref<15x7x27xi16, #hivm.address_space<ub>>)
+                        outs(%dst : memref<27x7x15xi16, #hivm.address_space<ub>>)
                         permutation = [2, 1, 0]
     return
   }

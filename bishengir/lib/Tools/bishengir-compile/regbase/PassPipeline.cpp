@@ -134,9 +134,6 @@ void setupHIVMPipelineOptions(
     }
   }
 
-  if (options.setCVPipelineMode == CVPipelineMode::Unroll) {
-    options.enableLazyLoading = false;
-  }
 
   // When cv-pipelining is off, disable workspace multibuffer entirely
   // so downstream passes do not allocate extra buffer slots for CV software
@@ -213,6 +210,8 @@ void setupHIVMAVEPipelineOptions(
       config.getEnableHivmNd2nzOnVector();
   hivmAVEPipelineOptions.enableFusedMultiplyAdd =
       config.getEnableFusedMultiplyAdd();
+  hivmAVEPipelineOptions.enableAveLoopOptimize =
+      config.getEnableAveLoopOptimize();
   hivmAVEPipelineOptions.enablePrintMemoryAllocatedSize =
       config.getEnablePrintMemoryAllocatedSize();
   hivmAVEPipelineOptions.maxReductionSplitNum = config.getMaxReductionSplit();
@@ -323,11 +322,9 @@ static void buildDelayedHFusionRegBaseVectorizePipeline(
       mlir::hivm::createHIVMAggregatedDecomposeOpPass(decomposeOption));
   hfusion::HFusionPipelineOptions hfusionPipelineOptions;
   setupHFusionPipelineOptions(hfusionPipelineOptions, hfusionConfig);
-  ExecutionEngineHIVMToUpstreamConversionOptions upstreamOptions;
-  upstreamOptions.convertToNamedOp =
-      hacc::utils::isRegBasedArch(config.getTarget());
-  pm.addPass(
-      mlir::execution_engine::createConvertHIVMToUpstreamPass(upstreamOptions));
+  // Convert the vector side back to HFusion dialects;
+  // host/AIC functions and hivm.hir.load ops are preserved.
+  pm.addPass(mlir::execution_engine::createConvertHIVMToHFusionPass());
   hfusion::regbase::buildHFusionRegBasePipeline(pm, hfusionPipelineOptions);
   if (shouldInferFuncCoreType) {
     pm.addPass(mlir::hivm::createInferFuncCoreTypePass());
@@ -521,10 +518,11 @@ void buildBiShengHIRPipeline(OpPassManager &pm,
       pm.addPass(hivm::createLegalizeBoolForSimtVFPass());
       pm.addPass(hivm::createInsertMemSemanticForSimtVFPass());
       pm.addPass(scope::createTransformOpForSIMTPass());
-      pm.addPass(scope::createOutlineScopePass());
-      // Propagate the SIMT VF mode from outlined SIMT VFs to their callers
-      // so later passes (mem effect/scope hint inference, SIMT module
-      // splitting) observe the correct caller vf_mode.
+      // Only AutoScope-marked scopes are outlined;
+      // cube/vector leftovers stay inline.
+      OutlineScopeOptions outlineScopeOptions;
+      outlineScopeOptions.outlineMarkedScopesOnly = true;
+      pm.addPass(scope::createOutlineScopePass(outlineScopeOptions));
       pm.addPass(scope::createPropagateSIMTModePass());
       pm.addPass(hivm::createInsertAllocBasePlaceholderPass());
       pm.addPass(hivm::createInferSimtVFMemEffectPass());

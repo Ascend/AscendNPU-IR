@@ -17,7 +17,7 @@ module {
     %c256 = arith.constant 256 : index
     %c1 = arith.constant 1 : index
     %c0 = arith.constant 0 : index
-    
+
     // Allocate source buffer and initialize with new value (7)
     %alloc = memref.alloc() : memref<256xi16>
     %c7 = arith.constant 7 : i16
@@ -26,12 +26,12 @@ module {
     }
 
     // Cast dynamic memref to fixed-size strided memref
-    %reinterpret_cast = memref.reinterpret_cast %arg0 
-      to offset: [0], sizes: [256], strides: [1] 
+    %reinterpret_cast = memref.reinterpret_cast %arg0
+      to offset: [0], sizes: [256], strides: [1]
       : memref<?xi16> to memref<256xi16, strided<[1]>>
-    
+
     // Execute atomic exchange operation
-    hfusion.atomic_xchg ins(%alloc : memref<256xi16>) 
+    hfusion.atomic_xchg ins(%alloc : memref<256xi16>)
                         outs(%reinterpret_cast : memref<256xi16, strided<[1]>>)
     return
   }
@@ -44,7 +44,7 @@ module {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
     %c0_i16 = arith.constant 0 : i16
-    
+
     // 1. Initialize destination memory with 0
     %mem = memref.alloc(%c256) : memref<?xi16>
     scf.for %i = %c0 to %c256 step %c1 {

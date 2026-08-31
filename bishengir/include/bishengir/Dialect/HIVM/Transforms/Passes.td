@@ -221,7 +221,7 @@ def CloneTensorEmpty : Pass<"hivm-clone-tensor-empty", "func::FuncOp"> {
 def InferHIVMDataLayout : Pass<"hivm-infer-data-layout", "func::FuncOp"> {
   let summary = "Infer data layout for HIVM Ops";
   let constructor = "mlir::hivm::createInferHIVMDataLayoutPass()";
-  let dependentDialects = ["affine::AffineDialect", "hivm::HIVMDialect", 
+  let dependentDialects = ["affine::AffineDialect", "hivm::HIVMDialect",
                            "annotation::AnnotationDialect",
   ];
 }
@@ -803,7 +803,7 @@ def HIVMCanonicalizationPipeline
   let summary = "Run HIVM canonicalization pass pipeline on one function";
   let constructor = "mlir::hivm::createHIVMCanonicalizationPipelinePass()";
   let dependentDialects = ["hivm::HIVMDialect", "func::FuncDialect",
-                           "arith::ArithDialect", "memref::MemRefDialect", 
+                           "arith::ArithDialect", "memref::MemRefDialect",
                            "scf::SCFDialect"];
 }
 
@@ -1103,7 +1103,7 @@ def InsertWorkSpaceForMixCV : Pass<"insert-workspace-for-mix-cv"> {
   let constructor = "mlir::hivm::createInsertWorkSpaceForMixCVPass()";
   let dependentDialects = [
     "hivm::HIVMDialect", "bishengir::memref_ext::MemRefExtDialect",
-                         "bufferization::BufferizationDialect", 
+                         "bufferization::BufferizationDialect",
                          "annotation::AnnotationDialect"
   ];
 }
@@ -1348,6 +1348,18 @@ def SIMTVFSubTiling
 def SplitSimtModule : Pass<"split-simt-module"> {
   let summary = "Split simt module for every simt vf";
   let constructor = "mlir::hivm::createSplitSimtModulePass()";
+}
+
+def MarkSimtScopeNoInline : Pass<"mark-simt-scope-no-inline", "ModuleOp"> {
+  let summary = "Mark SIMT scopes no_inline so inline-scope keeps them outlined";
+  let description = [{
+    SIMT scopes are lowered to independent SIMT vector functions by the mixed
+    SIMD/SIMT pipeline and must stay outlined. This pass marks every
+    `vector_mode = "simt"` scope `no_inline` so the generic inline-scope pass
+    does not merge them back into the caller.
+  }];
+  let constructor = "mlir::hivm::createMarkSimtScopeNoInlinePass()";
+  let dependentDialects = ["scope::ScopeDialect"];
 }
 
 def AutoScope : Pass<"auto-scope"> {

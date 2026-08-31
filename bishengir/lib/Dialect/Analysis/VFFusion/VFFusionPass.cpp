@@ -73,7 +73,8 @@ VFFusionKindOption VFFusionPass::getFusionOption() const {
                             enableOutlineArith, enableOutlineCube,
                             ubBudgetBytes_, ubAlignBytes_, enableRA, enableAR,
                             maxVFParams, enableVFStackLimit, enableCastOpt,
-                            enableNewTreeReducePolicy);
+                            enableNewTreeReducePolicy,
+                            enablePredicateSinkAcrossSync);
 }
 
 template <typename FusionKind>
@@ -116,110 +117,6 @@ static bool isCVCases(ModuleOp moduleOp) {
   });
 
   return result.wasInterrupted();
-}
-
-/// TODO: Detect CV-specific patterns that require skipping VFFusion.
-static bool hasCVSpecialPatternsSkip(ModuleOp moduleOp) {
-  // Pattern 1: linalg.fill → linalg.mul → linalg.fill → linalg.add → linalg.exp
-  // (DPS chain, all ops writing to the same output tensor).
-  // VFFusion outlines this chain into a fused function, but the
-  // function boundary changes the sync structure and downstream
-  // extract_slice/insert_slice handling, causing scheduling gaps.
-  bool hasFillMulFillAddExpPattern = false;
-  moduleOp.walk([&](linalg::ExpOp expOp) {
-    if (hasFillMulFillAddExpPattern)
-      return;
-    // exp's input should come from linalg.add
-    Operation *addOp = expOp.getOperand(0).getDefiningOp();
-    if (!addOp || !isa<linalg::AddOp>(addOp))
-      return;
-    // add's inputs: one from linalg.mul, one from linalg.fill
-    Operation *lhs = addOp->getOperand(0).getDefiningOp();
-    Operation *rhs = addOp->getOperand(1).getDefiningOp();
-    Operation *mulOp = nullptr;
-    if (isa<linalg::MulOp>(lhs) && isa<linalg::FillOp>(rhs)) {
-      mulOp = lhs;
-    } else if (isa<linalg::FillOp>(lhs) && isa<linalg::MulOp>(rhs)) {
-      mulOp = rhs;
-    } else {
-      return;
-    }
-    // mul's input should include a linalg.fill
-    for (Value operand : mulOp->getOperands()) {
-      if (Operation *op = operand.getDefiningOp()) {
-        if (isa<linalg::FillOp>(op)) {
-          hasFillMulFillAddExpPattern = true;
-          return;
-        }
-      }
-    }
-  });
-  if (hasFillMulFillAddExpPattern) {
-    LDBG("Skipping VFFusion: detected fill→mul→fill→add→exp "
-         "pattern in CV case");
-    return true;
-  }
-
-  // Pattern 2: hfusion.cast feeds two linalg.broadcast ops (one directly,
-  // one through a tensor.extract_slice of the cast result); both broadcasts
-  // feed linalg.sub → linalg.exp.
-  // VFFusion outlining this chain breaks the shared cast + slice
-  // relationship (the slice has a dynamic index and carries a
-  // to_be_bubbled_slice hint), causing scheduling gaps downstream.
-  bool hasCastBroadcastSubExpPattern = false;
-  moduleOp.walk([&](linalg::ExpOp expOp) {
-    if (hasCastBroadcastSubExpPattern)
-      return;
-    // exp's input should come from linalg.sub
-    Operation *subOp = expOp.getOperand(0).getDefiningOp();
-    if (!subOp || !isa<linalg::SubOp>(subOp))
-      return;
-    // sub's inputs: both should be linalg.broadcast
-    Operation *lhsBrc = subOp->getOperand(0).getDefiningOp();
-    Operation *rhsBrc = subOp->getOperand(1).getDefiningOp();
-    if (!lhsBrc || !isa<linalg::BroadcastOp>(lhsBrc) || !rhsBrc ||
-        !isa<linalg::BroadcastOp>(rhsBrc))
-      return;
-    // Resolve the defining op behind each broadcast's input:
-    //  - one should be a tensor.extract_slice whose source is a hfusion.cast
-    //  - the other should be the hfusion.cast directly
-    Operation *lhsSrc = lhsBrc->getOperand(0).getDefiningOp();
-    Operation *rhsSrc = rhsBrc->getOperand(0).getDefiningOp();
-    if (!lhsSrc || !rhsSrc)
-      return;
-    Operation *lhsCast = nullptr;
-    Operation *rhsCast = nullptr;
-    bool lhsViaSlice = false;
-    bool rhsViaSlice = false;
-    if (auto sliceOp = dyn_cast<tensor::ExtractSliceOp>(lhsSrc)) {
-      lhsCast = sliceOp.getSource().getDefiningOp();
-      lhsViaSlice = true;
-    } else {
-      lhsCast = lhsSrc;
-    }
-    if (auto sliceOp = dyn_cast<tensor::ExtractSliceOp>(rhsSrc)) {
-      rhsCast = sliceOp.getSource().getDefiningOp();
-      rhsViaSlice = true;
-    } else {
-      rhsCast = rhsSrc;
-    }
-    if (!lhsCast || !rhsCast)
-      return;
-    // Both sources must resolve to the same hfusion.cast
-    if (!isa<hfusion::CastOp>(lhsCast) || lhsCast != rhsCast)
-      return;
-    // One broadcast reaches the cast via extract_slice, the other directly
-    if (lhsViaSlice == rhsViaSlice)
-      return;
-    hasCastBroadcastSubExpPattern = true;
-  });
-  if (hasCastBroadcastSubExpPattern) {
-    LDBG("Skipping VFFusion: detected cast→broadcast(×2)→sub→exp "
-         "pattern in CV case");
-    return true;
-  }
-
-  return false;
 }
 
 void VFFusionPass::runOnOperation() {
@@ -283,10 +180,6 @@ void VFFusionPass::runOnOperation() {
                                                   : WalkResult::advance();
             })
             .wasInterrupted()) {
-      freezeRegisterTreeSelection();
-      return;
-    }
-    if (hasCVSpecialPatternsSkip(moduleOp)) {
       freezeRegisterTreeSelection();
       return;
     }

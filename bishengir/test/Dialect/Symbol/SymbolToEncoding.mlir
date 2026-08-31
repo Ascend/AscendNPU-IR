@@ -61,4 +61,3 @@ func.func @test_symbol_to_encoding_caller_0(%arg0: tensor<?x640x?xf16>) -> tenso
   %0 = func.call @test_symbol_to_encoding_callee_0(%arg0) : (tensor<?x640x?xf16>) -> tensor<?x640x?xf16>
   return %0 : tensor<?x640x?xf16>
 }
-

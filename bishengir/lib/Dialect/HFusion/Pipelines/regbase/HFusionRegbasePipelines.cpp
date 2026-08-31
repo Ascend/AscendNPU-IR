@@ -98,19 +98,6 @@ static DenseMap<int, std::vector<std::string>> phaseToDisabledMap = {
       canonicalizationEnumMap[FoldFillWithTensorReshapeExpand]}},
     {AfterAutoSchedule, {canonicalizationEnumMap[FoldTransposeWithTranspose]}}};
 
-// TODO: need to be reverted when Affinity GMM supported
-struct MarkDisableVectorizePass : public PassWrapper<MarkDisableVectorizePass,
-                                           OperationPass<mlir::ModuleOp>> {
-  const static constexpr llvm::StringLiteral kName = "hfusion.disableHfusionVectorize";
-
-  void runOnOperation() override {
-    mlir::ModuleOp module = getOperation();
-    mlir::MLIRContext *context = module.getContext();
-    if (!module->getAttr(kName))
-      module->setAttr(kName, UnitAttr::get(context));
-  }
-};
-
 static void
 canonicalizationPipeline(OpPassManager &pm,
                          const HFusionPipelineOptions &hfusionOptions,
@@ -359,7 +346,7 @@ static void hfusionAutoSchedulePipeline(OpPassManager &pm,
 static void postProcess(OpPassManager &pm,
                         const HFusionPipelineOptions &options) {
   pm.nest<func::FuncOp>().addPass(createHFusionInlineBrcPass());
-  
+
   // normalize should be called after auto schedule:
   // - tile reduction may generate unsupported elemwise op requiring normalize
   NormalizeOptions normalizeOptions;
@@ -386,7 +373,9 @@ static void postProcess(OpPassManager &pm,
 static void hfusionVectorizeManualScopePipeline(
     OpPassManager &pm, const HFusionPipelineOptions &hfusionOptions) {
   // vectorize manual vector scope
-  pm.addPass(scope::createOutlineScopePass());
+  OutlineScopeOptions outlineScopeOptions;
+  outlineScopeOptions.outlineMarkedScopesOnly = true;
+  pm.addPass(scope::createOutlineScopePass(outlineScopeOptions));
   VectorizeOpsOptions vectorizeOptions;
   vectorizeOptions.forManualScope = true;
   pm.addPass(createHFusionVectorizeOpsPass(vectorizeOptions));
@@ -444,10 +433,7 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
   canonicalizationPipeline(pm, hfusionOptions);
   if (hfusionOptions.enableAutoVectorizeV2) {
     AutoVectorizeV2Options vecOptions;
-    // Keep multi-consumer fusion groups within the VF stack budget.
-    vecOptions.enableVFStackLimit =
-        hfusionOptions.enableVFStackLimit ||
-        hfusionOptions.hfusionEnableMultipleConsumerFusion;
+    vecOptions.enableVFStackLimit = hfusionOptions.enableVFStackLimit;
     vecOptions.enableMultipleConsumerFusion =
         hfusionOptions.hfusionEnableMultipleConsumerFusion;
     if (hfusionOptions.hfusionMaxFusedOpsInAutoVectorizeV2 >= 0)
@@ -570,11 +556,6 @@ void buildHFusionPipelines(OpPassManager &pm,
     if (!options.disableHfusionVectorize) {
       hfusionAutoVectorizePipeline(pm, options);
     }
-  }
-
-  // TODO: need to be reverted when Affinity GMM supported
-  if (options.disableHfusionVectorize) {
-    pm.addPass(std::make_unique<MarkDisableVectorizePass>());
   }
 }
 

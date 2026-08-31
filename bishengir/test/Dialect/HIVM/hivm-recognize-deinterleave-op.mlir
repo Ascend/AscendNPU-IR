@@ -5,7 +5,7 @@
 #map1 = affine_map<()[s0] -> (s0 + 4)>
 #map2 = affine_map<()[s0, s1] -> (s0 - s1)>
 module {
-  func.func @recognize_deinterleave_for_load_0(%arg0: i64, %arg1: memref<?xf16, #hivm.address_space<gm>>, %arg2: memref<?xf16, #hivm.address_space<gm>>, %arg3: memref<?xf16, #hivm.address_space<gm>>, %arg4: i32, %arg5: i32, %arg6: i32, %arg7: i32, %arg8: i32) 
+  func.func @recognize_deinterleave_for_load_0(%arg0: i64, %arg1: memref<?xf16, #hivm.address_space<gm>>, %arg2: memref<?xf16, #hivm.address_space<gm>>, %arg3: memref<?xf16, #hivm.address_space<gm>>, %arg4: i32, %arg5: i32, %arg6: i32, %arg7: i32, %arg8: i32)
   attributes {func_dyn_memref_args = dense<[false, true, true, true, false, false, false, false, false]> : vector<9xi1>, global_kernel = "local", hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, mix_mode = "aiv"} {
     %c0 = arith.constant 0 : index
     %c64 = arith.constant 64 : index
@@ -54,7 +54,7 @@ module {
 #map1 = affine_map<()[s0] -> (s0 + 4)>
 #map2 = affine_map<()[s0, s1] -> (s0 - s1)>
 module {
-  func.func @recognize_deinterleave_for_copy_0(%arg0: i64, %arg1: memref<?xf16, #hivm.address_space<gm>>, %arg2: memref<?xf16, #hivm.address_space<gm>>, %arg3: memref<?xf16, #hivm.address_space<gm>>, %arg4: i32, %arg5: i32, %arg6: i32, %arg7: i32, %arg8: i32) 
+  func.func @recognize_deinterleave_for_copy_0(%arg0: i64, %arg1: memref<?xf16, #hivm.address_space<gm>>, %arg2: memref<?xf16, #hivm.address_space<gm>>, %arg3: memref<?xf16, #hivm.address_space<gm>>, %arg4: i32, %arg5: i32, %arg6: i32, %arg7: i32, %arg8: i32)
   attributes {func_dyn_memref_args = dense<[false, true, true, true, false, false, false, false, false]> : vector<9xi1>, global_kernel = "local", hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, mix_mode = "aiv"} {
     %c0 = arith.constant 0 : index
     %c64 = arith.constant 64 : index
@@ -154,7 +154,7 @@ func.func @recognize_deinterleave_for_i8_tensor(%arg0: index, %arg1: memref<128x
 // CHECK:   hivm.hir.vdeinterleave ins(%[[VAL_8]] : memref<?xi8, strided<[1]>, #hivm.address_space<ub>>) outs(%subview_0 : memref<?xi8, strided<[1]>, #hivm.address_space<ub>>) channel_num = 32 index_mode = <CHANNEL_0>
 
 // -----
- 	 
+
 // CHECK-LABEL: recognize_deinterleave_for_load_non_zero_offset
 // CHECK: hivm.hir.vdeinterleave {{.*}} channel_num = {{[0-9]+}} index_mode = <CHANNEL_0>
 func.func @recognize_deinterleave_for_load_non_zero_offset(%arg0: memref<?xf16, #hivm.address_space<gm>>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, mix_mode = "aiv"} {

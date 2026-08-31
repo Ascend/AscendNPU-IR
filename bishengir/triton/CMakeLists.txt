@@ -13,7 +13,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
 project(triton CXX C)
-# Suppress warnings from triton 
+# Suppress warnings from triton
 add_compile_options(-Wno-error)
 include(CTest)
 

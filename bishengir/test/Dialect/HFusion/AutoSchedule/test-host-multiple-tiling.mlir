@@ -26,7 +26,7 @@ module {
     return %1 : tensor<?x?xf16>
   }
 
-  func.func @main(%arg0: tensor<?x1xf16>, %arg1: tensor<1x?xf16>, %arg2: tensor<?x?xf16>) -> (tensor<?x?xf16>) 
+  func.func @main(%arg0: tensor<?x1xf16>, %arg1: tensor<1x?xf16>, %arg2: tensor<?x?xf16>) -> (tensor<?x?xf16>)
   attributes {hacc.function_kind = #hacc.function_kind<HOST>} {
     %ret = func.call @test_dynamic_shape_single_output(%arg0, %arg1, %arg2) : (tensor<?x1xf16>, tensor<1x?xf16>, tensor<?x?xf16>) -> (tensor<?x?xf16>)
     return %ret : tensor<?x?xf16>

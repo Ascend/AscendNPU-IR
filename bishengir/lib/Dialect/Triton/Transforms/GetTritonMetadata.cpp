@@ -86,7 +86,7 @@ public:
       llvm::raw_fd_ostream os(tritonMetadataOutput, ec);
       if (ec) {
         llvm::errs() << "Error: Failed to open file "
-                     << tritonMetadataOutput 
+                     << tritonMetadataOutput
                      << ": " << ec.message() << "\n";
         return;
       }

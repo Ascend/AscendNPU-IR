@@ -913,14 +913,14 @@ struct NormalizeSignBitOp : public OpRewritePattern<SignBitOp> {
         loc, intTensorType.getShape(), intType);
     auto vandAttr = hfusion::BinaryFnAttr::get(rewriter.getContext(),
                                                hfusion::BinaryFn::vand);
-    Value andResult = rewriter
-                          .create<hfusion::ElemwiseBinaryOp>(
-                              loc, TypeRange{intTensorType},
-                              ValueRange{bitcasted, maskScalar},
-                              ValueRange{emptyInt2},
-                              ArrayRef<NamedAttribute>{
-                                  rewriter.getNamedAttr("fun", vandAttr)})
-                          .getResult(0);
+    Value andResult =
+        rewriter
+            .create<hfusion::ElemwiseBinaryOp>(
+                loc, TypeRange{intTensorType},
+                ValueRange{bitcasted, maskScalar}, ValueRange{emptyInt2},
+                ArrayRef<NamedAttribute>{
+                    rewriter.getNamedAttr("fun", vandAttr)})
+            .getResult(0);
 
 #ifndef BSPUB_DAVINCI_BISHENGIR_A5
     Value zeroScalar = rewriter.create<arith::ConstantIntOp>(loc, 0, intType);
@@ -932,14 +932,14 @@ struct NormalizeSignBitOp : public OpRewritePattern<SignBitOp> {
         loc, i1TensorType.getShape(), rewriter.getI1Type());
     auto vneAttr = hfusion::CompareFnAttr::get(rewriter.getContext(),
                                                hfusion::CompareFn::vne);
-    Value cmpResult = rewriter
-                          .create<hfusion::CompareOp>(
-                              loc, TypeRange{i1TensorType},
-                              ValueRange{andResult, zeroScalar},
-                              ValueRange{emptyI1},
-                              ArrayRef<NamedAttribute>{rewriter.getNamedAttr(
-                                  "compare_fn", vneAttr)})
-                          .getResult(0);
+    Value cmpResult =
+        rewriter
+            .create<hfusion::CompareOp>(
+                loc, TypeRange{i1TensorType}, ValueRange{andResult, zeroScalar},
+                ValueRange{emptyI1},
+                ArrayRef<NamedAttribute>{
+                    rewriter.getNamedAttr("compare_fn", vneAttr)})
+            .getResult(0);
 
     rewriter.replaceOp(op, cmpResult);
     return success();
@@ -1724,9 +1724,9 @@ private:
 /// 4. Normal (else): mag = ln(z + sqrt(z² + 1))
 /// 5. asinh(x) = sgn * mag (Odd function symmetry)
 ///
-/// NormalizeAsinhOp: Decomposes asinh(x) into high-performance base instructions.
-/// This implementation balances precision and performance using a three-path 
-/// piecewise approach based on the input magnitude.
+/// NormalizeAsinhOp: Decomposes asinh(x) into high-performance base
+/// instructions. This implementation balances precision and performance using a
+/// three-path piecewise approach based on the input magnitude.
 struct NormalizeAsinhOp : public OpRewritePattern<hfusion::ElemwiseUnaryOp> {
   using OpRewritePattern<hfusion::ElemwiseUnaryOp>::OpRewritePattern;
 
@@ -1743,9 +1743,10 @@ struct NormalizeAsinhOp : public OpRewritePattern<hfusion::ElemwiseUnaryOp> {
 
     // -------------------------------------------------------------------------
     // Step 1: Precision Promotion (FP16 -> FP32)
-    // FP16 has a limited dynamic range (max 65504). Calculating x^2 can easily 
-    // cause overflow or significant rounding errors. Promoting to FP32 for 
-    // intermediate transcendental calculations is the standard approach for NPU.
+    // FP16 has a limited dynamic range (max 65504). Calculating x^2 can easily
+    // cause overflow or significant rounding errors. Promoting to FP32 for
+    // intermediate transcendental calculations is the standard approach for
+    // NPU.
     // -------------------------------------------------------------------------
     if (inTy.isF16()) {
       input = hfusion::castTo(rewriter, input, rewriter.getF32Type(),
@@ -1774,9 +1775,11 @@ private:
   /// Helper: Create a F32 scalar constant
   Value f32Const(PatternRewriter &rewriter, Location loc, float v) const {
     auto f32 = rewriter.getF32Type();
-    return rewriter.create<arith::ConstantOp>(loc, f32, rewriter.getFloatAttr(f32, v));
+    return rewriter.create<arith::ConstantOp>(loc, f32,
+                                              rewriter.getFloatAttr(f32, v));
   }
-  /// Helper: Create a hfusion.select operation to leverage NPU vsel instructions
+  /// Helper: Create a hfusion.select operation to leverage NPU vsel
+  /// instructions
   Value createSelect(PatternRewriter &rewriter, Location loc, Value cond,
                      Value t, Value f, Value init) const {
     return rewriter
@@ -1787,83 +1790,112 @@ private:
 
   /// Path for large values: ln(|x|) + ln(2)
   /// Used when |x| >= 10⁸ to prevent z² from overflowing FP32 range.
-  Value pathLarge(PatternRewriter &rewriter, Location loc, Value absInput) const {
+  Value pathLarge(PatternRewriter &rewriter, Location loc,
+                  Value absInput) const {
     auto empty = utils::createEmptyOp(rewriter, loc, absInput);
     // Precomputed ln(2)
-    Value ln2 = f32Const(rewriter, loc, 0.69314718f); 
+    Value ln2 = f32Const(rewriter, loc, 0.69314718f);
     // Calculate log(|x|), which maps to NPU vlog instruction
-    Value logX = hfusion::createUnaryOp<linalg::ElemwiseUnaryOp, linalg::UnaryFn,
-                                       linalg::UnaryFnAttr>(
-        rewriter, loc, linalg::UnaryFn::log, ValueRange{absInput}, empty)->getResult(0);
+    Value logX =
+        hfusion::createUnaryOp<linalg::ElemwiseUnaryOp, linalg::UnaryFn,
+                               linalg::UnaryFnAttr>(
+            rewriter, loc, linalg::UnaryFn::log, ValueRange{absInput}, empty)
+            ->getResult(0);
     // Final result for large path: ln(z) + ln(2)
     return hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
                                    linalg::BinaryFnAttr>(
-        rewriter, loc, linalg::BinaryFn::add, ValueRange{logX, ln2}, empty)->getResult(0);
+               rewriter, loc, linalg::BinaryFn::add, ValueRange{logX, ln2},
+               empty)
+        ->getResult(0);
   }
 
   /// Path for normal values: ln(|x| + sqrt(|x|² + 1))
   /// Used for the range 2⁻¹² <= |x| < 10⁸.
-  Value pathNormal(PatternRewriter &rewriter, Location loc, Value absInput) const {
+  Value pathNormal(PatternRewriter &rewriter, Location loc,
+                   Value absInput) const {
     auto empty = utils::createEmptyOp(rewriter, loc, absInput);
     Value one = f32Const(rewriter, loc, 1.0f);
-    
+
     // Calculate |x|^2
-    Value z2 = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
-                                       linalg::BinaryFnAttr>(
-        rewriter, loc, linalg::BinaryFn::mul, ValueRange{absInput, absInput}, empty)->getResult(0);
+    Value z2 = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp,
+                                       linalg::BinaryFn, linalg::BinaryFnAttr>(
+                   rewriter, loc, linalg::BinaryFn::mul,
+                   ValueRange{absInput, absInput}, empty)
+                   ->getResult(0);
     // Calculate |x|^2 + 1
-    Value z2p1 = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
-                                         linalg::BinaryFnAttr>(
-        rewriter, loc, linalg::BinaryFn::add, ValueRange{z2, one}, empty)->getResult(0);
-    
+    Value z2p1 =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::add, ValueRange{z2, one}, empty)
+            ->getResult(0);
+
     // Calculate sqrt(|x|^2 + 1) using NPU vsqrt instruction
-    Value sqrtVal = hfusion::createUnaryOp<hfusion::ElemwiseUnaryOp, hfusion::UnaryFn,
-                                           hfusion::UnaryFnAttr>(
-        rewriter, loc, hfusion::UnaryFn::sqrt, ValueRange{z2p1}, empty)->getResult(0);
-    
+    Value sqrtVal =
+        hfusion::createUnaryOp<hfusion::ElemwiseUnaryOp, hfusion::UnaryFn,
+                               hfusion::UnaryFnAttr>(
+            rewriter, loc, hfusion::UnaryFn::sqrt, ValueRange{z2p1}, empty)
+            ->getResult(0);
+
     // Calculate ln(|x| + sqrt(...))
-    Value argLog = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
-                                           linalg::BinaryFnAttr>(
-        rewriter, loc, linalg::BinaryFn::add, ValueRange{absInput, sqrtVal}, empty)->getResult(0);
-    
+    Value argLog =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::add, ValueRange{absInput, sqrtVal},
+            empty)
+            ->getResult(0);
+
     return hfusion::createUnaryOp<linalg::ElemwiseUnaryOp, linalg::UnaryFn,
                                   linalg::UnaryFnAttr>(
-        rewriter, loc, linalg::UnaryFn::log, ValueRange{argLog}, empty)->getResult(0);
+               rewriter, loc, linalg::UnaryFn::log, ValueRange{argLog}, empty)
+        ->getResult(0);
   }
   /// Core orchestration: Implements piecewise selection and sign restoration
-  Value calculateAsinh(PatternRewriter &rewriter, Location loc, Value input) const {
+  Value calculateAsinh(PatternRewriter &rewriter, Location loc,
+                       Value input) const {
     auto empty = utils::createEmptyOp(rewriter, loc, input);
     Value zero = f32Const(rewriter, loc, 0.0f);
     Value largeThr = f32Const(rewriter, loc, 1.0e8f);
     Value smallThr = f32Const(rewriter, loc, 2.44140625e-4f); // 2^-12
 
     // 1. Get magnitude z = |x|
-    Value absInput = hfusion::createUnaryOp<linalg::ElemwiseUnaryOp, linalg::UnaryFn,
-                                            linalg::UnaryFnAttr>(
-        rewriter, loc, linalg::UnaryFn::abs, ValueRange{input}, empty)->getResult(0);
+    Value absInput =
+        hfusion::createUnaryOp<linalg::ElemwiseUnaryOp, linalg::UnaryFn,
+                               linalg::UnaryFnAttr>(
+            rewriter, loc, linalg::UnaryFn::abs, ValueRange{input}, empty)
+            ->getResult(0);
 
     // 2. Pre-construct path results (Greedy rewrite pattern)
     Value resLarge = pathLarge(rewriter, loc, absInput);
     Value resNormal = pathNormal(rewriter, loc, absInput);
     // pathSmall directly reuses absInput (|x| < 2^-12)
 
-   
     // 3. Nested selection logic for magnitude (Magnitude = f(z))
-    // Decision A: If z < 2^-12, return z (Small Path); else return normal result
-    Value condSmall = createCmpOp(rewriter, loc, absInput, smallThr, CompareFn::vlt)->getResult(0);
-    Value res1 = createSelect(rewriter, loc, condSmall, absInput, resNormal, empty);
-    
-    // Decision B: If z >= 10^8, return resLarge (Large Path); else return result from Decision A
-    Value condLarge = createCmpOp(rewriter, loc, absInput, largeThr, CompareFn::vge)->getResult(0);
+    // Decision A: If z < 2^-12, return z (Small Path); else return normal
+    // result
+    Value condSmall =
+        createCmpOp(rewriter, loc, absInput, smallThr, CompareFn::vlt)
+            ->getResult(0);
+    Value res1 =
+        createSelect(rewriter, loc, condSmall, absInput, resNormal, empty);
+
+    // Decision B: If z >= 10^8, return resLarge (Large Path); else return
+    // result from Decision A
+    Value condLarge =
+        createCmpOp(rewriter, loc, absInput, largeThr, CompareFn::vge)
+            ->getResult(0);
     Value mag = createSelect(rewriter, loc, condLarge, resLarge, res1, empty);
 
     // 4. Restore sign using the odd function property: asinh(-x) = -asinh(x)
     // Logic: result = (input < 0) ? -mag : mag
-    Value isNeg = createCmpOp(rewriter, loc, input, zero, CompareFn::vlt)->getResult(0);
+    Value isNeg =
+        createCmpOp(rewriter, loc, input, zero, CompareFn::vlt)->getResult(0);
     Value negOne = f32Const(rewriter, loc, -1.0f);
-    Value negMag = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
-                                           linalg::BinaryFnAttr>(
-        rewriter, loc, linalg::BinaryFn::mul, ValueRange{mag, negOne}, empty)->getResult(0);
+    Value negMag =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::mul, ValueRange{mag, negOne},
+            empty)
+            ->getResult(0);
 
     return createSelect(rewriter, loc, isNeg, negMag, mag, empty);
   }
@@ -2604,8 +2636,8 @@ public:
         hfusion::castTo(builder, src, outType, hfusion::RoundMode::RINT, dst);
     Value signSrc = originalSrc;
     if (inType != outType)
-      signSrc =
-          hfusion::castTo(builder, originalSrc, outType, hfusion::RoundMode::ROUND);
+      signSrc = hfusion::castTo(builder, originalSrc, outType,
+                                hfusion::RoundMode::ROUND);
     result = buildCopysign(builder, op.getLoc(), result, signSrc);
     rewriter.replaceOp(op, result);
     return success();
@@ -3026,7 +3058,8 @@ private:
 ///
 /// Preserve the magnitude bits from x and the sign bit from y:
 ///   bitcast((bitcast(x) & magnitude_mask) | (bitcast(y) & sign_mask))
-struct NormalizeCopysignOp : public OpRewritePattern<hfusion::ElemwiseBinaryOp> {
+struct NormalizeCopysignOp
+    : public OpRewritePattern<hfusion::ElemwiseBinaryOp> {
 public:
   using OpRewritePattern<hfusion::ElemwiseBinaryOp>::OpRewritePattern;
 
@@ -3055,8 +3088,7 @@ public:
       magnitudeMaskVal = 0x7FFFU;
       signMaskVal = 0x8000U;
     } else {
-      llvm::report_fatal_error(
-          "only support input Type is f16, bf16 or f32");
+      llvm::report_fatal_error("only support input Type is f16, bf16 or f32");
     }
 
     Location loc = op->getLoc();
@@ -3092,8 +3124,8 @@ private:
         ->getResult(0);
   }
 
-  Value buildBinary(PatternRewriter &rewriter, Location loc, hfusion::BinaryFn fn,
-                    Value lhs, Value rhs) const {
+  Value buildBinary(PatternRewriter &rewriter, Location loc,
+                    hfusion::BinaryFn fn, Value lhs, Value rhs) const {
     auto empty = utils::createEmptyOp(rewriter, loc, lhs);
     return rewriter
         .create<hfusion::ElemwiseBinaryOp>(
@@ -3335,8 +3367,8 @@ private:
                     ->getResult(0);
 
     auto resEmpty = utils::createEmptyOp(rewriter, loc, src);
-    return hfusion::createBinaryOp<linalg::ElemwiseBinaryOp,
-                                   linalg::BinaryFn, linalg::BinaryFnAttr>(
+    return hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                   linalg::BinaryFnAttr>(
                rewriter, loc, linalg::BinaryFn::mul, ValueRange{add, half},
                ValueRange{resEmpty})
         ->getResult(0);
@@ -3412,9 +3444,9 @@ public:
 // enableLastMulTerm = false means [(input + p1) * squareSrc + p2] + ... remove
 // the last multiplication by squareSrc.
 static Value genPolyExpr(PatternRewriter &rewriter, Location loc,
-                  const Value squareSrc, Value input,
-                  const llvm::SmallVector<double> &numerCoeff,
-                  bool enableLastMulTerm = true) {
+                         const Value squareSrc, Value input,
+                         const llvm::SmallVector<double> &numerCoeff,
+                         bool enableLastMulTerm = true) {
   auto inType = getElementTypeOrSelf(squareSrc.getType());
 
   Value resInit = utils::createEmptyOp(rewriter, loc, input);
@@ -5041,7 +5073,7 @@ static void replaceResultsWithTargetType(const SmallVector<Value> &oldResults,
 }
 
 static SmallVector<Value> normalizeF16ToF32(PatternRewriter &rewriter,
-                                     const SmallVector<Value> &values) {
+                                            const SmallVector<Value> &values) {
   SmallVector<Value> result;
   for (Value v : values) {
     if (!isF16ElemType(v.getType())) {
@@ -5092,7 +5124,8 @@ SmallVector<Value> normalizeSrcToTargetIntegerType(
   return result;
 }
 
-static arith::CmpFPredicate getCmpFloatPredicate(arith::CmpIPredicate predicate) {
+static arith::CmpFPredicate
+getCmpFloatPredicate(arith::CmpIPredicate predicate) {
   switch (predicate) {
   case arith::CmpIPredicate::eq:
     return arith::CmpFPredicate::OEQ;
@@ -5119,7 +5152,7 @@ static arith::CmpFPredicate getCmpFloatPredicate(arith::CmpIPredicate predicate)
 }
 
 static Operation *cloneArithOp(PatternRewriter &rewriter, Location loc,
-                        Operation *bodyOp, IRMapping &mapper) {
+                               Operation *bodyOp, IRMapping &mapper) {
   const DenseMap<Value, Value> &valueMap = mapper.getValueMap();
   Value oldLhs = bodyOp->getOperand(0);
   Value oldRhs = bodyOp->getOperand(1);
@@ -5165,9 +5198,9 @@ static Operation *cloneArithOp(PatternRewriter &rewriter, Location loc,
   llvm::report_fatal_error("unsupported body op to map");
 }
 
-static Operation *mapReduceBodyOpToFloat(PatternRewriter &rewriter, Location loc,
-                                  Operation *bodyOp, Type srcType,
-                                  IRMapping &mapper) {
+static Operation *mapReduceBodyOpToFloat(PatternRewriter &rewriter,
+                                         Location loc, Operation *bodyOp,
+                                         Type srcType, IRMapping &mapper) {
   if (isa<linalg::YieldOp>(bodyOp)) {
     return rewriter.clone(*bodyOp, mapper);
   }
@@ -5196,10 +5229,11 @@ static Operation *mapReduceBodyOpToFloat(PatternRewriter &rewriter, Location loc
   return cloneArithOp(rewriter, loc, bodyOp, mapper);
 }
 
-static Operation *createNewReduceOp(linalg::ReduceOp op, PatternRewriter &rewriter,
-                             Type srcType, Type targetType,
-                             SmallVector<Value> &newInputs,
-                             SmallVector<Value> &newInits) {
+static Operation *createNewReduceOp(linalg::ReduceOp op,
+                                    PatternRewriter &rewriter, Type srcType,
+                                    Type targetType,
+                                    SmallVector<Value> &newInputs,
+                                    SmallVector<Value> &newInits) {
   bool isF16ToF32 = false;
   if (targetType == rewriter.getF32Type() && srcType == rewriter.getF16Type()) {
     isF16ToF32 = true;
@@ -9869,6 +9903,39 @@ public:
   }
 };
 
+/// Normalizes gather-like ops whose index operand is a non-i32 integer type
+/// by casting the index tensor to i32.
+///
+/// Example:
+///   gather(src, %index_i16, init) → cast %index_i16 → i32 →
+///   gather(src, %index_i32, init)
+struct NormalizeGatherIndexToI32 : public OpRewritePattern<hfusion::GatherOp> {
+public:
+  using OpRewritePattern<hfusion::GatherOp>::OpRewritePattern;
+  LogicalResult matchAndRewrite(hfusion::GatherOp op,
+                                PatternRewriter &rewriter) const override {
+    // Step 1: guard on pure tensor semantics (common to both dialects) and let
+    // the local trait apply dialect-specific constraints.
+    if (!op.hasPureTensorSemantics())
+      return failure();
+
+    // Step 2: match a non-i32 integer index operand.
+    Value index = op.getIndex();
+    Type indexElemType = getElementTypeOrSelf(index.getType());
+    if (!indexElemType.isInteger() || indexElemType.isInteger(32))
+      return failure();
+
+    // Step 3: cast the index tensor to i32 and rebuild the gather op.
+    // The result type is derived from init, so it is unchanged by the index
+    // cast and the op can be replaced in place.
+    Value newIndex = hfusion::castTo(
+        rewriter, index, rewriter.getI32Type());
+    rewriter.replaceOpWithNewOp<hfusion::GatherOp>(
+        op, op.getSrc(), newIndex, op.getInit(), op.getAxis());
+    return success();
+  }
+};
+
 } // namespace mlir::hfusion
 
 // Normalize scalar like tensor for linalg and hfusion ops.
@@ -10002,6 +10069,7 @@ void populateNormalizeHFusionPatterns(RewritePatternSet &patterns) {
   patterns.add<NormalizeShiftLeftOp>(patterns.getContext());
   patterns.add<NormalizeShiftRightOp>(patterns.getContext());
   patterns.add<NormalizeShiftI8ToI16>(patterns.getContext());
+  patterns.add<NormalizeGatherIndexToI32>(patterns.getContext());
 }
 
 namespace {
@@ -10013,8 +10081,8 @@ public:
   void runOnOperation() final {
     ModuleOp moduleOp = getOperation()->getParentOfType<ModuleOp>();
     if (hacc::utils::isRegBasedArch(moduleOp) || useRegBase) {
-      if (failed(runNormalizeRegBase(getOperation(),
-                                     enableHighPrecision, enableFastDiv)))
+      if (failed(runNormalizeRegBase(getOperation(), enableHighPrecision,
+                                     enableFastDiv)))
         signalPassFailure();
       return;
     }

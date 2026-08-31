@@ -79,9 +79,7 @@ class AVE_VmullBinaryOp<string mnemonic, list<Trait> traits = []> :
   let summary = "Ave binary op " # mnemonic # ".";
   let arguments = (ins AveExtValidVector:$src1,
                        AveExtValidVector:$src2,
-                       AveMaskType:$mask,
-                       DefaultValuedAttr<HIVM_TypeFnAttr,
-                           "hivm::TypeFn::cast_signed">:$cast);
+                       AveMaskType:$mask);
   let results = (outs AveExtValidVector:$res1,
                       AveExtValidVector:$res2);
 
@@ -111,6 +109,7 @@ class AVE_TenaryOp<string mnemonic, list<Trait> traits = []> :
 class AVE_VecScalarOp<string mnemonic, list<Trait> traits = []> :
     AVE_LibFnOp<mnemonic, !listconcat(traits, [
       Pure,
+      AVEElementwiseOpInterface,
       TypesMatchWith<"the scalar should have the same type with the vector's element type",
                      "vec", "scalar", "getElementType($_self)">,
       AllTypesMatch<["vec", "out"]>

@@ -96,7 +96,7 @@ load_gm_to_ubuf_1d_core(memref_t<__gm__ T, 1> *src,
 
   auto dst_ptr = dst->aligned + dst->offset - left_padding_num * dst->strides[0];
   if (!isAddress32ByteAligned(dst_ptr) && dst->strides[0] != 1) {
-    load_gm_to_ubuf_1d_by_scalar<T>(src, dst, left_padding_num, pad_value);	 
+    load_gm_to_ubuf_1d_by_scalar<T>(src, dst, left_padding_num, pad_value);
     return;
   }
 
@@ -134,7 +134,7 @@ load_gm_to_ubuf_1d_core(memref_t<__gm__ T, 1> *src,
       }
     }
   }
-  // step 3: update memref and continue load data to aligned dst. 
+  // step 3: update memref and continue load data to aligned dst.
   dst = &dst_memref_aligned;
   src = &src_memref_aligned;
 
@@ -160,7 +160,7 @@ load_gm_to_ubuf_1d_core(memref_t<__gm__ T, 1> *src,
         padding_value_1d_by_scalar_on_load<T>(pad_value, &dst_padding_memref);
       }
     }
-    // no need to update offset here since we already updated padding num. 
+    // no need to update offset here since we already updated padding num.
     left_padding_num = padding_remainder;
   }
 
@@ -182,7 +182,7 @@ load_gm_to_ubuf_1d_core(memref_t<__gm__ T, 1> *src,
 #else
       int64_t scalar = static_cast<int64_t>(pad_value);
 #endif
-    //   Use brc padding for last dimension of dst. 
+    //   Use brc padding for last dimension of dst.
       memref_t<__ubuf__ T, 1> dst_padding_b64_memref_lp = {
         dst->allocated,
         dst->aligned,
@@ -218,7 +218,7 @@ load_gm_to_ubuf_1d_core(memref_t<__gm__ T, 1> *src,
   // last dimension is not contiguous,
   // view the src (size) with stride [stride] as viewed_src (size, 1) with
   // stride [stride, 1], where last dimension of viewed_src is contiguous
-  // Additionally, we need deal with padding outside. 
+  // Additionally, we need deal with padding outside.
   if (left_padding_num > 0) {
     memref_t<__ubuf__ T, 1> dst_memref_non_contiguous_padding = copy_memref<__ubuf__ T, 1>(dst);
     dst_memref_non_contiguous_padding.offset -= left_padding_num * stride0_ub;

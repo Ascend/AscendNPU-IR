@@ -21,7 +21,9 @@
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/IR/Dominance.h"
 #include "mlir/IR/Visitors.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 #define DEBUG_TYPE "vf-fusion-max-parallel-analyzer"
@@ -87,14 +89,36 @@ static bool isReductionOp(Operation *innerOp, Operation *outterOp) {
 }
 
 static bool isInFusionWhiteList(Operation *op) {
-  if ((isa<tensor::ExtractOp>(op) || isa<tensor::ExtractSliceOp>(op)) &&
-      op->hasAttr("DuplicateTensorExtractForCube::visitedLabel"))
-    return false;
   if (isa<linalg::TransposeOp>(op) && !isVsstbPatternTransposeOp(op))
     return false;
   return isReshapeOp(op) || isa<tensor::ExtractSliceOp>(op) ||
          isa<tensor::ExtractOp>(op) || isa<tensor::InsertSliceOp>(op) ||
          isValidLinalgOp(dyn_cast<linalg::LinalgOp>(op));
+}
+
+// i1 "pass-through" ops: consume i1 and produce i1 (with shape/logic change).
+// These ops break the direct compare→select connection that
+// fusePredicateSelectPattern relies on. Recognizing them allows the pattern
+// to trace through and keep the predicate in-register.
+// Examples:
+//   compare → tensor.expand_shape → select   (fused_24 / fused_34)
+//   compare → elemwise_binary{vand} → select  (fused_36 / fused_38)
+static bool isI1PassThrough(Operation *op) {
+  // Reshape ops: expand_shape, collapse_shape
+  if (isReshapeOp(op))
+    return true;
+  // i1 binary ops: vand, vor, vxor (combine masks, produce i1)
+  if (auto elemwiseOp = dyn_cast<hfusion::ElemwiseBinaryOp>(op)) {
+    auto fn = elemwiseOp.getFun();
+    return fn == hfusion::BinaryFn::vand ||
+           fn == hfusion::BinaryFn::vor  ||
+           fn == hfusion::BinaryFn::vxor;
+  }
+  return false;
+}
+
+static bool isPredicateSelect(Operation *op) {
+  return isa<hfusion::SelectOp, linalg::SelectOp>(op);
 }
 
 // === Cost Model Helpers ===
@@ -348,12 +372,43 @@ bool MaxParallelAnalyzer::useNarrowingCastInConsumer(const int producerIndex,
 // insert_slice as producer is always rejected; as consumer it is only
 // allowed in the bridge case, where the producer also feeds a later
 // linalg consumer so fusing the slice connects the two linalg ops.
+//
+// Multi-buffer write-back exemption: when insert_slice writes back into a
+// double-buffered tensor (dest leading dim >= 2) and the producer's result
+// is solely consumed by this insert_slice, allow fusion so the fused VF
+// directly operates on the multi-buffered tensor.  This prevents the
+// outliner from producing a single-buffered VF signature that would later
+// require an explicit copy_ubuf_to_ubuf (MOV_UB_TO_UB) to fill the
+// ping-pong slot.
 static bool isInsertSliceFusionAllowed(Operation *producerOp,
                                        Operation *consumerOp) {
   if (isa<tensor::InsertSliceOp>(producerOp))
     return false;
   if (!isa<tensor::InsertSliceOp>(consumerOp))
     return true;
+
+  // Multi-buffer write-back: when insert_slice writes back into a
+  // multi-buffered tensor whose dest is a loop-carried iter_arg
+  // (BlockArgument) with a leading dimension >= 2, and the producer
+  // result is the sole input to this insert_slice, allow fusion.
+  // This keeps the 2x prefix in the VF signature and avoids later
+  // copy_ubuf_to_ubuf (MOV_UB_TO_UB) to fill the ping-pong slot.
+  auto insertOp = cast<tensor::InsertSliceOp>(consumerOp);
+  Value dest = insertOp.getDest();
+  if (auto blockArg = dyn_cast<BlockArgument>(dest)) {
+    if (auto destType = dyn_cast<RankedTensorType>(dest.getType())) {
+      if (!destType.getShape().empty() && destType.getShape()[0] >= 2) {
+        bool soleConsumer =
+            llvm::all_of(producerOp->getResults(), [&](Value res) {
+              return res.hasOneUse() && *res.getUsers().begin() == consumerOp;
+            });
+        if (soleConsumer)
+          return true;
+      }
+    }
+  }
+
+  // Bridge case: producer also feeds a later linalg consumer.
   for (Operation *user : producerOp->getUsers()) {
     if (user == consumerOp)
       continue;
@@ -364,16 +419,68 @@ static bool isInsertSliceFusionAllowed(Operation *producerOp,
   return false;
 }
 
+bool MaxParallelAnalyzer::canSinkPredicateGroupAcrossSync(
+    int producerGroupId, int consumerGroupId, Operation *consumerOp) {
+  auto &producerGroup = AllFusedGroupBlocks[producerGroupId];
+  auto &consumerGroup = AllFusedGroupBlocks[consumerGroupId];
+  DominanceInfo dominance(consumerOp->getParentOp());
+
+  // Keep this exception scoped to the predicate/select pattern. The first
+  // merge may target an i1 pass-through op; the final merge must target a
+  // group that already contains the select.
+  if (!isI1PassThrough(consumerOp) &&
+      !llvm::any_of(consumerGroup, isPredicateSelect))
+    return false;
+
+  for (Operation *op : producerGroup) {
+    // Only the pure predicate chain is allowed to cross SyncBlockSet. In
+    // particular, do not turn this into a general stage-0 sync bypass.
+    if (!isa<hfusion::CompareOp>(op) && !isI1PassThrough(op))
+      return false;
+    if (!isMemoryEffectFree(op))
+      return false;
+
+    // Sinking is only safe when every result stays inside the two groups that
+    // are about to be merged. Otherwise an earlier user could be moved past
+    // its definition, or a second chain could unexpectedly cross the sync.
+    for (Operation *user : op->getUsers())
+      if (!producerGroup.count(user) && !consumerGroup.count(user))
+        return false;
+
+    // Values defined outside the predicate group become inputs of the fused
+    // VF at the consumer position, so they must still dominate that position.
+    for (Value operand : op->getOperands()) {
+      Operation *defOp = operand.getDefiningOp();
+      if (defOp && producerGroup.count(defOp))
+        continue;
+      if (!dominance.dominates(operand, consumerOp))
+        return false;
+    }
+  }
+  return true;
+}
+
 bool MaxParallelAnalyzer::areFusibleOps(const int producerIndex,
                                         const int consumerIndex) {
   auto producerOp = opsInBlock[producerIndex];
   auto consumerOp = opsInBlock[consumerIndex];
 
-  // If a SyncBlockSetOp is found, prohibit fusion to avoid data races.
+  int producerGroupId = static_cast<int>(opToGroupIndex[producerOp]);
+  int consumerGroupId = static_cast<int>(opToGroupIndex[consumerOp]);
+  auto &producerGroup = AllFusedGroupBlocks[producerGroupId];
+  auto &consumerGroup = AllFusedGroupBlocks[consumerGroupId];
+
+  // SyncBlockSet remains a hard boundary except for the stage-0 predicate
+  // co-location pattern. That exception only sinks a pure, isolated-use
+  // compare/i1 pass-through chain whose inputs remain available at the target.
   for (auto it = producerOp->getNextNode(); it != nullptr && it != consumerOp;
        it = it->getNextNode()) {
     if (isa<hivm::SyncBlockSetOp>(it)) {
-      return false;
+      if (!this->option.enablePredicateSinkAcrossSync || stage != 0 ||
+          !canSinkPredicateGroupAcrossSync(producerGroupId, consumerGroupId,
+                                           consumerOp))
+        return false;
+      break;
     }
   }
 
@@ -383,10 +490,6 @@ bool MaxParallelAnalyzer::areFusibleOps(const int producerIndex,
   }
 
   // Only producer ExtractSlice/Extract Ops need to be fused to VF.
-  int producerGroupId = static_cast<int>(opToGroupIndex[producerOp]);
-  int consumerGroupId = static_cast<int>(opToGroupIndex[consumerOp]);
-  auto &producerGroup = AllFusedGroupBlocks[producerGroupId];
-  auto &consumerGroup = AllFusedGroupBlocks[consumerGroupId];
   // Similar to hasInvalidDependencyIfFused, if the number of ops in a group is
   // greater than 1, then the extract ops in that group must satisfy the
   // constraint rules.
@@ -895,7 +998,7 @@ bool MaxParallelAnalyzer::fusePredicateSelectPattern(Block &block) {
     for (auto *op : ops) {
       if (isa<hfusion::CompareOp>(op))
         pred = true;
-      if (isa<hfusion::SelectOp>(op))
+      if (isPredicateSelect(op))
         sel = true;
     }
     hasPredicate[static_cast<int>(id)] = pred;
@@ -917,7 +1020,68 @@ bool MaxParallelAnalyzer::fusePredicateSelectPattern(Block &block) {
     if (producerGroup.empty())
       continue;
 
-    LDBG("Special pattern (predicate+select): producer group " << producerGroupId);
+    LDBG("Special pattern (predicate+select): producer group "
+         << producerGroupId);
+
+    // Pre-phase: fuse with i1 pass-through ops (reshape, vand, vor) that sit
+    // between compare and select. These ops break the direct
+    // compare→select connection: compare→expand_shape→select or
+    // compare→elemwise_binary{vand}→select. By fusing the compare's group
+    // with the pass-through's group first, the fixpoint re-entry will find
+    // the select as a direct consumer of the merged group.
+    bool fusedPassThrough = false;
+    for (auto *producerOp : producerGroup) {
+      if (!opToIndex.contains(producerOp))
+        continue;
+      std::vector<OpOperand *> validUses =
+          getSortedConsumerOperands(producerOp);
+      for (auto *opOperandPtr : validUses) {
+        auto *ptConsumerOp = opOperandPtr->getOwner();
+        if (!opToGroupIndex.contains(ptConsumerOp))
+          continue;
+        int ptGroupId = static_cast<int>(opToGroupIndex[ptConsumerOp]);
+        if (ptGroupId == producerGroupId)
+          continue;
+        if (AllFusedGroupBlocks[ptGroupId].empty())
+          continue;
+        // Skip if the pass-through's group already has a select — the
+        // existing direct-search logic below will handle it.
+        if (hasSelect.lookup(ptGroupId))
+          continue;
+        if (!isI1PassThrough(ptConsumerOp))
+          continue;
+
+        int producerIndex = static_cast<int>(opToIndex[producerOp]);
+        int ptIndex = static_cast<int>(opToIndex[ptConsumerOp]);
+        if (!areFusibleOps(producerIndex, ptIndex)) {
+          LDBG("areFusibleOps returned false for pass-through fusion");
+          continue;
+        }
+        if (tryFuseGroups(producerIndex, ptIndex, producerGroupId,
+                          ptGroupId)) {
+          hasFused = true;
+          fusedPassThrough = true;
+          hasPredicate[ptGroupId] =
+              hasPredicate[ptGroupId] || hasPredicate[producerGroupId];
+          hasSelect[ptGroupId] =
+              hasSelect[ptGroupId] || hasSelect[producerGroupId];
+          hasPredicate.erase(producerGroupId);
+          hasSelect.erase(producerGroupId);
+          // The merged group now has predicate ops → re-add to worklist so
+          // the next iteration can find the select consumer directly.
+          if (hasPredicate[ptGroupId])
+            worklist.insert(ptGroupId);
+          LDBG("Special pattern (pass-through): group "
+               << producerGroupId << " fused with pass-through group "
+               << ptGroupId);
+          break;
+        }
+      }
+      if (fusedPassThrough)
+        break;
+    }
+    if (fusedPassThrough)
+      continue;
 
     // Find nearest select consumer using cache (O(1) lookup).
     int consumerGroupId = -1;
@@ -940,8 +1104,7 @@ bool MaxParallelAnalyzer::fusePredicateSelectPattern(Block &block) {
           continue;
         int foundGroupMaxIndex = static_cast<int>(
             dsu.getMaxIndexUnion(static_cast<int>(opToIndex[consumerOp])));
-        if (consumerGroupId < 0 ||
-            foundGroupMaxIndex < consumerGroupMinIndex) {
+        if (consumerGroupId < 0 || foundGroupMaxIndex < consumerGroupMinIndex) {
           consumerGroupId = foundGroupId;
           consumerGroupMinIndex = foundGroupMaxIndex;
         }
@@ -952,13 +1115,12 @@ bool MaxParallelAnalyzer::fusePredicateSelectPattern(Block &block) {
     if (AllFusedGroupBlocks[consumerGroupId].empty())
       continue;
 
-    LDBG("Special pattern: group " << producerGroupId
-           << " -> consumer group " << consumerGroupId);
+    LDBG("Special pattern: group " << producerGroupId << " -> consumer group "
+                                   << consumerGroupId);
     auto &consumerGroup = AllFusedGroupBlocks[consumerGroupId];
     auto *producerOp = *producerGroup.begin();
     auto *consumerOp = *consumerGroup.begin();
-    if (!opToIndex.contains(producerOp) ||
-        !opToIndex.contains(consumerOp))
+    if (!opToIndex.contains(producerOp) || !opToIndex.contains(consumerOp))
       continue;
     int producerIndex = static_cast<int>(opToIndex[producerOp]);
     int consumerIndex = static_cast<int>(opToIndex[consumerOp]);
@@ -982,8 +1144,8 @@ bool MaxParallelAnalyzer::fusePredicateSelectPattern(Block &block) {
       // worklist so it can find its own select consumers.
       if (hasPredicate[consumerGroupId])
         worklist.insert(consumerGroupId);
-      LDBG("Special pattern: group " << producerGroupId
-             << " fused with group " << consumerGroupId);
+      LDBG("Special pattern: group " << producerGroupId << " fused with group "
+                                     << consumerGroupId);
     }
   }
   return hasFused;
@@ -1141,8 +1303,8 @@ LogicalResult MaxParallelAnalyzer::fuseImpl(Block &block) {
   stage = 2;
   if (fuseIOBoundGroupsWithNearestConsumer())
     LDBG("=== Phase 2: find IO bound group to be merged ===");
-  stage = 3; 
-  if (fuseShapeBoundGroupsWithNearestConsumer()) 
+  stage = 3;
+  if (fuseShapeBoundGroupsWithNearestConsumer())
     LDBG("=== Phase 3: find small shape group to be merged ===");
   printValidGroupCount();
   return success();

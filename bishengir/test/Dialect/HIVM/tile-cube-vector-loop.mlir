@@ -231,13 +231,13 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
 }
 
 // -----
- 	 
+
 // CHECK-CUBE-DAG: #[[$MAP_M:.*]] = affine_map<(d0) -> (-d0 + 256, 64)>
 module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"L0C_SIZE", 1048576 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>>>, hivm.module_core_type = #hivm.module_core_type<MIX>} {
   // CHECK-CUBE-LABEL: func.func @test_cube_tile_m_axis
   func.func @test_cube_tile_m_axis(
-                                  %global_A: memref<256x128xbf16>, 
-                                  %global_B: memref<128x256xbf16>, 
+                                  %global_A: memref<256x128xbf16>,
+                                  %global_B: memref<128x256xbf16>,
                                   %out_C: memref<256x256xf32>) {
     // CHECK-CUBE-DAG: %[[C0:.*]] = arith.constant 0 : index
     // CHECK-CUBE-DAG: %[[C1:.*]] = arith.constant 1 : index
@@ -284,13 +284,13 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
 }
 
 // -----
- 	 
+
 // CHECK-CUBE-DAG: #[[$MAP_N:.*]] = affine_map<(d0) -> (-d0 + 256, 64)>
 module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"L0C_SIZE", 1048576 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>>>, hivm.module_core_type = #hivm.module_core_type<MIX>} {
   // CHECK-CUBE-LABEL: func.func @test_cube_tile_n_axis
   func.func @test_cube_tile_n_axis(
-                                  %global_A: memref<256x128xbf16>, 
-                                  %global_B: memref<128x256xbf16>, 
+                                  %global_A: memref<256x128xbf16>,
+                                  %global_B: memref<128x256xbf16>,
                                   %out_C: memref<256x256xf32>) {
     // CHECK-CUBE-DAG: %[[C0:.*]] = arith.constant 0 : index
     // CHECK-CUBE-DAG: %[[C1:.*]] = arith.constant 1 : index
@@ -337,14 +337,14 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
 }
 
 // -----
-	
+
 // CHECK-CUBE-DAG: #[[$MAP:.*]] = affine_map<(d0) -> (-d0 + 256, 64)>
 module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"L0C_SIZE", 1048576 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>>>, hivm.module_core_type = #hivm.module_core_type<MIX>} {
   // CHECK-CUBE-LABEL: func.func @test_cube_loop_fusion_shared_load
-  func.func @test_cube_loop_fusion_shared_load(%global_A: memref<256x128xbf16>, 
-                                               %global_B1: memref<128x128xbf16>, 
-                                               %global_B2: memref<128x128xbf16>, 
-                                               %out1: memref<256x128xf32>, 
+  func.func @test_cube_loop_fusion_shared_load(%global_A: memref<256x128xbf16>,
+                                               %global_B1: memref<128x128xbf16>,
+                                               %global_B2: memref<128x128xbf16>,
+                                               %out1: memref<256x128xf32>,
                                                %out2: memref<256x128xf32>) {
     // CHECK-CUBE-DAG: %[[C64:.*]] = arith.constant 64 : index
     // CHECK-CUBE-DAG: %[[C0:.*]] = arith.constant 0 : index
@@ -402,16 +402,16 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
 }
 
 // -----
- 	 
+
 // CHECK-CUBE-DAG: #[[$MAP:.*]] = affine_map<(d0) -> (-d0 + 256, 64)>
 module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"L0C_SIZE", 1048576 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>>>, hivm.module_core_type = #hivm.module_core_type<MIX>} {
   // CHECK-CUBE-LABEL: func.func @test_cube_loop_fusion_shared_load_2
   func.func @test_cube_loop_fusion_shared_load_2(
-                                              %global_A: memref<256x128xbf16>, 
-                                              %global_B1: memref<128x64xbf16>, 
-                                              %global_B2: memref<128x64xbf16>, 
-                                              %global_B3: memref<128x64xbf16>, 
-                                              %out1: memref<256x64xf32>, 
+                                              %global_A: memref<256x128xbf16>,
+                                              %global_B1: memref<128x64xbf16>,
+                                              %global_B2: memref<128x64xbf16>,
+                                              %global_B3: memref<128x64xbf16>,
+                                              %out1: memref<256x64xf32>,
                                               %out2: memref<256x64xf32>,
                                               %out3: memref<256x64xf32>) {
     // CHECK-CUBE-DAG: %[[C0:.*]] = arith.constant 0 : index
@@ -481,11 +481,11 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
 // CHECK-CUBE-DAG: #[[$MAP:.*]] = affine_map<(d0) -> (-d0 + 256, 64)>
 module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"L0C_SIZE", 1048576 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>>>, hivm.module_core_type = #hivm.module_core_type<MIX>} {
   // CHECK-CUBE-LABEL: func.func @test_cube_loop_fusion_independence
-  func.func @test_cube_loop_fusion_independence(%global_A1: memref<256x128xbf16>, 
-                                                %global_A2: memref<256x128xbf16>, 
-                                                %global_B1: memref<128x128xbf16>, 
-                                                %global_B2: memref<128x128xbf16>, 
-                                                %out1: memref<256x128xf32>, 
+  func.func @test_cube_loop_fusion_independence(%global_A1: memref<256x128xbf16>,
+                                                %global_A2: memref<256x128xbf16>,
+                                                %global_B1: memref<128x128xbf16>,
+                                                %global_B2: memref<128x128xbf16>,
+                                                %out1: memref<256x128xf32>,
                                                 %out2: memref<256x128xf32>) {
     // CHECK-CUBE-DAG: %[[C64:.*]] = arith.constant 64 : index
     // CHECK-CUBE-DAG: %[[C0:.*]] = arith.constant 0 : index
@@ -528,15 +528,15 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
     // CHECK-CUBE:       %[[LOAD_B2:.*]] = hivm.hir.load ins(%[[TENSOR_B2]]{{.*}}) outs(%[[EMPTY_B]]{{.*}}) -> tensor<128x128xbf16>
     // CHECK-CUBE:       scf.for %[[OUTER_IV:.*]] = %[[C0]] to %[[C4]] step %[[C1]] {
     // CHECK-CUBE:         scf.for %[[INNER_IV1:.*]] = %[[C0]] to %[[C256]] step %[[C64]] {
-    // CHECK-CUBE:           %[[LOAD_A1:.*]] = hivm.hir.load ins(%{{.*}}) outs(%{{.*}}) {cube_producer_to_fuse_0_group_0} -> tensor<64x128xbf16>
+    // CHECK-CUBE:           %[[LOAD_A1:.*]] = hivm.hir.load ins(%{{.*}}) outs(%{{.*}}) {cube_producer_to_fuse_0_group_1} -> tensor<64x128xbf16>
     // CHECK-CUBE:           %[[MIN1:.*]] = affine.min #[[$MAP]](%[[INNER_IV1]])
-    // CHECK-CUBE:           %[[MMAD1:.*]] = hivm.hir.mmadL1 {cube_producer_to_fuse_0_group_0} ins(%[[LOAD_A1]], %[[LOAD_B1]], %[[TRUE]], %[[MIN1]], %[[C128]], %[[C128]]{{.*}}
+    // CHECK-CUBE:           %[[MMAD1:.*]] = hivm.hir.mmadL1 {cube_producer_to_fuse_0_group_1} ins(%[[LOAD_A1]], %[[LOAD_B1]], %[[TRUE]], %[[MIN1]], %[[C128]], %[[C128]]{{.*}}
     // CHECK-CUBE:           hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, op_to_tile_0_branch_0} ins(%[[MMAD1]]{{.*}})
     // CHECK-CUBE:         }
     // CHECK-CUBE:         scf.for %[[INNER_IV2:.*]] = %[[C0]] to %[[C256]] step %[[C64]] {
-    // CHECK-CUBE:           %[[LOAD_A2:.*]] = hivm.hir.load ins(%{{.*}}) outs(%{{.*}}) {cube_producer_to_fuse_0_group_1} -> tensor<64x128xbf16>
+    // CHECK-CUBE:           %[[LOAD_A2:.*]] = hivm.hir.load ins(%{{.*}}) outs(%{{.*}}) {cube_producer_to_fuse_0_group_0} -> tensor<64x128xbf16>
     // CHECK-CUBE:           %[[MIN2:.*]] = affine.min #[[$MAP]](%[[INNER_IV2]])
-    // CHECK-CUBE:           %[[MMAD2:.*]] = hivm.hir.mmadL1 {cube_producer_to_fuse_0_group_1} ins(%[[LOAD_A2]], %[[LOAD_B2]], %[[TRUE]], %[[MIN2]], %[[C128]], %[[C128]]{{.*}}
+    // CHECK-CUBE:           %[[MMAD2:.*]] = hivm.hir.mmadL1 {cube_producer_to_fuse_0_group_0} ins(%[[LOAD_A2]], %[[LOAD_B2]], %[[TRUE]], %[[MIN2]], %[[C128]], %[[C128]]{{.*}}
     // CHECK-CUBE:           hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, op_to_tile_0_branch_1} ins(%[[MMAD2]]{{.*}})
     // CHECK-CUBE:         }
     // CHECK-CUBE:       } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
@@ -545,14 +545,14 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
 }
 
 // -----
- 	 
+
 // CHECK-CUBE-DAG: #[[$MAP:.*]] = affine_map<(d0) -> (-d0 + 256, 64)>
 module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"L0C_SIZE", 1048576 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>>>, hivm.module_core_type = #hivm.module_core_type<MIX>} {
   // CHECK-CUBE-LABEL: func.func @test_cube_loop_fusion_memory_dependency
-  func.func @test_cube_loop_fusion_memory_dependency(%global_A: memref<256x128xf32>, 
-                                                    %global_B: memref<128x64xf32>, 
-                                                    %global_D: memref<64x128xf32>, 
-                                                    %out_C: memref<256x64xf32>, 
+  func.func @test_cube_loop_fusion_memory_dependency(%global_A: memref<256x128xf32>,
+                                                    %global_B: memref<128x64xf32>,
+                                                    %global_D: memref<64x128xf32>,
+                                                    %out_C: memref<256x64xf32>,
                                                     %out_E: memref<256x128xf32>) {
     // CHECK-CUBE-DAG: %[[C0:.*]] = arith.constant 0 : index
     // CHECK-CUBE-DAG: %[[C1:.*]] = arith.constant 1 : index
@@ -585,10 +585,10 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
       hivm.hir.load ins(%global_B : memref<128x64xf32>) outs(%alloc_B : memref<128x64xf32>)
       %tensor_B = bufferization.to_tensor %alloc_B restrict writable : memref<128x64xf32>
       %empty_C = tensor.empty() : tensor<256x64xf32>
-      %C_f32 = hivm.hir.mmadL1 ins(%tensor_A, %tensor_B, %true, %c256, %c128, %c64 : tensor<256x128xf32>, tensor<128x64xf32>, i1, index, index, index) 
+      %C_f32 = hivm.hir.mmadL1 ins(%tensor_A, %tensor_B, %true, %c256, %c128, %c64 : tensor<256x128xf32>, tensor<128x64xf32>, i1, index, index, index)
                   outs(%empty_C : tensor<256x64xf32>) -> tensor<256x64xf32>
-      hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} 
-                      ins(%C_f32 : tensor<256x64xf32>) 
+      hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+                      ins(%C_f32 : tensor<256x64xf32>)
                       outs(%out_C : memref<256x64xf32>)
       %alloc_C_reload = memref.alloc() : memref<256x64xf32>
       hivm.hir.load ins(%out_C : memref<256x64xf32>) outs(%alloc_C_reload : memref<256x64xf32>)
@@ -597,10 +597,10 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
       hivm.hir.load ins(%global_D : memref<64x128xf32>) outs(%alloc_D : memref<64x128xf32>)
       %tensor_D = bufferization.to_tensor %alloc_D restrict writable : memref<64x128xf32>
       %empty_E = tensor.empty() : tensor<256x128xf32>
-      %E_f32 = hivm.hir.mmadL1 ins(%tensor_C_reloaded, %tensor_D, %true, %c256, %c64, %c128 : tensor<256x64xf32>, tensor<64x128xf32>, i1, index, index, index) 
+      %E_f32 = hivm.hir.mmadL1 ins(%tensor_C_reloaded, %tensor_D, %true, %c256, %c64, %c128 : tensor<256x64xf32>, tensor<64x128xf32>, i1, index, index, index)
                   outs(%empty_E : tensor<256x128xf32>) -> tensor<256x128xf32>
-      hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} 
-                      ins(%E_f32 : tensor<256x128xf32>) 
+      hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+                      ins(%E_f32 : tensor<256x128xf32>)
                       outs(%out_E : memref<256x128xf32>)
     } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
     // CHECK-CUBE:   } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
@@ -609,21 +609,21 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
 }
 
 // -----
- 	 
+
  	 // CHECK-CUBE-DAG: #[[$MAP_REMAIN:.*]] = affine_map<(d0)[s0] -> (-d0 + s0)>
  	 // CHECK-CUBE-DAG: #[[$MAP_BOUNDED:.*]] = affine_map<(d0)[s0] -> (-d0 + s0, 64)>
  	 // CHECK-CUBE-DAG: #[[$MAP_MMAD:.*]] = affine_map<()[s0] -> (256, s0)>
  	 module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"L0C_SIZE", 1048576 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>>>, hivm.module_core_type = #hivm.module_core_type<MIX>} {
- 	   
+
  	   // CHECK-CUBE-LABEL: func.func @test_extracted_cube_loop_pad_load
  	   // CHECK-CUBE-SAME: (%[[ARG_SRC:.*]]: memref<256x128xbf16{{.*}}>, %[[ARG_B:.*]]: tensor<256x128xbf16>, %[[ARG_OUT:.*]]: memref<256x256xf32{{.*}}>, %[[REMAIN_SIZE:.*]]: index, %[[OTHER_SIZE:.*]]: index, %[[IS_PARTIAL:.*]]: i1)
  	   func.func @test_extracted_cube_loop_pad_load(
- 	     %arg_src: memref<256x128xbf16, strided<[640, 1], offset: ?>>, 
- 	     %arg_tensor_B: tensor<256x128xbf16>,                          
- 	     %arg_out: memref<256x256xf32, strided<[256, 1], offset: ?>>,  
- 	     %remain_size: index,                                          
- 	     %other_size: index,                                           
- 	     %is_partial: i1                                               
+ 	     %arg_src: memref<256x128xbf16, strided<[640, 1], offset: ?>>,
+ 	     %arg_tensor_B: tensor<256x128xbf16>,
+ 	     %arg_out: memref<256x256xf32, strided<[256, 1], offset: ?>>,
+ 	     %remain_size: index,
+ 	     %other_size: index,
+ 	     %is_partial: i1
  	   ) {
  	     // CHECK-CUBE-DAG:   %[[C64:.*]] = arith.constant 64 : index
  	     // CHECK-CUBE-DAG:   %[[C256:.*]] = arith.constant 256 : index
@@ -633,7 +633,7 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
  	     %cst = arith.constant 0.000000e+00 : bf16
  	     %true = arith.constant true
  	     %false = arith.constant false
- 	     // CHECK-CUBE:       scf.for %[[IV_OUTER:.*]] = 
+ 	     // CHECK-CUBE:       scf.for %[[IV_OUTER:.*]] =
  	     scf.for %arg32 = %c0 to %c1 step %c1 {
  	       // CHECK-CUBE:         %[[SUBVIEW_OUTER:.*]] = memref.subview %[[ARG_SRC]][0, 0] [%[[REMAIN_SIZE]], 128] [1, 1]
  	       %subview_22 = memref.subview %arg_src[0, 0] [%remain_size, 128] [1, 1] : memref<256x128xbf16, strided<[640, 1], offset: ?>> to memref<?x128xbf16, strided<[640, 1], offset: ?>>

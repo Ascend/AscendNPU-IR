@@ -737,7 +737,7 @@ func.func @test_tensor_insert(%arg0: memref<?xi32>, %arg1: memref<?xi32>, %arg2:
 // CHECK: %{{.*}} = hivm.hir.load {{.*}} {"hivm.inserted-load"}
 // CHECK: %{{.*}} = hivm.hir.store {{.*}} {"hivm.inserted-store"}
 // CHECK: %{{.*}} = hivm.hir.load {{.*}} {"hivm.inserted-load"}
-// CHECK: %{{.*}} = hivm.hir.Conv1dL1 {fixpipe_already_inserted = true, groups = 2 : i32, outputAlreadyNormalized, padding = 0 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<2x2x1x128x16xf16>, tensor<1x1x3x32x16xf16>, i1) outs(%{{.*}} : tensor<128x64xf32>) -> tensor<128x64xf32>
+// CHECK: %{{.*}} = hivm.hir.Conv1dL1 {fixpipe_already_inserted = true, groups = 2 : i32, outputAlreadyNormalized, padding = 0 : i32, stride = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<2x2x1x128x16xf16>, tensor<1x1x3x32x16xf16>, i1) outs(%{{.*}} : tensor<128x64xf32>) -> tensor<128x64xf32>
 // CHECK: %{{.*}} = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%{{.*}} : tensor<126x64xf32>) outs(%{{.*}} : tensor<126x64xf16>) -> tensor<126x64xf16>
 // CHECK: %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<126x64xf16>) outs(%{{.*}} : tensor<126x64xf16>) {"hivm.inserted-load"} core_type = <VECTOR> -> tensor<126x64xf16>
 func.func @test_conv1d(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg2: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg4: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg5: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg6: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg7: i32, %arg8: i32, %arg9: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, func_dyn_memref_args = dense<[false, true, true, true, true, true, true, false, false, false]> : vector<10xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"} {
@@ -771,7 +771,7 @@ func.func @test_conv1d(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_addr
   %12 = hivm.hir.vtranspose ins(%10 : tensor<1x32x3x16xf16>) outs(%11 : tensor<1x3x32x16xf16>) permutation = [0, 2, 1, 3] -> tensor<1x3x32x16xf16>
   %expanded_6 = tensor.expand_shape %12 [[0, 1], [2], [3], [4]] output_shape [1, 1, 3, 32, 16] : tensor<1x3x32x16xf16> into tensor<1x1x3x32x16xf16>
   %13 = tensor.empty() : tensor<128x64xf32>
-  %14 = hivm.hir.Conv1dL1 {fixpipe_already_inserted = true, groups = 2 : i32, outputAlreadyNormalized, padding = 0 : i32} ins(%expanded_4, %expanded_6, %true : tensor<2x2x1x128x16xf16>, tensor<1x1x3x32x16xf16>, i1) outs(%13 : tensor<128x64xf32>) -> tensor<128x64xf32>
+  %14 = hivm.hir.Conv1dL1 {fixpipe_already_inserted = true, groups = 2 : i32, outputAlreadyNormalized, padding = 0 : i32, stride = 1 : i32} ins(%expanded_4, %expanded_6, %true : tensor<2x2x1x128x16xf16>, tensor<1x1x3x32x16xf16>, i1) outs(%13 : tensor<128x64xf32>) -> tensor<128x64xf32>
   %extracted_slice = tensor.extract_slice %14[0, 0] [126, 64] [1, 1] : tensor<128x64xf32> to tensor<126x64xf32>
   %15 = tensor.empty() : tensor<126x64xf16>
   %16 = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%extracted_slice : tensor<126x64xf32>) outs(%15 : tensor<126x64xf16>) -> tensor<126x64xf16>
@@ -1201,5 +1201,65 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     %res = hivm.hir.vadd ins(%merged, %vec : tensor<64x16xf32>, tensor<64x16xf32>)
         outs(%acc : tensor<64x16xf32>) -> tensor<64x16xf32>
     return %res : tensor<64x16xf32>
+  }
+}
+
+// -----
+// CHECK-LABEL: func.func @scf_for_vbrc_init_mmad_fixpipe_yield
+// CHECK-SAME: %[[INIT:.*]]: tensor<16x16xf32>, %[[RHS:.*]]: tensor<16x16xf32>, %[[OUT:.*]]: memref<16x16xf32>)
+module attributes {hacc.target = #hacc.target<"Ascend910_9382">} {
+  func.func @scf_for_vbrc_init_mmad_fixpipe_yield(
+      %init: tensor<16x16xf32>, %rhs: tensor<16x16xf32>, %out: memref<16x16xf32>)
+      attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c16 = arith.constant 16 : index
+    %true = arith.constant true
+    // CHECK: %[[INIT_LOAD:.*]] = hivm.hir.load ins(%[[INIT]] : tensor<16x16xf32>) outs(%{{.*}} : tensor<16x16xf32>) {"hivm.inserted-load"} core_type = <CUBE> -> tensor<16x16xf32>
+    // CHECK: %[[LOOP:.*]] = scf.for {{.*}} iter_args(%[[ITER:.*]] = %[[INIT_LOAD]]) -> (tensor<16x16xf32>)
+    %loop = scf.for %iv = %c0 to %c2 step %c1 iter_args(%iter = %init)
+        -> (tensor<16x16xf32>) {
+      // CHECK-DAG: %[[ITER_WS:.*]] = memref_ext.alloc_workspace() : memref<16x16xf32>
+      // CHECK-DAG: %[[ITER_WS_TENSOR:.*]] = bufferization.to_tensor %[[ITER_WS]] restrict writable : memref<16x16xf32>
+      // CHECK-DAG: %[[ITER_STORE:.*]] = hivm.hir.store ins(%[[ITER]] : tensor<16x16xf32>) outs(%[[ITER_WS_TENSOR]] : tensor<16x16xf32>) {"hivm.inserted-store"} -> tensor<16x16xf32>
+      // CHECK-DAG: %[[ITER_VEC_LOAD:.*]] = hivm.hir.load ins(%[[ITER_STORE]] : tensor<16x16xf32>) outs(%{{.*}} : tensor<16x16xf32>) {"hivm.inserted-load"} core_type = <VECTOR> -> tensor<16x16xf32>
+      // CHECK: %[[INNER:.*]] = scf.for {{.*}} iter_args(%[[INNER_ITER:.*]] = %[[ITER_VEC_LOAD]]) -> (tensor<16x16xf32>)
+      %inner = scf.for %jv = %c0 to %c2 step %c1 iter_args(%inner_iter = %iter)
+          -> (tensor<16x16xf32>) {
+        %vec_empty = tensor.empty() : tensor<16x16xf32>
+        // CHECK: %[[VEC:.*]] = hivm.hir.vexp ins(%[[INNER_ITER]]
+        %vec = hivm.hir.vexp ins(%inner_iter : tensor<16x16xf32>)
+            outs(%vec_empty : tensor<16x16xf32>) -> tensor<16x16xf32>
+        // CHECK: scf.yield %[[VEC]]
+        scf.yield %vec : tensor<16x16xf32>
+      }
+      // CHECK-DAG: %[[INNER_WS:.*]] = memref_ext.alloc_workspace() : memref<16x16xf32>
+      // CHECK-DAG: %[[INNER_WS_TENSOR:.*]] = bufferization.to_tensor %[[INNER_WS]] restrict writable : memref<16x16xf32>
+      // CHECK-DAG: %[[INNER_STORE:.*]] = hivm.hir.store ins(%[[INNER]] : tensor<16x16xf32>) outs(%[[INNER_WS_TENSOR]] : tensor<16x16xf32>) {"hivm.inserted-store"} -> tensor<16x16xf32>
+      // CHECK-DAG: %[[INNER_LOAD:.*]] = hivm.hir.load ins(%[[INNER_STORE]] : tensor<16x16xf32>) outs(%{{.*}} : tensor<16x16xf32>) {"hivm.inserted-load"} core_type = <CUBE> -> tensor<16x16xf32>
+      %mmad_empty = tensor.empty() : tensor<16x16xf32>
+      // CHECK: %[[MMAD_IN:.*]] = hivm.hir.mmadL1 ins(%[[INNER_LOAD]]
+      %mmad = hivm.hir.mmadL1 ins(%inner, %rhs, %true, %c16, %c16, %c16
+          : tensor<16x16xf32>, tensor<16x16xf32>, i1, index, index, index)
+          outs(%mmad_empty : tensor<16x16xf32>) -> tensor<16x16xf32>
+      %fix_empty = tensor.empty() : tensor<16x16xf32>
+      // CHECK: %[[FIX:.*]] = hivm.hir.fixpipe {{.*}} ins(%[[MMAD_IN]]
+      %fixed = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+          ins(%mmad : tensor<16x16xf32>) outs(%fix_empty : tensor<16x16xf32>)
+          -> tensor<16x16xf32>
+      // CHECK: %[[YIELD_LOAD:.*]] = hivm.hir.load ins(%[[FIX]] : tensor<16x16xf32>) outs(%{{.*}} : tensor<16x16xf32>) {"hivm.inserted-load"} core_type = <CUBE> -> tensor<16x16xf32>
+      // CHECK: scf.yield %[[YIELD_LOAD]]
+      scf.yield %fixed : tensor<16x16xf32>
+    }
+    %out_empty = tensor.empty() : tensor<16x16xf32>
+    // CHECK: %[[MMAD_OUT:.*]] = hivm.hir.mmadL1 ins(%[[LOOP]]
+    %result = hivm.hir.mmadL1 ins(%loop, %rhs, %true, %c16, %c16, %c16
+        : tensor<16x16xf32>, tensor<16x16xf32>, i1, index, index, index)
+        outs(%out_empty : tensor<16x16xf32>) -> tensor<16x16xf32>
+    // CHECK: hivm.hir.fixpipe {{.*}} ins(%[[MMAD_OUT]] : tensor<16x16xf32>) outs(%[[OUT]] : memref<16x16xf32>)
+    hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+        ins(%result : tensor<16x16xf32>) outs(%out : memref<16x16xf32>)
+    return
   }
 }

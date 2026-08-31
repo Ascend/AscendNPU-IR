@@ -153,6 +153,38 @@ func.func @mask_16_and_64_unmasked(
 
 // -----
 
+// Regression case: %3 has a masked write and an unmasked consumer through %5.
+// Cleanup must remove the reached-mask annotation from the whole
+// %1 -> %2 -> %3 chain.
+// CHECK-LABEL: upsample_linear1d_backward_align_false_scale_kernel_fused_3_outlined_merged_vf_0
+// CHECK: %[[ADD:.*]] = arith.addi %cst, %cst_0
+// CHECK-NOT: annotation.mark %[[ADD]] {reached_mask_ops_idx
+// CHECK: %[[INDEX_CAST:.*]] = arith.index_cast %[[ADD]]
+// CHECK-NOT: annotation.mark %[[INDEX_CAST]] {reached_mask_ops_idx
+// CHECK: %[[EXTSI:.*]] = arith.extsi %[[INDEX_CAST]]
+// CHECK-NOT: annotation.mark %[[EXTSI]] {reached_mask_ops_idx
+// CHECK: return
+func.func @upsample_linear1d_backward_align_false_scale_kernel_fused_3_outlined_merged_vf_0(
+    %arg0: memref<8xi64, #hivm.address_space<ub>>,
+    %arg1: i64,
+    %arg2: memref<64xi64, #hivm.address_space<ub>>)
+    attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
+  %cst = arith.constant dense<0> : vector<64xindex>
+  %cst_0 = arith.constant dense<[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63]> : vector<64xindex>
+  %c0 = arith.constant 0 : index
+  %0 = vector.constant_mask [8] : vector<64xi1>
+  %1 = arith.addi %cst, %cst_0 : vector<64xindex>
+  %2 = arith.index_cast %1 : vector<64xindex> to vector<64xi32>
+  %3 = arith.extsi %2 {round_mode = #hfusion.round_mode<rint>} : vector<64xi32> to vector<64xi64>
+  vector.transfer_write %3, %arg0[%c0], %0 {in_bounds = [true]} : vector<64xi64>, memref<8xi64, #hivm.address_space<ub>>
+  %4 = vector.broadcast %arg1 : i64 to vector<64xi64>
+  %5 = arith.addi %4, %3 : vector<64xi64>
+  vector.transfer_write %5, %arg2[%c0] {in_bounds = [true]} : vector<64xi64>, memref<64xi64, #hivm.address_space<ub>>
+  return
+}
+
+// -----
+
 // Positive regression test: a value whose only non-mark users are all inside
 // the masked chain must keep its reached_mask_ops_idx annotation. This guards
 // against over-aggressive erasure — a broken fix that always erases would

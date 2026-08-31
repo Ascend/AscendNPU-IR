@@ -76,7 +76,7 @@ module attributes {transform.with_named_sequence} {
 // CHECK:       %[[INSERT2:.+]] = tensor.insert_slice %[[UPDATED]]#1 into %[[ARG1]]
 // CHECK:       scf.yield %[[INSERT1]], %[[INSERT2]]
 // CHECK:       linalg.reduce ins(%[[OUT]]#0, %[[OUT]]#1 : tensor<?x5xf32>, tensor<?x5xf32>)
-// CHECK:         arith.addf 
+// CHECK:         arith.addf
 // CHECK:         arith.addf
 
 // -----

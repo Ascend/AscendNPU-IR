@@ -54,18 +54,24 @@ def ProcessVsstb : Pass<"ave-process-vsstb", "func::FuncOp"> {
 }
 
 def AveLoopOptimize : Pass<"ave-loop-optimize", "func::FuncOp"> {
-  let summary = "Optimize AVE SCF For loops (unroll wide vextf loops, peel epilogues, canonicalize)";
+  let summary = "Merge AVE small-width chains and optimize SCF For loops";
   let description = [{
-    This pass matches specific SCF For loops with vextf,
-    unrolls them by factor 2, peels epilogue loops, and applies
-    scf::ForOp / AffineApplyOp canonicalization.
+    This pass first peels partial iterations, then derives a natural factor of
+    2 or 4 from supported vector conversions, annotates and unrolls the full
+    loop, and merges small-width loads, elementwise operations and stores with
+    vintlv/vdintlv trees. Remaining cleanup iterations keep their original
+    vector width before SCF/Affine canonicalization.
   }];
   let constructor = "mlir::hivmave::createAveLoopOptimizePass()";
-    let dependentDialects = [
+  let dependentDialects = [
     "hivmave::AVEDialect",
     "arith::ArithDialect",
-    "hivm::HIVMDialect",
-    "mlir::annotation::AnnotationDialect"
+    "hivm::HIVMDialect"
+  ];
+  let options = [
+    Option<"maxSmallWidthMergeFactor", "max-small-width-merge-factor",
+           "unsigned", "4",
+           "Maximum natural small-width merge factor (2 or 4)">
   ];
 }
 
@@ -129,6 +135,19 @@ def ScalarBroadcastToVLoad : Pass<"hivmave-scalar-broadcast-to-vload", "func::Fu
 def HoistVstas : Pass<"hoist-vstas",  "func::FuncOp"> {
   let summary = "Hoist vstas op out of loops";
   let constructor = "::mlir::hivmave::createHoistVstasPass()";
+  let dependentDialects = ["hivmave::AVEDialect"];
+}
+
+def DuplicateUnitMaskBroadcast : Pass<"duplicate-unit-mask-broadcast", "func::FuncOp"> {
+  let summary = "Duplicate ave.hir.broadcast ops with vector<1xi1> mask so each result has at most one user";
+  let description = [{
+    This pass finds ave.hir.broadcast (VFBroadcastScalarMaskOp) operations whose
+    mask operand has type vector<1xi1> and whose result has multiple users.
+    For each additional user beyond the first, it creates a copy of the broadcast
+    op and places it right before the user, then replaces the operand. After this
+    pass, every matched broadcast result value has at most 1 user.
+  }];
+  let constructor = "::mlir::hivmave::createDuplicateUnitMaskBroadcastPass()";
   let dependentDialects = ["hivmave::AVEDialect"];
 }
 

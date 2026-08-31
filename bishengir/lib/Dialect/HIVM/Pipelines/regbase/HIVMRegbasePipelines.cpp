@@ -456,10 +456,15 @@ static void hivmPreBufferizationOptimizationPipeline(
   // Split mix kernel is done before bufferization because it depends on
   // tensor SSA property.
   pm.addPass(createSplitMixKernelPass());
+  // SIMT scopes must stay outlined, so mark them `no_inline` before the
+  // inline-scope below runs.
+  pm.addPass(createMarkSimtScopeNoInlinePass());
   pm.addPass(scope::createInlineScopePass());
-  TileAndBindSubBlockOptions tileOptions;
-  tileOptions.enableTile = hivmPipelineOptions.enableAutoBindSubBlock;
-  pm.addPass(createTileAndBindSubBlockPass(tileOptions));
+  if (!hivmPipelineOptions.skipHIVMBindSubBlockPass) {
+    TileAndBindSubBlockOptions tileOptions;
+    tileOptions.enableTile = hivmPipelineOptions.enableAutoBindSubBlock;
+    pm.addPass(createTileAndBindSubBlockPass(tileOptions));
+  }
   hivmWorkspacePipeline(pm, hivmPipelineOptions);
   pm.nest<func::FuncOp>().addPass(tensor::createFoldTensorEmptyPass());
   canonicalizationHIVMPipeline(pm);

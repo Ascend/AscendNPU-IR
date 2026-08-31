@@ -732,6 +732,7 @@ def Conv1DL1Op : HIVM_MacroOp<"Conv1dL1",[
                         synchronization instructions, they are
                         managed by inject-sync passes.
                       }]>:$sync_related_args,
+                      I32Attr:$stride,
                       I32Attr:$padding,
                       I32Attr:$groups
                       );
@@ -765,6 +766,9 @@ def Conv1DL1Op : HIVM_MacroOp<"Conv1dL1",[
 
     static StringRef getOpName() { return "Conv1dL1"; }
 
+    int64_t getStrideW();
+    int64_t getPaddingW();
+
     FailureOr<DataLayoutAttr> getInputLayout();
     FailureOr<DataLayoutAttr> getWeightLayout();
     FailureOr<DataLayoutAttr> getBiasLayout();
@@ -778,6 +782,7 @@ def Conv1DL1Op : HIVM_MacroOp<"Conv1dL1",[
     SmallVector<Value> getInputOperands(bool includeSyncRelatedArgs = true);
     SmallVector<Value> getLibraryCallOperands(PatternRewriter &rewriter);
   }];
+  let hasVerifier = 1;
 }
 
 //===----------------------------------------------------------------------===//
@@ -804,6 +809,12 @@ def Conv2DL1Op : HIVM_MacroOp<"Conv2dL1",[
                         synchronization instructions, they are
                         managed by inject-sync passes.
                       }]>:$sync_related_args,
+                      Arg<AnyAttr, [{
+                        Convolution stride for Conv2d. Accepts an integer
+                        scalar or a 2-element integer array
+                        [strideH, strideW]. A scalar applies to both H and W
+                        directions.
+                      }]>:$stride,
                       Arg<AnyAttr, [{
                         Zero-padding for Conv2d. Accepts an integer scalar or a
                         2-element integer array [paddingH, paddingW]. A scalar
@@ -842,6 +853,11 @@ def Conv2DL1Op : HIVM_MacroOp<"Conv2dL1",[
     void setInitCondition(Value init);
 
     static StringRef getOpName() { return "Conv2dL1"; }
+
+    FailureOr<int64_t> getStrideH();
+    FailureOr<int64_t> getStrideW();
+    FailureOr<int64_t> getPaddingH();
+    FailureOr<int64_t> getPaddingW();
 
     FailureOr<DataLayoutAttr> getInputLayout();
     FailureOr<DataLayoutAttr> getWeightLayout();
@@ -882,6 +898,12 @@ def Conv3DL1Op : HIVM_MacroOp<"Conv3dL1",[
                         synchronization instructions, they are
                         managed by inject-sync passes.
                       }]>:$sync_related_args,
+                      Arg<OptionalAttr<AnyAttr>, [{
+                        Convolution stride for Conv3d. Accepts an integer
+                        scalar or a 3-element integer array
+                        [strideD, strideH, strideW]. A scalar applies to all
+                        D/H/W directions. If omitted, the stride defaults to 1.
+                      }]>:$stride,
                       Arg<AnyAttr, [{
                         Zero-padding for Conv3d. Accepts an integer scalar or a
                         3-element integer array [paddingD, paddingH, paddingW].
@@ -920,6 +942,13 @@ def Conv3DL1Op : HIVM_MacroOp<"Conv3dL1",[
     void setInitCondition(Value init);
 
     static StringRef getOpName() { return "Conv3dL1"; }
+
+    FailureOr<int64_t> getStrideD();
+    FailureOr<int64_t> getStrideH();
+    FailureOr<int64_t> getStrideW();
+    FailureOr<int64_t> getPaddingD();
+    FailureOr<int64_t> getPaddingH();
+    FailureOr<int64_t> getPaddingW();
   }];
   let hasVerifier = 1;
 }

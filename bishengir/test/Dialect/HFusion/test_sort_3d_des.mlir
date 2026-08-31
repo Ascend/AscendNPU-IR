@@ -55,7 +55,7 @@ module {
         %c2 = arith.constant 2 : index
         %c3 = arith.constant 3 : index
         %c4 = arith.constant 4 : index
-        
+
         %m = memref.alloc() : memref<2x3x4xf32>
 
         // Data initialization
@@ -65,19 +65,19 @@ module {
                     %i_i = arith.index_cast %i : index to i64
                     %j_i = arith.index_cast %j : index to i64
                     %k_i = arith.index_cast %k : index to i64
-                    
+
                     %c5 = arith.constant 5 : i64
                     %c2_64 = arith.constant 2 : i64
                     %c7 = arith.constant 7 : i64
                     %c13 = arith.constant 13 : i64
-                    
+
                     %t1 = arith.muli %i_i, %c5 : i64
                     %t2 = arith.muli %j_i, %c2_64 : i64
                     %t3 = arith.muli %k_i, %c7 : i64
                     %sum1 = arith.addi %t1, %t2 : i64
                     %sum2 = arith.addi %sum1, %t3 : i64
                     %rem = arith.remsi %sum2, %c13 : i64
-                    
+
                     %fval = arith.sitofp %rem : i64 to f32
                     memref.store %fval, %m[%i, %j, %k] : memref<2x3x4xf32>
                 }

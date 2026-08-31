@@ -16,7 +16,7 @@ attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hfusion.fusion_kin
       %2 = arith.addf %in1, %init1 : f32
       linalg.yield %1, %2 : f32, f32
     }
-  
+
   %red1 = linalg.reduce
    ins(%arg2: tensor<1024x10240xf32>)
    outs(%out2: tensor<1024xf32>) dimensions = [1]

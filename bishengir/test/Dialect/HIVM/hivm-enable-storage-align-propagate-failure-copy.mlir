@@ -1,15 +1,15 @@
 // RUN: bishengir-opt -hivm-enable-stride-align -split-input-file %s | FileCheck %s
 
 // Test case where unrealized conversion cast propagation fails and CopyOps are inserted.
-// This happens when a memref-producing operation (like memref.reinterpret_cast) cannot 
-// have the conversion cast pushed past it, so the failure handling inserts CopyOps to 
+// This happens when a memref-producing operation (like memref.reinterpret_cast) cannot
+// have the conversion cast pushed past it, so the failure handling inserts CopyOps to
 // maintain data consistency between original and aligned buffers.
 
 // CHECK-LABEL: func @propagate_failure_reinterpret_cast
 func.func @propagate_failure_reinterpret_cast() {
   // Original allocation with non-aligned sizes
   %0 = memref.alloc() : memref<13x13x13xf32, #hivm.address_space<ub>>
-  
+
   // Annotate for stride alignment on dim 1 (require 32-byte alignment = 8 f32 elements)
   // This forces alloc expansion, and since reinterpret_cast cannot have the conversion
   // cast pushed past it, CopyOps are inserted to sync data.
@@ -17,17 +17,17 @@ func.func @propagate_failure_reinterpret_cast() {
   // CHECK: memref.subview %[[EXPANDED:.*]][0, 0, 0, 0] [13, 13, 13, 1] [1, 1, 1, 1]
   // CHECK: memref<13x13x13xf32, strided<[208, 16, 1]>
   annotation.mark %0 {hivm.stride_align_dims = array<i32: 1>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<13x13x13xf32, #hivm.address_space<ub>>
-  
+
   // CopyOp is inserted to copy from aligned buffer to flat buffer before reinterpret_cast
   // CHECK: hivm.hir.copy ins(%{{.*}} : memref<13x13x13xf32, strided<[208, 16, 1]>
   // CHECK: memref.reinterpret_cast
   // CHECK: hivm.hir.vexp
   // CHECK: hivm.hir.copy
   // CHECK-NOT: unrealized_conversion_cast
-  
+
   %c0 = arith.constant 0 : index
   %1 = memref.reinterpret_cast %0 to offset: [%c0], sizes: [169], strides: [13] : memref<13x13x13xf32, #hivm.address_space<ub>> to memref<169xf32, strided<[13], offset: ?>, #hivm.address_space<ub>>
-  
+
   hivm.hir.vexp ins(%1 : memref<169xf32, strided<[13], offset: ?>, #hivm.address_space<ub>>) outs(%1 : memref<169xf32, strided<[13], offset: ?>, #hivm.address_space<ub>>)
   return
 }
@@ -42,26 +42,26 @@ func.func @propagate_failure_reinterpret_cast() {
 // CHECK-LABEL: func @propagate_failure_write_after_copy
 func.func @propagate_failure_write_after_copy(%arg0: memref<169xf32, #hivm.address_space<gm>>) {
   %0 = memref.alloc() : memref<13x13x13xf32, #hivm.address_space<ub>>
-  
+
   // Force alignment expansion and trigger propagate failure
   // CHECK-DAG: memref.alloc() : memref<13x13x16x1xf32, #hivm.address_space<ub>>
   // CHECK-DAG: memref.subview
   // CHECK-DAG: memref<13x13x13xf32, strided<[208, 16, 1]>
   annotation.mark %0 {hivm.stride_align_dims = array<i32: 1>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<13x13x13xf32, #hivm.address_space<ub>>
-  
+
   %c0 = arith.constant 0 : index
-  
+
   // Initial CopyOp from aligned subview to flat alloc_0, then memref.reinterpret_cast
   // CHECK: hivm.hir.copy ins(%{{.*}} : memref<13x13x13xf32, strided<[208, 16, 1]>
   // CHECK: memref.reinterpret_cast
-  
+
   %1 = memref.reinterpret_cast %0 to offset: [%c0], sizes: [169], strides: [13] : memref<13x13x13xf32, #hivm.address_space<ub>> to memref<169xf32, strided<[13], offset: ?>, #hivm.address_space<ub>>
-  
+
   // Load writes to reinterpret_cast result (new buffer)
   // This triggers a sync CopyOp back to original buffer after the load
   // CHECK: hivm.hir.load
   // CHECK: hivm.hir.copy
-  
+
   hivm.hir.load ins(%arg0 : memref<169xf32, #hivm.address_space<gm>>) outs(%1 : memref<169xf32, strided<[13], offset: ?>, #hivm.address_space<ub>>)
   return
 }
@@ -74,15 +74,15 @@ func.func @propagate_failure_write_after_copy(%arg0: memref<169xf32, #hivm.addre
 // CHECK-LABEL: func @propagate_failure_vexp_write
 func.func @propagate_failure_vexp_write() {
   %0 = memref.alloc() : memref<13x13x13xf32, #hivm.address_space<ub>>
-  
+
   // Force alignment expansion
   // CHECK: memref.alloc() : memref<13x13x16x1xf32, #hivm.address_space<ub>>
   // CHECK: memref.subview
   annotation.mark %0 {hivm.stride_align_dims = array<i32: 1>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<13x13x13xf32, #hivm.address_space<ub>>
-  
+
   %c0 = arith.constant 0 : index
   %1 = memref.reinterpret_cast %0 to offset: [%c0], sizes: [169], strides: [13] : memref<13x13x13xf32, #hivm.address_space<ub>> to memref<169xf32, strided<[13], offset: ?>, #hivm.address_space<ub>>
-  
+
   // vexp reads AND writes to reinterpret_cast (new buffer)
   // Multiple sync CopyOps should be inserted after vexp to sync back to src
   // CHECK: hivm.hir.copy
@@ -91,7 +91,7 @@ func.func @propagate_failure_vexp_write() {
   // CHECK: hivm.hir.copy
   // CHECK: hivm.hir.copy
   // CHECK: return
-  
+
   hivm.hir.vexp ins(%1 : memref<169xf32, strided<[13], offset: ?>, #hivm.address_space<ub>>) outs(%1 : memref<169xf32, strided<[13], offset: ?>, #hivm.address_space<ub>>)
   return
 }
@@ -105,7 +105,7 @@ func.func @stride_align_success_no_copy() {
   // CHECK: memref.subview
   %0 = memref.alloc() : memref<16x16xf32, #hivm.address_space<ub>>
   annotation.mark %0 {hivm.stride_align_dims = array<i32: 1>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<16x16xf32, #hivm.address_space<ub>>
-  
+
   // CHECK-NOT: hivm.hir.copy
   // CHECK: hivm.hir.vexp
   hivm.hir.vexp ins(%0 : memref<16x16xf32, #hivm.address_space<ub>>) outs(%0 : memref<16x16xf32, #hivm.address_space<ub>>)

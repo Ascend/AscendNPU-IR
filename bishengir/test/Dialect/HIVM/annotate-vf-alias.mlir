@@ -12,4 +12,4 @@ func.func @test_vf(%arg0: memref<64xf32, #hivm.address_space<ub>>, %arg1: memref
   vector.transfer_write %1, %arg1[%c0],%mask {in_bounds = [true]} : vector<64xf32>, memref<64xf32, #hivm.address_space<ub>>
   vector.transfer_write %0, %arg0[%c0],%mask {in_bounds = [true]} : vector<64xf32>, memref<64xf32, #hivm.address_space<ub>>
   return
-}   
+}

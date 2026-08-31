@@ -58,8 +58,8 @@ public:
 
         CATLASS_HOST_DEVICE
         Params(Conv2dParams const &problemShape_,
-            GM_ADDR ptrFmap_, LayoutFmap layoutFmap_, 
-            GM_ADDR ptrFilter_, LayoutFilter layoutFilter_, 
+            GM_ADDR ptrFmap_, LayoutFmap layoutFmap_,
+            GM_ADDR ptrFilter_, LayoutFilter layoutFilter_,
             GM_ADDR ptrOutput_, LayoutOutput layoutOutput_)
         : problemShape(problemShape_),
           ptrFmap(ptrFmap_), layoutFmap(layoutFmap_),
@@ -112,7 +112,7 @@ public:
             params.problemShape.getPostIm2colShape(),
             MakeCoord(FmapL1TileShape::Ho, FmapL1TileShape::Wo, FilterL1TileShape::Cout));
         uint32_t loops = conv2dBlockScheduler.GetLoops();
-        
+
         Arch::Resource<ArchTag> resource;
         BlockConv2d blockConv2d(resource, params.problemShape.getFilterParams());
 
@@ -123,18 +123,18 @@ public:
         gmFilter.SetGlobalBuffer((__gm__ ElementFilter *)params.ptrFilter);
         AscendC::GlobalTensor<ElementOutput> gmOutput;
         gmOutput.SetGlobalBuffer((__gm__ ElementOutput *)params.ptrOutput);
-    
+
         for (uint32_t loopIdx = AscendC::GetBlockIdx(); loopIdx < loops; loopIdx += AscendC::GetBlockNum()) {
             // Compute block location
             Conv2dCoord blockCoord = conv2dBlockScheduler.GetBlockCoord(loopIdx);
             Conv2dCoord actualBlockShape = conv2dBlockScheduler.GetActualBlockShape(blockCoord);
 
             uint8_t blockPadLeft = 0, blockPadRight = 0, blockPadTop = 0, blockPadBottom = 0;
-            
+
             // Compute indices of hi
             uint32_t hoStart = blockCoord.h() * FmapL1TileShape::Ho;
             int32_t hiStart = hoStart * params.problemShape.strideH() - params.problemShape.padTop();
-            int32_t hiEnd = hiStart + (actualBlockShape.h() - 1) * params.problemShape.strideH() + 
+            int32_t hiEnd = hiStart + (actualBlockShape.h() - 1) * params.problemShape.strideH() +
                 (params.problemShape.kh() - 1) * params.problemShape.dilationH();
             if(hiStart < 0){
                 blockPadTop = 0 - hiStart;
@@ -149,7 +149,7 @@ public:
             // Compute indexes of wi
             uint32_t woStart = blockCoord.w() * FmapL1TileShape::Wo;
             int32_t wiStart = woStart * params.problemShape.strideW() - params.problemShape.padLeft();
-            int32_t wiEnd = wiStart + (actualBlockShape.w() - 1) * params.problemShape.strideW() + 
+            int32_t wiEnd = wiStart + (actualBlockShape.w() - 1) * params.problemShape.strideW() +
                 (params.problemShape.kw() - 1) * params.problemShape.dilationW();
             if(wiStart < 0){
                 blockPadLeft = 0 - wiStart;

@@ -17,10 +17,10 @@
 # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 # THE SOFTWARE.
- 
+
 import torch
- 
- 
+
+
 class IntermediateTensor:
     @staticmethod
     def __get_instruction(id: int):
@@ -32,7 +32,7 @@ class IntermediateTensor:
             case _:
                 return "UNKNOWN"
         pass
- 
+
     @staticmethod
     def __get_type(id: int):
         match id:
@@ -43,36 +43,41 @@ class IntermediateTensor:
             case _:
                 return "UNKNOWN"
         pass
- 
+
     def __init__(self, tensor: torch.Tensor):
         self.tensor = tensor
- 
+
     def __str__(self):
         result: str = "{\n"
- 
+
         shape = self.tensor.shape
         result += f"shape={shape},\n"
- 
+
         numel = shape.numel()
         i = 0
         while (i + 8) < numel:
             size = int(self.tensor[i])
-            if (size == 0):
+            if size == 0:
                 break
             typeId = self.tensor[i + 1]
             instructionId = self.tensor[i + 2]
             i += 8
- 
-            result += f"instruction={IntermediateTensor.__get_instruction(instructionId)}\n"
-            result += f"data (size={size}, type={IntermediateTensor.__get_type(typeId)})=" + "["
- 
+
+            result += (
+                f"instruction={IntermediateTensor.__get_instruction(instructionId)}\n"
+            )
+            result += (
+                f"data (size={size}, type={IntermediateTensor.__get_type(typeId)})="
+                + "["
+            )
+
             index = 0
             for j in range(i, i + size):
                 value = self.tensor[j]
                 result = result + f"{value},"
                 index += 1
             result += "]\n\n"
- 
+
             i += size
         result = result + "}"
         return result

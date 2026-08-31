@@ -75,7 +75,7 @@ static thread_local bool isRegBasedArch{false};
 
 namespace {
 
-static void copyAttrIfPresent(Operation* const &srcOp, Operation* const &dstOp,
+static void copyAttrIfPresent(Operation *const &srcOp, Operation *const &dstOp,
                               StringRef attrName) {
   if (auto attr = srcOp->getAttr(attrName)) {
     if (!dstOp->getAttr(attrName))
@@ -126,8 +126,8 @@ public:
       }
 
       if constexpr (std::is_base_of_v<
-                      mlir::hivm::detail::ExtraBufferOpInterfaceTrait<opType>,
-                      opType>) {
+                        mlir::hivm::detail::ExtraBufferOpInterfaceTrait<opType>,
+                        opType>) {
         // don't need temp buffer, but need to pass extra operand to create op
         if constexpr (std::is_same_v<opType, VDivOp>) {
           hivmOp = b.create<opType>(loc, resultTypes, inputs, inits,
@@ -225,12 +225,12 @@ template <> Operation *ElemwiseOpConvertor::create<hivm::VCmpOp>() {
   hivm::VCmpOp op;
   if (isRegBasedArch) {
     op = b.create<hivm::VCmpOp>(dpsOp->getLoc(), dpsOp->getResultTypes(),
-                                  dpsOp.getDpsInputs(), dpsOp.getDpsInits(),
-                                  isSignedCompareMode(hsCmpMode), hvCmpMode);
+                                dpsOp.getDpsInputs(), dpsOp.getDpsInits(),
+                                isSignedCompareMode(hsCmpMode), hvCmpMode);
   } else {
     op = b.create<hivm::VCmpOp>(dpsOp->getLoc(), dpsOp->getResultTypes(),
-                                  dpsOp.getDpsInputs(), dpsOp.getDpsInits(),
-                                  hvCmpMode);
+                                dpsOp.getDpsInputs(), dpsOp.getDpsInits(),
+                                hvCmpMode);
   }
   return op;
 }
@@ -276,11 +276,12 @@ template <> Operation *ElemwiseOpConvertor::create<hivm::VCastOp>() {
         mapRoundModeHFusionToHiVM(castOp.getRoundMode());
     hivm::TypeFn casting = mapCastHFusionToHiVM(castOp.getCast());
     hivm::UnsignedMode unsignedMode =
-        mlir::hfusion_conversion_utils::mapUnsignedModeHFusionToHiVM(castOp.getUnsignedMode());
+        mlir::hfusion_conversion_utils::mapUnsignedModeHFusionToHiVM(
+            castOp.getUnsignedMode());
 
-    hivmOp = b.create<hivm::VCastOp>(
-        dpsOp->getLoc(), dpsOp->getResultTypes(), dpsOp.getDpsInputs(),
-        dpsOp.getDpsInits(), roundMode, casting);
+    hivmOp = b.create<hivm::VCastOp>(dpsOp->getLoc(), dpsOp->getResultTypes(),
+                                     dpsOp.getDpsInputs(), dpsOp.getDpsInits(),
+                                     roundMode, casting);
 
     if (auto moduleOp = op->getParentOfType<ModuleOp>();
         moduleOp && hacc::utils::isRegBasedArch(moduleOp)) {
@@ -294,12 +295,13 @@ template <> Operation *ElemwiseOpConvertor::create<hivm::VCastOp>() {
     }
 
   } else {
-    hivm::RoundMode roundMode = mapRoundModeHFusionToHiVM(castOp.getRoundMode());
+    hivm::RoundMode roundMode =
+        mapRoundModeHFusionToHiVM(castOp.getRoundMode());
     hivm::TypeFn casting = mapCastHFusionToHiVM(castOp.getCast());
 
     hivmOp = b.create<hivm::VCastOp>(dpsOp->getLoc(), dpsOp->getResultTypes(),
-                                   dpsOp.getDpsInputs(), dpsOp.getDpsInits(),
-                                   roundMode, casting);
+                                     dpsOp.getDpsInputs(), dpsOp.getDpsInits(),
+                                     roundMode, casting);
   }
 
   return hivmOp;
@@ -312,14 +314,16 @@ Operation *convertNegfToMulOp(ElemwiseOpConvertor &b) {
 
   OpBuilder &builder = b.getBuilder();
   Value negOne = builder.create<arith::ConstantOp>(
-      elemwiseOp->getLoc(), elementType, builder.getFloatAttr(elementType, -1.0));
+      elemwiseOp->getLoc(), elementType,
+      builder.getFloatAttr(elementType, -1.0));
 
   auto operation = cast<DestinationStyleOpInterface>(b.getOp());
   Location location = operation->getLoc();
   auto resultTypes = operation->getResultTypes();
   auto inits = operation.getDpsInits();
 
-  return builder.create<hivm::VMulOp>(location, resultTypes, ValueRange{input, negOne}, inits);
+  return builder.create<hivm::VMulOp>(location, resultTypes,
+                                      ValueRange{input, negOne}, inits);
 }
 
 Operation *convertUnaryLinalgOp(ElemwiseOpConvertor &b, linalg::UnaryFn kind) {
@@ -432,14 +436,12 @@ Operation *convertBinaryHFusionOp(ElemwiseOpConvertor &b,
   case hfusion::BinaryFn::shrui:
     hivmOp = b.create<hivm::VShROp>();
     break;
-  case hfusion::BinaryFn::divfhp:
-    {
-      auto dpsOp = cast<DestinationStyleOpInterface>(b.getOp());
-      hivmOp = b.getBuilder().create<hivm::VDivOp>(
-          dpsOp->getLoc(), dpsOp->getResultTypes(), dpsOp.getDpsInputs(),
-          dpsOp.getDpsInits(), /*isSigned=*/true, /*isHP=*/true);
-    }
-    break;
+  case hfusion::BinaryFn::divfhp: {
+    auto dpsOp = cast<DestinationStyleOpInterface>(b.getOp());
+    hivmOp = b.getBuilder().create<hivm::VDivOp>(
+        dpsOp->getLoc(), dpsOp->getResultTypes(), dpsOp.getDpsInputs(),
+        dpsOp.getDpsInits(), /*isSigned=*/true, /*isHP=*/true);
+  } break;
   case hfusion::BinaryFn::modui:
     hivmOp = b.create<hivm::VModUIOp>();
     break;
@@ -478,7 +480,8 @@ Value brcOperand(OpBuilder &b, Location loc, Value scalarVal,
     // Extract tensor<i16> to i16 to make vbrc valid.
     // hivm.hir.vbrc ins(%x : i16) outs(%y : tensor<1xi16>) -> tensor<1xi16>
     if (isa<ShapedType>(scalarVal.getType())) {
-      scalarVal = b.create<tensor::ExtractOp>(loc, scalarVal, ArrayRef<Value>{});
+      scalarVal =
+          b.create<tensor::ExtractOp>(loc, scalarVal, ArrayRef<Value>{});
     }
   }
 
@@ -493,8 +496,10 @@ Value brcOperand(OpBuilder &b, Location loc, Value scalarVal,
 
 bool isScalarOperand(Value val) {
   auto const &type = val.getType();
-  return type.isIntOrFloat() || isRegBasedArch && (isa<IndexType>(type) ||
-         (isa<ShapedType>(type) && cast<ShapedType>(type).getRank() == 0));
+  return type.isIntOrFloat() ||
+         isRegBasedArch &&
+             (isa<IndexType>(type) ||
+              (isa<ShapedType>(type) && cast<ShapedType>(type).getRank() == 0));
 }
 
 void getInvalidScalarOperands(HIVMStructuredOp *hivmOp,
@@ -547,9 +552,8 @@ void convertInvalidScalarOperandByBrc(
       if (dstElementType == srcType) {
         brcResult = utils::createEmptyOp(b, op->getLoc(), dstVal);
       } else {
-        brcResult = utils::createEmptyOpWithTargetElemType(
-          b, op->getLoc(), dstVal, srcType
-        );
+        brcResult = utils::createEmptyOpWithTargetElemType(b, op->getLoc(),
+                                                           dstVal, srcType);
       }
       Value newOperand = brcOperand(b, op->getLoc(), operand, brcResult);
       op->setOperand(invalidIdx, newOperand);
@@ -862,19 +866,20 @@ struct HFusionToHIVMGatherOp : public OpRewritePattern<hfusion::GatherOp> {
     }
 
     auto resultTypeRange = op.hasPureBufferSemantics()
-                                 ? TypeRange()
-                                 : TypeRange(op->getResultTypes());
+                               ? TypeRange()
+                               : TypeRange(op->getResultTypes());
 
     if (isRegBasedArch) {
       const auto axis = static_cast<int64_t>(op.getAxis());
-      auto newOp = rewriter.create<hivm::VGatherOp>(op.getLoc(), resultTypeRange,
-        op.getSrc(), op.getIndex(), op.getInit(), axis);
+      auto newOp = rewriter.create<hivm::VGatherOp>(
+          op.getLoc(), resultTypeRange, op.getSrc(), op.getIndex(),
+          op.getInit(), axis);
       newOp->setAttr(VFModeAttr::name,
                      VFModeAttr::get(op->getContext(), VFMode::SIMT));
       rewriter.replaceOp(op, newOp);
     } else {
       rewriter.replaceOpWithNewOp<hivm::VGatherOp>(
-      op, resultTypeRange, op.getSrc(), op.getIndex(), op.getInit());
+          op, resultTypeRange, op.getSrc(), op.getIndex(), op.getInit());
     }
     return success();
   }
@@ -1236,24 +1241,25 @@ struct HFusionToHIVMCumOp : public OpRewritePattern<HFUSIONOP> {
 
     if (isRegBasedArch) {
       auto newOp = rewriter.create<HIVMOP>(op.getLoc(), op->getResultTypes(),
-                                           op.getInput(), dsts[0], op.getCumDims(),
-                                           op.getReverse());
+                                           op.getInput(), dsts[0],
+                                           op.getCumDims(), op.getReverse());
       // cummax/cummin carry a NaN-propagation flag (max/minimum vs max/minnum).
       // Forward it; cumsum/cumprod have no such attribute.
       if constexpr (std::is_same_v<HFUSIONOP, hfusion::CummaxOp> ||
                     std::is_same_v<HFUSIONOP, hfusion::CumminOp>) {
         newOp.setPropagateNan(op.getPropagateNan());
       }
-      // The cancellation tag is set on the hfusion.cumsum by the detector walk in
-      // HFusionGeneralizePass; propagate it to the new VCumsumOp so the lowering
-      // (getOpLibraryCallName) routes to the compensated "_comp" symbol.
+      // The cancellation tag is set on the hfusion.cumsum by the detector walk
+      // in HFusionGeneralizePass; propagate it to the new VCumsumOp so the
+      // lowering (getOpLibraryCallName) routes to the compensated "_comp"
+      // symbol.
       if (op->hasAttr("needs_compensation"))
         newOp->setAttr("needs_compensation", rewriter.getUnitAttr());
       rewriter.replaceOp(op, newOp->getResults());
     } else {
-      rewriter.replaceOpWithNewOp<HIVMOP>(op, op->getResultTypes(), op.getInput(),
-                                          dsts[0], op.getCumDims(), op.getReverse());
-
+      rewriter.replaceOpWithNewOp<HIVMOP>(op, op->getResultTypes(),
+                                          op.getInput(), dsts[0],
+                                          op.getCumDims(), op.getReverse());
     }
     return success();
   }
@@ -1330,6 +1336,7 @@ struct HFusionToHIVMConv1DOp : public OpRewritePattern<hfusion::Conv1DOp> {
     auto weight = op.getWeight();
     auto bias = op.getBias();
     auto group = op.getGroups();
+    auto stride = op.getStride();
     auto padding = op.getPadding();
 #ifndef BSPUB_DAVINCI_BISHENGIR_A5
     Value initCondition =
@@ -1340,7 +1347,8 @@ struct HFusionToHIVMConv1DOp : public OpRewritePattern<hfusion::Conv1DOp> {
 #endif
     rewriter.replaceOpWithNewOp<hivm::Conv1DL1Op>(op, resType, input, weight,
                                                   bias, init, initCondition,
-                                                  ValueRange{}, padding, group);
+                                                  ValueRange{}, stride, padding,
+                                                  group);
     return success();
   }
 };
@@ -1359,6 +1367,7 @@ struct HFusionToHIVMConv2DOp : public OpRewritePattern<hfusion::Conv2DOp> {
     auto weight = op.getWeight();
     auto bias = op.getBias();
     auto group = op.getGroups();
+    auto stride = op.getStrideAttr();
     auto padding = op.getPaddingAttr();
 #ifndef BSPUB_DAVINCI_BISHENGIR_A5
     Value initCondition =
@@ -1369,7 +1378,8 @@ struct HFusionToHIVMConv2DOp : public OpRewritePattern<hfusion::Conv2DOp> {
 #endif
     rewriter.replaceOpWithNewOp<hivm::Conv2DL1Op>(op, resType, input, weight,
                                                   bias, init, initCondition,
-                                                  ValueRange{}, padding, group);
+                                                  ValueRange{}, stride, padding,
+                                                  group);
     return success();
   }
 };
@@ -1388,6 +1398,7 @@ struct HFusionToHIVMConv3DOp : public OpRewritePattern<hfusion::Conv3DOp> {
     auto weight = op.getWeight();
     auto bias = op.getBias();
     auto group = op.getGroups();
+    auto stride = op.getStrideAttr();
     auto padding = op.getPaddingAttr();
 #ifndef BSPUB_DAVINCI_BISHENGIR_A5
     Value initCondition =
@@ -1398,7 +1409,8 @@ struct HFusionToHIVMConv3DOp : public OpRewritePattern<hfusion::Conv3DOp> {
 #endif
     rewriter.replaceOpWithNewOp<hivm::Conv3DL1Op>(op, resType, input, weight,
                                                   bias, init, initCondition,
-                                                  ValueRange{}, padding, group);
+                                                  ValueRange{}, stride, padding,
+                                                  group);
     return success();
   }
 };
@@ -1529,6 +1541,26 @@ struct HFusionBindSubBlockAttrLowing : public OpRewritePattern<scf::ForOp> {
                                 PatternRewriter &rewriter) const override {
     if (!forOp->hasAttrOfType<UnitAttr>(hfusion::BindSubBlockAttr::name))
       return failure();
+
+    // The func requires two vectors in order for us to spread
+    // the loop across two vec sub-blocks.
+    // It make no sense to perform the spread if vec < 2.
+    // In this case, raise a warning and fallback.
+    auto parentFunc = forOp->getParentOfType<func::FuncOp>();
+    auto coreRatio =
+        parentFunc ? hivm::getCoreRatioAttr(parentFunc) : TCoreRatioAttr();
+    if (coreRatio && coreRatio.getVector() < 2) {
+      forOp->emitWarning(
+          "[hfusion-bind-sub-block]: hivm.core_ratio<" +
+          std::to_string(coreRatio.getCube()) + ", " +
+          std::to_string(coreRatio.getVector()) +
+          "> gives fewer than two vector sub-blocks per block; sub-block "
+          "binding needs two, dropping the bind_sub_block hint");
+      rewriter.modifyOpInPlace(
+          forOp, [&]() { forOp->removeAttr(hfusion::BindSubBlockAttr::name); });
+      return success();
+    }
+
     rewriter.modifyOpInPlace(
         forOp, [&]() { forOp->removeAttr(hfusion::BindSubBlockAttr::name); });
     setSubBlockMapping(rewriter, forOp);
@@ -1872,7 +1904,8 @@ public:
     if (isRegBasedArch)
       populateLowerHFusionToHIVMSimtPatterns(patterns);
     populateReductionPatternsAndLegality(patterns, target, isRegBasedArch);
-    populateMatmulPatternsAndLegality(patterns, target, options, isRegBasedArch);
+    populateMatmulPatternsAndLegality(patterns, target, options,
+                                      isRegBasedArch);
     if (failed(applyPartialConversion(getOperation(), target,
                                       std::move(patterns)))) {
       signalPassFailure();

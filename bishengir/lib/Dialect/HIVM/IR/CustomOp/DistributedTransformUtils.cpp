@@ -20,9 +20,13 @@
 namespace mlir {
 namespace hivm {
 
-const llvm::StringSet<> shmemIntp = {
-    "dist.aclshmem_int64_p", "dist.aclshmem_int32_p", "dist.aclshmem_int16_p",
-    "dist.aclshmem_int8_p"};
+const llvm::StringSet<> shmemCoreTypeInferFromPreOp = {
+    "aclshmem_int64_p",          "aclshmem_int32_p",
+    "aclshmem_int16_p",          "aclshmem_int8_p",
+    "aclshmem_uint64_p",         "aclshmem_uint32_p",
+    "aclshmem_uint16_p",         "aclshmem_uint8_p",
+    "aclshmemx_signal_op",       "aclshmem_fence",
+    "aclshmem_atomic_add_int64", "aclshmem_atomic_add_uint64"};
 
 const std::string kShmemPtr = "aclshmem_ptr";
 const std::string kShmemConsumeToken = "aclshmem_consume_token";

@@ -11,4 +11,4 @@ module attributes {"ttg.enable-bishengir-simt-optimization" = 900101 : i32, "ttg
         %1 = tt.fp_to_fp %arg1, rounding = rtne : tensor<32x64xf8E4M3FN, #blocked> -> tensor<32x64xf32, #blocked>
         tt.return
     }
-}
+}

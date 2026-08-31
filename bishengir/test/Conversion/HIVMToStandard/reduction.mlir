@@ -1,5 +1,5 @@
 // RUN: bishengir-opt %s -convert-hivm-to-std  -split-input-file | FileCheck %s
- 
+
 module {
   func.func @test_reduce_op_check_arith_op() attributes {hacc.function_kind = #hacc.function_kind<DEVICE>} {
     // CHECK: call @reduce_sum_r_int32_t
@@ -8,33 +8,33 @@ module {
     hivm.hir.vreduce <sum>  ins(%src_2 : memref<16xi32>)
                             outs(%dst_2 : memref<1xi32>)
                             reduce_dims = [0]
- 
+
     // CHECK: call @reduce_prod_r_int32_t
     hivm.hir.vreduce <prod>  ins(%src_2 : memref<16xi32>)
                              outs(%dst_2 : memref<1xi32>)
                              reduce_dims = [0]
- 
+
     // CHECK: call @reduce_max_r_int32_t
     hivm.hir.vreduce <max>  ins(%src_2 : memref<16xi32>)
                             outs(%dst_2 : memref<1xi32>)
                             reduce_dims = [0]
- 
+
     // CHECK: call @reduce_min_r_int32_t
     hivm.hir.vreduce <min>  ins(%src_2 : memref<16xi32>)
                             outs(%dst_2 : memref<1xi32>)
                             reduce_dims = [0]
-    
+
     // CHECK: call @reduce_andi_r_int32_t
     hivm.hir.vreduce <andi>  ins(%src_2 : memref<16xi32>)
                             outs(%dst_2 : memref<1xi32>)
                             reduce_dims = [0]
- 
+
     return
   }
 }
- 
+
 // -----
- 
+
 module {
   // CHECK: func.func private @reduce_sum_aar_int32_t(memref<{{.*}}>, memref<{{.*}}>, memref<{{.*}}>, i32)
   func.func @test_reduce_op_4d() attributes {hacc.function_kind = #hacc.function_kind<DEVICE>} {
@@ -48,9 +48,9 @@ module {
     return
   }
 }
- 
+
 // -----
- 
+
 module {
   func.func @test_reduce_op_check_cross() attributes {hacc.function_kind = #hacc.function_kind<DEVICE>} {
     // CHECK: call @enablevc_reduce_sum_r_half
@@ -59,13 +59,13 @@ module {
     hivm.hir.vreduce <sum>  ins(%src_2 : memref<16xf16>)
                             outs(%dst_2 : memref<1xf16>)
                             reduce_dims = [0]
- 
+
     return
   }
 }
- 
+
 // -----
- 
+
 module {
   func.func @test_reduce_op_check_with_rank_reducing() attributes {hacc.function_kind = #hacc.function_kind<DEVICE>} {
     // CHECK-COUNT-5: scf.for
@@ -76,7 +76,7 @@ module {
     hivm.hir.vreduce <max> ins(%src_3 : memref<16x16x8x32x8x16x8x32xi32>)
                            outs(%dst_3 : memref<1x16x8x32x8x16x8x32xi32>)
                            reduce_dims = [0]
- 
+
     // CHECK-COUNT-5: scf.for
     // CHECK-COUNT-2: memref.subview
     // CHECK: call @reduce_min_aar_int32_t
@@ -85,13 +85,13 @@ module {
     hivm.hir.vreduce <min> ins(%src_4 : memref<16x16x8x32x8x16x8x32xi32>)
                            outs(%dst_4 : memref<16x16x8x32x8x16x8x1xi32>)
                            reduce_dims = [7]
- 
+
     return
   }
 }
- 
+
 // -----
- 
+
 module {
   func.func @test_reduce_op_check_with_rank_reducing_dynamic_shape(
                          %src_5 : memref<16x?x?x?x8x?x8x32xf16>,
@@ -110,13 +110,13 @@ module {
     hivm.hir.vreduce <max> ins(%src_5 : memref<16x?x?x?x8x?x8x32xf16>)
                            outs(%dst_5 : memref<1x?x?x?x8x?x8x32xf16>)
                            reduce_dims = [0]
- 
+
     return
   }
 }
- 
+
 // -----
- 
+
 module {
   func.func @test_reduce_op_check_temp_buffer() attributes {hacc.function_kind = #hacc.function_kind<DEVICE>} {
     // CHECK: call @reduce_max_ra0a1_int32_t(%{{.+}}, %{{.+}}, %{{.+}})
@@ -127,13 +127,13 @@ module {
                            outs(%dst_3 : memref<1x16x8x32x8x16x8x32xi32>)
                            temp_buffer (%tmp_3 : memref<2147483648xi32>)
                            reduce_dims = [0]
- 
+
     return
   }
 }
- 
+
 // -----
- 
+
 module {
   func.func @test_reduce_min_with_index() attributes {hacc.function_kind = #hacc.function_kind<DEVICE>} {
     // CHECK: call @reduce_min_with_index_left_ar_float
@@ -147,9 +147,9 @@ module {
     return
   }
 }
- 
+
 // -----
- 
+
 module {
   func.func @test_reduce_sum_mid_axis() attributes {hacc.function_kind = #hacc.function_kind<DEVICE>} {
     // CHECK: call @reduce_sum_ara_float

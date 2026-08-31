@@ -86,7 +86,7 @@ func.func @test_three_elemwise_ops(%arg0 : tensor<6x4xbf16>, %arg1 : tensor<6x4x
 
 // CHECK-LABEL: func.func @test_elemwise_broadcast_ops
 func.func @test_elemwise_broadcast_ops(%src : tensor<6x4xbf16>, %dst : tensor<6x4x3xbf16>) -> tensor<6x4x3xbf16> {
-  // CHECK-NOT: %{{.*}} = hfusion.cast 
+  // CHECK-NOT: %{{.*}} = hfusion.cast
 	%0 = tensor.empty() : tensor<6x4xbf16>
 	%res = linalg.broadcast ins(%0 : tensor<6x4xbf16>) outs(%dst : tensor<6x4x3xbf16>) dimensions = [2]
   return %res : tensor<6x4x3xbf16>
@@ -329,7 +329,7 @@ func.func @test_gather(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<works
 func.func @test_max_with_index(%arg0: tensor<1x22x39xbf16>, %arg1: tensor<1x22x39xi32>) -> (tensor<1x22xbf16>, tensor<1x22xi32>) {
   %0 = tensor.empty() : tensor<1x22xbf16>
   %1 = tensor.empty() : tensor<1x22xi32>
-  %2:2 = hfusion.reduce_with_index {tie_break_left = true} <max> ins(%arg0, %arg1 : tensor<1x22x39xbf16>, tensor<1x22x39xi32>) 
+  %2:2 = hfusion.reduce_with_index {tie_break_left = true} <max> ins(%arg0, %arg1 : tensor<1x22x39xbf16>, tensor<1x22x39xi32>)
                                          outs(%0, %1 : tensor<1x22xbf16>, tensor<1x22xi32>) dimensions = [2]  -> tensor<1x22xbf16>, tensor<1x22xi32>
   return %2#0, %2#1 : tensor<1x22xbf16>, tensor<1x22xi32>
 }

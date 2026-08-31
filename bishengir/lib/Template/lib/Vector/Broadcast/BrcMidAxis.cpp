@@ -67,7 +67,7 @@ brc_mid_axis_3d_vcopy_specialization(memref_t<__ubuf__ T, 3> *src,
                   1,                                         // dst blk stride
                   0,                                         // src blk stride
                   dst_repeat_stride,
-                  src_repeat_stride); 
+                  src_repeat_stride);
       }
       if constexpr (sizeof(T) == BYTES_B32) {
         INTRINSIC(vcopy,

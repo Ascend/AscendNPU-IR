@@ -184,4 +184,3 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 #loc54 = loc("y1"(#loc23))
 #loc55 = loc("x1_block_ptr"(#loc24))
 #loc56 = loc("y1_block_ptr"(#loc26))
-

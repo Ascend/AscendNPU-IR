@@ -152,7 +152,7 @@ struct LinalgMapToHFusionPattern : public OpRewritePattern<linalg::MapOp> {
           ValueRange{op.getInit()}, ArrayRef{fnAttr});
       return success();
     }
-    if (isRegBasedArch && 
+    if (isRegBasedArch &&
         (funcName.starts_with("__hmf_rint") ||
         funcName.starts_with("__hmf_roundf"))) {
       auto arg = op.getInputs().front();
@@ -230,7 +230,7 @@ struct LinalgMapToHFusionPattern : public OpRewritePattern<linalg::MapOp> {
     if (funcName.starts_with("__hmf_flip")) {
       // There is only one input which becomes the last dimension.
       // So, only need to do flip on the first input in the vector.
-      ValueRange inputs = isRegBasedArch ? 
+      ValueRange inputs = isRegBasedArch ?
         ValueRange{op.getInputs()[0], op.getInputs()[1]} : ValueRange{op.getInputs()[0]};
       rewriter.replaceOpWithNewOp<hfusion::FlipOp>(
           op, ValueRange{op.getInit()}, inputs);
@@ -532,7 +532,7 @@ struct LinalgToHFusionReduceWithIndex
     if (!linalgReduceAttr) {
       return failure();
     }
-    
+
     bool isRegBasedArch = hacc::utils::isRegBasedArch(op->getParentOfType<ModuleOp>());
 
     bool isUnsigned = checkUnsignedIntInput(op);

@@ -1089,7 +1089,7 @@ struct HIVMStoreOpLowering : public ConvertOpToLLVMPattern<VFMaskedStoreOp> {
 
     if (archIs910_95 && store->hasAttr(UnalignedAttr::name) &&
         !isONEPTDist(dist)) {
-      if (dElemType.isInteger(1)) {        
+      if (dElemType.isInteger(1)) {
         int pbMode = getBitWidthFromAttr(store);
         auto asResult = createPstuOp(data, dataPtr, rewriter, pbMode);
         rewriter.replaceOp(store, asResult);
@@ -2800,9 +2800,9 @@ struct HIVMVmullOpLowering : public ConvertOpToLLVMPattern<hivmave::VFVMULLOp> {
     Type vmullType = LLVM::LLVMStructType::getLiteral(
         rewriter.getContext(), {llvmVecVLType, llvmVecVLType});
 
-    Operation *vmullOp = createVmullIntrinsic(
-        rewriter, loc, vmullType, src1Casted->getResult(0),
-        src2Casted->getResult(0), elemType, mask, op.getCast());
+    Operation *vmullOp =
+        createVmullIntrinsic(rewriter, loc, vmullType, src1Casted->getResult(0),
+                             src2Casted->getResult(0), elemType, mask);
     if (!vmullOp)
       return rewriter.notifyMatchFailure(op,
                                          "Unsupported vector type for vmull");
@@ -2829,16 +2829,11 @@ private:
 
   Operation *createVmullIntrinsic(ConversionPatternRewriter &rewriter,
                                   Location loc, Type vecType, Value src1,
-                                  Value src2, Type elemType, Value mask,
-                                  TypeFn cast) const {
-    if (!elemType.isInteger(32))
-      return nullptr;
-
-    if (cast == TypeFn::cast_signed) {
+                                  Value src2, Type elemType, Value mask) const {
+    if (elemType.isSignedInteger(32) || elemType.isSignlessInteger(32)) {
       return rewriter.create<VmullV64S32InstrOp>(loc, vecType, src1, src2,
                                                  mask);
-    }
-    if (cast == TypeFn::cast_unsigned) {
+    } else if (elemType.isUnsignedInteger(32)) {
       return rewriter.create<VmullV64U32InstrOp>(loc, vecType, src1, src2,
                                                  mask);
     }

@@ -1079,7 +1079,7 @@ __aiv__ __attribute__((always_inline)) bool need_broadcast(
 }
 
 // Get the number of elements that need to be processed using scalar operations.
-// When the memory alignment of input or output is not suitable for vectorization, 
+// When the memory alignment of input or output is not suitable for vectorization,
 // some elements must be handled using scalar operations util the rest element is aligned with 32 bytes.
 template <typename T, size_t DIM>
 __aiv__ __attribute__((always_inline)) int64_t eltwise_get_element_nums_on_scalar(
@@ -1089,7 +1089,7 @@ __aiv__ __attribute__((always_inline)) int64_t eltwise_get_element_nums_on_scala
   auto src1_last_stride = src1 == nullptr ? 1 : src1->strides[DIM - 1];
   auto dst_last_stride = dst->strides[DIM - 1];
   bool broadcast_cond = need_broadcast<T, DIM>(src0, src1, dst);
-  
+
   if (src0_last_stride != 1 || src1_last_stride != 1 || dst_last_stride != 1) {
     return dst->sizes[DIM - 1];
   }
@@ -1107,7 +1107,7 @@ __aiv__ __attribute__((always_inline)) int64_t eltwise_get_element_nums_on_scala
       }
     }
   }
-  
+
 
   // Check offset alignment
   bool is_src0_aligned = src0 == nullptr ? true : isAddress32ByteAligned(src0->aligned + src0->offset);
@@ -1172,7 +1172,7 @@ __aiv__ __attribute__((always_inline)) T scalar_exp(T x) {
   if (x < (T)-88.7f) {
     return (T)0.0;
   }
- 
+
   // constant define
   const T LOG2E    = 1.4426950408889634f;
   // High part of ln(2) for precision compensation
@@ -1180,18 +1180,18 @@ __aiv__ __attribute__((always_inline)) T scalar_exp(T x) {
   // low part of ln(2) for precision compensation
   const T LN2_LO   = 1.4286068203094172e-6f;
   const T MAGIC    = 12582912.0f;           // 1.5 * 2^23
- 
+
   // Fast range reduction
   // n = round(x / ln2)
   T z = x * LOG2E + MAGIC;
   uint32_t vi = *(uint32_t*)&z;
-  int n = (int)(vi & 0x7FFFFF) - 0x400000; 
+  int n = (int)(vi & 0x7FFFFF) - 0x400000;
   T fn = z - MAGIC;
- 
+
   // r = x - n * ln2
   T r = x - fn * LN2_HI;
   r = r - fn * LN2_LO;
- 
+
   // Remez-optimized polynomial, 5th order term for better robustness
   // Approximate e^r ≈ 1 + c1*r + c2*r^2 + c3*r^3 + c4*r^4 + c5*r^5
   const T c1 = 1.0000000000f;
@@ -1199,25 +1199,25 @@ __aiv__ __attribute__((always_inline)) T scalar_exp(T x) {
   const T c3 = 0.1666653019f;
   const T c4 = 0.0416573475f;
   const T c5 = 0.0083013598f;
- 
+
   T r2 = r * r;
   T res_r = 1.0f + r * (c1 + r * (c2 + r * (c3 + r * (c4 + r * c5))));
- 
+
   // Exponent reconstruction (2^n)
   uint32_t ei = (uint32_t)(n + 127) << 23;
   T two_n = *(T*)&ei;
- 
+
   // e^r * 2^n
   return (T)(res_r * two_n);
 }
- 
+
 template <typename T>
 __aiv__ __attribute__((always_inline)) T scalar_sqrt(T x) {
   // Boundary Value Handling
   if (x < (T)0.0) {
     return std::numeric_limits<T>::quiet_NaN();
   }
-  
+
   const T kEpsilon = 1e-7;
   // -> 0
   if (x < kEpsilon) {
@@ -1235,10 +1235,10 @@ __aiv__ __attribute__((always_inline)) T scalar_sqrt(T x) {
       uint32_t i;
   } v;
   v.f = (float)x;
-  v.i = 0x1fbd1df5 + (v.i >> 1); 
+  v.i = 0x1fbd1df5 + (v.i >> 1);
   T guess = (T)v.f;
 
-  
+
   const T eps = (T)1e-5;
   // Newton-Raphson Iteration with Epsilon Control
   for (int i = 0; i < 6; ++i) {
@@ -1253,7 +1253,7 @@ __aiv__ __attribute__((always_inline)) T scalar_sqrt(T x) {
 
   return guess;
 }
- 
+
 template <typename T>
 __aiv__ __attribute__((always_inline)) T scalar_rsqrt(T x) {
   // Boundary Value Handling
@@ -1266,7 +1266,7 @@ __aiv__ __attribute__((always_inline)) T scalar_rsqrt(T x) {
   if (x < kEpsilon) {
     return std::numeric_limits<T>::infinity();
   }
-      
+
   float xf = (float)x;
 
   // Initial approximation
@@ -1276,7 +1276,7 @@ __aiv__ __attribute__((always_inline)) T scalar_rsqrt(T x) {
   } v;
   v.f = xf;
   // magic number
-  v.i = 0x5f375a86 - (v.i >> 1); 
+  v.i = 0x5f375a86 - (v.i >> 1);
   float y = v.f;
 
   // Two round of Newton-Raphson iteration to ensure accuracy within 0.01%
@@ -1287,8 +1287,8 @@ __aiv__ __attribute__((always_inline)) T scalar_rsqrt(T x) {
 
   return (T)y;
 }
- 
- 
+
+
 template <typename T>
 __aiv__ __attribute__((always_inline)) T scalar_ln(T x) {
   // Boundary Value Handling
@@ -1309,7 +1309,7 @@ __aiv__ __attribute__((always_inline)) T scalar_ln(T x) {
   } v;
   v.f = (float)x;
   int e = (int)((v.i >> 23) & 0xFF) - 127;
-  
+
   // Normalize the mantissa to [1, 2))
   v.i = (v.i & 0x7FFFFF) | 0x3F800000;
   float m = v.f;
@@ -1319,7 +1319,7 @@ __aiv__ __attribute__((always_inline)) T scalar_ln(T x) {
       m *= 0.5f;
       e++;
   }
-  
+
   // Pade approximation: ln(1 + t) = 2 * arctanh(t / (2 + t))
   T t = (T)m - (T)1.0;
   T s = t / ((T)2.0 + t);
@@ -1333,7 +1333,7 @@ __aiv__ __attribute__((always_inline)) T scalar_ln(T x) {
   const T LN2 = (T)0.69314718056;
   return (T)e * LN2 + poly;
 }
- 
+
 template <VectorOpTy OP, typename T>
 __aiv__ __attribute__((always_inline)) T scalar_operation(T src_oprand) {
   if constexpr (OP == VectorOpTy::VABS) {

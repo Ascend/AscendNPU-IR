@@ -393,7 +393,7 @@ static LogicalResult tileAndSliceOpAIC(
     const DenseMap<int32_t, int64_t> &tightlyCoupledBufferToTilingDim) {
   RewritePatternSet patterns(func.getContext());
   // DetachFixpipeDstReadView is to handle the Op pattern by Preload
-  // Please read UT case: trace_def_ops_fixpipe_readview_mix_aic 
+  // Please read UT case: trace_def_ops_fixpipe_readview_mix_aic
   patterns.add<DetachFixpipeDstReadView>(func.getContext());
   patterns.add<InsertFixpipeDstPropagateUp>(
       func.getContext(), tightlyCoupledBufferToTilingDim);

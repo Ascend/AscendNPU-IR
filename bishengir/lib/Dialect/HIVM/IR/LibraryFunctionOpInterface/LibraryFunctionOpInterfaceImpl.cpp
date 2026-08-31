@@ -636,6 +636,9 @@ struct StaticMaxRankExternalModel
     if constexpr (std::is_same_v<ConcreteOp, NZ2NDOp>) {
       return getNZ2NDOpLibraryCallName(concreteOp, isOpsAligned);
     }
+    if constexpr (std::is_same_v<ConcreteOp, L12UBOp>) {
+      return getL12UBOpLibraryCallName(concreteOp, isOpsAligned);
+    }
     if constexpr (std::is_same_v<ConcreteOp, VGatherOp>) {
       return getVGatherOpLibraryCallName(concreteOp, isOpsAligned);
     }
@@ -1695,6 +1698,7 @@ void bishengir::hivm::detail::registerLibraryFunctionOpInterfaceExtension(
     REGISTER_STATIC_MAX_RANK(IndirectStoreOp, 5);
     REGISTER_STATIC_MAX_RANK(CopyOp, 3);
     REGISTER_STATIC_MAX_RANK(NZ2NDOp, 2);
+    REGISTER_STATIC_MAX_RANK(L12UBOp, 2);
     REGISTER_NO_MAX_RANK(FixpipeOp);
     REGISTER_NO_MAX_RANK(ND2NZOp);
     REGISTER_NO_MAX_RANK(LoadMXScaleOp);

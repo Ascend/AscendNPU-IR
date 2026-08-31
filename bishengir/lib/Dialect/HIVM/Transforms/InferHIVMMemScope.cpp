@@ -87,14 +87,6 @@ LogicalResult setMemSpaceForAllocs(Operation *sourceOp,
   return success();
 }
 
-static BlockArgument getTiedWhileBodyIterArg(scf::WhileOp op,
-                                             OpOperand *opOperand) {
-  auto argsMutable = op.getInitsMutable();
-  auto *it = llvm::find(argsMutable, *opOperand);
-  if (it == argsMutable.end())
-    return {};
-  return op.getAfterArguments()[std::distance(argsMutable.begin(), it)];
-}
 } // namespace
 
 LogicalResult
@@ -125,13 +117,24 @@ MemScopeInferAndPropagateHelper::propagateMemScopeToUsers(Value val) {
     return failure();
   };
 
+  // Only infer values without a memory space; a scope pinned by the other
+  // while chain (before vs cond) is authoritative, else the while round trip
+  // recurses forever / trips setBaseMemRefTypeScope (ub/gm conflict).
+  auto propagateMemScopeIfMemRef = [this, &memrefScope](Value v) {
+    if (!isa<BaseMemRefType>(v.getType()))
+      return true;
+    if (cast<BaseMemRefType>(v.getType()).getMemorySpace())
+      return true;
+    setBaseMemRefTypeScope(v, memrefScope);
+    return propagateMemScopeToUsers(v).succeeded();
+  };
+
   auto propagateFn = [&](OpOperand &user) -> LogicalResult {
     Operation *userDefiningOp = user.getOwner();
     return TypeSwitch<Operation *, LogicalResult>(userDefiningOp)
         .Case<scf::YieldOp, scope::ReturnOp>([&](Operation *op) {
           Operation *parentOp = op->getParentOp();
           auto yieldResult = op->getOperand(user.getOperandNumber());
-          auto parentResult = parentOp->getResult(user.getOperandNumber());
 
           Type yieldType = yieldResult.getType();
           Type valType = val.getType();
@@ -144,6 +147,13 @@ MemScopeInferAndPropagateHelper::propagateMemScopeToUsers(Value val) {
           if (yieldMemRefType.getElementType() !=
               valMemRefType.getElementType())
             return success();
+
+          // yield[i] maps result[i]; while's after-yield handled elsewhere.
+          if (isa<scf::WhileOp>(parentOp))
+            return success();
+          if (user.getOperandNumber() >= parentOp->getNumResults())
+            return success();
+          auto parentResult = parentOp->getResult(user.getOperandNumber());
           setBaseMemRefTypeScope(parentResult, memrefScope);
           if (failed(propagateMemScopeToUsers(parentResult))) {
             return failure();
@@ -165,15 +175,32 @@ MemScopeInferAndPropagateHelper::propagateMemScopeToUsers(Value val) {
           auto yield = op.getTiedLoopYieldedValue(bbArg);
           if (!yield)
             return failure();
-          auto afterArg = getTiedWhileBodyIterArg(op, &user);
-          if (!afterArg)
-            return failure();
-          setBaseMemRefTypeScope(bbArg, memrefScope);
-          setBaseMemRefTypeScope(yield->get(), memrefScope);
-          setBaseMemRefTypeScope(afterArg, memrefScope);
-          return success(propagateMemScopeToUsers(afterArg).succeeded() &&
-                         propagateMemScopeToUsers(bbArg).succeeded() &&
-                         propagateMemScopeToUsers(yield->get()).succeeded());
+
+          // Propagate along the init -> before-arg -> after-yield round trip.
+          return success(propagateMemScopeIfMemRef(bbArg) &&
+                         propagateMemScopeIfMemRef(yield->get()));
+        })
+        .Case<scf::ConditionOp>([&](scf::ConditionOp op) {
+          // scf.condition's parent is always scf.while (HasParent trait).
+          auto whileOp = cast<scf::WhileOp>(op->getParentOp());
+          // cond-args map positionally to after-args/results.
+          auto condTerminator =
+              cast<RegionBranchTerminatorOpInterface>(op.getOperation());
+          OperandRange condArgs =
+              condTerminator.getSuccessorOperands(whileOp.getAfter());
+          if (user.getOperandNumber() < condArgs.getBeginOperandIndex())
+            return success(); // condition predicate
+          unsigned slot =
+              user.getOperandNumber() - condArgs.getBeginOperandIndex();
+          if (slot >= condArgs.size())
+            return success();
+
+          bool ok = true;
+          if (slot < whileOp.getAfterArguments().size())
+            ok &= propagateMemScopeIfMemRef(whileOp.getAfterArguments()[slot]);
+          if (slot < whileOp->getNumResults())
+            ok &= propagateMemScopeIfMemRef(whileOp->getResult(slot));
+          return success(ok);
         })
         .Case<memref::ExtractStridedMetadataOp>([&](auto op) {
           auto baseBuffer = op.getBaseBuffer();

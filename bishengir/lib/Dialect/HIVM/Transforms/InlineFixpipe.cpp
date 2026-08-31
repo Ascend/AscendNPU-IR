@@ -374,34 +374,38 @@ static RankedTensorType computeNz2NzL1DstType(RankedTensorType ndType) {
                                ndType.getElementType());
 }
 
-static bool shouldEnableChannelSplit(RankedTensorType ndType) {
-  static constexpr int64_t alignM = 16;
-  return mlir::utils::getNumPerBlock(ndType) == alignM / 2;
-}
-
-static FixpipeOp insertFixpipeToL1(PatternRewriter &rewriter, Operation *point,
-                                   Value src) {
-  rewriter.setInsertionPointAfter(point);
-
-  MLIRContext *ctx = rewriter.getContext();
-  auto tensorType = cast<RankedTensorType>(src.getType());
-  auto dstTy = computeNz2NzL1DstType(tensorType);
-
-  // FixpipeOp with channel_split enabled may split each channel (C0) in two
-  // parts in destination.
+/// Convert an NZ2ND Fixpipe to NZ2NZ. Applies channel_split or channel_merge
+/// (and a fractal L1 dest type) when the dest type requires it; otherwise only
+/// updates dma_mode in place. Returns the (possibly replaced) FixpipeOp.
+static FixpipeOp convertNz2NdFixpipeToNz2Nz(PatternRewriter &rewriter,
+                                            FixpipeOp op) {
+  auto tensorType = cast<RankedTensorType>(op.getDstOperandType());
   bool channelSplit = shouldEnableChannelSplit(tensorType);
-  Value fixpipeInit =
-      rewriter.create<tensor::EmptyOp>(point->getLoc(), dstTy,
-                                       /*dynamicSizes=*/ValueRange{});
-  FixpipeDMAModeAttr dmaModeAttr =
-      FixpipeDMAModeAttr::get(ctx, FixpipeDMAMode::NZ2NZ);
+  if (!channelSplit && !shouldEnableChannelMerge(tensorType)) {
+    rewriter.modifyOpInPlace(op, [&]() {
+      op.setDmaModeAttr(FixpipeDMAModeAttr::get(rewriter.getContext(),
+                                                FixpipeDMAMode::NZ2NZ));
+    });
+    return op;
+  }
 
-  return rewriter.create<FixpipeOp>(
-      point->getLoc(), /*result_tensor=*/fixpipeInit.getType(), src,
-      fixpipeInit, dmaModeAttr,
-      /*dual_dst_mode=*/nullptr, /*sub_block_idx=*/nullptr,
-      /*pre_quant=*/nullptr, /*pre_relu=*/nullptr,
-      /*channel_split=*/rewriter.getBoolAttr(channelSplit));
+  auto dstTy = computeNz2NzL1DstType(tensorType);
+  Location loc = op.getLoc();
+  Value src = op.getSrc();
+  auto dualDstMode = op.getDualDstModeAttr();
+  auto subBlockIdx = op.getSubBlockIdxAttr();
+  auto preQuant = op.getPreQuantAttr();
+  auto preRelu = op.getPreReluAttr();
+
+  rewriter.setInsertionPoint(op);
+  Value fixpipeInit =
+      rewriter.create<mlir::tensor::EmptyOp>(loc, dstTy, mlir::ValueRange{});
+  auto newOp = rewriter.replaceOpWithNewOp<FixpipeOp>(
+      op, /*result_tensor=*/fixpipeInit.getType(), src, fixpipeInit,
+      FixpipeDMAModeAttr::get(rewriter.getContext(), FixpipeDMAMode::NZ2NZ),
+      dualDstMode, subBlockIdx, preQuant, preRelu,
+      rewriter.getBoolAttr(channelSplit));
+  return newOp;
 }
 
 static FixpipeOp insertFixpipeToLocal(PatternRewriter &rewriter,
@@ -418,6 +422,12 @@ static FixpipeOp insertFixpipeToLocal(PatternRewriter &rewriter,
       /*dual_dst_mode=*/nullptr,
       /*sub_block_idx=*/nullptr,
       /*pre_quant=*/nullptr, /*pre_relu=*/nullptr, /*channel_split=*/nullptr);
+}
+
+static FixpipeOp insertFixpipeToL1(PatternRewriter &rewriter, Operation *point,
+                                   Value src) {
+  auto fixpipe = insertFixpipeToLocal(rewriter, point, src);
+  return convertNz2NdFixpipeToNz2Nz(rewriter, fixpipe);
 }
 
 static bool isInsertingFixpipeToL1(Value src) {
@@ -450,7 +460,6 @@ static bool isExclusiveLocalMatmulInit(Operation *op, Value v) {
 static FixpipeOp insertFixpipe(PatternRewriter &rewriter, Operation *point,
                                Value src) {
   rewriter.setInsertionPointAfter(point);
-
   bool isMovingToL1 =
       hacc::utils::isRegBasedArch(point->getParentOfType<ModuleOp>()) &&
       isInsertingFixpipeToL1(src);
@@ -459,14 +468,13 @@ static FixpipeOp insertFixpipe(PatternRewriter &rewriter, Operation *point,
                                : insertFixpipeToLocal)(rewriter, point, src);
 
   rewriter.replaceUsesWithIf(
-      src, fixpipe.getResultTensor(), [&isMovingToL1](OpOperand &use) {
+      src, fixpipe.getResultTensor(), [](OpOperand &use) {
         auto *op = use.getOwner();
         if (isa<DebugOp>(op) || isa<FixpipeOp>(op) ||
             isa<annotation::MarkOp>(op)) {
           return false;
         }
-        if (auto mmadOp = dyn_cast<hivm::MmadL1Op>(op);
-            isMovingToL1 && mmadOp) {
+        if (auto mmadOp = dyn_cast<hivm::MmadL1Op>(op)) {
           return !(llvm::any_of(
               mmadOp.getDpsInitsMutable(), [&use](OpOperand &init) {
                 return &use == &init &&
@@ -1054,34 +1062,15 @@ private:
 
     if (isRegBasedArch(op) && op.getDmaMode() != FixpipeDMAMode::NZ2NZ) {
       if (all_of(op->getUsers(), [](auto *user) {
+            if (isa<annotation::MarkOp>(user))
+              return true;
             return isa<
 #define GET_OP_LIST
 #include "bishengir/Dialect/HIVM/IR/HIVMMacroOps.cpp.inc"
                 >(user);
           })) {
 
-        MLIRContext *ctx = rewriter.getContext();
-        auto tensorType = cast<RankedTensorType>(op.getDst().getType());
-        auto dstTy = computeNz2NzL1DstType(tensorType);
-
-        // FixpipeOp with channel_split enabled may split each channel (C0) in
-        // two parts in destination.
-        bool channelSplit = shouldEnableChannelSplit(tensorType);
-        Value fixpipeInit = rewriter.create<mlir::tensor::EmptyOp>(
-            op->getLoc(), dstTy, mlir::ValueRange{});
-        FixpipeDMAModeAttr dmaModeAttr =
-            FixpipeDMAModeAttr::get(ctx, FixpipeDMAMode::NZ2NZ);
-
-        auto fixpipe = rewriter.create<FixpipeOp>(
-            op->getLoc(), /*result_tensor=*/fixpipeInit.getType(), op.getSrc(),
-            fixpipeInit, dmaModeAttr,
-            /*dual_dst_mode=*/op.getDualDstModeAttr(),
-            /*sub_block_idx=*/op.getSubBlockIdxAttr(),
-            /*pre_quant=*/op.getPreQuantAttr(),
-            /*pre_relu=*/op.getPreReluAttr(),
-            /*channel_split=*/rewriter.getBoolAttr(channelSplit));
-
-        rewriter.replaceOp(op, fixpipe.getResult(0));
+        convertNz2NdFixpipeToNz2Nz(rewriter, op);
         return success();
       }
     }

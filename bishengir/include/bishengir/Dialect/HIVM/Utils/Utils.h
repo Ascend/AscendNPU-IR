@@ -32,14 +32,17 @@
 #include "mlir/Interfaces/LoopLikeInterface.h"
 #include "mlir/Support/LLVM.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Debug.h"
 
+#include <array>
 #include <cassert>
 #include <cstdint>
 #include <optional>
 #include <queue>
 #include <set>
+#include <string>
 #include <type_traits>
 
 namespace mlir {
@@ -57,6 +60,9 @@ struct ValueComparator {
 } // namespace utils
 
 namespace hivm {
+
+bool shouldEnableChannelSplit(Type dstType);
+bool shouldEnableChannelMerge(Type dstType);
 
 /// Plan memory strategy for storage entry reorder.
 enum class PlanMemoryStrategy {
@@ -237,6 +243,10 @@ FailureOr<scf::ForOp> findContainingSubblockLoop(Operation *op);
 /// If val is yielded by the parent loop, need to get parent of parent loop.
 LoopLikeOpInterface getParentLoop(Value val);
 
+// Get tied loop block argument for opoperand
+BlockArgument getTiedBlockArgument(LoopLikeOpInterface loopOp,
+                                   OpOperand &operand);
+
 /// Flatten ptrCastOp's parent and ancestor loops into one dimension and then
 /// modulo modular.
 /// In the position of ptrCastOp, affineApply and indexCastOp would be
@@ -335,6 +345,36 @@ SmallVector<unsigned> traceVFWriteOpArgIds(func::CallOp callOp);
 TModuleCoreTypeAttr getModuleCoreTypeAttr(ModuleOp mod);
 void setModuleCoreTypeAttr(ModuleOp mod, TModuleCoreType coreType);
 void removeModuleCoreTypeAttr(ModuleOp mod);
+
+/// Getter setter of the hivm.core_ratio attribute.
+/// The getter returns null when the func declares no ratio
+TCoreRatioAttr getCoreRatioAttr(func::FuncOp func);
+LogicalResult setCoreRatioAttr(func::FuncOp func, int32_t cube, int32_t vector);
+
+struct CoreRatio {
+  int32_t cube;
+  int32_t vector;
+
+  constexpr bool operator==(const CoreRatio &rhs) const {
+    return rhs.cube == cube && rhs.vector == vector;
+  }
+
+  static constexpr auto getValidRatios() {
+    return std::array{CoreRatio{0, 1}, CoreRatio{1, 0}, CoreRatio{1, 1},
+                      CoreRatio{1, 2}};
+  }
+
+  static bool isValid(CoreRatio ratio) {
+    return llvm::is_contained(getValidRatios(), ratio);
+  }
+
+  /// "0:1, 1:0, 1:1, 1:2", for diagnostics.
+  static std::string getValidRatiosStr();
+
+  /// The declared hivm.core_ratio, or the target's default when none is
+  /// declared. Fails for a target that has no stated default.
+  static FailureOr<CoreRatio> getEffective(func::FuncOp func);
+};
 
 /// Get user op of the 'op'
 /// Constraints: Skip tensor::CollapseShapeOp/ExpandShapeOp
@@ -450,26 +490,33 @@ enum class BitWidth : uint32_t {
   B64 = 64,
 };
 
-/// Task type encoded as a two‑digit decimal number:
+/// Task type encoded as a two-digit decimal number:
 /// - Tens digit: which kernel(s) are used
-///   - 1 → pure vector kernel
-///   - 2 → pure cube kernel
-///   - 3 → mix cube and vector kernels (default 1:1 mix)
-/// - Units digit: presence of the kernel in the mix
+///   - 1 -> pure vector kernel
+///   - 2 -> pure cube kernel
+///   - 3 -> MIX with a cube (KERNEL_TYPE_MIX_AIC_*)
+///   - 4 -> MIX with no cube (KERNEL_TYPE_MIX_AIV_*)
+/// - Units digit: the vector side of the cube:vector ratio
 ///
-/// Example: 31 → mixed cube + vector, ratio 1:1.
+/// Example: 31 -> MIX, cube:vector = 1:1.
 enum TaskType : int8_t {
-  /// 1x – pure vector kernel (ratio 1:0)
+  /// 1x - pure vector kernel
   VectorOnly = 10,
 
-  /// 2x – pure cube kernel (ratio 0:1)
+  /// 2x - pure cube kernel
   CubeOnly = 20,
 
-  /// 3x – mixed cube & vector kernel, ratio 1:1
+  /// 3x - MIX, cube:vector = 1:0
+  CubeVectorMix_1_0 = 30,
+
+  /// 3x - MIX, cube:vector = 1:1
   CubeVectorMix_1_1 = 31,
 
-  /// 3x – mixed cube & vector kernel, default 1:2 ratio
+  /// 3x - MIX, cube:vector = 1:2, the default
   CubeVectorMix_1_2 = 32,
+
+  /// 4x - MIX, cube:vector = 0:1
+  CubeVectorMix_0_1 = 41,
 
   /// Unknown module type (kept as 0 to preserve original behaviour)
   Unknown = 0

@@ -75,14 +75,14 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 
 // First, we check that the dot to tile without staging was
 // tiled successfully with a tile-size of 1
-// 
+//
 // CHECK: [TileDotLoads]   -> K-tiling tileSize=1 numTiles=32
 // CHECK: [TileDotLoads]   -> tiling succeeded
 
 // Next, we check that the dot to tile with staging was tiled
 // with a tile-size of 1 (despite the cost model saying it
 // shouldn't be tiled)
-// 
+//
 // CHECK: [StageNonLoadOperand] examining tt.dot [M=32 K=32 N=32] MKN=32768 budget=32768  kTile=1 numTiles=32 A=stage B=stage
 // CHECK: -> cost model says staging is not profitable
 // CHECK: (numTiles=32, kTile=1)
@@ -90,7 +90,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // Next, we check to make sure that two scf.for loops, each
 // with a tt.dot of dims 32x1x32, have been introduced to the
 // IR, to ensure that tiling has actually occured.
-// 
+//
 // CHECK: IR Dump After TileDotLoads
 // CHECK: scf.for
 // CHECK: tt.dot
@@ -101,5 +101,5 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 
 // A final check that all the above happened in the TileDotLoads
 // pass, by checking the existend of the pass right after it
-// 
+//
 // CHECK: IR Dump After EnableAscendDPXMMA

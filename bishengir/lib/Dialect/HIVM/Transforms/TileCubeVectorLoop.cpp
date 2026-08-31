@@ -781,7 +781,7 @@ public:
     if (!storeOp->hasAttr(kDummyStore))
       return failure();
 
-    // This is a module-level rewrite pattern, but we only want to erase the 
+    // This is a module-level rewrite pattern, but we only want to erase the
     // dummy store in the current vector loop.
     if (llvm::none_of(maybeDummyStore, [&storeOp](const OpToTile &opInfo) {
           return storeOp->hasAttr(opInfo.tag);
@@ -1200,7 +1200,7 @@ LogicalResult TileCubeVectorLoopPass::collectVectorLoopInfo(OpType vectorLoop) {
 
           return WalkResult::advance();
         }
-        
+
         // TODO: Support unstructure mem access tiling
         if (utils::isUnstructuredMemAccLoop(op))
           return WalkResult::interrupt();

@@ -8,55 +8,55 @@
  * BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE. See LICENSE in the root of
  * the software repository for the full text of the License.
  */
- 
+
 #ifndef CATLASS_EPILOGUE_FUSION_VISITOR_CAST_HPP
 #define CATLASS_EPILOGUE_FUSION_VISITOR_CAST_HPP
- 
+
 #include "catlass/epilogue/fusion/visitor_impl.hpp"
 #include "catlass/epilogue/fusion/operations.hpp"
- 
+
 namespace Catlass::Epilogue::Fusion {
- 
+
 template <class ElementTo, class ElementFrom, AscendC::RoundMode RoundStyle = AscendC::RoundMode::CAST_NONE>
 struct VisitorCast : VisitorImpl<> {
     using VisitorImpl<>::VisitorImpl;
- 
+
     // 输出元素类型与输出阶段元信息
     using ElementOutput = ElementTo;
- 
+
     struct Arguments {};
     struct Params {};
- 
+
     template <class ProblemShape>
     static constexpr Params
     to_underlying_arguments(ProblemShape const&, Arguments const&, void*) {
         return Params();
     }
- 
+
     template <class ProblemShape>
     static size_t
     get_workspace_size(ProblemShape const&, Arguments const&) {
         return 0;
     }
- 
+
     template <class ProblemShape>
     static bool
     can_implement(ProblemShape const&, Arguments const&) {
         return true;
     }
- 
+
     VisitorCast() {}
- 
+
     VisitorCast(Params const&) {}
- 
+
     struct Callbacks : EmptyCallbacks {
         AscendC::LocalTensor<ElementTo> ubOut;
         uint32_t compute_length;
- 
+
         CATLASS_DEVICE
         Callbacks(AscendC::LocalTensor<ElementTo> ubOut_, uint32_t compute_length_)
             : ubOut(ubOut_), compute_length(compute_length_) {}
- 
+
         template <class ArchTag, class TensorC, typename ElementInput>
         CATLASS_DEVICE AscendC::LocalTensor<ElementTo> const& visit(
             TensorC const& /*tensorTile*/,    // 不使用
@@ -73,7 +73,7 @@ struct VisitorCast : VisitorImpl<> {
             return ubOut;
         }
     };
- 
+
     template <class ArchTag>
     CATLASS_DEVICE auto get_callbacks(
         Arch::Resource<ArchTag>& resource,
@@ -85,10 +85,10 @@ struct VisitorCast : VisitorImpl<> {
         assert(ub_offset <= ArchTag::UB_SIZE, "ub_offset exceeds ArchTag::UB_SIZE");
         return Callbacks(ubOut, compute_length);
     }
- 
+
     Params params;
 };
- 
+
 } // namespace Catlass::Epilogue::Fusion
- 
+
 #endif

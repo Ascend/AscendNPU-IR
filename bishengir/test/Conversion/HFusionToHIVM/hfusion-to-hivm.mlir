@@ -5,16 +5,16 @@
 func.func @test_elemwise_unary_ops(
   %src : memref<6x6xf32>, %dst : memref<6x6xf32>) {
   //     CHECK: hivm.hir.vexp
-  linalg.elemwise_unary {fun = #linalg.unary_fn<exp>} 
-    ins(%src : memref<6x6xf32>) 
+  linalg.elemwise_unary {fun = #linalg.unary_fn<exp>}
+    ins(%src : memref<6x6xf32>)
     outs(%dst : memref<6x6xf32>)
   //     CHECK: hivm.hir.vabs
-  linalg.elemwise_unary {fun = #linalg.unary_fn<abs>} 
-    ins(%src : memref<6x6xf32>) 
+  linalg.elemwise_unary {fun = #linalg.unary_fn<abs>}
+    ins(%src : memref<6x6xf32>)
     outs(%dst : memref<6x6xf32>)
   //     CHECK: hivm.hir.vln
-  linalg.elemwise_unary {fun = #linalg.unary_fn<log>} 
-    ins(%src : memref<6x6xf32>) 
+  linalg.elemwise_unary {fun = #linalg.unary_fn<log>}
+    ins(%src : memref<6x6xf32>)
     outs(%dst : memref<6x6xf32>)
   return
 }
@@ -103,36 +103,36 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 func.func @test_elemwise_binary_ops(
   %src1 : memref<6x6xf32>, %src2 : memref<6x6xf32>, %dst : memref<6x6xf32>) {
   //     CHECK: hivm.hir.vadd
-  linalg.elemwise_binary {fun = #linalg.binary_fn<add>} 
-    ins(%src1, %src2 : memref<6x6xf32>, memref<6x6xf32>) 
+  linalg.elemwise_binary {fun = #linalg.binary_fn<add>}
+    ins(%src1, %src2 : memref<6x6xf32>, memref<6x6xf32>)
     outs(%dst : memref<6x6xf32>)
   //     CHECK: hivm.hir.vmul
-  linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} 
-    ins(%src1, %src2 : memref<6x6xf32>, memref<6x6xf32>) 
+  linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
+    ins(%src1, %src2 : memref<6x6xf32>, memref<6x6xf32>)
     outs(%dst : memref<6x6xf32>)
   //     CHECK: hivm.hir.vsub
-  linalg.elemwise_binary {fun = #linalg.binary_fn<sub>} 
-    ins(%src1, %src2 : memref<6x6xf32>, memref<6x6xf32>) 
+  linalg.elemwise_binary {fun = #linalg.binary_fn<sub>}
+    ins(%src1, %src2 : memref<6x6xf32>, memref<6x6xf32>)
     outs(%dst : memref<6x6xf32>)
   //     CHECK: hivm.hir.vdiv
-  linalg.elemwise_binary {fun = #linalg.binary_fn<div>} 
-    ins(%src1, %src2 : memref<6x6xf32>, memref<6x6xf32>) 
+  linalg.elemwise_binary {fun = #linalg.binary_fn<div>}
+    ins(%src1, %src2 : memref<6x6xf32>, memref<6x6xf32>)
     outs(%dst : memref<6x6xf32>)
   //     CHECK: hivm.hir.vmax
-  linalg.elemwise_binary {fun = #linalg.binary_fn<max_signed>} 
-    ins(%src1, %src2 : memref<6x6xf32>, memref<6x6xf32>) 
+  linalg.elemwise_binary {fun = #linalg.binary_fn<max_signed>}
+    ins(%src1, %src2 : memref<6x6xf32>, memref<6x6xf32>)
     outs(%dst : memref<6x6xf32>)
   //     CHECK: hivm.hir.vmin
-  linalg.elemwise_binary {fun = #linalg.binary_fn<min_signed>} 
-    ins(%src1, %src2 : memref<6x6xf32>, memref<6x6xf32>) 
+  linalg.elemwise_binary {fun = #linalg.binary_fn<min_signed>}
+    ins(%src1, %src2 : memref<6x6xf32>, memref<6x6xf32>)
     outs(%dst : memref<6x6xf32>)
   //     CHECK: hivm.hir.vmax
-  linalg.elemwise_binary {fun = #linalg.binary_fn<max_unsigned>} 
-    ins(%src1, %src2 : memref<6x6xf32>, memref<6x6xf32>) 
+  linalg.elemwise_binary {fun = #linalg.binary_fn<max_unsigned>}
+    ins(%src1, %src2 : memref<6x6xf32>, memref<6x6xf32>)
     outs(%dst : memref<6x6xf32>)
   //     CHECK: hivm.hir.vmin
-  linalg.elemwise_binary {fun = #linalg.binary_fn<min_unsigned>} 
-    ins(%src1, %src2 : memref<6x6xf32>, memref<6x6xf32>) 
+  linalg.elemwise_binary {fun = #linalg.binary_fn<min_unsigned>}
+    ins(%src1, %src2 : memref<6x6xf32>, memref<6x6xf32>)
     outs(%dst : memref<6x6xf32>)
   return
 }
@@ -144,25 +144,25 @@ func.func @test_hfusion_elemwise_unary_ops(
   %src : memref<6x6xf32>, %dst : memref<6x6xf32>,
   %srci : memref<6x6xi32>, %dsti : memref<6x6xi32>) {
   //     CHECK: hivm.hir.vrelu
-  hfusion.elemwise_unary {fun = #hfusion.unary_fn<relu>} 
-    ins(%src : memref<6x6xf32>) 
+  hfusion.elemwise_unary {fun = #hfusion.unary_fn<relu>}
+    ins(%src : memref<6x6xf32>)
     outs(%dst : memref<6x6xf32>)
   //     CHECK: hivm.hir.vsqrt
-  hfusion.elemwise_unary {fun = #hfusion.unary_fn<sqrt>} 
-    ins(%src : memref<6x6xf32>) 
+  hfusion.elemwise_unary {fun = #hfusion.unary_fn<sqrt>}
+    ins(%src : memref<6x6xf32>)
     outs(%dst : memref<6x6xf32>)
   //     CHECK: hivm.hir.vrsqrt
-  hfusion.elemwise_unary {fun = #hfusion.unary_fn<rsqrt>} 
-    ins(%src : memref<6x6xf32>) 
+  hfusion.elemwise_unary {fun = #hfusion.unary_fn<rsqrt>}
+    ins(%src : memref<6x6xf32>)
     outs(%dst : memref<6x6xf32>)
   //     CHECK: hivm.hir.vrec
-  hfusion.elemwise_unary {fun = #hfusion.unary_fn<rec>} 
-    ins(%src : memref<6x6xf32>) 
+  hfusion.elemwise_unary {fun = #hfusion.unary_fn<rec>}
+    ins(%src : memref<6x6xf32>)
     outs(%dst : memref<6x6xf32>)
 
   //     CHECK: hivm.hir.vnot
-  hfusion.elemwise_unary {fun = #hfusion.unary_fn<vnot>} 
-    ins(%srci : memref<6x6xi32>) 
+  hfusion.elemwise_unary {fun = #hfusion.unary_fn<vnot>}
+    ins(%srci : memref<6x6xi32>)
     outs(%dsti : memref<6x6xi32>)
 
   //     CHECK: hivm.hir.vtanh
@@ -199,36 +199,36 @@ func.func @test_elemwise_ops_fix_operand(
   // CHECK: tensor.empty
   // CHECK: hivm.hir.vbrc
   // CHECK: hivm.hir.vmul
-  %0 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} 
-  ins(%src0, %src0 : f32, f32) 
+  %0 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
+  ins(%src0, %src0 : f32, f32)
   outs(%dst : tensor<6x6xf32>) -> tensor<6x6xf32>
   // CHECK: hivm.hir.vadd
-  %1 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} 
-  ins(%src1, %0 : f32, tensor<6x6xf32>) 
+  %1 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>}
+  ins(%src1, %0 : f32, tensor<6x6xf32>)
   outs(%dst : tensor<6x6xf32>) -> tensor<6x6xf32>
   // CHECK: memref.alloc
-  // CHECK: hivm.hir.vbrc   
+  // CHECK: hivm.hir.vbrc
   // CHECK: hivm.hir.vand
   hfusion.elemwise_binary {fun = #hfusion.binary_fn<vand>}
-    ins(%src4, %src5 : i16, memref<6x6xi16>) 
+    ins(%src4, %src5 : i16, memref<6x6xi16>)
     outs(%dst1 : memref<6x6xi16>)
   // CHECK: memref.alloc
-  // CHECK: hivm.hir.vbrc  
+  // CHECK: hivm.hir.vbrc
   // CHECK: memref.alloc
-  // CHECK: hivm.hir.vbrc  
+  // CHECK: hivm.hir.vbrc
   // CHECK: hivm.hir.vor
   hfusion.elemwise_binary {fun = #hfusion.binary_fn<vor>}
     ins(%src3, %src4 : i16, i16)
     outs(%dst1 : memref<6x6xi16>)
   // CHECK: tensor.empty
-  // CHECK: hivm.hir.vbrc   
+  // CHECK: hivm.hir.vbrc
   // CHECK: hivm.hir.vexp
-  %2 = linalg.elemwise_unary {fun = #linalg.unary_fn<exp>} 
-    ins(%src1 : f32) 
+  %2 = linalg.elemwise_unary {fun = #linalg.unary_fn<exp>}
+    ins(%src1 : f32)
     outs(%dst : tensor<6x6xf32>) -> tensor<6x6xf32>
   // CHECK: hivm.hir.vdiv
-  %3 = linalg.elemwise_binary {fun = #linalg.binary_fn<div>} 
-  ins(%1, %2 : tensor<6x6xf32>, tensor<6x6xf32>) 
+  %3 = linalg.elemwise_binary {fun = #linalg.binary_fn<div>}
+  ins(%1, %2 : tensor<6x6xf32>, tensor<6x6xf32>)
   outs(%dst : tensor<6x6xf32>) -> tensor<6x6xf32>
   return %3 : tensor<6x6xf32>
 }
@@ -249,7 +249,7 @@ func.func @test_hfusion_absi(
 func.func @test_hfusion_not_op(
   %src : memref<6x6xi1>, %dst : memref<6x6xi1>) {
   //     CHECK: hivm.hir.vnot
-  hfusion.elemwise_unary {fun = #hfusion.unary_fn<vnot>} 
+  hfusion.elemwise_unary {fun = #hfusion.unary_fn<vnot>}
     ins(%src : memref<6x6xi1>)
     outs(%dst : memref<6x6xi1>)
   return
@@ -262,11 +262,11 @@ func.func @test_hfusion_elemwise_binary_ops(
   %src1 : memref<6x6xi16>, %src2 : memref<6x6xi16>, %dst : memref<6x6xi16>,
   %src3 : memref<6x6xf16>, %src4 : memref<6x6xf16>, %dst1 : memref<6x6xf16>) {
   //     CHECK: hivm.hir.vor
-  hfusion.elemwise_binary {fun = #hfusion.binary_fn<vor>} 
+  hfusion.elemwise_binary {fun = #hfusion.binary_fn<vor>}
     ins(%src1, %src2 : memref<6x6xi16>, memref<6x6xi16>)
     outs(%dst : memref<6x6xi16>)
   //     CHECK: hivm.hir.vand
-  hfusion.elemwise_binary {fun = #hfusion.binary_fn<vand>} 
+  hfusion.elemwise_binary {fun = #hfusion.binary_fn<vand>}
     ins(%src1, %src2 : memref<6x6xi16>, memref<6x6xi16>)
     outs(%dst : memref<6x6xi16>)
   //     CHECK: hivm.hir.vmax
@@ -278,7 +278,7 @@ func.func @test_hfusion_elemwise_binary_ops(
     ins(%src3, %src4 : memref<6x6xf16>, memref<6x6xf16>)
     outs(%dst1 : memref<6x6xf16>)
   // CHECK: hivm.hir.vmod
-  hfusion.elemwise_binary {fun = #hfusion.binary_fn<mod>} 
+  hfusion.elemwise_binary {fun = #hfusion.binary_fn<mod>}
     ins(%src3, %src4 : memref<6x6xf16>, memref<6x6xf16>)
     outs(%dst1 : memref<6x6xf16>)
   return
@@ -638,7 +638,7 @@ func.func @transpose_2d() -> tensor<8x32xf32> {
   %dst = memref.alloc() : memref<8x32xf32>
   linalg.transpose ins(%src : memref<32x8xf32>) outs(%dst : memref<8x32xf32>) permutation = [1, 0]
   annotation.mark %dst {transpose_without_align} : memref<8x32xf32>
-  
+
   return %transposed : tensor<8x32xf32>
 }
 
@@ -707,8 +707,8 @@ func.func @test_hfusion_compare_scalar_ops() -> tensor<4xi1> {
   %src1 = arith.constant 4 : i32
   %src2 = arith.constant 0 : i32
   %dst = tensor.empty() : tensor<4xi1>
-  %0 = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} 
-    ins(%src1, %src2 : i32, i32) 
+  %0 = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>}
+    ins(%src1, %src2 : i32, i32)
     outs(%dst : tensor<4xi1>) -> tensor<4xi1>
   return %0 : tensor<4xi1>
 }
@@ -824,11 +824,11 @@ func.func @extract_scalar_rhs_for_binary_shift_op(%arg0 : tensor<1xi64>, %arg1 :
   %c2_i64 = arith.constant 2 : i64
   %0 = tensor.empty() : tensor<1xi64>
   %1 = linalg.fill ins(%c2_i64 : i64) outs(%0 : tensor<1xi64>) -> tensor<1xi64>
-  %2 = hfusion.elemwise_binary {fun = #hfusion.binary_fn<shli>} ins(%arg0, %1 : tensor<1xi64>, tensor<1xi64>) 
+  %2 = hfusion.elemwise_binary {fun = #hfusion.binary_fn<shli>} ins(%arg0, %1 : tensor<1xi64>, tensor<1xi64>)
                                                                 outs(%0 : tensor<1xi64>) -> tensor<1xi64>
   %3 = tensor.empty() : tensor<1x1xi64>
   %4 = linalg.fill ins(%c2_i64 : i64) outs(%3 : tensor<1x1xi64>) -> tensor<1x1xi64>
-  %5 = hfusion.elemwise_binary {fun = #hfusion.binary_fn<shli>} ins(%arg1, %4 : tensor<1x1xi64>, tensor<1x1xi64>) 
+  %5 = hfusion.elemwise_binary {fun = #hfusion.binary_fn<shli>} ins(%arg1, %4 : tensor<1x1xi64>, tensor<1x1xi64>)
                                                                 outs(%3 : tensor<1x1xi64>) -> tensor<1x1xi64>
   return %2, %5 : tensor<1xi64>, tensor<1x1xi64>
 }
@@ -950,7 +950,7 @@ func.func @test_hfusion_cum_ops() -> tensor<1x2x3x4xi32> {
 // CHECK-LABEL: func.func @test_atomic_cas
 module {
   func.func @test_atomic_cas(%arg0: memref<?xi16>) {
-    
+
     %alloc = memref.alloc() : memref<256xi16>
     %alloc_2 = memref.alloc() : memref<256xi16>
     // CHECK: hivm.hir.atomic_cas
@@ -1121,4 +1121,37 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
     %res = hfusion.matmul_mx ins(%a_t, %b_t, %2, %3 : tensor<4x8xf8E5M2>, tensor<8x16xf8E5M2>, tensor<1xui8>, tensor<1xui8>) outs(%acc : tensor<4x16xf32>) -> tensor<4x16xf32>
     return %res : tensor<4x16xf32>
   }
+}
+
+// -----
+
+// `setSubBlockMapping` spreads the loop across the two vector sub-blocks, which
+// needs the block to have two. A hivm.core_ratio with vector < 2 gives one, so
+// every iteration mapped to the second sub-block would be dropped. The hint and
+// the ratio both come from the frontend, so this is contradictory input: warn,
+// drop the hint, and leave the loop sequential on the single AIV.
+// CHECK-LABEL: func.func @bind_sub_block_ratio_1_1
+func.func @bind_sub_block_ratio_1_1(%arg0: tensor<64x64xf32> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg1: memref<32x64xf16>) attributes {WorkspaceArgIdx = 0 : i64, global_kernel = "local", hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.core_ratio = #hivm.core_ratio<1, 1>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+  %cst = arith.constant 1.000000e+00 : f32
+  %c2 = arith.constant 2 : index
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c32_i32 = arith.constant 32 : i32
+  %0 = tensor.empty() : tensor<32x64xf32>
+  // expected-warning@+1 {{gives fewer than two vector sub-blocks per block}}
+  scf.for %arg2 = %c0 to %c2 step %c1 {
+    %1 = arith.index_cast %arg2 : index to i32
+    %2 = arith.muli %1, %c32_i32 : i32
+    %3 = arith.index_cast %2 : i32 to index
+    %extracted_slice = tensor.extract_slice %arg0[%3, 0] [32, 64] [1, 1] : tensor<64x64xf32> to tensor<32x64xf32>
+    %4 = hivm.hir.vadd ins(%extracted_slice, %cst : tensor<32x64xf32>, f32) outs(%0 : tensor<32x64xf32>) -> tensor<32x64xf32>
+    %5 = tensor.empty() : tensor<32x64xf16>
+    %6 = hivm.hir.vcast ins(%4 : tensor<32x64xf32>) outs(%5 : tensor<32x64xf16>) -> tensor<32x64xf16>
+    bufferization.materialize_in_destination %6 in writable %arg1 : (tensor<32x64xf16>, memref<32x64xf16>) -> ()
+  } {hfusion.bind_sub_block}
+  // The bind_sub_block hint is consumed, but no sub-block mapping is attached.
+  // CHECK-NOT: map_for_to_forall
+  // CHECK-NOT: #hivm.sub_block<x>
+  // CHECK-NOT: hfusion.bind_sub_block
+  return
 }

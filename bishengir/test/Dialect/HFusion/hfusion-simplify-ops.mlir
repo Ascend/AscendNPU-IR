@@ -326,15 +326,15 @@ func.func @castInLoop(%arg0: tensor<1x1x12xbf16>, %arg1: tensor<1x1x12xbf16>) ->
   // CHECK:           %[[VAL_3:.*]] = arith.constant 4 : i32
   // CHECK:           %[[VAL_4:.*]] = tensor.empty
   // CHECK:           %[[VAL_5:.*]] = tensor.empty
-  // CHECK:           %[[VAL_6:.*]] = hfusion.cast 
-  // CHECK:           %[[VAL_7:.*]] = hfusion.cast 
+  // CHECK:           %[[VAL_6:.*]] = hfusion.cast
+  // CHECK:           %[[VAL_7:.*]] = hfusion.cast
   %c1_i32 = arith.constant 1 : i32
   %c4_i32 = arith.constant 4 : i32
   %0 = tensor.empty() : tensor<1x1x12xbf16>
   %1 = tensor.empty() : tensor<1x1x12xf32>
   %2 = hfusion.cast {enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%arg0 : tensor<1x1x12xbf16>) outs(%1 : tensor<1x1x12xf32>) -> tensor<1x1x12xf32>
   %4 = hfusion.cast {enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%0 : tensor<1x1x12xbf16>) outs(%1 : tensor<1x1x12xf32>) -> tensor<1x1x12xf32>
-  
+
   // CHECK:           %[[VAL_8:.*]] = tensor.empty() : tensor<1x1x12xf32>
   // CHECK:           %[[VAL_9:.*]] = hfusion.cast {{.*}} ins(%[[VAL_1]] : tensor<1x1x12xbf16>) outs(%[[VAL_8]] : tensor<1x1x12xf32>) -> tensor<1x1x12xf32>
   // CHECK:           %[[VAL_10:.*]] = scf.for %[[VAL_11:.*]] = %[[VAL_2]] to %[[VAL_3]] step %[[VAL_2]] iter_args(%[[VAL_12:.*]] = %[[VAL_9]]) -> (tensor<1x1x12xf32>)  : i32 {
@@ -521,13 +521,13 @@ func.func @hoist_negation_two_matmuls(%a: tensor<4x8xf32>, %b: tensor<8x4xf32>, 
   %cst_neg1 = arith.constant -1.000000e+00 : f32
   %out1 = tensor.empty() : tensor<4x4xf32>
   %neg1 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%matmul1, %cst_neg1 : tensor<4x4xf32>, f32) outs(%out1 : tensor<4x4xf32>) -> tensor<4x4xf32>
-  
+
   %init2 = tensor.empty() : tensor<4x4xf32>
   %fill2 = linalg.fill ins(%cst_zero : f32) outs(%init2 : tensor<4x4xf32>) -> tensor<4x4xf32>
   %matmul2 = linalg.matmul ins(%neg1, %c : tensor<4x4xf32>, tensor<4x4xf32>) outs(%fill2 : tensor<4x4xf32>) -> tensor<4x4xf32>
   %out2 = tensor.empty() : tensor<4x4xf32>
   %neg2 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%matmul2, %cst_neg1 : tensor<4x4xf32>, f32) outs(%out2 : tensor<4x4xf32>) -> tensor<4x4xf32>
-  
+
   return %neg2 : tensor<4x4xf32>
 }
 
@@ -567,16 +567,16 @@ func.func @no_hoist_sub_zero_multi_use_matmul(%a: tensor<4x8xf32>, %b: tensor<8x
   %cst_zero = arith.constant 0.000000e+00 : f32
   %fill = linalg.fill ins(%cst_zero : f32) outs(%init : tensor<4x4xf32>) -> tensor<4x4xf32>
   %matmul1 = linalg.matmul ins(%a, %b : tensor<4x8xf32>, tensor<8x4xf32>) outs(%fill : tensor<4x4xf32>) -> tensor<4x4xf32>
-  
+
   %out1 = tensor.empty() : tensor<4x4xf32>
   %neg = linalg.elemwise_binary {fun = #linalg.binary_fn<sub>} ins(%cst_zero, %matmul1 : f32, tensor<4x4xf32>) outs(%out1 : tensor<4x4xf32>) -> tensor<4x4xf32>
-  
+
   %fill2 = linalg.fill ins(%cst_zero : f32) outs(%init : tensor<4x4xf32>) -> tensor<4x4xf32>
   %matmul2 = linalg.matmul ins(%neg, %c : tensor<4x4xf32>, tensor<4x4xf32>) outs(%fill2 : tensor<4x4xf32>) -> tensor<4x4xf32>
-  
+
   %out2 = tensor.empty() : tensor<4x4xf32>
   %add = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%neg, %neg : tensor<4x4xf32>, tensor<4x4xf32>) outs(%out2 : tensor<4x4xf32>) -> tensor<4x4xf32>
-  
+
   return %matmul2, %add : tensor<4x4xf32>, tensor<4x4xf32>
 }
 
