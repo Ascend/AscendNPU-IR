@@ -81,6 +81,26 @@ func.func @decompose_conv3d_rank2_memref_dhw_padding(
 
 // -----
 
+// CHECK-LABEL: func.func @decompose_conv3d_asymmetric_padding
+// CHECK-NOT: hivm.hir.Conv3dL1
+// CHECK: memref.subview %{{.*}}[0, 0] [224, 128]
+// CHECK: hivm.hir.Conv2dL1 {groups = 1 : i32, padding = [2, 4, 3, 5], stride = 1 : i32}
+// CHECK-SAME: outs(%{{.*}} : memref<224x128xf16
+// CHECK: return
+func.func @decompose_conv3d_asymmetric_padding(
+    %input: memref<2x10x2x10x13x16xf16>,
+    %weight: memref<3x2x4x5x11x16xf16>,
+    %init: memref<224x256xf16>) {
+  %true = arith.constant true
+  hivm.hir.Conv3dL1 {conv3dDepthPadded, groups = 1 : i32,
+                     padding = [1, 2, 2, 4, 3, 5]}
+      ins(%input, %weight, %true : memref<2x10x2x10x13x16xf16>, memref<3x2x4x5x11x16xf16>, i1)
+      outs(%init : memref<224x256xf16>)
+  return
+}
+
+// -----
+
 // CHECK-LABEL: func.func @decompose_conv3d_hw_stride
 // CHECK-NOT: hivm.hir.Conv3dL1
 // CHECK: memref.subview %{{.*}}[0, 0] [16, 80]

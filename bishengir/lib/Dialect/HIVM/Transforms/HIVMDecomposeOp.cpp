@@ -1905,13 +1905,18 @@ public:
       return failure();
     }
 
-    auto paddingD = op.getPaddingD();
-    auto paddingH = op.getPaddingH();
-    auto paddingW = op.getPaddingW();
-    if (failed(paddingD) || failed(paddingH) || failed(paddingW)) {
+    auto paddingFront = op.getPaddingFront();
+    auto paddingBack = op.getPaddingBack();
+    auto paddingT = op.getPaddingT();
+    auto paddingB = op.getPaddingB();
+    auto paddingL = op.getPaddingL();
+    auto paddingR = op.getPaddingR();
+    if (failed(paddingFront) || failed(paddingBack) || failed(paddingT) ||
+        failed(paddingB) || failed(paddingL) || failed(paddingR)) {
       return failure();
     }
-    if (*paddingD < 0 || *paddingH < 0 || *paddingW < 0) {
+    if (*paddingFront < 0 || *paddingBack < 0 || *paddingT < 0 ||
+        *paddingB < 0 || *paddingL < 0 || *paddingR < 0) {
       return failure();
     }
     const bool depthAlreadyPadded = op->hasAttr(conv3dDepthPadded);
@@ -1919,7 +1924,7 @@ public:
     // Normalize materializes D padding when front/back padding is nonzero, so
     // decompose expects that precondition via conv3dDepthPadded. H/W padding
     // remains logical and is forwarded to Conv2dL1.
-    if (*paddingD > 0 && !depthAlreadyPadded) {
+    if ((*paddingFront > 0 || *paddingBack > 0) && !depthAlreadyPadded) {
       return failure();
     }
 
@@ -1930,15 +1935,15 @@ public:
         *strideD != 1 || *strideH <= 0 || *strideW <= 0) {
       return failure();
     }
-    if (iD < wD || h + 2 * (*paddingH) < wH ||
-        w + 2 * (*paddingW) < wW) {
+    if (iD < wD || h + *paddingT + *paddingB < wH ||
+        w + *paddingL + *paddingR < wW) {
       return failure();
     }
     const int64_t expectedOD = iD - wD + 1;
     const int64_t expectedOH =
-        (h + 2 * (*paddingH) - wH) / *strideH + 1;
+        (h + *paddingT + *paddingB - wH) / *strideH + 1;
     const int64_t expectedOW =
-        (w + 2 * (*paddingW) - wW) / *strideW + 1;
+        (w + *paddingL + *paddingR - wW) / *strideW + 1;
 
     const int64_t oD = expectedOD;
     const int64_t fusedND = n * expectedOD;
@@ -1956,11 +1961,27 @@ public:
       return failure();
     }
     Location loc = op.getLoc();
-    Attribute conv2DPadding =
-        isa<IntegerAttr>(op.getPaddingAttr())
-            ? op.getPaddingAttr()
-            : rewriter.getArrayAttr({rewriter.getI64IntegerAttr(*paddingH),
-                                     rewriter.getI64IntegerAttr(*paddingW)});
+    bool hasExplicitPadding = false;
+    if (auto arrayAttr = dyn_cast<ArrayAttr>(op.getPaddingAttr()))
+      hasExplicitPadding = arrayAttr.size() == 6;
+    else if (auto denseAttr =
+                 dyn_cast<DenseI64ArrayAttr>(op.getPaddingAttr()))
+      hasExplicitPadding = denseAttr.size() == 6;
+
+    Attribute conv2DPadding;
+    if (isa<IntegerAttr>(op.getPaddingAttr())) {
+      conv2DPadding = op.getPaddingAttr();
+    } else if (!hasExplicitPadding) {
+      conv2DPadding = rewriter.getArrayAttr(
+          {rewriter.getI64IntegerAttr(*paddingT),
+           rewriter.getI64IntegerAttr(*paddingL)});
+    } else {
+      conv2DPadding = rewriter.getArrayAttr(
+          {rewriter.getI64IntegerAttr(*paddingT),
+           rewriter.getI64IntegerAttr(*paddingB),
+           rewriter.getI64IntegerAttr(*paddingL),
+           rewriter.getI64IntegerAttr(*paddingR)});
+    }
     Attribute conv2DStride;
     if (!op.getStrideAttr()) {
       conv2DStride = rewriter.getI32IntegerAttr(1);

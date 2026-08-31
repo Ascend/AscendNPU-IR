@@ -378,7 +378,9 @@ def Conv1DOp
     Configurable parameters (with default values):
     - stride: Convolution stride. Accepts an integer scalar in [1, 255],
       default=1
-    - padding: Number of zero-padding elements on both sides, default=0
+    - padding: Number of zero-padding elements. Accepts an integer scalar or
+      a 2-element integer array [paddingL, paddingR], default=0. A scalar
+      applies to both sides.
     - dilation: Kernel dilation, default=1. Currently only dilation=1 is
       supported.
     - groups: Number of groups for grouped convolution, default=1
@@ -388,13 +390,20 @@ def Conv1DOp
                       Optional<AnyShaped>:$bias,
                       AnyShaped:$init,
                       I32Attr:$stride,
-                      I32Attr:$padding,
+                      AnyAttr:$padding,
                       I32Attr:$dilation,
                       I32Attr:$groups);
   let results = (outs AnyTensor:$result);
   let regions = (region AnyRegion:$region);
   let skipDefaultBuilders = 1;
   let builders = [OpBuilder<
+                    (ins "ValueRange":$inputs,
+                        "Value":$output,
+                        "int32_t":$stride,
+                        "Attribute":$padding,
+                        "int32_t":$dilation,
+                        "int32_t":$groups)>,
+                  OpBuilder<
                     (ins "ValueRange":$inputs,
                         "Value":$output,
                         "int32_t":$stride,
@@ -411,7 +420,8 @@ def Conv1DOp
     ArrayAttr getIndexingMaps();
 
     int64_t getStrideW();
-    int64_t getPaddingW();
+    FailureOr<int64_t> getPaddingL();
+    FailureOr<int64_t> getPaddingR();
     int64_t getDilationW();
 #ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
     static std::function<void(mlir::ImplicitLocOpBuilder &, mlir::Block &,
@@ -458,9 +468,10 @@ def Conv2DOp
     Configurable parameters (with default values):
     - stride: Convolution stride. Accepts an integer scalar or a 2-element
       integer array [strideH, strideW], with each value in [1, 255], default=1.
-    - padding: Number of zero-padding elements. Accepts an integer scalar or a
-      2-element integer array [paddingH, paddingW], default=0. A scalar applies
-      to both H and W directions.
+    - padding: Number of zero-padding elements. Accepts an integer scalar, a
+      2-element integer array [paddingH, paddingW], or a 4-element integer
+      array [paddingT, paddingB, paddingL, paddingR], default=0. A scalar and
+      the 2-element form apply symmetric padding in each dimension.
     - dilation: Kernel dilation. Accepts an integer scalar or a 2-element
       integer array [dilationH, dilationW], default=1. Currently only
       dilation=1 is supported.
@@ -502,8 +513,10 @@ def Conv2DOp
 
     FailureOr<int64_t> getStrideH();
     FailureOr<int64_t> getStrideW();
-    FailureOr<int64_t> getPaddingH();
-    FailureOr<int64_t> getPaddingW();
+    FailureOr<int64_t> getPaddingT();
+    FailureOr<int64_t> getPaddingB();
+    FailureOr<int64_t> getPaddingL();
+    FailureOr<int64_t> getPaddingR();
     FailureOr<int64_t> getDilationH();
     FailureOr<int64_t> getDilationW();
 #ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
@@ -551,9 +564,11 @@ def Conv3DOp
     - stride: Convolution stride. Accepts an integer scalar or a 3-element
       integer array [strideD, strideH, strideW], default=1. Currently strideD
       must be 1; strideH and strideW must be in [1, 255].
-    - padding: Number of zero-padding elements. Accepts an integer scalar or a
-      3-element integer array [paddingD, paddingH, paddingW], default=0. A
-      scalar applies to all D/H/W directions.
+    - padding: Number of zero-padding elements. Accepts an integer scalar, a
+      3-element integer array [paddingD, paddingH, paddingW], or a 6-element
+      integer array [paddingFront, paddingBack, paddingT, paddingB, paddingL,
+      paddingR], default=0. A scalar and the 3-element form apply symmetric
+      padding in each dimension.
     - dilation: Kernel dilation. Accepts an integer scalar or a 3-element
       integer array [dilationD, dilationH, dilationW], default=1. Currently
       only dilation=1 is supported.
@@ -597,9 +612,12 @@ def Conv3DOp
     FailureOr<int64_t> getStrideD();
     FailureOr<int64_t> getStrideH();
     FailureOr<int64_t> getStrideW();
-    FailureOr<int64_t> getPaddingD();
-    FailureOr<int64_t> getPaddingH();
-    FailureOr<int64_t> getPaddingW();
+    FailureOr<int64_t> getPaddingFront();
+    FailureOr<int64_t> getPaddingBack();
+    FailureOr<int64_t> getPaddingT();
+    FailureOr<int64_t> getPaddingB();
+    FailureOr<int64_t> getPaddingL();
+    FailureOr<int64_t> getPaddingR();
     FailureOr<int64_t> getDilationD();
     FailureOr<int64_t> getDilationH();
     FailureOr<int64_t> getDilationW();
