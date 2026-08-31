@@ -1194,34 +1194,110 @@ public:
 
   TreeSolves solveIt() {
     auto funcOp = getOperation();
-    TreeSolves solves = initializeSolutions();
     SmallVector<Operation *> ops;
-    funcOp->walk<WalkOrder::PreOrder>(
-        [&](Operation *op) { ops.push_back(op); });
+    funcOp->walk<WalkOrder::PreOrder>([&](Operation *op) {
+      if (isVectorOp(op))
+        ops.push_back(op);
+    });
 
-    for (auto op : llvm::reverse(ops)) {
-      if (isVectorOp(op)) {
-        solves = getSolveSpace(op, solves);
-        if (solves.empty())
-          return {};
+    struct SearchFrame {
+      size_t nextOp;
+      TreeSolves alternatives;
+      size_t nextAlternative = 0;
+    };
+
+    // Only the first complete solution is applied. Search depth-first so that
+    // independent branching operations do not materialize their Cartesian
+    // product. Keep the remaining candidates at each branch for complete
+    // backtracking if the preferred candidate fails later.
+    for (TreeSolvePtr initialSolve : initializeSolutions()) {
+      TreeSolvePtr solve = initialSolve;
+      size_t nextOp = ops.size();
+      SmallVector<SearchFrame> searchStack;
+
+      while (true) {
+        if (nextOp == 0)
+          return {solve};
+
+        Operation *op = ops[--nextOp];
+        TreeSolves candidates = getSolveSpace(op, solve);
+        if (!candidates.empty()) {
+          solve = candidates.front();
+          if (candidates.size() > 1) {
+            candidates.erase(candidates.begin());
+            searchStack.push_back(SearchFrame{nextOp, std::move(candidates)});
+          }
+          continue;
+        }
+
+        // A failure only depends on the vector states read by this operation.
+        // Skip newer branch points whose remaining alternatives cannot change
+        // any of those states. Without this backjump, a producer-side failure
+        // can enumerate the Cartesian product of unrelated consumers before
+        // reaching the consumer that constrained the failed result.
+        SmallVector<Value> conflictValues = solve->getVectorOperand(op);
+        llvm::append_range(conflictValues, solve->getVectorResults(op));
+        std::optional<size_t> conflictFrame;
+        for (size_t i = searchStack.size(); i > 0; --i) {
+          SearchFrame &frame = searchStack[i - 1];
+          bool canChangeConflict = false;
+          for (size_t alternative = frame.nextAlternative;
+               alternative < frame.alternatives.size() && !canChangeConflict;
+               ++alternative) {
+            const auto &alternativeInputs =
+                frame.alternatives[alternative]->inputs;
+            for (Value value : conflictValues) {
+              auto currentState = solve->inputs.find(value);
+              auto alternativeState = alternativeInputs.find(value);
+              if (currentState != solve->inputs.end() &&
+                  alternativeState != alternativeInputs.end() &&
+                  currentState->second != alternativeState->second) {
+                canChangeConflict = true;
+                break;
+              }
+            }
+          }
+          if (canChangeConflict) {
+            conflictFrame = i - 1;
+            break;
+          }
+        }
+
+        if (conflictFrame) {
+          // Drop invalid branches.
+          searchStack.resize(*conflictFrame + 1);
+          SearchFrame &frame = searchStack.back();
+          solve = frame.alternatives[frame.nextAlternative++];
+          nextOp = frame.nextOp;
+          continue;
+        }
+
+        // No branch can be proven relevant (for example, the failure does not
+        // expose vector operands/results). Fall back to chronological
+        // backtracking to keep the search complete.
+        while (!searchStack.empty()) {
+          SearchFrame &frame = searchStack.back();
+          if (frame.nextAlternative < frame.alternatives.size()) {
+            solve = frame.alternatives[frame.nextAlternative++];
+            nextOp = frame.nextOp;
+            break;
+          }
+          searchStack.pop_back();
+        }
+        if (searchStack.empty())
+          break;
       }
     }
-    return solves;
+    return {};
   }
 
-  TreeSolves getSolveSpace(Operation *op, TreeSolves &solves) {
+  TreeSolves getSolveSpace(Operation *op, const TreeSolvePtr &solve) {
     DBG(llvm::dbgs() << "Solving problem of: " << *op;);
-    TreeSolves newSolves;
-    for (auto solve : solves) {
-      for (auto s : solve->solveProblem(op)) {
-        newSolves.push_back(s);
-      }
-    }
-    DBG(llvm::dbgs() << "solve num from " << solves.size() << " To "
-                     << newSolves.size() << "\n";);
+    TreeSolves newSolves = solve->solveProblem(op);
+    DBG(llvm::dbgs() << "solve num from 1 To " << newSolves.size() << "\n";);
     if (newSolves.empty()) {
       failedOp = op;
-      failedSolves = solves;
+      failedSolves = {solve};
       DBG(llvm::dbgs() << "Failed to solve problem";);
     } else {
       DBG(llvm::dbgs() << "Solve problem succeed.";);
