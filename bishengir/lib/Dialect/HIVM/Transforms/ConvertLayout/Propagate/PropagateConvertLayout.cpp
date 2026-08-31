@@ -91,16 +91,7 @@ struct MoveConvertLayoutToSourceOfUBToCBufCopy
       return failure();
     }
 
-    auto spaceCastDef = toTensor.getMemref().getDefiningOp();
-    if (!spaceCastDef) {
-      return failure();
-    }
-    auto spaceCast = dyn_cast<memref::MemorySpaceCastOp>(spaceCastDef);
-    if (!spaceCast) {
-      return failure();
-    }
-
-    auto allocDef = spaceCast.getSource().getDefiningOp();
+    auto allocDef = toTensor.getMemref().getDefiningOp();
     if (!allocDef) {
       return failure();
     }
@@ -116,7 +107,7 @@ struct MoveConvertLayoutToSourceOfUBToCBufCopy
     }
 
     Operation *copyOpt = nullptr;
-    for (auto *user : spaceCast->getUsers()) {
+    for (auto *user : alloc->getUsers()) {
       copyOpt = dyn_cast<hivm::CopyOp>(user);
       if (copyOpt) {
         break;
@@ -139,10 +130,8 @@ struct MoveConvertLayoutToSourceOfUBToCBufCopy
     auto memRefType = MemRefType::get(shape, type, layout, space);
 
     auto newAlloc = rewriter.create<memref::AllocOp>(loc, memRefType);
-    auto newSpaceCast =
-        rewriter.create<memref::MemorySpaceCastOp>(loc, memRefType, newAlloc);
     auto newToTensor = rewriter.create<bufferization::ToTensorOp>(
-        loc, newSpaceCast, toTensor.getRestrict(), toTensor.getWritable());
+        loc, newAlloc, toTensor.getRestrict(), toTensor.getWritable());
 
     rewriter.modifyOpInPlace(convertLayout, [&] {
       convertLayout.getSourceMutable().assign(copy.getSource());
@@ -151,7 +140,7 @@ struct MoveConvertLayoutToSourceOfUBToCBufCopy
     rewriter.moveOpBefore(convertLayout, copy);
     rewriter.modifyOpInPlace(copy, [&] {
       copy.getSrcMutable().assign(convertLayout->getResult(0));
-      copy.getDstMutable().assign(newSpaceCast->getResult(0));
+      copy.getDstMutable().assign(newAlloc);
     });
 
     SmallPtrSet<Operation *, 4> except;

@@ -226,16 +226,24 @@ def InferHIVMDataLayout : Pass<"hivm-infer-data-layout", "func::FuncOp"> {
   ];
 }
 
-def ExposeMemrefWriteToTensor
-    : Pass<"hivm-expose-memref-write-to-tensor", "func::FuncOp"> {
-  let summary = "Expose memref-level writes to tensor-level analysis.";
+def NormalizeToTensorOp
+    : Pass<"hivm-normalize-to-tensor", "func::FuncOp"> {
+  let summary = "Normalize bufferization.to_tensor ops.";
   let description = [{
-    Expose memref-level writes (e.g., hivm.hir.load) to tensor-level analysis
-    by add copyOp for toTensorOp and replace all users of toTensorOp. This makes
-    memref-level writes visible to One-Shot Bufferization analysis, enabling RAW
-    conflict detection and correct copy insertion.
+    Normalize `bufferization.to_tensor` ops before bufferization:
+
+    1. Isolate the hivm memory-space information carried by the memref operand
+       by inserting a `memref.memory_space_cast` before the `to_tensor` when the
+       memref has an hivm address-space attribute, keeping the address-space
+       attr out of the tensor bufferization path.
+
+    2. Expose memref-level writes (e.g., hivm.hir.load) to tensor-level analysis
+       by adding a copyOp for the toTensorOp and replacing all users of the
+       toTensorOp. This makes memref-level writes visible to One-Shot
+       Bufferization analysis, enabling RAW conflict detection and correct copy
+       insertion.
   }];
-  let constructor = "mlir::hivm::createExposeMemrefWriteToTensorPass()";
+  let constructor = "mlir::hivm::createNormalizeToTensorOpPass()";
   let dependentDialects =
     ["bufferization::BufferizationDialect", "memref::MemRefDialect"];
 }

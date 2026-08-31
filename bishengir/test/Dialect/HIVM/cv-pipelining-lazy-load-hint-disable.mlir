@@ -9,7 +9,7 @@
 // consumer of %tensor2; the vector op consumes %wst instead).
 
 // CHECK-LABEL: func.func @test_lazy_loading_hint_false_kernel_off
-// CHECK: memref<2x16x16xf16>
+// CHECK: memref<2x16x16xf16
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   func.func @test_lazy_loading_hint_false_kernel_off(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}) attributes {WorkspaceArgIdx = 0 : i16, func_dyn_memref_args = dense<[true]> : vector<1xi1>, global_kernel = "local", hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix"} {
     %input1 = "some_op"() : () -> memref<16x16xf16>
@@ -63,7 +63,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // multi-buffer expansion for the load result).
 
 // CHECK-LABEL: func.func @test_lazy_loading_hint_false_cross_core_ignored
-// CHECK-NOT: memref<2x16x16xf16>
+// CHECK-NOT: memref<2x16x16xf16
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   func.func @test_lazy_loading_hint_false_cross_core_ignored(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}) attributes {WorkspaceArgIdx = 0 : i16, func_dyn_memref_args = dense<[true]> : vector<1xi1>, global_kernel = "local", hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix"} {
     %input1 = "some_op"() : () -> memref<16x16xf16>

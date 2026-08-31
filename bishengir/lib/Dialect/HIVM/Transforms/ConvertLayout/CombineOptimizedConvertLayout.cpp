@@ -1044,13 +1044,6 @@ struct FoldFixpipeStoreConvertLayoutPattern
     newAllocOp->setAttrs(match.allocOp->getAttrs());
 
     Value newBuffer = newAllocOp.getResult();
-    if (match.spaceCast) {
-      rewriter.setInsertionPoint(match.spaceCast);
-      auto newSpaceCast = rewriter.create<memref::MemorySpaceCastOp>(
-          match.spaceCast.getLoc(), newBufferTy, newBuffer);
-      newSpaceCast->setAttrs(match.spaceCast->getAttrs());
-      newBuffer = newSpaceCast.getResult();
-    }
 
     rewriter.setInsertionPoint(match.toTensorOp);
     auto newToTensorOp = rewriter.create<bufferization::ToTensorOp>(

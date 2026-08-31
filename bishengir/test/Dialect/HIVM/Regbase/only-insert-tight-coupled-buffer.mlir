@@ -11,9 +11,8 @@
 // CHECK: %[[EXPANDED:.*]] = tensor.expand_shape %[[TRANSPOSED]]
 // CHECK: %[[ALLOC:.*]] = memref.alloc() : memref<1x1x16x16xf16, #hivm.address_space<cbuf>>
 // CHECK: annotation.mark %[[ALLOC]] {buffer_size_in_byte = 512 : i64} : memref<1x1x16x16xf16, #hivm.address_space<cbuf>>
-// CHECK: %[[MEMCAST:.*]] = memref.memory_space_cast %[[ALLOC]] : memref<1x1x16x16xf16, #hivm.address_space<cbuf>> to memref<1x1x16x16xf16>
-// CHECK: %[[TENSOR:.*]] = bufferization.to_tensor %[[MEMCAST]] restrict writable : memref<1x1x16x16xf16>
-// CHECK: hivm.hir.copy ins(%[[EXPANDED]] : tensor<1x1x16x16xf16>) outs(%[[MEMCAST]] : memref<1x1x16x16xf16>) {"hivm.inserted-copy"}
+// CHECK: %[[TENSOR:.*]] = bufferization.to_tensor %[[ALLOC]] restrict writable : memref{{.*}}
+// CHECK: hivm.hir.copy ins(%[[EXPANDED]] : tensor<1x1x16x16xf16>) outs(%[[ALLOC]] : memref{{.*}}) {"hivm.inserted-copy"}
 // CHECK: %[[MMAD:.*]] = hivm.hir.mmadL1 ins(%[[TENSOR]], %[[LOAD]], %[[TRUE]], %[[VAL_16]], %[[VAL_16]], %[[VAL_64]] : tensor<1x1x16x16xf16>, tensor<16x64xf16>, i1, index, index, index) outs(%[[EMPTY]] : tensor<16x64xf32>) -> tensor<16x64xf32>
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   func.func @test_collapse_shape_with_annotation(%arg0: memref<4x4x16xf16>, %arg1: tensor<16x64xf16>, %arg2: tensor<16x16xf16>) -> tensor<16x64xf32> attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
@@ -41,14 +40,12 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // CHECK: %[[MMAD_1:.*]] = hivm.hir.mmadL1 {already_set_real_mkn, fixpipe_already_inserted = true, normalized_in_L0C}
 // CHECK: %[[ALLOC_1:.*]] = memref.alloc() : memref<64x64xf32, #hivm.address_space<ub>>
 // CHECK: annotation.mark %[[ALLOC_1]] {buffer_size_in_byte = 16384 : i64} : memref<64x64xf32, #hivm.address_space<ub>>
-// CHECK: %[[MEMCAST_1:.*]] = memref.memory_space_cast %[[ALLOC_1]] : memref<64x64xf32, #hivm.address_space<ub>> to memref<64x64xf32>
-// CHECK: %[[TENSOR:.*]] = bufferization.to_tensor %[[MEMCAST_1]] restrict writable : memref<64x64xf32>
-// CHECK: hivm.hir.fixpipe {"hivm.inserted-fixpipe"} ins(%[[MMAD_1]] : tensor<64x64xf32>) outs(%[[MEMCAST_1]] : memref<64x64xf32>)
+// CHECK: %[[TENSOR:.*]] = bufferization.to_tensor %[[ALLOC_1]] restrict writable : memref{{.*}}
+// CHECK: hivm.hir.fixpipe {"hivm.inserted-fixpipe"} ins(%[[MMAD_1]] : tensor<64x64xf32>) outs(%[[ALLOC_1]] : memref{{.*}})
 // CHECK: %[[ALLOC_2:.*]] = memref.alloc() : memref<64x64xf32, #hivm.address_space<ub>>
 // CHECK: annotation.mark %[[ALLOC_2]] {buffer_size_in_byte = 16384 : i64} : memref<64x64xf32, #hivm.address_space<ub>>
-// CHECK: %[[MEMCAST_2:.*]] = memref.memory_space_cast %[[ALLOC_2]] : memref<64x64xf32, #hivm.address_space<ub>> to memref<64x64xf32>
-// CHECK: %[[TENSOR_2:.*]] = bufferization.to_tensor %[[MEMCAST_2]] restrict writable : memref<64x64xf32>
-// CHECK: hivm.hir.fixpipe {"hivm.inserted-fixpipe"} ins(%[[MMAD_1]] : tensor<64x64xf32>) outs(%[[MEMCAST_2]] : memref<64x64xf32>)
+// CHECK: %[[TENSOR_2:.*]] = bufferization.to_tensor %[[ALLOC_2]] restrict writable : memref{{.*}}
+// CHECK: hivm.hir.fixpipe {"hivm.inserted-fixpipe"} ins(%[[MMAD_1]] : tensor<64x64xf32>) outs(%[[ALLOC_2]] : memref{{.*}})
 // CHECK: %[[VADD:.*]] = hivm.hir.vadd ins(%[[TENSOR_2]], %[[TENSOR]] : tensor<64x64xf32>, tensor<64x64xf32>)
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   func.func @func_mmad_l0c_ub(%arg0: memref<?xi8>, %arg1: tensor<64x32xbf16>, %arg2: tensor<32x64xbf16>, %arg3: tensor<64x64xbf16>, %arg4: tensor<64x64xbf16>, %arg5: i32, %arg6: tensor<64x64xf32>) -> tensor<64x64xf32> attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
@@ -77,14 +74,12 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // CHECK-SAME: %[[ARG_0:.*]]: tensor<8x8x16x16xf16>, %[[ARG_1:.*]]: tensor<8x8x16x16xf16>) -> (tensor<8x8x16x16xf16>, tensor<8x8x16x16xf16>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
 // CHECK: %[[ALLOC_1:.*]] = memref.alloc() : memref<8x8x16x16xf16, #hivm.address_space<cbuf>>
 // CHECK: annotation.mark %[[ALLOC_1]] {buffer_size_in_byte = 32768 : i64} : memref<8x8x16x16xf16, #hivm.address_space<cbuf>>
-// CHECK: %[[MEMCAST_1:.*]] = memref.memory_space_cast %[[ALLOC_1]] : memref<8x8x16x16xf16, #hivm.address_space<cbuf>> to memref<8x8x16x16xf16>
-// CHECK: %[[TENSOR_1:.*]] = bufferization.to_tensor %[[MEMCAST_1]] restrict writable : memref<8x8x16x16xf16>
+// CHECK: %[[TENSOR_1:.*]] = bufferization.to_tensor %[[ALLOC_1]] restrict writable : memref{{.*}}
 // CHECK: %[[ALLOC_2:.*]] = memref.alloc() : memref<8x8x16x16xf16, #hivm.address_space<cbuf>>
 // CHECK: annotation.mark %[[ALLOC_2]] {buffer_size_in_byte = 32768 : i64} : memref<8x8x16x16xf16, #hivm.address_space<cbuf>>
-// CHECK: %[[MEMCAST_2:.*]] = memref.memory_space_cast %[[ALLOC_2]] : memref<8x8x16x16xf16, #hivm.address_space<cbuf>> to memref<8x8x16x16xf16>
-// CHECK: %[[TENSOR_2:.*]] = bufferization.to_tensor %[[MEMCAST_2]] restrict writable : memref<8x8x16x16xf16>
-// CHECK: hivm.hir.copy ins(%[[ARG_0]] : tensor<8x8x16x16xf16>) outs(%[[MEMCAST_1]] : memref<8x8x16x16xf16>) {"hivm.inserted-copy"}
-// CHECK: hivm.hir.copy ins(%[[ARG_1]] : tensor<8x8x16x16xf16>) outs(%[[MEMCAST_2]] : memref<8x8x16x16xf16>) {"hivm.inserted-copy"}
+// CHECK: %[[TENSOR_2:.*]] = bufferization.to_tensor %[[ALLOC_2]] restrict writable : memref{{.*}}
+// CHECK: hivm.hir.copy ins(%[[ARG_0]] : tensor<8x8x16x16xf16>) outs(%[[ALLOC_1]] : memref{{.*}}) {"hivm.inserted-copy"}
+// CHECK: hivm.hir.copy ins(%[[ARG_1]] : tensor<8x8x16x16xf16>) outs(%[[ALLOC_2]] : memref{{.*}}) {"hivm.inserted-copy"}
 // CHECK: return %[[TENSOR_1]], %[[TENSOR_2]] : tensor<8x8x16x16xf16>, tensor<8x8x16x16xf16>
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   func.func @multiple_uses(%arg0: tensor<8x8x16x16xf16>, %arg1: tensor<8x8x16x16xf16>) -> (tensor<8x8x16x16xf16>, tensor<8x8x16x16xf16>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
