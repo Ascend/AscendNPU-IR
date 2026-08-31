@@ -252,9 +252,12 @@ static Value getPreloadCondition(const PreloadInfo &info, Location loc,
 }
 
 static bool isRematerializableAliasOp(Operation *op) {
-  // PointerCastOp is not ViewLikeOpInterface because it creates a memref from
-  // raw addresses, but it can still be cloned as the root of a view chain.
-  return isa_and_nonnull<ViewLikeOpInterface, hivm::PointerCastOp>(op);
+  if (!op)
+    return false;
+  // View-like ops, pointer casts, and pure arithmetic ops can be rematerialized
+  // as part of a result chain in the preload skip branch.
+  return isa<ViewLikeOpInterface, hivm::PointerCastOp>(op) ||
+         isa<arith::ArithDialect>(op->getDialect());
 }
 
 static void rewriteScopeReturnOp(ValueRange returnResults,
@@ -400,8 +403,11 @@ static scf::IfOp rewriteScopeOp(Value cond, scope::ScopeOp scopeOp,
         for (auto [res, retRes] :
              llvm::zip_equal(scopeOp->getResults(), returnResults)) {
           if (!getLocalBuffer(retRes)) {
-            if (res.hasOneUse() && isa<scf::YieldOp>(*res.user_begin())) {
-              auto oprNum = res.use_begin()->getOperandNumber();
+            auto yieldUse = llvm::find_if(res.getUses(), [](OpOperand &use) {
+              return isa<scf::YieldOp>(use.getOwner());
+            });
+            if (yieldUse != res.use_end()) {
+              auto oprNum = yieldUse->getOperandNumber();
               newYields.push_back(loopArgs[oprNum]);
             } else if (auto pointerCastOp =
                            retRes.getDefiningOp<hivm::PointerCastOp>()) {
