@@ -637,7 +637,7 @@ bool ExtractSliceBubbleUpStrategy::isSupportedOperation(
     return false;
   if (!extractSliceOp.hasUnitStride())
     return false;
-  return !isDynamicSlice(extractSliceOp) && !isDynamicSlice(sliceOp);
+  return !isDynamicSlice(extractSliceOp);
 }
 
 static LogicalResult
