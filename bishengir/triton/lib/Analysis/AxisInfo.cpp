@@ -109,7 +109,11 @@ public:
         divisibility.push_back(getDivisibility(op, lhsInfo, rhsInfo, d));
       }
     }
-    return AxisInfo(contiguity, divisibility, constancy, constantValue);
+    int64_t linearContiguity = 1;
+    if (!constantValue.has_value())
+      linearContiguity = getLinearContiguity(op, lhsInfo, rhsInfo);
+    return AxisInfo(contiguity, divisibility, constancy, constantValue,
+                    linearContiguity);
   }
 
 protected:
@@ -125,6 +129,11 @@ protected:
 
   virtual int64_t getConstancy(OpTy op, const AxisInfo &lhs,
                                const AxisInfo &rhs, int dim) {
+    return 1;
+  }
+
+  virtual int64_t getLinearContiguity(OpTy op, const AxisInfo &lhs,
+                                       const AxisInfo &rhs) {
     return 1;
   }
 
@@ -224,7 +233,8 @@ public:
     auto end = op.getEnd();
     return AxisInfo(/*contiguity=*/{end - start},
                     /*divisibility=*/{highestPowOf2Divisor(start)},
-                    /*constancy=*/{1});
+                    /*constancy=*/{1}, /*constantValue=*/std::nullopt,
+                    /*linearContiguity=*/end - start);
   }
 };
 
@@ -299,6 +309,40 @@ private:
 
     return std::max(gcd(lhs.getConstancy(dim), rhs.getContiguity(dim)),
                     gcd(lhs.getContiguity(dim), rhs.getConstancy(dim)));
+  }
+
+  int64_t getLinearContiguity(OpTy op, const AxisInfo &lhs,
+                              const AxisInfo &rhs) override {
+    // Mirror the per-dimension rule on the row-major flattening: adding a
+    // tensor whose flattening is constant over aligned windows of length W
+    // to one whose flattening has contiguous runs of length L yields runs of
+    // gcd(W, L), with the operands free to play either role.
+    auto tensorTy = dyn_cast<RankedTensorType>(op->getResult(0).getType());
+    if (!tensorTy)
+      return 1;
+    ArrayRef<int64_t> shape = tensorTy.getShape();
+    // Linear constancy: suffix product of fully-constant dimensions,
+    // extended by the constancy of the first partially-constant dimension.
+    auto linConst = [&](const AxisInfo &info) -> int64_t {
+      if (info.getRank() != static_cast<int>(shape.size()))
+        return 1;
+      int64_t prod = 1;
+      for (int d = shape.size() - 1; d >= 0; --d) {
+        int64_t c = info.getConstancy(d);
+        prod *= c;
+        if (c != shape[d])
+          break;
+      }
+      return prod;
+    };
+    int64_t lhsLinConst = linConst(lhs);
+    int64_t rhsLinConst = linConst(rhs);
+    // Contiguity assumes an increasing sequence, so for SubIOp only the
+    // contiguous LHS / constant RHS combination applies.
+    if (isa<arith::SubIOp>(op))
+      return gcd(lhs.getLinearContiguity(), rhsLinConst);
+    return std::max(gcd(lhsLinConst, rhs.getLinearContiguity()),
+                    gcd(lhs.getLinearContiguity(), rhsLinConst));
   }
 
   int64_t getDivisibility(OpTy op, const AxisInfo &lhs, const AxisInfo &rhs,
@@ -633,8 +677,11 @@ public:
     contiguity.insert(contiguity.begin() + op.getAxis(), 1);
     divisibility.insert(divisibility.begin() + op.getAxis(), newDivisibility);
     constancy.insert(constancy.begin() + op.getAxis(), 1);
+    // Inserting a size-1 dimension does not change the row-major order, so
+    // the linear contiguity carries over unchanged.
     return AxisInfo(contiguity, divisibility, constancy,
-                    operands[0]->getValue().getConstantValue());
+                    operands[0]->getValue().getConstantValue(),
+                    opInfo.getLinearContiguity());
   }
 };
 
@@ -652,25 +699,38 @@ public:
         cast<RankedTensorType>(op.getResult().getType()).getShape();
     int rank = dstShape.size();
 
-    // Compute total contiguous elements from source.
-    // In row-major layout, contiguous elements are at the innermost dims.
-    int64_t srcNumElems = 1;
-    for (auto d : srcShape)
-      srcNumElems *= d;
-    int64_t totalContig = 1;
-    for (int d = srcInfo.getRank() - 1; d >= 0; --d) {
-      totalContig *= srcInfo.getContiguity(d);
-      if (totalContig >= srcNumElems)
-        break;
-    }
-    totalContig = std::min(totalContig, srcNumElems);
+    // Contiguity along different dimensions does not compose across
+    // dimension boundaries: e.g. value(i, j) = i + j on a 4x32 tensor has
+    // contiguity [4, 32], yet its row-major flattening only has runs of 32
+    // (row end + 1 != next row start). Only the contiguity of the
+    // innermost significant (size > 1) source dimension can be transferred,
+    // because size-1 dims contribute no linear-index bits.
+    auto findInnerSignificant = [](ArrayRef<int64_t> shape) -> int {
+      int d = shape.size() - 1;
+      while (d >= 0 && shape[d] == 1)
+        --d;
+      return d;
+    };
+    int srcInner = findInnerSignificant(srcShape);
+    int dstInner = findInnerSignificant(dstShape);
+    int64_t innerContig = srcInner >= 0 ? srcInfo.getContiguity(srcInner) : 1;
 
-    // In row-major layout, only the innermost dimension has stride 1.
-    // All outer dimensions have stride > 1, so their contiguity is 1.
-    // The innermost dimension gets min(totalContig, innermostDimSize).
+    // The row-major flattening is identical before and after reshape, so the
+    // linear contiguity carries over unchanged. A linear run of length L also
+    // implies that the innermost dimension is contiguous over
+    // min(L, innermostDimSize): rows of a power-of-two size never straddle
+    // aligned linear windows. Use this to restore contiguity that the
+    // per-dimension representation cannot express (e.g. reshape of an
+    // arange back and forth).
+    int64_t linCont = srcInfo.getLinearContiguity();
+
+    // In row-major layout, only the innermost significant dimension has
+    // stride 1; all other dimensions have stride > 1, so their contiguity
+    // is 1.
     AxisInfo::DimVectorT contiguity(rank, 1);
-    if (rank > 0)
-      contiguity[rank - 1] = std::min(totalContig, dstShape[rank - 1]);
+    if (dstInner >= 0)
+      contiguity[dstInner] = std::min(std::max(innerContig, linCont),
+                                      dstShape[dstInner]);
 
     // Divisibility: conservatively use GCD of source divisibility
     AxisInfo::DimVectorT divisibility(rank);
@@ -684,7 +744,8 @@ public:
     AxisInfo::DimVectorT constancy(rank, 1);
 
     return AxisInfo(contiguity, divisibility, constancy,
-                    srcInfo.getConstantValue());
+                    srcInfo.getConstantValue(),
+                    std::min(linCont, (int64_t)product<int64_t>(dstShape)));
   }
 };
 
@@ -712,8 +773,20 @@ public:
       constancy.push_back(opShape[d] == 1 ? retShape[d]
                                           : opInfo.getConstancy(d));
     }
+    // Broadcasting dimension d repeats each source value over the product of
+    // the dimensions inner to d, which breaks contiguity of the row-major
+    // flattening at each repetition.
+    int64_t linCont = opInfo.getLinearContiguity();
+    for (int d = 0; d < retTy.getRank(); ++d) {
+      if (opShape[d] == 1 && retShape[d] > 1) {
+        int64_t innerProd = 1;
+        for (int e = d + 1; e < retTy.getRank(); ++e)
+          innerProd *= retShape[e];
+        linCont = std::min(linCont, innerProd);
+      }
+    }
     return AxisInfo(contiguity, divisibility, constancy,
-                    operands[0]->getValue().getConstantValue());
+                    operands[0]->getValue().getConstantValue(), linCont);
   }
 };
 
@@ -1137,7 +1210,7 @@ LogicalResult AxisInfoAnalysis::visitOperation(
     newConstancy = AxisInfo::DimVectorT(vals.begin(), vals.end());
   }
   curr = AxisInfo(newContiguity, newDivisibility, newConstancy,
-                  curr.getConstantValue());
+                  curr.getConstantValue(), curr.getLinearContiguity());
   // join all lattice elements
   for (auto *result : results)
     propagateIfChanged(result, result->join(curr));
@@ -1270,7 +1343,8 @@ void AxisInfo::initPessimisticStateFromFunc(int argNumber, T funcOp,
       rhs.getConstantValue().has_value() &&
       lhs.getConstantValue() == rhs.getConstantValue())
     constantValue = lhs.getConstantValue();
-  return AxisInfo(contiguity, divisibility, constancy, constantValue);
+  return AxisInfo(contiguity, divisibility, constancy, constantValue,
+                  gcd(lhs.getLinearContiguity(), rhs.getLinearContiguity()));
 }
 
 unsigned ModuleAxisInfoAnalysis::getContiguity(Value value) {
