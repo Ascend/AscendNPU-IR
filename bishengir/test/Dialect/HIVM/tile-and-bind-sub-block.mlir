@@ -4317,3 +4317,153 @@ func.func @store_with_static_mask_ratio_1_2(%arg0: tensor<64xf32>, %arg1: memref
   hivm.hir.store ins(%extracted_slice : tensor<1xf32>) outs(%subview : memref<1xf32>)
   return
 }
+
+// -----
+// Custom ops without gm_addr_args_indices must not be sub-block guarded.
+// Derived from autoencoder_encoding_kernel float2ll_rd_fp32 / exp_fp32 pattern.
+// CHECK-LABEL: func.func @custom_op_no_gm_addr_skip_guard
+// CHECK-NOT: limit_sub_block_id0
+// CHECK: %{{.*}} = hivm.hir.custom {{.*}}float2ll_rd_fp32
+// CHECK: hivm.hir.vmax
+// CHECK: %{{.*}} = hivm.hir.custom {{.*}}exp_fp32
+module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @custom_op_no_gm_addr_skip_guard(%arg0: memref<1024xf32>)
+      attributes {hacc.function_kind = #hacc.function_kind<DEVICE>,
+                  hivm.func_core_type = #hivm.func_core_type<AIV>,
+                  hivm.part_of_mix, mix_mode = "mix"} {
+    %cst = arith.constant 0.000000e+00 : f32
+    %alloc = memref.alloc() : memref<1024xf32>
+    %input = bufferization.to_tensor %alloc restrict writable : memref<1024xf32>
+    %empty_i64 = tensor.empty() : tensor<1024xi64>
+    %custom_i64 = hivm.hir.custom {arg_attrs = [], bitcode = "",
+        hivm.inline_mode = #hivm.inline_mode<always_inline>,
+        hivm.pipe = #hivm.pipe<PIPE_V>,
+        hivm.tcore_type = #hivm.tcore_type<VECTOR>,
+        hivm.vf_mode = #hivm.vf_mode<SIMD>, symbol = "float2ll_rd_fp32"}
+        "float2ll_rd_fp32"
+        ins(%input : tensor<1024xf32>) outs(%empty_i64 : tensor<1024xi64>)
+        -> tensor<1024xi64>
+    %empty_buf = tensor.empty() : tensor<1024xf32>
+    %exp_input = hivm.hir.vmax ins(%input, %cst : tensor<1024xf32>, f32)
+        outs(%empty_buf : tensor<1024xf32>) -> tensor<1024xf32>
+    %empty_f32 = tensor.empty() : tensor<1024xf32>
+    %custom_f32 = hivm.hir.custom {arg_attrs = [], bitcode = "",
+        hivm.inline_mode = #hivm.inline_mode<always_inline>,
+        hivm.pipe = #hivm.pipe<PIPE_V>,
+        hivm.tcore_type = #hivm.tcore_type<VECTOR>,
+        hivm.vf_mode = #hivm.vf_mode<SIMD>, symbol = "exp_fp32"}
+        "exp_fp32"
+        ins(%exp_input : tensor<1024xf32>) outs(%empty_f32 : tensor<1024xf32>)
+        -> tensor<1024xf32>
+    return
+  }
+}
+
+// -----
+// Custom ops with gm_addr_args_indices and tensor.empty() outs are sub-block
+// guarded; the else branch yields the tied empty init operand.
+// CHECK-LABEL: func.func @custom_op_gm_addr_gets_guard
+// CHECK: %[[EMPTY_I64:.*]] = tensor.empty() : tensor<1024xi64>
+// CHECK: %[[IF_I64:.*]] = scf.if %{{.*}} -> (tensor<1024xi64>) {
+// CHECK:   %{{.*}} = hivm.hir.custom {{.*}}float2ll_rd_fp32
+// CHECK:   scf.yield %{{.*}} : tensor<1024xi64>
+// CHECK: } else {
+// CHECK:   scf.yield %[[EMPTY_I64]] : tensor<1024xi64>
+// CHECK: } {limit_sub_block_id0}
+// CHECK: hivm.hir.vmax
+// CHECK: %[[EMPTY_F32:.*]] = tensor.empty() : tensor<1024xf32>
+// CHECK: %[[IF_F32:.*]] = scf.if %{{.*}} -> (tensor<1024xf32>) {
+// CHECK:   %{{.*}} = hivm.hir.custom {{.*}}exp_fp32
+// CHECK:   scf.yield %{{.*}} : tensor<1024xf32>
+// CHECK: } else {
+// CHECK:   scf.yield %[[EMPTY_F32]] : tensor<1024xf32>
+// CHECK: } {limit_sub_block_id0}
+module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @custom_op_gm_addr_gets_guard(%arg0: memref<1024xf32>)
+      attributes {hacc.function_kind = #hacc.function_kind<DEVICE>,
+                  hivm.func_core_type = #hivm.func_core_type<AIV>,
+                  hivm.part_of_mix, mix_mode = "mix"} {
+    %cst = arith.constant 0.000000e+00 : f32
+    %alloc = memref.alloc() : memref<1024xf32>
+    %input = bufferization.to_tensor %alloc restrict writable : memref<1024xf32>
+    %empty_i64 = tensor.empty() : tensor<1024xi64>
+    %custom_i64 = hivm.hir.custom {arg_attrs = [], bitcode = "",
+        gm_addr_args_indices = array<i32: 0>,
+        hivm.inline_mode = #hivm.inline_mode<always_inline>,
+        hivm.pipe = #hivm.pipe<PIPE_V>,
+        hivm.tcore_type = #hivm.tcore_type<VECTOR>,
+        hivm.vf_mode = #hivm.vf_mode<SIMD>, symbol = "float2ll_rd_fp32"}
+        "float2ll_rd_fp32"
+        ins(%input : tensor<1024xf32>) outs(%empty_i64 : tensor<1024xi64>)
+        -> tensor<1024xi64>
+    %empty_buf = tensor.empty() : tensor<1024xf32>
+    %exp_input = hivm.hir.vmax ins(%input, %cst : tensor<1024xf32>, f32)
+        outs(%empty_buf : tensor<1024xf32>) -> tensor<1024xf32>
+    %empty_f32 = tensor.empty() : tensor<1024xf32>
+    %custom_f32 = hivm.hir.custom {arg_attrs = [], bitcode = "",
+        gm_addr_args_indices = array<i32: 0>,
+        hivm.inline_mode = #hivm.inline_mode<always_inline>,
+        hivm.pipe = #hivm.pipe<PIPE_V>,
+        hivm.tcore_type = #hivm.tcore_type<VECTOR>,
+        hivm.vf_mode = #hivm.vf_mode<SIMD>, symbol = "exp_fp32"}
+        "exp_fp32"
+        ins(%exp_input : tensor<1024xf32>) outs(%empty_f32 : tensor<1024xf32>)
+        -> tensor<1024xf32>
+    return
+  }
+}
+
+// -----
+// CustomMacroOp without gm_addr_args_indices must not be sub-block guarded.
+// CHECK-LABEL: func.func @custom_macro_no_gm_addr_skip_guard
+// CHECK-NOT: limit_sub_block_id0
+// CHECK: %{{.*}} = hivm.hir.custom_macro
+module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @custom_macro_no_gm_addr_skip_guard(%arg0: memref<1024xf32>)
+      attributes {hacc.function_kind = #hacc.function_kind<DEVICE>,
+                  hivm.func_core_type = #hivm.func_core_type<AIV>,
+                  hivm.part_of_mix, mix_mode = "mix"} {
+    %alloc = memref.alloc() : memref<1024xf32>
+    %input = bufferization.to_tensor %alloc restrict writable : memref<1024xf32>
+    %empty = tensor.empty() : tensor<1024xf32>
+    %custom = hivm.hir.custom_macro
+        {hivm.inline_mode = #hivm.inline_mode<always_inline>,
+         hivm.pipe_in = #hivm.pipe<PIPE_V>, hivm.pipe_out = #hivm.pipe<PIPE_V>,
+         hivm.tcore_type = #hivm.tcore_type<VECTOR>,
+         hivm.vf_mode = #hivm.vf_mode<SIMD>, symbol = "my_custom_macro"}
+        "my_custom_macro"
+        ins(%input : tensor<1024xf32>) outs(%empty : tensor<1024xf32>)
+        -> tensor<1024xf32>
+    return
+  }
+}
+
+// -----
+// CustomMacroOp with gm_addr_args_indices is sub-block guarded.
+// CHECK-LABEL: func.func @custom_macro_gm_addr_gets_guard
+// CHECK: scf.if %{{.*}} -> (tensor<1024xf32>) {
+// CHECK:   %{{.*}} = hivm.hir.custom_macro
+// CHECK:   scf.yield %{{.*}} : tensor<1024xf32>
+// CHECK: } else {
+// CHECK:   scf.yield %{{.*}} : tensor<1024xf32>
+// CHECK: } {limit_sub_block_id0}
+module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @custom_macro_gm_addr_gets_guard(%arg0: memref<1024xf32>)
+      attributes {hacc.function_kind = #hacc.function_kind<DEVICE>,
+                  hivm.func_core_type = #hivm.func_core_type<AIV>,
+                  hivm.part_of_mix, mix_mode = "mix"} {
+    %alloc = memref.alloc() : memref<1024xf32>
+    %input = bufferization.to_tensor %alloc restrict writable : memref<1024xf32>
+    %empty = tensor.empty() : tensor<1024xf32>
+    %custom = hivm.hir.custom_macro
+        {gm_addr_args_indices = array<i32: 0>,
+         hivm.inline_mode = #hivm.inline_mode<always_inline>,
+         hivm.pipe_in = #hivm.pipe<PIPE_V>, hivm.pipe_out = #hivm.pipe<PIPE_V>,
+         hivm.tcore_type = #hivm.tcore_type<VECTOR>,
+         hivm.vf_mode = #hivm.vf_mode<SIMD>, symbol = "my_custom_macro"}
+        "my_custom_macro"
+        ins(%input : tensor<1024xf32>) outs(%empty : tensor<1024xf32>)
+        -> tensor<1024xf32>
+    return
+  }
+}

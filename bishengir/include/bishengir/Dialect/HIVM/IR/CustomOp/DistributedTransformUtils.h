@@ -34,10 +34,11 @@ extern const llvm::StringSet<> shmemCoreTypeInferFromPreOp;
 extern const std::string kShmemPtr;
 extern const std::string kShmemConsumeToken;
 
-/// Returns true when `op` is a distributed-marked `hivm.hir.custom`.
+/// Returns true when `op` is a distributed-marked `hivm.hir.custom` or
+/// `hivm.hir.custom_macro`.
 inline bool isDistributedTypeCustomOp(Operation *op) {
   return op->hasAttr(hivm::IsDistributedAttr::name) &&
-         llvm::isa<hivm::CustomOp>(op);
+         (llvm::isa<hivm::CustomOp>(op) || llvm::isa<hivm::CustomMacroOp>(op));
 }
 
 /// Returns true when `op` is a shmem notify custom op.
