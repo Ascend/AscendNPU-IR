@@ -67,6 +67,15 @@ createBubblePropagatorDown(Value oldValue, Value newValue, OpFoldResult offset,
                            OpFoldResult size, int64_t tilingDim,
                            PatternRewriter &rewriter);
 
+/// Like createBubblePropagatorDown but takes the old type directly instead of
+/// a representative value. Needed when the old-typed value no longer exists
+/// (e.g. after an in-place type change on an scf.if result).
+UnrealizedConversionCastOp
+createBubblePropagatorDownWithType(Type oldType, Value newValue,
+                                   OpFoldResult offset, OpFoldResult size,
+                                   int64_t tilingDim,
+                                   PatternRewriter &rewriter);
+
 UnrealizedConversionCastOp
 createBubblePropagatorUpLink(Value oldValue, Type slicedType,
                              OpFoldResult offset, OpFoldResult size,
