@@ -20,11 +20,12 @@
 #define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] ")
 #define LDBG(X) LLVM_DEBUG(DBGS() << X << "\n")
 
-namespace mlir {
+namespace bishengir {
+namespace triton {
 #define GEN_PASS_DEF_ADAPTGPUKERNEL
 #include "bishengir/Dialect/Triton/Transforms/Passes.h.inc"
-} // namespace mlir
 
+namespace {
 using namespace mlir;
 
 struct FuncInfo {
@@ -74,11 +75,10 @@ static Value castValueToType(OpBuilder &builder, Location loc, Value val,
   return builder.create<LLVM::BitcastOp>(loc, targetType, val);
 }
 
-namespace {
 struct AdaptGPUKernelPass
     : public impl::AdaptGPUKernelBase<AdaptGPUKernelPass> {
-  bishengir::TritonRemapOptions options;
-  AdaptGPUKernelPass(bishengir::TritonRemapOptions opts) : options{opts} {}
+  explicit AdaptGPUKernelPass(const AdaptGPUKernelOptions &options)
+      : AdaptGPUKernelBase(options) {}
   using GridDims = std::tuple<Value, Value, Value>;
   GridDims getGridDims(LLVM::LLVMFuncOp funcOp, OpBuilder builder,
                        Location loc) {
@@ -115,16 +115,16 @@ struct AdaptGPUKernelPass
         llvm::report_fatal_error("Unknown mapping");
       }
     }
-    if ((!gridX || !gridY || !gridZ) || options.useGridFlag) {
+    if ((!gridX || !gridY || !gridZ) || useGridFlag) {
       LDBG("Falling back to use compile options in remapper: gridDimX="
-           << options.gridDimX << ", gridDimY=" << options.gridDimY
-           << ", gridDimZ=" << options.gridDimZ);
+           << gridDimX << ", gridDimY=" << gridDimY
+           << ", gridDimZ=" << gridDimZ);
       gridX = builder.create<LLVM::ConstantOp>(
-          loc, int64Ty, builder.getI64IntegerAttr(options.gridDimX));
+          loc, int64Ty, builder.getI64IntegerAttr(gridDimX));
       gridY = builder.create<LLVM::ConstantOp>(
-          loc, int64Ty, builder.getI64IntegerAttr(options.gridDimY));
+          loc, int64Ty, builder.getI64IntegerAttr(gridDimY));
       gridZ = builder.create<LLVM::ConstantOp>(
-          loc, int64Ty, builder.getI64IntegerAttr(options.gridDimZ));
+          loc, int64Ty, builder.getI64IntegerAttr(gridDimZ));
     }
     return {gridX, gridY, gridZ};
   }
@@ -137,19 +137,19 @@ struct AdaptGPUKernelPass
 
     // Calculate the block dim
     int64_t numWarp = -1;
-    if (auto numWarpAttr = moduleOp->getAttr(triton::gpu::AttrNumWarpsName))
+    if (auto numWarpAttr = moduleOp->getAttr(mlir::triton::gpu::AttrNumWarpsName))
       if (auto intAttr = dyn_cast<IntegerAttr>(numWarpAttr))
         numWarp = intAttr.getInt();
 
     int64_t numThreadPerWarp = -1;
     if (auto numThreadAttr =
-            moduleOp->getAttr(triton::gpu::AttrNumThreadsPerWarp))
+            moduleOp->getAttr(mlir::triton::gpu::AttrNumThreadsPerWarp))
       if (auto intAttr = dyn_cast<IntegerAttr>(numThreadAttr))
         numThreadPerWarp = intAttr.getInt();
 
     unsigned superBlockFactor = 1;
     if (auto superBlockFactorAttr = moduleOp->getAttrOfType<IntegerAttr>(
-            triton::gpu::AttrSuperBlockFactor))
+            mlir::triton::gpu::AttrSuperBlockFactor))
       superBlockFactor = superBlockFactorAttr.getUInt();
 
     if (numWarp <= 0 || numThreadPerWarp <= 0)
@@ -187,7 +187,7 @@ struct AdaptGPUKernelPass
     Value px;
     Value py;
     Value pz;
-    if (options.isSimdSimtMixCompile) {
+    if (isSimdSimtMixCompile) {
       // In the SIMD-SIMT mixed path, HIVMToTriton lowers the one-dimensional
       // HIVM block id to tt.get_program_id x and the VF body performs the
       // logical 1D -> 3D decomposition itself.  Pass the raw linear NPU block id
@@ -210,7 +210,7 @@ struct AdaptGPUKernelPass
       Value tmp2 = builder.create<LLVM::UDivOp>(loc, int64Ty, tmp1, gridY);
       pz = tmp2;
     }
-    auto ub = triton::util::allocateSharedMemory(wrapperFuncOp, builder, loc);
+    auto ub = mlir::triton::util::allocateSharedMemory(wrapperFuncOp, builder, loc);
 
     args.push_back(gridX);
     args.push_back(gridY);
@@ -338,7 +338,7 @@ struct AdaptGPUKernelPass
     auto moduleOp = funcOp->getParentOfType<ModuleOp>();
     int64_t superBlockFactor = 1;
     if (auto superBlockFactorAttr = moduleOp->getAttrOfType<IntegerAttr>(
-            triton::gpu::AttrSuperBlockFactor))
+            mlir::triton::gpu::AttrSuperBlockFactor))
       superBlockFactor = superBlockFactorAttr.getUInt();
 
     // superBlockFactor = 1 indicates superblocking is disabled
@@ -373,7 +373,7 @@ struct AdaptGPUKernelPass
 
       int64_t numThreadPerWarp = -1;
       if (auto numThreadAttr =
-              moduleOp->getAttr(triton::gpu::AttrNumThreadsPerWarp))
+              moduleOp->getAttr(mlir::triton::gpu::AttrNumThreadsPerWarp))
         if (auto intAttr = dyn_cast<IntegerAttr>(numThreadAttr))
           numThreadPerWarp = intAttr.getInt();
 
@@ -540,6 +540,9 @@ struct AdaptGPUKernelPass
 } // namespace
 
 std::unique_ptr<Pass>
-bishengir::triton::createAdaptGPUKernelPass(TritonRemapOptions options) {
+createAdaptGPUKernelPass(AdaptGPUKernelOptions options) {
   return std::make_unique<AdaptGPUKernelPass>(options);
 }
+
+} // namespace triton
+} // namespace bishengir

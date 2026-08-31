@@ -275,7 +275,7 @@ void buildLowerToLLVMPipeline(OpPassManager &pm,
   pm.addPass(hivmave::createHoistVstasPass());
   if (config.getPureSimt() && config.getUseDPX()) {
     auto tritonGridDim = config.getSimtTritonGrid();
-    bishengir::TritonRemapOptions options;
+    bishengir::AdaptGPUKernelOptions options;
     options.isSimdSimtMixCompile = config.getEnableSimdSimtMixCompile();
     if (!tritonGridDim.empty()) {
       options.gridDimX = static_cast<int>(tritonGridDim[0]);
@@ -289,7 +289,7 @@ void buildLowerToLLVMPipeline(OpPassManager &pm,
     pm.addPass(bishengir::triton::createAdaptGPUKernelPass(options));
     pm.addPass(mlir::ascend_dpx::createHoistCallScalarToCallerPass());
     if (config.getEnableSIMTFastDiv())
-      pm.addPass(mlir::ascend_dpx::createDPXDivOptimizationPass(options));
+      pm.addPass(mlir::ascend_dpx::createDPXDivOptimizationPass());
   }
   pm.addPass(createConvertAscendDPXToHIVMRegbaseIntrinPass());
   pm.addPass(bishengir::triton::createDecomposeFRemPass());
@@ -395,6 +395,11 @@ void setupLowerTritonPipelineOptions(
 
 void buildBiShengTTIRPipeline(OpPassManager &pm,
                               const BiShengIRCompileMainConfig &config) {
+  if (!config.getUseDPX())
+    llvm::report_fatal_error(
+        "The legacy Triton remap lowering has been removed; enable DPX for "
+        "SIMT compilation.");
+
   if (config.getEnableSimdSimtMixCompile()) {
     if (config.getEnableSimtVFSubTiling()) {
       SIMTVFSubTilingOptions subTilingOptions;
@@ -428,22 +433,6 @@ void buildBiShengTTIRPipeline(OpPassManager &pm,
 
   pm.addPass(createCSEPass());
   pm.addPass(createSCCPPass());
-  auto tritonGridDim = simtConfig.getSimtTritonGrid();
-  bishengir::TritonRemapOptions options;
-  if (!tritonGridDim.empty()) {
-    options.gridDimX = static_cast<int>(tritonGridDim[0]);
-    options.useGridFlag = true;
-  }
-  if (tritonGridDim.size() > 1)
-    options.gridDimY = static_cast<int>(tritonGridDim[1]);
-
-  if (tritonGridDim.size() > 2)
-    options.gridDimZ = static_cast<int>(tritonGridDim[2]);
-
-  // TODO: When DPX covers all remapper features correctly, remove
-  // createTritonRemapPass completely.
-  if (!simtConfig.getUseDPX())
-    pm.addPass(bishengir::triton::createTritonRemapPass(options));
   CanonicalizerOptions canonicalizerOptions;
   pm.addPass(createCanonicalizerPass(canonicalizerOptions));
   pm.addPass(createCSEPass());
@@ -459,6 +448,28 @@ void buildBiShengTTIRPipeline(OpPassManager &pm,
 void buildBiShengHIRFinishPipeline(mlir::OpPassManager &pm,
                                    const BiShengIRCompileMainConfig &config) {
   pm.addPass(hivm::createWriteBackSharedPass());
+}
+
+// Build the complete SIMD/SIMT mixed flow in one place. Pure-SIMT compilation
+// uses the TTIR flow and intentionally skips these mixed-boundary passes.
+static void buildSimdSimtMixPassPipeline(mlir::OpPassManager &pm) {
+  pm.addPass(hivm::createAutoScopePass());
+  pm.addPass(hivm::createLegalizeBoolForSimtVFPass());
+  pm.addPass(hivm::createInsertMemSemanticForSimtVFPass());
+  pm.addPass(scope::createTransformOpForSIMTPass());
+  // Only AutoScope-marked scopes are outlined;
+  // cube/vector leftovers stay inline.
+  OutlineScopeOptions outlineScopeOptions;
+  outlineScopeOptions.outlineMarkedScopesOnly = true;
+  pm.addPass(scope::createOutlineScopePass(outlineScopeOptions));
+  pm.addPass(scope::createPropagateSIMTModePass());
+  pm.addPass(hivm::createInsertAllocBasePlaceholderPass());
+  pm.addPass(hivm::createInferSimtVFMemEffectPass());
+  // Infer per-argument mem scope hints from the mixed call boundary first;
+  // actual address space rewrites are deferred until each SIMT module is
+  // split out and lowered independently.
+  pm.addPass(hivm::createInferSimtVFMemScopeHintPass());
+  pm.addPass(hivm::createSplitSimtModulePass());
 }
 
 void buildBiShengHIRPipeline(OpPassManager &pm,
@@ -513,24 +524,7 @@ void buildBiShengHIRPipeline(OpPassManager &pm,
             pm, config, /*shouldInferFuncCoreType=*/true);
     }
     if (config.getEnableSimdSimtMixCompile()) {
-      // TODO(regbase)
-      pm.addPass(hivm::createAutoScopePass());
-      pm.addPass(hivm::createLegalizeBoolForSimtVFPass());
-      pm.addPass(hivm::createInsertMemSemanticForSimtVFPass());
-      pm.addPass(scope::createTransformOpForSIMTPass());
-      // Only AutoScope-marked scopes are outlined;
-      // cube/vector leftovers stay inline.
-      OutlineScopeOptions outlineScopeOptions;
-      outlineScopeOptions.outlineMarkedScopesOnly = true;
-      pm.addPass(scope::createOutlineScopePass(outlineScopeOptions));
-      pm.addPass(scope::createPropagateSIMTModePass());
-      pm.addPass(hivm::createInsertAllocBasePlaceholderPass());
-      pm.addPass(hivm::createInferSimtVFMemEffectPass());
-      // Infer per-argument mem scope hints from the mixed call boundary first;
-      // actual address space rewrites are deferred until each SIMT module is
-      // split out and lowered independently.
-      pm.addPass(hivm::createInferSimtVFMemScopeHintPass());
-      pm.addPass(hivm::createSplitSimtModulePass());
+      buildSimdSimtMixPassPipeline(pm);
     }
   }
 }

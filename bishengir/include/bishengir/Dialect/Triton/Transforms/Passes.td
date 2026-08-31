@@ -397,28 +397,17 @@ def GetTritonMetadata :
                         "File to dump triton metadata. -- means stdout">];
 }
 
-def AdaptGPUKernel : Pass<"adapt-gpu-kernel", "ModuleOp"> {
+def AdaptGPUKernel : Pass<"adapt-gpu-kernel", "mlir::ModuleOp"> {
   let summary = "Generate HIVM SIMT wrappers and attributes for a GPU/SIMT kernel";
   let constructor = "bishengir::triton::createAdaptGPUKernelPass()";
   let dependentDialects = [
-    "hacc::HACCDialect", "ascend_dpx::AscendDPXDialect", "hivm_regbaseintrins::HIVMRegbaseIntrinsDialect", "LLVM::LLVMDialect", "hivm::HIVMDialect"
-  ];
-}
-
-def TritonRemap : Pass<"triton-remap", "mlir::ModuleOp"> {
-  let summary = "Converts triton-generated LLVM IR into NPU-compatible LLVM IR.";
-  let constructor = "bishengir::triton::createTritonRemapPass()";
-  let dependentDialects = [
-    "mlir::LLVM::LLVMDialect", "mlir::hivm::HIVMDialect", "mlir::hivm_regbaseintrins::HIVMRegbaseIntrinsDialect",
-    "mlir::hacc::HACCDialect", "mlir::NVVM::NVVMDialect", "mlir::scf::SCFDialect"
+    "mlir::hacc::HACCDialect", "mlir::ascend_dpx::AscendDPXDialect", "mlir::hivm_regbaseintrins::HIVMRegbaseIntrinsDialect", "mlir::LLVM::LLVMDialect", "mlir::hivm::HIVMDialect"
   ];
   let options = [
     Option<"gridDimX", "dim-x", "int", "1", "Grid dimension for x axis">,
     Option<"gridDimY", "dim-y", "int", "1", "Grid dimension for y axis">,
     Option<"gridDimZ", "dim-z", "int", "1", "Grid dimension for z axis">,
-    Option<"useIfElse", "use-if-else", "bool", "true", "Replace inline asm load/stores with scf and llvm.load/store">,
     Option<"useGridFlag", "use-grid-flag", "bool", "false", "Override the argument dim x,y,z with the dim given by flag">,
-    Option<"blockified", "enabled-blockify", "bool", "false", "Indicates that blockify is enabled">,
     Option<"isSimdSimtMixCompile", "is-simd-simt-mix-compile", "bool", "false",
            "Whether the SIMT kernel is lowered from the SIMD-SIMT mixed pipeline">
   ];
