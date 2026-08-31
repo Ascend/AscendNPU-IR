@@ -1018,8 +1018,41 @@ struct AnalyzeVectorLayoutPass
   using AnalyzeVectorLayoutBase<
       AnalyzeVectorLayoutPass>::AnalyzeVectorLayoutBase;
 
-  Operation *failedOp = nullptr;
-  TreeSolves failedSolves;
+  struct SearchFrame {
+    Operation *branchOp;
+    size_t nextOp;
+    TreeSolves alternatives;
+    size_t nextAlternative = 0;
+  };
+
+  struct SearchCursor {
+    TreeSolvePtr solve;
+    size_t nextOp = 0;
+    SmallVector<SearchFrame> searchStack;
+  };
+
+  struct SolveFailure {
+    Operation *op;
+    TreeSolvePtr solve;
+    size_t solvedOpCount;
+    size_t searchDepth;
+    size_t initialSolveIndex;
+  };
+
+  struct SearchStatistics {
+    size_t vectorOps = 0;
+    size_t initialSolutions = 0;
+    size_t attemptedOps = 0;
+    size_t branchPoints = 0;
+    size_t failedPaths = 0;
+    size_t backjumps = 0;
+    size_t backtracks = 0;
+    size_t droppedFrames = 0;
+    size_t maxSearchDepth = 0;
+  };
+
+  std::optional<SolveFailure> bestFailure;
+  SearchStatistics searchStatistics;
 
 public:
   void runOnOperation() override {
@@ -1028,58 +1061,93 @@ public:
       signalPassFailure();
       auto &os = llvm::errs();
       os << "No Solve\n";
-      if (failedOp) {
-        os << "========== Vector Layout Analysis Failure ==========\n";
-        os << "Location: ";
-        failedOp->getLoc().print(os);
-        os << "\n";
-        os << "Operation: " << *failedOp << "\n";
-        os << "Opcode: " << failedOp->getName() << "\n";
-        os << "Operand types:\n";
-        for (auto operand : failedOp->getOperands()) {
-          os << "  " << operand.getType() << "\n";
-        }
-        os << "Result types:\n";
-        for (auto res : failedOp->getResults()) {
-          os << "  " << res.getType() << "\n";
-        }
-        os << "Candidates in the solution space: " << failedSolves.size()
-           << "\n";
-        if (!failedSolves.empty()) {
-          os << "Input states from last valid candidates:\n";
-          DenseSet<Value> visited;
-          for (auto &solve : failedSolves) {
-            for (auto &[val, state] : solve->inputs) {
-              if (visited.insert(val).second) {
-                os << "  Value: " << val << "  State: " << state << "\n";
-              }
-            }
-          }
-        }
-        os << "\nPossible causes and solutions:\n";
-        os << "  1. The operation may not have been lowered to the HIVMAVE "
-              "dialect before VectorLayout analysis.\n";
-        os << "     -> If using -analyze-vector-layout standalone: lower all "
-              "vector ops to HIVMAVE first.\n";
-        os << "     -> If running end-to-end: an upstream pass failed to "
-              "lower this op. Op: "
-           << failedOp->getName() << "\n";
-        os << "  2. The operation type may not be handled in solveProblem "
-              "TypeSwitch.\n";
-        os << "     -> Add a new Case for " << failedOp->getName()
-           << " in solveProblem().\n";
-        os << "  3. The specific VecMemType combination is not supported by "
-              "this op.\n";
-        os << "     -> Check COMB_CASE branches in the corresponding "
-              "solveProblem function.\n";
-        os << "  4. Conflicting layout requirements from multiple consumers.\n";
-        os << "     -> Check if the operands/results have incompatible layout "
-              "constraints.\n";
-        os << "  5. Unsupported element bitwidth (only 1/8/16/32 are "
-              "supported).\n";
-        os << "     -> Verify all vector types have supported bitwidths.\n";
+      os << "========== Vector Layout Analysis Failure ==========\n";
+      os << "Search summary:\n";
+      os << "  Vector operations: " << searchStatistics.vectorOps << "\n";
+      os << "  Initial solutions: " << searchStatistics.initialSolutions
+         << "\n";
+      os << "  Operation attempts: " << searchStatistics.attemptedOps << "\n";
+      os << "  Failed paths: " << searchStatistics.failedPaths << "\n";
+      os << "  Branch points: " << searchStatistics.branchPoints << "\n";
+      os << "  Conflict-directed backjumps: " << searchStatistics.backjumps
+         << "\n";
+      os << "  Chronological backtracks: " << searchStatistics.backtracks
+         << "\n";
+      os << "  Dropped unrelated frames: " << searchStatistics.droppedFrames
+         << "\n";
+      os << "  Maximum search depth: " << searchStatistics.maxSearchDepth
+         << "\n";
+
+      if (!bestFailure) {
+        os << "No failed search path was recorded.\n";
         os << "======================================================\n";
+        return;
       }
+
+      const SolveFailure &failure = *bestFailure;
+      Operation *failedOp = failure.op;
+      os << "Deepest failed partial solution:\n";
+      os << "  Initial solution: " << failure.initialSolveIndex + 1 << " / "
+         << searchStatistics.initialSolutions << "\n";
+      os << "  Solved vector operations: " << failure.solvedOpCount << " / "
+         << searchStatistics.vectorOps << "\n";
+      os << "  Search depth: " << failure.searchDepth << "\n";
+      os << "Location: ";
+      failedOp->getLoc().print(os);
+      os << "\n";
+      os << "Operation: " << *failedOp << "\n";
+      os << "Opcode: " << failedOp->getName() << "\n";
+      os << "Operand types:\n";
+      for (Value operand : failedOp->getOperands())
+        os << "  " << operand.getType() << "\n";
+      os << "Result types:\n";
+      for (Value result : failedOp->getResults())
+        os << "  " << result.getType() << "\n";
+      os << "Vector states used by the failed operation:\n";
+      for (Value result : failedOp->getResults()) {
+        if (!isa<VectorType>(result.getType()))
+          continue;
+        os << "  Result: " << result << "  State: ";
+        auto state = failure.solve->inputs.find(result);
+        if (state == failure.solve->inputs.end())
+          os << "<unassigned>\n";
+        else
+          os << state->second << "\n";
+      }
+      for (Value operand : failedOp->getOperands()) {
+        if (!isa<VectorType>(operand.getType()))
+          continue;
+        os << "  Operand: " << operand << "  State: ";
+        auto state = failure.solve->inputs.find(operand);
+        if (state == failure.solve->inputs.end())
+          os << "<unassigned>\n";
+        else
+          os << state->second << "\n";
+      }
+
+      os << "\nPossible causes and solutions:\n";
+      os << "  1. The operation may not have been lowered to the HIVMAVE "
+            "dialect before VectorLayout analysis.\n";
+      os << "     -> If using -analyze-vector-layout standalone: lower all "
+            "vector ops to HIVMAVE first.\n";
+      os << "     -> If running end-to-end: an upstream pass failed to "
+            "lower this op. Op: "
+         << failedOp->getName() << "\n";
+      os << "  2. The operation type may not be handled in solveProblem "
+            "TypeSwitch.\n";
+      os << "     -> Add a new Case for " << failedOp->getName()
+         << " in solveProblem().\n";
+      os << "  3. The specific VecMemType combination is not supported by "
+            "this op.\n";
+      os << "     -> Check COMB_CASE branches in the corresponding "
+            "solveProblem function.\n";
+      os << "  4. Conflicting layout requirements from multiple consumers.\n";
+      os << "     -> Check if the operands/results have incompatible layout "
+            "constraints.\n";
+      os << "  5. Unsupported element bitwidth (only 1/8/16/32 are "
+            "supported).\n";
+      os << "     -> Verify all vector types have supported bitwidths.\n";
+      os << "======================================================\n";
       return;
     }
     if (failed(applySolve(solves[0]))) {
@@ -1192,117 +1260,209 @@ public:
     return solves;
   }
 
-  TreeSolves solveIt() {
-    auto funcOp = getOperation();
+  std::optional<size_t>
+  findConflictFrame(const TreeSolvePtr &solve,
+                    ArrayRef<SearchFrame> searchStack,
+                    ArrayRef<Value> conflictValues) const {
+    auto canChangeConflictState = [&](const SearchFrame &frame) {
+      // Only untried alternatives can resolve the current conflict.
+      for (size_t alternative = frame.nextAlternative;
+           alternative < frame.alternatives.size(); ++alternative) {
+        const auto &alternativeInputs = frame.alternatives[alternative]->inputs;
+        for (Value value : conflictValues) {
+          auto currentState = solve->inputs.find(value);
+          auto alternativeState = alternativeInputs.find(value);
+          if (currentState != solve->inputs.end() &&
+              alternativeState != alternativeInputs.end() &&
+              currentState->second != alternativeState->second)
+            return true;
+        }
+      }
+      return false;
+    };
+
+    for (size_t i = searchStack.size(); i > 0; --i) {
+      if (canChangeConflictState(searchStack[i - 1]))
+        return i - 1;
+    }
+    return std::nullopt;
+  }
+
+  void recordFailure(Operation *op, const TreeSolvePtr &solve,
+                     size_t solvedOpCount, size_t searchDepth,
+                     size_t initialSolveIndex) {
+    ++searchStatistics.failedPaths;
+    // Failed paths may be exponential. Keep aggregate counts and one bounded,
+    // representative path: the one that progressed furthest through the IR.
+    if (!bestFailure || solvedOpCount > bestFailure->solvedOpCount) {
+      bestFailure = SolveFailure{op, solve, solvedOpCount, searchDepth,
+                                 initialSolveIndex};
+    }
+    DBG(llvm::dbgs() << "Reject path at " << op->getName()
+                     << ": solved vector ops = " << solvedOpCount << " / "
+                     << searchStatistics.vectorOps
+                     << ", search depth = " << searchDepth
+                     << ", known states = " << solve->inputs.size(););
+  }
+
+  void advanceWithCandidates(Operation *op, TreeSolves candidates,
+                             SearchCursor &search) {
+    assert(!candidates.empty() && "expected at least one candidate");
+    size_t candidateCount = candidates.size();
+    search.solve = candidates.front();
+    if (candidateCount == 1)
+      return;
+
+    candidates.erase(candidates.begin());
+    search.searchStack.push_back(
+        SearchFrame{op, search.nextOp, std::move(candidates)});
+    ++searchStatistics.branchPoints;
+    searchStatistics.maxSearchDepth =
+        std::max(searchStatistics.maxSearchDepth, search.searchStack.size());
+    DBG(llvm::dbgs() << "Branch at " << op->getName()
+                     << ": candidates = " << candidateCount
+                     << ", selected = 1, deferred = " << candidateCount - 1
+                     << ", search depth = " << search.searchStack.size(););
+  }
+
+  bool tryConflictBackjump(Operation *failedOp, ArrayRef<Value> conflictValues,
+                           SearchCursor &search) {
+    std::optional<size_t> conflictFrame =
+        findConflictFrame(search.solve, search.searchStack, conflictValues);
+    if (!conflictFrame)
+      return false;
+
+    size_t oldDepth = search.searchStack.size();
+    size_t droppedFrames = oldDepth - (*conflictFrame + 1);
+    // Drop newer branches which cannot affect the failed operation.
+    search.searchStack.resize(*conflictFrame + 1);
+    SearchFrame &frame = search.searchStack.back();
+    size_t selectedAlternative = frame.nextAlternative++;
+    ++searchStatistics.backjumps;
+    searchStatistics.droppedFrames += droppedFrames;
+    DBG(llvm::dbgs() << "Conflict-directed backjump from "
+                     << failedOp->getName() << " to "
+                     << frame.branchOp->getName() << ": dropped newer frames = "
+                     << droppedFrames << ", selected deferred alternative = "
+                     << selectedAlternative + 1 << " / "
+                     << frame.alternatives.size()
+                     << ", resume operation index = " << frame.nextOp;);
+    search.solve = frame.alternatives[selectedAlternative];
+    search.nextOp = frame.nextOp;
+    return true;
+  }
+
+  bool tryChronologicalBacktrack(Operation *failedOp, SearchCursor &search) {
+    size_t poppedFrames = 0;
+    while (!search.searchStack.empty()) {
+      SearchFrame &frame = search.searchStack.back();
+      if (frame.nextAlternative < frame.alternatives.size()) {
+        size_t selectedAlternative = frame.nextAlternative++;
+        ++searchStatistics.backtracks;
+        DBG(llvm::dbgs() << "Chronological backtrack from "
+                         << failedOp->getName() << " to "
+                         << frame.branchOp->getName()
+                         << ": popped exhausted frames = " << poppedFrames
+                         << ", selected deferred alternative = "
+                         << selectedAlternative + 1 << " / "
+                         << frame.alternatives.size()
+                         << ", resume operation index = " << frame.nextOp;);
+        search.solve = frame.alternatives[selectedAlternative];
+        search.nextOp = frame.nextOp;
+        return true;
+      }
+      search.searchStack.pop_back();
+      ++poppedFrames;
+    }
+
+    DBG(llvm::dbgs() << "No chronological backtrack candidate after failure at "
+                     << failedOp->getName()
+                     << "; popped exhausted frames = " << poppedFrames;);
+    return false;
+  }
+
+  bool recoverFromFailure(Operation *failedOp, SearchCursor &search) {
+    // A failure only depends on the vector states read by this operation.
+    // Prefer the newest branch which can change one of those states, then use
+    // chronological backtracking as the completeness-preserving fallback.
+    SmallVector<Value> conflictValues =
+        search.solve->getVectorOperand(failedOp);
+    llvm::append_range(conflictValues,
+                       search.solve->getVectorResults(failedOp));
+    if (tryConflictBackjump(failedOp, conflictValues, search))
+      return true;
+    return tryChronologicalBacktrack(failedOp, search);
+  }
+
+  TreeSolvePtr solveInitialSolution(ArrayRef<Operation *> ops,
+                                    TreeSolvePtr initialSolve,
+                                    size_t initialSolveIndex,
+                                    size_t initialSolveCount) {
+    SearchCursor search{std::move(initialSolve), ops.size(), {}};
+    DBG(llvm::dbgs() << "Try initial solution " << initialSolveIndex + 1
+                     << " / " << initialSolveCount;);
+
+    while (search.nextOp > 0) {
+      Operation *op = ops[--search.nextOp];
+      ++searchStatistics.attemptedOps;
+      TreeSolves candidates = getSolveSpace(op, search.solve);
+      if (!candidates.empty()) {
+        advanceWithCandidates(op, std::move(candidates), search);
+        continue;
+      }
+
+      size_t solvedOpCount = ops.size() - search.nextOp - 1;
+      recordFailure(op, search.solve, solvedOpCount, search.searchStack.size(),
+                    initialSolveIndex);
+      if (recoverFromFailure(op, search))
+        continue;
+
+      DBG(llvm::dbgs() << "Initial solution " << initialSolveIndex + 1 << " / "
+                       << initialSolveCount << " exhausted after failure at "
+                       << op->getName(););
+      return nullptr;
+    }
+    return search.solve;
+  }
+
+  SmallVector<Operation *> collectVectorOps() {
     SmallVector<Operation *> ops;
-    funcOp->walk<WalkOrder::PreOrder>([&](Operation *op) {
+    getOperation()->walk<WalkOrder::PreOrder>([&](Operation *op) {
       if (isVectorOp(op))
         ops.push_back(op);
     });
+    return ops;
+  }
 
-    struct SearchFrame {
-      size_t nextOp;
-      TreeSolves alternatives;
-      size_t nextAlternative = 0;
-    };
+  TreeSolves solveIt() {
+    bestFailure.reset();
+    searchStatistics = {};
 
-    // Only the first complete solution is applied. Search depth-first so that
-    // independent branching operations do not materialize their Cartesian
-    // product. Keep the remaining candidates at each branch for complete
-    // backtracking if the preferred candidate fails later.
-    for (TreeSolvePtr initialSolve : initializeSolutions()) {
-      TreeSolvePtr solve = initialSolve;
-      size_t nextOp = ops.size();
-      SmallVector<SearchFrame> searchStack;
+    SmallVector<Operation *> ops = collectVectorOps();
+    TreeSolves initialSolves = initializeSolutions();
+    searchStatistics.vectorOps = ops.size();
+    searchStatistics.initialSolutions = initialSolves.size();
+    DBG(llvm::dbgs() << "Start vector layout search: vector ops = "
+                     << searchStatistics.vectorOps << ", initial solutions = "
+                     << searchStatistics.initialSolutions;);
 
-      while (true) {
-        if (nextOp == 0)
-          return {solve};
-
-        Operation *op = ops[--nextOp];
-        TreeSolves candidates = getSolveSpace(op, solve);
-        if (!candidates.empty()) {
-          solve = candidates.front();
-          if (candidates.size() > 1) {
-            candidates.erase(candidates.begin());
-            searchStack.push_back(SearchFrame{nextOp, std::move(candidates)});
-          }
-          continue;
-        }
-
-        // A failure only depends on the vector states read by this operation.
-        // Skip newer branch points whose remaining alternatives cannot change
-        // any of those states. Without this backjump, a producer-side failure
-        // can enumerate the Cartesian product of unrelated consumers before
-        // reaching the consumer that constrained the failed result.
-        SmallVector<Value> conflictValues = solve->getVectorOperand(op);
-        llvm::append_range(conflictValues, solve->getVectorResults(op));
-        std::optional<size_t> conflictFrame;
-        for (size_t i = searchStack.size(); i > 0; --i) {
-          SearchFrame &frame = searchStack[i - 1];
-          bool canChangeConflict = false;
-          for (size_t alternative = frame.nextAlternative;
-               alternative < frame.alternatives.size() && !canChangeConflict;
-               ++alternative) {
-            const auto &alternativeInputs =
-                frame.alternatives[alternative]->inputs;
-            for (Value value : conflictValues) {
-              auto currentState = solve->inputs.find(value);
-              auto alternativeState = alternativeInputs.find(value);
-              if (currentState != solve->inputs.end() &&
-                  alternativeState != alternativeInputs.end() &&
-                  currentState->second != alternativeState->second) {
-                canChangeConflict = true;
-                break;
-              }
-            }
-          }
-          if (canChangeConflict) {
-            conflictFrame = i - 1;
-            break;
-          }
-        }
-
-        if (conflictFrame) {
-          // Drop invalid branches.
-          searchStack.resize(*conflictFrame + 1);
-          SearchFrame &frame = searchStack.back();
-          solve = frame.alternatives[frame.nextAlternative++];
-          nextOp = frame.nextOp;
-          continue;
-        }
-
-        // No branch can be proven relevant (for example, the failure does not
-        // expose vector operands/results). Fall back to chronological
-        // backtracking to keep the search complete.
-        while (!searchStack.empty()) {
-          SearchFrame &frame = searchStack.back();
-          if (frame.nextAlternative < frame.alternatives.size()) {
-            solve = frame.alternatives[frame.nextAlternative++];
-            nextOp = frame.nextOp;
-            break;
-          }
-          searchStack.pop_back();
-        }
-        if (searchStack.empty())
-          break;
-      }
+    // Only the first complete solution is applied. Each initial solution is
+    // searched depth-first without materializing independent branch products.
+    for (size_t i = 0; i < initialSolves.size(); ++i) {
+      TreeSolvePtr solve =
+          solveInitialSolution(ops, initialSolves[i], i, initialSolves.size());
+      if (solve)
+        return {solve};
     }
     return {};
   }
 
   TreeSolves getSolveSpace(Operation *op, const TreeSolvePtr &solve) {
     DBG(llvm::dbgs() << "Solving problem of: " << *op;);
-    TreeSolves newSolves = solve->solveProblem(op);
-    DBG(llvm::dbgs() << "solve num from 1 To " << newSolves.size() << "\n";);
-    if (newSolves.empty()) {
-      failedOp = op;
-      failedSolves = {solve};
-      DBG(llvm::dbgs() << "Failed to solve problem";);
-    } else {
-      DBG(llvm::dbgs() << "Solve problem succeed.";);
-    }
-    return newSolves;
+    TreeSolves candidates = solve->solveProblem(op);
+    DBG(llvm::dbgs() << "Current path produced " << candidates.size()
+                     << " candidate(s)";);
+    return candidates;
   }
 };
 } // namespace

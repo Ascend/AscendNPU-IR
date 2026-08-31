@@ -1,7 +1,12 @@
 // RUN: bishengir-opt %s --analyze-vector-layout | FileCheck %s
+// RUN: bishengir-opt %s --analyze-vector-layout --debug-only=analyze-vector-layout -o /dev/null 2>&1 | FileCheck %s --check-prefix=DEBUG
 
 // CHECK-LABEL: func.func @many_independent_i1_stores
 // CHECK-COUNT-15: ave.hir.masked_store
+// DEBUG: [solveIt]: Start vector layout search:
+// DEBUG: [advanceWithCandidates]: Branch at ave.hir.masked_store:
+// DEBUG: [recordFailure]: Reject path at ave.hir.vcmp:
+// DEBUG: [tryConflictBackjump]: Conflict-directed backjump from ave.hir.vcmp to ave.hir.masked_store:
 // Keep all f16 compares before the stores. The reverse solver sees 15
 // three-way i1 store branches before it can reject B8 at the compare producers.
 func.func @many_independent_i1_stores(
