@@ -62,12 +62,12 @@ func.func @distributed_dataflow_custom_ops_do_not_bind_to_subblock_zero(
 
 // -----
 
-// CHECK-LABEL: func.func @other_distributed_custom_op_stays_limited
-// CHECK: hivm.hir.get_sub_block_idx
-// CHECK: scf.if
+// CHECK-LABEL: func.func @other_distributed_custom_op_without_gm_addr_skip_guard
+// CHECK-NOT: hivm.hir.get_sub_block_idx
+// CHECK-NOT: scf.if
+// CHECK-NOT: limit_sub_block_id0
 // CHECK: hivm.hir.custom {{.*}}aclshmem_barrier_all
-// CHECK: } {limit_sub_block_id0}
-func.func @other_distributed_custom_op_stays_limited()
+func.func @other_distributed_custom_op_without_gm_addr_skip_guard()
     attributes {hacc.function_kind = #hacc.function_kind<DEVICE>,
                 hivm.func_core_type = #hivm.func_core_type<AIV>,
                 hivm.part_of_mix, mix_mode = "mix"} {

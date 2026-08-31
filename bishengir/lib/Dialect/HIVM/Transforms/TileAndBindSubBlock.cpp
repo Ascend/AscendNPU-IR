@@ -955,11 +955,13 @@ public:
     if (op->template hasAttrOfType<UnitAttr>(tiledOp))
       return failure();
 
-    if constexpr (std::is_same_v<hivm::CustomOp, OpType>) {
+    if constexpr (std::is_same_v<hivm::CustomOp, OpType> ||
+                  std::is_same_v<hivm::CustomMacroOp, OpType>) {
       if (isDistributedTypeCustomOp(op.getOperation()) &&
-          op->getNumResults() > op.getOutputs().size()) {
+          op->getNumResults() > op.getOutputs().size())
         return failure();
-      }
+      if (!op.getGMAddrArgsIndices())
+        return failure();
     }
 
     // Copy operations on A2/A3 represent ub-to-ub transfers, whereas on A5 they
