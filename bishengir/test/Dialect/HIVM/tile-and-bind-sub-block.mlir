@@ -2262,8 +2262,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">, hivm.module_cor
 // CHECK: hivm.hir.sync_block[<ALL_SUB_VECTOR>, 14 : i64] tvector_pipe = <PIPE_MTE3> vector_pipe = <PIPE_MTE2>
 // CHECK: hivm.hir.load
 // CHECK: %[[FINAL:.*]] = hivm.hir.vreduce <sum> ins(%{{.*}} : tensor<2xf32>)
-// CHECK: scope.return %[[FINAL]] : tensor<1xf32>
-// CHECK: annotation.mark
+// CHECK: annotation.mark %[[FINAL]]
 module attributes {
   hacc.target = #hacc.target<"Ascend950PR_9589">,
   hivm.module_core_type = #hivm.module_core_type<MIX>
@@ -3317,7 +3316,6 @@ func.func @broadcast_merged_candidate_groups(
 //
 // CHECK-LABEL: func.func @reduce_retile_mix_aiv
 // CHECK: hivm.hir.vreduce {tiled_op}
-// CHECK: scope.return
 // CHECK: map_for_to_forall
 
 #map = affine_map<()[s0, s1] -> (s0 + s1 * 32)>
