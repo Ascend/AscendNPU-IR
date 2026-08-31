@@ -36,5 +36,7 @@ add_bishengir_dialect_library(MLIRHIVMAVETransforms
   BiShengIRHIVMDialect
   MLIRIR
   MLIRTransformDialect
+  MLIRAVECostModelInfo
+  MLIRAVEUtils
   BiShengIRDialectUtils
   )
