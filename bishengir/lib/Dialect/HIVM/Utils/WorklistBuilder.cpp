@@ -921,17 +921,24 @@ void WorklistBuilder::populateLoopCarriedDependencies() {
       for (Operation *user : res.getUsers())
         pushScopedUser(user);
 
-    // Follow memref writes if DPS op
-    if (auto dps = dyn_cast<DestinationStyleOpInterface>(op)) {
-      for (Value init : dps.getDpsInits()) {
-        if (!isa<MemRefType>(init.getType()))
-          continue;
+    // Follow memref writes if DPS op or copy (including nested ops inside region ops)
+    op->walk([&](Operation *nestedOp) {
+      if (auto dps = dyn_cast<DestinationStyleOpInterface>(nestedOp)) {
+        for (Value init : dps.getDpsInits()) {
+          if (!isa<MemRefType>(init.getType()))
+            continue;
+          SmallVector<Operation *> memrefUsers;
+          memrefDFS(init, memrefUsers);
+          for (Operation *usr : memrefUsers)
+            pushScopedUser(usr);
+        }
+      } else if (auto copy = dyn_cast<memref::CopyOp>(nestedOp)) {
         SmallVector<Operation *> memrefUsers;
-        memrefDFS(init, memrefUsers);
+        memrefDFS(copy.getTarget(), memrefUsers);
         for (Operation *usr : memrefUsers)
           pushScopedUser(usr);
       }
-    }
+    });
 
     // Follow dependenceMap successors
     for (auto &[consumer, deps] : dependenceMap)
