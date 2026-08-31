@@ -189,6 +189,51 @@ SmallVector<Value> getShapeFromMixedSizes(ArrayRef<OpFoldResult> mixedSizes,
   return sizes;
 }
 
+/// Express the selected main or tail shape in the coordinate system seen by
+/// `val` by replaying collapse_shape operations from `rootAlloc` to `val`.
+SmallVector<Value>
+applyMemRefCollapseShapes(Value val, memref::AllocOp rootAlloc,
+                          SmallVector<Value> shape, Location loc,
+                          PatternRewriter &rewriter) {
+  if (auto toTensor = val.getDefiningOp<bufferization::ToTensorOp>())
+    val = toTensor.getMemref();
+
+  SmallVector<memref::CollapseShapeOp> collapseOps;
+  Value current = val;
+  while (current != rootAlloc.getResult()) {
+    if (auto collapse = current.getDefiningOp<memref::CollapseShapeOp>()) {
+      collapseOps.push_back(collapse);
+      current = collapse.getSrc();
+      continue;
+    }
+    if (current.getDefiningOp<memref::ExpandShapeOp>()) {
+      // TODO: Map the selected main/tail shape into the 2D coordinate system
+      // produced by memref.expand_shape.
+      return shape;
+    }
+    if (auto view = dyn_cast_if_present<ViewLikeOpInterface>(
+            current.getDefiningOp())) {
+      current = view.getViewSource();
+      continue;
+    }
+    // Preserve the previous behavior for unsupported def-use chains.
+    return shape;
+  }
+
+  for (memref::CollapseShapeOp collapse : llvm::reverse(collapseOps)) {
+    SmallVector<Value> collapsedShape;
+    for (ReassociationIndices group : collapse.getReassociationIndices()) {
+      assert(!group.empty() && "expected non-empty reassociation group");
+      Value size = shape[group.front()];
+      for (int64_t dim : llvm::drop_begin(group))
+        size = rewriter.create<arith::MulIOp>(loc, size, shape[dim]);
+      collapsedShape.push_back(size);
+    }
+    shape = std::move(collapsedShape);
+  }
+  return shape;
+}
+
 // If value is from memref, we get shape from memref.subview or memref.alloc.
 // If value is from tensor, we get shape from value directly.
 FailureOr<SmallVector<Value>>
@@ -226,9 +271,11 @@ getRealShapeFromMemrefOrTensor(Value val, Location loc,
   }
   // If there is no SubView, return Alloc's shape
   if (candidateSubViews.empty()) {
-    return getValueListFromMixedTypeLists(
+    auto shape = getValueListFromMixedTypeLists(
         rootAlloc.getDynamicSizes(), rootAlloc.getMemref().getType().getShape(),
         val.getLoc(), rewriter);
+    return applyMemRefCollapseShapes(val, rootAlloc, std::move(shape), loc,
+                                     rewriter);
   }
   // Filter the SubViewOps that is NOT written into.
   candidateSubViews.erase(llvm::remove_if(candidateSubViews, isNotWritten),
@@ -249,14 +296,18 @@ getRealShapeFromMemrefOrTensor(Value val, Location loc,
   auto subview = dyn_cast<memref::SubViewOp>(*candidateSubViews.begin());
   if (!optimized) {
     LDBG("Using main block size for mmadL1");
-    return getValueListFromMixedTypeLists(
+    auto shape = getValueListFromMixedTypeLists(
         rootAlloc.getDynamicSizes(), rootAlloc.getMemref().getType().getShape(),
         val.getLoc(), rewriter);
+    return applyMemRefCollapseShapes(val, rootAlloc, std::move(shape), loc,
+                                     rewriter);
   }
   LDBG("Using tail block size for mmadL1");
   assert(subview != nullptr);
-  return getValueListFromMixedTypeLists(
+  auto tailShape = getValueListFromMixedTypeLists(
       subview.getSizes(), subview.getStaticSizes(), val.getLoc(), rewriter);
+  return applyMemRefCollapseShapes(val, rootAlloc, std::move(tailShape), loc,
+                                   rewriter);
 }
 
 inline Value getBiasInputForPerChannelAdd(Value v) {
@@ -402,8 +453,11 @@ struct SetRealMKNPattern
       return rewriter.notifyMatchFailure(op, "Pattern already applied");
 
     auto mkn = extractRealMKN(mmadLikeOp, rewriter);
-    if (failed(mkn))
-      return rewriter.notifyMatchFailure(op, "Failed to extract mkn");
+    if (failed(mkn)) {
+      op->emitError(
+          "NormalizeMatmul SetRealMKNPattern failed to extract M/K/N");
+      return failure();
+    }
 
     // This pattern is intended to run only once. We clone the op and use
     // `GreedyRewriteStrictness::ExistingOps` to achieve this.
