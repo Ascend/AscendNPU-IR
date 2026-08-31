@@ -701,10 +701,10 @@ public:
     SmallVector<Value> additionalArgs;
     genAdditionalFunctionArgs(op, additionalArgs, rewriter);
 
-    // A rank-5 L0C draining into a rank-3 GM buffer resolves to the batched
-    // library function, which walks the batch via ND_PARA. That keeps one
-    // fixpipe paired with the single unit flag update BatchL1Mmad raises on
-    // its final mmad.
+    // A rank-5 L0C draining into a rank-3 GM or UB buffer resolves to the
+    // batched library function, which walks the batch via ND_PARA. That keeps
+    // one fixpipe paired with the single unit flag update BatchL1Mmad raises
+    // on its final mmad.
     SmallVector<Value> libCallOperands;
     libCallOperands.push_back(op.getSrc());
     libCallOperands.push_back(op.getDst());

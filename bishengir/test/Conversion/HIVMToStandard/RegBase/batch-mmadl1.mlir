@@ -46,6 +46,23 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
     return
   }
 
+  // A CV-fused matmul drains into UB rather than GM. That destination
+  // registers the batched variant too, so the dual-dst shape also resolves to
+  // a single ND_PARA fixpipe.
+  // CHECK-LABEL: func.func @lower_batch_fixpipe_ubuf
+  // CHECK: call @fixpipe_nz2nd_dual_float_to_float_5d_to_3d_ubuf
+  // CHECK-NOT: call @fixpipe_nz2nd_dual_float_to_float_4d_to_2d_ubuf
+  func.func @lower_batch_fixpipe_ubuf() {
+    %c = memref.alloc() : memref<1x8x13x16x16xf32, #hivm.address_space<cc>>
+    %dst = memref.alloc() : memref<1x128x128xf32, #hivm.address_space<ub>>
+
+    hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+      ins(%c : memref<1x8x13x16x16xf32, #hivm.address_space<cc>>)
+      outs(%dst : memref<1x128x128xf32, #hivm.address_space<ub>>)
+      dual_dst_mode = <ROW_SPLIT>
+    return
+  }
+
   // CHECK-LABEL: func.func @lower_batch_mmad_l1_bf16
   // CHECK: call @batch_mma_tile_bfloat16_t_to_float
   // CHECK-NOT: call @mma_tile_bfloat16_t_to_float
