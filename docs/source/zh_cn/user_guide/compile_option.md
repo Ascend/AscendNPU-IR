@@ -24,8 +24,8 @@ BiShengIR编译器通过一系列命令行编译选项控制编译流程、功�
 
 | 选项名 | 描述 | 类型 | 默认值 |
 |--------|------|------|--------|
-| --enable-auto-multi-buffer | 启用自动多缓冲优化 | bool | false |
-| --limit-auto-multi-buffer-only-for-local-buffer | 开启自动多缓冲后，限定该优化仅对本地缓冲区生效 | bool | true |
+| --enable-auto-multi-buffer | 启用自动多缓冲优化，详见[多缓冲](../developer_guide/features/multi_buffer.md) | bool | true |
+| --limit-auto-multi-buffer-only-for-local-buffer | 开启自动多缓冲后，限定该优化仅对片上本地缓冲区（UB、L1、L0C）生效，即跳过GM Workspace的多缓冲。仅对核类型为MIX的函数生效 | bool | false |
 | --enable-tuning-mode | 启用调优模式，内存规划失败时不会重试多次编译 | bool | false |
 | --block-dim=\<uint> | 指定使用的块数量 | unsigned | 1 |
 
@@ -39,6 +39,14 @@ BiShengIR编译器通过一系列命令行编译选项控制编译流程、功�
 | --hfusion-max-buffer-count-tuning=\<long> | HFusion自动调度中的最大缓冲区数量调优阈值 | int64_t | 0 |
 | --cube-tiling-tuning=\<long> | HFusion自动调度中的Cube分块尺寸调优参数 | list int64_t | "" |
 | --enable-hfusion-count-buffer-dma-opt | 开启后，DMA操作使用的缓冲区不会被向量运算复用 | bool | false |
+
+## BiShengIR HIVM优化选项
+
+| 选项名 | 描述 | 类型 | 默认值 |
+|--------|------|------|--------|
+| --limit-auto-multi-buffer-of-local-buffer=\<value> | 开启自动多缓冲后，限定本地缓冲区的多缓冲范围。`no-l0c`表示不对L0C开启多缓冲；`no-limit`表示不做限制 | enum | no-l0c |
+| --limit-auto-multi-buffer-buffer=\<value> | 开启自动多缓冲后，限定MIX算子中多缓冲的作用侧。`only-cube`表示仅Cube侧（L1、L0C）；`only-vector`表示仅Vector侧（UB）；`no-limit`表示不做限制 | enum | Ascend 950PR/Ascend 950DT为`no-limit`；Atlas A3系列产品、Atlas A2系列产品为`only-cube` |
+| --set-workspace-multibuffer=\<uint> | 指定GM Workspace的多缓冲数量 | unsigned | Ascend 950PR/Ascend 950DT为2；Atlas A3系列产品、Atlas A2系列产品为4 |
 
 ## BiShengIR目标平台选项
 

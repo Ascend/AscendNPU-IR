@@ -45,6 +45,7 @@
     - [自定义算子](developer_guide/features/custom_op.md)
     - [调试模块DFX](developer_guide/features/dfx.md)
     - [内存管理](developer_guide/features/plan_memory.md)
+    - [多缓冲](developer_guide/features/multi_buffer.md)
 - [常见问题](faq/faq.md)
 - [贡献与支持]()
   - [贡献指南](contributing_guide/contribute.md)
