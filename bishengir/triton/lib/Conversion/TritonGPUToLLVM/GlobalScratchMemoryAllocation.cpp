@@ -59,7 +59,7 @@ static void allocateGMem(Operation *parentOp,
     else if (auto cvtlytOp = dyn_cast<triton::gpu::ConvertLayoutOp>(op)) {
       if (cvtlytOp->hasAttr("store_to_gmem")) {
         nbytes = cvtlytOp->getAttrOfType<IntegerAttr>("bytes").getInt();
-        align = 1;
+        align = 256;
         auto cvtOffset = builder.getI64IntegerAttr(offset);
         cvtlytOp->setAttr("allocation.offset", cvtOffset);
       }

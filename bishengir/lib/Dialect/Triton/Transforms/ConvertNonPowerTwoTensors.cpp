@@ -1481,6 +1481,17 @@ void updateElementwiseOp(IRRewriter &rewriter, Operation *op) {
 void updateGeneralTensorOp(
     IRRewriter &rewriter, Operation *op,
     const DenseMap<Value, LocalTensorShapeData> &shapeMap) {
+  if (auto dotOp = dyn_cast<triton::DotOp>(op)) {
+    LocalTensorShapeData data = shapeMap.at(dotOp.getOperand(0));
+    if (data.dataShape[1] != data.localVirtualShape[1]) {
+      // If the K dimension is padded, we attach the real K size as an attribute
+      // to the dot op so that it can be used to optimize K-Tiling
+      OpBuilder builder(op->getContext());
+      IntegerAttr realKSize = builder.getI64IntegerAttr(data.dataShape[1]);
+      op->setAttr("bishengir.dot.real_k_size", realKSize);
+    }
+  }
+
   TypeSwitch<Operation *, void>(op)
       .Case<scf::ForOp>(
           [&](scf::ForOp forOp) { updateForOp(rewriter, forOp, shapeMap); })
