@@ -1913,6 +1913,7 @@ void mlir::triton::ascend::populateAscendElementwiseOpToLLVMPatterns(
   POPULATE_UNARY_OP(math::TanhOp, ascend_dpx::TanhOp)
   POPULATE_UNARY_OP(math::FloorOp, ascend_dpx::FloorOp)
   POPULATE_UNARY_OP(math::CeilOp, ascend_dpx::CeilOp)
+  POPULATE_UNARY_OP(math::RoundOp, ascend_dpx::RoundOp)
   POPULATE_UNARY_OP(math::LogOp, ascend_dpx::LogOp)
   POPULATE_UNARY_OP(math::Log2Op, ascend_dpx::Log2Op)
   POPULATE_UNARY_OP(math::CosOp, ascend_dpx::CosOp)

@@ -561,3 +561,27 @@ func.func @test_func_vcast_f32_bf16_cast_signed_truncf(%arg0:tensor<4x32x64xf32>
     hivm.hir.vcast ins(%arg0 : tensor<4x32x64xf32>) outs(%0:tensor<4x32x64xbf16>) round_mode = <rint> cast = <cast_signed> -> tensor<4x32x64xbf16>
     return %0 : tensor<4x32x64xbf16>
 }
+
+// CHECK-LABEL: func.func @test_func_vcast_f32_f32_round
+func.func @test_func_vcast_f32_f32_round(%arg0:tensor<4xf32>) -> tensor<4xf32> {
+    %0 = tensor.empty():tensor<4xf32>
+    //     CHECK: %[[RET:.*]] = math.round %arg0 {round_mode = #hivm.round_mode<round>} : tensor<4xf32>
+    %1 = hivm.hir.vcast ins(%arg0 : tensor<4xf32>) outs(%0:tensor<4xf32>) round_mode = <round> cast = <cast_signed> -> tensor<4xf32>
+    return %1 : tensor<4xf32>
+}
+
+// CHECK-LABEL: func.func @test_func_vcast_f32_f32_floor
+func.func @test_func_vcast_f32_f32_floor(%arg0:tensor<4xf32>) -> tensor<4xf32> {
+    %0 = tensor.empty():tensor<4xf32>
+    //     CHECK: %[[RET:.*]] = math.floor %arg0 {round_mode = #hivm.round_mode<floor>} : tensor<4xf32>
+    %1 = hivm.hir.vcast ins(%arg0 : tensor<4xf32>) outs(%0:tensor<4xf32>) round_mode = <floor> cast = <cast_signed> -> tensor<4xf32>
+    return %1 : tensor<4xf32>
+}
+
+// CHECK-LABEL: func.func @test_func_vcast_f32_f32_ceil
+func.func @test_func_vcast_f32_f32_ceil(%arg0:tensor<4xf32>) -> tensor<4xf32> {
+    %0 = tensor.empty():tensor<4xf32>
+    //     CHECK: %[[RET:.*]] = math.ceil %arg0 {round_mode = #hivm.round_mode<ceil>} : tensor<4xf32>
+    %1 = hivm.hir.vcast ins(%arg0 : tensor<4xf32>) outs(%0:tensor<4xf32>) round_mode = <ceil> cast = <cast_signed> -> tensor<4xf32>
+    return %1 : tensor<4xf32>
+}
