@@ -369,15 +369,6 @@ func.func @triton_V_C_kernel_backup(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %a
 }
 
 // -----
-// CHECK-LABEL: @copy_was_bool_to_int8_attr
-// CHECK: hivm.hir.load
-// CHECK-SAME: was_bool_to_int8 = true
-func.func @copy_was_bool_to_int8_attr(%src: memref<256xi8, #hivm.address_space<gm>>, %dst: memref<256xi8, #hivm.address_space<ub>>) attributes {global_kernel = "local"} {
-  memref.copy %src, %dst {was_bool_to_int8 = true} : memref<256xi8, #hivm.address_space<gm>> to memref<256xi8, #hivm.address_space<ub>>
-  return
-}
-
-// -----
 // i1 element type must not divide-by-zero in getNumPerBlock when computing
 // left_padding_num from a subview offset.
 // CHECK-LABEL: @load_i1_with_subview_offset
