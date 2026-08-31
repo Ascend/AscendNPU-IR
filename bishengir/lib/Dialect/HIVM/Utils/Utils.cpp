@@ -1250,6 +1250,15 @@ LoopLikeOpInterface getParentLoop(Value val) {
   return getParentLoopImpl(val, nullptr);
 }
 
+BlockArgument getTiedBlockArgument(LoopLikeOpInterface loopOp,
+                                   OpOperand &operand) {
+  for (auto barg : loopOp.getRegionIterArgs())
+    if (loopOp.getTiedLoopInit(barg) == &operand) {
+      return barg;
+    }
+  return nullptr;
+}
+
 Value createNestedIndexModular(OpBuilder &builder, Operation *op, int modular) {
   LoopLikeOpInterface parentLoop = getParentLoop(op->getResult(0));
   assert(parentLoop && " op has no proper parent loop to do multi buffer");

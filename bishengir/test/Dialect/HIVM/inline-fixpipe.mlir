@@ -1560,7 +1560,7 @@ func.func @test_conv1d(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_addr
   %12 = hivm.hir.vtranspose ins(%10 : tensor<1x32x3x16xf16>) outs(%11 : tensor<1x3x32x16xf16>) permutation = [0, 2, 1, 3] -> tensor<1x3x32x16xf16>
   %expanded_6 = tensor.expand_shape %12 [[0, 1], [2], [3], [4]] output_shape [1, 1, 3, 32, 16] : tensor<1x3x32x16xf16> into tensor<1x1x3x32x16xf16>
   %13 = tensor.empty() : tensor<128x64xf32>
-  %14 = hivm.hir.Conv1dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 0 : i32} ins(%expanded_4, %expanded_6, %true : tensor<2x2x1x128x16xf16>, tensor<1x1x3x32x16xf16>, i1) outs(%13 : tensor<128x64xf32>) -> tensor<128x64xf32>
+  %14 = hivm.hir.Conv1dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 0 : i32, stride = 1 : i32} ins(%expanded_4, %expanded_6, %true : tensor<2x2x1x128x16xf16>, tensor<1x1x3x32x16xf16>, i1) outs(%13 : tensor<128x64xf32>) -> tensor<128x64xf32>
   // CHECK: %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [126, 64] [1, 1] : tensor<128x64xf32> to tensor<126x64xf32>
   // CHECK: %{{.*}} = tensor.empty() : tensor<126x64xf16>
   // CHECK: %{{.*}} = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%{{.*}} : tensor<126x64xf32>) outs(%{{.*}} : tensor<126x64xf16>) -> tensor<126x64xf16>
@@ -1626,7 +1626,7 @@ func.func @test_conv2d(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_addr
   %19 = tensor.empty() : tensor<2x3x3x16x8xf32>
   %20 = hivm.hir.load ins(%18 : tensor<2x3x3x16x8xf32>) outs(%19 : tensor<2x3x3x16x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x3x3x16x8xf32>
   %21 = tensor.empty() : tensor<912x16xf32>
-  %22 = hivm.hir.Conv2dL1 {groups = 1 : i32, outputAlreadyNormalized, padding = 0 : i32} ins(%10, %20, %true : tensor<1x2x32x32x8xf32>, tensor<2x3x3x16x8xf32>, i1) outs(%21 : tensor<912x16xf32>) -> tensor<912x16xf32>
+  %22 = hivm.hir.Conv2dL1 {groups = 1 : i32, outputAlreadyNormalized, padding = 0 : i32, stride = 1 : i32} ins(%10, %20, %true : tensor<1x2x32x32x8xf32>, tensor<2x3x3x16x8xf32>, i1) outs(%21 : tensor<912x16xf32>) -> tensor<912x16xf32>
   // CHECK: %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [900, 16] [1, 1] : tensor<912x16xf32> to tensor<900x16xf32>
   // CHECK: %{{.*}} = tensor.empty() : tensor<900x16xf32>
   // CHECK: %{{.*}} = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%{{.*}} : tensor<900x16xf32>) outs(%{{.*}} : tensor<900x16xf32>) -> tensor<900x16xf32>

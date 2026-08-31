@@ -74,6 +74,11 @@ def OutlineScope : Pass<"outline-scope", "mlir::ModuleOp"> {
   }];
   let constructor = "mlir::scope::createOutlineScopePass()";
   let dependentDialects = ["mlir::func::FuncDialect"];
+  let options = [
+    Option<"outlineMarkedScopesOnly", "outline-marked-scopes-only", "bool",
+           /*default=*/"false",
+           "Only outline scopes carrying the `outline` attribute.">
+  ];
 }
 
 def InlineScope : Pass<"inline-scope", "mlir::ModuleOp"> {

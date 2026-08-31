@@ -4,6 +4,7 @@
 set(LLVM_OPTIONAL_SOURCES
   BiShengIRRunnerUtils.cpp
   ConvertHFusionToUpstream.cpp
+  ConvertHIVMToHFusion.cpp
   ConvertHIVMToUpstream.cpp
   CreateHostMain.cpp
   ExecutionEnginePipelines.cpp
@@ -18,6 +19,7 @@ get_property(dialect_libs GLOBAL PROPERTY MLIR_DIALECT_LIBS)
 
 add_bishengir_extension_library(BiShengIRExecutionEngineTransforms
   ConvertHFusionToUpstream.cpp
+  ConvertHIVMToHFusion.cpp
   ConvertHIVMToUpstream.cpp
   CreateHostMain.cpp
   ExecutionEnginePipelines.cpp

@@ -183,27 +183,6 @@ LogicalResult propagateUpForCustomLikeOp(Operation *op,
   return success();
 }
 
-static Value getLocalBufferTensor(PatternRewriter &rewriter, Location loc,
-                                  ArrayRef<int64_t> targetShape,
-                                  ArrayRef<Value> dynamicShape,
-                                  Type elementType,
-                                  hivm::AddressSpace addressSpace) {
-  if (addressSpace == hivm::AddressSpace::UB) {
-    auto memrefType = MemRefType::get(targetShape, elementType);
-    Value alloc =
-        rewriter.create<memref::AllocOp>(loc, memrefType, dynamicShape);
-#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
-    return rewriter.create<bufferization::ToTensorOp>(loc, alloc, true, true);
-#else
-    auto tensorType = RankedTensorType::get(targetShape, elementType);
-    return rewriter.create<bufferization::ToTensorOp>(loc, tensorType, alloc,
-                                                      true, true);
-#endif
-  }
-  return getLocalWorkSpaceTensor(rewriter, loc, targetShape, dynamicShape,
-                                 elementType);
-}
-
 std::pair<TCoreType, SmallVector<hivm::AddressSpace, 2>>
 extractPropagatorInfo(UnrealizedConversionCastOp propagateOp) {
   auto coreType = TCoreType::CUBE_OR_VECTOR;
@@ -589,19 +568,17 @@ bool haveSamePropagation(UnrealizedConversionCastOp lhs,
   return extractPropagatorInfo(lhs) == extractPropagatorInfo(rhs);
 }
 
-hivm::StoreOp insertStore(Value value, Location loc, PatternRewriter &rewriter,
-                          std::optional<hivm::AddressSpace> dstAddressSpace) {
+hivm::StoreOp insertStore(Value value, Location loc, PatternRewriter &rewriter) {
   Type type = value.getType();
   auto tensorType = dyn_cast<TensorType>(type);
   if (!tensorType) {
     Value storeInit = utils::createEmptyOp(rewriter, loc, value);
     return rewriter.create<hivm::StoreOp>(loc, TypeRange(), value, storeInit);
   }
-  auto addressSpace = dstAddressSpace.value_or(hivm::AddressSpace::GM);
-  Value storeInit = getLocalBufferTensor(
+  Value storeInit = getLocalWorkSpaceTensor(
       rewriter, value.getLoc(), tensorType.getShape(),
       hivm::getTensorDynamicValues(rewriter, value.getLoc(), value),
-      tensorType.getElementType(), addressSpace);
+      tensorType.getElementType());
   auto storeOp =
       rewriter.create<hivm::StoreOp>(loc, TypeRange(type), value, storeInit);
   storeOp->setAttr(hivm::kInsertedStoreAttr::name, rewriter.getUnitAttr());
@@ -760,11 +737,10 @@ tensor::EmptyOp insertTensor(Value value, Location loc,
 }
 
 std::pair<hivm::StoreOp, hivm::LoadOp>
-insertStoreAndLoad(Value value, Location loc, PatternRewriter &rewriter,
-                   std::optional<hivm::AddressSpace> dstAddressSpace) {
+insertStoreAndLoad(Value value, Location loc, PatternRewriter &rewriter) {
   Type type = value.getType();
   bool isBufferized = !isa<TensorType>(type);
-  auto storeOp = insertStore(value, loc, rewriter, dstAddressSpace);
+  auto storeOp = insertStore(value, loc, rewriter);
   auto loadOp = insertLoad(
       isBufferized ? storeOp.getDst() : storeOp.getResult(0), loc, rewriter);
   return std::make_pair(storeOp, loadOp);

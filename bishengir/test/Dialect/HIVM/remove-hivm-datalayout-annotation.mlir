@@ -39,7 +39,7 @@ func.func @triton_conv1d_3d_fp16_aligned_groups_mix_aic(%arg0: i64 {hacc.arg_typ
   %c16 = arith.constant 16 : index
   %c16_1 = arith.constant 16 : index
   %alloc_2 = memref.alloc(%5, %4, %c16, %c16_1) {alignment = 64 : i64} : memref<?x?x?x?xf32, #hivm.address_space<cc>>
-  hivm.hir.Conv1dL1 {fixpipe_already_inserted = true, groups = 2 : i32, outputAlreadyNormalized, padding = 0 : i32} ins(%alloc, %alloc_0, %true : memref<2x2x1x128x16xf16, #hivm.address_space<cbuf>>, memref<1x1x3x32x16xf16, #hivm.address_space<cbuf>>, i1) outs(%alloc_2 : memref<?x?x?x?xf32, #hivm.address_space<cc>>)
+  hivm.hir.Conv1dL1 {fixpipe_already_inserted = true, groups = 2 : i32, outputAlreadyNormalized, padding = 0 : i32, stride = 1 : i32} ins(%alloc, %alloc_0, %true : memref<2x2x1x128x16xf16, #hivm.address_space<cbuf>>, memref<1x1x3x32x16xf16, #hivm.address_space<cbuf>>, i1) outs(%alloc_2 : memref<?x?x?x?xf32, #hivm.address_space<cc>>)
   %c126 = arith.constant 126 : index
   %c64_3 = arith.constant 64 : index
   %6 = affine.apply #map()[%c126, %c64_3]

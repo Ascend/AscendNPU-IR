@@ -66,6 +66,9 @@ std::unique_ptr<Pass> createHoistVstasPass();
 /// Soft implement for reduction <xor>
 std::unique_ptr<Pass> createComplexReductionIntermediateLoweringPass();
 
+// Create a pass to duplicate unit-mask (vector<1xi1>) broadcast ops for single-user requirement
+std::unique_ptr<Pass> createDuplicateUnitMaskBroadcastPass();
+
 // Create a pass to analyze vector layout attribute
 std::unique_ptr<Pass> createAnalyzeVectorLayoutPass();
 

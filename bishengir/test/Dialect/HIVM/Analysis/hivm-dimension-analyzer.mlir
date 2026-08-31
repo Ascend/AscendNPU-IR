@@ -352,3 +352,31 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
     return
   }
 }
+
+// -----
+
+// Test that GatherLoadOp is treated as a parallel op in dimension analysis.
+// CHECK: 1 succeedFunc - Function analyzed count
+// CHECK: Tiling dim for {{.*}} is 0
+module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 24 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 24 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 48 : i32>>>, hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @hivm_dimension_gather_load(%arg0: memref<?xf32>, %arg1: tensor<8xi64>, %arg2: tensor<8xf32>, %arg3: memref<?xf32>) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, func_dyn_memref_args = dense<[true, false, false, true]> : vector<4xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+    %c1_i32 = arith.constant 1 : i32
+    %0 = hivm.hir.gather_load ins(%arg0 : memref<?xf32>, %arg1 : tensor<8xi64>, %c1_i32 : i32) outs(%arg2 : tensor<8xf32>) -> tensor<8xf32>
+    hivm.hir.store ins(%0 : tensor<8xf32>) outs(%arg3 : memref<?xf32>)
+    return
+  }
+}
+
+// -----
+
+// Test that ScatterStoreOp is treated as a parallel op in dimension analysis.
+// CHECK: 1 succeedFunc - Function analyzed count
+// CHECK: Tiling dim for {{.*}} is 0
+module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 24 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 24 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 48 : i32>>>, hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @hivm_dimension_scatter_store(%arg0: memref<?xf32>, %arg1: tensor<8xi64>, %arg2: tensor<8xf32>, %arg3: tensor<8xf32>, %arg4: memref<?xf32>) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, func_dyn_memref_args = dense<[true, false, false, false, true]> : vector<5xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+    %c1_i32 = arith.constant 1 : i32
+    hivm.hir.scatter_store ins(%arg1 : tensor<8xi64>, %arg2 : tensor<8xf32>, %c1_i32 : i32) outs(%arg0 : memref<?xf32>)
+    hivm.hir.store ins(%arg3 : tensor<8xf32>) outs(%arg4 : memref<?xf32>)
+    return
+  }
+}

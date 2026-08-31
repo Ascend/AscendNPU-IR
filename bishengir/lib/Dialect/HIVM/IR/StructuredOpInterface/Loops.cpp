@@ -21,9 +21,6 @@
 #include "mlir/IR/BuiltinAttributes.h"
 #include "llvm/ADT/STLExtras.h"
 
-#include <array>
-#include <optional>
-
 using namespace mlir;
 using namespace mlir::hivm;
 
@@ -34,25 +31,6 @@ constexpr size_t kDimFour = 4;
 
 int64_t getRankFromShapedTypeValue(Value val) {
   return cast<ShapedType>(val.getType()).getRank();
-}
-
-std::optional<std::array<int64_t, 3>> getConv3DPaddingAttr(Attribute attr) {
-  if (auto intAttr = dyn_cast<IntegerAttr>(attr)) {
-    int64_t value = intAttr.getInt();
-    return std::array<int64_t, 3>{value, value, value};
-  }
-
-  auto arrayAttr = dyn_cast<ArrayAttr>(attr);
-  if (!arrayAttr || arrayAttr.size() != 3)
-    return std::nullopt;
-
-  auto padD = dyn_cast<IntegerAttr>(arrayAttr[0]);
-  auto padH = dyn_cast<IntegerAttr>(arrayAttr[1]);
-  auto padW = dyn_cast<IntegerAttr>(arrayAttr[2]);
-  if (!padD || !padH || !padW)
-    return std::nullopt;
-
-  return std::array<int64_t, 3>{padD.getInt(), padH.getInt(), padW.getInt()};
 }
 
 template <typename HIVMOP>
@@ -813,11 +791,18 @@ ArrayAttr Conv3DL1Op::getIndexingMaps() {
         int64_t wH = packedWeightType.getDimSize(2);
         int64_t wW = packedWeightType.getDimSize(3);
         int64_t oC = packedWeightType.getDimSize(4);
-        auto padding = getConv3DPaddingAttr(getPaddingAttr());
-        if (padding) {
+        auto paddingH = getPaddingH();
+        auto paddingW = getPaddingW();
+        auto strideH = getStrideH();
+        auto strideW = getStrideW();
+        if (succeeded(paddingH) && succeeded(paddingW) &&
+            succeeded(strideH) && succeeded(strideW) && *strideH > 0 &&
+            *strideW > 0) {
           int64_t oD = iD - wD + 1;
-          int64_t oH = iH + 2 * (*padding)[1] - wH + 1;
-          int64_t oW = iW + 2 * (*padding)[2] - wW + 1;
+          int64_t oH =
+              (iH + 2 * (*paddingH) - wH) / *strideH + 1;
+          int64_t oW =
+              (iW + 2 * (*paddingW) - wW) / *strideW + 1;
           if (oD > 0 && oH > 0 && oW > 0 && oC > 0) {
             AffineExpr d0 = getAffineDimExpr(0, ctx);
             AffineExpr d6 = getAffineDimExpr(6, ctx);

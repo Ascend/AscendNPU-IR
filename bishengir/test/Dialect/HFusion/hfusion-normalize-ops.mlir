@@ -4417,3 +4417,17 @@ func.func @test_normalize_shift_right_i32(%arg0: tensor<16x32xi32>, %arg1: tenso
   %ret = hfusion.elemwise_binary {fun = #hfusion.binary_fn<shrsi>} ins(%arg0, %arg1 : tensor<16x32xi32>, tensor<16x32xi32>) outs(%dst : tensor<16x32xi32>) -> tensor<16x32xi32>
   return %ret : tensor<16x32xi32>
 }
+
+// -----
+
+// CHECK-LABEL: @test_NormalizeGatherIndexToI32
+// CHECK-DAG: %[[IDXF32_EMPTY:.*]] = tensor.empty() : tensor<4x32xf32>
+// CHECK-DAG: %[[IDXI32_EMPTY:.*]] = tensor.empty() : tensor<4x32xi32>
+// CHECK-DAG: %[[IDXF32:.*]] = hfusion.cast {{.*}} ins(%arg1 : tensor<4x32xi16>) outs(%[[IDXF32_EMPTY]] : tensor<4x32xf32>) -> tensor<4x32xf32>
+// CHECK-DAG: %[[IDXI32:.*]] = hfusion.cast {{.*}} ins(%[[IDXF32:.*]] : tensor<4x32xf32>) outs(%[[IDXI32_EMPTY]] : tensor<4x32xi32>) -> tensor<4x32xi32>
+// CHECK: hfusion.gather {{.*}} ins(%arg0, %[[IDXI32]] : tensor<4x64xf16>, tensor<4x32xi32>)
+func.func @test_NormalizeGatherIndexToI32(%arg0: tensor<4x64xf16>, %arg1: tensor<4x32xi16>) -> tensor<4x32xf16> {
+  %0 = tensor.empty() : tensor<4x32xf16>
+  %1 = hfusion.gather ins(%arg0, %arg1 : tensor<4x64xf16>, tensor<4x32xi16>) outs(%0 : tensor<4x32xf16>) axis = 1 -> tensor<4x32xf16>
+  return %1 : tensor<4x32xf16>
+}

@@ -295,6 +295,10 @@ bool DimensionAnalyzer::processOperation(Operation *op, Value current) {
             processForOp(op);
             return true;
           })
+          .Case<scf::WhileOp>([this](auto op) {
+            processWhileOp(op);
+            return true;
+          })
           .Case<tensor::ExpandShapeOp>([this](auto op) {
             if (utils::isAnnotationWithAttr(op, kTilingDimMappingAttrName)) {
               processReshapeOp(op);
@@ -539,14 +543,8 @@ void DimensionAnalyzer::processYieldOp(scf::YieldOp op) {
   if (!parentOp) {
     llvm::report_fatal_error("YieldOp doesn't have a parent");
   }
-  if (auto whileOp = dyn_cast<scf::WhileOp>(parentOp)) {
-    for (auto [beforeArg, yieldOpResult] :
-         llvm::zip_equal(whileOp.getBeforeArguments(), op.getOperands())) {
-      if (isa<ShapedType>(beforeArg.getType()))
-        mergeValues({beforeArg}, {yieldOpResult});
-    }
+  if (isa<scf::WhileOp>(parentOp))
     return;
-  }
   for (auto [parentResult, yieldOpResult] :
        llvm::zip_equal(parentOp->getResults(), op.getOperands())) {
     if (isa<ShapedType>(parentResult.getType()))
@@ -564,13 +562,25 @@ void DimensionAnalyzer::processForOp(scf::ForOp op) {
   }
 }
 
-void DimensionAnalyzer::processConditionOp(scf::ConditionOp op) {
-  LDBG("Processing ConditionOp " << op);
-  auto whileOp = cast<scf::WhileOp>(op->getParentOp());
-  for (auto [afterArg, arg] :
-       llvm::zip_equal(whileOp.getAfterArguments(), op.getArgs())) {
-    if (isa<ShapedType>(afterArg.getType()))
-      mergeValues({afterArg}, {arg});
+void DimensionAnalyzer::processWhileOp(scf::WhileOp op) {
+  LDBG("Processing WhileOp " << op);
+  auto conditionOp = cast<scf::ConditionOp>(op.getBeforeBody()->getTerminator());
+  auto yieldOp = cast<scf::YieldOp>(op.getAfterBody()->getTerminator());
+  for (const auto &[beforeArg, init, yield] : zip_equal(
+           op.getBeforeArguments(), op.getInits(), yieldOp.getOperands())) {
+    createDummyRefIfNotExist({beforeArg, init, yield});
+    if (isa<ShapedType>(beforeArg.getType())) {
+      processValue(beforeArg, init);
+      processValue(beforeArg, yield);
+    }
+  }
+  for (const auto &[afterArg, condArg, result] : zip_equal(
+           op.getAfterArguments(), conditionOp.getArgs(), op.getResults())) {
+    createDummyRefIfNotExist({afterArg, condArg, result});
+    if (isa<ShapedType>(afterArg.getType())) {
+      processValue(afterArg, condArg);
+      processValue(result, condArg);
+    }
   }
 }
 
@@ -906,7 +916,8 @@ bool DimensionAnalyzer::isParallelOp(Operation *op) const {
               bufferization::ToBufferOp
 #endif
               ,
-              arith::SelectOp, hivm::IndirectLoadOp, hivm::IndirectStoreOp>(
+              arith::SelectOp, hivm::IndirectLoadOp, hivm::IndirectStoreOp,
+              hivm::GatherLoadOp, hivm::ScatterStoreOp>(
               op));
 }
 
@@ -1366,6 +1377,54 @@ void DimensionAnalyzer::joinCollapser(int a, int b) {
     }
     exclusiveDimIdx[parA].clear();
   }
+}
+
+static constexpr StringRef kValueGroupAttrName = "value_group";
+static constexpr StringRef kStructuralGroupAttrName = "structural_group";
+
+void DimensionAnalyzer::dumpOpWithValueGroups() {
+  op_->walk([&](Operation *op) {
+    SmallVector<Attribute> group;
+    for (auto res : op->getResults()) {
+      if (!isa<ShapedType>(res.getType()))
+        continue;
+      createDummyRefIfNotExist({res});
+      auto arg = valueToDimIndicesIndex_.at(res);
+      arg = valueGroupDSU_->find(arg);
+      group.push_back(IntegerAttr::get(IndexType::get(res.getContext()), arg));
+    }
+    op->setAttr(kValueGroupAttrName, ArrayAttr::get(op->getContext(), group));
+  });
+
+  llvm::errs() << "VALUE_GROUP: " << *op_ << "\n";
+
+  op_->walk([&](Operation *op) { op->removeAttr(kValueGroupAttrName); });
+}
+
+void DimensionAnalyzer::dumpOpWithStructuralGroups() {
+  op_->walk([&](Operation *op) {
+    SmallVector<Attribute> group;
+    for (auto res : op->getResults()) {
+      if (!isa<ShapedType>(res.getType()))
+        continue;
+      createDummyRefIfNotExist({res});
+      auto args = getValueDimIndices(res);
+      SmallVector<Attribute> argAttrs;
+      for (auto &arg : args) {
+        arg = structuralDsu_->find(arg);
+        argAttrs.push_back(
+            IntegerAttr::get(IndexType::get(res.getContext()), arg));
+      }
+      group.push_back(ArrayAttr::get(op->getContext(), argAttrs));
+    }
+    op->setAttr(kStructuralGroupAttrName,
+                ArrayAttr::get(op->getContext(), group));
+  });
+
+  llvm::errs() << "STRUCTURAL_GROUP: " << *op_ << "\n";
+
+  op_->walk(
+      [&](Operation *op) { op->removeAttr(kStructuralGroupAttrName); });
 }
 
 } // namespace detail

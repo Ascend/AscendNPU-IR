@@ -1350,6 +1350,18 @@ def SplitSimtModule : Pass<"split-simt-module"> {
   let constructor = "mlir::hivm::createSplitSimtModulePass()";
 }
 
+def MarkSimtScopeNoInline : Pass<"mark-simt-scope-no-inline", "ModuleOp"> {
+  let summary = "Mark SIMT scopes no_inline so inline-scope keeps them outlined";
+  let description = [{
+    SIMT scopes are lowered to independent SIMT vector functions by the mixed
+    SIMD/SIMT pipeline and must stay outlined. This pass marks every
+    `vector_mode = "simt"` scope `no_inline` so the generic inline-scope pass
+    does not merge them back into the caller.
+  }];
+  let constructor = "mlir::hivm::createMarkSimtScopeNoInlinePass()";
+  let dependentDialects = ["scope::ScopeDialect"];
+}
+
 def AutoScope : Pass<"auto-scope"> {
   let summary = "Create scope for gather_load and scatter_store";
   let constructor = "mlir::hivm::createAutoScopePass()";

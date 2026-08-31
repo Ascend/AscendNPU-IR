@@ -32,7 +32,8 @@ namespace scope {
 std::unique_ptr<Pass> createTransformOpForSIMTPass();
 
 /// Create a pass to outline scope within ScopeOp's region
-std::unique_ptr<Pass> createOutlineScopePass();
+std::unique_ptr<Pass>
+createOutlineScopePass(const OutlineScopeOptions &options = {});
 
 // Create a pass to inline operations within the scope.scope operation to the
 // outer region.

@@ -460,7 +460,6 @@ static bool isExclusiveLocalMatmulInit(Operation *op, Value v) {
 static FixpipeOp insertFixpipe(PatternRewriter &rewriter, Operation *point,
                                Value src) {
   rewriter.setInsertionPointAfter(point);
-
   bool isMovingToL1 =
       hacc::utils::isRegBasedArch(point->getParentOfType<ModuleOp>()) &&
       isInsertingFixpipeToL1(src);
@@ -469,14 +468,13 @@ static FixpipeOp insertFixpipe(PatternRewriter &rewriter, Operation *point,
                                : insertFixpipeToLocal)(rewriter, point, src);
 
   rewriter.replaceUsesWithIf(
-      src, fixpipe.getResultTensor(), [&isMovingToL1](OpOperand &use) {
+      src, fixpipe.getResultTensor(), [](OpOperand &use) {
         auto *op = use.getOwner();
         if (isa<DebugOp>(op) || isa<FixpipeOp>(op) ||
             isa<annotation::MarkOp>(op)) {
           return false;
         }
-        if (auto mmadOp = dyn_cast<hivm::MmadL1Op>(op);
-            isMovingToL1 && mmadOp) {
+        if (auto mmadOp = dyn_cast<hivm::MmadL1Op>(op)) {
           return !(llvm::any_of(
               mmadOp.getDpsInitsMutable(), [&use](OpOperand &init) {
                 return &use == &init &&

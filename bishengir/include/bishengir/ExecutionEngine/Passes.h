@@ -38,6 +38,11 @@ std::unique_ptr<Pass> createCreateHostMainPass(
 std::unique_ptr<Pass> createConvertHIVMToUpstreamPass(
     const ExecutionEngineHIVMToUpstreamConversionOptions &options = {});
 
+/// Create a pass to convert the vector side of HIVM operations back to
+/// HFusion/upstream dialects for the RegBase pipeline.
+std::unique_ptr<Pass> createConvertHIVMToHFusionPass(
+    const ConvertHIVMToHFusionOptions &options = {});
+
 /// Create a pass to convert HFusion operations to upstream dialect's equivalent
 /// (e.g., for CPU runner fallback).
 std::unique_ptr<Pass> createConvertHFusionToUpstreamPass();

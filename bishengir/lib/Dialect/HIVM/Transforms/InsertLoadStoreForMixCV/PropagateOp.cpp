@@ -131,6 +131,19 @@ ControlFlowPropagatePattern::matchAndRewrite(RegionBranchOpInterface branch,
     if (shapedSiteCount == 0 || candidates.empty())
       continue;
 
+    LDBG("ControlFlowPropagate group in " << branch << " (step="
+                                          << static_cast<int>(step)
+                                          << "): shapedSiteCount="
+                                          << shapedSiteCount);
+    for (const Candidate &candidate : candidates) {
+      auto [coreType, addressSpaces] =
+          PropagatorUtil::extractPropagatorInfo(candidate.propagator);
+      LDBG("  candidate count=" << candidate.count
+                               << " coreType=" << coreType
+                               << " addressSpace="
+                               << utils::debugger::to_string(addressSpaces));
+    }
+
     Candidate *majority = nullptr;
     bool tied = false;
     for (Candidate &candidate : candidates) {
@@ -141,8 +154,7 @@ ControlFlowPropagatePattern::matchAndRewrite(RegionBranchOpInterface branch,
         tied = true;
       }
     }
-    if (tied || majority->count * 2 < shapedSiteCount ||
-        majority->count == shapedSiteCount)
+    if (tied || majority->count * 2 < shapedSiteCount)
       continue;
 
     bool groupChanged = false;

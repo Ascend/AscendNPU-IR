@@ -73,6 +73,7 @@ static void hivmAVEOptimizationPipeline(
     pm.nest<func::FuncOp>().addPass(hivmave::createPLTToPGEPass());
     pm.nest<func::FuncOp>().addPass(hivmave::createPLTToPLTMPass());
     pm.nest<func::FuncOp>().addPass(scf::createLegalizeLoopIterArgsPass());
+    pm.nest<func::FuncOp>().addPass(hivmave::createDuplicateUnitMaskBroadcastPass());
     pm.nest<func::FuncOp>().addPass(hivmave::createAnalyzeVectorLayoutPass());
     pm.nest<func::FuncOp>().addPass(createCanonicalizerPass());
     pm.nest<func::FuncOp>().addPass(hivmave::createAVENormalizeOpsPass());

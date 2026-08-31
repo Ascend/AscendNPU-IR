@@ -120,16 +120,17 @@ getConvIntArrayAttr(Attribute attr, StringRef attrName,
   return emitInvalidAttr();
 }
 
-FailureOr<std::array<int64_t, 2>>
-getConv2DIntPairAttr(Attribute attr, StringRef attrName,
-                     function_ref<InFlightDiagnostic()> emitError) {
-  return getConvIntArrayAttr<2>(attr, attrName, emitError);
-}
+enum class Conv2DDim : size_t { H = 0, W = 1 };
+enum class Conv3DDim : size_t { D = 0, H = 1, W = 2 };
 
-FailureOr<std::array<int64_t, 3>>
-getConv3DIntTripleAttr(Attribute attr, StringRef attrName,
-                       function_ref<InFlightDiagnostic()> emitError) {
-  return getConvIntArrayAttr<3>(attr, attrName, emitError);
+template <size_t Rank, typename Dim>
+FailureOr<int64_t>
+getConvIntArrayAttrElement(Attribute attr, StringRef attrName, Dim dim,
+                           function_ref<InFlightDiagnostic()> emitError) {
+  auto values = getConvIntArrayAttr<Rank>(attr, attrName, emitError);
+  if (failed(values))
+    return failure();
+  return (*values)[static_cast<size_t>(dim)];
 }
 
 //===----------------------------------------------------------------------===//
@@ -1419,6 +1420,16 @@ MatmulBiasMode MmadMxL1Op::getMatmulBiasMode() {
 // Conv1DL1Op
 //===----------------------------------------------------------------------===//
 
+int64_t Conv1DL1Op::getStrideW() { return getStride(); }
+
+int64_t Conv1DL1Op::getPaddingW() { return getPadding(); }
+
+LogicalResult Conv1DL1Op::verify() {
+  if (getStrideW() <= 0 || getStrideW() > 255)
+    return emitOpError() << "requires stride to be in the range [1, 255]";
+  return success();
+}
+
 bool Conv1DL1Op::isInitConstant(std::optional<bool> cst) {
   return isInitConstantForLocalMmadOp<Conv1DL1Op>(this, cst);
 }
@@ -1516,14 +1527,15 @@ Conv1DL1Op::getLibraryCallOperands(PatternRewriter &rewriter) {
 
   libParams.push_back(makeI64(getGroups()));
 
-  int64_t pad = getPadding();
-  libParams.push_back(makeI64(0));   // padT
-  libParams.push_back(makeI64(0));   // padB
-  libParams.push_back(makeI64(pad)); // padL
-  libParams.push_back(makeI64(pad)); // padR
+  int64_t paddingW = getPaddingW();
+  int64_t strideW = getStrideW();
+  libParams.push_back(makeI64(0));        // padT
+  libParams.push_back(makeI64(0));        // padB
+  libParams.push_back(makeI64(paddingW)); // padL
+  libParams.push_back(makeI64(paddingW)); // padR
 
-  libParams.push_back(makeI64(1)); // strideH
-  libParams.push_back(makeI64(1)); // strideW
+  libParams.push_back(makeI64(1));      // strideH
+  libParams.push_back(makeI64(strideW)); // strideW
 
   libParams.push_back(makeI64(1)); // dilationH
   libParams.push_back(makeI64(1)); // dilationW
@@ -1547,10 +1559,43 @@ Conv1DL1Op::getLibraryCallOperands(PatternRewriter &rewriter) {
 // Conv2DL1Op
 //===----------------------------------------------------------------------===//
 
+FailureOr<int64_t> Conv2DL1Op::getStrideH() {
+  return getConvIntArrayAttrElement<2>(
+      getStrideAttr(), "stride", Conv2DDim::H,
+      [&]() { return emitOpError(); });
+}
+
+FailureOr<int64_t> Conv2DL1Op::getStrideW() {
+  return getConvIntArrayAttrElement<2>(
+      getStrideAttr(), "stride", Conv2DDim::W,
+      [&]() { return emitOpError(); });
+}
+
+FailureOr<int64_t> Conv2DL1Op::getPaddingH() {
+  return getConvIntArrayAttrElement<2>(
+      getPaddingAttr(), "padding", Conv2DDim::H,
+      [&]() { return emitOpError(); });
+}
+
+FailureOr<int64_t> Conv2DL1Op::getPaddingW() {
+  return getConvIntArrayAttrElement<2>(
+      getPaddingAttr(), "padding", Conv2DDim::W,
+      [&]() { return emitOpError(); });
+}
+
 LogicalResult Conv2DL1Op::verify() {
-  FailureOr<std::array<int64_t, 2>> padding = getConv2DIntPairAttr(
-      getPaddingAttr(), "padding", [&]() { return emitOpError(); });
-  return failed(padding) ? failure() : success();
+  auto strideH = getStrideH();
+  if (failed(strideH))
+    return failure();
+  auto strideW = getStrideW();
+  if (failed(strideW))
+    return failure();
+  if (failed(getPaddingH()) || failed(getPaddingW()))
+    return failure();
+  if (*strideH <= 0 || *strideH > 255 || *strideW <= 0 || *strideW > 255)
+    return emitOpError()
+           << "requires stride values to be in the range [1, 255]";
+  return success();
 }
 
 bool Conv2DL1Op::isInitConstant(std::optional<bool> cst) {
@@ -1650,16 +1695,21 @@ Conv2DL1Op::getLibraryCallOperands(PatternRewriter &rewriter) {
 
   libParams.push_back(makeI64(getGroups()));
 
-  FailureOr<std::array<int64_t, 2>> padding = getConv2DIntPairAttr(
-      getPaddingAttr(), "padding", [&]() { return emitOpError(); });
-  assert(!failed(padding) && "Conv2DL1Op padding must be verified");
-  libParams.push_back(makeI64((*padding)[0])); // padT
-  libParams.push_back(makeI64((*padding)[0])); // padB
-  libParams.push_back(makeI64((*padding)[1])); // padL
-  libParams.push_back(makeI64((*padding)[1])); // padR
+  auto paddingH = getPaddingH();
+  auto paddingW = getPaddingW();
+  assert(succeeded(paddingH) && succeeded(paddingW) &&
+         "Conv2DL1Op padding must be verified");
+  libParams.push_back(makeI64(*paddingH)); // padT
+  libParams.push_back(makeI64(*paddingH)); // padB
+  libParams.push_back(makeI64(*paddingW)); // padL
+  libParams.push_back(makeI64(*paddingW)); // padR
 
-  libParams.push_back(makeI64(1)); // strideH
-  libParams.push_back(makeI64(1)); // strideW
+  auto strideH = getStrideH();
+  auto strideW = getStrideW();
+  assert(succeeded(strideH) && succeeded(strideW) &&
+         "Conv2DL1Op stride must be verified");
+  libParams.push_back(makeI64(*strideH)); // strideH
+  libParams.push_back(makeI64(*strideW)); // strideW
 
   libParams.push_back(makeI64(1)); // dilationH
   libParams.push_back(makeI64(1)); // dilationW
@@ -1682,10 +1732,68 @@ Conv2DL1Op::getLibraryCallOperands(PatternRewriter &rewriter) {
 // Conv3DL1Op
 //===----------------------------------------------------------------------===//
 
+FailureOr<int64_t> Conv3DL1Op::getStrideD() {
+  if (!getStrideAttr())
+    return 1;
+  return getConvIntArrayAttrElement<3>(
+      getStrideAttr(), "stride", Conv3DDim::D,
+      [&]() { return emitOpError(); });
+}
+
+FailureOr<int64_t> Conv3DL1Op::getStrideH() {
+  if (!getStrideAttr())
+    return 1;
+  return getConvIntArrayAttrElement<3>(
+      getStrideAttr(), "stride", Conv3DDim::H,
+      [&]() { return emitOpError(); });
+}
+
+FailureOr<int64_t> Conv3DL1Op::getStrideW() {
+  if (!getStrideAttr())
+    return 1;
+  return getConvIntArrayAttrElement<3>(
+      getStrideAttr(), "stride", Conv3DDim::W,
+      [&]() { return emitOpError(); });
+}
+
+FailureOr<int64_t> Conv3DL1Op::getPaddingD() {
+  return getConvIntArrayAttrElement<3>(
+      getPaddingAttr(), "padding", Conv3DDim::D,
+      [&]() { return emitOpError(); });
+}
+
+FailureOr<int64_t> Conv3DL1Op::getPaddingH() {
+  return getConvIntArrayAttrElement<3>(
+      getPaddingAttr(), "padding", Conv3DDim::H,
+      [&]() { return emitOpError(); });
+}
+
+FailureOr<int64_t> Conv3DL1Op::getPaddingW() {
+  return getConvIntArrayAttrElement<3>(
+      getPaddingAttr(), "padding", Conv3DDim::W,
+      [&]() { return emitOpError(); });
+}
+
 LogicalResult Conv3DL1Op::verify() {
-  FailureOr<std::array<int64_t, 3>> padding = getConv3DIntTripleAttr(
-      getPaddingAttr(), "padding", [&]() { return emitOpError(); });
-  return failed(padding) ? failure() : success();
+  auto strideD = getStrideD();
+  if (failed(strideD))
+    return failure();
+  auto strideH = getStrideH();
+  if (failed(strideH))
+    return failure();
+  auto strideW = getStrideW();
+  if (failed(strideW))
+    return failure();
+  if (*strideD != 1)
+    return emitOpError() << "currently requires strideD to be 1";
+  if (*strideH <= 0 || *strideH > 255 || *strideW <= 0 || *strideW > 255)
+    return emitOpError()
+           << "requires strideH and strideW to be in the range [1, 255]";
+
+  if (failed(getPaddingD()) || failed(getPaddingH()) ||
+      failed(getPaddingW()))
+    return failure();
+  return success();
 }
 
 bool Conv3DL1Op::isInitConstant(std::optional<bool> cst) {
