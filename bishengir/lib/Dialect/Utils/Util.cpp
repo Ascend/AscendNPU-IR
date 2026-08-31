@@ -110,27 +110,9 @@ SmallVector<Value> tracebackImpl(Value memrefVal) {
     return result;
   }
 
-  // case 2: v is the result of cast-like ops
-  //  - memref.cast
-  //  - memref.collapse_shape
-  //  - memref.expand_shape
-  //  - memref.memory_space_cast
-  //  - memref.reinterpret_cast
-  //  - memref.reshape
-  //  - memref.transpose
-  if (auto op = dyn_cast<memref::CastOp>(def)) {
-    result.emplace_back(op.getSource());
-  } else if (auto op = dyn_cast<memref::CollapseShapeOp>(def)) {
-    result.emplace_back(op.getSrc());
-  } else if (auto op = dyn_cast<memref::ExpandShapeOp>(def)) {
-    result.emplace_back(op.getSrc());
-  } else if (auto op = dyn_cast<memref::MemorySpaceCastOp>(def)) {
-    result.emplace_back(op.getSource());
-  } else if (auto op = dyn_cast<memref::ReinterpretCastOp>(def)) {
-    result.emplace_back(op.getSource());
-  } else if (auto op = dyn_cast<memref::ReshapeOp>(def)) {
-    result.emplace_back(op.getSource());
-  } else if (auto op = dyn_cast<memref::TransposeOp>(def)) {
+  // case 2: v is the result of cast-like ops that do not implement
+  // ViewLikeOpInterface, plus generic ViewLikeOpInterface ops.
+  if (auto op = dyn_cast<memref::TransposeOp>(def)) {
     result.emplace_back(op.getIn());
   } else if (auto op = dyn_cast<UnrealizedConversionCastOp>(def)) {
     result.emplace_back(
@@ -146,19 +128,12 @@ SmallVector<Value> tracebackImpl(Value memrefVal) {
         cast<OpResult>(memrefVal).getResultNumber()));
     result.emplace_back(op.elseYield()->getOperand(
         cast<OpResult>(memrefVal).getResultNumber()));
+  } else if (auto op = dyn_cast<ViewLikeOpInterface>(def)) {
+    result.emplace_back(op.getViewSource());
   }
 
   if (!result.empty()) {
     return result;
-  }
-
-  // case 3: v is the result of the view-like ops
-  //  - memref::view
-  //  - memref::subview
-  if (auto op = dyn_cast<memref::ViewOp>(def)) {
-    result.emplace_back(op.getViewSource());
-  } else if (auto op = dyn_cast<memref::SubViewOp>(def)) {
-    result.emplace_back(op.getViewSource());
   }
 
   // case 4: v is the result of bufferization ops
