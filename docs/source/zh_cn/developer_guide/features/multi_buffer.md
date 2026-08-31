@@ -77,7 +77,7 @@ iter 2:                                 [MTE2 load buf0][ V compute buf0 ]...
 - **内存溢出**：UB、L1、L0C容量有限，N倍占用可能导致PlanMemory分配失败并上报overflow。编译器带有溢出回退机制：在Ascend 950PR/Ascend 950DT上，会先只关闭溢出内存空间对应的多缓冲后重试，逐项退让无效时再关闭总开关；在Atlas A3系列产品与Atlas A2系列产品上，则依次关闭`--enable-code-motion`与多缓冲总开关后重试。回退能保证编译成功，但意味着对应层次的收益丢失，此时更合适的做法是减小tiling分块。开启`--enable-tuning-mode`可禁用该重试行为，使溢出直接暴露为编译失败。
 - **分块变小反而变慢**：为容纳多份Buffer而缩小tiling分块，会降低单次DMA的搬运效率、增加循环次数与同步开销。因此并非“开得越多越快”，需要结合实测确认。
 
-此外，多缓冲会改变同步结构（核内的flag ID与跨核的event ID都需要随槽位轮转），在CV跨核等复杂场景下对同步求解的要求更高。若开启多缓冲后出现精度异常或卡死，可先用`--enable-auto-multi-buffer=false`定位问题范围，相关排查手段见[调试调测-调试：工具类](../../user_guide/debug_option.md#调试：工具类)。
+此外，多缓冲会改变同步结构（核内的flag ID与跨核的event ID都需要随槽位轮转），在CV跨核等复杂场景下对同步求解的要求更高。若开启多缓冲后出现精度异常或卡死，可先用`--enable-auto-multi-buffer=false`定位问题范围，相关排查手段见[调试调测-调试：工具类](../../user_guide/debug_option.md#调试工具类)。
 
 ## 算法原理
 
