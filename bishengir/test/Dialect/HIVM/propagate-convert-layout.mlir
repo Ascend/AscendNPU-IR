@@ -387,7 +387,7 @@ func.func @do_not_propagate_insert_slice_unaligned_size(
 
 // -----
 
-// Dynamic offsets cannot currently be proven tile-aligned.
+// Unproven dynamic offsets cannot be assumed tile-aligned.
 // CHECK-LABEL: func.func @do_not_propagate_insert_slice_dynamic_offset(
 // CHECK-SAME:      %[[OFFSET:.*]]: index
 // CHECK:           %[[INSERTED:.*]] = tensor.insert_slice %{{.*}} into %{{.*}}[%[[OFFSET]], 0] [32, 128] [1, 1]
@@ -446,3 +446,104 @@ func.func @do_not_propagate_insert_slice_non_unit_stride(
 }
 
 // -----
+
+// CHECK-LABEL: func.func @propagate_down_through_insert_slice(
+// CHECK-SAME:      %[[DEST_FR:.*]]: tensor<8x8x16x16xbf16>, %[[SRC:.*]]: tensor<32x128xbf16>
+// CHECK:           %[[SRC_FR:.*]] = hivm.hir.convert_layout %[[SRC]] output_shape [8, 2, 16, 16]
+// CHECK-SAME:      (tensor<32x128xbf16>) -> tensor<8x2x16x16xbf16>
+// CHECK:           %[[INSERTED:.*]] = tensor.insert_slice %[[SRC_FR]] into %[[DEST_FR]][0, 2, 0, 0] [8, 2, 16, 16] [1, 1, 1, 1]
+// CHECK:           %[[DOWN:.*]] = hivm.hir.convert_layout %[[INSERTED]] output_shape [128, 128]
+// CHECK-SAME:      (tensor<8x8x16x16xbf16>) -> tensor<128x128xbf16>
+// CHECK:           return %[[DOWN]] : tensor<128x128xbf16>
+func.func @propagate_down_through_insert_slice(
+    %dest_fr: tensor<8x8x16x16xbf16>, %source: tensor<32x128xbf16>
+) -> tensor<128x128xbf16> {
+  %dest = hivm.hir.convert_layout %dest_fr output_shape [128, 128]
+      {dstLayout = #hivm.data_layout<ND>,
+       srcLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>}
+      : (tensor<8x8x16x16xbf16>) -> tensor<128x128xbf16>
+  %inserted = tensor.insert_slice %source into %dest[32, 0] [32, 128] [1, 1]
+      : tensor<32x128xbf16> into tensor<128x128xbf16>
+  return %inserted : tensor<128x128xbf16>
+}
+
+// -----
+
+// A loop-carried offset `iv * 32` is a multiple of the 16-row fractal tile,
+// so the down-conversion on the insert_slice dest can pass through the user.
+// CHECK-LABEL: func.func @propagate_down_through_insert_slice_dynamic_aligned_offset(
+// CHECK-SAME:      %[[DEST_FR:.*]]: tensor<16x8x16x8xbf16>, %[[SRC:.*]]: tensor<32x128xbf16>, %[[IV:.*]]: index
+// CHECK:           %[[SRC_FR:.*]] = hivm.hir.convert_layout %[[SRC]] output_shape [16, 2, 16, 8]
+// CHECK-SAME:      (tensor<32x128xbf16>) -> tensor<16x2x16x8xbf16>
+// CHECK:           %[[INSERTED:.*]] = tensor.insert_slice %[[SRC_FR]] into %[[DEST_FR]][0, %{{.*}}, 0, 0] [16, 2, 16, 8] [1, 1, 1, 1]
+// CHECK:           %[[DOWN:.*]] = hivm.hir.convert_layout %[[INSERTED]] output_shape [128, 128]
+// CHECK-SAME:      (tensor<16x8x16x8xbf16>) -> tensor<128x128xbf16>
+// CHECK:           return %[[DOWN]] : tensor<128x128xbf16>
+func.func @propagate_down_through_insert_slice_dynamic_aligned_offset(
+    %dest_fr: tensor<16x8x16x8xbf16>, %source: tensor<32x128xbf16>, %iv: index
+) -> tensor<128x128xbf16> {
+  %c32 = arith.constant 32 : i32
+  %iv_i32 = arith.index_cast %iv : index to i32
+  %off_i32 = arith.muli %iv_i32, %c32 : i32
+  %offset = arith.index_cast %off_i32 : i32 to index
+  %dest = hivm.hir.convert_layout %dest_fr output_shape [128, 128]
+      {dstLayout = #hivm.data_layout<ND>,
+       srcLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 8]>}
+      : (tensor<16x8x16x8xbf16>) -> tensor<128x128xbf16>
+  %inserted = tensor.insert_slice %source into %dest[%offset, 0] [32, 128] [1, 1]
+      : tensor<32x128xbf16> into tensor<128x128xbf16>
+  return %inserted : tensor<128x128xbf16>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @do_not_propagate_down_insert_slice_unproven_dynamic_offset(
+// CHECK:           %[[DEST_ND:.*]] = hivm.hir.convert_layout %{{.*}} output_shape [128, 128]
+// CHECK:           %[[INSERTED:.*]] = tensor.insert_slice %{{.*}} into %[[DEST_ND]][%{{.*}}, 0] [32, 128] [1, 1]
+// CHECK:           return %[[INSERTED]] : tensor<128x128xbf16>
+func.func @do_not_propagate_down_insert_slice_unproven_dynamic_offset(
+    %offset: index, %dest_fr: tensor<8x8x16x16xbf16>,
+    %source: tensor<32x128xbf16>
+) -> tensor<128x128xbf16> {
+  %dest = hivm.hir.convert_layout %dest_fr output_shape [128, 128]
+      {dstLayout = #hivm.data_layout<ND>,
+       srcLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>}
+      : (tensor<8x8x16x16xbf16>) -> tensor<128x128xbf16>
+  %inserted = tensor.insert_slice %source into %dest[%offset, 0] [32, 128] [1, 1]
+      : tensor<32x128xbf16> into tensor<128x128xbf16>
+  return %inserted : tensor<128x128xbf16>
+}
+
+// -----
+
+// Matching the leftover loop body after scf.for propagation: a down-conversion
+// of the fractal iter_arg feeding insert_slice, followed by an up-conversion
+// of the insert result. Both conversions cancel once insert_slice is rewritten
+// in fractal space.
+// CHECK-LABEL: func.func @propagate_insert_slice_through_for_iter_arg(
+// CHECK:           %[[SRC_FR:.*]] = hivm.hir.convert_layout %{{.*}} output_shape [16, 2, 16, 8]
+// CHECK:           %[[INIT_FR:.*]] = hivm.hir.convert_layout %{{.*}} output_shape [16, 8, 16, 8]
+// CHECK:           %[[FOR:.*]] = scf.for %{{.*}} iter_args(%[[ARG:.*]] = %[[INIT_FR]]) -> (tensor<16x8x16x8xbf16>)
+// CHECK:             %[[INSERTED:.*]] = tensor.insert_slice %[[SRC_FR]] into %[[ARG]][0, %{{.*}}, 0, 0] [16, 2, 16, 8] [1, 1, 1, 1]
+// CHECK:             scf.yield %[[INSERTED]] : tensor<16x8x16x8xbf16>
+// CHECK:           return %[[FOR]] : tensor<16x8x16x8xbf16>
+func.func @propagate_insert_slice_through_for_iter_arg(
+    %init: tensor<128x128xbf16>, %source: tensor<32x128xbf16>
+) -> tensor<16x8x16x8xbf16> {
+  %c0 = arith.constant 0 : index
+  %c4 = arith.constant 4 : index
+  %c1 = arith.constant 1 : index
+  %c32 = arith.constant 32 : index
+  %r = scf.for %iv = %c0 to %c4 step %c1
+      iter_args(%arg = %init) -> (tensor<128x128xbf16>) {
+    %offset = arith.muli %iv, %c32 : index
+    %inserted = tensor.insert_slice %source into %arg[%offset, 0] [32, 128] [1, 1]
+        : tensor<32x128xbf16> into tensor<128x128xbf16>
+    scf.yield %inserted : tensor<128x128xbf16>
+  }
+  %fractal = hivm.hir.convert_layout %r output_shape [16, 8, 16, 8]
+      {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 8]>,
+       srcLayout = #hivm.data_layout<ND>}
+      : (tensor<128x128xbf16>) -> tensor<16x8x16x8xbf16>
+  return %fractal : tensor<16x8x16x8xbf16>
+}
