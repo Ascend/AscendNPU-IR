@@ -24,6 +24,7 @@
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -103,7 +104,27 @@ LogicalResult PartitionAndBindSubBlockPass::runOnFunc(func::FuncOp func) {
   if (!hasScope)
     return success();
 
-  // Cube gate: sub-core (VEC0/VEC1) parallelism is a MIX-CV feature
+  // Ratio gate: nothing to partition and guard if we have core_ratio with vec
+  // < 2. The frontend made an mistake or user wrote incorrect code. Warn and
+  // fallback.
+  if (auto coreRatio = hivm::getCoreRatioAttr(func);
+      coreRatio && coreRatio.getVector() < 2) {
+    func.emitWarning(
+        "[hivm-partition-and-bind-sub-block]: @" + func.getName().str() +
+        " has hivm.core_ratio<" + std::to_string(coreRatio.getCube()) + ", " +
+        std::to_string(coreRatio.getVector()) +
+        ">, which gives fewer than two vector sub-blocks per block;"
+        " sub-core binding needs two -- dropping the {sub_block} "
+        "partition hint");
+    SubBlockLowering::inlineSubBlockScopesAsFallback(func);
+    LDBG("core_ratio vector < 2 in @" << func.getName()
+                                      << "; inlined {sub_block} scopes and "
+                                         "continued");
+    return success();
+  }
+
+  // Cube gate: sub-core (VEC0/VEC1) parallelism is a MIX-CV feature.
+  // If a cube is present but no ratio was set, it is by default 1:2.
   bool hasCube = false;
   func.walk([&](Operation *op) {
     if (isCubeOrSharedOp(op)) {

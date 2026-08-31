@@ -510,3 +510,30 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
     return
   }
 }
+
+// -----
+
+func.func @test_vxor_rejects_fp(%lhs: tensor<32xf32>,
+                                %rhs: tensor<32xf32>,
+                                %dst: tensor<32xf32>) {
+  // expected-error@+1 {{failed to verify that operand at idx 0 and 1 should have element type}}
+  %0 = hivm.hir.vxor ins(%lhs, %rhs : tensor<32xf32>, tensor<32xf32>)
+      outs(%dst : tensor<32xf32>) -> tensor<32xf32>
+  return
+}
+
+// -----
+
+func.func @core_ratio_invalid_0_2() {
+  // expected-error@+1 {{Invalid core ratio: 0:2, expected one of 0:1, 1:0, 1:1, 1:2}}
+  "test.core_ratio"() { ratio = #hivm.core_ratio<0, 2> } : () -> ()
+  return
+}
+
+// -----
+
+func.func @core_ratio_invalid_2_1() {
+  // expected-error@+1 {{Invalid core ratio: 2:1, expected one of 0:1, 1:0, 1:1, 1:2}}
+  "test.core_ratio"() { ratio = #hivm.core_ratio<2, 1> } : () -> ()
+  return
+}

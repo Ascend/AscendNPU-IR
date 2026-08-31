@@ -115,6 +115,25 @@ func.func @event() {
 }
 
 //===----------------------------------------------------------------------===//
+// Test Core Ratio Attribute
+//===----------------------------------------------------------------------===//
+
+func.func @core_ratio() {
+  "test.core_ratio"() {
+    // CHECK: #hivm.core_ratio<0, 1>
+    ratio_0_1 = #hivm.core_ratio<0, 1>,
+    // CHECK: #hivm.core_ratio<1, 0>
+    ratio_1_0 = #hivm.core_ratio<1, 0>,
+    // CHECK: #hivm.core_ratio<1, 1>
+    ratio_1_1 = #hivm.core_ratio<1, 1>,
+    // CHECK: #hivm.core_ratio<1, 2>
+    ratio_1_2 = #hivm.core_ratio<1, 2>
+  } : () -> ()
+
+  return
+}
+
+//===----------------------------------------------------------------------===//
 // Test Block Mapping Attribute
 //===----------------------------------------------------------------------===//
 

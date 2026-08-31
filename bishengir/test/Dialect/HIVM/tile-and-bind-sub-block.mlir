@@ -3208,6 +3208,24 @@ func.func @indirect_load_dual_store_mix_aiv(%arg0: memref<?xf32> {tt.divisibilit
 
 // -----
 
+// Make sure store is guarded when CV Ratio is 0:1
+// CHECK-LABEL:   func.func @store_with_static_mask_ratio_0_1(
+// CHECK:           hivm.hir.vln ins(%{{.*}} : tensor<64xf32>)
+// CHECK:           scf.if
+// CHECK:             hivm.hir.store
+// CHECK:           } {limit_sub_block_id0}
+// CHECK-NOT:       map_for_to_forall
+func.func @store_with_static_mask_ratio_0_1(%arg0: tensor<64xf32>, %arg1: memref<64xf32>) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.core_ratio = #hivm.core_ratio<0, 1>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+  %0 = tensor.empty() : tensor<64xf32>
+  %1 = hivm.hir.vln ins(%arg0 : tensor<64xf32>) outs(%0 : tensor<64xf32>) -> tensor<64xf32>
+  %extracted_slice = tensor.extract_slice %1[0] [1] [1] : tensor<64xf32> to tensor<1xf32>
+  %subview = memref.subview %arg1[0] [1] [1] : memref<64xf32> to memref<1xf32>
+  hivm.hir.store ins(%extracted_slice : tensor<1xf32>) outs(%subview : memref<1xf32>)
+  return
+}
+
+// -----
+
 // CHECK-LABEL: func.func @diamond_broadcast_operand_order(
 // CHECK:         scf.for
 // CHECK:           memref.subview %{{.*}}[0, %{{.*}}] [64, 32] [1, 1]
@@ -4075,8 +4093,6 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">, hivm.module_cor
     return
   }
 }
-
-
 // -----
 
 // A fixpipe whose dst is a memory_space_cast of the tightly-coupled UB alloc
@@ -4263,4 +4279,41 @@ module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
     hivm.hir.store ins(%extracted : tensor<210x112xf32>) outs(%out : memref<210x112xf32>)
     return
   }
+}
+
+// -----
+
+// 1:0 has no vector core at all, so it takes the same path as 0:1.
+// CHECK-LABEL:   func.func @store_with_static_mask_ratio_1_0(
+// CHECK:           hivm.hir.vln ins(%{{.*}} : tensor<64xf32>)
+// CHECK:           scf.if
+// CHECK:             hivm.hir.store
+// CHECK:           } {limit_sub_block_id0}
+// CHECK-NOT:       map_for_to_forall
+func.func @store_with_static_mask_ratio_1_0(%arg0: tensor<64xf32>, %arg1: memref<64xf32>) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.core_ratio = #hivm.core_ratio<1, 0>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+  %0 = tensor.empty() : tensor<64xf32>
+  %1 = hivm.hir.vln ins(%arg0 : tensor<64xf32>) outs(%0 : tensor<64xf32>) -> tensor<64xf32>
+  %extracted_slice = tensor.extract_slice %1[0] [1] [1] : tensor<64xf32> to tensor<1xf32>
+  %subview = memref.subview %arg1[0] [1] [1] : memref<64xf32> to memref<1xf32>
+  hivm.hir.store ins(%extracted_slice : tensor<1xf32>) outs(%subview : memref<1xf32>)
+  return
+}
+
+// -----
+
+// The default ratio must be indistinguishable from no ratio at all: 1:2 still
+// splits. Without this case a gate that fired on the mere presence of
+// `hivm.core_ratio` would pass every other test in this file.
+// CHECK-LABEL:   func.func @store_with_static_mask_ratio_1_2(
+// CHECK:           scf.for
+// CHECK:             hivm.hir.vln ins(%{{.*}} : tensor<32xf32>)
+// CHECK:             hivm.hir.store {{.*}} {tiled_op}
+// CHECK:           } {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+func.func @store_with_static_mask_ratio_1_2(%arg0: tensor<64xf32>, %arg1: memref<64xf32>) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.core_ratio = #hivm.core_ratio<1, 2>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+  %0 = tensor.empty() : tensor<64xf32>
+  %1 = hivm.hir.vln ins(%arg0 : tensor<64xf32>) outs(%0 : tensor<64xf32>) -> tensor<64xf32>
+  %extracted_slice = tensor.extract_slice %1[0] [1] [1] : tensor<64xf32> to tensor<1xf32>
+  %subview = memref.subview %arg1[0] [1] [1] : memref<64xf32> to memref<1xf32>
+  hivm.hir.store ins(%extracted_slice : tensor<1xf32>) outs(%subview : memref<1xf32>)
+  return
 }
