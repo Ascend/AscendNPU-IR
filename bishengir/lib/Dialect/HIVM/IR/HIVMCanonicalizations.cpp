@@ -408,8 +408,18 @@ struct RedudantVTransposeOpOp : public OpRewritePattern<VTransposeOp> {
     while (nextTransOp) {
       sim = simulate(sim, nextTransOp.getPermutation());
       if (sim == base) {
-        rewriter.replaceOp(transOp, {nextTransOp.getSrc()});
-        return success();
+        if (transOp.hasPureTensorSemantics()) {
+          rewriter.replaceOp(transOp, {nextTransOp.getSrc()});
+          return success();
+        }
+        // Buffer semantics: identity permutation still writes dst, so it is
+        // an elementwise copy, not a no-op.
+        if (nextTransOp == transOp) {
+          rewriter.replaceOpWithNewOp<hivm::CopyOp>(
+              transOp, TypeRange{}, transOp.getSrc(), transOp.getDst());
+          return success();
+        }
+        return failure();
       }
       nextTransOp = nextTransOp.getSrc().getDefiningOp<VTransposeOp>();
     }

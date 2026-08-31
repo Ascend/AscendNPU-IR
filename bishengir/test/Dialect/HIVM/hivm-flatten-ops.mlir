@@ -242,6 +242,81 @@ func.func @hivm_transpose(%arg0: memref<2x16x8x4x3xf32>) -> memref<2x16x4x8x3xf3
 }
 
 // -----
+
+// A5/RegBase: transpose-like flattening. [0, 2, 3, 1] moves only a unit axis
+// -> collapses to 1D, identity permutation.
+// CHECK-LABEL: func.func @hivm_transpose_mid_4
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9599">} {
+  func.func @hivm_transpose_mid_4(%arg1: memref<16x1x15x17xf16>) -> memref<16x15x17x1xf16> {
+    %3 = memref.alloc() : memref<16x15x17x1xf16>
+    // CHECK: hivm.hir.vtranspose ins(%{{.*}} : memref<4080xf16>) outs(%{{.*}} : memref<4080xf16>) permutation = [0]
+    hivm.hir.vtranspose ins(%arg1 : memref<16x1x15x17xf16>) outs(%3 : memref<16x15x17x1xf16>) permutation = [0, 2, 3, 1]
+    return %3 : memref<16x15x17x1xf16>
+  }
+}
+
+// -----
+
+// A5/RegBase: [2, 3, 0, 1] with a unit axis -> collapses to a rank-2 swap
+// [1, 0].
+// CHECK-LABEL: func.func @hivm_transpose_mid_5
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9599">} {
+  func.func @hivm_transpose_mid_5(%arg1: memref<16x1x15x17xf16>) -> memref<15x17x16x1xf16> {
+    %3 = memref.alloc() : memref<15x17x16x1xf16>
+    // CHECK: hivm.hir.vtranspose ins(%{{.*}} : memref<16x255xf16>) outs(%{{.*}} : memref<255x16xf16>) permutation = [1, 0]
+    hivm.hir.vtranspose ins(%arg1 : memref<16x1x15x17xf16>) outs(%3 : memref<15x17x16x1xf16>) permutation = [2, 3, 0, 1]
+    return %3 : memref<15x17x16x1xf16>
+  }
+}
+
+// -----
+
+// A5/RegBase: 3-cycle [1, 2, 0, 3] with unit axis -> collapses to supported
+// swap [1, 0, 2]. (On A3 the staged ConvertLayout lowering avoids the cycle;
+// the uniform flatten keeps the op as-is.)
+// CHECK-LABEL: func.func @hivm_transpose_fractal_unit
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9599">} {
+  func.func @hivm_transpose_fractal_unit(%src: memref<2x1x16x16xf16>, %dst: memref<1x16x2x16xf16>) {
+    // CHECK: memref.collapse_shape
+    // CHECK-SAME: memref<2x1x16x16xf16> into memref<2x16x16xf16>
+    // CHECK: memref.collapse_shape
+    // CHECK-SAME: memref<1x16x2x16xf16> into memref<16x2x16xf16>
+    // CHECK: hivm.hir.vtranspose ins({{.*}} : memref<2x16x16xf16>) outs({{.*}} : memref<16x2x16xf16>) permutation = [1, 0, 2]
+    hivm.hir.vtranspose ins(%src : memref<2x1x16x16xf16>) outs(%dst : memref<1x16x2x16xf16>) permutation = [1, 2, 0, 3]
+    return
+  }
+}
+
+// -----
+
+// A5/RegBase: no unit dims: the contiguous (Mt, M0) block still collapses ->
+// supported swap [1, 0, 2].
+// CHECK-LABEL: func.func @hivm_transpose_fractal_no_unit
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9599">} {
+  func.func @hivm_transpose_fractal_no_unit(%src: memref<2x2x16x16xf16>, %dst: memref<2x16x2x16xf16>) {
+    // CHECK: memref.collapse_shape
+    // CHECK-SAME: memref<2x2x16x16xf16> into memref<2x32x16xf16>
+    // CHECK: memref.collapse_shape
+    // CHECK-SAME: memref<2x16x2x16xf16> into memref<32x2x16xf16>
+    // CHECK: hivm.hir.vtranspose ins({{.*}} : memref<2x32x16xf16>) outs({{.*}} : memref<32x2x16xf16>) permutation = [1, 0, 2]
+    hivm.hir.vtranspose ins(%src : memref<2x2x16x16xf16>) outs(%dst : memref<2x16x2x16xf16>) permutation = [1, 2, 0, 3]
+    return
+  }
+}
+
+// -----
+
+// A3 (no regbase target): the same 3-cycle keeps the uniform flatten, so the
+// rank-4 op survives unchanged.
+// CHECK-LABEL: func.func @hivm_transpose_fractal_a3_unchanged
+func.func @hivm_transpose_fractal_a3_unchanged(%src: memref<2x1x16x16xf16>, %dst: memref<1x16x2x16xf16>) {
+  // CHECK-NOT: memref.collapse_shape
+  // CHECK: hivm.hir.vtranspose ins(%{{.*}} : memref<2x1x16x16xf16>) outs(%{{.*}} : memref<1x16x2x16xf16>) permutation = [1, 2, 0, 3]
+  hivm.hir.vtranspose ins(%src : memref<2x1x16x16xf16>) outs(%dst : memref<1x16x2x16xf16>) permutation = [1, 2, 0, 3]
+  return
+}
+
+// -----
 // CHECK-LABEL: func.func @test_reduce
 // CHECK: memref.collapse_shape
 // CHECK-SAME: memref<16x?x?x?x8x?x8x32xf16> into memref<16x?xf16>

@@ -668,3 +668,26 @@ func.func @test_keep_load_left_pad_nonzero(%src: memref<?x256xf16, #hivm.address
   hivm.hir.load ins(%src : memref<?x256xf16, #hivm.address_space<gm>>) outs(%dst : memref<?x256xf16, #hivm.address_space<ub>>) left_padding_num = %c1 : index
   return
 }
+
+// -----
+
+// Identity permutation on memrefs: the dst write must survive, so fold to
+// a copy (previously crashed in replaceOp on the 0-result op).
+// CHECK-LABEL: func @test_transpose_identity_memref
+// CHECK: hivm.hir.copy
+// CHECK-NOT: hivm.hir.vtranspose
+func.func @test_transpose_identity_memref(%arg0: memref<6xf32>, %arg1: memref<6xf32>) {
+  hivm.hir.vtranspose ins(%arg0 : memref<6xf32>) outs(%arg1 : memref<6xf32>) permutation = [0]
+  return
+}
+
+// -----
+
+// Identity permutation on tensors folds to the source.
+// CHECK-LABEL: func @test_transpose_identity_tensor
+// CHECK-NOT: hivm.hir.vtranspose
+func.func @test_transpose_identity_tensor(%arg0: tensor<2x3xf32>) -> tensor<2x3xf32> {
+  %empty = tensor.empty() : tensor<2x3xf32>
+  %0 = hivm.hir.vtranspose ins(%arg0 : tensor<2x3xf32>) outs(%empty : tensor<2x3xf32>) permutation = [0, 1] -> tensor<2x3xf32>
+  return %0 : tensor<2x3xf32>
+}
