@@ -737,7 +737,7 @@ func.func @test_tensor_insert(%arg0: memref<?xi32>, %arg1: memref<?xi32>, %arg2:
 // CHECK: %{{.*}} = hivm.hir.load {{.*}} {"hivm.inserted-load"}
 // CHECK: %{{.*}} = hivm.hir.store {{.*}} {"hivm.inserted-store"}
 // CHECK: %{{.*}} = hivm.hir.load {{.*}} {"hivm.inserted-load"}
-// CHECK: %{{.*}} = hivm.hir.Conv1dL1 {fixpipe_already_inserted = true, groups = 2 : i32, outputAlreadyNormalized, padding = 0 : i32, stride = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<2x2x1x128x16xf16>, tensor<1x1x3x32x16xf16>, i1) outs(%{{.*}} : tensor<128x64xf32>) -> tensor<128x64xf32>
+// CHECK: %{{.*}} = hivm.hir.Conv1dL1 {dilation = 1 : i32, fixpipe_already_inserted = true, groups = 2 : i32, outputAlreadyNormalized, padding = 0 : i32, stride = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<2x2x1x128x16xf16>, tensor<1x1x3x32x16xf16>, i1) outs(%{{.*}} : tensor<128x64xf32>) -> tensor<128x64xf32>
 // CHECK: %{{.*}} = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%{{.*}} : tensor<126x64xf32>) outs(%{{.*}} : tensor<126x64xf16>) -> tensor<126x64xf16>
 // CHECK: %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<126x64xf16>) outs(%{{.*}} : tensor<126x64xf16>) {"hivm.inserted-load"} core_type = <VECTOR> -> tensor<126x64xf16>
 func.func @test_conv1d(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg2: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg4: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg5: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg6: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg7: i32, %arg8: i32, %arg9: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, func_dyn_memref_args = dense<[false, true, true, true, true, true, true, false, false, false]> : vector<10xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"} {
@@ -771,7 +771,7 @@ func.func @test_conv1d(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_addr
   %12 = hivm.hir.vtranspose ins(%10 : tensor<1x32x3x16xf16>) outs(%11 : tensor<1x3x32x16xf16>) permutation = [0, 2, 1, 3] -> tensor<1x3x32x16xf16>
   %expanded_6 = tensor.expand_shape %12 [[0, 1], [2], [3], [4]] output_shape [1, 1, 3, 32, 16] : tensor<1x3x32x16xf16> into tensor<1x1x3x32x16xf16>
   %13 = tensor.empty() : tensor<128x64xf32>
-  %14 = hivm.hir.Conv1dL1 {fixpipe_already_inserted = true, groups = 2 : i32, outputAlreadyNormalized, padding = 0 : i32, stride = 1 : i32} ins(%expanded_4, %expanded_6, %true : tensor<2x2x1x128x16xf16>, tensor<1x1x3x32x16xf16>, i1) outs(%13 : tensor<128x64xf32>) -> tensor<128x64xf32>
+  %14 = hivm.hir.Conv1dL1 {dilation = 1 : i32, fixpipe_already_inserted = true, groups = 2 : i32, outputAlreadyNormalized, padding = 0 : i32, stride = 1 : i32} ins(%expanded_4, %expanded_6, %true : tensor<2x2x1x128x16xf16>, tensor<1x1x3x32x16xf16>, i1) outs(%13 : tensor<128x64xf32>) -> tensor<128x64xf32>
   %extracted_slice = tensor.extract_slice %14[0, 0] [126, 64] [1, 1] : tensor<128x64xf32> to tensor<126x64xf32>
   %15 = tensor.empty() : tensor<126x64xf16>
   %16 = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%extracted_slice : tensor<126x64xf32>) outs(%15 : tensor<126x64xf16>) -> tensor<126x64xf16>
