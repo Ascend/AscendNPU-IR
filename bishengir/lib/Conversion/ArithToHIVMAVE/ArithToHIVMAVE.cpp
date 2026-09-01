@@ -211,6 +211,38 @@ struct RoundOpPattern : public OpConversionPattern<math::RoundOp> {
   }
 };
 
+static bool isSignedI8DestMode(hivm::UnsignedMode mode, bool hasUniAttr) {
+  if (!hasUniAttr)
+    return true;
+  return mode == hivm::UnsignedMode::SI2SI ||
+         mode == hivm::UnsignedMode::UI2SI;
+}
+
+/// Hardware has no s322s8 / s162s8. Direct s322u8 / s162u8 treats the
+/// destination as unsigned and drops negatives. For wrap (arith.trunci),
+/// keep the low 8 bits first so the unsigned narrow is in [0, 255] and
+/// the stored i8 bit pattern matches two's-complement wrap.
+static Operation *createSignedWrapTruncToI8(
+    ConversionPatternRewriter &rewriter, Location loc, Value src, Value mask,
+    VectorType outVecType, BoolAttr sat, VCVT_PartTypeAttr part,
+    VCVT_PPTypeAttr pp, hivm::UnsignedModeAttr s2uAttr) {
+  auto srcVecTy = cast<VectorType>(src.getType());
+  Value scalar = rewriter.create<arith::ConstantOp>(
+      loc, rewriter.getIntegerAttr(srcVecTy.getElementType(), 0xFF));
+  Value splat =
+      hivmave::getBroadcastOp(scalar, srcVecTy, rewriter, loc)->getResult(0);
+  auto andMaskType =
+      VectorType::get({srcVecTy.getNumElements()}, rewriter.getI1Type());
+  Value andMask = rewriter.create<hivmave::VFPgeOp>(
+      loc, andMaskType,
+      hivmave::PgePatternAttr::get(rewriter.getContext(),
+                                   hivmave::PgePattern::ALL));
+  Value masked =
+      rewriter.create<VFAndOp>(loc, srcVecTy, src, splat, andMask).getResult();
+  return rewriter.create<VFTruncIOp>(loc, outVecType, masked, mask, sat, part,
+                                     pp, s2uAttr);
+}
+
 template <typename OpToBeConverted>
 struct VFTypeConvertionPattern : public OpConversionPattern<OpToBeConverted> {
   using OpConversionPattern<OpToBeConverted>::OpConversionPattern;
@@ -360,27 +392,46 @@ struct VFTypeConvertionPattern : public OpConversionPattern<OpToBeConverted> {
       const bool isI64ToI8 =
           inElemType.isSignlessInteger(64) && outElemType.isSignlessInteger(8);
       if (isI32ToI8) {
-        if (sat) {
-          hivm::UnsignedModeAttr u2uAttr = hivm::UnsignedModeAttr::get(
-              op->getContext(), hivm::UnsignedMode::UI2UI);
-          hivm::UnsignedModeAttr s2uAttr = hivm::UnsignedModeAttr::get(
-              op->getContext(), hivm::UnsignedMode::SI2UI);
-          if (hvUniMode == hivm::UnsignedMode::SI2UI) {
-            newOp = rewriter.create<VFTruncIOp>(
-                loc, outVecType, in, adjustedMask, sat, nullptr, pp, s2uAttr);
-          } else if (hvUniMode == hivm::UnsignedMode::UI2UI) {
-            newOp = rewriter.create<VFTruncIOp>(
-                loc, outVecType, in, adjustedMask, sat, nullptr, pp, u2uAttr);
-          } else {
-            newOp = rewriter.create<VFTruncIOp>(
-                loc, outVecType, in, adjustedMask, sat, nullptr, pp, nullptr);
-          }
+        hivm::UnsignedModeAttr u2uAttr = hivm::UnsignedModeAttr::get(
+            op->getContext(), hivm::UnsignedMode::UI2UI);
+        hivm::UnsignedModeAttr s2uAttr = hivm::UnsignedModeAttr::get(
+            op->getContext(), hivm::UnsignedMode::SI2UI);
+        const bool saturate = sat.getValue();
+        const bool signedI8Dest =
+            isSignedI8DestMode(hvUniMode, unsignedAttr != nullptr);
+        if (!saturate && signedI8Dest) {
+          newOp = createSignedWrapTruncToI8(rewriter, loc, in, adjustedMask,
+                                            outVecType, sat, nullptr, pp,
+                                            s2uAttr);
+        } else if (saturate && signedI8Dest) {
+          // No s322s8: saturate SI2SI through f32/f16, which keep sign.
+          auto f32VecType =
+              VectorType::get(inVecType.getShape(), rewriter.getF32Type());
+          auto f16VecType =
+              VectorType::get(inVecType.getShape(), rewriter.getF16Type());
+          Value maskF32 = hivmave::findReuseableMaskOrCreateOne(
+              op, f32VecType, rewriter);
+          Value maskF16 = hivmave::findReuseableMaskOrCreateOne(
+              op, f16VecType, rewriter);
+          auto f32Op = rewriter.create<VFSIntToFpOp>(loc, f32VecType, in,
+                                                     maskF32, rnd, nullptr);
+          auto f16Op = rewriter.create<VFTruncFOp>(
+              loc, f16VecType, f32Op.getResult(), maskF32, rnd, sat, part);
+          newOp = rewriter.create<VFFpToSIntOp>(loc, outVecType,
+                                                f16Op.getResult(), maskF16,
+                                                rnd, sat, part);
+        } else if (hvUniMode == hivm::UnsignedMode::SI2UI) {
+          newOp = rewriter.create<VFTruncIOp>(
+              loc, outVecType, in, adjustedMask, sat, nullptr, pp, s2uAttr);
+        } else if (hvUniMode == hivm::UnsignedMode::UI2UI) {
+          newOp = rewriter.create<VFTruncIOp>(
+              loc, outVecType, in, adjustedMask, sat, nullptr, pp, u2uAttr);
         } else {
-          newOp = rewriter.create<VFTruncIOp>(loc, outVecType, in, adjustedMask,
-                                              sat, nullptr, pp, nullptr);
+          newOp = rewriter.create<VFTruncIOp>(
+              loc, outVecType, in, adjustedMask, sat, nullptr, pp, nullptr);
         }
       } else if (isI64ToI8 || isI64ToI16) {
-        if (sat) {
+        if (sat.getValue()) {
           hivm::UnsignedModeAttr u2uAttr = hivm::UnsignedModeAttr::get(
               op->getContext(), hivm::UnsignedMode::UI2UI);
           hivm::UnsignedModeAttr u2sAttr = hivm::UnsignedModeAttr::get(
@@ -486,16 +537,34 @@ struct VFTypeConvertionPattern : public OpConversionPattern<OpToBeConverted> {
               op, newOutVecType, rewriter);
           auto i32Op = rewriter.create<VFTruncIOp>(
               loc, newOutVecType, in, maskForI32, sat, part, nullptr, nullptr);
+          hivm::UnsignedModeAttr s2uAttr = hivm::UnsignedModeAttr::get(
+              op->getContext(), hivm::UnsignedMode::SI2UI);
+          const bool signedI8Dest =
+              isSignedI8DestMode(hvUniMode, unsignedAttr != nullptr);
           // i32 -> i8/i16
-          newOp =
-              outElemType.isSignlessInteger(8)
-                  ? rewriter.create<VFTruncIOp>(loc, outVecType,
-                                                i32Op.getResult(), adjustedMask,
-                                                sat, nullptr, pp, nullptr)
-                  : rewriter.create<VFTruncIOp>(loc, outVecType,
-                                                i32Op.getResult(), adjustedMask,
-                                                sat, part, nullptr, nullptr);
+          if (outElemType.isSignlessInteger(8) && signedI8Dest) {
+            newOp = createSignedWrapTruncToI8(
+                rewriter, loc, i32Op.getResult(), adjustedMask, outVecType,
+                sat, nullptr, pp, s2uAttr);
+          } else {
+            newOp =
+                outElemType.isSignlessInteger(8)
+                    ? rewriter.create<VFTruncIOp>(
+                          loc, outVecType, i32Op.getResult(), adjustedMask, sat,
+                          nullptr, pp, nullptr)
+                    : rewriter.create<VFTruncIOp>(
+                          loc, outVecType, i32Op.getResult(), adjustedMask, sat,
+                          part, nullptr, nullptr);
+          }
         }
+      } else if (inElemType.isSignlessInteger(16) &&
+                 outElemType.isSignlessInteger(8) && !sat.getValue() &&
+                 isSignedI8DestMode(hvUniMode, unsignedAttr != nullptr)) {
+        hivm::UnsignedModeAttr s2uAttr = hivm::UnsignedModeAttr::get(
+            op->getContext(), hivm::UnsignedMode::SI2UI);
+        newOp = createSignedWrapTruncToI8(rewriter, loc, in, adjustedMask,
+                                          outVecType, sat, part, nullptr,
+                                          s2uAttr);
       } else
         newOp = rewriter.create<VFTruncIOp>(loc, outVecType, in, adjustedMask,
                                             sat, part, nullptr, uni);
