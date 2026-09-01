@@ -28,5 +28,16 @@
 /bishengir/**/InjectSync/* @AmmarDab3an @tanzirui123123 @hi_sy @hid90099092 @tanshengshun
 /bishengir/**/InjectBlockSync.* @AmmarDab3an @tanzirui123123 @hi_sy @hid90099092 @tanshengshun
 
+# AutoBlockify.
+/bishengir/**/Autoblockify.* @Alae-eddine @jy834507063 @hid90099092 @tanshengshun
+/bishengir/test/**/*auto-blockify-parallel-loop* @Alae-eddine @jy834507063 @hid90099092 @tanshengshun
+
+# Cube Op Template.
+/bishengir/**/Template/**/Cube/ @Alae-eddine @ZhaoWentengZWT @zhufang_hw @jqran @hid90099092 @tanshengshun
+/bishengir/**/Template/**/Macro/ @Alae-eddine @ZhaoWentengZWT @zhufang_hw @jqran @hid90099092 @tanshengshun
+/bishengir/**/Template/**/Host/ @Alae-eddine @ZhaoWentengZWT @zhufang_hw @jqran @hid90099092 @tanshengshun
+/bishengir/**/Template/**/Fixpipe/ @Alae-eddine @ZhaoWentengZWT @zhufang_hw @jqran @hid90099092 @tanshengshun
+/bishengir/**/Template/**/DMA/Cbuf/ @Alae-eddine @ZhaoWentengZWT @zhufang_hw @jqran @hid90099092 @tanshengshun
+
 # Submodule:llvm-project (ensure synchronization with hivmc)
 /third-party/llvm-project @NoBBAI @hid90099092 @tanshengshun
