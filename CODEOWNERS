@@ -7,6 +7,7 @@
 
 # Coding agent guidelines.
 /AGENTS.md @huangyujun123 @hid90099092 @tanshengshun @cxtjjcz
+/CLAUDE.md @huangyujun123 @hid90099092 @tanshengshun @cxtjjcz
 
 # Memory management.
 /bishengir/**/AllocToPointerCast.* @SL25 @ssy_5825 @hid90099092 @tanshengshun
