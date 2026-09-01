@@ -371,10 +371,11 @@ linearizeSingleElementI1Access(PatternRewriter &rewriter, Location loc,
     return LinearizedI1Access{viewOp.getSource(), linearOffset, linearSize};
   }
 
-  return LinearizedI1Access{
-      baseMemref, computeLinearMemRefOffset(rewriter, loc, baseMemref, indices,
-                                            rewriter.getIndexType()),
-      std::nullopt};
+  return LinearizedI1Access{baseMemref,
+                            computeLinearMemRefOffset(rewriter, loc, baseMemref,
+                                                      indices,
+                                                      rewriter.getIndexType()),
+                            std::nullopt};
 }
 
 /// Reinterprets the root singleton source as a linear 1D i1 memref so the
@@ -638,6 +639,135 @@ struct loadBroadcastPattern : public OpRewritePattern<hivmave::VFLoadOp> {
   }
 };
 
+/// Rewrites an unaligned singleton i1 store as a predicate-block
+/// read-modify-write.
+///
+/// Before conversion:
+/// %value = ave.hir.vcmp <EQ> %lhs, %rhs, %all
+///     : vector<64xf32>, vector<64xi1> -> vector<64xi1>
+/// ave.hir.masked_store <NORM_B8> %subview[%c0, %c0], %mask, %value
+///       {ave.unaligned_ub_access = #ave.unaligned_ub_access} :
+///       memref<1x1xi1, strided<[256, 1], offset: ?>, #hivm.address_space<ub>>,
+///       vector<64xi1>, vector<64xi1>
+///
+/// After conversion:
+/// %linear = memref.reinterpret_cast %singleton[...] to memref<?xi1>
+/// %old = ave.hir.vload <NORM> %linear[%base]
+///     {"1xi1 processed"} : memref<?xi1, strided<[1], offset: ?>>
+///     into vector<256xi1>
+///
+/// %p1 = ave.hir.plt (%offsetInVL + 1) : vector<256xi1>
+/// %p2 = ave.hir.plt %offsetInVL : vector<256xi1>
+/// %oneHot = ave.hir.preg.xor <B8> %p1, %p2, %all : vector<256xi1>
+///
+/// %valueAll = convertI1ToPreg(%value) : vector<256xi1>
+/// %diff = ave.hir.preg.xor <B8> %old, %valueAll, %all : vector<256xi1>
+/// %delta = ave.hir.preg.and <B8> %diff, %oneHot, %all : vector<256xi1>
+/// %new = ave.hir.preg.xor <B8> %old, %delta, %all : vector<256xi1>
+/// ave.hir.masked_store <NORM_B8> %linear[%base], %all, %new
+///     {"1xi1 processed"} : memref<?xi1, strided<[1], offset: ?>>,
+///                           vector<256xi1>, vector<256xi1>
+struct storeBroadcastPattern
+    : public OpRewritePattern<hivmave::VFMaskedStoreOp> {
+  storeBroadcastPattern(MLIRContext *context)
+      : OpRewritePattern<hivmave::VFMaskedStoreOp>(context, /*benefit=*/10) {}
+
+  LogicalResult matchAndRewrite(hivmave::VFMaskedStoreOp store,
+                                PatternRewriter &rewriter) const override {
+    // Step 1: Restrict the pattern to original unaligned singleton i1 stores.
+    if (!store->hasAttr(UnalignedAttr::name) ||
+        store->hasAttr(i1ProcessedAttr))
+      return failure();
+
+    VectorType valueTy = store.getVectorType();
+    MemRefType memRefTy = store.getMemRefType();
+    if (!valueTy.getElementType().isInteger(1) || !memRefTy.hasStaticShape() ||
+        memRefTy.getNumElements() != 1 || valueTy.getRank() != 1)
+      return failure();
+
+    // Step 2: Linearize the destination bit address and create a flat i1 view.
+    Location loc = store.getLoc();
+    auto linearized = linearizeSingleElementI1Access(
+        rewriter, loc, store.getBase(), store.getIndices());
+    if (failed(linearized))
+      return failure();
+    auto rawLinearView = buildRawLinearI1View(
+        rewriter, loc, linearized->rootMemref, linearized->linearBitSize);
+    if (failed(rawLinearView))
+      return failure();
+
+    // Step 3: Load the containing predicate block and compute its lane offset.
+    auto [baseIndex, offsetInVL] =
+        getBaseAndOffetInVL(rewriter, loc, linearized->linearBitOffset);
+    VectorType pregTy = VectorType::get({util::VL}, rewriter.getI1Type());
+
+    // Load the old block; the update must preserve every other bit.
+    auto oldBlockLoad = rewriter.create<hivmave::VFLoadOp>(
+        loc, pregTy, *rawLinearView, baseIndex);
+    oldBlockLoad->setAttr(i1ProcessedAttr, rewriter.getUnitAttr());
+    Value oldBlock = oldBlockLoad->getResult(0);
+
+    // Step 4: Build a one-hot predicate and normalize the incoming value.
+    Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    Value nextOffset = rewriter.create<arith::AddIOp>(loc, offsetInVL, one);
+    auto p1 = rewriter.create<hivmave::VFPltOp>(
+        loc, pregTy, rewriter.getIndexType(), nextOffset);
+    auto p2 = rewriter.create<hivmave::VFPltOp>(
+        loc, pregTy, rewriter.getIndexType(), offsetInVL);
+    Value allMask = rewriter.create<hivmave::VFPgeOp>(
+        loc, pregTy,
+        PgePatternAttr::get(rewriter.getContext(), PgePattern::ALL));
+
+    auto oneHot = rewriter.create<hivmave::PregXorOp>(
+        loc, pregTy, MaskWidthAttr::get(rewriter.getContext(), MaskWidth::B8),
+        p1->getResult(0), p2->getResult(0), allMask);
+
+    // Convert the source to the predicate used by the RMW. B16/B32 predicate
+    // results must be packed to B8 first; the cast mode follows the comparison
+    // element width. Other sources may already be B8.
+    Value value = store.getVal();
+    if (auto cmp = value.getDefiningOp<hivmave::VFCmpOp>()) {
+      auto lhsTy = cast<VectorType>(cmp.getLhs().getType());
+      auto bitWidth = lhsTy.getElementTypeBitWidth();
+      if (bitWidth == 16) {
+        value = rewriter.create<hivmave::VFPregTypeCastOp>(
+            loc, valueTy, value, hivmave::PregCastMode::PK_B16);
+      } else if (bitWidth == 32 || bitWidth == 64) {
+        // AVE uses B32 predicate granularity for 32/64-bit comparisons.
+        value = rewriter.create<hivmave::VFPregTypeCastOp>(
+            loc, valueTy, value, hivmave::PregCastMode::PK4_B32);
+      }
+    }
+    Value valueAll = convertI1ToPreg(valueTy, value, Value(), rewriter, loc);
+    if (valueAll.getType() != pregTy)
+      valueAll =
+          rewriter.create<UnrealizedConversionCastOp>(loc, pregTy, valueAll)
+              .getResult(0);
+
+    // TODO: Replace this RMW sequence with PSEL once the PSEL op is available.
+    // Step 5: Replace only the selected bit:
+    //   newBlock = oldBlock XOR ((oldBlock XOR valueAll) AND oneHot).
+    auto diff = rewriter.create<hivmave::PregXorOp>(
+        loc, pregTy, MaskWidthAttr::get(rewriter.getContext(), MaskWidth::B8),
+        oldBlock, valueAll, allMask);
+    auto delta = rewriter.create<hivmave::PregAndOp>(
+        loc, pregTy, MaskWidthAttr::get(rewriter.getContext(), MaskWidth::B8),
+        diff->getResult(0), oneHot->getResult(0), allMask);
+    auto newBlock = rewriter.create<hivmave::PregXorOp>(
+        loc, pregTy, MaskWidthAttr::get(rewriter.getContext(), MaskWidth::B8),
+        oldBlock, delta->getResult(0), allMask);
+
+    // Step 6: Store the updated B8 block and mark it processed to avoid
+    // re-rewriting.
+    auto newStore = rewriter.create<hivmave::VFMaskedStoreOp>(
+        loc, hivmave::StoreDist::NORM_B8, *rawLinearView, ValueRange{baseIndex},
+        allMask, newBlock->getResult(0));
+    newStore->setAttr(i1ProcessedAttr, rewriter.getUnitAttr());
+    rewriter.eraseOp(store);
+    return success();
+  }
+};
+
 namespace {
 struct i1opSoftImplPass : public impl::I1opSoftImplBase<i1opSoftImplPass> {
   using Base::Base;
@@ -648,6 +778,7 @@ struct i1opSoftImplPass : public impl::I1opSoftImplBase<i1opSoftImplPass> {
 
     RewritePatternSet patterns(context);
     patterns.add<loadBroadcastPattern>(context);
+    patterns.add<storeBroadcastPattern>(context);
     mlir::GreedyRewriteConfig config;
     config.strictMode = GreedyRewriteStrictness::ExistingOps;
 

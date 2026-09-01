@@ -720,3 +720,40 @@ func.func @test_reinterpret_cast_dynamic_i1_root_singleton_i1(%arg0: memref<?xi1
   annotation.mark %2 {mask_op_idx = 0 : i32} : vector<256xi1>
   return
 }
+
+// CHECK-LABEL: func.func @test_singleton_i1_store
+// CHECK: %[[VALUE:.*]] = ave.hir.vcmp <EQ>
+// CHECK: memref.extract_strided_metadata
+// CHECK: memref.reinterpret_cast
+// CHECK: ave.hir.vload
+// CHECK: ave.hir.plt
+// CHECK: ave.hir.plt
+// CHECK: ave.hir.preg.xor
+// CHECK: ave.hir.preg.cast %[[VALUE]] <PK4_B32>
+// CHECK: ave.hir.vsel
+// CHECK: ave.hir.vector_broadcast
+// CHECK: ave.hir.vcmp
+// CHECK: ave.hir.preg.xor
+// CHECK: ave.hir.preg.and
+// CHECK: ave.hir.preg.xor
+// CHECK: ave.hir.masked_store
+func.func @test_singleton_i1_store(%input: memref<3x16xf32, #hivm.address_space<ub>>, %output: memref<3x16xi1, strided<[256, 1]>, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
+  %cst = arith.constant 0.000000e+00 : f32
+  %all = ave.hir.pge <ALL> : vector<64xi1>
+  %zero = ave.hir.broadcast %cst, %all : f32, vector<64xi1> -> vector<64xf32>
+  %store_mask = ave.hir.pge <VL1> : vector<64xi1>
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c3 = arith.constant 3 : index
+  %c16 = arith.constant 16 : index
+  scf.for %row = %c0 to %c3 step %c1 {
+    scf.for %col = %c0 to %c16 step %c1 {
+      %input_elem = memref.subview %input[%row, %col] [1, 1] [1, 1] : memref<3x16xf32, #hivm.address_space<ub>> to memref<1x1xf32, strided<[16, 1], offset: ?>, #hivm.address_space<ub>>
+      %output_elem = memref.subview %output[%row, %col] [1, 1] [1, 1] : memref<3x16xi1, strided<[256, 1]>, #hivm.address_space<ub>> to memref<1x1xi1, strided<[256, 1], offset: ?>, #hivm.address_space<ub>>
+      %value = ave.hir.vload <BRC_B32> %input_elem[%c0, %c0] {ave.unaligned_ub_access = #ave.unaligned_ub_access} : memref<1x1xf32, strided<[16, 1], offset: ?>, #hivm.address_space<ub>> into vector<64xf32>
+      %cmp = ave.hir.vcmp <EQ> %value, %zero, %all : vector<64xf32>, vector<64xi1> -> vector<64xi1>
+      ave.hir.masked_store <NORM_B8> %output_elem[%c0, %c0], %store_mask, %cmp {ave.unaligned_ub_access = #ave.unaligned_ub_access} : memref<1x1xi1, strided<[256, 1], offset: ?>, #hivm.address_space<ub>>, vector<64xi1>, vector<64xi1>
+    }
+  }
+  return
+}
