@@ -311,14 +311,33 @@ struct VFOperandSubstitutionPass
       }
     });
 
+    static const int INIT_SIZE = 8;
+    llvm::SmallPtrSet<Operation *, INIT_SIZE> erasedAllocs;
+    llvm::SmallDenseSet<int> erasedIdx;
+    Candidate *prev = nullptr;
     for (Candidate &c : candidates) {
+      if (prev == nullptr || prev->call != c.call) {
+        prev = &c;
+        erasedIdx.clear(); // Index map is reset at each VF call.
+      }
+      // An alloc or an index may be contained more than once.
+      if (!c.dstAlloc || erasedAllocs.contains(c.dstAlloc)
+        || erasedIdx.contains(c.srcIdx) || erasedIdx.contains(c.dstIdx)) {
+        continue;
+      }
+
       Value dstOperand = c.call.getOperand(c.dstIdx);
       Value srcOperand = c.call.getOperand(c.srcIdx);
+      erasedIdx.insert(c.srcIdx);
+      erasedIdx.insert(c.dstIdx);
+
       // Redirect every use of the dead output buffer to the reused source
       // buffer, then erase the now-unused output alloc.
       dstOperand.replaceAllUsesWith(srcOperand);
+
       if (c.dstAlloc->use_empty()) {
-        c.dstAlloc.erase();
+        erasedAllocs.insert(c.dstAlloc);
+        c.dstAlloc->erase();
       }
     }
 
