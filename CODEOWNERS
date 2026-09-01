@@ -55,3 +55,6 @@
 /bishengir/**/OpLayoutInterface.* @hocky @jy834507063 @liupengcheng2012 @hid90099092 @tanshengshun
 /bishengir/lib/Dialect/HIVM/IR/OpLayoutInterface/ @hocky @jy834507063 @liupengcheng2012 @hid90099092 @tanshengshun
 /bishengir/test/Dialect/HIVM/**/*layout* @hocky @jy834507063 @liupengcheng2012 @hid90099092 @tanshengshun
+
+# CODEOWNERS file itself.
+/CODEOWNERS @hid90099092 @tanshengshun
