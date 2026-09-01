@@ -791,18 +791,21 @@ ArrayAttr Conv3DL1Op::getIndexingMaps() {
         int64_t wH = packedWeightType.getDimSize(2);
         int64_t wW = packedWeightType.getDimSize(3);
         int64_t oC = packedWeightType.getDimSize(4);
-        auto paddingH = getPaddingH();
-        auto paddingW = getPaddingW();
+        auto paddingT = getPaddingT();
+        auto paddingB = getPaddingB();
+        auto paddingL = getPaddingL();
+        auto paddingR = getPaddingR();
         auto strideH = getStrideH();
         auto strideW = getStrideW();
-        if (succeeded(paddingH) && succeeded(paddingW) &&
+        if (succeeded(paddingT) && succeeded(paddingB) &&
+            succeeded(paddingL) && succeeded(paddingR) &&
             succeeded(strideH) && succeeded(strideW) && *strideH > 0 &&
             *strideW > 0) {
           int64_t oD = iD - wD + 1;
           int64_t oH =
-              (iH + 2 * (*paddingH) - wH) / *strideH + 1;
+              (iH + *paddingT + *paddingB - wH) / *strideH + 1;
           int64_t oW =
-              (iW + 2 * (*paddingW) - wW) / *strideW + 1;
+              (iW + *paddingL + *paddingR - wW) / *strideW + 1;
           if (oD > 0 && oH > 0 && oW > 0 && oC > 0) {
             AffineExpr d0 = getAffineDimExpr(0, ctx);
             AffineExpr d6 = getAffineDimExpr(6, ctx);

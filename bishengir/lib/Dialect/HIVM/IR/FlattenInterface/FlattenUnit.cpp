@@ -104,10 +104,13 @@ getFlattenedUnitTransposableOTF(HIVMStructuredOp op,
     auto val = opr.get();
     if (auto memrefType = dyn_cast<MemRefType>(val.getType())) {
       auto unitMask = getUnitAxesMaskImpl(memrefType);
-      // Disable flattening the back because vtranspose may not be able to
+      // Disable flattening the back because transposable OTF may not be able to
       // support back collapse, still need a pivot, collapse of the last element
-      // will be done in the get flattened transposable phase
-      unitMask[static_cast<int>(unitMask.size()) - 1] = false;
+      // will be done in the get flattened transposable phase.
+      // VTransposeOp collapses the back too; it only reaches here on RegBase
+      // (gated in getFlattenedImpl).
+      if (!isa<VTransposeOp>(op))
+        unitMask[static_cast<int>(unitMask.size()) - 1] = false;
       ReassociationMap newReassociation =
           getReassociationFromUnitMask(unitMask);
       res.reassociation.push_back(newReassociation);

@@ -210,6 +210,8 @@ void setupHIVMAVEPipelineOptions(
       config.getEnableHivmNd2nzOnVector();
   hivmAVEPipelineOptions.enableFusedMultiplyAdd =
       config.getEnableFusedMultiplyAdd();
+  hivmAVEPipelineOptions.enableAveLoopOptimize =
+      config.getEnableAveLoopOptimize();
   hivmAVEPipelineOptions.enablePrintMemoryAllocatedSize =
       config.getEnablePrintMemoryAllocatedSize();
   hivmAVEPipelineOptions.maxReductionSplitNum = config.getMaxReductionSplit();
@@ -521,6 +523,7 @@ void buildBiShengHIRPipeline(OpPassManager &pm,
       OutlineScopeOptions outlineScopeOptions;
       outlineScopeOptions.outlineMarkedScopesOnly = true;
       pm.addPass(scope::createOutlineScopePass(outlineScopeOptions));
+      pm.addPass(scope::createPropagateSIMTModePass());
       pm.addPass(hivm::createInsertAllocBasePlaceholderPass());
       pm.addPass(hivm::createInferSimtVFMemEffectPass());
       // Infer per-argument mem scope hints from the mixed call boundary first;

@@ -1,4 +1,4 @@
-// RUN: bishengir-opt %s -auto-blockify-parallel-loop -verify-diagnostics | FileCheck %s
+// RUN: bishengir-opt %s -auto-blockify-parallel-loop -split-input-file -verify-diagnostics | FileCheck %s
 // CHECK: "VECTOR_CORE_COUNT", [[Physical_num:[0-9]+]]
 // CHECK: annotation.mark %[[Upper_bound:.*]] {logical_block_num}
 // CHECK: %[[Lower_bound_i64:.*]] = hivm.hir.get_block_idx
@@ -45,6 +45,77 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
     %extracted_slice = tensor.extract_slice %17[0] [%13] [1] : tensor<1024xf32> to tensor<?xf32>
     %subview_6 = memref.subview %reinterpret_cast_5[0] [%13] [1] : memref<1024xf32, strided<[1], offset: ?>> to memref<?xf32, strided<[1], offset: ?>>
     hivm.hir.store ins(%extracted_slice : tensor<?xf32>) outs(%subview_6 : memref<?xf32, strided<[1], offset: ?>>)
+    return
+  }
+}
+// -----
+
+// Regression: this kernel was AIV before hivm.core_ratio forced it to MIX,
+// and it must keep stepping by the Vector count.
+// CHECK-LABEL: func.func @blockify_ratio_0_1(
+// CHECK:         %[[STEP:.*]] = arith.constant 56 : i32
+// CHECK:         scf.for %{{.*}} step %[[STEP]]
+module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 28 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 28 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 56 : i32>, #dlti.dl_entry<"UB_SIZE", 1572864 : i32>, #dlti.dl_entry<"L1_SIZE", 4194304 : i32>, #dlti.dl_entry<"L0A_SIZE", 524288 : i32>, #dlti.dl_entry<"L0B_SIZE", 524288 : i32>, #dlti.dl_entry<"L0C_SIZE", 1048576 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L1_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L0C_ALIGN_SIZE", 4096 : i32>>>, hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @blockify_ratio_0_1(%n: i32) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.core_ratio = #hivm.core_ratio<0, 1>, hivm.func_core_type = #hivm.func_core_type<MIX>} {
+    annotation.mark %n {logical_block_num} : i32
+    %0 = hivm.hir.get_block_idx -> i64
+    return
+  }
+}
+
+// -----
+
+// Cube-only blocks.
+// CHECK-LABEL: func.func @blockify_ratio_1_0(
+// CHECK:         %[[STEP:.*]] = arith.constant 28 : i32
+// CHECK:         scf.for %{{.*}} step %[[STEP]]
+module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 28 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 28 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 56 : i32>, #dlti.dl_entry<"UB_SIZE", 1572864 : i32>, #dlti.dl_entry<"L1_SIZE", 4194304 : i32>, #dlti.dl_entry<"L0A_SIZE", 524288 : i32>, #dlti.dl_entry<"L0B_SIZE", 524288 : i32>, #dlti.dl_entry<"L0C_SIZE", 1048576 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L1_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L0C_ALIGN_SIZE", 4096 : i32>>>, hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @blockify_ratio_1_0(%n: i32) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.core_ratio = #hivm.core_ratio<1, 0>, hivm.func_core_type = #hivm.func_core_type<MIX>} {
+    annotation.mark %n {logical_block_num} : i32
+    %0 = hivm.hir.get_block_idx -> i64
+    return
+  }
+}
+
+// -----
+
+// One Vector core per block, but blocks are still Cube-counted.
+// CHECK-LABEL: func.func @blockify_ratio_1_1(
+// CHECK:         %[[STEP:.*]] = arith.constant 28 : i32
+// CHECK:         scf.for %{{.*}} step %[[STEP]]
+module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 28 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 28 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 56 : i32>, #dlti.dl_entry<"UB_SIZE", 1572864 : i32>, #dlti.dl_entry<"L1_SIZE", 4194304 : i32>, #dlti.dl_entry<"L0A_SIZE", 524288 : i32>, #dlti.dl_entry<"L0B_SIZE", 524288 : i32>, #dlti.dl_entry<"L0C_SIZE", 1048576 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L1_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L0C_ALIGN_SIZE", 4096 : i32>>>, hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @blockify_ratio_1_1(%n: i32) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.core_ratio = #hivm.core_ratio<1, 1>, hivm.func_core_type = #hivm.func_core_type<MIX>} {
+    annotation.mark %n {logical_block_num} : i32
+    %0 = hivm.hir.get_block_idx -> i64
+    return
+  }
+}
+
+// -----
+
+// Two Vector cores per block, addressed by sub-block index.
+// CHECK-LABEL: func.func @blockify_ratio_1_2(
+// CHECK:         %[[STEP:.*]] = arith.constant 28 : i32
+// CHECK:         scf.for %{{.*}} step %[[STEP]]
+module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 28 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 28 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 56 : i32>, #dlti.dl_entry<"UB_SIZE", 1572864 : i32>, #dlti.dl_entry<"L1_SIZE", 4194304 : i32>, #dlti.dl_entry<"L0A_SIZE", 524288 : i32>, #dlti.dl_entry<"L0B_SIZE", 524288 : i32>, #dlti.dl_entry<"L0C_SIZE", 1048576 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L1_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L0C_ALIGN_SIZE", 4096 : i32>>>, hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @blockify_ratio_1_2(%n: i32) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.core_ratio = #hivm.core_ratio<1, 2>, hivm.func_core_type = #hivm.func_core_type<MIX>} {
+    annotation.mark %n {logical_block_num} : i32
+    %0 = hivm.hir.get_block_idx -> i64
+    return
+  }
+}
+
+// -----
+
+// A MIX func with no ratio keeps the historical 1:2 default, so nothing changes
+// for kernels predating this attribute.
+// CHECK-LABEL: func.func @blockify_mix_no_ratio(
+// CHECK:         %[[STEP:.*]] = arith.constant 28 : i32
+// CHECK:         scf.for %{{.*}} step %[[STEP]]
+module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 28 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 28 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 56 : i32>, #dlti.dl_entry<"UB_SIZE", 1572864 : i32>, #dlti.dl_entry<"L1_SIZE", 4194304 : i32>, #dlti.dl_entry<"L0A_SIZE", 524288 : i32>, #dlti.dl_entry<"L0B_SIZE", 524288 : i32>, #dlti.dl_entry<"L0C_SIZE", 1048576 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L1_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L0C_ALIGN_SIZE", 4096 : i32>>>, hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @blockify_mix_no_ratio(%n: i32) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<MIX>} {
+    annotation.mark %n {logical_block_num} : i32
+    %0 = hivm.hir.get_block_idx -> i64
     return
   }
 }

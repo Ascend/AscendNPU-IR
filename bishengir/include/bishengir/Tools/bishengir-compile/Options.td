@@ -531,6 +531,12 @@ def EnableAutoBindSubBlock : HIVMOptimizationControlOptions<
   "true"
 >;
 
+def SkipHIVMBindSubBlockPass : HIVMOptimizationControlOptions<
+  "Skip the hivm-bind-sub-block pass.",
+  "bool",
+  "false"
+>;
+
 def EnableCodeMotion : HIVMOptimizationControlOptions<
   "Enable code-motion/subset-hoist.",
   "bool",
@@ -1231,6 +1237,14 @@ def EnableFusedMultiplyAdd : HIVMOptimizationControlOptions<
   "Enable fused multiply add",
   "bool",
   "false"
+> {
+  let passGroup = ["HIVM"];
+}
+
+def EnableAveLoopOptimize : HIVMOptimizationControlOptions<
+  "Enable AVE small-width loop optimization.",
+  "bool",
+  "true"
 > {
   let passGroup = ["HIVM"];
 }

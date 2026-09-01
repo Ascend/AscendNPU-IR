@@ -33,10 +33,8 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
     // CHECK:      %[[ALLOC:.*]] = memref.alloc()
     // CHECK-SAME:   {hivm.fractal_layout = "zN"}
     // CHECK-SAME:   memref<32x64xf16, #hivm.address_space<cbuf>>
-    // CHECK:      %[[CAST:.*]] = memref.memory_space_cast %[[ALLOC]]
-    // CHECK-SAME:   memref<32x64xf16, #hivm.address_space<cbuf>> to memref<32x64xf16>
-    // CHECK:      %[[L1:.*]] = bufferization.to_tensor %[[CAST]] restrict writable
-    // CHECK:      hivm.hir.copy ins(%[[GATHER]] : tensor<32x64xf16>) outs(%[[CAST]] : memref<32x64xf16>)
+    // CHECK:      %[[L1:.*]] = bufferization.to_tensor %[[ALLOC]] restrict writable
+    // CHECK:      hivm.hir.copy ins(%[[GATHER]] : tensor<32x64xf16>) outs(%[[ALLOC]] : memref{{.*}})
 
     // CHECK:      hivm.hir.mmadL1 ins(%[[L1]], %[[B]],
     // CHECK-NOT:    b_transpose
@@ -81,9 +79,8 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
     // CHECK:      %[[ALLOC:.*]] = memref.alloc()
     // CHECK-SAME:   {hivm.fractal_layout = "nZ"}
     // CHECK-SAME:   memref<64x64xf16, #hivm.address_space<cbuf>>
-    // CHECK:      %[[CAST:.*]] = memref.memory_space_cast %[[ALLOC]]
-    // CHECK:      %[[L1:.*]] = bufferization.to_tensor %[[CAST]] restrict writable
-    // CHECK:      hivm.hir.copy ins(%[[GATHER]] : tensor<64x64xf16>) outs(%[[CAST]] : memref<64x64xf16>)
+    // CHECK:      %[[L1:.*]] = bufferization.to_tensor %[[ALLOC]] restrict writable
+    // CHECK:      hivm.hir.copy ins(%[[GATHER]] : tensor<64x64xf16>) outs(%[[ALLOC]] : memref{{.*}})
 
     // CHECK:      hivm.hir.mmadL1 {b_transpose}
     // CHECK-SAME:   ins(%[[A]], %[[L1]],

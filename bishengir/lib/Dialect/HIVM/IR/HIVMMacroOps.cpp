@@ -133,6 +133,46 @@ getConvIntArrayAttrElement(Attribute attr, StringRef attrName, Dim dim,
   return (*values)[static_cast<size_t>(dim)];
 }
 
+FailureOr<int64_t> getConvPaddingAttrElement(
+    Attribute attr, size_t spatialRank, size_t symmetricDim,
+    size_t explicitSide, function_ref<InFlightDiagnostic()> emitError) {
+  if (auto intAttr = dyn_cast<IntegerAttr>(attr))
+    return intAttr.getInt();
+
+  SmallVector<int64_t, 6> values;
+  if (auto denseAttr = dyn_cast<DenseI64ArrayAttr>(attr)) {
+    values.append(denseAttr.asArrayRef().begin(),
+                  denseAttr.asArrayRef().end());
+  } else if (auto arrayAttr = dyn_cast<ArrayAttr>(attr)) {
+    values.reserve(arrayAttr.size());
+    for (Attribute element : arrayAttr) {
+      auto intAttr = dyn_cast<IntegerAttr>(element);
+      if (!intAttr) {
+        emitError() << "`padding` array elements must be integers";
+        return failure();
+      }
+      values.push_back(intAttr.getInt());
+    }
+  } else {
+    emitError() << "`padding` must be an integer scalar or an integer array";
+    return failure();
+  }
+
+  if (spatialRank > 1 && values.size() == spatialRank)
+    return values[symmetricDim];
+  if (values.size() == 2 * spatialRank)
+    return values[explicitSide];
+
+  auto diag = emitError();
+  diag << "`padding` must be an integer scalar";
+  if (spatialRank > 1)
+    diag << ", a " << spatialRank << "-element integer array, or a ";
+  else
+    diag << ", or a ";
+  diag << 2 * spatialRank << "-element integer array";
+  return failure();
+}
+
 //===----------------------------------------------------------------------===//
 // Utils for Global Mmad Ops
 //===----------------------------------------------------------------------===//
@@ -1422,11 +1462,23 @@ MatmulBiasMode MmadMxL1Op::getMatmulBiasMode() {
 
 int64_t Conv1DL1Op::getStrideW() { return getStride(); }
 
-int64_t Conv1DL1Op::getPaddingW() { return getPadding(); }
+FailureOr<int64_t> Conv1DL1Op::getPaddingL() {
+  return getConvPaddingAttrElement(getPaddingAttr(), /*spatialRank=*/1,
+                                   /*symmetricDim=*/0, /*explicitSide=*/0,
+                                   [&]() { return emitOpError(); });
+}
+
+FailureOr<int64_t> Conv1DL1Op::getPaddingR() {
+  return getConvPaddingAttrElement(getPaddingAttr(), /*spatialRank=*/1,
+                                   /*symmetricDim=*/0, /*explicitSide=*/1,
+                                   [&]() { return emitOpError(); });
+}
 
 LogicalResult Conv1DL1Op::verify() {
   if (getStrideW() <= 0 || getStrideW() > 255)
     return emitOpError() << "requires stride to be in the range [1, 255]";
+  if (failed(getPaddingL()) || failed(getPaddingR()))
+    return failure();
   return success();
 }
 
@@ -1527,12 +1579,15 @@ Conv1DL1Op::getLibraryCallOperands(PatternRewriter &rewriter) {
 
   libParams.push_back(makeI64(getGroups()));
 
-  int64_t paddingW = getPaddingW();
+  auto paddingL = getPaddingL();
+  auto paddingR = getPaddingR();
+  assert(succeeded(paddingL) && succeeded(paddingR) &&
+         "Conv1DL1Op padding must be verified");
   int64_t strideW = getStrideW();
   libParams.push_back(makeI64(0));        // padT
   libParams.push_back(makeI64(0));        // padB
-  libParams.push_back(makeI64(paddingW)); // padL
-  libParams.push_back(makeI64(paddingW)); // padR
+  libParams.push_back(makeI64(*paddingL)); // padL
+  libParams.push_back(makeI64(*paddingR)); // padR
 
   libParams.push_back(makeI64(1));      // strideH
   libParams.push_back(makeI64(strideW)); // strideW
@@ -1571,16 +1626,28 @@ FailureOr<int64_t> Conv2DL1Op::getStrideW() {
       [&]() { return emitOpError(); });
 }
 
-FailureOr<int64_t> Conv2DL1Op::getPaddingH() {
-  return getConvIntArrayAttrElement<2>(
-      getPaddingAttr(), "padding", Conv2DDim::H,
-      [&]() { return emitOpError(); });
+FailureOr<int64_t> Conv2DL1Op::getPaddingT() {
+  return getConvPaddingAttrElement(getPaddingAttr(), /*spatialRank=*/2,
+                                   /*symmetricDim=*/0, /*explicitSide=*/0,
+                                   [&]() { return emitOpError(); });
 }
 
-FailureOr<int64_t> Conv2DL1Op::getPaddingW() {
-  return getConvIntArrayAttrElement<2>(
-      getPaddingAttr(), "padding", Conv2DDim::W,
-      [&]() { return emitOpError(); });
+FailureOr<int64_t> Conv2DL1Op::getPaddingB() {
+  return getConvPaddingAttrElement(getPaddingAttr(), /*spatialRank=*/2,
+                                   /*symmetricDim=*/0, /*explicitSide=*/1,
+                                   [&]() { return emitOpError(); });
+}
+
+FailureOr<int64_t> Conv2DL1Op::getPaddingL() {
+  return getConvPaddingAttrElement(getPaddingAttr(), /*spatialRank=*/2,
+                                   /*symmetricDim=*/1, /*explicitSide=*/2,
+                                   [&]() { return emitOpError(); });
+}
+
+FailureOr<int64_t> Conv2DL1Op::getPaddingR() {
+  return getConvPaddingAttrElement(getPaddingAttr(), /*spatialRank=*/2,
+                                   /*symmetricDim=*/1, /*explicitSide=*/3,
+                                   [&]() { return emitOpError(); });
 }
 
 LogicalResult Conv2DL1Op::verify() {
@@ -1590,7 +1657,8 @@ LogicalResult Conv2DL1Op::verify() {
   auto strideW = getStrideW();
   if (failed(strideW))
     return failure();
-  if (failed(getPaddingH()) || failed(getPaddingW()))
+  if (failed(getPaddingT()) || failed(getPaddingB()) ||
+      failed(getPaddingL()) || failed(getPaddingR()))
     return failure();
   if (*strideH <= 0 || *strideH > 255 || *strideW <= 0 || *strideW > 255)
     return emitOpError()
@@ -1695,14 +1763,16 @@ Conv2DL1Op::getLibraryCallOperands(PatternRewriter &rewriter) {
 
   libParams.push_back(makeI64(getGroups()));
 
-  auto paddingH = getPaddingH();
-  auto paddingW = getPaddingW();
-  assert(succeeded(paddingH) && succeeded(paddingW) &&
-         "Conv2DL1Op padding must be verified");
-  libParams.push_back(makeI64(*paddingH)); // padT
-  libParams.push_back(makeI64(*paddingH)); // padB
-  libParams.push_back(makeI64(*paddingW)); // padL
-  libParams.push_back(makeI64(*paddingW)); // padR
+  auto paddingT = getPaddingT();
+  auto paddingB = getPaddingB();
+  auto paddingL = getPaddingL();
+  auto paddingR = getPaddingR();
+  assert(succeeded(paddingT) && succeeded(paddingB) && succeeded(paddingL) &&
+         succeeded(paddingR) && "Conv2DL1Op padding must be verified");
+  libParams.push_back(makeI64(*paddingT)); // padT
+  libParams.push_back(makeI64(*paddingB)); // padB
+  libParams.push_back(makeI64(*paddingL)); // padL
+  libParams.push_back(makeI64(*paddingR)); // padR
 
   auto strideH = getStrideH();
   auto strideW = getStrideW();
@@ -1756,22 +1826,40 @@ FailureOr<int64_t> Conv3DL1Op::getStrideW() {
       [&]() { return emitOpError(); });
 }
 
-FailureOr<int64_t> Conv3DL1Op::getPaddingD() {
-  return getConvIntArrayAttrElement<3>(
-      getPaddingAttr(), "padding", Conv3DDim::D,
-      [&]() { return emitOpError(); });
+FailureOr<int64_t> Conv3DL1Op::getPaddingFront() {
+  return getConvPaddingAttrElement(getPaddingAttr(), /*spatialRank=*/3,
+                                   /*symmetricDim=*/0, /*explicitSide=*/0,
+                                   [&]() { return emitOpError(); });
 }
 
-FailureOr<int64_t> Conv3DL1Op::getPaddingH() {
-  return getConvIntArrayAttrElement<3>(
-      getPaddingAttr(), "padding", Conv3DDim::H,
-      [&]() { return emitOpError(); });
+FailureOr<int64_t> Conv3DL1Op::getPaddingBack() {
+  return getConvPaddingAttrElement(getPaddingAttr(), /*spatialRank=*/3,
+                                   /*symmetricDim=*/0, /*explicitSide=*/1,
+                                   [&]() { return emitOpError(); });
 }
 
-FailureOr<int64_t> Conv3DL1Op::getPaddingW() {
-  return getConvIntArrayAttrElement<3>(
-      getPaddingAttr(), "padding", Conv3DDim::W,
-      [&]() { return emitOpError(); });
+FailureOr<int64_t> Conv3DL1Op::getPaddingT() {
+  return getConvPaddingAttrElement(getPaddingAttr(), /*spatialRank=*/3,
+                                   /*symmetricDim=*/1, /*explicitSide=*/2,
+                                   [&]() { return emitOpError(); });
+}
+
+FailureOr<int64_t> Conv3DL1Op::getPaddingB() {
+  return getConvPaddingAttrElement(getPaddingAttr(), /*spatialRank=*/3,
+                                   /*symmetricDim=*/1, /*explicitSide=*/3,
+                                   [&]() { return emitOpError(); });
+}
+
+FailureOr<int64_t> Conv3DL1Op::getPaddingL() {
+  return getConvPaddingAttrElement(getPaddingAttr(), /*spatialRank=*/3,
+                                   /*symmetricDim=*/2, /*explicitSide=*/4,
+                                   [&]() { return emitOpError(); });
+}
+
+FailureOr<int64_t> Conv3DL1Op::getPaddingR() {
+  return getConvPaddingAttrElement(getPaddingAttr(), /*spatialRank=*/3,
+                                   /*symmetricDim=*/2, /*explicitSide=*/5,
+                                   [&]() { return emitOpError(); });
 }
 
 LogicalResult Conv3DL1Op::verify() {
@@ -1790,8 +1878,9 @@ LogicalResult Conv3DL1Op::verify() {
     return emitOpError()
            << "requires strideH and strideW to be in the range [1, 255]";
 
-  if (failed(getPaddingD()) || failed(getPaddingH()) ||
-      failed(getPaddingW()))
+  if (failed(getPaddingFront()) || failed(getPaddingBack()) ||
+      failed(getPaddingT()) || failed(getPaddingB()) ||
+      failed(getPaddingL()) || failed(getPaddingR()))
     return failure();
   return success();
 }

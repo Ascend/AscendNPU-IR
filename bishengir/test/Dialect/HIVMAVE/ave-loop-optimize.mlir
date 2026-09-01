@@ -2,11 +2,12 @@
 // RUN: cat %t.mlir | FileCheck %s
 
 // CHECK-LABEL: func.func @causal_conv1d_update_kernel_bdt_fwd_outlined_vf_3
-
-// CHECK-DAG: %[[C128:.*]] = arith.constant 128 : index
-// CHECK-DAG: scf.for {{.*}} = %c0 to %c256 step %[[C128]]
-
-
+// The merge is rejected because the source rows are not contiguous. Keep the
+// original pass behavior and unroll the widening loop without merging loads.
+// CHECK: scf.for {{.*}} = %c0 to %c256 step %c128
+// CHECK-COUNT-2: ave.hir.vload <NORM> {{.*}} {ave.unaligned_ub_access = #ave.unaligned_ub_access} : {{.*}} into vector<64xf16>
+// CHECK-NOT: vector<128xf16>
+// CHECK-NOT: ave.hir.vintlv
 func.func @causal_conv1d_update_kernel_bdt_fwd_outlined_vf_3(
     %arg0: memref<32x4xf16, #hivm.address_space<ub>>,
     %arg1: index,
@@ -50,21 +51,24 @@ func.func @causal_conv1d_update_kernel_bdt_fwd_outlined_vf_3(
 // -----
 
 // CHECK-LABEL: func.func @peel_epilogue_canon_test
-// split bound folded to constant by AffineApplyOp canonicalization
+// CHECK-DAG: %[[C128:.*]] = arith.constant 128 : index
 // CHECK-DAG: %[[C192:.*]] = arith.constant 192 : index
-// affine.apply in promoted epilogue body folded to constant
 // CHECK-DAG: %[[C256:.*]] = arith.constant 256 : index
-// main loop uses folded split bound as upper bound
-// CHECK: scf.for {{.*}} = %c0 to %[[C192]] step %c64
-// no second scf.for — epilogue promoted by scf::ForOp canonicalization
 // CHECK-NOT: scf.for
-// epilogue body inlined: src subview uses folded %c256, dst subview uses %c192
-// CHECK: memref.subview %{{.*}}[0, %[[C256]]]
-// CHECK: memref.subview %{{.*}}[0, %[[C192]]]
-
+// CHECK: %[[PACKED_LOAD:.*]] = ave.hir.vload <NORM> {{.*}} into vector<128xf16>
+// CHECK-NEXT: %[[PEEL_EVEN:.*]], %[[PEEL_ODD:.*]] = ave.hir.vintlv %[[PACKED_LOAD]], %[[PACKED_LOAD]]
+// The source address is iv + 64: c192 is the full factor tail at iv=128,
+// while c256 is the peeled partial iteration at iv=192.
+// CHECK: memref.subview %{{.*}}[0, %[[C192]]] [1, 64]
+// CHECK: ave.hir.vload <NORM> {{.*}} into vector<64xf16>
+// CHECK: memref.subview %{{.*}}[0, %[[C256]]] [1, 64]
+// CHECK: ave.hir.vload <NORM> {{.*}} into vector<64xf16>
 func.func @peel_epilogue_canon_test(
     %arg0: memref<32x320xf16, #hivm.address_space<ub>>,
-    %arg1: memref<32x320xf32, #hivm.address_space<ub>>)
+    %arg1: memref<32x320xf32, #hivm.address_space<ub>>,
+    %arg2: memref<32x320xf32, #hivm.address_space<ub>>,
+    %arg3: memref<32x320xf32, #hivm.address_space<ub>>,
+    %arg4: memref<32x320xf32, #hivm.address_space<ub>>)
     attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
   %c0 = arith.constant 0 : index
   %c64 = arith.constant 64 : index
@@ -79,6 +83,127 @@ func.func @peel_epilogue_canon_test(
     %sub_dst = memref.subview %arg1[0, %iv] [1, 64] [1, 1] : memref<32x320xf32, #hivm.address_space<ub>> to memref<1x64xf32, strided<[320, 1], offset: ?>, #hivm.address_space<ub>>
     %sub_dst_flat = memref.subview %sub_dst[0, 0] [1, 64] [1, 1] : memref<1x64xf32, strided<[320, 1], offset: ?>, #hivm.address_space<ub>> to memref<64xf32, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>>
     ave.hir.masked_store <NORM_B32> %sub_dst_flat[%c0], %pge, %vextf {hivm.is_continuous} : memref<64xf32, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>>, vector<64xi1>, vector<64xf32>
+    %aux0 = ave.hir.vload <NORM> %arg2[%c0, %iv] : memref<32x320xf32, #hivm.address_space<ub>> into vector<64xf32>
+    %aux1 = ave.hir.vload <NORM> %arg3[%c0, %iv] : memref<32x320xf32, #hivm.address_space<ub>> into vector<64xf32>
+    %auxSum = ave.hir.vadd %aux0, %aux1, %pge : vector<64xf32>, vector<64xi1>
+    ave.hir.masked_store <NORM_B32> %arg4[%c0, %iv], %pge, %auxSum : memref<32x320xf32, #hivm.address_space<ub>>, vector<64xi1>, vector<64xf32>
+  }
+  return
+}
+
+// -----
+
+// This loop contains only complete data iterations, so the pre-peel stage does
+// not change it. The short load-to-store chain remains unchanged when the cost
+// model rejects the merge.
+// CHECK-LABEL: func.func @factor_tail_full_chain
+// CHECK: scf.for {{.*}} = %c0 to %c320 step %c64
+// CHECK: ave.hir.vload <NORM> {{.*}} into vector<64xf16>
+// CHECK-NOT: ave.hir.vintlv
+// CHECK-NOT: ave.hir.vdintlv
+// CHECK: ave.hir.masked_store <NORM_B16> {{.*}} vector<64xi1>, vector<64xf16>
+func.func @factor_tail_full_chain(
+    %src: memref<320xf16, #hivm.address_space<ub>>,
+    %dst: memref<320xf16, #hivm.address_space<ub>>)
+    attributes {
+      hivm.func_core_type = #hivm.func_core_type<AIV>,
+      hivm.vector_function,
+      no_inline
+    } {
+  %c0 = arith.constant 0 : index
+  %c64 = arith.constant 64 : index
+  %c320 = arith.constant 320 : index
+  scf.for %iv = %c0 to %c320 step %c64 {
+    %loaded = ave.hir.vload <NORM> %src[%iv]
+        : memref<320xf16, #hivm.address_space<ub>> into vector<64xf16>
+    %mask = ave.hir.pge <ALL> : vector<64xi1>
+    %wide = ave.hir.vextf %loaded, <part_even>, %mask
+        : vector<64xf16>, vector<64xf32>, vector<64xi1>
+    %narrow = ave.hir.vtruncf %wide, <rint>, false, <part_even>, %mask
+        : vector<64xf32>, vector<64xf16>, vector<64xi1>
+    %abs0 = ave.hir.vabs %narrow, %mask
+        : vector<64xf16>, vector<64xi1>
+    %abs1 = ave.hir.vabs %abs0, %mask
+        : vector<64xf16>, vector<64xi1>
+    ave.hir.masked_store <NORM_B16> %dst[%iv], %mask, %abs1
+        : memref<320xf16, #hivm.address_space<ub>>,
+          vector<64xi1>, vector<64xf16>
+  }
+  return
+}
+
+// -----
+
+// The partial data iteration is peeled before profitability analysis. It stays
+// peeled even when the cost model rejects the small-width merge.
+// CHECK-LABEL: func.func @unprofitable_partial_tail
+// CHECK: %[[C192:.*]] = arith.constant 192 : index
+// CHECK: scf.for {{.*}} = %{{.*}} to %[[C192]] step %{{.*}}
+// CHECK: ave.hir.vload <NORM> {{.*}} into vector<64xf16>
+// CHECK-NOT: vector<128xf16>
+// CHECK-NOT: ave.hir.vintlv
+// CHECK-NOT: ave.hir.vdintlv
+// CHECK: ave.hir.masked_store <NORM_B16> {{.*}} vector<64xi1>, vector<64xf16>
+// CHECK: ave.hir.vload <NORM> {{.*}}[%[[C192]]] {{.*}} into vector<64xf16>
+// CHECK: ave.hir.masked_store <NORM_B16> {{.*}}[%[[C192]]]{{.*}} vector<64xi1>, vector<64xf16>
+func.func @unprofitable_partial_tail(
+    %src: memref<256xf16, #hivm.address_space<ub>>,
+    %dst: memref<256xf16, #hivm.address_space<ub>>)
+    attributes {
+      hivm.func_core_type = #hivm.func_core_type<AIV>,
+      hivm.vector_function,
+      no_inline
+    } {
+  %c0 = arith.constant 0 : index
+  %c64 = arith.constant 64 : index
+  %c200 = arith.constant 200 : index
+  scf.for %iv = %c0 to %c200 step %c64 {
+    %loaded = ave.hir.vload <NORM> %src[%iv]
+        : memref<256xf16, #hivm.address_space<ub>> into vector<64xf16>
+    %mask = ave.hir.pge <ALL> : vector<64xi1>
+    %wide = ave.hir.vextf %loaded, <part_even>, %mask
+        : vector<64xf16>, vector<64xf32>, vector<64xi1>
+    %narrow = ave.hir.vtruncf %wide, <rint>, false, <part_even>, %mask
+        : vector<64xf32>, vector<64xf16>, vector<64xi1>
+    ave.hir.masked_store <NORM_B16> %dst[%iv], %mask, %narrow
+        : memref<256xf16, #hivm.address_space<ub>>,
+          vector<64xi1>, vector<64xf16>
+  }
+  return
+}
+
+// -----
+
+// Peel the partial data iteration at iv=256 first. The remaining 0..256 main
+// loop is then eligible for the legacy factor-2 widening unroll.
+// CHECK-LABEL: func.func @fallback_unroll_after_prepeel
+// CHECK-DAG: %[[C128:.*]] = arith.constant 128 : index
+// CHECK-DAG: %[[C256:.*]] = arith.constant 256 : index
+// CHECK: scf.for {{.*}} = %{{.*}} to %[[C256]] step %[[C128]]
+// CHECK-COUNT-2: ave.hir.vload <NORM> {{.*}} into vector<64xf16>
+// CHECK-NOT: vector<128xf16>
+// CHECK-NOT: ave.hir.vintlv
+// CHECK: ave.hir.vload <NORM> {{.*}}[%[[C256]]] {{.*}} into vector<64xf16>
+func.func @fallback_unroll_after_prepeel(
+    %src: memref<320xf16, #hivm.address_space<ub>>,
+    %dst: memref<320xf32, #hivm.address_space<ub>>)
+    attributes {
+      hivm.func_core_type = #hivm.func_core_type<AIV>,
+      hivm.vector_function,
+      no_inline
+    } {
+  %c0 = arith.constant 0 : index
+  %c64 = arith.constant 64 : index
+  %c264 = arith.constant 264 : index
+  scf.for %iv = %c0 to %c264 step %c64 {
+    %loaded = ave.hir.vload <NORM> %src[%iv]
+        : memref<320xf16, #hivm.address_space<ub>> into vector<64xf16>
+    %mask = ave.hir.pge <ALL> : vector<64xi1>
+    %wide = ave.hir.vextf %loaded, <part_even>, %mask
+        : vector<64xf16>, vector<64xf32>, vector<64xi1>
+    ave.hir.masked_store <NORM_B32> %dst[%iv], %mask, %wide
+        : memref<320xf32, #hivm.address_space<ub>>,
+          vector<64xi1>, vector<64xf32>
   }
   return
 }

@@ -13,6 +13,7 @@
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 #include "triton/Dialect/Triton/IR/Types.h"
@@ -685,6 +686,10 @@ static bool math_trunc_cast_condition(Type src, Type dst, hivm::TypeFn casting, 
     return roundMode == hivm::RoundMode::TRUNC;
 }
 
+static bool same_float_type_condition(Type src, Type dst) {
+    return llvm::isa<FloatType>(src) && src == dst;
+}
+
 struct HIVMToArithCastOp: public OpRewritePattern<hivm::VCastOp> {
     using OpRewritePattern<hivm::VCastOp>::OpRewritePattern;
     LogicalResult matchAndRewrite(hivm::VCastOp op,
@@ -717,7 +722,16 @@ struct HIVMToArithCastOp: public OpRewritePattern<hivm::VCastOp> {
         Value src = hivmOperands[0];
         auto resType = op.getResult().getType();
         Operation *result = nullptr;
-        if (math_trunc_cast_condition(src_type, dst_type, casting, roundMode)) {
+        if (same_float_type_condition(src_type, dst_type) &&
+            roundMode == hivm::RoundMode::ROUND) {
+            result = rewriter.create<math::RoundOp>(op.getLoc(), resType, src);
+        } else if (same_float_type_condition(src_type, dst_type) &&
+                   roundMode == hivm::RoundMode::FLOOR) {
+            result = rewriter.create<math::FloorOp>(op.getLoc(), resType, src);
+        } else if (same_float_type_condition(src_type, dst_type) &&
+                   roundMode == hivm::RoundMode::CEIL) {
+            result = rewriter.create<math::CeilOp>(op.getLoc(), resType, src);
+        } else if (math_trunc_cast_condition(src_type, dst_type, casting, roundMode)) {
             result = rewriter.create<math::FloorOp>(op.getLoc(), resType, src);
         } else if (truncf_cast_condition(src_type, dst_type, casting, roundMode)) {
             result = rewriter.create<arith::TruncFOp>(op.getLoc(), resType, src);

@@ -119,7 +119,8 @@ SmallVector<OpFoldResult> getUnitStrides(PatternRewriter &rewriter,
 }
 
 bool isMatrixNDToFractal(ConvertLayoutOp op) {
-  return checkFractalLayout(op, hivm::DataLayout::ND, hivm::DataLayout::Fractal);
+  return checkFractalLayout(op, hivm::DataLayout::ND,
+                            hivm::DataLayout::Fractal);
 }
 
 bool isScaleNDToFractal(ConvertLayoutOp op) {
@@ -322,24 +323,26 @@ struct FractalToCanonicalDecompose : public OpRewritePattern<ConvertLayoutOp> {
       return rewriter.notifyMatchFailure(
           op, "Batch matmul is currently not supported");
 
-    auto permutation = utils::inversePermutation(kMatrixNZLayoutPermutation);
-    auto emptyMixedShape =
-        tensor::getMixedSizes(rewriter, info.loc, op.getSource());
-    auto mixedExpandedShape =
-        applyShapePermutation(emptyMixedShape, permutation);
+    // [1, 2, 0, 3] moves three axes; VTranspose lowering supports one swap.
+    // Stage it:
+    //   [Nt, Mt, M0, N0] -- collapse(Mt, M0) --> [Nt, M, N0]
+    //                    -- transpose(0, 1) --> [M, Nt, N0]
+    //                    -- collapse(Nt, N0) --> [M, N]
+    auto collapseM = rewriter.create<tensor::CollapseShapeOp>(
+        info.loc, op.getSource(), buildExpandMReassociation());
+    auto collapsedMixedShape =
+        tensor::getMixedSizes(rewriter, info.loc, collapseM);
+    auto transposedMixedShape =
+        applyShapePermutation(collapsedMixedShape, kStaged3DPermutation);
+    auto transposeEmpty = rewriter.create<tensor::EmptyOp>(
+        info.loc, transposedMixedShape, getElementTypeOrSelf(op.getResult()));
+    auto transpose3d = rewriter.create<hivm::VTransposeOp>(
+        info.loc, TypeRange(transposeEmpty.getType()), collapseM,
+        transposeEmpty, rewriter.getDenseI64ArrayAttr(kStaged3DPermutation));
 
-    auto emptyTensor = rewriter.create<tensor::EmptyOp>(
-        info.loc, mixedExpandedShape, getElementTypeOrSelf(op.getResult()));
-
-    auto transposeOp = rewriter.create<hivm::VTransposeOp>(
-        info.loc, TypeRange(emptyTensor.getType()), op.getSource(), emptyTensor,
-        rewriter.getDenseI64ArrayAttr(permutation));
-
-    auto reassociation = buildReassociation();
-
-    // Collapse to dynamic 2D first (aligned ND).
+    // Padded ND tensor; the slice below trims unaligned M/N tails.
     auto collapseOp = rewriter.create<tensor::CollapseShapeOp>(
-        info.loc, transposeOp.getResult()[0], reassociation);
+        info.loc, transpose3d.getResult()[0], buildExpandNReassociation());
 
     // Slice to requested ND output shape (e.g. 130x145).
     auto outMixed = op.getMixedOutputShape();

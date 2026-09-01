@@ -265,7 +265,7 @@ static Operation *cloneStoreLikeToWorkspace(OpBuilder &builder, Operation *op,
 }
 
 Value CVPipelineRegbaseImpl::createSubview(OpBuilder &builder, Location loc,
-                                    Value from, Type to, Value iv) {
+                                           Value from, Type to, Value iv) {
   auto const1 = builder.getIndexAttr(1);
   auto const0 = builder.getIndexAttr(0);
   SmallVector<OpFoldResult> offsets, sizes, strides;
@@ -295,10 +295,6 @@ Value CVPipelineRegbaseImpl::createSubview(OpBuilder &builder, Location loc,
       srcMemSpace);
   Value subview = builder.create<memref::SubViewOp>(loc, finalTy, from, offsets,
                                                     sizes, strides);
-  if (srcMemSpace != targetTy.getMemorySpace())
-    subview = builder.create<memref::MemorySpaceCastOp>(
-        loc, MemRefType(MemRefType::Builder(finalTy).setMemorySpace(nullptr)),
-        subview);
   return subview;
 }
 
@@ -425,7 +421,7 @@ LogicalResult CVPipelineRegbaseImpl::absorbMergerOpsIntoWorkItems() {
           item->ops.insert(inc);
           opToWorkItemMap[inc].push_back(item.get());
           LLVM_DEBUG(dbgs() << "[absorbMergerOps] absorbed counter addi: ";
-                    inc->print(dbgs()); dbgs() << '\n');
+                     inc->print(dbgs()); dbgs() << '\n');
         }
       }
       item->ops.insert(&op);
@@ -749,18 +745,12 @@ LogicalResult CVPipelineRegbaseImpl::checkWorkItemDependencies() {
 }
 
 Value CVPipelineRegbaseImpl::createToTensor(OpBuilder &builder, Location loc,
-                                     Value src) {
+                                            Value src) {
   auto memref = dyn_cast<MemRefType>(src.getType());
   if (!memref) {
     pipelineLoop->emitWarning("[cv-pipelining] expected MemRefType source");
     return nullptr;
   }
-  if (memref.getMemorySpace()) {
-    auto newMemRef = MemRefType::get(memref.getShape(), memref.getElementType(),
-                                     memref.getLayout());
-    src = builder.create<memref::MemorySpaceCastOp>(loc, newMemRef, src);
-  }
-
   return builder.create<bufferization::ToTensorOp>(loc, src, /*restrict*/ true,
                                                    /*writable*/ true);
 }
@@ -866,7 +856,8 @@ LogicalResult CVPipelineRegbaseImpl::expandOutputInits(WorkItem &item) {
   return success();
 }
 
-LogicalResult CVPipelineRegbaseImpl::expandOutputInitsForPreload(WorkItem &item) {
+LogicalResult
+CVPipelineRegbaseImpl::expandOutputInitsForPreload(WorkItem &item) {
   OpBuilder::InsertionGuard g(builder);
   builder.setInsertionPointToStart(pipelineLoop.getBody());
   for (auto &[output, expanded] : item.localOutputs) {
@@ -991,9 +982,9 @@ LogicalResult CVPipelineRegbaseImpl::createNewLoops() {
     item->forOp = builder.create<scf::ForOp>(loc, c0, actualUB, c1, inits);
     item->forOp->setAttrs(
         {NamedAttribute(builder.getStringAttr(kPipelinedLoopCoreTypeAttrName),
-	                TCoreTypeAttr::get(ctx, item->core)),
-	 NamedAttribute(builder.getStringAttr(kMultibufferUnrollAttrName),
-	                builder.getI32IntegerAttr(numMultibuffer))});
+                        TCoreTypeAttr::get(ctx, item->core)),
+         NamedAttribute(builder.getStringAttr(kMultibufferUnrollAttrName),
+                        builder.getI32IntegerAttr(numMultibuffer))});
     builder.setInsertionPointToStart(item->forOp.getBody());
     Value workItemIV = item->forOp.getInductionVar();
     item->reconstructedIV = builder.create<affine::AffineApplyOp>(
@@ -1030,11 +1021,9 @@ LogicalResult CVPipelineRegbaseImpl::createNewLoops() {
   return success();
 }
 
-FailureOr<Value> CVPipelineRegbaseImpl::updateMaskingSubview(OpBuilder &builder,
-                                                      Location loc,
-                                                      Value expanded,
-                                                      OpOperand &initOperand,
-                                                      Value iv) const {
+FailureOr<Value> CVPipelineRegbaseImpl::updateMaskingSubview(
+    OpBuilder &builder, Location loc, Value expanded, OpOperand &initOperand,
+    Value iv) const {
   auto subview = dyn_cast<memref::SubViewOp>(initOperand.get().getDefiningOp());
   if (!subview)
     return Value(nullptr);
@@ -1258,19 +1247,14 @@ LogicalResult CVPipelineRegbaseImpl::migrateOps() {
           // copy case), leave it alone — rewriting the inner toTensor's
           // memref operand below is enough to redirect the writer.
           //
-          // The fixpipe writes to a UB-typed memref but `toTensorSubview`
-          // has been address-space-stripped to match the to_tensor's memref
-          // operand. Recover the pre-cast UB-typed subview for the writer
-          // so the fixpipe verifier and downstream codegen see the correct
-          // address space; otherwise the writer is treated as an
-          // unspecified-aspace store and the staged result is corrupted.
+          // `toTensorSubview` retains the source memref's HIVM address space
+          // (e.g. UB) so the fixpipe verifier and downstream codegen see the
+          // correct address space. NormalizeToTensorOp later inserts the
+          // `memref.memory_space_cast` before the `to_tensor` to isolate the
+          // HIVM address space from bufferization.
           if (!updatedSubview &&
               isa<MemRefType>(initOperand->get().getType())) {
-            Value writerSubview = toTensorSubview;
-            if (auto cast =
-                    toTensorSubview.getDefiningOp<memref::MemorySpaceCastOp>())
-              writerSubview = cast.getSource();
-            initOperand->set(writerSubview);
+            initOperand->set(toTensorSubview);
           }
           memrefOperand->set(toTensorSubview);
         }

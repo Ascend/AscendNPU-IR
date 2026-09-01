@@ -331,6 +331,17 @@ def HIVM_TModuleCoreTypeAttr : HIVM_Attr<"TModuleCoreType", "module_core_type"> 
   }];
 }
 
+def HIVM_TCoreRatioAttr : HIVM_Attr<"TCoreRatio", "core_ratio"> {
+  let parameters = (ins "int32_t":$cube, "int32_t":$vector);
+  let assemblyFormat = "`<` params `>`";
+  let genVerifyDecl = 1;
+  let description = [{
+    CV ratio on a mix kernel.
+
+    Only valid on a MIX kernel, supports 1:2, 0:1, 1:0, 1:1 and 1:2.
+  }];
+}
+
 //===----------------------------------------------------------------------===//
 // Op Core Type
 //===----------------------------------------------------------------------===//

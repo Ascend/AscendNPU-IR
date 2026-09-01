@@ -81,6 +81,17 @@ def OutlineScope : Pass<"outline-scope", "mlir::ModuleOp"> {
   ];
 }
 
+def PropagateSIMTMode : Pass<"propagate-simt-mode", "mlir::ModuleOp"> {
+  let summary = "Propagate SIMT VF mode to caller functions.";
+  let description = [{
+    After scope outlining, mark caller functions that directly invoke a SIMT
+    VF function with vf_mode = MIX. Callers without SIMT callees are left
+    untouched.
+  }];
+  let constructor = "mlir::scope::createPropagateSIMTModePass()";
+  let dependentDialects = ["mlir::func::FuncDialect"];
+}
+
 def InlineScope : Pass<"inline-scope", "mlir::ModuleOp"> {
   let summary = "Inline scope region within ScopeOp.";
   let description = [{

@@ -30,3 +30,55 @@ module {
     return
   }
 }
+
+// -----
+
+module {
+  // CHECK: func.func @F4_infer_task_type_function() -> i8
+  // CHECK: %[[TASK_TYPE:.*]] = arith.constant 41 : i8
+  // CHECK: return %[[TASK_TYPE]]
+  func.func @F4() attributes {hacc.entry,
+                              hivm.func_core_type = #hivm.func_core_type<MIX>,
+                              hivm.core_ratio = #hivm.core_ratio<0, 1>} {
+    return
+  }
+}
+
+// -----
+
+module {
+  // CHECK: func.func @F5_infer_task_type_function() -> i8
+  // CHECK: %[[TASK_TYPE:.*]] = arith.constant 30 : i8
+  // CHECK: return %[[TASK_TYPE]]
+  func.func @F5() attributes {hacc.entry,
+                              hivm.func_core_type = #hivm.func_core_type<MIX>,
+                              hivm.core_ratio = #hivm.core_ratio<1, 0>} {
+    return
+  }
+}
+
+// -----
+
+module {
+  // CHECK: func.func @F6_infer_task_type_function() -> i8
+  // CHECK: %[[TASK_TYPE:.*]] = arith.constant 31 : i8
+  // CHECK: return %[[TASK_TYPE]]
+  func.func @F6() attributes {hacc.entry,
+                              hivm.func_core_type = #hivm.func_core_type<MIX>,
+                              hivm.core_ratio = #hivm.core_ratio<1, 1>} {
+    return
+  }
+}
+
+// -----
+
+module {
+  // CHECK: func.func @F7_infer_task_type_function() -> i8
+  // CHECK: %[[TASK_TYPE:.*]] = arith.constant 32 : i8
+  // CHECK: return %[[TASK_TYPE]]
+  func.func @F7() attributes {hacc.entry,
+                              hivm.func_core_type = #hivm.func_core_type<MIX>,
+                              hivm.core_ratio = #hivm.core_ratio<1, 2>} {
+    return
+  }
+}

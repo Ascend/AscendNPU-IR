@@ -86,10 +86,7 @@ LogicalResult insertL12UBForOperand(PatternRewriter &rewriter,
   auto ubSpaceAttr = hivm::AddressSpaceAttr::get(ctx, hivm::AddressSpace::UB);
   auto ubMemrefType =
       mlir::MemRefType::get(shape, elemType, /*layout=*/nullptr, ubSpaceAttr);
-  auto noUbMemrefType = mlir::MemRefType::get(shape, elemType);
   Value alloc = rewriter.create<memref::AllocOp>(loc, ubMemrefType);
-  Value noUbAlloc =
-      rewriter.create<memref::MemorySpaceCastOp>(loc, noUbMemrefType, alloc);
 
   // step2: Due to hardware instruction constraints, the destination of l12ub
   // must be aligned
@@ -99,13 +96,13 @@ LogicalResult insertL12UBForOperand(PatternRewriter &rewriter,
   // by device_print
   rewriter.create<hivm::L12UBOp>(loc, Type{}, operand, alloc);
   auto toTensor = rewriter.create<bufferization::ToTensorOp>(
-      loc, resultTensorType, noUbAlloc, /*restrict*/true, /*writable*/true);
+      loc, resultTensorType, alloc, /*restrict*/ true, /*writable*/ true);
 
   // step4: Replace printed values of L1 device_print
   rewriter.modifyOpInPlace(debugOp, [&]() {
     debugOp.getArgMutable().assign(toTensor);
-    debugOp.setTcoretypeAttr(hivm::TCoreTypeAttr::get(
-        debugOp.getContext(), hivm::TCoreType::VECTOR));
+    debugOp.setTcoretypeAttr(hivm::TCoreTypeAttr::get(debugOp.getContext(),
+                                                      hivm::TCoreType::VECTOR));
     debugOp.setMemscopeAttr(hivm::AddressSpaceAttr::get(
         debugOp.getContext(), hivm::AddressSpace::UB));
   });
@@ -119,8 +116,8 @@ public:
   LogicalResult matchAndRewrite(hivm::DebugOp op,
                                 PatternRewriter &rewriter) const override {
     auto memscope = op.getMemscope();
-    bool isL1Memspace = memscope &&
-        memscope->getAddressSpace() == hivm::AddressSpace::L1;
+    bool isL1Memspace =
+        memscope && memscope->getAddressSpace() == hivm::AddressSpace::L1;
     if (!isL1Memspace || op->getAttr(alreadyInsertL12UB))
       return failure();
 

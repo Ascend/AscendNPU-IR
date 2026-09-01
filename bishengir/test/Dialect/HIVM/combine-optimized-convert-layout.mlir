@@ -554,9 +554,8 @@ func.func @fold_channel_merge_fixpipe_nz2nz_i8(%src: tensor<32x32xi32>) -> tenso
 // CHECK-SAME: %[[SRC:.*]]: tensor<4x4x16x16xf32>
 // CHECK-NOT: hivm.hir.convert_layout
 // CHECK: %[[ALLOC:.*]] = memref.alloc() : memref<8x4x16x8xf32, #hivm.address_space<cbuf>>
-// CHECK: %[[CAST:.*]] = memref.memory_space_cast %[[ALLOC]] : memref<8x4x16x8xf32, #hivm.address_space<cbuf>> to memref<8x4x16x8xf32>
-// CHECK: %[[TENSOR:.*]] = bufferization.to_tensor %[[CAST]] restrict writable : memref<8x4x16x8xf32>
-// CHECK: hivm.hir.fixpipe {channel_split = true, "hivm.inserted-fixpipe"} ins(%[[SRC]] : tensor<4x4x16x16xf32>) outs(%[[CAST]] : memref<8x4x16x8xf32>)
+// CHECK: %[[TENSOR:.*]] = bufferization.to_tensor %[[ALLOC]] restrict writable : memref{{.*}}
+// CHECK: hivm.hir.fixpipe {channel_split = true, "hivm.inserted-fixpipe"} ins(%[[SRC]] : tensor<4x4x16x16xf32>) outs(%[[ALLOC]] : memref{{.*}})
 // CHECK: return %[[TENSOR]] : tensor<8x4x16x8xf32>
 module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
   func.func @fold_fixpipe_store_convert_layout_channel_split(%src: tensor<4x4x16x16xf32>) -> tensor<8x4x16x8xf32> {

@@ -134,6 +134,32 @@ module {
 }
 // -----
 module {
+  // CHECK-LABEL: func @test_sync_block_lock_unlock_unordered
+  func.func @test_sync_block_lock_unlock_unordered() attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %lock = memref.alloc() : memref<1xi64>
+    // CHECK: call @sync_block_lock_unordered
+    hivm.hir.sync_block_lock {hivm.sync_block_lock_unordered} lock_var(%lock : memref<1xi64>)
+    // CHECK: call @sync_block_unlock_unordered
+    hivm.hir.sync_block_unlock {hivm.sync_block_lock_unordered} lock_var(%lock : memref<1xi64>)
+    return
+  }
+}
+// -----
+module {
+  // CHECK-LABEL: func @test_sync_block_lock_unlock_unordered_with_subblock
+  func.func @test_sync_block_lock_unlock_unordered_with_subblock() attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %lock = memref.alloc() : memref<1xi64>
+    // CHECK: call @sync_block_lock_unordered_with_subblock
+    hivm.hir.sync_block_lock {hivm.sync_block_lock_unordered, hivm.sync_block_lock_with_subblock}
+        lock_var(%lock : memref<1xi64>)
+    // CHECK: call @sync_block_unlock_unordered_with_subblock
+    hivm.hir.sync_block_unlock {hivm.sync_block_lock_unordered, hivm.sync_block_lock_with_subblock}
+        lock_var(%lock : memref<1xi64>)
+    return
+  }
+}
+// -----
+module {
   // CHECK-LABEL: func.func @convert_conv1d(
   // CHECK: %[[STRIDE_W:.*]] = arith.constant 3 : i64
   // CHECK: call @conv2d_group_half_to_float({{.*}}, %[[STRIDE_W]], {{.*}})
@@ -144,6 +170,26 @@ module {
       %output: memref<128x32xf32, #hivm.address_space<cc>>) {
     %true = arith.constant true
     hivm.hir.Conv1dL1 {groups = 2 : i32, padding = 1 : i32, stride = 3 : i32}
+        ins(%input, %weight, %true
+            : memref<1x2x1x128x16xf16, #hivm.address_space<cbuf>>,
+              memref<1x1x5x32x16xf16, #hivm.address_space<cbuf>>, i1)
+        outs(%output : memref<128x32xf32, #hivm.address_space<cc>>)
+    return
+  }
+}
+// -----
+module {
+  // CHECK-LABEL: func.func @convert_conv1d_asymmetric_padding(
+  // CHECK-DAG: %[[PAD1_L:.*]] = arith.constant 1 : i64
+  // CHECK-DAG: %[[PAD1_R:.*]] = arith.constant 2 : i64
+  // CHECK: call @conv2d_group_half_to_float({{.*}}, %[[PAD1_L]], %[[PAD1_R]], {{.*}})
+  // CHECK-NOT: hivm.hir.Conv1dL1
+  func.func @convert_conv1d_asymmetric_padding(
+      %input: memref<1x2x1x128x16xf16, #hivm.address_space<cbuf>>,
+      %weight: memref<1x1x5x32x16xf16, #hivm.address_space<cbuf>>,
+      %output: memref<128x32xf32, #hivm.address_space<cc>>) {
+    %true = arith.constant true
+    hivm.hir.Conv1dL1 {groups = 2 : i32, padding = [1, 2], stride = 3 : i32}
         ins(%input, %weight, %true
             : memref<1x2x1x128x16xf16, #hivm.address_space<cbuf>>,
               memref<1x1x5x32x16xf16, #hivm.address_space<cbuf>>, i1)
@@ -164,6 +210,29 @@ module {
       %output: memref<128x32xf32, #hivm.address_space<cc>>) {
     %true = arith.constant true
     hivm.hir.Conv2dL1 {groups = 1 : i32, padding = 1 : i32, stride = [2, 3]}
+        ins(%input, %weight, %true
+            : memref<1x1x1x128x16xf16, #hivm.address_space<cbuf>>,
+              memref<1x1x5x32x16xf16, #hivm.address_space<cbuf>>, i1)
+        outs(%output : memref<128x32xf32, #hivm.address_space<cc>>)
+    return
+  }
+}
+
+// -----
+module {
+  // CHECK-LABEL: func.func @convert_conv2d_asymmetric_padding(
+  // CHECK-DAG: %[[PAD_T:.*]] = arith.constant 1 : i64
+  // CHECK-DAG: %[[PAD_B:.*]] = arith.constant 2 : i64
+  // CHECK-DAG: %[[PAD_L:.*]] = arith.constant 3 : i64
+  // CHECK-DAG: %[[PAD_R:.*]] = arith.constant 4 : i64
+  // CHECK: call @conv2d_group_half_to_float({{.*}}, %[[PAD_T]], %[[PAD_B]], %[[PAD_L]], %[[PAD_R]], {{.*}})
+  // CHECK-NOT: hivm.hir.Conv2dL1
+  func.func @convert_conv2d_asymmetric_padding(
+      %input: memref<1x1x1x128x16xf16, #hivm.address_space<cbuf>>,
+      %weight: memref<1x1x5x32x16xf16, #hivm.address_space<cbuf>>,
+      %output: memref<128x32xf32, #hivm.address_space<cc>>) {
+    %true = arith.constant true
+    hivm.hir.Conv2dL1 {groups = 1 : i32, padding = [1, 2, 3, 4], stride = [2, 3]}
         ins(%input, %weight, %true
             : memref<1x1x1x128x16xf16, #hivm.address_space<cbuf>>,
               memref<1x1x5x32x16xf16, #hivm.address_space<cbuf>>, i1)
