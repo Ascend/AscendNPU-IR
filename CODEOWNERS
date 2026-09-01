@@ -41,3 +41,7 @@
 
 # Submodule:llvm-project (ensure synchronization with hivmc)
 /third-party/llvm-project @NoBBAI @hid90099092 @tanshengshun
+
+# Normalize Matmul.
+/bishengir/**/NormalizeMatmul.* @danielcm585 @jy834507063 @jqran @hid90099092 @tanshengshun
+/bishengir/test/**/normalize-matmul* @danielcm585 @jy834507063 @jqran @hid90099092 @tanshengshun
