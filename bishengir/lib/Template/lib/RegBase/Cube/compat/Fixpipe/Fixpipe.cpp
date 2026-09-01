@@ -154,8 +154,11 @@ __aicore__ __attribute__((always_inline)) void copy_matrix_cc_to_ubuf_split(
   uint8_t unit_flag = static_cast<uint8_t>(unit_flag_mode);
 
   if (dual_dst == DualDstMode::ROW_SPLIT) {
-    uint16_t m_size_half1 = (m_size + 1) / 2;
-    uint16_t m_size_half2 = m_size / 2;
+    uint32_t logical_m_half = (m_size + 1) / 2;
+    bool is_nz2dn_padded_dst = nz2dn_xt2 && (logical_m_half < dst_d);
+
+    uint16_t m_size_half1 = is_nz2dn_padded_dst ? dst_d : ((m_size + 1) / 2);
+    uint16_t m_size_half2 = is_nz2dn_padded_dst ? dst_d : (m_size / 2);
 
     copy_matrix_cc_to_ubuf_intrin(
         copy_matrix_cc_to_ubuf_intrin_args<SRC_TYPE, DST_TYPE>{
@@ -166,8 +169,8 @@ __aicore__ __attribute__((always_inline)) void copy_matrix_cc_to_ubuf_split(
                 unit_flag,
             quant_mode, pre_relu, channel_split,
             nz2nd_en FIXPIPE_ARGS_XT2_VALUES(nz2dn_xt2)});
-
-    uint32_t offset_elements = (m_size_half1 * 16);
+    // even if padded for alignment, src offset should be the real half m size.
+    uint32_t offset_elements = (logical_m_half * FRACTAL_BLOCK_NUM);
     copy_matrix_cc_to_ubuf_intrin(
         copy_matrix_cc_to_ubuf_intrin_args<SRC_TYPE, DST_TYPE>{
             ubuf_ptr, l0c_ptr + offset_elements,
