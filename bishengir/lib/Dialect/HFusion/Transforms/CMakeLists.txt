@@ -57,6 +57,7 @@ add_bishengir_dialect_library(BiShengIRHFusionTransforms
   RemoveCacheIO.cpp
   RemoveMaskFromUnalignedReductionLoop.cpp
   RemoveRedundantWriteAndReadPair.cpp
+  UnrollAndForward.cpp
   ReorderOpsByBFS.cpp
   SimplifyVFArgs.cpp
   SimplifyOps.cpp
