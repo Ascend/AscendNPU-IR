@@ -1,4 +1,4 @@
-//===- TransformOps.td - Analysis transform ops -----------*- tablegen-*-===//
+//===- TransformOps.td - Bishengir transform ops -----------*- tablegen-*-===//
 //
 // Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,8 +15,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef BISHENGIR_DIALECT_ANALYSIS_TRANSFORMS_TRANSFORMOPS
-#define BISHENGIR_DIALECT_ANALYSIS_TRANSFORMS_TRANSFORMOPS
+#ifndef BISHENGIR_DIALECT_TRANSFORM_IR_TRANSFORMOPS
+#define BISHENGIR_DIALECT_TRANSFORM_IR_TRANSFORMOPS
 
 include "mlir/Dialect/Transform/IR/TransformAttrs.td"
 include "mlir/Dialect/Transform/IR/TransformDialect.td"
@@ -418,4 +418,4 @@ def ExtendedFuseIntoContainingOp :
   let hasCustomAssemblyFormat = 1;
 }
 
-#endif // BISHENGIR_DIALECT_ANALYSIS_TRANSFORMS_TRANSFORMOPS
+#endif // BISHENGIR_DIALECT_TRANSFORM_IR_TRANSFORMOPS

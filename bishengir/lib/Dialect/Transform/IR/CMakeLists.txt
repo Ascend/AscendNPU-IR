@@ -1,12 +1,12 @@
-add_bishengir_dialect_library(BiShengIRAnalysisTransforms
+add_bishengir_dialect_library(BiShengIRTransformOps
   TransformOps.cpp
   DialectExtension.cpp
 
   ADDITIONAL_HEADER_DIRS
-  ${MLIR_MAIN_INCLUDE_DIR}/bishengir/Dialect/Analysis/Transforms
+  ${MLIR_MAIN_INCLUDE_DIR}/bishengir/Dialect/Transform/IR
 
   DEPENDS
-  BiShengIRAnalysisTransformsIncGen
+  BiShengIRTransformOpsIncGen
   MLIRLinalgTransformEnumsIncGen
 
   LINK_LIBS PUBLIC

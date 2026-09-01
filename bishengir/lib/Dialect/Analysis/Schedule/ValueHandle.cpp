@@ -21,7 +21,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/Analysis/Schedule/ValueHandle.h"
-#include "bishengir/Dialect/Analysis/Transforms/TransformOps.h"
+#include "bishengir/Dialect/Transform/IR/TransformOps.h"
 
 #include "mlir/Dialect/Linalg/TransformOps/LinalgTransformOps.h"
 #include "mlir/Dialect/Transform/IR/TransformOps.h"

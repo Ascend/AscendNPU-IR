@@ -235,7 +235,7 @@ private:
 
 /// Handle to a function argument, re-matched by position when needed.
 /// Relies on the dialect-neutral `func.get_func_argument` transform op
-/// (Analysis/Transforms).
+/// (Dialect/Transform).
 struct FuncArgHandle : public ValueHandle {
   FuncArgHandle(Value handle, size_t funcArgNum, HandleStatus status)
       : ValueHandle(handle, status, ValueHandleKind::kFuncArg),

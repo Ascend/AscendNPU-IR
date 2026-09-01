@@ -9,7 +9,7 @@
 
 #include "bishengir/Dialect/Analysis/Schedule/Builder.h"
 
-#include "bishengir/Dialect/Analysis/Transforms/TransformOps.h"
+#include "bishengir/Dialect/Transform/IR/TransformOps.h"
 #include "bishengir/Dialect/SCF/TransformOps/SCFTransformOps.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -132,7 +132,7 @@ Value ScheduleBuilder::getValue(ValueHandle *handle, OpBuilder &opBuilder) {
     return h->get(getTransformSeqHandle(), opBuilder);
   }
   // FuncArgHandle relies on the dialect-neutral `func.get_func_argument`
-  // transform op (Analysis/Transforms), so it is dispatched here directly.
+  // transform op (Dialect/Transform), so it is dispatched here directly.
   if (auto *h = dyn_cast<FuncArgHandle>(handle)) {
     return h->get(getFuncValue(opBuilder), opBuilder);
   }

@@ -20,7 +20,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/AutoScheduleBase.h"
-#include "bishengir/Dialect/Analysis/Transforms/TransformOps.h"
+#include "bishengir/Dialect/Transform/IR/TransformOps.h"
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HACC/IR/HACC.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"

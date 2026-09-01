@@ -1,4 +1,4 @@
-//===- TransformOps.h - Analysis transform ops ------------------*- C++ -*-===//
+//===- TransformOps.h - Bishengir transform ops -----------------*- C++ -*-===//
 //
 // Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,14 +15,14 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// Dialect-neutral transform ops used by the Analysis-level schedule
+// Dialect-neutral transform ops shared by the BishengIR schedule
 // infrastructure. These ops only depend on generic dialects (func, tensor,
 // linalg, ...), not on any BishengIR hardware dialect.
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef BISHENGIR_DIALECT_ANALYSIS_TRANSFORMS_TRANSFORMOPS_H
-#define BISHENGIR_DIALECT_ANALYSIS_TRANSFORMS_TRANSFORMOPS_H
+#ifndef BISHENGIR_DIALECT_TRANSFORM_IR_TRANSFORMOPS_H
+#define BISHENGIR_DIALECT_TRANSFORM_IR_TRANSFORMOPS_H
 
 #include "mlir/Dialect/Transform/IR/TransformTypes.h"
 
@@ -31,16 +31,16 @@
 #include "mlir/IR/OpImplementation.h"
 
 //===----------------------------------------------------------------------===//
-// Analysis Transform Operations
+// Bishengir Transform Operations
 //===----------------------------------------------------------------------===//
 
 #define GET_OP_CLASSES
-#include "bishengir/Dialect/Analysis/Transforms/TransformOps.h.inc"
+#include "bishengir/Dialect/Transform/IR/TransformOps.h.inc"
 
-namespace mlir {
-namespace analysis {
-void registerTransformDialectExtension(DialectRegistry &registry);
-} // namespace analysis
-} // namespace mlir
+namespace bishengir {
+namespace transform {
+void registerTransformDialectExtension(mlir::DialectRegistry &registry);
+} // namespace transform
+} // namespace bishengir
 
-#endif // BISHENGIR_DIALECT_ANALYSIS_TRANSFORMS_TRANSFORMOPS_H
+#endif // BISHENGIR_DIALECT_TRANSFORM_IR_TRANSFORMOPS_H

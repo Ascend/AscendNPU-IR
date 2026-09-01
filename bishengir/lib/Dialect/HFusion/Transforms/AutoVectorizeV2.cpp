@@ -12,7 +12,7 @@
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
-#include "bishengir/Dialect/Analysis/Transforms/TransformOps.h"
+#include "bishengir/Dialect/Transform/IR/TransformOps.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/TilingUtils.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoVectorize/Attrs.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoVectorize/PlanContext.h"

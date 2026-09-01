@@ -1,4 +1,4 @@
-//===- TransformOps.cpp - Analysis transform ops implementation ----------===//
+//===- TransformOps.cpp - Bishengir transform ops implementation ---------===//
 //
 // Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,13 +15,13 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file implements dialect-neutral transform ops used by the Analysis
+// This file implements dialect-neutral transform ops used by the Bishengir
 // schedule infrastructure. The ops only depend on generic dialects (func,
 // tensor, linalg).
 //
 //===----------------------------------------------------------------------===//
 
-#include "bishengir/Dialect/Analysis/Transforms/TransformOps.h"
+#include "bishengir/Dialect/Transform/IR/TransformOps.h"
 #include "bishengir/Transforms/Transforms.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -48,11 +48,11 @@
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/ErrorHandling.h"
 
-#define DEBUG_TYPE "bishengir-analysis-transform"
+#define DEBUG_TYPE "bishengir-transform"
 #define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] [TransformOps] ")
 
 #define GET_OP_CLASSES
-#include "bishengir/Dialect/Analysis/Transforms/TransformOps.cpp.inc"
+#include "bishengir/Dialect/Transform/IR/TransformOps.cpp.inc"
 
 using namespace mlir;
 using namespace mlir::transform;

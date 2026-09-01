@@ -6,7 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "bishengir/Dialect/Analysis/Transforms/TransformOps.h"
+#include "bishengir/Dialect/Transform/IR/TransformOps.h"
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"

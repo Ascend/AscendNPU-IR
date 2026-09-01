@@ -1,4 +1,4 @@
-//===- DialectExtension.cpp - Analysis transform dialect extension --------===//
+//===- DialectExtension.cpp - Bishengir transform dialect extension -------===//
 //
 // Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,7 +15,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "bishengir/Dialect/Analysis/Transforms/TransformOps.h"
+#include "bishengir/Dialect/Transform/IR/TransformOps.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
@@ -30,9 +30,9 @@ using namespace mlir;
 //===----------------------------------------------------------------------===//
 
 namespace {
-class AnalysisTransformDialectExtension
+class BishengirTransformDialectExtension
     : public transform::TransformDialectExtension<
-          AnalysisTransformDialectExtension> {
+          BishengirTransformDialectExtension> {
 public:
   using Base::Base;
 
@@ -43,13 +43,13 @@ public:
 
     registerTransformOps<
 #define GET_OP_LIST
-#include "bishengir/Dialect/Analysis/Transforms/TransformOps.cpp.inc"
+#include "bishengir/Dialect/Transform/IR/TransformOps.cpp.inc"
         >();
   }
 };
 } // namespace
 
-void mlir::analysis::registerTransformDialectExtension(
+void bishengir::transform::registerTransformDialectExtension(
     DialectRegistry &registry) {
-  registry.addExtensions<AnalysisTransformDialectExtension>();
+  registry.addExtensions<BishengirTransformDialectExtension>();
 }

@@ -7,8 +7,8 @@ add_bishengir_dialect_library(BiShengIRSchedule
   ValueHandle.cpp
 
   LINK_LIBS PUBLIC
-  BiShengIRAnalysisTransforms
   BiShengIRSCFTransformOps
+  BiShengIRTransformOps
   MLIRBufferizationDialect
   MLIRBufferizationTransformOps
   MLIRFuncDialect

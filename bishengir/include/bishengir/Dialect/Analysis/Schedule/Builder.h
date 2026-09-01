@@ -252,7 +252,7 @@ public:
 
   /// Create the op reversing the payload object order in `target`.
   /// Creates the dialect-neutral `transform.reverse` op
-  /// (Analysis/Transforms).
+  /// (Dialect/Transform).
   static Value createReverseOp(Value target, OpBuilder &opBuilder);
 
   /// Annotate the IR values corresponding to \c target with \c attrName.

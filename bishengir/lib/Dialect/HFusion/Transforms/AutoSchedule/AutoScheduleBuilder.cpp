@@ -21,7 +21,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/AutoScheduleBuilder.h"
-#include "bishengir/Dialect/Analysis/Transforms/TransformOps.h"
+#include "bishengir/Dialect/Transform/IR/TransformOps.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HFusion/TransformOps/HFusionTransformOps.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
