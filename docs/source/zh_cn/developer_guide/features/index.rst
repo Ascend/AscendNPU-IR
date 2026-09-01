@@ -15,3 +15,4 @@
    custom_op
    dfx
    plan_memory
+   multi_buffer
