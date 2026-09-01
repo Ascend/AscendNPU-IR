@@ -27,7 +27,6 @@
 
 namespace mlir {
 class Location;
-class OpBuilder;
 
 namespace hfusion {
 
@@ -129,8 +128,7 @@ public:
   ///   N.   UB Tile Size in Parallel Dim N-2
   ///   N+1. Buffer size in bytes
   TilingComputeFn calculateTilingImpl() override;
-  LogicalResult createScheduleImpl(TilingKey key,
-                                   OpBuilder &opBuilder) override;
+  LogicalResult createScheduleImpl(TilingKey key) override;
 
 protected:
   //===--------------------------------------------------------------------===//
@@ -174,12 +172,11 @@ protected:
   ///
   /// Disabled `kSimplifyTrivialLoops` because loop handles might be invalidate
   /// if the tiled loop is trivial during compile-time
-  void applyCanonicalization(OpBuilder &opBuilder);
+  void applyCanonicalization();
 
   /// Set buffer size for targets based on tiling info.
   LogicalResult setBufferSize(const TilingInfo *tilingInfo,
-                              ValueHandles &targetsToSetBufferSize,
-                              OpBuilder &opBuilder);
+                              ValueHandles &targetsToSetBufferSize);
 
   //===--------------------------------------------------------------------===//
   // Tile and fuse into related functions.
@@ -192,21 +189,19 @@ protected:
   /// axis is zero.
   ValueHandle *
   tileParallelAxesAndFuseProducers(TilingKey tilingKey, TilingInfo &tilingInfo,
-                                   const AnyPBRKernelInfo &kernelInfo,
-                                   OpBuilder &opBuilder);
+                                   const AnyPBRKernelInfo &kernelInfo);
 
   /// Merge the producer handles and return an unique collection of producers to
   /// fuse into.
   ValueHandles
   mergeProducerHandles(const SmallVector<NamedAttribute> &producerIdentifiers,
-                       const MatchOptions &options, OpBuilder &opBuilder);
+                       const MatchOptions &options);
 
   //===--------------------------------------------------------------------===//
   // Bind multi-core axes related functions.
   //===--------------------------------------------------------------------===//
 
   void bindLoopToMulticore(ValueHandle *loop, AnyPBRKernelInfo &kernelInfo,
-                           OpBuilder &opBuilder,
                            const TilingData *numOfCores = nullptr);
 
   /// Get multi-core num expr for Parallel and Reduce axis respectively.

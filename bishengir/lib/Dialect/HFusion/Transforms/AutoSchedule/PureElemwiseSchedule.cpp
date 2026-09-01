@@ -107,8 +107,7 @@ TilingComputeFn PureElemwiseScheduler::calculateTilingImpl() {
   };
 }
 
-LogicalResult PureElemwiseScheduler::createScheduleImpl(TilingKey key,
-                                                        OpBuilder &opBuilder) {
+LogicalResult PureElemwiseScheduler::createScheduleImpl(TilingKey key) {
   TilingInfo *tilingInfo = getTilingInfo();
   assert(tilingInfo != nullptr);
 
@@ -117,56 +116,54 @@ LogicalResult PureElemwiseScheduler::createScheduleImpl(TilingKey key,
     return failure();
 
   // Get handles to tiling data.
-  ValueHandles tilingDataHandles = builder().getTilingStructHandles(
-      tilingInfo->getTilingStruct(), opBuilder);
+  ValueHandles tilingDataHandles =
+      builder().getTilingStructHandles(tilingInfo->getTilingStruct());
 
   // Step 1: Cache read input arguments.
-  builder().getOpsWithName(hfusion::LoadOp::getOperationName(), opBuilder);
+  builder().getOpsWithName(hfusion::LoadOp::getOperationName());
 
   // Step 2: Cache write kernel results.
-  CacheIOResult cacheWriteResult = {builder().getOpsWithName(
-      hfusion::StoreOp::getOperationName(), opBuilder)};
+  CacheIOResult cacheWriteResult = {
+      builder().getOpsWithName(hfusion::StoreOp::getOperationName())};
 
   // Step 3: Tile cache writes using `scf.forall` op.
   ValueHandles splitCachedOps = builder().splitHandle(
-      cacheWriteResult.cachedOps, getKernelInfo()->numOutputs, opBuilder);
-  auto tileUsingForAllResult = builder().tileUsingForAll(
-      splitCachedOps, getKernelInfo()->blockDim, opBuilder);
+      cacheWriteResult.cachedOps, getKernelInfo()->numOutputs);
+  auto tileUsingForAllResult =
+      builder().tileUsingForAll(splitCachedOps, getKernelInfo()->blockDim);
 
   // Step 4: Fuse independent `scf.forall` ops.
-  ValueHandle *fusedLoop =
-      builder().fuseLoops(tileUsingForAllResult.loops, opBuilder);
+  ValueHandle *fusedLoop = builder().fuseLoops(tileUsingForAllResult.loops);
   // Handle to cached ops is invalidated after loop fuse, needs rematching.
   cacheWriteResult.cachedOps->setStatus(HandleStatus::kNeedsRematch);
 
   // Step 5: Fuse producers into `scf.forall` op.
   // We wish to fuse producers ops by reverse topological ordering.
-  ValueHandle *producerOps = builder().getIntermediateProducers(opBuilder);
+  ValueHandle *producerOps = builder().getIntermediateProducers();
   ValueHandles targetsToFuseInto = {producerOps};
   ValueHandles fusedLoopList = {fusedLoop};
-  builder().fuseIntoContaining(targetsToFuseInto, fusedLoopList, opBuilder,
+  builder().fuseIntoContaining(targetsToFuseInto, fusedLoopList,
                                /*duplicateProducers=*/true,
                                /*applyCanonicalizeAfterEachFusion=*/true);
 
   // Step 6: Tile cache writes again using `scf.for` op.
-  splitCachedOps = builder().splitHandle(
-      cacheWriteResult.cachedOps, getKernelInfo()->numOutputs, opBuilder);
+  splitCachedOps = builder().splitHandle(cacheWriteResult.cachedOps,
+                                         getKernelInfo()->numOutputs);
   // For Pure Elemwise schedule, the tile size should be one dimensional
   auto ubTilingDataHandle =
       ValueHandleFoldResults{tilingDataHandles[kUBTileSizePos]};
   auto tileUsingForResult =
-      builder().tileUsingFor(splitCachedOps, ubTilingDataHandle, opBuilder);
+      builder().tileUsingFor(splitCachedOps, ubTilingDataHandle);
 
   // Step 7: Apply canonicalize patterns.
   //         Disabled `kSimplifyTrivialLoops` because loop handles might be
   //         invalidate if the tiled loop is trivial during compile-time
   builder().applyPatterns(
-      builder().getFuncHandle(opBuilder),
+      builder().getFuncHandle(),
       /*patterns=*/
       SmallVector<TransformPatternKind>{
           TransformPatternKind::CSE, TransformPatternKind::CANONICALIZATION,
           TransformPatternKind::MERGE_CONSECUTIVE_INSERT_EXTRACT_SLICE},
-      opBuilder,
       /*disablePatterns=*/
       SmallVector<CanonicalizationPatternKind>{
           CanonicalizationPatternKind::kSimplifyTrivialLoops});
@@ -174,14 +171,14 @@ LogicalResult PureElemwiseScheduler::createScheduleImpl(TilingKey key,
   // Step 8: Fuse independent `scf.for` ops.
   auto loops = llvm::map_to_vector(tileUsingForResult.loops,
                                    [](ValueHandles hs) { return hs.front(); });
-  fusedLoop = builder().fuseLoops(loops, opBuilder);
+  fusedLoop = builder().fuseLoops(loops);
   // Handle are invalidated after loop fuse, needs rematching.
   fusedLoop->setStatus(HandleStatus::kNeedsRematch);
   cacheWriteResult.cachedOps->setStatus(HandleStatus::kNeedsRematch);
 
   // Step 9: Fuse producers into `scf.for` op.
   fusedLoopList = {fusedLoop};
-  builder().fuseIntoContaining(targetsToFuseInto, fusedLoopList, opBuilder,
+  builder().fuseIntoContaining(targetsToFuseInto, fusedLoopList,
                                /*duplicateProducers=*/true,
                                /*applyCanonicalizeAfterEachFusion=*/true);
 
@@ -199,7 +196,7 @@ LogicalResult PureElemwiseScheduler::createScheduleImpl(TilingKey key,
   setStatusTo(targetsToSetBufferSize, HandleStatus::kNeedsRematch);
   SetBufferSizeOptions bufferSizeOptions{transform::SetBufferSizeMode::kPerByte,
                                          getKernelInfo()->smallestElementType};
-  builder().setBufferSize(targetsToSetBufferSize, bufferSizeConst, opBuilder,
+  builder().setBufferSize(targetsToSetBufferSize, bufferSizeConst,
                           bufferSizeOptions);
   return success();
 }

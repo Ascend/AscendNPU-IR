@@ -26,6 +26,7 @@
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
 
 #include "mlir/Dialect/SCF/IR/DeviceMappingInterface.h"
+#include "mlir/IR/Builders.h"
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/Rewrite/FrozenRewritePatternSet.h"
 
@@ -90,11 +91,10 @@ public:
   virtual ~SchedulerBase();
 
   /// Main entry point to do auto-scheduling.
-  virtual LogicalResult runOnOperation(OpBuilder &opBuilder);
+  virtual LogicalResult runOnOperation();
 
   /// Apply schedule to outlineFunc
-  static LogicalResult applySchedule(func::FuncOp &funcOp,
-                                     OpBuilder &opBuilder);
+  static LogicalResult applySchedule(func::FuncOp &funcOp);
 
   /// Get and set auto schedule options.
   static AutoScheduleOptions getAutoScheduleOptions() { return options_; }
@@ -107,6 +107,11 @@ protected:
   /// dialect-neutral base primitives are accessible through it as well.
   AutoScheduleBuilder &builder() { return builder_; }
 
+  /// Get the OpBuilder owned by the auto-schedule builder, used for
+  /// module-level IR engineering (cloning kernels, constructing host tiling
+  /// functions, fixing call sites).
+  OpBuilder &getOpBuilder() { return builder().getOpBuilder(); }
+
   /// Implementation of kernel analysis and verification.
   virtual LogicalResult analyzeAndVerifyKernelImpl();
 
@@ -114,19 +119,18 @@ protected:
   virtual TilingComputeFn calculateTilingImpl() = 0;
 
   /// Implementation of creating a schedule from the input tiling key.
-  virtual LogicalResult createScheduleImpl(TilingKey key,
-                                           OpBuilder &opBuilder) = 0;
+  virtual LogicalResult createScheduleImpl(TilingKey key) = 0;
 
   /// Run pre-schedule procedure (e.g., kernel info collection and
   /// verification).
-  virtual LogicalResult runPreScheduleProcedure(OpBuilder &opBuilder);
+  virtual LogicalResult runPreScheduleProcedure();
 
   /// Run post-schedule procedure (e.g., tiling pack).
-  virtual LogicalResult runPostScheduleProcedure(OpBuilder &opBuilder);
+  virtual LogicalResult runPostScheduleProcedure();
 
   /// Run schedule procedure (including tiling calculation and schedule
   /// operation).
-  LogicalResult runScheduleProcedure(OpBuilder &opBuilder);
+  LogicalResult runScheduleProcedure();
 
   /// Run analysis on kernel function and verify constraints.
   LogicalResult analyzeAndVerifyKernel();
@@ -261,58 +265,55 @@ private:
 
   /// Run necessary procedures (such as generating an empty tiling function)
   /// even if the schedule is nop.
-  LogicalResult runNopScheduleProcedure(OpBuilder &opBuilder);
+  LogicalResult runNopScheduleProcedure();
 
   /// Cache input and output values.
-  LogicalResult cacheIO(OpBuilder &opBuilder);
+  LogicalResult cacheIO();
 
   /// Mark `hacc` input-related attributes to the kernel function.
   static LogicalResult markHACCInputArgAttr(func::FuncOp func);
 
   /// Calculate tiling struct for all tiling cases.
-  LogicalResult calculateTiling(OpBuilder &opBuilder);
+  LogicalResult calculateTiling();
 
   /// Prune and select tiling cases if possible.
   LogicalResult selectTiling() const;
 
   /// Create one or more tiling cases and apply schedules.
-  LogicalResult createAndApplySchedules(OpBuilder &opBuilder);
+  LogicalResult createAndApplySchedules();
 
   /// Apply one specific schedule according to the input tiling info.
-  LogicalResult applyScheduleImpl(OpBuilder &opBuilder);
+  LogicalResult applyScheduleImpl();
 
   /// Prepare kernel function for scheduling and init schedule sequence.
-  LogicalResult initSchedule(TilingKey key, OpBuilder &opBuilder);
+  LogicalResult initSchedule(TilingKey key);
 
   /// Reset things after doing schedule.
   void cleanUpAfterSchedule();
 
   /// Create switch cases for entry function to call scheduled functions
   /// according to tiling key and the callers of device kernels.
-  LogicalResult fixCallSitesAndCaller(OpBuilder &opBuilder);
+  LogicalResult fixCallSitesAndCaller();
 
   /// Fix the call sites by replacing arguments.
   void doFixCallSite(CallerInfo &callerInfo, func::CallOp callSite,
                      CallSiteArgBuilderInfo &builderInfo,
-                     DenseMap<Operation *, Operation *> &irMap,
-                     OpBuilder &opBuilder) const;
+                     DenseMap<Operation *, Operation *> &irMap);
 
   /// Generate callers for scheduled device functions.
   void generateDeviceCallers(func::CallOp callSite, Value tilingKey,
                              const SmallVector<Value> &newCallArgs,
-                             DenseMap<Operation *, Operation *> &irMap,
-                             OpBuilder &opBuilder) const;
+                             DenseMap<Operation *, Operation *> &irMap);
 
   /// Construct new call site arguments.
-  static SmallVector<Value>
-  getNewArgsForCallSite(func::FuncOp caller, func::CallOp oldCallSite,
-                        const CallSiteArgBuilderInfo &info,
-                        OpBuilder &opBuilder);
+  SmallVector<Value> getNewArgsForCallSite(func::FuncOp caller,
+                                           func::CallOp oldCallSite,
+                                           const CallSiteArgBuilderInfo &info);
 
   /// Get the tiling data arguments for the call sites.
   CallSite2TilingIdx2TilingData
   getTilingDataForCallSite(func::FuncOp caller, TilingInfo *tilingInfo,
-                           const CallerInfo &callerInfo, OpBuilder &opBuilder);
+                           const CallerInfo &callerInfo);
 
   /// Dump current schedule and kernel function for debugging purposes.
   void dumpKernelAndSchedule();

@@ -37,7 +37,7 @@ using namespace mlir::hfusion;
 // ShallowCVScheduler
 //===----------------------------------------------------------------------===//
 
-LogicalResult ShallowCVScheduler::runOnOperation(OpBuilder &opBuilder) {
+LogicalResult ShallowCVScheduler::runOnOperation() {
   func::FuncOp shallowCVFunc = getOriginalKernel();
   // Step 1: Apply LastAxsiPBR opfusion
   HFusionOpFusionOptions options;
@@ -53,7 +53,7 @@ LogicalResult ShallowCVScheduler::runOnOperation(OpBuilder &opBuilder) {
   // Step 2: Apply Schedule for outlined kernels.
   for (auto funcOp : *outlinedFuncs) {
     LDBG("Scheduling outlined func: " << *funcOp);
-    if (failed(applySchedule(funcOp, opBuilder)))
+    if (failed(applySchedule(funcOp)))
       return failure();
   }
 

@@ -21,11 +21,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/AutoScheduleBuilder.h"
-#include "bishengir/Dialect/Transform/IR/TransformOps.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HFusion/TransformOps/HFusionTransformOps.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/SCF/TransformOps/SCFTransformOps.h"
+#include "bishengir/Dialect/Transform/IR/TransformOps.h"
 
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Bufferization/TransformOps/BufferizationTransformOps.h"
@@ -55,14 +55,14 @@ using namespace mlir::hfusion;
 //===----------------------------------------------------------------------===//
 
 ValueHandles
-AutoScheduleBuilder::getKernelOutputs(OpBuilder &opBuilder,
-                                      const KernelInfo &kernelInfo,
+AutoScheduleBuilder::getKernelOutputs(const KernelInfo &kernelInfo,
                                       const GetKernelIOOptions &options) {
+  OpBuilder &opBuilder = getOpBuilder();
   if (options.isInverted) {
     assert(options.findReshapePosition.empty() &&
            "isInverted cannot be used with findReshapePosition");
   }
-  auto funcValue = getFuncValue(opBuilder);
+  auto funcValue = getFuncValue();
   ValueHandles handles;
   for (size_t operandIdx : kernelInfo.outputOrdering) {
     // TODO: The result is matched one-by-one because split handle op cannot
@@ -77,20 +77,19 @@ AutoScheduleBuilder::getKernelOutputs(OpBuilder &opBuilder,
         /*is_all=*/false,
         /*find_reshape_producer=*/
         options.findReshapePosition.contains(operandIdx));
-    handles.push_back(
-        record<RegularValueHandle>(resultHandle.getResult(), opBuilder));
+    handles.push_back(record<RegularValueHandle>(resultHandle.getResult()));
   }
   return handles;
 }
 
 ValueHandles
-AutoScheduleBuilder::getKernelInputs(OpBuilder &opBuilder,
-                                     const GetKernelIOOptions &options) {
+AutoScheduleBuilder::getKernelInputs(const GetKernelIOOptions &options) {
+  OpBuilder &opBuilder = getOpBuilder();
   if (options.isInverted) {
     assert(options.findReshapePosition.empty() &&
            "isInverted cannot be used with findReshapePosition");
   }
-  auto funcValue = getFuncValue(opBuilder);
+  auto funcValue = getFuncValue();
   ValueHandles handles;
   // TODO: The result is matched one-by-one because merge handle op cannot
   // merge transform any value typed inputs.
@@ -105,17 +104,15 @@ AutoScheduleBuilder::getKernelInputs(OpBuilder &opBuilder,
         /*is_all=*/false,
         /*find_reshape_consumer*/
         options.findReshapePosition.contains(operandIdx));
-    handles.push_back(
-        record<RegularValueHandle>(funcArgHandle.getResult(), opBuilder));
+    handles.push_back(record<RegularValueHandle>(funcArgHandle.getResult()));
   }
   return handles;
 }
 
 AutoScheduleBuilder::CacheIOResult
-AutoScheduleBuilder::cacheRead(OpBuilder &opBuilder,
-                               const KernelInfo &kernelInfo) {
+AutoScheduleBuilder::cacheRead(const KernelInfo &kernelInfo) {
+  OpBuilder &opBuilder = getOpBuilder();
   auto kernelInputsHandles = getKernelInputs(
-      opBuilder,
       GetKernelIOOptions{/*positionList=*/
                          llvm::to_vector(kernelInfo.cacheReadFuncArgIndices),
                          /*isInverted=*/false,
@@ -123,7 +120,7 @@ AutoScheduleBuilder::cacheRead(OpBuilder &opBuilder,
                          kernelInfo.funcArgWithReshapeIndices});
 
   for (auto [idx, kernelInputsHandle] : llvm::enumerate(kernelInputsHandles)) {
-    Value inputs = getValue(kernelInputsHandle, opBuilder);
+    Value inputs = getValue(kernelInputsHandle);
     auto cachedOp =
         opBuilder
             .create<transform::CacheReadOp>(
@@ -131,15 +128,13 @@ AutoScheduleBuilder::cacheRead(OpBuilder &opBuilder,
                 /*cached=*/opBuilder.getType<transform::AnyOpType>(),
                 /*targets=*/inputs)
             .getCached();
-    ScheduleBuilder::annotateByAttr(
-        cachedOp, hfusion::LoadOp::getOperationName(), opBuilder);
-    ScheduleBuilder::annotateByAttr(cachedOp, getCacheReadTag(idx), opBuilder);
+    annotateByAttr(cachedOp, hfusion::LoadOp::getOperationName());
+    annotateByAttr(cachedOp, getCacheReadTag(idx));
     kernelInputsHandle->invalidate();
   }
   auto matchTarget = getTransformSeqHandle();
   auto cachedOps = matchByIdentifier(
-      matchTarget, OperationIdentifier(hfusion::LoadOp::getOperationName()),
-      opBuilder);
+      matchTarget, OperationIdentifier(hfusion::LoadOp::getOperationName()));
   // TODO: needsReverse = true is a temporary solution to the problem that
   // cache reads are done in the order of they appear in the function arguments,
   // but that the order they appear in the IR is in reverse order. We shouldn't
@@ -147,28 +142,26 @@ AutoScheduleBuilder::cacheRead(OpBuilder &opBuilder,
   return CacheIOResult{
       /*cachedOps=*/
       record<NamedValueHandle>(
-          cachedOps, opBuilder,
-          NamedValueHandleArgs{hfusion::LoadOp::getOperationName(),
-                               IdentifierType::kOperation,
-                               /*needsAnnotate=*/false,
-                               /*needsReverse=*/true})};
+          cachedOps, NamedValueHandleArgs{hfusion::LoadOp::getOperationName(),
+                                          IdentifierType::kOperation,
+                                          /*needsAnnotate=*/false,
+                                          /*needsReverse=*/true})};
 }
 
 AutoScheduleBuilder::CacheIOResult
-AutoScheduleBuilder::cacheWrite(OpBuilder &opBuilder,
-                                const KernelInfo &kernelInfo) {
+AutoScheduleBuilder::cacheWrite(const KernelInfo &kernelInfo) {
+  OpBuilder &opBuilder = getOpBuilder();
   auto kernelOutputHandles = getKernelOutputs(
-      opBuilder, kernelInfo,
-      GetKernelIOOptions{/*positionList=*/
-                         kernelInfo.outputOrdering,
-                         /*isInverted=*/false,
-                         /*findReshapePosition=*/
-                         kernelInfo.returnValueWithReshapeIndices});
+      kernelInfo, GetKernelIOOptions{/*positionList=*/
+                                     kernelInfo.outputOrdering,
+                                     /*isInverted=*/false,
+                                     /*findReshapePosition=*/
+                                     kernelInfo.returnValueWithReshapeIndices});
 
   SmallVector<Value> cacheWriteOriginalOps;
   for (auto [originalResultIdx, outputHandle] :
        llvm::zip_equal(kernelInfo.outputOrdering, kernelOutputHandles)) {
-    auto output = getValue(outputHandle, opBuilder);
+    auto output = getValue(outputHandle);
     auto cachedWriteOp =
         opBuilder
             .create<transform::CacheWriteOp>(
@@ -180,19 +173,16 @@ AutoScheduleBuilder::cacheWrite(OpBuilder &opBuilder,
                 kernelInfo.returnValueIdx2TiedFuncArg.contains(
                     originalResultIdx))
             .getCached();
-    ScheduleBuilder::annotateByAttr(
-        cachedWriteOp, hfusion::StoreOp::getOperationName(), opBuilder);
+    annotateByAttr(cachedWriteOp, hfusion::StoreOp::getOperationName());
     outputHandle->invalidate();
   }
   auto matchTarget = getTransformSeqHandle();
   auto cachedOps = matchByIdentifier(
-      matchTarget, OperationIdentifier(hfusion::StoreOp::getOperationName()),
-      opBuilder);
+      matchTarget, OperationIdentifier(hfusion::StoreOp::getOperationName()));
   return CacheIOResult{/*cachedOps=*/record<NamedValueHandle>(
-      cachedOps, opBuilder,
-      NamedValueHandleArgs{hfusion::StoreOp::getOperationName(),
-                           IdentifierType::kOperation,
-                           /*needsAnnotate=*/false})};
+      cachedOps, NamedValueHandleArgs{hfusion::StoreOp::getOperationName(),
+                                      IdentifierType::kOperation,
+                                      /*needsAnnotate=*/false})};
 }
 
 //===----------------------------------------------------------------------===//
@@ -200,29 +190,26 @@ AutoScheduleBuilder::cacheWrite(OpBuilder &opBuilder,
 //===----------------------------------------------------------------------===//
 
 AutoScheduleBuilder::ForallTilingResult
-AutoScheduleBuilder::tileUsingForAll(ValueHandles &targets, int64_t blockDim,
-                                     OpBuilder &opBuilder) {
+AutoScheduleBuilder::tileUsingForAll(ValueHandles &targets, int64_t blockDim) {
+  OpBuilder &opBuilder = getOpBuilder();
   // The block axis is tied to `hivm.block<x>`.
   auto mapping = opBuilder.getArrayAttr(
       {hivm::HIVMBlockMappingAttr::get(opBuilder.getContext())});
-  return ScheduleBuilder::tileUsingForAll(targets, blockDim, mapping,
-                                          opBuilder);
+  return ScheduleBuilder::tileUsingForAll(targets, blockDim, mapping);
 }
 
 ValueHandles
-AutoScheduleBuilder::getTilingStructHandles(SmallVector<TilingData *> s,
-                                            OpBuilder &opBuilder) {
-  return llvm::map_to_vector(s, [this, &opBuilder](TilingData *td) {
-    return this->getTilingDataHandle(td, opBuilder);
-  });
+AutoScheduleBuilder::getTilingStructHandles(SmallVector<TilingData *> s) {
+  return llvm::map_to_vector(
+      s, [this](TilingData *td) { return this->getTilingDataHandle(td); });
 }
 
-ValueHandle *AutoScheduleBuilder::getTilingDataHandle(TilingData *d,
-                                                      OpBuilder &opBuilder) {
+ValueHandle *AutoScheduleBuilder::getTilingDataHandle(TilingData *d) {
+  OpBuilder &opBuilder = getOpBuilder();
   if (d->getHandle())
     return d->getHandle();
 
-  auto funcValue = getFuncValue(opBuilder);
+  auto funcValue = getFuncValue();
   size_t posWithInFunc = d->getPos();
   auto funcArgHandles = opBuilder.create<transform::GetFuncArgumentOp>(
       funcValue.getLoc(),
@@ -239,10 +226,10 @@ ValueHandle *AutoScheduleBuilder::getTilingDataHandle(TilingData *d,
 
 void AutoScheduleBuilder::setBufferSize(ValueHandles &targets,
                                         int64_t bufferSize,
-                                        OpBuilder &opBuilder,
                                         const SetBufferSizeOptions &options) {
+  OpBuilder &opBuilder = getOpBuilder();
   std::vector<int64_t> bufferSizes(targets.size(), bufferSize);
-  auto targetValues = getValues(targets, opBuilder);
+  auto targetValues = getValues(targets);
   opBuilder.create<transform::SetBufferSizeOp>(
       targetValues.front().getLoc(),
       /*target=*/targetValues,
@@ -255,10 +242,9 @@ std::string AutoScheduleBuilder::getCacheReadTag(size_t funcArgIdx) {
   return llvm::formatv(kFuncArgIdxFormat, funcArgIdx).str();
 }
 
-ValueHandle *
-AutoScheduleBuilder::getIntermediateProducers(OpBuilder &opBuilder) {
+ValueHandle *AutoScheduleBuilder::getIntermediateProducers() {
   MatchOptions matchOptions;
   matchOptions.needsReverse = true;
-  return getOpsWithAttr(kIntermediateProducerTagName, opBuilder, Attribute(),
+  return getOpsWithAttr(kIntermediateProducerTagName, Attribute(),
                         matchOptions);
 }

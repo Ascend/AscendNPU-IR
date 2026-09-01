@@ -26,7 +26,6 @@
 
 namespace mlir {
 class Location;
-class OpBuilder;
 
 namespace transform {
 class NamedSequenceOp;
@@ -45,12 +44,11 @@ public:
 
   TilingComputeFn calculateTilingImpl() override;
 
-  LogicalResult createScheduleImpl(TilingKey key,
-                                   OpBuilder &opBuilder) override;
+  LogicalResult createScheduleImpl(TilingKey key) override;
 
-  LogicalResult runPreScheduleProcedure(OpBuilder &opBuilder) override;
+  LogicalResult runPreScheduleProcedure() override;
 
-  LogicalResult runPostScheduleProcedure(OpBuilder &opBuilder) override;
+  LogicalResult runPostScheduleProcedure() override;
 };
 
 } // namespace hfusion

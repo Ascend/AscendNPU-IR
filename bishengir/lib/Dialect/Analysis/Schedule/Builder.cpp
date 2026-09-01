@@ -9,8 +9,8 @@
 
 #include "bishengir/Dialect/Analysis/Schedule/Builder.h"
 
-#include "bishengir/Dialect/Transform/IR/TransformOps.h"
 #include "bishengir/Dialect/SCF/TransformOps/SCFTransformOps.h"
+#include "bishengir/Dialect/Transform/IR/TransformOps.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Linalg/TransformOps/LinalgTransformOps.h"
@@ -115,7 +115,8 @@ namespace schedule {
 // Handle materialization.
 //===----------------------------------------------------------------------===//
 
-Value ScheduleBuilder::getValue(ValueHandle *handle, OpBuilder &opBuilder) {
+Value ScheduleBuilder::getValue(ValueHandle *handle) {
+  OpBuilder &opBuilder = getOpBuilder();
   if (handle == nullptr) {
     llvm::report_fatal_error("cannot get value from nullptr handle");
   }
@@ -126,7 +127,7 @@ Value ScheduleBuilder::getValue(ValueHandle *handle, OpBuilder &opBuilder) {
     if (h->getStatus() == HandleStatus::kNeedsRematch) {
       Value matched = h->get(getTransformSeqHandle(), opBuilder);
       if (h->getNeedsReverse())
-        matched = createReverseOp(matched, opBuilder);
+        matched = createReverseOp(matched);
       h->setHandle(matched);
     }
     return h->get(getTransformSeqHandle(), opBuilder);
@@ -134,21 +135,19 @@ Value ScheduleBuilder::getValue(ValueHandle *handle, OpBuilder &opBuilder) {
   // FuncArgHandle relies on the dialect-neutral `func.get_func_argument`
   // transform op (Dialect/Transform), so it is dispatched here directly.
   if (auto *h = dyn_cast<FuncArgHandle>(handle)) {
-    return h->get(getFuncValue(opBuilder), opBuilder);
+    return h->get(getFuncValue(), opBuilder);
   }
   llvm::report_fatal_error("Not implemented!");
 }
 
-SmallVector<Value> ScheduleBuilder::getValues(const ValueHandles &handles,
-                                              OpBuilder &opBuilder) {
-  return llvm::map_to_vector(handles, [this, &opBuilder](ValueHandle *handle) {
-    return this->getValue(handle, opBuilder);
-  });
+SmallVector<Value> ScheduleBuilder::getValues(const ValueHandles &handles) {
+  return llvm::map_to_vector(
+      handles, [this](ValueHandle *handle) { return this->getValue(handle); });
 }
 
 std::pair<SmallVector<int64_t>, SmallVector<Value>>
-ScheduleBuilder::unpackFoldResults(ValueHandleFoldResults &values,
-                                   OpBuilder &opBuilder) {
+ScheduleBuilder::unpackFoldResults(ValueHandleFoldResults &values) {
+  OpBuilder &opBuilder = getOpBuilder();
   SmallVector<int64_t> staticSizes;
   SmallVector<Value> dynamicSizes;
   for (auto &v : values) {
@@ -160,7 +159,7 @@ ScheduleBuilder::unpackFoldResults(ValueHandleFoldResults &values,
     staticSizes.push_back(ShapedType::kDynamic);
     std::optional<ValueHandle *> maybeHandle = v.getValueHandle();
     assert(maybeHandle && "invalid handle");
-    dynamicSizes.push_back(getValue(*maybeHandle, opBuilder));
+    dynamicSizes.push_back(getValue(*maybeHandle));
   }
   return {staticSizes, dynamicSizes};
 }
@@ -169,18 +168,20 @@ ScheduleBuilder::unpackFoldResults(ValueHandleFoldResults &values,
 // Matching and annotating.
 //===----------------------------------------------------------------------===//
 
-Value ScheduleBuilder::getFuncValue(OpBuilder &opBuilder) {
+Value ScheduleBuilder::getFuncValue() {
+  OpBuilder &opBuilder = getOpBuilder();
   auto matchTarget = getTransformSeqHandle();
   return opBuilder.create<transform::MatchOp>(
       matchTarget.getLoc(), matchTarget,
       ArrayRef<StringRef>({func::FuncOp::getOperationName()}));
 }
 
-ValueHandle *ScheduleBuilder::getFuncHandle(OpBuilder &opBuilder) {
-  return record<RegularValueHandle>(getFuncValue(opBuilder), opBuilder);
+ValueHandle *ScheduleBuilder::getFuncHandle() {
+  return record<RegularValueHandle>(getFuncValue());
 }
 
-Value ScheduleBuilder::createReverseOp(Value target, OpBuilder &opBuilder) {
+Value ScheduleBuilder::createReverseOp(Value target) {
+  OpBuilder &opBuilder = getOpBuilder();
   return opBuilder.create<transform::ReverseOp>(
       target.getLoc(),
       /*result=*/TypeRange{opBuilder.getType<transform::AnyOpType>()},
@@ -189,8 +190,8 @@ Value ScheduleBuilder::createReverseOp(Value target, OpBuilder &opBuilder) {
 
 Value ScheduleBuilder::matchByIdentifier(Value target,
                                          const Identifier &identifier,
-                                         OpBuilder &opBuilder,
                                          const MatchOptions &options) {
+  OpBuilder &opBuilder = getOpBuilder();
   auto ops = getMatchOps(identifier, opBuilder);
   auto requiredOpAttrs =
       getMatchOpAttrs(identifier, opBuilder, /*required=*/true);
@@ -210,7 +211,7 @@ Value ScheduleBuilder::matchByIdentifier(Value target,
       childValue = std::get<Value>(val);
     else if (std::holds_alternative<ValueHandle *>(val)) {
       auto *valHandle = std::get<ValueHandle *>(val);
-      childValue = getValue(valHandle, opBuilder);
+      childValue = getValue(valHandle);
     } else {
       llvm::report_fatal_error("Not implemented!");
     }
@@ -223,13 +224,13 @@ Value ScheduleBuilder::matchByIdentifier(Value target,
   }
 
   if (options.needsReverse)
-    matchResult = createReverseOp(matchResult, opBuilder);
+    matchResult = createReverseOp(matchResult);
 
   return matchResult;
 }
 
-void ScheduleBuilder::annotateByAttr(Value target, StringRef attrName,
-                                     OpBuilder &opBuilder) {
+void ScheduleBuilder::annotateByAttr(Value target, StringRef attrName) {
+  OpBuilder &opBuilder = getOpBuilder();
   opBuilder.create<transform::AnnotateOp>(
       target.getLoc(),
       /*target=*/target,
@@ -239,32 +240,34 @@ void ScheduleBuilder::annotateByAttr(Value target, StringRef attrName,
 
 Value ScheduleBuilder::mergeHandles(
     const SmallVectorImpl<Value> &handles,
-    transform::TransformHandleTypeInterface handleType, OpBuilder &opBuilder) {
+    transform::TransformHandleTypeInterface handleType) {
+  OpBuilder &opBuilder = getOpBuilder();
   assert(!handles.empty());
   return opBuilder.create<transform::MergeHandlesOp>(handles.front().getLoc(),
                                                      /*result=*/handleType,
                                                      /*target=*/handles);
 }
 
-ValueHandles ScheduleBuilder::splitHandle(ValueHandle *handle, size_t splitSize,
-                                          OpBuilder &opBuilder) {
-  Value handleValue = getValue(handle, opBuilder);
+ValueHandles ScheduleBuilder::splitHandle(ValueHandle *handle,
+                                          size_t splitSize) {
+  OpBuilder &opBuilder = getOpBuilder();
+  Value handleValue = getValue(handle);
   auto results = opBuilder
                      .create<transform::SplitHandleOp>(
                          handleValue.getLoc(),
                          /*handle=*/handleValue,
                          /*numResultHandles=*/static_cast<int64_t>(splitSize))
                      .getResults();
-  return llvm::map_to_vector(results, [this, &opBuilder](Value result) {
-    auto ptr = record<RegularValueHandle>(result, opBuilder);
+  return llvm::map_to_vector(results, [this](Value result) {
+    auto ptr = record<RegularValueHandle>(result);
     return static_cast<ValueHandle *>(ptr);
   });
 }
 
 ResultRange ScheduleBuilder::createForEachOp(Value target,
                                              TypeRange resultTypes,
-                                             RegionBuilderFn regionBuilder,
-                                             OpBuilder &opBuilder) {
+                                             RegionBuilderFn regionBuilder) {
+  OpBuilder &opBuilder = getOpBuilder();
   OpBuilder::InsertionGuard guard(opBuilder);
   auto foreach =
       opBuilder.create<transform::ForeachOp>(target.getLoc(),
@@ -282,21 +285,19 @@ ResultRange ScheduleBuilder::createForEachOp(Value target,
 }
 
 ValueHandle *ScheduleBuilder::getOpsWithName(StringRef opName,
-                                             OpBuilder &opBuilder,
                                              const MatchOptions &options) {
-  return getOpsWithIdentifier(OperationIdentifier(opName), opBuilder, options);
+  return getOpsWithIdentifier(OperationIdentifier(opName), options);
 }
 
 ValueHandle *ScheduleBuilder::getOpsWithAttr(StringRef attrName,
-                                             OpBuilder &opBuilder,
                                              Attribute attrValue,
                                              const MatchOptions &options) {
   return getOpsWithIdentifier(AttributeIdentifier(attrName, attrValue),
-                              opBuilder, options);
+                              options);
 }
 
 ValueHandle *ScheduleBuilder::getOpsWithAttrs(
-    const SmallVector<NamedAttribute> &requiredAttrs, OpBuilder &opBuilder,
+    const SmallVector<NamedAttribute> &requiredAttrs,
     const SmallVector<NamedAttribute> &optionalAttrs,
     const MatchOptions &options) {
   DenseMap<StringRef, Attribute> requiredAttrsMap;
@@ -308,14 +309,13 @@ ValueHandle *ScheduleBuilder::getOpsWithAttrs(
     optionalAttrsMap.insert({namedAttr.getName(), namedAttr.getValue()});
 
   return getOpsWithIdentifier(
-      AttributeIdentifier(requiredAttrsMap, optionalAttrsMap), opBuilder,
-      options);
+      AttributeIdentifier(requiredAttrsMap, optionalAttrsMap), options);
 }
 
 ValueHandle *
 ScheduleBuilder::getOpsWithIdentifier(const Identifier &identifier,
-                                      OpBuilder &opBuilder,
                                       const MatchOptions &options) {
+  OpBuilder &opBuilder = getOpBuilder();
   assert(identifier.getIdentifierKind() != IdentifierType::kUnknown);
   // For named handles, there is no need to construct a new handle everytime as
   // the name should be unique. Directly fetch the handle if possible.
@@ -325,16 +325,14 @@ ScheduleBuilder::getOpsWithIdentifier(const Identifier &identifier,
     return (*maybeHandle);
 
   auto matchTarget = getTransformSeqHandle();
-  auto targetOps =
-      matchByIdentifier(matchTarget, identifier, opBuilder, options);
+  auto targetOps = matchByIdentifier(matchTarget, identifier, options);
   // Don't need to annotate because the ops are match by op name.
   return record<NamedValueHandle>(
-      targetOps, opBuilder,
-      NamedValueHandleArgs{identifier.getUniqueIdentifier(),
-                           identifier.getIdentifierKind(),
-                           /*needsAnnotate=*/false,
-                           /*needsReverse=*/false,
-                           /*isNameUnique=*/true});
+      targetOps, NamedValueHandleArgs{identifier.getUniqueIdentifier(),
+                                      identifier.getIdentifierKind(),
+                                      /*needsAnnotate=*/false,
+                                      /*needsReverse=*/false,
+                                      /*isNameUnique=*/true});
 }
 
 //===----------------------------------------------------------------------===//
@@ -343,11 +341,11 @@ ScheduleBuilder::getOpsWithIdentifier(const Identifier &identifier,
 
 ScheduleBuilder::ForallTilingResult
 ScheduleBuilder::tileUsingForAll(ValueHandles &targets,
-                                 int64_t staticNumThreads, ArrayAttr mapping,
-                                 OpBuilder &opBuilder) {
+                                 int64_t staticNumThreads, ArrayAttr mapping) {
+  OpBuilder &opBuilder = getOpBuilder();
   ValueHandles loopHandles;
   for (auto *targetHandle : targets) {
-    auto targetValue = getValue(targetHandle, opBuilder);
+    auto targetValue = getValue(targetHandle);
     auto forAllOp = opBuilder.create<transform::TileUsingForallOp>(
         targetValue.getLoc(),
         /*target=*/targetValue,
@@ -355,7 +353,7 @@ ScheduleBuilder::tileUsingForAll(ValueHandles &targets,
         /*odsArg2=*/transform::NumThreadsSpec{},
         /*mapping=*/mapping);
     loopHandles.emplace_back(record<NamedValueHandle>(
-        forAllOp.getForallOp(), opBuilder,
+        forAllOp.getForallOp(),
         NamedValueHandleArgs{kTiledForAllTagName, IdentifierType::kAttribute}));
     // Update original handle to hold the tiled op.
     targetHandle->setHandle(forAllOp.getTiledOp());
@@ -363,16 +361,17 @@ ScheduleBuilder::tileUsingForAll(ValueHandles &targets,
   return ForallTilingResult{/*loops=*/loopHandles};
 }
 
-ScheduleBuilder::ForTilingResult ScheduleBuilder::tileUsingFor(
-    ValueHandles &targets, ValueHandleFoldResults &tileSizes,
-    OpBuilder &opBuilder, ArrayRef<int64_t> interchangeAxis) {
-  auto mapFn = [this, &opBuilder](Value tiledLoop) -> ValueHandle * {
+ScheduleBuilder::ForTilingResult
+ScheduleBuilder::tileUsingFor(ValueHandles &targets,
+                              ValueHandleFoldResults &tileSizes,
+                              ArrayRef<int64_t> interchangeAxis) {
+  OpBuilder &opBuilder = getOpBuilder();
+  auto mapFn = [this](Value tiledLoop) -> ValueHandle * {
     return record<NamedValueHandle>(
-        tiledLoop, opBuilder,
+        tiledLoop,
         NamedValueHandleArgs{kTiledForTagName, IdentifierType::kAttribute});
   };
-  auto [staticTileSizes, dynamicTileSizes] =
-      unpackFoldResults(tileSizes, opBuilder);
+  auto [staticTileSizes, dynamicTileSizes] = unpackFoldResults(tileSizes);
   SmallVector<bool> scalableSizes(tileSizes.size(), false);
   SmallVector<Type> outputTypes(
       llvm::count_if(staticTileSizes,
@@ -381,7 +380,7 @@ ScheduleBuilder::ForTilingResult ScheduleBuilder::tileUsingFor(
 
   SmallVector<ValueHandles> loopHandles;
   for (auto *targetHandle : targets) {
-    auto targetValue = getValue(targetHandle, opBuilder);
+    auto targetValue = getValue(targetHandle);
     auto forOp = opBuilder.create<transform::TileUsingForOp>(
         targetValue.getLoc(),
         /*tiled_linalg_op=*/opBuilder.getType<transform::AnyOpType>(),
@@ -413,22 +412,20 @@ ScheduleBuilder::ForTilingResult ScheduleBuilder::tileUsingFor(
 ScheduleBuilder::ForReductionTilingResult
 ScheduleBuilder::tileReductionUsingFor(ValueHandles &targets,
                                        ValueHandleFoldResults &tileSizes,
-                                       OpBuilder &opBuilder,
                                        int64_t multiReduceNum) {
-  auto [staticTileSizes, dynamicTileSizes] =
-      unpackFoldResults(tileSizes, opBuilder);
+  OpBuilder &opBuilder = getOpBuilder();
+  auto [staticTileSizes, dynamicTileSizes] = unpackFoldResults(tileSizes);
 
   ForReductionTilingResult result;
 
-  auto mapFnForInit = [this, &opBuilder](Value init) -> ValueHandle * {
+  auto mapFnForInit = [this](Value init) -> ValueHandle * {
     return record<NamedValueHandle>(
-        init, opBuilder,
-        NamedValueHandleArgs{kTileReductionInitOpTagName,
-                             IdentifierType::kAttribute});
+        init, NamedValueHandleArgs{kTileReductionInitOpTagName,
+                                   IdentifierType::kAttribute});
   };
 
   for (auto *targetHandle : targets) {
-    auto targetValue = getValue(targetHandle, opBuilder);
+    auto targetValue = getValue(targetHandle);
     auto tileReductionOp = opBuilder.create<transform::TileReductionUsingForOp>(
         targetValue.getLoc(),
         /*fill_op=*/
@@ -450,12 +447,12 @@ ScheduleBuilder::tileReductionUsingFor(ValueHandles &targets,
 #endif
     LDBG(tileReductionOp.getForOp());
     result.partialReductionOp.emplace_back(record<NamedValueHandle>(
-        tileReductionOp.getSplitLinalgOp(), opBuilder,
+        tileReductionOp.getSplitLinalgOp(),
         NamedValueHandleArgs{kTileReductionPartialReductionOpTagName,
                              IdentifierType::kAttribute}));
 
     result.finalReductionOp.emplace_back(record<NamedValueHandle>(
-        tileReductionOp.getCombiningLinalgOp(), opBuilder,
+        tileReductionOp.getCombiningLinalgOp(),
         NamedValueHandleArgs{kTileReductionFinalReductionOpTagName,
                              IdentifierType::kAttribute}));
 
@@ -463,7 +460,7 @@ ScheduleBuilder::tileReductionUsingFor(ValueHandles &targets,
         llvm::map_to_vector(tileReductionOp.getFillOp(), mapFnForInit));
 
     result.loops.emplace_back(record<NamedValueHandle>(
-        tileReductionOp.getForOp(), opBuilder,
+        tileReductionOp.getForOp(),
         NamedValueHandleArgs{kTileReductionLoopTagName,
                              IdentifierType::kAttribute}));
 
@@ -474,15 +471,15 @@ ScheduleBuilder::tileReductionUsingFor(ValueHandles &targets,
   return result;
 }
 
-ValueHandle *ScheduleBuilder::fuseLoops(ValueHandles &loops,
-                                        OpBuilder &opBuilder) {
+ValueHandle *ScheduleBuilder::fuseLoops(ValueHandles &loops) {
+  OpBuilder &opBuilder = getOpBuilder();
   assert(!std::empty(loops) && "Should fuse more than one loops");
   auto *fusedLoopHandle = loops.front();
-  auto fusedLoopValue = getValue(fusedLoopHandle, opBuilder);
+  auto fusedLoopValue = getValue(fusedLoopHandle);
   fusedLoopHandle->invalidate();
 
   for (auto *nextLoopHandle : llvm::drop_begin(loops)) {
-    auto nextLoopValue = getValue(nextLoopHandle, opBuilder);
+    auto nextLoopValue = getValue(nextLoopHandle);
     fusedLoopValue =
         opBuilder
             .create<transform::LoopFuseSiblingOp>(
@@ -494,12 +491,12 @@ ValueHandle *ScheduleBuilder::fuseLoops(ValueHandles &loops,
     nextLoopHandle->invalidate();
   }
   return record<NamedValueHandle>(
-      fusedLoopValue, opBuilder,
+      fusedLoopValue,
       NamedValueHandleArgs{kFusedLoopTagName, IdentifierType::kAttribute});
 }
 
 ValueHandles ScheduleBuilder::fuseLoopsForEachDim(
-    ArrayRef<ValueHandles> tiledLoopsForEachDim, OpBuilder &builder) {
+    ArrayRef<ValueHandles> tiledLoopsForEachDim) {
   ValueHandles fusedLoops;
   for (ValueHandles currentDimTiledLoops : tiledLoopsForEachDim) {
     auto loopsToFuse = llvm::to_vector(llvm::make_filter_range(
@@ -511,24 +508,23 @@ ValueHandles ScheduleBuilder::fuseLoopsForEachDim(
     llvm::for_each(loopsToFuse, [](ValueHandle *vh) {
       vh->setStatus(HandleStatus::kNeedsRematch);
     });
-    fusedLoops.push_back(fuseLoops(loopsToFuse, builder));
+    fusedLoops.push_back(fuseLoops(loopsToFuse));
   }
   return fusedLoops;
 }
 
-ValueHandle *ScheduleBuilder::coalesceLoops(ValueHandle *outerMostLoop,
-                                            OpBuilder &opBuilder) {
+ValueHandle *ScheduleBuilder::coalesceLoops(ValueHandle *outerMostLoop) {
+  OpBuilder &opBuilder = getOpBuilder();
   // Apply canonicalize before coalescing to move invariants out of loop.
   applyPatterns(
-      getFuncHandle(opBuilder),
+      getFuncHandle(),
       /*patterns=*/
       SmallVector<TransformPatternKind>{TransformPatternKind::CANONICALIZATION},
-      opBuilder,
       /*disablePatterns=*/
       SmallVector<CanonicalizationPatternKind>{
           CanonicalizationPatternKind::kSimplifyTrivialLoops});
 
-  auto outerMostLoopValue = getValue(outerMostLoop, opBuilder);
+  auto outerMostLoopValue = getValue(outerMostLoop);
   outerMostLoop->invalidate();
 
   auto coalescedLoopValue = opBuilder.create<transform::LoopCoalesceOp>(
@@ -537,28 +533,27 @@ ValueHandle *ScheduleBuilder::coalesceLoops(ValueHandle *outerMostLoop,
       /*target=*/outerMostLoopValue);
 
   return record<NamedValueHandle>(
-      coalescedLoopValue, opBuilder,
+      coalescedLoopValue,
       NamedValueHandleArgs{kCoalescedLoopTagName, IdentifierType::kAttribute});
 }
 
 void ScheduleBuilder::fuseIntoContaining(
     ValueHandles &targetOps, ValueHandles &containingLoops,
-    OpBuilder &opBuilder, bool duplicateProducers,
-    bool applyCanonicalizeAfterEachFusion) {
-  SmallVector<Value> containingLoopValues =
-      getValues(containingLoops, opBuilder);
+    bool duplicateProducers, bool applyCanonicalizeAfterEachFusion) {
+  OpBuilder &opBuilder = getOpBuilder();
+  SmallVector<Value> containingLoopValues = getValues(containingLoops);
   size_t numContainingLoop = containingLoopValues.size();
 
   SmallVector<Value> fusedLoops;
   for (auto *targetHandle : targetOps) {
-    auto targetValue = getValue(targetHandle, opBuilder);
+    auto targetValue = getValue(targetHandle);
     Location loc = targetValue.getLoc();
     if (applyCanonicalizeAfterEachFusion) {
       // Construct `transform::ForeachOp` to perform canonicalization before
       // fusing each target op into the containing op.
       // This is necessarily for complicated cases where the target ops
       // are used multiple times in the containing op.
-      auto forEachRegionBuilderFn = [&](ImplicitLocOpBuilder &opBuilder,
+      auto forEachRegionBuilderFn = [&](ImplicitLocOpBuilder &regionBuilder,
                                         Block &block) -> void {
         auto blockArg = block.getArgument(0);
 
@@ -566,27 +561,26 @@ void ScheduleBuilder::fuseIntoContaining(
         //   a) kSimplifyTrivialLoops: in case trivial loops is simplified and
         //      lead to invalid loop handles
         applyPatterns(
-            getFuncHandle(opBuilder),
+            getFuncHandle(),
             /*patterns=*/
             SmallVector<TransformPatternKind>{
                 TransformPatternKind::CSE,
                 TransformPatternKind::CANONICALIZATION,
                 TransformPatternKind::MERGE_CONSECUTIVE_INSERT_EXTRACT_SLICE,
                 TransformPatternKind::RESOLVE_RANKED_SHAPED_TYPE_RESULT_DIMS},
-            opBuilder,
             /*disablePatterns=*/
             SmallVector<CanonicalizationPatternKind>{
                 CanonicalizationPatternKind::kSimplifyTrivialLoops});
-        auto op = createFuseIntoContainingOp(blockArg, containingLoopValues,
-                                             duplicateProducers,
-                                             numContainingLoop, opBuilder, loc);
-        opBuilder.create<transform::YieldOp>(op.getLoc(), op->getResults());
+        auto op = createFuseIntoContainingOp(
+            blockArg, containingLoopValues, duplicateProducers,
+            numContainingLoop, regionBuilder, loc);
+        regionBuilder.create<transform::YieldOp>(op.getLoc(), op->getResults());
       };
 
       std::vector<Type> forEachResultTypes(
           numContainingLoop * 2, opBuilder.getType<transform::AnyOpType>());
       auto forEachResults = createForEachOp(targetValue, forEachResultTypes,
-                                            forEachRegionBuilderFn, opBuilder);
+                                            forEachRegionBuilderFn);
       fusedLoops = {forEachResults.begin(),
                     forEachResults.begin() + numContainingLoop};
       // TODO: Update containingLoopValue to ForeachOp's result
@@ -607,7 +601,8 @@ void ScheduleBuilder::fuseIntoContaining(
                                 applyCanonicalizeAfterEachFusion);
 }
 
-void ScheduleBuilder::applyCanonicalization(OpBuilder &opBuilder) {
+void ScheduleBuilder::applyCanonicalization() {
+  OpBuilder &opBuilder = getOpBuilder();
   auto matchTarget = getTransformSeqHandle();
   matchTarget = opBuilder
                     .create<transform::ApplyRegisteredPassOp>(
@@ -620,7 +615,8 @@ void ScheduleBuilder::applyCanonicalization(OpBuilder &opBuilder) {
   setTransformSeqHandle(matchTarget);
 }
 
-void ScheduleBuilder::applyCSE(OpBuilder &opBuilder) {
+void ScheduleBuilder::applyCSE() {
+  OpBuilder &opBuilder = getOpBuilder();
   auto matchTarget = getTransformSeqHandle();
   matchTarget = opBuilder
                     .create<transform::ApplyRegisteredPassOp>(
@@ -635,8 +631,8 @@ void ScheduleBuilder::applyCSE(OpBuilder &opBuilder) {
 
 void ScheduleBuilder::applyPatterns(
     ValueHandle *target, const SmallVector<TransformPatternKind> &patterns,
-    OpBuilder &opBuilder,
     const SmallVector<CanonicalizationPatternKind> &disablePatterns) {
+  OpBuilder &opBuilder = getOpBuilder();
   bool applyCSE = false;
   auto bodyBuilderFn = [&patterns, &applyCSE](OpBuilder &p, Location loc) {
     llvm::for_each(patterns, [&p, &loc, &applyCSE](TransformPatternKind k) {
@@ -658,7 +654,7 @@ void ScheduleBuilder::applyPatterns(
       }
     });
   };
-  Value targetValue = getValue(target, opBuilder);
+  Value targetValue = getValue(target);
   auto applyPatternsOp = opBuilder.create<transform::ApplyPatternsOp>(
       targetValue.getLoc(),
       /*target=*/targetValue,
@@ -688,15 +684,16 @@ void ScheduleBuilder::applyPatterns(
 // Handle recording.
 //===----------------------------------------------------------------------===//
 
-NamedValueHandle ScheduleBuilder::recordImpl(Value target, OpBuilder &opBuilder,
+NamedValueHandle ScheduleBuilder::recordImpl(Value target,
                                              const NamedValueHandleArgs &args) {
+  OpBuilder &opBuilder = getOpBuilder();
   // If the identifier type is operation name, then it's already unique.
   std::string uniqueName =
       args.isNameUnique ? args.name.str()
                         : getHandleRecord()->getAndRecordAttrName(args.name);
 
   if (args.needsReverse)
-    target = createReverseOp(target, opBuilder);
+    target = createReverseOp(target);
 
   if (args.needsAnnotate)
     opBuilder.create<transform::AnnotateOp>(
@@ -709,15 +706,11 @@ NamedValueHandle ScheduleBuilder::recordImpl(Value target, OpBuilder &opBuilder,
                           args.needsReverse);
 }
 
-RegularValueHandle
-ScheduleBuilder::recordImpl(Value target,
-                            [[maybe_unused]] OpBuilder &opBuilder) {
+RegularValueHandle ScheduleBuilder::recordImpl(Value target) {
   return RegularValueHandle(target, HandleStatus::kValid);
 }
 
-FuncArgHandle ScheduleBuilder::recordImpl(Value target,
-                                          [[maybe_unused]] OpBuilder &opBuilder,
-                                          size_t funcArgNum) {
+FuncArgHandle ScheduleBuilder::recordImpl(Value target, size_t funcArgNum) {
   return FuncArgHandle(target, funcArgNum, HandleStatus::kValid);
 }
 
@@ -727,9 +720,10 @@ FuncArgHandle ScheduleBuilder::recordImpl(Value target,
 
 ScheduleBuilder::LoopTileResult
 ScheduleBuilder::tileLoop(ValueHandle *targetLoop,
-                          ValueHandleFoldResult tileSize, OpBuilder &opBuilder,
+                          ValueHandleFoldResult tileSize,
                           const LoopTileOptions &options) {
-  auto targetLoopValue = getValue(targetLoop, opBuilder);
+  OpBuilder &opBuilder = getOpBuilder();
+  auto targetLoopValue = getValue(targetLoop);
   targetLoop->invalidate();
 
   size_t numLoopsAfterTiling = 2;
@@ -743,7 +737,7 @@ ScheduleBuilder::tileLoop(ValueHandle *targetLoop,
   } else {
     staticTileSize = ShapedType::kDynamic;
     if (auto *h = dyn_cast<FuncArgHandle>(tileSize.getValueHandle().value()))
-      dynamicTileSizes.push_back(h->get(getFuncValue(opBuilder), opBuilder));
+      dynamicTileSizes.push_back(h->get(getFuncValue(), opBuilder));
     else
       dynamicTileSizes.push_back(tileSize.getValueHandle().value()->get());
   }
@@ -761,16 +755,16 @@ ScheduleBuilder::tileLoop(ValueHandle *targetLoop,
   auto results = loopTileOp.getLoops();
   return LoopTileResult{
       /*outerLoop=*/record<NamedValueHandle>(
-          results[0], opBuilder,
+          results[0],
           NamedValueHandleArgs{kTiledForTagName, IdentifierType::kAttribute}),
       /*innerLoop=*/record<NamedValueHandle>(
-          results[1], opBuilder,
+          results[1],
           NamedValueHandleArgs{kTiledForTagName, IdentifierType::kAttribute})};
 }
 
-void ScheduleBuilder::normalizeLoop(ValueHandle *targetLoop,
-                                    OpBuilder &opBuilder) {
-  auto targetLoopValue = getValue(targetLoop, opBuilder);
+void ScheduleBuilder::normalizeLoop(ValueHandle *targetLoop) {
+  OpBuilder &opBuilder = getOpBuilder();
+  auto targetLoopValue = getValue(targetLoop);
   auto normalizedLoop = opBuilder.create<transform::LoopNormalizeOp>(
       targetLoopValue.getLoc(),
       /*transformed=*/opBuilder.getType<transform::AnyOpType>(),
@@ -779,9 +773,10 @@ void ScheduleBuilder::normalizeLoop(ValueHandle *targetLoop,
 }
 
 ValueHandle *
-ScheduleBuilder::mapForToForall(ValueHandle *targetLoop, OpBuilder &opBuilder,
+ScheduleBuilder::mapForToForall(ValueHandle *targetLoop,
                                 const MapForToForallOptions &options) {
-  Value loopValue = getValue(targetLoop, opBuilder);
+  OpBuilder &opBuilder = getOpBuilder();
+  Value loopValue = getValue(targetLoop);
   auto forallValue = opBuilder.create<transform::ForToForallOp>(
       loopValue.getLoc(),
       /*forallOp=*/
@@ -797,7 +792,7 @@ ScheduleBuilder::mapForToForall(ValueHandle *targetLoop, OpBuilder &opBuilder,
 
   targetLoop->invalidate();
   return record<NamedValueHandle>(
-      forallValue, opBuilder,
+      forallValue,
       NamedValueHandleArgs{kForallLoopTagName, IdentifierType::kAttribute,
                            /*needsAnnotate=*/true});
 }

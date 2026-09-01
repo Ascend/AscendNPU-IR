@@ -206,8 +206,7 @@ TilingComputeFn SingleCubeScheduler::calculateTilingImpl() {
 // Implementation of SingleCubeScheduler schedule functions.
 //===----------------------------------------------------------------------===//
 
-LogicalResult SingleCubeScheduler::createScheduleImpl(TilingKey key,
-                                                      OpBuilder &opBuilder) {
+LogicalResult SingleCubeScheduler::createScheduleImpl(TilingKey key) {
 #ifndef NDEBUG
   TilingInfo *tilingInfo = getTilingInfo();
   assert(tilingInfo != nullptr);
@@ -215,8 +214,7 @@ LogicalResult SingleCubeScheduler::createScheduleImpl(TilingKey key,
   return success();
 }
 
-LogicalResult
-SingleCubeScheduler::runPreScheduleProcedure(OpBuilder &opBuilder) {
+LogicalResult SingleCubeScheduler::runPreScheduleProcedure() {
   func::FuncOp currentFunc = getOriginalKernel();
   // 1. apply tensor result to out params
   if (failed(applyTensorResultToOutParamsPass(currentFunc)))
@@ -228,8 +226,7 @@ SingleCubeScheduler::runPreScheduleProcedure(OpBuilder &opBuilder) {
   return success();
 }
 
-LogicalResult
-SingleCubeScheduler::runPostScheduleProcedure(OpBuilder &opBuilder) {
+LogicalResult SingleCubeScheduler::runPostScheduleProcedure() {
   TilingInfo *tilingInfo = getTilingInfo();
   auto tilingKey2Kernel = tilingInfo->getTilingKey2KernelMap();
   assert(!tilingKey2Kernel.empty());
@@ -253,6 +250,7 @@ SingleCubeScheduler::runPostScheduleProcedure(OpBuilder &opBuilder) {
   assert(tilingStruct != nullptr);
   funcOp.walk([&](Operation *op) {
     if (isMatmulOps(op)) {
+      OpBuilder &opBuilder = getOpBuilder();
       opBuilder.setInsertionPointAfter(op);
       StringAttr tilingStructAttr = opBuilder.getStringAttr(
           stringifyEnum(hacc::KernelArgType::kTilingStruct));

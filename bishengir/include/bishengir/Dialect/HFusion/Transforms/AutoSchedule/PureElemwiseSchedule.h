@@ -25,7 +25,6 @@
 
 namespace mlir {
 class Location;
-class OpBuilder;
 namespace hfusion {
 
 constexpr size_t kPureElemwiseTilingCnt = 3;
@@ -52,8 +51,7 @@ private:
   ///     copyOut(ub_buffer_size)
   /// \endcode
   TilingComputeFn calculateTilingImpl() override;
-  LogicalResult createScheduleImpl(TilingKey key,
-                                   OpBuilder &opBuilder) override;
+  LogicalResult createScheduleImpl(TilingKey key) override;
 };
 
 } // namespace hfusion

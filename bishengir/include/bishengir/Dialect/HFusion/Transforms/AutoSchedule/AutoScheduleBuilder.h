@@ -31,8 +31,6 @@
 #include "llvm/ADT/SetVector.h"
 
 namespace mlir {
-class OpBuilder;
-
 namespace hfusion {
 using namespace mlir::schedule;
 
@@ -99,7 +97,7 @@ public:
   using SetBufferSizeOptions = detail::SetBufferSizeOptions;
   using SetBufferSizeMode = transform::SetBufferSizeMode;
 
-  AutoScheduleBuilder() = default;
+  explicit AutoScheduleBuilder(MLIRContext *ctx) : ScheduleBuilder(ctx) {}
   ~AutoScheduleBuilder() override = default;
 
   //===--------------------------------------------------------------------===//
@@ -108,40 +106,34 @@ public:
 
   /// Get handles to the outputs of the kernel.
   ///
-  /// \param opBuilder Reference to IRBuilder instance.
   /// \param kernelInfo Information regarding the to-be-scheduled kernel.
   /// \param options Options for getting kernel outputs.
   /// \return RegularValueHandles to the producing op of kernel function's
   ///         return values.
   ValueHandles
-  getKernelOutputs(OpBuilder &opBuilder, const KernelInfo &kernelInfo,
+  getKernelOutputs(const KernelInfo &kernelInfo,
                    const GetKernelIOOptions &options = GetKernelIOOptions());
 
   /// Get handles to the inputs of the kernel.
   ///
-  /// \param opBuilder Reference to IRBuilder instance.
   /// \param options Options for getting kernel inputs.
   /// \return RegularValueHandles to the kernel function's input block argument.
   ValueHandles
-  getKernelInputs(OpBuilder &opBuilder,
-                  const GetKernelIOOptions &options = GetKernelIOOptions());
+  getKernelInputs(const GetKernelIOOptions &options = GetKernelIOOptions());
 
   /// Get handle to the tiling data.
   ///
   /// \param d Tiling data pointer.
-  /// \param opBuilder Reference to IRBuilder instance.
   /// \return FuncArgHandle to the kernel function's block argument that
   ///         corresponds to the tiling data.
-  ValueHandle *getTilingDataHandle(TilingData *d, OpBuilder &opBuilder);
+  ValueHandle *getTilingDataHandle(TilingData *d);
 
   /// Get handles to each tiling data in tiling struct \c s.
   ///
   /// \param s A series of tiling data pointer.
-  /// \param opBuilder Reference to IRBuilder instance.
   /// \return FuncArgHandles to the kernel function's block arguments that
   ///         correspond to the tiling data in tiling struct.
-  ValueHandles getTilingStructHandles(SmallVector<TilingData *> s,
-                                      OpBuilder &opBuilder);
+  ValueHandles getTilingStructHandles(SmallVector<TilingData *> s);
 
   /// Perform cache read on kernel inputs.
   ///
@@ -152,23 +144,21 @@ public:
   ///   linalg.copy ins(%arg0) outs(...) {__arg0__}
   /// ```
   ///
-  /// \param opBuilder Reference to IRBuilder instance.
   /// \param kernelInfo Information regarding the to-be-scheduled kernel.
   /// \return NamedValueHandle to cached ops. Note that the handle points to
   ///         ALL cached ops. If you wish to obtain a more fine-grained control
   ///         over each ops, you can match by the attributed name returned by
   ///         `getCacheReadTag`.
-  CacheIOResult cacheRead(OpBuilder &opBuilder, const KernelInfo &kernelInfo);
+  CacheIOResult cacheRead(const KernelInfo &kernelInfo);
 
   /// Get a unique identifier to the cached op by the function argument index.
   std::string getCacheReadTag(size_t funcArgIdx);
 
   /// Perform cache write on kernel outputs.
   ///
-  /// \param opBuilder Reference to IRBuilder instance.
   /// \param kernelInfo Information regarding the to-be-scheduled kernel.
   /// \return NamedValueHandle to the cached ops.
-  CacheIOResult cacheWrite(OpBuilder &opBuilder, const KernelInfo &kernelInfo);
+  CacheIOResult cacheWrite(const KernelInfo &kernelInfo);
 
   /// Tile the target linalg ops using \c scf.forall ops by a
   /// factor of \c blockDim. The block axis is tied to \c hivm.block<x>
@@ -183,12 +173,10 @@ public:
   ///
   /// \param targets Value handles to linalg ops.
   /// \param blockDim Number of blocks.
-  /// \param opBuilder Reference to IRBuilder instance.
   /// \return NamedValueHandles to `scf.forall` ops.
   /// \note The input `targets` handles are updated to the tiled linalg ops
   ///       and can be reused without invalidation.
-  ForallTilingResult tileUsingForAll(ValueHandles &targets, int64_t blockDim,
-                                     OpBuilder &opBuilder);
+  ForallTilingResult tileUsingForAll(ValueHandles &targets, int64_t blockDim);
 
   /// Set the size of the `targets` to `bufferSize`.
   ///
@@ -200,14 +188,13 @@ public:
   /// \param targets Value handles to target ops.
   /// \param bufferSize Static buffer size.
   /// \param options
-  /// \param opBuilder Reference to IRBuilder instance.
   /// \note The input `targets` handles are invalidated.
   void
-  setBufferSize(ValueHandles &targets, int64_t bufferSize, OpBuilder &opBuilder,
+  setBufferSize(ValueHandles &targets, int64_t bufferSize,
                 const SetBufferSizeOptions &options = SetBufferSizeOptions());
 
   /// Get handle to all intermediate producers.
-  ValueHandle *getIntermediateProducers(OpBuilder &opBuilder);
+  ValueHandle *getIntermediateProducers();
 };
 
 } // namespace hfusion
