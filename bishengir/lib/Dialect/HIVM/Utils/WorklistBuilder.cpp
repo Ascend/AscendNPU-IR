@@ -312,6 +312,10 @@ static bool illegalRegionedOp(Operation &op, bool isLoopMode) {
       hasVector = true;
   }
 
+  if (isLoopMode && !hasCube && !hasVector &&
+      op.walk([](DebugOp) { return WalkResult::interrupt(); }).wasInterrupted())
+      hasVector = true;
+
   auto unit = UnitAttr::get(op.getContext());
   if (hasCube)
     op.setAttr(CubeOnlyAttrName, unit);
@@ -521,6 +525,14 @@ markWorkspaceOps(Operation *op,
       return alloc->emitWarning(
           "Expecting alloc_workspace and its tensor to only have one user "
           "(excluding annotation.mark)");
+
+    if (auto nz = dyn_cast<NZ2NDOp>(*toTensor.getResult().getUsers().begin())) {
+      Value nzResult = nz.getResultTensor();
+      if (nzResult && !nzResult.use_empty() &&
+          llvm::all_of(nzResult.getUsers(),
+                       [](Operation *u) { return isa<DebugOp>(u); }))
+        return success();
+    }
 
     if (allocs.contains(alloc)) {
       allocs[alloc].toTensor = toTensor;
@@ -1122,9 +1134,16 @@ LogicalResult WorklistBuilder::traceDependentOps(WorkItem &item) {
         if (it != counterClones.end() && !item.ops.contains(it->second))
           workingStack.push_back(it->second);
       }
-    for (Operation *usr : op->getUsers())
-      if (isa<annotation::MarkOp, DebugOp>(usr))
-        mapOpToItem(*usr, item);
+
+    for (Operation *usr : op->getUsers()) {
+      if (!isa<annotation::MarkOp, DebugOp>(usr) ||
+          usr->getBlock() != op->getBlock())
+        continue;
+      if (isa<DebugOp>(usr) && opToWorkItemMap.contains(usr))
+        continue;
+      mapOpToItem(*usr, item);
+    }
+
     if (isMemrefSubnetWriter(op)) {
       if (failed(traceMemrefSubnet(*op, workingStack)))
         return failure();
