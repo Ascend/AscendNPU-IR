@@ -93,6 +93,19 @@ createBubblePropagatorDown(Value oldValue, Value newValue, OpFoldResult offset,
   return propagateOp;
 }
 
+/// Like createBubblePropagatorDown but takes the old type directly.
+UnrealizedConversionCastOp
+createBubblePropagatorDownWithType(Type oldType, Value newValue,
+                                   OpFoldResult offset, OpFoldResult size,
+                                   int64_t tilingDim,
+                                   PatternRewriter &rewriter) {
+  PatternRewriter::InsertionGuard guard(rewriter);
+  rewriter.setInsertionPointAfterValue(newValue);
+  return createBubblePropagationCast(newValue, oldType,
+                                     kBubbleUpPropagateDown, offset, size,
+                                     tilingDim, rewriter);
+}
+
 /// Rebuild a memref type for `newShape`.
 /// Identity layouts stay identity (compact for the new extents, matching
 /// `createSlicedAllocLike`). Explicit strided layouts keep their strides so

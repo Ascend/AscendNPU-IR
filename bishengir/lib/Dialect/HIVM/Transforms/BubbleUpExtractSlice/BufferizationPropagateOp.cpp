@@ -255,6 +255,66 @@ LogicalResult BufferizationPropagateUpPattern::propagateUpSelect(
   return success();
 }
 
+LogicalResult BufferizationPropagateUpPattern::propagateUpIfOp(
+    scf::IfOp ifOp, UnrealizedConversionCastOp propagateOp,
+    PatternRewriter &rewriter) const {
+  auto slicedType = dyn_cast<MemRefType>(propagateOp.getResult(0).getType());
+  if (!slicedType)
+    return failure();
+
+  // scf.if with results must have an else block.
+  if (!ifOp.elseBlock())
+    return failure();
+
+  auto tilingDimInfo = getTilingDimInfo(propagateOp);
+
+  // Identify which result the propagate op is on.
+  Value input = propagateOp.getInputs()[0];
+  auto ifResult = cast<OpResult>(input);
+  unsigned resultNum = ifResult.getResultNumber();
+  Type oldType = ifResult.getType();
+
+  // Get the corresponding yield values from both branches.
+  Value thenYieldVal = ifOp.thenYield()->getOperand(resultNum);
+  Value elseYieldVal = ifOp.elseYield()->getOperand(resultNum);
+
+  // Create up links on both yield values so propagation continues
+  // up each branch independently.
+  auto upThen = createBubblePropagatorUpLink(
+      thenYieldVal, slicedType, tilingDimInfo.offset, tilingDimInfo.size,
+      tilingDimInfo.tilingDim, rewriter);
+  auto upElse = createBubblePropagatorUpLink(
+      elseYieldVal, slicedType, tilingDimInfo.offset, tilingDimInfo.size,
+      tilingDimInfo.tilingDim, rewriter);
+
+  // Update yield operands and result type in-place.
+  rewriter.modifyOpInPlace(ifOp, [&]() {
+    ifOp.thenYield()->setOperand(resultNum, upThen->getResult(0));
+    ifOp.elseYield()->setOperand(resultNum, upElse->getResult(0));
+    ifResult.setType(slicedType);
+  });
+
+  // Insert down propagators for other users of this result so they
+  // still see the original (full) type.
+  SmallVector<OpOperand *> otherUses;
+  for (auto &use : ifResult.getUses())
+    if (use.getOwner() != propagateOp)
+      otherUses.push_back(&use);
+  for (auto *use : otherUses) {
+    auto *user = use->getOwner();
+    auto downProp = createBubblePropagatorDownWithType(
+        oldType, ifResult, tilingDimInfo.offset, tilingDimInfo.size,
+        tilingDimInfo.tilingDim, rewriter);
+    rewriter.modifyOpInPlace(
+        user, [&]() { use->set(downProp->getResult(0)); });
+  }
+
+  rewriter.replaceOp(propagateOp, ifResult);
+
+  LDBG("Propagated up through scf.if " << ifOp);
+  return success();
+}
+
 // PropagateUp pattern should be rewritten here.
 LogicalResult BufferizationPropagateUpPattern::matchAndRewrite(
     UnrealizedConversionCastOp propagateOp, PatternRewriter &rewriter) const {
@@ -290,6 +350,9 @@ LogicalResult BufferizationPropagateUpPattern::matchAndRewrite(
       })
       .Case([&](arith::SelectOp op) {
         return propagateUpSelect(op, propagateOp, rewriter);
+      })
+      .Case([&](scf::IfOp op) {
+        return propagateUpIfOp(op, propagateOp, rewriter);
       })
       .Default([&](Operation *) { return failure(); });
 }
