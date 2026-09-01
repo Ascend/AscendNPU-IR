@@ -602,7 +602,7 @@ func.func @_attn_fwd_mix_aic(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_bas
 // CHECK:           %{{.*}} = arith.constant 16 : index
 // CHECK:           %{{.*}} = arith.constant 16 : index
 // CHECK:           %{{.*}} = memref.alloc(%{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}) {alignment = 64 : i64} : memref<?x?x?x?xf32, #hivm.address_space<cc>>
-// CHECK:           hivm.hir.Conv1dL1 {fixpipe_already_inserted = true, groups = 2 : i32, outputAlreadyNormalized, padding = 0 : i32, stride = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : memref<2x2x1x128x16xf16, #hivm.address_space<cbuf>>, memref<1x1x3x32x16xf16, #hivm.address_space<cbuf>>, i1) outs(%{{.*}} : memref<?x?x?x?xf32, #hivm.address_space<cc>>)
+// CHECK:           hivm.hir.Conv1dL1 {dilation = 1 : i32, fixpipe_already_inserted = true, groups = 2 : i32, outputAlreadyNormalized, padding = 0 : i32, stride = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : memref<2x2x1x128x16xf16, #hivm.address_space<cbuf>>, memref<1x1x3x32x16xf16, #hivm.address_space<cbuf>>, i1) outs(%{{.*}} : memref<?x?x?x?xf32, #hivm.address_space<cc>>)
 // CHECK:           %{{.*}} = arith.constant 126 : index
 // CHECK:           %{{.*}} = arith.constant 64 : index
 // CHECK:           %{{.*}} = affine.apply #[[$MAP]]()[%{{.*}}, %{{.*}}]
@@ -644,7 +644,7 @@ func.func @triton_conv1d_mix_aic(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts
   %alloc_0 = memref.alloc() {alignment = 64 : i64} : memref<1x1x3x32x16xf16, #hivm.address_space<cbuf>>
   hivm.hir.load ins(%3 : memref<1x1x3x32x16xf16, #hivm.address_space<gm>>) outs(%alloc_0 : memref<1x1x3x32x16xf16, #hivm.address_space<cbuf>>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
   %alloc_1 = memref.alloc() {alignment = 64 : i64} : memref<128x64xf32, #hivm.address_space<cc>>
-  hivm.hir.Conv1dL1 {fixpipe_already_inserted = true, groups = 2 : i32, outputAlreadyNormalized, padding = 0 : i32, stride = 1 : i32} ins(%alloc, %alloc_0, %true : memref<2x2x1x128x16xf16, #hivm.address_space<cbuf>>, memref<1x1x3x32x16xf16, #hivm.address_space<cbuf>>, i1) outs(%alloc_1 : memref<128x64xf32, #hivm.address_space<cc>>)
+  hivm.hir.Conv1dL1 {dilation = 1 : i32, fixpipe_already_inserted = true, groups = 2 : i32, outputAlreadyNormalized, padding = 0 : i32, stride = 1 : i32} ins(%alloc, %alloc_0, %true : memref<2x2x1x128x16xf16, #hivm.address_space<cbuf>>, memref<1x1x3x32x16xf16, #hivm.address_space<cbuf>>, i1) outs(%alloc_1 : memref<128x64xf32, #hivm.address_space<cc>>)
   %subview = memref.subview %alloc_1[0, 0] [126, 64] [1, 1] : memref<128x64xf32, #hivm.address_space<cc>> to memref<126x64xf32, strided<[64, 1]>, #hivm.address_space<cc>>
   %4 = memref_ext.alloc_workspace() from %arg2 offset = [%c19456] : from memref<?xi8, #hivm.address_space<gm>> to memref<126x64xf16, #hivm.address_space<gm>>
   hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%subview : memref<126x64xf32, strided<[64, 1]>, #hivm.address_space<cc>>) outs(%4 : memref<126x64xf16, #hivm.address_space<gm>>)
@@ -658,14 +658,14 @@ func.func @triton_conv1d_mix_aic(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts
 // CHECK-LABEL:   func.func @triton_conv3d_mix_aic
 // CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : memref<2x8x2x10x13x16xf16, #hivm.address_space<gm>>
 // CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : memref<3x2x4x5x12x16xf16, #hivm.address_space<gm>>
-// CHECK:           hivm.hir.Conv3dL1 {groups = 1 : i32, padding = 0 : i32}
+// CHECK:           hivm.hir.Conv3dL1 {dilation = 1 : i32, groups = 1 : i32, padding = 0 : i32, stride = 1 : i32}
 // CHECK:           annotation.mark %{{.*}} : memref<2x6x12x7x9xf16, #hivm.address_space<gm>>
 module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
 func.func @triton_conv3d_mix_aic(%arg0: memref<2x8x2x10x13x16xf16, #hivm.address_space<gm>>, %arg1: memref<3x2x4x5x12x16xf16, #hivm.address_space<gm>>, %arg2: memref<2x6x12x7x9xf16, #hivm.address_space<gm>>) {
   %true = arith.constant true
   annotation.mark %arg0 {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : memref<2x8x2x10x13x16xf16, #hivm.address_space<gm>>
   annotation.mark %arg1 {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : memref<3x2x4x5x12x16xf16, #hivm.address_space<gm>>
-  hivm.hir.Conv3dL1 {groups = 1 : i32, padding = 0 : i32}
+  hivm.hir.Conv3dL1 {dilation = 1 : i32, groups = 1 : i32, padding = 0 : i32, stride = 1 : i32}
       ins(%arg0, %arg1, %true : memref<2x8x2x10x13x16xf16, #hivm.address_space<gm>>, memref<3x2x4x5x12x16xf16, #hivm.address_space<gm>>, i1)
       outs(%arg2 : memref<2x6x12x7x9xf16, #hivm.address_space<gm>>)
   annotation.mark %arg2 : memref<2x6x12x7x9xf16, #hivm.address_space<gm>>

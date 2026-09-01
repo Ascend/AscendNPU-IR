@@ -1338,6 +1338,7 @@ struct HFusionToHIVMConv1DOp : public OpRewritePattern<hfusion::Conv1DOp> {
     auto group = op.getGroups();
     auto stride = op.getStride();
     auto padding = op.getPadding();
+    auto dilation = op.getDilation();
 #ifndef BSPUB_DAVINCI_BISHENGIR_A5
     Value initCondition =
         rewriter.create<arith::ConstantIntOp>(op->getLoc(), 1, int1Type);
@@ -1348,7 +1349,7 @@ struct HFusionToHIVMConv1DOp : public OpRewritePattern<hfusion::Conv1DOp> {
     rewriter.replaceOpWithNewOp<hivm::Conv1DL1Op>(op, resType, input, weight,
                                                   bias, init, initCondition,
                                                   ValueRange{}, stride, padding,
-                                                  group);
+                                                  dilation, group);
     return success();
   }
 };
@@ -1369,6 +1370,7 @@ struct HFusionToHIVMConv2DOp : public OpRewritePattern<hfusion::Conv2DOp> {
     auto group = op.getGroups();
     auto stride = op.getStrideAttr();
     auto padding = op.getPaddingAttr();
+    auto dilation = op.getDilationAttr();
 #ifndef BSPUB_DAVINCI_BISHENGIR_A5
     Value initCondition =
         rewriter.create<arith::ConstantIntOp>(op->getLoc(), 1, int1Type);
@@ -1379,7 +1381,7 @@ struct HFusionToHIVMConv2DOp : public OpRewritePattern<hfusion::Conv2DOp> {
     rewriter.replaceOpWithNewOp<hivm::Conv2DL1Op>(op, resType, input, weight,
                                                   bias, init, initCondition,
                                                   ValueRange{}, stride, padding,
-                                                  group);
+                                                  dilation, group);
     return success();
   }
 };
@@ -1400,6 +1402,7 @@ struct HFusionToHIVMConv3DOp : public OpRewritePattern<hfusion::Conv3DOp> {
     auto group = op.getGroups();
     auto stride = op.getStrideAttr();
     auto padding = op.getPaddingAttr();
+    auto dilation = op.getDilationAttr();
 #ifndef BSPUB_DAVINCI_BISHENGIR_A5
     Value initCondition =
         rewriter.create<arith::ConstantIntOp>(op->getLoc(), 1, int1Type);
@@ -1410,7 +1413,7 @@ struct HFusionToHIVMConv3DOp : public OpRewritePattern<hfusion::Conv3DOp> {
     rewriter.replaceOpWithNewOp<hivm::Conv3DL1Op>(op, resType, input, weight,
                                                   bias, init, initCondition,
                                                   ValueRange{}, stride, padding,
-                                                  group);
+                                                  dilation, group);
     return success();
   }
 };

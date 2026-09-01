@@ -1167,11 +1167,12 @@ public:
     auto initCondition = op.getInitCondition();
     auto stride = op.getStrideAttr();
     auto padding = op.getPaddingAttr();
+    auto dilation = op.getDilationAttr();
     auto groups = op.getGroupsAttr();
 
     auto newConv = rewriter.create<ConvOpType>(
         loc, TypeRange{fp32ResultType}, input, weight, newBias, init,
-        initCondition, ValueRange{}, stride, padding, groups);
+        initCondition, ValueRange{}, stride, padding, dilation, groups);
 
     auto castInit = rewriter.create<tensor::EmptyOp>(loc, shape, elemType);
     auto roundAttr = getRoundAttr(rewriter, fp32Ty, elemType);
@@ -1259,6 +1260,7 @@ public:
     auto initCondition = op.getInitCondition();
     auto stride = op.getStrideAttr();
     auto padding = op.getPaddingAttr();
+    auto dilation = op.getDilationAttr();
     auto groups = op.getGroupsAttr();
 
     auto elemType = resultType.getElementType();
@@ -1271,7 +1273,8 @@ public:
 
     auto newConv = rewriter.create<ConvOpType>(
         loc, TypeRange{resultType}, input, weight, /*bias=*/Value(),
-        convNoBiasInit, initCondition, ValueRange{}, stride, padding, groups);
+        convNoBiasInit, initCondition, ValueRange{}, stride, padding, dilation,
+        groups);
 
     Value convResult = newConv.getResultTensors()[0];
     SmallVector<int64_t> vaddShape(shape.begin(), shape.end());
@@ -1442,6 +1445,7 @@ public:
     auto initCondition = op.getInitCondition();
     auto stride = op.getStrideAttr();
     auto padding = op.getPaddingAttr();
+    auto dilation = op.getDilationAttr();
     auto groups = op.getGroupsAttr();
     int64_t groupsVal = groups.getInt();
 
@@ -1583,7 +1587,7 @@ public:
     Value convBias = useFusedConv3DBiasAdd ? Value() : bias;
     auto newConvOp = rewriter.create<ConvOpType>(
         loc, newResultType, input, weight, convBias, newEmpty, initCondition,
-        ValueRange{}, stride, padding, groups);
+        ValueRange{}, stride, padding, dilation, groups);
     if (op->hasAttr(conv3dDepthPadded)) {
       // Preserve depth-padding contract across op replacement.
       newConvOp->setAttr(conv3dDepthPadded, rewriter.getUnitAttr());
