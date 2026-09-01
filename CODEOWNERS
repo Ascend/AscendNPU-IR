@@ -45,3 +45,12 @@
 # Normalize Matmul.
 /bishengir/**/NormalizeMatmul.* @danielcm585 @jy834507063 @jqran @hid90099092 @tanshengshun
 /bishengir/test/**/normalize-matmul* @danielcm585 @jy834507063 @jqran @hid90099092 @tanshengshun
+
+# Cube data layout.
+/bishengir/lib/Dialect/HIVM/Transforms/ConvertLayout/ @hocky @jy834507063 @liupengcheng2012 @hid90099092 @tanshengshun
+/bishengir/**/ConvertLayoutUtils.h @hocky @jy834507063 @liupengcheng2012 @hid90099092 @tanshengshun
+/bishengir/**/ConvertLayoutCanonicalizations.* @hocky @jy834507063 @liupengcheng2012 @hid90099092 @tanshengshun
+/bishengir/**/InferHIVMDataLayout.* @hocky @jy834507063 @liupengcheng2012 @hid90099092 @tanshengshun
+/bishengir/**/OpLayoutInterface.* @hocky @jy834507063 @liupengcheng2012 @hid90099092 @tanshengshun
+/bishengir/lib/Dialect/HIVM/IR/OpLayoutInterface/ @hocky @jy834507063 @liupengcheng2012 @hid90099092 @tanshengshun
+/bishengir/test/Dialect/HIVM/**/*layout* @hocky @jy834507063 @liupengcheng2012 @hid90099092 @tanshengshun
