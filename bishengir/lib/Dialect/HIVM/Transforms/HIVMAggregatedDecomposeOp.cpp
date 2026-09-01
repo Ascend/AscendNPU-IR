@@ -27,6 +27,8 @@
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/PatternMatch.h"
@@ -100,6 +102,144 @@ private:
   bishengir::DecomposePhase decomposePhase;
 };
 
+static std::optional<Type>
+selectTmpElementTypeForUBAlign(int64_t lastDimElems,
+                               PatternRewriter &rewriter) {
+  for (Type type : {Type(rewriter.getF16Type()), Type(rewriter.getF32Type())}) {
+    int64_t lastDimBits = lastDimElems * type.getIntOrFloatBitWidth();
+    if (lastDimBits % utils::kUBAlignSizeInBits == 0)
+      return type;
+  }
+  return std::nullopt;
+}
+
+static Value copyUnalignedSubviewViaLoadStore(PatternRewriter &rewriter,
+                                              Location loc,
+                                              memref::SubViewOp op) {
+  Value compactBuffer =
+      utils::createTmpBufferOrTensorWithTargetType(rewriter, loc, op);
+
+  auto c0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+  auto c1 = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+  SmallVector<Value> srcIndices;
+  SmallVector<Value> dstIndices;
+  for (auto [size, offset] :
+       llvm::zip(op.getMixedSizes(), op.getMixedOffsets())) {
+    Value upper = getValueOrCreateConstantIndexOp(rewriter, loc, size);
+    auto forOp = rewriter.create<scf::ForOp>(loc, c0, upper, c1);
+    rewriter.setInsertionPointToStart(forOp.getBody());
+    Value iv = forOp.getInductionVar();
+    Value offsetVal = getValueOrCreateConstantIndexOp(rewriter, loc, offset);
+    srcIndices.push_back(rewriter.create<arith::AddIOp>(loc, iv, offsetVal));
+    dstIndices.push_back(iv);
+  }
+
+  Value loaded =
+      rewriter.create<memref::LoadOp>(loc, op.getSource(), srcIndices);
+  rewriter.create<memref::StoreOp>(loc, loaded, compactBuffer, dstIndices);
+
+  return compactBuffer;
+}
+
+static void copyNamedAttrs(Operation *from, Operation *to) {
+  for (auto attr : from->getAttrs()) {
+    if (!to->hasAttr(attr.getName()))
+      to->setAttr(attr.getName(), attr.getValue());
+  }
+}
+
+/// After replacing a strided subview with a compact buffer, refresh derived
+/// memref view ops whose result layout is computed from the source type.
+static void refreshMemrefViewChain(PatternRewriter &rewriter, Value root) {
+  SmallVector<Value> workList = {root};
+  DenseSet<Value> visited;
+  while (!workList.empty()) {
+    Value val = workList.pop_back_val();
+    if (!visited.insert(val).second)
+      continue;
+
+    SmallVector<Operation *> users(val.getUsers());
+    for (Operation *user : users) {
+      if (auto expandOp = dyn_cast<memref::ExpandShapeOp>(user)) {
+        auto srcType = cast<MemRefType>(expandOp.getSrc().getType());
+        FailureOr<MemRefType> expectedType =
+            memref::ExpandShapeOp::computeExpandedType(
+                srcType, expandOp.getResultType().getShape(),
+                expandOp.getReassociationIndices());
+        if (succeeded(expectedType) &&
+            *expectedType != expandOp.getResultType()) {
+          rewriter.setInsertionPoint(expandOp);
+          auto newOp = rewriter.create<memref::ExpandShapeOp>(
+              expandOp.getLoc(), expandOp.getResultType().getShape(),
+              expandOp.getSrc(), expandOp.getReassociationIndices());
+          copyNamedAttrs(expandOp, newOp);
+          rewriter.replaceOp(expandOp, newOp.getResult());
+          workList.push_back(newOp.getResult());
+        } else {
+          workList.push_back(expandOp.getResult());
+        }
+        continue;
+      }
+
+      if (auto collapseOp = dyn_cast<memref::CollapseShapeOp>(user)) {
+        auto srcType = cast<MemRefType>(collapseOp.getSrc().getType());
+        MemRefType expectedType = memref::CollapseShapeOp::computeCollapsedType(
+            srcType, collapseOp.getReassociationIndices());
+        if (expectedType != collapseOp.getResultType()) {
+          rewriter.setInsertionPoint(collapseOp);
+          auto newOp = rewriter.create<memref::CollapseShapeOp>(
+              collapseOp.getLoc(), collapseOp.getSrc(),
+              collapseOp.getReassociationIndices());
+          copyNamedAttrs(collapseOp, newOp);
+          rewriter.replaceOp(collapseOp, newOp.getResult());
+          workList.push_back(newOp.getResult());
+        } else {
+          workList.push_back(collapseOp.getResult());
+        }
+        continue;
+      }
+
+      if (auto subviewOp = dyn_cast<memref::SubViewOp>(user)) {
+        auto newType = cast<MemRefType>(memref::SubViewOp::inferResultType(
+            cast<MemRefType>(subviewOp.getSource().getType()),
+            subviewOp.getMixedOffsets(), subviewOp.getMixedSizes(),
+            subviewOp.getMixedStrides()));
+        if (newType != subviewOp.getType()) {
+          rewriter.modifyOpInPlace(
+              subviewOp, [&]() { subviewOp.getResult().setType(newType); });
+        }
+        workList.push_back(subviewOp.getResult());
+        continue;
+      }
+
+      if (auto castOp = dyn_cast<memref::CastOp>(user)) {
+        auto srcType = cast<MemRefType>(castOp.getSource().getType());
+        auto dstType = cast<MemRefType>(castOp.getType());
+        auto newDstType =
+            MemRefType::get(dstType.getShape(), dstType.getElementType(),
+                            srcType.getLayout(), dstType.getMemorySpace());
+        if (newDstType != dstType) {
+          rewriter.modifyOpInPlace(
+              castOp, [&]() { castOp.getResult().setType(newDstType); });
+        }
+        workList.push_back(castOp.getResult());
+        continue;
+      }
+
+      if (auto spaceCastOp = dyn_cast<memref::MemorySpaceCastOp>(user)) {
+        workList.push_back(spaceCastOp.getResult());
+      }
+    }
+  }
+}
+
+static void replaceSubviewAndRefreshMemrefViews(PatternRewriter &rewriter,
+                                                memref::SubViewOp op,
+                                                Value replacement) {
+  rewriter.replaceOp(op, replacement);
+  refreshMemrefViewChain(rewriter, replacement);
+}
+
 struct DecomposeUnalignedSubview : public OpRewritePattern<memref::SubViewOp> {
   using OpRewritePattern<memref::SubViewOp>::OpRewritePattern;
 
@@ -107,17 +247,18 @@ struct DecomposeUnalignedSubview : public OpRewritePattern<memref::SubViewOp> {
                                 PatternRewriter &rewriter) const override {
     auto srcType = op.getSourceType();
     auto dstType = op.getType();
-    if (srcType.getElementType().getIntOrFloatBitWidth() != 1)
+    if (!isLocalBuffer(GetBufferSpaceAttr(op.getSource())))
       return failure();
-    auto srcLastDimSize = srcType.getShape().back();
-    auto dstLastDimSize = dstType.getShape().back();
-    if (srcType.getRank() == 1)
+    if (!isMarkedExtractSliceOp(op))
       return failure();
-    if (srcLastDimSize == dstLastDimSize)
+    if (utils::isAlignedInUB(dstType))
+      return failure();
+    if (ShapedType::isDynamic(dstType.getShape().back()))
       return failure();
     if (op.getDroppedDims().back())
       return failure();
-    if (dstLastDimSize % utils::kUBAlignSizeInBits == 0)
+    auto slicedDims = getExtractOrInsertDim(op);
+    if (slicedDims.size() != 1 || *slicedDims.begin() != srcType.getRank() - 1)
       return failure();
     if (llvm::any_of(op->getUses(), [&](auto &use) {
           auto dstOp =
@@ -128,22 +269,23 @@ struct DecomposeUnalignedSubview : public OpRewritePattern<memref::SubViewOp> {
         }))
       return failure();
 
-    auto layout = dyn_cast<StridedLayoutAttr>(dstType.getLayout());
-    if (!layout || layout.getStrides()[1] == srcLastDimSize)
-      return failure();
-
+    auto elemType = srcType.getElementType();
+    auto bitWidth = elemType.getIntOrFloatBitWidth();
+    auto dstLastDimElems = dstType.getShape().back();
+    auto tmpType = selectTmpElementTypeForUBAlign(dstLastDimElems, rewriter);
     auto loc = op.getLoc();
-    auto i1Type = rewriter.getI1Type();
-    auto tmpType = rewriter.getF16Type();
-    if ((dstLastDimSize * 16) % utils::kUBAlignSizeInBits != 0) {
-      if ((dstLastDimSize * 32) % utils::kUBAlignSizeInBits != 0)
-        return failure();
-      tmpType = rewriter.getF32Type();
-    }
-    auto srcRoundAttr = rewriter.getAttr<hivm::RoundModeAttr>(
-        utils::selectRoundMode<hivm::RoundMode>(i1Type, tmpType));
 
-    auto srcCast = castTo(rewriter, loc, op.getSource(), srcRoundAttr, tmpType);
+    if (!tmpType.has_value()) {
+      Value result = copyUnalignedSubviewViaLoadStore(rewriter, loc, op);
+      replaceSubviewAndRefreshMemrefViews(rewriter, op, result);
+      return success();
+    }
+
+    auto srcRoundAttr = rewriter.getAttr<hivm::RoundModeAttr>(
+        utils::selectRoundMode<hivm::RoundMode>(elemType, tmpType.value()));
+
+    auto srcCast =
+        castTo(rewriter, loc, op.getSource(), srcRoundAttr, tmpType.value());
     auto newSubviewSrc = srcCast.getDst()[0];
 
     auto newSubviewType = memref::SubViewOp::inferRankReducedResultType(
@@ -161,14 +303,23 @@ struct DecomposeUnalignedSubview : public OpRewritePattern<memref::SubViewOp> {
     auto newValue =
         rewriter.create<hivm::CopyOp>(loc, TypeRange{}, newOp, dstBuffer)
             .getDst();
-    auto oneValue = rewriter.create<arith::ConstantOp>(
-        loc, rewriter.getFloatAttr(tmpType, 1));
-    dstBuffer = utils::createTmpBufferOrTensorWithTargetType(rewriter, loc, op);
-    auto dstCast = rewriter.create<hivm::VCmpOp>(
-        loc, TypeRange{}, ValueRange{newValue, oneValue}, ValueRange{dstBuffer},
-        hivm::CompareMode::EQ);
-    rewriter.replaceOp(op, dstCast.getDst()[0]);
-    return success();
+    if (bitWidth == 1) {
+      auto oneValue = rewriter.create<arith::ConstantOp>(
+          loc, rewriter.getFloatAttr(tmpType.value(), 1));
+      dstBuffer =
+          utils::createTmpBufferOrTensorWithTargetType(rewriter, loc, op);
+      auto dstCast = rewriter.create<hivm::VCmpOp>(
+          loc, TypeRange{}, ValueRange{newValue, oneValue},
+          ValueRange{dstBuffer}, hivm::CompareMode::EQ);
+      replaceSubviewAndRefreshMemrefViews(rewriter, op, dstCast.getDst()[0]);
+      return success();
+    } else {
+      auto dstRoundAttr = rewriter.getAttr<hivm::RoundModeAttr>(
+          utils::selectRoundMode<hivm::RoundMode>(tmpType.value(), elemType));
+      auto dstCast = castTo(rewriter, loc, newValue, dstRoundAttr, elemType);
+      replaceSubviewAndRefreshMemrefViews(rewriter, op, dstCast.getDst()[0]);
+      return success();
+    }
   }
 };
 
