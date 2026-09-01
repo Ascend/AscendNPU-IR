@@ -433,10 +433,7 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
   canonicalizationPipeline(pm, hfusionOptions);
   if (hfusionOptions.enableAutoVectorizeV2) {
     AutoVectorizeV2Options vecOptions;
-    // Keep multi-consumer fusion groups within the VF stack budget.
-    vecOptions.enableVFStackLimit =
-        hfusionOptions.enableVFStackLimit ||
-        hfusionOptions.hfusionEnableMultipleConsumerFusion;
+    vecOptions.enableVFStackLimit = hfusionOptions.enableVFStackLimit;
     vecOptions.enableMultipleConsumerFusion =
         hfusionOptions.hfusionEnableMultipleConsumerFusion;
     if (hfusionOptions.hfusionMaxFusedOpsInAutoVectorizeV2 >= 0)
