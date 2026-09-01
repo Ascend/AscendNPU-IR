@@ -30,8 +30,8 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // CHECK:   }
 // CHECK:   scf.yield %[[IF2]]#0, %[[ITER_AUX]], %[[IF2]]#1
 // CHECK: } {fixpipe_for_mmad_result_already_inserted = true}
-// CHECK-NOT: hivm.hir.fixpipe
-// CHECK: hivm.hir.store ins(%[[FOR2]]#0
+// CHECK: %[[FIXPIPE:.*]] = hivm.hir.fixpipe {{.*}} ins(%[[FOR2]]#0
+// CHECK: hivm.hir.store ins(%[[FIXPIPE]]
 func.func @cascade_mmad_multiple_results_to_same_downstream_loop(
     %cond: i1,
     %arg1: memref<128x128xf16>,
@@ -129,8 +129,8 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // CHECK:   }
 // CHECK:   scf.yield %[[IF_A]]
 // CHECK: } {fixpipe_for_mmad_result_already_inserted = true}
-// CHECK-NOT: hivm.hir.fixpipe
-// CHECK: hivm.hir.store ins(%[[FOR_A]]
+// CHECK: %[[FIXPIPE_A:.*]] = hivm.hir.fixpipe {{.*}} ins(%[[FOR_A]]
+// CHECK: hivm.hir.store ins(%[[FIXPIPE_A]]
 //
 // CHECK: %[[FOR_B:.*]] = scf.for {{.*}} iter_args(%[[ITER_B:.*]] = %[[FOR1]]#1)
 // CHECK:   %[[IF_B:.*]] = scf.if
@@ -142,8 +142,8 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // CHECK:   }
 // CHECK:   scf.yield %[[IF_B]]
 // CHECK: } {fixpipe_for_mmad_result_already_inserted = true}
-// CHECK-NOT: hivm.hir.fixpipe
-// CHECK: hivm.hir.store ins(%[[FOR_B]]
+// CHECK: %[[FIXPIPE_B:.*]] = hivm.hir.fixpipe {{.*}} ins(%[[FOR_B]]
+// CHECK: hivm.hir.store ins(%[[FIXPIPE_B]]
 func.func @cascade_mmad_multiple_results_to_different_downstream_loops(
     %cond1: i1,
     %cond2: i1,
