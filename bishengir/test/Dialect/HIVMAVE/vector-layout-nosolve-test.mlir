@@ -2,6 +2,20 @@
 
 // CHECK: No Solve
 // CHECK-NEXT: ========== Vector Layout Analysis Failure ==========
+// CHECK-NEXT: Search summary:
+// CHECK-NEXT:   Vector operations: 4
+// CHECK-NEXT:   Initial solutions: 1
+// CHECK-NEXT:   Operation attempts: 3
+// CHECK-NEXT:   Failed paths: 2
+// CHECK-NEXT:   Branch points: 1
+// CHECK-NEXT:   Conflict-directed backjumps: 1
+// CHECK-NEXT:   Chronological backtracks: 0
+// CHECK-NEXT:   Dropped unrelated frames: 0
+// CHECK-NEXT:   Maximum search depth: 1
+// CHECK-NEXT: Deepest failed partial solution:
+// CHECK-NEXT:   Initial solution: 1 / 1
+// CHECK-NEXT:   Solved vector operations: 1 / 4
+// CHECK-NEXT:   Search depth: 1
 // CHECK-NEXT: Location:
 // CHECK-NEXT: Operation: {{.*}}ave.hir.vtrc
 // CHECK-NEXT: Opcode: ave.hir.vtrc
@@ -10,9 +24,10 @@
 // CHECK-NEXT:   vector<64xi1>
 // CHECK-NEXT: Result types:
 // CHECK-NEXT:   vector<64xf16>
-// CHECK-NEXT: Candidates in the solution space:
-// CHECK-NEXT: Input states from last valid candidates:
-// CHECK:      State: b16
+// CHECK-NEXT: Vector states used by the failed operation:
+// CHECK-NEXT:   Result: {{.*}}State: b16
+// CHECK-NEXT:   Operand: {{.*}}State: <unassigned>
+// CHECK-NEXT:   Operand: {{.*}}State: b16
 // CHECK:      Possible causes and solutions:
 // CHECK-NEXT:   1. The operation may not have been lowered to the HIVMAVE dialect before VectorLayout analysis.
 // CHECK:         2. The operation type may not be handled in solveProblem TypeSwitch.
