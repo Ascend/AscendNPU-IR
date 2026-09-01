@@ -111,15 +111,9 @@ vector_deinterleave_2d(memref_t<__ubuf__ T, 2> *src,
                                        src_repeat_stride);
       return;
     }
-    // When N is not 32 Byte aligned, fallback to scalar deinterleave
-    __ubuf__ T *src_ptr = src->aligned + src->offset;
-    __ubuf__ T *dst_ptr = dst->aligned + dst->offset;
-    bool is_offset_aligned = isAddress32ByteAligned<T>(src_ptr) &&
-                             isAddress32ByteAligned<T>(dst_ptr);
-    if (!is_offset_aligned) {
-      scalar_deinterleave_2d<MODE, T>(src, dst);
-      return;
-    }
+    // Fallback to scalar when the layout is unsupported by both vector paths.
+    scalar_deinterleave_2d<MODE, T>(src, dst);
+    return;
   }
   static_assert("deinterleave op's unsupported mode");
 }
