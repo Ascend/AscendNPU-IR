@@ -26,3 +26,16 @@ func.func @fold_buffer_size_mark_to_source_alloc(%offset : index, %size : index,
   "some_use"(%subview) : (memref<?xf32, strided<[?], offset: ?>>) -> ()
   return
 }
+
+// -----
+
+// Erase the dead transpose mark together with its dead producer.
+// CHECK-LABEL: func.func @erase_dead_transpose_mark_and_src
+func.func @erase_dead_transpose_mark_and_src(%arg: memref<16x16xf16>) {
+  %tensor = bufferization.to_tensor %arg : memref<16x16xf16>
+  annotation.mark %tensor {MayImplicitTransposeWithLastAxis} : tensor<16x16xf16>
+  // CHECK-NOT: bufferization.to_tensor
+  // CHECK-NOT: annotation.mark
+  // CHECK: return
+  return
+}
