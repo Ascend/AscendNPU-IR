@@ -20,9 +20,9 @@
 /docs/**/*plan_memory* @wuying211 @SL25 @ssy_5825 @hid90099092 @tanshengshun
 
 # Multi-buffering.
-/bishengir/**/*MultiBuffer* @huangyujun123 @hid90099092 @tanshengshun
-/bishengir/test/**/*multi-buffer* @huangyujun123 @hid90099092 @tanshengshun
-/bishengir/test/**/*multibuffer* @huangyujun123 @hid90099092 @tanshengshun
+/bishengir/**/*MultiBuffer* @huangyujun123 @hid90099092 @tanshengshun @renxingdong
+/bishengir/test/**/*multi-buffer* @huangyujun123 @hid90099092 @tanshengshun @renxingdong
+/bishengir/test/**/*multibuffer* @huangyujun123 @hid90099092 @tanshengshun @renxingdong
 
 # Sync management.
 /bishengir/**/GraphSyncSolver/* @AmmarDab3an @tanzirui123123 @hi_sy @hid90099092 @tanshengshun
