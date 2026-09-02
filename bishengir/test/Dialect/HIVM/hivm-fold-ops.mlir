@@ -536,6 +536,59 @@ func.func @keep_hivm_debug_assert_nonconst(%cond: i1) {
 
 // -----
 
+// CHECK-LABEL: func.func @eliminate_self_copy_memref
+// CHECK-NOT: hivm.hir.copy
+func.func @eliminate_self_copy_memref(
+    %arg0: memref<128xf32, #hivm.address_space<ub>>) {
+  hivm.hir.copy
+      ins(%arg0 : memref<128xf32, #hivm.address_space<ub>>)
+      outs(%arg0 : memref<128xf32, #hivm.address_space<ub>>)
+  return
+}
+
+// -----
+
+// CHECK-LABEL: func.func @eliminate_self_copy_tensor
+// CHECK-NOT: hivm.hir.copy
+// CHECK: return %arg0
+func.func @eliminate_self_copy_tensor(%arg0: tensor<128xf32>)
+    -> tensor<128xf32> {
+  %0 = hivm.hir.copy ins(%arg0 : tensor<128xf32>)
+      outs(%arg0 : tensor<128xf32>) -> tensor<128xf32>
+  return %0 : tensor<128xf32>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @keep_non_self_copy
+// CHECK: hivm.hir.copy
+func.func @keep_non_self_copy(
+    %arg0: memref<128xf32, #hivm.address_space<ub>>,
+    %arg1: memref<128xf32, #hivm.address_space<ub>>) {
+  hivm.hir.copy
+      ins(%arg0 : memref<128xf32, #hivm.address_space<ub>>)
+      outs(%arg1 : memref<128xf32, #hivm.address_space<ub>>)
+  return
+}
+
+// -----
+
+// A self-copy with padding has non-trivial semantics and must be preserved.
+// CHECK-LABEL: func.func @keep_self_copy_with_padding
+// CHECK: hivm.hir.copy
+// CHECK-SAME: pad_mode = <PadValue>
+func.func @keep_self_copy_with_padding(
+    %arg0: memref<128xf32, #hivm.address_space<ub>>) {
+  %c0 = arith.constant 0.0 : f32
+  hivm.hir.copy
+      ins(%arg0 : memref<128xf32, #hivm.address_space<ub>>)
+      outs(%arg0 : memref<128xf32, #hivm.address_space<ub>>)
+      pad_mode = <PadValue> pad_value = %c0 : f32
+  return
+}
+
+// -----
+
 // VSort canonicalization: when sort_axis points to a dimension of size 1 and
 // src/dst have identical layouts, the vsort is redundant (sorting 1 element is
 // a no-op). It should be replaced by a CopyOp (buffer) or src (tensor).

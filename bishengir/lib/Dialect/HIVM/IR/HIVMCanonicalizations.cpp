@@ -672,6 +672,27 @@ struct DropLoadRightPad : public OpRewritePattern<LoadOp> {
     return dropLoadZeroPadding(load, rewriter, &LoadOp::getRightPaddingNumMutable);
   }
 };
+
+struct EliminateSelfCopy : public OpRewritePattern<CopyOp> {
+  using OpRewritePattern<CopyOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(CopyOp copy,
+                                PatternRewriter &rewriter) const final {
+    if (copy.getSrc() != copy.getDst() || copy.getPadMode() ||
+        copy.getPadValue() || copy.getCollapseReassociation())
+      return failure();
+
+    if (copy.hasPureTensorSemantics()) {
+      rewriter.replaceOp(copy, copy.getDst());
+      return success();
+    }
+    if (copy.hasPureBufferSemantics() && !copy.getResultTensor()) {
+      rewriter.eraseOp(copy);
+      return success();
+    }
+    return failure();
+  }
+};
 } // namespace
 
 void DebugOp::getCanonicalizationPatterns(::mlir::RewritePatternSet &results,
@@ -737,6 +758,11 @@ void VSortOp::getCanonicalizationPatterns(::mlir::RewritePatternSet &results,
 void LoadOp::getCanonicalizationPatterns(::mlir::RewritePatternSet &results,
                                          ::mlir::MLIRContext *context) {
   results.add<DropLoadLeftPad, DropLoadRightPad>(context);
+}
+
+void CopyOp::getCanonicalizationPatterns(::mlir::RewritePatternSet &results,
+                                         ::mlir::MLIRContext *context) {
+  results.add<EliminateSelfCopy>(context);
 }
 
 //===----------------------------------------------------------------------===//
