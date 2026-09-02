@@ -79,6 +79,25 @@
 /bishengir/**/SplitMixKernel.* @danielcm585 @devoperator @cathychan0027 @hid90099092 @tanshengshun
 /bishengir/test/**/split-mix-kernel* @danielcm585 @devoperator @cathychan0027 @hid90099092 @tanshengshun
 
+# CV Data Movement.
+/bishengir/**/InsertLoadStoreForMixCV.cpp @kresna @devoperator @cathychan0027 @hid90099092 @tanshengshun
+/bishengir/**/InsertLoadStoreForMixCV/* @kresna @devoperator @cathychan0027 @hid90099092 @tanshengshun
+/bishengir/**/InsertLoadStoreForScalar.cpp @kresna @devoperator @cathychan0027 @hid90099092 @tanshengshun
+/bishengir/**/InsertCVTightCoupledBuffer.cpp @kresna @devoperator @cathychan0027 @hid90099092 @tanshengshun
+/bishengir/**/MarkTightlyCoupledBuffer.cpp @kresna @devoperator @cathychan0027 @hid90099092 @tanshengshun
+/bishengir/**/InsertWorkSpaceForMixCV.cpp @kresna @devoperator @cathychan0027 @hid90099092 @tanshengshun
+/bishengir/test/Dialect/HIVM/enable-cv-tight-communication.mlir @kresna @devoperator @cathychan0027 @hid90099092 @tanshengshun
+/bishengir/test/Dialect/HIVM/insert-load-store-for-mix-cv-legacy.mlir @kresna @devoperator @cathychan0027 @hid90099092 @tanshengshun
+/bishengir/test/Dialect/HIVM/insert-load-store-for-mix-cv.mlir @kresna @devoperator @cathychan0027 @hid90099092 @tanshengshun
+/bishengir/test/Dialect/HIVM/Regbase/disable-tight-coupled-buffer.mlir @kresna @devoperator @cathychan0027 @hid90099092 @tanshengshun
+/bishengir/test/Dialect/HIVM/Regbase/enable-cv-tight-communication.mlir @kresna @devoperator @cathychan0027 @hid90099092 @tanshengshun
+/bishengir/test/Dialect/HIVM/Regbase/insert-load-store-for-mix-cv-fixpipe-fractal.mlir @kresna @devoperator @cathychan0027 @hid90099092 @tanshengshun
+/bishengir/test/Dialect/HIVM/Regbase/insert-load-store-for-mix-cv-fractal-block-size.mlir @kresna @devoperator @cathychan0027 @hid90099092 @tanshengshun
+/bishengir/test/Dialect/HIVM/Regbase/insert-load-store-for-mix-cv-legacy.mlir @kresna @devoperator @cathychan0027 @hid90099092 @tanshengshun
+/bishengir/test/Dialect/HIVM/Regbase/insert-load-store-for-mix-cv-scope-to-l1.mlir @kresna @devoperator @cathychan0027 @hid90099092 @tanshengshun
+/bishengir/test/Dialect/HIVM/Regbase/insert-load-store-for-mix-cv.mlir @kresna @devoperator @cathychan0027 @hid90099092 @tanshengshun
+/bishengir/test/Dialect/HIVM/Regbase/insert-tight-coupled-buffer.mlir @kresna @devoperator @cathychan0027 @hid90099092 @tanshengshun
+
 # CV1:2.
 /bishengir/**/TileAndBindSubBlock.cpp @kang-ingu @henrycliang @ZhaoWentengZWT @renxingdong @jy834507063 @hid90099092 @tanshengshun
 /bishengir/**/TileAndBindSubBlock/ @kang-ingu @henrycliang @ZhaoWentengZWT @renxingdong @jy834507063 @hid90099092 @tanshengshun
