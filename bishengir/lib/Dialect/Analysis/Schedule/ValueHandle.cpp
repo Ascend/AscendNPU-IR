@@ -20,10 +20,11 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/ValueHandle.h"
-#include "bishengir/Dialect/HFusion/TransformOps/HFusionTransformOps.h"
+#include "bishengir/Dialect/Analysis/Schedule/ValueHandle.h"
+#include "bishengir/Dialect/Transform/IR/TransformOps.h"
 
 #include "mlir/Dialect/Linalg/TransformOps/LinalgTransformOps.h"
+#include "mlir/Dialect/Transform/IR/TransformOps.h"
 #include "mlir/Dialect/Transform/IR/TransformTypes.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
 
@@ -46,7 +47,7 @@ static std::string stringifyNamedAttr(mlir::StringRef name,
 } // namespace
 
 namespace mlir {
-namespace hfusion {
+namespace schedule {
 
 //===----------------------------------------------------------------------===//
 // Implementation of ValueHandle
@@ -140,12 +141,6 @@ Value NamedValueHandle::getImpl(Value matchTarget, OpBuilder &opBuilder) {
     return Value();
   }
 
-  if (this->needsReverse_) {
-    matchResult = opBuilder.create<transform::ReverseOp>(
-        matchResult.getLoc(),
-        /*result=*/TypeRange{opBuilder.getType<transform::AnyOpType>()},
-        /*target=*/matchResult);
-  }
   this->handle_ = matchResult;
   this->status_ = HandleStatus::kValid;
   return handle_;
@@ -276,5 +271,5 @@ StringRef AttributeIdentifier::getUniqueIdentifier() const {
 
 } // namespace detail
 
-} // namespace hfusion
+} // namespace schedule
 } // namespace mlir

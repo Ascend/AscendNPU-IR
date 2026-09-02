@@ -26,7 +26,6 @@
 
 namespace mlir {
 class Location;
-class OpBuilder;
 
 namespace transform {
 class NamedSequenceOp;
@@ -40,16 +39,13 @@ public:
   explicit ShallowCVScheduler(func::FuncOp funcOpIn)
       : SchedulerBase(funcOpIn, FusionKind::ShallowCV){};
 
-  LogicalResult runOnOperation(OpBuilder &opBuilder) override;
+  LogicalResult runOnOperation() override;
 
   LogicalResult analyzeAndVerifyKernelImpl() override { return success(); }
 
   TilingComputeFn calculateTilingImpl() override { return nullptr; };
 
-  LogicalResult createScheduleImpl(TilingKey key,
-                                   OpBuilder &opBuilder) override {
-    return success();
-  }
+  LogicalResult createScheduleImpl(TilingKey key) override { return success(); }
 };
 
 } // namespace hfusion

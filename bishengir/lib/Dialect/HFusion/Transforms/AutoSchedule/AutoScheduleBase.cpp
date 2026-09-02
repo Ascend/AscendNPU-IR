@@ -38,6 +38,7 @@
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/Symbol/Transforms/Passes.h"
 #include "bishengir/Dialect/Tensor/Transforms/Passes.h"
+#include "bishengir/Dialect/Transform/IR/TransformOps.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "bishengir/Transforms/Passes.h"
@@ -100,13 +101,11 @@ SmallVector<int64_t> getReturnValueTopologicalOrdering(
       [](const std::pair<Value, int64_t> &v) { return std::get<1>(v); });
 }
 
-transform::SequenceOp initScheduleSequence(OpBuilder &opBuilder,
-                                           Location loc) {
+transform::SequenceOp initScheduleSequence(OpBuilder &opBuilder, Location loc) {
   OpBuilder::InsertionGuard g(opBuilder);
   // create transform sequence op with name
   auto seqOp = opBuilder.create<transform::SequenceOp>(
-      loc, TypeRange(),
-      transform::FailurePropagationMode::Propagate,
+      loc, TypeRange(), transform::FailurePropagationMode::Propagate,
       opBuilder.getType<transform::AnyOpType>(),
       [](OpBuilder &b, Location nested, Value rootH) {
         b.create<transform::YieldOp>(nested, ValueRange());
@@ -190,8 +189,8 @@ func::FuncOp createEmptyHostTilingFunction(func::FuncOp deviceFunc,
   auto hostTilingFunc = opBuilder.create<func::FuncOp>(
       deviceFunc.getLoc(),
       /*sym_name=*/
-      hacc::constructHostFunctionName(
-          deviceFunc.getSymName().str(), hacc::HostFuncType::kTilingFunction),
+      hacc::constructHostFunctionName(deviceFunc.getSymName().str(),
+                                      hacc::HostFuncType::kTilingFunction),
       /*function_type=*/t,
       /*sym_visibility=*/StringAttr(),
       /*arg_attrs=*/deviceFunc.getArgAttrsAttr(),
@@ -213,10 +212,10 @@ func::FuncOp createEmptyHostTilingFunction(func::FuncOp deviceFunc,
 /// Init static data members.
 AutoScheduleOptions SchedulerBase::options_ = AutoScheduleOptions();
 
-SchedulerBase::SchedulerBase(func::FuncOp f, FusionKind kind) {
+SchedulerBase::SchedulerBase(func::FuncOp f, FusionKind kind)
+    : builder_(f.getContext()) {
   kernelInfo_ = std::make_unique<KernelInfo>();
   tilingInfo_ = std::make_unique<TilingInfo>();
-  handleRecord_ = std::make_unique<HandleRecord>();
   originalKernel_ = f;
   module_ = f.getOperation()->getParentOfType<ModuleOp>();
   kind_ = kind;
@@ -225,10 +224,10 @@ SchedulerBase::SchedulerBase(func::FuncOp f, FusionKind kind) {
 
 SchedulerBase::SchedulerBase(func::FuncOp f,
                              std::unique_ptr<KernelInfo> &&kernelInfo,
-                             std::unique_ptr<TilingInfo> &&tilingInfo) {
+                             std::unique_ptr<TilingInfo> &&tilingInfo)
+    : builder_(f.getContext()) {
   kernelInfo_ = std::move(kernelInfo);
   tilingInfo_ = std::move(tilingInfo);
-  handleRecord_ = std::make_unique<HandleRecord>();
   originalKernel_ = f;
   module_ = f.getOperation()->getParentOfType<ModuleOp>();
   kind_ = kernelInfo_->getFusionKind();
@@ -238,12 +237,11 @@ SchedulerBase::SchedulerBase(func::FuncOp f,
 SchedulerBase::~SchedulerBase() {
   kernelInfo_.reset();
   tilingInfo_.reset();
-  handleRecord_.reset();
 }
 
-LogicalResult SchedulerBase::runPreScheduleProcedure(OpBuilder &opBuilder) {
+LogicalResult SchedulerBase::runPreScheduleProcedure() {
   func::FuncOp currentFunc = getOriginalKernel();
-  if (failed(cacheIO(opBuilder)))
+  if (failed(cacheIO()))
     return currentFunc.emitError() << "Failed to cache inputs/outputs.";
 
   if (failed(analyzeAndVerifyKernel()))
@@ -251,24 +249,23 @@ LogicalResult SchedulerBase::runPreScheduleProcedure(OpBuilder &opBuilder) {
   return success();
 }
 
-LogicalResult SchedulerBase::runPostScheduleProcedure(OpBuilder &opBuilder) {
-  return success();
-}
+LogicalResult SchedulerBase::runPostScheduleProcedure() { return success(); }
 
-LogicalResult SchedulerBase::runScheduleProcedure(OpBuilder &opBuilder) {
+LogicalResult SchedulerBase::runScheduleProcedure() {
   func::FuncOp currentFunc = getOriginalKernel();
-  if (failed(calculateTiling(opBuilder)))
+  if (failed(calculateTiling()))
     return currentFunc->emitWarning("Failed to calculate tiling.");
 
   if (failed(selectTiling()))
     return currentFunc->emitWarning("Failed to select tiling.");
 
-  if (failed(createAndApplySchedules(opBuilder)))
+  if (failed(createAndApplySchedules()))
     return currentFunc->emitWarning("Failed to create and apply schedule.");
   return success();
 }
 
-LogicalResult SchedulerBase::runNopScheduleProcedure(OpBuilder &opBuilder) {
+LogicalResult SchedulerBase::runNopScheduleProcedure() {
+  OpBuilder &opBuilder = getOpBuilder();
   OpBuilder::InsertionGuard g(opBuilder);
   TilingInfo *tilingInfo = getTilingInfo();
 
@@ -291,18 +288,18 @@ bool SchedulerBase::isNopSchedule() const {
   return kernelInfo->getAnalyzer()->getAnchorRank() == 0;
 }
 
-LogicalResult SchedulerBase::runOnOperation(OpBuilder &opBuilder) {
-  if (failed(runPreScheduleProcedure(opBuilder)))
+LogicalResult SchedulerBase::runOnOperation() {
+  if (failed(runPreScheduleProcedure()))
     return getOriginalKernel().emitOpError()
            << "Failed to run pre schedule procedure";
 
   if (isNopSchedule())
-    return runNopScheduleProcedure(opBuilder);
+    return runNopScheduleProcedure();
 
-  if (failed(runScheduleProcedure(opBuilder)))
+  if (failed(runScheduleProcedure()))
     return failure();
 
-  if (failed(runPostScheduleProcedure(opBuilder)))
+  if (failed(runPostScheduleProcedure()))
     return failure();
   return success();
 }
@@ -381,7 +378,7 @@ LogicalResult SchedulerBase::analyzeAndVerifyKernelImpl() {
   return KernelInfoCollector(getKernelInfo(), getAutoScheduleOptions()).run();
 }
 
-LogicalResult SchedulerBase::cacheIO(OpBuilder &opBuilder) {
+LogicalResult SchedulerBase::cacheIO() {
   auto originalKernel = getOriginalKernel();
   /// Merge consecutive extract slices to make sure CacheRead is inserted to
   /// the right position
@@ -463,7 +460,8 @@ LogicalResult SchedulerBase::markHACCInputArgAttr(func::FuncOp func) {
 }
 
 /// This is the main function that orchestrates the tiling function making
-LogicalResult SchedulerBase::calculateTiling(OpBuilder &opBuilder) {
+LogicalResult SchedulerBase::calculateTiling() {
+  OpBuilder &opBuilder = getOpBuilder();
   OpBuilder::InsertionGuard g(opBuilder);
   TilingInfo *tilingInfo = getTilingInfo();
   MLIRContext *ctx = getContext();
@@ -560,28 +558,28 @@ LogicalResult SchedulerBase::selectTiling() const {
   return success();
 }
 
-LogicalResult SchedulerBase::createAndApplySchedules(OpBuilder &opBuilder) {
+LogicalResult SchedulerBase::createAndApplySchedules() {
   // iterate over tiling cases
   TilingInfo *info = getTilingInfo();
 
   for (TilingKey key : info->getTilingCases()) {
     LDBG("Creating schedule for tiling key: " << key);
-    if (failed(initSchedule(key, opBuilder)))
+    if (failed(initSchedule(key)))
       return failure();
 
-    if (failed(createScheduleImpl(key, opBuilder)))
+    if (failed(createScheduleImpl(key)))
       return failure();
 
     LDBG("Dumping kernel and schedule for tiling key: " << key);
     LLVM_DEBUG(dumpKernelAndSchedule());
 
-    if (failed(applyScheduleImpl(opBuilder)))
+    if (failed(applyScheduleImpl()))
       return failure();
 
     cleanUpAfterSchedule();
   }
 
-  if (failed(fixCallSitesAndCaller(opBuilder)))
+  if (failed(fixCallSitesAndCaller()))
     return failure();
 
   LDBG("Removing original func...");
@@ -589,8 +587,7 @@ LogicalResult SchedulerBase::createAndApplySchedules(OpBuilder &opBuilder) {
   return success();
 }
 
-LogicalResult SchedulerBase::applySchedule(func::FuncOp &funcOp,
-                                           OpBuilder &opBuilder) {
+LogicalResult SchedulerBase::applySchedule(func::FuncOp &funcOp) {
   auto fusionKindAttr =
       funcOp->getAttrOfType<FusionKindAttr>(FusionKindAttr::name);
   if (!fusionKindAttr || !hacc::utils::isDevice(funcOp)) {
@@ -600,7 +597,8 @@ LogicalResult SchedulerBase::applySchedule(func::FuncOp &funcOp,
 
   auto fusionKind = fusionKindAttr.getFusionKind();
   std::unique_ptr<SchedulerBase> scheduler;
-  funcOp->setAttr(utils::kEnableAutoMarkBufferSize, opBuilder.getUnitAttr());
+  funcOp->setAttr(utils::kEnableAutoMarkBufferSize,
+                  UnitAttr::get(funcOp.getContext()));
   switch (fusionKind) {
   case FusionKind::PureElemwise:
   case FusionKind::AnyPB:
@@ -620,10 +618,10 @@ LogicalResult SchedulerBase::applySchedule(func::FuncOp &funcOp,
   default:
     return funcOp.emitError("Unknown kernel fusion kind");
   }
-  return scheduler->runOnOperation(opBuilder);
+  return scheduler->runOnOperation();
 }
 
-LogicalResult SchedulerBase::applyScheduleImpl(OpBuilder &opBuilder) {
+LogicalResult SchedulerBase::applyScheduleImpl() {
   PassManager pm(getContext());
   transform::TransformOptions options;
   options.enableExpensiveChecks(false);
@@ -664,9 +662,9 @@ void SchedulerBase::dumpKernelAndSchedule() {
 }
 
 void SchedulerBase::cleanUpAfterSchedule() {
-  getHandleRecord()->clear();
+  builder().getHandleRecord()->clear();
   setToBeScheduledKernel(nullptr);
-  setTransformSeqHandle(Value());
+  builder().setTransformSeqHandle(Value());
   for (auto *td : getTilingInfo()->getTilingStruct())
     td->setHandle(nullptr);
 }
@@ -688,7 +686,8 @@ void insertTilingDataArgument(OpBuilder &opBuilder, func::FuncOp func,
   }
 }
 
-LogicalResult SchedulerBase::initSchedule(TilingKey key, OpBuilder &opBuilder) {
+LogicalResult SchedulerBase::initSchedule(TilingKey key) {
+  OpBuilder &opBuilder = getOpBuilder();
   TilingInfo *tilingInfo = getTilingInfo();
   assert(tilingInfo != nullptr);
 
@@ -722,7 +721,7 @@ LogicalResult SchedulerBase::initSchedule(TilingKey key, OpBuilder &opBuilder) {
   // Set insertion point to transform sequence body
   opBuilder.setInsertionPointToStart(transformBody);
   // Record transform sequence block argument
-  setTransformSeqHandle(transformBody->getArguments().front());
+  builder().setTransformSeqHandle(transformBody->getArguments().front());
 
   // Step 5. Set attributes to various functions
   auto blockDimIntAttr = opBuilder.getIntegerAttr(opBuilder.getIntegerType(64),
@@ -748,7 +747,7 @@ LogicalResult SchedulerBase::initSchedule(TilingKey key, OpBuilder &opBuilder) {
 
 SmallVector<Value> SchedulerBase::getNewArgsForCallSite(
     func::FuncOp caller, func::CallOp oldCallSite,
-    const SchedulerBase::CallSiteArgBuilderInfo &info, OpBuilder &opBuilder) {
+    const SchedulerBase::CallSiteArgBuilderInfo &info) {
   auto oldCallArgs = oldCallSite->getOperands();
   size_t oldArgCount = oldCallArgs.size();
   size_t tilingStructSize = info.tilingIdx2TilingData.size();
@@ -772,12 +771,12 @@ SmallVector<Value> SchedulerBase::getNewArgsForCallSite(
 
 void SchedulerBase::doFixCallSite(CallerInfo &callerInfo, func::CallOp callSite,
                                   CallSiteArgBuilderInfo &builderInfo,
-                                  DenseMap<Operation *, Operation *> &irMap,
-                                  OpBuilder &opBuilder) const {
+                                  DenseMap<Operation *, Operation *> &irMap) {
+  OpBuilder &opBuilder = getOpBuilder();
   OpBuilder::InsertionGuard g(opBuilder);
   opBuilder.setInsertionPoint(callSite);
-  auto newArgs = getNewArgsForCallSite(callerInfo.caller, callSite, builderInfo,
-                                       opBuilder);
+  auto newArgs =
+      getNewArgsForCallSite(callerInfo.caller, callSite, builderInfo);
 
   // If the callee is not the original kernel, generate a new call
   // with the same callee but new args and bail out.
@@ -792,13 +791,14 @@ void SchedulerBase::doFixCallSite(CallerInfo &callerInfo, func::CallOp callSite,
   // using the tiling key.
   // By convention, the first tiling data is the tiling key.
   Value tilingKey = builderInfo.tilingIdx2TilingData.at(0);
-  return generateDeviceCallers(callSite, tilingKey, newArgs, irMap, opBuilder);
+  return generateDeviceCallers(callSite, tilingKey, newArgs, irMap);
 }
 
 void SchedulerBase::generateDeviceCallers(
     func::CallOp callSite, Value tilingKey,
     const SmallVector<Value> &newCallArgs,
-    DenseMap<Operation *, Operation *> &irMap, OpBuilder &opBuilder) const {
+    DenseMap<Operation *, Operation *> &irMap) {
+  OpBuilder &opBuilder = getOpBuilder();
   TilingInfo *tilingInfo = getTilingInfo();
   auto tilingKey2Kernel = tilingInfo->getTilingKey2KernelMap();
   assert(!tilingKey2Kernel.empty());
@@ -866,8 +866,8 @@ void SchedulerBase::generateDeviceCallers(
 SchedulerBase::CallSite2TilingIdx2TilingData
 SchedulerBase::getTilingDataForCallSite(func::FuncOp caller,
                                         TilingInfo *tilingInfo,
-                                        const CallerInfo &callerInfo,
-                                        OpBuilder &opBuilder) {
+                                        const CallerInfo &callerInfo) {
+  OpBuilder &opBuilder = getOpBuilder();
   CallSite2TilingIdx2TilingData callSite2TilingIdx2TilingData;
   if (hacc::utils::isHost(caller) && getEnableHostResourceMgmt()) {
     // If the caller is a host function and we enabled host resource mgmt,
@@ -965,7 +965,8 @@ SchedulerBase::getTilingDataForCallSite(func::FuncOp caller,
 ///        func.call @schedule_kernel_1(%tiling_key, %td0, %td1)
 /// }
 /// \endcode
-LogicalResult SchedulerBase::fixCallSitesAndCaller(OpBuilder &opBuilder) {
+LogicalResult SchedulerBase::fixCallSitesAndCaller() {
+  OpBuilder &opBuilder = getOpBuilder();
   OpBuilder::InsertionGuard g(opBuilder);
   LDBG("Fixing call sites of un-scheduled func...");
 
@@ -1000,14 +1001,14 @@ LogicalResult SchedulerBase::fixCallSitesAndCaller(OpBuilder &opBuilder) {
     LDBG("Fixing call site in: \n" << *caller);
 
     auto callSite2TilingIdx2TilingData =
-        getTilingDataForCallSite(caller, tilingInfo, callerInfo, opBuilder);
+        getTilingDataForCallSite(caller, tilingInfo, callerInfo);
 
     // Fix the call sites
     bool calleeIsOriginalKernel = callerInfo.callee == getOriginalKernel();
     for (func::CallOp callSite : callerInfo.callSites) {
       CallSiteArgBuilderInfo builderInfo{
           callSite2TilingIdx2TilingData.at(callSite), calleeIsOriginalKernel};
-      doFixCallSite(callerInfo, callSite, builderInfo, irMap, opBuilder);
+      doFixCallSite(callerInfo, callSite, builderInfo, irMap);
     }
 
     // If we created a tiling function call within the caller, there is no need
@@ -1026,41 +1027,6 @@ LogicalResult SchedulerBase::fixCallSitesAndCaller(OpBuilder &opBuilder) {
   }
 
   return success();
-}
-
-NamedValueHandle SchedulerBase::recordImpl(Value target, OpBuilder &opBuilder,
-                                           const NamedValueHandleArgs &args) {
-  // If the identifier type is operation name, then it's already unique.
-  std::string uniqueName =
-      args.isNameUnique ? args.name.str()
-                        : getHandleRecord()->getAndRecordAttrName(args.name);
-
-  if (args.needsReverse)
-    target = opBuilder.create<transform::ReverseOp>(
-        target.getLoc(),
-        /*result=*/TypeRange{opBuilder.getType<transform::AnyOpType>()},
-        /*target=*/target);
-
-  if (args.needsAnnotate)
-    opBuilder.create<transform::AnnotateOp>(
-        target.getLoc(),
-        /*target=*/target,
-        /*name=*/opBuilder.getStringAttr(uniqueName),
-        /*param=*/Value{});
-
-  return NamedValueHandle(target, uniqueName, args.type, HandleStatus::kValid,
-                          args.needsReverse);
-}
-
-RegularValueHandle
-SchedulerBase::recordImpl(Value target, [[maybe_unused]] OpBuilder &opBuilder) {
-  return RegularValueHandle(target, HandleStatus::kValid);
-}
-
-FuncArgHandle SchedulerBase::recordImpl(Value target,
-                                        [[maybe_unused]] OpBuilder &opBuilder,
-                                        size_t funcArgNum) {
-  return FuncArgHandle(target, funcArgNum, HandleStatus::kValid);
 }
 
 LogicalResult
@@ -1210,10 +1176,9 @@ void AutoSchedulePass::runOnOperation() {
   getOperation()->walk([&](func::FuncOp func) { funcList.push_back(func); });
 
   for (auto &func : funcList) {
-    OpBuilder opBuilder(&getContext());
     // set options individually for each function
     setOptionsForFunc(options, func);
-    if (succeeded(SchedulerBase::applySchedule(func, opBuilder)))
+    if (succeeded(SchedulerBase::applySchedule(func)))
       continue;
 
     func->emitOpError("Failed to create and apply schedule.");

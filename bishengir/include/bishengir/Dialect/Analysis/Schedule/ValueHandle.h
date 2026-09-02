@@ -1,22 +1,20 @@
-//===- ValueHandle.h ----------------------------------------- --*- C++ -*-===//
+//===------- ValueHandle.h - Handles to payload IR in schedules -*- C++ -*-===//
 //
-// Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
-//    http://www.apache.org/licenses/LICENSE-2.0
+//===----------------------------------------------------------------------===//
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Dialect-neutral value handles used to keep references to payload IR values
+// while building a transform sequence. Handles support lazy re-matching after
+// the payload IR has changed: regular handles are invalidated eagerly, while
+// named handles are re-matched from their identifier on next use.
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef BISHENGIR_DIALECT_HFUSION_TRANSFORMS_AUTOSCHEDULE_VALUEHANDLE_H
-#define BISHENGIR_DIALECT_HFUSION_TRANSFORMS_AUTOSCHEDULE_VALUEHANDLE_H
+#ifndef BISHENGIR_DIALECT_ANALYSIS_SCHEDULE_VALUEHANDLE_H
+#define BISHENGIR_DIALECT_ANALYSIS_SCHEDULE_VALUEHANDLE_H
 
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -24,10 +22,14 @@
 
 #include "llvm/ADT/StringMap.h"
 
+#include <optional>
 #include <string>
+#include <variant>
 
 namespace mlir {
-namespace hfusion {
+class OpBuilder;
+
+namespace schedule {
 
 /// Different types of handles.
 enum class ValueHandleKind : int32_t {
@@ -47,8 +49,8 @@ enum class HandleStatus : int32_t {
   kUnknown = 0,
   // Handle is still valid and can be used.
   kValid,
-  // Handles that is usable once it's matched. Only applicable to
-  // named value handles.
+  // Handle is usable once it's matched. Only applicable to named value
+  // handles.
   kNeedsRematch,
   // Unusable handles.
   kInvalid
@@ -76,6 +78,11 @@ struct ValueHandle {
 
   virtual Value getImpl();
   virtual Value getImpl(Value matchTarget, OpBuilder &opBuilder);
+
+  /// Reset the handle after the payload IR it refers to may have changed.
+  /// Regular handles are invalidated, while named handles are re-matched
+  /// lazily on next use.
+  virtual void reset() { status_ = HandleStatus::kInvalid; }
 
   //===--------------------------------------------------------------------===//
   // Getter and setter methods.
@@ -176,6 +183,15 @@ private:
   std::string uniqueIdentifier_;
 };
 
+/// Struct for specifying options for matching IR values.
+struct MatchOptions {
+  /// Whether to reverse the order of payload objects in \c target.
+  bool needsReverse{false};
+  /// If set, will only match operations that are ancestors of
+  /// \c childHandleOrValue.
+  std::optional<std::variant<ValueHandle *, Value>> childHandleOrValue{};
+};
+
 /// Options for constructing named value handles.
 struct NamedValueHandleArgs {
   StringRef name;
@@ -200,9 +216,13 @@ struct NamedValueHandle : public ValueHandle {
     return T->getValueHandleKind() == ValueHandleKind::kNamed;
   }
 
+  /// Match the payload ops by the handle's identifier.
   Value getImpl(Value matchTarget, OpBuilder &opBuilder) override;
+  void reset() override { status_ = HandleStatus::kNeedsRematch; }
 
   std::string getName() const { return this->name_; }
+  IdentifierType getIdentifierType() const { return this->type_; }
+  bool getNeedsReverse() const { return this->needsReverse_; }
 
 private:
   /// Unique identifier of this ValueHandle.
@@ -213,6 +233,9 @@ private:
   bool needsReverse_{false};
 };
 
+/// Handle to a function argument, re-matched by position when needed.
+/// Relies on the dialect-neutral `func.get_func_argument` transform op
+/// (Dialect/Transform).
 struct FuncArgHandle : public ValueHandle {
   FuncArgHandle(Value handle, size_t funcArgNum, HandleStatus status)
       : ValueHandle(handle, status, ValueHandleKind::kFuncArg),
@@ -223,6 +246,7 @@ struct FuncArgHandle : public ValueHandle {
   }
 
   Value getImpl(Value funcValue, OpBuilder &opBuilder) override;
+  void reset() override { status_ = HandleStatus::kNeedsRematch; }
 
 private:
   // TODO: vector of fun arg num
@@ -298,7 +322,7 @@ private:
 /// Set the status of all value handles.
 void setStatusTo(ValueHandles &vhs, HandleStatus status);
 
-} // namespace hfusion
+} // namespace schedule
 } // namespace mlir
 
-#endif // BISHENGIR_DIALECT_HFUSION_TRANSFORMS_AUTOSCHEDULE_VALUEHANDLE_H
+#endif // BISHENGIR_DIALECT_ANALYSIS_SCHEDULE_VALUEHANDLE_H
