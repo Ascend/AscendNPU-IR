@@ -28,11 +28,9 @@ public:
       : AxisInfo(contiguity, divisibility, constancy, std::nullopt) {}
 
   AxisInfo(ArrayRef<int64_t> contiguity, ArrayRef<int64_t> divisibility,
-           ArrayRef<int64_t> constancy, std::optional<int64_t> constantValue,
-           int64_t linearContiguity = 1)
+           ArrayRef<int64_t> constancy, std::optional<int64_t> constantValue)
       : contiguity(contiguity), divisibility(divisibility),
-        constancy(constancy), constantValue(constantValue),
-        linearContiguity(linearContiguity) {
+        constancy(constancy), constantValue(constantValue) {
     assert(divisibility.size() == contiguity.size());
     assert(constancy.size() == contiguity.size());
   }
@@ -106,18 +104,6 @@ public:
   int64_t getConstancy(size_t dim) const { return constancy[dim]; }
   const DimVectorT &getConstancy() const { return constancy; }
 
-  // linearContiguity is the length of the shortest sequence of contiguous
-  // integers in the row-major (linear) flattening of the tensor, i.e. the
-  // tensor can be divided into N/L aligned groups of L elements whose
-  // row-major values form consecutive integers.
-  //
-  // Unlike per-dimension contiguity, it composes across dimension
-  // boundaries: a tensor holding the row-major values 0..N-1 has
-  // linearContiguity N for any shape, while its per-dim contiguity is capped
-  // by each dimension's size. This is the information required to make
-  // reshape lossless with respect to contiguity.
-  int64_t getLinearContiguity() const { return linearContiguity; }
-
   int getRank() const { return contiguity.size(); }
 
   std::optional<int64_t> getConstantValue() const { return constantValue; }
@@ -130,8 +116,7 @@ public:
   bool operator==(const AxisInfo &other) const {
     return contiguity == other.contiguity &&
            divisibility == other.divisibility && constancy == other.constancy &&
-           constantValue == other.constantValue &&
-           linearContiguity == other.linearContiguity;
+           constantValue == other.constantValue;
   }
 
   static AxisInfo getPessimisticValueState(Value value);
@@ -148,7 +133,6 @@ public:
     print("contiguity", contiguity);
     print(", divisibility", divisibility);
     print(", constancy", constancy);
-    os << ", linear_contiguity = " << linearContiguity;
     os << ", constant_value = ";
     if (constantValue)
       os << *constantValue;
@@ -163,9 +147,6 @@ private:
 
   // The constant value of the lattice if we can infer it.
   std::optional<int64_t> constantValue;
-
-  // See getLinearContiguity().
-  int64_t linearContiguity = 1;
 };
 
 class AxisInfoVisitor {
