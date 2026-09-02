@@ -78,3 +78,22 @@
 # Split mix kernel.
 /bishengir/**/SplitMixKernel.* @danielcm585 @devoperator @cathychan0027 @hid90099092 @tanshengshun
 /bishengir/test/**/split-mix-kernel* @danielcm585 @devoperator @cathychan0027 @hid90099092 @tanshengshun
+
+# CV1:2.
+/bishengir/**/TileAndBindSubBlock.cpp @kang-ingu @henrycliang @ZhaoWentengZWT @renxingdong @jy834507063 @hid90099092 @tanshengshun
+/bishengir/**/TileAndBindSubBlock/ @kang-ingu @henrycliang @ZhaoWentengZWT @renxingdong @jy834507063 @hid90099092 @tanshengshun
+/bishengir/test/Dialect/HIVM/tile-and-bind-sub-block* @kang-ingu @henrycliang @ZhaoWentengZWT @renxingdong @jy834507063 @hid90099092 @tanshengshun
+/bishengir/**/HIVM/Analysis/DimensionAnalyzer.* @kang-ingu @henrycliang @ZhaoWentengZWT @renxingdong @jy834507063 @hid90099092 @tanshengshun
+/bishengir/**/HIVM/Analysis/DimensionMarker.* @kang-ingu @henrycliang @ZhaoWentengZWT @renxingdong @jy834507063 @hid90099092 @tanshengshun
+/bishengir/**/HIVM/Analysis/Initializer.* @kang-ingu @henrycliang @ZhaoWentengZWT @renxingdong @jy834507063 @hid90099092 @tanshengshun
+/bishengir/**/Dialect/Analysis/DimensionAnalyzer.* @kang-ingu @henrycliang @ZhaoWentengZWT @renxingdong @jy834507063 @hid90099092 @tanshengshun
+/bishengir/**/Dialect/Analysis/DimensionMarker.* @kang-ingu @henrycliang @ZhaoWentengZWT @renxingdong @jy834507063 @hid90099092 @tanshengshun
+/bishengir/**/Dialect/Analysis/Initializer.* @kang-ingu @henrycliang @ZhaoWentengZWT @renxingdong @jy834507063 @hid90099092 @tanshengshun
+/bishengir/**/Dialect/Analysis/ProcessOperations.* @kang-ingu @henrycliang @ZhaoWentengZWT @renxingdong @jy834507063 @hid90099092 @tanshengshun
+/bishengir/test/Dialect/HIVM/Analysis/hivm-dimension-analyzer.mlir @kang-ingu @henrycliang @ZhaoWentengZWT @renxingdong @jy834507063 @hid90099092 @tanshengshun
+/bishengir/test/lib/Dialect/HIVM/TestHIVMDimensionAnalyzer.cpp @kang-ingu @henrycliang @ZhaoWentengZWT @renxingdong @jy834507063 @hid90099092 @tanshengshun
+/bishengir/**/HIVMBubbleUpExtractSlice.cpp @kang-ingu @henrycliang @ZhaoWentengZWT @renxingdong @jy834507063 @hid90099092 @tanshengshun
+/bishengir/**/HIVM/**/BubbleUpExtractSlice/ @kang-ingu @henrycliang @ZhaoWentengZWT @renxingdong @jy834507063 @hid90099092 @tanshengshun
+/bishengir/test/Dialect/HIVM/hivm-bubble-up-extract-slice.mlir @kang-ingu @henrycliang @ZhaoWentengZWT @renxingdong @jy834507063 @hid90099092 @tanshengshun
+/bishengir/test/Dialect/HIVM/bubble-up-bufferization.mlir @kang-ingu @henrycliang @ZhaoWentengZWT @renxingdong @jy834507063 @hid90099092 @tanshengshun
+/bishengir/test/lib/Dialect/Utils/TestBubbleUpBufferization.cpp @kang-ingu @henrycliang @ZhaoWentengZWT @renxingdong @jy834507063 @hid90099092 @tanshengshun
