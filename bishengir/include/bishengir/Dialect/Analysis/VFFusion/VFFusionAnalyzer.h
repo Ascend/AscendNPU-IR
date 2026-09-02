@@ -348,6 +348,7 @@ private:
                                        Operation *consumerOp);
   bool fuseProducerConsumerImpl(Block &block);
   bool fuseSpecialPatterns(Block &block);
+  bool fuseSingleUseArangeComparePattern(Block &block);
   bool fusePredicateSelectPattern(Block &block);
   bool fuseIOBoundGroupsWithNearestConsumer();
   bool isIOBoundGroup(int groupId);
