@@ -40,6 +40,12 @@
 /bishengir/**/Template/**/Fixpipe/ @Alae-eddine @ZhaoWentengZWT @zhufang_hw @jqran @hid90099092 @tanshengshun
 /bishengir/**/Template/**/DMA/Cbuf/ @Alae-eddine @ZhaoWentengZWT @zhufang_hw @jqran @hid90099092 @tanshengshun
 
+# Inline Fixpipe.
+/bishengir/**/InlineFixpipe.* @Alae-eddine @jin-qian7 @jqran @kresna @devoperator @cathychan0027 @hid90099092 @tanshengshun
+/bishengir/test/**/*inline-fixpipe* @Alae-eddine @jin-qian7 @jqran @kresna @devoperator @cathychan0027 @hid90099092 @tanshengshun
+/bishengir/test/**/*insert-fixpipe* @kresna @devoperator @cathychan0027 @hid90099092 @tanshengshun
+/bishengir/test/**/*move-fixpipe* @kresna @devoperator @cathychan0027 @hid90099092 @tanshengshun
+
 # Submodule:llvm-project (ensure synchronization with hivmc)
 /third-party/llvm-project @NoBBAI @hid90099092 @tanshengshun
 
