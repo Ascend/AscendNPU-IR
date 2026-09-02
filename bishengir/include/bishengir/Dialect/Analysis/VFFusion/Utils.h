@@ -12,9 +12,9 @@
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/Utils/UnionFind.h"
-#include "llvm/ADT/SmallVector.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Operation.h"
+#include "llvm/ADT/SmallVector.h"
 #include <string>
 namespace mlir {
 namespace analysis {
@@ -30,7 +30,8 @@ struct VFFusionKindOption {
                      const bool enableVFStackLimit = false,
                      const bool enableCastOpt = false,
                      const bool enableNewTreeReducePolicy = false,
-                     const bool enablePredicateSinkAcrossSync = true)
+                      const bool enablePredicateSinkAcrossSync = true,
+                      const bool isMixCV = false)
       : enableOutlineCF(enableOutlineCF),
         enableOutlineMemref(enableOutlineMemref),
         enableOutlineArith(enableOutlineArith),
@@ -39,7 +40,8 @@ struct VFFusionKindOption {
         maxVFParams(maxVFParams), enableVFStackLimit(enableVFStackLimit),
         enableCastOpt(enableCastOpt),
         enableNewTreeReducePolicy(enableNewTreeReducePolicy),
-        enablePredicateSinkAcrossSync(enablePredicateSinkAcrossSync) {};
+        enablePredicateSinkAcrossSync(enablePredicateSinkAcrossSync),
+        isMixCV(isMixCV) {};
 
   VFFusionKindOption(const VFFusionKindOption &option) = default;
 
@@ -58,6 +60,7 @@ struct VFFusionKindOption {
   const bool enableCastOpt;
   const bool enableNewTreeReducePolicy;
   const bool enablePredicateSinkAcrossSync;
+  const bool isMixCV;
 };
 
 bool isReshapeOp(Operation *op);
@@ -101,7 +104,7 @@ bool isReshapeEliminableByPreVectorizationFusion(Operation *op);
 
 bool shouldSkipFusion(Operation *op, const VFFusionKindOption &option);
 
-bool isComputeOp(Operation* op);
+bool isComputeOp(Operation *op);
 
 } // namespace analysis
 } // namespace mlir
