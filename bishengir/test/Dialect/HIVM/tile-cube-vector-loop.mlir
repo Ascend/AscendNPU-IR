@@ -528,15 +528,15 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
     // CHECK-CUBE:       %[[LOAD_B2:.*]] = hivm.hir.load ins(%[[TENSOR_B2]]{{.*}}) outs(%[[EMPTY_B]]{{.*}}) -> tensor<128x128xbf16>
     // CHECK-CUBE:       scf.for %[[OUTER_IV:.*]] = %[[C0]] to %[[C4]] step %[[C1]] {
     // CHECK-CUBE:         scf.for %[[INNER_IV1:.*]] = %[[C0]] to %[[C256]] step %[[C64]] {
-    // CHECK-CUBE:           %[[LOAD_A1:.*]] = hivm.hir.load ins(%{{.*}}) outs(%{{.*}}) {cube_producer_to_fuse_0_group_1} -> tensor<64x128xbf16>
+    // CHECK-CUBE:           %[[LOAD_A1:.*]] = hivm.hir.load ins(%{{.*}}) outs(%{{.*}}) {cube_producer_to_fuse_0_group_0} -> tensor<64x128xbf16>
     // CHECK-CUBE:           %[[MIN1:.*]] = affine.min #[[$MAP]](%[[INNER_IV1]])
-    // CHECK-CUBE:           %[[MMAD1:.*]] = hivm.hir.mmadL1 {cube_producer_to_fuse_0_group_1} ins(%[[LOAD_A1]], %[[LOAD_B1]], %[[TRUE]], %[[MIN1]], %[[C128]], %[[C128]]{{.*}}
+    // CHECK-CUBE:           %[[MMAD1:.*]] = hivm.hir.mmadL1 {cube_producer_to_fuse_0_group_0} ins(%[[LOAD_A1]], %[[LOAD_B1]], %[[TRUE]], %[[MIN1]], %[[C128]], %[[C128]]{{.*}}
     // CHECK-CUBE:           hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, op_to_tile_0_branch_0} ins(%[[MMAD1]]{{.*}})
     // CHECK-CUBE:         }
     // CHECK-CUBE:         scf.for %[[INNER_IV2:.*]] = %[[C0]] to %[[C256]] step %[[C64]] {
-    // CHECK-CUBE:           %[[LOAD_A2:.*]] = hivm.hir.load ins(%{{.*}}) outs(%{{.*}}) {cube_producer_to_fuse_0_group_0} -> tensor<64x128xbf16>
+    // CHECK-CUBE:           %[[LOAD_A2:.*]] = hivm.hir.load ins(%{{.*}}) outs(%{{.*}}) {cube_producer_to_fuse_0_group_1} -> tensor<64x128xbf16>
     // CHECK-CUBE:           %[[MIN2:.*]] = affine.min #[[$MAP]](%[[INNER_IV2]])
-    // CHECK-CUBE:           %[[MMAD2:.*]] = hivm.hir.mmadL1 {cube_producer_to_fuse_0_group_0} ins(%[[LOAD_A2]], %[[LOAD_B2]], %[[TRUE]], %[[MIN2]], %[[C128]], %[[C128]]{{.*}}
+    // CHECK-CUBE:           %[[MMAD2:.*]] = hivm.hir.mmadL1 {cube_producer_to_fuse_0_group_1} ins(%[[LOAD_A2]], %[[LOAD_B2]], %[[TRUE]], %[[MIN2]], %[[C128]], %[[C128]]{{.*}}
     // CHECK-CUBE:           hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, op_to_tile_0_branch_1} ins(%[[MMAD2]]{{.*}})
     // CHECK-CUBE:         }
     // CHECK-CUBE:       } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
