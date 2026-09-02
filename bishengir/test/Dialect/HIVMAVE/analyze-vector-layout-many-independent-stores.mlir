@@ -1,3 +1,4 @@
+// REQUIRES: asserts
 // RUN: bishengir-opt %s --analyze-vector-layout | FileCheck %s
 // RUN: bishengir-opt %s --analyze-vector-layout --debug-only=analyze-vector-layout -o /dev/null 2>&1 | FileCheck %s --check-prefix=DEBUG
 
