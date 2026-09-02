@@ -1,0 +1,13 @@
+set(LLVM_TARGET_DEFINITIONS BiShengIRAttrs.td)
+mlir_tablegen(BiShengIREnums.h.inc -gen-enum-decls)
+mlir_tablegen(BiShengIREnums.cpp.inc -gen-enum-defs)
+mlir_tablegen(BiShengIRAttrs.h.inc -gen-attrdef-decls -attrdefs-dialect=bishengir)
+mlir_tablegen(BiShengIRAttrs.cpp.inc -gen-attrdef-defs -attrdefs-dialect=bishengir)
+mlir_tablegen(BiShengIRTypes.h.inc -gen-typedef-decls -typedefs-dialect=bishengir)
+mlir_tablegen(BiShengIRTypes.cpp.inc -gen-typedef-defs -typedefs-dialect=bishengir)
+add_public_tablegen_target(MLIRBiShengIREnumsIncGen)
+add_public_tablegen_target(MLIRBiShengIRAttributesIncGen)
+add_dependencies(mlir-headers MLIRBiShengIREnumsIncGen)
+add_dependencies(mlir-headers MLIRBiShengIRAttributesIncGen)
+
+add_mlir_interface(AggregatedOpInterface)

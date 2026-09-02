@@ -1,0 +1,4 @@
+[submodule "third-party/llvm-project"]
+	path = third-party/llvm-project
+	url = ssh://git@szv-open.codehub.huawei.com:2222/innersource/Compiler/llvm-project.git
+	branch = Ascend/AscendNPU-IR/llvmorg-19.1.7

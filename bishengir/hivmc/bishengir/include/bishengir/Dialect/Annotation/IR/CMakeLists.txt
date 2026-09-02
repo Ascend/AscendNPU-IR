@@ -1,0 +1,12 @@
+add_mlir_dialect(AnnotationOps annotation)
+add_bishengir_doc(AnnotationOps AnnotationOps Dialects/ -gen-dialect-doc -dialect annotation)
+
+set(LLVM_TARGET_DEFINITIONS AnnotationAttrs.td)
+mlir_tablegen(AnnotationEnums.h.inc -gen-enum-decls)
+mlir_tablegen(AnnotationEnums.cpp.inc -gen-enum-defs)
+mlir_tablegen(AnnotationAttrs.h.inc -gen-attrdef-decls -attrdefs-dialect=annotation)
+mlir_tablegen(AnnotationAttrs.cpp.inc -gen-attrdef-defs -attrdefs-dialect=annotation)
+add_public_tablegen_target(MLIRAnnotationEnumsIncGen)
+add_public_tablegen_target(MLIRAnnotationAttributesIncGen)
+add_dependencies(mlir-headers MLIRAnnotationEnumsIncGen)
+add_dependencies(mlir-headers MLIRAnnotationAttributesIncGen)

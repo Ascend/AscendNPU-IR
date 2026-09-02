@@ -214,9 +214,8 @@ usage() {
       --coverage                           Build with gcov-compatible coverage instrumentation
                                          (adds -fprofile-arcs -ftest-coverage -fprofile-update=atomic). (Default: disabled)
       --enable-bspub                       Enable BSPUB DaVinci BiShengIR build. (Default: disabled)
-      --collect-binary [OUTPUT_DIR]      Collect built binaries and bc files to OUTPUT_DIR.
-                                           This is a standalone mode that skips the build process.
-                                           (Default: bishengir-output)
+      --collect-binary [OUTPUT_DIR]      Collect built binaries and bc files to OUTPUT_DIR
+                                           after installation. (Default: bishengir-output)
       "
 }
 
@@ -702,6 +701,38 @@ cmake_build() {
   fi
 }
 
+build_hivmc() {
+  echo "Building HIVMC..."
+  local hivmc_publish_option=""
+  if [[ "${BISHENGIR_PUBLISH}" == "ON" ]]; then
+    hivmc_publish_option="--bishengir-publish"
+  fi
+
+  # The hivmc build script only creates its build directory on --rebuild,
+  # so ensure it exists before the first invocation.
+  mkdir -p "${BUILD_DIR}/../build_hivmc"
+
+  # The hivmc build script resolves its bishengir source as ../bishengir
+  # relative to its build directory, which only works when building inside
+  # the hivmc repo. Override it with the absolute source path (the hivmc
+  # script appends these options at the end of its cmake command, so the
+  # later -D takes precedence).
+  local hivmc_cmake_options="${CMAKE_OPTIONS} -DLLVM_EXTERNAL_BISHENGIR_SOURCE_DIR=${BISHENGIR_SOURCE_DIR}/bishengir/hivmc/bishengir"
+
+  ./bishengir/hivmc/build-tools/build.sh \
+    --build-type "${BUILD_TYPE}" -r \
+    -o "${BUILD_DIR}/../build_hivmc" \
+    -j "${THREADS}" \
+    --c-compiler "${C_COMPILER}" \
+    --cxx-compiler "${CXX_COMPILER}" \
+    --safety_options \
+    --safety_ld_options \
+    --skip_rpath \
+    ${hivmc_publish_option} \
+    --add-cmake-options "${hivmc_cmake_options}" \
+    --install-prefix "${INSTALL_PREFIX}"
+}
+
 cmake_install() {
   ( cd "${BUILD_DIR}" && \
     if [[ "${BISHENGIR_PUBLISH}" == "ON" ]]; then
@@ -710,6 +741,10 @@ cmake_install() {
       cmake --install .
     fi
   )
+
+  if [[ "${COLLECT_BINARY}" != "OFF" ]]; then
+    collect_binary "${COLLECT_BINARY}"
+  fi
 }
 
 collect_binary() {
@@ -731,6 +766,18 @@ collect_binary() {
     cp "${install_dir}/bin/bishengir-compile" "${output_dir}/bin/" || { echo "Failed to copy bishengir-compile"; exit 1; }
     cp "${install_dir}/bin/bishengir-opt" "${output_dir}/bin/" || { echo "Failed to copy bishengir-opt"; exit 1; }
     echo "  Copied bishengir-compile, bishengir-opt"
+
+    local hivmc_bin="${install_dir}/bin/hivmc-a5"
+    if [[ ! -f "${hivmc_bin}" ]]; then
+      hivmc_bin="${install_dir}/bin/hivmc"
+    fi
+    if [[ -f "${hivmc_bin}" ]]; then
+      cp "${hivmc_bin}" "${output_dir}/bin/hivmc" || { echo "Failed to copy hivmc"; exit 1; }
+      cp "${hivmc_bin}" "${output_dir}/bin/hivmc-a5" || { echo "Failed to copy hivmc-a5"; exit 1; }
+      echo "  Copied hivmc, hivmc-a5"
+    else
+      echo "Warning: hivmc binary not found at ${install_dir}/bin"
+    fi
   else
     echo "Warning: bin directory not found at ${install_dir}/bin"
   fi
@@ -763,11 +810,6 @@ main() {
   echo "Build directory: $BUILD_DIR"
   echo "C compiler: $C_COMPILER | CXX compiler: $CXX_COMPILER"
 
-  if [[ "${COLLECT_BINARY}" != "OFF" ]]; then
-    collect_binary "${COLLECT_BINARY}"
-    exit 0
-  fi
-
   check_dependencies
 
   if [[ -n "$REBUILD" ]]; then
@@ -781,6 +823,14 @@ main() {
   fi
 
   cmake_build
+
+  # Skip HIVMC when building the standalone IR only or against the
+  # LLVM 20/22 compatibility shims.
+  if [[ "${CMAKE_OPTIONS}" != *"-DBISHENGIR_BUILD_STANDALONE_IR_ONLY=ON"* ]] && \
+     [[ "${CMAKE_OPTIONS}" != *"-DCMAKE_C_FLAGS=-D__LLVM_MAJOR_VERSION_20_COMPATIBLE__"* ]] && \
+     [[ "${CMAKE_OPTIONS}" != *"-DLLVM_MAJOR_VERSION_22_COMPATIBLE=ON"* ]]; then
+    build_hivmc
+  fi
 
   if [[ -z "$BUILD_TEST" ]] && [[ -z "$NO_INSTALL" ]]; then
     cmake_install

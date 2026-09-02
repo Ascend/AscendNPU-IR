@@ -1,0 +1,6 @@
+set(LLVM_TARGET_DEFINITIONS SCFTransformOps.td)
+mlir_tablegen(SCFTransformOps.h.inc -gen-op-decls)
+mlir_tablegen(SCFTransformOps.cpp.inc -gen-op-defs)
+add_public_tablegen_target(BiShengIRSCFTransformOpsIncGen)
+add_dependencies(mlir-headers BiShengIRSCFTransformOpsIncGen)
+add_bishengir_doc(SCFTransformOps BiShengIRSCFLoopTransformOps Dialects/ -gen-op-doc)
