@@ -738,6 +738,10 @@ def Conv1DL1Op : HIVM_MacroOp<"Conv1dL1",[
                         a 2-element integer array [paddingL, paddingR]. A
                         scalar applies to both sides.
                       }]>:$padding,
+                      Arg<I32Attr, [{
+                        Convolution dilation for Conv1d. Accepts an integer
+                        scalar in [1, 255].
+                      }]>:$dilation,
                       I32Attr:$groups
                       );
   let results = (outs Variadic<AnyRankedTensor>:$result_tensors);
@@ -773,6 +777,7 @@ def Conv1DL1Op : HIVM_MacroOp<"Conv1dL1",[
     int64_t getStrideW();
     FailureOr<int64_t> getPaddingL();
     FailureOr<int64_t> getPaddingR();
+    int64_t getDilationW();
 
     FailureOr<DataLayoutAttr> getInputLayout();
     FailureOr<DataLayoutAttr> getWeightLayout();
@@ -828,6 +833,12 @@ def Conv2DL1Op : HIVM_MacroOp<"Conv2dL1",[
                         the 2-element form apply symmetric padding in each
                         dimension.
                       }]>:$padding,
+                      Arg<AnyAttr, [{
+                        Convolution dilation for Conv2d. Accepts an integer
+                        scalar or a 2-element integer array
+                        [dilationH, dilationW]. A scalar applies to both H and
+                        W directions. Each value must be in [1, 255].
+                      }]>:$dilation,
                       I32Attr:$groups
                       );
   let results = (outs Variadic<AnyRankedTensor>:$result_tensors);
@@ -866,6 +877,8 @@ def Conv2DL1Op : HIVM_MacroOp<"Conv2dL1",[
     FailureOr<int64_t> getPaddingB();
     FailureOr<int64_t> getPaddingL();
     FailureOr<int64_t> getPaddingR();
+    FailureOr<int64_t> getDilationH();
+    FailureOr<int64_t> getDilationW();
 
     FailureOr<DataLayoutAttr> getInputLayout();
     FailureOr<DataLayoutAttr> getWeightLayout();
@@ -906,11 +919,11 @@ def Conv3DL1Op : HIVM_MacroOp<"Conv3dL1",[
                         synchronization instructions, they are
                         managed by inject-sync passes.
                       }]>:$sync_related_args,
-                      Arg<OptionalAttr<AnyAttr>, [{
+                      Arg<AnyAttr, [{
                         Convolution stride for Conv3d. Accepts an integer
                         scalar or a 3-element integer array
                         [strideD, strideH, strideW]. A scalar applies to all
-                        D/H/W directions. If omitted, the stride defaults to 1.
+                        D/H/W directions.
                       }]>:$stride,
                       Arg<AnyAttr, [{
                         Zero-padding for Conv3d. Accepts an integer scalar, a
@@ -922,6 +935,13 @@ def Conv3DL1Op : HIVM_MacroOp<"Conv3dL1",[
                         materializes Front/Back padding and decompose forwards
                         T/B/L/R padding to Conv2dL1.
                       }]>:$padding,
+                      Arg<AnyAttr, [{
+                        Convolution dilation for Conv3d. Accepts an integer
+                        scalar or a 3-element integer array
+                        [dilationD, dilationH, dilationW]. A scalar applies to
+                        all D/H/W directions. Currently dilationD must be 1;
+                        dilationH and dilationW must be in [1, 255].
+                      }]>:$dilation,
                       I32Attr:$groups
                       );
   let results = (outs Variadic<AnyRankedTensor>:$result_tensors);
@@ -963,6 +983,9 @@ def Conv3DL1Op : HIVM_MacroOp<"Conv3dL1",[
     FailureOr<int64_t> getPaddingB();
     FailureOr<int64_t> getPaddingL();
     FailureOr<int64_t> getPaddingR();
+    FailureOr<int64_t> getDilationD();
+    FailureOr<int64_t> getDilationH();
+    FailureOr<int64_t> getDilationW();
   }];
   let hasVerifier = 1;
 }

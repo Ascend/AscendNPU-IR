@@ -26,6 +26,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/PatternMatch.h"
 
@@ -73,6 +74,10 @@ private:
   LogicalResult propagateUpSelect(arith::SelectOp selectOp,
                                   UnrealizedConversionCastOp propagateOp,
                                   PatternRewriter &rewriter) const;
+
+  LogicalResult propagateUpIfOp(scf::IfOp ifOp,
+                                UnrealizedConversionCastOp propagateOp,
+                                PatternRewriter &rewriter) const;
 };
 
 /// Propagate sliced shape requirements down to memref users.

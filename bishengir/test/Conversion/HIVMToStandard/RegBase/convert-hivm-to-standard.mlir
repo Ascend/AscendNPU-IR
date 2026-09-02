@@ -162,14 +162,16 @@ module {
 module {
   // CHECK-LABEL: func.func @convert_conv1d(
   // CHECK: %[[STRIDE_W:.*]] = arith.constant 3 : i64
-  // CHECK: call @conv2d_group_half_to_float({{.*}}, %[[STRIDE_W]], {{.*}})
+  // CHECK: %[[DILATION_W:.*]] = arith.constant 4 : i64
+  // CHECK: call @conv2d_group_half_to_float({{.*}}, %[[STRIDE_W]], {{.*}}, %[[DILATION_W]], {{.*}})
   // CHECK-NOT: hivm.hir.Conv1dL1
   func.func @convert_conv1d(
       %input: memref<1x2x1x128x16xf16, #hivm.address_space<cbuf>>,
       %weight: memref<1x1x5x32x16xf16, #hivm.address_space<cbuf>>,
       %output: memref<128x32xf32, #hivm.address_space<cc>>) {
     %true = arith.constant true
-    hivm.hir.Conv1dL1 {groups = 2 : i32, padding = 1 : i32, stride = 3 : i32}
+    hivm.hir.Conv1dL1 {dilation = 4 : i32, groups = 2 : i32,
+                       padding = 1 : i32, stride = 3 : i32}
         ins(%input, %weight, %true
             : memref<1x2x1x128x16xf16, #hivm.address_space<cbuf>>,
               memref<1x1x5x32x16xf16, #hivm.address_space<cbuf>>, i1)
@@ -189,7 +191,7 @@ module {
       %weight: memref<1x1x5x32x16xf16, #hivm.address_space<cbuf>>,
       %output: memref<128x32xf32, #hivm.address_space<cc>>) {
     %true = arith.constant true
-    hivm.hir.Conv1dL1 {groups = 2 : i32, padding = [1, 2], stride = 3 : i32}
+    hivm.hir.Conv1dL1 {dilation = 1 : i32, groups = 2 : i32, padding = [1, 2], stride = 3 : i32}
         ins(%input, %weight, %true
             : memref<1x2x1x128x16xf16, #hivm.address_space<cbuf>>,
               memref<1x1x5x32x16xf16, #hivm.address_space<cbuf>>, i1)
@@ -202,14 +204,17 @@ module {
   // CHECK-LABEL: func.func @convert_conv2d(
   // CHECK-DAG: %[[STRIDE_H:.*]] = arith.constant 2 : i64
   // CHECK-DAG: %[[STRIDE_W:.*]] = arith.constant 3 : i64
-  // CHECK: call @conv2d_group_half_to_float({{.*}}, %[[STRIDE_H]], %[[STRIDE_W]], {{.*}})
+  // CHECK-DAG: %[[DILATION_H:.*]] = arith.constant 4 : i64
+  // CHECK-DAG: %[[DILATION_W:.*]] = arith.constant 5 : i64
+  // CHECK: call @conv2d_group_half_to_float({{.*}}, %[[STRIDE_H]], %[[STRIDE_W]], %[[DILATION_H]], %[[DILATION_W]], {{.*}})
   // CHECK-NOT: hivm.hir.Conv2dL1
   func.func @convert_conv2d(
       %input: memref<1x1x1x128x16xf16, #hivm.address_space<cbuf>>,
       %weight: memref<1x1x5x32x16xf16, #hivm.address_space<cbuf>>,
       %output: memref<128x32xf32, #hivm.address_space<cc>>) {
     %true = arith.constant true
-    hivm.hir.Conv2dL1 {groups = 1 : i32, padding = 1 : i32, stride = [2, 3]}
+    hivm.hir.Conv2dL1 {dilation = [4, 5], groups = 1 : i32,
+                       padding = 1 : i32, stride = [2, 3]}
         ins(%input, %weight, %true
             : memref<1x1x1x128x16xf16, #hivm.address_space<cbuf>>,
               memref<1x1x5x32x16xf16, #hivm.address_space<cbuf>>, i1)
@@ -232,7 +237,7 @@ module {
       %weight: memref<1x1x5x32x16xf16, #hivm.address_space<cbuf>>,
       %output: memref<128x32xf32, #hivm.address_space<cc>>) {
     %true = arith.constant true
-    hivm.hir.Conv2dL1 {groups = 1 : i32, padding = [1, 2, 3, 4], stride = [2, 3]}
+    hivm.hir.Conv2dL1 {dilation = 1 : i32, groups = 1 : i32, padding = [1, 2, 3, 4], stride = [2, 3]}
         ins(%input, %weight, %true
             : memref<1x1x1x128x16xf16, #hivm.address_space<cbuf>>,
               memref<1x1x5x32x16xf16, #hivm.address_space<cbuf>>, i1)
@@ -253,7 +258,7 @@ module {
       %weight: memref<1x1x5x32x16xf16, #hivm.address_space<cbuf>>,
       %output: memref<128x32xf32, #hivm.address_space<cc>>) {
     %true = arith.constant true
-    hivm.hir.Conv2dL1 {groups = 2 : i32, padding = 1 : i32, stride = 3 : i32}
+    hivm.hir.Conv2dL1 {dilation = 1 : i32, groups = 2 : i32, padding = 1 : i32, stride = 3 : i32}
         ins(%input, %weight, %true
             : memref<1x2x1x128x16xf16, #hivm.address_space<cbuf>>,
               memref<1x1x5x32x16xf16, #hivm.address_space<cbuf>>, i1)

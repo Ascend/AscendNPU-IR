@@ -232,7 +232,7 @@ struct ScratchAccess {
   int64_t otherStart = 0;
 };
 
-static std::optional<ScratchAccess> matchScratchAccess(Value ptrTensor) {
+static std::optional<ScratchAccess> matchScratchAccess(Value ptrTensor, int expectedKAxis = -1) {
   auto addptr = ptrTensor.getDefiningOp<triton::AddPtrOp>();
   if (!addptr)
     return std::nullopt;
@@ -241,15 +241,44 @@ static std::optional<ScratchAccess> matchScratchAccess(Value ptrTensor) {
   if (!offsetsTy || offsetsTy.getRank() != 2)
     return std::nullopt;
 
-  auto addi = offsets.getDefiningOp<arith::AddIOp>();
-  if (!addi)
-    return std::nullopt;
+  bool is1x1 = offsetsTy.getDimSize(0) == 1 && offsetsTy.getDimSize(1) == 1;
+
+  arith::AddIOp addi;
+  triton::ExpandDimsOp expDimOp;
+  if (is1x1 && expectedKAxis == 1) {
+    auto splat = offsets.getDefiningOp<triton::SplatOp>();
+    ScratchAccess acc;
+    if (splat) {
+      if (splat.getResult().getType() != offsetsTy)
+        return std::nullopt;
+      acc.kind = ScratchAccess::DYNAMIC;
+      acc.startConst = 0;
+      acc.tileSize = 1;
+      acc.dimOther = 1;
+      acc.kAxis = expectedKAxis;
+      acc.tileIdx = splat.getSrc();
+      acc.otherStart = 0;
+      return acc;
+    }
+  } else if (expectedKAxis != -1 && offsetsTy.getDimSize(1 - expectedKAxis) == 1) {
+    expDimOp = offsets.getDefiningOp<triton::ExpandDimsOp>();
+    if (!expDimOp) {
+      addi = offsets.getDefiningOp<arith::AddIOp>();
+      if (!addi)
+        return std::nullopt;
+    }
+  } else {
+    addi = offsets.getDefiningOp<arith::AddIOp>();
+    if (!addi)
+      return std::nullopt;
+  }
 
   // Classify `side` as the tile-axis offset by matching the K-1D index
   // inside `expand_dims(_, axis=expectAxis)`. expectAxis=0 -> col-tile;
   // expectAxis=1 -> row-tile.
   auto classifyTileSide = [&](ScratchAccess &acc, Value side,
                               int expectAxis) -> bool {
+    if (expectAxis == expectedKAxis) return false;
     Value sideStripped = stripConvertLayouts(side);
     int kAxis = 1 - expectAxis;
     int otherAxis = expectAxis;
@@ -268,12 +297,18 @@ static std::optional<ScratchAccess> matchScratchAccess(Value ptrTensor) {
       return true;
     }
 
-    auto bcast = sideStripped.getDefiningOp<triton::BroadcastOp>();
-    if (!bcast) return false;
-    Value bcastSrc = stripConvertLayouts(bcast.getSrc());
-    auto exp = bcastSrc.getDefiningOp<triton::ExpandDimsOp>();
-    if (!exp || exp.getAxis() != static_cast<uint32_t>(expectAxis)) return false;
-    Value expSrc = stripConvertLayouts(exp.getSrc());
+    Value expSrc;
+
+    if (!expDimOp) {
+      auto bcast = sideStripped.getDefiningOp<triton::BroadcastOp>();
+      if (!bcast) return false;
+      Value bcastSrc = stripConvertLayouts(bcast.getSrc());
+      auto exp = bcastSrc.getDefiningOp<triton::ExpandDimsOp>();
+      if (!exp || exp.getAxis() != static_cast<uint32_t>(expectAxis)) return false;
+      expSrc = stripConvertLayouts(exp.getSrc());
+    } else {
+      expSrc = stripConvertLayouts(expDimOp.getSrc());
+    }
 
     // Tile axis is the OTHER axis from `expectAxis`.
     acc.kAxis = kAxis;
@@ -368,6 +403,15 @@ static std::optional<ScratchAccess> matchScratchAccess(Value ptrTensor) {
 
   // Try col-tile, then row-tile; each tries both addi sides.
   ScratchAccess acc;
+
+  if (expDimOp) {
+    if (classifyTileSide(acc, offsets, 1 - expectedKAxis)) {
+      acc.otherStart = 0;
+      return acc;
+    }
+    return std::nullopt;
+  }
+
   for (int expectAxis : {0, 1}) {
     Value lhs = addi.getLhs();
     Value rhs = addi.getRhs();
@@ -442,7 +486,12 @@ private:
       }
     }
     for (unsigned argIdx : scratchShmAccArgs) {
-      if (failed(handleScratchAccArg(func, argIdx)))
+      int expectedKAxis = -1;
+      if (func.getArgAttr(argIdx, dotAAttr))
+        expectedKAxis = 1; // col-tile
+      else if (func.getArgAttr(argIdx, dotBAttr))
+        expectedKAxis = 0; // row-tile
+      if (failed(handleScratchAccArg(func, argIdx, expectedKAxis)))
         return failure();
     }
 
@@ -620,7 +669,7 @@ private:
   ///       local_load/store on the per-tile <envM, tileN> view.
   ///   - For DYNAMIC tile access (inner-loop iv-driven case):
   ///       memdesc_index[tileIdx] + local_load/store on per-tile view.
-  LogicalResult handleScratchAccArg(triton::FuncOp func, unsigned argIdx) {
+  LogicalResult handleScratchAccArg(triton::FuncOp func, unsigned argIdx, int expectedKAxis = -1) {
     MLIRContext *ctx = func.getContext();
     BlockArgument arg = func.getArgument(argIdx);
     auto ptrTy = dyn_cast<triton::PointerType>(arg.getType());
@@ -671,7 +720,7 @@ private:
     int kAxis = -1; // determined by the first matched access; all must agree
 
     auto classify = [&](Operation *op, Value ptrTensor) -> LogicalResult {
-      auto acc = matchScratchAccess(ptrTensor);
+      auto acc = matchScratchAccess(ptrTensor, expectedKAxis);
       if (!acc) {
         LLVM_DEBUG({
           llvm::dbgs() << "[LowerDotBuffersAndSharedMem] FAILED match on op:\n";

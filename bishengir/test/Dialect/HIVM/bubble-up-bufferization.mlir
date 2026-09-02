@@ -448,3 +448,75 @@ func.func @bubble_up_nested_select_memspace_cast(
       : tensor<64x32xf32> to tensor<32x32xf32>
   return %slice : tensor<32x32xf32>
 }
+
+// -----
+// CHECK: Successfully bubble up bufferization
+func.func @bubble_up_if_alloc(%arg0: memref<64x32xf32>, %cond: i1) -> tensor<32x32xf32> {
+  %alloc0 = memref.alloc() : memref<64x32xf32>
+  %alloc1 = memref.alloc() : memref<64x32xf32>
+  hivm.hir.load ins(%arg0 : memref<64x32xf32>) outs(%alloc0 : memref<64x32xf32>)
+  hivm.hir.load ins(%arg0 : memref<64x32xf32>) outs(%alloc1 : memref<64x32xf32>)
+  %sel = scf.if %cond -> memref<64x32xf32> {
+    scf.yield %alloc0 : memref<64x32xf32>
+  } else {
+    scf.yield %alloc1 : memref<64x32xf32>
+  }
+  %tensor = bufferization.to_tensor %sel restrict writable : memref<64x32xf32>
+  %slice = tensor.extract_slice %tensor[32, 0] [32, 32] [1, 1] {to_be_bubbled_slice}
+      : tensor<64x32xf32> to tensor<32x32xf32>
+  return %slice : tensor<32x32xf32>
+}
+
+// -----
+// CHECK: Successfully bubble up bufferization
+func.func @bubble_up_if_memspace_cast(%arg0: memref<64x32xf32>, %cond: i1) -> tensor<32x32xf32> {
+  %alloc0 = memref.alloc() : memref<64x32xf32, #hivm.address_space<ub>>
+  %alloc1 = memref.alloc() : memref<64x32xf32, #hivm.address_space<ub>>
+  %cast0 = memref.memory_space_cast %alloc0
+      : memref<64x32xf32, #hivm.address_space<ub>> to memref<64x32xf32>
+  %cast1 = memref.memory_space_cast %alloc1
+      : memref<64x32xf32, #hivm.address_space<ub>> to memref<64x32xf32>
+  hivm.hir.load ins(%arg0 : memref<64x32xf32>) outs(%cast0 : memref<64x32xf32>)
+  hivm.hir.load ins(%arg0 : memref<64x32xf32>) outs(%cast1 : memref<64x32xf32>)
+  %sel = scf.if %cond -> memref<64x32xf32> {
+    scf.yield %cast0 : memref<64x32xf32>
+  } else {
+    scf.yield %cast1 : memref<64x32xf32>
+  }
+  %tensor = bufferization.to_tensor %sel restrict writable : memref<64x32xf32>
+  %slice = tensor.extract_slice %tensor[32, 0] [32, 32] [1, 1] {to_be_bubbled_slice}
+      : tensor<64x32xf32> to tensor<32x32xf32>
+  return %slice : tensor<32x32xf32>
+}
+
+// -----
+// CHECK: Successfully bubble up bufferization
+func.func @bubble_up_nested_if_memspace_cast(
+    %arg0: memref<64x32xf32>, %cond0: i1, %cond1: i1) -> tensor<32x32xf32> {
+  %alloc0 = memref.alloc() : memref<64x32xf32, #hivm.address_space<ub>>
+  %alloc1 = memref.alloc() : memref<64x32xf32, #hivm.address_space<ub>>
+  %alloc2 = memref.alloc() : memref<64x32xf32, #hivm.address_space<ub>>
+  %cast0 = memref.memory_space_cast %alloc0
+      : memref<64x32xf32, #hivm.address_space<ub>> to memref<64x32xf32>
+  %cast1 = memref.memory_space_cast %alloc1
+      : memref<64x32xf32, #hivm.address_space<ub>> to memref<64x32xf32>
+  %cast2 = memref.memory_space_cast %alloc2
+      : memref<64x32xf32, #hivm.address_space<ub>> to memref<64x32xf32>
+  hivm.hir.load ins(%arg0 : memref<64x32xf32>) outs(%cast0 : memref<64x32xf32>)
+  hivm.hir.load ins(%arg0 : memref<64x32xf32>) outs(%cast1 : memref<64x32xf32>)
+  hivm.hir.load ins(%arg0 : memref<64x32xf32>) outs(%cast2 : memref<64x32xf32>)
+  %sel0 = scf.if %cond0 -> memref<64x32xf32> {
+    scf.yield %cast1 : memref<64x32xf32>
+  } else {
+    scf.yield %cast0 : memref<64x32xf32>
+  }
+  %sel1 = scf.if %cond1 -> memref<64x32xf32> {
+    scf.yield %cast2 : memref<64x32xf32>
+  } else {
+    scf.yield %sel0 : memref<64x32xf32>
+  }
+  %tensor = bufferization.to_tensor %sel1 restrict writable : memref<64x32xf32>
+  %slice = tensor.extract_slice %tensor[32, 0] [32, 32] [1, 1] {to_be_bubbled_slice}
+      : tensor<64x32xf32> to tensor<32x32xf32>
+  return %slice : tensor<32x32xf32>
+}

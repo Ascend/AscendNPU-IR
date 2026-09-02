@@ -797,15 +797,22 @@ ArrayAttr Conv3DL1Op::getIndexingMaps() {
         auto paddingR = getPaddingR();
         auto strideH = getStrideH();
         auto strideW = getStrideW();
+        auto dilationH = getDilationH();
+        auto dilationW = getDilationW();
         if (succeeded(paddingT) && succeeded(paddingB) &&
             succeeded(paddingL) && succeeded(paddingR) &&
             succeeded(strideH) && succeeded(strideW) && *strideH > 0 &&
-            *strideW > 0) {
+            *strideW > 0 && succeeded(dilationH) && succeeded(dilationW) &&
+            *dilationH > 0 && *dilationW > 0) {
           int64_t oD = iD - wD + 1;
-          int64_t oH =
-              (iH + *paddingT + *paddingB - wH) / *strideH + 1;
-          int64_t oW =
-              (iW + *paddingL + *paddingR - wW) / *strideW + 1;
+          int64_t effectiveWH = *dilationH * (wH - 1) + 1;
+          int64_t effectiveWW = *dilationW * (wW - 1) + 1;
+          int64_t oH = (iH + *paddingT + *paddingB - effectiveWH) /
+                           *strideH +
+                       1;
+          int64_t oW = (iW + *paddingL + *paddingR - effectiveWW) /
+                           *strideW +
+                       1;
           if (oD > 0 && oH > 0 && oW > 0 && oC > 0) {
             AffineExpr d0 = getAffineDimExpr(0, ctx);
             AffineExpr d6 = getAffineDimExpr(6, ctx);

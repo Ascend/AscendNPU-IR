@@ -131,6 +131,7 @@ static DotLoadInfo getDotLoadInfo(Value v) {
 
 /// Attribute key that prevents re-processing.
 static constexpr llvm::StringLiteral kTiledAttr = "bishengir.dot.tiled";
+static constexpr llvm::StringLiteral realKSizeAttr = "bishengir.dot.real_k_size";
 
 //===----------------------------------------------------------------------===//
 // Type substitution helper
@@ -287,7 +288,7 @@ static triton::MakeTensorPtrOp getSourceMakeTensorPtr(triton::LoadOp load) {
 static LogicalResult emitKTilingBlockPtr(triton::DotOp dot,
                                          triton::LoadOp loadA,
                                          triton::LoadOp loadB, int64_t kTile,
-                                         PatternRewriter &rewriter) {
+                                         int64_t realKSize, PatternRewriter &rewriter) {
   Location loc = dot.getLoc();
 
   auto dTy = cast<RankedTensorType>(dot.getResult().getType());
@@ -323,7 +324,7 @@ static LogicalResult emitKTilingBlockPtr(triton::DotOp dot,
 
   // scf.for %step = 0 to (K/kTile) step 1 iter_args(pA, pB, acc)
   Value c0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
-  Value cNumTiles = rewriter.create<arith::ConstantIndexOp>(loc, K / kTile);
+  Value cNumTiles = rewriter.create<arith::ConstantIndexOp>(loc, (realKSize + kTile - 1) / kTile);
   Value c1 = rewriter.create<arith::ConstantIndexOp>(loc, 1);
 
   auto forOp = rewriter.create<scf::ForOp>(loc, c0, cNumTiles, c1,
@@ -487,7 +488,7 @@ tracePtrToBase(Value ptr, PatternRewriter &rewriter, Location loc) {
 static LogicalResult
 emitKTilingBlockPtrFromBase(triton::DotOp dot, triton::LoadOp loadA,
                             triton::LoadOp loadB, int64_t kTile,
-                            PatternRewriter &rewriter,
+                            int64_t realKSize, PatternRewriter &rewriter,
                             StringRef tagAttrName = kTiledAttr) {
   Location loc = dot.getLoc();
   auto dTy = cast<RankedTensorType>(dot.getResult().getType());
@@ -512,7 +513,7 @@ emitKTilingBlockPtrFromBase(triton::DotOp dot, triton::LoadOp loadA,
   Value c0 = rewriter.create<arith::ConstantOp>(loc, i32,
                                                 rewriter.getI32IntegerAttr(0));
   Value cK = rewriter.create<arith::ConstantOp>(
-      loc, i32, rewriter.getI32IntegerAttr(static_cast<int32_t>(K)));
+      loc, i32, rewriter.getI32IntegerAttr(static_cast<int32_t>(realKSize)));
   Value cKTile = rewriter.create<arith::ConstantOp>(
       loc, i32, rewriter.getI32IntegerAttr(static_cast<int32_t>(kTile)));
 
@@ -677,6 +678,7 @@ static LogicalResult emitKTilingTensorOfPtrs(triton::DotOp dot,
                                              triton::LoadOp loadA,
                                              triton::LoadOp loadB,
                                              int64_t kTile,
+                                             int64_t realKSize,
                                              PatternRewriter &rewriter) {
   Location loc = dot.getLoc();
 
@@ -691,7 +693,7 @@ static LogicalResult emitKTilingTensorOfPtrs(triton::DotOp dot,
     return failure();
 
   Value c0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
-  Value cNumTiles = rewriter.create<arith::ConstantIndexOp>(loc, K / kTile);
+  Value cNumTiles = rewriter.create<arith::ConstantIndexOp>(loc, (realKSize + kTile - 1) / kTile);
   Value c1 = rewriter.create<arith::ConstantIndexOp>(loc, 1);
 
   auto forOp = rewriter.create<scf::ForOp>(loc, c0, cNumTiles, c1,
@@ -894,7 +896,7 @@ static bool extractKMaskCmpInfo(Value kMaskLo, int kExpandAxis,
 static LogicalResult
 emitKTilingTensorOfPtrsCanonical(triton::DotOp dot, DotLoadInfo aInfo,
                                  DotLoadInfo bInfo, int64_t kTile,
-                                 PatternRewriter &rewriter) {
+                                 int64_t realKSize, PatternRewriter &rewriter) {
   if (aInfo.trans)
     return failure(); // trans-on-A not yet supported here.
   triton::LoadOp loadA = aInfo.load;
@@ -957,6 +959,7 @@ emitKTilingTensorOfPtrsCanonical(triton::DotOp dot, DotLoadInfo aInfo,
   Value bPLoK, bOLo;
   Value bBaseScalar, bStrideSplat;
   RankedTensorType bPLoTy;
+  Value bLoopStrideAddition;
   // Trans-B-only state (left null in direct-B path).
   Value bPLo_trans, bOLo_trans;
   RankedTensorType bPLoTy_trans;
@@ -989,16 +992,40 @@ emitKTilingTensorOfPtrsCanonical(triton::DotOp dot, DotLoadInfo aInfo,
         if (e.getAxis() != 1)
           return failure();
         bStrideSplat = rhs;
+        if (auto addiOp = e.getSrc().getDefiningOp<arith::AddIOp>()) {
+          Value addLhs = addiOp.getLhs(), addRhs = addiOp.getRhs();
+          if (auto loopSplat = addLhs.getDefiningOp<triton::SplatOp>()) {
+            bLoopStrideAddition = loopSplat.getSrc();
+          } else if (auto loopSplat = addRhs.getDefiningOp<triton::SplatOp>()) {
+            bLoopStrideAddition = loopSplat.getSrc();
+          }
+        }
       } else if (auto e = rhs.getDefiningOp<triton::ExpandDimsOp>()) {
         if (e.getAxis() != 1)
           return failure();
         bStrideSplat = lhs;
+        if (auto addiOp = e.getSrc().getDefiningOp<arith::AddIOp>()) {
+          Value addLhs = addiOp.getLhs(), addRhs = addiOp.getRhs();
+          if (auto loopSplat = addLhs.getDefiningOp<triton::SplatOp>()) {
+            bLoopStrideAddition = loopSplat.getSrc();
+          } else if (auto loopSplat = addRhs.getDefiningOp<triton::SplatOp>()) {
+            bLoopStrideAddition = loopSplat.getSrc();
+          }
+        }
       } else {
         return failure();
       }
     } else if (auto e = bRowOff.getDefiningOp<triton::ExpandDimsOp>()) {
       if (e.getAxis() != 1)
         return failure();
+      if (auto addiOp = e.getSrc().getDefiningOp<arith::AddIOp>()) {
+        Value addLhs = addiOp.getLhs(), addRhs = addiOp.getRhs();
+        if (auto loopSplat = addLhs.getDefiningOp<triton::SplatOp>()) {
+          bLoopStrideAddition = loopSplat.getSrc();
+        } else if (auto loopSplat = addRhs.getDefiningOp<triton::SplatOp>()) {
+          bLoopStrideAddition = loopSplat.getSrc();
+        }
+      }
     } else {
       return failure();
     }
@@ -1050,7 +1077,7 @@ emitKTilingTensorOfPtrsCanonical(triton::DotOp dot, DotLoadInfo aInfo,
                     << '\n');
 
   Value c0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
-  Value cNumTiles = rewriter.create<arith::ConstantIndexOp>(loc, K / kTile);
+  Value cNumTiles = rewriter.create<arith::ConstantIndexOp>(loc, (realKSize + kTile - 1) / kTile);
   Value c1 = rewriter.create<arith::ConstantIndexOp>(loc, 1);
 
   // Hoist loop-invariant pieces (the static `make_range`, the kTile
@@ -1084,6 +1111,13 @@ emitKTilingTensorOfPtrsCanonical(triton::DotOp dot, DotLoadInfo aInfo,
         rewriter.create<triton::BroadcastOp>(loc, bUnderPtrTyTrans, bPLo_trans);
   }
 
+  Value tiledBLoopStrideAddition;
+  if (bLoopStrideAddition) {
+    auto tiledBLoopStrideAdditionTy = RankedTensorType::get({kTile, 1}, i32);
+    tiledBLoopStrideAddition = rewriter.create<triton::SplatOp>(
+        loc, tiledBLoopStrideAdditionTy, bLoopStrideAddition);
+  }
+  
   auto forOp = rewriter.create<scf::ForOp>(loc, c0, cNumTiles, c1,
                                            ValueRange{dot.getC()});
   {
@@ -1159,13 +1193,16 @@ emitKTilingTensorOfPtrsCanonical(triton::DotOp dot, DotLoadInfo aInfo,
       Value tiledBKIdx2D = rewriter.create<triton::ExpandDimsOp>(
           loc, bKIdx2DTiledTy, tiledKRange1D, /*axis=*/1);
       Value tiledBRowOff = tiledBKIdx2D;
+      if (tiledBLoopStrideAddition) {
+        tiledBRowOff = rewriter.create<arith::AddIOp>(loc, tiledBRowOff, tiledBLoopStrideAddition);
+      }
       if (bStrideSplat) {
         Value tiledStride =
             resplatToShape(bStrideSplat, {kTile, 1}, rewriter, loc);
         if (!tiledStride)
           return failure();
         tiledBRowOff =
-            rewriter.create<arith::MulIOp>(loc, tiledBKIdx2D, tiledStride);
+            rewriter.create<arith::MulIOp>(loc, tiledBRowOff, tiledStride);
       }
       auto bPLoKTiledTy =
           RankedTensorType::get({kTile, 1}, bPLoTy.getElementType());
@@ -1315,14 +1352,14 @@ struct TileInfo {
   int64_t numTiles = 0;
 };
 
-static TileInfo chooseTile(triton::DotOp dot, int KTileSize) {
+static TileInfo chooseTile(triton::DotOp dot, int KTileSize, int64_t realKSize) {
   auto aTy = cast<RankedTensorType>(dot.getA().getType());
   auto dTy = cast<RankedTensorType>(dot.getResult().getType());
   int64_t M = dTy.getDimSize(0);
   int64_t N = dTy.getDimSize(1);
   int64_t K = aTy.getDimSize(1);
 
-  if (M * K * N <= kMKNBudget && (KTileSize <= 0 || KTileSize == K))
+  if ((M * K * N <= kMKNBudget && KTileSize <= 0) || KTileSize == K)
     return {};
 
   // Look through a single `tt.trans` between load and dot operand.
@@ -1362,8 +1399,8 @@ static TileInfo chooseTile(triton::DotOp dot, int KTileSize) {
   } else {
     kTile = KTileSize;
   }
-
-  return {TileStrategy::K, kTile, K / kTile};
+  
+  return {TileStrategy::K, kTile, (realKSize + kTile - 1) / kTile};
 }
 
 //===----------------------------------------------------------------------===//
@@ -1386,12 +1423,17 @@ struct TileDotPattern : public OpRewritePattern<triton::DotOp> {
     auto dTy = cast<RankedTensorType>(dot.getResult().getType());
     int64_t M = dTy.getDimSize(0), N = dTy.getDimSize(1);
     int64_t K = aTy.getDimSize(1);
+    int64_t realKSize = K;
+    if (dot->hasAttr(realKSizeAttr)) {
+      auto intAttr = dot->getAttrOfType<IntegerAttr>(realKSizeAttr);
+      realKSize = intAttr.getInt();
+    }
 
     LLVM_DEBUG(DBGS() << "examining tt.dot [M=" << M << " K=" << K << " N=" << N
                       << "] MKN=" << M * K * N << " budget=" << kMKNBudget
                       << '\n');
 
-    TileInfo info = chooseTile(dot, KTileSize);
+    TileInfo info = chooseTile(dot, KTileSize, realKSize);
     if (info.strategy == TileStrategy::None) {
       LLVM_DEBUG(DBGS() << "  -> skip (MKN within budget, only one operand is a load, "
                         << "or no tileable load)" << '\n');
@@ -1420,20 +1462,20 @@ struct TileDotPattern : public OpRewritePattern<triton::DotOp> {
       } else {
         // Prefer outer-base emitter; fall back to chained-advance form.
         res = emitKTilingBlockPtrFromBase(dot, aLoad, bLoad, info.tileSize,
-                                          rewriter);
+                                          realKSize, rewriter);
         if (failed(res))
-          res = emitKTilingBlockPtr(dot, aLoad, bLoad, info.tileSize, rewriter);
+          res = emitKTilingBlockPtr(dot, aLoad, bLoad, info.tileSize, realKSize, rewriter);
       }
     } else if (pA == PtrStyle::TensorOfPtrs && pB == PtrStyle::TensorOfPtrs) {
       // Canonical matmul/mask-aware emitter first; chain-walking fallback.
       if (info.tileSize >= 16)
         res = emitKTilingTensorOfPtrsCanonical(dot, aInfo, bInfo,
-                                               info.tileSize, rewriter);
+                                               info.tileSize, realKSize, rewriter);
       // Fallback only when neither operand has a tt.trans (the fallback
       // emitter doesn't yet support trans look-through).
       if (failed(res) && !aInfo.trans && !bInfo.trans)
         res =
-            emitKTilingTensorOfPtrs(dot, aLoad, bLoad, info.tileSize, rewriter);
+            emitKTilingTensorOfPtrs(dot, aLoad, bLoad, info.tileSize, realKSize, rewriter);
     } else {
       LLVM_DEBUG(DBGS() << "  -> mixed ptr styles, skipping" << '\n');
     }
@@ -1452,7 +1494,8 @@ struct TileDotPattern : public OpRewritePattern<triton::DotOp> {
 //===----------------------------------------------------------------------===//
 // StageNonLoadOperandPattern — handles over-budget dots where at least one
 // operand comes from a register chain (e.g. truncf(exp(...))) instead of
-// a tt.load. Routes the non-load operand through scratch SHM/GM so the dot
+// a tt.load, or when both operands are from a tt.load but weren't tiled by
+// TileDotLoads. Routes the staged operand(s) through scratch SHM/GM so the dot
 // can still be K-tiled.
 //
 // Steps:
@@ -1462,7 +1505,7 @@ struct TileDotPattern : public OpRewritePattern<triton::DotOp> {
 //      into `ttg.local_alloc` + per-tile `memdesc_subslice` accesses,
 //      or into `ttg.global_scratch_alloc` + per-tile regular ptr based
 //      accesses.
-//   2. Emit one envelope-shape `tt.store` of the non-load operand into
+//   2. Emit one envelope-shape `tt.store` of the operand to stage into
 //      the scratch arg. Pointer chain must match `matchScratchAccess`:
 //        addptr(splat(scratch_arg), addi(rowSide, colSide))
 //      where colSide = broadcast(expand_dims(make_range(0, K), axis=0)).
@@ -1775,14 +1818,17 @@ struct StageNonLoadOperandPattern : public OpRewritePattern<triton::DotOp> {
     int64_t K = aTy.getDimSize(1);
     if (bTy.getDimSize(0) != K)
       return failure();
-    if (M * K * N <= kMKNBudget && (KTileSize <= 0 || KTileSize == K))
+    if ((M * K * N <= kMKNBudget && KTileSize <= 0) || KTileSize == K)
       return failure();
+
+    int64_t realKSize = K;
+    if (dot->hasAttr(realKSizeAttr)) {
+      auto intAttr = dot->getAttrOfType<IntegerAttr>(realKSizeAttr);
+      realKSize = intAttr.getInt();
+    }
 
     auto aLoad = dot.getA().getDefiningOp<triton::LoadOp>();
     auto bLoad = dot.getB().getDefiningOp<triton::LoadOp>();
-    // TileDotPattern owns the both-loads case.
-    if (aLoad && bLoad)
-      return failure();
 
     // Largest power-of-two divisor of K with per-tile M*kTile*N <= budget.
     int64_t kTile;
@@ -1794,12 +1840,12 @@ struct StageNonLoadOperandPattern : public OpRewritePattern<triton::DotOp> {
       while (kTile > 1 && K % kTile != 0)
         kTile /= 2;
       if (kTile <= 0 || kTile >= K) {
-        LLVM_DEBUG(DBGS() << "[StageNonLoadOperand]   -> couldn't pick a kTile that "
+        LLVM_DEBUG(DBGS() << "[StageNonLoadOperand] couldn't pick a kTile that "
                           << "divides K and stays in budget" << '\n');
         return failure();
       }
     } else if (K % KTileSize != 0) {
-      LLVM_DEBUG(DBGS() << "  -> skip (KTileSize=" << KTileSize
+      LLVM_DEBUG(DBGS() << "[StageNonLoadOperand] skip (KTileSize=" << KTileSize
                         << " does not divide K=" << K << ")" << '\n');
       return failure();
     } else {
@@ -1842,15 +1888,28 @@ struct StageNonLoadOperandPattern : public OpRewritePattern<triton::DotOp> {
     if (bLoad && !bMk) {
       bTopInfo = decomposeTensorOfPtrsBKAxis0(bLoad, K, N);
     }
+
+    // If a load operand wasn't tiled by TileDotLoads, or if it cannot be
+    // tiled by StageNonLoadOperand, then we can treat it as a non-load
+    // operand and stage it anyways, in order to support K-Tiling. This is
+    // often necessary to manage UB Overflows
+    triton::LoadOp nullLoad;
     if ((aLoad && !aMk) || (bLoad && !bMk && !bTopInfo)) {
-      LLVM_DEBUG(DBGS() << "[StageNonLoadOperand]   -> a load operand isn't block-ptr "
-                        << "or canonical tensor-of-ptrs style; skipping" << '\n');
-      return failure();
+      LLVM_DEBUG(DBGS() << "[StageNonLoadOperand] a load operand isn't block-ptr "
+                        << "or canonical tensor-of-ptrs style" << '\n');
+      if (aLoad && !aMk) {
+        LLVM_DEBUG(DBGS() << "[StageNonLoadOperand] Staging A despite it being from LoadOp" << '\n');
+        aLoad = nullLoad;
+      }
+      if (bLoad && !bMk && !bTopInfo) {
+        LLVM_DEBUG(DBGS() << "[StageNonLoadOperand] Staging B despite it being from LoadOp" << '\n');
+        bLoad = nullLoad;
+      }
     }
 
     auto func = dot->getParentOfType<triton::FuncOp>();
     if (!func) {
-      LLVM_DEBUG(DBGS() << "[StageNonLoadOperand]   -> dot is not inside a tt.func"
+      LLVM_DEBUG(DBGS() << "[StageNonLoadOperand] dot is not inside a tt.func"
                         << '\n');
       return failure();
     }
@@ -1858,7 +1917,7 @@ struct StageNonLoadOperandPattern : public OpRewritePattern<triton::DotOp> {
     Location loc = dot.getLoc();
     Type aElemTy = aTy.getElementType();
     Type bElemTy = bTy.getElementType();
-    int64_t numTiles = K / kTile;
+    int64_t numTiles = (realKSize + kTile - 1) / kTile;
 
     LLVM_DEBUG(DBGS() << "[StageNonLoadOperand] examining tt.dot [M="
                       << M << " K=" << K << " N=" << N << "] MKN=" << M * K * N
@@ -2371,7 +2430,7 @@ struct TileDotLoadsPass : public impl::TileDotLoadsBase<TileDotLoadsPass> {
       (void)applyPatternsGreedily(getOperation(), std::move(p));
     }
 
-    // Stage non-load operands of over-budget dots through scratch SHM/GM.
+    // Stage non-load operands (or load operands that weren't tiled) of over-budget dots through scratch SHM/GM.
     {
       RewritePatternSet p(&getContext());
       p.add<StageNonLoadOperandPattern>(&getContext(), this->smemBudgetBytes, this->KTileSize, this->enableGlobalScratchAllocation);

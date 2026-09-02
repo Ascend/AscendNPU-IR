@@ -7,6 +7,7 @@
 
 # Coding agent guidelines.
 /AGENTS.md @huangyujun123 @hid90099092 @tanshengshun @cxtjjcz
+/CLAUDE.md @huangyujun123 @hid90099092 @tanshengshun @cxtjjcz
 
 # Memory management.
 /bishengir/**/AllocToPointerCast.* @SL25 @ssy_5825 @hid90099092 @tanshengshun
@@ -28,5 +29,42 @@
 /bishengir/**/InjectSync/* @AmmarDab3an @tanzirui123123 @hi_sy @hid90099092 @tanshengshun
 /bishengir/**/InjectBlockSync.* @AmmarDab3an @tanzirui123123 @hi_sy @hid90099092 @tanshengshun
 
+# AutoBlockify.
+/bishengir/**/Autoblockify.* @Alae-eddine @jy834507063 @hid90099092 @tanshengshun
+/bishengir/test/**/*auto-blockify-parallel-loop* @Alae-eddine @jy834507063 @hid90099092 @tanshengshun
+
+# Cube Op Template.
+/bishengir/**/Template/**/Cube/ @Alae-eddine @ZhaoWentengZWT @zhufang_hw @jqran @hid90099092 @tanshengshun
+/bishengir/**/Template/**/Macro/ @Alae-eddine @ZhaoWentengZWT @zhufang_hw @jqran @hid90099092 @tanshengshun
+/bishengir/**/Template/**/Host/ @Alae-eddine @ZhaoWentengZWT @zhufang_hw @jqran @hid90099092 @tanshengshun
+/bishengir/**/Template/**/Fixpipe/ @Alae-eddine @ZhaoWentengZWT @zhufang_hw @jqran @hid90099092 @tanshengshun
+/bishengir/**/Template/**/DMA/Cbuf/ @Alae-eddine @ZhaoWentengZWT @zhufang_hw @jqran @hid90099092 @tanshengshun
+
 # Submodule:llvm-project (ensure synchronization with hivmc)
 /third-party/llvm-project @NoBBAI @hid90099092 @tanshengshun
+
+# Normalize Matmul.
+/bishengir/**/NormalizeMatmul.* @danielcm585 @jy834507063 @jqran @hid90099092 @tanshengshun
+/bishengir/test/**/normalize-matmul* @danielcm585 @jy834507063 @jqran @hid90099092 @tanshengshun
+
+# Cube data layout.
+/bishengir/lib/Dialect/HIVM/Transforms/ConvertLayout/ @hocky @jy834507063 @liupengcheng2012 @hid90099092 @tanshengshun
+/bishengir/**/ConvertLayoutUtils.h @hocky @jy834507063 @liupengcheng2012 @hid90099092 @tanshengshun
+/bishengir/**/ConvertLayoutCanonicalizations.* @hocky @jy834507063 @liupengcheng2012 @hid90099092 @tanshengshun
+/bishengir/**/InferHIVMDataLayout.* @hocky @jy834507063 @liupengcheng2012 @hid90099092 @tanshengshun
+/bishengir/**/OpLayoutInterface.* @hocky @jy834507063 @liupengcheng2012 @hid90099092 @tanshengshun
+/bishengir/lib/Dialect/HIVM/IR/OpLayoutInterface/ @hocky @jy834507063 @liupengcheng2012 @hid90099092 @tanshengshun
+/bishengir/test/Dialect/HIVM/**/*layout* @hocky @jy834507063 @liupengcheng2012 @hid90099092 @tanshengshun
+
+# CODEOWNERS file itself.
+/CODEOWNERS @hid90099092 @tanshengshun
+
+# CV pipelining.
+/bishengir/**/CVPipelining.cpp @gaofangfrank @li-yangguang525 @huangyujun123 @wangtao489 @hid90099092 @tanshengshun
+/bishengir/**/WorkItem.h @gaofangfrank @li-yangguang525 @huangyujun123 @wangtao489 @hid90099092 @tanshengshun
+/bishengir/**/WorklistBuilder.* @gaofangfrank @li-yangguang525 @huangyujun123 @wangtao489 @hid90099092 @tanshengshun
+/bishengir/lib/Dialect/HIVM/Transforms/CreatePreload.cpp @gaofangfrank @li-yangguang525 @huangyujun123 @wangtao489 @hid90099092 @tanshengshun
+/bishengir/test/Dialect/HIVM/cv-pipelining* @gaofangfrank @li-yangguang525 @huangyujun123 @wangtao489 @hid90099092 @tanshengshun
+/bishengir/test/Dialect/HIVM/hivm-create-preload.mlir @gaofangfrank @li-yangguang525 @huangyujun123 @wangtao489 @hid90099092 @tanshengshun
+/bishengir/test/Dialect/HIVM/RegBase/CVPipelining/ @gaofangfrank @li-yangguang525 @huangyujun123 @wangtao489 @hid90099092 @tanshengshun
+/bishengir/test/bishengir-compile/hivm/compile-cv-pipeline-lazy-loading.mlir @gaofangfrank @li-yangguang525 @huangyujun123 @wangtao489 @hid90099092 @tanshengshun

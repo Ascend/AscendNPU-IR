@@ -381,8 +381,7 @@ def Conv1DOp
     - padding: Number of zero-padding elements. Accepts an integer scalar or
       a 2-element integer array [paddingL, paddingR], default=0. A scalar
       applies to both sides.
-    - dilation: Kernel dilation, default=1. Currently only dilation=1 is
-      supported.
+    - dilation: Kernel dilation in [1, 255], default=1.
     - groups: Number of groups for grouped convolution, default=1
     }];
   let arguments = (ins AnyShaped:$input,
@@ -473,8 +472,8 @@ def Conv2DOp
       array [paddingT, paddingB, paddingL, paddingR], default=0. A scalar and
       the 2-element form apply symmetric padding in each dimension.
     - dilation: Kernel dilation. Accepts an integer scalar or a 2-element
-      integer array [dilationH, dilationW], default=1. Currently only
-      dilation=1 is supported.
+      integer array [dilationH, dilationW], with each value in [1, 255],
+      default=1.
     - groups: Number of groups for grouped convolution, default=1
     }];
   let arguments = (ins AnyShaped:$input,
@@ -571,7 +570,7 @@ def Conv3DOp
       padding in each dimension.
     - dilation: Kernel dilation. Accepts an integer scalar or a 3-element
       integer array [dilationD, dilationH, dilationW], default=1. Currently
-      only dilation=1 is supported.
+      dilationD must be 1; dilationH and dilationW must be in [1, 255].
     - groups: Number of groups for grouped convolution, default=1
     }];
 

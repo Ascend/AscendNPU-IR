@@ -1474,11 +1474,17 @@ FailureOr<int64_t> Conv1DL1Op::getPaddingR() {
                                    [&]() { return emitOpError(); });
 }
 
+int64_t Conv1DL1Op::getDilationW() { return getDilation(); }
+
 LogicalResult Conv1DL1Op::verify() {
-  if (getStrideW() <= 0 || getStrideW() > 255)
+  int64_t strideW = getStrideW();
+  if (strideW <= 0 || strideW > 255)
     return emitOpError() << "requires stride to be in the range [1, 255]";
   if (failed(getPaddingL()) || failed(getPaddingR()))
     return failure();
+  int64_t dilationW = getDilationW();
+  if (dilationW <= 0 || dilationW > 255)
+    return emitOpError() << "requires dilation to be in the range [1, 255]";
   return success();
 }
 
@@ -1584,6 +1590,7 @@ Conv1DL1Op::getLibraryCallOperands(PatternRewriter &rewriter) {
   assert(succeeded(paddingL) && succeeded(paddingR) &&
          "Conv1DL1Op padding must be verified");
   int64_t strideW = getStrideW();
+  int64_t dilationW = getDilationW();
   libParams.push_back(makeI64(0));        // padT
   libParams.push_back(makeI64(0));        // padB
   libParams.push_back(makeI64(*paddingL)); // padL
@@ -1592,8 +1599,8 @@ Conv1DL1Op::getLibraryCallOperands(PatternRewriter &rewriter) {
   libParams.push_back(makeI64(1));      // strideH
   libParams.push_back(makeI64(strideW)); // strideW
 
-  libParams.push_back(makeI64(1)); // dilationH
-  libParams.push_back(makeI64(1)); // dilationW
+  libParams.push_back(makeI64(1));          // dilationH
+  libParams.push_back(makeI64(dilationW)); // dilationW
 
   // additional sync arguments
   if (getSyncRelatedArgs().empty()) {
@@ -1650,6 +1657,18 @@ FailureOr<int64_t> Conv2DL1Op::getPaddingR() {
                                    [&]() { return emitOpError(); });
 }
 
+FailureOr<int64_t> Conv2DL1Op::getDilationH() {
+  return getConvIntArrayAttrElement<2>(
+      getDilationAttr(), "dilation", Conv2DDim::H,
+      [&]() { return emitOpError(); });
+}
+
+FailureOr<int64_t> Conv2DL1Op::getDilationW() {
+  return getConvIntArrayAttrElement<2>(
+      getDilationAttr(), "dilation", Conv2DDim::W,
+      [&]() { return emitOpError(); });
+}
+
 LogicalResult Conv2DL1Op::verify() {
   auto strideH = getStrideH();
   if (failed(strideH))
@@ -1660,9 +1679,19 @@ LogicalResult Conv2DL1Op::verify() {
   if (failed(getPaddingT()) || failed(getPaddingB()) ||
       failed(getPaddingL()) || failed(getPaddingR()))
     return failure();
+  auto dilationH = getDilationH();
+  if (failed(dilationH))
+    return failure();
+  auto dilationW = getDilationW();
+  if (failed(dilationW))
+    return failure();
   if (*strideH <= 0 || *strideH > 255 || *strideW <= 0 || *strideW > 255)
     return emitOpError()
            << "requires stride values to be in the range [1, 255]";
+  if (*dilationH <= 0 || *dilationH > 255 || *dilationW <= 0 ||
+      *dilationW > 255)
+    return emitOpError()
+           << "requires dilation values to be in the range [1, 255]";
   return success();
 }
 
@@ -1781,8 +1810,12 @@ Conv2DL1Op::getLibraryCallOperands(PatternRewriter &rewriter) {
   libParams.push_back(makeI64(*strideH)); // strideH
   libParams.push_back(makeI64(*strideW)); // strideW
 
-  libParams.push_back(makeI64(1)); // dilationH
-  libParams.push_back(makeI64(1)); // dilationW
+  auto dilationH = getDilationH();
+  auto dilationW = getDilationW();
+  assert(succeeded(dilationH) && succeeded(dilationW) &&
+         "Conv2DL1Op dilation must be verified");
+  libParams.push_back(makeI64(*dilationH)); // dilationH
+  libParams.push_back(makeI64(*dilationW)); // dilationW
 
   // additional sync arguments
   if (getSyncRelatedArgs().empty()) {
@@ -1803,24 +1836,18 @@ Conv2DL1Op::getLibraryCallOperands(PatternRewriter &rewriter) {
 //===----------------------------------------------------------------------===//
 
 FailureOr<int64_t> Conv3DL1Op::getStrideD() {
-  if (!getStrideAttr())
-    return 1;
   return getConvIntArrayAttrElement<3>(
       getStrideAttr(), "stride", Conv3DDim::D,
       [&]() { return emitOpError(); });
 }
 
 FailureOr<int64_t> Conv3DL1Op::getStrideH() {
-  if (!getStrideAttr())
-    return 1;
   return getConvIntArrayAttrElement<3>(
       getStrideAttr(), "stride", Conv3DDim::H,
       [&]() { return emitOpError(); });
 }
 
 FailureOr<int64_t> Conv3DL1Op::getStrideW() {
-  if (!getStrideAttr())
-    return 1;
   return getConvIntArrayAttrElement<3>(
       getStrideAttr(), "stride", Conv3DDim::W,
       [&]() { return emitOpError(); });
@@ -1862,6 +1889,24 @@ FailureOr<int64_t> Conv3DL1Op::getPaddingR() {
                                    [&]() { return emitOpError(); });
 }
 
+FailureOr<int64_t> Conv3DL1Op::getDilationD() {
+  return getConvIntArrayAttrElement<3>(
+      getDilationAttr(), "dilation", Conv3DDim::D,
+      [&]() { return emitOpError(); });
+}
+
+FailureOr<int64_t> Conv3DL1Op::getDilationH() {
+  return getConvIntArrayAttrElement<3>(
+      getDilationAttr(), "dilation", Conv3DDim::H,
+      [&]() { return emitOpError(); });
+}
+
+FailureOr<int64_t> Conv3DL1Op::getDilationW() {
+  return getConvIntArrayAttrElement<3>(
+      getDilationAttr(), "dilation", Conv3DDim::W,
+      [&]() { return emitOpError(); });
+}
+
 LogicalResult Conv3DL1Op::verify() {
   auto strideD = getStrideD();
   if (failed(strideD))
@@ -1882,6 +1927,21 @@ LogicalResult Conv3DL1Op::verify() {
       failed(getPaddingT()) || failed(getPaddingB()) ||
       failed(getPaddingL()) || failed(getPaddingR()))
     return failure();
+  auto dilationD = getDilationD();
+  if (failed(dilationD))
+    return failure();
+  auto dilationH = getDilationH();
+  if (failed(dilationH))
+    return failure();
+  auto dilationW = getDilationW();
+  if (failed(dilationW))
+    return failure();
+  if (*dilationD != 1)
+    return emitOpError() << "currently requires dilationD to be 1";
+  if (*dilationH <= 0 || *dilationH > 255 || *dilationW <= 0 ||
+      *dilationW > 255)
+    return emitOpError()
+           << "requires dilationH and dilationW to be in the range [1, 255]";
   return success();
 }
 

@@ -4027,10 +4027,8 @@ LogicalResult Conv1DOp::verify() {
   if (strideW <= 0 || strideW > 255)
     return emitOpError() << "requires stride to be in the range [1, 255]";
 
-  // Currently only support dilation == 1.
-  if (dilationW != 1)
-    return emitOpError()
-           << "currently does not support dilation != 1";
+  if (dilationW <= 0 || dilationW > 255)
+    return emitOpError() << "requires dilation to be in the range [1, 255]";
 
   // Check output width oW
   // oW = floor((iW + paddingL + paddingR
@@ -4380,10 +4378,10 @@ LogicalResult Conv2DOp::verify() {
     return emitOpError()
            << "requires stride values to be in the range [1, 255]";
 
-  // Currently only support dilation == 1.
-  if (*dilationH != 1 || *dilationW != 1)
+  if (*dilationH <= 0 || *dilationH > 255 || *dilationW <= 0 ||
+      *dilationW > 255)
     return emitOpError()
-           << "currently does not support dilation != 1";
+           << "requires dilation values to be in the range [1, 255]";
 
   // Check output height oH
   // oH = floor((iH + paddingT + paddingB
@@ -4786,9 +4784,12 @@ LogicalResult Conv3DOp::verify() {
   if (*strideH <= 0 || *strideH > 255 || *strideW <= 0 || *strideW > 255)
     return emitOpError()
            << "requires strideH and strideW to be in the range [1, 255]";
-  if (*dilationD != 1 || *dilationH != 1 || *dilationW != 1)
+  if (*dilationD != 1)
+    return emitOpError() << "currently requires dilationD to be 1";
+  if (*dilationH <= 0 || *dilationH > 255 || *dilationW <= 0 ||
+      *dilationW > 255)
     return emitOpError()
-           << "currently does not support dilation != 1";
+           << "requires dilationH and dilationW to be in the range [1, 255]";
 
   // Check output depth/height/width.
   // oX = floor((iX + paddingBegin + paddingEnd
