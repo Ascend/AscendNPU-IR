@@ -591,9 +591,9 @@ struct FoldConvertLayoutFixpipePattern
 
       rewriter.modifyOpInPlace(fixpipeOp, [&]() {
         if (fixpipeOp.getDmaMode() == FixpipeDMAMode::NZ2NZ &&
-            hacc::utils::isRegBasedArch(op->getParentOfType<ModuleOp>())) {
-          if (shouldEnableChannelSplit(fixpipeOp.getDstOperandType()))
-            fixpipeOp.setChannelSplit(true);
+            hacc::utils::isRegBasedArch(op->getParentOfType<ModuleOp>()) &&
+            needChannelSplit(op, fixpipeOp)) {
+          fixpipeOp.setChannelSplit(true);
         }
         fixpipeOp.getSrcMutable().assign(op.getSource());
       });
