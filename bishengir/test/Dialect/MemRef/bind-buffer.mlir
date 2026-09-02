@@ -83,3 +83,22 @@ func.func @bind_buffer_reshape_self() {
   annotation.mark %reshape keys = ["bind_buffer"] values = [%reshape : memref<4x4xf32>] : memref<4x4xf32>
   return
 }
+
+// -----
+
+func.func @bind_buffer_through_convert_layout() {
+  // CHECK-LABEL: func.func @bind_buffer_through_convert_layout
+  // CHECK-NOT: memref.alloc
+  // CHECK: %[[TARGET:.*]] = memref.alloc() : memref<16x4x16x8xf32, #hivm.address_space<cbuf>>
+  // CHECK: %[[CONV:.*]] = hivm.hir.convert_layout %[[TARGET]]
+  // CHECK: %[[CAST:.*]] = memref.memory_space_cast %[[CONV]]
+  // CHECK: "some_op"(%[[CAST]])
+  // CHECK-NOT: annotation.mark
+  %target = memref.alloc() : memref<16x4x16x8xf32, #hivm.address_space<cbuf>>
+  %source = memref.alloc() : memref<16x4x16x8xf32, #hivm.address_space<cbuf>>
+  %converted = hivm.hir.convert_layout %source output_shape [64, 128] {dstLayout = #hivm.data_layout<ND>, srcLayout = #hivm.data_layout<ND>} : (memref<16x4x16x8xf32, #hivm.address_space<cbuf>>) -> memref<64x128xf32, #hivm.address_space<cbuf>>
+  %cast = memref.memory_space_cast %converted : memref<64x128xf32, #hivm.address_space<cbuf>> to memref<64x128xf32>
+  "some_op"(%cast) : (memref<64x128xf32>) -> ()
+  annotation.mark %cast keys = ["bind_buffer"] values = [%target : memref<16x4x16x8xf32, #hivm.address_space<cbuf>>] : memref<64x128xf32>
+  return
+}
