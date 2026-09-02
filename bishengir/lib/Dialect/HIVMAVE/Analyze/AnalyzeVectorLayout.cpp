@@ -341,6 +341,8 @@ struct TreeSolve : public std::enable_shared_from_this<TreeSolve> {
             .Case<scf::YieldOp>([&](auto op) { return solveProblem(op); })
             .Case<hivmave::VFBroadcastScalarOp>(
                 [&](auto op) { return solveProblem(op); })
+            .Case<hivmave::VFPregTypeCastOp>(
+                [&](auto op) { return solveProblem(op); })
             .Case<hivmave::VFPltOp>(
                 [&](auto op) { return solvePregGenProblem(op); })
             .Case<hivmave::VFSelectOp, hivmave::VFAddsOp, hivmave::VFExpOp,
@@ -563,6 +565,31 @@ struct TreeSolve : public std::enable_shared_from_this<TreeSolve> {
     case COMB_CASE(16, State::B16_2VL):
     case COMB_CASE(32, State::B32):
       return {wrapThis(FunctionType::NONE, {})};
+    default:
+      return {};
+    }
+  }
+
+  TreeSolves solveProblem(hivmave::VFPregTypeCastOp cast) {
+    auto src = cast.getSrc();
+    auto res = cast.getRes();
+    State resState = getState(res);
+
+    // Match the cast mode with the result layout and propagate the source
+    // layout across this physical predicate-format conversion.
+    switch (COMB_CASE(cast.getPregCastMode(), resState)) {
+    case COMB_CASE(hivmave::PregCastMode::PK4_B32, State::B8):
+      return {wrapThis(FunctionType::NONE, {{src, State::B32}})};
+    case COMB_CASE(hivmave::PregCastMode::PK_B16, State::B8):
+      return {wrapThis(FunctionType::NONE, {{src, State::B16}})};
+    case COMB_CASE(hivmave::PregCastMode::UNPK4_B8, State::B32):
+      return {wrapThis(FunctionType::NONE, {{src, State::B8}})};
+    case COMB_CASE(hivmave::PregCastMode::UNPK_B8, State::B16):
+      return {wrapThis(FunctionType::NONE, {{src, State::B8}})};
+    case COMB_CASE(hivmave::PregCastMode::UNPK_B16, State::B32):
+      return {wrapThis(FunctionType::NONE, {{src, State::B16}})};
+    case COMB_CASE(hivmave::PregCastMode::PK_B32, State::B16):
+      return {wrapThis(FunctionType::NONE, {{src, State::B32}})};
     default:
       return {};
     }
