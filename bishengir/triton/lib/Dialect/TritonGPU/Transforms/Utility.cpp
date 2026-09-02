@@ -96,7 +96,9 @@ SmallVector<unsigned, 4> argSort(const SmallVector<int64_t> &arr) {
   SmallVector<unsigned, 4> ret(arr.size());
   std::iota(ret.begin(), ret.end(), 0);
   std::stable_sort(ret.begin(), ret.end(),
-                   [&](unsigned x, unsigned y) { return arr[x] > arr[y]; });
+                   [&](unsigned x, unsigned y) {
+                     return arr[x] > arr[y] || (arr[x] == arr[y] && x > y);
+                   });
   return ret;
 }
 

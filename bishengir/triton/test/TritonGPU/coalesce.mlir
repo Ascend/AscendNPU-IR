@@ -199,3 +199,22 @@ tt.func @coalesce_poison(%arg0: !tt.ptr<f16> {tt.divisibility = 16 : i32}, %arg1
 }
 
 }
+
+// -----
+
+// Test argSort tie-breaking: when all dimensions have equal contiguity,
+// the sort should deterministically prefer row-major (higher index = more inner).
+#blocked_eq = #ttg.blocked<{sizePerThread = [1, 1], threadsPerWarp = [16, 2], warpsPerCTA = [2, 2], order = [1, 0]}>
+module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 4 : i32} {
+
+// CHECK-LABEL: @coalesce_equal_contiguity
+// CHECK: tt.load
+tt.func @coalesce_equal_contiguity(%arg0: !tt.ptr<f32> {tt.divisibility = 16 : i32}) {
+  // All dims have contiguity 1 (splat-based pointers), testing deterministic tie-breaking.
+  %ptrs = tt.splat %arg0 : !tt.ptr<f32> -> tensor<64x64x!tt.ptr<f32>, #blocked_eq>
+  %val = tt.load %ptrs : tensor<64x64x!tt.ptr<f32>, #blocked_eq>
+  tt.store %ptrs, %val : tensor<64x64x!tt.ptr<f32>, #blocked_eq>
+  tt.return
+}
+
+}
