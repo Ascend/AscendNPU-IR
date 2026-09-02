@@ -1361,6 +1361,179 @@ BrcBiasInfo getBrcBiasMode(CCFInfo ccfinfo) {
   return info;
 }
 
+/// Try to hoist the bias definition chain (vbrc and its defining ops) before
+/// the scf.for so that the add-bias can be inlined into the matmul
+/// (PostPerChannelAddWithSplitK). Without the hoist, bias loaded after the
+/// matmul loop is blocked by the dominance check in
+/// isSatisfiedBrcForPerChannel.
+///
+/// All conditions of matchPostPerChannelAddWithSplitK except the dominance of
+/// the bias definition are position-independent, so they are verified up
+/// front: if any of them fails, the hoist can never enable the inline and is
+/// skipped. The dominance itself is restored by construction, because the
+/// hoist moves the whole defining chain of the vbrc source before the
+/// scf.for.
+static void tryHoistBiasChainForPostPerChannel(PatternRewriter &rewriter,
+                                               const CCFInfo &ccfInfo) {
+  auto forOp = dyn_cast<scf::ForOp>(ccfInfo.insertPointOp);
+  if (!forOp)
+    return;
+
+  // Only hoist when the matmul is guaranteed to execute at least once.
+  // If mayNotExec is true (non-constant loop bounds or ub<=lb without
+  // matmul_at_least_once annotation), bias must remain after the loop so it
+  // is added even when the loop body never runs.
+  if (ccfInfo.mayNotExec)
+    return;
+
+  Value ccfOutVal = ccfInfo.outVal;
+  if (!ccfOutVal.hasOneUse())
+    return;
+
+  auto addOp = dyn_cast<hivm::VAddOp>(*ccfOutVal.getUsers().begin());
+  if (!addOp)
+    return;
+
+  // Find a per-channel vbrc source in vadd that is defined after forOp in the
+  // same block.
+  hivm::VBrcOp brcOp = nullptr;
+  for (Value src : addOp.getSrc()) {
+    if (auto brc = src.getDefiningOp<hivm::VBrcOp>()) {
+      // Reuse the shared per-channel check (without hookOp it reduces to the
+      // broadcast_dims check) to stay consistent with
+      // matchPostPerChannelAddWithSplitK. The position checks below are hoist
+      // specific: the bias must currently sit after forOp so the hoist is
+      // needed, and in the same block so it can be moved.
+      if (isSatisfiedBrcForPerChannel(brc) &&
+          brc->getBlock() == forOp->getBlock() &&
+          !brc->isBeforeInBlock(forOp.getOperation())) {
+        brcOp = brc;
+        break;
+      }
+    }
+  }
+  if (!brcOp)
+    return;
+
+  // The bias mode selection in getBrcBiasMode (PerChannelAdd / ReuseL0C /
+  // ElementwiseAdd vs the matchPostPerChannelAddWithSplitK path) is
+  // position-independent. Require the current mode to be one where
+  // matchPostPerChannelAddWithSplitK was already tried and failed only on
+  // dominance: ZeroInitNoAccumulation (const-zero vbrc init) or NoBias
+  // (tensor.empty init). Any other mode cannot become
+  // PostPerChannelAddWithSplitK by hoisting.
+  MatmulBiasMode curMode = getBrcBiasMode(ccfInfo).brcBiasMode;
+  if (curMode != MatmulBiasMode::ZeroInitNoAccumulation &&
+      curMode != MatmulBiasMode::NoBias)
+    return;
+
+  // Collect all ops in the bias definition chain that need hoisting.
+  // Post-order traversal: collect operands before the op itself so that
+  // moving them in collection order preserves SSA dominance.
+  SmallVector<Operation *, 16> opsToHoist;
+  DenseSet<Operation *> visited;
+  // Track if there's a nested-block op that needs hoisting but can't be
+  // moved as a whole (e.g., linalg.fill inside scf.if). In that case we
+  // abort to avoid hoisting an uninitialized bias buffer.
+  bool hasUnhoistableNestedOp = false;
+
+  auto collectOps = [&opsToHoist, &visited, &hasUnhoistableNestedOp, &forOp,
+                     &brcOp](Operation *op, auto &self) -> void {
+    if (!op || visited.count(op))
+      return;
+    visited.insert(op);
+
+    // Only hoist ops in the same block as forOp. Ops in nested blocks (e.g.,
+    // inside scf.if) cannot be moved individually without breaking the
+    // region structure.
+    if (op->getBlock() != forOp->getBlock()) {
+      // If this nested op is after forOp, it's part of the bias init chain
+      // but we can't hoist it safely. Mark as unhoistable.
+      Operation *topOp = op;
+      while (topOp->getParentOp() &&
+             topOp->getParentOp() != forOp->getParentOp())
+        topOp = topOp->getParentOp();
+      if (topOp->getBlock() == forOp->getBlock() &&
+          !topOp->isBeforeInBlock(forOp.getOperation()) &&
+          topOp != forOp.getOperation()) {
+        hasUnhoistableNestedOp = true;
+        LDBG("Found unhoistable nested op in bias chain: " << *op);
+      }
+      for (Value operand : op->getOperands()) {
+        if (auto *defOp = operand.getDefiningOp())
+          self(defOp, self);
+      }
+      return;
+    }
+
+    // Stop if op is already before forOp (dominance already satisfied).
+    if (op->isBeforeInBlock(forOp.getOperation()))
+      return;
+
+    // Don't hoist forOp itself.
+    if (op == forOp.getOperation())
+      return;
+
+    // Collect operands first (post-order).
+    for (Value operand : op->getOperands()) {
+      if (auto *defOp = operand.getDefiningOp())
+        self(defOp, self);
+    }
+
+    opsToHoist.push_back(op);
+
+    // If this op produces a memref result, also collect ops that use that
+    // memref to initialize the bias buffer (e.g., subview, load, copy, fill).
+    // The relation between the bias buffer (alloc) and its writer
+    // (hivm.hir.load) is via memory side effects, not SSA, so we must follow
+    // users downward to capture the full init chain.
+    //
+    // To avoid hoisting unrelated users, only collect users that:
+    // - are in the same block as forOp (not nested inside forOp/scf.if)
+    // - are after forOp (need hoisting)
+    // - are at or before brcOp (part of the bias init chain, not a later use)
+    for (Value result : op->getResults()) {
+      if (!isa<MemRefType>(result.getType()))
+        continue;
+      for (OpOperand &use : result.getUses()) {
+        Operation *user = use.getOwner();
+        if (user == op)
+          continue;
+        // Skip users in nested blocks (e.g., inside forOp or scf.if).
+        if (user->getBlock() != forOp->getBlock())
+          continue;
+        // Skip users already before forOp (dominance already satisfied).
+        if (user->isBeforeInBlock(forOp.getOperation()))
+          continue;
+        // Skip users after brcOp: they are not part of the bias init chain
+        // that feeds brcOp. brcOp is the endpoint of the chain we hoist.
+        if (brcOp->isBeforeInBlock(user) && user != brcOp.getOperation())
+          continue;
+        self(user, self);
+      }
+    }
+  };
+
+  collectOps(brcOp, collectOps);
+
+  // Abort if the bias init chain contains ops in nested blocks (e.g., inside
+  // scf.if) that cannot be hoisted as a whole. Hoisting only part of the
+  // chain would leave the bias buffer uninitialized at the hoisted position.
+  if (hasUnhoistableNestedOp) {
+    LDBG("Abort hoisting: bias chain has unhoistable nested ops");
+    return;
+  }
+
+  // Move ops to just before forOp. Always inserting at forOp keeps the
+  // relative order: each subsequent op is placed right before forOp, i.e.,
+  // after all previously moved ops, which matches the post-order collection.
+  Operation *insertBefore = forOp.getOperation();
+  for (Operation *op : opsToHoist)
+    rewriter.moveOpBefore(op, insertBefore);
+
+  LDBG("Hoisted bias chain before scf.for for PostPerChannelAddWithSplitK");
+}
+
 // Add counter and if block in the tail for the case that mmad is probably not
 // executed
 struct NormalizeCtx {
@@ -1661,6 +1834,10 @@ struct NormalizeMmadCCFPattern
     if (auto markOp = utils::getAnnotateOpWithAttr(ccfInfo.outVal,
                                                    "matmul_at_least_once"))
       rewriter.eraseOp(*markOp);
+
+    // Try to hoist bias definition chain before the CCF (scf.for) when it's
+    // a PostPerChannelAddWithSplitK candidate blocked by dominance.
+    tryHoistBiasChainForPostPerChannel(rewriter, ccfInfo);
 
     // get bias Info
     BrcBiasInfo biasInfo = getBrcBiasMode(ccfInfo);
