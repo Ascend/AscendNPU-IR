@@ -68,3 +68,7 @@
 /bishengir/test/Dialect/HIVM/hivm-create-preload.mlir @gaofangfrank @li-yangguang525 @huangyujun123 @wangtao489 @hid90099092 @tanshengshun
 /bishengir/test/Dialect/HIVM/RegBase/CVPipelining/ @gaofangfrank @li-yangguang525 @huangyujun123 @wangtao489 @hid90099092 @tanshengshun
 /bishengir/test/bishengir-compile/hivm/compile-cv-pipeline-lazy-loading.mlir @gaofangfrank @li-yangguang525 @huangyujun123 @wangtao489 @hid90099092 @tanshengshun
+
+# Split mix kernel.
+/bishengir/**/SplitMixKernel.* @danielcm585 @devoperator @cathychan0027 @hid90099092 @tanshengshun
+/bishengir/test/**/split-mix-kernel* @danielcm585 @devoperator @cathychan0027 @hid90099092 @tanshengshun
