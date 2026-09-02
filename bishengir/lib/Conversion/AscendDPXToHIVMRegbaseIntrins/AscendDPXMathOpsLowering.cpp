@@ -111,7 +111,7 @@ struct BinaryDirect<DPX_OP, LOWER_INT_OP, LOWER_F_OP>
   }
 };
 
-// copied over from LLVMTritonRemap
+// Create the requested LLVM declaration on demand before emitting the call.
 LLVM::CallOp emitOrCreateLibCall(OpBuilder &builder, Location loc,
                                  llvm::StringRef funcName, ValueRange operands,
                                  Type returnType) {

@@ -40,7 +40,7 @@ struct FuncInfo {
   ArrayAttr funcArgAttr;
 };
 
-// copied over from LLVMTritonRemap
+// Create the requested LLVM declaration on demand before emitting the call.
 static LLVM::CallOp emitOrCreateLibCall(OpBuilder &builder, Location loc,
                                         llvm::StringRef funcName,
                                         ValueRange operands, Type returnType) {
@@ -90,9 +90,6 @@ scalar to speed up division in the simt kernel.
 */
 struct DPXDivOptimizationPass
     : public impl::DPXDivOptimizationBase<DPXDivOptimizationPass> {
-
-  bishengir::TritonRemapOptions options;
-  DPXDivOptimizationPass(bishengir::TritonRemapOptions opts) : options{opts} {}
 
   // Note: The \p funcOp may be a simt wrapper or a simt vf.
   Value getUBPtr(LLVM::LLVMFuncOp funcOp) {
@@ -404,7 +401,6 @@ struct DPXDivOptimizationPass
 
 } // namespace
 
-std::unique_ptr<Pass> mlir::ascend_dpx::createDPXDivOptimizationPass(
-    bishengir::TritonRemapOptions options) {
-  return std::make_unique<DPXDivOptimizationPass>(options);
+std::unique_ptr<Pass> mlir::ascend_dpx::createDPXDivOptimizationPass() {
+  return std::make_unique<DPXDivOptimizationPass>();
 }
