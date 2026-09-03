@@ -32,7 +32,6 @@
 #include "bishengir/Dialect/HFusion/Transforms/regbase/RegBaseArchUtils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMTraits.h"
-#include "bishengir/Dialect/HIVM/IR/HIVMVectorize.h"
 #include "bishengir/Dialect/HIVM/Transforms/NormalizeTraitsBase.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/HIVMAVE/Utils/Utils.h"
@@ -77,9 +76,9 @@ struct DummyVFAnalyzer
 class ReportFatalErrorDeathTest : public ::testing::Test {
 protected:
   void SetUp() override {
-    context.loadDialect<arith::ArithDialect, LLVM::LLVMDialect,
-                        hivm::HIVMDialect,
-                        hivm_regbaseintrins::HIVMRegbaseIntrinsDialect>();
+    context
+        .loadDialect<arith::ArithDialect, LLVM::LLVMDialect, hivm::HIVMDialect,
+                     hivm_regbaseintrins::HIVMRegbaseIntrinsDialect>();
     builder = std::make_unique<OpBuilder>(&context);
     rewriter = std::make_unique<PatternRewriter>(&context);
     module = ModuleOp::create(builder->getUnknownLoc());
@@ -111,8 +110,8 @@ protected:
 
   Value i8Vec(int64_t n, int8_t v = 0) {
     auto ty = VectorType::get({n}, rewriter->getI8Type());
-    return rewriter->create<arith::ConstantOp>(
-        loc(), DenseElementsAttr::get(ty, v));
+    return rewriter->create<arith::ConstantOp>(loc(),
+                                               DenseElementsAttr::get(ty, v));
   }
 
   Value ptrLike() {
@@ -128,10 +127,9 @@ protected:
 };
 
 TEST_F(ReportFatalErrorDeathTest, UtilsSelectRoundModeUnsupportedType) {
-  EXPECT_DEATH(
-      (void)utils::selectRoundMode<hivm::RoundMode>(builder->getF16Type(),
-                                                    builder->getBF16Type()),
-      "unsupported type cast");
+  EXPECT_DEATH((void)utils::selectRoundMode<hivm::RoundMode>(
+                   builder->getF16Type(), builder->getBF16Type()),
+               "unsupported type cast");
 }
 
 TEST_F(ReportFatalErrorDeathTest, HFusionSelectRoundModeUnsupportedType) {
@@ -167,29 +165,13 @@ TEST_F(ReportFatalErrorDeathTest, PolynomialCoefficientsMustNotBeEmpty) {
                "polynomial coefficients must not be empty");
 }
 
-TEST_F(ReportFatalErrorDeathTest, GetIdentityElementUnsupportedType) {
-  EXPECT_DEATH((void)hivm::getIdentityElement(*builder, loc(),
-                                              builder->getIndexType(),
-                                              hivm::VectorArithKind::ADD),
-               "unsupported element type for neutral element");
-}
-
-TEST_F(ReportFatalErrorDeathTest, CreateVectorArithOpUnsupportedType) {
-  Value lhs = constIndex(1);
-  Value rhs = constIndex(2);
-  EXPECT_DEATH((void)hivm::createVectorArithOp(
-                   *builder, loc(), hivm::VectorArithKind::ADD, lhs, rhs),
-               "unsupported element type for vector arithmetic");
-}
-
 TEST_F(ReportFatalErrorDeathTest, IndexBoundUnknownPredicate) {
   Value lhs = constIndex(0);
   Value rhs = constIndex(1);
   utils::IndexBoundAnalyzer analyzer;
-  EXPECT_DEATH(
-      (void)analyzer.compare(
-          lhs, static_cast<utils::BoundComparisonPredicate>(99), rhs),
-      "unknown bound comparison predicate");
+  EXPECT_DEATH((void)analyzer.compare(
+                   lhs, static_cast<utils::BoundComparisonPredicate>(99), rhs),
+               "unknown bound comparison predicate");
 }
 
 TEST_F(ReportFatalErrorDeathTest, BoundCompareResultUnknownKind) {
@@ -202,11 +184,13 @@ TEST_F(ReportFatalErrorDeathTest, BoundCompareResultUnknownKind) {
 
 TEST_F(ReportFatalErrorDeathTest, NoLibraryFunctionTrait) {
   EXPECT_DEATH(
-      (void)OpTrait::NoLibraryFunctionTrait<Operation>::getOpLibraryMaxRankImpl(),
+      (void)
+          OpTrait::NoLibraryFunctionTrait<Operation>::getOpLibraryMaxRankImpl(),
       "This op has no library function");
-  EXPECT_DEATH((void)OpTrait::NoLibraryFunctionTrait<Operation>::
-                   getOpLibraryCallName(std::nullopt),
-               "This op has no library function");
+  EXPECT_DEATH(
+      (void)OpTrait::NoLibraryFunctionTrait<Operation>::getOpLibraryCallName(
+          std::nullopt),
+      "This op has no library function");
 }
 
 TEST_F(ReportFatalErrorDeathTest, VFUnionFindAllocateMinimum) {
@@ -282,9 +266,10 @@ TEST_F(ReportFatalErrorDeathTest, HivmCreateFillOpNonScalar) {
       loc(), DenseElementsAttr::get(tensorTy, 1.0f));
   Value out = builder->create<arith::ConstantOp>(
       loc(), DenseElementsAttr::get(tensorTy, 0.0f));
-  EXPECT_DEATH((void)hivm::NormalizeTraitsBase::createFillOp(*rewriter, loc(),
-                                                             fillVal, out),
-               "NormalizeTraitsBase::createFillOp only supports scalar-to-tensor fills");
+  EXPECT_DEATH(
+      (void)hivm::NormalizeTraitsBase::createFillOp(*rewriter, loc(), fillVal,
+                                                    out),
+      "NormalizeTraitsBase::createFillOp only supports scalar-to-tensor fills");
 }
 
 TEST_F(ReportFatalErrorDeathTest, HFusionCreateUnaryOpUnsupportedKind) {
@@ -342,10 +327,10 @@ TEST_F(ReportFatalErrorDeathTest, BuildVldusInvalidElementType) {
 }
 
 TEST_F(ReportFatalErrorDeathTest, BuildVldusPostInvalidElementType) {
-  EXPECT_DEATH((void)hivm_regbaseintrins::buildVldusPostOp(
-                   ptrLike(), i32(), i32(), rewriter->getIntegerType(128),
-                   *rewriter),
-               "Invalid vldus post element type");
+  EXPECT_DEATH(
+      (void)hivm_regbaseintrins::buildVldusPostOp(
+          ptrLike(), i32(), i32(), rewriter->getIntegerType(128), *rewriter),
+      "Invalid vldus post element type");
 }
 
 TEST_F(ReportFatalErrorDeathTest, BuildVstsUnsupportedDatatypes) {
@@ -370,9 +355,9 @@ TEST_F(ReportFatalErrorDeathTest, BuildVstsInvalidElementType) {
 
 TEST_F(ReportFatalErrorDeathTest, BuildVstusPostInvalidElementType) {
   auto src = rewriter->create<arith::ConstantOp>(
-      loc(), DenseElementsAttr::get(
-                 VectorType::get({32}, rewriter->getIntegerType(128)),
-                 APInt(128, 0)));
+      loc(),
+      DenseElementsAttr::get(
+          VectorType::get({32}, rewriter->getIntegerType(128)), APInt(128, 0)));
   EXPECT_DEATH((void)hivm_regbaseintrins::buildVstusPostOp(
                    src, ptrLike(), i32(), i32(), *rewriter),
                "Invalid vstus element type");
@@ -429,10 +414,10 @@ TEST_F(ReportFatalErrorDeathTest, BuildPltMInvalidAlignment) {
 }
 
 TEST_F(ReportFatalErrorDeathTest, BuildPstuInvalidAlignment) {
-  EXPECT_DEATH((void)hivm_regbaseintrins::buildPstuOp(
-                   i8Vec(256), ptrLike(), *rewriter, /*elementAlignment=*/7,
-                   i32()),
-               "Invalid elementAlignment");
+  EXPECT_DEATH(
+      (void)hivm_regbaseintrins::buildPstuOp(i8Vec(256), ptrLike(), *rewriter,
+                                             /*elementAlignment=*/7, i32()),
+      "Invalid elementAlignment");
 }
 
 TEST_F(ReportFatalErrorDeathTest, BuildVdupInvalidElementType) {
@@ -453,9 +438,9 @@ TEST_F(ReportFatalErrorDeathTest, BuildAddInvalidDavidElementType) {
 
 TEST_F(ReportFatalErrorDeathTest, BuildMaxInvalidDavidElementType) {
   auto lhs = rewriter->create<arith::ConstantOp>(
-      loc(), DenseElementsAttr::get(
-                 VectorType::get({64}, rewriter->getBF16Type()),
-                 APFloat::getZero(APFloat::BFloat())));
+      loc(),
+      DenseElementsAttr::get(VectorType::get({64}, rewriter->getBF16Type()),
+                             APFloat::getZero(APFloat::BFloat())));
   auto pred = i8Vec(256);
   EXPECT_DEATH((void)hivm_regbaseintrins::buildMaxOp(lhs, lhs, pred, *rewriter),
                "Invalid david op element type");
@@ -475,9 +460,9 @@ TEST_F(ReportFatalErrorDeathTest, Remove1DVectorHighDimsExpectsLeadingOnes) {
   auto src = rewriter->create<arith::ConstantOp>(
       loc(), DenseElementsAttr::get(
                  VectorType::get({2, 64}, rewriter->getF32Type()), 0.0f));
-  EXPECT_DEATH((void)hivm_regbaseintrins::remove1DVectorHighDims(loc(), src,
-                                                                 *rewriter),
-               "Expecting 1D vector when reducing high dimensions");
+  EXPECT_DEATH(
+      (void)hivm_regbaseintrins::remove1DVectorHighDims(loc(), src, *rewriter),
+      "Expecting 1D vector when reducing high dimensions");
 }
 
 TEST_F(ReportFatalErrorDeathTest, GetVldsBrcDistInvalidBitLength) {
@@ -486,9 +471,9 @@ TEST_F(ReportFatalErrorDeathTest, GetVldsBrcDistInvalidBitLength) {
 }
 
 TEST_F(ReportFatalErrorDeathTest, CreateVLVectorTypeUnsupportedDatatype) {
-  EXPECT_DEATH(
-      (void)hivm_regbaseintrins::createVLVectorType(rewriter->getIntegerType(3)),
-      "unsupported datatype");
+  EXPECT_DEATH((void)hivm_regbaseintrins::createVLVectorType(
+                   rewriter->getIntegerType(3)),
+               "unsupported datatype");
 }
 
 #endif // GTEST_HAS_DEATH_TEST

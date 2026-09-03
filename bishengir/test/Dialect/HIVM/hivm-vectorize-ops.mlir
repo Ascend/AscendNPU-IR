@@ -328,3 +328,432 @@ func.func @skip_non_vf(%arg0: tensor<4x16xf32>, %arg1: tensor<4x16xf32>) -> tens
   %1 = hivm.hir.vadd ins(%arg0, %arg1 : tensor<4x16xf32>, tensor<4x16xf32>) outs(%0 : tensor<4x16xf32>) -> tensor<4x16xf32>
   return %1 : tensor<4x16xf32>
 }
+
+// -----
+
+// Ops that opted out through NotVectorizableTrait are skipped gracefully:
+// the op stays, the pass does not fail.
+// CHECK-LABEL: func.func @skip_opted_out_vlog2(
+// CHECK: hivm.hir.vlog2
+// CHECK-NOT: vector.transfer_read
+func.func @skip_opted_out_vlog2(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32>
+    attributes {hivm.vector_function} {
+  %0 = tensor.empty() : tensor<8x8xf32>
+  %1 = hivm.hir.vlog2 ins(%arg0 : tensor<8x8xf32>) outs(%0 : tensor<8x8xf32>) -> tensor<8x8xf32>
+  return %1 : tensor<8x8xf32>
+}
+
+// -----
+
+// A scalar-source vbrc vectorizes through a splat: vector.broadcast takes the
+// scalar directly to the target vector shape.
+// CHECK-LABEL: func.func @vbrc_scalar_1x64(
+// CHECK-NOT: hivm.hir.vbrc
+// CHECK: %[[SPLAT:.*]] = vector.broadcast %{{.*}} : f32 to vector<1x64xf32>
+// CHECK: vector.transfer_write %[[SPLAT]], %{{.*}} : vector<1x64xf32>, tensor<1x64xf32>
+func.func @vbrc_scalar_1x64(%arg0: f32) -> tensor<1x64xf32>
+    attributes {hivm.vector_function} {
+  %0 = tensor.empty() : tensor<1x64xf32>
+  %1 = hivm.hir.vbrc ins(%arg0 : f32) outs(%0 : tensor<1x64xf32>) -> tensor<1x64xf32>
+  return %1 : tensor<1x64xf32>
+}
+
+// -----
+
+// A scalar source whose target exceeds one register still vectorizes: the
+// splat covers the one-register vector and the masked write spans the rest.
+// CHECK-LABEL: func.func @vbrc_scalar_8x8(
+// CHECK-NOT: hivm.hir.vbrc
+// CHECK: %[[SPLAT:.*]] = vector.broadcast %{{.*}} : f32 to vector<8x8xf32>
+// CHECK: vector.transfer_write %[[SPLAT]], %{{.*}} : vector<8x8xf32>, tensor<8x8xf32>
+func.func @vbrc_scalar_8x8(%arg0: f32) -> tensor<8x8xf32>
+    attributes {hivm.vector_function} {
+  %0 = tensor.empty() : tensor<8x8xf32>
+  %1 = hivm.hir.vbrc ins(%arg0 : f32) outs(%0 : tensor<8x8xf32>) -> tensor<8x8xf32>
+  return %1 : tensor<8x8xf32>
+}
+
+// -----
+
+// A transpose reads its source through the permuted map: the vector lands in
+// the destination orientation with no vector.transpose in between.
+// CHECK-LABEL: func.func @vtranspose_64x1(
+// CHECK-NOT: hivm.hir.vtranspose
+// CHECK: %[[READ:.*]] = vector.transfer_read %{{.*}} : tensor<64x1xf32>, vector<1x64xf32>
+// CHECK: vector.transfer_write %[[READ]], %{{.*}} : vector<1x64xf32>, tensor<1x64xf32>
+func.func @vtranspose_64x1(%arg0: tensor<64x1xf32>) -> tensor<1x64xf32>
+    attributes {hivm.vector_function} {
+  %0 = tensor.empty() : tensor<1x64xf32>
+  %1 = hivm.hir.vtranspose ins(%arg0 : tensor<64x1xf32>) outs(%0 : tensor<1x64xf32>) permutation = [1, 0] -> tensor<1x64xf32>
+  return %1 : tensor<1x64xf32>
+}
+
+// -----
+
+// A shaped-source vbrc whose target fits one register vectorizes: the source
+// reads at its own unit shape and vector.broadcast stretches it.
+// CHECK-LABEL: func.func @vbrc_shaped_1x64(
+// CHECK-NOT: hivm.hir.vbrc
+// CHECK: %[[SRC:.*]] = vector.transfer_read %{{.*}} : tensor<1x1xf32>, vector<1x1xf32>
+// CHECK: %[[BCAST:.*]] = vector.broadcast %[[SRC]] : vector<1x1xf32> to vector<1x64xf32>
+// CHECK: vector.transfer_write %[[BCAST]], %{{.*}} : vector<1x64xf32>, tensor<1x64xf32>
+func.func @vbrc_shaped_1x64(%arg0: tensor<1x1xf32>) -> tensor<1x64xf32>
+    attributes {hivm.vector_function} {
+  %0 = tensor.empty() : tensor<1x64xf32>
+  %1 = hivm.hir.vbrc ins(%arg0 : tensor<1x1xf32>) outs(%0 : tensor<1x64xf32>) broadcast_dims = [1] -> tensor<1x64xf32>
+  return %1 : tensor<1x64xf32>
+}
+
+// Elementwise math unary ops: one math op between the transfers, matching
+// what AutoVectorizeV2 emits for the equivalent linalg math regions.
+
+// CHECK-LABEL: func.func @vtanh_8x8(
+// CHECK-NOT: hivm.hir.vtanh
+// CHECK: %[[A:.*]] = vector.transfer_read %{{.*}} : tensor<8x8xf32>, vector<8x8xf32>
+// CHECK: %[[R:.*]] = math.tanh %[[A]] : vector<8x8xf32>
+// CHECK: vector.transfer_write %[[R]], %{{.*}} : vector<8x8xf32>, tensor<8x8xf32>
+func.func @vtanh_8x8(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32>
+    attributes {hivm.vector_function} {
+  %0 = tensor.empty() : tensor<8x8xf32>
+  %1 = hivm.hir.vtanh ins(%arg0 : tensor<8x8xf32>) outs(%0 : tensor<8x8xf32>) -> tensor<8x8xf32>
+  return %1 : tensor<8x8xf32>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @vsin_8x8(
+// CHECK-NOT: hivm.hir.vsin
+// CHECK: %[[A:.*]] = vector.transfer_read %{{.*}} : tensor<8x8xf32>, vector<8x8xf32>
+// CHECK: %[[R:.*]] = math.sin %[[A]] : vector<8x8xf32>
+// CHECK: vector.transfer_write %[[R]], %{{.*}} : vector<8x8xf32>, tensor<8x8xf32>
+func.func @vsin_8x8(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32>
+    attributes {hivm.vector_function} {
+  %0 = tensor.empty() : tensor<8x8xf32>
+  %1 = hivm.hir.vsin ins(%arg0 : tensor<8x8xf32>) outs(%0 : tensor<8x8xf32>) -> tensor<8x8xf32>
+  return %1 : tensor<8x8xf32>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @vcos_8x8(
+// CHECK-NOT: hivm.hir.vcos
+// CHECK: %[[A:.*]] = vector.transfer_read %{{.*}} : tensor<8x8xf32>, vector<8x8xf32>
+// CHECK: %[[R:.*]] = math.cos %[[A]] : vector<8x8xf32>
+// CHECK: vector.transfer_write %[[R]], %{{.*}} : vector<8x8xf32>, tensor<8x8xf32>
+func.func @vcos_8x8(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32>
+    attributes {hivm.vector_function} {
+  %0 = tensor.empty() : tensor<8x8xf32>
+  %1 = hivm.hir.vcos ins(%arg0 : tensor<8x8xf32>) outs(%0 : tensor<8x8xf32>) -> tensor<8x8xf32>
+  return %1 : tensor<8x8xf32>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @verf_8x8(
+// CHECK-NOT: hivm.hir.verf
+// CHECK: %[[A:.*]] = vector.transfer_read %{{.*}} : tensor<8x8xf32>, vector<8x8xf32>
+// CHECK: %[[R:.*]] = math.erf %[[A]] : vector<8x8xf32>
+// CHECK: vector.transfer_write %[[R]], %{{.*}} : vector<8x8xf32>, tensor<8x8xf32>
+func.func @verf_8x8(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32>
+    attributes {hivm.vector_function} {
+  %0 = tensor.empty() : tensor<8x8xf32>
+  %1 = hivm.hir.verf ins(%arg0 : tensor<8x8xf32>) outs(%0 : tensor<8x8xf32>) -> tensor<8x8xf32>
+  return %1 : tensor<8x8xf32>
+}
+
+// -----
+
+// vcast: round_mode/cast attributes map to the same arith cast ops that V2
+// emits for the equivalent convertScalarToDtype regions.
+
+// Float narrowing with rint semantics: arith.truncf.
+// CHECK-LABEL: func.func @vcast_f32_to_f16_8x8(
+// CHECK-NOT: hivm.hir.vcast
+// CHECK: %[[A:.*]] = vector.transfer_read %{{.*}} : tensor<8x8xf32>, vector<8x8xf32>
+// CHECK: %[[R:.*]] = arith.truncf %[[A]] : vector<8x8xf32> to vector<8x8xf16>
+// CHECK: vector.transfer_write %[[R]], %{{.*}} : vector<8x8xf16>, tensor<8x8xf16>
+func.func @vcast_f32_to_f16_8x8(%arg0: tensor<8x8xf32>) -> tensor<8x8xf16>
+    attributes {hivm.vector_function} {
+  %0 = tensor.empty() : tensor<8x8xf16>
+  %1 = hivm.hir.vcast ins(%arg0 : tensor<8x8xf32>) outs(%0 : tensor<8x8xf16>) round_mode = <rint> cast = <cast_signed> -> tensor<8x8xf16>
+  return %1 : tensor<8x8xf16>
+}
+
+// -----
+
+// Float widening with rint semantics: arith.extf.
+// CHECK-LABEL: func.func @vcast_f16_to_f32_8x8(
+// CHECK-NOT: hivm.hir.vcast
+// CHECK: %[[A:.*]] = vector.transfer_read %{{.*}} : tensor<8x8xf16>, vector<8x8xf16>
+// CHECK: %[[R:.*]] = arith.extf %[[A]] : vector<8x8xf16> to vector<8x8xf32>
+// CHECK: vector.transfer_write %[[R]], %{{.*}} : vector<8x8xf32>, tensor<8x8xf32>
+func.func @vcast_f16_to_f32_8x8(%arg0: tensor<8x8xf16>) -> tensor<8x8xf32>
+    attributes {hivm.vector_function} {
+  %0 = tensor.empty() : tensor<8x8xf32>
+  %1 = hivm.hir.vcast ins(%arg0 : tensor<8x8xf16>) outs(%0 : tensor<8x8xf32>) round_mode = <rint> cast = <cast_signed> -> tensor<8x8xf32>
+  return %1 : tensor<8x8xf32>
+}
+
+// -----
+
+// Float to signed integer with trunc semantics: arith.fptosi.
+// CHECK-LABEL: func.func @vcast_f32_to_i32_8x8(
+// CHECK-NOT: hivm.hir.vcast
+// CHECK: %[[A:.*]] = vector.transfer_read %{{.*}} : tensor<8x8xf32>, vector<8x8xf32>
+// CHECK: %[[R:.*]] = arith.fptosi %[[A]] : vector<8x8xf32> to vector<8x8xi32>
+// CHECK: vector.transfer_write %[[R]], %{{.*}} : vector<8x8xi32>, tensor<8x8xi32>
+func.func @vcast_f32_to_i32_8x8(%arg0: tensor<8x8xf32>) -> tensor<8x8xi32>
+    attributes {hivm.vector_function} {
+  %0 = tensor.empty() : tensor<8x8xi32>
+  %1 = hivm.hir.vcast ins(%arg0 : tensor<8x8xf32>) outs(%0 : tensor<8x8xi32>) round_mode = <trunc> cast = <cast_signed> -> tensor<8x8xi32>
+  return %1 : tensor<8x8xi32>
+}
+
+// -----
+
+// Float to narrow integer with trunc semantics: arith.fptosi.
+// CHECK-LABEL: func.func @vcast_f16_to_i8_8x16(
+// CHECK-NOT: hivm.hir.vcast
+// CHECK: %[[A:.*]] = vector.transfer_read %{{.*}} : tensor<8x16xf16>, vector<8x16xf16>
+// CHECK: %[[R:.*]] = arith.fptosi %[[A]] : vector<8x16xf16> to vector<8x16xi8>
+// CHECK: vector.transfer_write %[[R]], %{{.*}} : vector<8x16xi8>, tensor<8x16xi8>
+func.func @vcast_f16_to_i8_8x16(%arg0: tensor<8x16xf16>) -> tensor<8x16xi8>
+    attributes {hivm.vector_function} {
+  %0 = tensor.empty() : tensor<8x16xi8>
+  %1 = hivm.hir.vcast ins(%arg0 : tensor<8x16xf16>) outs(%0 : tensor<8x16xi8>) round_mode = <trunc> cast = <cast_signed> -> tensor<8x16xi8>
+  return %1 : tensor<8x16xi8>
+}
+
+// -----
+
+// Signed integer to float with rint semantics: arith.sitofp.
+// CHECK-LABEL: func.func @vcast_i32_to_f32_8x8(
+// CHECK-NOT: hivm.hir.vcast
+// CHECK: %[[A:.*]] = vector.transfer_read %{{.*}} : tensor<8x8xi32>, vector<8x8xi32>
+// CHECK: %[[R:.*]] = arith.sitofp %[[A]] : vector<8x8xi32> to vector<8x8xf32>
+// CHECK: vector.transfer_write %[[R]], %{{.*}} : vector<8x8xf32>, tensor<8x8xf32>
+func.func @vcast_i32_to_f32_8x8(%arg0: tensor<8x8xi32>) -> tensor<8x8xf32>
+    attributes {hivm.vector_function} {
+  %0 = tensor.empty() : tensor<8x8xf32>
+  %1 = hivm.hir.vcast ins(%arg0 : tensor<8x8xi32>) outs(%0 : tensor<8x8xf32>) round_mode = <rint> cast = <cast_signed> -> tensor<8x8xf32>
+  return %1 : tensor<8x8xf32>
+}
+
+// -----
+
+// Integer widening with rint semantics: arith.extsi.
+// CHECK-LABEL: func.func @vcast_i8_to_i16_8x16(
+// CHECK-NOT: hivm.hir.vcast
+// CHECK: %[[A:.*]] = vector.transfer_read %{{.*}} : tensor<8x16xi8>, vector<8x16xi8>
+// CHECK: %[[R:.*]] = arith.extsi %[[A]] : vector<8x16xi8> to vector<8x16xi16>
+// CHECK: vector.transfer_write %[[R]], %{{.*}} : vector<8x16xi16>, tensor<8x16xi16>
+func.func @vcast_i8_to_i16_8x16(%arg0: tensor<8x16xi8>) -> tensor<8x16xi16>
+    attributes {hivm.vector_function} {
+  %0 = tensor.empty() : tensor<8x16xi16>
+  %1 = hivm.hir.vcast ins(%arg0 : tensor<8x16xi8>) outs(%0 : tensor<8x16xi16>) round_mode = <rint> cast = <cast_signed> -> tensor<8x16xi16>
+  return %1 : tensor<8x16xi16>
+}
+
+// -----
+
+// Same-width bit reinterpretation: arith.bitcast.
+// CHECK-LABEL: func.func @vcast_bitcast_f32_to_i32_8x8(
+// CHECK-NOT: hivm.hir.vcast
+// CHECK: %[[A:.*]] = vector.transfer_read %{{.*}} : tensor<8x8xf32>, vector<8x8xf32>
+// CHECK: %[[R:.*]] = arith.bitcast %[[A]] : vector<8x8xf32> to vector<8x8xi32>
+// CHECK: vector.transfer_write %[[R]], %{{.*}} : vector<8x8xi32>, tensor<8x8xi32>
+func.func @vcast_bitcast_f32_to_i32_8x8(%arg0: tensor<8x8xf32>) -> tensor<8x8xi32>
+    attributes {hivm.vector_function} {
+  %0 = tensor.empty() : tensor<8x8xi32>
+  %1 = hivm.hir.vcast ins(%arg0 : tensor<8x8xf32>) outs(%0 : tensor<8x8xi32>) round_mode = <rint> cast = <bitcast> -> tensor<8x8xi32>
+  return %1 : tensor<8x8xi32>
+}
+
+// -----
+
+// vcmp: predicates follow HFusion's buildCompareFn, which is what V2's
+// linalg regions carry.
+
+// Float less-than to an i1 result: arith.cmpf olt.
+// CHECK-LABEL: func.func @vcmp_f32_lt_8x8(
+// CHECK-NOT: hivm.hir.vcmp
+// CHECK: %[[A:.*]] = vector.transfer_read %{{.*}} : tensor<8x8xf32>, vector<8x8xf32>
+// CHECK: %[[B:.*]] = vector.transfer_read %{{.*}} : tensor<8x8xf32>, vector<8x8xf32>
+// CHECK: %[[R:.*]] = arith.cmpf olt, %[[A]], %[[B]] : vector<8x8xf32>
+// CHECK: vector.transfer_write %[[R]], %{{.*}} : vector<8x8xi1>, tensor<8x8xi1>
+func.func @vcmp_f32_lt_8x8(%arg0: tensor<8x8xf32>, %arg1: tensor<8x8xf32>) -> tensor<8x8xi1>
+    attributes {hivm.vector_function} {
+  %0 = tensor.empty() : tensor<8x8xi1>
+  %1 = hivm.hir.vcmp ins(%arg0, %arg1 : tensor<8x8xf32>, tensor<8x8xf32>) outs(%0 : tensor<8x8xi1>) compare_mode = <lt> -> tensor<8x8xi1>
+  return %1 : tensor<8x8xi1>
+}
+
+// -----
+
+// Float not-equal lowers to `une`, mirroring HFusion's vne (V2's region).
+// CHECK-LABEL: func.func @vcmp_f32_ne_8x8(
+// CHECK-NOT: hivm.hir.vcmp
+// CHECK: arith.cmpf une, %{{.*}}, %{{.*}} : vector<8x8xf32>
+// CHECK: vector.transfer_write %{{.*}} : vector<8x8xi1>, tensor<8x8xi1>
+func.func @vcmp_f32_ne_8x8(%arg0: tensor<8x8xf32>, %arg1: tensor<8x8xf32>) -> tensor<8x8xi1>
+    attributes {hivm.vector_function} {
+  %0 = tensor.empty() : tensor<8x8xi1>
+  %1 = hivm.hir.vcmp ins(%arg0, %arg1 : tensor<8x8xf32>, tensor<8x8xf32>) outs(%0 : tensor<8x8xi1>) compare_mode = <ne> -> tensor<8x8xi1>
+  return %1 : tensor<8x8xi1>
+}
+
+// -----
+
+// Signed integer less-than: arith.cmpi slt.
+// CHECK-LABEL: func.func @vcmp_i32_slt_8x8(
+// CHECK-NOT: hivm.hir.vcmp
+// CHECK: arith.cmpi slt, %{{.*}}, %{{.*}} : vector<8x8xi32>
+// CHECK: vector.transfer_write %{{.*}} : vector<8x8xi1>, tensor<8x8xi1>
+func.func @vcmp_i32_slt_8x8(%arg0: tensor<8x8xi32>, %arg1: tensor<8x8xi32>) -> tensor<8x8xi1>
+    attributes {hivm.vector_function} {
+  %0 = tensor.empty() : tensor<8x8xi1>
+  %1 = hivm.hir.vcmp ins(%arg0, %arg1 : tensor<8x8xi32>, tensor<8x8xi32>) outs(%0 : tensor<8x8xi1>) compare_mode = <lt> -> tensor<8x8xi1>
+  return %1 : tensor<8x8xi1>
+}
+
+// -----
+
+// Unsigned integer less-than: arith.cmpi ult (is_signed : false on signless i32).
+// CHECK-LABEL: func.func @vcmp_i32_ult_8x8(
+// CHECK-NOT: hivm.hir.vcmp
+// CHECK: arith.cmpi ult, %{{.*}}, %{{.*}} : vector<8x8xi32>
+// CHECK: vector.transfer_write %{{.*}} : vector<8x8xi1>, tensor<8x8xi1>
+func.func @vcmp_i32_ult_8x8(%arg0: tensor<8x8xi32>, %arg1: tensor<8x8xi32>) -> tensor<8x8xi1>
+    attributes {hivm.vector_function} {
+  %0 = tensor.empty() : tensor<8x8xi1>
+  %1 = hivm.hir.vcmp ins(%arg0, %arg1 : tensor<8x8xi32>, tensor<8x8xi32>) outs(%0 : tensor<8x8xi1>) compare_mode = <lt> is_signed : false -> tensor<8x8xi1>
+  return %1 : tensor<8x8xi1>
+}
+
+// -----
+
+// A byte-wide comparison result widens back with arith.extui, as the scalar
+// lowering does.
+// CHECK-LABEL: func.func @vcmp_f32_lt_i8dst_8x8(
+// CHECK-NOT: hivm.hir.vcmp
+// CHECK: %[[C:.*]] = arith.cmpf olt, %{{.*}}, %{{.*}} : vector<8x8xf32>
+// CHECK: %[[R:.*]] = arith.extui %[[C]] : vector<8x8xi1> to vector<8x8xi8>
+// CHECK: vector.transfer_write %[[R]], %{{.*}} : vector<8x8xi8>, tensor<8x8xi8>
+func.func @vcmp_f32_lt_i8dst_8x8(%arg0: tensor<8x8xf32>, %arg1: tensor<8x8xf32>) -> tensor<8x8xi8>
+    attributes {hivm.vector_function} {
+  %0 = tensor.empty() : tensor<8x8xi8>
+  %1 = hivm.hir.vcmp ins(%arg0, %arg1 : tensor<8x8xf32>, tensor<8x8xf32>) outs(%0 : tensor<8x8xi8>) compare_mode = <lt> -> tensor<8x8xi8>
+  return %1 : tensor<8x8xi8>
+}
+
+// -----
+
+// An i1 condition drives arith.select directly.
+// CHECK-LABEL: func.func @vsel_i1_cond_8x8(
+// CHECK-NOT: hivm.hir.vsel
+// CHECK: %[[C:.*]] = vector.transfer_read %{{.*}} : tensor<8x8xi1>, vector<8x8xi1>
+// CHECK: %[[X:.*]] = vector.transfer_read %{{.*}} : tensor<8x8xf32>, vector<8x8xf32>
+// CHECK: %[[Y:.*]] = vector.transfer_read %{{.*}} : tensor<8x8xf32>, vector<8x8xf32>
+// CHECK: %[[R:.*]] = arith.select %[[C]], %[[X]], %[[Y]] : vector<8x8xi1>, vector<8x8xf32>
+// CHECK: vector.transfer_write %[[R]], %{{.*}} : vector<8x8xf32>, tensor<8x8xf32>
+func.func @vsel_i1_cond_8x8(%cond: tensor<8x8xi1>, %arg0: tensor<8x8xf32>, %arg1: tensor<8x8xf32>) -> tensor<8x8xf32>
+    attributes {hivm.vector_function} {
+  %0 = tensor.empty() : tensor<8x8xf32>
+  %1 = hivm.hir.vsel ins(%cond, %arg0, %arg1 : tensor<8x8xi1>, tensor<8x8xf32>, tensor<8x8xf32>) outs(%0 : tensor<8x8xf32>) -> tensor<8x8xf32>
+  return %1 : tensor<8x8xf32>
+}
+
+// -----
+
+// An i8 condition converts to i1 through a zero comparison before select.
+// CHECK-LABEL: func.func @vsel_i8_cond_8x8(
+// CHECK-NOT: hivm.hir.vsel
+// CHECK: %[[C8:.*]] = vector.transfer_read %{{.*}} : tensor<8x8xi8>, vector<8x8xi8>
+// CHECK: %[[C:.*]] = arith.cmpi ne, %[[C8]], %{{.*}} : vector<8x8xi8>
+// CHECK: arith.select %[[C]], %{{.*}}, %{{.*}} : vector<8x8xi1>, vector<8x8xf32>
+func.func @vsel_i8_cond_8x8(%cond: tensor<8x8xi8>, %arg0: tensor<8x8xf32>, %arg1: tensor<8x8xf32>) -> tensor<8x8xf32>
+    attributes {hivm.vector_function} {
+  %0 = tensor.empty() : tensor<8x8xf32>
+  %1 = hivm.hir.vsel ins(%cond, %arg0, %arg1 : tensor<8x8xi8>, tensor<8x8xf32>, tensor<8x8xf32>) outs(%0 : tensor<8x8xf32>) -> tensor<8x8xf32>
+  return %1 : tensor<8x8xf32>
+}
+
+// -----
+
+// Shifts: the scalar shift amount splats with vector.broadcast, the same
+// broadcast V2 applies to scalar region inputs.
+
+// CHECK-LABEL: func.func @vshl_scalar_8x8(
+// CHECK-NOT: hivm.hir.vshl
+// CHECK: %[[A:.*]] = vector.transfer_read %{{.*}} : tensor<8x8xi32>, vector<8x8xi32>
+// CHECK: %[[S:.*]] = vector.broadcast %{{.*}} : i32 to vector<8x8xi32>
+// CHECK: %[[R:.*]] = arith.shli %[[A]], %[[S]] : vector<8x8xi32>
+// CHECK: vector.transfer_write %[[R]], %{{.*}} : vector<8x8xi32>, tensor<8x8xi32>
+func.func @vshl_scalar_8x8(%arg0: tensor<8x8xi32>, %shift: i32) -> tensor<8x8xi32>
+    attributes {hivm.vector_function} {
+  %0 = tensor.empty() : tensor<8x8xi32>
+  %1 = hivm.hir.vshl ins(%arg0, %shift : tensor<8x8xi32>, i32) outs(%0 : tensor<8x8xi32>) -> tensor<8x8xi32>
+  return %1 : tensor<8x8xi32>
+}
+
+// -----
+
+// Signed shift right: arith.shrsi.
+// CHECK-LABEL: func.func @vshr_scalar_signed_8x8(
+// CHECK-NOT: hivm.hir.vshr
+// CHECK: %[[A:.*]] = vector.transfer_read %{{.*}} : tensor<8x8xi32>, vector<8x8xi32>
+// CHECK: %[[S:.*]] = vector.broadcast %{{.*}} : i32 to vector<8x8xi32>
+// CHECK: %[[R:.*]] = arith.shrsi %[[A]], %[[S]] : vector<8x8xi32>
+// CHECK: vector.transfer_write %[[R]], %{{.*}} : vector<8x8xi32>, tensor<8x8xi32>
+func.func @vshr_scalar_signed_8x8(%arg0: tensor<8x8xi32>, %shift: i32) -> tensor<8x8xi32>
+    attributes {hivm.vector_function} {
+  %0 = tensor.empty() : tensor<8x8xi32>
+  %1 = hivm.hir.vshr ins(%arg0, %shift : tensor<8x8xi32>, i32) outs(%0 : tensor<8x8xi32>) -> tensor<8x8xi32>
+  return %1 : tensor<8x8xi32>
+}
+
+// -----
+
+// Unsigned shift right: arith.shrui (is_signed : false on signless i32).
+// CHECK-LABEL: func.func @vshr_scalar_unsigned_8x8(
+// CHECK-NOT: hivm.hir.vshr
+// CHECK: %[[A:.*]] = vector.transfer_read %{{.*}} : tensor<8x8xi32>, vector<8x8xi32>
+// CHECK: %[[S:.*]] = vector.broadcast %{{.*}} : i32 to vector<8x8xi32>
+// CHECK: %[[R:.*]] = arith.shrui %[[A]], %[[S]] : vector<8x8xi32>
+// CHECK: vector.transfer_write %[[R]], %{{.*}} : vector<8x8xi32>, tensor<8x8xi32>
+func.func @vshr_scalar_unsigned_8x8(%arg0: tensor<8x8xi32>, %shift: i32) -> tensor<8x8xi32>
+    attributes {hivm.vector_function} {
+  %0 = tensor.empty() : tensor<8x8xi32>
+  %1 = hivm.hir.vshr ins(%arg0, %shift : tensor<8x8xi32>, i32) outs(%0 : tensor<8x8xi32>) is_signed : false -> tensor<8x8xi32>
+  return %1 : tensor<8x8xi32>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @vpow_f32_8x8(
+// CHECK-NOT: hivm.hir.vpow
+// CHECK: %[[A:.*]] = vector.transfer_read %{{.*}} : tensor<8x8xf32>, vector<8x8xf32>
+// CHECK: %[[B:.*]] = vector.transfer_read %{{.*}} : tensor<8x8xf32>, vector<8x8xf32>
+// CHECK: %[[R:.*]] = math.powf %[[A]], %[[B]] : vector<8x8xf32>
+// CHECK: vector.transfer_write %[[R]], %{{.*}} : vector<8x8xf32>, tensor<8x8xf32>
+func.func @vpow_f32_8x8(%arg0: tensor<8x8xf32>, %arg1: tensor<8x8xf32>) -> tensor<8x8xf32>
+    attributes {hivm.vector_function} {
+  %0 = tensor.empty() : tensor<8x8xf32>
+  %1 = hivm.hir.vpow ins(%arg0, %arg1 : tensor<8x8xf32>, tensor<8x8xf32>) outs(%0 : tensor<8x8xf32>) -> tensor<8x8xf32>
+  return %1 : tensor<8x8xf32>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @vpow_i32_8x8(
+// CHECK-NOT: hivm.hir.vpow
+// CHECK: %[[A:.*]] = vector.transfer_read %{{.*}} : tensor<8x8xi32>, vector<8x8xi32>
+// CHECK: %[[B:.*]] = vector.transfer_read %{{.*}} : tensor<8x8xi32>, vector<8x8xi32>
+// CHECK: %[[R:.*]] = math.ipowi %[[A]], %[[B]] : vector<8x8xi32>
+// CHECK: vector.transfer_write %[[R]], %{{.*}} : vector<8x8xi32>, tensor<8x8xi32>
+func.func @vpow_i32_8x8(%arg0: tensor<8x8xi32>, %arg1: tensor<8x8xi32>) -> tensor<8x8xi32>
+    attributes {hivm.vector_function} {
+  %0 = tensor.empty() : tensor<8x8xi32>
+  %1 = hivm.hir.vpow ins(%arg0, %arg1 : tensor<8x8xi32>, tensor<8x8xi32>) outs(%0 : tensor<8x8xi32>) -> tensor<8x8xi32>
+  return %1 : tensor<8x8xi32>
+}

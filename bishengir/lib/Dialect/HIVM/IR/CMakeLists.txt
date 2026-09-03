@@ -66,6 +66,7 @@ add_bishengir_dialect_library(BiShengIRHIVMDialect
   LINK_LIBS PUBLIC
   BiShengIRAnnotationDialect
   BiShengIRScopeDialect
+  BiShengIRMathExtDialect
   MLIRBufferizationDialect
   MLIRArithDialect
   MLIRDestinationStyleOpInterface

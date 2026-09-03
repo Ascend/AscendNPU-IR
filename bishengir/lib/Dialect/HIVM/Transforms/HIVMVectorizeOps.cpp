@@ -12,6 +12,7 @@
 #include "bishengir/Dialect/HIVM/Interfaces/VectorizableOpInterface.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/RegbaseUtils.h"
+#include "bishengir/Dialect/MathExt/IR/MathExt.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -43,7 +44,7 @@ void HIVMVectorizeOpsPass::runOnOperation() {
 
   IRRewriter rewriter(&getContext());
   WalkResult result = funcOp.walk([&](VectorizableOpInterface op) {
-    if (!canVectorizeHIVMOp(op.getOperation()))
+    if (!op.isVectorizable())
       return WalkResult::advance();
     auto structuredOp = dyn_cast<HIVMStructuredOp>(op.getOperation());
     if (!structuredOp)

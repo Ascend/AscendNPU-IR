@@ -167,6 +167,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   BiShengIRHACCDialect
   BiShengIRHIVMAnalysis
   BiShengIRHIVMDialect
+  BiShengIRMathExtDialect
   BiShengIRScopeDialect
   MLIRIR
   MLIRLinalgDialect
