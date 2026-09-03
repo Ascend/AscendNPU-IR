@@ -56,6 +56,7 @@ public:
 private:
   int64_t ubBudgetBytes_ = 0;
   int64_t ubAlignBytes_ = 0;
+  bool isMixCV_ = false;
 };
 
 LogicalResult VFFusionPass::preProcess() {
@@ -74,7 +75,7 @@ VFFusionKindOption VFFusionPass::getFusionOption() const {
                             ubBudgetBytes_, ubAlignBytes_, enableRA, enableAR,
                             maxVFParams, enableVFStackLimit, enableCastOpt,
                             enableNewTreeReducePolicy,
-                            enablePredicateSinkAcrossSync);
+                            enablePredicateSinkAcrossSync, isMixCV_);
 }
 
 template <typename FusionKind>
@@ -172,7 +173,8 @@ void VFFusionPass::runOnOperation() {
 
   // For CV cases, bypass vffusion entirely when any op should skip fusion
   // (e.g. RA/AR sum-reductions handled by dedicated downstream passes).
-  if (isCVCases(moduleOp)) {
+  isMixCV_ = isCVCases(moduleOp);
+  if (isMixCV_) {
     VFFusionKindOption option = getFusionOption();
     if (moduleOp
             .walk([&](Operation *op) -> WalkResult {

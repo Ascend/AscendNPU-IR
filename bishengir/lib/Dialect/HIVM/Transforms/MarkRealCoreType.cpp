@@ -84,29 +84,30 @@ void MarkRealCoreTypePass::runOnOperation() {
   // clone moduleOp to moduleClone
   IRMapping mapper;
   ModuleOp moduleClone = cast<ModuleOp>(moduleOp->clone(mapper));
-  auto clonedOpMap = mapper.getOperationMap();
-  DenseMap<Operation *, Operation *> invClonedOpMap;
-  for (auto &[op, clonedOp] : clonedOpMap) {
-    invClonedOpMap[clonedOp] = op;
-  }
 
-  DenseMap<uint64_t, Operation *> instructionCounterToOpMap;
-  DenseMap<Operation *, hivm::TCoreType> instructionCounterToCoreTypeMap;
+  SmallVector<Operation *> markerOperations;
+  SmallVector<hivm::TCoreType> markerCoreTypes;
   static constexpr StringLiteral kInstructionMarkerAttr = "instruction-marker";
 
-  // annotate instruction counter attribute to each op in moduleClone
+  // Annotate each cloned operation in preorder and retain its original
+  // counterpart by marker index. The marker is only used after the clone-side
+  // pipeline.
   auto *ctx = &getContext();
   OpBuilder builder(ctx);
   uint64_t instructionCounter = 0;
-  moduleClone->walk<WalkOrder::PreOrder>([&](Operation *op) {
-    if (isa<ModuleOp>(op)) {
+  moduleOp->walk<WalkOrder::PreOrder>([&](Operation *op) {
+    if (isa<ModuleOp>(op))
       return;
-    }
-    instructionCounterToOpMap[instructionCounter] = invClonedOpMap[op];
-    op->setAttr(kInstructionMarkerAttr,
-                builder.getIndexAttr(instructionCounter));
+
+    Operation *clonedOp = mapper.lookupOrNull(op);
+    assert(clonedOp && "missing cloned operation mapping");
+    markerOperations.push_back(op);
+    clonedOp->setAttr(kInstructionMarkerAttr,
+                      builder.getIndexAttr(instructionCounter));
     instructionCounter++;
   });
+  markerCoreTypes.resize(markerOperations.size(),
+                         hivm::TCoreType::CUBE_OR_VECTOR);
 
   // run split mix kernel pass to annotate core type attribute
   PassManager pm(moduleClone.getContext());
@@ -139,21 +140,21 @@ void MarkRealCoreTypePass::runOnOperation() {
               op->getAttrOfType<IntegerAttr>(kInstructionMarkerAttr)) {
         uint64_t instructionCounter =
             instructionCounterAttr.getValue().getZExtValue();
-        assert(instructionCounterToOpMap.count(instructionCounter) &&
+        assert(instructionCounter < markerOperations.size() &&
                "instructionCounter not found in map!");
-        Operation *opInOriginalModule =
-            instructionCounterToOpMap[instructionCounter];
-
-        auto [it, inserted] = instructionCounterToCoreTypeMap.insert(
-            {opInOriginalModule, opCoreType});
-        if (!inserted && it->second != opCoreType) {
-          it->second = hivm::TCoreType::CUBE_AND_VECTOR;
-        }
+        auto &coreType = markerCoreTypes[instructionCounter];
+        if (coreType == hivm::TCoreType::CUBE_OR_VECTOR)
+          coreType = opCoreType;
+        else if (coreType != opCoreType)
+          coreType = hivm::TCoreType::CUBE_AND_VECTOR;
       }
     });
   });
   moduleClone->erase();
-  for (auto &[op, coreType] : instructionCounterToCoreTypeMap) {
+  for (auto [instructionCounter, coreType] : llvm::enumerate(markerCoreTypes)) {
+    if (coreType == hivm::TCoreType::CUBE_OR_VECTOR)
+      continue;
+    Operation *op = markerOperations[instructionCounter];
     if (isOpTypeToBeMarked(op)) {
       op->setAttr(hivm::TCoreTypeAttr::name,
                   hivm::TCoreTypeAttr::get(op->getContext(), coreType));

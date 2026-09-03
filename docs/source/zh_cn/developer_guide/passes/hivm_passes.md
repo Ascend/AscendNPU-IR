@@ -254,6 +254,12 @@
 
 - `-remove-core-type-attrs`：移除所有核心类型属性，开启后该Pass变为清理Pass。
 
+## -hivm-pre-mark-stride-align
+
+**功能**：自动为hivm算子的操作数标注skip_stride_align_for_vload标记。
+
+该Pass会遍历所有hivm算子，为其memref类型操作数添加无需对齐的注解标记。
+
 ## -hivm-mark-stride-align
 
 **功能**：自动为hivm算子的操作数标注stride_align标记。

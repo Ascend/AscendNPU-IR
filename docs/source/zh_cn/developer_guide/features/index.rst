@@ -16,3 +16,5 @@
    dfx
    plan_memory
    multi_buffer
+   analyze_vector_layout
+   stride_align

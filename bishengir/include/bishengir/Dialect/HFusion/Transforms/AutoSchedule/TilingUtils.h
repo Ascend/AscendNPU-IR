@@ -19,7 +19,7 @@
 #define BISHENGIR_DIALECT_HFUSION_TRANSFORMS_AUTOSCHEDULE_TILINGUTILS_H
 
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
-#include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/ValueHandle.h"
+#include "bishengir/Dialect/Analysis/Schedule/ValueHandle.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
@@ -350,8 +350,8 @@ public:
   Type getType() { return t_; }
 
   /// Getters and setters for the value handle pointer.
-  ValueHandle *getHandle() const { return vh_; }
-  void setHandle(ValueHandle *vh) { vh_ = vh; }
+  schedule::ValueHandle *getHandle() const { return vh_; }
+  void setHandle(schedule::ValueHandle *vh) { vh_ = vh; }
 
   /// Set tiling data to expression or to constant value.
   void setData(int64_t newData);
@@ -383,7 +383,7 @@ private:
   /// Position within the to-be-scheduled function.
   size_t pos_{0};
   /// Bound value handle pointer using during scheduling.
-  ValueHandle *vh_{nullptr};
+  schedule::ValueHandle *vh_{nullptr};
   /// Mapping from tiling key to the heuristic tiling factor.
   DenseMap<TilingKey, int64_t> heuristicForKey_{};
 };

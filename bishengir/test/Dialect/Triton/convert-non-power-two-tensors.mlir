@@ -712,9 +712,11 @@ tt.func @castOpExtf(%ptr1: !tt.ptr<f16>, %ptr2: !tt.ptr<f32>) {
 // CHECK: %[[CST_64:.*]] = arith.constant 64 : i64
 // CHECK: %[[CST_1:.*]] = arith.constant 1 : i64
 // CHECK: %[[CST_0:.*]] = arith.constant 0 : i32
-// CHECK: %[[LOADPTR:.*]] = tt.make_tensor_ptr %{{.*}}, [%[[CST_64]], %[[CST_64]]], [%[[CST_64]], %[[CST_1]]], [%[[CST_0]], %[[CST_0]]] {order = array<i32: 1, 0>} : <tensor<4x8xf32>>
+// CHECK: %[[CST_3:.*]] = arith.constant 3 : i64
+// CHECK: %[[LOADPTR:.*]] = tt.make_tensor_ptr %{{.*}}, [%[[CST_3]], %[[CST_64]]], [%[[CST_64]], %[[CST_1]]], [%[[CST_0]], %[[CST_0]]] {order = array<i32: 1, 0>} : <tensor<4x8xf32>>
 // CHECK: %[[LOADVAL:.*]] = tt.load %[[LOADPTR]] {boundaryCheck = array<i32: 0>} : !tt.ptr<tensor<4x8xf32>
-// CHECK: %[[STOREPTR:.*]] = tt.make_tensor_ptr %{{.*}}, [%[[CST_64]], %[[CST_64]]], [%[[CST_64]], %[[CST_1]]], [%[[CST_0]], %[[CST_0]]] {order = array<i32: 1, 0>} : <tensor<4x8xf32>>
+// CHECK: %[[CST_3_1:.*]] = arith.constant 3 : i64
+// CHECK: %[[STOREPTR:.*]] = tt.make_tensor_ptr %{{.*}}, [%[[CST_3_1]], %[[CST_64]]], [%[[CST_64]], %[[CST_1]]], [%[[CST_0]], %[[CST_0]]] {order = array<i32: 1, 0>} : <tensor<4x8xf32>>
 // CHECK: tt.store %[[STOREPTR]], %[[LOADVAL]] {boundaryCheck = array<i32: 0>} : !tt.ptr<tensor<4x8xf32>
 tt.func @tensorPtr(%ptr0: !tt.ptr<f32>, %ptr1: !tt.ptr<f32>) {
   %0 = arith.constant 64 : i64
@@ -737,7 +739,8 @@ tt.func @tensorPtr(%ptr0: !tt.ptr<f32>, %ptr1: !tt.ptr<f32>) {
 // CHECK: %[[INITIALPTR:.*]] = tt.make_tensor_ptr %{{.*}}, [%[[CST_64]], %[[CST_64]]], [%[[CST_64]], %[[CST_1]]], [%[[CST_0]], %[[CST_0]]] {order = array<i32: 1, 0>} : <tensor<4x8xf32>>
 // CHECK: %[[ADVANCEPTR:.*]] = tt.advance %[[INITIALPTR]], [%[[CST_64_i32]], %[[CST_0]]] : <tensor<4x8xf32>
 // CHECK: %[[LOADVAL:.*]] = tt.load %[[ADVANCEPTR]] {boundaryCheck = array<i32: 0>} : !tt.ptr<tensor<4x8xf32>
-// CHECK: %[[STOREPTR:.*]] = tt.make_tensor_ptr %{{.*}}, [%[[CST_64]], %[[CST_64]]], [%[[CST_64]], %[[CST_1]]], [%[[CST_0]], %[[CST_0]]] {order = array<i32: 1, 0>} : <tensor<4x8xf32>>
+// CHECK: %[[CST_3:.*]] = arith.constant 3 : i64
+// CHECK: %[[STOREPTR:.*]] = tt.make_tensor_ptr %{{.*}}, [%[[CST_3]], %[[CST_64]]], [%[[CST_64]], %[[CST_1]]], [%[[CST_0]], %[[CST_0]]] {order = array<i32: 1, 0>} : <tensor<4x8xf32>>
 // CHECK: tt.store %[[STOREPTR]], %[[LOADVAL]] {boundaryCheck = array<i32: 0>} : !tt.ptr<tensor<4x8xf32>
 tt.func @advanceTensorPtr(%ptr0: !tt.ptr<f32>, %ptr1: !tt.ptr<f32>) {
   %0 = arith.constant 64 : i64
@@ -753,8 +756,8 @@ tt.func @advanceTensorPtr(%ptr0: !tt.ptr<f32>, %ptr1: !tt.ptr<f32>) {
 }
 
 // -----
-
-// CHECK: %[[RANGE:.*]] = tt.make_range
+// CHECK-LABEL: @AtomicRMWOp
+// CHECK: %[[RANGE:.*]] = tt.make_range 
 // CHECK: %[[SPLAT_PTR:.*]] = tt.splat
 // CHECK: %[[PTR:.*]] = tt.addptr %[[SPLAT_PTR]], %[[RANGE]]
 // CHECK: %[[SPLAT_VAL:.*]] = tt.splat
@@ -963,7 +966,10 @@ tt.func @histogramNonPowTwoSourceResultMasked(%ptr1: !tt.ptr<i32>, %ptr2: !tt.pt
 
 // CHECK-LABEL: @simpleReshapeDataLocs
 // CHECK-NOT: tt.reshape {{.*}} : tensor<8xf32> -> tensor<8xf32>
+// CHECK-NOT: tensor.
 // CHECK: tt.reshape {{.*}} : tensor<8xf32> -> tensor<4x2xf32>
+// CHECK-NOT: tt.reshape {{.*}} : tensor<8xf32> -> tensor<8xf32>
+// CHECK-NOT: tensor.
 tt.func @simpleReshapeDataLocs(%ptr0: !tt.ptr<f32>, %ptr1: !tt.ptr<f32>) {
   %0 = tt.make_range {end = 6 : i32, start = 0 : i32} : tensor<6xi32>
   %1 = tt.splat %ptr0 : !tt.ptr<f32> -> tensor<6x!tt.ptr<f32>>
@@ -992,8 +998,11 @@ tt.func @simpleReshapeDataLocs(%ptr0: !tt.ptr<f32>, %ptr1: !tt.ptr<f32>) {
 // -----
 
 // CHECK-LABEL: @simpleReshapeOnes
+// CHECK-NOT: tensor.
 // CHECK: tt.reshape {{.*}} tensor<4x!tt.ptr<f32>> -> tensor<1x4x1x1x!tt.ptr<f32>>
+// CHECK-NOT: tensor.
 // CHECK: tt.reshape {{.*}} tensor<4xi32> -> tensor<1x4x1x1xi32>
+// CHECK-NOT: tensor.
 tt.func @simpleReshapeOnes(%ptr0: !tt.ptr<f32>, %ptr1: !tt.ptr<f32>) {
   %0 = tt.make_range {end = 3 : i32, start = 0 : i32} : tensor<3xi32>
   %1 = tt.splat %ptr0 : !tt.ptr<f32> -> tensor<3x!tt.ptr<f32>>
@@ -1349,6 +1358,279 @@ tt.func @nestedStore(%ptr1: !tt.ptr<f32>, %ptr2: !tt.ptr<f32>, %lowerbound: i32,
   }
   tt.return
 }
+
+// -----
+
+// CHECK-LABEL: @expandReshape
+// CHECK-NOT: tensor.
+// CHECK: tt.reshape %{{.*}} allow_reorder : tensor<16xf32> -> tensor<1x16xf32>
+// CHECK-NOT: tensor.
+tt.func @expandReshape(%ptr1: !tt.ptr<f32>, %ptr2: !tt.ptr<f32>) {
+  %0 = arith.constant 9 : i64
+  %1 = arith.constant 1 : i64
+  %2 = arith.constant 0 : i32
+  %3 = tt.make_tensor_ptr %ptr1, [%0], [%1], [%2] {order = array<i32: 0>} : !tt.ptr<tensor<9xf32>>
+  %4 = tt.load %3 : !tt.ptr<tensor<9xf32>>
+  %5 = tt.reshape %4 allow_reorder : tensor<9xf32> -> tensor<1x9xf32>
+  %6 = tt.make_tensor_ptr %ptr2, [%1, %0], [%0, %1], [%2, %2] {order = array<i32: 1, 0>} : !tt.ptr<tensor<1x9xf32>>
+  tt.store %6, %5 : !tt.ptr<tensor<1x9xf32>>
+  tt.return
+}
+
+// -----
+
+// CHECK-LABEL: @simpleReshape
+// CHECK-NOT: tensor.
+// CHECK: tt.reshape %{{.*}} : tensor<8xf32> -> tensor<4x2xf32>
+// CHECK-NOT: tensor.
+tt.func @simpleReshape(%ptr1: !tt.ptr<f32>, %ptr2: !tt.ptr<f32>) {
+  %0 = arith.constant 6 : i64
+  %1 = arith.constant 3 : i64
+  %2 = arith.constant 2 : i64
+  %3 = arith.constant 1 : i64
+  %4 = arith.constant 0 : i32
+  %5 = tt.make_tensor_ptr %ptr1, [%0], [%3], [%4] {order = array<i32: 0>} : !tt.ptr<tensor<6xf32>>
+  %6 = tt.load %5 : !tt.ptr<tensor<6xf32>>
+  %7 = tt.reshape %6  : tensor<6xf32> -> tensor<3x2xf32>
+  %8 = tt.make_tensor_ptr %ptr2, [%1, %2], [%2, %3], [%4, %4] {order = array<i32: 1, 0>} : !tt.ptr<tensor<3x2xf32>>
+  tt.store %8, %7 : !tt.ptr<tensor<3x2xf32>>
+  tt.return
+}
+
+// -----
+
+// CHECK-LABEL: @preserveLoadStoreAttrs
+// CHECK: %[[CST8:.*]] = arith.constant 8 : i64
+// CHECK: %[[CST16:.*]] = arith.constant 16 : i64
+// CHECK: %[[CST3:.*]] = arith.constant 3 : i64
+// CHECK: %[[LOADPTR:.*]] = tt.make_tensor_ptr %{{.*}}, [%[[CST8]], %[[CST3]], %[[CST16]]], {{.*}} : <tensor<8x4x16xf32>
+// CHECK: %[[LOAD:.*]] = tt.load %[[LOADPTR]] {boundaryCheck = array<i32: 0, 1, 2>} : !tt.ptr<tensor<8x4x16xf32>>
+// CHECK: %[[CST3_1:.*]] = arith.constant 3 : i64
+// CHECK: %[[STOREPTR:.*]] = tt.make_tensor_ptr %{{.*}}, [%[[CST8]], %[[CST3_1]], %[[CST16]]], {{.*}} : <tensor<8x4x16xf32>
+// CHECK: tt.store %[[STOREPTR]], %[[LOAD]] {boundaryCheck = array<i32: 1>} : !tt.ptr<tensor<8x4x16xf32>>
+tt.func @preserveLoadStoreAttrs(%ptr1: !tt.ptr<f32>, %ptr2: !tt.ptr<f32>) {
+  %0 = arith.constant 8 : i64
+  %1 = arith.constant 3 : i64
+  %2 = arith.constant 16 : i64
+  %3 = arith.constant 1 : i64
+  %4 = arith.constant 48 : i64
+  %5 = arith.constant 0 : i32
+  %6 = tt.make_tensor_ptr %ptr1, [%0, %1, %2], [%4, %2, %3], [%5, %5, %5] {order = array<i32: 2, 1, 0>} : !tt.ptr<tensor<8x3x16xf32>>
+  %7 = tt.load %6 {boundaryCheck = array<i32: 0, 2>} : !tt.ptr<tensor<8x3x16xf32>>
+  %8 = tt.make_tensor_ptr %ptr2, [%0, %1, %2], [%4, %2, %3], [%5, %5, %5] {order = array<i32: 2, 1, 0>} : !tt.ptr<tensor<8x3x16xf32>>
+  tt.store %8, %7 {boundaryCheck = array<i32: 1>} : !tt.ptr<tensor<8x3x16xf32>>
+
+  tt.return
+}
+
+// -----
+
+// CHECK-LABEL: @makeTensorPtrResize
+// CHECK: %[[CST8:.*]] = arith.constant 8 : i64
+// CHECK: %[[CST16:.*]] = arith.constant 16 : i64
+// CHECK: %[[CST6:.*]] = arith.constant 6 : i64
+// CHECK: %[[LOADPTR:.*]] = tt.make_tensor_ptr %{{.*}}, [%[[CST6]], %[[CST16]]], {{.*}} : <tensor<8x8xf16>
+// CHECK: %[[LOAD:.*]] = tt.load %[[LOADPTR]] {boundaryCheck = array<i32: 0>} : !tt.ptr<tensor<8x8xf16>>
+// CHECK: %[[CST6_1:.*]] = arith.constant 6 : i64
+// CHECK: %[[STOREPTR:.*]] = tt.make_tensor_ptr %{{.*}}, [%[[CST6_1]], %[[CST8]]], {{.*}} : <tensor<8x8xf16>
+// CHECK: tt.store %[[STOREPTR]], %[[LOAD]] {boundaryCheck = array<i32: 0>} : !tt.ptr<tensor<8x8xf16>>
+tt.func @makeTensorPtrResize(%ptr1: !tt.ptr<f16>, %ptr2: !tt.ptr<f16>) {
+  %0 = arith.constant 6 : i64
+  %1 = arith.constant 8 : i64
+  %2 = arith.constant 16 : i64
+  %3 = arith.constant 1 : i64
+  %4 = arith.constant 0 : i32
+  %5 = tt.make_tensor_ptr %ptr1, [%0, %2], [%2, %3], [%4, %4] {order = array<i32: 1, 0>} : !tt.ptr<tensor<6x8xf16>>
+  %6 = tt.load %5 : !tt.ptr<tensor<6x8xf16>>
+  %7 = tt.make_tensor_ptr %ptr2, [%1, %1], [%1, %3], [%4, %4] {order = array<i32: 1, 0>} : !tt.ptr<tensor<6x8xf16>>
+  tt.store %7, %6 : !tt.ptr<tensor<6x8xf16>>
+  tt.return
+}
+
+// -----
+
+// CHECK-LABEL: @makeTensorPtrResizeWithStaticOffset
+// CHECK: %[[CST8:.*]] = arith.constant 8 : i64
+// CHECK: %[[CST16:.*]] = arith.constant 16 : i64
+// CHECK: %[[CST6:.*]] = arith.constant 6 : i64
+// CHECK: %[[LOADPTR:.*]] = tt.make_tensor_ptr %{{.*}}, [%[[CST6]], %[[CST16]]], {{.*}} : <tensor<8x8xbf16>
+// CHECK: %[[LOAD:.*]] = tt.load %[[LOADPTR]] {boundaryCheck = array<i32: 0>} : !tt.ptr<tensor<8x8xbf16>
+// CHECK: %[[CST14:.*]] = arith.constant 14 : i64
+// CHECK: %[[STOREPTR:.*]] = tt.make_tensor_ptr %{{.*}}, [%[[CST14]], %[[CST8]]], {{.*}} : <tensor<8x8xbf16>
+// CHECK: tt.store %[[STOREPTR]], %[[LOAD]] {boundaryCheck = array<i32: 0>} : !tt.ptr<tensor<8x8xbf16>>
+tt.func @makeTensorPtrResizeWithStaticOffset(%ptr1: !tt.ptr<bf16>, %ptr2: !tt.ptr<bf16>) {
+  %0 = arith.constant 6 : i64
+  %1 = arith.constant 8 : i64
+  %2 = arith.constant 16 : i64
+  %3 = arith.constant 1 : i64
+  %4 = arith.constant 0 : i32
+  %5 = arith.constant 8 : i32
+  %6 = tt.make_tensor_ptr %ptr1, [%0, %2], [%2, %3], [%4, %4] {order = array<i32: 1, 0>} : !tt.ptr<tensor<6x8xbf16>>
+  %7 = tt.load %6 : !tt.ptr<tensor<6x8xbf16>>
+  %8 = tt.make_tensor_ptr %ptr2, [%2, %1], [%1, %3], [%5, %4] {order = array<i32: 1, 0>} : !tt.ptr<tensor<6x8xbf16>>
+  tt.store %8, %7 : !tt.ptr<tensor<6x8xbf16>>
+  tt.return
+}
+
+// -----
+
+// CHECK-LABEL: @makeTensorPtrResizeWithDynamicOffset
+// CHECK-SAME: (%[[LOADBASE:.*]]: !tt.ptr<f16>, %[[STOREBASE:.*]]: !tt.ptr<f16>, %[[OFFSET:.*]]: i32)
+// CHECK: %[[CST8:.*]] = arith.constant 8 : i64
+// CHECK: %[[CST16:.*]] = arith.constant 16 : i64
+// CHECK: %[[CST6:.*]] = arith.constant 6 : i64
+// CHECK: %[[LOADPTR:.*]] = tt.make_tensor_ptr %[[LOADBASE]], [%[[CST6]], %[[CST16]]], {{.*}} : <tensor<8x8xf16>
+// CHECK: %[[LOAD:.*]] = tt.load %[[LOADPTR]] {boundaryCheck = array<i32: 0>} : !tt.ptr<tensor<8x8xf16>
+// CHECK: %[[CST6_1:.*]] = arith.constant 6 : i64
+// CHECK: %[[CASTOFFSET:.*]] = arith.extsi %[[OFFSET]] : i32 to i64
+// CHECK: %[[DIM0:.*]] = arith.addi %[[CASTOFFSET]], %[[CST6_1]] : i64
+// CHECK: %[[STOREPTR:.*]] = tt.make_tensor_ptr %[[STOREBASE]], [%[[DIM0]], %[[CST8]]], {{.*}} : <tensor<8x8xf16>
+// CHECK: tt.store %[[STOREPTR]], %[[LOAD]] {boundaryCheck = array<i32: 0>} : !tt.ptr<tensor<8x8xf16>>
+tt.func @makeTensorPtrResizeWithDynamicOffset(%ptr1: !tt.ptr<f16>, %ptr2: !tt.ptr<f16>, %offset: i32) {
+  %0 = arith.constant 6 : i64
+  %1 = arith.constant 8 : i64
+  %2 = arith.constant 16 : i64
+  %3 = arith.constant 1 : i64
+  %4 = arith.constant 0 : i32
+  %5 = tt.make_tensor_ptr %ptr1, [%0, %2], [%2, %3], [%4, %4] {order = array<i32: 1, 0>} : !tt.ptr<tensor<6x8xf16>>
+  %6 = tt.load %5 : !tt.ptr<tensor<6x8xf16>>
+  %7 = tt.make_tensor_ptr %ptr2, [%2, %1], [%1, %3], [%offset, %4] {order = array<i32: 1, 0>} : !tt.ptr<tensor<6x8xf16>>
+  tt.store %7, %6 : !tt.ptr<tensor<6x8xf16>>
+  tt.return
+}
+
+// -----
+
+// CHECK-LABEL: @makeTensorPtrAdvance
+// CHECK: %[[CST16:.*]] = arith.constant 16 : i64
+// CHECK: %[[CST0:.*]] = arith.constant 0 : i32
+// CHECK: %[[CST8_i32:.*]] = arith.constant 8 : i32
+// CHECK: %[[CST6:.*]] = arith.constant 6 : i64
+// CHECK: %[[LOADPTR:.*]] = tt.make_tensor_ptr %{{.*}}, [%[[CST6]], %[[CST16]]], {{.*}} : <tensor<8x8xf32>
+// CHECK: %[[LOAD:.*]] = tt.load %[[LOADPTR]] {boundaryCheck = array<i32: 0>} : !tt.ptr<tensor<8x8xf32>
+// CHECK: %[[STOREPTR:.*]] = tt.advance %[[LOADPTR]], [%[[CST0]], %[[CST8_i32]]] : <tensor<8x8xf32>
+// CHECK: tt.store %[[STOREPTR]], %[[LOAD]] {boundaryCheck = array<i32: 0>} : !tt.ptr<tensor<8x8xf32>>
+tt.func @makeTensorPtrAdvance(%ptr1: !tt.ptr<f32>) {
+  %0 = arith.constant 6 : i64
+  %1 = arith.constant 16 : i64
+  %2 = arith.constant 1 : i64
+  %3 = arith.constant 0 : i32
+  %4 = arith.constant 8 : i32
+  %5 = tt.make_tensor_ptr %ptr1, [%0, %1], [%1, %2], [%3, %3] {order = array<i32: 1, 0>} : !tt.ptr<tensor<6x8xf32>>
+  %6 = tt.load %5 : !tt.ptr<tensor<6x8xf32>>
+  %7 = tt.advance %5, [%3, %4] : !tt.ptr<tensor<6x8xf32>>
+  tt.store %7, %6 : !tt.ptr<tensor<6x8xf32>>
+  tt.return
+}
+
+// -----
+
+// CHECK-LABEL: @makeTensorPtrAdvanceNeedsResize
+// CHECK: %[[CST16:.*]] = arith.constant 16 : i64
+// CHECK: %[[CST0:.*]] = arith.constant 0 : i32
+// CHECK: %[[CST8_i32:.*]] = arith.constant 8 : i32
+// CHECK: %[[CST6:.*]] = arith.constant 6 : i64
+// CHECK: %[[LOADPTR:.*]] = tt.make_tensor_ptr %{{.*}}, [%[[CST6]], %[[CST16]]], {{.*}} : <tensor<8x8xf32>
+// CHECK: %[[LOAD:.*]] = tt.load %[[LOADPTR]] {boundaryCheck = array<i32: 0>} : !tt.ptr<tensor<8x8xf32>
+// CHECK: %[[STOREPTR:.*]] = tt.advance %[[LOADPTR]], [%[[CST0]], %[[CST8_i32]]] : <tensor<8x8xf32>
+// CHECK: tt.store %[[STOREPTR]], %[[LOAD]] {boundaryCheck = array<i32: 0>} : !tt.ptr<tensor<8x8xf32>>
+tt.func @makeTensorPtrAdvanceNeedsResize(%ptr1: !tt.ptr<f32>) {
+  %0 = arith.constant 6 : i64
+  %1 = arith.constant 16 : i64
+  %2 = arith.constant 16 : i64
+  %3 = arith.constant 1 : i64
+  %4 = arith.constant 0 : i32
+  %5 = arith.constant 8 : i32
+  %6 = tt.make_tensor_ptr %ptr1, [%2, %1], [%1, %3], [%4, %4] {order = array<i32: 1, 0>} : !tt.ptr<tensor<6x8xf32>>
+  %7 = tt.load %6 : !tt.ptr<tensor<6x8xf32>>
+  %8 = tt.advance %6, [%4, %5] : !tt.ptr<tensor<6x8xf32>>
+  tt.store %8, %7 : !tt.ptr<tensor<6x8xf32>>
+  tt.return
+}
+
+// -----
+
+// CHECK-LABEL: @makeTensorPtrAdvanceNeedsLoadSelect
+// CHECK: %[[CST10:.*]] = arith.constant 10 : i64
+// CHECK: %[[CST16:.*]] = arith.constant 16 : i64
+// CHECK: %[[CST8_i32:.*]] = arith.constant 8 : i32
+// CHECK: %[[LOADPTR:.*]] = tt.make_tensor_ptr %{{.*}}, [%[[CST10]], %[[CST16]]], {{.*}} : <tensor<8x8xf32>
+// CHECK: %[[LOAD:.*]] = tt.load %[[LOADPTR]] {boundaryCheck = array<i32: 0>} : !tt.ptr<tensor<8x8xf32>
+// CHECK: %[[STOREPTR:.*]] = tt.advance %[[LOADPTR]], [%[[CST8_i32]], %[[CST8_i32]]] : <tensor<8x8xf32>
+// CHECK: %[[STORELOAD:.*]] = tt.load %[[STOREPTR]] {boundaryCheck = array<i32: 0>} : !tt.ptr<tensor<8x8xf32>>
+// CHECK: %[[RANGE_0:.*]] = tt.make_range {end = 8 : i32, start = 0 : i32} : tensor<8xi32>
+// CHECK: %[[CST6:.*]] = arith.constant 6 : i32
+// CHECK: %[[SPLAT6:.*]] = tt.splat %[[CST6]] : i32 -> tensor<8xi32>
+// CHECK: %[[CMP6:.*]] = arith.cmpi slt, %[[RANGE_0]], %[[SPLAT6]] : tensor<8xi32>
+// CHECK: %[[EXPAND6:.*]] = tt.expand_dims %[[CMP6]] {axis = 1 : i32} : tensor<8xi1> -> tensor<8x1xi1>
+// CHECK: %[[BROADCAST6:.*]] = tt.broadcast %[[EXPAND6]] : tensor<8x1xi1> -> tensor<8x8xi1>
+// CHECK: %[[RANGE_1:.*]] = tt.make_range {end = 8 : i32, start = 0 : i32} : tensor<8xi32>
+// CHECK: %[[CST8:.*]] = arith.constant 8 : i32
+// CHECK: %[[SPLAT8:.*]] = tt.splat %[[CST8]] : i32 -> tensor<8xi32>
+// CHECK: %[[CMP8:.*]] = arith.cmpi slt, %[[RANGE_1]], %[[SPLAT8]] : tensor<8xi32>
+// CHECK: %[[EXPAND8:.*]] = tt.expand_dims %[[CMP8]] {axis = 0 : i32} : tensor<8xi1> -> tensor<1x8xi1>
+// CHECK: %[[BROADCAST8:.*]] = tt.broadcast %[[EXPAND8]] : tensor<1x8xi1> -> tensor<8x8xi1>
+// CHECK: %[[MASK:.*]] = arith.andi %[[BROADCAST6]], %[[BROADCAST8]] : tensor<8x8xi1>
+// CHECK: %[[SELECT:.*]] = arith.select %[[MASK]], %[[LOAD]], %[[STORELOAD]] : tensor<8x8xi1>, tensor<8x8xf32>
+// CHECK: tt.store %[[STOREPTR]], %[[SELECT]] {boundaryCheck = array<i32: 0>} : !tt.ptr<tensor<8x8xf32>>
+tt.func @makeTensorPtrAdvanceNeedsLoadSelect(%ptr1: !tt.ptr<f32>) {
+  %0 = arith.constant 10 : i64
+  %1 = arith.constant 16 : i64
+  %2 = arith.constant 1 : i64
+  %3 = arith.constant 0 : i32
+  %4 = arith.constant 8 : i32
+  %5 = tt.make_tensor_ptr %ptr1, [%0, %1], [%1, %2], [%3, %3] {order = array<i32: 1, 0>} : !tt.ptr<tensor<6x8xf32>>
+  %6 = tt.load %5 : !tt.ptr<tensor<6x8xf32>>
+  %7 = tt.advance %5, [%4, %4] : !tt.ptr<tensor<6x8xf32>>
+  tt.store %7, %6 : !tt.ptr<tensor<6x8xf32>>
+  tt.return
+}
+
+// -----
+
+// CHECK-LABEL: @makeTensorPtrDoubleAdvance
+// CHECK: %[[CST10:.*]] = arith.constant 10 : i64
+// CHECK: %[[CST16:.*]] = arith.constant 16 : i64
+// CHECK: %[[CST0_i32:.*]] = arith.constant 0 : i32
+// CHECK: %[[CST8_i32:.*]] = arith.constant 8 : i32
+// CHECK: %[[LOADPTR:.*]] = tt.make_tensor_ptr %{{.*}}, [%[[CST10]], %[[CST16]]], {{.*}} : <tensor<8x8xf32>
+// CHECK: %[[LOAD:.*]] = tt.load %[[LOADPTR]] {boundaryCheck = array<i32: 0>} : !tt.ptr<tensor<8x8xf32>
+// CHECK: %[[LOADPTR2:.*]] = tt.advance %[[LOADPTR]], [%[[CST0_i32]], %[[CST8_i32]]] : <tensor<8x8xf32>
+// CHECK: %[[LOAD2:.*]] = tt.load %[[LOADPTR2]] {boundaryCheck = array<i32: 0>} : !tt.ptr<tensor<8x8xf32>>
+// CHECK: %[[RES:.*]] = arith.addf %[[LOAD]], %[[LOAD2]] : tensor<8x8xf32>
+// CHECK: %[[STOREPTR:.*]] = tt.advance %[[LOADPTR2]], [%[[CST8_i32]], %[[CST0_i32]]] : <tensor<8x8xf32>
+// CHECK: %[[STORELOAD:.*]] = tt.load %[[STOREPTR]] {boundaryCheck = array<i32: 0>} : !tt.ptr<tensor<8x8xf32>>
+// CHECK: %[[RANGE_0:.*]] = tt.make_range {end = 8 : i32, start = 0 : i32} : tensor<8xi32>
+// CHECK: %[[CST6:.*]] = arith.constant 6 : i32
+// CHECK: %[[SPLAT6:.*]] = tt.splat %[[CST6]] : i32 -> tensor<8xi32>
+// CHECK: %[[CMP6:.*]] = arith.cmpi slt, %[[RANGE_0]], %[[SPLAT6]] : tensor<8xi32>
+// CHECK: %[[EXPAND6:.*]] = tt.expand_dims %[[CMP6]] {axis = 1 : i32} : tensor<8xi1> -> tensor<8x1xi1>
+// CHECK: %[[BROADCAST6:.*]] = tt.broadcast %[[EXPAND6]] : tensor<8x1xi1> -> tensor<8x8xi1>
+// CHECK: %[[RANGE_1:.*]] = tt.make_range {end = 8 : i32, start = 0 : i32} : tensor<8xi32>
+// CHECK: %[[CST8:.*]] = arith.constant 8 : i32
+// CHECK: %[[SPLAT8:.*]] = tt.splat %[[CST8]] : i32 -> tensor<8xi32>
+// CHECK: %[[CMP8:.*]] = arith.cmpi slt, %[[RANGE_1]], %[[SPLAT8]] : tensor<8xi32>
+// CHECK: %[[EXPAND8:.*]] = tt.expand_dims %[[CMP8]] {axis = 0 : i32} : tensor<8xi1> -> tensor<1x8xi1>
+// CHECK: %[[BROADCAST8:.*]] = tt.broadcast %[[EXPAND8]] : tensor<1x8xi1> -> tensor<8x8xi1>
+// CHECK: %[[MASK:.*]] = arith.andi %[[BROADCAST6]], %[[BROADCAST8]] : tensor<8x8xi1>
+// CHECK: %[[SELECT:.*]] = arith.select %[[MASK]], %[[RES]], %[[STORELOAD]] : tensor<8x8xi1>, tensor<8x8xf32>
+// CHECK: tt.store %[[STOREPTR]], %[[SELECT]] {boundaryCheck = array<i32: 0>} : !tt.ptr<tensor<8x8xf32>>
+tt.func @makeTensorPtrDoubleAdvance(%ptr1: !tt.ptr<f32>) {
+  %0 = arith.constant 10 : i64
+  %1 = arith.constant 16 : i64
+  %2 = arith.constant 1 : i64
+  %3 = arith.constant 0 : i32
+  %4 = arith.constant 8 : i32
+  %5 = tt.make_tensor_ptr %ptr1, [%0, %1], [%1, %2], [%3, %3] {order = array<i32: 1, 0>} : !tt.ptr<tensor<6x8xf32>>
+  %6 = tt.load %5 : !tt.ptr<tensor<6x8xf32>>
+  %7 = tt.advance %5, [%3, %4] : !tt.ptr<tensor<6x8xf32>>
+  %8 = tt.load %7 : !tt.ptr<tensor<6x8xf32>>
+  %9 = arith.addf %6, %8 : tensor<6x8xf32>
+  %10 = tt.advance %7, [%4, %3] : !tt.ptr<tensor<6x8xf32>>
+  tt.store %10, %9 : !tt.ptr<tensor<6x8xf32>>
+  tt.return
+}
+
 
 // -----
 

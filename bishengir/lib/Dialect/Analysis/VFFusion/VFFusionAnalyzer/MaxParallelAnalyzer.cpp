@@ -110,8 +110,7 @@ static bool isI1PassThrough(Operation *op) {
   // i1 binary ops: vand, vor, vxor (combine masks, produce i1)
   if (auto elemwiseOp = dyn_cast<hfusion::ElemwiseBinaryOp>(op)) {
     auto fn = elemwiseOp.getFun();
-    return fn == hfusion::BinaryFn::vand ||
-           fn == hfusion::BinaryFn::vor  ||
+    return fn == hfusion::BinaryFn::vand || fn == hfusion::BinaryFn::vor ||
            fn == hfusion::BinaryFn::vxor;
   }
   return false;
@@ -484,7 +483,7 @@ bool MaxParallelAnalyzer::areFusibleOps(const int producerIndex,
     }
   }
 
-  if (!isInsertSliceFusionAllowed(producerOp, consumerOp)) {
+  if (!option.isMixCV && !isInsertSliceFusionAllowed(producerOp, consumerOp)) {
     LDBG("Rejecting fusion: insert_slice boundary");
     return false;
   }
@@ -507,7 +506,8 @@ bool MaxParallelAnalyzer::areFusibleOps(const int producerIndex,
       if (!consumerGroup.count(user) && !producerGroup.count(user))
         return false;
 
-  if (!isInFusionWhiteList(producerOp) || !isInFusionWhiteList(consumerOp))
+  if (!isInFusionWhiteList(producerOp) ||
+      !isInFusionWhiteList(consumerOp))
     return false;
 
   auto producerLinalgOp = dyn_cast<linalg::LinalgOp>(producerOp);
@@ -1057,8 +1057,7 @@ bool MaxParallelAnalyzer::fusePredicateSelectPattern(Block &block) {
           LDBG("areFusibleOps returned false for pass-through fusion");
           continue;
         }
-        if (tryFuseGroups(producerIndex, ptIndex, producerGroupId,
-                          ptGroupId)) {
+        if (tryFuseGroups(producerIndex, ptIndex, producerGroupId, ptGroupId)) {
           hasFused = true;
           fusedPassThrough = true;
           hasPredicate[ptGroupId] =
@@ -1156,6 +1155,73 @@ bool MaxParallelAnalyzer::fuseSpecialPatterns(Block &block) {
   // Each pattern function is self-contained and iterates to fixpoint.
   // New patterns can be added here as the framework grows.
   hasFused |= fusePredicateSelectPattern(block);
+  hasFused |= fuseSingleUseArangeComparePattern(block);
+  return hasFused;
+}
+
+// Pattern: single-use arange + compare co-location.
+//
+// This handles a pipeline interaction that the MaxParallel profitability model
+// does not currently represent.  A compute-bound arange may be left outside a
+// compare group because adding it provides neither an execution-unit nor a
+// parallelism lift.  When the compare is grouped with operations after a copy,
+// VFFusion outlines the group at the consumer position and passes the full
+// arange tensor from the caller across the copy.  AutoVectorizeV2 may later
+// inline the fused function, but its copy-conflict constraints can still keep
+// the arange and compare in different vector functions.  Bufferization then
+// materializes the arange result in UB even though it could be generated in the
+// consumer VF, and will result ub overflow.
+//
+// Keep the impact narrow: require an exact ArangeOp with one ranked-tensor
+// result, a single direct CompareOp user, and a singleton producer group.  Do
+// not extend predicate/select groups because they have separate cross-sync
+// safety rules.  The merge also goes through areFusibleOps and tryFuseGroups,
+// so this pattern bypasses only the stage-1 profitability decision, not the
+// common legality, dependency, or grouping checks.
+//
+// TODO If there is a better way to handle it in the future, this code can be
+// removed.
+bool MaxParallelAnalyzer::fuseSingleUseArangeComparePattern(Block &block) {
+  bool hasFused = false;
+  for (Operation &op : block) {
+    auto arangeOp = dyn_cast<hfusion::ArangeOp>(&op);
+    if (!arangeOp || arangeOp->getNumResults() != 1)
+      continue;
+
+    Value result = arangeOp->getResult(0);
+    if (!isa<RankedTensorType>(result.getType()) || !result.hasOneUse())
+      continue;
+
+    Operation *consumerOp = *result.getUsers().begin();
+    if (!isa<hfusion::CompareOp>(consumerOp) ||
+        !opToGroupIndex.contains(arangeOp) ||
+        !opToGroupIndex.contains(consumerOp))
+      continue;
+
+    int producerGroupId =
+        static_cast<int>(opToGroupIndex[arangeOp.getOperation()]);
+    int consumerGroupId = static_cast<int>(opToGroupIndex[consumerOp]);
+    if (producerGroupId == consumerGroupId ||
+        AllFusedGroupBlocks[producerGroupId].size() != 1)
+      continue;
+
+    // Predicate/select sinking has its own cross-sync safety constraints.  Do
+    // not extend that pattern by pulling an arange into a select group.
+    if (llvm::any_of(AllFusedGroupBlocks[consumerGroupId], isPredicateSelect))
+      continue;
+
+    int producerIndex = static_cast<int>(opToIndex[arangeOp.getOperation()]);
+    int consumerIndex = static_cast<int>(opToIndex[consumerOp]);
+    if (!areFusibleOps(producerIndex, consumerIndex))
+      continue;
+
+    if (tryFuseGroups(producerIndex, consumerIndex, producerGroupId,
+                      consumerGroupId)) {
+      hasFused = true;
+      LDBG("Special pattern (single-use arange+compare): group "
+           << producerGroupId << " fused with group " << consumerGroupId);
+    }
+  }
   return hasFused;
 }
 
@@ -1252,6 +1318,89 @@ bool MaxParallelAnalyzer::fuseIOBoundGroupsWithNearestConsumer() {
                                        "IO-bound");
 }
 
+bool MaxParallelAnalyzer::fuseReduceGroupsWithProducer() {
+  bool hasFused = false;
+
+  std::vector<int> reduceGroupIds;
+  for (auto &[id, ops] : AllFusedGroupBlocks) {
+    if (ops.size() != 1)
+      continue;
+    auto linalgOp = dyn_cast<linalg::LinalgOp>(*ops.begin());
+    if (linalgOp && isLinalgReductionOp(linalgOp))
+      reduceGroupIds.push_back(id);
+  }
+
+  for (int reduceGroupId : reduceGroupIds) {
+    auto &reduceGroup = AllFusedGroupBlocks[reduceGroupId];
+    if (reduceGroup.empty())
+      continue;
+
+    Operation *reduceOp = *reduceGroup.begin();
+    if (tryFuseReduceWithProducer(reduceGroupId, reduceOp)) {
+      hasFused = true;
+      LDBG("Reduce group " << reduceGroupId << " fused with producer");
+    }
+  }
+  return hasFused;
+}
+
+bool MaxParallelAnalyzer::tryFuseReduceWithProducer(int reduceGroupId,
+                                                    Operation *reduceOp) {
+  auto linalgOp = dyn_cast<linalg::LinalgOp>(reduceOp);
+  if (!linalgOp)
+    return false;
+
+  // Find the nearest producer group from the reduce's DPS inputs.
+  // "Nearest" = the producer group with the largest max topological index
+  // (closest to the reduce in execution order).
+  int producerGroupId = -1;
+  int producerGroupMaxIndex = -1;
+  for (auto input : linalgOp.getDpsInputs()) {
+    Operation *definingOp = input.getDefiningOp();
+    if (!definingOp || isa<arith::ConstantOp>(definingOp))
+      continue;
+    if (!opToIndex.contains(definingOp) || !opToGroupIndex.contains(definingOp))
+      continue;
+
+    int foundGroupId = static_cast<int>(opToGroupIndex[definingOp]);
+    if (foundGroupId == reduceGroupId)
+      continue;
+    if (AllFusedGroupBlocks[foundGroupId].empty())
+      continue;
+
+    int foundGroupMaxIndex = static_cast<int>(
+        dsu.getMaxIndexUnion(static_cast<int>(opToIndex[definingOp])));
+    if (producerGroupId < 0 || foundGroupMaxIndex > producerGroupMaxIndex) {
+      producerGroupId = foundGroupId;
+      producerGroupMaxIndex = foundGroupMaxIndex;
+    }
+  }
+
+  if (producerGroupId < 0)
+    return false;
+
+  auto &producerGroup = AllFusedGroupBlocks[producerGroupId];
+  if (producerGroup.empty())
+    return false;
+
+  auto *producerOp = *producerGroup.begin();
+  if (!opToIndex.contains(producerOp) || !opToIndex.contains(reduceOp))
+    return false;
+
+  int producerIndex = static_cast<int>(opToIndex[producerOp]);
+  int consumerIndex = static_cast<int>(opToIndex[reduceOp]);
+  LDBG("Reduce group " << reduceGroupId << " -> producer group "
+                       << producerGroupId);
+
+  if (!areFusibleOps(producerIndex, consumerIndex)) {
+    LDBG("areFusibleOps returned false for reduce-to-producer fusion");
+    return false;
+  }
+
+  return tryFuseGroups(producerIndex, consumerIndex, producerGroupId,
+                       reduceGroupId);
+}
+
 bool MaxParallelAnalyzer::fuseShapeBoundGroupsWithNearestConsumer() {
   return fuseGroupsWithNearestConsumer(&MaxParallelAnalyzer::isSmallShapeGroup,
                                        "Small-shape");
@@ -1306,6 +1455,9 @@ LogicalResult MaxParallelAnalyzer::fuseImpl(Block &block) {
   stage = 3;
   if (fuseShapeBoundGroupsWithNearestConsumer())
     LDBG("=== Phase 3: find small shape group to be merged ===");
+  stage = 4;
+  if (fuseReduceGroupsWithProducer())
+    LDBG("=== Phase 4: fuse reduce group with producer ===");
   printValidGroupCount();
   return success();
 }

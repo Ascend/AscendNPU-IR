@@ -1,0 +1,12 @@
+set(LLVM_TARGET_DEFINITIONS HFusionTransformOps.td)
+mlir_tablegen(HFusionTransformOps.h.inc -gen-op-decls)
+mlir_tablegen(HFusionTransformOps.cpp.inc -gen-op-defs)
+add_public_tablegen_target(MLIRHFusionTransformOpsIncGen)
+add_bishengir_doc(HFusionTransformOps HFusionTransformOps Dialects/ -gen-op-doc)
+add_dependencies(mlir-headers MLIRHFusionTransformOpsIncGen)
+
+set(LLVM_TARGET_DEFINITIONS HFusionTransformEnums.td)
+mlir_tablegen(HFusionTransformOpsEnums.h.inc -gen-enum-decls)
+mlir_tablegen(HFusionTransformOpsEnums.cpp.inc -gen-enum-defs)
+add_public_tablegen_target(MLIRHFusionTransformEnumsIncGen)
+add_dependencies(mlir-headers MLIRHFusionTransformEnumsIncGen)

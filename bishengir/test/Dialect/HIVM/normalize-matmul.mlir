@@ -3980,3 +3980,81 @@ func.func @test_reuse_l0c_with_result_as_ins_and_outs(
   return %second : tensor<16x16xf32>
 }
 }
+
+// -----
+// PostPerChannelAddWithSplitK: bias is defined after the scf.for loop and
+// should be hoisted before the loop so the per-channel bias can be inlined.
+// CHECK-LABEL: func.func @test_post_per_channel_bias_after_for
+// CHECK: %[[BIAS:.*]] = bufferization.to_tensor %alloc{{.*}} : memref<128xf32>
+// CHECK: scf.for
+// CHECK: hivm.hir.mmadL1 {{.*}} ins({{.*}}, %[[BIAS]] : {{.*}}tensor<128xf32>)
+// CHECK-NOT: hivm.hir.vbrc
+// CHECK-NOT: hivm.hir.vadd
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+  func.func @test_post_per_channel_bias_after_for(%arg0: memref<?xf32>) -> tensor<16x128xf32> {
+    %c0_i32 = arith.constant 0 : i32
+    %c1_i32 = arith.constant 1 : i32
+    %c2_i32 = arith.constant 2 : i32
+    %c0 = arith.constant 0 : index
+    %c16 = arith.constant 16 : index
+    %c512 = arith.constant 512 : index
+    %c128 = arith.constant 128 : index
+    %false = arith.constant false
+    %a_alloc = memref.alloc() : memref<16x512xf16>
+    %b_alloc = memref.alloc() : memref<512x128xf16>
+    %a = bufferization.to_tensor %a_alloc restrict writable : memref<16x512xf16>
+    %b = bufferization.to_tensor %b_alloc restrict writable : memref<512x128xf16>
+    %init = tensor.empty() : tensor<16x128xf32>
+    %loop = scf.for %i = %c0_i32 to %c2_i32 step %c1_i32 iter_args(%acc = %init) -> (tensor<16x128xf32>) : i32 {
+      %mmad = hivm.hir.mmadL1 ins(%a, %b, %false, %c16, %c512, %c128 : tensor<16x512xf16>, tensor<512x128xf16>, i1, index, index, index) outs(%acc : tensor<16x128xf32>) -> tensor<16x128xf32>
+      scf.yield %mmad : tensor<16x128xf32>
+    }
+    %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [%c0], sizes: [128], strides: [1] : memref<?xf32> to memref<128xf32, strided<[1], offset: ?>>
+    %bias_alloc = memref.alloc() : memref<128xf32>
+    hivm.hir.load ins(%reinterpret_cast : memref<128xf32, strided<[1], offset: ?>>) outs(%bias_alloc : memref<128xf32>)
+    %bias = bufferization.to_tensor %bias_alloc restrict writable : memref<128xf32>
+    %expanded = tensor.expand_shape %bias [[0, 1]] output_shape [1, 128] : tensor<128xf32> into tensor<1x128xf32>
+    %brc = hivm.hir.vbrc ins(%expanded : tensor<1x128xf32>) outs(%init : tensor<16x128xf32>) broadcast_dims = [0] -> tensor<16x128xf32>
+    %add = hivm.hir.vadd ins(%loop, %brc : tensor<16x128xf32>, tensor<16x128xf32>) outs(%init : tensor<16x128xf32>) -> tensor<16x128xf32>
+    return %add : tensor<16x128xf32>
+  }
+}
+
+// -----
+// The bias chain is also after the scf.for, but the vbrc broadcasts along M
+// (broadcast_dims = [1]), not per-channel, so the add-bias can never be
+// inlined into the matmul. The hoist must be rolled back: the bias chain
+// stays after the loop and the vbrc/vadd remain.
+// CHECK-LABEL: func.func @test_bias_after_for_no_inline
+// CHECK: scf.for
+// CHECK: hivm.hir.vbrc
+// CHECK: hivm.hir.vadd
+// CHECK: return
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+  func.func @test_bias_after_for_no_inline(%arg0: memref<?xf32>) -> tensor<16x128xf32> {
+    %c0_i32 = arith.constant 0 : i32
+    %c1_i32 = arith.constant 1 : i32
+    %c2_i32 = arith.constant 2 : i32
+    %c0 = arith.constant 0 : index
+    %c16 = arith.constant 16 : index
+    %c512 = arith.constant 512 : index
+    %c128 = arith.constant 128 : index
+    %false = arith.constant false
+    %a_alloc = memref.alloc() : memref<16x512xf16>
+    %b_alloc = memref.alloc() : memref<512x128xf16>
+    %a = bufferization.to_tensor %a_alloc restrict writable : memref<16x512xf16>
+    %b = bufferization.to_tensor %b_alloc restrict writable : memref<512x128xf16>
+    %init = tensor.empty() : tensor<16x128xf32>
+    %loop = scf.for %i = %c0_i32 to %c2_i32 step %c1_i32 iter_args(%acc = %init) -> (tensor<16x128xf32>) : i32 {
+      %mmad = hivm.hir.mmadL1 ins(%a, %b, %false, %c16, %c512, %c128 : tensor<16x512xf16>, tensor<512x128xf16>, i1, index, index, index) outs(%acc : tensor<16x128xf32>) -> tensor<16x128xf32>
+      scf.yield %mmad : tensor<16x128xf32>
+    }
+    %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [%c0], sizes: [16, 1], strides: [1, 1] : memref<?xf32> to memref<16x1xf32, strided<[1, 1], offset: ?>>
+    %bias_alloc = memref.alloc() : memref<16x1xf32>
+    hivm.hir.load ins(%reinterpret_cast : memref<16x1xf32, strided<[1, 1], offset: ?>>) outs(%bias_alloc : memref<16x1xf32>)
+    %bias = bufferization.to_tensor %bias_alloc restrict writable : memref<16x1xf32>
+    %brc = hivm.hir.vbrc ins(%bias : tensor<16x1xf32>) outs(%init : tensor<16x128xf32>) broadcast_dims = [1] -> tensor<16x128xf32>
+    %add = hivm.hir.vadd ins(%loop, %brc : tensor<16x128xf32>, tensor<16x128xf32>) outs(%init : tensor<16x128xf32>) -> tensor<16x128xf32>
+    return %add : tensor<16x128xf32>
+  }
+}

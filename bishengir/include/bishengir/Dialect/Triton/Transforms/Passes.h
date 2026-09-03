@@ -26,15 +26,11 @@ std::unique_ptr<mlir::Pass> createConvertNonPowerTwoTensorsPass();
 
 /// Creates wrappers and attributes for SIMT functions
 std::unique_ptr<mlir::Pass>
-createAdaptGPUKernelPass(TritonRemapOptions options = {});
+createAdaptGPUKernelPass(AdaptGPUKernelOptions options = {});
 /// Create a pass to convert llvm.frem to sub(mul(trunc(fdiv)))
 /// IR.
 std::unique_ptr<mlir::Pass>
 createDecomposeFRemPass();
-/// Create a pass to convert triton-generated LLVM IR into NPU-compatible LLVM
-/// IR.
-std::unique_ptr<mlir::Pass> createTritonRemapPass(const TritonRemapOptions &options = {});
-
 /// Create a pass to add SIMT opt attribution.
 std::unique_ptr<mlir::Pass> createSetBishengirSimtOptAttrPass(
     const SetBishengirSimtOptAttrOptions &options = {});
