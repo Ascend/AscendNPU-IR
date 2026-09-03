@@ -421,9 +421,11 @@ public:
           op, " all dynamic dimensions should be constantized");
     }
 
-    auto bufferSize = getAnnotateBufferSizeInBits(op.getResult());
-    if (bufferSize.has_value()) {
-      if (totalBits > bufferSize)
+    int64_t totalBytes = static_cast<int64_t>(
+        llvm::divideCeil(totalBits.value(), utils::kBitsToByte));
+    auto bufferSizeInBytes = getAnnotatedBufferSizeInBytes(op.getResult());
+    if (bufferSizeInBytes.has_value()) {
+      if (totalBytes > bufferSizeInBytes.value())
         return rewriter.notifyMatchFailure(
             op, " constantized buffer size should not exceed set buffer size");
 
@@ -431,8 +433,6 @@ public:
       eraseAnnotateBufferSizeUsers(op.getResult(), rewriter);
     }
 
-    int64_t totalBytes = static_cast<int64_t>(
-        llvm::divideCeil(totalBits.value(), utils::kBitsToByte));
     auto newType =
         MemRefType::get({totalBytes}, rewriter.getI8Type(), mlir::AffineMap {},
                         currentMemRefType.getMemorySpace());
@@ -447,7 +447,7 @@ public:
   }
 
 private:
-  std::optional<int64_t> getAnnotateBufferSizeInBits(Value value) const {
+  std::optional<int64_t> getAnnotatedBufferSizeInBytes(Value value) const {
     std::optional<Operation *> markMaybe =
         utils::getAnnotateOpWithAttr(value, kBufferSizeInByteAttr);
     if (!markMaybe.has_value()) {
