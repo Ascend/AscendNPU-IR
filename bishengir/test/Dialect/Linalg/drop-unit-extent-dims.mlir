@@ -1,3 +1,4 @@
+// REQUIRES: asserts
 // RUN: mlir-opt %s -linalg-fold-unit-extent-dims -split-input-file | FileCheck %s
 // RUN: mlir-opt %s -linalg-fold-unit-extent-dims="use-rank-reducing-slices" -cse -split-input-file | FileCheck %s --check-prefix=CHECK-SLICES
 
