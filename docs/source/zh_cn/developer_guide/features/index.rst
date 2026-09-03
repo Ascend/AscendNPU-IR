@@ -18,3 +18,4 @@
    multi_buffer
    analyze_vector_layout
    stride_align
+   layout_optimizations
