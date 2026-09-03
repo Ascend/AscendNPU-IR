@@ -1,3 +1,4 @@
+// UNSUPPORTED: bishengir_published
 // RUN: not hivmc-a5 %s --enable-lir-compile=false --target=Ascend910B2 2>&1 | FileCheck %s
 // GlobalOps with no user trigger the error in hivmc.
 module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
