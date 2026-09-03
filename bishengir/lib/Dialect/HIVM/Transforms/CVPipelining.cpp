@@ -2056,6 +2056,20 @@ LogicalResult CVPipelineImpl::createNewLoopsForPreloadWithScopes() {
     builder.setInsertionPointToEnd(bodyBlock);
     IRMapping scopeMap(globalIRMap);
 
+    // Critical fix: Remove all block argument mappings from scopeMap before cloning.
+    // If scopeMap contains mappings for block arguments of ForOps we're about to clone,
+    // Region::cloneInto will skip adding those arguments to the cloned block
+    // (see mlir/lib/IR/Region.cpp: "if (!mapper.contains(arg))"),
+    // resulting in ForOps with missing block arguments.
+    // We need to clear these mappings so cloned ForOps get fresh block arguments.
+    SmallVector<BlockArgument> argsToErase;
+    for (auto it : scopeMap.getValueMap()) {
+      if (auto blockArg = dyn_cast<BlockArgument>(it.first))
+        argsToErase.push_back(blockArg);
+    }
+    for (auto arg : argsToErase)
+      scopeMap.erase(arg);
+
     // This work item reads a private copy of a shared loop counter; redirect
     // every read of the shared iter_arg inside the cloned body.
     for (const auto &pc : item->privateCounters)
