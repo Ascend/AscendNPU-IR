@@ -1018,6 +1018,8 @@ struct HIVMToTTGatherOp : public OpRewritePattern<hivm::VGatherOp> {
 
   LogicalResult matchAndRewrite(hivm::VGatherOp op,
                                 PatternRewriter &rewriter) const final {
+    if (op.getTempBuffer())
+      return op.emitOpError("temp_buffer is not supported in tensor lowering");
     if (!op.hasPureTensorSemantics())
       return op.emitOpError("only tensor form is supported");
     if (op.getNumResults() != 1)
@@ -1026,6 +1028,22 @@ struct HIVMToTTGatherOp : public OpRewritePattern<hivm::VGatherOp> {
     auto srcTy = dyn_cast<RankedTensorType>(op.getSrc().getType());
     if (!srcTy)
       return op.emitOpError("requires ranked tensor source");
+    auto indicesTy = dyn_cast<RankedTensorType>(op.getIndices().getType());
+    if (!indicesTy)
+      return op.emitOpError("requires ranked tensor indices");
+    auto resultTy = dyn_cast<RankedTensorType>(op->getResult(0).getType());
+    if (!resultTy)
+      return op.emitOpError("requires ranked tensor result");
+    if (srcTy.getRank() != indicesTy.getRank())
+      return op.emitOpError("requires source and indices ranks to match");
+    if (indicesTy.getRank() != resultTy.getRank())
+      return op.emitOpError("requires indices and result ranks to match");
+    if (indicesTy.getShape() != resultTy.getShape())
+      return op.emitOpError("requires indices and result shapes to match");
+    if (indicesTy.getEncoding() != resultTy.getEncoding())
+      return op.emitOpError("requires indices and result encodings to match");
+    if (srcTy.getElementType() != resultTy.getElementType())
+      return op.emitOpError("requires source and result element types to match");
 
     int64_t axis64 = srcTy.getRank() - 1;
     auto axisAttr = op.getGatherAxis();
@@ -1033,6 +1051,17 @@ struct HIVMToTTGatherOp : public OpRewritePattern<hivm::VGatherOp> {
       axis64 = static_cast<int64_t>(*axisAttr);
     if (axis64 < 0 || axis64 >= srcTy.getRank())
       return op.emitOpError("has invalid gather axis");
+
+    ArrayRef<int64_t> srcShape = srcTy.getShape();
+    ArrayRef<int64_t> indicesShape = indicesTy.getShape();
+    for (int64_t dim = 0; dim < indicesTy.getRank(); ++dim) {
+      if (dim == axis64)
+        continue;
+      if (indicesShape[dim] != srcShape[dim]) {
+        return op.emitOpError(
+            "requires non-gather indices dimensions to match source");
+      }
+    }
 
     Value gathered =
         rewriter.create<triton::GatherOp>(op.getLoc(), op.getSrc(),
