@@ -1,3 +1,4 @@
+// UNSUPPORTED: bishengir_published
 // RUN: hivmc-a5 %s --enable-lir-compile=false --target=Ascend910B2 2>&1 | FileCheck %s
 // GlobalOps stay in the same module with the parent function of its user.
 module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {

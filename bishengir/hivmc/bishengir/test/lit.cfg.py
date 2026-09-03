@@ -116,3 +116,6 @@ if (
 
 if config.bspub_davinci_bishengir:
     config.available_features.add("bspub_davinci_bishengir")
+
+if config.bishengir_published:
+    config.available_features.add("bishengir_published")
