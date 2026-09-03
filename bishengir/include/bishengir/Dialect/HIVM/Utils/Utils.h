@@ -148,8 +148,7 @@ const std::map<std::string, int> membarType = {
     {"SS_ALL", 12}, {"ST_LD", 13},  {"LD_ST", 14},  {"ST_ST", 15},
 };
 
-bool isRegionResultRequiredInL0C(RegionBranchOpInterface branch,
-                                 OpResult result);
+bool isOpResultRequiredInL0C(Operation *op, OpResult result);
 
 /// Set the input type's memory scope to the input HIVM Address Space.
 void setBaseMemRefTypeScope(Value val, AddressSpaceAttr targetMemScope);
