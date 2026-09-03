@@ -33,7 +33,8 @@ include "bishengir/Dialect/HIVM/IR/HIVMTraits.td"
 class HIVM_VectorOp<string mnemonic, list<Trait> traits = [],
   list<Trait> vecSpecialTraits=[OpPipeTrait<"PIPE::PIPE_V">, VectorCoreTypeTrait]> :
   HIVM_StructuredOp<mnemonic, !listconcat(!listconcat(
-    [AlwaysSpeculatable, SinglePipeOpTrait
+    [AlwaysSpeculatable, SinglePipeOpTrait,
+     DeclareOpInterfaceMethods<VectorizableOpInterface>
     ], vecSpecialTraits), traits)> {
   code vectorOpBaseDecls = [{
     ::mlir::LogicalResult fold(FoldAdaptor adaptor,
@@ -170,7 +171,6 @@ def VAbsOp : HIVM_ElementwiseUnaryOp<"vabs",
      DeclareOpInterfaceMethods<ImplByScalarOpInterface>,
      DeclareOpInterfaceMethods<ExtraBufferOpInterface,
        ["getExtraBufferSize"]>,
-     DeclareOpInterfaceMethods<VectorizableOpInterface>,
      BroadcastableOTF
     ]> {
   let summary = "Elementwise Vector Absolute Value Op";
@@ -652,7 +652,6 @@ def VAddOp : HIVM_ElementwiseBinaryOp<"vadd",
      DeclareOpInterfaceMethods<ImplByScalarOpInterface>,
      DeclareOpInterfaceMethods<BiShengIRAggregatedOpInterface,
        ["decomposeOperation","getDecomposePhase"]>,
-     DeclareOpInterfaceMethods<VectorizableOpInterface>,
      BroadcastableOTF
     ]> {
   let summary = "Elementwise Binary Vector Addition Op";
@@ -688,7 +687,6 @@ def VMulOp : HIVM_ElementwiseBinaryOp<"vmul",
      DeclareOpInterfaceMethods<ImplByScalarOpInterface>,
      DeclareOpInterfaceMethods<BiShengIRAggregatedOpInterface,
        ["decomposeOperation","getDecomposePhase"]>,
-     DeclareOpInterfaceMethods<VectorizableOpInterface>,
      BroadcastableOTF
     ]> {
   let summary = "Elementwise Binary Vector Multiplication Op";
@@ -760,7 +758,6 @@ def VSubOp
                    DeclareOpInterfaceMethods<BiShengIRAggregatedOpInterface,
                      ["decomposeOperation","getDecomposePhase"]>,
                    DeclareOpInterfaceMethods<ImplByScalarOpInterface>,
-                   DeclareOpInterfaceMethods<VectorizableOpInterface>,
                    BroadcastableOTF]> {
   let summary = "Elementwise Binary Vector Subtraction Op";
   let description = baseClassDescription # [{
@@ -790,7 +787,6 @@ def VDivOp : HIVM_ElementwiseBinaryOp<
                           DeclareOpInterfaceMethods<BiShengIRAggregatedOpInterface,
                             ["decomposeOperation","getDecomposePhase"]>,
                           DeclareOpInterfaceMethods<ImplByScalarOpInterface>,
-                          DeclareOpInterfaceMethods<VectorizableOpInterface>,
                           BroadcastableOTF]> {
   let summary = "Elementwise Binary Vector Division Op";
   let description = baseClassDescription # [{
@@ -831,7 +827,6 @@ def VMaxOp : HIVM_ElementwiseBinaryOp<"vmax",
      DeclareOpInterfaceMethods<BiShengIRAggregatedOpInterface,
        ["decomposeOperation","getDecomposePhase"]>,
      DeclareOpInterfaceMethods<ImplByScalarOpInterface>,
-     DeclareOpInterfaceMethods<VectorizableOpInterface>,
      BroadcastableOTF
     ]> {
   let summary = "Elementwise Binary Vector Maximum Op";
@@ -872,7 +867,6 @@ def VMinOp : HIVM_ElementwiseBinaryOp<"vmin",
      DeclareOpInterfaceMethods<BiShengIRAggregatedOpInterface,
        ["decomposeOperation","getDecomposePhase"]>,
      DeclareOpInterfaceMethods<ImplByScalarOpInterface>,
-     DeclareOpInterfaceMethods<VectorizableOpInterface>,
      BroadcastableOTF
     ]> {
   let summary = "Elementwise Binary Vector Minimum Op";
@@ -1325,7 +1319,7 @@ def VReduceOp : HIVM_VectorOp<"vreduce",
      DeclareOpInterfaceMethods<FlattenInterface,
        ["getLimitedAxes", "adjustTargetDimensions"]>,
      DeclareOpInterfaceMethods<ImplByScalarOpInterface>,
-     DeclareOpInterfaceMethods<VectorizableOpInterface>,
+     DeclareOpInterfaceMethods<VectorizableOpInterface, ["vectorize"]>,
      DeclareOpInterfaceMethods<BiShengIRAggregatedOpInterface,
        ["decomposeOperation", "getDecomposePhase"]>
     ]> {

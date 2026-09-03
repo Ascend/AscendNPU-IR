@@ -59,6 +59,15 @@ Value getIdentityElement(OpBuilder &builder, Location loc, Type elemType,
 
 Value createVectorArithOp(OpBuilder &builder, Location loc,
                           VectorArithKind kind, Value lhs, Value rhs);
+
+/// Rejects inline broadcast/transpose and rank/size mismatches before emitting
+/// vector IR. `vectorSizes` must match the rank of the first DPS input.
+LogicalResult checkVectorizePreconditions(Operation *op,
+                                          ArrayRef<int64_t> vectorSizes);
+
+/// VL packing policy used by `hivm-vectorize-ops` and `transform.hivm.vectorize`.
+/// Capacity is `hivm::util::VL` bytes / element width (64 lanes for f32).
+FailureOr<SmallVector<int64_t>> computeVectorSizes(HIVMStructuredOp op);
 }
 
 #endif

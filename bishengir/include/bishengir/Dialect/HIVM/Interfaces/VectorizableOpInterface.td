@@ -37,7 +37,10 @@ def VectorizableOpInterface : OpInterface<"VectorizableOpInterface"> {
       /*retType=*/"::llvm::LogicalResult",
       /*methodName=*/"vectorize",
       /*args=*/(ins "::mlir::RewriterBase &":$rewriter, "::llvm::ArrayRef<int64_t>":$vectorSizes),
-      /*methodBody=*/""
+      /*methodBody=*/"",
+      /*defaultImplementation=*/[{
+        return ::mlir::hivm::vectorizeElementwise($_op, rewriter, vectorSizes);
+      }]
     >
   ];
 }
