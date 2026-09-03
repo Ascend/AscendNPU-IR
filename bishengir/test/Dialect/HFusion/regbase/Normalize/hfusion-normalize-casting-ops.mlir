@@ -354,6 +354,19 @@ func.func @test_NormalizetruncfBf16_triton_scalar_f32_to_bf16(%arg0: f32) -> bf1
 
 // -----
 
+// CHECK-LABEL: @test_NormalizetruncfBf16_fold_constant_f32_to_bf16(
+// CHECK: %[[CST:.*]] = arith.constant -9.982440e+08 : bf16
+// CHECK-NOT: tensor.from_elements
+// CHECK-NOT: arith.truncf
+// CHECK: return %[[CST]] : bf16
+func.func @test_NormalizetruncfBf16_fold_constant_f32_to_bf16() -> bf16 {
+  %cst = arith.constant -1.000000e+09 : f32
+  %0 = arith.truncf %cst : f32 to bf16
+  return %0 : bf16
+}
+
+// -----
+
 // CHECK-LABEL: @test_NormalizetruncfExtf_test_arith_extf_scalar_bf16_to_f32
 // CHECK: %[[ZERO:.*]] = tensor.from_elements %arg0 : tensor<1xbf16>
 // CHECK: %[[ONE:.*]] = tensor.empty() : tensor<1xf32>
