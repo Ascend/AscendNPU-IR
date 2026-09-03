@@ -9,10 +9,9 @@
 // CHECK-NOT: tensor.cast {{.*}} tensor<1x16x32xf32> to tensor<1x16x?xf32>
 // CHECK: scf.for {{.*}} iter_args({{.*}}) -> (tensor<1x16x32xf32>)
 // CHECK: tensor.expand_shape {{.*}} output_shape [1, 2, 8, 32] : tensor<1x16x32xf32> into tensor<1x2x8x32xf32>
-// CHECK-LABEL: func.func @refine_other_static_shape
-// CHECK-NOT: tensor.cast {{.*}} tensor<3x7xi16> to tensor<?x?xi16>
-// CHECK: scf.for {{.*}} iter_args({{.*}}) -> (tensor<3x7xi16>)
-// CHECK: tensor.insert_slice {{.*}} into {{.*}} : tensor<1x7xi16> into tensor<3x7xi16>
+// CHECK-LABEL: func.func @do_not_refine_other_static_shape
+// CHECK: tensor.cast {{.*}} : tensor<3x7xi16> to tensor<?x?xi16>
+// CHECK: scf.for {{.*}} iter_args({{.*}}) -> (tensor<?x?xi16>)
 // CHECK-LABEL: func.func @do_not_refine_multiple_iter_args
 // CHECK: tensor.cast {{.*}} : tensor<3x7xi16> to tensor<?x?xi16>
 // CHECK: scf.for {{.*}} iter_args({{.*}}, {{.*}}) -> (tensor<?x?xi16>, tensor<3x7xi16>)
@@ -50,7 +49,7 @@ module {
     return %static : tensor<1x2x8x32xf32>
   }
 
-  func.func @refine_other_static_shape(
+  func.func @do_not_refine_other_static_shape(
       %init: tensor<3x7xi16>, %update: tensor<1x7xi16>)
       -> tensor<3x7xi16>
       attributes {
