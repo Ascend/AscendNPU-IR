@@ -197,6 +197,54 @@ func.func @preserve_exit_iv_zero_trip() {
 }
 
 // -----
+// Generated mixed-width form: the signed minimum caps the upper edge, while
+// saturation protects the lower edge before narrowing.
+//
+// CHECK-LABEL: func.func @uplift_sign_extended_iv
+//       CHECK: %[[MIN:.*]] = arith.constant -2147483648 : i64
+//       CHECK: %[[SATURATED:.*]] = arith.maxsi %{{.*}}, %[[MIN]] : i64
+//       CHECK: %[[END:.*]] = arith.trunci %[[SATURATED]] : i64 to i32
+//   CHECK-NOT: scf.while
+//       CHECK: scf.for %{{.*}} = %{{.*}} to %[[END]] step %{{.*}} : i32
+func.func @uplift_sign_extended_iv(%begin: i32, %wide: i64, %cap: i32,
+                                   %step: i32) -> i32 {
+  %wide_cap = arith.extsi %cap : i32 to i64
+  %end = arith.minsi %wide, %wide_cap : i64
+  %0 = scf.while (%iv = %begin) : (i32) -> i32 {
+    %wide_iv = arith.extsi %iv : i32 to i64
+    %condition = arith.cmpi slt, %wide_iv, %end : i64
+    scf.condition(%condition) %iv : i32
+  } do {
+  ^bb0(%iv: i32):
+    "test.body"(%iv) : (i32) -> ()
+    %next = arith.addi %iv, %step : i32
+    scf.yield %next : i32
+  }
+  return %0 : i32
+}
+
+// -----
+// Without a narrow cap, truncating the i64 bound could change the trip count.
+//
+// CHECK-LABEL: func.func @keep_unbounded_sign_extended_iv
+//       CHECK: scf.while
+//   CHECK-NOT: scf.for
+func.func @keep_unbounded_sign_extended_iv(%begin: i32, %end: i64,
+                                           %step: i32) -> i32 {
+  %0 = scf.while (%iv = %begin) : (i32) -> i32 {
+    %wide_iv = arith.extsi %iv : i32 to i64
+    %condition = arith.cmpi slt, %wide_iv, %end : i64
+    scf.condition(%condition) %iv : i32
+  } do {
+  ^bb0(%iv: i32):
+    "test.body"(%iv) : (i32) -> ()
+    %next = arith.addi %iv, %step : i32
+    scf.yield %next : i32
+  }
+  return %0 : i32
+}
+
+// -----
 // Data-driven exit: the `before` block reads from memory (the exit
 // condition isn't derived from a monotonic IV). The pattern must NOT
 // fire so the loop stays as scf.while - the downstream MultiBufferLoopAdapter
