@@ -79,6 +79,7 @@ canonicalizationPipeline(OpPassManager &pm,
 
 static void preProcess(OpPassManager &pm,
                        const HFusionPipelineOptions &options) {
+  pm.nest<func::FuncOp>().addPass(createUpliftWhileToForPass());
   if (!options.enableSymbolAnalysis) {
     pm.nest<func::FuncOp>().addPass(symbol::createEraseSymbolPass());
   }
