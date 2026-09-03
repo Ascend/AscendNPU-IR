@@ -669,6 +669,30 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 
 // -----
 
+// Same fold with a [16,16]-packed fractal source: the inline channel
+// re-tiling must not be requested - the packed view has to be copied
+// verbatim (channel_split on a packed source delivers the channels
+// interleaved). Target-independent: 9579 keeps the re-tiling for the
+// narrow ([16,8]) source case above.
+// CHECK-LABEL: func.func @fold_convert_fixpipe_packed_fractal_no_channel_split
+// CHECK-SAME: %[[DST:.*]]: memref<16x16xf32
+// CHECK-NOT: hivm.hir.convert_layout
+// CHECK-NOT: channel_split = true
+// CHECK: hivm.hir.fixpipe ins(%{{.*}} : tensor<2x1x16x16xf32>) outs(%[[DST]] : memref<16x16xf32
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @fold_convert_fixpipe_packed_fractal_no_channel_split(%dst: memref<16x16xf32, strided<[16, 1], offset: ?>>) {
+    %fractal = arith.constant dense<0.0> : tensor<2x1x16x16xf32>
+    %nd = hivm.hir.convert_layout %fractal output_shape [16, 16]
+        {dstLayout = #hivm.data_layout<ND>,
+         srcLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>}
+        : (tensor<2x1x16x16xf32>) -> tensor<16x16xf32>
+    hivm.hir.fixpipe ins(%nd : tensor<16x16xf32>) outs(%dst : memref<16x16xf32, strided<[16, 1], offset: ?>>)
+    return
+  }
+}
+
+// -----
+
 // Reduced from chunk_kda_bwd_kernel_wy_dqkg_fused: fractal mmad ->
 // convert_layout{Fractal->ND f32} -> fixpipe F322F16 into fractal f16 that
 // feeds the next mmad. Channel-split must follow the fixpipe dest type (f16),

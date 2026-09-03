@@ -95,6 +95,18 @@ bool shouldEnableChannelMerge(Type dstType) {
   return true;
 }
 
+bool needChannelSplit(ConvertLayoutOp op, FixpipeOp fixpipeOp) {
+  if (!shouldEnableChannelSplit(fixpipeOp.getDstOperandType()))
+    return false;
+  // The source channel width must equal the hardware channel element count
+  // (e.g. 8 for f32 whose channel row is 32 bytes); a wider, packed source
+  // view is already in the destination arrangement and must not be re-tiled.
+  auto srcFractalSizes = op.getSrcLayout().getFractalSizesArray();
+  return srcFractalSizes &&
+         srcFractalSizes->back() ==
+             mlir::utils::getNumPerBlock(op.getSource().getType());
+}
+
 namespace {
 /// Find the root memerf alloc for the input block argument.
 FailureOr<memref::AllocOp> getMemRefForBlockArgument(BlockArgument bbArg) {
