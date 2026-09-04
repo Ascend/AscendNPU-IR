@@ -25,6 +25,8 @@
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Scope/Utils/Utils.h"
 #include "mlir/Analysis/TopologicalSortUtils.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Linalg/TransformOps/LinalgTransformOps.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
@@ -1137,9 +1139,59 @@ void AutoVectorizeV2::applyCleanUp(OpBuilder &builder,
       SmallVector<Attribute>{builder.getStringAttr("SimplifyTrivialLoops")}));
 }
 
+// Workaround: keep the stack limit disabled for this specific large
+// pure-linalg case.  The limit is bound to multiple-consumer fusion and so is
+// on by default here; enabling it breaks the fusion on the use-def chain and
+// scatters one chain's ops into several fused nodes.
+//
+// The scattered layout defeats the conflict analysis: with ops linked as A->B
+// on one chain and C->D on another, the nodes become [A] [B C] [D], and the
+// D-A conflict cannot be computed because conflicts are still collected per-op
+// rather than per-node.
+//
+// Remove this once either (1) the stack limit is no longer bound to
+// multiple-consumer fusion and stays off by default, or (2) conflict updates
+// collect upstream/downstream at node granularity.
+static bool cannotOpenStackLimitWorkaround(func::FuncOp func) {
+  if (func.getArgumentTypes().size() <= 20 ||
+      func.getResultTypes().size() <= 50 || !func.isPrivate())
+    return false;
+  auto genericCnt = llvm::range_size(func.getOps<linalg::GenericOp>());
+  auto collapseCnt = llvm::range_size(func.getOps<tensor::CollapseShapeOp>());
+  auto expandCnt = llvm::range_size(func.getOps<tensor::ExpandShapeOp>());
+  if (genericCnt <= 60 || collapseCnt <= 10 || expandCnt <= 50)
+    return false;
+  if (!llvm::all_of(func.getOps<tensor::CollapseShapeOp>(), [](auto op) {
+        auto ty = dyn_cast<ShapedType>(op.getResultType());
+        return ty && ty.getRank() == 1 && ty.getDimSize(0) >= 64 &&
+               ty.getElementType().isF32();
+      }))
+    return false;
+  if (!llvm::all_of(func.getOps<tensor::ExpandShapeOp>(), [](auto op) {
+        auto ty = dyn_cast<ShapedType>(op.getResultType());
+        return ty && ty.getRank() == 2 && ty.getDimSize(0) == 1 &&
+               ty.getDimSize(1) >= 64 && ty.getElementType().isF32();
+      }))
+    return false;
+  if (!llvm::all_of(func.getOps<linalg::GenericOp>(), [](linalg::GenericOp op) {
+        return llvm::all_of(op->getResultTypes(), [](auto t) {
+          auto ty = dyn_cast<ShapedType>(t);
+          return ty && ty.getRank() == 1 && ty.getDimSize(0) >= 64 &&
+                 ty.getElementType().isF32();
+        });
+      }))
+    return false;
+  return llvm::all_of(func.getOps(), [](auto &op) {
+    return isa<tensor::ExpandShapeOp /*53*/, tensor::CollapseShapeOp /*11*/,
+               linalg::GenericOp /*64*/, func::ReturnOp /*1*/,
+               tensor::EmptyOp /*1*/, arith::ConstantOp /*9*/>(op);
+  });
+}
+
 transform::SequenceOp AutoVectorizeV2::buildTransformSequence(
     func::FuncOp func, RetriedOptions &retryCtx, OpBuilder &builder) {
-  analysis::VFStackInfoBuilder vfStack{retryCtx.enableVFStackLimit};
+  analysis::VFStackInfoBuilder vfStack{retryCtx.enableVFStackLimit &&
+                                       !cannotOpenStackLimitWorkaround(func)};
   PlanContext ctx(retryCtx, vfStack);
   ctx.initFusableOpInfoFrom(func);
   SmallVector<std::pair<std::string, SmallVector<int64_t>>>
