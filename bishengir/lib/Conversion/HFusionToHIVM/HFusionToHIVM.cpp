@@ -1936,6 +1936,8 @@ public:
     });
 
     moduleOp->walk([&](hivm::MmadL1Op op) {
+      if (op.getNumResults() == 0)
+        return;
       std::optional<Operation *> tileCubeMarkOp = utils::getAnnotateOpWithAttr(
           op.getResult(0), hivm::TileMixCubeNumAttr::name);
       if (tileCubeMarkOp.has_value()) {
