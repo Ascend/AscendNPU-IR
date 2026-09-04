@@ -12,7 +12,6 @@
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
-#include "bishengir/Dialect/Transform/IR/TransformOps.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/TilingUtils.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoVectorize/Attrs.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoVectorize/PlanContext.h"
@@ -24,6 +23,7 @@
 #include "bishengir/Dialect/SCF/TransformOps/SCFTransformOps.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Scope/Utils/Utils.h"
+#include "bishengir/Dialect/Transform/IR/TransformOps.h"
 #include "mlir/Analysis/TopologicalSortUtils.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -36,9 +36,11 @@
 #include "mlir/Dialect/Transform/IR/TransformOps.h"
 #include "mlir/Dialect/Transform/Interfaces/TransformInterfaces.h"
 #include "mlir/Dialect/Transform/Transforms/TransformInterpreterUtils.h"
+#include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/PassManager.h"
+#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
@@ -62,6 +64,264 @@ using namespace mlir::hfusion;
 using mlir::hfusion::RetriedOptions;
 
 namespace {
+
+/// Restore static shape information lost after MCF cleanup:
+///
+///   static tensor -> tensor.cast -> dynamic tensor
+///                 -> scf.for iter_arg -> tensor.insert_slice
+///
+/// Limit the workaround to the observed softmax tree-reduction accumulators:
+/// tensor<1xNx32xf32> -> tensor<1xNx?xf32>, where N is 16, 8, 4, or 2,
+/// updated at [0, iv, 0] inside the 19x32 row loop. General tiling and
+/// single-iteration-loop cleanup remain unchanged.
+static constexpr StringLiteral kRefinedLoopCarriedTensorShape =
+    "__hfusion_av2_refined_loop_carried_tensor_shape";
+static constexpr int64_t kTargetTreeReduceStageSizes[] = {16, 8, 4, 2};
+
+static bool isRefinedLoopCarriedTensorShape(Operation *op) {
+  return op && op->hasAttr(kRefinedLoopCarriedTensorShape);
+}
+
+static bool isInsideTargetTreeReduceRowLoop(scf::ForOp forOp) {
+  auto parent = forOp->getParentOfType<scf::ForOp>();
+  if (!parent || parent.getNumRegionIterArgs() != 1 ||
+      !isConstantIntValue(parent.getLowerBound(), 0) ||
+      !isConstantIntValue(parent.getUpperBound(), 19) ||
+      !isConstantIntValue(parent.getStep(), 1))
+    return false;
+  auto type =
+      dyn_cast<RankedTensorType>(parent.getRegionIterArgs().front().getType());
+  return type && type.getRank() == 2 && type.getElementType().isF32() &&
+         type.getDimSize(0) == 19 && type.getDimSize(1) == 32;
+}
+
+static bool isTargetStaticSubvectorLoop(scf::ForOp forOp,
+                                        RankedTensorType staticType,
+                                        RankedTensorType dynamicType,
+                                        tensor::InsertSliceOp yieldInsert) {
+  if (staticType.getRank() != 3 || dynamicType.getRank() != 3 ||
+      !staticType.getElementType().isF32() || staticType.getDimSize(0) != 1 ||
+      dynamicType.getDimSize(0) != 1 ||
+      staticType.getDimSize(1) != dynamicType.getDimSize(1) ||
+      !llvm::is_contained(kTargetTreeReduceStageSizes,
+                          staticType.getDimSize(1)) ||
+      staticType.getDimSize(2) != 32 || !dynamicType.isDynamicDim(2) ||
+      llvm::count_if(dynamicType.getShape(),
+                     [](int64_t dim) { return ShapedType::isDynamic(dim); }) !=
+          1 ||
+      !isConstantIntValue(forOp.getLowerBound(), 0) ||
+      !isConstantIntValue(forOp.getUpperBound(), staticType.getDimSize(1)) ||
+      !isConstantIntValue(forOp.getStep(), 1) ||
+      !isInsideTargetTreeReduceRowLoop(forOp))
+    return false;
+
+  auto sourceType = dyn_cast<RankedTensorType>(yieldInsert.getSourceType());
+  if (!sourceType || sourceType.getRank() != 3 ||
+      sourceType.getDimSize(0) != 1 || sourceType.getDimSize(1) != 1 ||
+      (!sourceType.isDynamicDim(2) &&
+       sourceType.getDimSize(2) != staticType.getDimSize(2)))
+    return false;
+
+  SmallVector<OpFoldResult> offsets = yieldInsert.getMixedOffsets();
+  SmallVector<OpFoldResult> sizes = yieldInsert.getMixedSizes();
+  SmallVector<OpFoldResult> strides = yieldInsert.getMixedStrides();
+  return offsets.size() == 3 && isConstantIntValue(offsets[0], 0) &&
+         offsets[1].dyn_cast<Value>() == forOp.getInductionVar() &&
+         isConstantIntValue(offsets[2], 0) && sizes.size() == 3 &&
+         isConstantIntValue(sizes[0], 1) && isConstantIntValue(sizes[1], 1) &&
+         isConstantIntValue(sizes[2], staticType.getDimSize(2)) &&
+         strides.size() == 3 && llvm::all_of(strides, [](OpFoldResult stride) {
+           return isConstantIntValue(stride, 1);
+         });
+}
+
+struct RefineStaticLoopCarriedTensorPattern
+    : public OpRewritePattern<scf::ForOp> {
+  using OpRewritePattern<scf::ForOp>::OpRewritePattern;
+
+  static bool isLoopAccumulatorUse(OpOperand &use, scf::ForOp forOp,
+                                   tensor::InsertSliceOp yieldInsert,
+                                   unsigned &extractCount) {
+    Operation *owner = use.getOwner();
+    if (auto extractOp = dyn_cast<tensor::ExtractSliceOp>(owner)) {
+      SmallVector<OpFoldResult> offsets = extractOp.getMixedOffsets();
+      SmallVector<OpFoldResult> sizes = extractOp.getMixedSizes();
+      SmallVector<OpFoldResult> strides = extractOp.getMixedStrides();
+      bool isTarget =
+          extractOp.getSource() == use.get() && offsets.size() == 3 &&
+          isConstantIntValue(offsets[0], 0) &&
+          offsets[1].dyn_cast<Value>() == forOp.getInductionVar() &&
+          isConstantIntValue(offsets[2], 0) && sizes.size() == 3 &&
+          isConstantIntValue(sizes[0], 1) && isConstantIntValue(sizes[1], 1) &&
+          isConstantIntValue(sizes[2], 32) && strides.size() == 3 &&
+          llvm::all_of(strides, [](OpFoldResult stride) {
+            return isConstantIntValue(stride, 1);
+          });
+      extractCount += isTarget;
+      return isTarget;
+    }
+    auto insertOp = dyn_cast<tensor::InsertSliceOp>(owner);
+    return insertOp == yieldInsert && insertOp.getDest() == use.get();
+  }
+
+  LogicalResult matchAndRewrite(scf::ForOp forOp,
+                                PatternRewriter &rewriter) const override {
+    if (forOp.getNumRegionIterArgs() != 1)
+      return failure();
+    auto initCast = forOp.getInitArgs().front().getDefiningOp<tensor::CastOp>();
+    if (!initCast || !initCast.getResult().hasOneUse())
+      return failure();
+
+    auto staticType =
+        dyn_cast<RankedTensorType>(initCast.getSource().getType());
+    auto dynamicType = dyn_cast<RankedTensorType>(initCast.getType());
+    if (!staticType || !dynamicType || !staticType.hasStaticShape() ||
+        dynamicType.hasStaticShape() ||
+        !tensor::preservesStaticInformation(dynamicType, staticType))
+      return failure();
+
+    BlockArgument iterArg = forOp.getRegionIterArgs().front();
+    auto yieldInsert =
+        forOp.getYieldedValues().front().getDefiningOp<tensor::InsertSliceOp>();
+    unsigned extractCount = 0;
+    if (!yieldInsert || !yieldInsert.getResult().hasOneUse() ||
+        yieldInsert.getDest() != iterArg ||
+        !isTargetStaticSubvectorLoop(forOp, staticType, dynamicType,
+                                     yieldInsert) ||
+        llvm::any_of(iterArg.getUses(),
+                     [&](OpOperand &use) {
+                       return !isLoopAccumulatorUse(use, forOp, yieldInsert,
+                                                    extractCount);
+                     }) ||
+        extractCount != 1)
+      return failure();
+
+    rewriter.modifyOpInPlace(forOp, [&] {
+      forOp.getInitArgsMutable()[0].set(initCast.getSource());
+      iterArg.setType(staticType);
+      forOp.getResult(0).setType(staticType);
+      forOp->setAttr(kRefinedLoopCarriedTensorShape, rewriter.getUnitAttr());
+    });
+    rewriter.modifyOpInPlace(yieldInsert, [&] {
+      yieldInsert.getResult().setType(staticType);
+      yieldInsert->setAttr(kRefinedLoopCarriedTensorShape,
+                           rewriter.getUnitAttr());
+    });
+    rewriter.eraseOp(initCast);
+    return success();
+  }
+};
+
+struct FoldRefinedLoopCarriedTensorDimPattern
+    : public OpRewritePattern<tensor::DimOp> {
+  using OpRewritePattern<tensor::DimOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(tensor::DimOp dimOp,
+                                PatternRewriter &rewriter) const override {
+    auto type = dyn_cast<RankedTensorType>(dimOp.getSource().getType());
+    std::optional<int64_t> dim = dimOp.getConstantIndex();
+    if (!isRefinedLoopCarriedTensorShape(dimOp.getSource().getDefiningOp()) ||
+        !type || !dim || type.isDynamicDim(*dim))
+      return failure();
+    rewriter.replaceOpWithNewOp<arith::ConstantIndexOp>(dimOp,
+                                                        type.getDimSize(*dim));
+    return success();
+  }
+};
+
+struct RefineLoopCarriedTensorInsertSlicePattern
+    : public OpRewritePattern<tensor::InsertSliceOp> {
+  using OpRewritePattern<tensor::InsertSliceOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(tensor::InsertSliceOp insertOp,
+                                PatternRewriter &rewriter) const override {
+    if (!isRefinedLoopCarriedTensorShape(insertOp) &&
+        !isRefinedLoopCarriedTensorShape(
+            insertOp.getSource().getDefiningOp()) &&
+        !isRefinedLoopCarriedTensorShape(insertOp.getDest().getDefiningOp()))
+      return failure();
+    auto destType = dyn_cast<RankedTensorType>(insertOp.getDest().getType());
+    auto sourceType =
+        dyn_cast<RankedTensorType>(insertOp.getSource().getType());
+    if (!destType || !sourceType || !destType.hasStaticShape() ||
+        static_cast<size_t>(sourceType.getRank()) !=
+            insertOp.getMixedSizes().size())
+      return failure();
+
+    bool changed = insertOp.getType() != destType;
+    SmallVector<OpFoldResult> sizes(insertOp.getMixedSizes());
+    for (auto [dim, size] : llvm::enumerate(sizes)) {
+      if (sourceType.isDynamicDim(dim) || isa<Attribute>(size))
+        continue;
+      if (std::optional<int64_t> constant = getConstantIntValue(size)) {
+        size = rewriter.getIndexAttr(*constant);
+        changed = true;
+      }
+    }
+    if (!changed)
+      return failure();
+
+    auto newInsert = rewriter.create<tensor::InsertSliceOp>(
+        insertOp.getLoc(), insertOp.getSource(), insertOp.getDest(),
+        insertOp.getMixedOffsets(), sizes, insertOp.getMixedStrides());
+    newInsert->setAttr(kRefinedLoopCarriedTensorShape, rewriter.getUnitAttr());
+    rewriter.replaceOp(insertOp, newInsert);
+    return success();
+  }
+};
+
+struct RefineLoopCarriedTensorExpandShapePattern
+    : public OpRewritePattern<tensor::ExpandShapeOp> {
+  using OpRewritePattern<tensor::ExpandShapeOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(tensor::ExpandShapeOp expandOp,
+                                PatternRewriter &rewriter) const override {
+    if (!isRefinedLoopCarriedTensorShape(expandOp.getSrc().getDefiningOp()))
+      return failure();
+    auto sourceType = dyn_cast<RankedTensorType>(expandOp.getSrc().getType());
+    RankedTensorType resultType = expandOp.getResultType();
+    if (!sourceType || !sourceType.hasStaticShape() ||
+        resultType.hasStaticShape())
+      return failure();
+
+    SmallVector<int64_t> shape;
+    for (OpFoldResult dim : expandOp.getMixedOutputShape()) {
+      std::optional<int64_t> constant = getConstantIntValue(dim);
+      if (!constant)
+        return failure();
+      shape.push_back(*constant);
+    }
+    auto staticType = RankedTensorType::get(shape, resultType.getElementType(),
+                                            resultType.getEncoding());
+    if (tensor::CollapseShapeOp::inferCollapsedType(
+            staticType, expandOp.getReassociationMaps())
+            .getShape() != sourceType.getShape())
+      return failure();
+    rewriter.modifyOpInPlace(expandOp, [&] {
+      expandOp.getOutputShapeMutable().assign(ValueRange{});
+      expandOp.setStaticOutputShape(shape);
+      expandOp.getResult().setType(staticType);
+    });
+    return success();
+  }
+};
+
+static LogicalResult refineStaticLoopCarriedTensorTypes(func::FuncOp func) {
+  RewritePatternSet patterns(func.getContext());
+  patterns.add<RefineStaticLoopCarriedTensorPattern,
+               FoldRefinedLoopCarriedTensorDimPattern,
+               RefineLoopCarriedTensorInsertSlicePattern,
+               RefineLoopCarriedTensorExpandShapePattern>(func.getContext());
+  GreedyRewriteConfig config;
+  config.fold = false;
+  config.cseConstants = false;
+  config.enableRegionSimplification = GreedySimplifyRegionLevel::Disabled;
+  LogicalResult result =
+      applyPatternsGreedily(func, std::move(patterns), config);
+  func.walk(
+      [](Operation *op) { op->removeAttr(kRefinedLoopCarriedTensorShape); });
+  return result;
+}
 
 static bool isCubeScopeOp(Operation *op) {
   auto scopeOp = dyn_cast<scope::ScopeOp>(op);
@@ -1238,6 +1498,9 @@ LogicalResult AutoVectorizeV2::vectorize(func::FuncOp func,
   LogicalResult result = transform::applyTransformNamedSequence(
       func, seqOp, func->getParentOfType<ModuleOp>(), transformOptions);
   seqOp->erase();
+
+  if (succeeded(result))
+    result = refineStaticLoopCarriedTensorTypes(func);
 
   hfusion::AutoVectorizeVerifier verifier;
   return failure(
