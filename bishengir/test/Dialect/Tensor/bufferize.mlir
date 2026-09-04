@@ -1,3 +1,4 @@
+// REQUIRES: asserts
 // RUN: mlir-opt %s --one-shot-bufferize="dialect-filter=tensor,bufferization copy-before-write unknown-type-conversion=identity-layout-map" -cse -split-input-file | FileCheck %s
 
 // CHECK-LABEL:   func @dim(

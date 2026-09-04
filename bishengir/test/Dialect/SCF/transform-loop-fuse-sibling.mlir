@@ -1,3 +1,4 @@
+// REQUIRES: asserts
 // RUN: bishengir-opt %s -transform-interpreter --cse --canonicalize-ext -split-input-file -verify-diagnostics | FileCheck %s
 // RUN: mlir-opt %s -transform-interpreter -split-input-file -verify-diagnostics | FileCheck %s --check-prefix CHECK-NOCLEANUP
 

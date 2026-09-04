@@ -64,6 +64,14 @@ namespace hivm {
 bool shouldEnableChannelSplit(Type dstType);
 bool shouldEnableChannelMerge(Type dstType);
 
+/// Whether folding `op` (a convert_layout whose source is a fractal tensor)
+/// into `fixpipeOp` should request the inline f32 channel re-tiling
+/// (channel_split). The re-tiling is only correct when the source fractal is
+/// the hardware-native narrow-channel view, i.e. its channel width
+/// (fractalSizes.back()) equals the per-channel element count of the element
+/// type; a full/packed source view must be copied verbatim.
+bool needChannelSplit(ConvertLayoutOp op, FixpipeOp fixpipeOp);
+
 /// Plan memory strategy for storage entry reorder.
 enum class PlanMemoryStrategy {
   DEFAULT,       // keep original storage entry order without sorting
@@ -140,8 +148,7 @@ const std::map<std::string, int> membarType = {
     {"SS_ALL", 12}, {"ST_LD", 13},  {"LD_ST", 14},  {"ST_ST", 15},
 };
 
-bool isRegionResultRequiredInL0C(RegionBranchOpInterface branch,
-                                 OpResult result);
+bool isOpResultRequiredInL0C(Operation *op, OpResult result);
 
 /// Set the input type's memory scope to the input HIVM Address Space.
 void setBaseMemRefTypeScope(Value val, AddressSpaceAttr targetMemScope);

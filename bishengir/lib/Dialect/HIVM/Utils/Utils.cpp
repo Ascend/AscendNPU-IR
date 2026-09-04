@@ -48,6 +48,7 @@
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/Value.h"
+#include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Interfaces/ViewLikeInterface.h"
 #include "mlir/Support/LLVM.h"
 
@@ -93,6 +94,18 @@ bool shouldEnableChannelMerge(Type dstType) {
   if (numElemPerBlock != alignM * 2)
     return false;
   return true;
+}
+
+bool needChannelSplit(ConvertLayoutOp op, FixpipeOp fixpipeOp) {
+  if (!shouldEnableChannelSplit(fixpipeOp.getDstOperandType()))
+    return false;
+  // The source channel width must equal the hardware channel element count
+  // (e.g. 8 for f32 whose channel row is 32 bytes); a wider, packed source
+  // view is already in the destination arrangement and must not be re-tiled.
+  auto srcFractalSizes = op.getSrcLayout().getFractalSizesArray();
+  return srcFractalSizes &&
+         srcFractalSizes->back() ==
+             mlir::utils::getNumPerBlock(op.getSource().getType());
 }
 
 namespace {
@@ -217,24 +230,28 @@ LoopLikeOpInterface getParentLoopImpl(Value val,
 }
 } // namespace
 
-bool isRegionResultRequiredInL0C(RegionBranchOpInterface branch,
-                                 OpResult result) {
-  if (branch->hasAttr(RemainInL0CAttr::name))
+bool isOpResultRequiredInL0C(Operation *op, OpResult result) {
+  if (op->hasAttr(RemainInL0CAttr::name))
     return true;
 
-  Attribute attr = branch->getAttr("normalized_in_L0C");
+  Attribute attr = op->getAttr("normalized_in_L0C");
   if (!attr)
     return false;
 
-  auto arrayAttr = dyn_cast<ArrayAttr>(attr);
-  if (!arrayAttr)
-    return true;
+  if (llvm::isa<RegionBranchOpInterface>(op)) {
+    auto arrayAttr = dyn_cast<ArrayAttr>(attr);
+    if (!arrayAttr)
+      return true;
 
-  uint64_t idx = result.getResultNumber();
-  return llvm::any_of(arrayAttr, [idx](Attribute element) {
-    auto intAttr = dyn_cast<IntegerAttr>(element);
-    return intAttr && intAttr.getValue().getZExtValue() == idx;
-  });
+    uint64_t idx = result.getResultNumber();
+    return llvm::any_of(arrayAttr, [idx](Attribute element) {
+      auto intAttr = dyn_cast<IntegerAttr>(element);
+      return intAttr && intAttr.getValue().getZExtValue() == idx;
+    });
+  }
+
+  // otherwise respect the result from NormalizeMatmul
+  return true;
 }
 
 FailureOr<memref::AllocOp> getMemRefAlloc(Value operand) {

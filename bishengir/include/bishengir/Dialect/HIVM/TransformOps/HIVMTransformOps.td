@@ -73,4 +73,44 @@ def MapForallToHIVMBlocks :
   }];
 }
 
+//===----------------------------------------------------------------------===//
+// HIVMVectorizeOp
+//===----------------------------------------------------------------------===//
+
+def HIVMVectorizeOp : Op<Transform_Dialect, "hivm.vectorize",
+    [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+     TransformOpInterface, ReportTrackingListenerFailuresOpTrait]> {
+  let summary = "Vectorize HIVM ops that implement VectorizableOpInterface";
+  let description = [{
+    Vectorize each payload op, which must implement `VectorizableOpInterface`.
+
+    If `vector_sizes` is omitted, sizes are inferred from the op shape using
+    the same VL packing policy as `hivm-vectorize-ops` (256-byte vector
+    length). Explicit static sizes skip that inference.
+
+    #### Return modes:
+
+    This operation produces a silenceable failure if a payload op is not
+    vectorizable, vector sizes cannot be computed, or `vectorize()` fails.
+  }];
+
+  let arguments = (ins TransformHandleTypeInterface:$target,
+                       DefaultValuedOptionalAttr<DenseI64ArrayAttr, "{}">:
+                          $static_vector_sizes);
+
+  let results = (outs);
+
+  let assemblyFormat = [{
+    $target (`vector_sizes` `=` $static_vector_sizes^)? attr-dict
+    `:` type($target)
+  }];
+
+  let extraClassDeclaration = [{
+    ::mlir::DiagnosedSilenceableFailure apply(
+        ::mlir::transform::TransformRewriter &rewriter,
+        ::mlir::transform::TransformResults &transformResults,
+        ::mlir::transform::TransformState &state);
+  }];
+}
+
 #endif // HIVM_TRANSFORMOPS_HIVMTRANSFORMOPS

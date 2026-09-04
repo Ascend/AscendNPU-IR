@@ -23,6 +23,7 @@ config.use_autogen_bc_hex = @USE_AUTOGEN_BC_HEX@
 config.bisheng_compiler_executable = "@BISHENG_COMPILER_EXECUTABLE@"
 config.bishengir_include_integration_tests = @MLIR_INCLUDE_INTEGRATION_TESTS@
 config.bspub_davinci_bishengir = @BSPUB_DAVINCI_BISHENGIR@
+config.bishengir_published = @BISHENGIR_PUBLISH@
 
 if 'bisheng' not in config.bisheng_compiler_executable:
     config.bisheng_compiler_executable = os.path.join("@BISHENG_COMPILER_PATH@", 'bisheng')

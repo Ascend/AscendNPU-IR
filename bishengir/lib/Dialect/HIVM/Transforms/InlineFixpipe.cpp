@@ -105,9 +105,20 @@ std::optional<bool> isStoreOp(Operation *dstOp) {
 
 static bool isRegBasedArch(Operation *op);
 
+static hivm::MmadL1Op traceAlongL0C(Value val) {
+  hivm::MmadL1Op source = llvm::dyn_cast_if_present<hivm::MmadL1Op>(
+      traceDefOp<hivm::MmadL1Op>(val).value_or(nullptr));
+  if (!source)
+    return nullptr;
+  hivm::MmadL1Op upstream = traceAlongL0C(source.getC());
+  if (upstream)
+    return upstream;
+  return source;
+}
+
 static bool hasSameSource(Value valA, Value valB) {
-  auto maybeMmadA = traceDefOp<hivm::MmadL1Op>(valA);
-  auto maybeMmadB = traceDefOp<hivm::MmadL1Op>(valB);
+  auto mmadA = traceAlongL0C(valA);
+  auto mmadB = traceAlongL0C(valB);
 
   auto isMatchedEmptyOrAllocOp = [](Value valA, Value valB) {
     LDBG("Begin to find matched dst for scf.if \n  -" << valA << "\n  -"
@@ -144,19 +155,15 @@ static bool hasSameSource(Value valA, Value valB) {
     LDBG("There is no matched dst for scf.if \n");
     return false;
   };
-  if (maybeMmadA.has_value() && maybeMmadB.has_value()) {
-    auto mmadA = cast<hivm::MmadL1Op>(maybeMmadA.value());
-    auto mmadB = cast<hivm::MmadL1Op>(maybeMmadB.value());
+  if (mmadA && mmadB) {
     return isMatchedEmptyOrAllocOp(mmadA.getC(), mmadB.getC());
   }
 
-  if (maybeMmadA.has_value()) {
-    auto mmadA = cast<hivm::MmadL1Op>(maybeMmadA.value());
+  if (mmadA) {
     return isMatchedEmptyOrAllocOp(mmadA.getC(), valB);
   }
 
-  if (maybeMmadB.has_value()) {
-    auto mmadB = cast<hivm::MmadL1Op>(maybeMmadB.value());
+  if (mmadB) {
     return isMatchedEmptyOrAllocOp(valA, mmadB.getC());
   }
   return false;
@@ -602,8 +609,8 @@ static bool shouldSkipOuterFixpipeForAccumulation(Operation *opInst,
     return false;
   if (forOp->getAttr(hivm::RemainInL0CAttr::name) == nullptr)
     return false;
-  if (!isRegionResultRequiredInL0C(cast<RegionBranchOpInterface>(insertAfterOp),
-                                   loopResult))
+  if (!isOpResultRequiredInL0C(cast<RegionBranchOpInterface>(insertAfterOp),
+                               loopResult))
     return false;
 
   return anyUserReachesMatmulOuts(loopResult);
@@ -654,6 +661,8 @@ public:
             op.isInitConstant(false) ||
             (!op.isInitConstant() && isRegBasedArch(opInst));
       }
+      skipFixpipeForBiasDecompose = skipFixpipeForBiasDecompose &&
+                                    !isOpResultRequiredInL0C(op, mmadLikeOpRes);
     }
     if (skipFixpipeForBiasDecompose) {
       // the op will decompose to mmadL1 + vadd, so fixpipe cannot be inserted

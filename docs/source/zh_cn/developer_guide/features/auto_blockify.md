@@ -12,7 +12,9 @@ Auto Blockify Pass通过高效地将逻辑块映射到硬件物理块，是昇�
 
 ![image](../../../images/developer_guide/AutoBlockify.jpg)
 
-## 算法原理
+## SIMD模式
+
+### 算法原理
 
 Auto Blockify Pass（AutoBlockifyParallelLoop）通过引入额外的循环层来变换IR，具体逻辑如下：
 
@@ -178,8 +180,69 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
 }
 ```
 
-## 约束
+### 约束
 
 - **可并行性**​：Auto Blockify算法仅适用于完全可并行的代码。这意味着各逻辑块的计算与访问必须可以安全地并行执行，块间不存在依赖关系。
 
 - **使用场景**​：若逻辑块数量非常小，则此Pass不会带来任何优势。
+
+## SIMT 模式
+
+SIMT模式下的自动块化与SIMD模式的功能与用法基本相同，本文主要介绍SIMT路径上特有的功能。
+
+### 算法原理
+
+与SIMD模式基本相同，此调度自动添加一层循环，并将SIMT版本的逻辑核ID指令（`tt.get_program_id x/y/z`）替换为用新循环IV和物理核ID计算得到的逻辑核ID。计算逻辑如下：
+
+```mlir
+原 kernel：
+   pid_x = tt.get_program_id x
+   pid_y = tt.get_program_id y
+   pid_z = tt.get_program_id z
+   <kernel body>
+
+重写后：
+   logical = grid_x * grid_y * grid_z // 计算 logical_block_num 
+   chunk   = ceildiv(logical, physical_block_dim)
+   hw_idx  = gpu.linear_block_id // 内层循环（锁定到物理块）
+   start   = hw_idx * chunk // 此物理块处理的第一个逻辑块
+   upper   = min(start + chunk, logical) // 此物理块处理的最后一个逻辑块
+   for iv in [start, upper) step 1:
+       pid_x = iv % grid_x // 计算三维逻辑核ID
+       pid_y = (iv / grid_x) % grid_y
+       pid_z = iv / (grid_x * grid_y)
+       <kernel body, 原始 tt.get_program_id 指令替换为上面解算出的 pid_*>
+```
+
+**接口说明**：
+
+该功能在SIMT模式下通过bishengir-compile中的`--enable-auto-blockify-loop`标志控制，也可通过bishengir-opt的`--simt-auto-blockify`标志直接调用。
+
+### 可选性能扩展Super-blocking
+
+GPU SIMT 编程中常常会为单个内核函数配置较小的工作量，并启动较多逻辑核。此场景会导致 Vector 核算力未被充分运用，无法达到最高性能。该扩展在自动块化的基础上，在一个物理核上并行处理若干个相邻逻辑核，提高算力利用率。
+
+**接口说明**：
+
+该功能通过bishengir-compile中的`--super-block-factor=N`标志控制，其中`N`代表需要并行的逻辑核数量，默认为1，即关闭super-blocking，只做常规自动块化。也可通过bishengir-opt的pass选项`-simt-auto-blockify="superblock-factor=N`直接调用。
+
+**逻辑说明**：
+
+将常规自动块化引入的循环的步长改为`N`，表示同时处理`N`个相邻的逻辑块。若原始函数每个逻辑块启动`W`个线程束，则调度后的函数启动`NxW`个线程束，并根据线程束ID计算新逻辑核ID。计算逻辑如下：
+
+```mlir
+for iv in [start, upper) step N:
+    warp_id = thread_id_x / 32 // 计算线程束ID
+    local   = warp_id % N // 计算核内并行的逻辑核的ID
+    linear  = iv + local // 计算一维逻辑核ID
+    if linear < upper: // 确保逻辑核ID不出界
+      <kernel body, 用linear计算三维逻辑核ID并替换原始 tt.get_program_id>
+```
+
+### 约束
+
+- **线程束数量限制**​：昇腾支持的最大线程束为64，所以`NxW`的值必须小于等于64。
+
+- **共享内存限制**：开启super-blocking后，`N`个并行的逻辑核会将物理核的共享内存等分为`N`份，需要注意单个逻辑核的内存用量，避免溢出。
+
+- **使用场景**​：若逻辑块数量非常小，则此Pass不会带来任何优势；若每个逻辑核工作量较大，则super-blocking功能性能收益有限。
