@@ -260,6 +260,7 @@ def CopyOp : HIVM_DmaOp<"copy", [
     (`->` type($result_tensor)^)?
   }];
   let hasFolder = 1;
+  let hasCanonicalizer = 1;
   let hasVerifier = 1; // verify parameter according to hardware version
   let extraClassDeclaration = DmaOpBaseDecl # [{
     // Declare functions necessary for SinglePipeOpTrait.
