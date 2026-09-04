@@ -88,6 +88,13 @@ isCVPipeliningDisabled(const HIVMPipelineOptions &hivmPipelineOptions) {
          hivmPipelineOptions.setCVPipelineMode == CVPipelineMode::Off;
 }
 
+static void inferAndSetBufferSizePipeline(OpPassManager &pm) {
+  pm.nest<func::FuncOp>().addPass(createAutoInferBufferSizePass());
+  pm.addPass(createArithToAffineConversionPass());
+  pm.nest<func::FuncOp>().addPass(createConstantizeBufferSizePass());
+  pm.nest<func::FuncOp>().addPass(createSetBufferSizePass());
+}
+
 static void hivmAutoInsertLdStForMixCVPipeline(
     OpPassManager &pm, const HIVMPipelineOptions &hivmPipelineOptions) {
   InsertLoadStoreForMixCVOptions options;
@@ -431,15 +438,6 @@ static void hivmPreBufferizationOptimizationPipeline(
   multiBufferOptions.multiBufferMode = hivmPipelineOptions.multibufferMode;
   if (hivmPipelineOptions.setWorkspaceMultibuffer == 0)
     multiBufferOptions.gmMultiBufferNum = 1;
-  // MarkTightlyCoupledBuffer before CVPipelining is only needed in Skew
-  // (preload) mode: createNewLoopsForPreloadWithScopes uses TCB marks to
-  // decide which local outputs bypass scope.return.  Running it for
-  // standard CVPipelining causes migrateOps to clone the TCB-marked allocs
-  // into work-item loops; those dead clones retain their marks and force
-  // PlanMemory to allocate them as independent buffers, causing UB overflow.
-  if (hivmPipelineOptions.setCVPipelineMode == CVPipelineMode::Skew) {
-    pm.nest<func::FuncOp>().addPass(createMarkTightlyCoupledBufferPass());
-  }
   pm.addNestedPass<func::FuncOp>(createMarkMultiBufferPass(multiBufferOptions));
   // Call canonicalize before inline OTF broadcast to optimize redundant 1-to-1
   // broadcasts.
@@ -454,6 +452,13 @@ static void hivmPreBufferizationOptimizationPipeline(
       pipelineOptions.enableLazyLoading = hivmPipelineOptions.enableLazyLoading;
       pipelineOptions.pipelineMode = hivmPipelineOptions.setCVPipelineMode;
       pipelineOptions.enablePreload = hivmPipelineOptions.enablePreload;
+      // Preload expansion requires static physical storage. Marking TCBs after
+      // constantization keeps the marker on that storage while logical dynamic
+      // shapes remain represented by memref.view.
+      if (hivmPipelineOptions.setCVPipelineMode == CVPipelineMode::Skew) {
+        inferAndSetBufferSizePipeline(pm);
+        pm.nest<func::FuncOp>().addPass(createMarkTightlyCoupledBufferPass());
+      }
       pm.nest<func::FuncOp>().addPass(createCVPipeliningPass(pipelineOptions));
       pm.addNestedPass<func::FuncOp>(
           createMarkMultiBufferPass(multiBufferOptions));
