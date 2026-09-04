@@ -2,6 +2,9 @@
 # https://www.sphinx-doc.org/en/master/usage/configuration.html
 
 import os
+import sys
+
+sys.path.insert(0, os.path.abspath('_ext'))
 
 # -- Project information -----------------------------------------------------
 project = 'AscendNPU IR'
@@ -30,6 +33,7 @@ else:
 templates_path = ['_templates']
 
 extensions = [
+    "codeowners",
     "myst_parser",
 ]
 
@@ -57,4 +61,6 @@ def setup(app):
     if not _is_build_by_readthedocs:
         app.add_js_file('lang-switcher.js')
         app.add_css_file('lang-switcher.css')
+    app.add_js_file('codeowners.js')
+    app.add_css_file('codeowners.css')
     return {'version': '0.1', 'parallel_read_safe': True}

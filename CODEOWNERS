@@ -1,6 +1,7 @@
 # This file lists reviewers that are auto-assigned when a pull request modifies
 # certain files or directories.
 # For each file, only the last successfully matched rule takes effect.
+# Dashboard grouping: module section headings must end in "."
 
 # Documentation.
 /docs/ @wuying211 @hid90099092 @tanshengshun
