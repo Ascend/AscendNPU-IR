@@ -6,6 +6,26 @@
 
 // -----
 module attributes {hacc.target = #hacc.target<"Ascend910B4">} {
+// CHECK-LABEL: func.func @test_MmadL1_Normalize_Mkn_through_collapse_shape(
+// CHECK-DAG: %[[C16:.*]] = arith.constant 16 : index
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn} ins({{.*}}, {{.*}}, {{.*}}, %[[C16]], %[[C16]], %[[C16]]
+func.func @test_MmadL1_Normalize_Mkn_through_collapse_shape() -> tensor<16x16xf32> {
+  %alloc_a = memref.alloc() : memref<2x8x16xf16>
+  %matrix_a = memref.collapse_shape %alloc_a [[0, 1], [2]] : memref<2x8x16xf16> into memref<16x16xf16>
+  %tensor_a = bufferization.to_tensor %matrix_a restrict writable : memref<16x16xf16>
+  %alloc_b = memref.alloc() : memref<16x1x16xf16>
+  %matrix_b = memref.collapse_shape %alloc_b [[0, 1], [2]] : memref<16x1x16xf16> into memref<16x16xf16>
+  %tensor_b = bufferization.to_tensor %matrix_b restrict writable : memref<16x16xf16>
+  %init = tensor.empty() : tensor<16x16xf32>
+  %true = arith.constant true
+  %c0 = arith.constant 0 : index
+  %result = hivm.hir.mmadL1 ins(%tensor_a, %tensor_b, %true, %c0, %c0, %c0 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%init : tensor<16x16xf32>) -> tensor<16x16xf32>
+  return %result : tensor<16x16xf32>
+}
+}
+
+// -----
+module attributes {hacc.target = #hacc.target<"Ascend910B4">} {
 // CHECK-LABEL: func.func @test_MmadL1_Normalize_Mkn(
 // CHECK-SAME:                                         %[[VAL_0:.*]]: memref<16x16xf32>) -> tensor<16x16xf32> {
 // CHECK-DAG: %[[C16:.*]] = arith.constant 16 : index

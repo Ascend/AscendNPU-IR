@@ -235,6 +235,11 @@ private:
 
   DenseMap<AllocWorkspaceOp, WorkspaceAllocParams> workspaceAllocs;
   DenseMap<Value, Value> expandedWorkspaceMap;
+  // expandWorkspace materializes these immediately before pipelineLoop, so
+  // erasing a failed replacement loop (or restoring pipelineLoop from the
+  // checkpoint) does not remove them. Keep the speculative top-level ops so
+  // revert can discard them as well.
+  SmallVector<Operation *> expandedWorkspaceOps;
   // annotation.mark ops we've already emitted a "hint overrides kernel
   // switch" warning on, to avoid duplicate diagnostics for the same tensor.
   DenseSet<Operation *> warnedOverrideMarks;
@@ -951,6 +956,7 @@ void CVPipelineImpl::expandWorkspace(OpBuilder &builder) {
     auto newAlloc = builder.create<AllocWorkspaceOp>(
         loc, newType, alloc.getWorkspaceArg(), alloc.getDynamicSize(),
         alloc.getOffset());
+    expandedWorkspaceOps.push_back(newAlloc.getOperation());
 
     expandedWorkspaceMap[alloc] = newAlloc;
 
@@ -963,6 +969,7 @@ void CVPipelineImpl::expandWorkspace(OpBuilder &builder) {
       auto markOp = builder.create<annotation::MarkOp>(loc, newAlloc);
       markOp->setAttr(hivm::CVPipelinedMultiBufferAttr::name,
                       UnitAttr::get(builder.getContext()));
+      expandedWorkspaceOps.push_back(markOp.getOperation());
     }
 
     toErase.insert(alloc);
@@ -2288,6 +2295,12 @@ void CVPipelineImpl::revert() {
            checkpoint->getResults()))
     res.replaceAllUsesWith(orig);
   pipelineLoop->erase();
+  // expandWorkspace inserts the enlarged allocs (and, in unroll mode, their
+  // marks) next to pipelineLoop rather than under newLoop. They therefore
+  // survive both loop erasures unless explicitly rolled back.
+  for (Operation *op : llvm::reverse(expandedWorkspaceOps))
+    op->erase();
+  expandedWorkspaceOps.clear();
 }
 
 LogicalResult CVPipelineImpl::preprocessCounterAllocas() {
