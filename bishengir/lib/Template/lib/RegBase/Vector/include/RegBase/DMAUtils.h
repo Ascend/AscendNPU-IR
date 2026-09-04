@@ -342,6 +342,9 @@ load_gm_to_ubuf_1d_by_scalar(memref_t<__gm__ T, 1> *src,
   for (int i = 0; i < src->sizes[0]; i++) {
     *(dst_ptr + i * dst->strides[0]) = *(src_ptr + i * src->strides[0]);
   }
+  // should clear/invalidate created dcache entries because subsequent
+  // dma/st_dev, which bypass dcache, may introduce cache incoherence
+  INTRINSIC(dcci, src_ptr, 1);
   INTRINSIC(set_flag, PIPE_S, PIPE_MTE2, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_S, PIPE_MTE2, LIB_EVENT_ID0);
 }
@@ -360,6 +363,9 @@ load_gm_to_ubuf_2d_by_scalar(memref_t<__gm__ T, 2> *src,
           *(src_ptr + i * src->strides[0] + j * src->strides[1]);
     }
   }
+  // should clear/invalidate created dcache entries because subsequent
+  // dma/st_dev, which bypass dcache, may introduce cache incoherence
+  INTRINSIC(dcci, src_ptr, 1);
   INTRINSIC(set_flag, PIPE_S, PIPE_MTE2, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_S, PIPE_MTE2, LIB_EVENT_ID0);
 }
@@ -389,9 +395,11 @@ load_gm_to_ubuf_3d_by_scalar(memref_t<__gm__ T, 3> *src,
 // TODO: After "removing the extract slice and inserting it into Deinterleave
 // on A5", issues may arise such as tail shaft strides not being 1 or block
 // misalignment. Temporarily use scalar to circumvent.
-// TODO: when multiple cores simultaneously write data to a section of GM buffer
-// with cacheline overlapped, the written buffer may be overwritten by following
-// cores. Need to use st_dev intrinsic.
+// TODO: if 2 cores simultaneously write data to a section of GM
+// covered by the one cacheline, each core will allocate self dirty version
+// of this cacheline and at the end only one version will be stored to GM
+// discading other core changes.
+// Need to use st_dev intrinsic, which bypasses dcache.
 template <typename T>
 __aiv__ __attribute__((always_inline)) void
 store_ubuf_to_gm_1d_by_scalar(memref_t<__ubuf__ T, 1> *src,
@@ -424,9 +432,11 @@ store_ubuf_to_gm_1d_by_scalar(memref_t<__ubuf__ T, 1> *src,
   INTRINSIC(wait_flag, PIPE_S, PIPE_MTE3, LIB_EVENT_ID0);
 }
 
-// TODO: when multiple cores simultaneously write data to a section of GM buffer
-// with cacheline overlapped, the written buffer may be overwritten by following
-// cores. Need to use st_dev intrinsic.
+// TODO: if 2 cores simultaneously write data to a section of GM
+// covered by the one cacheline, each core will allocate self dirty version
+// of this cacheline and at the end only one version will be stored to GM
+// discading other core changes.
+// Need to use st_dev intrinsic, which bypasses dcache.
 template <typename T>
 __aiv__ __attribute__((always_inline)) void
 store_ubuf_to_gm_2d_by_scalar(memref_t<__ubuf__ T, 2> *src,
@@ -461,9 +471,11 @@ store_ubuf_to_gm_2d_by_scalar(memref_t<__ubuf__ T, 2> *src,
   INTRINSIC(wait_flag, PIPE_S, PIPE_MTE3, LIB_EVENT_ID0);
 }
 
-// TODO: when multiple cores simultaneously write data to a section of GM buffer
-// with cacheline overlapped, the written buffer may be overwritten by following
-// cores. Need to use st_dev intrinsic.
+// TODO: if 2 cores simultaneously write data to a section of GM
+// covered by the one cacheline, each core will allocate self dirty version
+// of this cacheline and at the end only one version will be stored to GM
+// discading other core changes.
+// Need to use st_dev intrinsic, which bypasses dcache.
 template <typename T>
 __aiv__ __attribute__((always_inline)) void
 store_ubuf_to_gm_3d_by_scalar(memref_t<__ubuf__ T, 3> *src,
