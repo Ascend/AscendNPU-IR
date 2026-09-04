@@ -22,6 +22,7 @@ func.func @test_i8_cast_i16(%arg0: memref<5xi8, #hivm.address_space<ub>>, %arg1:
 // CHECK-NEXT:   %[[UCC2:.+]] = builtin.unrealized_conversion_cast
 // CHECK-NEXT:   %[[UCC1:.+]] = builtin.unrealized_conversion_cast
 // CHECK-NEXT:   %[[UCC0:.+]] = builtin.unrealized_conversion_cast
+// CHECK-NEXT:   %[[C255:.+]] = llvm.mlir.constant(255 : i16) : i16
 // CHECK-NEXT:   llvm.mlir.constant(0 : index) : i64
 // CHECK-NEXT:   %[[c5:.+]] = llvm.mlir.constant(5 : i32) : i32
 // CHECK-NEXT:   %[[PLT:.+]] = "hivm_regbaseintrins.intr.hivm.plt.b16.v300"(%[[c5]]) : (i32) -> !llvm.struct<(vector<256xi1>, i32)>
@@ -37,7 +38,12 @@ func.func @test_i8_cast_i16(%arg0: memref<5xi8, #hivm.address_space<ub>>, %arg1:
 // CHECK-NEXT:   %[[cvt1:.+]] = "hivm_regbaseintrins.intr.hivm.vcvtii.s82s16.x"(%[[LOAD1]], %[[EXTRACT_PLT]], %{{.*}}) : (vector<256xi8>, vector<256xi1>, i32) -> vector<128xi16>
 // CHECK-NEXT:   %[[cvt0:.+]] =  "hivm_regbaseintrins.intr.hivm.vcvtii.s82s16.x"(%[[LOAD0]], %[[EXTRACT_PLT]], %{{.*}}) : (vector<256xi8>, vector<256xi1>, i32) -> vector<128xi16>
 // CHECK-NEXT:   %[[div:.+]] = "hivm_regbaseintrins.intr.hivm.vdiv.s.x"(%[[cvt0]], %[[cvt1]], %[[EXTRACT_PLT]]) : (vector<128xi16>, vector<128xi16>, vector<256xi1>) -> vector<128xi16>
-// CHECK-NEXT:   %[[cvt2:.+]] = "hivm_regbaseintrins.intr.hivm.vcvtii.s162u8.x"(%[[div]], %[[EXTRACT_PLT]], %{{.*}}) : (vector<128xi16>, vector<256xi1>, i32, i32) -> vector<256xi8>
+// CHECK-NEXT:   %[[PGE0:.+]] = "hivm_regbaseintrins.intr.hivm.pge.b16"
+// CHECK-NEXT:   %[[C1:.+]] = llvm.mlir.constant(1 : i32) : i32
+// CHECK-NEXT:   %[[SPLAT:.+]] = "hivm_regbaseintrins.intr.hivm.vdups.z"(%[[C255]], %[[PGE0]], %[[C1]])
+// CHECK-NEXT:   %[[PGE1:.+]] = "hivm_regbaseintrins.intr.hivm.pge.b16"
+// CHECK-NEXT:   %[[AND:.+]] = "hivm_regbaseintrins.intr.hivm.vand.x"(%[[div]], %[[SPLAT]], %[[PGE1]])
+// CHECK-NEXT:   %[[cvt2:.+]] = "hivm_regbaseintrins.intr.hivm.vcvtii.s162u8.x"(%[[AND]], %[[EXTRACT_PLT]], %{{.*}}) : (vector<128xi16>, vector<256xi1>, i32, i32) -> vector<256xi8>
 // CHECK-NEXT:   %[[bitcast:.+]] = llvm.bitcast %[[cvt2:.+]]
 // CHECK-NEXT:   %[[EXTRACT_UCC2:.+]] = llvm.extractvalue %[[UCC2]][1] : !llvm.struct<(ptr<6>, ptr<6>, i64, array<1 x i64>, array<1 x i64>)>
 // CHECK-NEXT:   %[[GET_UCC2:.+]] = llvm.getelementptr %[[EXTRACT_UCC2]]
@@ -62,6 +68,7 @@ func.func @test_i8_cast_i32(%arg0: memref<5xi8, #hivm.address_space<ub>>, %arg1:
 // CHECK-NEXT:   %[[UCC2:.+]] = builtin.unrealized_conversion_cast
 // CHECK-NEXT:   %[[UCC1:.+]] = builtin.unrealized_conversion_cast
 // CHECK-NEXT:   %[[UCC0:.+]] = builtin.unrealized_conversion_cast
+// CHECK-NEXT:   %[[C255:.+]] = llvm.mlir.constant(255 : i32) : i32
 // CHECK-NEXT:   llvm.mlir.constant(0 : index) : i64
 // CHECK-NEXT:   %[[c5:.+]] = llvm.mlir.constant(5 : i32) : i32
 // CHECK-NEXT:   %[[PLT:.+]] = "hivm_regbaseintrins.intr.hivm.plt.b32.v300"(%[[c5]]) : (i32) -> !llvm.struct<(vector<256xi1>, i32)>
@@ -84,7 +91,12 @@ func.func @test_i8_cast_i32(%arg0: memref<5xi8, #hivm.address_space<ub>>, %arg1:
 // CHECK-NEXT:   %[[cvt1:.+]] = "hivm_regbaseintrins.intr.hivm.vcvtii.s82s32.x"(%[[EXTRACT_INTLV1_1]], %[[EXTRACT_PLT]], %{{.*}}) : (vector<256xi8>, vector<256xi1>, i32) -> vector<64xi32>
 // CHECK-NEXT:   %[[cvt0:.+]] =  "hivm_regbaseintrins.intr.hivm.vcvtii.s82s32.x"(%[[EXTRACT_INTLV0_1]], %[[EXTRACT_PLT]], %{{.*}}) : (vector<256xi8>, vector<256xi1>, i32) -> vector<64xi32>
 // CHECK-NEXT:   %[[div:.+]] = "hivm_regbaseintrins.intr.hivm.vdiv.s.x"(%[[cvt0]], %[[cvt1]], %[[EXTRACT_PLT]]) : (vector<64xi32>, vector<64xi32>, vector<256xi1>) -> vector<64xi32>
-// CHECK-NEXT:   %[[cvt2:.+]] = "hivm_regbaseintrins.intr.hivm.vcvtii.s322u8.x"(%[[div]], %[[EXTRACT_PLT]], %{{.*}}) : (vector<64xi32>, vector<256xi1>, i32, i32) -> vector<256xi8>
+// CHECK-NEXT:   %[[PGE0:.+]] = "hivm_regbaseintrins.intr.hivm.pge.b32"
+// CHECK-NEXT:   %[[C1:.+]] = llvm.mlir.constant(1 : i32) : i32
+// CHECK-NEXT:   %[[SPLAT:.+]] = "hivm_regbaseintrins.intr.hivm.vdups.z"(%[[C255]], %[[PGE0]], %[[C1]])
+// CHECK-NEXT:   %[[PGE1:.+]] = "hivm_regbaseintrins.intr.hivm.pge.b32"
+// CHECK-NEXT:   %[[AND:.+]] = "hivm_regbaseintrins.intr.hivm.vand.x"(%[[div]], %[[SPLAT]], %[[PGE1]])
+// CHECK-NEXT:   %[[cvt2:.+]] = "hivm_regbaseintrins.intr.hivm.vcvtii.s322u8.x"(%[[AND]], %[[EXTRACT_PLT]], %{{.*}}) : (vector<64xi32>, vector<256xi1>, i32, i32) -> vector<256xi8>
 // CHECK-NEXT:   %[[DINTLV0:.+]] = "hivm_regbaseintrins.intr.hivm.vdintlv"(%[[cvt2]], %[[cvt2]]) : (vector<256xi8>, vector<256xi8>) -> !llvm.struct<(vector<256xi8>, vector<256xi8>)>
 // CHECK-NEXT:   %[[EXTRACT_DINTLV0:.+]] = llvm.extractvalue %[[DINTLV0]][0] : !llvm.struct<(vector<256xi8>, vector<256xi8>)>
 // CHECK-NEXT:   %[[DINTLV1:.+]] = "hivm_regbaseintrins.intr.hivm.vdintlv"(%[[EXTRACT_DINTLV0]], %[[EXTRACT_DINTLV0]]) : (vector<256xi8>, vector<256xi8>) -> !llvm.struct<(vector<256xi8>, vector<256xi8>)>

@@ -211,6 +211,39 @@ struct RoundOpPattern : public OpConversionPattern<math::RoundOp> {
   }
 };
 
+static bool isSignedI8DestMode(hivm::UnsignedMode mode, bool hasUniAttr) {
+  if (!hasUniAttr)
+    return true;
+  return mode == hivm::UnsignedMode::SI2SI || mode == hivm::UnsignedMode::UI2SI;
+}
+
+/// Hardware has no s322s8 / s162s8. Direct s322u8 / s162u8 treats the
+/// destination as unsigned and drops negatives. For wrap (arith.trunci),
+/// keep the low 8 bits first so the unsigned narrow is in [0, 255] and
+/// the stored i8 bit pattern matches two's-complement wrap.
+static Operation *createSignedWrapTruncToI8(ConversionPatternRewriter &rewriter,
+                                            Location loc, Value src, Value mask,
+                                            VectorType outVecType, BoolAttr sat,
+                                            VCVT_PartTypeAttr part,
+                                            VCVT_PPTypeAttr pp,
+                                            hivm::UnsignedModeAttr s2uAttr) {
+  auto srcVecTy = cast<VectorType>(src.getType());
+  Value scalar = rewriter.create<arith::ConstantOp>(
+      loc, rewriter.getIntegerAttr(srcVecTy.getElementType(), 0xFF));
+  Value splat =
+      hivmave::getBroadcastOp(scalar, srcVecTy, rewriter, loc)->getResult(0);
+  auto andMaskType =
+      VectorType::get({srcVecTy.getNumElements()}, rewriter.getI1Type());
+  Value andMask = rewriter.create<hivmave::VFPgeOp>(
+      loc, andMaskType,
+      hivmave::PgePatternAttr::get(rewriter.getContext(),
+                                   hivmave::PgePattern::ALL));
+  Value masked =
+      rewriter.create<VFAndOp>(loc, srcVecTy, src, splat, andMask).getResult();
+  return rewriter.create<VFTruncIOp>(loc, outVecType, masked, mask, sat, part,
+                                     pp, s2uAttr);
+}
+
 template <typename OpToBeConverted>
 struct VFTypeConvertionPattern : public OpConversionPattern<OpToBeConverted> {
   using OpConversionPattern<OpToBeConverted>::OpConversionPattern;
@@ -360,27 +393,57 @@ struct VFTypeConvertionPattern : public OpConversionPattern<OpToBeConverted> {
       const bool isI64ToI8 =
           inElemType.isSignlessInteger(64) && outElemType.isSignlessInteger(8);
       if (isI32ToI8) {
-        if (sat) {
-          hivm::UnsignedModeAttr u2uAttr = hivm::UnsignedModeAttr::get(
-              op->getContext(), hivm::UnsignedMode::UI2UI);
-          hivm::UnsignedModeAttr s2uAttr = hivm::UnsignedModeAttr::get(
-              op->getContext(), hivm::UnsignedMode::SI2UI);
-          if (hvUniMode == hivm::UnsignedMode::SI2UI) {
-            newOp = rewriter.create<VFTruncIOp>(
-                loc, outVecType, in, adjustedMask, sat, nullptr, pp, s2uAttr);
-          } else if (hvUniMode == hivm::UnsignedMode::UI2UI) {
-            newOp = rewriter.create<VFTruncIOp>(
+        hivm::UnsignedModeAttr u2uAttr = hivm::UnsignedModeAttr::get(
+            op->getContext(), hivm::UnsignedMode::UI2UI);
+        hivm::UnsignedModeAttr s2uAttr = hivm::UnsignedModeAttr::get(
+            op->getContext(), hivm::UnsignedMode::SI2UI);
+        const bool saturate = sat.getValue();
+        const bool signedI8Dest =
+            isSignedI8DestMode(hvUniMode, unsignedAttr != nullptr);
+        if (!saturate && signedI8Dest) {
+          newOp =
+              createSignedWrapTruncToI8(rewriter, loc, in, adjustedMask,
+                                        outVecType, sat, nullptr, pp, s2uAttr);
+        } else if (saturate && signedI8Dest) {
+          auto f16VecType =
+              VectorType::get(inVecType.getShape(), rewriter.getF16Type());
+          Value maskF16 =
+              hivmave::findReuseableMaskOrCreateOne(op, f16VecType, rewriter);
+          if (hvUniMode == hivm::UnsignedMode::UI2SI) {
+            // No u322s8. VFUIntToFp is u8->f16 only; VFSIntToFp would treat
+            // bits as signed, so values >= 2^31 (e.g. 3e9) saturate to -128
+            // instead of 127. Saturate u32->u8, then u8->f16->s8.
+            auto u8Op = rewriter.create<VFTruncIOp>(
                 loc, outVecType, in, adjustedMask, sat, nullptr, pp, u2uAttr);
+            auto f16Op = rewriter.create<VFUIntToFpOp>(
+                loc, f16VecType, u8Op.getResult(), maskF16, nullptr, part);
+            newOp = rewriter.create<VFFpToSIntOp>(
+                loc, outVecType, f16Op.getResult(), maskF16, rnd, sat, part);
           } else {
-            newOp = rewriter.create<VFTruncIOp>(
-                loc, outVecType, in, adjustedMask, sat, nullptr, pp, nullptr);
+            // No s322s8: saturate SI2SI through f32/f16, which keep sign.
+            auto f32VecType =
+                VectorType::get(inVecType.getShape(), rewriter.getF32Type());
+            Value maskF32 =
+                hivmave::findReuseableMaskOrCreateOne(op, f32VecType, rewriter);
+            auto f32Op = rewriter.create<VFSIntToFpOp>(loc, f32VecType, in,
+                                                       maskF32, rnd, nullptr);
+            auto f16Op = rewriter.create<VFTruncFOp>(
+                loc, f16VecType, f32Op.getResult(), maskF32, rnd, sat, part);
+            newOp = rewriter.create<VFFpToSIntOp>(
+                loc, outVecType, f16Op.getResult(), maskF16, rnd, sat, part);
           }
+        } else if (hvUniMode == hivm::UnsignedMode::SI2UI) {
+          newOp = rewriter.create<VFTruncIOp>(loc, outVecType, in, adjustedMask,
+                                              sat, nullptr, pp, s2uAttr);
+        } else if (hvUniMode == hivm::UnsignedMode::UI2UI) {
+          newOp = rewriter.create<VFTruncIOp>(loc, outVecType, in, adjustedMask,
+                                              sat, nullptr, pp, u2uAttr);
         } else {
           newOp = rewriter.create<VFTruncIOp>(loc, outVecType, in, adjustedMask,
                                               sat, nullptr, pp, nullptr);
         }
       } else if (isI64ToI8 || isI64ToI16) {
-        if (sat) {
+        if (sat.getValue()) {
           hivm::UnsignedModeAttr u2uAttr = hivm::UnsignedModeAttr::get(
               op->getContext(), hivm::UnsignedMode::UI2UI);
           hivm::UnsignedModeAttr u2sAttr = hivm::UnsignedModeAttr::get(
@@ -486,16 +549,33 @@ struct VFTypeConvertionPattern : public OpConversionPattern<OpToBeConverted> {
               op, newOutVecType, rewriter);
           auto i32Op = rewriter.create<VFTruncIOp>(
               loc, newOutVecType, in, maskForI32, sat, part, nullptr, nullptr);
+          hivm::UnsignedModeAttr s2uAttr = hivm::UnsignedModeAttr::get(
+              op->getContext(), hivm::UnsignedMode::SI2UI);
+          const bool signedI8Dest =
+              isSignedI8DestMode(hvUniMode, unsignedAttr != nullptr);
           // i32 -> i8/i16
-          newOp =
-              outElemType.isSignlessInteger(8)
-                  ? rewriter.create<VFTruncIOp>(loc, outVecType,
-                                                i32Op.getResult(), adjustedMask,
-                                                sat, nullptr, pp, nullptr)
-                  : rewriter.create<VFTruncIOp>(loc, outVecType,
-                                                i32Op.getResult(), adjustedMask,
-                                                sat, part, nullptr, nullptr);
+          if (outElemType.isSignlessInteger(8) && signedI8Dest) {
+            newOp = createSignedWrapTruncToI8(rewriter, loc, i32Op.getResult(),
+                                              adjustedMask, outVecType, sat,
+                                              nullptr, pp, s2uAttr);
+          } else {
+            newOp = outElemType.isSignlessInteger(8)
+                        ? rewriter.create<VFTruncIOp>(
+                              loc, outVecType, i32Op.getResult(), adjustedMask,
+                              sat, nullptr, pp, nullptr)
+                        : rewriter.create<VFTruncIOp>(
+                              loc, outVecType, i32Op.getResult(), adjustedMask,
+                              sat, part, nullptr, nullptr);
+          }
         }
+      } else if (inElemType.isSignlessInteger(16) &&
+                 outElemType.isSignlessInteger(8) && !sat.getValue() &&
+                 isSignedI8DestMode(hvUniMode, unsignedAttr != nullptr)) {
+        hivm::UnsignedModeAttr s2uAttr = hivm::UnsignedModeAttr::get(
+            op->getContext(), hivm::UnsignedMode::SI2UI);
+        newOp =
+            createSignedWrapTruncToI8(rewriter, loc, in, adjustedMask,
+                                      outVecType, sat, part, nullptr, s2uAttr);
       } else
         newOp = rewriter.create<VFTruncIOp>(loc, outVecType, in, adjustedMask,
                                             sat, part, nullptr, uni);
@@ -629,8 +709,10 @@ struct ConstantOpToHivmBroadcastLowering
                                   tileType.getElementType());
         scalarValue = createMaskByPGE(pgeTy, rewriter, loc, allTrue);
         if (pgeTy != tileType)
-          scalarValue =
-            rewriter.create<UnrealizedConversionCastOp>(loc, tileType, scalarValue)->getResult(0);
+          scalarValue = rewriter
+                            .create<UnrealizedConversionCastOp>(loc, tileType,
+                                                                scalarValue)
+                            ->getResult(0);
         rewriter.replaceOp(constantOp, scalarValue);
         return success();
       } else
@@ -640,7 +722,8 @@ struct ConstantOpToHivmBroadcastLowering
     }
     Operation *brcOp = nullptr;
     // Check if the tile element type is FP8 (f8e4m3fn or f8e5m2)
-    if ((isa<Float8E4M3FNType>(tileElementType) || isa<Float8E5M2Type>(tileElementType)) &&
+    if ((isa<Float8E4M3FNType>(tileElementType) ||
+         isa<Float8E5M2Type>(tileElementType)) &&
         tileType.getRank() <= 1) {
       auto resType = constantOp.getResult().getType();
       VectorType resVecType = mlir::dyn_cast<VectorType>(resType);
@@ -1320,7 +1403,8 @@ struct ConstantOpToHivmVCIVCPLowering
             loc, maskType, rewriter.getIndexType(), trueShape);
 
       } else
-        llvm::report_fatal_error("TODO support irregular length for arith.constant dense values");
+        llvm::report_fatal_error(
+            "TODO support irregular length for arith.constant dense values");
 
     } else
       p = rewriter.create<hivmave::VFPgeOp>(loc, maskType,
@@ -1375,7 +1459,8 @@ struct ConstantOpToHivmVCIVCPLowering
           p_vci.createInstr(rewriter, constantOp.getLoc(), denseAttr.getType(),
                             tileElementType, mulValue, addValue);
     else
-      llvm::report_fatal_error("TODO implement arith.constant dense -> VCP lowering");
+      llvm::report_fatal_error(
+          "TODO implement arith.constant dense -> VCP lowering");
     if (defineOp == nullptr)
       return failure();
 
@@ -1514,8 +1599,12 @@ struct CmpOpPattern : public OpConversionPattern<ArithCmpOp> {
     auto flatTy = VectorType::get({flatLen}, resVecType.getElementType());
     auto flatSrcTy = VectorType::get({flatLen}, srcVecType.getElementType());
 
-    Value flatLhs = rewriter.create<UnrealizedConversionCastOp>(loc, flatSrcTy, lhs)->getResult(0);
-    Value flatRhs = rewriter.create<UnrealizedConversionCastOp>(loc, flatSrcTy, rhs)->getResult(0);
+    Value flatLhs =
+        rewriter.create<UnrealizedConversionCastOp>(loc, flatSrcTy, lhs)
+            ->getResult(0);
+    Value flatRhs =
+        rewriter.create<UnrealizedConversionCastOp>(loc, flatSrcTy, rhs)
+            ->getResult(0);
 
     Value mask = hivmave::findReuseableMaskOrCreateOne(op, flatTy, rewriter);
     Value flatResult;
@@ -1559,7 +1648,8 @@ struct CmpOpPattern : public OpConversionPattern<ArithCmpOp> {
                                                 flatRhs, mask);
     }
 
-    rewriter.replaceOpWithNewOp<UnrealizedConversionCastOp>(op, resType, flatResult);
+    rewriter.replaceOpWithNewOp<UnrealizedConversionCastOp>(op, resType,
+                                                            flatResult);
     return success();
   }
 
@@ -1668,11 +1758,15 @@ struct SelectOpPattern : public OpConversionPattern<arith::SelectOp> {
           mlir::cast<VectorType>(trueVal.getType()).getElementType());
 
       Value flatCond =
-          rewriter.create<UnrealizedConversionCastOp>(loc, flatCondTy, condition)->getResult(0);
+          rewriter
+              .create<UnrealizedConversionCastOp>(loc, flatCondTy, condition)
+              ->getResult(0);
       Value flatTrue =
-          rewriter.create<UnrealizedConversionCastOp>(loc, flatValTy, trueVal)->getResult(0);
+          rewriter.create<UnrealizedConversionCastOp>(loc, flatValTy, trueVal)
+              ->getResult(0);
       Value flatFalse =
-          rewriter.create<UnrealizedConversionCastOp>(loc, flatValTy, falseVal)->getResult(0);
+          rewriter.create<UnrealizedConversionCastOp>(loc, flatValTy, falseVal)
+              ->getResult(0);
 
       Value flatResult;
       // Check if the result type is FP8: f8e5m2 or f8e4m3fn
@@ -1690,7 +1784,8 @@ struct SelectOpPattern : public OpConversionPattern<arith::SelectOp> {
         flatResult = rewriter.create<hivmave::VFSelectOp>(
             loc, flatResTy, flatCond, flatTrue, flatFalse);
       }
-      rewriter.replaceOpWithNewOp<UnrealizedConversionCastOp>(op, resType, flatResult);
+      rewriter.replaceOpWithNewOp<UnrealizedConversionCastOp>(op, resType,
+                                                              flatResult);
       return success();
     }
 
@@ -1963,8 +2058,7 @@ struct FmaOpLowering : public OpConversionPattern<math::FmaOp> {
       return failure();
     }
     Type elementType = resVecType.getElementType();
-    if (!elementType.isF16() && !elementType.isBF16() &&
-        !elementType.isF32()) {
+    if (!elementType.isF16() && !elementType.isBF16() && !elementType.isF32()) {
       return rewriter.notifyMatchFailure(
           op, "AVE vmula supports only f16, bf16, and f32");
     }

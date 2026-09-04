@@ -385,4 +385,141 @@ func.func @nan_splat_f32() -> vector<64xf32> {
   %cst = arith.constant dense<0x7FC00000> : vector<64xf32>
   return %cst : vector<64xf32>
 }
+
 // -----
+
+// Signed i32->i8 wrap must keep the low 8 bits. Hardware has no s322s8;
+// s322u8 alone drops negatives, so mask 0xFF then unsigned-narrow.
+
+// CHECK-LABEL: @trunci_i32_to_i8_si2si_wrap
+// CHECK: %[[C255:.*]] = arith.constant 255 : i32
+// CHECK: %[[SPLAT:.*]] = ave.hir.broadcast %[[C255]], %{{.*}} : i32, vector<64xi1> -> vector<64xi32>
+// CHECK: %[[AND:.*]] = ave.hir.vand %{{.*}}, %[[SPLAT]], %{{.*}} : vector<64xi32>, vector<64xi1>
+// CHECK: ave.hir.vtrunci %[[AND]], false, %{{.*}} {pp = #ave.vcvt_pp_type<pp0>, uni = #hivm.unsigned_mode<si2ui>} : vector<64xi32>, vector<64xi8>, vector<64xi1>
+func.func @trunci_i32_to_i8_si2si_wrap(%arg0: memref<64xi32, #hivm.address_space<ub>>, %arg1: memref<64xi8, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
+  %c0 = arith.constant 0 : index
+  %mask = ave.hir.pge <ALL> : vector<64xi1>
+  %0 = ave.hir.vload <NORM> %arg0[%c0] : memref<64xi32, #hivm.address_space<ub>> into vector<64xi32>
+  %1 = arith.trunci %0 {enable_saturate = false, unsigned_mode = #hfusion.unsigned_mode<si2si>, round_mode = #hfusion.round_mode<truncwithoverflow>} : vector<64xi32> to vector<64xi8>
+  ave.hir.masked_store <NORM_B8> %arg1[%c0], %mask, %1 : memref<64xi8, #hivm.address_space<ub>>, vector<64xi1>, vector<64xi8>
+  return
+}
+
+// -----
+
+// CHECK-LABEL: @trunci_i16_to_i8_si2si_wrap
+// CHECK: %[[C255:.*]] = arith.constant 255 : i16
+// CHECK: %[[SPLAT:.*]] = ave.hir.broadcast %[[C255]], %{{.*}} : i16, vector<128xi1> -> vector<128xi16>
+// CHECK: %[[AND:.*]] = ave.hir.vand %{{.*}}, %[[SPLAT]], %{{.*}} : vector<128xi16>, vector<128xi1>
+// CHECK: ave.hir.vtrunci %[[AND]], false, %{{.*}} {part = #ave.vcvt_part_type<part_even>, uni = #hivm.unsigned_mode<si2ui>} : vector<128xi16>, vector<128xi8>, vector<128xi1>
+func.func @trunci_i16_to_i8_si2si_wrap(%arg0: memref<128xi16, #hivm.address_space<ub>>, %arg1: memref<128xi8, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
+  %c0 = arith.constant 0 : index
+  %mask = ave.hir.pge <ALL> : vector<128xi1>
+  %0 = ave.hir.vload <NORM> %arg0[%c0] : memref<128xi16, #hivm.address_space<ub>> into vector<128xi16>
+  %1 = arith.trunci %0 {enable_saturate = false, unsigned_mode = #hfusion.unsigned_mode<si2si>, round_mode = #hfusion.round_mode<truncwithoverflow>} : vector<128xi16> to vector<128xi8>
+  ave.hir.masked_store <NORM_B8> %arg1[%c0], %mask, %1 : memref<128xi8, #hivm.address_space<ub>>, vector<128xi1>, vector<128xi8>
+  return
+}
+
+// -----
+
+// Saturating SI2SI i32->i8 keeps sign via sitofp. 3e9 as signed i32 is
+// negative and must saturate to -128, not wrap.
+
+// CHECK-LABEL: @trunci_i32_to_i8_si2si_sat
+// CHECK: %[[F32:.*]] = ave.hir.vsitofp %{{.*}}, %{{.*}} {rnd = #hivm.round_mode<round>} : vector<64xi32>, vector<64xi1>, vector<64xf32>
+// CHECK: %[[F16:.*]] = ave.hir.vtruncf %[[F32]], <round>, true, <part_even>, %{{.*}} : vector<64xf32>, vector<64xf16>, vector<64xi1>
+// CHECK: ave.hir.vfptosi %[[F16]], <round>, %{{.*}} {part = #ave.vcvt_part_type<part_even>, sat = true} : vector<64xf16>, vector<64xi1>, vector<64xi8>
+func.func @trunci_i32_to_i8_si2si_sat(%arg0: memref<64xi32, #hivm.address_space<ub>>, %arg1: memref<64xi8, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
+  %c0 = arith.constant 0 : index
+  %mask = ave.hir.pge <ALL> : vector<64xi1>
+  %0 = ave.hir.vload <NORM> %arg0[%c0] : memref<64xi32, #hivm.address_space<ub>> into vector<64xi32>
+  %1 = arith.trunci %0 {enable_saturate = true, unsigned_mode = #hfusion.unsigned_mode<si2si>, round_mode = #hfusion.round_mode<round>} : vector<64xi32> to vector<64xi8>
+  ave.hir.masked_store <NORM_B8> %arg1[%c0], %mask, %1 : memref<64xi8, #hivm.address_space<ub>>, vector<64xi1>, vector<64xi8>
+  return
+}
+
+// -----
+
+// Saturating UI2SI i32->i8 must treat the source as unsigned. VFSIntToFp
+// would turn 3e9 into a negative and saturate to -128; expected is 127.
+
+// CHECK-LABEL: @trunci_i32_to_i8_ui2si_sat
+// CHECK: %[[U8:.*]] = ave.hir.vtrunci %{{.*}}, true, %{{.*}} {pp = #ave.vcvt_pp_type<pp0>, uni = #hivm.unsigned_mode<ui2ui>} : vector<64xi32>, vector<64xi8>, vector<64xi1>
+// CHECK: %[[F16:.*]] = ave.hir.vuitofp %[[U8]], <part_even>, %{{.*}} : vector<64xi8>, vector<64xi1>, vector<64xf16>
+// CHECK: ave.hir.vfptosi %[[F16]], <round>, %{{.*}} {part = #ave.vcvt_part_type<part_even>, sat = true} : vector<64xf16>, vector<64xi1>, vector<64xi8>
+// CHECK-NOT: ave.hir.vsitofp
+func.func @trunci_i32_to_i8_ui2si_sat(%arg0: memref<64xi32, #hivm.address_space<ub>>, %arg1: memref<64xi8, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
+  %c0 = arith.constant 0 : index
+  %mask = ave.hir.pge <ALL> : vector<64xi1>
+  %0 = ave.hir.vload <NORM> %arg0[%c0] : memref<64xi32, #hivm.address_space<ub>> into vector<64xi32>
+  %1 = arith.trunci %0 {enable_saturate = true, unsigned_mode = #hfusion.unsigned_mode<ui2si>, round_mode = #hfusion.round_mode<round>} : vector<64xi32> to vector<64xi8>
+  ave.hir.masked_store <NORM_B8> %arg1[%c0], %mask, %1 : memref<64xi8, #hivm.address_space<ub>>, vector<64xi1>, vector<64xi8>
+  return
+}
+
+// -----
+
+// Saturating i16->i8 keeps the source unsigned_mode on a direct vtrunci.
+
+// CHECK-LABEL: @trunci_i16_to_i8_si2si_sat
+// CHECK: ave.hir.vtrunci %{{.*}}, true, %{{.*}} {part = #ave.vcvt_part_type<part_even>, uni = #hivm.unsigned_mode<si2si>} : vector<128xi16>, vector<128xi8>, vector<128xi1>
+func.func @trunci_i16_to_i8_si2si_sat(%arg0: memref<128xi16, #hivm.address_space<ub>>, %arg1: memref<128xi8, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
+  %c0 = arith.constant 0 : index
+  %mask = ave.hir.pge <ALL> : vector<128xi1>
+  %0 = ave.hir.vload <NORM> %arg0[%c0] : memref<128xi16, #hivm.address_space<ub>> into vector<128xi16>
+  %1 = arith.trunci %0 {enable_saturate = true, unsigned_mode = #hfusion.unsigned_mode<si2si>, round_mode = #hfusion.round_mode<round>} : vector<128xi16> to vector<128xi8>
+  ave.hir.masked_store <NORM_B8> %arg1[%c0], %mask, %1 : memref<128xi8, #hivm.address_space<ub>>, vector<128xi1>, vector<128xi8>
+  return
+}
+
+// -----
+
+// CHECK-LABEL: @trunci_i16_to_i8_ui2si_sat
+// CHECK: ave.hir.vtrunci %{{.*}}, true, %{{.*}} {part = #ave.vcvt_part_type<part_even>, uni = #hivm.unsigned_mode<ui2si>} : vector<128xi16>, vector<128xi8>, vector<128xi1>
+func.func @trunci_i16_to_i8_ui2si_sat(%arg0: memref<128xi16, #hivm.address_space<ub>>, %arg1: memref<128xi8, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
+  %c0 = arith.constant 0 : index
+  %mask = ave.hir.pge <ALL> : vector<128xi1>
+  %0 = ave.hir.vload <NORM> %arg0[%c0] : memref<128xi16, #hivm.address_space<ub>> into vector<128xi16>
+  %1 = arith.trunci %0 {enable_saturate = true, unsigned_mode = #hfusion.unsigned_mode<ui2si>, round_mode = #hfusion.round_mode<round>} : vector<128xi16> to vector<128xi8>
+  ave.hir.masked_store <NORM_B8> %arg1[%c0], %mask, %1 : memref<128xi8, #hivm.address_space<ub>>, vector<128xi1>, vector<128xi8>
+  return
+}
+
+// -----
+
+// Saturating i64->i8 has no direct vcvt. SI2SI goes s64->u32->u8->f16->s8.
+
+// CHECK-LABEL: @trunci_i64_to_i8_si2si_sat
+// CHECK: %[[U32:.*]] = ave.hir.vtrunci %{{.*}}, true, %{{.*}} {part = #ave.vcvt_part_type<part_even>, uni = #hivm.unsigned_mode<si2ui>} : vector<32xi64>, vector<32xi32>, vector<32xi1>
+// CHECK: %[[U8:.*]] = ave.hir.vtrunci %[[U32]], true, %{{.*}} {pp = #ave.vcvt_pp_type<pp0>, uni = #hivm.unsigned_mode<ui2ui>} : vector<32xi32>, vector<32xi8>, vector<32xi1>
+// CHECK: %[[F16:.*]] = ave.hir.vuitofp %[[U8]], <part_even>, %{{.*}} : vector<32xi8>, vector<32xi1>, vector<32xf16>
+// CHECK: ave.hir.vfptosi %[[F16]], <round>, %{{.*}} {part = #ave.vcvt_part_type<part_even>, sat = true} : vector<32xf16>, vector<32xi1>, vector<32xi8>
+func.func @trunci_i64_to_i8_si2si_sat(%arg0: memref<32xi64, #hivm.address_space<ub>>, %arg1: memref<32xi8, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
+  %c0 = arith.constant 0 : index
+  %mask = ave.hir.pge <ALL> : vector<32xi1>
+  %0 = ave.hir.vload <NORM> %arg0[%c0] : memref<32xi64, #hivm.address_space<ub>> into vector<32xi64>
+  %1 = arith.trunci %0 {enable_saturate = true, unsigned_mode = #hfusion.unsigned_mode<si2si>, round_mode = #hfusion.round_mode<round>} : vector<32xi64> to vector<32xi8>
+  ave.hir.masked_store <NORM_B8> %arg1[%c0], %mask, %1 : memref<32xi8, #hivm.address_space<ub>>, vector<32xi1>, vector<32xi8>
+  return
+}
+
+// -----
+
+// Saturating UI2SI i64->i8 uses u64->u32->u8->f16->s8 so values >= 2^63
+// clamp to 127, not -128.
+
+// CHECK-LABEL: @trunci_i64_to_i8_ui2si_sat
+// CHECK: %[[U32:.*]] = ave.hir.vtrunci %{{.*}}, true, %{{.*}} {part = #ave.vcvt_part_type<part_even>, uni = #hivm.unsigned_mode<ui2ui>} : vector<32xi64>, vector<32xi32>, vector<32xi1>
+// CHECK: %[[U8:.*]] = ave.hir.vtrunci %[[U32]], true, %{{.*}} {pp = #ave.vcvt_pp_type<pp0>, uni = #hivm.unsigned_mode<ui2ui>} : vector<32xi32>, vector<32xi8>, vector<32xi1>
+// CHECK: %[[F16:.*]] = ave.hir.vuitofp %[[U8]], <part_even>, %{{.*}} : vector<32xi8>, vector<32xi1>, vector<32xf16>
+// CHECK: ave.hir.vfptosi %[[F16]], <round>, %{{.*}} {part = #ave.vcvt_part_type<part_even>, sat = true} : vector<32xf16>, vector<32xi1>, vector<32xi8>
+// CHECK-NOT: ave.hir.vsitofp
+func.func @trunci_i64_to_i8_ui2si_sat(%arg0: memref<32xi64, #hivm.address_space<ub>>, %arg1: memref<32xi8, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
+  %c0 = arith.constant 0 : index
+  %mask = ave.hir.pge <ALL> : vector<32xi1>
+  %0 = ave.hir.vload <NORM> %arg0[%c0] : memref<32xi64, #hivm.address_space<ub>> into vector<32xi64>
+  %1 = arith.trunci %0 {enable_saturate = true, unsigned_mode = #hfusion.unsigned_mode<ui2si>, round_mode = #hfusion.round_mode<round>} : vector<32xi64> to vector<32xi8>
+  ave.hir.masked_store <NORM_B8> %arg1[%c0], %mask, %1 : memref<32xi8, #hivm.address_space<ub>>, vector<32xi1>, vector<32xi8>
+  return
+}
