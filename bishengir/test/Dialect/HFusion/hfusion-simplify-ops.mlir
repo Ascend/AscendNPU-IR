@@ -649,3 +649,38 @@ func.func @no_hoist_scale_bias_matmul(%a: tensor<4x8xf32>, %b: tensor<8x4xf32>, 
   %matmul2 = linalg.matmul ins(%scaled, %c : tensor<4x4xf32>, tensor<4x4xf32>) outs(%bias : tensor<4x4xf32>) -> tensor<4x4xf32>
   return %matmul2 : tensor<4x4xf32>
 }
+
+// -----
+// Test: hoist mul->sub pattern through matmul chain (real-world case)
+// Pattern: matmul1 -> mul(result, -1) -> matmul2 -> sub(0, result) -> matmul3
+// After hoisting: matmul1 -> matmul2 -> matmul3 -> mul(result, -1) -> mul(result, -1)
+// CHECK-LABEL: func.func @hoist_mul_sub_matmul_chain
+// CHECK-SAME: (%[[A:.*]]: tensor<128x17xbf16>, %[[B:.*]]: tensor<17x19xbf16>, %[[C:.*]]: tensor<19x23xf32>, %[[D:.*]]: tensor<23x128xf32>)
+// CHECK-DAG: %[[NEG_ONE:.*]] = arith.constant -1.000000e+00 : f32
+// CHECK-DAG: %[[ZERO:.*]] = arith.constant 0.000000e+00 : f32
+// CHECK: %[[MATMUL1:.*]] = linalg.matmul {{.*}} ins(%[[A]], %[[B]]
+// CHECK-NOT: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
+// CHECK: %[[MATMUL2:.*]] = linalg.matmul {{.*}} ins(%[[MATMUL1]], %[[C]]
+// CHECK-NOT: linalg.elemwise_binary {fun = #linalg.binary_fn<sub>}
+// CHECK: %[[MATMUL3:.*]] = linalg.matmul {{.*}} ins(%[[MATMUL2]], %[[D]]
+// CHECK: %[[MUL1:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[MATMUL3]], %[[NEG_ONE]]
+// CHECK: %[[MUL2:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[MUL1]], %[[NEG_ONE]]
+// CHECK: return %[[MUL2]]
+func.func @hoist_mul_sub_matmul_chain(%a: tensor<128x17xbf16>, %b: tensor<17x19xbf16>, %c: tensor<19x23xf32>, %d: tensor<23x128xf32>) -> tensor<128x128xf32> {
+  %cst = arith.constant -1.000000e+00 : f32
+  %cst_0 = arith.constant 0.000000e+00 : f32
+  %empty1 = tensor.empty() : tensor<128x19xf32>
+  %init1 = linalg.fill ins(%cst_0 : f32) outs(%empty1 : tensor<128x19xf32>) -> tensor<128x19xf32>
+  %scale = linalg.fill ins(%cst : f32) outs(%empty1 : tensor<128x19xf32>) -> tensor<128x19xf32>
+  %empty2 = tensor.empty() : tensor<128x23xf32>
+  %init2 = linalg.fill ins(%cst_0 : f32) outs(%empty2 : tensor<128x23xf32>) -> tensor<128x23xf32>
+  %empty3 = tensor.empty() : tensor<128x128xf32>
+  %init3 = linalg.fill ins(%cst_0 : f32) outs(%empty3 : tensor<128x128xf32>) -> tensor<128x128xf32>
+
+  %matmul1 = linalg.matmul {input_precision = "ieee"} ins(%a, %b : tensor<128x17xbf16>, tensor<17x19xbf16>) outs(%init1 : tensor<128x19xf32>) -> tensor<128x19xf32>
+  %mul = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%matmul1, %scale : tensor<128x19xf32>, tensor<128x19xf32>) outs(%empty1 : tensor<128x19xf32>) -> tensor<128x19xf32>
+  %matmul2 = linalg.matmul {input_precision = "ieee"} ins(%mul, %c : tensor<128x19xf32>, tensor<19x23xf32>) outs(%init2 : tensor<128x23xf32>) -> tensor<128x23xf32>
+  %sub = linalg.elemwise_binary {fun = #linalg.binary_fn<sub>} ins(%init2, %matmul2 : tensor<128x23xf32>, tensor<128x23xf32>) outs(%empty2 : tensor<128x23xf32>) -> tensor<128x23xf32>
+  %matmul3 = linalg.matmul {input_precision = "ieee"} ins(%sub, %d : tensor<128x23xf32>, tensor<23x128xf32>) outs(%init3 : tensor<128x128xf32>) -> tensor<128x128xf32>
+  return %matmul3 : tensor<128x128xf32>
+}

@@ -1,10 +1,14 @@
 // RUN: bishengir-opt -cv-pipelining="pipeline-mode=skew" -allow-unregistered-dialect -verify-diagnostics %s | FileCheck %s
+// RUN: bishengir-opt -cv-pipelining="pipeline-mode=unroll set-depth-in-unroll-mode=2" -allow-unregistered-dialect -verify-diagnostics %s | FileCheck %s
 
 // A non-DPS scf.if tensor result cannot currently be expanded for preload.
 // Rejecting that work item must restore the checkpoint instead of leaving
-// both the checkpoint and the partially transformed loop executable.
+// both the checkpoint and the partially transformed loop executable. In
+// particular, expandWorkspace runs before output expansion and its enlarged
+// top-level workspace must be removed in both skew and unroll modes.
 
 // CHECK-LABEL: func.func @preload_revert_unsupported_output
+// CHECK-NOT: memref<2x16x16xf32>
 // CHECK-NOT: scope.scope
 // CHECK: scf.for
 // CHECK-NOT: scope.scope
@@ -18,6 +22,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
       %a: tensor<16x16xf16>,
       %b: tensor<16x16xf16>,
       %vector_in: tensor<16x16xf32>,
+      %workspace: memref<?xi8>,
       %cond: i1) attributes {
         hacc.entry,
         hacc.function_kind = #hacc.function_kind<DEVICE>,
@@ -41,9 +46,9 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 
       %dot_init = tensor.empty() : tensor<16x16xf32>
       %dot = hivm.hir.mmadL1 ins(%a, %b, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%dot_init : tensor<16x16xf32>) -> tensor<16x16xf32>
-      %cube_out = memref.alloc() : memref<16x16xf32, #hivm.address_space<ub>>
-      %cube_out_cast = memref.memory_space_cast %cube_out : memref<16x16xf32, #hivm.address_space<ub>> to memref<16x16xf32>
-      %cube_out_tensor = bufferization.to_tensor %cube_out_cast restrict writable : memref<16x16xf32>
+      %cube_out = memref_ext.alloc_workspace() from %workspace : from memref<?xi8> to memref<16x16xf32>
+      annotation.mark %cube_out {hivm.multi_buffer = 2 : i32} : memref<16x16xf32>
+      %cube_out_tensor = bufferization.to_tensor %cube_out restrict writable : memref<16x16xf32>
       %fix = hivm.hir.fixpipe ins(%dot : tensor<16x16xf32>) outs(%cube_out_tensor : tensor<16x16xf32>) -> tensor<16x16xf32>
 
       %sum_init = tensor.empty() : tensor<16x16xf32>

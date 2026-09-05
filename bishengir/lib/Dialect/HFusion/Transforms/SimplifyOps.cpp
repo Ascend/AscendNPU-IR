@@ -29,6 +29,8 @@
 #include "mlir/IR/Matchers.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
+#define DEBUG_TYPE "hfusion-simplify-ops"
+
 namespace mlir {
 #define GEN_PASS_DEF_SIMPLIFYOPS
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h.inc"
@@ -958,22 +960,51 @@ static bool isScalarConstant(Value v) {
   return false;
 }
 
+/// Extract scalar constant value from a Value by looking through fill ops.
+static std::optional<Attribute> extractScalarConstAttr(Value v) {
+  auto type = getElementTypeOrSelf(v);
+  if (isa<FloatType>(type)) {
+    APFloat val(cast<FloatType>(type).getFloatSemantics());
+    if (matchPattern(v, m_ConstantFloat(&val)))
+      return FloatAttr::get(type, val);
+  } else if (type.isIntOrIndex()) {
+    APInt val;
+    if (matchPattern(v, m_ConstantInt(&val)))
+      return IntegerAttr::get(type, val);
+  }
+
+  auto defineOp = v.getDefiningOp();
+  if (!defineOp)
+    return std::nullopt;
+
+  auto resIdx = cast<OpResult>(v).getResultNumber();
+  if (auto fillOp = dyn_cast<linalg::FillOp>(defineOp))
+    return extractScalarConstAttr(fillOp.getOperand(resIdx));
+  if (auto castOp = dyn_cast<hfusion::CastOp>(defineOp))
+    return extractScalarConstAttr(castOp.getOperand(resIdx));
+
+  return std::nullopt;
+}
+
 /// If \p elemOp is an elemwise_binary<mul>(matmul_result, constant) or
 /// elemwise_binary<sub>(0, matmul_result), return the matmul result and the
-/// scalar constant operand. For sub(0, x), the constant is conceptually -1.
-/// Returns {nullptr, nullptr} on failure.
-static std::pair<Value, Value>
+/// scalar constant attribute. For sub(0, x), returns nullopt to signal negate.
+/// Returns {nullptr, nullopt} on failure.
+static std::pair<Value, std::optional<Attribute>>
 getScaledOperand(linalg::ElemwiseBinaryOp elemOp) {
   if (elemOp.getFun() == linalg::BinaryFn::mul) {
     for (int i = 0; i < 2; ++i) {
-      if (isScalarConstant(elemOp.getInputs()[i]))
-        return {elemOp.getInputs()[1 - i], elemOp.getInputs()[i]};
+      if (isScalarConstant(elemOp.getInputs()[i])) {
+        auto constAttr = extractScalarConstAttr(elemOp.getInputs()[i]);
+        if (constAttr.has_value())
+          return {elemOp.getInputs()[1 - i], constAttr};
+      }
     }
   } else if (elemOp.getFun() == linalg::BinaryFn::sub) {
     if (isConstZero(elemOp.getInputs()[0]))
-      return {elemOp.getInputs()[1], nullptr}; // sentinel: negate
+      return {elemOp.getInputs()[1], std::nullopt}; // sentinel: negate
   }
-  return {nullptr, nullptr};
+  return {nullptr, std::nullopt};
 }
 
 /// Hoist scalar multiplication through a matmul consumer to its output.
@@ -996,7 +1027,7 @@ struct HoistScalarMulFromMatmulPattern
 
   LogicalResult matchAndRewrite(linalg::ElemwiseBinaryOp elemOp,
                                 PatternRewriter &rewriter) const override {
-    auto [producerMatmulResult, scalarConst] = getScaledOperand(elemOp);
+    auto [producerMatmulResult, scalarConstAttr] = getScaledOperand(elemOp);
     if (!producerMatmulResult)
       return failure();
 
@@ -1053,16 +1084,21 @@ struct HoistScalarMulFromMatmulPattern
     auto consumerResultType = cast<RankedTensorType>(consumerResult.getType());
     Type elemType = consumerResultType.getElementType();
 
-    // Recreate the scalar constant if needed (for sub(0, x) case)
-    Value scalarConstToUse = scalarConst;
-    if (!scalarConstToUse) {
+    // Always create a fresh arith::ConstantOp with the scalar constant value
+    Value scalarConstToUse;
+    if (!scalarConstAttr.has_value()) {
+      // For sub(0, x) case, create -1 constant
       if (isa<FloatType>(elemType)) {
         scalarConstToUse = rewriter.create<arith::ConstantOp>(
-            loc, elemType, rewriter.getFloatAttr(elemType, -1.0));
+            loc, rewriter.getFloatAttr(elemType, -1.0));
       } else {
         scalarConstToUse = rewriter.create<arith::ConstantOp>(
-            loc, elemType, rewriter.getIntegerAttr(elemType, -1));
+            loc, rewriter.getIntegerAttr(elemType, -1));
       }
+    } else {
+      // Create new constant from the extracted attribute (cast to TypedAttr)
+      scalarConstToUse = rewriter.create<arith::ConstantOp>(
+          loc, cast<TypedAttr>(scalarConstAttr.value()));
     }
 
     Value emptyTensor = rewriter.create<tensor::EmptyOp>(

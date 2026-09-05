@@ -1,5 +1,5 @@
 add_bishengir_dialect(HACCBase hacc)
-add_bishengir_doc(HACCBase HACCDialect Dialects/ -gen-dialect-doc)
+add_bishengir_doc(HACCAttrs HACCDialect Dialects/ -gen-dialect-doc -dialect=hacc)
 
 # HACC IR depends on TargetSpec
 add_dependencies(BiShengIRHACCBaseIncGen BiShengIRNPUTargetSpecIncGen)
