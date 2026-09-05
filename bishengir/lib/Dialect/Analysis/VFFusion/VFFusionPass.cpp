@@ -16,6 +16,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/Analysis/VFFusion/Passes.h"
+#include "bishengir/Dialect/Analysis/VFFusion/SkipSpecialPatterns.h"
 #include "bishengir/Dialect/Analysis/VFFusion/Transforms/Transforms.h"
 #include "bishengir/Dialect/Analysis/VFFusion/Utils.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
@@ -70,12 +71,11 @@ LogicalResult VFFusionPass::preProcess() {
 }
 
 VFFusionKindOption VFFusionPass::getFusionOption() const {
-  return VFFusionKindOption(enableOutlineCF, enableOutlineMemref,
-                            enableOutlineArith, enableOutlineCube,
-                            ubBudgetBytes_, ubAlignBytes_, enableRA, enableAR,
-                            maxVFParams, enableVFStackLimit, enableCastOpt,
-                            enableNewTreeReducePolicy,
-                            enablePredicateSinkAcrossSync, isMixCV_);
+  return VFFusionKindOption(
+      enableOutlineCF, enableOutlineMemref, enableOutlineArith,
+      enableOutlineCube, ubBudgetBytes_, ubAlignBytes_, enableRA, enableAR,
+      maxVFParams, enableVFStackLimit, enableCastOpt, enableNewTreeReducePolicy,
+      enablePredicateSinkAcrossSync, isMixCV_);
 }
 
 template <typename FusionKind>
@@ -118,6 +118,12 @@ static bool isCVCases(ModuleOp moduleOp) {
   });
 
   return result.wasInterrupted();
+}
+
+/// Detect CV-specific patterns that require skipping VFFusion.
+static bool hasCVSpecialPatternsSkip(ModuleOp moduleOp) {
+  return hasCastReduceCopyPattern(moduleOp) ||
+         hasPtr11CompareSyncForPattern(moduleOp);
 }
 
 void VFFusionPass::runOnOperation() {
@@ -182,6 +188,10 @@ void VFFusionPass::runOnOperation() {
                                                   : WalkResult::advance();
             })
             .wasInterrupted()) {
+      freezeRegisterTreeSelection();
+      return;
+    }
+    if (hasCVSpecialPatternsSkip(moduleOp)) {
       freezeRegisterTreeSelection();
       return;
     }
