@@ -1334,6 +1334,16 @@ void AutoVectorizeV2::runOnOperation() {
     }
 
     LogicalResult result = runAttempt(func, retryCtx, builder, rewriter);
+    // FIXME: Simplification during fuse removes the extract_slice, which
+    // prevents the tile_and_fuse path that relies on multiple-consumer fusion
+    // dependencies, causing errors. Remove this workaround once the root cause
+    // is properly fixed.
+    if (failed(result) && retryCtx.enableMultipleConsumerFusion) {
+      func.emitWarning() << "AutoVectorizeV2 failed; "
+                            "retrying with enableMultipleConsumerFusion=false";
+      retryCtx.enableMultipleConsumerFusion = false;
+      result = runAttempt(func, retryCtx, builder, rewriter);
+    }
     if (failed(result)) {
       func.emitWarning() << "AutoVectorizeV2 failed;";
       signalPassFailure();
