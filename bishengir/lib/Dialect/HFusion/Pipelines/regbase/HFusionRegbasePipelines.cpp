@@ -18,11 +18,11 @@
 #include "bishengir/Conversion/ArithToAffine/ArithToAffine.h"
 #include "bishengir/Conversion/ArithToHFusion/ArithToHFusion.h"
 #include "bishengir/Conversion/GPUToHFusion/GPUToHFusion.h"
+#include "bishengir/Conversion/HFusionToVector/HFusionToVector.h"
 #include "bishengir/Conversion/LinalgToHFusion/LinalgToHFusion.h"
 #include "bishengir/Conversion/MathToHFusion/MathToHFusion.h"
 #include "bishengir/Conversion/Passes.h"
 #include "bishengir/Conversion/TensorToHFusion/TensorToHFusion.h"
-#include "bishengir/Conversion/HFusionToVector/HFusionToVector.h"
 #include "bishengir/Dialect/Analysis/VFFusion/Passes.h"
 #include "bishengir/Dialect/HACC/IR/HACC.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
@@ -294,8 +294,7 @@ hfusionTilingOptimizationPipeline(OpPassManager &pm,
   pm.addPass(createConstantizeTilingDataPass());
   canonicalizationPipeline(pm, options, AfterAutoSchedule);
   PackTilingDataOptions packOptions;
-  packOptions.emitGetTilingStructSizeFunction =
-      !options.enableMultiKernel;
+  packOptions.emitGetTilingStructSizeFunction = !options.enableMultiKernel;
   packOptions.packTilingKey = false;
   pm.addPass(createPackTilingDataPass(packOptions));
   // after tiling is all constantized and packed, try to simplify loops
@@ -429,9 +428,11 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
   pm.nest<func::FuncOp>().addPass(hivm::createFuseTransposeIntoLoadPass());
   PreVectorizationFusionOptions preVecOptions;
   preVecOptions.enableTritonCompile = hfusionOptions.enableTritonKernelCompile;
-  preVecOptions.maxFusedElementwiseOps = hfusionOptions.hfusionMaxFusedElementwiseOps;
+  preVecOptions.maxFusedElementwiseOps =
+      hfusionOptions.hfusionMaxFusedElementwiseOps;
   preVecOptions.enableVFStackLimit = hfusionOptions.enableVFStackLimit;
-  pm.nest<func::FuncOp>().addPass(createPreVectorizationFusionPass(preVecOptions));
+  pm.nest<func::FuncOp>().addPass(
+      createPreVectorizationFusionPass(preVecOptions));
   pm.nest<func::FuncOp>().addPass(createPrepareI1Nx1ForVectorizationPass());
   canonicalizationPipeline(pm, hfusionOptions);
   if (hfusionOptions.enableAutoVectorizeV2) {
@@ -440,9 +441,8 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
     vecOptions.enableMultipleConsumerFusion =
         hfusionOptions.hfusionEnableMultipleConsumerFusion;
     if (hfusionOptions.hfusionMaxFusedOpsInAutoVectorizeV2 >= 0)
-      vecOptions.maxFusedOps =
-          static_cast<unsigned>(
-              hfusionOptions.hfusionMaxFusedOpsInAutoVectorizeV2);
+      vecOptions.maxFusedOps = static_cast<unsigned>(
+          hfusionOptions.hfusionMaxFusedOpsInAutoVectorizeV2);
     vecOptions.treeReduce = hfusionOptions.enableTreeReduce &&
                             !hfusionOptions.enableTreeReduceV2 &&
                             treeReduceFlags.enableRA;
