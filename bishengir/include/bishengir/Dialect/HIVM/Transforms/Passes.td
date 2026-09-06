@@ -153,6 +153,15 @@ def MarkMultiBuffer : Pass<"hivm-mark-multi-buffer", "func::FuncOp"> {
            "disable-multi-buffer-on-ub", "bool",
            /*default=*/"false",
            "Skip multi-buffer mark for UB (Vector Load/Store) buffers">,
+    Option<"skipOncePerSubloopGMAccess",
+           "skip-multi-buffer-for-once-per-subloop-access", "bool",
+           /*default=*/"true",
+           "Skip multi-buffer marking for UB buffers whose GM accesses all "
+           "sit directly in the body of their nearest enclosing "
+           "autoblockify.subloop (at most once per subloop iteration). Their "
+           "doubled UB footprint otherwise can push the no-reuse PlanMemory "
+           "layout over UB and force pipe-stalling dma buffer reuse for the "
+           "streaming buffers of the nested loops">,
     Option<"enablePreload", "enable-preload", "bool",
            /*default=*/"false", "Mark multi buffer for preload.">,
   ];
