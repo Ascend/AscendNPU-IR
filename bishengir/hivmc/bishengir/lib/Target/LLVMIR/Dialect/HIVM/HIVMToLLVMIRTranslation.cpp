@@ -26,26 +26,25 @@ namespace {
 static constexpr llvm::StringRef kNoAliasScope = "llvm.noalias_scopes";
 /// Create metadata node {mdName, value} and attach it to func's !annotation.
 void addAnnotationMD(llvm::Function *func, StringRef mdName, uint32_t value) {
-llvm::LLVMContext &ctx = func->getContext();
-llvm::Metadata *mdVals[] = {
-    llvm::MDString::get(ctx, mdName),
-    llvm::ConstantAsMetadata::get(
-        llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), value))};
-func->addMetadata(llvm::LLVMContext::MD_annotation,
-                  *llvm::MDNode::get(ctx, mdVals));
+  llvm::LLVMContext &ctx = func->getContext();
+  llvm::Metadata *mdVals[] = {
+      llvm::MDString::get(ctx, mdName),
+      llvm::ConstantAsMetadata::get(
+          llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), value))};
+  func->addMetadata(llvm::LLVMContext::MD_annotation,
+                    *llvm::MDNode::get(ctx, mdVals));
 }
 
 /// Append {ptr @func, mdName, value} to the module-level !hivm.annotations.
 void addHivmAnnotation(llvm::Function *func, StringRef mdName, uint32_t value) {
-llvm::Module *mod = func->getParent();
-llvm::LLVMContext &ctx = mod->getContext();
-llvm::Metadata *md[] = {
-    llvm::ConstantAsMetadata::get(func),
-    llvm::MDString::get(ctx, mdName),
-    llvm::ConstantAsMetadata::get(
-        llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), value))};
-mod->getOrInsertNamedMetadata("hivm.annotations")
-    ->addOperand(llvm::MDNode::get(ctx, md));
+  llvm::Module *mod = func->getParent();
+  llvm::LLVMContext &ctx = mod->getContext();
+  llvm::Metadata *md[] = {llvm::ConstantAsMetadata::get(func),
+                          llvm::MDString::get(ctx, mdName),
+                          llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(
+                              llvm::Type::getInt32Ty(ctx), value))};
+  mod->getOrInsertNamedMetadata("hivm.annotations")
+      ->addOperand(llvm::MDNode::get(ctx, md));
 }
 
 /// Mark standalone vector/cube kernel entries with vec-only-kernel or
@@ -150,19 +149,23 @@ public:
     }
 
     if (attribute.getName() == mlir::hivm::TCoreRatioAttr::name) {
-        auto func = dyn_cast<LLVM::LLVMFuncOp>(op);
-        if (!func) return success();
-        auto ratio = dyn_cast<hivm::TCoreRatioAttr>(attribute.getValue());
-        if (!ratio) return success();
-        llvm::Function *llvmFunc = moduleTranslation.lookupFunction(func.getName());
-        assert(llvmFunc != nullptr && "Expecting function to be found in the module");
-
-        llvmFunc->addFnAttr("mix-kernel-core-ratio");
-        addAnnotationMD(llvmFunc, "mix-kernel-core-ratio-M", ratio.getCube());
-        addAnnotationMD(llvmFunc, "mix-kernel-core-ratio-N", ratio.getVector());
-        addHivmAnnotation(llvmFunc, "mix-kernel-core-ratio-M", ratio.getCube());
-        addHivmAnnotation(llvmFunc, "mix-kernel-core-ratio-N", ratio.getVector());
+      auto func = dyn_cast<LLVM::LLVMFuncOp>(op);
+      if (!func)
         return success();
+      auto ratio = dyn_cast<hivm::TCoreRatioAttr>(attribute.getValue());
+      if (!ratio)
+        return success();
+      llvm::Function *llvmFunc =
+          moduleTranslation.lookupFunction(func.getName());
+      assert(llvmFunc != nullptr &&
+             "Expecting function to be found in the module");
+
+      llvmFunc->addFnAttr("mix-kernel-core-ratio");
+      addAnnotationMD(llvmFunc, "mix-kernel-core-ratio-M", ratio.getCube());
+      addAnnotationMD(llvmFunc, "mix-kernel-core-ratio-N", ratio.getVector());
+      addHivmAnnotation(llvmFunc, "mix-kernel-core-ratio-M", ratio.getCube());
+      addHivmAnnotation(llvmFunc, "mix-kernel-core-ratio-N", ratio.getVector());
+      return success();
     }
 
     // look for hivm.vector_function attr, add noalias to its ptr arguments
@@ -206,7 +209,8 @@ public:
       llvmFunc->addFnAttr(llvm::Attribute::NoInline);
       // disable VF to be duplicated by optimization passes, such as unrolling
       llvmFunc->addFnAttr(llvm::Attribute::NoDuplicate);
-      // help VF optimization with CFG related passes in backend compiler with willreturn
+      // help VF optimization with CFG related passes in backend compiler with
+      // willreturn
       llvmFunc->addFnAttr(llvm::Attribute::WillReturn);
       return success();
     }

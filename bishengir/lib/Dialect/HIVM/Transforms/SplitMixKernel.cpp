@@ -281,8 +281,7 @@ static SmallVector<Value> getOutOperands(Operation *op, bool opIsPreserved) {
     outOperands.reserve(forOp.getNumResults());
     for (auto [result, initArg] :
          llvm::zip_equal(forOp.getResults(), forOp.getInitArgs())) {
-      if (result.use_empty() ||
-          shouldKeepScalarResult(opIsPreserved, result)) {
+      if (result.use_empty() || shouldKeepScalarResult(opIsPreserved, result)) {
         outOperands.push_back(Value());
         continue;
       }
