@@ -48,6 +48,31 @@ mod->getOrInsertNamedMetadata("hivm.annotations")
     ->addOperand(llvm::MDNode::get(ctx, md));
 }
 
+/// Mark standalone vector/cube kernel entries with vec-only-kernel or
+/// cube-only-kernel, matching ordinary A3/A5 frontend output. These markers
+/// are required to preserve the standalone entry type under MIX compilation,
+/// including normalized Ascend950 0:1/1:0 entries.
+void translateKernelCoreTypeToLLVM(LLVM::LLVMFuncOp func,
+                                   hivm::TFuncCoreTypeAttr coreType,
+                                   LLVM::ModuleTranslation &moduleTranslation) {
+  // Both hacc.entry and hivm_regbaseintrins.kernel identify kernel entries.
+  if (!func->hasAttr("hacc.entry") &&
+      !func->hasAttr(hivm_regbaseintrins::kDavinciKernelAttrName))
+    return;
+  // AIV/AIC functions belonging to a MIX kernel retain their MIX
+  // representation.
+  if (func->hasAttr(hivm::TCoreRatioAttr::name) ||
+      func->hasAttr(hivm::TPartOfMixAttr::name))
+    return;
+
+  llvm::Function *llvmFunc = moduleTranslation.lookupFunction(func.getName());
+  assert(llvmFunc != nullptr && "Expecting function to be found in the module");
+  if (coreType.getFuncCoreType() == hivm::TFuncCoreType::AIV)
+    llvmFunc->addFnAttr("vec-only-kernel");
+  else if (coreType.getFuncCoreType() == hivm::TFuncCoreType::AIC)
+    llvmFunc->addFnAttr("cube-only-kernel");
+}
+
 /// Implementation of the dialect interface that converts operations belonging
 /// to the HIVM dialect to LLVM IR.
 class HIVMDialectLLVMIRTranslationInterface
@@ -113,6 +138,16 @@ public:
   amendOperation(Operation *op, ArrayRef<llvm::Instruction *> instructions,
                  NamedAttribute attribute,
                  LLVM::ModuleTranslation &moduleTranslation) const final {
+
+    if (attribute.getName() == hivm::TFuncCoreTypeAttr::name) {
+      auto func = dyn_cast<LLVM::LLVMFuncOp>(op);
+      if (!func)
+        return success();
+      translateKernelCoreTypeToLLVM(
+          func, cast<hivm::TFuncCoreTypeAttr>(attribute.getValue()),
+          moduleTranslation);
+      return success();
+    }
 
     if (attribute.getName() == mlir::hivm::TCoreRatioAttr::name) {
         auto func = dyn_cast<LLVM::LLVMFuncOp>(op);

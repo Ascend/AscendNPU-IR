@@ -87,41 +87,50 @@ FailureOr<bool> hasRequiredCoreWork(func::FuncOp func,
   return foundWork;
 }
 
-/// Verify that a core half has no required work when its core_ratio is zero.
-LogicalResult verifyCoreRatio(func::FuncOp half) {
-  auto ratio = hivm::getCoreRatioAttr(half);
-  auto coreType = half->getAttrOfType<hivm::TFuncCoreTypeAttr>(
+/// Verify that a mixed function or split core half has no required work when
+/// its core_ratio reserves zero instances of that core.
+LogicalResult verifyCoreRatio(func::FuncOp func) {
+  auto ratio = hivm::getCoreRatioAttr(func);
+  auto coreType = func->getAttrOfType<hivm::TFuncCoreTypeAttr>(
       hivm::TFuncCoreTypeAttr::name);
   if (!ratio || !coreType)
     return success();
 
-  if (coreType.getFuncCoreType() == TFuncCoreType::AIC &&
+  TFuncCoreType funcCoreType = coreType.getFuncCoreType();
+  if ((funcCoreType == TFuncCoreType::MIX ||
+       funcCoreType == TFuncCoreType::AIC) &&
       ratio.getCube() == 0) {
-    auto hasCube = hasRequiredCoreWork(half, hivm::TCoreType::CUBE);
+    auto hasCube = hasRequiredCoreWork(func, hivm::TCoreType::CUBE);
     if (failed(hasCube)) {
       return failure();
     }
     if (*hasCube) {
-      return half->emitError()
+      return func->emitError()
              << "hivm.core_ratio<0, " << ratio.getVector()
              << "> reserves no cube core, but the kernel has cube work";
     }
   }
 
-  if (coreType.getFuncCoreType() == TFuncCoreType::AIV &&
+  if ((funcCoreType == TFuncCoreType::MIX ||
+       funcCoreType == TFuncCoreType::AIV) &&
       ratio.getVector() == 0) {
-    auto hasVec = hasRequiredCoreWork(half, hivm::TCoreType::VECTOR);
+    auto hasVec = hasRequiredCoreWork(func, hivm::TCoreType::VECTOR);
     if (failed(hasVec)) {
       return failure();
     }
     if (*hasVec) {
-      return half->emitError()
+      return func->emitError()
              << "hivm.core_ratio<" << ratio.getCube()
              << ", 0> reserves no vector core, but the kernel has vector work";
     }
   }
 
   return success();
+}
+
+bool isSingleCoreRatio(hivm::TCoreRatioAttr ratio) {
+  return ratio && ((ratio.getCube() == 0 && ratio.getVector() == 1) ||
+                   (ratio.getCube() == 1 && ratio.getVector() == 0));
 }
 
 // mark the operands if the defining op is of given core type
@@ -441,6 +450,8 @@ struct SplitMixKernelPass
     : public impl::SplitMixKernelBase<SplitMixKernelPass> {
   void filterMixFunc(OpBuilder &builder, func::FuncOp mixedFunc,
                      enum TCoreType filterCoreType);
+  LogicalResult lowerSingleCoreRatio(func::FuncOp func,
+                                     hivm::TCoreRatioAttr coreRatio);
   void splitMixKernel(func::FuncOp &funcOp);
   void runOnOperation() override;
   void generateMixKernelDecl(func::FuncOp &funcOp);
@@ -781,6 +792,36 @@ void SplitMixKernelPass::generateMixKernelDecl(func::FuncOp &funcOp) {
         UnitAttr::get(&getContext()));
 }
 
+/// Lower Ascend950 MIX ratios 0:1 and 1:0 to one unsuffixed AIV/AIC function.
+LogicalResult
+SplitMixKernelPass::lowerSingleCoreRatio(func::FuncOp func,
+                                         hivm::TCoreRatioAttr coreRatio) {
+  assert(isSingleCoreRatio(coreRatio) && "expected core ratio 0:1 or 1:0");
+
+  // Validate before filtering so work requiring the absent core is diagnosed.
+  if (failed(verifyCoreRatio(func)))
+    return failure();
+
+  bool isVectorOnly = coreRatio.getCube() == 0;
+  auto coreType = isVectorOnly ? TFuncCoreType::AIV : TFuncCoreType::AIC;
+  func->setAttr(hivm::TFuncCoreTypeAttr::name,
+                hivm::TFuncCoreTypeAttr::get(func.getContext(), coreType));
+  OpBuilder builder(func);
+  filterMixFunc(builder, func,
+                isVectorOnly ? TCoreType::CUBE : TCoreType::VECTOR);
+  if (isVectorOnly)
+    postProcessVectorFunc(func);
+  else
+    postProcessCubeFunc(func);
+
+  // Ascend950 represents these ratios as one entry without MIX metadata.
+  // Preserve the symbol for host calls and keep the module MIX for library
+  // selection; only the function loses its MIX-specific metadata.
+  func->removeAttr(hivm::TCoreRatioAttr::name);
+  func->removeAttr(hivm::TPartOfMixAttr::name);
+  return success();
+}
+
 void SplitMixKernelPass::splitMixKernel(func::FuncOp &func) {
   StringRef funcName = func.getSymName();
   auto funcCoreTypeAttr = func->getAttrOfType<hivm::TFuncCoreTypeAttr>(
@@ -788,6 +829,16 @@ void SplitMixKernelPass::splitMixKernel(func::FuncOp &func) {
   if (!funcCoreTypeAttr ||
       funcCoreTypeAttr.getFuncCoreType() != TFuncCoreType::MIX)
     return;
+
+  // On Ascend950, MIX ratios 0:1 and 1:0 use a standalone vector/cube entry
+  // inside a MIX module.
+  auto module = func->getParentOfType<ModuleOp>();
+  auto coreRatio = hivm::getCoreRatioAttr(func);
+  if (hacc::utils::isAscend950(module) && isSingleCoreRatio(coreRatio)) {
+    if (failed(lowerSingleCoreRatio(func, coreRatio)))
+      signalPassFailure();
+    return;
+  }
 
   // generate a Mix function declaration for host callers
   generateMixKernelDecl(func);
