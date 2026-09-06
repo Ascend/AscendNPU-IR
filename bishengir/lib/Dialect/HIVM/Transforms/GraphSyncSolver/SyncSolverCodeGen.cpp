@@ -69,6 +69,38 @@ void CodeGenerator::setProperInsertionPoint(IRRewriter &rewriter,
       }
     }
   } else if (auto *placeHolderOp = dyn_cast<PlaceHolder>(opBase)) {
+    // Lazily materialize an MLIR else block for a placeholder that was
+    // created for the empty falseScope of a resultless `scf.if` with no
+    // source else region. This mirrors the logic previously used inside
+    // getOppositeIfBranchPlaceHolder but is now triggered directly when
+    // the explicit mirror conflict pair is placed at such a placeholder.
+    if (placeHolderOp->block == nullptr &&
+        (placeHolderOp->scopeBegin != nullptr ||
+         placeHolderOp->scopeEnd != nullptr)) {
+      auto *branchScope = dyn_cast<Scope>(placeHolderOp->parentOp);
+      if (branchScope != nullptr) {
+        auto *condition = dyn_cast<Condition>(branchScope->parentOp);
+        if (condition != nullptr && condition->op != nullptr) {
+          auto ifOp = dyn_cast<scf::IfOp>(condition->op);
+          if (ifOp != nullptr) {
+            // An empty-falseScope placeholder has no concrete MLIR op; bind
+            // it to the else block, materializing that block (with a yield
+            // terminator) on first use. A sibling placeholder of the same
+            // scope may have created it already, so bind unconditionally —
+            // otherwise this placeholder would still have no block and fall
+            // into the fatal-error case below.
+            if (ifOp.getElseRegion().empty()) {
+              assert(!ifOp.getNumResults() &&
+                     "result-ful scf.if must have a concrete else block");
+              Block *elseBlock = rewriter.createBlock(&ifOp.getElseRegion());
+              rewriter.setInsertionPointToEnd(elseBlock);
+              rewriter.create<scf::YieldOp>(ifOp.getLoc());
+            }
+            placeHolderOp->block = &ifOp.getElseRegion().front();
+          }
+        }
+      }
+    }
     if (placeHolderOp->block != nullptr) {
       if (placeHolderOp->scopeBegin) {
         rewriter.setInsertionPointToStart(placeHolderOp->block);
@@ -109,6 +141,53 @@ void CodeGenerator::setProperInsertionPoint(IRRewriter &rewriter,
   }
 }
 
+std::unique_ptr<PlaceHolder>
+CodeGenerator::getOppositeIfBranchPlaceHolder(IRRewriter &rewriter,
+                                               OperationBase *opBase,
+                                               SetWaitOp *setWaitOp) {
+  auto *placeHolder = dyn_cast<PlaceHolder>(opBase);
+  auto *branchScope =
+      placeHolder != nullptr ? dyn_cast<Scope>(placeHolder->parentOp) : nullptr;
+  auto *condition = setWaitOp->mirrorCondition;
+  if (condition == nullptr) {
+    assert(placeHolder != nullptr && placeHolder->block != nullptr);
+    assert(branchScope != nullptr);
+    condition = dyn_cast<Condition>(branchScope->parentOp);
+  }
+  assert(condition != nullptr);
+  auto ifOp = cast<scf::IfOp>(condition->op);
+
+  Block *oppositeBlock = nullptr;
+  bool inTrueBranch = branchScope == condition->getTrueScope() ||
+                      condition->getTrueScope()->isProperAncestor(opBase);
+  bool inFalseBranch =
+      condition->hasFalseScope() &&
+      (branchScope == condition->getFalseScope() ||
+       condition->getFalseScope()->isProperAncestor(opBase));
+  assert(inTrueBranch || inFalseBranch);
+  if (inTrueBranch) {
+    if (ifOp.getElseRegion().empty()) {
+      oppositeBlock = rewriter.createBlock(&ifOp.getElseRegion());
+      rewriter.setInsertionPointToEnd(oppositeBlock);
+      rewriter.create<scf::YieldOp>(ifOp.getLoc());
+    } else {
+      oppositeBlock = &ifOp.getElseRegion().front();
+    }
+  } else {
+    oppositeBlock = &ifOp.getThenRegion().front();
+  }
+  auto opposite = std::make_unique<PlaceHolder>(nullptr, condition);
+  opposite->block = oppositeBlock;
+  if (isa<SetFlagOp>(setWaitOp)) {
+    opposite->scopeEnd = inTrueBranch ? condition->getTrueScope()
+                                      : condition->getFalseScope();
+  } else {
+    opposite->scopeBegin = inTrueBranch ? condition->getTrueScope()
+                                        : condition->getFalseScope();
+  }
+  return opposite;
+}
+
 // Determine a proper Location for newly generated ops based on opBase context.
 Location CodeGenerator::getProperLoc(OperationBase *opBase) {
   assert(opBase != nullptr);
@@ -124,6 +203,18 @@ Location CodeGenerator::getProperLoc(OperationBase *opBase) {
       assert(placeHolderOp->beforeOp == nullptr);
       assert(placeHolderOp->afterOp->op != nullptr);
       return placeHolderOp->afterOp->op->getLoc();
+    } else if (placeHolderOp->scopeBegin != nullptr ||
+              placeHolderOp->scopeEnd != nullptr) {
+      // Empty-falseScope placeholder (no block, no before/after links):
+      // fall back to the enclosing Condition's scf.if location.
+      if (opBase->parentOp != nullptr) {
+        auto *condition =
+            dyn_cast_or_null<Condition>(opBase->parentOp->parentOp);
+        if (condition != nullptr && condition->op != nullptr) {
+          return condition->op->getLoc();
+        }
+        return getProperLoc(opBase->parentOp);
+      }
     } else {
       llvm::report_fatal_error("getProperLoc: unhandled place-holder op case.");
     }
@@ -242,6 +333,13 @@ void CodeGenerator::insertSetFlagOp(IRRewriter &rewriter, OperationBase *opBase,
                                        Value{});
     }
   }
+  if (setFlagOp->mirrorToOtherIfBranch) {
+    auto opposite =
+        getOppositeIfBranchPlaceHolder(rewriter, opBase, setFlagOp);
+    setFlagOp->mirrorToOtherIfBranch = false;
+    insertSetFlagOp(rewriter, opposite.get(), setFlagOp, insertAfterOp);
+    setFlagOp->mirrorToOtherIfBranch = true;
+  }
 }
 
 // Insert WaitFlagOp(s) handling multi-buffer and conditional wrapping.
@@ -292,6 +390,13 @@ void CodeGenerator::insertWaitFlagOp(IRRewriter &rewriter,
       rewriter.create<hivm::WaitFlagOp>(loc, setPipe, waitPipe, eventIdAttr,
                                         Value{});
     }
+  }
+  if (waitFlagOp->mirrorToOtherIfBranch) {
+    auto opposite =
+        getOppositeIfBranchPlaceHolder(rewriter, opBase, waitFlagOp);
+    waitFlagOp->mirrorToOtherIfBranch = false;
+    insertWaitFlagOp(rewriter, opposite.get(), waitFlagOp, insertAfterOp);
+    waitFlagOp->mirrorToOtherIfBranch = true;
   }
 }
 

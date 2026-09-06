@@ -122,6 +122,24 @@ std::pair<Occurrence *, Occurrence *> Occurrence::getLCAPair(Occurrence *occ1,
   return std::make_pair(occ1, occ2);
 }
 
+Occurrence *Occurrence::getDirectParentIfOcc() {
+  auto *branchOcc = parentOcc;
+  if (branchOcc == nullptr || branchOcc->parentOcc == nullptr) {
+    return nullptr;
+  }
+
+  auto *ifOcc = branchOcc->parentOcc;
+  auto *condition = dyn_cast_if_present<Condition>(ifOcc->op);
+  if (condition == nullptr) {
+    return nullptr;
+  }
+
+  bool inTrueBranch = branchOcc->op == condition->getTrueScope();
+  bool inFalseBranch = condition->hasFalseScope() &&
+                       branchOcc->op == condition->getFalseScope();
+  return inTrueBranch || inFalseBranch ? ifOcc : nullptr;
+}
+
 Occurrence *Occurrence::getParentloop(Occurrence *occ) {
   assert(occ != nullptr);
   Occurrence *cur = occ->parentOcc;

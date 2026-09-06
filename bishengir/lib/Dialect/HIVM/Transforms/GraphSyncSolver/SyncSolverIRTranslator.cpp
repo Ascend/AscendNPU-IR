@@ -894,6 +894,18 @@ std::unique_ptr<Scope> IRTranslator::funcIrBuilder(Region &region,
         if (ifOp.elseBlock()) {
           falseScope =
               funcIrBuilder(ifOp.getElseRegion(), nullptr, skipEmptyScopes);
+        } else {
+          falseScope = std::make_unique<Scope>();
+          auto beforePlaceHolderOp =
+            std::make_unique<PlaceHolder>(nullptr, falseScope.get());
+          auto afterPlaceHolderOp =
+            std::make_unique<PlaceHolder>(nullptr, falseScope.get());
+          beforePlaceHolderOp->beforeOp = falseScope.get();
+          beforePlaceHolderOp->scopeBegin = falseScope.get();
+          falseScope->body.push_back(std::move(beforePlaceHolderOp));
+          afterPlaceHolderOp->afterOp = falseScope.get();
+          afterPlaceHolderOp->scopeEnd = falseScope.get();
+          falseScope->body.push_back(std::move(afterPlaceHolderOp));
         }
         auto conditionOp = std::make_unique<Condition>(
             &op, parScope, std::move(trueScope), std::move(falseScope));

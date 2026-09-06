@@ -538,6 +538,8 @@ public:
   bool allAtOnce{false};
   bool checkFirstIter{false};
   bool checkLastIter{false};
+  bool mirrorToOtherIfBranch{false};
+  Condition *mirrorCondition{nullptr};
 
   SetWaitOp(const OpType &opType, Operation *op, OperationBase *parentOp,
             const llvm::SmallVector<int64_t> &eventIds, hivm::PIPE pipeSrc,
@@ -570,6 +572,8 @@ public:
     ret->checkFirstIter = checkFirstIter;
     ret->checkLastIter = checkLastIter;
     ret->eventIdInfo = eventIdInfo;
+    ret->mirrorToOtherIfBranch = mirrorToOtherIfBranch;
+    ret->mirrorCondition = mirrorCondition;
     return ret;
   }
   std::unique_ptr<SetFlagOp> clone() {
@@ -580,6 +584,8 @@ public:
     ret->checkFirstIter = checkFirstIter;
     ret->checkLastIter = checkLastIter;
     ret->eventIdInfo = eventIdInfo;
+    ret->mirrorToOtherIfBranch = mirrorToOtherIfBranch;
+    ret->mirrorCondition = mirrorCondition;
     return ret;
   }
 
@@ -609,6 +615,8 @@ public:
     ret->checkFirstIter = checkFirstIter;
     ret->checkLastIter = checkLastIter;
     ret->eventIdInfo = eventIdInfo;
+    ret->mirrorToOtherIfBranch = mirrorToOtherIfBranch;
+    ret->mirrorCondition = mirrorCondition;
     return ret;
   }
   std::unique_ptr<WaitFlagOp> clone() {
@@ -619,6 +627,8 @@ public:
     ret->checkFirstIter = checkFirstIter;
     ret->checkLastIter = checkLastIter;
     ret->eventIdInfo = eventIdInfo;
+    ret->mirrorToOtherIfBranch = mirrorToOtherIfBranch;
+    ret->mirrorCondition = mirrorCondition;
     return ret;
   }
 

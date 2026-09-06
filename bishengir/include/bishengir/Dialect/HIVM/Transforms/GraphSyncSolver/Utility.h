@@ -109,6 +109,10 @@ struct SyncSolverOptions {
   // Use disjoint direct subviews to refine memory conflicts.
   bool enableSubviewConflictRefinement{true};
 
+  // Keep same-level if synchronization at the exact conflict operations and
+  // mirror the synchronization to the opposite branches.
+  bool enableSiblingIfSync{true};
+
   // Build unrolled sync IR.
   bool buildUnrolledSyncIR{true};
 
@@ -165,6 +169,9 @@ struct SetWaitPairInfo {
   bool isSetWaitBackwardPair{false};
   bool isCVPreloading{false};
   bool isCVPipelining{false};
+  bool setWaitInside{false};
+  Occurrence *setIfOcc{nullptr};
+  Occurrence *waitIfOcc{nullptr};
 };
 
 class UnitFlagInfo : public UnitFlagInfoBase {
@@ -237,6 +244,8 @@ struct Occurrence {
   // Compute/return the pair of sibling occurrences just below their LCA.
   static std::pair<Occurrence *, Occurrence *> getLCAPair(Occurrence *occ1,
                                                           Occurrence *occ2);
+
+  Occurrence *getDirectParentIfOcc();
 
   template <typename OpTy> Occurrence *getParentOfType() {
     Occurrence *cur = this->parentOcc;
@@ -373,11 +382,18 @@ struct ConflictPair {
   // LCA parents of op1/op2 in the occurrence tree
   Occurrence *parOcc1{nullptr};
   Occurrence *parOcc2{nullptr};
+  Occurrence *setIfOcc{nullptr};
+  Occurrence *waitIfOcc{nullptr};
+  Occurrence *mirrorSetIfOcc{nullptr};
+  Occurrence *mirrorWaitIfOcc{nullptr};
+
+
 
   // Backward-sync classification + hoist target
   bool isOccBackwardPair{false};
   bool isSetWaitBackwardPair{false};
   bool isInnerBackwardPair{false};
+  bool setWaitPairInside{false};
   Loop *backwardSyncLoopOp{nullptr};
   Occurrence *backwardSyncLoopOcc{nullptr};
 
@@ -400,6 +416,8 @@ struct ConflictPair {
   bool movedToOuterLoop{false};
   bool isPersistent{false};
   bool isErased{false};
+  bool multipleSet{false};
+  bool multipleWait{false};
 
   ConflictPair(RWOperation *op1, RWOperation *op2, OperationBase *setOp,
                OperationBase *waitOp, Occurrence *setOcc, Occurrence *waitOcc,

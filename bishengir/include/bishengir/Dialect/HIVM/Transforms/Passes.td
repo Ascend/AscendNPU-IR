@@ -416,6 +416,10 @@ def GraphSyncSolver : Pass<"hivm-graph-sync-solver", "func::FuncOp"> {
               "enable-subview-conflict-refinement", "bool",
               /*default=*/"true",
               "Use disjoint direct subviews to refine memory conflicts">,
+       Option<"enableSiblingIfSync", "enable-sibling-if-sync", "bool",
+              /*default=*/"true",
+              "Keep same-level if synchronization at conflict operations and "
+              "mirror it to opposite branches">,
        Option<"solverVersion", "solver-version", "std::string",
               /*default=*/"\"v2\"", "Select SyncSolver implementation.">,
        ListOption<"syncTesterOptions", "sync-tester-options", "int64_t",
