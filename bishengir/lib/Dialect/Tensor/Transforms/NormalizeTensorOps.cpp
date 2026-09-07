@@ -347,6 +347,13 @@ struct FoldInsertSliceToConcat : OpRewritePattern<tensor::InsertSliceOp> {
       return rewriter.notifyMatchFailure(
           sliceOp, "the insertion must slice exactly one dimension");
 
+    // Only a last-dim concat has a copy-free lowering (interleave); on any
+    // other dimension the concat materializes a new buffer plus copies,
+    // whereas the insert_slice form bufferizes in place.
+    if (*concatDim != resultType.getRank() - 1)
+      return rewriter.notifyMatchFailure(
+          sliceOp, "only folds insertions along the innermost dimension");
+
     rewriter.replaceOp(sliceOp, convertToConcat(sliceOp, *concatDim, rewriter));
     return success();
   }
