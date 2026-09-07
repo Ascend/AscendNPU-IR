@@ -376,20 +376,22 @@ load_gm_to_ubuf_3d_by_scalar(memref_t<__gm__ T, 3> *src,
                              memref_t<__ubuf__ T, 3> *dst) {
   auto src_ptr = src->aligned + src->offset;
   auto dst_ptr = dst->aligned + dst->offset;
-
+  INTRINSIC(set_flag, PIPE_MTE2, PIPE_S, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_MTE2, PIPE_S, LIB_EVENT_ID0);
   for (int i = 0; i < src->sizes[0]; ++i) {
-    memref_t<__gm__ T, 2> src_2d{src->allocated,
-                                 src->aligned,
-                                 src->offset + i * src->strides[0],
-                                 {src->sizes[1], src->sizes[2]},
-                                 {src->strides[1], src->strides[2]}};
-    memref_t<__ubuf__ T, 2> dst_2d{dst->allocated,
-                                   dst->aligned,
-                                   dst->offset + i * dst->strides[0],
-                                   {dst->sizes[1], dst->sizes[2]},
-                                   {dst->strides[1], dst->strides[2]}};
-    load_gm_to_ubuf_2d_by_scalar<T>(&src_2d, &dst_2d);
+    for (int j = 0; j < src->sizes[1]; ++j) {
+      for (int k = 0; k < src->sizes[2]; ++k) {
+        *(dst_ptr + i * dst->strides[0] + j * dst->strides[1] +
+          k * dst->strides[2]) = *(src_ptr + i * src->strides[0] +
+                                   j * src->strides[1] + k * src->strides[2]);
+      }
+    }
   }
+  // should clear/invalidate created dcache entries because subsequent
+  // dma/st_dev, which bypass dcache, may introduce cache incoherence
+  INTRINSIC(dcci, src_ptr, 1);
+  INTRINSIC(set_flag, PIPE_S, PIPE_MTE2, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_S, PIPE_MTE2, LIB_EVENT_ID0);
 }
 
 // TODO: After "removing the extract slice and inserting it into Deinterleave
@@ -397,7 +399,7 @@ load_gm_to_ubuf_3d_by_scalar(memref_t<__gm__ T, 3> *src,
 // misalignment. Temporarily use scalar to circumvent.
 // TODO: if 2 cores simultaneously write data to a section of GM
 // covered by the one cacheline, each core will allocate self dirty version
-// of this cacheline and at the end only one version will be stored to GM
+// of this cacheline and in the end only one version will be stored to GM
 // discading other core changes.
 // Need to use st_dev intrinsic, which bypasses dcache.
 template <typename T>
@@ -434,7 +436,7 @@ store_ubuf_to_gm_1d_by_scalar(memref_t<__ubuf__ T, 1> *src,
 
 // TODO: if 2 cores simultaneously write data to a section of GM
 // covered by the one cacheline, each core will allocate self dirty version
-// of this cacheline and at the end only one version will be stored to GM
+// of this cacheline and in the end only one version will be stored to GM
 // discading other core changes.
 // Need to use st_dev intrinsic, which bypasses dcache.
 template <typename T>
@@ -473,7 +475,7 @@ store_ubuf_to_gm_2d_by_scalar(memref_t<__ubuf__ T, 2> *src,
 
 // TODO: if 2 cores simultaneously write data to a section of GM
 // covered by the one cacheline, each core will allocate self dirty version
-// of this cacheline and at the end only one version will be stored to GM
+// of this cacheline and in the end only one version will be stored to GM
 // discading other core changes.
 // Need to use st_dev intrinsic, which bypasses dcache.
 template <typename T>
