@@ -1,6 +1,9 @@
 // RUN: bishengir-opt %s -hivm-fuse-transpose-into-load | FileCheck %s
 
 // CHECK-LABEL: func.func @fuse_load_with_dyn_size
+// CHECK:       %[[NEW:.*]] = memref.alloc() : memref<256x128xbf16>
+// CHECK:       scf.if
+// CHECK:         linalg.fill ins(%{{.*}} : bf16) outs(%[[NEW]] : memref<256x128xbf16>)
 // CHECK:       %[[res:.*]] = bufferization.to_tensor
 // CHECK:       hivm.hir.load ins(%{{.*}} : memref<256x?xbf16, strided<[1, 256], offset: ?>>)
 // CHECK-SAME:                outs(%{{.*}} : memref<256x?xbf16, strided<[128, 1], offset: ?>>)
@@ -28,6 +31,8 @@ func.func @fuse_load_with_dyn_size(%arg0: memref<?xbf16>, %arg1: index, %arg2: i
 // -----
 
 // CHECK-LABEL: func.func @fuse_load_with_min_max_bounded_sizes
+// CHECK:       %[[ALLOC:.*]] = memref.alloc() : memref<32x32xf16>
+// CHECK:       linalg.fill ins(%{{.*}} : f16) outs(%[[ALLOC]] : memref<32x32xf16>)
 // CHECK:       hivm.hir.load ins(%{{.*}} : memref<?x?xf16, strided<[1, 128], offset: ?>>)
 // CHECK-SAME:                outs(%{{.*}} : memref<?x?xf16, strided<[32, 1]>>)
 // CHECK-NOT:   linalg.transpose
@@ -111,12 +116,12 @@ func.func @fuse_loop_tail_rank_reduced_dst_with_bounded_sizes(%arg0: memref<?xf1
 
 // -----
 
+// Generic fill is not linalg.fill; inspectLoadUses must reject it so the
+// transpose is not fused.
 // CHECK-LABEL: func.func @fuse_load_with_generic_fill
-// CHECK:       %[[res:.*]] = bufferization.to_tensor
-// CHECK:       hivm.hir.load ins(%{{.*}} : memref<32x32xf16, strided<{{\[}}1, 128{{\]}}, offset: ?>>)
-// CHECK-SAME:                outs(%{{.*}} : memref<32x32xf16, strided<{{\[}}32, 1{{\]}}, offset: ?>>)
-// CHECK-NOT:   transpose
-// CHECK:       return %[[res]] : tensor<32x32xf16>
+// CHECK:       linalg.generic
+// CHECK:       hivm.hir.load
+// CHECK:       linalg.transpose
 func.func @fuse_load_with_generic_fill(%arg0: memref<?xf16>, %arg1: index, %arg2: index) -> tensor<32x32xf16> {
   %cst = arith.constant 0.000000e+00 : f16
   %alloc = memref.alloc() : memref<2x32x32xf16>
@@ -172,9 +177,6 @@ func.func @fuse_load_dst_with_rank_reduce_rectangular(%arg0: memref<?xf16>, %arg
   %transposed = linalg.transpose ins(%0 : tensor<16x32xf16>) outs(%1 : tensor<32x16xf16>) permutation = [1, 0]
   return %transposed : tensor<32x16xf16>
 }
-
-
-
 
 // -----
 
@@ -267,6 +269,10 @@ func.func @no_fuse_multi_use_to_tensor(%arg0: memref<?xf16>, %arg1: index, %arg2
 // -----
 
 // CHECK-LABEL: func.func @fuse_load_with_multibuffer_annotation
+// CHECK:       %[[NEW:.*]] = memref.alloc() : memref<128x32xbf16>
+// CHECK:       scf.if
+// CHECK:         linalg.fill ins(%{{.*}} : bf16) outs(%[[NEW]] : memref<128x32xbf16>)
+// CHECK:       } {hivm.unlikely_condition}
 // CHECK:       %[[res:.*]] = bufferization.to_tensor
 // CHECK:       hivm.hir.load ins(%{{.*}} : memref<128x?xbf16, strided<[1, 4096], offset: ?>>)
 // CHECK-SAME:                outs(%{{.*}} : memref<128x?xbf16, strided<[32, 1], offset: ?>>)
@@ -295,9 +301,8 @@ func.func @fuse_load_with_multibuffer_annotation(%arg0: memref<?xbf16>, %arg1: i
 // -----
 
 // CHECK-LABEL: func.func @fuse_load_transfer_multi_buffer_mark
-// CHECK:       %[[OLD_ALLOC:.*]] = memref.alloc() : memref<16x32xf16>
-// CHECK-NOT:   annotation.mark
 // CHECK:       %[[NEW_ALLOC:.*]] = memref.alloc() : memref<32x16xf16>
+// CHECK:       linalg.fill ins(%{{.*}} : f16) outs(%[[NEW_ALLOC]] : memref<32x16xf16>)
 // CHECK:       annotation.mark %[[NEW_ALLOC]] {hivm.multi_buffer = 2 : i32} : memref<32x16xf16>
 // CHECK:       hivm.hir.load ins(%{{.*}} : memref<32x16xf16, strided<[1, 128], offset: ?>>)
 // CHECK-SAME:                outs(%[[NEW_ALLOC]] : memref<32x16xf16>)
@@ -319,9 +324,8 @@ func.func @fuse_load_transfer_multi_buffer_mark(%arg0: memref<?xf16>, %arg1: ind
 // -----
 
 // CHECK-LABEL: func.func @fuse_load_transfer_mark_rank_reduced_subview
-// CHECK:       %[[OLD_ALLOC:.*]] = memref.alloc() : memref<2x32x64xf16>
-// CHECK-NOT:   annotation.mark
 // CHECK:       %[[NEW_ALLOC:.*]] = memref.alloc() : memref<2x64x32xf16>
+// CHECK:       linalg.fill ins(%{{.*}} : f16) outs(%[[NEW_ALLOC]] : memref<2x64x32xf16>)
 // CHECK:       annotation.mark %[[NEW_ALLOC]] {hivm.multi_buffer = 2 : i32} : memref<2x64x32xf16>
 // CHECK:       hivm.hir.load ins(%{{.*}} : memref<64x32xf16, strided<[1, 128], offset: ?>>)
 // CHECK-SAME:                outs(%{{.*}} : memref<64x32xf16, strided<[32, 1], offset: ?>>)
@@ -345,9 +349,8 @@ func.func @fuse_load_transfer_mark_rank_reduced_subview(%arg0: memref<?xf16>, %a
 // -----
 
 // CHECK-LABEL: func.func @fuse_load_transfer_plain_mark
-// CHECK:       %[[OLD_ALLOC:.*]] = memref.alloc() : memref<2x32x64xf16>
-// CHECK-NOT:   annotation.mark
 // CHECK:       %[[NEW_ALLOC:.*]] = memref.alloc() : memref<2x64x32xf16>
+// CHECK:       linalg.fill ins(%{{.*}} : f16) outs(%[[NEW_ALLOC]] : memref<2x64x32xf16>)
 // CHECK:       annotation.mark %[[NEW_ALLOC]] {some_other_attr = 1 : i32} : memref<2x64x32xf16>
 // CHECK:       hivm.hir.load
 // CHECK-NOT:   linalg.transpose
@@ -365,4 +368,74 @@ func.func @fuse_load_transfer_plain_mark(%arg0: memref<?xf16>, %arg1: index) -> 
   %1 = tensor.empty() : tensor<64x32xf16>
   %transposed = linalg.transpose ins(%0 : tensor<32x64xf16>) outs(%1 : tensor<64x32xf16>) permutation = [1, 0]
   return %transposed : tensor<64x32xf16>
+}
+
+// -----
+
+// GLA k/gk shape: fill the 16x32 dest, DMA a prefix, to_tensor the full
+// alloc, then transpose to 32x16. The fill must follow the new dest; otherwise
+// pad K lanes are leftover UB.
+// CHECK-LABEL: func.func @fuse_load_keep_fill_on_transposed_dst
+// CHECK:       %[[NEW:.*]] = memref.alloc() : memref<32x16xbf16>
+// CHECK:       linalg.fill ins(%{{.*}} : bf16) outs(%[[NEW]] : memref<32x16xbf16>)
+// CHECK:       hivm.hir.load ins(%{{.*}} : memref<?x?xbf16, strided<[1, 32], offset: ?>>)
+// CHECK-SAME:                outs(%{{.*}} : memref<?x?xbf16, strided<[16, 1]>>)
+// CHECK-NOT:   linalg.transpose
+// CHECK:       return %{{.*}} : tensor<32x16xbf16>
+func.func @fuse_load_keep_fill_on_transposed_dst(%arg0: memref<?xbf16>, %arg1: index, %arg2: index, %arg3: index) -> tensor<32x16xbf16> {
+  %c0 = arith.constant 0 : index
+  %c16 = arith.constant 16 : index
+  %c32 = arith.constant 32 : index
+  %cst = arith.constant 0.000000e+00 : bf16
+  %alloc = memref.alloc() : memref<16x32xbf16>
+  linalg.fill ins(%cst : bf16) outs(%alloc : memref<16x32xbf16>)
+  %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [%arg1], sizes: [16, 32], strides: [32, 1] : memref<?xbf16> to memref<16x32xbf16, strided<[32, 1], offset: ?>>
+  %0 = arith.maxsi %arg2, %c0 : index
+  %1 = arith.minsi %0, %c16 : index
+  %2 = arith.maxsi %arg3, %c0 : index
+  %3 = arith.minsi %2, %c32 : index
+  %subview = memref.subview %reinterpret_cast[0, 0] [%1, %3] [1, 1] : memref<16x32xbf16, strided<[32, 1], offset: ?>> to memref<?x?xbf16, strided<[32, 1], offset: ?>>
+  %subview_0 = memref.subview %alloc[0, 0] [%1, %3] [1, 1] : memref<16x32xbf16> to memref<?x?xbf16, strided<[32, 1]>>
+  hivm.hir.load ins(%subview : memref<?x?xbf16, strided<[32, 1], offset: ?>>) outs(%subview_0 : memref<?x?xbf16, strided<[32, 1]>>) pad_mode = <PadValue> pad_value = %cst : bf16
+  %4 = bufferization.to_tensor %alloc restrict writable : memref<16x32xbf16>
+  %5 = tensor.empty() : tensor<32x16xbf16>
+  %transposed = linalg.transpose ins(%4 : tensor<16x32xbf16>) outs(%5 : tensor<32x16xbf16>) permutation = [1, 0]
+  return %transposed : tensor<32x16xbf16>
+}
+// -----
+
+// Same GLA prefix-load shape as fuse_load_keep_fill_on_transposed_dst, but the
+// fill is behind ConvertToHIVMOp's then-only scf.if. The fill must still land
+// on the transposed dest, and the guard must be kept (full tiles skip it).
+// CHECK-LABEL: func.func @fuse_load_keep_fill_in_unlikely_if
+// CHECK:       %[[NEW:.*]] = memref.alloc() : memref<32x16xbf16>
+// CHECK:       scf.if
+// CHECK:         linalg.fill ins(%{{.*}} : bf16) outs(%[[NEW]] : memref<32x16xbf16>)
+// CHECK:       } {hivm.unlikely_condition}
+// CHECK:       hivm.hir.load ins(%{{.*}} : memref<?x?xbf16, strided<[1, 32], offset: ?>>)
+// CHECK-SAME:                outs(%{{.*}} : memref<?x?xbf16, strided<[16, 1]>>)
+// CHECK-NOT:   linalg.transpose
+// CHECK:       return %{{.*}} : tensor<32x16xbf16>
+func.func @fuse_load_keep_fill_in_unlikely_if(%arg0: memref<?xbf16>, %arg1: index, %arg2: index, %arg3: index) -> tensor<32x16xbf16> {
+  %c0 = arith.constant 0 : index
+  %c16 = arith.constant 16 : index
+  %c32 = arith.constant 32 : index
+  %cst = arith.constant 0.000000e+00 : bf16
+  %alloc = memref.alloc() : memref<16x32xbf16>
+  %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [%arg1], sizes: [16, 32], strides: [32, 1] : memref<?xbf16> to memref<16x32xbf16, strided<[32, 1], offset: ?>>
+  %0 = arith.maxsi %arg2, %c0 : index
+  %1 = arith.minsi %0, %c16 : index
+  %2 = arith.maxsi %arg3, %c0 : index
+  %3 = arith.minsi %2, %c32 : index
+  %4 = arith.cmpi slt, %3, %c32 : index
+  scf.if %4 {
+    linalg.fill ins(%cst : bf16) outs(%alloc : memref<16x32xbf16>)
+  } {hivm.unlikely_condition}
+  %subview = memref.subview %reinterpret_cast[0, 0] [%1, %3] [1, 1] : memref<16x32xbf16, strided<[32, 1], offset: ?>> to memref<?x?xbf16, strided<[32, 1], offset: ?>>
+  %subview_0 = memref.subview %alloc[0, 0] [%1, %3] [1, 1] : memref<16x32xbf16> to memref<?x?xbf16, strided<[32, 1]>>
+  hivm.hir.load ins(%subview : memref<?x?xbf16, strided<[32, 1], offset: ?>>) outs(%subview_0 : memref<?x?xbf16, strided<[32, 1]>>) pad_mode = <PadValue> pad_value = %cst : bf16
+  %5 = bufferization.to_tensor %alloc restrict writable : memref<16x32xbf16>
+  %6 = tensor.empty() : tensor<32x16xbf16>
+  %transposed = linalg.transpose ins(%5 : tensor<16x32xbf16>) outs(%6 : tensor<32x16xbf16>) permutation = [1, 0]
+  return %transposed : tensor<32x16xbf16>
 }
