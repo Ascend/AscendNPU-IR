@@ -1,7 +1,0 @@
-add_subdirectory(Conversion)
-add_subdirectory(Dialect)
-add_subdirectory(ExecutionEngine)
-add_subdirectory(Pass)
-add_subdirectory(Target)
-add_subdirectory(Tools)
-add_subdirectory(Transforms)

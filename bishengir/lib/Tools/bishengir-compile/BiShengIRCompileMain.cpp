@@ -252,15 +252,12 @@ LogicalResult runExternalHIVMC(ModuleOp module,
   arguments.emplace_back("-o");
   arguments.push_back(outputFile);
   SmallVector<StringRef> argumentsRef(arguments.begin(), arguments.end());
-  if (failed(execute(getHIVMCName(), getBiShengInstallPath(), argumentsRef))) {
+  if (failed(executeBinary(getHIVMCName(), argumentsRef))) {
     return failure();
   }
-
   return success();
 }
-
 } // namespace
-
 FailureOr<OwningModuleRef>
 bishengir::runBiShengIRPipeline(ModuleOp mod,
                                 BiShengIRCompileMainConfig config) {

@@ -1,3 +1,7 @@
 add_subdirectory(bishengir-compile)
 add_subdirectory(bishengir-lsp-server)
 add_subdirectory(bishengir-opt)
+add_subdirectory(bishengir-translate)
+if(BISHENGIR_BUILD_HIVMC)
+  add_subdirectory(hivmc)
+endif()

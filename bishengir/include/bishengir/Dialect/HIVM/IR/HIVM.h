@@ -92,6 +92,12 @@
 #define GET_OP_CLASSES
 #include "bishengir/Dialect/HIVM/IR/HIVMSynchronizationOps.h.inc"
 
+#if !defined(__LLVM_MAJOR_VERSION_20_COMPATIBLE__) && \
+    !defined(__LLVM_MAJOR_VERSION_22_COMPATIBLE__)
+#define GET_OP_CLASSES
+#include "bishengir/Dialect/HIVM/IR/HIVMIntrinOps.h.inc"
+#endif
+
 
 namespace mlir {
 class TypeConverter;
