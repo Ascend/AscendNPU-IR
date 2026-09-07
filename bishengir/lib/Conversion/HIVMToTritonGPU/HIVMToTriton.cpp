@@ -1246,6 +1246,70 @@ struct HIVMToTTSplitOp : public OpRewritePattern<hivm::VDeinterleaveOp> {
   }
 };
 
+struct HIVMToTTFlipOp : public OpRewritePattern<hivm::VFlipOp> {
+  using OpRewritePattern<hivm::VFlipOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hivm::VFlipOp op,
+                                PatternRewriter &rewriter) const final {
+    if (!op.hasPureTensorSemantics())
+      return op.emitOpError("only tensor form is supported");
+    if (op.getNumResults() != 1)
+      return op.emitOpError("requires one tensor result");
+
+    auto srcTy = dyn_cast<RankedTensorType>(op.getSrc().getType());
+    if (!srcTy || !srcTy.hasStaticShape())
+      return op.emitOpError("requires static source shape");
+    auto resultTy = dyn_cast<RankedTensorType>(op->getResult(0).getType());
+    if (!resultTy || !resultTy.hasStaticShape())
+      return op.emitOpError("requires static result shape");
+    if (srcTy.getShape() != resultTy.getShape())
+      return op.emitOpError("requires source and result shapes to match");
+    if (srcTy.getElementType() != resultTy.getElementType())
+      return op.emitOpError("requires source and result element types to match");
+
+    int64_t rank = srcTy.getRank();
+    int64_t axis = op.getFlipAxis();
+    // VFlipOp is defined as a last-dimension flip. Negative axes are not
+    // normalized before the HIVM flatten pipeline consumes getLimitedAxes(), so
+    // reject them here instead of advertising unsupported lowering behavior.
+    if (axis != rank - 1)
+      return op.emitOpError("only last-dimension flip is supported");
+    if (srcTy.getDimSize(axis) <= 0 ||
+        srcTy.getDimSize(axis) > std::numeric_limits<int32_t>::max())
+      return op.emitOpError("has invalid flip axis");
+
+    Location loc = op.getLoc();
+    auto i32Ty = rewriter.getI32Type();
+    int64_t dimSize = srcTy.getDimSize(axis);
+    auto dimTy = RankedTensorType::get({dimSize}, i32Ty);
+    Value range =
+        rewriter.create<triton::MakeRangeOp>(loc, dimTy, 0, dimSize);
+    auto maxConst =
+        rewriter.create<arith::ConstantIntOp>(loc, dimSize - 1, 32);
+    Value maxSplat = rewriter.create<triton::SplatOp>(loc, dimTy, maxConst);
+    Value reversed =
+        rewriter.create<arith::SubIOp>(loc, dimTy, maxSplat, range);
+
+    SmallVector<int64_t> reshapeShape(rank, 1);
+    reshapeShape[axis] = dimSize;
+    auto reshapeTy = RankedTensorType::get(reshapeShape, i32Ty);
+    Value indices =
+        rewriter.create<triton::ReshapeOp>(loc, reshapeTy, reversed,
+                                           /*allowReorder=*/false);
+    auto indicesTy =
+        RankedTensorType::get(srcTy.getShape(), i32Ty, resultTy.getEncoding());
+    indices = rewriter.create<triton::BroadcastOp>(loc, indicesTy, indices);
+
+    Value flipped =
+        rewriter.create<triton::GatherOp>(loc, op.getSrc(), indices, axis);
+    if (flipped.getType() != op->getResult(0).getType())
+      return op.emitOpError("produced unexpected flipped type");
+
+    rewriter.replaceOp(op, flipped);
+    return success();
+  }
+};
+
 // Convert hivm.hir.vreduce to tt.reduce
 // Before: %2 = hivm.hir.vreduce <sum> (%0： tensor<16x16xf32>) outs(%1: tensor<1x16xf32>) unsigned_src = false reduce_dims=[0] ->tensor<16xf32>
 // After: %2 = tt.reduce （%0）<{axis=0:i32}> ({
@@ -1462,5 +1526,5 @@ void mlir::hivm::populateHIVMToTritonPatterns(TritonTypeConverter &converter,
 
   patterns.add<GetBlockIdxOpPattern, VArangeOpPattern, VBrcOpPattern,
                HIVMToTTGatherOp, HIVMToTTTransOp, HIVMToTTSplitOp,
-               HIVMToTTReduceOp, HIVMToTTScanOp>(context);
+               HIVMToTTFlipOp, HIVMToTTReduceOp, HIVMToTTScanOp>(context);
 }
