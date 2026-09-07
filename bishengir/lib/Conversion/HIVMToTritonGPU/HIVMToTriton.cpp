@@ -1310,6 +1310,62 @@ struct HIVMToTTFlipOp : public OpRewritePattern<hivm::VFlipOp> {
   }
 };
 
+struct HIVMToTTInterleaveOp : public OpRewritePattern<hivm::VInterleaveOp> {
+  using OpRewritePattern<hivm::VInterleaveOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hivm::VInterleaveOp op,
+                                PatternRewriter &rewriter) const final {
+    if (op.getTempBuffer())
+      return op.emitOpError("temp_buffer is not supported in tensor lowering");
+    if (!op.hasPureTensorSemantics())
+      return op.emitOpError("only tensor form is supported");
+    if (op.getNumResults() != 1)
+      return op.emitOpError("requires one tensor result");
+    if (op.getSrc().size() != 2 || op.getInterleaveChannelNums() != 2)
+      return op.emitOpError("only two input tensors are supported");
+
+    auto lhsTy = dyn_cast<RankedTensorType>(op.getSrc()[0].getType());
+    auto rhsTy = dyn_cast<RankedTensorType>(op.getSrc()[1].getType());
+    auto resultTy = dyn_cast<RankedTensorType>(op->getResult(0).getType());
+    if (!lhsTy || !rhsTy || !resultTy)
+      return op.emitOpError("requires ranked tensor types");
+    if (!lhsTy.hasStaticShape() || !rhsTy.hasStaticShape() ||
+        !resultTy.hasStaticShape())
+      return op.emitOpError("requires static tensor shapes");
+    if (op.getSrc()[0].getType() != op.getSrc()[1].getType())
+      return op.emitOpError("requires input tensor types to match");
+    if (resultTy.getElementType() != lhsTy.getElementType())
+      return op.emitOpError("requires result element type to match inputs");
+    int64_t rank = lhsTy.getRank();
+    if (rank == 0)
+      return op.emitOpError("requires non-scalar tensor types");
+    ArrayRef<int64_t> lhsShape = lhsTy.getShape();
+    ArrayRef<int64_t> resultShape = resultTy.getShape();
+    for (int64_t dim = 0; dim < rank - 1; ++dim) {
+      if (resultShape[dim] != lhsShape[dim])
+        return op.emitOpError(
+            "requires non-interleaved dimensions to match inputs");
+    }
+    if (resultShape.back() != lhsShape.back() * 2)
+      return op.emitOpError("requires result last dimension to double input");
+    if (resultTy.getNumElements() != lhsTy.getNumElements() * 2)
+      return op.emitOpError(
+          "requires result element count to match joined inputs");
+
+    Location loc = op.getLoc();
+    Value joined =
+        rewriter.create<triton::JoinOp>(loc, op.getSrc()[0], op.getSrc()[1]);
+    FailureOr<Value> result =
+        reshapeTensorIfNeeded(rewriter, loc, joined,
+                              op->getResult(0).getType());
+    if (failed(result))
+      return op.emitOpError("failed to reshape joined tensor");
+
+    rewriter.replaceOp(op, *result);
+    return success();
+  }
+};
+
 // Convert hivm.hir.vreduce to tt.reduce
 // Before: %2 = hivm.hir.vreduce <sum> (%0： tensor<16x16xf32>) outs(%1: tensor<1x16xf32>) unsigned_src = false reduce_dims=[0] ->tensor<16xf32>
 // After: %2 = tt.reduce （%0）<{axis=0:i32}> ({
@@ -1526,5 +1582,6 @@ void mlir::hivm::populateHIVMToTritonPatterns(TritonTypeConverter &converter,
 
   patterns.add<GetBlockIdxOpPattern, VArangeOpPattern, VBrcOpPattern,
                HIVMToTTGatherOp, HIVMToTTTransOp, HIVMToTTSplitOp,
-               HIVMToTTFlipOp, HIVMToTTReduceOp, HIVMToTTScanOp>(context);
+               HIVMToTTFlipOp, HIVMToTTInterleaveOp, HIVMToTTReduceOp,
+               HIVMToTTScanOp>(context);
 }
