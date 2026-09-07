@@ -1013,6 +1013,68 @@ public:
   }
 };
 
+struct HIVMToTTGatherOp : public OpRewritePattern<hivm::VGatherOp> {
+  using OpRewritePattern<hivm::VGatherOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hivm::VGatherOp op,
+                                PatternRewriter &rewriter) const final {
+    if (op.getTempBuffer())
+      return op.emitOpError("temp_buffer is not supported in tensor lowering");
+    if (!op.hasPureTensorSemantics())
+      return op.emitOpError("only tensor form is supported");
+    if (op.getNumResults() != 1)
+      return op.emitOpError("requires one tensor result");
+
+    auto srcTy = dyn_cast<RankedTensorType>(op.getSrc().getType());
+    if (!srcTy)
+      return op.emitOpError("requires ranked tensor source");
+    auto indicesTy = dyn_cast<RankedTensorType>(op.getIndices().getType());
+    if (!indicesTy)
+      return op.emitOpError("requires ranked tensor indices");
+    auto resultTy = dyn_cast<RankedTensorType>(op->getResult(0).getType());
+    if (!resultTy)
+      return op.emitOpError("requires ranked tensor result");
+    if (srcTy.getRank() != indicesTy.getRank())
+      return op.emitOpError("requires source and indices ranks to match");
+    if (indicesTy.getRank() != resultTy.getRank())
+      return op.emitOpError("requires indices and result ranks to match");
+    if (indicesTy.getShape() != resultTy.getShape())
+      return op.emitOpError("requires indices and result shapes to match");
+    if (indicesTy.getEncoding() != resultTy.getEncoding())
+      return op.emitOpError("requires indices and result encodings to match");
+    if (srcTy.getElementType() != resultTy.getElementType())
+      return op.emitOpError("requires source and result element types to match");
+
+    int64_t axis64 = srcTy.getRank() - 1;
+    auto axisAttr = op.getGatherAxis();
+    if (axisAttr.has_value() && static_cast<int64_t>(*axisAttr) != -1)
+      axis64 = static_cast<int64_t>(*axisAttr);
+    if (axis64 < 0 || axis64 >= srcTy.getRank())
+      return op.emitOpError("has invalid gather axis");
+
+    ArrayRef<int64_t> srcShape = srcTy.getShape();
+    ArrayRef<int64_t> indicesShape = indicesTy.getShape();
+    for (int64_t dim = 0; dim < indicesTy.getRank(); ++dim) {
+      if (dim == axis64)
+        continue;
+      if (indicesShape[dim] != srcShape[dim]) {
+        return op.emitOpError(
+            "requires non-gather indices dimensions to match source");
+      }
+    }
+
+    Value gathered =
+        rewriter.create<triton::GatherOp>(op.getLoc(), op.getSrc(),
+                                          op.getIndices(),
+                                          static_cast<int32_t>(axis64));
+    if (gathered.getType() != op->getResult(0).getType())
+      return op.emitOpError("produced unexpected gathered type");
+
+    rewriter.replaceOp(op, gathered);
+    return success();
+  }
+};
+
 // Convert hivm.hir.vreduce to tt.reduce
 // Before: %2 = hivm.hir.vreduce <sum> (%0： tensor<16x16xf32>) outs(%1: tensor<1x16xf32>) unsigned_src = false reduce_dims=[0] ->tensor<16xf32>
 // After: %2 = tt.reduce （%0）<{axis=0:i32}> ({
@@ -1228,5 +1290,5 @@ void mlir::hivm::populateHIVMToTritonPatterns(TritonTypeConverter &converter,
                HIVMStoreOpPattern>(converter, context);
 
   patterns.add<GetBlockIdxOpPattern, VArangeOpPattern, VBrcOpPattern,
-               HIVMToTTReduceOp, HIVMToTTScanOp>(context);
+               HIVMToTTGatherOp, HIVMToTTReduceOp, HIVMToTTScanOp>(context);
 }
