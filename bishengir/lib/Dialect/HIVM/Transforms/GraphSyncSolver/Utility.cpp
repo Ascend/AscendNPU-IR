@@ -514,7 +514,8 @@ bool isWorkSpaceFuncArgument(func::FuncOp funcOp, BlockArgument funcArg) {
 llvm::SmallVector<int64_t> getAddresses(const llvm::SmallVector<Value> &addrs) {
   llvm::SmallVector<int64_t> offsets;
   for (auto addr : addrs) {
-    if (auto constOp = dyn_cast<arith::ConstantOp>(addr.getDefiningOp())) {
+    if (auto constOp =
+            dyn_cast_if_present<arith::ConstantOp>(addr.getDefiningOp())) {
       auto baseAddr =
           static_cast<int64_t>(cast<IntegerAttr>(constOp.getValue()).getInt());
       int64_t baseAddrInBits = baseAddr * utils::kBitsToByte;

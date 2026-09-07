@@ -22,7 +22,9 @@ add_bishengir_dialect_library(BiShengIRVFFusion
   BiShengIRHFusionUtils
   MLIRArithDialect
   MLIRFuncDialect
+  MLIRLLVMDialect
   MLIRMemRefDialect
+  MLIRSCFDialect
   MLIRTensorDialect
   MLIRPass
 )
