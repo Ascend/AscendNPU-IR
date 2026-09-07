@@ -1649,6 +1649,26 @@ static LogicalResult setOperationsCoreTypeForA5(OpBuilder builder,
                             builder.getAttr<hivm::TCoreTypeAttr>(
                                 newTcoretype.getTcoretype()));
           }
+        })
+        .Case([&](tensor::ExtractOp op) {
+          auto upProp = PropagatorUtil::getUpPropagator(&op.getTensorMutable());
+          if (!upProp)
+            return;
+
+          auto coreType = PropagatorUtil::getCoreType(upProp);
+          if (coreType != TCoreType::CUBE_AND_VECTOR) {
+            op->setAttr(hivm::TCoreTypeAttr::name,
+                        TCoreTypeAttr::get(op.getContext(), coreType));
+          } else {
+            auto addressSpaces = PropagatorUtil::getAddressSpace(upProp);
+            auto addressSpace = addressSpaces.empty() ? hivm::AddressSpace::UB
+                                                      : addressSpaces[0];
+            op->setAttr(
+                hivm::TCoreTypeAttr::name,
+                TCoreTypeAttr::get(
+                    op.getContext(),
+                    PropagatorUtil::kAddressSpace2CoreType.at(addressSpace)));
+          }
         });
   });
   return success();
@@ -1696,6 +1716,26 @@ static LogicalResult setOperationsCoreTypeForA3(OpBuilder builder,
                   op.getContext(),
                   PropagatorUtil::kAddressSpace2CoreType.at(addressSpace)));
             }
+          }
+        })
+        .Case([&](tensor::ExtractOp op) {
+          auto upProp = PropagatorUtil::getUpPropagator(&op.getTensorMutable());
+          if (!upProp)
+            return;
+
+          auto coreType = PropagatorUtil::getCoreType(upProp);
+          if (coreType != TCoreType::CUBE_AND_VECTOR) {
+            op->setAttr(hivm::TCoreTypeAttr::name,
+                        TCoreTypeAttr::get(op.getContext(), coreType));
+          } else {
+            auto addressSpaces = PropagatorUtil::getAddressSpace(upProp);
+            auto addressSpace = addressSpaces.empty() ? hivm::AddressSpace::UB
+                                                      : addressSpaces[0];
+            op->setAttr(
+                hivm::TCoreTypeAttr::name,
+                TCoreTypeAttr::get(
+                    op.getContext(),
+                    PropagatorUtil::kAddressSpace2CoreType.at(addressSpace)));
           }
         });
   });
