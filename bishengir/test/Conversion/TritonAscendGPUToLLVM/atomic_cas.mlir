@@ -18,7 +18,7 @@ module attributes {
     ttg.shared             = 4096 : i32,
     ttg.target             = "cuda:80",
     hacc.target            = #hacc.target<"Ascend910_9589">,
-    "ttg.enable-bishengir-simt-optimization" = 1111 : i32
+    "ttg.simt-optimization-mode" = 1111 : i32
 } {
   // CHECK-LABEL: @tensor_atomic_cas_i32
   // CHECK: ascend_dpx.atomic_cas

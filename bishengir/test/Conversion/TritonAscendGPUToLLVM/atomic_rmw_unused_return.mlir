@@ -19,7 +19,7 @@ module attributes {
     ttg.shared             = 4096 : i32,
     ttg.target             = "cuda:80",
     hacc.target            = #hacc.target<"Ascend910_9589">,
-    "ttg.enable-bishengir-simt-optimization" = 1111 : i32
+    "ttg.simt-optimization-mode" = 1111 : i32
 } {
   tt.func @atomic_add_no_use(%ptr: !tt.ptr<i32>, %val: i32) {
     %true = arith.constant true

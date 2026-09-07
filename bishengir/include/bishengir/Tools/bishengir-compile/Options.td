@@ -1199,8 +1199,8 @@ def EnableFuseReductionIntoLoop : GeneralOptimizationControlOptions<
   let passGroup = ["HFUSION"];
 }
 
-def EnableBishengirSimtOptimization : GeneralOptimizationControlOptions<
-  "enable bishengir simt optimization",
+def SimtOptimizationMode : GeneralOptimizationControlOptions<
+  "set bishengir simt optimization modes",
   "int",
   "900101"
 > {
@@ -1329,14 +1329,6 @@ def EnableOptimizeMath : SIMTOptimizationControlOptions<
   "false"
 > {
   bit isSharedWithDownstreamToolchain = 0;
-}
-
-def EnableSimtReorderInstruction : SIMTOptimizationControlOptions<
-  "Enable SIMT reorder instruction pass",
-  "bool",
-  "false"
-> {
-  bit isSharedWithDownstreamToolchain = 1;
 }
 
 def EnableSIMTFastDiv : SIMTOptimizationControlOptions<

@@ -23,7 +23,7 @@ module attributes {
     ttg.shared             = 4096 : i32,
     ttg.target             = "cuda:80",
     hacc.target            = #hacc.target<"Ascend910_9589">,
-    "ttg.enable-bishengir-simt-optimization" = 1111 : i32
+    "ttg.simt-optimization-mode" = 1111 : i32
 } {
   tt.func @tensor_atomic_rmw_survives_mid_passes(
       %ptr: tensor<256x!tt.ptr<i32>, #blocked>,

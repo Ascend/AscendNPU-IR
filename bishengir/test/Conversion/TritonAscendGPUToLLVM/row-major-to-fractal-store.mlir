@@ -16,7 +16,7 @@ module attributes {
     "ttg.num-warps"        = 4 : i32,
     "ttg.threads-per-warp" = 32 : i32,
     ttg.shared             = 4096 : i32,
-    "ttg.enable-bishengir-simt-optimization" = 111 : i32
+    "ttg.simt-optimization-mode" = 111 : i32
 } {
   // CHECK-LABEL: @load_row_major_store_fractal_zN
   tt.func public @load_row_major_store_fractal_zN(

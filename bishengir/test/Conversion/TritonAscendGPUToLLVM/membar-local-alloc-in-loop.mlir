@@ -28,7 +28,7 @@ module attributes {
     "ttg.num-warps"        = 4 : i32,
     "ttg.threads-per-warp" = 32 : i32,
     ttg.shared             = 16384 : i32,
-    "ttg.enable-bishengir-simt-optimization" = 111 : i32
+    "ttg.simt-optimization-mode" = 111 : i32
 } {
   // CHECK-LABEL: llvm.func @membar_local_alloc_in_loop
   tt.func public @membar_local_alloc_in_loop(

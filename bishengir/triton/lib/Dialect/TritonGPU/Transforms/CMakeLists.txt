@@ -3,6 +3,9 @@ if(LLVM_BSPUB_DAVINCI_BISHENGIR)
   list(APPEND BS_SOURCE_FILES
     ReorderInstructionsImpl.cpp
   )
+  list(APPEND BS_LINK_LIBS
+    BiShengIRDialectUtils
+  )
 endif()
 
 add_triton_library(TritonGPUTransforms
@@ -47,6 +50,7 @@ add_triton_library(TritonGPUTransforms
   TritonGPUTransformsIncGen
 
   LINK_LIBS PUBLIC
+  ${BS_LINK_LIBS}
   MLIRTransforms
   MLIRTransformUtils
   TritonAnalysis

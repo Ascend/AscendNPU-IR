@@ -2,7 +2,7 @@
 
 #blocked = #ttg.blocked<{sizePerThread = [1, 4], threadsPerWarp = [1, 32], warpsPerCTA = [2, 16], order = [1, 0]}>
 #blocked1 = #ttg.blocked<{sizePerThread = [1, 1], threadsPerWarp = [32, 1], warpsPerCTA = [4, 8], order = [0, 1]}>
-module attributes {"ttg.enable-bishengir-simt-optimization" = 1 : i32, ttg.global_scratch_memory_alignment = 1 : i32,
+module attributes {"ttg.simt-optimization-mode" = 1 : i32, ttg.global_scratch_memory_alignment = 1 : i32,
     ttg.global_scratch_memory_size = 0 : i32, "ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 32 : i32,
     ttg.target = "cuda:89", ttg.tensor_memory_size = 0 : i32,
     "ttg.threads-per-warp" = 32 : i32, "ttg.total-num-warps" = 32 : i32} {
@@ -45,7 +45,7 @@ module attributes {"ttg.enable-bishengir-simt-optimization" = 1 : i32, ttg.globa
 
 #blocked = #ttg.blocked<{sizePerThread = [1, 4], threadsPerWarp = [1, 32], warpsPerCTA = [2, 16], order = [1, 0]}>
 #blocked1 = #ttg.blocked<{sizePerThread = [1, 1], threadsPerWarp = [32, 1], warpsPerCTA = [4, 8], order = [0, 1]}>
-module attributes {"ttg.enable-bishengir-simt-optimization" = 1 : i32, ttg.global_scratch_memory_alignment = 1 : i32,
+module attributes {"ttg.simt-optimization-mode" = 1 : i32, ttg.global_scratch_memory_alignment = 1 : i32,
     ttg.global_scratch_memory_size = 0 : i32, "ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 32 : i32,
     ttg.shared = 8192 : i32, ttg.target = "cuda:89", ttg.tensor_memory_size = 0 : i32,
     "ttg.threads-per-warp" = 32 : i32, "ttg.total-num-warps" = 32 : i32} {
@@ -88,7 +88,7 @@ module attributes {"ttg.enable-bishengir-simt-optimization" = 1 : i32, ttg.globa
 
 #blocked = #ttg.blocked<{sizePerThread = [1, 4], threadsPerWarp = [1, 32], warpsPerCTA = [2, 16], order = [1, 0]}>
 #blocked1 = #ttg.blocked<{sizePerThread = [1, 1], threadsPerWarp = [32, 1], warpsPerCTA = [4, 8], order = [0, 1]}>
-module attributes {"ttg.enable-bishengir-simt-optimization" = 1 : i32, ttg.global_scratch_memory_alignment = 1 : i32,
+module attributes {"ttg.simt-optimization-mode" = 1 : i32, ttg.global_scratch_memory_alignment = 1 : i32,
     ttg.global_scratch_memory_size = 0 : i32, "ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 32 : i32,
     ttg.shared = 1048576 : i32, ttg.target = "cuda:89", ttg.tensor_memory_size = 0 : i32,
     "ttg.threads-per-warp" = 32 : i32, "ttg.total-num-warps" = 32 : i32} {
