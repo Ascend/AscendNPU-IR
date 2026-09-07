@@ -79,6 +79,23 @@ castI32TensorToType(ConversionPatternRewriter &rewriter, Location loc,
   return failure();
 }
 
+FailureOr<Value> reshapeTensorIfNeeded(PatternRewriter &rewriter, Location loc,
+                                       Value value, Type dstType) {
+  if (value.getType() == dstType)
+    return value;
+
+  auto srcTy = dyn_cast<RankedTensorType>(value.getType());
+  auto dstTy = dyn_cast<RankedTensorType>(dstType);
+  if (!srcTy || !dstTy || !srcTy.hasStaticShape() || !dstTy.hasStaticShape() ||
+      srcTy.getElementType() != dstTy.getElementType() ||
+      srcTy.getNumElements() != dstTy.getNumElements())
+    return failure();
+
+  return rewriter.create<triton::ReshapeOp>(loc, dstTy, value,
+                                            /*allowReorder=*/false)
+      .getResult();
+}
+
 // Lowers hivm.hir.varange to an N-D strided index tensor:
 //
 //   result[i0, i1, ..., in] = offset + i0 * stride0 + i1 * stride1 + ... +
@@ -1136,6 +1153,99 @@ struct HIVMToTTTransOp : public OpRewritePattern<hivm::VTransposeOp> {
   }
 };
 
+struct HIVMToTTSplitOp : public OpRewritePattern<hivm::VDeinterleaveOp> {
+  using OpRewritePattern<hivm::VDeinterleaveOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hivm::VDeinterleaveOp op,
+                                PatternRewriter &rewriter) const final {
+    if (!op.hasPureTensorSemantics())
+      return op.emitOpError("only tensor form is supported");
+    if (op.getChannelNum() != 2)
+      return op.emitOpError("only channel_num=2 is supported");
+    if (op.getNumResults() == 0 || op.getNumResults() > 2)
+      return op.emitOpError("requires one or two tensor results");
+
+    auto srcTy = dyn_cast<RankedTensorType>(op.getSrc().getType());
+    if (!srcTy || !srcTy.hasStaticShape())
+      return op.emitOpError("requires static source shape");
+    auto firstResultTy =
+        dyn_cast<RankedTensorType>(op->getResult(0).getType());
+    if (!firstResultTy || !firstResultTy.hasStaticShape())
+      return op.emitOpError("requires static result shape");
+    if (srcTy.getElementType() != firstResultTy.getElementType())
+      return op.emitOpError("requires source and result element types to match");
+    int64_t rank = srcTy.getRank();
+    if (rank == 0)
+      return op.emitOpError("requires non-scalar tensor types");
+    ArrayRef<int64_t> srcShape = srcTy.getShape();
+    ArrayRef<int64_t> resultShape = firstResultTy.getShape();
+    for (int64_t dim = 0; dim < rank - 1; ++dim) {
+      if (srcShape[dim] != resultShape[dim])
+        return op.emitOpError(
+            "requires non-deinterleaved dimensions to match results");
+    }
+    if (srcShape.back() != resultShape.back() * 2)
+      return op.emitOpError("requires source last dimension to double result");
+    if (srcTy.getNumElements() != firstResultTy.getNumElements() * 2)
+      return op.emitOpError(
+          "requires source element count to match deinterleaved results");
+    if (op.getIndexMode() == hivm::DeinterleaveMode::ALL_CHANNELS) {
+      if (op.getNumResults() != 2)
+        return op.emitOpError("ALL_CHANNELS requires two tensor results");
+      auto secondResultTy =
+          dyn_cast<RankedTensorType>(op->getResult(1).getType());
+      if (!secondResultTy || !secondResultTy.hasStaticShape())
+        return op.emitOpError("requires static second result shape");
+      if (op->getResult(1).getType() != op->getResult(0).getType())
+        return op.emitOpError("requires result tensor types to match");
+    }
+
+    Location loc = op.getLoc();
+    SmallVector<int64_t> splitSrcShape(firstResultTy.getShape());
+    splitSrcShape.push_back(2);
+    auto splitSrcTy =
+        RankedTensorType::get(splitSrcShape, firstResultTy.getElementType());
+    FailureOr<Value> splitSrc =
+        reshapeTensorIfNeeded(rewriter, loc, op.getSrc(), splitSrcTy);
+    if (failed(splitSrc))
+      return op.emitOpError("failed to reshape split source");
+
+    auto split = rewriter.create<triton::SplitOp>(loc, *splitSrc);
+    auto reshapeResult = [&](Value value, Type dstType) -> FailureOr<Value> {
+      return reshapeTensorIfNeeded(rewriter, loc, value, dstType);
+    };
+
+    SmallVector<Value> results;
+    if (op.getIndexMode() == hivm::DeinterleaveMode::ALL_CHANNELS) {
+      if (op.getNumResults() != 2)
+        return op.emitOpError("ALL_CHANNELS requires two tensor results");
+      FailureOr<Value> lhs = reshapeResult(split.getOutLHS(),
+                                           op->getResult(0).getType());
+      FailureOr<Value> rhs = reshapeResult(split.getOutRHS(),
+                                           op->getResult(1).getType());
+      if (failed(lhs) || failed(rhs))
+        return op.emitOpError("failed to reshape split results");
+      results.push_back(*lhs);
+      results.push_back(*rhs);
+    } else {
+      Value selected;
+      if (op.getIndexMode() == hivm::DeinterleaveMode::CHANNEL_0) {
+        selected = split.getOutLHS();
+      } else {
+        selected = split.getOutRHS();
+      }
+      FailureOr<Value> result =
+          reshapeResult(selected, op->getResult(0).getType());
+      if (failed(result))
+        return op.emitOpError("failed to reshape split result");
+      results.push_back(*result);
+    }
+
+    rewriter.replaceOp(op, results);
+    return success();
+  }
+};
+
 // Convert hivm.hir.vreduce to tt.reduce
 // Before: %2 = hivm.hir.vreduce <sum> (%0： tensor<16x16xf32>) outs(%1: tensor<1x16xf32>) unsigned_src = false reduce_dims=[0] ->tensor<16xf32>
 // After: %2 = tt.reduce （%0）<{axis=0:i32}> ({
@@ -1351,6 +1461,6 @@ void mlir::hivm::populateHIVMToTritonPatterns(TritonTypeConverter &converter,
                HIVMStoreOpPattern>(converter, context);
 
   patterns.add<GetBlockIdxOpPattern, VArangeOpPattern, VBrcOpPattern,
-               HIVMToTTGatherOp, HIVMToTTTransOp, HIVMToTTReduceOp,
-               HIVMToTTScanOp>(context);
+               HIVMToTTGatherOp, HIVMToTTTransOp, HIVMToTTSplitOp,
+               HIVMToTTReduceOp, HIVMToTTScanOp>(context);
 }
