@@ -96,16 +96,29 @@ func.func @fold_double_pad(%arg0 : tensor<1x1x2047xf32>) -> tensor<4093xf32> {
 
 // -----
 
-// CHECK-LABEL: func.func @normalize_insert_slice_to_concat_prefix(
-// CHECK-SAME: %[[DST:.*]]: tensor<2x2xf32>, %[[SRC:.*]]: tensor<2xf32>
-// CHECK: %[[EXPANDED:.*]] = tensor.expand_shape %[[SRC]]
-// CHECK: %[[SUFFIX:.*]] = tensor.extract_slice %[[DST]]{{\[}}1, 0] {{\[}}1, 2] {{\[}}1, 1]
-// CHECK: tensor.concat dim(0) %[[EXPANDED]], %[[SUFFIX]] : (tensor<1x2xf32>, tensor<1x2xf32>) -> tensor<2x2xf32>
-func.func @normalize_insert_slice_to_concat_prefix(
+// CHECK-LABEL: func.func @do_not_fold_non_innermost_insert_slice(
+// CHECK: tensor.insert_slice
+// CHECK-NOT: tensor.concat
+// CHECK-TRITON-LABEL: func.func @do_not_fold_non_innermost_insert_slice(
+// CHECK-TRITON: tensor.insert_slice
+// CHECK-TRITON-NOT: tensor.concat
+func.func @do_not_fold_non_innermost_insert_slice(
     %dst: tensor<2x2xf32>, %src: tensor<2xf32>) -> tensor<2x2xf32> {
   %expanded = tensor.expand_shape %src [[0, 1]] output_shape [1, 2] : tensor<2xf32> into tensor<1x2xf32>
   %inserted_slice = tensor.insert_slice %expanded into %dst[0, 0] [1, 2] [1, 1] : tensor<1x2xf32> into tensor<2x2xf32>
   return %inserted_slice : tensor<2x2xf32>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @fold_innermost_insert_slice_rank2(
+// CHECK: tensor.concat dim(1)
+// CHECK-TRITON-LABEL: func.func @fold_innermost_insert_slice_rank2(
+// CHECK-TRITON: tensor.concat dim(1)
+func.func @fold_innermost_insert_slice_rank2(
+    %dst: tensor<2x4xf32>, %src: tensor<2x1xf32>) -> tensor<2x4xf32> {
+  %inserted_slice = tensor.insert_slice %src into %dst[0, 1] [2, 1] [1, 1] : tensor<2x1xf32> into tensor<2x4xf32>
+  return %inserted_slice : tensor<2x4xf32>
 }
 
 // -----
