@@ -43,6 +43,7 @@
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Arith/Utils/Utils.h"
+#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -79,6 +80,7 @@
 #include "llvm/Support/raw_ostream.h"
 #include <cstdint>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -123,6 +125,10 @@ private:
 } // namespace
 
 static bool isUbToUbCopy(Operation *op) {
+  if (auto materializeOp =
+          dyn_cast<bufferization::MaterializeInDestinationOp>(op))
+    return isa<MemRefType>(materializeOp.getDest().getType()) &&
+           materializeOp.getRestrict() && materializeOp.getWritable();
   auto copyOp = dyn_cast<hivm::CopyOp>(op);
   if (!copyOp)
     return false;
@@ -172,6 +178,26 @@ static void modifyOpToSliced(RewriterBase &rewriter, OpOperand *operand,
 }
 
 template <typename OpType>
+static constexpr bool isMaterializeInDestinationOp =
+    std::is_same_v<OpType, bufferization::MaterializeInDestinationOp>;
+
+template <typename OpType>
+static OpOperand &getStoreCopyLikeSrcMutable(OpType op) {
+  if constexpr (isMaterializeInDestinationOp<OpType>)
+    return op.getSourceMutable();
+  else
+    return op.getSrcMutable();
+}
+
+template <typename OpType>
+static OpOperand &getStoreCopyLikeDstMutable(OpType op) {
+  if constexpr (isMaterializeInDestinationOp<OpType>)
+    return op.getDestMutable();
+  else
+    return op.getDstMutable();
+}
+
+template <typename OpType>
 LogicalResult modifyStoreCopyOp(OpType Op, int64_t tilingDim, OpOperand *srcOpr,
                                 OpOperand *dstOpr, scf::ForOp containingLoop,
                                 PatternRewriter &rewriter) {
@@ -218,7 +244,7 @@ LogicalResult modifyStoreCopyOp(OpType Op, int64_t tilingDim, OpOperand *srcOpr,
   }
   rewriter.modifyOpInPlace(Op, [&]() {
     if (Op->getNumResults() > 0)
-      Op->getResult(0).setType(Op.getDst().getType());
+      Op->getResult(0).setType(dstOpr->get().getType());
     Op->setAttr(tiledOp, rewriter.getUnitAttr());
   });
   return success();
@@ -366,11 +392,16 @@ public:
                                 PatternRewriter &rewriter) const override {
     if (Op->template hasAttrOfType<UnitAttr>(tiledOp))
       return failure();
-    int64_t tilingDim = analyzer.getTilingDim(Op.getSrc());
-    auto inputType = Op.getOperand(0).getType();
+
+    auto *srcOpr = &getStoreCopyLikeSrcMutable(Op);
+    auto *dstOpr = &getStoreCopyLikeDstMutable(Op);
+    Value src = srcOpr->get();
+    int64_t tilingDim = analyzer.getTilingDim(src);
+    auto inputType = src.getType();
     if (!inputType) {
       return failure();
     }
+
     /// We differentiate storeOp and copyOp
     if constexpr (std::is_same_v<hivm::CopyOp, OpType>) {
       if (!Op.getResults().empty()) { // If copy Op with results
@@ -389,18 +420,15 @@ public:
             "Copy input memref is not supported, skip tile and bind.");
         return failure();
       }
-      LLVM_DEBUG(DBGS() << "The copy op tiling dim is: " << tilingDim << "\n");
-    } else {
-      LLVM_DEBUG(DBGS() << "The store op tiling dim is: " << tilingDim << "\n");
     }
+    LLVM_DEBUG(DBGS() << "The " << Op->getName().getStringRef()
+                      << " op tiling dim is: " << tilingDim << "\n");
     auto maybeContainingLoop = findContainingSubblockLoop(Op);
     if (tilingDim == -1 || failed(maybeContainingLoop)) {
       Op->setAttr(tileAndSliceFailure, rewriter.getUnitAttr());
       return failure();
     }
     auto containingLoop = maybeContainingLoop.value();
-    auto *srcOpr = &Op.getSrcMutable();
-    auto *dstOpr = &Op.getDstMutable();
     if constexpr (std::is_same_v<hivm::StoreOp, OpType>) {
       auto storeOp = cast<hivm::StoreOp>(Op);
       auto srcType = dyn_cast<ShapedType>(storeOp.getSrc().getType());
@@ -428,7 +456,8 @@ public:
         }
       }
     } else {
-      /// Handle the copyOp, we assump copyOp does not have a mask
+      /// Handle CopyOp and MaterializeInDestinationOp, neither of which has a
+      /// mask.
       if (failed(modifyStoreCopyOp(Op, tilingDim, srcOpr, dstOpr,
                                    containingLoop, rewriter))) {
         Op->setAttr(tileAndSliceFailure, rewriter.getUnitAttr());
@@ -1194,8 +1223,11 @@ tileAndSliceOp(func::FuncOp func,
 
   RewritePatternSet patterns(func->getContext());
   patterns.add<TileAndSliceStoreCopyOp<hivm::StoreOp>,
-               TileAndSliceStoreCopyOp<hivm::CopyOp>, TileAndSliceIndirectStore,
-               TileAndSliceStrideStore, TileAndSliceDebugOp,
+               TileAndSliceStoreCopyOp<hivm::CopyOp>,
+               TileAndSliceStoreCopyOp<
+                   bufferization::MaterializeInDestinationOp>,
+               TileAndSliceIndirectStore, TileAndSliceStrideStore,
+               TileAndSliceDebugOp,
                TileAndSliceLeaf<scf::ForOp>, TileAndSliceLeaf<scf::WhileOp>,
                TileAndSliceLeaf<scf::IfOp>>(func->getContext(), analyzer);
   if (hacc::utils::isRegBasedArch(func->getParentOfType<ModuleOp>())) {
