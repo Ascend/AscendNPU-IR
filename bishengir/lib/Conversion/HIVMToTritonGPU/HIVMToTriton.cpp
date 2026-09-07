@@ -1075,6 +1075,67 @@ struct HIVMToTTGatherOp : public OpRewritePattern<hivm::VGatherOp> {
   }
 };
 
+struct HIVMToTTTransOp : public OpRewritePattern<hivm::VTransposeOp> {
+  using OpRewritePattern<hivm::VTransposeOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hivm::VTransposeOp op,
+                                PatternRewriter &rewriter) const final {
+    if (op.getTempBuffer())
+      return op.emitOpError("temp_buffer is not supported in tensor lowering");
+    if (!op.hasPureTensorSemantics())
+      return op.emitOpError("only tensor form is supported");
+    if (op.getNumResults() != 1)
+      return op.emitOpError("requires one tensor result");
+
+    auto srcTy = dyn_cast<RankedTensorType>(op.getSrc().getType());
+    if (!srcTy)
+      return op.emitOpError("requires ranked tensor source");
+    auto resultTy = dyn_cast<RankedTensorType>(op->getResult(0).getType());
+    if (!resultTy)
+      return op.emitOpError("requires ranked tensor result");
+    if (srcTy.getRank() != resultTy.getRank())
+      return op.emitOpError("requires source and result ranks to match");
+    if (srcTy.getElementType() != resultTy.getElementType())
+      return op.emitOpError("requires source and result element types to match");
+
+    int64_t rank = srcTy.getRank();
+    SmallVector<int32_t> order;
+    ArrayRef<int64_t> permutation = op.getPermutation();
+    if (permutation.empty()) {
+      for (int64_t axis = 0; axis < rank; ++axis)
+        order.push_back(static_cast<int32_t>(axis));
+    } else {
+      if (static_cast<int64_t>(permutation.size()) != rank)
+        return op.emitOpError(
+            "requires permutation size to match source rank");
+      for (int64_t axis : permutation) {
+        if (axis < 0 || axis >= rank ||
+            axis > std::numeric_limits<int32_t>::max())
+          return op.emitOpError("has invalid transpose axis");
+        for (int32_t existingAxis : order) {
+          if (existingAxis == axis)
+            return op.emitOpError("has duplicate transpose axis");
+        }
+        order.push_back(static_cast<int32_t>(axis));
+      }
+    }
+
+    SmallVector<int64_t> expectedShape;
+    ArrayRef<int64_t> srcShape = srcTy.getShape();
+    for (int32_t axis : order)
+      expectedShape.push_back(srcShape[axis]);
+    if (expectedShape != resultTy.getShape()) {
+      return op.emitOpError(
+          "requires result shape to match source permutation");
+    }
+
+    rewriter.replaceOpWithNewOp<triton::TransOp>(
+        op, op->getResult(0).getType(), op.getSrc(),
+        rewriter.getDenseI32ArrayAttr(order));
+    return success();
+  }
+};
+
 // Convert hivm.hir.vreduce to tt.reduce
 // Before: %2 = hivm.hir.vreduce <sum> (%0： tensor<16x16xf32>) outs(%1: tensor<1x16xf32>) unsigned_src = false reduce_dims=[0] ->tensor<16xf32>
 // After: %2 = tt.reduce （%0）<{axis=0:i32}> ({
@@ -1290,5 +1351,6 @@ void mlir::hivm::populateHIVMToTritonPatterns(TritonTypeConverter &converter,
                HIVMStoreOpPattern>(converter, context);
 
   patterns.add<GetBlockIdxOpPattern, VArangeOpPattern, VBrcOpPattern,
-               HIVMToTTGatherOp, HIVMToTTReduceOp, HIVMToTTScanOp>(context);
+               HIVMToTTGatherOp, HIVMToTTTransOp, HIVMToTTReduceOp,
+               HIVMToTTScanOp>(context);
 }
