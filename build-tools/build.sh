@@ -114,6 +114,11 @@ init_variables() {
   ENABLE_WERROR="OFF"
   MLIR_WERROR="OFF"
   BISHENGIR_WERROR="OFF"
+  HIVMC_DISABLE_WERROR=""
+  HIVMC_DISABLE_MLIR_WERROR=""
+  HIVMC_DISABLE_BISHENGIR_WERROR=""
+  HIVMC_REBUILD=""
+  HIVMC_FAST_BUILD=""
   SHARED_LIBS="OFF"
   CCACHE_BUILD="ON"
   SAFETY_OPTIONS=""
@@ -349,6 +354,7 @@ parse_arguments() {
                 ;;
             --fast-build)
                 NO_INSTALL="1"
+                HIVMC_FAST_BUILD="--fast-build"
                 shift
                 ;;
             -h|--help)
@@ -397,6 +403,7 @@ parse_arguments() {
                 ;;
             -r|--rebuild)
                 REBUILD="1"
+                HIVMC_REBUILD="-r"
                 shift
                 ;;
             --safety-options)
@@ -417,14 +424,17 @@ parse_arguments() {
                 ;;
             --disable-werror)
                 ENABLE_WERROR="OFF"
+                HIVMC_DISABLE_WERROR="--disable-werror"
                 shift
                 ;;
             --disable-mlir-werror)
                 MLIR_WERROR="OFF"
+                HIVMC_DISABLE_MLIR_WERROR="--disable-mlir-werror"
                 shift
                 ;;
             --disable-bishengir-werror)
                 BISHENGIR_WERROR="OFF"
+                HIVMC_DISABLE_BISHENGIR_WERROR="--disable-bishengir-werror"
                 shift
                 ;;
             --enable-lld)
@@ -727,13 +737,17 @@ build_hivmc() {
   local hivmc_cmake_options="${CMAKE_OPTIONS} -DLLVM_EXTERNAL_BISHENGIR_SOURCE_DIR=${BISHENGIR_SOURCE_DIR}/bishengir/hivmc/bishengir"
 
   ./bishengir/hivmc/build-tools/build.sh \
-    --build-type "${BUILD_TYPE}" -r \
+    --build-type "${BUILD_TYPE}" ${HIVMC_REBUILD} \
     -o "${BUILD_DIR}/../build_hivmc" \
     -j "${THREADS}" \
     --c-compiler "${C_COMPILER}" \
     --cxx-compiler "${CXX_COMPILER}" \
     --safety_options \
     --safety_ld_options \
+    ${HIVMC_DISABLE_WERROR} \
+    ${HIVMC_DISABLE_MLIR_WERROR} \
+    ${HIVMC_DISABLE_BISHENGIR_WERROR} \
+    ${HIVMC_FAST_BUILD} \
     --skip_rpath \
     ${hivmc_publish_option} \
     --add-cmake-options "${hivmc_cmake_options}" \

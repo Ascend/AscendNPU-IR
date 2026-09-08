@@ -132,7 +132,11 @@ inline std::string getTransformRootTag(const std::string &kernelName) {
 } // namespace auto_schedule
 
 /// Check whether the given type is a FP8 type.
-bool isFP8(Type type);
+inline bool isFP8(Type type) {
+  return isa<Float8E5M2Type, Float8E4M3Type, Float8E4M3FNType,
+             Float8E5M2FNUZType, Float8E4M3FNUZType, Float8E4M3B11FNUZType>(
+      type);
+}
 
 /// Whether the operation is a `tensor.expand_shape`, `tensor.collapse_shape`.
 bool isReshapeOp(Operation *op);
