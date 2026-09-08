@@ -2,7 +2,7 @@
 
 #blocked = #ttg.blocked<{sizePerThread = [1], threadsPerWarp = [32], warpsPerCTA = [8], order = [0]}>
 
-module attributes {"ttg.enable-bishengir-simt-optimization" = 900101 : i32, "ttg.num-warps" = 8 : i32} {
+module attributes {"ttg.simt-optimization-mode" = 900101 : i32, "ttg.num-warps" = 8 : i32} {
   // Unary mappings.
 
   // CHECK-LABEL: @test_tanhf

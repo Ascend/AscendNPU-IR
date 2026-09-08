@@ -383,10 +383,8 @@ void setupLowerTritonPipelineOptions(
   // max size of shared memory available for simt vf.
   options.sharedDynamicSize = config.getSharedMemDynamicSize();
   // encode our own compile optimization
-  options.enableBishengirSimtOptimization =
-      config.getEnableBishengirSimtOptimization();
-  options.enableSimtReorderInstruction =
-      config.getEnableSimtReorderInstruction();
+  options.simtOptimizationMode =
+      config.getSimtOptimizationMode();
 #endif
 #if BISHENGIR_ENABLE_TRITON_COMPILE
   options.protonGPUCompileConfig = getProtonGPUCompileConfig();

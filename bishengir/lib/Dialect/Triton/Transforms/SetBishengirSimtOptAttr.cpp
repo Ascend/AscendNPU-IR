@@ -6,8 +6,8 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file implements a pass that set the SIMT opt Attr from
-// --enable-bishengir-simt-optimization.
+// This file implements a pass that sets the SIMT optimization attribute from
+// --simt-optimization-mode.
 //
 //===----------------------------------------------------------------------===//
 
@@ -40,8 +40,8 @@ public:
     ModuleOp mod = getOperation();
     OpBuilder builder(mod.getContext());
 
-    mod->setAttr(AttrEnableBishengirSimtOptimizationName,
-                 builder.getI32IntegerAttr(enableBishengirSimtOptimization));
+    mod->setAttr(AttrSimtOptimizationModeName,
+                 builder.getI32IntegerAttr(simtOptimizationMode));
   }
 };
 

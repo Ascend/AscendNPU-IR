@@ -22,7 +22,7 @@ module attributes {
     ttg.shared             = 16384 : i32,
     ttg.target             = "cuda:80",
     hacc.target            = #hacc.target<"Ascend910_9589">,
-    "ttg.enable-bishengir-simt-optimization" = 1111 : i32
+    "ttg.simt-optimization-mode" = 1111 : i32
 } {
   // CHECK-LABEL: @shared_mem_load_store_no_cache_option
   // CHECK:       ascend_dpx.store

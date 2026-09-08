@@ -33,9 +33,9 @@ struct LowerTritonPipelineOptions
       *this, "shared-memory-size",
       llvm::cl::desc("max size of shared memory available for simt vf"),
       llvm::cl::init(122880)};
-  PassOptions::Option<int32_t> enableBishengirSimtOptimization{
-      *this, "enable-bishengir-simt-optimization",
-      llvm::cl::desc("enable which bishengir simt optimization"),
+  PassOptions::Option<int32_t> simtOptimizationMode{
+      *this, "simt-optimization-mode",
+      llvm::cl::desc("set modes for some simt optimization passes"),
       llvm::cl::init(900101)};
   PassOptions::Option<bool> disableDecomposeReduction{
       *this, "disable-decompose-reduction",
@@ -60,10 +60,6 @@ struct LowerTritonPipelineOptions
   PassOptions::Option<bool> enableGlobalScratchAllocation{
  	  *this, "enable-global-scratch-allocation",
  	  llvm::cl::desc("enable the use of global scratch memory"),
-      llvm::cl::init(false)};
-  PassOptions::Option<bool> enableSimtReorderInstruction{
-      *this, "enable-simt-reorder-instruction",
-      llvm::cl::desc("enable simt reorder instruction pattern"),
       llvm::cl::init(false)};
   PassOptions::Option<bool> enableSIMTFastDiv{
       *this, "enable-simt-fast-div",

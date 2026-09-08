@@ -71,9 +71,7 @@ void buildTritonGPUOptimizationPipeline(
   pm.addPass(mlir::triton::gpu::createTritonGPUReduceDataDuplication());
   if (!tritonOptions.disableReorderInstruction) {
 #if BSPUB_DAVINCI_BISHENGIR
-    mlir::triton::gpu::TritonGPUReorderInstructionsOptions reorderInstructionsOptions;
-    reorderInstructionsOptions.enableSimtReorderInstruction = tritonOptions.enableSimtReorderInstruction;
-    pm.addPass(mlir::triton::gpu::createTritonGPUReorderInstructionsPass(reorderInstructionsOptions));
+    pm.addPass(mlir::triton::gpu::createTritonGPUReorderInstructionsPass());
 #else
     pm.addPass(mlir::triton::gpu::createTritonGPUReorderInstructionsPass());
 #endif
@@ -99,8 +97,8 @@ namespace triton {
 void buildLowerTritonPipeline(OpPassManager &pm,
                               const LowerTritonPipelineOptions &options) {
   bishengir::SetBishengirSimtOptAttrOptions optionsSimtOpt;
-  optionsSimtOpt.enableBishengirSimtOptimization =
-      options.enableBishengirSimtOptimization;
+  optionsSimtOpt.simtOptimizationMode =
+      options.simtOptimizationMode;
   pm.addNestedPass<mlir::triton::FuncOp>(createConvertNonPowerTwoTensorsPass());
   pm.addPass(
       bishengir::triton::createSetBishengirSimtOptAttrPass(optionsSimtOpt));

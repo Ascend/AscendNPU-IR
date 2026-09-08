@@ -1,3 +1,4 @@
+#include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Analysis/SliceAnalysis.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -45,13 +46,7 @@ class TritonGPUReorderInstructionsPass
     : public impl::TritonGPUReorderInstructionsBase<
           TritonGPUReorderInstructionsPass> {
 public:
-#if BSPUB_DAVINCI_BISHENGIR
-  explicit TritonGPUReorderInstructionsPass(const TritonGPUReorderInstructionsOptions &options)
-    : TritonGPUReorderInstructionsBase(options) {}
-#else
   TritonGPUReorderInstructionsPass() = default;
-#endif
-
   Operation *getFirstUse(Operation *op) {
     std::vector<Operation *> users;
     for (auto user : op->getUsers()) {
@@ -68,7 +63,8 @@ public:
   void runOnOperation() override {
     ModuleOp m = getOperation();
 #if BSPUB_DAVINCI_BISHENGIR
-    if (enableSimtReorderInstruction) {
+    llvm::StringRef myPassName = this->getArgument();
+    if (mlir::triton::util::getPassColumnDigit(m, myPassName)) {
       ReorderInstructionsImpl impl;
       impl.commonInstructionReorder(m, &getContext());
     }
@@ -154,8 +150,7 @@ public:
 } // namespace mlir
 
 #if BSPUB_DAVINCI_BISHENGIR
-std::unique_ptr<::mlir::Pass> mlir::triton::gpu::createTritonGPUReorderInstructionsPass(
-  const TritonGPUReorderInstructionsOptions &options) {
-  return std::make_unique<TritonGPUReorderInstructionsPass>(options);
+std::unique_ptr<::mlir::Pass> mlir::triton::gpu::createTritonGPUReorderInstructionsPass() {
+  return std::make_unique<TritonGPUReorderInstructionsPass>();
 }
 #endif

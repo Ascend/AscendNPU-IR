@@ -184,10 +184,12 @@ std::string modifyForVersionMismatch(std::string src) {
   auto downgradeDbgDeclareStr =
       std::regex_replace(downgradeDbgValueStr, dbgDeclareRe, dbgDeclarePattern);
 
-  std::regex dlvRegex(
-      R"((!+\d+\s*=\s*!DILocalVariable\([^)]*?)(\)))"
-  );
-  return std::regex_replace(downgradeDbgDeclareStr, dlvRegex, "$1, attrtype: 64$2");
+  std::regex dlvRegex(R"((!+\d+\s*=\s*!DILocalVariable\([^)]*?)(\)))");
+  auto addAttrType = std::regex_replace(downgradeDbgDeclareStr, dlvRegex,
+                                        "$1, attrtype: 64$2");
+  std::regex dspRegex(
+      R"((!+\d+\s*=\s*(?:distinct\s+)?!DISubprogram\([^)]*name:\s*"[^"]*_vf_[^"]*"[^)]*?)(\)))");
+  return std::regex_replace(addAttrType, dspRegex, "$1, functype: 256$2");
 }
 
 std::string tryReplaceExtension(StringRef path, StringRef newExtension) {

@@ -2,7 +2,7 @@
 
 #blocked = #ttg.blocked<{sizePerThread = [1, 1], threadsPerWarp = [32, 1], warpsPerCTA = [16, 1], order = [1, 0]}>
 #blocked1 = #ttg.blocked<{sizePerThread = [1], threadsPerWarp = [32], warpsPerCTA = [16], order = [0]}>
-module attributes {"ttg.enable-bishengir-simt-optimization" = 11 : i32, "ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 16 : i32, ttg.shared = 221184 : i32, ttg.target = "cuda:80", "ttg.threads-per-warp" = 32 : i32} {
+module attributes {"ttg.simt-optimization-mode" = 11 : i32, "ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 16 : i32, ttg.shared = 221184 : i32, ttg.target = "cuda:80", "ttg.threads-per-warp" = 32 : i32} {
   tt.func public @triton_zeros_sum(%arg0: !tt.ptr<f32> {tt.divisibility = 16 : i32}, %arg1: i32 {gpu.block = #gpu.block<x>, tt.divisibility = 1 : i32}, %arg2: i32 {gpu.block = #gpu.block<y>, tt.divisibility = 1 : i32}, %arg3: i32 {gpu.block = #gpu.block<z>, tt.divisibility = 1 : i32}) attributes {noinline = false} {
     %cst = arith.constant dense<0> : tensor<1x1xi32, #blocked>
     // CHECK: ttg.convert_layout

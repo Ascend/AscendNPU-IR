@@ -2,7 +2,7 @@
 
 #layout = #ttg.blocked<{sizePerThread = [1], threadsPerWarp = [32], warpsPerCTA = [32], order = [0]}>
 
-module attributes {"ttg.enable-bishengir-simt-optimization" = 100 : i32, "ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 32 : i32, ttg.target = "cuda:80", "ttg.threads-per-warp" = 32 : i32} {
+module attributes {"ttg.simt-optimization-mode" = 100 : i32, "ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 32 : i32, ttg.target = "cuda:80", "ttg.threads-per-warp" = 32 : i32} {
 
 // CHECK: module attributes {{.*}}ttg.shared = 256 : i32
 // CHECK-LABEL: llvm.func {{.*}}@scan_addf_fast
@@ -45,7 +45,7 @@ tt.func public @scan_addf_reverse_fast(%arg0: tensor<2048xf32, #layout>) attribu
 
 #layout_f16 = #ttg.blocked<{sizePerThread = [1], threadsPerWarp = [32], warpsPerCTA = [32], order = [0]}>
 
-module attributes {"ttg.enable-bishengir-simt-optimization" = 100 : i32, "ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 32 : i32, ttg.target = "cuda:80", "ttg.threads-per-warp" = 32 : i32} {
+module attributes {"ttg.simt-optimization-mode" = 100 : i32, "ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 32 : i32, ttg.target = "cuda:80", "ttg.threads-per-warp" = 32 : i32} {
 
 // CHECK: module attributes {{.*}}ttg.shared = 128 : i32
 // CHECK-LABEL: llvm.func {{.*}}@scan_addf_f16_fast
@@ -71,7 +71,7 @@ tt.func public @scan_addf_f16_fast(%arg0: tensor<2048xf16, #layout_f16>) attribu
 
 #layout_warp16 = #ttg.blocked<{sizePerThread = [1], threadsPerWarp = [32], warpsPerCTA = [16], order = [0]}>
 
-module attributes {"ttg.enable-bishengir-simt-optimization" = 100 : i32, "ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 16 : i32, ttg.target = "cuda:80", "ttg.threads-per-warp" = 32 : i32} {
+module attributes {"ttg.simt-optimization-mode" = 100 : i32, "ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 16 : i32, ttg.target = "cuda:80", "ttg.threads-per-warp" = 32 : i32} {
 
 // CHECK: module attributes {{.*}}ttg.shared = 128 : i32
 // CHECK-LABEL: llvm.func {{.*}}@scan_addf_warp16_fast
@@ -111,7 +111,7 @@ tt.func public @scan_addf_warp16_fast(%arg0: tensor<1024xf32, #layout_warp16>) a
 
 #layout_warp8 = #ttg.blocked<{sizePerThread = [1], threadsPerWarp = [32], warpsPerCTA = [8], order = [0]}>
 
-module attributes {"ttg.enable-bishengir-simt-optimization" = 100 : i32, "ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 8 : i32, ttg.target = "cuda:80", "ttg.threads-per-warp" = 32 : i32} {
+module attributes {"ttg.simt-optimization-mode" = 100 : i32, "ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 8 : i32, ttg.target = "cuda:80", "ttg.threads-per-warp" = 32 : i32} {
 
 // CHECK: module attributes {{.*}}ttg.shared = 64 : i32
 // CHECK-LABEL: llvm.func {{.*}}@scan_addf_warp8_fast

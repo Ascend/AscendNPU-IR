@@ -40,7 +40,7 @@ def SetBishengirSimtOptAttr
   let constructor = "bishengir::triton::createSetBishengirSimtOptAttrPass()";
 
   let options = [
-    Option<"enableBishengirSimtOptimization", "enable-bishengir-simt-optimization",
+    Option<"simtOptimizationMode", "simt-optimization-mode",
            "int32_t", /*default*/"0",
            "enable optimization for simt">,
   ];
