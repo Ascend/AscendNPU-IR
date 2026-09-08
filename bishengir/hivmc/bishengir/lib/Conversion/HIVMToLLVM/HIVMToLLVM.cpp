@@ -163,10 +163,21 @@ struct ConvertHIVMToLLVM
     // mark ssbuf-related load/store ops as volatile to prevent ccec from
     // hoisting
     auto loadOpWalkFn = [](LLVM::LoadOp loadOp) {
-      if (isLLVMLoadStoreOnSsbuf(loadOp)) {
-        // TODO: think of a better way of handling ssbuf loads.
-        loadOp.setVolatile_(true);
+      if (!isLLVMLoadStoreOnSsbuf(loadOp)) {
+        return WalkResult::advance();
       };
+      auto markOpOpt = utils::getAnnotateOpWithAttr(loadOp, kMemrefExtVolatile);
+      if (!markOpOpt.has_value()) {
+        return WalkResult::advance();
+      }
+      loadOp.setVolatile_(true);
+      auto markOp = markOpOpt.value();
+      markOp->removeAttr(kMemrefExtVolatile);
+      if (llvm::all_of(markOp->getAttrs(), [](NamedAttribute attr) {
+            return attr.getName() == "effect";
+          })) {
+        markOp->erase();
+      }
       return WalkResult::advance();
     };
 
