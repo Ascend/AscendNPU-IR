@@ -1545,11 +1545,12 @@ void DataLayoutInferAndPropagateHelper::rewriteCopyOp(mlir::Operation *op) {
   op->replaceUsesOfWith(src, rewrittenSrc);
 }
 
-class ReplaceMMADOperand : public OpRewritePattern<hivm::MmadL1Op> {
+template <typename MmadOp>
+class ReplaceMMADOperand : public OpRewritePattern<MmadOp> {
 public:
-  using OpRewritePattern<hivm::MmadL1Op>::OpRewritePattern;
+  using OpRewritePattern<MmadOp>::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(hivm::MmadL1Op op,
+  LogicalResult matchAndRewrite(MmadOp op,
                                 PatternRewriter &rewriter) const final {
     bool modifed = false;
     for (auto &operand : op->getOpOperands()) {
@@ -1582,7 +1583,8 @@ struct InferHIVMDataLayoutPass
 void hasConvertlayoutForCube(func::FuncOp func) {
   MLIRContext *ctx = func->getContext();
   RewritePatternSet pattern(ctx);
-  pattern.add<ReplaceMMADOperand>(ctx);
+  pattern.add<ReplaceMMADOperand<hivm::MmadL1Op>,
+              ReplaceMMADOperand<hivm::BatchMmadL1Op>>(ctx);
   (void)(applyPatternsGreedily(func, std::move(pattern)));
 }
 

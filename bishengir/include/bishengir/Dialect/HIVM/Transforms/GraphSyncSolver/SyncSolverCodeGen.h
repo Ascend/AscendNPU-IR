@@ -74,7 +74,7 @@ private:
       bufferSelectedMem;
 
   // Per-MMAD L1 op arguments collected during sync codegen insertion.
-  llvm::MapVector<hivm::MmadL1Op, MmadL1SyncArgs> mmadl1SyncArgsMap;
+  llvm::MapVector<Operation *, MmadL1SyncArgs> mmadl1SyncArgsMap;
 
   // Per-MMAD MxL1 op arguments collected during sync codegen insertion.
   llvm::MapVector<hivm::MmadMxL1Op, MmadMxL1SyncArgs> mmadMxL1SyncArgsMap;

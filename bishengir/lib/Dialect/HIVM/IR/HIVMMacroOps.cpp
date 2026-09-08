@@ -358,20 +358,23 @@ getLocalMatmulOperandALayoutImpl(Operation *operation) {
 
   bool isTranspose = op.isMatmulATransposed();
   switch (*rank) {
-  case kDimTwo: {
+  case kDimTwo:
+  case kDimThree: {
     DataLayout expected = isTranspose ? DataLayout::nZ : DataLayout::zN;
     bool effectiveTranspose = isTranspose && !sourceCarriesFractalLayoutHint(
                                                  op.getMatmulA(), expected);
     return DataLayoutAttr::get(op->getContext(), DataLayout::DOTA_ND,
                                effectiveTranspose);
   }
-  case kDimFour: {
+  case kDimFour:
+  case kDimFive: {
     auto shape = cast<ShapedType>(op.getMatmulA().getType()).getShape();
     return DataLayoutAttr::get(
         op->getContext(), isTranspose ? DataLayout::nZ : DataLayout::zN,
         BoolAttr(),
         mlir::DenseI64ArrayAttr::get(op->getContext(),
-                                     ArrayRef({shape[2], shape[3]})));
+                                     ArrayRef({shape[*rank - 2],
+                                               shape[*rank - 1]})));
   }
   default:
     return failure();
@@ -387,20 +390,23 @@ getLocalMatmulOperandBLayoutImpl(Operation *operation) {
 
   bool isTranspose = op.isMatmulBTransposed();
   switch (*rank) {
-  case kDimTwo: {
+  case kDimTwo:
+  case kDimThree: {
     DataLayout expected = isTranspose ? DataLayout::nZ : DataLayout::zN;
     bool effectiveTranspose = isTranspose && !sourceCarriesFractalLayoutHint(
                                                  op.getMatmulB(), expected);
     return DataLayoutAttr::get(op->getContext(), DataLayout::DOTB_ND,
                                effectiveTranspose);
   }
-  case kDimFour: {
+  case kDimFour:
+  case kDimFive: {
     auto shape = cast<ShapedType>(op.getMatmulB().getType()).getShape();
     return DataLayoutAttr::get(
         op->getContext(), isTranspose ? DataLayout::nZ : DataLayout::zN,
         BoolAttr(),
         mlir::DenseI64ArrayAttr::get(op->getContext(),
-                                     ArrayRef({shape[2], shape[3]})));
+                                     ArrayRef({shape[*rank - 2],
+                                               shape[*rank - 1]})));
   }
   default:
     return failure();
@@ -416,8 +422,10 @@ getLocalMatmulOperandCLayoutImpl(Operation *operation) {
 
   switch (*rank) {
   case kDimTwo:
+  case kDimThree:
     return DataLayoutAttr::get(op->getContext(), DataLayout::DOTC_ND);
   case kDimFour:
+  case kDimFive:
     return DataLayoutAttr::get(op->getContext(), DataLayout::zN);
   default:
     return failure();
@@ -1089,6 +1097,26 @@ void BatchMmadL1Op::build(OpBuilder &odsBuilder, OperationState &odsState,
 
 int BatchMmadL1Op::getNumSyncRelatedArgs() { return 7; }
 
+SmallVector<Value>
+BatchMmadL1Op::getInputOperands(bool includeSyncRelatedArgs /*=true*/) {
+  SmallVector<Value> retOperands;
+  retOperands.push_back(getA());
+  retOperands.push_back(getB());
+  retOperands.push_back(getInitCondition());
+  retOperands.push_back(getRealM());
+  retOperands.push_back(getRealK());
+  retOperands.push_back(getRealN());
+  if (getPerChannelBias()) {
+    retOperands.push_back(getPerChannelBias());
+  }
+  if (includeSyncRelatedArgs) {
+    auto syncRelatedArgs = getSyncRelatedArgs();
+    std::copy(syncRelatedArgs.begin(), syncRelatedArgs.end(),
+              std::back_inserter(retOperands));
+  }
+  return retOperands;
+}
+
 LogicalResult BatchMmadL1Op::verify() {
   auto syncRelatedArgs = getSyncRelatedArgs();
   auto numSyncRelatedArgs = getNumSyncRelatedArgs();
@@ -1111,6 +1139,36 @@ bool BatchMmadL1Op::isInitFirstLoopIter() {
 
 void BatchMmadL1Op::setInitCondition(Value init) {
   getInitConditionMutable().assign(init);
+}
+
+FailureOr<DataLayoutAttr> BatchMmadL1Op::getOperandALayout() {
+  return detail::getLocalMatmulOperandALayoutImpl(*this);
+}
+
+FailureOr<DataLayoutAttr> BatchMmadL1Op::getOperandBLayout() {
+  return detail::getLocalMatmulOperandBLayoutImpl(*this);
+}
+
+FailureOr<DataLayoutAttr> BatchMmadL1Op::getOperandCLayout() {
+  return detail::getLocalMatmulOperandCLayoutImpl(*this);
+}
+
+FailureOr<DataLayoutAttr> BatchMmadL1Op::getOperandBiasLayout() {
+  auto rank = getRankFromShapedTypeValue(getPerChannelBias());
+  if (failed(rank))
+    return failure();
+  if (*rank == kDimOne || *rank == kDimTwo || *rank == kDimThree)
+    return DataLayoutAttr::get(getContext(), DataLayout::ND);
+  if (*rank == kDimFour || *rank == kDimFive)
+    return DataLayoutAttr::get(getContext(), DataLayout::zN);
+  return failure();
+}
+
+llvm::SmallVector<int64_t>
+BatchMmadL1Op::getBlockSizesTile(Value oper, bool isTranspose, bool isA) {
+  bool isA5 = hacc::utils::isAscend950(
+      this->getOperation()->getParentOfType<ModuleOp>());
+  return ::getBlockSizesTile(oper, isTranspose, isA, isA5);
 }
 
 MatmulBiasMode BatchMmadL1Op::getMatmulBiasMode() {

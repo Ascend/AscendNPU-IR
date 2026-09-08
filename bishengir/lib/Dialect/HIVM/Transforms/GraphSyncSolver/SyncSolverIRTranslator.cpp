@@ -375,6 +375,65 @@ IRTranslator::getDecomposedMmadl1(hivm::MmadL1Op mmadl1Op,
   return outerScopeOp;
 }
 
+// BatchMmadL1 has the same seven synchronization arguments and the same
+// MTE1/M pipeline as MmadL1. Keep a separate overload because their generated
+// ODS operation types do not expose the common accessors through an interface.
+std::unique_ptr<OperationBase>
+IRTranslator::getDecomposedBatchMmadl1(hivm::BatchMmadL1Op batchOp,
+                                       OperationBase *parentOp) {
+  auto outerScopeOp = std::make_unique<Scope>();
+  outerScopeOp->parentOp = parentOp;
+  outerScopeOp->op = batchOp;
+
+  auto batchLoopOp =
+      std::make_unique<MmadL1LoopOp>(batchOp, outerScopeOp.get());
+  auto scopeOp = std::make_unique<Scope>();
+  scopeOp->parentOp = batchLoopOp.get();
+  auto coreType = TCoreType::CUBE_OR_VECTOR;
+  if (options.isCrossCoreMode()) {
+    coreType = TCoreType::CUBE;
+  }
+  auto loadL0aOp = std::make_unique<LoadL0AOp>(
+      nullptr, scopeOp.get(), coreType, hivm::PIPE::PIPE_MTE1,
+      hivm::PIPE::PIPE_MTE1, getMemoryOps({batchOp.getA()}),
+      SmallVector<Value>());
+  scopeOp->body.push_back(std::move(loadL0aOp));
+
+  auto loadL0bOp = std::make_unique<LoadL0BOp>(
+      nullptr, scopeOp.get(), coreType, hivm::PIPE::PIPE_MTE1,
+      hivm::PIPE::PIPE_MTE1, getMemoryOps({batchOp.getB()}),
+      SmallVector<Value>());
+  scopeOp->body.push_back(std::move(loadL0bOp));
+
+  if (auto bias = batchOp.getPerChannelBias()) {
+    auto loadBiasOp = std::make_unique<LoadBiasOp>(
+        nullptr, scopeOp.get(), coreType, hivm::PIPE::PIPE_MTE1,
+        hivm::PIPE::PIPE_MTE1, getMemoryOps({bias}), SmallVector<Value>());
+    scopeOp->body.push_back(std::move(loadBiasOp));
+  }
+
+  auto batchL0Op = std::make_unique<MmadL0Operation>(
+      batchOp, scopeOp.get(), coreType, hivm::PIPE::PIPE_M,
+      hivm::PIPE::PIPE_M, SmallVector<Value>(),
+      getMemoryOps({batchOp.getC()}));
+  batchL0Op->hasUnitFlagFeat = true;
+  unitFlagFeaturedOps.insert(batchL0Op.get());
+  batchLoopOp->mmadL0Op = batchL0Op.get();
+  scopeOp->body.push_back(std::move(batchL0Op));
+  batchLoopOp->body.push_back(std::move(scopeOp));
+
+  auto beforePlaceHolderOp =
+      std::make_unique<PlaceHolder>(nullptr, batchLoopOp->parentOp);
+  beforePlaceHolderOp->beforeOp = batchLoopOp.get();
+  auto afterPlaceHolderOp =
+      std::make_unique<PlaceHolder>(nullptr, batchLoopOp->parentOp);
+  afterPlaceHolderOp->afterOp = batchLoopOp.get();
+  outerScopeOp->body.push_back(std::move(beforePlaceHolderOp));
+  outerScopeOp->body.push_back(std::move(batchLoopOp));
+  outerScopeOp->body.push_back(std::move(afterPlaceHolderOp));
+  return outerScopeOp;
+}
+
 // Decompose MmadMxL1Ops into a small inline sequence in the IR for
 // easier sync handling with independent ScaleA/ScaleB eventIds.
 std::unique_ptr<OperationBase>
@@ -509,6 +568,9 @@ IRTranslator::getDestinationStyleInterfaceOp(Operation *op,
   if (options.decomposeMmadl1Op) {
     if (auto mmadl1Op = dyn_cast<hivm::MmadL1Op>(op)) {
       return getDecomposedMmadl1(mmadl1Op, parentOp);
+    }
+    if (auto batchOp = dyn_cast<hivm::BatchMmadL1Op>(op)) {
+      return getDecomposedBatchMmadl1(batchOp, parentOp);
     }
     if (auto mmadMxL1Op = dyn_cast<hivm::MmadMxL1Op>(op)) {
       return getDecomposedMmadMxL1(mmadMxL1Op, parentOp);

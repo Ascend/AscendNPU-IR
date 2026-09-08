@@ -959,6 +959,11 @@ def TileBatchMMIntoLoop : Pass<"hivm-tile-batchmm-into-loop", "func::FuncOp"> {
   let summary = "Tile batch matmul into loop with iteration on batch dimension";
   let constructor = "mlir::hivm::createTileBatchMMIntoLoopPass()";
   let dependentDialects = ["hivm::HIVMDialect"];
+  let options = [Option<
+    "keepRegBaseBatch", "keep-regbase-batch", "bool",
+    /*default=*/"false",
+    "Leave a RegBase batch matmul untiled so it can lower to the batched "
+    "mmad macro">];
 }
 
 def LiftZeroRank : Pass<"hivm-lift-zero-rank", "func::FuncOp"> {

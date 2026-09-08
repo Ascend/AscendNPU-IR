@@ -119,6 +119,94 @@ FractalOperandLayouts MmadL1Op::getOperandsTargetFractalLayout() {
 }
 
 //===----------------------------------------------------------------------===//
+// BatchMmadL1Op
+//===----------------------------------------------------------------------===//
+
+llvm::SmallDenseMap<Value, DataLayoutAttr>
+BatchMmadL1Op::getOperandsCurrentLayout() {
+  llvm::SmallDenseMap<Value, DataLayoutAttr> valLayoutMap;
+
+  auto aLayoutAttr = getOperandALayout();
+  assert(succeeded(aLayoutAttr) && "Cannot get layout for batched Matrix A");
+  valLayoutMap[getDpsInputOperand(0)->get()] = *aLayoutAttr;
+
+  auto bLayoutAttr = getOperandBLayout();
+  assert(succeeded(bLayoutAttr) && "Cannot get layout for batched Matrix B");
+  valLayoutMap[getDpsInputOperand(1)->get()] = *bLayoutAttr;
+
+  auto cLayoutAttr = getOperandCLayout();
+  assert(succeeded(cLayoutAttr) && "Cannot get layout for batched Matrix C");
+  valLayoutMap[getDpsInitOperand(0)->get()] = *cLayoutAttr;
+
+  if (getPerChannelBias()) {
+    auto biasLayoutAttr = getOperandBiasLayout();
+    assert(succeeded(biasLayoutAttr) && "Cannot get layout for batched bias");
+    valLayoutMap[getDpsInputOperand(getNumDpsInputs() - 1)->get()] =
+        *biasLayoutAttr;
+  }
+  return valLayoutMap;
+}
+
+llvm::SmallDenseMap<Value, DataLayoutAttr>
+BatchMmadL1Op::getOperandsTargetLayout() {
+  llvm::SmallDenseMap<Value, DataLayoutAttr> valLayoutMap;
+
+  auto operA = getA();
+  bool isATranspose = getATranspose().has_value();
+  auto aBlockSizes = getBlockSizesTile(operA, isATranspose, /*isA=*/true);
+  valLayoutMap[operA] = DataLayoutAttr::get(
+      getContext(), isATranspose ? DataLayout::nZ : DataLayout::zN, nullptr,
+      mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(aBlockSizes)));
+
+  auto operB = getB();
+  bool isBTranspose = getBTranspose().has_value();
+  auto bBlockSizes = getBlockSizesTile(operB, isBTranspose, /*isA=*/false);
+  valLayoutMap[operB] = DataLayoutAttr::get(
+      getContext(), isBTranspose ? DataLayout::nZ : DataLayout::zN, nullptr,
+      mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(bBlockSizes)));
+
+  llvm::SmallVector<int64_t> cBlockSizes = {utils::FRACTAL_BLOCK_NUM,
+                                            utils::FRACTAL_BLOCK_NUM};
+  valLayoutMap[getC()] = DataLayoutAttr::get(
+      getContext(), DataLayout::zN, nullptr,
+      mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(cBlockSizes)));
+
+  if (auto bias = getPerChannelBias())
+    valLayoutMap[bias] =
+        DataLayoutAttr::get(getContext(), DataLayout::ND, nullptr, nullptr);
+  return valLayoutMap;
+}
+
+FractalOperandLayouts BatchMmadL1Op::getOperandsTargetFractalLayout() {
+  FractalOperandLayouts layouts;
+
+  auto operA = getA();
+  auto aBlockSizes = getBlockSizesTile(operA, getATranspose().has_value(),
+                                       /*isA=*/true);
+  layouts.a = DataLayoutAttr::get(
+      getContext(), DataLayout::Fractal, nullptr,
+      mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(aBlockSizes)));
+
+  auto operB = getB();
+  auto bBlockSizes = getBlockSizesTile(operB, getBTranspose().has_value(),
+                                       /*isA=*/false);
+  layouts.b = DataLayoutAttr::get(
+      getContext(), DataLayout::Fractal, nullptr,
+      mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(bBlockSizes)));
+
+  llvm::SmallVector<int64_t> cBlockSizes = {utils::FRACTAL_BLOCK_NUM,
+                                            utils::FRACTAL_BLOCK_NUM};
+  layouts.c = DataLayoutAttr::get(
+      getContext(), DataLayout::Fractal, nullptr,
+      mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(cBlockSizes)));
+
+  if (getPerChannelBias())
+    layouts.bias =
+        DataLayoutAttr::get(getContext(), DataLayout::ND, nullptr, nullptr);
+  return layouts;
+}
+
+//===----------------------------------------------------------------------===//
 // Conv1DL1Op
 //===----------------------------------------------------------------------===//
 

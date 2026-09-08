@@ -226,8 +226,10 @@ def MmadL1Op : HIVM_LocalMmadOp<"mmadL1", [
   }];
 }
 
-def BatchMmadL1Op : HIVM_LocalMmadOp<"batchMmadL1",
-  [NoLibraryFunctionTrait]> {
+def BatchMmadL1Op : HIVM_LocalMmadOp<"batchMmadL1", [
+  NoMaxRankTrait,
+  DeclareOpInterfaceMethods<OpLayoutInterface, ["getOperandsTargetFractalLayout"]>,
+]> {
   let summary = [{
     Batch Matrix Multiply and Add Op with inputs from L1 memory hierarchy.
   }];
@@ -235,7 +237,16 @@ def BatchMmadL1Op : HIVM_LocalMmadOp<"batchMmadL1",
     Note: the rank of A, B, and C Matrix must be three, where the 0-th dimension
     being the batch dimension.
   }];
-  let extraClassDeclaration = localMmadBaseDecls;
+  let extraClassDeclaration = localMmadBaseDecls # [{
+    static StringRef getOpName() { return "batch_mma_tile"; }
+
+    FailureOr<DataLayoutAttr> getOperandALayout();
+    FailureOr<DataLayoutAttr> getOperandBLayout();
+    FailureOr<DataLayoutAttr> getOperandCLayout();
+    FailureOr<DataLayoutAttr> getOperandBiasLayout();
+    llvm::SmallVector<int64_t> getBlockSizesTile(
+        Value oper, bool isTranspose, bool isA);
+  }];
 }
 
 //===----------------------------------------------------------------------===//

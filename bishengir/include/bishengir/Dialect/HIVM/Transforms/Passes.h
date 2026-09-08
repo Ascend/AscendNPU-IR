@@ -263,7 +263,8 @@ std::unique_ptr<Pass>
 createInlineFixpipePass(const InlineFixpipeOptions &options = {});
 
 // Create a pass to tile batch matmul into loop
-std::unique_ptr<Pass> createTileBatchMMIntoLoopPass();
+std::unique_ptr<Pass> createTileBatchMMIntoLoopPass(
+    const TileBatchMMIntoLoopOptions &options = {});
 
 // Create a pass to lift zero rank
 std::unique_ptr<Pass> createLiftZeroRankPass();

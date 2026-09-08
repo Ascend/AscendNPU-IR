@@ -44,8 +44,8 @@ private:
 };
 
 /// Infer, propagate, and set memory scope information for local matmul-like
-/// ops (MmadL1Op and MmadMxL1Op).
-/// \note The op should be bufferized beforehand. BatchMmadL1Op is unsupported.
+/// ops (MmadL1Op, BatchMmadL1Op, and MmadMxL1Op).
+/// \note The op should be bufferized beforehand.
 LogicalResult
 inferAndPropagateMemScopeForLocalMatmulLike(LocalMatmulLikeOpInterface op);
 

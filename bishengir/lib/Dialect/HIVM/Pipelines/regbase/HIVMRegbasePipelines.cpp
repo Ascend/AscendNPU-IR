@@ -349,7 +349,13 @@ static void hivmPreBufferizationOptimizationPipeline(
     // Inserts convert layout before and after cube operations
     addOptimizedConvertLayoutFixpipePipeline(pm);
   }
-  pm.nest<func::FuncOp>().addPass(createTileBatchMMIntoLoopPass());
+  {
+    TileBatchMMIntoLoopOptions tileBatchMMOpts;
+    tileBatchMMOpts.keepRegBaseBatch =
+        hivmPipelineOptions.enableHIVMBatchMatmul;
+    pm.nest<func::FuncOp>().addPass(
+        createTileBatchMMIntoLoopPass(tileBatchMMOpts));
+  }
   pm.addPass(mlir::hivm::createNormalizeMatmulPass());
 
   if (hacc::utils::isAscend950(hivmPipelineOptions.target)) {
