@@ -12,8 +12,11 @@
 // pass rewrites the load destination view so the hardware writes into the
 // transposed result layout directly. The explicit transpose can then be
 // eliminated. Pad fills that initialized the old dest alloc are re-emitted on
-// the new dest; otherwise they stay on a dead buffer and DMA pad lanes are
-// leftover UB.
+// the new dest when a non-last dest dim is still a prefix, or when the last
+// kept dim starts at a non-zero offset (DMA pad does not write `[0, offset)`).
+// If every non-last kept dim already spans the alloc and the last kept dim
+// offset is statically 0, the load dest last dim is expanded to the root so
+// `pad_mode` covers `[0, rootLast)` and the fill is dropped.
 //
 //===----------------------------------------------------------------------===//
 
@@ -21,6 +24,7 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/MemRef/Transforms/ComposeSubView.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Dominance.h"
 #include "mlir/IR/OpDefinition.h"
@@ -28,7 +32,6 @@
 #include "mlir/Interfaces/ViewLikeInterface.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
-#include "mlir/Dialect/MemRef/Transforms/ComposeSubView.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
@@ -80,9 +83,8 @@ LogicalResult inspectLoadUses(Value root, hivm::LoadOp &loadOp,
   for (Operation *user : root.getUsers()) {
 
     if (isa<bufferization::ToTensorOp>(user) || isa<linalg::FillOp>(user)) {
-      // Fills are re-emitted on the new dest by transferFillOps. Without
-      // that, the load dest is a fresh alloc and the original fill becomes
-      // dead.
+      // Fills are re-emitted on the new dest by transferFillOps, or erased
+      // when DMA last-dim pad already covers the dest.
       continue;
     }
 
@@ -195,22 +197,44 @@ static scf::IfOp enclosingThenOnlyFillIf(linalg::FillOp fillOp) {
   return ifOp;
 }
 
+static SmallVector<linalg::FillOp> collectFillsOnAlloc(Value alloc) {
+  SmallVector<linalg::FillOp> fills;
+  if (!isa_and_nonnull<memref::AllocOp>(alloc.getDefiningOp()))
+    return fills;
+  llvm::DenseSet<Value> visited;
+  collectFillOps(alloc, visited, fills);
+  return fills;
+}
+
+static void eraseFillOps(ArrayRef<linalg::FillOp> fills,
+                         PatternRewriter &rewriter) {
+  llvm::SmallPtrSet<Operation *, 4> maybeDeadIfs;
+  for (linalg::FillOp fillOp : fills) {
+    if (isa<scf::IfOp>(fillOp->getParentOp()))
+      maybeDeadIfs.insert(fillOp->getParentOp());
+    rewriter.eraseOp(fillOp);
+  }
+  for (Operation *op : maybeDeadIfs) {
+    auto ifOp = cast<scf::IfOp>(op);
+    Block *thenBlock = ifOp.thenBlock();
+    if (thenBlock && thenBlock->without_terminator().empty() &&
+        ifOp.getElseRegion().empty() && ifOp.getNumResults() == 0)
+      rewriter.eraseOp(ifOp);
+  }
+}
+
 /// Re-emit pad fills on the transposed dest alloc created by permuteRoot().
 /// ConvertToHIVMOp folds a full-alloc vbrc into init_out_buffer and decompose
 /// restores a fill on that alloc; this pass then allocates a new dest and
 /// must not leave the fill behind. If the original fill sat in a then-only
-/// scf.if, keep that guard so full tiles skip the fill (dAv); unconditional
-/// fill is only the fallback when the condition does not dominate the new
-/// alloc.
+/// scf.if, keep that guard so full tiles skip the fill; unconditional fill is
+/// only the fallback when the condition does not dominate the new alloc.
 static void transferFillOps(Value oldAlloc, Value newAlloc,
                             PatternRewriter &rewriter) {
-  if (!isa_and_nonnull<memref::AllocOp>(oldAlloc.getDefiningOp()) ||
-      !isa_and_nonnull<memref::AllocOp>(newAlloc.getDefiningOp()))
+  if (!isa_and_nonnull<memref::AllocOp>(newAlloc.getDefiningOp()))
     return;
 
-  llvm::DenseSet<Value> visited;
-  SmallVector<linalg::FillOp> fills;
-  collectFillOps(oldAlloc, visited, fills);
+  SmallVector<linalg::FillOp> fills = collectFillsOnAlloc(oldAlloc);
   if (fills.empty())
     return;
 
@@ -229,7 +253,7 @@ static void transferFillOps(Value oldAlloc, Value newAlloc,
       if (dom.dominates(cond, newAllocOp)) {
         rewriter.setInsertionPointAfter(newAllocOp);
         auto newIf = rewriter.create<scf::IfOp>(oldIf.getLoc(), cond,
-                                               /*withElseRegion=*/false);
+                                                /*withElseRegion=*/false);
         newIf->setAttrs(oldIf->getAttrs());
         rewriter.setInsertionPoint(newIf.thenBlock()->getTerminator());
         rewriter.create<linalg::FillOp>(loc, ValueRange{pad},
@@ -243,19 +267,12 @@ static void transferFillOps(Value oldAlloc, Value newAlloc,
     rewriter.create<linalg::FillOp>(loc, ValueRange{pad}, ValueRange{newAlloc});
   }
 
-  llvm::SmallPtrSet<Operation *, 4> maybeDeadIfs;
-  for (linalg::FillOp fillOp : fills) {
-    if (isa<scf::IfOp>(fillOp->getParentOp()))
-      maybeDeadIfs.insert(fillOp->getParentOp());
-    rewriter.eraseOp(fillOp);
-  }
-  for (Operation *op : maybeDeadIfs) {
-    auto ifOp = cast<scf::IfOp>(op);
-    Block *thenBlock = ifOp.thenBlock();
-    if (thenBlock && thenBlock->without_terminator().empty() &&
-        ifOp.getElseRegion().empty() && ifOp.getNumResults() == 0)
-      rewriter.eraseOp(ifOp);
-  }
+  eraseFillOps(fills, rewriter);
+}
+
+static bool loadCanPadLastDim(hivm::LoadOp loadOp) {
+  auto padMode = loadOp.getPadMode();
+  return padMode && padMode->getPadmode() != hivm::PadMode::PadNull;
 }
 
 struct FuseTransposeIntoLoadPattern
@@ -340,7 +357,6 @@ struct FuseTransposeIntoLoadPattern
     TileView newLoadDstTile = dstPermutator.permute(rewriter);
 
     loadOp.setOperand(0, newLoadSrcTile.view);
-    loadOp.setOperand(1, newLoadDstTile.view);
 
     auto newMemref = newLoadDstTile.root;
     auto toTensorSrc = toTensorOp.getMemref();
@@ -353,8 +369,22 @@ struct FuseTransposeIntoLoadPattern
       TileView::unifyRoot(newSubviewTile, newLoadDstTile, rewriter);
       newMemref = newSubviewTile.view;
     }
+
+    // Last-dim pad can initialize [offset, rootLast). Expand dest to that
+    // window so the DMA writes the tail. Do not grow the to_tensor view.
+    if (loadCanPadLastDim(loadOp))
+      newLoadDstTile.expandLastKeptDimToRoot(rewriter);
+    loadOp.setOperand(1, newLoadDstTile.view);
+
     transferAnnotationMarks(permTile->root, newLoadDstTile.root, rewriter);
-    transferFillOps(permTile->root, newLoadDstTile.root, rewriter);
+    // Drop the fill only when pad covers the whole last kept dim. A non-zero
+    // last-dim offset leaves [0, offset) unwritten; keep transferFillOps.
+    if (loadCanPadLastDim(loadOp) &&
+        newLoadDstTile.nonLastKeptDimsCoverRoot() &&
+        newLoadDstTile.lastKeptDimOffsetIsZero())
+      eraseFillOps(collectFillsOnAlloc(permTile->root), rewriter);
+    else
+      transferFillOps(permTile->root, newLoadDstTile.root, rewriter);
 
     auto newToTensorOp = rewriter.create<bufferization::ToTensorOp>(
         toTensorOp.getLoc(), transposeOp->getResult(0).getType(), newMemref,
