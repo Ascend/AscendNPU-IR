@@ -68,6 +68,7 @@ add_bishengir_dialect_library(BiShengIRHFusionTransforms
   UnfoldSymbolicDim.cpp
   UpliftWhileToFor.cpp
   LegalizeScalar.cpp
+  OptimizeScalarTransfers.cpp
   VectorizeOps.cpp
   LegalizeBF16.cpp
   LegalizeFP8.cpp
@@ -108,6 +109,7 @@ add_bishengir_dialect_library(BiShengIRHFusionTransforms
   MLIRLinalgTransforms
   MLIRLinalgTransformOps
   MLIRLinalgUtils
+  MLIRMathDialect
   MLIRMemRefDialect
   MLIRMemRefTransformOps
   MLIRSCFTransformOps
