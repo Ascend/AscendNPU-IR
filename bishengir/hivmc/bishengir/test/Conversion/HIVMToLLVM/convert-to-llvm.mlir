@@ -386,6 +386,7 @@ module {
     // CHECK: %[[LOAD_ADDR:.*]] = llvm.extractvalue %[[FINAL_DESC]][1] : !llvm.struct<(ptr<11>, ptr<11>, i64)>
     // CHECK: %[[VAL:.*]] = llvm.load volatile %[[LOAD_ADDR]] : !llvm.ptr<11> -> i8
     %3 = memref.load %2[] {markDCacheInvalidatePatternVisited = 0 : i32} : memref<i8, #hivm.address_space<ssbuf>>
+	annotation.mark %3 {memref_ext.volatile} : i8
 
     %0 = llvm.mlir.constant(0 : i8) : i8
     %4 = llvm.icmp "sgt" %3, %0 : i8
