@@ -2,7 +2,7 @@
 // RUN: bishengir-opt %s -hivm-tensor-copy-insertion="analysis-heuristic=top-down allow-return-allocs-from-loops bufferize-function-boundaries" -one-shot-bufferize="allow-return-allocs-from-loops bufferize-function-boundaries analysis-heuristic=top-down function-boundary-type-conversion=identity-layout-map unknown-type-conversion=identity-layout-map" -split-input-file | FileCheck %s --check-prefix=CHECK-DOUBLE
 
 // -----
-
+// CHECK-LABEL: func.func @test_clone_same_yield_operands
 func.func @test_clone_same_yield_operands(%arg0: i32,
                                           %arg1 : tensor<256xf16>,
                                           %arg2 : tensor<256xf16>,
@@ -31,7 +31,7 @@ func.func @test_clone_same_yield_operands(%arg0: i32,
 }
 
 // -----
-
+// CHECK-LABEL: func.func @test_clone_use_after_SCFIf
 func.func @test_clone_use_after_SCFIf(%arg0: i32, %arg1 : tensor<256xf16>,
                                       %arg2 : tensor<256xf16>) -> tensor<256xf16> {
   %c1_i32 = arith.constant 1 : i32
@@ -55,7 +55,30 @@ func.func @test_clone_use_after_SCFIf(%arg0: i32, %arg1 : tensor<256xf16>,
 }
 
 // -----
+// CHECK-LABEL: func.func @test_clone_for_init
+func.func @test_clone_for_init(%arg0: i32, %arg1: tensor<256xf16>, %arg2: memref<256xf16>) {
+  %cst = arith.constant 0.000000e+00 : f16
+  %c4 = arith.constant 4 : index
+  %c1 = arith.constant 1 : index
+  %c0 = arith.constant 0 : index
+  %0 = tensor.empty() : tensor<256xf16>
+  %1 = hivm.hir.vbrc ins(%cst : f16) outs(%0 : tensor<256xf16>) -> tensor<256xf16>
+  // CHECK: hivm.hir.vbrc ins({{.*}} : f16) outs(%[[ALLOC_0:.*]] : memref<256xf16>)
+  scf.for %arg3 = %c0 to %c4 step %c1 {
+    // CHECK: memref.copy %[[ALLOC_0]], %[[ALLOC_1:.*]] : memref<256xf16> to memref<256xf16>
+    // CHECK: %{{.*}} = scf.for {{.*}} iter_args(%{{.*}} = %[[ALLOC_1]]) -> (memref<256xf16>) {
+    %2 = scf.for %arg4 = %c0 to %c4 step %c1 iter_args(%arg5 = %1) -> (tensor<256xf16>) {
+      %3 = tensor.empty() : tensor<256xf16>
+      %4 = hivm.hir.vadd ins(%arg5, %arg1 : tensor<256xf16>, tensor<256xf16>) outs(%3 : tensor<256xf16>) -> tensor<256xf16>
+      scf.yield %4 : tensor<256xf16>
+    }
+    hivm.hir.store ins(%2 : tensor<256xf16>) outs(%arg2 : memref<256xf16>)
+  }
+  return
+}
 
+// -----
+// CHECK-LABEL: func.func @test_clone_use_after_write_in_SCFIf
 func.func @test_clone_use_after_write_in_SCFIf(%arg0: i32, %arg1 : tensor<256xf16>,
                                       %arg2 : tensor<256xf16>) -> tensor<256xf16> {
   %c1_i32 = arith.constant 1 : i32
@@ -79,7 +102,7 @@ func.func @test_clone_use_after_write_in_SCFIf(%arg0: i32, %arg1 : tensor<256xf1
 }
 
 // -----
-
+// CHECK-LABEL: func.func @test_not_clone_in_SCFIf
 func.func @test_not_clone_in_SCFIf(%arg0: i32, %arg1 : tensor<256xf16>,
                                       %arg2 : tensor<256xf16>) -> tensor<256xf16> {
   %c1_i32 = arith.constant 1 : i32
@@ -102,7 +125,7 @@ func.func @test_not_clone_in_SCFIf(%arg0: i32, %arg1 : tensor<256xf16>,
 }
 
 // -----
-
+// CHECK-LABEL: func.func @test_not_clone_before_SCFIf
 func.func @test_not_clone_before_SCFIf(%arg0: i32, %arg1 : tensor<256xf16>,
                                       %arg2 : tensor<256xf16>) -> tensor<256xf16> {
   %c1_i32 = arith.constant 1 : i32
@@ -125,7 +148,7 @@ func.func @test_not_clone_before_SCFIf(%arg0: i32, %arg1 : tensor<256xf16>,
 }
 
 // -----
-
+// CHECK-LABEL: func.func @test_clone_double_SCFIf
 func.func @test_clone_double_SCFIf(%arg0: i32, %arg1 : tensor<256xf16>,
                                       %arg2 : tensor<256xf16>) -> tensor<256xf16> {
   %c1_i32 = arith.constant 1 : i32
@@ -159,7 +182,7 @@ func.func @test_clone_double_SCFIf(%arg0: i32, %arg1 : tensor<256xf16>,
 }
 
 // -----
-
+// CHECK-LABEL: func.func @test_clone_double_SCFIf_v1
 func.func @test_clone_double_SCFIf_v1(%arg0: i32, %arg1 : tensor<256xf16>,
                                       %arg2 : tensor<256xf16>) -> tensor<256xf16> {
   %c1_i32 = arith.constant 1 : i32
@@ -193,7 +216,7 @@ func.func @test_clone_double_SCFIf_v1(%arg0: i32, %arg1 : tensor<256xf16>,
 }
 
 // -----
-
+// CHECK-LABEL: func.func @test_clone_double_SCFIf_v2
 func.func @test_clone_double_SCFIf_v2(%arg0: i32, %arg1 : tensor<256xf16>,
                                       %arg2 : tensor<256xf16>) -> tensor<256xf16> {
   %c1_i32 = arith.constant 1 : i32
@@ -227,7 +250,7 @@ func.func @test_clone_double_SCFIf_v2(%arg0: i32, %arg1 : tensor<256xf16>,
 }
 
 // -----
-
+// CHECK-LABEL: func.func @test_not_clone_double_SCFIf
 func.func @test_not_clone_double_SCFIf(%arg0: i32, %arg1 : tensor<256xf16>,
                                       %arg2 : tensor<256xf16>) -> tensor<256xf16> {
   %c1_i32 = arith.constant 1 : i32
@@ -258,7 +281,7 @@ func.func @test_not_clone_double_SCFIf(%arg0: i32, %arg1 : tensor<256xf16>,
 }
 
 // -----
-
+// CHECK-LABEL: func.func @test_clone_yield_operands_in_for
 func.func @test_clone_yield_operands_in_for(%arg0: i32, %arg1 : tensor<256xf16>,
                                                               %arg2 : tensor<256xf16>) -> (tensor<256xf16>) {
   %cst_0 = arith.constant 0.000000e+00 : f16
@@ -280,9 +303,9 @@ func.func @test_clone_yield_operands_in_for(%arg0: i32, %arg1 : tensor<256xf16>,
 }
 
 // -----
-
+// CHECK-LABEL: func.func @test_not_clone_yield_operands_in_for
 func.func @test_not_clone_yield_operands_in_for(%arg0: i32, %arg1 : tensor<256xf16>,
-                                                              %arg2 : tensor<256xf16>) -> (tensor<256xf16>) {
+                                                            %arg2 : tensor<256xf16>) -> (tensor<256xf16>) {
   %cst_0 = arith.constant 0.000000e+00 : f16
   %c4 = arith.constant 4 : index
   %c1 = arith.constant 1 : index
@@ -301,7 +324,7 @@ func.func @test_not_clone_yield_operands_in_for(%arg0: i32, %arg1 : tensor<256xf
 }
 
 // -----
-
+// CHECK-LABEL: func.func @test_clone_yield_operands_in_for_and_if
 func.func @test_clone_yield_operands_in_for_and_if(%arg0: i32, %arg1 : tensor<256xf16>,
                                                               %arg2 : tensor<256xf16>) -> (tensor<256xf16>) {
   %cst_0 = arith.constant 0.000000e+00 : f16
@@ -333,7 +356,7 @@ func.func @test_clone_yield_operands_in_for_and_if(%arg0: i32, %arg1 : tensor<25
 }
 
 // -----
-
+// CHECK-LABEL: func.func @test_not_clone_yield_operands_in_for_and_if
 func.func @test_not_clone_yield_operands_in_for_and_if(%arg0: i32, %arg1 : tensor<256xf16>,
                                                               %arg2 : tensor<256xf16>) -> (tensor<256xf16>) {
   %cst_0 = arith.constant 0.000000e+00 : f16
@@ -363,7 +386,7 @@ func.func @test_not_clone_yield_operands_in_for_and_if(%arg0: i32, %arg1 : tenso
 }
 
 // -----
-
+// CHECK-LABEL: func.func @test_clone_yield_operands_in_for_out_if
 func.func @test_clone_yield_operands_in_for_out_if(%arg0: i32, %arg1 : tensor<256xf16>,
                                                               %arg2 : tensor<256xf16>) -> (tensor<256xf16>) {
   %cst_0 = arith.constant 0.000000e+00 : f16
@@ -395,7 +418,7 @@ func.func @test_clone_yield_operands_in_for_out_if(%arg0: i32, %arg1 : tensor<25
 }
 
 // -----
-
+// CHECK-LABEL: func.func @test_clone_yield_operands_alias_by_for_operands
 func.func @test_clone_yield_operands_alias_by_for_operands(%arg0: i32, %arg1 : tensor<256xf16>,
                                                               %arg2 : tensor<256xf16>) -> (tensor<256xf16>) {
   %cst_0 = arith.constant 0.000000e+00 : f16
@@ -428,7 +451,7 @@ func.func @test_clone_yield_operands_alias_by_for_operands(%arg0: i32, %arg1 : t
 }
 
 // -----
-
+// CHECK-LABEL: func.func @test_clone_if_yield_operands_defined_out_of_forOp
 func.func @test_clone_if_yield_operands_defined_out_of_forOp(%arg0: i32, %arg1: tensor<256xf16>, %arg2: memref<256xf16>) {
   %cst = arith.constant 0.000000e+00 : f16
   %c4 = arith.constant 4 : index
@@ -464,7 +487,7 @@ func.func @test_clone_if_yield_operands_defined_out_of_forOp(%arg0: i32, %arg1: 
 }
 
 // -----
-
+// CHECK-LABEL: func.func @test_clone_use_after_write_in_SCFIf_for_buffer
 func.func @test_clone_use_after_write_in_SCFIf_for_buffer(%arg0: i32, %arg1 : tensor<256xf16>,
                                       %arg2 : tensor<256xf16>) -> tensor<256xf16> {
   %c1_i32 = arith.constant 1 : i32
@@ -491,7 +514,7 @@ func.func @test_clone_use_after_write_in_SCFIf_for_buffer(%arg0: i32, %arg1 : te
 }
 
 // -----
-
+// CHECK-LABEL: func.func @test_clone_trace_insertSliceOp
 func.func @test_clone_trace_insertSliceOp(%arg0: i32, %arg1: tensor<16x16xf32>, %arg2: tensor<16x16xf32>) -> tensor<16x16xf32> {
   %c1_i32 = arith.constant 1 : i32
   %c1 = arith.constant 1 : index
@@ -518,8 +541,8 @@ func.func @test_clone_trace_insertSliceOp(%arg0: i32, %arg1: tensor<16x16xf32>, 
 }
 
 // -----
-
 // CHECK-DOUBLE-LABEL: func.func @test_clone_if_yield_operands_for_extra_uWrite
+// CHECK-LABEL: func.func @test_clone_if_yield_operands_for_extra_uWrite
 func.func @test_clone_if_yield_operands_for_extra_uWrite(%arg0: i32, %arg1: tensor<256xf16>, %arg2: memref<256xf16>) {
   %cst = arith.constant 0.000000e+00 : f16
   %c4 = arith.constant 4 : index
@@ -556,8 +579,8 @@ func.func @test_clone_if_yield_operands_for_extra_uWrite(%arg0: i32, %arg1: tens
 }
 
 // -----
-
 // CHECK-DOUBLE-LABEL: func.func @test_cross_yield_operands_in_for
+// CHECK-LABEL: func.func @test_cross_yield_operands_in_for
 func.func @test_cross_yield_operands_in_for(%arg0: i32, %arg1 : tensor<256xf16>,
                                                               %arg2 : tensor<256xf16>) -> (tensor<256xf16>) {
   %cst_0 = arith.constant 0.000000e+00 : f16
@@ -582,7 +605,8 @@ func.func @test_cross_yield_operands_in_for(%arg0: i32, %arg1 : tensor<256xf16>,
 }
 
 // -----
-
+// CHECK-DOUBLE-LABEL: func.func @test_not_clone_trace_insertSliceOp
+// CHECK-LABEL: func.func @test_not_clone_trace_insertSliceOp
 func.func @test_not_clone_trace_insertSliceOp(%arg0: i32, %arg1: tensor<16x16xf32>, %arg2: tensor<16x16xf32>) -> tensor<16x16xf32> {
   %c1_i32 = arith.constant 1 : i32
   %c1 = arith.constant 1 : index
@@ -630,7 +654,7 @@ module {
     %3 = vector.transfer_write %2, %arg1[%c0], %0 {in_bounds = [true]} : vector<64xf32>, tensor<16xf32>
     return %3 : tensor<16xf32>
   }
-
+  // CHECK-LABEL: func.func @test_conflict_in_vf
   func.func @test_conflict_in_vf(%arg0: tensor<16xf32>, %arg1: memref<16xf32>) {
     %c0_i32 = arith.constant 0 : i32
     %c8_i32 = arith.constant 8 : i32
@@ -666,7 +690,8 @@ module {
     }
     return %1 : tensor<16x16xf32>
   }
-
+  // CHECK-LABEL: func.func @test_vf
+  // CHECK-NOT: hivm.hir.copy
   func.func @test_vf(%arg0: tensor<16x16xf32>, %arg1: tensor<16x16xf32>) -> tensor<16x16xf32> attributes {hivm.vector_function, no_inline} {
     %cst = arith.constant dense<0.000000e+00> : vector<64xf32>
     %cst_1 = arith.constant 0.000000e+00 : f32
@@ -684,7 +709,7 @@ module {
     }
     return %1 : tensor<16x16xf32>
   }
-
+  // CHECK-LABEL: func.func @test_not_conflict_in_vf
   func.func @test_not_conflict_in_vf(%arg0: tensor<16x16xf32>, %arg1: memref<16x16xf32>) {
     %c0_i32 = arith.constant 0 : i32
     %c8_i32 = arith.constant 8 : i32
@@ -697,6 +722,115 @@ module {
       %4 = func.call @test_vf(%arg3, %3) {hivm.vector_function, no_inline} : (tensor<16x16xf32>, tensor<16x16xf32>) -> tensor<16x16xf32>
       // CHECK: scf.yield %[[CALL_RESULT]] : memref<16x16xf32>
       scf.yield %4 : tensor<16x16xf32>
+    }
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @init_vf(%arg0: tensor<16x16xf32>) -> tensor<16x16xf32> attributes {hivm.vector_function, no_inline} {
+    %cst = arith.constant dense<1.000000e+00> : vector<64xf32>
+    %0 = vector.constant_mask [16] : vector<64xi1>
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %1 = scf.for %arg2 = %c0 to %c16 step %c1 iter_args(%arg3 = %arg0) -> (tensor<16x16xf32>) {
+      %extracted_slice_0 = tensor.extract_slice %arg3[%arg2, %c0] [1, 16] [1, 1] : tensor<16x16xf32> to tensor<16xf32>
+      %3 = vector.transfer_write %cst, %extracted_slice_0[%c0], %0 {in_bounds = [true]} : vector<64xf32>, tensor<16xf32>
+      %inserted_slice = tensor.insert_slice %3 into %arg3[%arg2, %c0] [1, 16] [1, 1] : tensor<16xf32> into tensor<16x16xf32>
+      scf.yield %inserted_slice : tensor<16x16xf32>
+    }
+    return %1 : tensor<16x16xf32>
+  }
+
+  func.func @test_vf(%arg0: tensor<16x16xf32>, %arg1: tensor<16x16xf32>) -> tensor<16x16xf32> attributes {hivm.vector_function, no_inline} {
+    %cst = arith.constant dense<0.000000e+00> : vector<64xf32>
+    %cst_1 = arith.constant 0.000000e+00 : f32
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %0 = vector.constant_mask [16] : vector<64xi1>
+    %1 = scf.for %arg2 = %c0 to %c16 step %c1 iter_args(%arg3 = %arg1) -> (tensor<16x16xf32>) {
+      %extracted_slice = tensor.extract_slice %arg0[%c0, %arg2] [16, 1] [1, 1] : tensor<16x16xf32> to tensor<16xf32>
+      %extracted_slice_0 = tensor.extract_slice %arg3[%arg2, %c0] [1, 16] [1, 1] : tensor<16x16xf32> to tensor<16xf32>
+      %2 = vector.transfer_read %extracted_slice[%c0], %cst_1, %0 {in_bounds = [true]} : tensor<16xf32>, vector<64xf32>
+      %3 = vector.transfer_write %2, %extracted_slice_0[%c0], %0 {in_bounds = [true]} : vector<64xf32>, tensor<16xf32>
+      %inserted_slice = tensor.insert_slice %3 into %arg3[%arg2, %c0] [1, 16] [1, 1] : tensor<16xf32> into tensor<16x16xf32>
+      scf.yield %inserted_slice : tensor<16x16xf32>
+    }
+    return %1 : tensor<16x16xf32>
+  }
+  // CHECK-LABEL: func.func @test_transpose_in_vf
+  func.func @test_transpose_in_vf(%arg0: tensor<16x16xf32>, %arg1: memref<16x16xf32>) {
+    %c0_i32 = arith.constant 0 : i32
+    %c8_i32 = arith.constant 8 : i32
+    %c1_i32 = arith.constant 1 : i32
+    %0 = tensor.empty() : tensor<16x16xf32>
+    %1 = func.call @init_vf(%0) {hivm.vector_function, no_inline} : (tensor<16x16xf32>) -> tensor<16x16xf32>
+    %2 = scf.for %arg2 = %c0_i32 to %c8_i32 step %c1_i32 iter_args(%arg3 = %1) -> (tensor<16x16xf32>) : i32 {
+      %3 = tensor.empty() : tensor<16x16xf32>
+      // CHECK: %[[CALL_RESULT:.*]] = func.call @test_vf
+      %4 = func.call @test_vf(%arg3, %3) {hivm.vector_function, no_inline} : (tensor<16x16xf32>, tensor<16x16xf32>) -> tensor<16x16xf32>
+      // CHECK: memref.copy %[[CALL_RESULT]], %[[ALLOC:.*]] : memref<16x16xf32> to memref<16x16xf32>
+      // CHECK: scf.yield %[[ALLOC]] : memref<16x16xf32>
+      scf.yield %4 : tensor<16x16xf32>
+    }
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @init_vf(%arg0: tensor<16x16x16xf32>) -> tensor<16x16x16xf32> attributes {hivm.vector_function, no_inline} {
+    %cst = arith.constant dense<1.000000e+00> : vector<64xf32>
+    %0 = vector.constant_mask [16] : vector<64xi1>
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %1 = scf.for %arg1 = %c0 to %c16 step %c1 iter_args(%arg2 = %arg0) -> (tensor<16x16x16xf32>) {
+      %extracted_slice = tensor.extract_slice %arg2[%arg1, %c0, %c0] [1, 1, 16] [1, 1, 1] : tensor<16x16x16xf32> to tensor<16xf32>
+      %2 = vector.transfer_write %cst, %extracted_slice[%c0], %0 {in_bounds = [true]} : vector<64xf32>, tensor<16xf32>
+      %inserted_slice = tensor.insert_slice %2 into %arg2[%arg1, %c0, %c0] [1, 1, 16] [1, 1, 1] : tensor<16xf32> into tensor<16x16x16xf32>
+      scf.yield %inserted_slice : tensor<16x16x16xf32>
+    }
+    return %1 : tensor<16x16x16xf32>
+  }
+  func.func @test_vf(%arg0: tensor<16x16x16xf32>, %arg1: tensor<16x16x16xf32>) -> tensor<16x16x16xf32> attributes {hivm.vector_function, no_inline} {
+    %cst = arith.constant dense<0.000000e+00> : vector<64xf32>
+    %cst_0 = arith.constant 0.000000e+00 : f32
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %0 = vector.constant_mask [16] : vector<64xi1>
+    %1 = scf.for %arg2 = %c0 to %c16 step %c1 iter_args(%arg3 = %arg1) -> (tensor<16x16x16xf32>) {
+      %2 = scf.for %arg4 = %c0 to %c16 step %c1 iter_args(%arg5 = %arg3) -> (tensor<16x16x16xf32>) {
+        %extracted_slice_2 = tensor.extract_slice %arg0[%arg2, %arg4, %c0] [1, 1, 16] [1, 1, 1] : tensor<16x16x16xf32> to tensor<16xf32>
+        %extracted_slice_3 = tensor.extract_slice %arg5[%arg2, %arg4, %c0] [1, 1, 16] [1, 1, 1] : tensor<16x16x16xf32> to tensor<16xf32>
+        %3 = vector.transfer_read %extracted_slice_2[%c0], %cst_0, %0 {in_bounds = [true]} : tensor<16xf32>, vector<64xf32>
+        %4 = vector.transfer_write %3, %extracted_slice_3[%c0], %0 {in_bounds = [true]} : vector<64xf32>, tensor<16xf32>
+        %inserted_slice_4 = tensor.insert_slice %4 into %arg5[%arg2, %arg4, %c0] [1, 1, 16] [1, 1, 1] : tensor<16xf32> into tensor<16x16x16xf32>
+        scf.yield %inserted_slice_4 : tensor<16x16x16xf32>
+      }
+      scf.yield %2 : tensor<16x16x16xf32>
+    }
+    return %1 : tensor<16x16x16xf32>
+  }
+  // CHECK-LABEL: func.func @test_not_conflict_in_vf_with_nest_loop
+  func.func @test_not_conflict_in_vf_with_nest_loop(%arg0: tensor<16x16x16xf32>, %arg1: memref<16x16x16xf32>) {
+    %c0_i32 = arith.constant 0 : i32
+    %c8_i32 = arith.constant 8 : i32
+    %c1_i32 = arith.constant 1 : i32
+    %0 = tensor.empty() : tensor<16x16x16xf32>
+    %1 = call @init_vf(%0) {hivm.vector_function, no_inline} : (tensor<16x16x16xf32>) -> tensor<16x16x16xf32>
+    %2 = scf.for %arg2 = %c0_i32 to %c8_i32 step %c1_i32 iter_args(%arg3 = %1) -> (tensor<16x16x16xf32>)  : i32 {
+      %3 = tensor.empty() : tensor<16x16x16xf32>
+      // CHECK: %[[CALL_RESULT:.*]] = func.call @test_vf
+      %4 = func.call @test_vf(%arg3, %3) {hivm.vector_function, no_inline} : (tensor<16x16x16xf32>, tensor<16x16x16xf32>) -> tensor<16x16x16xf32>
+      // CHECK: scf.yield %[[CALL_RESULT]] : memref<16x16x16xf32>
+      scf.yield %4 : tensor<16x16x16xf32>
     }
     return
   }
@@ -746,6 +880,7 @@ module {
     return %2 : tensor<16x16xf32>
   }
 
+  // CHECK-LABEL: func.func @test_double_for_conflict_in_vf
   func.func @test_double_for_conflict_in_vf(%arg0: tensor<16x16xf32>, %arg1: memref<16x16xf32>) {
     %c0_i32 = arith.constant 0 : i32
     %c8_i32 = arith.constant 8 : i32
@@ -847,8 +982,8 @@ module {
     %3 = vector.transfer_write %2, %arg0[%c0], %0 {in_bounds = [true]} : vector<64xf32>, tensor<16xf32>
     return %3 : tensor<16xf32>
   }
-
-  func.func @test_conflict_in_vf(%arg0: tensor<16xf32>, %arg1: memref<16xf32>) {
+  // CHECK-LABEL: func.func @test_conflict_in_for
+  func.func @test_conflict_in_for(%arg0: tensor<16xf32>, %arg1: memref<16xf32>) {
     %c0_i32 = arith.constant 0 : i32
     %c8_i32 = arith.constant 8 : i32
     %c1_i32 = arith.constant 1 : i32
@@ -866,6 +1001,7 @@ module {
 
 // -----
 
+// CHECK-LABEL: func.func @test_not_copy_in_scf_whileOp
 func.func @test_not_copy_in_scf_whileOp(%arg0: tensor<16xf32>,
                                         %arg1: tensor<16xf32>,
                                         %arg2: i32) -> tensor<16xf32> {
@@ -894,6 +1030,7 @@ func.func @test_not_copy_in_scf_whileOp(%arg0: tensor<16xf32>,
 
 // -----
 
+// CHECK-LABEL: func.func @test_copy_in_scf_whileOp
 func.func @test_copy_in_scf_whileOp(%arg0: tensor<16xf32>,
                                     %arg1: tensor<16xf32>,
                                     %arg2: i32) -> tensor<16xf32> {
@@ -949,6 +1086,7 @@ func.func @test_not_clone_in_AIC(%arg0: memref<64xf32>) {
 
 // -----
 
+// CHECK-LABEL: func.func @test_clone_yield_operands_for_preload
 func.func @test_clone_yield_operands_for_preload(%arg0: i32, %arg1 : tensor<256xf16>,
                                                               %arg2 : tensor<256xf16>) -> (tensor<256xf16>) {
   %cst_0 = arith.constant 0.000000e+00 : f16
@@ -977,6 +1115,7 @@ func.func @test_clone_yield_operands_for_preload(%arg0: i32, %arg1 : tensor<256x
 
 // -----
 
+// CHECK-LABEL: func.func @test_move_copy_for_preload
 func.func @test_move_copy_for_preload(%arg0: i32, %arg1 : tensor<256xf16>,
                                       %arg2 : tensor<256xf16>) -> (tensor<256xf16>) {
   %cst_0 = arith.constant 0.000000e+00 : f16
