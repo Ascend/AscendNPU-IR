@@ -228,11 +228,15 @@ preprocessLoopArgs(scf::ForOp forOp, SmallVector<Value> &newInitArgs,
       newInitArgs.push_back(initArg);
     }
   }
-  Value newUpperbound = b.create<arith::MulIOp>(
-      info.ub.getLoc(), info.maxPreloadValue, info.step);
-  newUpperbound =
-      b.create<arith::AddIOp>(info.ub.getLoc(), info.ub, newUpperbound);
-  return newUpperbound;
+  Value extraIters = b.create<arith::MulIOp>(info.ub.getLoc(),
+                                             info.maxPreloadValue, info.step);
+  Value expandedUb =
+      b.create<arith::AddIOp>(info.ub.getLoc(), info.ub, extraIters);
+  // Keep empty loops empty: extra drain IVs would still run cloned SET/WAIT.
+  Value nonempty = b.create<arith::CmpIOp>(
+      info.ub.getLoc(), arith::CmpIPredicate::slt, info.lb, info.ub);
+  return b.create<arith::SelectOp>(info.ub.getLoc(), nonempty, expandedUb,
+                                   info.lb);
 }
 
 static Value getPreloadCondition(const PreloadInfo &info, Location loc,
