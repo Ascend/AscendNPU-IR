@@ -75,6 +75,12 @@ void PropagateReshapePass::runOnOperation() {
       coreType && *coreType == mlir::hivm::TFuncCoreType::AIC)
     return;
 
+  // For regbase hfusion pipeline, we use the `PropagateReshape` pass as a
+  // pre-flattening pass.
+  // We shouldn't apply `PropagateReshape` if flattening won't be performed.
+  if (options.forRegbased && !util::shouldApplyFlattenOpsPass(f))
+    return;
+
   if (options.forRegbased && options.skipScope && hasScopeOperation(f))
     return;
 
