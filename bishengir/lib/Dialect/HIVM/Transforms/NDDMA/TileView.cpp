@@ -9,8 +9,11 @@
 #include "bishengir/Dialect/HIVM/Transforms/NDDMA/TileView.h"
 
 #include "bishengir/Dialect/Utils/IndexBoundAnalyzer.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Arith/Utils/Utils.h"
 #include "mlir/Dialect/MemRef/Utils/MemRefUtils.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
+#include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Dominance.h"
 #include "llvm/Support/ErrorHandling.h"
 
@@ -41,22 +44,47 @@ static Value getDominatorRoot(Value lhs, Value rhs) {
   llvm::report_fatal_error("cannot find a common higher NDDMA tile root");
 }
 
+static bool isDroppedDim(const TileView &tile, unsigned dim) {
+  return dim < tile.droppedDims.size() && tile.droppedDims.test(dim);
+}
+
+static std::optional<unsigned> lastKeptDim(const TileView &tile) {
+  for (unsigned dim = tile.offsets.size(); dim-- > 0;) {
+    if (!isDroppedDim(tile, dim)) {
+      return dim;
+    }
+  }
+  return std::nullopt;
+}
+
+static bool coversRootDim(const TileView &tile, unsigned dim,
+                          ArrayRef<OpFoldResult> rootSizes) {
+  return isConstantIntValue(tile.offsets[dim], 0) &&
+         isEqualConstantIntOrValue(tile.sizes[dim], rootSizes[dim]);
+}
+
+static OpFoldResult extentFromOffset(OpBuilder &builder, Location loc,
+                                     OpFoldResult size, OpFoldResult offset) {
+  if (isConstantIntValue(offset, 0)) {
+    return size;
+  }
+  if (auto sizeCst = getConstantIntValue(size)) {
+    if (auto offsetCst = getConstantIntValue(offset)) {
+      return builder.getIndexAttr(*sizeCst - *offsetCst);
+    }
+  }
+  Value sizeVal = getValueOrCreateConstantIndexOp(builder, loc, size);
+  Value offsetVal = getValueOrCreateConstantIndexOp(builder, loc, offset);
+  return builder.create<arith::SubIOp>(loc, sizeVal, offsetVal).getResult();
+}
+
 static void remapViewToRoot(TileView &tile, const TileView &rootTile,
                             OpBuilder &builder) {
   // Keep the tile's view window unchanged, but materialize it on the selected
   // root so users of both tiles read/write the same allocation.
   tile.root = rootTile.root;
   tile.rootType = rootTile.rootType;
-
-  auto newType = cast<MemRefType>(memref::SubViewOp::inferRankReducedResultType(
-      tile.viewType.getShape(), tile.rootType, tile.offsets, tile.sizes,
-      tile.strides));
-  auto subview =
-      builder.create<memref::SubViewOp>(tile.view.getLoc(), newType, tile.root,
-                                        tile.offsets, tile.sizes, tile.strides);
-  tile.view = subview.getResult();
-  tile.viewType = subview.getType();
-  tile.droppedDims = subview.getDroppedDims();
+  tile.rematerializeView(builder);
 }
 
 std::optional<SmallVector<OpFoldResult>> TileView::getRootSizes(Value root) {
@@ -105,6 +133,79 @@ bool TileView::isContiguous() const {
     expectedStride *= size;
   }
   return true;
+}
+
+void TileView::rematerializeView(OpBuilder &builder) {
+  auto rootSizes = getRootSizes(root);
+  bool isFullRoot = rootSizes.has_value();
+  if (isFullRoot) {
+    for (unsigned dim = 0, e = offsets.size(); dim < e; ++dim) {
+      if (isDroppedDim(*this, dim) || !coversRootDim(*this, dim, *rootSizes)) {
+        isFullRoot = false;
+        break;
+      }
+    }
+  }
+
+  if (isFullRoot) {
+    view = root;
+    viewType = rootType;
+    return;
+  }
+
+  SmallVector<int64_t> viewShape;
+  for (unsigned dim = 0, e = offsets.size(); dim < e; ++dim) {
+    if (isDroppedDim(*this, dim)) {
+      continue;
+    }
+    viewShape.push_back(
+        getConstantIntValue(sizes[dim]).value_or(ShapedType::kDynamic));
+  }
+  auto newType = cast<MemRefType>(memref::SubViewOp::inferRankReducedResultType(
+      viewShape, rootType, offsets, sizes, strides));
+  auto subview = builder.create<memref::SubViewOp>(view.getLoc(), newType, root,
+                                                   offsets, sizes, strides);
+  view = subview.getResult();
+  viewType = subview.getType();
+  droppedDims = subview.getDroppedDims();
+}
+
+void TileView::expandLastKeptDimToRoot(OpBuilder &builder) {
+  auto rootSizes = getRootSizes(root);
+  std::optional<unsigned> last = lastKeptDim(*this);
+  if (!rootSizes || !last) {
+    return;
+  }
+
+  OpFoldResult newSize = extentFromOffset(builder, view.getLoc(),
+                                          (*rootSizes)[*last], offsets[*last]);
+  if (isEqualConstantIntOrValue(sizes[*last], newSize)) {
+    return;
+  }
+  sizes[*last] = newSize;
+  rematerializeView(builder);
+}
+
+bool TileView::nonLastKeptDimsCoverRoot() const {
+  auto rootSizes = getRootSizes(root);
+  std::optional<unsigned> last = lastKeptDim(*this);
+  if (!rootSizes || !last) {
+    return false;
+  }
+  for (unsigned dim = 0; dim < *last; ++dim) {
+    if (isDroppedDim(*this, dim)) {
+      continue;
+    }
+    if (!coversRootDim(*this, dim, *rootSizes)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool TileView::lastKeptDimOffsetIsZero() const {
+  std::optional<unsigned> last = lastKeptDim(*this);
+  return last && isConstantIntValue(offsets[*last], 0);
 }
 
 void TileView::unifyRoot(TileView &lhs, TileView &rhs, OpBuilder &builder) {
