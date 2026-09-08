@@ -80,10 +80,11 @@ public:
 //            ...
 //          }
 
-// Helper: check if a tensor is a scalar tensor (shape = [1])
+// Helper: check if a tensor is scalar-like. Both rank-0 tensor<T> and
+// tensor<1xT> represent scalar values here.
 static bool isScalarTensor(RankedTensorType tensorType) {
   auto shape = tensorType.getShape();
-  return shape.size() == 1 && shape[0] == 1;
+  return shape.empty() || (shape.size() == 1 && shape[0] == 1);
 }
 
 // Move scalar tensor.extract and its backward slice outside the scope
@@ -247,7 +248,7 @@ void TransformOpForSIMTPass::runOnOperation() {
           auto tensorType = cast<RankedTensorType>(extractOp.getTensor().getType());
 
           if (isScalarTensor(tensorType)) {
-            // Scalar tensor (shape=[1]): move extract and backward slice outside scope
+            // Scalar-like tensor: move extract and backward slice outside scope
             moveScalarExtractOutsideScope(extractOp, scopeOp);
           }
           else {
