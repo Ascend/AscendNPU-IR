@@ -2,8 +2,7 @@
 
 // CHECK-LABEL: func.func @fuse_load_with_dyn_size
 // CHECK:       %[[NEW:.*]] = memref.alloc() : memref<256x128xbf16>
-// CHECK:       scf.if
-// CHECK:         linalg.fill ins(%{{.*}} : bf16) outs(%[[NEW]] : memref<256x128xbf16>)
+// CHECK-NOT:   linalg.fill
 // CHECK:       %[[res:.*]] = bufferization.to_tensor
 // CHECK:       hivm.hir.load ins(%{{.*}} : memref<256x?xbf16, strided<[1, 256], offset: ?>>)
 // CHECK-SAME:                outs(%{{.*}} : memref<256x?xbf16, strided<[128, 1], offset: ?>>)
@@ -34,7 +33,7 @@ func.func @fuse_load_with_dyn_size(%arg0: memref<?xbf16>, %arg1: index, %arg2: i
 // CHECK:       %[[ALLOC:.*]] = memref.alloc() : memref<32x32xf16>
 // CHECK:       linalg.fill ins(%{{.*}} : f16) outs(%[[ALLOC]] : memref<32x32xf16>)
 // CHECK:       hivm.hir.load ins(%{{.*}} : memref<?x?xf16, strided<[1, 128], offset: ?>>)
-// CHECK-SAME:                outs(%{{.*}} : memref<?x?xf16, strided<[32, 1]>>)
+// CHECK-SAME:                outs(%{{.*}} : memref<?x32xf16, strided<[32, 1]>>)
 // CHECK-NOT:   linalg.transpose
 // CHECK:       return %{{.*}} : tensor<32x32xf16>
 func.func @fuse_load_with_min_max_bounded_sizes(%arg0: memref<?xf16>, %arg1: index, %arg2: index, %arg3: index) -> tensor<32x32xf16> {
@@ -62,11 +61,10 @@ func.func @fuse_load_with_min_max_bounded_sizes(%arg0: memref<?xf16>, %arg1: ind
 // CHECK-LABEL: func.func @fuse_loop_tail_rank_reduced_dst_with_bounded_sizes
 // CHECK:       scf.for
 // CHECK:       %[[ALLOC:.*]] = memref.alloc() : memref<2x32x32xf16>
-// CHECK:       %[[LOAD_DST:.*]] = memref.subview %[[ALLOC]][%{{.*}}, 0, 0] [1, %{{.*}}, %{{.*}}] [1, 1, 1] : memref<2x32x32xf16> to memref<?x?xf16, strided<[32, 1], offset: ?>>
 // CHECK:       %[[READ:.*]] = memref.subview %[[ALLOC]][%{{.*}}, 0, 0] [1, 32, 32] [1, 1, 1] : memref<2x32x32xf16> to memref<32x32xf16, strided<[32, 1], offset: ?>>
 // CHECK:       %[[RETURN:.*]] = bufferization.to_tensor %[[READ]] restrict writable : memref<32x32xf16, strided<[32, 1], offset: ?>>
 // CHECK:       hivm.hir.load ins(%{{.*}} : memref<?x?xf16, strided<[1, 128], offset: ?>>)
-// CHECK-SAME:                outs(%[[LOAD_DST]] : memref<?x?xf16, strided<[32, 1], offset: ?>>)
+// CHECK-SAME:                outs(%{{.*}} : memref<?x32xf16, strided<[32, 1], offset: ?>>)
 // CHECK-NOT:   linalg.transpose
 // CHECK:       scf.yield %[[RETURN]] : tensor<32x32xf16>
 #map = affine_map<(d0)[s0] -> (d0 + s0)>
@@ -270,9 +268,8 @@ func.func @no_fuse_multi_use_to_tensor(%arg0: memref<?xf16>, %arg1: index, %arg2
 
 // CHECK-LABEL: func.func @fuse_load_with_multibuffer_annotation
 // CHECK:       %[[NEW:.*]] = memref.alloc() : memref<128x32xbf16>
-// CHECK:       scf.if
-// CHECK:         linalg.fill ins(%{{.*}} : bf16) outs(%[[NEW]] : memref<128x32xbf16>)
-// CHECK:       } {hivm.unlikely_condition}
+// CHECK:       annotation.mark %[[NEW]] {hivm.multi_buffer = 2 : i32}
+// CHECK-NOT:   linalg.fill
 // CHECK:       %[[res:.*]] = bufferization.to_tensor
 // CHECK:       hivm.hir.load ins(%{{.*}} : memref<128x?xbf16, strided<[1, 4096], offset: ?>>)
 // CHECK-SAME:                outs(%{{.*}} : memref<128x?xbf16, strided<[32, 1], offset: ?>>)
@@ -302,8 +299,8 @@ func.func @fuse_load_with_multibuffer_annotation(%arg0: memref<?xbf16>, %arg1: i
 
 // CHECK-LABEL: func.func @fuse_load_transfer_multi_buffer_mark
 // CHECK:       %[[NEW_ALLOC:.*]] = memref.alloc() : memref<32x16xf16>
-// CHECK:       linalg.fill ins(%{{.*}} : f16) outs(%[[NEW_ALLOC]] : memref<32x16xf16>)
 // CHECK:       annotation.mark %[[NEW_ALLOC]] {hivm.multi_buffer = 2 : i32} : memref<32x16xf16>
+// CHECK-NOT:   linalg.fill
 // CHECK:       hivm.hir.load ins(%{{.*}} : memref<32x16xf16, strided<[1, 128], offset: ?>>)
 // CHECK-SAME:                outs(%[[NEW_ALLOC]] : memref<32x16xf16>)
 // CHECK-NOT:   linalg.transpose
@@ -325,8 +322,8 @@ func.func @fuse_load_transfer_multi_buffer_mark(%arg0: memref<?xf16>, %arg1: ind
 
 // CHECK-LABEL: func.func @fuse_load_transfer_mark_rank_reduced_subview
 // CHECK:       %[[NEW_ALLOC:.*]] = memref.alloc() : memref<2x64x32xf16>
-// CHECK:       linalg.fill ins(%{{.*}} : f16) outs(%[[NEW_ALLOC]] : memref<2x64x32xf16>)
 // CHECK:       annotation.mark %[[NEW_ALLOC]] {hivm.multi_buffer = 2 : i32} : memref<2x64x32xf16>
+// CHECK-NOT:   linalg.fill
 // CHECK:       hivm.hir.load ins(%{{.*}} : memref<64x32xf16, strided<[1, 128], offset: ?>>)
 // CHECK-SAME:                outs(%{{.*}} : memref<64x32xf16, strided<[32, 1], offset: ?>>)
 // CHECK-NOT:   linalg.transpose
@@ -350,8 +347,8 @@ func.func @fuse_load_transfer_mark_rank_reduced_subview(%arg0: memref<?xf16>, %a
 
 // CHECK-LABEL: func.func @fuse_load_transfer_plain_mark
 // CHECK:       %[[NEW_ALLOC:.*]] = memref.alloc() : memref<2x64x32xf16>
-// CHECK:       linalg.fill ins(%{{.*}} : f16) outs(%[[NEW_ALLOC]] : memref<2x64x32xf16>)
 // CHECK:       annotation.mark %[[NEW_ALLOC]] {some_other_attr = 1 : i32} : memref<2x64x32xf16>
+// CHECK-NOT:   linalg.fill
 // CHECK:       hivm.hir.load
 // CHECK-NOT:   linalg.transpose
 // CHECK:       return %{{.*}} : tensor<64x32xf16>
@@ -379,7 +376,7 @@ func.func @fuse_load_transfer_plain_mark(%arg0: memref<?xf16>, %arg1: index) -> 
 // CHECK:       %[[NEW:.*]] = memref.alloc() : memref<32x16xbf16>
 // CHECK:       linalg.fill ins(%{{.*}} : bf16) outs(%[[NEW]] : memref<32x16xbf16>)
 // CHECK:       hivm.hir.load ins(%{{.*}} : memref<?x?xbf16, strided<[1, 32], offset: ?>>)
-// CHECK-SAME:                outs(%{{.*}} : memref<?x?xbf16, strided<[16, 1]>>)
+// CHECK-SAME:                outs(%{{.*}} : memref<?x16xbf16, strided<[16, 1]>>)
 // CHECK-NOT:   linalg.transpose
 // CHECK:       return %{{.*}} : tensor<32x16xbf16>
 func.func @fuse_load_keep_fill_on_transposed_dst(%arg0: memref<?xbf16>, %arg1: index, %arg2: index, %arg3: index) -> tensor<32x16xbf16> {
@@ -413,7 +410,7 @@ func.func @fuse_load_keep_fill_on_transposed_dst(%arg0: memref<?xbf16>, %arg1: i
 // CHECK:         linalg.fill ins(%{{.*}} : bf16) outs(%[[NEW]] : memref<32x16xbf16>)
 // CHECK:       } {hivm.unlikely_condition}
 // CHECK:       hivm.hir.load ins(%{{.*}} : memref<?x?xbf16, strided<[1, 32], offset: ?>>)
-// CHECK-SAME:                outs(%{{.*}} : memref<?x?xbf16, strided<[16, 1]>>)
+// CHECK-SAME:                outs(%{{.*}} : memref<?x16xbf16, strided<[16, 1]>>)
 // CHECK-NOT:   linalg.transpose
 // CHECK:       return %{{.*}} : tensor<32x16xbf16>
 func.func @fuse_load_keep_fill_in_unlikely_if(%arg0: memref<?xbf16>, %arg1: index, %arg2: index, %arg3: index) -> tensor<32x16xbf16> {

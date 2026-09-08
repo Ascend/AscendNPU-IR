@@ -49,6 +49,17 @@ public:
   /// Rebuild one tile view so both tiles use the dominating root.
   static void unifyRoot(TileView &lhs, TileView &rhs, OpBuilder &builder);
 
+  /// Rebuild `view` from root + offsets/sizes/strides. Collapses to `root`
+  /// when the window is the full allocation.
+  void rematerializeView(OpBuilder &builder);
+
+  /// Grow the last kept dim from its current offset to the end of the root
+  /// so `hivm.hir.load` pad_mode can initialize that tail.
+  void expandLastKeptDimToRoot(OpBuilder &builder);
+
+  /// True when every kept dim except the last already spans the root.
+  bool nonLastKeptDimsCoverRoot() const;
+
   /// Print the root/view pair for debug logging.
   void print(raw_ostream &os) const;
 
