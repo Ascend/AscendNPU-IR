@@ -23,8 +23,8 @@
 Use the following commit-message format:
 
 ```text
-[AscendNPU IR][<Module>] <type>: <short description>
-[AscendNPU IR][<Module>][<Submodule>] <type>: <short description>
+[<Module>] <type>: <short description>
+[<Module>][<Submodule>] <type>: <short description>
 
 Motivation: <why this change is needed and what problem it solves>
 Design: <the general approach and any important algorithm or design choice>
@@ -36,13 +36,24 @@ Assisted-by: AI
 Rules:
 
 - Use one of these commit types: `feat`, `fix`, `doc`, `refactor`, or `chore`.
-- Use one or two module levels. For a dialect-related change, use the dialect as
-  the first level, for example `[HFusion]` or `[HIVM]`. When the change targets
-  a specific pass or component, add it as the second level, for example
-  `[HIVM][PlanMemory]`.
-- Use the closest owning module for cross-cutting changes. Omit the second level
-  when there is no useful, more specific scope. Other module or submodule names
-  include `AVE`, `VFFusion`, `SIMT`, `CVPipeline`, and `AutoBlockify`.
+- `Module` must be exactly one of the following case-sensitive values. This set
+  contains the first-level directories under `bishengir/include/bishengir`,
+  except `Dialect`, plus the concrete directories under `Dialect`:
+
+  ```text
+  Analysis Annotation Arith AscendDPX Bufferization Config Conversion
+  ExecutionEngine HACC HFusion HIVM HIVMAVE HIVMRegbaseIntrins Interfaces
+  LLVMIR Linalg MathExt MemRef MemRefExt Pass SCF Scope Symbol Tensor Tools
+  Torch Transform Transforms Triton TritonExt Utils Vector Version
+  ```
+
+- For changes under the `Dialect` directory, use the concrete dialect name as
+  the module, such as `Annotation`, `HIVM`, or `HFusion`, rather than the literal
+  module name `Dialect`.
+- Use one or two module levels. When a change targets a specific pass or
+  component, add it as the second level, for example `[HIVM][PlanMemory]`.
+- Use the closest owning module for cross-cutting changes and omit the second
+  level when there is no useful, more specific scope.
 - Keep the title concise (about 50 characters when practical) and use imperative
   mood.
 - Separate the title and body with a blank line. Wrap body text at about 72
@@ -53,6 +64,26 @@ Rules:
   message, the commit message must contain the exact trailer `Assisted-by: AI`.
   Do not include the agent name or model version. Omit the trailer only when the
   change is completely human-written.
+
+## Commit Message Hook
+
+Install the repository hooks once per checkout:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+The versioned `pre-push` hook checks every outgoing commit subject with this
+POSIX extended regular expression:
+
+```text
+^\[(Analysis|Annotation|Arith|AscendDPX|Bufferization|Config|Conversion|ExecutionEngine|HACC|HFusion|HIVM|HIVMAVE|HIVMRegbaseIntrins|Interfaces|LLVMIR|Linalg|MathExt|MemRef|MemRefExt|Pass|SCF|Scope|Symbol|Tensor|Tools|Torch|Transform|Transforms|Triton|TritonExt|Utils|Vector|Version)\](\[[[:alnum:]_][[:alnum:]_-]*\])? (feat|fix|doc|refactor|chore): [^[:space:]].*$
+```
+
+The hook validates the subject format only. The commit body and the mandatory
+`Assisted-by: AI` trailer remain the author's responsibility.
+When a first-level component or dialect is added or renamed, update the module
+list and regex in `AGENTS.md`, `.gitmessage`, and `.githooks/pre-push` together.
 
 ## LLVM/MLIR Submodule Changes
 

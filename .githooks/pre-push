@@ -1,0 +1,46 @@
+#!/bin/sh
+
+set -eu
+
+allowed_modules='Analysis|Annotation|Arith|AscendDPX|Bufferization|Config|Conversion|ExecutionEngine|HACC|HFusion|HIVM|HIVMAVE|HIVMRegbaseIntrins|Interfaces|LLVMIR|Linalg|MathExt|MemRef|MemRefExt|Pass|SCF|Scope|Symbol|Tensor|Tools|Torch|Transform|Transforms|Triton|TritonExt|Utils|Vector|Version'
+subject_regex="^\[(${allowed_modules})\](\[[[:alnum:]_][[:alnum:]_-]*\])? (feat|fix|doc|refactor|chore): [^[:space:]].*$"
+zero_oid=0000000000000000000000000000000000000000
+failed=0
+
+check_subject() {
+  printf '%s\n' "$1" | grep -Eq "$subject_regex"
+}
+
+if [ "${1:-}" = "--check-subject" ]; then
+  [ "$#" -eq 2 ] || {
+    printf '%s\n' "usage: $0 --check-subject '<subject>'" >&2
+    exit 2
+  }
+  check_subject "$2"
+  exit $?
+fi
+
+while read -r local_ref local_oid remote_ref remote_oid; do
+  [ "$local_oid" = "$zero_oid" ] && continue
+
+  if [ "$remote_oid" = "$zero_oid" ]; then
+    commits=$(git rev-list "$local_oid" --not --remotes)
+  else
+    commits=$(git rev-list "$local_oid" "^$remote_oid")
+  fi
+
+  for commit in $commits; do
+    subject=$(git log -1 --format=%s "$commit")
+    if ! check_subject "$subject"; then
+      printf '%s\n' "pre-push: invalid commit subject in $commit:" >&2
+      printf '%s\n' "  $subject" >&2
+      printf '%s\n' "Expected: [<Module>] <type>: <short description>" >&2
+      printf '%s\n' "     or: [<Module>][<Submodule>] <type>: <short description>" >&2
+      printf '%s\n' "Allowed modules: ${allowed_modules}" >&2
+      printf '%s\n' "Allowed types: feat, fix, doc, refactor, chore" >&2
+      failed=1
+    fi
+  done
+done
+
+exit "$failed"
