@@ -1225,6 +1225,7 @@ def HIVMVectorizeOps : Pass<"hivm-vectorize-ops", "func::FuncOp"> {
   let constructor = "mlir::hivm::createHIVMVectorizeOpsPass()";
   let dependentDialects = ["arith::ArithDialect", "func::FuncDialect",
                            "hivm::HIVMDialect", "math::MathDialect",
+                           "mathExt::MathExtDialect",
                            "memref::MemRefDialect", "tensor::TensorDialect",
                            "vector::VectorDialect"];
 }

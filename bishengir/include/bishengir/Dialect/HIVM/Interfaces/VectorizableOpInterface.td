@@ -39,10 +39,34 @@ def VectorizableOpInterface : OpInterface<"VectorizableOpInterface"> {
       /*args=*/(ins "::mlir::RewriterBase &":$rewriter, "::llvm::ArrayRef<int64_t>":$vectorSizes),
       /*methodBody=*/"",
       /*defaultImplementation=*/[{
-        return ::mlir::hivm::vectorizeElementwise($_op, rewriter, vectorSizes);
+        return ::llvm::failure();
+      }]
+    >,
+    InterfaceMethod<
+      /*desc=*/[{
+        Whether `vectorize` can lower this operation to vector IR.
+        Defaults to true: an operation is vectorizable unless it opts out
+        by attaching `NotVectorizableTrait`, which makes this default
+        answer false.
+      }],
+      /*retType=*/"bool",
+      /*methodName=*/"isVectorizable",
+      /*args=*/(ins),
+      /*methodBody=*/"",
+      /*defaultImplementation=*/[{
+        return !$_op->template hasTrait<::mlir::OpTrait::NotVectorizableTrait>();
       }]
     >
   ];
 }
+
+/// Marker trait for ops that are not vectorizable.
+/// Op marked with `NotVectorizableTrait` will return false for
+/// `isVectorizable()`.
+def NotVectorizableTrait : NativeOpTrait<"NotVectorizableTrait">;
+
+/// Marker trait for vectorizable op that implements `vectorize()`.
+def VectorizableTrait
+    : DeclareOpInterfaceMethods<VectorizableOpInterface, ["vectorize"]>;
 
 #endif // BISHENGIR_DIALECT_HIVM_INTERFACES_VECTORIZABLEOPINTERFACE_TD

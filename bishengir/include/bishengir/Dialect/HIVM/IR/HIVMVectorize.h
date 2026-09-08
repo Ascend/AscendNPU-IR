@@ -18,56 +18,47 @@
 #ifndef BISHENGIR_DIALECT_HIVM_IR_HIVMVECTORIZE_H
 #define BISHENGIR_DIALECT_HIVM_IR_HIVMVECTORIZE_H
 
-#include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
-#include "bishengir/Dialect/HIVM/Utils/RegbaseUtils.h"
-#include "bishengir/Dialect/HIVM/Utils/Utils.h"
-#include "bishengir/Dialect/Utils/Util.h"
+#include "bishengir/Dialect/HIVM/IR/HIVMInterfaces.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 
 namespace mlir::hivm {
-enum class VectorArithKind {
-  ADD,
-  SUB,
-  MUL,
-  DIV,
-  MAX,
-  MIN,
-};
 
-/// @brief Creates the identity element for a given arithmetic operation and element type.
-///
-/// The identity element is a neutral value that, when used with the specified
-/// operation, does not change the result (e.g., 0 for addition, 1 for multiplication).
-/// This is used as the padding value in vector.transfer_read operations to ensure
-/// that masked-off lanes do not affect the computation result.
-///
-/// @param builder OpBuilder used to create the constant operation
-/// @param loc Location information for the created constant
-/// @param elemType Element type (must be FloatType or IntegerType)
-/// @param kind The arithmetic operation kind that determines which identity element to use
-///
-/// @return A Value representing the identity element constant for the given operation:
-///         - ADD/SUB: Returns 0 (additive identity)
-///         - MUL/DIV: Returns 1 (multiplicative identity)
-///         - MAX: Returns $-\infty$ for floats, signed minimum for integers
-///         - MIN: Returns $+\infty$ for floats, signed maximum for integers
-///
-/// @throws llvm::report_fatal_error if elemType is neither FloatType nor IntegerType
-Value getIdentityElement(OpBuilder &builder, Location loc, Type elemType,
-                         VectorArithKind kind);
+vector::TransferReadOp
+createMaskedTransferRead(OpBuilder &builder, Location loc,
+                         VectorType vectorType, Value source, Value padding,
+                         Value mask, AffineMap permutationMap = {});
 
+vector::TransferWriteOp
+createMaskedTransferWrite(OpBuilder &builder, Location loc, Value vector,
+                          Value destination, Value mask,
+                          AffineMap permutationMap = {});
 
-Value createVectorArithOp(OpBuilder &builder, Location loc,
-                          VectorArithKind kind, Value lhs, Value rhs);
+/// Create mask over a `vectorSizes`-shaped vector that covers exactly the
+/// extent of `shaped`, whose rank must be `vectorSizes.size()`.
+Value createShapeMask(OpBuilder &builder, Location loc, Value shaped,
+                      ArrayRef<int64_t> vectorSizes);
 
-/// Rejects inline broadcast/transpose and rank/size mismatches before emitting
-/// vector IR. `vectorSizes` must match the rank of the first DPS input.
+/// Read an operand into a vector, handling scalar splats and shaped
+Value readOperand(OpBuilder &builder, Location loc, Value input,
+                  ArrayRef<int64_t> vectorSizes, Value padding, Value fullMask);
+
+/// Rejects what no vectorize() model serves: a non-structured op, missing DPS
+/// inputs, multiple or missing outputs, a rank mismatch, or a non-positive
+/// vector size. Broadcast operands are read at their own shape and stretched
+/// as needed.
 LogicalResult checkVectorizePreconditions(Operation *op,
                                           ArrayRef<int64_t> vectorSizes);
 
-/// VL packing policy used by `hivm-vectorize-ops` and `transform.hivm.vectorize`.
-/// Capacity is `hivm::util::VL` bytes / element width (64 lanes for f32).
+/// Require every DPS input to be shaped with the rank of `vectorSizes`.
+/// Lowerings that support scalar operands through `readOperand` should not
+/// call this check.
+LogicalResult checkShapedInputs(HIVMStructuredOp op,
+                                ArrayRef<int64_t> vectorSizes);
+
+/// VL packing policy used by `hivm-vectorize-ops` and
+/// `transform.hivm.vectorize`. Capacity is `hivm::util::VL` bytes / element
+/// width (64 lanes for f32).
 FailureOr<SmallVector<int64_t>> computeVectorSizes(HIVMStructuredOp op);
-}
+} // namespace mlir::hivm
 
 #endif
