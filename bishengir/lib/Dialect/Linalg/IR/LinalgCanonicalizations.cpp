@@ -20,8 +20,268 @@
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Linalg/IR/LinalgExtensions.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/Matchers.h"
+
+#include <optional>
+#include <tuple>
+#include <type_traits>
 
 using namespace mlir;
+
+static bool isLinalgMul(Operation *op) {
+  if (!op)
+    return false;
+  if (isa<linalg::MulOp>(op))
+    return true;
+  if (auto binary = dyn_cast<linalg::ElemwiseBinaryOp>(op)) {
+    auto funAttr = binary.getFunAttr();
+    return funAttr && funAttr.getValue() == linalg::BinaryFn::mul;
+  }
+  return false;
+}
+
+static bool isLinalgSub(Operation *op) {
+  if (!op)
+    return false;
+  if (isa<linalg::SubOp>(op))
+    return true;
+  if (auto binary = dyn_cast<linalg::ElemwiseBinaryOp>(op)) {
+    auto funAttr = binary.getFunAttr();
+    return funAttr && funAttr.getValue() == linalg::BinaryFn::sub;
+  }
+  return false;
+}
+
+static std::optional<TypedAttr> getScalarConstant(Value value) {
+  Attribute attr;
+  if (matchPattern(value, m_Constant(&attr))) {
+    if (auto dense = dyn_cast<DenseElementsAttr>(attr)) {
+      if (dense.isSplat())
+        return dense.getSplatValue<TypedAttr>();
+    } else if (auto typed = dyn_cast<TypedAttr>(attr)) {
+      return typed;
+    }
+  }
+  if (auto fill = value.getDefiningOp<linalg::FillOp>()) {
+    Attribute fillAttr;
+    if (matchPattern(fill.getInputs()[0], m_Constant(&fillAttr)))
+      return cast<TypedAttr>(fillAttr);
+  }
+  return std::nullopt;
+}
+
+static TypedAttr makeMinusOneAttr(Type type) {
+  if (isa<FloatType>(type))
+    return FloatAttr::get(type, -1.0);
+  if (isa<IntegerType>(type))
+    return IntegerAttr::get(
+        type, APInt(cast<IntegerType>(type).getWidth(), ~0ULL, true));
+  return nullptr;
+}
+
+static TypedAttr mulScalarAttrs(TypedAttr lhs, TypedAttr rhs) {
+  if (lhs.getType() != rhs.getType())
+    return nullptr;
+  if (isa<FloatType>(lhs.getType())) {
+    APFloat lhsValue = cast<FloatAttr>(lhs).getValue();
+    APFloat rhsValue = cast<FloatAttr>(rhs).getValue();
+    return FloatAttr::get(lhs.getType(), lhsValue * rhsValue);
+  }
+  if (isa<IntegerType>(lhs.getType())) {
+    APInt lhsValue = cast<IntegerAttr>(lhs).getValue();
+    APInt rhsValue = cast<IntegerAttr>(rhs).getValue();
+    return IntegerAttr::get(lhs.getType(), lhsValue * rhsValue);
+  }
+  return nullptr;
+}
+
+static std::pair<Value, std::optional<TypedAttr>>
+extractAsScalarMul(Operation *op) {
+  if (isLinalgMul(op)) {
+    Value lhs = op->getOperand(0);
+    Value rhs = op->getOperand(1);
+    if (auto scalar = getScalarConstant(rhs))
+      return {lhs, scalar};
+    if (auto scalar = getScalarConstant(lhs))
+      return {rhs, scalar};
+    return {Value(), std::nullopt};
+  }
+
+  if (isLinalgSub(op)) {
+    Value lhs = op->getOperand(0);
+    Value rhs = op->getOperand(1);
+    auto lhsScalar = getScalarConstant(lhs);
+    if (!lhsScalar)
+      return {Value(), std::nullopt};
+
+    bool lhsIsZero = false;
+    if (isa<FloatType>(lhsScalar->getType()))
+      lhsIsZero = cast<FloatAttr>(*lhsScalar).getValue().isZero();
+    else if (isa<IntegerType>(lhsScalar->getType()))
+      lhsIsZero = cast<IntegerAttr>(*lhsScalar).getValue().isZero();
+    if (!lhsIsZero)
+      return {Value(), std::nullopt};
+
+    TypedAttr minusOne = makeMinusOneAttr(lhsScalar->getType());
+    if (!minusOne)
+      return {Value(), std::nullopt};
+    return {rhs, minusOne};
+  }
+  return {Value(), std::nullopt};
+}
+
+template <typename MulOpTy>
+struct FoldConsecutiveScalarMulPattern : OpRewritePattern<MulOpTy> {
+  using OpRewritePattern<MulOpTy>::OpRewritePattern;
+
+  static std::tuple<Value, std::optional<TypedAttr>, Value>
+  splitConstOperands(Value lhs, Value rhs) {
+    if (auto scalar = getScalarConstant(rhs))
+      return {lhs, scalar, rhs};
+    if (auto scalar = getScalarConstant(lhs))
+      return {rhs, scalar, lhs};
+    return {Value(), std::nullopt, Value()};
+  }
+
+  static std::tuple<Value, std::optional<TypedAttr>, Value, bool>
+  splitOuterOp(MulOpTy outerMul) {
+    if constexpr (std::is_same_v<MulOpTy, linalg::ElemwiseBinaryOp>) {
+      auto funAttr = outerMul.getFunAttr();
+      if (!funAttr)
+        return {Value(), std::nullopt, Value(), false};
+
+      if (funAttr.getValue() == linalg::BinaryFn::mul) {
+        auto [nonConst, scalar, scalarOperand] = splitConstOperands(
+            outerMul.getInputs()[0], outerMul.getInputs()[1]);
+        return {nonConst, scalar, scalarOperand, false};
+      }
+
+      if (funAttr.getValue() == linalg::BinaryFn::sub) {
+        Value lhs = outerMul.getInputs()[0];
+        Value rhs = outerMul.getInputs()[1];
+        auto lhsScalar = getScalarConstant(lhs);
+        if (!lhsScalar)
+          return {Value(), std::nullopt, Value(), false};
+
+        bool isZero = false;
+        if (isa<FloatType>(lhsScalar->getType()))
+          isZero = cast<FloatAttr>(*lhsScalar).getValue().isZero();
+        else if (isa<IntegerType>(lhsScalar->getType()))
+          isZero = cast<IntegerAttr>(*lhsScalar).getValue().isZero();
+        if (!isZero)
+          return {Value(), std::nullopt, Value(), false};
+
+        TypedAttr minusOne = makeMinusOneAttr(lhsScalar->getType());
+        if (!minusOne)
+          return {Value(), std::nullopt, Value(), false};
+        return {rhs, minusOne, lhs, true};
+      }
+      return {Value(), std::nullopt, Value(), false};
+    } else if constexpr (std::is_same_v<MulOpTy, linalg::SubOp>) {
+      Value lhs = outerMul.getInputs()[0];
+      Value rhs = outerMul.getInputs()[1];
+      auto lhsScalar = getScalarConstant(lhs);
+      if (!lhsScalar)
+        return {Value(), std::nullopt, Value(), false};
+
+      bool isZero = false;
+      if (isa<FloatType>(lhsScalar->getType()))
+        isZero = cast<FloatAttr>(*lhsScalar).getValue().isZero();
+      else if (isa<IntegerType>(lhsScalar->getType()))
+        isZero = cast<IntegerAttr>(*lhsScalar).getValue().isZero();
+      if (!isZero)
+        return {Value(), std::nullopt, Value(), false};
+
+      TypedAttr minusOne = makeMinusOneAttr(lhsScalar->getType());
+      if (!minusOne)
+        return {Value(), std::nullopt, Value(), false};
+      return {rhs, minusOne, lhs, true};
+    } else if constexpr (std::is_same_v<MulOpTy, linalg::MulOp>) {
+      auto [nonConst, scalar, scalarOperand] =
+          splitConstOperands(outerMul.getInputs()[0], outerMul.getInputs()[1]);
+      return {nonConst, scalar, scalarOperand, false};
+    } else {
+      return {Value(), std::nullopt, Value(), false};
+    }
+  }
+
+  static FailureOr<Value> createMatchingConstant(PatternRewriter &rewriter,
+                                                 Location loc,
+                                                 TypedAttr scalarValue,
+                                                 Value referenceOperand) {
+    if (auto tensorType =
+            dyn_cast<RankedTensorType>(referenceOperand.getType())) {
+      if (scalarValue.getType() != tensorType.getElementType())
+        return failure();
+      auto splatAttr = DenseElementsAttr::get(tensorType, scalarValue);
+      return rewriter.create<arith::ConstantOp>(loc, tensorType, splatAttr)
+          .getResult();
+    }
+    return rewriter.create<arith::ConstantOp>(loc, scalarValue).getResult();
+  }
+
+  LogicalResult matchAndRewrite(MulOpTy outerMul,
+                                PatternRewriter &rewriter) const override {
+    if (!outerMul.hasPureTensorSemantics())
+      return failure();
+
+    auto [outerNonConst, outerScalar, outerScalarOperand, outerIsSub] =
+        splitOuterOp(outerMul);
+    if (!outerScalar)
+      return failure();
+
+    Operation *innerMulOp = outerNonConst.getDefiningOp();
+    if (!isLinalgMul(innerMulOp) && !isLinalgSub(innerMulOp))
+      return failure();
+    if (!cast<linalg::LinalgOp>(innerMulOp).hasPureTensorSemantics())
+      return failure();
+    if (!innerMulOp->hasOneUse())
+      return failure();
+
+    auto innerRes = extractAsScalarMul(innerMulOp);
+    if (!innerRes.second)
+      return failure();
+    Value innerNonConst = innerRes.first;
+    std::optional<TypedAttr> innerScalar = innerRes.second;
+    if (innerNonConst.getType() != outerNonConst.getType())
+      return failure();
+
+    TypedAttr foldedScalar = mulScalarAttrs(*outerScalar, *innerScalar);
+    if (!foldedScalar)
+      return failure();
+
+    Value combinedConst;
+    if (outerIsSub) {
+      combinedConst =
+          rewriter.create<arith::ConstantOp>(outerMul.getLoc(), foldedScalar);
+    } else {
+      FailureOr<Value> constant = createMatchingConstant(
+          rewriter, outerMul.getLoc(), foldedScalar, outerScalarOperand);
+      if (failed(constant))
+        return failure();
+      combinedConst = *constant;
+    }
+
+    if (outerIsSub) {
+      NamedAttribute mulFun = rewriter.getNamedAttr(
+          "fun", linalg::BinaryFnAttr::get(rewriter.getContext(),
+                                           linalg::BinaryFn::mul));
+      auto newMul = rewriter.create<linalg::ElemwiseBinaryOp>(
+          outerMul.getLoc(), outerMul->getResultTypes(),
+          ValueRange{innerNonConst, combinedConst}, outerMul.getDpsInits(),
+          ArrayRef<NamedAttribute>{mulFun});
+      rewriter.replaceOp(outerMul, newMul->getResults());
+    } else {
+      rewriter.modifyOpInPlace(outerMul, [&]() {
+        outerMul.getDpsInputOperand(0)->set(innerNonConst);
+        outerMul.getDpsInputOperand(1)->set(combinedConst);
+      });
+    }
+    rewriter.eraseOp(innerMulOp);
+    return success();
+  }
+};
 
 static SmallVector<SmallVector<int64_t, 2>>
 getReAssociation(ArrayRef<int64_t> expandDims, int64_t outRank) {
@@ -256,7 +516,8 @@ struct MergeConsecutiveReduceOp : public OpRewritePattern<linalg::ReduceOp> {
     prevReduce.getReductionDims(dims0);
     SmallVector<unsigned> dims1;
     op.getReductionDims(dims1);
-    unsigned maxRank = static_cast<unsigned>(prevReduce.getRank(prevReduce.getDpsInputOperand(0)));
+    unsigned maxRank = static_cast<unsigned>(
+        prevReduce.getRank(prevReduce.getDpsInputOperand(0)));
 
     SmallVector<int64_t> dims =
         mergeConsecutiveReduceDims(dims0, dims1, maxRank);
@@ -453,6 +714,9 @@ void linalg::getExtendedCanonicalizationPatterns(RewritePatternSet &results) {
               linalg::InlineDenseSplatToGenericRegion<linalg::ElemwiseBinaryOp>,
               linalg::InlineDenseSplatToGenericRegion<linalg::ElemwiseUnaryOp>>(
       context);
+  results.add<FoldConsecutiveScalarMulPattern<linalg::ElemwiseBinaryOp>,
+              FoldConsecutiveScalarMulPattern<linalg::MulOp>,
+              FoldConsecutiveScalarMulPattern<linalg::SubOp>>(context);
   results.add<FuseMatmulAddPattern<linalg::MatmulOp>>(context);
   results.add<FuseMatmulAddPattern<linalg::BatchMatmulOp>>(context);
 }
