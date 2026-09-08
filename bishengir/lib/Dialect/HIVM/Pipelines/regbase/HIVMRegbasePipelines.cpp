@@ -471,6 +471,7 @@ static void hivmPreBufferizationOptimizationPipeline(
   if (!hivmPipelineOptions.skipHIVMBindSubBlockPass) {
     TileAndBindSubBlockOptions tileOptions;
     tileOptions.enableTile = hivmPipelineOptions.enableAutoBindSubBlock;
+    tileOptions.batchMatmul = hivmPipelineOptions.enableHIVMBatchMatmul;
     pm.addPass(createTileAndBindSubBlockPass(tileOptions));
   }
   canonicalizationHIVMPipeline(pm);

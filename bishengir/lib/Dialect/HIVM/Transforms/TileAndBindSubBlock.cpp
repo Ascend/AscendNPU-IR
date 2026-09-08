@@ -1591,8 +1591,8 @@ void TileAndBindSubBlockPass::runOnOperation() {
     return;
   }
 
-  if (failed(tileAicFixpipeFuncsIfNeeded(aicFunctions,
-                                         tightlyCoupledBufferToTilingDim))) {
+  if (failed(tileAicFixpipeFuncsIfNeeded(
+          aicFunctions, tightlyCoupledBufferToTilingDim, batchMatmul))) {
     if (failed(restoreFunctionsFromBackups(moduleOp, aicRollbackBackups,
                                            /*limitSubBlockToStore=*/false)) ||
         failed(restoreFunctionsFromBackups(moduleOp, aivRollbackBackups,

@@ -47,10 +47,12 @@ constexpr llvm::StringLiteral kTiledTightlyCoupledAlloc =
 
 struct InsertFixpipeDstPropagateUp : public OpRewritePattern<FixpipeOp> {
   const llvm::DenseMap<int32_t, int64_t> &tightlyCoupledBufferToTilingDim;
+  bool batchMatmul;
 
   InsertFixpipeDstPropagateUp(
       MLIRContext *context,
-      const llvm::DenseMap<int32_t, int64_t> &tightlyCoupledMapIn);
+      const llvm::DenseMap<int32_t, int64_t> &tightlyCoupledMapIn,
+      bool batchMatmul);
 
   LogicalResult matchAndRewrite(FixpipeOp op,
                                 PatternRewriter &rewriter) const override;
@@ -93,7 +95,8 @@ LogicalResult pruneTightlyCoupledBufferToTilingDimAfterAivBubbleUp(
 
 LogicalResult tileAicFixpipeFuncsIfNeeded(
     ArrayRef<func::FuncOp> aicFunctions,
-    const llvm::DenseMap<int32_t, int64_t> &tightlyCoupledBufferToTilingDim);
+    const llvm::DenseMap<int32_t, int64_t> &tightlyCoupledBufferToTilingDim,
+    bool batchMatmul);
 
 /// Resolve fixpipe dual-dst split mode and halved UB alloc shape from dma mode
 /// and AIV tiling dim. Sets invalidTilingDim when tilingDim cannot map to

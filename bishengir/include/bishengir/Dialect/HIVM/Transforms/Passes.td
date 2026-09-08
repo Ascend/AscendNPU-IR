@@ -1158,7 +1158,13 @@ def TileAndBindSubBlock : Pass<"hivm-bind-sub-block", "ModuleOp"> {
     Option<
     "enableTile", "enable-tile", "bool",
     /*default=*/"true",
-    "Enable TileAndBindSubBlock pass">];
+    "Enable TileAndBindSubBlock pass">,
+    Option<
+    "batchMatmul", "batch-matmul", "bool",
+    /*default=*/"false",
+    "Roll back to CV1:1 when a fixpipe destination is tiled on a dim the "
+    "dual-dst split cannot express, which a batched matmul draining into UB "
+    "produces">];
 }
 
 def PartitionAndBindSubBlock
