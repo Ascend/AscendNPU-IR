@@ -162,6 +162,16 @@ std::string getLibraryCallNameForCopyLikeOp(std::string baseCallName,
   return callLibraryName;
 }
 
+/// Returns true when `op` copies from GM to L1 (cbuf) on a RegBase target,
+/// where only 1D load templates are registered.
+template <typename OpTy> bool isGMToCbufCopyOnRegBase(OpTy op) {
+  auto mod = op->template getParentOfType<ModuleOp>();
+  if (!mod || !hacc::utils::isRegBasedArch(mod))
+    return false;
+  return getHIVMAddressSpace(op.getSrc().getType()) == AddressSpace::GM &&
+         getHIVMAddressSpace(op.getDst().getType()) == AddressSpace::L1;
+}
+
 template <typename OpTy>
 std::string getCopyLikeOpLibraryCallName(OpTy op,
                                          std::optional<bool> /*isOpsAligned*/) {
@@ -884,6 +894,25 @@ template <>
 std::string InferMaxRankExternalModel<VGatherOp>::getOpLibraryCallName(
     Operation *operation, std::optional<bool> isOpsAligned) const {
   return getVGatherOpLibraryCallName(cast<VGatherOp>(operation), isOpsAligned);
+}
+
+//===----------------------------------------------------------------------===//
+// LoadOp
+//===----------------------------------------------------------------------===//
+
+template <>
+int InferMaxRankExternalModel<LoadOp>::inferOpLibraryMaxRank(
+    Operation *operation) const {
+  // RegBase only provides the 1D GM->L1 (cbuf) load template. Higher-rank
+  // copies must be lowered to outer loops around that template call; all
+  // other directions keep the static 3D rank on every target.
+  return isGMToCbufCopyOnRegBase(cast<LoadOp>(operation)) ? 1 : 3;
+}
+
+template <>
+std::string InferMaxRankExternalModel<LoadOp>::getOpLibraryCallName(
+    Operation *operation, std::optional<bool> isOpsAligned) const {
+  return getCopyLikeOpLibraryCallName(cast<LoadOp>(operation), isOpsAligned);
 }
 
 //===----------------------------------------------------------------------===//
@@ -1693,7 +1722,7 @@ void bishengir::hivm::detail::registerLibraryFunctionOpInterfaceExtension(
     REGISTER_NO_LIBRARY_FUNCTION(VConcatOp);
 
     // Dma Ops
-    REGISTER_STATIC_MAX_RANK(LoadOp, 3);
+    REGISTER_INFER_MAX_RANK(LoadOp);
     REGISTER_STATIC_MAX_RANK(StoreOp, 3);
     REGISTER_STATIC_MAX_RANK(IndirectStoreOp, 5);
     REGISTER_STATIC_MAX_RANK(CopyOp, 3);
