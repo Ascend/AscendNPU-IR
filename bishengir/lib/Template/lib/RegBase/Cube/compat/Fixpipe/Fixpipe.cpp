@@ -235,7 +235,8 @@ copy_matrix_cc_to_ubuf_normal_2d_to_2d_core(
   QuantMode_t quant_mode = get_quant_mode(pre_quant);
   if ((DualDst != DualDstMode::NO_DUAL) &&
       !canEnableHWDualDst(static_cast<uint8_t>(DualDst), quant_mode,
-                          channel_split, l0c->sizes[0], l0c->sizes[1], true)) {
+                          static_cast<uint8_t>(pre_relu), channel_split,
+                          l0c->sizes[0], l0c->sizes[1], true)) {
     copy_matrix_cc_to_ubuf_split<SRC_TYPE, DST_TYPE>(
         ubuf_ptr, l0c_ptr, n_size, m_size, src_stride, src_stride,
         /*nz2nd*/ false, /*nz2dn*/ false, unit_flag_mode, unit_flag_group_id,
@@ -288,7 +289,8 @@ copy_matrix_cc_to_ubuf_normal_4d_to_4d_core(
   QuantMode_t quant_mode = get_quant_mode(pre_quant);
   if ((DualDst != DualDstMode::NO_DUAL) &&
       !canEnableHWDualDst(static_cast<uint8_t>(DualDst), quant_mode,
-                          channel_split, src_m_size, src_n_size, true)) {
+                          static_cast<uint8_t>(pre_relu), channel_split,
+                          src_m_size, src_n_size, true)) {
     copy_matrix_cc_to_ubuf_split<SRC_TYPE, DST_TYPE>(
         ubuf_ptr, l0c_ptr, src_n_size, src_m_size, dst_stride, src_stride,
         /*nz2nd*/ false, /*nz2dn*/ false, unit_flag_mode, unit_flag_group_id,
@@ -466,7 +468,8 @@ copy_matrix_cc_to_ubuf_nz2nd_4d_to_2d_core(
 
   if ((DualDst != DualDstMode::NO_DUAL) &&
       !canEnableHWDualDst(static_cast<uint8_t>(DualDst), quant_mode,
-                          channel_split, m_size, n_size, true)) {
+                          static_cast<uint8_t>(pre_relu), channel_split, m_size,
+                          n_size, true)) {
     copy_matrix_cc_to_ubuf_split<SRC_TYPE, DST_TYPE>(
         ubuf_ptr, l0c_ptr, n_size, m_size, dst_D, m_tile_ceil,
         /*nz2nd*/ true, /*nz2dn*/ false, unit_flag_mode, unit_flag_group_id,
@@ -607,7 +610,8 @@ copy_matrix_cc_to_ubuf_nz2dn_4d_to_2d_core(
 
   if ((DualDst != DualDstMode::NO_DUAL) &&
       !canEnableHWDualDst(static_cast<uint8_t>(DualDst), quant_mode,
-                          channel_split, m_size, n_size, false)) {
+                          static_cast<uint8_t>(pre_relu), channel_split, m_size,
+                          n_size, false)) {
     copy_matrix_cc_to_ubuf_split<SRC_TYPE, DST_TYPE>(
         ubuf_ptr, l0c_ptr, n_size, m_size, dst_D, m_tile_ceil,
         /*nz2nd*/ false, /*nz2dn*/ true, unit_flag_mode, unit_flag_group_id,
