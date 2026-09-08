@@ -158,6 +158,7 @@ static void preProcess(OpPassManager &pm,
     if (options.enableFuseReductionIntoLoop)
       pm.nest<func::FuncOp>().addPass(
           bishengir::createFuseReductionIntoLoopPass());
+    pm.nest<func::FuncOp>().addPass(createOptimizeScalarTransfersPass());
     pm.nest<func::FuncOp>().addPass(createLegalizeScalarPass());
     // Convert the operations to HFusion as much as possible to make
     // LinalgFoldUnitExtentDims work on LinalgOp interface more effectively.
@@ -177,6 +178,8 @@ static void preProcess(OpPassManager &pm,
       // canonicalizer because it simplifies some linalg operations
       canonicalizationPipeline(pm, options);
     }
+  } else {
+    pm.nest<func::FuncOp>().addPass(createOptimizeScalarTransfersPass());
   }
   convertAllToHFusion(pm, options);
   pm.nest<func::FuncOp>().addPass(createLegalizeBF16Pass());
