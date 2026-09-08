@@ -19,6 +19,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/Utils/Util.h"
+#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVectorExtras.h"
@@ -70,7 +71,11 @@ bool DimensionAnalyzer::isReduceDim(Dimension dim) {
 }
 
 template <typename StoreOpTy> Value getStoreLikeSrc(StoreOpTy storeOp) {
-  if constexpr (std::is_same_v<StoreOpTy, hivm::LocalStoreOp>)
+  if constexpr (std::is_same_v<
+                    StoreOpTy,
+                    bufferization::MaterializeInDestinationOp>)
+    return storeOp.getSource();
+  else if constexpr (std::is_same_v<StoreOpTy, hivm::LocalStoreOp>)
     return storeOp.getData();
   else if constexpr (std::is_same_v<StoreOpTy, hivm::DebugOp>)
     return storeOp.getArg();
@@ -79,7 +84,11 @@ template <typename StoreOpTy> Value getStoreLikeSrc(StoreOpTy storeOp) {
 }
 
 template <typename StoreOpTy> Value getStoreLikeDst(StoreOpTy storeOp) {
-  if constexpr (std::is_same_v<StoreOpTy, hivm::VReduceOp>)
+  if constexpr (std::is_same_v<
+                    StoreOpTy,
+                    bufferization::MaterializeInDestinationOp>)
+    return storeOp.getDest();
+  else if constexpr (std::is_same_v<StoreOpTy, hivm::VReduceOp>)
     return storeOp.getDstValue();
   else if constexpr (std::is_same_v<StoreOpTy, hivm::LocalStoreOp>)
     return storeOp.getAddr();
@@ -205,6 +214,8 @@ bool DimensionAnalyzer::computeTilingDim(bool isVectorOp) {
   if (isVectorOp) {
     computeTilingDimImpl<hivm::StoreOp>(parallelDimMaps, numStoreOps);
     computeTilingDimImpl<hivm::CopyOp>(parallelDimMaps, numStoreOps);
+    computeTilingDimImpl<bufferization::MaterializeInDestinationOp>(
+        parallelDimMaps, numStoreOps);
     computeTilingDimImpl<hivm::StrideStoreOp>(parallelDimMaps, numStoreOps);
     computeTilingDimImpl<hivm::IndirectStoreOp>(parallelDimMaps, numStoreOps);
     computeTilingDimImpl<hivm::LocalStoreOp>(parallelDimMaps, numStoreOps);
