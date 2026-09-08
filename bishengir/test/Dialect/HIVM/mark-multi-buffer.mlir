@@ -6,6 +6,10 @@
 // RUN:   -pass-pipeline="builtin.module(                        \
 // RUN:     func.func(hivm-mark-multi-buffer{enable-auto=true limit-auto-multi-buffer-only-for-local-buffer=true}),cse)" \
 // RUN:   -split-input-file -verify-diagnostics | FileCheck %s --check-prefix=LIMIT-LOCAL
+// RUN: bishengir-opt -allow-unregistered-dialect %s             \
+// RUN:   -pass-pipeline="builtin.module(                        \
+// RUN:     func.func(hivm-mark-multi-buffer{enable-auto=true disable-multi-buffer-on-ub=true}),cse)" \
+// RUN:   -split-input-file -verify-diagnostics | FileCheck %s --check-prefix=DISABLE-UB
 
 // -----
 // CHECK-LABEL: func.func @test_mark_multi_buffer(
@@ -308,4 +312,28 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.max_preload_num = 4 : i32, hivm.preload_num = 0 : i32, no_inline}
     return
   }
+}
+
+// -----
+// DISABLE-UB-LABEL: func.func @test_disable_multi_buffer_on_ub_keeps_l1
+func.func @test_disable_multi_buffer_on_ub_keeps_l1(
+    %in_l1 : memref<64x128xf16, #hivm.address_space<gm>>,
+    %in_ub : memref<8xf32, #hivm.address_space<gm>>,
+    %out : memref<8xf32, #hivm.address_space<gm>>) {
+  %c0 = arith.constant 0 : index
+  %c4 = arith.constant 4 : index
+  %c16 = arith.constant 16 : index
+  scf.for %i0 = %c0 to %c16 step %c4 {
+    // L1/cbuf ND2NZ stays eligible; Vector Load/Store must not be marked.
+    // DISABLE-UB: %[[L1:.*]] = memref.alloc() : memref<8x4x16x16xf16, #hivm.address_space<cbuf>>
+    // DISABLE-UB-NEXT: annotation.mark %[[L1]] {hivm.multi_buffer = 2 : i32}
+    %l1 = memref.alloc() : memref<8x4x16x16xf16, #hivm.address_space<cbuf>>
+    hivm.hir.nd2nz {dst_continuous} ins(%in_l1 : memref<64x128xf16, #hivm.address_space<gm>>) outs(%l1 : memref<8x4x16x16xf16, #hivm.address_space<cbuf>>)
+    // DISABLE-UB: %[[UB:.*]] = memref.alloca() : memref<8xf32, #hivm.address_space<ub>>
+    // DISABLE-UB-NOT: annotation.mark %[[UB]]
+    %ub = memref.alloca() : memref<8xf32, #hivm.address_space<ub>>
+    hivm.hir.load ins(%in_ub : memref<8xf32, #hivm.address_space<gm>>) outs(%ub : memref<8xf32, #hivm.address_space<ub>>)
+    hivm.hir.store ins(%ub : memref<8xf32, #hivm.address_space<ub>>) outs(%out : memref<8xf32, #hivm.address_space<gm>>)
+  }
+  return
 }
