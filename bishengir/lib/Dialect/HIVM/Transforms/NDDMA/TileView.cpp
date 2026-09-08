@@ -203,6 +203,11 @@ bool TileView::nonLastKeptDimsCoverRoot() const {
   return true;
 }
 
+bool TileView::lastKeptDimOffsetIsZero() const {
+  std::optional<unsigned> last = lastKeptDim(*this);
+  return last && isConstantIntValue(offsets[*last], 0);
+}
+
 void TileView::unifyRoot(TileView &lhs, TileView &rhs, OpBuilder &builder) {
   // Only the root allocation shape must agree. The two tile views may describe
   // different windows over that allocation.

@@ -12,9 +12,11 @@
 // pass rewrites the load destination view so the hardware writes into the
 // transposed result layout directly. The explicit transpose can then be
 // eliminated. Pad fills that initialized the old dest alloc are re-emitted on
-// the new dest when a non-last dest dim is still a prefix. If every non-last
-// kept dim already spans the alloc, the load dest last dim is expanded to the
-// root so `pad_mode` covers the tail and the fill is dropped.
+// the new dest when a non-last dest dim is still a prefix, or when the last
+// kept dim starts at a non-zero offset (DMA pad does not write `[0, offset)`).
+// If every non-last kept dim already spans the alloc and the last kept dim
+// offset is statically 0, the load dest last dim is expanded to the root so
+// `pad_mode` covers `[0, rootLast)` and the fill is dropped.
 //
 //===----------------------------------------------------------------------===//
 
@@ -375,7 +377,11 @@ struct FuseTransposeIntoLoadPattern
     loadOp.setOperand(1, newLoadDstTile.view);
 
     transferAnnotationMarks(permTile->root, newLoadDstTile.root, rewriter);
-    if (loadCanPadLastDim(loadOp) && newLoadDstTile.nonLastKeptDimsCoverRoot())
+    // Drop the fill only when pad covers the whole last kept dim. A non-zero
+    // last-dim offset leaves [0, offset) unwritten; keep transferFillOps.
+    if (loadCanPadLastDim(loadOp) &&
+        newLoadDstTile.nonLastKeptDimsCoverRoot() &&
+        newLoadDstTile.lastKeptDimOffsetIsZero())
       eraseFillOps(collectFillsOnAlloc(permTile->root), rewriter);
     else
       transferFillOps(permTile->root, newLoadDstTile.root, rewriter);

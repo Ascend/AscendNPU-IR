@@ -1,8 +1,11 @@
 // RUN: bishengir-opt %s -hivm-fuse-transpose-into-load | FileCheck %s
 
+// Dst subview offset %arg2 becomes last-dim offset after last-two permute.
+// DMA pad cannot write [0, %arg2); the fill must follow the new dest.
 // CHECK-LABEL: func.func @fuse_load_with_dyn_size
 // CHECK:       %[[NEW:.*]] = memref.alloc() : memref<256x128xbf16>
-// CHECK-NOT:   linalg.fill
+// CHECK:       scf.if
+// CHECK:         linalg.fill ins(%{{.*}} : bf16) outs(%[[NEW]] : memref<256x128xbf16>)
 // CHECK:       %[[res:.*]] = bufferization.to_tensor
 // CHECK:       hivm.hir.load ins(%{{.*}} : memref<256x?xbf16, strided<[1, 256], offset: ?>>)
 // CHECK-SAME:                outs(%{{.*}} : memref<256x?xbf16, strided<[128, 1], offset: ?>>)
@@ -266,10 +269,14 @@ func.func @no_fuse_multi_use_to_tensor(%arg0: memref<?xf16>, %arg1: index, %arg2
 
 // -----
 
+// Same last-dim offset hole as fuse_load_with_dyn_size (%arg2 after permute).
+// Fill is inserted after the new alloc; the mark is transferred after that.
 // CHECK-LABEL: func.func @fuse_load_with_multibuffer_annotation
 // CHECK:       %[[NEW:.*]] = memref.alloc() : memref<128x32xbf16>
+// CHECK:       scf.if
+// CHECK:         linalg.fill ins(%{{.*}} : bf16) outs(%[[NEW]] : memref<128x32xbf16>)
+// CHECK:       } {hivm.unlikely_condition}
 // CHECK:       annotation.mark %[[NEW]] {hivm.multi_buffer = 2 : i32}
-// CHECK-NOT:   linalg.fill
 // CHECK:       %[[res:.*]] = bufferization.to_tensor
 // CHECK:       hivm.hir.load ins(%{{.*}} : memref<128x?xbf16, strided<[1, 4096], offset: ?>>)
 // CHECK-SAME:                outs(%{{.*}} : memref<128x?xbf16, strided<[32, 1], offset: ?>>)

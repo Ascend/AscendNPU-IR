@@ -60,6 +60,10 @@ public:
   /// True when every kept dim except the last already spans the root.
   bool nonLastKeptDimsCoverRoot() const;
 
+  /// True when the last kept dim starts at a static zero offset, so DMA
+  /// last-dim pad can initialize `[0, rootLast)` after expand.
+  bool lastKeptDimOffsetIsZero() const;
+
   /// Print the root/view pair for debug logging.
   void print(raw_ostream &os) const;
 
