@@ -176,8 +176,13 @@ std::string SubviewInfo::str() {
 
 std::string MemInfo::str() {
   std::string ret = "MemInfo";
-  if (this->pipe) {
+  if (this->pipe && this->coreType) {
+    ret += "<" + stringifyTCoreType(this->coreType.value()).str() + ", " +
+           stringifyPIPE(this->pipe.value()).str() + ">";
+  } else if (this->pipe) {
     ret += "<" + stringifyPIPE(this->pipe.value()).str() + ">";
+  } else if (this->coreType) {
+    ret += "<" + stringifyTCoreType(this->coreType.value()).str() + ">";
   }
   ret += "(";
   Comma comma;

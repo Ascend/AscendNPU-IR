@@ -322,8 +322,8 @@ protected:
 
   bool checkMemInfoConflict(
       RWOperation *rwOp1, RWOperation *rwOp2,
-      const llvm::SmallVector<MemInfo> &memInfoList1,
-      const llvm::SmallVector<MemInfo> &memInfoList2,
+      const llvm::SmallVector<MemInfo, 0> &memInfoList1,
+      const llvm::SmallVector<MemInfo, 0> &memInfoList2,
       std::optional<int64_t> lcmLen = {},
       std::optional<int64_t> eventIdNum = {},
       std::optional<std::pair<int64_t, int64_t>> offsetPair = {});
@@ -340,8 +340,8 @@ protected:
   llvm::SmallVector<std::pair<const MemInfo *, const MemInfo *>>
   getMemInfoConflict(
       RWOperation *rwOp1, RWOperation *rwOp2,
-      const llvm::SmallVector<MemInfo> &memInfoList1,
-      const llvm::SmallVector<MemInfo> &memInfoList2,
+      const llvm::SmallVector<MemInfo, 0> &memInfoList1,
+      const llvm::SmallVector<MemInfo, 0> &memInfoList2,
       std::optional<int64_t> lcmLen = {},
       std::optional<int64_t> eventIdNum = {},
       std::optional<std::pair<int64_t, int64_t>> offsetPair = {});
@@ -383,8 +383,8 @@ protected:
   // Innermost multibuffer scope shared by two RW ops (from explicit MemInfos).
   std::optional<Scope *>
   getMultiBufferScope(RWOperation *rwOp1, RWOperation *rwOp2,
-                      const llvm::SmallVector<MemInfo> &memInfoList1,
-                      const llvm::SmallVector<MemInfo> &memInfoList2);
+                      const llvm::SmallVector<MemInfo, 0> &memInfoList1,
+                      const llvm::SmallVector<MemInfo, 0> &memInfoList2);
   std::optional<Scope *> getMultiBufferScope(RWOperation *rwOp1,
                                              RWOperation *rwOp2);
   // Return the shared multibuffer depth as the number of event ids required.

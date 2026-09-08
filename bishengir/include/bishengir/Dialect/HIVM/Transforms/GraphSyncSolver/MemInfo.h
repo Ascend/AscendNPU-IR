@@ -165,30 +165,39 @@ struct MemInfo {
   std::optional<AllocLikeInfo> allocLikeInfo;
   std::optional<SubviewInfo> subviewInfo;
   std::optional<PIPE> pipe;
+  std::optional<hivm::TCoreType> coreType;
 
   MemInfo() = default;
 
-  explicit MemInfo(Value value, std::optional<PIPE> pipe = {})
-      : value(value), pipe(pipe) {}
+  explicit MemInfo(Value value, std::optional<PIPE> pipe = {},
+                   std::optional<hivm::TCoreType> coreType = {})
+      : value(value), pipe(pipe), coreType(coreType) {}
 
   explicit MemInfo(Value value, FuncArgInfo funcArgInfo,
-                   std::optional<PIPE> pipe = {})
-      : value(value), funcArgInfo(funcArgInfo), pipe(pipe) {}
+                   std::optional<PIPE> pipe = {},
+                   std::optional<hivm::TCoreType> coreType = {})
+      : value(value), funcArgInfo(funcArgInfo), pipe(pipe), coreType(coreType) {
+  }
 
   explicit MemInfo(Value value, PointerLikeInfo pointerLikeInfo,
-                   std::optional<PIPE> pipe = {})
-      : value(value), pointerLikeInfo(pointerLikeInfo), pipe(pipe) {}
+                   std::optional<PIPE> pipe = {},
+                   std::optional<hivm::TCoreType> coreType = {})
+      : value(value), pointerLikeInfo(pointerLikeInfo), pipe(pipe),
+        coreType(coreType) {}
 
   explicit MemInfo(Value value, AllocLikeInfo allocLikeInfo,
-                   std::optional<PIPE> pipe = {})
-      : value(value), allocLikeInfo(allocLikeInfo), pipe(pipe) {}
+                   std::optional<PIPE> pipe = {},
+                   std::optional<hivm::TCoreType> coreType = {})
+      : value(value), allocLikeInfo(allocLikeInfo), pipe(pipe),
+        coreType(coreType) {}
 
   bool operator==(const MemInfo &other) const {
     return (value != nullptr && value == other.value) ||
-           (std::tie(funcArgInfo, pointerLikeInfo, allocLikeInfo,
-                     other.subviewInfo, pipe) ==
+           (std::tie(funcArgInfo, pointerLikeInfo, allocLikeInfo, subviewInfo,
+                     pipe, coreType) ==
             std::tie(other.funcArgInfo, other.pointerLikeInfo,
-                     other.allocLikeInfo, other.subviewInfo, other.pipe));
+                     other.allocLikeInfo, other.subviewInfo, other.pipe,
+                     other.coreType));
   }
   bool operator!=(const MemInfo &other) const { return !(*this == other); }
 
@@ -204,7 +213,8 @@ struct MemInfo {
     return 0;
   }
 
-  static MemInfo getMemInfo(Value val, std::optional<PIPE> pipe = {});
+  static MemInfo getMemInfo(Value val, std::optional<PIPE> pipe = {},
+                            std::optional<hivm::TCoreType> coreType = {});
 
   static MemInfo getMemInfo(Scope *counterScope,
                             const llvm::SmallVector<int64_t> &addrs);
