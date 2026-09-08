@@ -68,6 +68,59 @@ llvm.func @test_set_mask_norm_decomposition() {
 
 // -----
 
+// Standalone entries use the same core-kind markers on C220 and C310. The C310
+// 0:1 and 1:0 functions normalized by SplitMixKernel have this representation
+// and need the markers when compiled with MIX enabled.
+// CHECK-LABEL: define dso_local void @c310_vector_only()
+// CHECK-SAME: #[[$AIV_ATTR:[0-9]+]] {
+llvm.func @c310_vector_only() attributes {hacc.entry, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm_regbaseintrins.target = #hivm_regbaseintrins.target<"dav-c310">} {
+  llvm.return
+}
+
+// CHECK-LABEL: define dso_local void @c310_cube_only()
+// CHECK-SAME: #[[$AIC_ATTR:[0-9]+]] {
+llvm.func @c310_cube_only() attributes {hacc.entry, hivm.func_core_type = #hivm.func_core_type<AIC>, hivm_regbaseintrins.target = #hivm_regbaseintrins.target<"dav-c310">} {
+  llvm.return
+}
+
+// Ordinary C220 entries use the same standalone markers as C310 entries.
+// CHECK-LABEL: define dso_local void @c220_vector_only()
+// CHECK-SAME: #[[$C220_AIV_ATTR:[0-9]+]] {
+llvm.func @c220_vector_only() attributes {hacc.entry, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm_regbaseintrins.target = #hivm_regbaseintrins.target<"dav-c220">} {
+  llvm.return
+}
+
+// A C220 0:1 vector half retains MIX metadata; AIV does not imply standalone.
+// CHECK-LABEL: define dso_local void @c220_mix_aiv()
+// CHECK-SAME: #[[$C220_MIX_ATTR:[0-9]+]]
+llvm.func @c220_mix_aiv() attributes {hacc.entry, hivm.core_ratio = #hivm.core_ratio<0, 1>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, hivm_regbaseintrins.target = #hivm_regbaseintrins.target<"dav-c220">} {
+  llvm.return
+}
+
+// A non-entry vector helper does not need a kernel marker.
+// CHECK-LABEL: define void @c310_vector_helper()
+// CHECK-SAME: #[[$HELPER_ATTR:[0-9]+]] {
+llvm.func @c310_vector_helper() attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm_regbaseintrins.target = #hivm_regbaseintrins.target<"dav-c310">} {
+  llvm.return
+}
+
+// An AIC MIX half without an explicit ratio must also remain unmarked.
+// CHECK-LABEL: define dso_local void @c310_default_mix_aic()
+// CHECK-SAME: #[[$HELPER_ATTR]] {
+llvm.func @c310_default_mix_aic() attributes {hacc.entry, hivm.func_core_type = #hivm.func_core_type<AIC>, hivm.part_of_mix, hivm_regbaseintrins.target = #hivm_regbaseintrins.target<"dav-c310">} {
+  llvm.return
+}
+
+// CHECK-DAG: attributes #[[$AIV_ATTR]] = { {{.*}}"vec-only-kernel"{{.*}} }
+// CHECK-DAG: attributes #[[$AIC_ATTR]] = { {{.*}}"cube-only-kernel"{{.*}} }
+// CHECK-DAG: attributes #[[$C220_AIV_ATTR]] = { "target-cpu"="dav-c220" "target-features"="+dav-c220" "vec-only-kernel" }
+// CHECK-DAG: attributes #[[$C220_MIX_ATTR]] = { "mix-kernel-core-ratio" "target-cpu"="dav-c220" "target-features"="+dav-c220" }
+// CHECK-DAG: attributes #[[$HELPER_ATTR]] = { "target-cpu"="dav-c310" "target-features"="+dav-c310" }
+// CHECK-DAG: !{ptr @c220_mix_aiv, !"mix-kernel-core-ratio-M", i32 0}
+// CHECK-DAG: !{ptr @c220_mix_aiv, !"mix-kernel-core-ratio-N", i32 1}
+
+// -----
+
 // CHECK-LABEL: define void @test_dcci
 // CHECK: call void @llvm.hivm.DCCI.DST(ptr addrspace(1) null, i64 1, i64 2)
 llvm.func @test_dcci() {
