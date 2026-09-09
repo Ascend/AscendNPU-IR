@@ -200,9 +200,6 @@ std::unique_ptr<Pass> createInferOutShapesPass();
 /// Create a pass to legalize scalar op
 std::unique_ptr<Pass> createLegalizeScalarPass();
 
-/// Create a pass to optimize scalar transfers between tensor operations.
-std::unique_ptr<Pass> createOptimizeScalarTransfersPass();
-
 /// Create a pass to legalize bf16 type
 std::unique_ptr<Pass> createLegalizeBF16Pass();
 
