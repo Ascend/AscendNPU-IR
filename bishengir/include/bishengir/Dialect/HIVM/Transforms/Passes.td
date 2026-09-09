@@ -157,8 +157,8 @@ def MarkMultiBuffer : Pass<"hivm-mark-multi-buffer", "func::FuncOp"> {
            "skip-multi-buffer-for-once-per-subloop-access", "bool",
            /*default=*/"true",
            "Skip multi-buffer marking for UB buffers whose GM accesses all "
-           "sit directly in the body of their nearest enclosing "
-           "autoblockify.subloop (at most once per subloop iteration). Their "
+           "sit directly in an autoblockify.subloop that contains a nested "
+           "scf.for. Their "
            "doubled UB footprint otherwise can push the no-reuse PlanMemory "
            "layout over UB and force pipe-stalling dma buffer reuse for the "
            "streaming buffers of the nested loops">,

@@ -16,6 +16,7 @@
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
 #include "mlir/Support/LLVM.h"
@@ -158,18 +159,31 @@ static bool isPassthroughOpForTrace(Operation *op) {
          isa<ViewLikeOpInterface>(op);
 }
 
-/// Walks up from `access` to its nearest enclosing loop op. Returns true when
-/// that nearest loop carries the autoblockify.subloop attribute, i.e.
-/// `access` executes at most once per iteration of that subloop. scf.if
-/// regions in between are fine; a nested loop in between means the access
-/// streams once per inner iteration and this returns false. Without any
-/// enclosing loop this also returns false, which keeps plain-loop kernels
-/// unaffected by the once-per-subloop gate.
-static bool isDirectInNearestSubloopBody(Operation *access) {
-  for (Operation *cur = access->getParentOp(); cur; cur = cur->getParentOp()) {
-    if (isa<LoopLikeOpInterface>(cur)) {
-      return cur->hasAttrOfType<UnitAttr>(kBlockifySubloopAttrName);
+static bool containsNestedForLoop(Operation *subloop) {
+  auto walkResult = subloop->walk([&](Operation *op) {
+    if (op != subloop && isa<scf::ForOp>(op)) {
+      return WalkResult::interrupt();
     }
+    return WalkResult::advance();
+  });
+  return walkResult.wasInterrupted();
+}
+
+/// Returns true when `access` sits directly in an autoblockify subloop that
+/// contains a nested scf.for. Regions such as scf.if may appear between the
+/// access and the subloop. If the nearest enclosing loop is the nested
+/// compute loop, the access is streaming and this returns false.
+static bool isDirectInSubloopWithNestedFor(Operation *access) {
+  for (Operation *cur = access->getParentOp(); cur; cur = cur->getParentOp()) {
+    if (!isa<LoopLikeOpInterface>(cur))
+      continue;
+
+    auto blockifyLoop = dyn_cast<scf::ForOp>(cur);
+    if (!blockifyLoop || !blockifyLoop->hasAttrOfType<UnitAttr>(
+                             kBlockifySubloopAttrName))
+      return false;
+
+    return containsNestedForLoop(blockifyLoop);
   }
   return false;
 }
@@ -596,20 +610,17 @@ struct MarkMultiBuffer : public OpRewritePattern<CopyOpType> {
         parentLoop = parentLoop->getParentOfType<LoopLikeOpInterface>();
       }
 
-      // Under autoblockify.subloop, buffers whose GM accesses all sit
-      // directly in the subloop body touch GM at most once per subloop
-      // iteration. Multi-buffering them only overlaps the block boundary
-      // with the previous block, while doubling their UB footprint; that
-      // extra footprint can push the no-reuse PlanMemory layout over UB and
-      // force pipe-stalling dma buffer reuse for the streaming buffers of
-      // the nested loops. Skip marking them.
+      // A buffer whose GM accesses all sit directly in an autoblockify
+      // subloop with a nested compute loop is only accessed at the block
+      // boundary. Skip marking it while retaining multi-buffer for streaming
+      // accesses inside the nested loop.
       if (skipOncePerSubloopGMAccess &&
           getHIVMAddressSpace(v.getType()) == AddressSpace::UB) {
         SmallVector<Operation *, 4> gmAccesses;
         Value allocVal = utils::tracebackMemRef(v);
         if (succeeded(collectGMAccesses(allocVal, gmAccesses)) &&
             !gmAccesses.empty() &&
-            llvm::all_of(gmAccesses, isDirectInNearestSubloopBody)) {
+            llvm::all_of(gmAccesses, isDirectInSubloopWithNestedFor)) {
           LLVM_DEBUG(DBGS() << "skip multi-buffer: buffer touches GM at most "
                                "once per autoblockify.subloop iteration.\n");
           return failure();
