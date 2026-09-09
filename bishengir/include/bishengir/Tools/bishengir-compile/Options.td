@@ -1055,7 +1055,7 @@ def HfusionEnableCrossIfFusion : FeatureControlOptions<
 def HfusionEnableMultipleConsumerFusion : FeatureControlOptions<
   "Enable multiple consumer fusion in AutoVectorizeV2",
   "bool",
-  "true"
+  "false"
 > {
   let passGroup = ["HFUSION"];
 }
