@@ -147,13 +147,15 @@ struct RecognizeDisContinuousStore : public OpRewritePattern<hivm::StoreOp> {
                                                            expandReassociation);
 
     // alloc: aligned buffer with compact row-major layout. The vbrc dst needs
-    // strides:
+    // expanded strides:
     //   strides[i] = srcStrides[i] * channelNum  (i < rank), strides[rank] = 1.
-    // For a compact row-major alloc, strides[i] = prod(allocShape[j>i]); thus
-    //   allocShape[i>0] = strides[i] / strides[i+1]
+    //
+    // For a compact row-major alloc:
+    //   allocShape[0] = dimUb(0)
+    //   allocShape[i] = strides[i - 1] / strides[i]  (0 < i < rank)
     //   allocShape[rank] = channelNum
-    //   allocShape[0]     = dimUb(0) (outer dim not encoded in strides)
-    // then do subview narrows it to the actual src dims for vbrc.
+    //
+    // then subview narrows it to the actual src dims for vbrc.
     auto dimUb = [&](int64_t i) {
       return staticUbs ? (*staticUbs)[i] : srcTy.getDimSize(i);
     };
@@ -164,11 +166,11 @@ struct RecognizeDisContinuousStore : public OpRewritePattern<hivm::StoreOp> {
     SmallVector<int64_t> allocShape;
     allocShape.push_back(dimUb(0));
     for (int64_t i = 1; i < rank; ++i) {
-      if (allocStrides[i + 1] == 0 ||
-          allocStrides[i] % allocStrides[i + 1] != 0)
+      if (allocStrides[i - 1] == 0 ||
+          allocStrides[i - 1] % allocStrides[i] != 0)
         return rewriter.notifyMatchFailure(
             op, "srcStrides not perfectly nested, cannot build compact alloc");
-      allocShape.push_back(allocStrides[i] / allocStrides[i + 1]);
+      allocShape.push_back(allocStrides[i - 1] / allocStrides[i]);
     }
     allocShape.push_back(channelNum);
     // allocShape is self-consistent with allocStrides -> always default

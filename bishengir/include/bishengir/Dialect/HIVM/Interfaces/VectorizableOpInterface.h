@@ -23,16 +23,12 @@
 #include "mlir/IR/PatternMatch.h"
 #include "llvm/ADT/ArrayRef.h"
 
-namespace mlir::hivm {
-/// Default `VectorizableOpInterface::vectorize` implementation for HIVM
-/// elementwise ops. Returns failure for ops without an elementwise lowering.
-LogicalResult vectorizeElementwise(Operation *op, RewriterBase &rewriter,
-                                   ArrayRef<int64_t> vectorSizes);
-
-/// Returns true for HIVM ops that currently lower through
-/// `VectorizableOpInterface::vectorize`.
-bool canVectorizeHIVMOp(Operation *op);
-} // namespace mlir::hivm
+namespace mlir::OpTrait {
+/// Marker trait for ops that are not vectorizable
+template <typename ConcreteType>
+class NotVectorizableTrait
+    : public TraitBase<ConcreteType, NotVectorizableTrait> {};
+} // namespace mlir::OpTrait
 
 // Include the generated interface declarations.
 #include "bishengir/Dialect/HIVM/Interfaces/VectorizableOpInterface.h.inc"

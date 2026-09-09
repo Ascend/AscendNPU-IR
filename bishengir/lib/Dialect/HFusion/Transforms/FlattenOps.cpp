@@ -100,15 +100,9 @@ void hfusion::populateFlattenOpsPattern(RewritePatternSet &patterns) {
 
 void FlattenOpsPass::runOnOperation() {
   auto funcOp = getOperation();
-  std::optional<mlir::hivm::TFuncCoreType> funcCoreType =
-      mlir::hivm::queryFuncCoreType(funcOp);
-  if (funcCoreType.has_value()) {
-    if (funcCoreType.value() == mlir::hivm::TFuncCoreType::AIC) {
-      return;
-    } else if (funcCoreType.value() == mlir::hivm::TFuncCoreType::AIV) {
-      return;
-    }
-  }
+  if (!util::shouldApplyFlattenOpsPass(funcOp))
+    return;
+
   if (this->flattenMode == FlattenMode::Greedy) {
     RewritePatternSet patterns(&getContext());
     populateFlattenOpsPattern(patterns);

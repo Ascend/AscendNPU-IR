@@ -4468,3 +4468,40 @@ module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
     return
   }
 }
+
+// -----
+
+// CHECK-LABEL: func.func @tile_materialize_in_destination(
+// CHECK:         scf.for %[[IV:.*]] = {{.*}} {
+// CHECK:           %[[EMPTY:.*]] = tensor.empty() : tensor<32x128xi32>
+// CHECK:           %[[VALUE:.*]] = hivm.hir.vbrc {{.*}} outs(%[[EMPTY]] : tensor<32x128xi32>) -> tensor<32x128xi32>
+// CHECK:           %[[ALLOC0:.*]] = memref.alloc() : memref<32x128xi32, #hivm.address_space<ub>>
+// CHECK:           %[[BUFFER0:.*]] = memref.memory_space_cast %[[ALLOC0]] : memref<32x128xi32, #hivm.address_space<ub>> to memref<32x128xi32>
+// CHECK:           %[[ALLOC1:.*]] = memref.alloc() : memref<32x128xi32, #hivm.address_space<ub>>
+// CHECK:           %[[BUFFER1:.*]] = memref.memory_space_cast %[[ALLOC1]] : memref<32x128xi32, #hivm.address_space<ub>> to memref<32x128xi32>
+// CHECK:           %[[SELECTED:.*]] = arith.select %{{.*}}, %[[BUFFER0]], %[[BUFFER1]] : memref<32x128xi32>
+// CHECK:           bufferization.materialize_in_destination %[[VALUE]] in restrict writable %[[SELECTED]] {tiled_op} : (tensor<32x128xi32>, memref<32x128xi32>) -> ()
+// CHECK:           %[[RESULT:.*]] = bufferization.to_tensor %[[SELECTED]] restrict writable : memref<32x128xi32>
+// CHECK:           hivm.hir.store ins(%[[RESULT]] : tensor<32x128xi32>) outs({{.*}} : memref<32x128xi32, strided<[128, 1], offset: ?>>) {tiled_op}
+// CHECK:         } {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+module attributes {
+  dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"ARCH", "dav-c310">>>,
+  hivm.module_core_type = #hivm.module_core_type<MIX>
+} {
+  func.func @tile_materialize_in_destination(%output: memref<64x128xi32>,
+                                               %condition: i1)
+      attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+    %c0_i32 = arith.constant 0 : i32
+    %empty = tensor.empty() : tensor<64x128xi32>
+    %value = hivm.hir.vbrc ins(%c0_i32 : i32) outs(%empty : tensor<64x128xi32>) -> tensor<64x128xi32>
+    %alloc0 = memref.alloc() : memref<64x128xi32, #hivm.address_space<ub>>
+    %buffer0 = memref.memory_space_cast %alloc0 : memref<64x128xi32, #hivm.address_space<ub>> to memref<64x128xi32>
+    %alloc1 = memref.alloc() : memref<64x128xi32, #hivm.address_space<ub>>
+    %buffer1 = memref.memory_space_cast %alloc1 : memref<64x128xi32, #hivm.address_space<ub>> to memref<64x128xi32>
+    %selected = arith.select %condition, %buffer0, %buffer1 : memref<64x128xi32>
+    bufferization.materialize_in_destination %value in restrict writable %selected : (tensor<64x128xi32>, memref<64x128xi32>) -> ()
+    %result = bufferization.to_tensor %selected restrict writable : memref<64x128xi32>
+    hivm.hir.store ins(%result : tensor<64x128xi32>) outs(%output : memref<64x128xi32>)
+    return
+  }
+}

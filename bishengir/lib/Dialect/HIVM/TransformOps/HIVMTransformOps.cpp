@@ -20,6 +20,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVMVectorize.h"
 #include "bishengir/Dialect/HIVM/Interfaces/VectorizableOpInterface.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/MathExt/IR/MathExt.h"
 
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -65,10 +66,10 @@ void MapForallToHIVMBlocks::getEffects(
   modifiesPayload(effects);
 }
 
-DiagnosedSilenceableFailure transform::HIVMVectorizeOp::apply(
-    transform::TransformRewriter &rewriter,
-    transform::TransformResults &transformResults,
-    transform::TransformState &state) {
+DiagnosedSilenceableFailure
+transform::HIVMVectorizeOp::apply(transform::TransformRewriter &rewriter,
+                                  transform::TransformResults &transformResults,
+                                  transform::TransformState &state) {
   ArrayRef<int64_t> explicitSizes = getStaticVectorSizes();
   for (Operation *target : state.getPayloadOps(getTarget())) {
     auto vecOp = dyn_cast<VectorizableOpInterface>(target);
@@ -77,8 +78,7 @@ DiagnosedSilenceableFailure transform::HIVMVectorizeOp::apply(
              << "payload op does not implement VectorizableOpInterface";
     auto structuredOp = dyn_cast<HIVMStructuredOp>(target);
     if (!structuredOp)
-      return emitSilenceableError()
-             << "payload op is not a HIVM structured op";
+      return emitSilenceableError() << "payload op is not a HIVM structured op";
 
     SmallVector<int64_t> vectorSizes;
     if (!explicitSizes.empty()) {
@@ -123,6 +123,7 @@ public:
     declareGeneratedDialect<scope::ScopeDialect>();
     declareGeneratedDialect<arith::ArithDialect>();
     declareGeneratedDialect<math::MathDialect>();
+    declareGeneratedDialect<mathExt::MathExtDialect>();
     declareGeneratedDialect<memref::MemRefDialect>();
     declareGeneratedDialect<tensor::TensorDialect>();
     declareGeneratedDialect<vector::VectorDialect>();

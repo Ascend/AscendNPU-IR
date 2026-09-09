@@ -1,18 +1,23 @@
-[<modules>] <short description>
+[<Module>] <type>: <short description>
 
-<optional body: motivation, design, risks>
+Motivation: <why this change is needed and what problem it solves>
+Design: <the general approach and any important algorithm or design choice>
+Risks: <potential risks or side effects; write "None" when there are none>
 
-<Assisted-by: <AGENT_NAME>:<MODEL_VERSION>>
+Assisted-by: AI
 # ===== Usage =====
 # 1. Delete placeholder lines above, replace with your commit message
-# 2. First line = title (~50 chars, imperative mood)
-# 3. Blank line + optional body (~72 chars per line)
-# 4. Optional modules: 
-#    PlanMemory|HIVM|AVE|VFFusion|HFusion|SIMT|CVPipeline|Autoblockify|...
-# 5. Assisted agent samples as below, delete this line if it's completely
-#    human written
-#    Assisted-by: GLM 5.1
-#    Assisted-by: Trae GLM 5.1
-#    Assisted-by: Claude-opus-4.8
-#    Assisted-by: Codex 5.3
+# 2. First line = title (~50 chars, imperative mood); an optional second
+#    module may identify a pass, for example: [HIVM][PlanMemory] fix: ...
+# 3. Allowed Module values (case-sensitive):
+#    Analysis Annotation Arith AscendDPX Bufferization Config Conversion
+#    ExecutionEngine HACC HFusion HIVM HIVMAVE HIVMRegbaseIntrins Interfaces
+#    LLVMIR Linalg MathExt MemRef MemRefExt Pass SCF Scope Symbol Tensor Tools
+#    Torch Transform Transforms Triton TritonExt Utils Vector Version
+# 4. For Dialect changes, use the concrete dialect name as Module; do not use
+#    Dialect itself
+# 5. Blank line + body; wrap lines at about 72 characters
+# 6. If AI assisted the change, keep exactly: Assisted-by: AI
+# 7. Subject regex checked by .githooks/pre-push:
+#    ^\[(Analysis|Annotation|Arith|AscendDPX|Bufferization|Config|Conversion|ExecutionEngine|HACC|HFusion|HIVM|HIVMAVE|HIVMRegbaseIntrins|Interfaces|LLVMIR|Linalg|MathExt|MemRef|MemRefExt|Pass|SCF|Scope|Symbol|Tensor|Tools|Torch|Transform|Transforms|Triton|TritonExt|Utils|Vector|Version)\](\[[[:alnum:]_][[:alnum:]_-]*\])? (feat|fix|doc|refactor|chore): [^[:space:]].*$
 # ========================================================================

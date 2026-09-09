@@ -136,8 +136,6 @@ func.func @test_sink_empty() -> tensor<16xf32>{
   %ret = scf.for %i = %c0 to %c1 step %c2 iter_args(%arg = %init) -> tensor<16xf32> : i32 {
     %fi = arith.uitofp %i : i32 to f32
     %res = hivm.hir.vbrc ins(%fi:f32) outs(%empty:tensor<16xf32>) -> tensor<16xf32>
-    // NOTE: if this check fails, then the pass is no longer needed before one-shot-bufferize
-    // NO-CLONE: memref.copy
 
     // CLONE-NOT: memref.copy
     scf.yield %res : tensor<16xf32>

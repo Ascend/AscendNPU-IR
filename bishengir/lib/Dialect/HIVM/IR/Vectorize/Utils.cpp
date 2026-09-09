@@ -1,4 +1,4 @@
-//===------------------ Utils.cpp - HIVM Vectorize Utils-   ------------------===//
+//===- Utils.cpp - HIVM vectorization utilities --------------------------===//
 //
 // Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,7 +18,6 @@
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMVectorize.h"
-#include "bishengir/Dialect/HIVM/Utils/RegbaseUtils.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
@@ -35,89 +34,86 @@
 using namespace mlir::utils::debugger;
 
 namespace mlir::hivm {
-Value getIdentityElement(OpBuilder &builder, Location loc, Type elemType,
-                         VectorArithKind kind) {
-  if (auto floatType = dyn_cast<FloatType>(elemType)) {
-    switch (kind) {
-    case VectorArithKind::ADD:
-    case VectorArithKind::SUB:
-      return builder.create<arith::ConstantOp>(
-          loc, builder.getFloatAttr(floatType, 0.0));
-    case VectorArithKind::MUL:
-    case VectorArithKind::DIV:
-      return builder.create<arith::ConstantOp>(
-          loc, builder.getFloatAttr(floatType, 1.0));
-    case VectorArithKind::MAX:
-      return builder.create<arith::ConstantOp>(
-          loc, builder.getFloatAttr(
-                   floatType, APFloat::getInf(floatType.getFloatSemantics(),
-                                              /*Negative=*/true)));
-    case VectorArithKind::MIN:
-      return builder.create<arith::ConstantOp>(
-          loc, builder.getFloatAttr(
-                   floatType, APFloat::getInf(floatType.getFloatSemantics(),
-                                              /*Negative=*/false)));
-    }
-  } else if (auto intType = dyn_cast<IntegerType>(elemType)) {
-    switch (kind) {
-    case VectorArithKind::ADD:
-    case VectorArithKind::SUB:
-      return builder.create<arith::ConstantOp>(
-          loc, builder.getIntegerAttr(intType, 0));
-    case VectorArithKind::MUL:
-    case VectorArithKind::DIV:
-      return builder.create<arith::ConstantOp>(
-          loc, builder.getIntegerAttr(intType, 1));
-    case VectorArithKind::MAX:
-      return builder.create<arith::ConstantOp>(
-          loc, builder.getIntegerAttr(
-                   intType, APInt::getSignedMinValue(intType.getWidth())));
-    case VectorArithKind::MIN:
-      return builder.create<arith::ConstantOp>(
-          loc, builder.getIntegerAttr(
-                   intType, APInt::getSignedMaxValue(intType.getWidth())));
-    }
-  }
-  llvm::report_fatal_error("unsupported element type for neutral element");
+
+static SmallVector<Value> createZeroIndices(OpBuilder &builder, Location loc,
+                                            int64_t rank) {
+  Value zero = builder.create<arith::ConstantIndexOp>(loc, 0);
+  return SmallVector<Value>(rank, zero);
 }
 
-Value createVectorArithOp(OpBuilder &builder, Location loc,
-                          VectorArithKind kind, Value lhs, Value rhs) {
-  Type elemType = getElementTypeOrSelf(lhs.getType());
+vector::TransferReadOp
+createMaskedTransferRead(OpBuilder &builder, Location loc,
+                         VectorType vectorType, Value source, Value padding,
+                         Value mask, AffineMap permutationMap) {
+  int64_t rank = vectorType.getRank();
+  if (!permutationMap)
+    permutationMap = builder.getMultiDimIdentityMap(rank);
+  return builder.create<vector::TransferReadOp>(
+      loc, vectorType, source, createZeroIndices(builder, loc, rank),
+      permutationMap, padding, mask,
+      builder.getBoolArrayAttr(SmallVector<bool>(rank, true)));
+}
 
-  if (isa<FloatType>(elemType)) {
-    switch (kind) {
-    case VectorArithKind::ADD:
-      return builder.create<arith::AddFOp>(loc, lhs, rhs);
-    case VectorArithKind::SUB:
-      return builder.create<arith::SubFOp>(loc, lhs, rhs);
-    case VectorArithKind::MUL:
-      return builder.create<arith::MulFOp>(loc, lhs, rhs);
-    case VectorArithKind::DIV:
-      return builder.create<arith::DivFOp>(loc, lhs, rhs);
-    case VectorArithKind::MAX:
-      return builder.create<arith::MaximumFOp>(loc, lhs, rhs);
-    case VectorArithKind::MIN:
-      return builder.create<arith::MinimumFOp>(loc, lhs, rhs);
-    }
-  } else if (isa<IntegerType>(elemType)) {
-    switch (kind) {
-    case VectorArithKind::ADD:
-      return builder.create<arith::AddIOp>(loc, lhs, rhs);
-    case VectorArithKind::SUB:
-      return builder.create<arith::SubIOp>(loc, lhs, rhs);
-    case VectorArithKind::MUL:
-      return builder.create<arith::MulIOp>(loc, lhs, rhs);
-    case VectorArithKind::DIV:
-      return builder.create<arith::DivSIOp>(loc, lhs, rhs); // or DivUIOp
-    case VectorArithKind::MAX:
-      return builder.create<arith::MaxSIOp>(loc, lhs, rhs);
-    case VectorArithKind::MIN:
-      return builder.create<arith::MinSIOp>(loc, lhs, rhs);
-    }
+vector::TransferWriteOp createMaskedTransferWrite(OpBuilder &builder,
+                                                  Location loc, Value vector,
+                                                  Value destination, Value mask,
+                                                  AffineMap permutationMap) {
+  int64_t rank = cast<ShapedType>(destination.getType()).getRank();
+  if (!permutationMap)
+    permutationMap = builder.getMultiDimIdentityMap(rank);
+  return builder.create<vector::TransferWriteOp>(
+      loc, TypeRange(destination.getType()), vector, destination,
+      createZeroIndices(builder, loc, rank), permutationMap, mask,
+      builder.getBoolArrayAttr(SmallVector<bool>(rank, true)));
+}
+
+Value createShapeMask(OpBuilder &builder, Location loc, Value shaped,
+                      ArrayRef<int64_t> vectorSizes) {
+  auto shapedType = cast<ShapedType>(shaped.getType());
+  SmallVector<Value> dimSizes;
+  for (int64_t i = 0, e = shapedType.getRank(); i < e; ++i) {
+    if (isa<TensorType>(shapedType))
+      dimSizes.push_back(builder.create<tensor::DimOp>(loc, shaped, i));
+    else
+      dimSizes.push_back(builder.create<memref::DimOp>(loc, shaped, i));
   }
+  return builder.create<vector::CreateMaskOp>(
+      loc, VectorType::get(vectorSizes, builder.getI1Type()), dimSizes);
+}
 
-  llvm::report_fatal_error("unsupported element type for vector arithmetic");
+Value readOperand(OpBuilder &builder, Location loc, Value input,
+                  ArrayRef<int64_t> vectorSizes, Value padding,
+                  Value fullMask) {
+  if (!isa<ShapedType>(input.getType()))
+    return builder.create<vector::BroadcastOp>(
+        loc, VectorType::get(vectorSizes, input.getType()), input);
+
+  auto shapedType = cast<ShapedType>(input.getType());
+  int64_t rank = static_cast<int64_t>(vectorSizes.size());
+  assert(shapedType.getRank() == rank && "expected a checked operand rank");
+
+  // A dim the operand carries at size one is read at size one and stretched
+  // by vector.broadcast; every other dim -- including one narrower than the
+  // vector shape, as the VL packing policy produces for leading dims -- is
+  // read at the vector size and covered by `fullMask`.
+  SmallVector<int64_t> readSizes(rank);
+  for (int64_t i = 0; i < rank; ++i)
+    readSizes[i] = shapedType.getDimSize(i) == 1 ? 1 : vectorSizes[i];
+  bool needsBroadcast = readSizes != SmallVector<int64_t>(vectorSizes);
+
+  // The narrow read only spans the operand's own extent, so it needs a mask
+  // derived from the operand rather than from the op's iteration domain.
+  Value mask = needsBroadcast ? createShapeMask(builder, loc, input, readSizes)
+                              : fullMask;
+
+  Type elementType = shapedType.getElementType();
+  Value read = createMaskedTransferRead(builder, loc,
+                                        VectorType::get(readSizes, elementType),
+                                        input, padding, mask);
+  if (!needsBroadcast)
+    return read;
+  return builder.create<vector::BroadcastOp>(
+      loc, VectorType::get(vectorSizes, elementType), read);
 }
 
 LogicalResult checkVectorizePreconditions(Operation *op,
@@ -125,19 +121,26 @@ LogicalResult checkVectorizePreconditions(Operation *op,
   auto structured = dyn_cast<HIVMStructuredOp>(op);
   if (!structured)
     return failure();
-  if (!structured.getBroadcastArray().empty() ||
-      !structured.getPermutationArray().empty())
+  if (structured.getNumDpsInputs() == 0 || structured.getNumDpsInits() != 1)
     return failure();
-  if (structured.getNumDpsInputs() == 0)
+  auto output = structured.getDpsInitOperand(0)->get();
+  auto outputType = dyn_cast<ShapedType>(output.getType());
+  if (!outputType ||
+      outputType.getRank() != static_cast<int64_t>(vectorSizes.size()))
     return failure();
-  auto shapedTy =
-      dyn_cast<ShapedType>(structured.getDpsInputs().front().getType());
-  if (!shapedTy ||
-      shapedTy.getRank() != static_cast<int64_t>(vectorSizes.size()))
-    return failure();
-  if (llvm::any_of(vectorSizes, [](int64_t size) { return size <= 0; }))
-    return failure();
-  return success();
+  return success(
+      llvm::none_of(vectorSizes, [](int64_t size) { return size <= 0; }));
+}
+
+LogicalResult checkShapedInputs(HIVMStructuredOp op,
+                                ArrayRef<int64_t> vectorSizes) {
+  // Checking all inputs here -- not just the first -- keeps these
+  // vectorizers from bailing out after they have already emitted IR.
+  return success(llvm::all_of(op.getDpsInputs(), [&](Value input) {
+    auto shapedTy = dyn_cast<ShapedType>(input.getType());
+    return shapedTy &&
+           shapedTy.getRank() == static_cast<int64_t>(vectorSizes.size());
+  }));
 }
 
 namespace {
@@ -170,15 +173,18 @@ std::optional<int64_t> getFirstNonUnitDim(ArrayRef<int64_t> shape) {
   return std::nullopt;
 }
 
-/// Loop extents used by the VL packing policy.
-/// `computeStaticLoopSizes` asserts on dynamic shapes, so fall back to the
-/// first DPS input (iteration-space rank) when any dim is dynamic.
 SmallVector<int64_t> getLoopShape(HIVMStructuredOp op) {
   if (!op.hasDynamicShape())
     return SmallVector<int64_t>(op.computeStaticLoopSizes());
-  if (op.getNumDpsInputs() == 0)
+  if (op.getNumDpsInputs() == 0 || op.getNumDpsInits() == 0)
     return SmallVector<int64_t>(op.getNumLoops(), ShapedType::kDynamic);
-  return SmallVector<int64_t>(op.getShape(op.getDpsInputOperand(0)));
+
+  // Reductions iterate over their input. Other supported ops iterate over the
+  // destination, including broadcasts and transposes.
+  OpOperand *domain = isa<VReduceOp>(op.getOperation())
+                          ? op.getDpsInputOperand(0)
+                          : op.getDpsInitOperand(0);
+  return SmallVector<int64_t>(op.getShape(domain));
 }
 
 // When the shape is dynamic, we only allow one dynamic dim, and the other dims
