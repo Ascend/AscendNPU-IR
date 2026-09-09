@@ -787,6 +787,17 @@ def SplitMixKernel : Pass<"hivm-split-mix-kernel", "ModuleOp"> {
                            "hacc::HACCDialect"];
 }
 
+def MergeSamePreloadScopes : Pass<"hivm-merge-same-preload-scopes", "ModuleOp"> {
+  let summary = "Merge scopes sharing identical preload_num within the same parent op.";
+  let constructor = "mlir::hivm::createMergeSamePreloadScopesPass()";
+  let dependentDialects = [
+    "scope::ScopeDialect",
+    "func::FuncDialect",
+    "hivm::HIVMDialect",
+    "scf::SCFDialect"
+  ];
+}
+
 def MarkRealCoreType : Pass<"hivm-mark-real-core-type", "ModuleOp"> {
   let summary = "Mark scalar operations with core-type attribute.";
   let constructor = "mlir::hivm::createMarkRealCoreTypePass()";

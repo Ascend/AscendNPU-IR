@@ -458,6 +458,7 @@ static void hivmPreBufferizationOptimizationPipeline(
   // Split mix kernel is done before bufferization because it depends on
   // tensor SSA property.
   pm.addPass(createSplitMixKernelPass());
+  pm.addPass(createMergeSamePreloadScopesPass());
   // SIMT scopes must stay outlined, so mark them `no_inline` before the
   // inline-scope below runs.
   pm.addPass(createMarkSimtScopeNoInlinePass());

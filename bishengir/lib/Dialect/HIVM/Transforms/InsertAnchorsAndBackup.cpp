@@ -399,9 +399,12 @@ func::FuncOp InsertAnchorsAndBackupPass::backupFunc(func::FuncOp src) {
   auto splitSimtModulePass = createSplitSimtModulePass();
   std::string splitSimtModulePassName =
       splitSimtModulePass->getArgument().str();
-  std::string allPassesNames = insertAnchorsAndBackupPassName + "," +
-                               delayedCrossCoreGSSPassName + "," +
-                               splitSimtModulePassName;
+  auto mergeSamePreloadScopesPass = createMergeSamePreloadScopesPass();
+  std::string mergeSamePreloadScopesPassName =
+      mergeSamePreloadScopesPass->getArgument().str();
+  std::string allPassesNames =
+      insertAnchorsAndBackupPassName + "," + delayedCrossCoreGSSPassName + "," +
+      splitSimtModulePassName + "," + mergeSamePreloadScopesPassName;
 
   auto attr = mlir::annotation::FilterPassesAttr::get(
       ctx, StringAttr::get(ctx, allPassesNames));
