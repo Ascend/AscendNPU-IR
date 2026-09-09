@@ -19,20 +19,13 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "bishengir/Conversion/Passes.h"
-#include "bishengir/Dialect/HACC/Utils/Utils.h"
-#include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
-#include "mlir/Dialect/Linalg/IR/Linalg.h"
-#include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
-#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
-#include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/Casting.h"
 #include <optional>
 #include <vector>
@@ -63,20 +56,18 @@ traceToFuncArgWithIndex(Value v, func::FuncOp f) {
   return std::nullopt;
 }
 
-// Collect all operations with a Write memory effect that transitively use v,
-// following ViewLike ops recursively.
+// Collect all operations with a Write memory effect on v (or a ViewLike
+// alias of v) that transitively use v, following ViewLike ops recursively.
 std::vector<Operation *> traceWriteEndUsers(Value v) {
   std::vector<Operation *> endUsers;
   for (Operation *userOp : v.getUsers()) {
     if (isa<ViewLikeOpInterface>(userOp)) {
-      auto nextLayerEndUsers = traceWriteEndUsers(userOp->getOpResult(0));
-      for (Operation *nextLayerEndUser : nextLayerEndUsers) {
-        if (hasEffect<MemoryEffects::Write>(nextLayerEndUser))
-          endUsers.push_back(nextLayerEndUser);
-      }
-    } else {
-      if (hasEffect<MemoryEffects::Write>(userOp))
-        endUsers.push_back(userOp);
+      Value viewResult = userOp->getOpResult(0);
+      auto nextLayerEndUsers = traceWriteEndUsers(viewResult);
+      endUsers.insert(endUsers.end(), nextLayerEndUsers.begin(),
+                      nextLayerEndUsers.end());
+    } else if (hasEffect<MemoryEffects::Write>(userOp, v)) {
+      endUsers.push_back(userOp);
     }
   }
   return endUsers;

@@ -1228,7 +1228,7 @@ def InsertInitAndFinishForDebug : Pass<"hivm-insert-init-and-finish-for-debug"> 
   let dependentDialects = ["hivm::HIVMDialect"];
 }
 
-def MarkDisableLoad : Pass<"hivm-mark-disable-load"> {
+def MarkDisableLoad : Pass<"hivm-mark-disable-load", "ModuleOp"> {
   let summary = "mark the memref.loads that need to disable dcache";
   let constructor = "mlir::hivm::createMarkDisableLoadPass()";
   let dependentDialects = ["hivm::HIVMDialect", "memref::MemRefDialect"];
