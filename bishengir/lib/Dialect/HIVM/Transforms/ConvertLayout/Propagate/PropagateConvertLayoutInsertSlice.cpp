@@ -25,6 +25,7 @@
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/AffineExpr.h"
+#include "mlir/IR/AffineMap.h"
 
 #define DEBUG_TYPE "hivm-propagate-convert-layout"
 #define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] ")
@@ -97,10 +98,41 @@ LogicalResult checkInsertSliceHasUnitStrides(tensor::InsertSliceOp insertSliceOp
   return success();
 }
 
-LogicalResult checkInsertSliceTileAlignment(tensor::InsertSliceOp insertSliceOp,
-                                            DataLayoutAttr fractalLayout,
-                                            PatternRewriter &rewriter,
-                                            ConvertLayoutOp convertOp) {
+/// Per spatial dim. `block` is that dim's fractal size (M: f0, N: f1).
+/// FullyAligned: offset and size are both multiples of `block` (a0/b0 = 0).
+/// IntraTile: size divides `block` and offset is a multiple of size, so
+/// [off, off+size) stays in one tile. sap: size 8, block 16, offset iv*8
+/// → a0 is 0 or 8.
+enum class TileDimFit { FullyAligned, IntraTile };
+
+struct InsertSliceTileFit {
+  TileDimFit mFit = TileDimFit::FullyAligned;
+  TileDimFit nFit = TileDimFit::FullyAligned;
+  bool anyIntraTile() const {
+    return mFit == TileDimFit::IntraTile || nFit == TileDimFit::IntraTile;
+  }
+};
+
+bool classifyTileDim(OpFoldResult offset, OpFoldResult size, int64_t block,
+                     TileDimFit &fit) {
+  if (isKnownMultipleOf(offset, block) && isKnownMultipleOf(size, block)) {
+    fit = TileDimFit::FullyAligned;
+    return true;
+  }
+  std::optional<int64_t> sizeCst = getConstantIntValue(size);
+  if (!sizeCst || *sizeCst <= 0 || *sizeCst > block || (block % *sizeCst) != 0)
+    return false;
+  if (!isKnownMultipleOf(offset, *sizeCst))
+    return false;
+  fit = TileDimFit::IntraTile;
+  return true;
+}
+
+LogicalResult checkInsertSliceTileFit(tensor::InsertSliceOp insertSliceOp,
+                                      DataLayoutAttr fractalLayout,
+                                      PatternRewriter &rewriter,
+                                      ConvertLayoutOp convertOp,
+                                      InsertSliceTileFit &fit) {
   auto sourceType =
       dyn_cast<RankedTensorType>(insertSliceOp.getSource().getType());
   auto destType = dyn_cast<RankedTensorType>(insertSliceOp.getDest().getType());
@@ -121,15 +153,25 @@ LogicalResult checkInsertSliceTileAlignment(tensor::InsertSliceOp insertSliceOp,
   int64_t spatialStart = rank == 3 ? 1 : 0;
   SmallVector<OpFoldResult> offsets = insertSliceOp.getMixedOffsets();
   SmallVector<OpFoldResult> sizes = insertSliceOp.getMixedSizes();
-  for (int64_t dim = spatialStart; dim < rank; ++dim) {
-    int64_t blockSize =
-        dim == spatialStart ? blockSizes->first : blockSizes->second;
-    if (!isKnownMultipleOf(offsets[dim], blockSize) ||
-        !isKnownMultipleOf(sizes[dim], blockSize))
+  int64_t blocks[2] = {blockSizes->first, blockSizes->second};
+  TileDimFit dimFits[2];
+  for (int i = 0; i < 2; ++i) {
+    int64_t dim = spatialStart + i;
+    if (!classifyTileDim(offsets[dim], sizes[dim], blocks[i], dimFits[i]))
       return rewriter.notifyMatchFailure(
-          convertOp,
-          "insert_slice offsets and sizes must be tile-aligned");
+          convertOp, "insert_slice offsets and sizes must be tile-aligned or "
+                     "contained in one fractal tile");
+    // Dest already one tile (M=16). Stop. Else this rewrite loops.
+    if (dimFits[i] == TileDimFit::IntraTile) {
+      int64_t destSize = destType.getDimSize(dim);
+      if (destSize != ShapedType::kDynamic && destSize <= blocks[i])
+        return rewriter.notifyMatchFailure(
+            convertOp,
+            "intra-tile insert dest is already a single fractal tile");
+    }
   }
+  fit.mFit = dimFits[0];
+  fit.nFit = dimFits[1];
   return success();
 }
 
@@ -170,8 +212,7 @@ FailureOr<Value> createFractalInsertSlice(PatternRewriter &rewriter,
   if (failed(newOffsets))
     return failure();
 
-  // Tile alignment guarantees intra-tile offsets are zero. Force them so
-  // dynamic-but-aligned ND offsets do not leave a residual `mod` apply.
+  // Force a0=b0=0. Safe only when offset is a multiple of the tile.
   (*newOffsets)[newOffsets->size() - 2] = rewriter.getIndexAttr(0);
   (*newOffsets)[newOffsets->size() - 1] = rewriter.getIndexAttr(0);
 
@@ -188,19 +229,88 @@ FailureOr<Value> createFractalInsertSlice(PatternRewriter &rewriter,
       .getResult();
 }
 
+OpFoldResult tileCountOFR(OpBuilder &builder, Location loc, OpFoldResult size,
+                          int64_t block, TileDimFit fit) {
+  // floorDiv(8, 16) is 0. Intra-tile still occupies one outer tile.
+  if (fit == TileDimFit::IntraTile)
+    return builder.getIndexAttr(1);
+  AffineExpr d0 = builder.getAffineDimExpr(0);
+  AffineMap map =
+      AffineMap::get(1, 0, d0.floorDiv(block), builder.getContext());
+  return affine::makeComposedFoldedAffineApply(builder, loc, map, {size});
+}
+
+/// Convert src to the live fractal slice [N1,1,a0,N0] and insert at
+/// [0, M1, a0, 0]. Do not convert dest. Output shape is the live inner so
+/// combine can nd2nz into dest's extract (no padded temp, no L1→L1 copy).
+FailureOr<Value>
+createIntraTileFractalInsertSlice(PatternRewriter &rewriter, Location loc,
+                                  tensor::InsertSliceOp insertSliceOp,
+                                  Value fractalDest, DataLayoutAttr ndLayout,
+                                  DataLayoutAttr fractalLayout,
+                                  const InsertSliceTileFit &fit) {
+  FailureOr<FractalSize> blockSizes = fractalLayout.getFractalBlockSizes();
+  if (failed(blockSizes))
+    return failure();
+  int64_t f0 = blockSizes->first;
+  int64_t f1 = blockSizes->second;
+
+  // Offsets before convert so they dominate it; combine nd2nz uses them.
+  auto newOffsets = computeTargetLayoutOffset(
+      insertSliceOp.getMixedOffsets(), ndLayout, fractalLayout, rewriter, loc);
+  if (failed(newOffsets))
+    return failure();
+
+  int64_t ndRank =
+      cast<RankedTensorType>(insertSliceOp.getDest().getType()).getRank();
+  int64_t spatialStart = ndRank == 3 ? 1 : 0;
+  int64_t fractalRank = cast<RankedTensorType>(fractalDest.getType()).getRank();
+  int64_t fractalSpatialStart = fractalRank == 5 ? 1 : 0;
+
+  SmallVector<OpFoldResult> ndSizes = insertSliceOp.getMixedSizes();
+  OpFoldResult m1Count =
+      tileCountOFR(rewriter, loc, ndSizes[spatialStart], f0, fit.mFit);
+  OpFoldResult n1Count =
+      tileCountOFR(rewriter, loc, ndSizes[spatialStart + 1], f1, fit.nFit);
+  OpFoldResult m0Size = fit.mFit == TileDimFit::IntraTile
+                            ? ndSizes[spatialStart]
+                            : rewriter.getIndexAttr(f0);
+  OpFoldResult n0Size = fit.nFit == TileDimFit::IntraTile
+                            ? ndSizes[spatialStart + 1]
+                            : rewriter.getIndexAttr(f1);
+
+  SmallVector<OpFoldResult> insertSizes;
+  if (fractalSpatialStart)
+    insertSizes.push_back(ndSizes[0]);
+  if (fractalLayout.isScaleFractalLayout())
+    insertSizes.append({m1Count, n1Count, m0Size, n0Size});
+  else
+    insertSizes.append({n1Count, m1Count, m0Size, n0Size});
+
+  auto sourceType = cast<RankedTensorType>(insertSliceOp.getSource().getType());
+  auto convertedType = RankedTensorType::get(
+      decomposeMixedValues(insertSizes).first, sourceType.getElementType());
+  Value sourceFr = rewriter
+                       .create<ConvertLayoutOp>(
+                           loc, convertedType, insertSliceOp.getSource(),
+                           ndLayout, fractalLayout, insertSizes)
+                       .getResult();
+
+  SmallVector<OpFoldResult> unitStrides(fractalRank, rewriter.getIndexAttr(1));
+  return rewriter
+      .create<tensor::InsertSliceOp>(loc, sourceFr, fractalDest, *newOffsets,
+                                     insertSizes, unitStrides)
+      .getResult();
+}
+
 //===----------------------------------------------------------------------===//
 // Propagate UP through InsertSlice Operations
 //===----------------------------------------------------------------------===//
 
-/// Pattern: Push convert_layout UP through tensor.insert_slice operations
-/// Before:
-///   %inserted = tensor.insert_slice %source into %dest[off][sz][1,1]
-///   %fractal = hivm.hir.convert_layout %inserted {up}  // ND -> Fractal
-/// After:
-///   %dest_fractal = hivm.hir.convert_layout %dest {up}
-///   %source_fractal = hivm.hir.convert_layout %source {up}
-///   %inserted_fractal = tensor.insert_slice %source_fractal into %dest_fractal
-///       [off'][sz'][1,1,1,1]
+/// Push convert_layout up through insert_slice.
+/// Whole tiles: convert src+dest, insert in fractal.
+/// Half tile: convert src to the live fractal slice, insert at a0. No dest
+/// convert.
 struct PropagateConvertLayoutUpThroughInsertSlice
     : public OpRewritePattern<ConvertLayoutOp> {
   using OpRewritePattern::OpRewritePattern;
@@ -223,8 +333,9 @@ struct PropagateConvertLayoutUpThroughInsertSlice
     auto srcLayout = convertOp.getSrcLayoutAttr();
     auto dstLayout = convertOp.getDstLayoutAttr();
 
-    if (failed(checkInsertSliceTileAlignment(insertSliceOp, dstLayout, rewriter,
-                                             convertOp)))
+    InsertSliceTileFit fit;
+    if (failed(checkInsertSliceTileFit(insertSliceOp, dstLayout, rewriter,
+                                       convertOp, fit)))
       return rewriter.notifyMatchFailure(
           convertOp, "insert_slice offsets or sizes are not tile-aligned");
 
@@ -236,15 +347,21 @@ struct PropagateConvertLayoutUpThroughInsertSlice
       return rewriter.notifyMatchFailure(convertOp,
                                          "failed to convert dest operand");
 
-    FailureOr<Value> sourceConverted = createConvertLayoutForOperand(
-        rewriter, loc, srcLayout, dstLayout, insertSliceOp.getSource());
-    if (failed(sourceConverted))
-      return rewriter.notifyMatchFailure(convertOp,
-                                         "failed to convert source operand");
-
-    FailureOr<Value> newInsertSlice = createFractalInsertSlice(
-        rewriter, loc, insertSliceOp, *sourceConverted, *destConverted,
-        srcLayout, dstLayout);
+    FailureOr<Value> newInsertSlice;
+    if (fit.anyIntraTile()) {
+      newInsertSlice = createIntraTileFractalInsertSlice(
+          rewriter, loc, insertSliceOp, *destConverted, srcLayout, dstLayout,
+          fit);
+    } else {
+      FailureOr<Value> sourceConverted = createConvertLayoutForOperand(
+          rewriter, loc, srcLayout, dstLayout, insertSliceOp.getSource());
+      if (failed(sourceConverted))
+        return rewriter.notifyMatchFailure(convertOp,
+                                           "failed to convert source operand");
+      newInsertSlice = createFractalInsertSlice(
+          rewriter, loc, insertSliceOp, *sourceConverted, *destConverted,
+          srcLayout, dstLayout);
+    }
     if (failed(newInsertSlice))
       return rewriter.notifyMatchFailure(
           convertOp, "failed to create fractal insert_slice");
@@ -258,14 +375,10 @@ struct PropagateConvertLayoutUpThroughInsertSlice
 // Propagate DOWN through InsertSlice Operations
 //===----------------------------------------------------------------------===//
 
-/// Pattern: Push convert_layout DOWN through tensor.insert_slice users
-/// Before:
-///   %dest_nd = hivm.hir.convert_layout %dest_fr {down}  // Fractal -> ND
-///   %inserted = tensor.insert_slice %source into %dest_nd[off][sz][1,1]
-/// After:
-///   %source_fr = hivm.hir.convert_layout %source {up}
-///   %inserted_fr = tensor.insert_slice %source_fr into %dest_fr[off'][sz']
-///   %inserted = hivm.hir.convert_layout %inserted_fr {down}
+/// Push convert_layout down through insert_slice dest.
+/// Whole tiles: convert src, insert in fractal, convert result down.
+/// Half tile: convert src to the live fractal slice, insert at a0. No dest
+/// convert.
 struct PropagateConvertLayoutDownThroughInsertSlice
     : public OpRewritePattern<ConvertLayoutOp> {
   using OpRewritePattern::OpRewritePattern;
@@ -297,23 +410,30 @@ struct PropagateConvertLayoutDownThroughInsertSlice
 
     auto ndLayout = convertOp.getDstLayoutAttr();
     auto fractalLayout = convertOp.getSrcLayoutAttr();
-    if (failed(checkInsertSliceTileAlignment(insertSliceOp, fractalLayout,
-                                             rewriter, convertOp)))
+    InsertSliceTileFit fit;
+    if (failed(checkInsertSliceTileFit(insertSliceOp, fractalLayout, rewriter,
+                                       convertOp, fit)))
       return rewriter.notifyMatchFailure(
           convertOp, "insert_slice offsets or sizes are not tile-aligned");
 
     Location loc = insertSliceOp.getLoc();
     rewriter.setInsertionPoint(insertSliceOp);
 
-    FailureOr<Value> sourceConverted = createConvertLayoutForOperand(
-        rewriter, loc, ndLayout, fractalLayout, insertSliceOp.getSource());
-    if (failed(sourceConverted))
-      return rewriter.notifyMatchFailure(convertOp,
-                                         "failed to convert source operand");
-
-    FailureOr<Value> newInsertSlice = createFractalInsertSlice(
-        rewriter, loc, insertSliceOp, *sourceConverted, convertOp.getSource(),
-        ndLayout, fractalLayout);
+    FailureOr<Value> newInsertSlice;
+    if (fit.anyIntraTile()) {
+      newInsertSlice = createIntraTileFractalInsertSlice(
+          rewriter, loc, insertSliceOp, convertOp.getSource(), ndLayout,
+          fractalLayout, fit);
+    } else {
+      FailureOr<Value> sourceConverted = createConvertLayoutForOperand(
+          rewriter, loc, ndLayout, fractalLayout, insertSliceOp.getSource());
+      if (failed(sourceConverted))
+        return rewriter.notifyMatchFailure(convertOp,
+                                           "failed to convert source operand");
+      newInsertSlice = createFractalInsertSlice(
+          rewriter, loc, insertSliceOp, *sourceConverted, convertOp.getSource(),
+          ndLayout, fractalLayout);
+    }
     if (failed(newInsertSlice))
       return rewriter.notifyMatchFailure(
           convertOp, "failed to create fractal insert_slice");

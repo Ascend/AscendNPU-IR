@@ -783,3 +783,30 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     return %5 : tensor<64x64xf32>
   }
 }
+
+// -----
+
+// nZ insert_slice feeding mmad stays CUBE_AND_VECTOR (same as ND insert).
+// Dest lives on L1 with mmad; do not copy the assembled dest UB→cbuf.
+// CHECK-LABEL: func.func @fractal_insert_slice_mmad_rhs(
+// CHECK: %[[INS:.*]] = tensor.insert_slice
+// CHECK-NOT: hivm.hir.copy ins(%[[INS]]
+// CHECK: hivm.hir.mmadL1 {{.*}} ins({{.*}}, %[[INS]]
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @fractal_insert_slice_mmad_rhs(%lhs: tensor<12x1x16x16xbf16>, %tile: tensor<12x1x8x16xbf16>, %dest: tensor<12x2x16x16xbf16>)
+      -> tensor<2x1x16x16xf32>
+      attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %c16 = arith.constant 16 : index
+    %c192 = arith.constant 192 : index
+    %c32 = arith.constant 32 : index
+    %true = arith.constant true
+    %ins = tensor.insert_slice %tile into %dest[0, 0, 0, 0] [12, 1, 8, 16] [1, 1, 1, 1]
+        : tensor<12x1x8x16xbf16> into tensor<12x2x16x16xbf16>
+    %out = tensor.empty() : tensor<2x1x16x16xf32>
+    %mmad = hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
+        ins(%lhs, %ins, %true, %c16, %c192, %c32
+            : tensor<12x1x16x16xbf16>, tensor<12x2x16x16xbf16>, i1, index, index, index)
+        outs(%out : tensor<2x1x16x16xf32>) -> tensor<2x1x16x16xf32>
+    return %mmad : tensor<2x1x16x16xf32>
+  }
+}
