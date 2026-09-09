@@ -197,6 +197,9 @@ std::unique_ptr<Pass> createInsertInferVFModeFuncPass();
 // Create a pass to split davinci aicore and aivector kernel
 std::unique_ptr<Pass> createSplitMixKernelPass();
 
+// Create a pass to merge scopes sharing identical preload_num within parent op
+std::unique_ptr<Pass> createMergeSamePreloadScopesPass();
+
 // Create a pass to split mixed-core scf.if ops into per-core if chains
 // (Ascend950 / RegBase). Intended to run before SplitMixKernel.
 std::unique_ptr<Pass> createSplitMixedIfConditionalsPass();
@@ -447,7 +450,6 @@ std::unique_ptr<Pass> createFuseTransposeIntoLoadPass();
 std::unique_ptr<Pass> createTensorCopyInsertionPass();
 std::unique_ptr<Pass> createTensorCopyInsertionPass(
     const bufferization::OneShotBufferizationOptions &options);
-
 
 //===----------------------------------------------------------------------===//
 // Registration
