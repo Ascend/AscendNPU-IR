@@ -109,6 +109,7 @@ init_variables() {
   PYTHON_BINDING="OFF"
   BUILD_TORCH_MLIR="OFF"
   BUILD_TRITON="ON"
+  SKIP_HIVMC="OFF"
   ENABLE_LLD="OFF"
   ENABLE_WERROR="OFF"
   MLIR_WERROR="OFF"
@@ -178,6 +179,7 @@ usage() {
                 [--safety-options]
                 [--safety-ld-options]
                 [--skip-rpath]
+                [--skip-hivmc]
                 [--enable-cpu-runner]
                 [--coverage]
                 [--enable-bspub]
@@ -209,6 +211,7 @@ usage() {
       --safety-options                     Whether to build with safe compile options. (Default: disabled)
       --safety-ld-options                  Whether to build with safe options for linking. (Default: disabled)
       --skip-rpath                         Disable the Run-time Search Path option. (Default: disabled)
+      --skip-hivmc                         Skip HIVMC build. (Default: disabled)
       --torch-mlir-source-dir DIR          Torch-MLIR project's root directory. (Default: 'third-party/torch-mlir')
       --enable-cpu-runner                  Enable the compilation of CPU runner targets
       --coverage                           Build with gcov-compatible coverage instrumentation
@@ -434,6 +437,10 @@ parse_arguments() {
                 ;;
             --disable-build-triton)
                 BUILD_TRITON="OFF"
+                shift
+                ;;
+            --skip-hivmc)
+                SKIP_HIVMC="ON"
                 shift
                 ;;
             --shared-libs)
@@ -824,9 +831,10 @@ main() {
 
   cmake_build
 
-  # Skip HIVMC when building the standalone IR only or against the
-  # LLVM 20/22 compatibility shims.
-  if [[ "${CMAKE_OPTIONS}" != *"-DBISHENGIR_BUILD_STANDALONE_IR_ONLY=ON"* ]] && \
+  # Skip HIVMC when building the standalone IR only, against the LLVM 20/22
+  # compatibility shims, or when --skip-hivmc is set.
+  if [[ "${SKIP_HIVMC}" != "ON" ]] && \
+     [[ "${CMAKE_OPTIONS}" != *"-DBISHENGIR_BUILD_STANDALONE_IR_ONLY=ON"* ]] && \
      [[ "${CMAKE_OPTIONS}" != *"-DCMAKE_C_FLAGS=-D__LLVM_MAJOR_VERSION_20_COMPATIBLE__"* ]] && \
      [[ "${CMAKE_OPTIONS}" != *"-DLLVM_MAJOR_VERSION_22_COMPATIBLE=ON"* ]]; then
     build_hivmc
