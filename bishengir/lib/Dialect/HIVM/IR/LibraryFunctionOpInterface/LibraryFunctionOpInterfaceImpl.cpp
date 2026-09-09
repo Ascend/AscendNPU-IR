@@ -103,6 +103,21 @@ template <typename OpTy> std::string getCumOpLibraryCallName(OpTy op) {
     }
   }
 
+  // Membase: 1D fp32 cumsum uses a Sklansky scalar library call to match
+  // regbase floating-point addition order.
+  if constexpr (std::is_same_v<OpTy, VCumsumOp>) {
+    if (mod && !hacc::utils::isRegBasedArch(mod)) {
+      Type dstElemType = getElementTypeOrSelf(op.getDst());
+      if (isa<FloatType>(dstElemType) && dstElemType.isF32() &&
+          srcVecType.getRank() == 1 && cumDim == 0 && !op.getReverse()) {
+        std::stringstream ss;
+        ss << baseName.data() << "_1d_"
+           << getTypeName(op.getLoc(), elemType) << "_dim0";
+        return ss.str();
+      }
+    }
+  }
+
   bool reverse = op.getReverse();
   std::stringstream ss;
   ss << baseName.data() << (cumDim > 0 ? "_ara_" : "_ra_")
