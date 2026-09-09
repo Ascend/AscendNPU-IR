@@ -114,11 +114,6 @@ private:
   // Location/IR insertion helpers and event id value creation.
   Location getProperLoc(OperationBase *opBase);
 
-  std::unique_ptr<PlaceHolder>
-  getOppositeIfBranchPlaceHolder(IRRewriter &rewriter,
-                                 OperationBase *opBase,
-                                 SetWaitOp *setWaitOp);
-
   void setProperInsertionPoint(IRRewriter &rewriter, OperationBase *opBase,
                                bool insertAfterOp);
 

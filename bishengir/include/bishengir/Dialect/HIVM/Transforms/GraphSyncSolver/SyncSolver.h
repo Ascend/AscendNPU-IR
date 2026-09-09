@@ -268,9 +268,18 @@ protected:
   // Return the LCA occurrence pair used when placing set/wait for a hazard.
   std::pair<Occurrence *, Occurrence *> getSetWaitLCAPairOcc(Occurrence *occ1,
                                                              Occurrence *occ2);
- std::pair<Occurrence *, Occurrence *>
- 	   getMirrorIfBranchOccs(Condition *condition, Occurrence *setOcc,
- 	                         Occurrence *waitOcc);
+  Occurrence *getMirrorIfBranch(Occurrence *ifOcc, bool isSet);
+
+  struct ExtraConflictOccPair {
+    Occurrence *setOcc;
+    Occurrence *waitOcc;
+    Occurrence *parentOcc;
+  };
+  llvm::SmallVector<ExtraConflictOccPair, 5>
+  buildSiblingIfExtraConflictOccs(const SetWaitPairInfo &setWaitPairInfo,
+                                  ConflictPair &conflictPair,
+                                  Occurrence *setOcc, Occurrence *waitOcc);
+
   // Map an occurrence to the first/last loop-iteration copy under parOcc.
   bool isFirstIterOcc(Occurrence *occ, Occurrence *loopOcc);
   bool isLastIterOcc(Occurrence *occ, Occurrence *loopOcc);

@@ -181,77 +181,66 @@ Occurrence *SyncSolverBase::getScopeEndPlaceHolderOcc(Occurrence *occ) {
   return placeHolderOcc;
 }
 
-std::pair<Occurrence *, Occurrence *>
- 	 SyncSolverBase::getMirrorIfBranchOccs(Condition *condition, Occurrence *setOcc,
- 	                                       Occurrence *waitOcc) {
- 	   assert(condition != nullptr);
- 	   auto *setOp = setOcc != nullptr ? setOcc->op : nullptr;
- 	   auto *waitOp = waitOcc != nullptr ? waitOcc->op : nullptr;
- 	   Scope *trueScope = condition->getTrueScope();
- 	   Scope *falseScope = condition->hasFalseScope() ? condition->getFalseScope()
- 	                                                  : nullptr;
- 	 
- 	   // Determine which branch currently holds set/wait and pick the opposite.
- 	   auto inTrueBranch = [&](OperationBase *op) -> bool {
- 	     return op != nullptr &&
- 	            (trueScope == op || trueScope->isProperAncestor(op));
- 	   };
- 	   auto inFalseBranch = [&](OperationBase *op) -> bool {
- 	     return op != nullptr && falseScope != nullptr &&
- 	            (falseScope == op || falseScope->isProperAncestor(op));
- 	   };
- 	 
- 	   auto pickOpposite = [&](Scope *branchScope) -> Scope * {
- 	     if (branchScope == trueScope) {
- 	       return falseScope;
- 	     }
- 	     if (falseScope != nullptr && branchScope == falseScope) {
- 	       return trueScope;
- 	     }
- 	     return nullptr;
- 	   };
- 	 
- 	   auto findBranchScopeOcc = [&](Scope *branchScope,
- 	                                 Occurrence *refOcc) -> Occurrence * {
- 	     if (branchScope == nullptr) return nullptr;
- 	     // branchScope's occurrence is the sibling occurrence next to refOcc's
- 	     // branch parent under the same condition occurrence.
- 	     auto *condOcc = refOcc->getParentWithOp(condition);
- 	     for (auto *childOcc : condOcc->childOccs) {
- 	       if (childOcc->op == branchScope) {
- 	         return childOcc;
- 	       }
- 	     }
- 	     return nullptr;
- 	   };
- 	 
- 	   Occurrence *mirrorSetOcc = setOcc;
- 	   Occurrence *mirrorWaitOcc = waitOcc;
- 	 
- 	   if (setOcc != nullptr && (inTrueBranch(setOp) || inFalseBranch(setOp))) {
- 	     auto *curScope = inTrueBranch(setOp) ? trueScope : falseScope;
- 	     auto *oppScope = pickOpposite(curScope);
- 	     if (oppScope != nullptr) {
- 	       auto *oppScopeOcc = findBranchScopeOcc(oppScope, setOcc);
- 	       if (oppScopeOcc != nullptr) {
- 	         mirrorSetOcc = getScopeEndPlaceHolderOcc(oppScopeOcc);
- 	       }
- 	     }
- 	   }
- 	 
- 	   if (waitOcc != nullptr && (inTrueBranch(waitOp) || inFalseBranch(waitOp))) {
- 	     auto *curScope = inTrueBranch(waitOp) ? trueScope : falseScope;
- 	     auto *oppScope = pickOpposite(curScope);
- 	     if (oppScope != nullptr) {
- 	       auto *oppScopeOcc = findBranchScopeOcc(oppScope, waitOcc);
- 	       if (oppScopeOcc != nullptr) {
- 	         mirrorWaitOcc = getScopeBeginPlaceHolderOcc(oppScopeOcc);
- 	       }
- 	     }
- 	   }
- 	 
- 	   return {mirrorSetOcc, mirrorWaitOcc};
- 	 }
+Occurrence *SyncSolverBase::getMirrorIfBranch(Occurrence *ifOcc, bool isSet) {
+  assert(ifOcc != nullptr);
+  auto *condition = cast<Condition>(ifOcc->op);
+  if (!condition->hasFalseScope())
+    return nullptr;
+
+  auto *falseScope = condition->getFalseScope();
+  for (auto *childOcc : ifOcc->childOccs) {
+    if (childOcc->op == falseScope) {
+      return isSet ? getScopeEndPlaceHolderOcc(childOcc)
+                   : getScopeBeginPlaceHolderOcc(childOcc);
+    }
+  }
+  return nullptr;
+}
+
+llvm::SmallVector<SyncSolverBase::ExtraConflictOccPair, 5>
+SyncSolverBase::buildSiblingIfExtraConflictOccs(
+    const SetWaitPairInfo &setWaitPairInfo, ConflictPair &conflictPair,
+    Occurrence *setOcc, Occurrence *waitOcc) {
+  assert(setWaitPairInfo.setWaitInside);
+  auto collectBranchOccs = [&](Occurrence *occ, Occurrence *ifOcc,
+                               bool isSet) {
+    llvm::SmallVector<Occurrence *, 2> branchOccs{occ};
+    if (ifOcc != nullptr) {
+      if (auto *mirrorOcc = getMirrorIfBranch(ifOcc, isSet))
+        branchOccs.push_back(mirrorOcc);
+    }
+    return branchOccs;
+  };
+
+  auto setOccs =
+      collectBranchOccs(setOcc, setWaitPairInfo.setIfOcc, /*isSet=*/true);
+  auto waitOccs =
+      collectBranchOccs(waitOcc, setWaitPairInfo.waitIfOcc, /*isSet=*/false);
+  conflictPair.mirrorSetIfOcc =
+      setOccs.size() > 1 ? setOccs.back() : nullptr;
+  conflictPair.mirrorWaitIfOcc =
+      waitOccs.size() > 1 ? waitOccs.back() : nullptr;
+
+  llvm::SmallVector<ExtraConflictOccPair, 5> extraOccPairs;
+  for (auto *extraSetOcc : setOccs)
+    for (auto *extraWaitOcc : waitOccs)
+      extraOccPairs.push_back({extraSetOcc, extraWaitOcc, nullptr});
+
+  auto *ifOcc = setWaitPairInfo.setIfOcc != nullptr
+                    ? setWaitPairInfo.setIfOcc
+                    : setWaitPairInfo.waitIfOcc;
+  assert(ifOcc != nullptr);
+  auto *setOccInIf = *std::min_element(
+      setOccs.begin(), setOccs.end(), [](Occurrence *lhs, Occurrence *rhs) {
+        return lhs->endIndex < rhs->endIndex;
+      });
+  auto *waitOccInIf = *std::min_element(
+      waitOccs.begin(), waitOccs.end(), [](Occurrence *lhs, Occurrence *rhs) {
+        return lhs->startIndex < rhs->startIndex;
+      });
+  extraOccPairs.push_back({setOccInIf, waitOccInIf, ifOcc->parentOcc});
+  return extraOccPairs;
+}
 
 std::pair<Occurrence *, Occurrence *>
 SyncSolverBase::getSetWaitLCAPairOcc(Occurrence *occ1, Occurrence *occ2) {
@@ -1603,11 +1592,25 @@ SyncSolverBase::getFixedSetWaitOcc(Occurrence *occ1, Occurrence *occ2,
       ret.waitOcc = placeHolderOcc;
   }
 
-  // Keep synchronization at exact conflict operations only when the two LCA
-  // children are precisely a direct if or the non-if endpoint itself.
-  if (options.isIntraCoreMode() && options.enableSiblingIfSync) {
-    auto *setIfOcc = occ1->getDirectParentIfOcc();
-    auto *waitIfOcc = occ2->getDirectParentIfOcc();
+  if (options.isIntraCoreMode() && options.enableSiblingIfSync &&
+      isBackwardSync(occ1, occ2)) {
+    auto *setBranchOcc = occ1->parentOcc;
+    auto *setIfOcc =
+        setBranchOcc != nullptr ? setBranchOcc->parentOcc : nullptr;
+    auto *setCondition = dyn_cast_if_present<Condition>(
+        setIfOcc != nullptr ? setIfOcc->op : nullptr);
+    if (setCondition == nullptr ||
+        setBranchOcc->op != setCondition->getTrueScope())
+      setIfOcc = nullptr;
+
+    auto *waitBranchOcc = occ2->parentOcc;
+    auto *waitIfOcc =
+        waitBranchOcc != nullptr ? waitBranchOcc->parentOcc : nullptr;
+    auto *waitCondition = dyn_cast_if_present<Condition>(
+        waitIfOcc != nullptr ? waitIfOcc->op : nullptr);
+    if (waitCondition == nullptr ||
+        waitBranchOcc->op != waitCondition->getTrueScope())
+      waitIfOcc = nullptr;
     auto [setLCAOp, waitLCAOp] =
         OperationBase::getLCAPair(occ1->op, occ2->op);
 
@@ -1615,12 +1618,12 @@ SyncSolverBase::getFixedSetWaitOcc(Occurrence *occ1, Occurrence *occ2,
         setIfOcc != nullptr ? setIfOcc->op : occ1->op;
     auto *expectedWaitLCA =
         waitIfOcc != nullptr ? waitIfOcc->op : occ2->op;
-    bool hasIfEndpoint = setIfOcc != nullptr || waitIfOcc != nullptr;
-    bool areDifferentIfs = setIfOcc == nullptr || waitIfOcc == nullptr ||
-                           setIfOcc->op != waitIfOcc->op;
+    bool bothEndpointsInIf = setIfOcc != nullptr && waitIfOcc != nullptr;
+    bool areDifferentIfs =
+        bothEndpointsInIf && setIfOcc->op != waitIfOcc->op;
     bool lcaMatchesEndpoints =
         setLCAOp == expectedSetLCA && waitLCAOp == expectedWaitLCA;
-    if (hasIfEndpoint && areDifferentIfs && lcaMatchesEndpoints) {
+    if (bothEndpointsInIf && areDifferentIfs && lcaMatchesEndpoints) {
       ret.setOcc = occ1;
       ret.waitOcc = occ2;
       ret.setWaitInside = true;
@@ -2238,7 +2241,8 @@ ConflictPair *SyncSolverBase::handleSetWaitConflict(
       extraConflictPairs;
   auto insertExtraConflictPair = [&](Occurrence *setOcc, Occurrence *waitOcc,
                                      Occurrence *parentScope,
-                                     bool couldNotRun = false, bool mustIncludeInGSS = false) -> bool {
+                                     bool couldNotRun = false,
+                                     bool mustIncludeInGSS = false) -> bool {
     assert(setOcc != nullptr && waitOcc != nullptr);
     auto extraConflictPair = conflictPair->clone(setOcc, waitOcc);
     extraConflictPair->isUseless = true;
@@ -2329,44 +2333,17 @@ ConflictPair *SyncSolverBase::handleSetWaitConflict(
       return nullptr;
     }
   }
-  Occurrence *parOcc;
   if (setWaitPairInfo.setWaitInside) {
-    parOcc = setWaitPairInfo.setIfOcc != nullptr
-                  ? setWaitPairInfo.setIfOcc->parentOcc
-                  : setOcc->parentOcc;
-    parOcc = setWaitPairInfo.waitIfOcc != nullptr
-                  ? setWaitPairInfo.waitIfOcc->parentOcc
-                  : waitOcc->parentOcc;
-  }
-  Occurrence *mirrorSetOcc = setOcc;
-  Occurrence *mirrorWaitOcc = waitOcc;
-  if (setWaitPairInfo.setIfOcc != nullptr || setWaitPairInfo.waitIfOcc != nullptr) {
-
-    if (setWaitPairInfo.setIfOcc != nullptr) {
-      auto *cond = cast<Condition>(setWaitPairInfo.setIfOcc->op);
-      auto [s, w] = getMirrorIfBranchOccs(cond, setOcc, nullptr);
-      mirrorSetOcc = s;
-    }
-    if (setWaitPairInfo.waitIfOcc != nullptr) {
-      auto *cond = cast<Condition>(setWaitPairInfo.waitIfOcc->op);
-      auto [s, w] = getMirrorIfBranchOccs(cond, nullptr, waitOcc);
-      mirrorWaitOcc = w;
+    for (auto [extraSetOcc, extraWaitOcc, parentOcc] :
+         buildSiblingIfExtraConflictOccs(setWaitPairInfo, *conflictPair,
+                                         setOcc, waitOcc)) {
+      if (!insertExtraConflictPair(extraSetOcc, extraWaitOcc, parentOcc,
+                                   /*couldNotRun=*/false,
+                                   /*mustIncludeInGSS=*/true)) {
+        return nullptr;
+      }
     }
   }
-  if (mirrorSetOcc != setOcc) {
-    conflictPair->multipleSet = true;
-    conflictPair->mirrorSetIfOcc = mirrorSetOcc;
-    insertExtraConflictPair(mirrorSetOcc, waitOcc, nullptr, false, true);
-  }
-  if (mirrorWaitOcc != waitOcc) {
-    conflictPair->multipleWait = true;
-    conflictPair->mirrorWaitIfOcc = mirrorWaitOcc;
-    insertExtraConflictPair(setOcc, mirrorWaitOcc, nullptr, false, true);
-  }
-  if (mirrorSetOcc != setOcc && mirrorWaitOcc != waitOcc) {
-    insertExtraConflictPair(mirrorSetOcc, mirrorWaitOcc, nullptr, false, true);
-  }
-  insertExtraConflictPair(setOcc, waitOcc, parOcc, false, true);
   // memorize conflict-pair for future reuse of event-id-node
   memorizeSyncedPair(conflictPair.get());
 
@@ -2879,21 +2856,19 @@ SyncBeforeAfterMap SyncSolverBase::getBeforeAfterSyncMaps() {
         waitOp->debugId = conflictPair->id;
       });
       assert(setOp != nullptr && waitOp != nullptr);
-      if (conflictPair->multipleSet) {
-        auto setOp2 = std::make_unique<SetFlagOp>(
-        conflictPair->mirrorSetIfOcc->op->op, conflictPair->mirrorSetIfOcc->op->parentOp,
-        conflictPair->eventIdNode->getEventIds(),
-        conflictPair->setCorePipeInfo.pipe,
-        conflictPair->waitCorePipeInfo.pipe);
-        syncMapAfter[conflictPair->mirrorSetIfOcc->op].push_back(std::move(setOp2));
+      if (conflictPair->mirrorSetIfOcc != nullptr) {
+        auto setMirror = setOp->clone(
+            conflictPair->mirrorSetIfOcc->op->op,
+            conflictPair->mirrorSetIfOcc->op->parentOp);
+        syncMapAfter[conflictPair->mirrorSetIfOcc->op].push_back(
+            std::move(setMirror));
       }
-      if (conflictPair->multipleWait) {
-        auto waitOp2 = std::make_unique<WaitFlagOp>(
-        conflictPair->mirrorWaitIfOcc->op->op, conflictPair->mirrorWaitIfOcc->op->parentOp,
-        conflictPair->eventIdNode->getEventIds(),
-        conflictPair->setCorePipeInfo.pipe,
-        conflictPair->waitCorePipeInfo.pipe);
-        syncMapBefore[conflictPair->mirrorWaitIfOcc->op].push_front(std::move(waitOp2));
+      if (conflictPair->mirrorWaitIfOcc != nullptr) {
+        auto waitMirror = waitOp->clone(
+            conflictPair->mirrorWaitIfOcc->op->op,
+            conflictPair->mirrorWaitIfOcc->op->parentOp);
+        syncMapBefore[conflictPair->mirrorWaitIfOcc->op].push_front(
+            std::move(waitMirror));
       }
 
       syncMapAfter[conflictPair->setOp].push_back(std::move(setOp));

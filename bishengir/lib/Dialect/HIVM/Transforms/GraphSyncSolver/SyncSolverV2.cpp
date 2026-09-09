@@ -154,7 +154,6 @@ SyncSolverV2::getGraphSolverRef(Occurrence *occ1, Occurrence *occ2,
   auto handleConflictPair = [&](Occurrence *parOcc1, Occurrence *parOcc2,
                                 ConflictPair *conflictPair, bool isTemp = false,
                                 bool isErase = false) {
-    llvm::errs() << "conflict pair" << conflictPair->str() << "\n";
     assert(!isErase || conflictPair->isErased);
     if (conflictPair->couldNotRun) {
       return;
@@ -176,8 +175,6 @@ SyncSolverV2::getGraphSolverRef(Occurrence *occ1, Occurrence *occ2,
         return;
       }
     }
-    llvm::errs() << "parOcc1" << parOcc1->str() << "\n";
-    llvm::errs() << "parOcc2" << parOcc2->str() << "\n";
     if (parOcc1 == parOcc2) {
       if (!parOcc1->isAncestor(occ1) && !parOcc1->isAncestor(occ2)) {
         return;
@@ -186,8 +183,6 @@ SyncSolverV2::getGraphSolverRef(Occurrence *occ1, Occurrence *occ2,
                (!parOcc1->isAncestor(occ2) || !parOcc2->isAncestor(occ1))) {
       return;
     }
-    llvm::errs() << "conflict pair" << "[good]" << "\n";
-    llvm::errs() << "---------------------------------\n";
     if (isErase) {
       graphSolverInfo.graphSolver->eraseConflictPair(conflictPair, isTemp);
     } else {

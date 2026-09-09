@@ -109,8 +109,6 @@ struct SyncSolverOptions {
   // Use disjoint direct subviews to refine memory conflicts.
   bool enableSubviewConflictRefinement{true};
 
-  // Keep same-level if synchronization at the exact conflict operations and
-  // mirror the synchronization to the opposite branches.
   bool enableSiblingIfSync{true};
 
   // Build unrolled sync IR.
@@ -244,8 +242,6 @@ struct Occurrence {
   // Compute/return the pair of sibling occurrences just below their LCA.
   static std::pair<Occurrence *, Occurrence *> getLCAPair(Occurrence *occ1,
                                                           Occurrence *occ2);
-
-  Occurrence *getDirectParentIfOcc();
 
   template <typename OpTy> Occurrence *getParentOfType() {
     Occurrence *cur = this->parentOcc;
@@ -416,9 +412,6 @@ struct ConflictPair {
   bool movedToOuterLoop{false};
   bool isPersistent{false};
   bool isErased{false};
-  bool multipleSet{false};
-  bool multipleWait{false};
-
   ConflictPair(RWOperation *op1, RWOperation *op2, OperationBase *setOp,
                OperationBase *waitOp, Occurrence *setOcc, Occurrence *waitOcc,
                CorePipeInfo setCorePipeInfo, CorePipeInfo waitCorePipeInfo,
