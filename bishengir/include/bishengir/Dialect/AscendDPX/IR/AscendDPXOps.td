@@ -470,4 +470,61 @@ def CallScalarOp : AscendDPX_Op<"call_scalar",
   }];
 }
 
+//===----------------------------------------------------------------------===//
+// PrintOp
+//===----------------------------------------------------------------------===//
+
+// should have
+// [MemoryEffects<[MemRead<SharedMemory>, MemWrite<GlobalMemory>]>]
+// but avoid import conflict
+def PrintOp : AscendDPX_Op<"print">
+{
+  let summary = "Print tensor from shared memory using warp 0 thread 0";
+
+  let description = [{
+    Takes a MemDesc pointing to a tensor in shared memory in natural
+    (unswizzled) row-major layout. Warp 0 thread 0 iterates over all
+    elements and writes them to a log buffer in global memory.
+    All other threads are no-ops.
+  }];
+
+  let arguments = (ins
+    StrAttr:$prefix,
+    BoolAttr:$hex,
+    Variadic<AnyType>:$args, // should be TTG_MemDescType, but avoid import conflict
+    DenseI32ArrayAttr:$isSigned,
+    DenseI32ArrayAttr:$isBool
+  );
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    $prefix attr-dict (`:` $args^ `:` type($args))?
+  }];
+}
+
+//===----------------------------------------------------------------------===//
+// AssertOp
+//===----------------------------------------------------------------------===//
+
+def AssertOp : AscendDPX_Op<"assert">
+{
+  let summary = "SIMT runtime assert";
+
+  let description = [{
+    Runtime assertion op for SIMT-only execution mode.
+    All threads contribute their condition values to shared memory collectively.
+    Only warp 0 thread 0 consumes the staged data from shared memory, checks assertion failures,
+    prints error message to global log buffer and aborts kernel on violation.
+    Remaining threads wait and perform no further logic after writing to shared memory.
+  }];
+
+  let arguments = (ins
+    AnyType:$cond,
+    StrAttr:$msg
+  );
+
+  let assemblyFormat = "$cond `,` $msg `:` type($cond) attr-dict";
+}
+
 #endif // ASCENDDPX_OPS

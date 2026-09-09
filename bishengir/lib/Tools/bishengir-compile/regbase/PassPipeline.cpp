@@ -284,6 +284,9 @@ void buildLowerToLLVMPipeline(OpPassManager &pm,
     pm.addPass(mlir::ascend_dpx::createHoistCallScalarToCallerPass());
     if (config.getEnableSIMTFastDiv())
       pm.addPass(mlir::ascend_dpx::createDPXDivOptimizationPass());
+    if (config.getEnableSIMTDeviceDebug())
+      pm.addPass(
+          bishengir::triton::createSIMTInsertInitAndFinishForDebugPass());
   }
   pm.addPass(createConvertAscendDPXToHIVMRegbaseIntrinPass());
   pm.addPass(bishengir::triton::createDecomposeFRemPass());
@@ -342,6 +345,7 @@ void setupLowerTritonPipelineOptions(
   options.numWarps = config.getNumWarps();
   options.threadsPerWarp = config.getThreadsPerWarp();
   options.enableSIMTFastDiv = config.getEnableSIMTFastDiv();
+  options.enableSIMTDeviceDebug = config.getEnableSIMTDeviceDebug();
   options.useDPX = config.getUseDPX();
   options.disableDecomposeReduction = config.getDisableDecomposeReduction();
   options.disableReorderInstruction = config.getDisableReorderInstruction();

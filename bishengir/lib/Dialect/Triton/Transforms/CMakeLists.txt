@@ -10,6 +10,7 @@ if(BISHENGIR_ENABLE_TRITON_COMPILE)
     FixFusedCatPass.cpp
     GetTritonMetadata.cpp
     LegalizeF16ForTriton.cpp
+    SIMTInsertInitAndFinishForDebug.cpp
     OptimizeLayouts.cpp
     OptimizeLayoutsAnalysis.cpp
     OptimizeLoads.cpp

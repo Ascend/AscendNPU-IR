@@ -96,6 +96,9 @@ namespace triton {
 #if BISHENGIR_ENABLE_TRITON_COMPILE
 void buildLowerTritonPipeline(OpPassManager &pm,
                               const LowerTritonPipelineOptions &options) {
+  if (!options.enableSIMTDeviceDebug)
+    pm.addPass(mlir::triton::ascend::createEraseTritonDebugOps());
+
   bishengir::SetBishengirSimtOptAttrOptions optionsSimtOpt;
   optionsSimtOpt.simtOptimizationMode =
       options.simtOptimizationMode;
@@ -182,6 +185,8 @@ void buildLowerTritonPipeline(OpPassManager &pm,
     pm.addNestedPass<mlir::triton::FuncOp>(
         bishengir::triton::createSIMTFastDivPass());
   pm.addPass(createConvertSCFToCFPass());
+  if (options.enableSIMTDeviceDebug)
+    pm.addPass(mlir::triton::ascend::createConvertDebugOpToAscendDPX());
   pm.addPass(mlir::triton::ascend::createAllocateAscendSharedMemory());
   if (options.enableGlobalScratchAllocation) {
     pm.addPass(mlir::triton::gpu::createTritonGPUGlobalScratchAllocationPass());

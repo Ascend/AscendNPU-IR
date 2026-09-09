@@ -22,15 +22,16 @@
 // print
 
 #define DECLARE_PRINT_SCALAR(type, mem)                                        \
-  [aicore] __attribute__((always_inline)) void                                 \
-  _mlir_ciface_print_scalar_##type##_##mem(char *prefix, const int64_t len,    \
-                                           type arg, const int8_t hex)
+  [aicore] CCE_PRINT_CC __attribute__((always_inline)) void                    \
+      CCE_DEBUG_NAME(_mlir_ciface_print_scalar_##type##_##mem)(                \
+          __gm__ char *prefix, const int64_t len, type arg, const int8_t hex)
 
 #define DECLARE_PRINT_TENSOR(dim, type, mem)                                   \
+  CCE_PRINT_CC                                                                 \
   [aicore] __attribute__((always_inline)) void                                 \
-  _mlir_ciface_print_##dim##d_##type##_##mem(                                  \
-      char *prefix, const int64_t len, memref_t<__##mem##__ type, dim> *arg,   \
-      const int8_t hex)
+      CCE_DEBUG_NAME(_mlir_ciface_print_##dim##d_##type##_##mem)(              \
+          __gm__ char *prefix, const int64_t len,                              \
+          memref_t<__##mem##__ type, dim> *arg, const int8_t hex)
 
 #define DECLARE_PRINT_1TO8D_TENSOR(type, mem)                                  \
   DECLARE_PRINT_TENSOR(1, type, mem);                                          \
@@ -65,14 +66,17 @@
 // assert
 
 #define DECLARE_ASSERT_SCALAR(mem)                                             \
+  CCE_PRINT_CC                                                                 \
   [aicore] __attribute__((always_inline)) void                                 \
-  _mlir_ciface_assert_scalar_bool_##mem(char *prefix, const int64_t len,       \
-                                        bool arg)
+      CCE_DEBUG_NAME(_mlir_ciface_assert_scalar_bool_##mem)(                   \
+          __gm__ char *prefix, const int64_t len, bool arg)
 
 #define DECLARE_ASSERT_TENSOR(dim, mem)                                        \
+  CCE_PRINT_CC                                                                 \
   [aicore] __attribute__((always_inline)) void                                 \
-  _mlir_ciface_assert_##dim##d_int8_t_##mem(                                   \
-      char *prefix, const int64_t len, memref_t<__##mem##__ int8_t, dim> *arg)
+      CCE_DEBUG_NAME(_mlir_ciface_assert_##dim##d_int8_t_##mem)(               \
+          __gm__ char *prefix, const int64_t len,                              \
+          memref_t<__##mem##__ int8_t, dim> *arg)
 
 #define DECLARE_ASSERT_1TO8D_TENSOR(mem)                                       \
   DECLARE_ASSERT_TENSOR(1, mem);                                               \
@@ -112,6 +116,7 @@ DECLARE_PRINT_SCALAR(uint16_t, gm);
 DECLARE_PRINT_SCALAR(int32_t, gm);
 DECLARE_PRINT_SCALAR(uint32_t, gm);
 DECLARE_PRINT_SCALAR(int64_t, gm);
+DECLARE_PRINT_SCALAR(uint64_t, gm);
 DECLARE_PRINT_SCALAR(half, gm);
 DECLARE_PRINT_SCALAR(bfloat16_t, gm);
 DECLARE_PRINT_SCALAR(float, gm);
@@ -123,6 +128,7 @@ DECLARE_PRINT_1TO8D_TENSOR(uint16_t, gm);
 DECLARE_PRINT_1TO8D_TENSOR(int32_t, gm);
 DECLARE_PRINT_1TO8D_TENSOR(uint32_t, gm);
 DECLARE_PRINT_1TO8D_TENSOR(int64_t, gm);
+DECLARE_PRINT_1TO8D_TENSOR(uint64_t, gm);
 DECLARE_PRINT_1TO8D_TENSOR(half, gm);
 DECLARE_PRINT_1TO8D_TENSOR(bfloat16_t, gm);
 DECLARE_PRINT_1TO8D_TENSOR(float, gm);
@@ -141,6 +147,7 @@ DECLARE_PRINT_SCALAR(uint16_t, ubuf);
 DECLARE_PRINT_SCALAR(int32_t, ubuf);
 DECLARE_PRINT_SCALAR(uint32_t, ubuf);
 DECLARE_PRINT_SCALAR(int64_t, ubuf);
+DECLARE_PRINT_SCALAR(uint64_t, ubuf);
 DECLARE_PRINT_SCALAR(half, ubuf);
 DECLARE_PRINT_SCALAR(bfloat16_t, ubuf);
 DECLARE_PRINT_SCALAR(float, ubuf);
@@ -152,6 +159,7 @@ DECLARE_PRINT_1TO8D_TENSOR(uint16_t, ubuf);
 DECLARE_PRINT_1TO8D_TENSOR(int32_t, ubuf);
 DECLARE_PRINT_1TO8D_TENSOR(uint32_t, ubuf);
 DECLARE_PRINT_1TO8D_TENSOR(int64_t, ubuf);
+DECLARE_PRINT_1TO8D_TENSOR(uint64_t, ubuf);
 DECLARE_PRINT_1TO8D_TENSOR(half, ubuf);
 DECLARE_PRINT_1TO8D_TENSOR(bfloat16_t, ubuf);
 DECLARE_PRINT_1TO8D_TENSOR(float, ubuf);

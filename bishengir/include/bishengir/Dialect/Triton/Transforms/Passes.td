@@ -94,6 +94,15 @@ def SIMTAutoBlockify
                          ">= 1). 1 means no super-blocking.">];
 }
 
+def SIMTInsertInitAndFinishForDebug
+    : Pass<"simt-insert-init-and-finish-for-debug", "mlir::ModuleOp"> {
+  let summary = "insert init and finish for debug for pure SIMT mode";
+  let constructor = "bishengir::triton::createSIMTInsertInitAndFinishForDebugPass()";
+  let dependentDialects = [
+    "hacc::HACCDialect", "hivm_regbaseintrins::HIVMRegbaseIntrinsDialect", "LLVM::LLVMDialect", "hivm::HIVMDialect"
+  ];
+}
+
 def EnableAscendDPXMMA
    : Pass<"enable-ascend-dpx-mma", "mlir::triton::FuncOp"> {
   let constructor = "bishengir::triton::createEnableAscendDPXMMAPass()";

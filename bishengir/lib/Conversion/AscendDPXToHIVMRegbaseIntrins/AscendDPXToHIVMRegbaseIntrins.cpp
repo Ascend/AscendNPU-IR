@@ -32,6 +32,8 @@
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/LogicalResult.h"
 #include <string>
@@ -1599,27 +1601,127 @@ struct AscendDPXToHIVMRegbaseIntrins
 
     // To be compatible with triton, addrspace 3 is used for shared memory
     // space. Mapping it to UB addrspace 6 here.
-    moduleOp.walk([&](Operation *op) {
-      for (Value result : op->getResults()) {
-        if (auto ptrType = dyn_cast<LLVM::LLVMPointerType>(result.getType())) {
-          if (ptrType.getAddressSpace() == 3) {
-            Type newType =
-                LLVM::LLVMPointerType::get(moduleOp->getContext(), 6);
-            result.setType(newType);
-          }
+    llvm::DenseMap<Type, Type> remappedTypes;
+    std::function<bool(Type, llvm::DenseSet<Type> &)>
+        containsSharedMemoryPointer =
+            [&](Type ty, llvm::DenseSet<Type> &visited) -> bool {
+      if (auto ptrType = dyn_cast<LLVM::LLVMPointerType>(ty))
+        return ptrType.getAddressSpace() == 3;
+
+      auto structType = dyn_cast<LLVM::LLVMStructType>(ty);
+      if (!structType || structType.isOpaque() || !visited.insert(ty).second)
+        return false;
+
+      for (Type elemTy : structType.getBody()) {
+        if (containsSharedMemoryPointer(elemTy, visited))
+          return true;
+      }
+      return false;
+    };
+
+    std::function<FailureOr<Type>(Type)> remapType =
+        [&](Type ty) -> FailureOr<Type> {
+      auto cachedType = remappedTypes.find(ty);
+      if (cachedType != remappedTypes.end())
+        return cachedType->second;
+
+      Type newType = ty;
+      if (auto ptrType = dyn_cast<LLVM::LLVMPointerType>(ty)) {
+        if (ptrType.getAddressSpace() == 3)
+          newType = LLVM::LLVMPointerType::get(moduleOp->getContext(), 6);
+      } else if (auto structType = dyn_cast<LLVM::LLVMStructType>(ty)) {
+        llvm::DenseSet<Type> visited;
+        if (!containsSharedMemoryPointer(ty, visited)) {
+          remappedTypes.try_emplace(ty, ty);
+          return ty;
         }
+
+        LLVM::LLVMStructType newStructType;
+        if (structType.isIdentified()) {
+          std::string baseName = structType.getName().str();
+          std::string newName = baseName;
+          unsigned suffix = 0;
+          do {
+            newStructType = LLVM::LLVMStructType::getIdentified(
+                moduleOp->getContext(), newName);
+            newName = baseName + "." + std::to_string(++suffix);
+          } while (newStructType.isInitialized());
+          remappedTypes.try_emplace(ty, newStructType);
+        }
+
+        SmallVector<Type> newBody;
+        for (Type elemTy : structType.getBody()) {
+          FailureOr<Type> newElemTy = remapType(elemTy);
+          if (failed(newElemTy))
+            return failure();
+          newBody.push_back(*newElemTy);
+        }
+
+        if (structType.isIdentified()) {
+          if (failed(newStructType.setBody(newBody, structType.isPacked()))) {
+            moduleOp.emitError() << "failed to initialize remapped LLVM struct "
+                                 << newStructType.getName();
+            return failure();
+          }
+          return newStructType;
+        }
+        newType = LLVM::LLVMStructType::getLiteral(
+            moduleOp->getContext(), newBody, structType.isPacked());
+      }
+      remappedTypes.try_emplace(ty, newType);
+      return newType;
+    };
+
+    // 1. Remap ALL block arguments in the module
+    WalkResult blockWalk = moduleOp.walk([&](Block *block) {
+      for (BlockArgument arg : block->getArguments()) {
+        FailureOr<Type> newType = remapType(arg.getType());
+        if (failed(newType))
+          return WalkResult::interrupt();
+        arg.setType(*newType);
+      }
+      return WalkResult::advance();
+    });
+    if (blockWalk.wasInterrupted())
+      return failure();
+
+    // 2. Remap all op results
+    WalkResult resultWalk = moduleOp.walk([&](Operation *op) {
+      for (Value val : op->getResults()) {
+        FailureOr<Type> newType = remapType(val.getType());
+        if (failed(newType))
+          return WalkResult::interrupt();
+        val.setType(*newType);
+      }
+      return WalkResult::advance();
+    });
+    if (resultWalk.wasInterrupted())
+      return failure();
+
+    // 3. Fix function type attributes
+    WalkResult functionWalk = moduleOp.walk([&](LLVM::LLVMFuncOp funcOp) {
+      LLVM::LLVMFunctionType oldFnTy = funcOp.getFunctionType();
+
+      SmallVector<Type> newArgTypes;
+      for (Type argTy : oldFnTy.getParams()) {
+        FailureOr<Type> newArgTy = remapType(argTy);
+        if (failed(newArgTy))
+          return WalkResult::interrupt();
+        newArgTypes.push_back(*newArgTy);
       }
 
-      for (Value operand : op->getOperands()) {
-        if (auto ptrType = dyn_cast<LLVM::LLVMPointerType>(operand.getType())) {
-          if (ptrType.getAddressSpace() == 3) {
-            Type newType =
-                LLVM::LLVMPointerType::get(moduleOp->getContext(), 6);
-            operand.setType(newType);
-          }
-        }
-      }
+      FailureOr<Type> newRetTy = remapType(oldFnTy.getReturnType());
+      if (failed(newRetTy))
+        return WalkResult::interrupt();
+
+      auto newFnTy = LLVM::LLVMFunctionType::get(*newRetTy, newArgTypes,
+                                                 oldFnTy.isVarArg());
+      funcOp.setFunctionType(newFnTy);
+      return WalkResult::advance();
     });
+    if (functionWalk.wasInterrupted())
+      return failure();
+
     return success();
   }
 
