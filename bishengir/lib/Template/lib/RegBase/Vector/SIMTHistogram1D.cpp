@@ -741,7 +741,8 @@ dhistv2CountPredU32(uint32_t lanes) {
 // predicate — the same contract as the u8/u16 paths).
 __aiv__ __attribute__((always_inline)) static void
 dhistv2ProcessChunkU32(DhistBins &acc, __ubuf__ uint32_t *src,
-                       vector_bool active, uint32_t negBase) {
+                       vector_bool active, uint32_t negBase,
+                       uint32_t binLimit = 256) {
   vector_bool all = pset_b8(PAT_ALL);
   vector_u32 v0, v1, v2, v3;
   vlds(v0, src, 0, NORM);       // elements 0..63
@@ -754,10 +755,10 @@ dhistv2ProcessChunkU32(DhistBins &acc, __ubuf__ uint32_t *src,
   vadds(v3, v3, negBase, all, MODE_ZEROING);
   // Countable iff the shifted value fits in a byte: segment member.
   vector_bool q0, q1, q2, q3, ml, mh, m01, m23, pl, ph, counted, pred;
-  vcmps_lt(q0, v0, static_cast<uint32_t>(256), all);
-  vcmps_lt(q1, v1, static_cast<uint32_t>(256), all);
-  vcmps_lt(q2, v2, static_cast<uint32_t>(256), all);
-  vcmps_lt(q3, v3, static_cast<uint32_t>(256), all);
+  vcmps_lt(q0, v0, binLimit, all);
+  vcmps_lt(q1, v1, binLimit, all);
+  vcmps_lt(q2, v2, binLimit, all);
+  vcmps_lt(q3, v3, binLimit, all);
   ppack(ml, q0, LOWER);
   ppack(mh, q1, HIGHER);
   psel(m01, ml, mh, pset_b8(PAT_H));
@@ -1147,7 +1148,70 @@ histogram_1d_masked(memref_t<__ubuf__ T, 1> *src, memref_t<__ubuf__ int32_t, 1> 
     num_bins);
 }
 
+__aiv__ __attribute__((always_inline)) static void
+histogram_256_i32_dhistv2(__ubuf__ int32_t *src, __ubuf__ int32_t *dst,
+                         uint16_t chunks, uint32_t numBins) {
+  __VEC_SCOPE__ {
+    DhistBins acc;
+    vector_bool all = pset_b8(PAT_ALL);
+    vdup(acc.half[0], static_cast<uint16_t>(0), all, MODE_ZEROING);
+    vdup(acc.half[1], static_cast<uint16_t>(0), all, MODE_ZEROING);
+    for (uint16_t chunk = 0; chunk < chunks; ++chunk)
+      dhistv2ProcessChunkU32(acc,
+          reinterpret_cast<__ubuf__ uint32_t *>(src) + chunk * 256,
+          all, 0, numBins);
+    vector_u32 o0, o1, o2, o3;
+    vunpack(o0, acc.half[0], LOWER);
+    vunpack(o1, acc.half[0], HIGHER);
+    vunpack(o2, acc.half[1], LOWER);
+    vunpack(o3, acc.half[1], HIGHER);
+    vector_bool p0, p1, p2, p3;
+    uint32_t c0 = dhistv2BinCount(numBins);
+    uint32_t c1 = dhistv2BinCount(int64_t(numBins) - 64);
+    uint32_t c2 = dhistv2BinCount(int64_t(numBins) - 128);
+    uint32_t c3 = dhistv2BinCount(int64_t(numBins) - 192);
+    CREATE_MASK_BY_SIZE(p0, uint32_t, c0);
+    CREATE_MASK_BY_SIZE(p1, uint32_t, c1);
+    CREATE_MASK_BY_SIZE(p2, uint32_t, c2);
+    CREATE_MASK_BY_SIZE(p3, uint32_t, c3);
+    vsts(o0, reinterpret_cast<__ubuf__ uint32_t *>(dst), 0, NORM_B32, p0);
+    vsts(o1, reinterpret_cast<__ubuf__ uint32_t *>(dst), 64, NORM_B32, p1);
+    vsts(o2, reinterpret_cast<__ubuf__ uint32_t *>(dst), 128, NORM_B32, p2);
+    vsts(o3, reinterpret_cast<__ubuf__ uint32_t *>(dst), 192, NORM_B32, p3);
+  }
+}
+
+
+template <typename T>
+__aiv__ __attribute__((always_inline)) static void
+histogramSmallBins(memref_t<__ubuf__ T, 1> *src,
+                   memref_t<__ubuf__ int32_t, 1> *dst, int64_t numBins) {
+  // Bound the partial counts and avoid tail overreads. Other shapes retain
+  // the general overflow-safe implementation.
+  if (numBins > 0 && numBins <= 256 && src->sizes[0] > 0 &&
+      src->sizes[0] <= 65280 && src->sizes[0] % 256 == 0 &&
+      dhistv2Eligible1D(src, dst)) {
+    histogram_256_i32_dhistv2(
+        reinterpret_cast<__ubuf__ int32_t *>(src->aligned + src->offset),
+        dst->aligned + dst->offset, src->sizes[0] / 256, numBins);
+    return;
+  }
+  histogram_1d<T>(src, dst, numBins);
+}
+
 extern "C" {
+__aiv__ __attribute__((always_inline)) void
+_mlir_ciface_histogram_1d_int32_t_small_bins(
+    memref_t<__ubuf__ int32_t, 1> *src, int64_t numBins,
+    memref_t<__ubuf__ int32_t, 1> *dst) {
+  histogramSmallBins(src, dst, numBins);
+}
+__aiv__ __attribute__((always_inline)) void
+_mlir_ciface_histogram_1d_uint32_t_small_bins(
+    memref_t<__ubuf__ uint32_t, 1> *src, int64_t numBins,
+    memref_t<__ubuf__ int32_t, 1> *dst) {
+  histogramSmallBins(src, dst, numBins);
+}
 //===-------------------------------------------------------------------===//
 // histogram, 1 dim
 //===-------------------------------------------------------------------===//

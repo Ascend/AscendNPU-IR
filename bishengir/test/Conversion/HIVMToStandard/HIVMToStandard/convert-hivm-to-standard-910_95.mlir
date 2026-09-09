@@ -48,7 +48,7 @@ module {
     %alloc_out = memref.alloc() : memref<4xi32, #hivm.address_space<ub>>
     // CHECK: %[[CAST_IN:.*]] = memref.cast {{.*}} : memref<8xi32, #hivm.address_space<ub>> to memref<?xi32, strided<[?], offset: ?>, #hivm.address_space<ub>>
     // CHECK: %[[CAST_OUT:.*]] = memref.cast {{.*}} : memref<4xi32, #hivm.address_space<ub>> to memref<?xi32, strided<[?], offset: ?>, #hivm.address_space<ub>>
-    // CHECK: call @histogram_1d_int32_t(%[[CAST_IN]], %c4_i64, %[[CAST_OUT]])
+    // CHECK: call @histogram_1d_int32_t_small_bins(%[[CAST_IN]], %c4_i64, %[[CAST_OUT]])
     hivm.hir.custom {gm_addr_args_indices = array<i32: 0>, hivm.pipe = #hivm.pipe<PIPE_V>, hivm.tcore_type = #hivm.tcore_type<VECTOR>, hivm.vf_mode = #hivm.vf_mode<SIMT>}
       "__builtin_histogram"
       ins(%alloc_in, %c4_i64 : memref<8xi32, #hivm.address_space<ub>>, i64)
