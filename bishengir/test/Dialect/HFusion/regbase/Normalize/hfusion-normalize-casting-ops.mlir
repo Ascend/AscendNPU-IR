@@ -764,3 +764,21 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     return %cast : tensor<16xi64>
   }
 }
+
+// -----
+
+// CHECK-LABEL: @test_NormalizeCastLowering_f32_to_u8_ascend950(
+// CHECK-SAME: %[[ARG0:.*]]: tensor<16xf32>
+// CHECK-NOT: tensor<16xi64>
+// CHECK: %[[CAST_I32:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = false, round_mode = #hfusion.round_mode<truncwithoverflow>} ins(%[[ARG0]] : tensor<16xf32>) outs({{.*}} : tensor<16xi32>) -> tensor<16xi32>
+// CHECK-NOT: tensor<16xi64>
+// CHECK: %[[CAST_U8:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, enable_overflow = true, round_mode = #hfusion.round_mode<trunc>, unsigned_mode = #hfusion.unsigned_mode<si2ui>} ins(%[[CAST_I32]] : tensor<16xi32>) outs({{.*}} : tensor<16xi8>) -> tensor<16xi8>
+// CHECK-NOT: tensor<16xi64>
+// CHECK: return %[[CAST_U8]] : tensor<16xi8>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @test_NormalizeCastLowering_f32_to_u8_ascend950(%arg0: tensor<16xf32>) -> tensor<16xi8> {
+    %0 = tensor.empty() : tensor<16xi8>
+    %1 = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, enable_overflow = true, round_mode = #hfusion.round_mode<truncwithoverflow>} ins(%arg0 : tensor<16xf32>) outs(%0 : tensor<16xi8>) -> tensor<16xi8>
+    return %1 : tensor<16xi8>
+  }
+}

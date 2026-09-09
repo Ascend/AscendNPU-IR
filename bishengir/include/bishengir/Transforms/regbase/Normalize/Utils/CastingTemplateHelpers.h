@@ -305,11 +305,18 @@ LogicalResult lowerTruncOverflowMode(CastOpType op,
   case OverflowCastKind::F32ToI8: {
     // Preserve overflow on the stage where the backend can legally express it.
     if (useLegacyFloatTruncOverflowSequence<Traits>(kind)) {
+      const bool useSignedI32 = kind == OverflowCastKind::F32ToI8;
       Value castI32 = Traits::createCastValueFromSourceOp(
           rewriter, loc, op, input, rewriter.getI32Type(),
-          CastRoundKind::TruncWithOverflow);
-      return replaceWith(Traits::createCastValueFromSourceOp(rewriter, loc, op, castI32, outType,
-                                           CastRoundKind::TruncEnableOverflow));
+          CastRoundKind::TruncWithOverflow,
+          useSignedI32 ? CastSignKind::Signed : CastSignKind::Preserve);
+      return replaceWith(Traits::createCastValueFromSourceOp(
+          rewriter, loc, op, castI32, outType,
+          CastRoundKind::TruncEnableOverflow, CastSignKind::Preserve,
+          /*enableSaturate=*/false,
+          useSignedI32 && Traits::isUnsignedCast(op)
+              ? CastUnsignedModeKind::SignedToUnsigned
+              : CastUnsignedModeKind::Preserve));
     }
     Value castI32 = Traits::createCastValueFromSourceOp(rewriter, loc, op, input,
                                       rewriter.getI32Type(),
