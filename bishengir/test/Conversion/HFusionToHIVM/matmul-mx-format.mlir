@@ -113,3 +113,23 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
     return %res : tensor<4x16xf32>
   }
 }
+
+// -----
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+  // CHECK-LABEL: func.func @test_matmulscale_mixed_native_fp8
+  // CHECK-NOT: hivm.hir.bitcast
+  // CHECK: hivm.hir.mmadmxL1
+  // CHECK-SAME: tensor<4x8xf8E4M3FN>, tensor<8x16xf8E5M2>
+  func.func @test_matmulscale_mixed_native_fp8(
+      %arg0: tensor<4x8xf8E4M3FN>, %arg1: tensor<8x16xf8E5M2>,
+      %arg2: tensor<4x1xi8>, %arg3: tensor<16x1xi8>)
+      -> tensor<4x16xf32> {
+    %acc = tensor.empty() : tensor<4x16xf32>
+    %res = hfusion.matmul_mx
+      ins(%arg0, %arg1, %arg2, %arg3 :
+          tensor<4x8xf8E4M3FN>, tensor<8x16xf8E5M2>,
+          tensor<4x1xi8>, tensor<16x1xi8>)
+      outs(%acc : tensor<4x16xf32>) -> tensor<4x16xf32>
+    return %res : tensor<4x16xf32>
+  }
+}
