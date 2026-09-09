@@ -214,8 +214,8 @@ void SyncTester::generateRandTest(
       for (auto i : getNDifferentRandNums(writeValsNum, pointerOps.size())) {
         writeVals.back().push_back(pointerOps[i]);
       }
-      llvm::SmallVector<MemInfo> readMemInfo;
-      llvm::SmallVector<MemInfo> writeMemInfo;
+      llvm::SmallVector<MemInfo, 0> readMemInfo;
+      llvm::SmallVector<MemInfo, 0> writeMemInfo;
       for (auto &val : readVals) {
         readMemInfo.push_back(MemInfo::getMemInfo(counterScope, val));
       }
