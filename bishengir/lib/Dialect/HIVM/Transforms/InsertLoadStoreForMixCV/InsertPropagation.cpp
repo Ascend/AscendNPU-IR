@@ -19,12 +19,14 @@
 
 #include "bishengir/Dialect/HIVM/IR/CustomOp/CustomOpUtils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/Transforms/InsertLoadStoreForMixCV/Utils.h"
 #include "bishengir/Dialect/HIVM/Utils/RegbaseUtils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/TypeSwitch.h"
 
 #define DEBUG_TYPE "insert-load-store-insert-propagation"
@@ -242,7 +244,7 @@ A5InsertionPattern::matchAndRewrite(Operation *op,
   return TypeSwitch<Operation *, LogicalResult>(op)
       .Case<hivm::VBrcOp>([&](auto vbrcOp) {
         // vbrc from scalar that can only be run on cube core
-        if (!utils::isScalarLike(vbrcOp.getSrc())) {
+        if (isVectorBroadcast(vbrcOp)) {
           PropagatorUtil::createPropagatorsUp(op, TCoreType::VECTOR,
                                               hivm::AddressSpace::UB, rewriter);
           PropagatorUtil::createPropagatorsDown(

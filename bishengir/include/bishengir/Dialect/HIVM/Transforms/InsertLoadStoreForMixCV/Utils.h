@@ -37,6 +37,8 @@ namespace hivm {
 constexpr llvm::StringLiteral kPropagateUpAttr = "propagate_up";
 constexpr llvm::StringLiteral kPropagateDownAttr = "propagate_down";
 
+bool isConstZero(Value v);
+bool isVectorBroadcast(VBrcOp vbrcOp);
 namespace PropagatorUtil {
 
 const llvm::SmallDenseMap<hivm::AddressSpace, TCoreType, 2>
@@ -44,7 +46,7 @@ const llvm::SmallDenseMap<hivm::AddressSpace, TCoreType, 2>
         {hivm::AddressSpace::UB, TCoreType::VECTOR},
         {hivm::AddressSpace::L1, TCoreType::CUBE},
         {hivm::AddressSpace::GM, TCoreType::CUBE_OR_VECTOR},
-        {hivm::AddressSpace::L0C, TCoreType::CUBE_OR_VECTOR},
+        {hivm::AddressSpace::L0C, TCoreType::CUBE},
 };
 
 /// Holds allocated memref and its plain (no address space) cast.

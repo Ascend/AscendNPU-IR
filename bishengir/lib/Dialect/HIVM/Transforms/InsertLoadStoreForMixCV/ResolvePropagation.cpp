@@ -218,41 +218,36 @@ static LogicalResult ensureFixpipeToUB(UnrealizedConversionCastOp downPropOp,
 static LogicalResult resolveL1ToUB(UnrealizedConversionCastOp downPropOp,
                                    UnrealizedConversionCastOp upPropOp,
                                    PatternRewriter &rewriter) {
+  // L1->UB is not a supported hardware DMA path.
+  // Route through GM: L1->GM (store) then GM->UB (load).
   Value srcValue = downPropOp->getResult(0);
   Location loc = downPropOp.getLoc();
 
-  auto tensorType = dyn_cast<RankedTensorType>(srcValue.getType());
-  if (!tensorType)
-    return failure();
-
-  MLIRContext *ctx = rewriter.getContext();
-  auto elemType = tensorType.getElementType();
-  auto shape = tensorType.getShape();
-
-  auto ubSpaceAttr = hivm::AddressSpaceAttr::get(ctx, hivm::AddressSpace::UB);
-  auto ubMemrefType = MemRefType::get(shape, elemType, nullptr, ubSpaceAttr);
-  auto plainMemrefType = MemRefType::get(shape, elemType);
-
   rewriter.setInsertionPointAfter(downPropOp);
-  Value alloc = rewriter.create<memref::AllocOp>(loc, ubMemrefType);
-  Value noUb =
-      rewriter.create<memref::MemorySpaceCastOp>(loc, plainMemrefType, alloc);
-  auto copyOp = rewriter.create<hivm::CopyOp>(loc, TypeRange{}, srcValue, noUb);
+  auto [storeOp, loadOp] = PropagatorUtil::insertStoreAndLoad(
+      srcValue, loc, rewriter);
 
-  auto toTensor = rewriter.create<bufferization::ToTensorOp>(loc, tensorType,
-                                                             noUb, true, true);
+  bool isBufferized = isa<MemRefType>(loadOp.getDstOperandType());
+  Value loadedValue =
+      isBufferized ? loadOp.getDst() : loadOp.getResult(0);
 
-  Value loadedValue = toTensor.getResult();
   rewriter.modifyOpInPlace(
       upPropOp, [&]() { upPropOp.getInputsMutable()[0].set(loadedValue); });
 
-  PropagatorUtil::createPropagatorUp(&copyOp.getSrcMutable(), downPropOp,
+  PropagatorUtil::createPropagatorUp(&storeOp.getSrcMutable(), downPropOp,
                                      rewriter);
-  PropagatorUtil::createPropagatorUp(&copyOp.getDstMutable(), upPropOp,
+  PropagatorUtil::createPropagatorUp(&storeOp.getDstMutable(),
+                                     hivm::AddressSpace::GM, rewriter);
+  PropagatorUtil::createPropagatorsDown(storeOp, hivm::AddressSpace::GM,
+                                        rewriter);
+  PropagatorUtil::createPropagatorUp(&loadOp.getSrcMutable(),
+                                      hivm::AddressSpace::GM, rewriter);
+  PropagatorUtil::createPropagatorUp(&loadOp.getDstMutable(), upPropOp,
                                      rewriter);
-  PropagatorUtil::createPropagatorsDown(copyOp, upPropOp, rewriter);
+  PropagatorUtil::createPropagatorsDown(loadOp, upPropOp, rewriter);
   return success();
 }
+
 
 //===----------------------------------------------------------------------===//
 // TightCoupledBufferResolvePropagationPattern
