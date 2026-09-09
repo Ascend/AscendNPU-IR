@@ -230,15 +230,7 @@ SyncSolverBase::buildSiblingIfExtraConflictOccs(
                     ? setWaitPairInfo.setIfOcc
                     : setWaitPairInfo.waitIfOcc;
   assert(ifOcc != nullptr);
-  auto *setOccInIf = *std::min_element(
-      setOccs.begin(), setOccs.end(), [](Occurrence *lhs, Occurrence *rhs) {
-        return lhs->endIndex < rhs->endIndex;
-      });
-  auto *waitOccInIf = *std::min_element(
-      waitOccs.begin(), waitOccs.end(), [](Occurrence *lhs, Occurrence *rhs) {
-        return lhs->startIndex < rhs->startIndex;
-      });
-  extraOccPairs.push_back({setOccInIf, waitOccInIf, ifOcc->parentOcc});
+  extraOccPairs.push_back({setOcc, waitOcc, ifOcc->parentOcc});
   return extraOccPairs;
 }
 
