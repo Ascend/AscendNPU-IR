@@ -473,29 +473,14 @@ llvm::cl::values(
   }];
 }
 
-// Fine-grained per-buffer multi-buffer disables. These act AND-wise on top of
-// the existing LimitAutoMultiBufferOfLocalBuffer / LimitAutoMultiBufferBuffer
-// switches: any of them being true skips marking on that address space
-// regardless of the broader strategy. They are also the knobs the compile-
-// time fallback in BiShengIRCompileMain flips when a specific memory space
-// reports overflow:
-//   ub overflow   -> DisableMultiBufferOnUB
-//   cc overflow   -> DisableMultiBufferOnL0C
-//   cbuf overflow -> DisableMultiBufferOnL1
+// Vector-side fine-grained multi-buffer disable. AND-combines with
+// LimitAutoMultiBufferOfLocalBuffer / LimitAutoMultiBufferBuffer: when true,
+// Load/Store UB marks are skipped regardless of the broader strategy.
+// RegBase compile-time fallback flips this on "ub overflow" so a retry can
+// keep Cube L1/L0C multi-buffer. L1/L0C overflow uses the coarse
+// enable-auto-multi-buffer switch instead.
 def DisableMultiBufferOnUB : HIVMOptimizationControlOptions<
   "Disable auto multi-buffer for UB (Vector) buffers (gates Load/Store mark).",
-  "bool",
-  "false"
->;
-
-def DisableMultiBufferOnL0C : HIVMOptimizationControlOptions<
-  "Disable auto multi-buffer for L0C (Cube accumulator) buffers (gates Fixpipe mark).",
-  "bool",
-  "false"
->;
-
-def DisableMultiBufferOnL1 : HIVMOptimizationControlOptions<
-  "Disable auto multi-buffer for L1 (cbuf) buffers (gates ND2NZ mark).",
   "bool",
   "false"
 >;
