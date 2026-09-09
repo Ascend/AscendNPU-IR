@@ -729,3 +729,40 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     return %mmad1 : tensor<4x4x16x16xf32>
   }
 }
+
+// -----
+
+// Intra-tile insert: nd2nz writes a memref alloc, then insert that into dest.
+// Dest stays a tensor until optimize-dps-op-with-yielded-insert-slice retargets
+// the alloc to dest's subview.
+// CHECK-LABEL: func.func @fold_subview_load_convert_into_insert
+// CHECK-NOT: hivm.hir.convert_layout
+// CHECK: %[[ALLOC:.*]] = memref.alloc() : memref<12x1x8x16xbf16>
+// CHECK: %[[SV:.*]] = memref.subview %[[ALLOC]][0, 0, 0, 0] [12, %{{.*}}, 8, 16] [1, 1, 1, 1] : memref<12x1x8x16xbf16> to memref<12x?x8x16xbf16, strided<[128, 128, 16, 1]>>
+// CHECK: hivm.hir.nd2nz {dst_continuous} ins(%{{.*}} : memref<?x192xbf16, strided<[?, 1], offset: ?>>) outs(%[[SV]] : memref<12x?x8x16xbf16, strided<[128, 128, 16, 1]>>)
+// CHECK: %[[T:.*]] = bufferization.to_tensor %[[ALLOC]]
+// CHECK: tensor.insert_slice %[[T]] into %{{.*}}[0, %{{.*}}, %{{.*}}, 0] [12, 1, 8, 16]
+func.func @fold_subview_load_convert_into_insert(
+    %gm: memref<8x192xbf16, strided<[?, 1], offset: ?>>,
+    %dest: tensor<12x2x16x16xbf16>, %m1: index, %a0: index,
+    %rows: index, %cond: i1) -> tensor<12x2x16x16xbf16> {
+  %c0 = arith.constant 0 : index
+  %cst = arith.constant 0.000000e+00 : bf16
+  %alloc = memref.alloc() : memref<8x192xbf16>
+  %sub_in = memref.subview %gm[0, 0] [%rows, 192] [1, 1]
+      : memref<8x192xbf16, strided<[?, 1], offset: ?>> to memref<?x192xbf16, strided<[?, 1], offset: ?>>
+  %sub_out = memref.subview %alloc[0, 0] [%rows, 192] [1, 1]
+      : memref<8x192xbf16> to memref<?x192xbf16, strided<[192, 1]>>
+  hivm.hir.load ins(%sub_in : memref<?x192xbf16, strided<[?, 1], offset: ?>>)
+      outs(%sub_out : memref<?x192xbf16, strided<[192, 1]>>)
+      pad_mode = <PadValue> pad_value = %cst : bf16 left_padding_num = %c0 : index
+      init_out_buffer = true init_condition = %cond : i1
+  %nd = bufferization.to_tensor %alloc restrict writable : memref<8x192xbf16>
+  %conv = hivm.hir.convert_layout %nd output_shape [12, 1, 8, 16]
+      {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>,
+       srcLayout = #hivm.data_layout<ND>}
+      : (tensor<8x192xbf16>) -> tensor<12x1x8x16xbf16>
+  %ins = tensor.insert_slice %conv into %dest[0, %m1, %a0, 0] [12, 1, 8, 16] [1, 1, 1, 1]
+      : tensor<12x1x8x16xbf16> into tensor<12x2x16x16xbf16>
+  return %ins : tensor<12x2x16x16xbf16>
+}

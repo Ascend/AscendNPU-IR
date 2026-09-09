@@ -314,6 +314,22 @@ matchSubviewLoadConvertLayout(ConvertLayoutOp op, PatternRewriter &rewriter) {
                                  useInfo};
 }
 
+/// Intra-tile convert_layout results (e.g. 12x1x8x16) are smaller than a full
+/// fractal tile. `computeMixedTargetLayoutShape` always emits the hardware
+/// block sizes (16x16) for the inner dims. Clamp each static dest size so the
+/// nd2nz subview stays in-bounds of the alloc.
+void clampMixedSizesToShape(SmallVectorImpl<OpFoldResult> &sizes,
+                            ArrayRef<int64_t> shape, Builder &builder) {
+  assert(sizes.size() == shape.size() && "rank mismatch");
+  for (auto [idx, dim] : llvm::enumerate(shape)) {
+    if (ShapedType::isDynamic(dim))
+      continue;
+    std::optional<int64_t> sizeVal = getConstantIntValue(sizes[idx]);
+    if (sizeVal && *sizeVal > dim)
+      sizes[idx] = builder.getIndexAttr(dim);
+  }
+}
+
 LogicalResult
 rewriteSubviewLoadConvertLayout(ConvertLayoutOp op, PatternRewriter &rewriter,
                                 SubviewLoadConvertMatch match,
@@ -333,6 +349,8 @@ rewriteSubviewLoadConvertLayout(ConvertLayoutOp op, PatternRewriter &rewriter,
   if (failed(fractalSizesOrFailure))
     return rewriter.notifyMatchFailure(
         op, "failed to compute fractal subview sizes");
+  clampMixedSizesToShape(*fractalSizesOrFailure, resultTensorType.getShape(),
+                         rewriter);
 
   auto fractalOffsetsOrFailure = computeTargetLayoutOffset(
       ndOffsets, srcLayout, dstLayout, rewriter, op.getLoc());
