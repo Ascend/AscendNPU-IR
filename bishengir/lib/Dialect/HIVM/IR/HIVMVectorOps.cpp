@@ -266,10 +266,25 @@ std::string VCastOp::getCastName(bool withMode) {
   ShapedType dstVcastType = cast<ShapedType>(getSingleDst().getType());
   auto srcElemType = srcVcastType.getElementType();
   auto dstElemType = dstVcastType.getElementType();
-  hivm::TypeFn casting = this->getCast();
-  castName.append(util::getTypeName(this->getLoc(), srcElemType, casting));
+  hivm::TypeFn srcCast = getCast();
+  hivm::TypeFn dstCast = getCast();
+  if (srcElemType.isInteger() && dstElemType.isInteger()) {
+    if (auto mode = (*this)->getAttrOfType<hivm::UnsignedModeAttr>(
+            hivm::UnsignedModeAttr::name);
+        mode && mode.getValue() != hivm::UnsignedMode::SI2SI) {
+      srcCast = mode.getValue() == hivm::UnsignedMode::UI2SI ||
+                        mode.getValue() == hivm::UnsignedMode::UI2UI
+                    ? hivm::TypeFn::cast_unsigned
+                    : hivm::TypeFn::cast_signed;
+      dstCast = mode.getValue() == hivm::UnsignedMode::SI2UI ||
+                        mode.getValue() == hivm::UnsignedMode::UI2UI
+                    ? hivm::TypeFn::cast_unsigned
+                    : hivm::TypeFn::cast_signed;
+    }
+  }
+  castName.append(util::getTypeName(this->getLoc(), srcElemType, srcCast));
   castName.append("_to_");
-  castName.append(util::getTypeName(this->getLoc(), dstElemType, casting));
+  castName.append(util::getTypeName(this->getLoc(), dstElemType, dstCast));
   if (withMode) {
     castName.append("_");
     castName.append(stringifyRoundMode((*this).getRoundMode()));
@@ -290,6 +305,7 @@ LogicalResult VCastOp::verify() {
   /// to rewrite the path after VCastOp verification succeeds.
 
   static const std::set<std::string> kRegBasedSoftCasts{
+      "int32_t_to_uint8_t_truncmode",
       "float_to_bool_truncmode",
       "float_to_int8_t_roundmode",
       "float_to_int8_t_rintmode",
