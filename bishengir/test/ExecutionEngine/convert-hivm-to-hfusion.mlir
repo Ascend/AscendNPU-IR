@@ -57,3 +57,15 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
     return %0 : tensor<16xf32>
   }
 }
+
+// -----
+
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  // COMMON-LABEL: func.func @cast_unsigned_mode_si2ui
+  func.func @cast_unsigned_mode_si2ui(%src: tensor<16xi32>, %dst: tensor<16xi8>) -> tensor<16xi8> {
+    // COMMON: %[[CAST:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, round_mode = #hfusion.round_mode<trunc>, unsigned_mode = #hfusion.unsigned_mode<si2ui>}
+    %0 = hivm.hir.vcast {hivm.unsigned_mode = #hivm.unsigned_mode<si2ui>} ins(%src : tensor<16xi32>) outs(%dst : tensor<16xi8>) round_mode = <trunc> cast = <cast_unsigned> -> tensor<16xi8>
+    // COMMON: return %[[CAST]] : tensor<16xi8>
+    return %0 : tensor<16xi8>
+  }
+}

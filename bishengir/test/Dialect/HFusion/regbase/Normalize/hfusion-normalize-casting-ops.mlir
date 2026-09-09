@@ -1,4 +1,5 @@
 // RUN: bishengir-opt --hfusion-normalize-ops="use-regbase=true" %s -split-input-file -verify-diagnostics | FileCheck %s
+// RUN: bishengir-opt --hfusion-normalize-ops="use-regbase=true" --hfusion-pre-vectorization-fusion %s -split-input-file | FileCheck %s --check-prefix=INTEGER
 
 // CHECK-LABEL: func.func @test_NormalizeCastLowering_cast_f32_to_i1
 // CHECK: %[[arg4:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins(%[[arg2:.*]], %[[cst:.*]] : tensor<2x256x12x257xf32>, f32) outs(%[[arg5:.*]] : tensor<2x256x12x257xi1>) -> tensor<2x256x12x257xi1>
@@ -748,5 +749,18 @@ module attributes {hacc.target = #hacc.target<"Ascend310B4">} {
     %0 = tensor.empty() : tensor<4x4xi8>
     %1 = hfusion.cast {enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%arg0 : tensor<4x4xi64>) outs(%0 : tensor<4x4xi8>) -> tensor<4x4xi8>
     return %1 : tensor<4x4xi8>
+  }
+}
+
+// -----
+
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  // CHECK-LABEL: func.func @test_integer_mode_i8_i64
+  // INTEGER-LABEL: func.func @test_integer_mode_i8_i64
+  // INTEGER: arith.extui {{.*}} : i8 to {{i32|i64}}
+  func.func @test_integer_mode_i8_i64(%src: tensor<16xi8>) -> tensor<16xi64> {
+    %empty = tensor.empty() : tensor<16xi64>
+    %cast = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>, unsigned_mode = #hfusion.unsigned_mode<ui2si>} ins(%src : tensor<16xi8>) outs(%empty : tensor<16xi64>) -> tensor<16xi64>
+    return %cast : tensor<16xi64>
   }
 }
