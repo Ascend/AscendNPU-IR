@@ -993,14 +993,14 @@ LogicalResult CVPipelineImpl::markOutputs() {
         continue;
       // With lazy loading (kernel-level switch, per-tensor compile hint,
       // or auto cross-core legality), skip to_tensor results backed by a
-      // load-like writer (LoadOp or ND2NZOp) since the writer is cloned into
-      // each consuming work item directly and therefore does not need a
-      // multi-buffered cross-stage tensor.
+      // load-like writer (LoadOp or ND2NZOp) for local cross-stage
+      // communication since the writer is cloned into each consuming work item
+      // directly and therefore does not need a multi-buffered cross-stage
+      // tensor.
       FailureOr<bool> shouldLazy = wlBuilder.shouldLazyLoadFor(op);
       if (failed(shouldLazy))
         return failure();
-      if (*shouldLazy)
-        continue;
+      bool isLazy = *shouldLazy;
       for (Value result : op->getResults()) {
         if (yieldedVals.contains(result)) {
           unsigned opNumber = static_cast<unsigned>(std::distance(
@@ -1008,6 +1008,8 @@ LogicalResult CVPipelineImpl::markOutputs() {
           item->yieldedOutputs.push_back(std::make_pair(result, opNumber));
           continue;
         }
+        if (isLazy)
+          continue;
         if (!isa<TensorType>(result.getType()))
           continue;
 
