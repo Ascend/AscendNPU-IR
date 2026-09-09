@@ -251,23 +251,57 @@ static std::optional<ScratchAccess> matchScratchAccess(Value ptrTensor,
 
   arith::AddIOp addi;
   triton::ExpandDimsOp expDimOp;
-  if (is1x1 && expectedKAxis == 1) {
-    auto splat = offsets.getDefiningOp<triton::SplatOp>();
+  auto extractScalarTileIdx = [&](Value v) -> Value {
+    v = stripConvertLayouts(v);
+    if (auto exp = v.getDefiningOp<triton::ExpandDimsOp>())
+      v = stripConvertLayouts(exp.getSrc());
+    if (auto splat = v.getDefiningOp<triton::SplatOp>())
+      return splat.getSrc();
+    return Value();
+  };
+  auto extractConstOffset = [&](Value v) -> std::optional<int64_t> {
+    v = stripConvertLayouts(v);
+    if (auto cst = v.getDefiningOp<arith::ConstantOp>()) {
+      if (auto attr = dyn_cast<IntegerAttr>(cst.getValue()))
+        return attr.getInt();
+      if (auto dense = dyn_cast<DenseElementsAttr>(cst.getValue());
+          dense && dense.isSplat() && dense.getElementType().isInteger())
+        return dense.getSplatValue<APInt>().getSExtValue();
+    }
+    return std::nullopt;
+  };
+
+  if (is1x1 && expectedKAxis != -1) {
     ScratchAccess acc;
-    if (splat) {
+    acc.kind = ScratchAccess::DYNAMIC;
+    acc.startConst = 0;
+    acc.tileSize = 1;
+    acc.dimOther = 1;
+    acc.kAxis = expectedKAxis;
+    acc.otherStart = 0;
+
+    if (auto splat = offsets.getDefiningOp<triton::SplatOp>()) {
       if (splat.getResult().getType() != offsetsTy)
         return std::nullopt;
-      acc.kind = ScratchAccess::DYNAMIC;
-      acc.startConst = 0;
-      acc.tileSize = 1;
-      acc.dimOther = 1;
-      acc.kAxis = expectedKAxis;
       acc.tileIdx = splat.getSrc();
-      acc.otherStart = 0;
       return acc;
     }
+
+    if (auto add = offsets.getDefiningOp<arith::AddIOp>()) {
+      for (auto [tileSide, otherSide] :
+           {std::pair{add.getLhs(), add.getRhs()},
+            std::pair{add.getRhs(), add.getLhs()}}) {
+        Value tileIdx = extractScalarTileIdx(tileSide);
+        if (!tileIdx)
+          continue;
+        acc.tileIdx = tileIdx;
+        if (std::optional<int64_t> otherStart = extractConstOffset(otherSide))
+          acc.otherStart = *otherStart;
+        return acc;
+      }
+    }
   } else if (expectedKAxis != -1 &&
-             offsetsTy.getDimSize(1 - expectedKAxis) == 1) {
+             offsetsTy.getDimSize(expectedKAxis) == 1) {
     expDimOp = offsets.getDefiningOp<triton::ExpandDimsOp>();
     if (!expDimOp) {
       addi = offsets.getDefiningOp<arith::AddIOp>();
