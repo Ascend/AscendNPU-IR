@@ -2233,18 +2233,12 @@ ConflictPair *SyncSolverBase::handleSetWaitConflict(
       extraConflictPairs;
   auto insertExtraConflictPair = [&](Occurrence *setOcc, Occurrence *waitOcc,
                                      Occurrence *parentScope,
-                                     bool couldNotRun = false,
-                                     bool mustIncludeInGSS = false) -> bool {
+                                     bool couldNotRun) -> bool {
     assert(setOcc != nullptr && waitOcc != nullptr);
     auto extraConflictPair = conflictPair->clone(setOcc, waitOcc);
     extraConflictPair->isUseless = true;
     extraConflictPair->dontReuse = true;
-    if (couldNotRun || options.moveOutAndMergeBackwardSyncPairs) {
-      extraConflictPair->couldNotRun = true;
-    }
-    if (mustIncludeInGSS) {
-      extraConflictPair->couldNotRun = false;
-    }
+    extraConflictPair->couldNotRun = couldNotRun;
     LLVM_DEBUG({
       llvm::dbgs() << "extra-conflict-pair: " << extraConflictPair->str()
                    << "\n";
@@ -2307,7 +2301,8 @@ ConflictPair *SyncSolverBase::handleSetWaitConflict(
       // multi-eventid backward sync to reserve the eventIds.
       if (!insertExtraConflictPair(parentLCALoopBeforePHOcc,
                                    parentLCALoopAfterPHOcc,
-                                   parentLCALoopOcc->parentOcc)) {
+                                   parentLCALoopOcc->parentOcc,
+                                   options.moveOutAndMergeBackwardSyncPairs)) {
         return nullptr;
       }
     }
@@ -2330,8 +2325,7 @@ ConflictPair *SyncSolverBase::handleSetWaitConflict(
          buildSiblingIfExtraConflictOccs(setWaitPairInfo, *conflictPair,
                                          setOcc, waitOcc)) {
       if (!insertExtraConflictPair(extraSetOcc, extraWaitOcc, parentOcc,
-                                   /*couldNotRun=*/false,
-                                   /*mustIncludeInGSS=*/true)) {
+                                   /*couldNotRun=*/false)) {
         return nullptr;
       }
     }
