@@ -981,6 +981,32 @@ static bool hasCompatibleShape(Value lhs, Value rhs) {
       verifyCompatibleShape(lhsType.getShape(), rhsType.getShape()));
 }
 
+static bool isInsertedToStatic(tensor::ExtractSliceOp extractSlice) {
+  auto sliceType =
+      dyn_cast<RankedTensorType>(extractSlice.getResult().getType());
+  if (!sliceType || sliceType.hasStaticShape() ||
+      !extractSlice.getResult().hasOneUse())
+    return false;
+
+  auto insertSlice =
+      dyn_cast<tensor::InsertSliceOp>(*extractSlice->user_begin());
+  if (!insertSlice)
+    return false;
+
+  auto destType = dyn_cast<RankedTensorType>(insertSlice.getDest().getType());
+  return destType && destType.hasStaticShape();
+}
+
+static bool isUserSliceSwappable(hivm::FixpipeOp fixpipe,
+                                 tensor::ExtractSliceOp extractSlice) {
+  if (!extractSlice)
+    return false;
+  if (!isRegBasedArch(fixpipe))
+    return true;
+  return hasCompatibleShape(fixpipe.getSource(), extractSlice.getSource()) &&
+         !isInsertedToStatic(extractSlice);
+}
+
 template <typename OpType>
 std::optional<FixpipePreReluMode> getReluMode(OpType op) {
   if constexpr (std::is_same_v<OpType, hivm::VReluOp>) {
@@ -1124,10 +1150,7 @@ private:
       inlineFixPipeWithTranspose(rewriter, op, cast<hivm::VTransposeOp>(curOp));
     } else if (auto extractSliceOp =
                    dyn_cast_if_present<tensor::ExtractSliceOp>(curOp);
-               extractSliceOp &&
-               (!isRegBasedArch(op) ||
-                hasCompatibleShape(op.getSource(),
-                                   extractSliceOp.getSource()))) {
+               isUserSliceSwappable(op, extractSliceOp)) {
       // change to fixpipe op + extract_slice to extract_slice + fixpipe op
       if (op->getBlock() == extractSliceOp->getBlock()) {
         // only swap when fixpipe op and extract slice op are in same block,
