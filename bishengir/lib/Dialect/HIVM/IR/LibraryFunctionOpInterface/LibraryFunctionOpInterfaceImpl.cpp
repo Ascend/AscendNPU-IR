@@ -1224,6 +1224,7 @@ std::string NoMaxRankExternalModel<MmadMxL1Op>::getOpLibraryCallName(
   auto elemBType = getElementTypeOrSelf(concreteOp.getDpsInputs()[1].getType());
 
   auto srcTypeName = getTypeName(concreteOp.getLoc(), elemAType);
+  auto bTypeName = getTypeName(concreteOp.getLoc(), elemBType);
   auto dstTypeName = getTypeName(
       concreteOp.getLoc(),
       getElementTypeOrSelf(concreteOp.getDpsInits()[0].getType()));
@@ -1235,13 +1236,16 @@ std::string NoMaxRankExternalModel<MmadMxL1Op>::getOpLibraryCallName(
         getElementTypeOrSelf(concreteOp.getPerChannelBias().getType()));
     finalName += "_with_" + biasTypeName + "_bias";
   }
-  finalName += "_" + srcTypeName + "_to_" + dstTypeName;
+  auto i8Type = IntegerType::get(concreteOp.getContext(), 8);
+  if (elemAType == i8Type && elemBType == i8Type)
+    finalName += "_" + srcTypeName + "_to_" + dstTypeName;
+  else
+    finalName += "_" + srcTypeName + "_" + bTypeName + "_to_" + dstTypeName;
   if (concreteOp.getATranspose().has_value())
     finalName += "_ta";
   if (concreteOp.getBTranspose().has_value())
     finalName += "_tb";
 
-  auto i8Type = IntegerType::get(concreteOp.getContext(), 8);
   auto lhsFmt = concreteOp.getLhsFormat();
   if (!lhsFmt || elemAType != i8Type || elemBType != i8Type)
     return finalName;
