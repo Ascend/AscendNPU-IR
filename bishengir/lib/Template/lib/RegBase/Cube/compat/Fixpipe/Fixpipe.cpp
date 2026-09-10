@@ -16,6 +16,7 @@
 
 #include "Fixpipe/FixpipeUtils.h"
 #include "Synchronization/SyncUtils.h"
+#include "Vector/VecUtils.h"
 
 template <typename DST_TYPE>
 __aicore__ __attribute__((always_inline)) void
@@ -414,6 +415,12 @@ copy_matrix_cc_to_gm_nz2nd_4d_to_2d_core(
   uint16_t m_size = gm->sizes[0];
   uint16_t n_size = gm->sizes[1];
   uint32_t dst_D = gm->strides[0];
+  // A fully clipped tile (e.g. a masked store whose whole extent lies beyond
+  // the tensor) yields a zero-size subview; a zero-length burst is not a
+  // guaranteed no-op on all archs.
+  if (is_no_op<2>(gm->sizes)) {
+    return;
+  }
 
   set_nd_para(1, 1, 1);
   set_pre_quant_scale<DST_TYPE>(quant_scale);
