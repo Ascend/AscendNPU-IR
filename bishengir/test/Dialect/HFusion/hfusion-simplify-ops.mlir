@@ -41,6 +41,85 @@ func.func @pair(%arg0: tensor<bf16>) -> tensor<bf16> {
 
 // -----
 
+// CHECK-LABEL: @pairNoFastmathUpcast
+// CHECK-SAME: (%[[arg0:.*]]: tensor<bf16>)
+// CHECK-NOT: hfusion.cast
+// CHECK: return %[[arg0]] : tensor<bf16>
+
+func.func @pairNoFastmathUpcast(%arg0: tensor<bf16>) -> tensor<bf16> {
+    %empty_f32 = tensor.empty() : tensor<f32>
+    %empty_bf16 = tensor.empty() : tensor<bf16>
+    %0 = hfusion.cast ins(%arg0 : tensor<bf16>) outs(%empty_f32 : tensor<f32>) -> tensor<f32>
+    %1 = hfusion.cast {arith.fastmath = #arith.fastmath<contract>} ins(%0 : tensor<f32>) outs(%empty_bf16 : tensor<bf16>) -> tensor<bf16>
+    return %1 : tensor<bf16>
+}
+
+// -----
+
+// CHECK-LABEL: @castChainThroughExpandShape
+// CHECK-NOT: hfusion.cast
+// CHECK: tensor.expand_shape %[[arg0:.*]]
+// CHECK-NOT: hfusion.cast
+// CHECK: return
+func.func @castChainThroughExpandShape(%arg0: tensor<8xf32>) -> tensor<1x8xf32> {
+    %empty_bf16 = tensor.empty() : tensor<8xbf16>
+    %down = hfusion.cast {arith.fastmath = #arith.fastmath<contract>}
+        ins(%arg0 : tensor<8xf32>) outs(%empty_bf16 : tensor<8xbf16>)
+        -> tensor<8xbf16>
+    %expanded = tensor.expand_shape %down [[0, 1]] output_shape [1, 8]
+        : tensor<8xbf16> into tensor<1x8xbf16>
+    %empty_f32 = tensor.empty() : tensor<1x8xf32>
+    %up = hfusion.cast
+        ins(%expanded : tensor<1x8xbf16>) outs(%empty_f32 : tensor<1x8xf32>)
+        -> tensor<1x8xf32>
+    return %up : tensor<1x8xf32>
+}
+
+// -----
+
+// CHECK-LABEL: @castChainThroughCollapseShape
+// CHECK-NOT: hfusion.cast
+// CHECK: tensor.collapse_shape %[[arg0:.*]]
+// CHECK-NOT: hfusion.cast
+// CHECK: return
+func.func @castChainThroughCollapseShape(%arg0: tensor<1x8xf32>) -> tensor<8xf32> {
+    %empty_bf16 = tensor.empty() : tensor<1x8xbf16>
+    %down = hfusion.cast {arith.fastmath = #arith.fastmath<contract>}
+        ins(%arg0 : tensor<1x8xf32>) outs(%empty_bf16 : tensor<1x8xbf16>)
+        -> tensor<1x8xbf16>
+    %collapsed = tensor.collapse_shape %down [[0, 1]]
+        : tensor<1x8xbf16> into tensor<8xbf16>
+    %empty_f32 = tensor.empty() : tensor<8xf32>
+    %up = hfusion.cast
+        ins(%collapsed : tensor<8xbf16>) outs(%empty_f32 : tensor<8xf32>)
+        -> tensor<8xf32>
+    return %up : tensor<8xf32>
+}
+
+// -----
+
+// CHECK-LABEL: @castChainThroughReshape
+// CHECK-NOT: hfusion.cast
+// CHECK: tensor.reshape %[[arg0:.*]]
+// CHECK-NOT: hfusion.cast
+// CHECK: return
+func.func @castChainThroughReshape(%arg0: tensor<8xf32>, %shape: tensor<2xi64>)
+    -> tensor<1x8xf32> {
+    %empty_bf16 = tensor.empty() : tensor<8xbf16>
+    %down = hfusion.cast {arith.fastmath = #arith.fastmath<contract>}
+        ins(%arg0 : tensor<8xf32>) outs(%empty_bf16 : tensor<8xbf16>)
+        -> tensor<8xbf16>
+    %reshaped = tensor.reshape %down(%shape)
+        : (tensor<8xbf16>, tensor<2xi64>) -> tensor<1x8xbf16>
+    %empty_f32 = tensor.empty() : tensor<1x8xf32>
+    %up = hfusion.cast
+        ins(%reshaped : tensor<1x8xbf16>) outs(%empty_f32 : tensor<1x8xf32>)
+        -> tensor<1x8xf32>
+    return %up : tensor<1x8xf32>
+}
+
+// -----
+
 // CHECK-LABEL: @symmetricChain
 // CHECK-SAME: (%[[arg0:.*]]: tensor<bf16>)
 // CHECK-4: hfusion.cast
