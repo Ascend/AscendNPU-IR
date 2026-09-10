@@ -16,6 +16,8 @@
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
@@ -155,6 +157,165 @@ static bool isPassthroughOpForTrace(Operation *op) {
   return isa<memref::MemorySpaceCastOp>(op) ||
          isa<bufferization::ToTensorOp>(op) ||
          isa<ViewLikeOpInterface>(op);
+}
+
+static bool containsNestedForLoop(Operation *subloop) {
+  auto walkResult = subloop->walk([&](Operation *op) {
+    if (op != subloop && isa<scf::ForOp>(op)) {
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
+  });
+  return walkResult.wasInterrupted();
+}
+
+/// Returns true when `access` sits directly in an autoblockify subloop that
+/// contains a nested scf.for. Regions such as scf.if may appear between the
+/// access and the subloop. If the nearest enclosing loop is the nested
+/// compute loop, the access is streaming and this returns false.
+static bool isDirectInSubloopWithNestedFor(Operation *access) {
+  for (Operation *cur = access->getParentOp(); cur; cur = cur->getParentOp()) {
+    if (!isa<LoopLikeOpInterface>(cur))
+      continue;
+
+    auto blockifyLoop = dyn_cast<scf::ForOp>(cur);
+    if (!blockifyLoop || !blockifyLoop->hasAttrOfType<UnitAttr>(
+                             kBlockifySubloopAttrName))
+      return false;
+
+    return containsNestedForLoop(blockifyLoop);
+  }
+  return false;
+}
+
+/// Collects every GM-side access op touching the buffer family rooted at
+/// `root`: hivm load/store/copy ops with one GM operand and the other operand
+/// in the family. Traces through view-like aliases, pointer casts, scf.for
+/// iter-arg linkage and into in-module callees. Returns failure when the use
+/// graph cannot be modeled conservatively (unsupported loop-carried linkage
+/// or an opaque indirect/external call); the caller must then keep the mark.
+static LogicalResult
+collectGMAccesses(Value root, SmallVectorImpl<Operation *> &gmAccesses) {
+  DenseSet<Value> visitedVals;
+  SmallVector<Value, 8> worklist = {root};
+  while (!worklist.empty()) {
+    Value v = worklist.pop_back_val();
+    if (!visitedVals.insert(v).second) {
+      continue;
+    }
+    if (auto blockArg = dyn_cast<BlockArgument>(v)) {
+      auto forOp = dyn_cast<scf::ForOp>(blockArg.getOwner()->getParentOp());
+      if (!forOp) {
+        if (!isa<func::FuncOp>(blockArg.getOwner()->getParentOp())) {
+          return failure();
+        }
+        // Argument of a traced-into callee: it aliases the buffer of every
+        // caller; its uses are plain uses of the buffer, so keep walking
+        // them below instead of bailing.
+      } else {
+        if (blockArg.getArgNumber() < forOp.getNumInductionVars()) {
+          return failure();
+        }
+        unsigned idx = blockArg.getArgNumber() - forOp.getNumInductionVars();
+        if (idx >= forOp.getInitArgs().size()) {
+          return failure();
+        }
+        worklist.push_back(forOp.getInitArgs()[idx]);
+        worklist.push_back(forOp->getResult(idx));
+        continue;
+      }
+    }
+    for (Operation *user : v.getUsers()) {
+      if (isa<annotation::MarkOp>(user)) {
+        continue;
+      }
+      if (auto loadOp = dyn_cast<hivm::LoadOp>(user)) {
+        if (loadOp.getDst() == v &&
+            getHIVMAddressSpace(loadOp.getSrc().getType()) ==
+                AddressSpace::GM) {
+          gmAccesses.push_back(user);
+        }
+        continue;
+      }
+      if (auto storeOp = dyn_cast<hivm::StoreOp>(user)) {
+        if (storeOp.getSrc() == v &&
+            getHIVMAddressSpace(storeOp.getDst().getType()) ==
+                AddressSpace::GM) {
+          gmAccesses.push_back(user);
+        }
+        continue;
+      }
+      if (auto copyOp = dyn_cast<hivm::CopyOp>(user)) {
+        if ((copyOp.getSrc() == v &&
+             getHIVMAddressSpace(copyOp.getDst().getType()) ==
+                 AddressSpace::GM) ||
+            (copyOp.getDst() == v &&
+             getHIVMAddressSpace(copyOp.getSrc().getType()) ==
+                 AddressSpace::GM)) {
+          gmAccesses.push_back(user);
+        }
+        continue;
+      }
+      if (auto forOp = dyn_cast<scf::ForOp>(user)) {
+        // Iter-arg linkage: init <-> region iter arg and init -> result.
+        for (unsigned i = 0, e = forOp.getInitArgs().size(); i < e; ++i) {
+          if (forOp.getInitArgs()[i] == v) {
+            worklist.push_back(forOp.getRegionIterArgs()[i]);
+            worklist.push_back(forOp->getResult(i));
+          }
+        }
+        continue;
+      }
+      if (auto yieldOp = dyn_cast<scf::YieldOp>(user)) {
+        if (auto forOp = dyn_cast<scf::ForOp>(yieldOp->getParentOp())) {
+          for (unsigned i = 0, e = yieldOp.getNumOperands(); i < e; ++i) {
+            if (yieldOp.getOperand(i) == v) {
+              worklist.push_back(forOp->getResult(i));
+            }
+          }
+          continue;
+        }
+        if (auto ifOp = dyn_cast<scf::IfOp>(yieldOp->getParentOp())) {
+          for (unsigned i = 0, e = yieldOp.getNumOperands(); i < e; ++i) {
+            if (yieldOp.getOperand(i) == v) {
+              worklist.push_back(ifOp->getResult(i));
+            }
+          }
+          continue;
+        }
+        return failure();
+      }
+      if (isa<scf::WhileOp>(user)) {
+        return failure();
+      }
+      if (isPassthroughOpForTrace(user) || isa<hivm::PointerCastOp>(user)) {
+        for (OpResult res : user->getResults()) {
+          worklist.push_back(res);
+        }
+        continue;
+      }
+      if (auto callOp = dyn_cast<func::CallOp>(user)) {
+        auto *symbol = SymbolTable::lookupNearestSymbolFrom(
+            callOp, callOp.getCalleeAttr());
+        auto callee = dyn_cast_or_null<func::FuncOp>(symbol);
+        if (!callee || callee.isExternal()) {
+          return failure();
+        }
+        for (unsigned i = 0, e = callOp.getNumOperands(); i < e; ++i) {
+          if (callOp.getOperand(i) == v) {
+            worklist.push_back(callee.getArgument(i));
+          }
+        }
+        continue;
+      }
+      if (isa<func::CallIndirectOp>(user)) {
+        return failure();
+      }
+      // Any other consumer is not a GM DMA op in this IR: it neither records
+      // a GM access nor propagates the buffer further.
+    }
+  }
+  return success();
 }
 
 void traceToScopes(Operation *op, SmallVectorImpl<scope::ScopeOp> &scopes, DenseSet<Operation *>& visited) {
@@ -412,8 +573,12 @@ template <typename CopyOpType>
 struct MarkMultiBuffer : public OpRewritePattern<CopyOpType> {
   using OpRewritePattern<CopyOpType>::OpRewritePattern;
 
-  explicit MarkMultiBuffer(MLIRContext *ctx)
-      : OpRewritePattern<CopyOpType>(ctx) {}
+  MarkMultiBuffer(MLIRContext *ctx, bool skipOncePerSubloopGMAccess)
+      : OpRewritePattern<CopyOpType>(ctx),
+        skipOncePerSubloopGMAccess(skipOncePerSubloopGMAccess) {}
+
+  // Once-per-subloop-iteration GM access gate; see markBufferFunc below.
+  bool skipOncePerSubloopGMAccess = false;
 
   LogicalResult matchAndRewrite(CopyOpType copyLikeOp,
                                 PatternRewriter &rewriter) const override {
@@ -443,6 +608,23 @@ struct MarkMultiBuffer : public OpRewritePattern<CopyOpType> {
           return failure();
         }
         parentLoop = parentLoop->getParentOfType<LoopLikeOpInterface>();
+      }
+
+      // A buffer whose GM accesses all sit directly in an autoblockify
+      // subloop with a nested compute loop is only accessed at the block
+      // boundary. Skip marking it while retaining multi-buffer for streaming
+      // accesses inside the nested loop.
+      if (skipOncePerSubloopGMAccess &&
+          getHIVMAddressSpace(v.getType()) == AddressSpace::UB) {
+        SmallVector<Operation *, 4> gmAccesses;
+        Value allocVal = utils::tracebackMemRef(v);
+        if (succeeded(collectGMAccesses(allocVal, gmAccesses)) &&
+            !gmAccesses.empty() &&
+            llvm::all_of(gmAccesses, isDirectInSubloopWithNestedFor)) {
+          LLVM_DEBUG(DBGS() << "skip multi-buffer: buffer touches GM at most "
+                               "once per autoblockify.subloop iteration.\n");
+          return failure();
+        }
       }
 
       // Do mark operations
@@ -556,18 +738,23 @@ void MarkMultiBufferPass::runOnOperation() {
       !isMixFuncCore ||
       !(limitMixAutoMultiBufferBuffer == MultiBufferStrategy::ONLY_VECTOR);
   if (allowCubeGroup) {
-    patterns.insert<MarkMultiBuffer<hivm::ND2NZOp>>(patterns.getContext());
+    patterns.insert<MarkMultiBuffer<hivm::ND2NZOp>>(
+        patterns.getContext(), skipOncePerSubloopGMAccess);
     // TODO: DN2NZ
-    if (limitAutoMultiBufferOfLocalBuffer != MultiBufferStrategy::CUBE_NO_L0C) {
-      patterns.insert<MarkMultiBuffer<hivm::FixpipeOp>>(patterns.getContext());
+    if (limitAutoMultiBufferOfLocalBuffer !=
+        MultiBufferStrategy::CUBE_NO_L0C) {
+      patterns.insert<MarkMultiBuffer<hivm::FixpipeOp>>(
+          patterns.getContext(), skipOncePerSubloopGMAccess);
     }
   }
   const bool allowVectorGroup =
       !isMixFuncCore ||
       !(limitMixAutoMultiBufferBuffer == MultiBufferStrategy::ONLY_CUBE);
   if (allowVectorGroup && !disableMultiBufferOnUB) {
-    patterns.insert<MarkMultiBuffer<hivm::LoadOp>>(patterns.getContext());
-    patterns.insert<MarkMultiBuffer<hivm::StoreOp>>(patterns.getContext());
+    patterns.insert<MarkMultiBuffer<hivm::LoadOp>>(patterns.getContext(),
+                                                   skipOncePerSubloopGMAccess);
+    patterns.insert<MarkMultiBuffer<hivm::StoreOp>>(patterns.getContext(),
+                                                    skipOncePerSubloopGMAccess);
   }
 
   if (!limitAutoMultiBufferOnlyForLocalBuffer && isMixFuncCore)
