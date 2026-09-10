@@ -181,7 +181,7 @@ Occurrence *SyncSolverBase::getScopeEndPlaceHolderOcc(Occurrence *occ) {
   return placeHolderOcc;
 }
 
-Occurrence *SyncSolverBase::getMirrorIfBranch(Occurrence *ifOcc, bool isSet) {
+Occurrence *SyncSolverBase::getElseBranchOcc(Occurrence *ifOcc, bool isSet) {
   assert(ifOcc != nullptr);
   auto *condition = cast<Condition>(ifOcc->op);
   if (!condition->hasFalseScope())
@@ -206,7 +206,7 @@ SyncSolverBase::buildSiblingIfExtraConflictOccs(
                                bool isSet) {
     llvm::SmallVector<Occurrence *, 2> branchOccs{occ};
     if (ifOcc != nullptr) {
-      if (auto *mirrorOcc = getMirrorIfBranch(ifOcc, isSet))
+      if (auto *mirrorOcc = getElseBranchOcc(ifOcc, isSet))
         branchOccs.push_back(mirrorOcc);
     }
     return branchOccs;
@@ -1584,8 +1584,33 @@ SyncSolverBase::getFixedSetWaitOcc(Occurrence *occ1, Occurrence *occ2,
       ret.waitOcc = placeHolderOcc;
   }
 
-  if (options.isIntraCoreMode() && options.enableSiblingIfSync &&
-      isBackwardSync(occ1, occ2)) {
+  // - check if it's the case of:
+  // loop(iter-1){
+  //   condition1{
+  //     true-scope{occ1}
+  //     false-scope{}
+  //   }
+  // }
+  // loop(iter-2){
+  //   condition2{
+  //     true-scope{occ2}
+  //     false-scope{}
+  //   }
+  // }
+  // - and fix it to be:
+  // loop(iter-1){
+  //   condition1{
+  //     true-scope{occ1, setOcc}
+  //     false-scope{setOcc}
+  //   }
+  // }
+  // loop(iter-2){
+  //   condition2{
+  //     true-scope{waitOcc, occ2}
+  //     false-scope{waitOcc}
+  //   }
+  // }
+  if (options.isSiblingIfSyncEnabled() && isBackwardSync(occ1, occ2)) {
     auto *setBranchOcc = occ1->parentOcc;
     auto *setIfOcc =
         setBranchOcc != nullptr ? setBranchOcc->parentOcc : nullptr;

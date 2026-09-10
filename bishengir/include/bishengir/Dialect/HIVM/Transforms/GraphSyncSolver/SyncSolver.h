@@ -268,7 +268,7 @@ protected:
   // Return the LCA occurrence pair used when placing set/wait for a hazard.
   std::pair<Occurrence *, Occurrence *> getSetWaitLCAPairOcc(Occurrence *occ1,
                                                              Occurrence *occ2);
-  Occurrence *getMirrorIfBranch(Occurrence *ifOcc, bool isSet);
+  Occurrence *getElseBranchOcc(Occurrence *ifOcc, bool isSet);
 
   struct ExtraConflictOccPair {
     Occurrence *setOcc;

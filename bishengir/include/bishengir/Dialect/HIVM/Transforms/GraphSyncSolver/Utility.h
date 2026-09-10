@@ -152,6 +152,10 @@ struct SyncSolverOptions {
            syncMode == SyncMode::TEST_INTRA_CORE_MODE;
   }
 
+  bool isSiblingIfSyncEnabled() const {
+    return enableSiblingIfSync && isIntraCoreMode();
+  }
+
   bool isTestMode() const {
     return syncMode == SyncMode::TEST_INTRA_CORE_MODE ||
            syncMode == SyncMode::TEST_CROSS_CORE_MODE;
