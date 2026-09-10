@@ -16,10 +16,11 @@
 
 namespace mlir::triton {
 
-std::unique_ptr<Pass> createConvertTritonAscendGPUToLLVMPass();
-
 #define GEN_PASS_DECL_CONVERTTRITONASCENDGPUTOLLVM
 #include "bishengir/Conversion/Passes.h.inc"
+
+std::unique_ptr<Pass> createConvertTritonAscendGPUToLLVMPass(
+    const ConvertTritonAscendGPUToLLVMOptions &options = {});
 
 } // namespace mlir::triton
 

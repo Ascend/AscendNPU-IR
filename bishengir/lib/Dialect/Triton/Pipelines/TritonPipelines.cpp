@@ -120,6 +120,9 @@ void buildLowerTritonPipeline(OpPassManager &pm,
             options.superBlockFactor));
   pm.addPass(bishengir::triton::createOptimizeLoadsPass());
   pm.addPass(bishengir::triton::createLoopRestructureArangeOptimizationPass());
+  if (options.enableCGroupingDotTileLowering)
+    pm.addNestedPass<mlir::triton::FuncOp>(
+        bishengir::triton::createGroupDotChainsForOverlapPass());
   // Thread the launch-time SHM size into TileDotLoads so its cost-model
   // gate (StageNonLoadOperandPattern) can reject staging plans that would
   // overflow the kernel's SHM budget.  Same value `ConvertTritonToTriton-
@@ -139,8 +142,7 @@ void buildLowerTritonPipeline(OpPassManager &pm,
   pm.addNestedPass<mlir::triton::FuncOp>(
       bishengir::triton::createHoistAndFuseDotChainsPass(hoistFuseOpts));
   if (options.enableOptimizeMath) {
-    pm.addNestedPass<mlir::triton::FuncOp>(
-        bishengir::triton::createOptimizeMathPass());
+    pm.addNestedPass<mlir::triton::FuncOp>(bishengir::triton::createOptimizeMathPass());
   }
   pm.addPass(bishengir::triton::createEnableAscendDPXMMAPass());
   pm.addNestedPass<mlir::triton::FuncOp>(
@@ -209,7 +211,11 @@ void buildLowerTritonPipeline(OpPassManager &pm,
       options.protonGPUCompileConfig.clockExtension));
   pm.addPass(createCSEPass());
   pm.addPass(mlir::triton::proton::gpu::createAllocateProtonSharedMemoryPass());
-  pm.addPass(mlir::triton::createConvertTritonAscendGPUToLLVMPass());
+  mlir::triton::ConvertTritonAscendGPUToLLVMOptions convertOptions;
+  convertOptions.enableCGroupingDotTileLowering =
+      options.enableCGroupingDotTileLowering;
+  pm.addPass(mlir::triton::createConvertTritonAscendGPUToLLVMPass(
+      convertOptions));
   if (options.enableSinkDPXLoad) {
     pm.addPass(createCSEPass());
     pm.addPass(mlir::triton::ascend::createSinkDPXLoad());
