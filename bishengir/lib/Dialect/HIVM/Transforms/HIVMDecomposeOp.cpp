@@ -1349,17 +1349,29 @@ class DecomposeVDeinterleaveOp
   }
 };
 
+/// A3 keeps the ordered token-ring lock. A5/regbase still uses unordered bakery
+/// locks for leftover atomics that hivm-normalize-ops did not rewrite.
+static SyncBlockLockOrdering getAtomicSyncBlockLockOrdering(Value lockVar) {
+  Operation *defOp = lockVar.getDefiningOp();
+  ModuleOp module =
+      defOp ? defOp->getParentOfType<ModuleOp>()
+            : lockVar.getParentRegion()->getParentOfType<ModuleOp>();
+  if (module && hacc::utils::isRegBasedArch(module))
+    return SyncBlockLockOrdering::Unordered;
+  return SyncBlockLockOrdering::Ordered;
+}
+
 static SyncBlockLockOp createAtomicSyncBlockLock(PatternRewriter &rewriter,
                                                  Location loc, Value lockVar) {
   return createSyncBlockLock(rewriter, loc, lockVar,
-                             SyncBlockLockOrdering::Unordered);
+                             getAtomicSyncBlockLockOrdering(lockVar));
 }
 
 static SyncBlockUnlockOp createAtomicSyncBlockUnlock(PatternRewriter &rewriter,
                                                      Location loc,
                                                      Value lockVar) {
   return createSyncBlockUnlock(rewriter, loc, lockVar,
-                               SyncBlockLockOrdering::Unordered);
+                               getAtomicSyncBlockLockOrdering(lockVar));
 }
 
 class AtomicStoreOpLowering : public OpRewritePattern<hivm::StoreOp> {
