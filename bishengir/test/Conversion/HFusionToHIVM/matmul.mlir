@@ -1,5 +1,5 @@
-// RUN: bishengir-opt -convert-hfusion-to-hivm="mm-map-mode=macro_instr" -canonicalize-ext %s -split-input-file -verify-diagnostics | FileCheck %s
-// RUN: bishengir-opt -convert-to-hivm-pipeline="enable-triton-kernel-compile=true" -canonicalize-ext %s -split-input-file -verify-diagnostics | FileCheck %s
+// RUN: bishengir-opt -convert-hfusion-to-hivm="mm-map-mode=macro_instr" -canonicalize-ext %s -split-input-file -verify-diagnostics | FileCheck %s --check-prefixes=CHECK,HFUSION
+// RUN: bishengir-opt -convert-to-hivm-pipeline="enable-triton-kernel-compile=true" -canonicalize-ext %s -split-input-file -verify-diagnostics | FileCheck %s --check-prefixes=CHECK,PIPELINE
 // -----
 // CHECK-LABEL: test_mmadL1_no_loop
 // CHECK-DAG: %[[STUB_0:.*]] = arith.constant 0 : index
@@ -14,13 +14,15 @@
 // CHECK: %[[RET1:.*]] = hivm.hir.mmadL1 ins(%[[TENSOR_A]], %[[TENSOR_B]], %[[FALSE]], %[[STUB_0]], %[[STUB_0]], %[[STUB_0]] :
 // CHECK-SAME:                                tensor<256x128xf16>, tensor<128x256xf16>, i1, index, index, index)
 // CHECK-SAME:                          outs(%[[ZERO1]] : tensor<256x256xf32>) -> tensor<256x256xf32>
-// CHECK: bufferization.materialize_in_destination %[[RET1]] in restrict writable %[[ALLOC_C]]
+// HFUSION: bufferization.materialize_in_destination %[[RET1]] in restrict writable %[[ALLOC_C]]
+// PIPELINE: hivm.hir.copy ins(%[[RET1]] : tensor<256x256xf32>) outs(%[[ALLOC_C]] : memref<256x256xf32>)
 // CHECK: %[[ALLOC_A_T:.*]] = memref.alloc() : memref<128x256xf16>
 // CHECK: %[[TENSOR_A_T:.*]] = bufferization.to_tensor %[[ALLOC_A_T]] restrict writable : memref<128x256xf16>
 // CHECK: %[[RET2:.*]] = hivm.hir.mmadL1 {a_transpose} ins(%[[TENSOR_A_T]], %[[TENSOR_B]], %[[FALSE]], %[[STUB_0]], %[[STUB_0]], %[[STUB_0]] :
 // CHECK-SAME:               tensor<128x256xf16>, tensor<128x256xf16>, i1, index, index, index)
 // CHECK-SAME:                                        outs(%[[ZERO1]] : tensor<256x256xf32>) -> tensor<256x256xf32>
-// CHECK: bufferization.materialize_in_destination %[[RET2]] in restrict writable %[[ALLOC_C]]
+// HFUSION: bufferization.materialize_in_destination %[[RET2]] in restrict writable %[[ALLOC_C]]
+// PIPELINE: hivm.hir.copy ins(%[[RET2]] : tensor<256x256xf32>) outs(%[[ALLOC_C]] : memref<256x256xf32>)
 // CHECK: return
 // CHECK: }
 func.func @test_mmadL1_no_loop() {

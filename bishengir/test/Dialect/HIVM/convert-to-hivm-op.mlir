@@ -383,6 +383,28 @@ func.func @load_i1_with_subview_offset(%arg0: memref<256xi1>) {
 }
 
 // -----
+// CHECK-LABEL: @materialize_to_tensor
+// CHECK: %[[DST:.*]] = tensor.empty() : tensor<16xf32>
+// CHECK-NEXT: %[[COPY:.*]] = hivm.hir.copy ins(%arg0 : tensor<16xf32>) outs(%[[DST]] : tensor<16xf32>) -> tensor<16xf32>
+// CHECK-NEXT: return %[[COPY]] : tensor<16xf32>
+func.func @materialize_to_tensor(%arg0: tensor<16xf32>) -> tensor<16xf32> {
+  %dst = tensor.empty() : tensor<16xf32>
+  %result = bufferization.materialize_in_destination %arg0 in %dst : (tensor<16xf32>, tensor<16xf32>) -> tensor<16xf32>
+  return %result : tensor<16xf32>
+}
+
+// -----
+// CHECK-LABEL: @materialize_to_local_memref
+// CHECK: %[[DST:.*]] = memref.alloc() : memref<16xf32>
+// CHECK-NEXT: hivm.hir.copy ins(%arg0 : tensor<16xf32>) outs(%[[DST]] : memref<16xf32>)
+// CHECK-NEXT: return
+func.func @materialize_to_local_memref(%arg0: tensor<16xf32>) {
+  %dst = memref.alloc() : memref<16xf32>
+  bufferization.materialize_in_destination %arg0 in writable %dst : (tensor<16xf32>, memref<16xf32>) -> ()
+  return
+}
+
+// -----
 // CHECK-LABEL: @skip_materialize_in_vector_function
 // CHECK: bufferization.materialize_in_destination
 // CHECK-NOT: hivm.hir.store
