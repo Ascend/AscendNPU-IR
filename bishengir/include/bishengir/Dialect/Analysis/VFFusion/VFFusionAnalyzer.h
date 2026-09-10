@@ -135,6 +135,62 @@ protected:
   /// beyond the base validation logic.
   bool isFusibleImpl(const int xIndex, const int yIndex) {};
 
+  /// Returns true if the union containing \p xIndex and the union containing
+  /// \p yIndex would co-locate a soft (non-f16/f32)
+  /// `linalg.elemwise_binary<div>` with an `hfusion.elemwise_binary<mod>`.
+  ///
+  /// This scans both whole unions (not just the two ops) so representative-
+  /// based group merges cannot bypass the div/mod exclusion: `mod` is fully
+  /// soft-implemented and integer `div` is soft-implemented, and fusing the
+  /// two into one VF risks V-register spill. Hardware float div (f16/f32) is
+  /// safe to keep with a `mod`.
+  bool hasDivModSoftImplConflict(const int xIndex, const int yIndex) {
+    // Find a soft (non-f16/f32) `linalg.elemwise_binary<div>` in the group.
+    auto findSoftDiv = [this](const auto &members) -> Operation * {
+      for (int idx : members) {
+        Operation *op = opsInBlock[idx];
+        auto bin = dyn_cast<linalg::ElemwiseBinaryOp>(op);
+        if (!bin || bin.getFun() != linalg::BinaryFn::div)
+          continue;
+        if (op->getNumOperands() == 0)
+          continue;
+        auto shapedType = dyn_cast<ShapedType>(op->getOperand(0).getType());
+        if (!shapedType)
+          continue;
+        // Hardware float div (f16/f32) is cheap; only soft (e.g. integer)
+        // div conflicts with mod.
+        if (isa<Float16Type, Float32Type>(shapedType.getElementType()))
+          continue;
+        return op;
+      }
+      return nullptr;
+    };
+    // Find an `hfusion.elemwise_binary<mod>` in the group.
+    auto findMod = [this](const auto &members) -> Operation * {
+      for (int idx : members) {
+        Operation *op = opsInBlock[idx];
+        if (auto bin = dyn_cast<hfusion::ElemwiseBinaryOp>(op))
+          if (bin.getFun() == hfusion::BinaryFn::mod)
+            return op;
+      }
+      return nullptr;
+    };
+    const auto &xMembers = dsu.getMembersUnion(xIndex);
+    const auto &yMembers = dsu.getMembersUnion(yIndex);
+    return (findSoftDiv(xMembers) && findMod(yMembers)) ||
+           (findMod(xMembers) && findSoftDiv(yMembers));
+  }
+
+  /// Returns true if fusing the pair (\p xIndex, \p yIndex) must be skipped.
+  bool shouldSkipFusionPair(const int xIndex, const int yIndex) {
+    Operation *const x = opsInBlock[xIndex];
+    Operation *const y = opsInBlock[yIndex];
+    if (shouldSkipFusionForTreeReduce(x, option) ||
+        shouldSkipFusionForTreeReduce(y, option))
+      return true;
+    return hasDivModSoftImplConflict(xIndex, yIndex);
+  }
+
   // Check if two operations are fusible. (only fusible if it's on the same
   // block)
   bool isFusible(const int xIndex, const int yIndex) {
@@ -158,7 +214,7 @@ protected:
     if (!areReshapesValidIfFused(xIndex, yIndex))
       return false;
 
-    if (shouldSkipFusion(x, option) || shouldSkipFusion(y, option))
+    if (shouldSkipFusionPair(xIndex, yIndex))
       return false;
 
     return static_cast<AnalyzerClass *>(this)->isFusibleImpl(xIndex, yIndex);
