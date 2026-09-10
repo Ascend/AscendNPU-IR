@@ -23,6 +23,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/Interfaces/LoopLikeInterface.h"
 
 namespace mlir {
 namespace hivm {
@@ -211,7 +212,6 @@ protected:
   void processInvalidUpdates(
       DenseMap<int64_t, DenseMap<int64_t, SmallVector<Dimension>>>
           &parallelDimMaps,
-      mlir::detail::SimpleUnionFind &candGroupDSU,
       MutableArrayRef<int64_t> candidateGroupSize,
       SmallVector<DenseSet<int64_t>> &candidateExclusiveDimIdx);
 
@@ -238,11 +238,32 @@ protected:
   template <typename StoreOpTy>
   bool checkTileableMaskedStore(StoreOpTy storeOp, size_t i) const;
 
-  template <typename StoreOpTy>
-  void computeTilingDimImpl(
+  template <typename... StoreOpTys>
+  void collectTilingDim(
       DenseMap<int64_t, DenseMap<int64_t, SmallVector<Dimension>>>
           &parallelDimMaps,
-      DenseMap<int64_t, int> &numStoreOps);
+      DenseMap<int64_t, int> &numStoreOps,
+      SmallVectorImpl<std::pair<Operation *, Value>> &collectedTilingOps);
+
+  template <typename StoreOpTy>
+  void collectTilingDimImpl(
+      DenseMap<int64_t, DenseMap<int64_t, SmallVector<Dimension>>>
+          &parallelDimMaps,
+      DenseMap<int64_t, int> &numStoreOps,
+      SmallVectorImpl<std::pair<Operation *, Value>> &collectedTilingOps);
+
+  /// Records loop-to-tiling-dimension associations for each store-like
+  /// operation and source pair collected during \c collectTilingDimImpl.
+  void recordLoopTilingDims(Operation *op, Value source);
+
+  /// Selects the best local tiling axis for \p v without loop-consistency
+  /// checks. Used internally by \c getTilingDim and \c recordLoopTilingDims.
+  int64_t getTilingDimImpl(Value v);
+
+  /// Candidate-group to tiled structural-parent set for \p loop, recorded
+  /// during \c computeTilingDim.
+  const DenseMap<int64_t, DenseSet<int64_t>> &
+  getLoopTilingDims(LoopLikeOpInterface loop) const;
 
   void joinShape(int a, int b) override;
   void joinCollapser(int a, int b) override;
@@ -286,6 +307,22 @@ protected:
   /// This forms a dense rank x rank exclusivity graph without self-edges
   /// (\c i != j), i.e., \c rank*(rank-1) directed links.
   SmallVector<DenseSet<int64_t>> exclusiveDimIdx;
+
+  /// Per structural parent index, records parent indices that were merged
+  /// invalidly in a broadcast transaction and therefore must never be merged
+  /// in subsequent transactions. Updated during \c finalizeTransaction and
+  /// merged in \c joinShape / \c joinCollapser like \c exclusiveDimIdx.
+  /// Not used for tiling-dimension selection.
+  SmallVector<DenseSet<int64_t>> invalidDimIdx;
+
+  /// Union-find over structural parent indices for tiling candidate groups.
+  /// Built during \c computeTilingDim and used by \c processInvalidUpdates.
+  std::unique_ptr<mlir::detail::SimpleUnionFind> candGroupDSU_;
+
+  /// Maps each loop enclosed by \c op_ to the set of structural parent indices
+  /// tiled for each candidate group in store-like ops nested inside that loop.
+  DenseMap<LoopLikeOpInterface, DenseMap<int64_t, DenseSet<int64_t>>>
+      loopTilingDims_;
 
   bool isRegbased;
 

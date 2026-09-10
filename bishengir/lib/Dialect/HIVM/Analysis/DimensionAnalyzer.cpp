@@ -123,7 +123,6 @@ bool DimensionAnalyzer::isReduceDim(Dimension dim) {
 void DimensionAnalyzer::processInvalidUpdates(
     DenseMap<int64_t, DenseMap<int64_t, SmallVector<Dimension>>>
         &parallelDimMaps,
-    mlir::detail::SimpleUnionFind &candGroupDSU,
     MutableArrayRef<int64_t> candidateGroupSize,
     SmallVector<DenseSet<int64_t>> &candidateExclusiveDimIdx) {
   if (invalidUpdates.empty())
@@ -132,25 +131,25 @@ void DimensionAnalyzer::processInvalidUpdates(
   LDBG("Connecting invalid updates: ");
   SmallVector<DenseSet<int64_t>> invalidConnection(argumentTotalLength_);
   auto hasConnection = [&](auto &connections, int lhs, int rhs) {
-    lhs = candGroupDSU.find(lhs);
-    rhs = candGroupDSU.find(rhs);
+    lhs = candGroupDSU_->find(lhs);
+    rhs = candGroupDSU_->find(rhs);
     return connections[lhs].contains(rhs);
   };
   auto addConnection = [&](auto &connections, int lhs, int rhs) {
-    lhs = candGroupDSU.find(lhs);
-    rhs = candGroupDSU.find(rhs);
+    lhs = candGroupDSU_->find(lhs);
+    rhs = candGroupDSU_->find(rhs);
     if (lhs == rhs)
       return;
     connections[lhs].insert(rhs);
     connections[rhs].insert(lhs);
   };
   auto mergeConnections = [&](auto &connections, int lhs, int rhs) {
-    auto merged = candGroupDSU.find(lhs);
+    auto merged = candGroupDSU_->find(lhs);
     DenseSet<int64_t> connected;
     for (auto idx : connections[lhs])
-      connected.insert(candGroupDSU.find(idx));
+      connected.insert(candGroupDSU_->find(idx));
     for (auto idx : connections[rhs])
-      connected.insert(candGroupDSU.find(idx));
+      connected.insert(candGroupDSU_->find(idx));
 
     connections[lhs].clear();
     connections[rhs].clear();
@@ -181,8 +180,8 @@ void DimensionAnalyzer::processInvalidUpdates(
       if (hasConnection(invalidConnection, repIdx, idx) ||
           hasConnection(candidateExclusiveDimIdx, repIdx, idx))
         continue;
-      auto curSize = candidateGroupSize[candGroupDSU.find(idxToMerge)];
-      auto size = candidateGroupSize[candGroupDSU.find(idx)];
+      auto curSize = candidateGroupSize[candGroupDSU_->find(idxToMerge)];
+      auto size = candidateGroupSize[candGroupDSU_->find(idx)];
       if (curSize < size ||
           hasConnection(invalidConnection, repIdx, idxToMerge) ||
           hasConnection(candidateExclusiveDimIdx, repIdx, idxToMerge)) {
@@ -190,34 +189,33 @@ void DimensionAnalyzer::processInvalidUpdates(
         for (auto [store, dim] : parallelDimMaps[groupIdx][idxToMerge])
           tilingDim_[store] = dim;
       } else if (curSize == size) {
-        if (2 * getHigherDimCounts(parallelDimMaps[groupIdx][idx]) >= size) {
+        auto curHigherDimCnt =
+            getHigherDimCounts(parallelDimMaps[groupIdx][idxToMerge]);
+        auto higherDimCnt = getHigherDimCounts(parallelDimMaps[groupIdx][idx]);
+        if (2 * higherDimCnt >= size && higherDimCnt > curHigherDimCnt) {
           idxToMerge = idx;
           for (auto [store, dim] : parallelDimMaps[groupIdx][idxToMerge])
             tilingDim_[store] = dim;
         }
       }
     }
-    if (candGroupDSU.find(repIdx) == candGroupDSU.find(idxToMerge) ||
+    if (candGroupDSU_->find(repIdx) == candGroupDSU_->find(idxToMerge) ||
         hasConnection(invalidConnection, repIdx, idxToMerge) ||
         hasConnection(candidateExclusiveDimIdx, repIdx, idxToMerge))
       continue;
     LDBG("repIdx " << repIdx << "("
-                   << candidateGroupSize[candGroupDSU.find(repIdx)]
+                   << candidateGroupSize[candGroupDSU_->find(repIdx)]
                    << "): " << to_string(indices));
-    auto totalSize = candidateGroupSize[candGroupDSU.find(repIdx)] +
-                     candidateGroupSize[candGroupDSU.find(idxToMerge)];
+    auto totalSize = candidateGroupSize[candGroupDSU_->find(repIdx)] +
+                     candidateGroupSize[candGroupDSU_->find(idxToMerge)];
     LDBG("Merging " << repIdx << " with " << idxToMerge << " to be "
                     << totalSize);
-    auto repRoot = candGroupDSU.find(repIdx);
-    auto idxRoot = candGroupDSU.find(idxToMerge);
-    candGroupDSU.join(repIdx, idxToMerge);
+    auto repRoot = candGroupDSU_->find(repIdx);
+    auto idxRoot = candGroupDSU_->find(idxToMerge);
+    candGroupDSU_->join(repIdx, idxToMerge);
     mergeConnections(invalidConnection, repRoot, idxRoot);
     mergeConnections(candidateExclusiveDimIdx, repRoot, idxRoot);
-    candidateGroupSize[candGroupDSU.find(repIdx)] = totalSize;
-    for (auto &idx : indices) {
-      if (candGroupDSU.find(idx) != candGroupDSU.find(idxToMerge))
-        addConnection(invalidConnection, repIdx, idx);
-    }
+    candidateGroupSize[candGroupDSU_->find(repIdx)] = totalSize;
   }
 }
 
@@ -235,32 +233,37 @@ bool DimensionAnalyzer::computeTilingDim(bool isVectorOp) {
   for (auto [value, _] : valueToDimIndicesIndex_)
     tilingDim_[value] = -1;
 
+  loopTilingDims_.clear();
+
+  SmallVector<std::pair<Operation *, Value>> collectedTilingOps;
   if (isVectorOp) {
-    computeTilingDimImpl<hivm::StoreOp>(parallelDimMaps, numStoreOps);
-    computeTilingDimImpl<hivm::CopyOp>(parallelDimMaps, numStoreOps);
-    computeTilingDimImpl<bufferization::MaterializeInDestinationOp>(
-        parallelDimMaps, numStoreOps);
-    computeTilingDimImpl<hivm::StrideStoreOp>(parallelDimMaps, numStoreOps);
-    computeTilingDimImpl<hivm::IndirectStoreOp>(parallelDimMaps, numStoreOps);
-    computeTilingDimImpl<hivm::LocalStoreOp>(parallelDimMaps, numStoreOps);
+    collectTilingDim<
+        hivm::StoreOp, hivm::CopyOp, bufferization::MaterializeInDestinationOp,
+        hivm::StrideStoreOp, hivm::IndirectStoreOp, hivm::LocalStoreOp>(
+        parallelDimMaps, numStoreOps, collectedTilingOps);
     // FIXME: Support reduction dim slicing
     if (isRegbased)
-      computeTilingDimImpl<hivm::VReduceOp>(parallelDimMaps, numStoreOps);
+      collectTilingDim<hivm::VReduceOp>(parallelDimMaps, numStoreOps,
+                                        collectedTilingOps);
     if (isa<scf::ForOp>(op_))
-      computeTilingDimImpl<scf::YieldOp>(parallelDimMaps, numStoreOps);
+      collectTilingDim<scf::YieldOp>(parallelDimMaps, numStoreOps,
+                                     collectedTilingOps);
   } else {
-    computeTilingDimImpl<hivm::FixpipeOp>(parallelDimMaps, numStoreOps);
+    collectTilingDim<hivm::FixpipeOp>(parallelDimMaps, numStoreOps,
+                                      collectedTilingOps);
   }
-  computeTilingDimImpl<hivm::DebugOp>(parallelDimMaps, numStoreOps);
+  collectTilingDim<hivm::DebugOp>(parallelDimMaps, numStoreOps,
+                                  collectedTilingOps);
 
-  mlir::detail::SimpleUnionFind candGroupDSU(argumentTotalLength_);
+  candGroupDSU_ =
+      std::make_unique<mlir::detail::SimpleUnionFind>(argumentTotalLength_);
   SmallVector<int64_t> candidateGroupSize(argumentTotalLength_);
   for (const auto &[groupIndex, parallelDimMap] : parallelDimMaps) {
     for (const auto &[parentIndex, candidate] : parallelDimMap)
       candidateGroupSize[parentIndex] = static_cast<int64_t>(candidate.size());
   }
   auto candidateExclusiveDimIdx = exclusiveDimIdx;
-  processInvalidUpdates(parallelDimMaps, candGroupDSU, candidateGroupSize,
+  processInvalidUpdates(parallelDimMaps, candidateGroupSize,
                         candidateExclusiveDimIdx);
 
   for (auto [value, _] : valueToDimIndicesIndex_)
@@ -274,7 +277,7 @@ bool DimensionAnalyzer::computeTilingDim(bool isVectorOp) {
     LDBG("Group " << groupIndex << " has " << numStoreOp << " operations");
     DenseMap<int64_t, SmallVector<Dimension>> candidatesByCandGroup;
     for (const auto &[parentIndex, candidate] : parallelDimMap) {
-      auto candGroup = candGroupDSU.find(parentIndex);
+      auto candGroup = candGroupDSU_->find(parentIndex);
       llvm::append_range(candidatesByCandGroup[candGroup], candidate);
     }
     for (const auto &[candGroup, candidate] : candidatesByCandGroup) {
@@ -299,15 +302,39 @@ bool DimensionAnalyzer::computeTilingDim(bool isVectorOp) {
        << selectedTilingCandGroupMap.size());
   for (auto [groupIndex, candGroup] : selectedTilingCandGroupMap) {
     for (const auto &[parentIndex, _] : parallelDimMaps[groupIndex]) {
-      if (candGroupDSU.find(parentIndex) == candGroup)
+      if (candGroupDSU_->find(parentIndex) == candGroup)
         selectedTilingParIdx.insert(parentIndex);
     }
   }
   LDBG(utils::debugger::to_string(selectedTilingParIdx));
+  for (auto [op, source] : collectedTilingOps)
+    recordLoopTilingDims(op, source);
   return isBroadcastAxisCase;
 }
 
-int64_t DimensionAnalyzer::getTilingDim(Value v) {
+void DimensionAnalyzer::recordLoopTilingDims(Operation *op, Value source) {
+  int64_t tilingDim = getTilingDimImpl(source);
+  if (tilingDim == -1 || !candGroupDSU_)
+    return;
+
+  auto args = getValueDimIndices(source);
+  int64_t parIdx = structuralDsu_->find(args[tilingDim]);
+  int64_t candGroup = candGroupDSU_->find(parIdx);
+  for (auto loopOp = op->getParentOfType<LoopLikeOpInterface>();
+       loopOp && op_->isAncestor(loopOp.getOperation());
+       loopOp = loopOp->getParentOfType<LoopLikeOpInterface>()) {
+    loopTilingDims_[loopOp][candGroup].insert(parIdx);
+  }
+}
+
+const DenseMap<int64_t, DenseSet<int64_t>> &
+DimensionAnalyzer::getLoopTilingDims(LoopLikeOpInterface loop) const {
+  static const DenseMap<int64_t, DenseSet<int64_t>> empty;
+  auto it = loopTilingDims_.find(loop);
+  return it == loopTilingDims_.end() ? empty : it->second;
+}
+
+int64_t DimensionAnalyzer::getTilingDimImpl(Value v) {
   if (!valueToDimIndicesIndex_.contains(v))
     return -1;
   auto rank = utils::getShapeRank(v.getType()).value_or(0);
@@ -334,6 +361,29 @@ int64_t DimensionAnalyzer::getTilingDim(Value v) {
       }
     }
   }
+  return tilingDim;
+}
+
+int64_t DimensionAnalyzer::getTilingDim(Value v) {
+  int64_t tilingDim = getTilingDimImpl(v);
+  if (tilingDim == -1)
+    return -1;
+
+  auto loopOp = v.getDefiningOp<LoopLikeOpInterface>();
+  if (!loopOp || !candGroupDSU_ || !op_->isAncestor(loopOp.getOperation()))
+    return tilingDim;
+
+  auto loopTiledDims = getLoopTilingDims(loopOp);
+  if (loopTiledDims.empty())
+    return tilingDim;
+
+  auto args = getValueDimIndices(v);
+  int64_t chosenParIdx = structuralDsu_->find(args[tilingDim]);
+  int64_t candGroup = candGroupDSU_->find(chosenParIdx);
+  if (auto tiledParIdxsIt = loopTiledDims.find(candGroup);
+      tiledParIdxsIt != loopTiledDims.end() &&
+      !tiledParIdxsIt->second.contains(chosenParIdx))
+    return -1;
   return tilingDim;
 }
 
@@ -417,6 +467,17 @@ bool DimensionAnalyzer::checkTileableMaskedStore(hivm::DebugOp storeOp,
   return false;
 }
 
+template <typename... StoreOpTys>
+void DimensionAnalyzer::collectTilingDim(
+    DenseMap<int64_t, DenseMap<int64_t, SmallVector<Dimension>>>
+        &parallelDimMaps,
+    DenseMap<int64_t, int> &numStoreOps,
+    SmallVectorImpl<std::pair<Operation *, Value>> &collectedTilingOps) {
+  (collectTilingDimImpl<StoreOpTys>(parallelDimMaps, numStoreOps,
+                                    collectedTilingOps),
+   ...);
+}
+
 /// Walks every \c StoreOpTy under the analyzed op. For each source axis that
 /// is parallel, appends that \c Dimension to \p parallelDimMap (keyed by solver
 /// group and parent index) unless the axis is dynamic or size 1; for
@@ -437,10 +498,11 @@ bool DimensionAnalyzer::checkTileableMaskedStore(hivm::DebugOp storeOp,
 /// hivm::IndirectStoreOp, or \c hivm::FixpipeOp depending on how \c
 /// computeTilingDim was invoked.
 template <typename StoreOpTy>
-void DimensionAnalyzer::computeTilingDimImpl(
+void DimensionAnalyzer::collectTilingDimImpl(
     DenseMap<int64_t, DenseMap<int64_t, SmallVector<Dimension>>>
         &parallelDimMap,
-    DenseMap<int64_t, int> &numStoreOps) {
+    DenseMap<int64_t, int> &numStoreOps,
+    SmallVectorImpl<std::pair<Operation *, Value>> &collectedTilingOps) {
   op_->walk<WalkOrder::PreOrder>([&](StoreOpTy op) {
     SmallVector<Value> sources;
     if constexpr (std::is_same_v<StoreOpTy, scf::YieldOp>) {
@@ -452,6 +514,7 @@ void DimensionAnalyzer::computeTilingDimImpl(
       sources.push_back(getTilingTarget(op));
     }
     for (auto src : sources) {
+      collectedTilingOps.emplace_back(op.getOperation(), src);
       auto rank = utils::getShapeRank(src.getType()).value_or(0);
       createDummyRefIfNotExist({src});
       auto args = getValueDimIndices(src);

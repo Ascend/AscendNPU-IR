@@ -3968,6 +3968,74 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
 
 // -----
 
+// Varange pipeline, dual broadcast, indirect load, dynamic slice, vreduce,
+// and post-reduce broadcast vmul must select tiling dim 0 for UB buffer 0.
+//
+// CHECK-LABEL: func.func @dual_broadcast_ub_tiling_mix_aiv
+// CHECK-NOT: tile_and_bind_subblock_reverted
+// CHECK: memref<64x128xf32, #hivm.address_space<ub>>
+// CHECK: hivm.tightly_coupled_buffer<0>, hivm.tiling_dim = 0 : index, tiledAlloc
+// CHECK: map_for_to_forall
+
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">, hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  // expected-remark @+1{{Selected tiling dim might have broadcast two different axis. Automatically disables strict mode.}}
+  func.func @dual_broadcast_ub_tiling_mix_aiv(%idx0: memref<?xi32>, %idx1: memref<?xi32>, %gm: memref<?xf16>, %slice_len: index) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+    %c1_i32 = arith.constant 1 : i32
+    %cst_3 = arith.constant 0.000000e+00 : f32
+    %c1_i8 = arith.constant 1 : i8
+    %cst_4 = arith.constant 0.000000e+00 : f16
+    %c1 = arith.constant 1 : index
+    %c3_i32 = arith.constant 3 : i32
+    %c0_i32 = arith.constant 0 : i32
+    %cst_6 = arith.constant 0xFF800000 : f32
+    %c0 = arith.constant 0 : index
+    %9 = tensor.empty() : tensor<1x128xf32>
+    %13 = tensor.empty() : tensor<128x1xf16>
+    %14 = hivm.hir.vbrc ins(%cst_4 : f16) outs(%13 : tensor<128x1xf16>) -> tensor<128x1xf16>
+    %15 = tensor.empty() : tensor<128x1xi8>
+    %16 = hivm.hir.vbrc ins(%c1_i8 : i8) outs(%15 : tensor<128x1xi8>) -> tensor<128x1xi8>
+    %17 = tensor.empty() : tensor<128xf32>
+    %18 = hivm.hir.vbrc ins(%cst_3 : f32) outs(%17 : tensor<128xf32>) -> tensor<128xf32>
+    %19 = tensor.empty() : tensor<128x16xf32>
+    %20 = hivm.hir.vbrc ins(%cst_3 : f32) outs(%19 : tensor<128x16xf32>) -> tensor<128x16xf32>
+    %21 = tensor.empty() : tensor<128x128xf32>
+    %22 = hivm.hir.vbrc ins(%cst_6 : f32) outs(%21 : tensor<128x128xf32>) -> tensor<128x128xf32>
+    %23 = hivm.hir.vbrc ins(%cst_6 : f32) outs(%17 : tensor<128xf32>) -> tensor<128xf32>
+    %27 = tensor.empty() : tensor<128xi32>
+    %28 = hivm.hir.varange offset[%c0] strides[%c1] outs(%27 : tensor<128xi32>) -> tensor<128xi32>
+    // expected-warning @+1{{Extract slice is not fully bubbled up}}
+    %expanded = tensor.expand_shape %28 [[0, 1]] output_shape [128, 1] : tensor<128xi32> into tensor<128x1xi32>
+    %expanded_11 = tensor.expand_shape %28 [[0, 1]] output_shape [1, 128] : tensor<128xi32> into tensor<1x128xi32>
+    %45 = tensor.empty() : tensor<128x1xi64>
+    %46 = hivm.hir.vcast ins(%expanded : tensor<128x1xi32>) outs(%45 : tensor<128x1xi64>) -> tensor<128x1xi64>
+    scf.for %arg18 = %c0_i32 to %c3_i32 step %c1_i32 iter_args(%arg19 = %20, %arg20 = %18, %arg21 = %23, %arg22 = %expanded_11) -> (tensor<128x16xf32>, tensor<128xf32>, tensor<128xf32>, tensor<1x128xi32>)  : i32 {
+      %alloc = memref.alloc() : memref<128x128xf32, #hivm.address_space<ub>>
+      annotation.mark %alloc {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>} : memref<128x128xf32, #hivm.address_space<ub>>
+      %memspacecast = memref.memory_space_cast %alloc : memref<128x128xf32, #hivm.address_space<ub>> to memref<128x128xf32>
+      %69 = bufferization.to_tensor %memspacecast restrict writable : memref<128x128xf32>
+      %73 = hivm.hir.indirect_load ins(%gm : memref<?xf16>, %46 : tensor<128x1xi64>, %16 : tensor<128x1xi8>, %14 : tensor<128x1xf16>) outs(%13 : tensor<128x1xf16>) {hivm.vf_mode = #hivm.vf_mode<SIMT>, isVolatile = false} -> tensor<128x1xf16>
+      %74 = tensor.empty() : tensor<128x1xf32>
+      %75 = hivm.hir.vcast ins(%73 : tensor<128x1xf16>) outs(%74 : tensor<128x1xf32>) -> tensor<128x1xf32>
+      %76 = hivm.hir.vadd ins(%69, %75 : tensor<128x128xf32>, tensor<128x1xf32>) outs(%21 : tensor<128x128xf32>) broadcast = [1] -> tensor<128x128xf32>
+      %79 = hivm.hir.vbrc ins(%cst_3 : f32) outs(%9 : tensor<1x128xf32>) -> tensor<1x128xf32>
+      %80 = hivm.hir.vadd ins(%76, %79 : tensor<128x128xf32>, tensor<1x128xf32>) outs(%21 : tensor<128x128xf32>) broadcast = [0] -> tensor<128x128xf32>
+      %82 = hivm.hir.vcast ins(%arg22 : tensor<1x128xi32>) outs(%9 : tensor<1x128xf32>) -> tensor<1x128xf32>
+      %extracted_slice_17 = tensor.extract_slice %80[0, 0] [128, %slice_len] [1, 1] : tensor<128x128xf32> to tensor<128x?xf32>
+      %inserted_slice = tensor.insert_slice %extracted_slice_17 into %22[0, 0] [128, %slice_len] [1, 1] : tensor<128x?xf32> into tensor<128x128xf32>
+      %99 = hivm.hir.vmul ins(%inserted_slice, %82 : tensor<128x128xf32>, tensor<1x128xf32>) outs(%21 : tensor<128x128xf32>) broadcast = [0] -> tensor<128x128xf32>
+      %expanded_22 = tensor.expand_shape %18 [[0, 1]] output_shape [128, 1] : tensor<128xf32> into tensor<128x1xf32>
+      %140 = hivm.hir.vreduce <sum> ins(%99 : tensor<128x128xf32>) outs(%expanded_22 : tensor<128x1xf32>) reduce_dims = [1] -> tensor<128x1xf32>
+      %collapsed_23 = tensor.collapse_shape %140 [[0, 1]] : tensor<128x1xf32> into tensor<128xf32>
+      %expanded_24 = tensor.expand_shape %arg20 [[0, 1]] output_shape [128, 1] : tensor<128xf32> into tensor<128x1xf32>
+      %142 = hivm.hir.vmul ins(%arg19, %expanded_24 : tensor<128x16xf32>, tensor<128x1xf32>) outs(%19 : tensor<128x16xf32>) broadcast = [1] -> tensor<128x16xf32>
+      scf.yield %142, %collapsed_23, %arg21, %expanded_11 : tensor<128x16xf32>, tensor<128xf32>, tensor<128xf32>, tensor<1x128xi32>
+    }
+    return
+  }
+}
+
+// -----
+
 // Rank-reduced memref.subview (2x64x64 -> 64x64) combined with dual
 // memref.reinterpret_cast views (64x64 matrix + 64-vector) on the same
 // underlying buffer must not unify the pipeline axis with the tileable
@@ -4189,8 +4257,8 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">, hivm.module_c
 
 // -----
 // Shrunk flex-attention AIV from before-1by2.mlir: softmax on 128x128 QK TCB
-// plus a 128x16 GM store. Analyzer leaves hivm.tiling_dim = -1 on the QK
-// alloc; bubble-up still halves dim 0 and overwrites it.
+// plus a 128x16 GM store. Dimension analyzer selects hivm.tiling_dim = 0 on
+// the QK alloc so AIC ROW_SPLIT and AIV sub-block tiling stay consistent.
 // CHECK-LABEL:   func.func @flex_qk_tcb_inconsistent_aic(
 // CHECK:           memref.alloc() : memref<64x128xf32, #hivm.address_space<ub>>
 // CHECK:           hivm.hir.fixpipe {{.*}} dual_dst_mode = <ROW_SPLIT>
@@ -4307,10 +4375,8 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">, hivm.module_c
       %44 = hivm.hir.vmod ins(%expanded, %c277_i32 : tensor<128x1xi32>, i32) outs(%43 : tensor<128x1xi32>) -> tensor<128x1xi32>
       %45 = tensor.empty() : tensor<128x1xi64>
       %46 = hivm.hir.vcast {enable_overflow = true, enable_saturate = false, hivm.unsigned_mode = #hivm.unsigned_mode<si2si>} ins(%44 : tensor<128x1xi32>) outs(%45 : tensor<128x1xi64>) -> tensor<128x1xi64>
-      // expected-error @+1 {{dimension size (1) is less than minimum tile size (2)}}
       %47:5 = scf.for %arg18 = %c0_i32 to %41 step %c1_i32 iter_args(%arg19 = %20, %arg20 = %18, %arg21 = %23, %arg22 = %expanded_11, %arg23 = %c0_i32) -> (tensor<128x16xf32>, tensor<128xf32>, tensor<128xf32>, tensor<1x128xi32>, i32)  : i32 {
         %alloc = memref.alloc() : memref<128x128xf32, #hivm.address_space<ub>>
-        // expected-warning @+1 {{[hivm-bind-sub-block] AIC tightly coupled buffer tiling dim is inconsistent with vector and is overwritten}}
         annotation.mark %alloc {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>} : memref<128x128xf32, #hivm.address_space<ub>>
         %memspacecast = memref.memory_space_cast %alloc : memref<128x128xf32, #hivm.address_space<ub>> to memref<128x128xf32>
         %69 = bufferization.to_tensor %memspacecast restrict writable : memref<128x128xf32>
