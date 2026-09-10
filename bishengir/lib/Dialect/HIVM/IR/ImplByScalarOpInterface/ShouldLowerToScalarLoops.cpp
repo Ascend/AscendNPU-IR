@@ -171,6 +171,20 @@ static bool shouldCumOpWithTempLowerToScalarLoops(HIVMOP op) {
 bool VCumsumOp::shouldLowerToScalarLoops() {
   auto moduleOp = (*this)->getParentOfType<ModuleOp>();
   if (!hacc::utils::isRegBasedArch(moduleOp)) {
+    // Membase: 1D fp32 cumsum uses a Sklansky library call to match
+    // regbase floating-point addition order.  Other types/shapes fall
+    // back to the default scalar-loop lowering.
+    if (hasPureBufferSemantics()) {
+      auto cumDims = getCumDims();
+      if (cumDims.size() == 1) {
+        auto elemType = getElementTypeOrSelf(getDst());
+        auto srcType = dyn_cast<ShapedType>(getSrc().getType());
+        if (srcType && srcType.getRank() == 1 && cumDims[0] == 0 &&
+            isa<FloatType>(elemType) && elemType.isF32() && !getReverse()) {
+          return false;
+        }
+      }
+    }
     return shouldCumOpLowerToScalarLoops(*this);
   }
 
