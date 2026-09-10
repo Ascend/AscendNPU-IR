@@ -152,7 +152,8 @@ static void insertBubblePropagatorUpLinkForSlicedOperand(
       operandValue, slicedMemrefType, mixedOffsets[tilingDim],
       mixedSize[tilingDim], tilingDim, rewriter);
   operand->set(upLink.getResult(0));
-  hivm::detail::markTiledTightlyCoupledAllocIfNeeded(rewriter, operandValue);
+  hivm::detail::markTiledTightlyCoupledAllocIfNeeded(rewriter, operandValue,
+                                                     tilingDim);
 }
 
 static void modifyOpToSliced(RewriterBase &rewriter, OpOperand *operand,
