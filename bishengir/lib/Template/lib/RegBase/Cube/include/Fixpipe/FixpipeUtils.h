@@ -195,13 +195,13 @@ get_quant_mode(int64_t pre_quant) {
 }
 
 __aicore__ __attribute__((always_inline)) bool
-canEnableHWDualDst(uint8_t dual_dst, QuantMode_t quant_mode, bool channel_split,
-                   uint16_t row_num, uint16_t column_num,
+canEnableHWDualDst(uint8_t dual_dst, QuantMode_t quant_mode, uint8_t pre_relu,
+                   bool channel_split, uint16_t row_num, uint16_t column_num,
                    bool allow_hw_dual_for_transform) {
   if (!allow_hw_dual_for_transform) {
     return false;
   }
-  if (quant_mode != QuantMode_t::NoQuant || channel_split) {
+  if (quant_mode != QuantMode_t::NoQuant || channel_split || pre_relu != 0) {
     return false;
   }
   if (dual_dst == DualDstMode::ROW_SPLIT && (row_num % 2 != 0)) {

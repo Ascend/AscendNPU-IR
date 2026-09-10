@@ -1,4 +1,5 @@
-// RUN: bishengir-opt %s -convert-hivm-to-std  -split-input-file| FileCheck %s
+// RUN: bishengir-opt %s -convert-hivm-to-std -split-input-file --verify-diagnostics -o %t
+// RUN: FileCheck %s < %t
 
 // -----
 module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
@@ -2197,6 +2198,30 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
     hivm.hir.init_debug
     hivm.hir.debug {debugtype = "print", finishInserted = 0 : i32, hex = true, memscope = #hivm.address_space<gm>, prefix = " VAL =: ", tcoretype = #hivm.tcore_type<VECTOR>} %arg0 : memref<1024xf32, #hivm.address_space<gm>>
     hivm.hir.finish_debug
+    return
+  }
+}
+
+// -----
+module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
+  // CHECK-LABEL: func.func @test_assert_8d
+  // CHECK: call @assert_8d_int8_t_gm
+  // CHECK: call @assert_8d_int8_t_ubuf
+  func.func @test_assert_8d(
+      %gm: memref<1x1x1x1x1x1x1x128xi8, #hivm.address_space<gm>>,
+      %ub: memref<1x1x1x1x1x1x1x128xi8, #hivm.address_space<ub>>) {
+    hivm.hir.debug {debugtype = "assert", hex = false, memscope = #hivm.address_space<gm>, prefix = "rank-8 GM assertion failed", tcoretype = #hivm.tcore_type<VECTOR>} %gm : memref<1x1x1x1x1x1x1x128xi8, #hivm.address_space<gm>>
+    hivm.hir.debug {debugtype = "assert", hex = false, memscope = #hivm.address_space<ub>, prefix = "rank-8 UB assertion failed", tcoretype = #hivm.tcore_type<VECTOR>} %ub : memref<1x1x1x1x1x1x1x128xi8, #hivm.address_space<ub>>
+    return
+  }
+}
+
+// -----
+module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
+  func.func @test_assert_rank9(
+      %arg0: memref<1x1x1x1x1x1x1x1x32xi8, #hivm.address_space<ub>>) {
+    // expected-error@+1 {{DebugOp requires rank <= maxOpRank}}
+    hivm.hir.debug {debugtype = "assert", hex = false, memscope = #hivm.address_space<ub>, prefix = "rank-9 assertion failed", tcoretype = #hivm.tcore_type<VECTOR>} %arg0 : memref<1x1x1x1x1x1x1x1x32xi8, #hivm.address_space<ub>>
     return
   }
 }

@@ -27,6 +27,8 @@ std::unique_ptr<mlir::Pass> createConvertNonPowerTwoTensorsPass();
 /// Creates wrappers and attributes for SIMT functions
 std::unique_ptr<mlir::Pass>
 createAdaptGPUKernelPass(AdaptGPUKernelOptions options = {});
+// Create a pass to insert init and finish for debug for SIMT mode.
+std::unique_ptr<mlir::Pass> createSIMTInsertInitAndFinishForDebugPass();
 /// Create a pass to convert llvm.frem to sub(mul(trunc(fdiv)))
 /// IR.
 std::unique_ptr<mlir::Pass>

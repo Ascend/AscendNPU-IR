@@ -602,8 +602,8 @@ bool SyncSolverBase::checkMemInfoConflict(
 
 bool SyncSolverBase::checkMemInfoConflict(
     RWOperation *rwOp1, RWOperation *rwOp2,
-    const llvm::SmallVector<MemInfo> &memInfoList1,
-    const llvm::SmallVector<MemInfo> &memInfoList2,
+    const llvm::SmallVector<MemInfo, 0> &memInfoList1,
+    const llvm::SmallVector<MemInfo, 0> &memInfoList2,
     std::optional<int64_t> lcmLen, std::optional<int64_t> eventIdNum,
     std::optional<std::pair<int64_t, int64_t>> offsetPair) {
   for (auto &memInfo1 : memInfoList1) {
@@ -643,8 +643,8 @@ bool SyncSolverBase::checkMemoryConflicts(
 llvm::SmallVector<std::pair<const MemInfo *, const MemInfo *>>
 SyncSolverBase::getMemInfoConflict(
     RWOperation *rwOp1, RWOperation *rwOp2,
-    const llvm::SmallVector<MemInfo> &memInfoList1,
-    const llvm::SmallVector<MemInfo> &memInfoList2,
+    const llvm::SmallVector<MemInfo, 0> &memInfoList1,
+    const llvm::SmallVector<MemInfo, 0> &memInfoList2,
     std::optional<int64_t> lcmLen, std::optional<int64_t> eventIdNum,
     std::optional<std::pair<int64_t, int64_t>> offsetPair) {
   llvm::SetVector<std::pair<const MemInfo *, const MemInfo *>>
@@ -754,33 +754,26 @@ SyncSolverBase::getMemoryConflicts(RWOperation *rwOp1, RWOperation *rwOp2) {
   if (!isInserted) {
     return it->second;
   }
-  auto coreSrc = rwOp1->coreType;
-  auto coreDst = rwOp2->coreType;
   llvm::SetVector<std::pair<CorePipeInfo, CorePipeInfo>> collectedConflictsSet;
-  auto choosePipe = [](const MemInfo *memInfo, PIPE pipe) {
-    return memInfo->pipe ? memInfo->pipe.value() : pipe;
+  auto collectConflicts = [&](const llvm::SmallVector<MemInfo, 0> &memInfos1,
+                              const llvm::SmallVector<MemInfo, 0> &memInfos2,
+                              PIPE pipe1, PIPE pipe2) {
+    for (auto [memInfo1, memInfo2] :
+         getMemInfoConflict(rwOp1, rwOp2, memInfos1, memInfos2)) {
+      auto pipeSrc = memInfo1->pipe.value_or(pipe1);
+      auto pipeDst = memInfo2->pipe.value_or(pipe2);
+      auto coreTypeSrc = memInfo1->coreType.value_or(rwOp1->coreType);
+      auto coreTypeDst = memInfo2->coreType.value_or(rwOp2->coreType);
+      collectedConflictsSet.insert({CorePipeInfo(coreTypeSrc, pipeSrc),
+                                    CorePipeInfo(coreTypeDst, pipeDst)});
+    }
   };
-  for (auto [memInfo1, memInfo2] : getMemInfoConflict(
-           rwOp1, rwOp2, rwOp1->readMemInfo, rwOp2->writeMemInfo)) {
-    auto pipeSrc = choosePipe(memInfo1, rwOp1->pipeRead);
-    auto pipeDst = choosePipe(memInfo2, rwOp2->pipeWrite);
-    collectedConflictsSet.insert(
-        {CorePipeInfo(coreSrc, pipeSrc), CorePipeInfo(coreDst, pipeDst)});
-  }
-  for (auto [memInfo1, memInfo2] : getMemInfoConflict(
-           rwOp1, rwOp2, rwOp1->writeMemInfo, rwOp2->readMemInfo)) {
-    auto pipeSrc = choosePipe(memInfo1, rwOp1->pipeWrite);
-    auto pipeDst = choosePipe(memInfo2, rwOp2->pipeRead);
-    collectedConflictsSet.insert(
-        {CorePipeInfo(coreSrc, pipeSrc), CorePipeInfo(coreDst, pipeDst)});
-  }
-  for (auto [memInfo1, memInfo2] : getMemInfoConflict(
-           rwOp1, rwOp2, rwOp1->writeMemInfo, rwOp2->writeMemInfo)) {
-    auto pipeSrc = choosePipe(memInfo1, rwOp1->pipeWrite);
-    auto pipeDst = choosePipe(memInfo2, rwOp2->pipeWrite);
-    collectedConflictsSet.insert(
-        {CorePipeInfo(coreSrc, pipeSrc), CorePipeInfo(coreDst, pipeDst)});
-  }
+  collectConflicts(rwOp1->readMemInfo, rwOp2->writeMemInfo, rwOp1->pipeRead,
+                   rwOp2->pipeWrite);
+  collectConflicts(rwOp1->writeMemInfo, rwOp2->readMemInfo, rwOp1->pipeWrite,
+                   rwOp2->pipeRead);
+  collectConflicts(rwOp1->writeMemInfo, rwOp2->writeMemInfo, rwOp1->pipeWrite,
+                   rwOp2->pipeWrite);
   llvm::SmallVector<std::pair<CorePipeInfo, CorePipeInfo>> collectedConflicts(
       collectedConflictsSet.begin(), collectedConflictsSet.end());
   return it->second = collectedConflicts;
@@ -833,8 +826,8 @@ bool SyncSolverBase::checkMemoryConflictBetweenOccExclusive(
 
 std::optional<Scope *> SyncSolverBase::getMultiBufferScope(
     RWOperation *rwOp1, RWOperation *rwOp2,
-    const llvm::SmallVector<MemInfo> &memInfoList1,
-    const llvm::SmallVector<MemInfo> &memInfoList2) {
+    const llvm::SmallVector<MemInfo, 0> &memInfoList1,
+    const llvm::SmallVector<MemInfo, 0> &memInfoList2) {
   std::optional<Scope *> multibufferScope;
   for (auto &memInfo1 : memInfoList1) {
     for (auto &memInfo2 : memInfoList2) {

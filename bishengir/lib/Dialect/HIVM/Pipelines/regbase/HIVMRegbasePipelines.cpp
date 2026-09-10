@@ -392,6 +392,8 @@ static void hivmPreBufferizationOptimizationPipeline(
   multiBufferOptions.workspaceMultiBufferNum =
       hivmPipelineOptions.setWorkspaceMultibuffer;
   multiBufferOptions.enablePreload = hivmPipelineOptions.enablePreload;
+  multiBufferOptions.disableMultiBufferOnUB =
+      hivmPipelineOptions.disableMultiBufferOnUB;
   // MarkTightlyCoupledBuffer before CVPipelining is only needed in Skew
   // (preload) mode: createNewLoopsForPreloadWithScopes uses TCB marks to
   // decide which local outputs bypass scope.return.  Running it for
@@ -607,6 +609,8 @@ static void hivmPostBufferizationOptimizationPipeline(
   multiBufferOptions.limitMixAutoMultiBufferBuffer =
       hivmPipelineOptions.limitAutoMultiBufferBuffer;
   multiBufferOptions.enablePreload = hivmPipelineOptions.enablePreload;
+  multiBufferOptions.disableMultiBufferOnUB =
+      hivmPipelineOptions.disableMultiBufferOnUB;
   pm.nest<func::FuncOp>().addPass(
       createMarkMultiBufferPass(multiBufferOptions));
   PlanMemoryRegBaseOptions planMemoryOption;

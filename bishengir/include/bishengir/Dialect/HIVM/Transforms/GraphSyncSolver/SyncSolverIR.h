@@ -324,16 +324,16 @@ public:
   hivm::TCoreType coreType{hivm::TCoreType::CUBE_OR_VECTOR};
   hivm::PIPE pipeRead{hivm::PIPE::PIPE_UNASSIGNED};
   hivm::PIPE pipeWrite{hivm::PIPE::PIPE_UNASSIGNED};
-  llvm::SmallVector<MemInfo> readMemInfo;
-  llvm::SmallVector<MemInfo> writeMemInfo;
+  llvm::SmallVector<MemInfo, 0> readMemInfo;
+  llvm::SmallVector<MemInfo, 0> writeMemInfo;
   bool hasUnitFlagFeat{false};
   UnitFlagInfoBase mergedUnitFlagInfo;
 
 public:
   RWOperation(Operation *op, OperationBase *parentOp, hivm::TCoreType coreType,
               hivm::PIPE pipeRead, hivm::PIPE pipeWrite,
-              const llvm::SmallVector<MemInfo> &readMemInfo,
-              const llvm::SmallVector<MemInfo> &writeMemInfo,
+              const llvm::SmallVector<MemInfo, 0> &readMemInfo,
+              const llvm::SmallVector<MemInfo, 0> &writeMemInfo,
               OpType opType = OpType::RW_OPERATION)
       : OperationBase(opType, op, parentOp), coreType(coreType),
         pipeRead(pipeRead), pipeWrite(pipeWrite), readMemInfo(readMemInfo),

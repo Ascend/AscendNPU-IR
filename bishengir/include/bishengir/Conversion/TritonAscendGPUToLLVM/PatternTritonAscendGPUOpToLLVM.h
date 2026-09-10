@@ -3,12 +3,15 @@
 
 #include "mlir/Conversion/LLVMCommon/TypeConverter.h"
 #include "triton/Conversion/TritonGPUToLLVM/TargetInfoBase.h"
+#include "triton/Conversion/TritonGPUToLLVM/TypeConverter.h"
 #include "triton/Analysis/AxisInfo.h"
 
-using namespace mlir;
-using namespace mlir::triton;
+// using namespace mlir;
+// using namespace mlir::triton;
 
 namespace mlir::triton::ascend {
+
+bool isSupportedPrintRuntimeType(Type type);
 
 void populateDotOpToLLVMPatterns(LLVMTypeConverter &typeConverter,
                                  RewritePatternSet &patterns,
@@ -18,6 +21,11 @@ void populateAscendReduceOpToLLVMPatterns(LLVMTypeConverter &typeConverter,
                                           RewritePatternSet &patterns,
                                           const TargetInfoBase &targetInfo,
                                           PatternBenefit benefit);
+
+void populateDebugOpToLLVMPattern(TritonGPUToLLVMTypeConverter &typeConverter,
+                                  RewritePatternSet &patterns,
+                                  const TargetInfoBase &targetInfo,
+                                  PatternBenefit benefit);
 
 void populateAscendElementwiseOpToLLVMPatterns(
     LLVMTypeConverter &typeConverter, RewritePatternSet &patterns,

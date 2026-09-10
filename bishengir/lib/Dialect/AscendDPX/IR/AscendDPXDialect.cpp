@@ -62,6 +62,18 @@ void ascend_dpx::AscendDPXDialect::initialize() {
 #define GET_OP_CLASSES
 #include "bishengir/Dialect/AscendDPX/IR/AscendDPXOps.cpp.inc"
 
+LogicalResult mlir::ascend_dpx::PrintOp::verify() {
+  size_t numArgs = getArgs().size();
+  if (getIsSigned().size() != numArgs)
+    return emitOpError() << "expected " << numArgs
+                         << " isSigned entries, but got "
+                         << getIsSigned().size();
+  if (getIsBool().size() != numArgs)
+    return emitOpError() << "expected " << numArgs
+                         << " isBool entries, but got " << getIsBool().size();
+  return success();
+}
+
 //===----------------------------------------------------------------------===//
 // CallScalarOp - CallOpInterface
 //===----------------------------------------------------------------------===//

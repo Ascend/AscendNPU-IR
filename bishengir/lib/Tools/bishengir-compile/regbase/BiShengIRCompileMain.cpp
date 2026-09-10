@@ -329,8 +329,8 @@ bishengir::regbase::runRegBasePipeline(ModuleOp mod,
     return failure();
   }
 
-  // Track each address-space overflow independently so fallback can disable the
-  // matching multi-buffer knob before trying coarser vector-side mitigations.
+  // Overflow tracking: UB gets a Vector-only multi-buffer fallback; L1/L0C
+  // overflow still uses the coarse enable-auto-multi-buffer switch.
   bool hasUboverflow = false;
   bool hasCcOverflow = false;
   bool hasCbufOverflow = false;
@@ -407,37 +407,17 @@ bishengir::regbase::runRegBasePipeline(ModuleOp mod,
     }
     bool hasMemoryOverflow = hasUboverflow || hasCcOverflow || hasCbufOverflow;
     if (!success && hasMemoryOverflow) {
-      bool flippedAnyMultiBufferKnob = false;
-      if (config.getEnableAutoMultiBuffer()) {
-        if (hasUboverflow && !config.getDisableMultiBufferOnUB()) {
-          LDBG("ub overflow detected at attempt "
-               << (i + 1) << "/" << tryTimes
-               << ", fallback with disabled UB (Vector) multi buffer");
-          config.setDisableMultiBufferOnUB(true);
-          flippedAnyMultiBufferKnob = true;
-        }
-        if (hasCcOverflow && !config.getDisableMultiBufferOnL0C()) {
-          LDBG("cc overflow detected at attempt "
-               << (i + 1) << "/" << tryTimes
-               << ", fallback with disabled L0C multi buffer");
-          config.setDisableMultiBufferOnL0C(true);
-          flippedAnyMultiBufferKnob = true;
-        }
-        if (hasCbufOverflow && !config.getDisableMultiBufferOnL1()) {
-          LDBG("cbuf overflow detected at attempt "
-               << (i + 1) << "/" << tryTimes
-               << ", fallback with disabled L1 (cbuf) multi buffer");
-          config.setDisableMultiBufferOnL1(true);
-          flippedAnyMultiBufferKnob = true;
-        }
-      }
-      if (flippedAnyMultiBufferKnob) {
+      if (config.getEnableAutoMultiBuffer() && hasUboverflow &&
+          !config.getDisableMultiBufferOnUB()) {
+        LDBG("ub overflow detected at attempt "
+             << (i + 1) << "/" << tryTimes
+             << ", fallback with disabled UB (Vector) multi buffer");
+        config.setDisableMultiBufferOnUB(true);
         collectedDiagnostics.clear();
       } else if (config.getEnableAutoMultiBuffer()) {
         LDBG("memory overflow (ub/cc/cbuf) detected at attempt "
              << (i + 1) << "/" << tryTimes
-             << ", per-buffer knobs exhausted, fallback with disabled auto "
-                "multi buffer");
+             << ", fallback with disabled auto multi buffer");
         collectedDiagnostics.clear();
         config.setEnableAutoMultiBuffer(false);
       } else if (hasUboverflow && config.getVfFusionMode() ==

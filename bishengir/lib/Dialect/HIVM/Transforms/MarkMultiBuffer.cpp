@@ -545,26 +545,20 @@ void MarkMultiBufferPass::runOnOperation() {
        funcOp->getAttrOfType<UnitAttr>(hivm::TPartOfMixAttr::name));
   patterns.insert<MarkScopeTightlyMultiBuffer>(patterns.getContext());
   patterns.insert<MarkScopeMultiBuffer>(patterns.getContext());
-  // Per-buffer fine-grained gates (used by BiShengIRCompileMain's compile-
-  // time fallback to surgically turn off the multi-buffer of just the
-  // overflowing address space):
-  //   ND2NZ   -> L1 (cbuf)         -> disableMultiBufferOnL1
-  //   Fixpipe -> L0C (cube acc)    -> disableMultiBufferOnL0C
-  //   Load    -> UB (Vector ingress)\
-  //   Store   -> UB (Vector egress) -> disableMultiBufferOnUB
-  // These AND-combine with the existing coarse Mix-core gates
-  // (limitMixAutoMultiBufferBuffer == ONLY_VECTOR/ONLY_CUBE) and with
-  // limitAutoMultiBufferOfLocalBuffer == CUBE_NO_L0C: any single switch can
-  // disable a given group; we never re-enable.
+  // Vector-side fine-grained gate used by RegBase compile-time fallback:
+  //   Load  -> UB (Vector ingress)\
+  //   Store -> UB (Vector egress) -> disableMultiBufferOnUB
+  // AND-combines with the existing coarse Mix-core gates
+  // (limitMixAutoMultiBufferBuffer == ONLY_VECTOR/ONLY_CUBE). L1/L0C have
+  // no per-space disable; Cube overflow falls back by turning off all
+  // auto multi-buffer.
   const bool allowCubeGroup =
       !isMixFuncCore ||
       !(limitMixAutoMultiBufferBuffer == MultiBufferStrategy::ONLY_VECTOR);
   if (allowCubeGroup) {
-    if (!disableMultiBufferOnL1)
-      patterns.insert<MarkMultiBuffer<hivm::ND2NZOp>>(patterns.getContext());
+    patterns.insert<MarkMultiBuffer<hivm::ND2NZOp>>(patterns.getContext());
     // TODO: DN2NZ
-    if (limitAutoMultiBufferOfLocalBuffer != MultiBufferStrategy::CUBE_NO_L0C &&
-        !disableMultiBufferOnL0C) {
+    if (limitAutoMultiBufferOfLocalBuffer != MultiBufferStrategy::CUBE_NO_L0C) {
       patterns.insert<MarkMultiBuffer<hivm::FixpipeOp>>(patterns.getContext());
     }
   }

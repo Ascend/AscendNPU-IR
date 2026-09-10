@@ -5,6 +5,7 @@ add_bishengir_conversion_library(TritonAscendGPUToLLVM
   DotOpToLLVM.cpp
   DotOpToLLVM/FMA.cpp
   DotOpToLLVM/FMADotUtility.cpp
+  DebugOpToLLVM.cpp
   ReduceOpToLLVM.cpp
   TargetInfo.cpp
   TritonAscendGPUToLLVMPass.cpp

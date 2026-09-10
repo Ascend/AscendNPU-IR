@@ -262,13 +262,16 @@ createMergedRWOperation(OperationBase *parentOp, hivm::TCoreType coreType,
                         const llvm::SmallVector<RWOperation *> &rwOps) {
   llvm::DenseSet<Value> readMemInfoSet;
   llvm::DenseSet<Value> writeMemInfoSet;
-  llvm::SmallVector<MemInfo> readMemInfo;
-  llvm::SmallVector<MemInfo> writeMemInfo;
+  llvm::SmallVector<MemInfo, 0> readMemInfo;
+  llvm::SmallVector<MemInfo, 0> writeMemInfo;
   for (auto *rwOp : rwOps) {
     assert(rwOp != nullptr);
     for (auto memInfo : rwOp->readMemInfo) {
       if (!memInfo.pipe.has_value()) {
         memInfo.pipe = rwOp->pipeRead;
+      }
+      if (!memInfo.coreType.has_value()) {
+        memInfo.coreType = rwOp->coreType;
       }
       if (readMemInfoSet.insert(memInfo.value).second) {
         readMemInfo.push_back(memInfo);
@@ -277,6 +280,9 @@ createMergedRWOperation(OperationBase *parentOp, hivm::TCoreType coreType,
     for (auto memInfo : rwOp->writeMemInfo) {
       if (!memInfo.pipe.has_value()) {
         memInfo.pipe = rwOp->pipeWrite;
+      }
+      if (!memInfo.coreType.has_value()) {
+        memInfo.coreType = rwOp->coreType;
       }
       if (writeMemInfoSet.insert(memInfo.value).second) {
         writeMemInfo.push_back(memInfo);

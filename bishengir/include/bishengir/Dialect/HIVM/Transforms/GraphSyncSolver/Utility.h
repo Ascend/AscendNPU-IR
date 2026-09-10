@@ -289,14 +289,14 @@ struct Occurrence {
     } else if (auto rwOp = dyn_cast<RWOperation>(op)) {
       for (auto &readMemInfo : rwOp->readMemInfo) {
         memInfoTree1.insert(
-            CorePipeInfo(rwOp->coreType,
+            CorePipeInfo(readMemInfo.coreType.value_or(rwOp->coreType),
                          readMemInfo.pipe.value_or(rwOp->pipeRead)),
             MemoryEffect::READ, readMemInfo,
             MemInfoOccElement(this, this->syncIrIndex));
       }
       for (auto &writeMemInfo : rwOp->writeMemInfo) {
         memInfoTree1.insert(
-            CorePipeInfo(rwOp->coreType,
+            CorePipeInfo(writeMemInfo.coreType.value_or(rwOp->coreType),
                          writeMemInfo.pipe.value_or(rwOp->pipeWrite)),
             MemoryEffect::WRITE, writeMemInfo,
             MemInfoOccElement(this, this->syncIrIndex));
@@ -323,14 +323,14 @@ struct Occurrence {
     } else if (auto rwOp = dyn_cast<RWOperation>(op)) {
       for (auto &readMemInfo : rwOp->readMemInfo) {
         memInfoTree2.insert(
-            CorePipeInfo(rwOp->coreType,
+            CorePipeInfo(readMemInfo.coreType.value_or(rwOp->coreType),
                          readMemInfo.pipe.value_or(rwOp->pipeRead)),
             MemoryEffect::READ, readMemInfo,
             MemInfoOccElement(this, this->syncIrIndex));
       }
       for (auto &writeMemInfo : rwOp->writeMemInfo) {
         memInfoTree2.insert(
-            CorePipeInfo(rwOp->coreType,
+            CorePipeInfo(writeMemInfo.coreType.value_or(rwOp->coreType),
                          writeMemInfo.pipe.value_or(rwOp->pipeWrite)),
             MemoryEffect::WRITE, writeMemInfo,
             MemInfoOccElement(this, this->syncIrIndex));

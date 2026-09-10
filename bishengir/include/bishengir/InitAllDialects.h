@@ -37,6 +37,7 @@
 
 #if (!BISHENGIR_BUILD_STANDALONE_IR_ONLY)
 #include "bishengir/Conversion/Passes.h"
+#include "bishengir/Conversion/TritonAscendGPUToLLVM/Passes.h"
 #include "bishengir/Dialect/AscendDPX/IR/AscendDPX.h"
 #include "bishengir/Dialect/HIVMAVE/IR/HIVMAVE.h"
 #include "bishengir/Dialect/HIVMRegbaseIntrins/IR/HIVMRegbaseIntrins.h"
@@ -100,6 +101,8 @@ inline void registerAllDialects(mlir::DialectRegistry &registry) {
 
 #if BISHENGIR_ENABLE_TRITON_COMPILE
   registerTritonDialects(registry);
+  mlir::triton::ascend::registerConvertDebugOpToAscendDPXPass();
+  mlir::triton::ascend::registerAllocateAscendSharedMemoryPass();
   registerConvertTritonAscendGPUToLLVMPass();
   registerConvertProtonAscendGPUToLLVMPass();
   triton::registerGetTritonMetadataPass();

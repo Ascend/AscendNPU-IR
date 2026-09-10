@@ -305,26 +305,28 @@ bool MemInfo::checkConflict(
           checkSubviewConflict(memInfo1, memInfo2));
 }
 
-MemInfo MemInfo::getMemInfo(Value value, std::optional<PIPE> pipe) {
+MemInfo MemInfo::getMemInfo(Value value, std::optional<PIPE> pipe,
+                            std::optional<hivm::TCoreType> coreType) {
   if (auto funcArgInfo = FuncArgInfo::tryGet(value)) {
-    return MemInfo(value, funcArgInfo.value(), pipe);
+    return MemInfo(value, funcArgInfo.value(), pipe, coreType);
   }
   if (auto pointerLikeInfo = PointerLikeInfo::tryGet(value)) {
-    return MemInfo(value, pointerLikeInfo.value(), pipe);
+    return MemInfo(value, pointerLikeInfo.value(), pipe, coreType);
   }
   if (auto allocLikeInfo = AllocLikeInfo::tryGet(value)) {
-    return MemInfo(value, allocLikeInfo.value(), pipe);
+    return MemInfo(value, allocLikeInfo.value(), pipe, coreType);
   }
 
   if (auto subviewInfo = SubviewInfo::tryGet(value)) {
     auto pointerLikeInfo = PointerLikeInfo::tryGet(subviewInfo->source);
     assert(pointerLikeInfo.has_value() &&
            "expected subview source to have pointer-like info");
-    MemInfo memInfo(subviewInfo->source, pointerLikeInfo.value(), pipe);
+    MemInfo memInfo(subviewInfo->source, pointerLikeInfo.value(), pipe,
+                    coreType);
     memInfo.subviewInfo = std::move(subviewInfo);
     return memInfo;
   }
-  return MemInfo(value, pipe);
+  return MemInfo(value, pipe, coreType);
 }
 
 MemInfo MemInfo::getMemInfo(Scope *counterScope,
