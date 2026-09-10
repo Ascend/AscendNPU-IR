@@ -444,6 +444,74 @@ copy_matrix_cc_to_gm_nz2nd_4d_to_2d_core(
       });
 }
 
+// Batched L0C->GM copy, where L0C is (batch, N1, M1, M0, N0) and GM is
+// (batch, M, N). Programming ND_PARA drains the whole batch with one fixpipe
+// instead of one per matrix. ND_PARA packs ndNum and both nd strides into
+// 16-bit fields, so oversized batches fall back to an explicit loop here.
+template <typename SRC_TYPE, typename DST_TYPE>
+__aicore__ __attribute__((always_inline)) void
+copy_matrix_cc_to_gm_nz2nd_5d_to_3d_core(
+    memref_t<__cc__ SRC_TYPE, 5> *l0c, memref_t<__gm__ DST_TYPE, 3> *gm,
+    int64_t pre_quant, float32_t quant_scale, int64_t pre_relu,
+    bool channel_split, UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id) {
+  __gm__ DST_TYPE *gm_ptr = gm->aligned + gm->offset;
+  __cc__ SRC_TYPE *l0c_ptr = l0c->aligned + l0c->offset;
+
+  uint16_t m_tile_ceil = l0c->strides[1] / l0c->strides[3];
+  uint16_t m_size = gm->sizes[1];
+  uint16_t n_size = gm->sizes[2];
+  uint32_t dst_D = gm->strides[1];
+
+  // src_nd_stride is counted in C0 blocks and dst_nd_stride in elements, so
+  // src_nd_stride works out to align(M) * align(N) / C0, i.e. m_tile_ceil * N1.
+  int64_t batch = gm->sizes[0];
+  int64_t src_batch_stride = l0c->strides[0];
+  int64_t dst_batch_stride = gm->strides[0];
+  int64_t src_nd_stride = src_batch_stride / l0c->strides[3];
+
+  constexpr int64_t ND_PARA_FIELD_MAX = 0xffff;
+  bool nd_fits = batch <= ND_PARA_FIELD_MAX &&
+                 src_nd_stride <= ND_PARA_FIELD_MAX &&
+                 dst_batch_stride <= ND_PARA_FIELD_MAX;
+  if (nd_fits) {
+    set_nd_para(batch, src_nd_stride, dst_batch_stride);
+  } else {
+    set_nd_para(1, 1, 1);
+  }
+
+  set_pre_quant_scale<DST_TYPE>(quant_scale);
+  unit_flag_mode = resolveUnitFlagMode(unit_flag_mode, unit_flag_group_id);
+  QuantMode_t quant_mode = get_quant_mode(pre_quant);
+
+  int64_t steps = nd_fits ? 1 : batch;
+  for (int64_t i = 0; i < steps; ++i) {
+    // The unit flag is a one-shot "cube has drained" barrier. Once the first
+    // fixpipe has waited on it the whole L0C range is stable, so the remaining
+    // fixpipes of this group must not wait again or they would deadlock.
+    uint8_t unit_flag = static_cast<uint8_t>(i == 0 ? unit_flag_mode
+                                                    : UNIT_FLAG::DISABLED);
+    copy_matrix_cc_to_gm_intrin(
+        copy_matrix_cc_to_gm_intrin_args<SRC_TYPE, DST_TYPE>{
+            gm_ptr + i * dst_batch_stride, l0c_ptr + i * src_batch_stride,
+            0, // sid
+            n_size, m_size,
+            dst_D,                                   // dstStride_dst_D
+            m_tile_ceil,                             // srcStride
+            FIXPIPE_ARGS_XT1_VALUES_TO_GM unit_flag, // UnitFlagMode
+            quant_mode,                              // QuantPRE
+            static_cast<uint8_t>(pre_relu),          // ReLUPRE
+            channel_split,
+            true                           // NZ2ND_EN
+            FIXPIPE_ARGS_XT2_VALUES(false) // with NZ2DN_EN control
+        });
+  }
+
+  // ND_PARA is sticky state; restore the scalar default for later fixpipes.
+  if (nd_fits) {
+    set_nd_para(1, 1, 1);
+  }
+}
+
 template <typename SRC_TYPE, typename DST_TYPE, DualDstMode DualDst>
 __aicore__ __attribute__((always_inline)) void
 copy_matrix_cc_to_ubuf_nz2nd_4d_to_2d_core(
@@ -501,6 +569,91 @@ copy_matrix_cc_to_ubuf_nz2nd_4d_to_2d_core(
           true                           // NZ2ND_EN
           FIXPIPE_ARGS_XT2_VALUES(false) // with NZ2DN_EN control
       });
+}
+
+// Batched L0C->UB copy, where L0C is (batch, N1, M1, M0, N0) and UB is
+// (batch, M, N). ND_PARA is fixpipe state rather than a property of the
+// destination space, so the descriptor that drains a batch to GM drains one to
+// UB just as well. ndNum and both nd strides are 16-bit fields; keeping the
+// batch inside them is the tiling's job, not this function's.
+template <typename SRC_TYPE, typename DST_TYPE, DualDstMode DualDst>
+__aicore__ __attribute__((always_inline)) void
+copy_matrix_cc_to_ubuf_nz2nd_5d_to_3d_core(
+    memref_t<__cc__ SRC_TYPE, 5> *l0c, memref_t<__ubuf__ DST_TYPE, 3> *ubuf,
+    int64_t pre_quant, float32_t quant_scale, int64_t pre_relu,
+    bool channel_split, UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id,
+    bool sub_blockid) {
+  __ubuf__ DST_TYPE *ubuf_ptr = ubuf->aligned + ubuf->offset;
+  __cc__ SRC_TYPE *l0c_ptr = l0c->aligned + l0c->offset;
+
+  uint16_t m_tile_ceil = l0c->strides[1] / l0c->strides[3];
+  uint16_t m_size =
+      (DualDst == DualDstMode::ROW_SPLIT) ? ubuf->sizes[1] * 2 : ubuf->sizes[1];
+  uint16_t n_size = ubuf->sizes[2];
+  uint32_t dst_D = ubuf->strides[1];
+
+  if (DualDst == DualDstMode::COLUMN_SPLIT) {
+    n_size *= 2;
+  } else if (n_size < dst_D) {
+    n_size = dst_D;
+  }
+
+  // Same units the GM drain programs: src_nd_stride counts C0 blocks and
+  // dst_nd_stride elements.
+  int64_t batch = ubuf->sizes[0];
+  int64_t src_batch_stride = l0c->strides[0];
+  int64_t dst_batch_stride = ubuf->strides[0];
+  int64_t src_nd_stride = src_batch_stride / l0c->strides[3];
+
+  set_pre_quant_scale<DST_TYPE>(quant_scale);
+  unit_flag_mode = resolveUnitFlagMode(unit_flag_mode, unit_flag_group_id);
+  QuantMode_t quant_mode = get_quant_mode(pre_quant);
+
+  // The dual-dst software fallback issues its own pair of fixpipes and offsets
+  // L0C by hand, which does not compose with ND_PARA walking the batch. Leave
+  // the descriptor scalar there and step the batch here instead.
+  if ((DualDst != DualDstMode::NO_DUAL) &&
+      !canEnableHWDualDst(static_cast<uint8_t>(DualDst), quant_mode,
+                          static_cast<uint8_t>(pre_relu), channel_split, m_size,
+                          n_size, true)) {
+    set_nd_para(1, 1, 1);
+    for (int64_t i = 0; i < batch; ++i) {
+      // The unit flag is a one-shot "cube has drained" barrier. Once the first
+      // fixpipe has waited on it the whole L0C range is stable, so the rest of
+      // the group must not wait again or they would deadlock.
+      copy_matrix_cc_to_ubuf_split<SRC_TYPE, DST_TYPE>(
+          ubuf_ptr + i * dst_batch_stride, l0c_ptr + i * src_batch_stride,
+          n_size, m_size, dst_D, m_tile_ceil,
+          /*nz2nd*/ true, /*nz2dn*/ false,
+          i == 0 ? unit_flag_mode : UNIT_FLAG::DISABLED, unit_flag_group_id,
+          quant_mode, static_cast<uint8_t>(pre_relu), channel_split,
+          static_cast<uint8_t>(DualDst));
+    }
+    return;
+  }
+
+  set_nd_para(batch, src_nd_stride, dst_batch_stride);
+  uint8_t unit_flag = static_cast<uint8_t>(unit_flag_mode);
+
+  copy_matrix_cc_to_ubuf_intrin(
+      copy_matrix_cc_to_ubuf_intrin_args<SRC_TYPE, DST_TYPE>{
+          ubuf_ptr, l0c_ptr,
+          0, // sid
+          n_size, m_size,
+          dst_D,       // dstStride_dst_D
+          m_tile_ceil, // srcStride
+          FIXPIPE_ARGS_XT1_VALUES_TO_UB(static_cast<uint8_t>(DualDst),
+                                        /*sub_blockid=*/sub_blockid)
+              unit_flag,                  // UnitFlagMode
+          quant_mode,                     // QuantPRE
+          static_cast<uint8_t>(pre_relu), // ReLUPRE
+          channel_split,
+          true                           // NZ2ND_EN
+          FIXPIPE_ARGS_XT2_VALUES(false) // with NZ2DN_EN control
+      });
+
+  // ND_PARA is sticky state; restore the scalar default for later fixpipes.
+  set_nd_para(1, 1, 1);
 }
 
 template <typename SRC_TYPE, typename DST_TYPE>
@@ -713,6 +866,24 @@ copy_matrix_cc_to_gm_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
   static_assert("fixpipe 4d unsupports this transform mode");
 }
 
+template <typename SRC_TYPE, typename DST_TYPE, TransformMode MODE>
+__aicore__ __attribute__((always_inline)) void
+copy_matrix_cc_to_gm_5d_to_3d_core(memref_t<__cc__ SRC_TYPE, 5> *l0c,
+                                   memref_t<__gm__ DST_TYPE, 3> *gm,
+                                   int64_t pre_quant, float32_t quant_scale,
+                                   int64_t pre_relu, bool channel_split,
+                                   UNIT_FLAG unit_flag_mode,
+                                   int64_t unit_flag_group_id) {
+  if constexpr (MODE == TransformMode::NZ_2_ND) {
+    copy_matrix_cc_to_gm_nz2nd_5d_to_3d_core<SRC_TYPE, DST_TYPE>(
+        l0c, gm, pre_quant, quant_scale, pre_relu, channel_split,
+        unit_flag_mode, unit_flag_group_id);
+    return;
+  }
+
+  static_assert("fixpipe 5d unsupports this transform mode");
+}
+
 template <typename SRC_TYPE, typename DST_TYPE, TransformMode MODE,
           DualDstMode DualDst = DualDstMode::NO_DUAL>
 __aicore__ __attribute__((always_inline)) void
@@ -737,6 +908,26 @@ copy_matrix_cc_to_ubuf_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
   }
 
   static_assert("fixpipe 4d unsupports this transform mode");
+}
+
+template <typename SRC_TYPE, typename DST_TYPE, TransformMode MODE,
+          DualDstMode DualDst = DualDstMode::NO_DUAL>
+__aicore__ __attribute__((always_inline)) void
+copy_matrix_cc_to_ubuf_5d_to_3d_core(memref_t<__cc__ SRC_TYPE, 5> *l0c,
+                                     memref_t<__ubuf__ DST_TYPE, 3> *ubuf,
+                                     int64_t pre_quant, float32_t quant_scale,
+                                     int64_t pre_relu, bool channel_split,
+                                     UNIT_FLAG unit_flag_mode,
+                                     int64_t unit_flag_group_id,
+                                     bool sub_blockid = false) {
+  if constexpr (MODE == TransformMode::NZ_2_ND) {
+    copy_matrix_cc_to_ubuf_nz2nd_5d_to_3d_core<SRC_TYPE, DST_TYPE, DualDst>(
+        l0c, ubuf, pre_quant, quant_scale, pre_relu, channel_split,
+        unit_flag_mode, unit_flag_group_id, sub_blockid);
+    return;
+  }
+
+  static_assert("fixpipe 5d unsupports this transform mode");
 }
 
 template <typename SRC_TYPE, typename DST_TYPE, TransformMode MODE>
@@ -901,6 +1092,14 @@ REGISTE_FIXPIPE_NOSUFFIX(cc, gm, 4, 2, float, float, nz2nd,
                          TransformMode::NZ_2_ND)
 REGISTE_FIXPIPE_NOSUFFIX(cc, gm, 4, 2, int32_t, int32_t, nz2nd,
                          TransformMode::NZ_2_ND)
+
+//===-------------------------------------------------------------------===//
+// fixpipe, 5 dim to 3 dim, nz2nd (batched via ND_PARA)
+//===-------------------------------------------------------------------===//
+REGISTE_FIXPIPE(cc, gm, 5, 3, float, half, nz2nd, TransformMode::NZ_2_ND)
+REGISTE_FIXPIPE(cc, gm, 5, 3, float, bfloat16_t, nz2nd, TransformMode::NZ_2_ND)
+REGISTE_FIXPIPE(cc, gm, 5, 3, float, float, nz2nd, TransformMode::NZ_2_ND)
+REGISTE_FIXPIPE(cc, gm, 5, 3, int32_t, int32_t, nz2nd, TransformMode::NZ_2_ND)
 
 #if !defined(__DAV_M300__)
 REGISTE_FIXPIPE(cc, gm, 4, 2, int32_t, int8_t, nz2nd, TransformMode::NZ_2_ND)

@@ -584,8 +584,11 @@ FailureOr<SmallVector<Value>> ND2NZOp::decomposeOperation(PatternRewriter &b) {
     b.create<hivm::VBrcOp>(loc, TypeRange(), getPadValue(), *padBuffer,
                            b.getDenseI64ArrayAttr(ArrayRef<int64_t>{}));
   }
-  b.create<hivm::ND2NZOp>(loc, TypeRange{}, getSrc(), getDst(),
-                          b.getUnitAttr());
+  auto nd2nzOp = b.create<hivm::ND2NZOp>(loc, TypeRange{}, getSrc(), getDst(),
+                                         b.getUnitAttr());
+  // This replaces the op being decomposed, so it inherits its L2 hint.
+  if (auto modeAttr = getL2CacheModeAttr())
+    nd2nzOp.setL2CacheModeAttr(modeAttr);
   return SmallVector<Value>{};
 }
 

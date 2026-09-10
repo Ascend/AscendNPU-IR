@@ -544,7 +544,8 @@ SyncSolverBase::checkUnitFlagPatterns(Occurrence *occ1, Occurrence *occ2) {
     return {};
   }
   if (checkMemoryConflictBetweenOccExclusive(occ1, occ2, [](RWOperation *rwOp) {
-        return isa_and_present<hivm::MmadL1Op, hivm::FixpipeOp>(rwOp->op);
+        return isa_and_present<hivm::MmadL1Op, hivm::BatchMmadL1Op,
+                               hivm::FixpipeOp>(rwOp->op);
       })) {
     return {};
   }

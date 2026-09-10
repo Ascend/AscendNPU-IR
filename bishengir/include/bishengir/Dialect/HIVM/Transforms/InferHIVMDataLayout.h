@@ -60,7 +60,8 @@ public:
     DataLayoutAttr targetLayout;
   };
 
-  DataLayoutInferAndPropagateHelper(func::FuncOp func) : func_(func) {}
+  DataLayoutInferAndPropagateHelper(func::FuncOp func, bool batchMatmul = false)
+      : func_(func), batchMatmul_(batchMatmul) {}
 
   /// Find the anchor ops and record their current and target data layout.
   void initAnchorLayout();
@@ -178,6 +179,9 @@ private:
 
 private:
   func::FuncOp func_;
+  /// Fold a rank-3 ND2NZ into one MTE2 descriptor and honour an l2_cache_mode
+  /// annotation, both of which only a batched matmul asks for.
+  bool batchMatmul_;
   llvm::SmallDenseSet<Operation *> anchor_ops_;
   /// Mapping from value to layout information.
   llvm::MapVector<Value, LayoutInfo> layout_info_;

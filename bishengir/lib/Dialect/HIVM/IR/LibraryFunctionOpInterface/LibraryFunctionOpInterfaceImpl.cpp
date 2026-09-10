@@ -1212,6 +1212,40 @@ std::string NoMaxRankExternalModel<MmadL1Op>::getOpLibraryCallName(
 }
 
 //===----------------------------------------------------------------------===//
+// BatchMmadL1Op
+//===----------------------------------------------------------------------===//
+
+template <>
+std::string NoMaxRankExternalModel<BatchMmadL1Op>::getOpLibraryCallName(
+    Operation *op, std::optional<bool> isOpsAligned) const {
+  auto concreteOp = cast<BatchMmadL1Op>(op);
+  auto baseCallName = concreteOp.getOpName().str();
+  auto srcTypeName =
+      getTypeName(concreteOp.getLoc(),
+                  getElementTypeOrSelf(concreteOp.getDpsInputs()[0].getType()));
+  auto dstTypeName =
+      getTypeName(concreteOp.getLoc(),
+                  getElementTypeOrSelf(concreteOp.getDpsInits()[0].getType()));
+  std::string suffix;
+  if (concreteOp.getATranspose().has_value())
+    suffix += "_ta";
+  if (concreteOp.getBTranspose().has_value())
+    suffix += "_tb";
+  if (concreteOp.getEnable_HF32().has_value())
+    suffix += "_hf32";
+
+  if (concreteOp.getPerChannelBias()) {
+    auto biasTypeName = getTypeName(
+        concreteOp.getLoc(),
+        getElementTypeOrSelf(concreteOp.getPerChannelBias().getType()));
+    return baseCallName + "_with_" + biasTypeName + "_bias_" +
+           srcTypeName + "_to_" + dstTypeName + suffix;
+  }
+  return baseCallName + "_" + srcTypeName + "_to_" + dstTypeName +
+         suffix;
+}
+
+//===----------------------------------------------------------------------===//
 // MmadMxL1Op
 //===----------------------------------------------------------------------===//
 
@@ -1360,6 +1394,15 @@ std::string NoMaxRankExternalModel<ND2NZOp>::getOpLibraryCallName(
         callName = callName + "_forbias";
     }
   }
+  // A rank-3 source carries a leading batch dimension and maps to the batched
+  // library function, which folds the batch into one MTE2 descriptor. Only
+  // regbase registers that variant.
+  auto mod = op->getParentOfType<ModuleOp>();
+  auto srcType = dyn_cast<MemRefType>(concreteOp.getDpsInputs()[0].getType());
+  if (mod && hacc::utils::isRegBasedArch(mod) && srcType &&
+      srcType.getRank() == 3)
+    callName = callName + "_batch";
+
   Type eleType = getElementTypeOrSelf(concreteOp.getDpsInputs()[0].getType());
   auto elemTypeName = getTypeName(concreteOp.getLoc(), eleType);
   return callName + "_" + elemTypeName;
@@ -1760,7 +1803,7 @@ void bishengir::hivm::detail::registerLibraryFunctionOpInterfaceExtension(
     REGISTER_NO_MAX_RANK(MatmulOp);
     REGISTER_NO_MAX_RANK(MixMatmulOp);
     REGISTER_NO_MAX_RANK(MixGroupMatmulOp);
-    REGISTER_NO_LIBRARY_FUNCTION(BatchMmadL1Op);
+    REGISTER_NO_MAX_RANK(BatchMmadL1Op);
 
     // Other ops
     REGISTER_STATIC_MAX_RANK(DebugOp, 8);

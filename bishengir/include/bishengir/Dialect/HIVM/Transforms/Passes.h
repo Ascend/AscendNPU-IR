@@ -100,7 +100,8 @@ std::unique_ptr<Pass> createAllocToAllocaPass();
 std::unique_ptr<Pass> createCloneTensorEmptyPass();
 
 /// Create a pass to infer data layout information for HIVM Ops.
-std::unique_ptr<Pass> createInferHIVMDataLayoutPass();
+std::unique_ptr<Pass> createInferHIVMDataLayoutPass(
+    const InferHIVMDataLayoutOptions &options = {});
 
 /// Create a pass to infer vf mode for HIVM Ops.
 std::unique_ptr<Pass> createInferVFModePass();
@@ -263,7 +264,8 @@ std::unique_ptr<Pass>
 createInlineFixpipePass(const InlineFixpipeOptions &options = {});
 
 // Create a pass to tile batch matmul into loop
-std::unique_ptr<Pass> createTileBatchMMIntoLoopPass();
+std::unique_ptr<Pass> createTileBatchMMIntoLoopPass(
+    const TileBatchMMIntoLoopOptions &options = {});
 
 // Create a pass to lift zero rank
 std::unique_ptr<Pass> createLiftZeroRankPass();

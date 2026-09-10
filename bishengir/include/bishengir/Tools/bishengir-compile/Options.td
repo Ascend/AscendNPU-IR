@@ -548,6 +548,14 @@ def EnableHIVMUnitFlagSync : HIVMOptimizationControlOptions<
   "false"
 >;
 
+def EnableHIVMBatchMatmul : HIVMOptimizationControlOptions<
+  "Lower a RegBase batch matmul as one batched mmad macro instead of tiling "
+  "it into a loop over the batch dimension. Keeps the batched operands "
+  "resident in L1 and drains L0C with a single ND_PARA fixpipe.",
+  "bool",
+  "false"
+>;
+
 def EnableHIVMAssumeAliveLoops : HIVMOptimizationControlOptions<
   "Assume that all loops (forOp whileOp) will execute at least once.",
   "bool",
