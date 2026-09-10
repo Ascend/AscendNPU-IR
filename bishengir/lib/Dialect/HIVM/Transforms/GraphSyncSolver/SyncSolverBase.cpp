@@ -1587,27 +1587,47 @@ SyncSolverBase::getFixedSetWaitOcc(Occurrence *occ1, Occurrence *occ2,
   // - check if it's the case of:
   // loop(iter-1){
   //   condition1{
-  //     true-scope{occ1}
-  //     false-scope{}
+  //     true-scope{
+  //       occ1
+  //     }
+  //     false-scope{
+  //       ...
+  //     }
   //   }
   // }
   // loop(iter-2){
   //   condition2{
-  //     true-scope{occ2}
-  //     false-scope{}
+  //     true-scope{
+  //       occ2
+  //     }
+  //     false-scope{
+  //       ...
+  //     }
   //   }
   // }
   // - and fix it to be:
   // loop(iter-1){
   //   condition1{
-  //     true-scope{occ1, setOcc}
-  //     false-scope{setOcc}
+  //     true-scope{
+  //       occ1
+  //       setOcc
+  //     }
+  //     false-scope{
+  //       ...
+  //       setOcc
+  //     }
   //   }
   // }
   // loop(iter-2){
   //   condition2{
-  //     true-scope{waitOcc, occ2}
-  //     false-scope{waitOcc}
+  //     true-scope{
+  //       waitOcc
+  //       occ2
+  //     }
+  //     false-scope{
+  //       waitOcc
+  //       ...
+  //     }
   //   }
   // }
   if (options.isSiblingIfSyncEnabled() && isBackwardSync(occ1, occ2)) {
