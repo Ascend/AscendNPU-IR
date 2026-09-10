@@ -1519,6 +1519,19 @@ static std::string getHistogramLibraryCallName(CustomOpT op) {
   if (op.getInputs().size() > 2)
     ss << "_masked";
   ss << "_" << getTypeName(op->getLoc(), elemType);
+  // Select the small-bin entry before template linking. Dynamic bin counts,
+  // masked inputs and other element types retain the general implementation.
+  auto mod = op->template getParentOfType<ModuleOp>();
+  if (mod && hacc::utils::isRegBasedArch(mod) && srcTy.getRank() == 1 &&
+      elemType.isInteger(32) && op.getInputs().size() == 2) {
+    if (auto constant =
+            op.getInputs()[1].template getDefiningOp<arith::ConstantOp>()) {
+      if (auto bins = dyn_cast<IntegerAttr>(constant.getValue())) {
+        if (bins.getInt() > 0 && bins.getInt() <= 256)
+          ss << "_small_bins";
+      }
+    }
+  }
   return ss.str();
 }
 
