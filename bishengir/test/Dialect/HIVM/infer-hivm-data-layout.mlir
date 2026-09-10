@@ -444,11 +444,11 @@ module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
   // CHECK: hivm.hir.nd2nz
   hivm.hir.load ins(%cast_2 : memref<64x64xi8, strided<[?, ?], offset: ?>, #hivm.address_space<gm>>) outs(%alloc_7 : memref<64x64xi8, #hivm.address_space<cbuf>>) init_out_buffer = false
   %alloc = memref.alloc() : memref<64x64xi8, #hivm.address_space<cbuf>>
-  %alloc_5 = memref.alloc() {alignment = 64 : i64} : memref<64x64xi8, #hivm.address_space<cc>>
+  %alloc_5 = memref.alloc() {alignment = 64 : i64} : memref<64x64xi32, #hivm.address_space<cc>>
   hivm.hir.mmadL1 {a_transpose} ins(%alloc_7, %alloc, %true, %c64, %c64, %c64 : memref<64x64xi8, #hivm.address_space<cbuf>>, memref<64x64xi8, #hivm.address_space<cbuf>>, i1, index, index, index)
-      outs(%alloc_5 : memref<64x64xi8, #hivm.address_space<cc>>)
+      outs(%alloc_5 : memref<64x64xi32, #hivm.address_space<cc>>)
   %view_4 = memref.view %arg4[%c0][] : memref<?xi8, #hivm.address_space<gm>> to memref<64x64xi8, #hivm.address_space<gm>>
-  hivm.hir.fixpipe {enable_nz2nd} ins(%alloc_5 : memref<64x64xi8, #hivm.address_space<cc>>) outs(%view_4 : memref<64x64xi8, #hivm.address_space<gm>>)
+  hivm.hir.fixpipe {enable_nz2nd, pre_quant = #hivm.fixpipe_pre_quant_mode<S322I8>} ins(%alloc_5 : memref<64x64xi32, #hivm.address_space<cc>>) outs(%view_4 : memref<64x64xi8, #hivm.address_space<gm>>)
   return
   }
 }

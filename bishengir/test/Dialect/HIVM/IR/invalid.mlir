@@ -500,12 +500,12 @@ func.func @test_matmul_valid_descale_dim(%A_gm : memref<16x16xf16, #hivm.address
 // CHECK-LABEL test_fixpipe_dual_dst_mode_with_sub_block_idx
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
   func.func @test_fixpipe_dual_dst_mode_with_sub_block_idx() {
-    %l0c = memref.alloc() : memref<16x16xf16, #hivm.address_space<cc>>
-    %ub = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
+    %l0c = memref.alloc() : memref<16x16xf32, #hivm.address_space<cc>>
+    %ub = memref.alloc() : memref<16x16xf32, #hivm.address_space<ub>>
     // expected-error@+1 {{'hivm.hir.fixpipe' op sub_block_idx must not be set when dual_dst_mode is enabled!}}
     hivm.hir.fixpipe {sub_block_idx = #hivm.fixpipe_sub_block<sub_block_1>}
-                    ins(%l0c : memref<16x16xf16, #hivm.address_space<cc>>)
-                    outs(%ub : memref<16x16xf16, #hivm.address_space<ub>>)
+                    ins(%l0c : memref<16x16xf32, #hivm.address_space<cc>>)
+                    outs(%ub : memref<16x16xf32, #hivm.address_space<ub>>)
                     dual_dst_mode = #hivm.fixpipe_dual_dst_mode<ROW_SPLIT>
     return
   }
@@ -716,4 +716,57 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     %0 = hivm.hir.vcast {hivm.unsigned_mode = #hivm.unsigned_mode<si2ui>} ins(%src : tensor<16xi8>) outs(%dst : tensor<16xi32>) round_mode = <rint> cast = <cast_unsigned> -> tensor<16xi32>
     return
   }
+}
+
+// -----
+
+// F16 sources must be rejected by plain Op verification, independent of the
+// target architecture.
+// CHECK-LABEL: test_fixpipe_f16_src_rejected
+func.func @test_fixpipe_f16_src_rejected() {
+  %src = memref.alloc() : memref<16x16xf16, #hivm.address_space<cc>>
+  %dst = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
+  // expected-error@+1 {{'hivm.hir.fixpipe' op operand #0 must be Shaped Type of 32-bit float or 32-bit signless integer values, but got 'memref<16x16xf16, #hivm.address_space<cc>>'}}
+  hivm.hir.fixpipe ins(%src : memref<16x16xf16, #hivm.address_space<cc>>) outs(%dst : memref<16x16xf16, #hivm.address_space<ub>>)
+  return
+}
+
+// -----
+
+// The same rejection must not depend on the C220 target.
+// CHECK-LABEL: test_fixpipe_f16_src_rejected_c220
+module attributes {hacc.target = #hacc.target<"Ascend910B1">} {
+  func.func @test_fixpipe_f16_src_rejected_c220() {
+    %src = memref.alloc() : memref<16x16xf16, #hivm.address_space<cc>>
+    %dst = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
+    // expected-error@+1 {{'hivm.hir.fixpipe' op operand #0 must be Shaped Type of 32-bit float or 32-bit signless integer values, but got 'memref<16x16xf16, #hivm.address_space<cc>>'}}
+    hivm.hir.fixpipe ins(%src : memref<16x16xf16, #hivm.address_space<cc>>) outs(%dst : memref<16x16xf16, #hivm.address_space<ub>>)
+    return
+  }
+}
+
+// -----
+
+// The same rejection must not depend on the C310 target.
+// CHECK-LABEL: test_fixpipe_f16_src_rejected_c310
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @test_fixpipe_f16_src_rejected_c310() {
+    %src = memref.alloc() : memref<16x16xf16, #hivm.address_space<cc>>
+    %dst = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
+    // expected-error@+1 {{'hivm.hir.fixpipe' op operand #0 must be Shaped Type of 32-bit float or 32-bit signless integer values, but got 'memref<16x16xf16, #hivm.address_space<cc>>'}}
+    hivm.hir.fixpipe ins(%src : memref<16x16xf16, #hivm.address_space<cc>>) outs(%dst : memref<16x16xf16, #hivm.address_space<ub>>)
+    return
+  }
+}
+
+// -----
+
+// Tensor f16 sources are rejected as well.
+// CHECK-LABEL: test_fixpipe_f16_tensor_src_rejected
+func.func @test_fixpipe_f16_tensor_src_rejected() {
+  %src = tensor.empty() : tensor<16x16xf16>
+  %dst = tensor.empty() : tensor<16x16xf16>
+  // expected-error@+1 {{'hivm.hir.fixpipe' op operand #0 must be Shaped Type of 32-bit float or 32-bit signless integer values, but got 'tensor<16x16xf16>'}}
+  %r = hivm.hir.fixpipe ins(%src : tensor<16x16xf16>) outs(%dst : tensor<16x16xf16>) -> tensor<16x16xf16>
+  return
 }
