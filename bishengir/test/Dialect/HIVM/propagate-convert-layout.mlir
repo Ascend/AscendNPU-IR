@@ -668,3 +668,95 @@ func.func @propagate_insert_slice_intra_tile_through_for(
       : (tensor<32x192xbf16>) -> tensor<12x2x16x16xbf16>
   return %fractal : tensor<12x2x16x16xbf16>
 }
+
+// -----
+
+// Recreating scf.for must keep discardable attrs (e.g. hivm.multi_buffer).
+// CHECK-LABEL:   func.func @propagate_up_from_for_result_keeps_attrs(
+// CHECK:           %[[FOR_RETURN:.*]] = scf.for
+// CHECK:             scf.yield
+// CHECK:           } {hivm.multi_buffer = 2 : i32}
+// CHECK:           return %[[FOR_RETURN]] : tensor<1x1x16x16xf16>
+func.func @propagate_up_from_for_result_keeps_attrs(
+  %init: tensor<16x16xf16>, %lb: index, %ub: index, %step: index
+) -> tensor<1x1x16x16xf16> {
+  %r = scf.for %iv = %lb to %ub step %step
+      iter_args(%arg = %init) -> (tensor<16x16xf16>) {
+    %tmp = tensor.empty() : tensor<16x16xf16>
+    %mid = hivm.hir.vexp ins(%arg : tensor<16x16xf16>) outs(%tmp : tensor<16x16xf16>) -> tensor<16x16xf16>
+    scf.yield %mid : tensor<16x16xf16>
+  } {hivm.multi_buffer = 2 : i32}
+
+  %r_up = hivm.hir.convert_layout %r output_shape [1, 1, 16, 16]
+    {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>,
+     srcLayout = #hivm.data_layout<ND>}
+    : (tensor<16x16xf16>) -> tensor<1x1x16x16xf16>
+
+  return %r_up : tensor<1x1x16x16xf16>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @propagate_down_from_if_yields_keeps_attrs(
+// CHECK:      %[[IFR:.*]] = scf.if
+// CHECK:        scf.yield
+// CHECK:      } else {
+// CHECK:        scf.yield
+// CHECK:      } {hivm.multi_buffer = 2 : i32}
+// CHECK:      %[[DOWN:.*]] = hivm.hir.convert_layout %[[IFR]] output_shape [16, 16]
+// CHECK:      return %[[DOWN]] : tensor<16x16xf16>
+func.func @propagate_down_from_if_yields_keeps_attrs(
+    %cond: i1,
+    %a_fr: tensor<1x1x16x16xf16>,
+    %b_fr: tensor<1x1x16x16xf16>) -> tensor<16x16xf16> {
+  %r = scf.if %cond -> (tensor<16x16xf16>) {
+    %a_nd = hivm.hir.convert_layout %a_fr output_shape [16, 16]
+      {dstLayout = #hivm.data_layout<ND>,
+       srcLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>}
+      : (tensor<1x1x16x16xf16>) -> tensor<16x16xf16>
+
+    %tmp = tensor.empty() : tensor<16x16xf16>
+    %vexp_a = hivm.hir.vexp ins(%a_nd : tensor<16x16xf16>) outs(%tmp : tensor<16x16xf16>) -> tensor<16x16xf16>
+    scf.yield %vexp_a : tensor<16x16xf16>
+  } else {
+    %b_nd = hivm.hir.convert_layout %b_fr output_shape [16, 16]
+      {dstLayout = #hivm.data_layout<ND>,
+       srcLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>}
+      : (tensor<1x1x16x16xf16>) -> tensor<16x16xf16>
+
+    %tmp = tensor.empty() : tensor<16x16xf16>
+    %vabs_b = hivm.hir.vabs ins(%b_nd : tensor<16x16xf16>) outs(%tmp : tensor<16x16xf16>) -> tensor<16x16xf16>
+    scf.yield %vabs_b : tensor<16x16xf16>
+  } {hivm.multi_buffer = 2 : i32}
+  return %r : tensor<16x16xf16>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @propagate_up_from_while_result_keeps_attrs(
+// CHECK:      %[[W:.*]] = scf.while
+// CHECK:      attributes {hivm.multi_buffer = 2 : i32}
+// CHECK:      %[[RAW:.*]] = hivm.hir.convert_layout
+// CHECK:      return %[[RAW]], %[[W]] : tensor<16x16xf16>, tensor<1x1x16x16xf16>
+func.func @propagate_up_from_while_result_keeps_attrs(
+  %init: tensor<16x16xf16>, %cond: i1
+) -> (tensor<16x16xf16>, tensor<1x1x16x16xf16>) {
+  %w = scf.while (%s = %init) : (tensor<16x16xf16>) -> (tensor<16x16xf16>) {
+    scf.condition(%cond) %s : tensor<16x16xf16>
+  } do {
+  ^bb0(%arg: tensor<16x16xf16>):
+    %tmp = tensor.empty() : tensor<16x16xf16>
+    %mid = hivm.hir.vexp ins(%arg : tensor<16x16xf16>) outs(%tmp : tensor<16x16xf16>) -> tensor<16x16xf16>
+    scf.yield %mid : tensor<16x16xf16>
+  } attributes {hivm.multi_buffer = 2 : i32}
+
+  %w_up = hivm.hir.convert_layout %w output_shape [1, 1, 16, 16]
+    {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>,
+     srcLayout = #hivm.data_layout<ND>}
+    : (tensor<16x16xf16>) -> tensor<1x1x16x16xf16>
+
+  %tmp2 = tensor.empty() : tensor<16x16xf16>
+  %raw_user = hivm.hir.vabs ins(%w : tensor<16x16xf16>) outs(%tmp2 : tensor<16x16xf16>) -> tensor<16x16xf16>
+
+  return %raw_user, %w_up : tensor<16x16xf16>, tensor<1x1x16x16xf16>
+}
