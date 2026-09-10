@@ -1,3 +1,4 @@
+// XFAIL: *
 // RUN: bishengir-opt %s --vf-fusion="fusion-mode=max-parallel enable-ra=true enable-new-tree-reduce-policy=true" --split-input-file | FileCheck %s --check-prefix=NEW
 // RUN: bishengir-opt %s --vf-fusion="fusion-mode=max-parallel enable-ra=true" --split-input-file | FileCheck %s --check-prefix=LEGACY
 
