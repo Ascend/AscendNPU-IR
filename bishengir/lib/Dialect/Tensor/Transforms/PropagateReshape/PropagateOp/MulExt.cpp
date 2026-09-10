@@ -69,8 +69,9 @@ SmallVector<Value> expandCollapseOperands(PatternRewriter &rewriter,
   return operands;
 }
 
+template <typename MulExtOpTy>
 void collapseResults(PatternRewriter &rewriter, Operation *oldOp,
-                     hfusion::MulExtOp newOp, Type collapsedType,
+                     MulExtOpTy newOp, Type collapsedType,
                      ArrayRef<ReassociationIndices> reassociation) {
   for (auto [oldResult, newResult] :
        llvm::zip(oldOp->getResults(), newOp->getResults())) {
@@ -97,12 +98,23 @@ LogicalResult PropagatableMulExt::matchAndRewriteExpand(
                                              expandOp.getLoc(), operand);
       });
   rewriter.setInsertionPointAfter(op);
-  auto newMulExt = rewriter.create<hfusion::MulExtOp>(op->getLoc(), operands);
-  collapseResults(rewriter, op, newMulExt, expandOp.getSrc().getType(),
-                  expandOp.getReassociationIndices());
 
-  rewriter.replaceOp(expandOp,
-                     newMulExt.getResult(sourceResult.getResultNumber()));
+  if (isa<hfusion::MulExtOp>(op)) {
+    auto newMulExt = rewriter.create<hfusion::MulExtOp>(op->getLoc(), operands);
+    collapseResults(rewriter, op, newMulExt, expandOp.getSrc().getType(),
+                    expandOp.getReassociationIndices());
+    rewriter.replaceOp(expandOp,
+                       newMulExt.getResult(sourceResult.getResultNumber()));
+  } else if (isa<hfusion::MulExtUiOp>(op)) {
+    auto newMulExt =
+        rewriter.create<hfusion::MulExtUiOp>(op->getLoc(), operands);
+    collapseResults(rewriter, op, newMulExt, expandOp.getSrc().getType(),
+                    expandOp.getReassociationIndices());
+    rewriter.replaceOp(expandOp,
+                       newMulExt.getResult(sourceResult.getResultNumber()));
+  } else {
+    return failure();
+  }
   rewriter.eraseOp(op);
   return success();
 }
@@ -117,9 +129,19 @@ LogicalResult PropagatableMulExt::matchAndRewriteCollapse(
   SmallVector<Value> operands =
       expandCollapseOperands(rewriter, op, collapseOp, *resultRank);
   rewriter.setInsertionPointAfter(op);
-  auto newMulExt = rewriter.create<hfusion::MulExtOp>(op->getLoc(), operands);
-  collapseResults(rewriter, op, newMulExt, collapseOp.getResult().getType(),
-                  collapseOp.getReassociationIndices());
+
+  if (isa<hfusion::MulExtOp>(op)) {
+    auto newMulExt = rewriter.create<hfusion::MulExtOp>(op->getLoc(), operands);
+    collapseResults(rewriter, op, newMulExt, collapseOp.getResult().getType(),
+                    collapseOp.getReassociationIndices());
+  } else if (isa<hfusion::MulExtUiOp>(op)) {
+    auto newMulExt =
+        rewriter.create<hfusion::MulExtUiOp>(op->getLoc(), operands);
+    collapseResults(rewriter, op, newMulExt, collapseOp.getResult().getType(),
+                    collapseOp.getReassociationIndices());
+  } else {
+    return failure();
+  }
   rewriter.eraseOp(op);
   // Other handlers call collapseAndReplace on results; for MulExt the
   // collapsed results already replace old uses. Erase the original collapse
