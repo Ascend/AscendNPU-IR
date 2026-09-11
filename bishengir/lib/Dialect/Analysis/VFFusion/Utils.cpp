@@ -340,8 +340,8 @@ static bool shouldSkipSumReduction(Operation *op,
     return false;
 
   LLVM_DEBUG(llvm::dbgs() << "[" DEBUG_TYPE
-                          << "] shouldSkipFusionForTreeReduce: sum-reduce dim="
-                          << dim << " rank=" << inputType.getRank()
+                          << "] shouldSkipFusion: sum-reduce dim=" << dim
+                          << " rank=" << inputType.getRank()
                           << " enableRA=" << option.enableRA
                           << " enableAR=" << option.enableAR << "\n");
 
@@ -381,10 +381,7 @@ static bool shouldSkipSumReduction(Operation *op,
   return false;
 }
 
-// Per-op tree-reduce gate: returns true for RA/AR sum-reductions that are
-// handed off to TreeReduceV2, so they stay outlined for the downstream pass.
-bool shouldSkipFusionForTreeReduce(Operation *op,
-                                   const VFFusionKindOption &option) {
+bool shouldSkipFusion(Operation *op, const VFFusionKindOption &option) {
   return llvm::TypeSwitch<Operation *, bool>(op)
       .Case<linalg::GenericOp, linalg::ReduceOp>(
           [&](auto /*typedOp*/) { return shouldSkipSumReduction(op, option); })

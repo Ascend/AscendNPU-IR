@@ -102,8 +102,7 @@ bool isExpandShapeOpCanFuseIntoVsstbPatternTranspose(Operation *op);
 /// phase, so they never reach areReshapesValidIfFused.
 bool isReshapeEliminableByPreVectorizationFusion(Operation *op);
 
-bool shouldSkipFusionForTreeReduce(Operation *op,
-                                   const VFFusionKindOption &option);
+bool shouldSkipFusion(Operation *op, const VFFusionKindOption &option);
 
 bool isComputeOp(Operation *op);
 
