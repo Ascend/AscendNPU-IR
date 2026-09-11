@@ -103,6 +103,21 @@ template <typename OpTy> std::string getCumOpLibraryCallName(OpTy op) {
     }
   }
 
+  // Membase: 1D fp32 cumsum uses a Sklansky scalar library call to match
+  // regbase floating-point addition order.
+  if constexpr (std::is_same_v<OpTy, VCumsumOp>) {
+    if (mod && !hacc::utils::isRegBasedArch(mod)) {
+      Type dstElemType = getElementTypeOrSelf(op.getDst());
+      if (isa<FloatType>(dstElemType) && dstElemType.isF32() &&
+          srcVecType.getRank() == 1 && cumDim == 0 && !op.getReverse()) {
+        std::stringstream ss;
+        ss << baseName.data() << "_1d_"
+           << getTypeName(op.getLoc(), elemType) << "_dim0";
+        return ss.str();
+      }
+    }
+  }
+
   bool reverse = op.getReverse();
   std::stringstream ss;
   ss << baseName.data() << (cumDim > 0 ? "_ara_" : "_ra_")
@@ -1212,6 +1227,40 @@ std::string NoMaxRankExternalModel<MmadL1Op>::getOpLibraryCallName(
 }
 
 //===----------------------------------------------------------------------===//
+// BatchMmadL1Op
+//===----------------------------------------------------------------------===//
+
+template <>
+std::string NoMaxRankExternalModel<BatchMmadL1Op>::getOpLibraryCallName(
+    Operation *op, std::optional<bool> isOpsAligned) const {
+  auto concreteOp = cast<BatchMmadL1Op>(op);
+  auto baseCallName = concreteOp.getOpName().str();
+  auto srcTypeName =
+      getTypeName(concreteOp.getLoc(),
+                  getElementTypeOrSelf(concreteOp.getDpsInputs()[0].getType()));
+  auto dstTypeName =
+      getTypeName(concreteOp.getLoc(),
+                  getElementTypeOrSelf(concreteOp.getDpsInits()[0].getType()));
+  std::string suffix;
+  if (concreteOp.getATranspose().has_value())
+    suffix += "_ta";
+  if (concreteOp.getBTranspose().has_value())
+    suffix += "_tb";
+  if (concreteOp.getEnable_HF32().has_value())
+    suffix += "_hf32";
+
+  if (concreteOp.getPerChannelBias()) {
+    auto biasTypeName = getTypeName(
+        concreteOp.getLoc(),
+        getElementTypeOrSelf(concreteOp.getPerChannelBias().getType()));
+    return baseCallName + "_with_" + biasTypeName + "_bias_" +
+           srcTypeName + "_to_" + dstTypeName + suffix;
+  }
+  return baseCallName + "_" + srcTypeName + "_to_" + dstTypeName +
+         suffix;
+}
+
+//===----------------------------------------------------------------------===//
 // MmadMxL1Op
 //===----------------------------------------------------------------------===//
 
@@ -1224,6 +1273,7 @@ std::string NoMaxRankExternalModel<MmadMxL1Op>::getOpLibraryCallName(
   auto elemBType = getElementTypeOrSelf(concreteOp.getDpsInputs()[1].getType());
 
   auto srcTypeName = getTypeName(concreteOp.getLoc(), elemAType);
+  auto bTypeName = getTypeName(concreteOp.getLoc(), elemBType);
   auto dstTypeName = getTypeName(
       concreteOp.getLoc(),
       getElementTypeOrSelf(concreteOp.getDpsInits()[0].getType()));
@@ -1235,13 +1285,16 @@ std::string NoMaxRankExternalModel<MmadMxL1Op>::getOpLibraryCallName(
         getElementTypeOrSelf(concreteOp.getPerChannelBias().getType()));
     finalName += "_with_" + biasTypeName + "_bias";
   }
-  finalName += "_" + srcTypeName + "_to_" + dstTypeName;
+  auto i8Type = IntegerType::get(concreteOp.getContext(), 8);
+  if (elemAType == i8Type && elemBType == i8Type)
+    finalName += "_" + srcTypeName + "_to_" + dstTypeName;
+  else
+    finalName += "_" + srcTypeName + "_" + bTypeName + "_to_" + dstTypeName;
   if (concreteOp.getATranspose().has_value())
     finalName += "_ta";
   if (concreteOp.getBTranspose().has_value())
     finalName += "_tb";
 
-  auto i8Type = IntegerType::get(concreteOp.getContext(), 8);
   auto lhsFmt = concreteOp.getLhsFormat();
   if (!lhsFmt || elemAType != i8Type || elemBType != i8Type)
     return finalName;
@@ -1356,6 +1409,15 @@ std::string NoMaxRankExternalModel<ND2NZOp>::getOpLibraryCallName(
         callName = callName + "_forbias";
     }
   }
+  // A rank-3 source carries a leading batch dimension and maps to the batched
+  // library function, which folds the batch into one MTE2 descriptor. Only
+  // regbase registers that variant.
+  auto mod = op->getParentOfType<ModuleOp>();
+  auto srcType = dyn_cast<MemRefType>(concreteOp.getDpsInputs()[0].getType());
+  if (mod && hacc::utils::isRegBasedArch(mod) && srcType &&
+      srcType.getRank() == 3)
+    callName = callName + "_batch";
+
   Type eleType = getElementTypeOrSelf(concreteOp.getDpsInputs()[0].getType());
   auto elemTypeName = getTypeName(concreteOp.getLoc(), eleType);
   return callName + "_" + elemTypeName;
@@ -1519,6 +1581,19 @@ static std::string getHistogramLibraryCallName(CustomOpT op) {
   if (op.getInputs().size() > 2)
     ss << "_masked";
   ss << "_" << getTypeName(op->getLoc(), elemType);
+  // Select the small-bin entry before template linking. Dynamic bin counts,
+  // masked inputs and other element types retain the general implementation.
+  auto mod = op->template getParentOfType<ModuleOp>();
+  if (mod && hacc::utils::isRegBasedArch(mod) && srcTy.getRank() == 1 &&
+      elemType.isInteger(32) && op.getInputs().size() == 2) {
+    if (auto constant =
+            op.getInputs()[1].template getDefiningOp<arith::ConstantOp>()) {
+      if (auto bins = dyn_cast<IntegerAttr>(constant.getValue())) {
+        if (bins.getInt() > 0 && bins.getInt() <= 256)
+          ss << "_small_bins";
+      }
+    }
+  }
   return ss.str();
 }
 
@@ -1743,7 +1818,7 @@ void bishengir::hivm::detail::registerLibraryFunctionOpInterfaceExtension(
     REGISTER_NO_MAX_RANK(MatmulOp);
     REGISTER_NO_MAX_RANK(MixMatmulOp);
     REGISTER_NO_MAX_RANK(MixGroupMatmulOp);
-    REGISTER_NO_LIBRARY_FUNCTION(BatchMmadL1Op);
+    REGISTER_NO_MAX_RANK(BatchMmadL1Op);
 
     // Other ops
     REGISTER_STATIC_MAX_RANK(DebugOp, 8);

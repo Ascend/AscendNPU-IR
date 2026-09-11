@@ -4140,6 +4140,358 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">, hivm.module_c
 }
 
 // -----
+// Square 128x128 tightly-coupled UB (QK scores) is halved along the Q rows.
+// AIC fixpipe must ROW_SPLIT; otherwise both AIV sub-blocks read the same
+// first 64 rows.
+// CHECK-LABEL:   func.func @square_qk_tcb_row_split_aic(
+// CHECK:           memref.alloc() : memref<64x128xf32, #hivm.address_space<ub>>
+// CHECK:           hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%{{.*}} : tensor<8x8x16x16xf32>) outs(%{{.*}} : memref<64x128xf32, #hivm.address_space<ub>>) dual_dst_mode = <ROW_SPLIT>
+// CHECK-LABEL:   func.func @square_qk_tcb_row_split_aiv(
+// CHECK:           annotation.mark %{{.*}} {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>, hivm.tiling_dim = 0 : index, tiledAlloc} : memref<64x128xf32, #hivm.address_space<ub>>
+// CHECK:           } {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">, hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @square_qk_tcb_row_split_aic() attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIC>, hivm.part_of_mix, hivm.vf_mode = #hivm.vf_mode<SIMD>, mix_mode = "mix", parallel_mode = "simd"} {
+    %true = arith.constant true
+    %c128 = arith.constant 128 : index
+    %alloc = memref.alloc() : memref<128x128xf32, #hivm.address_space<ub>>
+    annotation.mark %alloc {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>} : memref<128x128xf32, #hivm.address_space<ub>>
+    %empty = tensor.empty() : tensor<8x8x16x16xf32>
+    %mmad = hivm.hir.mmadL1 {fixpipe_for_result_already_inserted = true, normalized_in_L0C} ins(%empty, %empty, %true, %c128, %c128, %c128 : tensor<8x8x16x16xf32>, tensor<8x8x16x16xf32>, i1, index, index, index) outs(%empty : tensor<8x8x16x16xf32>) -> tensor<8x8x16x16xf32>
+    hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%mmad : tensor<8x8x16x16xf32>) outs(%alloc : memref<128x128xf32, #hivm.address_space<ub>>)
+    return
+  }
+  func.func @square_qk_tcb_row_split_aiv(%arg0: memref<?xf32>, %arg1: i32, %arg2: i32) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, hivm.vf_mode = #hivm.vf_mode<SIMD>, mix_mode = "mix", parallel_mode = "simd"} {
+    %c16 = arith.constant 16 : index
+    %c128 = arith.constant 128 : index
+    %0 = hivm.hir.get_block_idx -> i64
+    %1 = arith.trunci %0 : i64 to i32
+    %2 = arith.muli %arg2, %arg1 : i32
+    %3 = arith.divsi %1, %2 : i32
+    %alloc = memref.alloc() : memref<128x128xf32, #hivm.address_space<ub>>
+    annotation.mark %alloc {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>} : memref<128x128xf32, #hivm.address_space<ub>>
+    %memspacecast = memref.memory_space_cast %alloc : memref<128x128xf32, #hivm.address_space<ub>> to memref<128x128xf32>
+    %4 = bufferization.to_tensor %memspacecast restrict writable : memref<128x128xf32>
+    %empty = tensor.empty() : tensor<128x128xf32>
+    %5 = hivm.hir.vexp ins(%4 : tensor<128x128xf32>) outs(%empty : tensor<128x128xf32>) -> tensor<128x128xf32>
+    %extracted_qk = tensor.extract_slice %5[0, 0] [128, 16] [1, 1] : tensor<128x128xf32> to tensor<128x16xf32>
+    %6 = arith.index_cast %2 : i32 to index
+    %7 = arith.muli %6, %c128 : index
+    %8 = arith.index_cast %3 : i32 to index
+    %9 = arith.addi %7, %8 : index
+    %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [%9], sizes: [128, 16], strides: [16, 1] : memref<?xf32> to memref<128x16xf32, strided<[16, 1], offset: ?>>
+    %10 = arith.minsi %6, %c128 : index
+    %extracted_slice = tensor.extract_slice %extracted_qk[0, 0] [%10, %c16] [1, 1] : tensor<128x16xf32> to tensor<?x?xf32>
+    %subview = memref.subview %reinterpret_cast[0, 0] [%10, %c16] [1, 1] : memref<128x16xf32, strided<[16, 1], offset: ?>> to memref<?x?xf32, strided<[16, 1], offset: ?>>
+    hivm.hir.store ins(%extracted_slice : tensor<?x?xf32>) outs(%subview : memref<?x?xf32, strided<[16, 1], offset: ?>>)
+    return
+  }
+}
+
+// -----
+// Shrunk flex-attention AIV from before-1by2.mlir: softmax on 128x128 QK TCB
+// plus a 128x16 GM store. Analyzer leaves hivm.tiling_dim = -1 on the QK
+// alloc; bubble-up still halves dim 0 and overwrites it.
+// CHECK-LABEL:   func.func @flex_qk_tcb_inconsistent_aic(
+// CHECK:           memref.alloc() : memref<64x128xf32, #hivm.address_space<ub>>
+// CHECK:           hivm.hir.fixpipe {{.*}} dual_dst_mode = <ROW_SPLIT>
+// CHECK-LABEL:   func.func @flex_qk_tcb_inconsistent_aiv(
+// CHECK:           annotation.mark %{{.*}} {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>, hivm.tiling_dim = 0 : index, tiledAlloc} : memref<64x128xf32, #hivm.address_space<ub>>
+#map = affine_map<()[s0, s1] -> (s0 + s1 * 16)>
+#map1 = affine_map<()[s0] -> (s0 + 128)>
+#map2 = affine_map<()[s0, s1] -> (s0 - s1)>
+#map3 = affine_map<()[s0, s1] -> ((s0 - s1) ceildiv 16)>
+#map4 = affine_map<()[s0, s1] -> (s0 + s1)>
+#map5 = affine_map<()[s0, s1] -> (s0 + s1 + 1)>
+#map6 = affine_map<()[s0, s1, s2] -> (s0 + s1 + s2 * 16)>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">, hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @flex_qk_tcb_inconsistent_aic() attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIC>, hivm.part_of_mix, hivm.vf_mode = #hivm.vf_mode<SIMD>, mix_mode = "mix", parallel_mode = "simd"} {
+    %true = arith.constant true
+    %c128 = arith.constant 128 : index
+    %alloc = memref.alloc() : memref<128x128xf32, #hivm.address_space<ub>>
+    annotation.mark %alloc {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>} : memref<128x128xf32, #hivm.address_space<ub>>
+    %empty = tensor.empty() : tensor<8x8x16x16xf32>
+    %mmad = hivm.hir.mmadL1 {fixpipe_for_result_already_inserted = true, normalized_in_L0C} ins(%empty, %empty, %true, %c128, %c128, %c128 : tensor<8x8x16x16xf32>, tensor<8x8x16x16xf32>, i1, index, index, index) outs(%empty : tensor<8x8x16x16xf32>) -> tensor<8x8x16x16xf32>
+    hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%mmad : tensor<8x8x16x16xf32>) outs(%alloc : memref<128x128xf32, #hivm.address_space<ub>>)
+    return
+  }
+  // expected-remark @+1{{Selected tiling dim might have broadcast two different axis. Automatically disables strict mode.}}
+  func.func @flex_qk_tcb_inconsistent_aiv(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf16> {tt.tensor_kind = 0 : i32}, %arg3: memref<?xf16> {tt.tensor_kind = 0 : i32}, %arg4: memref<?xf16> {tt.tensor_kind = 0 : i32}, %arg5: memref<?xf32> {tt.tensor_kind = 1 : i32}, %arg6: memref<?xf32>, %arg7: memref<?xi32> {tt.tensor_kind = 0 : i32}, %arg8: memref<?xi32> {tt.tensor_kind = 0 : i32}, %arg9: memref<?xf32>, %arg10: memref<?xf32>, %arg11: memref<?xf16> {tt.tensor_kind = 0 : i32}, %arg12: memref<?xf32> {tt.tensor_kind = 0 : i32}, %arg13: memref<?xf16> {tt.tensor_kind = 1 : i32}, %arg14: i32, %arg15: i32, %arg16: i32) attributes {DirectlyUsedGMArgIdxList = [12, 11], SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, func_dyn_memref_args = dense<[true, true, true, true, true, true, true, true, true, true, true, true, true, true, false, false, false]> : vector<17xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, hivm.vf_mode = #hivm.vf_mode<MIX>, mix_mode = "mix", parallel_mode = "mix_simd_simt"} {
+    %c28_i32 = arith.constant 28 : i32
+    %c1_i32 = arith.constant 1 : i32
+    %c0_i16 = arith.constant 0 : i16
+    %cst = arith.constant -1.000000e+00 : f16
+    %cst_0 = arith.constant 2.000000e+00 : f32
+    %cst_1 = arith.constant 0.693147182 : f32
+    %c-2139095040_i32 = arith.constant -2139095040 : i32
+    %c2147483647_i32 = arith.constant 2147483647 : i32
+    %cst_2 = arith.constant dense<0> : tensor<1x128xi16>
+    %cst_3 = arith.constant 0.000000e+00 : f32
+    %c1_i8 = arith.constant 1 : i8
+    %cst_4 = arith.constant 0.000000e+00 : f16
+    %c1 = arith.constant 1 : index
+    %c3_i32 = arith.constant 3 : i32
+    %c0_i32 = arith.constant 0 : i32
+    %false = arith.constant false
+    %cst_5 = arith.constant 1.44269502 : f32
+    %cst_6 = arith.constant 0xFF800000 : f32
+    %cst_7 = arith.constant 2.500000e-01 : f32
+    %c1073741696_i32 = arith.constant 1073741696 : i32
+    %true = arith.constant true
+    %cst_8 = arith.constant 1.000000e+00 : f32
+    %c1073741824_i32 = arith.constant 1073741824 : i32
+    %c8388608_i32 = arith.constant 8388608 : i32
+    %c277 = arith.constant 277 : index
+    %c128 = arith.constant 128 : index
+    %c277_i32 = arith.constant 277 : i32
+    %c4_i32 = arith.constant 4 : i32
+    %c4432_i32 = arith.constant 4432 : i32
+    %c17728_i32 = arith.constant 17728 : i32
+    %c128_i32 = arith.constant 128 : i32
+    %cst_9 = arith.constant dense<1> : tensor<1x128xi16>
+    %c0 = arith.constant 0 : index
+    %0 = arith.muli %arg14, %arg15 : i32
+    %1 = arith.muli %0, %arg16 : i32
+    annotation.mark %1 {logical_block_num} : i32
+    %2 = hivm.hir.get_block_idx -> i64
+    %3 = arith.trunci %2 : i64 to i32
+    hivm.hir.sync_block_set[<VECTOR>, <PIPE_V>, <PIPE_FIX>] flag = 0
+    hivm.hir.sync_block_set[<VECTOR>, <PIPE_V>, <PIPE_FIX>] flag = 1
+    scf.for %arg17 = %3 to %1 step %c28_i32  : i32 {
+      hivm.hir.set_ctrl false at ctrl[60]
+      hivm.hir.set_ctrl true at ctrl[48]
+      %4 = arith.remsi %arg17, %arg14 : i32
+      %5 = arith.divsi %arg17, %arg14 : i32
+      %6 = arith.remsi %5, %arg15 : i32
+      %7 = arith.divsi %arg17, %0 : i32
+      %8 = arith.remsi %7, %arg16 : i32
+      %9 = tensor.empty() : tensor<1x128xf32>
+      %10 = hivm.hir.vbrc {hivm.tcore_type = #hivm.tcore_type<VECTOR>} ins(%cst_3 : f32) outs(%9 : tensor<1x128xf32>) -> tensor<1x128xf32>
+      %11 = tensor.empty() : tensor<1x128xi8>
+      %12 = hivm.hir.vbrc {hivm.tcore_type = #hivm.tcore_type<VECTOR>} ins(%c1_i8 : i8) outs(%11 : tensor<1x128xi8>) -> tensor<1x128xi8>
+      %13 = tensor.empty() : tensor<128x1xf16>
+      %14 = hivm.hir.vbrc {hivm.tcore_type = #hivm.tcore_type<VECTOR>} ins(%cst_4 : f16) outs(%13 : tensor<128x1xf16>) -> tensor<128x1xf16>
+      %15 = tensor.empty() : tensor<128x1xi8>
+      %16 = hivm.hir.vbrc {hivm.tcore_type = #hivm.tcore_type<VECTOR>} ins(%c1_i8 : i8) outs(%15 : tensor<128x1xi8>) -> tensor<128x1xi8>
+      %17 = tensor.empty() : tensor<128xf32>
+      %18 = hivm.hir.vbrc {hivm.tcore_type = #hivm.tcore_type<VECTOR>} ins(%cst_3 : f32) outs(%17 : tensor<128xf32>) -> tensor<128xf32>
+      %19 = tensor.empty() : tensor<128x16xf32>
+      %20 = hivm.hir.vbrc {hivm.tcore_type = #hivm.tcore_type<VECTOR>} ins(%cst_3 : f32) outs(%19 : tensor<128x16xf32>) -> tensor<128x16xf32>
+      %21 = tensor.empty() : tensor<128x128xf32>
+      %22 = hivm.hir.vbrc {hivm.tcore_type = #hivm.tcore_type<VECTOR>} ins(%cst_6 : f32) outs(%21 : tensor<128x128xf32>) -> tensor<128x128xf32>
+      %23 = hivm.hir.vbrc {hivm.tcore_type = #hivm.tcore_type<VECTOR>} ins(%cst_6 : f32) outs(%17 : tensor<128xf32>) -> tensor<128xf32>
+      %24 = arith.muli %6, %c17728_i32 : i32
+      %25 = arith.muli %8, %c4432_i32 : i32
+      %26 = arith.muli %4, %c128_i32 : i32
+      %27 = tensor.empty() : tensor<128xi32>
+      %28 = hivm.hir.varange offset[%c0] strides[%c1] outs(%27 : tensor<128xi32>) -> tensor<128xi32>
+      %29 = arith.divsi %4, %c8388608_i32 : i32
+      // expected-warning @+1 {{Extract slice is not fully bubbled up}}
+      %30 = hivm.hir.vadd ins(%28, %26 : tensor<128xi32>, i32) outs(%27 : tensor<128xi32>) -> tensor<128xi32>
+      %expanded = tensor.expand_shape %30 [[0, 1]] output_shape [128, 1] : tensor<128xi32> into tensor<128x1xi32>
+      %31 = arith.index_cast %26 : i32 to index
+      %32 = affine.apply #map1()[%31]
+      %33 = arith.maxsi %31, %c277 : index
+      %34 = arith.minsi %32, %33 : index
+      %35 = affine.apply #map2()[%34, %31]
+      %36 = arith.index_cast %29 : i32 to index
+      %reinterpret_cast = memref.reinterpret_cast %arg8 to offset: [%36], sizes: [1], strides: [1] : memref<?xi32> to memref<1xi32, strided<[1], offset: ?>>
+      %37 = memref.load %reinterpret_cast[%c0] : memref<1xi32, strided<[1], offset: ?>>
+      %38 = arith.muli %37, %c1073741824_i32 : i32
+      %reinterpret_cast_10 = memref.reinterpret_cast %arg7 to offset: [%36], sizes: [1], strides: [1] : memref<?xi32> to memref<1xi32, strided<[1], offset: ?>>
+      %39 = memref.load %reinterpret_cast_10[%c0] : memref<1xi32, strided<[1], offset: ?>>
+      %40 = arith.muli %39, %c8388608_i32 : i32
+      %41 = arith.minsi %40, %c3_i32 : i32
+      %42 = hivm.hir.vadd ins(%28, %38 : tensor<128xi32>, i32) outs(%27 : tensor<128xi32>) -> tensor<128xi32>
+      %expanded_11 = tensor.expand_shape %42 [[0, 1]] output_shape [1, 128] : tensor<128xi32> into tensor<1x128xi32>
+      %43 = tensor.empty() : tensor<128x1xi32>
+      %44 = hivm.hir.vmod ins(%expanded, %c277_i32 : tensor<128x1xi32>, i32) outs(%43 : tensor<128x1xi32>) -> tensor<128x1xi32>
+      %45 = tensor.empty() : tensor<128x1xi64>
+      %46 = hivm.hir.vcast {enable_overflow = true, enable_saturate = false, hivm.unsigned_mode = #hivm.unsigned_mode<si2si>} ins(%44 : tensor<128x1xi32>) outs(%45 : tensor<128x1xi64>) -> tensor<128x1xi64>
+      // expected-error @+1 {{dimension size (1) is less than minimum tile size (2)}}
+      %47:5 = scf.for %arg18 = %c0_i32 to %41 step %c1_i32 iter_args(%arg19 = %20, %arg20 = %18, %arg21 = %23, %arg22 = %expanded_11, %arg23 = %c0_i32) -> (tensor<128x16xf32>, tensor<128xf32>, tensor<128xf32>, tensor<1x128xi32>, i32)  : i32 {
+        %alloc = memref.alloc() : memref<128x128xf32, #hivm.address_space<ub>>
+        // expected-warning @+1 {{[hivm-bind-sub-block] AIC tightly coupled buffer tiling dim is inconsistent with vector and is overwritten}}
+        annotation.mark %alloc {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>} : memref<128x128xf32, #hivm.address_space<ub>>
+        %memspacecast = memref.memory_space_cast %alloc : memref<128x128xf32, #hivm.address_space<ub>> to memref<128x128xf32>
+        %69 = bufferization.to_tensor %memspacecast restrict writable : memref<128x128xf32>
+        hivm.hir.sync_block_wait[<VECTOR>, <PIPE_FIX>, <PIPE_V>] flag = 2
+        %70 = hivm.hir.vmul ins(%69, %cst_7 : tensor<128x128xf32>, f32) outs(%21 : tensor<128x128xf32>) -> tensor<128x128xf32>
+        hivm.hir.sync_block_set[<VECTOR>, <PIPE_V>, <PIPE_FIX>] flag = 1
+        %71 = tensor.empty() : tensor<1x128xi32>
+        %72 = hivm.hir.vmod ins(%arg22, %c277_i32 : tensor<1x128xi32>, i32) outs(%71 : tensor<1x128xi32>) -> tensor<1x128xi32>
+        %73 = hivm.hir.indirect_load ins(%arg11 : memref<?xf16>, %46 : tensor<128x1xi64>, %16 : tensor<128x1xi8>, %14 : tensor<128x1xf16>) outs(%13 : tensor<128x1xf16>) {hivm.vf_mode = #hivm.vf_mode<SIMT>, isVolatile = false} -> tensor<128x1xf16>
+        %74 = tensor.empty() : tensor<128x1xf32>
+        %75 = hivm.hir.vcast {enable_overflow = true, enable_saturate = false, hivm.unsigned_mode = #hivm.unsigned_mode<si2si>} ins(%73 : tensor<128x1xf16>) outs(%74 : tensor<128x1xf32>) -> tensor<128x1xf32>
+        %76 = hivm.hir.vadd ins(%70, %75 : tensor<128x128xf32>, tensor<128x1xf32>) outs(%21 : tensor<128x128xf32>) broadcast = [1] -> tensor<128x128xf32>
+        %77 = tensor.empty() : tensor<1x128xi64>
+        %78 = hivm.hir.vcast {enable_overflow = true, enable_saturate = false, hivm.unsigned_mode = #hivm.unsigned_mode<si2si>} ins(%72 : tensor<1x128xi32>) outs(%77 : tensor<1x128xi64>) -> tensor<1x128xi64>
+        %79 = hivm.hir.indirect_load ins(%arg12 : memref<?xf32>, %78 : tensor<1x128xi64>, %12 : tensor<1x128xi8>, %10 : tensor<1x128xf32>) outs(%9 : tensor<1x128xf32>) {hivm.vf_mode = #hivm.vf_mode<SIMT>, isVolatile = false} -> tensor<1x128xf32>
+        %80 = hivm.hir.vadd ins(%76, %79 : tensor<128x128xf32>, tensor<1x128xf32>) outs(%21 : tensor<128x128xf32>) broadcast = [0] -> tensor<128x128xf32>
+        %81 = tensor.empty() : tensor<1x128xi1>
+        %82 = hivm.hir.vcmp ins(%arg22, %c277_i32 : tensor<1x128xi32>, i32) outs(%81 : tensor<1x128xi1>) compare_mode = <lt> -> tensor<1x128xi1>
+        %83 = arith.index_cast %38 : i32 to index
+        %84 = affine.apply #map1()[%83]
+        %85 = arith.maxsi %83, %c277 : index
+        %86 = arith.minsi %84, %85 : index
+        %87 = affine.apply #map2()[%86, %83]
+        %extracted_slice_17 = tensor.extract_slice %80[0, 0] [128, %87] [1, 1] : tensor<128x128xf32> to tensor<128x?xf32>
+        %inserted_slice = tensor.insert_slice %extracted_slice_17 into %22[0, 0] [128, %87] [1, 1] : tensor<128x?xf32> into tensor<128x128xf32>
+        %88 = tensor.empty() : tensor<1x128xi16>
+        %89 = hivm.hir.vsel ins(%true, %cst_9, %cst_2 : i1, tensor<1x128xi16>, tensor<1x128xi16>) outs(%88 : tensor<1x128xi16>) -> tensor<1x128xi16>
+        %90 = hivm.hir.vsel ins(%false, %cst_9, %cst_2 : i1, tensor<1x128xi16>, tensor<1x128xi16>) outs(%88 : tensor<1x128xi16>) -> tensor<1x128xi16>
+        %91 = hivm.hir.vsel ins(%82, %89, %90 : tensor<1x128xi1>, tensor<1x128xi16>, tensor<1x128xi16>) outs(%88 : tensor<1x128xi16>) -> tensor<1x128xi16>
+        %92 = hivm.hir.vcmp ins(%91, %c0_i16 : tensor<1x128xi16>, i16) outs(%81 : tensor<1x128xi1>) compare_mode = <ne> -> tensor<1x128xi1>
+        %collapsed = tensor.collapse_shape %92 [[0, 1]] : tensor<1x128xi1> into tensor<128xi1>
+        %93 = tensor.empty() : tensor<128xf16>
+        %94 = hivm.hir.vsel ins(%collapsed, %cst, %cst_4 : tensor<128xi1>, f16, f16) outs(%93 : tensor<128xf16>) -> tensor<128xf16>
+        %expanded_18 = tensor.expand_shape %94 [[0, 1]] output_shape [1, 128] : tensor<128xf16> into tensor<1x128xf16>
+        %95 = tensor.empty() : tensor<128x128xf16>
+        %96 = hivm.hir.vbrc {hivm.tcore_type = #hivm.tcore_type<VECTOR>} ins(%expanded_18 : tensor<1x128xf16>) outs(%95 : tensor<128x128xf16>) broadcast_dims = [0] -> tensor<128x128xf16>
+        %97 = tensor.empty() : tensor<128x128xi1>
+        %98 = hivm.hir.vcmp ins(%96, %cst_4 : tensor<128x128xf16>, f16) outs(%97 : tensor<128x128xi1>) compare_mode = <ne> -> tensor<128x128xi1>
+        %99 = hivm.hir.vsel ins(%98, %inserted_slice, %cst_6 : tensor<128x128xi1>, tensor<128x128xf32>, f32) outs(%21 : tensor<128x128xf32>) -> tensor<128x128xf32>
+        %100 = hivm.hir.vmul ins(%99, %cst_5 : tensor<128x128xf32>, f32) outs(%21 : tensor<128x128xf32>) -> tensor<128x128xf32>
+        %101 = hivm.hir.bitcast %100 : tensor<128x128xf32> -> tensor<128x128xi32>
+        %102 = tensor.empty() : tensor<128x128xi32>
+        %103 = hivm.hir.vbrc {hivm.tcore_type = #hivm.tcore_type<VECTOR>} ins(%c2147483647_i32 : i32) outs(%102 : tensor<128x128xi32>) -> tensor<128x128xi32>
+        %104 = hivm.hir.vand ins(%101, %103 : tensor<128x128xi32>, tensor<128x128xi32>) outs(%102 : tensor<128x128xi32>) -> tensor<128x128xi32>
+        %105 = hivm.hir.vadd ins(%104, %c-2139095040_i32 : tensor<128x128xi32>, i32) outs(%102 : tensor<128x128xi32>) -> tensor<128x128xi32>
+        %106 = hivm.hir.vmin ins(%105, %c1_i32 : tensor<128x128xi32>, i32) outs(%105 : tensor<128x128xi32>) -> tensor<128x128xi32>
+        %107 = hivm.hir.vrelu ins(%106 : tensor<128x128xi32>) outs(%106 : tensor<128x128xi32>) -> tensor<128x128xi32>
+        %108 = hivm.hir.vcast {enable_overflow = false, enable_saturate = false, hivm.unsigned_mode = #hivm.unsigned_mode<si2si>} ins(%107 : tensor<128x128xi32>) outs(%21 : tensor<128x128xf32>) -> tensor<128x128xf32>
+        %109 = hivm.hir.vcmp ins(%108, %cst_3 : tensor<128x128xf32>, f32) outs(%97 : tensor<128x128xi1>) compare_mode = <ne> -> tensor<128x128xi1>
+        %110 = hivm.hir.vsel ins(%109, %cst_6, %100 : tensor<128x128xi1>, f32, tensor<128x128xf32>) outs(%21 : tensor<128x128xf32>) -> tensor<128x128xf32>
+        %expanded_19 = tensor.expand_shape %23 [[0, 1]] output_shape [128, 1] : tensor<128xf32> into tensor<128x1xf32>
+        %111 = hivm.hir.vreduce <max> ins(%110 : tensor<128x128xf32>) outs(%expanded_19 : tensor<128x1xf32>) reduce_dims = [1] -> tensor<128x1xf32>
+        %collapsed_20 = tensor.collapse_shape %111 [[0, 1]] : tensor<128x1xf32> into tensor<128xf32>
+        %112 = hivm.hir.bitcast %arg21 : tensor<128xf32> -> tensor<128xi32>
+        %113 = hivm.hir.vbrc {hivm.tcore_type = #hivm.tcore_type<VECTOR>} ins(%c2147483647_i32 : i32) outs(%27 : tensor<128xi32>) -> tensor<128xi32>
+        %114 = hivm.hir.vand ins(%112, %113 : tensor<128xi32>, tensor<128xi32>) outs(%27 : tensor<128xi32>) -> tensor<128xi32>
+        %115 = hivm.hir.vadd ins(%114, %c-2139095040_i32 : tensor<128xi32>, i32) outs(%27 : tensor<128xi32>) -> tensor<128xi32>
+        %116 = hivm.hir.vmin ins(%115, %c1_i32 : tensor<128xi32>, i32) outs(%115 : tensor<128xi32>) -> tensor<128xi32>
+        %117 = hivm.hir.vmax ins(%116, %c0_i32 : tensor<128xi32>, i32) outs(%116 : tensor<128xi32>) -> tensor<128xi32>
+        %118 = hivm.hir.vcast {enable_overflow = false, enable_saturate = false, hivm.unsigned_mode = #hivm.unsigned_mode<si2si>} ins(%117 : tensor<128xi32>) outs(%17 : tensor<128xf32>) -> tensor<128xf32>
+        %119 = tensor.empty() : tensor<128xi1>
+        %120 = hivm.hir.vcmp ins(%118, %cst_3 : tensor<128xf32>, f32) outs(%119 : tensor<128xi1>) compare_mode = <ne> -> tensor<128xi1>
+        %121 = hivm.hir.vsel ins(%120, %cst_6, %arg21 : tensor<128xi1>, f32, tensor<128xf32>) outs(%17 : tensor<128xf32>) -> tensor<128xf32>
+        %122 = hivm.hir.bitcast %collapsed_20 : tensor<128xf32> -> tensor<128xi32>
+        %123 = hivm.hir.vand ins(%122, %113 : tensor<128xi32>, tensor<128xi32>) outs(%27 : tensor<128xi32>) -> tensor<128xi32>
+        %124 = hivm.hir.vadd ins(%123, %c-2139095040_i32 : tensor<128xi32>, i32) outs(%27 : tensor<128xi32>) -> tensor<128xi32>
+        %125 = hivm.hir.vmin ins(%124, %c1_i32 : tensor<128xi32>, i32) outs(%124 : tensor<128xi32>) -> tensor<128xi32>
+        %126 = hivm.hir.vrelu ins(%125 : tensor<128xi32>) outs(%125 : tensor<128xi32>) -> tensor<128xi32>
+        %127 = hivm.hir.vcast {enable_overflow = false, enable_saturate = false, hivm.unsigned_mode = #hivm.unsigned_mode<si2si>} ins(%126 : tensor<128xi32>) outs(%17 : tensor<128xf32>) -> tensor<128xf32>
+        %128 = hivm.hir.vcmp ins(%127, %cst_3 : tensor<128xf32>, f32) outs(%119 : tensor<128xi1>) compare_mode = <ne> -> tensor<128xi1>
+        %129 = hivm.hir.vsel ins(%128, %cst_6, %collapsed_20 : tensor<128xi1>, f32, tensor<128xf32>) outs(%17 : tensor<128xf32>) -> tensor<128xf32>
+        %130 = hivm.hir.vmax ins(%121, %129 : tensor<128xf32>, tensor<128xf32>) outs(%17 : tensor<128xf32>) -> tensor<128xf32>
+        %131 = hivm.hir.vcmp ins(%130, %cst_6 : tensor<128xf32>, f32) outs(%119 : tensor<128xi1>) -> tensor<128xi1>
+        %132 = hivm.hir.vsel ins(%131, %cst_3, %130 : tensor<128xi1>, f32, tensor<128xf32>) outs(%17 : tensor<128xf32>) -> tensor<128xf32>
+        %133 = hivm.hir.vsub ins(%arg21, %132 : tensor<128xf32>, tensor<128xf32>) outs(%17 : tensor<128xf32>) -> tensor<128xf32>
+        %134 = hivm.hir.vmul ins(%133, %cst_1 : tensor<128xf32>, f32) outs(%17 : tensor<128xf32>) -> tensor<128xf32>
+        %135 = hivm.hir.vexp ins(%134 : tensor<128xf32>) outs(%17 : tensor<128xf32>) -> tensor<128xf32>
+        %expanded_21 = tensor.expand_shape %132 [[0, 1]] output_shape [128, 1] : tensor<128xf32> into tensor<128x1xf32>
+        %136 = hivm.hir.vsub ins(%100, %expanded_21 : tensor<128x128xf32>, tensor<128x1xf32>) outs(%21 : tensor<128x128xf32>) broadcast = [1] -> tensor<128x128xf32>
+        %137 = hivm.hir.vmul ins(%136, %cst_1 : tensor<128x128xf32>, f32) outs(%21 : tensor<128x128xf32>) -> tensor<128x128xf32>
+        %138 = hivm.hir.vexp ins(%137 : tensor<128x128xf32>) outs(%21 : tensor<128x128xf32>) -> tensor<128x128xf32>
+        %139 = hivm.hir.vmul ins(%arg20, %135 : tensor<128xf32>, tensor<128xf32>) outs(%17 : tensor<128xf32>) -> tensor<128xf32>
+        %expanded_22 = tensor.expand_shape %18 [[0, 1]] output_shape [128, 1] : tensor<128xf32> into tensor<128x1xf32>
+        %140 = hivm.hir.vreduce <sum> ins(%138 : tensor<128x128xf32>) outs(%expanded_22 : tensor<128x1xf32>) reduce_dims = [1] -> tensor<128x1xf32>
+        %collapsed_23 = tensor.collapse_shape %140 [[0, 1]] : tensor<128x1xf32> into tensor<128xf32>
+        %141 = hivm.hir.vadd ins(%139, %collapsed_23 : tensor<128xf32>, tensor<128xf32>) outs(%17 : tensor<128xf32>) -> tensor<128xf32>
+        %expanded_24 = tensor.expand_shape %135 [[0, 1]] output_shape [128, 1] : tensor<128xf32> into tensor<128x1xf32>
+        %142 = hivm.hir.vmul ins(%arg19, %expanded_24 : tensor<128x16xf32>, tensor<128x1xf32>) outs(%19 : tensor<128x16xf32>) broadcast = [1] -> tensor<128x16xf32>
+        %143 = hivm.hir.vcast {enable_overflow = true, enable_saturate = false, hivm.unsigned_mode = #hivm.unsigned_mode<si2si>} ins(%138 : tensor<128x128xf32>) outs(%95 : tensor<128x128xf16>) -> tensor<128x128xf16>
+        %expanded_25 = tensor.expand_shape %143 [[0], [1, 2]] output_shape [128, 8, 16] : tensor<128x128xf16> into tensor<128x8x16xf16>
+        %144 = tensor.empty() : tensor<8x128x16xf16>
+        %145 = hivm.hir.vtranspose ins(%expanded_25 : tensor<128x8x16xf16>) outs(%144 : tensor<8x128x16xf16>) permutation = [1, 0, 2] -> tensor<8x128x16xf16>
+        %expanded_26 = tensor.expand_shape %145 [[0], [1, 2], [3]] output_shape [8, 8, 16, 16] : tensor<8x128x16xf16> into tensor<8x8x16x16xf16>
+        %alloc_27 = memref.alloc() : memref<8x8x16x16xf16, #hivm.address_space<cbuf>>
+        annotation.mark %alloc_27 {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<2>} : memref<8x8x16x16xf16, #hivm.address_space<cbuf>>
+        hivm.hir.sync_block_wait[<VECTOR>, <PIPE_MTE1>, <PIPE_MTE3>] flag = 1
+        hivm.hir.copy ins(%expanded_26 : tensor<8x8x16x16xf16>) outs(%alloc_27 : memref<8x8x16x16xf16, #hivm.address_space<cbuf>>) {"hivm.inserted-copy"}
+        hivm.hir.sync_block_set[<VECTOR>, <PIPE_MTE3>, <PIPE_MTE1>] flag = 3
+        %alloc_28 = memref.alloc() : memref<128x16xf32, #hivm.address_space<ub>>
+        annotation.mark %alloc_28 {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<1>} : memref<128x16xf32, #hivm.address_space<ub>>
+        %memspacecast_29 = memref.memory_space_cast %alloc_28 : memref<128x16xf32, #hivm.address_space<ub>> to memref<128x16xf32>
+        %146 = bufferization.to_tensor %memspacecast_29 restrict writable : memref<128x16xf32>
+        hivm.hir.sync_block_wait[<VECTOR>, <PIPE_FIX>, <PIPE_V>] flag = 2
+        %147 = hivm.hir.vadd ins(%146, %142 : tensor<128x16xf32>, tensor<128x16xf32>) outs(%19 : tensor<128x16xf32>) -> tensor<128x16xf32>
+        hivm.hir.sync_block_set[<VECTOR>, <PIPE_V>, <PIPE_FIX>] flag = 0
+        %148 = arith.divsi %arg18, %c8388608_i32 : i32
+        %149 = arith.index_cast %148 : i32 to index
+        %150 = affine.apply #map4()[%36, %149]
+        %reinterpret_cast_30 = memref.reinterpret_cast %arg8 to offset: [%150], sizes: [1], strides: [1] : memref<?xi32> to memref<1xi32, strided<[1], offset: ?>>
+        %151 = memref.load %reinterpret_cast_30[%c0] : memref<1xi32, strided<[1], offset: ?>>
+        %152 = arith.addi %148, %c1_i32 : i32
+        %153 = arith.cmpi slt, %152, %39 : i32
+        %154 = affine.apply #map5()[%36, %149]
+        %reinterpret_cast_31 = memref.reinterpret_cast %arg8 to offset: [%154], sizes: [1], strides: [1] : memref<?xi32> to memref<1xi32, strided<[1], offset: ?>>
+        %155 = memref.load %reinterpret_cast_31[%c0] : memref<1xi32, strided<[1], offset: ?>>
+        %156 = tensor.empty() : tensor<1xi1>
+        %inserted = tensor.insert %153 into %156[%c0] : tensor<1xi1>
+        %157 = tensor.empty() : tensor<1xi32>
+        %inserted_32 = tensor.insert %155 into %157[%c0] : tensor<1xi32>
+        %158 = hivm.hir.vsel ins(%inserted, %inserted_32, %c0_i32 : tensor<1xi1>, tensor<1xi32>, i32) outs(%157 : tensor<1xi32>) -> tensor<1xi32>
+        %extracted = tensor.extract %158[%c0] {"DuplicateTensorExtractForCube::visitedLabel" = 1 : i32} : tensor<1xi32>
+        %159 = memref_ext.alloc_workspace() from %arg1 offset = [%c0] : from memref<?xi8> to memref<1xi32>
+        %160 = bufferization.to_tensor %159 restrict writable : memref<1xi32>
+        hivm.hir.sync_block_wait[<VECTOR>, <PIPE_S>, <PIPE_MTE3>] flag = 0
+        %161 = hivm.hir.store ins(%158 : tensor<1xi32>) outs(%160 : tensor<1xi32>) {"hivm.inserted-store"} -> tensor<1xi32>
+        hivm.hir.sync_block_set[<VECTOR>, <PIPE_MTE3>, <PIPE_S>] flag = 2
+        annotation.mark %161 {hivm.tcore_type = #hivm.tcore_type<VECTOR>} : tensor<1xi32>
+        %162 = arith.addi %arg18, %c1_i32 : i32
+        %163 = arith.remsi %162, %c8388608_i32 : i32
+        %164 = arith.cmpi eq, %163, %c0_i32 : i32
+        %165 = arith.subi %extracted, %151 : i32
+        %166 = arith.muli %165, %c1073741824_i32 : i32
+        %167 = arith.subi %166, %c1073741696_i32 : i32
+        %168 = arith.extui %164 : i1 to i32
+        %169 = arith.muli %167, %168 : i32
+        %170 = arith.subi %c1_i32, %168 : i32
+        %171 = arith.muli %170, %c128_i32 : i32
+        %172 = arith.addi %169, %171 : i32
+        %173 = hivm.hir.vadd ins(%arg22, %172 : tensor<1x128xi32>, i32) outs(%71 : tensor<1x128xi32>) -> tensor<1x128xi32>
+        %174 = arith.addi %arg23, %172 : i32
+        scf.yield %147, %141, %130, %173, %174 : tensor<128x16xf32>, tensor<128xf32>, tensor<128xf32>, tensor<1x128xi32>, i32
+      } {fixpipe_for_mmad_result_already_inserted = true}
+      %48 = tensor.empty() : tensor<128xi1>
+      %49 = hivm.hir.vcmp ins(%47#1, %cst_3 : tensor<128xf32>, f32) outs(%48 : tensor<128xi1>) -> tensor<128xi1>
+      %50 = hivm.hir.vsel ins(%49, %cst_8, %47#1 : tensor<128xi1>, f32, tensor<128xf32>) outs(%17 : tensor<128xf32>) -> tensor<128xf32>
+      %expanded_12 = tensor.expand_shape %50 [[0, 1]] output_shape [128, 1] : tensor<128xf32> into tensor<128x1xf32>
+      %51 = hivm.hir.vdiv ins(%47#0, %expanded_12 : tensor<128x16xf32>, tensor<128x1xf32>) outs(%19 : tensor<128x16xf32>) broadcast = [1] -> tensor<128x16xf32>
+      %52 = arith.index_cast %25 : i32 to index
+      %53 = arith.index_cast %24 : i32 to index
+      %54 = affine.apply #map6()[%53, %52, %31]
+      %reinterpret_cast_13 = memref.reinterpret_cast %arg13 to offset: [%54], sizes: [128, 16], strides: [16, 1] : memref<?xf16> to memref<128x16xf16, strided<[16, 1], offset: ?>>
+      %55 = tensor.empty() : tensor<128x16xf16>
+      %56 = hivm.hir.vcast {enable_overflow = true, enable_saturate = false, hivm.unsigned_mode = #hivm.unsigned_mode<si2si>} ins(%51 : tensor<128x16xf32>) outs(%55 : tensor<128x16xf16>) -> tensor<128x16xf16>
+      %57 = arith.minsi %35, %c128 : index
+      %58 = arith.maxsi %57, %c0 : index
+      %extracted_slice = tensor.extract_slice %56[0, 0] [%58, 16] [1, 1] : tensor<128x16xf16> to tensor<?x16xf16>
+      %subview = memref.subview %reinterpret_cast_13[0, 0] [%58, 16] [1, 1] : memref<128x16xf16, strided<[16, 1], offset: ?>> to memref<?x16xf16, strided<[16, 1], offset: ?>>
+      hivm.hir.store ins(%extracted_slice : tensor<?x16xf16>) outs(%subview : memref<?x16xf16, strided<[16, 1], offset: ?>>)
+      %59 = arith.muli %6, %c4_i32 : i32
+      %60 = arith.addi %59, %8 : i32
+      %61 = arith.muli %60, %c277_i32 : i32
+      %62 = arith.index_cast %61 : i32 to index
+      %63 = affine.apply #map4()[%62, %31]
+      %reinterpret_cast_14 = memref.reinterpret_cast %arg5 to offset: [%63], sizes: [128], strides: [1] : memref<?xf32> to memref<128xf32, strided<[1], offset: ?>>
+      %64 = hivm.hir.vln ins(%50 : tensor<128xf32>) outs(%17 : tensor<128xf32>) -> tensor<128xf32>
+      %65 = hivm.hir.vbrc {hivm.tcore_type = #hivm.tcore_type<VECTOR>} ins(%cst_0 : f32) outs(%17 : tensor<128xf32>) -> tensor<128xf32>
+      %66 = hivm.hir.vln ins(%65 : tensor<128xf32>) outs(%17 : tensor<128xf32>) -> tensor<128xf32>
+      %67 = hivm.hir.vdiv ins(%64, %66 : tensor<128xf32>, tensor<128xf32>) outs(%17 : tensor<128xf32>) -> tensor<128xf32>
+      %68 = hivm.hir.vadd ins(%47#2, %67 : tensor<128xf32>, tensor<128xf32>) outs(%17 : tensor<128xf32>) -> tensor<128xf32>
+      %extracted_slice_15 = tensor.extract_slice %68[0] [%35] [1] : tensor<128xf32> to tensor<?xf32>
+      %subview_16 = memref.subview %reinterpret_cast_14[0] [%35] [1] : memref<128xf32, strided<[1], offset: ?>> to memref<?xf32, strided<[1], offset: ?>>
+      hivm.hir.store ins(%extracted_slice_15 : tensor<?xf32>) outs(%subview_16 : memref<?xf32, strided<[1], offset: ?>>)
+      hivm.hir.set_ctrl true at ctrl[60]
+    } {autoblockify.subloop}
+    hivm.hir.sync_block_wait[<VECTOR>, <PIPE_S>, <PIPE_MTE3>] flag = 0
+    hivm.hir.sync_block_wait[<VECTOR>, <PIPE_MTE1>, <PIPE_MTE3>] flag = 1
+    return
+  }
+}
+
+// -----
 // Nested scf.if yields bufferization.to_tensor from ping-pong UB buffers.
 // Sub-block tiling requires bubbling slices through those to_tensor ops;
 // until that succeeds the pass reverts rather than leaving a tiled loop

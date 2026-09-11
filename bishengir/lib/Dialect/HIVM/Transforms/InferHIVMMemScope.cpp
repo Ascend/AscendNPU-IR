@@ -295,8 +295,6 @@ private:
 LogicalResult hivm::inferAndPropagateMemScopeForLocalMatmulLike(
     LocalMatmulLikeOpInterface op) {
   Operation *mmadOp = op.getOperation();
-  assert(!isa<BatchMmadL1Op>(mmadOp) &&
-         "BatchMmadL1Op should be decomposed before inferring memory scope");
 
   auto dpsOp = cast<DestinationStyleOpInterface>(mmadOp);
   if (!dpsOp.hasPureBufferSemantics()) {
@@ -715,10 +713,7 @@ void InferHIVMMemScopePass::runOnOperation() {
   // Infer and propagate memory scope for device functions.
   for (auto func : deviceFuncList) {
     // Set the memory scope of local matmul-like ops to L1 or L0C.
-    // BatchMmadL1Op should have been decomposed before this pass.
     func->walk([&](LocalMatmulLikeOpInterface op) {
-      if (isa<BatchMmadL1Op>(op.getOperation()))
-        return;
       if (failed(hivm::inferAndPropagateMemScopeForLocalMatmulLike(op))) {
         if (isa<MmadMxL1Op>(op.getOperation()))
           signalPassFailure();

@@ -112,6 +112,10 @@ protected:
                                                      OperationBase *parentOp);
 
   std::unique_ptr<OperationBase>
+  getDecomposedBatchMmadl1(hivm::BatchMmadL1Op batchOp,
+                           OperationBase *parentOp);
+
+  std::unique_ptr<OperationBase>
   getDecomposedMmadMxL1(hivm::MmadMxL1Op mmadMxL1Op, OperationBase *parentOp);
 
   // Build sync IR occurrences from the operation tree.

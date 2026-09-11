@@ -307,7 +307,7 @@ func.func @test_mulsi_extended(%arg0: vector<64xi64>, %arg1: vector<64xi64>) -> 
 // -----
 
 // CHECK-LABEL: @test_mului_extended
-// CHECK: ave.hir.mull
+// CHECK: ave.hir.mull {{.*}} {cast = #hivm.cast<cast_unsigned>}
 func.func @test_mului_extended(%arg0: vector<64xi64>, %arg1: vector<64xi64>) -> (vector<64xi64>, vector<64xi64>){
   %low, %high = arith.mului_extended  %arg0, %arg1 : vector<64xi64>
   return %low, %high : vector<64xi64>, vector<64xi64>

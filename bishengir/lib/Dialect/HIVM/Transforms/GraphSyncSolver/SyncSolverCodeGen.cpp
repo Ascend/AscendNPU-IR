@@ -650,10 +650,10 @@ llvm::LogicalResult CodeGenerator::handleMmadL1SyncOps(IRRewriter &rewriter,
   if (opBase->parentOp == nullptr || opBase->parentOp->parentOp == nullptr) {
     return llvm::failure();
   }
-  hivm::MmadL1Op mmadl1Op;
+  Operation *mmadl1Op = nullptr;
   if (auto *mmadL1Loop = dyn_cast<MmadL1LoopOp>(opBase->parentOp->parentOp)) {
-    mmadl1Op = llvm::dyn_cast<hivm::MmadL1Op>(mmadL1Loop->op);
-    assert(mmadl1Op != nullptr);
+    mmadl1Op = mmadL1Loop->op;
+    assert((isa<hivm::MmadL1Op, hivm::BatchMmadL1Op>(mmadl1Op)));
   }
   if (mmadl1Op == nullptr) {
     return llvm::failure();
@@ -661,12 +661,32 @@ llvm::LogicalResult CodeGenerator::handleMmadL1SyncOps(IRRewriter &rewriter,
   assert(isa<LoadL0AOp>(opBase) || isa<LoadL0BOp>(opBase));
   assert(isa<SetFlagOp>(syncOp) || isa<WaitFlagOp>(syncOp));
   if (auto *setFlagOp = dyn_cast<SetFlagOp>(syncOp)) {
+    auto recordSetEvent = [&](Value &eventSlot) {
+      Value newEvent =
+          getEventIdValue(rewriter, setFlagOp, mmadl1Op->getLoc());
+      if (eventSlot && isa<hivm::BatchMmadL1Op>(mmadl1Op)) {
+        // BatchMmadL1 has only one MTE1->MTE2 event operand for each of A
+        // and B. Buffer reuse can nevertheless create multiple release
+        // edges from the same internal L0 load (for example, one edge to
+        // the next K stage and one edge to the next persistent task). Do
+        // not silently overwrite the first edge: materialize it right
+        // after the macro on PIPE_MTE1, where all of this macro's L1 reads
+        // have been issued. Keep the newest edge in the macro operand so
+        // the existing intra-task placement is unchanged.
+        PatternRewriter::InsertionGuard guard(rewriter);
+        rewriter.setInsertionPointAfter(mmadl1Op);
+        auto *ctx = funcOp->getContext();
+        auto setPipe = PipeAttr::get(ctx, setFlagOp->pipeSrc);
+        auto waitPipe = PipeAttr::get(ctx, setFlagOp->pipeDst);
+        rewriter.create<hivm::SetFlagOp>(mmadl1Op->getLoc(), setPipe,
+                                         waitPipe, EventAttr{}, eventSlot);
+      }
+      eventSlot = newEvent;
+    };
     if (isa<LoadL0AOp>(opBase)) {
-      mmadl1SyncArgsMap[mmadl1Op].l1AWaitL0Event =
-          getEventIdValue(rewriter, setFlagOp, mmadl1Op->getLoc());
+      recordSetEvent(mmadl1SyncArgsMap[mmadl1Op].l1AWaitL0Event);
     } else if (isa<LoadL0BOp>(opBase)) {
-      mmadl1SyncArgsMap[mmadl1Op].l1BWaitL0Event =
-          getEventIdValue(rewriter, setFlagOp, mmadl1Op->getLoc());
+      recordSetEvent(mmadl1SyncArgsMap[mmadl1Op].l1BWaitL0Event);
     }
   } else if (auto *waitFlagOp = dyn_cast<WaitFlagOp>(syncOp)) {
     if (isa<LoadL0AOp>(opBase)) {
@@ -750,7 +770,8 @@ Value CodeGenerator::getLoopDBCond(IRRewriter &rewriter, Operation *op) {
 void CodeGenerator::insertPipeMPipeMte1OuterBwdPairs(IRRewriter &rewriter) {
   // Find the first and last Mmad-type op without a full tree traversal.
   auto firstLastMmadOps =
-      getFirstLastOpOfTypes<hivm::MmadL1Op, hivm::MmadMxL1Op>(funcOp);
+      getFirstLastOpOfTypes<hivm::MmadL1Op, hivm::BatchMmadL1Op,
+                            hivm::MmadMxL1Op>(funcOp);
   if (failed(firstLastMmadOps)) {
     return;
   }
@@ -788,7 +809,7 @@ void CodeGenerator::insertMmadL1SyncArgs(IRRewriter &rewriter) {
         mmadL1Op->getLoc(), rewriter.getI64Type(), -1);
 #endif
     if (options.isMemBasedArch) {
-      syncArgs.kLoopDBCond = getLoopDBCond(rewriter, mmadL1Op.getOperation());
+      syncArgs.kLoopDBCond = getLoopDBCond(rewriter, mmadL1Op);
       syncArgs.bwdPipeMPipeMTE1Event0 = rewriter.create<arith::ConstantIntOp>(
           mmadL1Op->getLoc(), static_cast<int64_t>(EVENT::EVENT_ID0),
           static_cast<unsigned>(64));
@@ -809,7 +830,13 @@ void CodeGenerator::insertMmadL1SyncArgs(IRRewriter &rewriter) {
         val = defaultValue;
       }
     }
-    mmadL1Op.getSyncRelatedArgsMutable().assign(newArgs);
+    if (auto mmol = dyn_cast<hivm::MmadL1Op>(mmadL1Op)) {
+      mmol.getSyncRelatedArgsMutable().assign(newArgs);
+    } else {
+      cast<hivm::BatchMmadL1Op>(mmadL1Op)
+          .getSyncRelatedArgsMutable()
+          .assign(newArgs);
+    }
   }
 }
 

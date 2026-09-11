@@ -88,7 +88,7 @@ ND2NZOp createND2NZFromLoad(PatternRewriter &rewriter, Location loc,
   return rewriter.create<ND2NZOp>(
       loc, resultTypes, src, dst, rewriter.getUnitAttr(), hasInitOutBuffer,
       hasInitOutBuffer ? loadOp.getPadValue() : Value{},
-      loadOp.getInitCondition());
+      loadOp.getInitCondition(), /*l2_cache_mode=*/IntegerAttr{});
 }
 
 LogicalResult verifyLoadDominatesConvertLayout(LoadOp loadOp,

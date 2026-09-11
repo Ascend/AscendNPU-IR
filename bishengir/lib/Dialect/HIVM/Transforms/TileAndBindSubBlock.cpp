@@ -152,7 +152,8 @@ static void insertBubblePropagatorUpLinkForSlicedOperand(
       operandValue, slicedMemrefType, mixedOffsets[tilingDim],
       mixedSize[tilingDim], tilingDim, rewriter);
   operand->set(upLink.getResult(0));
-  hivm::detail::markTiledTightlyCoupledAllocIfNeeded(rewriter, operandValue);
+  hivm::detail::markTiledTightlyCoupledAllocIfNeeded(rewriter, operandValue,
+                                                     tilingDim);
 }
 
 static void modifyOpToSliced(RewriterBase &rewriter, OpOperand *operand,
@@ -1591,8 +1592,8 @@ void TileAndBindSubBlockPass::runOnOperation() {
     return;
   }
 
-  if (failed(tileAicFixpipeFuncsIfNeeded(aicFunctions,
-                                         tightlyCoupledBufferToTilingDim))) {
+  if (failed(tileAicFixpipeFuncsIfNeeded(
+          aicFunctions, tightlyCoupledBufferToTilingDim, batchMatmul))) {
     if (failed(restoreFunctionsFromBackups(moduleOp, aicRollbackBackups,
                                            /*limitSubBlockToStore=*/false)) ||
         failed(restoreFunctionsFromBackups(moduleOp, aivRollbackBackups,

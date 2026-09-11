@@ -512,10 +512,19 @@ rewriteFixpipeThrowOutBatch(Value matrixToStore, SmallVector<Value> indexes,
 /// }
 class TileBatchMM : public OpRewritePattern<hivm::BatchMmadL1Op> {
 public:
-  using OpRewritePattern<hivm::BatchMmadL1Op>::OpRewritePattern;
+  TileBatchMM(MLIRContext *ctx, bool keepRegBaseBatch)
+      : OpRewritePattern<hivm::BatchMmadL1Op>(ctx),
+        keepRegBaseBatch(keepRegBaseBatch) {}
 
   LogicalResult matchAndRewrite(hivm::BatchMmadL1Op batchmmOp,
                                 PatternRewriter &rewriter) const override {
+    // Keep the regbase batch tile intact for the BatchMmad library path.
+    // Its L0C output tiling needs a dedicated BatchMmad/Fixpipe rewrite;
+    // this tensor-level decomposition cannot preserve resident batched L1.
+    auto module = batchmmOp->getParentOfType<ModuleOp>();
+    if (keepRegBaseBatch && module && hacc::utils::isRegBasedArch(module))
+      return failure();
+
     Value matrixC = batchmmOp.getResultTensors()[0];
     auto matrixCType = dyn_cast<RankedTensorType>(matrixC.getType());
     assert(matrixCType.getRank() == 3);
@@ -593,6 +602,9 @@ public:
 
     return success();
   }
+
+private:
+  bool keepRegBaseBatch;
 };
 
 } // anonymous namespace
@@ -600,6 +612,9 @@ public:
 class TileBatchMMIntoLoopPass
     : public impl::TileBatchMMIntoLoopBase<TileBatchMMIntoLoopPass> {
 public:
+  using impl::TileBatchMMIntoLoopBase<
+      TileBatchMMIntoLoopPass>::TileBatchMMIntoLoopBase;
+
   void runOnOperation() override;
 };
 
@@ -607,12 +622,13 @@ void TileBatchMMIntoLoopPass::runOnOperation() {
   func::FuncOp funcOp = getOperation();
 
   RewritePatternSet patterns(&getContext());
-  patterns.add<TileBatchMM>(&getContext());
+  patterns.add<TileBatchMM>(&getContext(), keepRegBaseBatch);
   if (failed(applyPatternsGreedily(funcOp, std::move(patterns)))) {
     return signalPassFailure();
   }
 }
 
-std::unique_ptr<Pass> mlir::hivm::createTileBatchMMIntoLoopPass() {
-  return std::make_unique<TileBatchMMIntoLoopPass>();
+std::unique_ptr<Pass> mlir::hivm::createTileBatchMMIntoLoopPass(
+    const TileBatchMMIntoLoopOptions &options) {
+  return std::make_unique<TileBatchMMIntoLoopPass>(options);
 }

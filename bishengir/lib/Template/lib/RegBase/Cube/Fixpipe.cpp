@@ -1,5 +1,11 @@
 #include "compat/Fixpipe/Fixpipe.cpp"
 
+// The included file closes its own extern "C" block, so everything registered
+// below needs its own. These are _mlir_ciface_* entry points the conversion
+// calls by name; without C linkage they are emitted mangled and no kernel can
+// resolve them.
+extern "C" {
+
 //===-------------------------------------------------------------------===//
 // fixpipe, 4 dim to 2 dim, nz2nd
 //===-------------------------------------------------------------------===//
@@ -15,6 +21,17 @@ REGISTE_FIXPIPE(cc, ubuf, 4, 2, int32_t, int8_t, nz2nd, TransformMode::NZ_2_ND);
 REGISTE_FIXPIPE(cc, ubuf, 4, 2, int32_t, uint8_t, nz2nd, TransformMode::NZ_2_ND);
 REGISTE_FIXPIPE(cc, ubuf, 4, 2, int32_t, int32_t, nz2nd, TransformMode::NZ_2_ND);
 
+//===-------------------------------------------------------------------===//
+// fixpipe, 5 dim to 3 dim, nz2nd (batched via ND_PARA)
+//===-------------------------------------------------------------------===//
+
+REGISTE_FIXPIPE(cc, ubuf, 5, 3, float, half, nz2nd, TransformMode::NZ_2_ND);
+REGISTE_FIXPIPE(cc, ubuf, 5, 3, float, bfloat16_t, nz2nd,
+                TransformMode::NZ_2_ND);
+REGISTE_FIXPIPE(cc, ubuf, 5, 3, float, float, nz2nd, TransformMode::NZ_2_ND);
+REGISTE_FIXPIPE(cc, ubuf, 5, 3, int32_t, int32_t, nz2nd,
+                TransformMode::NZ_2_ND);
+
 #if defined(__DAV_C310__)
 REGISTE_FIXPIPE_DUAL(cc, ubuf, 4, 2, float, half, nz2nd, TransformMode::NZ_2_ND);
 REGISTE_FIXPIPE_DUAL(cc, ubuf, 4, 2, float, bfloat16_t, nz2nd, TransformMode::NZ_2_ND);
@@ -26,6 +43,15 @@ REGISTE_FIXPIPE_DUAL(cc, ubuf, 4, 2, int32_t, half, nz2nd, TransformMode::NZ_2_N
 REGISTE_FIXPIPE_DUAL(cc, ubuf, 4, 2, int32_t, int8_t, nz2nd, TransformMode::NZ_2_ND);
 REGISTE_FIXPIPE_DUAL(cc, ubuf, 4, 2, int32_t, uint8_t, nz2nd, TransformMode::NZ_2_ND);
 REGISTE_FIXPIPE_DUAL(cc, ubuf, 4, 2, int32_t, int32_t, nz2nd, TransformMode::NZ_2_ND);
+
+REGISTE_FIXPIPE_DUAL(cc, ubuf, 5, 3, float, half, nz2nd,
+                     TransformMode::NZ_2_ND);
+REGISTE_FIXPIPE_DUAL(cc, ubuf, 5, 3, float, bfloat16_t, nz2nd,
+                     TransformMode::NZ_2_ND);
+REGISTE_FIXPIPE_DUAL(cc, ubuf, 5, 3, float, float, nz2nd,
+                     TransformMode::NZ_2_ND);
+REGISTE_FIXPIPE_DUAL(cc, ubuf, 5, 3, int32_t, int32_t, nz2nd,
+                     TransformMode::NZ_2_ND);
 
 REGISTE_FIXPIPE_DUAL(cc, ubuf, 4, 2, float, half, nz2dn, TransformMode::NZ_2_DN);
 REGISTE_FIXPIPE_DUAL(cc, ubuf, 4, 2, float, bfloat16_t, nz2dn, TransformMode::NZ_2_DN);
@@ -104,3 +130,5 @@ REGISTE_FIXPIPE(cc, ubuf, 4, 2, int32_t, int32_t, nz2dn, TransformMode::NZ_2_DN)
 REGISTE_FIXPIPE(cc, cbuf, 4, 2, float, half, nz2dn, TransformMode::NZ_2_DN);
 REGISTE_FIXPIPE(cc, cbuf, 4, 2, float, bfloat16_t, nz2dn, TransformMode::NZ_2_DN);
 #endif // defined(__DAV_C310__)
+
+} // extern "C"

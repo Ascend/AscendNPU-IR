@@ -24,6 +24,7 @@
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "bishengir/Dialect/Tensor/IR/TensorImpl.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/DLTI/DLTI.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
@@ -128,6 +129,9 @@ SmallVector<Value> tracebackImpl(Value memrefVal) {
         cast<OpResult>(memrefVal).getResultNumber()));
     result.emplace_back(op.elseYield()->getOperand(
         cast<OpResult>(memrefVal).getResultNumber()));
+  } else if (auto op = dyn_cast<arith::SelectOp>(def)) {
+    result.emplace_back(op.getTrueValue());
+    result.emplace_back(op.getFalseValue());
   } else if (auto op = dyn_cast<ViewLikeOpInterface>(def)) {
     result.emplace_back(op.getViewSource());
   }

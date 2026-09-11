@@ -228,9 +228,10 @@ static FailureOr<int64_t> getFixpipeDstTilingDim(Value dst,
 
 InsertFixpipeDstPropagateUp::InsertFixpipeDstPropagateUp(
     MLIRContext *context,
-    const DenseMap<int32_t, int64_t> &tightlyCoupledMapIn)
+    const DenseMap<int32_t, int64_t> &tightlyCoupledMapIn, bool batchMatmul)
     : OpRewritePattern<FixpipeOp>(context),
-      tightlyCoupledBufferToTilingDim(tightlyCoupledMapIn) {}
+      tightlyCoupledBufferToTilingDim(tightlyCoupledMapIn),
+      batchMatmul(batchMatmul) {}
 
 LogicalResult InsertFixpipeDstPropagateUp::matchAndRewrite(
     FixpipeOp op, PatternRewriter &rewriter) const {
@@ -310,9 +311,15 @@ LogicalResult InsertFixpipeDstPropagateUp::matchAndRewrite(
     bool invalidTilingDim = false;
     if (failed(computeFixpipeSplitInfo(op, tilingDim, allocVal, splitMode,
                                        splitShape, invalidTilingDim))) {
-      if (invalidTilingDim)
-        return failure();
-      op->setAttr(tileAndSliceFailure, rewriter.getUnitAttr());
+      // A tiling dim the dual-dst split cannot express has to reach the CV1:1
+      // rollback too, not just a dim that cannot be halved: this buffer is one
+      // the AIV side tiled, so a NO_DUAL drain writes only one sub-block's UB
+      // and the other core reads uninitialised memory. A rank-3 [batch, M, N]
+      // destination tiled on the batch axis -- what a batched matmul feeding a
+      // vector op produces -- lands exactly here. Gated, because the rollback
+      // is correct but slower and no native path has asked for it yet.
+      if (!invalidTilingDim || batchMatmul)
+        op->setAttr(tileAndSliceFailure, rewriter.getUnitAttr());
       return failure();
     }
 
@@ -390,13 +397,14 @@ static bool hasUnpropagatedBubblePropagator(func::FuncOp func) {
 
 static LogicalResult tileAndSliceOpAIC(
     func::FuncOp func,
-    const DenseMap<int32_t, int64_t> &tightlyCoupledBufferToTilingDim) {
+    const DenseMap<int32_t, int64_t> &tightlyCoupledBufferToTilingDim,
+    bool batchMatmul) {
   RewritePatternSet patterns(func.getContext());
   // DetachFixpipeDstReadView is to handle the Op pattern by Preload
   // Please read UT case: trace_def_ops_fixpipe_readview_mix_aic
   patterns.add<DetachFixpipeDstReadView>(func.getContext());
   patterns.add<InsertFixpipeDstPropagateUp>(
-      func.getContext(), tightlyCoupledBufferToTilingDim);
+      func.getContext(), tightlyCoupledBufferToTilingDim, batchMatmul);
   patterns.add<BufferizationPropagateUpPattern,
                BufferizationPropagateDownPattern>(func.getContext());
   if (failed(applyPatternsGreedily(func, std::move(patterns)))) {
@@ -592,7 +600,8 @@ bool areLoadAndStoreSameAddress(ArrayRef<func::FuncOp> aivFunctions) {
 
 LogicalResult tileAicFixpipeFuncsIfNeeded(
     ArrayRef<func::FuncOp> aicFunctions,
-    const DenseMap<int32_t, int64_t> &tightlyCoupledBufferToTilingDim) {
+    const DenseMap<int32_t, int64_t> &tightlyCoupledBufferToTilingDim,
+    bool batchMatmul) {
 
   for (func::FuncOp originalFunc : aicFunctions) {
     originalFunc->walk([&](annotation::MarkOp markOp) {
@@ -614,8 +623,9 @@ LogicalResult tileAicFixpipeFuncsIfNeeded(
             IntegerAttr::get(IndexType::get(markOp.getContext()), tilingDim));
       }
     });
-    if (failed(
-            tileAndSliceOpAIC(originalFunc, tightlyCoupledBufferToTilingDim))) {
+    if (failed(tileAndSliceOpAIC(originalFunc,
+                                 tightlyCoupledBufferToTilingDim,
+                                 batchMatmul))) {
       return failure();
     }
   }

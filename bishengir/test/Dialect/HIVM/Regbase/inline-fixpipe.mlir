@@ -18,6 +18,33 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9599">} {
 
 // -----
 
+// Keep a static fixpipe before a dynamic slice when the slice is immediately
+// inserted back into a static tensor. Moving the slice before fixpipe would
+// make its result dynamic and prevent downstream CV 1:2 tiling.
+// CHECK-LABEL: func.func @keep_fixpipe_before_dynamic_slice
+// CHECK: %[[FIX:.*]] = hivm.hir.fixpipe
+// CHECK-SAME: ins(%arg0 : tensor<16x32xf32>) outs(%arg1 : tensor<16x32xf32>)
+// CHECK-SAME: -> tensor<16x32xf32>
+// CHECK-NEXT: %[[SLICE:.*]] = tensor.extract_slice %[[FIX]][0, 0] [16, %arg3] [1, 1]
+// CHECK-SAME: tensor<16x32xf32> to tensor<16x?xf32>
+// CHECK-NEXT: %[[INSERT:.*]] = tensor.insert_slice %[[SLICE]] into %arg2
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @keep_fixpipe_before_dynamic_slice(
+      %arg0: tensor<16x32xf32>, %arg1: tensor<16x32xf32>,
+      %arg2: tensor<16x32xf32>, %arg3: index) -> tensor<16x32xf32> {
+    %0 = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+        ins(%arg0 : tensor<16x32xf32>) outs(%arg1 : tensor<16x32xf32>)
+        -> tensor<16x32xf32>
+    %1 = tensor.extract_slice %0[0, 0] [16, %arg3] [1, 1]
+        : tensor<16x32xf32> to tensor<16x?xf32>
+    %2 = tensor.insert_slice %1 into %arg2[0, 0] [16, %arg3] [1, 1]
+        : tensor<16x?xf32> into tensor<16x32xf32>
+    return %2 : tensor<16x32xf32>
+  }
+}
+
+// -----
+
 // Fractal C output: mmadL1 result feeds convert_layout{ND->Fractal} -> inline fixpipe as NZ2NZ
 // CHECK-LABEL: func.func @test_fractal_c_nz2nz_fixpipe
 // CHECK-NOT: hivm.hir.convert_layout

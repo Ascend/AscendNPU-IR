@@ -349,7 +349,13 @@ static void hivmPreBufferizationOptimizationPipeline(
     // Inserts convert layout before and after cube operations
     addOptimizedConvertLayoutFixpipePipeline(pm);
   }
-  pm.nest<func::FuncOp>().addPass(createTileBatchMMIntoLoopPass());
+  {
+    TileBatchMMIntoLoopOptions tileBatchMMOpts;
+    tileBatchMMOpts.keepRegBaseBatch =
+        hivmPipelineOptions.enableHIVMBatchMatmul;
+    pm.nest<func::FuncOp>().addPass(
+        createTileBatchMMIntoLoopPass(tileBatchMMOpts));
+  }
   pm.addPass(mlir::hivm::createNormalizeMatmulPass());
 
   if (hacc::utils::isAscend950(hivmPipelineOptions.target)) {
@@ -465,6 +471,7 @@ static void hivmPreBufferizationOptimizationPipeline(
   if (!hivmPipelineOptions.skipHIVMBindSubBlockPass) {
     TileAndBindSubBlockOptions tileOptions;
     tileOptions.enableTile = hivmPipelineOptions.enableAutoBindSubBlock;
+    tileOptions.batchMatmul = hivmPipelineOptions.enableHIVMBatchMatmul;
     pm.addPass(createTileAndBindSubBlockPass(tileOptions));
   }
   canonicalizationHIVMPipeline(pm);
@@ -567,7 +574,12 @@ static void hivmPostBufferizationOptimizationPipeline(
       createHIVMAggregatedDecomposeOpPass(decomposeOption));
   ADD_CANONICALIZER_PASS;
   // convert copyOp to nd2nzOp
-  pm.nest<func::FuncOp>().addPass(createInferHIVMDataLayoutPass());
+  {
+    InferHIVMDataLayoutOptions dataLayoutOpts;
+    dataLayoutOpts.batchMatmul = hivmPipelineOptions.enableHIVMBatchMatmul;
+    pm.nest<func::FuncOp>().addPass(
+        createInferHIVMDataLayoutPass(dataLayoutOpts));
+  }
   decomposeOption.decomposePhase =
       bishengir::DecomposePhase::AFTER_INFER_HIVM_DATA_LAYOUT;
   pm.nest<func::FuncOp>().addPass(

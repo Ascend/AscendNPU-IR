@@ -450,6 +450,14 @@ DECLARE_FIXPIPE_NOSUFFIX(cc, gm, 4, 2, float, float, nz2nd,
 DECLARE_FIXPIPE_NOSUFFIX(cc, gm, 4, 2, int32_t, int32_t, nz2nd,
                          TransformMode::NZ_2_ND);
 
+//===-------------------------------------------------------------------===//
+// fixpipe, 5 dim to 3 dim, nz2nd (batched via ND_PARA)
+//===-------------------------------------------------------------------===//
+DECLARE_FIXPIPE(cc, gm, 5, 3, float, half, nz2nd, TransformMode::NZ_2_ND);
+DECLARE_FIXPIPE(cc, gm, 5, 3, float, bfloat16_t, nz2nd, TransformMode::NZ_2_ND);
+DECLARE_FIXPIPE(cc, gm, 5, 3, float, float, nz2nd, TransformMode::NZ_2_ND);
+DECLARE_FIXPIPE(cc, gm, 5, 3, int32_t, int32_t, nz2nd, TransformMode::NZ_2_ND);
+
 #if !defined(__DAV_M300__)
 DECLARE_FIXPIPE(cc, gm, 4, 2, int32_t, int8_t, nz2nd, TransformMode::NZ_2_ND);
 DECLARE_FIXPIPE(cc, gm, 4, 2, int32_t, half, nz2nd, TransformMode::NZ_2_ND);
