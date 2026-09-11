@@ -1193,19 +1193,36 @@ struct RouteVectorFractalizeViaGMPattern
   }
 };
 
+/// Fold uninit L1 ND→Fractal `convert_layout` to a cbuf `tensor.empty`.
+struct FoldUninitL1NDConvertToEmptyPattern
+    : public OpRewritePattern<ConvertLayoutOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(ConvertLayoutOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!isMatrixND2NZConversion(op))
+      return rewriter.notifyMatchFailure(op, "not ND -> Fractal");
+    if (!isUninitL1NDConvertLayout(op))
+      return rewriter.notifyMatchFailure(
+          op, "source is not an uninitialized L1 ND buffer");
+    replaceUninitL1NDConvertWithEmpty(rewriter, op);
+    return success();
+  }
+};
+
 void populateCombineOptimizedConvertLayoutPatterns(RewritePatternSet &patterns,
                                                    MLIRContext *context) {
   ConvertLayoutOp::getCanonicalizationPatterns(patterns, context);
-  patterns
-      .add<FoldDirectLoadToND2NZPattern, FoldDirectLoadToLoadMXScalePattern,
-           FoldSubviewLoadToND2NZPattern, FoldSubviewLoadToLoadMXScalePattern,
-           FoldFixpipeNz2NzToFractalConvertLayoutPattern,
-           FoldTensorLoadToND2NZPattern, FoldTensorLoadToND2NZPattern,
-           FoldTensorLoadToLoadMXScalePattern, FoldFixpipeConvertLayoutPattern,
-           FoldConvertLayoutFixpipePattern,
-           FoldConvertLayoutExtractSliceFixpipePattern,
-           FoldFixpipeStoreConvertLayoutPattern,
-           RouteVectorFractalizeViaGMPattern>(context);
+  patterns.add<
+      FoldDirectLoadToND2NZPattern, FoldDirectLoadToLoadMXScalePattern,
+      FoldSubviewLoadToND2NZPattern, FoldSubviewLoadToLoadMXScalePattern,
+      FoldFixpipeNz2NzToFractalConvertLayoutPattern,
+      FoldTensorLoadToND2NZPattern, FoldTensorLoadToND2NZPattern,
+      FoldTensorLoadToLoadMXScalePattern, FoldFixpipeConvertLayoutPattern,
+      FoldConvertLayoutFixpipePattern,
+      FoldConvertLayoutExtractSliceFixpipePattern,
+      FoldFixpipeStoreConvertLayoutPattern, FoldUninitL1NDConvertToEmptyPattern,
+      RouteVectorFractalizeViaGMPattern>(context);
 }
 
 } // namespace

@@ -357,3 +357,36 @@ func.func @scaleb_dn_to_fractal_i8(%arg0: tensor<224x2xi8>) -> tensor<14x1x16x2x
        : (tensor<224x2xi8>) -> tensor<14x1x16x2xi8>
   return %0 : tensor<14x1x16x2xi8>
 }
+
+// -----
+
+// Uninit L1 ND convert becomes cbuf empty, not vtranspose.
+// CHECK-LABEL: func.func @nd_to_fractal_from_l1_uninit
+// CHECK: tensor.empty() {hivm.address_space = #hivm.address_space<cbuf>} : tensor<12x8x16x16xbf16>
+// CHECK-NOT: hivm.hir.vtranspose
+func.func @nd_to_fractal_from_l1_uninit() -> tensor<12x8x16x16xbf16> {
+  %alloc = memref.alloc() : memref<128x192xbf16, #hivm.address_space<cbuf>>
+  %cast = memref.memory_space_cast %alloc : memref<128x192xbf16, #hivm.address_space<cbuf>> to memref<128x192xbf16>
+  %nd = bufferization.to_tensor %cast restrict writable : memref<128x192xbf16>
+  %0 = hivm.hir.convert_layout %nd output_shape [12, 8, 16, 16]
+       {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>,
+        srcLayout = #hivm.data_layout<ND, transpose = false>}
+       : (tensor<128x192xbf16>) -> tensor<12x8x16x16xbf16>
+  return %0 : tensor<12x8x16x16xbf16>
+}
+
+// -----
+
+// UB source: keep vtranspose.
+// CHECK-LABEL: func.func @nd_to_fractal_from_ub_uninit
+// CHECK: hivm.hir.vtranspose
+func.func @nd_to_fractal_from_ub_uninit() -> tensor<12x8x16x16xbf16> {
+  %alloc = memref.alloc() : memref<128x192xbf16, #hivm.address_space<ub>>
+  %cast = memref.memory_space_cast %alloc : memref<128x192xbf16, #hivm.address_space<ub>> to memref<128x192xbf16>
+  %nd = bufferization.to_tensor %cast restrict writable : memref<128x192xbf16>
+  %0 = hivm.hir.convert_layout %nd output_shape [12, 8, 16, 16]
+       {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>,
+        srcLayout = #hivm.data_layout<ND, transpose = false>}
+       : (tensor<128x192xbf16>) -> tensor<12x8x16x16xbf16>
+  return %0 : tensor<12x8x16x16xbf16>
+}
