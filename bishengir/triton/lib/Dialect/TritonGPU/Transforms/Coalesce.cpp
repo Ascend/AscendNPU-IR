@@ -4,6 +4,7 @@
 #include "mlir/Analysis/SliceAnalysis.h"
 #include "mlir/Support/LLVM.h"
 #include "triton/Analysis/AxisInfo.h"
+#include "triton/Dialect/Triton/IR/Types.h"
 #include "triton/Dialect/Triton/IR/Utility.h"
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
 #include "triton/Dialect/TritonGPU/Transforms/Passes.h"
@@ -83,6 +84,14 @@ struct CoalescePass : public impl::TritonGPUCoalesceBase<CoalescePass> {
     }
 
     perThread = std::min<int>(perThread, std::max(numElems / numThreads, 1));
+#if BSPUB_DAVINCI_BISHENGIR
+    if (getOperation()->hasAttr("hacc.target")) {
+      // Match DPX transfer width.
+      unsigned maxElements =
+          std::max(64u / triton::getPointeeBitWidth(refTensorType), 1u);
+      perThread = std::min(perThread, maxElements);
+    }
+#endif
     LDBG("perThread: " << perThread);
 
     if (!dyn_cast<triton::LoadOp>(op)) {
