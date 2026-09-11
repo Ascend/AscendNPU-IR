@@ -77,14 +77,13 @@ public:
         // to be processed by a dedicated downstream pass (e.g. reduce-sum
         // ops handled by TreeReduceV2) must still be *outlined* into a
         // standalone vector function so that the downstream pass can
-        // recognise and transform them.  shouldSkipFusionForTreeReduce()
-        // gates this:
+        // recognise and transform them.  shouldSkipFusion() gates this:
         //   - returns true  → outline this single-op block (skip fusion,
         //                     but keep the op isolated for later handling)
         //   - returns false → skip entirely (no outline, no fusion)
         if (computeOps.size() <= 1) {
           if (computeOps.empty() ||
-              !shouldSkipFusionForTreeReduce(computeOps.front(), option))
+              !shouldSkipFusion(computeOps.front(), option))
             continue;
         }
 

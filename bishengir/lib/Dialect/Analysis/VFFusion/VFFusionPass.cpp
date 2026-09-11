@@ -184,9 +184,8 @@ void VFFusionPass::runOnOperation() {
     VFFusionKindOption option = getFusionOption();
     if (moduleOp
             .walk([&](Operation *op) -> WalkResult {
-              return shouldSkipFusionForTreeReduce(op, option)
-                         ? WalkResult::interrupt()
-                         : WalkResult::advance();
+              return shouldSkipFusion(op, option) ? WalkResult::interrupt()
+                                                  : WalkResult::advance();
             })
             .wasInterrupted()) {
       freezeRegisterTreeSelection();
