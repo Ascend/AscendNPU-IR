@@ -16,9 +16,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HIVM/Transforms/ConvertLayoutUtils.h"
-#include "bishengir/Conversion/Passes.h"
 
+#include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
+#include "bishengir/Dialect/HIVM/Utils/Utils.h"
 
 #define DEBUG_TYPE "convert-layout-utils"
 #define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] ")
@@ -26,6 +27,43 @@
 
 using namespace mlir;
 using namespace mlir::hivm;
+
+namespace {
+
+/// Users of `tensor` are only `convertOp` or `annotation.mark`.
+bool tensorFeedsOnlyConvert(Value tensor, ConvertLayoutOp convertOp) {
+  return llvm::all_of(tensor.getUsers(), [&](Operation *user) {
+    return user == convertOp.getOperation() || isa<annotation::MarkOp>(user);
+  });
+}
+
+/// Walk convert-src toward alloc/empty; erase marks then unused ops.
+void eraseDeadDummyChain(PatternRewriter &rewriter, Value root) {
+  SmallVector<Operation *, 8> chain;
+  Value v = root;
+  while (Operation *def = v.getDefiningOp()) {
+    if (isa<bufferization::ToTensorOp, ViewLikeOpInterface>(def)) {
+      chain.push_back(def);
+      if (def->getNumOperands() == 0)
+        break;
+      v = def->getOperand(0);
+      continue;
+    }
+    if (isa<memref::AllocOp, tensor::EmptyOp>(def))
+      chain.push_back(def);
+    break;
+  }
+  for (Operation *dead : chain) {
+    for (Operation *user : llvm::make_early_inc_range(dead->getUsers())) {
+      if (isa<annotation::MarkOp>(user))
+        rewriter.eraseOp(user);
+    }
+    if (dead->use_empty())
+      rewriter.eraseOp(dead);
+  }
+}
+
+} // namespace
 
 constexpr llvm::StringLiteral convertLayoutNotToPropagateUp =
     "not_to_propagate_up";
@@ -119,5 +157,63 @@ Value createInverseConvertLayout(PatternRewriter &rewriter,
       input.getLoc(), newReplacedElementType, input,
       templateOp.getDstLayoutAttr(), templateOp.getSrcLayoutAttr());
   return converted.getResult();
+}
+
+bool isUninitL1NDConvertLayout(ConvertLayoutOp op) {
+  Value src = op.getSource();
+
+  if (auto emptyOp = src.getDefiningOp<tensor::EmptyOp>()) {
+    auto spaceAttr =
+        emptyOp->getAttrOfType<AddressSpaceAttr>(AddressSpaceAttr::name);
+    if (!spaceAttr || spaceAttr.getAddressSpace() != AddressSpace::L1)
+      return false;
+    return tensorFeedsOnlyConvert(emptyOp.getResult(), op);
+  }
+
+  auto toTensor = src.getDefiningOp<bufferization::ToTensorOp>();
+  if (!toTensor)
+    return false;
+
+  auto alloc = getMemRefAlloc(toTensor.getMemref());
+  if (failed(alloc))
+    return false;
+  auto space = getOptionalHIVMAddressSpace(alloc->getType());
+  if (!space || *space != AddressSpace::L1)
+    return false;
+
+  SmallVector<Value, 8> worklist{alloc->getResult()};
+  SmallPtrSet<Value, 8> seen;
+  while (!worklist.empty()) {
+    Value cur = worklist.pop_back_val();
+    if (!seen.insert(cur).second)
+      continue;
+    for (Operation *user : cur.getUsers()) {
+      if (isa<annotation::MarkOp>(user))
+        continue;
+      if (isa<ViewLikeOpInterface>(user)) {
+        llvm::append_range(worklist, user->getResults());
+        continue;
+      }
+      auto toTensorUser = dyn_cast<bufferization::ToTensorOp>(user);
+      if (!toTensorUser)
+        return false;
+      if (!tensorFeedsOnlyConvert(toTensorUser.getResult(), op))
+        return false;
+    }
+  }
+  return true;
+}
+
+void replaceUninitL1NDConvertWithEmpty(PatternRewriter &rewriter,
+                                       ConvertLayoutOp op) {
+  Value src = op.getSource();
+  auto resultTy = cast<RankedTensorType>(op.getType());
+  rewriter.setInsertionPoint(op);
+  auto emptyOp = rewriter.create<tensor::EmptyOp>(
+      op.getLoc(), op.getMixedOutputShape(), resultTy.getElementType());
+  emptyOp->setAttr(AddressSpaceAttr::name,
+                   rewriter.getAttr<AddressSpaceAttr>(AddressSpace::L1));
+  rewriter.replaceOp(op, emptyOp.getResult());
+  eraseDeadDummyChain(rewriter, src);
 }
 } // namespace mlir::hivm
