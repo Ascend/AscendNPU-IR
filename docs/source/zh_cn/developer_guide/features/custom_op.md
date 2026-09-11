@@ -240,6 +240,32 @@ class tiled_custom_op:
         ]
 ```
 
+#### Sub-Block切分支持
+
+对于AIV函数，`hivm-bind-sub-block` Pass可根据`iterator_types`和
+`indexing_map`，将CustomOp的`parallel`迭代维分配到两个sub-block执行。各
+operand是否随之缩小由对应的`indexing_map`决定；broadcast维和仅用于reduction
+的维保持全量。
+
+当前参与sub-block切分的CustomOp需满足：
+
+- result最终流向Store/Copy类算子；暂不支持没有此类下游消费路径的leaf
+  CustomOp；
+- 设置`no_side_effect`，且为非builtin，不使用`temp_buffers`或
+  `extra_buffers_*`；CustomMacroOp还不能携带同步元信息；
+- tensor input、output(init)和result为`RankedTensorType`，tile size静态可知；
+  scalar input原样传递，当前不支持`memref` input；
+- `iterator_types`和`indexing_map`必须同时提供；任一属性为空时不参与
+  sub-block切分；
+- `indexing_map`仅使用按原顺序出现且不重复的迭代维，或以常量`0`表示input
+  broadcast；被切分的维必须是`parallel`，reduction维保持全量；
+- output(init)与对应result具有相同shape和`indexing_map`，不使用broadcast；
+  multi-result CustomOp的所有result使用相同tile类型并流向受支持的消费路径。
+
+不满足条件时，Pass会保留全量计算或回退到1:1执行。该优化不会改变CustomOp的
+外部kernel接口；切分后，两个sub-block仍调用同一个kernel，分别处理不同的数据
+分片。
+
 #### 操作数对齐属性（align_dim、arg_attrs）
 
 `align_dim`用于标记指定操作数需要对齐的维度。在MLIR中，该属性通过`arg_attrs`挂载到对应索引的操作数上，示例如下：

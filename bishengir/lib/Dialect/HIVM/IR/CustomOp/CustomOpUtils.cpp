@@ -17,6 +17,7 @@
 
 #include "bishengir/Dialect/HIVM/IR/CustomOp/CustomOpUtils.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/TypeSwitch.h"
 
 #include <type_traits>
@@ -52,6 +53,46 @@ void forEachCustomLikeTempBufferFor(CustomOpT op,
     fn(tempBuffer);
 }
 } // namespace
+
+bool hasUnrankedCustomLikeOperandsOrResults(Operation *op) {
+  auto isUnrankedShaped = [](Value value) {
+    auto type = dyn_cast<ShapedType>(value.getType());
+    return type && !type.hasRank();
+  };
+  return llvm::any_of(op->getOperands(), isUnrankedShaped) ||
+         llvm::any_of(op->getResults(), isUnrankedShaped);
+}
+
+bool customOpHasExplicitSemantics(Operation *op) {
+  return TypeSwitch<Operation *, bool>(op)
+      .Case<CustomOp, CustomMacroOp>([](auto customOp) {
+        using CustomOpT = decltype(customOp);
+        auto iterTypes = customOp->template getAttrOfType<ArrayAttr>(
+            CustomOpT::kIteratorTypesName);
+        auto idxMaps = customOp->template getAttrOfType<ArrayAttr>(
+            CustomOpT::kIndexingMapName);
+        return iterTypes && !iterTypes.empty() && idxMaps && !idxMaps.empty();
+      })
+      .Default([](Operation *) { return false; });
+}
+
+bool hasStrictIdentityMaps(ValueRange operands, ArrayRef<AffineMap> maps,
+                           unsigned numLoops) {
+  if (maps.size() < operands.size())
+    return false;
+  for (auto [i, operand] : llvm::enumerate(operands)) {
+    AffineMap map = maps[i];
+    if (map.getNumDims() != numLoops)
+      return false;
+    if (isa<ShapedType>(operand.getType())) {
+      if (!map.isIdentity())
+        return false;
+    } else if (map.getNumResults() != 0) {
+      return false;
+    }
+  }
+  return true;
+}
 
 SmallVector<PIPE> getCustomLikePipes(Operation *op) {
   return TypeSwitch<Operation *, SmallVector<PIPE>>(op)

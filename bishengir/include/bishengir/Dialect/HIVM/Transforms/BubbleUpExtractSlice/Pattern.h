@@ -242,6 +242,18 @@ public:
                         PatternRewriter &rewriter) const override;
 };
 
+/// Propagates a tensor.extract_slice across a `hivm.hir.custom` or
+/// `hivm.hir.custom_macro` op, projecting the slice onto each shaped operand
+/// via the op's `indexing_map`/`iterator_types`. See CustomOpBubbleUpStrategy's
+/// comment in Pattern.cpp.
+class CustomOpBubbleUpStrategy : public BubbleUpStrategy {
+public:
+  bool isSupportedOperation(tensor::ExtractSliceOp sliceOp) const override;
+
+  LogicalResult execute(tensor::ExtractSliceOp sliceOp,
+                        PatternRewriter &rewriter) const override;
+};
+
 class GatherLoadBubbleUpStrategy : public BubbleUpStrategy {
 public:
   bool isSupportedOperation(tensor::ExtractSliceOp sliceOp) const override;
