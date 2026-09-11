@@ -230,7 +230,9 @@ def SyncBlockLockOp
       hivm.hir.sync_block_lock lock_var(%lock : memref<1xi64>)
     ```
   }];
-  let arguments = (ins MemRefRankOf<[I64], [1]>:$lock_var);
+  let arguments = (ins MemRefRankOf<[I64], [1]>:$lock_var,
+                       DefaultValuedAttr<HIVM_SyncBlockLockOrderingAttr,
+                                         "SyncBlockLockOrdering::Ordered">:$ordering);
 
   let assemblyFormat = [{
     attr-dict `lock_var` `(` $lock_var `:` type($lock_var) `)`
@@ -252,7 +254,9 @@ def SyncBlockUnlockOp
       hivm.hir.sync_block_unlock lock_var(%lock : memref<1xi64>)
     ```
   }];
-  let arguments = (ins MemRefRankOf<[I64], [1]>:$lock_var);
+  let arguments = (ins MemRefRankOf<[I64], [1]>:$lock_var,
+                       DefaultValuedAttr<HIVM_SyncBlockLockOrderingAttr,
+                                         "SyncBlockLockOrdering::Ordered">:$ordering);
 
   let assemblyFormat = [{
     attr-dict `lock_var` `(` $lock_var `:` type($lock_var) `)`
@@ -278,7 +282,9 @@ def FreeLockVarOp
       hivm.hir.free_lock_var lock_var(%lock : memref<1xi64>)
     ```
   }];
-  let arguments = (ins MemRefRankOf<[I64], [1]>:$lock_var);
+  let arguments = (ins MemRefRankOf<[I64], [1]>:$lock_var,
+                       DefaultValuedAttr<HIVM_SyncBlockLockOrderingAttr,
+                                         "SyncBlockLockOrdering::Ordered">:$ordering);
 
   let assemblyFormat = [{
     attr-dict `lock_var` `(` $lock_var `:` type($lock_var) `)`

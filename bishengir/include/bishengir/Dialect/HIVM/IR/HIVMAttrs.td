@@ -1353,12 +1353,39 @@ def HIVM_SyncBlockLockWithSubblockAttr
   }];
 }
 
+// Legacy unordered marker used by older Triton / AscendNPU-IR producers.
+// Prefer `$ordering = #hivm.ordering<unordered>` on lock/unlock/free. Keep this
+// AttrDef so dumps with `{hivm.sync_block_lock_unordered}` remain parseable and
+// are treated as unordered until upstream users migrate.
 def HIVM_SyncBlockLockUnorderedAttr
     : HIVM_Attr<"SyncBlockLockUnordered", "sync_block_lock_unordered"> {
   let description = [{
-    Marks create_sync_block_lock / sync_block_lock / sync_block_unlock /
-    free_lock_var ops that should use the unordered (Lamport bakery,
-    arrival-order) lock instead of the ordered token ring.
+    Legacy unit attribute meaning unordered (Lamport bakery) sync block lock.
+    Equivalent to `$ordering = #hivm.ordering<unordered>`. Recognized on
+    create_sync_block_lock, sync_block_lock, sync_block_unlock, and
+    free_lock_var for compatibility; new code should set the native ordering
+    enum instead.
+  }];
+}
+
+def HIVM_SyncBlockLockOrdering_Ordered
+    : I32EnumAttrCase<"Ordered", 0, "ordered">;
+def HIVM_SyncBlockLockOrdering_Unordered
+    : I32EnumAttrCase<"Unordered", 1, "unordered">;
+
+def HIVM_SyncBlockLockOrderingEnum : HIVM_I32Enum<
+  "SyncBlockLockOrdering", "Ordering for sync block lock operations", [
+    HIVM_SyncBlockLockOrdering_Ordered,
+    HIVM_SyncBlockLockOrdering_Unordered,
+  ]>;
+
+def HIVM_SyncBlockLockOrderingAttr
+    : HIVM_I32EnumAttr<"ordering", HIVM_SyncBlockLockOrderingEnum> {
+  let description = [{
+    Selects ordered token-ring vs unordered (Lamport bakery) sync block lock.
+    Set on sync_block_lock, sync_block_unlock, and free_lock_var (default
+    ordered). Legacy IR may instead use unit attr
+    `hivm.sync_block_lock_unordered`; helpers treat that as unordered.
   }];
 }
 

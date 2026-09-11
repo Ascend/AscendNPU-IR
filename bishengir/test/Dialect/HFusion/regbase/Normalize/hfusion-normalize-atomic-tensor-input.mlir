@@ -3,11 +3,11 @@
 // CHECK-LABEL: func.func @test_NormalizeAtomicOps_XCHG_tensor_ins_no_return
 // CHECK: scope.scope : () -> () {
 // CHECK: %[[LOCK:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
-// CHECK: hivm.hir.sync_block_lock lock_var(%[[LOCK]] : memref<1xi64>)
+// CHECK: hivm.hir.sync_block_lock {ordering = #hivm.ordering<unordered>} lock_var(%[[LOCK]] : memref<1xi64>)
 // CHECK: memref.copy %[[GM:.*]], %[[TMP:.*]] : memref<1x1x4x4xi32, strided<[16, 16, 4, 1], offset: ?>> to memref<1x1x4x4xi32>
 // CHECK: bufferization.materialize_in_destination %[[UB:.*]] in writable %[[GM]] : (tensor<1x1x4x4xi32>, memref<1x1x4x4xi32, strided<[16, 16, 4, 1], offset: ?>>) -> ()
 // CHECK-NOT: memref.copy %[[TMP]], %{{.*}}
-// CHECK: hivm.hir.sync_block_unlock lock_var(%[[LOCK]] : memref<1xi64>)
+// CHECK: hivm.hir.sync_block_unlock {ordering = #hivm.ordering<unordered>} lock_var(%[[LOCK]] : memref<1xi64>)
 // CHECK: scope.return
 // CHECK: } {hivm.allow_flatten, hivm.tcore_type = #hivm.tcore_type<VECTOR>}
 // CHECK-NOT: hfusion.atomic_xchg
@@ -83,11 +83,11 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // CHECK: bufferization.materialize_in_destination %{{.*}} in writable %{{.*}} : (tensor<4xi16>, memref<4xi16>) -> ()
 // CHECK: bufferization.materialize_in_destination %{{.*}} in writable %{{.*}} : (tensor<4xi16>, memref<4xi16>) -> ()
 // CHECK: %[[LOCK:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
-// CHECK: hivm.hir.sync_block_lock lock_var(%[[LOCK]] : memref<1xi64>)
+// CHECK: hivm.hir.sync_block_lock {ordering = #hivm.ordering<unordered>} lock_var(%[[LOCK]] : memref<1xi64>)
 // CHECK: %[[CMP:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins(%{{.*}}, %{{.*}} : tensor<4xi16>, tensor<4xi16>) outs(%{{.*}} : tensor<4xi1>) -> tensor<4xi1>
 // CHECK: %[[SEL:.*]] = hfusion.select ins(%[[CMP]], %{{.*}}, %{{.*}} : tensor<4xi1>, tensor<4xi16>, tensor<4xi16>) outs(%{{.*}} : tensor<4xi16>) -> tensor<4xi16>
 // CHECK: bufferization.materialize_in_destination %[[SEL]] in writable %{{.*}} : (tensor<4xi16>, memref<4xi16>) -> ()
-// CHECK: hivm.hir.sync_block_unlock lock_var(%[[LOCK]] : memref<1xi64>)
+// CHECK: hivm.hir.sync_block_unlock {ordering = #hivm.ordering<unordered>} lock_var(%[[LOCK]] : memref<1xi64>)
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
   func.func @test_NormalizeAtomicOps_CAS_tensor_ins(%arg0: memref<4xi16>, %arg1: tensor<4xi16>, %arg2: tensor<4xi16>) {
     hfusion.atomic_cas ins(%arg1, %arg2 : tensor<4xi16>, tensor<4xi16>) outs(%arg0 : memref<4xi16>)

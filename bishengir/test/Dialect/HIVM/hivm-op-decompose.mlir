@@ -2283,3 +2283,16 @@ func.func @test_scalar_f32_to_si64(%0: f32, %1 : memref<1xi64>) {
   memref.store %6, %1[%c0] : memref<1xi64>
   return
 }
+
+// -----
+// A5 leftover software atomics in hivm-decompose-op stay unordered.
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9599">} {
+  // CHECK: hivm.hir.sync_block_lock {ordering = #hivm.ordering<unordered>} lock_var
+  // CHECK: hivm.hir.sync_block_unlock {ordering = #hivm.ordering<unordered>} lock_var
+  func.func @test_decompose_atomic_and_op_a5(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<16xi32>, %arg2: memref<16xi32>) {
+    %alloc = memref.alloc() : memref<16xi32>
+    hivm.hir.load ins(%arg1 : memref<16xi32>) outs(%alloc : memref<16xi32>)
+    hivm.hir.store ins(%alloc : memref<16xi32>) outs(%arg2 : memref<16xi32>) atomic = <and>
+    return
+  }
+}
