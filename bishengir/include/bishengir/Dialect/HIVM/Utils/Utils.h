@@ -89,12 +89,6 @@ static constexpr llvm::StringLiteral kMapForToForallAttrName =
 constexpr llvm::StringLiteral kSimtVFTileLoopAttrName =
     "hivm.simt_vf_tile_loop";
 
-// Marks the per-block serial subloop created by AutoBlockifyParallelLoop.
-// Consumers key on it to tell per-block boundary GM accesses (executed at
-// most once per subloop iteration) from streaming accesses that sit inside
-// the nested compute loops.
-constexpr llvm::StringLiteral kBlockifySubloopAttrName = "autoblockify.subloop";
-
 // Attribute names used by the hivm-mark-disable-load pass and consumed by the
 // MemRef-to-LLVM lowering to emit non-cached (ld_dev) load instructions.
 static constexpr llvm::StringLiteral kDisableDCacheAttr = "disableDCache";

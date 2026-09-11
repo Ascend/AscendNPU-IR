@@ -45,7 +45,7 @@ using namespace mlir;
 using namespace mlir::hivm;
 
 static constexpr llvm::StringLiteral BlockifyLoopAttrName =
-    kBlockifySubloopAttrName;
+    "autoblockify.subloop";
 
 namespace {
 /// This pass will add a loop over the blocks when the logical block num is
