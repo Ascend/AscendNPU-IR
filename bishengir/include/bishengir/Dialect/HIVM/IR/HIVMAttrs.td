@@ -956,11 +956,18 @@ def HIVM_MemPlanModeEnum : HIVM_I32Enum<
 // Fixpipe
 //===----------------------------------------------------------------------===//
 
-def HIVM_FIXPIPEPREQUANT_NO_QUANT : I32EnumAttrCase<"NO_QUANT", 0>;
-def HIVM_FIXPIPEPREQUANT_F322F16 : I32EnumAttrCase<"F322F16", 1>;
-def HIVM_FIXPIPEPREQUANT_S322I8 : I32EnumAttrCase<"S322I8", 9>;
-def HIVM_FIXPIPEPREQUANT_QF322F32_PRE : I32EnumAttrCase<"QF322F32_PRE", 15>;
-def HIVM_FIXPIPEPREQUANT_F322BF16 : I32EnumAttrCase<"F322BF16", 16>;
+include "bishengir/Dialect/HIVM/IR/Contracts/FixpipePreQuantContract.td"
+
+def HIVM_FIXPIPEPREQUANT_NO_QUANT :
+    HIVM_FixpipePreQuantCase<"NO_QUANT", 0, [Sig_F32_F32, Sig_I32_I32]>;
+def HIVM_FIXPIPEPREQUANT_F322F16 :
+    HIVM_FixpipePreQuantCase<"F322F16", 1, [Sig_F32_F16]>;
+def HIVM_FIXPIPEPREQUANT_S322I8 :
+    HIVM_FixpipePreQuantCase<"S322I8", 9, [Sig_I32_I8]>;
+def HIVM_FIXPIPEPREQUANT_QF322F32_PRE :
+    HIVM_FixpipePreQuantCase<"QF322F32_PRE", 15, [Sig_F32_F32]>;
+def HIVM_FIXPIPEPREQUANT_F322BF16 :
+    HIVM_FixpipePreQuantCase<"F322BF16", 16, [Sig_F32_BF16]>;
 
 def HIVM_FixpipePreQuantModeEnum
     : HIVM_I32Enum<"FixpipePreQuantMode", "HIVM fixpipe pre_quant mode",

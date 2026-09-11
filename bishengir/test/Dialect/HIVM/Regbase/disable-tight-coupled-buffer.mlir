@@ -2,7 +2,7 @@
 
 // CHECK: func.func @test_fixpipe_load_to_vector
 // CHECK: %[[MMAD:.*]] = hivm.hir.mmadL1
-// CHECK: %[[FIXPIPE:.*]] = hivm.hir.fixpipe
+// CHECK: %[[FIXPIPE:.*]] = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>}
 // CHECK: %[[EMPTY:.*]] = tensor.empty() : tensor<16x16xf16>
 // CHECK: %[[LOAD:.*]] = hivm.hir.load ins(%[[FIXPIPE]] : tensor<16x16xf16>) outs(%[[EMPTY]] : tensor<16x16xf16>) {"hivm.inserted-load"} core_type = <VECTOR> -> tensor<16x16xf16>
 

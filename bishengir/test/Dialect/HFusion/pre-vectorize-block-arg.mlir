@@ -53,7 +53,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
         %transposed_19 = linalg.transpose ins(%17 : tensor<1x64xf32>) outs(%18 : tensor<64x1xf32>) permutation = [1, 0]
         %19 = linalg.matmul {input_precison = "ieee"} ins(%15, %transposed : tensor<64x128xf16>, tensor<128x64xf16>) outs(%3 : tensor<64x64xf32>) -> tensor<64x64xf32>
         %alloc_3 = memref.alloc() : memref<64x64xf16, #hivm.address_space<ub>>
-        hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%19 : tensor<64x64xf32>) outs(%alloc_3 : memref<64x64xf16, #hivm.address_space<ub>>)
+        hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>, dma_mode = #hivm.dma_mode<nz2nd>} ins(%19 : tensor<64x64xf32>) outs(%alloc_3 : memref<64x64xf16, #hivm.address_space<ub>>)
         %memspacecast = memref.memory_space_cast %alloc_3 : memref<64x64xf16, #hivm.address_space<ub>> to memref<64x64xf16>
         %20 = bufferization.to_tensor %memspacecast restrict writable : memref<64x64xf16>
         %21 = hfusion.cast {round_mode = #hfusion.round_mode<rint>} ins(%20 : tensor<64x64xf16>) outs(%2 : tensor<64x64xf32>) -> tensor<64x64xf32>

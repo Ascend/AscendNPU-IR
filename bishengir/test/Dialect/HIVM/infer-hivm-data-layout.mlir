@@ -241,7 +241,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
       %subview_17 = memref.subview %alloc[0, 0] [%33, %31] [1, 1] : memref<16x16xf32, #hivm.address_space<cc>> to memref<?x?xf32, strided<[16, 1]>, #hivm.address_space<cc>>
       %subview_18 = memref.subview %reinterpret_cast_11[0, 0] [%33, %31] [1, 1] : memref<16x16xf16, strided<[16, 1], offset: ?>, #hivm.address_space<gm>> to memref<?x?xf16, strided<[16, 1], offset: ?>, #hivm.address_space<gm>>
       %cast_19 = memref.cast %subview_18 : memref<?x?xf16, strided<[16, 1], offset: ?>, #hivm.address_space<gm>> to memref<?x?xf16, strided<[?, ?], offset: ?>, #hivm.address_space<gm>>
-      hivm.hir.fixpipe {enable_nz2nd} ins(%subview_17 : memref<?x?xf32, strided<[16, 1]>, #hivm.address_space<cc>>) outs(%cast_19 : memref<?x?xf16, strided<[?, ?], offset: ?>, #hivm.address_space<gm>>)
+      hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>, enable_nz2nd} ins(%subview_17 : memref<?x?xf32, strided<[16, 1]>, #hivm.address_space<cc>>) outs(%cast_19 : memref<?x?xf16, strided<[?, ?], offset: ?>, #hivm.address_space<gm>>)
     }
     return
   }

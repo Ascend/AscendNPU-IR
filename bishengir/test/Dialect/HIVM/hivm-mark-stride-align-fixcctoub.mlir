@@ -120,15 +120,15 @@ func.func @test_nsize_b8_cs_n_nd_y_le_y() attributes {hivm.func_core_type = #hiv
 
 // -----//
 
-// Test 9: NSize - B4, CS_N, ND_N, LE_N, N -> nSizeStride=16, alignBytes=8
+// Test 9: NSize - B8, CS_N, ND_N, LE_N, N -> nSizeStride=16, alignBytes=16
 // AIC-LABEL: func.func @test_nsize_b4_cs_n_nd_n_le_n
-// AIC: annotation.mark %alloc {hivm.stride_align_dims = array<i32: 1>, hivm.stride_align_value_in_byte = array<i32: 8>}
+// AIC: annotation.mark %alloc {hivm.stride_align_dims = array<i32: 1>, hivm.stride_align_value_in_byte = array<i32: 16>}
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 func.func @test_nsize_b4_cs_n_nd_n_le_n() attributes {hivm.func_core_type = #hivm.func_core_type<AIC>} {
-  %alloc = memref.alloc() : memref<16x16xi4, #hivm.address_space<ub>>
-  annotation.mark %alloc {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>} : memref<16x16xi4, #hivm.address_space<ub>>
+  %alloc = memref.alloc() : memref<16x16xi8, #hivm.address_space<ub>>
+  annotation.mark %alloc {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>} : memref<16x16xi8, #hivm.address_space<ub>>
   %alloc_0 = memref.alloc() {alignment = 64 : i64} : memref<16x16xi32, #hivm.address_space<cc>>
-  hivm.hir.fixpipe ins(%alloc_0 : memref<16x16xi32, #hivm.address_space<cc>>) outs(%alloc : memref<16x16xi4, #hivm.address_space<ub>>)
+  hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<S322I8>} ins(%alloc_0 : memref<16x16xi32, #hivm.address_space<cc>>) outs(%alloc : memref<16x16xi8, #hivm.address_space<ub>>)
   return
 }
 }
@@ -140,10 +140,10 @@ func.func @test_nsize_b4_cs_n_nd_n_le_n() attributes {hivm.func_core_type = #hiv
 // AIC: annotation.mark %alloc {hivm.stride_align_dims = array<i32: 1>, hivm.stride_align_value_in_byte = array<i32: 32>}
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 func.func @test_nsize_b4_cs_n_nd_y_le_n() attributes {hivm.func_core_type = #hivm.func_core_type<AIC>} {
-  %alloc = memref.alloc() : memref<16x16xi4, #hivm.address_space<ub>>
-  annotation.mark %alloc {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>} : memref<16x16xi4, #hivm.address_space<ub>>
+  %alloc = memref.alloc() : memref<16x16xi8, #hivm.address_space<ub>>
+  annotation.mark %alloc {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>} : memref<16x16xi8, #hivm.address_space<ub>>
   %alloc_0 = memref.alloc() {alignment = 64 : i64} : memref<16x16xi32, #hivm.address_space<cc>>
-  hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%alloc_0 : memref<16x16xi32, #hivm.address_space<cc>>) outs(%alloc : memref<16x16xi4, #hivm.address_space<ub>>)
+  hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<S322I8>, dma_mode = #hivm.dma_mode<nz2nd>} ins(%alloc_0 : memref<16x16xi32, #hivm.address_space<cc>>) outs(%alloc : memref<16x16xi8, #hivm.address_space<ub>>)
   return
 }
 }
@@ -260,10 +260,10 @@ func.func @test_msize_b8_dn_y() attributes {hivm.func_core_type = #hivm.func_cor
 // AIC: annotation.mark %alloc {hivm.stride_align_dims = array<i32: 0>, hivm.stride_align_value_in_byte = array<i32: 32>}
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 func.func @test_msize_b4_dn_y() attributes {hivm.func_core_type = #hivm.func_core_type<AIC>} {
-  %alloc = memref.alloc() : memref<16x16xi4, #hivm.address_space<ub>>
-  annotation.mark %alloc {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>} : memref<16x16xi4, #hivm.address_space<ub>>
+  %alloc = memref.alloc() : memref<16x16xi8, #hivm.address_space<ub>>
+  annotation.mark %alloc {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>} : memref<16x16xi8, #hivm.address_space<ub>>
   %alloc_0 = memref.alloc() {alignment = 64 : i64} : memref<16x16xi32, #hivm.address_space<cc>>
-  hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2dn>} ins(%alloc_0 : memref<16x16xi32, #hivm.address_space<cc>>) outs(%alloc : memref<16x16xi4, #hivm.address_space<ub>>)
+  hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<S322I8>, dma_mode = #hivm.dma_mode<nz2dn>} ins(%alloc_0 : memref<16x16xi32, #hivm.address_space<cc>>) outs(%alloc : memref<16x16xi8, #hivm.address_space<ub>>)
   return
 }
 }

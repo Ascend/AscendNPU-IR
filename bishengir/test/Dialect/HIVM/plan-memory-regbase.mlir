@@ -124,26 +124,27 @@ func.func @test_unique_memory_with_multi_buffer(%arg0: memref<16x32x64xf16, #hiv
 // -----
 
 module attributes {hacc.target = #hacc.target<"Ascend950PR_950z">} {
-  func.func @test_tightly_coupled_buffer_in_AIC(%arg0: memref<16x16xf16, #hivm.address_space<gm>>,
+  // CHECK-NOREUSE-LABEL: func.func @test_unique_memory_for_tightly_coupled_buffer_in_AIC
+  func.func @test_unique_memory_for_tightly_coupled_buffer_in_AIC(%arg0: memref<16x16xf16, #hivm.address_space<gm>>,
                                %arg1: memref<16x16xf32, #hivm.address_space<gm>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIC>} {
     %alloc_3 = memref.alloc() {alignment = 64 : i64} : memref<16x16xf32, #hivm.address_space<cc>>
     hivm.hir.load ins(%arg1 : memref<16x16xf32, #hivm.address_space<gm>>) outs(%alloc_3 : memref<16x16xf32, #hivm.address_space<cc>>)
-    // CHECK-NOREUSE: {{.*}} = hivm.hir.pointer_cast(%[[CONST32:.*]]) : memref<16x16xf32, #hivm.address_space<ub>>
-    %alloc_4 = memref.alloc() {alignment = 64 : i64} : memref<16x16xf32, #hivm.address_space<ub>>
-    annotation.mark %alloc_4 {hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<4>} : memref<16x16xf32, #hivm.address_space<ub>>
-    hivm.hir.fixpipe {enable_nz2nd, l0c_to_ub} ins(%alloc_3 : memref<16x16xf32, #hivm.address_space<cc>>) outs(%alloc_4 : memref<16x16xf32, #hivm.address_space<ub>>)
+    // CHECK-NOREUSE: {{.*}} = hivm.hir.pointer_cast(%[[CONST0:.*]]) : memref<16x16xf16, #hivm.address_space<ub>>
+    %alloc_4 = memref.alloc() {alignment = 64 : i64} : memref<16x16xf16, #hivm.address_space<ub>>
+    annotation.mark %alloc_4 {hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<4>} : memref<16x16xf16, #hivm.address_space<ub>>
+    hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%alloc_3 : memref<16x16xf32, #hivm.address_space<cc>>) outs(%alloc_4 : memref<16x16xf16, #hivm.address_space<ub>>)
     return
   }
-  func.func @test_unique_memory_for_CV_tightly_coupled_buffer(%arg0: i32, %arg1: memref<16x16xf16, #hivm.address_space<gm>>,
+  func.func @test_unique_memory_for_tightly_coupled_buffer_in_AIV(%arg0: i32, %arg1: memref<16x16xf16, #hivm.address_space<gm>>,
                                %arg2: memref<16x16xf16, #hivm.address_space<gm>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>}  {
-    // CHECK-NOREUSE: {{.*}} = hivm.hir.pointer_cast(%[[CONST16:.*]]) : memref<16x16xf16, #hivm.address_space<ub>>
+    // CHECK-NOREUSE: {{.*}} = hivm.hir.pointer_cast(%[[CONST0]]) : memref<16x16xf16, #hivm.address_space<ub>>
     %c1_i32 = arith.constant 1 : i32
     %alloc = memref.alloc() {alignment = 64 : i64} : memref<16x16xf16, #hivm.address_space<ub>>
     annotation.mark %alloc {hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<4>} : memref<16x16xf16, #hivm.address_space<ub>>
     %0 = arith.cmpi eq, %arg0, %c1_i32 : i32
     // CHECK-NOREUSE: {{.*}} = scf.if {{.*}} -> (memref<16x16xf16, #hivm.address_space<ub>>) {
     %1 = scf.if %0 -> (memref<16x16xf16, #hivm.address_space<ub>>) {
-      // CHECK-NOREUSE-NOT: {{.*}} = hivm.hir.pointer_cast(%[[CONST16]]) : memref<16x16xf16, #hivm.address_space<ub>>
+      // CHECK-NOREUSE-NOT: {{.*}} = hivm.hir.pointer_cast(%[[CONST0]]) : memref<16x16xf16, #hivm.address_space<ub>>
       %alloc_1 = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
       hivm.hir.load ins(%arg1 : memref<16x16xf16, #hivm.address_space<gm>>) outs(%alloc_1 : memref<16x16xf16, #hivm.address_space<ub>>)
       scf.yield %alloc_1 : memref<16x16xf16, #hivm.address_space<ub>>

@@ -826,3 +826,62 @@ func.func @test_batch_mmad_l1_f16_accumulator() {
   hivm.hir.batchMmadL1 ins(%a, %b, %true, %c16, %c16, %c16 : memref<2x16x16xf16>, memref<2x16x16xf16>, i1, index, index, index) outs(%c : memref<2x16x16xf16>)
   return
 }
+
+// -----
+
+// Fixpipe pre-quant mode type contracts must be rejected by plain Op
+// verification: the mode names one src/dst signature, and the mismatch is
+// reported with the mode, the allowed signatures and the actual signature.
+// CHECK-LABEL: test_fixpipe_pre_quant_wrong_dst
+func.func @test_fixpipe_pre_quant_wrong_dst() {
+  %src = tensor.empty() : tensor<16x16xf32>
+  %dst = tensor.empty() : tensor<16x16xbf16>
+  // expected-error@+1 {{pre_quant mode 'F322F16' requires src/dst element type signature 32-bit float -> 16-bit float, but got 'f32' -> 'bf16'}}
+  %r = hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%src : tensor<16x16xf32>) outs(%dst : tensor<16x16xbf16>) -> tensor<16x16xbf16>
+  return
+}
+
+// -----
+
+// CHECK-LABEL: test_fixpipe_pre_quant_s322i8_wrong_dst
+func.func @test_fixpipe_pre_quant_s322i8_wrong_dst() {
+  %src = tensor.empty() : tensor<16x16xi32>
+  %dst = tensor.empty() : tensor<16x16xi16>
+  // expected-error@+1 {{pre_quant mode 'S322I8' requires src/dst element type signature 32-bit signless integer -> 8-bit signless integer, but got 'i32' -> 'i16'}}
+  %r = hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<S322I8>} ins(%src : tensor<16x16xi32>) outs(%dst : tensor<16x16xi16>) -> tensor<16x16xi16>
+  return
+}
+
+// -----
+
+// NO_QUANT requires identical src/dst element types.
+// CHECK-LABEL: test_fixpipe_pre_quant_no_quant_mismatch
+func.func @test_fixpipe_pre_quant_no_quant_mismatch() {
+  %src = tensor.empty() : tensor<16x16xf32>
+  %dst = tensor.empty() : tensor<16x16xi32>
+  // expected-error@+1 {{pre_quant mode 'NO_QUANT' requires one of [32-bit float -> 32-bit float, 32-bit signless integer -> 32-bit signless integer], but got 'f32' -> 'i32'}}
+  %r = hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<NO_QUANT>} ins(%src : tensor<16x16xf32>) outs(%dst : tensor<16x16xi32>) -> tensor<16x16xi32>
+  return
+}
+
+// -----
+
+// CHECK-LABEL: test_fixpipe_pre_quant_qf_wrong_dst
+func.func @test_fixpipe_pre_quant_qf_wrong_dst() {
+  %src = tensor.empty() : tensor<16x16xf32>
+  %dst = tensor.empty() : tensor<16x16xf16>
+  // expected-error@+1 {{pre_quant mode 'QF322F32_PRE' requires src/dst element type signature 32-bit float -> 32-bit float, but got 'f32' -> 'f16'}}
+  %r = hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<QF322F32_PRE>} ins(%src : tensor<16x16xf32>) outs(%dst : tensor<16x16xf16>) -> tensor<16x16xf16>
+  return
+}
+
+// -----
+
+// CHECK-LABEL: test_fixpipe_pre_quant_f322bf16_wrong_dst
+func.func @test_fixpipe_pre_quant_f322bf16_wrong_dst() {
+  %src = tensor.empty() : tensor<16x16xf32>
+  %dst = tensor.empty() : tensor<16x16xf16>
+  // expected-error@+1 {{pre_quant mode 'F322BF16' requires src/dst element type signature 32-bit float -> bfloat16 type, but got 'f32' -> 'f16'}}
+  %r = hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322BF16>} ins(%src : tensor<16x16xf32>) outs(%dst : tensor<16x16xf16>) -> tensor<16x16xf16>
+  return
+}

@@ -285,3 +285,30 @@ func.func @test_fixpipe_i32_memref_src() {
   hivm.hir.fixpipe ins(%src : memref<16x16xi32, #hivm.address_space<cc>>) outs(%dst : memref<16x16xi32, #hivm.address_space<gm>>)
   return
 }
+
+// -----
+// Fixpipe pre-quant mode type contracts (positive coverage).
+// CHECK-LABEL: test_fixpipe_pre_quant_signatures
+func.func @test_fixpipe_pre_quant_signatures() {
+  // F322F16: f32 -> f16.
+  %src_f16 = tensor.empty() : tensor<16x16xf32>
+  %dst_f16 = tensor.empty() : tensor<16x16xf16>
+  %f322f16 = hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%src_f16 : tensor<16x16xf32>) outs(%dst_f16 : tensor<16x16xf16>) -> tensor<16x16xf16>
+  // F322BF16: f32 -> bf16.
+  %src_bf16 = tensor.empty() : tensor<16x16xf32>
+  %dst_bf16 = tensor.empty() : tensor<16x16xbf16>
+  %f322bf16 = hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322BF16>} ins(%src_bf16 : tensor<16x16xf32>) outs(%dst_bf16 : tensor<16x16xbf16>) -> tensor<16x16xbf16>
+  // S322I8: i32 -> i8.
+  %src_i8 = tensor.empty() : tensor<16x16xi32>
+  %dst_i8 = tensor.empty() : tensor<16x16xi8>
+  %s322i8 = hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<S322I8>} ins(%src_i8 : tensor<16x16xi32>) outs(%dst_i8 : tensor<16x16xi8>) -> tensor<16x16xi8>
+  // QF322F32_PRE: f32 -> f32.
+  %src_q = tensor.empty() : tensor<16x16xf32>
+  %dst_q = tensor.empty() : tensor<16x16xf32>
+  %qf = hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<QF322F32_PRE>} ins(%src_q : tensor<16x16xf32>) outs(%dst_q : tensor<16x16xf32>) -> tensor<16x16xf32>
+  // Explicit NO_QUANT: i32 -> i32 (the default mode's other signature).
+  %src_n = tensor.empty() : tensor<16x16xi32>
+  %dst_n = tensor.empty() : tensor<16x16xi32>
+  %nq = hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<NO_QUANT>} ins(%src_n : tensor<16x16xi32>) outs(%dst_n : tensor<16x16xi32>) -> tensor<16x16xi32>
+  return
+}

@@ -26,7 +26,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     // CHECK: %[[RES:.*]] = call @vf_mm_func(%[[TOT]])
 
 
-    %fix = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+    %fix = hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>, dma_mode = #hivm.dma_mode<nz2nd>}
              ins(%src : tensor<16x16xf32>)
              outs(%dst : tensor<16x16xf16>) -> tensor<16x16xf16>
 
@@ -212,7 +212,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     %cst_1 = arith.constant 2.000000e+00 : f16
     %1 = tensor.empty() : tensor<16x16xf32>
     %2 = tensor.empty() : tensor<16x16xf16>
-    %3 = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%1 : tensor<16x16xf32>) outs(%2 : tensor<16x16xf16>) -> tensor<16x16xf16>
+    %3 = hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>, dma_mode = #hivm.dma_mode<nz2nd>} ins(%1 : tensor<16x16xf32>) outs(%2 : tensor<16x16xf16>) -> tensor<16x16xf16>
     %4 = hivm.hir.vmul ins(%3, %cst_1 : tensor<16x16xf16>, f16) outs(%2 : tensor<16x16xf16>) -> tensor<16x16xf16>
     %reinterpret_cast_0 = memref.reinterpret_cast %arg1 to offset: [0], sizes: [512], strides: [ 1] : memref<?xi8> to memref<512xi8, strided<[1], offset: 0>>
     %cst0 = arith.constant 0 : index
@@ -235,7 +235,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     %cst_1 = arith.constant 2.000000e+00 : f16
     %1 = tensor.empty() : tensor<16x16xf32>
     %2 = tensor.empty() : tensor<16x16xf16>
-    %3 = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%1 : tensor<16x16xf32>) outs(%2 : tensor<16x16xf16>) -> tensor<16x16xf16>
+    %3 = hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>, dma_mode = #hivm.dma_mode<nz2nd>} ins(%1 : tensor<16x16xf32>) outs(%2 : tensor<16x16xf16>) -> tensor<16x16xf16>
     %reinterpret_cast_0 = memref.reinterpret_cast %arg1 to offset: [0], sizes: [512], strides: [ 1] : memref<?xi8> to memref<512xi8, strided<[1], offset: 0>>
     %cst0 = arith.constant 0 : index
     %view = memref.view %reinterpret_cast_0[%cst0][] : memref<512xi8, strided<[1], offset: 0>> to memref<16x16xf16>
@@ -431,7 +431,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     // CHECK: %[[TOT:.*]] = bufferization.to_tensor %[[CAST]] restrict writable : memref<16x16xf16>
     // CHECK: hivm.hir.fixpipe {{.*}} ins({{.*}} : tensor<16x16xf32>) outs(%[[ALLOC]] : memref<16x16xf16, #hivm.address_space<ub>>
     // CHECK: %[[RES:.*]] = tensor.extract %[[TOT]]
-    %fix_res = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+    %fix_res = hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>, dma_mode = #hivm.dma_mode<nz2nd>}
                ins(%src : tensor<16x16xf32>)
                outs(%dst_init : tensor<16x16xf16>) -> tensor<16x16xf16>
     %c0 = arith.constant 0 : index
@@ -662,7 +662,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
                                          %base : memref<?xf16>,
                                          %idx : tensor<16x16xi64>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
     %dst_init = tensor.empty() : tensor<16x16xf16>
-    %fix = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+    %fix = hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>, dma_mode = #hivm.dma_mode<nz2nd>}
         ins(%src : tensor<16x16xf32>)
         outs(%dst_init : tensor<16x16xf16>) -> tensor<16x16xf16>
     hivm.hir.indirect_store
@@ -684,7 +684,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     %0 = tensor.empty() : tensor<16x16xf32>
     %1 = hivm.hir.mmadL1 {already_set_real_mkn} ins(%arg4, %arg5, %arg6, %arg7, %arg8, %arg8 : tensor<16x16xf32>, tensor<16x16xf32>, i1, index, index, index) outs(%0 : tensor<16x16xf32>) -> tensor<16x16xf32>
     %2 = tensor.empty() : tensor<16x16xf16>
-    %3 = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%1 : tensor<16x16xf32>) outs(%2 : tensor<16x16xf16>) -> tensor<16x16xf16>
+    %3 = hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>, dma_mode = #hivm.dma_mode<nz2nd>} ins(%1 : tensor<16x16xf32>) outs(%2 : tensor<16x16xf16>) -> tensor<16x16xf16>
     hivm.hir.indirect_store ins(%3 : tensor<16x16xf16>, %arg2 : tensor<16x16xi64>) outs(%arg1 : memref<?xf16>)
     return
   }
@@ -709,7 +709,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     %0 = tensor.empty() : tensor<16x16xf32>
     %1 = hivm.hir.mmadL1 {already_set_real_mkn} ins(%arg1, %arg2, %arg3, %arg4, %arg5, %arg5 : tensor<16x16xf32>, tensor<16x16xf32>, i1, index, index, index) outs(%0 : tensor<16x16xf32>) -> tensor<16x16xf32>
     %2 = tensor.empty() : tensor<16x16xf16>
-    %3 = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%1 : tensor<16x16xf32>) outs(%2 : tensor<16x16xf16>) -> tensor<16x16xf16>
+    %3 = hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>, dma_mode = #hivm.dma_mode<nz2nd>} ins(%1 : tensor<16x16xf32>) outs(%2 : tensor<16x16xf16>) -> tensor<16x16xf16>
     %4 = call @vf_mm_func(%3) {hivm.vector_function} : (tensor<16x16xf16>) -> tensor<16x16xf16>
     return %4 : tensor<16x16xf16>
   }
