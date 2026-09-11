@@ -1627,7 +1627,7 @@ static LogicalResult setOperationsCoreTypeForA5(OpBuilder builder,
           auto inferNewCoreType =
               [&vbrcOp](UnrealizedConversionCastOp upProp) -> TCoreTypeAttr {
             auto coreType = PropagatorUtil::getCoreType(upProp);
-            if (coreType != TCoreType::CUBE_AND_VECTOR) {
+            if (coreType != TCoreType::CUBE_AND_VECTOR && coreType != TCoreType::CUBE_OR_VECTOR) {
               return TCoreTypeAttr::get(vbrcOp.getContext(), coreType);
             } else {
               auto addressSpaces = PropagatorUtil::getAddressSpace(upProp);
