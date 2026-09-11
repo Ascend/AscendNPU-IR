@@ -1313,6 +1313,8 @@ emitKTilingTensorOfPtrsCanonical(triton::DotOp dot, DotLoadInfo aInfo,
             bLoopStrideAddition = loopSplat.getSrc();
           } else if (auto loopSplat = addRhs.getDefiningOp<triton::SplatOp>()) {
             bLoopStrideAddition = loopSplat.getSrc();
+          } else {
+            return failure();
           }
         }
       } else if (auto e = rhs.getDefiningOp<triton::ExpandDimsOp>()) {
@@ -1325,6 +1327,8 @@ emitKTilingTensorOfPtrsCanonical(triton::DotOp dot, DotLoadInfo aInfo,
             bLoopStrideAddition = loopSplat.getSrc();
           } else if (auto loopSplat = addRhs.getDefiningOp<triton::SplatOp>()) {
             bLoopStrideAddition = loopSplat.getSrc();
+          } else {
+            return failure();
           }
         }
       } else {
@@ -1339,6 +1343,8 @@ emitKTilingTensorOfPtrsCanonical(triton::DotOp dot, DotLoadInfo aInfo,
           bLoopStrideAddition = loopSplat.getSrc();
         } else if (auto loopSplat = addRhs.getDefiningOp<triton::SplatOp>()) {
           bLoopStrideAddition = loopSplat.getSrc();
+        } else {
+          return failure();
         }
       }
     } else {
@@ -2082,10 +2088,12 @@ static Value loadStagedScratchTile(PatternRewriter &rewriter, Location loc,
 /// is [K, N] with K on axis 0 (i.e. K-variant).  Populated by
 /// `decomposeTensorOfPtrsBKAxis0`.
 struct TensorOfPtrsBInfo {
-  Value bPLoK;        // tensor<K x 1 x Ptr>, K-variant
-  Value bOLo;         // tensor<1 x N x i32>, K-invariant
-  Value bBaseScalar;  // scalar Ptr (splat src for bPLoK)
-  Value bStrideSplat; // optional splat<i32> stride; null = stride 1
+  Value bPLoK;               // tensor<K x 1 x Ptr>, K-variant
+  Value bOLo;                // tensor<1 x N x i32>, K-invariant
+  Value bBaseScalar;         // scalar Ptr (splat src for bPLoK)
+  Value bStrideSplat;        // optional splat<i32> stride; null = stride 1
+  Value bLoopStrideAddition; // built in case of additional loop above
+                             // canonical tensor-of-ptrs style tiling
   // Mask pieces (filled when load has a mask); see splitMaskKvsOther.
   Value bOtherMaskLo, bKMaskLo;
   arith::CmpIPredicate bKMaskPred{};
@@ -2132,16 +2140,46 @@ decomposeTensorOfPtrsBKAxis0(triton::LoadOp loadB, int64_t K, int64_t N) {
       if (e.getAxis() != 1)
         return std::nullopt;
       info.bStrideSplat = rhs;
+      if (auto addiOp = e.getSrc().getDefiningOp<arith::AddIOp>()) {
+        Value addLhs = addiOp.getLhs(), addRhs = addiOp.getRhs();
+        if (auto loopSplat = addLhs.getDefiningOp<triton::SplatOp>()) {
+          info.bLoopStrideAddition = loopSplat.getSrc();
+        } else if (auto loopSplat = addRhs.getDefiningOp<triton::SplatOp>()) {
+          info.bLoopStrideAddition = loopSplat.getSrc();
+        } else {
+          return std::nullopt;
+        }
+      }
     } else if (auto e = rhs.getDefiningOp<triton::ExpandDimsOp>()) {
       if (e.getAxis() != 1)
         return std::nullopt;
       info.bStrideSplat = lhs;
+      if (auto addiOp = e.getSrc().getDefiningOp<arith::AddIOp>()) {
+        Value addLhs = addiOp.getLhs(), addRhs = addiOp.getRhs();
+        if (auto loopSplat = addLhs.getDefiningOp<triton::SplatOp>()) {
+          info.bLoopStrideAddition = loopSplat.getSrc();
+        } else if (auto loopSplat = addRhs.getDefiningOp<triton::SplatOp>()) {
+          info.bLoopStrideAddition = loopSplat.getSrc();
+        } else {
+          return std::nullopt;
+        }
+      }
     } else {
       return std::nullopt;
     }
   } else if (auto e = bRowOff.getDefiningOp<triton::ExpandDimsOp>()) {
     if (e.getAxis() != 1)
       return std::nullopt;
+    if (auto addiOp = e.getSrc().getDefiningOp<arith::AddIOp>()) {
+      Value addLhs = addiOp.getLhs(), addRhs = addiOp.getRhs();
+      if (auto loopSplat = addLhs.getDefiningOp<triton::SplatOp>()) {
+        info.bLoopStrideAddition = loopSplat.getSrc();
+      } else if (auto loopSplat = addRhs.getDefiningOp<triton::SplatOp>()) {
+        info.bLoopStrideAddition = loopSplat.getSrc();
+      } else {
+        return std::nullopt;
+      }
+    }
   } else {
     return std::nullopt;
   }
@@ -2622,11 +2660,17 @@ struct StageNonLoadOperandPattern : public OpRewritePattern<triton::DotOp> {
     // Hoist the static K-tile range AND every loop-invariant piece of the
     // tensor-of-ptrs per-tile B load outside the K-tile loop
     Value hoistedKRangeBase;
+    Value tiledBLoopStrideAddition;
     std::optional<TensorOfPtrsBKAxis0Hoisted> bHoisted;
     if (bTopInfo) {
       auto kRange1DTy = RankedTensorType::get({kTile}, i32);
       hoistedKRangeBase = rewriter.create<triton::MakeRangeOp>(
           loc, kRange1DTy, /*start=*/0, /*end=*/static_cast<int32_t>(kTile));
+      if (bTopInfo->bLoopStrideAddition) {
+        auto tiledBLoopStrideAdditionTy = RankedTensorType::get({kTile}, i32);
+        tiledBLoopStrideAddition = rewriter.create<triton::SplatOp>(
+            loc, tiledBLoopStrideAdditionTy, bTopInfo->bLoopStrideAddition);
+      }
       bHoisted =
           hoistTensorOfPtrsBKAxis0(rewriter, loc, bLoad, *bTopInfo, N, kTile);
       if (!bHoisted) {
@@ -2720,6 +2764,10 @@ struct StageNonLoadOperandPattern : public OpRewritePattern<triton::DotOp> {
             rewriter.create<triton::SplatOp>(loc, kRange1DTy, kBaseDyn);
         Value tiledKRange1D =
             rewriter.create<arith::AddIOp>(loc, kBaseSplat, hoistedKRangeBase);
+        if (tiledBLoopStrideAddition)
+          tiledKRange1D =
+              rewriter.create<arith::AddIOp>(loc, tiledKRange1D,
+                                             tiledBLoopStrideAddition);
         bTile = emitTensorOfPtrsBKAxis0Tile(rewriter, loc, bLoad, *bTopInfo,
                                             *bHoisted, N, kTile, tiledKRange1D);
         if (!bTile) {
