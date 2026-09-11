@@ -12,6 +12,30 @@ func.func @test_get_block_idx() {
 }
 
 // -----
+// CHECK-LABEL: test_mmadL0
+func.func @test_mmadL0() {
+  %ma = memref.alloc() : memref<256x128xf16>
+  %mb = memref.alloc() : memref<128x256xf16>
+  %mc = memref.alloc() : memref<256x256xf32>
+  %c0 = arith.constant 0 : i1
+  %c1 = arith.constant 1 : i1
+  %c128 = arith.constant 128 : index
+  %c256 = arith.constant 256 : index
+  hivm.hir.mmadL0 ins(%ma, %mb, %c256, %c128, %c256, %c0, %c0, %c1 :
+                        memref<256x128xf16>, memref<128x256xf16>, index, index, index, i1, i1, i1)
+                  outs(%mc : memref<256x256xf32>)
+  hivm.hir.mmadL0 {enable_HF32}
+                 ins(%ma, %mb, %c256, %c128, %c256, %c0, %c1, %c1 :
+                       memref<256x128xf16>, memref<128x256xf16>, index, index, index, i1, i1, i1)
+                 outs(%mc : memref<256x256xf32>)
+  hivm.hir.mmadL0 {enable_I4}
+                 ins(%ma, %mb, %c256, %c128, %c256, %c1, %c0, %c0 :
+                       memref<256x128xf16>, memref<128x256xf16>, index, index, index, i1, i1, i1)
+                 outs(%mc : memref<256x256xf32>)
+  return
+}
+
+// -----
 // CHECK-LABEL: test_mmadL1
 func.func @test_mmadL1() {
   %ma = memref.alloc() : memref<256x128xf16>

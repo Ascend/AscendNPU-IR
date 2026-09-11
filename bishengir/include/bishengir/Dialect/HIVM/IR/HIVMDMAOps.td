@@ -471,6 +471,65 @@ def LoadMXScaleOp : HIVM_DmaOp<"load_scale", [
   let extraClassDeclaration = DmaOpBaseDecl;
 }
 
+def L12L0Op: HIVM_DmaOp<"l12l0",
+    [StaticMaxRankTrait<2>,
+     SinglePipeOpTrait, OpPipeTrait<"PIPE::PIPE_MTE1">,
+     HIVMCoreTypeInterface, CubeCoreTypeTrait
+    ]> {
+  let summary = "HIVM data copy operation from L1 to L0A or L0B Buffer";
+  let description = [{
+    Copy data from L1 to L0A or L0B buffer.
+    The destination is distinguished by the dst address space:
+      - L0A: `#hivm.address_space<ca>`
+      - L0B: `#hivm.address_space<cb>`
+  }];
+  let arguments = (ins TensorOrMemref:$src, TensorOrMemref:$dst,
+                    I64Attr:$k_part_idx, I64Attr:$k_part, I64Attr:$k_part_ceil,
+                    I64Attr:$k_part_loop, I64Attr:$k_part_actual, I64Attr:$m,
+                    DefaultValuedOptionalAttr<BoolAttr, "false">:$is_transposed);
+  let results = (outs Optional<AnyRankedTensor>:$result_tensor);
+  let assemblyFormat = [{
+    attr-dict
+    `ins` `(` $src `:` type($src) `)`
+    `outs` `(` $dst `:` type($dst) `)`
+    `{`
+      `k_part_idx` `=` $k_part_idx `,`
+      `k_part` `=` $k_part `,`
+      `k_part_ceil` `=` $k_part_ceil `,`
+      `k_part_loop` `=` $k_part_loop `,`
+      `k_part_actual` `=` $k_part_actual `,`
+      `m` `=` $m
+      (`,` `is_transposed` `=` $is_transposed^)?
+    `}`
+    (`->` type($result_tensor)^)?
+  }];
+  let hasVerifier = 1;
+  let extraClassDeclaration = DmaOpBaseDecl # [{
+    bool isToL0A();
+    bool isToL0B();
+  }];
+}
+
+def L12BTOp: HIVM_DmaOp<"l12bt",
+    [StaticMaxRankTrait<2>,
+     SinglePipeOpTrait, OpPipeTrait<"PIPE::PIPE_MTE1">,
+     HIVMCoreTypeInterface, CubeCoreTypeTrait
+    ]> {
+  let summary = "HIVM data copy operation from L1 to BiasTable Buffer";
+  let description = [{ Copy data from L1 to BiasTable Buffer. }];
+  let arguments = (ins TensorOrMemref:$src, TensorOrMemref:$dst, Index:$n);
+  let results = (outs Optional<AnyRankedTensor>:$result_tensor);
+  let assemblyFormat = [{
+    attr-dict
+    `ins` `(` $src `:` type($src) `)`
+    `outs` `(` $dst `:` type($dst) `)`
+    `n` `=` $n
+    (`->` type($result_tensor)^)?
+  }];
+  let hasVerifier = 1;
+  let extraClassDeclaration = DmaOpBaseDecl;
+}
+
 def AtomicCasOp : HIVM_Op<"atomic_cas", [
   NoLibraryFunctionTrait,
   OperElemTypeConstraints<[0], [I8, I16, I32, F16, BF16, F32, F8E4M3FN,
