@@ -421,9 +421,9 @@ module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
   // CHECK: hivm.hir.nd2nz
   hivm.hir.load ins(%cast_2 : memref<64x64xi8, strided<[?, ?], offset: ?>, #hivm.address_space<gm>>) outs(%alloc_7 : memref<64x64xi8, #hivm.address_space<cbuf>>) init_out_buffer = false
   %alloc = memref.alloc() : memref<64x64xi8, #hivm.address_space<cbuf>>
-  %alloc_5 = memref.alloc() {alignment = 64 : i64} : memref<64x64xi8, #hivm.address_space<cc>>
+  %alloc_5 = memref.alloc() {alignment = 64 : i64} : memref<64x64xi32, #hivm.address_space<cc>>
   hivm.hir.mmadL1 {a_transpose} ins(%alloc_7, %alloc, %true, %c64, %c64, %c64 : memref<64x64xi8, #hivm.address_space<cbuf>>, memref<64x64xi8, #hivm.address_space<cbuf>>, i1, index, index, index)
-      outs(%alloc_5 : memref<64x64xi8, #hivm.address_space<cc>>)
+      outs(%alloc_5 : memref<64x64xi32, #hivm.address_space<cc>>)
   return
   }
 }
@@ -946,13 +946,13 @@ module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
         memref<32x32xi8, strided<[64, 1], offset: 1032>,
                #hivm.address_space<cbuf>>
     %b = memref.alloc() : memref<32x16xi8, #hivm.address_space<cbuf>>
-    %c = memref.alloc() : memref<32x16xi8, #hivm.address_space<cc>>
+    %c = memref.alloc() : memref<32x16xi32, #hivm.address_space<cc>>
     hivm.hir.mmadL1 {a_transpose} ins(%a, %b, %true, %m, %k, %n :
                             memref<32x32xi8, strided<[64, 1], offset: 1032>,
                                    #hivm.address_space<cbuf>>,
                             memref<32x16xi8, #hivm.address_space<cbuf>>,
                             i1, index, index, index)
-                    outs(%c : memref<32x16xi8, #hivm.address_space<cc>>)
+                    outs(%c : memref<32x16xi32, #hivm.address_space<cc>>)
     return
   }
 }
@@ -969,8 +969,8 @@ module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
 // CHECK: %[[B:.*]] = memref.alloc({{.*}}, {{.*}}, %[[C16_B]], %[[C32_B]]) : memref<?x?x?x?xi8, #hivm.address_space<cbuf>>
 // CHECK: %[[C16_C0:.*]] = arith.constant 16 : index
 // CHECK: %[[C16_C1:.*]] = arith.constant 16 : index
-// CHECK: %[[C:.*]] = memref.alloc({{.*}}, {{.*}}, %[[C16_C0]], %[[C16_C1]]) : memref<?x?x?x?xi8, #hivm.address_space<cc>>
-// CHECK: hivm.hir.mmadL1 ins(%[[A]], %[[B]], {{.*}}, {{.*}}, {{.*}}, {{.*}} : memref<?x?x?x?xi8, #hivm.address_space<cbuf>>, memref<?x?x?x?xi8, #hivm.address_space<cbuf>>, i1, index, index, index) outs(%[[C]] : memref<?x?x?x?xi8, #hivm.address_space<cc>>)
+// CHECK: %[[C:.*]] = memref.alloc({{.*}}, {{.*}}, %[[C16_C0]], %[[C16_C1]]) : memref<?x?x?x?xi32, #hivm.address_space<cc>>
+// CHECK: hivm.hir.mmadL1 ins(%[[A]], %[[B]], {{.*}}, {{.*}}, {{.*}}, {{.*}} : memref<?x?x?x?xi8, #hivm.address_space<cbuf>>, memref<?x?x?x?xi8, #hivm.address_space<cbuf>>, i1, index, index, index) outs(%[[C]] : memref<?x?x?x?xi32, #hivm.address_space<cc>>)
 module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
   func.func @test_i8_fractal_block_sizes() attributes {
       hacc.function_kind = #hacc.function_kind<DEVICE>,
@@ -982,12 +982,12 @@ module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
     %n = arith.constant 17 : index
     %a = memref.alloc() : memref<33x65xi8, #hivm.address_space<cbuf>>
     %b = memref.alloc() : memref<65x17xi8, #hivm.address_space<cbuf>>
-    %c = memref.alloc() : memref<33x17xi8, #hivm.address_space<cc>>
+    %c = memref.alloc() : memref<33x17xi32, #hivm.address_space<cc>>
     hivm.hir.mmadL1 ins(%a, %b, %true, %m, %k, %n :
                             memref<33x65xi8, #hivm.address_space<cbuf>>,
                             memref<65x17xi8, #hivm.address_space<cbuf>>,
                             i1, index, index, index)
-                    outs(%c : memref<33x17xi8, #hivm.address_space<cc>>)
+                    outs(%c : memref<33x17xi32, #hivm.address_space<cc>>)
     return
   }
 }
@@ -1320,12 +1320,12 @@ module {
     %cst_320 = arith.constant 320 : index
     %a = memref.alloc() : memref<2x4x16x16xf16, #hivm.address_space<cbuf>>
     %b = memref.alloc() : memref<4x2x16x16xf16, #hivm.address_space<cbuf>>
-    %acc = memref.alloc() : memref<64x32xf16, #hivm.address_space<cc>>
+    %acc = memref.alloc() : memref<64x32xf32, #hivm.address_space<cc>>
     // 4D A [K1=2,M1=4,16,16]: M=dim1*dim2=64, K=dim0*dim3=32
     // 4D B [K1=4,N1=2,16,16]: K=dim1*dim2=32, N=dim0*dim3=32
     // CHECK: hivm.hir.mmadL1
     // CHECK-SAME: memref<2x4x16x16xf16, #hivm.address_space<cbuf>>
-    hivm.hir.mmadL1 ins(%a, %b, %true, %cst_64, %cst_320, %cst_64 : memref<2x4x16x16xf16, #hivm.address_space<cbuf>>, memref<4x2x16x16xf16, #hivm.address_space<cbuf>>, i1, index, index, index) outs(%acc : memref<64x32xf16, #hivm.address_space<cc>>)
+    hivm.hir.mmadL1 ins(%a, %b, %true, %cst_64, %cst_320, %cst_64 : memref<2x4x16x16xf16, #hivm.address_space<cbuf>>, memref<4x2x16x16xf16, #hivm.address_space<cbuf>>, i1, index, index, index) outs(%acc : memref<64x32xf32, #hivm.address_space<cc>>)
     return
   }
 }
@@ -1341,12 +1341,12 @@ module {
     %cst_320 = arith.constant 320 : index
     %a = memref.alloc() : memref<4x2x16x16xf16, #hivm.address_space<cbuf>>
     %b = memref.alloc() : memref<2x4x16x16xf16, #hivm.address_space<cbuf>>
-    %acc = memref.alloc() : memref<64x32xf16, #hivm.address_space<cc>>
+    %acc = memref.alloc() : memref<64x32xf32, #hivm.address_space<cc>>
     // 4D A [K1=4,M1=2,16,16]: M=dim1*dim2=32, K=dim0*dim3=64
     // 4D B [N1=2,K1=4,16,16]: K=dim1*dim2=64, N=dim0*dim3=32
     // CHECK: hivm.hir.mmadL1
     // CHECK-SAME: memref<2x4x16x16xf16, #hivm.address_space<cbuf>>
-    hivm.hir.mmadL1 ins(%a, %b, %true, %cst_64, %cst_320, %cst_64 : memref<4x2x16x16xf16, #hivm.address_space<cbuf>>, memref<2x4x16x16xf16, #hivm.address_space<cbuf>>, i1, index, index, index) outs(%acc : memref<64x32xf16, #hivm.address_space<cc>>)
+    hivm.hir.mmadL1 ins(%a, %b, %true, %cst_64, %cst_320, %cst_64 : memref<4x2x16x16xf16, #hivm.address_space<cbuf>>, memref<2x4x16x16xf16, #hivm.address_space<cbuf>>, i1, index, index, index) outs(%acc : memref<64x32xf32, #hivm.address_space<cc>>)
     return
   }
 }

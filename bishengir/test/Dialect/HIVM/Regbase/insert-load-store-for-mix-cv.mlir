@@ -1091,16 +1091,21 @@ func.func @propagate_through_scope_result(
 
 // -----
 // CHECK-LABEL: @propagate_through_tensor_insert_slice
-// CHECK: %c16 = arith.constant 16 : index
 // CHECK: %true = arith.constant true
+// CHECK: %c16 = arith.constant 16 : index
 // CHECK: %0 = tensor.empty() : tensor<16x16xf16>
-// CHECK: %extracted_slice = tensor.extract_slice %arg0[0, 0] [1, 16] [1, 1] : tensor<16x16xf16> to tensor<1x16xf16>
-// CHECK: %inserted_slice = tensor.insert_slice %extracted_slice into %arg1[0, 0] [1, 16] [1, 1] : tensor<1x16xf16> into tensor<16x16xf16>
-// CHECK: %1 = hivm.hir.mmadL1 ins(%arg0, %inserted_slice, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%0 : tensor<16x16xf16>) -> tensor<16x16xf16>
-// CHECK: %2 = tensor.empty() : tensor<16x16xf16>
-// CHECK: %3 = hivm.hir.fixpipe {enable_nz2nd} ins(%1 : tensor<16x16xf16>) outs(%2 : tensor<16x16xf16>) -> tensor<16x16xf16>
-// CHECK: %4 = tensor.empty() : tensor<16x16xf16>
-// CHECK: %5 = hivm.hir.load ins(%3 : tensor<16x16xf16>) outs(%4 : tensor<16x16xf16>) -> tensor<16x16xf16>
+// CHECK: %[[LHS_VECTOR:.*]] = hivm.hir.load ins(%arg0 : tensor<16x16xf16>) outs(%{{.*}} : tensor<16x16xf16>) {{.*}}core_type = <VECTOR> -> tensor<16x16xf16>
+// CHECK: %[[LHS_CUBE:.*]] = hivm.hir.load ins(%arg0 : tensor<16x16xf16>) outs(%{{.*}} : tensor<16x16xf16>) {{.*}}core_type = <CUBE> -> tensor<16x16xf16>
+// CHECK: %[[RHS_VECTOR:.*]] = hivm.hir.load ins(%arg1 : tensor<16x16xf16>) outs(%{{.*}} : tensor<16x16xf16>) {{.*}}core_type = <VECTOR> -> tensor<16x16xf16>
+// CHECK: %[[CUBE_OUT:.*]] = tensor.empty() : tensor<16x16xf32>
+// CHECK: %[[EXTRACTED:.*]] = tensor.extract_slice %[[LHS_VECTOR]][0, 0] [1, 16] [1, 1] : tensor<16x16xf16> to tensor<1x16xf16>
+// CHECK: %[[INSERTED:.*]] = tensor.insert_slice %[[EXTRACTED]] into %[[RHS_VECTOR]][0, 0] [1, 16] [1, 1] : tensor<1x16xf16> into tensor<16x16xf16>
+// CHECK: %[[RHS_CUBE:.*]] = hivm.hir.load ins(%{{.*}} : tensor<16x16xf16>) outs(%{{.*}} : tensor<16x16xf16>) {{.*}}core_type = <CUBE> -> tensor<16x16xf16>
+// CHECK: %[[MMAD:.*]] = hivm.hir.mmadL1 ins(%[[LHS_CUBE]], %[[RHS_CUBE]], %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%[[CUBE_OUT]] : tensor<16x16xf32>) -> tensor<16x16xf32>
+// CHECK: %[[FIX_OUT:.*]] = tensor.empty() : tensor<16x16xf16>
+// CHECK: %[[FIX:.*]] = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%[[MMAD]] : tensor<16x16xf32>) outs(%[[FIX_OUT]] : tensor<16x16xf16>) -> tensor<16x16xf16>
+// CHECK: %[[LOAD_OUT:.*]] = tensor.empty() : tensor<16x16xf16>
+// CHECK: hivm.hir.load ins(%[[FIX]] : tensor<16x16xf16>) outs(%[[LOAD_OUT]] : tensor<16x16xf16>) {{.*}}core_type = <VECTOR> -> tensor<16x16xf16>
 func.func @propagate_through_tensor_insert_slice(
     %lhs: tensor<16x16xf16>, %rhs: tensor<16x16xf16>,
     %out: memref<16x16xf16>) attributes { hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE> } {
@@ -2001,7 +2006,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // CHECK: hivm.hir.mmadL1 {{.*}} ins(%{{.*}}, %[[COPY]]
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   func.func @fixpipe_nd_rhs_gets_convert_layout(
-      %lhs: tensor<16x16xf16>, %rhs: tensor<16x16xf32>) -> tensor<16x16xf32>
+      %lhs: tensor<16x16xf32>, %rhs: tensor<16x16xf32>) -> tensor<16x16xf32>
       attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
     %c16 = arith.constant 16 : index
     %true = arith.constant true
@@ -2012,7 +2017,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     %out = tensor.empty() : tensor<16x16xf32>
     %mmad = hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
         ins(%lhs, %fix, %true, %c16, %c16, %c16
-            : tensor<16x16xf16>, tensor<16x16xf32>, i1, index, index, index)
+            : tensor<16x16xf32>, tensor<16x16xf32>, i1, index, index, index)
         outs(%out : tensor<16x16xf32>) -> tensor<16x16xf32>
     return %mmad : tensor<16x16xf32>
   }
@@ -2026,12 +2031,12 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // CHECK-NOT: {"hivm.inserted-copy"}
 // CHECK-NOT: hivm.hir.vtranspose
 // CHECK-NOT: memref.alloc(){{.*}}#hivm.address_space<cbuf>
-// CHECK: %[[LHS_LOAD:.*]] = hivm.hir.load ins(%arg0 : tensor<16x16xf16>) outs(%{{.*}} : tensor<16x16xf16>) {"hivm.inserted-load"} -> tensor<16x16xf16>
+// CHECK: %[[LHS_LOAD:.*]] = hivm.hir.load ins(%arg0 : tensor<16x16xf32>) outs(%{{.*}} : tensor<16x16xf32>) {"hivm.inserted-load"} -> tensor<16x16xf32>
 // CHECK: %[[FIX:.*]] = hivm.hir.fixpipe {{.*}}ins(%arg1 : tensor<16x16xf32>) outs(%{{.*}} : tensor<16x16xf32>) -> tensor<16x16xf32>
-// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C} ins(%[[LHS_LOAD]], %[[FIX]], %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf32>, i1, index, index, index) outs(%{{.*}} : tensor<16x16xf32>) -> tensor<16x16xf32>
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C} ins(%[[LHS_LOAD]], %[[FIX]], %true, %c16, %c16, %c16 : tensor<16x16xf32>, tensor<16x16xf32>, i1, index, index, index) outs(%{{.*}} : tensor<16x16xf32>) -> tensor<16x16xf32>
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   func.func @fixpipe_nz2nz_rhs_no_convert_layout(
-      %lhs: tensor<16x16xf16>, %rhs: tensor<16x16xf32>) -> tensor<16x16xf32>
+      %lhs: tensor<16x16xf32>, %rhs: tensor<16x16xf32>) -> tensor<16x16xf32>
       attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
     %c16 = arith.constant 16 : index
     %true = arith.constant true
@@ -2043,7 +2048,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     %out = tensor.empty() : tensor<16x16xf32>
     %mmad = hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
         ins(%lhs, %fix, %true, %c16, %c16, %c16
-            : tensor<16x16xf16>, tensor<16x16xf32>, i1, index, index, index)
+            : tensor<16x16xf32>, tensor<16x16xf32>, i1, index, index, index)
         outs(%out : tensor<16x16xf32>) -> tensor<16x16xf32>
     return %mmad : tensor<16x16xf32>
   }

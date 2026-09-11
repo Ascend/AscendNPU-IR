@@ -770,3 +770,59 @@ func.func @test_fixpipe_f16_tensor_src_rejected() {
   %r = hivm.hir.fixpipe ins(%src : tensor<16x16xf16>) outs(%dst : tensor<16x16xf16>) -> tensor<16x16xf16>
   return
 }
+
+// -----
+
+// Matrix A and B must use the same element type.
+func.func @test_mmad_l1_mismatched_input_types() {
+  %a = memref.alloc() : memref<16x16xf32>
+  %b = memref.alloc() : memref<16x16xf16>
+  %c = memref.alloc() : memref<16x16xf32>
+  %true = arith.constant true
+  %c16 = arith.constant 16 : index
+  // expected-error@+1 {{'hivm.hir.mmadL1' op failed to verify that all of {a, b} have same element type}}
+  hivm.hir.mmadL1 ins(%a, %b, %true, %c16, %c16, %c16 : memref<16x16xf32>, memref<16x16xf16>, i1, index, index, index) outs(%c : memref<16x16xf32>)
+  return
+}
+
+// -----
+
+// Matrix C is an accumulator and must use f32 or i32 elements.
+func.func @test_mmad_l1_f16_accumulator() {
+  %a = memref.alloc() : memref<16x16xf16>
+  %b = memref.alloc() : memref<16x16xf16>
+  %c = memref.alloc() : memref<16x16xf16>
+  %true = arith.constant true
+  %c16 = arith.constant 16 : index
+  // expected-error@+1 {{'hivm.hir.mmadL1' op operand #6 must be Shaped Type of 32-bit float or 32-bit signless integer values}}
+  hivm.hir.mmadL1 ins(%a, %b, %true, %c16, %c16, %c16 : memref<16x16xf16>, memref<16x16xf16>, i1, index, index, index) outs(%c : memref<16x16xf16>)
+  return
+}
+
+// -----
+
+// Tensor results must use the same accumulator element-type domain.
+func.func @test_mmad_l1_f16_result() {
+  %a = tensor.empty() : tensor<16x16xf16>
+  %b = tensor.empty() : tensor<16x16xf16>
+  %c = tensor.empty() : tensor<16x16xf32>
+  %true = arith.constant true
+  %c16 = arith.constant 16 : index
+  // expected-error@+1 {{'hivm.hir.mmadL1' op result #0 must be variadic of ranked tensor of 32-bit float or 32-bit signless integer values}}
+  %result = hivm.hir.mmadL1 ins(%a, %b, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%c : tensor<16x16xf32>) -> tensor<16x16xf16>
+  return
+}
+
+// -----
+
+// BatchMmadL1 shares the same accumulator contract.
+func.func @test_batch_mmad_l1_f16_accumulator() {
+  %a = memref.alloc() : memref<2x16x16xf16>
+  %b = memref.alloc() : memref<2x16x16xf16>
+  %c = memref.alloc() : memref<2x16x16xf16>
+  %true = arith.constant true
+  %c16 = arith.constant 16 : index
+  // expected-error@+1 {{'hivm.hir.batchMmadL1' op operand #6 must be Shaped Type of 32-bit float or 32-bit signless integer values}}
+  hivm.hir.batchMmadL1 ins(%a, %b, %true, %c16, %c16, %c16 : memref<2x16x16xf16>, memref<2x16x16xf16>, i1, index, index, index) outs(%c : memref<2x16x16xf16>)
+  return
+}

@@ -107,13 +107,13 @@ func.func @keep_fixpipe_inside_scf_for_with_attr() -> tensor<16x16xf32> {
   %c16 = arith.constant 16 : index
   %true = arith.constant true
   %init_a = tensor.empty() : tensor<16x16xf16>
-  %init_b = tensor.empty() : tensor<16x16xf16>
+  %init_b = tensor.empty() : tensor<16x16xf32>
   %init_c = tensor.empty() : tensor<16x16xf32>
   %for_res = scf.for %iv = %c0_i32 to %c4_i32 step %c1_i32 iter_args(%acc = %init_c) -> (tensor<16x16xf32>) : i32 {
     %empty = tensor.empty() : tensor<16x16xf32>
     %mmad = hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
         ins(%acc, %init_b, %true, %c16, %c16, %c16
-            : tensor<16x16xf32>, tensor<16x16xf16>, i1, index, index, index)
+            : tensor<16x16xf32>, tensor<16x16xf32>, i1, index, index, index)
         outs(%empty : tensor<16x16xf32>) -> tensor<16x16xf32>
     scf.yield %mmad : tensor<16x16xf32>
   }
