@@ -28,7 +28,6 @@
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
-#include "bishengir/Dialect/HIVM/Utils/Utils.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Operation.h"
@@ -54,7 +53,7 @@ namespace {
 struct LockVarInfo {
   Value lockVar;
   bool withSubblock = false;
-  SyncBlockLockOrdering ordering = SyncBlockLockOrdering::Ordered;
+  bool unordered = false;
 };
 
 void collectLockVarsAndReturnOps(func::FuncOp funcOp,
@@ -67,14 +66,12 @@ void collectLockVarsAndReturnOps(func::FuncOp funcOp,
 
   // assuming that each SyncBlockLock is paired with a SyncBlockUnlock on the
   // same lock_var
-  auto recordLockVar = [&](Value lockVar, bool withSubblock,
-                           SyncBlockLockOrdering ordering) {
+  auto recordLockVar = [&](Value lockVar, bool withSubblock, bool unordered) {
     auto [it, inserted] =
         lockVarToInfo.try_emplace(lockVar, LockVarInfo{lockVar});
     (void)inserted;
     it->second.withSubblock |= withSubblock;
-    if (ordering == SyncBlockLockOrdering::Unordered)
-      it->second.ordering = SyncBlockLockOrdering::Unordered;
+    it->second.unordered |= unordered;
   };
 
   // Each SyncBlockLock is assumed paired with a SyncBlockUnlock on the same
@@ -83,7 +80,7 @@ void collectLockVarsAndReturnOps(func::FuncOp funcOp,
     if (auto lockOp = dyn_cast<SyncBlockLockOp>(op)) {
       recordLockVar(lockOp.getLockVar(),
                     lockOp->hasAttr(SyncBlockLockWithSubblockAttr::name),
-                    getSyncBlockLockOpOrdering(lockOp));
+                    lockOp->hasAttr(SyncBlockLockUnorderedAttr::name));
     } else if (auto returnOp = dyn_cast<func::ReturnOp>(op)) {
       returnOps.push_back(returnOp);
     }
@@ -127,12 +124,13 @@ public:
         builder.setInsertionPoint(returnOp);
 
         for (const LockVarInfo &info : lockVars) {
-          auto freeLockOp = builder.create<FreeLockVarOp>(
-              returnOp.getLoc(), info.lockVar,
-              SyncBlockLockOrderingAttr::get(funcOp.getContext(),
-                                             info.ordering));
+          auto freeLockOp =
+              builder.create<FreeLockVarOp>(returnOp.getLoc(), info.lockVar);
 
-          if (info.withSubblock)
+          if (info.unordered)
+            freeLockOp->setAttr(SyncBlockLockUnorderedAttr::name,
+                                builder.getUnitAttr());
+          else if (info.withSubblock)
             freeLockOp->setAttr(SyncBlockLockWithSubblockAttr::name,
                                 builder.getUnitAttr());
         }

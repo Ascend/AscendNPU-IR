@@ -80,25 +80,3 @@ func.func @hoist_sync_in_for_loop_if_statement(%arg0: memref<16xi32>, %arg1: mem
   }
   return
 }
-
-// -----
-
-// Unordered lock (native $ordering): create may hoist; lock/unlock stay in loop.
-// CHECK-LABEL: func.func @unordered_lock_stays_in_for_loop(
-// CHECK: hivm.hir.create_sync_block_lock
-// CHECK: scf.for
-// CHECK: hivm.hir.sync_block_lock {ordering = #hivm.ordering<unordered>}
-// CHECK: hivm.hir.sync_block_unlock {ordering = #hivm.ordering<unordered>}
-func.func @unordered_lock_stays_in_for_loop(%arg0: memref<16xi32>, %arg1: memref<16xi32>) {
-  %c1_i32 = arith.constant 1 : i32
-  %c8_i32 = arith.constant 8 : i32
-  %c0_i32 = arith.constant 0 : i32
-  scf.for %arg2 = %c0_i32 to %c8_i32 step %c1_i32  : i32 {
-    %0 = hivm.hir.create_sync_block_lock : memref<1xi64>
-    hivm.hir.sync_block_lock {ordering = #hivm.ordering<unordered>} lock_var(%0 : memref<1xi64>)
-    %alloc = memref.alloc() : memref<16xi32>
-    hivm.hir.vadd ins(%arg0, %arg1 : memref<16xi32>, memref<16xi32>) outs(%alloc : memref<16xi32>)
-    hivm.hir.sync_block_unlock {ordering = #hivm.ordering<unordered>} lock_var(%0 : memref<1xi64>)
-  }
-  return
-}
