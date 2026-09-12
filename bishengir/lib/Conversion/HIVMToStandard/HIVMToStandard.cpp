@@ -1896,10 +1896,12 @@ public:
                                 PatternRewriter &rewriter) const final {
     ModuleOp mod = op->template getParentOfType<ModuleOp>();
     std::string libCallName = op.getOpName().str();
-    if (getSyncBlockLockOpOrdering(op) == SyncBlockLockOrdering::Unordered)
+    if (op->hasAttr(SyncBlockLockUnorderedAttr::name)) {
       libCallName += "_unordered";
-    if (op->hasAttr(SyncBlockLockWithSubblockAttr::name))
+    }
+    if (op->hasAttr(SyncBlockLockWithSubblockAttr::name)) {
       libCallName += "_with_subblock";
+    }
     createLibCall(rewriter, op, mod, libCallName, op->getOperands(), {});
     rewriter.eraseOp(op);
     return success();

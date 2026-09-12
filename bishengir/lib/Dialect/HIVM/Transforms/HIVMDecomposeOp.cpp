@@ -1349,31 +1349,6 @@ class DecomposeVDeinterleaveOp
   }
 };
 
-/// A3 keeps the ordered token-ring lock. A5/regbase still uses unordered bakery
-/// locks for leftover atomics that hivm-normalize-ops did not rewrite.
-static SyncBlockLockOrdering getAtomicSyncBlockLockOrdering(Value lockVar) {
-  Operation *defOp = lockVar.getDefiningOp();
-  ModuleOp module =
-      defOp ? defOp->getParentOfType<ModuleOp>()
-            : lockVar.getParentRegion()->getParentOfType<ModuleOp>();
-  if (module && hacc::utils::isRegBasedArch(module))
-    return SyncBlockLockOrdering::Unordered;
-  return SyncBlockLockOrdering::Ordered;
-}
-
-static SyncBlockLockOp createAtomicSyncBlockLock(PatternRewriter &rewriter,
-                                                 Location loc, Value lockVar) {
-  return createSyncBlockLock(rewriter, loc, lockVar,
-                             getAtomicSyncBlockLockOrdering(lockVar));
-}
-
-static SyncBlockUnlockOp createAtomicSyncBlockUnlock(PatternRewriter &rewriter,
-                                                     Location loc,
-                                                     Value lockVar) {
-  return createSyncBlockUnlock(rewriter, loc, lockVar,
-                               getAtomicSyncBlockLockOrdering(lockVar));
-}
-
 class AtomicStoreOpLowering : public OpRewritePattern<hivm::StoreOp> {
   using OpRewritePattern<hivm::StoreOp>::OpRewritePattern;
   LogicalResult matchAndRewrite(hivm::StoreOp op,
@@ -1442,8 +1417,7 @@ private:
   }
 
   LogicalResult addSyncForReturnedValue(hivm::StoreOp op,
-                                        PatternRewriter &rewriter,
-                                        Location loc) const {
+                                        PatternRewriter &rewriter, Location loc) const {
     static constexpr llvm::StringLiteral kAlreadySync =
         "already_sync";
     if (op->hasAttr(kAlreadySync)) {
@@ -1453,9 +1427,9 @@ private:
     PatternRewriter::InsertionGuard guard(rewriter);
     rewriter.setInsertionPoint(returnedValueLoadOp);
     auto lockVar = createSyncBlockLockVar(rewriter, op->getLoc());
-    createAtomicSyncBlockLock(rewriter, loc, lockVar);
+    rewriter.create<hivm::SyncBlockLockOp>(loc, lockVar);
     rewriter.setInsertionPointAfter(op);
-    createAtomicSyncBlockUnlock(rewriter, loc, lockVar);
+    rewriter.create<hivm::SyncBlockUnlockOp>(loc, lockVar);
     op->setAttr(kAlreadySync, UnitAttr::get(op->getContext()));
     return success();
   }
@@ -1476,7 +1450,7 @@ private:
     auto lockVar = createSyncBlockLockVar(rewriter, op->getLoc());
 
     // 1. insert sync_block_lock
-    createAtomicSyncBlockLock(rewriter, loc, lockVar);
+    rewriter.create<hivm::SyncBlockLockOp>(loc, lockVar);
 
     // 2. create tmp memref alloc and load dst to tmp
     auto src = op.getSrc();
@@ -1523,7 +1497,7 @@ private:
     rewriter.create<hivm::StoreOp>(loc, TypeRange{}, resUB, dst);
 
     // 5. insert sync_block_unlock
-    createAtomicSyncBlockUnlock(rewriter, loc, lockVar);
+    rewriter.create<hivm::SyncBlockUnlockOp>(loc, lockVar);
 
     rewriter.eraseOp(op);
     return success();
@@ -1615,9 +1589,9 @@ private:
   LogicalResult decomposeEltwiseAtomic(hivm::AtomicRMWOp op,
                                        PatternRewriter &rewriter,
                                        Location loc) const {
-    // 1. insert sync_block_lock
     auto lockVar = createSyncBlockLockVar(rewriter, op->getLoc());
-    createAtomicSyncBlockLock(rewriter, loc, lockVar);
+    // 1. insert sync_block_lock
+    rewriter.create<hivm::SyncBlockLockOp>(loc, lockVar);
 
     // 2. create tmp memref alloc and load dst to tmp
     auto src = op.getSrc();
@@ -1652,7 +1626,7 @@ private:
     rewriter.create<hivm::StoreOp>(loc, TypeRange{}, resUB, dst);
 
     // 5. insert sync_block_unlock
-    createAtomicSyncBlockUnlock(rewriter, loc, lockVar);
+    rewriter.create<hivm::SyncBlockUnlockOp>(loc, lockVar);
 
     rewriter.eraseOp(op);
 
@@ -1678,7 +1652,7 @@ class AtomicCasOpLowering : public OpRewritePattern<hivm::AtomicCasOp> {
     auto lockVar = createSyncBlockLockVar(rewriter, op->getLoc());
 
     // insert sync_block_lock
-    createAtomicSyncBlockLock(rewriter, loc, lockVar);
+    rewriter.create<hivm::SyncBlockLockOp>(loc, lockVar);
 
     // step1: load old val in gm to ub
     // create memref.alloc op
@@ -1744,7 +1718,7 @@ class AtomicCasOpLowering : public OpRewritePattern<hivm::AtomicCasOp> {
     // step3: store res_ub to dst
     rewriter.create<hivm::StoreOp>(loc, TypeRange{}, resUB, dst);
 
-    createAtomicSyncBlockUnlock(rewriter, loc, lockVar);
+    rewriter.create<hivm::SyncBlockUnlockOp>(loc, lockVar);
     if (hasReturn) {
       rewriter.replaceAllUsesWith(op.getResults()[0], tmpUB);
     }
@@ -1767,12 +1741,15 @@ class AtomicXchgOpLowering : public OpRewritePattern<hivm::AtomicXchgOp> {
                                 PatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
     auto lockVar = createSyncBlockLockVar(rewriter, op->getLoc());
-    createAtomicSyncBlockLock(rewriter, loc, lockVar);
     auto src = op.getSrc();
     auto dst = op.getDst();
     auto mask = op.getMask();
 
+    // insert sync_block_lock
+    rewriter.create<hivm::SyncBlockLockOp>(loc, lockVar);
+
     // step1: load old val in dst gm to ub
+
     bool hasReturn = !op.getResults().empty();
     auto tmpUB_dst = createTmpBufferOrTensorWithTargetType(
         rewriter, loc, hasReturn ? op.getResults()[0] : src);
@@ -1796,7 +1773,7 @@ class AtomicXchgOpLowering : public OpRewritePattern<hivm::AtomicXchgOp> {
       rewriter.create<hivm::CopyOp>(loc, TypeRange{}, tmpUB_dst, src);
     }
 
-    createAtomicSyncBlockUnlock(rewriter, loc, lockVar);
+    rewriter.create<hivm::SyncBlockUnlockOp>(loc, lockVar);
     if (hasReturn) {
       rewriter.replaceAllUsesWith(op.getResults()[0], tmpUB_dst);
     }
