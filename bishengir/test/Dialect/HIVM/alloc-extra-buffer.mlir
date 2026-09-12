@@ -2434,8 +2434,7 @@ func.func @test_reduce_max_with_r_index_dim0_UI8() {
 // -----
 func.func @test_decompose_r_argmax_I1(%src: memref<2x5x7xi1, strided<[35, 7, 1], offset: ?>>, %idx: memref<2x5x1xi32>) {
   %dst = memref.alloc() : memref<2x5x1xi1>
-  // CHECK: hivm.hir.vreduce <max_with_index_right>
-  // CHECK: temp_buffer
+  // CHECK: hivm.hir.vreduce <max_with_index_right>{{.*}}temp_buffer({{.*}}memref<8xi1>)
   hivm.hir.vreduce <max_with_index_right> ins(%src : memref<2x5x7xi1, strided<[35, 7, 1], offset: ?>>)
                                     outs(%dst, %idx : memref<2x5x1xi1>, memref<2x5x1xi32>) reduce_dims = [2]
   return
@@ -2444,8 +2443,7 @@ func.func @test_decompose_r_argmax_I1(%src: memref<2x5x7xi1, strided<[35, 7, 1],
 // -----
 func.func @test_decompose_r_argmax_I8(%src: memref<2x5x7xi8, strided<[35, 7, 1], offset: ?>>, %idx: memref<2x5x1xi32>) {
   %dst = memref.alloc() : memref<2x5x1xi8>
-  // CHECK: hivm.hir.vreduce <max_with_index_right>
-  // CHECK: temp_buffer
+  // CHECK: hivm.hir.vreduce <max_with_index_right>{{.*}}temp_buffer({{.*}}memref<8xi8>)
   hivm.hir.vreduce <max_with_index_right> ins(%src : memref<2x5x7xi8, strided<[35, 7, 1], offset: ?>>)
                                     outs(%dst, %idx : memref<2x5x1xi8>, memref<2x5x1xi32>) reduce_dims = [2]
   return
@@ -2454,10 +2452,45 @@ func.func @test_decompose_r_argmax_I8(%src: memref<2x5x7xi8, strided<[35, 7, 1],
 // -----
 func.func @test_decompose_r_argmax_UI8(%src: memref<2x5x7xui8, strided<[35, 7, 1], offset: ?>>, %idx: memref<2x5x1xi32>) {
   %dst = memref.alloc() : memref<2x5x1xui8>
-  // CHECK: hivm.hir.vreduce <max_with_index_right>
-  // CHECK: temp_buffer
+  // CHECK: hivm.hir.vreduce <max_with_index_right>{{.*}}temp_buffer({{.*}}memref<8xui8>)
   hivm.hir.vreduce <max_with_index_right> ins(%src : memref<2x5x7xui8, strided<[35, 7, 1], offset: ?>>)
                                     outs(%dst, %idx : memref<2x5x1xui8>, memref<2x5x1xi32>) reduce_dims = [2]
+  return
+}
+
+// -----
+func.func @test_decompose_r_argmax_I1_multirepeat(%src: memref<2x5x512xi1>, %idx: memref<2x5x1xi32>) {
+  %dst = memref.alloc() : memref<2x5x1xi1>
+  // CHECK: hivm.hir.vreduce <max_with_index_right>{{.*}}temp_buffer({{.*}}memref<16xi1>)
+  hivm.hir.vreduce <max_with_index_right> ins(%src : memref<2x5x512xi1>)
+                                    outs(%dst, %idx : memref<2x5x1xi1>, memref<2x5x1xi32>) reduce_dims = [2]
+  return
+}
+
+// -----
+func.func @test_decompose_r_argmax_I8_multirepeat(%src: memref<2x5x512xi8>, %idx: memref<2x5x1xi32>) {
+  %dst = memref.alloc() : memref<2x5x1xi8>
+  // CHECK: hivm.hir.vreduce <max_with_index_right>{{.*}}temp_buffer({{.*}}memref<16xi8>)
+  hivm.hir.vreduce <max_with_index_right> ins(%src : memref<2x5x512xi8>)
+                                    outs(%dst, %idx : memref<2x5x1xi8>, memref<2x5x1xi32>) reduce_dims = [2]
+  return
+}
+
+// -----
+func.func @test_decompose_r_argmax_UI8_multirepeat(%src: memref<2x5x512xui8>, %idx: memref<2x5x1xi32>) {
+  %dst = memref.alloc() : memref<2x5x1xui8>
+  // CHECK: hivm.hir.vreduce <max_with_index_right>{{.*}}temp_buffer({{.*}}memref<16xui8>)
+  hivm.hir.vreduce <max_with_index_right> ins(%src : memref<2x5x512xui8>)
+                                    outs(%dst, %idx : memref<2x5x1xui8>, memref<2x5x1xi32>) reduce_dims = [2]
+  return
+}
+
+// -----
+func.func @test_decompose_r_argmax_I8_three_repeats(%src: memref<2x5x768xi8>, %idx: memref<2x5x1xi32>) {
+  %dst = memref.alloc() : memref<2x5x1xi8>
+  // CHECK: hivm.hir.vreduce <max_with_index_right>{{.*}}temp_buffer({{.*}}memref<24xi8>)
+  hivm.hir.vreduce <max_with_index_right> ins(%src : memref<2x5x768xi8>)
+                                    outs(%dst, %idx : memref<2x5x1xi8>, memref<2x5x1xi32>) reduce_dims = [2]
   return
 }
 
