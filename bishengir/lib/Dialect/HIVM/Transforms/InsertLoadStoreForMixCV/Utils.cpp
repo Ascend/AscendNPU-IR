@@ -26,6 +26,8 @@
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/Visitors.h"
 
+#include "llvm/ADT/APFloat.h"
+#include "llvm/ADT/APInt.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/TypeSwitch.h"
 
@@ -36,7 +38,46 @@
 #define DBGSNL() (llvm::dbgs() << "\n")
 #define LDBG(X) LLVM_DEBUG(DBGS() << X << "\n")
 
+using namespace llvm;
+
 namespace mlir::hivm {
+
+bool isConstZero(Value v) {
+  auto type = getElementTypeOrSelf(v);
+  if (auto floatType = dyn_cast<FloatType>(type)) {
+    return matchPattern(v, m_PosZeroFloat()) ||
+           matchPattern(v, m_NegZeroFloat());
+  } else if (auto intType = dyn_cast<IntegerType>(type)) {
+    return matchPattern(v, m_Zero());
+  } else {
+    llvm_unreachable("unexpected type");
+    return false;
+  }
+
+  auto defineOp = v.getDefiningOp();
+  if (!defineOp) {
+    return false;
+  }
+
+  if (auto vbrcOp = dyn_cast<VBrcOp>(defineOp)) {
+    return isConstZero(vbrcOp.getSrc());
+  }
+
+  return false;
+}
+
+bool isVectorBroadcast(VBrcOp vbrcOp) {
+  auto src = vbrcOp.getSrc();
+  if (!utils::isScalarLike(src))
+    return true;
+
+  // TODO: find why broadcast to l1 doesn't work
+  if (!isConstZero(src))
+    return true;
+
+  return false;
+}
+
 namespace {
 /// Peel `builtin.unrealized_conversion_cast` chains used as propagation
 /// markers so `getTensorDynamicValues` does not build `tensor.dim` / size

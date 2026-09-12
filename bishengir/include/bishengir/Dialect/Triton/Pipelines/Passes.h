@@ -37,6 +37,11 @@ struct LowerTritonPipelineOptions
       *this, "simt-optimization-mode",
       llvm::cl::desc("set modes for some simt optimization passes"),
       llvm::cl::init(900101)};
+  PassOptions::Option<bool> enableCGroupingDotTileLowering{
+      *this, "enable-c-grouping-dot-tile-lowering",
+      llvm::cl::desc("enable C-grouping dot marking, tiling, and FMA-layout "
+                     "lowering"),
+      llvm::cl::init(false)};
   PassOptions::Option<bool> disableDecomposeReduction{
       *this, "disable-decompose-reduction",
       llvm::cl::desc("disable decompose reduction"), llvm::cl::init(false)};

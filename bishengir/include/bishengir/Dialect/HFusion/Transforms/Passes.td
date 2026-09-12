@@ -500,6 +500,13 @@ def LegalizeScalarPass : Pass<"hfusion-legalize-scalar", "func::FuncOp"> {
   let dependentDialects = ["arith::ArithDialect", "linalg::LinalgDialect", "hfusion::HFusionDialect"];
 }
 
+def OptimizeScalarTransfers
+    : Pass<"hfusion-optimize-scalar-transfers", "func::FuncOp"> {
+  let summary = "Optimize scalar transfers between tensor operations";
+  let constructor = "mlir::hfusion::createOptimizeScalarTransfersPass()";
+  let dependentDialects = ["arith::ArithDialect", "math::MathDialect", "tensor::TensorDialect"];
+}
+
 def LegalizeBF16Pass : Pass<"hfusion-legalize-bf16", "func::FuncOp"> {
   let summary = "normalize BF16 to FP32.";
   let constructor = "mlir::hfusion::createLegalizeBF16Pass()";

@@ -16,7 +16,7 @@ func.func @extract_i1_for_cube_init(
   %c16 = arith.constant 16 : index
   %cmp_empty = tensor.empty() : tensor<16x16xi1>
   %cmp = hivm.hir.vcmp ins(%arg0, %arg1 : tensor<16x16xf16>, tensor<16x16xf16>) outs(%cmp_empty : tensor<16x16xi1>) compare_mode = <lt> -> tensor<16x16xi1>
-  %cond = tensor.extract %cmp[%c0, %c0] : tensor<16x16xi1>
+  %cond = tensor.extract %cmp[%c0, %c0] {hivm.tcore_type = #hivm.tcore_type<VECTOR>} : tensor<16x16xi1>
   %cube_empty = tensor.empty() : tensor<16x16xf32>
   %res = hivm.hir.mmadL1 ins(%lhs, %rhs, %cond, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%cube_empty : tensor<16x16xf32>) -> tensor<16x16xf32>
   hivm.hir.store ins(%res : tensor<16x16xf32>) outs(%out : memref<16x16xf32>)
@@ -63,7 +63,7 @@ func.func @extract_i1_direct_load_for_cube_init(
   %alloc = memref.alloc() : memref<16x16xi1>
   hivm.hir.load ins(%src : memref<16x16xi1>) outs(%alloc : memref<16x16xi1>)
   %tensor = bufferization.to_tensor %alloc restrict writable : memref<16x16xi1>
-  %cond = tensor.extract %tensor[%c0, %c0] : tensor<16x16xi1>
+  %cond = tensor.extract %tensor[%c0, %c0] {hivm.tcore_type = #hivm.tcore_type<VECTOR>} : tensor<16x16xi1>
   %cube_empty = tensor.empty() : tensor<16x16xf32>
   %res = hivm.hir.mmadL1 ins(%lhs, %rhs, %cond, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%cube_empty : tensor<16x16xf32>) -> tensor<16x16xf32>
   hivm.hir.store ins(%res : tensor<16x16xf32>) outs(%out : memref<16x16xf32>)

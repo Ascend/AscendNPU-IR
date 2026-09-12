@@ -1200,6 +1200,14 @@ def SimtOptimizationMode : GeneralOptimizationControlOptions<
   bit isSharedWithDownstreamToolchain = 1;
 }
 
+def EnableCGroupingDotTileLowering : GeneralOptimizationControlOptions<
+  "Enable C-grouping dot marking, tiling, and FMA-layout lowering",
+  "bool",
+  "false"
+> {
+  bit isSharedWithDownstreamToolchain = 0;
+}
+
 def EnableVfMergeLevel : GeneralOptimizationControlOptions<
   "Enable vector function merge with level",
   "int32_t",

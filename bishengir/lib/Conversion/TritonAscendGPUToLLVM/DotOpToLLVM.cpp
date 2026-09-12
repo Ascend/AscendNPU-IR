@@ -9,34 +9,48 @@
 #include "bishengir/Conversion/TritonAscendGPUToLLVM/FMADotUtility.h"
 #include "bishengir/Conversion/TritonAscendGPUToLLVM/PatternTritonAscendGPUOpToLLVM.h"
 #include "triton/Conversion/TritonGPUToLLVM/Utility.h"
+#include "triton/Dialect/TritonGPU/IR/Dialect.h"
 
 using namespace mlir;
 using namespace mlir::triton;
 
-using ::mlir::triton::gpu::getShapePerCTA;
-
+static constexpr llvm::StringLiteral kFMAConvertedAttr = "fma.converted";
 namespace {
+
 struct DotOpConversion : public ConvertOpToLLVMPattern<triton::DotOp> {
-  using ConvertOpToLLVMPattern<triton::DotOp>::ConvertOpToLLVMPattern;
+  DotOpConversion(LLVMTypeConverter &converter,
+                  bool enableCGroupingDotTileLowering, PatternBenefit benefit)
+      : ConvertOpToLLVMPattern<triton::DotOp>(converter, benefit),
+        enableCGroupingDotTileLowering(enableCGroupingDotTileLowering) {}
 
   LogicalResult
   matchAndRewrite(triton::DotOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    Value D = op.getResult();
+    // C-group lowering must own the whole group/chain of dots so it can lower
+    // and interleave the FMAs more closely, reduce register lifetimes, avoid
+    // intermediate pack/unpack, and preserve accumulator flow.
+    if (enableCGroupingDotTileLowering && ascend::isGroupedDotAnchor(op))
+      return ascend::convertGroupedFMADots(op, adaptor, getTypeConverter(),
+                                           rewriter);
 
-    if (isa<BlockedEncodingAttr>(
-            cast<RankedTensorType>(D.getType()).getEncoding()))
+    if (op->hasAttr(kFMAConvertedAttr) ||
+        isa<BlockedEncodingAttr>(
+            cast<RankedTensorType>(op.getResult().getType()).getEncoding())) {
       return ascend::convertFMADot(op, adaptor, getTypeConverter(), rewriter);
-
+    }
     llvm::report_fatal_error(
         "Unsupported DotOp found when converting TritonGPU to LLVM.");
   }
+
+  bool enableCGroupingDotTileLowering;
 };
 
 } // namespace
 
 void mlir::triton::ascend::populateDotOpToLLVMPatterns(
     LLVMTypeConverter &typeConverter, RewritePatternSet &patterns,
+    bool enableCGroupingDotTileLowering,
     PatternBenefit benefit) {
-  patterns.add<DotOpConversion>(typeConverter, benefit);
+  patterns.add<DotOpConversion>(typeConverter,
+                                enableCGroupingDotTileLowering, benefit);
 }

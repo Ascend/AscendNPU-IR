@@ -95,3 +95,62 @@ module {
     tt.return
   }
 }
+
+// -----
+// Test 6: A grouped C-chain unit load uses a dynamic tile index plus a dense
+// 1x1 constant offset.  The explicit axis attribute disambiguates this
+// degenerate shape.
+
+// CHECK: #[[$UNIT_SHARED:.*]] = #ttg.swizzled_shared
+// CHECK-LABEL: tt.func @unit_load_with_axis
+// CHECK:         ttg.local_load %{{.*}} : !ttg.memdesc<1x1xf32, #{{.*}}, #smem, mutable>
+// CHECK-NOT:     tt.load
+module {
+  tt.func @unit_load_with_axis(
+      %arg0: !tt.ptr<f32, 6> {
+        bishengir.scratch_shm,
+        bishengir.scratch_k_axis = 0 : i32
+      }) {
+    %offset = arith.constant dense<80> : tensor<1x1xi32>
+    %idx = arith.constant 0 : i32
+    %idx_splat = tt.splat %idx : i32 -> tensor<1xi32>
+    %idx_expanded = tt.expand_dims %idx_splat {axis = 1 : i32}
+        : tensor<1xi32> -> tensor<1x1xi32>
+    %combined = arith.addi %idx_expanded, %offset : tensor<1x1xi32>
+    %base = tt.splat %arg0 : !tt.ptr<f32, 6>
+        -> tensor<1x1x!tt.ptr<f32, 6>>
+    %ptr = tt.addptr %base, %combined
+        : tensor<1x1x!tt.ptr<f32, 6>>, tensor<1x1xi32>
+    %value = tt.load %ptr : tensor<1x1x!tt.ptr<f32, 6>>
+    tt.return
+  }
+}
+
+// -----
+// Test 7: A 16x1 access may contain only the other-axis range.  With
+// scratch_k_axis=1, the singleton column tile has an implicit start of zero.
+
+// CHECK-LABEL: tt.func @other_axis_only
+// CHECK:         ttg.local_load %{{.*}} : !ttg.memdesc<16x1xf32, #{{.*}}, #smem, mutable>
+// CHECK-NOT:     tt.load
+module {
+  tt.func @other_axis_only(
+      %arg0: !tt.ptr<f32, 6> {
+        bishengir.scratch_shm,
+        bishengir.scratch_k_axis = 1 : i32
+      }) {
+    %c16 = arith.constant dense<16> : tensor<16xi32>
+    %range = tt.make_range {end = 16 : i32, start = 0 : i32}
+        : tensor<16xi32>
+    %row_offset = arith.muli %range, %c16
+        : tensor<16xi32>
+    %offset = tt.expand_dims %row_offset {axis = 1 : i32}
+        : tensor<16xi32> -> tensor<16x1xi32>
+    %base = tt.splat %arg0 : !tt.ptr<f32, 6>
+        -> tensor<16x1x!tt.ptr<f32, 6>>
+    %ptr = tt.addptr %base, %offset
+        : tensor<16x1x!tt.ptr<f32, 6>>, tensor<16x1xi32>
+    %value = tt.load %ptr : tensor<16x1x!tt.ptr<f32, 6>>
+    tt.return
+  }
+}

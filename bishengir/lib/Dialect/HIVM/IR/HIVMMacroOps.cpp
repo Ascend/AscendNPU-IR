@@ -2010,3 +2010,123 @@ bool Conv3DL1Op::isInitConstant(std::optional<bool> cst) {
 void Conv3DL1Op::setInitCondition(Value init) {
   getInitConditionMutable().assign(init);
 }
+
+//===----------------------------------------------------------------------===//
+// MmadL0Op
+//===----------------------------------------------------------------------===//
+
+void MmadL0Op::build(OpBuilder &odsBuilder, OperationState &odsState,
+                     TypeRange result_tensors, Value a, Value b, Value real_m,
+                     Value real_k, Value real_n, Value c, Value k_direction_align,
+                     Value is_with_bias, Value init_condition, UnitAttr enable_HF32,
+                     UnitAttr enable_I4) {
+  build(odsBuilder, odsState, result_tensors, a, b, real_m, real_k, real_n, c,
+        k_direction_align, is_with_bias, init_condition,
+        /*unit_flag_cond*/ ValueRange{}, enable_HF32, enable_I4,
+        /*unit_flag_mode*/ ArrayAttr{}, /*unit_flag_group_id*/ IntegerAttr{});
+}
+
+SmallVector<IteratorType> MmadL0Op::getIteratorTypesArray() {
+  return {IteratorType::kParallel, IteratorType::kParallel,
+          IteratorType::kReduction};
+}
+
+LogicalResult MmadL0Op::verify() {
+  auto verifySpace = [&](Type type, AddressSpace expected,
+                         StringRef err) -> LogicalResult {
+    auto space = getOptionalHIVMAddressSpace(type);
+    if (space && *space != expected)
+      return emitOpError(err);
+    return success();
+  };
+
+  if (failed(verifySpace(getA().getType(), AddressSpace::L0A,
+                         "a must have L0A (ca) address space")))
+    return failure();
+  if (failed(verifySpace(getB().getType(), AddressSpace::L0B,
+                         "b must have L0B (cb) address space")))
+    return failure();
+  if (failed(verifySpace(getC().getType(), AddressSpace::L0C,
+                         "c must have L0C (cc) address space")))
+    return failure();
+  return success();
+}
+
+namespace mlir {
+namespace hivm {
+
+//===----------------------------------------------------------------------===//
+// L12BTOp
+//===----------------------------------------------------------------------===//
+
+SmallVector<IteratorType> L12BTOp::getIteratorTypesArray() {
+  SmallVector<IteratorType> iteratorTypes;
+  iteratorTypes.push_back(IteratorType::kParallel);
+  iteratorTypes.push_back(IteratorType::kParallel);
+  return iteratorTypes;
+}
+
+Value L12BTOp::getSource() {
+  return getSrc();
+}
+
+Value L12BTOp::getTarget() {
+  return getDst();
+}
+
+LogicalResult L12BTOp::verify() {
+  auto srcSpace = getOptionalHIVMAddressSpace(getSrc().getType());
+  if (srcSpace && *srcSpace != AddressSpace::L1)
+    return emitOpError("src must have L1 address space (cbuf)");
+
+  auto dstSpace = getOptionalHIVMAddressSpace(getDst().getType());
+  if (dstSpace && *dstSpace != AddressSpace::BiasBUF)
+    return emitOpError("dst must have BiasBUF (biasbuf) address space");
+
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
+// L12L0Op
+//===----------------------------------------------------------------------===//
+
+SmallVector<IteratorType> L12L0Op::getIteratorTypesArray() {
+  SmallVector<IteratorType> iteratorTypes;
+  iteratorTypes.push_back(IteratorType::kParallel);
+  iteratorTypes.push_back(IteratorType::kParallel);
+  return iteratorTypes;
+}
+
+Value L12L0Op::getSource() {
+  return getSrc();
+}
+
+Value L12L0Op::getTarget() {
+  return getDst();
+}
+
+bool L12L0Op::isToL0A() {
+  auto dstSpace = getOptionalHIVMAddressSpace(getDst().getType());
+  return dstSpace && *dstSpace == AddressSpace::L0A;
+}
+
+bool L12L0Op::isToL0B() {
+  auto dstSpace = getOptionalHIVMAddressSpace(getDst().getType());
+  return dstSpace && *dstSpace == AddressSpace::L0B;
+}
+
+LogicalResult L12L0Op::verify() {
+  auto srcSpace = getOptionalHIVMAddressSpace(getSrc().getType());
+  if (srcSpace && *srcSpace != AddressSpace::L1)
+    return emitOpError("src must have L1 address space (cbuf)");
+
+  auto dstSpace = getOptionalHIVMAddressSpace(getDst().getType());
+  if (dstSpace && *dstSpace != AddressSpace::L0A &&
+      *dstSpace != AddressSpace::L0B)
+    return emitOpError("dst must have L0A (ca) or L0B (cb) address space");
+
+  return success();
+}
+
+} // namespace hivm
+} // namespace mlir

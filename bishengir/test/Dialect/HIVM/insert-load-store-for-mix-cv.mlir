@@ -1263,3 +1263,31 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9382">} {
     return
   }
 }
+
+// -----
+// CHECK-LABEL: @extract_from_load_to_tensor_for_cube
+// CHECK-DAG: bufferization.to_tensor {{.*}} restrict writable : memref<1xi32>
+// CHECK-DAG: tensor.extract {{.*}} {"DuplicateTensorExtractForCube::visitedLabel" = 1 : i32} : tensor<1xi32>
+// CHECK-DAG: hivm.hir.store ins({{.*}} : tensor<1xi32>) outs({{.*}} : tensor<1xi32>) {"hivm.inserted-store"} -> tensor<1xi32>
+// CHECK-DAG: tensor.extract {{.*}} {"DuplicateTensorExtractForCube::newExtractLabel" = 1 : i32, "DuplicateTensorExtractForCube::visitedLabel" = 1 : i32} : tensor<1xi32>
+// CHECK-DAG: annotation.mark {{.*}}DuplicateTensorExtractForCube::replacementLabel
+// CHECK: hivm.hir.mmadL1
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+  func.func @extract_from_load_to_tensor_for_cube(%src: memref<1xi32>, %lhs: tensor<8x8xi8>, %rhs: tensor<8x8xi8>, %out: memref<8x8xi32>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %c0 = arith.constant 0 : index
+    %c0_i32 = arith.constant 0 : i32
+    %c8 = arith.constant 8 : index
+    %true = arith.constant true
+    %alloc = memref.alloc() : memref<1xi32>
+    hivm.hir.load ins(%src : memref<1xi32>) outs(%alloc : memref<1xi32>)
+    %tensor = bufferization.to_tensor %alloc restrict writable : memref<1xi32>
+    %extracted = tensor.extract %tensor[%c0] : tensor<1xi32>
+    %cond = arith.cmpi ne, %extracted, %c0_i32 : i32
+    scf.if %cond {
+      %empty = tensor.empty() : tensor<8x8xi32>
+      %res = hivm.hir.mmadL1 ins(%lhs, %rhs, %true, %c8, %c8, %c8 : tensor<8x8xi8>, tensor<8x8xi8>, i1, index, index, index) outs(%empty : tensor<8x8xi32>) -> tensor<8x8xi32>
+      hivm.hir.store ins(%res : tensor<8x8xi32>) outs(%out : memref<8x8xi32>)
+    }
+    return
+  }
+}

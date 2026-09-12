@@ -52,10 +52,55 @@ class HIVM_MacroOp<string mnemonic, list<Trait> traits = []> :
 }
 
 //===----------------------------------------------------------------------===//
-// HIVM Local MMAD op definitions.
+// HIVM MMAD-like op definitions.
 //===----------------------------------------------------------------------===//
 
 class HIVM_LocalMmadLikeOperandDags {
+  dag mmadCommonAB = (ins
+    Arg<TensorOrMemref, "Matrix A">:$a,
+    Arg<TensorOrMemref, "Matrix B">:$b
+  );
+
+  dag mmadCommonInit = (ins
+    Arg<I1, [{
+      The condition under which
+      data in L0C is cleared before use
+    }]>:$init_condition
+  );
+
+  dag mmadCommonMKN = (ins
+    Index:$real_m,
+    Index:$real_k,
+    Index:$real_n
+  );
+
+  dag mmadCommonC = (ins
+    Arg<TensorOrMemref, "Matrix C">:$c
+  );
+
+  dag mmadCommonUnitFlagCond = (ins
+    Arg<Variadic<I1>, [{
+      An optional condition to enable unit-flag mode,
+      useful if there is a dependency on a for loop to run at least once.
+    }]>:$unit_flag_cond
+  );
+
+  dag mmadCommonUnitFlagAttrs = (ins
+    OptionalAttr<UnitFlagArrayAttr>:$unit_flag_mode,
+    OptionalAttr<I64Attr>:$unit_flag_group_id
+  );
+
+  dag mmadCommonEnableAttrs = (ins
+    Arg<OptionalAttr<UnitAttr>, [{
+      MMAD HF32 mode control.If true, FP32 data will be rounded
+      to HF32 by CUBE before matrix multiplication, which achieves
+      double performance of MMAD.F32 but losing precision.
+    }]>:$enable_HF32,
+    Arg<OptionalAttr<UnitAttr>, [{
+      Was i4 -> i8 conversion
+    }]>:$enable_I4
+  );
+
   dag localMmadLikeArgs = (ins
     Arg<I1, [{
       The condition under which
@@ -90,48 +135,26 @@ class HIVM_LocalMmadLikeOperandDags {
 
 def HIVM_LocalMmadLikeOperands : HIVM_LocalMmadLikeOperandDags;
 
-class HIVM_LocalMmadOp<string mnemonic, list<Trait> traits = []> :
+//===----------------------------------------------------------------------===//
+// HIVM L1 MMAD op definitions.
+//===----------------------------------------------------------------------===//
+
+class HIVM_L1MmadOp<string mnemonic, list<Trait> traits = []> :
   HIVM_MacroOp<mnemonic, !listconcat(
     [HIVMLocalMatmulLikeOpTraits,
      HIVMUnitFlagEnabledInterface,
     ], traits)> {
-  let arguments = (ins Arg<TensorOrMemref, "Matrix A">:$a,
-                       Arg<TensorOrMemref, "Matrix B">:$b,
-                       Arg<I1, [{
-                        The condition under which
-                        data in L0C is cleared before use
-                       }]>:$init_condition,
-                       Index:$real_m,
-                       Index:$real_k,
-                       Index:$real_n,
-                       Arg<TensorOrMemref, "Matrix C">:$c,
-                       Arg<Variadic<I64>, [{
-                        Arguments required by mma_tile to insert
-                        synchronization instructions, they are
-                        managed by inject-sync passes.
-                       }]>:$sync_related_args,
-                       Arg<Variadic<I1>, [{
-                        An optional condition to enable unit-flag mode,
-                        useful if there is a dependency on a for loop to run at least once.
-                       }]>:$unit_flag_cond,
-                       Optional<TensorOrMemref>:$per_channel_bias,
-                       Arg<OptionalAttr<UnitAttr>, [{
-                        Matrix A is transposed before load
-                       }]>:$a_transpose,
-                       Arg<OptionalAttr<UnitAttr>, [{
-                        Matrix B is transposed before load
-                       }]>:$b_transpose,
-                       Arg<OptionalAttr<UnitAttr>, [{
-                        MMAD HF32 mode control.If true, FP32 data will be rounded
-                        to HF32 by CUBE before matrix multiplication, which achieves
-                        double performance of MMAD.F32 but losing precision.
-                       }]>:$enable_HF32,
-                       Arg<OptionalAttr<UnitAttr>, [{
-                        Was i4 -> i8 conversion
-                       }]>:$enable_I4,
-                       OptionalAttr<UnitFlagArrayAttr>:$unit_flag_mode,
-                       OptionalAttr<I64Attr>:$unit_flag_group_id
-                       );
+  let arguments = !con(
+    HIVM_LocalMmadLikeOperands.mmadCommonAB,
+    HIVM_LocalMmadLikeOperands.localMmadLikeArgs,
+    HIVM_LocalMmadLikeOperands.mmadCommonC,
+    HIVM_LocalMmadLikeOperands.localMmadLikeSyncArgs,
+    HIVM_LocalMmadLikeOperands.mmadCommonUnitFlagCond,
+    (ins Optional<TensorOrMemref>:$per_channel_bias),
+    HIVM_LocalMmadLikeOperands.localMmadLikeTransposeArgs,
+    HIVM_LocalMmadLikeOperands.mmadCommonEnableAttrs,
+    HIVM_LocalMmadLikeOperands.mmadCommonUnitFlagAttrs
+  );
   let results = (outs Variadic<AnyRankedTensor>:$result_tensors);
   code localMmadBaseDecls = [{
     // Implement functions necessary for DestinationStyleOpInterface.
@@ -202,7 +225,7 @@ class HIVM_LocalMmadOp<string mnemonic, list<Trait> traits = []> :
   let hasVerifier = 1;
 }
 
-def MmadL1Op : HIVM_LocalMmadOp<"mmadL1", [
+def MmadL1Op : HIVM_L1MmadOp<"mmadL1", [
   NoMaxRankTrait,
   DeclareOpInterfaceMethods<HIVMStructuredOpInterface, ["getIndexingMaps"]>,
   DeclareOpInterfaceMethods<OpLayoutInterface, ["getOperandsTargetFractalLayout"]>,
@@ -226,7 +249,7 @@ def MmadL1Op : HIVM_LocalMmadOp<"mmadL1", [
   }];
 }
 
-def BatchMmadL1Op : HIVM_LocalMmadOp<"batchMmadL1", [
+def BatchMmadL1Op : HIVM_L1MmadOp<"batchMmadL1", [
   NoMaxRankTrait,
   DeclareOpInterfaceMethods<OpLayoutInterface, ["getOperandsTargetFractalLayout"]>,
 ]> {
@@ -247,6 +270,110 @@ def BatchMmadL1Op : HIVM_LocalMmadOp<"batchMmadL1", [
     llvm::SmallVector<int64_t> getBlockSizesTile(
         Value oper, bool isTranspose, bool isA);
   }];
+}
+
+//===----------------------------------------------------------------------===//
+// HIVM L0 MMAD op definitions.
+//===----------------------------------------------------------------------===//
+
+def MmadL0Op : HIVM_StructuredOp<"mmadL0", [
+  CubeCoreTypeTrait,
+  SinglePipeOpTrait,
+  HIVMLocalMatmulL0OpInterface,
+  HIVMUnitFlagEnabledInterface,
+  OpPipeTrait<"PIPE::PIPE_M">,
+  DeclareOpInterfaceMethods<HIVMStructuredOpInterface,
+    ["getIteratorTypesArray"]>,
+]> {
+  let arguments = !con(
+    HIVM_LocalMmadLikeOperands.mmadCommonAB,
+    HIVM_LocalMmadLikeOperands.mmadCommonMKN,
+    HIVM_LocalMmadLikeOperands.mmadCommonC,
+    (ins
+      Arg<I1, [{}]>:$k_direction_align,
+      Arg<I1, [{
+        If true, data in L0C is initialized from the bias source.
+      }]>:$is_with_bias
+    ),
+    HIVM_LocalMmadLikeOperands.mmadCommonInit,
+    HIVM_LocalMmadLikeOperands.mmadCommonUnitFlagCond,
+    HIVM_LocalMmadLikeOperands.mmadCommonEnableAttrs,
+    HIVM_LocalMmadLikeOperands.mmadCommonUnitFlagAttrs
+  );
+  let results = (outs Variadic<AnyRankedTensor>:$result_tensors);
+
+  let summary = [{
+    Matrix Multiply and Add Op with inputs from L0 memory hierarchy.
+  }];
+  let description = [{
+    The computation logic is:
+
+    ```
+    C = C + A x B + (optional) bias
+    ```
+  }];
+  let assemblyFormat = [{
+    attr-dict `ins` `(`
+    $a
+    `,` $b
+    `,` $real_m
+    `,` $real_k
+    `,` $real_n
+    `,` $k_direction_align
+    `,` $is_with_bias
+    `,` $init_condition
+    `:`
+    type($a)
+    `,` type($b)
+    `,` type($real_m)
+    `,` type($real_k)
+    `,` type($real_n)
+    `,` type($k_direction_align)
+    `,` type($is_with_bias)
+    `,` type($init_condition) `)`
+    `outs` `(` $c `:` type($c) `)`
+    (`unit_flag_mode` `(` $unit_flag_mode^ `)` )?
+    (`unit_flag_cond` `(` $unit_flag_cond^ `)` )?
+    (`->` type($result_tensors)^)?
+  }];
+
+  let builders = [
+    OpBuilder<(ins "TypeRange":$result_tensors,
+                   "Value":$a,
+                   "Value":$b,
+                   "Value":$real_m,
+                   "Value":$real_k,
+                   "Value":$real_n,
+                   "Value":$c,
+                   "Value":$k_direction_align,
+                   "Value":$is_with_bias,
+                   "Value":$init_condition,
+                   CArg<"UnitAttr", "{}">:$enable_HF32,
+                   CArg<"UnitAttr", "{}">:$enable_I4)>
+  ];
+
+  let extraClassDeclaration = [{
+    // Required by DestinationStyleOpInterface
+    ::mlir::MutableOperandRange getDpsInitsMutable() {
+      return getCMutable();
+    }
+
+    ArrayAttr getIndexingMaps() {
+      return ::mlir::hivm::detail::getIndexingMapsImpl(*this);
+    }
+
+    // LocalMatmulBaseOpInterface methods
+    ::mlir::hivm::MatmulBiasMode getMatmulBiasMode() {
+      return ::mlir::hivm::MatmulBiasMode::NoBias;
+    }
+
+    bool supportsScaleOperands() {
+      return false;
+    }
+
+  }];
+
+  let hasVerifier = 1;
 }
 
 //===----------------------------------------------------------------------===//
@@ -280,6 +407,8 @@ class HIVM_LocalMmadMxOp<string mnemonic, list<Trait> traits = []> :
     bool shouldDecomposeBiasByElementAdd();
     bool supportsScaleOperands() { return true; }
     bool usesBoolAttrForTargetLayout() { return true; }
+    bool isHF32Enabled() { return false; }
+    bool isI4Enabled() { return false; }
     llvm::SmallVector<int64_t> getMatmulBlockSizesTile(
         Value oper, bool isTranspose, bool isA) const;
     // Needed for lower-hivm-to-std, should be updated if input operands got changed.
