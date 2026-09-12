@@ -168,6 +168,10 @@ def ConvertLayoutOp : HIVM_Op<"convert_layout",
     dynamic dimensions are provided as SSA values in `output_shape`.
     Dynamic dimensions are indicated by `ShapedType::kDynamic` in
     the static shape attribute.
+
+    `groups` is present for grouped NCHW to NC1HWC0 conversions. It records
+    that channel padding is applied independently to each group; it defaults
+    to one when omitted.
   }];
 
   let arguments = (ins TensorOrMemref:$source,

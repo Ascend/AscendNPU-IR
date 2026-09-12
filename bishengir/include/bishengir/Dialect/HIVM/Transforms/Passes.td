@@ -58,6 +58,8 @@ def NormalizeConvOps : Pass<"hivm-normalize-convops"> {
   let constructor = "mlir::hivm::createNormalizeConvOpsPass()";
   let dependentDialects = ["arith::ArithDialect", "hivm::HIVMDialect",
                            "tensor::TensorDialect", "annotation::AnnotationDialect",
+                           "bufferization::BufferizationDialect",
+                           "memref::MemRefDialect",
   ];
 }
 

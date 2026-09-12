@@ -246,6 +246,54 @@ convertAndAssignOperand(PatternRewriter &rewriter, Location loc, Value input,
   return success();
 }
 
+template <typename ConvOpType>
+struct InsertConvertLayoutAroundConv : public OpRewritePattern<ConvOpType> {
+  using OpRewritePattern<ConvOpType>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(ConvOpType op,
+                                PatternRewriter &rewriter) const override {
+    ModuleOp module = op->template getParentOfType<ModuleOp>();
+    if (!module || !hacc::utils::isAscend950(module))
+      return rewriter.notifyMatchFailure(op, "not an A5 target");
+    if (!op.hasPureTensorSemantics())
+      return rewriter.notifyMatchFailure(op, "not tensor based");
+
+    Value input = op.getInput();
+    auto inputType = dyn_cast<RankedTensorType>(input.getType());
+    if (!inputType || !inputType.hasStaticShape() || inputType.getRank() != 4)
+      return rewriter.notifyMatchFailure(op,
+                                         "input is not static rank-4 NCHW");
+    Type elementType = inputType.getElementType();
+    if (!isa<Float16Type, BFloat16Type, Float32Type>(elementType))
+      return rewriter.notifyMatchFailure(op, "unsupported input element type");
+
+    int64_t groups = op.getGroups();
+    int64_t channels = inputType.getDimSize(1);
+    if (groups <= 0 || channels % groups != 0)
+      return rewriter.notifyMatchFailure(op, "invalid grouped channels");
+
+    int64_t c0 = elementType.isF32() ? 8 : 16;
+    int64_t channelsPerGroup = channels / groups;
+    int64_t c1PerGroup = (channelsPerGroup + c0 - 1) / c0;
+    SmallVector<int64_t> outputShape{
+        inputType.getDimSize(0), groups * c1PerGroup,
+        inputType.getDimSize(2), inputType.getDimSize(3), c0};
+    auto outputType = RankedTensorType::get(outputShape, elementType);
+    auto srcLayout =
+        DataLayoutAttr::get(rewriter.getContext(), hivm::DataLayout::NCHW);
+    auto dstLayout =
+        DataLayoutAttr::get(rewriter.getContext(), hivm::DataLayout::NC1HWC0);
+
+    rewriter.setInsertionPoint(op);
+    auto converted = rewriter.create<ConvertLayoutOp>(
+        op.getLoc(), outputType, input, srcLayout, dstLayout);
+    converted->setAttr("groups", rewriter.getI64IntegerAttr(groups));
+    rewriter.modifyOpInPlace(
+        op, [&]() { op.getInputMutable().assign(converted.getResult()); });
+    return success();
+  }
+};
+
 struct InsertConvertLayoutAroundMmadL1 : public OpRewritePattern<MmadL1Op> {
   using OpRewritePattern<MmadL1Op>::OpRewritePattern;
 
@@ -519,6 +567,8 @@ struct InsertConvertLayoutPass
     // Add all transformation patterns
     patterns.add<InsertConvertLayoutAroundMmadL1>(context);
     patterns.add<InsertConvertLayoutAroundMmadMxL1>(context);
+    patterns.add<InsertConvertLayoutAroundConv<Conv1DL1Op>,
+                 InsertConvertLayoutAroundConv<Conv2DL1Op>>(context);
     GreedyRewriteConfig config;
     config.strictMode = GreedyRewriteStrictness::ExistingOps;
 

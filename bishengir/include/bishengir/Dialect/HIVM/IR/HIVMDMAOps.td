@@ -530,6 +530,36 @@ def L12BTOp: HIVM_DmaOp<"l12bt",
   let extraClassDeclaration = DmaOpBaseDecl;
 }
 
+def NCHW2NC1HWC0Op : HIVM_DmaOp<"nchw2nc1hwc0", [
+  SinglePipeOpTrait, OpPipeTrait<"PIPE::PIPE_MTE2">,
+  HIVMCoreTypeInterface, CubeCoreTypeTrait, NoMaxRankTrait,
+  OperElemTypeConstraints<[0, 1], [F16, BF16, F32]>,
+  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "Convert grouped NCHW data from GM to NC1HWC0 data in L1";
+  let description = [{
+    Converts a contiguous source with shape `[N, G*C, H, W]` in global memory
+    to a contiguous destination with shape `[N, G*C1, H, W, C0]` in L1, where
+    `C1 = ceil(C / C0)` and `C0 * sizeof(element_type) = 32` bytes. Channel
+    padding is applied independently for each group.
+
+    Only `f16`, `bf16`, and `f32` element types are supported. The `groups`
+    attribute specifies the number of groups for grouped channel
+    transformation.
+  }];
+  let arguments = (ins AnyMemRef:$src,
+                       AnyMemRef:$dst,
+                       DefaultValuedAttr<I64Attr, "1">:$groups);
+  let results = (outs);
+  let assemblyFormat = [{
+    attr-dict
+    `ins` `(` $src `:` type($src) `)`
+    `outs` `(` $dst `:` type($dst) `)`
+  }];
+  let hasVerifier = 1;
+  let extraClassDeclaration = DmaOpBaseDecl;
+}
+
 def AtomicCasOp : HIVM_Op<"atomic_cas", [
   NoLibraryFunctionTrait,
   OperElemTypeConstraints<[0], [I8, I16, I32, F16, BF16, F32, F8E4M3FN,

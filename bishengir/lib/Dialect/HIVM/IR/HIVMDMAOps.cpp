@@ -58,6 +58,7 @@ ENABLE_DEFAULT_COPYOP_INTERFACE_IMPLEMENTATION(ND2NZOp)
 ENABLE_DEFAULT_COPYOP_INTERFACE_IMPLEMENTATION(NZ2NDOp)
 ENABLE_DEFAULT_COPYOP_INTERFACE_IMPLEMENTATION(L12UBOp)
 ENABLE_DEFAULT_COPYOP_INTERFACE_IMPLEMENTATION(LoadMXScaleOp)
+ENABLE_DEFAULT_COPYOP_INTERFACE_IMPLEMENTATION(NCHW2NC1HWC0Op)
 #undef ENABLE_DEFAULT_COPYOP_INTERFACE_IMPLEMENTATION
 
 //===----------------------------------------------------------------------===//
@@ -697,6 +698,71 @@ void LoadMXScaleOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
   detail::getEffectsImpl(effects, cast<HIVMStructuredOp>(getOperation()));
+}
+
+//===----------------------------------------------------------------------===//
+// NCHW2NC1HWC0Op
+//===----------------------------------------------------------------------===//
+
+void NCHW2NC1HWC0Op::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  detail::getEffectsImpl(effects, cast<HIVMStructuredOp>(getOperation()));
+}
+
+LogicalResult NCHW2NC1HWC0Op::verify() {
+  auto srcType = cast<MemRefType>(getSrc().getType());
+  auto dstType = cast<MemRefType>(getDst().getType());
+  if (srcType.getRank() != 4)
+    return emitOpError("expects a rank-4 NCHW source");
+  if (dstType.getRank() != 5)
+    return emitOpError("expects a rank-5 NC1HWC0 destination");
+  if (srcType.getElementType() != dstType.getElementType())
+    return emitOpError("expects source and destination element types to match");
+
+  auto srcSpace = dyn_cast_or_null<AddressSpaceAttr>(srcType.getMemorySpace());
+  auto dstSpace = dyn_cast_or_null<AddressSpaceAttr>(dstType.getMemorySpace());
+  if (srcSpace && srcSpace.getAddressSpace() != AddressSpace::GM)
+    return emitOpError("expects the source to be in GM");
+  if (dstSpace && dstSpace.getAddressSpace() != AddressSpace::L1)
+    return emitOpError("expects the destination to be in L1");
+
+  int64_t c0Size = srcType.getElementType().isF32() ? 8 : 16;
+  int64_t dstC0 = dstType.getDimSize(4);
+  if (!ShapedType::isDynamic(dstC0) && dstC0 != c0Size)
+    return emitOpError("expects the destination C0 dimension to occupy one "
+                       "32-byte block");
+  for (int64_t dim : {0, 2, 3}) {
+    int64_t srcDim = srcType.getDimSize(dim);
+    int64_t dstDim = dstType.getDimSize(dim);
+    if (!ShapedType::isDynamic(srcDim) && !ShapedType::isDynamic(dstDim) &&
+        srcDim != dstDim)
+      return emitOpError("expects source and destination N/H/W dimensions to "
+                         "match");
+  }
+
+  int64_t groups = getGroups();
+  if (groups <= 0)
+    return emitOpError("expects groups to be positive");
+
+  int64_t srcChannels = srcType.getDimSize(1);
+  int64_t dstChannelBlocks = dstType.getDimSize(1);
+  if (!ShapedType::isDynamic(srcChannels) && srcChannels % groups != 0)
+    return emitOpError("expects the source channel dimension to be divisible "
+                       "by groups");
+  if (!ShapedType::isDynamic(dstChannelBlocks) &&
+      dstChannelBlocks % groups != 0)
+    return emitOpError("expects the destination C1 dimension to be divisible "
+                       "by groups");
+  if (!ShapedType::isDynamic(srcChannels) &&
+      !ShapedType::isDynamic(dstChannelBlocks)) {
+    int64_t channelsPerGroup = srcChannels / groups;
+    int64_t expectedC1PerGroup = (channelsPerGroup + c0Size - 1) / c0Size;
+    if (dstChannelBlocks / groups != expectedC1PerGroup)
+      return emitOpError("destination C1 dimension does not match the grouped "
+                         "source channels");
+  }
+  return success();
 }
 
 //===----------------------------------------------------------------------===//

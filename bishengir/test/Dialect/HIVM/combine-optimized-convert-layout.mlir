@@ -1,5 +1,35 @@
 // RUN: bishengir-opt %s --canonicalize --hivm-combine-optimized-convert-layout --split-input-file | FileCheck %s
 
+// CHECK-LABEL: func.func @fold_direct_load_to_nchw2nc1hwc0(
+// CHECK-NOT: hivm.hir.load
+// CHECK-NOT: hivm.hir.convert_layout
+// CHECK: %[[DST:.*]] = memref.alloc() : memref<1x2x8x8x16xf16>
+// CHECK: hivm.hir.nchw2nc1hwc0
+// CHECK-SAME: {groups = 2 : i64}
+// CHECK-SAME: ins(%{{.*}} : memref<1x30x8x8xf16, strided<[1920, 64, 8, 1]>>)
+// CHECK-SAME: outs(%[[DST]] : memref<1x2x8x8x16xf16>)
+// CHECK: %[[RESULT:.*]] = bufferization.to_tensor %[[DST]] restrict writable
+// CHECK: return %[[RESULT]] : tensor<1x2x8x8x16xf16>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @fold_direct_load_to_nchw2nc1hwc0(
+      %src: memref<1x30x8x8xf16, strided<[1920, 64, 8, 1]>>) -> tensor<1x2x8x8x16xf16> {
+    %alloc = memref.alloc() : memref<1x30x8x8xf16>
+    hivm.hir.load
+        ins(%src : memref<1x30x8x8xf16, strided<[1920, 64, 8, 1]>>)
+        outs(%alloc : memref<1x30x8x8xf16>)
+    %input = bufferization.to_tensor %alloc restrict writable
+        : memref<1x30x8x8xf16>
+    %converted = hivm.hir.convert_layout %input
+        output_shape [1, 2, 8, 8, 16]
+        {dstLayout = #hivm.data_layout<NC1HWC0>, groups = 2 : i64,
+         srcLayout = #hivm.data_layout<NCHW>}
+        : (tensor<1x30x8x8xf16>) -> tensor<1x2x8x8x16xf16>
+    return %converted : tensor<1x2x8x8x16xf16>
+  }
+}
+
+// -----
+
 // CHECK:   func.func @fold_one_use_subview(%[[VAL_0:.*]]: memref<16x16xf16, strided<[?, 1], offset: ?>>, %[[VAL_1:.*]]: memref<16x16xf16, strided<[?, 1], offset:
 // CHECK: %[[VAL_4:.*]] = memref.subview %[[VAL_0]][0, 0] {{\[}}%{{.*}}, 16] [1, 1] : memref<16x16xf16, strided<[?, 1], offset: ?>> to memref<?x16xf16, strided<[?, 1], offset: ?>>
 // CHECK: %[[VAL_6:.*]] = memref.alloc() : memref<1x1x16x16xf16>
