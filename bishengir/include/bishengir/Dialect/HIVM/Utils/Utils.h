@@ -427,24 +427,6 @@ Value getLocalWorkSpaceTensor(
 hivm::CreateSyncBlockLockOp createSyncBlockLockVar(OpBuilder &builder,
                                                    Location loc);
 
-hivm::SyncBlockLockOp
-createSyncBlockLock(OpBuilder &builder, Location loc, Value lockVar,
-                    hivm::SyncBlockLockOrdering ordering =
-                        hivm::SyncBlockLockOrdering::Ordered);
-
-hivm::SyncBlockUnlockOp
-createSyncBlockUnlock(OpBuilder &builder, Location loc, Value lockVar,
-                      hivm::SyncBlockLockOrdering ordering =
-                          hivm::SyncBlockLockOrdering::Ordered);
-
-/// Resolve ordering on a lock/unlock/free (or create) op.
-/// Recognizes native `$ordering` and legacy unit attr
-/// `hivm.sync_block_lock_unordered`.
-hivm::SyncBlockLockOrdering getSyncBlockLockOpOrdering(Operation *op);
-
-// Resolve sync block lock ordering from lock/unlock/free users of lock memref,
-// falling back to a legacy unordered marker on create_sync_block_lock.
-hivm::SyncBlockLockOrdering getSyncBlockLockOrdering(Value lockVar);
 
 /// get Operation alias pair.
 std::vector<std::pair<Value, Value>> getOperationAliasInfo(Operation *op);

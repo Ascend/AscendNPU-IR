@@ -36,11 +36,11 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9599">} {
     scope.scope : () -> () {
       %alloc_3 = memref.alloc() : memref<1x4x128x16x3xf8E4M3FN>
       %11 = hivm.hir.create_sync_block_lock : memref<1xi64>
-      hivm.hir.sync_block_lock {ordering = #hivm.ordering<unordered>} lock_var(%11 : memref<1xi64>)
+      hivm.hir.sync_block_lock lock_var(%11 : memref<1xi64>)
       memref.copy %expand_shape_1, %alloc_3 : memref<1x4x128x16x3xf8E4M3FN, strided<[24576, 6144, 48, 3, 1], offset: ?>> to memref<1x4x128x16x3xf8E4M3FN>
       memref.copy %expand_shape, %expand_shape_1 : memref<1x4x128x16x3xf8E4M3FN> to memref<1x4x128x16x3xf8E4M3FN, strided<[24576, 6144, 48, 3, 1], offset: ?>>
       memref.copy %alloc_3, %expand_shape : memref<1x4x128x16x3xf8E4M3FN> to memref<1x4x128x16x3xf8E4M3FN>
-      hivm.hir.sync_block_unlock {ordering = #hivm.ordering<unordered>} lock_var(%11 : memref<1xi64>)
+      hivm.hir.sync_block_unlock lock_var(%11 : memref<1xi64>)
       scope.return
     } {hivm.allow_flatten, hivm.tcore_type = #hivm.tcore_type<VECTOR>}
     %reinterpret_cast_2 = memref.reinterpret_cast %arg4 to offset: [%9], sizes: [4, 128, 16, 3], strides: [6144, 48, 3, 1] : memref<?xf8E4M3FN> to memref<4x128x16x3xf8E4M3FN, strided<[6144, 48, 3, 1], offset: ?>>
