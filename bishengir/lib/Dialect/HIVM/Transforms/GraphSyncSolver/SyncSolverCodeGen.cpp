@@ -69,6 +69,27 @@ void CodeGenerator::setProperInsertionPoint(IRRewriter &rewriter,
       }
     }
   } else if (auto *placeHolderOp = dyn_cast<PlaceHolder>(opBase)) {
+    if (placeHolderOp->block == nullptr &&
+        (placeHolderOp->scopeBegin != nullptr ||
+         placeHolderOp->scopeEnd != nullptr)) {
+      auto *branchScope = dyn_cast<Scope>(placeHolderOp->parentOp);
+      if (branchScope != nullptr) {
+        auto *condition = dyn_cast<Condition>(branchScope->parentOp);
+        if (condition != nullptr && condition->op != nullptr) {
+          auto ifOp = dyn_cast<scf::IfOp>(condition->op);
+          if (ifOp != nullptr) {
+            if (ifOp.getElseRegion().empty()) {
+              assert(!ifOp.getNumResults() &&
+                     "result-ful scf.if must have a concrete else block");
+              Block *elseBlock = rewriter.createBlock(&ifOp.getElseRegion());
+              rewriter.setInsertionPointToEnd(elseBlock);
+              rewriter.create<scf::YieldOp>(ifOp.getLoc());
+            }
+            placeHolderOp->block = &ifOp.getElseRegion().front();
+          }
+        }
+      }
+    }
     if (placeHolderOp->block != nullptr) {
       if (placeHolderOp->scopeBegin) {
         rewriter.setInsertionPointToStart(placeHolderOp->block);
@@ -124,6 +145,18 @@ Location CodeGenerator::getProperLoc(OperationBase *opBase) {
       assert(placeHolderOp->beforeOp == nullptr);
       assert(placeHolderOp->afterOp->op != nullptr);
       return placeHolderOp->afterOp->op->getLoc();
+    } else if (placeHolderOp->scopeBegin != nullptr ||
+              placeHolderOp->scopeEnd != nullptr) {
+      // Empty-falseScope placeholder (no block, no before/after links):
+      // fall back to the enclosing Condition's scf.if location.
+      if (opBase->parentOp != nullptr) {
+        auto *condition =
+            dyn_cast_or_null<Condition>(opBase->parentOp->parentOp);
+        if (condition != nullptr && condition->op != nullptr) {
+          return condition->op->getLoc();
+        }
+        return getProperLoc(opBase->parentOp);
+      }
     } else {
       llvm::report_fatal_error("getProperLoc: unhandled place-holder op case.");
     }
