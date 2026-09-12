@@ -129,75 +129,6 @@ bool isNotConflicting(Operation *op, OpOperand *uRead, OpOperand *uWrite,
          op->isAncestor(uRead->getOwner()) &&
          op->isAncestor(uWrite->getOwner());
 }
-
-/// Helper function for loop bufferization. Return the indices of all values
-/// that have a tensor type.
-static DenseSet<int64_t> getTensorIndices(ValueRange values) {
-  DenseSet<int64_t> result;
-  for (const auto &it : llvm::enumerate(values))
-    if (isa<TensorType>(it.value().getType()))
-      result.insert(it.index());
-  return result;
-}
-
-LogicalResult resolveConflicts(Operation *op, RewriterBase &rewriter,
-                               const AnalysisState &state) {
-  auto bufferizableOp = cast<BufferizableOpInterface>(op);
-  if (failed(bufferizableOp.resolveTensorOpOperandConflicts(rewriter, state)))
-    return failure();
-
-  if (!state.getOptions().enforceAliasingInvariants)
-    return success();
-
-  // According to the `getAliasing...` implementations, a bufferized OpResult
-  // may alias only with the corresponding bufferized init_arg (or with a
-  // newly allocated buffer) and not with other buffers defined outside of the
-  // loop. I.e., the i-th OpResult may alias with the i-th init_arg;
-  // but not with any other OpOperand.
-  auto forOp = cast<scf::ForOp>(op);
-  auto yieldOp = cast<scf::YieldOp>(forOp.getBody()->getTerminator());
-  OpBuilder::InsertionGuard g(rewriter);
-  rewriter.setInsertionPoint(yieldOp);
-
-  // Indices of all iter_args that have tensor type. These are the ones that
-  // are bufferized.
-  DenseSet<int64_t> indices = getTensorIndices(forOp.getInitArgs());
-  // For every yielded value, does it alias with something defined outside of
-  // the loop?
-  SmallVector<Value> yieldValues;
-  auto iterArgs = forOp.getRegionIterArgs();
-  auto &oneShotState = static_cast<const OneShotAnalysisState &>(state);
-  for (const auto it : llvm::enumerate(yieldOp.getResults())) {
-    // Note: `state` is guaranteed to be a `OneShotAnalysisState`, but this
-    // type cannot be used in the signature of `resolveConflicts` because the
-    // op interface is in the "IR" build unit and the `OneShotAnalysisState`
-    // is defined in the "Transforms" build unit.
-    if (!indices.contains(it.index())) {
-      yieldValues.push_back(it.value());
-      continue;
-    }
-
-    bool conflict = false;
-    oneShotState.applyOnAliases(it.value(), [&](Value alias) {
-      if (alias != forOp.getRegionIterArg(it.index()) &&
-          llvm::is_contained(iterArgs, alias))
-        conflict = true;
-    });
-    if (!conflict) {
-      yieldValues.push_back(it.value());
-      continue;
-    }
-    FailureOr<Value> alloc = allocateTensorForShapedValue(
-        rewriter, yieldOp.getLoc(), it.value(), state.getOptions());
-    if (failed(alloc))
-      return failure();
-    yieldValues.push_back(*alloc);
-  }
-
-  rewriter.modifyOpInPlace(
-      yieldOp, [&]() { yieldOp.getResultsMutable().assign(yieldValues); });
-  return success();
-}
 } // namespace ForOpInterfaceForOpReuseInPlanMemory
 
 namespace YieldOpInterfaceForOpReuseInPlanMemory {
@@ -216,12 +147,7 @@ AliasingValueList getAliasingValues(Operation *op, OpOperand &opOperand,
   } else if (isa<scf::ForOp>(op->getParentOp())) {
     auto iterArg = dyn_cast<scf::ForOp>(op->getParentOp())
                        .getTiedLoopRegionIterArg(opResult);
-    aliases.addAlias(AliasingValue(iterArg, BufferRelation::Equivalent,
-                                   /*isDefinite=*/false));
-    if (hivm::isVF(op->getParentOfType<func::FuncOp>())) {
-      aliases.addAlias(AliasingValue(opResult, BufferRelation::Equivalent,
-                                     /*isDefinite=*/false));
-    }
+    aliases.addAlias(AliasingValue(iterArg, BufferRelation::Equivalent));
   } else if (isa<scf::WhileOp>(op->getParentOp())) {
     auto whileOp = dyn_cast<scf::WhileOp>(op->getParentOp());
     auto beforeArg = whileOp.getBeforeArguments()[opResult.getResultNumber()];
@@ -372,12 +298,6 @@ RegisterOpInterfaceOverride(
     /*InterfaceMethod=*/isNotConflicting,
     /*Impl=*/
     &ForOpInterfaceForOpReuseInPlanMemory::isNotConflicting);
-
-RegisterOpInterfaceOverride(
-    /*Op=*/scf::ForOp, /*Interface=*/BufferizableOpInterface,
-    /*InterfaceMethod=*/resolveConflicts,
-    /*Impl=*/
-    &ForOpInterfaceForOpReuseInPlanMemory::resolveConflicts);
 
 RegisterOpInterfaceOverride(
     /*Op=*/scf::ConditionOp, /*Interface=*/BufferizableOpInterface,
