@@ -511,15 +511,31 @@ getExtraBufferSizeForReduceOpSingleDim(Operation *op, BufferSizeUnit unit,
       utils::traceToAllocMaxSize(op->getOpOperand(0).get());
   assert(srcAllocTotalSize);
   if (VReduceOp::isArgminOrArgmax(arithOp)) {
-    // * R/AR: 1 ub_block_unit
+    // * R/AR: repeat_cnt * (sizeof(Value) + sizeof(Index))
     // * RA: r * sizeof(Index) aligned to ub_block_unit + 1 extra ub_block_unit
     int64_t rank = srcType.getRank();
     int64_t elementBitWidth = srcType.getElementTypeBitWidth();
     assert(vectorBlockSizeBit % elementBitWidth == 0);
     int64_t numElemPerBlock = vectorBlockSizeBit / elementBitWidth;
     if (reductionDim == rank - 1) {
-      // R/AR
-      return numElemPerBlock;
+      // R/AR. In counting mode, vcmax/vcmin only reduces one repeat (256
+      // bytes)
+      // per iteration. When r spans multiple repeats, the VALUE_INDEX
+      // order
+      // writes one (value, index) pair per repeat into the temp buffer.
+      // The
+      // value is aligned to the src element width, the index to the index
+      // (int32) width, so pad the value up to the index alignment first.
+      int64_t elementByteSize = CEIL_DIV(elementBitWidth, 8);
+      constexpr int64_t idxByteSize = sizeof(int32_t);
+      int64_t numElemPerRepeat = getNumPerRepeat(eleType);
+      int64_t reductionDimLength = srcType.getShape()[reductionDim];
+      if (ShapedType::isDynamic(reductionDimLength))
+        reductionDimLength = srcAllocTotalSize.value();
+      int64_t numRepeats = ceilDiv(reductionDimLength, numElemPerRepeat);
+      int64_t pairByteSize =
+        ceilFactor(elementByteSize, idxByteSize) + idxByteSize;
+      return ceilDiv(numRepeats * pairByteSize, elementByteSize);
     }
     if (srcType.hasStaticShape()) {
       int64_t aDimension = 1; // This is A dimension in RA term
