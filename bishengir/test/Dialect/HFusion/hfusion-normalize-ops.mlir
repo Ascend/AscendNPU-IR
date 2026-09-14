@@ -2332,6 +2332,21 @@ func.func @normalize_mulext_i8_low_bits(%arg0: tensor<4x2xi8>, %arg1: tensor<4x2
   return  %low : tensor<4x2xi8>
 }
 
+// -----
+
+// CHECK-LABEL: @normalize_mulextui_i8
+// CHECK-NOT: hfusion.mulextui
+// CHECK: hfusion.cast {{.*}}type_fn<cast_unsigned>{{.*}} ins(%[[ARG0:.*]] : tensor<4x2xi8>)
+// CHECK: hfusion.cast {{.*}}type_fn<cast_unsigned>{{.*}} ins(%[[ARG1:.*]] : tensor<4x2xi8>)
+// CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
+// CHECK: hfusion.elemwise_binary {fun = #hfusion.binary_fn<shrui>}
+// CHECK: hfusion.elemwise_binary {fun = #hfusion.binary_fn<shli>}
+// CHECK: hfusion.elemwise_binary {fun = #hfusion.binary_fn<shrui>}
+func.func @normalize_mulextui_i8(%arg0: tensor<4x2xi8>, %arg1: tensor<4x2xi8>) -> (tensor<4x2xi8>, tensor<4x2xi8>) {
+  %low, %high = hfusion.mulextui %arg0, %arg1 : tensor<4x2xi8>
+  return %low, %high : tensor<4x2xi8>, tensor<4x2xi8>
+}
+
 // CHECK-LABEL: @normalize_vlog_f16_to_f32
 // CHECK: %[[a0:.*]] = tensor.empty() : tensor<17x256xf16>
 // CHECK: %[[a1:.*]] = tensor.empty() : tensor<17x256xf32>

@@ -440,6 +440,21 @@ func.func @test_NormalizeMulExt_mulext_i8_low_bits(%arg0: tensor<4x2xi8>, %arg1:
 
 // -----
 
+// CHECK-LABEL: @test_NormalizeMulExtUi_mulextui_i8
+// CHECK-NOT: hfusion.mulextui
+// CHECK: hfusion.cast {{.*}}cast_unsigned{{.*}} ins(%[[ARG0:.*]] : tensor<4x2xi8>)
+// CHECK: hfusion.cast {{.*}}cast_unsigned{{.*}} ins(%[[ARG1:.*]] : tensor<4x2xi8>)
+// CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
+// CHECK: hfusion.elemwise_binary {fun = #hfusion.binary_fn<shrui>}
+// CHECK: hfusion.elemwise_binary {fun = #hfusion.binary_fn<shli>}
+// CHECK: hfusion.elemwise_binary {fun = #hfusion.binary_fn<shrui>}
+func.func @test_NormalizeMulExtUi_mulextui_i8(%arg0: tensor<4x2xi8>, %arg1: tensor<4x2xi8>) -> (tensor<4x2xi8>, tensor<4x2xi8>) {
+  %low, %high = hfusion.mulextui %arg0, %arg1 : tensor<4x2xi8>
+  return %low, %high : tensor<4x2xi8>, tensor<4x2xi8>
+}
+
+// -----
+
 // CHECK-LABEL: func.func @test_NormalizeVPowiToPowf_i16
 // CHECK: %[[IN0_EMPTY:.*]] = tensor.empty() : tensor<4x2x32xf32>
 // CHECK: %[[IN0:.*]] = hfusion.cast {{.*}} ins(%arg0 : tensor<4x2x32xi16>) outs(%[[IN0_EMPTY]] : tensor<4x2x32xf32>) -> tensor<4x2x32xf32>
