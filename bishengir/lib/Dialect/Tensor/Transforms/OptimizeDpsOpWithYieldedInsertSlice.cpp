@@ -43,9 +43,32 @@ using namespace mlir;
 using namespace mlir::tensor;
 
 namespace {
-/// Returns true if `root` (or a view derived from it) is stored into inside
-/// `forOp`, e.g. by a DPS op, HIVM DMA, or similar destination write.
-static bool hasBufferStoreUserInLoop(Value root, scf::ForOp forOp) {
+/// Pin the optional `init_condition` of an ND2NZ to `false`. After the alloc
+/// hoist redirects the nd2nz dst to a chunk of the big buffer, the old
+/// per-iteration condition no longer describes the hoisted region, so keeping
+/// it would initialize the chunk based on a stale predicate. Assigning through
+/// the mutable operand keeps the optional slot (and the operand-segment
+/// layout) in place.
+static void forceND2NZInitConditionFalse(hivm::ND2NZOp nd2nz,
+                                         OpBuilder &builder) {
+  Value cond = nd2nz.getInitCondition();
+  // `init_condition` is an optional predicate; a missing condition means the
+  // dst was never conditionally initialized, and any other type is malformed
+  // IR that this pattern must leave alone.
+  if (!cond || !cond.getType().isInteger(1))
+    return;
+  builder.setInsertionPoint(nd2nz);
+  nd2nz.getInitConditionMutable().assign(builder.create<arith::ConstantOp>(
+      nd2nz->getLoc(), builder.getBoolAttr(false)));
+}
+
+/// Returns the in-loop writer of `root` (or of a view derived from it): the
+/// first DPS op or ND2NZ reached along the recognized view chain, or null when
+/// the buffer is not stored into inside `forOp`. The writer is also what the
+/// hoist rewrite redirects onto a chunk of the big alloc, so an ND2NZ writer
+/// has to have its per-iteration init_condition pinned afterwards (see
+/// forceND2NZInitConditionFalse).
+static Operation *findBufferStoreWriterInLoop(Value root, scf::ForOp forOp) {
   SmallVector<Value> workList = {root};
   llvm::SmallPtrSet<Value, 8> visited;
   while (!workList.empty()) {
@@ -55,16 +78,14 @@ static bool hasBufferStoreUserInLoop(Value root, scf::ForOp forOp) {
     for (Operation *user : val.getUsers()) {
       if (user->getParentOp() != forOp)
         continue;
-      if (isa<DestinationStyleOpInterface>(user))
-        return true;
-      if (isa<hivm::ND2NZOp>(user))
-        return true;
+      if (isa<DestinationStyleOpInterface>(user) || isa<hivm::ND2NZOp>(user))
+        return user;
       if (isa<memref::MemorySpaceCastOp, memref::SubViewOp, memref::CastOp,
               memref::ReinterpretCastOp>(user))
         workList.push_back(user->getResult(0));
     }
   }
-  return false;
+  return nullptr;
 }
 
 /// Returns true if `root` has a user inside `forOp` that is not on a
@@ -234,6 +255,7 @@ struct HoistAllocForInsertSliceLoad : public OpRewritePattern<scf::ForOp> {
       Value memcast;
       int resultIdx;
       Value vbrcScalar = nullptr; // scalar src of vbrc if iter_arg init is vbrc
+      hivm::ND2NZOp nd2nz = nullptr; // gm->cbuf ND2NZ writer filling the alloc
     };
     SmallVector<InsertSliceInfo> infos;
 
@@ -261,9 +283,16 @@ struct HoistAllocForInsertSliceLoad : public OpRewritePattern<scf::ForOp> {
       if (!allocOp)
         return failure();
 
-      // Verify the alloc/memcast is used as a store destination in the loop.
-      if (!hasBufferStoreUserInLoop(toTensorOp.getMemref(), forOp))
+      // Verify the alloc/memcast is stored into inside the loop and keep the
+      // writer: if it is a cube ND2NZ, the hoist below redirects its dst to a
+      // chunk of the big buffer and its per-iteration init_condition no longer
+      // describes the region it fills, so it must be pinned to false (see
+      // forceND2NZInitConditionFalse).
+      Operation *storeWriter =
+          findBufferStoreWriterInLoop(toTensorOp.getMemref(), forOp);
+      if (!storeWriter)
         return failure();
+      hivm::ND2NZOp nd2nzWriter = dyn_cast<hivm::ND2NZOp>(storeWriter);
       // The alloc must not have users (e.g. func.call) that are not on the
       // recognized load/view chain — redirecting those would break the IR.
       if (hasUnexpectedUserInLoop(toTensorOp.getMemref(),
@@ -303,7 +332,7 @@ struct HoistAllocForInsertSliceLoad : public OpRewritePattern<scf::ForOp> {
 
       infos.push_back(
           {insertOp, toTensorOp, allocOp, toTensorOp.getMemref(), static_cast<int>(idx),
-           vbrcScalar});
+           vbrcScalar, nd2nzWriter});
     }
 
     if (infos.empty())
@@ -444,6 +473,9 @@ struct HoistAllocForInsertSliceLoad : public OpRewritePattern<scf::ForOp> {
       // to_tensor result.
       rewriter.replaceAllUsesWith(info.insertOp.getResult(),
                                   iterArgs[info.resultIdx]);
+
+      if (info.nd2nz)
+        forceND2NZInitConditionFalse(info.nd2nz, rewriter);
     }
 
     // 3. Replace uses of old forOp tensor results with to_tensor results.

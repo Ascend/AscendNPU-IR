@@ -414,3 +414,56 @@ func.func @skip_memref_copy_in_forall(%arg0: memref<16xf32>, %arg1: memref<16xf3
   }
   return
 }
+
+// -----
+// The source of the copy is traced back through the argument of the while
+// "do" region to a local memref.alloc (not a GM pointer), so the copy must
+// stay a copy instead of being converted to a load.
+// CHECK-LABEL: @memref_copy_from_while_doarg_alloc
+// CHECK: hivm.hir.copy
+// CHECK-NOT: hivm.hir.load
+func.func @memref_copy_from_while_doarg_alloc() -> memref<8x16xi32> {
+  %c0 = arith.constant 0 : i32
+  %c1 = arith.constant 1 : i32
+  %c2 = arith.constant 2 : index
+  %init = memref.alloc() : memref<8x16xi32>
+  %r:2 = scf.while (%arg1 = %init, %arg2 = %c0) : (memref<8x16xi32>, i32) -> (memref<8x16xi32>, i32) {
+    %cond = arith.cmpi sgt, %arg2, %c0 : i32
+    scf.condition(%cond) %arg1, %arg2 : memref<8x16xi32>, i32
+  } do {
+  ^bb0(%arg3: memref<8x16xi32>, %arg4: i32):
+    %alloc = memref.alloc() : memref<8x16xi32>
+    %sv1 = memref.subview %arg3[%c2, 0] [4, 16] [1, 1] : memref<8x16xi32> to memref<4x16xi32, strided<[16, 1], offset: ?>>
+    %sv2 = memref.subview %alloc[%c2, 0] [4, 16] [1, 1] : memref<8x16xi32> to memref<4x16xi32, strided<[16, 1], offset: ?>>
+    memref.copy %sv1, %sv2 : memref<4x16xi32, strided<[16, 1], offset: ?>> to memref<4x16xi32, strided<[16, 1], offset: ?>>
+    %next = arith.subi %arg4, %c1 : i32
+    scf.yield %arg3, %next : memref<8x16xi32>, i32
+  }
+  return %r#0 : memref<8x16xi32>
+}
+
+// -----
+// The source of the copy is traced back through the argument of the while
+// "do" region to a function entry argument, which is a GM pointer by
+// convention, so the copy is converted to a load.
+// CHECK-LABEL: @memref_copy_from_while_doarg_gm_arg
+// CHECK: hivm.hir.load
+// CHECK-NOT: hivm.hir.copy
+func.func @memref_copy_from_while_doarg_gm_arg(%arg0: memref<8x16xi32>) -> memref<8x16xi32> {
+  %c0 = arith.constant 0 : i32
+  %c1 = arith.constant 1 : i32
+  %c2 = arith.constant 2 : index
+  %r:2 = scf.while (%arg1 = %arg0, %arg2 = %c0) : (memref<8x16xi32>, i32) -> (memref<8x16xi32>, i32) {
+    %cond = arith.cmpi sgt, %arg2, %c0 : i32
+    scf.condition(%cond) %arg1, %arg2 : memref<8x16xi32>, i32
+  } do {
+  ^bb0(%arg3: memref<8x16xi32>, %arg4: i32):
+    %alloc = memref.alloc() : memref<8x16xi32>
+    %sv1 = memref.subview %arg3[%c2, 0] [4, 16] [1, 1] : memref<8x16xi32> to memref<4x16xi32, strided<[16, 1], offset: ?>>
+    %sv2 = memref.subview %alloc[%c2, 0] [4, 16] [1, 1] : memref<8x16xi32> to memref<4x16xi32, strided<[16, 1], offset: ?>>
+    memref.copy %sv1, %sv2 : memref<4x16xi32, strided<[16, 1], offset: ?>> to memref<4x16xi32, strided<[16, 1], offset: ?>>
+    %next = arith.subi %arg4, %c1 : i32
+    scf.yield %arg3, %next : memref<8x16xi32>, i32
+  }
+  return %r#0 : memref<8x16xi32>
+}

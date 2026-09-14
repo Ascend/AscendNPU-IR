@@ -123,9 +123,9 @@ LogicalResult BufferizationPropagateUpPattern::propagateUpAlloc(
   }
   auto newAllocOp = maybeNewAlloc.value();
 
-  markTiledTightlyCoupledAllocIfNeeded(rewriter, allocOp.getResult());
-
   auto [tilingDim, tiledOffset, tiledSize] = getTilingDimInfo(propagateOp);
+  markTiledTightlyCoupledAllocIfNeeded(rewriter, allocOp.getResult(),
+                                       tilingDim);
   insertDownPropagators(allocOp, newAllocOp, tiledOffset, tiledSize, tilingDim,
                         rewriter);
   LDBG("Propagated up to alloc, the new alloc is:\n " << newAllocOp);

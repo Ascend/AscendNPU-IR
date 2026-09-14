@@ -16,6 +16,7 @@
 
 #include "Fixpipe/FixpipeUtils.h"
 #include "Synchronization/SyncUtils.h"
+#include "Vector/VecUtils.h"
 
 __aicore__ __attribute__((always_inline)) void
 set_nd_para(uint64_t nd_num, uint64_t src_nd_stride, uint64_t dst_nd_stride) {
@@ -92,6 +93,12 @@ copy_matrix_cc_to_gm_nz2nd_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
   uint16_t m_size = gm->sizes[0];
   uint16_t n_size = gm->sizes[1];
   uint32_t dst_D = gm->strides[0];
+  // A fully clipped tile (e.g. a masked store whose whole extent lies beyond
+  // the tensor) yields a zero-size subview; a zero-length burst is not a
+  // guaranteed no-op on all archs.
+  if (is_no_op<2>(gm->sizes)) {
+    return;
+  }
 
   set_nd_para(1, 1, 1);
   unit_flag_mode = resolveUnitFlagMode(unit_flag_mode, unit_flag_group_id);

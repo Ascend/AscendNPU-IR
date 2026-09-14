@@ -1627,7 +1627,7 @@ static LogicalResult setOperationsCoreTypeForA5(OpBuilder builder,
           auto inferNewCoreType =
               [&vbrcOp](UnrealizedConversionCastOp upProp) -> TCoreTypeAttr {
             auto coreType = PropagatorUtil::getCoreType(upProp);
-            if (coreType != TCoreType::CUBE_AND_VECTOR) {
+            if (coreType != TCoreType::CUBE_AND_VECTOR && coreType != TCoreType::CUBE_OR_VECTOR) {
               return TCoreTypeAttr::get(vbrcOp.getContext(), coreType);
             } else {
               auto addressSpaces = PropagatorUtil::getAddressSpace(upProp);
@@ -1648,6 +1648,26 @@ static LogicalResult setOperationsCoreTypeForA5(OpBuilder builder,
             vbrcOp->setAttr(hivm::TCoreTypeAttr::name,
                             builder.getAttr<hivm::TCoreTypeAttr>(
                                 newTcoretype.getTcoretype()));
+          }
+        })
+        .Case([&](tensor::ExtractOp op) {
+          auto upProp = PropagatorUtil::getUpPropagator(&op.getTensorMutable());
+          if (!upProp)
+            return;
+
+          auto coreType = PropagatorUtil::getCoreType(upProp);
+          if (coreType != TCoreType::CUBE_AND_VECTOR) {
+            op->setAttr(hivm::TCoreTypeAttr::name,
+                        TCoreTypeAttr::get(op.getContext(), coreType));
+          } else {
+            auto addressSpaces = PropagatorUtil::getAddressSpace(upProp);
+            auto addressSpace = addressSpaces.empty() ? hivm::AddressSpace::UB
+                                                      : addressSpaces[0];
+            op->setAttr(
+                hivm::TCoreTypeAttr::name,
+                TCoreTypeAttr::get(
+                    op.getContext(),
+                    PropagatorUtil::kAddressSpace2CoreType.at(addressSpace)));
           }
         });
   });
@@ -1696,6 +1716,26 @@ static LogicalResult setOperationsCoreTypeForA3(OpBuilder builder,
                   op.getContext(),
                   PropagatorUtil::kAddressSpace2CoreType.at(addressSpace)));
             }
+          }
+        })
+        .Case([&](tensor::ExtractOp op) {
+          auto upProp = PropagatorUtil::getUpPropagator(&op.getTensorMutable());
+          if (!upProp)
+            return;
+
+          auto coreType = PropagatorUtil::getCoreType(upProp);
+          if (coreType != TCoreType::CUBE_AND_VECTOR) {
+            op->setAttr(hivm::TCoreTypeAttr::name,
+                        TCoreTypeAttr::get(op.getContext(), coreType));
+          } else {
+            auto addressSpaces = PropagatorUtil::getAddressSpace(upProp);
+            auto addressSpace = addressSpaces.empty() ? hivm::AddressSpace::UB
+                                                      : addressSpaces[0];
+            op->setAttr(
+                hivm::TCoreTypeAttr::name,
+                TCoreTypeAttr::get(
+                    op.getContext(),
+                    PropagatorUtil::kAddressSpace2CoreType.at(addressSpace)));
           }
         });
   });

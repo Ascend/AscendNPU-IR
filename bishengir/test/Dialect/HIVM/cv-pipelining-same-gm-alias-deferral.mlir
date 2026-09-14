@@ -240,3 +240,83 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     return
   }
 }
+
+// -----
+
+// SKEW-LABEL: func.func @preload_assume_chain_absorbed
+// SKEW: scf.for
+// SKEW: scope.scope
+// SKEW: hivm.hir.mmadL1
+// SKEW: hivm.hir.fixpipe
+// SKEW: scope.scope
+// SKEW: hivm.hir.load
+// SKEW: hivm.hir.vcast
+// SKEW: hivm.hir.vadd
+// SKEW: hivm.hir.vcast
+// SKEW: hivm.hir.store
+// SKEW-NOT: scf.for
+// SKEW: return
+
+// UNROLL-LABEL: func.func @preload_assume_chain_absorbed
+// UNROLL: scf.for
+// UNROLL: scf.for
+// UNROLL: hivm.hir.mmadL1
+// UNROLL: hivm.hir.fixpipe
+// UNROLL: scf.for
+// UNROLL: hivm.hir.load
+// UNROLL: hivm.hir.vcast
+// UNROLL: hivm.hir.vadd
+// UNROLL: hivm.hir.vcast
+// UNROLL: hivm.hir.store
+// UNROLL-NOT: scf.for
+// UNROLL: return
+
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @preload_assume_chain_absorbed(%gm: memref<?xbf16>, %a: tensor<64x64xf16>, %b: tensor<64x64xf16>, %rows: index, %cols: index) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix"} {
+    %c0 = arith.constant 0 : i32
+    %c1 = arith.constant 1 : i32
+    %c2 = arith.constant 2 : i32
+    %true = arith.constant true
+    %c64 = arith.constant 64 : index
+    %f16Empty = tensor.empty() : tensor<64x64xf16>
+    %bf16Empty = tensor.empty() : tensor<64x64xbf16>
+    %f32Empty = tensor.empty() : tensor<64x64xf32>
+    scf.for %i = %c0 to %c2 step %c1 : i32 {
+      %prep = hivm.hir.vexp ins(%a : tensor<64x64xf16>) outs(%f16Empty : tensor<64x64xf16>) -> tensor<64x64xf16>
+      %dot = hivm.hir.mmadL1 ins(%prep, %b, %true, %c64, %c64, %c64 : tensor<64x64xf16>, tensor<64x64xf16>, i1, index, index, index) outs(%f32Empty : tensor<64x64xf32>) -> tensor<64x64xf32>
+      %cubeBuffer = memref.alloc() : memref<64x64xf32, #hivm.address_space<ub>>
+      hivm.hir.fixpipe ins(%dot : tensor<64x64xf32>) outs(%cubeBuffer : memref<64x64xf32, #hivm.address_space<ub>>)
+      %cubeBufferCast = memref.memory_space_cast %cubeBuffer : memref<64x64xf32, #hivm.address_space<ub>> to memref<64x64xf32>
+      %cube = bufferization.to_tensor %cubeBufferCast : memref<64x64xf32>
+
+      // Index calculation feeding the GM tile offset. This op is assigned to
+      // a WorkItem and enters toErase. Its user (%cond1) would normally be
+      // left outside, blocking erase. The assume-chain absorption must pull
+      // %iv, %cond1 and the assume into the WorkItem.
+      %iv = arith.index_cast %i : i32 to index
+      %iv_i32 = arith.index_cast %iv : index to i32
+      %cond1 = arith.cmpi sge, %iv_i32, %c0 : i32
+      "llvm.intr.assume"(%cond1) : (i1) -> ()
+
+      %gmTile = memref.reinterpret_cast %gm to offset: [%iv], sizes: [64, 64], strides: [4096, 1] : memref<?xbf16> to memref<64x64xbf16, strided<[4096, 1], offset: ?>>
+      %gmView = memref.subview %gmTile[0, 0] [%rows, %cols] [1, 1] : memref<64x64xbf16, strided<[4096, 1], offset: ?>> to memref<?x?xbf16, strided<[4096, 1], offset: ?>>
+      %localBuffer = memref.alloc() : memref<64x64xbf16>
+      %localView = memref.subview %localBuffer[0, 0] [%rows, %cols] [1, 1] : memref<64x64xbf16> to memref<?x?xbf16, strided<[64, 1]>>
+      hivm.hir.load ins(%gmView : memref<?x?xbf16, strided<[4096, 1], offset: ?>>) outs(%localView : memref<?x?xbf16, strided<[64, 1]>>)
+      %loadedTensor = bufferization.to_tensor %localBuffer : memref<64x64xbf16>
+      %old = hivm.hir.vcast ins(%loadedTensor : tensor<64x64xbf16>) outs(%f32Empty : tensor<64x64xf32>) -> tensor<64x64xf32>
+      %sum = hivm.hir.vadd ins(%cube, %old : tensor<64x64xf32>, tensor<64x64xf32>) outs(%f32Empty : tensor<64x64xf32>) -> tensor<64x64xf32>
+      %updated = hivm.hir.vcast ins(%sum : tensor<64x64xf32>) outs(%bf16Empty : tensor<64x64xbf16>) -> tensor<64x64xbf16>
+
+      // A second assume over a different index (%rows) to verify the
+      // absorption handles multiple independent chains in one loop body.
+      %rows_i32 = arith.index_cast %rows : index to i32
+      %cond2 = arith.cmpi sge, %rows_i32, %c0 : i32
+      "llvm.intr.assume"(%cond2) : (i1) -> ()
+
+      %slice = tensor.extract_slice %updated[0, 0] [%rows, %cols] [1, 1] : tensor<64x64xbf16> to tensor<?x?xbf16>
+      hivm.hir.store ins(%slice : tensor<?x?xbf16>) outs(%gmView : memref<?x?xbf16, strided<[4096, 1], offset: ?>>)
+    }
+    return
+  }
+}

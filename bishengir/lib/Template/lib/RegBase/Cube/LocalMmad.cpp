@@ -52,7 +52,7 @@ L1Mmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
        uint32_t l1AMTE2MTE1EventId, uint32_t l1AMTE1MTE2EventId,
        uint32_t l1BMTE2MTE1EventId, uint32_t l1BMTE1MTE2EventId,
        bool isL1FirstK, bool isL1LastK, UNIT_FLAG unit_flag_mode,
-       bool hasBias) {
+       bool hasBias, int64_t l1BOuterStride = 0) {
   if constexpr (HF32) {
     AscendCBisheng::SetHF32Mode(true);
   }
@@ -114,6 +114,13 @@ L1Mmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
   auto layoutAInL1 = tla::MakeLayout<ElementA, LayoutTagL1A>(l1M, l1K);
   auto tensorL1A = tla::MakeTensor(l1ATensor, layoutAInL1, Arch::PositionL1{});
   auto layoutBInL1 = tla::MakeLayout<ElementB, LayoutTagL1B>(l1K, l1N);
+  // A K-axis subview of a non-transposed zN B tile keeps the parent tile's
+  // N-outer stride. The memref descriptor carries that stride.
+  if constexpr (!TB) {
+    if (l1BOuterStride > 0) {
+      layoutBInL1.template stride<1, 1>() = l1BOuterStride;
+    }
+  }
   auto tensorL1B = tla::MakeTensor(l1BTensor, layoutBInL1, Arch::PositionL1{});
   auto layoutInL0C = tla::MakeLayoutL0C(actualM, actualN);
   auto tensorL0C = tla::MakeTensor(l0CTensor, layoutInL0C, Arch::PositionL0C{});
@@ -274,7 +281,205 @@ L1Mmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
   }
 }
 
+template <class ElementA, class ElementB, class ElementACC, bool TA, bool TB,
+          bool HF32>
+CATLASS_DEVICE void BatchL1Mmad(
+    __cc__ ElementACC *l0C, __cbuf__ ElementA *l1A,
+    __cbuf__ ElementB *l1B, uint32_t batchCount, uint32_t l1M,
+    uint32_t l1K, uint32_t l1N, uint32_t actualM, uint32_t actualK,
+    uint32_t actualN, uint32_t l1AMTE2MTE1EventId,
+    uint32_t l1AMTE1MTE2EventId, uint32_t l1BMTE2MTE1EventId,
+    uint32_t l1BMTE1MTE2EventId, bool initC, UNIT_FLAG unitFlag,
+    int64_t l1BOuterStride) {
+  if (batchCount == 1) {
+    L1Mmad<ElementA, ElementB, void, ElementACC, TA, TB, HF32>(
+        l0C, l1A, l1B, nullptr, l1M, l1K, l1N, actualM, actualK, actualN,
+        l1AMTE2MTE1EventId, l1AMTE1MTE2EventId, l1BMTE2MTE1EventId,
+        l1BMTE1MTE2EventId, initC, true, unitFlag, false, l1BOuterStride);
+    return;
+  }
+
+  if constexpr (HF32) {
+    AscendCBisheng::SetHF32Mode(true);
+  }
+
+  using ArchTag = Arch::AtlasA5;
+  using LayoutTagL1A = typename TransToTag<TA>::tag;
+  using LayoutTagL1B = typename TransToTag<TB>::tag;
+  using LayoutTagL0A = layout::zN;
+  using LayoutTagL0B = layout::nZ;
+  using LayoutL1A = detail::TagToLayout_t<ElementA, LayoutTagL1A>;
+  using LayoutL1B = detail::TagToLayout_t<ElementB, LayoutTagL1B>;
+  using LayoutL0A = detail::TagToLayout_t<ElementA, LayoutTagL0A>;
+  using LayoutL0B = detail::TagToLayout_t<ElementB, LayoutTagL0B>;
+  using TensorL1A = tla::Tensor<AscendCBisheng::LocalTensor<ElementA>,
+                                LayoutL1A, tla::Coord<tla::_0, tla::_0>,
+                                AscendCBisheng::TPosition::A1>;
+  using TensorL1B = tla::Tensor<AscendCBisheng::LocalTensor<ElementB>,
+                                LayoutL1B, tla::Coord<tla::_0, tla::_0>,
+                                AscendCBisheng::TPosition::A1>;
+  using TensorL0A = tla::Tensor<AscendCBisheng::LocalTensor<ElementA>,
+                                LayoutL0A, tla::Coord<tla::_0, tla::_0>,
+                                AscendCBisheng::TPosition::A2>;
+  using TensorL0B = tla::Tensor<AscendCBisheng::LocalTensor<ElementB>,
+                                LayoutL0B, tla::Coord<tla::_0, tla::_0>,
+                                AscendCBisheng::TPosition::B2>;
+  using CopyL1ToL0A = Gemm::Tile::TileCopyTla<ArchTag, TensorL1A, TensorL0A>;
+  using CopyL1ToL0B = Gemm::Tile::TileCopyTla<ArchTag, TensorL1B, TensorL0B>;
+
+  const uint32_t l0AElems = actualM * actualK;
+  const uint32_t l0BElems = actualK * actualN;
+  const uint32_t l0CElems = actualM * actualN;
+  uint32_t l0Batch = min(
+      min(ArchTag::L0A_SIZE / sizeof(ElementA) / l0AElems,
+          ArchTag::L0B_SIZE / sizeof(ElementB) / l0BElems),
+      ArchTag::L0C_SIZE / sizeof(ElementACC) / l0CElems);
+  l0Batch = min(max(l0Batch, static_cast<uint32_t>(1)), batchCount);
+
+  AscendCBisheng::LocalTensor<ElementA> l0ATensor{
+      AscendCBisheng::TPosition::A2, 0, ArchTag::L0A_SIZE / sizeof(ElementA)};
+  AscendCBisheng::LocalTensor<ElementB> l0BTensor{
+      AscendCBisheng::TPosition::B2, 0, ArchTag::L0B_SIZE / sizeof(ElementB)};
+  AscendCBisheng::LocalTensor<ElementACC> l0CTensor{
+      AscendCBisheng::TPosition::CO1,
+      static_cast<uint32_t>(reinterpret_cast<int64_t>(l0C)),
+      batchCount * l0CElems};
+  auto layoutL0A = tla::MakeLayout<ElementA, LayoutTagL0A>(actualM, actualK);
+  auto layoutL0B = tla::MakeLayout<ElementB, LayoutTagL0B>(actualK, actualN);
+  auto tensorL0A = tla::MakeTensor(l0ATensor, layoutL0A, Arch::PositionL0A{});
+  auto tensorL0B = tla::MakeTensor(l0BTensor, layoutL0B, Arch::PositionL0B{});
+  CopyL1ToL0A copyL1ToL0A;
+  CopyL1ToL0B copyL1ToL0B;
+
+  AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::M_MTE1>(EVENT_ID0);
+  if (l1AMTE2MTE1EventId != static_cast<uint32_t>(-1)) {
+    AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::MTE2_MTE1>(
+        l1AMTE2MTE1EventId);
+  }
+  if (l1BMTE2MTE1EventId != static_cast<uint32_t>(-1)) {
+    AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::MTE2_MTE1>(
+        l1BMTE2MTE1EventId);
+  }
+
+  for (uint32_t batchBegin = 0; batchBegin < batchCount;
+       batchBegin += l0Batch) {
+    uint32_t actualBatch = min(l0Batch, batchCount - batchBegin);
+    AscendCBisheng::LocalTensor<ElementA> l1ATensor{
+        AscendCBisheng::TPosition::A1,
+        static_cast<uint32_t>(reinterpret_cast<int64_t>(
+            l1A + batchBegin * l1M * l1K)),
+        actualBatch * l1M * l1K};
+    AscendCBisheng::LocalTensor<ElementB> l1BTensor{
+        AscendCBisheng::TPosition::A1,
+        static_cast<uint32_t>(reinterpret_cast<int64_t>(
+            l1B + batchBegin * l1K * l1N)),
+        actualBatch * l1K * l1N};
+    auto layoutL1A = tla::MakeLayout<ElementA, LayoutTagL1A>(l1M, l1K);
+    auto layoutL1B = tla::MakeLayout<ElementB, LayoutTagL1B>(l1K, l1N);
+    if constexpr (!TB) {
+      if (l1BOuterStride > 0) {
+        layoutL1B.template stride<1, 1>() = l1BOuterStride;
+      }
+    }
+    auto tensorL1A =
+        tla::MakeTensor(l1ATensor, layoutL1A, Arch::PositionL1{});
+    auto tensorL1B =
+        tla::MakeTensor(l1BTensor, layoutL1B, Arch::PositionL1{});
+    copyL1ToL0A(tensorL0A, tensorL1A, actualBatch);
+    copyL1ToL0B(tensorL0B, tensorL1B, actualBatch);
+    AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::MTE1_M>(EVENT_ID0);
+    AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::MTE1_M>(EVENT_ID0);
+
+    AscendCBisheng::MmadParams params;
+    params.m = actualM;
+    params.n = actualN;
+    params.k = actualK;
+    params.cmatrixInitVal = initC;
+#if defined(CATLASS_ARCH_A5_ENABLED)
+    params.disableGemv = true;
+#endif
+    for (uint32_t batchIdx = 0; batchIdx < actualBatch; ++batchIdx) {
+      // No mmad here may update the unit flag: the batch is drained by a single
+      // Fixpipe that cannot pair up with per-mmad updates. batch_mma_tile_core
+      // already downgraded the mode so that M->FIX ordering comes from an
+      // explicit set_flag/wait_flag pair instead.
+      params.unitFlag = static_cast<uint8_t>(unitFlag);
+      AscendCBisheng::Mmad(
+          l0CTensor[(batchBegin + batchIdx) * l0CElems],
+          l0ATensor[batchIdx * l0AElems], l0BTensor[batchIdx * l0BElems],
+          params);
+    }
+    AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::M_MTE1>(EVENT_ID0);
+    if (batchBegin + actualBatch < batchCount) {
+      AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::M_MTE1>(EVENT_ID0);
+    }
+  }
+
+  if (l1AMTE1MTE2EventId != static_cast<uint32_t>(-1)) {
+    AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::MTE1_MTE2>(
+        l1AMTE1MTE2EventId);
+  }
+  if (l1BMTE1MTE2EventId != static_cast<uint32_t>(-1)) {
+    AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::MTE1_MTE2>(
+        l1BMTE1MTE2EventId);
+  }
+  if constexpr (HF32) {
+    AscendCBisheng::SetHF32Mode(false);
+  }
+}
+
 } // namespace Catlass::Gemm
+
+template <typename SRC_TYPE, typename DST_TYPE, bool TA, bool TB, bool HF32>
+__aicore__ __attribute__((always_inline)) void batch_mma_tile_core(
+    memref_t<__cbuf__ SRC_TYPE, 5> *ma,
+    memref_t<__cbuf__ SRC_TYPE, 5> *mb, bool init, int64_t m, int64_t k,
+    int64_t n, memref_t<__cc__ DST_TYPE, 5> *mc,
+    int64_t batch_mmad_wait_l1a_event, int64_t batch_mmad_wait_l1b_event,
+    int64_t l1a_wait_batch_mmad_event, int64_t l1b_wait_batch_mmad_event,
+    int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,
+    int64_t back_pipe_m_pipe_mte1_db_event1, UNIT_FLAG unit_flag_mode,
+    int64_t unit_flag_group_id) {
+  uint32_t l1M = TA ? (ma->sizes[1] * ma->sizes[4])
+                    : (ma->sizes[2] * ma->sizes[3]);
+  uint32_t l1K = TA ? (ma->sizes[2] * ma->sizes[3])
+                    : (ma->sizes[1] * ma->sizes[4]);
+  uint32_t l1N = TB ? (mb->sizes[2] * mb->sizes[3])
+                    : (mb->sizes[1] * mb->sizes[4]);
+
+  if (unit_flag_mode != UNIT_FLAG::DISABLED) {
+    auto &unit_flag_was_disable = getUnitFlagDisableStatus(unit_flag_group_id);
+    if (unit_flag_was_disable) {
+      INTRINSIC(set_flag, PIPE_FIX, PIPE_M, LIB_EVENT_ID0);
+      INTRINSIC(wait_flag, PIPE_FIX, PIPE_M, LIB_EVENT_ID0);
+    }
+    if (unit_flag_mode == UNIT_FLAG::ENABLED_WITHOUT_UPDATE) {
+      if (unit_flag_was_disable) {
+        unit_flag_was_disable = false;
+        unit_flag_mode = UNIT_FLAG::DISABLED;
+      }
+    } else if (unit_flag_mode == UNIT_FLAG::ENABLED_WITH_UPDATE) {
+      unit_flag_was_disable = false;
+      int64_t l0cN = mc->sizes[1] * mc->sizes[4];
+      int64_t l0cM = mc->sizes[2] * mc->sizes[3];
+      // A batch is drained by one Fixpipe covering every matrix at once, which
+      // cannot pair up with a per-mmad flag update. Marking the group disabled
+      // hands the M->FIX ordering back to the explicit set_flag/wait_flag pair
+      // that Fixpipe emits for a disabled group.
+      if ((ma->sizes[0] > 1) || (n != l0cN) || (m != l0cM)) {
+        unit_flag_was_disable = true;
+        unit_flag_mode = UNIT_FLAG::ENABLED_WITHOUT_UPDATE;
+      }
+    }
+  }
+
+  Catlass::Gemm::BatchL1Mmad<SRC_TYPE, SRC_TYPE, DST_TYPE, TA, TB, HF32>(
+      mc->aligned + mc->offset, ma->aligned + ma->offset,
+      mb->aligned + mb->offset, ma->sizes[0], l1M, l1K, l1N, m, k, n,
+      batch_mmad_wait_l1a_event, l1a_wait_batch_mmad_event,
+      batch_mmad_wait_l1b_event, l1b_wait_batch_mmad_event, init,
+      unit_flag_mode, mb->strides[1]);
+}
 
 template <typename SRC_TYPE, typename DST_TYPE, typename BIAS_TYPE, bool TA,
           bool TB, bool HF32>
@@ -414,6 +619,28 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
       true                          // hasBias
   );
 }
+
+#define REGISTER_BATCH_MMA_TILE(suffix, src_type, dst_type, ta, tb, hf32)     \
+  __aicore__ __attribute__((always_inline)) void                              \
+      _mlir_ciface_batch_mma_tile_##src_type##_to_##dst_type##suffix(         \
+          memref_t<__cbuf__ src_type, 5> *src0,                               \
+          memref_t<__cbuf__ src_type, 5> *src1, bool init, int64_t m,         \
+          int64_t k, int64_t n, memref_t<__cc__ dst_type, 5> *dst,            \
+          int64_t batch_mmad_wait_l1a_event,                                  \
+          int64_t batch_mmad_wait_l1b_event,                                  \
+          int64_t l1a_wait_batch_mmad_event,                                  \
+          int64_t l1b_wait_batch_mmad_event, int64_t kloop_db_cond,           \
+          int64_t back_pipe_m_pipe_mte1_db_event0,                            \
+          int64_t back_pipe_m_pipe_mte1_db_event1, UNIT_FLAG unit_flag_mode,  \
+          int64_t unit_flag_group_id) {                                       \
+    batch_mma_tile_core<src_type, dst_type, ta, tb, hf32>(                    \
+        src0, src1, init, m, k, n, dst, batch_mmad_wait_l1a_event,            \
+        batch_mmad_wait_l1b_event, l1a_wait_batch_mmad_event,                 \
+        l1b_wait_batch_mmad_event, kloop_db_cond,                             \
+        back_pipe_m_pipe_mte1_db_event0,                                      \
+        back_pipe_m_pipe_mte1_db_event1, unit_flag_mode,                      \
+        unit_flag_group_id);                                                  \
+  }
 
 #define DECLARE_MMA_TILE(src_scope, dst_scope, dim, src_type, dst_type,        \
                          bias_type)                                            \
@@ -839,6 +1066,23 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
   }
 
 extern "C" {
+REGISTER_BATCH_MMA_TILE(, half, float, false, false, false);
+REGISTER_BATCH_MMA_TILE(_ta, half, float, true, false, false);
+REGISTER_BATCH_MMA_TILE(_tb, half, float, false, true, false);
+REGISTER_BATCH_MMA_TILE(_ta_tb, half, float, true, true, false);
+REGISTER_BATCH_MMA_TILE(, bfloat16_t, float, false, false, false);
+REGISTER_BATCH_MMA_TILE(_ta, bfloat16_t, float, true, false, false);
+REGISTER_BATCH_MMA_TILE(_tb, bfloat16_t, float, false, true, false);
+REGISTER_BATCH_MMA_TILE(_ta_tb, bfloat16_t, float, true, true, false);
+REGISTER_BATCH_MMA_TILE(, float, float, false, false, false);
+REGISTER_BATCH_MMA_TILE(_ta, float, float, true, false, false);
+REGISTER_BATCH_MMA_TILE(_tb, float, float, false, true, false);
+REGISTER_BATCH_MMA_TILE(_ta_tb, float, float, true, true, false);
+REGISTER_BATCH_MMA_TILE(_hf32, float, float, false, false, true);
+REGISTER_BATCH_MMA_TILE(_ta_hf32, float, float, true, false, true);
+REGISTER_BATCH_MMA_TILE(_tb_hf32, float, float, false, true, true);
+REGISTER_BATCH_MMA_TILE(_ta_tb_hf32, float, float, true, true, true);
+
 REGISTER_MMA_TILE(cbuf, cc, 4, float8_e4m3_t, float, float);
 REGISTER_MMA_TILE(cbuf, cc, 4, float8_e5m2_t, float, float);
 REGISTER_MMA_TILE(cbuf, cc, 4, half, float, float);

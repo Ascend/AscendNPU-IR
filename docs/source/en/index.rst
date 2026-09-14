@@ -39,6 +39,7 @@ About
 -----
 
 - :doc:`Contributing <contributing_guide/contribute>`
+- :doc:`Code Ownership <codeowners>`
 - :doc:`FAQ <faq/faq>`
 - :doc:`Related Projects and Acknowledgments <reference/thanks>`
 - :doc:`Talks and Courses <reference/talk_and_course>`
@@ -80,6 +81,7 @@ About
    :caption: Contributing
 
    Contributing Guide <contributing_guide/contribute>
+   Code Ownership <codeowners>
    AscendNPU IR Users <user_of_npuir/users>
 
 .. toctree::

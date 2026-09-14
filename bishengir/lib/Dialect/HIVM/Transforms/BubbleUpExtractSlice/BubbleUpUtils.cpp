@@ -19,7 +19,11 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVectorExtras.h"
 #include "llvm/Support/Casting.h"
+#include "llvm/Support/Debug.h"
 #include "llvm/Support/LogicalResult.h"
+
+#define DEBUG_TYPE "hivm-bind-sub-block"
+#define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] ")
 
 namespace mlir::hivm::detail {
 
@@ -74,9 +78,8 @@ UnrealizedConversionCastOp createBubblePropagatorUpLinkBefore(
     OpFoldResult size, int64_t tilingDim, PatternRewriter &rewriter) {
   PatternRewriter::InsertionGuard guard(rewriter);
   rewriter.setInsertionPoint(anchor);
-  return createBubblePropagationCast(oldValue, slicedType,
-                                     kBubbleUpPropagateUp, offset, size,
-                                     tilingDim, rewriter);
+  return createBubblePropagationCast(oldValue, slicedType, kBubbleUpPropagateUp,
+                                     offset, size, tilingDim, rewriter);
 }
 
 /// Creates a downward propagator: `newValue` (sliced) is cast to `oldValue`'s
@@ -94,16 +97,13 @@ createBubblePropagatorDown(Value oldValue, Value newValue, OpFoldResult offset,
 }
 
 /// Like createBubblePropagatorDown but takes the old type directly.
-UnrealizedConversionCastOp
-createBubblePropagatorDownWithType(Type oldType, Value newValue,
-                                   OpFoldResult offset, OpFoldResult size,
-                                   int64_t tilingDim,
-                                   PatternRewriter &rewriter) {
+UnrealizedConversionCastOp createBubblePropagatorDownWithType(
+    Type oldType, Value newValue, OpFoldResult offset, OpFoldResult size,
+    int64_t tilingDim, PatternRewriter &rewriter) {
   PatternRewriter::InsertionGuard guard(rewriter);
   rewriter.setInsertionPointAfterValue(newValue);
-  return createBubblePropagationCast(newValue, oldType,
-                                     kBubbleUpPropagateDown, offset, size,
-                                     tilingDim, rewriter);
+  return createBubblePropagationCast(newValue, oldType, kBubbleUpPropagateDown,
+                                     offset, size, tilingDim, rewriter);
 }
 
 /// Rebuild a memref type for `newShape`.
@@ -111,8 +111,8 @@ createBubblePropagatorDownWithType(Type oldType, Value newValue,
 /// `createSlicedAllocLike`). Explicit strided layouts keep their strides so
 /// views into a larger parent buffer (e.g. GM reinterpret_cast / subview)
 /// remain valid when only the viewed size is halved.
-static MemRefType
-cloneMemRefTypeWithNewShape(MemRefType oldType, ArrayRef<int64_t> newShape) {
+static MemRefType cloneMemRefTypeWithNewShape(MemRefType oldType,
+                                              ArrayRef<int64_t> newShape) {
   assert(static_cast<int64_t>(newShape.size()) == oldType.getRank() &&
          "rank must be preserved when cloning a sliced memref type");
 
@@ -160,7 +160,8 @@ FailureOr<MemRefType> getSlicedMemRefType(MemRefType oldType,
 /// If `memrefValue` traces back to a tightly-coupled alloc, tag that
 /// `annotation.mark` with `kTiledTightlyCoupledAlloc` after tiling.
 void markTiledTightlyCoupledAllocIfNeeded(RewriterBase &rewriter,
-                                          Value memrefValue) {
+                                          Value memrefValue,
+                                          int64_t tilingDim) {
   auto maybeAlloc = mlir::utils::tracebackMemRefToAlloc(memrefValue);
   if (!maybeAlloc)
     return;
@@ -176,10 +177,26 @@ void markTiledTightlyCoupledAllocIfNeeded(RewriterBase &rewriter,
       hivm::HIVMTightlyCoupledBufferAttr::name);
   if (!attr || !attr.getId().has_value())
     return;
-  rewriter.modifyOpInPlace(markOp, [&]() {
-    markOp->setAttr(kTiledTightlyCoupledAlloc,
-                    UnitAttr::get(rewriter.getContext()));
-  });
+  auto existing = markOp->getAttrOfType<IntegerAttr>(hivm::AICAttrTilingDim);
+  bool shouldOverwriteTilingDim =
+      tilingDim >= 0 &&
+      !(existing && existing.getValue().getSExtValue() == tilingDim);
+  rewriter.modifyOpInPlace(
+      markOp, [&]() {
+        markOp->setAttr(kTiledTightlyCoupledAlloc,
+                        UnitAttr::get(rewriter.getContext()));
+        if (!shouldOverwriteTilingDim)
+          return;
+        markOp->setAttr(
+            hivm::AICAttrTilingDim,
+            IntegerAttr::get(IndexType::get(markOp.getContext()), tilingDim));
+        LLVM_DEBUG(DBGS() << "tile and bind subblock overwrite tiling dim for "
+                          << markOp << " to " << tilingDim << "\n\n");
+        LLVM_DEBUG(markOp.dump());
+        markOp.emitWarning()
+            << "[hivm-bind-sub-block] AIC tightly coupled buffer tiling dim is "
+               "inconsistent with vector and is overwritten";
+      });
 }
 
 /// For dynamic sliced allocs, attach `kBufferSizeInByteAttr` so later passes
@@ -202,8 +219,8 @@ markOddTilingBufferSizeIfNeeded(MemRefType slicedType, MemRefType sourceType,
 }
 
 /// Replaces `oldAllocOp` with a smaller alloc whose shape comes from the
-/// upward propagator's result type. Dynamic tile sizes become alloc operands and
-/// may trigger an odd-buffer-size annotation.
+/// upward propagator's result type. Dynamic tile sizes become alloc operands
+/// and may trigger an odd-buffer-size annotation.
 FailureOr<memref::AllocOp>
 createSlicedAllocLike(UnrealizedConversionCastOp propagateOp,
                       memref::AllocOp oldAllocOp, PatternRewriter &rewriter) {

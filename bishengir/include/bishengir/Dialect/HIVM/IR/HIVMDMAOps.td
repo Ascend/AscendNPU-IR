@@ -375,6 +375,12 @@ def ND2NZOp : HIVM_DmaOp<"nd2nz", [
     - `dst_continuous`: if present, signify that the source data is stored continuously
       in the destination buffer. This must be set in order for this op to be converted to
       library function call.
+    - `l2_cache_mode`: the raw value of the MTE2 descriptor's cache control field,
+      absent meaning the hardware default of 0.  LoadOp spells the same field as an
+      EvictFirst/EvictLast enum, which is all the vector copies use, but the field is
+      wider than that enum and a matmul needs the rest of it: keeping a streamed-once
+      operand out of L2 entirely is what stops it evicting the operand that is
+      re-read, and no eviction *priority* can express that.
     Constraints:
     - if `init_out_buffer` is true, `pad_value` should have value.
   }];
@@ -383,7 +389,8 @@ def ND2NZOp : HIVM_DmaOp<"nd2nz", [
                        OptionalAttr<UnitAttr>:$dst_continuous,
                        DefaultValuedOptionalAttr<BoolAttr, "false">:$init_out_buffer,
                        Optional<AnyType>:$pad_value,
-                       Optional<AnyType>:$init_condition
+                       Optional<AnyType>:$init_condition,
+                       OptionalAttr<I32Attr>:$l2_cache_mode
   );
   let results = (outs Variadic<AnyRankedTensor>:$result_tensor);
   let assemblyFormat = [{
@@ -461,6 +468,65 @@ def LoadMXScaleOp : HIVM_DmaOp<"load_scale", [
     (`is_transposed` `=` $is_transposed^)?
     (`->` type($result_tensor)^)?
   }];
+  let extraClassDeclaration = DmaOpBaseDecl;
+}
+
+def L12L0Op: HIVM_DmaOp<"l12l0",
+    [StaticMaxRankTrait<2>,
+     SinglePipeOpTrait, OpPipeTrait<"PIPE::PIPE_MTE1">,
+     HIVMCoreTypeInterface, CubeCoreTypeTrait
+    ]> {
+  let summary = "HIVM data copy operation from L1 to L0A or L0B Buffer";
+  let description = [{
+    Copy data from L1 to L0A or L0B buffer.
+    The destination is distinguished by the dst address space:
+      - L0A: `#hivm.address_space<ca>`
+      - L0B: `#hivm.address_space<cb>`
+  }];
+  let arguments = (ins TensorOrMemref:$src, TensorOrMemref:$dst,
+                    I64Attr:$k_part_idx, I64Attr:$k_part, I64Attr:$k_part_ceil,
+                    I64Attr:$k_part_loop, I64Attr:$k_part_actual, I64Attr:$m,
+                    DefaultValuedOptionalAttr<BoolAttr, "false">:$is_transposed);
+  let results = (outs Optional<AnyRankedTensor>:$result_tensor);
+  let assemblyFormat = [{
+    attr-dict
+    `ins` `(` $src `:` type($src) `)`
+    `outs` `(` $dst `:` type($dst) `)`
+    `{`
+      `k_part_idx` `=` $k_part_idx `,`
+      `k_part` `=` $k_part `,`
+      `k_part_ceil` `=` $k_part_ceil `,`
+      `k_part_loop` `=` $k_part_loop `,`
+      `k_part_actual` `=` $k_part_actual `,`
+      `m` `=` $m
+      (`,` `is_transposed` `=` $is_transposed^)?
+    `}`
+    (`->` type($result_tensor)^)?
+  }];
+  let hasVerifier = 1;
+  let extraClassDeclaration = DmaOpBaseDecl # [{
+    bool isToL0A();
+    bool isToL0B();
+  }];
+}
+
+def L12BTOp: HIVM_DmaOp<"l12bt",
+    [StaticMaxRankTrait<2>,
+     SinglePipeOpTrait, OpPipeTrait<"PIPE::PIPE_MTE1">,
+     HIVMCoreTypeInterface, CubeCoreTypeTrait
+    ]> {
+  let summary = "HIVM data copy operation from L1 to BiasTable Buffer";
+  let description = [{ Copy data from L1 to BiasTable Buffer. }];
+  let arguments = (ins TensorOrMemref:$src, TensorOrMemref:$dst, Index:$n);
+  let results = (outs Optional<AnyRankedTensor>:$result_tensor);
+  let assemblyFormat = [{
+    attr-dict
+    `ins` `(` $src `:` type($src) `)`
+    `outs` `(` $dst `:` type($dst) `)`
+    `n` `=` $n
+    (`->` type($result_tensor)^)?
+  }];
+  let hasVerifier = 1;
   let extraClassDeclaration = DmaOpBaseDecl;
 }
 

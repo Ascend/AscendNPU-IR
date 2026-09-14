@@ -1256,7 +1256,7 @@ PropagateCollapseDown::matchAndRewrite(tensor::CollapseShapeOp collapseOp,
         isa<bufferization::MaterializeInDestinationOp>(userOp)) {
       return handleMaterializeInDestinationOp(collapseOp, rewriter, userOp);
     }
-    if (isa<hfusion::MulExtOp>(userOp)) {
+    if (isa<hfusion::MulExtOp, hfusion::MulExtUiOp>(userOp)) {
       PropagatableMulExt propagater;
       return propagater.matchAndRewriteCollapse(rewriter, userOp, collapseOp);
     }

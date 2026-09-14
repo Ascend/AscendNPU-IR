@@ -8,6 +8,7 @@
 
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/Transforms/ConvertLayoutUtils.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
@@ -285,6 +286,12 @@ struct NDToFractalDecompose : public OpRewritePattern<ConvertLayoutOp> {
 
     if (!matcher(op))
       return rewriter.notifyMatchFailure(op, "layout conversion not matched");
+
+    // Uninit L1 ND leftover: rewrite to cbuf empty; do not emit vtranspose.
+    if (isUninitL1NDConvertLayout(op)) {
+      replaceUninitL1NDConvertWithEmpty(rewriter, op);
+      return success();
+    }
 
     LayoutConversionInfo info = extractConversionInfo(op);
     if (info.hasBatch)

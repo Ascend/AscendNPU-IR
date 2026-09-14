@@ -18,6 +18,7 @@
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/CustomOp/DistributedTransformUtils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMInterfaces.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
@@ -138,9 +139,73 @@ inline DataLayoutAttr globalSeedLayout(Value v) {
   return DataLayoutAttr::get(v.getContext(), hivm::DataLayout::ND);
 }
 
-void convertToBatchND2NZOp(Value src, Value dst, OpBuilder &builder) {
-  auto buildLoopBody = [&src, &dst,
-                        &builder](llvm::SmallVector<Value> indexes) -> void {
+constexpr llvm::StringLiteral kL2CacheModeAttr = "l2_cache_mode";
+
+/// Find the `annotation.mark {l2_cache_mode = N}` that applies to the buffer
+/// this copy fills.
+///
+/// The mark rides on the destination buffer rather than on the copy itself
+/// because the Triton frontend lowers tl.load to a bare memref.copy and keeps
+/// none of the load's own attributes.  It has to be read off the copy's
+/// original target: rewriteAllocOp replaces that buffer with a freshly
+/// allocated fractal one, so once the nd2nz exists its destination no longer
+/// traces to the alloc the mark was attached to.
+IntegerAttr l2CacheModeFromAnnotation(Operation &originalOp) {
+  auto copyOp = dyn_cast<CopyOpInterface>(originalOp);
+  if (!copyOp)
+    return nullptr;
+  auto dstAlloc = traceDefOp<memref::AllocOp>(copyOp.getTarget());
+  if (!dstAlloc)
+    return nullptr;
+  auto funcOp = originalOp.getParentOfType<func::FuncOp>();
+  if (!funcOp)
+    return nullptr;
+
+  IntegerAttr mode;
+  funcOp.walk([&](annotation::MarkOp markOp) {
+    auto modeAttr = markOp->getAttrOfType<IntegerAttr>(kL2CacheModeAttr);
+    if (!modeAttr)
+      return WalkResult::advance();
+    auto markAlloc = traceDefOp<memref::AllocOp>(markOp.getSrc());
+    if (!markAlloc || *markAlloc != *dstAlloc)
+      return WalkResult::advance();
+    mode = modeAttr;
+    return WalkResult::interrupt();
+  });
+  return mode;
+}
+
+/// The L2 hint belongs to the data, not to the op that happened to be reading
+/// it, so it has to survive the rewrite into ND2NZ.
+///
+/// Only an explicit annotation is honoured.  A load lowered from Triton also
+/// reaches this pass carrying an eviction_policy, but that is the one the
+/// frontend defaulted to rather than anything the kernel asked for, so
+/// translating it would put a mode on every matmul operand instead of on the
+/// one a kernel marked.  No annotation leaves the field at the 0 the library
+/// hardcoded before.
+inline IntegerAttr l2CacheModeOf(Operation &originalOp) {
+  return l2CacheModeFromAnnotation(originalOp);
+}
+
+void convertToBatchND2NZOp(Value src, Value dst, Operation &originalOp,
+                           OpBuilder &builder, bool batchMatmul) {
+  // Regbase keeps the batch dimension on the op so that the library call can
+  // fold it into a single MTE2 descriptor; other architectures still need one
+  // ND2NZ per batch.
+  auto modeAttr = batchMatmul ? l2CacheModeOf(originalOp) : IntegerAttr{};
+  auto mod = originalOp.getParentOfType<ModuleOp>();
+  if (batchMatmul && mod && hacc::utils::isRegBasedArch(mod)) {
+    auto op = builder.create<hivm::ND2NZOp>(src.getLoc(), TypeRange{},
+                                            /*src=*/src,
+                                            /*dst=*/dst, builder.getUnitAttr());
+    if (modeAttr)
+      op.setL2CacheModeAttr(modeAttr);
+    return;
+  }
+
+  auto buildLoopBody = [&src, &dst, &builder,
+                        modeAttr](llvm::SmallVector<Value> indexes) -> void {
     auto getSub = [&builder, &indexes](Value val) -> Value {
       auto valType = llvm::dyn_cast<ShapedType>(val.getType());
 
@@ -168,9 +233,11 @@ void convertToBatchND2NZOp(Value src, Value dst, OpBuilder &builder) {
     auto subSrc = getSub(src);
     auto subDst = getSub(dst);
 
-    builder.create<hivm::ND2NZOp>(src.getLoc(), TypeRange{},
-                                  /*src=*/subSrc, /*dst=*/subDst,
-                                  builder.getUnitAttr());
+    auto op = builder.create<hivm::ND2NZOp>(src.getLoc(), TypeRange{},
+                                            /*src=*/subSrc, /*dst=*/subDst,
+                                            builder.getUnitAttr());
+    if (modeAttr)
+      op.setL2CacheModeAttr(modeAttr);
   };
   std::set<int> loopDims;
   loopDims.insert(0);
@@ -178,6 +245,7 @@ void convertToBatchND2NZOp(Value src, Value dst, OpBuilder &builder) {
 }
 
 void convertToND2NZOp(Value src, Value dst, Operation &originalOp,
+                      bool batchMatmul,
                       OpBuilder &builder) {
   mlir::Value padValue = nullptr;
   mlir::Value initCondition = nullptr;
@@ -187,9 +255,10 @@ void convertToND2NZOp(Value src, Value dst, Operation &originalOp,
     padValue = hasInitOutBuffer ? loadOp.getPadValue() : nullptr;
     initCondition = loadOp.getInitCondition();
   }
-  builder.create<hivm::ND2NZOp>(src.getLoc(), TypeRange{}, src, dst,
-                                builder.getUnitAttr(), hasInitOutBuffer,
-                                padValue, initCondition);
+  builder.create<hivm::ND2NZOp>(
+      src.getLoc(), TypeRange{}, src, dst, builder.getUnitAttr(),
+      hasInitOutBuffer, padValue, initCondition,
+      batchMatmul ? l2CacheModeOf(originalOp) : IntegerAttr{});
 }
 
 void convertToLoadMXScaleOp(Value src, Value dst, Operation &originalOp,
@@ -1476,10 +1545,10 @@ DataLayoutInferAndPropagateHelper::tryFoldLayoutConversionIntoCopy(
       llvm::report_fatal_error("Unsupported operand shape when convert copy to ND2NZ");
     bool batchFlag = (llvm::dyn_cast<ShapedType>(src.getType()).getRank() == 3);
     if (batchFlag) {
-      convertToBatchND2NZOp(src, dst, builder);
+      convertToBatchND2NZOp(src, dst, originalOp, builder, batchMatmul_);
       return success();
     } else {
-      convertToND2NZOp(src, dst, originalOp, builder);
+      convertToND2NZOp(src, dst, originalOp, batchMatmul_, builder);
       return success();
     }
   }
@@ -1545,11 +1614,12 @@ void DataLayoutInferAndPropagateHelper::rewriteCopyOp(mlir::Operation *op) {
   op->replaceUsesOfWith(src, rewrittenSrc);
 }
 
-class ReplaceMMADOperand : public OpRewritePattern<hivm::MmadL1Op> {
+template <typename MmadOp>
+class ReplaceMMADOperand : public OpRewritePattern<MmadOp> {
 public:
-  using OpRewritePattern<hivm::MmadL1Op>::OpRewritePattern;
+  using OpRewritePattern<MmadOp>::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(hivm::MmadL1Op op,
+  LogicalResult matchAndRewrite(MmadOp op,
                                 PatternRewriter &rewriter) const final {
     bool modifed = false;
     for (auto &operand : op->getOpOperands()) {
@@ -1568,6 +1638,9 @@ public:
 namespace {
 struct InferHIVMDataLayoutPass
     : public impl::InferHIVMDataLayoutBase<InferHIVMDataLayoutPass> {
+  using impl::InferHIVMDataLayoutBase<
+      InferHIVMDataLayoutPass>::InferHIVMDataLayoutBase;
+
   void runOnOperation() override;
 };
 } // namespace
@@ -1582,7 +1655,8 @@ struct InferHIVMDataLayoutPass
 void hasConvertlayoutForCube(func::FuncOp func) {
   MLIRContext *ctx = func->getContext();
   RewritePatternSet pattern(ctx);
-  pattern.add<ReplaceMMADOperand>(ctx);
+  pattern.add<ReplaceMMADOperand<hivm::MmadL1Op>,
+              ReplaceMMADOperand<hivm::BatchMmadL1Op>>(ctx);
   (void)(applyPatternsGreedily(func, std::move(pattern)));
 }
 
@@ -1608,7 +1682,7 @@ void InferHIVMDataLayoutPass::runOnOperation() {
   hasConvertlayoutForCube(funcOp);
   LLVM_DEBUG(llvm::dbgs() << "func : " << *funcOp);
 
-  DataLayoutInferAndPropagateHelper helper(funcOp);
+  DataLayoutInferAndPropagateHelper helper(funcOp, batchMatmul);
   // Init "anchor" ops' data layout information.
   helper.initAnchorLayout();
   // Propagate data layout information to users.
@@ -1619,6 +1693,7 @@ void InferHIVMDataLayoutPass::runOnOperation() {
   helper.rewrite();
 }
 
-std::unique_ptr<Pass> mlir::hivm::createInferHIVMDataLayoutPass() {
-  return std::make_unique<InferHIVMDataLayoutPass>();
+std::unique_ptr<Pass> mlir::hivm::createInferHIVMDataLayoutPass(
+    const InferHIVMDataLayoutOptions &options) {
+  return std::make_unique<InferHIVMDataLayoutPass>(options);
 }

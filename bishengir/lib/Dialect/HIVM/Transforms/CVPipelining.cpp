@@ -32,6 +32,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/SCF/Utils/Utils.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
@@ -867,6 +868,52 @@ LogicalResult CVPipelineImpl::absorbMergerOpsIntoWorkItems() {
       opToWorkItemMap[&op].push_back(item.get());
       LLVM_DEBUG(dbgs() << "[absorbMergerOps] absorbed counter store: ";
                  op.print(dbgs()); dbgs() << '\n');
+    }
+  }
+
+  // Absorb `llvm.intr.assume` assertions together with their condition producer
+  // chain.
+  for (Operation &op : *body) {
+    if (!isa<LLVM::AssumeOp>(op) || opToWorkItemMap.contains(&op))
+      continue;
+    // Collect every op on the condition producer chain starting from the
+    // assume op, plus the set of WorkItems that ultimately feed it.
+    SetVector<Operation *> chain;
+    SmallPtrSet<WorkItem *, 4> producers;
+    SmallVector<Operation *> stack{&op};
+    while (!stack.empty()) {
+      Operation *cur = stack.pop_back_val();
+      if (!chain.insert(cur))
+        continue;
+      for (Value operand : cur->getOperands()) {
+        Operation *def = operand.getDefiningOp();
+        if (!def || def->getBlock() != body)
+          continue;
+        auto it = opToWorkItemMap.find(def);
+        if (it != opToWorkItemMap.end()) {
+          for (WorkItem *wi : it->getSecond())
+            producers.insert(wi);
+          continue;
+        }
+        stack.push_back(def);
+      }
+    }
+
+    if (producers.empty())
+      continue;
+    // Attach every op in the chain to all WorkItems that feed the assume.
+    // A single index op may be shared by multiple WorkItems
+    for (Operation *m : chain) {
+      for (WorkItem *target : producers) {
+        if (llvm::is_contained(opToWorkItemMap[m], target))
+          continue;
+        target->ops.insert(m);
+        opToWorkItemMap[m].push_back(target);
+      }
+      if (!opToWorkItemMap.contains(m))
+        continue;
+      LLVM_DEBUG(dbgs() << "[absorbMergerOps] absorbed assume-chain op: ";
+                 m->print(dbgs()); dbgs() << '\n');
     }
   }
 

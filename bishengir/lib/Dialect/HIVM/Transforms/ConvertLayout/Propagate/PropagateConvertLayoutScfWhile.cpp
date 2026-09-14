@@ -42,6 +42,7 @@ scf::WhileOp createWhileWithExplicitBlockTypes(
     TypeRange newAfterArgTypes) {
   auto newWhile = rewriter.create<scf::WhileOp>(oldWhile.getLoc(),
                                                 newResultTypes, newInits);
+  newWhile->setAttrs(oldWhile->getAttrs());
 
   // If builder already made placeholder blocks, clear them first.
   newWhile.getBefore().getBlocks().clear();

@@ -16,7 +16,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
     %c256 = arith.constant 256 : index
     %c128 = arith.constant 128 : index
 
-    // CHECK: call @mmadmxL1_with_float_bias_float8_e5m2_t_to_float
+    // CHECK: call @mmadmxL1_with_float_bias_float8_e5m2_t_float8_e5m2_t_to_float
     hivm.hir.mmadmxL1
       ins(%ma, %mb, %scaleA, %scaleB, %init, %c256, %c128, %c256, %bias :
           memref<256x128xf8E5M2>, memref<128x256xf8E5M2>,
@@ -24,7 +24,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
           memref<1x256xf32>)
       outs(%mc : memref<256x256xf32>)
 
-    // CHECK: call @mmadmxL1_with_float_bias_float8_e5m2_t_to_float_ta
+    // CHECK: call @mmadmxL1_with_float_bias_float8_e5m2_t_float8_e5m2_t_to_float_ta
     hivm.hir.mmadmxL1 {a_transpose}
       ins(%ma_t, %mb, %scaleA, %scaleB, %init, %c256, %c128, %c256, %bias :
           memref<128x256xf8E5M2>, memref<128x256xf8E5M2>,
@@ -32,7 +32,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
           memref<1x256xf32>)
       outs(%mc : memref<256x256xf32>)
 
-    // CHECK: call @mmadmxL1_with_float_bias_float8_e5m2_t_to_float_tb
+    // CHECK: call @mmadmxL1_with_float_bias_float8_e5m2_t_float8_e5m2_t_to_float_tb
     hivm.hir.mmadmxL1 {b_transpose}
       ins(%ma, %mb_t, %scaleA, %scaleB, %init, %c256, %c128, %c256, %bias :
           memref<256x128xf8E5M2>, memref<256x128xf8E5M2>,
@@ -40,10 +40,61 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
           memref<1x256xf32>)
       outs(%mc : memref<256x256xf32>)
 
-    // CHECK: call @mmadmxL1_with_float_bias_float8_e5m2_t_to_float_ta_tb
+    // CHECK: call @mmadmxL1_with_float_bias_float8_e5m2_t_float8_e5m2_t_to_float_ta_tb
     hivm.hir.mmadmxL1 {a_transpose, b_transpose}
       ins(%ma_t, %mb_t, %scaleA, %scaleB, %init, %c256, %c128, %c256, %bias :
           memref<128x256xf8E5M2>, memref<256x128xf8E5M2>,
+          memref<256x4xui8>, memref<256x4xui8>, i1, index, index, index,
+          memref<1x256xf32>)
+      outs(%mc : memref<256x256xf32>)
+    return
+  }
+}
+
+// -----
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+  // CHECK-LABEL: test_mmadmxL1_mixed_native_fp8_bias
+  func.func @test_mmadmxL1_mixed_native_fp8_bias() {
+    %ma = memref.alloc() : memref<256x128xf8E4M3FN>
+    %mb = memref.alloc() : memref<128x256xf8E5M2>
+    %ma_t = memref.alloc() : memref<128x256xf8E4M3FN>
+    %mb_t = memref.alloc() : memref<256x128xf8E5M2>
+    %scaleA = memref.alloc() : memref<256x4xui8>
+    %scaleB = memref.alloc() : memref<256x4xui8>
+    %bias = memref.alloc() : memref<1x256xf32>
+    %mc = memref.alloc() : memref<256x256xf32>
+    %init = arith.constant 1 : i1
+    %c256 = arith.constant 256 : index
+    %c128 = arith.constant 128 : index
+
+    // CHECK: call @mmadmxL1_with_float_bias_float8_e4m3_t_float8_e5m2_t_to_float
+    hivm.hir.mmadmxL1
+      ins(%ma, %mb, %scaleA, %scaleB, %init, %c256, %c128, %c256, %bias :
+          memref<256x128xf8E4M3FN>, memref<128x256xf8E5M2>,
+          memref<256x4xui8>, memref<256x4xui8>, i1, index, index, index,
+          memref<1x256xf32>)
+      outs(%mc : memref<256x256xf32>)
+
+    // CHECK: call @mmadmxL1_with_float_bias_float8_e4m3_t_float8_e5m2_t_to_float_ta
+    hivm.hir.mmadmxL1 {a_transpose}
+      ins(%ma_t, %mb, %scaleA, %scaleB, %init, %c256, %c128, %c256, %bias :
+          memref<128x256xf8E4M3FN>, memref<128x256xf8E5M2>,
+          memref<256x4xui8>, memref<256x4xui8>, i1, index, index, index,
+          memref<1x256xf32>)
+      outs(%mc : memref<256x256xf32>)
+
+    // CHECK: call @mmadmxL1_with_float_bias_float8_e4m3_t_float8_e5m2_t_to_float_tb
+    hivm.hir.mmadmxL1 {b_transpose}
+      ins(%ma, %mb_t, %scaleA, %scaleB, %init, %c256, %c128, %c256, %bias :
+          memref<256x128xf8E4M3FN>, memref<256x128xf8E5M2>,
+          memref<256x4xui8>, memref<256x4xui8>, i1, index, index, index,
+          memref<1x256xf32>)
+      outs(%mc : memref<256x256xf32>)
+
+    // CHECK: call @mmadmxL1_with_float_bias_float8_e4m3_t_float8_e5m2_t_to_float_ta_tb
+    hivm.hir.mmadmxL1 {a_transpose, b_transpose}
+      ins(%ma_t, %mb_t, %scaleA, %scaleB, %init, %c256, %c128, %c256, %bias :
+          memref<128x256xf8E4M3FN>, memref<256x128xf8E5M2>,
           memref<256x4xui8>, memref<256x4xui8>, i1, index, index, index,
           memref<1x256xf32>)
       outs(%mc : memref<256x256xf32>)
@@ -72,7 +123,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
       ins(%gmBias : memref<1x256xf32>)
       outs(%bias : memref<1x1x1x256xf32>)
 
-    // CHECK: call @mmadmxL1_with_float_bias_float8_e5m2_t_to_float
+    // CHECK: call @mmadmxL1_with_float_bias_float8_e5m2_t_float8_e5m2_t_to_float
     hivm.hir.mmadmxL1
       ins(%ma, %mb, %scaleA, %scaleB, %init, %c256, %c128, %c256, %bias :
           memref<256x128xf8E5M2>, memref<128x256xf8E5M2>,

@@ -758,11 +758,11 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
 
 } // namespace Catlass::Gemm
 
-template <typename SRC_TYPE, typename DST_TYPE, typename BIAS_TYPE,
-          bool TA = false, bool TB = false>
+template <typename A_TYPE, typename B_TYPE, typename DST_TYPE,
+          typename BIAS_TYPE, bool TA = false, bool TB = false>
 __aicore__ __attribute__((always_inline)) void mmamx_tile_core(
-    memref_t<__cc__ DST_TYPE, 4> *mc, memref_t<__cbuf__ SRC_TYPE, 4> *ma,
-    memref_t<__cbuf__ SRC_TYPE, 4> *mb,
+    memref_t<__cc__ DST_TYPE, 4> *mc, memref_t<__cbuf__ A_TYPE, 4> *ma,
+    memref_t<__cbuf__ B_TYPE, 4> *mb,
     memref_t<__cbuf__ ElementMxScaleA, 1> *l1MxScaleA,
     memref_t<__cbuf__ ElementMxScaleB, 1> *l1MxScaleB, bool init, int64_t m,
     int64_t k, int64_t n,
@@ -771,7 +771,7 @@ __aicore__ __attribute__((always_inline)) void mmamx_tile_core(
     int64_t mmad_l1_wait_l1b_event, int64_t mmad_l1_wait_l1scaleb_event, int64_t l1a_wait_mmad_l1_event,
     int64_t l1scalea_wait_mmad_l1_event,
     int64_t l1b_wait_mmad_l1_event, int64_t l1scaleb_wait_mmad_l1_event) {
-  Catlass::Gemm::L1MxMmad<SRC_TYPE, SRC_TYPE, BIAS_TYPE, DST_TYPE, TA, TB,
+  Catlass::Gemm::L1MxMmad<A_TYPE, B_TYPE, BIAS_TYPE, DST_TYPE, TA, TB,
                           false>(
       mc->aligned + mc->offset, ma->aligned + ma->offset,
       mb->aligned + mb->offset, l1MxScaleA->aligned + l1MxScaleA->offset,
@@ -787,11 +787,11 @@ __aicore__ __attribute__((always_inline)) void mmamx_tile_core(
       init, true, false, false);
 }
 
-template <typename SRC_TYPE, typename DST_TYPE, typename BIAS_TYPE,
-          bool TA = false, bool TB = false>
+template <typename A_TYPE, typename B_TYPE, typename DST_TYPE,
+          typename BIAS_TYPE, bool TA = false, bool TB = false>
 __aicore__ __attribute__((always_inline)) void mmamx_tile_bias(
-    memref_t<__cc__ DST_TYPE, 4> *mc, memref_t<__cbuf__ SRC_TYPE, 4> *ma,
-    memref_t<__cbuf__ SRC_TYPE, 4> *mb,
+    memref_t<__cc__ DST_TYPE, 4> *mc, memref_t<__cbuf__ A_TYPE, 4> *ma,
+    memref_t<__cbuf__ B_TYPE, 4> *mb,
     memref_t<__cbuf__ ElementMxScaleA, 1> *l1MxScaleA,
     memref_t<__cbuf__ ElementMxScaleB, 1> *l1MxScaleB, bool init, int64_t m,
     int64_t k, int64_t n, memref_t<__cbuf__ BIAS_TYPE, 4> *bias,
@@ -799,7 +799,7 @@ __aicore__ __attribute__((always_inline)) void mmamx_tile_bias(
     int64_t mmad_l1_wait_l1b_event, int64_t mmad_l1_wait_l1scaleb_event,
     int64_t l1a_wait_mmad_l1_event, int64_t l1scalea_wait_mmad_l1_event,
     int64_t l1b_wait_mmad_l1_event, int64_t l1scaleb_wait_mmad_l1_event) {
-  Catlass::Gemm::L1MxMmad<SRC_TYPE, SRC_TYPE, BIAS_TYPE, DST_TYPE, TA, TB,
+  Catlass::Gemm::L1MxMmad<A_TYPE, B_TYPE, BIAS_TYPE, DST_TYPE, TA, TB,
                           false>(
       mc->aligned + mc->offset, ma->aligned + ma->offset,
       mb->aligned + mb->offset, l1MxScaleA->aligned + l1MxScaleA->offset,
@@ -878,22 +878,38 @@ mmamx_tile_bias(memref_t<__cc__ DST_TYPE, 4> *mc,
 #endif // CATLASS_GEMM_L1MMAD_HPP
 
 extern "C" {
-REGISTER_MMA_MX(float8_e5m2_t, float, float);
-REGISTER_MMA_MX(float8_e4m3_t, float, float);
-REGISTER_MMA_MX_BIAS(float8_e5m2_t, float, float);
-REGISTER_MMA_MX_BIAS(float8_e4m3_t, float, float);
-REGISTER_MMA_MX_TRANS(float8_e5m2_t, float, float, _ta, true, false);
-REGISTER_MMA_MX_TRANS(float8_e5m2_t, float, float, _tb, false, true);
-REGISTER_MMA_MX_TRANS(float8_e5m2_t, float, float, _ta_tb, true, true);
-REGISTER_MMA_MX_TRANS(float8_e4m3_t, float, float, _ta, true, false);
-REGISTER_MMA_MX_TRANS(float8_e4m3_t, float, float, _tb, false, true);
-REGISTER_MMA_MX_TRANS(float8_e4m3_t, float, float, _ta_tb, true, true);
-REGISTER_MMA_MX_BIAS_TRANS(float8_e5m2_t, float, float, _ta, true, false);
-REGISTER_MMA_MX_BIAS_TRANS(float8_e5m2_t, float, float, _tb, false, true);
-REGISTER_MMA_MX_BIAS_TRANS(float8_e5m2_t, float, float, _ta_tb, true, true);
-REGISTER_MMA_MX_BIAS_TRANS(float8_e4m3_t, float, float, _ta, true, false);
-REGISTER_MMA_MX_BIAS_TRANS(float8_e4m3_t, float, float, _tb, false, true);
-REGISTER_MMA_MX_BIAS_TRANS(float8_e4m3_t, float, float, _ta_tb, true, true);
+REGISTER_MMA_MX(float8_e5m2_t, float8_e5m2_t, float, float);
+REGISTER_MMA_MX(float8_e4m3_t, float8_e4m3_t, float, float);
+REGISTER_MMA_MX(float8_e4m3_t, float8_e5m2_t, float, float);
+REGISTER_MMA_MX(float8_e5m2_t, float8_e4m3_t, float, float);
+REGISTER_MMA_MX_BIAS(float8_e5m2_t, float8_e5m2_t, float, float);
+REGISTER_MMA_MX_BIAS(float8_e4m3_t, float8_e4m3_t, float, float);
+REGISTER_MMA_MX_BIAS(float8_e4m3_t, float8_e5m2_t, float, float);
+REGISTER_MMA_MX_BIAS(float8_e5m2_t, float8_e4m3_t, float, float);
+REGISTER_MMA_MX_TRANS(float8_e5m2_t, float8_e5m2_t, float, float, _ta, true, false);
+REGISTER_MMA_MX_TRANS(float8_e5m2_t, float8_e5m2_t, float, float, _tb, false, true);
+REGISTER_MMA_MX_TRANS(float8_e5m2_t, float8_e5m2_t, float, float, _ta_tb, true, true);
+REGISTER_MMA_MX_TRANS(float8_e4m3_t, float8_e4m3_t, float, float, _ta, true, false);
+REGISTER_MMA_MX_TRANS(float8_e4m3_t, float8_e4m3_t, float, float, _tb, false, true);
+REGISTER_MMA_MX_TRANS(float8_e4m3_t, float8_e4m3_t, float, float, _ta_tb, true, true);
+REGISTER_MMA_MX_TRANS(float8_e4m3_t, float8_e5m2_t, float, float, _ta, true, false);
+REGISTER_MMA_MX_TRANS(float8_e4m3_t, float8_e5m2_t, float, float, _tb, false, true);
+REGISTER_MMA_MX_TRANS(float8_e4m3_t, float8_e5m2_t, float, float, _ta_tb, true, true);
+REGISTER_MMA_MX_TRANS(float8_e5m2_t, float8_e4m3_t, float, float, _ta, true, false);
+REGISTER_MMA_MX_TRANS(float8_e5m2_t, float8_e4m3_t, float, float, _tb, false, true);
+REGISTER_MMA_MX_TRANS(float8_e5m2_t, float8_e4m3_t, float, float, _ta_tb, true, true);
+REGISTER_MMA_MX_BIAS_TRANS(float8_e5m2_t, float8_e5m2_t, float, float, _ta, true, false);
+REGISTER_MMA_MX_BIAS_TRANS(float8_e5m2_t, float8_e5m2_t, float, float, _tb, false, true);
+REGISTER_MMA_MX_BIAS_TRANS(float8_e5m2_t, float8_e5m2_t, float, float, _ta_tb, true, true);
+REGISTER_MMA_MX_BIAS_TRANS(float8_e4m3_t, float8_e4m3_t, float, float, _ta, true, false);
+REGISTER_MMA_MX_BIAS_TRANS(float8_e4m3_t, float8_e4m3_t, float, float, _tb, false, true);
+REGISTER_MMA_MX_BIAS_TRANS(float8_e4m3_t, float8_e4m3_t, float, float, _ta_tb, true, true);
+REGISTER_MMA_MX_BIAS_TRANS(float8_e4m3_t, float8_e5m2_t, float, float, _ta, true, false);
+REGISTER_MMA_MX_BIAS_TRANS(float8_e4m3_t, float8_e5m2_t, float, float, _tb, false, true);
+REGISTER_MMA_MX_BIAS_TRANS(float8_e4m3_t, float8_e5m2_t, float, float, _ta_tb, true, true);
+REGISTER_MMA_MX_BIAS_TRANS(float8_e5m2_t, float8_e4m3_t, float, float, _ta, true, false);
+REGISTER_MMA_MX_BIAS_TRANS(float8_e5m2_t, float8_e4m3_t, float, float, _tb, false, true);
+REGISTER_MMA_MX_BIAS_TRANS(float8_e5m2_t, float8_e4m3_t, float, float, _ta_tb, true, true);
 REGISTER_MMA_MX_FORMAT(int8_t, float, float, fp8_e5m2_t, fp8_e5m2_t,
                        Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T,
                        Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T);

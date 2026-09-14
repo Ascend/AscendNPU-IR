@@ -72,6 +72,16 @@ static void eraseAutoYieldIfPresent(PatternRewriter &rewriter, Block *block) {
     rewriter.eraseOp(block->getTerminator());
 }
 
+static scf::IfOp createIfOpPreservingAttrs(PatternRewriter &rewriter,
+                                           scf::IfOp ifOp,
+                                           TypeRange newResultTypes) {
+  auto newIfOp = rewriter.create<scf::IfOp>(ifOp.getLoc(), newResultTypes,
+                                            ifOp.getCondition(),
+                                            /*withElseRegion=*/true);
+  newIfOp->setAttrs(ifOp->getAttrs());
+  return newIfOp;
+}
+
 static void cloneBlockWithoutTerminator(PatternRewriter &rewriter,
                                         Block &oldBlock,
                                         IRMapping &mapping,
@@ -186,8 +196,7 @@ struct PropagateConvertLayoutScfIfYieldDown
     newResultTypes[k] = thenConv.getSource().getType();
 
     rewriter.setInsertionPoint(ifOp);
-    auto newIfOp = rewriter.create<scf::IfOp>(
-        ifOp.getLoc(), newResultTypes, ifOp.getCondition(), /*withElseRegion=*/true);
+    auto newIfOp = createIfOpPreservingAttrs(rewriter, ifOp, newResultTypes);
 
     eraseAutoYieldIfPresent(rewriter, newIfOp.thenBlock());
     eraseAutoYieldIfPresent(rewriter, newIfOp.elseBlock());
@@ -294,8 +303,7 @@ struct PropagateConvertLayoutScfIfResultUp
     newResultTypes[k] = convertOp.getResult().getType();
 
     rewriter.setInsertionPoint(ifOp);
-    auto newIfOp = rewriter.create<scf::IfOp>(
-        ifOp.getLoc(), newResultTypes, ifOp.getCondition(), /*withElseRegion=*/true);
+    auto newIfOp = createIfOpPreservingAttrs(rewriter, ifOp, newResultTypes);
 
     eraseAutoYieldIfPresent(rewriter, newIfOp.thenBlock());
     eraseAutoYieldIfPresent(rewriter, newIfOp.elseBlock());

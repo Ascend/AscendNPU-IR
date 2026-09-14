@@ -2496,6 +2496,40 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
 }
 
 // -----
+module attributes {hacc.target = #hacc.target<"Ascend910B1">} {
+  // Membase 1D fp32 cumsum → library call @cumsum_1d_float_dim0.
+  // CHECK-LABEL: func @test_cumsum_op_f32_1d_dim0
+  // CHECK: call @cumsum_1d_float_dim0
+  func.func @test_cumsum_op_f32_1d_dim0(%arg0: memref<16xf32>, %arg1: memref<16xf32>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    hivm.hir.vcumsum ins(%arg0 : memref<16xf32>) outs(%arg1 : memref<16xf32>) cum_dims = [0] reverse = false
+    return
+  }
+}
+
+// -----
+module attributes {hacc.target = #hacc.target<"Ascend910B1">} {
+  // Membase 2D fp16 cumsum does NOT use library call (only fp32 qualifies).
+  // CHECK-LABEL: func @test_cumsum_op_f16_2d_dim0
+  // CHECK-NOT: call @cumsum_1d_float_dim0
+  // CHECK: call @cumsum_ra_half
+  func.func @test_cumsum_op_f16_2d_dim0(%arg0: memref<16x16xf16>, %arg1: memref<16x16xf16>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    hivm.hir.vcumsum ins(%arg0 : memref<16x16xf16>) outs(%arg1 : memref<16x16xf16>) cum_dims = [0] reverse = false
+    return
+  }
+}
+
+// -----
+module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
+  // RegBase 1D fp32 cumsum → library call @cumsum_1d_float_dim0.
+  // CHECK-LABEL: func @test_cumsum_op_f32_1d_dim0_A5
+  // CHECK: call @cumsum_1d_float_dim0
+  func.func @test_cumsum_op_f32_1d_dim0_A5(%arg0: memref<16xf32>, %arg1: memref<16xf32>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    hivm.hir.vcumsum ins(%arg0 : memref<16xf32>) outs(%arg1 : memref<16xf32>) cum_dims = [0] reverse = false
+    return
+  }
+}
+
+// -----
 module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
   // CHECK-LABEL: func @test_cumprod_op_i32_2d_dim1
   // CHECK: call @cumprod_2d_int32_t_dim1

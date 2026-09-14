@@ -73,6 +73,23 @@ func.func @bind_if_else(%condition: i1) -> (memref<16xf32>) {
 
 // -----
 
+func.func @bind_select(%condition: i1) {
+  // CHECK: %[[TARGET:.*]] = memref.alloc
+  %target = memref.alloc() : memref<16xf32>
+  // CHECK-NOT: memref.alloc
+  %true_buf = memref.alloc() : memref<16xf32>
+  %false_buf = memref.alloc() : memref<16xf32>
+  %selected = arith.select %condition, %true_buf, %false_buf : memref<16xf32>
+  // CHECK: "some_op"(%[[TARGET]])
+  "some_op"(%true_buf) : (memref<16xf32>) -> ()
+  // CHECK: "some_op"(%[[TARGET]])
+  "some_op"(%false_buf) : (memref<16xf32>) -> ()
+  annotation.mark %selected keys = ["bind_buffer"] values = [%target : memref<16xf32>] : memref<16xf32>
+  return
+}
+
+// -----
+
 func.func @bind_buffer_reshape_self() {
   // Reshape bound to itself: alloc -> expand_shape, annotation on reshape.
   // Should just remove annotation (replace alloc with itself).

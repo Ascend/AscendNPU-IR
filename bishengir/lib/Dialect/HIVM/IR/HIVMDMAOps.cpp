@@ -676,7 +676,8 @@ void ND2NZOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                     UnitAttr dst_continuous) {
   build(odsBuilder, odsState, res, src, dst, dst_continuous,
         /*init_out_buffer=*/false,
-        /*pad_value=*/nullptr, /*init_condition=*/nullptr);
+        /*pad_value=*/nullptr, /*init_condition=*/nullptr,
+        /*l2_cache_mode=*/nullptr);
 }
 
 void ND2NZOp::build(OpBuilder &odsBuilder, OperationState &odsState,
@@ -684,7 +685,8 @@ void ND2NZOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                     UnitAttr dst_continuous, bool init_out_buffer,
                     Value pad_value) {
   build(odsBuilder, odsState, res, src, dst, dst_continuous, init_out_buffer,
-        pad_value, /*init_condition=*/nullptr);
+        pad_value, /*init_condition=*/nullptr,
+        /*l2_cache_mode=*/nullptr);
 }
 
 //===----------------------------------------------------------------------===//

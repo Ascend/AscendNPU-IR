@@ -216,6 +216,11 @@ def InferHIVMDataLayout : Pass<"hivm-infer-data-layout", "func::FuncOp"> {
   let dependentDialects = ["affine::AffineDialect", "hivm::HIVMDialect",
                            "annotation::AnnotationDialect",
   ];
+  let options = [Option<
+    "batchMatmul", "batch-matmul", "bool",
+    /*default=*/"false",
+    "Fold a rank-3 ND2NZ into one MTE2 descriptor and honour an "
+    "l2_cache_mode annotation on a matmul operand">];
 }
 
 def NormalizeToTensorOp
@@ -402,6 +407,10 @@ def GraphSyncSolver : Pass<"hivm-graph-sync-solver", "func::FuncOp"> {
               "enable-subview-conflict-refinement", "bool",
               /*default=*/"true",
               "Use disjoint direct subviews to refine memory conflicts">,
+       Option<"enableSiblingIfSync", "enable-sibling-if-sync", "bool",
+              /*default=*/"true",
+              "Keep same-level if synchronization at conflict operations and "
+              "mirror it to opposite branches">,
        Option<"solverVersion", "solver-version", "std::string",
               /*default=*/"\"v2\"", "Select SyncSolver implementation.">,
        ListOption<"syncTesterOptions", "sync-tester-options", "int64_t",
@@ -970,6 +979,11 @@ def TileBatchMMIntoLoop : Pass<"hivm-tile-batchmm-into-loop", "func::FuncOp"> {
   let summary = "Tile batch matmul into loop with iteration on batch dimension";
   let constructor = "mlir::hivm::createTileBatchMMIntoLoopPass()";
   let dependentDialects = ["hivm::HIVMDialect"];
+  let options = [Option<
+    "keepRegBaseBatch", "keep-regbase-batch", "bool",
+    /*default=*/"false",
+    "Leave a RegBase batch matmul untiled so it can lower to the batched "
+    "mmad macro">];
 }
 
 def LiftZeroRank : Pass<"hivm-lift-zero-rank", "func::FuncOp"> {
@@ -1159,7 +1173,13 @@ def TileAndBindSubBlock : Pass<"hivm-bind-sub-block", "ModuleOp"> {
     Option<
     "enableTile", "enable-tile", "bool",
     /*default=*/"true",
-    "Enable TileAndBindSubBlock pass">];
+    "Enable TileAndBindSubBlock pass">,
+    Option<
+    "batchMatmul", "batch-matmul", "bool",
+    /*default=*/"false",
+    "Roll back to CV1:1 when a fixpipe destination is tiled on a dim the "
+    "dual-dst split cannot express, which a batched matmul draining into UB "
+    "produces">];
 }
 
 def PartitionAndBindSubBlock
@@ -1239,7 +1259,7 @@ def InsertInitAndFinishForDebug : Pass<"hivm-insert-init-and-finish-for-debug"> 
   let dependentDialects = ["hivm::HIVMDialect"];
 }
 
-def MarkDisableLoad : Pass<"hivm-mark-disable-load"> {
+def MarkDisableLoad : Pass<"hivm-mark-disable-load", "ModuleOp"> {
   let summary = "mark the memref.loads that need to disable dcache";
   let constructor = "mlir::hivm::createMarkDisableLoadPass()";
   let dependentDialects = ["hivm::HIVMDialect", "memref::MemRefDialect"];

@@ -37,9 +37,9 @@ namespace {
 // Helper Functions
 //===----------------------------------------------------------------------===//
 
-
 /// Create a new scf.for with modified init arg at the specified index.
-/// Removes the automatically created yield op from the new for loop.
+/// Copies attributes from the original loop and removes the automatically
+/// created yield op from the new for loop.
 scf::ForOp createForOpWithModifiedInit(PatternRewriter &rewriter,
                                        scf::ForOp forOp,
                                        uint32_t modifiedIdx,
@@ -53,6 +53,7 @@ scf::ForOp createForOpWithModifiedInit(PatternRewriter &rewriter,
       forOp.getUpperBound(),
       forOp.getStep(),
       newInitArgs);
+  newForOp->setAttrs(forOp->getAttrs());
 
   // Remove the automatically created yield
   if (newForOp.getBody()->mightHaveTerminator()) {

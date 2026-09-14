@@ -78,6 +78,17 @@ func.func @test_umulhi(%arg0 : tensor<6xi32>, %arg1 : tensor<6xi32>) -> tensor<6
 
 // -----
 
+// CHECK-LABEL: func.func @test_regbase_umulhi
+// CHECK:       %[[VAL_2:.*]], %[[VAL_3:.*]] = hfusion.mulextui
+module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
+  func.func @test_regbase_umulhi(%arg0 : tensor<6xi32>, %arg1 : tensor<6xi32>) -> tensor<6xi32> {
+    %low, %high = arith.mului_extended %arg0, %arg1 : tensor<6xi32>
+    return %high : tensor<6xi32>
+  }
+}
+
+// -----
+
 // CHECK-LABEL: func.func @test_divf
 func.func @test_divf(%arg0 : tensor<6x6xf32>, %arg1 : tensor<6x6xf32>) -> tensor<6x6xf32> {
   // CHECK:       %[[EMPTY:.*]] = tensor.empty()

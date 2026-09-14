@@ -83,6 +83,7 @@ public:
 struct ConvertTritonAscendGPUToLLVMPass
     : public impl::ConvertTritonAscendGPUToLLVMBase<
           ConvertTritonAscendGPUToLLVMPass> {
+  using Base::Base;
 
   void runOnOperation() override {
     MLIRContext *const context = &getContext();
@@ -151,6 +152,7 @@ struct ConvertTritonAscendGPUToLLVMPass
                                                   kDefaultPatternBenefit);
     // Compute capability 61 means devices do not support MMA
     triton::ascend::populateDotOpToLLVMPatterns(typeConverter, patterns,
+                                        this->enableCGroupingDotTileLowering,
                                         kDefaultPatternBenefit);
     triton::ascend::populateLoadStoreOpToLLVMPatterns(
         typeConverter, targetInfo, patterns, axisInfoAnalysis,
@@ -209,8 +211,9 @@ private:
   }
 };
 
-std::unique_ptr<Pass> createConvertTritonAscendGPUToLLVMPass() {
-  return std::make_unique<ConvertTritonAscendGPUToLLVMPass>();
+std::unique_ptr<Pass> createConvertTritonAscendGPUToLLVMPass(
+    const ConvertTritonAscendGPUToLLVMOptions &options) {
+  return std::make_unique<ConvertTritonAscendGPUToLLVMPass>(options);
 }
 
 namespace ascend {

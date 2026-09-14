@@ -766,3 +766,36 @@ func.func @fold_subview_load_convert_into_insert(
       : tensor<12x1x8x16xbf16> into tensor<12x2x16x16xbf16>
   return %ins : tensor<12x2x16x16xbf16>
 }
+
+// -----
+
+// Uninit L1 ND→Fractal convert folds to a cbuf empty.
+// CHECK-LABEL: func.func @fold_uninit_l1_convert_to_empty
+// CHECK: %[[EMPTY:.*]] = tensor.empty() {hivm.address_space = #hivm.address_space<cbuf>} : tensor<12x8x16x16xbf16>
+// CHECK: return %[[EMPTY]] : tensor<12x8x16x16xbf16>
+func.func @fold_uninit_l1_convert_to_empty() -> tensor<12x8x16x16xbf16> {
+  %alloc = memref.alloc() : memref<128x192xbf16, #hivm.address_space<cbuf>>
+  %cast = memref.memory_space_cast %alloc : memref<128x192xbf16, #hivm.address_space<cbuf>> to memref<128x192xbf16>
+  %nd = bufferization.to_tensor %cast restrict writable : memref<128x192xbf16>
+  %conv = hivm.hir.convert_layout %nd output_shape [12, 8, 16, 16]
+      {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>,
+       srcLayout = #hivm.data_layout<ND>}
+      : (tensor<128x192xbf16>) -> tensor<12x8x16x16xbf16>
+  return %conv : tensor<12x8x16x16xbf16>
+}
+
+// -----
+
+// UB source: keep `convert_layout`.
+// CHECK-LABEL: func.func @do_not_fold_uninit_ub_convert
+// CHECK: hivm.hir.convert_layout
+func.func @do_not_fold_uninit_ub_convert() -> tensor<12x8x16x16xbf16> {
+  %alloc = memref.alloc() : memref<128x192xbf16, #hivm.address_space<ub>>
+  %cast = memref.memory_space_cast %alloc : memref<128x192xbf16, #hivm.address_space<ub>> to memref<128x192xbf16>
+  %nd = bufferization.to_tensor %cast restrict writable : memref<128x192xbf16>
+  %conv = hivm.hir.convert_layout %nd output_shape [12, 8, 16, 16]
+      {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>,
+       srcLayout = #hivm.data_layout<ND>}
+      : (tensor<128x192xbf16>) -> tensor<12x8x16x16xbf16>
+  return %conv : tensor<12x8x16x16xbf16>
+}

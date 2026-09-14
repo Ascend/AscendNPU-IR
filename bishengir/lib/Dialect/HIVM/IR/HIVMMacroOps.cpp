@@ -358,20 +358,23 @@ getLocalMatmulOperandALayoutImpl(Operation *operation) {
 
   bool isTranspose = op.isMatmulATransposed();
   switch (*rank) {
-  case kDimTwo: {
+  case kDimTwo:
+  case kDimThree: {
     DataLayout expected = isTranspose ? DataLayout::nZ : DataLayout::zN;
     bool effectiveTranspose = isTranspose && !sourceCarriesFractalLayoutHint(
                                                  op.getMatmulA(), expected);
     return DataLayoutAttr::get(op->getContext(), DataLayout::DOTA_ND,
                                effectiveTranspose);
   }
-  case kDimFour: {
+  case kDimFour:
+  case kDimFive: {
     auto shape = cast<ShapedType>(op.getMatmulA().getType()).getShape();
     return DataLayoutAttr::get(
         op->getContext(), isTranspose ? DataLayout::nZ : DataLayout::zN,
         BoolAttr(),
         mlir::DenseI64ArrayAttr::get(op->getContext(),
-                                     ArrayRef({shape[2], shape[3]})));
+                                     ArrayRef({shape[*rank - 2],
+                                               shape[*rank - 1]})));
   }
   default:
     return failure();
@@ -387,20 +390,23 @@ getLocalMatmulOperandBLayoutImpl(Operation *operation) {
 
   bool isTranspose = op.isMatmulBTransposed();
   switch (*rank) {
-  case kDimTwo: {
+  case kDimTwo:
+  case kDimThree: {
     DataLayout expected = isTranspose ? DataLayout::nZ : DataLayout::zN;
     bool effectiveTranspose = isTranspose && !sourceCarriesFractalLayoutHint(
                                                  op.getMatmulB(), expected);
     return DataLayoutAttr::get(op->getContext(), DataLayout::DOTB_ND,
                                effectiveTranspose);
   }
-  case kDimFour: {
+  case kDimFour:
+  case kDimFive: {
     auto shape = cast<ShapedType>(op.getMatmulB().getType()).getShape();
     return DataLayoutAttr::get(
         op->getContext(), isTranspose ? DataLayout::nZ : DataLayout::zN,
         BoolAttr(),
         mlir::DenseI64ArrayAttr::get(op->getContext(),
-                                     ArrayRef({shape[2], shape[3]})));
+                                     ArrayRef({shape[*rank - 2],
+                                               shape[*rank - 1]})));
   }
   default:
     return failure();
@@ -416,8 +422,10 @@ getLocalMatmulOperandCLayoutImpl(Operation *operation) {
 
   switch (*rank) {
   case kDimTwo:
+  case kDimThree:
     return DataLayoutAttr::get(op->getContext(), DataLayout::DOTC_ND);
   case kDimFour:
+  case kDimFive:
     return DataLayoutAttr::get(op->getContext(), DataLayout::zN);
   default:
     return failure();
@@ -1089,6 +1097,26 @@ void BatchMmadL1Op::build(OpBuilder &odsBuilder, OperationState &odsState,
 
 int BatchMmadL1Op::getNumSyncRelatedArgs() { return 7; }
 
+SmallVector<Value>
+BatchMmadL1Op::getInputOperands(bool includeSyncRelatedArgs /*=true*/) {
+  SmallVector<Value> retOperands;
+  retOperands.push_back(getA());
+  retOperands.push_back(getB());
+  retOperands.push_back(getInitCondition());
+  retOperands.push_back(getRealM());
+  retOperands.push_back(getRealK());
+  retOperands.push_back(getRealN());
+  if (getPerChannelBias()) {
+    retOperands.push_back(getPerChannelBias());
+  }
+  if (includeSyncRelatedArgs) {
+    auto syncRelatedArgs = getSyncRelatedArgs();
+    std::copy(syncRelatedArgs.begin(), syncRelatedArgs.end(),
+              std::back_inserter(retOperands));
+  }
+  return retOperands;
+}
+
 LogicalResult BatchMmadL1Op::verify() {
   auto syncRelatedArgs = getSyncRelatedArgs();
   auto numSyncRelatedArgs = getNumSyncRelatedArgs();
@@ -1111,6 +1139,36 @@ bool BatchMmadL1Op::isInitFirstLoopIter() {
 
 void BatchMmadL1Op::setInitCondition(Value init) {
   getInitConditionMutable().assign(init);
+}
+
+FailureOr<DataLayoutAttr> BatchMmadL1Op::getOperandALayout() {
+  return detail::getLocalMatmulOperandALayoutImpl(*this);
+}
+
+FailureOr<DataLayoutAttr> BatchMmadL1Op::getOperandBLayout() {
+  return detail::getLocalMatmulOperandBLayoutImpl(*this);
+}
+
+FailureOr<DataLayoutAttr> BatchMmadL1Op::getOperandCLayout() {
+  return detail::getLocalMatmulOperandCLayoutImpl(*this);
+}
+
+FailureOr<DataLayoutAttr> BatchMmadL1Op::getOperandBiasLayout() {
+  auto rank = getRankFromShapedTypeValue(getPerChannelBias());
+  if (failed(rank))
+    return failure();
+  if (*rank == kDimOne || *rank == kDimTwo || *rank == kDimThree)
+    return DataLayoutAttr::get(getContext(), DataLayout::ND);
+  if (*rank == kDimFour || *rank == kDimFive)
+    return DataLayoutAttr::get(getContext(), DataLayout::zN);
+  return failure();
+}
+
+llvm::SmallVector<int64_t>
+BatchMmadL1Op::getBlockSizesTile(Value oper, bool isTranspose, bool isA) {
+  bool isA5 = hacc::utils::isAscend950(
+      this->getOperation()->getParentOfType<ModuleOp>());
+  return ::getBlockSizesTile(oper, isTranspose, isA, isA5);
 }
 
 MatmulBiasMode BatchMmadL1Op::getMatmulBiasMode() {
@@ -1952,3 +2010,123 @@ bool Conv3DL1Op::isInitConstant(std::optional<bool> cst) {
 void Conv3DL1Op::setInitCondition(Value init) {
   getInitConditionMutable().assign(init);
 }
+
+//===----------------------------------------------------------------------===//
+// MmadL0Op
+//===----------------------------------------------------------------------===//
+
+void MmadL0Op::build(OpBuilder &odsBuilder, OperationState &odsState,
+                     TypeRange result_tensors, Value a, Value b, Value real_m,
+                     Value real_k, Value real_n, Value c, Value k_direction_align,
+                     Value is_with_bias, Value init_condition, UnitAttr enable_HF32,
+                     UnitAttr enable_I4) {
+  build(odsBuilder, odsState, result_tensors, a, b, real_m, real_k, real_n, c,
+        k_direction_align, is_with_bias, init_condition,
+        /*unit_flag_cond*/ ValueRange{}, enable_HF32, enable_I4,
+        /*unit_flag_mode*/ ArrayAttr{}, /*unit_flag_group_id*/ IntegerAttr{});
+}
+
+SmallVector<IteratorType> MmadL0Op::getIteratorTypesArray() {
+  return {IteratorType::kParallel, IteratorType::kParallel,
+          IteratorType::kReduction};
+}
+
+LogicalResult MmadL0Op::verify() {
+  auto verifySpace = [&](Type type, AddressSpace expected,
+                         StringRef err) -> LogicalResult {
+    auto space = getOptionalHIVMAddressSpace(type);
+    if (space && *space != expected)
+      return emitOpError(err);
+    return success();
+  };
+
+  if (failed(verifySpace(getA().getType(), AddressSpace::L0A,
+                         "a must have L0A (ca) address space")))
+    return failure();
+  if (failed(verifySpace(getB().getType(), AddressSpace::L0B,
+                         "b must have L0B (cb) address space")))
+    return failure();
+  if (failed(verifySpace(getC().getType(), AddressSpace::L0C,
+                         "c must have L0C (cc) address space")))
+    return failure();
+  return success();
+}
+
+namespace mlir {
+namespace hivm {
+
+//===----------------------------------------------------------------------===//
+// L12BTOp
+//===----------------------------------------------------------------------===//
+
+SmallVector<IteratorType> L12BTOp::getIteratorTypesArray() {
+  SmallVector<IteratorType> iteratorTypes;
+  iteratorTypes.push_back(IteratorType::kParallel);
+  iteratorTypes.push_back(IteratorType::kParallel);
+  return iteratorTypes;
+}
+
+Value L12BTOp::getSource() {
+  return getSrc();
+}
+
+Value L12BTOp::getTarget() {
+  return getDst();
+}
+
+LogicalResult L12BTOp::verify() {
+  auto srcSpace = getOptionalHIVMAddressSpace(getSrc().getType());
+  if (srcSpace && *srcSpace != AddressSpace::L1)
+    return emitOpError("src must have L1 address space (cbuf)");
+
+  auto dstSpace = getOptionalHIVMAddressSpace(getDst().getType());
+  if (dstSpace && *dstSpace != AddressSpace::BiasBUF)
+    return emitOpError("dst must have BiasBUF (biasbuf) address space");
+
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
+// L12L0Op
+//===----------------------------------------------------------------------===//
+
+SmallVector<IteratorType> L12L0Op::getIteratorTypesArray() {
+  SmallVector<IteratorType> iteratorTypes;
+  iteratorTypes.push_back(IteratorType::kParallel);
+  iteratorTypes.push_back(IteratorType::kParallel);
+  return iteratorTypes;
+}
+
+Value L12L0Op::getSource() {
+  return getSrc();
+}
+
+Value L12L0Op::getTarget() {
+  return getDst();
+}
+
+bool L12L0Op::isToL0A() {
+  auto dstSpace = getOptionalHIVMAddressSpace(getDst().getType());
+  return dstSpace && *dstSpace == AddressSpace::L0A;
+}
+
+bool L12L0Op::isToL0B() {
+  auto dstSpace = getOptionalHIVMAddressSpace(getDst().getType());
+  return dstSpace && *dstSpace == AddressSpace::L0B;
+}
+
+LogicalResult L12L0Op::verify() {
+  auto srcSpace = getOptionalHIVMAddressSpace(getSrc().getType());
+  if (srcSpace && *srcSpace != AddressSpace::L1)
+    return emitOpError("src must have L1 address space (cbuf)");
+
+  auto dstSpace = getOptionalHIVMAddressSpace(getDst().getType());
+  if (dstSpace && *dstSpace != AddressSpace::L0A &&
+      *dstSpace != AddressSpace::L0B)
+    return emitOpError("dst must have L0A (ca) or L0B (cb) address space");
+
+  return success();
+}
+
+} // namespace hivm
+} // namespace mlir

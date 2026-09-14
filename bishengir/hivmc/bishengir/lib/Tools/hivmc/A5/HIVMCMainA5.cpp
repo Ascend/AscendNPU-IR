@@ -23,6 +23,9 @@
 
 #include "bishengir/Dialect/HIVMRegbaseIntrins/IR/HIVMRegbaseIntrins.h"
 
+#include <thread>
+#include <vector>
+
 #define DEBUG_TYPE "bishengir-compile"
 #define LDBG(X) LLVM_DEBUG(llvm::dbgs() << X << "\n")
 
@@ -307,24 +310,39 @@ bool lowerDeviceToBinary(
     bool mixKernelHasDebugOrShmem,
     const std::map<SubCoreTarget, std::string> &bitcodePaths) {
   LDBG("Lowering device module from BiShengLIR to binary");
-  SmallVector<std::optional<std::string>> outputObjects;
+  SmallVector<std::optional<std::string>> outputObjects(outputLLVMIRs.size());
 
-  for (auto &pair : outputLLVMIRs) {
-    std::optional<std::string> result;
-    auto bishengPath = getBiShengInstallPath();
+  auto compileDeviceModule = [&](size_t i) {
+    const IRFilePair &pair = outputLLVMIRs[i];
     SubCoreTarget coreType = pair.second;
 
-    // For mix kernels, derive .o path from the .ll file's path (which already has mangle suffix)
-    // For non-mix, use outputFile directly
-    std::string kernelOutputPath = (outputLLVMIRs.size() > 1)
-                                       ? tryReplaceExtension(
-                                             pair.first->getFilename().str(), "o")
-                                       : outputFile;
+    // For mix kernels, derive .o path from the .ll file's path (which already
+    // has mangle suffix). For non-mix, use outputFile directly.
+    std::string kernelOutputPath =
+        (outputLLVMIRs.size() > 1)
+            ? tryReplaceExtension(pair.first->getFilename().str(), "o")
+            : outputFile;
 
-    result = compileDeviceKernel(bishengPath, pair.first->getFilename().str(),
-                                 kernelOutputPath, coreType, config, isMixKernel,
-                                 mixKernelHasDebugOrShmem, bitcodePaths);
-    outputObjects.push_back(result);
+    outputObjects[i] = compileDeviceKernel(
+        getBiShengInstallPath(), pair.first->getFilename().str(),
+        kernelOutputPath, coreType, config, isMixKernel,
+        mixKernelHasDebugOrShmem, bitcodePaths);
+  };
+
+  // The AIC and AIV device modules are independent: they read disjoint .ll
+  // files, write disjoint .o files and link disjoint bitcode modules.
+  // Everything else reachable from here is either local or read-only.
+  // Compile them concurrently; the linker below still waits for all of them.
+  if (outputLLVMIRs.size() > 1) {
+    std::vector<std::thread> workers;
+    workers.reserve(outputLLVMIRs.size());
+    for (size_t i = 0, e = outputLLVMIRs.size(); i != e; ++i)
+      workers.emplace_back(compileDeviceModule, i);
+    for (std::thread &worker : workers)
+      worker.join();
+  } else {
+    for (size_t i = 0, e = outputLLVMIRs.size(); i != e; ++i)
+      compileDeviceModule(i);
   }
 
   if (std::any_of(

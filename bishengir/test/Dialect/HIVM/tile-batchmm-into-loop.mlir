@@ -1,4 +1,5 @@
 // RUN: bishengir-opt --hivm-tile-batchmm-into-loop %s -split-input-file -verify-diagnostics | FileCheck %s
+// RUN: bishengir-opt --hivm-tile-batchmm-into-loop='keep-regbase-batch=true' %s -split-input-file -verify-diagnostics | FileCheck %s --check-prefix=KEEP
 
 // -----
 // CHECK: func.func @test_tile_batchMmadL1(%[[DST:.*]]: memref<2x256x256xf16>)
@@ -111,6 +112,15 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
   // CHECK: scf.for
   // CHECK:   hivm.hir.debug
   // CHECK: }
+  // With keep-regbase-batch the batch tile survives for the batched mmad
+  // macro, so only the nested debug loop is moved.
+  // KEEP-LABEL: func.func @test_move_nested_debug_through_memory_space_cast
+  // KEEP: %[[BMM:.*]] = hivm.hir.batchMmadL1
+  // KEEP: hivm.hir.fixpipe
+  // KEEP-SAME: ins(%[[BMM]]
+  // KEEP: scf.for
+  // KEEP:   hivm.hir.debug
+  // KEEP: }
   func.func @test_move_nested_debug_through_memory_space_cast(
       %dst: memref<2x1x1xf32>) {
     %ma = tensor.empty() : tensor<2x1x1xf16>

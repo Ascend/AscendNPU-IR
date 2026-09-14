@@ -697,18 +697,37 @@ public:
       return op.emitError("cum dimensions array is not decomposed yet");
     }
     int64_t cumDim = cumDims[0];
+    // Membase 1D fp32 cumsum has a dedicated Sklansky library call and bypasses
+    // the "last dimension should decompose to scalar" guard.  Other last-axis
+    // cases still require scalar decomposition.
+    bool isMembase1DFloatCumsum = false;
     if (cumDim == rank - 1) {
-      return op.emitError("cum dimension with last dimension should be "
-                          "decomposed to scalar operation");
+      if (isa<hivm::VCumsumOp>(op)) {
+        auto elemType = getElementTypeOrSelf(op.getDst());
+        if (!hacc::utils::isRegBasedArch(mod) && rank == 1 &&
+            isa<FloatType>(elemType) && elemType.isF32() && !op.getReverse()) {
+          isMembase1DFloatCumsum = true;
+        }
+      }
+      if (!isMembase1DFloatCumsum) {
+        return op.emitError("cum dimension with last dimension should be "
+                            "decomposed to scalar operation");
+      }
     }
 
-    // For loop axes would be used to create forOp.
-    auto axes = getForLoopAxes(cumDim, rank);
-    SmallVector<Value> operands = reduceMemrefsToNestedForUsingAxes(
-        rewriter, op.getLoc(), {src, dst}, axes);
-
-    rewriter.setInsertionPointAfter(
-        operands[operands.size() - 1].getDefiningOp());
+    // For 1D membase cumsum, no loop reduction is needed — pass src/dst
+    // directly to the library call.
+    SmallVector<Value> operands;
+    if (isMembase1DFloatCumsum) {
+      operands = {src, dst};
+    } else {
+      // For loop axes would be used to create forOp.
+      auto axes = getForLoopAxes(cumDim, rank);
+      operands = reduceMemrefsToNestedForUsingAxes(rewriter, op.getLoc(),
+                                                   {src, dst}, axes);
+      rewriter.setInsertionPointAfter(
+          operands[operands.size() - 1].getDefiningOp());
+    }
 
     auto libCallName =
         libraryOp.getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);

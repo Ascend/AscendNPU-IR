@@ -24,6 +24,7 @@
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "bishengir/Dialect/Tensor/IR/TensorImpl.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/DLTI/DLTI.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
@@ -98,7 +99,15 @@ SmallVector<Value> tracebackImpl(Value memrefVal) {
     }
     if (auto whileOp =
             dyn_cast<scf::WhileOp>(arg.getParentRegion()->getParentOp())) {
-      if (auto *tiedLoopInit = whileOp.getTiedLoopInit(arg)) {
+      if (arg.getParentRegion() == &whileOp.getAfter()) {
+        // The arguments of the after (do) region are forwarded from the
+        // trailing operands of the scf.condition terminator in the before
+        // region, so trace back through them.
+        auto condArgs = whileOp.getConditionOp().getArgs();
+        if (arg.getArgNumber() < condArgs.size()) {
+          result.emplace_back(condArgs[arg.getArgNumber()]);
+        }
+      } else if (auto *tiedLoopInit = whileOp.getTiedLoopInit(arg)) {
         result.emplace_back(tiedLoopInit->get());
       }
     }
@@ -128,6 +137,9 @@ SmallVector<Value> tracebackImpl(Value memrefVal) {
         cast<OpResult>(memrefVal).getResultNumber()));
     result.emplace_back(op.elseYield()->getOperand(
         cast<OpResult>(memrefVal).getResultNumber()));
+  } else if (auto op = dyn_cast<arith::SelectOp>(def)) {
+    result.emplace_back(op.getTrueValue());
+    result.emplace_back(op.getFalseValue());
   } else if (auto op = dyn_cast<ViewLikeOpInterface>(def)) {
     result.emplace_back(op.getViewSource());
   }

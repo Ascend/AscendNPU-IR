@@ -232,7 +232,7 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
     }
     tt.return
   }
-  
+
   // CHECK: tt.func public @while_kernel
   tt.func public @while_kernel(%arg0: !tt.ptr<f16> {tt.divisibility = 16 : i32}, %arg1: !tt.ptr<f16> {tt.divisibility = 16 : i32}, %arg2: i32 {tt.divisibility = 16 : i32}) attributes {noinline = false} {
     %cst_0 = arith.constant dense<128> : tensor<128x1xi32>

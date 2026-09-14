@@ -360,6 +360,22 @@ void MemLivenessAnalysis::RecursiveForOp(scf::ForOp forOp, Liveness live) {
   UpdateForOpInitArgsAlias(forOp);
   UpdateForOpBufferAlias(forOp);
   RecursionIR(&forOp.getRegion(), live);
+
+  // Select-init loop-carried values use hasCond aliases, so
+  // InitializeInplacePairList will not mark the yielded dest ignoreInplace.
+  // Extra inplace of that dest onto a sibling loop-local src is still unsafe:
+  // the next iteration reads the dest as the iter_arg.
+  for (auto [init, yield] :
+       llvm::zip(forOp.getInitArgs(), forOp.getYieldedValues())) {
+    if (!init.getDefiningOp<arith::SelectOp>())
+      continue;
+    auto maybeAlloc = utils::tracebackMemRefToAlloc(yield);
+    if (!maybeAlloc.has_value())
+      continue;
+    auto *it = bufferInfos.find(maybeAlloc->getResult());
+    if (it != bufferInfos.end())
+      it->second.ignoreInplace = true;
+  }
   auto *forEndSeq = UpdateLinearOperation(forOp.getOperation());
   OpKillHandle(forEndSeq, live, forOp->getBlock());
 }
@@ -1668,9 +1684,9 @@ void MemPlan::MergeInplaceSE() {
     }
     // remove the alloc info of dst after successful merging
     auto *e = std::find_if(StorageEntryVec.begin(), StorageEntryVec.end(),
-                          [genSE](std::unique_ptr<StorageEntry> &se) {
-                            return se.get() == genSE;
-                          });
+                           [genSE](std::unique_ptr<StorageEntry> &se) {
+                             return se.get() == genSE;
+                           });
     StorageEntryVec.erase(e);
   }
 }
@@ -1940,8 +1956,8 @@ PlanStatus MemPlan::PlanMemAddressOfWholeLocalBuffer() {
           return as;
         }
         LDBG("[PlanLocal] ApplyFailStrategy -> CONTINUE_PLAN "
-             "specLevel=" << si.specLevel << " childIdx=" << si.childIdx
-             << "\n");
+             "specLevel="
+             << si.specLevel << " childIdx=" << si.childIdx << "\n");
       }
       if (si.childIdx >= childrenNum) {
         break;
@@ -2130,8 +2146,8 @@ LogicalResult MemPlan::MultiSpecPlan(SpecInfo &si, MemBoundList &outline,
         // In roll back plan, when the specified specStartIdx is reached,
         // the subsequent plan still adopts the maxLevel strategy.
         LDBG("[MultiSpecPlan] reached specStartIdx="
-             << si.specStartIdx << ", reset specLevel to maxLevel="
-             << si.maxLevel << "\n");
+             << si.specStartIdx
+             << ", reset specLevel to maxLevel=" << si.maxLevel << "\n");
         si.specLevel = si.maxLevel;
       }
       si.childIdx++;
@@ -2949,7 +2965,7 @@ bool MemPlan::ContinueRollBack(const StatusWrapper &statusWrapper) const {
 // the first buffer only when both were planned at the same level; if the
 // levels differ they may be retried independently (e.g. other at L2 while
 // first already at L0).
-bool MemPlan::ShouldRollbackMuiltiBuffer(const PlanRecord& r) const {
+bool MemPlan::ShouldRollbackMuiltiBuffer(const PlanRecord &r) const {
   if (r.isDirectlyRollback) {
     return true;
   }

@@ -218,3 +218,42 @@ func.func @noncontiguous_copy(%src : memref<64x32x4xbf16, strided<[512, 16, 1]>,
                 collapse_reassociation = [[0, 1, 2]]
   return
 }
+
+// -----
+// CHECK-LABEL: test_l12l0_to_l0a
+func.func @test_l12l0_to_l0a(
+    %src : memref<256x128xf16, #hivm.address_space<cbuf>>,
+    %dst : memref<256x128xf16, #hivm.address_space<ca>>) {
+  // CHECK: hivm.hir.l12l0
+  hivm.hir.l12l0 ins(%src : memref<256x128xf16, #hivm.address_space<cbuf>>)
+                 outs(%dst : memref<256x128xf16, #hivm.address_space<ca>>)
+                 {k_part_idx = 0, k_part = 1, k_part_ceil = 1,
+                  k_part_loop = 1, k_part_actual = 128, m = 256}
+  return
+}
+
+// -----
+// CHECK-LABEL: test_l12l0_to_l0b
+func.func @test_l12l0_to_l0b(
+    %src : memref<128x256xf16, #hivm.address_space<cbuf>>,
+    %dst : memref<128x256xf16, #hivm.address_space<cb>>) {
+  // CHECK: hivm.hir.l12l0
+  hivm.hir.l12l0 ins(%src : memref<128x256xf16, #hivm.address_space<cbuf>>)
+                 outs(%dst : memref<128x256xf16, #hivm.address_space<cb>>)
+                 {k_part_idx = 0, k_part = 1, k_part_ceil = 1,
+                  k_part_loop = 1, k_part_actual = 128, m = 256}
+  return
+}
+
+// -----
+// CHECK-LABEL: test_l12bt
+func.func @test_l12bt(
+    %src : memref<256xf32, #hivm.address_space<cbuf>>,
+    %dst : memref<256xf32, #hivm.address_space<biasbuf>>,
+    %n : index) {
+  // CHECK: hivm.hir.l12bt
+  hivm.hir.l12bt ins(%src : memref<256xf32, #hivm.address_space<cbuf>>)
+                 outs(%dst : memref<256xf32, #hivm.address_space<biasbuf>>)
+                 n = %n
+  return
+}

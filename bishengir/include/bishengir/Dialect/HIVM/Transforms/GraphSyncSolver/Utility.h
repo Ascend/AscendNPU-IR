@@ -109,6 +109,8 @@ struct SyncSolverOptions {
   // Use disjoint direct subviews to refine memory conflicts.
   bool enableSubviewConflictRefinement{true};
 
+  bool enableSiblingIfSync{true};
+
   // Build unrolled sync IR.
   bool buildUnrolledSyncIR{true};
 
@@ -150,6 +152,10 @@ struct SyncSolverOptions {
            syncMode == SyncMode::TEST_INTRA_CORE_MODE;
   }
 
+  bool isSiblingIfSyncEnabled() const {
+    return enableSiblingIfSync && isIntraCoreMode();
+  }
+
   bool isTestMode() const {
     return syncMode == SyncMode::TEST_INTRA_CORE_MODE ||
            syncMode == SyncMode::TEST_CROSS_CORE_MODE;
@@ -165,6 +171,9 @@ struct SetWaitPairInfo {
   bool isSetWaitBackwardPair{false};
   bool isCVPreloading{false};
   bool isCVPipelining{false};
+  bool setWaitInside{false};
+  Occurrence *setIfOcc{nullptr};
+  Occurrence *waitIfOcc{nullptr};
 };
 
 class UnitFlagInfo : public UnitFlagInfoBase {
@@ -373,11 +382,18 @@ struct ConflictPair {
   // LCA parents of op1/op2 in the occurrence tree
   Occurrence *parOcc1{nullptr};
   Occurrence *parOcc2{nullptr};
+  Occurrence *setIfOcc{nullptr};
+  Occurrence *waitIfOcc{nullptr};
+  Occurrence *mirrorSetIfOcc{nullptr};
+  Occurrence *mirrorWaitIfOcc{nullptr};
+
+
 
   // Backward-sync classification + hoist target
   bool isOccBackwardPair{false};
   bool isSetWaitBackwardPair{false};
   bool isInnerBackwardPair{false};
+  bool setWaitPairInside{false};
   Loop *backwardSyncLoopOp{nullptr};
   Occurrence *backwardSyncLoopOcc{nullptr};
 
@@ -400,7 +416,6 @@ struct ConflictPair {
   bool movedToOuterLoop{false};
   bool isPersistent{false};
   bool isErased{false};
-
   ConflictPair(RWOperation *op1, RWOperation *op2, OperationBase *setOp,
                OperationBase *waitOp, Occurrence *setOcc, Occurrence *waitOcc,
                CorePipeInfo setCorePipeInfo, CorePipeInfo waitCorePipeInfo,

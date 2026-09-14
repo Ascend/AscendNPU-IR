@@ -108,6 +108,11 @@ std::unique_ptr<mlir::Pass> createFlattenMemDescArgsPass();
 /// call_scalar and removes ordering-only local_load ops.
 std::unique_ptr<mlir::Pass> createPopulateSharedMemoryOffsetToDPXPass();
 
+/// Create a pass that groups dependent dot chains and marks
+/// selected groups for fused lowering.  Runs before TileDotLoads so the
+/// grouped dots are invisible to K-tiling and SHM staging.
+std::unique_ptr<mlir::Pass> createGroupDotChainsForOverlapPass();
+
 /// Create a pass to tile tt.dot load inputs to reduce register spill.
 
 std::unique_ptr<mlir::Pass>

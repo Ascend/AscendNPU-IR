@@ -137,6 +137,17 @@ bool isPropagatingDown(ConvertLayoutOp op);
 /// a ConvertLayoutOp can be moved past op.
 bool isLayoutAgnosticOp(Operation *op);
 
+/// True if `op` converts an L1 (cbuf) ND dummy: source is L1 `tensor.empty`
+/// or `to_tensor` of an L1 `memref.alloc` (via `getMemRefAlloc`) whose only
+/// users are view-likes, marks, and this convert. Cube cannot pack ND in L1
+/// (no L1→L1 DMA; vtranspose is UB).
+bool isUninitL1NDConvertLayout(ConvertLayoutOp op);
+
+/// Replace `op` with a cbuf `tensor.empty` of the result type. Do not set
+/// `hivm.inserted-tensor` (TCB would wrap it in `to_tensor` and skip hoist).
+void replaceUninitL1NDConvertWithEmpty(PatternRewriter &rewriter,
+                                       ConvertLayoutOp op);
+
 FailureOr<SmallVector<OpFoldResult>> computeTargetLayoutOffset(
     ArrayRef<OpFoldResult> currentOffset,
     DataLayoutAttr srcLayout,

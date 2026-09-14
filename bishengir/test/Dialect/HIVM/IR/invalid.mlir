@@ -512,6 +512,176 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 }
 
 // -----
+// CHECK-LABEL: test_mmadL0_invalid_init_condition_type
+func.func @test_mmadL0_invalid_init_condition_type() {
+  %ma = memref.alloc() : memref<256x128xf16>
+  %mb = memref.alloc() : memref<128x256xf16>
+  %mc = memref.alloc() : memref<256x256xf32>
+  %c0 = arith.constant 0 : i1
+  %c128 = arith.constant 128 : index
+  %c256 = arith.constant 256 : index
+  %c0_i64 = arith.constant 0 : i64
+  // expected-error@+1 {{'hivm.hir.mmadL0' op operand #8 must be 1-bit signless integer, but got 'i64'}}
+  hivm.hir.mmadL0 ins(%ma, %mb, %c256, %c128, %c256, %c0, %c0, %c0_i64 :
+                        memref<256x128xf16>, memref<128x256xf16>, index, index, index, i1, i1, i64)
+                  outs(%mc : memref<256x256xf32>)
+  return
+}
+
+// -----
+// CHECK-LABEL: test_mmadL0_unit_flag_cond_without_mode
+func.func @test_mmadL0_unit_flag_cond_without_mode() {
+  %ma = memref.alloc() : memref<256x128xf16>
+  %mb = memref.alloc() : memref<128x256xf16>
+  %mc = memref.alloc() : memref<256x256xf32>
+  %c0 = arith.constant 0 : i1
+  %c128 = arith.constant 128 : index
+  %c256 = arith.constant 256 : index
+  // expected-error@+1 {{Cannot have unit-flag conditions without unit-flag modes}}
+  hivm.hir.mmadL0 ins(%ma, %mb, %c256, %c128, %c256, %c0, %c0, %c0 :
+                        memref<256x128xf16>, memref<128x256xf16>, index, index, index, i1, i1, i1)
+                  outs(%mc : memref<256x256xf32>)
+                  unit_flag_cond(%c0)
+  return
+}
+
+// -----
+// CHECK-LABEL: test_l12l0_invalid_k_attr_type
+func.func @test_l12l0_invalid_k_attr_type(
+    %src : memref<256x128xf16, #hivm.address_space<cbuf>>,
+    %dst : memref<256x128xf16, #hivm.address_space<ca>>) {
+  // expected-error@+3 {{floating point value not valid for specified type}}
+  hivm.hir.l12l0 ins(%src : memref<256x128xf16, #hivm.address_space<cbuf>>)
+                 outs(%dst : memref<256x128xf16, #hivm.address_space<ca>>)
+                 {k_part_idx = 0.0, k_part = 1, k_part_ceil = 1,
+                  k_part_loop = 1, k_part_actual = 128, m = 256}
+  return
+}
+
+// -----
+// CHECK-LABEL: test_l12l0_invalid_dst_space
+func.func @test_l12l0_invalid_dst_space(
+    %src : memref<256x128xf16, #hivm.address_space<cbuf>>,
+    %dst : memref<256x128xf16, #hivm.address_space<ub>>) {
+  // expected-error@+1 {{dst must have L0A (ca) or L0B (cb) address space}}
+  hivm.hir.l12l0 ins(%src : memref<256x128xf16, #hivm.address_space<cbuf>>)
+                 outs(%dst : memref<256x128xf16, #hivm.address_space<ub>>)
+                 {k_part_idx = 0, k_part = 1, k_part_ceil = 1,
+                  k_part_loop = 1, k_part_actual = 128, m = 256}
+  return
+}
+
+// -----
+// CHECK-LABEL: test_l12l0_invalid_src_space
+func.func @test_l12l0_invalid_src_space(
+    %src : memref<256x128xf16, #hivm.address_space<ub>>,
+    %dst : memref<256x128xf16, #hivm.address_space<ca>>) {
+  // expected-error@+1 {{src must have L1 address space (cbuf)}}
+  hivm.hir.l12l0 ins(%src : memref<256x128xf16, #hivm.address_space<ub>>)
+                 outs(%dst : memref<256x128xf16, #hivm.address_space<ca>>)
+                 {k_part_idx = 0, k_part = 1, k_part_ceil = 1,
+                  k_part_loop = 1, k_part_actual = 128, m = 256}
+  return
+}
+
+// -----
+// CHECK-LABEL: test_mmadL0_invalid_a_space
+func.func @test_mmadL0_invalid_a_space() {
+  %ma = memref.alloc() : memref<256x128xf16, #hivm.address_space<cbuf>>
+  %mb = memref.alloc() : memref<128x256xf16, #hivm.address_space<cb>>
+  %mc = memref.alloc() : memref<256x256xf32, #hivm.address_space<cc>>
+  %c0 = arith.constant 0 : i1
+  %c1 = arith.constant 1 : i1
+  %c128 = arith.constant 128 : index
+  %c256 = arith.constant 256 : index
+  // expected-error@+1 {{a must have L0A (ca) address space}}
+  hivm.hir.mmadL0 ins(%ma, %mb, %c256, %c128, %c256, %c0, %c0, %c1 :
+                        memref<256x128xf16, #hivm.address_space<cbuf>>,
+                        memref<128x256xf16, #hivm.address_space<cb>>,
+                        index, index, index, i1, i1, i1)
+                  outs(%mc : memref<256x256xf32, #hivm.address_space<cc>>)
+  return
+}
+
+// -----
+// CHECK-LABEL: test_mmadL0_invalid_b_space
+func.func @test_mmadL0_invalid_b_space() {
+  %ma = memref.alloc() : memref<256x128xf16, #hivm.address_space<ca>>
+  %mb = memref.alloc() : memref<128x256xf16, #hivm.address_space<cbuf>>
+  %mc = memref.alloc() : memref<256x256xf32, #hivm.address_space<cc>>
+  %c0 = arith.constant 0 : i1
+  %c1 = arith.constant 1 : i1
+  %c128 = arith.constant 128 : index
+  %c256 = arith.constant 256 : index
+  // expected-error@+1 {{b must have L0B (cb) address space}}
+  hivm.hir.mmadL0 ins(%ma, %mb, %c256, %c128, %c256, %c0, %c0, %c1 :
+                        memref<256x128xf16, #hivm.address_space<ca>>,
+                        memref<128x256xf16, #hivm.address_space<cbuf>>,
+                        index, index, index, i1, i1, i1)
+                  outs(%mc : memref<256x256xf32, #hivm.address_space<cc>>)
+  return
+}
+
+// -----
+// CHECK-LABEL: test_mmadL0_invalid_c_space
+func.func @test_mmadL0_invalid_c_space() {
+  %ma = memref.alloc() : memref<256x128xf16, #hivm.address_space<ca>>
+  %mb = memref.alloc() : memref<128x256xf16, #hivm.address_space<cb>>
+  %mc = memref.alloc() : memref<256x256xf32, #hivm.address_space<ub>>
+  %c0 = arith.constant 0 : i1
+  %c1 = arith.constant 1 : i1
+  %c128 = arith.constant 128 : index
+  %c256 = arith.constant 256 : index
+  // expected-error@+1 {{c must have L0C (cc) address space}}
+  hivm.hir.mmadL0 ins(%ma, %mb, %c256, %c128, %c256, %c0, %c0, %c1 :
+                        memref<256x128xf16, #hivm.address_space<ca>>,
+                        memref<128x256xf16, #hivm.address_space<cb>>,
+                        index, index, index, i1, i1, i1)
+                  outs(%mc : memref<256x256xf32, #hivm.address_space<ub>>)
+  return
+}
+
+// -----
+// CHECK-LABEL: test_l12bt_invalid_src_space
+func.func @test_l12bt_invalid_src_space(
+    %src : memref<256xf32, #hivm.address_space<ub>>,
+    %dst : memref<256xf32, #hivm.address_space<biasbuf>>,
+    %n : index) {
+  // expected-error@+1 {{src must have L1 address space (cbuf)}}
+  hivm.hir.l12bt ins(%src : memref<256xf32, #hivm.address_space<ub>>)
+                 outs(%dst : memref<256xf32, #hivm.address_space<biasbuf>>)
+                 n = %n
+  return
+}
+
+// -----
+// CHECK-LABEL: test_l12bt_invalid_dst_space
+func.func @test_l12bt_invalid_dst_space(
+    %src : memref<256xf32, #hivm.address_space<cbuf>>,
+    %dst : memref<256xf32, #hivm.address_space<ub>>,
+    %n : index) {
+  // expected-error@+1 {{dst must have BiasBUF (biasbuf) address space}}
+  hivm.hir.l12bt ins(%src : memref<256xf32, #hivm.address_space<cbuf>>)
+                 outs(%dst : memref<256xf32, #hivm.address_space<ub>>)
+                 n = %n
+  return
+}
+
+// -----
+// CHECK-LABEL: test_l12bt_invalid_n_type
+func.func @test_l12bt_invalid_n_type(
+    %src : memref<256xf32, #hivm.address_space<cbuf>>,
+    %dst : memref<256xf32, #hivm.address_space<biasbuf>>) {
+  // expected-note@+1 {{prior use here}}
+  %n_i64 = arith.constant 256 : i64
+  // expected-error@+3 {{expects different type than prior uses: 'index' vs 'i64'}}
+  hivm.hir.l12bt ins(%src : memref<256xf32, #hivm.address_space<cbuf>>)
+                 outs(%dst : memref<256xf32, #hivm.address_space<biasbuf>>)
+                 n = %n_i64
+  return
+}
+
+// -----
 
 func.func @test_vxor_rejects_fp(%lhs: tensor<32xf32>,
                                 %rhs: tensor<32xf32>,

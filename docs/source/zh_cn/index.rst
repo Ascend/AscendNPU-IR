@@ -39,6 +39,7 @@
 ------------
 
 - :doc:`贡献指南 <contributing_guide/contribute>`
+- :doc:`代码负责人 <codeowners>`
 - :doc:`常见问题 <faq/faq>`
 - :doc:`相关项目与资源 <reference/thanks>`
 - :doc:`讲座与课程 <reference/talk_and_course>`
@@ -80,6 +81,7 @@
    :caption: 贡献与支持
 
    贡献指南 <contributing_guide/contribute>
+   代码负责人 <codeowners>
    AscendNPU IR 用户 <user_of_npuir/users>
 
 .. toctree::
@@ -96,4 +98,3 @@
 
    相关项目与致谢 <reference/thanks>
    讲座与课程 <reference/talk_and_course>
-

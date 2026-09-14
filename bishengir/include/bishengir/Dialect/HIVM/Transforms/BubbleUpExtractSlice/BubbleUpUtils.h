@@ -70,11 +70,9 @@ createBubblePropagatorDown(Value oldValue, Value newValue, OpFoldResult offset,
 /// Like createBubblePropagatorDown but takes the old type directly instead of
 /// a representative value. Needed when the old-typed value no longer exists
 /// (e.g. after an in-place type change on an scf.if result).
-UnrealizedConversionCastOp
-createBubblePropagatorDownWithType(Type oldType, Value newValue,
-                                   OpFoldResult offset, OpFoldResult size,
-                                   int64_t tilingDim,
-                                   PatternRewriter &rewriter);
+UnrealizedConversionCastOp createBubblePropagatorDownWithType(
+    Type oldType, Value newValue, OpFoldResult offset, OpFoldResult size,
+    int64_t tilingDim, PatternRewriter &rewriter);
 
 UnrealizedConversionCastOp
 createBubblePropagatorUpLink(Value oldValue, Type slicedType,
@@ -93,8 +91,11 @@ void insertDownPropagators(Operation *op, Operation *newOp, OpFoldResult offset,
                            OpFoldResult size, int64_t tilingDim,
                            PatternRewriter &rewriter);
 
+/// Tag a tightly-coupled alloc as tiled. If `hivm.tiling_dim` disagrees with
+/// the axis bubble-up halved, overwrite it so AIC follows the vector split.
 void markTiledTightlyCoupledAllocIfNeeded(RewriterBase &rewriter,
-                                          Value memrefValue);
+                                          Value memrefValue,
+                                          int64_t tilingDim = -1);
 
 TilingDimInfo getTilingDimInfo(UnrealizedConversionCastOp propagateOp);
 

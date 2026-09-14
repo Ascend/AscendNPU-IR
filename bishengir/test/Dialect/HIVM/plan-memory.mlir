@@ -2659,3 +2659,52 @@ func.func @test_change_mem_plan_order(%arg0: memref<32x256xf32, #hivm.address_sp
   hivm.hir.debug {debugtype = "print", hex = false, prefix = " %alloc_0: ", tcoretype = #hivm.tcore_type<CUBE_OR_VECTOR>} %alloc_0 : memref<128x256xf32, #hivm.address_space<ub>>
   return
 }
+
+// -----
+
+module {
+  // Loop-carried vadd dest whose init is arith.select must not share a UB
+  // offset with the sibling src (chunk_abc alloc_24 / alloc_20 pattern).
+  // CHECK-LABEL: func.func @test_select_init_iter_no_reuse_yield
+  func.func @test_select_init_iter_no_reuse_yield(
+      %src0: memref<64xf32, #hivm.address_space<gm>>,
+      %src1: memref<64xf32, #hivm.address_space<gm>>,
+      %tmp_src: memref<64xf32, #hivm.address_space<gm>>,
+      %dst: memref<64xf32, #hivm.address_space<gm>>,
+      %cond: i1) {
+    // CHECK-DAG: %[[C0:.*]] = arith.constant 0 : i64
+    // CHECK-DAG: %[[C256:.*]] = arith.constant 256 : i64
+    // CHECK-DAG: %[[C512:.*]] = arith.constant 512 : i64
+    // CHECK-DAG: %[[C768:.*]] = arith.constant 768 : i64
+    // CHECK: hivm.hir.pointer_cast(%[[C0]]) : memref<64xf32, #hivm.address_space<ub>>
+    // CHECK: hivm.hir.pointer_cast(%[[C256]]) : memref<64xf32, #hivm.address_space<ub>>
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %init0 = memref.alloc() : memref<64xf32, #hivm.address_space<ub>>
+    %init1 = memref.alloc() : memref<64xf32, #hivm.address_space<ub>>
+    hivm.hir.load ins(%src0 : memref<64xf32, #hivm.address_space<gm>>)
+                  outs(%init0 : memref<64xf32, #hivm.address_space<ub>>)
+    hivm.hir.load ins(%src1 : memref<64xf32, #hivm.address_space<gm>>)
+                  outs(%init1 : memref<64xf32, #hivm.address_space<ub>>)
+    %init = arith.select %cond, %init0, %init1 : memref<64xf32, #hivm.address_space<ub>>
+    %acc = scf.for %i = %c0 to %c2 step %c1 iter_args(%iter = %init)
+        -> (memref<64xf32, #hivm.address_space<ub>>) {
+      // Sibling src (tmp) and yielded dest (out) must get distinct offsets.
+      // CHECK: %[[TMP:.*]] = hivm.hir.pointer_cast(%[[C512]]) : memref<64xf32, #hivm.address_space<ub>>
+      // CHECK: %[[OUT:.*]] = hivm.hir.pointer_cast(%[[C768]]) : memref<64xf32, #hivm.address_space<ub>>
+      // CHECK: hivm.hir.vadd ins(%{{.*}}, %[[TMP]] : {{.*}}) outs(%[[OUT]] :
+      %tmp = memref.alloc() : memref<64xf32, #hivm.address_space<ub>>
+      hivm.hir.load ins(%tmp_src : memref<64xf32, #hivm.address_space<gm>>)
+                    outs(%tmp : memref<64xf32, #hivm.address_space<ub>>)
+      %out = memref.alloc() : memref<64xf32, #hivm.address_space<ub>>
+      hivm.hir.vadd ins(%iter, %tmp : memref<64xf32, #hivm.address_space<ub>>,
+                                      memref<64xf32, #hivm.address_space<ub>>)
+                    outs(%out : memref<64xf32, #hivm.address_space<ub>>)
+      scf.yield %out : memref<64xf32, #hivm.address_space<ub>>
+    }
+    hivm.hir.store ins(%acc : memref<64xf32, #hivm.address_space<ub>>)
+                   outs(%dst : memref<64xf32, #hivm.address_space<gm>>)
+    return
+  }
+}

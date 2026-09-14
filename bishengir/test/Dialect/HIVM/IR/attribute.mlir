@@ -6,6 +6,8 @@
 
 func.func @address_space() {
   "test.address_space"() {
+    // CHECK: #hivm.address_space<biasbuf>
+    biasbuf = #hivm.address_space<biasbuf>,
     // CHECK: #hivm.address_space<ca>
     ca = #hivm.address_space<ca>,
     // CHECK: #hivm.address_space<cb>

@@ -148,20 +148,20 @@ public:
 
       // A declared core-ratio attr always makes this a mix kernel.
       if (auto coreRatio = hivm::getCoreRatioAttr(func)) {
-        // Check the func is not annotated with AIV/AIC if there is also a
-        // core_ratio setting.
-        auto annotated = func->getAttrOfType<hivm::TFuncCoreTypeAttr>(
-            hivm::TFuncCoreTypeAttr::name);
-        if (annotated &&
-            annotated.getFuncCoreType() != hivm::TFuncCoreType::MIX) {
-          func->emitError()
-              << "hivm.core_ratio is only valid on a MIX "
-                 "function, but hivm.func_core_type is "
-              << stringifyTFuncCoreType(annotated.getFuncCoreType());
-          fail = true;
+        // Preserve the core type of split MIX members.
+        if (!func->hasAttr(hivm::TPartOfMixAttr::name)) {
+          auto annotated = func->getAttrOfType<hivm::TFuncCoreTypeAttr>(
+              hivm::TFuncCoreTypeAttr::name);
+          if (annotated &&
+              annotated.getFuncCoreType() != hivm::TFuncCoreType::MIX) {
+            func->emitError()
+                << "hivm.core_ratio is only valid on a MIX "
+                   "function, but hivm.func_core_type is "
+                << stringifyTFuncCoreType(annotated.getFuncCoreType());
+            fail = true;
+          }
+          e = hivm::TFuncCoreType::MIX;
         }
-        // set the func type
-        e = hivm::TFuncCoreType::MIX;
         inferredModuleCoreType = hivm::TModuleCoreType::MIX;
       }
 

@@ -22,7 +22,6 @@
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
-#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
@@ -50,10 +49,6 @@ struct InsertLoadStoreForScalarPass
   void runOnOperation() override;
 };
 
-template <typename... OpTypes> static bool traceVector(Value v) {
-  return ((traceDefOp<OpTypes>(v) != std::nullopt) || ...);
-}
-
 //===----------------------------------------------------------------------===//
 // DuplicateTensorExtractForCube
 //===----------------------------------------------------------------------===//
@@ -70,8 +65,6 @@ struct DuplicateTensorExtractForCube
       "DuplicateTensorExtractForCube::newExtractLabel";
   constexpr static llvm::StringRef replacementLabel =
       "DuplicateTensorExtractForCube::replacementLabel";
-  constexpr static llvm::StringRef cubeErasureLabel =
-      "DuplicateTensorExtractForCube::cubeErasureLabel";
   constexpr static llvm::StringRef extractedLoadStoreLabel =
       "ExtractedLoadOrStore";
 
@@ -185,50 +178,11 @@ struct DuplicateTensorExtractForCube
     }
 
     TensorType tensorType = cast<TensorType>(originTensor.getType());
-    if (hacc::utils::isMemBasedArch(extractOp->getParentOfType<ModuleOp>())) {
-      TCoreType originCoreType = getCoreType(definingOp).value();
-      if (originCoreType != TCoreType::VECTOR) {
-        // handle the case of direct load
-        // TODO: (plan A) bubble up (plan B) infer load to vector type
-        auto presumedAllocOp = traceDefOp<memref::AllocOp>(originTensor);
-        if (presumedAllocOp.has_value()) {
-          auto allocOp = cast<memref::AllocOp>(presumedAllocOp.value());
-          Value memrefValue = allocOp.getMemref();
-          bool foundLoad = false;
-          bool foundBufferization = false;
-          SmallVector<Operation *, 2> tmpOps;
-          for (Operation *userOp : memrefValue.getUsers()) {
-            if (auto loadOp = dyn_cast<hivm::LoadOp>(userOp);
-                loadOp && loadOp.getDst() == memrefValue) {
-              foundLoad = true;
-              tmpOps.push_back(userOp);
-            } else if (auto toTensorOp =
-                           dyn_cast<bufferization::ToTensorOp>(userOp);
-                       toTensorOp && toTensorOp.getOperand() == memrefValue) {
-              foundBufferization = true;
-              tmpOps.push_back(userOp);
-            }
-          }
-          if (!(tmpOps.size() == 2 && foundLoad && foundBufferization)) {
-            return failure();
-          }
-          // the op need eraseLabel only if when the bufferization is from load
-          allocOp->setAttr(cubeErasureLabel, rewriter.getI32IntegerAttr(1));
-          for (auto *op : tmpOps) {
-            op->setAttr(cubeErasureLabel, rewriter.getI32IntegerAttr(1));
-          }
-        } else {
-          return failure();
-        }
-      }
-    } else {
-      bool originCoreTypeIsVector = traceVector<
-#define GET_OP_LIST
-#include "bishengir/Dialect/HIVM/IR/HIVMVectorOps.cpp.inc"
-          >(originTensor);
-      if (!originCoreTypeIsVector) {
-        return failure();
-      }
+    auto extractCoreTypeAttr = extractOp->getAttrOfType<hivm::TCoreTypeAttr>(
+        hivm::TCoreTypeAttr::name);
+    if (!extractCoreTypeAttr ||
+        extractCoreTypeAttr.getTcoretype() != TCoreType::VECTOR) {
+      return failure();
     }
 
     // prepare for insertion
@@ -319,6 +273,10 @@ void InsertLoadStoreForScalarPass::runOnOperation() {
 
   if (failed(applyPatternsGreedily(funcOp, std::move(patterns))))
     signalPassFailure();
+
+  funcOp.walk([](tensor::ExtractOp extractOp) {
+    extractOp->removeAttr(hivm::TCoreTypeAttr::name);
+  });
 }
 } // anonymous namespace
 std::unique_ptr<Pass> mlir::hivm::createInsertLoadStoreForScalarPass() {

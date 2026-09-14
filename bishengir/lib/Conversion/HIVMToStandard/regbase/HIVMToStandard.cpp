@@ -463,6 +463,122 @@ public:
   }
 };
 
+class BatchMmadL1OpToLibraryCallPattern
+    : public OpRewritePattern<hivm::BatchMmadL1Op> {
+public:
+  using OpRewritePattern<hivm::BatchMmadL1Op>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(BatchMmadL1Op op,
+                                PatternRewriter &rewriter) const final {
+    if (!op.getPerChannelBias()) {
+      if (op.getSyncRelatedArgs().empty()) {
+        auto negOneDefaultValue = rewriter.create<arith::ConstantOp>(
+            op->getLoc(), rewriter.getI64Type(),
+            rewriter.getI64IntegerAttr(-1));
+        SmallVector<Value> syncArgs(op.getNumSyncRelatedArgs(),
+                                    negOneDefaultValue);
+        syncArgs[4] = rewriter.create<arith::ConstantOp>(
+            op.getLoc(), rewriter.getI64Type(), rewriter.getI64IntegerAttr(0));
+        syncArgs[5] = rewriter.create<arith::ConstantOp>(
+            op.getLoc(), rewriter.getI64Type(), rewriter.getI64IntegerAttr(0));
+        syncArgs[6] = rewriter.create<arith::ConstantOp>(
+            op.getLoc(), rewriter.getI64Type(), rewriter.getI64IntegerAttr(1));
+        op.getSyncRelatedArgsMutable().assign(syncArgs);
+      }
+      SmallVector<Value> libParams =
+          op.getInputOperands(/*includeSyncRelatedArgs=*/false);
+      libParams.push_back(op.getC());
+      SmallVector<Value> syncArgs(op.getSyncRelatedArgs().begin(),
+                                  op.getSyncRelatedArgs().end());
+      llvm::append_range(libParams, syncArgs);
+      libParams.push_back(op.getUnitFlagModeLibValue(rewriter));
+      libParams.push_back(op.getUnitFlagGroupIdValue(rewriter));
+      replaceWithLibCall(
+          rewriter, op,
+          cast<OpWithLibraryFunction>(op.getOperation())
+              .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
+          libParams, {});
+      return success();
+    }
+
+    if (op.getSyncRelatedArgs().empty()) {
+      auto negOneDefaultValue = rewriter.create<arith::ConstantOp>(
+          op->getLoc(), rewriter.getI64Type(), rewriter.getI64IntegerAttr(-1));
+      SmallVector<Value> syncArgs(op.getNumSyncRelatedArgs(),
+                                  negOneDefaultValue);
+      // mma_tile's L0A/L0B ping-pong waits on M->MTE1 event 0/1. GraphSync
+      // initializes and drains those events around all MMAD-like operations.
+      syncArgs[5] = rewriter.create<arith::ConstantOp>(
+          op.getLoc(), rewriter.getI64Type(), rewriter.getI64IntegerAttr(0));
+      syncArgs[6] = rewriter.create<arith::ConstantOp>(
+          op.getLoc(), rewriter.getI64Type(), rewriter.getI64IntegerAttr(1));
+      op.getSyncRelatedArgsMutable().assign(syncArgs);
+    }
+    std::string fnName =
+        cast<OpWithLibraryFunction>(op.getOperation())
+            .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
+    size_t batchPrefix = fnName.find("batch_mma_tile");
+    assert(batchPrefix != std::string::npos &&
+           "expected BatchMmad library function name");
+    fnName.replace(batchPrefix, std::string("batch_mma_tile").size(),
+                   "mma_tile");
+
+    ModuleOp mod = op->getParentOfType<ModuleOp>();
+    Location loc = op.getLoc();
+    Value zero = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+    Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    Value batch = rewriter.create<memref::DimOp>(loc, op.getA(), 0);
+    auto loop = rewriter.create<scf::ForOp>(loc, zero, batch, one);
+
+    rewriter.setInsertionPointToStart(loop.getBody());
+    Value matrixA = createBatchSlice(op.getA(), loop.getInductionVar(),
+                                     rewriter, loc);
+    Value matrixB = createBatchSlice(op.getB(), loop.getInductionVar(),
+                                     rewriter, loc);
+    Value matrixC = createBatchSlice(op.getC(), loop.getInductionVar(),
+                                     rewriter, loc);
+
+    SmallVector<Value> libParams{matrixA, matrixB, op.getInitCondition(),
+                                 op.getRealM(), op.getRealK(), op.getRealN(),
+                                 matrixC};
+    llvm::append_range(libParams, op.getSyncRelatedArgs());
+    libParams.push_back(op.getUnitFlagModeLibValue(rewriter));
+    libParams.push_back(op.getUnitFlagGroupIdValue(rewriter));
+    createLibCall(rewriter, op, mod, fnName, libParams, {});
+
+    rewriter.eraseOp(op);
+    return success();
+  }
+
+private:
+  static Value createBatchSlice(Value value, Value batchIdx,
+                                PatternRewriter &rewriter, Location loc) {
+    auto type = cast<MemRefType>(value.getType());
+    assert(type.getRank() == 5 && "expected a rank-5 batch matrix tile");
+
+    SmallVector<OpFoldResult> offsets(type.getRank(),
+                                      rewriter.getIndexAttr(0));
+    SmallVector<OpFoldResult> sizes;
+    SmallVector<OpFoldResult> strides(type.getRank(),
+                                      rewriter.getIndexAttr(1));
+    offsets[0] = batchIdx;
+    sizes.push_back(rewriter.getIndexAttr(1));
+    for (int64_t dim = 1; dim < type.getRank(); ++dim) {
+      if (type.isDynamicDim(dim))
+        sizes.push_back(rewriter.create<memref::DimOp>(loc, value, dim)
+                            .getResult());
+      else
+        sizes.push_back(rewriter.getIndexAttr(type.getDimSize(dim)));
+    }
+
+    SmallVector<int64_t> reducedShape(type.getShape().drop_front());
+    auto reducedType = cast<MemRefType>(inferRankReducedResultType(
+        reducedShape, type, offsets, sizes, strides, {0}));
+    return rewriter.create<memref::SubViewOp>(
+        loc, reducedType, value, offsets, sizes, strides);
+  }
+};
+
 class MMmadMxL1OpToLibraryCallPattern
     : public OpRewritePattern<hivm::MmadMxL1Op> {
 public:
@@ -514,10 +630,22 @@ public:
       return failure();
     }
 
+    // The template writes this straight into the MTE2 descriptor's cache
+    // control field.  It is always passed, so the callee signature does not
+    // depend on whether the attribute was set; absent means the hardware
+    // default of 0.
+    int64_t l2CacheMode = 0;
+    if (auto modeAttr = op.getL2CacheModeAttr())
+      l2CacheMode = modeAttr.getInt();
+
+    SmallVector<Value> inputOperands(op->getOperands());
+    inputOperands.push_back(
+        rewriter.create<arith::ConstantIntOp>(op->getLoc(), l2CacheMode, 32));
+
     replaceWithLibCall(rewriter, op,
                        cast<OpWithLibraryFunction>(op.getOperation())
                            .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
-                       op->getOperands(), {});
+                       inputOperands, {});
     return success();
   }
 };
@@ -573,6 +701,10 @@ public:
     SmallVector<Value> additionalArgs;
     genAdditionalFunctionArgs(op, additionalArgs, rewriter);
 
+    // A rank-5 L0C draining into a rank-3 GM or UB buffer resolves to the
+    // batched library function, which walks the batch via ND_PARA. That keeps
+    // one fixpipe paired with the single unit flag update BatchL1Mmad raises
+    // on its final mmad.
     SmallVector<Value> libCallOperands;
     libCallOperands.push_back(op.getSrc());
     libCallOperands.push_back(op.getDst());
@@ -2026,6 +2158,7 @@ void populateHIVMToStandardConversionPatternsRegBase(
   patterns.add<MmadL1OpToLibraryCallPattern,
                Conv1DL1OpToLibraryCallPattern,
                Conv2DL1OpToLibraryCallPattern,
+               BatchMmadL1OpToLibraryCallPattern,
                MMmadMxL1OpToLibraryCallPattern,
                ND2NZOpToLibraryCallPattern,
                LoadMXScaleOpToLibraryCallPattern,
@@ -2109,6 +2242,7 @@ LogicalResult ConvertHIVMToStandardRegBasePass::runOnOperation(
   // Abstract Intrinsic Ops must be converted.
   // clang-format off
   target.addIllegalOp<hivm::MmadL1Op,
+                      hivm::BatchMmadL1Op,
                       hivm::Conv1DL1Op,
                       hivm::Conv2DL1Op,
                       hivm::ND2NZOp,

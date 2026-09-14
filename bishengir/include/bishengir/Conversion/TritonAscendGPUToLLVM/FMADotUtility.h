@@ -40,6 +40,20 @@ LogicalResult parametricConvertFMADot(DotOp op, DotOp::Adaptor adaptor,
                                       ConversionPatternRewriter &rewriter,
                                       FMAVectorMultiplier &multiplier);
 
+/// Returns true if `op` is the chosen lowering anchor for a grouped overlap
+/// set. Non-anchor grouped dots must not lower independently.
+bool isGroupedDotAnchor(DotOp op);
+
+/// Lowers a pre-selected grouped overlap set as one fused FMA schedule.
+///
+/// Returns failure when `op` is not grouped, is grouped but not the anchor, or
+/// when the grouped shape/dependency pattern is not yet supported by the fused
+/// scheduler.
+LogicalResult convertGroupedFMADots(DotOp op,
+                                    DotOp::Adaptor adaptor,
+                                    const LLVMTypeConverter *typeConverter,
+                                    ConversionPatternRewriter &rewriter);
+
 LogicalResult convertFMADot(DotOp op, DotOp::Adaptor adaptor,
                             const LLVMTypeConverter *typeConverter,
                             ConversionPatternRewriter &rewriter);

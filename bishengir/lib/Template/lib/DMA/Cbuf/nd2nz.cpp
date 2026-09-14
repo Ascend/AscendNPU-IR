@@ -27,6 +27,13 @@ copy_gm_to_cbuf_multi_nd2nz_core(memref_t<__gm__ T, 2> *gm,
 
   int64_t n_tile_actual = gm->sizes[0];
   int64_t d_tile_actual = gm->sizes[1];
+  // A fully clipped tile (e.g. a masked load whose whole extent lies beyond
+  // the tensor) yields a zero-size subview. Issuing the intrinsic with
+  // nValue == 0 is not a guaranteed no-op on all archs, and the source base
+  // address may already be out of bounds, causing an OOB gm read.
+  if (is_no_op<2>(gm->sizes)) {
+    return;
+  }
   int64_t d_val = gm->strides[0];
   // TODO: Remove for bias when fix bias infer layout.
   int64_t n_tile_ceil =

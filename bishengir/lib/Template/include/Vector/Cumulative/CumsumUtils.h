@@ -48,7 +48,31 @@ vector_cumsum_ara(memref_t<__ubuf__ T, 3> *src, memref_t<__ubuf__ T, 3> *dst);
     vector_cumsum_##suffix<dtype, true>(src, dst);                             \
   }
 
+/// Membase 1D Sklansky cumsum: scalar implementation that mirrors the
+/// regbase SIMT Sklansky addition tree to ensure bit-identical
+/// floating-point results across platforms.
+/// Currently covers f32 (float), reduce dim0, non-reverse.
+template <typename T>
+__aiv__ __attribute__((always_inline)) void
+vector_cumsum_1d_sklansky(memref_t<__ubuf__ T, 1> *src,
+                          memref_t<__ubuf__ T, 1> *dst);
+
+#define DECLARE_CUMSUM_1D_SKLANSKY(dtype)                                      \
+  __aiv__ __attribute__((always_inline)) void                                  \
+      _mlir_ciface_cumsum_1d_##dtype##_dim0(memref_t<__ubuf__ dtype, 1> *src,  \
+                                            memref_t<__ubuf__ dtype, 1> *dst)
+
+#define REGISTE_CUMSUM_1D_SKLANSKY(dtype)                                      \
+  DECLARE_CUMSUM_1D_SKLANSKY(dtype) {                                          \
+    vector_cumsum_1d_sklansky<dtype>(src, dst);                                \
+  }
+
 extern "C" {
+//===-------------------------------------------------------------------===//
+// cumsum 1d sklansky (membase), dim0
+//===-------------------------------------------------------------------===//
+DECLARE_CUMSUM_1D_SKLANSKY(float);
+
 //===-------------------------------------------------------------------===//
 // cumsum ra, 2 dim
 //===-------------------------------------------------------------------===//
