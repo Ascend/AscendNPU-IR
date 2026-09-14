@@ -1,33 +1,31 @@
-# Best practices
+# Best Practices
 
-## Performance Optimization
+## Performance Optimization Cases
 
-## Tiling Strategy
+### Tiling Strategy
 
-### Case description
+**Case description**:
 
-When porting Triton kernels from GPU to NPU, the number of logical cores launched is often much larger than the number of physical cores, causing significant launch and scheduling overhead.
-During porting, adjust the tiling strategy to reduce the number of cores so that the number of logical cores is close to the number of physical cores. 
-This example uses Triton.
+When a GPU-based Triton operator is migrated to the NPU, the number of logical cores launched is usually far greater than the number of physical cores, resulting in severe launch and scheduling overhead. It is recommended that, during migration, the Tiling strategy be adjusted to reduce the number of cores, so that the number of logical cores launched is as close as possible to the number of physical cores, thereby improving performance. This case is implemented using Triton.
 
-``` python
+```python
 out = torch.gather(x, dim=1, index=idx)
 ```
 
-Input:
+**Input**:
 
 | Input | Shape  |
 |-------|--------|
-| x     | (B, C) |
-| idx   | (B, K) |
+| `x`   | `(B, C)` |
+| `idx` | `(B, K)` |
 
-Output:
+**Output**:
 
-| Output| Shape  |
+| Input | Shape  |
 |-------|--------|
-| out   | (B, K) |
+| `out` | `(B, K)` |
 
-### Differences
+**Detailed explanation of case differences**:
 
 ```diff
 @triton.jit
@@ -55,11 +53,11 @@ def gather_dim1_kernel(
 
 -   tl.store(out_ptr + pid_b * stride_ob + k_off * stride_ok, x_val, mask=mask)
 
-+   #NPU implementation
++   # NPU implementation
 +   b_idx = pid_b * BLOCK_B + tl.arange(0, BLOCK_B)
 +   b_mask = b_idx < B
 
-+   # Loop over the K dimension
++   # Loop over the K dimension.
 +   for k_start in range(0, K, BLOCK_K):
 +       ks = tl.arange(0, BLOCK_K)
 +       k_mask = ks < K - k_start
@@ -76,28 +74,26 @@ def gather_dim1_kernel(
 +                  (k_start + ks)[None, :] * stride_ok)
 +       tl.store(out_ptr + out_off, x_val, mask=b_mask[:, None] & k_mask)
 
-# Call
+# Call.
 B = 128  # batch dim
 K = 64  
 
 BLOCK_B = 4
 BLOCK_K = 128
 
-— # GPU  
+- # GPU  
 - grid = (B, triton.cdiv(K, BLOCK_K))
 + # NPU
 + grid = (triton.cdiv(B, BLOCK_B),)
 ```
 
-## Ascend-Friendly Kernel Rewriting
+### Ascend-Affinity Kernel Rewrite
 
-### Case description
+**Case Description**:
 
-In the original GPU flow, i64/i32 compare operations cannot use the vector unit on NPU and fall back to scalar computation, reducing efficiency. Converting to fp32 and using `vec_cast` and `vec_cmp` enables vectorized execution.
-Note: Masks in `tl.load` and `tl.store` are often auto-optimized to vector ops by the compiler; in this example `tl.where` requires manual conversion.
-This case uses `LayerNorm` to illustrate vectorized compare for tail-block handling.
+In the original GPU computation flow, the `i64`/`i32` `cmp` operation cannot enable `vector` on NPU devices and degrades to scalar computation, reducing efficiency. By converting to `fp32`, `vec_cast` and `vec_cmp` are leveraged to implement `vector` operation acceleration. Note that when the `mask` in `tl.load` and `tl.save` uses the `cmp` function, the compiler can automatically optimize it into a `vec` operation in most cases. In this case, `tl.where` requires manual conversion. This case uses **layerNorm** as an example to illustrate the implementation of vectorized `cmp` to accelerate the NPU computation flow. The `cmp` operation is used to handle tail blocks in **layerNorm**.
 
-### Differences
+**Detailed Explanation of Case Differences**:
 
 ```diff
     cols = tl.arange(0, BLOCK_N)  # cols is int64
@@ -117,22 +113,22 @@ This case uses `LayerNorm` to illustrate vectorized compare for tail-block handl
 
 ## Function or Precision Cases
 
-This section describes common function or precision cases.
+This section introduces common function or precision cases.
 
-## Hang / Timeout
+### Hang Issues
 
-### Demarcation
+**Symptom**:
 
-- **Symptom**: Kernel hangs or timed out. Some hangs are related to hardware synchronization (intra-core, inter-core, or pipeline sync). If you encounter a hang, you can try passing the following options when invoking the kernel to change the binary's sync behavior and avoid the hang.
-  
-- **Example**:
+The operator option reports a timeout error. Some operator hang issues are related to hardware synchronization, which may involve intra-core/inter-core synchronization or pipeline synchronization. If an operator hang occurs, you can try passing the following input parameters when invoking the Kernel to modify the binary synchronization logic and work around the operator hang issue.
 
-| Compile Option| Value| Description|
+**Code example**:
+
+| Compilation option | Value | Description |
 |--------|------|------|
-| **inject_barrier_all** | false(default). | Set it to true. If the hang disappears, intra-core sync is likely the cause. This option applies to mix/aic/aiv kernels.|
-| **inject_block_all**|  false(default). | Set it to true. If the hang disappears, inter-core sync is likely the cause. This option applies to mix kernels.| 
+| `inject_barrier_all` | `false` (default) | The frontend attempts to enable it as `true`. If the hang issue disappears, it indicates an intra-core synchronization problem. This option applies to `mix`/`aic`/`aiv` kernels. |
+| `inject_block_all` | `false` (default) | The frontend attempts to enable it as `true`. If the hang issue disappears, it indicates an inter-core synchronization problem. This option applies to `mix` kernels. |
 
-The following uses the GDN network's `chunk_gated_delta_rule_fwd_kernel_h_blockdim64` operator as an example. Tthe original code calls it as:
+Taking the `chunk_gated_delta_rule_fwd_kernel_h_blockdim64` operator of the GDN network as an example, the original code example is invoked as follows:
 
 ```python
 chunk_gated_delta_rule_fwd_kernel_h_blockdim64[grid](
@@ -155,7 +151,7 @@ chunk_gated_delta_rule_fwd_kernel_h_blockdim64[grid](
 )
 ```
 
-With the CV pipeline enabled:
+The code example after enabling full CV pipelining is as follows:
 
 ```python
 chunk_gated_delta_rule_fwd_kernel_h_blockdim64[grid](
@@ -175,20 +171,20 @@ chunk_gated_delta_rule_fwd_kernel_h_blockdim64[grid](
     K=K,
     V=V,
     BT=BT,
-    inject_block_all = True # Enable inter-core sync
-    inject_barrier_all = True # Enable intra-core sync
+    inject_block_all = True, # Enable inter-core synchronization.
+    inject_barrier_all = True # Enable intra-core synchronization.
 )
 ```
 
-### Invalid varlen arguments
+**Unreasonable parameter input**:
 
-For varlen-style kernels that randomly sample indices in seqlen, ensure that indices are valid: strictly increasing and in the range [0, seqlen].
+For `varlen`-type operators, `indice` is usually randomly sampled from `seqlen`, and the validity of the `indice` input must be ensured. For example, it must be strictly increasing and within the range `[0, seqlen]`.
 
-## UB overflow
+### UB Overflow Issues
 
-### Triton argmax: 32B alignment then axis fusion wastes UB
+#### Triton argmax op performs 32B alignment before merging axes, wasting a large amount of UB space
 
-MLIR code snippet:
+**The MLIR code is as follows**:
 
 ```mlir
 %reinterpret_cast = memref.reinterpret_cast %arg3 to offset: [0], sizes: [256, 9, 11], strides: [99, 11, 1] : memref<?xi8, #hivm.address_space<gm>> to memref<256x9x11xi8, strided<[99, 11, 1]>, #hivm.address_space<gm>>
@@ -199,29 +195,29 @@ MLIR code snippet:
 hivm.hir.load ins(%collapse_shape : memref<256x99xi8, strided<[99, 1]>, #hivm.address_space<gm>>) outs(%collapse_shape_0 : memref<256x99xi8, strided<[352, 1]>, #hivm.address_space<ub>>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
 ```
 
-- Analysis:
+**Analysis**:
 
-    Line 1: The original data has a shape of 256×9×11xi8 and is stored in GM (kernel argument %arg3).
+Line 1: The original data size is `256x9x11xi8`, stored in GM (the kernel parameter `%arg3`);
 
-    Line 2: Allocate a UB buffer of size 256×32×11×1xi8 to copy data from GM to UB. The first axis is aligned to 32 bytes, and an additional dimension is appended to the last axis.
+Line 2: A UB space of size `256x32x11x1xi8` is allocated for copying data from GM to UB. Here, 32-byte alignment is applied to axis 1, and an extra dimension is added to the last axis;
 
-    Line 3: From the UB buffer allocated in Line 2 (256×32×11×1xi8), extract a subview of shape 256×9×11xi8.
+Line 3: For the UB shape `256×32×11×1xi8` allocated in line 2, a subview of `256x9x11xi8` is extracted via `subview`;
 
-    Line 4: Apply collapse_shape to the GM view in Line 1 (256×9×11xi8) to merge dimensions, resulting in a shape of 256×99xi8.
+Line 4: Via `collapse_shape`, the dimensions of the GM view `256x9x11xi8` in line 1 are merged into the type `256x99xi8`;
 
-    Line 5: Apply collapse_shape to the UB subview in Line 3 (256×9×11xi8) to merge dimensions, resulting in a shape of 256×99xi8.
+Line 5: Via `collapse_shape`, the dimensions of the UB view `256x9x11xi8` in line 3 are merged into the type `256x99xi8`;
 
-    Line 6: Copy the data from GM with shape 256×99xi8 (Line 4) to the UB buffer with shape 256×99xi8 (Line 5).
+Line 6: The data of shape `256x99xi8` in GM from line 4 is copied into the `256x99xi8` shape in UB from line 5.
 
-- Summary:
+**Summary**:
 
-    Original data 256x9x11xi8 is 25344 B; after loading from GM to UB, UB usage (256x32x11x1xi8) is 90112 B, about 3.5× the original size.
+The original data `256x9x11xi8` is 25344B in size; after being `load`ed from GM to UB, the size occupied in UB (`256x32x11x1xi8`) is 90112B, which is more than 3.5 times the size of the original data.
 
-### Triton Not op: unreasonable lowering wastes UB
+#### Unreasonable implementation of the triton not op, causing extra memory usage
 
-The Triton Not op is lowered in NPU IR to a sequence of VOR, VAND, VNOT, VAND; in many cases a single VNOT is sufficient. 
+In NPU-IR, the implementation of the Triton Not OP is converted into a series of operations such as `VOR`, `VAND`, `VNOT`, and `VAND`. In fact, only the `VNOT` operation needs to be executed:
 
-MLIR code snippet:
+**The MLIR code is as follows**:
 
 ```mlir
   %2 = hivm.hir.pointer_cast(%c0_i64) : memref<65536xi8, #hivm.address_space<ub>>
@@ -237,41 +233,41 @@ MLIR code snippet:
   hivm.hir.vand ins(%5, %4 : memref<65536xi8, #hivm.address_space<ub>>, memref<65536xi8, #hivm.address_space<ub>>) outs(%6 : memref<65536xi8, #hivm.address_space<ub>>)
 ```
 
-- Analysis:
+**Analysis**:
 
-    Line 1: The original data has a shape of 65536xi8 and is stored in GM (kernel argument %arg3).
+Line 1: The original data size is `65536xi8`, which is stored in GM (the kernel parameter `%arg3`);
 
-    Line 2: Allocate a UB buffer of size 65536xi8.
+Line 2: Allocate a UB space of size `65536xi8`;
 
-    Line 3: Copy the data from GM in Line 1 (65536xi8) to the UB buffer allocated in Line 2 (65536xi8).
-    
-    Line 4: Allocate a UB buffer of size 65536xi8.
+Line 3: Copy the data of shape `65536xi8` in GM on line 1 to the UB space of shape `65536xi8` on line 2;
 
-    Line 5: Fill the UB buffer allocated in Line 4 with -1.
+Line 4: Allocate a UB space of size `65536xi8`;
 
-    Line 6: Allocate a UB buffer of size 65536xi8.
+Line 5: Fill the `65536xi8` UB space allocated on line 4 entirely with -1;
 
-    Line 7: Perform a bitwise OR operation between the input data and -1, and store the result in the UB buffer allocated in Line 6.
+Line 6: Allocate a UB space of size `65536xi8`;
 
-    Line 8: Allocate a UB buffer of size 65536xi8.
-    
-    Line 9: Perform a bitwise AND operation between the input data and -1, and store the result in the UB buffer allocated in Line 8.
+Line 7: The input data is ORed with -1, and the result is stored in the UB space allocated on line 6.
 
-    Line 10: Apply a bitwise NOT operation to the result from Line 9, and store the result back into the UB buffer allocated in Line 8.
+Line 8: A UB space of size `65536xi8` is allocated.
 
-    Line 11: Allocate a UB buffer of size 65536xi8.
+Line 9: The input data is ANDed with -1, and the result is stored in the UB space allocated on line 8.
 
-    Line 12: Perform a bitwise AND operation between the results from Line 7 and Line 10, and store the result in the UB buffer allocated in Line 11.
+Line 10: A `not` operation is then performed on the result of line 9, and the result is stored in the UB space allocated on line 8.
 
-- Summary
+Line 11: A UB space of size `65536xi8` is allocated.
 
-    A bitwise NOT operation is applied to the input data input_data. In MLIR, this is lowered to the following expression: (input_data | (-1)) & (!(input_data & (-1))). 
+Line 12: An `and` operation is performed on the result of line 7 and the result of line 10, and the result is stored in the UB space allocated on line 11.
 
-    The original data size is 65536 B. To perform the computation (input_data | (-1)) & (!(input_data & (-1))), a total of 5 × 65536 B of UB space is allocated.
+**Summary**:
 
-### Triton max_dim0 (int64): PlanMemory before HIVMLowerToLoops wastes UB
+When the `not` operation is performed on the input data `input_data`, `mlir` translates it into the following operation: `(input_data|(-1))&(!(input_data&(-1)))`.
 
-MLIR code snippet:
+The original data size is 65536B. To complete the `(input_data|(-1))&(!(input_data&(-1)))` operation, a UB space of `5*65536B` is allocated.
+
+#### triton max_dim0 op wastes a large amount of UB space when PlanMemory is executed before HIVMLowerToLoops for int64 input
+
+**The MLIR code is as follows**:
 
 ```mlir
 %2 = hivm.hir.pointer_cast(%c0_i64) : memref<2x4912xi64, #hivm.address_space<ub>>
@@ -280,71 +276,84 @@ MLIR code snippet:
 hivm.hir.vreduce {already_initialize_init} <max> ins(%2 : memref<2x4912xi64, #hivm.address_space<ub>>) outs(%3 : memref<1x4912xi64, #hivm.address_space<ub>>) temp_buffer(%4 : memref<9824xi64, #hivm.address_space<ub>>) reduce_dims = [0]
 ```
 
-- Analysis:
+**Analysis**:
 
-    Line 1: The input data has a shape of 2×4912xi64, allocated in UB, with data sourced from GM.
+Line 1: The input data size is `2x4912xi64`, allocated in UB, with the data sourced from GM.
 
-    Line 2: The output data has a shape of 1×4912xi64, allocated in UB to store the computation result, which is finally written back to GM.
+Line 2: The output data size is `1x4912xi64`, allocated in UB to store the computation result, which is finally stored to GM.
 
-    Line 3: Allocate a UB buffer of size 9824xi64 as a temporary buffer for the vreduce operation.
+Line 3: A UB space of size `9824xi64` is allocated as the temporary node for the `vreduce` operation.
 
-    Line 4: For int64 inputs, the vreduce operation is later lowered to a loop-based scalar implementation, and the temp_buffer is removed.
+Line 4: For `int64` input, the `vreduce` operation is later lowered to a `loop scalar` operation, and the `temp_buffer` is removed.
 
-- Summary: The temp_buffer considered during the PlanMemory stage is not actually used in the final computation, which leads to a false-positive UB overflow. The temporary buffer allocation rule should be adjusted in the pre-PlanMemory allocation step.
+**Summary**:
 
-## D-cache
+The `temp_buffer` considered during PlanMemory is not used in the final computation, which causes a false `ub overflow` report. The temporary node allocation rule needs to be modified in the step of allocating `temp_buffer` before PlanMemory.
 
-### Invalid address access
+### D-cache Category
 
-- **Symptom**: Inputs are valid and on the same device ID, but the kernel's device ID is set incorrectly, so data cannot be read and D-cache read/write errors occur.
-- **Example**:
-Wrong:
+#### Invalid Address Access
+
+**Symptom**:
+
+The operator inputs are valid and all belong to the same `deviceID`, but the actual `deviceID` of the operator is set incorrectly, causing the data to be inaccessible and resulting in D-cache read/write errors.
+
+**Code example**:
+
+Incorrect example:
 
 ```python
 A=torch.empty(shape, dtype)
 ```
 
-Correct:
+Correct example:
 
 ```python
 A=torch.empty(shape, dtype).npu()
-or
+```
+
+Or:
+
+```python
 DEVICE="npu:0"
 A=torch.empty(shape, dtype, device=DEVICE).npu()
 ```
 
-### Use non-negative loop iter as memory index
+#### Using a Non-negative Iter Arg as the Memory Access Index
 
-- **Symptom**: The compiler analyzes and optimizes memory access; if the index involves complex control flow (e.g. loop indices causing out-of-bounds access), the compiler may not fully handle it. Prefer using non-negative for-loop iteration arguments as memory indices. 
-- **Example**:
-Take the GDN network's `causal_conv1d_fwd_kernel` as an example. The value of `i_w` in the source code may be negative.
-Wrong:
+**Symptom**:
+
+Because the compilation process analyzes memory access operations and optimizes the compilation result, if the index of a memory access operation involves complex control flow (such as out-of-bounds access introduced by a `for` loop index), the compiler may not be able to fully cover it at present. Therefore, it is recommended to use a non-negative `for` loop `iter` parameter as the memory access index.
+
+**Code example**:
+
+Taking the `causal_conv1d_fwd_kernel` of the GDN network as an example, `i_w` in the source code may be a negative number.
+
+Incorrect example:
 
 ```python
 for i_w in tl.static_range(-W+1, 1):
     p_yi = tl.make_block_ptr(x + bos * D, (T, D), (D, 1), (i_t * BT + i_w, i_d * BD), (BT, BD), (1, 0))
 ```
 
-Correct:
+Correct example:
 
 ```python
 for i_w in tl.static_range(W):
     p_yi = tl.make_block_ptr(x + bos * D, (T, D), (D, 1), (i_t * BT + i_w - W + 1, i_d * BD), (BT, BD), (1, 0))
 ```
 
-## Memory access
+### Memory Access
 
-### Implicit transpose in load
+#### Load Implicit Transpose
 
-- **Symptom**: Implicit transpose means the load or store performs a transpose in one go, avoiding a separate transpose kernel or explicit data reorder.
-It is usually done by adjusting pointer shape and strides so that the access pattern swaps dimensions.
-This technique can save global memory bandwidth, reduce kernel launch overhead, and improve computational efficiency.
+**Symptom**:
 
-You can use `tl.make_block_ptr(base, shape, strides, offsets, block_shape, order)` to achieve this,
-with `order` specifying the iteration order of the elements in the memory, or `strides` specifying the transposed strides. 
-For a matrix transpose with input A (M, K) and output B (K, M), each block can process a block of B 
-and load the corresponding transposed block from A (e.g. with swapped strides). You can use `make_block_ptr` to load from A, but set the strides to those that result in a transposed load.
-Alternatively, load a normal block of A and use `tl.trans` before storing to B.
+"Implicit transpose" refers to completing the matrix transpose operation while loading or storing data, avoiding a separate transpose kernel or additional explicit data rearrangement. It is typically implemented by adjusting the strides and shapes of pointers, so that the memory access pattern implicitly performs the dimension swap. This technique can save global memory bandwidth, reduce kernel launch overhead, and improve computational efficiency.
+
+`tl.make_block_ptr(base, shape, strides, offsets, block_shape, order)`
+
+The `order` parameter specifies the iteration order of elements in memory and can be used to implement transposition. Alternatively, the `strides` parameter can be set to indicate the transposed strides. In practice, for matrix transposition, if we have an input matrix `A (M, K)` and an output matrix `B (K, M)`, we can let each thread block process a block of `B` and load the corresponding transposed block from `A`. When loading, `make_block_ptr` can be used to load from `A`, but with strides set to cause transposed loading. Or, more commonly, a normal `A` block is loaded, then transposed using `tl.trans` before being stored to `B`.
 
 ```python
 import torch
@@ -361,16 +370,16 @@ def transpose_kernel(
 ):
     """
     Matrix transpose kernel: Y = X^T, where X has shape (M, N) and Y has shape (N, M).
-    Each program block processes a (BLOCK_N, BLOCK_M) tile of Y.
-    Implicit transposed loading is achieved by swapping the strides of the input pointer.
+    Each program block processes a (BLOCK_N, BLOCK_M) sub-block of Y.
+    Implement implicit transposed loading by swapping the strides of the input pointers.
     """
-    pid_n = tl.program_id(0) # Row block index of output matrix (original column block)
-    pid_m = tl.program_id(1) # Column block index of output matrix (original row block) 
+    pid_n = tl.program_id(0)  # Row block index of the output matrix (original column block).
+    pid_m = tl.program_id(1)  # Column block index of the output matrix (original row block).
 
-    bn = pid_n * BLOCK_N # Row start of output = Original column start
-    bm = pid_m * BLOCK_M # Column start of output = Original row start
+    bn = pid_n * BLOCK_N  # Row start of the output matrix = original column start.
+    bm = pid_m * BLOCK_M  # Column start of the output matrix = original row start.
 
-    # Build input pointer: use swapped strides, shape (N, M) to match transposed access
+    # Build the input pointer: use swapped strides with shape (N, M) to match transposed access.
     x_ptr_t = tl.make_block_ptr(
         base=x_ptr,
         shape=(N, M),
@@ -380,7 +389,7 @@ def transpose_kernel(
         order=(1, 0)
     )
 
-    # Build output pointer: normal row-major strides, shape (N, M)
+    # Build the output pointer: normal row-major strides with shape (N, M).
     y_ptr_b = tl.make_block_ptr(
         base=y_ptr,
         shape=(N, M),
@@ -390,20 +399,20 @@ def transpose_kernel(
         order=(1, 0)
     )
 
-    # Load input tile (already implicitly transposed), with boundary checks
+    # Load the input block (implicitly transposed), with boundary checks to prevent out-of-bounds access.
     x_tile = tl.load(x_ptr_t, boundary_check=(0, 1))
 
-    # Store to output matrix
+    # Store to the output matrix.
     tl.store(y_ptr_b, x_tile, boundary_check=(0, 1))
 
 
 def transpose(x, y=None, BLOCK_M=64, BLOCK_N=32):
     """
-    Compute matrix transpose using Triton kernel.
+    Compute the matrix transpose using a Triton kernel.
     Args:
         x: torch.Tensor of shape (M, N)
-        y: optional output tensor of shape (N, M); if None, it will be automatically created.
-        BLOCK_M: block size (along the M dimension)
+        y: Optional output tensor of shape (N, M); created automatically if None.
+        BLOCK_M: block size (along the M dimension).
         BLOCK_N: block size (along the N dimension)
     Returns:
         y: transposed tensor
@@ -412,12 +421,12 @@ def transpose(x, y=None, BLOCK_M=64, BLOCK_N=32):
     if y is None:
         y = torch.empty(N, M, dtype=x.dtype, device=x.device)
     else:
-        assert y.shape == (N, M), f"y should have shape ({N}, {M}), but got {y.shape}"
+        assert y.shape == (N, M), f"y's shape should be ({N}, {M}), but got {y.shape}"
 
     # Compute the grid size.
     grid = (triton.cdiv(N, BLOCK_N), triton.cdiv(M, BLOCK_M))
 
-    # Launch the kernel.
+    # Invoke the kernel.
     transpose_kernel[grid](
         x, y,
         M, N,
@@ -430,105 +439,110 @@ def transpose(x, y=None, BLOCK_M=64, BLOCK_N=32):
 # Create a random matrix.
 x = torch.randn(512, 1024, device='npu')
 
-# Call the transpose function.
+# Invoke the transpose function.
 y = transpose(x)
 ```
 
-If no error is reported, the execution is successful.
+The execution completes without errors, which indicates that the run is successful.
 
-### Use mayDiscretememaccess to avoid UB overflow
+#### Using **mayDiscretememaccess** to Avoid UB Overflow
 
-- **Symptom**: The causes of UB overflow vary. Apart from the tensor data type being too large, exceeding the 192 KB UB limit, another possible reason is non-contiguous memory access leading to axis expansion within the UB. Taking the `<Nx1xf32>` data type as an example, because the hardware requires 32-byte alignment for the last axis, and `1xf32` is only 4 bytes in size, the actual size of `<Nx1xf32>` on the hardware is expanded to `<Nx8xf32>` to ensure 32-byte alignment. Regardless of the cause of UB overflow, adding the `mayDiscretememaccess` compile hint can degrade tensor operations to scalar operations, thereby avoiding UB overflow.
-- **Example**:
-When rewriting operators, simply add the `compile_hint` to the data involved in load/store operations. Refer to the following code snippet: 
-For versions prior to triton-ascend 3.2.0:
+**Symptom**:
+
+The causes of UB overflow vary. In addition to the tensor data type itself being too large, which causes it to exceed the 192 KB UB limit, another possible cause is that non-contiguous data movement leads to axis expansion within the UB. Taking the `<Nx1xf32>` data type as an example, because the hardware requires 32B alignment on the last axis while `1xf32` is only 4B in size, the actual size of `<Nx1xf32>` on the hardware is expanded to `<Nx8xf32>` to ensure 32B alignment. Regardless of the cause of UB overflow, it can be avoided by adding the `mayDiscretememaccess` compilation hint, which degrades tensor operations into scalar operations.
+
+**Code example**:
+
+When rewriting the operator, you only need to add `compile_hint` to the data of the `load`/`store` operation. Refer to the following code snippet:
+
+For versions earlier than `triton-ascend 3.2.0`:
 
 ```python
-# For load operations, compile_hint should be added to the loaded value.
+# If this is a load operation, add compile_hint to the loaded value.
 value = tl.load(pointer)
 tl.compile_hint(value, "mayDiscretememaccess")
 
-# For store operations, compile_hint should be added to the value being stored.
+# If this is a store operation, add compile_hint to the value being stored.
 tl.compile_hint(value, "mayDiscretememaccess")
 tl.store(pointer, value)
 ```
 
-For versions after triton-ascend 3.4.0, the following modification is required:
+For versions later than `triton-ascend 3.4.0`, change it to:
 
 ```python
-# For load operations, compile_hint should be added to the loaded value.
+# If this is a load operation, add compile_hint to the loaded value.
 value = tl.load(pointer)
 tl.extra.cann.extension.compile_hint(value, "mayDiscretememaccess")
 
-# For store operations, compile_hint should be added to the value being stored.
+# If this is a store operation, add the compile_hint to the value being stored.
 tl.extra.cann.extension.compile_hint(value, "mayDiscretememaccess")
 tl.store(pointer, value)
 ```
 
-- **Example 1**
+- **Code example 1**:
 
-```python
-b_x = tl.load(x + o_t * D + o_d[:, None], mask=(m_t & m_d[:, None]), other=0)
-```
+    ```python
+    b_x = tl.load(x + o_t * D + o_d[:, None], mask=(m_t & m_d[:, None]), other=0)
+    ```
 
-By adding a compile hint, tensor memory access is degraded to scalar memory access to avoid UB overflow. Refer to the following code snippet:
+    By adding a compilation hint, tensor memory access is degraded to scalar memory access, thereby avoiding UB overflow. Refer to the following code snippet:
 
-```python
-b_x = tl.load(x + o_t * D + o_d[:, None], mask=(m_t & m_d[:, None]), other=0)
-tl.extra.cann.extension.compile_hint(b_x, "mayDiscretememaccess")
-```
+    ```python
+    b_x = tl.load(x + o_t * D + o_d[:, None], mask=(m_t & m_d[:, None]), other=0)
+    tl.extra.cann.extension.compile_hint(b_x, "mayDiscretememaccess")
+    ```
 
-- **Example 2**
+- **Code example 2**:
 
-```diff
-import triton
-import triton.language as tl
-+ import triton.language.extra.cann.extension as extension
+    ```diff
+    import triton
+    import triton.language as tl
+    + import triton.language.extra.cann.extension as extension
+    
+    @triton.jit
+    def copy_column_major_to_row_major(
+        A_ptr, B_ptr,
+        M, N,
+        BLOCK_SIZE_M: tl.constexpr, BLOCK_SIZE_N: tl.constexpr,
+    ):
+        # Obtain the program ID.
+        pid_m = tl.program_id(0)
+        pid_n = tl.program_id(1)
+    
+        # Compute the block start position.
+        start_m = pid_m * BLOCK_SIZE_M
+        start_n = pid_n * BLOCK_SIZE_N
+    
+        # Create the block pointer of A (column-major: strides=(1, M)). The last dimension is non-contiguous, so it is automatically expanded.
+        A_block_ptr = tl.make_block_ptr(
+            base=A_ptr,
+            shape=(M, N),
+            strides=(1, M),
+            offsets=(start_m, start_n),
+            block_shape=(BLOCK_SIZE_M, BLOCK_SIZE_N),
+            order=(0, 1),  # The innermost dimension is the row (index 0) because of column-major order.
+        )
+    
+        # Create the block pointer of B (row-major: strides=(N, 1)).
+        B_block_ptr = tl.make_block_ptr(
+            base=B_ptr,
+            shape=(M, N),
+            strides=(N, 1),
+            offsets=(start_m, start_n),
+            block_shape=(BLOCK_SIZE_M, BLOCK_SIZE_N),
+            order=(1, 0),  # The innermost dimension is the column (index 1) because of row-major order.
+        )
+    
+        # Load the block of A and perform boundary check (fill 0 for out-of-range parts).
+        a = tl.load(A_block_ptr, boundary_check=(0, 1))
+    +   # npu
+    +   extension.compile_hint(a, "mayDiscretememaccess")
+    
+        # Store to B.
+        tl.store(B_block_ptr, a, boundary_check=(0, 1))
+    ```
 
-@triton.jit
-def copy_column_major_to_row_major(
-    A_ptr, B_ptr,
-    M, N,
-    BLOCK_SIZE_M: tl.constexpr, BLOCK_SIZE_N: tl.constexpr,
-):
-    # Obtain program IDs
-    pid_m = tl.program_id(0)
-    pid_n = tl.program_id(1)
-
-    # Compute block start positions
-    start_m = pid_m * BLOCK_SIZE_M
-    start_n = pid_n * BLOCK_SIZE_N
-
-    # Create block pointer for A (column-major: strides=(1, M)). The last dimension is non-contiguous, automatically expanded.
-    A_block_ptr = tl.make_block_ptr(
-        base=A_ptr,
-        shape=(M, N),
-        strides=(1, M),
-        offsets=(start_m, start_n),
-        block_shape=(BLOCK_SIZE_M, BLOCK_SIZE_N),
-        order=(0, 1), # Innermost dimension is row (index 0) because of column-major.
-    )
-
-    # Create block pointer for B (row-major: strides=(N, 1))
-    B_block_ptr = tl.make_block_ptr(
-        base=B_ptr,
-        shape=(M, N),
-        strides=(N, 1),
-        offsets=(start_m, start_n),
-        block_shape=(BLOCK_SIZE_M, BLOCK_SIZE_N),
-        order=(1, 0), # Innermost dimension is column (index 1) because of row-major.
-    )
-
-    # Load blocks from A with bound checks (with out-of-bound positions being filled with 0)
-    a = tl.load(A_block_ptr, boundary_check=(0, 1))
-+   # npu
-+   extension.compile_hint(a, "mayDiscretememaccess")
-
-    # Store to B
-    tl.store(B_block_ptr, a, boundary_check=(0, 1))
-```
-
-- **Comparison of IR before and after using compile hint in Example 2**
+**IR comparison of Example 2 before and after using `compile hint`**:
 
 ```mlir
 // before using tl.compile_hint(a, "mayDiscretememaccess")
@@ -669,51 +683,49 @@ module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
     return
   }
 }
-
 ```
 
-## Scenario-based Debugging
+## Scenario-Based Debugging Examples
 
-This section gives guidance on Triton NPU kernel performance tuning.
+This section introduces the performance optimization guide for Triton NPU operators.
 
-### Use bitwise_mask for Mask Memory
+### Using bitwise_mask to Optimize Memory Access Masks
 
-#### Symptom
+**Problem description**:
 
-On Ascend, boolean (i1) tensors are stored in GM as i8 (one byte). Triton Ascend loads i1 as i8; 
-when the value is used as a condition mask (e.g. in `tl.where`), it may be converted back to i1, causing extra conversions and overhead.
+On Ascend hardware, tensors of the Boolean type (`i1`) are actually stored as `i8` (one byte) in global memory (GM). When Triton Ascend processes operations that take an `i1` tensor as input, it loads the `i1` as `i8`; however, in certain cases (for example, when used as the condition mask of `tl.where`), the result must be converted back to `i1`, causing unnecessary type conversions and performance loss.
 
-The `compile_hint("bitwise_mask")` tells the compiler to treat the tensor as a bitmask and use bitwise ops, avoiding conversions.
+To address this issue, `compile_hint: "bitwise_mask"` is provided. With this hint, the compiler can recognize that the `i1` tensor is used as a bitmask and thus perform bitwise operations directly, avoiding intermediate type conversions and improving performance.
 
-To use this hint, simply add `compile_hint("bitwise_mask")` to the result of `where`. Refer to the following code snippet:
+To use it, simply add `compile_hint("bitwise_mask")` to the result of `where`, as shown in the following code snippet:
 
 ```python
 mask = tl.where(cond, value1, value2)
 tl.compile_hint(cond, "bitwise_mask")
 ```
 
-Note that since the mask is expressed as a bitmask, the mask pointer offsets must be correctly computed.
+Note that because `mask` is expressed in the form of a `bitmask`, the corresponding `mask` pointer offset must also be computed correctly.
 
 ![image](../../images/user_guide/best_practice1.png)
 
 ![image](../../images/user_guide/best_practice2.png)
 
-```{note}
-When using compile_hint, pay attention to the triton-ascend version.
+> **Description**:
+>
+> When using `compile_hint`, pay attention to the local `TA` version.
+>
+> Versions before `triton-ascend 3.2.0`: `tl.compile_hint(cond, "bitwise_mask")`
+>
+> Versions after `triton-ascend 3.4.0` need to be changed to: `tl.extra.cann.extension.compile_hint(cond, "bitwise_mask")`
+>
+> The `bitmask` feature is available only in versions after `cann9.0`; therefore, a version after `cann.9.0` must be downloaded.
 
-Before triton-ascend 3.2.0: tl.compile_hint(cond, "bitwise_mask")
+**Operator example**:
 
-After triton-ascend 3.4.0: tl.extra.cann.extension.compile_hint(cond, "bitwise_mask")
+Rewrite it by referring to the [Ascend where operator](https://gitcode.com/Ascend/triton-ascend/blob/master/ascend/examples/pytest_ut/test_where_lt.py). If you need to pass the `i8` mask of `bitwise` as an operator input parameter, simply add `compile_hint` to the result of `tl.where`.
 
-The bitmask feature is available only in versions after CANN 9.0.
-```
+For the dependent code script, download it from the link and place it in the same directory as the test script, then run `python3 test_bitmask.py`.
 
-#### Example
-
-Rewrite the code by referring to [Ascend where kernel](https://gitcode.com/Ascend/triton-ascend/blob/master/ascend/examples/pytest_ut/test_where_lt.py).
-For i8 bitwise mask input, add `compile_hint` to the result of `tl.where`:
-
-Download the dependency script from the link below, place it in the same directory as the test script, and run `python3 test_bitmask.py`.
 [triton testcommon script](https://gitcode.com/Ascend/triton-ascend/blob/master/ascend/examples/pytest_ut/test_common.py)
 
 ```python
@@ -758,13 +770,21 @@ def test_where_lt_case1():
 test_where_lt_case1()
 ```
 
-If no error is reported, the execution is successful.
+If the execution completes without errors, the run is considered successful.
 
-#### Tiling
+**Tiling logic**:
 
-The bitmask is highly related to the tiling logic, and the kernel itself has different tiling logic under different scenarios, including but not limited to (1) enabling 1:2 optimization, (2) tensor axes fusion, (3) broadcast, (4) unsupported data types in hardware, (5) non-1 grid triton kernel, etc. Since the tiling logic varies across scenarios, we have a generalized example of creating a benchmark mask (deriving an i1 benchmark mask from an i8 bitmask) for your reference. This mask creation logic does not consider specific scenarios; it is derived from the errors in the bitmask results.
+`bitmask` is bound to the tiling logic. The operator itself has different tiling logic in different scenarios, mainly covering the following scenarios:
 
-Let's say this is the original mask creation logic:
+- Enabling the 1:2 performance optimization in CV scenarios
+- Axis fusion
+- The `broadcast` scenario
+- Data types not supported by hardware
+- Triton operators with a non-1 grid tiling input
+
+Because the scenario-specific tiling logic is not unified, a generalized group `mask` example is provided here: an `i1` benchmark `mask` is composed through an `i8 bitmask`. This group `mask` logic does not consider the scenario; instead, it is derived from the error of the `bitmask` result.
+
+Assume that the following is the original group `mask` logic:
 
 ```python
 for i in range(numel // 8):
@@ -773,13 +793,13 @@ for i in range(numel // 8):
         flatten_cond_i1[..., i*8 + bit] = (byte_value & (1 << bit)) != 0
 ```
 
-Assume that in a specific scenario, when the shape is (2, X, X, X), the vimdiff result is:
+Assume that in a certain scenario, when the shape is `(2, X, X, X)`, the vimdiff result is:
 ![image](../../images/user_guide/bitmask1.png)
 
-In the same scenario, when the shape is (3, X, X, X), the vimdiff result is:
+In the same scenario, when the shape is `(3, X, X, X)`, the vimdiff result is:
 ![image](../../images/user_guide/bitmask2.png)
 
-From this it can be seen that, when the shape is (A, X, X, X), the tiling logic in the preceding scenario is processed according to the first axis (i.e., `A`). The incorrect mask creation results in only the first tile along the first axis having aligned accuracy, while the remaining `(A-1)/A` of the data has deviations. Therefore, the benchmark mask creation logic for accuracy verification needs to take A into account, as shown in the following code:
+From this, it can be perceived that when the shape is `(A, X, X, X)`, the tiling logic of the above scenario processes along the first axis (that is, `A`). The incorrect group `mask` logic causes only the first tiling of the first axis to achieve precision alignment, while the remaining `(A-1)/A` of the data is biased. Therefore, the benchmark group `mask` logic for precision verification needs to take `A` into account, as shown in the following code:
 
 ```python
 for sub_A in range(A):
@@ -791,9 +811,9 @@ for sub_A in range(A):
             flatten_cond_i1[..., offset_sub_A + i*8 + bit] = (byte_value & (1 << bit)) != 0
 ```
 
-Through the above mask creation example, the bitmask function can be correctly implemented using a highly generalized approach.
+Through the best practice described above, the `bitmask` feature can be correctly implemented in a highly generalized manner.
 
-In addition, the following provides the logic for multi-tiling mask creation for reference:
+In addition, the following provides the logic for multiple tiling for reference:
 
 ```python
 # test_bitmask_tile.py
@@ -904,28 +924,118 @@ def test_where_lt_case1(param_list):
     test_common.validate_cmp(dtype, y_cal, y_ref)
 ```
 
-#### Limit
+> **Note**:
+>
+> Because the Triton frontend converts `i1` to `i8`, performing a `bitwise_mask` operation on other types such as `i16`/`i32` would instead incur performance loss. Therefore, this feature supports only `i8`-type `mask`.
 
-- The Triton frontend will convert i1 to i8. Using bitwise_mask on other types (e.g. i16/i32) can hurt performance, so this feature is limited to i8.
+### Using Manual Alignment to Improve Compiler Optimization Efficiency in Tail-Axis Misalignment Scenarios
 
-## CV
+**Problem description**:
 
-### Using hivm.tile_mix_cube_num to avoid L1 overflow
+In Triton operator development, when the tail-axis dimension of a tensor is small (for example, 4) and is not aligned to the hardware-recommended 32 bytes (corresponding to 8 `float32` elements), the compiler backend often struggles to generate optimal contiguous memory access and vectorization instructions for such misaligned shapes, preventing full performance from being achieved. To obtain better compiler optimization results, developers are recommended to explicitly align the tail-axis dimension of the data to an appropriate width in the frontend kernel through manual padding or mask loading, thereby providing the compiler with an alignment-friendly data layout. This simplifies the backend optimization decisions and significantly improves execution efficiency.
 
-#### Symptom
+**Operator example**:
 
-The compiler currently analyzes tiling for a single matmul and does not consider the lifetime of other matmuls. When matmuls are triggered multiple times (e.g. `cube -> vector -> cube`), overlapping lifetimes can cause L1 overflow at runtime. Until lifetime analysis is improved, use the `hivm.tile_mix_cube_num` compile hint so the compiler can apply sub-tiling to the relevant matmul.
+The following shows two kernel implementations with a tail axis of 4: Version 1 directly uses 4 as the tail-axis dimension without alignment handling, resulting in poor performance; Version 2 aligns the tail-axis dimension to 8 through `mask` loading, which is the recommended optimization approach.
 
-#### Example
+- Version 1: Tail axis not aligned (with an optimization bottleneck)
 
-When rewriting operators, simply add the `hivm.tile_mix_cube_num` compile hint to the dot op result. See the following code snippet:
+    ```python
+    @triton.jit
+    def kernel(in_ptr, out_ptr, batch_size,
+                D: tl.constexpr, iters: tl.constexpr,
+                eps: tl.constexpr, group: tl.constexpr):
+        lin = tl.arange(0, D * D)
+        pid0 = tl.program_id(0) * group
+        pids = pid0 + tl.arange(0, group)
+        mask = pids < batch_size
+        off = pids[:, None] * (D * D)
+
+        # Load the D×D matrix directly without alignment padding.
+        mat = tl.load(in_ptr + off + lin[None, :], mask=mask[:, None])
+        mat = mat.reshape(group, D, D)
+
+        row_max = tl.max(mat, axis=2)
+        mat = tl.exp(mat - row_max[:, :, None])
+        for _ in range(iters):
+            row_sum = tl.sum(mat, axis=2)
+            mat = mat / (row_sum[:, :, None] + eps)
+            col_sum = tl.sum(mat, axis=1)
+            mat = mat / (col_sum[:, None, :] + eps)
+
+        mat_flat = tl.reshape(mat, (group, D * D))
+        tl.store(out_ptr + off + lin[None, :], mat_flat, mask=mask[:, None])
+    ```
+
+- Version 2: Manual alignment (recommended)
+
+    ```python
+    @triton.jit
+    def kernel_opt(in_ptr, out_ptr, batch_size,
+                    D: tl.constexpr, iters: tl.constexpr,
+                    eps: tl.constexpr, group: tl.constexpr,
+                    ALIGN: tl.constexpr = 8):
+        pid0 = tl.program_id(0) * group
+        pids = pid0 + tl.arange(0, group)
+        p_mask = pids < batch_size
+    
+        # Load ALIGN elements at a time based on the original D×D shape.
+        off_base = pids[:, None, None] * (D * D)
+        row_idx = tl.arange(0, D)[:, None]
+        col_idx = tl.arange(0, ALIGN)[None, :]
+        offs = row_idx * D + col_idx
+        valid_cols = col_idx < D
+    
+        # Fill invalid columns with -inf through the mask to implement manual alignment.
+        # Shape (group, D, ALIGN).
+        mat = tl.load(
+            in_ptr + off_base + offs[None, :, :],
+            mask=p_mask[:, None, None] & valid_cols[None, :, :],
+            other=float('-inf')
+        )
+    
+        # Normalization computation (invalid columns become 0 after exp, which does not affect the result).
+        row_max = tl.max(mat, axis=2)
+        mat = tl.exp(mat - row_max[:, :, None])
+        for _ in range(iters):
+            row_sum = tl.sum(mat, axis=2)
+            mat = mat / (row_sum[:, :, None] + eps)
+            col_sum = tl.sum(mat, axis=1)
+            mat = mat / (col_sum[:, None, :] + eps)
+    
+        # Write back with the width aligned to ALIGN.
+        out_flat = tl.reshape(mat, (group, D * ALIGN))
+        tl.store(out_ptr + pids[:, None] * (D * ALIGN)
+                + tl.arange(0, D * ALIGN)[None, :],
+                out_flat, mask=p_mask[:, None])
+    ```
+
+    In version 2, by manually aligning the last-axis dimension to 8, the compiler can directly leverage contiguous, aligned memory access patterns to generate efficient instructions, avoiding the additional processing overhead that may be introduced by last-axis misalignment, thereby improving overall performance.
+
+    > **Note**:
+    >
+    > - Manual alignment requires **ALIGN** to be a compile-time constant and equal to the alignment width recommended by the hardware.
+    >
+    > - The padding value (such as `-inf`) must be compatible with subsequent computations to ensure that it does not affect the final result (for example, `exp(-inf) = 0`).
+
+### CV Category
+
+#### Using hivm.tile_mix_cube_num to Avoid L1 Out-of-Bounds
+
+**Problem description**:
+
+Because the compiler currently can only perform tiling requirement analysis on a single `matmul` and does not consider the lifecycle of other `matmul` operations, when `matmul` is triggered multiple times (for example, when the execution logic is `cube -> vector -> cube`), if the lifecycle of the previous `matmul` overlaps with that of the current `matmul`, the operator may cause L1 out-of-bounds at runtime. The compiler will enhance the lifecycle analysis of tiling in the future. Currently, the `hivm.tile_mix_cube_num` compilation hint must be added so that the compiler can perceive whether sub tiling is required for the related `matmul` operations.
+
+**Operator example**:
+
+When rewriting the operator, you only need to add the `hivm.tile_mix_cube_num` compilation hint to the result of the `dot` operation. Refer to the following code snippet:
 
 ```python
 res = tl.dot(lhs, rhs)
 tl.compile_hint(res, "hivm.tile_mix_cube_num", 2)
 ```
 
-Take the `_attn_fwd_inner` operator of Flash Attention as an example. The logic for QKV matrix multiplication in the original code is roughly as follows:
+Taking the `_attn_fwd_inner` operator of Flash Attention as an example, the `QKV` matrix multiplication logic of the original code is roughly as follows:
 
 ```python
 qk = tl.dot(q, trans_k)
@@ -935,7 +1045,7 @@ p = tl.math.exp(qk)
 pv = tl.dot(p, v)
 ```
 
-Referring to the preceding code, `qk` is a cube operation, while computations such as softmax are vector operations. The results computed by the vector operations are then fed into a second cube operation to perform matrix multiplication. In this scenario, the compiler cannot monitor the tiling logic within the second cube operation, and the code may cause out-of-bounds access in the L1 cache. Therefore, it is necessary to add a `tile_mix_cube_num` compile hint to the result of the second dot operation, instructing the compiler to perform sub-tiling on this operation, as shown in the following code snippet:
+Referring to the code above, `qk` is a `cube` operation, while computations such as `softmax` belong to `vector` operations. Finally, the result computed by the `vector` operation is fed into the second `cube` operation to perform matrix multiplication. In the above scenario, the compiler cannot monitor the tiling logic in the second `cube` operation, and the code may go out of bounds in the L1 cache. Therefore, the `tile_mix_cube_num` compilation hint must be added to the result of the second `dot` operation so that the compiler performs sub tiling on that operation. See the following code snippet:
 
 ```python
 qk = tl.dot(q, trans_k)
@@ -946,36 +1056,36 @@ pv = tl.dot(p, v)
 tl.compile_hint(pv, "hivm.tile_mix_cube_num", 2)
 ```
 
-### Compile Options (Reference)
+**Compilation optimization option reference**:
 
-| Option| Meaning| Value Range|
+| Compilation option | Meaning | Value range |
 | --- | --- | --- |
-| multibuffer | Controls whether to enable ping-pong pipeline.| False (default), True|
-| limit_auto_multi_buffer_of_local_buffer | Scope of ping-pong on-chip (L1, L0, UB). "no-limit" = no restriction; "no-l0c" = only outside L0 cache| "no-limit", "no-l0c" (default)|
-| unit_flag | Cube output by block (alignment scenarios only)| False (default), True|
-| limit_auto_multi_buffer_only_for_local_buffer | Controls whether to enable CV pipeline in GM workspace. False = enable. The API may change for more readable options.| False (default), True|
-| set_workspace_multibuffer | Sets the CV parallelism degree. This parameter takes effect only when `limit_auto_multi_buffer_only_for_local_buffer` is `False`. Ensure that there is no data dependency. N = N CV ops in parallel.| 2 (default), 4|
-| tile_mix_vector_loop | Sets the vector tile count. The value can be obtained through autotuning. This parameter takes effect only when `limit_auto_multi_buffer_only_for_local_buffer` is `False`.| 1 (default), 2, 4|
-| tile_mix_cube_loop | Sets the cube tile count. The value can be obtained through autotuning. This parameter takes effect only when `limit_auto_multi_buffer_only_for_local_buffer` is `False`.| 1 (default), 2, 4|
+| `multibuffer` | Sets whether to enable ping-pong pipelining. | `False` (default), `True` |
+| `limit_auto_multi_buffer_of_local_buffer` | Sets the scope of ping-pong pipelining within the tile (L1, L0, and UB). "no-limit" means no restriction on the ping-pong pipelining scope. "no-l0c" means ping-pong pipelining is enabled only outside the L0 cache. | "no-limit", "no-l0c" (default) |
+| `unit_flag` | Sets whether the `cube` is moved out by block, applicable only in data alignment scenarios. | `False` (default), `True` |
+| `limit_auto_multi_buffer_only_for_local_buffer` | Sets whether to enable CV pipeline parallelism in the GM workspace. `False` means enabled. The interface will be revised later to provide more readable options. | `False` (default), `True` |
+| `set_workspace_multibuffer` | Takes effect only when `limit_auto_multi_buffer_only_for_local_buffer=false`. Sets the parallelism of CV operations. When using it, ensure that the data has no dependencies. If set to `N`, `N` CV operations are executed in parallel. | 2 (default), 4 |
+| `tile_mix_vector_loop` | Takes effect only when `limit_auto_multi_buffer_only_for_local_buffer=false`. Sets the number of tiles for the current `vector`. The value can be obtained through `autotuning`; any of the listed values may be optimal. | 1 (default), 2, 4 |
+| `tile_mix_cube_loop` | Takes effect only when `limit_auto_multi_buffer_only_for_local_buffer=false`. Sets the number of tiles for the current `cube`. The value can be obtained through `autotuning`; any of the listed values may be optimal. | 1 (default), 2, 4 |
 
-### Kernel Options to Avoid Timeout Errors
+#### Workaround for Timeout Errors via Operator Options
 
-#### Symptom
+**Problem description**:
 
-Some hangs are related to hardware sync (intra-core, inter-core, or pipeline). You can try the following options when invoking the kernel to avoid hang:
+Some causes of operator hang are related to hardware synchronization, which may involve intra-core/inter-core synchronization or pipeline synchronization. If an operator hang occurs, you can try passing the following input parameters when invoking the kernel to modify the binary synchronization logic and work around the operator hang issue.
 
 ```python
-# Sync options
-inject_block_all = True # Enable inter-core sync
-inject_barrier_all = True # Enable intra-core sync
-# Pipeline options
-limit_auto_multi_buffer_only_for_local_buffer = True # Disable CV pipeline in GM
-multibuffer = False # Disable ping-pong pipeline
+# Core synchronization options.
+inject_block_all = True # Enable inter-core synchronization.
+inject_barrier_all = True # Enable intra-core synchronization.
+# Pipeline options.
+limit_auto_multi_buffer_only_for_local_buffer = True # Disable the (GM space) CV pipeline.
+multibuffer = False # Disable the ping-pong pipeline.
 ```
 
-#### Example
+**Operator example**:
 
-Take the `chunk_gated_delta_rule_fwd_kernel_h_blockdim64` operator in the GDN network as an example; the original code calls it as:
+Taking the `chunk_gated_delta_rule_fwd_kernel_h_blockdim64` operator of the GDN network as an example, the original code invocation is as follows:
 
 ```python
 chunk_gated_delta_rule_fwd_kernel_h_blockdim64[grid](
@@ -998,7 +1108,7 @@ chunk_gated_delta_rule_fwd_kernel_h_blockdim64[grid](
 )
 ```
 
-With the CV pipeline in GM disabled to avoid hang:
+After disabling the CV pipeline, the invocation becomes:
 
 ```python
 chunk_gated_delta_rule_fwd_kernel_h_blockdim64[grid](
@@ -1021,8 +1131,3 @@ chunk_gated_delta_rule_fwd_kernel_h_blockdim64[grid](
     limit_auto_multi_buffer_only_for_local_buffer = True,
 )
 ```
-
-## Triton NPU Programming Cases
-
-Triton NPU programming reference:
-[https://github.com/Ascend/triton-ascend-ops/blob/main/tutorial/README.zh.md](https://github.com/Ascend/triton-ascend-ops/blob/main/tutorial/README.zh.md)

@@ -2,75 +2,80 @@
 
 ## Background
 
-The **Auto Blockify** pass is essential for optimizing the execution of Ascend-compatible operators by efficiently mapping logical blocks to physical blocks in hardware. In our architecture efficient scheduling becomes crucial to performance, so when logical blocks are 1-to-1 mapped to the physical blocks, scheduling would not occur and scheduling time can be saved, resulting in the performance increase.
+The Auto Blockify Pass is a core optimization technique in the Ascend-compatible operator execution pipeline, achieved by efficiently mapping logical blocks to hardware physical blocks. Under the current architecture, scheduling efficiency directly determines operator performance, and a one-to-one mapping between logical blocks and physical blocks eliminates scheduling overhead, thereby improving performance.
 
-In our experience with AscendNPU IR architecture, the number of available physical blocks is often significantly lower than the number of logical blocks used in the computations (Physical is < 50, logical may be 500+). In these 10x scenarios the acceleration can be over double the original speed.
+In practice with the AscendNPU IR architecture, the number of available physical blocks is usually far smaller than the number of logical blocks required for computation (physical blocks < 50, while logical blocks may reach 500+). In such a scenario with a 10-fold gap, the acceleration can exceed twice the original speed.
 
-When running a triton kernel (with triton-ascend) **the way to activate the Auto Blockify logic** is to add the following flag: `TRITON_ALL_PARALLEL`
+When running Triton kernels (via triton-ascend), the Auto Blockify logic is activated by adding the following flag: `TRITON_ALL_PARALLEL`.
 
-For AscendNPU-IR user you can add the following flag to bishengir-compile command: `--enable-auto-blockify-loop`
+For AscendNPU IR developers, the following flag can be added to the `bishengir-compile` command: `--enable-auto-blockify-loop`.
 
-![image](../../../../images/developer_guide/AutoBlockify.jpg)
+![image](../../../images/developer_guide/AutoBlockify.jpg)
 
-## Algorithm Principle
+## SIMD Mode
 
-The Auto Blockify pass (full name: AutoBlockifyParallelLoop) transforms the IR by introducing an additional layer of looping. This is accomplished through the following logic:
+### Algorithm Principle
+
+The Auto Blockify Pass (**AutoBlockifyParallelLoop**) transforms the IR by introducing an additional loop layer. The specific logic is as follows:
 
 ```plaintext
 for outer from 0,...,ceildiv(logical_block_dim, physical_block_dim)
-    for inner from 0,...,physical_block_dim  <- get as block.idx
+    for inner from 0,...,physical_block_dim  <- Used as block.idx.
         use(min(outer * physical_block_dim + inner, logical_block_dim))
 ```
 
-### Logic Explanation
+**Logical description**:
 
-1. Original Scheduling​:
-    The original pattern typically resembles:
+1. Original scheduling
+
+    The original mode is typically as follows:
 
     ```plaintext
     block.idx = hivm.get_block_idx
     use(block.idx)
-    -------equivalent to--------------
+    -------Equivalent to--------------
     for block.idx from 0,...,logical_block_num
         use(block.idx)
     ```
 
-2. **Example usage with TRITON_ALL_PARALLEL​:**
+2. Example using `TRITON_ALL_PARALLEL`
 
-    When the user adds the TRITON_ALL_PARALLEL flag for triton adapter, the kernel will be launched limited to only the maximum of physical blocks (assuming logical num > physical num). Thus our execution is limited to:
+    When the user adds the `TRITON_ALL_PARALLEL` flag in the triton adapter, the kernel is restricted to launch with only the maximum number of physical blocks (assuming the number of logical blocks > the number of physical blocks). Therefore, execution is restricted to:
 
     ```plaintext
-    for block.idx from 0,...,physical_block_num   <- from get_block_idx
+    for block.idx from 0,...,physical_block_num   <- From get_block_idx
         use(block.idx)
     ```
 
-    This logic is incomplete if left alone (some indexes will be missing). This is where the auto blockify pass is needed to complete the logic by automatically adding an outer layer of looping/blockifying.
+    Relying solely on this loop logic cannot cover all computation indices, resulting in missing indices. This is also the reason for introducing the Auto Blockify Pass to complete the logic: it automatically adds an outer loop/blockification layer to fill the gap.
 
-    (Note: If the user is not going through triton adapter they will need to make sure the block dim is set similarly as the above)
+    > Note: If you do not integrate through the Triton Adapter, you must ensure that the block dimension settings are consistent with the above.
 
-3. **Final Logic with Auto Blockify​**:
+3. Final logic after using Auto Blockify
+
+    After the Auto Blockify Pass automatically completes the loop structure, the final execution logic is as follows:
 
     ```plaintext
     for outer from 0,...,ceildiv(logical_block_dim, physical_block_dim)
-        for inner from 0,...,physical_block_dim  <- get as block.idx
+        for inner from 0,...,physical_block_dim  <- used as block.idx
             use(min(outer * physical_block_dim + inner, logical_block_dim))
     ```
 
-### Interface description
+**Interface description**:
 
-This feature is controlled in bishengir-compile with the flag `--enable-auto-blockify-loop`. It can be called directly with bishengir-opt using flag `--auto-blockify-parallel-loop`
+This feature is controlled by the `--enable-auto-blockify-loop` flag in bishengir-compile, and can also be invoked directly through the `--auto-blockify-parallel-loop` flag of bishengir-opt.
 
 To use this feature correctly, note the following points:
 
-1. The way the pass gets the logical block num is by finding the value marked by the attribute `kLogicalBlockNumAttr` [in IR: logical_block_num] the user needs to make sure this value is available or the pass will fail when called.
+- The Pass obtains the number of logical blocks by looking up the value marked with the `kLogicalBlockNumAttr` attribute (`logical_block_num` in the IR). You must ensure that this value is available; otherwise, the Pass invocation will fail.
 
-2. The pass also expects to find a `hivm get_block_idx` operation. This is the operation that gives the block indexes from 0 up to block dim. **When using AutoBlockify** user needs to change the blockdim when calling the device kernel (launch with max physical block dim, same as seen in the algorithm above). This makes it so that the blockidx operation returns values from 0,....,`physical_block_num`.
+- The Pass also needs to find a `hivm get_block_idx` operation, which returns the block index from 0 to the block dimension. When using Auto Blockify, you need to modify the block dimension when invoking the device kernel (launching with the maximum physical block dimension, consistent with the algorithm above), so that the `blockidx` operation returns a value in the range from 0 to `physical_block_num`.
 
-#### Triton Adapter
+**Triton Adapter**:
 
-This pass has been used extensively with our triton adapter pipeline. The correct way to make use of AutoBlockify feature in this case is to enable it from the front end (triton) with `TRITON_ALL_PARALLEL=1` as this environment variable will also lay the foundation (lock the number of blocks) then automatically call the appropriate compiler command with the correct flags. In the triton pipeline there is a pass called `TritonGlobalKernelArgsToHIVMOpPass` which will automatically make sure there is value marked with `logical_block_num` and create the `get_block_idx` op needed.
+This pass has been widely used in the triton adapter pipeline. In this case, the correct way to use the AutoBlockify feature is to enable it from the frontend (triton) via `TRITON_ALL_PARALLEL=1`. This environment variable also completes the preparation work (locking the number of blocks), and then automatically invokes the corresponding compiler command with the correct flags. In the triton pipeline, there is a pass named `TritonGlobalKernelArgsToHIVMOpPass` that automatically ensures the existence of a value marked with `logical_block_num` and creates the required `get_block_idx` operation.
 
-Example input:
+Input example:
 
 ```mlir
 module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 20 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 20 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 40 : i32>, #dlti.dl_entry<"UB_SIZE", 1572864 : i32>, #dlti.dl_entry<"L1_SIZE", 4194304 : i32>, #dlti.dl_entry<"L0A_SIZE", 524288 : i32>, #dlti.dl_entry<"L0B_SIZE", 524288 : i32>, #dlti.dl_entry<"L0C_SIZE", 1048576 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L1_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L0C_ALIGN_SIZE", 4096 : i32>>>, hivm.module_core_type = #hivm.module_core_type<AIV>} {
@@ -81,7 +86,7 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
     hivm.hir.set_mask_norm
     %0 = arith.muli %arg6, %arg7 : i32
     %1 = arith.muli %0, %arg8 : i32
-    annotation.mark %1 {logical_block_num} : i32 // This logical_block_num is the original large number
+    annotation.mark %1 {logical_block_num} : i32 // This logical_block_num is the original large value.
     %2 = hivm.hir.get_block_idx -> i64   // for block.idx from 0,...,block_num
     %3 = arith.trunci %2 : i64 to i32
     %4 = arith.muli %arg8, %arg7 : i32
@@ -117,16 +122,16 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
 }
 ```
 
-Example output:
+Output example:
 
 ```mlir
 module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 20 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 20 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 40 : i32>, #dlti.dl_entry<"UB_SIZE", 1572864 : i32>, #dlti.dl_entry<"L1_SIZE", 4194304 : i32>, #dlti.dl_entry<"L0A_SIZE", 524288 : i32>, #dlti.dl_entry<"L0B_SIZE", 524288 : i32>, #dlti.dl_entry<"L0C_SIZE", 1048576 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L1_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L0C_ALIGN_SIZE", 4096 : i32>>>, hivm.module_core_type = #hivm.module_core_type<AIV>} {
   func.func @add_kernel(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf32> {tt.divisibility = 16 : i32}, %arg3: memref<?xf32> {tt.divisibility = 16 : i32}, %arg4: memref<?xf32> {tt.divisibility = 16 : i32}, %arg5: i32 {tt.divisibility = 16 : i32}, %arg6: i32, %arg7: i32, %arg8: i32) attributes {WorkspaceArgIdx = 0 : i64, func_dyn_memref_args = dense<[false, true, true, true, true, false, false, false, false]> : vector<9xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>} {
     %0 = arith.muli %arg6, %arg7 : i32
     %1 = arith.muli %0, %arg8 : i32
-    annotation.mark %1 {logical_block_num} : i32  // This logical_block_num is the original large number
+    annotation.mark %1 {logical_block_num} : i32  // This logical_block_num is the original large value.
     %c0_i32 = arith.constant 0 : i32
-    %c40_i32 = arith.constant 40 : i32 // 40 is physical block num here
+    %c40_i32 = arith.constant 40 : i32 // 40 is the number of physical blocks here.
     %2 = arith.ceildivsi %1, %c40_i32 : i32 // ceildiv(logical_block_num, physical_block_dim)
     %c1_i32 = arith.constant 1 : i32
     scf.for %arg9 = %c0_i32 to %2 step %c1_i32  : i32 { // Outer loop
@@ -175,10 +180,69 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
 }
 ```
 
-## Constraints
+### Constraints
 
-1. **Parallelizability​**:
-   The Auto Blockify algorithm is only applicable when the code is fully parallelizable. This means that the computations and accesses made by the logical blocks must be safe to run in parallel without dependencies between them.
+- **Parallelizability**: The **Auto Blockify** algorithm applies only to fully parallelizable code. This means that the computation and access of each logical block must be safely executable in parallel, with no dependencies between blocks.
 
-2. **Use Case**​:
-   If Logical block num is very small, then we do not get any advantage from this pass.
+- **Use scenario**: If the number of logical blocks is very small, this pass provides no benefit.
+
+## SIMT Mode
+
+Automatic blockification in SIMT mode is essentially the same as in SIMD mode in terms of functionality and usage. This document mainly describes the features specific to the SIMT path.
+
+### Algorithm Principle
+
+Similar to the SIMD mode, this scheduling automatically adds one loop layer and replaces the SIMT-version logical core ID instruction (`tt.get_program_id x/y/z`) with the logical core ID computed from the new loop IV and the physical core ID. The computation logic is as follows:
+
+```mlir
+Original kernel:
+   pid_x = tt.get_program_id x
+   pid_y = tt.get_program_id y
+   pid_z = tt.get_program_id z
+   <kernel body>
+
+After rewriting:
+   logical = grid_x * grid_y * grid_z // Compute logical_block_num.
+   chunk   = ceildiv(logical, physical_block_dim)
+   hw_idx  = gpu.linear_block_id // Inner loop (locked to the physical block).
+   start   = hw_idx * chunk // The first logical block processed by this physical block.
+   upper   = min(start + chunk, logical) // The last logical block processed by this physical block.
+   for iv in [start, upper) step 1:
+       pid_x = iv % grid_x // Compute the 3D logical core ID.
+       pid_y = (iv / grid_x) % grid_y
+       pid_z = iv / (grid_x * grid_y)
+       <kernel body, with the original tt.get_program_id instruction replaced by the pid_* resolved above>
+```
+
+**Interface description**:
+
+In SIMT mode, this feature is controlled by the `--enable-auto-blockify-loop` flag in bishengir-compile, and it can also be invoked directly through the `--simt-auto-blockify` flag of bishengir-opt.
+
+### Optional Performance Extension: Super-blocking
+
+In GPU SIMT programming, a small workload is often configured for a single kernel function, and a large number of logical cores are launched. In this scenario, the Vector core computing power is not fully utilized, and peak performance cannot be achieved. Based on automatic blockification, this extension processes several adjacent logical cores in parallel on one physical core to improve computing power utilization.
+
+**Interface description**:
+
+This feature is controlled by the `--super-block-factor=N` flag in bishengir-compile, where `N` represents the number of logical cores to be processed in parallel. The default value is 1, which disables super-blocking and performs only conventional automatic blockification. It can also be invoked directly through the pass option `-simt-auto-blockify="superblock-factor=N` of bishengir-opt.
+
+**Logic description**:
+
+The step of the loop introduced by conventional automatic blockification is changed to `N`, indicating that `N` adjacent logical blocks are processed simultaneously. If the original function launches `W` warps per logical block, the scheduled function launches `NxW` warps and calculates the new logical core ID based on the warp ID. The calculation logic is as follows:
+
+```mlir
+for iv in [start, upper) step N:
+    warp_id = thread_id_x / 32 // Calculate the warp ID.
+    local   = warp_id % N // Calculate the ID of the logical core processed in parallel within the core.
+    linear  = iv + local // Calculate the one-dimensional logical core ID.
+    if linear < upper: // Ensure that the logical core ID does not go out of bounds.
+      <kernel body, compute the 3D logical core ID using linear and replace the original tt.get_program_id>
+```
+
+### Constraints
+
+- **Number of warps**: Ascend supports a maximum of 64 warps, so the value of `NxW` must be less than or equal to 64.
+
+- **Shared memory**: After super-blocking is enabled, the `N` parallel logical cores divide the shared memory of the physical core into `N` equal parts. Pay attention to the memory usage of each logical core to avoid overflow.
+
+- **Use cases**: If the number of logical blocks is very small, this pass provides no benefit. If the workload of each logical core is large, the performance gain of the super-blocking feature is limited.
