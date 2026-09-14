@@ -21,6 +21,7 @@ if(BISHENGIR_ENABLE_TRITON_COMPILE)
     SIMTAutoBlockify.cpp
     SIMTFastDiv.cpp
     LoopRestructureArangeOptimization.cpp
+    LowerRemainingTensorDialect.cpp
     EnableAscendDPXMMA.cpp
     LowerDotBuffersAndSharedMem.cpp
     FlattenMemDescArgs.cpp

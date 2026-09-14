@@ -366,6 +366,21 @@ def LowerDotBuffersAndSharedMem
   ];
 }
 
+def LowerRemainingTensorDialect
+    : Pass<"lower-remaining-tensor-dialect", "mlir::ModuleOp"> {
+  let summary = "Lower leftover tensor dialect ops";
+  let description = [{
+    Lowers remaining tensor dialect ops if possible. 
+    Otherwise signals a pass failure.
+  }];
+  let constructor = "bishengir::triton::createLowerRemainingTensorDialectPass()";
+  let dependentDialects = [
+    "mlir::triton::TritonDialect",
+    "mlir::tensor::TensorDialect",
+    "mlir::arith::ArithDialect",
+  ];
+}
+
 def FlattenMemDescArgs
     : Pass<"flatten-memdesc-args", "mlir::ModuleOp"> {
   let summary = "Replace memdesc struct function args with bare pointers";

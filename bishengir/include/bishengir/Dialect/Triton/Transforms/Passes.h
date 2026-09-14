@@ -99,6 +99,8 @@ std::unique_ptr<mlir::Pass> createSIMTFastDivPass();
 /// ttg.local_load/ttg.local_store with memdesc types.
 std::unique_ptr<mlir::Pass> createLowerDotBuffersAndSharedMemPass();
 
+std::unique_ptr<mlir::Pass> createLowerRemainingTensorDialectPass();
+
 /// Create a pass to flatten memdesc struct args to bare pointers.
 std::unique_ptr<mlir::Pass> createFlattenMemDescArgsPass();
 
