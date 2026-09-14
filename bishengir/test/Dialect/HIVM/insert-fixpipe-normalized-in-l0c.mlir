@@ -14,7 +14,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // CHECK:        %[[MMAD:.*]] = hivm.hir.mmadL1 {already_set_real_mkn, fixpipe_for_result_already_inserted = true, normalized_in_L0C}
 // CHECK-SAME:       ins(%[[ARG0]], %[[ARG1]], %false, %[[C32]], %[[C64]], %[[C64]] : tensor<32x64xf32>, tensor<64x64xf32>, i1, index, index, index)
 // CHECK-SAME:       outs(%[[INIT]] : tensor<32x64xf32>) -> tensor<32x64xf32>
-// CHECK:        %[[DST:.*]] = tensor.empty() : tensor<32x64xf32>
+// CHECK:        %[[DST:.*]] = tensor.empty() {hivm.address_space = #hivm.address_space<ub>, "hivm.inserted-tensor"} : tensor<32x64xf32>
 // CHECK:        %[[FIXPIPE:.*]] = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%[[MMAD]] : tensor<32x64xf32>) outs(%[[DST]] : tensor<32x64xf32>) -> tensor<32x64xf32>
 // CHECK:        hivm.hir.store ins(%[[FIXPIPE]] : tensor<32x64xf32>) outs(%[[OUT]] : memref<32x64xf32>)
 func.func @mmad_normalized_in_l0c_insert_fixpipe(
@@ -45,7 +45,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 
 // CHECK-LABEL: func.func @mmad_normalized_in_l0c_slice_and_store
 // CHECK:        %[[MMAD:.*]] = hivm.hir.mmadL1 {a_transpose, already_set_real_mkn, fixpipe_for_result_already_inserted = true, normalized_in_L0C}
-// CHECK:        %[[DST:.*]] = tensor.empty() : tensor<32x64xf32>
+// CHECK:        %[[DST:.*]] = tensor.empty() {hivm.address_space = #hivm.address_space<ub>, "hivm.inserted-tensor"} : tensor<32x64xf32>
 // CHECK:        %[[FIXPIPE:.*]] = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%[[MMAD]] : tensor<32x64xf32>) outs(%[[DST]] : tensor<32x64xf32>) -> tensor<32x64xf32>
 // CHECK:        %[[SLICE:.*]] = tensor.extract_slice %[[FIXPIPE]][0, 0] [%c32, %c64] [1, 1] : tensor<32x64xf32> to tensor<?x?xf32>
 // CHECK:        hivm.hir.store ins(%[[SLICE]] : tensor<?x?xf32>) outs(%{{.*}} : memref<?x?xf32, strided<[512, 1], offset: ?>>)
