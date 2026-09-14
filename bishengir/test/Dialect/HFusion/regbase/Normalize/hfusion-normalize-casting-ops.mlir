@@ -767,6 +767,23 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 
 // -----
 
+// The input has no unsigned_mode. Both generated signed casts keep SI2SI as
+// the default, unlike the SI2UI integer step for an unsigned destination below.
+// CHECK-LABEL: @test_NormalizeCastLowering_f32_to_i8_ascend950(
+// CHECK-SAME: %[[ARG0:.*]]: tensor<16xf32>
+// CHECK: %[[CAST_I32:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = false, round_mode = #hfusion.round_mode<truncwithoverflow>} ins(%[[ARG0]] : tensor<16xf32>) outs({{.*}} : tensor<16xi32>) -> tensor<16xi32>
+// CHECK: %[[CAST_I8:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<trunc>} ins(%[[CAST_I32]] : tensor<16xi32>) outs({{.*}} : tensor<16xi8>) -> tensor<16xi8>
+// CHECK: return %[[CAST_I8]] : tensor<16xi8>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @test_NormalizeCastLowering_f32_to_i8_ascend950(%arg0: tensor<16xf32>) -> tensor<16xi8> {
+    %0 = tensor.empty() : tensor<16xi8>
+    %1 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<truncwithoverflow>} ins(%arg0 : tensor<16xf32>) outs(%0 : tensor<16xi8>) -> tensor<16xi8>
+    return %1 : tensor<16xi8>
+  }
+}
+
+// -----
+
 // CHECK-LABEL: @test_NormalizeCastLowering_f32_to_u8_ascend950(
 // CHECK-SAME: %[[ARG0:.*]]: tensor<16xf32>
 // CHECK-NOT: tensor<16xi64>
