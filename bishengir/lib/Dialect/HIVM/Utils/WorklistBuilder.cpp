@@ -26,8 +26,10 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/Interfaces/CastInterfaces.h"
 #include "mlir/Interfaces/DestinationStyleOpInterface.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
+#include "mlir/Interfaces/ViewLikeInterface.h"
 #include "llvm/ADT/TypeSwitch.h"
 
 #define DEBUG_TYPE "cv-pipelining"
@@ -209,6 +211,118 @@ static bool isMemrefSubnetWriter(Operation *op) {
 /// write to a UB/L1 alloc that the consumer mmadL1/vector op will read via
 /// `bufferization.to_tensor`.
 static bool isLoadLikeOp(Operation *op) { return isa<LoadOp, ND2NZOp>(op); }
+
+static Value unwrapTensorViews(Value val) {
+  while (val) {
+    Operation *def = val.getDefiningOp();
+    if (!def)
+      break;
+    if (auto view = dyn_cast<ViewLikeOpInterface>(def)) {
+      val = view.getViewSource();
+      continue;
+    }
+    if (auto castOp = dyn_cast<CastOpInterface>(def)) {
+      val = castOp->getOperand(0);
+      continue;
+    }
+    if (isa<tensor::CollapseShapeOp, tensor::ExpandShapeOp, tensor::ReshapeOp>(
+            def)) {
+      val = def->getOperand(0);
+      continue;
+    }
+    break;
+  }
+  return val;
+}
+
+static bool isCastingLoadResult(Operation *op) {
+  auto vcast = dyn_cast_or_null<VCastOp>(op);
+  if (!vcast)
+    return false;
+  Value inVal = vcast.getDpsInputOperand(0)->get();
+  inVal = unwrapTensorViews(inVal);
+  if (!inVal)
+    return false;
+  Operation *def = inVal.getDefiningOp();
+  if (!def)
+    return false;
+  if (isLoadLikeOp(def))
+    return true;
+  auto toTensor = dyn_cast<bufferization::ToTensorOp>(def);
+  if (!toTensor)
+    return false;
+  Value memref = toTensor.getMemref();
+  Value root = traceValueDef(memref);
+  if (!root)
+    root = memref;
+  for (Operation *user : root.getUsers()) {
+    SmallVector<Operation *> userStack = {user};
+    DenseSet<Operation *> visited;
+    while (!userStack.empty()) {
+      Operation *curr = userStack.pop_back_val();
+      if (!visited.insert(curr).second)
+        continue;
+      if (isLoadLikeOp(curr)) {
+        if (auto dps = dyn_cast<DestinationStyleOpInterface>(curr)) {
+          if (llvm::any_of(dps.getDpsInits(), [&](Value init) {
+                return traceValueDef(init) == root;
+              }))
+            return true;
+        } else {
+          return true;
+        }
+      }
+      for (Value res : curr->getResults()) {
+        if (isa<MemRefType>(res.getType())) {
+          for (Operation *resUser : res.getUsers())
+            userStack.push_back(resUser);
+        }
+      }
+    }
+  }
+  return false;
+}
+
+static bool isVCastDowncast(VCastOp vcast) {
+  Type inType =
+      getElementTypeOrSelf(vcast.getDpsInputOperand(0)->get().getType());
+  Type outType =
+      vcast->getNumResults() > 0
+          ? getElementTypeOrSelf(vcast->getResult(0).getType())
+          : getElementTypeOrSelf(vcast.getDpsInitOperand(0)->get().getType());
+  if (!inType.isIntOrFloat() || !outType.isIntOrFloat())
+    return false;
+  return inType.getIntOrFloatBitWidth() > outType.getIntOrFloatBitWidth();
+}
+
+static bool isVCastUpcast(VCastOp vcast) {
+  Type inType =
+      getElementTypeOrSelf(vcast.getDpsInputOperand(0)->get().getType());
+  Type outType =
+      vcast->getNumResults() > 0
+          ? getElementTypeOrSelf(vcast->getResult(0).getType())
+          : getElementTypeOrSelf(vcast.getDpsInitOperand(0)->get().getType());
+  if (!inType.isIntOrFloat() || !outType.isIntOrFloat())
+    return false;
+  return inType.getIntOrFloatBitWidth() < outType.getIntOrFloatBitWidth();
+}
+
+static bool shouldDelayCoreOp(Operation *op) {
+  if (!op)
+    return false;
+  if (auto vcast = dyn_cast<VCastOp>(op)) {
+    if (isCastingLoadResult(vcast))
+      return true;
+    if (isVCastDowncast(vcast))
+      return false;
+    if (isVCastUpcast(vcast))
+      return true;
+    return false;
+  }
+  if (isa<VBrcOp>(op))
+    return true;
+  return false;
+}
 
 /// Recognize an indirect-gather loop expressed entirely in non-HIVM ops:
 ///
@@ -746,6 +860,14 @@ FailureOr<bool> WorklistBuilder::isCrossCoreLoad(const Value loaded) const {
 }
 
 FailureOr<bool> WorklistBuilder::shouldLazyLoadFor(Operation *op) {
+  if (isCastingLoadResult(op)) {
+    auto vcast = cast<VCastOp>(op);
+    Value inVal = vcast.getDpsInputOperand(0)->get();
+    inVal = unwrapTensorViews(inVal);
+    if (inVal && inVal.getDefiningOp())
+      return shouldLazyLoadFor(inVal.getDefiningOp());
+    return false;
+  }
   // Find the candidate to_tensor whose hint we should consult, with
   // shape-specific fallbacks when no candidate exists.
   bufferization::ToTensorOp tt;
@@ -1134,7 +1256,7 @@ LogicalResult WorklistBuilder::traceDependentOps(WorkItem &item) {
           // hint, or auto cross-core legality), allow load-like ops to be
           // cloned into multiple work items so each stage loads
           // independently from GM.
-          if (!isLoadLikeOp(op))
+          if (!isLoadLikeOp(op) && !isCastingLoadResult(op))
             continue;
           FailureOr<bool> shouldLazy = shouldLazyLoadFor(op);
           if (failed(shouldLazy))
@@ -1142,7 +1264,7 @@ LogicalResult WorklistBuilder::traceDependentOps(WorkItem &item) {
           if (!*shouldLazy)
             continue;
         }
-      } else if (!isLoadLikeOp(op)) {
+      } else if (!isLoadLikeOp(op) && !shouldDelayCoreOp(op)) {
         // Separators (Store/Fixpipe/cross-core Copy) that reach here via a
         // shared memref alias chain have not been assigned to any workitem
         // yet — they will be picked up in a subsequent extractAvailableOps
@@ -1286,7 +1408,7 @@ WorklistBuilder::extractAvailableOps(SmallVector<Operation *> &extractedOps,
     for (Operation &op : *targetBlock) {
       if (opToWorkItemMap.contains(&op) ||
           isa<scf::YieldOp, scf::ConditionOp>(&op) || !isCoreOp(op) ||
-          isLoadLikeOp(&op))
+          isLoadLikeOp(&op) || shouldDelayCoreOp(&op))
         continue;
       if (!loopCarriedDependentOps.contains(&op)) {
         hasRemainingNoLoopCarriedOps = true;
@@ -1297,6 +1419,8 @@ WorklistBuilder::extractAvailableOps(SmallVector<Operation *> &extractedOps,
 
   for (Operation &op : *targetBlock) {
     if (opToWorkItemMap.contains(&op))
+      continue;
+    if (isLoadLikeOp(&op) || shouldDelayCoreOp(&op))
       continue;
     if (isLoopMode && useLcdBackup && hasRemainingNoLoopCarriedOps &&
         loopCarriedDependentOps.contains(&op))
@@ -1331,6 +1455,43 @@ WorklistBuilder::extractAvailableOps(SmallVector<Operation *> &extractedOps,
     if (it == dependenceMap.end() || !it->second || it->second->empty()) {
       core = maybeCore;
       potentiallyAvailable.insert(&op);
+    }
+  }
+
+  if (potentiallyAvailable.empty()) {
+    for (Operation &op : *targetBlock) {
+      if (opToWorkItemMap.contains(&op))
+        continue;
+      if (isLoadLikeOp(&op) || isCastingLoadResult(&op))
+        continue;
+      if (isLoopMode && useLcdBackup && hasRemainingNoLoopCarriedOps &&
+          loopCarriedDependentOps.contains(&op))
+        continue;
+      TCoreType maybeCore = op.hasAttr(CubeOnlyAttrName) ? TCoreType::CUBE
+                            : op.hasAttr(VecOnlyAttrName)
+                                ? TCoreType::VECTOR
+                                : TCoreType::CUBE_OR_VECTOR;
+      if (maybeCore == hivm::TCoreType::CUBE_OR_VECTOR) {
+        if (!isCoreOp(op) || isLoadLikeOp(&op))
+          continue;
+        maybeCore = queryCoreTypeHelper(&op).value_or(TCoreType::CUBE_OR_VECTOR);
+        if (maybeCore != TCoreType::VECTOR && isCrossCoreCopy(&op))
+          maybeCore = TCoreType::VECTOR;
+        if (!isLoopMode && maybeCore == TCoreType::CUBE_OR_VECTOR)
+          continue;
+      }
+
+      if (maybeCore != TCoreType::VECTOR && maybeCore != TCoreType::CUBE)
+        return op.emitWarning("[cv-pipelining] unexpected core type for op");
+      if (((maybeCore == TCoreType::VECTOR || isCrossCoreCopy(&op)) &&
+           core == TCoreType::CUBE) ||
+          ((maybeCore == TCoreType::CUBE && core == TCoreType::VECTOR)))
+        continue;
+      auto it = dependenceMap.find(&op);
+      if (it == dependenceMap.end() || !it->second || it->second->empty()) {
+        core = maybeCore;
+        potentiallyAvailable.insert(&op);
+      }
     }
   }
 
@@ -1673,6 +1834,37 @@ FailureOr<WorklistBuildResult> WorklistBuilder::build() {
       return scopeOp->emitWarning("[cv-pipelining] cannot pipeline loop due "
                                   "to loop carried dependencies");
     return failure();
+  }
+
+  if (isLoopMode && useLcdBackup) {
+    int wi0Idx = -1;
+    int wi1Idx = -1;
+    for (int i = 0; i < static_cast<int>(worklist.size()); ++i) {
+      if (!worklist[i]->hasLoopCarriedDep)
+        wi0Idx = i;
+      else if (wi1Idx == -1)
+        wi1Idx = i;
+    }
+    if (wi0Idx != -1 && wi1Idx != -1) {
+      auto &wi0 = worklist[wi0Idx];
+      auto &wi1 = worklist[wi1Idx];
+      int wi0CoreOps = llvm::count_if(
+          wi0->ops, [](Operation *op) { return isCoreOp(*op); });
+      // HACK: Merging WI0 into WI1 when WI0 has fewer than 3 core ops is a
+      // temporary heuristic to avoid excessive pipeline stages and reduce
+      // preload depth when WI0 has insufficient work to justify a separate stage.
+      if (wi0CoreOps < 3 && wi1->core == wi0->core) {
+        for (Operation *op : wi0->ops) {
+          wi1->ops.insert(op);
+          if (opToWorkItemMap.contains(op)) {
+            auto &items = opToWorkItemMap[op];
+            std::replace(items.begin(), items.end(), wi0.get(), wi1.get());
+            items.erase(std::unique(items.begin(), items.end()), items.end());
+          }
+        }
+        worklist.erase(worklist.begin() + wi0Idx);
+      }
+    }
   }
 
   // Loop mode needs ≥2 WorkItems to form an alternating pipeline.
