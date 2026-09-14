@@ -17,6 +17,7 @@
 
 #include "bishengir/Dialect/HIVM/Transforms/regbase/PlanMemory.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/AllocToPointerCast.h"
 #include "bishengir/Dialect/HIVM/Utils/RegbaseUtils.h"
@@ -49,6 +50,19 @@ using namespace hivm;
 using namespace util;
 
 namespace {
+
+bool isCVModule(ModuleOp op) {
+  bool hasAIV = false;
+  bool hasAIC = false;
+  op->walk([&](func::FuncOp funcOp) {
+    if (queryFuncCoreType(funcOp) == TFuncCoreType::AIV) {
+      hasAIV = true;
+    } else if (queryFuncCoreType(funcOp) == TFuncCoreType::AIC) {
+      hasAIC = true;
+    }
+  });
+  return hasAIV && hasAIC;
+}
 
 bool isReusableCastOp(hivm::VCastOp &castOp, Value output, Value input) {
   auto rank = dyn_cast<MemRefType>(output.getType()).getRank();
@@ -3025,8 +3039,10 @@ std::optional<DenseMap<Value, SmallVector<uint64_t>>>
 PlanMemoryPass::PlanMemoryForFuncOp(
     func::FuncOp &funcOp, VFInplaceReuseAnalysis &vfInplaceReuseAnalysis) {
 
-  constexpr int kPlanRetryCount = 20;
-  DenseMap<Value, SmallVector<uint64_t>> plannedBuffer2Offsets;
+  constexpr int singleTrytime = 3;
+  constexpr int retryOptionsNum = 3;
+  constexpr int kPlanRetryCount = singleTrytime * retryOptionsNum;
+  auto moduleOp = funcOp->getParentOfType<ModuleOp>();
 
   // The current plan-memory algorithm is sensitive to the order in which some
   // candidate buffers are considered. We retry planning with different
@@ -3037,6 +3053,28 @@ PlanMemoryPass::PlanMemoryForFuncOp(
   for (int attempt = 0; attempt < kPlanRetryCount; ++attempt) {
     LDBG("Memory planning attempt " << attempt + 1 << "/" << kPlanRetryCount
                                     << "\n");
+
+    if (attempt == singleTrytime && isCVModule(moduleOp) &&
+        queryFuncCoreType(funcOp).value() == TFuncCoreType::AIV) {
+      // Remove the MultiBufferAttr from all mark ops on the first attempt for
+      // AIV functions
+      funcOp.walk([&](annotation::MarkOp markOp) {
+        if (markOp->hasAttr(hivm::MultiBufferAttr::name) &&
+            !markOp->hasAttr(hivm::PreloadLocalBufferAttr::name)) {
+          markOp->removeAttr(hivm::MultiBufferAttr::name);
+          if (markOp.isAttrEmpty()) {
+            markOp.erase();
+          }
+        }
+      });
+      LDBG("Disabled MultiBuffer in AIV function by remove all multiBuffer "
+           << "attrs on attempt " << attempt + 1<< "\n");
+    }
+    // Disable VF reachable check after the first two attempts, to allow more
+    // aggressive reuse of VF buffers in case the first two attempts fail.
+    if (attempt == singleTrytime * 2) {
+      this->disableVFReachableCheck = true;
+    }
 
     // FIXME: Reusing tightly coupled buffer is dangerous because inter-core
     // sync was inserted before plan memory. Currently, changing this behavior

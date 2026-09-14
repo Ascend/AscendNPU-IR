@@ -50,6 +50,20 @@ using namespace hivm;
 using namespace util;
 
 namespace {
+
+bool isCVModule(ModuleOp op) {
+  bool hasAIV = false;
+  bool hasAIC = false;
+  op->walk([&](func::FuncOp funcOp) {
+    if (queryFuncCoreType(funcOp) == TFuncCoreType::AIV) {
+      hasAIV = true;
+    } else if (queryFuncCoreType(funcOp) == TFuncCoreType::AIC) {
+      hasAIC = true;
+    }
+  });
+  return hasAIV && hasAIC;
+}
+
 bool isReusableCastOp(hivm::VCastOp &castOp, Value output, Value input) {
   auto rank = dyn_cast<MemRefType>(output.getType()).getRank();
   if (rank > 1 || !isLastDimContiguous(output) || !isLastDimContiguous(input)) {
@@ -3104,8 +3118,10 @@ PlanMemoryPass::planMemoryForFuncOp(
     markTempBufForMemoryDisplay(funcOp);
   }
 
-  constexpr int kPlanRetryCount = 20;
-
+  constexpr int singleTrytime = 3;
+  constexpr int retryOptionsNum = 3;
+  constexpr int kPlanRetryCount = singleTrytime * retryOptionsNum;
+  auto moduleOp = funcOp->getParentOfType<ModuleOp>();
   // The current plan-memory algorithm is sensitive to the order in which
   // some candidate buffers are considered. We retry planning with different
   // deterministic shuffle seeds to improve the chance of finding a valid
@@ -3115,6 +3131,28 @@ PlanMemoryPass::planMemoryForFuncOp(
   for (int attempt = 0; attempt < kPlanRetryCount; ++attempt) {
     LDBG("Memory planning attempt " << attempt + 1 << "/" << kPlanRetryCount
                                     << "\n");
+
+    if (attempt == singleTrytime && isCVModule(moduleOp) &&
+        queryFuncCoreType(funcOp).value() == TFuncCoreType::AIV) {
+      // Remove the MultiBufferAttr from all mark ops on the first attempt for
+      // AIV functions
+      funcOp.walk([&](annotation::MarkOp markOp) {
+        if (markOp->hasAttr(hivm::MultiBufferAttr::name) &&
+            !markOp->hasAttr(hivm::PreloadLocalBufferAttr::name)) {
+          markOp->removeAttr(hivm::MultiBufferAttr::name);
+          if (markOp.isAttrEmpty()) {
+            markOp.erase();
+          }
+        }
+      });
+      LDBG("Disabled MultiBuffer in AIV function by remove all multiBuffer "
+           << "attrs on attempt " << attempt + 1 << "\n");
+    }
+    // Disable VF reachable check after the first two attempts, to allow more
+    // aggressive reuse of VF buffers in case the first two attempts fail.
+    if (attempt == singleTrytime * 2) {
+      this->disableVFReachableCheck = true;
+    }
 
     MemLivenessAnalysis memLiveness(funcOp, this->memMode,
                                     this->disableTightlyCoupledBufferReuse,
