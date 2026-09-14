@@ -6,20 +6,16 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file implements a pattern that fuses linalg.transpose into hivm.hir.load
-// by leveraging DMA on-the-fly transpose capability. When a load writes a tile
-// that is later converted to tensor and transposed on the last two axes, this
-// pass rewrites the load destination view so the hardware writes into the
-// transposed result layout directly. The explicit transpose can then be
-// eliminated. Pad fills that initialized the old dest alloc are re-emitted on
-// the new dest when a non-last dest dim is still a prefix, or when the last
-// kept dim starts at a non-zero offset (DMA pad does not write `[0, offset)`).
-// If every non-last kept dim already spans the alloc and the last kept dim
-// offset is statically 0, the load dest last dim is expanded to the root so
-// `pad_mode` covers `[0, rootLast)` and the fill is dropped.
+// Fuse linalg.transpose into hivm.hir.load via DMA on-the-fly transpose by
+// rewriting the load dest view to the transposed layout and dropping the
+// explicit transpose. Pad fills move to the new dest when needed. Last-dim-only
+// pad does not expand to rootLast; drop the fill when last kept-dim offset is
+// 0, otherwise keep fill guarded by offset != 0. GLA prefix still expands the
+// last dim when that offset is 0 so DMA pad covers it.
 //
 //===----------------------------------------------------------------------===//
 
+#include "mlir/Dialect/Arith/Utils/Utils.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
@@ -229,8 +225,11 @@ static void eraseFillOps(ArrayRef<linalg::FillOp> fills,
 /// must not leave the fill behind. If the original fill sat in a then-only
 /// scf.if, keep that guard so full tiles skip the fill; unconditional fill is
 /// only the fallback when the condition does not dominate the new alloc.
-static void transferFillOps(Value oldAlloc, Value newAlloc,
-                            PatternRewriter &rewriter) {
+/// `fillIfOffsetNonZero` ANDs `offset != 0` into the guard so last-dim pad
+/// tiles whose last offset is 0 at runtime skip the !3107 vector fill.
+static void transferFillOps(
+    Value oldAlloc, Value newAlloc, PatternRewriter &rewriter,
+    std::optional<OpFoldResult> fillIfOffsetNonZero = std::nullopt) {
   if (!isa_and_nonnull<memref::AllocOp>(newAlloc.getDefiningOp()))
     return;
 
@@ -244,26 +243,41 @@ static void transferFillOps(Value oldAlloc, Value newAlloc,
   Operation *newAllocOp = newAlloc.getDefiningOp();
 
   OpBuilder::InsertionGuard guard(rewriter);
-  bool emittedGuarded = false;
-  if (scf::IfOp oldIf = enclosingThenOnlyFillIf(fill)) {
-    Value cond = oldIf.getCondition();
-    auto func = newAllocOp->getParentOfType<func::FuncOp>();
-    if (func) {
-      DominanceInfo dom(func);
-      if (dom.dominates(cond, newAllocOp)) {
-        rewriter.setInsertionPointAfter(newAllocOp);
-        auto newIf = rewriter.create<scf::IfOp>(oldIf.getLoc(), cond,
-                                                /*withElseRegion=*/false);
-        newIf->setAttrs(oldIf->getAttrs());
-        rewriter.setInsertionPoint(newIf.thenBlock()->getTerminator());
-        rewriter.create<linalg::FillOp>(loc, ValueRange{pad},
-                                        ValueRange{newAlloc});
-        emittedGuarded = true;
+  rewriter.setInsertionPointAfter(newAllocOp);
+
+  Value cond;
+  scf::IfOp oldIf = enclosingThenOnlyFillIf(fill);
+  std::optional<DominanceInfo> dom;
+  if (auto func = newAllocOp->getParentOfType<func::FuncOp>())
+    dom.emplace(func);
+
+  if (oldIf && dom && dom->dominates(oldIf.getCondition(), newAllocOp))
+    cond = oldIf.getCondition();
+
+  // Attribute / static non-zero: no runtime guard (same as dropping
+  // Attribute OFRs via dyn_cast<Value>). Dynamic SSA offsets get `cmpi ne`.
+  if (fillIfOffsetNonZero && dom) {
+    if (auto offsetVal = dyn_cast<Value>(*fillIfOffsetNonZero)) {
+      if (dom->dominates(offsetVal, newAllocOp)) {
+        Value zero = getValueOrCreateConstantIndexOp(rewriter, loc,
+                                                     rewriter.getIndexAttr(0));
+        Value ne = rewriter.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ne,
+                                                  offsetVal, zero);
+        cond = cond ? rewriter.create<arith::AndIOp>(loc, cond, ne).getResult()
+                    : ne;
       }
     }
   }
-  if (!emittedGuarded) {
-    rewriter.setInsertionPointAfter(newAllocOp);
+
+  if (cond) {
+    auto newIf = rewriter.create<scf::IfOp>(
+        oldIf ? oldIf.getLoc() : loc, cond, [&](OpBuilder &b, Location ifLoc) {
+          b.create<linalg::FillOp>(loc, ValueRange{pad}, ValueRange{newAlloc});
+          b.create<scf::YieldOp>(ifLoc);
+        });
+    if (oldIf)
+      newIf->setAttrs(oldIf->getAttrs());
+  } else {
     rewriter.create<linalg::FillOp>(loc, ValueRange{pad}, ValueRange{newAlloc});
   }
 
@@ -273,6 +287,40 @@ static void transferFillOps(Value oldAlloc, Value newAlloc,
 static bool loadCanPadLastDim(hivm::LoadOp loadOp) {
   auto padMode = loadOp.getPadMode();
   return padMode && padMode->getPadmode() != hivm::PadMode::PadNull;
+}
+
+enum class PadFillPolicy {
+  EraseFill,             // last-dim-only, offset 0: no expand
+  TransferFillAndOffset, // last-dim-only, dyn/nonzero: no expand
+  TransferFill,          // GLA + nonzero, or no pad
+  ExpandAndTransfer,     // GLA + offset 0: expand then transfer
+};
+
+static PadFillPolicy decidePadFillPolicy(const TileView &dst,
+                                         hivm::LoadOp loadOp) {
+  if (!loadCanPadLastDim(loadOp))
+    return PadFillPolicy::TransferFill;
+  const bool off0 = dst.lastKeptDimOffsetIsZero();
+  if (dst.nonLastKeptDimsCoverRoot())
+    return off0 ? PadFillPolicy::EraseFill
+                : PadFillPolicy::TransferFillAndOffset;
+  return off0 ? PadFillPolicy::ExpandAndTransfer : PadFillPolicy::TransferFill;
+}
+
+static void applyPadFillPolicy(PadFillPolicy policy, TileView &dst,
+                               Value oldRoot, PatternRewriter &rewriter) {
+  switch (policy) {
+  case PadFillPolicy::EraseFill:
+    eraseFillOps(collectFillsOnAlloc(oldRoot), rewriter);
+    return;
+  case PadFillPolicy::TransferFillAndOffset:
+    transferFillOps(oldRoot, dst.root, rewriter, dst.lastKeptDimOffset());
+    return;
+  case PadFillPolicy::ExpandAndTransfer:
+  case PadFillPolicy::TransferFill:
+    transferFillOps(oldRoot, dst.root, rewriter);
+    return;
+  }
 }
 
 struct FuseTransposeIntoLoadPattern
@@ -370,21 +418,13 @@ struct FuseTransposeIntoLoadPattern
       newMemref = newSubviewTile.view;
     }
 
-    // Last-dim pad can initialize [offset, rootLast). Expand dest to that
-    // window so the DMA writes the tail. Do not grow the to_tensor view.
-    if (loadCanPadLastDim(loadOp))
+    const PadFillPolicy policy = decidePadFillPolicy(newLoadDstTile, loadOp);
+    if (policy == PadFillPolicy::ExpandAndTransfer)
       newLoadDstTile.expandLastKeptDimToRoot(rewriter);
     loadOp.setOperand(1, newLoadDstTile.view);
 
     transferAnnotationMarks(permTile->root, newLoadDstTile.root, rewriter);
-    // Drop the fill only when pad covers the whole last kept dim. A non-zero
-    // last-dim offset leaves [0, offset) unwritten; keep transferFillOps.
-    if (loadCanPadLastDim(loadOp) &&
-        newLoadDstTile.nonLastKeptDimsCoverRoot() &&
-        newLoadDstTile.lastKeptDimOffsetIsZero())
-      eraseFillOps(collectFillsOnAlloc(permTile->root), rewriter);
-    else
-      transferFillOps(permTile->root, newLoadDstTile.root, rewriter);
+    applyPadFillPolicy(policy, newLoadDstTile, permTile->root, rewriter);
 
     auto newToTensorOp = rewriter.create<bufferization::ToTensorOp>(
         toTensorOp.getLoc(), transposeOp->getResult(0).getType(), newMemref,

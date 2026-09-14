@@ -78,15 +78,6 @@ static OpFoldResult extentFromOffset(OpBuilder &builder, Location loc,
   return builder.create<arith::SubIOp>(loc, sizeVal, offsetVal).getResult();
 }
 
-static void remapViewToRoot(TileView &tile, const TileView &rootTile,
-                            OpBuilder &builder) {
-  // Keep the tile's view window unchanged, but materialize it on the selected
-  // root so users of both tiles read/write the same allocation.
-  tile.root = rootTile.root;
-  tile.rootType = rootTile.rootType;
-  tile.rematerializeView(builder);
-}
-
 std::optional<SmallVector<OpFoldResult>> TileView::getRootSizes(Value root) {
   Operation *def = root.getDefiningOp();
 
@@ -204,8 +195,22 @@ bool TileView::nonLastKeptDimsCoverRoot() const {
 }
 
 bool TileView::lastKeptDimOffsetIsZero() const {
+  std::optional<OpFoldResult> off = lastKeptDimOffset();
+  if (!off)
+    return false;
+  if (isConstantIntValue(*off, 0))
+    return true;
+  return utils::IndexBoundAnalyzer{}
+      .compare(*off, utils::BoundComparisonPredicate::EQ,
+               getAsIndexOpFoldResult(root.getContext(), 0))
+      .isSat();
+}
+
+std::optional<OpFoldResult> TileView::lastKeptDimOffset() const {
   std::optional<unsigned> last = lastKeptDim(*this);
-  return last && isConstantIntValue(offsets[*last], 0);
+  if (!last)
+    return std::nullopt;
+  return offsets[*last];
 }
 
 void TileView::unifyRoot(TileView &lhs, TileView &rhs, OpBuilder &builder) {
@@ -217,11 +222,12 @@ void TileView::unifyRoot(TileView &lhs, TileView &rhs, OpBuilder &builder) {
   }
 
   Value root = getDominatorRoot(lhs.root, rhs.root);
-  if (lhs.root == root) {
-    remapViewToRoot(rhs, lhs, builder);
-    return;
-  }
-  remapViewToRoot(lhs, rhs, builder);
+  // Keep the remapped tile's window; rebuild it on the dominating alloc.
+  TileView &keep = lhs.root == root ? lhs : rhs;
+  TileView &remap = lhs.root == root ? rhs : lhs;
+  remap.root = keep.root;
+  remap.rootType = keep.rootType;
+  remap.rematerializeView(builder);
 }
 
 FailureOr<TileView> TileView::fromMemRef(Value memref, Builder &builder) {
