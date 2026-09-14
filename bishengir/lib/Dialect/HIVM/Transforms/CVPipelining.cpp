@@ -39,6 +39,7 @@
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Interfaces/DestinationStyleOpInterface.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "llvm/ADT/TypeSwitch.h"
 
 #define DEBUG_TYPE "cv-pipelining"
@@ -2269,6 +2270,97 @@ LogicalResult CVPipelineImpl::createNewLoopsForPreloadWithScopes() {
   return success();
 }
 
+static Value stripStorePriorityTensorViews(Value value) {
+  while (Operation *op = value.getDefiningOp()) {
+    if (!isa<tensor::ExtractSliceOp, tensor::ExpandShapeOp,
+             tensor::CollapseShapeOp>(op))
+      break;
+    value = op->getOperand(0);
+  }
+  return value;
+}
+
+static bool isStorePriorityCBuf(Value value) {
+  auto alloc = value.getDefiningOp<memref::AllocOp>();
+  if (!alloc)
+    return false;
+  auto space =
+      dyn_cast_or_null<AddressSpaceAttr>(alloc.getType().getMemorySpace());
+  return space && space.getAddressSpace() == AddressSpace::L1;
+}
+
+/// Prioritize the transposed CBUF copy over the GM output of the same cast.
+/// Keep this local to tensor-form preload scopes, before memory planning and
+/// sync insertion account for the delayed store's buffer lifetime.
+static void prioritizePreloadCrossCoreCopy(Block &body) {
+  if (llvm::any_of(body, [](Operation &op) { return isa<SetAtomicOp>(op); }))
+    return;
+
+  SmallVector<StoreOp> stores(body.getOps<StoreOp>());
+  // Reverse traversal preserves the order of consecutive GM stores.
+  for (StoreOp store : llvm::reverse(stores)) {
+    if (store->getNumResults() || store.getAtomicKindAttr() ||
+        !isa<TensorType>(store.getSrc().getType()) ||
+        !isa<MemRefType>(store.getDst().getType()))
+      continue;
+
+    Value dst = store.getDst();
+    while (Operation *op = dst.getDefiningOp()) {
+      if (!isa<memref::SubViewOp, memref::ReinterpretCastOp, memref::CastOp>(
+              op))
+        break;
+      dst = op->getOperand(0);
+    }
+    auto arg = dyn_cast<BlockArgument>(dst);
+    if (!arg || !isa<func::FuncOp>(arg.getOwner()->getParentOp()))
+      continue;
+    Attribute space = cast<BaseMemRefType>(dst.getType()).getMemorySpace();
+    if (space && space != AddressSpaceAttr::get(body.getParent()->getContext(),
+                                                AddressSpace::GM))
+      continue;
+
+    Value source = stripStorePriorityTensorViews(store.getSrc());
+    auto castOp = source.getDefiningOp<VCastOp>();
+    if (!castOp || !isMemoryEffectFree(castOp) || castOp.getDst().size() != 1 ||
+        !castOp.getDst()[0].getDefiningOp<tensor::EmptyOp>())
+      continue;
+
+    Operation *insertAfter = nullptr;
+    for (Operation *op = store->getNextNode(); op; op = op->getNextNode()) {
+      if (op->hasTrait<OpTrait::IsTerminator>() || op->getNumRegions())
+        break;
+      if (auto copy = dyn_cast<CopyOp>(op)) {
+        if (!isa<TensorType>(copy.getSrc().getType()) ||
+            !isStorePriorityCBuf(copy.getDst()))
+          break;
+        auto transpose = stripStorePriorityTensorViews(copy.getSrc())
+                             .getDefiningOp<VTransposeOp>();
+        if (!transpose || !isMemoryEffectFree(transpose) ||
+            !transpose.getDst().getDefiningOp<tensor::EmptyOp>() ||
+            stripStorePriorityTensorViews(transpose.getSrc()) != source)
+          break;
+        insertAfter = op;
+        continue;
+      }
+      if (auto mark = dyn_cast<annotation::MarkOp>(op)) {
+        if (mark->hasAttr(HIVMTightlyCoupledBufferAttr::name) &&
+            isStorePriorityCBuf(mark.getSrc()))
+          continue;
+      }
+      // Unknown memory effects, other GM accesses and synchronization are
+      // boundaries. Pure tensor/index operations do not overwrite the cast.
+      if (!isMemoryEffectFree(op))
+        break;
+      // Keep the store after trailing pure vector work as well. Otherwise VF
+      // merging can hoist it ahead of the transpose and undo this priority.
+      if (insertAfter)
+        insertAfter = op;
+    }
+    if (insertAfter)
+      store->moveAfter(insertAfter);
+  }
+}
+
 LogicalResult CVPipelineImpl::markScopesForPreload() {
   toErase.clear();
 
@@ -2281,6 +2373,10 @@ LogicalResult CVPipelineImpl::markScopesForPreload() {
     revert();
     return failure();
   }
+
+  for (auto &item : worklist)
+    if (item->core == TCoreType::VECTOR)
+      prioritizePreloadCrossCoreCopy(item->scopeOp.getRegion().front());
 
   LLVM_DEBUG({
     for (auto item : worklist) {
