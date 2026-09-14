@@ -978,6 +978,12 @@ propagateFuncCallOp(RewriterBase &rewriter,
   ModuleOp module = callOp->getParentOfType<ModuleOp>();
   SymbolTable symtab(module);
   auto callee = symtab.lookup<func::FuncOp>(callOp.getCallee());
+  // An external declaration (e.g. an outlined scope stub without a body)
+  // cannot be rewritten in-place, so bail out and let the caller fall back
+  // to a copy via handlePropagateFailure.
+  if (!callee || callee.isExternal()) {
+    return failure();
+  }
 
   std::optional<unsigned> argIdx;
   for (auto [idx, opr] : llvm::enumerate(callOp.getArgOperands())) {
