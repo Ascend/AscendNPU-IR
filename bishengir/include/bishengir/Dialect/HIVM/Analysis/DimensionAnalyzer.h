@@ -55,6 +55,7 @@ public:
 
   bool isParallelDim(Dimension dim);
   bool isReduceDim(Dimension dim);
+  bool isReduceDim(int64_t index);
 
   /// @description: Analyze the tiling dimension for the current operation.
   ///
@@ -204,8 +205,8 @@ protected:
   void transferDimMarkImpl(hivm::VBrcOp op);
   void transferDimMarkImpl(hivm::VTransposeOp op);
 
-  int64_t getHigherDimCounts(ArrayRef<Dimension> candidate,
-                             SmallVectorImpl<int64_t> *candidateDims = nullptr);
+  int64_t getHigherDimScore(ArrayRef<Dimension> candidate,
+                            SmallVectorImpl<int64_t> *candidateDims = nullptr);
 
   /// Merges tiling candidate groups that were marked incompatible during
   /// dimension analysis but must be reconciled for broadcast-axis tiling.
@@ -327,6 +328,41 @@ protected:
   bool isRegbased;
 
 private:
+  bool hasCandidateGroupConnection(ArrayRef<DenseSet<int64_t>> connections,
+                                   int64_t lhs, int64_t rhs) const;
+
+  void
+  addCandidateGroupConnection(MutableArrayRef<DenseSet<int64_t>> connections,
+                              int64_t lhs, int64_t rhs);
+
+  void
+  mergeCandidateGroupConnections(MutableArrayRef<DenseSet<int64_t>> connections,
+                                 int64_t lhs, int64_t rhs);
+
+  void setTilingDimFromMergeIndex(
+      int64_t idxToMerge, int64_t groupIdx,
+      DenseMap<int64_t, DenseMap<int64_t, SmallVector<Dimension>>>
+          &parallelDimMaps);
+
+  int64_t selectInvalidUpdateMergeIndex(
+      int64_t repIdx, ArrayRef<int64_t> indices,
+      ArrayRef<DenseSet<int64_t>> invalidConnection,
+      ArrayRef<DenseSet<int64_t>> candidateExclusiveDimIdx,
+      DenseMap<int64_t, DenseMap<int64_t, SmallVector<Dimension>>>
+          &parallelDimMaps,
+      ArrayRef<int64_t> candidateGroupSize);
+
+  bool shouldSkipInvalidUpdateMerge(
+      int64_t repIdx, int64_t idxToMerge,
+      ArrayRef<DenseSet<int64_t>> invalidConnection,
+      ArrayRef<DenseSet<int64_t>> candidateExclusiveDimIdx) const;
+
+  void applyInvalidUpdateMerge(
+      int64_t repIdx, int64_t idxToMerge,
+      MutableArrayRef<int64_t> candidateGroupSize,
+      MutableArrayRef<DenseSet<int64_t>> invalidConnection,
+      MutableArrayRef<DenseSet<int64_t>> candidateExclusiveDimIdx);
+
   /// Updates value-group relationships for one operand use of \p user when
   /// processing \p current. \p operandNumber is the logical operand slot used
   /// by region-aware ops (e.g. scf) to map \p use to analyzer rules.
