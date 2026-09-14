@@ -56,6 +56,16 @@ bool DimensionAnalyzer::isParallelDim(Dimension dim) {
   return true;
 }
 
+bool DimensionAnalyzer::isReduceDim(int64_t index) {
+  auto solverCollapserIndex = structuralDsu_->find(index);
+  auto tilingDimKindVal =
+      tilingDimKindMapForCollapser.find(solverCollapserIndex);
+  if (tilingDimKindVal != tilingDimKindMapForCollapser.end())
+    return tilingDimKindVal->getSecond() == TilingDimensionKind::Reduce;
+
+  return false;
+}
+
 bool DimensionAnalyzer::isReduceDim(Dimension dim) {
   createDummyRefIfNotExist({dim.first});
   auto args = getValueDimIndices(dim.first);
@@ -64,12 +74,122 @@ bool DimensionAnalyzer::isReduceDim(Dimension dim) {
       equivalentDsu_->find(args[dim.second]);
   LDBG("Checking reduceDim of " << solverCollapserIndex << "("
                                 << solverShapeIndex << ")");
-  auto tilingDimKindVal =
-      tilingDimKindMapForCollapser.find(solverCollapserIndex);
-  if (tilingDimKindVal != tilingDimKindMapForCollapser.end())
-    return tilingDimKindVal->getSecond() == TilingDimensionKind::Reduce;
+  return isReduceDim(args[dim.second]);
+}
 
-  return false;
+bool DimensionAnalyzer::hasCandidateGroupConnection(
+    ArrayRef<DenseSet<int64_t>> connections, int64_t lhs, int64_t rhs) const {
+  lhs = candGroupDSU_->find(lhs);
+  rhs = candGroupDSU_->find(rhs);
+  return connections[lhs].contains(rhs);
+}
+
+void DimensionAnalyzer::addCandidateGroupConnection(
+    MutableArrayRef<DenseSet<int64_t>> connections, int64_t lhs, int64_t rhs) {
+  lhs = candGroupDSU_->find(lhs);
+  rhs = candGroupDSU_->find(rhs);
+  if (lhs == rhs)
+    return;
+  connections[lhs].insert(rhs);
+  connections[rhs].insert(lhs);
+}
+
+void DimensionAnalyzer::mergeCandidateGroupConnections(
+    MutableArrayRef<DenseSet<int64_t>> connections, int64_t lhs, int64_t rhs) {
+  auto merged = candGroupDSU_->find(lhs);
+  DenseSet<int64_t> connected;
+  for (auto idx : connections[lhs])
+    connected.insert(candGroupDSU_->find(idx));
+  for (auto idx : connections[rhs])
+    connected.insert(candGroupDSU_->find(idx));
+
+  connections[lhs].clear();
+  connections[rhs].clear();
+  for (auto idx : connected) {
+    connections[idx].erase(lhs);
+    connections[idx].erase(rhs);
+    if (idx == merged)
+      continue;
+    connections[merged].insert(idx);
+    connections[idx].insert(merged);
+  }
+}
+
+void DimensionAnalyzer::setTilingDimFromMergeIndex(
+    int64_t idxToMerge, int64_t groupIdx,
+    DenseMap<int64_t, DenseMap<int64_t, SmallVector<Dimension>>>
+        &parallelDimMaps) {
+  for (auto [store, dim] : parallelDimMaps[groupIdx][idxToMerge])
+    tilingDim_[store] = dim;
+}
+
+int64_t DimensionAnalyzer::selectInvalidUpdateMergeIndex(
+    int64_t repIdx, ArrayRef<int64_t> indices,
+    ArrayRef<DenseSet<int64_t>> invalidConnection,
+    ArrayRef<DenseSet<int64_t>> candidateExclusiveDimIdx,
+    DenseMap<int64_t, DenseMap<int64_t, SmallVector<Dimension>>>
+        &parallelDimMaps,
+    ArrayRef<int64_t> candidateGroupSize) {
+  int64_t idxToMerge = indices.front();
+  int64_t groupIdx = valueGroupDSU_->find(dimIdxToArgIdx_[idxToMerge]);
+  setTilingDimFromMergeIndex(idxToMerge, groupIdx, parallelDimMaps);
+
+  for (int64_t idx : llvm::drop_begin(indices)) {
+    if (hasCandidateGroupConnection(invalidConnection, repIdx, idx) ||
+        hasCandidateGroupConnection(candidateExclusiveDimIdx, repIdx, idx))
+      continue;
+
+    int64_t curSize = candidateGroupSize[candGroupDSU_->find(idxToMerge)];
+    int64_t size = candidateGroupSize[candGroupDSU_->find(idx)];
+    if (curSize < size ||
+        hasCandidateGroupConnection(invalidConnection, repIdx, idxToMerge) ||
+        hasCandidateGroupConnection(candidateExclusiveDimIdx, repIdx,
+                                    idxToMerge)) {
+      idxToMerge = idx;
+      setTilingDimFromMergeIndex(idxToMerge, groupIdx, parallelDimMaps);
+      continue;
+    }
+
+    if (curSize != size)
+      continue;
+
+    int64_t curHigherDimScore =
+        getHigherDimScore(parallelDimMaps[groupIdx][idxToMerge]);
+    int64_t higherDimScore = getHigherDimScore(parallelDimMaps[groupIdx][idx]);
+    if (2 * higherDimScore >= size && higherDimScore > curHigherDimScore) {
+      idxToMerge = idx;
+      setTilingDimFromMergeIndex(idxToMerge, groupIdx, parallelDimMaps);
+    }
+  }
+
+  return idxToMerge;
+}
+
+bool DimensionAnalyzer::shouldSkipInvalidUpdateMerge(
+    int64_t repIdx, int64_t idxToMerge,
+    ArrayRef<DenseSet<int64_t>> invalidConnection,
+    ArrayRef<DenseSet<int64_t>> candidateExclusiveDimIdx) const {
+  return candGroupDSU_->find(repIdx) == candGroupDSU_->find(idxToMerge) ||
+         hasCandidateGroupConnection(invalidConnection, repIdx, idxToMerge) ||
+         hasCandidateGroupConnection(candidateExclusiveDimIdx, repIdx,
+                                     idxToMerge);
+}
+
+void DimensionAnalyzer::applyInvalidUpdateMerge(
+    int64_t repIdx, int64_t idxToMerge,
+    MutableArrayRef<int64_t> candidateGroupSize,
+    MutableArrayRef<DenseSet<int64_t>> invalidConnection,
+    MutableArrayRef<DenseSet<int64_t>> candidateExclusiveDimIdx) {
+  int64_t totalSize = candidateGroupSize[candGroupDSU_->find(repIdx)] +
+                      candidateGroupSize[candGroupDSU_->find(idxToMerge)];
+  LDBG("Merging " << repIdx << " with " << idxToMerge << " to be "
+                  << totalSize);
+  int64_t repRoot = candGroupDSU_->find(repIdx);
+  int64_t idxRoot = candGroupDSU_->find(idxToMerge);
+  candGroupDSU_->join(repIdx, idxToMerge);
+  mergeCandidateGroupConnections(invalidConnection, repRoot, idxRoot);
+  mergeCandidateGroupConnections(candidateExclusiveDimIdx, repRoot, idxRoot);
+  candidateGroupSize[candGroupDSU_->find(repIdx)] = totalSize;
 }
 
 template <typename StoreOpTy> Value getStoreLikeSrc(StoreOpTy storeOp) {
@@ -118,92 +238,34 @@ void DimensionAnalyzer::processInvalidUpdates(
 
   LDBG("Connecting invalid updates: ");
   SmallVector<DenseSet<int64_t>> invalidConnection(argumentTotalLength_);
-  auto hasConnection = [&](auto &connections, int lhs, int rhs) {
-    lhs = candGroupDSU_->find(lhs);
-    rhs = candGroupDSU_->find(rhs);
-    return connections[lhs].contains(rhs);
-  };
-  auto addConnection = [&](auto &connections, int lhs, int rhs) {
-    lhs = candGroupDSU_->find(lhs);
-    rhs = candGroupDSU_->find(rhs);
-    if (lhs == rhs)
-      return;
-    connections[lhs].insert(rhs);
-    connections[rhs].insert(lhs);
-  };
-  auto mergeConnections = [&](auto &connections, int lhs, int rhs) {
-    auto merged = candGroupDSU_->find(lhs);
-    DenseSet<int64_t> connected;
-    for (auto idx : connections[lhs])
-      connected.insert(candGroupDSU_->find(idx));
-    for (auto idx : connections[rhs])
-      connected.insert(candGroupDSU_->find(idx));
 
-    connections[lhs].clear();
-    connections[rhs].clear();
-    for (auto idx : connected) {
-      connections[idx].erase(lhs);
-      connections[idx].erase(rhs);
-      if (idx == merged)
-        continue;
-      connections[merged].insert(idx);
-      connections[idx].insert(merged);
-    }
+  // Greedy invalid-update ordering: merge groups with fewer reduction dims
+  // first so non-reduction (parallel) tiling candidates take priority during
+  // later candidate-group selection.
+  auto reduceDimSum = [&](int64_t repIdx, ArrayRef<int64_t> indices) {
+    int64_t sum = isReduceDim(repIdx);
+    for (int64_t idx : indices)
+      sum += isReduceDim(idx);
+    return sum;
   };
+  llvm::stable_sort(invalidUpdates, [&](const auto &lhs, const auto &rhs) {
+    return reduceDimSum(lhs.first, lhs.second) <
+           reduceDimSum(rhs.first, rhs.second);
+  });
+
   for (auto &[repIdx, indices] : invalidUpdates) {
-    if (llvm::any_of(indices,
-                     [repIdx = repIdx](auto idx) { return idx == repIdx; })) {
-      for (auto idx : indices) {
-        if (idx != repIdx)
-          addConnection(invalidConnection, repIdx, idx);
-      }
-    }
-  }
-  for (auto &[repIdx, indices] : invalidUpdates) {
-    auto idxToMerge = indices[0];
-    auto groupIdx = valueGroupDSU_->find(dimIdxToArgIdx_[idxToMerge]);
-    for (auto [store, dim] : parallelDimMaps[groupIdx][idxToMerge])
-      tilingDim_[store] = dim;
-    for (auto &idx : llvm::drop_begin(indices)) {
-      if (hasConnection(invalidConnection, repIdx, idx) ||
-          hasConnection(candidateExclusiveDimIdx, repIdx, idx))
-        continue;
-      auto curSize = candidateGroupSize[candGroupDSU_->find(idxToMerge)];
-      auto size = candidateGroupSize[candGroupDSU_->find(idx)];
-      if (curSize < size ||
-          hasConnection(invalidConnection, repIdx, idxToMerge) ||
-          hasConnection(candidateExclusiveDimIdx, repIdx, idxToMerge)) {
-        idxToMerge = idx;
-        for (auto [store, dim] : parallelDimMaps[groupIdx][idxToMerge])
-          tilingDim_[store] = dim;
-      } else if (curSize == size) {
-        auto curHigherDimCnt =
-            getHigherDimCounts(parallelDimMaps[groupIdx][idxToMerge]);
-        auto higherDimCnt = getHigherDimCounts(parallelDimMaps[groupIdx][idx]);
-        if (2 * higherDimCnt >= size && higherDimCnt > curHigherDimCnt) {
-          idxToMerge = idx;
-          for (auto [store, dim] : parallelDimMaps[groupIdx][idxToMerge])
-            tilingDim_[store] = dim;
-        }
-      }
-    }
-    if (candGroupDSU_->find(repIdx) == candGroupDSU_->find(idxToMerge) ||
-        hasConnection(invalidConnection, repIdx, idxToMerge) ||
-        hasConnection(candidateExclusiveDimIdx, repIdx, idxToMerge))
+    int64_t idxToMerge = selectInvalidUpdateMergeIndex(
+        repIdx, indices, invalidConnection, candidateExclusiveDimIdx,
+        parallelDimMaps, candidateGroupSize);
+    if (shouldSkipInvalidUpdateMerge(repIdx, idxToMerge, invalidConnection,
+                                     candidateExclusiveDimIdx))
       continue;
+
     LDBG("repIdx " << repIdx << "("
                    << candidateGroupSize[candGroupDSU_->find(repIdx)]
                    << "): " << to_string(indices));
-    auto totalSize = candidateGroupSize[candGroupDSU_->find(repIdx)] +
-                     candidateGroupSize[candGroupDSU_->find(idxToMerge)];
-    LDBG("Merging " << repIdx << " with " << idxToMerge << " to be "
-                    << totalSize);
-    auto repRoot = candGroupDSU_->find(repIdx);
-    auto idxRoot = candGroupDSU_->find(idxToMerge);
-    candGroupDSU_->join(repIdx, idxToMerge);
-    mergeConnections(invalidConnection, repRoot, idxRoot);
-    mergeConnections(candidateExclusiveDimIdx, repRoot, idxRoot);
-    candidateGroupSize[candGroupDSU_->find(repIdx)] = totalSize;
+    applyInvalidUpdateMerge(repIdx, idxToMerge, candidateGroupSize,
+                            invalidConnection, candidateExclusiveDimIdx);
   }
 }
 
@@ -271,14 +333,14 @@ bool DimensionAnalyzer::computeTilingDim(bool isVectorOp) {
     for (const auto &[candGroup, candidate] : candidatesByCandGroup) {
       if (candidateGroupSize[candGroup] == numStoreOp) {
         SmallVector<int64_t> candidateDims;
-        int64_t higherDimCnt = getHigherDimCounts(candidate, &candidateDims);
+        int64_t higherDimScore = getHigherDimScore(candidate, &candidateDims);
 
         LDBG("Candidate of "
              << candGroup << " in group " << groupIndex << " is "
              << utils::debugger::to_string(candidateDims) << " with "
-             << higherDimCnt << " priority dimensions");
+             << higherDimScore << " priority score");
         // try to find majority of dimension is higher
-        if (2 * higherDimCnt >= numStoreOp) {
+        if (2 * higherDimScore >= numStoreOp) {
           selectedTilingCandGroupMap[groupIndex] = candGroup;
           for (auto [store, dim] : candidate)
             tilingDim_[store] = dim;
@@ -376,9 +438,10 @@ int64_t DimensionAnalyzer::getTilingDim(Value v) {
 }
 
 int64_t
-DimensionAnalyzer::getHigherDimCounts(ArrayRef<Dimension> candidate,
-                                      SmallVectorImpl<int64_t> *candidateDims) {
-  int64_t higherDimCnt = 0;
+DimensionAnalyzer::getHigherDimScore(ArrayRef<Dimension> candidate,
+                                     SmallVectorImpl<int64_t> *candidateDims) {
+  int64_t higherDimScore = 0;
+  const int64_t candidateSize = static_cast<int64_t>(candidate.size());
   for (auto [store, cDim] : candidate) {
     auto storeRef = getValueDimIndices(store);
     int64_t curDim = tilingDim_[store];
@@ -404,14 +467,24 @@ DimensionAnalyzer::getHigherDimCounts(ArrayRef<Dimension> candidate,
     }
     if (candidateDims)
       candidateDims->push_back(dim);
-    if (isReduceDim(Dimension(store, origDim))) {
+    const bool candIsReduce = isReduceDim(Dimension(store, origDim));
+    if (candIsReduce) {
       dim += static_cast<int64_t>(storeRef.size());
       LDBG("Reduced dim detected for dim: lowering priority");
     }
-    if (curDim == -1 || curDim > dim)
-      higherDimCnt++;
+    const bool curIsReduce =
+        curDim != -1 && isReduceDim(Dimension(store, curOrigDim));
+    const bool candWins = curDim == -1 || curDim > dim;
+    if (candIsReduce != curIsReduce) {
+      if (candWins)
+        higherDimScore += candidateSize;
+      else
+        higherDimScore -= candidateSize;
+    } else if (candWins) {
+      higherDimScore++;
+    }
   }
-  return higherDimCnt;
+  return higherDimScore;
 }
 
 bool DimensionAnalyzer::isValidTilingSize(int64_t dim) const {
