@@ -238,17 +238,17 @@ void computeConflictListsForCopyOpOperand(PlanContext &ctx,
   }
   auto memRef = optMemRef.value();
 
-  for (auto previousOp : previousOps) {
+  for (auto *previousOp : previousOps) {
     if (hasMemRefInOperands(previousOp, memRef)) {
-      for (auto followingOp : followingOps) {
+      for (auto *followingOp : followingOps) {
         ctx.addCopyConflict(previousOp, followingOp);
       }
     }
   }
 
-  for (auto followingOp : followingOps) {
+  for (auto *followingOp : followingOps) {
     if (hasMemRefInOperands(followingOp, memRef)) {
-      for (auto previousOp : previousOps) {
+      for (auto *previousOp : previousOps) {
         ctx.addCopyConflict(previousOp, followingOp);
       }
     }
@@ -433,8 +433,8 @@ void PlanContext::computeConflictLists(func::FuncOp func) {
         DenseSet<Operation *> visitedDownstreamOps;
         findDownstreamFusableOpOf(op, block, downstreamOps,
                                   visitedDownstreamOps);
-        for (auto upstreamOp : upstreamOps) {
-          for (auto downstreamOp : downstreamOps) {
+        for (auto *upstreamOp : upstreamOps) {
+          for (auto *downstreamOp : downstreamOps) {
             addOpConflict(upstreamOp, downstreamOp, op);
           }
         }
@@ -476,8 +476,8 @@ void PlanContext::computeConflictLists(func::FuncOp func) {
                          : WalkResult::advance();
             };
             if (op->walk(walker).wasInterrupted()) {
-              for (auto previousOp : previousOps) {
-                for (auto followingOp : followingOps) {
+              for (auto *previousOp : previousOps) {
+                for (auto *followingOp : followingOps) {
                   addSyncConflict(previousOp, followingOp);
                 }
               }
@@ -505,8 +505,8 @@ void PlanContext::computeConflictLists(func::FuncOp func) {
             DenseSet<Operation *> followingOps;
             findPreviousAndFollowingFusableOpOf(op, block, previousOps,
                                                 followingOps);
-            for (auto previousOp : previousOps) {
-              for (auto followingOp : followingOps) {
+            for (auto *previousOp : previousOps) {
+              for (auto *followingOp : followingOps) {
                 addSyncConflict(previousOp, followingOp);
               }
             }
