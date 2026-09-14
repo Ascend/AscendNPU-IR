@@ -1,4 +1,3 @@
-// REQUIRES: regbase
 // RUN: bishengir-opt -hivm-insert-fixpipe -hivm-inline-fixpipe %s -split-input-file -verify-diagnostics | FileCheck %s
 
 // Fractal mmadL1: all-4D inputs/output, check fixpipe insertion doesn't crash
@@ -1072,6 +1071,46 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
         outs(%init1 : tensor<16x16xf32>) -> tensor<16x16xf32>
     return %mmad1 : tensor<16x16xf32>
   }
+}
+
+// -----
+
+// A fixpipe whose single user is the scf.yield of an scf.for and whose source
+// is a batchMmadL1 result must stay inside the loop: hoisting it out leaves
+// the batch op's use chain crossing the loop boundary, which breaks
+// TileBatchMMIntoLoop (it requires the BatchMmadL1 -> Fixpipe chain to stay in
+// the same block).
+//
+// CHECK-LABEL: func.func @keep_batchmmadl1_fixpipe_inside_scf_for
+// CHECK: scf.for
+// CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+// CHECK: scf.yield %{{.*}} : tensor<2x16x16xf32>
+// CHECK-NOT: hivm.hir.fixpipe
+func.func @keep_batchmmadl1_fixpipe_inside_scf_for(
+    %a: tensor<2x16x16xf16>,
+    %b: tensor<2x16x16xf16>,
+    %dst: memref<2x16x16xf32, strided<[256, 16, 1]>>) {
+  %true = arith.constant true
+  %c16 = arith.constant 16 : index
+  %c0_i32 = arith.constant 0 : i32
+  %c1_i32 = arith.constant 1 : i32
+  %c2_i32 = arith.constant 2 : i32
+  %init = tensor.empty() : tensor<2x16x16xf32>
+  %for_res = scf.for %iv = %c0_i32 to %c2_i32 step %c1_i32
+      iter_args(%acc = %init) -> (tensor<2x16x16xf32>) : i32 {
+    %bmm = hivm.hir.batchMmadL1
+        ins(%a, %b, %true, %c16, %c16, %c16
+            : tensor<2x16x16xf16>, tensor<2x16x16xf16>, i1, index, index, index)
+        outs(%init : tensor<2x16x16xf32>) -> tensor<2x16x16xf32>
+    %fp_init = tensor.empty() : tensor<2x16x16xf32>
+    %fp = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+        ins(%bmm : tensor<2x16x16xf32>) outs(%fp_init : tensor<2x16x16xf32>)
+        -> tensor<2x16x16xf32>
+    scf.yield %fp : tensor<2x16x16xf32>
+  }
+  hivm.hir.store ins(%for_res : tensor<2x16x16xf32>)
+      outs(%dst : memref<2x16x16xf32, strided<[256, 16, 1]>>)
+  return
 }
 
 // -----

@@ -1176,8 +1176,11 @@ private:
       }
     } else if (isa<scf::YieldOp>(curOp) &&
                isa<scf::ForOp>(curOp->getParentOp()) &&
-               !op->getAttr(fixpipeDoNotMoveOutOfScfFor)) {
-      // move fixpipe out of scf.for
+               !op->getAttr(fixpipeDoNotMoveOutOfScfFor) &&
+               !op.getSource().getDefiningOp<hivm::BatchMmadL1Op>()) {
+      // Move fixpipe out of scf.for.
+      // The BatchMmadL1 case is excluded because TileBatchMMIntoLoop requires
+      // `BatchMmadL1 -> Fixpipe` use chain to stay in the same block.
       matched = true;
       auto scfForOp = dyn_cast_if_present<scf::ForOp>(curOp->getParentOp());
       moveFixpipeOutOfScfFor(rewriter, loc, op, scfForOp, op.getResultTensor());
