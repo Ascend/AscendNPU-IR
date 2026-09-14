@@ -1,80 +1,48 @@
-# CustomOp
+# Custom Operators
 
 ## Overview
 
-AscendNPU-IR already supports a rich operator set for upstream models. However, in certain scenarios, there are needs to define their own operators to perform custom computations:
+AscendNPU IR already provides a rich set of operators for upstream models. However, in some business scenarios, users still need custom operators to implement dedicated computation logic. Typical scenarios include:
 
-- Supported operators' combination could not fulfill desired computations.
-- The vendor wants custom operators to be private.
-- Combining multiple operators could not reach optimal performance.
+- The combination of existing operators cannot meet the required computation needs.
+- Vendors want to keep custom operators private.
+- The combination of multiple operators cannot achieve optimal performance.
 
-Custom operators allow users to freely use the APIs provided by AscendNPU-IR to provide their own operators that compiles with other operators.
+Custom operators allow users to freely use the interfaces provided by AscendNPU IR and provide their own operators that can be compiled together with other operators.
 
-### Hardware Background
+## Interface Description
 
-N/A
+**Parameters**:
 
-### Algorithm Principle
+| Parameter | Description |
+| --------- | ----------- |
+| `name`    | Unique operator name.<br>Note: Some names are reserved for built-in operators, mostly prefixed with `__builtin`. The compiler automatically links such built-in operators to the built-in template library bundled with `bishengir-compile`, requiring no additional user configuration.<br>If a custom operator name is used, the user must specify the implementation location, the compilation command, and all necessary information. |
+| `inputs`  | Input parameters. |
+| `outputs` | Output results, which can be specified as the `init` operand, used as the initial value of the operation result or the initial location where the operation result is written. |
 
-N/A
+**Attributes**:
 
-### API Description
+| Attribute | Description | Remarks/Example |
+|--------|------|----------|
+| `CoreType` | The core type on which the operator executes. | See `TCoreTypeAttr`. |
+| `Pipe` | The pipe on which the operator executes (used for `hivm.hir.custom`). | See `PipeAttr`. |
+| `InPipe` | The input pipe of a Macro custom operator. | See `PipeAttr` (`hivm.pipe_in`). |
+| `OutPipe` | The output pipe of a Macro custom operator. | See `PipeAttr` (`hivm.pipe_out`). |
+| `VFMode` | The running mode on the vector unit. | See `VFModeAttr`. This attribute is ignored when the core type is Cube. Note: Built-in operators may or may not specify it; the compiler checks correctness and normalizes it. |
+| `Symbol` | The name of the implementation function. | - |
+| `sync_event_slots` | Synchronization slot metadata of a Macro custom operator. `GraphSyncSolver` fills `sync_related_args` accordingly and injects `set/wait flag` before and after the macro. | The list length must match the number of `set_flag`/`wait_flag` pairs on the same pipe pair within the macro implementation body. See [Macro sync_event_slots](#macro-operator-sync-event-slots-sync_event_slots) for details. |
+| `iterator_types` | Per-operand iterator semantics, used by structured lowering and flatten-type passes (`HIVM_IteratorTypeAttr`). | Optional; when set, the length should cover the inputs and outputs participating in tiling. |
+| `indexing_map` | Per-operand affine index mapping (same role as Linalg's `indexing_maps`). | Optional, of type `ArrayAttr<AffineMapAttr>`. |
+| `max_rank` | The maximum tensor rank supported by flatten/layout-type passes. | Optional `i64` attribute, default value 5. |
+| `align_dim` | Per-operand dimension alignment hint. | Attached to the corresponding operand via `arg_attrs`. |
+| `arg_attrs` | Per-operand dictionary attribute array. | Of type `ArrayAttr` (for example, `{align_dim = 1 : i64}` on operand 2). The Triton frontend generates it automatically based on `align_dim` on the registered class. |
+| `extra_buffers_types` | The element type of temporary buffers. | The `hivm-alloc-extra-buffer` pass allocates `memref` and appends them to `temp_buffers` (`tmps` in assembly). |
+| `extra_buffers_sizes` | The one-dimensional size (number of elements) of temporary buffers. | Same as above. |
+| `temp_buffers` | Temporary `memref` passed to the device implementation (the `tmps` operand segment). | Usually filled automatically by the `extra_buffers_*` attributes; no manual setting is required. |
+| `no_side_effect` | Indicates that the operator has no side effects. | - |
+| `bitcode` / `source` / `compile` | The path of the implementation artifact and an optional compilation command. | Usually set by the Triton frontend. |
 
-Generic API for custom op:
-
-- **name**: unique op name.
-
-         Note : there are names reserved for builtins, usually starting with "__builtin".
-                Compiler will link these builtins to self-contained template library, 
-                which comes together within bishengir-compile. 
-
-                For normal names/cases, user needs to specify implementation location/compilation commands,
-                and all the necessary information.
-
-- **inputs**: input parameters.
-- **outputs**: output results, designated "init" operands, which act as initial values for the results of the operation 
-              or the init locations to which the results of the op will be written.
-
-In order to adapt to future enhancements quickly and dynamically, custom op relies on attributes to retrieve necessary information:
-
-- **CoreType**: which core type to execute on. Refer to TCoreTypeAttr.
-- **Pipe**: which pipe to execute on. Refer to PipeAttr.
-- InPipe   : input pipe for macro custom op, refer to PipeAttr (`hivm.pipe_in`).
-- OutPipe  : output pipe for macro custom op, refer to PipeAttr (`hivm.pipe_out`).
-- VFMode   : which mode to run on vector units, refer to VFModeAttr.
-             this attribute is ignored when core type is cube.
-
-             Note : for builtins, user could specify these information or not,
-                    compiler will help to check the correctness and canonicalize.
-- Symbol   : implementation function name.
-- sync_event_slots : optional sync slot metadata for macro custom op. GraphSyncSolver
-                     fills the corresponding `sync_related_args` and can inject
-                     required set/wait flags around the macro. The list length must
-                     match the number of internal `set_flag`/`wait_flag` pairs
-                     declared in the macro implementation for the same pipe pair.
-                     See [Macro sync_event_slots](#macro-sync-event-slots).
-- iterator_types : per-operand iterator semantics for structured lowering and
-                   flatten passes (`HIVM_IteratorTypeAttr`). Optional; when set,
-                   length should cover inputs and outputs that participate in tiling.
-- indexing_map : per-operand affine index maps (same role as Linalg `indexing_maps`).
-                 Optional `ArrayAttr<AffineMapAttr>`.
-- max_rank : maximum tensor rank supported by flatten/layout passes. Optional `i64`
-             attribute; default is **5**.
-- align_dim : per-operand dimension alignment hint. Stored on the matching operand
-              via **arg_attrs** (see below).
-- arg_attrs : `ArrayAttr` of per-operand dictionary attributes (for example
-              `{align_dim = 1 : i64}` on operand 2). The Triton frontend builds this
-              from `align_dim` on the registration class.
-- extra_buffers_types / extra_buffers_sizes : scratch buffer element types and 1-D
-              sizes (element counts). The `hivm-alloc-extra-buffer` pass allocates
-              `memref` values and appends them to **temp_buffers** (`tmps` in assembly).
-- temp_buffers : scratch memrefs passed to the device implementation (`tmps` operand
-                 segment). Often populated automatically from `extra_buffers_*` attributes.
-- no_side_effect : unit attribute; marks the op as side-effect free.
-- bitcode / source / compile : path to the implementation artifact and optional compile
-                               recipe (typically set by the Triton frontend).
-
-## Lowering Process
+## Lowering Flow
 
 ```text
 ┌─────────────────────────────────────────────────────────────────┐
@@ -86,47 +54,52 @@ In order to adapt to future enhancements quickly and dynamically, custom op reli
 ┌─────────────────────────────────────────────────────────────────┐
 │  HIVMToStandard                                                 │
 │  ───────────────────────────────────────────────────────────────│
-│  • Builtins                                                     │
-│    -> call to builtins libraries                                │
-│  • User provided implementations ->                             │
-|    -> call to user provided function name                       |
-|      -> bishengir-compile link with user provided link commands |
+│  • built-in operator                                             │
+│    -> call the built-in library                                  │
+│  • user-provided implementation ->                               │
+|    -> call the user-provided function name                      |
+|      -> bishengir-compile links using the user-provided link command |
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
-            BiSheng Compiler compiles to objects
+            BiSheng Compiler compiles them into Object Files
 ```
 
-### Constraints and Capabilities
+## Supported Capabilities
 
-#### ✅ Capabilities
-
-| Feature                         | Description                                                  |
+| Feature | Description |
 | ------------------------------- | ------------------------------------------------------------ |
-| **CoreType**                    | Custom op execution core.                                    |
-| **Pipe**                        | Custom op execution pipe (`hivm.hir.custom`).                |
-| **InPipe / OutPipe**            | Macro custom op input/output pipes (`hivm.hir.custom_macro`). |
-| **VFMode**                      | Custom op running mode on vector core, SIMT/SIMD/MIX.        |
-| **Symbol**                      | User provided implementation function name                   |
-| **sync_event_slots**            | Macro sync-slot declaration for GraphSyncSolver integration. |
-| **iterator_types**              | Tiling / flatten iterator semantics per operand.               |
-| **indexing_map**                | Per-operand affine maps for structured lowering.               |
-| **max_rank**                    | Upper bound on tensor rank for layout passes (default 5).      |
-| **align_dim** / **arg_attrs**   | Per-operand alignment hints for adjustment passes.             |
-| **extra_buffers_*** / **tmps**  | Scratch buffer declaration and allocation.                     |
-| **no_side_effect**              | Pure-op marking for optimization.                              |
-| **Builtins**                    | Set of builtins (name reserved).                             |
+| CoreType | Execution core of the custom operator. |
+| Pipe | Pipe on which the custom operator executes (`hivm.hir.custom`). |
+| InPipe / OutPipe | Input/output pipe of the Macro custom operator (`hivm.hir.custom_macro`). |
+| VFMode | Running mode of the custom operator on the vector core: SIMT/SIMD/MIX. |
+| Symbol | Function name provided by the user. |
+| sync_event_slots | Macro sync slot declaration, used for GraphSyncSolver integration. |
+| iterator_types | Per-operand iterator semantics for Tiling / flatten. |
+| indexing_map | Per-operand affine mapping for structured lowering. |
+| max_rank | Maximum tensor rank supported by the layout pass (default 5). |
+| align_dim / arg_attrs | Per-operand alignment hints for the alignment adjustment pass. |
+| extra_buffers_* / tmps | Temporary buffer declaration and allocation. |
+| no_side_effect | Pure operator marker for optimization. |
+| built-in operator | A set of built-in operators (names reserved). |
 
-#### ⚠️ Limitations
+## Constraints
 
-| Limitation                   | Description                                               | Status                                                                 |
-| ---------------------------- | --------------------------------------------------------- | ------------------------------------------------------- |
-| **User implementations**     | Custom op lowered to user provided implementations:<br>- HIVM IR link to user provided sources/objects<br>- Specific commands registration to bishengir-compile | Work in progress. |
-| **Passes interactions**      | Transformation passes that adapt to custom op:<br>- Flatten optimization<br>- Alignment adjustment<br>- Memory planning<br>- Layout transformation<br>- ... more to go | NA, work in progress. |
+The current custom operator system has two capabilities that are still being improved, as follows:
 
-### MLIR Example
+- **Incomplete adaptation of user-side implementation**
 
-#### Builtin
+  It supports lowering a custom operator to a user-provided implementation. The related process includes linking HIVM IR to user-provided source code or object files and registering specific link commands with bishengir-compile. This feature is still under development.
+
+- **Incomplete adaptation of pass interaction**
+
+  The transformation passes for various custom operators, including Flatten optimization, alignment adjustment, memory planning, and layout transformation, still require additional adaptation logic, and the related work is in progress.
+
+## MLIR Example
+
+### Operator Declaration Example
+
+**Built-in operator**:
 
 ```mlir
 %0 = hivm.hir.custom
@@ -137,7 +110,7 @@ In order to adapt to future enhancements quickly and dynamically, custom op reli
 
 ```
 
-#### Custom
+**Custom operator**:
 
 ```mlir
 %0 = hivm.hir.custom
@@ -149,7 +122,7 @@ In order to adapt to future enhancements quickly and dynamically, custom op reli
       outs(%empty : tensor<3x3xf32>) -> tensor<3x3xf32>
 ```
 
-#### Custom Macro
+**Custom Macro operator**:
 
 ```mlir
 %0 = hivm.hir.custom_macro
@@ -166,32 +139,26 @@ In order to adapt to future enhancements quickly and dynamically, custom op reli
       outs(%dst : memref<32xi32, #hivm.address_space<ub>>)
 ```
 
-<a id="macro-sync-event-slots"></a>
+### Core Attribute Usage Example
 
-#### Macro `sync_event_slots`: one slot vs two slots
+#### Macro Operator Sync Event Slots (sync_event_slots)
 
-Macro custom ops that move data on **InPipe** (for example `PIPE_MTE2`) and compute on
-**OutPipe** (for example `PIPE_V`) often need explicit `set_flag` / `wait_flag` inside
-the device implementation to synchronize MTE2 completion before the vector pipe reads UB.
+For a Macro custom operator that moves data in the InPipe (such as `PIPE_MTE2`) and performs computation in the OutPipe (such as `PIPE_V`), it is usually necessary to insert `set_flag` and `wait_flag` operations in the device implementation to ensure that the vector Pipe starts reading only after MTE2 has finished writing data into the UB.
 
-Register those internal handshakes in Triton via `sync_event_slots` with
-`SYNC_HINT.INTERNAL`. **GraphSyncSolver** maps each slot to a distinct event id and may
-inject additional set/wait flags around the macro so it composes safely with surrounding
-HIVM ops.
+On the Triton side, declare these intra-macro synchronization relationships through `sync_event_slots` and `SYNC_HINT.INTERNAL`.
 
-**Rule:** declare one `sync_event_slots` entry per internal `set_flag`/`wait_flag` pair
-for the same producer/consumer pipe pair inside the macro body.
+GraphSyncSolver assigns an independent event ID to each slot and, when necessary, inserts set/wait operations before and after the macro operator to ensure that it correctly connects with the upstream and downstream HIVM operators.
 
-| Pattern | Slots in Python / MLIR | Typical device code | When to use |
-| ------- | ---------------------- | ------------------- | ----------- |
-| **Single slot** | 1 × `(PIPE_MTE2, PIPE_V, INTERNAL)` | Both GM→UB loads, then one `set_flag` + `wait_flag`, then vector op | Default when copies run back-to-back and a single MTE2→V fence before vector is enough |
-| **Two slots** | 2 × `(PIPE_MTE2, PIPE_V, INTERNAL)` | `load` → `set_flag(0)` → `load` → `set_flag(1)` → `wait_flag(0)` → `wait_flag(1)` → vector op | When each GM→UB transfer needs its own event (pipeline overlap, or per-transfer visibility) |
+**Rule**: In the macro implementation body, each pair of `set_flag`/`wait_flag` for Pipes in the same direction requires a corresponding `sync_event_slots` entry to be declared in Python/MLIR.
 
-**Single slot — why it works**
+| Mode | Python/MLIR Slot Count | Typical Device Code | Applicable Scenario |
+| ------ | ----------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------ |
+| Single slot | 1 × `(PIPE_MTE2, PIPE_V, INTERNAL)` | After two GM→UB transfers complete, one `set_flag` + `wait_flag`, then vector computation | Default scenario: two loads execute consecutively, and only one MTE2-to-V synchronization is required before vector computation starts |
+| Dual slot | 2 × `(PIPE_MTE2, PIPE_V, INTERNAL)` | `load` → `set_flag(0)` → `load` → `set_flag(1)` → `wait_flag(0)` → `wait_flag(1)` → vector computation | Scenarios where each GM→UB transfer requires an independent event, such as pipeline overlap or per-transfer completion confirmation |
 
-Both operands are copied to UB on MTE2 before any vector work. One event signals that
-*all* MTE2 traffic required for the macro inputs has finished, so PIPE_V can safely
-read both UB scratch buffers:
+**Single slot description**:
+
+Only after both operands have been moved into the UB through MTE2 does the vector Pipe start computation. A single event is sufficient to indicate that all MTE2 input transfers required by this macro have completed, and PIPE_V can safely read the two UB temporary buffers. The corresponding pseudocode is as follows:
 
 ```text
 load_gm_to_ubuf(src0)
@@ -201,11 +168,9 @@ wait_flag(MTE2 → V, event 0)
 vector_vadd(...)
 ```
 
-**Two slots — why you might need them**
+**Dual slot description**:
 
-Issuing `set_flag` after the first load lets MTE2 start the second transfer while the
-compiler/runtime tracks completion per buffer. Each slot reserves a distinct event id for
-GraphSyncSolver:
+Executing `set_flag` immediately after the first load allows the second GM-to-UB transfer to start while waiting for the first transfer to complete. Each slot corresponds to an independent event ID assigned by GraphSyncSolver. The corresponding pseudocode is as follows:
 
 ```text
 load_gm_to_ubuf(src0)
@@ -217,7 +182,7 @@ wait_flag(MTE2 → V, event 1)
 vector_vadd(...)
 ```
 
-MLIR for two internal slots:
+The MLIR corresponding to the dual slots:
 
 ```mlir
 sync_event_slots = [
@@ -226,20 +191,15 @@ sync_event_slots = [
 ]
 ```
 
-Mismatch between the slot count in Python/MLIR and the `set_flag`/`wait_flag` count in
-the `.cpp` implementation is a common integration bug: GraphSyncSolver will assign event
-ids that no longer line up with the kernel.
+If the number of slots declared in Python/MLIR does not match the number of `set_flag`/`wait_flag` pairs in the C++ implementation, the event IDs allocated by GraphSyncSolver will not match the kernel. This is a common error when integrating custom Macro operators.
 
-#### Tiling attributes (`iterator_types`, `indexing_map`, `max_rank`)
+#### Tiling attributes (iterator_types, indexing_map, max_rank)
 
-These attributes connect CustomOp to HIVM structured-op interfaces (`getIteratorTypesArray`,
-`getIndexingMaps`) so flatten, broadcast, and layout passes can reason about operands
-the same way as native structured ops.
+By configuring these attributes, CustomOp can implement the HIVM structured operator interfaces (`getIteratorTypesArray`, `getIndexingMaps`), enabling the flatten, broadcast, and layout passes to analyze and optimize the operands of custom operators in the same way they handle native structured operators.
 
-Supported `iterator_types` values: `parallel`, `broadcast`, `transpose`, `reduction`,
-`interleave`, `deinterleave`, `inverse`, `pad`, `concat`, `gather`, `cumulative`, `opaque`.
+The supported values of `iterator_types` include: `parallel`, `broadcast`, `transpose`, `reduction`, `interleave`, `deinterleave`, `inverse`, `pad`, `concat`, `gather`, `cumulative`, and `opaque`.
 
-MLIR example (from `custom-op-attrs.mlir`):
+MLIR example (excerpted from `custom-op-attrs.mlir`):
 
 ```mlir
 #map2d = affine_map<(d0, d1) -> (d0, d1)>
@@ -272,7 +232,7 @@ class tiled_custom_op:
     ]
 
     def __init__(self, x, y, out=None):
-        # One affine map per structured operand (inputs + outputs).
+        # Each structured operand (input + output) corresponds to one affine map.
         self.indexing_map = [
             al.affine_map.get_identity(2),
             al.affine_map.get_identity(2),
@@ -280,10 +240,9 @@ class tiled_custom_op:
         ]
 ```
 
-#### Operand alignment (`align_dim`, `arg_attrs`)
+#### Operand Alignment Attribute (align_dim, arg_attrs)
 
-`align_dim` tags which dimension of a given operand should be aligned. In MLIR it
-appears as a dictionary entry inside `arg_attrs` on that operand index:
+`align_dim` is used to mark the dimension of a specified operand that needs to be aligned. In MLIR, this attribute is attached to the operand at the corresponding index through `arg_attrs`. An example is as follows:
 
 ```mlir
 %0 = hivm.hir.custom { ... }
@@ -292,17 +251,16 @@ appears as a dictionary entry inside `arg_attrs` on that operand index:
     outs(%dst : tensor<?xf32>) -> tensor<?xf32>
 ```
 
-Triton example (set in `__init__`; keys are argument names or positional indices):
+Triton example (set in `__init__`, with the key being the parameter name or positional index):
 
 ```python
 def __init__(self, x, ptr1, ptr2, out=None):
-    self.align_dim = {"ptr2": 1, 1: 0}  # ptr2 dim 1; 2nd arg dim 0
+    self.align_dim = {"ptr2": 1, 1: 0}  # Dimension 1 of ptr2; dimension 0 of the second parameter.
 ```
 
-#### Extra scratch buffers (`extra_buffers_*`, `temp_buffers`)
+#### Temporary Buffer Attributes (extra_buffers_*, temp_buffers)
 
-Declare scratch types and sizes on the op; `hivm-alloc-extra-buffer` allocates 1-D
-memrefs and wires them into the `tmps` segment:
+The type and size of temporary buffers can be declared on the operator through the related attributes. `hivm-alloc-extra-buffer` automatically allocates a one-dimensional memref and connects it to the `tmps` operand segment of the operator. An example is as follows:
 
 ```mlir
 // After hivm-alloc-extra-buffer:
@@ -317,7 +275,7 @@ memrefs and wires them into the `tmps` segment:
      outs(%empty : tensor<2x2xf32>) -> tensor<2x2xf32>
 ```
 
-Triton example (single buffer as tuple, or list of `(dtype, size)` pairs):
+Triton example (a tuple for a single buffer, or a list of `(dtype, size)` for multiple buffers):
 
 ```python
 @al.register_custom_op
@@ -333,27 +291,28 @@ class my_custom_op_extra_buf:
             (tl.bfloat16, 256),
             (tl.float32, 512),
         ]
-        # Or a single buffer: self.extra_buffers = (tl.float16, 128)
+        # Or for a single buffer: self.extra_buffers = (tl.float16, 128)
 ```
 
-The device kernel receives the allocated scratch memrefs through the `tmps` operands
-in the same order as `extra_buffers`.
+The device kernel receives the allocated scratch memref through the `tmps` operands in the declaration order of `extra_buffers`.
 
-#### `no_side_effect`
+#### no_side_effect
 
-Mark ops that only read inputs and write declared outputs:
+This attribute marks a pure operator that only reads inputs and only writes declared outputs. An example is as follows:
 
 ```mlir
 %0 = hivm.hir.custom {no_side_effect, symbol = "pure_kernel", ...}
     "pure_op" ins(...) outs(...) -> ...
 ```
 
-#### TRITON CustomOp Lowering Example
+### Triton custom operator example
+
+#### Standard custom operator example
 
 Python script: `test_custom_op.py`
 
 ```python
-# For more details of Triton custom op design, refer to
+# For more details about Triton custom operator design, see
 # https://gitcode.com/Ascend/triton-ascend/pull/988
 
 import triton
@@ -417,9 +376,9 @@ def test_custom(DT, L):
     torch.testing.assert_close(out, ref)
 ```
 
-CPP API definition: `add.cpp`
+C++ API definition: `add.cpp`
 
-```C++
+```cpp
 #define __aiv__ [aicore]
 #define INTRINSIC_NO_ARGS(NAME) NAME()
 #define INTRINSIC(NAME, ...) NAME(__VA_ARGS__)
@@ -485,19 +444,19 @@ __aiv__ __attribute__((always_inline)) void _mlir_ciface_custom_add_int32(
 }
 ```
 
-Command for compiling the `.bc` file:
+Command to compile the `.bc` file:
 
 ```bash
 ccec -x cce --cce-aicore-arch=dav-c220-vec --cce-aicore-only -c -emit-llvm ./add.cpp -o ./add.bc
 ```
 
-Command for Python script execution:
+Command to run the Python script:
 
 ```bash
 python -m pytest -sv test_custom_op.py
 ```
 
-#### TRITON CustomMacroOp Lowering Example
+#### Macro custom operator example
 
 Python script: `test_custom_macro_op.py`
 
@@ -542,9 +501,9 @@ def test_custom_macro(L):
     torch.testing.assert_close(out.cpu(), (a + b).cpu())
 ```
 
-CPP API definition: `macro_add.cpp`
+C++ API definition: `macro_add.cpp`
 
-```c++
+```cpp
 #define __aiv__ [aicore]
 #define INTRINSIC_NO_ARGS(NAME) NAME()
 #define INTRINSIC(NAME, ...) NAME(__VA_ARGS__)
@@ -574,7 +533,7 @@ __aiv__ __attribute__((always_inline)) void _mlir_ciface_custom_macro_add_int32(
   memref_t<__gm__ int32_t, 1> gm_src1 = {src1->allocated, src1->aligned,
                                          src1->offset, {n}, {1}};
 
-  // Single internal event: both GM→UB loads, then one MTE2→V handshake.
+  // Single internal event: two GM→UB transfers followed by one MTE2→V handshake.
   load_gm_to_ubuf_1d(&gm_src0, &ub_src0);
   load_gm_to_ubuf_1d(&gm_src1, &ub_src1);
   INTRINSIC(set_flag, PIPE_MTE2, PIPE_V, 0);
@@ -584,19 +543,19 @@ __aiv__ __attribute__((always_inline)) void _mlir_ciface_custom_macro_add_int32(
 }
 ```
 
-Command for compiling the `.bc` file:
+Command to compile the `.bc` file:
 
 ```bash
 ccec -x cce --cce-aicore-arch=dav-c220-vec --cce-aicore-only -c -emit-llvm ./macro_add.cpp -o ./macro_add.bc
 ```
 
-Command for Python script execution:
+Python script execution command:
 
 ```bash
 python -m pytest -sv test_custom_macro_op.py
 ```
 
-Lowering to MLIR:
+Lowered to MLIR:
 
 ```mlir
 module attributes {hacc.target = #hacc.target<"Ascend910B3">} {

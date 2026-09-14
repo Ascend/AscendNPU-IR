@@ -1,46 +1,46 @@
-# Debugging Module (DFX)
+# Debugging Module DFX
 
-## device_print
+## Hardware Background
 
-### Hardware Background
+**device_print**:
 
-`device_print` is a device-side debugging tool provided by the Triton framework on the Ascend NPU, allowing developers to directly print scalar/vector information during the execution of operator kernels. The core process is as follows:
+**device_print** is a device-side debugging tool provided by the Triton framework on Ascend NPUs. It allows developers to directly print scalar/vector information during operator kernel execution. The core flow is as follows:
 
 ```mermaid
 flowchart LR
-    subgraph Host [Host-side process]
+    subgraph Host[Host-side flow]
         A[Host Launcher] -->|1. Pass the print buffer| B[Kernel execution]
-        B -->|2. Kernel return| C[Read the buffer]
+        B -->|2. Kernel returns| C[Read the buffer]
         C -->|3. Parse and print| D[Terminal output]
     end
 
-    subgraph Code [Code implementation]
-        E[BiSheng header file <br/>Builtin print logic] -->|Automatic extraction| F[triton-ascend<br/> integration]
+    subgraph Code[Code implementation]
+        E[BiSheng header file<br/>built-in print logic] -->|Automatically extract| F[triton-ascend<br/>integration]
         F -->|Call| A
     end
 ```
 
-Key hardware resource restrictions:
+**Key hardware resource constraints**:
 
-- **UB Print Buffer**: Each AI core is fixed with **16 KB** of space for temporary data storage, and all print operations within the same aicore share this 16 KB buffer. When the buffer is full, a warning is issued indicating that the data size exceeds the maximum buffer capacity, and new data will be discarded.
+- UB print buffer: Each aicore is allocated a fixed 16 KB space for temporary data storage, and all print operations within the same aicore share this 16 KB buffer. When the buffer is full, new data triggers a warning, and data exceeding the maximum buffer size is discarded.
 
-- **Multi-Core Concurrency**: Each AI core executes kernel code independently, and the final print results from each core are presented on the host.
+- Multi-core concurrency: Each aicore executes the kernel code independently, and the Host side ultimately presents the print results of each core.
 
-### Algorithm Principle
+## Algorithm Principles
 
-The implementation involves three components working together: Triton Ascend, AscendNPU IR, and the Bisheng compiler. This section focuses on AscendNPU IR.
+The implementation involves the collaboration of three components: **Triton Ascend**, **AscendNPU IR**, and the **Bisheng Compiler**. The description of this feature focuses primarily on **AscendNPU IR**.
 
-#### Triton Ascend
+### Triton Ascend
 
-Produces the initial `.ttadapter` IR. During this process, Triton's `tl.device_print` is converted to the `func.call @triton_print_*` API.
+During the generation of the initial `.ttadapter` IR, the `tl.device_print` on the Triton side is converted into the `func.call @triton_print_*` interface.
 
-#### AscendNPU IR
+### AscendNPU IR
 
-After receiving the `.ttadapter` IR, the following transformations are applied in the AscendNPU IR stage.
+After receiving the `.ttadapter` IR, the AscendNPU IR stage mainly undergoes the following transformations:
 
-##### AdaptTritonKernel
+#### AdaptTritonKernel
 
-Converts the `func.call @triton_print_*` API to the `hfusion.print` API.
+Converts the `func.call @triton_print_*` interface into the `hfusion.print` interface.
 
 ```mlir
 // Before AdaptTritonKernel
@@ -58,9 +58,9 @@ memref.copy %reinterpret_cast, %alloc : memref<8xi64, strided<[1]>> to memref<8x
 hfusion.print " x: " {hex = false} %0 : tensor<8xi64>
 ```
 
-##### HFusionToHIVM
+#### HFusionToHIVM
 
-Converts the `hfusion.print` API to the `hivm.hir.debug` API.
+Converts the `hfusion.print` interface into the `hivm.hir.debug` interface.
 
 ```mlir
 // Before ConvertHFusionToHIVM
@@ -78,9 +78,9 @@ memref.copy %reinterpret_cast, %alloc : memref<8xi64, strided<[1]>> to memref<8x
 hivm.hir.debug {debugtype = "print", hex = false, prefix = " x: ", tcoretype = #hivm.tcore_type<CUBE_OR_VECTOR>} %0 : tensor<8xi64>
 ```
 
-##### InlineFixpipe
+#### InlineFixpipe
 
-Inserts fixpipe for `hivm.print` when the printed value is the result of mmad that is yielded from `scf.for`.
+Inserts a fixpipe for `hivm.print`, where `hivm.print` prints the `mmad` result, and the `mmad` result is the `yield` in `scf.for`.
 
 ```mlir
 // Before InlineFixpipe
@@ -101,9 +101,9 @@ Inserts fixpipe for `hivm.print` when the printed value is the result of mmad th
 }
 ```
 
-##### InsertNZ2NDForDebug
+#### InsertNZ2NDForDebug
 
-`device_print` only supports printing data on UB/GM. Therefore when printing L1 data, the data must first be moved from L1 to GM. When this pass identifies `hivm::MmadL1Op`, it checks whether an input of that op is used by `hivm::DebugOp`; if so, it allocates a workspace and inserts an NZ2ND op so that the data is moved to GM for printing.
+`device_print` supports printing data only on UB/GM. Therefore, when printing data on L1, the data must first be moved from L1 to GM. The purpose of this Pass is as follows: when `hivm::MmadL1Op` is recognized, the inputs of this op are checked; if an input is used by `hivm::DebugOp`, a `workspace` of the required size is allocated, and then an `NZ2ND` op is inserted to ensure that the data is moved to GM for printing.
 
 ```mlir
 // Before InsertNZ2NDForDebug
@@ -143,13 +143,13 @@ hivm.hir.load ins(%reinterpret_cast_0 : memref<4x1xf32, strided<[?, 1], offset: 
 hivm.hir.debug {debugtype = "print", hex = false, prefix = " a_vals: ", tcoretype = #hivm.tcore_type<CUBE_OR_VECTOR>} %15 : tensor<1x4xf32>
 ```
 
-##### SplitMixKernel
+#### SplitMixKernel
 
-For mix kernels, the Debug op is first processed in this pass with InferCoreType to infer the precise core type (VECTOR/CUBE); the default is `CUBE_OR_VECTOR`. The `mix` function is then split into pure Cube and pure Vector functions, which determines whether the Debug op finally runs on the Cube core or the Vector core.
+For `mix`-type use cases, the `Debug` op first performs `InferCoreType` in this Pass to infer the precise `coretype` (VECTOR/CUBE), which defaults to CUBE_OR_VECTOR, and then splits the `mix` function to generate a pure `cube` function and a pure `vector` function. This determines whether the `Debug` op ultimately runs on the `cube` core or the `vector` core.
 
-##### InsertInitAndFinishForDebug
+#### InsertInitAndFinishForDebug
 
-If any Debug op exists, inserts `hivm.hir.init_print` at the beginning of each function and `hivm.hir.finish_print` after each `hivm.hir.print`. `hivm.hir.init_print` is used for preparation before printing; `hivm.hir.finish_print` is used for work after printing. Currently they have no specific effect and are reserved for future extension of `device_print`.
+If a `Debug` op exists, the `hivm.hir.init_print` call is added to the beginning of each function, and `hivm.hir.finish_print` is added after each `hivm.hir.print`. `hivm.hir.init_print` is used for the preparation work before printing, and `hivm.hir.finish_print` is used for the work after printing. Currently they have no particularly specific function, and they reserve an interface for future extension of `device_print`.
 
 ```mlir
 // Before InsertInitAndFinishForDebug
@@ -179,43 +179,40 @@ hivm.hir.debug {debugtype = "print", finishInserted = 0 : i32, hex = false, pref
 hivm.hir.finish_debug
 ```
 
-##### ConvertHIVMToStandard
+#### ConvertHIVMToStandard
 
-Converts `hivm.hir.init_print` / `hivm.hir.print` / `hivm.hir.finish_print` to library function calls.
+Converts `hivm.hir.init_print`/`hivm.hir.print`/`hivm.hir.finish_print` into library function calls.
 
-##### ConvertHIVMToLLVM
+#### ConvertHIVMToLLVM
 
-`ConvertHIVMToLLVM` brings in the real library functions and sets the linkage of print-related functions to `ExternWeak` (allowing repeated definition across multiple LLVM modules).
+`ConvertHIVMToLLVM` introduces the actual library functions and sets the linkage of the print-related functions to `ExternWeak` (allowing duplicate definitions across multiple llvm modules).
 
-##### Debug op library implementation
+#### Debug op Library Implementation
 
-The op library currently implements printing via scalar print: it uses a loop that calls the BiSheng compiler's `cce::printf` interface for scalar output.
+The current implementation of the `op` library performs scalar printing by hoisting the print calls out of the `for` loop and invoking the `cce::printf` interface provided by the Bisheng Compiler.
 
-#### BiSheng compiler
+### Bisheng Compiler
 
-The host launcher produced by triton-ascend calls the kernel compiled by the BiSheng compiler and passes the print buffer to the kernel. After the kernel returns, the host launcher reads the buffer and performs the actual print. This logic is implemented in the headers shipped with the BiSheng compiler and is automatically extracted by triton-ascend from the BiSheng compiler path.
+The host-side launcher generated by **triton-ascend** invokes the kernel compiled by the **bisheng** compiler and passes the print buffer to the kernel. After the kernel returns, the host launcher reads the buffer and performs the actual printing. This part of the code is implemented in the header file bundled with the **bisheng** compiler and is automatically extracted by **triton-ascend** from the **bisheng** compiler path.
 
-### API
+## Interface Description
 
-Enable the feature by setting the environment variable `TRITON_DEVICE_PRINT=1`. When enabled, Triton Ascend sets the macro `__CCE_ENABLE_PRINT__`, which the BiSheng compiler uses to control whether printing is enabled. In addition, compiling the meta op library requires `--cce-enable-print` (currently enabled by default) to ensure that printing is enabled.
+Enable this feature by setting the environment variable `TRITON_DEVICE_PRINT=1`. After it is enabled, the triton-ascend side sets the related macro `__CCE_ENABLE_PRINT__`, which affects whether printing is enabled on the Bisheng Compiler side. In addition, when compiling the `meta op` library, `--cce-enable-print` must be enabled (currently it is always enabled by default) to ensure that printing is enabled.
 
 ```mlir
-// HFusion OP API
-// dtype - Data type of the tensor/scalar to be printed.
+// hfusion op interface
+// dtype - Data type corresponding to the tensor/scalar to be printed.
 hfusion.print " prefix = xxx " {hex = xxx} %args : dtype
 
-// hivm op API
-// tcoretype - Indicates whether the op runs on the cube core or vector core. (Default: CUBE_OR_VECTOR)
+// hivm op interface
+// tcoretype - Indicates whether to run on the core or the vector core (default initial value: CUBE_OR_VECTOR).
 hivm.hir.debug {debugtype = "print", hex = xxx, prefix = " xxx: ", tcoretype = #hivm.tcore_type<CUBE_OR_VECTOR>} %args : dtype
 ```
 
-### Constraints
+## Constraints
 
-- Only tensor and scalar printing is supported.
-- The size of the current `device_print` is fixed at 16 KB.
-- Triton `sanitizer` and `device_print` cannot be enabled at the same time.
-- The following data types are supported: bool, int8, uint8, int16, uint16, int32, uint32, int64, bfloat16, half, and float32.
-- When using `device_print`, you are advised to print a single tensor and place the print statement immediately next to the tensor being printed, to prevent exceptions caused by changes in the tensor's lifetime.
-- Currently, this feature is not supported when the kernel is stored and then loaded, and is not used by subsequent operations (except the debug operation).
-- The triton dot API does not support printing when the input is in a 3D scenario.
-- The current timeout for waiting for kernel completion during printing is set to 30 seconds. For test cases that exceed 30 seconds, enabling printing will cause a timeout error.
+| Applicable Hardware | Constraints |
+|--------|--------|
+| <ul><li>Ascend 950PR/Ascend 950DT</li><li>Atlas A3 training products/Atlas A3 inference products</li><li>Atlas A2 training products/Atlas A2 inference products</li></ul> | 1. Only tensors and scalars are supported as print objects.<br>2. The print buffer of `device_print` is fixed at 16 KB.<br>3. The Triton memory checking tool sanitizer is mutually exclusive with `device_print` and cannot be enabled at the same time.<br>4. Coding conventions: Print a single tensor separately, and place the print instruction immediately after the target tensor to prevent runtime exceptions caused by changes in the tensor lifecycle.<br>5. Kernel restrictions: The operator to be printed must not be the sole input of `device_print`.<br>6. Loop restrictions: Printing operands defined outside a `while` loop is prohibited inside the loop.<br>7. Timeout restrictions: The timeout for waiting for kernel completion during printing is 10 minutes. Enabling printing for long-running test cases triggers a timeout failure. |
+| <ul><li>Atlas A3 training products/Atlas A3 inference products</li><li>Atlas A2 training products/Atlas A2 inference products</li></ul> | Supported print data types: `bool`, `int8`, `uint8`, `int16`, `uint16`, `int32`, `uint32`, `int64`, `bfloat16`, `half`, `float32`. |
+| <ul><li>Ascend 950PR/Ascend 950DT</li></ul> | 1. Data type compatibility: Compatible with all types of Atlas A3 training products/Atlas A3 inference products, with additional support for `fp8`.<br>2. Fusion scheduling constraints: Inserting `device_print` may cause UB overflow when it breaks the VF fusion boundary, in which case the tiling block size must be reduced.<br>3. Cache resource constraints: Printing `fp8` tensors or tensors at L1 boundaries may cause UB overflow, in which case the tiling block size must be reduced to avoid cache overflow. |

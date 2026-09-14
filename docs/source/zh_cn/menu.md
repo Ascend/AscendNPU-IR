@@ -48,6 +48,7 @@
     - [内存对齐](developer_guide/features/stride_align.md)
     - [内存管理](developer_guide/features/plan_memory.md)
     - [多缓冲](developer_guide/features/multi_buffer.md)
+    - [规约分解优化](developer_guide/features/layout_optimizations.md)
 - [常见问题](faq/faq.md)
 - [贡献与支持]()
   - [贡献指南](contributing_guide/contribute.md)

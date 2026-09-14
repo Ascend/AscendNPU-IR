@@ -6,7 +6,7 @@ Auto-sync is the AscendNPU-IR (HIVM) compiler feature that automatically inserts
 
 ### AICore Architecture
 
-<https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/83RC1/opdevg/Ascendcopdevg/atlas_ascendc_10_0008.html>
+<https://www.hiascend.com/document/detail/en/CANNCommunityEdition/83RC1/opdevg/Ascendcopdevg/atlas_ascendc_10_0008.html>
 
 ### HIVM Synchronization Operations
 
@@ -72,7 +72,7 @@ In Triton-Ascend, graph sync can also be selected via `sync_solver=True` (maps t
 
 ### GraphSyncSolver
 
-![alt text](../../../../images/developer_guide/auto_sync1.png)
+![alt text](../../../images/developer_guide/auto_sync1.png)
 
 **Purpose**: Primary intra-core auto-sync. Uses graph-based algorithms to decide when to insert set/wait pairs (or pipe barriers) and to allocate event ids. Supports unit-flag mode and SyncSolver V1/V2.
 
@@ -119,7 +119,7 @@ Enabled when both `--enable-hivm-cross-core-gss` and `--enable-hivm-delayed-cros
 
 ### InjectSync
 
-![alt text](../../../../images/developer_guide/auto_sync0.png)
+![alt text](../../../images/developer_guide/auto_sync0.png)
 
 **Purpose**: Fallback core-level (intra-core) synchronization (`set_flag` / `wait_flag` / `pipe_barrier`) using memory-dependence analysis, sync analysis, event-id allocation, and cleanup (move/remove redundant syncs).
 
