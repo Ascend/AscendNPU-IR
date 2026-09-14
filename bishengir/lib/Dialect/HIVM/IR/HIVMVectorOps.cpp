@@ -341,6 +341,8 @@ LogicalResult VCastOp::verify() {
       "int64_t_to_int16_t_rintmode",
       "int64_t_to_int8_t_rintmode",
       "int64_t_to_half_truncmode",
+      "uint32_t_to_uint8_t_truncmode",
+      "uint32_t_to_uint16_t_truncmode",
       "uint32_t_to_float_rintmode",
       "uint32_t_to_bfloat16_t_rintmode",
       "float_to_float8_e4m3_t_rintmode",
