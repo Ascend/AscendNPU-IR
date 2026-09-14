@@ -5,6 +5,8 @@ if(LLVM_BSPUB_DAVINCI_BISHENGIR)
   )
   list(APPEND BS_LINK_LIBS
     BiShengIRDialectUtils
+    BiShengIRHIVMDialect
+    BiShengIRHFusionUtils
   )
 endif()
 

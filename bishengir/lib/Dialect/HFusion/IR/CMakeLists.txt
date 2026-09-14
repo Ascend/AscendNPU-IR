@@ -20,6 +20,7 @@ add_bishengir_dialect_library(BiShengIRHFusionDialect
   LINK_LIBS PUBLIC
   ${BS_FEAT_LINK_LIBS}
   BiShengIRHACCDialect
+  BiShengIRHACCUtils
   BiShengIRSymbolDialect
   BiShengIRMathExtDialect
   MLIRBufferizationDialect
