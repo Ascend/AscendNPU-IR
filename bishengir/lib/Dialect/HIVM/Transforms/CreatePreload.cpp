@@ -174,19 +174,19 @@ static bool isPreloadWorkspaceSubview(memref::SubViewOp subviewOp) {
   return hasPreloadWorkspaceMark(subviewOp.getSource());
 }
 
-static Value
-cloneWorkspaceSubview(memref::SubViewOp subviewOp, size_t preloadNum,
-                      PreloadInfo &info, OpBuilder &b) {
+static Value cloneWorkspaceSubview(memref::SubViewOp subviewOp,
+                                   size_t preloadNum, PreloadInfo &info,
+                                   OpBuilder &b) {
   auto offsets = subviewOp.getMixedOffsets();
   auto loc = subviewOp.getLoc();
 
   auto indVar = info.mappings[preloadNum].lookup(info.indVar);
 
   Value offset = b.create<arith::DivSIOp>(indVar.getLoc(), indVar, info.step);
-  offset = b.create<arith::RemSIOp>(offset.getLoc(), offset,
-                                    info.maxPreloadValue);
-  offset = b.create<arith::IndexCastOp>(offset.getLoc(), b.getIndexType(),
-                                        offset);
+  offset =
+      b.create<arith::RemSIOp>(offset.getLoc(), offset, info.maxPreloadValue);
+  offset =
+      b.create<arith::IndexCastOp>(offset.getLoc(), b.getIndexType(), offset);
   offsets[0] = offset;
 
   auto src = info.mappings[preloadNum].lookupOrDefault(subviewOp.getSource());
@@ -276,7 +276,7 @@ static void rewriteBody(Block *body, PreloadInfo &info, OpBuilder &b) {
         pointerCastOp && getPreloadLocalBufferNum(pointerCastOp, info)) {
       cloneLocalBuffer(pointerCastOp, pointerCastOp, info.preloadNum, info, b);
     } else if (auto subviewOp = dyn_cast<memref::SubViewOp>(&op);
-              subviewOp && isPreloadWorkspaceSubview(subviewOp)) {
+               subviewOp && isPreloadWorkspaceSubview(subviewOp)) {
       cloneWorkspaceSubview(subviewOp, info.preloadNum, info, b);
     } else if (auto forOp = dyn_cast<scf::ForOp>(&op)) {
       auto &mapping = info.mappings[info.preloadNum];
@@ -296,6 +296,11 @@ static void rewriteBody(Block *body, PreloadInfo &info, OpBuilder &b) {
             b.clone(*forOp.getBody()->getTerminator(),
                     info.mappings[info.preloadNum]);
           });
+      // Preserve iteration independence so sync analysis does not introduce
+      // loop-carried barriers between disjoint page transfers.
+      if (auto parallelAttr =
+              forOp->getAttrOfType<UnitAttr>(hivm::ParallelLoopAttr::name))
+        newForOp->setAttr(hivm::ParallelLoopAttr::name, parallelAttr);
       info.mappings[info.preloadNum].map(forOp->getResults(),
                                          newForOp->getResults());
     } else {
@@ -424,8 +429,8 @@ static scf::IfOp rewriteScopeOp(Value cond, scope::ScopeOp scopeOp,
 
 static bool isSynchronizationOp(Operation *op) {
   return isa<hivm::SetFlagOp, hivm::WaitFlagOp, hivm::PipeBarrierOp,
-             hivm::SyncBlockOp, hivm::SyncBlockSetOp,
-             hivm::SyncBlockWaitOp>(op);
+             hivm::SyncBlockOp, hivm::SyncBlockSetOp, hivm::SyncBlockWaitOp>(
+      op);
 }
 
 static void rewritePreloadLoop(scf::ForOp forOp,
@@ -497,9 +502,9 @@ static void rewritePreloadLoop(scf::ForOp forOp,
                 continue;
               }
             } else if (auto subviewOp = dyn_cast<memref::SubViewOp>(&bodyOp);
-                      subviewOp && isPreloadWorkspaceSubview(subviewOp)) {
+                       subviewOp && isPreloadWorkspaceSubview(subviewOp)) {
               for (int64_t preloadNum = maxPreloadNum - 1; preloadNum >= 0;
-                  preloadNum--) {
+                   preloadNum--) {
                 cloneWorkspaceSubview(subviewOp, preloadNum, info, b);
               }
               continue;
@@ -517,9 +522,9 @@ static void rewritePreloadLoop(scf::ForOp forOp,
           Value cond = getPreloadCondition(info, loc, b);
 
           auto newOp = rewriteScopeOp(cond, scopeOp, info, args, loc, b);
-          auto returnResults = cast<scope::ReturnOp>(
-                                   scopeOp.getRegion().front().getTerminator())
-                                   .getResults();
+          auto returnResults =
+              cast<scope::ReturnOp>(scopeOp.getRegion().front().getTerminator())
+                  .getResults();
           auto scopeResIter = scopeOp.result_begin();
           SmallVector<IRMapping> viewMappings(info.mappings.size());
           for (auto newRes : newOp->getResults()) {
@@ -676,8 +681,8 @@ void CreatePreloadPass::runOnOperation() {
       return static_cast<bool>(scopeOp);
     });
     assert(scopeIt != scopes.end() && "Expected at least one preload scope");
-    auto maxPreloadNumAttr = (*scopeIt)->getAttrOfType<IntegerAttr>(
-        hivm::MaxPreloadNumAttr::name);
+    auto maxPreloadNumAttr =
+        (*scopeIt)->getAttrOfType<IntegerAttr>(hivm::MaxPreloadNumAttr::name);
     assert(maxPreloadNumAttr && "MaxPreloadNumAttr must be set");
     rewritePreloadLoop(forOp, scopes,
                        static_cast<size_t>(maxPreloadNumAttr.getInt()));

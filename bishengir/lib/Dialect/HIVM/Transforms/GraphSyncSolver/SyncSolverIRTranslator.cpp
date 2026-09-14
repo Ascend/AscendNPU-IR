@@ -856,6 +856,19 @@ std::unique_ptr<Scope> IRTranslator::funcIrBuilder(Region &region,
   auto scopeOp = std::make_unique<Scope>();
   scopeOp->parentOp = parentOp;
 
+  if (region.empty()) {
+    auto beginPlaceHolder =
+        std::make_unique<PlaceHolder>(nullptr, scopeOp.get());
+    beginPlaceHolder->scopeBegin = scopeOp.get();
+    scopeOp->body.push_back(std::move(beginPlaceHolder));
+
+    auto endPlaceHolder =
+        std::make_unique<PlaceHolder>(nullptr, scopeOp.get());
+    endPlaceHolder->scopeEnd = scopeOp.get();
+    scopeOp->body.push_back(std::move(endPlaceHolder));
+    return scopeOp;
+  }
+
   if (!isa_and_present<Function>(parentOp) && region.getBlocks().size() > 1) {
     llvm::report_fatal_error(
         "unsupported non-function region to have multiple blocks.");
@@ -890,11 +903,8 @@ std::unique_ptr<Scope> IRTranslator::funcIrBuilder(Region &region,
       if (auto ifOp = dyn_cast<scf::IfOp>(op)) {
         auto trueScope =
             funcIrBuilder(ifOp.getThenRegion(), nullptr, skipEmptyScopes);
-        std::unique_ptr<Scope> falseScope;
-        if (ifOp.elseBlock()) {
-          falseScope =
-              funcIrBuilder(ifOp.getElseRegion(), nullptr, skipEmptyScopes);
-        }
+        auto falseScope =
+            funcIrBuilder(ifOp.getElseRegion(), nullptr, skipEmptyScopes);
         auto conditionOp = std::make_unique<Condition>(
             &op, parScope, std::move(trueScope), std::move(falseScope));
         conditionOp->isUnlikely = isUnlikelyCondition(conditionOp.get());
