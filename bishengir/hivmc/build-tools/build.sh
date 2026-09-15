@@ -443,6 +443,8 @@ cmake_build() {
   # only check bishengir now
   local targets="check-bishengir"
 
+  cd "${BUILD_DIR}"
+
   if [[ -v BUILD_TEST ]]; then
     cmake --build . -j "${THREADS}" --target "${targets}" || exit 1
   else
