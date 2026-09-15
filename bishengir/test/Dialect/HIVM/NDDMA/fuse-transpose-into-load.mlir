@@ -1,11 +1,15 @@
 // RUN: bishengir-opt %s -hivm-fuse-transpose-into-load | FileCheck %s
 
 // Dst subview offset %arg2 becomes last-dim offset after last-two permute.
-// DMA pad cannot write [0, %arg2); the fill must follow the new dest.
+// DMA pad cannot write [0, %arg2); the fill must follow the new dest, but
+// only when that offset is not 0 (runtime skip recovers last-dim-only kda).
 // CHECK-LABEL: func.func @fuse_load_with_dyn_size
 // CHECK:       %[[NEW:.*]] = memref.alloc() : memref<256x128xbf16>
+// CHECK:       arith.cmpi ne
 // CHECK:       scf.if
 // CHECK:         linalg.fill ins(%{{.*}} : bf16) outs(%[[NEW]] : memref<256x128xbf16>)
+// Dynamic last-dim offset: keep fill, do not expand dest to rootLast-offset.
+// CHECK-NOT:   arith.subi
 // CHECK:       %[[res:.*]] = bufferization.to_tensor
 // CHECK:       hivm.hir.load ins(%{{.*}} : memref<256x?xbf16, strided<[1, 256], offset: ?>>)
 // CHECK-SAME:                outs(%{{.*}} : memref<256x?xbf16, strided<[128, 1], offset: ?>>)
@@ -18,6 +22,38 @@ func.func @fuse_load_with_dyn_size(%arg0: memref<?xbf16>, %arg1: index, %arg2: i
   %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [%arg1], sizes: [128, 256], strides: [256, 1] : memref<?xbf16> to memref<128x256xbf16, strided<[256, 1], offset: ?>>
   %subview = memref.subview %reinterpret_cast[0, 0] [%arg3, 256] [1, 1] : memref<128x256xbf16, strided<[256, 1], offset: ?>> to memref<?x256xbf16, strided<[256, 1], offset: ?>>
   %subview_0 = memref.subview %alloc[%arg2, 0] [%arg3, 256] [1, 1] : memref<128x256xbf16> to memref<?x256xbf16, strided<[256, 1], offset: ?>>
+  %0 = arith.cmpi slt, %arg3, %c128 : index
+  %1 = arith.ori %arg4, %0 : i1
+  scf.if %1 {
+    linalg.fill ins(%cst : bf16) outs(%alloc : memref<128x256xbf16>)
+  }
+  hivm.hir.load ins(%subview : memref<?x256xbf16, strided<[256, 1], offset: ?>>) outs(%subview_0 : memref<?x256xbf16, strided<[256, 1], offset: ?>>) pad_mode = <PadValue> pad_value = %cst : bf16
+  %2 = bufferization.to_tensor %alloc restrict writable : memref<128x256xbf16>
+  %3 = tensor.empty() : tensor<256x128xbf16>
+  %transposed = linalg.transpose ins(%2 : tensor<128x256xbf16>) outs(%3 : tensor<256x128xbf16>) permutation = [1, 0]
+  return %transposed : tensor<256x128xbf16>
+}
+
+// -----
+
+// Same last-dim-only pad as fuse_load_with_dyn_size, but the dest row offset is
+// IndexBound-proven 0 (`%arg2 - %arg2`). Drop fill, do not expand last dim.
+// CHECK-LABEL: func.func @fuse_load_last_dim_proven_zero_offset
+// CHECK:       %[[NEW:.*]] = memref.alloc() : memref<256x128xbf16>
+// CHECK-NOT:   arith.cmpi ne
+// CHECK-NOT:   linalg.fill
+// CHECK:       hivm.hir.load ins(%{{.*}} : memref<256x?xbf16, strided<[1, 256], offset: ?>>)
+// CHECK-SAME:                outs(%{{.*}} : memref<256x?xbf16, strided<[128, 1], offset: ?>>)
+// CHECK-NOT:   transpose
+// CHECK:       return %{{.*}} : tensor<256x128xbf16>
+func.func @fuse_load_last_dim_proven_zero_offset(%arg0: memref<?xbf16>, %arg1: index, %arg2: index, %arg3: index, %arg4: i1) -> tensor<256x128xbf16> {
+  %c128 = arith.constant 128 : index
+  %cst = arith.constant 0.000000e+00 : bf16
+  %alloc = memref.alloc() : memref<128x256xbf16>
+  %off = arith.subi %arg2, %arg2 : index
+  %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [%arg1], sizes: [128, 256], strides: [256, 1] : memref<?xbf16> to memref<128x256xbf16, strided<[256, 1], offset: ?>>
+  %subview = memref.subview %reinterpret_cast[0, 0] [%arg3, 256] [1, 1] : memref<128x256xbf16, strided<[256, 1], offset: ?>> to memref<?x256xbf16, strided<[256, 1], offset: ?>>
+  %subview_0 = memref.subview %alloc[%off, 0] [%arg3, 256] [1, 1] : memref<128x256xbf16> to memref<?x256xbf16, strided<[256, 1], offset: ?>>
   %0 = arith.cmpi slt, %arg3, %c128 : index
   %1 = arith.ori %arg4, %0 : i1
   scf.if %1 {
@@ -269,8 +305,8 @@ func.func @no_fuse_multi_use_to_tensor(%arg0: memref<?xf16>, %arg1: index, %arg2
 
 // -----
 
-// Same last-dim offset hole as fuse_load_with_dyn_size (%arg2 after permute).
-// Fill is inserted after the new alloc; the mark is transferred after that.
+// Same last-dim offset hole as fuse_load_with_dyn_size; unique CHECKs are the
+// unlikely hint and transferred multi_buffer mark (pad gate lives on dyn_size).
 // CHECK-LABEL: func.func @fuse_load_with_multibuffer_annotation
 // CHECK:       %[[NEW:.*]] = memref.alloc() : memref<128x32xbf16>
 // CHECK:       scf.if
@@ -304,9 +340,11 @@ func.func @fuse_load_with_multibuffer_annotation(%arg0: memref<?xbf16>, %arg1: i
 
 // -----
 
+// Last-dim-only static offset 0: drop fill, no expand, no runtime offset gate.
 // CHECK-LABEL: func.func @fuse_load_transfer_multi_buffer_mark
 // CHECK:       %[[NEW_ALLOC:.*]] = memref.alloc() : memref<32x16xf16>
 // CHECK:       annotation.mark %[[NEW_ALLOC]] {hivm.multi_buffer = 2 : i32} : memref<32x16xf16>
+// CHECK-NOT:   arith.cmpi ne
 // CHECK-NOT:   linalg.fill
 // CHECK:       hivm.hir.load ins(%{{.*}} : memref<32x16xf16, strided<[1, 128], offset: ?>>)
 // CHECK-SAME:                outs(%[[NEW_ALLOC]] : memref<32x16xf16>)
@@ -382,6 +420,7 @@ func.func @fuse_load_transfer_plain_mark(%arg0: memref<?xf16>, %arg1: index) -> 
 // CHECK-LABEL: func.func @fuse_load_keep_fill_on_transposed_dst
 // CHECK:       %[[NEW:.*]] = memref.alloc() : memref<32x16xbf16>
 // CHECK:       linalg.fill ins(%{{.*}} : bf16) outs(%[[NEW]] : memref<32x16xbf16>)
+// CHECK-NOT:   arith.cmpi ne
 // CHECK:       hivm.hir.load ins(%{{.*}} : memref<?x?xbf16, strided<[1, 32], offset: ?>>)
 // CHECK-SAME:                outs(%{{.*}} : memref<?x16xbf16, strided<[16, 1]>>)
 // CHECK-NOT:   linalg.transpose
@@ -416,6 +455,7 @@ func.func @fuse_load_keep_fill_on_transposed_dst(%arg0: memref<?xbf16>, %arg1: i
 // CHECK:       scf.if
 // CHECK:         linalg.fill ins(%{{.*}} : bf16) outs(%[[NEW]] : memref<32x16xbf16>)
 // CHECK:       } {hivm.unlikely_condition}
+// CHECK-NOT:   arith.cmpi ne
 // CHECK:       hivm.hir.load ins(%{{.*}} : memref<?x?xbf16, strided<[1, 32], offset: ?>>)
 // CHECK-SAME:                outs(%{{.*}} : memref<?x16xbf16, strided<[16, 1]>>)
 // CHECK-NOT:   linalg.transpose

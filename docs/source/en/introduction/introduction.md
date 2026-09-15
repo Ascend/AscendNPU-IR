@@ -1,25 +1,28 @@
 # Introduction
 
-**AscendNPU IR** (AscendNPU Intermediate Representation) is an MLIR-based (Multi-Level Intermediate Representation) intermediate representation for Ascend-affinity operator compilation. It provides complete Ascend expression capability, improves Ascend AI processor efficiency through compilation optimizations, and supports flexible integration with ecosystem frameworks via open interfaces to efficiently enable Ascend AI processors.
+**AscendNPU IR** (AscendNPU Intermediate Representation) is an Ascend-affinity operator compilation intermediate representation built on **MLIR** (Multi-Level Intermediate Representation). It provides complete expressiveness for Ascend, improves the computational efficiency of Ascend AI Processors through compilation optimization, and, by opening interfaces through the open-source community, supports flexible integration with ecosystem frameworks to efficiently enable Ascend AI Processors.
 
-## Key capabilities
+## Key Capabilities
 
-- **Multi-level abstraction and ease of use**  
-  High-level abstraction interfaces hide Ascend computation, data movement, and synchronization details. The compiler automatically adapts to hardware and maps hardware-agnostic expressions to low-level instructions. Fine-grained performance control interfaces allow precise control of on-chip memory layout, pipeline synchronization insertion points, and ping-pong pipeline enablement for both usability and performance tuning.
+- **Multi-level Abstraction and Usability**
 
-- **Layered dialects and compilation**  
-  - **HFusion**: Linalg-based extension for hardware-agnostic optimization and ecosystem integration; conversions to/from Arith, Math, Torch, etc.; tensor simplification, type legalization, and operator fusion.  
-  - **HIVM**: Tile-level abstraction for Ascend computation, data movement, and synchronization; CV kernel mapping (Mix kernel CV fusion, inter-core sync, CVPipeline, AutoSubTiling), on-chip memory mapping, and multi-stage pipeline/instruction mapping.  
-  - **HACC**: Heterogeneous hardware abstraction for Host/Device programming and launch semantics; **Annotation**, **Scope** for compiler hints and scope marking.
+  Provides high-level abstraction interfaces that hide the details of Ascend computation, data movement, and synchronization instructions. The compiler automatically senses the hardware architecture and maps hardware-independent expressions to low-level instructions. It also provides fine-grained performance control interfaces for precisely controlling on-chip memory layout, pipeline synchronization insertion positions, and whether to enable ping-pong pipelining, balancing ease of use with performance tuning.
 
-- **Key compilation features**  
-  CV fusion and pipelining (CVPipeline, AutoSubTiling), automatic memory planning (PlanMemory) and pipeline sync (AutoSync), blockization and scheduling (AutoBlockify, AutoFlatten, AutoSchedule), custom ops, DFX, and CV optimizations for portable performance while preserving high-level semantics.
+- **Layered Dialects and Compilation Optimization**
+    - **HFusion**: Built on Linalg extensions, it handles hardware-independent optimizations and ecosystem integration. It supports conversions with dialects such as Arith, Math, and Torch, as well as tensor simplification, type legalization, and operator fusion generation.
+    - **HIVM**: Provides Tile-level abstraction of computation, data movement, and synchronization for Ascend, hiding low-level instruction parameters. It handles CV kernel mapping (CV fusion of Mix Kernel, inter-core synchronization, CVPipeline pipelining, AutoSubTiling, and more), on-chip memory mapping within kernels, and multi-level pipelining/instruction mapping.
+    - **HACC**: Heterogeneous hardware abstraction that expresses the Host/Device programming model and launch semantics. Annotation, Scope, and others are used for `compiler hint` and scope marking.
 
-- **Ecosystem and openness**  
-  Layered interfaces for PyTorch (Torch-MLIR), TileLang, Triton, and other frameworks, balancing performance and usability to enable Ascend AI processors.
+- **Key Compilation Features**
 
-## Next steps
+  Supports CV fusion and pipelining (CVPipeline, AutoSubTiling), automatic memory planning (PlanMemory) and pipeline synchronization (AutoSync), blocking and scheduling (AutoBlockify, AutoFlatten, AutoSchedule), as well as custom operators, DFX, and CV optimization, enabling portable performance while preserving high-level semantics.
 
-- [Install and build](quick_start/installing_guide.md) — Environment and build
-- [Quick start](quick_start/index.rst) — Examples and entry
-- [Architecture](architecture.md) — Logical and code architecture, compilation flow
+- **Ecosystem Integration and Openness**
+
+Through layered interfaces, it supports integration with PyTorch (Torch-MLIR), TileLang, Triton, and various frameworks, flexibly balancing high performance and ease of use to efficiently enable the Ascend AI Processor.
+
+## Next Steps
+
+- [Installation and Build](quick_start/installing_guide.md) — Environment and Compilation
+- [Quick Start](quick_start/index.rst) — Examples and Usage Entry
+- [Architecture Design](architecture.md) — Logical Architecture, Code Architecture, and Compilation Process

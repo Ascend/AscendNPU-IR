@@ -29,6 +29,7 @@
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/IRMapping.h"
@@ -103,7 +104,7 @@ std::optional<bool> isStoreOp(Operation *dstOp) {
   return std::nullopt;
 }
 
-static bool isRegBasedArch(Operation *op);
+static bool isOnRegBasedArch(Operation *op);
 
 static hivm::MmadL1Op traceAlongL0C(Value val) {
   hivm::MmadL1Op source = llvm::dyn_cast_if_present<hivm::MmadL1Op>(
@@ -467,8 +468,9 @@ static bool isExclusiveLocalMatmulInit(Operation *op, Value v) {
 static FixpipeOp insertFixpipe(PatternRewriter &rewriter, Operation *point,
                                Value src) {
   rewriter.setInsertionPointAfter(point);
+  const bool isRegBased = isOnRegBasedArch(point);
   bool isMovingToL1 =
-      hacc::utils::isRegBasedArch(point->getParentOfType<ModuleOp>()) &&
+      isRegBased &&
       isInsertingFixpipeToL1(src);
 
   auto fixpipe = (isMovingToL1 ? insertFixpipeToL1
@@ -490,6 +492,19 @@ static FixpipeOp insertFixpipe(PatternRewriter &rewriter, Operation *point,
         }
         return true;
       });
+
+  auto dst = fixpipe.getDst();
+  // in MemBased Architecture, there is fixpipe that goes to
+  // GM with load user.
+  if (isRegBased && !fixpipe->getUsers().empty()) {
+    auto emptyOp = dst.getDefiningOp<tensor::EmptyOp>();
+    if (emptyOp) {
+      emptyOp->setAttr(hivm::kInsertedTensorAttr::name, rewriter.getUnitAttr());
+      emptyOp->setAttr(hivm::AddressSpaceAttr::name,
+                        rewriter.getAttr<hivm::AddressSpaceAttr>(isMovingToL1 ? hivm::AddressSpace::L1 : hivm::AddressSpace::UB));
+    }
+  }
+
   return fixpipe;
 }
 
@@ -585,7 +600,7 @@ public:
   }
 };
 
-static bool isRegBasedArch(Operation *op);
+static bool isOnRegBasedArch(Operation *op);
 
 /// Skip inserting outer fixpipe after an accumulation loop when that *loop
 /// result* stays in L0C for a later matmul outs. The in-loop mmad result
@@ -659,7 +674,7 @@ public:
       } else {
         skipFixpipeForBiasDecompose =
             op.isInitConstant(false) ||
-            (!op.isInitConstant() && isRegBasedArch(opInst));
+            (!op.isInitConstant() && isOnRegBasedArch(opInst));
       }
       skipFixpipeForBiasDecompose = skipFixpipeForBiasDecompose &&
                                     !isOpResultRequiredInL0C(op, mmadLikeOpRes);
@@ -675,7 +690,7 @@ public:
 
     bool changed = false;
     if (!shouldSkipOuterFixpipeForAccumulation(opInst, mmadLikeOpRes)) {
-      if (isRegBasedArch(opInst) && allUsersReachFixpipe(mmadLikeOpRes))
+      if (isOnRegBasedArch(opInst) && allUsersReachFixpipe(mmadLikeOpRes))
         return failure();
 
       auto isMatchedOp = [](Operation *op, Value v) {
@@ -866,7 +881,7 @@ static bool isIntegerNarrowingCastInlinable(Type inputType, Type outputType,
 }
 
 static bool isVcastInlinableIntoFixpipe(hivm::VCastOp castOp) {
-  if (!isRegBasedArch(castOp))
+  if (!isOnRegBasedArch(castOp))
     return true;
   auto inputType = getElementTypeOrSelf(castOp.getSrc()[0].getType());
   auto outputType = getElementTypeOrSelf(castOp.getDst()[0].getType());
@@ -965,8 +980,8 @@ std::optional<FixpipePreQuantMode> getQuantMode(hivm::VCastOp castOp) {
 /// p-relu
 bool isActivationOp(Operation *op) { return isa<hivm::VReluOp>(op); }
 
-static bool isRegBasedArch(Operation *op) {
-  auto module = op->getParentOfType<ModuleOp>();
+static bool isOnRegBasedArch(Operation *op) {
+  auto module = isa<ModuleOp>(op) ? cast<ModuleOp>(op) : op->getParentOfType<ModuleOp>();
   return module && hacc::utils::isRegBasedArch(module);
 }
 
@@ -1001,7 +1016,7 @@ static bool isUserSliceSwappable(hivm::FixpipeOp fixpipe,
                                  tensor::ExtractSliceOp extractSlice) {
   if (!extractSlice)
     return false;
-  if (!isRegBasedArch(fixpipe))
+  if (!isOnRegBasedArch(fixpipe))
     return true;
   return hasCompatibleShape(fixpipe.getSource(), extractSlice.getSource()) &&
          !isInsertedToStatic(extractSlice);
@@ -1095,7 +1110,7 @@ private:
     if (isInsideVectorScope(curOp))
       return failure();
 
-    if (isRegBasedArch(op) && op.getDmaMode() != FixpipeDMAMode::NZ2NZ) {
+    if (isOnRegBasedArch(op) && op.getDmaMode() != FixpipeDMAMode::NZ2NZ) {
       if (all_of(op->getUsers(), [](auto *user) {
             if (isa<annotation::MarkOp>(user))
               return true;
@@ -1140,7 +1155,7 @@ private:
                                  op.getDpsInputOperand(0)->get());
       }
     } else if (auto vMulOp = dyn_cast<hivm::VMulOp>(curOp);
-               vMulOp && isRegBasedArch(op) &&
+               vMulOp && isOnRegBasedArch(op) &&
                (inlineQuantScale || hasQuantScaleCompileHint(vMulOp)) &&
                isUserQuantScaleInlinable(op, vMulOp)) {
       matched = true;
@@ -1198,7 +1213,7 @@ private:
     Value fixpipeInit =
         utils::createEmptyOp(rewriter, loc, lastCast.getResult()[0]);
     MLIRContext *ctx = rewriter.getContext();
-    bool regBased = isRegBasedArch(op);
+    bool regBased = isOnRegBasedArch(op);
     FixpipeDMAModeAttr dmaModeAttr =
         regBased ? op.getDmaModeAttr()
                  : FixpipeDMAModeAttr::get(ctx, FixpipeDMAMode::NZ2ND);
@@ -1282,7 +1297,7 @@ private:
   }
 
   bool isUserTransposeInlinable(hivm::FixpipeOp op, Operation *user) const {
-    if (!isRegBasedArch(op))
+    if (!isOnRegBasedArch(op))
       return false;
     auto transpose = dyn_cast<hivm::VTransposeOp>(user);
     if (!transpose || op.getDmaMode() != FixpipeDMAMode::NZ2ND)
@@ -1364,7 +1379,7 @@ private:
         getInitType(newExtractSliceResult, op.getPreQuant(), rewriter));
 
     MLIRContext *ctx = rewriter.getContext();
-    bool regBased = isRegBasedArch(op);
+    bool regBased = isOnRegBasedArch(op);
     FixpipeDMAModeAttr dmaModeAttr =
         regBased ? op.getDmaModeAttr()
                  : FixpipeDMAModeAttr::get(ctx, FixpipeDMAMode::NZ2ND);

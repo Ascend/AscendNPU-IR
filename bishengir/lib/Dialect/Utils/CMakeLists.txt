@@ -28,6 +28,7 @@ add_bishengir_library(BiShengIRDialectUtils
   MLIRTensorDialect
   MLIRValueBoundsOpInterface
   BiShengIRMemRefDialect
+  BiShengIRMemRefExtDialect
   BiShengIRTensorDialect
   ${BS_FEAT_LINK_LIBS}
 )

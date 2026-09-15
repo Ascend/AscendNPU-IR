@@ -1,87 +1,82 @@
 # Architecture Design
 
-## Overview
+## Objectives
 
-BiSheng AscendNPU IR is a high-level abstraction of Ascend hardware built on the MLIR ecosystem. It performs abstraction, compilation, and optimization from bottom to top over Ascend low-level instructions, intra-core resources, inter-core resources, and SoC resources. The multiple abstraction layers are decoupled and open-source. They allow ecosystem programming and third-party frameworks to connect flexibly according to their trade-offs between performance and ease of use, and provide a unified compilation entry and complete hardware expression and optimization for Ascend-oriented ecosystem frameworks.
+The AscendNPU IR of the Bisheng Compiler is a high-level abstraction of Ascend hardware built on the MLIR (Multi-Level Intermediate Representation) ecosystem. It abstracts and optimizes, from the bottom up, the low-level instructions, intra-core resources, inter-core resources, and SOC resources of Ascend hardware layer by layer. The multiple abstraction layers are decoupled and open source, so ecosystem programming and third-party frameworks can balance performance and ease of use as needed for flexible integration. It provides ecosystem frameworks with a unified compilation access layer for Ascend and complete hardware expression and optimization capabilities.
 
-![image](../../images/introduction/architecture1.png)
+![image](../../images/introduction/architecture1_zh.png)
 
 ## Logical Architecture
 
-The dialects designed in-house in AscendNPU IR are HFusion, HIVM, HACC, Annotation, and Scope. Among them, the HFusion dialect is responsible for hardware-relatively-independent optimization; HIVM is responsible for fine-grained awareness of NPU hardware details and for converting high-level programming languages into NPU low-level instructions; the HACC dialect is responsible for heterogeneous hardware abstraction; Annotation and Scope are responsible for marking compiler hint information for specific Operands or Operations.
+The dialects independently designed in AscendNPU IR include **HFusion**, **HIVM**, **HACC**, **Annotation**, and **Scope**. The **HFusion** dialect is responsible for hardware-independent optimization, while **HIVM** is responsible for fine-grained perception of NPU hardware details, converting high-level programming languages into low-level NPU instructions. The **HACC** dialect is responsible for heterogeneous hardware abstraction, and **Annotation** and **Scope** are responsible for marking `compiler hint` information on specific **Operand** or **Operation** objects.
 
-![image](../../images/introduction/architecture2.png)
+![image](../../images/introduction/architecture2_zh.png)
 
 ### HFusion Dialect
 
-The HFusion (Hybrid Fusion) dialect is an extension set based on the MLIR community Linalg dialect. The HFusion dialect inherits all operations of the Linalg dialect and extends with operations not yet supported by the Linalg community. Note that the operations handled by the HFusion dialect are all named operations, so that high-level semantics are preserved as much as possible for the compiler to process. The HFusion dialect mainly includes three layers of capability: conversion layer, preprocessing, and fusion:
+The HFusion (Hybrid Fusion) dialect is an extension set based on the Linalg dialect of the MLIR community. The HFusion dialect inherits all operations of the Linalg dialect and additionally extends operations that the Linalg community does not yet support. Note that the operations processed by the HFusion dialect are all `named operations`, which maximizes the preservation of high-level semantics for compiler processing. The HFusion dialect mainly provides three layers of capabilities: conversion layer, preprocessing, and fusion processing:
 
-1. **Conversion layer**: The HFusion dialect is a key layer for ecosystem integration. It currently supports conversion with key operations of Arith, Math, Torch and other dialects; ecosystem integration will be gradually completed and extended.
+- **Conversion layer**: The HFusion dialect is a key layer for ecosystem integration. It currently supports conversion with key operations of dialects such as Arith, Math, and Torch, and will gradually improve and complete the ecosystem integration capabilities in the future.
 
-2. **Preprocessing**: Hardware-detail–agnostic optimization layer, supporting tensor expression simplification, BF16/Bool data type legalization, composite OP implementation, and other common device function optimizations.
+- **Preprocessing**: A hardware-detail-independent optimization layer that supports common device function optimizations such as tensor expression simplification, legalization of the `BF16`/`Bool` data types, and implementation of complex Op combinations.
 
-3. **Fusion**: Automatically fuses and generates Device Kernel operators and Host Tiling functions.
+- **Fusion processing**: It can automatically fuse and generate Device Kernel operators and Host Tiling functions.
 
 ### HIVM Dialect
 
-HIVM (Hybrid ISA Virtual Machine): Abstracts computation, data movement, synchronization and other operations for Ascend hardware, and provides tile-level operations supporting Tensor or Memref of arbitrary dimensions and sizes, shielding the parameters of Ascend low-level instructions. HIVM compilation and optimization is mainly divided into the following three layers:
+HIVM (Hybrid ISA Virtual Machine): It abstracts computation, data movement, synchronization, and other operations for Ascend hardware, provides Tile-level Operation to support Tensor or `Memref` operation types of arbitrary dimensions and sizes, and shields the underlying instruction parameters of Ascend hardware. The compilation optimization at the HIVM layer is mainly divided into the following three layers:
 
-1. **CV kernel mapping compilation**: Aware of the NPU CV core-separation hardware architecture, it automatically performs CV fusion compilation and optimization for Mix Kernel (kernel functions that include both cube and vector operations). By analyzing data dependencies between cube and vector operations, it automatically inserts store and load for CV core data exchange, derives the workspace global memory size required for intermediate exchange and generates the Host-side size-derivation function, inserts inter-core synchronization at CV data dependencies to guarantee dependency order, and finally splits MixKernel into separate AIC and AIV kernel functions, thus realizing CV fusion compilation. For performance, the CVPipeline pass automatically adjusts the order of Cube and Vector code to enable CV core pipeline parallelism, and AutoSubTiling automatically implements the CV 1:2 subtiling ratio.
+- **CV core mapping compilation**: With awareness of the NPU CV core separation hardware architecture, it automatically performs CV fusion compilation optimization on Mix Kernels (kernel functions that include both `cube` operations and `vector` operations). By analyzing the data dependency between `cube` and `vector` operations, it automatically inserts `store` and `load` to perform CV core data interaction, calculates the workspace global memory size required for intermediate interaction, and generates a Host-side function for deriving the size. At the same time, it inserts inter-core synchronization at locations with CV data dependency to ensure the dependency order, and finally automatically splits the MixKernel into separate AIC kernel functions and AIV kernel functions, thereby implementing CV fusion compilation. In terms of performance optimization, the CVPipeline pass automatically adjusts the order of Cube code and Vector code to ensure CV core pipeline parallelism, and AutoSubTiling automatically implements the CV 1:2 ratio splitting feature.
 
-2. **Intra-core on-chip memory mapping**: Aware of the NPU intra-core on-chip memory structure, compilation and optimization automatically implement on-chip memory space derivation, on-chip memory data layout derivation, on-chip memory access alignment, OP temporary space allocation, and on-chip memory address assignment.
+- **Intra-core on-chip memory mapping**: With awareness of the NPU intra-core on-chip memory structure, the compilation optimization automatically implements on-chip memory space derivation, on-chip memory data format derivation, automatic on-chip memory access alignment, Op temporary space application, and on-chip memory address allocation.
 
-3. **Intra-core execution unit mapping**: Aware of the NPU intra-core multi-stage pipeline execution units, it automatically inserts pipeline synchronization so that different pipelines execute in order while enabling parallel pipeline optimization; aware of NPU instruction details, it automatically completes strategy-based instruction mapping and enables efficient NPU SIMD instructions.
+- **Intra-core processing unit mapping**: With awareness of the NPU intra-core multi-level pipeline processing units, it automatically inserts pipeline synchronization operations to ensure that different pipelines execute in an orderly manner while optimizing parallel pipelines. With awareness of NPU instruction details, it automatically completes policy-based automatic instruction mapping, enabling efficient NPU SIMD instructions.
 
-### Features of the A5 Chip and Support Optimization for AscendNPU-IR
+### Features on Ascend 950PR/Ascend 950DT Chips and AscendNPU IR Support Optimization
 
-The A5 chip inherits the RegBase (`Register-based`) programming model from the `310B` chip. Compared with the `Memory-based` programming model of the A2 and A3 chips, it adds a register layer at the hardware level; a data path is added between the Cube and Vector cores, providing more optimization opportunity for CV fusion; components such as the `Warp Scheduler` are added to introduce SIMT capability; in addition, new hardware instructions such as `ND-DMA` are also introduced.
+The Ascend 950PR/Ascend 950DT chips inherit the RegBase (Register-based) programming model of the 310B chip. Compared with the Memory-based programming model of the Atlas A2 series products/Atlas A3 series products, the hardware adds a register layer; adds a data path between the Cube and Vector cores to provide more optimization space for CV fusion; adds components such as the Warp Scheduler to introduce SIMT capability; and adds new hardware instructions such as `ND-DMA`.
 
-AscendNPU IR provides support for the new hardware features in the HIVM dialect, including support for compute and reduction OPs in the `Arith` and `Vector` dialects. For `SIMD` compilation, optimizations including VF fusion, vectorization, mask optimization, and Combine optimization are added. `SIMT` compilation support is newly added on A5 and lower the community `TritonGPU` dialect to HIVM. Ascend-friendly optimization algorithms for Layout optimization, shared memory allocation, and core instruction mapping are constructed. AscendNPU IR for A5 supports not only pure `SIMD` and pure `SIMT` compilation, but also hybrid `SIMD/SIMT` compilation.
+AscendNPU IR provides support for the new hardware features in the HIVM dialect, including the Arith and Vector dialects supporting computation and reduction Ops. For pure SIMD compilation, VF fusion, vectorization, mask optimization, and Combine optimization are added. On Ascend 950PR/Ascend 950DT, SIMT compilation support is newly added, connecting the community's TritonGPU dialect to HIVM and building Ascend-affinity algorithms for layout optimization, shared memory allocation, and core instruction mapping optimization. In addition to supporting pure SIMD mode and pure SIMT mode, AscendNPU IR also supports SIMD/SIMT hybrid compilation on Ascend 950PR/Ascend 950DT.
 
-![AscendNPU-IR architecture for A5](../../images/introduction/architecture_A5.png)
+![AscendNPU IR architecture of Ascend 950PR/Ascend 950DT](../../images/introduction/architecture_A5_zh.png)
 
 ## Code Architecture
 
-AscendNPU IR is built on the MLIR ecosystem; MLIR upstream community code is introduced as third-party. The code structure is as follows: the bishengir (i.e. AscendNPU IR) directory contains AscendNPU IR–related implementation, and the build-tools directory contains scripts and patches required to build AscendNPU IR. Enhancements to MLIR upstream by AscendNPU IR are preferably placed under bishengir/Dialect in separate dialect directories; capability is extended by adding files in these directories to avoid invasive changes to the community code. Modifications that cannot be isolated are applied via separate patch files; each patch has its own commit information for future integration with the MLIR community.
+AscendNPU IR is built on the MLIR (Multi-Level Intermediate Representation) ecosystem. The native MLIR community code is introduced as a third-party dependency. The code structure is shown below. The `bishengir` directory (that is, AscendNPU IR) contains the AscendNPU IR-related implementation, and the `build-tools` directory contains the scripts required for building AscendNPU IR. For enhancements to the native MLIR community, AscendNPU IR preferentially creates a corresponding dialect directory under the independent `include/bishengir/Dialect` directory, extending capabilities by adding files in the independent directory to avoid intrusive modifications to the community. For modifications that cannot be isolated, they have been directly committed to the corresponding Ascend-maintained branches under `third-party` (for example, the corresponding branch of `llvm-project` is `Ascend/AscendNPU-IR/llvmorg-19.1.7`, and the corresponding branch of torch-mlir is `Ascend/AscendNPU-IR/main-20250716`). Each modification has a separate `commit` message to facilitate subsequent upstreaming to the MLIR community. The approach used in historical versions, which applied patch files from the `build-tools/patches` directory at build time, has been deprecated.
 
 ```text
 .
-├── bishengir // AscendNPU IR related implementation
-├── build-tools // Directory for AscendNPU IR build scripts
-│   ├── patches // Patches for invasive modifications to third-party ecosystem projects
-│   │   ├── llvm-project
-│   │   │   ├── 0001-[Huawei][MLIR]-xxx.patch
-│   │   │   └── ...
-│   │   └── torch-mlir
-│   ├── apply_patches.sh
+├── bishengir // AscendNPU IR-related implementation
+├── build-tools // Directory containing AscendNPU IR build scripts
 │   └── build.sh
 └── third-party
-    ├── llvm-project
-    └── torch-mlir
+    ├── llvm-project // Ascend-maintained branch: Ascend/AscendNPU-IR/llvmorg-19.1.7
+    ├── shmem
+    └── torch-mlir   // Ascend-maintained branch: Ascend/AscendNPU-IR/main-20250716
 ```
 
-The directory structure of `bishengir` is consistent with `mlir`. The `include` directory stores declaration files, including C++ header files (`.h` and `.hpp`) and TableGen definition files (`.td`). The build directory `build/include` contains files automatically generated by TableGen (`.h.inc` and `.cpp.inc`). The `lib` directory stores implementation code (`.cpp`), and its directory structure is basically consistent with `include`.
+The directory structure of `bishengir` is consistent with that of `mlir`: the `include` directory stores declaration files, including C++ header files (`.h`, `.hpp`) and TableGen definition files (`.td`), and the build directory `build/include` contains files automatically generated by TableGen (`.h.inc`, `.cpp.inc`). The `lib` directory stores implementation code (`.cpp`), and its directory structure is basically consistent with that of `include`.
 
 ```text
 .
-├── bishengir // AscendNPU IR related implementation
+├── bishengir // AscendNPU IR-related implementation
 │   ├── include
 │   │   └── bishengir
 │   │       ├── Conversion
 │   │       └── Dialect
-│   │           ├── Community dialects // Extensions to community dialects
-│   │           └── In-house dialects // Custom dialects
+│   │           ├── Community dialects // Extensions and enhancements to community dialects
+│   │           └── Self-developed dialects // Custom dialects
 ├── lib
 └── tools
-    ├── bishengir-compile // AscendNPU IR compiler command-line driver
+    ├── bishengir-compile // Command-line driver of the AscendNPU IR compiler.
     └── bishengir-opt
 ```
 
-The IR is mainly composed of Conversion, Dialect, and tools. Conversion carries the conversion capability between dialects; Dialect contains the definitions and implementations of dialects; the tools directory defines the compilation toolchain.
-Conversion includes both third-party ecosystem conversions (e.g. TorchToHFusion) and internal AscendNPU IR dialect conversions (e.g. HFusionToHIVM). Under Dialect there are both in-house dialects and community dialects. Under tools, bishengir-compile is the command-line driver of the AscendNPU IR compiler.
+The IR mainly consists of three parts: `Conversion`, `Dialect`, and `tools`. `Conversion` provides the capability of conversion between different dialects; `Dialect` contains the definitions and implementations of different dialects; and the `tools` directory defines the compilation toolchain.
+
+`Conversion` includes both third-party ecosystem integration conversions (such as TorchToHFusion) and conversions between internal dialects of AscendNPU IR (such as HFusionToHIVM). `Dialect` includes both self-developed dialects and community dialects. In `tools`, `bishengir-compile` is the command-line driver of the AscendNPU IR compiler.
 
 ## Compilation Process
 
-The AscendNPU IR toolchain is bishengir-compile, which compiles high-level tile-level OPs into NPU-hardware–aware low-level ops; both input and output of this toolchain are MLIR. The hivmc tool is responsible for converting low-level MLIR into LLVM IR and for low-level instruction compilation and optimization on LLVM IR, finally producing the operator binary.
-
-![image](../../images/introduction/architecture3.png)
+The toolchain corresponding to AscendNPU IR is `bishengir-compile`, which is responsible for compiling high-abstraction Tile-level Ops into low-level ops with awareness of the NPU hardware architecture. Both the input and output of this toolchain are MLIR. The `hivmc` tool is responsible for converting the low-level MLIR into LLVM IR and performing low-level instruction compilation optimization based on LLVM IR, ultimately generating the operator binary.
+![image](../../images/introduction/architecture3_zh.png)

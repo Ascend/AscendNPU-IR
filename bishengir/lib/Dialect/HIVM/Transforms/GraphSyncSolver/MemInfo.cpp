@@ -321,8 +321,8 @@ MemInfo MemInfo::getMemInfo(Value value, std::optional<PIPE> pipe,
     auto pointerLikeInfo = PointerLikeInfo::tryGet(subviewInfo->source);
     assert(pointerLikeInfo.has_value() &&
            "expected subview source to have pointer-like info");
-    MemInfo memInfo(subviewInfo->source, pointerLikeInfo.value(), pipe,
-                    coreType);
+    MemInfo memInfo(value, pipe, coreType);
+    memInfo.pointerLikeInfo = std::move(pointerLikeInfo);
     memInfo.subviewInfo = std::move(subviewInfo);
     return memInfo;
   }

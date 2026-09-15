@@ -79,7 +79,7 @@ void buildFinalizeHIVMToLLVMPipeline(
     pm.addPass(LLVM::createDIScopeForLLVMFuncOpPass());
   }
   if (config.shouldEnableDebugVariables()) {
-    pm.addPass(LLVM::createLLVMDILocalVariablePass());
+    pm.addPass(LLVM::createLLVMDILocalVariableA3Pass());
   }
 }
 } // namespace

@@ -117,3 +117,6 @@
 /bishengir/test/Dialect/HIVM/hivm-bubble-up-extract-slice.mlir @kang-ingu @henrycliang @ZhaoWentengZWT @renxingdong @jy834507063 @hid90099092 @tanshengshun
 /bishengir/test/Dialect/HIVM/bubble-up-bufferization.mlir @kang-ingu @henrycliang @ZhaoWentengZWT @renxingdong @jy834507063 @hid90099092 @tanshengshun
 /bishengir/test/lib/Dialect/Utils/TestBubbleUpBufferization.cpp @kang-ingu @henrycliang @ZhaoWentengZWT @renxingdong @jy834507063 @hid90099092 @tanshengshun
+
+/bishengir/hivmc @huchengbei @hid90099092 @tanshengshun
+

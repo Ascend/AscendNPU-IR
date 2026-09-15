@@ -49,10 +49,6 @@ public:
   /// Rebuild one tile view so both tiles use the dominating root.
   static void unifyRoot(TileView &lhs, TileView &rhs, OpBuilder &builder);
 
-  /// Rebuild `view` from root + offsets/sizes/strides. Collapses to `root`
-  /// when the window is the full allocation.
-  void rematerializeView(OpBuilder &builder);
-
   /// Grow the last kept dim from its current offset to the end of the root
   /// so `hivm.hir.load` pad_mode can initialize that tail.
   void expandLastKeptDimToRoot(OpBuilder &builder);
@@ -60,12 +56,21 @@ public:
   /// True when every kept dim except the last already spans the root.
   bool nonLastKeptDimsCoverRoot() const;
 
-  /// True when the last kept dim starts at a static zero offset, so DMA
-  /// last-dim pad can initialize `[0, rootLast)` after expand.
+  /// True when the last kept dim starts at offset 0 (static constant or
+  /// IndexBoundAnalyzer EQ 0). GLA prefix expand uses this; last-dim-only pad
+  /// uses it to drop the dest fill.
   bool lastKeptDimOffsetIsZero() const;
+
+  /// Offset of the last kept dim in the root, if any.
+  std::optional<OpFoldResult> lastKeptDimOffset() const;
 
   /// Print the root/view pair for debug logging.
   void print(raw_ostream &os) const;
+
+private:
+  /// Rebuild `view` from root + offsets/sizes/strides. Collapses to `root`
+  /// when the window is the full allocation.
+  void rematerializeView(OpBuilder &builder);
 
 public:
   /// Tile state inspected by the current NDDMA transforms.

@@ -19,8 +19,9 @@
 #include "mlir/Pass/Pass.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
-#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/ErrorHandling.h"
 #include <cassert>
 
@@ -62,7 +63,7 @@ static SmallVector<Operation *> getAllMaskOps(func::FuncOp funcOp) {
 int getIdxInMaskOps(Value mask) {
   int idx = -1;
   Operation *op = mask.getDefiningOp();
-  assert(op!=nullptr);
+  assert(op != nullptr);
   func::FuncOp funcOp = op->getParentOfType<func::FuncOp>();
   if (!funcOp)
     return idx;
@@ -106,7 +107,11 @@ void markReachableInfo(Value val, Operation *maskOp, int idx,
 
 // Analyze whether the value could reach the mask op with specified index
 void analyzeUseAndMark(Value val, Operation *maskOp, int maskOpIdx,
-                       IRRewriter &rewriter) {
+                       IRRewriter &rewriter,
+                       llvm::SmallPtrSet<Value, 16> &visited) {
+  // Skip already-visited values.
+  if (!visited.insert(val).second)
+    return;
   auto valDefOp = val.getDefiningOp();
   // If val is not defined by op(from args), or is from
   // CreateMaskOp, ConstantMaskOp, ..., then skip the analysis
@@ -126,7 +131,7 @@ void analyzeUseAndMark(Value val, Operation *maskOp, int maskOpIdx,
   // Get val definingOp's operand, analyze and mark recursively
   for (unsigned i = 0; i < valDefOp->getNumOperands(); i++) {
     Value defOpOperand = valDefOp->getOperand(i);
-    analyzeUseAndMark(defOpOperand, maskOp, maskOpIdx, rewriter);
+    analyzeUseAndMark(defOpOperand, maskOp, maskOpIdx, rewriter, visited);
   }
 }
 
@@ -168,8 +173,11 @@ void ArithVectorMaskAnalysisPass::runOnOperation() {
                             rewriter.getI32IntegerAttr(maskOpIdx));
         maskOpMarkIdx[maskOpIdx] = maskOpMark;
       }
-      if (maskOpIdx != -1)
-        analyzeUseAndMark(outVec, maskOp.getDefiningOp(), maskOpIdx, rewriter);
+      if (maskOpIdx != -1) {
+        llvm::SmallPtrSet<Value, 16> visited;
+        analyzeUseAndMark(outVec, maskOp.getDefiningOp(), maskOpIdx, rewriter,
+                          visited);
+      }
     }
   });
 
