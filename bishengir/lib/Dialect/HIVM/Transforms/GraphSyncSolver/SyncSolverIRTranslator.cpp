@@ -238,7 +238,8 @@ IRTranslator::getMemoryOps(const SmallVector<Value> &vals) {
 }
 
 // Return read/write memory operands for a generic operation by consulting
-// DestinationStyleOpInterface and ExtraBufferOpInterface.
+// DestinationStyleOpInterface, ExtraBufferOpInterface and indirect atomic
+// CustomOps.
 std::pair<llvm::SmallVector<Value>, llvm::SmallVector<Value>>
 IRTranslator::getReadWriteMemoryOps(Operation *op) {
   assert(op != nullptr);
@@ -255,6 +256,28 @@ IRTranslator::getReadWriteMemoryOps(Operation *op) {
     extendedWriteMemVals.insert(extraWriteMemVals.begin(),
                                 extraWriteMemVals.end());
     writeMemVals = extendedWriteMemVals.takeVector();
+  }
+  // Indirect atomics update the GM buffers listed by `gm_addr_args_indices` in
+  // addition to reading them. Keep these values in `readMemVals` as well so the
+  // operation is modeled as read-modify-write.
+  if (auto customOp = dyn_cast<hivm::CustomOp>(op);
+      customOp &&
+      customOp.getName() == hivm::CustomOp::kBuiltinIndirectAtomicName) {
+    if (auto gmAddrArgsIndices = customOp.getGMAddrArgsIndices()) {
+      llvm::SetVector<Value> extendedWriteMemVals(writeMemVals.begin(),
+                                                  writeMemVals.end());
+      auto inputs = customOp.getInputs();
+      for (size_t index : *gmAddrArgsIndices) {
+        assert(index < inputs.size() &&
+               "GM address argument index is out of range");
+        if (index < inputs.size()) {
+          auto gmAddrMemVals = getMemoryOps({inputs[index]});
+          extendedWriteMemVals.insert(gmAddrMemVals.begin(),
+                                      gmAddrMemVals.end());
+        }
+      }
+      writeMemVals = extendedWriteMemVals.takeVector();
+    }
   }
   return std::make_pair(readMemVals, writeMemVals);
 }
