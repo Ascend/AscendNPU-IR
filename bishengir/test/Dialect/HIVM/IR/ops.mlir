@@ -388,6 +388,21 @@ func.func @test_nchw2nc1hwc0(
 }
 
 // -----
+// CHECK-LABEL: test_nchw2c1hwnc0
+// CHECK: hivm.hir.nchw2c1hwnc0
+// CHECK-SAME: groups = 2 : i64
+// CHECK-SAME: ins(%[[SRC:.*]] : memref<30x15x3x3xf16, #hivm.address_space<gm>>)
+// CHECK-SAME: outs(%[[DST:.*]] : memref<1x3x3x32x16xf16, #hivm.address_space<cbuf>>)
+func.func @test_nchw2c1hwnc0(
+    %src : memref<30x15x3x3xf16, #hivm.address_space<gm>>,
+    %dst : memref<1x3x3x32x16xf16, #hivm.address_space<cbuf>>) {
+  hivm.hir.nchw2c1hwnc0 {groups = 2 : i64}
+      ins(%src : memref<30x15x3x3xf16, #hivm.address_space<gm>>)
+      outs(%dst : memref<1x3x3x32x16xf16, #hivm.address_space<cbuf>>)
+  return
+}
+
+// -----
 // CHECK-LABEL: func.func @test_multi_buffer_counter
 func.func @test_multi_buffer_counter() {
   %c0 = arith.constant 0 : index

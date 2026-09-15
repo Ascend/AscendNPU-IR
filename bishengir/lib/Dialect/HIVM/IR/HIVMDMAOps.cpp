@@ -59,6 +59,7 @@ ENABLE_DEFAULT_COPYOP_INTERFACE_IMPLEMENTATION(NZ2NDOp)
 ENABLE_DEFAULT_COPYOP_INTERFACE_IMPLEMENTATION(L12UBOp)
 ENABLE_DEFAULT_COPYOP_INTERFACE_IMPLEMENTATION(LoadMXScaleOp)
 ENABLE_DEFAULT_COPYOP_INTERFACE_IMPLEMENTATION(NCHW2NC1HWC0Op)
+ENABLE_DEFAULT_COPYOP_INTERFACE_IMPLEMENTATION(NCHW2C1HWNC0Op)
 #undef ENABLE_DEFAULT_COPYOP_INTERFACE_IMPLEMENTATION
 
 //===----------------------------------------------------------------------===//
@@ -727,7 +728,7 @@ LogicalResult NCHW2NC1HWC0Op::verify() {
   if (dstSpace && dstSpace.getAddressSpace() != AddressSpace::L1)
     return emitOpError("expects the destination to be in L1");
 
-  int64_t c0Size = srcType.getElementType().isF32() ? 8 : 16;
+  int64_t c0Size = mlir::utils::getNumPerBlock(srcType.getElementType());
   int64_t dstC0 = dstType.getDimSize(4);
   if (!ShapedType::isDynamic(dstC0) && dstC0 != c0Size)
     return emitOpError("expects the destination C0 dimension to occupy one "
@@ -761,6 +762,82 @@ LogicalResult NCHW2NC1HWC0Op::verify() {
     if (dstChannelBlocks / groups != expectedC1PerGroup)
       return emitOpError("destination C1 dimension does not match the grouped "
                          "source channels");
+  }
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
+// NCHW2C1HWNC0Op
+//===----------------------------------------------------------------------===//
+
+void NCHW2C1HWNC0Op::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  detail::getEffectsImpl(effects, cast<HIVMStructuredOp>(getOperation()));
+}
+
+LogicalResult NCHW2C1HWNC0Op::verify() {
+  auto srcType = cast<MemRefType>(getSrc().getType());
+  auto dstType = cast<MemRefType>(getDst().getType());
+  if (srcType.getRank() != 4)
+    return emitOpError("expects a rank-4 NCHW source");
+  if (dstType.getRank() != 5)
+    return emitOpError("expects a rank-5 C1HWNC0 destination");
+  if (srcType.getElementType() != dstType.getElementType())
+    return emitOpError("expects source and destination element types to match");
+
+  auto srcSpace = dyn_cast_or_null<AddressSpaceAttr>(srcType.getMemorySpace());
+  auto dstSpace = dyn_cast_or_null<AddressSpaceAttr>(dstType.getMemorySpace());
+  if (srcSpace && srcSpace.getAddressSpace() != AddressSpace::GM)
+    return emitOpError("expects the source to be in GM");
+  if (dstSpace && dstSpace.getAddressSpace() != AddressSpace::L1)
+    return emitOpError("expects the destination to be in L1");
+
+  int64_t c0Size = mlir::utils::getNumPerBlock(srcType.getElementType());
+  int64_t dstC0 = dstType.getDimSize(4);
+  if (!ShapedType::isDynamic(dstC0) && dstC0 != c0Size)
+    return emitOpError("expects the destination C0 dimension to occupy one "
+                       "32-byte block");
+
+  for (int64_t srcDimIndex : {2, 3}) {
+    int64_t dstDimIndex = srcDimIndex - 1;
+    int64_t srcDim = srcType.getDimSize(srcDimIndex);
+    int64_t dstDim = dstType.getDimSize(dstDimIndex);
+    if (!ShapedType::isDynamic(srcDim) && !ShapedType::isDynamic(dstDim) &&
+        srcDim != dstDim)
+      return emitOpError("expects source and destination H/W dimensions to "
+                         "match");
+  }
+
+  int64_t srcChannels = srcType.getDimSize(1);
+  int64_t dstChannelBlocks = dstType.getDimSize(0);
+  if (!ShapedType::isDynamic(srcChannels) &&
+      !ShapedType::isDynamic(dstChannelBlocks) &&
+      dstChannelBlocks != (srcChannels + c0Size - 1) / c0Size)
+    return emitOpError(
+        "destination C1 dimension does not match source channels");
+
+  int64_t groups = getGroups();
+  if (groups <= 0)
+    return emitOpError("expects groups to be positive");
+  int64_t srcOutputChannels = srcType.getDimSize(0);
+  int64_t dstOutputChannels = dstType.getDimSize(3);
+  if (!ShapedType::isDynamic(srcOutputChannels) &&
+      srcOutputChannels % groups != 0)
+    return emitOpError("expects the source N dimension to be divisible by "
+                       "groups");
+  if (!ShapedType::isDynamic(dstOutputChannels) &&
+      dstOutputChannels % groups != 0)
+    return emitOpError("expects the destination N dimension to be divisible "
+                       "by groups");
+  if (!ShapedType::isDynamic(srcOutputChannels) &&
+      !ShapedType::isDynamic(dstOutputChannels)) {
+    int64_t outputChannelsPerGroup = srcOutputChannels / groups;
+    int64_t expectedOutputChannelsPerGroup =
+        CEIL_FACTOR(outputChannelsPerGroup, utils::FRACTAL_BLOCK_NUM);
+    if (dstOutputChannels / groups != expectedOutputChannelsPerGroup)
+      return emitOpError("destination N dimension does not match the grouped "
+                         "and aligned source N dimension");
   }
   return success();
 }

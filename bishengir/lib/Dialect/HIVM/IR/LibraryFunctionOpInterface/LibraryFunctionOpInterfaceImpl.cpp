@@ -1404,6 +1404,19 @@ std::string NoMaxRankExternalModel<NCHW2NC1HWC0Op>::getOpLibraryCallName(
 }
 
 //===----------------------------------------------------------------------===//
+// NCHW2C1HWNC0Op
+//===----------------------------------------------------------------------===//
+
+template <>
+std::string NoMaxRankExternalModel<NCHW2C1HWNC0Op>::getOpLibraryCallName(
+    Operation *op, std::optional<bool> /*isOpsAligned*/) const {
+  auto concreteOp = cast<NCHW2C1HWNC0Op>(op);
+  Type elemType = getElementTypeOrSelf(concreteOp.getSrc().getType());
+  return concreteOp.getOpName().str() + "_" +
+         getTypeName(concreteOp.getLoc(), elemType);
+}
+
+//===----------------------------------------------------------------------===//
 // ND2NZOp
 //===----------------------------------------------------------------------===//
 
@@ -1824,6 +1837,7 @@ void bishengir::hivm::detail::registerLibraryFunctionOpInterfaceExtension(
     REGISTER_NO_MAX_RANK(ND2NZOp);
     REGISTER_NO_MAX_RANK(LoadMXScaleOp);
     REGISTER_NO_MAX_RANK(NCHW2NC1HWC0Op);
+    REGISTER_NO_MAX_RANK(NCHW2C1HWNC0Op);
     REGISTER_NO_LIBRARY_FUNCTION(AtomicCasOp);
     REGISTER_NO_LIBRARY_FUNCTION(AtomicXchgOp);
     REGISTER_NO_LIBRARY_FUNCTION(AtomicRMWOp);
