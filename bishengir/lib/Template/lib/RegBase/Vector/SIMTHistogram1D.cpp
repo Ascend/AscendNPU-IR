@@ -1207,14 +1207,14 @@ __simd_vf__ void histogram_256_i32_dhistv2_vf(uint16_t chunks,
   vsts(o3, reinterpret_cast<__ubuf__ uint32_t *>(dst), 192, NORM_B32, p3);
 }
 
-__simd_callee__ __aiv__ __attribute__((always_inline)) static void
+__aiv__ __attribute__((always_inline)) static void
 histogram_256_i32_dhistv2(__ubuf__ int32_t *src, __ubuf__ int32_t *dst,
                           uint16_t chunks, uint32_t numBins) {
   histogram_256_i32_dhistv2_vf(chunks, src, numBins, dst);
 }
 
 template <typename T>
-__simd_callee__ __aiv__ __attribute__((always_inline)) static void
+__aiv__ __attribute__((always_inline)) static void
 histogramSmallBins(memref_t<__ubuf__ T, 1> *src,
                    memref_t<__ubuf__ int32_t, 1> *dst, int64_t numBins) {
   // Bound the partial counts and avoid tail overreads. Other shapes retain
