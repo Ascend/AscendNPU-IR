@@ -422,8 +422,8 @@ struct BufferizeMaterializeOpLowering
   LogicalResult
   matchAndRewrite(bufferization::MaterializeInDestinationOp bufMIDOp,
                   PatternRewriter &rewriter) const override {
-    // Align with MemrefCopyOpLowering / docs: do not emit hivm.store inside
-    // vector functions or scf.forall.
+    // Do not convert materialize_in_destination inside simt_vf forall or
+    // vector functions.
     if (bufMIDOp->getParentOfType<scf::ForallOp>() != nullptr)
       return failure();
     if (auto funcOp = bufMIDOp->getParentOfType<func::FuncOp>()) {
@@ -438,7 +438,9 @@ struct BufferizeMaterializeOpLowering
                                                  bufMIDOp.getSource(), dst);
       return success();
     }
-    return failure();
+    rewriter.replaceOpWithNewOp<hivm::CopyOp>(
+        bufMIDOp, bufMIDOp.getResultTypes(), bufMIDOp.getSource(), dst);
+    return success();
   }
 };
 
