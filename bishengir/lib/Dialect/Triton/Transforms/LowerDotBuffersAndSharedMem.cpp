@@ -241,7 +241,7 @@ struct ScratchAccess {
 arith::IndexCastOp findTileIdx(Operation *op) {
   if (!op)
     return nullptr;
-  
+
   for (Value operand : op->getOperands()) {
     if (auto defOp = operand.getDefiningOp()) {
       if (auto indexCastOp = dyn_cast<arith::IndexCastOp>(defOp)) {

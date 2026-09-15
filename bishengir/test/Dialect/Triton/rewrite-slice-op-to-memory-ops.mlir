@@ -15,7 +15,7 @@
 // CHECK: %[[PTR:.*]] = tt.addptr %[[SPLAT]], %[[ADD]] : tensor<2x6x!tt.ptr<f32>>, tensor<2x6xi32>
 // CHECK: %[[LOAD:.*]] = tt.load %[[PTR]] : tensor<2x6x!tt.ptr<f32>>
 // CHECK: %[[TRUNC:.*]] = arith.truncf %[[LOAD]] : tensor<2x6xf32> to tensor<2x6xf16>
-// CHECK: tt.store %{{.*}}, %[[TRUNC]] : tensor<2x6x!tt.ptr<f16>> 
+// CHECK: tt.store %{{.*}}, %[[TRUNC]] : tensor<2x6x!tt.ptr<f16>>
 tt.func @extractSlice(%src: !tt.ptr<f32>, %dst: !tt.ptr<f16>) {
   %0 = tt.make_range {end = 6 : i32, start = 0 : i32} : tensor<6xi32>
   %1 = tt.make_range {end = 4 : i32, start = 0 : i32} : tensor<4xi32>
@@ -67,7 +67,7 @@ tt.func @extractSlice(%src: !tt.ptr<f32>, %dst: !tt.ptr<f16>) {
 // CHECK: %[[LOAD:.*]] = tt.load %[[PTR]] : tensor<2x6x!tt.ptr<f32>>
 // CHECK: %[[TRUNC:.*]] = arith.truncf %[[LOAD]] : tensor<2x6xf32> to tensor<2x6xf16>
 // CHECK: %[[ADD:.*]] = arith.addf %[[TRUNC]], %[[TRUNC]] : tensor<2x6xf16>
-// CHECK: tt.store %{{.*}}, %[[ADD]] : tensor<2x6x!tt.ptr<f16>> 
+// CHECK: tt.store %{{.*}}, %[[ADD]] : tensor<2x6x!tt.ptr<f16>>
 tt.func @extractSliceBinaryOp(%src: !tt.ptr<f32>, %dst: !tt.ptr<f16>) {
   %0 = tt.make_range {end = 6 : i32, start = 0 : i32} : tensor<6xi32>
   %1 = tt.make_range {end = 4 : i32, start = 0 : i32} : tensor<4xi32>
@@ -179,13 +179,13 @@ tt.func @extractSliceTensorPtrOffset(%src: !tt.ptr<f32>, %dst: !tt.ptr<f16>, %of
 // CHECK-DAG: %[[CMP_2:.*]] = arith.cmpi slt, %[[MASK_RANGE_2]], %[[CST_3]] : tensor<2xi32>
 // CHECK-DAG: %[[MASK_EXPAND_2:.*]] = tt.expand_dims %[[CMP_2]] {axis = 1 : i32} : tensor<2xi1> -> tensor<2x1xi1>
 // CHECK-DAG: %[[MASK_BROADCAST_2:.*]] = tt.broadcast %[[MASK_EXPAND_2]] : tensor<2x1xi1> -> tensor<2x6xi1>
-// CHECK-DAG: %[[CMP_6:.*]] = arith.cmpi slt, %[[RANGE_6]], %[[CST_5]] : tensor<6xi32> 
+// CHECK-DAG: %[[CMP_6:.*]] = arith.cmpi slt, %[[RANGE_6]], %[[CST_5]] : tensor<6xi32>
 // CHECK-DAG: %[[MASK_EXPAND_6:.*]] = tt.expand_dims %[[CMP_6]] {axis = 0 : i32} : tensor<6xi1> -> tensor<1x6xi1>
 // CHECK-DAG: %[[MASK_BROADCAST_6:.*]] = tt.broadcast %[[MASK_EXPAND_6]] : tensor<1x6xi1> -> tensor<2x6xi1>
 // CHECK-DAG: %[[MASK:.*]] = arith.andi %[[MASK_BROADCAST_2]], %[[MASK_BROADCAST_6]] : tensor<2x6xi1>
 // CHECK: %[[LOAD:.*]] = tt.load %[[PTR]], %[[MASK]] : tensor<2x6x!tt.ptr<f32>>
 // CHECK: %[[TRUNC:.*]] = arith.truncf %[[LOAD]] : tensor<2x6xf32> to tensor<2x6xf16>
-// CHECK: tt.store %{{.*}}, %[[TRUNC]] : tensor<2x6x!tt.ptr<f16>> 
+// CHECK: tt.store %{{.*}}, %[[TRUNC]] : tensor<2x6x!tt.ptr<f16>>
 tt.func @extractSlicePreserveMask(%src: !tt.ptr<f32>, %dst: !tt.ptr<f16>) {
   %0 = tt.make_range {end = 6 : i32, start = 0 : i32} : tensor<6xi32>
   %1 = tt.make_range {end = 4 : i32, start = 0 : i32} : tensor<4xi32>
@@ -550,7 +550,7 @@ tt.func @insertSliceTensorPtrDoubleStore(%src1: !tt.ptr<f16>, %src2: !tt.ptr<f16
 // CHECK: %[[IN_SLICE_2D:.*]] = tt.broadcast %{{.*}} : tensor<4x1xi1> -> tensor<4x6xi1>
 // CHECK: %[[INSERT_MASK:.*]] = arith.xori %[[IN_SLICE_2D]], %{{.*}} : tensor<4x6xi1>
 // CHECK: %[[STORE_MASK:.*]] = arith.andi %[[INSERT_MASK]], %[[OLD_MASK]] : tensor<4x6xi1>
-// CHECK: tt.store %{{.*}}, %[[EXT2]], %[[STORE_MASK]] : tensor<4x6x!tt.ptr<f32>> 
+// CHECK: tt.store %{{.*}}, %[[EXT2]], %[[STORE_MASK]] : tensor<4x6x!tt.ptr<f32>>
 // CHECK: %[[CMP_6:.*]] = arith.cmpi slt, %[[OLD_RANGE_6]], %[[CST_5]] : tensor<6xi32>
 // CHECK: %[[EXPAND_6:.*]] = tt.expand_dims %[[CMP_6]] {axis = 0 : i32} : tensor<6xi1> -> tensor<1x6xi1>
 // CHECK: %[[BROADCAST_6:.*]] = tt.broadcast %[[EXPAND_6]] : tensor<1x6xi1> -> tensor<2x6xi1>

@@ -52,7 +52,8 @@ struct SyncBlockLockGuard {
   }
 };
 
-/// Static backing allocation for a GM destination that may be a dynamic subview.
+/// Static backing allocation for a GM destination that may be a dynamic
+/// subview.
 ///
 /// `sBuffer` is used for tensor conversion, while `dBuffer` has the same
 /// logical shape as the original GM memref:
@@ -115,16 +116,16 @@ struct StaticSizedBuffer {
   /// Tensor view of the full static staging allocation.
   TypedValue<TensorType> toStaticTensor() {
     return builder
-        .create<bufferization::ToTensorOp>(
-            loc, sBuffer, /*restrict=*/true, /*writable=*/true)
+        .create<bufferization::ToTensorOp>(loc, sBuffer, /*restrict=*/true,
+                                           /*writable=*/true)
         .getResult();
   }
 
   /// Tensor view matching the GM destination shape (`ins` == `outs`).
   TypedValue<TensorType> toLogicalTensor() {
     return builder
-        .create<bufferization::ToTensorOp>(
-            loc, dBuffer, /*restrict=*/true, /*writable=*/true)
+        .create<bufferization::ToTensorOp>(loc, dBuffer, /*restrict=*/true,
+                                           /*writable=*/true)
         .getResult();
   }
 
@@ -268,27 +269,36 @@ struct NormalizeAtomicStoreElemwise : public OpRewritePattern<StoreOpTy> {
       return rewriter.notifyMatchFailure(
           op, "expected dynamic GM memref to be a static subview");
 
-    // The staged UB value is immutable; only the GM read-modify-write needs the
-    // critical section.
-    SyncBlockLockGuard lock(rewriter, loc);
-    rewriter.create<memref::CopyOp>(loc, gmMemref, lhsBuffer.dBuffer);
-    Value lhsTensor =
-        castAtomicOpToF32IfFp8<Traits>(rewriter, loc, lhsBuffer.toStaticTensor(),
-                             gmMemref.getType(), /*isForward=*/true);
-    Value binOpResultBuffer = rewriter.create<tensor::EmptyOp>(
-        loc, lhsTensor.getType(), ValueRange({}));
-    FailureOr<Value> maybeResult = Traits::createStoreBinary(
-        rewriter, loc, op, lhsTensor, rhsTensor, binOpResultBuffer);
-    if (failed(maybeResult))
-      return failure();
+    auto readModifyWrite = [&]() {
+      rewriter.create<memref::CopyOp>(loc, gmMemref, lhsBuffer.dBuffer);
+      Value lhsTensor = castAtomicOpToF32IfFp8<Traits>(
+          rewriter, loc, lhsBuffer.toStaticTensor(), gmMemref.getType(),
+          /*isForward=*/true);
+      Value binOpResultBuffer = rewriter.create<tensor::EmptyOp>(
+          loc, lhsTensor.getType(), ValueRange({}));
+      FailureOr<Value> maybeResult = Traits::createStoreBinary(
+          rewriter, loc, op, lhsTensor, rhsTensor, binOpResultBuffer);
+      if (failed(maybeResult))
+        return failure();
+      Value result = castAtomicOpToF32IfFp8<Traits>(rewriter, loc, *maybeResult,
+                                                    gmMemref.getType(),
+                                                    /*isForward=*/false);
+      auto resultTensor = dyn_cast<TypedValue<TensorType>>(result);
+      if (!resultTensor)
+        return rewriter.notifyMatchFailure(op, "expected tensor result");
+      lhsBuffer.storeBack(resultTensor);
+      return success();
+    };
 
-    Value result = castAtomicOpToF32IfFp8<Traits>(rewriter, loc, *maybeResult,
-                                        gmMemref.getType(),
-                                        /*isForward=*/false);
-    auto resultTensor = dyn_cast<TypedValue<TensorType>>(result);
-    if (!resultTensor)
-      return rewriter.notifyMatchFailure(op, "expected tensor result");
-    lhsBuffer.storeBack(resultTensor);
+    static constexpr llvm::StringLiteral kAlreadySync = "already_sync";
+    if (op->hasAttr(kAlreadySync)) {
+      if (failed(readModifyWrite()))
+        return failure();
+    } else {
+      SyncBlockLockGuard lock(rewriter, loc);
+      if (failed(readModifyWrite()))
+        return failure();
+    }
     rewriter.eraseOp(op);
     eraseToMemrefIfUnused(ubInput, rewriter);
     return success();
@@ -330,28 +340,42 @@ struct NormalizeAtomicCASTemplate : public OpRewritePattern<AtomicCasOpTy> {
     FailureOr<TypedValue<TensorType>> maybeStoringTensor =
         storingBuffer.stageInput(resolveAtomicInput(srcOperands[1]));
     if (failed(maybeComparingTensor) || failed(maybeStoringTensor))
-      return rewriter.notifyMatchFailure(op,
-                                         "expected memref or tensor CAS inputs");
+      return rewriter.notifyMatchFailure(
+          op, "expected memref or tensor CAS inputs");
 
-    SyncBlockLockGuard lock(rewriter, loc);
-    rewriter.create<memref::CopyOp>(loc, gmMemref, gmValBuffer.dBuffer);
-    const TypedValue<TensorType> gmValTensor = gmValBuffer.toStaticTensor();
+    auto compareAndSwap = [&]() {
+      rewriter.create<memref::CopyOp>(loc, gmMemref, gmValBuffer.dBuffer);
+      const TypedValue<TensorType> gmValTensor = gmValBuffer.toStaticTensor();
 
-    Value cmpResult = Traits::createCmpOp(
-        rewriter, loc,
-        castAtomicOpToF32IfFp8<Traits>(rewriter, loc, gmValTensor, gmValTensor.getType(),
-                             /*isForward=*/true),
-        castAtomicOpToF32IfFp8<Traits>(rewriter, loc, *maybeComparingTensor,
-                             gmValTensor.getType(), /*isForward=*/true),
-        CompareKind::EQ);
-    Value selectedResult =
-        Traits::createSelectOp(rewriter, loc, cmpResult, *maybeStoringTensor,
-                               gmValTensor, gmValTensor);
-    auto selectedResultTensor =
-        dyn_cast<TypedValue<TensorType>>(selectedResult);
-    if (!selectedResultTensor)
-      return rewriter.notifyMatchFailure(op, "expected tensor select result");
-    gmValBuffer.storeBack(selectedResultTensor);
+      Value cmpResult = Traits::createCmpOp(
+          rewriter, loc,
+          castAtomicOpToF32IfFp8<Traits>(rewriter, loc, gmValTensor,
+                                         gmValTensor.getType(),
+                                         /*isForward=*/true),
+          castAtomicOpToF32IfFp8<Traits>(rewriter, loc, *maybeComparingTensor,
+                                         gmValTensor.getType(),
+                                         /*isForward=*/true),
+          CompareKind::EQ);
+      Value selectedResult =
+          Traits::createSelectOp(rewriter, loc, cmpResult, *maybeStoringTensor,
+                                 gmValTensor, gmValTensor);
+      auto selectedResultTensor =
+          dyn_cast<TypedValue<TensorType>>(selectedResult);
+      if (!selectedResultTensor)
+        return rewriter.notifyMatchFailure(op, "expected tensor select result");
+      gmValBuffer.storeBack(selectedResultTensor);
+      return success();
+    };
+
+    static constexpr llvm::StringLiteral kAlreadySync = "already_sync";
+    if (op->hasAttr(kAlreadySync)) {
+      if (failed(compareAndSwap()))
+        return failure();
+    } else {
+      SyncBlockLockGuard lock(rewriter, loc);
+      if (failed(compareAndSwap()))
+        return failure();
+    }
     rewriter.eraseOp(op);
     eraseToMemrefIfUnused(srcOperands[0], rewriter);
     eraseToMemrefIfUnused(srcOperands[1], rewriter);
@@ -393,13 +417,12 @@ struct NormalizeAtomicXCHGTemplate : public OpRewritePattern<AtomicXchgOpTy> {
       scopeOp = rewriter.create<scope::ScopeOp>(loc, op->getResultTypes());
     else
       scopeOp = rewriter.create<scope::ScopeOp>(loc, TypeRange{});
-    scopeOp->setAttr(
-        hivm::TCoreTypeAttr::name,
-        hivm::TCoreTypeAttr::get(rewriter.getContext(), hivm::TCoreType::VECTOR));
+    scopeOp->setAttr(hivm::TCoreTypeAttr::name,
+                     hivm::TCoreTypeAttr::get(rewriter.getContext(),
+                                              hivm::TCoreType::VECTOR));
     // Allow FlattenOps/PropagateReshape to run despite skip-scope: collapsing
     // multi-rank shapes in this critical section reduces padded UB usage.
-    scopeOp->setAttr(hivm::AllowFlattenAttr::name,
-                     rewriter.getUnitAttr());
+    scopeOp->setAttr(hivm::AllowFlattenAttr::name, rewriter.getUnitAttr());
     rewriter.createBlock(&scopeOp.getRegion());
     OpBuilder::InsertionGuard scopeGuard(rewriter);
     rewriter.setInsertionPointToStart(scopeOp.getBody());
