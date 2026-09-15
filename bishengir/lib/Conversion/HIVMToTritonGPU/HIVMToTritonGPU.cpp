@@ -348,6 +348,7 @@ void HIVMToTritonGPUConversionPass::runOnOperation() {
     stage2Target.addLegalOp<tensor::EmptyOp>();
     stage2Target.addLegalOp<tensor::ExtractOp>();
     stage2Target.addLegalOp<tensor::ExtractSliceOp>();
+    stage2Target.addLegalOp<tensor::InsertOp>();
     stage2Target.addIllegalOp<func::FuncOp>();
     stage2Target.addLegalOp<UnrealizedConversionCastOp>();
     stage2Target.addLegalDialect<scf::SCFDialect>();
