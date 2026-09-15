@@ -1564,6 +1564,8 @@ FailureOr<DataLayoutAttr> Conv1DL1Op::getInputLayout() {
     return DataLayoutAttr::get(getContext(), DataLayout::NCHW);
   case kDimThree:
     return DataLayoutAttr::get(getContext(), DataLayout::NCHW);
+  case kDimFour:
+    return DataLayoutAttr::get(getContext(), DataLayout::NCHW);
   case kDimFive:
     return DataLayoutAttr::get(getContext(), DataLayout::NC1HWC0);
   default:

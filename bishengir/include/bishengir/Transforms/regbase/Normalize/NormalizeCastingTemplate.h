@@ -330,6 +330,20 @@ struct NormalizeTruncfBf16Template : public OpRewritePattern<TruncFOpType> {
     if (Traits::isInsideDialectCast(*op))
       return failure();
 
+    // Fold constants before scalarizing through a length-1 tensor.  Keeping
+    // the tensor cast for a constant can materialize a global tensor during
+    // bufferization.  If the value crosses an outlined SIMD/SIMT boundary,
+    // that leaves a tensor arith.truncf in the SIMD module, which cannot be
+    // lowered by the RegBase backend.
+    if (auto constantOp = src.template getDefiningOp<arith::ConstantOp>()) {
+      if (auto floatAttr = dyn_cast<FloatAttr>(constantOp.getValue())) {
+        auto foldedAttr = rewriter.getFloatAttr(
+            dstType, floatAttr.getValue().convertToDouble());
+        rewriter.replaceOpWithNewOp<arith::ConstantOp>(op, dstType, foldedAttr);
+        return success();
+      }
+    }
+
     Value result = Traits::castScalarThroughTensor(rewriter, op.getLoc(), src,
                                                    dstType);
     rewriter.replaceOp(op, result);

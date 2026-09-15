@@ -58,6 +58,47 @@ module {
 
 // -----
 module {
+// Guarded consumer selection.
+// CHECK-LABEL: func.func @single_guarded_consumer_selection(
+  func.func @single_guarded_consumer_selection(
+      %src: memref<16xf16, #hivm.address_space<gm>>, %cond: i1) {
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 32 : i64
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+
+    // CHECK: scf.for
+    scf.for %iv = %c0 to %c4 step %c1 {
+      // CHECK: memref.load
+      // CHECK: arith.remui
+      // CHECK-NOT: arith.select
+      %buffer = hivm.hir.pointer_cast(%a0, %a1)
+        : memref<16xf16, #hivm.address_space<ub>>
+      annotation.mark %buffer {hivm.multi_buffer = 2 : i32}
+        : memref<16xf16, #hivm.address_space<ub>>
+      "test.before_guard"() : () -> ()
+      // CHECK: "test.before_guard"
+      // CHECK-NOT: arith.select
+      // CHECK: scf.if
+      scf.if %cond {
+        // CHECK: %[[SELECTED:.*]] = arith.select
+        // CHECK: hivm.hir.load {{.*}} outs(%[[SELECTED]]
+        hivm.hir.load
+          ins(%src : memref<16xf16, #hivm.address_space<gm>>)
+          outs(%buffer : memref<16xf16, #hivm.address_space<ub>>)
+      }
+      // CHECK: }
+      // Keep counter unconditional.
+      // CHECK: arith.addi
+      // CHECK: memref.store
+    }
+    return
+  }
+}
+
+// -----
+module {
 // CHECK-LABEL: func.func @multi_buffer_alloc_manual_2for(
 // CHECK:   memref.alloca() : memref<1xi64>
 // CHECK:   memref.store %{{.*}}, %{{.*}}[%{{.*}}] : memref<1xi64>

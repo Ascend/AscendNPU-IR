@@ -1476,6 +1476,7 @@ LogicalResult CVPipelineImpl::createNewLoops() {
       builder.create<arith::ConstantIndexOp>(loc, numMultibuffer);
   newLoop =
       builder.create<scf::ForOp>(loc, lb, ub, newStep, pipelineLoop.getInits());
+  newLoop->setAttr(hivm::CVPipelinedLoopAttr::name, builder.getUnitAttr());
   newLoop->setAttr(hivm::kCVUnrolledLoopName, builder.getUnitAttr());
   if (newLoop->getNumResults() == 0)
     newLoop.getBody()->getTerminator()->erase();
@@ -2321,6 +2322,7 @@ LogicalResult CVPipelineImpl::markScopesForPreload() {
   }
   LLVM_DEBUG(dbgs() << "\n\nAfter everything:\n";
              pipelineLoop->getParentOfType<func::FuncOp>()->dump());
+  pipelineLoop->setAttr(hivm::CVPipelinedLoopAttr::name, builder.getUnitAttr());
   checkpoint->erase();
   return success();
 }

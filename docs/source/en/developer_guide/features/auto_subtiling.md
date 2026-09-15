@@ -6,7 +6,7 @@ This document describes the AutoBindSubBlock pass in HIVM. This pass optimizes C
 
 During Ascend chip evolution, AIC and AIV were separated with a 1:2 core ratio.
 
-![image](../../../../images/developer_guide/cvarch.png)
+![image](../../../images/developer_guide/cvarch.png)
 
 In the current ecosystem, neither user-written kernels nor community operators typically implement Ascend Cube–Vector 1:2 sub-block logic. To improve compute efficiency and Ascend affinity, the compiler needs automatic sub-block (subtiling) capability. This feature applies a Cube–Vector 1:2 subtiling strategy and performs the corresponding data splitting.
 
@@ -14,11 +14,11 @@ In the current ecosystem, neither user-written kernels nor community operators t
 
 The overall approach is:
 
-![image](../../../../images/developer_guide/auto_subtiling2.png)
+![image](../../../images/developer_guide/auto_subtiling2.png)
 
 Effects:
 
-![image](../../../../images/developer_guide/auto_subtiling3.png)
+![image](../../../images/developer_guide/auto_subtiling3.png)
 
 ### Input/output Example
 
@@ -54,7 +54,7 @@ hivm.hir.store ins(%t1: tensor<32xf16>) outs(%output_slice : memref<32xf16>)
 
 If subtiling fails, the compiler falls back to 1:1.
 
-![image](../../../../images/developer_guide/auto_subtiling4.png)
+![image](../../../images/developer_guide/auto_subtiling4.png)
 
 Figure: Auto-subtiling 1:2 implementation
 

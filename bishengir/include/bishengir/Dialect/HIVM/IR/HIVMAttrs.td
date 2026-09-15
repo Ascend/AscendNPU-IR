@@ -1331,6 +1331,13 @@ def HIVM_ParallelLoopAttr : HIVM_Attr<"ParallelLoop", "parallel_loop"> {
   }];
 }
 
+def HIVM_CVPipelinedLoopAttr
+    : HIVM_Attr<"CVPipelinedLoop", "cv_pipelined_loop"> {
+  let description = [{
+    Marks a loop as a CV-pipelined loop.
+  }];
+}
+
 def HIVM_UnlikelyConditionAttr
     : HIVM_Attr<"UnlikelyCondition", "unlikely_condition"> {
   let description = [{

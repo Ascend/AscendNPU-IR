@@ -58,6 +58,8 @@ def NormalizeConvOps : Pass<"hivm-normalize-convops"> {
   let constructor = "mlir::hivm::createNormalizeConvOpsPass()";
   let dependentDialects = ["arith::ArithDialect", "hivm::HIVMDialect",
                            "tensor::TensorDialect", "annotation::AnnotationDialect",
+                           "bufferization::BufferizationDialect",
+                           "memref::MemRefDialect",
   ];
 }
 
@@ -894,6 +896,12 @@ def MarkStrideAlign : Pass<"hivm-mark-stride-align", "func::FuncOp"> {
   let constructor = "mlir::hivm::createMarkStrideAlignPass()";
   let dependentDialects = ["mlir::memref::MemRefDialect", "hivm::HIVMDialect",
                            "annotation::AnnotationDialect",
+  ];
+  let options = [
+    Option<"alignPackedUnaligned", "align-packed-unaligned", "bool",
+           /*default=*/"true",
+           "Mark tightly packed (dimSize == stride) but unaligned strides for"
+           " alignment. Disable to restore the legacy packed-skip behavior.">,
   ];
 }
 

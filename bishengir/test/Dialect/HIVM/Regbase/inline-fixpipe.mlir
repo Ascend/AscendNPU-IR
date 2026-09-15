@@ -1,4 +1,3 @@
-// REQUIRES: regbase
 // RUN: bishengir-opt -hivm-insert-fixpipe -hivm-inline-fixpipe %s -split-input-file -verify-diagnostics | FileCheck %s
 
 // Fractal mmadL1: all-4D inputs/output, check fixpipe insertion doesn't crash
@@ -1039,6 +1038,170 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
         : memref<16x16xf32, strided<[16, 1]>> to memref<?x16xf32, strided<[16, 1]>>
     hivm.hir.store ins(%slice1 : tensor<?x16xf32>)
         outs(%sub1 : memref<?x16xf32, strided<[16, 1]>>)
+    return
+  }
+}
+
+// -----
+
+// Cube consumer on a reg-based arch: the intermediate fixpipe dest is L1
+// (printed as cbuf). The returned mmad result still goes to UB.
+// CHECK-LABEL: func.func @mmad_cube_consumer_marks_l1_empty
+// CHECK: %[[MMAD0:.*]] = hivm.hir.mmadL1
+// CHECK: %[[L1_DST:.*]] = tensor.empty() {hivm.address_space = #hivm.address_space<cbuf>, "hivm.inserted-tensor"} : tensor<2x1x16x8xf32>
+// CHECK: %[[FIX0:.*]] = hivm.hir.fixpipe {channel_split = true} ins(%[[MMAD0]] : tensor<16x16xf32>) outs(%[[L1_DST]] : tensor<2x1x16x8xf32>) -> tensor<2x1x16x8xf32>
+// CHECK: %[[MMAD1:.*]] = hivm.hir.mmadL1
+// CHECK-SAME: ins(%[[FIX0]]
+// CHECK: %[[UB_DST:.*]] = tensor.empty() {hivm.address_space = #hivm.address_space<ub>, "hivm.inserted-tensor"} : tensor<16x16xf32>
+// CHECK: %[[FIX1:.*]] = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%[[MMAD1]] : tensor<16x16xf32>) outs(%[[UB_DST]] : tensor<16x16xf32>) -> tensor<16x16xf32>
+// CHECK: return %[[FIX1]]
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @mmad_cube_consumer_marks_l1_empty(
+      %a: tensor<16x16xf32>, %b: tensor<16x16xf32>,
+      %c: tensor<16x16xf32>) -> tensor<16x16xf32> {
+    %true = arith.constant true
+    %c16 = arith.constant 16 : index
+    %init0 = tensor.empty() : tensor<16x16xf32>
+    %mmad0 = hivm.hir.mmadL1 {already_set_real_mkn}
+        ins(%a, %b, %true, %c16, %c16, %c16 : tensor<16x16xf32>, tensor<16x16xf32>, i1, index, index, index)
+        outs(%init0 : tensor<16x16xf32>) -> tensor<16x16xf32>
+    %init1 = tensor.empty() : tensor<16x16xf32>
+    %mmad1 = hivm.hir.mmadL1 {already_set_real_mkn}
+        ins(%mmad0, %c, %true, %c16, %c16, %c16 : tensor<16x16xf32>, tensor<16x16xf32>, i1, index, index, index)
+        outs(%init1 : tensor<16x16xf32>) -> tensor<16x16xf32>
+    return %mmad1 : tensor<16x16xf32>
+  }
+}
+
+// -----
+
+// A fixpipe whose single user is the scf.yield of an scf.for and whose source
+// is a batchMmadL1 result must stay inside the loop: hoisting it out leaves
+// the batch op's use chain crossing the loop boundary, which breaks
+// TileBatchMMIntoLoop (it requires the BatchMmadL1 -> Fixpipe chain to stay in
+// the same block).
+//
+// CHECK-LABEL: func.func @keep_batchmmadl1_fixpipe_inside_scf_for
+// CHECK: scf.for
+// CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+// CHECK: scf.yield %{{.*}} : tensor<2x16x16xf32>
+// CHECK-NOT: hivm.hir.fixpipe
+func.func @keep_batchmmadl1_fixpipe_inside_scf_for(
+    %a: tensor<2x16x16xf16>,
+    %b: tensor<2x16x16xf16>,
+    %dst: memref<2x16x16xf32, strided<[256, 16, 1]>>) {
+  %true = arith.constant true
+  %c16 = arith.constant 16 : index
+  %c0_i32 = arith.constant 0 : i32
+  %c1_i32 = arith.constant 1 : i32
+  %c2_i32 = arith.constant 2 : i32
+  %init = tensor.empty() : tensor<2x16x16xf32>
+  %for_res = scf.for %iv = %c0_i32 to %c2_i32 step %c1_i32
+      iter_args(%acc = %init) -> (tensor<2x16x16xf32>) : i32 {
+    %bmm = hivm.hir.batchMmadL1
+        ins(%a, %b, %true, %c16, %c16, %c16
+            : tensor<2x16x16xf16>, tensor<2x16x16xf16>, i1, index, index, index)
+        outs(%init : tensor<2x16x16xf32>) -> tensor<2x16x16xf32>
+    %fp_init = tensor.empty() : tensor<2x16x16xf32>
+    %fp = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+        ins(%bmm : tensor<2x16x16xf32>) outs(%fp_init : tensor<2x16x16xf32>)
+        -> tensor<2x16x16xf32>
+    scf.yield %fp : tensor<2x16x16xf32>
+  }
+  hivm.hir.store ins(%for_res : tensor<2x16x16xf32>)
+      outs(%dst : memref<2x16x16xf32, strided<[256, 16, 1]>>)
+  return
+}
+
+// -----
+
+// f32 cube consumer uses channel_split and a fractal L1 dest; that dest
+// must still be marked L1 + inserted-tensor.
+// CHECK-LABEL: func.func @mmad_cube_consumer_channel_split_marks_l1_empty
+// CHECK: %[[MMAD0:.*]] = hivm.hir.mmadL1
+// CHECK: %[[L1_DST:.*]] = tensor.empty() {hivm.address_space = #hivm.address_space<cbuf>, "hivm.inserted-tensor"} : tensor<2x1x16x8xf32>
+// CHECK: %[[FIX0:.*]] = hivm.hir.fixpipe {channel_split = true} ins(%[[MMAD0]] : tensor<16x16xf32>) outs(%[[L1_DST]] : tensor<2x1x16x8xf32>) -> tensor<2x1x16x8xf32>
+// CHECK: hivm.hir.mmadL1
+// CHECK-SAME: ins(%[[FIX0]]
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @mmad_cube_consumer_channel_split_marks_l1_empty(
+      %a: tensor<16x16xf32>, %b: tensor<16x16xf32>,
+      %c: tensor<16x16xf32>) -> tensor<16x16xf32> {
+    %true = arith.constant true
+    %c16 = arith.constant 16 : index
+    %init0 = tensor.empty() : tensor<16x16xf32>
+    %mmad0 = hivm.hir.mmadL1 {already_set_real_mkn}
+        ins(%a, %b, %true, %c16, %c16, %c16 : tensor<16x16xf32>, tensor<16x16xf32>, i1, index, index, index)
+        outs(%init0 : tensor<16x16xf32>) -> tensor<16x16xf32>
+    %init1 = tensor.empty() : tensor<16x16xf32>
+    %mmad1 = hivm.hir.mmadL1 {already_set_real_mkn}
+        ins(%mmad0, %c, %true, %c16, %c16, %c16 : tensor<16x16xf32>, tensor<16x16xf32>, i1, index, index, index)
+        outs(%init1 : tensor<16x16xf32>) -> tensor<16x16xf32>
+    return %mmad1 : tensor<16x16xf32>
+  }
+}
+
+// -----
+
+// Nested scf.if from a mix kernel (triton_dot_2): the then-branch mmad is
+// consumed by vabs, so fixpipe is inserted before the vector op. The
+// else-branch nested if yields either mmad or a vector tensor (vbrc);
+// fixpipe is inserted on the mmad side so both sides yield UB.
+// CHECK-LABEL: func.func @mmad_in_nested_scf_if_inserts_fixpipe
+// CHECK: %[[RES:.*]] = scf.if %{{.*}} -> (tensor<16x16xf32>) {
+// CHECK:   %[[MMAD0:.*]] = hivm.hir.mmadL1
+// CHECK:   %[[UB0:.*]] = tensor.empty() {hivm.address_space = #hivm.address_space<ub>, "hivm.inserted-tensor"} : tensor<16x16xf32>
+// CHECK:   %[[FIX0:.*]] = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%[[MMAD0]] : tensor<16x16xf32>) outs(%[[UB0]] : tensor<16x16xf32>) -> tensor<16x16xf32>
+// CHECK:   %[[ABS:.*]] = hivm.hir.vabs ins(%[[FIX0]]
+// CHECK:   scf.yield %[[ABS]]
+// CHECK: } else {
+// CHECK:   %[[INNER:.*]] = scf.if %{{.*}} -> (tensor<16x16xf32>) {
+// CHECK:     %[[MMAD1:.*]] = hivm.hir.mmadL1
+// CHECK:     %[[UB1:.*]] = tensor.empty() {hivm.address_space = #hivm.address_space<ub>, "hivm.inserted-tensor"} : tensor<16x16xf32>
+// CHECK:     %[[FIX1:.*]] = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%[[MMAD1]] : tensor<16x16xf32>) outs(%[[UB1]] : tensor<16x16xf32>) -> tensor<16x16xf32>
+// CHECK:     scf.yield %[[FIX1]]
+// CHECK:   } else {
+// CHECK:     scf.yield
+// CHECK:   } {may_not_exec
+// CHECK:   scf.yield %[[INNER]]
+// CHECK: }
+// CHECK: hivm.hir.store ins(%[[RES]]
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @mmad_in_nested_scf_if_inserts_fixpipe(
+      %cond0: i1, %cond1: i1,
+      %a: tensor<16x16xf32>, %b: tensor<16x16xf32>, %c: tensor<16x16xf32>,
+      %dst: memref<16x16xf32, strided<[16, 1]>>) {
+    %true = arith.constant true
+    %c16 = arith.constant 16 : index
+    %cst = arith.constant 0.000000e+00 : f32
+    %empty = tensor.empty() : tensor<16x16xf32>
+    %zero = hivm.hir.vbrc ins(%cst : f32) outs(%empty : tensor<16x16xf32>) -> tensor<16x16xf32>
+    %res = scf.if %cond0 -> (tensor<16x16xf32>) {
+      %init = tensor.empty() : tensor<16x16xf32>
+      %mmad = hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
+          ins(%a, %b, %true, %c16, %c16, %c16
+              : tensor<16x16xf32>, tensor<16x16xf32>, i1, index, index, index)
+          outs(%init : tensor<16x16xf32>) -> tensor<16x16xf32>
+      %abs = hivm.hir.vabs ins(%mmad : tensor<16x16xf32>)
+          outs(%empty : tensor<16x16xf32>) -> tensor<16x16xf32>
+      scf.yield %abs : tensor<16x16xf32>
+    } else {
+      %init = tensor.empty() : tensor<16x16xf32>
+      %inner = scf.if %cond1 -> (tensor<16x16xf32>) {
+        %add = hivm.hir.vadd ins(%a, %b : tensor<16x16xf32>, tensor<16x16xf32>)
+            outs(%empty : tensor<16x16xf32>) -> tensor<16x16xf32>
+        %mmad = hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
+            ins(%add, %c, %true, %c16, %c16, %c16
+                : tensor<16x16xf32>, tensor<16x16xf32>, i1, index, index, index)
+            outs(%init : tensor<16x16xf32>) -> tensor<16x16xf32>
+        scf.yield %mmad : tensor<16x16xf32>
+      } else {
+        scf.yield %zero : tensor<16x16xf32>
+      } {may_not_exec, normalized_in_L0C = [0 : i32]}
+      scf.yield %inner : tensor<16x16xf32>
+    }
+    hivm.hir.store ins(%res : tensor<16x16xf32>)
+        outs(%dst : memref<16x16xf32, strided<[16, 1]>>)
     return
   }
 }

@@ -1116,8 +1116,7 @@ InsertSliceBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   auto parentInsertOp =
       cast<tensor::InsertSliceOp>(sliceOp.getSource().getDefiningOp());
   if (parentInsertOp->hasAttrOfType<UnitAttr>(toBeBubbleUpSlice) ||
-      (!hacc::utils::isRegBasedArch(sliceOp->getParentOfType<ModuleOp>()) &&
-       parentInsertOp->hasAttrOfType<UnitAttr>(toBeCancelOutInsertSlice))) {
+      parentInsertOp->hasAttrOfType<UnitAttr>(toBeCancelOutInsertSlice)) {
     return failure();
   }
 

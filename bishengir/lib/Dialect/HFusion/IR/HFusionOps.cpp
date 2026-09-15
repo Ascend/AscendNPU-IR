@@ -3602,16 +3602,6 @@ void MatMulMxOp::build(OpBuilder &builder, OperationState &state, Value inputA,
         /*rhsFormat=*/DataformatAttr{});
 }
 
-#if BISHENGIR_BUILD_STANDALONE_IR_ONLY
-// HFusion Utils is not part of the standalone IR build; provide isFP8 here.
-// Prefer isa<> — Builder::getFloat8E*Type() was removed in newer LLVM.
-bool hfusion::isFP8(Type type) {
-  return isa<Float8E5M2Type, Float8E4M3Type, Float8E4M3FNType,
-             Float8E5M2FNUZType, Float8E4M3FNUZType, Float8E4M3B11FNUZType>(
-      type);
-}
-#endif
-
 LogicalResult MatMulMxOp::verify() {
   auto inputATy = mlir::cast<ShapedType>(getInputA().getType());
   auto inputBTy = mlir::cast<ShapedType>(getInputB().getType());

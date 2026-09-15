@@ -109,10 +109,17 @@ public:
     }
     createMarkOp(builder, newPtrCastOps);
 
+    // Find guarded consumer.
+    Block *selectionBlock = getSingleConsumerBlock();
+
     Location loc = ptrCastOp_->getLoc();
     auto idxType = builder.getI64Type();
     Value modularIndex =
         createNestedIndexModular(builder, ptrCastOp_.getOperation(), factor);
+
+    // Restore selection locality.
+    if (selectionBlock)
+      builder.setInsertionPointToStart(selectionBlock);
     Value modularIdx =
         builder.create<arith::IndexCastOp>(loc, idxType, modularIndex);
 
@@ -141,6 +148,35 @@ public:
   }
 
 private:
+  /// Find guarded consumer.
+  Block *getSingleConsumerBlock() const {
+    Block *consumerBlock = nullptr;
+    for (Operation *user : ptrCastOp_->getUsers()) {
+      if (isa<annotation::MarkOp>(user))
+        continue;
+      if (!consumerBlock) {
+        consumerBlock = user->getBlock();
+        continue;
+      }
+      if (consumerBlock != user->getBlock())
+        return nullptr;
+    }
+
+    Block *definitionBlock = ptrCastOp_->getBlock();
+    if (!consumerBlock || consumerBlock == definitionBlock)
+      return nullptr;
+
+    Operation *ancestor = consumerBlock->getParentOp();
+    while (ancestor && ancestor->getBlock() != definitionBlock) {
+      if (!isa<scf::IfOp>(ancestor))
+        return nullptr;
+      ancestor = ancestor->getParentOp();
+    }
+    if (!isa_and_nonnull<scf::IfOp>(ancestor))
+      return nullptr;
+    return consumerBlock;
+  }
+
   bool isPtrAddrsConstantIntOp() {
     auto addrs = ptrCastOp_.getAddrs();
     for (auto addr : addrs) {

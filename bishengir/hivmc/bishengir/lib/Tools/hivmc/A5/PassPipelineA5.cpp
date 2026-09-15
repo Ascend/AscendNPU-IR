@@ -68,7 +68,7 @@ void buildLowerToLLVMPipeline(OpPassManager &pm,
     pm.addPass(LLVM::createDIScopeForLLVMFuncOpPass());
   }
   if (config.shouldEnableDebugVariables()) {
-    pm.addPass(LLVM::createLLVMDILocalVariablePass());
+    pm.addPass(LLVM::createLLVMDILocalVariableA5Pass());
   }
 
   pm.addPass(createAppendUsePrintDebugDataPass());

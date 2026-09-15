@@ -1,12 +1,12 @@
-# Compile and Run Example
+# Compilation and Execution Example
 
-This example shows how to compile IR to a device binary with `bishengir-compile` and run it on device using CANN runtime (registration and launch).
+This example demonstrates how to use `bishengir-compile` to compile IR into a device-side binary, and how to complete registration and on-board execution based on the runtime APIs provided by CANN.
 
-**Prerequisites**: Complete [Build and install](installing_guide.md), ensure `bishengir-compile` is on PATH, and install CANN and run `set_env.sh`.
+**Prerequisites**: You have completed [Build and Installation](installing_guide.md), added `bishengir-compile` to `PATH`, and installed the CANN environment and completed the `set_env.sh` configuration.
 
 ## IR Compilation
 
-Prepare VecAdd MLIR (or convert from another IR):
+Prepare a piece of `VecAdd` MLIR (which can be converted from other IR):
 
 ```mlir
 // add.mlir
@@ -24,18 +24,18 @@ module {
 }
 ```
 
-Use `bishengir-compile` to generate the device binary:
+Use `bishengir-compile` to generate the device-side binary:
 
 ```bash
-# Compile Command
+# Compilation command.
 bishengir-compile add.mlir -enable-hivm-compile -o kernel.o
 ```
 
-The resulting `kernel.o` is the operator binary that runs on the NPU.
+The generated `kernel.o` is the operator binary that can be executed on the NPU.
 
-## Runtime Registration and Execution
+## Runtime Registration and On-Board Execution
 
-The C++ code below implements CANN runtime kernel registration and launch. Build it together with `kernel.o` to run on device.
+The following C++ code implements the operator registration and invocation interfaces required by the CANN runtime. After compilation, it can be executed on the board together with `kernel.o`.
 
 ```cpp
 // main.cpp
@@ -200,21 +200,21 @@ int main() {
 }
 ```
 
-Build the executable (`main.cpp` reads `kernel.o` from the current directory and registers/invokes the kernel):
+Compile the executable (`main.cpp` reads `kernel.o` from the current directory and completes registration and invocation):
 
 ```bash
-# Load CANN environment first (omit if already in shell config); path may vary. See Build and Install.
+# Load the CANN runtime environment (can be omitted if already written to the shell configuration); the path is subject to the actual installation directory. For details, see *Quick Start - Installation and Build*.
 source /usr/local/Ascend/ascend-toolkit/set_env.sh
-# Configure include and library paths. If CANN is installed elsewhere, set ASCEND_HOME_PATH or use the variable from set_env.sh
+# Configure the corresponding header file path and link path. If CANN is installed in a custom path, replace ASCEND_HOME_PATH with the actual path, or use the environment variable name set by set_env.sh.
 RT_INC=${ASCEND_HOME_PATH}/include
 PROF_INC=${ASCEND_HOME_PATH}/include/experiment/msprof
 PKG_INC=${ASCEND_HOME_PATH}/pkg_inc
 RT_LIB=${ASCEND_HOME_PATH}/lib64
 
-g++ main.cpp -I${RT_INC}  -I${PROF_INC} -I${PKG_INC} -L ${RT_LIB} -l runtime -l ascendcl -o vec-add
+g++ main.cpp -I${RT_INC} -I${PROF_INC} -I${PKG_INC} -L ${RT_LIB} -l runtime -l ascendcl -o vec-add
 ```
 
-Run:
+Run the example:
 
 ```bash
 ./vec-add

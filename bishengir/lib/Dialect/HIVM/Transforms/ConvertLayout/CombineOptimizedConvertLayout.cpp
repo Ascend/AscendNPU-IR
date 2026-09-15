@@ -111,6 +111,42 @@ bool isMatrixND2NZConversion(ConvertLayoutOp op) {
          op.getDstLayout().getDataLayout() == DataLayout::Fractal;
 }
 
+bool isNCHW2NC1HWC0Conversion(ConvertLayoutOp op) {
+  return op.getSrcLayout().getDataLayout() == DataLayout::NCHW &&
+         op.getDstLayout().getDataLayout() == DataLayout::NC1HWC0;
+}
+
+LogicalResult verifyNCHW2NC1HWC0Load(LoadOp loadOp,
+                                    PatternRewriter &rewriter,
+                                    Operation *op) {
+  if (loadOp.getPadModeAttr() || loadOp.getPadValue() ||
+      loadOp.getLeftPaddingNum() || loadOp.getRightPaddingNum() ||
+      loadOp.getInitOutBuffer() || loadOp.getInitCondition())
+    return rewriter.notifyMatchFailure(
+        op, "NCHW load has padding or conditional initialization");
+
+  auto srcType = dyn_cast<MemRefType>(loadOp.getSource().getType());
+  if (!srcType || srcType.getRank() != 4 || !srcType.hasStaticShape())
+    return rewriter.notifyMatchFailure(op,
+                                       "load source is not static rank-4 NCHW");
+
+  int64_t offset;
+  SmallVector<int64_t> strides;
+  if (failed(getStridesAndOffset(srcType, strides, offset)))
+    return rewriter.notifyMatchFailure(op,
+                                       "cannot determine NCHW source strides");
+  (void)offset;
+  int64_t expectedStride = 1;
+  for (int64_t dim = 3; dim >= 0; --dim) {
+    if (ShapedType::isDynamic(strides[dim]) ||
+        strides[dim] != expectedStride)
+      return rewriter.notifyMatchFailure(op,
+                                         "load source is not contiguous NCHW");
+    expectedStride *= srcType.getDimSize(dim);
+  }
+  return success();
+}
+
 /// Non-transposed scale conversions that can fuse into `hivm.hir.load_scale`.
 bool isScaleLoadMXConversion(ConvertLayoutOp op) {
   auto src = op.getSrcLayout().getDataLayout();
@@ -476,6 +512,36 @@ struct FoldDirectLoadToND2NZPattern : public OpRewritePattern<ConvertLayoutOp> {
       return failure();
     return rewriteDirectLoadConvertLayout(op, rewriter, *match,
                                           createND2NZMemrefDma);
+  }
+};
+
+struct FoldDirectLoadToNCHW2NC1HWC0Pattern
+    : public OpRewritePattern<ConvertLayoutOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(ConvertLayoutOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!isNCHW2NC1HWC0Conversion(op))
+      return rewriter.notifyMatchFailure(op,
+                                         "not an NCHW→NC1HWC0 conversion");
+    ModuleOp module = op->getParentOfType<ModuleOp>();
+    if (!module || !hacc::utils::isAscend950(module))
+      return rewriter.notifyMatchFailure(op, "not an A5 target");
+    auto match = matchDirectLoadConvertLayout(op, rewriter);
+    if (failed(match))
+      return failure();
+    if (failed(verifyNCHW2NC1HWC0Load(match->loadOp, rewriter, op)))
+      return failure();
+
+    auto groupsAttr = op->getAttrOfType<IntegerAttr>("groups");
+    int64_t groups = groupsAttr ? groupsAttr.getInt() : 1;
+    auto createFusedDma = [groups](PatternRewriter &rewriter, Location loc,
+                                  LoadOp, Value src, Value dst) {
+      rewriter.create<NCHW2NC1HWC0Op>(loc, src, dst,
+                                      rewriter.getI64IntegerAttr(groups));
+    };
+    return rewriteDirectLoadConvertLayout(op, rewriter, *match,
+                                          createFusedDma);
   }
 };
 
@@ -1215,6 +1281,7 @@ void populateCombineOptimizedConvertLayoutPatterns(RewritePatternSet &patterns,
   ConvertLayoutOp::getCanonicalizationPatterns(patterns, context);
   patterns.add<
       FoldDirectLoadToND2NZPattern, FoldDirectLoadToLoadMXScalePattern,
+           FoldDirectLoadToNCHW2NC1HWC0Pattern,
       FoldSubviewLoadToND2NZPattern, FoldSubviewLoadToLoadMXScalePattern,
       FoldFixpipeNz2NzToFractalConvertLayoutPattern,
       FoldTensorLoadToND2NZPattern, FoldTensorLoadToND2NZPattern,

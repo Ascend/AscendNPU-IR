@@ -591,6 +591,13 @@ VectorType trimNonScalableUnitDims(VectorType oldType);
 
 /// check if a vector type is of Vector<dtype> or Vector<1x...xdtype>
 bool isOneDimLikeVecType(VectorType vecType);
+
+/// Check the order of the two operations in memory view. We only care order of
+/// ops which can change memory. For example, forOp can't change memory, but ops
+/// in forOp block(like vbrcOp) can change memory.
+/// VbrcOp and forOp described above are seen as same level and return false.
+/// `!isBeforeInMemoryView` means not before which is not equal to after.
+bool isBeforeInMemoryView(Operation *before, Operation *after);
 } // namespace util
 } // namespace hivm
 } // namespace mlir

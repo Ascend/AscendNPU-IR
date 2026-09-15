@@ -307,6 +307,17 @@ def FixFusedCat: Pass<"fix-fused-cat", "mlir::ModuleOp"> {
                             "mlir::triton::TritonDialect"];
 }
 
+def RewriteSliceOpToMemoryOps 
+    : Pass<"rewrite-slice-op-to-memory-ops", "mlir::ModuleOp"> {
+  let summary = "";
+  let constructor = "bishengir::triton::createRewriteSliceOpToMemoryOpsPass()";
+  let dependentDialects = [
+    "mlir::arith::ArithDialect",
+    "mlir::triton::TritonDialect",
+    "mlir::tensor::TensorDialect",
+  ];
+}
+
 def RewriteSliceOpToTriton
     : Pass<"rewrite-slice-op-to-triton", "mlir::ModuleOp"> {
   let summary = "rewrite tensor.extract_slice/insert_slice into tt.trans/reshape/split/join";
