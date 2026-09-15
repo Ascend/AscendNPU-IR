@@ -6,6 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Transforms.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
@@ -18,6 +19,7 @@
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/PatternMatch.h"
+#include "mlir/Interfaces/FunctionInterfaces.h"
 #include "llvm/ADT/FloatingPointMode.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -141,7 +143,7 @@ inline Value GetBlockSyncInstrConfig(ConversionPatternRewriter &rewriter,
          mode <= hivm::SyncBlockInstrMode::INTRA_BLOCK_SYNCHRONIZATION &&
          "BlockSyncInstrMode is illegal");
   Value result;
-  // xd[15:8] contains mode, xd[7:0] contains flagID
+  // Enable bit 0, synchronization mode in bits [5:4], flag in bits [11:8].
   if (auto attr = dyn_cast_if_present<Attribute>(flagID)) {
     auto eventAttr = llvm::cast<IntegerAttr>(attr);
 #ifndef NDEBUG
@@ -227,6 +229,23 @@ using LowerBlockSetToIntraBlockSet = LowerBlockSetWaitToIntraBlockSetWait<
 
 using LowerBlockWaitToIntraBlockSet = LowerBlockSetWaitToIntraBlockSetWait<
     SyncBlockWaitOp, WaitIntraBlockImmInstrOp, WaitIntraBlockRegInstrOp>;
+
+// On Ascend950, fall back to FFTS mode 2 for CV11 instead of direct intra-block
+// instructions.
+template <typename SyncOp> static bool needsFFTSIntraBlockSync(SyncOp op) {
+  if (op.getTsyncInstrMode().getSyncInstrMode() !=
+          SyncBlockInstrMode::INTRA_BLOCK_SYNCHRONIZATION ||
+      !hacc::utils::isAscend950(op->template getParentOfType<ModuleOp>()))
+    return false;
+  // Read the enclosing function's attributes from either func.func or llvm.func
+  // while function and sync operations are being converted in the same pass.
+  auto func = op->template getParentOfType<FunctionOpInterface>();
+  auto ratio =
+      func ? func->template getAttrOfType<TCoreRatioAttr>(TCoreRatioAttr::name)
+           : TCoreRatioAttr{};
+  return ratio && ratio.getCube() == 1 && ratio.getVector() == 1;
+}
+
 struct HIVMSetBlockSyncOpLowering
     : public ConvertOpToLLVMPattern<SyncBlockSetOp> {
   bool isRegBased;
@@ -237,14 +256,34 @@ struct HIVMSetBlockSyncOpLowering
   LogicalResult
   matchAndRewrite(SyncBlockSetOp convertOp, SyncBlockSetOp::Adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    if (isRegBased && convertOp.getTsyncInstrMode().getSyncInstrMode() ==
-                          SyncBlockInstrMode::INTRA_BLOCK_SYNCHRONIZATION) {
+    bool useFFTSIntraBlock = needsFFTSIntraBlockSync(convertOp);
+    if (isRegBased &&
+        convertOp.getTsyncInstrMode().getSyncInstrMode() ==
+            SyncBlockInstrMode::INTRA_BLOCK_SYNCHRONIZATION &&
+        !useFFTSIntraBlock) {
       return LowerBlockSetToIntraBlockSet::Lower(convertOp, rewriter);
     }
     auto loc = convertOp.getLoc();
     auto fftsBaseAddr = convertOp.getFftsBaseAddr();
-    uint64_t pipeVal =
-        static_cast<uint64_t>(convertOp.getTpipeAttr().getPipe());
+    auto pipe = convertOp.getTpipeAttr().getPipe();
+    if (useFFTSIntraBlock) {
+      auto core = convertOp.getTcoreTypeAttr().getTcoretype();
+      if (core != TCoreType::CUBE && core != TCoreType::VECTOR)
+        return convertOp.emitOpError(
+            "CV11 FFTS SET requires an explicit CUBE or VECTOR core type");
+      if (pipe == PIPE::PIPE_ALL)
+        return convertOp.emitOpError("CV11 FFTS SET does not support PIPE_ALL");
+      if (pipe == PIPE::PIPE_S) {
+        // FFTS SET cannot issue on PIPE_S. Emit a PIPE_ALL barrier, then send
+        // the notification on FIX for Cube or MTE3 for Vector.
+        // TODO: Confidence is low that this correctly simulates PIPE_S SET.
+        // Verify the required ordering and whether PIPE_ALL is appropriate.
+        rewriter.create<PipeBarrierInstrOp>(
+            loc, static_cast<uint64_t>(PIPE::PIPE_ALL));
+        pipe = core == TCoreType::CUBE ? PIPE::PIPE_FIX : PIPE::PIPE_MTE3;
+      }
+    }
+    uint64_t pipeVal = static_cast<uint64_t>(pipe);
     auto configVal = GetBlockSyncInstrConfig(
         rewriter, loc, convertOp.getTsyncInstrMode().getSyncInstrMode(),
         convertOp.getFlagId());
@@ -317,12 +356,18 @@ struct HIVMWaitBlockSyncPipeOpLowering
   LogicalResult
   matchAndRewrite(SyncBlockWaitOp convertOp, SyncBlockWaitOp::Adaptor,
                   ConversionPatternRewriter &rewriter) const override {
+    bool useFFTSIntraBlock = needsFFTSIntraBlockSync(convertOp);
     if (convertOp.getTsyncInstrMode().getSyncInstrMode() ==
-        SyncBlockInstrMode::INTRA_BLOCK_SYNCHRONIZATION) {
+            SyncBlockInstrMode::INTRA_BLOCK_SYNCHRONIZATION &&
+        !useFFTSIntraBlock) {
       return LowerBlockWaitToIntraBlockSet::Lower(convertOp, rewriter);
     }
     auto loc = convertOp.getLoc();
-    uint64_t pipeVal = static_cast<uint64_t>(convertOp.getPipeAttr().getPipe());
+    // WAIT uses the receiver's pipe directly, including PIPE_S.
+    auto pipe = convertOp.getPipeAttr().getPipe();
+    if (useFFTSIntraBlock && pipe == PIPE::PIPE_ALL)
+      return convertOp.emitOpError("CV11 FFTS WAIT does not support PIPE_ALL");
+    uint64_t pipeVal = static_cast<uint64_t>(pipe);
     std::optional<uint64_t> flagId;
     if (convertOp.getStaticFlagId().has_value()) {
       flagId = static_cast<uint64_t>(convertOp.getStaticFlagId()->getInt());
