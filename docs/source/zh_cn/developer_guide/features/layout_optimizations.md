@@ -10,7 +10,7 @@
 - **Warp 同步规约**：同一 warp 内的线程通过 shuffle 指令协作完成规约轴上的计算，减少冗余计算量。
 - **全局内存原子规约**：不同 warp/block 之间通过全局内存原子操作完成规约，延迟较高。
 
-在昇腾 NPU 的 Triton 编译路径中，若规约轴的张量规模较大（例如 `[1024, 1024]` 在 axis 1 上规约），单靠线程内规约计算量过大，而 warp 同步规约可以将计算任务分摊到 warp 内多个线程上，各线程负责规约轴的一部分，再通过 shuffle 合并结果。该 Pass 的核心思路即是：通过 Reshape 将规约轴拆分为多个子轴，使子轴可以被 warp 同步覆盖，转换为等效的多级规约序列。同时，单线程内的规约比warp内的shuffle操作效率高，此pass减少了shuffle操作，提示性能。
+在昇腾 NPU 的 Triton 编译路径中，若规约轴的张量规模较大（例如 `[1024, 1024]` 在 axis 1 上规约），单靠线程内规约计算量过大，而 warp 同步规约可以将计算任务分摊到 warp 内多个线程上，各线程负责规约轴的一部分，再通过 shuffle 合并结果。该 Pass 的核心思路即是：通过 Reshape 将规约轴拆分为多个子轴，使子轴可以被 warp 同步覆盖，转换为等效的多级规约序列。同时，单线程内的规约比warp内的shuffle操作效率高，此pass减少了shuffle操作，提升性能。
 
 ## 算法原理
 
@@ -25,7 +25,7 @@ DecomposeReduction Pass 将大规模的 Reduction 分解为以下模式：
 分解后:
   // 步骤1: 通过 Reshape 将规约轴拆分（若需要）
   %reshaped = tt.reshape %input
-  // 步骤2: 子级 Reduce（可选，3D→2D 或 2D→2D）
+  // 步骤2: 子级 Reduce（可选，4D→3D 或 3D→2D）
   %sub_reduced = tt.reduce(%reshaped) axis = newAxis { combine_op }
   // 步骤3: 转换为 warp 同步布局
   %converted = ttg.convert_layout %sub_reduced
@@ -48,8 +48,8 @@ calcVectHighDimLayout(sizePerThread, threadsPerWarp, warpsPerCTA, dim, srcShape)
   // 初始化所有轴为 1
   // 从高维到低维遍历:
   //   若 i == rAxis: sizePerThread[i] = min(shape[i], 4); shape[i] /= 4
-  //   若 i != rAxis: warpsPerCTA[i] = min(shape[i], nw); 剩余 warp 继续分配
-  //   再从高维到低维: threadsPerWarp[i] = min(shape[i], nt); 剩余线程继续分配
+  //   若 i != rAxis: warpsPerCTA[i] = min(shape[i], warpsPerCTA); 剩余 warp 继续分配
+  //   再从高维到低维: threadsPerWarp[i] = min(shape[i], threadsPerWarp); 剩余线程继续分配
 ```
 
 ### 分解策略
@@ -70,21 +70,21 @@ Pass 根据规约张量的形状和规约轴，采用不同的分解策略：
 
 ```mlir
 // 分解前:
-%input = ttg.convert_layout %src { blocking = #blocked<...> }
+%input = ttg.convert_layout %src { result_layout = #blocked<...> }
 %out = tt.reduce %input axis = 1 { combine_op }
 ```
 
 此时若 threadsPerWarp[1] 较小，Pass 将尝试以下变换：
 
 ```mlir
-// reshape 为 3D: 在 axis 0 处插入新轴，将原 shape[1] 拆分为 shape[1]/4 和 4
+// reshape 为 4D: 在 axis 1 处插入新轴，将原 shape[1] 拆分为 shape[1]/4 和 4
 %reshape = tt.reshape %input { shape = [2, 4, 256, 64] }
 
-// 3DTo2D Reduce: 在 axis=1 上规约
+// 4DTo3D Reduce: 在 axis=1 上规约
 %sub = tt.reduce %reshape axis = 1 { combine_op }  // shape: [2, 256, 64]
 
 // convert 到 warp 同步布局
-%cvt = ttg.convert_layout %sub { blocking = #blocked<warps=[...]> }
+%cvt = ttg.convert_layout %sub { result_layout = warp_synchronous(#blocked<...>) }
 
 // 最终规约
 %result = tt.reduce %cvt axis = 1 { combine_op }   // shape: [2, 64]
@@ -118,7 +118,7 @@ while shape[axis] / numThreads > 1:
     // 1) Reshape: 将 axis=1 拆为 [shape[1]/numThreads, numThreads]
     outputShape = [shape[0], shape[1]/numThreads, numThreads]
 
-    // 2) 3DTo2D Reduce: 在 axis=2 上规约（新插入的线程轴）
+    // 2) 3DTo2D Reduce: 规约新插入的numThreads轴（axis=2）
     %sub = reduce(%reshaped) axis=2
 
     // 3) ConvertLayout: 切换到 warp 同步布局

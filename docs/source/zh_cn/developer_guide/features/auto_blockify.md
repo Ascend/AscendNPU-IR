@@ -224,7 +224,7 @@ GPU SIMT 编程中常常会为单个内核函数配置较小的工作量，并�
 
 **接口说明**：
 
-该功能通过bishengir-compile中的`--super-block-factor=N`标志控制，其中`N`代表需要并行的逻辑核数量，默认为1，即关闭super-blocking，只做常规自动块化。也可通过bishengir-opt的pass选项`-simt-auto-blockify="superblock-factor=N`直接调用。
+该功能通过bishengir-compile中的`--super-block-factor=N`标志控制，其中`N`代表需要并行的逻辑核数量，默认为1，即关闭super-blocking，只做常规自动块化。也可通过bishengir-opt的pass选项`-simt-auto-blockify="superblock-factor=N"`直接调用。
 
 **逻辑说明**：
 
