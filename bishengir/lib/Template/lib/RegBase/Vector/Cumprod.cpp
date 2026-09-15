@@ -129,13 +129,6 @@ cumprod_3d_byte(memref_t<__ubuf__ T, 3> *src,
 }
 
 template <typename T>
-__simd_callee__ __aiv__ __attribute__((always_inline)) static void
-cumprod_vf_mul(VectorReg<T> &dst, VectorReg<T> &src0, VectorReg<T> &src1,
-               vector_bool mask) {
-  vmul(dst, src0, src1, mask);
-}
-
-template <typename T>
 __simd_vf__ void
 oneway_cumprod_vf(int32_t nAddFactor, int32_t mFactor, uint16_t nLoop,
                   __ubuf__ T *src_ptr, int32_t start_row_offset,
@@ -168,7 +161,7 @@ oneway_cumprod_vf(int32_t nAddFactor, int32_t mFactor, uint16_t nLoop,
 
       // 2. Standard vector multiply: acc = acc * x2 (no error compensation)
 
-      cumprod_vf_mul(acc, acc, x2, mask);
+      vmul(acc, acc, x2, mask);
 
       // 3. Store the cumulative product of the current row to output
 
@@ -197,11 +190,11 @@ template <typename T>
 
   if constexpr (sizeof(T) == 1) {
     cumprod_3d_byte<T>(src, dst, reverse);
-    return;
+  } else {
+    oneway_cumprod_vf<T>(nAddFactor, mFactor, nLoop, src_ptr, start_row_offset,
+                         num_per_reg, dst_ptr, rLoop, reverse, rFactor,
+                         stride0);
   }
-
-  oneway_cumprod_vf<T>(nAddFactor, mFactor, nLoop, src_ptr, start_row_offset,
-                       num_per_reg, dst_ptr, rLoop, reverse, rFactor, stride0);
 }
 
 /* =========================================================================
@@ -277,7 +270,7 @@ __simd_vf__ void comprod_unified_scan_fwd_nocopy_vf(
     CREATE_MASK_BY_SIZE(m, T, tailN);
     vgather2(a, tailRd, (VectorReg<uIdxT> &)idx, m);
     vgather2(b, tailRd - d, (VectorReg<uIdxT> &)idx, m);
-    cumprod_vf_mul(a, a, b, m);
+    vmul(a, a, b, m);
     vscatter(a, tailWd, (VectorReg<uIdxT> &)idx, m);
   }
 
@@ -288,7 +281,7 @@ __simd_vf__ void comprod_unified_scan_fwd_nocopy_vf(
     vlds(a, rb, 0, NORM);
     vldas(valign, rb - d);
     vldus(b, valign, rb - d);
-    cumprod_vf_mul(a, a, b, mFull);
+    vmul(a, a, b, mFull);
     vsts(a, wb, 0, NORM_B32, mFull);
   }
 
@@ -296,7 +289,7 @@ __simd_vf__ void comprod_unified_scan_fwd_nocopy_vf(
     CREATE_MASK_BY_SIZE(m, T, strN);
     vgather2(a, strRd, (VectorReg<uIdxT> &)idx, m);
     vgather2(b, strRd - d, (VectorReg<uIdxT> &)idx, m);
-    cumprod_vf_mul(a, a, b, m);
+    vmul(a, a, b, m);
     vscatter(a, strWd, (VectorReg<uIdxT> &)idx, m);
   }
 }
@@ -367,7 +360,7 @@ comprod_unified_scan_rev_nocopy_vf(uint32_t bpeU, uint16_t revCCntU,
     vlds(a, rb, 0, NORM);
     vldas(valign, rb + d);
     vldus(b, valign, rb + d);
-    cumprod_vf_mul(a, a, b, mFull);
+    vmul(a, a, b, mFull);
     vsts(a, wb, 0, NORM_B32, mFull);
   }
 
@@ -384,7 +377,7 @@ comprod_unified_scan_rev_nocopy_vf(uint32_t bpeU, uint16_t revCCntU,
     __ubuf__ T *wd = wbase + rStart;
     vgather2(a, rd, (VectorReg<uIdxT> &)idx, m);
     vgather2(b, rd + d, (VectorReg<uIdxT> &)idx, m);
-    cumprod_vf_mul(a, a, b, m);
+    vmul(a, a, b, m);
     vscatter(a, wd, (VectorReg<uIdxT> &)idx, m);
   }
 }
