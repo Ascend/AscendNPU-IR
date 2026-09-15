@@ -194,6 +194,10 @@ get_quant_mode(int64_t pre_quant) {
   return QuantMode_t::NoQuant;
 }
 
+// IMPORTANT: Keep this function in sync with isSoftwareSplitFixpipe() in
+// SyncSolverIRTranslator.cpp.
+// When a new software-split trigger is added here, update
+// isSoftwareSplitFixpipe correspondingly.
 __aicore__ __attribute__((always_inline)) bool
 canEnableHWDualDst(uint8_t dual_dst, QuantMode_t quant_mode, uint8_t pre_relu,
                    bool channel_split, uint16_t row_num, uint16_t column_num,

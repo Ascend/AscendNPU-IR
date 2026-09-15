@@ -562,6 +562,49 @@ IRTranslator::getInferredPipe(Operation *op, TCoreType coreType,
   return pipe;
 }
 
+// Whether a dual-dst fixpipe would fall back to a software split (two
+// copy_matrix_cc_to_ubuf intrinsics) instead of a single hardware dual-dst
+// intrinsic. Mirrors the template library's copy_matrix_cc_to_ubuf_*_core
+// dispatch (canEnableHWDualDst): hardware dual-dst is unavailable for NZ2DN,
+// when quantization is applied, when pre-stage ReLU is fused, or when the
+// channel is split. The split dim divisibility constraint is already enforced
+// upstream by TileAndBindSubBlock.
+//
+// IMPORTANT: Keep this function in sync with canEnableHWDualDst() in
+// template library file FixpipeUtils.h.
+// When canEnableHWDualDst adds a new software-split trigger, update this
+// function correspondingly.
+// TODO : Should have better way to synchronize the constraits of software
+// splitting in template library and syncsolver
+static bool isSoftwareSplitFixpipe(hivm::FixpipeOp fixpipeOp) {
+  auto dualDstModeAttr = fixpipeOp.getDualDstModeAttr();
+  if (!dualDstModeAttr ||
+      dualDstModeAttr.getDualDstMode() == hivm::FixpipeDualDstMode::NO_DUAL)
+    return false;
+
+  // NZ2DN never enables hardware dual-dst (copy_matrix_cc_to_ubuf_nz2dn_*).
+  if (fixpipeOp.getDmaMode() == hivm::FixpipeDMAMode::NZ2DN)
+    return true;
+
+  if (fixpipeOp.getChannelSplit())
+    return true;
+
+  // Pre-stage ReLU fusion disables hardware dual-dst.
+  if (fixpipeOp.getPreRelu() != hivm::FixpipePreReluMode::NO_RELU)
+    return true;
+
+  // Quantization disables hardware dual-dst. Besides an explicit pre_quant
+  // attribute, genPreQuant (in HIVMToStandard) auto-fills the quant mode from
+  // the element types when the attribute is NO_QUANT.
+  if (fixpipeOp.getPreQuant() != hivm::FixpipePreQuantMode::NO_QUANT)
+    return true;
+  Type srcElemType = getElementTypeOrSelf(fixpipeOp.getSrcOperandType());
+  Type dstElemType = getElementTypeOrSelf(fixpipeOp.getDstOperandType());
+  return (srcElemType.isF32() && dstElemType.isF16()) ||
+         (srcElemType.isF32() && dstElemType.isBF16()) ||
+         (srcElemType.isInteger(32) && dstElemType.isInteger(8));
+}
+
 std::unique_ptr<OperationBase>
 IRTranslator::getDestinationStyleInterfaceOp(Operation *op,
                                              OperationBase *parentOp) {
@@ -611,8 +654,16 @@ IRTranslator::getDestinationStyleInterfaceOp(Operation *op,
   auto rwOp = std::make_unique<RWOperation>(op, parentOp, coreTypeVal, pipeRead,
                                             pipeWrite, readMemOps, writeMemOps);
   if (isa<UnitFlagEnabledInterface>(op)) {
-    rwOp->hasUnitFlagFeat = true;
-    unitFlagFeaturedOps.insert(rwOp.get());
+    // A dual-dst fixpipe may fall back to a software split (two
+    // copy_matrix_cc_to_ubuf intrinsics) in the template library; the
+    // unit-flag feature does not apply on that path.
+    bool skipUnitFlag = false;
+    if (auto fixpipeOp = dyn_cast<hivm::FixpipeOp>(op))
+      skipUnitFlag = isSoftwareSplitFixpipe(fixpipeOp);
+    if (!skipUnitFlag) {
+      rwOp->hasUnitFlagFeat = true;
+      unitFlagFeaturedOps.insert(rwOp.get());
+    }
   }
   return rwOp;
 }
