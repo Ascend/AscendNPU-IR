@@ -1,5 +1,40 @@
 // RUN: bishengir-opt -hivm-normalize-convops %s -split-input-file -verify-diagnostics -allow-unregistered-dialect | FileCheck %s
 
+// CHECK-LABEL: func.func @a5_conv2d_input_stays_nchw(
+// CHECK: %[[NCHW_SRC:.*]] = memref.expand_shape %{{.*}} {{\[\[}}0, 1], [2], [3]] output_shape [1, 30, 8, 8]
+// CHECK: %[[NCHW_ALLOC:.*]] = memref.alloc() : memref<1x30x8x8xf16, #hivm.address_space<cbuf>>
+// CHECK: hivm.hir.load ins(%[[NCHW_SRC]] : memref<1x30x8x8xf16, {{.*}}#hivm.address_space<gm>>) outs(%[[NCHW_ALLOC]] : memref<1x30x8x8xf16, #hivm.address_space<cbuf>>)
+// CHECK: %[[NCHW:.*]] = bufferization.to_tensor %[[NCHW_ALLOC]] restrict writable
+// CHECK: hivm.hir.Conv2dL1
+// CHECK-SAME: ins(%[[NCHW]],
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @a5_conv2d_input_stays_nchw(
+      %src: memref<30x8x8xf16, strided<[64, 8, 1]>,
+                   #hivm.address_space<gm>>,
+      %weight: tensor<32x15x3x3xf16>) -> tensor<32x8x8xf32> {
+    %input_alloc = memref.alloc() : memref<30x8x8xf16,
+                                           #hivm.address_space<cbuf>>
+    hivm.hir.load
+        ins(%src : memref<30x8x8xf16, strided<[64, 8, 1]>,
+                          #hivm.address_space<gm>>)
+        outs(%input_alloc : memref<30x8x8xf16,
+                                    #hivm.address_space<cbuf>>)
+    %input = bufferization.to_tensor %input_alloc restrict writable
+        : memref<30x8x8xf16, #hivm.address_space<cbuf>>
+    %true = arith.constant true
+    %init = tensor.empty() : tensor<32x8x8xf32>
+    %conv = hivm.hir.Conv2dL1
+        {dilation = [1, 1], groups = 2 : i32, padding = [1, 1],
+         stride = [1, 1]}
+        ins(%input, %weight, %true
+            : tensor<30x8x8xf16>, tensor<32x15x3x3xf16>, i1)
+        outs(%init : tensor<32x8x8xf32>) -> tensor<32x8x8xf32>
+    return %conv : tensor<32x8x8xf32>
+  }
+}
+
+// -----
+
 // -----
 // CHECK-LABEL:   func.func @triton_conv1d_2d_fp16_nobias_ocaligned(
 // CHECK:           %{{.*}} = arith.constant true

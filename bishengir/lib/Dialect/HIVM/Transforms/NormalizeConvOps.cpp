@@ -23,7 +23,9 @@
 #include "bishengir/Dialect/Utils/Util.h"
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 
+#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -172,6 +174,11 @@ bool isRegBasedArch(Operation *op) {
   return moduleOp && hacc::utils::isRegBasedArch(moduleOp);
 }
 
+bool isAscend950(Operation *op) {
+  auto moduleOp = op->getParentOfType<ModuleOp>();
+  return moduleOp && hacc::utils::isAscend950(moduleOp);
+}
+
 inline RoundModeAttr getRoundAttr(mlir::OpBuilder &b, Type srcType,
                                   Type dstType) {
   return hivm::RoundModeAttr::get(
@@ -284,6 +291,173 @@ LogicalResult expandToBatch(ConvOpType op, PatternRewriter &rewriter) {
   op->replaceUsesOfWith(input, expandShapeOp->getResults()[0]);
 
   return success();
+}
+
+/// Add only unit batch/spatial dimensions so that an A5 Conv1D/Conv2D input
+/// has the canonical rank-4 NCHW shape expected by NCHW2NC1HWC0Op. This is a
+/// view-like reshape and does not materialize channel padding or transpose
+/// data. The reshape is applied on the memref side (load source and
+/// destination alloc) so that load and to_tensor share the same expanded
+/// memref, allowing later DMA fusion in CombineOptimizedConvertLayout.
+template <typename ConvOpType>
+LogicalResult normalizeInputToNCHW(ConvOpType op,
+                                   PatternRewriter &rewriter) {
+  static constexpr int64_t baseDims = ConvBaseDims<ConvOpType>::dim;
+
+  Value input = op.getInput();
+  auto inputType = cast<RankedTensorType>(input.getType());
+  if (inputType.getRank() == 4)
+    return success();
+
+  ArrayRef<int64_t> shape = inputType.getShape();
+  SmallVector<int64_t> nchwShape;
+  SmallVector<ReassociationIndices> reassociation;
+
+  if constexpr (baseDims == 2) {
+    if (inputType.getRank() == 2) {
+      // [C, W] -> [1, C, 1, W]
+      nchwShape = {1, shape[0], 1, shape[1]};
+      reassociation = {{0, 1}, {2, 3}};
+    } else {
+      // [N, C, W] -> [N, C, 1, W]
+      nchwShape = {shape[0], shape[1], 1, shape[2]};
+      reassociation = {{0}, {1, 2}, {3}};
+    }
+  } else {
+    // [C, H, W] -> [1, C, H, W]
+    nchwShape = {1, shape[0], shape[1], shape[2]};
+    reassociation = {{0, 1}, {2}, {3}};
+  }
+
+  auto nchwType =
+      RankedTensorType::get(nchwShape, inputType.getElementType());
+
+  auto toTensor = input.getDefiningOp<bufferization::ToTensorOp>();
+  if (!toTensor || !input.hasOneUse())
+    return failure();
+  Value oldDst = toTensor.getMemref();
+  auto oldAlloc = oldDst.getDefiningOp<memref::AllocOp>();
+  if (!oldAlloc)
+    return failure();
+
+  hivm::LoadOp loadOp;
+  for (Operation *user : oldDst.getUsers()) {
+    if (user == toTensor.getOperation())
+      continue;
+    auto candidate = dyn_cast<hivm::LoadOp>(user);
+    if (!candidate || candidate.getDst() != oldDst || loadOp)
+      return failure();
+    loadOp = candidate;
+  }
+  if (!loadOp || loadOp.getResultTensor())
+    return failure();
+
+  auto srcType = dyn_cast<MemRefType>(loadOp.getSrc().getType());
+  auto dstType = dyn_cast<MemRefType>(oldDst.getType());
+  if (!srcType || !dstType)
+    return failure();
+  auto expandedSrcType = memref::ExpandShapeOp::computeExpandedType(
+      srcType, nchwShape, reassociation);
+  auto expandedDstType = memref::ExpandShapeOp::computeExpandedType(
+      dstType, nchwShape, reassociation);
+  if (failed(expandedSrcType) || failed(expandedDstType))
+    return failure();
+
+  {
+    PatternRewriter::InsertionGuard guard(rewriter);
+    rewriter.setInsertionPoint(loadOp);
+    Value expandedSrc = rewriter.create<memref::ExpandShapeOp>(
+        op.getLoc(), *expandedSrcType, loadOp.getSrc(), reassociation);
+    auto newAlloc =
+        rewriter.create<memref::AllocOp>(op.getLoc(), *expandedDstType);
+    newAlloc->setAttrs(oldAlloc->getAttrs());
+    auto newLoad = rewriter.create<hivm::LoadOp>(
+        op.getLoc(), TypeRange{}, expandedSrc, newAlloc.getResult());
+    newLoad->setAttrs(loadOp->getAttrs());
+    auto newToTensor = rewriter.create<bufferization::ToTensorOp>(
+        op.getLoc(), nchwType, newAlloc.getResult(), /*restrict=*/true,
+        /*writable=*/true);
+    newToTensor->setAttrs(toTensor->getAttrs());
+    op.getInputMutable().assign(newToTensor.getResult());
+
+    rewriter.eraseOp(toTensor);
+    rewriter.eraseOp(loadOp);
+    if (oldAlloc->use_empty())
+      rewriter.eraseOp(oldAlloc);
+  }
+  return success();
+}
+
+bool hasCanonicalizableInputLoad(Value input) {
+  auto toTensor = input.getDefiningOp<bufferization::ToTensorOp>();
+  if (!toTensor || !input.hasOneUse())
+    return false;
+  Value dst = toTensor.getMemref();
+  if (!dst.getDefiningOp<memref::AllocOp>())
+    return false;
+  hivm::LoadOp loadOp;
+  for (Operation *user : dst.getUsers()) {
+    if (user == toTensor.getOperation())
+      continue;
+    auto candidate = dyn_cast<hivm::LoadOp>(user);
+    if (!candidate || candidate.getDst() != dst || loadOp)
+      return false;
+    loadOp = candidate;
+  }
+  if (!loadOp || loadOp.getResultTensor() || loadOp.getPadModeAttr() ||
+      loadOp.getPadValue() || loadOp.getLeftPaddingNum() ||
+      loadOp.getRightPaddingNum() || loadOp.getInitOutBuffer() ||
+      loadOp.getInitCondition())
+    return false;
+  auto srcType = dyn_cast<MemRefType>(loadOp.getSrc().getType());
+  if (!srcType || !srcType.hasStaticShape())
+    return false;
+  int64_t offset;
+  SmallVector<int64_t> strides;
+  if (failed(getStridesAndOffset(srcType, strides, offset)))
+    return false;
+  (void)offset;
+  int64_t expectedStride = 1;
+  for (int64_t dim = srcType.getRank() - 1; dim >= 0; --dim) {
+    if (ShapedType::isDynamic(strides[dim]) ||
+        strides[dim] != expectedStride)
+      return false;
+    expectedStride *= srcType.getDimSize(dim);
+  }
+  return true;
+}
+
+template <typename ConvOpType>
+bool canUseNCHW2NC1HWC0(ConvOpType op, RankedTensorType inputType) {
+  static constexpr int64_t baseDims = ConvBaseDims<ConvOpType>::dim;
+  if constexpr (baseDims == 4) {
+    return false;
+  }
+
+  if (!isAscend950(op) || !inputType.hasStaticShape())
+    return false;
+  Type elementType = inputType.getElementType();
+  if (!isa<Float16Type, BFloat16Type, Float32Type>(elementType))
+    return false;
+
+  int64_t groups = op.getGroups();
+  if (groups <= 0)
+    return false;
+  bool hasBatch = inputType.getRank() == baseDims + 1;
+  int64_t batch = hasBatch ? inputType.getDimSize(0) : 1;
+  int64_t channels = inputType.getDimSize(hasBatch ? 1 : 0);
+  int64_t height = baseDims == 3
+                       ? inputType.getDimSize(hasBatch ? 2 : 1)
+                       : 1;
+  int64_t width = inputType.getDimSize(inputType.getRank() - 1);
+  int64_t c0 = elementType.isF32() ? 8 : 16;
+  int64_t c1PerGroup = (channels / groups + c0 - 1) / c0;
+
+  // These are the field-width limits of copy_gm_to_cbuf_multi_dn2nz used by
+  // the NCHW2NC1HWC0 template.
+  return channels % groups == 0 && batch * groups <= 4095 &&
+         height * width <= 16384 && c1PerGroup * height * width <= 65535 &&
+         hasCanonicalizableInputLoad(op.getInput());
 }
 
 LogicalResult padDepthForConv3dInput(hivm::Conv3DL1Op op,
@@ -1043,7 +1217,13 @@ public:
       rewriter.setInsertionPoint(outDefOp);
     }
 
-    if (inputType.getRank() == baseDims) {
+    bool useNCHW2NC1HWC0 =
+        canUseNCHW2NC1HWC0<ConvOpType>(op, cast<RankedTensorType>(inputType));
+    if (useNCHW2NC1HWC0) {
+      if (failed(normalizeInputToNCHW<ConvOpType>(op, rewriter)))
+        return rewriter.notifyMatchFailure(op,
+                                           "Failed to normalize input to NCHW");
+    } else if (inputType.getRank() == baseDims) {
       if (failed(expandToBatch<ConvOpType>(op, rewriter))) {
         return rewriter.notifyMatchFailure(op, "Failed to expand to batch");
       }
@@ -1089,7 +1269,8 @@ public:
     LLVM_DEBUG(llvm::dbgs()
                << "start insert [pad expand trans] op for conv op"
                << "\n");
-    if (failed(insertPadExpandTransToFormatInput<ConvOpType>(op, rewriter, C0,
+    if (!useNCHW2NC1HWC0 &&
+        failed(insertPadExpandTransToFormatInput<ConvOpType>(op, rewriter, C0,
                                                              C, groups))) {
       return rewriter.notifyMatchFailure(
           op, "Failed to insert pad/expand/trans for input");

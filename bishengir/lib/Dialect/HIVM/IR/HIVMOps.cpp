@@ -448,6 +448,13 @@ LogicalResult ConvertLayoutOp::verify() {
            << numDynamic << " dynamic dimensions but got "
            << getOutputShape().size();
   }
+  if (auto groupsAttr = (*this)->getAttr("groups")) {
+    auto groups = dyn_cast<IntegerAttr>(groupsAttr);
+    if (!groups || !groups.getType().isInteger(64))
+      return emitOpError("requires groups to be an i64 integer attribute");
+    if (groups.getInt() <= 0)
+      return emitOpError("requires groups to be positive");
+  }
   return success();
 }
 

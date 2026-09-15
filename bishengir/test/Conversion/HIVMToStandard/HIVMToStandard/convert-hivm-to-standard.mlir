@@ -2,6 +2,35 @@
 // RUN: FileCheck %s < %t
 
 // -----
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+  // CHECK-LABEL: func.func @test_nchw2nc1hwc0
+  func.func @test_nchw2nc1hwc0(
+      %src_f16: memref<2x30x3x4xf16, #hivm.address_space<gm>>,
+      %dst_f16: memref<2x2x3x4x16xf16, #hivm.address_space<cbuf>>,
+      %src_bf16: memref<2x30x3x4xbf16, #hivm.address_space<gm>>,
+      %dst_bf16: memref<2x2x3x4x16xbf16, #hivm.address_space<cbuf>>,
+      %src_f32: memref<2x10x3x4xf32, #hivm.address_space<gm>>,
+      %dst_f32: memref<2x2x3x4x8xf32, #hivm.address_space<cbuf>>) {
+    // CHECK: %[[GROUPS:.*]] = arith.constant 2 : i64
+    // CHECK: call @nchw2nc1hwc0_half({{.*}}, {{.*}}, %[[GROUPS]])
+    hivm.hir.nchw2nc1hwc0 {groups = 2 : i64}
+      ins(%src_f16 : memref<2x30x3x4xf16, #hivm.address_space<gm>>)
+      outs(%dst_f16 : memref<2x2x3x4x16xf16, #hivm.address_space<cbuf>>)
+
+    // CHECK: call @nchw2nc1hwc0_bfloat16_t({{.*}}, {{.*}}, %[[GROUPS]])
+    hivm.hir.nchw2nc1hwc0 {groups = 2 : i64}
+      ins(%src_bf16 : memref<2x30x3x4xbf16, #hivm.address_space<gm>>)
+      outs(%dst_bf16 : memref<2x2x3x4x16xbf16, #hivm.address_space<cbuf>>)
+
+    // CHECK: call @nchw2nc1hwc0_float({{.*}}, {{.*}}, %[[GROUPS]])
+    hivm.hir.nchw2nc1hwc0 {groups = 2 : i64}
+      ins(%src_f32 : memref<2x10x3x4xf32, #hivm.address_space<gm>>)
+      outs(%dst_f32 : memref<2x2x3x4x8xf32, #hivm.address_space<cbuf>>)
+    return
+  }
+}
+
+// -----
 module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
   // CHECK-LABEL: test_mmadL1_with_k_init
   // CHECK-NOT: hivm
