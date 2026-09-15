@@ -431,6 +431,12 @@ def MarkStrideAlign : Pass<"hivm-mark-stride-align", "func::FuncOp"> {
   let dependentDialects = ["mlir::memref::MemRefDialect", "hivm::HIVMDialect",
                            "annotation::AnnotationDialect",
   ];
+  let options = [
+    Option<"alignPackedUnaligned", "align-packed-unaligned", "bool",
+           /*default=*/"true",
+           "Mark tightly packed (dimSize == stride) but unaligned strides for"
+           " alignment. Disable to restore the legacy packed-skip behavior.">,
+  ];
 }
 
 def EnableStrideAlign : Pass<"hivm-enable-stride-align", "ModuleOp"> {

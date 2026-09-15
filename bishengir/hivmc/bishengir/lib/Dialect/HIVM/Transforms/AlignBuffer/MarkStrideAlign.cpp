@@ -73,22 +73,30 @@ LogicalResult markAlignedDim(OpBuilder &builder, Operation *markedOp, Value arg,
   return success();
 }
 
-// Return "true", if the size of lowest dimension equal with the stride of
-// sub-low dimension or the stride of sub-low dimension is UB align.
-// Such as memref<3x13xi8, strided<[16, 1]>>
-static bool isNotTailJumpOrStrideAlign(MemRefType type) {
+// Return "true" if the stride of the sub-low dimension is UB aligned.
+// Such as memref<3x13xi8, strided<[32, 1]>>
+// Note: a tightly packed layout (dimSize == stride) with a non-aligned row
+// stride still needs alignment, so only the aligned-stride check applies
+// unless "alignPackedUnaligned" is disabled, which restores the legacy
+// packed-skip behavior.
+static bool isNotTailJumpOrStrideAlign(MemRefType type,
+                                       bool alignPackedUnaligned) {
   int64_t offset;
   SmallVector<int64_t> strides;
   auto successStrides = getStridesAndOffset(type, strides, offset);
   int64_t dim = type.getRank();
-  int64_t hwAlignBits = static_cast<int64_t>(getHWAlignBytes(type.getMemorySpace()) * 8);
+  int64_t hwAlignBits =
+      static_cast<int64_t>(getHWAlignBytes(type.getMemorySpace()) * 8);
   int64_t dataWidth = type.getElementTypeBitWidth();
   if (dim == 1)
     return true;
   if (succeeded(successStrides) && !strides.empty() &&
-      !type.isDynamicDim(dim - 1))
-    return (type.getDimSize(dim - 1) == strides[dim - 2]) ||
-      (strides[dim - 2] * dataWidth % hwAlignBits == 0);
+      !type.isDynamicDim(dim - 1)) {
+    if (strides[dim - 2] * dataWidth % hwAlignBits == 0)
+      return true;
+    return !alignPackedUnaligned &&
+           type.getDimSize(dim - 1) == strides[dim - 2];
+  }
   return false;
 }
 
@@ -115,7 +123,8 @@ std::optional<int> getLastDiscontinuousDim(
     const SmallVectorImpl<MemRefType> &memRefTypes,
     const SmallVectorImpl<MemRefType> &origMemRefTypes,
     const SmallVector<ReassociationIndices> &continuousReassociations,
-    bool isUBDMAOp, bool archIsRegbased, bool archIs950) {
+    bool isUBDMAOp, bool archIsRegbased, bool archIs950,
+    bool alignPackedUnaligned) {
   LLVM_DEBUG(llvm::dbgs() << "memRefTypes " << memRefTypes << "\n";
              llvm::dbgs() << "origMemRefTypes " << origMemRefTypes << "\n";
              utils::dumpReassociationIndicesVector(continuousReassociations););
@@ -135,7 +144,7 @@ std::optional<int> getLastDiscontinuousDim(
               dyn_cast<hivm::AddressSpaceAttr>(memRefType.getMemorySpace());
           if (hivmSpace.getAddressSpace() == hivm::AddressSpace::UB)
             return isSubLowDimStrideAlign(memRefType) &&
-                   isNotTailJumpOrStrideAlign(memRefType);
+                   isNotTailJumpOrStrideAlign(memRefType, alignPackedUnaligned);
           else
             return false;
         })) {
@@ -167,7 +176,8 @@ std::optional<int> getLastDiscontinuousDim(
 /// get last discontinuous dim
 std::optional<int> getLastDiscontinuousDimRegBased(
     const SmallVectorImpl<MemRefType> &memRefTypes,
-    const ReassociationIndices &continuousReassociations, bool isUBDMAOp) {
+    const ReassociationIndices &continuousReassociations, bool isUBDMAOp,
+    bool alignPackedUnaligned) {
   LLVM_DEBUG(llvm::dbgs() << "memRefTypes " << memRefTypes << "\n";);
   // 1. if any memref contains non-unit stride at the last dim,
   //    the last axis of size > 1 should be aligned.
@@ -187,7 +197,7 @@ std::optional<int> getLastDiscontinuousDimRegBased(
               dyn_cast<hivm::AddressSpaceAttr>(memRefType.getMemorySpace());
           if (hivmSpace.getAddressSpace() == hivm::AddressSpace::UB)
             return isSubLowDimStrideAlign(memRefType) &&
-                   isNotTailJumpOrStrideAlign(memRefType);
+                   isNotTailJumpOrStrideAlign(memRefType, alignPackedUnaligned);
           else
             return false;
         })) {
@@ -372,7 +382,7 @@ void MarkStrideAlignPass::runOnOperation() {
   auto moduleOp = funcOp->getParentOfType<ModuleOp>();
   bool archIsRegbased = hacc::utils::isRegBasedArch(moduleOp);
   bool archIs950 = hacc::utils::isAscend950(moduleOp);
-  WalkResult result = funcOp->walk([&builder, archIsRegbased,
+  WalkResult result = funcOp->walk([&builder, this, archIsRegbased,
                                     archIs950](Operation *op) {
     LDBG("Walk operation : " << *op);
     if (!isa<HIVMStructuredOp>(op)) {
@@ -428,8 +438,8 @@ void MarkStrideAlignPass::runOnOperation() {
         identityReassoc[i] = i;
       }
       // In A5, memrefTypes is already the result of flattening.
-      alignDim = getLastDiscontinuousDimRegBased(filterMemrefTypes,
-                                                 identityReassoc, isUBDMAOp);
+      alignDim = getLastDiscontinuousDimRegBased(
+          filterMemrefTypes, identityReassoc, isUBDMAOp, alignPackedUnaligned);
     } else {
       // For A2/3
       auto hivmFlattenInterfaceOp = dyn_cast<hivm::FlattenInterface>(op);
@@ -446,9 +456,9 @@ void MarkStrideAlignPass::runOnOperation() {
       auto flattenedAssociations = flattenResult->reassociation[0];
       auto flattenedTypes = flattenResult->getOperandTypes(DpsKind::kDpsAll);
       auto flattenedMemrefTypes = util::getMemRefTypes(flattenedTypes);
-      alignDim = getLastDiscontinuousDim(flattenedMemrefTypes, memrefTypes,
-                                         flattenedAssociations, isUBDMAOp,
-                                         archIsRegbased, archIs950);
+      alignDim = getLastDiscontinuousDim(
+          flattenedMemrefTypes, memrefTypes, flattenedAssociations, isUBDMAOp,
+          archIsRegbased, archIs950, alignPackedUnaligned);
     }
     LDBG("getLastDiscontinuousDim " << alignDim.value_or(-1) << "\n");
     for (const auto &oper : hivmOp.getTargetSpaceOperands(
@@ -463,7 +473,8 @@ void MarkStrideAlignPass::runOnOperation() {
   });
 
   if (archIsRegbased) {
-    WalkResult resultVF = funcOp->walk([&builder, &moduleOp, archIsRegbased,
+    WalkResult resultVF = funcOp->walk([&builder, &moduleOp, this,
+                                        archIsRegbased,
                                         archIs950](func::CallOp callOp) {
       for (Value operand : callOp.getArgOperands()) {
         if (isMarked(operand))
@@ -488,9 +499,9 @@ void MarkStrideAlignPass::runOnOperation() {
         auto continuousAssociations = util::getContinuousReassociation(
             memrefTypes, ArrayRef<int64_t>(reshapeDims),
             ArrayRef<int64_t>(permutations));
-        auto alignDim = getLastDiscontinuousDim(memrefTypes, memrefTypes,
-                                                continuousAssociations, false,
-                                                archIsRegbased, archIs950);
+        auto alignDim = getLastDiscontinuousDim(
+            memrefTypes, memrefTypes, continuousAssociations, false,
+            archIsRegbased, archIs950, alignPackedUnaligned);
         LDBG("getLastDiscontinuousDim " << alignDim.value_or(-1) << "\n");
 
         auto adjustedAlignDim = adjustAlignDim(callOp, operand, alignDim);

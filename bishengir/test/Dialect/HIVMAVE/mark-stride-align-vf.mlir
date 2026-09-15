@@ -69,7 +69,9 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">, hivm.module_c
 // CHECK-LABEL:func.func @triton_sum_dim00
 // CHECK: annotation.mark %alloc {hivm.stride_align_dims = array<i32: 2>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<1x2x39xf32, #hivm.address_space<ub>>
 // CHECK: memref.alloc() {alignment = 64 : i64} : memref<2x39xf32, #hivm.address_space<ub>>
-// CHECK-NOT: annotation.mark %alloc_0 {hivm.stride_align_dims
+// Packed 2x39xf32 has a non-32B-aligned row stride (39 * 32bit = 156B), so it
+// is marked even though the layout is tightly packed (issue #14 fix).
+// CHECK: annotation.mark %alloc_0 {hivm.stride_align_dims = array<i32: 1>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<2x39xf32, #hivm.address_space<ub>>
 // CHECK: call @triton_sum_dim0_outlined_vf_00(%alloc_0) {hivm.vector_function}
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">, hivm.module_core_type = #hivm.module_core_type<AIV>} {
   func.func @triton_sum_dim0_outlined_vf_00(%arg0: memref<2x39xf32, #hivm.address_space<ub>>) attributes {hivm.vector_function} {
