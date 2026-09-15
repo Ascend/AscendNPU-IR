@@ -114,6 +114,11 @@ llvm::SmallVector<Value> IRTranslator::tracebackMemValsStep(Value val) {
       collectedVals.push_back(yieldedValueElse);
     }
   } else if (auto forOp = dyn_cast<scf::ForOp>(defOp)) {
+    auto staticLoopCount = getStaticLoopCount(forOp);
+    if (!staticLoopCount || *staticLoopCount == 0) {
+      assert(forOp.getInitArgs().size() > resultNum);
+      collectedVals.push_back(forOp.getInitArgs()[resultNum]);
+    }
     assert(forOp.getYieldedValues().size() > resultNum);
     auto yieldedValue = forOp.getYieldedValues()[resultNum];
     collectedVals.push_back(yieldedValue);

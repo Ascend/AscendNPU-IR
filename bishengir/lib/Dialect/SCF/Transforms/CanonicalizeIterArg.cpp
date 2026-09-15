@@ -19,6 +19,7 @@
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/Transforms/Transforms.h"
+#include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/Dominance.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
@@ -663,6 +664,12 @@ static llvm::SmallVector<Value> tracebackMemValsStep(Value val) {
       collectedVals.push_back(yieldedValueElse);
     }
   } else if (auto forOp = dyn_cast<scf::ForOp>(defOp)) {
+    auto staticLoopCount = constantTripCount(
+        forOp.getLowerBound(), forOp.getUpperBound(), forOp.getStep());
+    if (!staticLoopCount || *staticLoopCount == 0) {
+      assert(forOp.getInitArgs().size() > resultNum);
+      collectedVals.push_back(forOp.getInitArgs()[resultNum]);
+    }
     // yield
     assert(forOp.getYieldedValues().size() > resultNum);
     auto yieldedValue = forOp.getYieldedValues()[resultNum];
