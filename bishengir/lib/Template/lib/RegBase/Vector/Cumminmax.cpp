@@ -29,7 +29,7 @@ enum cum_minmax_kind {
 };
 
 template <int kind, typename T>
-__aiv__ __attribute__((always_inline)) void
+__simd_callee__ __aiv__ __attribute__((always_inline)) void
 cum_mm_comb(VectorReg<T> &dst, VectorReg<T> &a, VectorReg<T> &b,
             vector_bool &mask) {
   if constexpr (!std::is_integral<T>::value) {
