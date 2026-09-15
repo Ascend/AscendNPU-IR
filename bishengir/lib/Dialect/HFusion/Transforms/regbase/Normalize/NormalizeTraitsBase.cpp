@@ -54,8 +54,10 @@ Value mlir::hfusion::NormalizeTraitsBase::createCastValueFromSourceOp(
     Type targetElemType, CastRoundKind executionKind, CastSignKind signKind,
     bool enableSaturate, CastUnsignedModeKind unsignedModeKind) {
   hfusion::TypeFn typeFn = mapCastSignKind(signKind, op.getCast());
-  hfusion::UnsignedMode unsignedMode =
-      mapCastUnsignedModeKind(unsignedModeKind, hfusion::UnsignedMode::SI2SI);
+  hfusion::UnsignedMode unsignedMode = mapCastUnsignedModeKind(
+      unsignedModeKind, signKind == CastSignKind::Preserve
+                            ? getCastUnsignedMode(op)
+                            : hfusion::UnsignedMode::SI2SI);
   hfusion::RoundMode defaultRoundMode =
       selectRoundMode<hfusion::RoundMode>(
           getElementTypeOrSelf(input.getType()), targetElemType);
@@ -66,8 +68,11 @@ Value mlir::hfusion::NormalizeTraitsBase::createCastValueFromSourceOp(
                                   : executionKind ==
                                         CastRoundKind::TruncEnableOverflow;
   return hfusion::castTo(rewriter, input, targetElemType, roundMode,
-                         std::nullopt,
-                         enableOverflow, enableSaturate, typeFn, unsignedMode);
+                         std::nullopt, enableOverflow, enableSaturate, typeFn,
+                         getElementTypeOrSelf(input.getType()).isInteger() &&
+                                 targetElemType.isInteger()
+                             ? unsignedMode
+                             : hfusion::UnsignedMode::SI2SI);
 }
 
 Value mlir::hfusion::NormalizeTraitsBase::castScalarThroughTensor(
@@ -339,10 +344,14 @@ mlir::Value mlir::hfusion::NormalizeTraitsBase::createBinaryOp(
 
 mlir::Value mlir::hfusion::NormalizeTraitsBase::createCastOp(
     PatternRewriter &rewriter, Location loc, Value input, Type targetElemType,
-    std::optional<RoundMode> roundMode) {
-  if (roundMode)
-    return hfusion::castTo(rewriter, input, targetElemType, *roundMode);
-  return hfusion::castTo(rewriter, input, targetElemType);
+    std::optional<RoundMode> roundMode, TypeFn castType,
+    UnsignedMode unsignedMode) {
+  if (!roundMode)
+    roundMode = mlir::utils::selectRoundMode<RoundMode>(
+        getElementTypeOrSelf(input.getType()), targetElemType);
+  return hfusion::castTo(rewriter, input, targetElemType, *roundMode,
+                         std::nullopt, /*enableOverflow=*/true,
+                         /*enableSaturate=*/false, castType, unsignedMode);
 }
 
 mlir::Value mlir::hfusion::NormalizeTraitsBase::createShiftOp(
@@ -475,6 +484,14 @@ bool mlir::hfusion::NormalizeTraitsBase::matchCastRoundMode(
     hfusion::CastOp op, CastRoundKind kind) {
   auto roundMode = mapCastRoundKindToRoundMode(kind);
   return roundMode && op.getRoundMode() == *roundMode;
+}
+
+hfusion::UnsignedMode
+mlir::hfusion::NormalizeTraitsBase::getCastUnsignedMode(CastOp op) {
+  if (!getElementTypeOrSelf(op.getDpsInputs()[0].getType()).isInteger() ||
+      !getElementTypeOrSelf(op.getDpsInits()[0].getType()).isInteger())
+    return hfusion::UnsignedMode::SI2SI;
+  return op.getUnsignedMode();
 }
 
 bool mlir::hfusion::NormalizeTraitsBase::matchCastUnsignedMode(

@@ -81,6 +81,15 @@ Value hfusion::castTo(OpBuilder &builder, Value src, Type targetElemType,
     assert(src.getType().isIntOrIndexOrFloat());
     bool isUnsignedCast = (hfusion::TypeFn::cast_unsigned == castIntegerType);
     Type srcElem = getElementTypeOrSelf(src.getType());
+    bool isIntegerCast = srcElem.isInteger() && targetElemType.isInteger();
+    if (isIntegerCast) {
+      if (unsignedMode != hfusion::UnsignedMode::SI2SI)
+        isUnsignedCast = unsignedMode == hfusion::UnsignedMode::UI2SI ||
+                         unsignedMode == hfusion::UnsignedMode::UI2UI;
+      else if (isUnsignedCast && srcElem.getIntOrFloatBitWidth() >
+                                     targetElemType.getIntOrFloatBitWidth())
+        unsignedMode = hfusion::UnsignedMode::UI2UI;
+    }
     if (srcElem.isInteger(1) && isa<mlir::FloatType>(targetElemType)) {
       // Only apply unsigned cast on reg-based architectures; on mem-based
       // architectures this may introduce precision issues.
@@ -92,8 +101,21 @@ Value hfusion::castTo(OpBuilder &builder, Value src, Type targetElemType,
         }
       }
     }
-    return convertScalarToDtype(builder, loc, src, targetElemType,
-                                isUnsignedCast);
+    Value result =
+        convertScalarToDtype(builder, loc, src, targetElemType, isUnsignedCast);
+    if (isIntegerCast && result != src &&
+        (unsignedMode != hfusion::UnsignedMode::SI2SI || enableSaturate)) {
+      auto *castOp = result.getDefiningOp();
+      castOp->setAttr("round_mode",
+                      builder.getAttr<hfusion::RoundModeAttr>(roundMode));
+      if (unsignedMode != hfusion::UnsignedMode::SI2SI)
+        castOp->setAttr(
+            "unsigned_mode",
+            builder.getAttr<hfusion::UnsignedModeAttr>(unsignedMode));
+      if (enableSaturate)
+        castOp->setAttr("enable_saturate", builder.getBoolAttr(true));
+    }
+    return result;
   }
 
   Value targetTensor;

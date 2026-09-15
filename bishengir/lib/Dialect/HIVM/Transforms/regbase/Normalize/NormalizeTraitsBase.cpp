@@ -98,12 +98,18 @@ Value mlir::hivm::NormalizeTraitsBase::createCastValueFromSourceOp(
   hivm::RoundMode roundMode =
       mapCastRoundKind(executionKind, defaultRoundMode);
   hivm::TypeFn typeFn = mapCastSignKind(signKind, op.getCast());
-  hivm::UnsignedMode unsignedMode =
-      mapCastUnsignedModeKind(unsignedModeKind, hivm::UnsignedMode::SI2SI);
+  hivm::UnsignedMode unsignedMode = mapCastUnsignedModeKind(
+      unsignedModeKind, signKind == CastSignKind::Preserve
+                            ? getCastUnsignedMode(op)
+                            : hivm::UnsignedMode::SI2SI);
   auto castOp = hivm::castTo(rewriter, loc, input,
                              rewriter.getAttr<hivm::RoundModeAttr>(roundMode),
                              targetElemType);
   castOp.setCastAttr(rewriter.getAttr<hivm::TypeFnAttr>(typeFn));
+  if (getElementTypeOrSelf(input.getType()).isInteger() &&
+      targetElemType.isInteger() && unsignedMode != hivm::UnsignedMode::SI2SI)
+    castOp->setAttr(hivm::UnsignedModeAttr::name,
+                    rewriter.getAttr<hivm::UnsignedModeAttr>(unsignedMode));
   if (executionKind == CastRoundKind::Default)
     return getPrimaryCastValue(castOp);
 
@@ -129,7 +135,8 @@ Value mlir::hivm::NormalizeTraitsBase::createCastValueFromSourceOp(
 }
 
 Value mlir::hivm::NormalizeTraitsBase::castScalarThroughTensor(
-    PatternRewriter &rewriter, Location loc, Value scalar, Type dstType) {
+    PatternRewriter &rewriter, Location loc, Value scalar, Type dstType,
+    TypeFn castType, UnsignedMode unsignedMode) {
   auto tensorType = RankedTensorType::get({1}, scalar.getType());
   Value fromElementsOp =
       rewriter.create<tensor::FromElementsOp>(loc, tensorType, scalar);
@@ -138,6 +145,10 @@ Value mlir::hivm::NormalizeTraitsBase::castScalarThroughTensor(
   auto castOp = hivm::castTo(
       rewriter, loc, fromElementsOp,
       rewriter.getAttr<hivm::RoundModeAttr>(roundMode), dstType);
+  castOp.setCastAttr(rewriter.getAttr<hivm::TypeFnAttr>(castType));
+  if (unsignedMode != hivm::UnsignedMode::SI2SI)
+    castOp->setAttr(hivm::UnsignedModeAttr::name,
+                    rewriter.getAttr<hivm::UnsignedModeAttr>(unsignedMode));
   Value castValue = getPrimaryCastValue(castOp);
   auto c0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
   return rewriter.create<tensor::ExtractOp>(loc, castValue, ValueRange{c0});
@@ -407,23 +418,16 @@ mlir::Value mlir::hivm::NormalizeTraitsBase::createTernaryOp(
 
 mlir::Value mlir::hivm::NormalizeTraitsBase::createCastOp(
     PatternRewriter &rewriter, Location loc, Value input, Type targetElemType,
-    std::optional<RoundMode> roundMode) {
+    std::optional<RoundMode> roundMode, TypeFn castType,
+    UnsignedMode unsignedMode) {
   if (!isa<ShapedType>(input.getType()))
-    return castScalarThroughTensor(rewriter, loc, input, targetElemType);
-
-  if (!roundMode) {
-    hivm::RoundMode defaultRoundMode =
-        selectNormalizeRoundMode(
-            getElementTypeOrSelf(input.getType()), targetElemType);
-    auto castOp = hivm::castTo(
-        rewriter, loc, input,
-        rewriter.getAttr<hivm::RoundModeAttr>(defaultRoundMode),
-        targetElemType);
-    return getPrimaryCastValue(castOp);
-  }
+    return castScalarThroughTensor(rewriter, loc, input, targetElemType,
+                                   castType, unsignedMode);
 
   Type srcElemType = getElementTypeOrSelf(input.getType());
-  hivm::RoundMode actualRoundMode = *roundMode;
+  hivm::RoundMode actualRoundMode =
+      roundMode ? *roundMode
+                : selectNormalizeRoundMode(srcElemType, targetElemType);
   if ((srcElemType.isF16() || srcElemType.isBF16()) && targetElemType.isF32()) {
     // HIVM VCastOp only supports f16/bf16 -> f32 in rint mode.
     actualRoundMode = hivm::RoundMode::RINT;
@@ -431,8 +435,10 @@ mlir::Value mlir::hivm::NormalizeTraitsBase::createCastOp(
   auto castOp = hivm::castTo(rewriter, loc, input,
                              rewriter.getAttr<hivm::RoundModeAttr>(actualRoundMode),
                              targetElemType);
-  castOp.setCastAttr(rewriter.getAttr<hivm::TypeFnAttr>(
-      hivm::TypeFn::cast_signed));
+  castOp.setCastAttr(rewriter.getAttr<hivm::TypeFnAttr>(castType));
+  if (unsignedMode != hivm::UnsignedMode::SI2SI)
+    castOp->setAttr(hivm::UnsignedModeAttr::name,
+                    rewriter.getAttr<hivm::UnsignedModeAttr>(unsignedMode));
   return getPrimaryCastValue(castOp);
 }
 
@@ -577,6 +583,16 @@ bool mlir::hivm::NormalizeTraitsBase::matchCastRoundMode(
     hivm::VCastOp op, CastRoundKind kind) {
   auto roundMode = mapCastRoundKindToRoundMode(kind);
   return roundMode && op.getRoundMode() == *roundMode;
+}
+
+hivm::UnsignedMode
+mlir::hivm::NormalizeTraitsBase::getCastUnsignedMode(VCastOp op) {
+  if (!getElementTypeOrSelf(op.getDpsInputs()[0].getType()).isInteger() ||
+      !getElementTypeOrSelf(op.getDpsInits()[0].getType()).isInteger())
+    return hivm::UnsignedMode::SI2SI;
+  auto attr =
+      op->getAttrOfType<hivm::UnsignedModeAttr>(hivm::UnsignedModeAttr::name);
+  return attr ? attr.getValue() : hivm::UnsignedMode::SI2SI;
 }
 
 bool mlir::hivm::NormalizeTraitsBase::matchCastUnsignedMode(

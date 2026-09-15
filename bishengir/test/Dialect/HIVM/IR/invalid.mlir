@@ -707,3 +707,13 @@ func.func @core_ratio_invalid_2_1() {
   "test.core_ratio"() { ratio = #hivm.core_ratio<2, 1> } : () -> ()
   return
 }
+
+// -----
+
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @test_vcast_integer_mode_i8_i32_si2ui(%src: tensor<16xi8>, %dst: tensor<16xi32>) {
+    // expected-error@+1 {{'hivm.hir.vcast' op currently don't support cast int8_t_to_uint32_t_rintmode}}
+    %0 = hivm.hir.vcast {hivm.unsigned_mode = #hivm.unsigned_mode<si2ui>} ins(%src : tensor<16xi8>) outs(%dst : tensor<16xi32>) round_mode = <rint> cast = <cast_unsigned> -> tensor<16xi32>
+    return
+  }
+}

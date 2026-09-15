@@ -1462,7 +1462,7 @@ struct RewriteCastOp : public OpRewritePattern<hivm::VCastOp> {
     if (auto unsignedModeAttr =
             op->getAttrOfType<hivm::UnsignedModeAttr>(hivm::UnsignedModeAttr::name))
       attrs.emplace_back(
-          hfusion::UnsignedModeAttr::name,
+          hfusion::UnsignedModeAttr::getMnemonic(),
           hfusion::UnsignedModeAttr::get(
               rewriter.getContext(),
               static_cast<hfusion::UnsignedMode>(unsignedModeAttr.getValue())));

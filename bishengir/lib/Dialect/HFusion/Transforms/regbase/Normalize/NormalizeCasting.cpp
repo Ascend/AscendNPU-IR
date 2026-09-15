@@ -111,9 +111,12 @@ struct HFusionNormalizeScalarCastTraits : public hfusion::NormalizeTraitsBase {
     auto tensorType = RankedTensorType::get({1}, scalar.getType());
     Value fromElementsOp =
         rewriter.create<tensor::FromElementsOp>(loc, tensorType, scalar);
-    Value castOp = hfusion::castTo(rewriter, fromElementsOp, dstType,
-                                   op.getRoundMode(), std::nullopt,
-                                   op.getEnableOverflow());
+    bool isIntegerCast = scalar.getType().isInteger() && dstType.isInteger();
+    Value castOp = hfusion::castTo(
+        rewriter, fromElementsOp, dstType, op.getRoundMode(), std::nullopt,
+        op.getEnableOverflow(), /*enableSaturate=*/false,
+        isIntegerCast ? op.getCast() : hfusion::TypeFn::cast_signed,
+        getCastUnsignedMode(op));
     auto c0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
     return rewriter.create<tensor::ExtractOp>(loc, castOp, ValueRange{c0});
   }
