@@ -103,7 +103,10 @@ __aiv__ __attribute__((always_inline)) bool isSizeAlignedToBlock(int size) {
 }
 
 template <typename T>
-__simd_callee__ __aiv__ __attribute__((always_inline)) bool
+#if defined(__DAV_C310__)
+__simd_callee__
+#endif
+__aiv__ __attribute__((always_inline)) bool
 isAddress32ByteAligned(__ubuf__ T *ptr) {
   auto address = reinterpret_cast<uintptr_t>(ptr);
   return (address & 0x1F) == 0;
