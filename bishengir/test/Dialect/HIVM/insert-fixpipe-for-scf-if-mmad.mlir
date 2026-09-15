@@ -31,17 +31,17 @@ func.func @single_fixpipe_after_scf_if(
   %res = scf.if %cond -> (tensor<128x128xf32>) {
     %memspacecast = memref.memory_space_cast %alloc : memref<128x128xf32, #hivm.address_space<cc>> to memref<128x128xf32>
     %acc = bufferization.to_tensor %memspacecast restrict writable : memref<128x128xf32>
-    %mmad = hivm.hir.mmadL1 {already_set_real_mkn}
+    %mmad = hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
         ins(%a, %b, %false, %c128, %c128, %c128 : tensor<128x128xf16>, tensor<128x128xf16>, i1, index, index, index)
         outs(%acc : tensor<128x128xf32>) -> tensor<128x128xf32>
     scf.yield %mmad : tensor<128x128xf32>
   } else {
     %init = tensor.empty() : tensor<128x128xf32>
-    %mmad = hivm.hir.mmadL1 {already_set_real_mkn}
+    %mmad = hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
         ins(%a, %b, %true, %c128, %c128, %c128 : tensor<128x128xf16>, tensor<128x128xf16>, i1, index, index, index)
         outs(%init : tensor<128x128xf32>) -> tensor<128x128xf32>
     scf.yield %mmad : tensor<128x128xf32>
-  }
+  } {normalized_in_L0C = [0 : i32]}
   hivm.hir.store ins(%res : tensor<128x128xf32>) outs(%arg3 : memref<128x128xf32>) atomic = <add>
   annotation.mark %res keys = ["bind_buffer"] values = [%alloc : memref<128x128xf32, #hivm.address_space<cc>>] : tensor<128x128xf32>
   return
