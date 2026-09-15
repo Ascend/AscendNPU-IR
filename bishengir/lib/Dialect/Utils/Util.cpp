@@ -169,9 +169,9 @@ SmallVector<Value> tracebackImpl(Value memrefVal) {
       result.emplace_back(
           dyn_cast<bufferization::ToTensorOp>(toTensor).getBuffer());
 #endif
-    } else {
-      result.emplace_back(op.getTensor());
     }
+    // Otherwise, leave the result empty so traceback stops at this to_memref
+    // result. Returning its tensor operand violates the memref-only contract.
   }
 
   return result;
