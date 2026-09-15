@@ -203,6 +203,9 @@ def TileDotLoads
            /*default*/"0",
            "Custom tile size for k tiling of dot operations.  0 enables "
            "standard calculation for tile size.">,
+    Option<"superBlockFactor", "super-block-factor", "int",
+           /*default*/"1",
+           "Super block factor as defined in compiler flags">,
     Option<"enableGlobalScratchAllocation", "enable-global-scratch-allocation", "bool",
             /*default*/"false",
             "Whether to allow using global scratch memory for staging.">,
