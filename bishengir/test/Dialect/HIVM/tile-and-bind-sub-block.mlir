@@ -4569,6 +4569,62 @@ module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
 }
 
 // -----
+// Regbase mix AIV: nested scf.while carrying a tensor must not leave
+// extract_slice/insert_slice at the start of the while after region when
+// cancel-out insert slices are tagged during subtiling.
+// CHECK-LABEL: func.func @while_carried_tensor_no_cancel_out_slices
+// CHECK: scf.while
+// CHECK: } do {
+// CHECK: ^bb0(
+// CHECK-NOT: tensor.extract_slice
+// CHECK-NOT: tensor.insert_slice
+// CHECK: memref.alloc
+// CHECK: hivm.hir.vadd ins({{.*}}, %arg{{[0-9]+}} :
+// CHECK: scf.while
+// CHECK: } do {
+// CHECK: ^bb0(
+// CHECK-NOT: tensor.extract_slice
+// CHECK-NOT: tensor.insert_slice
+// CHECK: memref.alloc
+// CHECK: hivm.hir.vadd ins({{.*}}, %arg{{[0-9]+}} :
+// CHECK-NOT: tensor.insert_slice
+
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">, hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @while_carried_tensor_no_cancel_out_slices(%out: memref<16x16xi32>) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+    %c3_i32 = arith.constant 3 : i32
+    %c0_i32 = arith.constant 0 : i32
+    %empty = tensor.empty() : tensor<16x16xi32>
+    %init = hivm.hir.vbrc {hivm.tcore_type = #hivm.tcore_type<VECTOR>} ins(%c0_i32 : i32) outs(%empty : tensor<16x16xi32>) -> tensor<16x16xi32>
+    %trip = arith.constant 4 : i32
+    %w0:2 = scf.while (%t = %init, %c = %trip) : (tensor<16x16xi32>, i32) -> (tensor<16x16xi32>, i32) {
+      %cond = arith.cmpi sgt, %c, %c0_i32 : i32
+      scf.condition(%cond) %t, %c : tensor<16x16xi32>, i32
+    } do {
+    ^bb0(%t: tensor<16x16xi32>, %c: i32):
+      %buf = memref.alloc() : memref<16x16xi32, #hivm.address_space<ub>>
+      annotation.mark %buf {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<1>} : memref<16x16xi32, #hivm.address_space<ub>>
+      %tensor = bufferization.to_tensor %buf restrict writable : memref<16x16xi32, #hivm.address_space<ub>>
+      %acc = hivm.hir.vadd ins(%tensor, %t : tensor<16x16xi32>, tensor<16x16xi32>) outs(%empty : tensor<16x16xi32>) -> tensor<16x16xi32>
+      scf.yield %acc, %c0_i32 : tensor<16x16xi32>, i32
+    }
+    %start = arith.addi %w0#1, %c3_i32 : i32
+    %w1:2 = scf.while (%t = %w0#0, %c = %start) : (tensor<16x16xi32>, i32) -> (tensor<16x16xi32>, i32) {
+      %cond = arith.cmpi sgt, %c, %c0_i32 : i32
+      scf.condition(%cond) %t, %c : tensor<16x16xi32>, i32
+    } do {
+    ^bb0(%t: tensor<16x16xi32>, %c: i32):
+      %buf = memref.alloc() : memref<16x16xi32, #hivm.address_space<ub>>
+      annotation.mark %buf {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<2>} : memref<16x16xi32, #hivm.address_space<ub>>
+      %tensor = bufferization.to_tensor %buf restrict writable : memref<16x16xi32, #hivm.address_space<ub>>
+      %acc = hivm.hir.vadd ins(%tensor, %t : tensor<16x16xi32>, tensor<16x16xi32>) outs(%empty : tensor<16x16xi32>) -> tensor<16x16xi32>
+      scf.yield %acc, %c0_i32 : tensor<16x16xi32>, i32
+    }
+    hivm.hir.store ins(%w1#0 : tensor<16x16xi32>) outs(%out : memref<16x16xi32>)
+    return
+  }
+}
+
+// -----
 // Odd 1:2 sub-block split on 210x112 (105-wide tiles): nested dynamic
 // extract-of-extract must bubble so load reaches workspace block arg.
 // CHECK-LABEL: func.func @triton_dot_inner_tile_mix_aiv
