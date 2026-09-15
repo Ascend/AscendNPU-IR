@@ -942,11 +942,14 @@ struct PushConvertThroughLoadPattern
     // 7. Emit load directly in the target layout — no shared memory.
     // Use the (ptr, mask, other, cache, evict, isVolatile) builder which
     // infers the result tensor type from the pointer element type.
-    Value newLoad = rewriter.create<LoadOp>(
+    auto newLoad = rewriter.create<LoadOp>(
         loc, newPtrs, newMask, newOther, loadOp.getCache(), loadOp.getEvict(),
         loadOp.getIsVolatile());
+    Value newLoadResult = newLoad.getResult();
+    for (NamedAttribute attr : loadOp->getAttrs())
+      newLoad->setAttr(attr.getName(), attr.getValue());
 
-    rewriter.replaceOp(cvtOp, newLoad);
+    rewriter.replaceOp(cvtOp, newLoadResult);
     // The original load becomes dead and will be cleaned up by DCE.
 
     LLVM_DEBUG(llvm::dbgs()
