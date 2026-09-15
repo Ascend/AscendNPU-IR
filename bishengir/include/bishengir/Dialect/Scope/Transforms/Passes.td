@@ -27,6 +27,8 @@ def TransformOpForSIMT : Pass<"transform-op-for-simt", "mlir::ModuleOp"> {
     Threads) execution before outlining scope regions.
   }];
   let constructor = "mlir::scope::createTransformOpForSIMTPass()";
+  let dependentDialects = ["mlir::bufferization::BufferizationDialect",
+                           "mlir::tensor::TensorDialect"];
 }
 
 def OutlineScope : Pass<"outline-scope", "mlir::ModuleOp"> {
