@@ -1967,12 +1967,12 @@ __aiv__ __attribute__((always_inline)) T set_pad_value_null() {
 
 #if defined(__DAV_C310__)
 template <typename T, int DIM>
-__simd_vf__ void
-apply_padding_b64_vf(int64_t repeat, memref_t<__ubuf__ T, DIM> *dst,
-                     __ubuf__ T *block_ptr, int shift_num, int num_per_block,
-                     int64_t align_pad, int64_t pad_value) {
+__simd_vf__ void apply_padding_b64_vf(int64_t repeat, int64_t stride0,
+                                      __ubuf__ T *block_ptr, int shift_num,
+                                      int num_per_block, int64_t align_pad,
+                                      int64_t pad_value) {
   for (uint16_t i = 0; i < static_cast<uint16_t>(repeat); ++i) {
-    __ubuf__ T *till_block_ptr = i * dst->strides[0] + block_ptr + shift_num;
+    __ubuf__ T *till_block_ptr = i * stride0 + block_ptr + shift_num;
     // make mask
     uint32_t vl_all = num_per_block;
     uint32_t vl_val = num_per_block - align_pad;
@@ -2007,8 +2007,8 @@ apply_padding_b64(memref_t<__ubuf__ T, DIM> *dst, int64_t offset,
     return;
   }
   __ubuf__ T *block_ptr = dst->aligned + dst->offset;
-  apply_padding_b64_vf<T, DIM>(repeat, dst, block_ptr, shift_num, num_per_block,
-                               align_pad, pad_value);
+  apply_padding_b64_vf<T, DIM>(repeat, dst->strides[0], block_ptr, shift_num,
+                               num_per_block, align_pad, pad_value);
 }
 #else
 ///========================================

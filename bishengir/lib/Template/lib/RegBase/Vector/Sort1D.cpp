@@ -42,7 +42,7 @@ prepare_src_value(memref_t<__ubuf__ T, 1> *src, memref_t<__ubuf__ T, 1> *dst,
   INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
   for (int64_t i = 0; i < fill_num; ++i) {
-  *(src_ptr + real_num + i) = static_cast<T>(FLOAT_NEG_INF);
+    *(src_ptr + real_num + i) = static_cast<T>(FLOAT_NEG_INF);
   }
   INTRINSIC(set_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
@@ -344,13 +344,11 @@ merge_sort(memref_t<__ubuf__ T, 1> *src, memref_t<__ubuf__ T, 1> *dst,
 }
 
 template <typename T>
-__simd_vf__ void move_out_result_vf(bool descending, bool need_index,
-                                    memref_t<__ubuf__ int32_t, 1> *dst_index,
-                                    __ubuf__ int32_t *src_int32_ptr,
-                                    __ubuf__ int32_t *dst_index_ptr,
-                                    memref_t<__ubuf__ T, 1> *dst_value,
-                                    __ubuf__ T *src_ptr,
-                                    __ubuf__ T *dst_value_ptr) {
+__simd_vf__ void
+move_out_result_vf(bool descending, bool need_index, uint16_t dst_index_count,
+                   __ubuf__ int32_t *src_int32_ptr,
+                   __ubuf__ int32_t *dst_index_ptr, uint16_t dst_value_count,
+                   __ubuf__ T *src_ptr, __ubuf__ T *dst_value_ptr) {
   vector_bool full_mask;
   CREATE_MASK_BY_PAT(full_mask, T, PAT_ALL);
 
@@ -360,13 +358,13 @@ __simd_vf__ void move_out_result_vf(bool descending, bool need_index,
   vector_u32 indices;
   if (descending) {
     if (need_index) {
-      for (uint16_t i = 0; i < (uint16_t)dst_index->sizes[0]; ++i) {
+      for (uint16_t i = 0; i < dst_index_count; ++i) {
         vbr(indices, i * 2 + 1);
         vgather2_bc(index_result, src_int32_ptr, indices, full_mask);
         vsts(index_result, dst_index_ptr, i, ONEPT_B32, full_mask);
       }
     }
-    for (uint16_t i = 0; i < (uint16_t)dst_value->sizes[0]; ++i) {
+    for (uint16_t i = 0; i < dst_value_count; ++i) {
       if constexpr (std::is_same_v<T, int16_t> || std::is_same_v<T, half>) {
         vbr(indices, i * 4);
         vgather2_bc(result, src_ptr, indices, full_mask);
@@ -378,7 +376,7 @@ __simd_vf__ void move_out_result_vf(bool descending, bool need_index,
       }
     }
   } else {
-    uint16_t end = (uint16_t)dst_value->sizes[0];
+    uint16_t end = dst_value_count;
     if (need_index) {
       for (uint16_t i = 0; i < end; ++i) {
         vbr(indices, (end - i - 1) * 2 + 1);
@@ -420,8 +418,9 @@ move_out_result(memref_t<__ubuf__ T, 1> *src,
   INTRINSIC_NO_ARGS(set_mask_count);
   INTRINSIC(set_vector_mask, 0, real_num);
 
-  move_out_result_vf<T>(descending, need_index, dst_index, src_int32_ptr,
-                        dst_index_ptr, dst_value, src_ptr, dst_value_ptr);
+  move_out_result_vf<T>(descending, need_index, dst_index->sizes[0],
+                        src_int32_ptr, dst_index_ptr, dst_value->sizes[0],
+                        src_ptr, dst_value_ptr);
 }
 
 template <typename T>
@@ -657,13 +656,14 @@ lower_sort_operation_for_i32(memref_t<__ubuf__ int32_t, 1> *src,
 ///     Extract low32 bits: [0xAABBCCDD, 0x11223344, 0xFFFFFFFF]
 ///     Sort low32 bits (ascending): [0x11223344, 0xAABBCCDD, 0xFFFFFFFF]
 ///     Get indices from sort: [1, 0, 2]
-///     Intermediate result: [0x87654321'11223344, 0x12345678'AABBCCDD, 0x00000000'FFFFFFFF]
+///     Intermediate result: [0x87654321'11223344, 0x12345678'AABBCCDD,
+///     0x00000000'FFFFFFFF]
 ///
 ///   Step 2 - Sort by higher 32 bits:
-///     Extract high32 bits from intermediate: [0x87654321, 0x12345678, 0x00000000]
-///     Sort high32 bits (ascending): [0x00000000, 0x12345678, 0x87654321]
-///     Get indices from sort: [2, 1, 0]
-///     Final sorted array: [0x00000000'FFFFFFFF, 0x12345678'AABBCCDD, 0x87654321'11223344]
+///     Extract high32 bits from intermediate: [0x87654321, 0x12345678,
+///     0x00000000] Sort high32 bits (ascending): [0x00000000, 0x12345678,
+///     0x87654321] Get indices from sort: [2, 1, 0] Final sorted array:
+///     [0x00000000'FFFFFFFF, 0x12345678'AABBCCDD, 0x87654321'11223344]
 ///
 /// \param descending: true for descending order, false for ascending
 /// \param need_index: true if indices are needed, false otherwise
