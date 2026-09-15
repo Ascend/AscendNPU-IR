@@ -259,7 +259,7 @@ __simd_vf__ void dhistv2Histogram1DU8_vf(__ubuf__ uint8_t *srcPtr,
 }
 
 // u8 fast path (unmasked): full chunks + one predicate-masked tail chunk.
-__simd_callee__ __aiv__ __attribute__((always_inline)) static void
+__aiv__ __attribute__((always_inline)) static void
 dhistv2Histogram1DU8(memref_t<__ubuf__ uint8_t, 1> *src,
                      memref_t<__ubuf__ int32_t, 1> *dst, int64_t num_bins) {
   __ubuf__ uint8_t *srcPtr = src->aligned + src->offset;
@@ -283,7 +283,7 @@ dhistv2Histogram1DMaskedU8_vf(__ubuf__ uint8_t *srcPtr, int64_t fullChunks,
 }
 
 // u8 fast path (masked): the packed mask bitstream gates each chunk.
-__simd_callee__ __aiv__ __attribute__((always_inline)) static void
+__aiv__ __attribute__((always_inline)) static void
 dhistv2Histogram1DMaskedU8(memref_t<__ubuf__ uint8_t, 1> *src,
                            memref_t<__ubuf__ int32_t, 1> *dst,
                            memref_t<__ubuf__ bool, 1> *mask, int64_t num_bins) {
@@ -656,7 +656,7 @@ __simd_vf__ void dhistv2Histogram1DU16_vf(int32_t sentinel,
 
 // u16 fast path (unmasked): narrow-bins clamp when num_bins < 256, otherwise
 // segmented.
-__simd_callee__ __aiv__ __attribute__((always_inline)) static void
+__aiv__ __attribute__((always_inline)) static void
 dhistv2Histogram1DU16(memref_t<__ubuf__ uint16_t, 1> *src,
                       memref_t<__ubuf__ int32_t, 1> *dst, int64_t num_bins) {
   __ubuf__ uint16_t *srcPtr = src->aligned + src->offset;
@@ -696,11 +696,9 @@ dhistv2Histogram1DMaskedU16_vf(int32_t sentinel, __ubuf__ uint16_t *srcPtr,
 
 // u16 fast path (masked): narrow-bins clamp when num_bins < 256, otherwise
 // segmented.
-__simd_callee__ __aiv__ __attribute__((always_inline)) static void
-dhistv2Histogram1DMaskedU16(memref_t<__ubuf__ uint16_t, 1> *src,
-                            memref_t<__ubuf__ int32_t, 1> *dst,
-                            memref_t<__ubuf__ bool, 1> *mask,
-                            int64_t num_bins) {
+__aiv__ __attribute__((always_inline)) static void dhistv2Histogram1DMaskedU16(
+    memref_t<__ubuf__ uint16_t, 1> *src, memref_t<__ubuf__ int32_t, 1> *dst,
+    memref_t<__ubuf__ bool, 1> *mask, int64_t num_bins) {
   __ubuf__ uint16_t *srcPtr = src->aligned + src->offset;
   __ubuf__ int32_t *binsPtr = dst->aligned + dst->offset;
   __ubuf__ uint8_t *maskBytes =
@@ -1022,7 +1020,7 @@ __simd_vf__ void dhistv2Histogram1DU32_vf(int32_t sentinel,
 
 // u32 fast path (unmasked): narrow-bins clamp when num_bins < 256, otherwise
 // segmented.
-__simd_callee__ __aiv__ __attribute__((always_inline)) static void
+__aiv__ __attribute__((always_inline)) static void
 dhistv2Histogram1DU32(memref_t<__ubuf__ uint32_t, 1> *src,
                       memref_t<__ubuf__ int32_t, 1> *dst, int64_t num_bins) {
   __ubuf__ uint32_t *srcPtr = src->aligned + src->offset;
@@ -1059,11 +1057,9 @@ dhistv2Histogram1DMaskedU32_vf(int32_t sentinel, __ubuf__ uint32_t *srcPtr,
 
 // u32 fast path (masked): narrow-bins clamp when num_bins < 256, otherwise
 // segmented.
-__simd_callee__ __aiv__ __attribute__((always_inline)) static void
-dhistv2Histogram1DMaskedU32(memref_t<__ubuf__ uint32_t, 1> *src,
-                            memref_t<__ubuf__ int32_t, 1> *dst,
-                            memref_t<__ubuf__ bool, 1> *mask,
-                            int64_t num_bins) {
+__aiv__ __attribute__((always_inline)) static void dhistv2Histogram1DMaskedU32(
+    memref_t<__ubuf__ uint32_t, 1> *src, memref_t<__ubuf__ int32_t, 1> *dst,
+    memref_t<__ubuf__ bool, 1> *mask, int64_t num_bins) {
   __ubuf__ uint32_t *srcPtr = src->aligned + src->offset;
   __ubuf__ int32_t *binsPtr = dst->aligned + dst->offset;
   __ubuf__ uint8_t *maskBytes =
