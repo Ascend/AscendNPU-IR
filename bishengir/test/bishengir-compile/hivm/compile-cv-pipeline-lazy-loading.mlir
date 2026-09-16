@@ -1,5 +1,5 @@
 // The CPU-runner hook stops the RegBase flow after CV pipelining, before
-// hivmc. This device-only test has no host entry, so the hook's crash is
+// hivmc-a5. This device-only test has no host entry, so the hook's crash is
 // expected; FileCheck validates the IR emitted before that point.
 // RUN: not --crash bishengir-compile %s \
 // RUN:   --target=Ascend950PR_9579 \

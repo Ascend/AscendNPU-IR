@@ -152,7 +152,7 @@ skipOptions(const std::vector<std::string> &options,
 }
 
 static StringRef getHIVMCName() {
-  const char *kBiShengIRHIVMBinaryName = "hivmc";
+  const char *kBiShengIRHIVMBinaryName = "hivmc-a5";
   return kBiShengIRHIVMBinaryName;
 }
 
@@ -224,16 +224,17 @@ runExternalHIVMC(ModuleOp &module,
                                      "vf-fusion-mode",
                                      "disable-vf-reachable-check",
                                      "enable-sink-dpx-load",
-                                     // a5 does not recognize
+                                     // hivmc-a5 does not recognize
                                      // --enable-lir-compile (it is an A3
                                      // bishengir-compile-only flag). Drop it
-                                     // before forwarding to hivmc in the
+                                     // before forwarding to hivmc-a5 in the
                                      // RegBase path.
                                      "enable-lir-compile"};
   auto skippedArgs = skipOptions(arguments, blacklist);
 
   SmallVector<StringRef> argumentsRef(skippedArgs.begin(), skippedArgs.end());
-  if (failed(executeBinary(getHIVMCName(), argumentsRef))) {
+  if (failed(execute(getHIVMCName(), getBiShengInstallPath(),
+                     argumentsRef))) {
     return failure();
   }
 

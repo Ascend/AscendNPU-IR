@@ -63,7 +63,6 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   CVPipelining.cpp
   EnableHIVMCCompatiblePrint.cpp
   EnableMultiBuffer.cpp
-  FlattenModule.cpp
   FlattenOps.cpp
   HIVMAggregatedDecomposeOp.cpp
   HIVMBubbleUpExtractSlice.cpp
@@ -101,7 +100,6 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   InsertL12UBForDebug.cpp
   InsertWorkSpaceForMixCV.cpp
   LegalizeBoolForSimtVF.cpp
-  LegalizeForLLVMExport.cpp
   LiftLowestStride.cpp
   LiftZeroRank.cpp
   LowerCreateSyncBlockLock.cpp

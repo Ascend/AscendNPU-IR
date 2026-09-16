@@ -209,7 +209,7 @@ void BiShengIRCompileMainConfig::collectHIVMCArgs() {
   for (auto &[optStr, opt] : opts) {
     // Skip options that were not explicitly set by the user, matching A5
     // behavior. Without this check, all registered options (with their default
-    // values) are forwarded to hivmc, producing a diverging argument list.
+    // values) are forwarded to hivmc-a5, producing a diverging argument list.
     if (opt->getNumOccurrences() == 0)
       continue;
 

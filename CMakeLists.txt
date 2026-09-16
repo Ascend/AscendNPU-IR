@@ -59,10 +59,6 @@ option(BISHENGIR_BUILD_TEMPLATE
 option(BISHENGIR_BUILD_STANDALONE_IR_ONLY
   "Experimental feature. If set, only build IR definitions." OFF)
 
-# The BISHENGIR_BUILD_HIVMC option controls whether the hivmc tool is built.
-option(BISHENGIR_BUILD_HIVMC
-  "Build the hivmc tool." ON)
-
 # The BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES option is used to enable A5 features that are currently unpublished.
 option(BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
   "Experimental feature. If set, enable A5 unpublished features." OFF)
@@ -119,7 +115,6 @@ include(AddMLIR)
 include(AddMLIRPython)
 include(AddBiShengIR)
 include(BiShengIRVersion)
-include(HIVMCVersion)
 
 configure_file(
   ${BISHENGIR_MAIN_INCLUDE_DIR}/bishengir/Config/bishengir-config.h.cmake
@@ -221,16 +216,6 @@ string(TIMESTAMP BISHENGIR_BUILD_DATE "%Y-%m-%d")
 message(STATUS "BISHENGIR version: ${BISHENGIR_VERSION}")
 message(STATUS "BISHENGIR build date: ${BISHENGIR_BUILD_DATE}")
 
-# If HIVMC_VERSION is specified and has correct format, use it to overwrite HIVMC_VERSION_*
-if(HIVMC_VERSION MATCHES "^([0-9]+)\\.([0-9]+)\\.([0-9]+)([a-zA-Z0-9-]*)$")
-  set(HIVMC_VERSION_MAJOR  ${CMAKE_MATCH_1})
-  set(HIVMC_VERSION_MINOR  ${CMAKE_MATCH_2})
-  set(HIVMC_VERSION_PATCH  ${CMAKE_MATCH_3})
-  set(HIVMC_VERSION_SUFFIX ${CMAKE_MATCH_4})
-endif()
-set(HIVMC_VERSION "${HIVMC_VERSION_MAJOR}.${HIVMC_VERSION_MINOR}.${HIVMC_VERSION_PATCH}${HIVMC_VERSION_SUFFIX}")
-message(STATUS "HIVMC version: ${HIVMC_VERSION}")
-
 # Configure the Version.inc file.
 configure_file(
   ${CMAKE_CURRENT_SOURCE_DIR}/bishengir/include/bishengir/Version/Version.inc.in
@@ -323,21 +308,8 @@ if(NOT LLVM_INSTALL_TOOLCHAIN_ONLY)
   endif()
 endif()
 
-set_property(GLOBAL PROPERTY BISHENGIR_OPEN_SOURCE_LIBS
-                             "@BISHENGIR_OPEN_SOURCE_LIBS@")
 set_property(GLOBAL PROPERTY BISHENGIR_LIBS "@BISHENGIR_LIBS@")
-set_property(GLOBAL PROPERTY BISHENGIR_DIALECT_OPEN_SOURCE_LIBS
-                             "@BISHENGIR_DIALECT_OPEN_SOURCE_LIBS@")
 set_property(GLOBAL PROPERTY BISHENGIR_DIALECT_LIBS "@BISHENGIR_DIALECT_LIBS@")
-set_property(GLOBAL PROPERTY BISHENGIR_CONVERSION_OPEN_SOURCE_LIBS
-                             "@BISHENGIR_CONVERSION_OPEN_SOURCE_LIBS@")
-set_property(GLOBAL PROPERTY BISHENGIR_CONVERSION_LIBS
-                             "@BISHENGIR_CONVERSION_LIBS@")
-set_property(GLOBAL PROPERTY BISHENGIR_TRANSLATION_OPEN_SOURCE_LIBS
-                             "@BISHENGIR_TRANSLATION_OPEN_SOURCE_LIBS@")
-set_property(GLOBAL PROPERTY BISHENGIR_TRANSLATION_LIBS
-                             "@BISHENGIR_TRANSLATION_LIBS@")
-set_property(GLOBAL PROPERTY BISHENGIR_EXTENSION_OPEN_SOURCE_LIBS
-                             "@BISHENGIR_EXTENSION_OPEN_SOURCE_LIBS@")
-set_property(GLOBAL PROPERTY BISHENGIR_EXTENSION_LIBS
-                             "@BISHENGIR_EXTENSION_LIBS@")
+set_property(GLOBAL PROPERTY BISHENGIR_CONVERSION_LIBS "@BISHENGIR_CONVERSION_LIBS@")
+set_property(GLOBAL PROPERTY BISHENGIR_TRANSLATION_LIBS "@BISHENGIR_TRANSLATION_LIBS@")
+set_property(GLOBAL PROPERTY BISHENGIR_EXTENSION_LIBS "@BISHENGIR_EXTENSION_LIBS@")

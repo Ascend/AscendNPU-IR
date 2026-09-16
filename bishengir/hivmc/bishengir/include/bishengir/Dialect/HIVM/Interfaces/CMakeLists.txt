@@ -1,0 +1,7 @@
+add_mlir_interface(ExtraBufferOpInterface)
+add_mlir_interface(FlattenInterface)
+add_mlir_interface(ImplByScalarOpInterface)
+add_mlir_interface(LibraryFunctionOpInterface)
+add_mlir_interface(OpLayoutInterface)
+add_mlir_interface(OpPipeInterface)
+add_mlir_interface(VectorizableOpInterface)

@@ -21,7 +21,6 @@ set(BISHENGIR_TEST_DEPENDS
   FileCheck count not
   bishengir-compile
   bishengir-opt
-  bishengir-translate
   bishengir-options-tblgen
   bishengir-target-spec-tblgen
   bishengir-capi-ir-test
@@ -29,12 +28,6 @@ set(BISHENGIR_TEST_DEPENDS
   # These really shouldnt be here, to remove from the testcases in the future
   opt llc llvm-dis
 )
-
-# Tests that invoke hivmc (REQUIRES: hivmc) need the hivmc tool built before
-# lit runs, otherwise the hivmc binary resolves to an unrelated external one.
-if(BISHENGIR_BUILD_HIVMC)
-  list(APPEND BISHENGIR_TEST_DEPENDS hivmc)
-endif()
 
 # Tests using mlir-cpu-runner (REQUIRES: execution-engine) need the runner
 # and its runtime support libraries built before lit runs.

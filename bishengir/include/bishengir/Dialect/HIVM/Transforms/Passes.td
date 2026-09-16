@@ -1563,12 +1563,4 @@ def TensorCopyInsertion : Pass<"hivm-tensor-copy-insertion", "ModuleOp"> {
   ];
 }
 
-def FlattenModule : Pass<"hivm-flatten-module", "ModuleOp"> {
-  let summary = "Flatten nested sub modules in one top mlir module";
-  let constructor = "mlir::hivm::createFlattenModulePass()";
-  let dependentDialects = ["hivm::HIVMDialect",
-                           "hivm_regbaseintrins::HIVMRegbaseIntrinsDialect",
-                           "LLVM::LLVMDialect"];
-}
-
 #endif // BISHENGIR_DIALECT_HIVM_TRANSFORMS_PASSES_TD

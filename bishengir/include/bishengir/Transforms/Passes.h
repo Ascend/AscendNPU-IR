@@ -75,10 +75,6 @@ std::unique_ptr<mlir::Pass> createEliminateSingleIterationScfForPass();
 std::unique_ptr<mlir::Pass>
 createDebugMemoryPass(const DebugMemoryOptions &options = {});
 
-/// Create a pass to debug LLVM dialect.
-std::unique_ptr<mlir::Pass>
-createDebugLLVMPass(const DebugLLVMOptions &options = {});
-
 //===----------------------------------------------------------------------===//
 // Registration
 //===----------------------------------------------------------------------===//

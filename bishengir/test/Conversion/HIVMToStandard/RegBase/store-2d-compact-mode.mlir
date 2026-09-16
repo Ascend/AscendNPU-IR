@@ -1,6 +1,11 @@
 // RUN: bishengir-opt %s \
 // RUN:   -hacc-append-device-spec=target=Ascend950PR_9589 \
 // RUN:   -convert-hivm-to-std | FileCheck %s
+// RUN: %if hivmc-a5 %{ bishengir-compile %s \
+// RUN:   --target=Ascend950PR_9589 \
+// RUN:   --enable-hfusion-compile=false \
+// RUN:   --enable-hivm-compile=true \
+// RUN:   -o %t.o %}
 
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
   func.func @store_2d_compact_mode(

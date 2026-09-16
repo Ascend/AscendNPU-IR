@@ -99,13 +99,6 @@ void mlir::hivm::HIVMDialect::initialize() {
 #define GET_OP_LIST
 #include "bishengir/Dialect/HIVM/IR/HIVMDMAOps.cpp.inc"
       >();
-#if !defined(__LLVM_MAJOR_VERSION_20_COMPATIBLE__) && \
-    !defined(__LLVM_MAJOR_VERSION_22_COMPATIBLE__)
-  addOperations<
-#define GET_OP_LIST
-#include "bishengir/Dialect/HIVM/IR/HIVMIntrinOps.cpp.inc"
-      >();
-#endif
   addOperations<
 #define GET_OP_LIST
 #include "bishengir/Dialect/HIVM/IR/HIVMVectorOps.cpp.inc"
