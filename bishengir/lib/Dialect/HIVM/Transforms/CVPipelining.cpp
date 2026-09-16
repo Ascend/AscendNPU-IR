@@ -1040,14 +1040,14 @@ LogicalResult CVPipelineImpl::markOutputs() {
         continue;
       // With lazy loading (kernel-level switch, per-tensor compile hint,
       // or auto cross-core legality), skip to_tensor results backed by a
-      // load-like writer (LoadOp or ND2NZOp) for local cross-stage
-      // communication since the writer is cloned into each consuming work item
-      // directly and therefore does not need a multi-buffered cross-stage
-      // tensor.
+      // load-like writer (LoadOp or ND2NZOp) since the writer is cloned into
+      // each consuming work item directly and therefore does not need a
+      // multi-buffered cross-stage tensor.
       FailureOr<bool> shouldLazy = wlBuilder.shouldLazyLoadFor(op);
       if (failed(shouldLazy))
         return failure();
-      bool isLazy = *shouldLazy;
+      if (*shouldLazy)
+        continue;
       for (Value result : op->getResults()) {
         if (yieldedVals.contains(result)) {
           unsigned opNumber = static_cast<unsigned>(std::distance(
@@ -1055,8 +1055,6 @@ LogicalResult CVPipelineImpl::markOutputs() {
           item->yieldedOutputs.push_back(std::make_pair(result, opNumber));
           continue;
         }
-        if (isLazy)
-          continue;
         if (!isa<TensorType>(result.getType()))
           continue;
 
@@ -1183,6 +1181,24 @@ LogicalResult CVPipelineImpl::checkWorkItemDependencies() {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Reject cross-core loop-carried dependencies.
+  //
+  // CV pipelining splits the loop body into a VECTOR stage and a CUBE stage,
+  // each of which runs all of its iterations in its own loop before the other
+  // stage's loop runs. A tensor carried across the iteration boundary (a loop
+  // iter_arg) that is *produced* on one core but *consumed* on the other can
+  // therefore never be honored: the consuming stage would read the loop-entry
+  // value instead of the previous iteration's result computed by the other
+  // core. The split happens silently, so the existing operand-resolvability
+  // walk above does not catch it — an iter_arg is a BlockArgument and so is
+  // always deemed "resolvable" there. Detect it here, before any IR mutation,
+  // and leave the loop un-pipelined.
+  //
+  // Same-core carries (e.g. a CUBE matmul accumulator) are fine: that stage's
+  // own loop runs sequentially. Non-tensor carries (loop-index / address
+  // arithmetic) are replicated onto every stage and never form a cross-core
+  // data hazard, so they are ignored.
   DenseMap<unsigned, const WorkItem *> producerByIterArg;
   for (const auto &item : worklist) {
     for (auto &yielded : item->yieldedOutputs)
@@ -1215,7 +1231,7 @@ LogicalResult CVPipelineImpl::checkWorkItemDependencies() {
       if (it != opToWorkItemMap.end()) {
         for (const WorkItem *wi : it->second)
           uses.push_back({wi, top});
-        continue;
+        continue; // stop at the consuming work item; don't walk past it
       }
       for (Operation *next : top->getUsers())
         stack.push_back(next);
@@ -1228,30 +1244,27 @@ LogicalResult CVPipelineImpl::checkWorkItemDependencies() {
   for (unsigned pos = 0, e = iterArgs.size(); pos < e; ++pos) {
     BlockArgument iterArg = iterArgs[pos];
     if (!isa<TensorType>(iterArg.getType()))
-      continue;
+      continue; // only tensor data can form a cross-core hazard
     auto prodIt = producerByIterArg.find(pos);
     if (prodIt == producerByIterArg.end())
-      continue;
+      continue; // not produced by a work item (e.g. forwarded unchanged)
     const WorkItem *producerItem = prodIt->second;
 
     for (auto [consumerItem, consumerOp] : consumerUses(iterArg)) {
       if (consumerItem != producerItem) {
-        bool hasAnyIndependentItem = llvm::any_of(
-            worklist, [](const auto &item) { return !item->hasLoopCarriedDep; });
-        if (!hasAnyIndependentItem || pipelineMode == CVPipelineMode::Unroll) {
-          InFlightDiagnostic diag =
-              pipelineLoop->emitWarning()
-              << "[cv-pipelining] cannot pipeline loop: loop-carried tensor "
-                 "iter_arg #"
-              << pos << " is produced by one work item but consumed by another "
-                 "work item across the iteration boundary; skipping pipelining";
-          if (Operation *producerOp = yieldedValues[pos].getDefiningOp())
-            diag.attachNote(producerOp->getLoc())
-                << "loop-carried value produced here";
-          diag.attachNote(consumerOp->getLoc())
-              << "and consumed here by another work item in the next iteration";
-          return diag;
-        }
+        InFlightDiagnostic diag =
+            pipelineLoop->emitWarning()
+            << "[cv-pipelining] cannot pipeline loop: loop-carried tensor "
+               "iter_arg #"
+            << pos
+            << " is produced by one work item but consumed by another "
+               "work item across the iteration boundary; skipping pipelining";
+        if (Operation *producerOp = yieldedValues[pos].getDefiningOp())
+          diag.attachNote(producerOp->getLoc())
+              << "loop-carried value produced here";
+        diag.attachNote(consumerOp->getLoc())
+            << "and consumed here by another work item in the next iteration";
+        return diag;
       }
     }
   }
@@ -2055,16 +2068,7 @@ LogicalResult CVPipelineImpl::createNewLoopsForPreloadWithScopes() {
     if (isa<SetAtomicOp>(op))
       toErase.insert(&op);
 
-  bool hasAnyLoopCarriedItem = llvm::any_of(
-      worklist, [](const auto &item) { return item->hasLoopCarriedDep; });
-  unsigned numIndependent = llvm::count_if(
-      worklist, [](const auto &item) { return !item->hasLoopCarriedDep; });
-  int32_t preloadNum = hasAnyLoopCarriedItem
-                           ? static_cast<int32_t>(numIndependent)
-                           : static_cast<int32_t>(worklist.size()) - 1;
-  int32_t maxPreloadNum = hasAnyLoopCarriedItem
-                              ? static_cast<int32_t>(numIndependent) + 1
-                              : static_cast<int32_t>(worklist.size());
+  int32_t preloadNum = static_cast<int32_t>(worklist.size()) - 1;
   for (auto &item : worklist) {
     // Reset insertion point after we're done with this item
     OpBuilder::InsertionGuard g(builder);
@@ -2092,18 +2096,15 @@ LogicalResult CVPipelineImpl::createNewLoopsForPreloadWithScopes() {
     newScopeOp.setNoInline(true);
     newScopeOp->setAttr(kPipelinedLoopCoreTypeAttrName,
                         TCoreTypeAttr::get(builder.getContext(), item->core));
-    int32_t itemPreloadNum = item->hasLoopCarriedDep ? 0 : preloadNum;
     newScopeOp->setAttr(
         hivm::PreloadNumAttr::name,
         IntegerAttr::get(IntegerType::get(newScopeOp->getContext(), 32),
-                         itemPreloadNum));
+                         preloadNum));
     // TODO: add a new pass to analyze max preload num
     newScopeOp->setAttr(
         hivm::MaxPreloadNumAttr::name,
         IntegerAttr::get(IntegerType::get(newScopeOp->getContext(), 32),
-                         maxPreloadNum));
-    if (item->hasLoopCarriedDep)
-      newScopeOp->setAttr("hivm.has_loop_carried_dep", builder.getUnitAttr());
+                         worklist.size()));
 
     Region &region = newScopeOp.getRegion();
     Block *bodyBlock = builder.createBlock(&region);
@@ -2228,8 +2229,7 @@ LogicalResult CVPipelineImpl::createNewLoopsForPreloadWithScopes() {
     }
 
     item->scopeOp = newScopeOp;
-    if (!item->hasLoopCarriedDep)
-      preloadNum--;
+    preloadNum--;
   }
 
   if (trailingAtomicEffect) {
@@ -2321,7 +2321,7 @@ LogicalResult CVPipelineImpl::markScopesForPreload() {
     eraseOp = usrOp;
   }
   LLVM_DEBUG(dbgs() << "\n\nAfter everything:\n";
-             pipelineLoop->getParentOfType<func::FuncOp>()->dump());
+             newLoop->getParentOfType<func::FuncOp>()->dump());
   pipelineLoop->setAttr(hivm::CVPipelinedLoopAttr::name, builder.getUnitAttr());
   checkpoint->erase();
   return success();

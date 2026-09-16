@@ -56,9 +56,6 @@ struct WorkItem {
   /// work item that absorbs flexibly-typed ops.
   TCoreType core;
 
-  /// Indicates whether operations in this work item depend on loop-carried values.
-  bool hasLoopCarriedDep = false;
-
   // ===========================================================================
   // CV-pipelining codegen state (loop mode only). Block-mode consumers leave
   // these default-constructed.

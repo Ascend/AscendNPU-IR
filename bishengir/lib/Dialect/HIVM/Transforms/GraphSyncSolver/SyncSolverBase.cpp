@@ -1209,7 +1209,7 @@ SyncSolverBase::checkCVPreloadingEventIdInfo(Occurrence *occ1, Occurrence *occ2,
                                  : 1;
 
     if (options.isCrossCoreMode()) {
-      assert(preloadDiff % 2 == 1 || preloadDiff == 0);
+      assert(preloadDiff % 2 == 1);
       if (multibufferNum >= eventIdNum) {
         EventIdInfo eventIdInfo(multibufferNum);
         eventIdInfo.cvPreloadingInfo =
@@ -1225,8 +1225,7 @@ SyncSolverBase::checkCVPreloadingEventIdInfo(Occurrence *occ1, Occurrence *occ2,
             CVPreloadingInfo(parentCVPipeliningLoop1, parentScope1,
                              parentScope2, preloadOffset1, preloadOffset2);
         return eventIdInfo;
-      }
-      if (multibufferNum == 1) {
+      } else if (multibufferNum == 1) {
         // instead of inserting outside of the scopes, use the unlikely trick
         EventIdInfo eventIdInfo(1);
         eventIdInfo.cvPreloadingInfo =
