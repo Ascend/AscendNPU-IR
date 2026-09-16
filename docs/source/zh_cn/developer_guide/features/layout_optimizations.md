@@ -1,6 +1,10 @@
 # 规约分解优化
 
-本文档介绍 Triton 层 `DecomposeReduction` Pass。该 Pass 将大规模 `tt.ReduceOp` 分解为多个小规模规约操作，并在其间插入 `ttg.ConvertLayout` 布局转换，以利用 warp 同步规约机制，避免全局内存原子操作，提升规约性能。
+本文档介绍 Triton SIMT 模式的 `DecomposeReduction` Pass。该 Pass 将大规模 `tt.ReduceOp` 分解为多个小规模规约操作，并在其间插入 `ttg.ConvertLayout` 布局转换，以利用 warp 同步规约机制，避免全局内存原子操作，提升规约性能。
+
+**适用产品**
+
+- Ascend 950PR&950DT系列产品
 
 ## 背景
 

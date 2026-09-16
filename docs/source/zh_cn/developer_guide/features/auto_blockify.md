@@ -1,5 +1,11 @@
 # 自动块化
 
+**适用产品**
+
+- Ascend 950PR&950DT系列产品
+- Atlas A3 系列产品
+- Atlas A2 系列产品
+
 ## 背景
 
 Auto Blockify Pass通过高效地将逻辑块映射到硬件物理块，是昇腾兼容算子执行链路的核心优化手段。当前架构下调度效率直接决定算子性能，逻辑块与物理块一对一映射可消除调度开销，实现性能提升。
@@ -187,6 +193,10 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
 - **使用场景**​：若逻辑块数量非常小，则此Pass不会带来任何优势。
 
 ## SIMT 模式
+
+> **说明**
+>
+> 本节内容仅适用于Ascend 950PR&950DT系列产品。
 
 SIMT模式下的自动块化与SIMD模式的功能与用法基本相同，本文主要介绍SIMT路径上特有的功能。
 
