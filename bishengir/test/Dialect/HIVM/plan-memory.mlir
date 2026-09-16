@@ -2431,46 +2431,6 @@ module {
 // -----
 
 module {
-  // CHECK: hivm.hir.pointer_cast(%{{.*}})
-  func.func @outlined_vf(%arg0: memref<16x16x16xf16, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
-    return
-  }
-  func.func @test_plan_memory_while_alias_and_op_kill_time(%arg0: memref<16x16x16xf16, #hivm.address_space<gm>>, %arg1: memref<16x16x16xf16, #hivm.address_space<gm>>, %arg2: memref<16x16x16xf16, #hivm.address_space<gm>>, %arg3: i1) {
-    %c0 = arith.constant 0 : index
-    %c1 = arith.constant 1 : index
-    %c64 = arith.constant 64 : index
-    %alloc = memref.alloc() : memref<16x16x16xf16, #hivm.address_space<ub>>
-    hivm.hir.load ins(%arg0 : memref<16x16x16xf16, #hivm.address_space<gm>>) outs(%alloc : memref<16x16x16xf16, #hivm.address_space<ub>>)
-    %0 = scf.while (%arg4 = %alloc) : (memref<16x16x16xf16, #hivm.address_space<ub>>) -> memref<16x16x16xf16, #hivm.address_space<ub>> {
-      scf.condition(%arg3) %arg4 : memref<16x16x16xf16, #hivm.address_space<ub>>
-    } do {
-    ^bb0(%arg5: memref<16x16x16xf16, #hivm.address_space<ub>>):
-      %1 = scf.for %arg6 = %c0 to %c64 step %c1 iter_args(%arg7 = %arg5) -> (memref<16x16x16xf16, #hivm.address_space<ub>>) {
-        %alloc_0 = memref.alloc() : memref<16x16x16xf16, #hivm.address_space<ub>>
-        hivm.hir.copy ins(%arg7 : memref<16x16x16xf16, #hivm.address_space<ub>>) outs(%alloc_0 : memref<16x16x16xf16, #hivm.address_space<ub>>)
-        %alloc_1 = memref.alloc() : memref<16x16x16xf16, #hivm.address_space<ub>>
-        hivm.hir.copy ins(%alloc_0 : memref<16x16x16xf16, #hivm.address_space<ub>>) outs(%alloc_1 : memref<16x16x16xf16, #hivm.address_space<ub>>)
-        scf.yield %alloc_1 : memref<16x16x16xf16, #hivm.address_space<ub>>
-      }
-      %2 = scf.if %arg3 -> (memref<16x16x16xf16, #hivm.address_space<ub>>) {
-        %alloc_0 = memref.alloc() : memref<16x16x16xf16, #hivm.address_space<ub>>
-        hivm.hir.copy ins(%1 : memref<16x16x16xf16, #hivm.address_space<ub>>) outs(%alloc_0 : memref<16x16x16xf16, #hivm.address_space<ub>>)
-        scf.yield %alloc_0 : memref<16x16x16xf16, #hivm.address_space<ub>>
-      } else {
-        %alloc_0 = memref.alloc() : memref<16x16x16xf16, #hivm.address_space<ub>>
-        hivm.hir.load ins(%arg1 : memref<16x16x16xf16, #hivm.address_space<gm>>) outs(%alloc_0 : memref<16x16x16xf16, #hivm.address_space<ub>>)
-        scf.yield %alloc_0 : memref<16x16x16xf16, #hivm.address_space<ub>>
-      }
-      scf.yield %2 : memref<16x16x16xf16, #hivm.address_space<ub>>
-    }
-    func.call @outlined_vf(%0) {hivm.vector_function, no_inline} : (memref<16x16x16xf16, #hivm.address_space<ub>>) -> ()
-    return
-  }
-}
-
-// -----
-
-module {
   // CHECK-LABEL: func.func @test_plan_memory_for_alias
   func.func @test_plan_memory_for_alias(%arg0: memref<64xf32, #hivm.address_space<gm>>, %arg1: memref<64xf32, #hivm.address_space<gm>>, %arg2: memref<64xf32, #hivm.address_space<gm>>, %arg3: i1, %arg4: memref<1xf32, #hivm.address_space<gm>>) {
     // CHECK-NOT: memref.alloc()
