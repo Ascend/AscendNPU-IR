@@ -442,9 +442,12 @@ void buildBiShengHIRFinishPipeline(mlir::OpPassManager &pm,
 // uses the TTIR flow and intentionally skips these mixed-boundary passes.
 static void buildSimdSimtMixPassPipeline(mlir::OpPassManager &pm) {
   pm.addPass(hivm::createAutoScopePass());
+  // Runs directly after the scopes are formed and before the boundary passes:
+  // it moves ops across the scope boundary, so anything it hoists has to be
+  // visible to LegalizeBoolForSimtVF and InsertMemSemanticForSimtVF.
+  pm.addPass(scope::createTransformOpForSIMTPass());
   pm.addPass(hivm::createLegalizeBoolForSimtVFPass());
   pm.addPass(hivm::createInsertMemSemanticForSimtVFPass());
-  pm.addPass(scope::createTransformOpForSIMTPass());
   // Only AutoScope-marked scopes are outlined;
   // cube/vector leftovers stay inline.
   OutlineScopeOptions outlineScopeOptions;
