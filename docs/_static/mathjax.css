@@ -1,0 +1,29 @@
+/* 取消容器的横向滚动设置 —— 默认的overflow-x:auto 会连带把 overflow-y 也变成 auto，
+   进而把带上下标（如 \sum_{k=0}^{n}、\iff）的公式在垂直方向裁剪掉一半 */
+mjx-container,
+mjx-container[display="true"],
+.MathJax_Display,
+.MathJax {
+  overflow: visible !important;
+}
+
+/* 给行间公式留出上下标空间，避免被父容器 line-height 裁切 */
+mjx-container[display="true"],
+.MathJax_Display {
+  padding-top: 0.5em;
+  padding-bottom: 0.5em;
+}
+
+/* 归一化公式内部行高，避免上下标与基线的行框冲突 */
+mjx-container,
+.MathJax,
+.mjx-chtml {
+  line-height: normal !important;
+}
+
+/* 表格单元格内的行内公式：保证完整显示、垂直居中 */
+td mjx-container,
+td .MathJax {
+  display: inline-block;
+  vertical-align: middle;
+}
