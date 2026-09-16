@@ -407,6 +407,9 @@ std::unique_ptr<Pass> createNonContiguousReshapeToCopyPass();
 
 std::unique_ptr<Pass> createSinkOpToConsumerInLoopPass();
 
+// Create a pass to flatten nested moduleOp
+std::unique_ptr<Pass> createFlattenModulePass();
+
 std::unique_ptr<Pass> createPropagateConvertLayoutPass(
     const PropagateConvertLayoutOptions &options = {});
 

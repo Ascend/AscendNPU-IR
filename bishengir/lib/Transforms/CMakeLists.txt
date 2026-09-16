@@ -3,6 +3,7 @@ add_bishengir_library(BiShengIRTransform
   CanonicalizeModule.cpp
   DeadFunctionElimination.cpp
   EliminateSingleIterationScfFor.cpp
+  DebugLLVM.cpp
   DebugMemory.cpp
   InjectIR.cpp
   InjectIRInstrumentation.cpp

@@ -1,5 +1,0 @@
-set(LLVM_TARGET_DEFINITIONS NPUTargetSpec.td)
-bishengir_target_tablegen(NPUTargetSpec.h.inc -gen-target-spec-decls)
-bishengir_target_tablegen(NPUTargetSpec.cpp.inc -gen-target-spec-defs)
-add_public_tablegen_target(BiShengIRNPUTargetSpecIncGen)
-add_dependencies(mlir-headers BiShengIRNPUTargetSpecIncGen)

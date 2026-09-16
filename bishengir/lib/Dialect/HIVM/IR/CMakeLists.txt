@@ -34,6 +34,7 @@ add_bishengir_dialect_library(BiShengIRHIVMDialect
   HIVMDMAOps.cpp
   HIVMImpl.cpp
   HIVMInterfaces.cpp
+  HIVMIntrinOps.cpp
 
   HIVMMacroOps.cpp
   HIVMOps.cpp
@@ -58,6 +59,7 @@ add_bishengir_dialect_library(BiShengIRHIVMDialect
   BiShengIRHIVMAttributesIncGen
   BiShengIRHIVMDMAOpsIncGen
   BiShengIRHIVMInterfacesIncGen
+  BiShengIRHIVMIntrinOpsIncGen
   BiShengIRHIVMMacroOpsIncGen
   BiShengIRHIVMVectorOpsIncGen
   BiShengIRHIVMSynchronizationOpsIncGen

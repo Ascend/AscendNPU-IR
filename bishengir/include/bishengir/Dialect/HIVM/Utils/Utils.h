@@ -537,6 +537,7 @@ constexpr static unsigned int VNCHWCONV_INTR_BYTES_PER_REPEAT = 512;
 constexpr static unsigned BITS_PER_BYTE = 8;
 constexpr static unsigned VL_BITS = VL * BITS_PER_BYTE;
 constexpr static unsigned PREDICATE_BITS = 256;
+constexpr static unsigned INTRA_BLOCK_FLAG_ID_OFFSET = 16;
 
 constexpr static unsigned VL_B32 = VL / 4;
 constexpr static unsigned VL_B16 = VL / 2;

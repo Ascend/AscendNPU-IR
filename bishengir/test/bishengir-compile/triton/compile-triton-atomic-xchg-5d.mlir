@@ -1,4 +1,4 @@
-// REQUIRES: hivmc-a5
+// REQUIRES: hivmc
 // RUN: bishengir-compile %s --target=Ascend950PR_9589 --enable-auto-multi-buffer=true --enable-hfusion-compile=true --enable-hivm-compile=true --enable-triton-kernel-compile=true --enable-lir-compile=false -o %t
 
 
