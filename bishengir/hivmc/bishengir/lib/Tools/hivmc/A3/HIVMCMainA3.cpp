@@ -218,7 +218,23 @@ std::string modifyForVersionMismatch(std::string src) {
       R"((?:llvm\.stackrestore|llvm\.stacksave)(\.\w+))");
   auto downgradeStacksaveStr =
       std::regex_replace(downgradeMemStr, downgradeStackRe, "");
-  return downgradeStacksaveStr;
+
+  std::regex dbgValueRe(
+      R"(#dbg_value\(([^,]+),\s*([^,]+),\s*(!DIExpression\([^)]*\)),\s*([^)]+)\))");
+
+  std::string dbgValuePattern = "call void @llvm.dbg.value(metadata $1, "
+                                "metadata $2, metadata $3), !dbg $4";
+  auto downgradeDbgValueStr =
+      std::regex_replace(downgradeStacksaveStr, dbgValueRe, dbgValuePattern);
+
+  std::regex dbgDeclareRe(
+      R"(#dbg_declare\(([^,]+),\s*([^,]+),\s*(!DIExpression\([^)]*\)),\s*([^)]+)\))");
+
+  std::string dbgDeclarePattern = "call void @llvm.dbg.declare(metadata $1, "
+                                  "metadata $2, metadata $3), !dbg $4";
+  auto downgradeDbgDeclareStr =
+      std::regex_replace(downgradeDbgValueStr, dbgDeclareRe, dbgDeclarePattern);
+  return downgradeDbgDeclareStr;
 }
 
 std::string tryReplaceExtension(StringRef path, StringRef newExtension) {
