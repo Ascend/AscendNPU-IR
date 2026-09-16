@@ -307,7 +307,8 @@ struct InsertConvertLayoutAroundConv : public OpRewritePattern<ConvOpType> {
                                            hivm::DataLayout::NC1HWC0);
       auto converted = rewriter.create<ConvertLayoutOp>(
           op.getLoc(), outputType, input, srcLayout, dstLayout);
-      converted->setAttr("groups", rewriter.getI64IntegerAttr(groups));
+      converted->setDiscardableAttr(kConvolutionGroupsAttrName,
+                                    rewriter.getI64IntegerAttr(groups));
       rewriter.modifyOpInPlace(
           op, [&]() { op.getInputMutable().assign(converted.getResult()); });
     }
@@ -328,7 +329,8 @@ struct InsertConvertLayoutAroundConv : public OpRewritePattern<ConvOpType> {
                                            hivm::DataLayout::C1HWNC0);
       auto converted = rewriter.create<ConvertLayoutOp>(
           op.getLoc(), outputType, weight, srcLayout, dstLayout);
-      converted->setAttr("groups", rewriter.getI64IntegerAttr(groups));
+      converted->setDiscardableAttr(kConvolutionGroupsAttrName,
+                                    rewriter.getI64IntegerAttr(groups));
       rewriter.modifyOpInPlace(
           op, [&]() { op.getWeightMutable().assign(converted.getResult()); });
     }

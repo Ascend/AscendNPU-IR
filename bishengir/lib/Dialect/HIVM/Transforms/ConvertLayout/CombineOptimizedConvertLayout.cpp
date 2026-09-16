@@ -537,7 +537,8 @@ struct FoldDirectLoadToNCHW2NC1HWC0Pattern
     if (failed(verifyNCHWLoad(match->loadOp, rewriter, op)))
       return failure();
 
-    auto groupsAttr = op->getAttrOfType<IntegerAttr>("groups");
+    auto groupsAttr = dyn_cast_or_null<IntegerAttr>(
+        op->getDiscardableAttr(kConvolutionGroupsAttrName));
     int64_t groups = groupsAttr ? groupsAttr.getInt() : 1;
     auto createFusedDma = [groups](PatternRewriter &rewriter, Location loc,
                                   LoadOp, Value src, Value dst) {
@@ -567,7 +568,8 @@ struct FoldDirectLoadToNCHW2C1HWNC0Pattern
     if (failed(verifyNCHWLoad(match->loadOp, rewriter, op)))
       return failure();
 
-    auto groupsAttr = op->getAttrOfType<IntegerAttr>("groups");
+    auto groupsAttr = dyn_cast_or_null<IntegerAttr>(
+        op->getDiscardableAttr(kConvolutionGroupsAttrName));
     int64_t groups = groupsAttr ? groupsAttr.getInt() : 1;
     auto createFusedDma = [groups](PatternRewriter &rewriter, Location loc,
                                   LoadOp, Value src, Value dst) {

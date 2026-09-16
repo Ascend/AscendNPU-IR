@@ -180,6 +180,8 @@ constexpr llvm::StringLiteral kPipelinedLoopCoreTypeAttrName =
     "hivm.loop_core_type";
 constexpr llvm::StringLiteral kPreLoadAttrName =
     "preload_num";
+constexpr llvm::StringLiteral kConvolutionGroupsAttrName =
+    "convolution_groups";
 
 /// Suffixes appended by SplitMixKernel when cloning a MIX function into AIC/AIV
 /// copies (e.g. `kernel` -> `kernel_mix_aic` / `kernel_mix_aiv`).

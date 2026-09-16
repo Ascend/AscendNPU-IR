@@ -21,7 +21,8 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
         : memref<1x30x8x8xf16>
     %converted = hivm.hir.convert_layout %input
         output_shape [1, 2, 8, 8, 16]
-        {dstLayout = #hivm.data_layout<NC1HWC0>, groups = 2 : i64,
+        {convolution_groups = 2 : i64,
+         dstLayout = #hivm.data_layout<NC1HWC0>,
          srcLayout = #hivm.data_layout<NCHW>}
         : (tensor<1x30x8x8xf16>) -> tensor<1x2x8x8x16xf16>
     return %converted : tensor<1x2x8x8x16xf16>
@@ -51,7 +52,8 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
         : memref<30x15x3x3xf16>
     %converted = hivm.hir.convert_layout %weight
         output_shape [1, 3, 3, 32, 16]
-        {dstLayout = #hivm.data_layout<C1HWNC0>, groups = 2 : i64,
+        {convolution_groups = 2 : i64,
+         dstLayout = #hivm.data_layout<C1HWNC0>,
          srcLayout = #hivm.data_layout<NCHW>}
         : (tensor<30x15x3x3xf16>) -> tensor<1x3x3x32x16xf16>
     return %converted : tensor<1x3x3x32x16xf16>

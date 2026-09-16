@@ -28,8 +28,8 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 
 // CHECK-LABEL: func.func @insert_conv2d_input_convert_layout(
 // CHECK: %[[CONVERTED:.*]] = hivm.hir.convert_layout %{{.*}} output_shape [1, 2, 8, 8, 16]
+// CHECK-SAME: convolution_groups = 2 : i64
 // CHECK-SAME: dstLayout = #hivm.data_layout<NC1HWC0>
-// CHECK-SAME: groups = 2 : i64
 // CHECK-SAME: srcLayout = #hivm.data_layout<NCHW>
 // CHECK: hivm.hir.Conv2dL1
 // CHECK-SAME: ins(%[[CONVERTED]],
@@ -53,8 +53,8 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 
 // CHECK-LABEL: func.func @insert_conv2d_weight_convert_layout(
 // CHECK: %[[CONVERTED:.*]] = hivm.hir.convert_layout %{{.*}} output_shape [1, 3, 3, 32, 16]
+// CHECK-SAME: convolution_groups = 2 : i64
 // CHECK-SAME: dstLayout = #hivm.data_layout<C1HWNC0>
-// CHECK-SAME: groups = 2 : i64
 // CHECK-SAME: srcLayout = #hivm.data_layout<NCHW>
 // CHECK: hivm.hir.Conv2dL1
 // CHECK-SAME: ins(%{{.*}}, %[[CONVERTED]],
