@@ -24,6 +24,7 @@
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Scope/Transforms/Passes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Builders.h"
@@ -87,6 +88,81 @@ static bool isScalarTensor(RankedTensorType tensorType) {
   return shape.empty() || (shape.size() == 1 && shape[0] == 1);
 }
 
+// A local_load materializes a SIMD-to-SIMT transfer at a scope boundary. If
+// its users are hoisted back to SIMD, restore their use of the original SIMD
+// tensor instead of leaking the SIMT-only boundary op into the SIMD module.
+static void rewriteHoistedLocalLoads(scope::ScopeOp scopeOp,
+                                     SetVector<Operation *> &toHoist) {
+  SmallVector<hivm::LocalLoadOp> localLoads;
+  for (Operation *op : toHoist)
+    if (auto localLoad = dyn_cast<hivm::LocalLoadOp>(op))
+      localLoads.push_back(localLoad);
+
+  SmallVector<std::pair<hivm::LocalLoadOp, Value>> recoverableLoads;
+  SetVector<Operation *> blocked;
+  auto isDefinedInsideScope = [&](Value value) {
+    if (Operation *defOp = value.getDefiningOp())
+      return scopeOp.getRegion().isAncestor(defOp->getParentRegion());
+    if (auto blockArg = dyn_cast<BlockArgument>(value))
+      return scopeOp.getRegion().isAncestor(blockArg.getOwner()->getParent());
+    return false;
+  };
+
+  for (hivm::LocalLoadOp localLoad : localLoads) {
+    Value addr = localLoad.getAddr();
+    while (auto castOp = addr.getDefiningOp<memref::CastOp>())
+      addr = castOp.getSource();
+
+    Value tensorSource;
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+    if (auto toMemref = addr.getDefiningOp<bufferization::ToMemrefOp>())
+      tensorSource = toMemref.getTensor();
+#else
+    if (auto toBuffer = addr.getDefiningOp<bufferization::ToBufferOp>())
+      tensorSource = toBuffer.getTensor();
+#endif
+
+    if (!tensorSource || isDefinedInsideScope(tensorSource) ||
+        tensorSource.getType() != localLoad.getResult().getType()) {
+      blocked.insert(localLoad.getOperation());
+      continue;
+    }
+
+    recoverableLoads.emplace_back(localLoad, tensorSource);
+  }
+
+  // Classify every boundary load before mutating any uses. Otherwise an op
+  // that consumes both a recoverable and an unrecoverable load can be rewired
+  // to the raw SIMD tensor before it is later blocked from hoisting.
+  bool changed = true;
+  while (changed) {
+    changed = false;
+    for (Operation *op : toHoist) {
+      if (blocked.contains(op))
+        continue;
+      for (Value operand : op->getOperands()) {
+        if (blocked.contains(operand.getDefiningOp())) {
+          changed |= blocked.insert(op);
+          break;
+        }
+      }
+    }
+  }
+  for (Operation *op : blocked)
+    toHoist.remove(op);
+
+  for (auto [localLoad, tensorSource] : recoverableLoads) {
+    if (!toHoist.contains(localLoad.getOperation()))
+      continue;
+    localLoad.getResult().replaceUsesWithIf(
+        tensorSource,
+        [&](OpOperand &use) { return toHoist.contains(use.getOwner()); });
+    toHoist.remove(localLoad.getOperation());
+    if (localLoad->use_empty())
+      localLoad.erase();
+  }
+}
+
 // Move scalar tensor.extract and its backward slice outside the scope
 static void moveScalarExtractOutsideScope(tensor::ExtractOp extractOp,
                                           scope::ScopeOp scopeOp) {
@@ -111,6 +187,8 @@ static void moveScalarExtractOutsideScope(tensor::ExtractOp extractOp,
         worklist.push_back(operand);
     }
   }
+
+  rewriteHoistedLocalLoads(scopeOp, toHoist);
 
   // Move ops before the scope, maintaining original block order.
   for (Operation &op : llvm::make_early_inc_range(scopeOp.getRegion().front())) {
@@ -218,6 +296,8 @@ static void moveFromElementsOutsideScope(scope::ScopeOp scopeOp) {
       }
     }
   }
+
+  rewriteHoistedLocalLoads(scopeOp, toHoist);
 
   // Move ops before the scope, maintaining original block order.
   for (Operation &op : llvm::make_early_inc_range(scopeOp.getRegion().front())) {
