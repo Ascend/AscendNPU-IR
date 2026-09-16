@@ -68,7 +68,7 @@ constexpr const int SPEC_LEVEL_1 = 1;
 /// dma.
 constexpr const int SPEC_LEVEL_2 = 2;
 
-/// do not reuse buffer when pipe conflicts and in different pipelined loop.
+/// do not reuse buffer when pipe conflicts.
 constexpr const int SPEC_LEVEL_3 = 3;
 
 /// plan information of alloc buffer.
@@ -231,10 +231,7 @@ struct SpecInfo {
   int minLevel = SPEC_LEVEL_0;
   int specLevel = SPEC_LEVEL_3;
   int childIdx = -1;
-  /// The child index at which recovery mode begins. After a rollback, the
-  /// specLevel is lowered to retry the failed entry; once childIdx catches up
-  /// to this index, specLevel is restored to maxLevel.
-  int rollBackStopIdx = 0;
+  int specStartIdx = 0;
   int rollbackIdx = -1;
   uint64_t rollbackAddr = UINT64_MAX;
 };
@@ -282,54 +279,6 @@ struct StatusWrapper {
   StorageEntry *RootE;
 };
 
-/// Example IR for preload buffer reuse:
-/// 1:  func.func {
-/// 2:    scf.for {
-/// 3:      %alloc = memref.alloc()
-/// 4:      annotation.mark %alloc {hivm.preload_local_buffer = 1 : i32}
-/// 5:      scope.scope : () -> () {
-/// 6:        ops
-/// 7:        hivm.hir.load outs(%alloc)
-/// 8:        ops
-/// 9:      } {preload_num = 1}
-/// 10:     scope.scope : () -> () {
-/// 11:       %alloc_0 = memref.alloc()
-/// 12:       func.call @vf_reuse_direct(%alloc, %alloc_0)
-/// 13:       read %alloc_0
-/// 14:       scope.return
-/// 15:     } {preload_num = 0}
-/// 16:   }
-/// 17:   return
-/// 18: }
-///
-/// Preload buffer %alloc is generated at line 7 (hivm.hir.load) and killed at
-/// line 12 (func.call). A preload buffer is alive across scopes, so the two
-/// idle intervals within each scope can be reused by other buffers:
-///   - genScope before genOp (line 6): %alloc is allocated but not yet loaded,
-///     so its storage is free before line 7.
-///   - killScope after killOp (line 13): %alloc has been consumed by the call,
-///     so its storage is free after line 12.
-///
-/// These two reusable intervals are recorded as reuseableBufferLifeBeforeGen
-/// and reuseableBufferLifeAfterKill respectively.
-/// Besides, genScope and killScope must have different preload_num.
-struct PreloadBufferReuseableInfo {
-  /// preload Buffer
-  Value preloadBuffer;
-  /// gen opInfo
-  OpInfo *genInfo;
-  /// reuseable buffer life in genScope before genOp
-  std::shared_ptr<BufferLife> reuseableBufferLifeBeforeGen;
-  /// gen scope preload num
-  int64_t genScopePreloadNum;
-  /// kill opInfo
-  OpInfo *killInfo;
-  /// reuseable buffer life in killScope after killOp
-  std::shared_ptr<BufferLife> reuseableBufferLifeAfterKill;
-  /// kill scope preload num
-  int64_t killScopePreloadNum;
-};
-
 /// Pair of alias buffer and whether the alias buffer is conditional
 using BufferCondPair = std::pair<Value, bool>;
 
@@ -352,9 +301,6 @@ public:
 
   /// map from buffer to its lifetime.
   DenseMap<Value, std::shared_ptr<BufferLife>> buffer2Life;
-
-  /// map from preload buffer to its reuseable info
-  DenseMap<Value, PreloadBufferReuseableInfo> preloadBufferReuseableInfo;
 
   /// map from operation to its gen and kill buffer.
   DenseMap<OpInfo *, GenKillEntry> genKillMap;
@@ -474,10 +420,10 @@ private:
                                                      Value aliasValue);
 
   /// Get alias buffer information.
-  SmallVector<BufferCondPair> GetAliasBufferCondPairs(Value aliasBuffer) const;
+  SmallVector<BufferCondPair> GetAliasBufferCondPairs(Value aliasBuffer);
 
   /// Get alias buffers.
-  SetVector<Value> GetAliasBuffers(Value aliasBuffer) const;
+  SetVector<Value> GetAliasBuffers(Value aliasBuffer);
 
   /// Check whether there is an unknown operation with buffer
   /// information.
@@ -515,27 +461,21 @@ private:
   /// ancestor of op1.
   bool isParentOpDominate(Operation *op1, Operation *op2) const;
 
-  /// Check if a buffer is a preload buffer.
-  bool IsPreloadBuffer(Value buffer) const;
+  /// Check whether operand is marked buffer used in multi scope operations.
+  bool IsPreloadBuffer(Value operand);
 
   /// Check whether operand is marked buffer used in multi scope operations.
   void UpdatePreloadBuffers(annotation::MarkOp markOp, memref::AllocOp allocOp);
 
-  /// Update gen info of preload buffers to their enclosing loop op.
-  void UpdatePreloadBuffersGenInfo(OpInfo *opInfo);
+  /// Update Gen information for multi scope used buffers and their alias
+  /// buffers.
+  void UpdatePreloadBuffersGenInfo(OpInfo *opInfo,
+                                   const SetVector<Value> &preloadBufferValues);
 
-  /// Update kill info of preload buffers to their enclosing loop op.
-  void UpdatePreloadBuffersKillInfo(OpInfo *opInfo);
-
-  /// Generate preload buffer reuseable lifetime vector.
-  void GeneratePreloadBufferReuseableInfo();
-
-  /// Generate preload buffers reuseable info and extend preload buffer lifetime
-  /// from scope to parent for.
-  void PreprocessPreloadBuffersBufferLife();
-
-  /// Dump preload buffer reuseable info for debugging.
-  void DumpPreloadBufferReuseableInfo() const;
+  /// Update Kill information for multi scope used buffers and their alias
+  /// buffers.
+  void UpdatePreloadBuffersKillInfo(OpInfo *opInfo,
+                                    const SetVector<Value> &preloadBufferValues);
 
   /// Process mark op and update buffer's gen and kill.
   void ProcessMarkOp(annotation::MarkOp markOp, OpInfo *curOpInfo,
@@ -613,20 +553,14 @@ public:
         restrictInplaceAsISA(restrictInplaceAsISA),
         simtVFDynamicSize(simtVFDynamicSize),
         disableVFReachableCheck(disableVFReachableCheck),
-        planMemoryStrategy(planMemoryStrategy), vfInplaceReuseInfo(nullptr) {}
+        planMemoryStrategy(planMemoryStrategy),
+        vfInplaceReuseInfo(nullptr) {}
 
   LogicalResult plan(bool emitErrors = true);
 
   /// Get buffer2Offsets
   inline DenseMap<Value, SmallVector<uint64_t>> GetBuffer2Offsets() {
     return buffer2Offsets;
-  }
-
-  /// Alloc roots that must carry `hivm.preload_local_buffer` after
-  /// materializing pointer_cast (preload TCB and any buffers folded onto its
-  /// storage entry).
-  inline const DenseSet<Value> GetPreloadLocalBuffers() const {
-    return preloadLocalBuffers;
   }
 
   inline void
@@ -657,11 +591,6 @@ public:
 
   inline void SetVFInplaceReuseInfo(VFCallInplaceReuseInfo *inplaceReuseInfo) {
     vfInplaceReuseInfo = inplaceReuseInfo;
-  }
-
-  inline void SetPreloadBufferReuseableInfo(
-      DenseMap<Value, PreloadBufferReuseableInfo> info) {
-    preloadBufferReuseableInfo = info;
   }
 
   /// Setup the device's storage specs
@@ -775,39 +704,35 @@ private:
 
   /// Check whether current buffer conflicts with the history buffers.
   bool VerifyConflictStageCommon(
-      PlanRecHis &his, const StorageEntry *e, uint64_t offset,
+      PlanRecHis &his, const StorageEntry *e, MemBoundListConstIter &start,
+      const MemBoundList &outline,
       std::function<bool(const StorageEntry *, const StorageEntry *)>
           conflictChecker);
 
   /// spec_level == SPEC_LEVEL_3, do not reuse buffer when pipe conflicts.
   bool VerifyConflictStage3(PlanRecHis &his, const StorageEntry *e,
-                            uint64_t firstBufferOffset,
-                            SmallVector<uint64_t, 3> otherBufferOffsets);
+                            int specLevel, MemBoundListConstIter &start,
+                            const MemBoundList &outline);
 
   /// spec_level == SPEC_LEVEL_2, do not reuse the buffer in same loop when pipe
   /// conflicts between vector and dma.
   bool VerifyConflictStage2(PlanRecHis &his, const StorageEntry *e,
-                            uint64_t firstBufferOffset,
-                            SmallVector<uint64_t, 3> otherBufferOffsets);
+                            int specLevel, MemBoundListConstIter &start,
+                            const MemBoundList &outline);
 
   /// spec_level == SPEC_LEVEL_1, pure single can reuse with mb.
   /// otherBufferOffsets will contain multiBufferNum - 1 elements.
   bool VerifyConflictStage1(MemBoundList &outline, PlanRecHis &his,
-                            StorageEntry *e, int specLevel,
+                            StorageEntry *e,
                             const OutlineSectionInfo &outlineInfo,
                             SmallVectorImpl<uint64_t> &otherBufferOffsets);
 
   /// check if e1 and e2 has pipe conflict.
-  bool PipeConflict(const StorageEntry *e1, const StorageEntry *e2);
-
-  /// Get pipelined loop(loop for preload, CV pipieline).
-  scf::ForOp getPipelinedLoop(const SmallVector<Value> &buffers);
-
-  /// check if e1 and e2 are not in same pipelined loop.
-  bool InDifferentPipelinedLoop(const StorageEntry *e1, const StorageEntry *e2);
+  bool PipeConflict(const StorageEntry *e1, const StorageEntry *e2,
+                    DenseMap<StorageEntryPair, bool> &conflictMap);
 
   /// check if e1 and e2 has same parent loop.
-  bool InSameLoop(const StorageEntry *e1, const StorageEntry *e2);
+  bool PipeConflictInSameLoop(const StorageEntry *e1, const StorageEntry *e2);
 
   /// spec_level == SPEC_LEVEL_3, MTE2/MTE3 is pipe conflict with all existing
   /// allocation. check if current entry has OptDmaPipe-conflict with buffers
@@ -824,7 +749,7 @@ private:
 
   /// spec_level == SPEC_LEVEL_0, life time reuse.
   inline bool
-  VerifyConflictStage0(StorageEntry *e, int specLevel,
+  VerifyConflictStage0(StorageEntry *e,
                        const std::shared_ptr<MemoryBound> &last,
                        SmallVector<ValuePair> &stallPipelineInplacePairs);
 
@@ -869,7 +794,7 @@ private:
   bool ContinueRollBack(const StatusWrapper &statusWrapper) const;
 
   /// Check if multibuffer-slots should be rolled back together
-  bool ShouldRollbackMuiltiBuffer(const PlanRecord &r) const;
+  bool ShouldRollbackMuiltiBuffer(const PlanRecord& r) const;
 
   /// Memory plan fallback information processing.
   void RollBackForAllocFailInner(StatusWrapper &statusWrapper,
@@ -941,8 +866,7 @@ private:
 
   /// Processing otherbuffer Storage Entry Information.
   void SpecAllocRelationOtherBufferEntry(MemBoundList &outline, PlanRecHis &his,
-                                         StorageEntry *e, int specLevel,
-                                         uint64_t offset);
+                                         StorageEntry *e, uint64_t offset);
 
   /// Get relative otherbuffer storage entry when the current reuse bound
   /// storage entry is of type mb.
@@ -967,20 +891,6 @@ private:
   /// Report tensor allocate info.
   void ReportAllocatedEntryDebugInfo(const StorageEntry *rootStorageEntry,
                                      bool isFail) const;
-
-  /// Check if preload buffer can be reused.
-  bool IsPreloadBufferReuseable(PreloadBufferReuseableInfo &info,
-                                std::shared_ptr<BufferLife> &life2);
-
-  /// collect all the preload buffer reuseable info and generate the map from
-  /// local storage entry to its reuseable preload storage entry.
-  void GeneratePreloadReuseableSE();
-
-  /// Reuse the local buffer with the preload buffer if it is reuseable.
-  void LocalBufferReusePreloadBuffer(StorageEntry *entry, PlanRecHis &history);
-
-  /// Check inplaced buffer contained in preloadBuffer2Life
-  bool IsPreloadStorageEntry(const StorageEntry *storageEntry);
 
 private:
   /// The buffer corresponding to each operation.
@@ -1016,9 +926,6 @@ private:
 
   /// map from memref buffer to plan memory address.
   DenseMap<Value, SmallVector<uint64_t>> buffer2Offsets;
-
-  /// Alloc roots belonging to a preload-local storage entry after planning.
-  DenseSet<Value> preloadLocalBuffers;
 
   /// map from each scope to its root StorageEntry.
   llvm::MapVector<hivm::AddressSpace, StorageEntry *> memscope2rootStorageEntry;
@@ -1056,12 +963,6 @@ private:
 
   /// The scope of the buffer applied memory fail and the max bits it applied.
   llvm::MapVector<hivm::AddressSpace, uint64_t> failApplyBufferInfo;
-
-  /// map from preload buffer to its lifetime.
-  DenseMap<Value, PreloadBufferReuseableInfo> preloadBufferReuseableInfo;
-
-  /// map from local storage entry to its reuseable preload storage entry.
-  DenseMap<StorageEntry *, StorageEntry *> localSE2ReuseablePreloadSE;
 
   /// when plan memory fail, map from each scope to its root StorageEntry.
   llvm::MapVector<hivm::AddressSpace, StorageEntry *>
