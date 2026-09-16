@@ -307,6 +307,7 @@ void HIVMToTritonGPUConversionPass::runOnOperation() {
   // forward its value
   stage1Target.addLegalOp<memref::AllocOp>();
   stage1Target.addIllegalOp<tensor::ExpandShapeOp, tensor::CollapseShapeOp,
+                            bufferization::AllocTensorOp,
                             bufferization::ToTensorOp, affine::AffineApplyOp>();
 
   LowerToTritonGPUOptions bodyOptions;

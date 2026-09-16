@@ -530,3 +530,64 @@ module {
     return
   }
 }
+
+// -----
+
+// A dead allocation must disappear rather than leak into function conversion.
+// CHECK-LABEL: tt.func @dead_alloc_tensor
+// CHECK-NOT: bufferization.alloc_tensor
+// CHECK: tt.return
+module attributes {
+  hivm.module_core_type = #hivm.module_core_type<AIV>
+} {
+  func.func @dead_alloc_tensor() {
+    %dead = bufferization.alloc_tensor() : tensor<4xi32>
+    return
+  }
+}
+
+// -----
+
+// A supported live allocation keeps the same uninitialized tensor semantics.
+// CHECK-LABEL: tt.func @static_alloc_tensor
+// CHECK: %[[EMPTY:.*]] = tensor.empty() : tensor<4xi32>
+// CHECK-NOT: bufferization.alloc_tensor
+// CHECK: tt.store {{.*}}, %[[EMPTY]]
+// CHECK: tt.return
+module attributes {
+  hivm.module_core_type = #hivm.module_core_type<AIV>
+} {
+  func.func @static_alloc_tensor(%out: memref<4xi32>) {
+    %alloc = bufferization.alloc_tensor() : tensor<4xi32>
+    hivm.hir.store ins(%alloc : tensor<4xi32>) outs(%out : memref<4xi32>)
+    return
+  }
+}
+
+// -----
+
+// expected-error@+1 {{Stage1 failed: HIVM/Bufferization Op conversion failed}}
+module attributes {
+  hivm.module_core_type = #hivm.module_core_type<AIV>
+} {
+  func.func @dynamic_alloc_tensor(%size: index) -> tensor<?xi32> {
+    // expected-error@+2 {{only static allocations without a copy are supported}}
+    // expected-error@+1 {{failed to legalize operation 'bufferization.alloc_tensor' that was explicitly marked illegal}}
+    %alloc = bufferization.alloc_tensor(%size) : tensor<?xi32>
+    return %alloc : tensor<?xi32>
+  }
+}
+
+// -----
+
+// expected-error@+1 {{Stage1 failed: HIVM/Bufferization Op conversion failed}}
+module attributes {
+  hivm.module_core_type = #hivm.module_core_type<AIV>
+} {
+  func.func @copy_alloc_tensor(%arg0: tensor<4xi32>) -> tensor<4xi32> {
+    // expected-error@+2 {{only static allocations without a copy are supported}}
+    // expected-error@+1 {{failed to legalize operation 'bufferization.alloc_tensor' that was explicitly marked illegal}}
+    %alloc = bufferization.alloc_tensor() copy(%arg0) : tensor<4xi32>
+    return %alloc : tensor<4xi32>
+  }
+}

@@ -11,6 +11,7 @@
 #include "triton/Dialect/Triton/IR/Dialect.h"
 
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/Transforms/DialectConversion.h"
 
@@ -19,6 +20,31 @@ using namespace mlir::triton;
 using namespace mlir::hivm;
 
 namespace {
+class AllocTensorOpReplacementPattern
+    : public OpConversionPattern<bufferization::AllocTensorOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(bufferization::AllocTensorOp op, OpAdaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (op.use_empty()) {
+      rewriter.eraseOp(op);
+      return success();
+    }
+
+    auto tensorTy = dyn_cast<RankedTensorType>(op.getType());
+    if (!tensorTy || !tensorTy.hasStaticShape() || op.getCopy() ||
+        !op.getDynamicSizes().empty())
+      return op.emitOpError(
+          "only static allocations without a copy are supported");
+
+    rewriter.replaceOpWithNewOp<tensor::EmptyOp>(op, tensorTy.getShape(),
+                                                 tensorTy.getElementType());
+    return success();
+  }
+};
+
 // Process all of the ToTensorOp before dialect conversion
 class ToTensorOpReplacementPattern
     : public OpConversionPattern<bufferization::ToTensorOp> {
@@ -67,5 +93,6 @@ public:
 void mlir::hivm::populateBufferizationToTritonPatterns(
     TritonTypeConverter &converter, RewritePatternSet &patterns) {
   auto *ctx = patterns.getContext();
-  patterns.add<ToTensorOpReplacementPattern>(converter, ctx);
+  patterns.add<AllocTensorOpReplacementPattern, ToTensorOpReplacementPattern>(
+      converter, ctx);
 }
