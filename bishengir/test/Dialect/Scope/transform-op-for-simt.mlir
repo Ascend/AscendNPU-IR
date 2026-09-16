@@ -290,3 +290,65 @@ func.func @test_nested_local_load_source_stays_in_scope(
 
   return
 }
+
+// -----
+
+// Test 12: a hoisted region-carrying op also drags out the values its body
+// captures from the scope, otherwise the loop would be moved out while its
+// body still refers to a definition left behind.
+// CHECK-LABEL: func.func @test_region_captured_operand_hoisted
+func.func @test_region_captured_operand_hoisted(%arg0: index) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+
+  // CHECK: %[[INIT:.*]] = tensor.empty() : tensor<i32>
+  // CHECK: %[[CAPTURED:.*]] = arith.constant 7 : i32
+  // CHECK: %[[LOOP:.*]] = scf.for
+  // CHECK:   "test.use"(%{{.*}}, %[[CAPTURED]])
+  // CHECK: tensor.extract %[[LOOP]][]
+  // CHECK: scope.scope : () -> () {
+  // CHECK-NOT: arith.constant 7 : i32
+  // CHECK:   scope.return
+  scope.scope : () -> () {
+    %init = tensor.empty() : tensor<i32>
+    %captured = arith.constant 7 : i32
+    %loop = scf.for %i = %c0 to %arg0 step %c1 iter_args(%acc = %init) -> (tensor<i32>) {
+      %next = "test.use"(%acc, %captured) : (tensor<i32>, i32) -> tensor<i32>
+      scf.yield %next : tensor<i32>
+    }
+    %extracted = tensor.extract %loop[] : tensor<i32>
+    scope.return
+  } {hivm.vf_mode = #hivm.vf_mode<SIMT>}
+
+  return
+}
+
+// -----
+
+// Test 13: an unrecoverable local_load captured by a nested region blocks the
+// whole slice from being hoisted, the same way a direct operand would.
+// CHECK-LABEL: func.func @test_region_captured_local_load_blocks_hoist
+func.func @test_region_captured_local_load_blocks_hoist(
+    %arg0: index, %buffer: memref<1xi32>) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+
+  // CHECK: scope.scope : () -> () {
+  // CHECK:   %[[LOADED:.*]] = hivm.hir.local_load ins(%{{.*}} : memref<1xi32>)
+  // CHECK:   %[[LOOP:.*]] = scf.for
+  // CHECK:     "test.use"(%{{.*}}, %[[LOADED]])
+  // CHECK:   tensor.extract %[[LOOP]][]
+  // CHECK:   scope.return
+  scope.scope : () -> () {
+    %init = tensor.empty() : tensor<i32>
+    %loaded = hivm.hir.local_load ins(%buffer : memref<1xi32>) -> tensor<1xi32>
+    %loop = scf.for %i = %c0 to %arg0 step %c1 iter_args(%acc = %init) -> (tensor<i32>) {
+      %next = "test.use"(%acc, %loaded) : (tensor<i32>, tensor<1xi32>) -> tensor<i32>
+      scf.yield %next : tensor<i32>
+    }
+    %extracted = tensor.extract %loop[] : tensor<i32>
+    scope.return
+  } {hivm.vf_mode = #hivm.vf_mode<SIMT>}
+
+  return
+}
