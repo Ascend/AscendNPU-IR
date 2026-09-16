@@ -1,4 +1,4 @@
-// REQUIRES: hivmc-a5
+// REQUIRES: hivmc
 //
 // Full-pipeline test: Two independent chains (a*b, c*d) from Triton kernel.
 // Without ub-aware-op mode, both chains are merged into 1 VF that overflows UB.

@@ -27,7 +27,8 @@ class RewritePatternSet;
 /// Collect a set of patterns to lower HIVM ops to ops that map to LLVM
 /// intrinsics.
 void populateHIVMLegalizeForLLVMExportPatterns(LLVMTypeConverter &converter,
-                                               RewritePatternSet &patterns);
+                                               RewritePatternSet &patterns,
+                                               bool isRegBased);
 
 /// Configure the target to support lowering HIVM ops to ops that map to LLVM
 /// intrinsics.
