@@ -253,8 +253,6 @@ func.func @do_not_propagate_scf_for_yield_when_iter_arg_is_used() -> memref<1x7x
   return %0 : memref<1x7xf32, #hivm.address_space<ub>>
 }
 
-// RUN: bishengir-opt -hivm-enable-stride-align -split-input-file %s | FileCheck %s
-
 module attributes {
   hacc.target = #hacc.target<"Ascend950PR_9579">,
   hivm.module_core_type = #hivm.module_core_type<AIV>
@@ -275,14 +273,12 @@ module attributes {
     // CHECK: %[[ALIGNED:.*]] = memref.subview %[[PHYSICAL]]
     // CHECK-SAME: to memref<1x16xf32, strided<[32, 1]>, #hivm.address_space<ub>>
 
-    // 关键断言一：不能在 if 前提前 copy。
     // CHECK-NOT: hivm.hir.copy ins(%[[ALIGNED]]
 
     // CHECK: %[[RET:.*]] = scf.if %{{.*}} ->
     // CHECK-SAME: memref<1x16xf32, #hivm.address_space<ub>>
     %ret = scf.if %cond
         -> (memref<1x16xf32, #hivm.address_space<ub>>) {
-      // 关键断言二：copy 必须被物化在发生转换的分支内。
       // CHECK: %[[DENSE:.*]] = memref.alloc()
       // CHECK-SAME: memref<1x16xf32, #hivm.address_space<ub>>
       // CHECK-NEXT: hivm.hir.copy ins(%[[ALIGNED]]
