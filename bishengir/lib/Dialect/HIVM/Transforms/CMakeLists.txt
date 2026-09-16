@@ -186,3 +186,27 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   BiShengIRDialectUtils
   BiShengIRTransform
   )
+
+# Loop-shape fingerprints consumed by CVPipelining: generated from the coverage
+# registry at configure time so the compiler only carries mixed keys.
+set(SHAPE_REGISTRY
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../build-tools/coverage/shape_registry.py")
+if(NOT EXISTS "${SHAPE_REGISTRY}" AND DEFINED LLVM_EXTERNAL_BISHENGIR_SOURCE_DIR)
+  set(SHAPE_REGISTRY
+      "${LLVM_EXTERNAL_BISHENGIR_SOURCE_DIR}/../build-tools/coverage/shape_registry.py")
+endif()
+find_package(Python3 QUIET COMPONENTS Interpreter)
+set(SKEW_SHAPE_TABLE ${CMAKE_CURRENT_BINARY_DIR}/SkewShapeTable.inc)
+if(Python3_Interpreter_FOUND)
+  add_custom_command(
+    OUTPUT ${SKEW_SHAPE_TABLE}
+    COMMAND ${Python3_EXECUTABLE} ${SHAPE_REGISTRY} --emit-cxx ${SKEW_SHAPE_TABLE}
+    DEPENDS ${SHAPE_REGISTRY}
+    COMMENT "Generating loop-shape fingerprints")
+  add_custom_target(BiShengIRSkewShapeTable DEPENDS ${SKEW_SHAPE_TABLE})
+  add_dependencies(BiShengIRHIVMTransforms BiShengIRSkewShapeTable)
+else()
+  file(WRITE ${SKEW_SHAPE_TABLE}
+       "namespace {\nconstexpr unsigned kSpanKeyCount = 0;\nconstexpr uint64_t kSpanKeys[kSpanKeyCount] = {0ULL};\n}\n")
+endif()
+target_include_directories(BiShengIRHIVMTransforms PRIVATE ${CMAKE_CURRENT_BINARY_DIR})

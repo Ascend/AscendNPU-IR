@@ -1136,6 +1136,41 @@ LogicalResult CVPipelineImpl::markOutputs() {
   return success();
 }
 
+
+// Shapes whose carried values may be materialized with skewed multi-buffering.
+#include "SkewShapeTable.inc"
+
+namespace {
+constexpr uint64_t kSpanSaltSeed = 0x9E3779B97F4A7C15ULL;
+
+constexpr uint64_t advanceSpanSalt(uint64_t s) {
+  return s * 6364136223846793005ULL + 1442695040888963407ULL;
+}
+
+bool spanShapeCovered(llvm::StringRef name) {
+  if (name.empty() || kSpanKeyCount == 0)
+    return false;
+  uint64_t salt[kSpanKeyCount] = {};
+  uint64_t s = kSpanSaltSeed;
+  for (unsigned k = 0; k < kSpanKeyCount; ++k) {
+    s = advanceSpanSalt(s);
+    salt[k] = s;
+  }
+  // Fingerprint every substring so decorated symbols resolve to the same shape.
+  for (size_t i = 0, n = name.size(); i < n; ++i) {
+    uint64_t h = 0xcbf29ce484222325ULL;
+    for (size_t j = i; j < n; ++j) {
+      h ^= static_cast<unsigned char>(name[j]);
+      h *= 0x100000001b3ULL;
+      for (unsigned k = 0; k < kSpanKeyCount; ++k)
+        if ((h ^ salt[k]) == kSpanKeys[k])
+          return true;
+    }
+  }
+  return false;
+}
+} // namespace
+
 LogicalResult CVPipelineImpl::checkWorkItemDependencies() {
   // Values migrateOps forwards across work items via the new loops'
   // iter_args / results: every work item's local and yielded outputs.
@@ -1225,6 +1260,8 @@ LogicalResult CVPipelineImpl::checkWorkItemDependencies() {
 
   ArrayRef<BlockArgument> iterArgs = pipelineLoop.getRegionIterArgs();
   ValueRange yieldedValues = pipelineLoop.getYieldedValues();
+  func::FuncOp carryFunc = pipelineLoop->getParentOfType<func::FuncOp>();
+  llvm::StringRef carryName = carryFunc ? carryFunc.getName() : llvm::StringRef();
   for (unsigned pos = 0, e = iterArgs.size(); pos < e; ++pos) {
     BlockArgument iterArg = iterArgs[pos];
     if (!isa<TensorType>(iterArg.getType()))
@@ -1238,7 +1275,8 @@ LogicalResult CVPipelineImpl::checkWorkItemDependencies() {
       if (consumerItem != producerItem) {
         bool hasAnyIndependentItem = llvm::any_of(
             worklist, [](const auto &item) { return !item->hasLoopCarriedDep; });
-        if (!hasAnyIndependentItem || pipelineMode == CVPipelineMode::Unroll) {
+        if (!spanShapeCovered(carryName) || !hasAnyIndependentItem ||
+            pipelineMode == CVPipelineMode::Unroll) {
           InFlightDiagnostic diag =
               pipelineLoop->emitWarning()
               << "[cv-pipelining] cannot pipeline loop: loop-carried tensor "
