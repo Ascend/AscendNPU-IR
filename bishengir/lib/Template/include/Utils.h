@@ -102,8 +102,10 @@ __aiv__ __attribute__((always_inline)) bool isSizeAlignedToBlock(int size) {
   return size % num_per_block == 0;
 }
 
-// Determine whether the starting address is 32byte aligned.
 template <typename T>
+#if defined(__DAV_C310__)
+__simd_callee__
+#endif
 __aiv__ __attribute__((always_inline)) bool
 isAddress32ByteAligned(__ubuf__ T *ptr) {
   auto address = reinterpret_cast<uintptr_t>(ptr);

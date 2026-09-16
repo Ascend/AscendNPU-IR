@@ -23,6 +23,31 @@
 // The software implementation interface vdiv of CCEC supports division
 // operations on uint16, uint32, int16, and int32 types with no precision error.
 
+template <typename T>
+__simd_vf__ void vdiv_int_vf(uint16_t loop_times, uint16_t inner_size,
+                             uint32_t ele_per_VL, __ubuf__ T *src0_ptr,
+                             __ubuf__ T *src1_ptr, __ubuf__ T *dst_ptr) {
+  VectorReg<T> src0_val, src1_val, dst_val;
+
+  for (uint16_t loop_idx = 0; loop_idx < loop_times; ++loop_idx) {
+    uint32_t remain = inner_size - loop_idx * ele_per_VL;
+    uint32_t cur = remain > ele_per_VL ? ele_per_VL : remain;
+
+    vector_bool mask;
+    CREATE_MASK_BY_SIZE(mask, T, cur);
+
+    vlds(src0_val, src0_ptr, loop_idx * ele_per_VL, NORM);
+    vlds(src1_val, src1_ptr, loop_idx * ele_per_VL, NORM);
+    vdiv(dst_val, src0_val, src1_val, mask, MODE_ZEROING);
+
+    if constexpr (std::is_same_v<T, int16_t> || std::is_same_v<T, uint16_t>)
+      vsts(dst_val, dst_ptr, loop_idx * ele_per_VL, NORM_B16, mask);
+    else if constexpr (std::is_same_v<T, int32_t> ||
+                       std::is_same_v<T, uint32_t>)
+      vsts(dst_val, dst_ptr, loop_idx * ele_per_VL, NORM_B32, mask);
+  }
+}
+
 template <typename T, size_t dim>
 __aiv__ __attribute__((always_inline)) void
 vdiv_int(memref_t<__ubuf__ T, dim> *src0, memref_t<__ubuf__ T, dim> *src1,
@@ -61,27 +86,32 @@ vdiv_int(memref_t<__ubuf__ T, dim> *src0, memref_t<__ubuf__ T, dim> *src1,
     __ubuf__ T *src1_ptr = src1_base + outer_idx * s1_outer_stride;
     __ubuf__ T *dst_ptr = dst_base + outer_idx * d_outer_stride;
 
-    __VEC_SCOPE__ {
-      VectorReg<T> src0_val, src1_val, dst_val;
+    vdiv_int_vf<T>(loop_times, inner_size, ele_per_VL, src0_ptr, src1_ptr,
+                   dst_ptr);
+  }
+}
 
-      for (uint16_t loop_idx = 0; loop_idx < loop_times; ++loop_idx) {
-        uint32_t remain = inner_size - loop_idx * ele_per_VL;
-        uint32_t cur = remain > ele_per_VL ? ele_per_VL : remain;
+template <typename T>
+__simd_vf__ void vdiv_int_scalar_vf(T src1, uint16_t loop_times,
+                                    uint16_t inner_size, uint32_t ele_per_VL,
+                                    __ubuf__ T *src0_ptr, __ubuf__ T *dst_ptr) {
+  constexpr int dsize = sizeof(T);
+  VectorReg<T> src0_val, src1_val, dst_val;
+  vbr(src1_val, src1);
+  for (uint16_t loop_idx = 0; loop_idx < loop_times; ++loop_idx) {
+    uint32_t remain = inner_size - loop_idx * ele_per_VL;
+    uint32_t cur = remain > ele_per_VL ? ele_per_VL : remain;
 
-        vector_bool mask;
-        CREATE_MASK_BY_SIZE(mask, T, cur);
+    vector_bool mask;
+    CREATE_MASK_BY_SIZE(mask, T, cur);
 
-        vlds(src0_val, src0_ptr, loop_idx * ele_per_VL, NORM);
-        vlds(src1_val, src1_ptr, loop_idx * ele_per_VL, NORM);
-        vdiv(dst_val, src0_val, src1_val, mask, MODE_ZEROING);
+    vlds(src0_val, src0_ptr, loop_idx * ele_per_VL, NORM);
+    vdiv(dst_val, src0_val, src1_val, mask, MODE_ZEROING);
 
-        if constexpr (std::is_same_v<T, int16_t> || std::is_same_v<T, uint16_t>)
-          vsts(dst_val, dst_ptr, loop_idx * ele_per_VL, NORM_B16, mask);
-        else if constexpr (std::is_same_v<T, int32_t> ||
-                           std::is_same_v<T, uint32_t>)
-          vsts(dst_val, dst_ptr, loop_idx * ele_per_VL, NORM_B32, mask);
-      }
-    }
+    if constexpr (std::is_same_v<T, int16_t>)
+      vsts(dst_val, dst_ptr, loop_idx * ele_per_VL, NORM_B16, mask);
+    else if constexpr (dsize == BYTES_B32)
+      vsts(dst_val, dst_ptr, loop_idx * ele_per_VL, NORM_B32, mask);
   }
 }
 
@@ -119,25 +149,8 @@ vdiv_int_scalar(memref_t<__ubuf__ T, dim> *src0, T src1,
     __ubuf__ T *src0_ptr = src0_base + outer_idx * s0_outer_stride;
     __ubuf__ T *dst_ptr = dst_base + outer_idx * d_outer_stride;
 
-    __VEC_SCOPE__ {
-      VectorReg<T> src0_val, src1_val, dst_val;
-      vbr(src1_val, src1);
-      for (uint16_t loop_idx = 0; loop_idx < loop_times; ++loop_idx) {
-        uint32_t remain = inner_size - loop_idx * ele_per_VL;
-        uint32_t cur = remain > ele_per_VL ? ele_per_VL : remain;
-
-        vector_bool mask;
-        CREATE_MASK_BY_SIZE(mask, T, cur);
-
-        vlds(src0_val, src0_ptr, loop_idx * ele_per_VL, NORM);
-        vdiv(dst_val, src0_val, src1_val, mask, MODE_ZEROING);
-
-        if constexpr (std::is_same_v<T, int16_t>)
-          vsts(dst_val, dst_ptr, loop_idx * ele_per_VL, NORM_B16, mask);
-        else if constexpr (dsize == BYTES_B32)
-          vsts(dst_val, dst_ptr, loop_idx * ele_per_VL, NORM_B32, mask);
-      }
-    }
+    vdiv_int_scalar_vf<T>(src1, loop_times, inner_size, ele_per_VL, src0_ptr,
+                          dst_ptr);
   }
 }
 

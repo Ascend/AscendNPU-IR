@@ -1573,7 +1573,6 @@
 #define __USE_XOPEN_EXTENDED 1
 #define __UWORD_TYPE unsigned long int
 #define __VECTOR_ADDRESS__
-#define __VEC_SCOPE__ if(false)
 #define __VERSION__ "2026-01-09 10:57:37 +0800 Clang 15.0.5 (clang-ebb840325b82 flang-ebb840325b82)"
 #define __WALL 0x40000000
 #define __WCHAR_MAX __WCHAR_MAX__

@@ -23,6 +23,58 @@
 #if defined(__DAV_C310__)
 
 template <typename T>
+__simd_vf__ void cumprod_3d_u8_vf(uint32_t size0_temp0, __ubuf__ T *src_aligned,
+                                  int64_t src_offset, int64_t src_first_row,
+                                  uint16_t i, int num_per_reg,
+                                  __ubuf__ T *dst_aligned, int64_t dst_offset,
+                                  int64_t dst_first_row) {
+  VectorReg<T> reg;
+  vector_bool mask;
+  CREATE_MASK_BY_SIZE(mask, T, size0_temp0);
+  vlds(reg, src_aligned + src_offset + src_first_row, i * num_per_reg, NORM);
+  vsts(reg, dst_aligned + dst_offset + dst_first_row, i * num_per_reg, NORM_B32,
+       mask);
+}
+
+template <typename T>
+__simd_vf__ void cumprod_3d_u8_vf2(uint32_t size0, uint16_t repeat_times,
+                                   __ubuf__ T *src_aligned,
+                                   int64_t curr_src_off, int num_per_reg,
+                                   __ubuf__ T *dst_aligned,
+                                   int64_t prev_dst_off, int64_t curr_dst_off) {
+  uint32_t size0_temp1 = size0;
+  vector_u16 src0_u16_even, src0_u16_odd;
+  vector_u16 src1_u16_even, src1_u16_odd;
+  vector_u16 dst_u16_even, dst_u16_odd;
+  VectorReg<T> src0_reg, src1_reg, dst_reg;
+  vector_bool full_mask;
+
+  for (uint16_t i = 0; i < repeat_times; i++) {
+    // 读当前 src + 上一轮 dst 结果
+    CREATE_MASK_BY_SIZE(full_mask, T, size0_temp1);
+    vlds(src0_reg, src_aligned + curr_src_off, i * num_per_reg, NORM);
+    vlds(src1_reg, dst_aligned + prev_dst_off, i * num_per_reg, NORM);
+
+    // u8 -> u16 奇偶拆分
+    vcvt(src0_u16_even, src0_reg, PART_EVEN);
+    vcvt(src0_u16_odd, src0_reg, PART_ODD);
+    vcvt(src1_u16_even, src1_reg, PART_EVEN);
+    vcvt(src1_u16_odd, src1_reg, PART_ODD);
+
+    // 乘法
+    vmul(dst_u16_even, src0_u16_even, src1_u16_even, full_mask, MODE_ZEROING);
+    vmul(dst_u16_odd, src0_u16_odd, src1_u16_odd, full_mask, MODE_ZEROING);
+
+    vcvt(dst_reg, dst_u16_even, PART_EVEN, MODE_MERGING);
+    vcvt(dst_reg, dst_u16_odd, PART_ODD, MODE_MERGING);
+
+    // 写回当前 dst
+    vsts(dst_reg, dst_aligned + curr_dst_off, i * num_per_reg, NORM_B32,
+         full_mask);
+  }
+}
+
+template <typename T>
 __aiv__ __attribute__((always_inline)) static void
 cumprod_3d_u8(memref_t<__ubuf__ T, 3> *src,
               memref_t<__ubuf__ T, 3> *dst, bool reverse) {
@@ -43,13 +95,8 @@ cumprod_3d_u8(memref_t<__ubuf__ T, 3> *src,
   int64_t src_first_row = reverse ? (int64_t)(src_size - 1) * src_stride : (int64_t)0;
   int64_t dst_first_row = reverse ? (int64_t)(src_size - 1) * dst_stride : (int64_t)0;
   for (uint16_t i = 0; i < repeat_times; i++) {
-    __VEC_SCOPE__ {
-      VectorReg<T> reg;
-      vector_bool mask;
-      CREATE_MASK_BY_SIZE(mask, T, size0_temp0);
-      vlds(reg, src_aligned + src_offset + src_first_row, i * num_per_reg, NORM);
-      vsts(reg, dst_aligned + dst_offset + dst_first_row, i * num_per_reg, NORM_B32, mask);
-    }
+    cumprod_3d_u8_vf<T>(size0_temp0, src_aligned, src_offset, src_first_row, i,
+                        num_per_reg, dst_aligned, dst_offset, dst_first_row);
   }
 
   for (uint16_t j = 1; j < src_size; ++j) {
@@ -59,37 +106,8 @@ cumprod_3d_u8(memref_t<__ubuf__ T, 3> *src,
     int64_t prev_dst_off = dst_offset + prev_idx * dst_stride;
     int64_t curr_dst_off = dst_offset + curr_idx * dst_stride;
 
-    __VEC_SCOPE__ {
-      uint32_t size0_temp1 = size0;
-      vector_u16 src0_u16_even, src0_u16_odd;
-      vector_u16 src1_u16_even, src1_u16_odd;
-      vector_u16 dst_u16_even,  dst_u16_odd;
-      VectorReg<T> src0_reg, src1_reg, dst_reg;
-      vector_bool full_mask;
-
-      for (uint16_t i = 0; i < repeat_times; i++) {
-        // 读当前 src + 上一轮 dst 结果
-        CREATE_MASK_BY_SIZE(full_mask, T, size0_temp1);
-        vlds(src0_reg, src_aligned + curr_src_off, i * num_per_reg, NORM);
-        vlds(src1_reg, dst_aligned + prev_dst_off, i * num_per_reg, NORM);
-
-        // u8 -> u16 奇偶拆分
-        vcvt(src0_u16_even, src0_reg, PART_EVEN);
-        vcvt(src0_u16_odd,  src0_reg, PART_ODD);
-        vcvt(src1_u16_even, src1_reg, PART_EVEN);
-        vcvt(src1_u16_odd,  src1_reg, PART_ODD);
-
-        // 乘法
-        vmul(dst_u16_even, src0_u16_even, src1_u16_even, full_mask, MODE_ZEROING);
-        vmul(dst_u16_odd,  src0_u16_odd,  src1_u16_odd,  full_mask, MODE_ZEROING);
-
-        vcvt(dst_reg, dst_u16_even, PART_EVEN, MODE_MERGING);
-        vcvt(dst_reg, dst_u16_odd,  PART_ODD,  MODE_MERGING);
-
-        // 写回当前 dst
-        vsts(dst_reg, dst_aligned + curr_dst_off, i * num_per_reg, NORM_B32, full_mask);
-      }
-    }
+    cumprod_3d_u8_vf2<T>(size0, repeat_times, src_aligned, curr_src_off,
+                         num_per_reg, dst_aligned, prev_dst_off, curr_dst_off);
   }
 }
 
@@ -107,6 +125,48 @@ cumprod_3d_byte(memref_t<__ubuf__ T, 3> *src,
     view_as<int8_t, uint8_t, 3>(src, &src_as_uint8);
     view_as<int8_t, uint8_t, 3>(dst, &dst_as_uint8);
     cumprod_3d_u8(&src_as_uint8, &dst_as_uint8, reverse);
+  }
+}
+
+template <typename T>
+__simd_vf__ void
+oneway_cumprod_vf(int32_t nAddFactor, int32_t mFactor, uint16_t nLoop,
+                  __ubuf__ T *src_ptr, int32_t start_row_offset,
+                  int32_t num_per_reg, __ubuf__ T *dst_ptr, uint16_t rLoop,
+                  bool reverse, int32_t rFactor, int32_t stride0) {
+  // acc caches the cumulative product of the previous row; x2 holds the current
+  // row
+  VectorReg<T> acc, x2;
+  vector_bool mask;
+  uint32_t totalElements = (uint32_t)nAddFactor * (uint32_t)mFactor;
+
+  for (uint16_t j = 0; j < nLoop; j++) {
+    CREATE_MASK_BY_SIZE(mask, T, totalElements);
+
+    // Row 0 initialisation: load the first row as the starting point for
+    // accumulation
+
+    vlds(acc, src_ptr, start_row_offset + j * num_per_reg, NORM);
+    // Write the first row directly to the output
+    vsts(acc, dst_ptr, start_row_offset + j * num_per_reg, NORM_B32, mask);
+
+    // Iteratively accumulate starting from row 1
+
+    for (uint16_t r = 1; r < rLoop; r++) {
+      int32_t r_offset = reverse ? (rFactor - 1 - r) : r;
+
+      // 1. Load the current row into x2
+
+      vlds(x2, src_ptr + r_offset * stride0, j * num_per_reg, NORM);
+
+      // 2. Standard vector multiply: acc = acc * x2 (no error compensation)
+
+      vmul(acc, acc, x2, mask);
+
+      // 3. Store the cumulative product of the current row to output
+
+      vsts(acc, dst_ptr + r_offset * stride0, j * num_per_reg, NORM_B32, mask);
+    }
   }
 }
 
@@ -130,42 +190,10 @@ template <typename T>
 
   if constexpr (sizeof(T) == 1) {
     cumprod_3d_byte<T>(src, dst, reverse);
-    return;
-  }
-
-  __VEC_SCOPE__ {
-    // acc caches the cumulative product of the previous row; x2 holds the current row
-    VectorReg<T> acc, x2;
-    vector_bool mask;
-    uint32_t totalElements = (uint32_t)nAddFactor * (uint32_t)mFactor;
-
-    for (uint16_t j = 0; j < nLoop; j++) {
-      CREATE_MASK_BY_SIZE(mask, T, totalElements);
-
-      // Row 0 initialisation: load the first row as the starting point for accumulation
-
-      vlds(acc, src_ptr, start_row_offset + j * num_per_reg, NORM);
-      // Write the first row directly to the output
-      vsts(acc, dst_ptr, start_row_offset + j * num_per_reg, NORM_B32, mask);
-
-      // Iteratively accumulate starting from row 1
-
-      for (uint16_t r = 1; r < rLoop; r++) {
-        int32_t r_offset = reverse ? (rFactor - 1 - r) : r;
-
-        // 1. Load the current row into x2
-
-        vlds(x2, src_ptr + r_offset * stride0, j * num_per_reg, NORM);
-
-        // 2. Standard vector multiply: acc = acc * x2 (no error compensation)
-
-        vmul(acc, acc, x2, mask);
-
-        // 3. Store the cumulative product of the current row to output
-
-        vsts(acc, dst_ptr + r_offset * stride0, j * num_per_reg, NORM_B32, mask);
-      }
-    }
+  } else {
+    oneway_cumprod_vf<T>(nAddFactor, mFactor, nLoop, src_ptr, start_row_offset,
+                         num_per_reg, dst_ptr, rLoop, reverse, rFactor,
+                         stride0);
   }
 }
 
@@ -201,18 +229,22 @@ compute_cumprod_3d(memref_t<__ubuf__ T, 3> *src, memref_t<__ubuf__ T, 3> *dst,
  * =========================================================================
  */
 template <typename T, typename IdxT, typename uIdxT>
+__simd_vf__ void cumprod_copy_lane_gather_vf(uint32_t nn, __ubuf__ T *s,
+                                             __ubuf__ T *d) {
+  VectorReg<T> a;
+  VectorReg<IdxT> idx;
+  vector_bool m;
+  CREATE_MASK_BY_SIZE(m, T, nn);
+  vci(idx, 0);
+  vgather2(a, s, (VectorReg<uIdxT> &)idx, m);
+  vscatter(a, d, (VectorReg<uIdxT> &)idx, m);
+}
+
+template <typename T, typename IdxT, typename uIdxT>
 __aiv__ __attribute__((always_inline)) static void
 cumprod_copy_lane_gather(__ubuf__ T *s, __ubuf__ T *d, int n) {
   uint32_t nn = static_cast<uint32_t>(n);
-  __VEC_SCOPE__ {
-    VectorReg<T>    a;
-    VectorReg<IdxT> idx;
-    vector_bool     m;
-    CREATE_MASK_BY_SIZE(m, T, nn);
-    vci(idx, 0);
-    vgather2(a, s, (VectorReg<uIdxT> &)idx, m);
-    vscatter(a, d, (VectorReg<uIdxT> &)idx, m);
-  }
+  cumprod_copy_lane_gather_vf<T, IdxT, uIdxT>(nn, s, d);
 }
 
 /* =========================================================================
@@ -220,6 +252,48 @@ cumprod_copy_lane_gather(__ubuf__ T *s, __ubuf__ T *d, int n) {
  *    All vadd -> vmul vs. the cumprod version.
  * =========================================================================
  */
+template <typename T, typename IdxT, typename uIdxT>
+__simd_vf__ void comprod_unified_scan_fwd_nocopy_vf(
+    uint32_t bpeU, bool tailG, uint32_t tailN, __ubuf__ T *tailRd, int d,
+    __ubuf__ T *tailWd, uint16_t fwdCntU, int fullRegs, __ubuf__ T *rbase,
+    int BpE, __ubuf__ T *wbase, bool strG, uint32_t strN, __ubuf__ T *strRd,
+    __ubuf__ T *strWd) {
+  VectorReg<T> a, b;
+  VectorReg<IdxT> idx;
+  vector_align valign;
+  vector_bool m, mFull;
+
+  vci(idx, 0);
+  CREATE_MASK_BY_SIZE(mFull, T, bpeU);
+
+  if (tailG) {
+    CREATE_MASK_BY_SIZE(m, T, tailN);
+    vgather2(a, tailRd, (VectorReg<uIdxT> &)idx, m);
+    vgather2(b, tailRd - d, (VectorReg<uIdxT> &)idx, m);
+    vmul(a, a, b, m);
+    vscatter(a, tailWd, (VectorReg<uIdxT> &)idx, m);
+  }
+
+  for (uint16_t k = 0; k < fwdCntU; ++k) {
+    int r = (fullRegs - 1) - static_cast<int>(k);
+    __ubuf__ T *rb = rbase + r * BpE;
+    __ubuf__ T *wb = wbase + r * BpE;
+    vlds(a, rb, 0, NORM);
+    vldas(valign, rb - d);
+    vldus(b, valign, rb - d);
+    vmul(a, a, b, mFull);
+    vsts(a, wb, 0, NORM_B32, mFull);
+  }
+
+  if (strG) {
+    CREATE_MASK_BY_SIZE(m, T, strN);
+    vgather2(a, strRd, (VectorReg<uIdxT> &)idx, m);
+    vgather2(b, strRd - d, (VectorReg<uIdxT> &)idx, m);
+    vmul(a, a, b, m);
+    vscatter(a, strWd, (VectorReg<uIdxT> &)idx, m);
+  }
+}
+
 template <typename T>
 __aiv__ __attribute__((always_inline)) static void
 comprod_unified_scan_fwd_nocopy(__ubuf__ T *srcBase, __ubuf__ T *dstBase, int N,
@@ -251,42 +325,9 @@ comprod_unified_scan_fwd_nocopy(__ubuf__ T *srcBase, __ubuf__ T *dstBase, int N,
     int      fwdCnt  = (fullRegs - cf > 0) ? (fullRegs - cf) : 0;
     uint16_t fwdCntU = static_cast<uint16_t>(fwdCnt);
 
-    __VEC_SCOPE__ {
-      VectorReg<T>    a, b;
-      VectorReg<IdxT> idx;
-      vector_align    valign;
-      vector_bool     m, mFull;
-
-      vci(idx, 0);
-      CREATE_MASK_BY_SIZE(mFull, T, bpeU);
-
-      if (tailG) {
-        CREATE_MASK_BY_SIZE(m, T, tailN);
-        vgather2(a, tailRd,     (VectorReg<uIdxT> &)idx, m);
-        vgather2(b, tailRd - d, (VectorReg<uIdxT> &)idx, m);
-        vmul(a, a, b, m);
-        vscatter(a, tailWd, (VectorReg<uIdxT> &)idx, m);
-      }
-
-      for (uint16_t k = 0; k < fwdCntU; ++k) {
-        int r = (fullRegs - 1) - static_cast<int>(k);
-        __ubuf__ T *rb = rbase + r * BpE;
-        __ubuf__ T *wb = wbase + r * BpE;
-        vlds(a, rb, 0, NORM);
-        vldas(valign, rb - d);
-        vldus(b, valign, rb - d);
-        vmul(a, a, b, mFull);
-        vsts(a, wb, 0, NORM_B32, mFull);
-      }
-
-      if (strG) {
-        CREATE_MASK_BY_SIZE(m, T, strN);
-        vgather2(a, strRd,     (VectorReg<uIdxT> &)idx, m);
-        vgather2(b, strRd - d, (VectorReg<uIdxT> &)idx, m);
-        vmul(a, a, b, m);
-        vscatter(a, strWd, (VectorReg<uIdxT> &)idx, m);
-      }
-    }
+    comprod_unified_scan_fwd_nocopy_vf<T, IdxT, uIdxT>(
+        bpeU, tailG, tailN, tailRd, d, tailWd, fwdCntU, fullRegs, rbase, BpE,
+        wbase, strG, strN, strRd, strWd);
 
     if (d == 1) {
       cumprod_copy_lane_gather<T, IdxT, uIdxT>(srcBase, dstBase, d);
@@ -298,6 +339,49 @@ comprod_unified_scan_fwd_nocopy(__ubuf__ T *srcBase, __ubuf__ T *dstBase, int N,
  * 5. comprod_unified_scan_rev_nocopy  -  reverse (suffix) product scan
  * =========================================================================
  */
+template <typename T, typename IdxT, typename uIdxT>
+__simd_vf__ void
+comprod_unified_scan_rev_nocopy_vf(uint32_t bpeU, uint16_t revCCntU,
+                                   __ubuf__ T *rbase, int BpE,
+                                   __ubuf__ T *wbase, int d, uint16_t revGCntU,
+                                   int gLo, int last, int tailSize, int N) {
+  VectorReg<T> a, b;
+  VectorReg<IdxT> idx;
+  vector_align valign;
+  vector_bool m, mFull;
+
+  vci(idx, 0);
+  CREATE_MASK_BY_SIZE(mFull, T, bpeU);
+
+  for (uint16_t k = 0; k < revCCntU; ++k) {
+    int r = static_cast<int>(k);
+    __ubuf__ T *rb = rbase + r * BpE;
+    __ubuf__ T *wb = wbase + r * BpE;
+    vlds(a, rb, 0, NORM);
+    vldas(valign, rb + d);
+    vldus(b, valign, rb + d);
+    vmul(a, a, b, mFull);
+    vsts(a, wb, 0, NORM_B32, mFull);
+  }
+
+  for (uint16_t k = 0; k < revGCntU; ++k) {
+    int r = gLo + static_cast<int>(k);
+    int rStart = r * BpE;
+    int sz = (r == last) ? tailSize : BpE;
+    int hi = rStart + sz;
+    int addEnd = (hi < (N - d)) ? hi : (N - d);
+    uint32_t nact = static_cast<uint32_t>(addEnd - rStart);
+
+    CREATE_MASK_BY_SIZE(m, T, nact);
+    __ubuf__ T *rd = rbase + rStart;
+    __ubuf__ T *wd = wbase + rStart;
+    vgather2(a, rd, (VectorReg<uIdxT> &)idx, m);
+    vgather2(b, rd + d, (VectorReg<uIdxT> &)idx, m);
+    vmul(a, a, b, m);
+    vscatter(a, wd, (VectorReg<uIdxT> &)idx, m);
+  }
+}
+
 template <typename T>
 __aiv__ __attribute__((always_inline)) static void
 comprod_unified_scan_rev_nocopy(__ubuf__ T *srcBase, __ubuf__ T *dstBase, int N,
@@ -326,43 +410,8 @@ comprod_unified_scan_rev_nocopy(__ubuf__ T *srcBase, __ubuf__ T *dstBase, int N,
     int      revGCnt  = (lastActive - gLo + 1 > 0) ? (lastActive - gLo + 1) : 0;
     uint16_t revGCntU = static_cast<uint16_t>(revGCnt);
 
-    __VEC_SCOPE__ {
-      VectorReg<T>    a, b;
-      VectorReg<IdxT> idx;
-      vector_align    valign;
-      vector_bool     m, mFull;
-
-      vci(idx, 0);
-      CREATE_MASK_BY_SIZE(mFull, T, bpeU);
-
-      for (uint16_t k = 0; k < revCCntU; ++k) {
-        int r = static_cast<int>(k);
-        __ubuf__ T *rb = rbase + r * BpE;
-        __ubuf__ T *wb = wbase + r * BpE;
-        vlds(a, rb, 0, NORM);
-        vldas(valign, rb + d);
-        vldus(b, valign, rb + d);
-        vmul(a, a, b, mFull);
-        vsts(a, wb, 0, NORM_B32, mFull);
-      }
-
-      for (uint16_t k = 0; k < revGCntU; ++k) {
-        int r      = gLo + static_cast<int>(k);
-        int rStart = r * BpE;
-        int sz     = (r == last) ? tailSize : BpE;
-        int hi     = rStart + sz;
-        int addEnd = (hi < (N - d)) ? hi : (N - d);
-        uint32_t nact = static_cast<uint32_t>(addEnd - rStart);
-
-        CREATE_MASK_BY_SIZE(m, T, nact);
-        __ubuf__ T *rd = rbase + rStart;
-        __ubuf__ T *wd = wbase + rStart;
-        vgather2(a, rd,     (VectorReg<uIdxT> &)idx, m);
-        vgather2(b, rd + d, (VectorReg<uIdxT> &)idx, m);
-        vmul(a, a, b, m);
-        vscatter(a, wd, (VectorReg<uIdxT> &)idx, m);
-      }
-    }
+    comprod_unified_scan_rev_nocopy_vf<T, IdxT, uIdxT>(
+        bpeU, revCCntU, rbase, BpE, wbase, d, revGCntU, gLo, last, tailSize, N);
 
     if (d == 1) {
       cumprod_copy_lane_gather<T, IdxT, uIdxT>(srcBase + (N - d), dstBase + (N - d), d);

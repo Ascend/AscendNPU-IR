@@ -28,7 +28,7 @@ template <ReduceOpTy OP, TieBreak TIE_BREAK, typename T0, typename T1,
           typename AlignedHint = __cce_simd::AlignedHint,
           typename Enable = void>
 struct ReduceImpl {
-  static inline __aiv__ __attribute__((always_inline)) void
+  __simd_callee__ __aiv__ __attribute__((always_inline)) static void
   reduce_leading_dim(__ubuf__ T0 *data_UB, __ubuf__ T0 *reduce_val_UB,
                      __ubuf__ int32_t *reduce_idx_UB, uint16_t loop_a,
                      uint16_t dim_a, uint16_t loop_r, uint16_t src_r_stride) {
@@ -91,7 +91,7 @@ struct ReduceImpl {
     }
   }
 
-  static inline __aiv__ __attribute__((always_inline)) void
+  __simd_callee__ __aiv__ __attribute__((always_inline)) static void
   reduce_last_axis_contiguous_vec(
       __ubuf__ T0 *data_UB, __ubuf__ T0 *reduce_val_UB,
       __ubuf__ int32_t *reduce_idx_UB, uint16_t dim_a, uint16_t dim_r,
@@ -173,7 +173,7 @@ struct ReduceImpl {
 template <ReduceOpTy OP, TieBreak TIE_BREAK, typename T0, typename T1>
 struct ReduceImpl<OP, TIE_BREAK, T0, T1, __cce_simd::UnAlignedHint,
                   typename std::enable_if<!isB64Type<T0>>::type> {
-  static inline __aiv__ __attribute__((always_inline)) void
+  __simd_callee__ __aiv__ __attribute__((always_inline)) static void
   reduce_leading_dim(__ubuf__ T0 *data_UB, __ubuf__ T0 *reduce_val_UB,
                      __ubuf__ int32_t *reduce_idx_UB, uint16_t loop_a,
                      uint16_t dim_a, uint16_t loop_r, uint16_t src_r_stride) {
@@ -244,7 +244,7 @@ struct ReduceImpl<OP, TIE_BREAK, T0, T1, __cce_simd::UnAlignedHint,
 #endif
   }
 
-  static inline __aiv__ __attribute__((always_inline)) void
+  __simd_callee__ __aiv__ __attribute__((always_inline)) static void
   reduce_last_axis_contiguous_vec(
       __ubuf__ T0 *data_UB, __ubuf__ T0 *reduce_val_UB,
       __ubuf__ int32_t *reduce_idx_UB, uint16_t dim_a, uint16_t dim_r,
@@ -332,10 +332,11 @@ struct ReduceImpl<OP, TIE_BREAK, T0, T1, __cce_simd::UnAlignedHint,
 };
 
 // i64 Specialized Reduction Template (Aligned/Unaligned)
-template <ReduceOpTy OP, TieBreak TIE_BREAK, typename T0, typename T1, typename AlignedHint>
+template <ReduceOpTy OP, TieBreak TIE_BREAK, typename T0, typename T1,
+          typename AlignedHint>
 struct ReduceImpl<OP, TIE_BREAK, T0, T1, AlignedHint,
                   typename std::enable_if<isB64Type<T0>>::type> {
-  static inline __aiv__ __attribute__((always_inline)) void
+  __simd_callee__ __aiv__ __attribute__((always_inline)) static void
   reduce_leading_dim(__ubuf__ T0 *data_UB, __ubuf__ T0 *reduce_val_UB,
                      __ubuf__ int32_t *reduce_idx_UB, uint16_t loop_a,
                      uint16_t dim_a, uint16_t loop_r, uint16_t src_r_stride) {
@@ -398,7 +399,7 @@ struct ReduceImpl<OP, TIE_BREAK, T0, T1, AlignedHint,
 #endif
   }
 
-  static inline __aiv__ __attribute__((always_inline)) void
+  __simd_callee__ __aiv__ __attribute__((always_inline)) static void
   reduce_last_axis_contiguous_vec(
       __ubuf__ T0 *data_UB, __ubuf__ T0 *reduce_val_UB,
       __ubuf__ int32_t *reduce_idx_UB, uint16_t dim_a, uint16_t dim_r,
@@ -409,7 +410,7 @@ struct ReduceImpl<OP, TIE_BREAK, T0, T1, AlignedHint,
 
     VectorReg<T0> cur_val, acc_val, reduced_val, brc_reduced_val;
     VectorReg<T1> cur_idx, acc_idx, helper_idx, reduced_idx, tmp_idx,
-                  tmp_reduced_idx, brc_tmp_reduced_idx;
+        tmp_reduced_idx, brc_tmp_reduced_idx;
     VectorReg<int32_t> final_idx;
 
     vector_bool full_mask, two_mask, one_mask, cmp_mask;
@@ -488,17 +489,11 @@ struct ReduceImpl<OP, TIE_BREAK, T0, T1, AlignedHint,
 };
 
 template <ReduceOpTy OP, TieBreak TIE_BREAK, typename T0, typename T1>
-inline __aiv__ __attribute__((always_inline)) void
-vf_wrapper_reduce_ar_last_axis_contiguous(
-    __ubuf__ T0 *data_UB, __ubuf__ T0 *reduce_val_UB,
+__simd_vf__ void vf_wrapper_reduce_ar_last_axis_contiguous_vf(
+    __ubuf__ T0 *data_UB, uint16_t src_a_stride, __ubuf__ T0 *reduce_val_UB,
     __ubuf__ int32_t *reduce_idx_UB, uint16_t dim_a, uint16_t dim_r,
-    uint16_t src_a_stride, uint16_t dst_val_stride, uint16_t dst_idx_stride,
-    T0 initvalue) {
-  constexpr int dsize = sizeof(T0);
-  uint16_t main_loop = CEIL_DIV(dim_r * dsize, VL_IN_BYTE);
-  uint16_t ele_per_VL = VL_IN_BYTE / dsize;
-
-  __VEC_SCOPE__ {
+    uint16_t dst_val_stride, uint16_t dst_idx_stride, T0 initvalue,
+    uint16_t main_loop, uint16_t ele_per_VL) {
 // calls helper vector function to reduce (a,r) -> (a,1)
 // last dimension must be contiguous
 
@@ -513,25 +508,67 @@ vf_wrapper_reduce_ar_last_axis_contiguous(
 // TODO: if the OP is tiled along the reduction axis, then a start index
 // maybe needed
 #if defined(__DAV_C310__)
-    if (isAddress32ByteAligned(data_UB + src_a_stride) &&
-        isAddress32ByteAligned(data_UB)) {
-      ReduceImpl<OP, TIE_BREAK, T0, T1>::reduce_last_axis_contiguous_vec(
-          data_UB, reduce_val_UB, reduce_idx_UB, dim_a, dim_r, src_a_stride,
-          dst_val_stride, dst_idx_stride, initvalue, main_loop, ele_per_VL);
-    } else {
-      ReduceImpl<OP, TIE_BREAK, T0, T1, __cce_simd::UnAlignedHint>::
-          reduce_last_axis_contiguous_vec(
-              data_UB, reduce_val_UB, reduce_idx_UB, dim_a, dim_r, src_a_stride,
-              dst_val_stride, dst_idx_stride, initvalue, main_loop, ele_per_VL);
-    }
-#else
-    // TODO: if the OP is tiled along the reduction axis, then a start index
-    // maybe needed
+  if (isAddress32ByteAligned(data_UB + src_a_stride) &&
+      isAddress32ByteAligned(data_UB)) {
     ReduceImpl<OP, TIE_BREAK, T0, T1>::reduce_last_axis_contiguous_vec(
         data_UB, reduce_val_UB, reduce_idx_UB, dim_a, dim_r, src_a_stride,
         dst_val_stride, dst_idx_stride, initvalue, main_loop, ele_per_VL);
-#endif
+  } else {
+    ReduceImpl<OP, TIE_BREAK, T0, T1, __cce_simd::UnAlignedHint>::
+        reduce_last_axis_contiguous_vec(
+            data_UB, reduce_val_UB, reduce_idx_UB, dim_a, dim_r, src_a_stride,
+            dst_val_stride, dst_idx_stride, initvalue, main_loop, ele_per_VL);
   }
+#else
+  // TODO: if the OP is tiled along the reduction axis, then a start index
+  // maybe needed
+  ReduceImpl<OP, TIE_BREAK, T0, T1>::reduce_last_axis_contiguous_vec(
+      data_UB, reduce_val_UB, reduce_idx_UB, dim_a, dim_r, src_a_stride,
+      dst_val_stride, dst_idx_stride, initvalue, main_loop, ele_per_VL);
+#endif
+}
+
+template <ReduceOpTy OP, TieBreak TIE_BREAK, typename T0, typename T1>
+inline __aiv__ __attribute__((always_inline)) void
+vf_wrapper_reduce_ar_last_axis_contiguous(
+    __ubuf__ T0 *data_UB, __ubuf__ T0 *reduce_val_UB,
+    __ubuf__ int32_t *reduce_idx_UB, uint16_t dim_a, uint16_t dim_r,
+    uint16_t src_a_stride, uint16_t dst_val_stride, uint16_t dst_idx_stride,
+    T0 initvalue) {
+  constexpr int dsize = sizeof(T0);
+  uint16_t main_loop = CEIL_DIV(dim_r * dsize, VL_IN_BYTE);
+  uint16_t ele_per_VL = VL_IN_BYTE / dsize;
+
+  vf_wrapper_reduce_ar_last_axis_contiguous_vf<OP, TIE_BREAK, T0, T1>(
+      data_UB, src_a_stride, reduce_val_UB, reduce_idx_UB, dim_a, dim_r,
+      dst_val_stride, dst_idx_stride, initvalue, main_loop, ele_per_VL);
+}
+
+template <ReduceOpTy OP, TieBreak TIE_BREAK, typename T0, typename T1>
+__simd_vf__ void vf_wrapper_reduce_ra_last_axis_contiguous_vf(
+    __ubuf__ T0 *data_UB, uint16_t src_r_stride, __ubuf__ T0 *reduce_val_UB,
+    __ubuf__ int32_t *reduce_idx_UB, uint16_t loop_a, uint16_t dim_a,
+    uint16_t loop_r) {
+#if defined(__DAV_C310__)
+  if (isAddress32ByteAligned(data_UB + src_r_stride) &&
+      isAddress32ByteAligned(data_UB)) {
+    ReduceImpl<OP, TIE_BREAK, T0, T1>::reduce_leading_dim(
+        data_UB, reduce_val_UB, reduce_idx_UB, loop_a, dim_a, loop_r,
+        src_r_stride);
+  } else {
+    ReduceImpl<OP, TIE_BREAK, T0, T1,
+               __cce_simd::UnAlignedHint>::reduce_leading_dim(data_UB,
+                                                              reduce_val_UB,
+                                                              reduce_idx_UB,
+                                                              loop_a, dim_a,
+                                                              loop_r,
+                                                              src_r_stride);
+  }
+#else
+  ReduceImpl<OP, TIE_BREAK, T0, T1>::reduce_leading_dim(
+      data_UB, reduce_val_UB, reduce_idx_UB, loop_a, dim_a, loop_r,
+      src_r_stride);
+#endif
 }
 
 template <ReduceOpTy OP, TieBreak TIE_BREAK, typename T0, typename T1>
@@ -545,21 +582,37 @@ vf_wrapper_reduce_ra_last_axis_contiguous(__ubuf__ T0 *data_UB,
   uint16_t loop_a = CEIL_DIV(size_a_in_byte, VL_IN_BYTE);
   uint16_t loop_r = dim_r > 1 ? (dim_r - 1) : 0;
 
-  __VEC_SCOPE__ {
+  vf_wrapper_reduce_ra_last_axis_contiguous_vf<OP, TIE_BREAK, T0, T1>(
+      data_UB, src_r_stride, reduce_val_UB, reduce_idx_UB, loop_a, dim_a,
+      loop_r);
+}
+
+template <ReduceOpTy OP, TieBreak TIE_BREAK, typename T0, typename T1>
+__simd_vf__ void vf_wrapper_reduce_ra0a1_last_axis_contiguous_vf(
+    uint16_t dim_a0, uint16_t src_a0_stride, __ubuf__ T0 *data_UB,
+    uint16_t dst_val_a0_stride, __ubuf__ T0 *reduce_val_UB,
+    uint16_t dst_idx_a0_stride, __ubuf__ int32_t *reduce_idx_UB,
+    uint16_t src_r_stride, uint16_t loop_a1, uint16_t dim_a1, uint16_t loop_r) {
+  for (uint16_t a0 = 0; a0 < dim_a0; ++a0) {
+    // usually dst_a0 and src_a0 offset are the same
+    __ubuf__ T0 *cur_data_UB = a0 * src_a0_stride + data_UB;
+    __ubuf__ T0 *cur_reduce_val_UB = a0 * dst_val_a0_stride + reduce_val_UB;
+    __ubuf__ int32_t *cur_reduce_idx_UB =
+        a0 * dst_idx_a0_stride + reduce_idx_UB;
 #if defined(__DAV_C310__)
-    if (isAddress32ByteAligned(data_UB + src_r_stride) &&
-        isAddress32ByteAligned(data_UB)) {
+    if (isAddress32ByteAligned(cur_data_UB + src_r_stride) &&
+        isAddress32ByteAligned(cur_data_UB)) {
       ReduceImpl<OP, TIE_BREAK, T0, T1>::reduce_leading_dim(
-          data_UB, reduce_val_UB, reduce_idx_UB, loop_a, dim_a,
+          cur_data_UB, cur_reduce_val_UB, cur_reduce_idx_UB, loop_a1, dim_a1,
           loop_r, src_r_stride);
     } else {
-      ReduceImpl<OP, TIE_BREAK, T0, T1, __cce_simd::UnAlignedHint>::reduce_leading_dim(
-          data_UB, reduce_val_UB, reduce_idx_UB, loop_a, dim_a, loop_r,
-          src_r_stride);
+      ReduceImpl<OP, TIE_BREAK, T0, T1, __cce_simd::UnAlignedHint>::
+          reduce_leading_dim(cur_data_UB, cur_reduce_val_UB, cur_reduce_idx_UB,
+                             loop_a1, dim_a1, loop_r, src_r_stride);
     }
 #else
     ReduceImpl<OP, TIE_BREAK, T0, T1>::reduce_leading_dim(
-        data_UB, reduce_val_UB, reduce_idx_UB, loop_a, dim_a,
+        cur_data_UB, cur_reduce_val_UB, cur_reduce_idx_UB, loop_a1, dim_a1,
         loop_r, src_r_stride);
 #endif
   }
@@ -576,32 +629,9 @@ vf_wrapper_reduce_ra0a1_last_axis_contiguous(
   uint16_t loop_a1 = CEIL_DIV(size_a_in_byte, VL_IN_BYTE);
   uint16_t loop_r = dim_r > 1 ? (dim_r - 1) : 0;
 
-  __VEC_SCOPE__ {
-
-    for (uint16_t a0 = 0; a0 < dim_a0; ++a0) {
-      // usually dst_a0 and src_a0 offset are the same
-      __ubuf__ T0 *cur_data_UB = a0 * src_a0_stride + data_UB;
-      __ubuf__ T0 *cur_reduce_val_UB = a0 * dst_val_a0_stride + reduce_val_UB;
-      __ubuf__ int32_t *cur_reduce_idx_UB =
-          a0 * dst_idx_a0_stride + reduce_idx_UB;
-#if defined(__DAV_C310__)
-      if (isAddress32ByteAligned(cur_data_UB + src_r_stride) &&
-          isAddress32ByteAligned(cur_data_UB)) {
-        ReduceImpl<OP, TIE_BREAK, T0, T1>::reduce_leading_dim(
-            cur_data_UB, cur_reduce_val_UB, cur_reduce_idx_UB, loop_a1, dim_a1,
-            loop_r, src_r_stride);
-      } else {
-        ReduceImpl<OP, TIE_BREAK, T0, T1, __cce_simd::UnAlignedHint>::reduce_leading_dim(
-            cur_data_UB, cur_reduce_val_UB, cur_reduce_idx_UB, loop_a1, dim_a1,
-            loop_r, src_r_stride);
-      }
-#else
-      ReduceImpl<OP, TIE_BREAK, T0, T1>::reduce_leading_dim(
-          cur_data_UB, cur_reduce_val_UB, cur_reduce_idx_UB, loop_a1,
-          dim_a1, loop_r, src_r_stride);
-#endif
-    }
-  }
+  vf_wrapper_reduce_ra0a1_last_axis_contiguous_vf<OP, TIE_BREAK, T0, T1>(
+      dim_a0, src_a0_stride, data_UB, dst_val_a0_stride, reduce_val_UB,
+      dst_idx_a0_stride, reduce_idx_UB, src_r_stride, loop_a1, dim_a1, loop_r);
 }
 
 /// reduce src (r, ) to dst (1, ) and return the reduction value and index
@@ -621,8 +651,7 @@ reduce_r_with_index(memref_t<__ubuf__ T0, 1> *src0,
   static_assert((OP == ReduceOpTy::REDUCE_MIN_WITH_INDEX ||
                  OP == ReduceOpTy::REDUCE_MAX_WITH_INDEX) &&
                 "reduce_r_with_index do not support this reduce op type");
-  static_assert((TIE_BREAK == TieBreak::LEFT ||
-                 TIE_BREAK == TieBreak::RIGHT) &&
+  static_assert((TIE_BREAK == TieBreak::LEFT || TIE_BREAK == TieBreak::RIGHT) &&
                 "reduce_r_with_index do not support this tie break type");
 
   const int64_t size0 = src0->sizes[0];
@@ -650,8 +679,7 @@ reduce_ar_with_index(memref_t<__ubuf__ T0, 2> *src0,
   static_assert((OP == ReduceOpTy::REDUCE_MIN_WITH_INDEX ||
                  OP == ReduceOpTy::REDUCE_MAX_WITH_INDEX) &&
                 "reduce_r_with_index do not support this reduce op type");
-  static_assert((TIE_BREAK == TieBreak::LEFT ||
-                 TIE_BREAK == TieBreak::RIGHT) &&
+  static_assert((TIE_BREAK == TieBreak::LEFT || TIE_BREAK == TieBreak::RIGHT) &&
                 "reduce_r_with_index do not support this tie break type");
 
   const int64_t size0 = src0->sizes[0];
@@ -692,8 +720,7 @@ reduce_ra_with_index(memref_t<__ubuf__ T0, 2> *src0,
   static_assert((OP == ReduceOpTy::REDUCE_MIN_WITH_INDEX ||
                  OP == ReduceOpTy::REDUCE_MAX_WITH_INDEX) &&
                 "reduce_r_with_index do not support this reduce op type");
-  static_assert((TIE_BREAK == TieBreak::LEFT ||
-                 TIE_BREAK == TieBreak::RIGHT) &&
+  static_assert((TIE_BREAK == TieBreak::LEFT || TIE_BREAK == TieBreak::RIGHT) &&
                 "reduce_r_with_index do not support this tie break type");
 
   const int64_t size0 = src0->sizes[0]; // dimR
