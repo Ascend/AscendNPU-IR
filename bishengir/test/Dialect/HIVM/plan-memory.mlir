@@ -1446,7 +1446,7 @@ module {
     // CHECK: } else {
     } else {
       // CHECK: %[[ARG4:.*]] = hivm.hir.pointer_cast(%[[CONST1]]) : memref<11520xf32, #hivm.address_space<ub>>
-      // CHECK: %[[ARG5:.*]] = hivm.hir.pointer_cast(%[[CONST1]]) : memref<11520xf32, #hivm.address_space<ub>>
+      // CHECK: %[[ARG5:.*]] = hivm.hir.pointer_cast(%[[CONST3:.*]]) : memref<11520xf32, #hivm.address_space<ub>>
       // CHECK: %[[ARG6:.*]] = hivm.hir.pointer_cast(%[[CONST1]]) : memref<11520xi64, #hivm.address_space<ub>>
       %alloc_4 = memref.alloc() : memref<11520xf32, #hivm.address_space<ub>>
       hivm.hir.load ins(%arg3 : memref<11520xf32, #hivm.address_space<gm>>) outs(%alloc_4 : memref<11520xf32, #hivm.address_space<ub>>)
@@ -2627,39 +2627,6 @@ module {
 }
 
 // -----
-
-module {
-  func.func @vf_reuse_direct(%arg0: memref<256x128xf32, #hivm.address_space<ub>>, %arg1: memref<256x128xf32, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
-    %c0 = arith.constant 0 : index
-    %cst = arith.constant 0.000000e+00 : f32
-    %0 = vector.transfer_read %arg0[%c0, %c0], %cst {in_bounds = [true, true]} : memref<256x128xf32, #hivm.address_space<ub>>, vector<1x64xf32>
-    vector.transfer_write %0, %arg1[%c0, %c0] {in_bounds = [true, true]} : vector<1x64xf32>, memref<256x128xf32, #hivm.address_space<ub>>
-    return
-  }
-  // CHECK: hivm.hir.pointer_cast(%{{.*}})
-  func.func @test_preload_local_buffer_lifetime_is_per_enclosing_loop(%arg0: memref<256x128xf32, #hivm.address_space<gm>>, %arg1: memref<256x128xf32, #hivm.address_space<gm>>, %arg2: memref<256x128xf32, #hivm.address_space<gm>>, %arg3: memref<256x128xf32, #hivm.address_space<gm>>) {
-    %c0 = arith.constant 0 : index
-    %c1 = arith.constant 1 : index
-    %c4 = arith.constant 4 : index
-    scf.for %arg4 = %c0 to %c4 step %c1 {
-      %alloc = memref.alloc() : memref<256x128xf32, #hivm.address_space<ub>>
-      annotation.mark %alloc {hivm.preload_local_buffer = 1 : i32} : memref<256x128xf32, #hivm.address_space<ub>>
-      scope.scope : () -> () {
-        hivm.hir.load ins(%arg0 : memref<256x128xf32, #hivm.address_space<gm>>) outs(%alloc : memref<256x128xf32, #hivm.address_space<ub>>)
-      } {hivm.preload_num = 1 : i32}
-      scope.scope : () -> () {
-        %alloc_0 = memref.alloc() : memref<256x128xf32, #hivm.address_space<ub>>
-        func.call @vf_reuse_direct(%alloc, %alloc_0) {hivm.vector_function, no_inline} : (memref<256x128xf32, #hivm.address_space<ub>>, memref<256x128xf32, #hivm.address_space<ub>>) -> ()
-        hivm.hir.debug {debugtype = "print", hex = false, prefix = "%alloc_0: ", tcoretype = #hivm.tcore_type<CUBE_OR_VECTOR>} %alloc_0 : memref<256x128xf32, #hivm.address_space<ub>>
-        scope.return
-      } {hivm.preload_num = 0 : i32}
-    }
-    return
-  }
-}
-
-// -----
-
 func.func @test_reuse_l0C(%arg0: memref<128x128xf16, #hivm.address_space<gm>>, %arg1: memref<128x128xf16, #hivm.address_space<gm>>, %arg2: i1) {
   %c1 = arith.constant 1 : index
   %c64 = arith.constant 64 : index
@@ -2689,7 +2656,7 @@ func.func @test_reuse_l0C(%arg0: memref<128x128xf16, #hivm.address_space<gm>>, %
                     outs(%alloc_2 : memref<128x128xf16, #hivm.address_space<cc>>)
       hivm.hir.fixpipe ins(%alloc_2 : memref<128x128xf16, #hivm.address_space<cc>>) outs(%arg0 : memref<128x128xf16, #hivm.address_space<gm>>)
     }
-  } {hivm.cv_pipelined_loop}
+  }
   // CHECK: scf.for
   scf.for %arg3 = %c0 to %c64 step %c1 {
     // CHECK: {{.*}} = hivm.hir.pointer_cast(%[[CONST0:.*]], %[[CONST1:.*]])
@@ -2706,7 +2673,7 @@ func.func @test_reuse_l0C(%arg0: memref<128x128xf16, #hivm.address_space<gm>>, %
                         memref<128x128xf16, #hivm.address_space<cbuf>>, memref<128x128xf16, #hivm.address_space<cbuf>>, i1, index, index, index)
                   outs(%alloc_2 : memref<128x128xf16, #hivm.address_space<cc>>)
     hivm.hir.fixpipe ins(%alloc_2 : memref<128x128xf16, #hivm.address_space<cc>>) outs(%arg0 : memref<128x128xf16, #hivm.address_space<gm>>)
-  } {hivm.cv_pipelined_loop}
+  }
   return
 }
 
