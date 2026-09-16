@@ -279,6 +279,22 @@ private:
 
 bool isIgnoredBetweenOp(Operation *op) { return isa<hivm::AnchorOp>(op); }
 
+// SSA and memref dependencies do not capture ordering through synchronization
+// events, including communication with another core. Do not move operations or
+// merge calls across these barriers, even when they are nested in a region.
+// Before intra-core sync insertion and lock finalization, preserve block sync,
+// lock resources, and pipe barriers from explicit barriers or block-all sync.
+bool containsVFMergeBarrier(Operation *op) {
+  WalkResult result = op->walk([](Operation *nestedOp) {
+    if (isa<hivm::SyncBlockSetOp, hivm::SyncBlockWaitOp, hivm::SyncBlockOp,
+            hivm::CreateSyncBlockLockOp, hivm::SyncBlockLockOp,
+            hivm::SyncBlockUnlockOp, hivm::PipeBarrierOp>(nestedOp))
+      return WalkResult::interrupt();
+    return WalkResult::advance();
+  });
+  return result.wasInterrupted();
+}
+
 bool containsAnchor(Operation *op) {
   if (isa<hivm::AnchorOp>(op))
     return true;
@@ -900,13 +916,9 @@ bool MergeVecScopePass::tryMerge(func::FuncOp root, func::FuncOp vf1,
     between = between->getNextNode();
   }
 
-  for (Operation *op : betweenOps) {
-    if (isa<hivm::SyncBlockSetOp>(op) || isa<hivm::SyncBlockWaitOp>(op)) {
-      // temporarily regard sync_block instr as memory op
-      // so that vf1 and vf2 would not be merged
-      LLVM_DEBUG(llvm::dbgs() << "SyncBlock|Load op prevents fusion\n";);
-      return false;
-    }
+  if (llvm::any_of(betweenOps, containsVFMergeBarrier)) {
+    LDBG("Synchronization barrier prevents VF merge");
+    return false;
   }
 
   // Identify ops that must NOT move because moving them would reorder
