@@ -15,8 +15,11 @@
 #include "llvm/ADT/STLExtras.h" // interleaveComma
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/Error.h"
 #include "llvm/Support/ErrorHandling.h" // report_fatal_error
 #include "llvm/Support/ManagedStatic.h"
+#include <unordered_map>
+#include <functional>
 
 using namespace bishengir;
 using namespace llvm;
@@ -32,7 +35,7 @@ static cl::OptionCategory
 static cl::OptionCategory hivmOptCategory("HIVMC HIVM Optimization Options");
 static cl::OptionCategory targetCategory("HIVMC Target Options");
 static cl::OptionCategory
-    simtOptCategory("BiShengIR SIMT Optimization Options");
+    simtOptCategory("HIVMC SIMT Optimization Options");
 
 /// This class is intended to manage the handling of command line options for
 /// creating bishengir-compile config. This is a singleton.
@@ -292,7 +295,7 @@ struct HIVMCMainConfigCLOptions : public HIVMCMainConfig {
             "simt-optimization-mode",
             cl::desc("set simt optimiation mode"),
             cl::location(simtOptimizationModeFlag), cl::init(900101));
-    
+
     static cl::alias enableBishengirSimtOptimization(
             "enable-bishengir-simt-optimization",
             cl::desc("alias for simt-optimziation-mode"),

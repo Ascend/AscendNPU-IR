@@ -13,12 +13,17 @@
 
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Tools/hivmc/Config.h"
+#include "bishengir/Tools/hivmc/HIVMC.h"
+#include "bishengir/Tools/hivmc/HIVMCA5.h"
 #include "bishengir/Pass/PassManager.h"
+#include "bishengir/Version/Version.h"
 #include "bishengir/Tools/Utils/Utils.h"
 #include "bishengir/Tools/bishengir-compile/BiShengIRCompile.h"
 #include "bishengir/Tools/bishengir-compile/regbase/PassPipeline.h"
 #include "bishengir/Tools/bishengir-compile/regbase/Utility.h"
 #include "mlir/Support/FileUtilities.h"
+#include "mlir/IR/AsmState.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/LogicalResult.h"
 #include "llvm/Support/Path.h"
@@ -138,114 +143,6 @@ static void addBitcodeAttrsToModule(ModuleOp module, StringRef executablePath,
               });
 }
 
-static std::vector<std::string>
-skipOptions(const std::vector<std::string> &options,
-            const std::set<std::string> &skip) {
-  std::vector<std::string> result;
-  for (const std::string &arg : options) {
-    StringRef argRef = arg;
-    SmallVector<StringRef> parts;
-    argRef.split(parts, '=');
-    if (parts.empty())
-      continue;
-    std::string trimArg = parts[0].trim().ltrim('-').str();
-    if (skip.count(trimArg) != 0)
-      continue;
-    result.push_back(arg);
-  }
-  return result;
-}
-
-static StringRef getHIVMCName() {
-  const char *kBiShengIRHIVMBinaryName = "hivmc";
-  return kBiShengIRHIVMBinaryName;
-}
-
-llvm::LogicalResult
-runExternalHIVMC(ModuleOp &module,
-                 const bishengir::BiShengIRCompileMainConfig &config) {
-  TempDirectoriesStore tempDirsStore;
-  std::string inputFile = "module.hivm.opt.mlir";
-  std::string outputFile = config.getOutputFile();
-  std::unique_ptr<llvm::ToolOutputFile> inputFileHandler;
-
-  // Handle --save-temps=<directory> option to store module.hivm.opt.mlir
-  if (!config.getSaveTemps().empty()) {
-    llvm::SmallString<256> saveTempsDir(config.getSaveTemps());
-    if (llvm::sys::fs::make_absolute(saveTempsDir)) {
-      llvm::errs() << "[ERROR] Failed to get absolute path for save-temps.\n";
-      return failure();
-    }
-    if (!llvm::sys::fs::exists(saveTempsDir))
-      if (auto ec = llvm::sys::fs::create_directories(saveTempsDir)) {
-        llvm::errs() << "[ERROR] Failed to create save-temps directory: "
-                     << saveTempsDir << "\n";
-        return failure();
-      }
-    llvm::sys::path::append(saveTempsDir, inputFile);
-    std::string errorMessage;
-    inputFileHandler = mlir::openOutputFile(saveTempsDir, &errorMessage);
-    if (!inputFileHandler) {
-      llvm::errs() << "[ERROR] Failed to open save-temps file: " << errorMessage
-                   << "\n";
-      return failure();
-    }
-    inputFileHandler->keep();
-  } else {
-    inputFileHandler = getTempFile(inputFile, tempDirsStore);
-    if (!inputFileHandler) {
-      llvm::dbgs() << "[ERROR] Failed to create temporary input file needed to "
-                      "run hivmc compile.\n";
-      return failure();
-    }
-  }
-  inputFile = inputFileHandler->outputFilename();
-
-  module.print(inputFileHandler->os(),
-               mlir::OpPrintingFlags().enableDebugInfo(
-                   config.getEnableSanitizer() || config.getEnableDebugInfo()));
-  inputFileHandler->os().flush();
-
-  std::vector<std::string> arguments;
-  arguments.push_back("");
-  arguments.push_back(inputFile);
-
-  auto hivmcOptions = config.getHIVMCArgsDashDash();
-  llvm::append_range(arguments, hivmcOptions);
-  for (const auto &arg :
-       regbase::filterSharedHIVMCOptions(config.getClArgs())) {
-    auto argName = StringRef(arg).ltrim('-').split('=').first;
-    if (!regbase::hasCLIArg(arguments, argName))
-      arguments.push_back(arg);
-  }
-
-  arguments.push_back("-o");
-  arguments.push_back(outputFile);
-  arguments.push_back("--only-run-hivm-pipeline=false");
-
-  // TODO: Support options in hivmc
-  std::set<std::string> blacklist = {
-      "inject-ir-from-file", "print-pass-id", "inject-ir-before",
-      "inject-ir-after", "hfusion-enable-multiple-consumer-fusion",
-      "disable-tightly-coupled-buffer-reuse", "enable-hivm-cross-core-gss",
-      "enable-tree-reduce-v2", "vf-fusion-mode", "disable-vf-reachable-check",
-      "enable-sink-dpx-load",
-      // a5 does not recognize
-      // --enable-lir-compile (it is an A3
-      // bishengir-compile-only flag). Drop it
-      // before forwarding to hivmc in the
-      // RegBase path.
-      "enable-lir-compile"};
-  auto skippedArgs = skipOptions(arguments, blacklist);
-
-  SmallVector<StringRef> argumentsRef(skippedArgs.begin(), skippedArgs.end());
-  if (failed(executeBinary(getHIVMCName(), argumentsRef))) {
-    return failure();
-  }
-
-  return success();
-}
-
 using MixedModules = std::pair<ModuleOp, SmallVector<ModuleOp, 2>>;
 
 /// Run a pipeline on a module using the regbase builder and A3's runPipeline
@@ -324,6 +221,108 @@ static bool runMixedPipelines(ModuleOp mixedModule,
   }
   return runModulePipeline(mainMod, regbase::buildBiShengHIRAVEToLLVMPipeline,
                            config, "BiShengSIMD");
+}
+
+LogicalResult handleSaveTemps(ModuleOp module, BiShengIRCompileMainConfig& config) {
+  TempDirectoriesStore tempDirsStore;
+  std::string inputFile = "module.hivm.opt.mlir";
+  std::string outputFile = config.getOutputFile();
+  std::unique_ptr<llvm::ToolOutputFile> inputFileHandler;
+
+  // Handle --save-temps=<directory> option to store module.hivm.opt.mlir
+  if (!config.getSaveTemps().empty()) {
+    llvm::SmallString<256> saveTempsDir(config.getSaveTemps());
+    if (llvm::sys::fs::make_absolute(saveTempsDir)) {
+      llvm::errs() << "[ERROR] Failed to get absolute path for save-temps.\n";
+      return failure();
+    }
+    if (!llvm::sys::fs::exists(saveTempsDir))
+      if (auto ec = llvm::sys::fs::create_directories(saveTempsDir)) {
+        llvm::errs() << "[ERROR] Failed to create save-temps directory: " << saveTempsDir << "\n";
+        return failure();
+      }
+    llvm::sys::path::append(saveTempsDir, inputFile);
+    std::string errorMessage;
+    inputFileHandler = mlir::openOutputFile(saveTempsDir, &errorMessage);
+    if (!inputFileHandler) {
+      llvm::errs() << "[ERROR] Failed to open save-temps file: " << errorMessage << "\n";
+      return failure();
+    }
+    inputFileHandler->keep();
+  } else {
+    inputFileHandler = getTempFile(inputFile, tempDirsStore);
+    if (!inputFileHandler) {
+      llvm::dbgs() << "[ERROR] Failed to create temporary input file needed to run hivmc compile.\n";
+      return failure();
+    }
+  }
+  inputFile = inputFileHandler->outputFilename();
+
+  module.print(inputFileHandler->os(), mlir::OpPrintingFlags().enableDebugInfo(
+                                         config.getEnableSanitizer() ||
+                                         config.getEnableDebugInfo()));
+  inputFileHandler->os().flush();
+  return success();
+}
+
+HIVMCMainConfig HIVMCFromBiShengIRConfig(BiShengIRCompileMainConfig& config) {
+    HIVMCMainConfig hivmcConfig;
+
+    /// TODO: add flag difference logic for hivmc and bishengir flags in Options.td
+    /// These flags are set manually due to mismatch in
+    /// HIVMCConfigCLOptions constructor and Options.td
+    ///
+    /// Options.td is used both by bishengir pipeline and hivmc pipeline,
+    /// So the flags which are both in bishengir pipeline and hivmc pipeline are just
+    /// copied from the BiShengIRCompileMainConfig through dispatch table
+    /// (which is generated in CompileOptionsGen.cpp)
+    /// P.S : the same problem is also on A3 pipeline, check the translation there
+
+    /// A5-specific
+    hivmcConfig.autoVectorizeV2(false);
+    hivmcConfig.targetBackend(config.getTarget());
+    ///
+
+    hivmcConfig.limitAutoMultiBufferForLocalBuffer(true);
+    hivmcConfig.deterministicComputing(true);
+    hivmcConfig.simtOptimizationMode(1900101);
+    hivmcConfig.enableAutoCVBalance(true);
+    hivmcConfig.setUseDPX(true);
+    hivmcConfig.onlyRunHIVMPipeline(false);
+
+    hivmcConfig.appendBishengOptions(config.getAppendBishengOptions());
+    hivmcConfig.compileTriton(config.getEnableTritonKernelCompile());
+    hivmcConfig.compileTritonDialect(config.getEnableTritonIRCompile());
+    hivmcConfig.enableSimdSimtMixCompile(config.getEnableSimdSimtMixCompile());
+    hivmcConfig.enableSIMTOnly(config.getPureSimt());
+    hivmcConfig.enableSanitizer(config.getEnableSanitizer());
+    hivmcConfig.enableSIMTFastDiv(config.getEnableSIMTFastDiv());
+    hivmcConfig.enableDebugVariables(config.getEnableDebugVariables());
+    hivmcConfig.enableDebugInfo(config.getEnableDebugInfo());
+    hivmcConfig.saveTemps(config.getSaveTemps());
+    hivmcConfig.injectBarrierAllSync(config.getEnableHIVMInjectBarrierAllSync());
+    hivmcConfig.setExtraDeviceBCPaths(config.getLinkAicoreBitcode());
+    hivmcConfig.setDisableFMA(config.getDisableFMA());
+    hivmcConfig.setSaveLinkedIR(config.getSaveLinkedIR());
+    hivmcConfig.setNumWarps(config.getNumWarps());
+    hivmcConfig.setThreadsPerWarp(config.getThreadsPerWarp());
+    hivmcConfig.setSharedDynamicSize(config.getSharedMemDynamicSize());
+    hivmcConfig.tritonMetadataOutput(config.getTritonMetadataOutput());
+    hivmcConfig.disableDecomposeReduction(config.getDisableDecomposeReduction());
+    hivmcConfig.disableReorderInstruction(config.getDisableReorderInstruction());
+
+    if (hivmcConfig.getTritonGridDim().size() > 3) {
+        report_fatal_error(
+            "Invalid --simt-triton-grid: at most 3 elements allowed x,y,z\n");
+    }
+    hivmcConfig.setOutputFile(config.getOutputFile());
+
+    StringTmpPath path(hivmcConfig.outputFile());
+
+    // TODO: investigate if this check is redundant
+    llvm::cantFail(llvm::errorCodeToError(hivmcCanonicalizePath(path)));
+    hivmcConfig.setOutputFile(path.str().str());
+    return hivmcConfig;
 }
 
 } // namespace
@@ -423,12 +422,23 @@ bishengir::regbase::runRegBasePipeline(ModuleOp mod,
                                   config, "BiShengSIMD");
     }
 
+
     addBitcodeAttrsToModule(hirCompileMode, config.getExecutablePath(), config);
-    if (success && succeeded(runExternalHIVMC(hirCompileMode, config))) {
+
+    auto savedTemp = handleSaveTemps(hirCompileMode, config);
+    if (failed(savedTemp)) {
+      return failure();
+    }
+
+    auto hivmcConfig = HIVMCFromBiShengIRConfig(config);
+    if (success && succeeded(runHIVMCCompileA5(hirCompileMode, hivmcConfig))) {
       hirCompileSuccess = true;
       mod = hirCompileMode.clone();
       break;
     }
+
+    // increase max buffers by 2 in HFusion auto schedule
+    config.increaseHfusionMaxBufferCountTuning(2);
   }
 
   // Restore to the default handler.
