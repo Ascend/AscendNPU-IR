@@ -74,12 +74,6 @@ LogicalResult reifyOperations(OpBuilder &buidler,
   return failure();
 }
 
-void updateFuncArgs(func::FuncOp func, TypeRange args) {
-  FunctionType funcType = FunctionType::get(
-      func.getContext(), args, func.getFunctionType().getResults());
-  func.setType(funcType);
-}
-
 void updateFuncResults(func::FuncOp func, TypeRange results) {
   FunctionType funcType = FunctionType::get(
       func.getContext(), func.getFunctionType().getInputs(), results);
@@ -252,26 +246,15 @@ void InferOutShapesPass::updateShapeFuncArgs() {
     }
 
     // Filter out output arguments from shape function arguments
-    auto inputs = shapeFunc.getFunctionType().getInputs();
-    SmallVector<Type> newInputs;
-    SmallVector<int> argIndicesToErase;
-    for (size_t i = 0; i < inputs.size(); i++) {
-      Type ty = inputs[i];
+    BitVector argIndicesToErase(shapeFunc.getNumArguments());
+    for (size_t i = 0; i < shapeFunc.getNumArguments(); i++) {
       if (hacc::utils::isKernelArg(shapeFunc, i,
                                    hacc::KernelArgType::kOutput)) {
-        argIndicesToErase.push_back(i);
-      } else {
-        newInputs.push_back(ty);
+        argIndicesToErase.set(i);
       }
     }
 
-    // Update shape func type
-    updateFuncArgs(shapeFunc, newInputs);
-
-    // Update shape func arguments
-    Block &entryBlock = shapeFunc.front();
-    std::for_each(argIndicesToErase.begin(), argIndicesToErase.end(),
-                  [&entryBlock](int idx) { entryBlock.eraseArgument(idx); });
+    shapeFunc.eraseArguments(argIndicesToErase);
   });
 }
 

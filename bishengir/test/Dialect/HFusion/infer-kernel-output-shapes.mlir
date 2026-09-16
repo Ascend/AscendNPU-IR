@@ -96,3 +96,14 @@ func.func @test_out_param(%arg0: tensor<?x4096xf16>, %arg1: tensor<6144x4096xf16
 // CHECK-NOT: hacc.entry
 // CHECK: %dim = tensor.dim %arg0, %c0
 // CHECK: %from_elements = tensor.from_elements %dim, %c6144
+
+// -----
+
+func.func @test_multiple_out_params(%arg0: tensor<?xf32>, %arg1: tensor<?xf32> {hacc.arg_type = #hacc.arg_type<output>, hacc.output_idx = #hacc.output_idx<0>}, %arg2: tensor<?xf32>, %arg3: tensor<?xf32> {hacc.arg_type = #hacc.arg_type<output>, hacc.output_idx = #hacc.output_idx<1>}) -> (tensor<?xf32>, tensor<?xf32>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+  %0 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%arg0, %arg2 : tensor<?xf32>, tensor<?xf32>) outs(%arg1 : tensor<?xf32>) -> tensor<?xf32>
+  %1 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%arg0, %arg2 : tensor<?xf32>, tensor<?xf32>) outs(%arg3 : tensor<?xf32>) -> tensor<?xf32>
+  return %0, %1 : tensor<?xf32>, tensor<?xf32>
+}
+// CHECK-LABEL: func.func @test_multiple_out_params_infer_output_shape_function
+// CHECK-SAME: (%arg0: tensor<?xf32>, %arg1: tensor<?xf32>)
+// CHECK: return
