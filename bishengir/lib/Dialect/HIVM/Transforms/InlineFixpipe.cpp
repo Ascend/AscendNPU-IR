@@ -688,19 +688,28 @@ static bool shouldSkipOuterFixpipeForAccumulation(Operation *opInst,
 /// extract_slice chains. This covers branch fan-out where a single-user-chain
 /// query cannot detect that fixpipes have already been inserted.
 static bool allUsersReachFixpipe(Value value) {
-  SmallVector<Operation *> users;
-  for (Operation *user : value.getUsers()) {
-    if (isa<tensor::DimOp, annotation::MarkOp>(user))
+  SmallVector<OpOperand *> uses;
+  for (OpOperand &use : value.getUses()) {
+    if (isa<tensor::DimOp, annotation::MarkOp>(use.getOwner()))
       continue;
-    users.push_back(user);
+    uses.push_back(&use);
   }
-  if (users.empty())
+  if (uses.empty())
     return false;
-  return llvm::all_of(users, [](Operation *user) {
-    if (isa<hivm::FixpipeOp>(user))
+  return llvm::all_of(uses, [](OpOperand *use) {
+    if (auto fixpipeOp = dyn_cast<hivm::FixpipeOp>(use->getOwner());
+        fixpipeOp && fixpipeOp.getSrc() == use->get())
       return true;
-    if (auto extractSlice = dyn_cast<tensor::ExtractSliceOp>(user))
+    if (auto extractSlice = dyn_cast<tensor::ExtractSliceOp>(use->getOwner()))
       return allUsersReachFixpipe(extractSlice.getResult());
+    if (auto forOp = dyn_cast<scf::ForOp>(use->getOwner())) {
+      if (auto iterArg = forOp.getTiedLoopRegionIterArg(use))
+        return allUsersReachFixpipe(iterArg);
+      if (auto result = forOp.getTiedLoopResult(use))
+        return allUsersReachFixpipe(result);
+    }
+    if (auto yieldOp = dyn_cast<scf::YieldOp>(use->getOwner()))
+      return allUsersReachFixpipe(yieldOp->getParentOp()->getResult(use->getOperandNumber()));
     return false;
   });
 }
@@ -742,9 +751,9 @@ public:
       return failure();
 
     bool changed = false;
+    if (isOnRegBasedArch(opInst) && allUsersReachFixpipe(mmadLikeOpRes))
+      return failure();
     if (!shouldSkipOuterFixpipeForAccumulation(opInst, mmadLikeOpRes)) {
-      if (isOnRegBasedArch(opInst) && allUsersReachFixpipe(mmadLikeOpRes))
-        return failure();
 
       auto isMatchedOp = [](Operation *op, Value v) {
         LDBG("Matching this current op " << *op);
