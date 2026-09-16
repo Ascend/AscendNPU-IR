@@ -868,7 +868,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // -----
 
 // CHECK-LABEL: func.func @test_scalar_vbrc_mmad_outs
-// CHECK: %[[VBRC:.*]] = hivm.hir.vbrc {hivm.tcore_type = #hivm.tcore_type<CUBE>} ins(%{{.*}} : f32) outs(%{{.*}} : tensor<16x16xf32>) -> tensor<16x16xf32>
+// CHECK: %[[VBRC:.*]] = hivm.hir.vbrc ins(%{{.*}} : f32) outs(%{{.*}} : tensor<16x16xf32>) -> tensor<16x16xf32>
 // CHECK: hivm.hir.mmadL1 {{.*}} outs(%[[VBRC]] :
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   func.func @test_scalar_vbrc_mmad_outs(%a : tensor<16x16xf32>, %b : tensor<16x16xf32>, %dst : tensor<16x16xf32>)
@@ -886,5 +886,137 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
              ins(%mm : tensor<16x16xf32>)
              outs(%dst : tensor<16x16xf32>) -> tensor<16x16xf32>
     return %fix : tensor<16x16xf32>
+  }
+}
+
+// -----
+
+// Scalar vbrc used both as a vector store and as cube mmad outs. Clone into
+// VECTOR (store) and CUBE (mmad); do not insert TightCoupledBuffer copies.
+// CHECK-LABEL: func.func @vbrc_store_and_mmad_outs
+// CHECK: %[[VBRC_VEC:.*]] = hivm.hir.vbrc {hivm.tcore_type = #hivm.tcore_type<VECTOR>} ins(%{{.*}} : f32) outs(%{{.*}} : tensor<16x16xf32>) -> tensor<16x16xf32>
+// CHECK: %[[VBRC_CUBE:.*]] = hivm.hir.vbrc ins(%{{.*}} : f32) outs(%{{.*}} : tensor<16x16xf32>) -> tensor<16x16xf32>
+// CHECK-NOT: hivm.hir.copy
+// CHECK-NOT: "hivm.inserted-fixpipe"
+// CHECK: hivm.hir.store ins(%[[VBRC_VEC]] : tensor<16x16xf32>)
+// CHECK: hivm.hir.mmadL1 {{.*}} outs(%[[VBRC_CUBE]] :
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @vbrc_store_and_mmad_outs(
+      %a: tensor<16x16xf32>, %b: tensor<16x16xf32>,
+      %store_dst: memref<16x16xf32>, %fixpipe_dst: memref<16x16xf32>)
+      attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %true = arith.constant true
+    %c16 = arith.constant 16 : index
+    %cst = arith.constant 0.000000e+00 : f32
+    %empty = tensor.empty() : tensor<16x16xf32>
+    %vbrc = hivm.hir.vbrc ins(%cst : f32) outs(%empty : tensor<16x16xf32>) -> tensor<16x16xf32>
+    hivm.hir.store ins(%vbrc : tensor<16x16xf32>) outs(%store_dst : memref<16x16xf32>)
+    %mm = hivm.hir.mmadL1 {already_set_real_mkn, fixpipe_already_inserted = true}
+        ins(%a, %b, %true, %c16, %c16, %c16
+            : tensor<16x16xf32>, tensor<16x16xf32>, i1, index, index, index)
+        outs(%vbrc : tensor<16x16xf32>) -> tensor<16x16xf32>
+    hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+        ins(%mm : tensor<16x16xf32>) outs(%fixpipe_dst : memref<16x16xf32>)
+    return
+  }
+}
+
+// -----
+
+// Simplified mix kernel: scalar vbrc is stored (vector) and is also the
+// else-yield of a remain_in_l0c scf.if whose result is a later mmad accumulator.
+// Clone VECTOR/CUBE vbrc; keep the L0C if yield without local copies or extra
+// fixpipes.
+// CHECK-LABEL: func.func @vbrc_store_and_remain_in_l0c_if
+// CHECK: %[[VBRC_VEC:.*]] = hivm.hir.vbrc {hivm.tcore_type = #hivm.tcore_type<VECTOR>} ins(%{{.*}} : f32) outs(%{{.*}} : tensor<16x16xf32>) -> tensor<16x16xf32>
+// CHECK: %[[VBRC_CUBE:.*]] = hivm.hir.vbrc ins(%{{.*}} : f32) outs(%{{.*}} : tensor<16x16xf32>) -> tensor<16x16xf32>
+// CHECK-NOT: hivm.hir.copy
+// CHECK-NOT: "hivm.inserted-fixpipe"
+// CHECK-NOT: "hivm.inserted-store"
+// CHECK: %[[IF:.*]] = scf.if %{{.*}} -> (tensor<16x16xf32>) {
+// CHECK: %[[MMAD:.*]] = hivm.hir.mmadL1 {{.*}}normalized_in_L0C
+// CHECK: scf.yield %[[MMAD]]
+// CHECK: } else {
+// CHECK: scf.yield %[[VBRC_CUBE]]
+// CHECK: } {hivm.remain_in_l0c, may_not_exec, normalized_in_L0C = [0 : i32]}
+// CHECK: hivm.hir.store ins(%[[VBRC_VEC]] : tensor<16x16xf32>)
+// CHECK: hivm.hir.mmadL1 {{.*}} outs(%[[IF]] :
+// CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @vbrc_store_and_remain_in_l0c_if(
+      %a: tensor<16x16xf16>, %b: tensor<16x16xf16>, %cond: i1,
+      %store_dst: memref<16x16xf32>, %fixpipe_dst: memref<16x16xf32>)
+      attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %c0_i32 = arith.constant 0 : i32
+    %c1_i32 = arith.constant 1 : i32
+    %c16 = arith.constant 16 : index
+    %cst = arith.constant 0.000000e+00 : f32
+    %empty_vbrc = tensor.empty() : tensor<16x16xf32>
+    %vbrc = hivm.hir.vbrc ins(%cst : f32) outs(%empty_vbrc : tensor<16x16xf32>)
+        -> tensor<16x16xf32>
+    %alloca = memref.alloca() {normalize_matmul_counter = 0 : i32} : memref<i32>
+    memref.store %c0_i32, %alloca[] {hivm.tcore_type = #hivm.tcore_type<CUBE_AND_VECTOR>} : memref<i32>
+    %empty_mmad = tensor.empty() : tensor<16x16xf32>
+    %if_res = scf.if %cond -> (tensor<16x16xf32>) {
+      %cnt = memref.load %alloca[] {hivm.tcore_type = #hivm.tcore_type<CUBE_AND_VECTOR>} : memref<i32>
+      %init = arith.cmpi eq, %cnt, %c0_i32 : i32
+      %mm = hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
+          ins(%a, %b, %init, %c16, %c16, %c16
+              : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index)
+          outs(%empty_mmad : tensor<16x16xf32>) -> tensor<16x16xf32>
+      %cnt1 = arith.addi %cnt, %c1_i32 : i32
+      memref.store %cnt1, %alloca[] {hivm.tcore_type = #hivm.tcore_type<CUBE_AND_VECTOR>} : memref<i32>
+      scf.yield %mm : tensor<16x16xf32>
+    } else {
+      scf.yield %vbrc : tensor<16x16xf32>
+    } {hivm.remain_in_l0c, may_not_exec, normalized_in_L0C = [0 : i32]}
+    %cnt_after = memref.load %alloca[] {hivm.tcore_type = #hivm.tcore_type<CUBE_AND_VECTOR>} : memref<i32>
+    %init2 = arith.cmpi eq, %cnt_after, %c0_i32 {counter_previous} : i32
+    hivm.hir.store ins(%vbrc : tensor<16x16xf32>) outs(%store_dst : memref<16x16xf32>)
+    %mm2 = hivm.hir.mmadL1 {already_set_real_mkn, fixpipe_for_result_already_inserted = true, normalized_in_L0C}
+        ins(%a, %b, %init2, %c16, %c16, %c16
+            : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index)
+        outs(%if_res : tensor<16x16xf32>) -> tensor<16x16xf32>
+    hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+        ins(%mm2 : tensor<16x16xf32>) outs(%fixpipe_dst : memref<16x16xf32>)
+    return
+  }
+}
+
+// -----
+
+// Cube mmad result is fixpiped to a UB tensor, then stored from a VECTOR
+// scope. ensureFixpipeToUB must rewrite the fixpipe onto the tight-coupled UB
+// memref outside the scope, not generate it inside the VECTOR region.
+// CHECK-LABEL: func.func @mmad_fixpipe_store_in_vector_scope
+// CHECK: %[[MMAD:.*]] = hivm.hir.mmadL1
+// CHECK: %[[UB_ALLOC:.*]] = memref.alloc() : memref<16x16xf32, #hivm.address_space<ub>>
+// CHECK: %[[UB_CAST:.*]] = memref.memory_space_cast %[[UB_ALLOC]]
+// CHECK: %[[UB_TENSOR:.*]] = bufferization.to_tensor %[[UB_CAST]]
+// CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%[[MMAD]] : tensor<16x16xf32>) outs(%[[UB_ALLOC]] : memref<16x16xf32, #hivm.address_space<ub>>)
+// CHECK: scope.scope : () -> () {
+// CHECK-NOT: hivm.hir.fixpipe
+// CHECK: hivm.hir.store ins(%[[UB_TENSOR]] : tensor<16x16xf32>)
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @mmad_fixpipe_store_in_vector_scope(
+      %a: tensor<16x16xf32>, %b: tensor<16x16xf32>,
+      %out: memref<16x16xf32>)
+      attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %true = arith.constant true
+    %c16 = arith.constant 16 : index
+    %empty = tensor.empty() : tensor<16x16xf32>
+    %mm = hivm.hir.mmadL1 {already_set_real_mkn, fixpipe_for_result_already_inserted = true, normalized_in_L0C}
+        ins(%a, %b, %true, %c16, %c16, %c16
+            : tensor<16x16xf32>, tensor<16x16xf32>, i1, index, index, index)
+        outs(%empty : tensor<16x16xf32>) -> tensor<16x16xf32>
+    %ub = tensor.empty() {hivm.address_space = #hivm.address_space<ub>, "hivm.inserted-tensor"} : tensor<16x16xf32>
+    %fix = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+        ins(%mm : tensor<16x16xf32>) outs(%ub : tensor<16x16xf32>)
+        -> tensor<16x16xf32>
+    scope.scope : () -> () {
+      hivm.hir.store ins(%fix : tensor<16x16xf32>) outs(%out : memref<16x16xf32>)
+      scope.return
+    } {hivm.allow_flatten, hivm.tcore_type = #hivm.tcore_type<VECTOR>}
+    return
   }
 }
