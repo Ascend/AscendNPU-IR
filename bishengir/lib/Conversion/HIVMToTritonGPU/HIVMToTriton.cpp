@@ -675,6 +675,25 @@ resolveStaticTransferShape(MemRefType primaryTy, MemRefType fallbackTy) {
   return std::nullopt;
 }
 
+static std::optional<SmallVector<int64_t>>
+resolveStaticBaseShape(Value value) {
+  auto memrefTy = dyn_cast<MemRefType>(value.getType());
+  if (!memrefTy)
+    return std::nullopt;
+  if (memrefTy.hasStaticShape())
+    return SmallVector<int64_t>(memrefTy.getShape().begin(),
+                                memrefTy.getShape().end());
+
+  if (auto subview = value.getDefiningOp<memref::SubViewOp>())
+    return resolveStaticBaseShape(subview.getSource());
+  if (auto reinterpretCast =
+          value.getDefiningOp<memref::ReinterpretCastOp>())
+    return resolveStaticBaseShape(reinterpretCast.getSource());
+  if (auto cast = value.getDefiningOp<memref::CastOp>())
+    return resolveStaticBaseShape(cast.getSource());
+  return std::nullopt;
+}
+
 // Convert hivm.load op into Triton arithmetic and memory ops.
 // Supported Conversion Scenarios:
 // 1. Loads data from source `memref` into Triton registers using `tt.load`.
@@ -712,9 +731,100 @@ public:
     }
     Value other = onlyValue(nAdaptor.getPadValue());
 
-    // Guard: padded loads cannot be reversed to plain tt.load
-    if (op.getPadMode())
-      return rewriter.notifyMatchFailure(op, "padded load not converted");
+    if (op.getPadMode()) {
+      auto padMode = op.getPadModeAttr();
+      auto dstSubview = dst.getDefiningOp<memref::SubViewOp>();
+      auto srcSubview = src.getDefiningOp<memref::SubViewOp>();
+      if (!padMode || padMode.getPadmode() != hivm::PadMode::PadValue ||
+          !other || !op.getInitOutBuffer() || !dstSubview || !srcSubview) {
+        return op.emitOpError("unsupported padded load shape or padding mode");
+      }
+
+      auto dstParent = dstSubview.getSource();
+      bool hasToTensorUser = llvm::any_of(
+          dstParent.getUsers(),
+          [](Operation *user) { return isa<bufferization::ToTensorOp>(user); });
+      if (!hasToTensorUser)
+        return op.emitOpError(
+            "padded load destination has no parent to_tensor user");
+
+      auto shape = resolveStaticBaseShape(dstParent);
+      auto srcShape = resolveStaticBaseShape(srcSubview.getSource());
+      if (!shape || !srcShape || *shape != *srcShape || shape->size() != 1) {
+        return op.emitOpError(
+            "padded load requires matching static 1D buffers");
+      }
+
+      FailureOr<hivm::MemRefDescriptor> srcDesc =
+          hivm::getMemRefDescriptor(
+              rewriter, loc, cast<MemRefType>(src.getType()),
+              nAdaptor.getSrc());
+      FailureOr<hivm::MemRefDescriptor> dstDesc =
+          hivm::getMemRefDescriptor(
+              rewriter, loc, cast<MemRefType>(dst.getType()),
+              nAdaptor.getDst());
+      if (failed(srcDesc) || failed(dstDesc) || srcDesc->getRank() != 1 ||
+          dstDesc->getRank() != 1 ||
+          !isConstantIntValue(srcDesc->strides[0], 1) ||
+          !isConstantIntValue(dstDesc->strides[0], 1))
+        return op.emitOpError("invalid padded load descriptors");
+
+      int64_t numElements = (*shape)[0];
+      if (numElements <= 0 ||
+          numElements > std::numeric_limits<int32_t>::max())
+        return op.emitOpError("invalid padded load shape");
+
+      auto i32Ty = rewriter.getI32Type();
+      auto indexTy = RankedTensorType::get({numElements}, i32Ty);
+      Value indices = rewriter.create<triton::MakeRangeOp>(
+          loc, indexTy, 0, numElements);
+      Value dstOffset = castIndexToI32(rewriter, loc, dstDesc->offset);
+      Value dstOffsetTensor =
+          rewriter.create<triton::SplatOp>(loc, indexTy, dstOffset);
+      Value validSize = castIndexToI32(rewriter, loc, dstDesc->sizes[0]);
+      Value validSizeTensor =
+          rewriter.create<triton::SplatOp>(loc, indexTy, validSize);
+      Value end = rewriter.create<arith::AddIOp>(loc, dstOffsetTensor,
+                                                 validSizeTensor);
+      Value hasReachedStart = rewriter.create<arith::CmpIOp>(
+          loc, arith::CmpIPredicate::sge, indices, dstOffsetTensor);
+      Value hasNotReachedEnd = rewriter.create<arith::CmpIOp>(
+          loc, arith::CmpIPredicate::slt, indices, end);
+      Value mask = rewriter.create<arith::AndIOp>(loc, hasReachedStart,
+                                                  hasNotReachedEnd);
+
+      Value localIndices = rewriter.create<arith::SubIOp>(
+          loc, indices, dstOffsetTensor);
+      Value srcOffset = castIndexToI32(rewriter, loc, srcDesc->offset);
+      Value srcOffsetTensor =
+          rewriter.create<triton::SplatOp>(loc, indexTy, srcOffset);
+      Value sourceIndices =
+          rewriter.create<arith::AddIOp>(loc, srcOffsetTensor, localIndices);
+      auto ptrTy =
+          HIVMToTritonTypeConvert(cast<MemRefType>(src.getType()));
+      auto ptrTensorTy = RankedTensorType::get({numElements}, ptrTy);
+      Value basePtrs =
+          rewriter.create<triton::SplatOp>(loc, ptrTensorTy, srcDesc->basePtr());
+      Value srcPtrs = rewriter.create<triton::AddPtrOp>(
+          loc, ptrTensorTy, basePtrs, sourceIndices);
+
+      auto elemType = cast<MemRefType>(dst.getType()).getElementType();
+      auto valueTensorTy = RankedTensorType::get({numElements}, elemType);
+      Value padValue = other;
+      if (!isa<RankedTensorType>(padValue.getType()))
+        padValue = rewriter.create<triton::SplatOp>(loc, valueTensorTy,
+                                                    padValue);
+
+      auto loaded = rewriter.create<triton::LoadOp>(
+          loc, srcPtrs, mask, padValue, llvm::ArrayRef<int32_t>{}, std::nullopt,
+          triton::CacheModifier::NONE, evict, false);
+      for (Operation *user : llvm::make_early_inc_range(dstParent.getUsers())) {
+        if (auto toTensor = dyn_cast<bufferization::ToTensorOp>(user))
+          rewriter.replaceOp(toTensor, loaded.getResult());
+      }
+      rewriter.eraseOp(op);
+      return success();
+    }
 
     // === Only support Memref form ===
     auto srcMemrefTy = dyn_cast<MemRefType>(src.getType());
