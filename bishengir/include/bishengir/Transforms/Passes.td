@@ -166,4 +166,20 @@ def DebugMemory : Pass<"debug-memory", "mlir::ModuleOp"> {
                         "Cache file path">];
 }
 
+def DebugLLVM : Pass<"debug-llvm", "mlir::ModuleOp"> {
+  let summary = "Debug LLVM dialect";
+  let description = [{
+    Debug LLVM dialect
+  }];
+  let constructor = "bishengir::createDebugLLVMPass()";
+  let dependentDialects = ["mlir::LLVM::LLVMDialect"];
+
+  let options = [Option<"actionsList",
+                        "actions", "std::string", "",
+                        "Debug actions list">,
+                 Option<"cacheFilePath",
+                        "cache-file-path", "std::string", "",
+                        "Cache file path">];
+}
+
 #endif //BISHENGIR_TRANSFORMS_PASSES_H

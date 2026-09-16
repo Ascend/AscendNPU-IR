@@ -1,5 +1,0 @@
-add_subdirectory(bishengir-bc-tools)
-add_subdirectory(bishengir-lsp-server)
-add_subdirectory(bishengir-opt)
-add_subdirectory(bishengir-translate)
-add_subdirectory(hivmc)
