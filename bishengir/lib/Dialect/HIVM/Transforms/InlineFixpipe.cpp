@@ -414,14 +414,38 @@ bool isAccumulation(Operation *op) {
 /// NZ fractal dest type for L1 fixpipe: [N1, M1, 16, C0].
 /// Use ceilDiv so M/N below the fractal tile (e.g. M=1) pad instead of
 /// producing a zero-sized dimension (M1 = M/16 == 0).
-static RankedTensorType computeNz2NzL1DstType(RankedTensorType ndType) {
+RankedTensorType computeNz2NzL1DstTypeChannelSplit(RankedTensorType ndType) {
+  assert(ndType.getElementType().isF32() && "only support f32");
   auto rank = ndType.getRank();
   int64_t M = ndType.getDimSize(rank - 2);
   int64_t N = ndType.getDimSize(rank - 1);
-  static constexpr int64_t alignM = 16;
-  auto numElemPerBlock = mlir::utils::getNumPerBlock(ndType);
+  const int64_t alignM = 16;
+  const int64_t numElemPerBlock = 8;
   int64_t M1 = static_cast<int64_t>(llvm::divideCeil(M, alignM));
-  int64_t N1 = static_cast<int64_t>(llvm::divideCeil(N, numElemPerBlock));
+  int64_t N1 = static_cast<int64_t>(llvm::divideCeil(N, alignM)) * 2;
+  SmallVector<int64_t> shape;
+  for (int64_t i = 0; i < rank - 2; i++) {
+    shape.push_back(ndType.getDimSize(i));
+  }
+  shape.push_back(N1);
+  shape.push_back(M1);
+  shape.push_back(alignM);
+  shape.push_back(numElemPerBlock);
+  return RankedTensorType::get(shape, ndType.getElementType());
+}
+
+/// NZ fractal dest type for L1 fixpipe: [N1, M1, 16, C0].
+/// Use ceilDiv so M/N below the fractal tile (e.g. M=1) pad instead of
+/// producing a zero-sized dimension (M1 = M/16 == 0).
+RankedTensorType computeNz2NzL1DstTypeChannelMerge(RankedTensorType ndType) {
+  auto rank = ndType.getRank();
+  int64_t M = ndType.getDimSize(rank - 2);
+  int64_t N = ndType.getDimSize(rank - 1);
+  const int64_t alignM = 16;
+  const int64_t numElemPerBlock = mlir::utils::getNumPerBlock(ndType);
+  int64_t M1 = static_cast<int64_t>(llvm::divideCeil(M, alignM));
+  int64_t N1 =
+      static_cast<int64_t>(llvm::divideCeil(N, numElemPerBlock));
   SmallVector<int64_t> shape;
   for (int64_t i = 0; i < rank - 2; i++) {
     shape.push_back(ndType.getDimSize(i));
@@ -448,7 +472,7 @@ static FixpipeOp convertNz2NdFixpipeToNz2Nz(PatternRewriter &rewriter,
     return op;
   }
 
-  auto dstTy = computeNz2NzL1DstType(tensorType);
+  auto dstTy = channelSplit ? computeNz2NzL1DstTypeChannelSplit(tensorType) : computeNz2NzL1DstTypeChannelMerge(tensorType);
   Location loc = op.getLoc();
   Value src = op.getSrc();
   auto dualDstMode = op.getDualDstModeAttr();
