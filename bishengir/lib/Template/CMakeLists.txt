@@ -55,14 +55,17 @@ function(compile_single_cpp_to_bc cpp_with_path core_type platform_type)
     list(APPEND bisheng_args --cce-aicore-only)
     list(APPEND bisheng_args --cce-generic-addrspace=off)
     list(APPEND bisheng_args -mllvm -disable-llvm-optzns)
-    list(APPEND bisheng_args -mllvm -cce-aicore-addr-transform=false)
+    if ((NOT "${platform_type}" STREQUAL "Ascend910D") OR
+        (BISHENGIR_OPTIMIZE_TEMPLATE_BITCODE STREQUAL "ON"))
+        list(APPEND bisheng_args -O2)
+    endif ()
+    if ("${platform_type}" STREQUAL "Ascend910D" AND
+        BISHENGIR_OPTIMIZE_TEMPLATE_BITCODE STREQUAL "ON")
+        list(APPEND bisheng_args -mllvm -cce-aicore-addr-transform=false)
+    endif ()
     if (DEFINED EXTRA_BISHENG_DEFINES)
         list(APPEND bisheng_args ${EXTRA_BISHENG_DEFINES})
     endif()
-    if (BISHENGIR_OPTIMIZE_TEMPLATE_BITCODE STREQUAL "ON")
-        list(APPEND bisheng_args -O2)
-    endif ()
-
     if ((${core_type} STREQUAL "mix_aic") OR (${core_type} STREQUAL "mix_aiv"))
         list(APPEND bisheng_args -cce-enable-mix)
         list(APPEND bisheng_args -mllvm -enable-mix=true)
@@ -173,10 +176,14 @@ function(compile_shmem_to_bc cpp_with_path core_type platform_type)
     list(APPEND bisheng_args --cce-aicore-only)
     list(APPEND bisheng_args --cce-generic-addrspace=off)
     list(APPEND bisheng_args -mllvm -disable-llvm-optzns)
-    list(APPEND bisheng_args -mllvm -cce-aicore-addr-transform=false)
     list(APPEND bisheng_args --cce-enable-print)
-    if (BISHENGIR_OPTIMIZE_TEMPLATE_BITCODE STREQUAL "ON")
+    if ((NOT "${platform_type}" STREQUAL "Ascend910D") OR
+        (BISHENGIR_OPTIMIZE_TEMPLATE_BITCODE STREQUAL "ON"))
         list(APPEND bisheng_args -O2)
+    endif ()
+    if ("${platform_type}" STREQUAL "Ascend910D" AND
+        BISHENGIR_OPTIMIZE_TEMPLATE_BITCODE STREQUAL "ON")
+        list(APPEND bisheng_args -mllvm -cce-aicore-addr-transform=false)
     endif ()
     # open --cce-enable-sanitizer after shmem upgrade to 1.6.x
 
@@ -278,11 +285,14 @@ function(compile_single_cpp_to_bc_debug cpp_with_path core_type platform_type)
     set(bisheng_args ${cpp_with_path})
     list(APPEND bisheng_args -emit-llvm -c)
     list(APPEND bisheng_args -mllvm -disable-llvm-optzns)
-    list(APPEND bisheng_args -mllvm -cce-aicore-addr-transform=false)
-    if (BISHENGIR_OPTIMIZE_TEMPLATE_BITCODE STREQUAL "ON")
+    if ((NOT "${platform_type}" STREQUAL "Ascend910D") OR
+        (BISHENGIR_OPTIMIZE_TEMPLATE_BITCODE STREQUAL "ON"))
         list(APPEND bisheng_args -O2)
     endif ()
-
+    if ("${platform_type}" STREQUAL "Ascend910D" AND
+        BISHENGIR_OPTIMIZE_TEMPLATE_BITCODE STREQUAL "ON")
+        list(APPEND bisheng_args -mllvm -cce-aicore-addr-transform=false)
+    endif ()
     if (${core_type} STREQUAL "aic")
         string(REGEX REPLACE ".cpp" ".aic.bc" bc_name ${cpp_name})
     elseif (${core_type} STREQUAL "aiv")
@@ -369,41 +379,43 @@ function(compile_cpp_to_bc)
     bishengir_register_bcgen_target("${this_call_outputs}")
 endfunction()
 
-function(get_meta_op_aicore_arch arch core_type out_var)
-    if ("${arch}" STREQUAL "c310")
-        set(aicore_arch "dav-c310")
-    elseif ("${arch}" STREQUAL "c220")
-        set(aicore_arch "dav-c220")
-    else()
-        message(FATAL_ERROR, "Unsupported meta op arch: ${arch}")
-    endif()
+if (BISHENGIR_OPTIMIZE_TEMPLATE_BITCODE STREQUAL "ON")
+    function(get_meta_op_aicore_arch arch core_type out_var)
+        if ("${arch}" STREQUAL "c310")
+            set(aicore_arch "dav-c310")
+        elseif ("${arch}" STREQUAL "c220")
+            set(aicore_arch "dav-c220")
+        else()
+            message(FATAL_ERROR, "Unsupported meta op arch: ${arch}")
+        endif()
 
-    if ("${core_type}" STREQUAL "aic" OR "${core_type}" STREQUAL "mix_aic")
-        set(${out_var} "${aicore_arch}-cube" PARENT_SCOPE)
-    elseif ("${core_type}" STREQUAL "aiv" OR "${core_type}" STREQUAL "mix_aiv")
-        set(${out_var} "${aicore_arch}-vec" PARENT_SCOPE)
-    else()
-        message(FATAL_ERROR, "Unsupported meta op core type: ${core_type}")
-    endif()
-endfunction()
+        if ("${core_type}" STREQUAL "aic" OR "${core_type}" STREQUAL "mix_aic")
+            set(${out_var} "${aicore_arch}-cube" PARENT_SCOPE)
+        elseif ("${core_type}" STREQUAL "aiv" OR "${core_type}" STREQUAL "mix_aiv")
+            set(${out_var} "${aicore_arch}-vec" PARENT_SCOPE)
+        else()
+            message(FATAL_ERROR, "Unsupported meta op core type: ${core_type}")
+        endif()
+    endfunction()
 
-function(get_optimize_meta_op_args arch core_type out_var)
-    get_meta_op_aicore_arch(${arch} ${core_type} aicore_arch)
-    set(opt_args
-        -O2
-        --cce-aicore-arch=${aicore_arch}
-        --cce-aicore-only
-        -cce-bitcode-is-aicore
-        -mllvm -cce-aicore-addr-transform=false
-    )
+    function(get_optimize_meta_op_args arch core_type out_var)
+        get_meta_op_aicore_arch(${arch} ${core_type} aicore_arch)
+        set(opt_args
+            -O2
+            --cce-aicore-arch=${aicore_arch}
+            --cce-aicore-only
+            -cce-bitcode-is-aicore
+            -mllvm -cce-aicore-addr-transform=false
+        )
 
-    if ("${core_type}" STREQUAL "mix_aic" OR "${core_type}" STREQUAL "mix_aiv")
-        list(APPEND opt_args -cce-enable-mix)
-        list(APPEND opt_args -mllvm -enable-mix=true)
-    endif()
+        if ("${core_type}" STREQUAL "mix_aic" OR "${core_type}" STREQUAL "mix_aiv")
+            list(APPEND opt_args -cce-enable-mix)
+            list(APPEND opt_args -mllvm -enable-mix=true)
+        endif()
 
-    set(${out_var} ${opt_args} PARENT_SCOPE)
-endfunction()
+        set(${out_var} ${opt_args} PARENT_SCOPE)
+    endfunction()
+endif()
 
 # Register a link rule that merges all per-file .bc registered under
 # bishengir_bc_outputs_<tag> (populated by compile_*_to_bc) into `out_file`.
@@ -429,18 +441,19 @@ function(link_one_group_to_meta_op out_dir arch core_type)
     endif()
     string(REGEX REPLACE "[^0-9A-Za-z_]" "_" target_suffix "${tag}")
     set(link_target "bishengir_link_${target_suffix}")
-    string(REPLACE ";" "\n" link_signature_content "${LLVM_LINK_TOOL}\n${inputs}\n-o\n${out_file}.linked.bc")
-    set(link_signature "${out_file}.llvm-link.args")
-    file(GENERATE OUTPUT "${link_signature}" CONTENT "${link_signature_content}\n")
-    add_custom_command(
-        OUTPUT "${out_file}.linked.bc"
-        COMMAND ${LLVM_LINK_TOOL} ${inputs} -o "${out_file}.linked.bc"
-        DEPENDS ${inputs} "${link_signature}"
-        COMMENT "[llvm-link] ${tag} -> ${out_file}.linked.bc"
-        VERBATIM
-    )
-
-    if (BISHENGIR_OPTIMIZE_TEMPLATE_BITCODE STREQUAL "ON" AND NOT "${core_type}" STREQUAL "host")
+    if (BISHENGIR_OPTIMIZE_TEMPLATE_BITCODE STREQUAL "ON" AND
+        "${arch}" STREQUAL "c310")
+        string(REPLACE ";" "\n" link_signature_content
+               "${LLVM_LINK_TOOL}\n${inputs}\n-o\n${out_file}.linked.bc")
+        set(link_signature "${out_file}.llvm-link.args")
+        file(GENERATE OUTPUT "${link_signature}" CONTENT "${link_signature_content}\n")
+        add_custom_command(
+            OUTPUT "${out_file}.linked.bc"
+            COMMAND ${LLVM_LINK_TOOL} ${inputs} -o "${out_file}.linked.bc"
+            DEPENDS ${inputs} "${link_signature}"
+            COMMENT "[llvm-link] ${tag} -> ${out_file}.linked.bc"
+            VERBATIM
+        )
         get_optimize_meta_op_args(${arch} ${core_type} opt_args)
         add_custom_command(
             OUTPUT "${out_file}"
@@ -454,12 +467,15 @@ function(link_one_group_to_meta_op out_dir arch core_type)
             VERBATIM
         )
     else()
+        string(REPLACE ";" "\n" link_signature_content
+               "${LLVM_LINK_TOOL}\n${inputs}\n-o\n${out_file}")
+        set(link_signature "${out_file}.llvm-link.args")
+        file(GENERATE OUTPUT "${link_signature}" CONTENT "${link_signature_content}\n")
         add_custom_command(
             OUTPUT "${out_file}"
-            COMMAND ${CMAKE_COMMAND} -E rename
-                    "${out_file}.linked.bc" "${out_file}"
-            DEPENDS "${out_file}.linked.bc"
-            COMMENT "[no-post-link] ${out_file}.linked.bc -> ${out_file}"
+            COMMAND ${LLVM_LINK_TOOL} ${inputs} -o "${out_file}"
+            DEPENDS ${inputs} "${link_signature}"
+            COMMENT "[llvm-link] ${tag} -> ${out_file}"
             VERBATIM
         )
     endif()
