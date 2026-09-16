@@ -18,7 +18,6 @@
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
-#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallSet.h"
 
 namespace mlir {
@@ -30,14 +29,9 @@ namespace hivm {
 /// `hivm.hir.pointer_cast` bound to its planned address(es). Interrupts and
 /// returns failure with a diagnostic if any alloc is not covered by the memory
 /// plan (read before first write).
-///
-/// Alloc roots listed in `preloadLocalBuffers` receive
-/// `annotation.mark {hivm.preload_local_buffer = 1}` on the materialized
-/// pointer_cast so create-preload rotates every alias of a preload TCB.
 LogicalResult walkAllocToPointerCast(
     func::FuncOp funcOp,
-    const DenseMap<Value, SmallVector<uint64_t>> &buffer2Offsets,
-    const DenseSet<Value> &preloadLocalBuffers = {});
+    const DenseMap<Value, SmallVector<uint64_t>> &buffer2Offsets);
 
 /// Walk every `memref_ext.alloc_workspace` in `funcOp` and attach its planned
 /// offset(s). Interrupts and returns failure with a diagnostic if any workspace

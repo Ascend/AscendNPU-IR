@@ -622,13 +622,6 @@ public:
     return buffer2Offsets;
   }
 
-  /// Alloc roots that must carry `hivm.preload_local_buffer` after
-  /// materializing pointer_cast (preload TCB and any buffers folded onto its
-  /// storage entry).
-  inline const DenseSet<Value> GetPreloadLocalBuffers() const {
-    return preloadLocalBuffers;
-  }
-
   inline void
   SetLinearOperation(SmallVector<std::unique_ptr<OpInfo>> &linearOp) {
     linearOperation = std::move(linearOp);
@@ -1016,9 +1009,6 @@ private:
 
   /// map from memref buffer to plan memory address.
   DenseMap<Value, SmallVector<uint64_t>> buffer2Offsets;
-
-  /// Alloc roots belonging to a preload-local storage entry after planning.
-  DenseSet<Value> preloadLocalBuffers;
 
   /// map from each scope to its root StorageEntry.
   llvm::MapVector<hivm::AddressSpace, StorageEntry *> memscope2rootStorageEntry;
