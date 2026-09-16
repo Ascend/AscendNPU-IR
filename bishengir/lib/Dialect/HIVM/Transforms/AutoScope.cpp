@@ -238,11 +238,8 @@ void AutoScopePass::runOnOperation() {
     if (!indicesTy) {
       continue;
     }
-    unsigned blockSize = indicesTy.getShape().front();
-    if (!(blockSize && !(blockSize & (blockSize - 1)))) {
-      llvm::report_fatal_error(
-          "BLOCK size of simd_simt mode must be power of 2");
-    }
+    // AutoScope only outlines the SIMT dependency graph. Non-power-of-two
+    // tensor widths are padded and masked later by the outlined SIMT pipeline.
     seedInfo.plannedOps = gatherSimtOps(seedInfo.seedOp, allSeedOps);
   }
 

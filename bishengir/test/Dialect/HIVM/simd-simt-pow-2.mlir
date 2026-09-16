@@ -1,5 +1,12 @@
-// RUN: bishengir-opt --auto-scope --split-input-file %s
-// XFAIL: *
+// RUN: bishengir-opt --auto-scope --split-input-file %s | FileCheck %s
+
+// CHECK-LABEL: func.func @simple_indirect_load_add_kernel
+// CHECK:       %[[SCOPE:.*]] = scope.scope
+// CHECK:         %[[GATHER:.*]] = hivm.hir.gather_load
+// CHECK-SAME:      tensor<33xi64>
+// CHECK-SAME:      tensor<33xf32>
+// CHECK:         scope.return %[[GATHER]] : tensor<33xf32>
+// CHECK:       hivm.hir.store ins(%{{.*}} : tensor<33xf32>)
 func.func @simple_indirect_load_add_kernel(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %arg2: memref<?xf32>, %arg3: memref<?xi64>, %arg4: memref<?xf32>, %arg5: f32, %arg6: i32, %arg7: i32, %arg8: i32) attributes {parallel_mode = "mix_simd_simt"} {
     %c1_i32 = arith.constant 1 : i32
     %0 = arith.muli %arg6, %arg7 : i32
