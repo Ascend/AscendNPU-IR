@@ -93,6 +93,21 @@ func.func @extract1Element(%src: tensor<1x1xf16>, %index: index) -> f16 {
 
 // -----
 
+// A rank-0 reshape can be introduced after reducing the only tensor dimension.
+// Bypass it so TritonGPU never has to assign a layout to a rank-0 tensor.
+// CHECK-LABEL: @extractRank0Reshape
+// CHECK-NOT: tensor<i64>
+// CHECK-NOT: tt.reshape
+// CHECK: %[[SCALAR:.*]] = tt.unsplat %arg0 : tensor<1xi64>
+// CHECK: return %[[SCALAR]] : i64
+func.func @extractRank0Reshape(%src: tensor<1xi64>) -> i64 {
+  %rank0 = tt.reshape %src : tensor<1xi64> -> tensor<i64>
+  %scalar = tensor.extract %rank0[] : tensor<i64>
+  return %scalar : i64
+}
+
+// -----
+
 // CHECK-LABEL: @extract1D
 // CHECK-NOT: tensor.extract
 // CHECK-NOT: tt.reduce

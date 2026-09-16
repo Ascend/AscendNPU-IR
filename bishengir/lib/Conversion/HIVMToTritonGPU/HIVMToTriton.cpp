@@ -1512,15 +1512,23 @@ struct HIVMToTTReduceOp: public OpRewritePattern<hivm::VReduceOp> {
         for (auto axis : reduceDims) {
           SmallVector<int64_t> resultShape(currentShape.begin(), currentShape.end());
           resultShape.erase(resultShape.begin() + axis);
-          RankedTensorType reduceResultType = RankedTensorType::get(resultShape, elemType);
+          Value reduceInput = finalResult;
+          auto reduceAxis = axis;
+          bool reduceToScalar = resultShape.empty();
+          if (reduceToScalar) {
+            SmallVector<int64_t> inputShape{1};
+            inputShape.append(currentShape.begin(), currentShape.end());
+            auto inputType = RankedTensorType::get(inputShape, elemType);
+            reduceInput = rewriter.create<triton::ReshapeOp>(
+                loc, inputType, finalResult, /*allowReorder=*/false);
+            reduceAxis = axis + 1;
+            resultShape.push_back(1);
+          }
+          RankedTensorType reduceResultType =
+              RankedTensorType::get(resultShape, elemType);
 
-          auto adjustedAxis = axis;
           auto ttReduceOp = rewriter.create<triton::ReduceOp>(
-              loc,
-              reduceResultType,
-              finalResult,
-              adjustedAxis
-          );
+              loc, reduceResultType, reduceInput, reduceAxis);
 
           Region &combineRegion = ttReduceOp.getCombineOp();
           rewriter.createBlock(&combineRegion);
@@ -1594,13 +1602,19 @@ struct HIVMToTTReduceOp: public OpRewritePattern<hivm::VReduceOp> {
 
           // triton::ReduceOp removes the reduced dimension, but HIVM keeps it as size 1
           auto currentResultType = cast<RankedTensorType>(reduceResult.getType());
-          if (currentResultType.getRank() != dstType.getRank()) {
-              // Insert dimension of size 1 at the reduced axis position
-              SmallVector<int64_t> expandShape(currentShape.begin(), currentShape.end());
-              expandShape.insert(expandShape.begin() + axis, 1);
-              RankedTensorType finalType = RankedTensorType::get(expandShape, elemType);
-              finalResult = rewriter.create<triton::ExpandDimsOp>(loc, finalType, reduceResult, axis);
-              currentShape = expandShape;
+          if (reduceToScalar && dstType.getRank() == 0) {
+            finalResult = rewriter.create<triton::UnsplatOp>(loc, reduceResult);
+            currentShape.clear();
+          } else if (currentResultType.getRank() != dstType.getRank()) {
+            // Insert dimension of size 1 at the reduced axis position
+            SmallVector<int64_t> expandShape(currentShape.begin(),
+                                             currentShape.end());
+            expandShape.insert(expandShape.begin() + axis, 1);
+            RankedTensorType finalType =
+                RankedTensorType::get(expandShape, elemType);
+            finalResult = rewriter.create<triton::ExpandDimsOp>(
+                loc, finalType, reduceResult, axis);
+            currentShape = expandShape;
           }
         }
 
