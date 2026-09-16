@@ -516,10 +516,11 @@ static bool isOverFlowMode(Type inType, Type outType) {
   const bool isF32ToI8 = inType.isF32() && outType.isInteger(8);
   const bool isF16ToI8 = inType.isF16() && outType.isInteger(8);
   const bool isI16ToI8 = inType.isInteger(16) && outType.isInteger(8);
+  const bool isI64ToI32 = inType.isInteger(64) && outType.isInteger(32);
   const bool isI32ToI16 = inType.isInteger(32) && outType.isInteger(16);
   const bool isI32ToI8 = inType.isInteger(32) && outType.isInteger(8);
-  return (isI16ToI8 || isI32ToI16 || isI32ToI8 || isF32ToI16 || isF32ToI8 ||
-          isF16ToI8);
+  return (isI64ToI32 || isI16ToI8 || isI32ToI16 || isI32ToI8 || isF32ToI16 ||
+          isF32ToI8 || isF16ToI8);
 }
 
 /*
