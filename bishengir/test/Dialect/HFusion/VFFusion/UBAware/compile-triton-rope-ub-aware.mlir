@@ -1,4 +1,4 @@
-// REQUIRES: hivmc
+// REQUIRES: hivmc-a5
 //
 // E2E compile test: RoPE kernel from triton-ascend Customer_Kernels.
 // Without consumer-lookahead, UB-aware analyzer rejects pairwise merges

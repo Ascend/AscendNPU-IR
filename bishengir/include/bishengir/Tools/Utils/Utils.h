@@ -95,12 +95,6 @@ execute(llvm::StringRef binName, llvm::StringRef installPath,
         std::optional<llvm::StringRef> outputFile = std::nullopt,
         unsigned timeoutSeconds = 15);
 
-llvm::LogicalResult
-executeBinary(llvm::StringRef binName,
-              llvm::SmallVectorImpl<llvm::StringRef> &arguments,
-              std::optional<llvm::StringRef> outputFile = std::nullopt,
-              unsigned timeoutSeconds = 15);
-
 std::optional<llvm::VersionTuple> parseHIVMCVersion(llvm::StringRef content);
 
 std::optional<llvm::VersionTuple>

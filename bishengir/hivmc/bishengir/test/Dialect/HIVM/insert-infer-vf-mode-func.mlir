@@ -1,0 +1,85 @@
+// RUN: bishengir-opt --hacc-append-device-spec=target=Ascend950PR_9589 \
+// RUN:               --hivm-insert-vf-mode-func -split-input-file %s | FileCheck %s
+
+// enum VFMode : int64_t { SIMD = 0, SIMT, MIX };
+
+// -----
+
+// SIMD
+
+// CHECK-LABEL: @foo_infer_vf_mode_function() -> index
+// CHECK: arith.constant 0
+func.func private @bar() attributes { hivm.vector_function }
+
+func.func @foo() attributes { hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE> } {
+  call @bar() : () -> ()
+  return
+}
+
+// -----
+
+// SIMT
+
+// CHECK-LABEL: @foo_infer_vf_mode_function() -> index
+// CHECK: arith.constant 1
+func.func private @bar() attributes { hivm_regbaseintrins.simt_callable }
+
+func.func @foo() attributes { hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE> } {
+  call @bar() : () -> ()
+  return
+}
+
+// -----
+
+// MIX
+
+// CHECK-LABEL: @foo_infer_vf_mode_function() -> index
+// CHECK: arith.constant 2
+func.func private @bar() attributes { hivm.vector_function }
+func.func private @xyz() attributes { hivm_regbaseintrins.simt_callable }
+
+func.func @foo() attributes { hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE> } {
+  call @bar() : () -> ()
+  call @xyz() : () -> ()
+  return
+}
+
+// -----
+
+// MIX
+
+// CHECK-LABEL: @foo_infer_vf_mode_function() -> index
+// CHECK: arith.constant 2
+func.func private @bar() attributes { hivm.vector_function }
+func.func private @xyz() attributes { hivm_regbaseintrins.simt_callable }
+
+func.func private @foo2() {
+  call @bar() : () -> ()
+  call @xyz() : () -> ()
+  return
+}
+
+func.func @foo() attributes { hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE> } {
+  call @foo2() : () -> ()
+  return
+}
+
+// -----
+
+// MIX
+
+// CHECK-LABEL: @foo_infer_vf_mode_function() -> index
+// CHECK: arith.constant 2
+func.func private @bar() attributes { hivm.vector_function }
+func.func private @xyz() attributes { hivm.vf_mode = #hivm.vf_mode<SIMT> }
+
+func.func private @foo2() {
+  call @bar() : () -> ()
+  call @xyz() : () -> ()
+  return
+}
+
+func.func @foo() attributes { hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE> } {
+  call @foo2() : () -> ()
+  return
+}

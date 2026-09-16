@@ -193,12 +193,29 @@ bishengir::getTempFile(const std::string &outputFile,
   return tempFile;
 }
 
-// Executes the binary at \p binPath with \p arguments, redirecting stdout to
-// \p outputFile when provided. Returns failure() when the binary cannot be
-// started or exits with a non-zero status.
-static LogicalResult runResolvedBinary(StringRef binPath,
-                                       SmallVectorImpl<StringRef> &arguments,
-                                       std::optional<StringRef> outputFile) {
+LogicalResult bishengir::execute(StringRef binName, StringRef installPath,
+                                 SmallVectorImpl<StringRef> &arguments,
+                                 std::optional<llvm::StringRef> outputFile,
+                                 unsigned timeoutSeconds) {
+  std::string binPath;
+  if (!installPath.empty()) {
+    if (auto binPathOrErr =
+            llvm::sys::findProgramByName(binName, {installPath})) {
+      binPath = binPathOrErr.get();
+    } else {
+      llvm::errs() << "[WARNING] Cannot find " << binName << " under "
+                   << installPath << "\n";
+    }
+  }
+  if (binPath.empty()) {
+    if (auto binPathOrErr = llvm::sys::findProgramByName(binName)) {
+      binPath = binPathOrErr.get();
+    } else {
+      llvm::errs() << "[ERROR] Cannot find " << binName << " under "
+                   << "$PATH \n";
+      return failure();
+    }
+  }
   arguments[0] = binPath;
 
   LLVM_DEBUG({
@@ -228,46 +245,6 @@ static LogicalResult runResolvedBinary(StringRef binPath,
   return success();
 }
 
-LogicalResult bishengir::execute(StringRef binName, StringRef installPath,
-                                 SmallVectorImpl<StringRef> &arguments,
-                                 std::optional<llvm::StringRef> outputFile,
-                                 unsigned timeoutSeconds) {
-  std::string binPath;
-  if (!installPath.empty()) {
-    if (auto binPathOrErr =
-            llvm::sys::findProgramByName(binName, {installPath})) {
-      binPath = binPathOrErr.get();
-    } else {
-      llvm::errs() << "[WARNING] Cannot find " << binName << " under "
-                   << installPath << "\n";
-    }
-  }
-  if (binPath.empty()) {
-    if (auto binPathOrErr = llvm::sys::findProgramByName(binName)) {
-      binPath = binPathOrErr.get();
-    } else {
-      llvm::errs() << "[ERROR] Cannot find " << binName << " under "
-                   << "$PATH \n";
-      return failure();
-    }
-  }
-  return runResolvedBinary(binPath, arguments, outputFile);
-}
-
-LogicalResult bishengir::executeBinary(
-    StringRef binName, SmallVectorImpl<StringRef> &arguments,
-    std::optional<llvm::StringRef> outputFile, unsigned timeoutSeconds) {
-  std::string binPath;
-  if (auto binPathOrErr = llvm::sys::findProgramByName(binName)) {
-    binPath = binPathOrErr.get();
-  } else {
-    llvm::errs() << "[ERROR] Cannot find " << binName << " under "
-                 << "$PATH \n";
-    return failure();
-  }
-  return runResolvedBinary(binPath, arguments, outputFile);
-}
-
 std::optional<llvm::VersionTuple>
 bishengir::parseHIVMCVersion(llvm::StringRef content) {
   llvm::VersionTuple version;
@@ -291,14 +268,15 @@ llvm::VersionTuple findHIVMCVersion(llvm::StringRef content) {
   //                hivmc 0.3.0
   // the first regex check will fail, however the version
   // can still be parsed, so use RSimple pattern
-  Regex RSimple("^(hivmc) "                  // name
-                "([0-9]+\\.[0-9]+\\.[0-9]+)" // version
-  );
+  Regex RSimple("^(hivmc) "                 // name
+              "([0-9]+\\.[0-9]+\\.[0-9]+)" // version
+              );
 
   SmallVector<StringRef, 4> M;
-  if (!R.match(versionLine, &M) && !RSimple.match(versionLine, &M)) {
-    return llvm::VersionTuple();
-  }
+  if (!R.match(versionLine, &M) &&
+      !RSimple.match(versionLine, &M)) {
+      return llvm::VersionTuple();
+    }
 
   StringRef versionStr = M[2];
   auto version = bishengir::parseHIVMCVersion(versionStr);
