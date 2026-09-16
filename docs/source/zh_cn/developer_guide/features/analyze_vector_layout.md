@@ -1,6 +1,10 @@
 # 向量布局分析
 
-本文介绍HIVMAVE中的向量布局分析变换（AnalyzeVectorLayoutPass），包括硬件背景、算法原理、测试用例、接口说明和使用约束。
+**适用产品**：
+
+- Ascend 950PR&950DT 系列产品
+
+本文介绍HIVMAVE中的向量布局分析变换（AnalyzeVectorLayoutPass），包括硬件布局规划、算法原理、编译选项和使用约束。
 
 ## 硬件布局规划
 
@@ -92,8 +96,8 @@ AVE使用谓词寄存器保存Mask。Mask的逻辑元素类型通常是`i1`，�
 
 后续的AVE规范化和指令降低需要这些信息完成以下工作：
 
-- 根据向量结果的布局选择Load的`NORM`、`UNPK`或`UNPK4`模式；
-- 根据Store输入的布局选择`NORM`、`PK`或`PK4`模式；
+- 根据向量结果的布局选择Load的模式；
+- 根据Store输入的布局选择模式；
 - 为Mask选择正确的谓词粒度；
 - 为ext/trunc选择正确的硬件转换形式和通道；
 - 在源布局和目标布局不一致时插入`INTLV`或`DINTLV`；
@@ -101,15 +105,15 @@ AVE使用谓词寄存器保存Mask。Mask的逻辑元素类型通常是`i1`，�
 
 如果为每个操作独立选择布局，前后操作之间很容易出现不匹配。例如，Load可以产生`B8`、`B8_2VL`或`B8_4VL`中的任意一种布局，但后续ext、compare和Store对输入布局的要求不同。一个操作的选择会影响其所有输入和输出，最终需要在整个函数范围内统一求解。
 
-AnalyzeVectorLayout将布局推导建模为约束满足问题。它从函数末端的向量结果开始，枚举可能的布局，然后沿数据流反向传播约束。每个操作根据自己的硬件语义产生一个或多个合法候选；候选在传播过程中不断合并，发生冲突时被删除。最终选出的解同时满足数据布局、Mask粒度、类型转换和控制流边界的约束。
+AnalyzeVectorLayout将布局推导建模为约束满足问题，用带回溯的深度优先搜索求解。它从函数末端的向量结果开始，枚举可能的布局得到初始解，然后沿数据流反向传播约束。每个操作根据自己的硬件语义产生一个或多个合法候选；多个候选建立分支，无候选或状态冲突时回跳到更早的分支尝试其他选择。最终选出的解同时满足数据布局、Mask粒度、类型转换和控制流边界的约束。
 
 ### 求解流程
 
-1. 初始化解空间：收集没有用户的向量结果，并根据元素位宽枚举初始布局；
-2. 逆序遍历操作：从函数末端向前处理所有包含向量操作数或向量结果的操作；
-3. 操作约束求解：通过`TypeSwitch`分派到操作类型对应的求解函数；
-4. 合并候选解：将当前操作产生的输入状态合并到已有状态，发现冲突时丢弃候选；
-5. 应用求解结果：为向量结果类型添加布局属性，为操作添加`functionType`属性，并重写特殊操作。
+1. 初始化解空间：收集没有用户的向量结果，根据元素位宽枚举候选布局并做笛卡尔积，得到全部初始解；
+2. 逆序遍历操作：对每个初始解，从函数末端向前处理所有包含向量操作数或向量结果的操作；
+3. 操作约束求解：通过`TypeSwitch`分派到操作类型对应的求解函数，产生一个或多个候选解；
+4. 分支与回溯：多个候选解时选择第一个并保留其余候选建立分支；无候选解时优先冲突导向回跳，其次时序回溯；所有初始解穷尽仍无解则输出`No Solve`；
+5. 应用求解结果：取第一个完整解，为向量结果类型添加布局属性，为操作添加`functionType`属性，并重写特殊操作。
 
 ### 操作求解规则
 
@@ -212,7 +216,7 @@ B8  -> B8_2VL
 B8_2VL -> B8_4VL
 ```
 
-无属性的原始Interleave操作中，若8-bit结果为`B8_2VL`或`B8_4VL`，分别选择`INTLV2`或`INTLV4`；DeInterleave操作则对应选择`DINTLV2`或`DINTLV4`。这里的`DENSE`和`SPARSE`描述的是相对于输入的变化方向，而不是结果布局的绝对名称。
+这里的`DENSE`和`SPARSE`描述的是相对于输入的变化方向，而不是结果布局的绝对名称。
 
 #### 循环和函数调用求解
 
@@ -260,10 +264,9 @@ build/bin/bishengir-opt -analyze-vector-layout \
 
 失败诊断会输出以下信息：
 
-- 失败操作的位置和完整操作；
-- 操作码、操作数类型和结果类型；
-- 失败前剩余的候选解数量；
-- 失败候选中已经记录的输入状态；
+- 搜索统计，包括向量操作总数、初始解数量、失败路径数、分支点数、回跳和回溯次数等聚合数据；
+- 失败操作的位置、完整操作、操作码、操作数类型和结果类型；
+- 失败前已求解的向量操作数、搜索深度，以及失败操作各向量结果和向量操作数已确定的布局状态，未赋状态的值显示为`<unassigned>`；
 - 可能的原因和建议处理方式。
 
 典型错误信息如下：
@@ -271,22 +274,29 @@ build/bin/bishengir-opt -analyze-vector-layout \
 ```text
 No Solve
 ========== Vector Layout Analysis Failure ==========
-Location: ...
-Operation: ...
+Search summary:
+  Vector operations: 4
+  Initial solutions: 1
+  ...
+Deepest failed partial solution:
+  Initial solution: 1 / 1
+  Solved vector operations: 1 / 4
+  Search depth: 1
+Location: loc("vector-layout-nosolve-test.mlir":44:8)
+Operation: %1 = ave.hir.vtrc %res, <rint>, %0 : vector<64xf32>, vector<64xi1>, vector<64xf16>
 Opcode: ave.hir.vtrc
 Operand types:
   vector<64xf32>
   vector<64xi1>
 Result types:
   vector<64xf16>
-Candidates in the solution space: 0
+Vector states used by the failed operation:
+  Result: %1 = ave.hir.vtrc ...  State: b16
+  Operand: %res = ave.hir.vload ...  State: <unassigned>
+  Operand: %0 = ave.hir.pge ...  State: b16
 Possible causes and solutions:
   1. The operation may not have been lowered to the HIVMAVE dialect before VectorLayout analysis.
-  2. The operation type may not be handled in solveProblem TypeSwitch.
-  3. The specific VecMemType combination is not supported by this op.
-  4. Conflicting layout requirements from multiple consumers.
-  5. Unsupported element bitwidth (only 1/8/16/32 are supported).
+     -> If running end-to-end: an upstream pass failed to lower this op. Op: ave.hir.vtrc
+  ...
 ======================================================
 ```
-
-若需要支持新的HIVMAVE操作或新的布局组合，应在对应的`solveProblem()`函数中增加正向约束，明确操作数、结果和Mask之间的状态关系，并补充成功和失败测试。不能通过跳过该操作、默认放宽约束或将分析失败改写为pattern匹配失败来规避布局问题。
