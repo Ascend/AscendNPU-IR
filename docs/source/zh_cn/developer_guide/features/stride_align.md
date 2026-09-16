@@ -1,5 +1,11 @@
 # 存储对齐
 
+**适用产品**：
+
+- Ascend 950PR&950DT 系列产品
+- Atlas A3 系列产品
+- Atlas A2 系列产品
+
 本文介绍HIVM中的存储对齐（Stride Alignment）机制，包括 `hivm-pre-mark-stride-align`、`hivm-mark-stride-align` 和 `hivm-enable-stride-align` 三个Pass的硬件背景、算法原理、接口说明和使用约束。
 
 存储对齐分为"标记"（mark）与"使能"(enable)两个阶段：标记阶段分析每个HIVM算子的memref操作数，确定需要对齐的维度和对齐字节数，并以 `annotation.mark` 注解的形式写入IR；使能阶段读取这些注解，将标记信息传播到根分配点（`memref.alloc`），对分配的内存形状进行填充（padding），使各行起始地址满足硬件对齐要求，再通过 `memref.subview` 切回原始逻辑形状。
@@ -18,7 +24,7 @@
 | BT Buffer | 64字节对齐 | BiasTable Buffer，存放矩阵运算中的Bias |
 | FP Buffer | 64字节对齐 | Fixpipe Buffer，存放量化参数、Relu参数等 |
 
-除了Buffer自身的起始地址需要对齐外，当memref的最低维（last dim）不连续时——即次低维（sub-tail dim）的stride不等于最低维的size——硬件在逐行访问数据时，每一行的起始地址也需要满足对齐约束。例如，对于 `memref<3x13xi8, strided<[16, 1]>>`，最低维size为13但stride为16，最低维不连续；16字节的行宽不满足硬件对齐要求（32字节），就需要在分配时将最低维填充到对齐大小32。
+除了Buffer自身的起始地址需要对齐外，当memref的最低维（last dim）不连续时——即次低维（sub-tail dim）的stride不等于最低维的size——硬件在逐行访问数据时，每一行的起始地址也需要满足对齐约束。例如，对于 `memref<3x13xi8, strided<[16, 1]>>`，最低维size为13但次低维的stride为16，最低维不连续；16字节的行宽不满足硬件对齐要求（32字节），就需要在分配时将最低维填充到对齐大小32。
 
 DMA搬运指令和Vector计算指令对stride有各自的约束：
 
@@ -39,7 +45,7 @@ DMA搬运指令和Vector计算指令对stride有各自的约束：
 
 ### 软件背景
 
-在PlanMemory完成地址分配之前，输入IR中的 `memref.alloc` 仅声明了逻辑形状和所需内存大小，不包含地址信息。如果某个Buffer的逻辑形状在次低维未对齐（如 `memref<37x5x3xi32, strided<[15, 3, 1]>>`，次低维stride=15），DMA模版实现中转为2D处理时，各行的起始地址不对齐，会导致功能异常。
+在PlanMemory完成地址分配之前，输入IR中的 `memref.alloc` 仅声明了逻辑形状和所需内存大小，不包含地址信息。如果某个Buffer的逻辑形状在次低维未对齐（如 `memref<37x5x3xi32, strided<[15, 3, 1]>>`，第0维stride=15，未32B对齐），DMA模版实现中转为2D处理时，各行的起始地址不对齐，会导致功能异常。
 
 存储对齐机制通过以下方式解决该问题：
 
@@ -64,9 +70,13 @@ hivm-enable-stride-align        // 使能阶段：传播注解 + 重分配内存
 
 ## hivm-pre-mark-stride-align
 
+> **说明**：
+>
+> 本节内容仅适用于 Ascend 950PR&950DT 系列产品。
+
 ### 功能概述
 
-该Pass仅对reg-based架构（如Ascend 950PR/Ascend 950DT）生效，是标记阶段的前置分析步骤。
+该Pass是标记阶段的前置分析步骤。
 
 某些Buffer由DMA（`hivm.hir.load`）从GM搬运到UB后，会在Vector Function（通过 `func.call` 调用的VF）中被 `vector.transfer_read`（即vload）读取。如果对这些Buffer做stride对齐，会在各行之间插入填充间隙，使UB中的memref布局变为非连续。而 `vlds` 指令要求连续元素的扁平指针加载，无法处理非连续布局。
 
@@ -92,9 +102,9 @@ hivm-enable-stride-align        // 使能阶段：传播注解 + 重分配内存
 
 对每个 `HIVMStructuredOp`，执行以下步骤：
 
-1. 跳过非Buffer化（tensor类型）或仅含GM操作数的算子（GM无需对齐）。
+1. 遇到非Buffer化（tensor类型）报错，跳过仅含GM操作数的算子（GM无需对齐）。
 2. 收集算子的memref操作数类型，跳过全rank-0或全shape为1的操作数。
-3. 判断是否为UB DMA操作（`hivm.hir.load`/`store`），DMA操作的对齐判断规则与普通计算op不同。
+3. 判断是否为UB DMA操作（`hivm.hir.load`/`store`/`copy`），DMA操作的对齐判断规则与普通计算op不同。
 4. 根据架构走不同分析路径：
    - **reg-based（A5/950）**：由于A5的 `hfusion-flatten` 已合并轴，直接将memref视为已flatten的状态，用 `getLastDiscontinuousDimRegBased` 查找最后不连续维度。对Fixpipe有专门的对齐约束计算。
    - **非reg-based（A2/A3）**：通过 `FlattenInterface` 的 `getFlattened` 获取flatten后的关联组和类型，用 `getLastDiscontinuousDim` 在flatten后的类型上查找，再映射回原始维度。
@@ -167,11 +177,11 @@ alignSize = shape[subTailDim] * 16 / gcd(shape[subTailDim], 16) + 1
 
 ```text
 // 标记前：UB alloc的最低维不连续
-%alloc = memref.alloc() : memref<37x5x3xi32, #hivm.address_space<ub>>
-hivm.hir.load ins(%gm : ...) outs(%alloc : memref<37x5x3xi32, strided<[15, 3, 1]>, ...>)
+%alloc = memref.alloc() : memref<37x5x3xi1, #hivm.address_space<ub>>
+hivm.hir.load ins(%gm : ...) outs(%alloc : memref<37x5x3xi1, strided<[15, 3, 1]>, ...>)
 
-// 标记后：在第2维（stride=15）添加32字节对齐注解
-annotation.mark %alloc {hivm.stride_align_dims = array<i32: 1>, hivm.stride_align_value_in_byte = array<i32: 32>}
+// 标记后：在第2维添加32字节对齐注解
+annotation.mark %alloc {hivm.stride_align_dims = array<i32: 2>, hivm.stride_align_value_in_byte = array<i32: 32>}
 ```
 
 ## hivm-enable-stride-align
@@ -238,7 +248,7 @@ annotation.mark %alloc {hivm.stride_align_dims = array<i32: 1>, hivm.stride_alig
 ```text
 // 使能前：alloc带对齐标记
 %alloc = memref.alloc() {hivm.stride_align_dims = array<i32: 1>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<37x5x3xi32, #hivm.address_space<ub>>
-// 第1维size=3，stride需要32字节对齐 → 32/4(i32)=8元素 → 最低维填充到8
+// 第2维size=3，stride需要32字节对齐 → 32/4(i32)=8元素 → 最低维填充到8
 
 // 使能后：分配对齐后的形状，再subview切回原始形状
 %aligned_alloc = memref.alloc() : memref<37x5x8xi32, #hivm.address_space<ub>>
@@ -252,13 +262,12 @@ annotation.mark %alloc {hivm.stride_align_dims = array<i32: 1>, hivm.stride_alig
 |------|--------|------|
 | `enable-hivm-auto-storage-align` | true | Pipeline选项，控制是否在 `alignStoragePipeline` 中执行标记和使能阶段 |
 
-三个Pass本身不暴露独立的命令行选项，均通过 `enableHIVMAutoStorageAlign` 选项统一控制。关闭该选项后，`hivm-pre-mark-stride-align`、`hivm-mark-stride-align` 不执行，但 `hivm-enable-stride-align` 仍会执行（此时因无标记注解，不会产生实际的内存重分配）。
+三个Pass本身不暴露独立的命令行选项，`hivm-pre-mark-stride-align`、`hivm-mark-stride-align`通过 `enableHIVMAutoStorageAlign` 选项控制。关闭该选项后，`hivm-pre-mark-stride-align`、`hivm-mark-stride-align` 不执行，但 `hivm-enable-stride-align` 仍会执行（此时因无标记注解，不会产生实际的内存重分配）。
 
 ## 使用约束
 
 1. **需在Buffer化之后运行**：标记阶段要求算子已通过 `hasPureBufferSemantics()` 检查，即输入IR已完成tensor→memref的Bufferization。
 2. **需在Flatten之后运行**：reg-based架构要求 `hfusion-flatten` 已完成轴合并；非reg-based架构通过 `FlattenInterface::getFlattened` 在标记时获取flatten信息。
-3. **memref不应由SCF op返回**：如 `scf.if` yield memref 的场景，对齐传播无法处理，需在标记阶段前由其他pass将控制流下沉。
-4. **使能阶段可能增大内存占用**：对齐填充会使alloc的物理尺寸增大（对齐维度size变大），可能影响后续PlanMemory的内存分配。用户需保证对齐后的总内存需求不超过硬件空间上限。
-5. **传播收敛性**：操作数间传播最大迭代10次，若未收敛会编译失败。通常合理的IR结构不会触发此限制。
-6. **vsstb与FlattenOps的已知冲突**：vsstb的bank conflict对齐可能将连续形状变为非连续形状，与依赖连续形状特征的 `memref.collapse_shape`/`memref.reshape` 产生冲突，可能导致后续FlattenOps编译错误。
+3. **使能阶段可能增大内存占用**：对齐填充会使alloc的物理尺寸增大（对齐维度size变大），可能影响后续PlanMemory的内存分配。用户需保证对齐后的总内存需求不超过硬件空间上限。
+4. **传播收敛性**：操作数间传播最大迭代10次，若未收敛会编译失败。通常合理的IR结构不会触发此限制。
+5. **vsstb与FlattenOps的已知冲突**：vsstb的bank conflict对齐可能将连续形状变为非连续形状，与依赖连续形状特征的 `memref.collapse_shape`/`memref.reshape` 产生冲突，可能导致后续FlattenOps编译错误。
