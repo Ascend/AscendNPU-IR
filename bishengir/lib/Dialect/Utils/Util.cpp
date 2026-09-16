@@ -1917,6 +1917,27 @@ bool utils::isTransferWriteSuitForStoreWithStride(Operation *op) {
   return true;
 }
 
+namespace {
+bool isGMSafeSource(Value v) {
+  Operation *defOp = v.getDefiningOp();
+  return utils::isAllocLikeOp(v) || hivm::util::isGMPointerCastOp(defOp) ||
+         (defOp && isa<memref::GetGlobalOp>(defOp));
+}
+} // namespace
+
+bool utils::isFromGMSpace(Value v) {
+  SmallVector<Value> targetOPVec =
+      utils::tracebackMemRefVecByTargetFn(v, isGMSafeSource);
+  for (auto targetOP : targetOPVec) {
+    auto defOp = targetOP.getDefiningOp();
+    if (defOp != nullptr && !isa<hivm::PointerCastOp>(defOp) &&
+        !isa<memref::GetGlobalOp>(defOp)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 void utils::dumpReassociationIndicesVector(
     const SmallVector<ReassociationIndices> &reassocVec) {
   for (size_t i = 0; i < reassocVec.size(); ++i) {

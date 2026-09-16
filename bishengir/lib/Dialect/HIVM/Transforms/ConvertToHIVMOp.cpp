@@ -355,25 +355,6 @@ LogicalResult replaceMemCopyByHIVMLoadOp(memref::CopyOp copyOp,
   return success();
 }
 
-bool isGMSafeSource(Value v) {
-  Operation *defOp = v.getDefiningOp();
-  return utils::isAllocLikeOp(v) || util::isGMPointerCastOp(defOp) ||
-         (defOp && isa<memref::GetGlobalOp>(defOp));
-}
-
-bool isFromGMSpace(Value v) {
-  SmallVector<Value> targetOPVec =
-      utils::tracebackMemRefVecByTargetFn(v, isGMSafeSource);
-  for (auto targetOP : targetOPVec) {
-    auto defOp = targetOP.getDefiningOp();
-    if (defOp != nullptr && !isa<hivm::PointerCastOp>(defOp) &&
-        !isa<memref::GetGlobalOp>(defOp)) {
-      return false;
-    }
-  }
-  return true;
-}
-
 struct MemrefCopyOpLowering : public OpRewritePattern<memref::CopyOp> {
   using OpRewritePattern<memref::CopyOp>::OpRewritePattern;
 
@@ -390,14 +371,14 @@ struct MemrefCopyOpLowering : public OpRewritePattern<memref::CopyOp> {
 
     Value src = copyOp.getSource();
     bool convertToLoad = !isInVectorFunction &&
-                         (isFromGMSpace(src) || isFromDistCallResult(src));
+                         (utils::isFromGMSpace(src) || isFromDistCallResult(src));
     if (convertToLoad) {
       return replaceMemCopyByHIVMLoadOp(copyOp, rewriter);
     }
 
     Value dst = copyOp.getTarget();
     bool convertToStore = !isInVectorFunction &&
-                          (isFromGMSpace(dst) || isFromDistCallResult(dst));
+                          (utils::isFromGMSpace(dst) || isFromDistCallResult(dst));
     if (convertToStore) {
       auto storeOp = rewriter.replaceOpWithNewOp<hivm::StoreOp>(
           copyOp, TypeRange(), src, dst);
@@ -432,7 +413,7 @@ struct BufferizeMaterializeOpLowering
     }
 
     Value dst = bufMIDOp.getDest();
-    bool convertToStore = isFromGMSpace(dst) || isFromDistCallResult(dst);
+    bool convertToStore = utils::isFromGMSpace(dst) || isFromDistCallResult(dst);
     if (convertToStore) {
       rewriter.replaceOpWithNewOp<hivm::StoreOp>(bufMIDOp, TypeRange(),
                                                  bufMIDOp.getSource(), dst);

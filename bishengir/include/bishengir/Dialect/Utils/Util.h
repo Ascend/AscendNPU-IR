@@ -703,6 +703,9 @@ bool isValidTwoDimVectorType(VectorType vType);
 /// Return true if transfer write op suits for change to StoreWithStride
 bool isTransferWriteSuitForStoreWithStride(Operation *op);
 
+/// Does the pointer value come from GM?
+bool isFromGMSpace(Value v);
+
 } // namespace utils
 
 namespace reshape_utils {
