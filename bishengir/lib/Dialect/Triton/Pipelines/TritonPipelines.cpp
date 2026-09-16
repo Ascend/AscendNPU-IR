@@ -163,6 +163,7 @@ void buildLowerTritonPipeline(OpPassManager &pm,
     pm.addPass(bishengir::triton::createExpandGatherOpSourcesPass());
   }
   pm.addPass(bishengir::triton::createRemoveAnnotationMarkPass());
+  pm.addPass(bishengir::triton::createLowerRemainingTensorDialectPass());
   // Convert TTIR to TTGIR
   // TODO: Adapt target for NPU
   mlir::triton::ConvertTritonToTritonGPUOptions convertTritonToTritonGPUOpt;
