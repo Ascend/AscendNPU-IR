@@ -36,8 +36,8 @@ using llvm::dbgs;
 
 namespace mlir {
 using namespace hivm;
-using bishengir::memref_ext::AllocWorkspaceOp;
 using hivm::detail::queryCoreTypeHelper;
+using bishengir::memref_ext::AllocWorkspaceOp;
 
 static constexpr llvm::StringLiteral CubeOnlyAttrName = "pipeline.cubeonly";
 static constexpr llvm::StringLiteral VecOnlyAttrName = "pipeline.veconly";
@@ -383,8 +383,8 @@ static bool hasOnlySameGMAliasDeferralUses(Operation *scope, Value gmRoot,
                                            bufferization::ToTensorOp toTensor,
                                            StoreOp store) {
   SmallVector<OpOperand *, 4> endpoints{
-      &load.getSrcMutable(), &load.getDstMutable(), &toTensor->getOpOperand(0),
-      &store.getDstMutable()};
+      &load.getSrcMutable(), &load.getDstMutable(),
+      &toTensor->getOpOperand(0), &store.getDstMutable()};
   WalkResult result = scope->walk([&](Operation *op) -> WalkResult {
     for (OpOperand &use : op->getOpOperands()) {
       if (!isa<MemRefType>(use.get().getType()))
@@ -840,10 +840,10 @@ LogicalResult WorklistBuilder::populateDependencies(Operation &separator) {
             scopedUsr == &separator)
           continue;
         dfsStack.push_back(scopedUsr);
-        auto &setPtr = dependenceMap[scopedUsr];
-        if (!setPtr)
-          setPtr = std::make_unique<DenseSet<Operation *>>();
-        setPtr->insert(&separator);
+        if (dependenceMap.contains(scopedUsr))
+          dependenceMap[scopedUsr].insert(&separator);
+        else
+          dependenceMap[scopedUsr] = DenseSet<Operation *>({&separator});
       }
     }
   }
@@ -853,105 +853,46 @@ LogicalResult WorklistBuilder::populateDependencies(Operation &separator) {
 /// Populate dependencies that are carried between loop iterations (iter args,
 /// yield operands). Only meaningful in loop mode; no-op in block mode.
 void WorklistBuilder::populateLoopCarriedDependencies() {
-  if (!isLoopMode)
+  auto maybeYield = pipelineLoop.getYieldedValuesMutable();
+  if (!maybeYield.has_value())
     return;
-
-  if (!useLcdBackup) {
-    loopCarriedDependenceMap.clear();
-    for (auto [iterArg, yieldedVal] : llvm::zip(
-             pipelineLoop.getRegionIterArgs(), pipelineLoop.getYieldedValues())) {
-      SmallVector<Operation *> userTraceStack;
-      for (Operation *user : iterArg.getUsers()) {
-        Operation *scopedUsr = getContainedParent(scopeOp, *user);
-        if (scopedUsr && scopedUsr->getParentOp() == scopeOp &&
-            !isa<scf::YieldOp, scf::ConditionOp>(scopedUsr))
-          userTraceStack.push_back(scopedUsr);
+  for (OpOperand &yieldOperand : *maybeYield) {
+    Value yieldVal = yieldOperand.get();
+    if (!isa<TensorType>(yieldVal.getType()))
+      continue;
+    Operation *defining = yieldVal.getDefiningOp();
+    if (!defining || !scopeOp->isAncestor(defining))
+      continue;
+    BlockArgument iterArg =
+        pipelineLoop.getRegionIterArgs()[yieldOperand.getOperandNumber()];
+    SmallVector<Operation *> dfsStack(iterArg.getUsers());
+    DenseSet<Operation *> visited;
+    while (!dfsStack.empty()) {
+      Operation *op = getContainedParent(scopeOp, *dfsStack.pop_back_val());
+      if (visited.contains(op) || op == defining)
+        continue;
+      visited.insert(op);
+      if (isa<DestinationStyleOpInterface>(op)) {
+        if (loopCarriedDependenceMap.contains(op))
+          loopCarriedDependenceMap[op].insert(defining);
+        else
+          loopCarriedDependenceMap[op] = {defining};
+        continue;
       }
-      Operation *yieldedOp = yieldedVal.getDefiningOp();
-      while (!userTraceStack.empty()) {
-        Operation *op = userTraceStack.pop_back_val();
-        if (!isCoreOp(*op))
+      for (Operation *usr : op->getUsers()) {
+        if (isa<scf::YieldOp>(usr))
           continue;
-        auto it = dependenceMap.find(op);
-        if (yieldedOp && it != dependenceMap.end() && it->second &&
-            it->second->contains(yieldedOp))
-          continue;
-        if (yieldedOp) {
-          auto &setPtr = loopCarriedDependenceMap[op];
-          if (!setPtr)
-            setPtr = std::make_unique<DenseSet<Operation *>>();
-          setPtr->insert(yieldedOp);
-        }
+        dfsStack.push_back(usr);
       }
     }
-    return;
   }
-
-  loopCarriedDependentOps.clear();
-  SmallVector<Operation *> dfsStack;
-  DenseSet<Operation *> visited;
-
-  auto pushScopedUser = [&](Operation *user) {
-    Operation *scopedUsr = getContainedParent(scopeOp, *user);
-    if (scopedUsr && scopedUsr->getParentOp() == scopeOp &&
-        !isa<scf::YieldOp, scf::ConditionOp>(scopedUsr))
-      dfsStack.push_back(scopedUsr);
-  };
-
-  for (BlockArgument iterArg : pipelineLoop.getRegionIterArgs()) {
-    if (!isa<TensorType>(iterArg.getType()))
-      continue;
-    for (Operation *user : iterArg.getUsers())
-      pushScopedUser(user);
-  }
-
-  while (!dfsStack.empty()) {
-    Operation *op = dfsStack.pop_back_val();
-    if (!visited.insert(op).second)
-      continue;
-
-    if (isCoreOp(*op)) {
-      if (!isLoadLikeOp(op) ||
-          !(enableLazyLoading || shouldLazyLoadFor(op).value_or(false)))
-        loopCarriedDependentOps.insert(op);
-    }
-
-    // Follow SSA results
-    for (Value res : op->getResults())
-      for (Operation *user : res.getUsers())
-        pushScopedUser(user);
-
-    // Follow memref writes if DPS op or copy (including nested ops inside region ops)
-    op->walk([&](Operation *nestedOp) {
-      if (auto dps = dyn_cast<DestinationStyleOpInterface>(nestedOp)) {
-        for (Value init : dps.getDpsInits()) {
-          if (!isa<MemRefType>(init.getType()))
-            continue;
-          SmallVector<Operation *> memrefUsers;
-          memrefDFS(init, memrefUsers);
-          for (Operation *usr : memrefUsers)
-            pushScopedUser(usr);
-        }
-      } else if (auto copy = dyn_cast<memref::CopyOp>(nestedOp)) {
-        SmallVector<Operation *> memrefUsers;
-        memrefDFS(copy.getTarget(), memrefUsers);
-        for (Operation *usr : memrefUsers)
-          pushScopedUser(usr);
-      }
-    });
-
-    // Follow dependenceMap successors
-    for (auto &[consumer, deps] : dependenceMap)
-      if (deps && deps->contains(op))
-        pushScopedUser(consumer);
-  }
-
   LLVM_DEBUG({
-    dbgs() << "[populateLoopCarriedDependencies] CoreOps with loop-carried "
-              "dependency:\n";
-    for (Operation *op : loopCarriedDependentOps) {
-      dbgs() << "\t";
-      op->dump();
+    for (auto &[val, set] : loopCarriedDependenceMap) {
+      dbgs() << *val << " depends on:\n";
+      for (auto *op : set) {
+        dbgs() << "\t";
+        op->dump();
+      }
     }
   });
 }
@@ -1251,18 +1192,8 @@ WorklistBuilder::populateWorkItem(SmallVector<Operation *> &availableOps,
   for (Operation *op : availableOps)
     mapOpToItem(*op, *item);
 
-  if (traceDependentOps(*item).failed())
-    return failure();
-
-  if (isLoopMode) {
-    item->hasLoopCarriedDep = llvm::any_of(item->ops, [&](Operation *op) {
-      return loopCarriedDependentOps.contains(op);
-    });
-  }
-
   LLVM_DEBUG({
-    dbgs() << "[populateWorkItem] Initial set (hasLoopCarriedDep = "
-           << item->hasLoopCarriedDep << ") {\n";
+    dbgs() << "[populateWorkItem] Initial set{\n";
     for (Operation *op : item->ops) {
       dbgs() << '\t';
       op->dump();
@@ -1270,6 +1201,8 @@ WorklistBuilder::populateWorkItem(SmallVector<Operation *> &availableOps,
     dbgs() << "[populateWorkItem] } // Initial set\n";
   });
 
+  if (traceDependentOps(*item).failed())
+    return failure();
   worklist.push_back(item);
   return success();
 }
@@ -1281,25 +1214,8 @@ WorklistBuilder::extractAvailableOps(SmallVector<Operation *> &extractedOps,
                                      TCoreType &core) {
   SetVector<Operation *> potentiallyAvailable;
 
-  bool hasRemainingNoLoopCarriedOps = false;
-  if (isLoopMode && useLcdBackup) {
-    for (Operation &op : *targetBlock) {
-      if (opToWorkItemMap.contains(&op) ||
-          isa<scf::YieldOp, scf::ConditionOp>(&op) || !isCoreOp(op) ||
-          isLoadLikeOp(&op))
-        continue;
-      if (!loopCarriedDependentOps.contains(&op)) {
-        hasRemainingNoLoopCarriedOps = true;
-        break;
-      }
-    }
-  }
-
   for (Operation &op : *targetBlock) {
     if (opToWorkItemMap.contains(&op))
-      continue;
-    if (isLoopMode && useLcdBackup && hasRemainingNoLoopCarriedOps &&
-        loopCarriedDependentOps.contains(&op))
       continue;
     TCoreType maybeCore = op.hasAttr(CubeOnlyAttrName) ? TCoreType::CUBE
                           : op.hasAttr(VecOnlyAttrName)
@@ -1327,39 +1243,33 @@ WorklistBuilder::extractAvailableOps(SmallVector<Operation *> &extractedOps,
          core == TCoreType::CUBE) ||
         ((maybeCore == TCoreType::CUBE && core == TCoreType::VECTOR)))
       continue;
-    auto it = dependenceMap.find(&op);
-    if (it == dependenceMap.end() || !it->second || it->second->empty()) {
-      core = maybeCore;
+    core = maybeCore;
+    if (!dependenceMap.contains(&op) || dependenceMap[&op].empty())
       potentiallyAvailable.insert(&op);
-    }
   }
 
   DenseSet<Operation *> deferredOps;
-  if (!useLcdBackup) {
-    for (Operation *op : potentiallyAvailable) {
-      auto it = loopCarriedDependenceMap.find(op);
-      if (it == loopCarriedDependenceMap.end() || !it->second ||
-          it->second->empty())
-        continue;
-      if (llvm::all_of(*it->second, [&](Operation *dependantOp) {
-            return potentiallyAvailable.contains(dependantOp);
-          }))
-        continue;
-      deferredOps.insert(op);
-    }
+  for (Operation *op : potentiallyAvailable) {
+    if (!loopCarriedDependenceMap.contains(op))
+      continue;
+    if (llvm::all_of(loopCarriedDependenceMap[op], [&](Operation *dependantOp) {
+          return potentiallyAvailable.contains(dependantOp);
+        }))
+      continue;
+    deferredOps.insert(op);
+  }
 
-    // Propagate the loop-carried dependencies through the available ops
-    SmallVector<Operation *> dfsStack;
-    dfsStack.append(deferredOps.begin(), deferredOps.end());
-    while (!dfsStack.empty()) {
-      Operation *op = dfsStack.pop_back_val();
-      if (deferredOps.contains(op))
-        continue;
-      if (potentiallyAvailable.contains(op))
-        deferredOps.insert(op);
-      for (Operation *usr : op->getUsers())
-        dfsStack.push_back(usr);
-    }
+  // Propagate the loop-carried dependencies through the available ops
+  SmallVector<Operation *> dfsStack;
+  dfsStack.append(deferredOps.begin(), deferredOps.end());
+  while (!dfsStack.empty()) {
+    Operation *op = dfsStack.pop_back_val();
+    if (deferredOps.contains(op))
+      continue;
+    if (potentiallyAvailable.contains(op))
+      deferredOps.insert(op);
+    for (Operation *usr : op->getUsers())
+      dfsStack.push_back(usr);
   }
 
   // This deferral exists only to avoid the cross-WorkItem GM-alias rejection.
@@ -1507,47 +1417,6 @@ void WorklistBuilder::computeLocalOutputs() {
     }
   }
 }
-LogicalResult WorklistBuilder::runRoundExtraction() {
-  SmallVector<Operation *> independentOps;
-  TCoreType core = hivm::TCoreType::CUBE_OR_VECTOR;
-  const size_t maxRounds = targetBlock->getOperations().size() + 2;
-  bool extractionDone = false;
-  for (size_t round = 0; round < maxRounds && !extractionDone; ++round) {
-    if (extractAvailableOps(independentOps, core).failed())
-      return failure();
-    if (independentOps.empty() &&
-        (core == TCoreType::CUBE || core == TCoreType::VECTOR)) {
-      TCoreType altCore =
-          (core == TCoreType::CUBE) ? TCoreType::VECTOR : TCoreType::CUBE;
-      if (extractAvailableOps(independentOps, altCore).failed())
-        return failure();
-      if (!independentOps.empty())
-        core = altCore;
-    }
-    if (independentOps.empty()) {
-      extractionDone = true;
-      continue;
-    }
-    if (core == hivm::TCoreType::CUBE_OR_VECTOR)
-      return failure();
-    if (populateWorkItem(independentOps, core).failed())
-      return failure();
-
-    for (auto &[op, dependant] : dependenceMap)
-      if (dependant)
-        for (Operation *processed : independentOps)
-          dependant->erase(processed);
-    independentOps.clear();
-
-    if (core == TCoreType::VECTOR)
-      core = TCoreType::CUBE;
-    else if (core == TCoreType::CUBE)
-      core = TCoreType::VECTOR;
-    else
-      return failure();
-  }
-  return success(extractionDone);
-}
 
 /// Unified entry point used by both CV pipelining (loop mode) and split-if
 /// (block mode). Performs the same core algorithm: scan ops → collect
@@ -1604,36 +1473,43 @@ FailureOr<WorklistBuildResult> WorklistBuilder::build() {
     if (populateDependencies(*separator).failed())
       return failure();
 
-  // First attempt: standard / original extraction
-  useLcdBackup = false;
+  // Loop-carried deps only exist in loop mode.
   if (isLoopMode)
     populateLoopCarriedDependencies();
 
-  bool extractionSuccess =
-      succeeded(runRoundExtraction()) && toBePipelined.empty();
+  // Round-based extraction, alternating CUBE/VECTOR. Bound iterations by the
+  // number of block-level ops (plus slack) — each round consumes at least one
+  // op into a WorkItem, so more iterations than that indicates a bug.
+  SmallVector<Operation *> independentOps;
+  TCoreType core = hivm::TCoreType::CUBE_OR_VECTOR;
+  const size_t maxRounds = targetBlock->getOperations().size() + 2;
+  bool extractionDone = false;
+  for (size_t round = 0; round < maxRounds && !extractionDone; ++round) {
+    if (extractAvailableOps(independentOps, core).failed())
+      return failure();
+    if (independentOps.empty()) {
+      extractionDone = true;
+      continue;
+    }
+    if (core == hivm::TCoreType::CUBE_OR_VECTOR)
+      return failure();
+    if (populateWorkItem(independentOps, core).failed())
+      return failure();
 
-  // Backup attempt: if loop mode and original extraction failed due to LCD
-  if (isLoopMode && !extractionSuccess) {
-    LLVM_DEBUG(dbgs() << "[WorklistBuilder] Standard extraction failed, "
-                         "retrying with LCD backup handling\n");
-    worklist.clear();
-    opToWorkItemMap.clear();
-    outputMemrefMap.clear();
-    toBePipelined.clear();
-    for (Operation &op : targetBlock->getOperations())
-      if (isCoreOp(op))
-        toBePipelined.insert(&op);
+    for (auto &[op, dependant] : dependenceMap)
+      for (Operation *processed : independentOps)
+        dependant.erase(processed);
+    independentOps.clear();
 
-    dependenceMap.clear();
-    for (Operation *separator : separators)
-      if (populateDependencies(*separator).failed())
-        return failure();
-
-    useLcdBackup = true;
-    populateLoopCarriedDependencies();
-    extractionSuccess =
-        succeeded(runRoundExtraction()) && toBePipelined.empty();
+    if (core == TCoreType::VECTOR)
+      core = TCoreType::CUBE;
+    else if (core == TCoreType::CUBE)
+      core = TCoreType::VECTOR;
+    else
+      return failure();
   }
+  if (!extractionDone)
+    return failure();
 
   // Block-mode fallback: collect any remaining ops (not assigned to any
   // WorkItem by the round-based extraction) into a single CUBE_OR_VECTOR

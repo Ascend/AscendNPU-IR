@@ -113,7 +113,6 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   MarkTightlyCoupledBuffer.cpp
   MaterializeSimtVFMemScope.cpp
   MemoryDisplay.cpp
-  MergeSamePreloadScopes.cpp
   NormalizeBitwiseSelect.cpp
   NormalizeConvOps.cpp
   NormalizeToTensorOp.cpp
