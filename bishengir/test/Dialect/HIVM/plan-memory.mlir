@@ -2589,7 +2589,7 @@ module {
                        outs(%dst0 : memref<81920xi8, #hivm.address_space<gm>>)
 
         scope.return
-      } {hivm.preload_num = 1 : i32}
+      }
     }
 
     // Second sibling preload loop.
@@ -2618,7 +2618,7 @@ module {
                        outs(%dst1 : memref<81920xi8, #hivm.address_space<gm>>)
 
         scope.return
-      } {hivm.preload_num = 1 : i32}
+      }
     }
 
     // CHECK: return
