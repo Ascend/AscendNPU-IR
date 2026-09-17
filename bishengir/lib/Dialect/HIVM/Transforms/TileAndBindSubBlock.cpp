@@ -416,11 +416,15 @@ public:
                             // a tiling start point.
         }
       }
-      // If the copy input is memref, we cannot tile it.
-      if (isa<mlir::MemRefType>(inputType)) {
-        Op->emitWarning(
-            "Copy input memref is not supported, skip tile and bind.");
-        return failure();
+      // Tile elementwise buffer copies along the axis selected for both sides.
+      if (auto srcType = dyn_cast<MemRefType>(inputType)) {
+        auto dstType = dyn_cast<MemRefType>(dstOpr->get().getType());
+        if (!dstType || !srcType.hasStaticShape() ||
+            srcType.getShape() != dstType.getShape() || Op.getPadMode() ||
+            Op.getPadValue() || Op.getCollapseReassociation() ||
+            !isUbToUbCopy(Op) || tilingDim == -1 ||
+            tilingDim != analyzer.getTilingDim(dstOpr->get()))
+          return failure();
       }
     }
     LLVM_DEBUG(DBGS() << "The " << Op->getName().getStringRef()
