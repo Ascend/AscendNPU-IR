@@ -132,9 +132,14 @@ bool InsertLoadStoreForMixCVPass::isA5Target() {
 }
 
 bool InsertLoadStoreForMixCVPass::isEnabledTightCoupledBuffer() {
-  if (disableTightCoupledBuffer)
+  if (disableTightCoupledBuffer || !isA5Target())
     return false;
-  return isA5Target();
+  // Ascend950: L0C-to-Ub and UB-to-L1 requires CV12.
+  // Disable this path for CV11
+  auto func = getOperation();
+  if (auto ratio = getCoreRatioAttr(func))
+    return ratio.getCube() != 1 || ratio.getVector() != 1;
+  return true;
 }
 
 // TODO: change certain places to trace
