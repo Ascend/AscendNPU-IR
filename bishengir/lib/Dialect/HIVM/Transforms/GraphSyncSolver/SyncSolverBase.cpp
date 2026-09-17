@@ -2117,8 +2117,7 @@ ConflictPair *SyncSolverBase::handleSetWaitConflict(
 
   assert((!setWaitPairInfo.isOpForwardPair ||
           !setWaitPairInfo.isSetWaitBackwardPair) ||
-         setWaitPairInfo.isCVPipelining || setWaitPairInfo.isCVPreloading ||
-         setWaitPairInfo.setWaitInside ||
+         setWaitPairInfo.isCVPreloading || setWaitPairInfo.setWaitInside ||
          options.enableUnitFlagFeature);
 
   bool movedToOuterLoop{false};
@@ -2130,9 +2129,12 @@ ConflictPair *SyncSolverBase::handleSetWaitConflict(
   // calc norm scope occs
   Occurrence *parOcc1 = setOcc->parentOcc;
   Occurrence *parOcc2 = waitOcc->parentOcc;
-
+  if (setWaitPairInfo.isCVPipelining) {
+    parOcc1 = setOcc->getNthParent(3);
+    parOcc2 = waitOcc->getNthParent(3);
+  }
   assert(parOcc1->op == parOcc2->op || setWaitPairInfo.isCVPreloading ||
-         setWaitPairInfo.isCVPipelining || setWaitPairInfo.setWaitInside);
+         setWaitPairInfo.setWaitInside);
 
   // create set/wait conflict-pair
   auto conflictPair = std::make_unique<ConflictPair>(
