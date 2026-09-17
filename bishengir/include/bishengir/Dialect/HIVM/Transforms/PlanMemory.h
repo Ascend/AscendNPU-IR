@@ -602,6 +602,9 @@ private:
 /// Pair of StorageEntry.
 using StorageEntryPair = std::pair<const StorageEntry *, const StorageEntry *>;
 
+/// Map from buffer value to its planned memory address(es).
+using Buffer2Offsets = DenseMap<Value, SmallVector<uint64_t>>;
+
 class MemPlan {
 public:
   MemPlan(MemPlanMode planMode, bool enableGlobalReuse,
@@ -618,8 +621,14 @@ public:
   LogicalResult plan(bool emitErrors = true);
 
   /// Get buffer2Offsets
-  inline DenseMap<Value, SmallVector<uint64_t>> GetBuffer2Offsets() {
-    return buffer2Offsets;
+  inline Buffer2Offsets GetBuffer2Offsets() { return buffer2Offsets; }
+
+  /// Local buffers folded onto a preload storage entry during plan that do
+  /// not already carry `hivm.preload_local_buffer` (the preload TCB itself
+  /// is excluded). These need the mark added at pointer_cast materialization
+  /// so create-preload applies the same bank rotation to them.
+  inline const DenseSet<Value> GetPreloadLocalBuffers() const {
+    return preloadLocalBuffers;
   }
 
   inline void
@@ -1003,7 +1012,12 @@ private:
   bool splitOutline{false};
 
   /// map from memref buffer to plan memory address.
-  DenseMap<Value, SmallVector<uint64_t>> buffer2Offsets;
+  Buffer2Offsets buffer2Offsets;
+
+  /// Local buffers folded onto a preload storage entry that need a
+  /// `hivm.preload_local_buffer` mark; the preload TCB itself is excluded
+  /// (already tracked in preloadBufferReuseableInfo).
+  DenseSet<Value> preloadLocalBuffers;
 
   /// map from each scope to its root StorageEntry.
   llvm::MapVector<hivm::AddressSpace, StorageEntry *> memscope2rootStorageEntry;

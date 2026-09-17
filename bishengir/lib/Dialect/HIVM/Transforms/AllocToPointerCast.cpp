@@ -16,8 +16,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HIVM/Transforms/AllocToPointerCast.h"
+#include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
@@ -30,9 +32,21 @@ namespace mlir {
 using namespace mlir;
 using namespace mlir::hivm;
 
+/// Add `hivm.preload_local_buffer` mark to `mem` (a local buffer folded onto
+/// a preload storage entry that does not already carry it) so create-preload
+/// applies the same bank rotation to it.
+static void ensurePreloadLocalBufferMark(IRRewriter &rewriter, Value mem) {
+  OpBuilder::InsertionGuard guard(rewriter);
+  rewriter.setInsertionPointAfterValue(mem);
+  auto markOp = rewriter.create<annotation::MarkOp>(mem.getLoc(), mem);
+  markOp->setAttr(hivm::PreloadLocalBufferAttr::name,
+                  rewriter.getI32IntegerAttr(1));
+}
+
 LogicalResult mlir::hivm::walkAllocToPointerCast(
     func::FuncOp funcOp,
-    const DenseMap<Value, SmallVector<uint64_t>> &buffer2Offsets) {
+    const DenseMap<Value, SmallVector<uint64_t>> &buffer2Offsets,
+    const DenseSet<Value> &preloadLocalBuffers) {
   IRRewriter rewriter(funcOp);
   // Cache of already-created offset constants, keyed by the offset value. All
   // constants are created at the start of the function so that they dominate
@@ -48,6 +62,8 @@ LogicalResult mlir::hivm::walkAllocToPointerCast(
       op.emitOpError() << "error: read before first write";
       return WalkResult::interrupt();
     }
+    if (preloadLocalBuffers.contains(op.getResult()))
+      ensurePreloadLocalBufferMark(rewriter, op.getResult());
     SmallVector<Value> addrs;
     for (auto &offset : iter->second) {
       // if the offset has not been materialized, materialize it.
