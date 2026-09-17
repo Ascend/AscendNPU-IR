@@ -18,6 +18,7 @@
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/HFusion/Analysis/ReshapeAnalyzer.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HFusion/IR/HFusionImpl.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
@@ -31,6 +32,7 @@
 
 #include "mlir/Analysis/SliceAnalysis.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
+#include "mlir/Dialect/Linalg/Utils/Utils.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/PatternMatch.h"
 
@@ -2097,10 +2099,26 @@ bool hfusion::shouldUseLegacyTreeReductionScope(Operation *op) {
   bool supportedSize = reductionSize <= maxLegacyTreeReductionSize ||
                        (cumsumWithSingleReduction &&
                         reductionSize <= maxCumsumTreeReductionSize);
-  return supportedSize &&
-         (allReductionsAreRegisterCandidates || singleCandidateMixedScope ||
-          cumsumWithSingleReduction || registerPressureFallback) &&
-         cost <= maxLegacyTreeReductionCost;
+  if (supportedSize &&
+      (allReductionsAreRegisterCandidates || singleCandidateMixedScope ||
+       cumsumWithSingleReduction || registerPressureFallback) &&
+      cost <= maxLegacyTreeReductionCost)
+    return true;
+
+  auto hasFusionCandidate = [](linalg::LinalgOp op) {
+    return llvm::any_of(op.getDpsInputOperands(), [](OpOperand *opOpnd) {
+      // Get initial value before reshape\slice.
+      auto init =
+          hfusion::traceReshapeOrSliceSingleProducerOrSelf(opOpnd->get());
+      auto defOp = init.getDefiningOp<linalg::LinalgOp>();
+      return defOp && linalg::isElementwise(defOp);
+    });
+  };
+
+  // Currently, the new tree reduction algorithm can outperform TreeReduceV2
+  // only when it enables fusion with a producer of a reduction input.
+  // Without fusion candidates, TreeReduceV2 is better.
+  return !hasFusionCandidate(linalgOp);
 }
 
 bool hfusion::shouldUseMaterializedTreeReduction(Operation *op) {
