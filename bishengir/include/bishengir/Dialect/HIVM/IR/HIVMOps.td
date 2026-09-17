@@ -922,6 +922,7 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
       static constexpr StringLiteral kBuiltinGatherLoadName = "__builtin_gather_load";
       static constexpr StringLiteral kBuiltinIndexSelectName = "__builtin_index_select";
       static constexpr StringLiteral kBuiltinIndirectAtomicName = "__builtin_indirect_atomic";
+      static constexpr StringLiteral kBuiltinOnlineSoftmaxNZName = "__builtin_online_softmax_nz";
       static constexpr StringLiteral kBuiltinHistogramName = "__builtin_histogram";
       static constexpr StringLiteral kBuiltinProtonGetSysCntName =
           "__builtin_proton_get_sys_cnt";
@@ -994,6 +995,7 @@ def CustomOp : HIVM_CustomOp<"custom", [SinglePipeOpTrait]> {
       PIPE pipe;
       VFMode vfMode;
       const SmallVector<size_t> gmAddrArgsIndices;
+      std::optional<InlineMode> inlineMode = std::nullopt;
     };
 
     // Map <builtin in name> <-> {CORE_TYPE, PIPE, VF_MODE, gmAddrArgsIndices}
