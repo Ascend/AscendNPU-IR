@@ -344,63 +344,6 @@ merge_sort(memref_t<__ubuf__ T, 1> *src, memref_t<__ubuf__ T, 1> *dst,
 }
 
 template <typename T>
-__simd_vf__ void move_out_result_vf(bool descending, bool need_index,
-                                    memref_t<__ubuf__ int32_t, 1> *dst_index,
-                                    __ubuf__ int32_t *src_int32_ptr,
-                                    __ubuf__ int32_t *dst_index_ptr,
-                                    memref_t<__ubuf__ T, 1> *dst_value,
-                                    __ubuf__ T *src_ptr,
-                                    __ubuf__ T *dst_value_ptr) {
-  vector_bool full_mask;
-  CREATE_MASK_BY_PAT(full_mask, T, PAT_ALL);
-
-  VectorReg<T> result;
-  VectorReg<int32_t> index_result;
-  constexpr int dsize = sizeof(T);
-  vector_u32 indices;
-  if (descending) {
-    if (need_index) {
-      for (uint16_t i = 0; i < (uint16_t)dst_index->sizes[0]; ++i) {
-        vbr(indices, i * 2 + 1);
-        vgather2_bc(index_result, src_int32_ptr, indices, full_mask);
-        vsts(index_result, dst_index_ptr, i, ONEPT_B32, full_mask);
-      }
-    }
-    for (uint16_t i = 0; i < (uint16_t)dst_value->sizes[0]; ++i) {
-      if constexpr (std::is_same_v<T, int16_t> || std::is_same_v<T, half>) {
-        vbr(indices, i * 4);
-        vgather2_bc(result, src_ptr, indices, full_mask);
-        vsts(result, dst_value_ptr, i, ONEPT_B16, full_mask);
-      } else if constexpr (dsize == BYTES_B32) {
-        vbr(indices, i * 2);
-        vgather2_bc(result, src_ptr, indices, full_mask);
-        vsts(result, dst_value_ptr, i, ONEPT_B32, full_mask);
-      }
-    }
-  } else {
-    uint16_t end = (uint16_t)dst_value->sizes[0];
-    if (need_index) {
-      for (uint16_t i = 0; i < end; ++i) {
-        vbr(indices, (end - i - 1) * 2 + 1);
-        vgather2_bc(index_result, src_int32_ptr, indices, full_mask);
-        vsts(index_result, dst_index_ptr, i, ONEPT_B32, full_mask);
-      }
-    }
-    for (uint16_t i = 0; i < end; ++i) {
-      if constexpr (std::is_same_v<T, int16_t> || std::is_same_v<T, half>) {
-        vbr(indices, (end - i - 1) * 4);
-        vgather2_bc(result, src_ptr, indices, full_mask);
-        vsts(result, dst_value_ptr, i, ONEPT_B16, full_mask);
-      } else if constexpr (dsize == BYTES_B32) {
-        vbr(indices, (end - i - 1) * 2);
-        vgather2_bc(result, src_ptr, indices, full_mask);
-        vsts(result, dst_value_ptr, i, ONEPT_B32, full_mask);
-      }
-    }
-  }
-}
-
-template <typename T>
 __aiv__ __attribute__((always_inline)) void
 move_out_result(memref_t<__ubuf__ T, 1> *src,
                 memref_t<__ubuf__ T, 1> *dst_value,
@@ -420,8 +363,55 @@ move_out_result(memref_t<__ubuf__ T, 1> *src,
   INTRINSIC_NO_ARGS(set_mask_count);
   INTRINSIC(set_vector_mask, 0, real_num);
 
-  move_out_result_vf<T>(descending, need_index, dst_index, src_int32_ptr,
-                        dst_index_ptr, dst_value, src_ptr, dst_value_ptr);
+  __VEC_SCOPE__ {
+    vector_bool full_mask;
+    CREATE_MASK_BY_PAT(full_mask, T, PAT_ALL);
+
+    VectorReg<T> result;
+    VectorReg<int32_t> index_result;
+    constexpr int dsize = sizeof(T);
+    vector_u32 indices;
+    if (descending) {
+      if (need_index) {
+        for (uint16_t i = 0; i < (uint16_t)dst_index->sizes[0]; ++i) {
+          vbr(indices, i * 2 + 1);
+          vgather2_bc(index_result, src_int32_ptr, indices, full_mask);
+          vsts(index_result, dst_index_ptr, i, ONEPT_B32, full_mask);
+        }
+      }
+      for (uint16_t i = 0; i < (uint16_t)dst_value->sizes[0]; ++i) {
+        if constexpr (std::is_same_v<T, int16_t> || std::is_same_v<T, half>) {
+          vbr(indices, i * 4);
+          vgather2_bc(result, src_ptr, indices, full_mask);
+          vsts(result, dst_value_ptr, i, ONEPT_B16, full_mask);
+        } else if constexpr (dsize == BYTES_B32) {
+          vbr(indices, i * 2);
+          vgather2_bc(result, src_ptr, indices, full_mask);
+          vsts(result, dst_value_ptr, i, ONEPT_B32, full_mask);
+        }
+      }
+    } else {
+      uint16_t end = (uint16_t)dst_value->sizes[0];
+      if (need_index) {
+        for (uint16_t i = 0; i < end; ++i) {
+          vbr(indices, (end - i - 1) * 2 + 1);
+          vgather2_bc(index_result, src_int32_ptr, indices, full_mask);
+          vsts(index_result, dst_index_ptr, i, ONEPT_B32, full_mask);
+        }
+      }
+      for (uint16_t i = 0; i < end; ++i) {
+        if constexpr (std::is_same_v<T, int16_t> || std::is_same_v<T, half>) {
+          vbr(indices, (end - i - 1) * 4);
+          vgather2_bc(result, src_ptr, indices, full_mask);
+          vsts(result, dst_value_ptr, i, ONEPT_B16, full_mask);
+        } else if constexpr (dsize == BYTES_B32) {
+          vbr(indices, (end - i - 1) * 2);
+          vgather2_bc(result, src_ptr, indices, full_mask);
+          vsts(result, dst_value_ptr, i, ONEPT_B32, full_mask);
+        }
+      }
+    }
+  } // end of __VEC_SCOPE__
 }
 
 template <typename T>
@@ -445,23 +435,6 @@ move_out_result_with_index(memref_t<__ubuf__ T, 1> *src,
   INTRINSIC(wait_flag, PIPE_S, PIPE_V, EVENT_ID0);
 }
 
-__simd_vf__ void cast_i32_to_f32_for_sort_vf(int64_t sort_num,
-                                             uint16_t loop_times,
-                                             __ubuf__ int32_t *src_ptr,
-                                             uint16_t ele_per_VL,
-                                             __ubuf__ float *dst_ptr) {
-  VectorReg<int32_t> src_reg;
-  VectorReg<float> dst_reg;
-  unsigned int plt_size = sort_num;
-  for (uint16_t i = 0; i < (uint16_t)loop_times; ++i) {
-    vector_bool full_mask;
-    CREATE_MASK_BY_SIZE(full_mask, int32_t, plt_size);
-    vlds(src_reg, src_ptr, i * ele_per_VL, NORM);
-    vcvt(dst_reg, src_reg, full_mask, ROUND_R, MODE_ZEROING);
-    vsts(dst_reg, dst_ptr, i * ele_per_VL, NORM_B32, full_mask);
-  }
-}
-
 __aiv__ __attribute__((always_inline)) void
 cast_i32_to_f32_for_sort(memref_t<__ubuf__ int32_t, 1> *src,
                          memref_t<__ubuf__ float, 1> *dst, int64_t sort_num) {
@@ -470,28 +443,18 @@ cast_i32_to_f32_for_sort(memref_t<__ubuf__ int32_t, 1> *src,
   constexpr int dsize = sizeof(int32_t);
   uint16_t loop_times = CEIL_DIV(sort_num * dsize, VL_IN_BYTE);
   uint16_t ele_per_VL = VL_IN_BYTE / dsize;
-  cast_i32_to_f32_for_sort_vf(sort_num, loop_times, src_ptr, ele_per_VL,
-                              dst_ptr);
-}
-
-__simd_vf__ void cast_low_to_f32_for_sort_vf(int64_t sort_num,
-                                             uint16_t loop_times,
-                                             __ubuf__ int32_t *src_ptr,
-                                             uint16_t ele_per_VL,
-                                             __ubuf__ float *dst_ptr) {
-  VectorReg<int32_t> src_reg;
-  VectorReg<float> dst_reg;
-  unsigned int plt_size = sort_num;
-  for (uint16_t i = 0; i < (uint16_t)loop_times; ++i) {
-    vector_bool full_mask;
-    CREATE_MASK_BY_SIZE(full_mask, int32_t, plt_size);
-    vector_s32 tmp, lowPart;
-    vlds(src_reg, src_ptr, i * ele_per_VL, NORM);
-    vshls(tmp, src_reg, 16, full_mask);
-    vshrs(lowPart, tmp, 16, full_mask);
-    vcvt(dst_reg, lowPart, full_mask, ROUND_R, MODE_ZEROING);
-    vsts(dst_reg, dst_ptr, i * ele_per_VL, NORM_B32, full_mask);
-  }
+  __VEC_SCOPE__ {
+    VectorReg<int32_t> src_reg;
+    VectorReg<float> dst_reg;
+    unsigned int plt_size = sort_num;
+    for (uint16_t i = 0; i < (uint16_t)loop_times; ++i) {
+      vector_bool full_mask;
+      CREATE_MASK_BY_SIZE(full_mask, int32_t, plt_size);
+      vlds(src_reg, src_ptr, i * ele_per_VL, NORM);
+      vcvt(dst_reg, src_reg, full_mask, ROUND_R, MODE_ZEROING);
+      vsts(dst_reg, dst_ptr, i * ele_per_VL, NORM_B32, full_mask);
+    }
+  } // end of __VEC_SCOPE__
 }
 
 __aiv__ __attribute__((always_inline)) void
@@ -502,8 +465,21 @@ cast_low_to_f32_for_sort(memref_t<__ubuf__ int32_t, 1> *src,
   constexpr int dsize = sizeof(int32_t);
   uint16_t loop_times = CEIL_DIV(sort_num * dsize, VL_IN_BYTE);
   uint16_t ele_per_VL = VL_IN_BYTE / dsize;
-  cast_low_to_f32_for_sort_vf(sort_num, loop_times, src_ptr, ele_per_VL,
-                              dst_ptr);
+  __VEC_SCOPE__ {
+    VectorReg<int32_t> src_reg;
+    VectorReg<float> dst_reg;
+    unsigned int plt_size = sort_num;
+    for (uint16_t i = 0; i < (uint16_t)loop_times; ++i) {
+      vector_bool full_mask;
+      CREATE_MASK_BY_SIZE(full_mask, int32_t, plt_size);
+      vector_s32 tmp, lowPart;
+      vlds(src_reg, src_ptr, i * ele_per_VL, NORM);
+      vshls(tmp, src_reg, 16, full_mask);
+      vshrs(lowPart, tmp, 16, full_mask);
+      vcvt(dst_reg, lowPart, full_mask, ROUND_R, MODE_ZEROING);
+      vsts(dst_reg, dst_ptr, i * ele_per_VL, NORM_B32, full_mask);
+    }
+  } // end of __VEC_SCOPE__
 }
 
 template <typename DST>

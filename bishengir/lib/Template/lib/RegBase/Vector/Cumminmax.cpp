@@ -89,65 +89,6 @@ __aiv__ __attribute__((always_inline)) T cum_mm_comb_s(T a, T b) {
 // 3d scan along dim0 (rows are contiguous tiles, 2-way interleaved for ILP)
 //===----------------------------------------------------------------------===//
 template <typename T, int kind>
-__simd_vf__ void
-oneway_cum_minmax_vf(uint32_t fullLanes, uint16_t jQuad, int32_t num_per_reg,
-                     __ubuf__ T *src_ptr, int32_t start_row_offset,
-                     __ubuf__ T *dst_ptr, uint16_t rLoop, bool reverse,
-                     int32_t rFactor, int32_t stride0, uint16_t nLoop,
-                     uint32_t totalElements) {
-  VectorReg<T> a0, a1, a2, a3, x0, x1, x2, x3;
-  vector_bool mask;
-  CREATE_MASK_BY_SIZE(mask, T, fullLanes);
-  // Four independent accumulator chains hide the combine latency.
-  for (uint16_t j = 0; j < jQuad; j += 4) {
-    int32_t o0 = (int32_t)j * num_per_reg;
-    int32_t o1 = o0 + num_per_reg;
-    int32_t o2 = o1 + num_per_reg;
-    int32_t o3 = o2 + num_per_reg;
-    vlds(a0, src_ptr, start_row_offset + o0, NORM);
-    vlds(a1, src_ptr, start_row_offset + o1, NORM);
-    vlds(a2, src_ptr, start_row_offset + o2, NORM);
-    vlds(a3, src_ptr, start_row_offset + o3, NORM);
-    vsts(a0, dst_ptr, start_row_offset + o0, NORM_B32, mask);
-    vsts(a1, dst_ptr, start_row_offset + o1, NORM_B32, mask);
-    vsts(a2, dst_ptr, start_row_offset + o2, NORM_B32, mask);
-    vsts(a3, dst_ptr, start_row_offset + o3, NORM_B32, mask);
-    for (uint16_t r = 1; r < rLoop; r++) {
-      int32_t base = (reverse ? (rFactor - 1 - r) : (int32_t)r) * stride0;
-      vlds(x0, src_ptr + base, o0, NORM);
-      vlds(x1, src_ptr + base, o1, NORM);
-      vlds(x2, src_ptr + base, o2, NORM);
-      vlds(x3, src_ptr + base, o3, NORM);
-      cum_mm_comb<kind, T>(a0, a0, x0, mask);
-      cum_mm_comb<kind, T>(a1, a1, x1, mask);
-      cum_mm_comb<kind, T>(a2, a2, x2, mask);
-      cum_mm_comb<kind, T>(a3, a3, x3, mask);
-      vsts(a0, dst_ptr + base, o0, NORM_B32, mask);
-      vsts(a1, dst_ptr + base, o1, NORM_B32, mask);
-      vsts(a2, dst_ptr + base, o2, NORM_B32, mask);
-      vsts(a3, dst_ptr + base, o3, NORM_B32, mask);
-    }
-  }
-  // Remaining full tiles and the (exactly masked) tail tile.
-  for (uint16_t j = jQuad; j < nLoop; j++) {
-    int32_t o0 = (int32_t)j * num_per_reg;
-    uint32_t lanes = totalElements - (uint32_t)j * (uint32_t)num_per_reg;
-    if (lanes > (uint32_t)num_per_reg) {
-      lanes = (uint32_t)num_per_reg;
-    }
-    CREATE_MASK_BY_SIZE(mask, T, lanes);
-    vlds(a0, src_ptr, start_row_offset + o0, NORM);
-    vsts(a0, dst_ptr, start_row_offset + o0, NORM_B32, mask);
-    for (uint16_t r = 1; r < rLoop; r++) {
-      int32_t base = (reverse ? (rFactor - 1 - r) : (int32_t)r) * stride0;
-      vlds(x0, src_ptr + base, o0, NORM);
-      cum_mm_comb<kind, T>(a0, a0, x0, mask);
-      vsts(a0, dst_ptr + base, o0, NORM_B32, mask);
-    }
-  }
-}
-
-template <typename T, int kind>
 __aiv__ __attribute__((always_inline)) void
 oneway_cum_minmax(memref_t<__ubuf__ T, 3> *src, memref_t<__ubuf__ T, 3> *dst,
                   bool reverse) {
@@ -178,59 +119,64 @@ oneway_cum_minmax(memref_t<__ubuf__ T, 3> *src, memref_t<__ubuf__ T, 3> *dst,
   uint16_t fullTiles = (uint16_t)(totalElements / (uint32_t)num_per_reg);
   uint16_t jQuad = fullTiles & ~(uint16_t)3; // multiple-of-4 full tiles
   uint32_t fullLanes = (uint32_t)num_per_reg;
-  oneway_cum_minmax_vf<T, kind>(fullLanes, jQuad, num_per_reg, src_ptr,
-                                start_row_offset, dst_ptr, rLoop, reverse,
-                                rFactor, stride0, nLoop, totalElements);
+  __VEC_SCOPE__ {
+    VectorReg<T> a0, a1, a2, a3, x0, x1, x2, x3;
+    vector_bool mask;
+    CREATE_MASK_BY_SIZE(mask, T, fullLanes);
+    // Four independent accumulator chains hide the combine latency.
+    for (uint16_t j = 0; j < jQuad; j += 4) {
+      int32_t o0 = (int32_t)j * num_per_reg;
+      int32_t o1 = o0 + num_per_reg;
+      int32_t o2 = o1 + num_per_reg;
+      int32_t o3 = o2 + num_per_reg;
+      vlds(a0, src_ptr, start_row_offset + o0, NORM);
+      vlds(a1, src_ptr, start_row_offset + o1, NORM);
+      vlds(a2, src_ptr, start_row_offset + o2, NORM);
+      vlds(a3, src_ptr, start_row_offset + o3, NORM);
+      vsts(a0, dst_ptr, start_row_offset + o0, NORM_B32, mask);
+      vsts(a1, dst_ptr, start_row_offset + o1, NORM_B32, mask);
+      vsts(a2, dst_ptr, start_row_offset + o2, NORM_B32, mask);
+      vsts(a3, dst_ptr, start_row_offset + o3, NORM_B32, mask);
+      for (uint16_t r = 1; r < rLoop; r++) {
+        int32_t base = (reverse ? (rFactor - 1 - r) : (int32_t)r) * stride0;
+        vlds(x0, src_ptr + base, o0, NORM);
+        vlds(x1, src_ptr + base, o1, NORM);
+        vlds(x2, src_ptr + base, o2, NORM);
+        vlds(x3, src_ptr + base, o3, NORM);
+        cum_mm_comb<kind, T>(a0, a0, x0, mask);
+        cum_mm_comb<kind, T>(a1, a1, x1, mask);
+        cum_mm_comb<kind, T>(a2, a2, x2, mask);
+        cum_mm_comb<kind, T>(a3, a3, x3, mask);
+        vsts(a0, dst_ptr + base, o0, NORM_B32, mask);
+        vsts(a1, dst_ptr + base, o1, NORM_B32, mask);
+        vsts(a2, dst_ptr + base, o2, NORM_B32, mask);
+        vsts(a3, dst_ptr + base, o3, NORM_B32, mask);
+      }
+    }
+    // Remaining full tiles and the (exactly masked) tail tile.
+    for (uint16_t j = jQuad; j < nLoop; j++) {
+      int32_t o0 = (int32_t)j * num_per_reg;
+      uint32_t lanes = totalElements - (uint32_t)j * (uint32_t)num_per_reg;
+      if (lanes > (uint32_t)num_per_reg) {
+        lanes = (uint32_t)num_per_reg;
+      }
+      CREATE_MASK_BY_SIZE(mask, T, lanes);
+      vlds(a0, src_ptr, start_row_offset + o0, NORM);
+      vsts(a0, dst_ptr, start_row_offset + o0, NORM_B32, mask);
+      for (uint16_t r = 1; r < rLoop; r++) {
+        int32_t base = (reverse ? (rFactor - 1 - r) : (int32_t)r) * stride0;
+        vlds(x0, src_ptr + base, o0, NORM);
+        cum_mm_comb<kind, T>(a0, a0, x0, mask);
+        vsts(a0, dst_ptr + base, o0, NORM_B32, mask);
+      }
+    }
+  }
 }
 
 // Sklansky scan along dim0, in place on dst. max/min are idempotent and
 // associative, so the tree reordering is bit-exact; unlike float cumsum we
 // can always use it. Work is nLoop*R*log(R)/2 ops but depth is only log(R),
 // so it wins over the latency-bound sequential chain when nLoop is small.
-template <typename T, int kind>
-__simd_vf__ void sklansky_cum_minmax_round_vf(
-    uint16_t nLoop, uint32_t totalElements, uint16_t num_per_reg,
-    uint16_t groupMainCountu16, int32_t flag, int32_t group_offset,
-    __ubuf__ T *ptr, int32_t startOffset, uint16_t addCount, uint16_t stride0,
-    uint16_t groupTailCountu16, int32_t groupMainCount,
-    uint16_t addTailCountu16) {
-  VectorReg<T> x1, x2;
-  vector_bool mask;
-  for (uint16_t j = 0; j < nLoop; j++) {
-    // Mask the tail tile exactly: rows are stride-contiguous, so an
-    // overrunning store would corrupt the next, not-yet-scanned row.
-    uint32_t lanes = totalElements - (uint32_t)j * (uint32_t)num_per_reg;
-    if (lanes > (uint32_t)num_per_reg) {
-      lanes = (uint32_t)num_per_reg;
-    }
-    CREATE_MASK_BY_SIZE(mask, T, lanes);
-    for (uint16_t m = 0; m < groupMainCountu16; m++) {
-      int32_t src_offset = flag * m * group_offset + j * num_per_reg;
-      vlds(x1, ptr + startOffset, src_offset, NORM);
-      for (uint16_t n = 1; n <= addCount; n++) {
-        int32_t dst_offset =
-            flag * (m * group_offset + n * stride0) + j * num_per_reg;
-        vlds(x2, ptr + startOffset, dst_offset, NORM);
-        cum_mm_comb<kind, T>(x2, x1, x2, mask);
-        vsts(x2, ptr + startOffset, dst_offset, NORM_B32, mask);
-      }
-    }
-    for (uint16_t m = 0; m < groupTailCountu16; m++) {
-      int32_t src_offset =
-          flag * groupMainCount * group_offset + j * num_per_reg;
-      vlds(x1, ptr + startOffset, src_offset, NORM);
-      for (uint16_t n = 1; n <= addTailCountu16; n++) {
-        int32_t dst_offset =
-            flag * (groupMainCount * group_offset + n * stride0) +
-            j * num_per_reg;
-        vlds(x2, ptr + startOffset, dst_offset, NORM);
-        cum_mm_comb<kind, T>(x2, x1, x2, mask);
-        vsts(x2, ptr + startOffset, dst_offset, NORM_B32, mask);
-      }
-    }
-  }
-}
-
 template <typename T, int kind>
 __aiv__ __attribute__((always_inline)) void
 sklansky_cum_minmax_round(memref_t<__ubuf__ T, 3> *dst, sklansky_param_t param) {
@@ -251,10 +197,42 @@ sklansky_cum_minmax_round(memref_t<__ubuf__ T, 3> *dst, sklansky_param_t param) 
   if (totalElements > (uint32_t)stride0) {
     totalElements = (uint32_t)stride0;
   }
-  sklansky_cum_minmax_round_vf<T, kind>(
-      nLoop, totalElements, num_per_reg, groupMainCountu16, flag, group_offset,
-      ptr, startOffset, addCount, stride0, groupTailCountu16, groupMainCount,
-      addTailCountu16);
+  __VEC_SCOPE__ {
+    VectorReg<T> x1, x2;
+    vector_bool mask;
+    for (uint16_t j = 0; j < nLoop; j++) {
+      // Mask the tail tile exactly: rows are stride-contiguous, so an
+      // overrunning store would corrupt the next, not-yet-scanned row.
+      uint32_t lanes = totalElements - (uint32_t)j * (uint32_t)num_per_reg;
+      if (lanes > (uint32_t)num_per_reg) {
+        lanes = (uint32_t)num_per_reg;
+      }
+      CREATE_MASK_BY_SIZE(mask, T, lanes);
+      for (uint16_t m = 0; m < groupMainCountu16; m++) {
+        int32_t src_offset = flag * m * group_offset + j * num_per_reg;
+        vlds(x1, ptr + startOffset, src_offset, NORM);
+        for (uint16_t n = 1; n <= addCount; n++) {
+          int32_t dst_offset =
+              flag * (m * group_offset + n * stride0) + j * num_per_reg;
+          vlds(x2, ptr + startOffset, dst_offset, NORM);
+          cum_mm_comb<kind, T>(x2, x1, x2, mask);
+          vsts(x2, ptr + startOffset, dst_offset, NORM_B32, mask);
+        }
+      }
+      for (uint16_t m = 0; m < groupTailCountu16; m++) {
+        int32_t src_offset = flag * groupMainCount * group_offset + j * num_per_reg;
+        vlds(x1, ptr + startOffset, src_offset, NORM);
+        for (uint16_t n = 1; n <= addTailCountu16; n++) {
+          int32_t dst_offset =
+              flag * (groupMainCount * group_offset + n * stride0) +
+              j * num_per_reg;
+          vlds(x2, ptr + startOffset, dst_offset, NORM);
+          cum_mm_comb<kind, T>(x2, x1, x2, mask);
+          vsts(x2, ptr + startOffset, dst_offset, NORM_B32, mask);
+        }
+      }
+    }
+  }
 }
 
 template <typename T, int kind>
@@ -291,62 +269,6 @@ sklansky_cum_minmax(memref_t<__ubuf__ T, 3> *dst, bool reverse) {
 // pair is an independent chain over m, so chains across r hide the combine
 // latency; rows are loaded/stored contiguously.
 template <typename T, int kind>
-__simd_vf__ void dim1_scan_direct_vf(uint16_t nTiles, int32_t num_per_reg,
-                                     int32_t N, uint16_t rQuad, int32_t s0,
-                                     __ubuf__ T *sp, int32_t startM,
-                                     __ubuf__ T *dp, uint16_t Mu, bool reverse,
-                                     int32_t M, int32_t s1, uint16_t Ru) {
-  VectorReg<T> a0, a1, a2, a3, x0, x1, x2, x3;
-  vector_bool mask;
-  for (uint16_t j = 0; j < nTiles; j++) {
-    int32_t o = (int32_t)j * num_per_reg;
-    uint32_t lanes = (uint32_t)((N - o < num_per_reg) ? (N - o) : num_per_reg);
-    CREATE_MASK_BY_SIZE(mask, T, lanes);
-    // Four independent r-chains per iteration for latency hiding.
-    for (uint16_t r = 0; r < rQuad; r += 4) {
-      int32_t b0 = (int32_t)r * s0 + o;
-      int32_t b1 = b0 + s0;
-      int32_t b2 = b1 + s0;
-      int32_t b3 = b2 + s0;
-      vlds(a0, sp + b0, startM, NORM);
-      vlds(a1, sp + b1, startM, NORM);
-      vlds(a2, sp + b2, startM, NORM);
-      vlds(a3, sp + b3, startM, NORM);
-      vsts(a0, dp + b0, startM, NORM_B32, mask);
-      vsts(a1, dp + b1, startM, NORM_B32, mask);
-      vsts(a2, dp + b2, startM, NORM_B32, mask);
-      vsts(a3, dp + b3, startM, NORM_B32, mask);
-      for (uint16_t m = 1; m < Mu; m++) {
-        int32_t mo = (reverse ? (M - 1 - (int32_t)m) : (int32_t)m) * s1;
-        vlds(x0, sp + b0, mo, NORM);
-        vlds(x1, sp + b1, mo, NORM);
-        vlds(x2, sp + b2, mo, NORM);
-        vlds(x3, sp + b3, mo, NORM);
-        cum_mm_comb<kind, T>(a0, a0, x0, mask);
-        cum_mm_comb<kind, T>(a1, a1, x1, mask);
-        cum_mm_comb<kind, T>(a2, a2, x2, mask);
-        cum_mm_comb<kind, T>(a3, a3, x3, mask);
-        vsts(a0, dp + b0, mo, NORM_B32, mask);
-        vsts(a1, dp + b1, mo, NORM_B32, mask);
-        vsts(a2, dp + b2, mo, NORM_B32, mask);
-        vsts(a3, dp + b3, mo, NORM_B32, mask);
-      }
-    }
-    for (uint16_t r = rQuad; r < Ru; r++) { // 1..3 remainder chains
-      int32_t b0 = (int32_t)r * s0 + o;
-      vlds(a0, sp + b0, startM, NORM);
-      vsts(a0, dp + b0, startM, NORM_B32, mask);
-      for (uint16_t m = 1; m < Mu; m++) {
-        int32_t mo = (reverse ? (M - 1 - (int32_t)m) : (int32_t)m) * s1;
-        vlds(x0, sp + b0, mo, NORM);
-        cum_mm_comb<kind, T>(a0, a0, x0, mask);
-        vsts(a0, dp + b0, mo, NORM_B32, mask);
-      }
-    }
-  }
-}
-
-template <typename T, int kind>
 __aiv__ __attribute__((always_inline)) void
 dim1_scan_direct(memref_t<__ubuf__ T, 3> *src, memref_t<__ubuf__ T, 3> *dst,
                  bool reverse) {
@@ -363,8 +285,56 @@ dim1_scan_direct(memref_t<__ubuf__ T, 3> *src, memref_t<__ubuf__ T, 3> *dst,
   int32_t startM = reverse ? (M - 1) * s1 : 0;
   __ubuf__ T *sp = src->aligned + src->offset;
   __ubuf__ T *dp = dst->aligned + dst->offset;
-  dim1_scan_direct_vf<T, kind>(nTiles, num_per_reg, N, rQuad, s0, sp, startM,
-                               dp, Mu, reverse, M, s1, Ru);
+  __VEC_SCOPE__ {
+    VectorReg<T> a0, a1, a2, a3, x0, x1, x2, x3;
+    vector_bool mask;
+    for (uint16_t j = 0; j < nTiles; j++) {
+      int32_t o = (int32_t)j * num_per_reg;
+      uint32_t lanes = (uint32_t)((N - o < num_per_reg) ? (N - o) : num_per_reg);
+      CREATE_MASK_BY_SIZE(mask, T, lanes);
+      // Four independent r-chains per iteration for latency hiding.
+      for (uint16_t r = 0; r < rQuad; r += 4) {
+        int32_t b0 = (int32_t)r * s0 + o;
+        int32_t b1 = b0 + s0;
+        int32_t b2 = b1 + s0;
+        int32_t b3 = b2 + s0;
+        vlds(a0, sp + b0, startM, NORM);
+        vlds(a1, sp + b1, startM, NORM);
+        vlds(a2, sp + b2, startM, NORM);
+        vlds(a3, sp + b3, startM, NORM);
+        vsts(a0, dp + b0, startM, NORM_B32, mask);
+        vsts(a1, dp + b1, startM, NORM_B32, mask);
+        vsts(a2, dp + b2, startM, NORM_B32, mask);
+        vsts(a3, dp + b3, startM, NORM_B32, mask);
+        for (uint16_t m = 1; m < Mu; m++) {
+          int32_t mo = (reverse ? (M - 1 - (int32_t)m) : (int32_t)m) * s1;
+          vlds(x0, sp + b0, mo, NORM);
+          vlds(x1, sp + b1, mo, NORM);
+          vlds(x2, sp + b2, mo, NORM);
+          vlds(x3, sp + b3, mo, NORM);
+          cum_mm_comb<kind, T>(a0, a0, x0, mask);
+          cum_mm_comb<kind, T>(a1, a1, x1, mask);
+          cum_mm_comb<kind, T>(a2, a2, x2, mask);
+          cum_mm_comb<kind, T>(a3, a3, x3, mask);
+          vsts(a0, dp + b0, mo, NORM_B32, mask);
+          vsts(a1, dp + b1, mo, NORM_B32, mask);
+          vsts(a2, dp + b2, mo, NORM_B32, mask);
+          vsts(a3, dp + b3, mo, NORM_B32, mask);
+        }
+      }
+      for (uint16_t r = rQuad; r < Ru; r++) { // 1..3 remainder chains
+        int32_t b0 = (int32_t)r * s0 + o;
+        vlds(a0, sp + b0, startM, NORM);
+        vsts(a0, dp + b0, startM, NORM_B32, mask);
+        for (uint16_t m = 1; m < Mu; m++) {
+          int32_t mo = (reverse ? (M - 1 - (int32_t)m) : (int32_t)m) * s1;
+          vlds(x0, sp + b0, mo, NORM);
+          cum_mm_comb<kind, T>(a0, a0, x0, mask);
+          vsts(a0, dp + b0, mo, NORM_B32, mask);
+        }
+      }
+    }
+  }
 }
 
 template <typename T, int dim, int kind>
@@ -535,40 +505,6 @@ scalar_incl_suffix_mm_4way(__ubuf__ T *src, __ubuf__ T *dst, int32_t N) {
 // intrinsic that sporadically miscomputes on this hardware). Phase 2 uses only
 // aligned vlds/vsts and vdup which are fully reliable.
 template <typename T, int kind>
-__simd_vf__ void
-unified_scan_mm_fwd_nocopy_vf(uint32_t bpeU, __ubuf__ T *dstBase, int numBlocks,
-                              int last, int tailSize, int BpE) {
-  using IdxT = std::conditional_t<sizeof(T) == 2, int16_t, int32_t>;
-  using uIdxT = std::conditional_t<sizeof(T) == 2, uint16_t, uint32_t>;
-  VectorReg<T> v, carry;
-  VectorReg<IdxT> idx;
-  vector_bool m, mFull;
-  vci(idx, 0);
-  CREATE_MASK_BY_SIZE(mFull, T, bpeU);
-  // Seed: register 0's highest lane = op(src[0..BpE-1]).
-  vlds(v, dstBase, 0, NORM);
-  vdup(carry, v, mFull, POS_HIGHEST, MODE_ZEROING);
-  uint16_t cntU = static_cast<uint16_t>(numBlocks - 1);
-  for (uint16_t k = 0; k < cntU; ++k) {
-    int r = 1 + static_cast<int>(k);
-    int sz = (r == last) ? tailSize : BpE;
-    __ubuf__ T *rb = dstBase + r * BpE;
-    if (sz == BpE) {
-      vlds(v, rb, 0, NORM);
-      cum_mm_comb<kind, T>(v, v, carry, mFull);
-      vsts(v, rb, 0, NORM_B32, mFull);
-    } else {
-      uint32_t szU = static_cast<uint32_t>(sz);
-      CREATE_MASK_BY_SIZE(m, T, szU);
-      vgather2(v, rb, (VectorReg<uIdxT> &)idx, m);
-      cum_mm_comb<kind, T>(v, v, carry, m);
-      vscatter(v, rb, (VectorReg<uIdxT> &)idx, m);
-    }
-    vdup(carry, v, mFull, POS_HIGHEST, MODE_ZEROING);
-  }
-}
-
-template <typename T, int kind>
 __aiv__ __attribute__((always_inline)) void
 unified_scan_mm_fwd_nocopy(__ubuf__ T *srcBase, __ubuf__ T *dstBase,
                            __ubuf__ T * /*tempBase*/, int N, int BpE) {
@@ -589,39 +525,34 @@ unified_scan_mm_fwd_nocopy(__ubuf__ T *srcBase, __ubuf__ T *dstBase,
   if (numBlocks > 1) {
     uint32_t bpeU = static_cast<uint32_t>(BpE);
     INTRINSIC(pipe_barrier, PIPE_ALL);
-    unified_scan_mm_fwd_nocopy_vf<T, kind>(bpeU, dstBase, numBlocks, last,
-                                           tailSize, BpE);
-  }
-}
-
-template <typename T, int kind>
-__simd_vf__ void unified_scan_mm_rev_nocopy_vf(uint32_t bpeU, int tailSize,
-                                               int BpE, __ubuf__ T *dstBase,
-                                               int last, uint32_t tailU,
-                                               int numBlocks) {
-  using IdxT = std::conditional_t<sizeof(T) == 2, int16_t, int32_t>;
-  using uIdxT = std::conditional_t<sizeof(T) == 2, uint16_t, uint32_t>;
-  VectorReg<T> v, carry;
-  VectorReg<IdxT> idx;
-  vector_bool m, mFull;
-  vci(idx, 0);
-  CREATE_MASK_BY_SIZE(mFull, T, bpeU);
-  // Seed: last register's lowest lane = op(src[(last)*BpE .. N-1]).
-  if (tailSize == BpE) {
-    vlds(v, dstBase + last * BpE, 0, NORM);
-  } else {
-    CREATE_MASK_BY_SIZE(m, T, tailU);
-    vgather2(v, dstBase + last * BpE, (VectorReg<uIdxT> &)idx, m);
-  }
-  vdup(carry, v, mFull, POS_LOWEST, MODE_ZEROING);
-  uint16_t cntU = static_cast<uint16_t>(numBlocks - 1);
-  for (uint16_t k = 0; k < cntU; ++k) {
-    int r = (numBlocks - 2) - static_cast<int>(k);
-    __ubuf__ T *rb = dstBase + r * BpE;
-    vlds(v, rb, 0, NORM);
-    cum_mm_comb<kind, T>(v, v, carry, mFull);
-    vsts(v, rb, 0, NORM_B32, mFull);
-    vdup(carry, v, mFull, POS_LOWEST, MODE_ZEROING);
+    __VEC_SCOPE__ {
+      VectorReg<T> v, carry;
+      VectorReg<IdxT> idx;
+      vector_bool m, mFull;
+      vci(idx, 0);
+      CREATE_MASK_BY_SIZE(mFull, T, bpeU);
+      // Seed: register 0's highest lane = op(src[0..BpE-1]).
+      vlds(v, dstBase, 0, NORM);
+      vdup(carry, v, mFull, POS_HIGHEST, MODE_ZEROING);
+      uint16_t cntU = static_cast<uint16_t>(numBlocks - 1);
+      for (uint16_t k = 0; k < cntU; ++k) {
+        int r = 1 + static_cast<int>(k);
+        int sz = (r == last) ? tailSize : BpE;
+        __ubuf__ T *rb = dstBase + r * BpE;
+        if (sz == BpE) {
+          vlds(v, rb, 0, NORM);
+          cum_mm_comb<kind, T>(v, v, carry, mFull);
+          vsts(v, rb, 0, NORM_B32, mFull);
+        } else {
+          uint32_t szU = static_cast<uint32_t>(sz);
+          CREATE_MASK_BY_SIZE(m, T, szU);
+          vgather2(v, rb, (VectorReg<uIdxT> &)idx, m);
+          cum_mm_comb<kind, T>(v, v, carry, m);
+          vscatter(v, rb, (VectorReg<uIdxT> &)idx, m);
+        }
+        vdup(carry, v, mFull, POS_HIGHEST, MODE_ZEROING);
+      }
+    }
   }
 }
 
@@ -647,8 +578,30 @@ unified_scan_mm_rev_nocopy(__ubuf__ T *srcBase, __ubuf__ T *dstBase,
     uint32_t bpeU = static_cast<uint32_t>(BpE);
     uint32_t tailU = static_cast<uint32_t>(tailSize);
     INTRINSIC(pipe_barrier, PIPE_ALL);
-    unified_scan_mm_rev_nocopy_vf<T, kind>(bpeU, tailSize, BpE, dstBase, last,
-                                           tailU, numBlocks);
+    __VEC_SCOPE__ {
+      VectorReg<T> v, carry;
+      VectorReg<IdxT> idx;
+      vector_bool m, mFull;
+      vci(idx, 0);
+      CREATE_MASK_BY_SIZE(mFull, T, bpeU);
+      // Seed: last register's lowest lane = op(src[(last)*BpE .. N-1]).
+      if (tailSize == BpE) {
+        vlds(v, dstBase + last * BpE, 0, NORM);
+      } else {
+        CREATE_MASK_BY_SIZE(m, T, tailU);
+        vgather2(v, dstBase + last * BpE, (VectorReg<uIdxT> &)idx, m);
+      }
+      vdup(carry, v, mFull, POS_LOWEST, MODE_ZEROING);
+      uint16_t cntU = static_cast<uint16_t>(numBlocks - 1);
+      for (uint16_t k = 0; k < cntU; ++k) {
+        int r = (numBlocks - 2) - static_cast<int>(k);
+        __ubuf__ T *rb = dstBase + r * BpE;
+        vlds(v, rb, 0, NORM);
+        cum_mm_comb<kind, T>(v, v, carry, mFull);
+        vsts(v, rb, 0, NORM_B32, mFull);
+        vdup(carry, v, mFull, POS_LOWEST, MODE_ZEROING);
+      }
+    }
   }
 }
 

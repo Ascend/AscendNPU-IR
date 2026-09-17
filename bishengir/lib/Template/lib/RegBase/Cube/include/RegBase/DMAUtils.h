@@ -1966,28 +1966,6 @@ __aiv__ __attribute__((always_inline)) T set_pad_value_null() {
 }
 
 #if defined(__DAV_C310__)
-template <typename T>
-__simd_vf__ void apply_padding_b64_vf(int64_t repeat, int64_t size_aligned,
-                                      __ubuf__ T *block_ptr, int shift_num,
-                                      uint32_t vl_all, uint32_t vl_val,
-                                      int64_t pad_value) {
-  for (uint16_t i = 0; i < static_cast<uint16_t>(repeat); ++i) {
-    __ubuf__ T *till_block_ptr = i * size_aligned + block_ptr + shift_num;
-    // make mask
-    vector_bool mask_all = plt_2xvl_b64(vl_all, POST_UPDATE);
-    vector_bool mask_val = plt_2xvl_b64(vl_val, POST_UPDATE);
-    VectorReg<T> v_src;
-    VectorReg<T> v_dst;
-    vlds(v_src, till_block_ptr, 0);
-    // store
-    vdup(v_dst, pad_value, mask_all, MODE_ZEROING);
-    // store padvalue
-    vsts(v_dst, till_block_ptr, 0, mask_all);
-    // store valid data
-    vsts(v_src, till_block_ptr, 0, mask_val);
-  }
-}
-
 template <typename T, int DIM,
           typename = std::enable_if_t<std::is_same_v<T, int64_t> ||
                                       std::is_same_v<T, uint64_t>>>
@@ -2008,8 +1986,23 @@ apply_padding_b64(memref_t<__ubuf__ T, DIM> *dst, int64_t offset,
   __ubuf__ T *block_ptr = dst->aligned + dst->offset;
   uint32_t vl_all = num_per_block;
   uint32_t vl_val = num_per_block - align_pad;
-  apply_padding_b64_vf<T>(repeat, size_aligned, block_ptr, shift_num, vl_all,
-                          vl_val, pad_value);
+  __VEC_SCOPE__ {
+    for (uint16_t i = 0; i < static_cast<uint16_t>(repeat); ++i) {
+      __ubuf__ T *till_block_ptr = i * size_aligned + block_ptr + shift_num;
+      // make mask
+      vector_bool mask_all = plt_2xvl_b64(vl_all, POST_UPDATE);
+      vector_bool mask_val = plt_2xvl_b64(vl_val, POST_UPDATE);
+      VectorReg<T> v_src;
+      VectorReg<T> v_dst;
+      vlds(v_src, till_block_ptr, 0);
+      // store
+      vdup(v_dst, pad_value, mask_all, MODE_ZEROING);
+      // store padvalue
+      vsts(v_dst, till_block_ptr, 0, mask_all);
+      // store valid data
+      vsts(v_src, till_block_ptr, 0, mask_val);
+    }
+  }
 }
 #else
 ///========================================
