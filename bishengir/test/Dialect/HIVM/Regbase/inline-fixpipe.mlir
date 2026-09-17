@@ -1315,3 +1315,81 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     return
   }
 }
+
+// -----
+
+// A type-converting fixpipe (f32 -> f16) whose single user is the scf.yield
+// of an scf.for must stay inside the loop. Hoisting it would replace the
+// loop yield with the f32 mmadL1 result and leave an f16 iter_arg with an
+// f32 yield.
+//
+// CHECK-LABEL: func.func @keep_type_converting_fixpipe_inside_scf_for
+// CHECK: scf.for
+// CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>}
+// CHECK: scf.yield %{{.*}} : tensor<16x16xf16>
+// CHECK-NOT: hivm.hir.fixpipe
+func.func @keep_type_converting_fixpipe_inside_scf_for(
+    %b: tensor<16x16xf16>, %dst: memref<16x16xf16, strided<[16, 1]>>) {
+  %true = arith.constant true
+  %c16 = arith.constant 16 : index
+  %c0_i32 = arith.constant 0 : i32
+  %c1_i32 = arith.constant 1 : i32
+  %c2_i32 = arith.constant 2 : i32
+  %init = tensor.empty() : tensor<16x16xf16>
+  %for_res = scf.for %iv = %c0_i32 to %c2_i32 step %c1_i32
+      iter_args(%acc = %init) -> (tensor<16x16xf16>) : i32 {
+    %mmad_init = tensor.empty() : tensor<16x16xf32>
+    %mmad = hivm.hir.mmadL1 {already_set_real_mkn,
+        fixpipe_for_result_already_inserted = true, normalized_in_L0C}
+        ins(%acc, %b, %true, %c16, %c16, %c16
+            : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index)
+        outs(%mmad_init : tensor<16x16xf32>) -> tensor<16x16xf32>
+    %fp_init = tensor.empty() : tensor<16x16xf16>
+    %fp = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>,
+        pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>}
+        ins(%mmad : tensor<16x16xf32>) outs(%fp_init : tensor<16x16xf16>)
+        -> tensor<16x16xf16>
+    scf.yield %fp : tensor<16x16xf16>
+  }
+  hivm.hir.store ins(%for_res : tensor<16x16xf16>)
+      outs(%dst : memref<16x16xf16, strided<[16, 1]>>)
+  return
+}
+
+// -----
+
+// A type-preserving fixpipe (f32 -> f32) yielded from an scf.for is still
+// hoisted out of the loop.
+//
+// CHECK-LABEL: func.func @hoist_type_preserving_fixpipe_out_of_scf_for
+// CHECK: %[[FOR:.*]] = scf.for
+// CHECK-NOT: hivm.hir.fixpipe
+// CHECK: scf.yield %{{.*}} : tensor<16x16xf32>
+// CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%[[FOR]] : tensor<16x16xf32>)
+// CHECK-NOT: hivm.hir.fixpipe
+func.func @hoist_type_preserving_fixpipe_out_of_scf_for(
+    %b: tensor<16x16xf16>, %dst: memref<16x16xf32, strided<[16, 1]>>) {
+  %true = arith.constant true
+  %c16 = arith.constant 16 : index
+  %c0_i32 = arith.constant 0 : i32
+  %c1_i32 = arith.constant 1 : i32
+  %c2_i32 = arith.constant 2 : i32
+  %init = tensor.empty() : tensor<16x16xf32>
+  %for_res = scf.for %iv = %c0_i32 to %c2_i32 step %c1_i32
+      iter_args(%acc = %init) -> (tensor<16x16xf32>) : i32 {
+    %mmad_init = tensor.empty() : tensor<16x16xf32>
+    %mmad = hivm.hir.mmadL1 {already_set_real_mkn,
+        fixpipe_for_result_already_inserted = true, normalized_in_L0C}
+        ins(%acc, %b, %true, %c16, %c16, %c16
+            : tensor<16x16xf32>, tensor<16x16xf16>, i1, index, index, index)
+        outs(%mmad_init : tensor<16x16xf32>) -> tensor<16x16xf32>
+    %fp_init = tensor.empty() : tensor<16x16xf32>
+    %fp = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+        ins(%mmad : tensor<16x16xf32>) outs(%fp_init : tensor<16x16xf32>)
+        -> tensor<16x16xf32>
+    scf.yield %fp : tensor<16x16xf32>
+  }
+  hivm.hir.store ins(%for_res : tensor<16x16xf32>)
+      outs(%dst : memref<16x16xf32, strided<[16, 1]>>)
+  return
+}

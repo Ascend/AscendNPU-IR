@@ -1236,6 +1236,12 @@ private:
       // Move fixpipe out of scf.for.
       // The BatchMmadL1 case is excluded because TileBatchMMIntoLoop requires
       // `BatchMmadL1 -> Fixpipe` use chain to stay in the same block.
+      // Do not hoist a type-converting fixpipe out of a loop-carried value:
+      // hoisting rewires the yield to the fixpipe source, which would change
+      // the loop yield type.
+      if (op.getSource().getType() != op.getResultTensor().getType())
+        return rewriter.notifyMatchFailure(
+            op, "fixpipe converts the loop-carried value type");
       matched = true;
       auto scfForOp = dyn_cast_if_present<scf::ForOp>(curOp->getParentOp());
       moveFixpipeOutOfScfFor(rewriter, loc, op, scfForOp, op.getResultTensor());
