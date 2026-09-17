@@ -344,14 +344,12 @@ template <auto T, auto U, auto... Args> __aicore__ constexpr bool SupportEnum()
 }
 
 #if !defined(__DAV_L310_EFF__)
-template <auto funcPtr, typename... Args>
-__simd_vf__ void VF_CALL_vf(Args &&...args) {
-  funcPtr(args...);
-}
-
-template <auto funcPtr, typename... Args>
-__aicore__ inline void VF_CALL(Args &&...args) {
-  VF_CALL_vf<funcPtr>(args...);
+template <auto funcPtr, typename... Args> __aicore__ inline void VF_CALL(Args &&... args)
+{
+    __VEC_SCOPE__
+    {
+        funcPtr(args...);
+    }
 }
 #endif
 #endif
