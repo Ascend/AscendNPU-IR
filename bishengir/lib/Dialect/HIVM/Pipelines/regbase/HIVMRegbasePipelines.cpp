@@ -452,8 +452,10 @@ static void hivmPreBufferizationOptimizationPipeline(
   pm.nest<func::FuncOp>().addPass(createMarkTightlyCoupledBufferPass());
   pm.nest<func::FuncOp>().addPass(createHoistTightlyCoupledAllocPass());
 
-  // Post-CVPipelining sink on the unsplit MIX function. SplitMixKernel
-  // then clones placement onto backup / AIC / AIV.
+  // Post-CVPipelining sink on the unsplit MIX function: exclusive dest/src
+  // clusters (including MTE2 across an unused CUBE) and load→VF→copy
+  // chains that sit across an unused mmad. Flattening same preload_num
+  // scopes stays after split.
   pm.addPass(createSinkExclusivePreloadWorkPass());
 
   // Cross-Core Auto-Sync passes STEP=1

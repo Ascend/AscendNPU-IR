@@ -227,6 +227,10 @@ DiagnosedSilenceableFailure mapForallToBlocksImpl(
     RewriterBase &rewriter, scf::ForallOp forallOp, ForallRewriteResult &result,
     std::optional<transform::TransformOpInterface> transformOp = std::nullopt);
 
+/// Move a producer-scope dest / src tensor or leftover-memref cluster into
+/// the unique later VECTOR consumer, including MTE2 load through a subview.
+LogicalResult sinkReturnedTensorsToConsumer(scf::ForOp forOp);
+
 /// Remove attr from markOp, and remove markOp if no attr left.
 void removeMarkOpAttr(annotation::MarkOp markOp, ::llvm::StringLiteral attrName,
                       bool removeOp = true);

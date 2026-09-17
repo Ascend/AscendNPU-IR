@@ -810,7 +810,7 @@ def MergeSamePreloadScopes : Pass<"hivm-merge-same-preload-scopes", "ModuleOp"> 
 }
 
 def SinkExclusivePreloadWork : Pass<"hivm-sink-exclusive-preload-work", "ModuleOp"> {
-  let summary = "Sink mb=1 preload-local allocs after CVPipelining on the unsplit MIX function.";
+  let summary = "Sink exclusive dest/src clusters and unused-CUBE load/VF/copy chains after CVPipelining.";
   let constructor = "mlir::hivm::createSinkExclusivePreloadWorkPass()";
   let dependentDialects = [
     "scope::ScopeDialect",
@@ -818,7 +818,11 @@ def SinkExclusivePreloadWork : Pass<"hivm-sink-exclusive-preload-work", "ModuleO
     "hivm::HIVMDialect",
     "scf::SCFDialect",
     "annotation::AnnotationDialect",
-    "memref::MemRefDialect"
+    "memref::MemRefDialect",
+    "affine::AffineDialect",
+    "arith::ArithDialect",
+    "bufferization::BufferizationDialect",
+    "tensor::TensorDialect"
   ];
 }
 

@@ -16,6 +16,8 @@
 //===----------------------------------------------------------------------===//
 //
 // Merge scopes sharing identical preload_num within the same parent loop op.
+// Exclusive dest / src / copy-chain sinking lives in
+// hivm-sink-exclusive-preload-work (after CVPipelining, before SplitMix).
 //
 //===----------------------------------------------------------------------===//
 

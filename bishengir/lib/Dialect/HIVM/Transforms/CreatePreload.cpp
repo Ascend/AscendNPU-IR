@@ -578,15 +578,30 @@ static void rewritePreloadLoop(scf::ForOp forOp,
 
   LDBG("New for loop:\n" << newForOp);
 
+  // `preprocessLoopArgs` drops every iteration argument that carries a
+  // preload-local buffer, because the new body re-materializes the rotation
+  // belonging to each preload stage instead of threading one buffer through the
+  // loop. The original loop still has one result per iteration argument, so
+  // walk the original arguments rather than the new results and supply a
+  // replacement for the dropped ones too.
   SmallVector<Value> newRes;
-  for (auto [res, yield] :
-       llvm::zip_equal(newForOp->getResults(), newForOp.getYieldedValues())) {
-    if (auto maybeLocalBuffer = getLocalBuffer(yield);
+  newRes.reserve(forOp.getNumResults());
+  auto newResIt = newForOp->result_begin();
+  auto newYieldIt = newForOp.getYieldedValues().begin();
+  for (auto [initArg, iterArg] :
+       llvm::zip_equal(forOp.getInitArgs(), forOp.getRegionIterArgs())) {
+    if (valueToAdapt.contains(iterArg)) {
+      newRes.push_back(initArg);
+      continue;
+    }
+    if (auto maybeLocalBuffer = getLocalBuffer(*newYieldIt);
         maybeLocalBuffer.has_value()) {
       newRes.push_back(maybeLocalBuffer.value());
     } else {
-      newRes.push_back(res);
+      newRes.push_back(*newResIt);
     }
+    ++newResIt;
+    ++newYieldIt;
   }
   rewriter.replaceOp(forOp, newRes);
 }
