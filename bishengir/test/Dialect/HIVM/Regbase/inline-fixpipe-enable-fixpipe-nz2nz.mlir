@@ -341,3 +341,27 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     return %mmad1 : tensor<32x32xi32>
   }
 }
+
+// -----
+
+// N not a multiple of 16 must pad to 16 before C0=8 channel split.
+// 37x70xf32: M1=ceil(37/16)=3, N1=ceil(ceil(70/16)*16 / 8)=10
+// (not ceil(70/8)=9). From mmad 37x48xf16 * 48x70xf16 -> 37x70xf32,
+// then 37x70xf32 * 70x96xf32.
+// CHECK-LABEL: func.func @dotdot_f32_m37n70
+// CHECK: %[[ARG0:.*]] = hivm.hir.fixpipe {channel_split = true} ins(%{{.*}} : tensor<37x70xf32>) outs(%{{.*}} : tensor<10x3x16x8xf32>) -> tensor<10x3x16x8xf32>
+// CHECK: %[[ARG1:.*]] = hivm.hir.mmadL1 {fixpipe_for_result_already_inserted = true} ins(%[[ARG0]]
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @dotdot_f32_m37n70(%a: tensor<37x48xf16>, %b: tensor<48x70xf16>, %c: tensor<70x96xf32>) -> tensor<37x96xf32> {
+    %true = arith.constant true
+    %c37 = arith.constant 37 : index
+    %c48 = arith.constant 48 : index
+    %c70 = arith.constant 70 : index
+    %c96 = arith.constant 96 : index
+    %7 = tensor.empty() : tensor<37x70xf32>
+    %8 = hivm.hir.mmadL1 ins(%a, %b, %true, %c37, %c48, %c70 : tensor<37x48xf16>, tensor<48x70xf16>, i1, index, index, index) outs(%7 : tensor<37x70xf32>) -> tensor<37x70xf32>
+    %9 = tensor.empty() : tensor<37x96xf32>
+    %10 = hivm.hir.mmadL1 ins(%8, %c, %true, %c37, %c70, %c96 : tensor<37x70xf32>, tensor<70x96xf32>, i1, index, index, index) outs(%9 : tensor<37x96xf32>) -> tensor<37x96xf32>
+    return %10 : tensor<37x96xf32>
+  }
+}
