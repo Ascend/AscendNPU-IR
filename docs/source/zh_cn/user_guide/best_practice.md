@@ -1060,9 +1060,6 @@ tl.compile_hint(pv, "hivm.tile_mix_cube_num", 2)
 
 | 编译选项 | 含义 | 取值范围 |
 | --- | --- | --- |
-| `multibuffer` | 设置是否启用乒乓流水 | `False`(默认),`True` |
-| `limit_auto_multi_buffer_of_local_buffer` | 设置乒乓流水在片中 (L1, L0, 及UB) 的作用范围"no-limit"表示不限乒乓流水范围"no-l0c"表示只允许L0缓存外启用乒乓流水 | "no-limit","no-l0c"(默认) |
-| `unit_flag` | 设置`cube`搬出时是否按照block搬出，仅限数据对齐场景下使用 | `False`(默认),`True` |
 | `limit_auto_multi_buffer_only_for_local_buffer` | 设置是否在GM workspace中启用CV流水并行，`False`表示启用后续会整改接口，提供更可读的选项 | `False`(默认),`True` |
 | `set_workspace_multibuffer` | 仅在`limit_auto_multi_buffer_only_for_local_buffer=false`的场景下生效。设置CV并行的并行度使用时需确保数据没有依赖若设置为`N`，则`N`个CV操作并行执行 | 2(默认),4 |
 | `tile_mix_vector_loop` | 仅在`limit_auto_multi_buffer_only_for_local_buffer=false`的场景下生效。设置当前`vector`的切分数量，数值可由`autotuning`得出，均可为最优 | 1(默认),2,4 |
