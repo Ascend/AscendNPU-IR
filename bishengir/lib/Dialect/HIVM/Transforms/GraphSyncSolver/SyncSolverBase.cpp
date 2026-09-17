@@ -1499,9 +1499,25 @@ SyncSolverBase::getFixedSetWaitOcc(Occurrence *occ1, Occurrence *occ2,
   if (!eventIdInfo.has_value() || eventIdInfo->getEventIdNum() < 2) {
     if (ret.setOcc->parentOcc != nullptr) {
       if (isBackwardSync(ret.setOcc, ret.waitOcc)) {
-        if (llvm::isa_and_present<Condition>(ret.setOcc->parentOcc->op)) {
-          occ2 = getScopeEndPlaceHolderOcc(ret.setOcc);
-          std::tie(ret.setOcc, ret.waitOcc) = getSetWaitLCAPairOcc(occ1, occ2);
+        if (options.isCrossCoreMode()) {
+          // Cross-core keeps a true-scope pair at the set-scope end, and
+          // moves an else-scope pair to the wait-scope begin.
+          if (auto *conditionOp =
+                  dyn_cast<Condition>(ret.setOcc->parentOcc->op)) {
+            if (conditionOp->trueScope == ret.setOcc->op) {
+              occ2 = getScopeEndPlaceHolderOcc(ret.setOcc);
+            } else {
+              occ1 = getScopeBeginPlaceHolderOcc(ret.waitOcc);
+            }
+            std::tie(ret.setOcc, ret.waitOcc) =
+                getSetWaitLCAPairOcc(occ1, occ2);
+          }
+        } else if (options.isIntraCoreMode()) {
+          if (llvm::isa_and_present<Condition>(ret.setOcc->parentOcc->op)) {
+            occ2 = getScopeEndPlaceHolderOcc(ret.setOcc);
+            std::tie(ret.setOcc, ret.waitOcc) =
+                getSetWaitLCAPairOcc(occ1, occ2);
+          }
         }
       }
     }
