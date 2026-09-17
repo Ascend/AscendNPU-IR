@@ -72,6 +72,18 @@ bool isMemScopeHintAnchor(Value val) {
 }
 
 std::optional<AddressSpaceAttr> inferMemScopeFromAnchor(Value root) {
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+  if (auto toMemref = root.getDefiningOp<bufferization::ToMemrefOp>()) {
+#else
+  if (auto toMemref = root.getDefiningOp<bufferization::ToBufferOp>()) {
+#endif
+    // Generic memref traceback deliberately stops at a to_memref whose tensor
+    // cannot be traced to an inverse to_tensor. For SIMT VF hint inference,
+    // inspect that tensor source locally so known tensor producers can still
+    // identify the mixed-boundary storage class.
+    return inferMemScopeFromAnchor(toMemref.getTensor());
+  }
+
   if (auto bbArg = dyn_cast<BlockArgument>(root)) {
     auto *parentOp = bbArg.getOwner()->getParentOp();
     if (auto func = dyn_cast<func::FuncOp>(parentOp)) {

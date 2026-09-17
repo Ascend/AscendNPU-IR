@@ -142,6 +142,38 @@ module {
 
 // -----
 
+module {
+  // A tensor materialized directly as a memref is the nearest memref root.
+  // Traceback must stop at to_memref instead of returning the tensor value.
+  // CHECK-LABEL: func.func @simt_vf_to_memref_caller(
+  func.func @simt_vf_to_memref_caller() attributes {
+      hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %tensor = "test.tensor_source"() : () -> tensor<1xi32>
+    // CHECK: %[[BUFFER:.*]] = bufferization.to_memref %{{.*}} : memref<1xi32, strided<[?], offset: ?>, #hivm.address_space<ub>>
+    %buffer = bufferization.to_memref %tensor :
+        memref<1xi32, strided<[?], offset: ?>>
+    // CHECK: %[[CAST:.*]] = memref.cast %[[BUFFER]]
+    // CHECK-SAME: to memref<1xi32, #hivm.address_space<ub>>
+    %cast = memref.cast %buffer :
+        memref<1xi32, strided<[?], offset: ?>> to memref<1xi32>
+    // CHECK: call @simt_vf_from_tensor(%[[CAST]])
+    // CHECK-SAME: (memref<1xi32, #hivm.address_space<ub>>) -> ()
+    call @simt_vf_from_tensor(%cast) {hivm.vector_function} :
+        (memref<1xi32>) -> ()
+    return
+  }
+
+  // CHECK-LABEL: func.func @simt_vf_from_tensor(
+  // CHECK-SAME: %{{.*}}: memref<1xi32, #hivm.address_space<ub>>)
+  func.func @simt_vf_from_tensor(%local: memref<1xi32>)
+      attributes {hivm.vector_function,
+                  hivm.vf_mode = #hivm.vf_mode<SIMT>} {
+    return
+  }
+}
+
+// -----
+
 // CHECK: func.func @test_scf_if_0
 // CHECK: scf.if
 func.func @test_scf_if_0(%arg0: memref<19xf32>, %arg1: memref<17xf32>, %arg2: index, %arg3: index) {
