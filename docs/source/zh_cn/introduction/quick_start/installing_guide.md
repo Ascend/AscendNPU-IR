@@ -152,6 +152,7 @@ ninja -j32
 | `-DLLVM_TARGETS_TO_BUILD="host;Native"` | 启用CPU runner |
 | `-DBISHENGIR_PUBLISH=OFF` | 关闭未发布功能 |
 | `-DBISHENGIR_BUILD_TEMPLATE=ON -DBISHENG_COMPILER_PATH=...` | 构建BiShengIR模板库 |
+| `-DBISHENGIR_OPTIMIZE_TEMPLATE_BITCODE=OFF` | 关闭C310模板位码优化（默认开启） |
 
 ### 二进制安装（免编译）
 
