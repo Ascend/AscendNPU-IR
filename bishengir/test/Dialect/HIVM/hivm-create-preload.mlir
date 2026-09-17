@@ -676,7 +676,9 @@ module {
   // CHECK-DAG: %[[C1:.*]] = arith.constant 1 : i32
   // CHECK-DAG: %[[C2:.*]] = arith.constant 2 : i32
 
-  // CHECK: %[[NEW_UB:.*]] = arith.addi %[[UB]], %[[C2]] : i32
+  // CHECK: %[[EXTRA:.*]] = arith.addi %[[UB]], %[[C2]] : i32
+  // CHECK: %[[NONEMPTY:.*]] = arith.cmpi slt, %[[LB]], %[[UB]] : i32
+  // CHECK: %[[NEW_UB:.*]] = arith.select %[[NONEMPTY]], %[[EXTRA]], %[[LB]] : i32
   // CHECK: %[[RESULTS:.*]]:2 = scf.for %[[NEW_IV:.*]] = %[[LB]] to %[[NEW_UB]] step %[[C1]] iter_args(%[[ARG0:.*]] = %[[INIT0]], %[[ARG1:.*]] = %[[INIT1]]) -> (i32, i32) : i32 {
 
   // CHECK: %[[MAPPED_IV:.*]] = arith.subi %[[NEW_IV]], %[[C1]] : i32
