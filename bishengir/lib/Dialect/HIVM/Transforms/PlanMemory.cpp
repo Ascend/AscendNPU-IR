@@ -1709,11 +1709,17 @@ void MemPlan::ValidateParameters(std::unique_ptr<StorageEntry> &e) const {
 }
 
 void MemPlan::UpdateBuffer2Offsets() {
-  for (auto &e : StorageEntryVec) {
+  for (const auto &e : StorageEntryVec) {
     for (Value &buffer : e->inplaceBuffers) {
       // MultiBuffer can cause multiple addrs.
       buffer2Offsets[buffer].push_back(
           (e->bitsOffset + utils::kBitsToByte - 1) / utils::kBitsToByte);
+      // Collect local buffers folded onto a preload storage entry that need
+      // a new preload mark. The preload TCB itself (in
+      // preloadBufferReuseableInfo) is excluded — it already has the mark.
+      if (IsPreloadStorageEntry(e.get()) &&
+          !preloadBufferReuseableInfo.contains(buffer))
+        preloadLocalBuffers.insert(buffer);
     }
   }
   // In the MultiBuffer scenario, single reuse db will result in additional
@@ -1845,19 +1851,7 @@ void MemPlan::GeneratePreloadReuseableSE() {
           preloadBufferSE->bufInfo->constBits < e->bufInfo->constBits) {
         continue;
       }
-      // we limit local se inplace buffer size to 1 because case below will have
-      // precision issue:
-      //
-      // 1: %buffer_tcb
-      // 2: scope.scope() {
-      // 3：   vf_1(%buffer_tcb, %buffer_1)
-      // 4:    vf_2(%buffer_1, %buffer_2)
-      // 5: }
-      //
-      // if %buffer_1 is inplaced with %buffer_2, %buffer_1 can't reuse
-      // %buffer_tcb or we will have precision issue
-      if (e->inplaceBuffers.size() == 1 &&
-          llvm::all_of(e->bufferLifeVec, [&](std::shared_ptr<BufferLife> life) {
+      if (llvm::all_of(e->bufferLifeVec, [&](std::shared_ptr<BufferLife> life) {
             return IsPreloadBufferReuseable(pair.second, life);
           })) {
         MemLifeDebugInfo(e.get());
@@ -3256,27 +3250,28 @@ public:
 
 private:
   void markTempBufForMemoryDisplay(func::FuncOp funcOp);
-  // Returning nullopt means that memory plan for funcOp failed
-  std::optional<DenseMap<Value, SmallVector<uint64_t>>>
+  // Returning nullopt means that memory plan for funcOp failed. On success,
+  // first is buffer2Offsets and second is preload-local alloc roots.
+  std::optional<std::pair<Buffer2Offsets, DenseSet<Value>>>
   planMemoryForFuncOp(func::FuncOp &funcOp,
                       VFInplaceReuseAnalysis &vfInplaceReuseAnalysis);
 
-  void updateId2Offsets(func::FuncOp &funcOp,
-                        DenseMap<Value, SmallVector<uint64_t>> &buffer2Offsets,
+  void updateId2Offsets(func::FuncOp &funcOp, Buffer2Offsets &buffer2Offsets,
                         DenseMap<int32_t, SmallVector<uint64_t>> &id2Offsets);
 
   void updateBuffer2OffsetsForFuncOp(
-      func::FuncOp &funcOp,
-      DenseMap<Value, SmallVector<uint64_t>> &buffer2Offsets,
+      func::FuncOp &funcOp, Buffer2Offsets &buffer2Offsets,
       DenseMap<int32_t, SmallVector<uint64_t>> &id2Offsets);
 
-  LogicalResult populateBufferAddressToAllocOp(
-      func::FuncOp &funcOp,
-      const DenseMap<Value, SmallVector<uint64_t>> &buffer2Offsets) {
+  LogicalResult
+  populateBufferAddressToAllocOp(func::FuncOp &funcOp,
+                                 const Buffer2Offsets &buffer2Offsets,
+                                 const DenseSet<Value> &preloadLocalBuffers) {
     if (this->memMode == MemPlanMode::LOCAL_MEM_PLAN) {
       // Convert every memref.alloc into an hivm.hir.pointer_cast bound to its
       // planned address(es).
-      return walkAllocToPointerCast(funcOp, buffer2Offsets);
+      return walkAllocToPointerCast(funcOp, buffer2Offsets,
+                                    preloadLocalBuffers);
     }
     assert(this->memMode == MemPlanMode::GLOBAL_WORKSPACE_PLAN);
     // Attach the planned offset(s) to every memref_ext.alloc_workspace.
@@ -3288,7 +3283,7 @@ private:
 };
 } // namespace
 
-std::optional<DenseMap<Value, SmallVector<uint64_t>>>
+std::optional<std::pair<Buffer2Offsets, DenseSet<Value>>>
 PlanMemoryPass::planMemoryForFuncOp(
     func::FuncOp &funcOp, VFInplaceReuseAnalysis &vfInplaceReuseAnalysis) {
   // Add a attr to the memref alloc for the tempbuf.
@@ -3366,7 +3361,8 @@ PlanMemoryPass::planMemoryForFuncOp(
             memPlan.GetBuffer2Offsets(), memPlan.errorInfo, false);
         createJsonForMemoryDisplay(funcOp, memoryDisplayInfoList);
       }
-      return memPlan.GetBuffer2Offsets();
+      return std::make_pair(memPlan.GetBuffer2Offsets(),
+                            memPlan.GetPreloadLocalBuffers());
     }
 
     if (isLastAttempt && memPlan.enableMemoryDisplay) {
@@ -3387,8 +3383,7 @@ PlanMemoryPass::planMemoryForFuncOp(
 }
 
 void PlanMemoryPass::updateId2Offsets(
-    func::FuncOp &funcOp,
-    DenseMap<Value, SmallVector<uint64_t>> &buffer2Offsets,
+    func::FuncOp &funcOp, Buffer2Offsets &buffer2Offsets,
     DenseMap<int32_t, SmallVector<uint64_t>> &id2Offsets) {
   auto funcType = queryFuncCoreType(funcOp);
 
@@ -3411,8 +3406,7 @@ void PlanMemoryPass::updateId2Offsets(
 }
 
 void PlanMemoryPass::updateBuffer2OffsetsForFuncOp(
-    func::FuncOp &funcOp,
-    DenseMap<Value, SmallVector<uint64_t>> &buffer2Offsets,
+    func::FuncOp &funcOp, Buffer2Offsets &buffer2Offsets,
     DenseMap<int32_t, SmallVector<uint64_t>> &id2Offsets) {
   auto funcType = queryFuncCoreType(funcOp);
 
@@ -3524,11 +3518,11 @@ void MemPlan::SetMemscope2rootSuccessStorageEntry() {
 void PlanMemoryPass::runOnOperation() {
   ModuleOp moduleOp = getOperation();
   VFInplaceReuseAnalysis vfInplaceReuseAnalysis(moduleOp);
-  // Map all funcs to buffer2Offsets obtained in PlanMemoryForFuncOp,
-  // because in the second walk, buffer2Offset is needed to populate
-  // bufferAddress to allocOp.
-  DenseMap<func::FuncOp, DenseMap<Value, SmallVector<uint64_t>>>
-      buffer2OffsetMap;
+  // Cache per-func plan results (buffer2Offsets + preload-local roots) from
+  // the first walk; the second walk uses them to populate addresses on
+  // allocOps.
+  DenseMap<func::FuncOp, std::pair<Buffer2Offsets, DenseSet<Value>>>
+      planResultMap;
   // map cvMixId to the address will be used in both aic and aiv.
   DenseMap<int32_t, SmallVector<uint64_t>> id2Offsets;
   // planMem for variables and update Id2Offsets.
@@ -3538,24 +3532,26 @@ void PlanMemoryPass::runOnOperation() {
     if (hivm::isVF(funcOp))
       continue;
     LDBG("\n-----funcOp " << funcOp.getName() << " mem plan start !! -----\n");
-    auto plannedBuffer2Offsets =
-        planMemoryForFuncOp(funcOp, vfInplaceReuseAnalysis);
-    if (plannedBuffer2Offsets.has_value()) {
-      buffer2OffsetMap[funcOp] = plannedBuffer2Offsets.value();
+    auto planned = planMemoryForFuncOp(funcOp, vfInplaceReuseAnalysis);
+    if (planned.has_value()) {
+      planResultMap[funcOp] = std::move(planned.value());
     } else {
       signalPassFailure();
       return;
     }
     LDBG("\n-----------------Update Id2Offsets start !! ------------------\n");
-    updateId2Offsets(funcOp, plannedBuffer2Offsets.value(), id2Offsets);
+    updateId2Offsets(funcOp, planResultMap[funcOp].first, id2Offsets);
   };
 
   // Update buffer2Offsets and populate bufferAddress to allocOp.
   LDBG("\n----------------Second traversal of func !! --------------------\n");
-  for (auto [funcOp, buffer2Offsets] : buffer2OffsetMap) {
+  for (auto &[funcOp, planResult] : planResultMap) {
+    auto &buffer2Offsets = planResult.first;
+    auto &preloadLocalBuffers = planResult.second;
     LDBG("\n------------funcOp : " << funcOp.getName() << "---------------\n");
     updateBuffer2OffsetsForFuncOp(funcOp, buffer2Offsets, id2Offsets);
-    if (failed(populateBufferAddressToAllocOp(funcOp, buffer2Offsets))) {
+    if (failed(populateBufferAddressToAllocOp(funcOp, buffer2Offsets,
+                                              preloadLocalBuffers))) {
       signalPassFailure();
       return;
     }
