@@ -977,10 +977,8 @@ void DimensionAnalyzer::markDimensions() {
       } else {
         if (isa<tensor::InsertSliceOp>(sliceOp.getOperation()) &&
             sliceType.getDimSize(sliceIdx) == 1) {
-          tilingDimKindMapForCollapser[structuralDsu_->find(origRef[i])] =
-              TilingDimensionKind::Reduce;
-          tilingDimKindMapForShape[equivalentDsu_->find(origRef[i])] =
-              TilingDimensionKind::Reduce;
+          tryMarkReduceDim(structuralDsu_->find(origRef[i]),
+                           equivalentDsu_->find(origRef[i]));
           LDBG("Dim " << i << "(" << structuralDsu_->find(origRef[i])
                       << ") is marked as Reduce");
         }
@@ -997,12 +995,10 @@ void DimensionAnalyzer::markDimensions() {
           auto reduceSrcRef = getValueDimIndices(op.getSrc());
           auto reduceDstRef = getValueDimIndices(op.getDst()[0]);
           for (auto reduceDim : op.getReduceDims()) {
-            tilingDimKindMapForCollapser[structuralDsu_->find(
-                reduceSrcRef[reduceDim])] = TilingDimensionKind::Reduce;
-            tilingDimKindMapForShape[equivalentDsu_->find(
-                reduceSrcRef[reduceDim])] = TilingDimensionKind::Reduce;
-            tilingDimKindMapForShape[equivalentDsu_->find(
-                reduceDstRef[reduceDim])] = TilingDimensionKind::Reduce;
+            tryMarkReduceDim(structuralDsu_->find(reduceSrcRef[reduceDim]),
+                             equivalentDsu_->find(reduceSrcRef[reduceDim]));
+            tryMarkReduceDimShape(
+                equivalentDsu_->find(reduceDstRef[reduceDim]));
             LDBG("Reduced dim: "
                  << equivalentDsu_->find(reduceSrcRef[reduceDim]) << " -> "
                  << equivalentDsu_->find(reduceDstRef[reduceDim]));
@@ -1068,6 +1064,18 @@ void DimensionAnalyzer::markTransposedDim(hivm::VTransposeOp op) {
     LDBG(dstSolverIdx << " is now transposed dim("
                       << transposedDimMap[dstSolverIdx] << ")");
   }
+}
+
+void DimensionAnalyzer::tryMarkReduceDim(int64_t structuralIdx,
+                                         int64_t shapeIdx) {
+  if (!tilingDimKindMapForCollapser.contains(structuralIdx))
+    tilingDimKindMapForCollapser[structuralIdx] = TilingDimensionKind::Reduce;
+  tryMarkReduceDimShape(shapeIdx);
+}
+
+void DimensionAnalyzer::tryMarkReduceDimShape(int64_t shapeIdx) {
+  if (!tilingDimKindMapForShape.contains(shapeIdx))
+    tilingDimKindMapForShape[shapeIdx] = TilingDimensionKind::Reduce;
 }
 
 void DimensionAnalyzer::markUnalignedDim(hivm::CopyOp op) {
