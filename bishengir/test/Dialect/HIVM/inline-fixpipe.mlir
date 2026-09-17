@@ -229,7 +229,6 @@ func.func @matmul_kernel(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_ad
 // -----
 module attributes {hacc.target = #hacc.target<"Ascend910B1">} {
 // CHECK-LABEL: func.func @mm_01
-module {
   func.func @mm_01(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf16> {tt.divisibility = 16 : i32}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32}, %arg4: memref<?xf16> {tt.divisibility = 16 : i32}, %arg5: memref<?xf32> {tt.divisibility = 16 : i32}, %arg6: i32, %arg7: i32, %arg8: i32) attributes {WorkspaceArgIdx = 0 : i64, func_dyn_memref_args = dense<[false, true, true, true, true, true, false, false, false]> : vector<9xi1>, global_kernel = "local", hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "mix"} {
     %true = arith.constant true
     %c16_i32 = arith.constant 16 : i32
@@ -282,7 +281,6 @@ module {
   }
 }
 
-}
 // -----
 module attributes {hacc.target = #hacc.target<"Ascend910B1">} {
 // CHECK-LABEL: func.func @_attn_fwd

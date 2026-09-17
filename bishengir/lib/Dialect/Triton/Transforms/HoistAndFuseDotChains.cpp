@@ -100,7 +100,8 @@ static bool areIndependent(scf::ForOp curFor, scf::ForOp nextFor) {
   }
   // Bounded BFS; on overflow, conservatively report NOT independent.
   unsigned budget = 64;
-  while (!wl.empty() && budget-- > 0) {
+  while (!wl.empty() && budget > 0) {
+    --budget;
     Operation *op = wl.pop_back_val();
     if (op == curFor.getOperation())
       return false;
@@ -120,8 +121,7 @@ static bool areIndependent(scf::ForOp curFor, scf::ForOp nextFor) {
 // K-tile loops which are emitted with the same constants.
 static bool sameBounds(scf::ForOp a, scf::ForOp b) {
   return a.getLowerBound() == b.getLowerBound() &&
-         a.getUpperBound() == b.getUpperBound() &&
-         a.getStep() == b.getStep();
+         a.getUpperBound() == b.getUpperBound() && a.getStep() == b.getStep();
 }
 
 // Sum envelope bytes of every `bishengir.scratch_shm` func arg referenced
@@ -171,13 +171,13 @@ static uint64_t computeForLoopSmemBytes(scf::ForOp forOp) {
       Value v = wl.pop_back_val();
       for (Operation *user : v.getUsers()) {
         if (auto store = dyn_cast<mlir::triton::StoreOp>(user)) {
-          if (auto vt = dyn_cast<RankedTensorType>(
-                  store.getValue().getType())) {
+          if (auto vt =
+                  dyn_cast<RankedTensorType>(store.getValue().getType())) {
             uint64_t bytes = 1;
             for (int64_t d : vt.getShape())
               bytes *= static_cast<uint64_t>(std::max<int64_t>(1, d));
-            uint64_t elemBits =
-                static_cast<uint64_t>(vt.getElementType().getIntOrFloatBitWidth());
+            uint64_t elemBits = static_cast<uint64_t>(
+                vt.getElementType().getIntOrFloatBitWidth());
             bytes *= (elemBits + 7) / 8;
             maxBytes = std::max(maxBytes, bytes);
           }
@@ -264,10 +264,9 @@ static scf::ForOp fuseTwo(scf::ForOp curFor, scf::ForOp nextFor) {
   for (Value v : nextFor.getInitArgs())
     newInits.push_back(v);
 
-  auto newFor =
-      builder.create<scf::ForOp>(loc, curFor.getLowerBound(),
-                                  curFor.getUpperBound(), curFor.getStep(),
-                                  newInits);
+  auto newFor = builder.create<scf::ForOp>(loc, curFor.getLowerBound(),
+                                           curFor.getUpperBound(),
+                                           curFor.getStep(), newInits);
   // Drop the auto-generated yield; we'll emit our own merged yield.
   if (!newFor.getBody()->empty())
     newFor.getBody()->getTerminator()->erase();
@@ -307,7 +306,7 @@ static scf::ForOp fuseTwo(scf::ForOp curFor, scf::ForOp nextFor) {
 }
 
 static void fuseAdjacentDotChains(mlir::triton::FuncOp fn,
-                                   int64_t smemBudgetBytes) {
+                                  int64_t smemBudgetBytes) {
   // SMEM budget gate: peak SMEM rises from max(A,B) to A+B once two
   // loops are fused, so cap combined footprint at 70% of the budget.
   uint64_t threshold = 0;
@@ -317,7 +316,8 @@ static void fuseAdjacentDotChains(mlir::triton::FuncOp fn,
   // Fixed point: each iteration merges one pair, exposing the next.
   bool changed = true;
   unsigned iters = 0;
-  while (changed && iters++ < 32) {
+  while (changed && iters < 32) {
+    ++iters;
     changed = false;
 
     SmallVector<std::pair<scf::ForOp, scf::ForOp>> candidates;
@@ -325,14 +325,19 @@ static void fuseAdjacentDotChains(mlir::triton::FuncOp fn,
       // For each scf.for, take the earliest later for that's fuse-eligible.
       for (auto outerIt = block->begin(); outerIt != block->end(); ++outerIt) {
         auto cur = dyn_cast<scf::ForOp>(&*outerIt);
-        if (!cur) continue;
+        if (!cur)
+          continue;
         for (auto innerIt = std::next(outerIt); innerIt != block->end();
              ++innerIt) {
           auto nxt = dyn_cast<scf::ForOp>(&*innerIt);
-          if (!nxt) continue;
-          if (!sameBounds(cur, nxt)) continue;
-          if (!areIndependent(cur, nxt)) continue;
-          if (!nextDoesNotUseBetweenDefs(cur, nxt)) continue;
+          if (!nxt)
+            continue;
+          if (!sameBounds(cur, nxt))
+            continue;
+          if (!areIndependent(cur, nxt))
+            continue;
+          if (!nextDoesNotUseBetweenDefs(cur, nxt))
+            continue;
           // SMEM budget gate: skip the fuse when the combined footprint
           // exceeds 70% of the budget.  Computing on candidates only —
           // the cost is bounded by the number of candidates per func.
@@ -342,21 +347,23 @@ static void fuseAdjacentDotChains(mlir::triton::FuncOp fn,
             uint64_t combined = curBytes + nextBytes;
             if (combined > threshold) {
               LLVM_DEBUG(llvm::dbgs()
-                  << "[HoistAndFuse] skipping fuse: combined SMEM "
-                  << combined << " B > 70% budget ("
-                  << threshold << " B of " << smemBudgetBytes << " B)\n");
+                         << "[HoistAndFuse] skipping fuse: combined SMEM "
+                         << combined << " B > 70% budget (" << threshold
+                         << " B of " << smemBudgetBytes << " B)\n");
               continue;
             }
           }
           candidates.emplace_back(cur, nxt);
           break; // one match per cur
         }
-        if (!candidates.empty()) break; // one fuse per outer walk
+        if (!candidates.empty())
+          break; // one fuse per outer walk
       }
     });
 
     for (auto [cur, nxt] : candidates) {
-      if (!fuseTwo(cur, nxt)) continue;
+      if (!fuseTwo(cur, nxt))
+        continue;
       changed = true;
     }
   }

@@ -93,9 +93,9 @@ private:
 
     // replace symbolic_int
     symbolicIntOp->replaceAllUsesWith(applyOp);
-    symbolicIntOp->erase();
 
     LDBG("finish unfolding symbol " << symbolicIntOp.getSymbolName());
+    symbolicIntOp->erase();
     return success();
   }
 

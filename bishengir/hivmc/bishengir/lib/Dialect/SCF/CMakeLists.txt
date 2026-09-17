@@ -1,3 +1,0 @@
-add_subdirectory(TransformOps)
-add_subdirectory(Transforms)
-add_subdirectory(Utils)

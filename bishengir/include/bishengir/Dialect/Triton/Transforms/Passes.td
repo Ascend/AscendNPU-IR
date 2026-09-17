@@ -307,6 +307,17 @@ def FixFusedCat: Pass<"fix-fused-cat", "mlir::ModuleOp"> {
                             "mlir::triton::TritonDialect"];
 }
 
+def RewriteSliceOpToMemoryOps 
+    : Pass<"rewrite-slice-op-to-memory-ops", "mlir::ModuleOp"> {
+  let summary = "";
+  let constructor = "bishengir::triton::createRewriteSliceOpToMemoryOpsPass()";
+  let dependentDialects = [
+    "mlir::arith::ArithDialect",
+    "mlir::triton::TritonDialect",
+    "mlir::tensor::TensorDialect",
+  ];
+}
+
 def RewriteSliceOpToTriton
     : Pass<"rewrite-slice-op-to-triton", "mlir::ModuleOp"> {
   let summary = "rewrite tensor.extract_slice/insert_slice into tt.trans/reshape/split/join";
@@ -387,6 +398,21 @@ def LowerDotBuffersAndSharedMem
     "mlir::triton::gpu::TritonGPUDialect",
     "mlir::triton::TritonDialect",
     "bishengir::triton_ext::TritonExtDialect"
+  ];
+}
+
+def LowerRemainingTensorDialect
+    : Pass<"lower-remaining-tensor-dialect", "mlir::ModuleOp"> {
+  let summary = "Lower leftover tensor dialect ops";
+  let description = [{
+    Lowers remaining tensor dialect ops if possible. 
+    Otherwise signals a pass failure.
+  }];
+  let constructor = "bishengir::triton::createLowerRemainingTensorDialectPass()";
+  let dependentDialects = [
+    "mlir::triton::TritonDialect",
+    "mlir::tensor::TensorDialect",
+    "mlir::arith::ArithDialect",
   ];
 }
 

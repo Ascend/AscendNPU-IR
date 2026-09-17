@@ -124,6 +124,10 @@ struct HIVMNormalizeScalarCastTraits : public hivm::NormalizeTraitsBase {
     auto castOp = hivm::castTo(
         rewriter, loc, fromElementsOp, op.getRoundModeAttr(), dstType);
     castOp.setCastAttr(op.getCastAttr());
+    if (auto unsignedMode = op->getAttrOfType<hivm::UnsignedModeAttr>(
+            hivm::UnsignedModeAttr::name);
+        unsignedMode && scalar.getType().isInteger() && dstType.isInteger())
+      castOp->setAttr(hivm::UnsignedModeAttr::name, unsignedMode);
     if (hasSaturateOverflowModeAnnotation(op)) {
       castOp->setAttr(kOverflowModeAttr, rewriter.getStringAttr("saturate"));
       if (getCastAnnotationBool(op, kSaturateSrcUnsignedAttr).value_or(false))

@@ -26,6 +26,31 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 
 // -----
 
+// CHECK-LABEL: func.func @insert_conv2d_input_convert_layout(
+// CHECK: %[[CONVERTED:.*]] = hivm.hir.convert_layout %{{.*}} output_shape [1, 2, 8, 8, 16]
+// CHECK-SAME: dstLayout = #hivm.data_layout<NC1HWC0>
+// CHECK-SAME: groups = 2 : i64
+// CHECK-SAME: srcLayout = #hivm.data_layout<NCHW>
+// CHECK: hivm.hir.Conv2dL1
+// CHECK-SAME: ins(%[[CONVERTED]],
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @insert_conv2d_input_convert_layout(
+      %input: tensor<1x30x8x8xf16>,
+      %weight: tensor<1x3x3x32x16xf16>) -> tensor<64x32xf32> {
+    %true = arith.constant true
+    %init = tensor.empty() : tensor<64x32xf32>
+    %conv = hivm.hir.Conv2dL1
+        {dilation = [1, 1], groups = 2 : i32, padding = [1, 1],
+         stride = [1, 1]}
+        ins(%input, %weight, %true
+            : tensor<1x30x8x8xf16>, tensor<1x3x3x32x16xf16>, i1)
+        outs(%init : tensor<64x32xf32>) -> tensor<64x32xf32>
+    return %conv : tensor<64x32xf32>
+  }
+}
+
+// -----
+
 // Contrast: fixpipe writing to UB still needs Fractal->ND convert_layout.
 // CHECK-LABEL: func.func @mmad_result_to_fixpipe_ub_keeps_nd_convert(
 // CHECK: %[[MMAD:.*]] = hivm.hir.mmadL1

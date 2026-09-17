@@ -35,6 +35,11 @@ templates_path = ['_templates']
 extensions = [
     "codeowners",
     "myst_parser",
+    "sphinx.ext.mathjax",
+]
+
+myst_enable_extensions = [
+    "dollarmath",
 ]
 
 source_suffix = {
@@ -63,4 +68,5 @@ def setup(app):
         app.add_css_file('lang-switcher.css')
     app.add_js_file('codeowners.js')
     app.add_css_file('codeowners.css')
+    app.add_css_file('mathjax.css')
     return {'version': '0.1', 'parallel_read_safe': True}

@@ -29,3 +29,11 @@ func.func @test_pre_vectorize_skip_combination(%arg0: memref<2048xf32>) -> () {
   }
   return
 }
+
+// CHECK-LABEL: func.func @test_integer_unsigned_si2ui
+// CHECK: arith.extsi {{.*}} : i8 to i32
+func.func @test_integer_unsigned_si2ui(%src: tensor<16xi8>) -> tensor<16xi32> {
+  %empty = tensor.empty() : tensor<16xi32>
+  %cast = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, round_mode = #hfusion.round_mode<rint>, unsigned_mode = #hfusion.unsigned_mode<si2ui>} ins(%src : tensor<16xi8>) outs(%empty : tensor<16xi32>) -> tensor<16xi32>
+  return %cast : tensor<16xi32>
+}

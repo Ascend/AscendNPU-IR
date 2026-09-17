@@ -114,6 +114,11 @@ init_variables() {
   ENABLE_WERROR="OFF"
   MLIR_WERROR="OFF"
   BISHENGIR_WERROR="OFF"
+  HIVMC_DISABLE_WERROR=""
+  HIVMC_DISABLE_MLIR_WERROR=""
+  HIVMC_DISABLE_BISHENGIR_WERROR=""
+  HIVMC_REBUILD=""
+  HIVMC_FAST_BUILD=""
   SHARED_LIBS="OFF"
   CCACHE_BUILD="ON"
   SAFETY_OPTIONS=""
@@ -349,6 +354,7 @@ parse_arguments() {
                 ;;
             --fast-build)
                 NO_INSTALL="1"
+                HIVMC_FAST_BUILD="--fast-build"
                 shift
                 ;;
             -h|--help)
@@ -397,6 +403,7 @@ parse_arguments() {
                 ;;
             -r|--rebuild)
                 REBUILD="1"
+                HIVMC_REBUILD="-r"
                 shift
                 ;;
             --safety-options)
@@ -417,14 +424,17 @@ parse_arguments() {
                 ;;
             --disable-werror)
                 ENABLE_WERROR="OFF"
+                HIVMC_DISABLE_WERROR="--disable-werror"
                 shift
                 ;;
             --disable-mlir-werror)
                 MLIR_WERROR="OFF"
+                HIVMC_DISABLE_MLIR_WERROR="--disable-mlir-werror"
                 shift
                 ;;
             --disable-bishengir-werror)
                 BISHENGIR_WERROR="OFF"
+                HIVMC_DISABLE_BISHENGIR_WERROR="--disable-bishengir-werror"
                 shift
                 ;;
             --enable-lld)
@@ -649,6 +659,18 @@ cmake_generate() {
     fi
   fi
 
+  # Do not build the hivmc binary when --skip-hivmc is set or when the
+  # selected build configuration cannot produce a working hivmc (standalone
+  # IR-only builds, or the LLVM 20/22 compatibility shims).
+  if [[ "${SKIP_HIVMC}" != "ON" ]] && \
+     [[ "${CMAKE_OPTIONS}" != *"-DBISHENGIR_BUILD_STANDALONE_IR_ONLY=ON"* ]] && \
+     [[ "${CMAKE_OPTIONS}" != *"-DCMAKE_C_FLAGS=-D__LLVM_MAJOR_VERSION_20_COMPATIBLE__"* ]] && \
+     [[ "${CMAKE_OPTIONS}" != *"-DLLVM_MAJOR_VERSION_22_COMPATIBLE=ON"* ]]; then
+    HIVMC_BUILD_OPTION="-DBISHENGIR_BUILD_HIVMC=ON"
+  else
+    HIVMC_BUILD_OPTION="-DBISHENGIR_BUILD_HIVMC=OFF"
+  fi
+
   echo "Running CMake configuration..."
   echo "Build directory: ${BUILD_DIR}"
   echo "LLVM source: ${LLVM_SOURCE_DIR}/llvm"
@@ -688,10 +710,12 @@ cmake_generate() {
     -DBSPUB_DAVINCI_BISHENGIR=ON \
     -DLLVM_BSPUB_DAVINCI_BISHENGIR_A5=ON \
     -DLLVM_BSPUB_DAVINCI_BISHENGIR_A5_NPUIR=ON \
+    -DBISHENGIR_ENABLE_PM_CL_OPTIONS=ON \
     -DBISHENGIR_PUBLISH="${BISHENGIR_PUBLISH}" \
     -DBISHENG_COMPILER_PATH="${BISHENG_COMPILER}" \
     -DBISHENGIR_BUILD_TEMPLATE="${BISHENGIR_BUILD_TEMPLATE}" \
     -DSHMEM_BUILD_TEMPLATE="${SHMEM_BUILD_TEMPLATE}" \
+    ${HIVMC_BUILD_OPTION} \
     ${CMAKE_OPTIONS}
 }
 
@@ -706,38 +730,6 @@ cmake_build() {
   if [[ "${BUILD_BISHENGIR_DOC}" == "ON" ]]; then
     ( cd "${BUILD_DIR}" && cmake --build . -j "${THREADS}" --target "bishengir-doc" ) || exit 1
   fi
-}
-
-build_hivmc() {
-  echo "Building HIVMC..."
-  local hivmc_publish_option=""
-  if [[ "${BISHENGIR_PUBLISH}" == "ON" ]]; then
-    hivmc_publish_option="--bishengir-publish"
-  fi
-
-  # The hivmc build script only creates its build directory on --rebuild,
-  # so ensure it exists before the first invocation.
-  mkdir -p "${BUILD_DIR}/../build_hivmc"
-
-  # The hivmc build script resolves its bishengir source as ../bishengir
-  # relative to its build directory, which only works when building inside
-  # the hivmc repo. Override it with the absolute source path (the hivmc
-  # script appends these options at the end of its cmake command, so the
-  # later -D takes precedence).
-  local hivmc_cmake_options="${CMAKE_OPTIONS} -DLLVM_EXTERNAL_BISHENGIR_SOURCE_DIR=${BISHENGIR_SOURCE_DIR}/bishengir/hivmc/bishengir"
-
-  ./bishengir/hivmc/build-tools/build.sh \
-    --build-type "${BUILD_TYPE}" -r \
-    -o "${BUILD_DIR}/../build_hivmc" \
-    -j "${THREADS}" \
-    --c-compiler "${C_COMPILER}" \
-    --cxx-compiler "${CXX_COMPILER}" \
-    --safety_options \
-    --safety_ld_options \
-    --skip_rpath \
-    ${hivmc_publish_option} \
-    --add-cmake-options "${hivmc_cmake_options}" \
-    --install-prefix "${INSTALL_PREFIX}"
 }
 
 cmake_install() {
@@ -774,13 +766,9 @@ collect_binary() {
     cp "${install_dir}/bin/bishengir-opt" "${output_dir}/bin/" || { echo "Failed to copy bishengir-opt"; exit 1; }
     echo "  Copied bishengir-compile, bishengir-opt"
 
-    local hivmc_bin="${install_dir}/bin/hivmc-a5"
-    if [[ ! -f "${hivmc_bin}" ]]; then
-      hivmc_bin="${install_dir}/bin/hivmc"
-    fi
-    if [[ -f "${hivmc_bin}" ]]; then
-      cp "${hivmc_bin}" "${output_dir}/bin/hivmc" || { echo "Failed to copy hivmc"; exit 1; }
-      cp "${hivmc_bin}" "${output_dir}/bin/hivmc-a5" || { echo "Failed to copy hivmc-a5"; exit 1; }
+    if [[ -f "${install_dir}/bin/hivmc" ]]; then
+      cp "${install_dir}/bin/hivmc" "${output_dir}/bin/hivmc" || { echo "Failed to copy hivmc"; exit 1; }
+      cp "${install_dir}/bin/hivmc" "${output_dir}/bin/hivmc-a5" || { echo "Failed to copy hivmc-a5"; exit 1; }
       echo "  Copied hivmc, hivmc-a5"
     else
       echo "Warning: hivmc binary not found at ${install_dir}/bin"
@@ -830,15 +818,6 @@ main() {
   fi
 
   cmake_build
-
-  # Skip HIVMC when building the standalone IR only, against the LLVM 20/22
-  # compatibility shims, or when --skip-hivmc is set.
-  if [[ "${SKIP_HIVMC}" != "ON" ]] && \
-     [[ "${CMAKE_OPTIONS}" != *"-DBISHENGIR_BUILD_STANDALONE_IR_ONLY=ON"* ]] && \
-     [[ "${CMAKE_OPTIONS}" != *"-DCMAKE_C_FLAGS=-D__LLVM_MAJOR_VERSION_20_COMPATIBLE__"* ]] && \
-     [[ "${CMAKE_OPTIONS}" != *"-DLLVM_MAJOR_VERSION_22_COMPATIBLE=ON"* ]]; then
-    build_hivmc
-  fi
 
   if [[ -z "$BUILD_TEST" ]] && [[ -z "$NO_INSTALL" ]]; then
     cmake_install

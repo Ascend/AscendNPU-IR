@@ -105,6 +105,60 @@ bool isSafeToSimplifyCast(CastOp castOp) {
 }
 
 struct CastOpPattern : public OpRewritePattern<CastOp> {
+  // Return the cast op that defines all inputs of the given op, skipping
+  // tensor reshape operations. The skipped operations are recorded so that the
+  // chain can be rebuilt with the pre-cast element type when necessary.
+  static CastOp getInputCast(CastOp castOp,
+                             SmallVector<Operation *> &reshapes) {
+    auto value = castOp.getInputs().front();
+    while (auto *defOp = value.getDefiningOp()) {
+      if (auto inputCastOp = dyn_cast<CastOp>(defOp)) {
+        return inputCastOp;
+      }
+
+      if (auto expandOp = dyn_cast<tensor::ExpandShapeOp>(defOp)) {
+        reshapes.push_back(defOp);
+        value = expandOp.getSrc();
+        continue;
+      }
+      if (auto collapseOp = dyn_cast<tensor::CollapseShapeOp>(defOp)) {
+        reshapes.push_back(defOp);
+        value = collapseOp.getSrc();
+        continue;
+      }
+      if (auto reshapeOp = dyn_cast<tensor::ReshapeOp>(defOp)) {
+        reshapes.push_back(defOp);
+        // The data operand is operand zero; the shape operand must not be
+        // traversed as part of the cast chain.
+        value = reshapeOp.getSource();
+        continue;
+      }
+      return {};
+    }
+    return {};
+  }
+
+  // Rebuild a transparent reshape op using the source value and its element type.
+  static Value buildReshapeTo(Operation *reshapeTo, Value source,
+                           PatternRewriter &rewriter) {
+
+    auto elementType = getElementTypeOrSelf(source);
+    auto resultType =
+        cast<ShapedType>(reshapeTo->getResult(0).getType()).clone(elementType);
+    if (auto expandOp = dyn_cast<tensor::ExpandShapeOp>(reshapeTo))
+      return rewriter.create<tensor::ExpandShapeOp>(
+          reshapeTo->getLoc(), resultType, source,
+          expandOp.getReassociationIndices());
+    if (auto collapseOp = dyn_cast<tensor::CollapseShapeOp>(reshapeTo))
+      return rewriter.create<tensor::CollapseShapeOp>(
+          reshapeTo->getLoc(), resultType, source,
+          collapseOp.getReassociationIndices());
+    if (auto reshapeOp = dyn_cast<tensor::ReshapeOp>(reshapeTo))
+      return rewriter.create<tensor::ReshapeOp>(reshapeTo->getLoc(), resultType,
+                                                source, reshapeOp.getShape());
+    return {};
+  }
+
 public:
   using OpRewritePattern<CastOp>::OpRewritePattern;
   LogicalResult matchAndRewrite(CastOp castOp,
@@ -117,18 +171,6 @@ public:
     if (!isSafeToSimplifyCast(castOp)) {
       return failure();
     }
-
-    // Helper function that return the cast op that
-    // defines all inputs of the given op (in the same order). Return "nullptr"
-    // if there is no such op.
-    auto getInputCast = [](CastOp castOp) -> CastOp {
-      auto inputCastOp = castOp.getInputs().front().getDefiningOp<CastOp>();
-      if (!inputCastOp)
-        return {};
-      if (inputCastOp.getResults() != castOp.getInputs())
-        return {};
-      return inputCastOp;
-    };
 
     // Helper to test for fastmath<contract> attribute.
     auto hasFastMathContract = [](CastOp op) -> bool {
@@ -218,6 +260,7 @@ public:
     // Traverse the chain of input cast ops to see if an op with the same
     // input types can be found.
     SmallVector<CastOp> castChain;
+    SmallVector<Operation *> reshapes;
     CastOp nextCast = castOp;
     while (nextCast) {
       // In total cast chain, if one cast of chain has the same type input and
@@ -228,7 +271,8 @@ public:
 
       castChain.push_back(nextCast);
 
-      if (nextCast.getInputs().getTypes() == castOp.getResultTypes()) {
+      if (getElementTypeOrSelf(nextCast.getInputs().front().getType()) ==
+          getElementTypeOrSelf(castOp.getResults().front().getType())) {
         // Found a cast where the input types match the output types of the
         // matched op. We can directly use those inputs and the matched op can
         // be removed.
@@ -241,10 +285,17 @@ public:
           }
         }
 
-        rewriter.replaceOp(castOp, nextCast.getInputs());
+        if (reshapes.empty()) {
+          rewriter.replaceOp(castOp, nextCast.getInputs());
+        } else {
+          Value replacement = nextCast.getInputs().front();
+          for (auto *reshapeTo : llvm::reverse(reshapes))
+            replacement = buildReshapeTo(reshapeTo, replacement, rewriter);
+          rewriter.replaceOp(castOp, replacement);
+        }
         return success();
       }
-      nextCast = getInputCast(nextCast);
+      nextCast = getInputCast(nextCast, reshapes);
     }
 
     return failure();

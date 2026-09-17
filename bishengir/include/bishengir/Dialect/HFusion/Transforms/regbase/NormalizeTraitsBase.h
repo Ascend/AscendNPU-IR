@@ -63,7 +63,9 @@ public:
   /// selected by the underlying cast builder.
   static Value createCastOp(PatternRewriter &rewriter, Location loc,
                             Value input, Type targetElemType,
-                            std::optional<RoundMode> roundMode = std::nullopt);
+                            std::optional<RoundMode> roundMode = std::nullopt,
+                            TypeFn castType = TypeFn::cast_signed,
+                            UnsignedMode unsignedMode = UnsignedMode::SI2SI);
 
   /// Create a dialect cast from a normalize-template abstract round kind.
   static Value createCastOp(PatternRewriter &rewriter, Location loc,
@@ -116,6 +118,8 @@ public:
   static bool matchCastRoundMode(CastOp op, CastRoundKind kind);
 
   static bool matchCastUnsignedMode(CastOp op, CastUnsignedModeKind kind);
+
+  static UnsignedMode getCastUnsignedMode(CastOp op);
 
   static TypeFn mapCastSignKind(CastSignKind kind, TypeFn preserveTypeFn);
 

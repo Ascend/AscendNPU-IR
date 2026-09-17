@@ -102,6 +102,9 @@ void buildLowerTritonPipeline(OpPassManager &pm,
   bishengir::SetBishengirSimtOptAttrOptions optionsSimtOpt;
   optionsSimtOpt.simtOptimizationMode =
       options.simtOptimizationMode;
+  if (!options.disableSliceOptimizations) {
+    pm.addPass(bishengir::triton::createRewriteSliceOpToMemoryOpsPass());
+  }
   pm.addNestedPass<mlir::triton::FuncOp>(createConvertNonPowerTwoTensorsPass());
   pm.addPass(
       bishengir::triton::createSetBishengirSimtOptAttrPass(optionsSimtOpt));
@@ -160,6 +163,7 @@ void buildLowerTritonPipeline(OpPassManager &pm,
     pm.addPass(bishengir::triton::createExpandGatherOpSourcesPass());
   }
   pm.addPass(bishengir::triton::createRemoveAnnotationMarkPass());
+  pm.addPass(bishengir::triton::createLowerRemainingTensorDialectPass());
   // Convert TTIR to TTGIR
   // TODO: Adapt target for NPU
   mlir::triton::ConvertTritonToTritonGPUOptions convertTritonToTritonGPUOpt;

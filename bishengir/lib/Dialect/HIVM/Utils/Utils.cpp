@@ -42,6 +42,7 @@
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/Block.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Location.h"
@@ -75,7 +76,6 @@
 
 namespace mlir {
 namespace hivm {
-
 bool shouldEnableChannelSplit(Type dstType) {
   const int64_t alignM = 16;
   const int64_t numElemPerBlock = mlir::utils::getNumPerBlock(dstType);
@@ -230,28 +230,32 @@ LoopLikeOpInterface getParentLoopImpl(Value val,
 }
 } // namespace
 
-bool isOpResultRequiredInL0C(Operation *op, OpResult result) {
-  if (op->hasAttr(RemainInL0CAttr::name))
-    return true;
+bool isResultInL0C(OpResult result) {
+  Operation *op = result.getOwner();
 
-  Attribute attr = op->getAttr("normalized_in_L0C");
-  if (!attr)
-    return false;
-
-  if (llvm::isa<RegionBranchOpInterface>(op)) {
-    auto arrayAttr = dyn_cast<ArrayAttr>(attr);
-    if (!arrayAttr)
-      return true;
-
-    uint64_t idx = result.getResultNumber();
-    return llvm::any_of(arrayAttr, [idx](Attribute element) {
+  auto findValueInArrayAttr = [](ArrayAttr arrayAttr, uint64_t idx) {
+    return llvm::any_of(arrayAttr.getValue(), [idx](Attribute element) {
       auto intAttr = dyn_cast<IntegerAttr>(element);
       return intAttr && intAttr.getValue().getZExtValue() == idx;
     });
-  }
+  };
 
-  // otherwise respect the result from NormalizeMatmul
-  return true;
+  auto isInL0CBasedOnAttr = [&result, &op,
+                             findValueInArrayAttr](StringRef attrName) {
+    if (auto attr = op->getAttrOfType<UnitAttr>(attrName))
+      return true;
+    if (auto arrayAttr = op->getAttrOfType<ArrayAttr>(attrName))
+      return findValueInArrayAttr(arrayAttr, result.getResultNumber());
+    return false;
+  };
+
+  if (isInL0CBasedOnAttr(RemainInL0CAttr::name))
+    return true;
+
+  if (isInL0CBasedOnAttr(kNormalizedInL0C))
+    return true;
+
+  return false;
 }
 
 FailureOr<memref::AllocOp> getMemRefAlloc(Value operand) {

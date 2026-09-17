@@ -1987,6 +1987,37 @@ func.func @test_mmadl1_normalize_in_nested_ccf(%arg0: i1, %arg1: i1, %arg2: i32,
 }
 
 // -----
+// A direct scf.for-carried matmul result may have independent side users.
+// CHECK-LABEL: func.func @test_mmadl1_normalize_for_with_side_user
+// CHECK: memref.alloca() {normalize_matmul_counter
+// CHECK: hivm.hir.mmadL1 {{.*}}normalized_in_L0C
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+func.func @test_mmadl1_normalize_for_with_side_user(
+    %a: tensor<16x16xf16>, %b: tensor<16x16xf16>, %ub: i32)
+    -> tensor<16x16xf32> {
+  %c0_i32 = arith.constant 0 : i32
+  %c1_i32 = arith.constant 1 : i32
+  %c0 = arith.constant 0 : index
+  %false = arith.constant false
+  %zero = arith.constant 0.0 : f32
+  %empty = tensor.empty() : tensor<16x16xf32>
+  %init = hivm.hir.vbrc ins(%zero : f32) outs(%empty : tensor<16x16xf32>) -> tensor<16x16xf32>
+  %result:2 = scf.for %i = %c0_i32 to %ub step %c1_i32
+      iter_args(%acc = %init, %side = %init)
+      -> (tensor<16x16xf32>, tensor<16x16xf32>) : i32 {
+    %mmad = hivm.hir.mmadL1
+        ins(%a, %b, %false, %c0, %c0, %c0
+            : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index)
+        outs(%acc : tensor<16x16xf32>) -> tensor<16x16xf32>
+    %abs = hivm.hir.vabs ins(%mmad : tensor<16x16xf32>)
+        outs(%empty : tensor<16x16xf32>) -> tensor<16x16xf32>
+    scf.yield %mmad, %abs : tensor<16x16xf32>, tensor<16x16xf32>
+  }
+  return %result#1 : tensor<16x16xf32>
+}
+}
+
+// -----
 // CHECK-LABEL: func.func @test_mmadmx_elemwise_bias_decompose(
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
   func.func @test_mmadmx_elemwise_bias_decompose(%bias: tensor<4x16xf32>) -> tensor<4x16xf32> {

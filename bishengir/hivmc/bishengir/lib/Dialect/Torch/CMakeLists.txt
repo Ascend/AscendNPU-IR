@@ -1,2 +1,0 @@
-add_subdirectory(Pipelines)
-add_subdirectory(Transforms)

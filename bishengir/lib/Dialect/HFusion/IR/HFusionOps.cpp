@@ -827,11 +827,19 @@ public:
   // Build the type functions defined by OpDSL.
   Value buildRoundMode(TypeFn cast, RoundMode round, UnsignedMode unsignedMode,
                        Type toType, Value operand) {
-    bool isUnsignedCast = false;
-    if ((cast == TypeFn::cast_unsigned) ||
-        (operand.getType().isInteger(1) &&
-         toType.getIntOrFloatBitWidth() > 1)) {
-      // TODO: general support for unsigned cast
+    bool isUnsignedCast = cast == TypeFn::cast_unsigned;
+    if (operand.getType().isInteger() && toType.isInteger()) {
+      // SI2SI is also the default: retain the legacy cast label in that case.
+      // The other modes distinguish the two integer sides of the conversion.
+      if (unsignedMode != UnsignedMode::SI2SI)
+        isUnsignedCast = unsignedMode == UnsignedMode::UI2SI ||
+                         unsignedMode == UnsignedMode::UI2UI;
+      // trunci has no signed/unsigned opcode pair; retain unsigned narrowing.
+      else if (isUnsignedCast && operand.getType().getIntOrFloatBitWidth() >
+                                     toType.getIntOrFloatBitWidth())
+        unsignedMode = UnsignedMode::UI2UI;
+    }
+    if (operand.getType().isInteger(1) && toType.getIntOrFloatBitWidth() > 1) {
       isUnsignedCast = true;
     }
 
@@ -856,7 +864,8 @@ public:
     defOp->setAttr("round_mode", roundingAttr);
     // TODO: Temporarily disable default-valued attributes so the printed IR
     // stays backward-compatible.
-    if (unsignedMode != UnsignedMode::SI2SI)
+    if (operand.getType().isInteger() && toType.isInteger() &&
+        unsignedMode != UnsignedMode::SI2SI)
       defOp->setAttr("unsigned_mode", unsignedAttr);
     return castedOp;
   }
@@ -3601,16 +3610,6 @@ void MatMulMxOp::build(OpBuilder &builder, OperationState &state, Value inputA,
         scaleB, acc, /*lhsFormat=*/DataformatAttr{},
         /*rhsFormat=*/DataformatAttr{});
 }
-
-#if BISHENGIR_BUILD_STANDALONE_IR_ONLY
-// HFusion Utils is not part of the standalone IR build; provide isFP8 here.
-// Prefer isa<> — Builder::getFloat8E*Type() was removed in newer LLVM.
-bool hfusion::isFP8(Type type) {
-  return isa<Float8E5M2Type, Float8E4M3Type, Float8E4M3FNType,
-             Float8E5M2FNUZType, Float8E4M3FNUZType, Float8E4M3B11FNUZType>(
-      type);
-}
-#endif
 
 LogicalResult MatMulMxOp::verify() {
   auto inputATy = mlir::cast<ShapedType>(getInputA().getType());

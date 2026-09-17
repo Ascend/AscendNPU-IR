@@ -1,5 +1,4 @@
 // RUN: bishengir-opt -hivm-insert-fixpipe -hivm-inline-fixpipe %s -split-input-file -verify-diagnostics | FileCheck %s
-// REQUIRES: regbase
 
 // On reg-based A5 targets, mmadL1->mmadL1 inserts fixpipe directly to L1
 // (fractal NZ shape) instead of the local NZ2ND path.

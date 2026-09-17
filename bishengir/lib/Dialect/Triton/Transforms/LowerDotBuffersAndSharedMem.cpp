@@ -29,6 +29,7 @@
 
 #include "bishengir/Dialect/TritonExt/IR/TritonExtAttrs.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Dominance.h"
@@ -237,8 +238,104 @@ struct ScratchAccess {
   int64_t rowStride = 0;
 };
 
-static std::optional<ScratchAccess> matchScratchAccess(Value ptrTensor,
+arith::IndexCastOp findTileIdx(Operation *op) {
+  if (!op)
+    return nullptr;
+  
+  for (Value operand : op->getOperands()) {
+    if (auto defOp = operand.getDefiningOp()) {
+      if (auto indexCastOp = dyn_cast<arith::IndexCastOp>(defOp)) {
+        if (indexCastOp->getParentOp() == op->getParentOp()
+            && dyn_cast<scf::ForOp>(indexCastOp->getParentOp())
+            && scf::getForInductionVarOwner(indexCastOp.getIn())) {
+          return indexCastOp;
+        }
+      }
+      if (auto foundOp = findTileIdx(defOp)) {
+        return foundOp;
+      }
+    }
+  }
+  return nullptr;
+}
+
+static std::optional<ScratchAccess> matchScratchAccessFromAttrs(Operation *op, Value ptrTensor) {
+  ScratchAccess acc;
+  if (op->hasAttrOfType<IntegerAttr>("startConst")) {
+    auto intAttr = op->getAttrOfType<IntegerAttr>("startConst");
+    acc.startConst = intAttr.getInt();
+  } else {
+    LLVM_DEBUG(llvm::dbgs() << "matchScratchAccess: missing startConst attr\n");
+    return std::nullopt;
+  }
+
+  if (op->hasAttrOfType<IntegerAttr>("otherStart")) {
+    auto intAttr = op->getAttrOfType<IntegerAttr>("otherStart");
+    acc.otherStart = intAttr.getInt();
+  } else {
+    LLVM_DEBUG(llvm::dbgs() << "matchScratchAccess: missing otherStart attr\n");
+    return std::nullopt;
+  }
+
+  if (op->hasAttrOfType<IntegerAttr>("kAxis")) {
+    auto intAttr = op->getAttrOfType<IntegerAttr>("kAxis");
+    acc.kAxis = intAttr.getInt();
+  } else {
+    LLVM_DEBUG(llvm::dbgs() << "matchScratchAccess: missing kAxis attr\n");
+    return std::nullopt;
+  }
+
+  if (op->hasAttrOfType<IntegerAttr>("tileSize")) {
+    auto intAttr = op->getAttrOfType<IntegerAttr>("tileSize");
+    acc.tileSize = intAttr.getInt();
+  } else {
+    LLVM_DEBUG(llvm::dbgs() << "matchScratchAccess: missing tileSize attr\n");
+    return std::nullopt;
+  }
+
+  if (op->hasAttrOfType<IntegerAttr>("dimOther")) {
+    auto intAttr = op->getAttrOfType<IntegerAttr>("dimOther");
+    acc.dimOther = intAttr.getInt();
+  } else {
+    LLVM_DEBUG(llvm::dbgs() << "matchScratchAccess: missing dimOther attr\n");
+    return std::nullopt;
+  }
+
+  if (op->hasAttrOfType<IntegerAttr>("rowStride")) {
+    auto intAttr = op->getAttrOfType<IntegerAttr>("rowStride");
+    acc.rowStride = intAttr.getInt();
+  } else {
+    LLVM_DEBUG(llvm::dbgs() << "matchScratchAccess: missing rowStride attr\n");
+    return std::nullopt;
+  }
+
+  if (op->hasAttrOfType<BoolAttr>("isStatic")) {
+    auto boolAttr = op->getAttrOfType<BoolAttr>("isStatic");
+    acc.kind = (boolAttr.getValue() ? ScratchAccess::Kind::STATIC : ScratchAccess::Kind::DYNAMIC);
+  } else {
+    LLVM_DEBUG(llvm::dbgs() << "matchScratchAccess: missing isStatic attr\n");
+    return std::nullopt;
+  }
+
+  if (acc.kind == ScratchAccess::Kind::DYNAMIC) {
+    // Find the tileIdx Value by traversing the operands of the operation
+    arith::IndexCastOp indexCastOp = findTileIdx(ptrTensor.getDefiningOp<triton::AddPtrOp>());
+    if (indexCastOp) {
+      acc.tileIdx = indexCastOp->getResult(0);
+    } else {
+      LLVM_DEBUG(llvm::dbgs() << "matchScratchAccess: missing tileIdx for DYNAMIC access\n");
+      return std::nullopt;
+    }
+  }
+
+  return acc;
+}
+
+static std::optional<ScratchAccess> matchScratchAccess(Operation *op, Value ptrTensor,
                                                        int expectedKAxis = -1) {
+  if (auto acc = matchScratchAccessFromAttrs(op, ptrTensor)) {
+    return acc;
+  }
   auto addptr = ptrTensor.getDefiningOp<triton::AddPtrOp>();
   if (!addptr)
     return std::nullopt;
@@ -301,7 +398,8 @@ static std::optional<ScratchAccess> matchScratchAccess(Value ptrTensor,
       }
     }
   } else if (expectedKAxis != -1 &&
-             offsetsTy.getDimSize(expectedKAxis) == 1) {
+             (offsetsTy.getDimSize(1 - expectedKAxis) == 1
+             || offsetsTy.getDimSize(expectedKAxis) == 1)) {
     expDimOp = offsets.getDefiningOp<triton::ExpandDimsOp>();
     if (!expDimOp) {
       addi = offsets.getDefiningOp<arith::AddIOp>();
@@ -920,7 +1018,7 @@ private:
           argIdx, "bishengir.scratch_k_axis");
       expectedKAxis =
           axisAttr ? static_cast<int>(axisAttr.getInt()) : expectedKAxis;
-      auto acc = matchScratchAccess(ptrTensor, expectedKAxis);
+      auto acc = matchScratchAccess(op, ptrTensor, expectedKAxis);
       if (!acc) {
         LLVM_DEBUG({
           llvm::dbgs() << "[LowerDotBuffersAndSharedMem] FAILED match on op:\n";

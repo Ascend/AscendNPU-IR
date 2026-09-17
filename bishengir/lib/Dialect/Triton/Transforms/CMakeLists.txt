@@ -15,6 +15,7 @@ if(BISHENGIR_ENABLE_TRITON_COMPILE)
     OptimizeLayoutsAnalysis.cpp
     OptimizeLoads.cpp
     RemoveAnnotationMark.cpp
+    RewriteSliceOpToMemoryOps.cpp
     RewriteSliceOpToTriton.cpp
     SetBishengirSimtOptAttr.cpp
     SetAllowGlobalScratchAttr.cpp
@@ -22,6 +23,7 @@ if(BISHENGIR_ENABLE_TRITON_COMPILE)
     SIMTAutoBlockify.cpp
     SIMTFastDiv.cpp
     LoopRestructureArangeOptimization.cpp
+    LowerRemainingTensorDialect.cpp
     EnableAscendDPXMMA.cpp
     LowerDotBuffersAndSharedMem.cpp
     FlattenMemDescArgs.cpp

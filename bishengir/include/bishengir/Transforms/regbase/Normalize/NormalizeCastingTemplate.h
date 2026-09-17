@@ -201,9 +201,14 @@ public:
         !isa<ShapedType>(input.getType()))
       return rewriter.notifyMatchFailure(
           castOp, "either round mode or datatype is not supported!");
-    Value castedVal = Traits::createCastOp(rewriter, castOp.getLoc(), input,
-                                           getElementTypeOrSelf(dstTy),
-                                           castOp.getRoundMode());
+    bool integerCast = getElementTypeOrSelf(srcTy).isInteger() &&
+                       getElementTypeOrSelf(dstTy).isInteger();
+    auto castType = Traits::mapCastSignKind(integerCast ? CastSignKind::Preserve
+                                                        : CastSignKind::Signed,
+                                            castOp.getCast());
+    Value castedVal = Traits::createCastOp(
+        rewriter, castOp.getLoc(), input, getElementTypeOrSelf(dstTy),
+        castOp.getRoundMode(), castType, Traits::getCastUnsignedMode(castOp));
 
     Value emptyTensor =
         utils::createEmptyOp(rewriter, castOp.getLoc(), castOp.getDpsInits()[0]);
@@ -263,10 +268,14 @@ public:
                                         pointSrcTensorType);
     Value pointTensor =
         Traits::createFillOp(rewriter, castOp.getLoc(), input, pointSrcTensor);
-    Value castedVal = Traits::createCastOp(rewriter, castOp.getLoc(),
-                                           pointTensor,
-                                           getElementTypeOrSelf(dstTy),
-                                           castOp.getRoundMode());
+    bool integerCast = getElementTypeOrSelf(src.getType()).isInteger() &&
+                       getElementTypeOrSelf(dstTy).isInteger();
+    auto castType = Traits::mapCastSignKind(integerCast ? CastSignKind::Preserve
+                                                        : CastSignKind::Signed,
+                                            castOp.getCast());
+    Value castedVal = Traits::createCastOp(
+        rewriter, castOp.getLoc(), pointTensor, getElementTypeOrSelf(dstTy),
+        castOp.getRoundMode(), castType, Traits::getCastUnsignedMode(castOp));
 
     Value emptyTensor =
         utils::createEmptyOp(rewriter, castOp.getLoc(), castOp.getDpsInits()[0]);
@@ -329,6 +338,20 @@ struct NormalizeTruncfBf16Template : public OpRewritePattern<TruncFOpType> {
       return failure();
     if (Traits::isInsideDialectCast(*op))
       return failure();
+
+    // Fold constants before scalarizing through a length-1 tensor.  Keeping
+    // the tensor cast for a constant can materialize a global tensor during
+    // bufferization.  If the value crosses an outlined SIMD/SIMT boundary,
+    // that leaves a tensor arith.truncf in the SIMD module, which cannot be
+    // lowered by the RegBase backend.
+    if (auto constantOp = src.template getDefiningOp<arith::ConstantOp>()) {
+      if (auto floatAttr = dyn_cast<FloatAttr>(constantOp.getValue())) {
+        auto foldedAttr = rewriter.getFloatAttr(
+            dstType, floatAttr.getValue().convertToDouble());
+        rewriter.replaceOpWithNewOp<arith::ConstantOp>(op, dstType, foldedAttr);
+        return success();
+      }
+    }
 
     Value result = Traits::castScalarThroughTensor(rewriter, op.getLoc(), src,
                                                    dstType);

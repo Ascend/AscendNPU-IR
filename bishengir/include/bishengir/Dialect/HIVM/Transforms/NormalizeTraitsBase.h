@@ -64,7 +64,9 @@ public:
   /// encoding for the requested element types.
   static Value createCastOp(PatternRewriter &rewriter, Location loc,
                             Value input, Type targetElemType,
-                            std::optional<RoundMode> roundMode = std::nullopt);
+                            std::optional<RoundMode> roundMode = std::nullopt,
+                            TypeFn castType = TypeFn::cast_signed,
+                            UnsignedMode unsignedMode = UnsignedMode::SI2SI);
 
   /// Create a dialect cast from a normalize-template abstract round kind.
   static Value createCastOp(PatternRewriter &rewriter, Location loc,
@@ -117,6 +119,8 @@ public:
 
   static bool matchCastUnsignedMode(VCastOp op, CastUnsignedModeKind kind);
 
+  static UnsignedMode getCastUnsignedMode(VCastOp op);
+
   static TypeFn mapCastSignKind(CastSignKind kind, TypeFn preserveTypeFn);
 
   static RoundMode mapCastRoundKind(CastRoundKind kind,
@@ -138,8 +142,10 @@ public:
       bool enableSaturate = false,
       CastUnsignedModeKind unsignedModeKind = CastUnsignedModeKind::Preserve);
 
-  static Value castScalarThroughTensor(PatternRewriter &rewriter, Location loc,
-                                       Value scalar, Type dstType);
+  static Value
+  castScalarThroughTensor(PatternRewriter &rewriter, Location loc, Value scalar,
+                          Type dstType, TypeFn castType = TypeFn::cast_signed,
+                          UnsignedMode unsignedMode = UnsignedMode::SI2SI);
   static Value createSelectOp(PatternRewriter &rewriter, Location loc,
                               Value cond, Value a, Value b, Value dst);
 
