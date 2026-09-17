@@ -9,6 +9,7 @@ file(GLOB HIVM_LIBRARY_FUNCTION ${CMAKE_CURRENT_SOURCE_DIR}/LibraryFunctionOpInt
 file(GLOB HIVM_PIPE ${CMAKE_CURRENT_SOURCE_DIR}/OpPipeInterface/*.cpp)
 file(GLOB HIVM_VECTOR_BASE ${CMAKE_CURRENT_SOURCE_DIR}/VectorOpBase/*.cpp)
 file(GLOB HIVM_VECTORIZE ${CMAKE_CURRENT_SOURCE_DIR}/Vectorize/*.cpp)
+file(GLOB HIVM_CONTRACT ${CMAKE_CURRENT_SOURCE_DIR}/Contracts/*.cpp)
 file(GLOB HIVM_CANONICALIZATIONS ${CMAKE_CURRENT_SOURCE_DIR}/Canonicalizations/*.cpp)
 file(GLOB HIVM_CUSTOM_OP ${CMAKE_CURRENT_SOURCE_DIR}/CustomOp/*.cpp)
 file(GLOB HIVM_VECTORIZE ${CMAKE_CURRENT_SOURCE_DIR}/Vectorize/*.cpp)
@@ -35,6 +36,7 @@ add_bishengir_dialect_library(BiShengIRHIVMDialect
   HIVMImpl.cpp
   HIVMInterfaces.cpp
   HIVMIntrinOps.cpp
+  ${HIVM_CONTRACT}
 
   HIVMMacroOps.cpp
   HIVMOps.cpp
@@ -54,6 +56,7 @@ add_bishengir_dialect_library(BiShengIRHIVMDialect
   ${MLIR_MAIN_INCLUDE_DIR}/bishengir/Dialect/HIVM/Utils
 
   DEPENDS
+  BiShengIRFixpipePreQuantContractIncGen
   BiShengIRHIVMIncGen
   BiShengIRHIVMEnumsIncGen
   BiShengIRHIVMAttributesIncGen

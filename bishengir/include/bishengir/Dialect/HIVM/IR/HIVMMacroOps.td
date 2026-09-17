@@ -78,6 +78,12 @@ class HIVM_LocalMmadLikeOperandDags {
     Arg<TensorOrMemref, "Matrix C">:$c
   );
 
+  // MmadL1 contract: C must be shaped F32/I32 (kept out of mmadCommonC,
+  // which is shared with MmadL0Op and must stay unconstrained).
+  dag mmadCommonCL1 = (ins
+    Arg<ShapedTypeOf<[F32, I32]>, "Matrix C">:$c
+  );
+
   dag mmadCommonUnitFlagCond = (ins
     Arg<Variadic<I1>, [{
       An optional condition to enable unit-flag mode,
@@ -143,11 +149,12 @@ class HIVM_L1MmadOp<string mnemonic, list<Trait> traits = []> :
   HIVM_MacroOp<mnemonic, !listconcat(
     [HIVMLocalMatmulLikeOpTraits,
      HIVMUnitFlagEnabledInterface,
+     AllElementTypesMatch<["a", "b"]>,
     ], traits)> {
   let arguments = !con(
     HIVM_LocalMmadLikeOperands.mmadCommonAB,
     HIVM_LocalMmadLikeOperands.localMmadLikeArgs,
-    HIVM_LocalMmadLikeOperands.mmadCommonC,
+    HIVM_LocalMmadLikeOperands.mmadCommonCL1,
     HIVM_LocalMmadLikeOperands.localMmadLikeSyncArgs,
     HIVM_LocalMmadLikeOperands.mmadCommonUnitFlagCond,
     (ins Optional<TensorOrMemref>:$per_channel_bias),
@@ -155,7 +162,7 @@ class HIVM_L1MmadOp<string mnemonic, list<Trait> traits = []> :
     HIVM_LocalMmadLikeOperands.mmadCommonEnableAttrs,
     HIVM_LocalMmadLikeOperands.mmadCommonUnitFlagAttrs
   );
-  let results = (outs Variadic<AnyRankedTensor>:$result_tensors);
+  let results = (outs Variadic<RankedTensorOf<[F32, I32]>>:$result_tensors);
   code localMmadBaseDecls = [{
     // Implement functions necessary for DestinationStyleOpInterface.
     ::mlir::MutableOperandRange getDpsInitsMutable() {

@@ -16,6 +16,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/HIVM/IR/Contracts/FixpipePreQuantContract.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMInterfaces.h"
@@ -1336,6 +1337,16 @@ ParseResult FixpipeOp::parse(::mlir::OpAsmParser &parser,
 }
 
 LogicalResult FixpipeOp::verify() {
+  // The pre-quant mode's src/dst element-type contract is target-independent
+  // and generated from the typed enum-case metadata. It runs before any
+  // target-aware check.
+  Type srcElementType = getElementTypeOrSelf(getSrc().getType());
+  Type dstElementType = getElementTypeOrSelf(getDst().getType());
+  if (failed(verifyFixpipePreQuantSignature(getPreQuant(), srcElementType,
+                                            dstElementType,
+                                            [&] { return emitOpError(); })))
+    return failure();
+
   auto moduleOp = this->getOperation()->getParentOfType<mlir::ModuleOp>();
   bool isAscend950 = moduleOp && hacc::utils::isAscend950(moduleOp);
   bool is910_95 = moduleOp && hacc::utils::isAscend910_95(moduleOp);

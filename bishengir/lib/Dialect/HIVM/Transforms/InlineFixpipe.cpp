@@ -22,6 +22,7 @@
 #include "bishengir/Config/bishengir-config.h"
 #include "bishengir/Conversion/Passes.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/HIVM/IR/Contracts/FixpipePreQuantContract.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
@@ -986,13 +987,21 @@ static SmallVector<hivm::VCastOp> collectVCastChain(hivm::VCastOp firstCast) {
 
 static std::optional<FixpipePreQuantMode>
 getQuantModeForTypes(Type inputType, Type outputType) {
-  if (inputType.isF32() && outputType.isF16())
-    return symbolizeFixpipePreQuantMode("F322F16");
-  if (inputType.isF32() && outputType.isBF16())
-    return symbolizeFixpipePreQuantMode("F322BF16");
-  if (inputType.isInteger(32) && outputType.isInteger(8))
-    return symbolizeFixpipePreQuantMode("S322I8");
-  return std::nullopt;
+  // Candidates come from the generated pre-quant type contract. InlineFixpipe
+  // only fuses type-changing quantizing modes: a signature with several
+  // candidates (f32 -> f32 matches both NO_QUANT and QF322F32_PRE) or with
+  // only identity candidates is deliberately not fused.
+  SmallVector<FixpipePreQuantMode> candidates =
+      getFixpipePreQuantCandidates(inputType, outputType);
+  // NO_QUANT describes identity signatures and is not an explicit quantizing
+  // fusion choice.
+  llvm::erase(candidates, FixpipePreQuantMode::NO_QUANT);
+  if (candidates.size() != 1)
+    return std::nullopt;
+  FixpipePreQuantMode mode = candidates.front();
+  if (mode == FixpipePreQuantMode::QF322F32_PRE)
+    return std::nullopt;
+  return mode;
 }
 
 /// True when \p inputType -> \p outputType is an integer bit-width narrowing.

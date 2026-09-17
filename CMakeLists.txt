@@ -164,6 +164,7 @@ set(BISHENGIR_TARGET_SPEC_TABLEGEN_TARGET
     CACHE INTERNAL "")
 
 add_subdirectory(bishengir/tools/bishengir-options-tblgen)
+add_subdirectory(bishengir/tools/bishengir-hivm-ir-contract-tblgen)
 set(BISHENGIR_OPTIONS_TABLEGEN_EXE
     "${BISHENGIR_OPTIONS_TABLEGEN_EXE}"
     CACHE INTERNAL "")

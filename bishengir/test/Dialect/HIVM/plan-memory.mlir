@@ -2598,41 +2598,37 @@ func.func @test_reuse_l0C(%arg0: memref<128x128xf16, #hivm.address_space<gm>>, %
   hivm.hir.load ins(%arg1 : memref<128x128xf16, #hivm.address_space<gm>>) outs(%alloc_0 : memref<128x128xf16, #hivm.address_space<cbuf>>)
   // CHECK: scf.for
   scf.for %arg3 = %c0 to %c64 step %c1 {
-    // CHECK: {{.*}} = hivm.hir.pointer_cast(%[[CONST0:.*]], %[[CONST1:.*]])
-    // CHECK-NOT: {{.*}} = hivm.hir.pointer_cast(%[[CONST0]], %[[CONST1]])
+    // CHECK: {{.*}} = hivm.hir.pointer_cast(%[[CONST0:.*]])
+    // CHECK-NOT: {{.*}} = hivm.hir.pointer_cast(%[[CONST0]])
     scf.if %arg2 {
-      %alloc_2 = memref.alloc() {alignment = 64 : i64} : memref<128x128xf16, #hivm.address_space<cc>>
-      annotation.mark %alloc_2 {hivm.multi_buffer = 2 : i32} : memref<128x128xf16, #hivm.address_space<cc>>
+      %alloc_2 = memref.alloc() {alignment = 64 : i64} : memref<128x128xf32, #hivm.address_space<cc>>
       hivm.hir.mmadL1 ins(%alloc, %alloc_0, %arg2, %c128, %c128, %c128 :
                           memref<128x128xf16, #hivm.address_space<cbuf>>, memref<128x128xf16, #hivm.address_space<cbuf>>, i1, index, index, index)
-                    outs(%alloc_2 : memref<128x128xf16, #hivm.address_space<cc>>)
-      hivm.hir.fixpipe ins(%alloc_2 : memref<128x128xf16, #hivm.address_space<cc>>) outs(%arg0 : memref<128x128xf16, #hivm.address_space<gm>>)
+                    outs(%alloc_2 : memref<128x128xf32, #hivm.address_space<cc>>)
+      hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%alloc_2 : memref<128x128xf32, #hivm.address_space<cc>>) outs(%arg0 : memref<128x128xf16, #hivm.address_space<gm>>)
     }
     scf.if %arg2 {
-      %alloc_2 = memref.alloc() {alignment = 64 : i64} : memref<128x128xf16, #hivm.address_space<cc>>
-      annotation.mark %alloc_2 {hivm.multi_buffer = 2 : i32} : memref<128x128xf16, #hivm.address_space<cc>>
+      %alloc_2 = memref.alloc() {alignment = 64 : i64} : memref<128x128xf32, #hivm.address_space<cc>>
       hivm.hir.mmadL1 ins(%alloc, %alloc_0, %arg2, %c128, %c128, %c128 :
                           memref<128x128xf16, #hivm.address_space<cbuf>>, memref<128x128xf16, #hivm.address_space<cbuf>>, i1, index, index, index)
-                    outs(%alloc_2 : memref<128x128xf16, #hivm.address_space<cc>>)
-      hivm.hir.fixpipe ins(%alloc_2 : memref<128x128xf16, #hivm.address_space<cc>>) outs(%arg0 : memref<128x128xf16, #hivm.address_space<gm>>)
+                    outs(%alloc_2 : memref<128x128xf32, #hivm.address_space<cc>>)
+      hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%alloc_2 : memref<128x128xf32, #hivm.address_space<cc>>) outs(%arg0 : memref<128x128xf16, #hivm.address_space<gm>>)
     }
   }
   // CHECK: scf.for
   scf.for %arg3 = %c0 to %c64 step %c1 {
-    // CHECK: {{.*}} = hivm.hir.pointer_cast(%[[CONST0:.*]], %[[CONST1:.*]])
-    // CHECK-NOT: {{.*}} = hivm.hir.pointer_cast(%[[CONST0]], %[[CONST1]])
-    %alloc_1 = memref.alloc() {alignment = 64 : i64} : memref<128x128xf16, #hivm.address_space<cc>>
-    annotation.mark %alloc_1 {hivm.multi_buffer = 2 : i32} : memref<128x128xf16, #hivm.address_space<cc>>
+    // CHECK: {{.*}} = hivm.hir.pointer_cast(%[[CONST1:.*]])
+    // CHECK-NOT: {{.*}} = hivm.hir.pointer_cast(%[[CONST1]])
+    %alloc_1 = memref.alloc() {alignment = 64 : i64} : memref<128x128xf32, #hivm.address_space<cc>>
     hivm.hir.mmadL1 ins(%alloc, %alloc_0, %arg2, %c128, %c128, %c128 :
                         memref<128x128xf16, #hivm.address_space<cbuf>>, memref<128x128xf16, #hivm.address_space<cbuf>>, i1, index, index, index)
-                  outs(%alloc_1 : memref<128x128xf16, #hivm.address_space<cc>>)
-    hivm.hir.fixpipe ins(%alloc_1 : memref<128x128xf16, #hivm.address_space<cc>>) outs(%arg0 : memref<128x128xf16, #hivm.address_space<gm>>)
-    %alloc_2 = memref.alloc() {alignment = 64 : i64} : memref<128x128xf16, #hivm.address_space<cc>>
-    annotation.mark %alloc_2 {hivm.multi_buffer = 2 : i32} : memref<128x128xf16, #hivm.address_space<cc>>
+                  outs(%alloc_1 : memref<128x128xf32, #hivm.address_space<cc>>)
+    hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%alloc_1 : memref<128x128xf32, #hivm.address_space<cc>>) outs(%arg0 : memref<128x128xf16, #hivm.address_space<gm>>)
+    %alloc_2 = memref.alloc() {alignment = 64 : i64} : memref<128x128xf32, #hivm.address_space<cc>>
     hivm.hir.mmadL1 ins(%alloc, %alloc_0, %arg2, %c128, %c128, %c128 :
                         memref<128x128xf16, #hivm.address_space<cbuf>>, memref<128x128xf16, #hivm.address_space<cbuf>>, i1, index, index, index)
-                  outs(%alloc_2 : memref<128x128xf16, #hivm.address_space<cc>>)
-    hivm.hir.fixpipe ins(%alloc_2 : memref<128x128xf16, #hivm.address_space<cc>>) outs(%arg0 : memref<128x128xf16, #hivm.address_space<gm>>)
+                  outs(%alloc_2 : memref<128x128xf32, #hivm.address_space<cc>>)
+    hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%alloc_2 : memref<128x128xf32, #hivm.address_space<cc>>) outs(%arg0 : memref<128x128xf16, #hivm.address_space<gm>>)
   }
   return
 }
