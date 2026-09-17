@@ -991,7 +991,11 @@ public:
       if (isDistributedTypeCustomOp(op.getOperation()) &&
           op->getNumResults() > op.getOutputs().size())
         return failure();
-      if (!op.getGMAddrArgsIndices())
+      // Builtin canonicalization materializes an empty list for UB-only
+      // customs. Presence alone does not imply a GM side effect: guarding an
+      // NZ softmax here would skip the second AIV's independent row slice.
+      auto gmArgs = op.getGMAddrArgsIndices();
+      if (!gmArgs || gmArgs->empty())
         return failure();
     }
 

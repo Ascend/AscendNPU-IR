@@ -2567,38 +2567,32 @@ module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
 
 // -----
 
-// A CustomOp with a transposing indexing_map `(d0, d1) -> (d1, d0)` on its
-// input. isSupportedOperation rejects non-order-preserving maps (AffineDimExpr
-// positions must be strictly increasing), so the slice cannot bubble through and
-// the Store rolls back and receives `limit_sub_block_id0`.
-// Regression guard: the transpose map previously passed (only AffineDimExpr, no
-// duplicates) and the Pass tiled it — locked here.
+// A transposed input uses the same logical row window as its result.
+// The input slices columns while the output slices rows; the other parallel
+// dimension remains full.
 // CHECK-DAG: #[[$TRANSPOSE_IDENTITY_MAP:[A-Za-z0-9_]+]] = affine_map<(d0, d1) -> (d0, d1)>
 // CHECK-DAG: #[[$TRANSPOSE_INPUT_MAP:[A-Za-z0-9_]+]] = affine_map<(d0, d1) -> (d1, d0)>
-// CHECK-LABEL: func.func @custom_transpose_reject
-// CHECK-NOT: {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
-// CHECK-NOT: tensor.extract_slice
-// CHECK-NOT: memref.subview
-// CHECK: %[[FALLBACK_RESULT:.*]] = hivm.hir.custom
+// CHECK-LABEL: func.func @custom_transpose_tiling
+// CHECK: scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} {
+// CHECK: memref.subview %{{[A-Za-z0-9_]+}}[0, %[[TRANSPOSE_OFFSET:[A-Za-z0-9_]+]]] [16, 8] [1, 1]
+// CHECK: %[[TRANSPOSE_RESULT:.*]] = hivm.hir.custom
 // CHECK-SAME: indexing_map = [#[[$TRANSPOSE_INPUT_MAP]], #[[$TRANSPOSE_IDENTITY_MAP]]]
 // CHECK-SAME: iterator_types = [#hivm.iterator_type<parallel>, #hivm.iterator_type<parallel>]
 // CHECK-SAME: "user.transpose"
-// CHECK-SAME: ins(%{{[A-Za-z0-9_]+}} : tensor<16x16xf16>)
-// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : tensor<16x16xf16>)
-// CHECK-SAME: -> tensor<16x16xf16>
-// CHECK: scf.if
+// CHECK-SAME: ins(%{{[A-Za-z0-9_]+}} : tensor<16x8xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : tensor<8x16xf16>)
+// CHECK-SAME: -> tensor<8x16xf16>
+// CHECK: memref.subview %{{[A-Za-z0-9_]+}}[%[[TRANSPOSE_OFFSET]], 0] [8, 16] [1, 1]
 // CHECK: hivm.hir.store
-// CHECK-SAME: ins(%[[FALLBACK_RESULT]] : tensor<16x16xf16>)
-// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : memref<16x16xf16{{.*}}>)
-// CHECK: } {limit_sub_block_id0}
-// CHECK-NOT: tensor.extract_slice
-// CHECK-NOT: memref.subview
+// CHECK-SAME: ins(%[[TRANSPOSE_RESULT]] : tensor<8x16xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : memref<8x16xf16{{.*}}>)
+// CHECK: } {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
 // CHECK-NOT: {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
 // CHECK: return
 #map_transpose_identity = affine_map<(d0, d1) -> (d0, d1)>
 #map_transpose_input = affine_map<(d0, d1) -> (d1, d0)>
 module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
-  func.func @custom_transpose_reject(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf16> {tt.divisibility = 16 : i32}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32}) attributes {WorkspaceArgIdx = 0 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+  func.func @custom_transpose_tiling(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf16> {tt.divisibility = 16 : i32}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32}) attributes {WorkspaceArgIdx = 0 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
     hivm.hir.set_ffts_base_addr %arg0
     hivm.hir.set_mask_norm
     %init = tensor.empty() : tensor<16x16xf16>
