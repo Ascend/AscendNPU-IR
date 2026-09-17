@@ -452,6 +452,10 @@ static void hivmPreBufferizationOptimizationPipeline(
   pm.nest<func::FuncOp>().addPass(createMarkTightlyCoupledBufferPass());
   pm.nest<func::FuncOp>().addPass(createHoistTightlyCoupledAllocPass());
 
+  // Post-CVPipelining sink on the unsplit MIX function. SplitMixKernel
+  // then clones placement onto backup / AIC / AIV.
+  pm.addPass(createSinkExclusivePreloadWorkPass());
+
   // Cross-Core Auto-Sync passes STEP=1
   hivmCrossCoreAutoSyncPipeline(pm, hivmPipelineOptions,
                                 CrossCoreAutoSyncMode::CCGSS_STEP_1);

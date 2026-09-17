@@ -809,6 +809,19 @@ def MergeSamePreloadScopes : Pass<"hivm-merge-same-preload-scopes", "ModuleOp"> 
   ];
 }
 
+def SinkExclusivePreloadWork : Pass<"hivm-sink-exclusive-preload-work", "ModuleOp"> {
+  let summary = "Sink mb=1 preload-local allocs after CVPipelining on the unsplit MIX function.";
+  let constructor = "mlir::hivm::createSinkExclusivePreloadWorkPass()";
+  let dependentDialects = [
+    "scope::ScopeDialect",
+    "func::FuncDialect",
+    "hivm::HIVMDialect",
+    "scf::SCFDialect",
+    "annotation::AnnotationDialect",
+    "memref::MemRefDialect"
+  ];
+}
+
 def MarkRealCoreType : Pass<"hivm-mark-real-core-type", "ModuleOp"> {
   let summary = "Mark scalar operations with core-type attribute.";
   let constructor = "mlir::hivm::createMarkRealCoreTypePass()";
