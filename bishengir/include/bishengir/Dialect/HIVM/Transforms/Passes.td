@@ -1343,7 +1343,11 @@ def CVPipelining : Pass<"cv-pipelining", "func::FuncOp"> {
                  Option<"enableLazyLoading", "enable-lazy-loading", "bool",
                         /*default=*/"false",
                         "Allow load ops to be cloned into multiple work items "
-                        "to reduce intermediate buffer expansion">];
+                        "to reduce intermediate buffer expansion">,
+                 Option<"bypassShapeRegistry", "bypass-shape-registry", "bool",
+                        /*default=*/"false",
+                        "Bypass shape registry check for loop-carried tensor "
+                        "skewing">];
 }
 
 def AutoBlockifyParallelLoop

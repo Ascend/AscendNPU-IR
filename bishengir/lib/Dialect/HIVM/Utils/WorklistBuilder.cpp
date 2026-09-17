@@ -235,22 +235,21 @@ static Value unwrapTensorViews(Value val) {
   return val;
 }
 
-static bool isCastingLoadResult(Operation *op) {
-  auto vcast = dyn_cast_or_null<VCastOp>(op);
+static Operation *getLoadOpFeedingVCast(VCastOp vcast) {
   if (!vcast)
-    return false;
+    return nullptr;
   Value inVal = vcast.getDpsInputOperand(0)->get();
   inVal = unwrapTensorViews(inVal);
   if (!inVal)
-    return false;
+    return nullptr;
   Operation *def = inVal.getDefiningOp();
   if (!def)
-    return false;
+    return nullptr;
   if (isLoadLikeOp(def))
-    return true;
+    return def;
   auto toTensor = dyn_cast<bufferization::ToTensorOp>(def);
   if (!toTensor)
-    return false;
+    return nullptr;
   Value memref = toTensor.getMemref();
   Value root = traceValueDef(memref);
   if (!root)
@@ -267,9 +266,9 @@ static bool isCastingLoadResult(Operation *op) {
           if (llvm::any_of(dps.getDpsInits(), [&](Value init) {
                 return traceValueDef(init) == root;
               }))
-            return true;
+            return curr;
         } else {
-          return true;
+          return curr;
         }
       }
       for (Value res : curr->getResults()) {
@@ -280,7 +279,12 @@ static bool isCastingLoadResult(Operation *op) {
       }
     }
   }
-  return false;
+  return nullptr;
+}
+
+static bool isCastingLoadResult(Operation *op) {
+  auto vcast = dyn_cast_or_null<VCastOp>(op);
+  return vcast && getLoadOpFeedingVCast(vcast) != nullptr;
 }
 
 static bool isVCastDowncast(VCastOp vcast) {
@@ -307,10 +311,39 @@ static bool isVCastUpcast(VCastOp vcast) {
   return inType.getIntOrFloatBitWidth() < outType.getIntOrFloatBitWidth();
 }
 
-static bool shouldDelayCoreOp(Operation *op) {
+bool WorklistBuilder::hasStoreToSameBuffer(VCastOp vcast) {
+  if (!scopeOp)
+    return false;
+  Operation *loadOp = getLoadOpFeedingVCast(vcast);
+  if (!loadOp)
+    return false;
+  Value src;
+  if (auto load = dyn_cast<LoadOp>(loadOp))
+    src = load.getSrc();
+  else if (auto nd2nz = dyn_cast<ND2NZOp>(loadOp))
+    src = nd2nz.getSrc();
+  else
+    return false;
+  Value gmRoot = traceValueDef(src);
+  if (!gmRoot)
+    return false;
+  bool foundStore = false;
+  scopeOp->walk([&](StoreOp store) {
+    if (traceValueDef(store.getDst()) == gmRoot) {
+      foundStore = true;
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
+  });
+  return foundStore;
+}
+
+bool WorklistBuilder::shouldDelayCoreOp(Operation *op) {
   if (!op)
     return false;
   if (auto vcast = dyn_cast<VCastOp>(op)) {
+    if (hasStoreToSameBuffer(vcast))
+      return false;
     if (isCastingLoadResult(vcast))
       return true;
     if (isVCastDowncast(vcast))
@@ -428,7 +461,7 @@ static bool illegalRegionedOp(Operation &op, bool isLoopMode) {
 
   if (isLoopMode && !hasCube && !hasVector &&
       op.walk([](DebugOp) { return WalkResult::interrupt(); }).wasInterrupted())
-      hasVector = true;
+    hasVector = true;
 
   auto unit = UnitAttr::get(op.getContext());
   if (hasCube)
@@ -980,8 +1013,9 @@ void WorklistBuilder::populateLoopCarriedDependencies() {
 
   if (!useLcdBackup) {
     loopCarriedDependenceMap.clear();
-    for (auto [iterArg, yieldedVal] : llvm::zip(
-             pipelineLoop.getRegionIterArgs(), pipelineLoop.getYieldedValues())) {
+    for (auto [iterArg, yieldedVal] :
+         llvm::zip(pipelineLoop.getRegionIterArgs(),
+                   pipelineLoop.getYieldedValues())) {
       SmallVector<Operation *> userTraceStack;
       for (Operation *user : iterArg.getUsers()) {
         Operation *scopedUsr = getContainedParent(scopeOp, *user);
@@ -1043,7 +1077,8 @@ void WorklistBuilder::populateLoopCarriedDependencies() {
       for (Operation *user : res.getUsers())
         pushScopedUser(user);
 
-    // Follow memref writes if DPS op or copy (including nested ops inside region ops)
+    // Follow memref writes if DPS op or copy (including nested ops inside
+    // region ops)
     op->walk([&](Operation *nestedOp) {
       if (auto dps = dyn_cast<DestinationStyleOpInterface>(nestedOp)) {
         for (Value init : dps.getDpsInits()) {
@@ -1474,7 +1509,8 @@ WorklistBuilder::extractAvailableOps(SmallVector<Operation *> &extractedOps,
       if (maybeCore == hivm::TCoreType::CUBE_OR_VECTOR) {
         if (!isCoreOp(op) || isLoadLikeOp(&op))
           continue;
-        maybeCore = queryCoreTypeHelper(&op).value_or(TCoreType::CUBE_OR_VECTOR);
+        maybeCore =
+            queryCoreTypeHelper(&op).value_or(TCoreType::CUBE_OR_VECTOR);
         if (maybeCore != TCoreType::VECTOR && isCrossCoreCopy(&op))
           maybeCore = TCoreType::VECTOR;
         if (!isLoopMode && maybeCore == TCoreType::CUBE_OR_VECTOR)
@@ -1848,11 +1884,12 @@ FailureOr<WorklistBuildResult> WorklistBuilder::build() {
     if (wi0Idx != -1 && wi1Idx != -1) {
       auto &wi0 = worklist[wi0Idx];
       auto &wi1 = worklist[wi1Idx];
-      int wi0CoreOps = llvm::count_if(
-          wi0->ops, [](Operation *op) { return isCoreOp(*op); });
+      int wi0CoreOps =
+          llvm::count_if(wi0->ops, [](Operation *op) { return isCoreOp(*op); });
       // HACK: Merging WI0 into WI1 when WI0 has fewer than 3 core ops is a
       // temporary heuristic to avoid excessive pipeline stages and reduce
-      // preload depth when WI0 has insufficient work to justify a separate stage.
+      // preload depth when WI0 has insufficient work to justify a separate
+      // stage.
       if (wi0CoreOps < 3 && wi1->core == wi0->core) {
         for (Operation *op : wi0->ops) {
           wi1->ops.insert(op);

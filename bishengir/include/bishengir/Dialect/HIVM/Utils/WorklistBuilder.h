@@ -22,13 +22,13 @@
 //===----------------------------------------------------------------------===//
 #ifndef BISHENGIR_DIALECT_HIVM_UTILS_WORKLISTBUILDER_H
 #define BISHENGIR_DIALECT_HIVM_UTILS_WORKLISTBUILDER_H
-#include "bishengir/Dialect/HIVM/Utils/WorkItem.h"
-#include <memory>
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/Utils/WorkItem.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include <memory>
 
 namespace mlir {
 namespace hivm {
@@ -65,7 +65,8 @@ struct WorklistBuildResult {
   int resolvedMultibuffer;
 
   /// Tracked workspace allocations and their associated operations.
-  DenseMap<bishengir::memref_ext::AllocWorkspaceOp, WorkspaceAllocParams> workspaceAllocs;
+  DenseMap<bishengir::memref_ext::AllocWorkspaceOp, WorkspaceAllocParams>
+      workspaceAllocs;
 };
 
 /// Partitions operations into WorkItems grouped by core type (CUBE vs VECTOR).
@@ -176,6 +177,14 @@ private:
   /// Non-fatal.
   void diagnoseLazyLoadHints();
 
+  /// Determine whether a core op should be delayed from being extracted as a
+  /// seed.
+  bool shouldDelayCoreOp(Operation *op);
+
+  /// Check whether the input vcast casts a load from a GM buffer that also has
+  /// a StoreOp within the current scope.
+  bool hasStoreToSameBuffer(VCastOp vcast);
+
   // Block to scan for ops.
   Block *targetBlock = nullptr;
   // Scope anchor for ancestor / parent checks:
@@ -192,10 +201,12 @@ private:
   DenseSet<Operation *> toBePipelined;
   SmallVector<Operation *> separators;
 
-  // Counter alloca value -> vector-safe clone advancing it (set by CV pipeline).
+  // Counter alloca value -> vector-safe clone advancing it (set by CV
+  // pipeline).
   DenseMap<Value, Operation *> counterClones;
-  // Use DenseMap with std::unique_ptr<DenseSet> to avoid large inline value-type
-  // overhead during DenseMap hash bucket resizing while maintaining fast lookup.
+  // Use DenseMap with std::unique_ptr<DenseSet> to avoid large inline
+  // value-type overhead during DenseMap hash bucket resizing while maintaining
+  // fast lookup.
   DenseMap<Operation *, std::unique_ptr<DenseSet<Operation *>>> dependenceMap;
   DenseMap<Operation *, std::unique_ptr<DenseSet<Operation *>>>
       loopCarriedDependenceMap;

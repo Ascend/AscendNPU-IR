@@ -71,9 +71,11 @@ struct AtomicEffect {
 
 struct CVPipelineImpl {
   CVPipelineImpl(LoopLikeOpInterface loop, int multibuffer,
-                 CVPipelineMode pipelineMode, bool enableLazyLoading)
+                 CVPipelineMode pipelineMode, bool enableLazyLoading,
+                 bool bypassShapeRegistry = false)
       : pipelineLoop(loop), newLoop(nullptr), builder(loop->getContext()),
         numMultibuffer(multibuffer), pipelineMode(pipelineMode),
+        bypassShapeRegistry(bypassShapeRegistry),
         wlBuilder(cast<scf::ForOp>(loop.getOperation()), multibuffer,
                   enableLazyLoading),
         yieldedVals(loop.getYieldedValues().begin(),
@@ -191,6 +193,9 @@ private:
 
   // Pipeline mode for CV-pipelining.
   CVPipelineMode pipelineMode;
+
+  // Bypass shape registry check for loop-carried tensor skewing.
+  bool bypassShapeRegistry = false;
 
   // Worklist builder — owns dep-tracking machinery, separator/dependence
   // discovery, lazy-load hint surface, and outputMemrefMap. Held as a member
@@ -1136,7 +1141,6 @@ LogicalResult CVPipelineImpl::markOutputs() {
   return success();
 }
 
-
 // Shapes whose carried values may be materialized with skewed multi-buffering.
 #include "SkewShapeTable.inc"
 
@@ -1261,7 +1265,8 @@ LogicalResult CVPipelineImpl::checkWorkItemDependencies() {
   ArrayRef<BlockArgument> iterArgs = pipelineLoop.getRegionIterArgs();
   ValueRange yieldedValues = pipelineLoop.getYieldedValues();
   func::FuncOp carryFunc = pipelineLoop->getParentOfType<func::FuncOp>();
-  llvm::StringRef carryName = carryFunc ? carryFunc.getName() : llvm::StringRef();
+  llvm::StringRef carryName =
+      carryFunc ? carryFunc.getName() : llvm::StringRef();
   for (unsigned pos = 0, e = iterArgs.size(); pos < e; ++pos) {
     BlockArgument iterArg = iterArgs[pos];
     if (!isa<TensorType>(iterArg.getType()))
@@ -1273,15 +1278,18 @@ LogicalResult CVPipelineImpl::checkWorkItemDependencies() {
 
     for (auto [consumerItem, consumerOp] : consumerUses(iterArg)) {
       if (consumerItem != producerItem) {
-        bool hasAnyIndependentItem = llvm::any_of(
-            worklist, [](const auto &item) { return !item->hasLoopCarriedDep; });
-        if (!spanShapeCovered(carryName) || !hasAnyIndependentItem ||
-            pipelineMode == CVPipelineMode::Unroll) {
+        bool hasAnyIndependentItem =
+            llvm::any_of(worklist, [](const auto &item) {
+              return !item->hasLoopCarriedDep;
+            });
+        if ((!bypassShapeRegistry && !spanShapeCovered(carryName)) ||
+            !hasAnyIndependentItem || pipelineMode == CVPipelineMode::Unroll) {
           InFlightDiagnostic diag =
               pipelineLoop->emitWarning()
               << "[cv-pipelining] cannot pipeline loop: loop-carried tensor "
                  "iter_arg #"
-              << pos << " is produced by one work item but consumed by another "
+              << pos
+              << " is produced by one work item but consumed by another "
                  "work item across the iteration boundary; skipping pipelining";
           if (Operation *producerOp = yieldedValues[pos].getDefiningOp())
             diag.attachNote(producerOp->getLoc())
@@ -2148,12 +2156,13 @@ LogicalResult CVPipelineImpl::createNewLoopsForPreloadWithScopes() {
     builder.setInsertionPointToEnd(bodyBlock);
     IRMapping scopeMap(globalIRMap);
 
-    // Critical fix: Remove all block argument mappings from scopeMap before cloning.
-    // If scopeMap contains mappings for block arguments of ForOps we're about to clone,
-    // Region::cloneInto will skip adding those arguments to the cloned block
-    // (see mlir/lib/IR/Region.cpp: "if (!mapper.contains(arg))"),
-    // resulting in ForOps with missing block arguments.
-    // We need to clear these mappings so cloned ForOps get fresh block arguments.
+    // Critical fix: Remove all block argument mappings from scopeMap before
+    // cloning. If scopeMap contains mappings for block arguments of ForOps
+    // we're about to clone, Region::cloneInto will skip adding those arguments
+    // to the cloned block (see mlir/lib/IR/Region.cpp: "if
+    // (!mapper.contains(arg))"), resulting in ForOps with missing block
+    // arguments. We need to clear these mappings so cloned ForOps get fresh
+    // block arguments.
     SmallVector<BlockArgument> argsToErase;
     for (auto it : scopeMap.getValueMap()) {
       if (auto blockArg = dyn_cast<BlockArgument>(it.first))
@@ -2801,7 +2810,7 @@ void CVPipeliningPass::runOnOperation() {
 
     auto parentLoop = loop->getParentOfType<scf::ForOp>();
     CVPipelineImpl impl(loop, this->setDepthInUnrollMode, this->pipelineMode,
-                        this->enableLazyLoading);
+                        this->enableLazyLoading, this->bypassShapeRegistry);
 
     // Mark all parent loops to not attempt pipelining to save compile time
     if (impl.run().succeeded())

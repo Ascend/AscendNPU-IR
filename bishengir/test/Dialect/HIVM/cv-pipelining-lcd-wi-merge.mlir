@@ -1,4 +1,4 @@
-// RUN: bishengir-opt -cv-pipelining="pipeline-mode=skew" -allow-unregistered-dialect -split-input-file %s | FileCheck %s
+// RUN: bishengir-opt -cv-pipelining="pipeline-mode=skew bypass-shape-registry=true" -allow-unregistered-dialect -split-input-file %s | FileCheck %s
 
 // Test 1: Merge last non-LCD work item (WI0, < 3 core ops) with first LCD work item (WI1) of same core type.
 // Stage 0: Independent CUBE stage (mmad + fixpipe) has preload_num = 1.
