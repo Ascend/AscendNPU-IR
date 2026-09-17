@@ -16,6 +16,7 @@
 #include "mlir/Dialect/Vector/Transforms/LoweringPatterns.h"
 #include "mlir/Dialect/Vector/Transforms/VectorRewritePatterns.h"
 #include "mlir/Dialect/Vector/Transforms/VectorTransforms.h"
+#include "mlir/Dialect/Vector/Utils/VectorUtils.h"
 #include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/AffineMap.h"
 #include "mlir/IR/Builders.h"
@@ -991,8 +992,8 @@ class TransferReadToGatheringLoadPattern
     if (!permMap.isPermutation())
       return rewriter.notifyMatchFailure(readop, "unsupported permutation map");
 
-    // we don't touch the ones with (1) identity, (2) broadcast (constant)
-    if (permMap.isIdentity() || permMap.isConstant())
+    // Broadcasts are handled by the existing broadcast lowering.
+    if (permMap.isConstant())
       return failure();
 
     memrefType = dyn_cast<MemRefType>(readop.getSource().getType());
@@ -1048,6 +1049,13 @@ class TransferReadToGatheringLoadPattern
         }
       }
     }
+
+    // Extend identity reads only for 1-D non-contiguous sources. Preserve
+    // the existing multi-dimensional and single-element lowering paths.
+    if (permMap.isIdentity())
+      return success(memrefType.getRank() == 1 &&
+                     memrefType.getNumElements() != 1 &&
+                     !vector::isContiguousSlice(memrefType, destType));
 
     // if transpose dim with 1 mask value
     // no need to change transfer_read to gather
@@ -1264,8 +1272,8 @@ class TransferReadToGatheringLoadPattern
 
   LogicalResult matchAndRewrite(vector::TransferReadOp readop,
                                 PatternRewriter &rewriter) const override {
-    // convert vector.transfer_read with non-identity permutation map
-    // to vector.gather and index computations doing the same operations
+    // Convert permuted or 1-D identity-strided reads using the existing
+    // physical offset computation and gather lowering.
     auto permMap = readop.getPermutationMap();
     MemRefType memrefType;
     VectorType destType;
