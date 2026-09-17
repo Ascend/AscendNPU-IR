@@ -681,19 +681,34 @@ static void hivmPostBufferizationOptimizationPipeline(
   multiBufferOptions.gmMultiBufferNum = 1;
   pm.nest<func::FuncOp>().addPass(
       createMarkMultiBufferPass(multiBufferOptions));
-  PlanMemoryRegBaseOptions planMemoryOption;
-  planMemoryOption.enablePrintMemoryAllocatedSize =
-      hivmPipelineOptions.enablePrintMemoryAllocatedSize;
-  planMemoryOption.simtVFDynamicSize = hivmPipelineOptions.simtVFDynamicSize;
-  planMemoryOption.disableTightlyCoupledBufferReuse =
-      hivmPipelineOptions.disableTightlyCoupledBufferReuse;
-  planMemoryOption.disableVFReachableCheck =
-      hivmPipelineOptions.disableVFReachableCheck;
-  if (hivmPipelineOptions.enableVFOperandSubstitution) {
-    pm.addPass(createVFOperandSubstitutionPass());
+  if (hivmPipelineOptions.setWorkspaceMultibuffer == 0) {
+    if (hivmPipelineOptions.enableVFOperandSubstitution) {
+      pm.addPass(createVFOperandSubstitutionPass());
+    }
+    PlanMemoryRegBaseOptions planMemoryOption;
+    planMemoryOption.enablePrintMemoryAllocatedSize =
+        hivmPipelineOptions.enablePrintMemoryAllocatedSize;
+    planMemoryOption.simtVFDynamicSize = hivmPipelineOptions.simtVFDynamicSize;
+    planMemoryOption.disableTightlyCoupledBufferReuse =
+        hivmPipelineOptions.disableTightlyCoupledBufferReuse;
+    planMemoryOption.disableVFReachableCheck =
+        hivmPipelineOptions.disableVFReachableCheck;
+    planMemoryOption.planMemoryStrategy =
+        hivmPipelineOptions.planMemoryStrategy;
+    pm.addPass(createPlanMemoryRegBasePass(planMemoryOption));
+  } else {
+    PlanMemoryOptions planMemoryOption;
+    planMemoryOption.enableMemoryDisplay =
+        hivmPipelineOptions.enableMemoryDisplay;
+    planMemoryOption.simtVFDynamicSize = hivmPipelineOptions.simtVFDynamicSize;
+    planMemoryOption.disableTightlyCoupledBufferReuse =
+        hivmPipelineOptions.disableTightlyCoupledBufferReuse;
+    planMemoryOption.disableVFReachableCheck =
+        hivmPipelineOptions.disableVFReachableCheck;
+    planMemoryOption.planMemoryStrategy =
+        hivmPipelineOptions.planMemoryStrategy;
+    pm.addPass(createPlanMemoryPass(planMemoryOption));
   }
-  planMemoryOption.planMemoryStrategy = hivmPipelineOptions.planMemoryStrategy;
-  pm.addPass(createPlanMemoryRegBasePass(planMemoryOption));
 
   // Cross-Core Auto-Sync passes STEP=2
   hivmCrossCoreAutoSyncPipeline(pm, hivmPipelineOptions,
