@@ -190,11 +190,11 @@ template <typename T>
 
   if constexpr (sizeof(T) == 1) {
     cumprod_3d_byte<T>(src, dst, reverse);
-  } else {
-    oneway_cumprod_vf<T>(nAddFactor, mFactor, nLoop, src_ptr, start_row_offset,
-                         num_per_reg, dst_ptr, rLoop, reverse, rFactor,
-                         stride0);
+    return;
   }
+
+  oneway_cumprod_vf<T>(nAddFactor, mFactor, nLoop, src_ptr, start_row_offset,
+                       num_per_reg, dst_ptr, rLoop, reverse, rFactor, stride0);
 }
 
 /* =========================================================================

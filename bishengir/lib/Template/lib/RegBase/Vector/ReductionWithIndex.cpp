@@ -28,7 +28,7 @@ template <ReduceOpTy OP, TieBreak TIE_BREAK, typename T0, typename T1,
           typename AlignedHint = __cce_simd::AlignedHint,
           typename Enable = void>
 struct ReduceImpl {
-  __simd_callee__ __aiv__ __attribute__((always_inline)) static void
+  static inline __aiv__ __attribute__((always_inline)) void
   reduce_leading_dim(__ubuf__ T0 *data_UB, __ubuf__ T0 *reduce_val_UB,
                      __ubuf__ int32_t *reduce_idx_UB, uint16_t loop_a,
                      uint16_t dim_a, uint16_t loop_r, uint16_t src_r_stride) {
@@ -91,7 +91,7 @@ struct ReduceImpl {
     }
   }
 
-  __simd_callee__ __aiv__ __attribute__((always_inline)) static void
+  static inline __aiv__ __attribute__((always_inline)) void
   reduce_last_axis_contiguous_vec(
       __ubuf__ T0 *data_UB, __ubuf__ T0 *reduce_val_UB,
       __ubuf__ int32_t *reduce_idx_UB, uint16_t dim_a, uint16_t dim_r,
@@ -173,7 +173,7 @@ struct ReduceImpl {
 template <ReduceOpTy OP, TieBreak TIE_BREAK, typename T0, typename T1>
 struct ReduceImpl<OP, TIE_BREAK, T0, T1, __cce_simd::UnAlignedHint,
                   typename std::enable_if<!isB64Type<T0>>::type> {
-  __simd_callee__ __aiv__ __attribute__((always_inline)) static void
+  static inline __aiv__ __attribute__((always_inline)) void
   reduce_leading_dim(__ubuf__ T0 *data_UB, __ubuf__ T0 *reduce_val_UB,
                      __ubuf__ int32_t *reduce_idx_UB, uint16_t loop_a,
                      uint16_t dim_a, uint16_t loop_r, uint16_t src_r_stride) {
@@ -244,7 +244,7 @@ struct ReduceImpl<OP, TIE_BREAK, T0, T1, __cce_simd::UnAlignedHint,
 #endif
   }
 
-  __simd_callee__ __aiv__ __attribute__((always_inline)) static void
+  static inline __aiv__ __attribute__((always_inline)) void
   reduce_last_axis_contiguous_vec(
       __ubuf__ T0 *data_UB, __ubuf__ T0 *reduce_val_UB,
       __ubuf__ int32_t *reduce_idx_UB, uint16_t dim_a, uint16_t dim_r,
@@ -332,11 +332,10 @@ struct ReduceImpl<OP, TIE_BREAK, T0, T1, __cce_simd::UnAlignedHint,
 };
 
 // i64 Specialized Reduction Template (Aligned/Unaligned)
-template <ReduceOpTy OP, TieBreak TIE_BREAK, typename T0, typename T1,
-          typename AlignedHint>
+template <ReduceOpTy OP, TieBreak TIE_BREAK, typename T0, typename T1, typename AlignedHint>
 struct ReduceImpl<OP, TIE_BREAK, T0, T1, AlignedHint,
                   typename std::enable_if<isB64Type<T0>>::type> {
-  __simd_callee__ __aiv__ __attribute__((always_inline)) static void
+  static inline __aiv__ __attribute__((always_inline)) void
   reduce_leading_dim(__ubuf__ T0 *data_UB, __ubuf__ T0 *reduce_val_UB,
                      __ubuf__ int32_t *reduce_idx_UB, uint16_t loop_a,
                      uint16_t dim_a, uint16_t loop_r, uint16_t src_r_stride) {
@@ -399,7 +398,7 @@ struct ReduceImpl<OP, TIE_BREAK, T0, T1, AlignedHint,
 #endif
   }
 
-  __simd_callee__ __aiv__ __attribute__((always_inline)) static void
+  static inline __aiv__ __attribute__((always_inline)) void
   reduce_last_axis_contiguous_vec(
       __ubuf__ T0 *data_UB, __ubuf__ T0 *reduce_val_UB,
       __ubuf__ int32_t *reduce_idx_UB, uint16_t dim_a, uint16_t dim_r,
@@ -410,7 +409,7 @@ struct ReduceImpl<OP, TIE_BREAK, T0, T1, AlignedHint,
 
     VectorReg<T0> cur_val, acc_val, reduced_val, brc_reduced_val;
     VectorReg<T1> cur_idx, acc_idx, helper_idx, reduced_idx, tmp_idx,
-        tmp_reduced_idx, brc_tmp_reduced_idx;
+                  tmp_reduced_idx, brc_tmp_reduced_idx;
     VectorReg<int32_t> final_idx;
 
     vector_bool full_mask, two_mask, one_mask, cmp_mask;
@@ -651,7 +650,8 @@ reduce_r_with_index(memref_t<__ubuf__ T0, 1> *src0,
   static_assert((OP == ReduceOpTy::REDUCE_MIN_WITH_INDEX ||
                  OP == ReduceOpTy::REDUCE_MAX_WITH_INDEX) &&
                 "reduce_r_with_index do not support this reduce op type");
-  static_assert((TIE_BREAK == TieBreak::LEFT || TIE_BREAK == TieBreak::RIGHT) &&
+  static_assert((TIE_BREAK == TieBreak::LEFT ||
+                 TIE_BREAK == TieBreak::RIGHT) &&
                 "reduce_r_with_index do not support this tie break type");
 
   const int64_t size0 = src0->sizes[0];
@@ -679,7 +679,8 @@ reduce_ar_with_index(memref_t<__ubuf__ T0, 2> *src0,
   static_assert((OP == ReduceOpTy::REDUCE_MIN_WITH_INDEX ||
                  OP == ReduceOpTy::REDUCE_MAX_WITH_INDEX) &&
                 "reduce_r_with_index do not support this reduce op type");
-  static_assert((TIE_BREAK == TieBreak::LEFT || TIE_BREAK == TieBreak::RIGHT) &&
+  static_assert((TIE_BREAK == TieBreak::LEFT ||
+                 TIE_BREAK == TieBreak::RIGHT) &&
                 "reduce_r_with_index do not support this tie break type");
 
   const int64_t size0 = src0->sizes[0];
@@ -720,7 +721,8 @@ reduce_ra_with_index(memref_t<__ubuf__ T0, 2> *src0,
   static_assert((OP == ReduceOpTy::REDUCE_MIN_WITH_INDEX ||
                  OP == ReduceOpTy::REDUCE_MAX_WITH_INDEX) &&
                 "reduce_r_with_index do not support this reduce op type");
-  static_assert((TIE_BREAK == TieBreak::LEFT || TIE_BREAK == TieBreak::RIGHT) &&
+  static_assert((TIE_BREAK == TieBreak::LEFT ||
+                 TIE_BREAK == TieBreak::RIGHT) &&
                 "reduce_r_with_index do not support this tie break type");
 
   const int64_t size0 = src0->sizes[0]; // dimR
