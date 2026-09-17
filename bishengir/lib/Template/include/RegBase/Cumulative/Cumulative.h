@@ -187,38 +187,6 @@ transpose_dim_01(memref_t<__ubuf__ T, 3> *src, memref_t<__ubuf__ T, 3> *dst) {
 }
 
 template <typename T>
-__simd_vf__ void
-transpose_ar2ra_i8_vf(uint32_t num_per_reg, int32_t srcStride0, uint16_t mLoop,
-                      uint32_t M, __ubuf__ T *src_ptr, uint16_t N,
-                      __ubuf__ T *dst_ptr, int32_t dstStride0) {
-  using gatherT =
-      std::conditional_t<std::is_same<T, uint8_t>::value, uint16_t, int16_t>;
-  VectorReg<gatherT> dataReg;
-  VectorReg<uint8_t> packReg;
-  VectorReg<int16_t> idx_reg;
-  vector_bool full_mask, full_mask_i8;
-  uint32_t full_mask_size = num_per_reg;
-  CREATE_MASK_BY_SIZE(full_mask, int16_t, full_mask_size);
-  vci(idx_reg, 0);
-  vmuls(idx_reg, idx_reg, srcStride0, full_mask);
-  for (uint16_t m = 0; m < mLoop; m++) {
-    uint32_t mask_size = (m == mLoop - 1) ? M - m * num_per_reg : num_per_reg;
-    uint32_t mask_size4i8 =
-        (m == mLoop - 1) ? M - m * num_per_reg : num_per_reg;
-    CREATE_MASK_BY_SIZE(full_mask, int16_t, mask_size);
-    CREATE_MASK_BY_SIZE(full_mask_i8, T, mask_size4i8);
-    __ubuf__ T *src_block = src_ptr + (int32_t)m * num_per_reg * srcStride0;
-    for (uint16_t n = 0; n < N; n++) {
-      vgather2(dataReg, src_block + n, (VectorReg<uint16_t> &)idx_reg,
-               full_mask);
-      vpack((VectorReg<uint8_t> &)packReg, dataReg, LOWER, MODE_ZEROING);
-      vsts((VectorReg<T> &)packReg, dst_ptr, n * dstStride0 + m * num_per_reg,
-           NORM_B32, full_mask_i8);
-    }
-  }
-}
-
-template <typename T>
 __aiv__ __attribute__((always_inline)) void
 transpose_ar2ra_i8(memref_t<__ubuf__ T, 2> *src, memref_t<__ubuf__ T, 2> *dst) {
   uint32_t M = src->sizes[0];
@@ -231,32 +199,29 @@ transpose_ar2ra_i8(memref_t<__ubuf__ T, 2> *src, memref_t<__ubuf__ T, 2> *dst) {
   uint16_t mLoop = CEIL_DIV((uint16_t)M, (uint16_t)num_per_reg);
   using gatherT =
       std::conditional_t<std::is_same<T, uint8_t>::value, uint16_t, int16_t>;
-  transpose_ar2ra_i8_vf<T>(num_per_reg, srcStride0, mLoop, M, src_ptr, N,
-                           dst_ptr, dstStride0);
-}
-
-template <typename T>
-__simd_vf__ void transpose_ar2ra_vf(uint32_t num_per_reg, int32_t srcStride0,
-                                    uint16_t mLoop, uint32_t M,
-                                    __ubuf__ T *src_ptr, uint16_t N,
-                                    __ubuf__ T *dst_ptr, int32_t dstStride0) {
-  using IdxT = std::conditional_t<sizeof(T) == 2, int16_t, int32_t>;
-  using uIdxT = std::conditional_t<sizeof(T) == 2, uint16_t, uint32_t>;
-  VectorReg<T> dataReg;
-  VectorReg<IdxT> idx_reg;
-  vector_bool full_mask;
-  uint32_t full_mask_size = num_per_reg;
-  CREATE_MASK_BY_SIZE(full_mask, T, full_mask_size);
-  vci(idx_reg, 0);
-  vmuls(idx_reg, idx_reg, srcStride0, full_mask);
-  for (uint16_t m = 0; m < mLoop; m++) {
-    uint32_t mask_size = (m == mLoop - 1) ? M - m * num_per_reg : num_per_reg;
-    CREATE_MASK_BY_SIZE(full_mask, T, mask_size);
-    __ubuf__ T *src_block = src_ptr + (int32_t)m * num_per_reg * srcStride0;
-    for (uint16_t n = 0; n < N; n++) {
-      vgather2(dataReg, src_block + n, (VectorReg<uIdxT> &)idx_reg, full_mask);
-      vsts(dataReg, dst_ptr, n * dstStride0 + m * num_per_reg, NORM_B32,
-           full_mask);
+  __VEC_SCOPE__ {
+    VectorReg<gatherT> dataReg;
+    VectorReg<uint8_t> packReg;
+    VectorReg<int16_t> idx_reg;
+    vector_bool full_mask, full_mask_i8;
+    uint32_t full_mask_size = num_per_reg;
+    CREATE_MASK_BY_SIZE(full_mask, int16_t, full_mask_size);
+    vci(idx_reg, 0);
+    vmuls(idx_reg, idx_reg, srcStride0, full_mask);
+    for (uint16_t m = 0; m < mLoop; m++) {
+      uint32_t mask_size = (m == mLoop - 1) ? M - m * num_per_reg : num_per_reg;
+      uint32_t mask_size4i8 =
+          (m == mLoop - 1) ? M - m * num_per_reg : num_per_reg;
+      CREATE_MASK_BY_SIZE(full_mask, int16_t, mask_size);
+      CREATE_MASK_BY_SIZE(full_mask_i8, T, mask_size4i8);
+      __ubuf__ T *src_block = src_ptr + (int32_t)m * num_per_reg * srcStride0;
+      for (uint16_t n = 0; n < N; n++) {
+        vgather2(dataReg, src_block + n, (VectorReg<uint16_t> &)idx_reg,
+                 full_mask);
+        vpack((VectorReg<uint8_t> &)packReg, dataReg, LOWER, MODE_ZEROING);
+        vsts((VectorReg<T> &)packReg, dst_ptr, n * dstStride0 + m * num_per_reg,
+             NORM_B32, full_mask_i8);
+      }
     }
   }
 }
@@ -274,8 +239,26 @@ transpose_ar2ra(memref_t<__ubuf__ T, 2> *src, memref_t<__ubuf__ T, 2> *dst) {
   uint16_t mLoop = CEIL_DIV((uint16_t)M, (uint16_t)num_per_reg);
   using IdxT = std::conditional_t<sizeof(T) == 2, int16_t, int32_t>;
   using uIdxT = std::conditional_t<sizeof(T) == 2, uint16_t, uint32_t>;
-  transpose_ar2ra_vf<T>(num_per_reg, srcStride0, mLoop, M, src_ptr, N, dst_ptr,
-                        dstStride0);
+  __VEC_SCOPE__ {
+    VectorReg<T> dataReg;
+    VectorReg<IdxT> idx_reg;
+    vector_bool full_mask;
+    uint32_t full_mask_size = num_per_reg;
+    CREATE_MASK_BY_SIZE(full_mask, T, full_mask_size);
+    vci(idx_reg, 0);
+    vmuls(idx_reg, idx_reg, srcStride0, full_mask);
+    for (uint16_t m = 0; m < mLoop; m++) {
+      uint32_t mask_size = (m == mLoop - 1) ? M - m * num_per_reg : num_per_reg;
+      CREATE_MASK_BY_SIZE(full_mask, T, mask_size);
+      __ubuf__ T *src_block = src_ptr + (int32_t)m * num_per_reg * srcStride0;
+      for (uint16_t n = 0; n < N; n++) {
+        vgather2(dataReg, src_block + n, (VectorReg<uIdxT> &)idx_reg,
+                 full_mask);
+        vsts(dataReg, dst_ptr, n * dstStride0 + m * num_per_reg, NORM_B32,
+             full_mask);
+      }
+    }
+  }
 }
 
 template <typename T>
