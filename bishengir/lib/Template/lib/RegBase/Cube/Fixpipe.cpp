@@ -101,6 +101,9 @@ REGISTE_FIXPIPE(cc, ubuf, 4, 4, float, float, normal, TransformMode::NORMAL);
 REGISTE_FIXPIPE(cc, ubuf, 4, 4, int32_t, int32_t, normal,
                 TransformMode::NORMAL);
 
+// Quantized NZ16 uses the compatibility path: two SINGLE sub-block sends.
+REGISTE_FIXPIPE_DUAL(cc, ubuf, 4, 4, float, half, normal,
+                     TransformMode::NORMAL);
 REGISTE_FIXPIPE_DUAL(cc, ubuf, 4, 4, float, float, normal, TransformMode::NORMAL);
 REGISTE_FIXPIPE_DUAL(cc, ubuf, 4, 4, int32_t, int32_t, normal, TransformMode::NORMAL);
 

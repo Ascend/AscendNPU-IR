@@ -158,7 +158,7 @@ private:
     auto castOp = dyn_cast_if_present<hivm::VCastOp>(curOp);
     if (op.getFixpipeState() <= op.needFixpipePreFuse() && castOp) {
       SmallVector<hivm::VCastOp> castChain = collectVCastChain(castOp);
-      if (getQuantModeForCastChain(castChain).has_value()) {
+      if (getQuantModeForCastChain(castChain, op.getPreQuant()).has_value()) {
         matched = true;
         inlineFixpipeWithQuant(rewriter, loc, op, castChain,
                                op.getDpsInputOperand(0)->get());

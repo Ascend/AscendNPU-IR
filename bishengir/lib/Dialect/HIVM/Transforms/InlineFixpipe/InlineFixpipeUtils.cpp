@@ -18,6 +18,7 @@
 #include "bishengir/Dialect/HIVM/Transforms/InlineFixpipe/InlineFixpipeUtils.h"
 
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/Contracts/FixpipePreQuantContract.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/FixpipeUtils.h"
@@ -25,6 +26,7 @@
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/ErrorHandling.h"
 
@@ -114,6 +116,7 @@ getQuantModeForTypes(Type inputType, Type outputType) {
   // NO_QUANT describes identity signatures and is not an explicit quantizing
   // fusion choice.
   llvm::erase(candidates, FixpipePreQuantMode::NO_QUANT);
+  llvm::erase(candidates, FixpipePreQuantMode::QF322F16_PRE);
   if (candidates.size() != 1)
     return std::nullopt;
   FixpipePreQuantMode mode = candidates.front();
@@ -135,7 +138,8 @@ static bool isIntegerNarrowing(Type inputType, Type outputType) {
 /// first cast's input to element type of the last cast's output. Every cast
 /// in the chain (and the overall conversion) must be inlinable.
 std::optional<FixpipePreQuantMode>
-getQuantModeForCastChain(ArrayRef<hivm::VCastOp> castChain) {
+getQuantModeForCastChain(ArrayRef<hivm::VCastOp> castChain,
+                         FixpipePreQuantMode preQuant) {
   assert(!castChain.empty() && "cast chain must be non-empty");
   for (hivm::VCastOp castOp : castChain) {
     if (!isVCastInlinableIntoFixpipe(castOp))
@@ -175,7 +179,19 @@ getQuantModeForCastChain(ArrayRef<hivm::VCastOp> castChain) {
     }
   }
 
-  return getQuantModeForTypes(inputType, outputType);
+  auto mode = getQuantModeForTypes(inputType, outputType);
+  if (preQuant != FixpipePreQuantMode::QF322F32_PRE)
+    return mode;
+
+  // Compose scalar PRE scaling with its final conversion, preserving scale.
+  auto module = firstCast->getParentOfType<ModuleOp>();
+  auto saturate = firstCast->getAttrOfType<BoolAttr>("enable_saturate");
+  if (mode != FixpipePreQuantMode::F322F16 || castChain.size() != 1 ||
+      firstCast.getRoundMode() != RoundMode::RINT ||
+      (saturate && saturate.getValue()) || !module ||
+      !hacc::utils::isAscend950(module))
+    return std::nullopt;
+  return FixpipePreQuantMode::QF322F16_PRE;
 }
 
 std::optional<FixpipePreQuantMode> getQuantMode(hivm::VCastOp castOp) {

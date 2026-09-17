@@ -313,13 +313,15 @@ _mlir_ciface_online_softmax_nz_f16_f8e4m3fn(
   }
 }
 
-// Mask the existing FP16 score allocation once before the joint N512 softmax.
+// Mask through the output's FP16 view before the joint N512 softmax.
 // Keeping this VF separate avoids extending the four exp chains' register
 // lifetimes with masking temporaries or repeating comparisons on score reloads.
 __aicore__ __attribute__((always_inline)) void
 maskOnlineSoftmaxF16(memref_t<__ubuf__ half, 4> *scores,
-                     memref_t<__ubuf__ int32_t, 1> *causal_limits) {
+                     memref_t<__ubuf__ int32_t, 1> *causal_limits,
+                     memref_t<__ubuf__ float8_e4m3_t, 4> *p) {
   auto s = scores->aligned + scores->offset;
+  auto masked = (__ubuf__ half *)(p->aligned + p->offset);
   auto cl = causal_limits->aligned + causal_limits->offset;
   const uint16_t rows = scores->sizes[1] * 16;
   const uint32_t sn = scores->strides[0], sm = scores->strides[1];
@@ -358,7 +360,7 @@ maskOnlineSoftmaxF16(memref_t<__ubuf__ half, 4> *scores,
         vlds(score, s + block * sn + soff, 0, NORM);
         vsel((VectorReg<uint16_t> &)score, (VectorReg<uint16_t> &)score,
              (VectorReg<uint16_t> &)negativeInf, visible);
-        vsts(score, s + block * sn + soff, 0, NORM_B16, halves);
+        vsts(score, masked + block * sn + soff, 0, NORM_B16, halves);
       }
     }
     // The following softmax VF reloads the scores written by this VF.
@@ -374,7 +376,7 @@ _mlir_ciface_online_softmax_nz_f16_f8e4m3fn_causal(
     memref_t<__ubuf__ int32_t, 1> *causal_limits,
     memref_t<__ubuf__ float8_e4m3_t, 4> *p, memref_t<__ubuf__ half, 1> *new_m,
     memref_t<__ubuf__ float, 1> *block_sum) {
-  maskOnlineSoftmaxF16(scores, causal_limits);
+  maskOnlineSoftmaxF16(scores, causal_limits, p);
   _mlir_ciface_online_softmax_nz_f16_f8e4m3fn(scores, old_m, pack_index, p,
                                               new_m, block_sum);
 }
@@ -390,7 +392,7 @@ _mlir_ciface_online_softmax_nz_f16_f8e4m3fn_causal_if(
     memref_t<__ubuf__ float8_e4m3_t, 4> *p, memref_t<__ubuf__ half, 1> *new_m,
     memref_t<__ubuf__ float, 1> *block_sum) {
   if (mask_required)
-    maskOnlineSoftmaxF16(scores, causal_limits);
+    maskOnlineSoftmaxF16(scores, causal_limits, p);
   _mlir_ciface_online_softmax_nz_f16_f8e4m3fn(scores, old_m, pack_index, p,
                                               new_m, block_sum);
 }

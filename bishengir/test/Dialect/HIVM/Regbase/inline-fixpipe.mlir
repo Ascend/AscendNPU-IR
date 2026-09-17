@@ -1,3 +1,4 @@
+// RUN: bishengir-opt -hivm-insert-fixpipe -hivm-inline-fixpipe='inline-quant-scale=true' %s -split-input-file -verify-diagnostics | FileCheck %s --check-prefix=PRE-OPTION
 // RUN: bishengir-opt -hivm-insert-fixpipe -hivm-inline-fixpipe %s -split-input-file -verify-diagnostics | FileCheck %s
 
 // Fractal mmadL1: all-4D inputs/output, check fixpipe insertion doesn't crash
@@ -1484,4 +1485,211 @@ func.func @transpose_keeps_quant_scale(%src: tensor<16x16xf32>,
       outs(%dst : memref<16x16xf32>) permutation = [1, 0]
   return
 }
+}
+
+// -----
+
+// Slice before pre-quantization while retaining its destination type and scale.
+// CHECK-LABEL: func.func @slice_qf322f16_pre
+// CHECK-SAME: %[[SRC:.*]]: tensor<32x32xf32>, %[[SCALE:.*]]: f32
+// CHECK: %[[SLICE:.*]] = tensor.extract_slice %[[SRC]][16, 0] [16, 32] [1, 1]
+// CHECK-SAME: tensor<32x32xf32> to tensor<16x32xf32>
+// CHECK: %[[INIT:.*]] = tensor.empty() : tensor<16x32xf16>
+// CHECK: %[[FIX:.*]] = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, pre_quant = #hivm.fixpipe_pre_quant_mode<QF322F16_PRE>}
+// CHECK-SAME: ins(%[[SLICE]] : tensor<16x32xf32>) outs(%[[INIT]] : tensor<16x32xf16>)
+// CHECK-SAME: quant_scale = %[[SCALE]] : f32 -> tensor<16x32xf16>
+// CHECK: return %[[FIX]] : tensor<16x32xf16>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @slice_qf322f16_pre(%src: tensor<32x32xf32>, %scale: f32)
+      -> tensor<16x32xf16> {
+    %dst = tensor.empty() : tensor<32x32xf16>
+    %fp = hivm.hir.fixpipe {
+        dma_mode = #hivm.dma_mode<nz2nd>,
+        pre_quant = #hivm.fixpipe_pre_quant_mode<QF322F16_PRE>}
+        ins(%src : tensor<32x32xf32>) outs(%dst : tensor<32x32xf16>)
+        quant_scale = %scale : f32 -> tensor<32x32xf16>
+    %slice = tensor.extract_slice %fp[16, 0] [16, 32] [1, 1]
+        : tensor<32x32xf16> to tensor<16x32xf16>
+    return %slice : tensor<16x32xf16>
+  }
+}
+
+// -----
+
+// A TF32 hint authorizes the existing scale fusion before FP16 conversion.
+// CHECK-LABEL: func.func @inline_marked_scale_f16(
+// CHECK-SAME: %[[MARK_SRC:[^:]+]]: tensor<16x16xf32>, %[[MARK_SCALE:[^:]+]]: f32) -> tensor<16x16xf16>
+// CHECK-NOT: hivm.hir.vmul
+// CHECK-NOT: hivm.hir.vcast
+// CHECK: %[[MARK_FP:.*]] = hivm.hir.fixpipe
+// CHECK-SAME: pre_quant = #hivm.fixpipe_pre_quant_mode<QF322F16_PRE>
+// CHECK-SAME: ins(%[[MARK_SRC]] : tensor<16x16xf32>) outs(%{{.*}} : tensor<16x16xf16>)
+// CHECK-SAME: quant_scale = %[[MARK_SCALE]] : f32
+// CHECK-NEXT: return %[[MARK_FP]] : tensor<16x16xf16>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @inline_marked_scale_f16(%src: tensor<16x16xf32>, %scale: f32) -> tensor<16x16xf16> {
+    %init = tensor.empty() : tensor<16x16xf32>
+    %fp = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+        ins(%src : tensor<16x16xf32>) outs(%init : tensor<16x16xf32>) -> tensor<16x16xf32>
+    %mul_init = tensor.empty() : tensor<16x16xf32>
+    %mul = hivm.hir.vmul ins(%fp, %scale : tensor<16x16xf32>, f32)
+        outs(%mul_init : tensor<16x16xf32>) -> tensor<16x16xf32>
+    annotation.mark %mul {enable_fast_tf32_mul} : tensor<16x16xf32>
+    %cast_init = tensor.empty() : tensor<16x16xf16>
+    %cast = hivm.hir.vcast {enable_overflow = true, enable_saturate = false}
+        ins(%mul : tensor<16x16xf32>) outs(%cast_init : tensor<16x16xf16>)
+        round_mode = <rint> -> tensor<16x16xf16>
+    return %cast : tensor<16x16xf16>
+  }
+}
+
+// -----
+
+// Without a hint, only the existing explicit option permits scale fusion.
+// CHECK-LABEL: func.func @inline_option_scale_f16(
+// CHECK-SAME: %[[OPT_SRC:[^:]+]]: tensor<16x16xf32>, %[[OPT_SCALE:[^:]+]]: f32, %[[OPT_OUT:[^:]+]]: memref<16x16xf16>
+// CHECK: %[[OPT_FP:.*]] = hivm.hir.fixpipe
+// CHECK-SAME: ins(%[[OPT_SRC]] : tensor<16x16xf32>)
+// CHECK-NOT: quant_scale
+// CHECK: %[[OPT_MUL:.*]] = hivm.hir.vmul ins(%[[OPT_FP]], %[[OPT_SCALE]] : tensor<16x16xf32>, f32)
+// CHECK: %[[OPT_CAST:.*]] = hivm.hir.vcast
+// CHECK-SAME: ins(%[[OPT_MUL]] : tensor<16x16xf32>)
+// CHECK: hivm.hir.store ins(%[[OPT_CAST]] : tensor<16x16xf16>) outs(%[[OPT_OUT]] : memref<16x16xf16>)
+// CHECK-NEXT: return
+// PRE-OPTION-LABEL: func.func @inline_option_scale_f16(
+// PRE-OPTION-SAME: %[[SRC:[^:]+]]: tensor<16x16xf32>, %[[SCALE:[^:]+]]: f32, %[[OUT:[^:]+]]: memref<16x16xf16>
+// PRE-OPTION-NOT: hivm.hir.vmul
+// PRE-OPTION-NOT: hivm.hir.vcast
+// PRE-OPTION: hivm.hir.fixpipe
+// PRE-OPTION-SAME: pre_quant = #hivm.fixpipe_pre_quant_mode<QF322F16_PRE>
+// PRE-OPTION-SAME: ins(%[[SRC]] : tensor<16x16xf32>) outs(%[[OUT]] : memref<16x16xf16>)
+// PRE-OPTION-SAME: quant_scale = %[[SCALE]] : f32
+// PRE-OPTION-NEXT: return
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @inline_option_scale_f16(%src: tensor<16x16xf32>, %scale: f32, %out: memref<16x16xf16>) {
+    %init = tensor.empty() : tensor<16x16xf32>
+    %fp = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+        ins(%src : tensor<16x16xf32>) outs(%init : tensor<16x16xf32>) -> tensor<16x16xf32>
+    %mul_init = tensor.empty() : tensor<16x16xf32>
+    %mul = hivm.hir.vmul ins(%fp, %scale : tensor<16x16xf32>, f32)
+        outs(%mul_init : tensor<16x16xf32>) -> tensor<16x16xf32>
+    %cast_init = tensor.empty() : tensor<16x16xf16>
+    %cast = hivm.hir.vcast {enable_overflow = true, enable_saturate = false}
+        ins(%mul : tensor<16x16xf32>) outs(%cast_init : tensor<16x16xf16>)
+        round_mode = <rint> -> tensor<16x16xf16>
+    hivm.hir.store ins(%cast : tensor<16x16xf16>) outs(%out : memref<16x16xf16>)
+    return
+  }
+}
+
+// -----
+
+// Composing an existing scaled fixpipe must retain both its mode and scale.
+// CHECK-LABEL: func.func @inline_existing_pre32_to_f16(
+// CHECK-SAME: %[[PRE_SRC:[^:]+]]: tensor<16x16xf32>, %[[PRE_SCALE:[^:]+]]: f32, %[[PRE_OUT:[^:]+]]: memref<16x16xf16>
+// CHECK-NOT: hivm.hir.vcast
+// CHECK: hivm.hir.fixpipe
+// CHECK-SAME: pre_quant = #hivm.fixpipe_pre_quant_mode<QF322F16_PRE>
+// CHECK-SAME: ins(%[[PRE_SRC]] : tensor<16x16xf32>) outs(%[[PRE_OUT]] : memref<16x16xf16>)
+// CHECK-SAME: quant_scale = %[[PRE_SCALE]] : f32
+// CHECK-NEXT: return
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @inline_existing_pre32_to_f16(%src: tensor<16x16xf32>, %scale: f32, %out: memref<16x16xf16>) {
+    %init = tensor.empty() : tensor<16x16xf32>
+    %fp = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, pre_quant = #hivm.fixpipe_pre_quant_mode<QF322F32_PRE>}
+        ins(%src : tensor<16x16xf32>) outs(%init : tensor<16x16xf32>)
+        quant_scale = %scale : f32 -> tensor<16x16xf32>
+    %cast_init = tensor.empty() : tensor<16x16xf16>
+    %cast = hivm.hir.vcast {enable_overflow = true, enable_saturate = false}
+        ins(%fp : tensor<16x16xf32>) outs(%cast_init : tensor<16x16xf16>)
+        round_mode = <rint> -> tensor<16x16xf16>
+    hivm.hir.store ins(%cast : tensor<16x16xf16>) outs(%out : memref<16x16xf16>)
+    return
+  }
+}
+
+// -----
+
+// PRE16 cannot replace an explicit round toward positive infinity.
+// CHECK-LABEL: func.func @keep_pre32_f16_ceil(
+// CHECK-SAME: %[[CEIL_SRC:[^:]+]]: tensor<16x16xf32>, %[[CEIL_SCALE:[^:]+]]: f32, %[[CEIL_OUT:[^:]+]]: memref<16x16xf16>
+// CHECK: %[[CEIL_FP:.*]] = hivm.hir.fixpipe
+// CHECK-SAME: pre_quant = #hivm.fixpipe_pre_quant_mode<QF322F32_PRE>
+// CHECK-SAME: ins(%[[CEIL_SRC]] : tensor<16x16xf32>)
+// CHECK-SAME: quant_scale = %[[CEIL_SCALE]] : f32 -> tensor<16x16xf32>
+// CHECK: %[[CEIL_CAST:.*]] = hivm.hir.vcast
+// CHECK-SAME: ins(%[[CEIL_FP]] : tensor<16x16xf32>)
+// CHECK-SAME: round_mode = <ceil>
+// CHECK: hivm.hir.store ins(%[[CEIL_CAST]] : tensor<16x16xf16>) outs(%[[CEIL_OUT]] : memref<16x16xf16>)
+// CHECK-NEXT: return
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @keep_pre32_f16_ceil(%src: tensor<16x16xf32>, %scale: f32, %out: memref<16x16xf16>) {
+    %init = tensor.empty() : tensor<16x16xf32>
+    %fp = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, pre_quant = #hivm.fixpipe_pre_quant_mode<QF322F32_PRE>}
+        ins(%src : tensor<16x16xf32>) outs(%init : tensor<16x16xf32>)
+        quant_scale = %scale : f32 -> tensor<16x16xf32>
+    %cast_init = tensor.empty() : tensor<16x16xf16>
+    %cast = hivm.hir.vcast {enable_overflow = true, enable_saturate = false}
+        ins(%fp : tensor<16x16xf32>) outs(%cast_init : tensor<16x16xf16>)
+        round_mode = <ceil> -> tensor<16x16xf16>
+    hivm.hir.store ins(%cast : tensor<16x16xf16>) outs(%out : memref<16x16xf16>)
+    return
+  }
+}
+
+// -----
+
+// PRE16 cannot drop the cast's saturation request.
+// CHECK-LABEL: func.func @keep_pre32_f16_saturate(
+// CHECK-SAME: %[[SAT_SRC:[^:]+]]: tensor<16x16xf32>, %[[SAT_SCALE:[^:]+]]: f32, %[[SAT_OUT:[^:]+]]: memref<16x16xf16>
+// CHECK: %[[SAT_FP:.*]] = hivm.hir.fixpipe
+// CHECK-SAME: pre_quant = #hivm.fixpipe_pre_quant_mode<QF322F32_PRE>
+// CHECK-SAME: ins(%[[SAT_SRC]] : tensor<16x16xf32>)
+// CHECK-SAME: quant_scale = %[[SAT_SCALE]] : f32 -> tensor<16x16xf32>
+// CHECK: %[[SAT_CAST:.*]] = hivm.hir.vcast
+// CHECK-SAME: enable_saturate = true
+// CHECK-SAME: ins(%[[SAT_FP]] : tensor<16x16xf32>)
+// CHECK: hivm.hir.store ins(%[[SAT_CAST]] : tensor<16x16xf16>) outs(%[[SAT_OUT]] : memref<16x16xf16>)
+// CHECK-NEXT: return
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @keep_pre32_f16_saturate(%src: tensor<16x16xf32>, %scale: f32, %out: memref<16x16xf16>) {
+    %init = tensor.empty() : tensor<16x16xf32>
+    %fp = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, pre_quant = #hivm.fixpipe_pre_quant_mode<QF322F32_PRE>}
+        ins(%src : tensor<16x16xf32>) outs(%init : tensor<16x16xf32>)
+        quant_scale = %scale : f32 -> tensor<16x16xf32>
+    %cast_init = tensor.empty() : tensor<16x16xf16>
+    %cast = hivm.hir.vcast {enable_overflow = true, enable_saturate = true}
+        ins(%fp : tensor<16x16xf32>) outs(%cast_init : tensor<16x16xf16>)
+        round_mode = <rint> -> tensor<16x16xf16>
+    hivm.hir.store ins(%cast : tensor<16x16xf16>) outs(%out : memref<16x16xf16>)
+    return
+  }
+}
+
+// -----
+
+// PRE scaling retains the existing ReLU coefficients, including negative scale.
+// CHECK-LABEL: func.func @inline_relu_scale_f16(
+// CHECK: hivm.hir.fixpipe
+// CHECK-SAME: pre_quant = #hivm.fixpipe_pre_quant_mode<QF322F16_PRE>
+// CHECK-SAME: pre_relu = #hivm.fixpipe_pre_relu_mode<NORMAL_RELU>
+// CHECK-SAME: quant_scale = %{{.*}} : f32
+// CHECK-NOT: hivm.hir.vmul
+// CHECK-NOT: hivm.hir.vcast
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @inline_relu_scale_f16(%src: tensor<16x16xf32>, %out: memref<16x16xf16>) {
+    %negative = arith.constant -1.0 : f32
+    %init = tensor.empty() : tensor<16x16xf32>
+    %fp = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, pre_relu = #hivm.fixpipe_pre_relu_mode<NORMAL_RELU>}
+        ins(%src : tensor<16x16xf32>) outs(%init : tensor<16x16xf32>) -> tensor<16x16xf32>
+    %mul_init = tensor.empty() : tensor<16x16xf32>
+    %mul = hivm.hir.vmul ins(%fp, %negative : tensor<16x16xf32>, f32)
+        outs(%mul_init : tensor<16x16xf32>) -> tensor<16x16xf32>
+    annotation.mark %mul {enable_fast_tf32_mul} : tensor<16x16xf32>
+    %cast_init = tensor.empty() : tensor<16x16xf16>
+    %cast = hivm.hir.vcast {enable_saturate = false}
+        ins(%mul : tensor<16x16xf32>) outs(%cast_init : tensor<16x16xf16>) -> tensor<16x16xf16>
+    hivm.hir.store ins(%cast : tensor<16x16xf16>) outs(%out : memref<16x16xf16>)
+    return
+  }
 }

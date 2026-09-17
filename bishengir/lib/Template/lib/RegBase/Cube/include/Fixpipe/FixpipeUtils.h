@@ -196,6 +196,11 @@ get_quant_mode(int64_t pre_quant) {
     return QuantMode_t::F322F16;
   }
 #if BISHENG_TPL_REGBASE
+#if BISHENG_TPL_C310
+  // Scalar FP32 -> FP16 PRE_QUANT uses cfg1 bit 29.
+  if (pre_quant == static_cast<int64_t>(QuantMode_t::QF322F16_PRE))
+    return QuantMode_t::QF322F16_PRE;
+#endif
   if (pre_quant == static_cast<int64_t>(QuantMode_t::QF322F32_PRE)) {
     return QuantMode_t::QF322F32_PRE;
   }
@@ -642,6 +647,8 @@ DECLARE_FIXPIPE(cc, ubuf, 4, 4, float, float, normal, TransformMode::NORMAL);
 DECLARE_FIXPIPE(cc, ubuf, 4, 4, int32_t, int32_t, normal,
                 TransformMode::NORMAL);
 
+DECLARE_FIXPIPE_DUAL(cc, ubuf, 4, 4, float, half, normal,
+                     TransformMode::NORMAL);
 DECLARE_FIXPIPE_DUAL(cc, ubuf, 4, 4, float, float, normal,
                      TransformMode::NORMAL);
 DECLARE_FIXPIPE_DUAL(cc, ubuf, 4, 4, int32_t, int32_t, normal,

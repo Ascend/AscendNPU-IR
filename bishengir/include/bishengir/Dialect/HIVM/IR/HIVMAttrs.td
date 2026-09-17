@@ -989,13 +989,16 @@ def HIVM_FIXPIPEPREQUANT_QF322F32_PRE :
     HIVM_FixpipePreQuantCase<"QF322F32_PRE", 15, [Sig_F32_F32]>;
 def HIVM_FIXPIPEPREQUANT_F322BF16 :
     HIVM_FixpipePreQuantCase<"F322BF16", 16, [Sig_F32_BF16]>;
+def HIVM_FIXPIPEPREQUANT_QF322F16_PRE :
+    HIVM_FixpipePreQuantCase<"QF322F16_PRE", 32, [Sig_F32_F16]>;
 
 def HIVM_FixpipePreQuantModeEnum
     : HIVM_I32Enum<"FixpipePreQuantMode", "HIVM fixpipe pre_quant mode",
                    [HIVM_FIXPIPEPREQUANT_NO_QUANT, HIVM_FIXPIPEPREQUANT_S322I8,
                     HIVM_FIXPIPEPREQUANT_F322F16,
                     HIVM_FIXPIPEPREQUANT_QF322F32_PRE,
-                    HIVM_FIXPIPEPREQUANT_F322BF16]>;
+                    HIVM_FIXPIPEPREQUANT_F322BF16,
+                    HIVM_FIXPIPEPREQUANT_QF322F16_PRE]>;
 
 def HIVM_FixpipePreQuantModeAttr : HIVM_I32EnumAttr<
   "fixpipe_pre_quant_mode", HIVM_FixpipePreQuantModeEnum> {
