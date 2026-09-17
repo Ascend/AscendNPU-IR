@@ -1305,7 +1305,15 @@ PropagateExpandUp::matchAndRewrite(tensor::ExpandShapeOp expandOp,
                                        "Defining op has different parent");
   if (llvm::all_of(expandOp->getUsers(),
                    [&](Operation *op) { return isOutOp(op); })) {
-    return rewriter.notifyMatchFailure(expandOp, "All user of expand is out");
+    // A non-unit expand whose only consumers are reshape/return ops still needs
+    // to fold into a zero-cost memref view on the load side.
+    bool liftNonUnitExpand =
+        isa<bufferization::ToTensorOp>(definingOp) &&
+        isNonUnitExpandOrEmptyReassoc(expandOp.getResultType().getShape(),
+                                      expandOp.getReassociationIndices());
+    if (!liftNonUnitExpand)
+      return rewriter.notifyMatchFailure(expandOp,
+                                         "All user of expand is out");
   }
   if (isa<bufferization::ToTensorOp>(definingOp)) {
     return handleBufferizationToTensor(expandOp, rewriter, definingOp, options);
