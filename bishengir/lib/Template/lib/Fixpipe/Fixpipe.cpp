@@ -128,6 +128,7 @@ copy_matrix_cc_to_gm_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
                                    bool channel_split, UNIT_FLAG unit_flag_mode,
                                    int64_t unit_flag_group_id) {
   if constexpr (MODE == TransformMode::NZ_2_ND) {
+    unit_flag_mode = resolveUnitFlagMode(unit_flag_mode, unit_flag_group_id);
     copy_matrix_cc_to_gm_nz2nd_4d_to_2d_core<SRC_TYPE, DST_TYPE>(
         l0c, gm, pre_quant, pre_relu, channel_split, unit_flag_mode,
         unit_flag_group_id);
@@ -145,6 +146,7 @@ copy_matrix_cc_to_gm_2d_to_2d_core(memref_t<__cc__ SRC_TYPE, 2> *l0c,
                                    bool channel_split, UNIT_FLAG unit_flag_mode,
                                    int64_t unit_flag_group_id) {
   if constexpr (MODE == TransformMode::NORMAL) {
+    unit_flag_mode = resolveUnitFlagMode(unit_flag_mode, unit_flag_group_id);
     copy_matrix_cc_to_gm_normal_2d_to_2d_core<SRC_TYPE, DST_TYPE>(
         l0c, gm, pre_quant, pre_relu, channel_split, unit_flag_mode,
         unit_flag_group_id);
