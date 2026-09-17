@@ -122,6 +122,24 @@ void forEachCustomLikeTempBuffer(Operation *op,
   }
 }
 
+// The address space a custom-like op declares for its operand at `operandIdx`
+// in arg_attrs, if any. Positions are laid out as [inputs..., outputs...],
+// matching operand numbers.
+std::optional<hivm::AddressSpace> getDeclaredAddressSpace(Operation *op,
+                                                          unsigned operandIdx) {
+  auto argAttrs =
+      op->getAttrOfType<ArrayAttr>(CustomLikeOpInterface::kArgAttrsName);
+  if (!argAttrs || operandIdx >= argAttrs.size())
+    return std::nullopt;
+  auto dict = dyn_cast_or_null<DictionaryAttr>(argAttrs[operandIdx]);
+  if (!dict)
+    return std::nullopt;
+  if (auto attr = dyn_cast_or_null<hivm::AddressSpaceAttr>(
+          dict.get(CustomLikeOpInterface::kAddressSpaceName)))
+    return attr.getAddressSpace();
+  return std::nullopt;
+}
+
 } // namespace
 
 std::pair<TCoreType, hivm::AddressSpace>
@@ -175,11 +193,28 @@ void insertPropagatorsForCustomLikeOp(llvm::ArrayRef<hivm::PIPE> pipes,
     tagOperandUp(&tempBuffer, info.inCoreType, info.inAddressSpace);
   });
 
-  // Out-pipe scope: values produced by the kernel.
+  // Out-pipe scope: values produced by the kernel. The pipe only says how an op
+  // moves data, not where it lands: an MTE2 op that writes L1 (the sparse
+  // gather) would be tagged GM from its pipe alone, and ResolvePropagation
+  // would then try to satisfy a local consumer with a GM load of a cbuf value,
+  // which hivm.hir.load rejects. Honor an output address space declared in
+  // arg_attrs over the pipe-derived default.
+  auto outCoreType = info.outCoreType;
+  auto outAddressSpace = info.outAddressSpace;
+  for (auto &init : structuredOp.getDpsInitsMutable()) {
+    auto declared = getDeclaredAddressSpace(op, init.getOperandNumber());
+    if (!declared)
+      continue;
+    auto it = kAddressSpace2CoreType.find(*declared);
+    if (it != kAddressSpace2CoreType.end()) {
+      outCoreType = it->second;
+      outAddressSpace = *declared;
+      break;
+    }
+  }
   for (auto &init : structuredOp.getDpsInitsMutable())
-    tagOperandUp(&init, info.outCoreType, info.outAddressSpace);
-  createPropagatorsDown(structuredOp, info.outCoreType, info.outAddressSpace,
-                        rewriter);
+    tagOperandUp(&init, outCoreType, outAddressSpace);
+  createPropagatorsDown(structuredOp, outCoreType, outAddressSpace, rewriter);
 }
 
 LogicalResult

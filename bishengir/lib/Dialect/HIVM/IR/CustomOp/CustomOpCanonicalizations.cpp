@@ -59,10 +59,13 @@ struct CustomOpCanonicalizer : public OpRewritePattern<CustomOpT> {
       }
     }
 
-    const auto &vfMode = customOp.getVFMode();
-    if (!vfMode || *vfMode != builtinInfo.vfMode) {
-      customOp.setVFMode(builtinInfo.vfMode);
-      return success();
+    // Cube-core builtins have no VF mode (builtinInfo.vfMode is nullopt).
+    if (builtinInfo.vfMode) {
+      const auto &vfMode = customOp.getVFMode();
+      if (!vfMode || *vfMode != *builtinInfo.vfMode) {
+        customOp.setVFMode(*builtinInfo.vfMode);
+        return success();
+      }
     }
 
     const auto &gmAddrArgsIndices = customOp.getGMAddrArgsIndices();

@@ -1679,6 +1679,18 @@ static std::string getIndexSelectLibraryCallName(CustomOpT op) {
          idxTypeStr;
 }
 
+// Keyed on the gathered tensor's element type and the region metadata's
+// element type, matching REGISTER_SPARSE_GATHER_LOAD_TO_L1BUFFER in
+// RegBase/Cube/include/DMA/SparseGatherNd2nz.h.
+template <typename CustomOpT>
+static std::string getSparseGatherLoadToL1BufferLibraryCallName(CustomOpT op) {
+  const std::string baseTypeStr = getTypeName(
+      op->getLoc(), getElementTypeOrSelf(op->getOperand(0).getType()));
+  const std::string idxTypeStr = getTypeName(
+      op->getLoc(), getElementTypeOrSelf(op->getOperand(1).getType()));
+  return "sparse_gather_load_to_L1buffer_" + baseTypeStr + "_" + idxTypeStr;
+}
+
 template <typename CustomOpT>
 static std::string getIndirectAtomicLibraryCallName(CustomOpT op) {
   std::string opName = "unknown";
@@ -1749,6 +1761,9 @@ std::string customOpLibraryCallName(Operation *op,
     }
     if (concreteOp.getName() == CustomOpT::kBuiltinHistogramName)
       return getHistogramLibraryCallName(concreteOp);
+    if (concreteOp.getName() ==
+        CustomOpT::kBuiltinSparseGatherLoadToL1BufferName)
+      return getSparseGatherLoadToL1BufferLibraryCallName(concreteOp);
     if (concreteOp.getName() == CustomOpT::kBuiltinProtonGetSysCntName)
       return "proton_get_sys_cnt";
     if (concreteOp.getName() == CustomOpT::kBuiltinProtonCircularStoreName)
