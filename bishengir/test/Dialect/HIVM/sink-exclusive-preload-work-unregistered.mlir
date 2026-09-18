@@ -64,3 +64,37 @@ func.func @keep_single_slot_preload_alloc_in_loop()
   }
   return
 }
+
+// Registered name is not enough: dest-sink stays off unless preload is on.
+// CHECK-LABEL: func.func @cross_core_loop_carry_skew
+// CHECK:         scope.scope
+// CHECK:           %[[SRC:.*]] = bufferization.to_tensor
+// CHECK:           %[[EMPTY:.*]] = tensor.empty
+// CHECK:           %[[DST:.*]] = hivm.hir.vcast {{.*}} ins(%[[SRC]] {{.*}} outs(%[[EMPTY]]
+// CHECK:           scope.return %[[DST]]
+// CHECK:         } {{{.*}}preload_num = 1
+// CHECK:         scope.scope
+// CHECK:           hivm.hir.vexp
+func.func @cross_core_loop_carry_skew(%arg0: memref<32x128xbf16, #hivm.address_space<ub>>)
+    attributes {hivm.func_core_type = #hivm.func_core_type<AIV>} {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c4 = arith.constant 4 : index
+  scf.for %i = %c0 to %c4 step %c1 {
+    %prod = scope.scope : () -> tensor<32x128xf32> {
+      %src = bufferization.to_tensor %arg0 restrict writable : memref<32x128xbf16, #hivm.address_space<ub>>
+      %empty = tensor.empty() : tensor<32x128xf32>
+      %dst = hivm.hir.vcast {enable_overflow = true, enable_saturate = false,
+                             hivm.unsigned_mode = #hivm.unsigned_mode<si2si>}
+          ins(%src : tensor<32x128xbf16>) outs(%empty : tensor<32x128xf32>)
+          -> tensor<32x128xf32>
+      scope.return %dst : tensor<32x128xf32>
+    } {hivm.preload_num = 1 : i32, no_inline}
+    scope.scope : () -> () {
+      %out = tensor.empty() : tensor<32x128xf32>
+      %e = hivm.hir.vexp ins(%prod : tensor<32x128xf32>) outs(%out : tensor<32x128xf32>) -> tensor<32x128xf32>
+      scope.return
+    } {hivm.preload_num = 0 : i32, no_inline}
+  }
+  return
+}

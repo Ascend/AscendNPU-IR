@@ -70,6 +70,8 @@ struct PreloadInfo {
 };
 
 struct CreatePreloadPass : public impl::CreatePreloadBase<CreatePreloadPass> {
+  using Base = impl::CreatePreloadBase<CreatePreloadPass>;
+  using Base::Base;
   void runOnOperation() override;
 };
 
@@ -680,7 +682,8 @@ void CreatePreloadPass::runOnOperation() {
       return;
     auto parentFunc = parentForOp->getParentOfType<func::FuncOp>();
     bool allow = parentFunc && allowLoopShapeHeuristics(
-                                   this->bypassShapeRegistry, parentFunc.getName());
+                                   this->bypassShapeRegistry, parentFunc.getName(),
+                                   this->enablePreload);
     if (auto maxPreloadNumAttr = scopeOp->getAttrOfType<IntegerAttr>(
             hivm::MaxPreloadNumAttr::name)) {
       if (allow) {
@@ -745,6 +748,7 @@ void CreatePreloadPass::runOnOperation() {
   }
 }
 
-std::unique_ptr<Pass> mlir::hivm::createCreatePreloadPass() {
-  return std::make_unique<CreatePreloadPass>();
+std::unique_ptr<Pass>
+mlir::hivm::createCreatePreloadPass(const CreatePreloadOptions &options) {
+  return std::make_unique<CreatePreloadPass>(options);
 }

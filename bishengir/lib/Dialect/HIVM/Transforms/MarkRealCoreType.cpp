@@ -169,7 +169,8 @@ void MarkRealCoreTypePass::runOnOperation() {
     if (isOpTypeToBeMarked(op) && !op->hasAttr(hivm::TCoreTypeAttr::name)) {
       auto func = op->getParentOfType<func::FuncOp>();
       if (!func ||
-          !allowLoopShapeHeuristics(this->bypassShapeRegistry, func.getName()))
+          !allowLoopShapeHeuristics(this->bypassShapeRegistry, func.getName(),
+                                    this->enablePreload))
         return;
       if (auto parentScope = op->getParentOfType<scope::ScopeOp>()) {
         if (auto attr = parentScope->getAttrOfType<hivm::TCoreTypeAttr>(

@@ -71,21 +71,22 @@ struct AtomicEffect {
   TypeAttr type;
 };
 
-static bool computeAllowShapeHeuristics(bool bypass, Operation *op) {
+static bool computeAllowShapeHeuristics(bool bypass, bool enablePreload,
+                                        Operation *op) {
   if (auto func = op->getParentOfType<func::FuncOp>())
-    return allowLoopShapeHeuristics(bypass, func.getName());
+    return allowLoopShapeHeuristics(bypass, func.getName(), enablePreload);
   return bypass;
 }
 
 struct CVPipelineImpl {
   CVPipelineImpl(LoopLikeOpInterface loop, int multibuffer,
                  CVPipelineMode pipelineMode, bool enableLazyLoading,
-                 bool bypassShapeRegistry = false)
+                 bool bypassShapeRegistry = false, bool enablePreload = false)
       : pipelineLoop(loop), newLoop(nullptr), builder(loop->getContext()),
         numMultibuffer(multibuffer), pipelineMode(pipelineMode),
         bypassShapeRegistry(bypassShapeRegistry),
         allowShapeHeuristics(
-            computeAllowShapeHeuristics(bypassShapeRegistry,
+            computeAllowShapeHeuristics(bypassShapeRegistry, enablePreload,
                                         loop.getOperation())),
         wlBuilder(cast<scf::ForOp>(loop.getOperation()), multibuffer,
                   enableLazyLoading, allowShapeHeuristics),
@@ -208,7 +209,8 @@ private:
   // Bypass shape registry check for registered-kernel heuristics.
   bool bypassShapeRegistry = false;
 
-  // True when this loop's parent function is registered or bypass is on.
+  // True when this loop's parent function is registered and preload is on,
+  // or LIT bypass is on.
   bool allowShapeHeuristics = false;
 
   // Worklist builder — owns dep-tracking machinery, separator/dependence
@@ -2292,7 +2294,7 @@ static bool isStorePriorityCBuf(Value value) {
 /// Prioritize the transposed CBUF copy over the GM output of the same cast.
 /// Keep this local to tensor-form preload scopes, before memory planning and
 /// sync insertion account for the delayed store's buffer lifetime.
-/// Callers must first pass `allowShapeHeuristics` (registry or LIT bypass).
+/// Callers must first pass `allowShapeHeuristics` (registry + preload, or LIT bypass).
 static void prioritizePreloadCrossCoreCopy(Block &body) {
   if (llvm::any_of(body, [](Operation &op) { return isa<SetAtomicOp>(op); }))
     return;
@@ -2890,7 +2892,8 @@ void CVPipeliningPass::runOnOperation() {
 
     auto parentLoop = loop->getParentOfType<scf::ForOp>();
     CVPipelineImpl impl(loop, this->setDepthInUnrollMode, this->pipelineMode,
-                        this->enableLazyLoading, this->bypassShapeRegistry);
+                        this->enableLazyLoading, this->bypassShapeRegistry,
+                        this->enablePreload);
 
     // Mark all parent loops to not attempt pipelining to save compile time
     if (impl.run().succeeded())

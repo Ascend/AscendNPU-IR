@@ -227,6 +227,8 @@ static LogicalResult processForOp(scf::ForOp forOp, func::FuncOp funcOp) {
 
 struct MergeSamePreloadScopesPass
     : public impl::MergeSamePreloadScopesBase<MergeSamePreloadScopesPass> {
+  using Base = impl::MergeSamePreloadScopesBase<MergeSamePreloadScopesPass>;
+  using Base::Base;
   void runOnOperation() override;
 };
 
@@ -234,7 +236,7 @@ void MergeSamePreloadScopesPass::runOnOperation() {
   ModuleOp moduleOp = getOperation();
   for (auto funcOp : moduleOp.getOps<func::FuncOp>()) {
     if (!hivm::allowLoopShapeHeuristics(this->bypassShapeRegistry,
-                                        funcOp.getName()))
+                                        funcOp.getName(), this->enablePreload))
       continue;
     SmallVector<scf::ForOp> forOps;
     funcOp.walk([&](scf::ForOp forOp) { forOps.push_back(forOp); });
@@ -248,6 +250,7 @@ void MergeSamePreloadScopesPass::runOnOperation() {
 
 } // namespace
 
-std::unique_ptr<Pass> mlir::hivm::createMergeSamePreloadScopesPass() {
-  return std::make_unique<MergeSamePreloadScopesPass>();
+std::unique_ptr<Pass> mlir::hivm::createMergeSamePreloadScopesPass(
+    const MergeSamePreloadScopesOptions &options) {
+  return std::make_unique<MergeSamePreloadScopesPass>(options);
 }

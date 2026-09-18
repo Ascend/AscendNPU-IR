@@ -1286,7 +1286,7 @@ void SinkExclusivePreloadWorkPass::runOnOperation() {
     return;
   for (auto funcOp : moduleOp.getOps<func::FuncOp>()) {
     if (!hivm::allowLoopShapeHeuristics(this->bypassShapeRegistry,
-                                        funcOp.getName()))
+                                        funcOp.getName(), this->enablePreload))
       continue;
     SmallVector<scf::ForOp> forOps;
     funcOp.walk([&](scf::ForOp forOp) { forOps.push_back(forOp); });
@@ -1307,6 +1307,7 @@ LogicalResult mlir::hivm::sinkReturnedTensorsToConsumer(scf::ForOp forOp) {
   return sinkReturnedTensorsToConsumerImpl(forOp);
 }
 
-std::unique_ptr<Pass> mlir::hivm::createSinkExclusivePreloadWorkPass() {
-  return std::make_unique<SinkExclusivePreloadWorkPass>();
+std::unique_ptr<Pass> mlir::hivm::createSinkExclusivePreloadWorkPass(
+    const SinkExclusivePreloadWorkOptions &options) {
+  return std::make_unique<SinkExclusivePreloadWorkPass>(options);
 }

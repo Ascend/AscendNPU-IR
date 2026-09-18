@@ -198,11 +198,13 @@ std::unique_ptr<Pass> createInsertInferVFModeFuncPass();
 std::unique_ptr<Pass> createSplitMixKernelPass();
 
 // Create a pass to merge scopes sharing identical preload_num within parent op
-std::unique_ptr<Pass> createMergeSamePreloadScopesPass();
+std::unique_ptr<Pass> createMergeSamePreloadScopesPass(
+    const MergeSamePreloadScopesOptions &options = {});
 
 // Post-CVPipelining sink of exclusive dest/src clusters, unused-CUBE
 // load/VF/copy chains, and mb=1 preload-local allocs. No-op after SplitMix.
-std::unique_ptr<Pass> createSinkExclusivePreloadWorkPass();
+std::unique_ptr<Pass> createSinkExclusivePreloadWorkPass(
+    const SinkExclusivePreloadWorkOptions &options = {});
 
 // Create a pass to split mixed-core scf.if ops into per-core if chains
 // (Ascend950 / RegBase). Intended to run before SplitMixKernel.
@@ -437,7 +439,8 @@ std::unique_ptr<Pass> createCombineOptimizedConvertLayoutPass();
 std::unique_ptr<Pass> createNormalizeConvOpsPass();
 
 /// Create a pass to create preload for CV pipelining
-std::unique_ptr<Pass> createCreatePreloadPass();
+std::unique_ptr<Pass>
+createCreatePreloadPass(const CreatePreloadOptions &options = {});
 
 /// Create a pass to remove HIVM data layout annotation.
 std::unique_ptr<Pass> createRemoveHIVMDataLayoutAnnotationPass();

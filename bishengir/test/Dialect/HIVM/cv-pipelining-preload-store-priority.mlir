@@ -1,8 +1,8 @@
-// RUN: bishengir-opt -cv-pipelining="pipeline-mode=skew" %s | FileCheck %s
+// RUN: bishengir-opt -cv-pipelining="pipeline-mode=skew enable-preload=true" %s | FileCheck %s
 
-// The first function uses a registered LIT name so store-priority is on
-// without `--bypass-shape-registry` (bypass would also enable other
-// registry heuristics on the later negative cases).
+// The first function uses a registered LIT name plus `--enable-preload`
+// so store-priority is on without `--bypass-shape-registry` (bypass would
+// also enable other registry heuristics on the later negative cases).
 // The GM output and the transpose read the same tensor. Prioritize the
 // independent CBUF write consumed by the next CUBE scope over the GM stores,
 // while preserving the order between those stores. Also sink past the trailing

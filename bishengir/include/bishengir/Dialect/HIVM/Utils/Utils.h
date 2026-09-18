@@ -230,7 +230,8 @@ DiagnosedSilenceableFailure mapForallToBlocksImpl(
 /// Move a producer-scope dest / src tensor or leftover-memref cluster into
 /// the unique later VECTOR consumer, including MTE2 load through a subview.
 /// Callers must first allow the parent function via `--bypass-shape-registry`
-/// or `isLoopShapeRegistered`; the pass filters before calling the impl.
+/// or (`--enable-preload` and `isLoopShapeRegistered`); the pass filters
+/// before calling the impl.
 LogicalResult sinkReturnedTensorsToConsumer(scf::ForOp forOp);
 
 /// Remove attr from markOp, and remove markOp if no attr left.

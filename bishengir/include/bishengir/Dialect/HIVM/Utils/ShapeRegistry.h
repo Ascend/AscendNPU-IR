@@ -28,9 +28,13 @@ namespace hivm {
 bool isLoopShapeRegistered(llvm::StringRef name);
 
 /// Shared gate for registered-kernel CV / preload heuristics.
+/// LIT may pass `--bypass-shape-registry` to force the heuristic on.
+/// Otherwise both `--enable-preload` and a registered kernel name are required.
 inline bool allowLoopShapeHeuristics(bool bypassShapeRegistry,
-                                     llvm::StringRef funcName) {
-  return bypassShapeRegistry || isLoopShapeRegistered(funcName);
+                                     llvm::StringRef funcName,
+                                     bool enablePreload) {
+  return bypassShapeRegistry ||
+         (enablePreload && isLoopShapeRegistered(funcName));
 }
 
 } // namespace hivm

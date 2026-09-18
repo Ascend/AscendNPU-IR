@@ -1,4 +1,4 @@
-// RUN: bishengir-opt -cv-pipelining="pipeline-mode=skew" -allow-unregistered-dialect -split-input-file %s | FileCheck %s
+// RUN: bishengir-opt -cv-pipelining="pipeline-mode=skew enable-preload=true" -allow-unregistered-dialect -split-input-file %s | FileCheck %s
 
 // Registered LIT shape without bypass: vcast-of-load is delayed and bundled
 // with the consumer VECTOR work item.

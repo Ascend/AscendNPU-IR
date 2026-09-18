@@ -1,4 +1,4 @@
-// RUN: bishengir-opt -cv-pipelining="pipeline-mode=skew" -allow-unregistered-dialect -split-input-file %s | FileCheck %s
+// RUN: bishengir-opt -cv-pipelining="pipeline-mode=skew enable-preload=true" -allow-unregistered-dialect -split-input-file %s | FileCheck %s
 
 // Test 1: Cross-core loop carry (CUBE producer -> VECTOR consumer).
 // In skew mode, the pass pipelines the loop into VECTOR and CUBE scopes,

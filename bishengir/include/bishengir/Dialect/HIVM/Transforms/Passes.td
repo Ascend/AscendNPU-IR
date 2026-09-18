@@ -809,7 +809,10 @@ def MergeSamePreloadScopes : Pass<"hivm-merge-same-preload-scopes", "ModuleOp"> 
   ];
   let options = [Option<"bypassShapeRegistry", "bypass-shape-registry", "bool",
                         /*default=*/"false",
-                        "Bypass shape registry check for merge-same-preload heuristics">];
+                        "Bypass shape registry check for merge-same-preload heuristics">,
+                 Option<"enablePreload", "enable-preload", "bool",
+                        /*default=*/"false",
+                        "Enable merge-same-preload heuristics when the kernel is registered">];
 }
 
 def SinkExclusivePreloadWork : Pass<"hivm-sink-exclusive-preload-work", "ModuleOp"> {
@@ -829,7 +832,10 @@ def SinkExclusivePreloadWork : Pass<"hivm-sink-exclusive-preload-work", "ModuleO
   ];
   let options = [Option<"bypassShapeRegistry", "bypass-shape-registry", "bool",
                         /*default=*/"false",
-                        "Bypass shape registry check for exclusive-preload sink">];
+                        "Bypass shape registry check for exclusive-preload sink">,
+                 Option<"enablePreload", "enable-preload", "bool",
+                        /*default=*/"false",
+                        "Enable exclusive-preload sink when the kernel is registered">];
 }
 
 def MarkRealCoreType : Pass<"hivm-mark-real-core-type", "ModuleOp"> {
@@ -843,7 +849,10 @@ def MarkRealCoreType : Pass<"hivm-mark-real-core-type", "ModuleOp"> {
                         "pass becomes a cleanup pass.">,
                  Option<"bypassShapeRegistry", "bypass-shape-registry", "bool",
                         /*default=*/"false",
-                        "Bypass shape registry check for parent-scope core-type inheritance">];
+                        "Bypass shape registry check for parent-scope core-type inheritance">,
+                 Option<"enablePreload", "enable-preload", "bool",
+                        /*default=*/"false",
+                        "Enable parent-scope core-type inheritance when the kernel is registered">];
 }
 
 def HIVMCanonicalizationPipeline
@@ -1356,7 +1365,10 @@ def CVPipelining : Pass<"cv-pipelining", "func::FuncOp"> {
                  Option<"bypassShapeRegistry", "bypass-shape-registry", "bool",
                         /*default=*/"false",
                         "Bypass shape registry check for registered-kernel "
-                        "CV-pipelining heuristics">];
+                        "CV-pipelining heuristics">,
+                 Option<"enablePreload", "enable-preload", "bool",
+                        /*default=*/"false",
+                        "Enable registered-kernel CV-pipelining heuristics">];
 }
 
 def AutoBlockifyParallelLoop
@@ -1526,7 +1538,10 @@ def CreatePreload : Pass<"create-preload"> {
   let dependentDialects = ["memref::MemRefDialect", "hivm::HIVMDialect", "mlir::scope::ScopeDialect"];
   let options = [Option<"bypassShapeRegistry", "bypass-shape-registry", "bool",
                         /*default=*/"false",
-                        "Bypass shape registry check for same-preload_num multi-scope">];
+                        "Bypass shape registry check for same-preload_num multi-scope">,
+                 Option<"enablePreload", "enable-preload", "bool",
+                        /*default=*/"false",
+                        "Enable same-preload_num multi-scope when the kernel is registered">];
 }
 
 def RemoveHIVMDataLayoutAnnotation : Pass<"hivm-remove-layout-annotation", "func::FuncOp"> {

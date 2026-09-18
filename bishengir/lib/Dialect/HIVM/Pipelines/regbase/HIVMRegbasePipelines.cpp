@@ -39,6 +39,15 @@ namespace mlir {
 namespace hivm {
 namespace regbase {
 
+static MarkRealCoreTypeOptions
+markCoreTypeOpts(const HIVMPipelineOptions &pipelineOpts,
+                 bool removeCoreTypeAttrs = false) {
+  MarkRealCoreTypeOptions opts;
+  opts.enablePreload = pipelineOpts.enablePreload;
+  opts.removeCoreTypeAttrs = removeCoreTypeAttrs;
+  return opts;
+}
+
 #define ADD_CANONICALIZER_PASS                                                 \
   CanonicalizerOptions options;                                                \
   options.enableExtendedPattern = true;                                        \
@@ -130,14 +139,13 @@ hivmCrossCoreAutoSyncINJPipeline(OpPassManager &pm,
                                  CrossCoreAutoSyncMode mode) {
   if (mode == CrossCoreAutoSyncMode::CCGSS_STEP_1) {
     canonicalizationHIVMPipeline(pm);
-    pm.addPass(createMarkRealCoreTypePass());
+    pm.addPass(createMarkRealCoreTypePass(markCoreTypeOpts(hivmPipelineOptions)));
     InjectBlockSyncOptions blockSyncOption;
     blockSyncOption.blockAllSync =
         hivmPipelineOptions.enableHIVMInjectBlockAllSync;
     pm.nest<func::FuncOp>().addPass(createInjectBlockSyncPass(blockSyncOption));
-    MarkRealCoreTypeOptions markRealCoreTypeOptions;
-    markRealCoreTypeOptions.removeCoreTypeAttrs = true;
-    pm.addPass(createMarkRealCoreTypePass(markRealCoreTypeOptions));
+    pm.addPass(createMarkRealCoreTypePass(
+        markCoreTypeOpts(hivmPipelineOptions, /*removeCoreTypeAttrs=*/true)));
   }
 }
 
@@ -147,15 +155,14 @@ hivmCrossCoreAutoSyncGSSPipeline(OpPassManager &pm,
                                  CrossCoreAutoSyncMode mode) {
   if (mode == CrossCoreAutoSyncMode::CCGSS_STEP_1) {
     canonicalizationHIVMPipeline(pm);
-    pm.addPass(createMarkRealCoreTypePass());
+    pm.addPass(createMarkRealCoreTypePass(markCoreTypeOpts(hivmPipelineOptions)));
     CrossCoreGSSOptions crossCoreGSSOptions;
     crossCoreGSSOptions.solverVersion =
         hivmPipelineOptions.hivmSyncSolverVersion;
     pm.nest<func::FuncOp>().addPass(
         createCrossCoreGSSPass(crossCoreGSSOptions));
-    MarkRealCoreTypeOptions markRealCoreTypeOptions;
-    markRealCoreTypeOptions.removeCoreTypeAttrs = true;
-    pm.addPass(createMarkRealCoreTypePass(markRealCoreTypeOptions));
+    pm.addPass(createMarkRealCoreTypePass(
+        markCoreTypeOpts(hivmPipelineOptions, /*removeCoreTypeAttrs=*/true)));
   }
 }
 
@@ -168,7 +175,7 @@ static void hivmDelayedCrossCoreAutoSyncGSSPipeline(
     // pipeline does not merge operations that must stay separated for the
     // delayed cross-core autosync flow. Remove this once auto-vectorize no
     // longer depends on the presence of sync ops to preserve those boundaries.
-    pm.addPass(createMarkRealCoreTypePass());
+    pm.addPass(createMarkRealCoreTypePass(markCoreTypeOpts(hivmPipelineOptions)));
     CrossCoreGSSOptions crossCoreGSSOptions;
     crossCoreGSSOptions.enableCVPatterns = false;
     crossCoreGSSOptions.solverVersion =
@@ -179,21 +186,19 @@ static void hivmDelayedCrossCoreAutoSyncGSSPipeline(
     insertAnchorsAndBackupOptions.insertAnchorOnlyBeforeCubeOps = false;
     insertAnchorsAndBackupOptions.insertAnchorBeforeCubeAndVectorOps = true;
     pm.addPass(createInsertAnchorsAndBackupPass(insertAnchorsAndBackupOptions));
-    MarkRealCoreTypeOptions markRealCoreTypeOptions;
-    markRealCoreTypeOptions.removeCoreTypeAttrs = true;
-    pm.addPass(createMarkRealCoreTypePass(markRealCoreTypeOptions));
+    pm.addPass(createMarkRealCoreTypePass(
+        markCoreTypeOpts(hivmPipelineOptions, /*removeCoreTypeAttrs=*/true)));
   } else if (mode == CrossCoreAutoSyncMode::CCGSS_STEP_2) {
     canonicalizationHIVMPipeline(pm);
-    pm.addPass(createMarkRealCoreTypePass());
+    pm.addPass(createMarkRealCoreTypePass(markCoreTypeOpts(hivmPipelineOptions)));
     DelayedCrossCoreGSSOptions delayedcrossCoreGSSOptions;
     delayedcrossCoreGSSOptions.blockAllSync =
         hivmPipelineOptions.enableHIVMInjectBlockAllSync;
     delayedcrossCoreGSSOptions.solverVersion =
         hivmPipelineOptions.hivmSyncSolverVersion;
     pm.addPass(createDelayedCrossCoreGSSPass(delayedcrossCoreGSSOptions));
-    MarkRealCoreTypeOptions markRealCoreTypeOptions;
-    markRealCoreTypeOptions.removeCoreTypeAttrs = true;
-    pm.addPass(createMarkRealCoreTypePass(markRealCoreTypeOptions));
+    pm.addPass(createMarkRealCoreTypePass(
+        markCoreTypeOpts(hivmPipelineOptions, /*removeCoreTypeAttrs=*/true)));
     InsertAnchorsAndBackupOptions insertAnchorsAndBackupOptions;
     insertAnchorsAndBackupOptions.cleanup = true;
     insertAnchorsAndBackupOptions.insertAnchorOnlyBeforeCubeOps = false;
@@ -422,6 +427,7 @@ static void hivmPreBufferizationOptimizationPipeline(
           hivmPipelineOptions.setWorkspaceMultibuffer;
       pipelineOptions.enableLazyLoading = hivmPipelineOptions.enableLazyLoading;
       pipelineOptions.pipelineMode = hivmPipelineOptions.setCVPipelineMode;
+      pipelineOptions.enablePreload = hivmPipelineOptions.enablePreload;
       pm.nest<func::FuncOp>().addPass(createCVPipeliningPass(pipelineOptions));
       pm.addNestedPass<func::FuncOp>(
           createMarkMultiBufferPass(multiBufferOptions));
@@ -455,8 +461,12 @@ static void hivmPreBufferizationOptimizationPipeline(
   // Post-CVPipelining sink on the unsplit MIX function: exclusive dest/src
   // clusters (including MTE2 across an unused CUBE) and load→VF→copy
   // chains that sit across an unused mmad. Flattening same preload_num
-  // scopes stays after split.
-  pm.addPass(createSinkExclusivePreloadWorkPass());
+  // scopes stays after split. Registered kernels only, and only with preload.
+  if (hivmPipelineOptions.enablePreload) {
+    SinkExclusivePreloadWorkOptions sinkOpts;
+    sinkOpts.enablePreload = true;
+    pm.addPass(createSinkExclusivePreloadWorkPass(sinkOpts));
+  }
 
   // Cross-Core Auto-Sync passes STEP=1
   hivmCrossCoreAutoSyncPipeline(pm, hivmPipelineOptions,
@@ -470,7 +480,11 @@ static void hivmPreBufferizationOptimizationPipeline(
   // Split mix kernel is done before bufferization because it depends on
   // tensor SSA property.
   pm.addPass(createSplitMixKernelPass());
-  pm.addPass(createMergeSamePreloadScopesPass());
+  if (hivmPipelineOptions.enablePreload) {
+    MergeSamePreloadScopesOptions mergeOpts;
+    mergeOpts.enablePreload = true;
+    pm.addPass(createMergeSamePreloadScopesPass(mergeOpts));
+  }
   // SIMT scopes must stay outlined, so mark them `no_inline` before the
   // inline-scope below runs.
   pm.addPass(createMarkSimtScopeNoInlinePass());
@@ -673,7 +687,9 @@ static void hivmPostBufferizationOptimizationPipeline(
   pm.addPass(createInferHIVMMemScopePass());
   // Preload code transformation for CV pipelining
   if (hivmPipelineOptions.enablePreload) {
-    pm.addPass(createCreatePreloadPass());
+    CreatePreloadOptions preloadOpts;
+    preloadOpts.enablePreload = true;
+    pm.addPass(createCreatePreloadPass(preloadOpts));
   }
   // Intra-Core Auto-Sync passes (Inject-Sync, GSS)
   hivmIntraCoreSyncPipeline(pm, hivmPipelineOptions);
