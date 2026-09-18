@@ -57,7 +57,7 @@ AscendNPU IR仓关键目录如下所示：
   - **中文**：入口页为 `docs/source/zh_cn/index.rst`，正文位于 `docs/source/zh_cn` 目录下。
 - **命名规范**：`docs/`（包含 `docs/source/`）下的**目录名**与**文档文件名**统一采用 **snake_case** 小写下划线风格，例如：`quick_start/`、`installing_guide.md`、`user_guide/`，以保持路径与 URL 风格一致。
 
-在仓库根目录下构建文档：
+在仓库根目录下构建文档（空环境请先按 `docs/README_zh.md` 的「前置依赖」一节安装系统包与 Python 依赖）：
 
 ```bash
 make -C docs html      # 仅英文 → docs/_build/en

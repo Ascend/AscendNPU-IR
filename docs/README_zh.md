@@ -16,6 +16,35 @@
 
 `docs/`（包含 `docs/source/`）下的**目录名**与**文档文件名**统一采用 **snake_case** 小写下划线风格，例如：`quick_start/`、`installing_guide.md`、`user_guide/`，以保持路径与 URL 风格一致。
 
+## 前置依赖
+
+以 Ubuntu 22.04 空环境为例（其他系统安装对应组件即可）：
+
+### 系统包
+
+```bash
+apt-get update && apt-get install -y \
+    clang lld git make ccache \
+    python3 python3-pip python3-venv
+```
+
+- `git`：首次构建时自动拉取 `third-party/llvm-project` 子模块（若子模块已就位则不需要）。
+- `clang`、`ccache`：本地无项目构建产物时，一次性编译文档生成工具（mlir-tblgen 等）所需。
+- `lld`：可选，用于加速链接。
+
+### Python 依赖
+
+在**仓库根目录**下执行：
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install cmake ninja
+pip install -r docs/requirements.txt
+```
+
+> **注意**：`cmake` 与 `ninja` 需通过 pip（或其他新版本渠道）安装——编译文档生成工具要求 CMake ≥ 3.28、Ninja ≥ 1.12，而 Ubuntu 22.04 默认源仅提供 CMake 3.22 / Ninja 1.10，直接 `apt install cmake ninja-build` 会因版本不足导致配置失败。
+
 ## 如何构建
 
 在**仓库根目录**下执行：
