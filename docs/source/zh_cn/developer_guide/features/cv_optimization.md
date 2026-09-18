@@ -70,7 +70,7 @@ fixpipe是Cube与Vector之间的数据搬运通道，昇腾芯片的Cube和Vecto
 
 ### createInsertFixpipePass
 
-- **作用**：在mmadL1/batchMmadL1与store之间插入`hivm.hir.fixpipe`，显式表达Cube到Vector的数据搬运。
+- **作用**：在mmadL1、batchMmadL1与store之间插入`hivm.hir.fixpipe`，显式表达Cube到Vector的数据搬运。
 - **目的**：为后续workspace分配、load/store插入提供明确的插入点。
 - **典型变换**：在mmadL1结果到store的use链上插入fixpipe。
 - **典型场景**：Cube计算结果需要从L0C经fixpipe搬运后再存储（如Cube输出直接Store），此时需要插入fixpipe显式表达数据通路。
