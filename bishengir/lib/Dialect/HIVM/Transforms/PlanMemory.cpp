@@ -1930,6 +1930,10 @@ PlanStatus MemPlan::PlanMemAddressOfWholeLocalBuffer() {
     memscope2allocatedEntry.erase(memScope);
     // memory outline in a given buffer scope.
     LDBG("\nTry multi level plan strategy for " << memScope << " memScope\n");
+    // Enable sectional outline from the first multi-level attempt. Waiting
+    // until ApplyFailStrategy restarts is too late for L1 pong registration
+    // when a later buffer swallows an exact pong start.
+    splitOutline = true;
     int childrenNum = static_cast<int>(rootStorageEntry->mergedChildren.size());
     outline.push_back(
         std::make_shared<MemoryBound>(BufferLifeVec(), 0, maxBits, nullptr));
