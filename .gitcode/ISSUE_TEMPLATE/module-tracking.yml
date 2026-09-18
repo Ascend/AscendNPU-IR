@@ -1,0 +1,129 @@
+name: Module-Tracking|模块跟踪
+description: 用于集中跟踪模块缺陷、技术债、能力缺口和改进事项。
+title: "[Module-Tracking|模块跟踪]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This issue tracks defects, technical debt, capability gaps, and improvements related to a specific module.
+        本 Issue 用于集中跟踪特定模块的缺陷、技术债、能力缺口和改进事项。
+
+        Please create concrete problems using the `Module-Issue|模块问题` template and link them below.
+        请使用 `Module-Issue|模块问题` 模板创建具体问题，并在下方关联。
+
+  - type: textarea
+    attributes:
+      label: Module information / 模块信息 (Mandatory / 必填)
+      description: 请填写模块负责人、相关编译阶段和目标平台等基本信息
+      placeholder: |
+        - Module / 模块：
+        - Owners / 负责人：
+        - Pipeline or passes / 相关 Pipeline 或 Pass：
+        - Target platforms / 目标平台：A3 / A5 / Common 通用
+        - Tracking period / 跟踪周期：
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Objectives / 跟踪目标 (Mandatory / 必填)
+      description: 请描述本 Issue 的跟踪目标
+      placeholder: |
+        1. Identify the current problem scope / 明确当前问题范围
+        2. Assign priorities and owners / 明确问题优先级和负责人
+        3. Complete test and validation coverage / 补齐测试和验证覆盖
+        4. Track fixes through validation / 跟踪修复直至验证完成
+        5. Record remaining risks and follow-up work / 记录遗留风险和后续计划
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Scope / 跟踪范围 (Mandatory / 必填)
+      description: 请明确本 Issue 包含和不包含的范围
+      placeholder: |
+        In Scope / 包含：
+        - 模块负责的功能或编译阶段
+        - 相关 Dialect、Op、Pass 或 Analysis
+        - 特定平台问题
+
+        Out of Scope / 不包含：
+        - 由其他模块负责的问题
+        - 上游 LLVM/MLIR 问题
+        - 非本模块导致的运行时或环境问题
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Issue list / 问题列表 (Mandatory / 必填)
+      description: 请按优先级关联子 Issue，并持续更新状态、负责人和下一步动作
+      value: |
+        <!--
+        请使用以下格式登记问题：
+        - [ ] #<issue-id> <Issue title / 问题标题>
+          - Status / 状态：To Confirm / Investigating / In Progress /
+            Pending Validation / Resolved / Deferred / Externally Blocked
+          - Owner / 负责人：@<owner>
+          - Next action / 下一步：<action>
+        -->
+
+        ### P0 — Release or core-flow blocker / 阻塞发布或核心流程
+
+        <!-- 在这里关联 P0 子 Issue -->
+
+        ### P1 — Major functional problem / 重要功能异常
+
+        <!-- 在这里关联 P1 子 Issue -->
+
+        ### P2 — General problem or capability gap / 一般问题或能力缺口
+
+        <!-- 在这里关联 P2 子 Issue -->
+
+        ### Technical debt and improvements / 技术债与工程改进
+
+        <!-- 在这里关联技术债和工程改进子 Issue -->
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Risks and blockers / 风险与阻塞项 (Optional / 选填)
+      description: 请记录当前风险、外部依赖和解除阻塞的条件
+      placeholder: |
+        - Risk or blocker / 风险或阻塞项：
+          - Impact / 影响：
+          - Dependency / 依赖：
+          - Unblock condition / 解除条件：
+    validations:
+      required: false
+
+  - type: textarea
+    attributes:
+      label: Progress log / 进展记录 (Optional / 选填)
+      description: 请按日期记录问题新增、状态变化、验证结果和下一步动作
+      value: |
+        <!--
+        ### YYYY-MM-DD
+
+        - Added / 新增：#<issue-id>
+        - Status update / 状态变化：#<issue-id>
+        - Resolved / 已解决：#<issue-id>
+        - Validation / 验证结果：
+        - Next step / 下一步：
+        -->
+    validations:
+      required: false
+
+  - type: textarea
+    attributes:
+      label: References / 相关资料 (Optional / 选填)
+      description: 请提供相关设计文档、测试报告、提交或合入请求
+      placeholder: |
+        - Design document / 设计文档：
+        - Test report / 测试报告：
+        - Related commits / 关联提交：
+        - Merge requests / 关联合入请求：
+        - Upstream issues / 上游问题：
+    validations:
+      required: false
