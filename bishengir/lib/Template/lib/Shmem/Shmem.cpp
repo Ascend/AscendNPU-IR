@@ -93,6 +93,30 @@ _mlir_ciface_aclshmem_fence(void) {
   aclshmem_fence();
 }
 
+// Wrapper for aclshmem_sync
+__aicore__ __attribute__((always_inline)) void
+_mlir_ciface_aclshmem_sync(aclshmem_team_t team) {
+  aclshmem_sync(team);
+}
+
+// Wrapper for aclshmem_sync_all
+__aicore__ __attribute__((always_inline)) void
+_mlir_ciface_aclshmem_sync_all(void) {
+  aclshmem_sync_all();
+}
+
+// Wrapper for aclshmemx_sync_vec
+__aicore__ __attribute__((always_inline)) void
+_mlir_ciface_aclshmemx_sync_vec(aclshmem_team_t team) {
+  aclshmemx_sync_vec(team);
+}
+
+// Wrapper for aclshmemx_sync_vec_all
+__aicore__ __attribute__((always_inline)) void
+_mlir_ciface_aclshmemx_sync_vec_all(void) {
+  aclshmemx_sync_vec_all();
+}
+
 // Wrapper for aclshmemx_signal_op
 __aicore__ __attribute__((always_inline)) void
 _mlir_ciface_aclshmemx_signal_op(memref_t<__gm__ int32_t, 1> sigAddr,
