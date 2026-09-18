@@ -76,9 +76,10 @@ public:
   /// `enableLazyLoading=true` permits the same LoadOp or ND2NZOp (and its
   /// backing to_tensor) to be pulled into multiple consuming WorkItems instead
   /// of being shared through expanded multi-buffered tensors.
-  /// `allowPreferredLoopHeuristics` enables vcast/upcast/vbrc delay, load-like
-  /// vcast bundling, and walking region DPS / memref.copy for LCD. Block-mode
-  /// construction leaves this false.
+  /// `allowPreferredLoopHeuristics` enables LCD backup extraction (and the
+  /// WI0-into-WI1 merge), vcast/upcast/vbrc delay, load-like vcast bundling,
+  /// and walking region DPS / memref.copy for LCD. Block-mode construction
+  /// leaves this false.
   WorklistBuilder(scf::ForOp loop, int numMultibuffer,
                   bool enableLazyLoading = false,
                   bool allowPreferredLoopHeuristics = false);

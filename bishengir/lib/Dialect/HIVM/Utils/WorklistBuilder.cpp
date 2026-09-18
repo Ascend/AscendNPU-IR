@@ -1830,8 +1830,11 @@ FailureOr<WorklistBuildResult> WorklistBuilder::build() {
   bool extractionSuccess =
       succeeded(runRoundExtraction()) && toBePipelined.empty();
 
-  // Backup attempt: if loop mode and original extraction failed due to LCD
-  if (isLoopMode && !extractionSuccess) {
+  // Backup attempt: if loop mode and original extraction failed due to LCD.
+  // Off-registry kernels keep the pre-LCD behavior: leftover core ops fail
+  // the build and CVP leaves the loop un-pipelined. Registered kernels (or
+  // LIT `--bypass-shape-registry`) may retry with LCD-aware extraction.
+  if (isLoopMode && !extractionSuccess && allowPreferredLoopHeuristics) {
     LLVM_DEBUG(dbgs() << "[WorklistBuilder] Standard extraction failed, "
                          "retrying with LCD backup handling\n");
     worklist.clear();

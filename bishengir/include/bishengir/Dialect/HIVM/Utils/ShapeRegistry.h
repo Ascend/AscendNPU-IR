@@ -33,6 +33,8 @@ bool isLoopShapeRegistered(llvm::StringRef name);
 /// LIT may pass `--bypass-shape-registry` to force the heuristic on.
 /// Otherwise `--enable-preload`, a non-zero `--set-workspace-multibuffer`,
 /// and a registered kernel name are all required.
+/// Covers LCD backup extraction (intra-WI and cross-WI) as well as dest-sink
+/// / delay / merge-same-preload heuristics.
 inline bool allowLoopShapeHeuristics(bool bypassShapeRegistry,
                                      llvm::StringRef funcName,
                                      bool enablePreload,

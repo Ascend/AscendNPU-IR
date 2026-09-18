@@ -1,4 +1,5 @@
-// RUN: bishengir-opt -cv-pipelining="pipeline-mode=skew enable-preload=true" -allow-unregistered-dialect -split-input-file %s | FileCheck %s
+// Registered LCD names: preload + non-zero workspace depth enable LCD backup.
+// RUN: bishengir-opt -cv-pipelining="pipeline-mode=skew enable-preload=true set-depth-in-unroll-mode=2" -allow-unregistered-dialect -split-input-file %s | FileCheck %s
 
 // Test 1: Cross-core loop carry (CUBE producer -> VECTOR consumer).
 // In skew mode, the pass pipelines the loop into VECTOR and CUBE scopes,
