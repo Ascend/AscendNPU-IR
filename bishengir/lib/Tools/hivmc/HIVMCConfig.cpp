@@ -288,11 +288,15 @@ struct HIVMCMainConfigCLOptions : public HIVMCMainConfig {
         cl::location(enableFlattenFlag), cl::init(true),
         cl::cat(generalOptCategory));
 
-    static cl::opt<int, /*ExternalStorage=*/true>
-        enableBishengirSimtOptimization(
+    static cl::opt<int, /*ExternalStorage=*/true> simtOptimizationMode(
+            "simt-optimization-mode",
+            cl::desc("set simt optimiation mode"),
+            cl::location(simtOptimizationModeFlag), cl::init(900101));
+    
+    static cl::alias enableBishengirSimtOptimization(
             "enable-bishengir-simt-optimization",
-            cl::desc("enable bishengir simt optimization"),
-            cl::location(enableBishengirSimtOptimizationFlag), cl::init(1900101));
+            cl::desc("alias for simt-optimziation-mode"),
+            cl::aliasopt(simtOptimizationMode));
 
     static cl::opt<int32_t> simtStackLimitOpt(
     "simt-stack-limit",
