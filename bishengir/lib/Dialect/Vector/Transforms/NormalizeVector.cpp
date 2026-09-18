@@ -16,7 +16,6 @@
 #include "mlir/Dialect/Vector/Transforms/LoweringPatterns.h"
 #include "mlir/Dialect/Vector/Transforms/VectorRewritePatterns.h"
 #include "mlir/Dialect/Vector/Transforms/VectorTransforms.h"
-#include "mlir/Dialect/Vector/Utils/VectorUtils.h"
 #include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/AffineMap.h"
 #include "mlir/IR/Builders.h"
@@ -1003,6 +1002,31 @@ class TransferReadToGatheringLoadPattern
     if (!destType || !destType.hasStaticShape())
       return failure();
 
+    if (permMap.isIdentity()) {
+      // In 1-D the mask needs no permutation. The offsets depend only on the
+      // vector width and static stride, even when the source has a dynamic
+      // extent. Preserve the original mask when creating the gather below.
+      if (memrefType.getRank() != 1 || memrefType.getDimSize(0) == 1 ||
+          readop.hasOutOfBoundsDim())
+        return failure();
+      int64_t offset;
+      // For a 1-D view, unit stride is contiguous even with a dynamic extent.
+      if (failed(getStridesAndOffset(memrefType, strides, offset)) ||
+          strides.front() <= 1)
+        return failure();
+      isFullMask = true;
+      if (auto mask = readop.getMask()) {
+        if (auto constantMask = mask.getDefiningOp<vector::ConstantMaskOp>()) {
+          // Keep inactive indices zero, as on the existing constant-mask path,
+          // so that a large stride does not overflow unused gather indices.
+          constantMaskBounds.push_back(
+              cast<IntegerAttr>(constantMask.getMaskDimSizes()[0]).getInt());
+          isFullMask = false;
+        }
+      }
+      return success();
+    }
+
     // must have static shape
     // dynamic shape size is represented by a large negative number
     auto shape = memrefType.getShape();
@@ -1049,13 +1073,6 @@ class TransferReadToGatheringLoadPattern
         }
       }
     }
-
-    // Extend identity reads only for 1-D non-contiguous sources. Preserve
-    // the existing multi-dimensional and single-element lowering paths.
-    if (permMap.isIdentity())
-      return success(memrefType.getRank() == 1 &&
-                     memrefType.getNumElements() != 1 &&
-                     !vector::isContiguousSlice(memrefType, destType));
 
     // if transpose dim with 1 mask value
     // no need to change transfer_read to gather
@@ -1311,7 +1328,9 @@ class TransferReadToGatheringLoadPattern
     decltype(readop.getMask()) newMask;
     VectorType maskType =
         VectorType::get({totalDestSize}, rewriter.getI1Type());
-    if (!isFullMask) {
+    if (permMap.isIdentity() && readop.getMask()) {
+      newMask = readop.getMask();
+    } else if (!isFullMask) {
       // check if we can convert the constant mask to something simple
       // currently we only try to create another constant mask
       // if there are more patterns we can support, update them here
