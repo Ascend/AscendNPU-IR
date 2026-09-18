@@ -1,0 +1,132 @@
+name: Module-Issue|模块问题
+description: 用于反馈具体的模块缺陷、能力缺口、技术债或改进事项。
+title: "[Module-Issue|模块问题]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please provide sufficient information to reproduce, investigate, and validate the problem.
+        请提供足够的信息，以便复现、分析和验证该问题。
+
+  - type: textarea
+    attributes:
+      label: Problem description / 问题描述 (Mandatory / 必填)
+      description: 请描述当前行为、预期行为以及问题影响
+      placeholder: |
+        Current behavior / 当前行为：
+
+        Expected behavior / 预期行为：
+
+        Impact / 影响：
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Module information / 模块信息 (Mandatory / 必填)
+      description: 请填写问题所属模块及影响范围
+      placeholder: |
+        - Module / 模块：
+        - Pipeline or pass / Pipeline 或 Pass：
+        - Issue type / 问题类型：Compilation / Precision / Performance / Memory / Synchronization / Runtime / Technical Debt
+        - Priority / 优先级：P0 / P1 / P2
+        - Target platforms / 目标平台：A3 / A5 / Common 通用
+        - Parent tracking issue / 所属跟踪 Issue：#
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Environment / 环境信息 (Mandatory / 必填)
+      description: 请提供代码版本、工具链版本和目标硬件等信息
+      placeholder: |
+        - Code revision / 代码版本：
+        - Toolchain version / 工具链版本：
+        - Hardware / 硬件型号：
+        - OS / 操作系统：
+        - Other dependencies / 其他依赖：
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Steps to reproduce / 重现步骤 (Mandatory / 必填)
+      description: 请提供最小复现用例、完整命令和编译选项
+      placeholder: |
+        1. Minimal reproducer / 最小复现用例：
+        2. Command / 执行命令：
+        3. Compilation options / 编译参数：
+        4. Reproduction rate / 复现概率：
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Logs and IR information / 日志与 IR 信息 (Mandatory / 必填)
+      description: 请提供错误日志、异常结果或首个出现异常的 IR 阶段
+      placeholder: |
+        Error log or incorrect output / 错误日志或异常输出：
+
+        First abnormal stage or pass / 首个异常阶段或 Pass：
+
+        IR before the suspected pass / 可疑 Pass 执行前的 IR：
+
+        IR after the suspected pass / 可疑 Pass 执行后的 IR：
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Investigation and workaround / 已完成排查与规避方案 (Optional / 选填)
+      description: 请记录已经尝试的排查方法、初步结论及临时规避方案
+      placeholder: |
+        Investigation / 已完成排查：
+
+        Preliminary conclusion / 初步结论：
+
+        Workaround / 临时规避方案：
+    validations:
+      required: false
+
+  - type: textarea
+    attributes:
+      label: Root cause and solution / 根因与解决方案 (Optional / 选填)
+      description: 问题定位后由负责人持续更新
+      placeholder: |
+        Root cause / 根因：
+
+        Solution / 解决方案：
+
+        Risks / 风险：
+
+        Related commit or MR / 关联提交或合入请求：
+    validations:
+      required: false
+
+  - type: textarea
+    attributes:
+      label: Validation / 验证结果 (Optional / 选填)
+      description: 修复完成后由负责人补充验证命令和结果
+      value: |
+        <!-- 修复完成后更新以下检查项。 -->
+
+        - [ ] Root cause is identified / 根因已经明确
+        - [ ] Fix commit or merge request is linked / 已关联修复提交或合入请求
+        - [ ] Regression tests are added or updated / 已新增或更新回归测试
+        - [ ] Focused tests pass / 聚焦测试通过
+        - [ ] Relevant test suites pass / 相关测试套通过
+        - [ ] Target hardware validation passes or its limitation is documented / 目标硬件验证通过或已说明限制
+        - [ ] No known cross-platform regression is introduced / 未引入已知跨平台回归
+
+        Test commands and results / 测试命令及结果：
+
+        Remaining risks / 遗留风险：
+    validations:
+      required: false
+
+  - type: textarea
+    attributes:
+      label: Special notes / 备注 (Optional / 选填)
+      description: 请补充其他有助于分析问题的信息
+    validations:
+      required: false
