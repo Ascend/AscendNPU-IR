@@ -23,6 +23,7 @@
 
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVM/Utils/ShapeRegistry.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -232,6 +233,9 @@ struct MergeSamePreloadScopesPass
 void MergeSamePreloadScopesPass::runOnOperation() {
   ModuleOp moduleOp = getOperation();
   for (auto funcOp : moduleOp.getOps<func::FuncOp>()) {
+    if (!hivm::allowLoopShapeHeuristics(this->bypassShapeRegistry,
+                                        funcOp.getName()))
+      continue;
     SmallVector<scf::ForOp> forOps;
     funcOp.walk([&](scf::ForOp forOp) { forOps.push_back(forOp); });
 

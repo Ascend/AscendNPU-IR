@@ -1,4 +1,4 @@
-// RUN: bishengir-opt %s -hivm-merge-same-preload-scopes | FileCheck %s
+// RUN: bishengir-opt %s -hivm-merge-same-preload-scopes="bypass-shape-registry=true" | FileCheck %s
 
 // Test 1: Merge preload_num = 0 scopes and sink trailing anchor/store while hoisting tensor.empty
 // CHECK-LABEL: func.func @merge_preload_scopes_0(

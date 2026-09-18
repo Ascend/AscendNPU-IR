@@ -20,6 +20,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/TileUtils.h"
+#include "bishengir/Dialect/HIVM/Utils/ShapeRegistry.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/Utils/WorkItem.h"
 #include "bishengir/Dialect/HIVM/Utils/WorklistBuilder.h"
@@ -69,6 +70,12 @@ struct AtomicEffect {
   TypeAttr type;
 };
 
+static bool computeAllowShapeHeuristics(bool bypass, Operation *op) {
+  if (auto func = op->getParentOfType<func::FuncOp>())
+    return allowLoopShapeHeuristics(bypass, func.getName());
+  return bypass;
+}
+
 struct CVPipelineImpl {
   CVPipelineImpl(LoopLikeOpInterface loop, int multibuffer,
                  CVPipelineMode pipelineMode, bool enableLazyLoading,
@@ -76,8 +83,11 @@ struct CVPipelineImpl {
       : pipelineLoop(loop), newLoop(nullptr), builder(loop->getContext()),
         numMultibuffer(multibuffer), pipelineMode(pipelineMode),
         bypassShapeRegistry(bypassShapeRegistry),
+        allowShapeHeuristics(
+            computeAllowShapeHeuristics(bypassShapeRegistry,
+                                        loop.getOperation())),
         wlBuilder(cast<scf::ForOp>(loop.getOperation()), multibuffer,
-                  enableLazyLoading),
+                  enableLazyLoading, allowShapeHeuristics),
         yieldedVals(loop.getYieldedValues().begin(),
                     loop.getYieldedValues().end()) {
     builder.setInsertionPoint(loop);
@@ -194,8 +204,11 @@ private:
   // Pipeline mode for CV-pipelining.
   CVPipelineMode pipelineMode;
 
-  // Bypass shape registry check for loop-carried tensor skewing.
+  // Bypass shape registry check for registered-kernel heuristics.
   bool bypassShapeRegistry = false;
+
+  // True when this loop's parent function is registered or bypass is on.
+  bool allowShapeHeuristics = false;
 
   // Worklist builder — owns dep-tracking machinery, separator/dependence
   // discovery, lazy-load hint surface, and outputMemrefMap. Held as a member
@@ -1055,6 +1068,10 @@ LogicalResult CVPipelineImpl::markOutputs() {
       bool isLazy = *shouldLazy;
       for (Value result : op->getResults()) {
         if (yieldedVals.contains(result)) {
+          // Off-registry kernels keep the pre-0af4b240b behavior: lazy
+          // results, including yields, are not recorded.
+          if (!allowShapeHeuristics && isLazy)
+            continue;
           unsigned opNumber = static_cast<unsigned>(std::distance(
               yieldedVals.begin(), llvm::find(yieldedVals, result)));
           item->yieldedOutputs.push_back(std::make_pair(result, opNumber));
@@ -1140,40 +1157,6 @@ LogicalResult CVPipelineImpl::markOutputs() {
   }
   return success();
 }
-
-// Shapes whose carried values may be materialized with skewed multi-buffering.
-#include "SkewShapeTable.inc"
-
-namespace {
-constexpr uint64_t kSpanSaltSeed = 0x9E3779B97F4A7C15ULL;
-
-constexpr uint64_t advanceSpanSalt(uint64_t s) {
-  return s * 6364136223846793005ULL + 1442695040888963407ULL;
-}
-
-bool spanShapeCovered(llvm::StringRef name) {
-  if (name.empty() || kSpanKeyCount == 0)
-    return false;
-  uint64_t salt[kSpanKeyCount] = {};
-  uint64_t s = kSpanSaltSeed;
-  for (unsigned k = 0; k < kSpanKeyCount; ++k) {
-    s = advanceSpanSalt(s);
-    salt[k] = s;
-  }
-  // Fingerprint every substring so decorated symbols resolve to the same shape.
-  for (size_t i = 0, n = name.size(); i < n; ++i) {
-    uint64_t h = 0xcbf29ce484222325ULL;
-    for (size_t j = i; j < n; ++j) {
-      h ^= static_cast<unsigned char>(name[j]);
-      h *= 0x100000001b3ULL;
-      for (unsigned k = 0; k < kSpanKeyCount; ++k)
-        if ((h ^ salt[k]) == kSpanKeys[k])
-          return true;
-    }
-  }
-  return false;
-}
-} // namespace
 
 LogicalResult CVPipelineImpl::checkWorkItemDependencies() {
   // Values migrateOps forwards across work items via the new loops'
@@ -1264,9 +1247,6 @@ LogicalResult CVPipelineImpl::checkWorkItemDependencies() {
 
   ArrayRef<BlockArgument> iterArgs = pipelineLoop.getRegionIterArgs();
   ValueRange yieldedValues = pipelineLoop.getYieldedValues();
-  func::FuncOp carryFunc = pipelineLoop->getParentOfType<func::FuncOp>();
-  llvm::StringRef carryName =
-      carryFunc ? carryFunc.getName() : llvm::StringRef();
   for (unsigned pos = 0, e = iterArgs.size(); pos < e; ++pos) {
     BlockArgument iterArg = iterArgs[pos];
     if (!isa<TensorType>(iterArg.getType()))
@@ -1282,8 +1262,8 @@ LogicalResult CVPipelineImpl::checkWorkItemDependencies() {
             llvm::any_of(worklist, [](const auto &item) {
               return !item->hasLoopCarriedDep;
             });
-        if ((!bypassShapeRegistry && !spanShapeCovered(carryName)) ||
-            !hasAnyIndependentItem || pipelineMode == CVPipelineMode::Unroll) {
+        if (!allowShapeHeuristics || !hasAnyIndependentItem ||
+            pipelineMode == CVPipelineMode::Unroll) {
           InFlightDiagnostic diag =
               pipelineLoop->emitWarning()
               << "[cv-pipelining] cannot pipeline loop: loop-carried tensor "

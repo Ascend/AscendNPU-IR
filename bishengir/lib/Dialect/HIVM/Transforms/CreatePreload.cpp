@@ -19,6 +19,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVM/Utils/ShapeRegistry.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
@@ -27,6 +28,7 @@
 #include "bishengir/Transforms/Passes.h"
 
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Verifier.h"
 #include "mlir/Interfaces/ViewLikeInterface.h"
@@ -35,7 +37,6 @@
 #include "mlir/Transforms/Passes.h"
 
 namespace mlir {
-#define GEN_PASS_DECL_CREATEPRELOAD
 #define GEN_PASS_DEF_CREATEPRELOAD
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h.inc"
 
@@ -672,23 +673,45 @@ void CreatePreloadPass::runOnOperation() {
   auto moduleOp = getOperation();
   DenseMap<scf::ForOp, DenseMap<Operation *, size_t>> loopToScopes;
   DenseMap<scf::ForOp, size_t> loopToMaxPreloadNum;
+  DenseMap<scf::ForOp, SmallVector<scope::ScopeOp, 4>> uniqueSlots;
   moduleOp->walk([&](scope::ScopeOp scopeOp) {
     auto parentForOp = dyn_cast<scf::ForOp>(scopeOp->getParentOp());
     if (!parentForOp)
       return;
+    auto parentFunc = parentForOp->getParentOfType<func::FuncOp>();
+    bool allow = parentFunc && allowLoopShapeHeuristics(
+                                   this->bypassShapeRegistry, parentFunc.getName());
     if (auto maxPreloadNumAttr = scopeOp->getAttrOfType<IntegerAttr>(
             hivm::MaxPreloadNumAttr::name)) {
-      loopToMaxPreloadNum[parentForOp] =
-          std::max(loopToMaxPreloadNum[parentForOp],
-                   static_cast<size_t>(maxPreloadNumAttr.getInt()));
+      if (allow) {
+        loopToMaxPreloadNum[parentForOp] =
+            std::max(loopToMaxPreloadNum[parentForOp],
+                     static_cast<size_t>(maxPreloadNumAttr.getInt()));
+      } else {
+        uniqueSlots[parentForOp].resize(maxPreloadNumAttr.getInt(), nullptr);
+        loopToMaxPreloadNum[parentForOp] = uniqueSlots[parentForOp].size();
+      }
     }
     if (auto preloadNumAttr =
             scopeOp->getAttrOfType<IntegerAttr>(hivm::PreloadNumAttr::name)) {
       auto preloadNum = preloadNumAttr.getInt();
       assert(preloadNum >= 0 && "PreloadNum must be non-negative integer");
-      loopToScopes[parentForOp][scopeOp] = static_cast<size_t>(preloadNum);
+      if (allow) {
+        loopToScopes[parentForOp][scopeOp] = static_cast<size_t>(preloadNum);
+      } else {
+        auto &preloadVec = uniqueSlots[parentForOp];
+        assert(preloadNum < static_cast<int64_t>(preloadVec.size()) &&
+               "MaxPreloadNumAttr must be set");
+        preloadVec[preloadNum] = scopeOp;
+      }
     }
   });
+  for (auto &[forOp, scopes] : uniqueSlots) {
+    for (size_t i = 0, e = scopes.size(); i < e; ++i) {
+      if (scopes[i])
+        loopToScopes[forOp][scopes[i]] = i;
+    }
+  }
 
   if (loopToScopes.empty())
     return;

@@ -1,4 +1,4 @@
-// RUN: bishengir-opt %s -create-preload -split-input-file  | FileCheck %s
+// RUN: bishengir-opt %s -create-preload="bypass-shape-registry=true" -split-input-file  | FileCheck %s
 
 #map = affine_map<()[s0] -> (s0 * 1835008 + 1048576)>
 #map1 = affine_map<()[s0] -> (s0 * 1835008 + 1572864)>

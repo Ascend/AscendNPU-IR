@@ -21,6 +21,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVMInterfaces.h"
 #include "bishengir/Dialect/HIVM/Pipelines/Passes.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVM/Utils/ShapeRegistry.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Bufferization/Transforms/Passes.h"
@@ -163,9 +164,13 @@ void MarkRealCoreTypePass::runOnOperation() {
   }
 
   // Fallback: for ops that were DCE'd in moduleClone (e.g. dead iter_arg cycles),
-  // inherit core type from the enclosing scope.scope.
+  // inherit core type from the enclosing scope.scope. Registered kernels only.
   moduleOp.walk([&](Operation *op) {
     if (isOpTypeToBeMarked(op) && !op->hasAttr(hivm::TCoreTypeAttr::name)) {
+      auto func = op->getParentOfType<func::FuncOp>();
+      if (!func ||
+          !allowLoopShapeHeuristics(this->bypassShapeRegistry, func.getName()))
+        return;
       if (auto parentScope = op->getParentOfType<scope::ScopeOp>()) {
         if (auto attr = parentScope->getAttrOfType<hivm::TCoreTypeAttr>(
                 hivm::kPipelinedLoopCoreTypeAttrName)) {

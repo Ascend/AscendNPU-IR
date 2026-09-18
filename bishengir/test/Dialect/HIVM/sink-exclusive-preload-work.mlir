@@ -1,4 +1,4 @@
-// RUN: bishengir-opt %s -hivm-sink-exclusive-preload-work | FileCheck %s
+// RUN: bishengir-opt %s -hivm-sink-exclusive-preload-work="bypass-shape-registry=true" | FileCheck %s
 
 func.func @vf_cast(
     %arg0: memref<32x128xbf16, #hivm.address_space<ub>>,

@@ -76,8 +76,12 @@ public:
   /// `enableLazyLoading=true` permits the same LoadOp or ND2NZOp (and its
   /// backing to_tensor) to be pulled into multiple consuming WorkItems instead
   /// of being shared through expanded multi-buffered tensors.
+  /// `allowPreferredLoopHeuristics` enables vcast/upcast/vbrc delay, load-like
+  /// vcast bundling, and walking region DPS / memref.copy for LCD. Block-mode
+  /// construction leaves this false.
   WorklistBuilder(scf::ForOp loop, int numMultibuffer,
-                  bool enableLazyLoading = false);
+                  bool enableLazyLoading = false,
+                  bool allowPreferredLoopHeuristics = false);
 
   /// Block mode: partition a block's operations for if-else splitting.
   explicit WorklistBuilder(Block *block);
@@ -181,6 +185,10 @@ private:
   /// seed.
   bool shouldDelayCoreOp(Operation *op);
 
+  /// True when a vcast-of-load should be treated as load-like for delay,
+  /// lazy clone, and fallback extraction.
+  bool shouldTreatAsDelayedLoadLike(Operation *op);
+
   /// Check whether the input vcast casts a load from a GM buffer that also has
   /// a StoreOp within the current scope.
   bool hasStoreToSameBuffer(VCastOp vcast);
@@ -196,6 +204,7 @@ private:
   bool isLoopMode = false;
   int numMultibuffer = -1;
   bool enableLazyLoading = false;
+  bool allowPreferredLoopHeuristics = false;
   bool useLcdBackup = false;
 
   DenseSet<Operation *> toBePipelined;

@@ -338,8 +338,12 @@ bool WorklistBuilder::hasStoreToSameBuffer(VCastOp vcast) {
   return foundStore;
 }
 
+bool WorklistBuilder::shouldTreatAsDelayedLoadLike(Operation *op) {
+  return allowPreferredLoopHeuristics && isCastingLoadResult(op);
+}
+
 bool WorklistBuilder::shouldDelayCoreOp(Operation *op) {
-  if (!op)
+  if (!allowPreferredLoopHeuristics || !op)
     return false;
   if (auto vcast = dyn_cast<VCastOp>(op)) {
     if (hasStoreToSameBuffer(vcast))
@@ -696,10 +700,12 @@ markWorkspaceOps(Operation *op,
 //===----------------------------------------------------------------------===//
 
 WorklistBuilder::WorklistBuilder(scf::ForOp loop, int numMultibuffer,
-                                 bool enableLazyLoading)
+                                 bool enableLazyLoading,
+                                 bool allowPreferredLoopHeuristics)
     : targetBlock(loop.getBody()), scopeOp(loop.getOperation()),
       pipelineLoop(loop), isLoopMode(true), numMultibuffer(numMultibuffer),
       enableLazyLoading(enableLazyLoading),
+      allowPreferredLoopHeuristics(allowPreferredLoopHeuristics),
       yieldedVals(loop.getYieldedValues().begin(),
                   loop.getYieldedValues().end()) {}
 
@@ -893,7 +899,7 @@ FailureOr<bool> WorklistBuilder::isCrossCoreLoad(const Value loaded) const {
 }
 
 FailureOr<bool> WorklistBuilder::shouldLazyLoadFor(Operation *op) {
-  if (isCastingLoadResult(op)) {
+  if (shouldTreatAsDelayedLoadLike(op)) {
     auto vcast = cast<VCastOp>(op);
     Value inVal = vcast.getDpsInputOperand(0)->get();
     inVal = unwrapTensorViews(inVal);
@@ -1077,25 +1083,36 @@ void WorklistBuilder::populateLoopCarriedDependencies() {
       for (Operation *user : res.getUsers())
         pushScopedUser(user);
 
-    // Follow memref writes if DPS op or copy (including nested ops inside
-    // region ops)
-    op->walk([&](Operation *nestedOp) {
-      if (auto dps = dyn_cast<DestinationStyleOpInterface>(nestedOp)) {
-        for (Value init : dps.getDpsInits()) {
-          if (!isa<MemRefType>(init.getType()))
-            continue;
+    // Follow memref writes if DPS op. Registered kernels also walk into
+    // region ops and follow memref.copy targets.
+    if (allowPreferredLoopHeuristics) {
+      op->walk([&](Operation *nestedOp) {
+        if (auto dps = dyn_cast<DestinationStyleOpInterface>(nestedOp)) {
+          for (Value init : dps.getDpsInits()) {
+            if (!isa<MemRefType>(init.getType()))
+              continue;
+            SmallVector<Operation *> memrefUsers;
+            memrefDFS(init, memrefUsers);
+            for (Operation *usr : memrefUsers)
+              pushScopedUser(usr);
+          }
+        } else if (auto copy = dyn_cast<memref::CopyOp>(nestedOp)) {
           SmallVector<Operation *> memrefUsers;
-          memrefDFS(init, memrefUsers);
+          memrefDFS(copy.getTarget(), memrefUsers);
           for (Operation *usr : memrefUsers)
             pushScopedUser(usr);
         }
-      } else if (auto copy = dyn_cast<memref::CopyOp>(nestedOp)) {
+      });
+    } else if (auto dps = dyn_cast<DestinationStyleOpInterface>(op)) {
+      for (Value init : dps.getDpsInits()) {
+        if (!isa<MemRefType>(init.getType()))
+          continue;
         SmallVector<Operation *> memrefUsers;
-        memrefDFS(copy.getTarget(), memrefUsers);
+        memrefDFS(init, memrefUsers);
         for (Operation *usr : memrefUsers)
           pushScopedUser(usr);
       }
-    });
+    }
 
     // Follow dependenceMap successors
     for (auto &[consumer, deps] : dependenceMap)
@@ -1291,7 +1308,7 @@ LogicalResult WorklistBuilder::traceDependentOps(WorkItem &item) {
           // hint, or auto cross-core legality), allow load-like ops to be
           // cloned into multiple work items so each stage loads
           // independently from GM.
-          if (!isLoadLikeOp(op) && !isCastingLoadResult(op))
+          if (!isLoadLikeOp(op) && !shouldTreatAsDelayedLoadLike(op))
             continue;
           FailureOr<bool> shouldLazy = shouldLazyLoadFor(op);
           if (failed(shouldLazy))
@@ -1497,7 +1514,7 @@ WorklistBuilder::extractAvailableOps(SmallVector<Operation *> &extractedOps,
     for (Operation &op : *targetBlock) {
       if (opToWorkItemMap.contains(&op))
         continue;
-      if (isLoadLikeOp(&op) || isCastingLoadResult(&op))
+      if (isLoadLikeOp(&op) || shouldTreatAsDelayedLoadLike(&op))
         continue;
       if (isLoopMode && useLcdBackup && hasRemainingNoLoopCarriedOps &&
           loopCarriedDependentOps.contains(&op))
