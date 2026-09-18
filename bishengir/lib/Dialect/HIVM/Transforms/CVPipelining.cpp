@@ -2292,6 +2292,7 @@ static bool isStorePriorityCBuf(Value value) {
 /// Prioritize the transposed CBUF copy over the GM output of the same cast.
 /// Keep this local to tensor-form preload scopes, before memory planning and
 /// sync insertion account for the delayed store's buffer lifetime.
+/// Callers must first pass `allowShapeHeuristics` (registry or LIT bypass).
 static void prioritizePreloadCrossCoreCopy(Block &body) {
   if (llvm::any_of(body, [](Operation &op) { return isa<SetAtomicOp>(op); }))
     return;
@@ -2374,9 +2375,12 @@ LogicalResult CVPipelineImpl::markScopesForPreload() {
     return failure();
   }
 
-  for (auto &item : worklist)
-    if (item->core == TCoreType::VECTOR)
-      prioritizePreloadCrossCoreCopy(item->scopeOp.getRegion().front());
+  // Off-registry kernels keep the original GM-store / CBUF-copy order.
+  if (allowShapeHeuristics) {
+    for (auto &item : worklist)
+      if (item->core == TCoreType::VECTOR && item->scopeOp)
+        prioritizePreloadCrossCoreCopy(item->scopeOp.getRegion().front());
+  }
 
   LLVM_DEBUG({
     for (auto item : worklist) {

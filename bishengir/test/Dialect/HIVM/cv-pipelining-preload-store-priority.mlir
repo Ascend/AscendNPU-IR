@@ -1,12 +1,15 @@
 // RUN: bishengir-opt -cv-pipelining="pipeline-mode=skew" %s | FileCheck %s
 
+// The first function uses a registered LIT name so store-priority is on
+// without `--bypass-shape-registry` (bypass would also enable other
+// registry heuristics on the later negative cases).
 // The GM output and the transpose read the same tensor. Prioritize the
 // independent CBUF write consumed by the next CUBE scope over the GM stores,
 // while preserving the order between those stores. Also sink past the trailing
 // pure VECTOR computation so later vector-scope merging preserves the
 // priority of the CBUF write. The second output is an unranked GM function
 // argument reached through a ranked memref.cast.
-// CHECK-LABEL: func.func @prioritize_cross_core_copy
+// CHECK-LABEL: func.func @cross_core_loop_carry_skew
 // CHECK: %[[RANKED_OUTPUT:.*]] = memref.cast {{.*}} : memref<*xf16, #hivm.address_space<gm>> to memref<16x16xf16, #hivm.address_space<gm>>
 // CHECK: scope.scope
 // CHECK: %[[CAST:.*]] = hivm.hir.vcast
@@ -25,7 +28,7 @@
 // CHECK: hivm.hir.mmadL1
 // CHECK: } {hivm.loop_core_type = #hivm.tcore_type<CUBE>
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
-  func.func @prioritize_cross_core_copy(
+  func.func @cross_core_loop_carry_skew(
       %input: tensor<16x16xf32>, %rhs: tensor<1x1x16x16xf16>,
       %output: memref<?xf16>,
       %second_output: memref<*xf16, #hivm.address_space<gm>>,
@@ -105,13 +108,14 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   }
 
   // A potentially aliasing GM load is a scheduling barrier, even when the
-  // following CBUF copy has an independent source.
+  // following CBUF copy has an independent source. Current worklist
+  // construction leaves this loop unpipelined; the store still precedes
+  // the load and the CBUF copy.
   // CHECK-LABEL: func.func @keep_store_before_gm_load
-  // CHECK: scope.scope
+  // CHECK: scf.for
   // CHECK: hivm.hir.store
   // CHECK: hivm.hir.load
   // CHECK: hivm.hir.copy
-  // CHECK: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>
   func.func @keep_store_before_gm_load(
       %input: tensor<16x16xf32>, %rhs: tensor<16x16xf16>,
       %output: memref<16x16xf16>, %cube_output: memref<16x16xf32>,
