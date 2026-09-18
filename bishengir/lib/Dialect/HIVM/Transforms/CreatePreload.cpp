@@ -683,7 +683,8 @@ void CreatePreloadPass::runOnOperation() {
     auto parentFunc = parentForOp->getParentOfType<func::FuncOp>();
     bool allow = parentFunc && allowLoopShapeHeuristics(
                                    this->bypassShapeRegistry, parentFunc.getName(),
-                                   this->enablePreload);
+                                   this->enablePreload,
+                                   this->workspaceMultiBufferNum);
     if (auto maxPreloadNumAttr = scopeOp->getAttrOfType<IntegerAttr>(
             hivm::MaxPreloadNumAttr::name)) {
       if (allow) {

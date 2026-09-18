@@ -1,4 +1,5 @@
 // RUN: bishengir-opt %s -hivm-sink-exclusive-preload-work | FileCheck %s
+// RUN: bishengir-opt %s -hivm-sink-exclusive-preload-work="enable-preload=true set-workspace-multibuffer=0" | FileCheck %s
 
 func.func @vf_consume(
     %arg0: memref<32x128xf32, #hivm.address_space<ub>>)

@@ -812,7 +812,10 @@ def MergeSamePreloadScopes : Pass<"hivm-merge-same-preload-scopes", "ModuleOp"> 
                         "Bypass shape registry check for merge-same-preload heuristics">,
                  Option<"enablePreload", "enable-preload", "bool",
                         /*default=*/"false",
-                        "Enable merge-same-preload heuristics when the kernel is registered">];
+                        "Enable merge-same-preload heuristics when the kernel is registered">,
+                 Option<"workspaceMultiBufferNum", "set-workspace-multibuffer", "unsigned",
+                        /*default=*/"0",
+                        "Workspace multibuffer depth; heuristics require a non-zero value">];
 }
 
 def SinkExclusivePreloadWork : Pass<"hivm-sink-exclusive-preload-work", "ModuleOp"> {
@@ -835,7 +838,10 @@ def SinkExclusivePreloadWork : Pass<"hivm-sink-exclusive-preload-work", "ModuleO
                         "Bypass shape registry check for exclusive-preload sink">,
                  Option<"enablePreload", "enable-preload", "bool",
                         /*default=*/"false",
-                        "Enable exclusive-preload sink when the kernel is registered">];
+                        "Enable exclusive-preload sink when the kernel is registered">,
+                 Option<"workspaceMultiBufferNum", "set-workspace-multibuffer", "unsigned",
+                        /*default=*/"0",
+                        "Workspace multibuffer depth; heuristics require a non-zero value">];
 }
 
 def MarkRealCoreType : Pass<"hivm-mark-real-core-type", "ModuleOp"> {
@@ -852,7 +858,10 @@ def MarkRealCoreType : Pass<"hivm-mark-real-core-type", "ModuleOp"> {
                         "Bypass shape registry check for parent-scope core-type inheritance">,
                  Option<"enablePreload", "enable-preload", "bool",
                         /*default=*/"false",
-                        "Enable parent-scope core-type inheritance when the kernel is registered">];
+                        "Enable parent-scope core-type inheritance when the kernel is registered">,
+                 Option<"workspaceMultiBufferNum", "set-workspace-multibuffer", "unsigned",
+                        /*default=*/"0",
+                        "Workspace multibuffer depth; heuristics require a non-zero value">];
 }
 
 def HIVMCanonicalizationPipeline
@@ -1541,7 +1550,10 @@ def CreatePreload : Pass<"create-preload"> {
                         "Bypass shape registry check for same-preload_num multi-scope">,
                  Option<"enablePreload", "enable-preload", "bool",
                         /*default=*/"false",
-                        "Enable same-preload_num multi-scope when the kernel is registered">];
+                        "Enable same-preload_num multi-scope when the kernel is registered">,
+                 Option<"workspaceMultiBufferNum", "set-workspace-multibuffer", "unsigned",
+                        /*default=*/"0",
+                        "Workspace multibuffer depth; heuristics require a non-zero value">];
 }
 
 def RemoveHIVMDataLayoutAnnotation : Pass<"hivm-remove-layout-annotation", "func::FuncOp"> {

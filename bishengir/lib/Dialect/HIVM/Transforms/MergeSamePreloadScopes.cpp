@@ -235,8 +235,9 @@ struct MergeSamePreloadScopesPass
 void MergeSamePreloadScopesPass::runOnOperation() {
   ModuleOp moduleOp = getOperation();
   for (auto funcOp : moduleOp.getOps<func::FuncOp>()) {
-    if (!hivm::allowLoopShapeHeuristics(this->bypassShapeRegistry,
-                                        funcOp.getName(), this->enablePreload))
+    if (!hivm::allowLoopShapeHeuristics(
+            this->bypassShapeRegistry, funcOp.getName(), this->enablePreload,
+            this->workspaceMultiBufferNum))
       continue;
     SmallVector<scf::ForOp> forOps;
     funcOp.walk([&](scf::ForOp forOp) { forOps.push_back(forOp); });

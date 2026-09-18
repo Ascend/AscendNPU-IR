@@ -72,9 +72,11 @@ struct AtomicEffect {
 };
 
 static bool computeAllowShapeHeuristics(bool bypass, bool enablePreload,
+                                        int64_t workspaceMultiBuffer,
                                         Operation *op) {
   if (auto func = op->getParentOfType<func::FuncOp>())
-    return allowLoopShapeHeuristics(bypass, func.getName(), enablePreload);
+    return allowLoopShapeHeuristics(bypass, func.getName(), enablePreload,
+                                    workspaceMultiBuffer);
   return bypass;
 }
 
@@ -87,7 +89,7 @@ struct CVPipelineImpl {
         bypassShapeRegistry(bypassShapeRegistry),
         allowShapeHeuristics(
             computeAllowShapeHeuristics(bypassShapeRegistry, enablePreload,
-                                        loop.getOperation())),
+                                        multibuffer, loop.getOperation())),
         wlBuilder(cast<scf::ForOp>(loop.getOperation()), multibuffer,
                   enableLazyLoading, allowShapeHeuristics),
         yieldedVals(loop.getYieldedValues().begin(),
@@ -209,8 +211,8 @@ private:
   // Bypass shape registry check for registered-kernel heuristics.
   bool bypassShapeRegistry = false;
 
-  // True when this loop's parent function is registered and preload is on,
-  // or LIT bypass is on.
+  // True when the parent function is registered, preload is on, and
+  // workspace multibuffer is non-zero, or LIT bypass is on.
   bool allowShapeHeuristics = false;
 
   // Worklist builder — owns dep-tracking machinery, separator/dependence
@@ -2294,7 +2296,8 @@ static bool isStorePriorityCBuf(Value value) {
 /// Prioritize the transposed CBUF copy over the GM output of the same cast.
 /// Keep this local to tensor-form preload scopes, before memory planning and
 /// sync insertion account for the delayed store's buffer lifetime.
-/// Callers must first pass `allowShapeHeuristics` (registry + preload, or LIT bypass).
+/// Callers must first pass `allowShapeHeuristics` (registry + preload +
+/// non-zero workspace multibuffer, or LIT bypass).
 static void prioritizePreloadCrossCoreCopy(Block &body) {
   if (llvm::any_of(body, [](Operation &op) { return isa<SetAtomicOp>(op); }))
     return;

@@ -39,11 +39,18 @@ namespace mlir {
 namespace hivm {
 namespace regbase {
 
+static bool enableRegisteredPreloadHeuristics(
+    const HIVMPipelineOptions &pipelineOpts) {
+  return pipelineOpts.enablePreload &&
+         pipelineOpts.setWorkspaceMultibuffer != 0;
+}
+
 static MarkRealCoreTypeOptions
 markCoreTypeOpts(const HIVMPipelineOptions &pipelineOpts,
                  bool removeCoreTypeAttrs = false) {
   MarkRealCoreTypeOptions opts;
   opts.enablePreload = pipelineOpts.enablePreload;
+  opts.workspaceMultiBufferNum = pipelineOpts.setWorkspaceMultibuffer;
   opts.removeCoreTypeAttrs = removeCoreTypeAttrs;
   return opts;
 }
@@ -462,9 +469,11 @@ static void hivmPreBufferizationOptimizationPipeline(
   // clusters (including MTE2 across an unused CUBE) and load→VF→copy
   // chains that sit across an unused mmad. Flattening same preload_num
   // scopes stays after split. Registered kernels only, and only with preload.
-  if (hivmPipelineOptions.enablePreload) {
+  if (enableRegisteredPreloadHeuristics(hivmPipelineOptions)) {
     SinkExclusivePreloadWorkOptions sinkOpts;
     sinkOpts.enablePreload = true;
+    sinkOpts.workspaceMultiBufferNum =
+        hivmPipelineOptions.setWorkspaceMultibuffer;
     pm.addPass(createSinkExclusivePreloadWorkPass(sinkOpts));
   }
 
@@ -480,9 +489,11 @@ static void hivmPreBufferizationOptimizationPipeline(
   // Split mix kernel is done before bufferization because it depends on
   // tensor SSA property.
   pm.addPass(createSplitMixKernelPass());
-  if (hivmPipelineOptions.enablePreload) {
+  if (enableRegisteredPreloadHeuristics(hivmPipelineOptions)) {
     MergeSamePreloadScopesOptions mergeOpts;
     mergeOpts.enablePreload = true;
+    mergeOpts.workspaceMultiBufferNum =
+        hivmPipelineOptions.setWorkspaceMultibuffer;
     pm.addPass(createMergeSamePreloadScopesPass(mergeOpts));
   }
   // SIMT scopes must stay outlined, so mark them `no_inline` before the
@@ -689,6 +700,8 @@ static void hivmPostBufferizationOptimizationPipeline(
   if (hivmPipelineOptions.enablePreload) {
     CreatePreloadOptions preloadOpts;
     preloadOpts.enablePreload = true;
+    preloadOpts.workspaceMultiBufferNum =
+        hivmPipelineOptions.setWorkspaceMultibuffer;
     pm.addPass(createCreatePreloadPass(preloadOpts));
   }
   // Intra-Core Auto-Sync passes (Inject-Sync, GSS)

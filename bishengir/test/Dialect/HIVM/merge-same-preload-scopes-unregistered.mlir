@@ -1,4 +1,5 @@
 // RUN: bishengir-opt %s -hivm-merge-same-preload-scopes | FileCheck %s
+// RUN: bishengir-opt %s -hivm-merge-same-preload-scopes="enable-preload=true set-workspace-multibuffer=0" | FileCheck %s
 
 // Off-registry functions must not merge scopes that share preload_num.
 // CHECK-LABEL: func.func @keep_distinct_same_preload_num_scopes(
