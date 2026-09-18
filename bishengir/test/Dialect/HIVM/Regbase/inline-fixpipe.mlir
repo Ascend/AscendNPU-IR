@@ -1402,3 +1402,45 @@ func.func @hoist_type_preserving_fixpipe_out_of_scf_for(
       outs(%dst : memref<16x16xf32, strided<[16, 1]>>)
   return
 }
+
+// -----
+
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+
+// Cube init mmad is loop-carried and already fixpiped to a UB memref inside
+// the loop (Cube→Vector TCB). The in-loop fixpipe must stay live (memref dest)
+// so DCE cannot drop it before hivm-insert-fixpipe sees the L0C use.
+// Do not insert another fixpipe that would replace the L0C iter_arg with a UB
+// value and later crash hivm-infer-mem-scope.
+
+// CHECK-LABEL: func.func @mmad_loop_init_already_fixpiped_keep_l0c
+// CHECK: %[[MMAD:.*]] = hivm.hir.mmadL1
+// CHECK-NOT: fixpipe_for_result_already_inserted
+// CHECK: scf.for
+// CHECK-SAME: iter_args(%[[ACC:.*]] = %[[MMAD]])
+// CHECK: hivm.hir.fixpipe
+// CHECK-SAME: ins(%[[ACC]] : tensor<16x16xf32>)
+  func.func @mmad_loop_init_already_fixpiped_keep_l0c(
+      %a: tensor<16x16xf16>, %b: tensor<16x16xf16>,
+      %ub: memref<16x16xf32>) -> tensor<16x16xf32> {
+    %c0 = arith.constant 0 : index
+    %c2 = arith.constant 2 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %true = arith.constant true
+    %init = tensor.empty() : tensor<16x16xf32>
+    %mmad = hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
+        ins(%a, %b, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index)
+        outs(%init : tensor<16x16xf32>) -> tensor<16x16xf32>
+    %res = scf.for %i = %c0 to %c2 step %c1 iter_args(%acc = %mmad) -> (tensor<16x16xf32>) {
+      hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+          ins(%acc : tensor<16x16xf32>) outs(%ub : memref<16x16xf32>)
+      %acc2 = tensor.empty() : tensor<16x16xf32>
+      %mmad2 = hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
+          ins(%a, %b, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index)
+          outs(%acc2 : tensor<16x16xf32>) -> tensor<16x16xf32>
+      scf.yield %mmad2 : tensor<16x16xf32>
+    }
+    return %res : tensor<16x16xf32>
+  }
+}
