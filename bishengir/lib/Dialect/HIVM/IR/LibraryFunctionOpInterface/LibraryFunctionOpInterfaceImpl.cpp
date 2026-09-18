@@ -244,6 +244,15 @@ std::string getVCastOpLibraryCallName(VCastOp concreteOp,
         disableSizeAlignForCast = true;
       }
     }
+    // Per-op attribute set by AlignAllocSize for high-rank VCast.
+    // Only honour it when the current rank is still > 3 — FlattenOps may
+    // have collapsed the shape after the attribute was set.
+    auto curRank =
+        cast<ShapedType>(concreteOp.getSrc()[0].getType()).getRank();
+    if (curRank > 3 &&
+        concreteOp->hasAttr(hivm::DisableSizeAlignForCastAttr::name)) {
+      disableSizeAlignForCast = true;
+    }
     // Disable size align for overflow cast only when the cast is I32 to I8 or
     // I16 to I8
     if (disableSizeAlignForCast && (isI32ToI8 || isI16ToI8))
