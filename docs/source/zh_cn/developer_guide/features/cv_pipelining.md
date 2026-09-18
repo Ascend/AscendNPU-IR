@@ -147,7 +147,7 @@ scf.for iter_args(%arg0 = %init) {
 
 ## 未来演进
 
-当前 Preload 模式（对应 `--cv-pipeline-mode=Skew`）已支持 per-loop depth（各循环独立深度，而非全局固定）、Preload 回滚、嵌套 for 以及 NormalizeMatmul 计数器兼容等能力。在此基础上，未来将继续增强调度优化：
+当前 Preload 模式（对应 `--cv-pipeline-mode=Skew`）已支持 per-loop depth（各循环独立深度，而非全局固定）、Preload 回滚、嵌套 for 循环以及 NormalizeMatmul 计数器兼容等能力。在此基础上，未来将继续增强调度优化：
 
 - **动态调度模式**：通过Cost Model、Profiling或用户提供的Hint，根据Cube/Vector负载比例、阶段时长、通信量和片上内存容量等因素，动态选择最优的流水深度和多Buffer数量
 - **自适应策略选择**：针对不同workload特征（计算密集型、访存密集型等），自动在Unroll和Preload模式间选择，实现性能收益最大化
