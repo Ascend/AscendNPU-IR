@@ -410,8 +410,9 @@ static bool addMemrefViewTreeToReturnedCluster(Value memref,
 /// subview), address arith / expand_shape, and exclusive tensor.empty.
 /// Shared empties stay behind and are listed in `destEmpties` so the
 /// consumer can allocate a fresh one. Producer-local shaped extras are
-/// forwarded; scalar extras are cloned into the consumer (CreatePreload
-/// cannot rematerialize index / i1 as scope results).
+/// forwarded; scalar extras are cloned into the consumer together with
+/// any producer-local memref view chain they load (CreatePreload cannot
+/// rematerialize index / i1 as scope results).
 static bool collectExclusiveReturnedCluster(Value root, scope::ScopeOp producer,
                                             SmallVector<Operation *> &clusterOps,
                                             SmallVector<Value> &destEmpties,
@@ -496,6 +497,11 @@ static bool collectExclusiveReturnedCluster(Value root, scope::ScopeOp producer,
 static Value cloneProducerScalar(Value v, scope::ScopeOp producer,
                                  Operation *insertBefore,
                                  DenseMap<Value, Value> &cloned);
+static void collectForwardedDepsForScalarExtras(scope::ScopeOp producer,
+                                                SmallVector<Value> &extras);
+static void remapClonedScalarOperands(const DenseMap<Value, Value> &cloned,
+                                      ArrayRef<Value> newReturns,
+                                      scope::ScopeOp newProducer);
 
 static bool isMmadLikeOp(Operation *op) {
   return op->getName().getStringRef().contains("mmad");
@@ -570,6 +576,7 @@ static LogicalResult sinkReturnedTensorsToConsumerImpl(scf::ForOp forOp) {
         if (!collectExclusiveReturnedCluster(retVal, producer, cluster,
                                              destEmpties, extras))
           continue;
+        collectForwardedDepsForScalarExtras(producer, extras);
         // VECTOR ops stay out of CUBE scopes. Copy-chain sink places
         // load→VF→copy next to a later mmad; a returned tensor whose
         // only user is a cube is left here.
@@ -636,6 +643,7 @@ static LogicalResult sinkReturnedTensorsToConsumerImpl(scf::ForOp forOp) {
             continue;
           cloneProducerScalar(extra, newProducer, insertBefore, clonedScalars);
         }
+        remapClonedScalarOperands(clonedScalars, newReturns, newProducer);
 
         for (Operation *op : m.cluster) {
           for (OpOperand &operand : op->getOpOperands()) {
@@ -941,15 +949,32 @@ static void moveEarlyToTensorsAfter(Value dest, scope::ScopeOp destScope) {
 /// into `destScope`. CreatePreload cannot rematerialize those types as
 /// scope results (`Unhandled scope result case`), so they must not be
 /// forwarded through `scope.return`.
+///
+/// A scalar `memref.load` may read a producer-local view
+/// (`reinterpret_cast` / `subview` / `cast`). Those views often stay in
+/// the producer because another load still uses them, so they cannot
+/// join the dest-sink cluster. Clone the view chain too: its memref root
+/// is a function arg or loop alloc that already dominates the consumer,
+/// and its index operands are cloned as scalars. Do not clone allocs.
+static bool shouldCloneProducerValue(Value v, Operation *def,
+                                     scope::ScopeOp producer) {
+  if (!def || !producer->isProperAncestor(def))
+    return false;
+  // MemRefType is a ShapedType; check views before the tensor early-out.
+  if (isa<MemRefType>(v.getType()))
+    return isViewLikeMemrefOp(def);
+  if (isa<ShapedType>(v.getType()))
+    return false;
+  return true;
+}
+
 static Value cloneProducerScalar(Value v, scope::ScopeOp producer,
                                  Operation *insertBefore,
                                  DenseMap<Value, Value> &cloned) {
   if (auto it = cloned.find(v); it != cloned.end())
     return it->second;
-  if (isa<ShapedType, MemRefType>(v.getType()))
-    return v;
   Operation *def = v.getDefiningOp();
-  if (!def || !producer->isProperAncestor(def))
+  if (!shouldCloneProducerValue(v, def, producer))
     return v;
   IRMapping mapping;
   for (Value operand : def->getOperands()) {
@@ -964,6 +989,63 @@ static Value cloneProducerScalar(Value v, scope::ScopeOp producer,
     return v;
   cloned[v] = copy->getResult(0);
   return copy->getResult(0);
+}
+
+/// A cloned scalar (`memref.load` / `tensor.extract`) may still read a
+/// producer-local tensor or leftover memref. Those cannot be rematerialized
+/// as views, so they must ride `scope.return` and be remapped afterwards.
+static void collectForwardedCloneDeps(Value v, scope::ScopeOp producer,
+                                      SmallVector<Value> &extras) {
+  DenseSet<Value> seen;
+  SmallVector<Value> work = {v};
+  while (!work.empty()) {
+    Value cur = work.pop_back_val();
+    if (!seen.insert(cur).second)
+      continue;
+    Operation *def = cur.getDefiningOp();
+    if (!def || !producer->isProperAncestor(def))
+      continue;
+    if (isa<MemRefType>(cur.getType())) {
+      if (isViewLikeMemrefOp(def)) {
+        work.append(def->operand_begin(), def->operand_end());
+        continue;
+      }
+      if (!llvm::is_contained(extras, cur))
+        extras.push_back(cur);
+      continue;
+    }
+    if (isa<ShapedType>(cur.getType())) {
+      if (!llvm::is_contained(extras, cur))
+        extras.push_back(cur);
+      continue;
+    }
+    work.append(def->operand_begin(), def->operand_end());
+  }
+}
+
+static void collectForwardedDepsForScalarExtras(scope::ScopeOp producer,
+                                                SmallVector<Value> &extras) {
+  SmallVector<Value> scalars;
+  for (Value extra : extras) {
+    if (!isa<ShapedType, MemRefType>(extra.getType()))
+      scalars.push_back(extra);
+  }
+  for (Value scalar : scalars)
+    collectForwardedCloneDeps(scalar, producer, extras);
+}
+
+static void remapClonedScalarOperands(const DenseMap<Value, Value> &cloned,
+                                      ArrayRef<Value> newReturns,
+                                      scope::ScopeOp newProducer) {
+  for (auto &entry : cloned) {
+    Operation *copy = entry.second.getDefiningOp();
+    if (!copy)
+      continue;
+    for (OpOperand &operand : copy->getOpOperands()) {
+      operand.set(
+          remapThroughReturns(operand.get(), newReturns, newProducer));
+    }
+  }
 }
 
 /// Move a load→VF→hir.copy chain past unused mmad scopes so the copy sits
@@ -1017,6 +1099,7 @@ static LogicalResult sinkCopyChainPastUnusedMmad(scf::ForOp forOp) {
       if (!collectExclusiveCopyCluster(copy, producer, cluster, destEmpties,
                                        extras))
         continue;
+      collectForwardedDepsForScalarExtras(producer, extras);
 
       SmallVector<Value> newReturns(ret.getOperands().begin(),
                                     ret.getOperands().end());
@@ -1039,6 +1122,7 @@ static LogicalResult sinkCopyChainPastUnusedMmad(scf::ForOp forOp) {
       DenseMap<Value, Value> clonedScalars;
       for (Value extra : scalarExtras)
         cloneProducerScalar(extra, newProducer, insertBefore, clonedScalars);
+      remapClonedScalarOperands(clonedScalars, newReturns, newProducer);
 
       for (Operation *op : cluster) {
         for (OpOperand &operand : op->getOpOperands()) {

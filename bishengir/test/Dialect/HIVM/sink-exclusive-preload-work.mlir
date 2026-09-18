@@ -751,3 +751,107 @@ func.func @keep_returned_cluster_shared_with_cube(
   }
   return
 }
+
+// Scalar extra of a sunk dest is `memref.load` of a producer-local view.
+// The view stays in the producer (another load still uses it), so clone
+// the reinterpret_cast / subview / affine offset into the consumer.
+// CHECK-LABEL: func.func @sink_clones_memref_load_view_chain
+// CHECK:         scope.scope
+// CHECK:           memref.reinterpret_cast
+// CHECK:           memref.subview
+// CHECK:           memref.load
+// CHECK:           hivm.hir.vexp
+// CHECK:           scope.return
+// CHECK:         } {{{.*}}preload_num = 1
+// CHECK:         scope.scope
+// CHECK:         } {{{.*}}CUBE
+// CHECK:         scope.scope
+// CHECK:           affine.apply
+// CHECK:           memref.reinterpret_cast
+// CHECK:           memref.subview
+// CHECK:           memref.load
+// CHECK:           hivm.hir.vmul
+// CHECK:           hivm.hir.vadd
+// CHECK:           hivm.hir.vexp
+func.func @sink_clones_memref_load_view_chain(
+    %g: memref<?xf32>,
+    %bg: memref<64xf32, #hivm.address_space<ub>>)
+    attributes {hivm.func_core_type = #hivm.func_core_type<MIX>} {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c4 = arith.constant 4 : index
+  %cst_m1 = arith.constant -1.000000e+00 : f32
+  scf.for %i = %c0 to %c4 step %c1 {
+    %prod = scope.scope : () -> tensor<64xf32> {
+      %off = affine.apply affine_map<()[s0] -> (s0)>()[%i]
+      %rc = memref.reinterpret_cast %g to offset: [%off], sizes: [1], strides: [1]
+          : memref<?xf32> to memref<1xf32, strided<[1], offset: ?>>
+      %sv = memref.subview %rc[0] [1] [1]
+          : memref<1xf32, strided<[1], offset: ?>> to
+            memref<1xf32, strided<[1], offset: ?>>
+      %scalar = memref.load %sv[%c0] : memref<1xf32, strided<[1], offset: ?>>
+      %keep = memref.load %sv[%c0] : memref<1xf32, strided<[1], offset: ?>>
+      %one = tensor.empty() : tensor<1xf32>
+      %inserted = tensor.insert %keep into %one[%c0] : tensor<1xf32>
+      %t = bufferization.to_tensor %bg restrict writable : memref<64xf32, #hivm.address_space<ub>>
+      %e0 = tensor.empty() : tensor<64xf32>
+      %neg = hivm.hir.vmul ins(%t, %cst_m1 : tensor<64xf32>, f32) outs(%e0 : tensor<64xf32>) -> tensor<64xf32>
+      %adj = hivm.hir.vadd ins(%neg, %scalar : tensor<64xf32>, f32) outs(%e0 : tensor<64xf32>) -> tensor<64xf32>
+      %exp = hivm.hir.vexp ins(%adj : tensor<64xf32>) outs(%e0 : tensor<64xf32>) -> tensor<64xf32>
+      %stay = hivm.hir.vexp ins(%t : tensor<64xf32>) outs(%e0 : tensor<64xf32>) -> tensor<64xf32>
+      scope.return %exp : tensor<64xf32>
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.preload_num = 1 : i32, no_inline}
+    scope.scope : () -> () {
+      scope.return
+    } {hivm.loop_core_type = #hivm.tcore_type<CUBE>, hivm.preload_num = 2 : i32, no_inline}
+    scope.scope : () -> () {
+      %out = tensor.empty() : tensor<64xf32>
+      %e = hivm.hir.vexp ins(%prod : tensor<64xf32>) outs(%out : tensor<64xf32>) -> tensor<64xf32>
+      scope.return
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.preload_num = 0 : i32, no_inline}
+  }
+  return
+}
+
+// Second dest-sink iteration: later VECTOR uniquely uses
+// vmul(extract(exp)). Clone the extract and return-forward the tensor.
+// CHECK-LABEL: func.func @sink_forwards_extracted_tensor_extra
+// CHECK:         scope.scope
+// CHECK:           %[[EXP:.*]] = hivm.hir.vexp
+// CHECK:           tensor.extract %[[EXP]]
+// CHECK:           scope.return %[[EXP]]
+// CHECK:         } {{{.*}}preload_num = 1
+// CHECK:         scope.scope
+// CHECK:         } {{{.*}}CUBE
+// CHECK:         scope.scope
+// CHECK:           tensor.extract
+// CHECK:           hivm.hir.vmul
+func.func @sink_forwards_extracted_tensor_extra()
+    attributes {hivm.func_core_type = #hivm.func_core_type<MIX>} {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c4 = arith.constant 4 : index
+  %cst = arith.constant 1.000000e+00 : f32
+  scf.for %i = %c0 to %c4 step %c1 {
+    %gate = scope.scope : () -> tensor<1xf32> {
+      %empty = tensor.empty() : tensor<1xf32>
+      %exp = hivm.hir.vexp ins(%empty : tensor<1xf32>) outs(%empty : tensor<1xf32>) -> tensor<1xf32>
+      scope.return %exp : tensor<1xf32>
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.preload_num = 2 : i32, no_inline}
+    %prod = scope.scope : () -> tensor<64xf32> {
+      %extracted = tensor.extract %gate[%c0] : tensor<1xf32>
+      %out = tensor.empty() : tensor<64xf32>
+      %scaled = hivm.hir.vmul ins(%out, %extracted : tensor<64xf32>, f32) outs(%out : tensor<64xf32>) -> tensor<64xf32>
+      scope.return %scaled : tensor<64xf32>
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.preload_num = 1 : i32, no_inline}
+    scope.scope : () -> () {
+      scope.return
+    } {hivm.loop_core_type = #hivm.tcore_type<CUBE>, hivm.preload_num = 3 : i32, no_inline}
+    scope.scope : () -> () {
+      %out = tensor.empty() : tensor<64xf32>
+      %e = hivm.hir.vexp ins(%prod : tensor<64xf32>) outs(%out : tensor<64xf32>) -> tensor<64xf32>
+      scope.return
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.preload_num = 0 : i32, no_inline}
+  }
+  return
+}
