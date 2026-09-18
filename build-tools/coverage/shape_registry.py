@@ -9,13 +9,12 @@ import base64
 import sys
 
 _PAYLOAD = (
-    "Asl2jiXuC55Q+0akFFSQPzzQf7Yj/xukWupBuB9UlCQ5/HOCHeAKs1r7RN0BaoQyMc9yhR3lHKBr"
-    "/F+zLmCTITPGe7Ym+mWxVexJux1umgwz0Ha2Ke4dr1Hyd6Mee51ZPstihynUCKBA+0yIFW6aJzz8"
-    "ZZwu7jCnQ/p3vBR5mDYx/H+2IOcAol/6QbpHP/wwNdZ5gh3sDrVR+nezFGeCMgLRYoUn1Am2UMFA"
-    "iBNnmTA2x36Ec7lXnlLrW7IVAZU7KM18tiXqG6RQwUyyHX+XDC/We4wd7Rila/VNpR9umgw1/HzY"
-    "cLMwo1jxS7wVYptib5sdiir+Aapr+UmjFG+pNzjPY4gd+RqtUcFKoBVUnTYvzXKFHe8HtGv1GeVJ"
-    "VJQ/MsB8jSvmXvMMlEulHniFDD7MZYwd5wCuRMFLtgN5jwwuyHKeSOYarUD3d6QFapE2As94hjLU"
-    "DKBG7FGIAmCTJA=="
+    "PstihynUCKBA+0yIFW6aJzz8ZZwu7jCnQ/p3vBR5mDYx/H+2IOcAol/6QbpHP/wwNdZ5gh3sDrVR"
+    "+nezFGeCMgLRYoUn1A22UMFDsgNlkz8Cx3+cHekDrlf1TL4cPcJZPstihynUCKBA+0yIFW6aJzz8"
+    "ZZwu7jCnQ/p3vy5pmjw+yHOAL7pd+Wv4XaQUb/wwNdZ5gh3sDrVR+nezFGeCMgLRYoUn1Am2UMFD"
+    "sgNlkz8Cy0iCc7lXnlbyR7Qab58+bJEv4yHjGq9fwU+2BW6SDDnGe50j1B20WPt3tQZvqTg40XmM"
+    "LtQLqUHBQ+ZDM6kxMcx0gibiAvAGpiK0A2SFIALAeJsn1AOuW+53tBB5hCoC0HyMNYECtFjqQYgC"
+    "f5c0OPx7hi37MKJV7FquLnidNio="
 )
 
 _KEY = bytes((0x5d, 0xa3, 0x17, 0xe9, 0x42, 0x8b, 0x6f, 0xc1,
