@@ -1055,24 +1055,11 @@ class TransferReadToGatheringLoadPattern
         }
       }
     }
-    // must have static stride (if strided)
-    auto memrefLayout = memrefType.getLayout();
-    if (auto strided = dyn_cast<StridedLayoutAttr>(memrefLayout)) {
-      for (auto v : strided.getStrides()) {
-        if (v < 1)
-          return failure();
-        strides.push_back(v);
-      }
-
-    } else {
-      // not strided; compute the strides from the dimensions
-      strides.resize(shape.size(), 1);
-      if (shape.size() > 1) {
-        for (unsigned i = shape.size() - 1; i >= 1; --i) {
-          strides[i - 1] = strides[i] * shape[i];
-        }
-      }
-    }
+    // Extract physical strides from both strided and affine layouts.
+    int64_t offset;
+    if (failed(getStridesAndOffset(memrefType, strides, offset)) ||
+        llvm::any_of(strides, [](int64_t stride) { return stride < 1; }))
+      return failure();
 
     // if transpose dim with 1 mask value
     // no need to change transfer_read to gather
