@@ -104,9 +104,8 @@ canonicalizationPipeline(OpPassManager &pm,
                          DisableCanonicalizationPhase phase = NoRestriction) {
   pm.addPass(createCSEPass());
   CanonicalizerOptions options;
-  options.enableExtendedPattern = true;
   options.disabledPatterns = phaseToDisabledMap[phase];
-  pm.addPass(createCanonicalizerPass(options));
+  pm.addPass(bishengir::createExtendedCanonicalizerPass(options));
   pm.nest<func::FuncOp>().addPass(tensor::createNormalizeTensorOpsPass(
       /*skipAlignedSlice=*/hfusionOptions.enableTritonKernelCompile));
 }
