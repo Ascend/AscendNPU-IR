@@ -2,7 +2,7 @@
 
 ## 硬件背景
 
-本文档从宏观角度介绍AscendNPU IR中Cube-Vector（CV）优化的整体流程。CV优化面向Atlas A2系列产品、Atlas A3系列产品的NPU硬件，针对Cube（矩阵乘单元）和Vector（向量运算单元）两类核心的协同工作，在HIVM（华为中间表示虚拟机）层进行一系列变换，以提升混合内核（Mix Kernel）的执行效率。
+本文档从宏观角度介绍AscendNPU IR中Cube-Vector（CV）优化的整体流程。CV优化面向Atlas A2系列产品、Atlas A3系列产品、Atlas 950PR&950DT系列产品的NPU硬件，针对Cube（矩阵乘单元）和Vector（向量运算单元）两类核心的协同工作，在HIVM（Hybrid Intelligence Virtual Machine，混合智能虚拟机）层进行一系列变换，以提升混合内核（Mix Kernel）的执行效率。
 
 ### 术语与背景知识（阅读前必读）
 
@@ -10,7 +10,7 @@
 
 | 术语 | 含义 | 补充说明 |
 |------|------|----------|
-| **HIVM** | Huawei Intermediate Virtual Machine，华为中间表示虚拟机 | AscendNPU IR中的一种dialect，承载面向NPU的算子（如mmadL1、fixpipe、vadd）与控制流。 |
+| **HIVM** | Hybrid Intelligence Virtual Machine，混合智能虚拟机 | AscendNPU IR中的一种dialect，承载面向NPU的算子（如mmadL1、fixpipe、vadd）与控制流。 |
 | **IR** | Intermediate Representation，中间表示 | 编译器在源码与机器码之间的抽象表示。本仓库使用MLIR（Multi-Level IR），IR以SSA形式组织。 |
 | **Bufferization** | 将tensor抽象转换为具体内存（memref）的过程 | 在「预bufferization」阶段，IR仍以tensor为主（逻辑多维数组）；bufferization之后会引入memref（带地址/布局的内存引用）。CV中多数pass在预bufferization阶段运行，因此文档中常见「tensor.empty」「tensor的slice」等表述。 |
 | **tensor vs memref** | tensor：逻辑多维数组，无显式地址；memref：有基址、步长、形状的内存区域 | 在CV流程中，fixpipe的「输出」常先以tensor表示，后续通过workspace（memref）或bufferization落到具体内存。 |
@@ -38,7 +38,7 @@ Ascend NPU采用异构计算架构，主要包含：
 | **UB** | 统一缓冲，Vector运算主存 | 256 KB |
 | **GM** | 全局内存 | 外部DDR |
 
-fixpipe是Cube与Vector之间的数据搬运通道，昇腾芯片的Cube和Vector底层架构是分离的。对于不同版本的芯片来说，存在不同的交互通路。例如对于910系列来说，Cube计算完成后，通过fixpipe将结果从L0C搬运到GM，供后续Vector运算使用。在IR中体现为`hivm.hir.fixpipe`算子；硬件上对应专门的L0C→UB数据通路，可同时完成类型转换、量化等（由fixpipe的`pre_quant`、`pre_relu`等属性控制）。910系列的芯片架构如下：
+fixpipe是Cube与Vector之间的数据搬运通道，昇腾芯片的Cube和Vector底层架构是分离的。对于不同版本的芯片来说，存在不同的交互通路。例如对于910系列来说，Cube计算完成后，通过fixpipe将结果从L0C搬运到GM，供后续Vector运算使用。在IR中体现为`hivm.hir.fixpipe`算子；硬件上对应专门的L0C→GM→UB数据通路，可同时完成类型转换、量化等（由fixpipe的`pre_quant`、`pre_relu`等属性控制）。910系列的芯片架构如下：
 ![V220架构](../../../images/developer_guide/cvarch.png)
 
 ## 算法原理
@@ -65,14 +65,14 @@ fixpipe是Cube与Vector之间的数据搬运通道，昇腾芯片的Cube和Vecto
 %3 = tensor.empty() : tensor<16x32xf32>
 %4 = hivm.hir.mmadL1 ins(*)
         outs(%3 : tensor<16x32xf32>) -> tensor<16x32xf32>
-%5 = hivm.hir.vadd ins(%2, %4: tensor<1x32xf32>) outs(%2 : tensor<16x32xf32>)
+%5 = hivm.hir.vadd ins(%2, %4: tensor<16x32xf32>) outs(%2 : tensor<16x32xf32>)
 ```
 
-### createInlineFixpipePass
+### createInsertFixpipePass
 
-- **作用**：在mmadL1/batchMmadL1与store之间插入`hivm.hir.fixpipe`，将store+vcast等合并进fixpipe的量化/激活选项。
-- **目的**：显式表达Cube到Vector的数据搬运，使后续workspace分配、load/store插入有明确插入点。
-- **典型变换**：在mmadL1结果到store的use链上插入fixpipe；将vcast(f32->f16) 等融合为fixpipe的`pre_quant = F322F16`。
+- **作用**：在mmadL1/batchMmadL1与store之间插入`hivm.hir.fixpipe`，显式表达Cube到Vector的数据搬运。
+- **目的**：为后续workspace分配、load/store插入提供明确的插入点。
+- **典型变换**：在mmadL1结果到store的use链上插入fixpipe。
 - **典型场景**：纯Cube到Store。
 
 变换前：
@@ -87,7 +87,26 @@ mmadL1 -> store
 mmadL1 -> fixpipe
 ```
 
-InlineFixpipe负责插入fixpipe，站在新增的fixpipe的基础上，尝试inline op，如`hivm.vcast`/`hivm.vrelu`/`hivm.store`。
+### createInlineFixpipePass
+
+- **作用**：在InsertFixpipe插入的fixpipe基础上，将vcast/vrelu/store等op内联进fixpipe的量化/激活选项。
+- **目的**：利用fixpipe硬件的pre_quant/pre_relu等能力，减少独立的向量指令。
+- **典型变换**：将vcast(f32->f16) 等融合为fixpipe的`pre_quant = F322F16`。
+- **典型场景**：纯Cube到Store。
+
+变换前：
+
+```mlir
+mmadL1 -> fixpipe -> vcast
+```
+
+变换后：
+
+```mlir
+mmadL1 -> fixpipe{pre_quant = F322F16}
+```
+
+InlineFixpipe在InsertFixpipe插入的fixpipe基础上，尝试inline op，如`hivm.vcast`/`hivm.vrelu`/`hivm.store`。
 
 ### createTileBatchMMIntoLoopPass
 
@@ -193,7 +212,7 @@ func.func @bind_workspace_arg(
 
 ### createPlanMemoryPass
 
-- **作用**：在`GLOBAL_WORKSPACE_PLAN`模式下，对`memref_ext.alloc_workspace`进行内存规划，将alloc替换为`hivm.hir.pointer_cast` + 偏移。
+- **作用**：在`GLOBAL_WORKSPACE_PLAN`模式下，为每个`memref_ext.alloc_workspace`附加规划偏移。
 - **目的**：在给定workspace基址上，按liveness与inplace规则分配偏移，最大化复用、减少总workspace大小。
 - **典型变换**：多个alloc_workspace被映射到同一块workspace的不同偏移；冲突的buffer分配不同偏移。
 
