@@ -1,8 +1,14 @@
 # Cube与Vector优化
 
+**适用产品**：
+
+- Ascend 950PR&950DT 系列产品
+- Atlas A3 系列产品
+- Atlas A2 系列产品
+
 ## 硬件背景
 
-本文档从宏观角度介绍AscendNPU IR中Cube-Vector（CV）优化的整体流程。CV优化面向Atlas A2系列产品、Atlas A3系列产品、Ascend 950PR&950DT系列产品的NPU硬件，针对Cube（矩阵乘单元）和Vector（向量运算单元）两类核心的协同工作，在HIVM（Hybrid Intelligence Virtual Machine，混合智能虚拟机）层进行一系列变换，以提升混合内核（Mix Kernel）的执行效率。
+本文档从宏观角度介绍AscendNPU IR中Cube-Vector（CV）优化的整体流程。CV优化针对Cube（矩阵乘单元）和Vector（向量运算单元）两类核心的协同工作，在HIVM（Hybrid Intelligence Virtual Machine，混合智能虚拟机）层进行一系列变换，以提升混合内核（Mix Kernel）的执行效率。
 
 ### 术语与背景知识（阅读前必读）
 

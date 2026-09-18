@@ -1,5 +1,11 @@
 # Cube与Vector软件流水优化
 
+**适用产品**：
+
+- Ascend 950PR&950DT 系列产品
+- Atlas A3 系列产品
+- Atlas A2 系列产品
+
 本文介绍HIVM中的CV Pipelining Pass。该Pass针对CV类kernel进行优化。在阅读本文之前，建议先阅读[CV Optimization](./cv_optimization.md)，了解CV编译相关术语。
 
 ## 硬件背景
