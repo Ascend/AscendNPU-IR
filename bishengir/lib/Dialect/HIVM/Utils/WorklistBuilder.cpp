@@ -250,7 +250,11 @@ static Operation *getLoadOpFeedingVCast(VCastOp vcast) {
   auto toTensor = dyn_cast<bufferization::ToTensorOp>(def);
   if (!toTensor)
     return nullptr;
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
   Value memref = toTensor.getMemref();
+#else
+  Value memref = toTensor.getBuffer();
+#endif
   Value root = traceValueDef(memref);
   if (!root)
     root = memref;
