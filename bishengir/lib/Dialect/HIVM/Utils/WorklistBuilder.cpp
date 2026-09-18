@@ -1050,9 +1050,23 @@ void WorklistBuilder::populateLoopCarriedDependencies() {
         }
       }
     }
-    return;
+    // Off-registry kernels keep the pre-3530 standard path: only the
+    // consumer->yield deferral map is populated. `hasLoopCarriedDep` stays
+    // unset so later stages do not pin preload_num or take the same-stage
+    // cross-WI exception. Registered kernels (and LIT bypass) also collect
+    // the transitive LCD op set so the 3530 same-stage check is accurate.
+    if (!allowPreferredLoopHeuristics)
+      return;
   }
 
+  // `loopCarriedDependentOps` (and with it WorkItem::hasLoopCarriedDep) must
+  // be accurate for the standard extraction as well, not only for the LCD
+  // backup attempt: CVPipelining relies on it to pin LCD work items to
+  // preload 0 and to reject cross-stage carries it cannot honor.
+  collectLoopCarriedDependentOps();
+}
+
+void WorklistBuilder::collectLoopCarriedDependentOps() {
   loopCarriedDependentOps.clear();
   SmallVector<Operation *> dfsStack;
   DenseSet<Operation *> visited;
@@ -1125,7 +1139,7 @@ void WorklistBuilder::populateLoopCarriedDependencies() {
   }
 
   LLVM_DEBUG({
-    dbgs() << "[populateLoopCarriedDependencies] CoreOps with loop-carried "
+    dbgs() << "[collectLoopCarriedDependentOps] CoreOps with loop-carried "
               "dependency:\n";
     for (Operation *op : loopCarriedDependentOps) {
       dbgs() << "\t";

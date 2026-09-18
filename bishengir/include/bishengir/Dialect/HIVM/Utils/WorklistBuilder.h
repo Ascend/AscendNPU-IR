@@ -78,8 +78,10 @@ public:
   /// of being shared through expanded multi-buffered tensors.
   /// `allowPreferredLoopHeuristics` enables LCD backup extraction (and the
   /// WI0-into-WI1 merge), vcast/upcast/vbrc delay, load-like vcast bundling,
-  /// and walking region DPS / memref.copy for LCD. Block-mode construction
-  /// leaves this false.
+  /// walking region DPS / memref.copy for LCD, and collecting
+  /// `loopCarriedDependentOps` during standard extraction so the 3530
+  /// same-stage cross-WI check can pin LCD work items. Block-mode
+  /// construction leaves this false.
   WorklistBuilder(scf::ForOp loop, int numMultibuffer,
                   bool enableLazyLoading = false,
                   bool allowPreferredLoopHeuristics = false);
@@ -156,6 +158,12 @@ private:
   void mapOpToItem(Operation &op, WorkItem &item);
   LogicalResult populateDependencies(Operation &separator);
   void populateLoopCarriedDependencies();
+  /// Collect core ops that transitively depend on loop-carried iter_args
+  /// (following SSA results, DPS memref writes, and dependence-map
+  /// successors) into `loopCarriedDependentOps`. This drives
+  /// `WorkItem::hasLoopCarriedDep`. Called for LCD backup always, and for
+  /// standard extraction only when `allowPreferredLoopHeuristics` is set.
+  void collectLoopCarriedDependentOps();
   LogicalResult extractAvailableOps(SmallVector<Operation *> &extractedOps,
                                     TCoreType &core);
   LogicalResult runRoundExtraction();

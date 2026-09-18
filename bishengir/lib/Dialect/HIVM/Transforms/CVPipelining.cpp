@@ -1263,11 +1263,23 @@ LogicalResult CVPipelineImpl::checkWorkItemDependencies() {
 
     for (auto [consumerItem, consumerOp] : consumerUses(iterArg)) {
       if (consumerItem != producerItem) {
-        bool hasAnyIndependentItem =
-            llvm::any_of(worklist, [](const auto &item) {
-              return !item->hasLoopCarriedDep;
-            });
-        if (!allowShapeHeuristics || !hasAnyIndependentItem ||
+        // In skew mode a loop-carried iter_arg is only honored when the
+        // producing and the consuming work items run at the same preload
+        // stage: stage k executes original iteration i-(maxPreload-1-k) of
+        // the rewritten loop, so a producer/consumer preload mismatch skews
+        // the carried value by the difference of the two stages. Work items
+        // with hasLoopCarriedDep are pinned to preload 0, so a cross-item
+        // carry is legal only when BOTH items carry the flag. At least one
+        // independent item must remain as well; with none, maxPreloadNum
+        // degenerates to 1 and the rewrite adds no pipelining at all.
+        // Off-registry kernels keep the pre-3530 contract: any cross-WI
+        // tensor carry is rejected. The same-stage exception is a registered
+        // (or LIT `--bypass-shape-registry`) heuristic.
+        bool sameStage = consumerItem->hasLoopCarriedDep &&
+                         producerItem->hasLoopCarriedDep;
+        bool hasAnyIndependentItem = llvm::any_of(
+            worklist, [](const auto &item) { return !item->hasLoopCarriedDep; });
+        if (!allowShapeHeuristics || !sameStage || !hasAnyIndependentItem ||
             pipelineMode == CVPipelineMode::Unroll) {
           InFlightDiagnostic diag =
               pipelineLoop->emitWarning()

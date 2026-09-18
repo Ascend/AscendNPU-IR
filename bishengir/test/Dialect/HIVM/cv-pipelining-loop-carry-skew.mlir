@@ -1,25 +1,24 @@
 // Registered LCD names: preload + non-zero workspace depth enable LCD backup.
 // RUN: bishengir-opt -cv-pipelining="pipeline-mode=skew enable-preload=true set-depth-in-unroll-mode=2" -allow-unregistered-dialect -split-input-file %s | FileCheck %s
 
-// Test 1: Cross-core loop carry (CUBE producer -> VECTOR consumer).
-// In skew mode, the pass pipelines the loop into VECTOR and CUBE scopes,
-// assigning preload_num = 1 to the independent VECTOR stage and preload_num = 0
-// to the CUBE stage that produces the carried iter_arg.
+// Test 1: Cross-core loop carry (CUBE producer -> VECTOR consumer) whose
+// transitive consumer chain spans both candidate work items. Every work item
+// is loop-carried-dependent, so no independent stage remains to skew against
+// and pipelining is rejected: a skewed consumer stage would read the carried
+// iter_arg one iteration stale.
 
 // CHECK-LABEL: func.func @cross_core_loop_carry_skew
 // CHECK: scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} iter_args(%[[ITER_ARG:.*]] = %{{.*}}) -> (tensor<2x2xf32>)
-// CHECK:   %[[VEC_RES:.*]] = scope.scope : () -> tensor<1x1x16x8xf32> {
-// CHECK:     tensor.insert_slice %[[ITER_ARG]]
-// CHECK:     hivm.hir.vtranspose
-// CHECK:     hivm.hir.copy
-// CHECK:     scope.return
-// CHECK:   } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.max_preload_num = 2 : i32, hivm.preload_num = 1 : i32, no_inline}
-// CHECK:   %[[CUBE_RES:.*]] = scope.scope : () -> tensor<2x2xf32> {
-// CHECK:     hivm.hir.mmadL1
-// CHECK:     hivm.hir.fixpipe
-// CHECK:     scope.return
-// CHECK:   } {hivm.loop_core_type = #hivm.tcore_type<CUBE>, hivm.max_preload_num = 2 : i32, hivm.preload_num = 0 : i32, no_inline}
-// CHECK:   scf.yield %[[CUBE_RES]] : tensor<2x2xf32>
+// CHECK-NOT: scope.scope
+// CHECK: tensor.insert_slice %[[ITER_ARG]]
+// CHECK-NOT: scope.scope
+// CHECK: hivm.hir.mmadL1
+// CHECK-NOT: scope.scope
+// CHECK: hivm.hir.fixpipe
+// CHECK-NOT: scope.scope
+// CHECK: scf.yield
+// CHECK-NOT: scope.scope
+// CHECK-NOT: hivm.cv_pipelined_loop
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   func.func @cross_core_loop_carry_skew(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg3: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg4: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg5: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg6: i32, %arg7: i32, %arg8: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, func_dyn_memref_args = dense<[true, true, true, true, true, true, false, false, false]> : vector<9xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix", parallel_mode = "simd"} {
     %cst = arith.constant 0.000000e+00 : f32
@@ -77,7 +76,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // CHECK:   %[[VEC_OUT:.*]] = scope.scope : () -> tensor<16x16xf32> {
 // CHECK:     hivm.hir.vadd
 // CHECK:     scope.return
-// CHECK:   } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.max_preload_num = 2 : i32, hivm.preload_num = 0 : i32, no_inline}
+// CHECK:   } {hivm.has_loop_carried_dep, hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.max_preload_num = 2 : i32, hivm.preload_num = 0 : i32, no_inline}
 // CHECK:   scf.yield %[[VEC_OUT]] : tensor<16x16xf32>
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   func.func @multi_stage_loop_carry_skew(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}) attributes {WorkspaceArgIdx = 0 : i16, func_dyn_memref_args = dense<true> : vector<1xi1>, global_kernel = "local", hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix"} {
