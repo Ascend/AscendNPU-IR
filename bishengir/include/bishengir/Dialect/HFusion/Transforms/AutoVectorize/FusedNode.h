@@ -54,7 +54,8 @@ class FusedNode : public std::enable_shared_from_this<FusedNode> {
   std::string loopLabel;
   SetVector<Operation *> leaf;
   SetVector<Operation *> producers;
-  // Mirror of leaf + producers, in block order; mutated only by insertOrdered().
+  // Mirror of leaf + producers, in block order; mutated only by
+  // insertOrdered().
   SmallVector<Operation *> opsOrdered;
 
 public:
