@@ -16,21 +16,29 @@
 
 **重要说明**：
 
-如需保留当前CANN版本不做升级替换，又想使用AscendNPU IR的新特性，可以参考如下方式尝试体验：
+如需保留当前CANN版本不做升级替换，又想使用AscendNPU IR的新特性，可以从新版CANN工具包中提取AscendNPU IR组件，将当前CANN包中的NPUIR进行版本替换。参考步骤如下：
 
 ```bash
+# 本示例：在CANN 8.5.0安装中，将其NPUIR替换为CANN 9.0.0包中的版本
+# 1. 准备变量：新版CANN包路径（<arch>按实际架构填写，如x86_64）、临时解压目录、当前CANN安装路径
+NEW_CANN_PKG="PATH-TO/Ascend-cann-toolkit_9.0.0_linux-<arch>.run"
 NEW_CANN_PKG="PATH-TO/Ascend-cann-toolkit_9.0.0_linux-aarch64.run"
 TMP_PATH="tmp_pkg_files"
 OLD_CANN_PATH="${CANN_850_PATH}/Ascend/cann-8.5.0"
 
+# 2. 解包新版CANN工具包（--noexec表示只解包、不安装）
 bash ${NEW_CANN_PKG} --noexec --extract=cann900
+
+# 3. 从解包目录中提取ascendnpu-ir子包
 bash cann900/run_package/ascendnpu-ir_*.run --noexec --extract=$TMP_PATH
+
+# 4. 用提取出的新版bishengir替换当前CANN包中的NPUIR，并清理临时文件
 cp -r $TMP_PATH/bishengir/* ${OLD_CANN_PATH}/tools/bishengir/
 rm -rf $TMP_PATH
 
-# 一般执行完上述就会基本可行了，如果还有问题，可以进一步尝试
+# 5. 一般完成上述替换即可；如仍有问题，可按同样方式进一步替换bisheng-compiler
 bash cann900/run_package/cann-bisheng-compiler_*.run --noexec --extract=$TMP_PATH
-BiShengCompilerPath="${TMP_PATH}/bisheng_compiler" # CANN 9.1.0 后路径为 "tools/bisheng_compiler/"
+BiShengCompilerPath="${TMP_PATH}/bisheng_compiler" # CANN 9.1.0及之后版本路径为 "tools/bisheng_compiler/"
 cp -r $BiShengCompilerPath/* ${OLD_CANN_PATH}/tools/bisheng_compiler/
 rm -rf $TMP_PATH
 ```

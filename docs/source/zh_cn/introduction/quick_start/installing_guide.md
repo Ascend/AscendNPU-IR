@@ -104,6 +104,9 @@ AscendNPU IR端到端运行依赖CANN环境。
 
 # 重新构建并构建模板库（端到端用例执行依赖模板库）
 ./build-tools/build.sh -r -o ./build --fast-build -t --bisheng-compiler=/usr/Ascend/cann/bin
+
+# 如遇构建失败，建议尝试在构建选项中加入
+--add-cmake-options "-DLLVM_ENABLE_LLD=ON -DCMAKE_LINKER=lld"
 ```
 
 ### 手动CMake+Ninja构建（自定义编译参数）
@@ -176,7 +179,7 @@ CANN Toolkit包中会包含完整的AscendNPU IR二进制，Docker镜像可以�
 
 ### 构建本地镜像
 
-开发者也可以独立构建本地镜像，可参考`docker`目录中内置的不同架构的`Dockerfile`。
+开发者也可以独立构建本地镜像，可参考项目根目录下`docker`目录中内置的不同架构的`Dockerfile`。
 
 对于不同架构，均包含CANN Toolkit包与最新编译的AscendNPU IR。可自行安装`ops`包与Torch相关组件体验更多内容。
 
@@ -288,7 +291,7 @@ Total Discovered Tests: 388
 
     - **UNSUPPORTED**：当前环境不支持（如`UNSUPPORTED: bishengir_published`）
 
-    - **XFAIL**：预期失败且实际失败
+    - **Expectedly Failed**：预期失败且实际失败
 
 - **测试失败**：命令退出码非0，或`Failed` > 0。以下结果均计入失败：
 

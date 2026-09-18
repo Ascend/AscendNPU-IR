@@ -18,7 +18,7 @@
 
 ## 前置依赖
 
-以 Ubuntu 22.04 空环境为例（其他系统安装对应组件即可）：
+以全新安装的 Ubuntu 22.04 基础系统为例（其他系统安装对应组件即可）：
 
 ### 系统包
 
@@ -47,7 +47,7 @@ pip install -r docs/requirements.txt
 
 ## 如何构建
 
-在**仓库根目录**下执行：
+在仓库根目录下执行：
 
 ```bash
 make -C docs html      # 仅英文 → docs/_build/en

@@ -82,3 +82,15 @@ module {
   }
 }
 ```
+
+## -propagate-simt-mode
+
+**功能**：将SIMT VF模式传播至调用方函数。
+
+在Scope外提之后，将直接调用SIMT VF函数的调用方函数标记为`vf_mode = MIX`；不调用SIMT被调函数的调用方保持不变。
+
+## -transform-op-for-simt
+
+**功能**：面向SIMT执行对算子进行变换。
+
+在外提Scope区域之前对算子进行变换，为SIMT（Single Instruction, Multiple Threads，单指令多线程）执行做准备。
