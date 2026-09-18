@@ -2,7 +2,7 @@
 
 ## 硬件背景
 
-本文档从宏观角度介绍AscendNPU IR中Cube-Vector（CV）优化的整体流程。CV优化面向Atlas A2系列产品、Atlas A3系列产品、Atlas 950PR&950DT系列产品的NPU硬件，针对Cube（矩阵乘单元）和Vector（向量运算单元）两类核心的协同工作，在HIVM（Hybrid Intelligence Virtual Machine，混合智能虚拟机）层进行一系列变换，以提升混合内核（Mix Kernel）的执行效率。
+本文档从宏观角度介绍AscendNPU IR中Cube-Vector（CV）优化的整体流程。CV优化面向Atlas A2系列产品、Atlas A3系列产品、Ascend 950PR&950DT系列产品的NPU硬件，针对Cube（矩阵乘单元）和Vector（向量运算单元）两类核心的协同工作，在HIVM（Hybrid Intelligence Virtual Machine，混合智能虚拟机）层进行一系列变换，以提升混合内核（Mix Kernel）的执行效率。
 
 ### 术语与背景知识（阅读前必读）
 
@@ -73,7 +73,7 @@ fixpipe是Cube与Vector之间的数据搬运通道，昇腾芯片的Cube和Vecto
 - **作用**：在mmadL1/batchMmadL1与store之间插入`hivm.hir.fixpipe`，显式表达Cube到Vector的数据搬运。
 - **目的**：为后续workspace分配、load/store插入提供明确的插入点。
 - **典型变换**：在mmadL1结果到store的use链上插入fixpipe。
-- **典型场景**：纯Cube到Store。
+- **典型场景**：Cube计算结果需要从L0C经fixpipe搬运后再存储（如Cube输出直接Store），此时需要插入fixpipe显式表达数据通路。
 
 变换前：
 
@@ -89,10 +89,10 @@ mmadL1 -> fixpipe
 
 ### createInlineFixpipePass
 
-- **作用**：在InsertFixpipe插入的fixpipe基础上，将vcast/vrelu/store等op内联进fixpipe的量化/激活选项。
-- **目的**：利用fixpipe硬件的pre_quant/pre_relu等能力，减少独立的向量指令。
-- **典型变换**：将vcast(f32->f16) 等融合为fixpipe的`pre_quant = F322F16`。
-- **典型场景**：纯Cube到Store。
+- **作用**：在InsertFixpipe插入的fixpipe基础上，将vcast、vrelu、store等op内联进fixpipe的量化、激活选项。
+- **目的**：利用fixpipe硬件的pre_quant、pre_relu等能力，减少独立的向量指令。
+- **典型变换**：将 `vcast`（把 `f32` 转成 `f16`）等算子融合为fixpipe的`pre_quant = F322F16`。
+- **典型场景**：fixpipe下游存在可融合的vcast、vrelu、store等算子，需将其内联进fixpipe的量化、激活选项以减少独立向量指令。
 
 变换前：
 
@@ -105,8 +105,6 @@ mmadL1 -> fixpipe -> vcast
 ```mlir
 mmadL1 -> fixpipe{pre_quant = F322F16}
 ```
-
-InlineFixpipe在InsertFixpipe插入的fixpipe基础上，尝试inline op，如`hivm.vcast`/`hivm.vrelu`/`hivm.store`。
 
 ### createTileBatchMMIntoLoopPass
 

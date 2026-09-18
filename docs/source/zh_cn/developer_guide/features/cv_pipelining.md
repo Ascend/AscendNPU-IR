@@ -116,7 +116,7 @@ scf.for %i = 0 to N+max_preload_num step S {
 | 选项 | 默认值 | 含义 |
 |------|--------|------|
 | `set-workspace-multibuffer` | 2 (RegBase) | 软件流水的阶段数，同时也是Multi-Buffering的数量。`--cv-pipeline-mode=Off`时强制为0 |
-| `--enable-lazy-loading` | false | 开启CV Pipelining中的Lazy Load功能，允许将Load/ND2NZ op克隆到多个Work Item中，以减少中间buffer扩展 |
+| `--enable-lazy-loading` | false | 开启CV Pipelining中的Lazy Load功能，允许将Load、ND2NZ op克隆到多个Work Item中，以减少中间buffer扩展 |
 | `--set-depth-in-unroll-mode` | -1 | Unroll模式下指定流水深度 |
 | `--cv-pipeline-mode` | Unroll | CV流水模式：`Off`/`Unroll`/`Skew`。`Skew`对应Preload模式 |
 | `--enable-preload` | false | 开启Preload模式，等价于设置`--cv-pipeline-mode=Skew`。|
@@ -147,7 +147,7 @@ scf.for iter_args(%arg0 = %init) {
 
 ## 未来演进
 
-当前 Preload（Skew）模式已支持 per-loop depth（各循环独立深度，而非全局固定）、preload 回滚、嵌套 for 以及 NormalizeMatmul 计数器兼容等能力。在此基础上，未来将继续增强调度优化：
+当前 Preload 模式（对应 `--cv-pipeline-mode=Skew`）已支持 per-loop depth（各循环独立深度，而非全局固定）、Preload 回滚、嵌套 for 以及 NormalizeMatmul 计数器兼容等能力。在此基础上，未来将继续增强调度优化：
 
 - **动态调度模式**：通过Cost Model、Profiling或用户提供的Hint，根据Cube/Vector负载比例、阶段时长、通信量和片上内存容量等因素，动态选择最优的流水深度和多Buffer数量
 - **自适应策略选择**：针对不同workload特征（计算密集型、访存密集型等），自动在Unroll和Preload模式间选择，实现性能收益最大化
