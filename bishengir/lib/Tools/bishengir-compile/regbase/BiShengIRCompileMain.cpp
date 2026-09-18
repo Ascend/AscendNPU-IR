@@ -1,4 +1,4 @@
-//===- BiShengIRCompileMain.cpp - RegBase compile orchestration ------------===//
+//===- BiShengIRCompileMain.cpp - RegBase compile orchestration -----------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -11,13 +11,13 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Pass/PassManager.h"
 #include "bishengir/Tools/Utils/Utils.h"
 #include "bishengir/Tools/bishengir-compile/BiShengIRCompile.h"
 #include "bishengir/Tools/bishengir-compile/regbase/PassPipeline.h"
 #include "bishengir/Tools/bishengir-compile/regbase/Utility.h"
-#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "mlir/Support/FileUtilities.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/LogicalResult.h"
@@ -89,7 +89,8 @@ static void addBitcodeAttrsToModule(ModuleOp module, StringRef executablePath,
     if (llvm::sys::fs::real_path(bcPath, canonicalPath))
       return;
     module->setAttr(
-        attrName, createAttr(ctx, mlir::StringAttr::get(ctx, canonicalPath.str().str())));
+        attrName,
+        createAttr(ctx, mlir::StringAttr::get(ctx, canonicalPath.str().str())));
   };
 
   if (mlir::hacc::utils::isAscend950(config.getTarget())) {
@@ -101,11 +102,13 @@ static void addBitcodeAttrsToModule(ModuleOp module, StringRef executablePath,
                 [](MLIRContext *c, mlir::StringAttr s) -> mlir::Attribute {
                   return mlir::hivm::AIV_BITCODEAttr::get(c, s);
                 });
-    addIfExists("meta_op.mix.aic.c310.bc", mlir::hivm::MIX_AIC_BITCODEAttr::name,
+    addIfExists("meta_op.mix.aic.c310.bc",
+                mlir::hivm::MIX_AIC_BITCODEAttr::name,
                 [](MLIRContext *c, mlir::StringAttr s) -> mlir::Attribute {
                   return mlir::hivm::MIX_AIC_BITCODEAttr::get(c, s);
                 });
-    addIfExists("meta_op.mix.aiv.c310.bc", mlir::hivm::MIX_AIV_BITCODEAttr::name,
+    addIfExists("meta_op.mix.aiv.c310.bc",
+                mlir::hivm::MIX_AIV_BITCODEAttr::name,
                 [](MLIRContext *c, mlir::StringAttr s) -> mlir::Attribute {
                   return mlir::hivm::MIX_AIV_BITCODEAttr::get(c, s);
                 });
@@ -118,11 +121,13 @@ static void addBitcodeAttrsToModule(ModuleOp module, StringRef executablePath,
                 [](MLIRContext *c, mlir::StringAttr s) -> mlir::Attribute {
                   return mlir::hivm::AIV_BITCODEAttr::get(c, s);
                 });
-    addIfExists("meta_op.mix.aic.c220.bc", mlir::hivm::MIX_AIC_BITCODEAttr::name,
+    addIfExists("meta_op.mix.aic.c220.bc",
+                mlir::hivm::MIX_AIC_BITCODEAttr::name,
                 [](MLIRContext *c, mlir::StringAttr s) -> mlir::Attribute {
                   return mlir::hivm::MIX_AIC_BITCODEAttr::get(c, s);
                 });
-    addIfExists("meta_op.mix.aiv.c220.bc", mlir::hivm::MIX_AIV_BITCODEAttr::name,
+    addIfExists("meta_op.mix.aiv.c220.bc",
+                mlir::hivm::MIX_AIV_BITCODEAttr::name,
                 [](MLIRContext *c, mlir::StringAttr s) -> mlir::Attribute {
                   return mlir::hivm::MIX_AIV_BITCODEAttr::get(c, s);
                 });
@@ -173,29 +178,32 @@ runExternalHIVMC(ModuleOp &module,
     }
     if (!llvm::sys::fs::exists(saveTempsDir))
       if (auto ec = llvm::sys::fs::create_directories(saveTempsDir)) {
-        llvm::errs() << "[ERROR] Failed to create save-temps directory: " << saveTempsDir << "\n";
+        llvm::errs() << "[ERROR] Failed to create save-temps directory: "
+                     << saveTempsDir << "\n";
         return failure();
       }
     llvm::sys::path::append(saveTempsDir, inputFile);
     std::string errorMessage;
     inputFileHandler = mlir::openOutputFile(saveTempsDir, &errorMessage);
     if (!inputFileHandler) {
-      llvm::errs() << "[ERROR] Failed to open save-temps file: " << errorMessage << "\n";
+      llvm::errs() << "[ERROR] Failed to open save-temps file: " << errorMessage
+                   << "\n";
       return failure();
     }
     inputFileHandler->keep();
   } else {
     inputFileHandler = getTempFile(inputFile, tempDirsStore);
     if (!inputFileHandler) {
-      llvm::dbgs() << "[ERROR] Failed to create temporary input file needed to run hivmc compile.\n";
+      llvm::dbgs() << "[ERROR] Failed to create temporary input file needed to "
+                      "run hivmc compile.\n";
       return failure();
     }
   }
   inputFile = inputFileHandler->outputFilename();
 
-  module.print(inputFileHandler->os(), mlir::OpPrintingFlags().enableDebugInfo(
-                                         config.getEnableSanitizer() ||
-                                         config.getEnableDebugInfo()));
+  module.print(inputFileHandler->os(),
+               mlir::OpPrintingFlags().enableDebugInfo(
+                   config.getEnableSanitizer() || config.getEnableDebugInfo()));
   inputFileHandler->os().flush();
 
   std::vector<std::string> arguments;
@@ -204,7 +212,8 @@ runExternalHIVMC(ModuleOp &module,
 
   auto hivmcOptions = config.getHIVMCArgsDashDash();
   llvm::append_range(arguments, hivmcOptions);
-  for (const auto &arg : regbase::filterSharedHIVMCOptions(config.getClArgs())) {
+  for (const auto &arg :
+       regbase::filterSharedHIVMCOptions(config.getClArgs())) {
     auto argName = StringRef(arg).ltrim('-').split('=').first;
     if (!regbase::hasCLIArg(arguments, argName))
       arguments.push_back(arg);
@@ -215,21 +224,18 @@ runExternalHIVMC(ModuleOp &module,
   arguments.push_back("--only-run-hivm-pipeline=false");
 
   // TODO: Support options in hivmc
-  std::set<std::string> blacklist = {"inject-ir-from-file", "print-pass-id",
-                                     "inject-ir-before", "inject-ir-after",
-                                     "hfusion-enable-multiple-consumer-fusion",
-                                     "disable-tightly-coupled-buffer-reuse",
-                                     "enable-hivm-cross-core-gss",
-                                     "enable-tree-reduce-v2",
-                                     "vf-fusion-mode",
-                                     "disable-vf-reachable-check",
-                                     "enable-sink-dpx-load",
-                                     // a5 does not recognize
-                                     // --enable-lir-compile (it is an A3
-                                     // bishengir-compile-only flag). Drop it
-                                     // before forwarding to hivmc in the
-                                     // RegBase path.
-                                     "enable-lir-compile"};
+  std::set<std::string> blacklist = {
+      "inject-ir-from-file", "print-pass-id", "inject-ir-before",
+      "inject-ir-after", "hfusion-enable-multiple-consumer-fusion",
+      "disable-tightly-coupled-buffer-reuse", "enable-hivm-cross-core-gss",
+      "enable-tree-reduce-v2", "vf-fusion-mode", "disable-vf-reachable-check",
+      "enable-sink-dpx-load",
+      // a5 does not recognize
+      // --enable-lir-compile (it is an A3
+      // bishengir-compile-only flag). Drop it
+      // before forwarding to hivmc in the
+      // RegBase path.
+      "enable-lir-compile"};
   auto skippedArgs = skipOptions(arguments, blacklist);
 
   SmallVector<StringRef> argumentsRef(skippedArgs.begin(), skippedArgs.end());
@@ -242,15 +248,16 @@ runExternalHIVMC(ModuleOp &module,
 
 using MixedModules = std::pair<ModuleOp, SmallVector<ModuleOp, 2>>;
 
-/// Run a pipeline on a module using the regbase builder and A3's runPipeline utility.
-static LogicalResult
-runPipelineRegBase(ModuleOp mod,
-                   const PipelineBuilder &buildPipeline,
-                   BiShengIRCompileMainConfig &config,
-                   const std::string &pipelineName) {
-  // Bind the config parameter into the builder to match A3's runPipeline signature.
-  auto boundPipeline = std::bind(buildPipeline, std::placeholders::_1,
-                                 std::cref(config));
+/// Run a pipeline on a module using the regbase builder and A3's runPipeline
+/// utility.
+static LogicalResult runPipelineRegBase(ModuleOp mod,
+                                        const PipelineBuilder &buildPipeline,
+                                        BiShengIRCompileMainConfig &config,
+                                        const std::string &pipelineName) {
+  // Bind the config parameter into the builder to match A3's runPipeline
+  // signature.
+  auto boundPipeline =
+      std::bind(buildPipeline, std::placeholders::_1, std::cref(config));
   return bishengir::runPipeline(mod, boundPipeline, config, pipelineName);
 }
 
@@ -331,8 +338,6 @@ bishengir::regbase::runRegBasePipeline(ModuleOp mod,
   // Overflow tracking: UB gets a Vector-only multi-buffer fallback; L1/L0C
   // overflow still uses the coarse enable-auto-multi-buffer switch.
   bool hasUboverflow = false;
-  bool hasCcOverflow = false;
-  bool hasCbufOverflow = false;
   MLIRContext *ctx = mod->getContext();
   mlir::DiagnosticEngine &diagEngine = ctx->getDiagEngine();
   std::vector<Diagnostic> collectedDiagnostics;
@@ -350,18 +355,12 @@ bishengir::regbase::runRegBasePipeline(ModuleOp mod,
       if (msg.find("ub overflow") != std::string::npos) {
         hasUboverflow = true;
       }
-      if (msg.find("cc overflow") != std::string::npos) {
-        hasCcOverflow = true;
-      }
-      if (msg.find("cbuf overflow") != std::string::npos) {
-        hasCbufOverflow = true;
-      }
     }
     collectedDiagnostics.emplace_back(std::move(diag));
   });
 
   bool hirCompileSuccess = false;
-  int tryTimes = 6;
+  int tryTimes = 2;
   // triton compile has nothing to do with HFusion auto schedule, so we don't
   // need to tune for it.
   //
@@ -384,59 +383,37 @@ bishengir::regbase::runRegBasePipeline(ModuleOp mod,
     ModuleOp hirCompileMode = mod.clone();
     bool success = true;
     hasUboverflow = false;
-    hasCcOverflow = false;
-    hasCbufOverflow = false;
 
     if (compileFlow == CompileFlow::Mixed) {
       success = runMixedPipelines(hirCompileMode, config);
     } else if (compileFlow == CompileFlow::PureSimt) {
-      success = runModulePipeline(hirCompileMode,
-                                  regbase::buildBiShengTTIRPipeline, config,
-                                  "BiShengSIMT");
+      success =
+          runModulePipeline(hirCompileMode, regbase::buildBiShengTTIRPipeline,
+                            config, "BiShengSIMT");
     } else {
       // Standard HIR compile path (no SIMD/SIMT split)
-      success = runModulePipeline(hirCompileMode,
-                                  regbase::buildBiShengHIRPipeline, config,
-                                  "BiShengHIR");
-      // Stop final HIVM lowering after earlier pipeline fails.
       success =
-          success && runModulePipeline(hirCompileMode,
-                                       regbase::buildFinalHIVMPipelines,
-                                       config, "buildFinalHIVMPipelines");
+          runModulePipeline(hirCompileMode, regbase::buildBiShengHIRPipeline,
+                            config, "BiShengHIR");
+      // Stop final HIVM lowering after earlier pipeline fails.
+      success = success && runModulePipeline(hirCompileMode,
+                                             regbase::buildFinalHIVMPipelines,
+                                             config, "buildFinalHIVMPipelines");
     }
-    bool hasMemoryOverflow = hasUboverflow || hasCcOverflow || hasCbufOverflow;
-    if (!success && hasMemoryOverflow) {
-      if (config.getEnableAutoMultiBuffer() && hasUboverflow &&
-          !config.getDisableMultiBufferOnUB()) {
-        LDBG("ub overflow detected at attempt "
-             << (i + 1) << "/" << tryTimes
-             << ", fallback with disabled UB (Vector) multi buffer");
-        config.setDisableMultiBufferOnUB(true);
-        collectedDiagnostics.clear();
-      } else if (config.getEnableAutoMultiBuffer()) {
-        LDBG("memory overflow (ub/cc/cbuf) detected at attempt "
-             << (i + 1) << "/" << tryTimes
-             << ", fallback with disabled auto multi buffer");
-        collectedDiagnostics.clear();
-        config.setEnableAutoMultiBuffer(false);
-      } else if (hasUboverflow && config.getVfFusionMode() ==
-                                      mlir::analysis::FusionMode::MaxParallel) {
+    if (!success) {
+      if (hasUboverflow &&
+          config.getVfFusionMode() == mlir::analysis::FusionMode::MaxParallel) {
         LDBG("ub overflow detected at attempt "
              << (i + 1) << "/" << tryTimes << ", fallback with all-op mode");
         config.setVfFusionMode(mlir::analysis::FusionMode::AllOp);
+        // increase max buffers by 2 in HFusion auto schedule
+        config.increaseHfusionMaxBufferCountTuning(2);
         collectedDiagnostics.clear();
-      } else if (hasUboverflow && !config.getDisableVFReachableCheck()) {
-        LDBG("ub overflow detected at attempt "
-             << (i + 1) << "/" << tryTimes
-             << ", fallback with disabled VF reachable check");
-        config.setDisableVFReachableCheck(true);
-        collectedDiagnostics.clear();
+        continue;
       }
-    }
-
-    if (!success) {
-      // Stop hivmc pipeline when upstream pipeline fails
-      continue;
+      LDBG("can't retry at attempt " << (i + 1) << "/" << tryTimes
+                                     << ", no fallback");
+      break;
     }
 
     if (compileFlow == CompileFlow::Simd) {
@@ -452,9 +429,6 @@ bishengir::regbase::runRegBasePipeline(ModuleOp mod,
       mod = hirCompileMode.clone();
       break;
     }
-
-    // increase max buffers by 2 in HFusion auto schedule
-    config.increaseHfusionMaxBufferCountTuning(2);
   }
 
   // Restore to the default handler.
