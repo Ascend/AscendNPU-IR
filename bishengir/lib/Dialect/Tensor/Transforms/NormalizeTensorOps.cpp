@@ -395,8 +395,8 @@ private:
     SmallVector<OpFoldResult> results;
     results.reserve(values.size());
     for (auto [index, value] : llvm::enumerate(values))
-      results.push_back(
-          rewriter.getIndexAttr(index == dimension ? replacement : value));
+      results.push_back(rewriter.getIndexAttr(
+          static_cast<int64_t>(index) == dimension ? replacement : value));
     return results;
   }
 
@@ -521,8 +521,8 @@ struct NormalizeInterleaveExpandReshape
     Operation *reshapeOp = *interleaveOp.getResult().getUsers().begin();
     if (!isa<tensor::ReshapeOp, tensor::CollapseShapeOp>(reshapeOp))
       return failure();
-    auto reshapeType = dyn_cast<RankedTensorType>(
-        reshapeOp->getResult(0).getType());
+    auto reshapeType =
+        dyn_cast<RankedTensorType>(reshapeOp->getResult(0).getType());
     if (!reshapeType || !isInterleaveResultShape(sourceType, reshapeType))
       return failure();
 

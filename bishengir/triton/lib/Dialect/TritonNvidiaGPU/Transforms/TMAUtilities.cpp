@@ -71,11 +71,11 @@ updateEncodingForShape(Operation *op, ttg::SharedEncodingTrait encoding,
     auto rank = tensorType.getRank();
     auto oldOrder = swizEnc.getOrder();
     SmallVector<unsigned> order;
-    for (int i = 0; i + oldOrder.size() < rank; ++i)
+    for (int i = 0; i + static_cast<int>(oldOrder.size()) < rank; ++i)
       order.push_back(rank - i - 1);
-    for (int i = 0; i < oldOrder.size(); ++i) {
+    for (size_t i = 0; i < oldOrder.size(); ++i) {
       // If it is a rank-reducing load, we need to drop the last dimensions.
-      if (oldOrder[i] >= rank)
+      if (oldOrder[i] >= static_cast<unsigned>(rank))
         continue;
       order.push_back(oldOrder[i]);
     }
@@ -153,7 +153,7 @@ std::optional<int> getTMASwizzleMode(Operation *op, TensorDescType ty) {
     }
   }
 
-  bool fp4Padded = isFp4Padded(encoding);
+  [[maybe_unused]] bool fp4Padded = isFp4Padded(encoding);
   assert(!fp4Padded || swizzleBytes == 128 &&
                            "elem type .b4x16_p64 supports only 128B swizzling");
 
@@ -192,7 +192,8 @@ enum TMA_ELEMENT_TYPES {
 
 std::optional<int> getTMAElementType(Operation *op, TensorDescType ty) {
   auto encoding = ty.getBlockType().getEncoding();
-  auto mmaEncoding = dyn_cast<ttg::NVMMASharedEncodingAttr>(encoding);
+  [[maybe_unused]] auto mmaEncoding =
+      dyn_cast<ttg::NVMMASharedEncodingAttr>(encoding);
   bool fp4Padded = isFp4Padded(encoding);
 
   if (fp4Padded)
@@ -233,7 +234,7 @@ std::optional<int> getTMAElementType(Operation *op, TensorDescType ty) {
 LogicalResult createTMADesc(Value tmaPtr, MakeTensorDescOp op,
                             OpBuilder &builder) {
   using namespace mlir;
-  MLIRContext *ctx = op.getContext();
+  [[maybe_unused]] MLIRContext *ctx = op.getContext();
   auto loc = op.getLoc();
   auto mkI32Constant = [&](int32_t val) {
     return builder.create<arith::ConstantOp>(loc, builder.getI32Type(),
@@ -247,7 +248,7 @@ LogicalResult createTMADesc(Value tmaPtr, MakeTensorDescOp op,
       llvm::dyn_cast_or_null<gpu::NVMMASharedEncodingAttr>(encoding);
   bool fp4Padded = mmaEncoding && mmaEncoding.getFp4Padded();
 
-  int paddingScale = fp4Padded ? 2 : 1;
+  [[maybe_unused]] int paddingScale = fp4Padded ? 2 : 1;
   auto shapePerCTA = gpu::getShapePerCTA(encoding, op.getTensorShape());
   auto blockShape =
       getTMABlockShape(encoding, shapePerCTA, /*packedSize=*/false);
@@ -262,7 +263,8 @@ LogicalResult createTMADesc(Value tmaPtr, MakeTensorDescOp op,
   for (int k = shapePerCTA.size() - 2; k >= 0; --k)
     boxDim.push_back(mkI32Constant(blockShape[k]));
 
-  unsigned swizzleBytes = mmaEncoding ? mmaEncoding.getSwizzlingByteWidth() : 0;
+  [[maybe_unused]] unsigned swizzleBytes =
+      mmaEncoding ? mmaEncoding.getSwizzlingByteWidth() : 0;
   if (!mmaEncoding) {
     auto swizzledEnc = dyn_cast<gpu::SwizzledSharedEncodingAttr>(
         op.getType().getBlockType().getEncoding());
@@ -295,7 +297,7 @@ LogicalResult createTMADesc(Value tmaPtr, MakeTensorDescOp op,
 
   SmallVector<Value> elementStride(globalDim.size(), mkI32Constant(1));
 
-  for (int i = 0; i < globalStride.size(); ++i)
+  for (size_t i = 0; i < globalStride.size(); ++i)
     globalStride[i] =
         builder.create<arith::MulIOp>(loc, globalStride[i], elemSizeVal);
 

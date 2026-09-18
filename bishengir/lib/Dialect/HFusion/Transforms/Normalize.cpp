@@ -7007,7 +7007,7 @@ public:
 
     // Get mantissa input (x)
     Value input = op.getInputs()[0];
-    auto inType = getElementTypeOrSelf(input.getType());
+    [[maybe_unused]] auto inType = getElementTypeOrSelf(input.getType());
     // Get exponent and convert to float (i32 -> f32, f16/f32 unchanged)
     Value exp = op.getInputs()[1];
 
@@ -9936,10 +9936,9 @@ public:
     // Step 3: cast the index tensor to i32 and rebuild the gather op.
     // The result type is derived from init, so it is unchanged by the index
     // cast and the op can be replaced in place.
-    Value newIndex = hfusion::castTo(
-        rewriter, index, rewriter.getI32Type());
-    rewriter.replaceOpWithNewOp<hfusion::GatherOp>(
-        op, op.getSrc(), newIndex, op.getInit(), op.getAxis());
+    Value newIndex = hfusion::castTo(rewriter, index, rewriter.getI32Type());
+    rewriter.replaceOpWithNewOp<hfusion::GatherOp>(op, op.getSrc(), newIndex,
+                                                   op.getInit(), op.getAxis());
     return success();
   }
 };

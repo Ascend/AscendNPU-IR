@@ -27,7 +27,7 @@ namespace mlir {
 
 // Lower to use GetCanonicalWarpIdOp.
 // In Hopper, each task is a warpgroup consisting of 4 warps.
-static const int WARPS_PER_TASK = 4;
+[[maybe_unused]] static const int WARPS_PER_TASK = 4;
 static const int THREADS_PER_TASK = 128;
 
 Value getMBarrierPhaseBit(OpBuilder &builder, Operation *op,
@@ -171,7 +171,7 @@ void lowerTokenOperations(Operation *parentOp, int numCTAs,
       // We need bufferFullArray and bufferEmptyArray.
       if (auto op = dyn_cast<ttnvws::ProducerAcquireOp>(user)) {
         Value bufferEmpty = extractBufferEmpty(loc, op.getIdx());
-        auto pOp = user->getParentOp();
+        [[maybe_unused]] auto pOp = user->getParentOp();
         assert(user->hasAttr("async_task_id"));
         setAsyncTaskIds(bufferEmpty.getDefiningOp(), getAsyncTaskIds(user));
         processProducerAcquireOp(builder, op, bufferEmpty);
@@ -208,7 +208,7 @@ void lowerTokenOperations(Operation *parentOp, int numCTAs,
     // and ConsumerReleaseOp.
     for (OpOperand &use : createTokenOp.getResult().getUses()) {
       Operation *user = use.getOwner();
-      auto loc = user->getLoc();
+      [[maybe_unused]] auto loc = user->getLoc();
       builder.setInsertionPoint(user);
       bool handled = handleOneUser(user);
       if (auto wsOp = dyn_cast<ttg::WarpSpecializeOp>(user)) {
@@ -239,7 +239,7 @@ void lowerTokenOperations(Operation *parentOp, int numCTAs,
     });
     op->erase();
   }
-  unsigned tokenRemoval = 0;
+  [[maybe_unused]] unsigned tokenRemoval = 0;
   // Map from tokenOp to bufferFullArray, bufferEmptyArray.
   // If a tokenOp is used by warp_specialize, remove it and add
   // buffer[Full|Empty]Array.
@@ -273,7 +273,7 @@ void lowerTokenOperations(Operation *parentOp, int numCTAs,
           for (Region *region : wsOp.getPartitionRegions()) {
             LDBG("-- region " << region->getNumArguments());
             auto tArg = region->getArgument(opndNum);
-            for (Operation *tUser : tArg.getUsers()) {
+            for ([[maybe_unused]] Operation *tUser : tArg.getUsers()) {
               LLVM_DEBUG({
                 LDBG("user for arg");
                 tUser->dump();

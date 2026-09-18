@@ -190,10 +190,11 @@ SmallVector<Value> getShapeFromMixedSizes(ArrayRef<OpFoldResult> mixedSizes,
 
 /// Express the selected main or tail shape in the coordinate system seen by
 /// `val` by replaying collapse_shape operations from `rootAlloc` to `val`.
-SmallVector<Value>
-applyMemRefCollapseShapes(Value val, memref::AllocOp rootAlloc,
-                          SmallVector<Value> shape, Location loc,
-                          PatternRewriter &rewriter) {
+SmallVector<Value> applyMemRefCollapseShapes(Value val,
+                                             memref::AllocOp rootAlloc,
+                                             SmallVector<Value> shape,
+                                             Location loc,
+                                             PatternRewriter &rewriter) {
   if (auto toTensor = val.getDefiningOp<bufferization::ToTensorOp>())
     val = toTensor.getMemref();
 
@@ -210,8 +211,8 @@ applyMemRefCollapseShapes(Value val, memref::AllocOp rootAlloc,
       // produced by memref.expand_shape.
       return shape;
     }
-    if (auto view = dyn_cast_if_present<ViewLikeOpInterface>(
-            current.getDefiningOp())) {
+    if (auto view =
+            dyn_cast_if_present<ViewLikeOpInterface>(current.getDefiningOp())) {
       current = view.getViewSource();
       continue;
     }
@@ -1077,7 +1078,7 @@ void setNormalizedInL0CWithIndex(PatternRewriter &rewriter,
   auto newIdxAttr = rewriter.getI32IntegerAttr(resultIdx);
   bool isDuplicate = false;
   for (Attribute attr : indices) {
-    if (auto idxAttr = attr.dyn_cast<IntegerAttr>()) {
+    if (auto idxAttr = mlir::dyn_cast<IntegerAttr>(attr)) {
       if (idxAttr.getInt() == static_cast<int64_t>(resultIdx)) {
         isDuplicate = true;
         break;

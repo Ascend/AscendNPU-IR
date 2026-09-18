@@ -16,6 +16,7 @@
 #include "mlir/Transforms/DialectConversion.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/TypeSwitch.h"
+#include "llvm/Support/ErrorHandling.h"
 #include <utility>
 namespace mlir {
 #define GEN_PASS_DEF_ANALYZEVECTORLAYOUT
@@ -177,7 +178,7 @@ void legalizeCallOp(func::CallOp callOp, IRRewriter &rewriter) {
         s = State::B32;
         break;
       default:
-        assert(0);
+        llvm::report_fatal_error("unsupported vector element bit width");
       }
       auto newRes = rewriter.create<hivmave::VectorLayoutCastOp>(
           newCallOp.getLoc(),
@@ -938,8 +939,7 @@ struct TreeSolve : public std::enable_shared_from_this<TreeSolve> {
     // on a null/absent Attribute triggers an assertion in llvm::dyn_cast,
     // so we must verify the layout is present before casting.
     if (auto layout = resVecType.getLayout()) {
-      if (auto layoutAttr =
-              dyn_cast<hivmave::VectorLayoutAttr>(layout)) {
+      if (auto layoutAttr = dyn_cast<hivmave::VectorLayoutAttr>(layout)) {
         auto memTypeAttr =
             dyn_cast<hivmave::VecMemTypeAttr>(layoutAttr.getMem());
         if (memTypeAttr) {
@@ -947,8 +947,8 @@ struct TreeSolve : public std::enable_shared_from_this<TreeSolve> {
           // Converge: both result and source are constrained to the
           // type-encoded layout. If downstream resolved to a different
           // state, wrapThis will detect the conflict and prune.
-          return {wrapThis(FunctionType::NONE,
-                          {{res, resState}, {src, resState}})};
+          return {
+              wrapThis(FunctionType::NONE, {{res, resState}, {src, resState}})};
         }
       }
     }
@@ -961,8 +961,7 @@ struct TreeSolve : public std::enable_shared_from_this<TreeSolve> {
     // FunctionType. No constraint propagation to src.
     auto srcVecType = cast<VectorType>(src.getType());
     if (auto srcLayout = srcVecType.getLayout()) {
-      if (auto srcLayoutAttr =
-              dyn_cast<hivmave::VectorLayoutAttr>(srcLayout)) {
+      if (auto srcLayoutAttr = dyn_cast<hivmave::VectorLayoutAttr>(srcLayout)) {
         auto srcMemTypeAttr =
             dyn_cast<hivmave::VecMemTypeAttr>(srcLayoutAttr.getMem());
         if (srcMemTypeAttr) {
@@ -1380,7 +1379,7 @@ public:
   }
 
   bool tryChronologicalBacktrack(Operation *failedOp, SearchCursor &search) {
-    size_t poppedFrames = 0;
+    [[maybe_unused]] size_t poppedFrames = 0;
     while (!search.searchStack.empty()) {
       SearchFrame &frame = search.searchStack.back();
       if (frame.nextAlternative < frame.alternatives.size()) {

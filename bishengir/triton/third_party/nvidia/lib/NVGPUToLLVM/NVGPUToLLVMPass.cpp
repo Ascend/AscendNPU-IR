@@ -278,16 +278,18 @@ protected:
                               triton::nvgpu::LoadMatrixShape shape,
                               int bitWidth) const {
     std::string ptxAsmBase = std::string(".sync.aligned");
+    StringRef shapeModifier;
     switch (shape) {
     case triton::nvgpu::LoadMatrixShape::m8n8:
-      ptxAsmBase += ".m8n8";
+      shapeModifier = ".m8n8";
       break;
     case triton::nvgpu::LoadMatrixShape::m16n16:
-      ptxAsmBase += ".m16n16";
+      shapeModifier = ".m16n16";
       break;
-    default:
-      llvm_unreachable("Invalid load matrix shape");
     }
+    if (shapeModifier.empty())
+      llvm_unreachable("Invalid load matrix shape");
+    ptxAsmBase += shapeModifier.str();
     std::string suffix = trans ? ".trans.shared" : ".shared";
     suffix += ".b" + std::to_string(bitWidth);
     switch (vecSize) {
@@ -517,7 +519,7 @@ public:
     auto typeB = opB.getType();
     auto typeOutput = op.getType();
     auto structTypeA = dyn_cast<LLVM::LLVMStructType>(typeA);
-    auto structTypeB = dyn_cast<LLVM::LLVMStructType>(typeB);
+    [[maybe_unused]] auto structTypeB = dyn_cast<LLVM::LLVMStructType>(typeB);
     auto structTypeOutput = dyn_cast<LLVM::LLVMStructType>(typeOutput);
     assert(!structTypeB && "Operand B can not be registers");
     assert(structTypeOutput && "Output and C operand must be registers");
@@ -634,7 +636,7 @@ static Value createTMAlloc(IRRewriter &rewriter, LLVM::LLVMFuncOp func,
   allocOp(
       {ptxBuilder.newOperand(pred, "b"), ptxBuilder.newOperand(sharedMem, "r")},
       /*onlyAttachMLIRArgs=*/true);
-  auto voidTy = void_ty(func->getContext());
+  [[maybe_unused]] auto voidTy = void_ty(func->getContext());
   ptxBuilder.launch(rewriter, loc, void_ty(func->getContext()));
   rewriter.create<NVVM::Barrier0Op>(loc);
   Value address = b.load(i32_ty, sharedMem);
@@ -659,7 +661,7 @@ void freeTMAlloc(LLVM::LLVMFuncOp func, Value alloc, size_t size, Value pred,
     OpBuilder b(ret);
     auto ctx = ret->getContext();
     auto loc = ret.getLoc();
-    auto voidTy = void_ty(ctx);
+    [[maybe_unused]] auto voidTy = void_ty(ctx);
     b.create<NVVM::Barrier0Op>(loc);
     PTXBuilder ptxBuilder;
     // Calculate the predicate in the inline asm to avoid creating long

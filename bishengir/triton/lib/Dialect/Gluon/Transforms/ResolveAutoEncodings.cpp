@@ -203,7 +203,7 @@ LogicalResult inferAutoLayouts(FuncOp func) {
   }
 
   // 3. Transfer propagated encodings into the graph
-  auto ctx = func.getContext();
+  [[maybe_unused]] auto ctx = func.getContext();
   for (auto &[val, info] : valueToEncoding) {
     auto existingTy = cast<RankedTensorType>(val.getType());
     assert(isa<gluon::AutoEncodingAttr>(existingTy.getEncoding()));
@@ -252,7 +252,7 @@ public:
   using BaseT::BaseT;
 
   void runOnOperation() override {
-    MLIRContext *context = &getContext();
+    [[maybe_unused]] MLIRContext *context = &getContext();
     ModuleOp m = getOperation();
     // Do layout inference
     if (failed(inferAutoLayouts(m)))

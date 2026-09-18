@@ -204,19 +204,23 @@ struct ElementwiseOpToHFusionCast : public OpRewritePattern<CastOp> {
         return hfusion::RoundMode::RINT;
       if (inType.isF32() && outType.isF32())
         return hfusion::RoundMode::RINT;
-      if (isRegBasedArch && (inType.isF32() || inType.isF16() || inType.isBF16())
-          && (isa<Float8E4M3FNType>(outType) || isa<Float8E5M2Type>(outType)))
+      if (isRegBasedArch &&
+          (inType.isF32() || inType.isF16() || inType.isBF16()) &&
+          (isa<Float8E4M3FNType>(outType) || isa<Float8E5M2Type>(outType)))
         return hfusion::RoundMode::RINT;
-      llvm::report_fatal_error("unsupported datatype for arith::TruncFOp to hfusion");
+      llvm::report_fatal_error(
+          "unsupported datatype for arith::TruncFOp to hfusion");
     } else if (isa<arith::ExtFOp>(op)) {
       if (inType.isF16() && outType.isF32())
         return hfusion::RoundMode::RINT;
       if (inType.isBF16() && outType.isF32())
         return hfusion::RoundMode::RINT;
-      if (isRegBasedArch && (isa<Float8E4M3FNType>(inType) || isa<Float8E5M2Type>(inType))
-          && (outType.isF32() || outType.isF16() || outType.isBF16()))
+      if (isRegBasedArch &&
+          (isa<Float8E4M3FNType>(inType) || isa<Float8E5M2Type>(inType)) &&
+          (outType.isF32() || outType.isF16() || outType.isBF16()))
         return hfusion::RoundMode::RINT;
-      llvm::report_fatal_error("unsupported datatype for arith::ExtFOp to hfusion");
+      llvm::report_fatal_error(
+          "unsupported datatype for arith::ExtFOp to hfusion");
     } else if (isa<arith::TruncIOp>(op)) {
       if (isOverFlowMode(inType, outType)) {
         return hfusion::RoundMode::TRUNCWITHOVERFLOW;
@@ -249,9 +253,12 @@ struct ElementwiseOpToHFusionCast : public OpRewritePattern<CastOp> {
       const bool isI8ToI64 = inType.isInteger(8) && outType.isInteger(64);
       const bool isI16ToI32 = inType.isInteger(16) && outType.isInteger(32);
       const bool isI16ToI64 = inType.isInteger(16) && outType.isInteger(64);
-      const bool isI32ToI64 = inType.isInteger(32) && outType.isInteger(64);
-      const bool isInTypeI1 = isI1ToI16 || isI1ToI32 || isI1ToI64 || isI1ToFloat;
-      const bool isInTypeI8  = isI8ToI16 || isI8ToI32 || isI8ToI64;
+      [[maybe_unused]] const bool isI32ToI64 =
+          inType.isInteger(32) && outType.isInteger(64);
+      const bool isInTypeI1 =
+          isI1ToI16 || isI1ToI32 || isI1ToI64 || isI1ToFloat;
+      [[maybe_unused]] const bool isInTypeI8 =
+          isI8ToI16 || isI8ToI32 || isI8ToI64;
       const bool isInTypeI16 = isI16ToI32 || isI16ToI64;
       const bool isInTypeI32 = inType.isInteger(32) && outType.isInteger(64);
       // Now we support unsigned casts only from uint8
@@ -387,8 +394,8 @@ struct ElementwiseOpToHFusionCompare : public OpRewritePattern<CompareOp> {
         auto width = elemType.getIntOrFloatBitWidth();
         if (width == 1 && op.getPredicate() != arith::CmpIPredicate::eq &&
             op.getPredicate() != arith::CmpIPredicate::ne) {
-          auto targetType =
-              RankedTensorType::get(tensorType.getShape(), rewriter.getI8Type());
+          auto targetType = RankedTensorType::get(tensorType.getShape(),
+                                                  rewriter.getI8Type());
           lhs = rewriter.create<arith::ExtUIOp>(lhs.getLoc(), targetType, lhs);
           rhs = rewriter.create<arith::ExtUIOp>(rhs.getLoc(), targetType, rhs);
           hfusion::CompareFn predicate = selectI1Predicate(op);
@@ -399,7 +406,7 @@ struct ElementwiseOpToHFusionCompare : public OpRewritePattern<CompareOp> {
           rewriter.replaceOpWithNewOp<hfusion::CompareOp>(
               op, ValueRange{lhs, rhs}, ValueRange{dsts}, ArrayRef{modeAttr});
           return success();
-            }
+        }
       }
     }
     hfusion::CompareFn predicate = selectPredicate(op);

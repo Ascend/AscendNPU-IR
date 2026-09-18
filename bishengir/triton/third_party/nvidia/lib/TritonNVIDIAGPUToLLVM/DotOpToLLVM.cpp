@@ -30,7 +30,7 @@ struct DotOpConversion : public ConvertOpToLLVMPattern<triton::DotOp> {
   LogicalResult
   matchAndRewrite(triton::DotOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    Location loc = op->getLoc();
+    [[maybe_unused]] Location loc = op->getLoc();
     // D = A * B + C
     Value A = op.getA();
     Value D = op.getResult();

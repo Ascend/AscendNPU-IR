@@ -68,9 +68,8 @@ LogicalResult DimensionAnalyzerBase::initialize() {
 int64_t
 DimensionAnalyzerBase::allocateArguments(int rank,
                                          ArrayRef<int64_t> dimensionRef) {
-  LLVM_DEBUG(
-    llvm::dbgs() << "Allocating new arguments with rank = " << rank << "\n";
-  );
+  LLVM_DEBUG(llvm::dbgs() << "Allocating new arguments with rank = " << rank
+                          << "\n";);
   auto startingIdx = argumentTotalLength_;
   argumentTotalLength_ += rank + 1;
   isConnected_.resize(argumentTotalLength_);
@@ -78,14 +77,11 @@ DimensionAnalyzerBase::allocateArguments(int rank,
   structuralDsu_->allocateMinimum(argumentTotalLength_);
   dimIdxToArgIdx_.resize(argumentTotalLength_);
   assert(rank == ssize_t(dimensionRef.size()));
-  LLVM_DEBUG(
-    llvm::dbgs() << "dimensionAllocation_ = " << dimensionAllocation_ << "\n";
-  );
+  LLVM_DEBUG(llvm::dbgs() << "dimensionAllocation_ = " << dimensionAllocation_
+                          << "\n";);
   for (int64_t i = 0; i < rank; ++i) {
-    LLVM_DEBUG(
-      llvm::dbgs() << "Allocating axis(" << i << ") with dimSiz = "
-                   << dimensionRef[i] << "\n";
-    );
+    LLVM_DEBUG(llvm::dbgs() << "Allocating axis(" << i
+                            << ") with dimSiz = " << dimensionRef[i] << "\n";);
     int64_t currentIndex = startingIdx + i;
     equivalentDsu_->minParentIndex_[currentIndex] = {dimensionAllocation_, i};
     equivalentDsu_->shape_[currentIndex] = dimensionRef[i];
@@ -118,10 +114,9 @@ bool DimensionAnalyzerBase::isHeadOperation(Operation *op) {
   if (options.registerBased) {
     return reshape_utils::isReshapingOp(op) || reshape_utils::isInitOp(op) ||
            isa_and_present<memref::AllocaOp, memref::AllocOp,
-                           memref::ReinterpretCastOp,
-                           arith::ConstantOp, memref::ExpandShapeOp,
-                           memref::CollapseShapeOp, hivm::PointerCastOp,
-                           tensor::FromElementsOp>(op);
+                           memref::ReinterpretCastOp, arith::ConstantOp,
+                           memref::ExpandShapeOp, memref::CollapseShapeOp,
+                           hivm::PointerCastOp, tensor::FromElementsOp>(op);
   }
   return reshape_utils::isArgOp(op);
 }
@@ -141,7 +136,7 @@ void DimensionAnalyzerBase::initializeStructures() {
   structuralDsu_ = std::make_unique<SimpleUnionFind>();
   valueGroupDSU_ = std::make_unique<SimpleUnionFind>();
 
-  size_t sizeCount = 0;
+  [[maybe_unused]] size_t sizeCount = 0;
   for (Block &block : op_->getRegion(0)) {
     LLVM_DEBUG(llvm::dbgs() << "Processing Block\n");
     sizeCount += block.getOperations().size();
@@ -179,16 +174,11 @@ void DimensionAnalyzerBase::initializeStructures() {
   assert(dimensionAllocation_ == ssize_t(argumentList_.size()) &&
          "Inconsistency in argumentList_");
   LLVM_DEBUG(
-    llvm::dbgs() << DEBUG_LINE_BEG("Flatten-After-initializeStructures");
-    llvm::dbgs() << "equivalentDsu_:\n";
-    equivalentDsu_->dump();
-    llvm::dbgs() << "structuralDsu_:\n";
-    structuralDsu_->dump();
-    dumpArgumentsRefPointer();
-    dumpArgumentsRef();
-    dumpIsConnected();
-    llvm::dbgs() << DEBUG_LINE_END("Flatten-After-initializeStructures");
-  );
+      llvm::dbgs() << DEBUG_LINE_BEG("Flatten-After-initializeStructures");
+      llvm::dbgs() << "equivalentDsu_:\n"; equivalentDsu_->dump();
+      llvm::dbgs() << "structuralDsu_:\n"; structuralDsu_->dump();
+      dumpArgumentsRefPointer(); dumpArgumentsRef(); dumpIsConnected();
+      llvm::dbgs() << DEBUG_LINE_END("Flatten-After-initializeStructures"););
 }
 
 void DimensionAnalyzerBase::processArgument(Value arg) {

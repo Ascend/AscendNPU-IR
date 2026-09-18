@@ -43,7 +43,7 @@ struct SplitSimtModulePass
 
 void SplitSimtModulePass::runOnOperation() {
   static constexpr int GridSizeCount = 3;
-  static constexpr int GridSizeWidth = 32;
+  [[maybe_unused]] static constexpr int GridSizeWidth = 32;
   auto mod = llvm::cast<ModuleOp>(getOperation());
   auto ctx = &getContext();
   OpBuilder builder(ctx);
@@ -59,7 +59,7 @@ void SplitSimtModulePass::runOnOperation() {
     if (util::isSIMTVF(funcOp)) {
       hasCallToSIMTVF = true;
       auto gridSizeArgs = parentFuncOp.getArguments().take_back(GridSizeCount);
-      for (auto arg : gridSizeArgs) {
+      for ([[maybe_unused]] auto arg : gridSizeArgs) {
         assert(llvm::isa<IntegerType>(arg.getType()) &&
                llvm::cast<IntegerType>(arg.getType()).getWidth() ==
                    GridSizeWidth &&
@@ -78,8 +78,9 @@ void SplitSimtModulePass::runOnOperation() {
     }
   });
 
-  // A pure SIMD kernel may still enter this pass in mix compile mode. If there is
-  // no call to SIMT VF, skip SIMT VF splitting but keep SIMD module wrapping.
+  // A pure SIMD kernel may still enter this pass in mix compile mode. If there
+  // is no call to SIMT VF, skip SIMT VF splitting but keep SIMD module
+  // wrapping.
   if (!hasCallToSIMTVF) {
     simtVFs.clear();
   } else if (!gridSizeType) {

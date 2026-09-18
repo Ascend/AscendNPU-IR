@@ -31,6 +31,8 @@
 #include "mlir/Transforms/DialectConversion.h"
 #include "llvm/Support/Debug.h"
 
+#include <type_traits>
+
 #define DEBUG_TYPE "convert-arith-to-hivmave"
 #define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] ")
 
@@ -54,6 +56,16 @@ static bool isEligibleVectorType(Type type) {
   return false;
 }
 namespace {
+template <typename T> bool isExactValueEqual(const T &lhs, const T &rhs) {
+  if constexpr (std::is_floating_point_v<T>) {
+    llvm::APFloat lhsValue(lhs);
+    llvm::APFloat rhsValue(rhs);
+    return lhsValue.compare(rhsValue) == llvm::APFloat::cmpEqual;
+  } else {
+    return lhs == rhs;
+  }
+}
+
 template <typename ArithUnaryOp, typename HivmVFUnaryOp>
 struct UnaryOpPattern : public OpConversionPattern<ArithUnaryOp> {
   using OpConversionPattern<ArithUnaryOp>::OpConversionPattern;
@@ -72,7 +84,8 @@ struct UnaryOpPattern : public OpConversionPattern<ArithUnaryOp> {
     VectorType resVecType = mlir::dyn_cast<VectorType>(resType);
     if (!resVecType || resVecType.getShape().size() != 1) {
       LLVM_DEBUG(DBGS() << "legalize" << ArithUnaryOp::getOperationName()
-                        << "failed." << "\n";);
+                        << "failed."
+                        << "\n";);
       return failure();
     }
 
@@ -104,7 +117,8 @@ struct BinaryOpPattern : public OpConversionPattern<ArithBinaryOp> {
     VectorType resVecType = mlir::dyn_cast<VectorType>(resType);
     if (!resVecType || resVecType.getShape().size() != 1) {
       LLVM_DEBUG(DBGS() << "legalize" << ArithBinaryOp::getOperationName()
-                        << "failed." << "\n";);
+                        << "failed."
+                        << "\n";);
       return failure();
     }
 
@@ -156,7 +170,8 @@ struct ArithMulExtendOpPattern : public OpConversionPattern<ArithMulExtendOp> {
 
     if (!lowResVecType || !highResVecType || resType.size() != 2) {
       LLVM_DEBUG(DBGS() << "legalize" << ArithMulExtendOp::getOperationName()
-                        << "failed." << "\n";);
+                        << "failed."
+                        << "\n";);
       return failure();
     }
 
@@ -1245,7 +1260,8 @@ struct ConstantOpToHivmVCIVCPLowering
                            ElementType &mulValue, ElementType &addValue) {
       /** Pattern1 */
       ElementType baseValue = 0;
-      if (mulValue == 1 || mulValue == -1) {
+      if (isExactValueEqual(mulValue, ElementType{1}) ||
+          isExactValueEqual(mulValue, ElementType{-1})) {
         baseValue = addValue;
         addValue = 0;
       }
@@ -1256,7 +1272,7 @@ struct ConstantOpToHivmVCIVCPLowering
       }
       auto vciType = hivmave::VCIType::INCREASE;
       /** Pattern1 */
-      if (mulValue == -1) {
+      if (isExactValueEqual(mulValue, ElementType{-1})) {
         mulValue = 1;
         vciType = hivmave::VCIType::DECREASE;
       }
@@ -1311,14 +1327,15 @@ struct ConstantOpToHivmVCIVCPLowering
                        arith::ConstantOp constantOp, Type elementType,
                        ElementType mulValue, ElementType addValue) const {
     /** Pattern1 */
-    if (mulValue == 1 && addValue == 0) {
+    if (isExactValueEqual(mulValue, ElementType{1}) &&
+        isExactValueEqual(addValue, ElementType{0})) {
       return defineOp;
     }
     /** Pattern2 */
     VectorType resultType = cast<VectorType>(constantOp.getType());
     auto loc = constantOp.getLoc();
     auto mask = createMaskByPGE(resultType, rewriter, loc);
-    if (mulValue != 1) {
+    if (!isExactValueEqual(mulValue, ElementType{1})) {
       auto mulValueOp = ConstantCreateHelper<ElementType>(
           rewriter, loc, elementType, mulValue);
       if (!mulValueOp)
@@ -1328,7 +1345,7 @@ struct ConstantOpToHivmVCIVCPLowering
           mask);
       defineOp = vmulOp;
     }
-    if (addValue != 0) {
+    if (!isExactValueEqual(addValue, ElementType{0})) {
       auto addValueOp = ConstantCreateHelper<ElementType>(
           rewriter, loc, elementType, addValue);
       if (!addValueOp)
@@ -1351,16 +1368,19 @@ struct ConstantOpToHivmVCIVCPLowering
     using ElementType = typename APTypeHelper<APType>::ElementType;
     unsigned range = values.size();
     ElementType tailPaddingValue = APTypeHelper<APType>::extract(values.back());
-    if (APTypeHelper<APType>::extract(values[range - 2]) == tailPaddingValue) {
+    if (isExactValueEqual(APTypeHelper<APType>::extract(values[range - 2]),
+                          tailPaddingValue)) {
       // we indeed has tail padding
       // the last two has already been checked, so we skip them
       range = values.size() - 2;
       for (unsigned i = values.size() - 3; i >= 1; --i) {
-        if (APTypeHelper<APType>::extract(values[i]) != tailPaddingValue)
+        if (!isExactValueEqual(APTypeHelper<APType>::extract(values[i]),
+                               tailPaddingValue))
           break;
         range = i;
       }
-    } else if (tailPaddingValue == 0 && range > 0) {
+    } else if (isExactValueEqual(tailPaddingValue, ElementType{0}) &&
+               range > 0) {
       // we have only one tail padding
       --range;
     }
@@ -1446,7 +1466,7 @@ struct ConstantOpToHivmVCIVCPLowering
         APTypeHelper<APType>::extractArithmeticSequenceParams(denseAttr,
                                                               valueCheckRange);
 
-    if (!isArithmeticSeq || mulValue == 0)
+    if (!isArithmeticSeq || isExactValueEqual(mulValue, ElementType{0}))
       return failure();
 
     for (unsigned i = 0; i < valueCheckRange; ++i) {

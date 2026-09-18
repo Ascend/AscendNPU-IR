@@ -1007,7 +1007,8 @@ LogicalResult handlePadOp(tensor::CollapseShapeOp collapseOp,
   auto padOp = dyn_cast<tensor::PadOp>(userOp);
   auto collapseSrc = collapseOp.getSrc();
   // Rank and reassociation shall be the same
-  assert(reassociation.size() == padOp.getSource().getType().getRank());
+  assert(reassociation.size() ==
+         static_cast<size_t>(padOp.getSource().getType().getRank()));
   // We need to expand them first, and then collapse them
   SmallVector<OpFoldResult> newPadLow;
   SmallVector<OpFoldResult> newPadHigh;
@@ -1015,7 +1016,8 @@ LogicalResult handlePadOp(tensor::CollapseShapeOp collapseOp,
   // %a = Collapse %src
   // %b = pad %a
   auto dimensionResult = utils::getShape(collapseSrc.getType());
-  assert(dimensionResult.size() == reassociation.back().back() + 1);
+  assert(dimensionResult.size() ==
+         static_cast<size_t>(reassociation.back().back() + 1));
   auto oldExpandOutputShape =
       getMixedSizes(rewriter, collapseOp.getLoc(), collapseSrc);
 
@@ -1057,8 +1059,7 @@ LogicalResult handlePadOp(tensor::CollapseShapeOp collapseOp,
 }
 
 LogicalResult handleExtractSliceOp(tensor::CollapseShapeOp collapseOp,
-                                   PatternRewriter &rewriter,
-                                   Operation *userOp,
+                                   PatternRewriter &rewriter, Operation *userOp,
                                    const PropagateReshapeOptions &options) {
   auto reassociation = collapseOp.getReassociationIndices();
   auto extractSliceOp = dyn_cast<tensor::ExtractSliceOp>(userOp);
@@ -1103,8 +1104,7 @@ LogicalResult handleExtractSliceOp(tensor::CollapseShapeOp collapseOp,
 }
 
 LogicalResult handleInsertSliceOp(tensor::CollapseShapeOp collapseOp,
-                                  PatternRewriter &rewriter,
-                                  Operation *userOp,
+                                  PatternRewriter &rewriter, Operation *userOp,
                                   const PropagateReshapeOptions &options) {
   LDBG("Handle dropping insert slice here");
   auto reassociation = collapseOp.getReassociationIndices();
@@ -1132,15 +1132,13 @@ LogicalResult handleInsertSliceOp(tensor::CollapseShapeOp collapseOp,
   }
   auto res = getInsertSliceModifyingOp(
       rewriter, cast<InsertSliceOp>(userOp), reassociation, expandedShape,
-      isSrcCollapsed,
-      newMixedOffsets, newMixedSizes, newMixedStrides, expandSrcOutputShape,
-      expandDestOutputShape, newReassociation);
+      isSrcCollapsed, newMixedOffsets, newMixedSizes, newMixedStrides,
+      expandSrcOutputShape, expandDestOutputShape, newReassociation);
   if (res.failed())
     return failure();
 
   SmallVector<ReassociationIndices> fullReassociation =
-      isSrcCollapsed ? newReassociation
-                     : llvm::to_vector(reassociation);
+      isSrcCollapsed ? newReassociation : llvm::to_vector(reassociation);
   SmallVector<ReassociationIndices> sourceReassociation =
       isSrcCollapsed ? llvm::to_vector(reassociation) : newReassociation;
   auto expandedSrcShape = expandSrcOutputShape;
@@ -1153,8 +1151,7 @@ LogicalResult handleInsertSliceOp(tensor::CollapseShapeOp collapseOp,
   auto expandedNewSrc = createExpand(rewriter, loc, insertSliceOp.getSource(),
                                      sourceReassociation, expandedSrcShape);
   auto expandedNewDest = createExpand(rewriter, loc, insertSliceOp.getDest(),
-                                      fullReassociation,
-                                      expandDestOutputShape);
+                                      fullReassociation, expandDestOutputShape);
   auto newInsertSliceOp = rewriter.create<tensor::InsertSliceOp>(
       loc, expandedNewSrc, expandedNewDest, newMixedOffsets, newMixedSizes,
       newMixedStrides);
@@ -1360,8 +1357,7 @@ PropagateCollapseDown::matchAndRewrite(tensor::CollapseShapeOp collapseOp,
   bool hasOneUse = collapseOp->hasOneUse();
   for (Operation *userOp : users) {
     LDBG(*userOp);
-    bool isCrossRegion =
-        collapseOp->getParentOp() != userOp->getParentOp();
+    bool isCrossRegion = collapseOp->getParentOp() != userOp->getParentOp();
     // RegBase follows A5 and permits the only user to cross a region boundary.
     // Multiple users retain A3's boundary to avoid moving shared producers.
     if (isCrossRegion && (!options.forRegbased || !hasOneUse))

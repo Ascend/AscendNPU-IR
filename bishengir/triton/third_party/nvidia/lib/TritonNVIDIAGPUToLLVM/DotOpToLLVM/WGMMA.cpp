@@ -88,26 +88,26 @@ static Value createDescriptor(ConversionPatternRewriter &rewriter, Location loc,
   desc.descriptor = 0;
   switch (swizzling) {
   case 0:
-    desc.swizzlingMode = 0;
+    desc.fields.swizzlingMode = 0;
     break;
   case 32:
-    desc.swizzlingMode = 3;
+    desc.fields.swizzlingMode = 3;
     break;
   case 64:
-    desc.swizzlingMode = 2;
+    desc.fields.swizzlingMode = 2;
     break;
   case 128:
-    desc.swizzlingMode = 1;
+    desc.fields.swizzlingMode = 1;
     break;
   default:
     llvm::report_fatal_error("Unsupported swizzling size.");
   }
   if (swizzling == 0) {
-    desc.leadDimensionBaseOffset = 16 >> 4; // 16 bytes.
-    desc.strideDimensionBaseOffset = (8 * 16) >> 4;
+    desc.fields.leadDimensionBaseOffset = 16 >> 4; // 16 bytes.
+    desc.fields.strideDimensionBaseOffset = (8 * 16) >> 4;
   } else {
-    desc.leadDimensionBaseOffset = (swizzling * stride) >> 4;
-    desc.strideDimensionBaseOffset = swizzling >> 1;
+    desc.fields.leadDimensionBaseOffset = (swizzling * stride) >> 4;
+    desc.fields.strideDimensionBaseOffset = swizzling >> 1;
   }
   return b.int_val(64, desc.descriptor);
 }
@@ -346,7 +346,7 @@ static SmallVector<Value> emitWait(ConversionPatternRewriter &rewriter,
   Value res = rewriter.create<triton::nvgpu::WGMMAWaitGroupOp>(loc, llvmStruct,
                                                                pendings);
   SmallVector<Value> results;
-  for (int i = 0; i < acc.size(); ++i) {
+  for (int i = 0; i < static_cast<int>(acc.size()); ++i) {
     results.push_back(b.extract_val(types[0], res, i));
   }
   return results;
@@ -414,7 +414,7 @@ LogicalResult convertDot(const LLVMTypeConverter *typeConverter,
   triton::nvgpu::WGMMALayout layoutB = transB ? triton::nvgpu::WGMMALayout::row
                                               : triton::nvgpu::WGMMALayout::col;
 
-  auto func = op->getParentOfType<LLVM::LLVMFuncOp>();
+  [[maybe_unused]] auto func = op->getParentOfType<LLVM::LLVMFuncOp>();
   Operation *startSequence = rewriter.create<NVVM::WgmmaFenceAlignedOp>(loc);
   SmallVector<Value> mmaResults;
   for (int m = 0; m < numRepM; ++m) {
@@ -442,7 +442,7 @@ LogicalResult convertDot(const LLVMTypeConverter *typeConverter,
         if (aSharedLayout) {
           a = aLoader.smemLoad(m, k, rewriter, loc);
         } else {
-          auto aDotOpEnc =
+          [[maybe_unused]] auto aDotOpEnc =
               cast<DotOperandEncodingAttr>(aTensorTy.getEncoding());
           assert(aDotOpEnc.getKWidth() ==
                  32 / aTensorTy.getElementTypeBitWidth());
@@ -481,7 +481,7 @@ LogicalResult convertDot(const LLVMTypeConverter *typeConverter,
         }
       }
       auto acc = unpackLLElements(loc, d, rewriter);
-      for (int i = 0; i < acc.size(); ++i) {
+      for (int i = 0; i < static_cast<int>(acc.size()); ++i) {
         mmaResults.push_back(acc[i]);
       }
     }
@@ -507,8 +507,8 @@ LogicalResult convertWGMMA(triton::nvidia_gpu::WarpGroupDotOp op,
                            triton::nvidia_gpu::WarpGroupDotOp::Adaptor adaptor,
                            const LLVMTypeConverter *typeConverter,
                            ConversionPatternRewriter &rewriter, Value thread) {
-  auto AEnc = op.getA().getType().getEncoding();
-  auto BEnc = op.getB().getType().getEncoding();
+  [[maybe_unused]] auto AEnc = op.getA().getType().getEncoding();
+  [[maybe_unused]] auto BEnc = op.getB().getType().getEncoding();
   return convertDot(typeConverter, rewriter, op.getLoc(), op.getOperation(),  //
                     op.getA(), op.getB(), op.getC(), op.getD(), op.getUseC(), //
                     adaptor.getA(), adaptor.getB(), adaptor.getC(),           //

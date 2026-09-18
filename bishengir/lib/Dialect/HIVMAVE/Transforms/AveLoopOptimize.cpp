@@ -1006,7 +1006,7 @@ static LogicalResult optimizeLoop(scf::ForOp forOp, unsigned maxMergeFactor,
 
   // Load groups are rewritten first so their users retain the original
   // conversion and wide-compute structure.
-  unsigned successfulMerges = 0;
+  [[maybe_unused]] unsigned successfulMerges = 0;
   for (GroupKind kind : {GroupKind::Load, GroupKind::NarrowStore}) {
     for (const SmallWidthGroup &group : plan->groups) {
       if (group.kind != kind)

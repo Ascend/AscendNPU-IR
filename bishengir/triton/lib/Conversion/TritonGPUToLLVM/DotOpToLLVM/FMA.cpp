@@ -17,7 +17,7 @@ public:
 
   Value multiplyVectors(ArrayRef<Value> a, ArrayRef<Value> b,
                         Value c) override {
-    auto K = a.size();
+    [[maybe_unused]] auto K = a.size();
     assert(b.size() == K);
     Value accum = c;
     Type tgtTy = accum.getType();
@@ -49,7 +49,7 @@ public:
 LogicalResult convertFMADot(DotOp op, DotOp::Adaptor adaptor,
                             const LLVMTypeConverter *typeConverter,
                             ConversionPatternRewriter &rewriter) {
-  auto *ctx = rewriter.getContext();
+  [[maybe_unused]] auto *ctx = rewriter.getContext();
   auto loc = op.getLoc();
   GenericFMAVectorMultiplier multiplier(rewriter, loc);
   return parametricConvertFMADot(op, adaptor, typeConverter, rewriter,

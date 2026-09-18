@@ -133,16 +133,16 @@ getConvIntArrayAttrElement(Attribute attr, StringRef attrName, Dim dim,
   return (*values)[static_cast<size_t>(dim)];
 }
 
-FailureOr<int64_t> getConvPaddingAttrElement(
-    Attribute attr, size_t spatialRank, size_t symmetricDim,
-    size_t explicitSide, function_ref<InFlightDiagnostic()> emitError) {
+FailureOr<int64_t>
+getConvPaddingAttrElement(Attribute attr, size_t spatialRank,
+                          size_t symmetricDim, size_t explicitSide,
+                          function_ref<InFlightDiagnostic()> emitError) {
   if (auto intAttr = dyn_cast<IntegerAttr>(attr))
     return intAttr.getInt();
 
   SmallVector<int64_t, 6> values;
   if (auto denseAttr = dyn_cast<DenseI64ArrayAttr>(attr)) {
-    values.append(denseAttr.asArrayRef().begin(),
-                  denseAttr.asArrayRef().end());
+    values.append(denseAttr.asArrayRef().begin(), denseAttr.asArrayRef().end());
   } else if (auto arrayAttr = dyn_cast<ArrayAttr>(attr)) {
     values.reserve(arrayAttr.size());
     for (Attribute element : arrayAttr) {
@@ -288,7 +288,7 @@ bool sourceCarriesFractalLayoutHint(Value val, hivm::DataLayout layout) {
   return false;
 }
 
-llvm::SmallVector<int64_t> getBlockSizes(mlir::Value oper) {
+[[maybe_unused]] llvm::SmallVector<int64_t> getBlockSizes(mlir::Value oper) {
   llvm::SmallVector<int64_t> kBlockSizes;
   auto elementType = getElementTypeOrSelf(oper.getType());
   size_t kBlockSize =
@@ -372,9 +372,8 @@ getLocalMatmulOperandALayoutImpl(Operation *operation) {
     return DataLayoutAttr::get(
         op->getContext(), isTranspose ? DataLayout::nZ : DataLayout::zN,
         BoolAttr(),
-        mlir::DenseI64ArrayAttr::get(op->getContext(),
-                                     ArrayRef({shape[*rank - 2],
-                                               shape[*rank - 1]})));
+        mlir::DenseI64ArrayAttr::get(
+            op->getContext(), ArrayRef({shape[*rank - 2], shape[*rank - 1]})));
   }
   default:
     return failure();
@@ -404,9 +403,8 @@ getLocalMatmulOperandBLayoutImpl(Operation *operation) {
     return DataLayoutAttr::get(
         op->getContext(), isTranspose ? DataLayout::nZ : DataLayout::zN,
         BoolAttr(),
-        mlir::DenseI64ArrayAttr::get(op->getContext(),
-                                     ArrayRef({shape[*rank - 2],
-                                               shape[*rank - 1]})));
+        mlir::DenseI64ArrayAttr::get(
+            op->getContext(), ArrayRef({shape[*rank - 2], shape[*rank - 1]})));
   }
   default:
     return failure();
@@ -1651,15 +1649,15 @@ Conv1DL1Op::getLibraryCallOperands(PatternRewriter &rewriter) {
          "Conv1DL1Op padding must be verified");
   int64_t strideW = getStrideW();
   int64_t dilationW = getDilationW();
-  libParams.push_back(makeI64(0));        // padT
-  libParams.push_back(makeI64(0));        // padB
+  libParams.push_back(makeI64(0));         // padT
+  libParams.push_back(makeI64(0));         // padB
   libParams.push_back(makeI64(*paddingL)); // padL
   libParams.push_back(makeI64(*paddingR)); // padR
 
-  libParams.push_back(makeI64(1));      // strideH
+  libParams.push_back(makeI64(1));       // strideH
   libParams.push_back(makeI64(strideW)); // strideW
 
-  libParams.push_back(makeI64(1));          // dilationH
+  libParams.push_back(makeI64(1));         // dilationH
   libParams.push_back(makeI64(dilationW)); // dilationW
 
   // additional sync arguments
@@ -1682,15 +1680,13 @@ Conv1DL1Op::getLibraryCallOperands(PatternRewriter &rewriter) {
 //===----------------------------------------------------------------------===//
 
 FailureOr<int64_t> Conv2DL1Op::getStrideH() {
-  return getConvIntArrayAttrElement<2>(
-      getStrideAttr(), "stride", Conv2DDim::H,
-      [&]() { return emitOpError(); });
+  return getConvIntArrayAttrElement<2>(getStrideAttr(), "stride", Conv2DDim::H,
+                                       [&]() { return emitOpError(); });
 }
 
 FailureOr<int64_t> Conv2DL1Op::getStrideW() {
-  return getConvIntArrayAttrElement<2>(
-      getStrideAttr(), "stride", Conv2DDim::W,
-      [&]() { return emitOpError(); });
+  return getConvIntArrayAttrElement<2>(getStrideAttr(), "stride", Conv2DDim::W,
+                                       [&]() { return emitOpError(); });
 }
 
 FailureOr<int64_t> Conv2DL1Op::getPaddingT() {
@@ -1718,15 +1714,15 @@ FailureOr<int64_t> Conv2DL1Op::getPaddingR() {
 }
 
 FailureOr<int64_t> Conv2DL1Op::getDilationH() {
-  return getConvIntArrayAttrElement<2>(
-      getDilationAttr(), "dilation", Conv2DDim::H,
-      [&]() { return emitOpError(); });
+  return getConvIntArrayAttrElement<2>(getDilationAttr(), "dilation",
+                                       Conv2DDim::H,
+                                       [&]() { return emitOpError(); });
 }
 
 FailureOr<int64_t> Conv2DL1Op::getDilationW() {
-  return getConvIntArrayAttrElement<2>(
-      getDilationAttr(), "dilation", Conv2DDim::W,
-      [&]() { return emitOpError(); });
+  return getConvIntArrayAttrElement<2>(getDilationAttr(), "dilation",
+                                       Conv2DDim::W,
+                                       [&]() { return emitOpError(); });
 }
 
 LogicalResult Conv2DL1Op::verify() {
@@ -1736,8 +1732,8 @@ LogicalResult Conv2DL1Op::verify() {
   auto strideW = getStrideW();
   if (failed(strideW))
     return failure();
-  if (failed(getPaddingT()) || failed(getPaddingB()) ||
-      failed(getPaddingL()) || failed(getPaddingR()))
+  if (failed(getPaddingT()) || failed(getPaddingB()) || failed(getPaddingL()) ||
+      failed(getPaddingR()))
     return failure();
   auto dilationH = getDilationH();
   if (failed(dilationH))
@@ -1896,21 +1892,18 @@ Conv2DL1Op::getLibraryCallOperands(PatternRewriter &rewriter) {
 //===----------------------------------------------------------------------===//
 
 FailureOr<int64_t> Conv3DL1Op::getStrideD() {
-  return getConvIntArrayAttrElement<3>(
-      getStrideAttr(), "stride", Conv3DDim::D,
-      [&]() { return emitOpError(); });
+  return getConvIntArrayAttrElement<3>(getStrideAttr(), "stride", Conv3DDim::D,
+                                       [&]() { return emitOpError(); });
 }
 
 FailureOr<int64_t> Conv3DL1Op::getStrideH() {
-  return getConvIntArrayAttrElement<3>(
-      getStrideAttr(), "stride", Conv3DDim::H,
-      [&]() { return emitOpError(); });
+  return getConvIntArrayAttrElement<3>(getStrideAttr(), "stride", Conv3DDim::H,
+                                       [&]() { return emitOpError(); });
 }
 
 FailureOr<int64_t> Conv3DL1Op::getStrideW() {
-  return getConvIntArrayAttrElement<3>(
-      getStrideAttr(), "stride", Conv3DDim::W,
-      [&]() { return emitOpError(); });
+  return getConvIntArrayAttrElement<3>(getStrideAttr(), "stride", Conv3DDim::W,
+                                       [&]() { return emitOpError(); });
 }
 
 FailureOr<int64_t> Conv3DL1Op::getPaddingFront() {
@@ -1950,21 +1943,21 @@ FailureOr<int64_t> Conv3DL1Op::getPaddingR() {
 }
 
 FailureOr<int64_t> Conv3DL1Op::getDilationD() {
-  return getConvIntArrayAttrElement<3>(
-      getDilationAttr(), "dilation", Conv3DDim::D,
-      [&]() { return emitOpError(); });
+  return getConvIntArrayAttrElement<3>(getDilationAttr(), "dilation",
+                                       Conv3DDim::D,
+                                       [&]() { return emitOpError(); });
 }
 
 FailureOr<int64_t> Conv3DL1Op::getDilationH() {
-  return getConvIntArrayAttrElement<3>(
-      getDilationAttr(), "dilation", Conv3DDim::H,
-      [&]() { return emitOpError(); });
+  return getConvIntArrayAttrElement<3>(getDilationAttr(), "dilation",
+                                       Conv3DDim::H,
+                                       [&]() { return emitOpError(); });
 }
 
 FailureOr<int64_t> Conv3DL1Op::getDilationW() {
-  return getConvIntArrayAttrElement<3>(
-      getDilationAttr(), "dilation", Conv3DDim::W,
-      [&]() { return emitOpError(); });
+  return getConvIntArrayAttrElement<3>(getDilationAttr(), "dilation",
+                                       Conv3DDim::W,
+                                       [&]() { return emitOpError(); });
 }
 
 LogicalResult Conv3DL1Op::verify() {
@@ -1984,8 +1977,8 @@ LogicalResult Conv3DL1Op::verify() {
            << "requires strideH and strideW to be in the range [1, 255]";
 
   if (failed(getPaddingFront()) || failed(getPaddingBack()) ||
-      failed(getPaddingT()) || failed(getPaddingB()) ||
-      failed(getPaddingL()) || failed(getPaddingR()))
+      failed(getPaddingT()) || failed(getPaddingB()) || failed(getPaddingL()) ||
+      failed(getPaddingR()))
     return failure();
   auto dilationD = getDilationD();
   if (failed(dilationD))
@@ -2019,8 +2012,9 @@ void Conv3DL1Op::setInitCondition(Value init) {
 
 void MmadL0Op::build(OpBuilder &odsBuilder, OperationState &odsState,
                      TypeRange result_tensors, Value a, Value b, Value real_m,
-                     Value real_k, Value real_n, Value c, Value k_direction_align,
-                     Value is_with_bias, Value init_condition, UnitAttr enable_HF32,
+                     Value real_k, Value real_n, Value c,
+                     Value k_direction_align, Value is_with_bias,
+                     Value init_condition, UnitAttr enable_HF32,
                      UnitAttr enable_I4) {
   build(odsBuilder, odsState, result_tensors, a, b, real_m, real_k, real_n, c,
         k_direction_align, is_with_bias, init_condition,
@@ -2068,13 +2062,9 @@ SmallVector<IteratorType> L12BTOp::getIteratorTypesArray() {
   return iteratorTypes;
 }
 
-Value L12BTOp::getSource() {
-  return getSrc();
-}
+Value L12BTOp::getSource() { return getSrc(); }
 
-Value L12BTOp::getTarget() {
-  return getDst();
-}
+Value L12BTOp::getTarget() { return getDst(); }
 
 LogicalResult L12BTOp::verify() {
   auto srcSpace = getOptionalHIVMAddressSpace(getSrc().getType());
@@ -2099,13 +2089,9 @@ SmallVector<IteratorType> L12L0Op::getIteratorTypesArray() {
   return iteratorTypes;
 }
 
-Value L12L0Op::getSource() {
-  return getSrc();
-}
+Value L12L0Op::getSource() { return getSrc(); }
 
-Value L12L0Op::getTarget() {
-  return getDst();
-}
+Value L12L0Op::getTarget() { return getDst(); }
 
 bool L12L0Op::isToL0A() {
   auto dstSpace = getOptionalHIVMAddressSpace(getDst().getType());

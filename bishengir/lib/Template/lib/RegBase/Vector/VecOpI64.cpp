@@ -45,7 +45,7 @@ ave_cast_u64_to_float(vector_2xvl_s64 *src, ave_preg preg, RoundType rnd) {
   vector_2xvl_s64 lowPartS64, highPartS64;
 
   vshrs(highPart, unsignSrc, 32, p);
-  vshls(tmp, unsignSrc, 32, p) ;
+  vshls(tmp, unsignSrc, 32, p);
   vshrs(lowPart, tmp, 32, p);
 
   vcvt(lowPartS64, lowPart);
@@ -92,7 +92,8 @@ ave_cast_float_to_i64(vector_2xvl_s64 *sret, vector_f32 src, ave_preg preg,
 }
 
 __aiv__ __attribute__((always_inline)) void
-ave_cast_float_to_u64(vector_2xvl_u64 *sret, vector_f32 src, ave_preg preg, RoundType rnd) {
+ave_cast_float_to_u64(vector_2xvl_u64 *sret, vector_f32 src, ave_preg preg,
+                      RoundType rnd) {
   vector_bool p = convertAVEPregToVecBool(preg);
   vector_f32 src_H, highPartF32, highPartF32Mul32, lowPartF32;
   vector_2xvl_s64 highPartI64, lowPartI64;
@@ -150,7 +151,7 @@ ave_cast_i64_to_i32_sat(vector_2xvl_s64 *src, ave_preg preg) {
   int64_t I32_MIN_VAL = -2147483648;
   vmins(s64Sat, *src, I32_MAX_VAL, p);
   vmaxs(s64Sat, s64Sat, I32_MIN_VAL, p);
-  vcvt(ret, s64Sat) ;
+  vcvt(ret, s64Sat);
   return ret;
 }
 
@@ -163,8 +164,8 @@ ave_cast_i64_to_u32_sat(vector_2xvl_s64 *src, ave_preg preg) {
   int64_t U32_MAX_VAL = 4294967295;
   vmins(s64Sat, *src, U32_MAX_VAL, p);
   vmaxs(s64Sat, s64Sat, 0, p);
-  vcvt(u64Sat, s64Sat) ;
-  vcvt(ret, u64Sat) ;
+  vcvt(u64Sat, s64Sat);
+  vcvt(ret, u64Sat);
   return ret;
 }
 
@@ -255,8 +256,8 @@ ave_vload_NORM_B64_int64_t(vector_2xvl_s64 *sret,
 template <int DIM>
 __aiv__ __attribute__((always_inline)) void
 ave_vload_NORM_B64_int64_t_unalign(vector_2xvl_s64 *sret,
-                           memref_t<__ubuf__ int64_t, DIM> *base,
-                           int64_t offset) {
+                                   memref_t<__ubuf__ int64_t, DIM> *base,
+                                   int64_t offset) {
   __ubuf__ int64_t *base_ptr = base->aligned + base->offset;
   __ubuf__ int64_t *offset_ptr = base_ptr + offset;
   vload(*sret, offset_ptr, ADDRESS_UNALIGNED);
@@ -288,8 +289,8 @@ ave_store_NORM_B64_int64_t(memref_t<__ubuf__ int64_t, DIM> *base,
 template <int DIM>
 __aiv__ __attribute__((always_inline)) void
 ave_store_NORM_B64_int64_t_unalign(memref_t<__ubuf__ int64_t, DIM> *base,
-                           int64_t offset, vector_2xvl_s64 *src,
-                           uint32_t elementCount) {
+                                   int64_t offset, vector_2xvl_s64 *src,
+                                   uint32_t elementCount) {
 
   __ubuf__ int64_t *base_ptr = base->aligned + base->offset;
   __ubuf__ int64_t *offset_ptr = base_ptr + offset;
@@ -298,11 +299,8 @@ ave_store_NORM_B64_int64_t_unalign(memref_t<__ubuf__ int64_t, DIM> *base,
 
 template <int DIM>
 __aiv__ __attribute__((always_inline)) void
-ave_vgather_int64_t(vector_2xvl_s64 *res,
-                    memref_t<__ubuf__ int64_t, DIM> *base,
-                    int64_t offset,
-                    vector_2xvl_s64 *index_vec,
-                    ave_preg mask) {
+ave_vgather_int64_t(vector_2xvl_s64 *res, memref_t<__ubuf__ int64_t, DIM> *base,
+                    int64_t offset, vector_2xvl_s64 *index_vec, ave_preg mask) {
   int64_t linear = base->offset + offset;
   __ubuf__ int64_t *ptr = base->aligned + linear;
   vector_bool m = convertAVEPregToVecBool(mask);
@@ -404,11 +402,13 @@ vector_dma_unalign_vv_2d_vf(memref_t<__ubuf__ T, 2> *src,
     uint16_t col_count = (uint16_t)size1;
     uint16_t repeatTimes = col_count / num_per_register;
     uint16_t tailsize = col_count - num_per_register * repeatTimes;
-    uint16_t unroll_row_count = row_count / UNROLL * UNROLL;
+    uint16_t unroll_iter = row_count / UNROLL;
+    uint16_t unroll_row_count = unroll_iter * UNROLL;
     uint16_t j_unroll = repeatTimes / UNROLL;
     VectorReg<T> srcReg0, srcReg1, srcReg2, srcReg3;
     vector_align ureg_src0, ureg_src1, ureg_dst0, ureg_dst1;
-    for (uint16_t i = 0; i < unroll_row_count; i += UNROLL) {
+    for (uint16_t k = 0; k < unroll_iter; ++k) {
+      uint16_t i = k * UNROLL;
       __ubuf__ T *row_src0 = src_base + (int64_t)i * src_stride0;
       __ubuf__ T *row_dst0 = dst_base + (int64_t)i * dst_stride0;
       __ubuf__ T *row_src1 = src_base + (int64_t)(i + 1) * src_stride0;
@@ -458,36 +458,40 @@ vector_dma_unalign_vv_2d_vf(memref_t<__ubuf__ T, 2> *src,
 }
 
 #define SPECIALIZE_DMA_UNALIGN_2D(OrigT, ConvT)                                \
-  template <> __aiv__ __attribute__((always_inline)) void                      \
-  vector_dma_unalign_vv_2d_vf<OrigT, true, true>(                             \
-      memref_t<__ubuf__ OrigT, 2> *src, memref_t<__ubuf__ OrigT, 2> *dst) {   \
+  template <>                                                                  \
+  __aiv__ __attribute__((always_inline)) void                                  \
+  vector_dma_unalign_vv_2d_vf<OrigT, true, true>(                              \
+      memref_t<__ubuf__ OrigT, 2> * src, memref_t<__ubuf__ OrigT, 2> * dst) {  \
     memref_t<__ubuf__ ConvT, 2> src_as;                                        \
     memref_t<__ubuf__ ConvT, 2> dst_as;                                        \
     view_as<OrigT, ConvT, 2>(src, &src_as);                                    \
     view_as<OrigT, ConvT, 2>(dst, &dst_as);                                    \
     vector_dma_unalign_vv_2d_vf<ConvT, true, true>(&src_as, &dst_as);          \
   }                                                                            \
-  template <> __aiv__ __attribute__((always_inline)) void                      \
-  vector_dma_unalign_vv_2d_vf<OrigT, true, false>(                            \
-      memref_t<__ubuf__ OrigT, 2> *src, memref_t<__ubuf__ OrigT, 2> *dst) {   \
+  template <>                                                                  \
+  __aiv__ __attribute__((always_inline)) void                                  \
+  vector_dma_unalign_vv_2d_vf<OrigT, true, false>(                             \
+      memref_t<__ubuf__ OrigT, 2> * src, memref_t<__ubuf__ OrigT, 2> * dst) {  \
     memref_t<__ubuf__ ConvT, 2> src_as;                                        \
     memref_t<__ubuf__ ConvT, 2> dst_as;                                        \
     view_as<OrigT, ConvT, 2>(src, &src_as);                                    \
     view_as<OrigT, ConvT, 2>(dst, &dst_as);                                    \
     vector_dma_unalign_vv_2d_vf<ConvT, true, false>(&src_as, &dst_as);         \
   }                                                                            \
-  template <> __aiv__ __attribute__((always_inline)) void                      \
-  vector_dma_unalign_vv_2d_vf<OrigT, false, true>(                            \
-      memref_t<__ubuf__ OrigT, 2> *src, memref_t<__ubuf__ OrigT, 2> *dst) {   \
+  template <>                                                                  \
+  __aiv__ __attribute__((always_inline)) void                                  \
+  vector_dma_unalign_vv_2d_vf<OrigT, false, true>(                             \
+      memref_t<__ubuf__ OrigT, 2> * src, memref_t<__ubuf__ OrigT, 2> * dst) {  \
     memref_t<__ubuf__ ConvT, 2> src_as;                                        \
     memref_t<__ubuf__ ConvT, 2> dst_as;                                        \
     view_as<OrigT, ConvT, 2>(src, &src_as);                                    \
     view_as<OrigT, ConvT, 2>(dst, &dst_as);                                    \
     vector_dma_unalign_vv_2d_vf<ConvT, false, true>(&src_as, &dst_as);         \
   }                                                                            \
-  template <> __aiv__ __attribute__((always_inline)) void                      \
-  vector_dma_unalign_vv_2d_vf<OrigT, false, false>(                           \
-      memref_t<__ubuf__ OrigT, 2> *src, memref_t<__ubuf__ OrigT, 2> *dst) {   \
+  template <>                                                                  \
+  __aiv__ __attribute__((always_inline)) void                                  \
+  vector_dma_unalign_vv_2d_vf<OrigT, false, false>(                            \
+      memref_t<__ubuf__ OrigT, 2> * src, memref_t<__ubuf__ OrigT, 2> * dst) {  \
     memref_t<__ubuf__ ConvT, 2> src_as;                                        \
     memref_t<__ubuf__ ConvT, 2> dst_as;                                        \
     view_as<OrigT, ConvT, 2>(src, &src_as);                                    \
@@ -516,11 +520,13 @@ vector_dma_unalign_size_vv_1d_vf(memref_t<__ubuf__ T, 1> *src,
     VectorReg<T> srcReg;
     uint32_t sreg = size0;
     vector_bool preg;
-    using StorePattern = std::conditional_t< sizeof(T) == 1, NORM_B8_Type,
-        std::conditional_t< sizeof(T) == 2, NORM_B16_Type,
-        std::conditional_t< sizeof(T) == 4, NORM_B32_Type, void>>>;
+    using StorePattern = std::conditional_t<
+        sizeof(T) == 1, NORM_B8_Type,
+        std::conditional_t<
+            sizeof(T) == 2, NORM_B16_Type,
+            std::conditional_t<sizeof(T) == 4, NORM_B32_Type, void>>>;
     static_assert(!std::is_same_v<StorePattern, void>,
-        "Unsupported element size");
+                  "Unsupported element size");
     for (uint16_t i = 0; i < repeatTimes; ++i) {
       CREATE_MASK_BY_SIZE(preg, T, sreg);
       vlds(srcReg, src_ptr, i * num_per_block, NORM);
@@ -752,7 +758,6 @@ REGISTE_BINARY_DMA_UNALIGN_SIZE(uint16_t);
 REGISTE_BINARY_DMA_UNALIGN_SIZE(int32_t);
 REGISTE_BINARY_DMA_UNALIGN_SIZE(uint32_t);
 
-
 REGISTE_BINARY_DMA_UNALIGN_OFFSET(float);
 REGISTE_BINARY_DMA_UNALIGN_OFFSET(half);
 REGISTE_BINARY_DMA_UNALIGN_OFFSET(bfloat16_t);
@@ -779,7 +784,6 @@ REGISTE_BINARY_DMA_UNALIGN_2D(uint32_t);
 REGISTE_BINARY_DMA_UNALIGN_2D(int64_t);
 REGISTE_BINARY_DMA_UNALIGN_2D(uint64_t);
 REGISTE_BINARY_DMA_UNALIGN_2D(bool);
-
 
 REGISTE_SHIFT_VV(vshr);
 REGISTE_SHIFT_VV(vshl);

@@ -98,8 +98,9 @@ LogicalResult BufferizationPropagateUpPattern::propagateUpMemorySpaceCast(
     return failure();
 
   rewriter.setInsertionPoint(castOp);
-  auto newCastOp = rewriter.replaceOpWithNewOp<memref::MemorySpaceCastOp>(
-      propagateOp, slicedCastResultType, slicedSource);
+  [[maybe_unused]] auto newCastOp =
+      rewriter.replaceOpWithNewOp<memref::MemorySpaceCastOp>(
+          propagateOp, slicedCastResultType, slicedSource);
 
   LDBG("Propagated up through memory_space_cast, new cast op is:\n "
        << newCastOp);
@@ -169,11 +170,11 @@ LogicalResult BufferizationPropagateUpPattern::propagateUpSubView(
     SmallVector<int64_t> strides;
     if (succeeded(getStridesAndOffset(slicedType, strides, offset)) &&
         !ShapedType::isDynamic(offset)) {
-      slicedType = MemRefType::get(
-          slicedType.getShape(), slicedType.getElementType(),
-          StridedLayoutAttr::get(slicedType.getContext(),
-                                 ShapedType::kDynamic, strides),
-          slicedType.getMemorySpace());
+      slicedType =
+          MemRefType::get(slicedType.getShape(), slicedType.getElementType(),
+                          StridedLayoutAttr::get(slicedType.getContext(),
+                                                 ShapedType::kDynamic, strides),
+                          slicedType.getMemorySpace());
     }
   }
   auto srcUp =
@@ -305,8 +306,7 @@ LogicalResult BufferizationPropagateUpPattern::propagateUpIfOp(
     auto downProp = createBubblePropagatorDownWithType(
         oldType, ifResult, tilingDimInfo.offset, tilingDimInfo.size,
         tilingDimInfo.tilingDim, rewriter);
-    rewriter.modifyOpInPlace(
-        user, [&]() { use->set(downProp->getResult(0)); });
+    rewriter.modifyOpInPlace(user, [&]() { use->set(downProp->getResult(0)); });
   }
 
   rewriter.replaceOp(propagateOp, ifResult);
@@ -364,8 +364,8 @@ LogicalResult BufferizationPropagateDownPattern::propagateDownMarkOp(
     return failure();
 
   Value newValue = propagateOp.getInputs()[0];
-  rewriter.modifyOpInPlace(
-      markOp, [&]() { markOp.getSrcMutable().set(newValue); });
+  rewriter.modifyOpInPlace(markOp,
+                           [&]() { markOp.getSrcMutable().set(newValue); });
   LDBG("Propagated down through annotation.mark " << markOp);
   if (propagateOp->use_empty())
     rewriter.eraseOp(propagateOp);
