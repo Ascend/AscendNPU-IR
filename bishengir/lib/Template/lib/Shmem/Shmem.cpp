@@ -138,10 +138,9 @@ _mlir_ciface_aclshmem_signal_wait_until(memref_t<__gm__ int32_t, 1> sigAddr,
 // pointer, no need to wrap with memref struct. Macro to generate wrappers for
 // aclshmem_ptr functions
 #define ACLSHMEM_PTR_WRAPPER(NAME, TYPE)                                       \
-  __aicore__                                                                   \
-      __attribute__((always_inline)) void _mlir_ciface_aclshmem_ptr_##NAME(    \
-          memref_t<__gm__ TYPE, 1> *symmPtr, memref_t<__gm__ TYPE, 1> *ptr,    \
-          int pe) {                                                            \
+  __aicore__ __attribute__((always_inline)) void                               \
+  _mlir_ciface_aclshmem_ptr_##NAME(memref_t<__gm__ TYPE, 1> *symmPtr,          \
+                                   memref_t<__gm__ TYPE, 1> *ptr, int pe) {    \
     __gm__ TYPE *symmAlignedPtr =                                              \
         (__gm__ TYPE *)aclshmem_ptr(ptr->aligned + ptr->offset, pe);           \
     symmPtr->aligned = symmAlignedPtr;                                         \
@@ -170,10 +169,10 @@ ACLSHMEM_PTR_WRAPPER(bfloat16, bfloat16_t)
 // Macros for aclshmem_getmem / aclshmem_getmem_nbi / aclshmem_putmem /
 // aclshmem_putmem_nbi (void * API in shmem_device_rma.h; typed memrefs here)
 #define ACLSHMEM_GETMEM_WRAPPER(NAME, TYPE)                                    \
-  __aicore__                                                                   \
-      __attribute__((always_inline)) void _mlir_ciface_aclshmem_getmem_##NAME( \
-          memref_t<__gm__ TYPE, 1> *dst, memref_t<__gm__ TYPE, 1> *src,        \
-          uint32_t elem_size, int32_t pe) {                                    \
+  __aicore__ __attribute__((always_inline)) void                               \
+  _mlir_ciface_aclshmem_getmem_##NAME(memref_t<__gm__ TYPE, 1> *dst,           \
+                                      memref_t<__gm__ TYPE, 1> *src,           \
+                                      uint32_t elem_size, int32_t pe) {        \
     aclshmem_getmem((__gm__ void *)(dst->aligned + dst->offset),               \
                     (__gm__ void *)(src->aligned + src->offset), elem_size,    \
                     pe);                                                       \
@@ -181,19 +180,19 @@ ACLSHMEM_PTR_WRAPPER(bfloat16, bfloat16_t)
 
 #define ACLSHMEM_GETMEM_NBI_WRAPPER(NAME, TYPE)                                \
   __aicore__ __attribute__((always_inline)) void                               \
-      _mlir_ciface_aclshmem_getmem_nbi_##NAME(                                 \
-          memref_t<__gm__ TYPE, 1> *dst, memref_t<__gm__ TYPE, 1> *src,        \
-          uint32_t elem_size, int32_t pe) {                                    \
+  _mlir_ciface_aclshmem_getmem_nbi_##NAME(memref_t<__gm__ TYPE, 1> *dst,       \
+                                          memref_t<__gm__ TYPE, 1> *src,       \
+                                          uint32_t elem_size, int32_t pe) {    \
     aclshmem_getmem_nbi((__gm__ void *)(dst->aligned + dst->offset),           \
                         (__gm__ void *)(src->aligned + src->offset),           \
                         elem_size, pe);                                        \
   }
 
 #define ACLSHMEM_PUTMEM_WRAPPER(NAME, TYPE)                                    \
-  __aicore__                                                                   \
-      __attribute__((always_inline)) void _mlir_ciface_aclshmem_putmem_##NAME( \
-          memref_t<__gm__ TYPE, 1> *dst, memref_t<__gm__ TYPE, 1> *src,        \
-          uint32_t elem_size, int32_t pe) {                                    \
+  __aicore__ __attribute__((always_inline)) void                               \
+  _mlir_ciface_aclshmem_putmem_##NAME(memref_t<__gm__ TYPE, 1> *dst,           \
+                                      memref_t<__gm__ TYPE, 1> *src,           \
+                                      uint32_t elem_size, int32_t pe) {        \
     aclshmem_putmem((__gm__ void *)(dst->aligned + dst->offset),               \
                     (__gm__ void *)(src->aligned + src->offset), elem_size,    \
                     pe);                                                       \
@@ -201,9 +200,9 @@ ACLSHMEM_PTR_WRAPPER(bfloat16, bfloat16_t)
 
 #define ACLSHMEM_PUTMEM_NBI_WRAPPER(NAME, TYPE)                                \
   __aicore__ __attribute__((always_inline)) void                               \
-      _mlir_ciface_aclshmem_putmem_nbi_##NAME(                                 \
-          memref_t<__gm__ TYPE, 1> *dst, memref_t<__gm__ TYPE, 1> *src,        \
-          uint32_t elem_size, int32_t pe) {                                    \
+  _mlir_ciface_aclshmem_putmem_nbi_##NAME(memref_t<__gm__ TYPE, 1> *dst,       \
+                                          memref_t<__gm__ TYPE, 1> *src,       \
+                                          uint32_t elem_size, int32_t pe) {    \
     aclshmem_putmem_nbi((__gm__ void *)(dst->aligned + dst->offset),           \
                         (__gm__ void *)(src->aligned + src->offset),           \
                         elem_size, pe);                                        \
@@ -238,10 +237,10 @@ ACLSHMEM_EXPAND_GETPUT_MEM_OPS(bfloat16, bfloat16_t)
 // (void * API in shmem_device_so.h; typed memrefs here)
 #define ACLSHMEM_PUTMEM_SIGNAL_WRAPPER(NAME, TYPE)                             \
   __aicore__ __attribute__((always_inline)) void                               \
-      _mlir_ciface_aclshmem_putmem_signal_##NAME(                              \
-          memref_t<__gm__ TYPE, 1> *dst, memref_t<__gm__ TYPE, 1> *src,        \
-          uint32_t elem_size, memref_t<__gm__ int32_t, 1> *sig_addr,           \
-          int32_t signal, int32_t sig_op, int32_t pe) {                        \
+  _mlir_ciface_aclshmem_putmem_signal_##NAME(                                  \
+      memref_t<__gm__ TYPE, 1> *dst, memref_t<__gm__ TYPE, 1> *src,            \
+      uint32_t elem_size, memref_t<__gm__ int32_t, 1> *sig_addr,               \
+      int32_t signal, int32_t sig_op, int32_t pe) {                            \
     aclshmem_putmem_signal(                                                    \
         (__gm__ void *)(dst->aligned + dst->offset),                           \
         (__gm__ void *)(src->aligned + src->offset), elem_size,                \
@@ -251,10 +250,10 @@ ACLSHMEM_EXPAND_GETPUT_MEM_OPS(bfloat16, bfloat16_t)
 
 #define ACLSHMEM_PUTMEM_SIGNAL_NBI_WRAPPER(NAME, TYPE)                         \
   __aicore__ __attribute__((always_inline)) void                               \
-      _mlir_ciface_aclshmem_putmem_signal_nbi_##NAME(                          \
-          memref_t<__gm__ TYPE, 1> *dst, memref_t<__gm__ TYPE, 1> *src,        \
-          uint32_t elem_size, memref_t<__gm__ int32_t, 1> *sig_addr,           \
-          int32_t signal, int32_t sig_op, int32_t pe) {                        \
+  _mlir_ciface_aclshmem_putmem_signal_nbi_##NAME(                              \
+      memref_t<__gm__ TYPE, 1> *dst, memref_t<__gm__ TYPE, 1> *src,            \
+      uint32_t elem_size, memref_t<__gm__ int32_t, 1> *sig_addr,               \
+      int32_t signal, int32_t sig_op, int32_t pe) {                            \
     aclshmem_putmem_signal_nbi(                                                \
         (__gm__ void *)(dst->aligned + dst->offset),                           \
         (__gm__ void *)(src->aligned + src->offset), elem_size,                \
@@ -286,9 +285,9 @@ ACLSHMEM_EXPAND_PUTMEM_SIGNAL_OPS(bfloat16, bfloat16_t)
 // distributed kernels.
 #define ACLSHMEM_UDMA_PUT_NBI_WRAPPER(NAME, TYPE)                              \
   __aicore__ __attribute__((always_inline)) void                               \
-      _mlir_ciface_aclshmemi_udma_put_nbi_##NAME(                              \
-          memref_t<__gm__ TYPE, 1> *dst, memref_t<__gm__ TYPE, 1> *src,        \
-          uint32_t elem_size, int32_t pe) {                                    \
+  _mlir_ciface_aclshmemi_udma_put_nbi_##NAME(memref_t<__gm__ TYPE, 1> *dst,    \
+                                             memref_t<__gm__ TYPE, 1> *src,    \
+                                             uint32_t elem_size, int32_t pe) { \
     aclshmemx_udma_put_nbi<TYPE, PIPE_S>(                                      \
         dst->aligned + dst->offset, src->aligned + src->offset,                \
         (__ubuf__ TYPE *)nullptr, elem_size, pe, 0);                           \
@@ -296,10 +295,10 @@ ACLSHMEM_EXPAND_PUTMEM_SIGNAL_OPS(bfloat16, bfloat16_t)
 
 #define ACLSHMEM_UDMA_PUT_SIGNAL_NBI_WRAPPER(NAME, TYPE)                       \
   __aicore__ __attribute__((always_inline)) void                               \
-      _mlir_ciface_aclshmemx_udma_put_signal_nbi_##NAME(                       \
-          memref_t<__gm__ TYPE, 1> *dst, memref_t<__gm__ TYPE, 1> *src,        \
-          uint32_t elem_size, memref_t<__gm__ uint64_t, 1> *sig_addr,          \
-          uint64_t signal, int32_t pe) {                                       \
+  _mlir_ciface_aclshmemx_udma_put_signal_nbi_##NAME(                           \
+      memref_t<__gm__ TYPE, 1> *dst, memref_t<__gm__ TYPE, 1> *src,            \
+      uint32_t elem_size, memref_t<__gm__ uint64_t, 1> *sig_addr,              \
+      uint64_t signal, int32_t pe) {                                           \
     aclshmemx_udma_put_signal_nbi<TYPE, PIPE_S>(                               \
         dst->aligned + dst->offset, src->aligned + src->offset, elem_size,     \
         sig_addr->aligned + sig_addr->offset, signal, pe,                      \
@@ -333,9 +332,9 @@ _mlir_ciface_aclshmemx_udma_quiet(int32_t pe) {
 
 // Macro to generate wrappers for aclshmem_##NAME##_p functions
 #define ACLSHMEM_P_WRAPPER(NAME, TYPE)                                         \
-  __aicore__                                                                   \
-      __attribute__((always_inline)) void _mlir_ciface_aclshmem_##NAME##_p(    \
-          memref_t<__gm__ TYPE, 1> *dst, const TYPE value, int pe) {           \
+  __aicore__ __attribute__((always_inline)) void                               \
+  _mlir_ciface_aclshmem_##NAME##_p(memref_t<__gm__ TYPE, 1> *dst,              \
+                                   const TYPE value, int pe) {                 \
     aclshmem_##NAME##_p(dst->aligned + dst->offset, value, pe);                \
   }
 
@@ -358,8 +357,8 @@ ACLSHMEM_P_WRAPPER(bfloat16, bfloat16_t)
 // Macro to generate wrappers for aclshmem_atomic_add_##NAME## functions
 #define ACLSHMEM_ATOMIC_ADD_WRAPPER(NAME, TYPE)                                \
   __aicore__ __attribute__((always_inline)) void                               \
-      _mlir_ciface_aclshmem_atomic_add_##NAME(memref_t<__gm__ TYPE, 1> *dst,   \
-                                              const TYPE value, int pe) {      \
+  _mlir_ciface_aclshmem_atomic_add_##NAME(memref_t<__gm__ TYPE, 1> *dst,       \
+                                          const TYPE value, int pe) {          \
     aclshmem_##NAME##_atomic_add(dst->aligned + dst->offset, value, pe);       \
   }
 
@@ -375,11 +374,237 @@ ACLSHMEM_ATOMIC_ADD_WRAPPER(int64, int64_t)
 
 #undef ACLSHMEM_ATOMIC_ADD_WRAPPER
 
+// Macro to generate wrappers for aclshmem_g_##NAME functions (scalar get)
+#define ACLSHMEM_G_WRAPPER(NAME, TYPE)                                         \
+  __aicore__ __attribute__((always_inline)) TYPE                               \
+  _mlir_ciface_aclshmem_g_##NAME(memref_t<__gm__ TYPE, 1> *src, int pe) {      \
+    return aclshmem_##NAME##_g(src->aligned + src->offset, pe);                \
+  }
+
+ACLSHMEM_G_WRAPPER(half, half)
+ACLSHMEM_G_WRAPPER(float, float)
+ACLSHMEM_G_WRAPPER(int8, int8_t)
+ACLSHMEM_G_WRAPPER(int16, int16_t)
+ACLSHMEM_G_WRAPPER(int32, int32_t)
+ACLSHMEM_G_WRAPPER(int64, int64_t)
+ACLSHMEM_G_WRAPPER(uint8, uint8_t)
+ACLSHMEM_G_WRAPPER(uint16, uint16_t)
+ACLSHMEM_G_WRAPPER(uint32, uint32_t)
+ACLSHMEM_G_WRAPPER(uint64, uint64_t)
+ACLSHMEM_G_WRAPPER(char, char)
+ACLSHMEM_G_WRAPPER(bfloat16, bfloat16_t)
+
+#undef ACLSHMEM_G_WRAPPER
+
+// Macro to generate wrappers for aclshmem_atomic_fetch_add
+#define ACLSHMEM_ATOMIC_FETCH_ADD_WRAPPER(NAME, TYPE)                          \
+  __aicore__ __attribute__((always_inline)) TYPE                               \
+  _mlir_ciface_aclshmem_atomic_fetch_add_##NAME(memref_t<__gm__ TYPE, 1> *dst, \
+                                                const TYPE value, int pe) {    \
+    return aclshmem_##NAME##_atomic_fetch_add(dst->aligned + dst->offset,      \
+                                              value, pe);                      \
+  }
+
+ACLSHMEM_ATOMIC_FETCH_ADD_WRAPPER(int32, int32_t)
+ACLSHMEM_ATOMIC_FETCH_ADD_WRAPPER(uint32, uint32_t)
+ACLSHMEM_ATOMIC_FETCH_ADD_WRAPPER(int64, int64_t)
+ACLSHMEM_ATOMIC_FETCH_ADD_WRAPPER(uint64, uint64_t)
+
+#undef ACLSHMEM_ATOMIC_FETCH_ADD_WRAPPER
+
+// Macro to generate wrappers for aclshmem_atomic_inc
+#define ACLSHMEM_ATOMIC_INC_WRAPPER(NAME, TYPE)                                \
+  __aicore__ __attribute__((always_inline)) void                               \
+  _mlir_ciface_aclshmem_atomic_inc_##NAME(memref_t<__gm__ TYPE, 1> *dst,       \
+                                          int pe) {                            \
+    aclshmem_##NAME##_atomic_inc(dst->aligned + dst->offset, pe);              \
+  }
+
+ACLSHMEM_ATOMIC_INC_WRAPPER(int32, int32_t)
+ACLSHMEM_ATOMIC_INC_WRAPPER(uint32, uint32_t)
+ACLSHMEM_ATOMIC_INC_WRAPPER(int64, int64_t)
+ACLSHMEM_ATOMIC_INC_WRAPPER(uint64, uint64_t)
+
+#undef ACLSHMEM_ATOMIC_INC_WRAPPER
+
+// Macro to generate wrappers for aclshmem_atomic_fetch_inc
+#define ACLSHMEM_ATOMIC_FETCH_INC_WRAPPER(NAME, TYPE)                          \
+  __aicore__ __attribute__((always_inline)) TYPE                               \
+  _mlir_ciface_aclshmem_atomic_fetch_inc_##NAME(memref_t<__gm__ TYPE, 1> *dst, \
+                                                int pe) {                      \
+    return aclshmem_##NAME##_atomic_fetch_inc(dst->aligned + dst->offset, pe); \
+  }
+
+ACLSHMEM_ATOMIC_FETCH_INC_WRAPPER(int32, int32_t)
+ACLSHMEM_ATOMIC_FETCH_INC_WRAPPER(uint32, uint32_t)
+ACLSHMEM_ATOMIC_FETCH_INC_WRAPPER(int64, int64_t)
+ACLSHMEM_ATOMIC_FETCH_INC_WRAPPER(uint64, uint64_t)
+
+#undef ACLSHMEM_ATOMIC_FETCH_INC_WRAPPER
+
+// Macro to generate wrappers for aclshmem_atomic_and
+#define ACLSHMEM_ATOMIC_AND_WRAPPER(NAME, TYPE)                                \
+  __aicore__ __attribute__((always_inline)) void                               \
+  _mlir_ciface_aclshmem_atomic_and_##NAME(memref_t<__gm__ TYPE, 1> *dst,       \
+                                          const TYPE value, int pe) {          \
+    aclshmem_##NAME##_atomic_and(dst->aligned + dst->offset, value, pe);       \
+  }
+
+ACLSHMEM_ATOMIC_AND_WRAPPER(int32, int32_t)
+ACLSHMEM_ATOMIC_AND_WRAPPER(uint32, uint32_t)
+ACLSHMEM_ATOMIC_AND_WRAPPER(int64, int64_t)
+ACLSHMEM_ATOMIC_AND_WRAPPER(uint64, uint64_t)
+
+#undef ACLSHMEM_ATOMIC_AND_WRAPPER
+
+// Macro to generate wrappers for aclshmem_atomic_or
+#define ACLSHMEM_ATOMIC_OR_WRAPPER(NAME, TYPE)                                 \
+  __aicore__ __attribute__((always_inline)) void                               \
+  _mlir_ciface_aclshmem_atomic_or_##NAME(memref_t<__gm__ TYPE, 1> *dst,        \
+                                         const TYPE value, int pe) {           \
+    aclshmem_##NAME##_atomic_or(dst->aligned + dst->offset, value, pe);        \
+  }
+
+ACLSHMEM_ATOMIC_OR_WRAPPER(int32, int32_t)
+ACLSHMEM_ATOMIC_OR_WRAPPER(uint32, uint32_t)
+ACLSHMEM_ATOMIC_OR_WRAPPER(int64, int64_t)
+ACLSHMEM_ATOMIC_OR_WRAPPER(uint64, uint64_t)
+
+#undef ACLSHMEM_ATOMIC_OR_WRAPPER
+
+// Macro to generate wrappers for aclshmem_atomic_xor
+#define ACLSHMEM_ATOMIC_XOR_WRAPPER(NAME, TYPE)                                \
+  __aicore__ __attribute__((always_inline)) void                               \
+  _mlir_ciface_aclshmem_atomic_xor_##NAME(memref_t<__gm__ TYPE, 1> *dst,       \
+                                          const TYPE value, int pe) {          \
+    aclshmem_##NAME##_atomic_xor(dst->aligned + dst->offset, value, pe);       \
+  }
+
+ACLSHMEM_ATOMIC_XOR_WRAPPER(int32, int32_t)
+ACLSHMEM_ATOMIC_XOR_WRAPPER(uint32, uint32_t)
+ACLSHMEM_ATOMIC_XOR_WRAPPER(int64, int64_t)
+ACLSHMEM_ATOMIC_XOR_WRAPPER(uint64, uint64_t)
+
+#undef ACLSHMEM_ATOMIC_XOR_WRAPPER
+
+// Macro to generate wrappers for aclshmem_atomic_fetch_and
+#define ACLSHMEM_ATOMIC_FETCH_AND_WRAPPER(NAME, TYPE)                          \
+  __aicore__ __attribute__((always_inline)) TYPE                               \
+  _mlir_ciface_aclshmem_atomic_fetch_and_##NAME(memref_t<__gm__ TYPE, 1> *dst, \
+                                                const TYPE value, int pe) {    \
+    return aclshmem_##NAME##_atomic_fetch_and(dst->aligned + dst->offset,      \
+                                              value, pe);                      \
+  }
+
+ACLSHMEM_ATOMIC_FETCH_AND_WRAPPER(int32, int32_t)
+ACLSHMEM_ATOMIC_FETCH_AND_WRAPPER(uint32, uint32_t)
+ACLSHMEM_ATOMIC_FETCH_AND_WRAPPER(int64, int64_t)
+ACLSHMEM_ATOMIC_FETCH_AND_WRAPPER(uint64, uint64_t)
+
+#undef ACLSHMEM_ATOMIC_FETCH_AND_WRAPPER
+
+// Macro to generate wrappers for aclshmem_atomic_fetch_or
+#define ACLSHMEM_ATOMIC_FETCH_OR_WRAPPER(NAME, TYPE)                           \
+  __aicore__ __attribute__((always_inline)) TYPE                               \
+  _mlir_ciface_aclshmem_atomic_fetch_or_##NAME(memref_t<__gm__ TYPE, 1> *dst,  \
+                                               const TYPE value, int pe) {     \
+    return aclshmem_##NAME##_atomic_fetch_or(dst->aligned + dst->offset,       \
+                                             value, pe);                       \
+  }
+
+ACLSHMEM_ATOMIC_FETCH_OR_WRAPPER(int32, int32_t)
+ACLSHMEM_ATOMIC_FETCH_OR_WRAPPER(uint32, uint32_t)
+ACLSHMEM_ATOMIC_FETCH_OR_WRAPPER(int64, int64_t)
+ACLSHMEM_ATOMIC_FETCH_OR_WRAPPER(uint64, uint64_t)
+
+#undef ACLSHMEM_ATOMIC_FETCH_OR_WRAPPER
+
+// Macro to generate wrappers for aclshmem_atomic_fetch_xor
+#define ACLSHMEM_ATOMIC_FETCH_XOR_WRAPPER(NAME, TYPE)                          \
+  __aicore__ __attribute__((always_inline)) TYPE                               \
+  _mlir_ciface_aclshmem_atomic_fetch_xor_##NAME(memref_t<__gm__ TYPE, 1> *dst, \
+                                                const TYPE value, int pe) {    \
+    return aclshmem_##NAME##_atomic_fetch_xor(dst->aligned + dst->offset,      \
+                                              value, pe);                      \
+  }
+
+ACLSHMEM_ATOMIC_FETCH_XOR_WRAPPER(int32, int32_t)
+ACLSHMEM_ATOMIC_FETCH_XOR_WRAPPER(uint32, uint32_t)
+ACLSHMEM_ATOMIC_FETCH_XOR_WRAPPER(int64, int64_t)
+ACLSHMEM_ATOMIC_FETCH_XOR_WRAPPER(uint64, uint64_t)
+
+#undef ACLSHMEM_ATOMIC_FETCH_XOR_WRAPPER
+
+// Macro to generate wrappers for aclshmem_atomic_fetch
+#define ACLSHMEM_ATOMIC_FETCH_WRAPPER(NAME, TYPE)                              \
+  __aicore__ __attribute__((always_inline)) TYPE                               \
+  _mlir_ciface_aclshmem_atomic_fetch_##NAME(memref_t<__gm__ TYPE, 1> *src,     \
+                                            int pe) {                          \
+    return aclshmem_##NAME##_atomic_fetch(src->aligned + src->offset, pe);     \
+  }
+
+ACLSHMEM_ATOMIC_FETCH_WRAPPER(int32, int32_t)
+ACLSHMEM_ATOMIC_FETCH_WRAPPER(uint32, uint32_t)
+ACLSHMEM_ATOMIC_FETCH_WRAPPER(int64, int64_t)
+ACLSHMEM_ATOMIC_FETCH_WRAPPER(uint64, uint64_t)
+
+#undef ACLSHMEM_ATOMIC_FETCH_WRAPPER
+
+// Macro to generate wrappers for aclshmem_atomic_set
+#define ACLSHMEM_ATOMIC_SET_WRAPPER(NAME, TYPE)                                \
+  __aicore__ __attribute__((always_inline)) void                               \
+  _mlir_ciface_aclshmem_atomic_set_##NAME(memref_t<__gm__ TYPE, 1> *dst,       \
+                                          const TYPE value, int pe) {          \
+    aclshmem_##NAME##_atomic_set(dst->aligned + dst->offset, value, pe);       \
+  }
+
+ACLSHMEM_ATOMIC_SET_WRAPPER(int32, int32_t)
+ACLSHMEM_ATOMIC_SET_WRAPPER(uint32, uint32_t)
+ACLSHMEM_ATOMIC_SET_WRAPPER(int64, int64_t)
+ACLSHMEM_ATOMIC_SET_WRAPPER(uint64, uint64_t)
+ACLSHMEM_ATOMIC_SET_WRAPPER(float, float)
+
+#undef ACLSHMEM_ATOMIC_SET_WRAPPER
+
+// Macro to generate wrappers for aclshmem_atomic_swap
+#define ACLSHMEM_ATOMIC_SWAP_WRAPPER(NAME, TYPE)                               \
+  __aicore__ __attribute__((always_inline)) TYPE                               \
+  _mlir_ciface_aclshmem_atomic_swap_##NAME(memref_t<__gm__ TYPE, 1> *dst,      \
+                                           const TYPE value, int pe) {         \
+    return aclshmem_##NAME##_atomic_swap(dst->aligned + dst->offset, value,    \
+                                         pe);                                  \
+  }
+
+ACLSHMEM_ATOMIC_SWAP_WRAPPER(int32, int32_t)
+ACLSHMEM_ATOMIC_SWAP_WRAPPER(uint32, uint32_t)
+ACLSHMEM_ATOMIC_SWAP_WRAPPER(int64, int64_t)
+ACLSHMEM_ATOMIC_SWAP_WRAPPER(uint64, uint64_t)
+ACLSHMEM_ATOMIC_SWAP_WRAPPER(float, float)
+
+#undef ACLSHMEM_ATOMIC_SWAP_WRAPPER
+
+// Macro to generate wrappers for aclshmem_atomic_compare_swap
+#define ACLSHMEM_ATOMIC_COMPARE_SWAP_WRAPPER(NAME, TYPE)                       \
+  __aicore__ __attribute__((always_inline)) TYPE                               \
+  _mlir_ciface_aclshmem_atomic_compare_swap_##NAME(                            \
+      memref_t<__gm__ TYPE, 1> *dst, const TYPE cond, const TYPE value,        \
+      int pe) {                                                                \
+    return aclshmem_##NAME##_atomic_compare_swap(dst->aligned + dst->offset,   \
+                                                 cond, value, pe);             \
+  }
+
+ACLSHMEM_ATOMIC_COMPARE_SWAP_WRAPPER(int32, int32_t)
+ACLSHMEM_ATOMIC_COMPARE_SWAP_WRAPPER(uint32, uint32_t)
+ACLSHMEM_ATOMIC_COMPARE_SWAP_WRAPPER(int64, int64_t)
+ACLSHMEM_ATOMIC_COMPARE_SWAP_WRAPPER(uint64, uint64_t)
+
+#undef ACLSHMEM_ATOMIC_COMPARE_SWAP_WRAPPER
+
 // Macro to generate wrappers for aclshmem_##NAME##_wait_until functions
 #define ACLSHMEM_WAIT_UNTIL_WRAPPER(NAME, TYPE)                                \
   __aicore__ __attribute__((always_inline)) void                               \
-      _mlir_ciface_aclshmem_wait_until_##NAME(memref_t<__gm__ TYPE, 1> ivar,   \
-                                              int cmp, TYPE cmp_value) {       \
+  _mlir_ciface_aclshmem_wait_until_##NAME(memref_t<__gm__ TYPE, 1> ivar,       \
+                                          int cmp, TYPE cmp_value) {           \
     aclshmem_##NAME##_wait_until(ivar.aligned + ivar.offset, cmp, cmp_value);  \
   }
 
@@ -400,10 +625,9 @@ ACLSHMEM_WAIT_UNTIL_WRAPPER(char, char)
 // Macro to generate wrappers for aclshmem_wait functions (with numBarriers
 // loop)
 #define ACLSHMEM_WAIT_WRAPPER(NAME, TYPE)                                      \
-  __aicore__                                                                   \
-      __attribute__((always_inline)) int _mlir_ciface_aclshmem_wait_##NAME(    \
-          memref_t<__gm__ TYPE, 1> barrierPtr, int64_t numBarriers,            \
-          TYPE waitVal) {                                                      \
+  __aicore__ __attribute__((always_inline)) int                                \
+  _mlir_ciface_aclshmem_wait_##NAME(memref_t<__gm__ TYPE, 1> barrierPtr,       \
+                                    int64_t numBarriers, TYPE waitVal) {       \
     for (int64_t i = 0; i < numBarriers; ++i) {                                \
       __gm__ TYPE *ptr =                                                       \
           barrierPtr.aligned + barrierPtr.offset + i * (64 / sizeof(TYPE));    \
@@ -422,7 +646,7 @@ ACLSHMEM_WAIT_WRAPPER(int64, int64_t)
 // Macro to generate wrappers for scalar consume_token functions
 #define CONSUME_TOKEN_SCALAR_WRAPPER(NAME, TYPE)                               \
   __aicore__ __attribute__((always_inline)) TYPE                               \
-      _mlir_ciface_aclshmem_consume_token_##NAME(TYPE value, int token) {      \
+  _mlir_ciface_aclshmem_consume_token_##NAME(TYPE value, int token) {          \
     return value;                                                              \
   }
 
@@ -440,8 +664,8 @@ CONSUME_TOKEN_SCALAR_WRAPPER(bfloat16, bfloat16_t)
 // Macro to generate wrappers for memref consume_token functions
 #define CONSUME_TOKEN_PTR_WRAPPER(NAME, DIM, ...)                              \
   __aicore__ __attribute__((always_inline)) void                               \
-      _mlir_ciface_aclshmem_consume_token_##NAME##_##DIM##d(                   \
-          __VA_ARGS__ *res, __VA_ARGS__ *value, int token) {                   \
+  _mlir_ciface_aclshmem_consume_token_##NAME##_##DIM##d(                       \
+      __VA_ARGS__ *res, __VA_ARGS__ *value, int token) {                       \
     res->aligned = value->aligned;                                             \
     res->allocated = value->allocated;                                         \
     res->offset = value->offset;                                               \
