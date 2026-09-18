@@ -1,5 +1,11 @@
 # Cube与Vector软件流水优化
 
+**适用产品**：
+
+- Ascend 950PR&950DT 系列产品
+- Atlas A3 系列产品
+- Atlas A2 系列产品
+
 本文介绍HIVM中的CV Pipelining Pass。该Pass针对CV类kernel进行优化。在阅读本文之前，建议先阅读[CV Optimization](./cv_optimization.md)，了解CV编译相关术语。
 
 ## 硬件背景
@@ -19,7 +25,7 @@ CV Pipelining当前支持两种主要流水模式：
 | Unroll模式 | 按配置depth对原循环unroll，为各Work Item生成内层循环 | 标准CV流水场景 |
 | Preload模式 | 采用Skew方式，通过迭代偏移实现跨迭代重叠执行 | FlashAttention等CV融合场景 |
 
-**Preload模式原理**：将原始循环中的Cube/Vector计算组织为多个Preload stage，使不同迭代的数据搬运和计算交错调度。通过提前执行后续迭代的数据加载，隐藏访存与同步延迟，提高C/V核利用率。各代码段通过`scope`封装并标记`preload_number`，表示相对最终消费阶段提前的物理循环拍数。
+**Preload模式原理**：将原始循环中的Cube/Vector计算组织为多个Preload stage，使不同迭代的数据搬运和计算交错调度。通过提前执行后续迭代的数据加载，隐藏访存与同步延迟，提高C/V核利用率。各代码段通过`scope`封装并标记`preload_num`，表示相对最终消费阶段提前的物理循环拍数。
 
 ## 算法原理
 
@@ -68,7 +74,7 @@ scf.for 0 to N step 3*S {
 
 ### Preload模式变换
 
-采用Skew方式，将Work Item封装为带`preload_number`的`scope`，通过迭代偏移实现跨迭代交错调度。
+采用Skew方式，将Work Item封装为带`preload_num`的`scope`，通过迭代偏移实现跨迭代交错调度。
 
 变换前：
 
@@ -86,25 +92,25 @@ scf.for 0 to N step S {
 ```mlir
 scf.for %i = 0 to N+max_preload_num step S {
     if 0 <= %i < N {
-        scope.scope {max_preload_num=4, preload_number = 3} {
+        scope.scope {no_inline, hivm.loop_core_type = #hivm.tcore_type<CUBE>, hivm.max_preload_num = 4 : i32, hivm.preload_num = 3 : i32} {
             %c_i = Cube() -> buffer0[%i % 2]
         }
     }
     %ii = %i - 1
     if 0 <= %ii < N {
-        scope.scope {max_preload_num=4, preload_number = 2} {
+        scope.scope {no_inline, hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.max_preload_num = 4 : i32, hivm.preload_num = 2 : i32} {
             %v_ii = Vector(buffer0[%ii % 2]) -> buffer1[%ii % 2]
         }
     }
     %iii = %i -2
     if 0 <= %iii < N {
-        scope.scope {max_preload_num=4, preload_number = 1} {
+        scope.scope {no_inline, hivm.loop_core_type = #hivm.tcore_type<CUBE>, hivm.max_preload_num = 4 : i32, hivm.preload_num = 1 : i32} {
             %c1_iii = Cube(buffer1[%iii % 2]) -> buffer2[%iii % 2]
         }
     }
     %iiii = %i - 3
     if 0 <= %iiii < N {
-        scope.scope {max_preload_num=4, preload_number = 0} {
+        scope.scope {no_inline, hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.max_preload_num = 4 : i32, hivm.preload_num = 0 : i32} {
             %v1_iiii = Vector(buffer2[%iiii % 2])
         }
     }
@@ -115,8 +121,9 @@ scf.for %i = 0 to N+max_preload_num step S {
 
 | 选项 | 默认值 | 含义 |
 |------|--------|------|
-| `set-workspace-multibuffer` | 2 | 软件流水的阶段数，同时也是Multi-Buffering的数量 |
-| `--enable-lazy-loading` | false | 开启CV Pipelining中的Lazy Load功能，允许将Load op克隆到多个Work Item中，以减少中间buffer扩展 |
+| `set-workspace-multibuffer` | 2 (RegBase) | 软件流水的阶段数，同时也是Multi-Buffering的数量。`--cv-pipeline-mode=Off`时强制为0 |
+| `--enable-lazy-loading` | false | 开启CV Pipelining中的Lazy Load功能，允许将Load、ND2NZ op克隆到多个Work Item中，以减少中间buffer扩展 |
+| `--set-depth-in-unroll-mode` | -1 | Unroll模式下指定流水深度 |
 | `--cv-pipeline-mode` | Unroll | CV流水模式：`Off`/`Unroll`/`Skew`。`Skew`对应Preload模式 |
 | `--enable-preload` | false | 开启Preload模式，等价于设置`--cv-pipeline-mode=Skew`。|
 
@@ -146,7 +153,7 @@ scf.for iter_args(%arg0 = %init) {
 
 ## 未来演进
 
-当前实现的Preload模式基于固定的stage划分策略，未来将支持更灵活的调度优化：
+当前 Preload 模式（对应 `--cv-pipeline-mode=Skew`）已支持 per-loop depth（各循环独立深度，而非全局固定）、Preload 回滚、嵌套 for 循环以及 NormalizeMatmul 计数器兼容等能力。在此基础上，未来将继续增强调度优化：
 
 - **动态调度模式**：通过Cost Model、Profiling或用户提供的Hint，根据Cube/Vector负载比例、阶段时长、通信量和片上内存容量等因素，动态选择最优的流水深度和多Buffer数量
 - **自适应策略选择**：针对不同workload特征（计算密集型、访存密集型等），自动在Unroll和Preload模式间选择，实现性能收益最大化
