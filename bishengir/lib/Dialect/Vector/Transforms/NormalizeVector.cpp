@@ -1003,9 +1003,12 @@ class TransferReadToGatheringLoadPattern
       return failure();
 
     if (permMap.isIdentity()) {
-      // In 1-D the mask needs no permutation. The offsets depend only on the
-      // vector width and static stride, even when the source has a dynamic
-      // extent. Preserve the original mask when creating the gather below.
+      // Limit identity reads to 1-D: unmasked offsets form an arithmetic
+      // sequence even for dynamic extents, and the mask can be reused directly.
+      // Higher-rank reads may produce non-arithmetic index constants that AVE
+      // cannot lower; their masks also need correct flattening.
+      // TODO: Support higher-rank identity reads by extending index lowering
+      // and preserving mask semantics when flattening.
       if (memrefType.getRank() != 1 || memrefType.getDimSize(0) == 1 ||
           readop.hasOutOfBoundsDim())
         return failure();
