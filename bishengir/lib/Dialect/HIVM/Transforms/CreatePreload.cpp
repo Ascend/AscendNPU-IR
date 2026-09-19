@@ -19,6 +19,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVM/Utils/ShapeRegistry.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
@@ -27,6 +28,7 @@
 #include "bishengir/Transforms/Passes.h"
 
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Verifier.h"
 #include "mlir/Interfaces/ViewLikeInterface.h"
@@ -35,7 +37,6 @@
 #include "mlir/Transforms/Passes.h"
 
 namespace mlir {
-#define GEN_PASS_DECL_CREATEPRELOAD
 #define GEN_PASS_DEF_CREATEPRELOAD
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h.inc"
 
@@ -69,6 +70,8 @@ struct PreloadInfo {
 };
 
 struct CreatePreloadPass : public impl::CreatePreloadBase<CreatePreloadPass> {
+  using Base = impl::CreatePreloadBase<CreatePreloadPass>;
+  using Base::Base;
   void runOnOperation() override;
 };
 
@@ -256,9 +259,12 @@ static Value getPreloadCondition(const PreloadInfo &info, Location loc,
 }
 
 static bool isRematerializableAliasOp(Operation *op) {
-  // PointerCastOp is not ViewLikeOpInterface because it creates a memref from
-  // raw addresses, but it can still be cloned as the root of a view chain.
-  return isa_and_nonnull<ViewLikeOpInterface, hivm::PointerCastOp>(op);
+  if (!op)
+    return false;
+  // View-like ops, pointer casts, and pure arithmetic ops can be rematerialized
+  // as part of a result chain in the preload skip branch.
+  return isa<ViewLikeOpInterface, hivm::PointerCastOp>(op) ||
+         isa<arith::ArithDialect>(op->getDialect());
 }
 
 static void rewriteScopeReturnOp(ValueRange returnResults,
@@ -409,8 +415,11 @@ static scf::IfOp rewriteScopeOp(Value cond, scope::ScopeOp scopeOp,
         for (auto [res, retRes] :
              llvm::zip_equal(scopeOp->getResults(), returnResults)) {
           if (!getLocalBuffer(retRes)) {
-            if (res.hasOneUse() && isa<scf::YieldOp>(*res.user_begin())) {
-              auto oprNum = res.use_begin()->getOperandNumber();
+            auto yieldUse = llvm::find_if(res.getUses(), [](OpOperand &use) {
+              return isa<scf::YieldOp>(use.getOwner());
+            });
+            if (yieldUse != res.use_end()) {
+              auto oprNum = yieldUse->getOperandNumber();
               newYields.push_back(loopArgs[oprNum]);
             } else if (auto pointerCastOp =
                            retRes.getDefiningOp<hivm::PointerCastOp>()) {
@@ -438,7 +447,7 @@ static bool isSynchronizationOp(Operation *op) {
 }
 
 static void rewritePreloadLoop(scf::ForOp forOp,
-                               SmallVector<scope::ScopeOp, 4> scopes,
+                               const DenseMap<Operation *, size_t> &scopeToIdx,
                                size_t maxPreloadNum) {
   IRRewriter rewriter(forOp.getContext());
   PreloadInfo info;
@@ -459,14 +468,6 @@ static void rewritePreloadLoop(scf::ForOp forOp,
   DenseMap<Value, hivm::PointerCastOp> valueToAdapt;
   Value newUpperbound =
       preprocessLoopArgs(forOp, newInitArgs, valueToAdapt, info, rewriter);
-
-  DenseMap<Operation *, size_t> scopeToIdx;
-  for (size_t preloadNum = 0; preloadNum < scopes.size(); preloadNum++) {
-    auto scopeOp = scopes[preloadNum];
-    if (!scopeOp)
-      continue;
-    scopeToIdx[scopeOp] = preloadNum;
-  }
 
   auto newForOp = rewriter.create<scf::ForOp>(
       forOp.getLoc(), info.lb, newUpperbound, info.step, newInitArgs,
@@ -580,15 +581,30 @@ static void rewritePreloadLoop(scf::ForOp forOp,
 
   LDBG("New for loop:\n" << newForOp);
 
+  // `preprocessLoopArgs` drops every iteration argument that carries a
+  // preload-local buffer, because the new body re-materializes the rotation
+  // belonging to each preload stage instead of threading one buffer through the
+  // loop. The original loop still has one result per iteration argument, so
+  // walk the original arguments rather than the new results and supply a
+  // replacement for the dropped ones too.
   SmallVector<Value> newRes;
-  for (auto [res, yield] :
-       llvm::zip_equal(newForOp->getResults(), newForOp.getYieldedValues())) {
-    if (auto maybeLocalBuffer = getLocalBuffer(yield);
+  newRes.reserve(forOp.getNumResults());
+  auto newResIt = newForOp->result_begin();
+  auto newYieldIt = newForOp.getYieldedValues().begin();
+  for (auto [initArg, iterArg] :
+       llvm::zip_equal(forOp.getInitArgs(), forOp.getRegionIterArgs())) {
+    if (valueToAdapt.contains(iterArg)) {
+      newRes.push_back(initArg);
+      continue;
+    }
+    if (auto maybeLocalBuffer = getLocalBuffer(*newYieldIt);
         maybeLocalBuffer.has_value()) {
       newRes.push_back(maybeLocalBuffer.value());
     } else {
-      newRes.push_back(res);
+      newRes.push_back(*newResIt);
     }
+    ++newResIt;
+    ++newYieldIt;
   }
   rewriter.replaceOp(forOp, newRes);
 }
@@ -657,39 +673,60 @@ static void cleanupPreloadWorkspaceMarks(Operation &op) {
 
 void CreatePreloadPass::runOnOperation() {
   auto moduleOp = getOperation();
-  DenseMap<scf::ForOp, SmallVector<scope::ScopeOp, 4>> preload;
+  DenseMap<scf::ForOp, DenseMap<Operation *, size_t>> loopToScopes;
+  DenseMap<scf::ForOp, size_t> loopToMaxPreloadNum;
+  DenseMap<scf::ForOp, SmallVector<scope::ScopeOp, 4>> uniqueSlots;
   moduleOp->walk([&](scope::ScopeOp scopeOp) {
+    auto parentForOp = dyn_cast<scf::ForOp>(scopeOp->getParentOp());
+    if (!parentForOp)
+      return;
+    auto parentFunc = parentForOp->getParentOfType<func::FuncOp>();
+    bool allow = parentFunc && allowLoopShapeHeuristics(
+                                   this->bypassShapeRegistry, parentFunc.getName(),
+                                   this->enablePreload,
+                                   this->workspaceMultiBufferNum);
     if (auto maxPreloadNumAttr = scopeOp->getAttrOfType<IntegerAttr>(
             hivm::MaxPreloadNumAttr::name)) {
-      auto parentForOp = cast<scf::ForOp>(scopeOp->getParentOp());
-      preload[parentForOp].resize(maxPreloadNumAttr.getInt(), nullptr);
+      if (allow) {
+        loopToMaxPreloadNum[parentForOp] =
+            std::max(loopToMaxPreloadNum[parentForOp],
+                     static_cast<size_t>(maxPreloadNumAttr.getInt()));
+      } else {
+        uniqueSlots[parentForOp].resize(maxPreloadNumAttr.getInt(), nullptr);
+        loopToMaxPreloadNum[parentForOp] = uniqueSlots[parentForOp].size();
+      }
     }
     if (auto preloadNumAttr =
             scopeOp->getAttrOfType<IntegerAttr>(hivm::PreloadNumAttr::name)) {
-      auto parentForOp = cast<scf::ForOp>(scopeOp->getParentOp());
       auto preloadNum = preloadNumAttr.getInt();
-      auto &preloadVec = preload[parentForOp];
       assert(preloadNum >= 0 && "PreloadNum must be non-negative integer");
-      assert(preloadNum < static_cast<int64_t>(preloadVec.size()) &&
-             "MaxPreloadNumAttr must be set");
-      preloadVec[preloadNum] = scopeOp;
+      if (allow) {
+        loopToScopes[parentForOp][scopeOp] = static_cast<size_t>(preloadNum);
+      } else {
+        auto &preloadVec = uniqueSlots[parentForOp];
+        assert(preloadNum < static_cast<int64_t>(preloadVec.size()) &&
+               "MaxPreloadNumAttr must be set");
+        preloadVec[preloadNum] = scopeOp;
+      }
     }
   });
+  for (auto &[forOp, scopes] : uniqueSlots) {
+    for (size_t i = 0, e = scopes.size(); i < e; ++i) {
+      if (scopes[i])
+        loopToScopes[forOp][scopes[i]] = i;
+    }
+  }
 
-  if (preload.empty())
+  if (loopToScopes.empty())
     return;
 
-  for (auto &[forOp, scopes] : preload) {
+  for (auto &[forOp, scopeToIdx] : loopToScopes) {
     LDBG("Processing preload:\n" << forOp);
-    auto scopeIt = llvm::find_if(scopes, [](scope::ScopeOp scopeOp) {
-      return static_cast<bool>(scopeOp);
-    });
-    assert(scopeIt != scopes.end() && "Expected at least one preload scope");
-    auto maxPreloadNumAttr =
-        (*scopeIt)->getAttrOfType<IntegerAttr>(hivm::MaxPreloadNumAttr::name);
-    assert(maxPreloadNumAttr && "MaxPreloadNumAttr must be set");
-    rewritePreloadLoop(forOp, scopes,
-                       static_cast<size_t>(maxPreloadNumAttr.getInt()));
+    assert(loopToMaxPreloadNum.contains(forOp) &&
+           "MaxPreloadNumAttr must be set");
+    size_t maxPreloadNum = loopToMaxPreloadNum[forOp];
+    assert(maxPreloadNum > 0 && "MaxPreloadNum must be positive");
+    rewritePreloadLoop(forOp, scopeToIdx, maxPreloadNum);
   }
 
   cleanupPreloadWorkspaceMarks(*moduleOp);
@@ -712,6 +749,7 @@ void CreatePreloadPass::runOnOperation() {
   }
 }
 
-std::unique_ptr<Pass> mlir::hivm::createCreatePreloadPass() {
-  return std::make_unique<CreatePreloadPass>();
+std::unique_ptr<Pass>
+mlir::hivm::createCreatePreloadPass(const CreatePreloadOptions &options) {
+  return std::make_unique<CreatePreloadPass>(options);
 }
