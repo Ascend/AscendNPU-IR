@@ -40,7 +40,7 @@ AICore架构详情可查阅官方文档：[基本架构](https://www.hiascend.co
 
   参数说明：
 
-    - `tcore_type`：目标核类型（vector/cube）
+    - `tcore_type`：目标核类型（`TCoreTypeAttr`：CUBE/VECTOR/CUBE_OR_VECTOR/CUBE_AND_VECTOR；CUBE对应cube核，VECTOR对应vector核）
     - `tpipe`、`pipe`：目标核上的set/wait pipe
     - flag ID：静态和/或动态flag
     - `ffts_base_addr`：内存型架构（如Ascend910B）上通常需要
@@ -54,7 +54,7 @@ AICore架构详情可查阅官方文档：[基本架构](https://www.hiascend.co
 
   参数说明：
 
-    - `tcore_type`：目标核类型（vector/cube）
+    - `tcore_type`：目标核类型（`TCoreTypeAttr`：CUBE/VECTOR/CUBE_OR_VECTOR/CUBE_AND_VECTOR；CUBE对应cube核，VECTOR对应vector核）
     - `tpipe`、`pipe`：目标核上的set/wait pipe
     - `tsync_instr_mode`：默认值为`INTRA_BLOCK_SYNCHRONIZATION`
 
@@ -74,7 +74,7 @@ AICore架构详情可查阅官方文档：[基本架构](https://www.hiascend.co
 
 - `InjectSync` / `InjectBlockSync`（回退方案）
 
-  使用多个Pass插入所需同步、移动/删除冗余同步，并通过活跃性分析分配flag ID/event ID。在禁用图同步，或barrier-all / block-all调试模式强制走inject路径时使用。
+  二者各为单个Pass，内部按多个阶段执行（IR翻译 → 同步分析 → 冗余清理 → ID分配 → 代码生成）来插入所需同步、移动/删除冗余同步，并通过活跃性分析分配flag ID/event ID。在禁用图同步，或barrier-all / block-all调试模式强制走inject路径时使用。
 
 在Triton-Ascend中，也可通过`sync_solver=True`选择图同步求解器路径。
 
@@ -107,7 +107,7 @@ AICore架构详情可查阅官方文档：[基本架构](https://www.hiascend.co
 - 与核内GSS相同的求解栈，配置为`CROSS_CORE_SYNC`。
 - 仅在MIX内核上运行（非Host、非纯AIC/AIV）。
 - 在内存型架构上，当内核参数存在FFTS基址时插入`SetFFTSBaseAddrOp`。
-- 支持CV pattern、multibuffer flag-id策略、内存型架构上的round-robin event-id重试，以及block-all模式。
+- 支持CV pattern、multibuffer flag-id策略、内存型架构上的round-robin event-id重试。（block-all模式**不是**CrossCoreGSS的能力——启用`--enable-hivm-inject-block-all-sync`会将管线从CrossCoreGSS切换到InjectBlockSync。）
 
 ### DelayedCrossCoreGSS
 
@@ -118,7 +118,7 @@ AICore架构详情可查阅官方文档：[基本架构](https://www.hiascend.co
 **工作原理**：
 
 1. **Step 1**（拆分前）：运行CrossCoreGSS（通常关闭CV pattern），再执行`InsertAnchorsAndBackup`插入`hivm.anchor`并克隆备份mix函数。
-2. **Step 2**（拆分后）：`DelayedCrossCoreGSS`匹配备份mix与拆分后的cube/vector函数，清除旧的块内同步，基于anchor重建区间读写信息，求解并将同步物化回mix/cube/vector；最后清理anchor与备份函数。
+2. **Step 2**（plan-memory改写后）：`DelayedCrossCoreGSS`匹配备份mix与拆分后的cube/vector函数，清除旧的块内同步，基于anchor重建区间读写信息，求解并将同步物化回mix/cube/vector；最后清理anchor与备份函数。求解推迟到`PlanMemoryRegBase`之后（`HIVMLowerToLoops`之前）——提前求解的同步会被bufferization / 内存规划改写失效。
 
 当`--enable-hivm-cross-core-gss`与`--enable-hivm-delayed-cross-core-gss`同时为true时启用（RegBase编译面上二者默认均为`true`）。
 
@@ -143,7 +143,7 @@ AICore架构详情可查阅官方文档：[基本架构](https://www.hiascend.co
 5. SyncEventIdAllocation：分配静态或动态event IDs；在安全时进行复用。
 6. SyncCodegen：生成`hivm.set_flag` / `hivm.wait_flag` / `hivm.pipe_barrier`。
 
-barrier-all调试模式（`--enable-hivm-inject-barrier-all-sync`）会在相关内存效应操作前插入`pipe_barrier(PIPE_ALL)`，而不是走正常分析路径。
+barrier-all调试模式（`--enable-hivm-inject-barrier-all-sync`）会在每个HIVM op、memref/tensor load/store、`func::ReturnOp`、`func::CallOp`前插入`pipe_barrier(PIPE_ALL)`（强制全流水串行，仅用于debug），而不是走正常分析路径。
 
 ### InjectBlockSync
 
