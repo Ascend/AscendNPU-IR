@@ -20,16 +20,19 @@
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/PatternMatch.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 #include "triton/Dialect/TritonGPU/IR/Attributes.h"
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/LogicalResult.h"
+#include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
 #include <cmath>
@@ -115,10 +118,9 @@ findDependentOpsFromStore(triton::StoreOp storeOp,
   }
 }
 
-/// Find mask and constant ops by starting from the store's mask operand(s)
-/// and walking backwards (following operand defs). Collect mask chain ops and
-/// collect any arith::ConstantOp found among operands in pattern.constantOps.
-/// This is used to find the actual size of each load/store
+/// Collect the mask chain and its constants for debug diagnostics. Access-width
+/// inference is performed separately so unrelated constants cannot be mistaken
+/// for last-dimension bounds.
 static void findMaskAndConstantOps(Operation *storeOp,
                                    StoreLoadPattern &pattern) {
   if (!storeOp)
@@ -174,59 +176,205 @@ static void findMaskAndConstantOps(Operation *storeOp,
   }
 }
 
-/// Attempt to extract a load size from constant ops collected.
-/// Heuristic: look for integer dense constant splats and
-/// power of Two
-// TODO: currently this works but maybe in other test cases this method cant
-// find the size of load
-static bool extractEmbeddingSize(StoreLoadPattern &pattern) {
-  int64_t bestSize = -1;
-  for (Operation *cOp : pattern.constantOps) {
-    if (!cOp)
-      continue;
-    auto cst = dyn_cast<arith::ConstantOp>(cOp);
-    if (!cst)
-      continue;
-    Attribute val = cst.getValue();
-    // only arith.constant dense<#> and extract this #
-    auto dense = dyn_cast<DenseElementsAttr>(val);
-    if (!dense)
-      continue;
-    if (auto maybeInt = extractIntFromAttr(val)) {
-      int64_t v = *maybeInt;
-      // want power of two
-      if (v <= 0 || (static_cast<unsigned int>(v) & (static_cast<unsigned int>(v) - 1)) != 0)
-        continue;
-      auto tensorType = dyn_cast<RankedTensorType>(cst.getType());
-      // get tensor last dim size
-      if (!tensorType || tensorType.getShape().empty())
-        continue;
-      int64_t lastDim = tensorType.getShape().back();
-      // only consider size if <= last dim size
-      if (v > lastDim)
-        continue;
-      // chose the largest valid value
-      if (v > bestSize)
-        bestSize = v;
+/// Map an axis backwards through a reshape that only inserts or removes unit
+/// dimensions. More general reshapes do not preserve enough axis provenance
+/// for this pass to associate a mask bound with an access dimension.
+static std::optional<unsigned>
+mapAxisThroughUnitDimReshape(RankedTensorType srcType,
+                             RankedTensorType resultType, unsigned resultAxis) {
+  ArrayRef<int64_t> srcShape = srcType.getShape();
+  ArrayRef<int64_t> resultShape = resultType.getShape();
+  if (resultAxis >= resultShape.size() || resultShape[resultAxis] == 1)
+    return std::nullopt;
+
+  SmallVector<unsigned> srcNonUnitAxes;
+  SmallVector<unsigned> resultNonUnitAxes;
+  SmallVector<int64_t> srcNonUnitSizes;
+  SmallVector<int64_t> resultNonUnitSizes;
+  for (auto [axis, size] : llvm::enumerate(srcShape)) {
+    if (size <= 0)
+      return std::nullopt;
+    if (size != 1) {
+      srcNonUnitAxes.push_back(axis);
+      srcNonUnitSizes.push_back(size);
     }
   }
-  if (bestSize > 0) {
-    pattern.embeddingSize = bestSize;
-    return true;
+  for (auto [axis, size] : llvm::enumerate(resultShape)) {
+    if (size <= 0)
+      return std::nullopt;
+    if (size != 1) {
+      resultNonUnitAxes.push_back(axis);
+      resultNonUnitSizes.push_back(size);
+    }
   }
-  return false;
+  if (srcNonUnitSizes != resultNonUnitSizes)
+    return std::nullopt;
+
+  auto it = llvm::find(resultNonUnitAxes, resultAxis);
+  if (it == resultNonUnitAxes.end())
+    return std::nullopt;
+  return srcNonUnitAxes[std::distance(resultNonUnitAxes.begin(), it)];
 }
 
-/// Preserve original program order: given a block and a set of ops, return
-/// the ops in block order
-static SmallVector<Operation *, 32>
-orderedOpsInBlock(Block &blk, const llvm::DenseSet<Operation *> &set) {
-  SmallVector<Operation *, 32> res;
-  for (Operation &op : blk) {
-    if (set.contains(&op))
-      res.push_back(&op);
+/// Map an axis backwards through shape-only Triton operations. Return no axis
+/// when the source is invariant along that result axis or when the reshape is
+/// not a unit-dimension reshape.
+static std::optional<unsigned> mapAxisToShapeOperand(Operation *op,
+                                                     unsigned resultAxis) {
+  auto resultType = dyn_cast<RankedTensorType>(op->getResult(0).getType());
+  auto srcType = dyn_cast<RankedTensorType>(op->getOperand(0).getType());
+  if (!resultType || !srcType || resultAxis >= resultType.getRank())
+    return std::nullopt;
+
+  if (isa<triton::BroadcastOp>(op)) {
+    if (srcType.getRank() != resultType.getRank() ||
+        srcType.getDimSize(resultAxis) != resultType.getDimSize(resultAxis) ||
+        srcType.getDimSize(resultAxis) <= 1)
+      return std::nullopt;
+    return resultAxis;
   }
-  return res;
+  if (auto expand = dyn_cast<triton::ExpandDimsOp>(op)) {
+    unsigned expandAxis = expand.getAxis();
+    if (resultAxis == expandAxis)
+      return std::nullopt;
+    return resultAxis > expandAxis ? resultAxis - 1 : resultAxis;
+  }
+  if (isa<triton::ReshapeOp>(op))
+    return mapAxisThroughUnitDimReshape(srcType, resultType, resultAxis);
+  return std::nullopt;
+}
+
+/// Return the extent only if the value still denotes [0, extent) interpreted
+/// unsigned. In particular, casts must preserve values, not just shapes.
+static std::optional<int64_t>
+getRangeExtentAlongAxis(Value value, unsigned axis, unsigned depth = 0) {
+  if (depth >= 64)
+    return std::nullopt;
+  Operation *def = value.getDefiningOp();
+  if (!def)
+    return std::nullopt;
+  if (auto makeRange = dyn_cast<triton::MakeRangeOp>(def)) {
+    auto type = dyn_cast<RankedTensorType>(value.getType());
+    if (type && type.getRank() == 1 && axis == 0 && makeRange.getStart() == 0 &&
+        makeRange.getEnd() > 0)
+      return makeRange.getEnd();
+    return std::nullopt;
+  }
+  if (isa<triton::BroadcastOp, triton::ExpandDimsOp, triton::ReshapeOp>(def)) {
+    auto srcAxis = mapAxisToShapeOperand(def, axis);
+    return srcAxis ? getRangeExtentAlongAxis(def->getOperand(0), *srcAxis,
+                                             depth + 1)
+                   : std::nullopt;
+  }
+  if (isa<arith::ExtSIOp, arith::ExtUIOp, arith::TruncIOp>(def)) {
+    auto extent = getRangeExtentAlongAxis(def->getOperand(0), axis, depth + 1);
+    auto type = dyn_cast<IntegerType>(getElementTypeOrSelf(value.getType()));
+    if (!extent || !type || !APInt(64, *extent - 1).isIntN(type.getWidth()))
+      return std::nullopt;
+    if (isa<arith::ExtSIOp>(def)) {
+      auto srcType =
+          cast<IntegerType>(getElementTypeOrSelf(def->getOperand(0).getType()));
+      if (!APInt(64, *extent - 1).isSignedIntN(srcType.getWidth()))
+        return std::nullopt;
+    }
+    return extent;
+  }
+  // Index casts need a target-dependent index-width proof. Unknown casts are
+  // not transparent; another conjunct may still supply a valid bound.
+  return std::nullopt;
+}
+
+/// Extract an upper bound only when a comparison is proven to constrain the
+/// requested tensor axis.
+// TODO: Extend this provenance analysis to other predicates and offset index
+// arithmetic. Until then, leave those patterns unchanged instead of guessing
+// from unrelated constants in the mask DAG.
+static std::optional<int64_t> extractAxisBound(arith::CmpIOp cmp,
+                                               unsigned axis) {
+  Value index;
+  Value bound;
+  switch (cmp.getPredicate()) {
+  case arith::CmpIPredicate::slt:
+  case arith::CmpIPredicate::ult:
+    index = cmp.getLhs();
+    bound = cmp.getRhs();
+    break;
+  case arith::CmpIPredicate::sgt:
+  case arith::CmpIPredicate::ugt:
+    index = cmp.getRhs();
+    bound = cmp.getLhs();
+    break;
+  default:
+    return std::nullopt;
+  }
+
+  auto constant = bound.getDefiningOp<arith::ConstantOp>();
+  auto cmpType = dyn_cast<RankedTensorType>(cmp.getType());
+  auto extent = getRangeExtentAlongAxis(index, axis);
+  if (!constant || !cmpType || axis >= cmpType.getRank() || !extent)
+    return std::nullopt;
+  auto indexType = dyn_cast<IntegerType>(getElementTypeOrSelf(index.getType()));
+  // A signed comparison observes the high half of an unsigned range as
+  // negative, so it is not an upper bound on the original coordinates.
+  if ((cmp.getPredicate() == arith::CmpIPredicate::slt ||
+       cmp.getPredicate() == arith::CmpIPredicate::sgt) &&
+      (!indexType ||
+       !APInt(64, *extent - 1).isSignedIntN(indexType.getWidth())))
+    return std::nullopt;
+
+  auto dense = dyn_cast<DenseElementsAttr>(constant.getValue());
+  auto maybeBound = extractIntFromAttr(constant.getValue());
+  if (!dense || !maybeBound)
+    return std::nullopt;
+  int64_t value = *maybeBound;
+  if (value <= 0 || !llvm::isPowerOf2_64(value) ||
+      cmpType.getDimSize(axis) < value)
+    return std::nullopt;
+  return value;
+}
+
+/// Trace the final store mask backwards while retaining the axis that
+/// corresponds to the store's last dimension. For a conjunction, any proven
+/// upper bound remains valid and the tightest one determines the useful width.
+static std::optional<int64_t> extractMaskAxisBound(Value mask, unsigned axis,
+                                                   unsigned depth = 0) {
+  if (depth >= 64)
+    return std::nullopt;
+  Operation *def = mask.getDefiningOp();
+  if (!def)
+    return std::nullopt;
+  if (auto cmp = dyn_cast<arith::CmpIOp>(def))
+    return extractAxisBound(cmp, axis);
+  if (auto andOp = dyn_cast<arith::AndIOp>(def)) {
+    auto lhs = extractMaskAxisBound(andOp.getLhs(), axis, depth + 1);
+    auto rhs = extractMaskAxisBound(andOp.getRhs(), axis, depth + 1);
+    if (lhs && rhs)
+      return std::min(*lhs, *rhs);
+    return lhs ? lhs : rhs;
+  }
+  if (isa<triton::BroadcastOp, triton::ExpandDimsOp, triton::ReshapeOp>(def)) {
+    auto srcAxis = mapAxisToShapeOperand(def, axis);
+    if (srcAxis)
+      return extractMaskAxisBound(def->getOperand(0), *srcAxis, depth + 1);
+  }
+  return std::nullopt;
+}
+
+/// Infer the useful width of the store's last dimension. Bounds on other
+/// dimensions are deliberately ignored even if their numeric values happen to
+/// be powers of two.
+static bool extractEmbeddingSize(StoreLoadPattern &pattern) {
+  auto store = dyn_cast_or_null<triton::StoreOp>(pattern.storeOp);
+  if (!store || !store.getMask())
+    return false;
+  auto maskType = dyn_cast<RankedTensorType>(store.getMask().getType());
+  if (!maskType || maskType.getRank() == 0)
+    return false;
+  auto bound = extractMaskAxisBound(store.getMask(), maskType.getRank() - 1);
+  if (!bound)
+    return false;
+  pattern.embeddingSize = *bound;
+  return true;
 }
 
 /// Replace only the last dimension if it equals oldLast; else
@@ -249,6 +397,102 @@ static Type replaceLastDimIfMatches(Type type, int64_t oldLast,
     }
   }
   return type;
+}
+
+/// Check every operation that will be copied, including scalar and equal-width
+/// dependencies. OperationState cloning below does not copy regions/successors.
+static bool
+canCloneDependencies(const SmallVectorImpl<const StoreLoadPattern *> &group) {
+  for (auto *pattern : group) {
+    for (Operation *op : pattern->dependentOps) {
+      if (op->getNumRegions() || op->getNumSuccessors())
+        return false;
+      if (auto load = dyn_cast<triton::LoadOp>(op)) {
+        if (load.getIsVolatile())
+          return false;
+      } else if (!isa<triton::StoreOp>(op) && !isMemoryEffectFree(op)) {
+        // Ordinary reads can be copied at their original position. Volatile
+        // reads, atomics and unknown side effects must not be duplicated.
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+/// The cloner changes every matching last dimension, not just the mask's
+/// range. Prove that these changes all implement the same last-axis prefix
+/// slice before mutating anything. Equal dimension sizes alone are not axis
+/// provenance (e.g. a row range expanded from 32 to 32x1 must not shrink).
+// TODO: Carry explicit axis/slice mappings into the cloner to support more
+// general reshapes and independent axes instead of rejecting those graphs.
+static bool
+canCloneLastAxisPrefix(const SmallVectorImpl<const StoreLoadPattern *> &group,
+                       int64_t oldSize) {
+  auto changes = [oldSize](Type type) {
+    auto tensor = dyn_cast<RankedTensorType>(type);
+    return tensor && tensor.getRank() > 0 &&
+           tensor.getShape().back() == oldSize;
+  };
+  llvm::DenseSet<Operation *> ops;
+  for (auto *pattern : group) {
+    ops.insert(pattern->dependentOps.begin(), pattern->dependentOps.end());
+    ops.insert(pattern->storeOp);
+  }
+  for (Operation *op : ops) {
+    bool changesOperand = llvm::any_of(op->getOperandTypes(), changes);
+    bool changesResult = llvm::any_of(op->getResultTypes(), changes);
+    // make_range is cloned by its end attribute as well as its tensor size.
+    if (auto range = dyn_cast<triton::MakeRangeOp>(op)) {
+      if ((changesResult || range.getEnd() == oldSize) &&
+          (range.getStart() != 0 || range.getEnd() != oldSize))
+        return false;
+      continue;
+    }
+    if (!changesOperand && !changesResult)
+      continue;
+    // A tensor block argument cannot be sliced by inserting a broadcast.
+    for (Value operand : op->getOperands())
+      if (changes(operand.getType()) &&
+          (!operand.getDefiningOp() || !ops.contains(operand.getDefiningOp())))
+        return false;
+    if (auto constant = dyn_cast<arith::ConstantOp>(op)) {
+      auto dense = dyn_cast<DenseElementsAttr>(constant.getValue());
+      if (!dense || !dense.isSplat())
+        return false;
+      continue;
+    }
+    if (isa<triton::SplatOp>(op))
+      continue;
+    if (isa<triton::BroadcastOp, triton::ExpandDimsOp, triton::ReshapeOp>(op)) {
+      auto result = cast<RankedTensorType>(op->getResult(0).getType());
+      auto src = cast<RankedTensorType>(op->getOperand(0).getType());
+      // A broadcast may introduce the sliced axis from an invariant source.
+      if (isa<triton::BroadcastOp>(op) && !changesOperand &&
+          src.getShape().back() == 1)
+        continue;
+      auto srcAxis = mapAxisToShapeOperand(op, result.getRank() - 1);
+      if (!changesOperand || !changesResult || !srcAxis ||
+          *srcAxis != src.getRank() - 1)
+        return false;
+      continue;
+    }
+    // Pointwise operations commute with the same prefix slice on each tensor
+    // operand/result. Do not assume this for reductions, transposes or regions.
+    if (!op->hasTrait<OpTrait::Elementwise>() &&
+        !isa<triton::AddPtrOp, triton::LoadOp, triton::StoreOp>(op))
+      return false;
+    RankedTensorType tensorType;
+    for (Type type :
+         llvm::concat<Type>(op->getOperandTypes(), op->getResultTypes())) {
+      if (auto tensor = dyn_cast<RankedTensorType>(type)) {
+        if (tensorType && tensor.getShape() != tensorType.getShape())
+          return false;
+        tensorType = tensor;
+      }
+    }
+  }
+  return true;
 }
 
 /// Look through the group's dependent operations to find a broadcast op result
@@ -337,6 +581,8 @@ static Value ensureValueWithNewLastDim(
   RankedTensorType newType = RankedTensorType::get(newShape, elem);
 
   // create a triton.broadcast that produces the requested shape.
+  // Do not move the caller's clone away from its original memory-order point.
+  OpBuilder::InsertionGuard guard(rewriter);
   rewriter.setInsertionPointAfterValue(v);
   auto bcast = rewriter.create<triton::BroadcastOp>(loc, newType, v);
   bcast.getOperation()->setAttr(
@@ -370,40 +616,16 @@ cloneConstantOp(PatternRewriter &rewriter, Location loc,
   // newResultTypes[0]
   Attribute valAttr = constOp.getValue();
   Attribute newValAttr = valAttr;
-  if (!newResultTypes.empty()) {
-    if (auto newResRT = dyn_cast<RankedTensorType>(newResultTypes[0])) {
-      if (auto dense = dyn_cast_or_null<DenseElementsAttr>(valAttr)) {
-        if (dense.isSplat()) {
-          Attribute splatVal = dense.getSplatValue<Attribute>();
-          newValAttr = SplatElementsAttr::get(newResRT, splatVal);
-        } else if (dense.getNumElements() == 1) {
-          Type elemTy = newResRT.getElementType();
-          if (mlir::isa<IntegerType>(elemTy)) {
-            auto it = dense.value_begin<llvm::APInt>();
-            IntegerAttr scalar = IntegerAttr::get(elemTy, *it);
-            newValAttr = SplatElementsAttr::get(newResRT, scalar);
-          } else if (mlir::isa<FloatType>(elemTy)) {
-            auto it = dense.value_begin<llvm::APFloat>();
-            FloatAttr scalar = FloatAttr::get(elemTy, *it);
-            newValAttr = SplatElementsAttr::get(newResRT, scalar);
-          }
-        } else {
-          //  create a splat from the first element
-          Type elemTy = newResRT.getElementType();
-          if (mlir::isa<IntegerType>(elemTy)) {
-            auto it = dense.value_begin<llvm::APInt>();
-            IntegerAttr scalar = IntegerAttr::get(elemTy, *it);
-            newValAttr = SplatElementsAttr::get(newResRT, scalar);
-          } else if (mlir::isa<FloatType>(elemTy)) {
-            auto it = dense.value_begin<llvm::APFloat>();
-            FloatAttr scalar = FloatAttr::get(elemTy, *it);
-            newValAttr = SplatElementsAttr::get(newResRT, scalar);
-          }
-        }
-      } else if (mlir::isa<IntegerAttr>(valAttr) || mlir::isa<FloatAttr>(valAttr)) {
-        newValAttr = SplatElementsAttr::get(newResRT, valAttr);
-      }
-    }
+  // Preserve every element of unchanged constants, including row offsets on
+  // unrelated axes. Only resized constants need their value rebuilt; preflight
+  // restricts those constants to splats.
+  if (!newResultTypes.empty() && newResultTypes[0] != constOp.getType()) {
+    auto newResRT = cast<RankedTensorType>(newResultTypes[0]);
+    auto dense = dyn_cast<DenseElementsAttr>(valAttr);
+    assert(dense && dense.isSplat() &&
+           "preflight must only allow resizing splat constants");
+    newValAttr =
+        SplatElementsAttr::get(newResRT, dense.getSplatValue<Attribute>());
   }
   if (newValAttr)
     state.addAttribute("value", newValAttr);
@@ -413,30 +635,12 @@ cloneConstantOp(PatternRewriter &rewriter, Location loc,
   return cloned;
 }
 
-static void cloneGroupOperations(
-    PatternRewriter &rewriter, Location loc, Block &sourceBlock,
-    Operation *insertionPoint,
-    const SmallVectorImpl<const StoreLoadPattern *> &group, int64_t oldSize,
-    int64_t newSize, llvm::DenseMap<Operation *, Operation *> &clonedOpsMap,
-    int groupID, llvm::DenseMap<Value, Value> *initialValueMapping = nullptr) {
-  // Collect all ops to clone
-  llvm::DenseSet<Operation *> opsToClone;
-  for (auto *p : group) {
-    if (!p)
-      continue;
-    opsToClone.insert(p->dependentOps.begin(), p->dependentOps.end());
-    if (p->storeOp)
-      opsToClone.insert(p->storeOp);
-  }
-  // Preserve program order
-  SmallVector<Operation *, 64> ordered =
-      orderedOpsInBlock(sourceBlock, opsToClone);
-  // Value mapping old -> new
-  llvm::DenseMap<Value, Value> valueMapping;
-  // If initial value mapping provided, use it as starting point
-  if (initialValueMapping) {
-    valueMapping = *initialValueMapping;
-  }
+static void
+cloneGroupOperations(PatternRewriter &rewriter, Location loc,
+                     ArrayRef<Operation *> ordered, Operation *insertionPoint,
+                     int64_t oldSize, int64_t newSize,
+                     llvm::DenseMap<Operation *, Operation *> &clonedOpsMap,
+                     int groupID, llvm::DenseMap<Value, Value> &valueMapping) {
 
   // Insert cloned ops before insertionPoint
   rewriter.setInsertionPoint(insertionPoint);
@@ -1003,40 +1207,69 @@ private:
     groupAndBalancePatterns(patterns, groups, digit);
     LLVM_DEBUG(llvm::dbgs() << "Grouped into " << groups.size() << " groups\n");
 
-    // If every group's oldSize equals its newSize, there is nothing to rewrite.
-    bool allSizesMatch = !groups.empty();
-    for (const auto &group : groups) {
-      if (group.empty())
-        continue;
-      int64_t newSize = 0;
-      for (auto *p : group)
-        newSize = std::max(newSize, p->embeddingSize);
-      int64_t oldSize = computeGroupOldSize(group, func);
-      if (oldSize != newSize) {
-        allSizesMatch = false;
-        break;
-      }
-    }
-    if (allSizesMatch) {
-      LLVM_DEBUG(llvm::dbgs()
-                 << "SKIP PASS: oldSize == newSize for all groups\n");
-      return success();
-    }
-
-    // Find a representative scf.for (if any)
+    // Find a representative scf.for (if any).
     scf::ForOp foundFor = nullptr;
     int loopCount = 0;
-
     func.walk([&](scf::ForOp f) {
       loopCount++;
       foundFor = f;
       return WalkResult::advance();
     });
-    // for now only work with 1 for loop
+    // For now only work with at most one loop.
     if (loopCount > 1) {
-      // if more than 1 loop this pass do nothing and just let it pass
       LLVM_DEBUG(llvm::dbgs()
                  << "SKIPPING: More than 1 loop is not supported yet \n");
+      return success();
+    }
+
+    // Axis-aware mask analysis above identifies a last-dimension bound, while
+    // old-size recovery remains a separate conservative analysis. Keep an
+    // explicit shrink-only invariant between the two results. Expanding a
+    // tensor type without expanding flattened producers such as tt.make_range
+    // would create invalid reshape operations.
+    //
+    // Validate every group before mutation; unsupported dependency graphs
+    // retain the existing whole-function fallback.
+    // Preserve the existing behavior when an unchanged group is present next
+    // to a shrinkable group: equality is a no-op, not an unsupported
+    // expansion. Only skip for all-equal groups after checking every group.
+    bool allSizesMatch = !groups.empty();
+    for (const auto &group : groups) {
+      if (group.empty())
+        continue;
+      if (!canCloneDependencies(group)) {
+        LLVM_DEBUG(llvm::dbgs()
+                   << "SKIP PASS: unsupported dependency cloning\n");
+        return success();
+      }
+      int64_t newSize = 0;
+      for (auto *p : group)
+        newSize = std::max(newSize, p->embeddingSize);
+      int64_t oldSize = computeGroupOldSize(group, func);
+      if (oldSize < 0) {
+        LLVM_DEBUG(llvm::dbgs()
+                   << "SKIP PASS: unable to infer group oldSize\n");
+        return success();
+      }
+      if (oldSize < newSize) {
+        LLVM_DEBUG(llvm::dbgs()
+                   << "SKIP PASS: group oldSize=" << oldSize
+                   << " is smaller than newSize=" << newSize << "\n");
+        return success();
+      }
+      if (oldSize != newSize) {
+        if (!canCloneLastAxisPrefix(group, oldSize)) {
+          LLVM_DEBUG(
+              llvm::dbgs()
+              << "SKIP PASS: dependent graph is not a last-axis slice\n");
+          return success();
+        }
+        allSizesMatch = false;
+      }
+    }
+    if (allSizesMatch) {
+      LLVM_DEBUG(llvm::dbgs()
+                 << "SKIP PASS: oldSize == newSize for all groups\n");
       return success();
     }
     if (loopCount == 1) {
@@ -1062,401 +1295,56 @@ private:
                  << "ALL" << patterns.size()
                  << " store patterns verified insid single loop \n");
     }
-    // TODO: create a flag to enable splitting loops. Currently from testing
-    // splitting has no effects to performance
-    bool splitFlag = false;
-    if (loopCount == 1) {
-      return processSplitIntoGroupsReuseLoop(func, foundFor, groups);
-      if (splitFlag)
-        return processSplitIntoGroupsLoops(func, foundFor, groups);
-    } else {
-      return processSplitIntoGroupsNoLoops(func, groups);
-    }
+    return processGroupsInPlace(func, groups);
   }
 
-  static bool isInsideLoop(Operation *op, scf::ForOp loop) {
-    if (!op)
-      return false;
-    return op->getParentOfType<scf::ForOp>() == loop;
-  }
-  // Determine max embedding size in this group and
-  // collect stores for deletion later
-  static int64_t computeMaxEmbeddingAndCollectStores(
-      const SmallVector<const StoreLoadPattern *, 4> &group,
-      llvm::SmallVector<Operation *, 16> &storesToDelete) {
-    int64_t maxSize = 0;
-    for (auto *pattern : group) {
-      maxSize = std::max(maxSize, pattern->embeddingSize);
-      // collect stores for deletion later
-      if (pattern->storeOp)
-        storesToDelete.push_back(pattern->storeOp);
-    }
-    return maxSize;
-  }
-
-  // Initialize a fake StoreLoadPattern used to reuse clone logic
-  static void initFakePattern(StoreLoadPattern &fake,
-                              const llvm::DenseSet<Operation *> &ops,
-                              int64_t embeddingSize) {
-    fake.dependentOps = ops;
-    fake.storeOp = nullptr;
-    fake.loadOp = nullptr;
-    fake.embeddingSize = embeddingSize;
-    fake.maskOps.clear();
-    fake.constantOps.clear();
-  }
-
-  // Split dependent ops: outside-loop vs inside-loop
-  static void
-  splitDependentOpsByLoop(const SmallVector<const StoreLoadPattern *, 4> &group,
-                          scf::ForOp loop,
-                          llvm::DenseSet<Operation *> &outsideLoopOps,
-                          llvm::DenseSet<Operation *> &insideLoopOps) {
-    for (auto *p : group) {
-      for (Operation *op : p->dependentOps) {
-        if (!op)
-          continue;
-        if (op->getBlock() == loop.getBody())
-          insideLoopOps.insert(op);
-        else if (op->getBlock() == loop->getBlock() &&
-                 op->isBeforeInBlock(loop))
-          outsideLoopOps.insert(op);
-      }
-      // include the storeOp itself
-      if (!p->storeOp)
-        continue;
-      if (p->storeOp->getBlock() == loop.getBody())
-        insideLoopOps.insert(p->storeOp);
-      else if (p->storeOp->getBlock() == loop->getBlock() &&
-               p->storeOp->isBeforeInBlock(loop))
-        outsideLoopOps.insert(p->storeOp);
-    }
-  }
-  LogicalResult processSplitIntoGroupsNoLoops(
+  /// Width grouping must not schedule memory operations. Copy each dependency
+  /// immediately before its original operation, with independent SSA mappings
+  /// per width. Stores stay in source order, loads never cross writes, and loop
+  /// placement/iteration order is unchanged even when all pointers may alias.
+  LogicalResult processGroupsInPlace(
       triton::FuncOp func,
       SmallVectorImpl<SmallVector<const StoreLoadPattern *, 4>> &groups) {
-
-    // We clone at the end of the function body.
-    PatternRewriter rewriter(func.getContext());
-
-    Block &body = func.getBody().front();
-
-    // Collect stores to delete after all cloning, just deleting the stores will
-    // delete all the old code by in other pass like cse
-    llvm::SmallVector<Operation *, 16> storesToDelete;
-
-    // Process each group
-    for (size_t gi = 0; gi < groups.size(); ++gi) {
-      Operation *insertionPoint = body.getTerminator();
-      const auto &group = groups[gi];
-      if (group.empty())
-        continue;
-
-      // Determine max embedding size in this group
-      int64_t maxSize =
-          computeMaxEmbeddingAndCollectStores(group, storesToDelete);
-
-      // Map to track cloned operations for this group
-      llvm::DenseMap<Operation *, Operation *> clonedOpsMap;
-
-      // Compute group old size
-      auto oldSize = computeGroupOldSize(group, func);
-
-      // default success if cant find oldSize
-      if (oldSize == -1) {
-        return success();
-      }
-
-      LLVM_DEBUG(llvm::dbgs() << "Processing group with old size: " << oldSize
-                              << ", new size: " << maxSize << "\n");
-      // Clone operations for this group with new size, clone by group since
-      // diff group have diff size
-      cloneGroupOperations(rewriter, func.getLoc(), body, insertionPoint, group,
-                           oldSize, maxSize, clonedOpsMap,
-                           static_cast<int>(gi));
-    }
-
-    // erase original stores collected earlier
-    for (Operation *store : storesToDelete) {
-      if (store && store->getBlock()) {
-        rewriter.eraseOp(store);
-      }
-    }
-
-    return success();
-  }
-
-  LogicalResult processSplitIntoGroupsLoops(
-      triton::FuncOp func, scf::ForOp loop,
-      SmallVectorImpl<SmallVector<const StoreLoadPattern *, 4>> &groups) {
-
-    PatternRewriter rewriter(func.getContext());
-    Block &body = func.getBody().front();
-    Operation *insertPt = body.getTerminator();
-    llvm::SmallVector<Operation *, 16> storesToDelete;
-
-    for (size_t gi = 0; gi < groups.size(); ++gi) {
-      const auto &group = groups[gi];
-      if (group.empty())
-        continue;
-
-      // get new/old size
-      int64_t newSize =
-          computeMaxEmbeddingAndCollectStores(group, storesToDelete);
-      int64_t oldSize = computeGroupOldSize(group, func);
-      // default success if cant find oldSize
-      if (oldSize == -1) {
-        return success();
-      }
-
-      LLVM_DEBUG(llvm::dbgs()
-                 << "processSplitIntoGroupsLoops: group " << gi
-                 << " oldSize=" << oldSize << " newSize=" << newSize << "\n");
-
-      llvm::DenseMap<Operation *, Operation *> clonedOpsMap;
-
-      // Split dependent ops: outside-loop vs inside-loop
-      llvm::DenseSet<Operation *> outsideLoopOps;
-      llvm::DenseSet<Operation *> insideLoopOps;
-      splitDependentOpsByLoop(group, loop, outsideLoopOps, insideLoopOps);
-
-      // Clone outside-loop ops
-      if (!outsideLoopOps.empty()) {
-        // Create a temporary fake pattern for outside ops only populate the
-        // dependentOps so we can reuse no loop clone logic
-        StoreLoadPattern fake;
-        initFakePattern(fake, outsideLoopOps, newSize);
-
-        SmallVector<const StoreLoadPattern *, 4> fakeGroup;
-        fakeGroup.push_back(&fake);
-
-        cloneGroupOperations(rewriter, func.getLoc(), body, insertPt, fakeGroup,
-                             oldSize, newSize, clonedOpsMap,
-                             static_cast<int>(gi), nullptr);
-      }
-
-      // Clone the loop itself (same bounds,step, iter args)
-      rewriter.setInsertionPoint(insertPt);
-      // Remap loop bounds and init args if they were cloned in the outside step
-      Value lowerBound = loop.getLowerBound();
-      Value upperBound = loop.getUpperBound();
-      Value step = loop.getStep();
-      SmallVector<Value> initArgs = loop.getInitArgs();
-
-      if (lowerBound.getDefiningOp() &&
-          clonedOpsMap.count(lowerBound.getDefiningOp()))
-        lowerBound = clonedOpsMap[lowerBound.getDefiningOp()]->getResult(0);
-      if (upperBound.getDefiningOp() &&
-          clonedOpsMap.count(upperBound.getDefiningOp()))
-        upperBound = clonedOpsMap[upperBound.getDefiningOp()]->getResult(0);
-      if (step.getDefiningOp() && clonedOpsMap.count(step.getDefiningOp()))
-        step = clonedOpsMap[step.getDefiningOp()]->getResult(0);
-
-      SmallVector<Value> newInitArgs;
-      for (Value arg : initArgs) {
-        if (arg.getDefiningOp() && clonedOpsMap.count(arg.getDefiningOp())) {
-          newInitArgs.push_back(
-              clonedOpsMap[arg.getDefiningOp()]->getResult(0));
-        } else {
-          newInitArgs.push_back(arg);
-        }
-      }
-
-      auto newFor = rewriter.create<scf::ForOp>(func.getLoc(), lowerBound,
-                                                upperBound, step, newInitArgs);
-
-      newFor->setAttr(
-          "group_id",
-          IntegerAttr::get(IntegerType::get(rewriter.getContext(), 32),
-                           APInt(32, gi, /*isSigned=*/true)));
-
-      // Update clonedOpsMap with the new loop mapping
-      clonedOpsMap[loop.getOperation()] = newFor.getOperation();
-
-      // Clone inside-loop ops into new loop body using cloneGroupOperations
-      if (!insideLoopOps.empty()) {
-        // Create a temporary fake pattern for inside ops
-        StoreLoadPattern fakeInside;
-        initFakePattern(fakeInside, insideLoopOps, newSize);
-
-        SmallVector<const StoreLoadPattern *, 4> fakeInsideGroup;
-        fakeInsideGroup.push_back(&fakeInside);
-
-        // Prepare value mapping for the new loop body context
-        llvm::DenseMap<Value, Value> valueMapping;
-        valueMapping[loop.getInductionVar()] = newFor.getInductionVar();
-        // Map iter args from original loop to new loop
-        for (auto it :
-             llvm::zip(loop.getRegionIterArgs(), newFor.getRegionIterArgs())) {
-          valueMapping[std::get<0>(it)] = std::get<1>(it);
-        }
-
-        // Set insertion point to the start of the new loop body
-        rewriter.setInsertionPointToStart(newFor.getBody());
-        // Call cloneGroupOperations for the inside ops with initial value
-        // mapping
-        cloneGroupOperations(rewriter, func.getLoc(), *loop.getBody(),
-                             newFor.getBody()->getTerminator(), fakeInsideGroup,
-                             oldSize, newSize, clonedOpsMap,
-                             static_cast<int>(gi), &valueMapping);
-      }
-    }
-
-    // Erase original stores
-    for (Operation *s : storesToDelete) {
-      if (s && s->getBlock())
-        rewriter.eraseOp(s);
-    }
-
-    return success();
-  }
-
-  LogicalResult processSplitIntoGroupsReuseLoop(
-      triton::FuncOp func, scf::ForOp loop,
-      SmallVectorImpl<SmallVector<const StoreLoadPattern *, 4>> &groups) {
-    PatternRewriter rewriter(func.getContext());
-    Block &body = func.getBody().front();
-    Operation *insertPt = body.getTerminator();
-    llvm::SmallVector<Operation *, 16> storesToDelete;
-
-    // Per-group collected inside/outside ops and sizes
-    SmallVector<llvm::DenseSet<Operation *>, 4> perGroupInsideOps(
+    SmallVector<llvm::DenseSet<Operation *>, 4> groupOps(groups.size());
+    SmallVector<llvm::DenseMap<Operation *, Operation *>, 4> clonedOps(
         groups.size());
-    SmallVector<llvm::DenseSet<Operation *>, 4> perGroupOutsideOps(
-        groups.size());
-    SmallVector<int64_t, 4> groupNewSizes(groups.size(), 0);
-
-    // gather per-group sets and sizes (don't create loops yet).
-    for (size_t gi = 0; gi < groups.size(); ++gi) {
-      const auto &group = groups[gi];
-      if (group.empty())
-        continue;
+    SmallVector<llvm::DenseMap<Value, Value>, 4> valueMappings(groups.size());
+    SmallVector<int64_t, 4> oldSizes;
+    SmallVector<int64_t, 4> newSizes;
+    llvm::DenseSet<Operation *> allOps;
+    SmallVector<Operation *> storesToDelete;
+    for (auto [gi, group] : llvm::enumerate(groups)) {
       int64_t newSize = 0;
-      for (auto *p : group) {
-        newSize = std::max(newSize, p->embeddingSize);
-        if (p->storeOp)
-          storesToDelete.push_back(p->storeOp);
-        for (Operation *op : p->dependentOps) {
-          if (!op)
-            continue;
-          if (op->getBlock() == loop.getBody())
-            perGroupInsideOps[gi].insert(op);
-          else if (op->getBlock() == loop->getBlock() &&
-                   op->isBeforeInBlock(loop))
-            perGroupOutsideOps[gi].insert(op);
-        }
-        // include the storeOp itself
-        if (p->storeOp) {
-          if (p->storeOp->getBlock() == loop.getBody())
-            perGroupInsideOps[gi].insert(p->storeOp);
-          else if (p->storeOp->getBlock() == loop->getBlock() &&
-                   p->storeOp->isBeforeInBlock(loop))
-            perGroupOutsideOps[gi].insert(p->storeOp);
-        }
+      for (auto *pattern : group) {
+        newSize = std::max(newSize, pattern->embeddingSize);
+        groupOps[gi].insert(pattern->dependentOps.begin(),
+                            pattern->dependentOps.end());
+        storesToDelete.push_back(pattern->storeOp);
       }
-      groupNewSizes[gi] = newSize;
+      allOps.insert(groupOps[gi].begin(), groupOps[gi].end());
+      oldSizes.push_back(computeGroupOldSize(group, func));
+      newSizes.push_back(newSize);
     }
 
-    SmallVector<llvm::DenseMap<Operation *, Operation *>, 4> perGroupClonedMaps(
-        groups.size());
-    for (size_t gi = 0; gi < groups.size(); ++gi) {
-      const auto &group = groups[gi];
-      if (group.empty())
-        continue;
-      if (perGroupOutsideOps[gi].empty())
-        continue;
-
-      StoreLoadPattern fakeOutside;
-      fakeOutside.dependentOps = perGroupOutsideOps[gi];
-      fakeOutside.storeOp = nullptr;
-      fakeOutside.loadOp = nullptr;
-      fakeOutside.embeddingSize = groupNewSizes[gi];
-      fakeOutside.maskOps.clear();
-      fakeOutside.constantOps.clear();
-
-      SmallVector<const StoreLoadPattern *, 1> fakeGroup;
-      fakeGroup.push_back(&fakeOutside);
-
-      int64_t oldSize = computeGroupOldSize(group, func);
-      // default success if cant find oldSize
-      if (oldSize == -1) {
-        return success();
+    // Snapshot before mutation: do not visit newly created copies. Regions
+    // are retained in place, not recreated by the regionless cloner.
+    SmallVector<Operation *> ordered;
+    func.walk<WalkOrder::PreOrder>([&](Operation *op) {
+      if (allOps.contains(op))
+        ordered.push_back(op);
+    });
+    PatternRewriter rewriter(func.getContext());
+    for (Operation *op : ordered) {
+      for (unsigned gi = 0; gi < groups.size(); ++gi) {
+        if (!groupOps[gi].contains(op))
+          continue;
+        cloneGroupOperations(rewriter, op->getLoc(), {op}, op, oldSizes[gi],
+                             newSizes[gi], clonedOps[gi], gi,
+                             valueMappings[gi]);
       }
-
-      // insert clones at insertPt (end of function body).
-      cloneGroupOperations(rewriter, func.getLoc(), body, insertPt, fakeGroup,
-                           oldSize, groupNewSizes[gi], perGroupClonedMaps[gi],
-                           static_cast<int>(gi), /*valueMapping=*/nullptr);
     }
-    rewriter.setInsertionPoint(insertPt);
-    Value lowerBound = loop.getLowerBound();
-    Value upperBound = loop.getUpperBound();
-    Value step = loop.getStep();
-    SmallVector<Value> initArgs = loop.getInitArgs();
-    auto newFor = rewriter.create<scf::ForOp>(func.getLoc(), lowerBound,
-                                              upperBound, step, initArgs);
-    // We will map the original loop to this new loop when cloning inside ops
-    Operation *origLoopOp = loop.getOperation();
-    Operation *newForOp = newFor.getOperation();
-
-    // For each group, clone inside-loop ops into newFor, using a per-group
-    // clonedOpsMap that contains that group's outside clones + mapping of
-    // loop.
-    for (size_t gi = 0; gi < groups.size(); ++gi) {
-      const auto &group = groups[gi];
-      if (group.empty())
-        continue;
-
-      if (perGroupInsideOps[gi].empty())
-        continue;
-
-      // Build per-group clonedOpsMap: start with the per-group outside clones,
-      // then map the original loop -> newFor so cloneGroupOperations remaps
-      // uses of the loop to the single cloned loop.
-      llvm::DenseMap<Operation *, Operation *> clonedOpsMap;
-      for (auto &kv : perGroupClonedMaps[gi])
-        clonedOpsMap[kv.first] = kv.second;
-      clonedOpsMap[origLoopOp] = newForOp;
-
-      int64_t newSize = groupNewSizes[gi];
-      int64_t oldSize = computeGroupOldSize(group, func);
-      // default success if cant find oldSize
-      if (oldSize == -1) {
-        return success();
-      }
-
-      StoreLoadPattern fakeInside;
-      fakeInside.dependentOps = perGroupInsideOps[gi];
-      fakeInside.storeOp = nullptr;
-      fakeInside.loadOp = nullptr;
-      fakeInside.embeddingSize = newSize;
-      fakeInside.maskOps.clear();
-      fakeInside.constantOps.clear();
-      SmallVector<const StoreLoadPattern *, 1> fakeInsideGroup;
-      fakeInsideGroup.push_back(&fakeInside);
-
-      // Value mapping for induction var and region iter args
-      llvm::DenseMap<Value, Value> valueMapping;
-      valueMapping[loop.getInductionVar()] = newFor.getInductionVar();
-      for (auto it :
-           llvm::zip(loop.getRegionIterArgs(), newFor.getRegionIterArgs())) {
-        valueMapping[std::get<0>(it)] = std::get<1>(it);
-      }
-
-      // Insert cloned inside ops at the start of the new loop body
-      rewriter.setInsertionPointToStart(newFor.getBody());
-      cloneGroupOperations(rewriter, func.getLoc(), *loop.getBody(),
-                           newFor.getBody()->getTerminator(), fakeInsideGroup,
-                           oldSize, newSize, clonedOpsMap, static_cast<int>(gi),
-                           &valueMapping);
-    }
-
-    // Erase original stores collected earlier
-    for (Operation *s : storesToDelete) {
-      if (s && s->getBlock())
-        rewriter.eraseOp(s);
-    }
-
+    for (Operation *store : storesToDelete)
+      rewriter.eraseOp(store);
     return success();
   }
 };
