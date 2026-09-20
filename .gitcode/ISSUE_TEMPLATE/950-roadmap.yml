@@ -1,0 +1,40 @@
+name: 🎯 Roadmap
+description: 发布周期内的项目规划（仅供核心维护者使用）
+title: "[Roadmap] <项目名称> Roadmap <时间范围>"
+labels: ["roadmap"]
+
+body:
+- type: textarea
+  attributes:
+    value: |
+      ```
+      # <项目名称> Roadmap <时间范围>
+
+      本周期重点聚焦 <方向1>、<方向2>、<方向3>，持续提升 <性能/兼容性/易用性/质量>。
+
+      ## Focus
+
+      - <Focus 1 描述>
+      - <Focus 2 描述>
+
+      ## <模块名称 1>
+
+      - [ ] **<工作项名称 1>**
+      Goal: <目标描述>
+      Issue: <Issue链接>（可选，建议使用）
+      Owner: @<GitCodeID>（可选）
+      PR: <PR链接>（可选）
+
+      - [ ] **<工作项名称 2> [🙋 Help Wanted]**（可选）
+      Goal: <目标描述>
+      Issue: <Issue链接>（可选，建议使用）
+      Owner: @<GitCodeID>（可选）
+      PR: <PR链接>（可选）
+
+      ## Sub-issues（可选）
+
+      <上周期 Roadmap 描述> <Issue链接>
+      <大型工作项拆分> <Issue链接>
+      ```
+  validations:
+    required: true
