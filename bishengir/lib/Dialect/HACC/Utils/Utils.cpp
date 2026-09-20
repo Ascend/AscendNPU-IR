@@ -28,6 +28,7 @@
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/FormatVariadic.h"
 
 #include <optional>
@@ -431,7 +432,16 @@ resetDeclFuncLoc(LLVM::LLVMFuncOp /* don't need reference */ llvmFunc) {
   /// empty.
   if (auto originalLoc =
           llvm::dyn_cast_if_present<FusedLoc>(llvmFunc.getLoc())) {
-    auto originalAttr = cast<LLVM::DISubprogramAttr>(originalLoc.getMetadata());
+
+    // This check and dyn_cast were added after merging hivmc binary into bishengir-compile binary
+    // Before the merge hivmc would be called from a separate file (e.g. loc("/path/test/tmp/module.hivm.opt.mlir":2:3))
+    // After the merge the location is already FUSED (e.g. loc(fused["y"("/path/softcap_npu.py":104:27), "/path/softcap_npu.py":83:0]))
+    // So it can't be directly casted via llvm::cast, and we need to use dyn_cast to exclude exceptions.
+    // If the merge will become stable, this function can be moved to exclude redundant dyn_cast (the location is already fused)
+    // this can increase compile-time perf a bit.
+    auto originalAttr = llvm::dyn_cast_if_present<LLVM::DISubprogramAttr>(originalLoc.getMetadata());
+    if (!originalAttr)
+      return;
 #if defined(__LLVM_MAJOR_VERSION_20_COMPATIBLE__) || defined(__LLVM_MAJOR_VERSION_22_COMPATIBLE__)
     auto newAttr = LLVM::DISubprogramAttr::get(
         llvmFunc->getContext(), DistinctAttr(), LLVM::DICompileUnitAttr(),

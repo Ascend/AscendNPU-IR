@@ -20,6 +20,7 @@
 #include "bishengir/Tools/hivmc/Utility.h"
 #include "bishengir/Version/Version.h"
 
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/InitAllDialects.h"
 #include "mlir/InitAllExtensions.h"
 #include "mlir/InitAllPasses.h"
