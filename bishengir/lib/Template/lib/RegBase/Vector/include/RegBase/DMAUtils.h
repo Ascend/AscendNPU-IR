@@ -502,8 +502,8 @@ load_gm_to_ubuf_1d_core_with_contiguous_last_dim(memref_t<__gm__ T, 1> *gm,
                               left_padding_num, 0, 0, l2_cache_ctl);
 }
 
-/// `load_gm_to_ubuf_intrin_core` with `numBurst = size[0], burst_len =
-/// dtypeBytes` Prerequisites: `strideUB[0] == 1, strideGM[0] != 1`
+/// Compact GM -> UB load with `burst_len = dtypeBytes`.
+/// Prerequisites: `strideUB[0] == 1, strideGM[0] != 1`.
 template <typename T>
 __aiv__ __attribute__((always_inline)) void
 load_gm_to_ubuf_1d_core_with_ubuf_contiguous_last_dim(
@@ -515,24 +515,26 @@ load_gm_to_ubuf_1d_core_with_ubuf_contiguous_last_dim(
   constexpr int bytes = sizeof(T);
 
   const int64_t stride0_gm = gm->strides[0];
-  const int64_t dma_copy_size = FLOOR_FACTOR(size0, (UB_ALIGN_BYTES / bytes));
-  load_gm_to_ubuf_intrin_core(src_ptr, 0, dst_ptr, 0, dma_copy_size, bytes,
-                              left_padding_num, (stride0_gm - 1) * bytes, 0,
-                              l2_cache_ctl);
-  const int64_t scalar_copy_size = size0 - dma_copy_size;
-  if (scalar_copy_size) {
-    // Use scalar loop to handle the remaining unaligned tail section.
-    memref_t<__gm__ T, 1> gm_scalar = {gm->allocated,
-                                       gm->aligned,
-                                       gm->offset + stride0_gm * dma_copy_size,
-                                       {scalar_copy_size},
-                                       {stride0_gm}};
-    memref_t<__ubuf__ T, 1> ub_scalar = {ub->allocated,
-                                         ub->aligned,
-                                         ub->offset + dma_copy_size,
-                                         {scalar_copy_size},
-                                         {1}};
-    load_gm_to_ubuf_1d_by_scalar<T>(&gm_scalar, &ub_scalar);
+  constexpr uint16_t num_per_block = INTR_BYTES_PER_BLOCK / bytes;
+  constexpr uint16_t aligned_max_burst_cnt =
+      FLOOR_FACTOR(INTRIN_MAX_BURST_CNT, num_per_block);
+  const int64_t main_count = size0 / aligned_max_burst_cnt;
+  const uint16_t tail_burst_cnt = size0 % aligned_max_burst_cnt;
+  const uint64_t src_gap = (stride0_gm - 1) * bytes;
+
+  for (int64_t i = 0; i < main_count; ++i) {
+    const int64_t gm_offset = i * aligned_max_burst_cnt * stride0_gm;
+    const int64_t ub_offset = i * aligned_max_burst_cnt;
+    load_gm_to_ubuf_intrin_core(src_ptr, gm_offset, dst_ptr, ub_offset,
+                                aligned_max_burst_cnt, bytes, left_padding_num,
+                                src_gap, 0, l2_cache_ctl);
+  }
+  if (tail_burst_cnt > 0) {
+    const int64_t gm_offset = main_count * aligned_max_burst_cnt * stride0_gm;
+    const int64_t ub_offset = main_count * aligned_max_burst_cnt;
+    load_gm_to_ubuf_intrin_core(src_ptr, gm_offset, dst_ptr, ub_offset,
+                                tail_burst_cnt, bytes, left_padding_num,
+                                src_gap, 0, l2_cache_ctl);
   }
 }
 
