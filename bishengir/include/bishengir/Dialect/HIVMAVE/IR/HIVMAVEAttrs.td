@@ -52,6 +52,9 @@ def AVE_LoadDist : I32EnumAttr<"LoadDist",
       I32EnumAttrCase<"SPLT4CHN_B8",  21>,
       I32EnumAttrCase<"SPLT2CHN_B8",  22>,
       I32EnumAttrCase<"SPLT2CHN_B16", 23>,
+      // Mask / plds patterns. Enum ordinals are 24/25, but convert-hivmave-to-
+      // ave-intrin must map them to CCE MaskDist encodings US=1 / DS=2 for
+      // hivm.plds.b8 (see mapLoadDistToPldsMaskDist). Do not pass 24/25 through.
       I32EnumAttrCase<"US",           24>,
       I32EnumAttrCase<"DS",           25>,
       I32EnumAttrCase<"PK",           26>,
