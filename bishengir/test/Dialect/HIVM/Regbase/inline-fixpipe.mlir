@@ -129,7 +129,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9599">} {
     %mmad = hivm.hir.mmadL1 ins(%a, %b, %false, %c0, %c0, %c0 : tensor<10x10x16x32xi8>, tensor<2x10x32x32xi8>, i1, index, index, index) outs(%c : tensor<160x64xi32>) -> tensor<160x64xi32>
     %fractal = hivm.hir.convert_layout %mmad output_shape [2, 10, 16, 32] {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 32]>, srcLayout = #hivm.data_layout<ND>} : (tensor<160x64xi32>) -> tensor<2x10x16x32xi32>
     %strided = memref.cast %gm : memref<2x10x16x32xi8, #hivm.address_space<gm>> to memref<2x10x16x32xi8, strided<[?, ?, ?, ?], offset: ?>, #hivm.address_space<gm>>
-    hivm.hir.fixpipe ins(%fractal : tensor<2x10x16x32xi32>) outs(%strided : memref<2x10x16x32xi8, strided<[?, ?, ?, ?], offset: ?>, #hivm.address_space<gm>>)
+    hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<S322I8>} ins(%fractal : tensor<2x10x16x32xi32>) outs(%strided : memref<2x10x16x32xi8, strided<[?, ?, ?, ?], offset: ?>, #hivm.address_space<gm>>)
     return
   }
 }
@@ -156,51 +156,51 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 
 // -----
 
-// Inserted i8 L1 fixpipe: shouldEnableChannelMerge retargets dest to fractal
-// [N1, M1, 16, 32] (C0=32). No channel_split attr (default false).
+// Inserted i32 L1 fixpipe between i8-input mmads: no channel split/merge on
+// the i32 dst, so dma_mode is switched to NZ2NZ in place (default, omitted).
 // CHECK-LABEL: func.func @dotdot_i8
-// CHECK: %[[ARG0:.*]] = hivm.hir.fixpipe ins(%[[input:.*]] : tensor<32x32xi8>) outs(%[[out0:.*]] : tensor<1x2x16x32xi8>) -> tensor<1x2x16x32xi8>
+// CHECK: %[[ARG0:.*]] = hivm.hir.fixpipe ins(%[[input:.*]] : tensor<32x32xi32>) outs(%[[out0:.*]] : tensor<32x32xi32>) -> tensor<32x32xi32>
 // CHECK-NOT: channel_split
 // CHECK: %[[ARG1:.*]] = hivm.hir.mmadL1 {fixpipe_for_result_already_inserted = true} ins(%[[ARG0]]
-// CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%[[ARG1]] : tensor<32x32xi8>) outs(%[[out1:.*]] : tensor<32x32xi8>) -> tensor<32x32xi8>
+// CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%[[ARG1]] : tensor<32x32xi32>) outs(%[[out1:.*]] : tensor<32x32xi32>) -> tensor<32x32xi32>
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
-  func.func @dotdot_i8(%4: tensor<32x32xi8>, %e4: tensor<32x32xi8>, %e5: tensor<32x32xi8>) -> tensor<32x32xi8> {
+  func.func @dotdot_i8(%4: tensor<32x32xi8>, %e4: tensor<32x32xi8>, %e5: tensor<32x32xi32>) -> tensor<32x32xi32> {
     %true = arith.constant true
     %c32 = arith.constant 32 : index
-    %7 = tensor.empty() : tensor<32x32xi8>
-    %8 = hivm.hir.mmadL1 ins(%4, %e4, %true, %c32, %c32, %c32 : tensor<32x32xi8>, tensor<32x32xi8>, i1, index, index, index) outs(%7 : tensor<32x32xi8>) -> tensor<32x32xi8>
-    %9 = tensor.empty() : tensor<32x32xi8>
-    %10 = hivm.hir.mmadL1 ins(%8, %e5, %true, %c32, %c32, %c32 : tensor<32x32xi8>, tensor<32x32xi8>, i1, index, index, index) outs(%9 : tensor<32x32xi8>) -> tensor<32x32xi8>
-    return %10 : tensor<32x32xi8>
+    %7 = tensor.empty() : tensor<32x32xi32>
+    %8 = hivm.hir.mmadL1 ins(%4, %e4, %true, %c32, %c32, %c32 : tensor<32x32xi8>, tensor<32x32xi8>, i1, index, index, index) outs(%7 : tensor<32x32xi32>) -> tensor<32x32xi32>
+    %9 = tensor.empty() : tensor<32x32xi32>
+    %10 = hivm.hir.mmadL1 ins(%8, %e5, %true, %c32, %c32, %c32 : tensor<32x32xi32>, tensor<32x32xi32>, i1, index, index, index) outs(%9 : tensor<32x32xi32>) -> tensor<32x32xi32>
+    return %10 : tensor<32x32xi32>
   }
 }
 
 // -----
 
-// Pre-inserted NZ2ND fixpipe between f16 mmads (no channel split/merge).
+// Pre-inserted NZ2ND fixpipe (no channel split/merge on the f16 dst).
 // InlineFixpipe must switch dma_mode to NZ2NZ in place (default, omitted).
 // CHECK-LABEL: func.func @dotdot_preinserted_nz2nd_to_nz2nz
 // CHECK: %[[MMAD0:.*]] = hivm.hir.mmadL1
-// CHECK: %[[FP:.*]] = hivm.hir.fixpipe ins(%[[MMAD0]] : tensor<16x16xf16>) outs(%{{.*}} : tensor<16x16xf16>) -> tensor<16x16xf16>
+// CHECK: %[[FP:.*]] = hivm.hir.fixpipe {{.*pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>.*}} ins(%[[MMAD0]] : tensor<16x16xf32>) outs(%{{.*}} : tensor<16x16xf16>) -> tensor<16x16xf16>
 // CHECK-NOT: dma_mode = #hivm.dma_mode<nz2nd>
 // CHECK: hivm.hir.mmadL1 {{.*}}ins(%[[FP]]
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
-  func.func @dotdot_preinserted_nz2nd_to_nz2nz(%4: tensor<16x16xf16>, %e4: tensor<16x16xf16>, %e5: tensor<16x16xf16>) -> tensor<16x16xf16> {
+  func.func @dotdot_preinserted_nz2nd_to_nz2nz(%4: tensor<16x16xf16>, %e4: tensor<16x16xf16>, %e5: tensor<16x16xf16>) -> tensor<16x16xf32> {
     %true = arith.constant true
     %c16 = arith.constant 16 : index
-    %7 = tensor.empty() : tensor<16x16xf16>
+    %7 = tensor.empty() : tensor<16x16xf32>
     %8 = hivm.hir.mmadL1 {fixpipe_for_result_already_inserted = true}
         ins(%4, %e4, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index)
-        outs(%7 : tensor<16x16xf16>) -> tensor<16x16xf16>
+        outs(%7 : tensor<16x16xf32>) -> tensor<16x16xf32>
     %fp_dst = tensor.empty() : tensor<16x16xf16>
-    %fp = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
-        ins(%8 : tensor<16x16xf16>) outs(%fp_dst : tensor<16x16xf16>)
+    %fp = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>}
+        ins(%8 : tensor<16x16xf32>) outs(%fp_dst : tensor<16x16xf16>)
         -> tensor<16x16xf16>
-    %9 = tensor.empty() : tensor<16x16xf16>
+    %9 = tensor.empty() : tensor<16x16xf32>
     %10 = hivm.hir.mmadL1 {fixpipe_for_result_already_inserted = true}
         ins(%fp, %e5, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index)
-        outs(%9 : tensor<16x16xf16>) -> tensor<16x16xf16>
-    return %10 : tensor<16x16xf16>
+        outs(%9 : tensor<16x16xf32>) -> tensor<16x16xf32>
+    return %10 : tensor<16x16xf32>
   }
 }
 
@@ -613,7 +613,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
       %b: tensor<16x16xf16>,
       %a2: tensor<16x16xf16>,
       %b2: tensor<16x16xf16>,
-      %c: tensor<16x16xf16>) -> tensor<16x16xf32> {
+      %c: tensor<16x16xf32>) -> tensor<16x16xf32> {
     %true = arith.constant true
     %c16 = arith.constant 16 : index
     %empty0 = tensor.empty() : tensor<16x16xf32>
@@ -628,7 +628,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
         outs(%empty1 : tensor<16x16xf32>) -> tensor<16x16xf32>
     %mmad1 = hivm.hir.mmadL1
         ins(%mmad0, %c, %true, %c16, %c16, %c16
-            : tensor<16x16xf32>, tensor<16x16xf16>, i1, index, index, index)
+            : tensor<16x16xf32>, tensor<16x16xf32>, i1, index, index, index)
         outs(%mmad_prev : tensor<16x16xf32>) -> tensor<16x16xf32>
     return %mmad1 : tensor<16x16xf32>
   }
@@ -682,16 +682,16 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // CHECK-LABEL: func.func @used_at_input_and_init
 // CHECK: %[[MMAD0:.*]] = hivm.hir.mmadL1
 // CHECK: %[[FIX:.*]] = hivm.hir.fixpipe {channel_split = true} ins(%[[MMAD0]] : tensor<16x16xf32>)
-// CHECK: %[[MMAD1:.*]] = hivm.hir.mmadL1 {fixpipe_for_result_already_inserted = true} ins(%[[FIX]], %[[_:.*]] : tensor<2x1x16x8xf32>, tensor<16x16xf16>, i1, index, index, index) outs(%[[MMAD0]] : tensor<16x16xf32>) -> tensor<16x16xf32>
+// CHECK: %[[MMAD1:.*]] = hivm.hir.mmadL1 {fixpipe_for_result_already_inserted = true} ins(%[[FIX]], %[[_:.*]] : tensor<2x1x16x8xf32>, tensor<16x16xf32>, i1, index, index, index) outs(%[[MMAD0]] : tensor<16x16xf32>) -> tensor<16x16xf32>
 // CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%[[MMAD1]] : tensor<16x16xf32>)
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
-  func.func @used_at_input_and_init(%arg0: tensor<16x16xf16>, %arg1: tensor<16x16xf16>, %arg2: tensor<16x16xf16>, %arg3: tensor<16x16xf16>, %arg4: tensor<16x16xf16>) -> tensor<16x16xf32> {
+  func.func @used_at_input_and_init(%arg0: tensor<16x16xf16>, %arg1: tensor<16x16xf16>, %arg2: tensor<16x16xf16>, %arg3: tensor<16x16xf16>, %arg4: tensor<16x16xf32>) -> tensor<16x16xf32> {
     %true = arith.constant true
     %c16 = arith.constant 16 : index
     %0 = tensor.empty() : tensor<16x16xf32>
     %1 = tensor.empty() : tensor<16x16xf32>
     %2 = hivm.hir.mmadL1 ins(%arg2, %arg3, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%1 : tensor<16x16xf32>) -> tensor<16x16xf32>
-    %3 = hivm.hir.mmadL1 ins(%2, %arg4, %true, %c16, %c16, %c16 : tensor<16x16xf32>, tensor<16x16xf16>, i1, index, index, index) outs(%2 : tensor<16x16xf32>) -> tensor<16x16xf32>
+    %3 = hivm.hir.mmadL1 ins(%2, %arg4, %true, %c16, %c16, %c16 : tensor<16x16xf32>, tensor<16x16xf32>, i1, index, index, index) outs(%2 : tensor<16x16xf32>) -> tensor<16x16xf32>
     return %3 : tensor<16x16xf32>
   }
 }
@@ -1235,29 +1235,38 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 
 // -----
 
-// 3D i8: 2x32x32 -> leading 2, M=32, N=32, C0=32 (channel merge)
+// 3D i8: an i8-input MMAD produces i32, then an S322I8 Fixpipe feeds the
+// next i8-input MMAD. Converting that Fixpipe to NZ2NZ must preserve the
+// leading batch dimension while applying channel merge.
+// 2x32x32 -> leading 2, M=32, N=32, C0=32 (channel merge)
 // N1 = ceil(32/32) = 1, M1 = ceil(32/16) = 2  =>  2x1x2x16x32xi8
 // CHECK-LABEL: func.func @batch_dotdot_i8_keeps_leading_dim
-// CHECK: %[[FP:.*]] = hivm.hir.fixpipe ins(%{{.*}} : tensor<2x32x32xi8>) outs(%{{.*}} : tensor<2x1x2x16x32xi8>) -> tensor<2x1x2x16x32xi8>
+// CHECK: %[[FP:.*]] = hivm.hir.fixpipe {{.*pre_quant = #hivm.fixpipe_pre_quant_mode<S322I8>.*}} ins(%{{.*}} : tensor<2x32x32xi32>) outs(%{{.*}} : tensor<2x1x2x16x32xi8>) -> tensor<2x1x2x16x32xi8>
 // CHECK-NOT: channel_split
 // CHECK: hivm.hir.batchMmadL1 {fixpipe_for_result_already_inserted = true} ins(%[[FP]]
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   func.func @batch_dotdot_i8_keeps_leading_dim(
       %a: tensor<2x32x32xi8>, %b: tensor<2x32x32xi8>,
-      %c: tensor<2x32x32xi8>) -> tensor<2x32x32xi8> {
+      %c: tensor<2x32x32xi8>) -> tensor<2x32x32xi32> {
     %true = arith.constant true
     %c32 = arith.constant 32 : index
-    %empty0 = tensor.empty() : tensor<2x32x32xi8>
-    %mmad0 = hivm.hir.batchMmadL1
+    %empty0 = tensor.empty() : tensor<2x32x32xi32>
+    %mmad0 = hivm.hir.batchMmadL1 {fixpipe_for_result_already_inserted = true}
         ins(%a, %b, %true, %c32, %c32, %c32
             : tensor<2x32x32xi8>, tensor<2x32x32xi8>, i1, index, index, index)
-        outs(%empty0 : tensor<2x32x32xi8>) -> tensor<2x32x32xi8>
-    %empty1 = tensor.empty() : tensor<2x32x32xi8>
+        outs(%empty0 : tensor<2x32x32xi32>) -> tensor<2x32x32xi32>
+    %fixpipe_dst = tensor.empty() : tensor<2x32x32xi8>
+    %fixpipe = hivm.hir.fixpipe {
+        dma_mode = #hivm.dma_mode<nz2nd>,
+        pre_quant = #hivm.fixpipe_pre_quant_mode<S322I8>}
+        ins(%mmad0 : tensor<2x32x32xi32>)
+        outs(%fixpipe_dst : tensor<2x32x32xi8>) -> tensor<2x32x32xi8>
+    %empty1 = tensor.empty() : tensor<2x32x32xi32>
     %mmad1 = hivm.hir.batchMmadL1
-        ins(%mmad0, %c, %true, %c32, %c32, %c32
+        ins(%fixpipe, %c, %true, %c32, %c32, %c32
             : tensor<2x32x32xi8>, tensor<2x32x32xi8>, i1, index, index, index)
-        outs(%empty1 : tensor<2x32x32xi8>) -> tensor<2x32x32xi8>
-    return %mmad1 : tensor<2x32x32xi8>
+        outs(%empty1 : tensor<2x32x32xi32>) -> tensor<2x32x32xi32>
+    return %mmad1 : tensor<2x32x32xi32>
   }
 }
 
@@ -1313,5 +1322,125 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     hivm.hir.store ins(%if_res : tensor<64x64xf32>)
         outs(%dst : memref<64x64xf32, strided<[64, 1]>>)
     return
+  }
+}
+
+// -----
+
+// A type-converting fixpipe (f32 -> f16) whose single user is the scf.yield
+// of an scf.for must stay inside the loop. Hoisting it would replace the
+// loop yield with the f32 mmadL1 result and leave an f16 iter_arg with an
+// f32 yield.
+//
+// CHECK-LABEL: func.func @keep_type_converting_fixpipe_inside_scf_for
+// CHECK: scf.for
+// CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>}
+// CHECK: scf.yield %{{.*}} : tensor<16x16xf16>
+// CHECK-NOT: hivm.hir.fixpipe
+func.func @keep_type_converting_fixpipe_inside_scf_for(
+    %b: tensor<16x16xf16>, %dst: memref<16x16xf16, strided<[16, 1]>>) {
+  %true = arith.constant true
+  %c16 = arith.constant 16 : index
+  %c0_i32 = arith.constant 0 : i32
+  %c1_i32 = arith.constant 1 : i32
+  %c2_i32 = arith.constant 2 : i32
+  %init = tensor.empty() : tensor<16x16xf16>
+  %for_res = scf.for %iv = %c0_i32 to %c2_i32 step %c1_i32
+      iter_args(%acc = %init) -> (tensor<16x16xf16>) : i32 {
+    %mmad_init = tensor.empty() : tensor<16x16xf32>
+    %mmad = hivm.hir.mmadL1 {already_set_real_mkn,
+        fixpipe_for_result_already_inserted = true, normalized_in_L0C}
+        ins(%acc, %b, %true, %c16, %c16, %c16
+            : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index)
+        outs(%mmad_init : tensor<16x16xf32>) -> tensor<16x16xf32>
+    %fp_init = tensor.empty() : tensor<16x16xf16>
+    %fp = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>,
+        pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>}
+        ins(%mmad : tensor<16x16xf32>) outs(%fp_init : tensor<16x16xf16>)
+        -> tensor<16x16xf16>
+    scf.yield %fp : tensor<16x16xf16>
+  }
+  hivm.hir.store ins(%for_res : tensor<16x16xf16>)
+      outs(%dst : memref<16x16xf16, strided<[16, 1]>>)
+  return
+}
+
+// -----
+
+// A type-preserving fixpipe (f32 -> f32) yielded from an scf.for is still
+// hoisted out of the loop.
+//
+// CHECK-LABEL: func.func @hoist_type_preserving_fixpipe_out_of_scf_for
+// CHECK: %[[FOR:.*]] = scf.for
+// CHECK-NOT: hivm.hir.fixpipe
+// CHECK: scf.yield %{{.*}} : tensor<16x16xf32>
+// CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%[[FOR]] : tensor<16x16xf32>)
+// CHECK-NOT: hivm.hir.fixpipe
+func.func @hoist_type_preserving_fixpipe_out_of_scf_for(
+    %b: tensor<16x16xf32>, %dst: memref<16x16xf32, strided<[16, 1]>>) {
+  %true = arith.constant true
+  %c16 = arith.constant 16 : index
+  %c0_i32 = arith.constant 0 : i32
+  %c1_i32 = arith.constant 1 : i32
+  %c2_i32 = arith.constant 2 : i32
+  %init = tensor.empty() : tensor<16x16xf32>
+  %for_res = scf.for %iv = %c0_i32 to %c2_i32 step %c1_i32
+      iter_args(%acc = %init) -> (tensor<16x16xf32>) : i32 {
+    %mmad_init = tensor.empty() : tensor<16x16xf32>
+    %mmad = hivm.hir.mmadL1 {already_set_real_mkn,
+        fixpipe_for_result_already_inserted = true, normalized_in_L0C}
+        ins(%acc, %b, %true, %c16, %c16, %c16
+            : tensor<16x16xf32>, tensor<16x16xf32>, i1, index, index, index)
+        outs(%mmad_init : tensor<16x16xf32>) -> tensor<16x16xf32>
+    %fp_init = tensor.empty() : tensor<16x16xf32>
+    %fp = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+        ins(%mmad : tensor<16x16xf32>) outs(%fp_init : tensor<16x16xf32>)
+        -> tensor<16x16xf32>
+    scf.yield %fp : tensor<16x16xf32>
+  }
+  hivm.hir.store ins(%for_res : tensor<16x16xf32>)
+      outs(%dst : memref<16x16xf32, strided<[16, 1]>>)
+  return
+}
+
+// -----
+
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+
+// Cube init mmad is loop-carried and already fixpiped to a UB memref inside
+// the loop (Cube→Vector TCB). The in-loop fixpipe must stay live (memref dest)
+// so DCE cannot drop it before hivm-insert-fixpipe sees the L0C use.
+// Do not insert another fixpipe that would replace the L0C iter_arg with a UB
+// value and later crash hivm-infer-mem-scope.
+
+// CHECK-LABEL: func.func @mmad_loop_init_already_fixpiped_keep_l0c
+// CHECK: %[[MMAD:.*]] = hivm.hir.mmadL1
+// CHECK-NOT: fixpipe_for_result_already_inserted
+// CHECK: scf.for
+// CHECK-SAME: iter_args(%[[ACC:.*]] = %[[MMAD]])
+// CHECK: hivm.hir.fixpipe
+// CHECK-SAME: ins(%[[ACC]] : tensor<16x16xf32>)
+  func.func @mmad_loop_init_already_fixpiped_keep_l0c(
+      %a: tensor<16x16xf16>, %b: tensor<16x16xf16>,
+      %ub: memref<16x16xf32>) -> tensor<16x16xf32> {
+    %c0 = arith.constant 0 : index
+    %c2 = arith.constant 2 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %true = arith.constant true
+    %init = tensor.empty() : tensor<16x16xf32>
+    %mmad = hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
+        ins(%a, %b, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index)
+        outs(%init : tensor<16x16xf32>) -> tensor<16x16xf32>
+    %res = scf.for %i = %c0 to %c2 step %c1 iter_args(%acc = %mmad) -> (tensor<16x16xf32>) {
+      hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+          ins(%acc : tensor<16x16xf32>) outs(%ub : memref<16x16xf32>)
+      %acc2 = tensor.empty() : tensor<16x16xf32>
+      %mmad2 = hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
+          ins(%a, %b, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index)
+          outs(%acc2 : tensor<16x16xf32>) -> tensor<16x16xf32>
+      scf.yield %mmad2 : tensor<16x16xf32>
+    }
+    return %res : tensor<16x16xf32>
   }
 }

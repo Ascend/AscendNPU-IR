@@ -169,9 +169,9 @@ SmallVector<Value> tracebackImpl(Value memrefVal) {
       result.emplace_back(
           dyn_cast<bufferization::ToTensorOp>(toTensor).getBuffer());
 #endif
-    } else {
-      result.emplace_back(op.getTensor());
     }
+    // Otherwise, leave the result empty so traceback stops at this to_memref
+    // result. Returning its tensor operand violates the memref-only contract.
   }
 
   return result;
@@ -1914,6 +1914,27 @@ bool utils::isTransferWriteSuitForStoreWithStride(Operation *op) {
     return false;
   }
   LLVM_DEBUG(DBGS() << " matched!! for transferWriteWithStride\n");
+  return true;
+}
+
+namespace {
+bool isGMSafeSource(Value v) {
+  Operation *defOp = v.getDefiningOp();
+  return utils::isAllocLikeOp(v) || hivm::util::isGMPointerCastOp(defOp) ||
+         (defOp && isa<memref::GetGlobalOp>(defOp));
+}
+} // namespace
+
+bool utils::isFromGMSpace(Value v) {
+  SmallVector<Value> targetOPVec =
+      utils::tracebackMemRefVecByTargetFn(v, isGMSafeSource);
+  for (auto targetOP : targetOPVec) {
+    auto defOp = targetOP.getDefiningOp();
+    if (defOp != nullptr && !isa<hivm::PointerCastOp>(defOp) &&
+        !isa<memref::GetGlobalOp>(defOp)) {
+      return false;
+    }
+  }
   return true;
 }
 

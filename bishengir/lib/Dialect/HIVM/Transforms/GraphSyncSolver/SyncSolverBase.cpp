@@ -1209,7 +1209,7 @@ SyncSolverBase::checkCVPreloadingEventIdInfo(Occurrence *occ1, Occurrence *occ2,
                                  : 1;
 
     if (options.isCrossCoreMode()) {
-      assert(preloadDiff % 2 == 1);
+      assert(preloadDiff % 2 == 1 || preloadDiff == 0);
       if (multibufferNum >= eventIdNum) {
         EventIdInfo eventIdInfo(multibufferNum);
         eventIdInfo.cvPreloadingInfo =
@@ -1225,7 +1225,8 @@ SyncSolverBase::checkCVPreloadingEventIdInfo(Occurrence *occ1, Occurrence *occ2,
             CVPreloadingInfo(parentCVPipeliningLoop1, parentScope1,
                              parentScope2, preloadOffset1, preloadOffset2);
         return eventIdInfo;
-      } else if (multibufferNum == 1) {
+      }
+      if (multibufferNum == 1) {
         // instead of inserting outside of the scopes, use the unlikely trick
         EventIdInfo eventIdInfo(1);
         eventIdInfo.cvPreloadingInfo =
@@ -2117,8 +2118,7 @@ ConflictPair *SyncSolverBase::handleSetWaitConflict(
 
   assert((!setWaitPairInfo.isOpForwardPair ||
           !setWaitPairInfo.isSetWaitBackwardPair) ||
-         setWaitPairInfo.isCVPipelining || setWaitPairInfo.isCVPreloading ||
-         setWaitPairInfo.setWaitInside ||
+         setWaitPairInfo.isCVPreloading || setWaitPairInfo.setWaitInside ||
          options.enableUnitFlagFeature);
 
   bool movedToOuterLoop{false};
@@ -2130,9 +2130,12 @@ ConflictPair *SyncSolverBase::handleSetWaitConflict(
   // calc norm scope occs
   Occurrence *parOcc1 = setOcc->parentOcc;
   Occurrence *parOcc2 = waitOcc->parentOcc;
-
+  if (setWaitPairInfo.isCVPipelining) {
+    parOcc1 = setOcc->getNthParent(3);
+    parOcc2 = waitOcc->getNthParent(3);
+  }
   assert(parOcc1->op == parOcc2->op || setWaitPairInfo.isCVPreloading ||
-         setWaitPairInfo.isCVPipelining || setWaitPairInfo.setWaitInside);
+         setWaitPairInfo.setWaitInside);
 
   // create set/wait conflict-pair
   auto conflictPair = std::make_unique<ConflictPair>(

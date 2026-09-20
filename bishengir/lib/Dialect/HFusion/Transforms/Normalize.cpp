@@ -7921,7 +7921,7 @@ struct ReduceWithIndexRAHighPerformance
   }
 };
 
-/// normalize mulext(x, y) as bellow
+/// Normalize signed or unsigned mulext(x, y) as below.
 /// inputs: N-bit number x, y
 /// step1: perform extension to generate 2N-bit operands from x and y
 /// step2: multiply 2N-bit x and y to get mul_res
@@ -7930,10 +7930,11 @@ struct ReduceWithIndexRAHighPerformance
 /// and later N-bit-right-shifting mul_res
 /// step5: cast result back to origin type
 /// outputs: the N-bit low and the N-bit high halves of the product.
-class NormalizeMulExtOp : public OpRewritePattern<hfusion::MulExtOp> {
+template <typename MulExtOpType, bool IsUnsigned = false>
+class NormalizeMulExtOp : public OpRewritePattern<MulExtOpType> {
 public:
-  using OpRewritePattern<hfusion::MulExtOp>::OpRewritePattern;
-  LogicalResult matchAndRewrite(hfusion::MulExtOp op,
+  using OpRewritePattern<MulExtOpType>::OpRewritePattern;
+  LogicalResult matchAndRewrite(MulExtOpType op,
                                 PatternRewriter &rewriter) const override {
     Value lhs = op.getLhs();
     Value rhs = op.getRhs();
@@ -7944,8 +7945,13 @@ public:
     }
 
     // step1: perform extension.
-    Value lhsI16 = hfusion::castTo(rewriter, lhs, rewriter.getI16Type());
-    Value rhsI16 = hfusion::castTo(rewriter, rhs, rewriter.getI16Type());
+    constexpr hfusion::TypeFn castKind = IsUnsigned
+                                             ? hfusion::TypeFn::cast_unsigned
+                                             : hfusion::TypeFn::cast_signed;
+    Value lhsI16 =
+        hfusion::castTo(rewriter, lhs, rewriter.getI16Type(), castKind);
+    Value rhsI16 =
+        hfusion::castTo(rewriter, rhs, rewriter.getI16Type(), castKind);
 
     // step2: multiply
     auto loc = op.getLoc();
@@ -7966,7 +7972,8 @@ public:
     auto shrHighBit =
         hfusion::createBinaryOp<hfusion::ElemwiseBinaryOp, hfusion::BinaryFn,
                                 hfusion::BinaryFnAttr>(
-            rewriter, loc, hfusion::BinaryFn::shrsi,
+            rewriter, loc,
+            IsUnsigned ? hfusion::BinaryFn::shrui : hfusion::BinaryFn::shrsi,
             ValueRange{mulRes, shiftValue}, ValueRange(shrHighBitInit))
             ->getResult(0);
 
@@ -7982,7 +7989,8 @@ public:
     auto shrLowBit =
         hfusion::createBinaryOp<hfusion::ElemwiseBinaryOp, hfusion::BinaryFn,
                                 hfusion::BinaryFnAttr>(
-            rewriter, loc, hfusion::BinaryFn::shrsi,
+            rewriter, loc,
+            IsUnsigned ? hfusion::BinaryFn::shrui : hfusion::BinaryFn::shrsi,
             ValueRange{shlRes, shiftValue}, ValueRange(shrLowBitInit))
             ->getResult(0);
 
@@ -10053,7 +10061,9 @@ void populateNormalizeHFusionPatterns(RewritePatternSet &patterns) {
   populateNormalizeI1ToTargetPatterns(patterns);
   populateNormalizeI8ToTargetPatterns(patterns);
   patterns.add<NormalizeCDivandFloorDivIntOp>(patterns.getContext());
-  patterns.add<NormalizeMulExtOp>(patterns.getContext());
+  patterns.add<NormalizeMulExtOp<hfusion::MulExtOp>,
+               NormalizeMulExtOp<hfusion::MulExtUiOp,
+                                 /*IsUnsigned=*/true>>(patterns.getContext());
   patterns.add<NormalizeDivSIandDivUIOp>(patterns.getContext());
   patterns.add<NormalizeCmpVne>(patterns.getContext());
   patterns.add<NormalizeArgMinMaxOp>(patterns.getContext());

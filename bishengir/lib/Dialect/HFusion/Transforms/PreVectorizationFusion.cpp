@@ -849,17 +849,12 @@ static void populatePreVectorizationFusionPatterns(RewritePatternSet &patterns,
   }
 }
 
-bool isCopyFromGM(memref::CopyOp copyOp) {
-  Value src = copyOp.getSource();
-  return util::isFromFunctionArg(src);
-}
-
 void InsertPadConstMark(Operation *moduleOp) {
   // add pad value mark
   moduleOp->walk([&](Operation *op) {
     // if it is one load copy
     if (auto copyOp = dyn_cast<memref::CopyOp>(op)) {
-      if (!isCopyFromGM(copyOp))
+      if (!utils::isFromGMSpace(copyOp.getSource()))
         return WalkResult::skip();
       auto dst = copyOp.getTarget();
       auto allocOpAliases = utils::tracebackMemRefAllocAndAlias(dst);

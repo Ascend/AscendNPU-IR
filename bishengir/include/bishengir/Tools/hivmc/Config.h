@@ -423,12 +423,12 @@ public:
   }
   int32_t enableVfMergeLevel() const { return enableVfMergeLevelFlag; }
 
-  HIVMCMainConfig &enableBishengirSimtOptimization(int enable) {
-    enableBishengirSimtOptimizationFlag = enable;
+  HIVMCMainConfig &simtOptimizationMode(int mode) {
+    simtOptimizationModeFlag = mode;
     return *this;
   }
-  int getEnableBishengirSimtOptimize() const {
-    return enableBishengirSimtOptimizationFlag;
+  int simtOptimizationMode() const {
+    return simtOptimizationModeFlag;
   }
 
   HIVMCMainConfig &enableSIMTFastDiv(bool enable) {
@@ -1023,7 +1023,7 @@ protected:
   /// one
   bool enableAutoBlockifyLoopFlag{false};
 
-  int enableBishengirSimtOptimizationFlag{000};
+  int simtOptimizationModeFlag{0000000};
 
   std::optional<int32_t> simtStackLimitFlag{};
 

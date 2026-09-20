@@ -307,7 +307,10 @@ def FixpipeOp : HIVM_DmaOp<"fixpipe", [
     Enable hardware C0 padding for the destination fractal layout (used with int8 channel merge when an odd
     number of C0 blocks would otherwise leave an unmerged tail). Defaults to true (padding enabled).
   }];
-  let arguments = (ins AnyShaped:$src,
+  // Fixpipe source element type is permanently constrained to f32/i32
+  // (target-independent IR semantics; the destination may still be f16,
+  // bf16 or i8 through the pre-quant modes).
+  let arguments = (ins ShapedTypeOf<[F32, I32]>:$src,
                        AnyShaped:$dst,
                        Arg<Variadic<I1>, [{
                         An optional condition to enable unit-flag mode,

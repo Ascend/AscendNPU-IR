@@ -517,11 +517,12 @@ struct NormalizeInterleaveExpandReshape
 
     if (!interleaveOp.getResult().hasOneUse())
       return failure();
-    auto reshapeOp = dyn_cast<tensor::ReshapeOp>(
-        *interleaveOp.getResult().getUsers().begin());
-    auto reshapeType =
-        reshapeOp ? dyn_cast<RankedTensorType>(reshapeOp.getResult().getType())
-                  : RankedTensorType();
+
+    Operation *reshapeOp = *interleaveOp.getResult().getUsers().begin();
+    if (!isa<tensor::ReshapeOp, tensor::CollapseShapeOp>(reshapeOp))
+      return failure();
+    auto reshapeType = dyn_cast<RankedTensorType>(
+        reshapeOp->getResult(0).getType());
     if (!reshapeType || !isInterleaveResultShape(sourceType, reshapeType))
       return failure();
 

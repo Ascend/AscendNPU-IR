@@ -28,7 +28,7 @@ func.func @test_tile_batchMmadL1(%dst : memref<2x256x256xf16>) {
   // CHECK-SAME: outs(%[[COLLAPSE_DST]]
   %result = hivm.hir.batchMmadL1 ins(%ma, %mb, %true, %M, %K, %N: tensor<2x256x128xf16>, tensor<2x128x256xf16>, i1, index, index, index)
                               outs(%mc: tensor<2x256x256xf32>) -> tensor<2x256x256xf32>
-  hivm.hir.fixpipe {enable_nz2nd} ins(%result : tensor<2x256x256xf32>) outs(%dst : memref<2x256x256xf16>)
+  hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>, enable_nz2nd} ins(%result : tensor<2x256x256xf32>) outs(%dst : memref<2x256x256xf16>)
   return
 }
 
@@ -49,13 +49,13 @@ func.func @test_preserve_fixpipe_operands_memref(
       outs(%mc : tensor<2x16x16xf32>) -> tensor<2x16x16xf32>
 
   // CHECK: scf.for
-  // CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>, pre_relu = #hivm.fixpipe_pre_relu_mode<NORMAL_RELU>}
+  // CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, pre_quant = #hivm.fixpipe_pre_quant_mode<QF322F32_PRE>, pre_relu = #hivm.fixpipe_pre_relu_mode<NORMAL_RELU>}
   // CHECK-SAME: quant_scale = %[[SCALE:.*]] : f32
   // CHECK-SAME: unit_flag_mode([#hivm.unit_flag<ENABLED_WITH_UPDATE>])
   // CHECK-SAME: unit_flag_cond(%[[COND:.*]])
   hivm.hir.fixpipe {
     dma_mode = #hivm.dma_mode<nz2nd>,
-    pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>,
+    pre_quant = #hivm.fixpipe_pre_quant_mode<QF322F32_PRE>,
     pre_relu = #hivm.fixpipe_pre_relu_mode<NORMAL_RELU>
   } ins(%result : tensor<2x16x16xf32>)
     outs(%dst : memref<2x16x16xf32>)
@@ -83,7 +83,7 @@ func.func @test_preserve_fixpipe_operands_tensor(
       outs(%mc : tensor<2x16x16xf32>) -> tensor<2x16x16xf32>
 
   // CHECK: scf.for
-  // CHECK: %[[FIXPIPE:.*]] = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>, pre_relu = #hivm.fixpipe_pre_relu_mode<NORMAL_RELU>}
+  // CHECK: %[[FIXPIPE:.*]] = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, pre_quant = #hivm.fixpipe_pre_quant_mode<QF322F32_PRE>, pre_relu = #hivm.fixpipe_pre_relu_mode<NORMAL_RELU>}
   // CHECK-SAME: outs(%[[FIXPIPE_DST:.*]] : tensor<16x16xf32>)
   // CHECK-SAME: quant_scale = %[[SCALE:.*]] : f32
   // CHECK-SAME: unit_flag_mode([#hivm.unit_flag<ENABLED_WITH_UPDATE>])
@@ -92,7 +92,7 @@ func.func @test_preserve_fixpipe_operands_tensor(
   // CHECK: tensor.insert_slice %[[FIXPIPE]] into {{.*}} : tensor<16x16xf32> into tensor<2x16x16xf32>
   %fixpipe = hivm.hir.fixpipe {
     dma_mode = #hivm.dma_mode<nz2nd>,
-    pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>,
+    pre_quant = #hivm.fixpipe_pre_quant_mode<QF322F32_PRE>,
     pre_relu = #hivm.fixpipe_pre_relu_mode<NORMAL_RELU>
   } ins(%result : tensor<2x16x16xf32>)
     outs(%dst : tensor<2x16x16xf32>)
@@ -234,7 +234,7 @@ func.func @test_tile_batchMmadL1(%dst : memref<2x256x256xf16>) {
   // CHECK-SAME: outs(%[[COLLAPSE_DST]]
   %result = hivm.hir.batchMmadL1 {fixpipe_for_result_already_inserted = true} ins(%ma, %mb, %true, %M, %K, %N: tensor<2x256x128xf16>, tensor<2x128x256xf16>, i1, index, index, index)
                               outs(%mc: tensor<2x256x256xf32>) -> tensor<2x256x256xf32>
-  hivm.hir.fixpipe {enable_nz2nd} ins(%result : tensor<2x256x256xf32>) outs(%dst : memref<2x256x256xf16>)
+  hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>, enable_nz2nd} ins(%result : tensor<2x256x256xf32>) outs(%dst : memref<2x256x256xf16>)
   return
 }
 
@@ -260,7 +260,7 @@ module {
 // CHECK:             %[[VAL_19:.*]] = hivm.hir.mmadL1 {batch_matmul, fixpipe_for_result_already_inserted = true} ins(%[[VAL_16]], %[[VAL_17]], %[[VAL_6]], %[[VAL_5]], %[[VAL_4]], %[[VAL_5]] : tensor<256x128xf16>, tensor<128x256xf16>, i1, index, index, index) outs(%[[VAL_18]] : tensor<256x256xf32>) -> tensor<256x256xf32>
 // CHECK:             %[[VAL_20:.*]] = memref.subview %[[VAL_0]]{{\[}}%[[VAL_13]], 0, 0] [1, 256, 256] [1, 1, 1] : memref<2x256x256xf16> to memref<1x256x256xf16, strided<[65536, 256, 1], offset: ?>>
 // CHECK:             %[[VAL_21:.*]] = memref.collapse_shape %[[VAL_20]] {{\[\[}}0, 1], [2]] : memref<1x256x256xf16, strided<[65536, 256, 1], offset: ?>> into memref<256x256xf16, strided<[256, 1], offset: ?>>
-// CHECK:             hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%[[VAL_19]] : tensor<256x256xf32>) outs(%[[VAL_21]] : memref<256x256xf16, strided<[256, 1], offset: ?>>)
+// CHECK:             hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%[[VAL_19]] : tensor<256x256xf32>) outs(%[[VAL_21]] : memref<256x256xf16, strided<[256, 1], offset: ?>>)
 // CHECK:             %[[VAL_22:.*]] = tensor.extract_slice %[[VAL_14]]{{\[}}%[[VAL_13]], 0, 0] [1, 256, 256] [1, 1, 1] : tensor<2x256x256xf32> to tensor<256x256xf32>
 // CHECK:             %[[VAL_23:.*]] = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%[[VAL_19]] : tensor<256x256xf32>) outs(%[[VAL_22]] : tensor<256x256xf32>) -> tensor<256x256xf32>
 // CHECK:             %[[VAL_24:.*]] = tensor.insert_slice %[[VAL_23]] into %[[VAL_14]]{{\[}}%[[VAL_13]], 0, 0] [1, 256, 256] [1, 1, 1] {elide_after_bufferize} : tensor<256x256xf32> into tensor<2x256x256xf32>
@@ -294,7 +294,7 @@ func.func @test_tile_batchMmadL1_debug(%dst : memref<2x256x256xf16>) -> tensor<2
   %tmp_3 = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%result : tensor<2x256x256xf32>) outs(%tmp_1 : tensor<2x256x256xf32>) -> tensor<2x256x256xf32>
   %tmp_4 = hivm.hir.vcumsum ins(%tmp_3 : tensor<2x256x256xf32>) outs(%tmp_2: tensor<2x256x256xf32>) cum_dims = [0] reverse = false -> tensor<2x256x256xf32>
 
-  hivm.hir.fixpipe {enable_nz2nd} ins(%result : tensor<2x256x256xf32>) outs(%dst : memref<2x256x256xf16>)
+  hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>, enable_nz2nd} ins(%result : tensor<2x256x256xf32>) outs(%dst : memref<2x256x256xf16>)
   return %tmp_4 : tensor<2x256x256xf32>
 }
 }

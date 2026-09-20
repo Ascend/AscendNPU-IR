@@ -1,5 +1,11 @@
 # 调试调测
 
+**适用产品:**
+
+- Ascend 950PR&950DT 系列产品
+- Atlas A3 系列产品
+- Atlas A2 系列产品
+
 ## 调试：DEBUG OP类
 
 在基于AscendNPU IR进行算子开发与移植过程中（如基于Triton前端编写算子并基于AscendNPU IR编译执行）调试是必不可少的一环。为了帮助开发者在不同抽象层次定位问题，AscendNPU IR定义了两类核心调试算子：
@@ -93,9 +99,12 @@ func.func @vector_kernel(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_ad
 **接口描述**：
 
 ```python
-# condition: bool - 编译时可计算的布尔表达式
-# message: str - 可选，断言失败时显示的消息
-triton.language.static_assert(condition: bool, message: str = "") -> None
+# condition: bool - 编译时可计算的布尔表达式，必须为 constexpr 常量
+# message: str - 可选，断言失败时显示的消息，必须是字符串字面量
+# _semantic: 内部参数，语义处理句柄，用户无需传入
+
+# Triton 语言接口
+triton.language.static_assert(condition, message="", _semantic=None) -> None
 ```
 
 **使用示例**：
@@ -109,7 +118,7 @@ import triton.language as tl
 
 @triton.jit
 def kernel_name(x_ptr, y_ptr, n_elements, BLOCK: tl.constexpr):
-    tl.static_assert(BLOCK < 0, "BLOCK must > 0")
+    tl.static_assert(BLOCK > 0, "BLOCK must > 0")
     pid = tl.program_id(0)
     offsets = pid * BLOCK + tl.arange(0, BLOCK)
     mask = offsets < n_elements
@@ -136,8 +145,15 @@ if __name__ == "__main__":
 **接口描述**：
 
 ```python
-# message: str - 要打印的消息，可以包含编译时常量
-triton.language.static_print(message: str) -> None
+# *values - 要打印的值，参数与 Python 内置 print 相同
+# sep: str - 分隔符，默认为空格
+# end: str - 结束符，默认为换行符
+# file - 输出流，默认为 None
+# flush: bool - 是否立即刷新输出流，默认为 False
+# _semantic: 内部参数，语义处理句柄，用户无需传入
+
+# Triton 语言接口
+triton.language.static_print(*values, sep=' ', end='\n', file=None, flush=False, _semantic=None) -> None
 ```
 
 **使用示例**：
@@ -190,10 +206,12 @@ export TRITON_DEVICE_PRINT=1
 
 ```python
 # condition: bool - 要断言的条件，必须是一个布尔张量
-# message: str - 可选，断言失败时显示的消息
+# message: str - 可选，断言失败时显示的消息，必须是字符串字面量
+# mask: 可选，掩码，仅对掩码为真的元素执行断言
+# _semantic: 内部参数，语义处理句柄，用户无需传入
 
-# triton language 接口
-triton.language.device_assert(condition: bool, message: str = "") -> None
+# Triton 语言接口
+triton.language.device_assert(condition, message="", mask=None, _semantic=None) -> None
 ```
 
 **使用示例**：
@@ -239,12 +257,13 @@ if __name__ == "__main__":
 **接口描述**：
 
 ```python
-# prefix: str - 打印在值之前的前缀，必须是字符串
-# *args - 要打印的值可以是任何张量或标量
+# prefix: str - 打印在值之前的前缀，必须是字符串字面量
+# *args - 要打印的值，可以是任何张量或标量
 # hex: bool - 是否将所有值以十六进制而非十进制形式打印
+# _semantic: 内部参数，语义处理句柄，用户无需传入
 
-# triton language 接口
-triton.language.device_print(prefix, *args, hex=False) -> None
+# Triton 语言接口
+triton.language.device_print(prefix, *args, hex=False, _semantic=None) -> None
 ```
 
 **使用示例**：

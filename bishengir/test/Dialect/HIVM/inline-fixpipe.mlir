@@ -1478,7 +1478,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910B1">} {
 // feed vsel and need an outer fixpipe after the scf.for.
 func.func @test_remain_in_l0c_vsel_needs_outer_fixpipe(
     %A: tensor<64x32xf16>, %B: tensor<32x32xf16>, %C: tensor<32x64xf16>,
-    %D: tensor<32x64xf16>, %rhs: tensor<64x32xf16>,
+    %D: tensor<32x64xf16>, %rhs: tensor<64x32xf32>,
     %mask: tensor<64x64xi1>) -> tensor<64x32xf32> {
   %c0 = arith.constant 0 : index
   %c2 = arith.constant 2 : index
@@ -1515,10 +1515,10 @@ func.func @test_remain_in_l0c_vsel_needs_outer_fixpipe(
   %sel1 = hivm.hir.vsel ins(%mask, %loop#1, %cst : tensor<64x64xi1>, tensor<64x64xf32>, f32) outs(%sel_out : tensor<64x64xf32>) -> tensor<64x64xf32>
   %sel2 = hivm.hir.vsel ins(%mask, %loop#2, %cst : tensor<64x64xi1>, tensor<64x64xf32>, f32) outs(%sel_out : tensor<64x64xf32>) -> tensor<64x64xf32>
   %acc = hivm.hir.mmadL1 {already_set_real_mkn} ins(%sel1, %rhs, %false, %c64, %c64, %c32
-    : tensor<64x64xf32>, tensor<64x32xf16>, i1, index, index, index)
+    : tensor<64x64xf32>, tensor<64x32xf32>, i1, index, index, index)
     outs(%loop#0 : tensor<64x32xf32>) -> tensor<64x32xf32>
   %out = hivm.hir.mmadL1 {already_set_real_mkn} ins(%sel2, %rhs, %false, %c64, %c64, %c32
-    : tensor<64x64xf32>, tensor<64x32xf16>, i1, index, index, index)
+    : tensor<64x64xf32>, tensor<64x32xf32>, i1, index, index, index)
     outs(%acc : tensor<64x32xf32>) -> tensor<64x32xf32>
   return %out : tensor<64x32xf32>
 }
@@ -1756,7 +1756,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9599">} {
     %mmad = hivm.hir.mmadL1 ins(%a, %b, %false, %c0, %c0, %c0 : tensor<10x10x16x32xi8>, tensor<2x10x32x32xi8>, i1, index, index, index) outs(%c : tensor<160x64xi32>) -> tensor<160x64xi32>
     %fractal = hivm.hir.convert_layout %mmad output_shape [2, 10, 16, 32] {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 32]>, srcLayout = #hivm.data_layout<ND>} : (tensor<160x64xi32>) -> tensor<2x10x16x32xi32>
     %strided = memref.cast %gm : memref<2x10x16x32xi8, #hivm.address_space<gm>> to memref<2x10x16x32xi8, strided<[?, ?, ?, ?], offset: ?>, #hivm.address_space<gm>>
-    hivm.hir.fixpipe ins(%fractal : tensor<2x10x16x32xi32>) outs(%strided : memref<2x10x16x32xi8, strided<[?, ?, ?, ?], offset: ?>, #hivm.address_space<gm>>)
+    hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<S322I8>} ins(%fractal : tensor<2x10x16x32xi32>) outs(%strided : memref<2x10x16x32xi8, strided<[?, ?, ?, ?], offset: ?>, #hivm.address_space<gm>>)
     return
   }
 }

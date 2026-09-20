@@ -138,7 +138,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
     %gmC = memref.alloc() : memref<32x32xf16, strided<[32, 1], offset: 0>, #hivm.address_space<gm>>
     %l0c = memref.alloc() : memref<2x2x16x16xf32, #hivm.address_space<cc>>
     // CHECK: call @fixpipe_nz2nd_float_to_half_4d_to_2d_gm
-    hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+    hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>, dma_mode = #hivm.dma_mode<nz2nd>}
       ins(%l0c : memref<2x2x16x16xf32, #hivm.address_space<cc>>)
       outs(%gmC : memref<32x32xf16, strided<[32, 1], offset: 0>, #hivm.address_space<gm>>)
     return
@@ -151,7 +151,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
     %ubC = memref.alloc() : memref<32x32xf16, strided<[32, 1], offset: 0>, #hivm.address_space<ub>>
     %l0c = memref.alloc() : memref<2x2x16x16xf32, #hivm.address_space<cc>>
     // CHECK: call @fixpipe_nz2nd_dual_float_to_half_4d_to_2d_ub
-    hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, dual_dst_mode = #hivm.fixpipe_dual_dst_mode<ROW_SPLIT>}
+    hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>, dma_mode = #hivm.dma_mode<nz2nd>, dual_dst_mode = #hivm.fixpipe_dual_dst_mode<ROW_SPLIT>}
       ins(%l0c : memref<2x2x16x16xf32, #hivm.address_space<cc>>)
       outs(%ubC : memref<32x32xf16, strided<[32, 1], offset: 0>, #hivm.address_space<ub>>)
     return
@@ -164,7 +164,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
     %ubC = memref.alloc() : memref<32x32xf16, strided<[32, 1], offset: 0>, #hivm.address_space<ub>>
     %l0c = memref.alloc() : memref<2x2x16x16xf32, #hivm.address_space<cc>>
     // CHECK: call @fixpipe_nz2nd_dual_float_to_half_4d_to_2d_ub
-    hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, dual_dst_mode = #hivm.fixpipe_dual_dst_mode<COLUMN_SPLIT>}
+    hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>, dma_mode = #hivm.dma_mode<nz2nd>, dual_dst_mode = #hivm.fixpipe_dual_dst_mode<COLUMN_SPLIT>}
       ins(%l0c : memref<2x2x16x16xf32, #hivm.address_space<cc>>)
       outs(%ubC : memref<32x32xf16, strided<[32, 1], offset: 0>, #hivm.address_space<ub>>)
     return
@@ -177,7 +177,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
     %gmC = memref.alloc() : memref<32x32xf16, strided<[32, 1], offset: 0>, #hivm.address_space<gm>>
     %l0c = memref.alloc() : memref<32x32xf32, #hivm.address_space<cc>>
     // CHECK: call @fixpipe_normal_float_to_half_2d_to_2d_gm
-    hivm.hir.fixpipe {}
+    hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>}
       ins(%l0c : memref<32x32xf32, #hivm.address_space<cc>>)
       outs(%gmC : memref<32x32xf16, strided<[32, 1], offset: 0>, #hivm.address_space<gm>>)
     return
@@ -190,7 +190,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
     %ubC = memref.alloc() : memref<32x32xf16, strided<[32, 1], offset: 0>, #hivm.address_space<ub>>
     %l0c = memref.alloc() : memref<32x32xf32, #hivm.address_space<cc>>
     // CHECK: call @fixpipe_normal_dual_float_to_half_2d_to_2d_ub
-    hivm.hir.fixpipe {dual_dst_mode = #hivm.fixpipe_dual_dst_mode<ROW_SPLIT>}
+    hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>, dual_dst_mode = #hivm.fixpipe_dual_dst_mode<ROW_SPLIT>}
       ins(%l0c : memref<32x32xf32, #hivm.address_space<cc>>)
       outs(%ubC : memref<32x32xf16, strided<[32, 1], offset: 0>, #hivm.address_space<ub>>)
     return
@@ -203,7 +203,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
     %ubC = memref.alloc() : memref<32x32xf16, strided<[32, 1], offset: 0>, #hivm.address_space<ub>>
     %l0c = memref.alloc() : memref<32x32xf32, #hivm.address_space<cc>>
     // CHECK: call @fixpipe_normal_dual_float_to_half_2d_to_2d_ub
-    hivm.hir.fixpipe {dual_dst_mode = #hivm.fixpipe_dual_dst_mode<COLUMN_SPLIT>}
+    hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>, dual_dst_mode = #hivm.fixpipe_dual_dst_mode<COLUMN_SPLIT>}
       ins(%l0c : memref<32x32xf32, #hivm.address_space<cc>>)
       outs(%ubC : memref<32x32xf16, strided<[32, 1], offset: 0>, #hivm.address_space<ub>>)
     return
@@ -216,7 +216,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
     %gmC = memref.alloc() : memref<32x32xf16, strided<[32, 1], offset: 0>, #hivm.address_space<gm>>
     %l0c = memref.alloc() : memref<2x2x16x16xf32, #hivm.address_space<cc>>
     // CHECK: call @fixpipe_nz2dn_float_to_half_4d_to_2d_gm
-    hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2dn>}
+    hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>, dma_mode = #hivm.dma_mode<nz2dn>}
       ins(%l0c : memref<2x2x16x16xf32, #hivm.address_space<cc>>)
       outs(%gmC : memref<32x32xf16, strided<[32, 1], offset: 0>, #hivm.address_space<gm>>)
     return
@@ -2983,7 +2983,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
     %l0c = memref.alloc() : memref<2x2x16x16xf32, #hivm.address_space<cc>>
     //   CHECK-DAG: %[[SB1:.*]] = arith.constant true
     //       CHECK: call @fixpipe_nz2nd_float_to_half_4d_to_2d_ubuf({{.*}}, %[[SB1]]) :
-    hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, sub_block_idx = #hivm.fixpipe_sub_block<sub_block_1>}
+    hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>, dma_mode = #hivm.dma_mode<nz2nd>, sub_block_idx = #hivm.fixpipe_sub_block<sub_block_1>}
       ins(%l0c : memref<2x2x16x16xf32, #hivm.address_space<cc>>)
       outs(%ubC : memref<32x32xf16, strided<[32, 1], offset: 0>, #hivm.address_space<ub>>)
     return
@@ -2999,7 +2999,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
     // c0_pad_en defaults true, so a true constant is expected; sub_block stays false.
     //   CHECK-DAG: %[[SB0:.*]] = arith.constant false
     //       CHECK: call @fixpipe_nz2nd_float_to_half_4d_to_2d_ubuf({{.*}}, %[[SB0]]) :
-    hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+    hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>, dma_mode = #hivm.dma_mode<nz2nd>}
       ins(%l0c : memref<2x2x16x16xf32, #hivm.address_space<cc>>)
       outs(%ubC : memref<32x32xf16, strided<[32, 1], offset: 0>, #hivm.address_space<ub>>)
     return

@@ -798,6 +798,52 @@ def SplitMixKernel : Pass<"hivm-split-mix-kernel", "ModuleOp"> {
                            "hacc::HACCDialect"];
 }
 
+def MergeSamePreloadScopes : Pass<"hivm-merge-same-preload-scopes", "ModuleOp"> {
+  let summary = "Merge scopes sharing identical preload_num within the same parent op.";
+  let constructor = "mlir::hivm::createMergeSamePreloadScopesPass()";
+  let dependentDialects = [
+    "scope::ScopeDialect",
+    "func::FuncDialect",
+    "hivm::HIVMDialect",
+    "scf::SCFDialect"
+  ];
+  let options = [Option<"bypassShapeRegistry", "bypass-shape-registry", "bool",
+                        /*default=*/"false",
+                        "Bypass shape registry check for merge-same-preload heuristics">,
+                 Option<"enablePreload", "enable-preload", "bool",
+                        /*default=*/"false",
+                        "Enable merge-same-preload heuristics when the kernel is registered">,
+                 Option<"workspaceMultiBufferNum", "set-workspace-multibuffer", "unsigned",
+                        /*default=*/"0",
+                        "Workspace multibuffer depth; heuristics require a non-zero value">];
+}
+
+def SinkExclusivePreloadWork : Pass<"hivm-sink-exclusive-preload-work", "ModuleOp"> {
+  let summary = "Sink exclusive dest/src clusters and unused-CUBE load/VF/copy chains after CVPipelining.";
+  let constructor = "mlir::hivm::createSinkExclusivePreloadWorkPass()";
+  let dependentDialects = [
+    "scope::ScopeDialect",
+    "func::FuncDialect",
+    "hivm::HIVMDialect",
+    "scf::SCFDialect",
+    "annotation::AnnotationDialect",
+    "memref::MemRefDialect",
+    "affine::AffineDialect",
+    "arith::ArithDialect",
+    "bufferization::BufferizationDialect",
+    "tensor::TensorDialect"
+  ];
+  let options = [Option<"bypassShapeRegistry", "bypass-shape-registry", "bool",
+                        /*default=*/"false",
+                        "Bypass shape registry check for exclusive-preload sink">,
+                 Option<"enablePreload", "enable-preload", "bool",
+                        /*default=*/"false",
+                        "Enable exclusive-preload sink when the kernel is registered">,
+                 Option<"workspaceMultiBufferNum", "set-workspace-multibuffer", "unsigned",
+                        /*default=*/"0",
+                        "Workspace multibuffer depth; heuristics require a non-zero value">];
+}
+
 def MarkRealCoreType : Pass<"hivm-mark-real-core-type", "ModuleOp"> {
   let summary = "Mark scalar operations with core-type attribute.";
   let constructor = "mlir::hivm::createMarkRealCoreTypePass()";
@@ -806,7 +852,16 @@ def MarkRealCoreType : Pass<"hivm-mark-real-core-type", "ModuleOp"> {
   let options = [Option<"removeCoreTypeAttrs", "remove-core-type-attrs", "bool",
                         /*default=*/"false",
                         "Remove all core type attributes. If set to true, this "
-                        "pass becomes a cleanup pass.">];
+                        "pass becomes a cleanup pass.">,
+                 Option<"bypassShapeRegistry", "bypass-shape-registry", "bool",
+                        /*default=*/"false",
+                        "Bypass shape registry check for parent-scope core-type inheritance">,
+                 Option<"enablePreload", "enable-preload", "bool",
+                        /*default=*/"false",
+                        "Enable parent-scope core-type inheritance when the kernel is registered">,
+                 Option<"workspaceMultiBufferNum", "set-workspace-multibuffer", "unsigned",
+                        /*default=*/"0",
+                        "Workspace multibuffer depth; heuristics require a non-zero value">];
 }
 
 def HIVMCanonicalizationPipeline
@@ -1315,7 +1370,14 @@ def CVPipelining : Pass<"cv-pipelining", "func::FuncOp"> {
                  Option<"enableLazyLoading", "enable-lazy-loading", "bool",
                         /*default=*/"false",
                         "Allow load ops to be cloned into multiple work items "
-                        "to reduce intermediate buffer expansion">];
+                        "to reduce intermediate buffer expansion">,
+                 Option<"bypassShapeRegistry", "bypass-shape-registry", "bool",
+                        /*default=*/"false",
+                        "Bypass shape registry check for registered-kernel "
+                        "CV-pipelining heuristics">,
+                 Option<"enablePreload", "enable-preload", "bool",
+                        /*default=*/"false",
+                        "Enable registered-kernel CV-pipelining heuristics">];
 }
 
 def AutoBlockifyParallelLoop
@@ -1483,6 +1545,15 @@ def CreatePreload : Pass<"create-preload"> {
   let summary = "Create preload for CV pipelining";
   let constructor = "mlir::hivm::createCreatePreloadPass()";
   let dependentDialects = ["memref::MemRefDialect", "hivm::HIVMDialect", "mlir::scope::ScopeDialect"];
+  let options = [Option<"bypassShapeRegistry", "bypass-shape-registry", "bool",
+                        /*default=*/"false",
+                        "Bypass shape registry check for same-preload_num multi-scope">,
+                 Option<"enablePreload", "enable-preload", "bool",
+                        /*default=*/"false",
+                        "Enable same-preload_num multi-scope when the kernel is registered">,
+                 Option<"workspaceMultiBufferNum", "set-workspace-multibuffer", "unsigned",
+                        /*default=*/"0",
+                        "Workspace multibuffer depth; heuristics require a non-zero value">];
 }
 
 def RemoveHIVMDataLayoutAnnotation : Pass<"hivm-remove-layout-annotation", "func::FuncOp"> {

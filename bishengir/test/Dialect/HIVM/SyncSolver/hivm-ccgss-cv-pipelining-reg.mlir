@@ -208,7 +208,6 @@ module {
         // CHECK-NEXT: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} {{.*}}
         hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%56 : tensor<128x128xf32>) outs(%collapse_shape : memref<128x128xf32, strided<[128, 1], offset: ?>>)
         // CHECK-NEXT: hivm.hir.sync_block_set[<CUBE>, <PIPE_FIX>, <PIPE_MTE2>] flag = {{.*}}
-        // CHECK-NEXT: hivm.hir.sync_block_set[<CUBE>, <PIPE_FIX>, <PIPE_MTE2>] flag = {{.*}}
         %57 = arith.addi %arg18, %c128_i32 : i32
         scf.yield %57 : i32
       } {hivm.loop_core_type = #hivm.tcore_type<CUBE>, multibuffer_unroll_factor = 4 : i32}
@@ -218,7 +217,6 @@ module {
         %49 = tensor.empty() : tensor<128x128xf32>
         %extracted_slice = tensor.extract_slice %42[%arg17, 0, 0] [1, 128, 128] [1, 1, 1] {hivm.tcore_type = #hivm.tcore_type<VECTOR>} : tensor<4x128x128xf32> to tensor<128x128xf32>
         // CHECK: hivm.hir.sync_block_wait[<VECTOR>, <PIPE_FIX>, <PIPE_MTE2>] flag = {{.*}}
-        // CHECK-NEXT: hivm.hir.sync_block_wait[<VECTOR>, <PIPE_FIX>, <PIPE_MTE2>] flag = {{.*}}
         // CHECK-NEXT: {{.*}}hivm.hir.load{{.*}}
         %50 = hivm.hir.load ins(%extracted_slice : tensor<128x128xf32>) outs(%49 : tensor<128x128xf32>) {hivm.tcore_type = #hivm.tcore_type<VECTOR>} -> tensor<128x128xf32>
         // CHECK-NEXT: hivm.hir.sync_block_set[<VECTOR>, <PIPE_MTE2>, <PIPE_FIX>] flag = {{.*}}
@@ -245,7 +243,6 @@ module {
         // CHECK-NEXT: {{.*}}hivm.hir.store{{.*}}
         hivm.hir.store ins(%65 : tensor<128x128xbf16>) outs(%collapse_shape : memref<128x128xbf16, strided<[128, 1], offset: ?>>) {hivm.tcore_type = #hivm.tcore_type<VECTOR>}
         // CHECK-NEXT: hivm.hir.sync_block_set[<VECTOR>, <PIPE_MTE3>, <PIPE_MTE2>] flag = {{.*}}
-        // CHECK-NEXT: hivm.hir.sync_block_set[<VECTOR>, <PIPE_MTE3>, <PIPE_MTE2>] flag = {{.*}}
         %66 = tensor.empty() : tensor<128x1xf32>
         %67 = hivm.hir.vreduce <sum> ins(%63 : tensor<128x128xf32>) outs(%66 : tensor<128x1xf32>) unsigned_src = false reduce_dims = [1] -> tensor<128x1xf32>
         %collapsed_5 = tensor.collapse_shape %67 [[0, 1]] : tensor<128x1xf32> into tensor<128xf32>
@@ -266,7 +263,6 @@ module {
         %52 = tensor.empty() : tensor<128x128xbf16>
         %extracted_slice = tensor.extract_slice %45[%arg17, 0, 0] [1, 128, 128] [1, 1, 1] {hivm.tcore_type = #hivm.tcore_type<CUBE>} : tensor<4x128x128xbf16> to tensor<128x128xbf16>
         // CHECK: hivm.hir.sync_block_wait[<CUBE>, <PIPE_MTE3>, <PIPE_MTE2>] flag = {{.*}}
-        // CHECK-NEXT: hivm.hir.sync_block_wait[<CUBE>, <PIPE_MTE3>, <PIPE_MTE2>] flag = {{.*}}
         // CHECK-NEXT: {{.*}}hivm.hir.load{{.*}}
         %53 = hivm.hir.load ins(%extracted_slice : tensor<128x128xbf16>) outs(%52 : tensor<128x128xbf16>) {hivm.tcore_type = #hivm.tcore_type<CUBE>} -> tensor<128x128xbf16>
         // CHECK-NEXT: hivm.hir.sync_block_set[<CUBE>, <PIPE_MTE2>, <PIPE_MTE3>] flag = {{.*}}
@@ -282,7 +278,6 @@ module {
         // CHECK-NEXT: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} {{.*}}
         hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%58 : tensor<128x64xf32>) outs(%collapse_shape : memref<128x64xf32, strided<[64, 1], offset: ?>>)
         // CHECK-NEXT: hivm.hir.sync_block_set[<CUBE>, <PIPE_FIX>, <PIPE_MTE2>] flag = {{.*}}
-        // CHECK-NEXT: hivm.hir.sync_block_set[<CUBE>, <PIPE_FIX>, <PIPE_MTE2>] flag = {{.*}}
         %59 = arith.addi %arg18, %c128_i32 : i32
         scf.yield %59 : i32
       } {hivm.loop_core_type = #hivm.tcore_type<CUBE>, multibuffer_unroll_factor = 4 : i32}
@@ -294,7 +289,6 @@ module {
         %50 = tensor.empty() : tensor<128x64xf32>
         %extracted_slice_5 = tensor.extract_slice %47[%arg17, 0, 0] [1, 128, 64] [1, 1, 1] {hivm.tcore_type = #hivm.tcore_type<VECTOR>} : tensor<4x128x64xf32> to tensor<128x64xf32>
         // CHECK: hivm.hir.sync_block_wait[<VECTOR>, <PIPE_FIX>, <PIPE_MTE2>] flag = {{.*}}
-        // CHECK-NEXT: hivm.hir.sync_block_wait[<VECTOR>, <PIPE_FIX>, <PIPE_MTE2>] flag = {{.*}}
         // CHECK-NEXT: {{.*}}hivm.hir.load{{.*}}
         %51 = hivm.hir.load ins(%extracted_slice_5 : tensor<128x64xf32>) outs(%50 : tensor<128x64xf32>) {hivm.tcore_type = #hivm.tcore_type<VECTOR>} -> tensor<128x64xf32>
         // CHECK-NEXT: hivm.hir.sync_block_set[<VECTOR>, <PIPE_MTE2>, <PIPE_FIX>] flag = {{.*}}

@@ -222,26 +222,26 @@ func.func @insert_store_load_between_implicit_transposeb_and_mmad(%arg0: memref<
 
 // -----
 // CHECK-LABEL: @insert_load_between_fixpipe_and_mmad
-func.func @insert_load_between_fixpipe_and_mmad(%arg0: memref<16x16xf16>, %arg1: memref<16x16xf16>) -> tensor<16x16xf32> {
+func.func @insert_load_between_fixpipe_and_mmad(%arg0: memref<16x16xf32>, %arg1: memref<16x16xf32>) -> tensor<16x16xf32> {
   %c16 = arith.constant 16 : index
   %true = arith.constant true
-  %0 = bufferization.to_tensor %arg0 restrict writable : memref<16x16xf16>
-  %1 = bufferization.to_tensor %arg1 restrict writable : memref<16x16xf16>
-  %2 = hivm.hir.fixpipe {enable_nz2nd} ins(%0 : tensor<16x16xf16>) outs(%1 : tensor<16x16xf16>) -> tensor<16x16xf16>
-  // CHECK: %[[EMPTY1:.*]] = tensor.empty() : tensor<16x16xf16>
-  // CHECK: %[[LOAD:.*]] = hivm.hir.load ins(%{{.*}} : tensor<16x16xf16>) outs(%[[EMPTY1:.*]] : tensor<16x16xf16>) -> tensor<16x16xf16>
+  %0 = bufferization.to_tensor %arg0 restrict writable : memref<16x16xf32>
+  %1 = bufferization.to_tensor %arg1 restrict writable : memref<16x16xf32>
+  %2 = hivm.hir.fixpipe {enable_nz2nd} ins(%0 : tensor<16x16xf32>) outs(%1 : tensor<16x16xf32>) -> tensor<16x16xf32>
+  // CHECK: %[[EMPTY1:.*]] = tensor.empty() : tensor<16x16xf32>
+  // CHECK: %[[LOAD:.*]] = hivm.hir.load ins(%{{.*}} : tensor<16x16xf32>) outs(%[[EMPTY1:.*]] : tensor<16x16xf32>) -> tensor<16x16xf32>
   %3 = tensor.empty() : tensor<16x16xf32>
-  %4 = hivm.hir.mmadL1 ins(%0, %2, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%3 : tensor<16x16xf32>) -> tensor<16x16xf32>
+  %4 = hivm.hir.mmadL1 ins(%0, %2, %true, %c16, %c16, %c16 : tensor<16x16xf32>, tensor<16x16xf32>, i1, index, index, index) outs(%3 : tensor<16x16xf32>) -> tensor<16x16xf32>
   return %4 : tensor<16x16xf32>
 }
 
 
 // -----
 // CHECK-LABEL: @insert_load_between_fixpipe_and_vector
-func.func @insert_load_between_fixpipe_and_vector(%arg0: memref<16x16xf16>, %arg1: memref<16x16xf16>) -> tensor<16x16xf16> {
-  %0 = bufferization.to_tensor %arg0 restrict writable : memref<16x16xf16>
+func.func @insert_load_between_fixpipe_and_vector(%arg0: memref<16x16xf32>, %arg1: memref<16x16xf16>) -> tensor<16x16xf16> {
+  %0 = bufferization.to_tensor %arg0 restrict writable : memref<16x16xf32>
   %1 = bufferization.to_tensor %arg1 restrict writable : memref<16x16xf16>
-  %2 = hivm.hir.fixpipe {enable_nz2nd} ins(%0 : tensor<16x16xf16>) outs(%1 : tensor<16x16xf16>) -> tensor<16x16xf16>
+  %2 = hivm.hir.fixpipe {enable_nz2nd, pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%0 : tensor<16x16xf32>) outs(%1 : tensor<16x16xf16>) -> tensor<16x16xf16>
   // CHECK: %[[EMPTY1:.*]] = tensor.empty() : tensor<16x16xf16>
   // CHECK: %[[LOAD:.*]] = hivm.hir.load ins(%{{.*}} : tensor<16x16xf16>) outs(%[[EMPTY1:.*]] : tensor<16x16xf16>) -> tensor<16x16xf16>
   %3 = tensor.empty() : tensor<16x16xf16>

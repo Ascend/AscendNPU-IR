@@ -1159,11 +1159,11 @@ FailureOrCastVec propagateScfIfOp(RewriterBase &rewriter, scf::IfOp op,
   auto elseYieldConversionSrc = getConversionSrc(elseYieldValue);
   if (!thenYieldConversionSrc.has_value() ||
       !elseYieldConversionSrc.has_value()) {
-    return UnrealizedCastOpVec{};
+    return failure();
   }
   if (thenYieldConversionSrc.value().getType() !=
       elseYieldConversionSrc.value().getType()) {
-    return UnrealizedCastOpVec{};
+    return failure();
   }
 
   // replace yield value by conversion src and modify if result type

@@ -500,12 +500,12 @@ func.func @test_matmul_valid_descale_dim(%A_gm : memref<16x16xf16, #hivm.address
 // CHECK-LABEL test_fixpipe_dual_dst_mode_with_sub_block_idx
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
   func.func @test_fixpipe_dual_dst_mode_with_sub_block_idx() {
-    %l0c = memref.alloc() : memref<16x16xf16, #hivm.address_space<cc>>
-    %ub = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
+    %l0c = memref.alloc() : memref<16x16xf32, #hivm.address_space<cc>>
+    %ub = memref.alloc() : memref<16x16xf32, #hivm.address_space<ub>>
     // expected-error@+1 {{'hivm.hir.fixpipe' op sub_block_idx must not be set when dual_dst_mode is enabled!}}
     hivm.hir.fixpipe {sub_block_idx = #hivm.fixpipe_sub_block<sub_block_1>}
-                    ins(%l0c : memref<16x16xf16, #hivm.address_space<cc>>)
-                    outs(%ub : memref<16x16xf16, #hivm.address_space<ub>>)
+                    ins(%l0c : memref<16x16xf32, #hivm.address_space<cc>>)
+                    outs(%ub : memref<16x16xf32, #hivm.address_space<ub>>)
                     dual_dst_mode = #hivm.fixpipe_dual_dst_mode<ROW_SPLIT>
     return
   }
@@ -716,4 +716,172 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     %0 = hivm.hir.vcast {hivm.unsigned_mode = #hivm.unsigned_mode<si2ui>} ins(%src : tensor<16xi8>) outs(%dst : tensor<16xi32>) round_mode = <rint> cast = <cast_unsigned> -> tensor<16xi32>
     return
   }
+}
+
+// -----
+
+// F16 sources must be rejected by plain Op verification, independent of the
+// target architecture.
+// CHECK-LABEL: test_fixpipe_f16_src_rejected
+func.func @test_fixpipe_f16_src_rejected() {
+  %src = memref.alloc() : memref<16x16xf16, #hivm.address_space<cc>>
+  %dst = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
+  // expected-error@+1 {{'hivm.hir.fixpipe' op operand #0 must be Shaped Type of 32-bit float or 32-bit signless integer values, but got 'memref<16x16xf16, #hivm.address_space<cc>>'}}
+  hivm.hir.fixpipe ins(%src : memref<16x16xf16, #hivm.address_space<cc>>) outs(%dst : memref<16x16xf16, #hivm.address_space<ub>>)
+  return
+}
+
+// -----
+
+// The same rejection must not depend on the C220 target.
+// CHECK-LABEL: test_fixpipe_f16_src_rejected_c220
+module attributes {hacc.target = #hacc.target<"Ascend910B1">} {
+  func.func @test_fixpipe_f16_src_rejected_c220() {
+    %src = memref.alloc() : memref<16x16xf16, #hivm.address_space<cc>>
+    %dst = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
+    // expected-error@+1 {{'hivm.hir.fixpipe' op operand #0 must be Shaped Type of 32-bit float or 32-bit signless integer values, but got 'memref<16x16xf16, #hivm.address_space<cc>>'}}
+    hivm.hir.fixpipe ins(%src : memref<16x16xf16, #hivm.address_space<cc>>) outs(%dst : memref<16x16xf16, #hivm.address_space<ub>>)
+    return
+  }
+}
+
+// -----
+
+// The same rejection must not depend on the C310 target.
+// CHECK-LABEL: test_fixpipe_f16_src_rejected_c310
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @test_fixpipe_f16_src_rejected_c310() {
+    %src = memref.alloc() : memref<16x16xf16, #hivm.address_space<cc>>
+    %dst = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
+    // expected-error@+1 {{'hivm.hir.fixpipe' op operand #0 must be Shaped Type of 32-bit float or 32-bit signless integer values, but got 'memref<16x16xf16, #hivm.address_space<cc>>'}}
+    hivm.hir.fixpipe ins(%src : memref<16x16xf16, #hivm.address_space<cc>>) outs(%dst : memref<16x16xf16, #hivm.address_space<ub>>)
+    return
+  }
+}
+
+// -----
+
+// Tensor f16 sources are rejected as well.
+// CHECK-LABEL: test_fixpipe_f16_tensor_src_rejected
+func.func @test_fixpipe_f16_tensor_src_rejected() {
+  %src = tensor.empty() : tensor<16x16xf16>
+  %dst = tensor.empty() : tensor<16x16xf16>
+  // expected-error@+1 {{'hivm.hir.fixpipe' op operand #0 must be Shaped Type of 32-bit float or 32-bit signless integer values, but got 'tensor<16x16xf16>'}}
+  %r = hivm.hir.fixpipe ins(%src : tensor<16x16xf16>) outs(%dst : tensor<16x16xf16>) -> tensor<16x16xf16>
+  return
+}
+
+// -----
+
+// Matrix A and B must use the same element type.
+func.func @test_mmad_l1_mismatched_input_types() {
+  %a = memref.alloc() : memref<16x16xf32>
+  %b = memref.alloc() : memref<16x16xf16>
+  %c = memref.alloc() : memref<16x16xf32>
+  %true = arith.constant true
+  %c16 = arith.constant 16 : index
+  // expected-error@+1 {{'hivm.hir.mmadL1' op failed to verify that all of {a, b} have same element type}}
+  hivm.hir.mmadL1 ins(%a, %b, %true, %c16, %c16, %c16 : memref<16x16xf32>, memref<16x16xf16>, i1, index, index, index) outs(%c : memref<16x16xf32>)
+  return
+}
+
+// -----
+
+// Matrix C is an accumulator and must use f32 or i32 elements.
+func.func @test_mmad_l1_f16_accumulator() {
+  %a = memref.alloc() : memref<16x16xf16>
+  %b = memref.alloc() : memref<16x16xf16>
+  %c = memref.alloc() : memref<16x16xf16>
+  %true = arith.constant true
+  %c16 = arith.constant 16 : index
+  // expected-error@+1 {{'hivm.hir.mmadL1' op operand #6 must be Shaped Type of 32-bit float or 32-bit signless integer values}}
+  hivm.hir.mmadL1 ins(%a, %b, %true, %c16, %c16, %c16 : memref<16x16xf16>, memref<16x16xf16>, i1, index, index, index) outs(%c : memref<16x16xf16>)
+  return
+}
+
+// -----
+
+// Tensor results must use the same accumulator element-type domain.
+func.func @test_mmad_l1_f16_result() {
+  %a = tensor.empty() : tensor<16x16xf16>
+  %b = tensor.empty() : tensor<16x16xf16>
+  %c = tensor.empty() : tensor<16x16xf32>
+  %true = arith.constant true
+  %c16 = arith.constant 16 : index
+  // expected-error@+1 {{'hivm.hir.mmadL1' op result #0 must be variadic of ranked tensor of 32-bit float or 32-bit signless integer values}}
+  %result = hivm.hir.mmadL1 ins(%a, %b, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%c : tensor<16x16xf32>) -> tensor<16x16xf16>
+  return
+}
+
+// -----
+
+// BatchMmadL1 shares the same accumulator contract.
+func.func @test_batch_mmad_l1_f16_accumulator() {
+  %a = memref.alloc() : memref<2x16x16xf16>
+  %b = memref.alloc() : memref<2x16x16xf16>
+  %c = memref.alloc() : memref<2x16x16xf16>
+  %true = arith.constant true
+  %c16 = arith.constant 16 : index
+  // expected-error@+1 {{'hivm.hir.batchMmadL1' op operand #6 must be Shaped Type of 32-bit float or 32-bit signless integer values}}
+  hivm.hir.batchMmadL1 ins(%a, %b, %true, %c16, %c16, %c16 : memref<2x16x16xf16>, memref<2x16x16xf16>, i1, index, index, index) outs(%c : memref<2x16x16xf16>)
+  return
+}
+
+// -----
+
+// Fixpipe pre-quant mode type contracts must be rejected by plain Op
+// verification: the mode names one src/dst signature, and the mismatch is
+// reported with the mode, the allowed signatures and the actual signature.
+// CHECK-LABEL: test_fixpipe_pre_quant_wrong_dst
+func.func @test_fixpipe_pre_quant_wrong_dst() {
+  %src = tensor.empty() : tensor<16x16xf32>
+  %dst = tensor.empty() : tensor<16x16xbf16>
+  // expected-error@+1 {{pre_quant mode 'F322F16' requires src/dst element type signature 32-bit float -> 16-bit float, but got 'f32' -> 'bf16'}}
+  %r = hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%src : tensor<16x16xf32>) outs(%dst : tensor<16x16xbf16>) -> tensor<16x16xbf16>
+  return
+}
+
+// -----
+
+// CHECK-LABEL: test_fixpipe_pre_quant_s322i8_wrong_dst
+func.func @test_fixpipe_pre_quant_s322i8_wrong_dst() {
+  %src = tensor.empty() : tensor<16x16xi32>
+  %dst = tensor.empty() : tensor<16x16xi16>
+  // expected-error@+1 {{pre_quant mode 'S322I8' requires src/dst element type signature 32-bit signless integer -> 8-bit signless integer, but got 'i32' -> 'i16'}}
+  %r = hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<S322I8>} ins(%src : tensor<16x16xi32>) outs(%dst : tensor<16x16xi16>) -> tensor<16x16xi16>
+  return
+}
+
+// -----
+
+// NO_QUANT requires identical src/dst element types.
+// CHECK-LABEL: test_fixpipe_pre_quant_no_quant_mismatch
+func.func @test_fixpipe_pre_quant_no_quant_mismatch() {
+  %src = tensor.empty() : tensor<16x16xf32>
+  %dst = tensor.empty() : tensor<16x16xi32>
+  // expected-error@+1 {{pre_quant mode 'NO_QUANT' requires one of [32-bit float -> 32-bit float, 32-bit signless integer -> 32-bit signless integer], but got 'f32' -> 'i32'}}
+  %r = hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<NO_QUANT>} ins(%src : tensor<16x16xf32>) outs(%dst : tensor<16x16xi32>) -> tensor<16x16xi32>
+  return
+}
+
+// -----
+
+// CHECK-LABEL: test_fixpipe_pre_quant_qf_wrong_dst
+func.func @test_fixpipe_pre_quant_qf_wrong_dst() {
+  %src = tensor.empty() : tensor<16x16xf32>
+  %dst = tensor.empty() : tensor<16x16xf16>
+  // expected-error@+1 {{pre_quant mode 'QF322F32_PRE' requires src/dst element type signature 32-bit float -> 32-bit float, but got 'f32' -> 'f16'}}
+  %r = hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<QF322F32_PRE>} ins(%src : tensor<16x16xf32>) outs(%dst : tensor<16x16xf16>) -> tensor<16x16xf16>
+  return
+}
+
+// -----
+
+// CHECK-LABEL: test_fixpipe_pre_quant_f322bf16_wrong_dst
+func.func @test_fixpipe_pre_quant_f322bf16_wrong_dst() {
+  %src = tensor.empty() : tensor<16x16xf32>
+  %dst = tensor.empty() : tensor<16x16xf16>
+  // expected-error@+1 {{pre_quant mode 'F322BF16' requires src/dst element type signature 32-bit float -> bfloat16 type, but got 'f32' -> 'f16'}}
+  %r = hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322BF16>} ins(%src : tensor<16x16xf32>) outs(%dst : tensor<16x16xf16>) -> tensor<16x16xf16>
+  return
 }

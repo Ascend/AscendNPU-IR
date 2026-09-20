@@ -288,11 +288,15 @@ struct HIVMCMainConfigCLOptions : public HIVMCMainConfig {
         cl::location(enableFlattenFlag), cl::init(true),
         cl::cat(generalOptCategory));
 
-    static cl::opt<int, /*ExternalStorage=*/true>
-        enableBishengirSimtOptimization(
+    static cl::opt<int, /*ExternalStorage=*/true> simtOptimizationMode(
+            "simt-optimization-mode",
+            cl::desc("set simt optimiation mode"),
+            cl::location(simtOptimizationModeFlag), cl::init(900101));
+    
+    static cl::alias enableBishengirSimtOptimization(
             "enable-bishengir-simt-optimization",
-            cl::desc("enable bishengir simt optimization"),
-            cl::location(enableBishengirSimtOptimizationFlag), cl::init(1900101));
+            cl::desc("alias for simt-optimziation-mode"),
+            cl::aliasopt(simtOptimizationMode));
 
     static cl::opt<int32_t> simtStackLimitOpt(
     "simt-stack-limit",
@@ -563,43 +567,29 @@ struct HIVMCMainConfigCLOptions : public HIVMCMainConfig {
             REGISTER_TARGET(Ascend910_9581), REGISTER_TARGET(Ascend910_9589),
             REGISTER_TARGET(Ascend910_958a), REGISTER_TARGET(Ascend910_958b),
             REGISTER_TARGET(Ascend910_9599), REGISTER_TARGET(Ascend950PR_950z),
-            REGISTER_TARGET(Ascend950PR_9579),
-            REGISTER_TARGET(Ascend950PR_957a),
-            REGISTER_TARGET(Ascend950PR_957b),
-            REGISTER_TARGET(Ascend950PR_957c),
-            REGISTER_TARGET(Ascend950PR_957d),
-            REGISTER_TARGET(Ascend950PR_9589),
-            REGISTER_TARGET(Ascend950PR_958a),
-            REGISTER_TARGET(Ascend950PR_958b),
-            REGISTER_TARGET(Ascend950PR_958c),
-            REGISTER_TARGET(Ascend950PR_958d),
-            REGISTER_TARGET(Ascend950PR_9599),
-            REGISTER_TARGET(Ascend950PR_959a),
-            REGISTER_TARGET(Ascend950PR_959b),
-            REGISTER_TARGET(Ascend950DT_950x),
-            REGISTER_TARGET(Ascend950DT_950y),
-            REGISTER_TARGET(Ascend950DT_9571),
-            REGISTER_TARGET(Ascend950DT_9572),
-            REGISTER_TARGET(Ascend950DT_9573),
-            REGISTER_TARGET(Ascend950DT_9574),
-            REGISTER_TARGET(Ascend950DT_9575),
-            REGISTER_TARGET(Ascend950DT_9576),
-            REGISTER_TARGET(Ascend950DT_9577),
-            REGISTER_TARGET(Ascend950DT_9578),
-            REGISTER_TARGET(Ascend950DT_9581),
-            REGISTER_TARGET(Ascend950DT_9582),
-            REGISTER_TARGET(Ascend950DT_9583),
-            REGISTER_TARGET(Ascend950DT_9584),
-            REGISTER_TARGET(Ascend950DT_9585),
-            REGISTER_TARGET(Ascend950DT_9586),
-            REGISTER_TARGET(Ascend950DT_9587),
-            REGISTER_TARGET(Ascend950DT_9588),
-            REGISTER_TARGET(Ascend950DT_9591),
-            REGISTER_TARGET(Ascend950DT_9592),
-            REGISTER_TARGET(Ascend950DT_9595),
-            REGISTER_TARGET(Ascend950DT_9596),
-            REGISTER_TARGET(Ascend950DT_95A1),
-            REGISTER_TARGET(Ascend950DT_95A2), REGISTER_TARGET(Unknown)
+            REGISTER_TARGET(Ascend950PR_9579), REGISTER_TARGET(Ascend950PR_9579x),
+            REGISTER_TARGET(Ascend950PR_957a), REGISTER_TARGET(Ascend950PR_957b),
+            REGISTER_TARGET(Ascend950PR_957c), REGISTER_TARGET(Ascend950PR_957d),
+            REGISTER_TARGET(Ascend950PR_9589), REGISTER_TARGET(Ascend950PR_958a),
+            REGISTER_TARGET(Ascend950PR_958b), REGISTER_TARGET(Ascend950PR_958c),
+            REGISTER_TARGET(Ascend950PR_958d), REGISTER_TARGET(Ascend950PR_9599),
+            REGISTER_TARGET(Ascend950PR_959a), REGISTER_TARGET(Ascend950PR_959b),
+            REGISTER_TARGET(Ascend950PR_957bx), REGISTER_TARGET(Ascend950PR_958bx),
+            REGISTER_TARGET(Ascend950DT_950x), REGISTER_TARGET(Ascend950DT_950y),
+            REGISTER_TARGET(Ascend950DT_9571), REGISTER_TARGET(Ascend950DT_9572),
+            REGISTER_TARGET(Ascend950DT_9573), REGISTER_TARGET(Ascend950DT_9574),
+            REGISTER_TARGET(Ascend950DT_9575), REGISTER_TARGET(Ascend950DT_9576),
+            REGISTER_TARGET(Ascend950DT_9577), REGISTER_TARGET(Ascend950DT_9578),
+            REGISTER_TARGET(Ascend950DT_9581), REGISTER_TARGET(Ascend950DT_9581x),
+            REGISTER_TARGET(Ascend950DT_9582), REGISTER_TARGET(Ascend950DT_9582x),
+            REGISTER_TARGET(Ascend950DT_9583), REGISTER_TARGET(Ascend950DT_9584),
+            REGISTER_TARGET(Ascend950DT_9585), REGISTER_TARGET(Ascend950DT_9586),
+            REGISTER_TARGET(Ascend950DT_9587), REGISTER_TARGET(Ascend950DT_9588),
+            REGISTER_TARGET(Ascend950DT_9591), REGISTER_TARGET(Ascend950DT_9592),
+            REGISTER_TARGET(Ascend950DT_9595), REGISTER_TARGET(Ascend950DT_9596),
+            REGISTER_TARGET(Ascend950DT_95A1), REGISTER_TARGET(Ascend950DT_95A2),
+            REGISTER_TARGET(Ascend950DT_9572x),
+            REGISTER_TARGET(Unknown)
 #undef REGISTER_TARGET
 #undef TO_STRING
                 ),

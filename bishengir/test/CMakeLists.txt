@@ -23,6 +23,7 @@ set(BISHENGIR_TEST_DEPENDS
   bishengir-opt
   bishengir-translate
   bishengir-options-tblgen
+  bishengir-hivm-ir-contract-tblgen
   bishengir-target-spec-tblgen
   bishengir-capi-ir-test
   bishengir-capi-pass-test

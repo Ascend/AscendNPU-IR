@@ -691,6 +691,10 @@ module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
 
 ### 使用bitwise_mask优化访存掩码
 
+**说明**：
+
+本节内容仅适用于 Atlas A3/A2 系列产品。
+
 **问题描述**：
 
 在昇腾硬件上，布尔类型（`i1`）的张量在全局内存（GM）中实际是按`i8`（一个字节）存储的。当Triton Ascend处理以`i1`张量作为输入的运算时，它会将`i1`视为`i8`搬入，但某些情况下（例如作为`tl.where`的条件掩码）又需要将结果转换回`i1`，导致不必要的类型转换，带来性能损耗。
@@ -1060,9 +1064,6 @@ tl.compile_hint(pv, "hivm.tile_mix_cube_num", 2)
 
 | 编译选项 | 含义 | 取值范围 |
 | --- | --- | --- |
-| `multibuffer` | 设置是否启用乒乓流水 | `False`(默认),`True` |
-| `limit_auto_multi_buffer_of_local_buffer` | 设置乒乓流水在片中 (L1, L0, 及UB) 的作用范围"no-limit"表示不限乒乓流水范围"no-l0c"表示只允许L0缓存外启用乒乓流水 | "no-limit","no-l0c"(默认) |
-| `unit_flag` | 设置`cube`搬出时是否按照block搬出，仅限数据对齐场景下使用 | `False`(默认),`True` |
 | `limit_auto_multi_buffer_only_for_local_buffer` | 设置是否在GM workspace中启用CV流水并行，`False`表示启用后续会整改接口，提供更可读的选项 | `False`(默认),`True` |
 | `set_workspace_multibuffer` | 仅在`limit_auto_multi_buffer_only_for_local_buffer=false`的场景下生效。设置CV并行的并行度使用时需确保数据没有依赖若设置为`N`，则`N`个CV操作并行执行 | 2(默认),4 |
 | `tile_mix_vector_loop` | 仅在`limit_auto_multi_buffer_only_for_local_buffer=false`的场景下生效。设置当前`vector`的切分数量，数值可由`autotuning`得出，均可为最优 | 1(默认),2,4 |

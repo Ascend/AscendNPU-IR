@@ -22,6 +22,7 @@
 #include "bishengir/Config/bishengir-config.h"
 #include "bishengir/Conversion/Passes.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/HIVM/IR/Contracts/FixpipePreQuantContract.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
@@ -414,14 +415,38 @@ bool isAccumulation(Operation *op) {
 /// NZ fractal dest type for L1 fixpipe: [N1, M1, 16, C0].
 /// Use ceilDiv so M/N below the fractal tile (e.g. M=1) pad instead of
 /// producing a zero-sized dimension (M1 = M/16 == 0).
-static RankedTensorType computeNz2NzL1DstType(RankedTensorType ndType) {
+RankedTensorType computeNz2NzL1DstTypeChannelSplit(RankedTensorType ndType) {
+  assert(ndType.getElementType().isF32() && "only support f32");
   auto rank = ndType.getRank();
   int64_t M = ndType.getDimSize(rank - 2);
   int64_t N = ndType.getDimSize(rank - 1);
-  static constexpr int64_t alignM = 16;
-  auto numElemPerBlock = mlir::utils::getNumPerBlock(ndType);
+  const int64_t alignM = 16;
+  const int64_t numElemPerBlock = 8;
   int64_t M1 = static_cast<int64_t>(llvm::divideCeil(M, alignM));
-  int64_t N1 = static_cast<int64_t>(llvm::divideCeil(N, numElemPerBlock));
+  int64_t N1 = static_cast<int64_t>(llvm::divideCeil(N, alignM)) * 2;
+  SmallVector<int64_t> shape;
+  for (int64_t i = 0; i < rank - 2; i++) {
+    shape.push_back(ndType.getDimSize(i));
+  }
+  shape.push_back(N1);
+  shape.push_back(M1);
+  shape.push_back(alignM);
+  shape.push_back(numElemPerBlock);
+  return RankedTensorType::get(shape, ndType.getElementType());
+}
+
+/// NZ fractal dest type for L1 fixpipe: [N1, M1, 16, C0].
+/// Use ceilDiv so M/N below the fractal tile (e.g. M=1) pad instead of
+/// producing a zero-sized dimension (M1 = M/16 == 0).
+RankedTensorType computeNz2NzL1DstTypeChannelMerge(RankedTensorType ndType) {
+  auto rank = ndType.getRank();
+  int64_t M = ndType.getDimSize(rank - 2);
+  int64_t N = ndType.getDimSize(rank - 1);
+  const int64_t alignM = 16;
+  const int64_t numElemPerBlock = mlir::utils::getNumPerBlock(ndType);
+  int64_t M1 = static_cast<int64_t>(llvm::divideCeil(M, alignM));
+  int64_t N1 =
+      static_cast<int64_t>(llvm::divideCeil(N, numElemPerBlock));
   SmallVector<int64_t> shape;
   for (int64_t i = 0; i < rank - 2; i++) {
     shape.push_back(ndType.getDimSize(i));
@@ -448,7 +473,7 @@ static FixpipeOp convertNz2NdFixpipeToNz2Nz(PatternRewriter &rewriter,
     return op;
   }
 
-  auto dstTy = computeNz2NzL1DstType(tensorType);
+  auto dstTy = channelSplit ? computeNz2NzL1DstTypeChannelSplit(tensorType) : computeNz2NzL1DstTypeChannelMerge(tensorType);
   Location loc = op.getLoc();
   Value src = op.getSrc();
   auto dualDstMode = op.getDualDstModeAttr();
@@ -688,19 +713,28 @@ static bool shouldSkipOuterFixpipeForAccumulation(Operation *opInst,
 /// extract_slice chains. This covers branch fan-out where a single-user-chain
 /// query cannot detect that fixpipes have already been inserted.
 static bool allUsersReachFixpipe(Value value) {
-  SmallVector<Operation *> users;
-  for (Operation *user : value.getUsers()) {
-    if (isa<tensor::DimOp, annotation::MarkOp>(user))
+  SmallVector<OpOperand *> uses;
+  for (OpOperand &use : value.getUses()) {
+    if (isa<tensor::DimOp, annotation::MarkOp>(use.getOwner()))
       continue;
-    users.push_back(user);
+    uses.push_back(&use);
   }
-  if (users.empty())
+  if (uses.empty())
     return false;
-  return llvm::all_of(users, [](Operation *user) {
-    if (isa<hivm::FixpipeOp>(user))
+  return llvm::all_of(uses, [](OpOperand *use) {
+    if (auto fixpipeOp = dyn_cast<hivm::FixpipeOp>(use->getOwner());
+        fixpipeOp && fixpipeOp.getSrc() == use->get())
       return true;
-    if (auto extractSlice = dyn_cast<tensor::ExtractSliceOp>(user))
+    if (auto extractSlice = dyn_cast<tensor::ExtractSliceOp>(use->getOwner()))
       return allUsersReachFixpipe(extractSlice.getResult());
+    if (auto forOp = dyn_cast<scf::ForOp>(use->getOwner())) {
+      if (auto iterArg = forOp.getTiedLoopRegionIterArg(use))
+        return allUsersReachFixpipe(iterArg);
+      if (auto result = forOp.getTiedLoopResult(use))
+        return allUsersReachFixpipe(result);
+    }
+    if (auto yieldOp = dyn_cast<scf::YieldOp>(use->getOwner()))
+      return allUsersReachFixpipe(yieldOp->getParentOp()->getResult(use->getOperandNumber()));
     return false;
   });
 }
@@ -742,9 +776,9 @@ public:
       return failure();
 
     bool changed = false;
+    if (isOnRegBasedArch(opInst) && allUsersReachFixpipe(mmadLikeOpRes))
+      return failure();
     if (!shouldSkipOuterFixpipeForAccumulation(opInst, mmadLikeOpRes)) {
-      if (isOnRegBasedArch(opInst) && allUsersReachFixpipe(mmadLikeOpRes))
-        return failure();
 
       auto isMatchedOp = [](Operation *op, Value v) {
         LDBG("Matching this current op " << *op);
@@ -962,13 +996,21 @@ static SmallVector<hivm::VCastOp> collectVCastChain(hivm::VCastOp firstCast) {
 
 static std::optional<FixpipePreQuantMode>
 getQuantModeForTypes(Type inputType, Type outputType) {
-  if (inputType.isF32() && outputType.isF16())
-    return symbolizeFixpipePreQuantMode("F322F16");
-  if (inputType.isF32() && outputType.isBF16())
-    return symbolizeFixpipePreQuantMode("F322BF16");
-  if (inputType.isInteger(32) && outputType.isInteger(8))
-    return symbolizeFixpipePreQuantMode("S322I8");
-  return std::nullopt;
+  // Candidates come from the generated pre-quant type contract. InlineFixpipe
+  // only fuses type-changing quantizing modes: a signature with several
+  // candidates (f32 -> f32 matches both NO_QUANT and QF322F32_PRE) or with
+  // only identity candidates is deliberately not fused.
+  SmallVector<FixpipePreQuantMode> candidates =
+      getFixpipePreQuantCandidates(inputType, outputType);
+  // NO_QUANT describes identity signatures and is not an explicit quantizing
+  // fusion choice.
+  llvm::erase(candidates, FixpipePreQuantMode::NO_QUANT);
+  if (candidates.size() != 1)
+    return std::nullopt;
+  FixpipePreQuantMode mode = candidates.front();
+  if (mode == FixpipePreQuantMode::QF322F32_PRE)
+    return std::nullopt;
+  return mode;
 }
 
 /// True when \p inputType -> \p outputType is an integer bit-width narrowing.
@@ -1236,6 +1278,12 @@ private:
       // Move fixpipe out of scf.for.
       // The BatchMmadL1 case is excluded because TileBatchMMIntoLoop requires
       // `BatchMmadL1 -> Fixpipe` use chain to stay in the same block.
+      // Do not hoist a type-converting fixpipe out of a loop-carried value:
+      // hoisting rewires the yield to the fixpipe source, which would change
+      // the loop yield type.
+      if (op.getSource().getType() != op.getResultTensor().getType())
+        return rewriter.notifyMatchFailure(
+            op, "fixpipe converts the loop-carried value type");
       matched = true;
       auto scfForOp = dyn_cast_if_present<scf::ForOp>(curOp->getParentOp());
       moveFixpipeOutOfScfFor(rewriter, loc, op, scfForOp, op.getResultTensor());

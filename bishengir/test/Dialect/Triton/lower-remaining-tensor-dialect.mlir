@@ -53,7 +53,7 @@ module {
       // expected-error @+1 {{tensor.yield is an unsupported tensor dialect operation}}
       tensor.yield %val : i32
     } : tensor<2xi32> to tensor<4xi32>
-    
+
     tt.store %dstPtr, %res : !tt.ptr<tensor<4xi32>>
     tt.return
   }
