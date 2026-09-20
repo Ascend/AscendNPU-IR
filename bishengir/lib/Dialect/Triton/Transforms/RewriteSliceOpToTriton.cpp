@@ -669,6 +669,24 @@ struct ExtractToTritonPattern : public OpRewritePattern<tensor::ExtractOp> {
     Value source = op.getTensor();
     RankedTensorType sourceType = cast<RankedTensorType>(source.getType());
 
+    // A scalar-shaped tensor is not representable in TritonGPU layouts. The
+    // HIVM reduction path can produce it by reshaping a one-element tensor;
+    // bypass that reshape before lowering the extract.
+    if (sourceType.getRank() == 0) {
+      if (auto reshape = source.getDefiningOp<triton::ReshapeOp>()) {
+        auto reshapeSource = reshape.getSrc();
+        auto reshapeSourceType =
+            dyn_cast<RankedTensorType>(reshapeSource.getType());
+        if (reshapeSourceType && reshapeSourceType.getNumElements() == 1) {
+          auto res = rewriter.create<triton::UnsplatOp>(loc, reshapeSource);
+          rewriter.replaceOp(op, res->getResults());
+          if (reshape->use_empty())
+            rewriter.eraseOp(reshape);
+          return success();
+        }
+      }
+    }
+
     // If there is just one element we can directly use unsplat op
     if (sourceType.getNumElements() == 1) {
       auto res = rewriter.create<triton::UnsplatOp>(loc, op.getTensor());

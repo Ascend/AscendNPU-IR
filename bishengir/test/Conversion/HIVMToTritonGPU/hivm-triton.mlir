@@ -1,4 +1,5 @@
 // RUN: bishengir-opt -convert-hivm-to-tritongpu %s -split-input-file -verify-diagnostics | FileCheck %s
+// RUN: bishengir-opt %s --convert-hivm-to-tritongpu --rewrite-slice-op-to-triton --convert-triton-to-tritongpu="target=cuda:80 num-warps=1 threads-per-warp=32 shared-memory-size=221184" --split-input-file --verify-diagnostics -o /dev/null
 
 // CHECK-LABEL: tt.func @simple_indirect_load_kernel_scope_0(%arg0: !tt.ptr<i64>, %arg1: !tt.ptr<i64>, %arg2: i64, %arg3: i64, %arg4: i64, %arg5: !tt.ptr<i64>, %arg6: !tt.ptr<i64>, %arg7: i64, %arg8: i64, %arg9: i64, %arg10: !tt.ptr<f32>, %arg11: !tt.ptr<f32>, %arg12: i64, %arg13: i64, %arg14: i64, %arg15: i32, %arg16: !tt.ptr<f32>, %arg17: !tt.ptr<f32>, %arg18: i64, %arg19: i64, %arg20: i64)
 // CHECK-NEXT: %c0_i64 = arith.constant 0 : i64
@@ -378,5 +379,215 @@ module {
     %222 = hivm.hir.vmul ins(%220, %cst_1 : tensor<16xf32>, f32) outs(%221 : tensor<16xf32>) -> tensor<16xf32>
     hivm.hir.local_store ins(%arg14 : memref<16xf32, #hivm.address_space<ub>>, %222 : tensor<16xf32>)
     return
+  }
+}
+
+// -----
+
+// CHECK-LABEL: tt.func @padded_load(
+// CHECK: %[[SRC_DESC_OFFSET:.*]] = arith.addi {{.*}} : i64
+// CHECK: %[[DST_DESC_OFFSET:.*]] = arith.addi {{.*}} : i64
+// CHECK: %[[VALID_SIZE:.*]] = arith.index_cast {{.*}} : index to i64
+// CHECK: %[[RANGE:.*]] = tt.make_range {end = 8 : i32, start = 0 : i32} : tensor<8xi32>
+// CHECK: %[[DST_OFFSET:.*]] = arith.trunci %[[DST_DESC_OFFSET]] : i64 to i32
+// CHECK: %[[DST_OFFSET_TENSOR:.*]] = tt.splat %[[DST_OFFSET]] : i32 -> tensor<8xi32>
+// CHECK: %[[SIZE:.*]] = arith.trunci %[[VALID_SIZE]] : i64 to i32
+// CHECK: %[[SIZE_TENSOR:.*]] = tt.splat %[[SIZE]] : i32 -> tensor<8xi32>
+// CHECK: %[[END:.*]] = arith.addi %[[DST_OFFSET_TENSOR]], %[[SIZE_TENSOR]] : tensor<8xi32>
+// CHECK: %[[AFTER_START:.*]] = arith.cmpi sge, %[[RANGE]], %[[DST_OFFSET_TENSOR]] : tensor<8xi32>
+// CHECK: %[[BEFORE_END:.*]] = arith.cmpi slt, %[[RANGE]], %[[END]] : tensor<8xi32>
+// CHECK: %[[MASK:.*]] = arith.andi %[[AFTER_START]], %[[BEFORE_END]] : tensor<8xi1>
+// CHECK: %[[LOCAL_INDEX:.*]] = arith.subi %[[RANGE]], %[[DST_OFFSET_TENSOR]] : tensor<8xi32>
+// CHECK: %[[SRC_OFFSET:.*]] = arith.trunci %[[SRC_DESC_OFFSET]] : i64 to i32
+// CHECK: %[[SRC_OFFSET_TENSOR:.*]] = tt.splat %[[SRC_OFFSET]] : i32 -> tensor<8xi32>
+// CHECK: %[[SOURCE_INDEX:.*]] = arith.addi %[[SRC_OFFSET_TENSOR]], %[[LOCAL_INDEX]] : tensor<8xi32>
+// CHECK: %[[SOURCE_PTRS:.*]] = tt.addptr {{.*}}, %[[SOURCE_INDEX]]
+// CHECK: %[[PAD:.*]] = tt.splat {{.*}} : i64 -> tensor<8xi64>
+// CHECK: %[[LOADED:.*]] = tt.load %[[SOURCE_PTRS]], %[[MASK]], %[[PAD]] evictionPolicy = evict_first
+// CHECK: tt.store {{.*}}, %[[LOADED]]
+// CHECK-NOT: hivm.hir.load
+// CHECK-NOT: bufferization.to_tensor
+// CHECK-NOT: builtin.unrealized_conversion_cast
+// CHECK: tt.return
+module {
+  func.func @padded_load(%src: memref<?xi64>, %srcOffset: index,
+                         %dstOffset: index, %size: index, %needsInit: i1,
+                         %out: memref<8xi64>) {
+    %c0 = arith.constant 0 : i64
+    %c4 = arith.constant 4 : index
+    %srcParent = memref.reinterpret_cast %src to offset: [0], sizes: [8],
+      strides: [1] : memref<?xi64> to memref<8xi64, strided<[1]>>
+    %srcView = memref.subview %srcParent[%srcOffset] [%size] [1]
+      : memref<8xi64, strided<[1]>>
+        to memref<?xi64, strided<[1], offset: ?>>
+    %dst = memref.alloc() : memref<8xi64>
+    %dstView = memref.subview %dst[%dstOffset] [%size] [1]
+      : memref<8xi64> to memref<?xi64, strided<[1], offset: ?>>
+    %leftPad = arith.remui %dstOffset, %c4 : index
+    hivm.hir.load
+        ins(%srcView : memref<?xi64, strided<[1], offset: ?>>)
+        outs(%dstView : memref<?xi64, strided<[1], offset: ?>>)
+        pad_mode = <PadValue>
+        pad_value = %c0 : i64
+        left_padding_num = %leftPad : index
+        init_out_buffer = true
+        init_condition = %needsInit : i1
+        eviction_policy = <EvictFirst>
+    %loaded = bufferization.to_tensor %dst restrict writable
+      : memref<8xi64>
+    hivm.hir.store ins(%loaded : tensor<8xi64>)
+                   outs(%out : memref<8xi64>)
+    return
+  }
+}
+
+// -----
+
+// expected-error@+1 {{Stage1 failed: HIVM/Bufferization Op conversion failed}}
+module {
+  func.func @padded_load_2d(%src: memref<4x4xi32>, %dst: memref<4x4xi32>,
+                            %size: index) {
+    %c0 = arith.constant 0 : i32
+    %srcView = memref.subview %src[0, 0] [4, %size] [1, 1]
+      : memref<4x4xi32> to memref<4x?xi32, strided<[4, 1]>>
+    %dstView = memref.subview %dst[0, 0] [4, %size] [1, 1]
+      : memref<4x4xi32> to memref<4x?xi32, strided<[4, 1]>>
+    // expected-error@+2 {{padded load requires matching static 1D buffers}}
+    // expected-error@+1 {{failed to legalize operation 'hivm.hir.load' that was explicitly marked illegal}}
+    hivm.hir.load ins(%srcView : memref<4x?xi32, strided<[4, 1]>>)
+                  outs(%dstView : memref<4x?xi32, strided<[4, 1]>>)
+                  pad_mode = <PadValue> pad_value = %c0 : i32
+                  init_out_buffer = true
+    %tensor = bufferization.to_tensor %dst restrict writable
+      : memref<4x4xi32>
+    return
+  }
+}
+
+// -----
+
+// expected-error@+1 {{Stage1 failed: HIVM/Bufferization Op conversion failed}}
+module {
+  func.func @padded_load_without_init(%src: memref<8xi32>,
+                                      %dst: memref<8xi32>, %size: index) {
+    %c0 = arith.constant 0 : i32
+    %srcView = memref.subview %src[0] [%size] [1]
+      : memref<8xi32> to memref<?xi32, strided<[1]>>
+    %dstView = memref.subview %dst[0] [%size] [1]
+      : memref<8xi32> to memref<?xi32, strided<[1]>>
+    // expected-error@+2 {{unsupported padded load shape or padding mode}}
+    // expected-error@+1 {{failed to legalize operation 'hivm.hir.load' that was explicitly marked illegal}}
+    hivm.hir.load ins(%srcView : memref<?xi32, strided<[1]>>)
+                  outs(%dstView : memref<?xi32, strided<[1]>>)
+                  pad_mode = <PadValue> pad_value = %c0 : i32
+                  init_out_buffer = false
+    %tensor = bufferization.to_tensor %dst restrict writable
+      : memref<8xi32>
+    return
+  }
+}
+
+// -----
+
+// expected-error@+1 {{Stage1 failed: HIVM/Bufferization Op conversion failed}}
+module {
+  func.func @padded_load_without_to_tensor(%src: memref<8xi32>,
+                                           %dst: memref<8xi32>, %size: index) {
+    %c0 = arith.constant 0 : i32
+    %srcView = memref.subview %src[0] [%size] [1]
+      : memref<8xi32> to memref<?xi32, strided<[1]>>
+    %dstView = memref.subview %dst[0] [%size] [1]
+      : memref<8xi32> to memref<?xi32, strided<[1]>>
+    // expected-error@+2 {{padded load destination has no parent to_tensor user}}
+    // expected-error@+1 {{failed to legalize operation 'hivm.hir.load' that was explicitly marked illegal}}
+    hivm.hir.load ins(%srcView : memref<?xi32, strided<[1]>>)
+                  outs(%dstView : memref<?xi32, strided<[1]>>)
+                  pad_mode = <PadValue> pad_value = %c0 : i32
+                  init_out_buffer = true
+    return
+  }
+}
+
+// -----
+
+// expected-error@+1 {{Stage1 failed: HIVM/Bufferization Op conversion failed}}
+module {
+  func.func @padded_load_non_contiguous(%src: memref<8xi32>,
+                                        %dst: memref<8xi32>) {
+    %c0 = arith.constant 0 : i32
+    %srcView = memref.subview %src[0] [4] [2]
+      : memref<8xi32> to memref<4xi32, strided<[2]>>
+    %dstView = memref.subview %dst[0] [4] [2]
+      : memref<8xi32> to memref<4xi32, strided<[2]>>
+    // expected-error@+2 {{invalid padded load descriptors}}
+    // expected-error@+1 {{failed to legalize operation 'hivm.hir.load' that was explicitly marked illegal}}
+    hivm.hir.load ins(%srcView : memref<4xi32, strided<[2]>>)
+                  outs(%dstView : memref<4xi32, strided<[2]>>)
+                  pad_mode = <PadValue> pad_value = %c0 : i32
+                  init_out_buffer = true
+    %tensor = bufferization.to_tensor %dst restrict writable
+      : memref<8xi32>
+    return
+  }
+}
+
+// -----
+
+// A dead allocation must disappear rather than leak into function conversion.
+// CHECK-LABEL: tt.func @dead_alloc_tensor
+// CHECK-NOT: bufferization.alloc_tensor
+// CHECK: tt.return
+module attributes {
+  hivm.module_core_type = #hivm.module_core_type<AIV>
+} {
+  func.func @dead_alloc_tensor() {
+    %dead = bufferization.alloc_tensor() : tensor<4xi32>
+    return
+  }
+}
+
+// -----
+
+// A supported live allocation keeps the same uninitialized tensor semantics.
+// CHECK-LABEL: tt.func @static_alloc_tensor
+// CHECK: %[[EMPTY:.*]] = tensor.empty() : tensor<4xi32>
+// CHECK-NOT: bufferization.alloc_tensor
+// CHECK: tt.store {{.*}}, %[[EMPTY]]
+// CHECK: tt.return
+module attributes {
+  hivm.module_core_type = #hivm.module_core_type<AIV>
+} {
+  func.func @static_alloc_tensor(%out: memref<4xi32>) {
+    %alloc = bufferization.alloc_tensor() : tensor<4xi32>
+    hivm.hir.store ins(%alloc : tensor<4xi32>) outs(%out : memref<4xi32>)
+    return
+  }
+}
+
+// -----
+
+// expected-error@+1 {{Stage1 failed: HIVM/Bufferization Op conversion failed}}
+module attributes {
+  hivm.module_core_type = #hivm.module_core_type<AIV>
+} {
+  func.func @dynamic_alloc_tensor(%size: index) -> tensor<?xi32> {
+    // expected-error@+2 {{only static allocations without a copy are supported}}
+    // expected-error@+1 {{failed to legalize operation 'bufferization.alloc_tensor' that was explicitly marked illegal}}
+    %alloc = bufferization.alloc_tensor(%size) : tensor<?xi32>
+    return %alloc : tensor<?xi32>
+  }
+}
+
+// -----
+
+// expected-error@+1 {{Stage1 failed: HIVM/Bufferization Op conversion failed}}
+module attributes {
+  hivm.module_core_type = #hivm.module_core_type<AIV>
+} {
+  func.func @copy_alloc_tensor(%arg0: tensor<4xi32>) -> tensor<4xi32> {
+    // expected-error@+2 {{only static allocations without a copy are supported}}
+    // expected-error@+1 {{failed to legalize operation 'bufferization.alloc_tensor' that was explicitly marked illegal}}
+    %alloc = bufferization.alloc_tensor() copy(%arg0) : tensor<4xi32>
+    return %alloc : tensor<4xi32>
   }
 }
