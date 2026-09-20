@@ -1595,11 +1595,10 @@ def TensorCopyInsertion : Pass<"hivm-tensor-copy-insertion", "ModuleOp"> {
     catch conflicts that were exposed by the first round's copy insertion.
   }];
   let constructor = "mlir::hivm::createTensorCopyInsertionPass()";
-  let dependentDialects = [
-    "bufferization::BufferizationDialect",
-    "memref::MemRefDialect",
-    "tensor::TensorDialect",
-    "hivm::HIVMDialect",
+  let dependentDialects = ["annotation::AnnotationDialect",
+                           "bufferization::BufferizationDialect",
+                           "memref::MemRefDialect", "tensor::TensorDialect",
+                           "hivm::HIVMDialect",
   ];
   let options = [
     Option<"allowReturnAllocsFromLoops", "allow-return-allocs-from-loops",

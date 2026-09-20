@@ -1050,6 +1050,72 @@ Value createAllocWithMark(PatternRewriter &rewriter, Location loc,
   return alloc;
 }
 
+namespace {
+/// Trace `value`'s defining chain up to a statically-shaped ancestor and
+/// return its size in bytes as a sound upper bound of `value`'s byte size.
+/// Returns std::nullopt when no static ancestor can be reached.
+// TODO: Get rid of this ad-hoc tracing. Bind values to the dynamic dims of
+// extract_slice via the symbol dialect so sizes can be reused globally.
+std::optional<int64_t> getBufferSizeInBytesUpperBound(Value value) {
+  auto shapedType = dyn_cast<ShapedType>(value.getType());
+  if (shapedType && shapedType.hasStaticShape()) {
+    auto numElems = utils::getStaticTotalSize(shapedType.getShape());
+    if (!numElems) {
+      return std::nullopt;
+    }
+    int64_t elemBits = getElementTypeOrSelf(value).getIntOrFloatBitWidth();
+    return llvm::divideCeil(*numElems * elemBits, utils::kBitsToByte);
+  }
+
+  Operation *defOp = value.getDefiningOp();
+  if (isa_and_nonnull<FixpipeOp, StoreOp>(defOp)) {
+    // fixpipe / store preserve the element count.
+    return getBufferSizeInBytesUpperBound(defOp->getOperand(0));
+  }
+  if (auto sliceOp = dyn_cast_if_present<tensor::ExtractSliceOp>(defOp)) {
+    // A slice never holds more elements than its source.
+    return getBufferSizeInBytesUpperBound(sliceOp.getSource());
+  }
+  if (auto castOp = dyn_cast_if_present<UnrealizedConversionCastOp>(defOp);
+      castOp && castOp->getNumOperands() == 1) {
+    // The propagator forwards the wrapped value unchanged.
+    return getBufferSizeInBytesUpperBound(castOp->getOperand(0));
+  }
+  return std::nullopt;
+}
+} // namespace
+
+/// Clone all annotation marks from `src` onto `dst`.
+void cloneAnnotationMarks(PatternRewriter &rewriter, Location loc, Value src,
+                          Value dst) {
+  for (Operation *op : utils::getAnnotateOpUsers(src)) {
+    auto markOp = cast<annotation::MarkOp>(op);
+    auto clonedMarkOp = rewriter.create<annotation::MarkOp>(
+        loc, dst, markOp.getValues(), markOp.getKeysAttr());
+    for (NamedAttribute attr : markOp->getAttrs())
+      clonedMarkOp->setAttr(attr.getName(), attr.getValue());
+  }
+}
+
+/// Mark dynamically shaped `dst` with a static buffer_size_in_byte upper
+/// bound derived from `src`'s defining chain. The bound is computed purely
+/// from `src` (`dst`'s shape and element type are not consulted), so callers
+/// must guarantee `src` and `dst` describe the same buffer. No-op when `dst`
+/// is statically shaped or already carries a buffer_size_in_byte mark.
+void markBufferSizeUpperBound(PatternRewriter &rewriter, Location loc,
+                              Value src, Value dst) {
+  auto shapedType = dyn_cast<ShapedType>(dst.getType());
+  if (!shapedType || shapedType.hasStaticShape())
+    return;
+  if (utils::getAnnotateOpWithAttr(dst, hivm::kBufferSizeInByteAttr))
+    return;
+  if (auto sizeInBytes = getBufferSizeInBytesUpperBound(src)) {
+    auto markOp = rewriter.create<annotation::MarkOp>(loc, dst);
+    markOp->setAttr(hivm::kBufferSizeInByteAttr,
+                    rewriter.getI64IntegerAttr(*sizeInBytes));
+  }
+}
+
 Value createAllocLocalWorkSpace(OpBuilder &builder, Location loc,
                                 ArrayRef<int64_t> shape, Type elementType) {
   assert(!ShapedType::isDynamicShape(shape) &&

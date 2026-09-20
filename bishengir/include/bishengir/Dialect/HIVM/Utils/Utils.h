@@ -411,6 +411,18 @@ Value createAllocWithMark(PatternRewriter &rewriter, Location loc,
                           MemRefType memrefType, ValueRange dynamicDims,
                           ArrayRef<int64_t> staticAllocSize, Type elemType);
 
+/// Clone all annotation marks from `src` onto `dst`.
+void cloneAnnotationMarks(PatternRewriter &rewriter, Location loc, Value src,
+                          Value dst);
+
+/// Mark dynamically shaped `dst` with a static buffer_size_in_byte upper
+/// bound derived from `src`'s defining chain. The bound is computed purely
+/// from `src` (`dst`'s shape and element type are not consulted), so callers
+/// must guarantee `src` and `dst` describe the same buffer. No-op when `dst`
+/// is statically shaped or already carries a buffer_size_in_byte mark.
+void markBufferSizeUpperBound(PatternRewriter &rewriter, Location loc,
+                              Value src, Value dst);
+
 // Create local workspace of current block (static shape only).
 Value createAllocLocalWorkSpace(OpBuilder &builder, Location loc,
                                 ArrayRef<int64_t> shape, Type elementType);
