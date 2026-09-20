@@ -1,4 +1,5 @@
 add_bishengir_library(BiShengIRPass
+  PassExecutionPolicy.cpp
   PassManager.cpp
   PassManagerOptions.cpp
 
@@ -11,6 +12,7 @@ add_bishengir_library(BiShengIRPass
 
   LINK_LIBS PUBLIC
   MLIRAnalysis
+  MLIRFuncDialect
   MLIRIR
   MLIRPass
   )

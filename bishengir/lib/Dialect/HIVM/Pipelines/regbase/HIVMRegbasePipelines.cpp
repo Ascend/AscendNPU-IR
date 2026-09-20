@@ -711,6 +711,7 @@ static void hivmPostBufferizationOptimizationPipeline(
 
 void buildConvertToHIVMPipeline(OpPassManager &pm,
                                 const ConvertToHIVMPipelineOptions &options) {
+  registerAivDisabledPassesForRegbase();
   ConvertHFusionToHIVMOptions hfs2hivmOptions;
   hfs2hivmOptions.mmMapMode = options.enableTritonKernelCompile
                                   ? hfusion::MmMapMode::MacroInstr
@@ -737,6 +738,7 @@ void buildConvertToHIVMPipeline(OpPassManager &pm,
 
 void buildHIVMTensorOptimizations(
     OpPassManager &pm, const HIVMPipelineOptions &hivmPipelineOptions) {
+  registerAivDisabledPassesForRegbase();
   pm.nest<func::FuncOp>().addPass(createInitEntryKernelPass());
   pm.nest<func::FuncOp>().addPass(mlir::hivm::createHIVMNormalizeOpsPass());
   hivmPreBufferizationOptimizationPipeline(pm, hivmPipelineOptions);
@@ -744,6 +746,7 @@ void buildHIVMTensorOptimizations(
 
 void buildLowerHIVMPipelines(OpPassManager &pm,
                              const HIVMPipelineOptions &hivmPipelineOptions) {
+  registerAivDisabledPassesForRegbase();
   bufferizationPipeline(pm, hivmPipelineOptions);
   // Self-gated: only rewrites guards whose get_sub_block_idx carries the
   // partition provenance stamp
