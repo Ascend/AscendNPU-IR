@@ -91,13 +91,13 @@ module attributes {hacc.hivmc_version = #hacc.hivmc_version<"0.2.0">} {
 // -----
 
 // CHECK-LABEL: func.func @marks_unordered_lock_in_mix
-// CHECK: hivm.hir.sync_block_lock {hivm.sync_block_lock_unordered, hivm.sync_block_lock_with_subblock}
-// CHECK: hivm.hir.sync_block_unlock {hivm.sync_block_lock_unordered, hivm.sync_block_lock_with_subblock}
+// CHECK: hivm.hir.sync_block_lock {hivm.sync_block_lock_with_subblock, ordering = #hivm.ordering<unordered>}
+// CHECK: hivm.hir.sync_block_unlock {hivm.sync_block_lock_with_subblock, ordering = #hivm.ordering<unordered>}
 module attributes {hacc.hivmc_version = #hacc.hivmc_version<"0.2.0">} {
   func.func @marks_unordered_lock_in_mix() attributes {mix_mode = "mix", hacc.function_kind = #hacc.function_kind<DEVICE>} {
     %lock = hivm.hir.create_sync_block_lock : memref<1xi64>
-    hivm.hir.sync_block_lock {hivm.sync_block_lock_unordered} lock_var(%lock : memref<1xi64>)
-    hivm.hir.sync_block_unlock {hivm.sync_block_lock_unordered} lock_var(%lock : memref<1xi64>)
+    hivm.hir.sync_block_lock {ordering = #hivm.ordering<unordered>} lock_var(%lock : memref<1xi64>)
+    hivm.hir.sync_block_unlock {ordering = #hivm.ordering<unordered>} lock_var(%lock : memref<1xi64>)
     return
   }
 }

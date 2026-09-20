@@ -16,6 +16,7 @@
 //===---------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
+#include "bishengir/Dialect/HFusion/Transforms/DecomposeAtomicSync.h"
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Interfaces/AggregatedOpInterface.h"
@@ -89,6 +90,7 @@ void DecomposePass::runOnOperation() {
   auto *ctx = &getContext();
   RewritePatternSet patterns(ctx);
   patterns.add<HFusionDecomposePattern>(ctx, hfusionDecomposePhase);
+  populateHFusionDecomposeAtomicSyncPatterns(patterns);
   if (failed(applyPatternsGreedily(funcOp, std::move(patterns)))) {
     signalPassFailure();
   }

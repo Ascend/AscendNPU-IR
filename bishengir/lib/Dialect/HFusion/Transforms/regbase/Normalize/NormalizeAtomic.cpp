@@ -15,6 +15,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "bishengir/Dialect/HFusion/Transforms/DecomposeAtomicSync.h"
 #include "bishengir/Dialect/HFusion/Transforms/regbase/NormalizePatterns.h"
 #include "bishengir/Dialect/HFusion/Transforms/regbase/NormalizeTraitsBase.h"
 #include "bishengir/Dialect/HFusion/Transforms/regbase/NormalizeUtils.h"
@@ -40,12 +41,10 @@ struct HFusionAtomicTraits : public NormalizeTraitsBase {
   getStoreDecompositionBinaryKind(hfusion::StoreOp op) {
     Type elemType = getElementTypeOrSelf(op.getOutputs()[0].getType());
     AtomicKind atomicKind = op.getAtomicKind();
-    if (auto kind =
-            mapAlwaysSoftwareAtomicKindToBinary(atomicKind))
+    if (auto kind = mapAlwaysSoftwareAtomicKindToBinary(atomicKind))
       return kind;
     if (!isHardwareSupported(elemType))
-      return mapNativeUnsupportedAtomicKindToBinary(
-          atomicKind);
+      return mapNativeUnsupportedAtomicKindToBinary(atomicKind);
     return std::nullopt;
   }
 
@@ -67,14 +66,16 @@ struct HFusionAtomicTraits : public NormalizeTraitsBase {
 
 using Elemwise =
     NormalizeAtomicStoreElemwise<hfusion::StoreOp, HFusionAtomicTraits>;
-using CAS = NormalizeAtomicCASTemplate<hfusion::AtomicCasOp, HFusionAtomicTraits>;
-using XCHG = NormalizeAtomicXCHGTemplate<hfusion::AtomicXchgOp,
-                                         HFusionAtomicTraits>;
+using CAS =
+    NormalizeAtomicCASTemplate<hfusion::AtomicCasOp, HFusionAtomicTraits>;
+using XCHG =
+    NormalizeAtomicXCHGTemplate<hfusion::AtomicXchgOp, HFusionAtomicTraits>;
 } // namespace NormalizeAtomicOps
 
 void populateNormalizeAtomicPatterns(RewritePatternSet &patterns) {
   MLIRContext *ctx = patterns.getContext();
   if (archisAscend950) {
+    populateHFusionDecomposeAtomicSyncPatterns(patterns);
     patterns.add<NormalizeAtomicOps::Elemwise>(ctx);
     patterns.add<NormalizeAtomicOps::CAS>(ctx);
     patterns.add<NormalizeAtomicOps::XCHG>(ctx);

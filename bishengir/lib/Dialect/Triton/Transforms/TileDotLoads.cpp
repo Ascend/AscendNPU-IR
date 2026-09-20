@@ -2065,7 +2065,7 @@ static Value loadStagedScratchTile(PatternRewriter &rewriter, Location loc,
       /*padding=*/std::optional<triton::PaddingOption>(),
       triton::CacheModifier::NONE, triton::EvictionPolicy::NORMAL,
       /*isVolatile=*/false);
-  
+
   loadOp->setAttr("startConst", rewriter.getI32IntegerAttr(0));
   loadOp->setAttr("otherStart", rewriter.getI32IntegerAttr(0));
   loadOp->setAttr("kAxis", rewriter.getI32IntegerAttr(kAxis));
@@ -2584,7 +2584,7 @@ struct StageNonLoadOperandPattern : public OpRewritePattern<triton::DotOp> {
       auto storeOp = rewriter.create<triton::StoreOp>(
           loc, envPtrs, dot.getA(), /*mask=*/Value(),
           triton::CacheModifier::NONE, triton::EvictionPolicy::NORMAL);
-      
+
       storeOp->setAttr("startConst", rewriter.getI32IntegerAttr(0));
       storeOp->setAttr("otherStart", rewriter.getI32IntegerAttr(0));
       storeOp->setAttr("kAxis", rewriter.getI32IntegerAttr(1));
@@ -2732,7 +2732,7 @@ struct StageNonLoadOperandPattern : public OpRewritePattern<triton::DotOp> {
           /*padding=*/std::optional<triton::PaddingOption>(),
           triton::CacheModifier::NONE, triton::EvictionPolicy::NORMAL,
           /*isVolatile=*/false);
-      
+
       loadOp->setAttr("startConst", rewriter.getI32IntegerAttr(0));
       loadOp->setAttr("otherStart", rewriter.getI32IntegerAttr(0));
       loadOp->setAttr("kAxis", rewriter.getI32IntegerAttr(kAxis));
