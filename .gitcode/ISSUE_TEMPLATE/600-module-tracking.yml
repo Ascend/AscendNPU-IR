@@ -1,6 +1,6 @@
-name: Module-Tracking|模块跟踪
+name: 📋 Module-Tracking | 模块跟踪
 description: 用于集中跟踪模块缺陷、技术债、能力缺口和改进事项。
-title: "[Module-Tracking|模块跟踪]: "
+title: "[Module-Tracking | 模块跟踪]: "
 body:
   - type: markdown
     attributes:
@@ -8,51 +8,57 @@ body:
         This issue tracks defects, technical debt, capability gaps, and improvements related to a specific module.
         本 Issue 用于集中跟踪特定模块的缺陷、技术债、能力缺口和改进事项。
 
-        Please create concrete problems using the `Module-Issue|模块问题` template and link them below.
-        请使用 `Module-Issue|模块问题` 模板创建具体问题，并在下方关联。
+        Please create concrete problems using the `Module-Issue | 模块问题` template and link them below.
+        请使用 `Module-Issue | 模块问题` 模板创建具体问题，并在下方关联。
 
   - type: textarea
     attributes:
       label: Module information / 模块信息 (Mandatory / 必填)
-      description: 请填写模块负责人、相关编译阶段和目标平台等基本信息
-      placeholder: |
+      description: 请复制注释中的字段并填写模块负责人、相关编译阶段和目标平台等基本信息
+      value: |
+        <!--
+        Copy the fields below outside this comment and complete them.
+        请将以下字段复制到注释外并填写。
+
         - Module / 模块：
         - Owners / 负责人：
         - Pipeline or passes / 相关 Pipeline 或 Pass：
         - Target platforms / 目标平台：A3 / A5 / Common 通用
         - Tracking period / 跟踪周期：
+        -->
     validations:
       required: true
 
-  - type: textarea
+  - type: markdown
     attributes:
-      label: Objectives / 跟踪目标 (Mandatory / 必填)
-      description: 请描述本 Issue 的跟踪目标
-      placeholder: |
+      value: |
+        ## Objectives / 跟踪目标
+
+        This tracking issue is intended to:
+        本跟踪 Issue 用于：
+
         1. Identify the current problem scope / 明确当前问题范围
         2. Assign priorities and owners / 明确问题优先级和负责人
         3. Complete test and validation coverage / 补齐测试和验证覆盖
         4. Track fixes through validation / 跟踪修复直至验证完成
         5. Record remaining risks and follow-up work / 记录遗留风险和后续计划
-    validations:
-      required: true
 
-  - type: textarea
+  - type: markdown
     attributes:
-      label: Scope / 跟踪范围 (Mandatory / 必填)
-      description: 请明确本 Issue 包含和不包含的范围
-      placeholder: |
-        In Scope / 包含：
+      value: |
+        ## Scope / 跟踪范围
+
+        **In Scope / 包含：**
+
         - 模块负责的功能或编译阶段
         - 相关 Dialect、Op、Pass 或 Analysis
         - 特定平台问题
 
-        Out of Scope / 不包含：
+        **Out of Scope / 不包含：**
+
         - 由其他模块负责的问题
         - 上游 LLVM/MLIR 问题
         - 非本模块导致的运行时或环境问题
-    validations:
-      required: true
 
   - type: textarea
     attributes:
@@ -118,12 +124,17 @@ body:
   - type: textarea
     attributes:
       label: References / 相关资料 (Optional / 选填)
-      description: 请提供相关设计文档、测试报告、提交或合入请求
-      placeholder: |
+      description: 请复制注释中的字段并补充相关设计文档、测试报告、提交或合入请求
+      value: |
+        <!--
+        Copy the relevant fields below outside this comment and complete them.
+        请将需要的字段复制到注释外并填写。
+
         - Design document / 设计文档：
         - Test report / 测试报告：
         - Related commits / 关联提交：
         - Merge requests / 关联合入请求：
         - Upstream issues / 上游问题：
+        -->
     validations:
       required: false

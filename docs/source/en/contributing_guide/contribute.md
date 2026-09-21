@@ -18,11 +18,11 @@ Developer contribution scenarios mainly include:
 
   If you find a bug in this project and want to fix it, you can create an Issue to report and track it.
 
-  You can create a [Bug-Report](https://gitcode.com/Ascend/AscendNPU-IR/issues/create?type=template&title=Bug-Report|%E7%BC%BA%E9%99%B7%E5%8F%8D%E9%A6%88&template=.gitcode%252FISSUE_TEMPLATE%252Fbug-report.yml) Issue to describe the bug, and then enter "/assign" or "/assign @yourself" in the comment box to claim this Issue and start working on it.
+  You can create a [Bug-Report](https://gitcode.com/Ascend/AscendNPU-IR/issues/create?type=template&title=Bug-Report|%E7%BC%BA%E9%99%B7%E5%8F%8D%E9%A6%88&template=.gitcode%252FISSUE_TEMPLATE%252F400-bug-report.yml) Issue to describe the bug, and then enter "/assign" or "/assign @yourself" in the comment box to claim this Issue and start working on it.
 
 - Code Contributions
 
-  You can create a [Requirement](https://gitcode.com/Ascend/AscendNPU-IR/issues/create?type=template&title=%E6%96%B0%E9%9C%80%E6%B1%82&template=.gitcode%252FISSUE_TEMPLATE%252Ffeature.yml) Issue to describe a new sample operator and provide a design proposal, and then enter "/assign" or "/assign @yourself" in the comment box to claim this Issue and start working on it.
+  You can create a [Requirement](https://gitcode.com/Ascend/AscendNPU-IR/issues/create?type=template&title=%E6%96%B0%E9%9C%80%E6%B1%82&template=.gitcode%252FISSUE_TEMPLATE%252F500-feature-request.yml) Issue to describe a new sample operator and provide a design proposal, and then enter "/assign" or "/assign @yourself" in the comment box to claim this Issue and start working on it.
 
   When browsing other Issues, follow these requirements:
     - If you plan to resolve a corresponding issue, leave a comment under the issue stating that you will handle it.
@@ -33,7 +33,7 @@ Developer contribution scenarios mainly include:
 
   If you have questions while using this project, you can create an Issue to provide feedback and seek consultation.
 
-  You can create a [Question](https://gitcode.com/Ascend/AscendNPU-IR/issues/create?type=template&title=Question|%E9%97%AE%E9%A2%98%E5%92%A8%E8%AF%A2&template=.gitcode%252FISSUE_TEMPLATE%252Fquestion.yml) type Issue to raise your questions.
+  You can create a [Question](https://gitcode.com/Ascend/AscendNPU-IR/issues/create?type=template&title=Question|%E9%97%AE%E9%A2%98%E5%92%A8%E8%AF%A2&template=.gitcode%252FISSUE_TEMPLATE%252F300-usage.yml) type Issue to raise your questions.
 
 - Help resolve others' issues
 
