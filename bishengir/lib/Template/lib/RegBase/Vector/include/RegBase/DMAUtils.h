@@ -512,15 +512,29 @@ load_gm_to_ubuf_1d_core_with_ubuf_contiguous_last_dim(
   auto src_ptr = gm->aligned + gm->offset;
   auto dst_ptr = ub->aligned + ub->offset;
   const int64_t size0 = gm->sizes[0];
-  constexpr int bytes = sizeof(T);
-
   const int64_t stride0_gm = gm->strides[0];
+  constexpr uint64_t bytes = sizeof(T);
+
+#if defined(__DAV_C310__)
+  // src_stride is an unsigned forward byte step; negative or over-limit
+  // strides cannot be encoded, fall back to scalar.
+  const bool invalid_src_stride =
+      stride0_gm <= 0 ||
+      static_cast<uint64_t>(stride0_gm) > INTRIN_MAX_STRIDE / bytes;
+
+  if (invalid_src_stride) [[unlikely]] {
+    load_gm_to_ubuf_1d_by_scalar<T>(gm, ub);
+    return;
+  }
+#endif
+
   constexpr uint16_t num_per_block = INTR_BYTES_PER_BLOCK / bytes;
   constexpr uint16_t aligned_max_burst_cnt =
       FLOOR_FACTOR(INTRIN_MAX_BURST_CNT, num_per_block);
   const int64_t main_count = size0 / aligned_max_burst_cnt;
   const uint16_t tail_burst_cnt = size0 % aligned_max_burst_cnt;
-  const uint64_t src_gap = (stride0_gm - 1) * bytes;
+  const uint64_t src_stride = static_cast<uint64_t>(stride0_gm) * bytes;
+  const uint64_t src_gap = src_stride - bytes;
 
   for (int64_t i = 0; i < main_count; ++i) {
     const int64_t gm_offset = i * aligned_max_burst_cnt * stride0_gm;
