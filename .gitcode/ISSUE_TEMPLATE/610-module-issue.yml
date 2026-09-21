@@ -2,19 +2,12 @@ name: 🧩 Module-Issue | 模块问题
 description: 用于反馈具体的模块缺陷、能力缺口、技术债或改进事项。
 title: "[Module-Issue | 模块问题]: "
 body:
-  - type: markdown
-    attributes:
-      value: |
-        Please provide sufficient information to reproduce, investigate, and validate the problem.
-        请提供足够的信息，以便复现、分析和验证该问题。
-
-        Copy the fields from each comment outside the comment and complete them.
-        请将各字段注释中的内容复制到注释外并填写。
-
   - type: textarea
     attributes:
       label: Problem description / 问题描述 (Mandatory / 必填)
-      description: 请描述当前行为、预期行为以及问题影响
+      description: |
+        Please provide sufficient information to reproduce, investigate, and validate the problem. Copy the fields from the comment outside the comment and complete them.
+        请提供足够的信息，以便复现、分析和验证该问题。请将注释中的字段复制到注释外并填写。
       value: |
         <!--
         Current behavior / 当前行为：
