@@ -1487,7 +1487,7 @@ bool isLegalOp(Operation *op) {
           linalg::ElemwiseBinaryOp, linalg::ElemwiseUnaryOp,
 #endif
           linalg::BroadcastOp, linalg::ReduceOp, linalg::TransposeOp,
-          linalg::MatmulOp, linalg::MatmulTransposeAOp,
+          linalg::MatmulOp, linalg::BatchMatmulOp, linalg::MatmulTransposeAOp,
           linalg::MatmulTransposeBOp, tensor::ExtractOp>(op)) {
     return true;
   }
