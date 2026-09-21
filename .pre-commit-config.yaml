@@ -14,3 +14,28 @@ repos:
     rev: 24.4.2
     hooks:
     -   id: black
+-   repo: local
+    hooks:
+    -   id: git-clang-format
+        name: git-clang-format
+        description: Check PR changed lines against .clang-format (merge-base origin/master)
+        entry: |-
+            bash -c '
+            set +e
+            if ! command -v git-clang-format >/dev/null 2>&1; then
+              apt-get update -qq && apt-get install -y -qq clang-format >/dev/null 2>&1
+              python3 -m pip install -q clang-format 2>/dev/null || true
+            fi
+            command -v git-clang-format >/dev/null 2>&1 || { echo "git-clang-format unavailable, skip"; exit 0; }
+            BASE=$(git merge-base origin/master HEAD 2>/dev/null || echo origin/master)
+            OUT=$(git-clang-format --diff "$BASE" HEAD -- bishengir/ 2>/dev/null)
+            if echo "$OUT" | grep -q "^diff --git"; then
+              echo "$OUT"
+              echo "==== GATE RESULT: FAIL - run git-clang-format to fix ===="
+              exit 1
+            fi
+            exit 0'
+        language: system
+        types_or: [c, c++]
+        pass_filenames: false
+        require_serial: true
