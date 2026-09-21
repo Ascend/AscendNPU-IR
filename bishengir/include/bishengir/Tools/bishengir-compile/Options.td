@@ -1315,6 +1315,13 @@ def HfusionMaxFusedElementwiseOps : HFusionOptimizationControlOptions<
   let passGroup = ["HFUSION"];
 }
 
+def EnableOptimizeScalarTransfers : HFusionOptimizationControlOptions<
+  "Lift intermediate scalar chains onto tensor<1xelem>. "
+  "Turned off for one retry after a UB overflow or an autovectorize failure.",
+  "bool",
+  "true"
+>;
+
 //===----------------------------------------------------------------------===//
 // HIVM Optimization Control Options
 //===----------------------------------------------------------------------===//
