@@ -707,6 +707,8 @@ SIMT scope会被SIMD、SIMT混合流水线降级为独立的SIMT向量函数，�
 
 ## -triton-global-kernel-args-to-hivm-op
 
+**功能**： 将 Triton 全局 kernel 的 program_id 参数转换为 HIVM 操作
+
 ## -write-back-shared
 
 **功能**：为SIMT VF中表示已用共享内存的`memref.alloc`设置实际大小。

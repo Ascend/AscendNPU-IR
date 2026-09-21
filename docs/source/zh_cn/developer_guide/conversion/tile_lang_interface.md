@@ -143,7 +143,7 @@ def vec_add(N, block_N, dtype="float32"):
             T.copy(A[start_idx], A_VEC[:tail_size])
             T.copy(B[start_idx], B_VEC[:tail_size])
 
-            # Perform vector addition on the NPU using low-level NPU IR instruction
+            # Perform vector addition on the NPU using low-level AscendNPU IR instruction
             T.npuir_add(A_VEC, B_VEC, C_VEC)
 
             # Write the result back from on-chip buffer (C_VEC) to global memory (C)
@@ -162,7 +162,7 @@ def test_vec_add():
     # Instantiate the vector addition kernel for the full sequence length (single block)
     func = vec_add(seq_len, seq_len)
 
-    # Compile the TileLang function to NPU IR for execution on the NPU
+    # Compile the TileLang function to AscendNPU IR for execution on the NPU
     compiled_kernel = tilelang.compile(func, target="npuir")
 
     # Create random input tensors on the NPU
