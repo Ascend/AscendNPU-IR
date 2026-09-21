@@ -13,8 +13,10 @@
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Pass/Pass.h"
 
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallVector.h"
 
 #include <optional>
@@ -29,7 +31,8 @@ using namespace hivm;
 
 namespace {
 
-AddressSpaceAttr getAddressSpaceAttr(MLIRContext *ctx, hivm::AddressSpace space) {
+AddressSpaceAttr getAddressSpaceAttr(MLIRContext *ctx,
+                                     hivm::AddressSpace space) {
   return AddressSpaceAttr::get(ctx, space);
 }
 
@@ -68,7 +71,8 @@ bool isMemScopeHintAnchor(Value val) {
   }
   // tensor.insert_slice are kept outside the SIMT scope by
   // AutoScope (dynamic sizes unsupported). Treat them as anchors returning UB.
-  return isa_and_nonnull<tensor::InsertSliceOp, hivm::PointerCastOp>(val.getDefiningOp());
+  return isa_and_nonnull<tensor::InsertSliceOp, hivm::PointerCastOp>(
+      val.getDefiningOp());
 }
 
 std::optional<AddressSpaceAttr> inferMemScopeFromAnchor(Value root) {
@@ -111,7 +115,8 @@ std::optional<AddressSpaceAttr> inferMemScopeFromAnchor(Value root) {
 
     // tensor.empty and tensor.insert_slice all produce
     // tensor values that default to UB; the are kept outside the
-    // SIMT scope by AutoScope (dynamic sizes unsupported by RewriteSliceOpToTriton).
+    // SIMT scope by AutoScope (dynamic sizes unsupported by
+    // RewriteSliceOpToTriton).
     if (isa<tensor::EmptyOp, tensor::InsertSliceOp>(defOp)) {
       return getAddressSpaceAttr(root.getContext(), hivm::AddressSpace::UB);
     }
@@ -119,9 +124,84 @@ std::optional<AddressSpaceAttr> inferMemScopeFromAnchor(Value root) {
   return std::nullopt;
 }
 
+// AutoScope may leave a tensor-producing region outside the SIMT scope. Follow
+// all possible storage sources locally rather than extending generic memref
+// traceback across the tensor boundary or assuming every region result is UB.
+FailureOr<AddressSpaceAttr> inferMemScopeThroughTensorRegions(Value value) {
+  SmallVector<Value> worklist{value};
+  llvm::DenseSet<Value> visited;
+  std::optional<AddressSpaceAttr> hint;
+  while (!worklist.empty()) {
+    Value current = worklist.pop_back_val();
+    if (!visited.insert(current).second)
+      continue;
+    if (auto currentHint = inferMemScopeFromAnchor(current)) {
+      if (hint && *hint != *currentHint)
+        return failure();
+      hint = currentHint;
+      continue;
+    }
+
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+    if (auto toMemref = current.getDefiningOp<bufferization::ToMemrefOp>()) {
+#else
+    if (auto toMemref = current.getDefiningOp<bufferization::ToBufferOp>()) {
+#endif
+      worklist.push_back(toMemref.getTensor());
+      continue;
+    }
+    if (auto toTensor = current.getDefiningOp<bufferization::ToTensorOp>()) {
+      worklist.push_back(toTensor->getOperand(0));
+      continue;
+    }
+    if (auto result = dyn_cast<OpResult>(current)) {
+      unsigned index = result.getResultNumber();
+      if (auto ifOp = dyn_cast<scf::IfOp>(result.getOwner())) {
+        worklist.push_back(ifOp.thenYield().getOperand(index));
+        worklist.push_back(ifOp.elseYield().getOperand(index));
+        continue;
+      }
+      if (auto forOp = dyn_cast<scf::ForOp>(result.getOwner())) {
+        worklist.push_back(forOp.getInitArgs()[index]);
+        worklist.push_back(forOp.getYieldedValues()[index]);
+        continue;
+      }
+    }
+    if (auto arg = dyn_cast<BlockArgument>(current)) {
+      if (auto forOp = dyn_cast<scf::ForOp>(arg.getOwner()->getParentOp())) {
+        if (arg.getArgNumber() > 0) {
+          unsigned index = arg.getArgNumber() - 1;
+          worklist.push_back(forOp.getInitArgs()[index]);
+          worklist.push_back(forOp.getYieldedValues()[index]);
+          continue;
+        }
+      }
+    }
+    if (isa<BaseMemRefType>(current.getType())) {
+      // Traversing tensor regions and to_tensor may expose new memref views
+      // that the caller's initial traceback never visited. Trace those views
+      // too; generic traceback can stop at unresolved non-anchor values.
+      auto roots =
+          utils::tracebackMemRefVecByTargetFn(current, isMemScopeHintAnchor);
+      if (roots.size() != 1 || roots.front() != current) {
+        worklist.append(roots);
+        continue;
+      }
+    }
+    // TODO: Support tensor-valued scf.while with its condition forwarding and
+    // loop-carried sources. Until then, unsupported tensor regions fail closed.
+    // Every reachable source must be known, including non-region sources such
+    // as arith.select operands and arguments of non-entry functions. A known UB
+    // source cannot establish UB for an alternative unknown or GM source.
+    return failure();
+  }
+  if (!hint)
+    return failure();
+  return *hint;
+}
+
 struct InferSimtVFMemScopeHintPass
-    : public impl::InferSimtVFMemScopeHintBase<
-          InferSimtVFMemScopeHintPass> {
+    : public impl::InferSimtVFMemScopeHintBase<InferSimtVFMemScopeHintPass> {
   void runOnOperation() override;
 
 private:
@@ -158,20 +238,22 @@ LogicalResult InferSimtVFMemScopeHintPass::inferHintForArgument(
     Value callOperand = callOp.getOperand(arg.getArgNumber());
 
     // Infer from the SIMD-side operand roots without mutating types yet.
-    auto roots = utils::tracebackMemRefVecByTargetFn(callOperand,
-                                                     isMemScopeHintAnchor);
+    auto roots =
+        utils::tracebackMemRefVecByTargetFn(callOperand, isMemScopeHintAnchor);
     if (roots.empty())
       roots.push_back(callOperand);
 
     for (Value root : roots) {
-      auto maybeHint = inferMemScopeFromAnchor(root);
-      if (!maybeHint.has_value())
-        continue;
+      auto maybeHint = inferMemScopeThroughTensorRegions(root);
+      if (failed(maybeHint))
+        return func.emitOpError()
+               << "failed to infer memory scope hint for simt argument #"
+               << arg.getArgNumber();
       if (!inferredHint.has_value()) {
-        inferredHint = maybeHint;
+        inferredHint = *maybeHint;
         continue;
       }
-      if (inferredHint.value() != maybeHint.value()) {
+      if (inferredHint.value() != *maybeHint) {
         return func.emitOpError()
                << "conflicting memory scope hints for simt argument #"
                << arg.getArgNumber();
