@@ -132,15 +132,19 @@ void collectValueDependencies(OrderedOps &simtVFOps, VisitedOps &visitedOps,
   collectOpDependencies(simtVFOps, visitedOps, defOp, seedOp, allSeedOps);
 }
 
-// Returns true for tensor.insert_slice with dynamic sizes.
-// Such ops cannot be lowered by RewriteSliceOpToTriton and should stay outside
-// the SIMT scope.
-bool hasDynamicSliceSize(Operation *op) {
-  if (!isa<tensor::InsertSliceOp>(op)) {
-    return false;
-  }
-  auto sliceOp = cast<OffsetSizeAndStrideOpInterface>(op);
-  return llvm::any_of(sliceOp.getStaticSizes(), ShapedType::isDynamic);
+// Returns true if cloning op would bring a dynamically sized insert_slice into
+// the SIMT scope. Region-bearing dependencies are cloned recursively, so check
+// their bodies too: checking only the defining op lets an enclosing scf.if or
+// scf.for bypass the slice boundary. These slices cannot be lowered by
+// RewriteSliceOpToTriton and must stay in the surrounding SIMD code.
+bool containsDynamicallySizedInsertSlice(Operation *op) {
+  return op
+      ->walk([](tensor::InsertSliceOp sliceOp) {
+        return llvm::any_of(sliceOp.getStaticSizes(), ShapedType::isDynamic)
+                   ? WalkResult::interrupt()
+                   : WalkResult::advance();
+      })
+      .wasInterrupted();
 }
 
 void collectOpDependencies(OrderedOps &simtVFOps, VisitedOps &visitedOps,
@@ -149,9 +153,9 @@ void collectOpDependencies(OrderedOps &simtVFOps, VisitedOps &visitedOps,
   if (!visitedOps.insert(op).second) {
     return;
   }
-  // Skip dynamic-sized slice ops; they stay outside the SIMT scope and their
-  // results become scope inputs when referenced by in-scope ops.
-  if (hasDynamicSliceSize(op)) {
+  // Keep dynamic-sized slices and their enclosing dependencies outside the
+  // SIMT scope. Their results become inputs to the in-scope operations.
+  if (containsDynamicallySizedInsertSlice(op)) {
     return;
   }
   for (auto operand : op->getOperands()) {
