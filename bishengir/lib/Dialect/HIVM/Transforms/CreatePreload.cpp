@@ -587,6 +587,10 @@ static void rewritePreloadLoop(scf::ForOp forOp,
   // loop. The original loop still has one result per iteration argument, so
   // walk the original arguments rather than the new results and supply a
   // replacement for the dropped ones too.
+  //
+  // When a kept yield is itself a preload-local buffer, clone that buffer after
+  // the loop instead of rewiring users to the in-loop definition (which would
+  // not dominate post-loop uses once the unused yield is DCE'd).
   SmallVector<Value> newRes;
   newRes.reserve(forOp.getNumResults());
   auto newResIt = newForOp->result_begin();
@@ -599,7 +603,11 @@ static void rewritePreloadLoop(scf::ForOp forOp,
     }
     if (auto maybeLocalBuffer = getLocalBuffer(*newYieldIt);
         maybeLocalBuffer.has_value()) {
-      newRes.push_back(maybeLocalBuffer.value());
+      IRRewriter::InsertionGuard guard(rewriter);
+      rewriter.setInsertionPointAfter(newForOp);
+      hivm::PointerCastOp src = *maybeLocalBuffer;
+      newRes.push_back(rewriter.create<hivm::PointerCastOp>(
+          src.getLoc(), src.getType(), src.getAddrs()));
     } else {
       newRes.push_back(*newResIt);
     }
@@ -681,10 +689,10 @@ void CreatePreloadPass::runOnOperation() {
     if (!parentForOp)
       return;
     auto parentFunc = parentForOp->getParentOfType<func::FuncOp>();
-    bool allow = parentFunc && allowLoopShapeHeuristics(
-                                   this->bypassShapeRegistry, parentFunc.getName(),
-                                   this->enablePreload,
-                                   this->workspaceMultiBufferNum);
+    bool allow =
+        parentFunc && allowLoopShapeHeuristics(
+                          this->bypassShapeRegistry, parentFunc.getName(),
+                          this->enablePreload, this->workspaceMultiBufferNum);
     if (auto maxPreloadNumAttr = scopeOp->getAttrOfType<IntegerAttr>(
             hivm::MaxPreloadNumAttr::name)) {
       if (allow) {
