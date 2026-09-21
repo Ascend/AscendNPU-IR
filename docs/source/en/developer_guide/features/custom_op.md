@@ -307,6 +307,10 @@ This attribute marks a pure operator that only reads inputs and only writes decl
 
 ### Triton custom operator example
 
+**Note:**
+ 
+This section applies only to Atlas A3/A2 series products.
+
 #### Standard custom operator example
 
 Python script: `test_custom_op.py`
@@ -510,7 +514,6 @@ C++ API definition: `macro_add.cpp`
 
 constexpr int64_t UB_SCRATCH_SRC0_BYTES = 256;
 constexpr int64_t UB_SCRATCH_SRC1_BYTES = 384;
-constexpr int64_t kGmToUbChunkElems = 16;
 
 template <typename T, size_t Dim>
 struct memref_t {
@@ -521,13 +524,50 @@ struct memref_t {
   int64_t strides[Dim];
 };
 
+constexpr int64_t kUbScratchPoolBytes =
+    UB_SCRATCH_SRC0_BYTES + UB_SCRATCH_SRC1_BYTES + 32;
+__ubuf__ uint8_t g_ub_scratch_pool[kUbScratchPoolBytes];
+__ubuf__ int64_t g_ub_scratch_offset;
+
+template <typename T>
+__aiv__ memref_t<__ubuf__ T, 1> ub_scratch_at_bytes(int64_t bytes, int64_t n) {
+  g_ub_scratch_offset = (g_ub_scratch_offset + 31) / 32 * 32;
+  auto *base =
+      reinterpret_cast<__ubuf__ T *>(g_ub_scratch_pool + g_ub_scratch_offset);
+  g_ub_scratch_offset += bytes;
+  return {base, base, 0, {n}, {1}};
+}
+
+template <typename T>
+__aiv__ __attribute__((always_inline)) void
+load_gm_to_ubuf_1d(memref_t<__gm__ T, 1> *gm, memref_t<__ubuf__ T, 1> *ub) {
+  static_assert(sizeof(T) == 4, "minimal example uses the b32 intrinsic");
+  const int64_t bytes = gm->sizes[0] * sizeof(T);
+  const int64_t right_pad = ((bytes + 31) / 32 * 32 - bytes) / sizeof(T);
+  INTRINSIC(copy_gm_to_ubuf_align_b32, ub->aligned + ub->offset,
+            gm->aligned + gm->offset, 0, 1, bytes, 0, right_pad, 0, 0);
+}
+
+__aiv__ __attribute__((always_inline)) void
+vector_vadd_ub(memref_t<__ubuf__ int32_t, 1> *src0,
+               memref_t<__ubuf__ int32_t, 1> *src1,
+               memref_t<__ubuf__ int32_t, 1> *dst) {
+  const int64_t n = dst->sizes[0];
+  INTRINSIC_NO_ARGS(set_mask_count);
+  INTRINSIC(set_vector_mask, 0, n);
+  INTRINSIC(vadd, dst->aligned + dst->offset, src0->aligned + src0->offset,
+            src1->aligned + src1->offset, 1, 1, 1, 1, 8, 8, 8);
+  INTRINSIC_NO_ARGS(set_mask_norm);
+}
+
 extern "C" {
 __aiv__ __attribute__((always_inline)) void _mlir_ciface_custom_macro_add_int32(
     memref_t<__gm__ int32_t, 1> *src0, memref_t<__gm__ int32_t, 1> *src1,
-    memref_t<__ubuf__ int32_t, 1> *dst) {
+    memref_t<__ubuf__ int32_t, 1> *dst, int64_t sync_event0) {
   const int64_t n = dst->sizes[0];
-  auto ub_src0 = ub_scratch_at_bytes(UB_SCRATCH_SRC0_BYTES, n);
-  auto ub_src1 = ub_scratch_at_bytes(UB_SCRATCH_SRC1_BYTES, n);
+  g_ub_scratch_offset = 0;
+  auto ub_src0 = ub_scratch_at_bytes<int32_t>(UB_SCRATCH_SRC0_BYTES, n);
+  auto ub_src1 = ub_scratch_at_bytes<int32_t>(UB_SCRATCH_SRC1_BYTES, n);
   memref_t<__gm__ int32_t, 1> gm_src0 = {src0->allocated, src0->aligned,
                                          src0->offset, {n}, {1}};
   memref_t<__gm__ int32_t, 1> gm_src1 = {src1->allocated, src1->aligned,
@@ -536,8 +576,8 @@ __aiv__ __attribute__((always_inline)) void _mlir_ciface_custom_macro_add_int32(
   // Single internal event: two GM→UB transfers followed by one MTE2→V handshake.
   load_gm_to_ubuf_1d(&gm_src0, &ub_src0);
   load_gm_to_ubuf_1d(&gm_src1, &ub_src1);
-  INTRINSIC(set_flag, PIPE_MTE2, PIPE_V, 0);
-  INTRINSIC(wait_flag, PIPE_MTE2, PIPE_V, 0);
+  INTRINSIC(set_flag, PIPE_MTE2, PIPE_V, sync_event0);
+  INTRINSIC(wait_flag, PIPE_MTE2, PIPE_V, sync_event0);
   vector_vadd_ub(&ub_src0, &ub_src1, dst);
 }
 }
