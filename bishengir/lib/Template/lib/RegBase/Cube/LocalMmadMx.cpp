@@ -219,6 +219,7 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
          bool hasBias = false) {
   if constexpr (HF32) {
     AscendCBisheng::SetHF32Mode(true);
+    AscendCBisheng::SetHF32TransMode(true);
   }
 
   using ArchTag = Arch::AtlasA5;
@@ -465,6 +466,7 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
 
   if constexpr (HF32) {
     AscendCBisheng::SetHF32Mode(false);
+    AscendCBisheng::SetHF32TransMode(false);
   }
 }
 
@@ -485,6 +487,7 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
          bool hasBias = false) {
   if constexpr (HF32) {
     AscendCBisheng::SetHF32Mode(true);
+    AscendCBisheng::SetHF32TransMode(true);
   }
 
   using ArchTag = Arch::AtlasA5;
@@ -753,6 +756,7 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
 
   if constexpr (HF32) {
     AscendCBisheng::SetHF32Mode(false);
+    AscendCBisheng::SetHF32TransMode(false);
   }
 }
 
