@@ -307,6 +307,7 @@ HIVMCMainConfig HIVMCFromBiShengIRConfig(BiShengIRCompileMainConfig& config) {
     hivmcConfig.setNumWarps(config.getNumWarps());
     hivmcConfig.setThreadsPerWarp(config.getThreadsPerWarp());
     hivmcConfig.setSharedDynamicSize(config.getSharedMemDynamicSize());
+    hivmcConfig.simtStackLimit(config.getSimtStackLimit());
     hivmcConfig.tritonMetadataOutput(config.getTritonMetadataOutput());
     hivmcConfig.disableDecomposeReduction(config.getDisableDecomposeReduction());
     hivmcConfig.disableReorderInstruction(config.getDisableReorderInstruction());
