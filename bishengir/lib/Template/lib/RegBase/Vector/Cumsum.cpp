@@ -23,6 +23,50 @@
 #if defined(__DAV_C310__)
 
 template <typename T>
+__simd_vf__ void
+sklansky_calculation_vf(int32_t nAddFactor, int32_t mFold, uint16_t nLoop,
+                        uint16_t groupMainCountu16, int32_t flag,
+                        int32_t group_offset, uint16_t num_per_reg,
+                        __ubuf__ T *src_ptr, int32_t startOffset,
+                        uint16_t addCount, uint16_t src_stride0,
+                        __ubuf__ T *dst_ptr, uint16_t groupTailCountu16,
+                        int32_t groupMainCount, uint16_t addTailCountu16) {
+  VectorReg<T> x1RegTensor, x2RegTensor;
+  vector_bool mask;
+  uint32_t totalElements = (uint32_t)nAddFactor * (uint32_t)mFold;
+  // mask is invariant across the j (column-tile) loop -> create once
+  // (hoisted).
+  for (uint16_t j = 0; j < nLoop; j++) {
+    CREATE_MASK_BY_SIZE(mask, T, totalElements);
+    for (uint16_t m = 0; m < groupMainCountu16; m++) {
+      int32_t src_offset = flag * m * group_offset + j * num_per_reg;
+      vlds(x1RegTensor, src_ptr + startOffset, src_offset, NORM);
+      for (uint16_t n = 1; n <= addCount; n++) {
+        int32_t dst_offset =
+            flag * (m * group_offset + n * src_stride0) + j * num_per_reg;
+        vlds(x2RegTensor, src_ptr + startOffset, dst_offset, NORM);
+        vadd(x2RegTensor, x1RegTensor, x2RegTensor, mask);
+        vsts(x2RegTensor, dst_ptr + startOffset, dst_offset, NORM_B32, mask);
+      }
+    }
+
+    for (uint16_t m = 0; m < groupTailCountu16; m++) {
+      int32_t src_offset =
+          flag * groupMainCount * group_offset + j * num_per_reg;
+      vlds(x1RegTensor, src_ptr + startOffset, src_offset, NORM);
+      for (uint16_t n = 1; n <= addTailCountu16; n++) {
+        int32_t dst_offset =
+            flag * (groupMainCount * group_offset + n * src_stride0) +
+            j * num_per_reg;
+        vlds(x2RegTensor, src_ptr + startOffset, dst_offset, NORM);
+        vadd(x2RegTensor, x1RegTensor, x2RegTensor, mask, MODE_ZEROING);
+        vsts(x2RegTensor, dst_ptr + startOffset, dst_offset, NORM_B32, mask);
+      }
+    }
+  }
+}
+
+template <typename T>
 __aiv__ __attribute__((always_inline)) void
 sklansky_calculation(memref_t<__ubuf__ T, 3> *src, memref_t<__ubuf__ T, 3> *dst,
                      sklansky_param_t param) {
@@ -45,41 +89,10 @@ sklansky_calculation(memref_t<__ubuf__ T, 3> *src, memref_t<__ubuf__ T, 3> *dst,
   __ubuf__ T *dst_ptr = dst->aligned + dst->offset;
   uint16_t nLoop = CEIL_DIV(realDupSize, REG_REGISTER_SIZE);
   uint16_t src_stride0 = (uint16_t)src->strides[0];
-  __VEC_SCOPE__ {
-    VectorReg<T> x1RegTensor, x2RegTensor;
-    vector_bool mask;
-    uint32_t totalElements = (uint32_t)nAddFactor * (uint32_t)mFold;
-    // mask is invariant across the j (column-tile) loop -> create once
-    // (hoisted).
-    for (uint16_t j = 0; j < nLoop; j++) {
-      CREATE_MASK_BY_SIZE(mask, T, totalElements);
-      for (uint16_t m = 0; m < groupMainCountu16; m++) {
-        int32_t src_offset = flag * m * group_offset + j * num_per_reg;
-        vlds(x1RegTensor, src_ptr + startOffset, src_offset, NORM);
-        for (uint16_t n = 1; n <= addCount; n++) {
-          int32_t dst_offset =
-              flag * (m * group_offset + n * src_stride0) + j * num_per_reg;
-          vlds(x2RegTensor, src_ptr + startOffset, dst_offset, NORM);
-          vadd(x2RegTensor, x1RegTensor, x2RegTensor, mask);
-          vsts(x2RegTensor, dst_ptr + startOffset, dst_offset, NORM_B32, mask);
-        }
-      }
-
-      for (uint16_t m = 0; m < groupTailCountu16; m++) {
-        int32_t src_offset =
-            flag * groupMainCount * group_offset + j * num_per_reg;
-        vlds(x1RegTensor, src_ptr + startOffset, src_offset, NORM);
-        for (uint16_t n = 1; n <= addTailCountu16; n++) {
-          int32_t dst_offset =
-              flag * (groupMainCount * group_offset + n * src_stride0) +
-              j * num_per_reg;
-          vlds(x2RegTensor, src_ptr + startOffset, dst_offset, NORM);
-          vadd(x2RegTensor, x1RegTensor, x2RegTensor, mask, MODE_ZEROING);
-          vsts(x2RegTensor, dst_ptr + startOffset, dst_offset, NORM_B32, mask);
-        }
-      }
-    }
-  }
+  sklansky_calculation_vf<T>(nAddFactor, mFold, nLoop, groupMainCountu16, flag,
+                             group_offset, num_per_reg, src_ptr, startOffset,
+                             addCount, src_stride0, dst_ptr, groupTailCountu16,
+                             groupMainCount, addTailCountu16);
 }
 
 template <typename T>
@@ -123,6 +136,40 @@ oneway_sklansky_cumsum(memref_t<__ubuf__ T, 3> *src,
 }
 
 template <typename T>
+__simd_vf__ void oneway_cumsum_compensated_vf(
+    int32_t nAddFactor, int32_t mFactor, uint16_t nLoop, __ubuf__ T *src_ptr,
+    int32_t start_row_offset, int32_t num_per_reg, __ubuf__ T *dst_ptr,
+    uint16_t rLoop, bool reverse, int32_t rFactor, int32_t stride0) {
+  VectorReg<T> hi, lo, x2, s, bb, t1, t2;
+  vector_bool mask;
+  uint32_t totalElements = (uint32_t)nAddFactor * (uint32_t)mFactor;
+  for (uint16_t j = 0; j < nLoop; j++) {
+    CREATE_MASK_BY_SIZE(mask, T, totalElements);
+    // row 0: (hi, lo) = (X[row0], 0)
+    vlds(hi, src_ptr, start_row_offset + j * num_per_reg, NORM);
+    vsub(lo, hi, hi, mask); // lo = 0
+    vsts(hi, dst_ptr, start_row_offset + j * num_per_reg, NORM_B32, mask);
+    for (uint16_t r = 1; r < rLoop; r++) {
+      int32_t r_offset = reverse ? (rFactor - 1 - r) : r;
+      vlds(x2, src_ptr + r_offset * stride0, j * num_per_reg, NORM);
+      // TwoSum(hi, x2): s = fl(hi + x2), error e (x2 has no low part)
+      vadd(s, hi, x2, mask);  // s = hi + x2
+      vsub(bb, s, hi, mask);  // bb = s - hi
+      vsub(t1, s, bb, mask);  // t1 = s - bb
+      vsub(t1, hi, t1, mask); // t1 = hi - (s - bb)
+      vsub(t2, x2, bb, mask); // t2 = x2 - bb
+      vadd(t1, t1, t2, mask); // t1 = e  (TwoSum error)
+      vadd(t1, t1, lo, mask); // t1 = e + lo  (fold old comp)
+      // FastTwoSum(s, e) -> renormalized (hi, lo)
+      vadd(hi, s, t1, mask);  // hi = s + e
+      vsub(t2, hi, s, mask);  // t2 = hi - s
+      vsub(lo, t1, t2, mask); // lo = e - (hi - s)
+      vsts(hi, dst_ptr + r_offset * stride0, j * num_per_reg, NORM_B32, mask);
+    }
+  }
+}
+
+template <typename T>
 __aiv__ __attribute__((always_inline)) void
 oneway_cumsum_compensated(memref_t<__ubuf__ T, 3> *src,
                           memref_t<__ubuf__ T, 3> *dst, bool reverse) {
@@ -140,33 +187,29 @@ oneway_cumsum_compensated(memref_t<__ubuf__ T, 3> *src,
   __ubuf__ T *src_ptr = src->aligned + src->offset;
   __ubuf__ T *dst_ptr = dst->aligned + dst->offset;
   int32_t start_row_offset = reverse ? (rFactor - 1) * stride0 : 0;
-  __VEC_SCOPE__ {
-    VectorReg<T> hi, lo, x2, s, bb, t1, t2;
-    vector_bool mask;
-    uint32_t totalElements = (uint32_t)nAddFactor * (uint32_t)mFactor;
-    for (uint16_t j = 0; j < nLoop; j++) {
-      CREATE_MASK_BY_SIZE(mask, T, totalElements);
-      // row 0: (hi, lo) = (X[row0], 0)
-      vlds(hi, src_ptr, start_row_offset + j * num_per_reg, NORM);
-      vsub(lo, hi, hi, mask); // lo = 0
-      vsts(hi, dst_ptr, start_row_offset + j * num_per_reg, NORM_B32, mask);
-      for (uint16_t r = 1; r < rLoop; r++) {
-        int32_t r_offset = reverse ? (rFactor - 1 - r) : r;
-        vlds(x2, src_ptr + r_offset * stride0, j * num_per_reg, NORM);
-        // TwoSum(hi, x2): s = fl(hi + x2), error e (x2 has no low part)
-        vadd(s, hi, x2, mask);  // s = hi + x2
-        vsub(bb, s, hi, mask);  // bb = s - hi
-        vsub(t1, s, bb, mask);  // t1 = s - bb
-        vsub(t1, hi, t1, mask); // t1 = hi - (s - bb)
-        vsub(t2, x2, bb, mask); // t2 = x2 - bb
-        vadd(t1, t1, t2, mask); // t1 = e  (TwoSum error)
-        vadd(t1, t1, lo, mask); // t1 = e + lo  (fold old comp)
-        // FastTwoSum(s, e) -> renormalized (hi, lo)
-        vadd(hi, s, t1, mask);  // hi = s + e
-        vsub(t2, hi, s, mask);  // t2 = hi - s
-        vsub(lo, t1, t2, mask); // lo = e - (hi - s)
-        vsts(hi, dst_ptr + r_offset * stride0, j * num_per_reg, NORM_B32, mask);
-      }
+  oneway_cumsum_compensated_vf<T>(nAddFactor, mFactor, nLoop, src_ptr,
+                                  start_row_offset, num_per_reg, dst_ptr, rLoop,
+                                  reverse, rFactor, stride0);
+}
+
+template <typename T>
+__simd_vf__ void oneway_cumsum_plain_seq_vf(
+    int32_t nAddFactor, int32_t mFactor, uint16_t nLoop, __ubuf__ T *src_ptr,
+    int32_t start_row_offset, int32_t num_per_reg, __ubuf__ T *dst_ptr,
+    uint16_t rLoop, bool reverse, int32_t rFactor, int32_t stride0) {
+  VectorReg<T> acc, x2;
+  vector_bool mask;
+  uint32_t totalElements = (uint32_t)nAddFactor * (uint32_t)mFactor;
+  for (uint16_t j = 0; j < nLoop; j++) {
+    CREATE_MASK_BY_SIZE(mask, T, totalElements);
+    // row 0: acc = X[row0]
+    vlds(acc, src_ptr, start_row_offset + j * num_per_reg, NORM);
+    vsts(acc, dst_ptr, start_row_offset + j * num_per_reg, NORM_B32, mask);
+    for (uint16_t r = 1; r < rLoop; r++) {
+      int32_t r_offset = reverse ? (rFactor - 1 - r) : r;
+      vlds(x2, src_ptr + r_offset * stride0, j * num_per_reg, NORM);
+      vadd(acc, acc, x2, mask);
+      vsts(acc, dst_ptr + r_offset * stride0, j * num_per_reg, NORM_B32, mask);
     }
   }
 }
@@ -188,24 +231,9 @@ oneway_cumsum_plain_seq(memref_t<__ubuf__ T, 3> *src,
   __ubuf__ T *src_ptr = src->aligned + src->offset;
   __ubuf__ T *dst_ptr = dst->aligned + dst->offset;
   int32_t start_row_offset = reverse ? (rFactor - 1) * stride0 : 0;
-  __VEC_SCOPE__ {
-    VectorReg<T> acc, x2;
-    vector_bool mask;
-    uint32_t totalElements = (uint32_t)nAddFactor * (uint32_t)mFactor;
-    for (uint16_t j = 0; j < nLoop; j++) {
-      CREATE_MASK_BY_SIZE(mask, T, totalElements);
-      // row 0: acc = X[row0]
-      vlds(acc, src_ptr, start_row_offset + j * num_per_reg, NORM);
-      vsts(acc, dst_ptr, start_row_offset + j * num_per_reg, NORM_B32, mask);
-      for (uint16_t r = 1; r < rLoop; r++) {
-        int32_t r_offset = reverse ? (rFactor - 1 - r) : r;
-        vlds(x2, src_ptr + r_offset * stride0, j * num_per_reg, NORM);
-        vadd(acc, acc, x2, mask);
-        vsts(acc, dst_ptr + r_offset * stride0, j * num_per_reg, NORM_B32,
-             mask);
-      }
-    }
-  }
+  oneway_cumsum_plain_seq_vf<T>(nAddFactor, mFactor, nLoop, src_ptr,
+                                start_row_offset, num_per_reg, dst_ptr, rLoop,
+                                reverse, rFactor, stride0);
 }
 
 template <typename T, int dim>
@@ -238,6 +266,47 @@ compute_cumsum_3d(memref_t<__ubuf__ T, 3> *src, memref_t<__ubuf__ T, 3> *dst,
 }
 
 template <typename T>
+__simd_vf__ void compute_cumsum_2d_along_dim1_comp_vf(
+    uint32_t num_per_reg, int32_t stride0, uint16_t mLoop, __ubuf__ T *src_ptr,
+    __ubuf__ T *dst_ptr, uint32_t size0, int32_t start_col, uint16_t N,
+    bool reverse) {
+  using IdxT = std::conditional_t<sizeof(T) == 4, int32_t, int16_t>;
+  using IdxUT = std::conditional_t<sizeof(T) == 4, uint32_t, uint16_t>;
+  VectorReg<T> hi, lo, x2, s, bb, t1, t2;
+  VectorReg<IdxT> idx_reg;
+  vector_bool mask;
+  uint32_t full_mask_size = num_per_reg;
+  CREATE_MASK_BY_SIZE(mask, T, full_mask_size);
+  vci(idx_reg, 0);
+  vmuls(idx_reg, idx_reg, stride0, mask);
+  for (uint16_t m = 0; m < mLoop; m++) {
+    __ubuf__ T *src_block = src_ptr + (int32_t)m * num_per_reg * stride0;
+    __ubuf__ T *dst_block = dst_ptr + (int32_t)m * num_per_reg * stride0;
+    CREATE_MASK_BY_SIZE(mask, T, size0);
+    vgather2(hi, src_block + start_col, (VectorReg<IdxUT> &)idx_reg, mask);
+    vsub(lo, hi, hi, mask); // lo = 0
+    vscatter(hi, dst_block + start_col, (VectorReg<IdxUT> &)idx_reg, mask);
+    for (uint16_t n = 1; n < N; n++) {
+      int32_t nOffset = reverse ? (N - n - 1) : n;
+      vgather2(x2, src_block + nOffset, (VectorReg<IdxUT> &)idx_reg, mask);
+      // TwoSum(hi, x2): s = fl(hi + x2), error e (x2 has no low part)
+      vadd(s, hi, x2, mask);  // s = hi + x2
+      vsub(bb, s, hi, mask);  // bb = s - hi
+      vsub(t1, s, bb, mask);  // t1 = s - bb
+      vsub(t1, hi, t1, mask); // t1 = hi - (s - bb)
+      vsub(t2, x2, bb, mask); // t2 = x2 - bb
+      vadd(t1, t1, t2, mask); // t1 = e  (TwoSum error)
+      vadd(t1, t1, lo, mask); // t1 = e + lo  (fold old comp)
+      // FastTwoSum(s, e) -> renormalized (hi, lo)
+      vadd(hi, s, t1, mask);  // hi = s + e
+      vsub(t2, hi, s, mask);  // t2 = hi - s
+      vsub(lo, t1, t2, mask); // lo = e - (hi - s)
+      vscatter(hi, dst_block + nOffset, (VectorReg<IdxUT> &)idx_reg, mask);
+    }
+  }
+}
+
+template <typename T>
 __aiv__ __attribute__((always_inline)) void
 compute_cumsum_2d_along_dim1_comp(memref_t<__ubuf__ T, 2> *src,
                                   memref_t<__ubuf__ T, 2> *dst, bool reverse) {
@@ -252,38 +321,40 @@ compute_cumsum_2d_along_dim1_comp(memref_t<__ubuf__ T, 2> *src,
   uint16_t mLoop = CEIL_DIV((uint16_t)M, (uint16_t)num_per_reg);
   uint32_t size0 = M;
   int32_t start_col = reverse ? (N - 1) : 0;
-  __VEC_SCOPE__ {
-    VectorReg<T> hi, lo, x2, s, bb, t1, t2;
-    VectorReg<IdxT> idx_reg;
-    vector_bool mask;
-    uint32_t full_mask_size = num_per_reg;
-    CREATE_MASK_BY_SIZE(mask, T, full_mask_size);
-    vci(idx_reg, 0);
-    vmuls(idx_reg, idx_reg, stride0, mask);
-    for (uint16_t m = 0; m < mLoop; m++) {
-      __ubuf__ T *src_block = src_ptr + (int32_t)m * num_per_reg * stride0;
-      __ubuf__ T *dst_block = dst_ptr + (int32_t)m * num_per_reg * stride0;
-      CREATE_MASK_BY_SIZE(mask, T, size0);
-      vgather2(hi, src_block + start_col, (VectorReg<IdxUT> &)idx_reg, mask);
-      vsub(lo, hi, hi, mask); // lo = 0
-      vscatter(hi, dst_block + start_col, (VectorReg<IdxUT> &)idx_reg, mask);
-      for (uint16_t n = 1; n < N; n++) {
-        int32_t nOffset = reverse ? (N - n - 1) : n;
-        vgather2(x2, src_block + nOffset, (VectorReg<IdxUT> &)idx_reg, mask);
-        // TwoSum(hi, x2): s = fl(hi + x2), error e (x2 has no low part)
-        vadd(s, hi, x2, mask);  // s = hi + x2
-        vsub(bb, s, hi, mask);  // bb = s - hi
-        vsub(t1, s, bb, mask);  // t1 = s - bb
-        vsub(t1, hi, t1, mask); // t1 = hi - (s - bb)
-        vsub(t2, x2, bb, mask); // t2 = x2 - bb
-        vadd(t1, t1, t2, mask); // t1 = e  (TwoSum error)
-        vadd(t1, t1, lo, mask); // t1 = e + lo  (fold old comp)
-        // FastTwoSum(s, e) -> renormalized (hi, lo)
-        vadd(hi, s, t1, mask);  // hi = s + e
-        vsub(t2, hi, s, mask);  // t2 = hi - s
-        vsub(lo, t1, t2, mask); // lo = e - (hi - s)
-        vscatter(hi, dst_block + nOffset, (VectorReg<IdxUT> &)idx_reg, mask);
-      }
+  compute_cumsum_2d_along_dim1_comp_vf<T>(num_per_reg, stride0, mLoop, src_ptr,
+                                          dst_ptr, size0, start_col, N,
+                                          reverse);
+}
+
+template <typename T>
+__simd_vf__ void compute_cumsum_2d_along_dim1_plain_seq_vf(
+    uint32_t num_per_reg, int32_t stride0, uint16_t mLoop, __ubuf__ T *src_ptr,
+    __ubuf__ T *dst_ptr, uint32_t size0, int32_t start_col, uint16_t N,
+    bool reverse) {
+  using IdxT = std::conditional_t<sizeof(T) == 4, int32_t, int16_t>;
+  using IdxUT = std::conditional_t<sizeof(T) == 4, uint32_t, uint16_t>;
+  VectorReg<T> x1RegTensor, x2RegTensor;
+  VectorReg<IdxT> idx_reg;
+  vector_bool mask;
+  uint32_t full_mask_size = num_per_reg;
+  CREATE_MASK_BY_SIZE(mask, T, full_mask_size);
+  vci(idx_reg, 0);
+  vmuls(idx_reg, idx_reg, stride0, mask);
+  for (uint16_t m = 0; m < mLoop; m++) {
+    __ubuf__ T *src_block = src_ptr + (int32_t)m * num_per_reg * stride0;
+    __ubuf__ T *dst_block = dst_ptr + (int32_t)m * num_per_reg * stride0;
+    CREATE_MASK_BY_SIZE(mask, T, size0);
+    vgather2(x1RegTensor, src_block + start_col, (VectorReg<IdxUT> &)idx_reg,
+             mask);
+    vscatter(x1RegTensor, dst_block + start_col, (VectorReg<IdxUT> &)idx_reg,
+             mask);
+    for (uint16_t n = 1; n < N; n++) {
+      int32_t nOffset = reverse ? (N - n - 1) : n;
+      vgather2(x2RegTensor, src_block + nOffset, (VectorReg<IdxUT> &)idx_reg,
+               mask);
+      vadd(x1RegTensor, x1RegTensor, x2RegTensor, mask);
+      vscatter(x1RegTensor, dst_block + nOffset, (VectorReg<IdxUT> &)idx_reg,
+               mask);
     }
   }
 }
@@ -304,32 +375,9 @@ compute_cumsum_2d_along_dim1_plain_seq(memref_t<__ubuf__ T, 2> *src,
   uint16_t mLoop = CEIL_DIV((uint16_t)M, (uint16_t)num_per_reg);
   uint32_t size0 = M;
   int32_t start_col = reverse ? (N - 1) : 0;
-  __VEC_SCOPE__ {
-    VectorReg<T> x1RegTensor, x2RegTensor;
-    VectorReg<IdxT> idx_reg;
-    vector_bool mask;
-    uint32_t full_mask_size = num_per_reg;
-    CREATE_MASK_BY_SIZE(mask, T, full_mask_size);
-    vci(idx_reg, 0);
-    vmuls(idx_reg, idx_reg, stride0, mask);
-    for (uint16_t m = 0; m < mLoop; m++) {
-      __ubuf__ T *src_block = src_ptr + (int32_t)m * num_per_reg * stride0;
-      __ubuf__ T *dst_block = dst_ptr + (int32_t)m * num_per_reg * stride0;
-      CREATE_MASK_BY_SIZE(mask, T, size0);
-      vgather2(x1RegTensor, src_block + start_col, (VectorReg<IdxUT> &)idx_reg,
-               mask);
-      vscatter(x1RegTensor, dst_block + start_col, (VectorReg<IdxUT> &)idx_reg,
-               mask);
-      for (uint16_t n = 1; n < N; n++) {
-        int32_t nOffset = reverse ? (N - n - 1) : n;
-        vgather2(x2RegTensor, src_block + nOffset, (VectorReg<IdxUT> &)idx_reg,
-                 mask);
-        vadd(x1RegTensor, x1RegTensor, x2RegTensor, mask);
-        vscatter(x1RegTensor, dst_block + nOffset, (VectorReg<IdxUT> &)idx_reg,
-                 mask);
-      }
-    }
-  }
+  compute_cumsum_2d_along_dim1_plain_seq_vf<T>(num_per_reg, stride0, mLoop,
+                                               src_ptr, dst_ptr, size0,
+                                               start_col, N, reverse);
 }
 
 template <typename T, int cum_dim>
@@ -400,17 +448,62 @@ vector_cumsum_2d(memref_t<__ubuf__ T, 2> *src, memref_t<__ubuf__ T, 2> *dst,
 }
 
 template <typename T, typename IdxT, typename uIdxT>
+__simd_vf__ void copy_lane_gather_vf(uint32_t nn, __ubuf__ T *s,
+                                     __ubuf__ T *d) {
+  VectorReg<T> a;
+  VectorReg<IdxT> idx;
+  vector_bool m;
+  CREATE_MASK_BY_SIZE(m, T, nn);
+  vci(idx, 0);
+  vgather2(a, s, (VectorReg<uIdxT> &)idx, m);
+  vscatter(a, d, (VectorReg<uIdxT> &)idx, m);
+}
+
+template <typename T, typename IdxT, typename uIdxT>
 __aiv__ __attribute__((always_inline)) void
 copy_lane_gather(__ubuf__ T *s, __ubuf__ T *d, int n) {
   uint32_t nn = static_cast<uint32_t>(n);
-  __VEC_SCOPE__ {
-    VectorReg<T> a;
-    VectorReg<IdxT> idx;
-    vector_bool m;
-    CREATE_MASK_BY_SIZE(m, T, nn);
-    vci(idx, 0);
-    vgather2(a, s, (VectorReg<uIdxT> &)idx, m);
-    vscatter(a, d, (VectorReg<uIdxT> &)idx, m);
+  copy_lane_gather_vf<T, IdxT, uIdxT>(nn, s, d);
+}
+
+template <typename T>
+__simd_vf__ void
+unified_scan_fwd_nocopy_vf(uint32_t bpeU, bool tailG, uint32_t tailN,
+                           __ubuf__ T *tailRd, int d, __ubuf__ T *tailWd,
+                           uint16_t fwdCntU, int fullRegs, __ubuf__ T *rbase,
+                           int BpE, __ubuf__ T *wbase, bool strG, uint32_t strN,
+                           __ubuf__ T *strRd, __ubuf__ T *strWd) {
+  using IdxT = std::conditional_t<sizeof(T) == 2, int16_t, int32_t>;
+  using uIdxT = std::conditional_t<sizeof(T) == 2, uint16_t, uint32_t>;
+  VectorReg<T> a, b;
+  VectorReg<IdxT> idx;
+  vector_align valign;
+  vector_bool m, mFull;
+  vci(idx, 0);
+  CREATE_MASK_BY_SIZE(mFull, T, bpeU);
+  if (tailG) { // highest active register
+    CREATE_MASK_BY_SIZE(m, T, tailN);
+    vgather2(a, tailRd, (VectorReg<uIdxT> &)idx, m);
+    vgather2(b, tailRd - d, (VectorReg<uIdxT> &)idx, m);
+    vadd(a, a, b, m);
+    vscatter(a, tailWd, (VectorReg<uIdxT> &)idx, m);
+  }
+  for (uint16_t k = 0; k < fwdCntU; ++k) { // contiguous bulk, high->low
+    int r = (fullRegs - 1) - static_cast<int>(k);
+    __ubuf__ T *rb = rbase + r * BpE;
+    __ubuf__ T *wb = wbase + r * BpE;
+    vlds(a, rb, 0, NORM);
+    vldas(valign, rb - d);
+    vldus(b, valign, rb - d);
+    vadd(a, a, b, mFull);
+    vsts(a, wb, 0, NORM_B32, mFull);
+  }
+  if (strG) { // lowest active register
+    CREATE_MASK_BY_SIZE(m, T, strN);
+    vgather2(a, strRd, (VectorReg<uIdxT> &)idx, m);
+    vgather2(b, strRd - d, (VectorReg<uIdxT> &)idx, m);
+    vadd(a, a, b, m);
+    vscatter(a, strWd, (VectorReg<uIdxT> &)idx, m);
   }
 }
 
@@ -445,41 +538,52 @@ unified_scan_fwd_nocopy(__ubuf__ T *srcBase, __ubuf__ T *dstBase, int N,
     // map k -> r.
     int fwdCnt = (fullRegs - cf > 0) ? (fullRegs - cf) : 0;
     uint16_t fwdCntU = static_cast<uint16_t>(fwdCnt);
-    __VEC_SCOPE__ {
-      VectorReg<T> a, b;
-      VectorReg<IdxT> idx;
-      vector_align valign;
-      vector_bool m, mFull;
-      vci(idx, 0);
-      CREATE_MASK_BY_SIZE(mFull, T, bpeU);
-      if (tailG) { // highest active register
-        CREATE_MASK_BY_SIZE(m, T, tailN);
-        vgather2(a, tailRd, (VectorReg<uIdxT> &)idx, m);
-        vgather2(b, tailRd - d, (VectorReg<uIdxT> &)idx, m);
-        vadd(a, a, b, m);
-        vscatter(a, tailWd, (VectorReg<uIdxT> &)idx, m);
-      }
-      for (uint16_t k = 0; k < fwdCntU; ++k) { // contiguous bulk, high->low
-        int r = (fullRegs - 1) - static_cast<int>(k);
-        __ubuf__ T *rb = rbase + r * BpE;
-        __ubuf__ T *wb = wbase + r * BpE;
-        vlds(a, rb, 0, NORM);
-        vldas(valign, rb - d);
-        vldus(b, valign, rb - d);
-        vadd(a, a, b, mFull);
-        vsts(a, wb, 0, NORM_B32, mFull);
-      }
-      if (strG) { // lowest active register
-        CREATE_MASK_BY_SIZE(m, T, strN);
-        vgather2(a, strRd, (VectorReg<uIdxT> &)idx, m);
-        vgather2(b, strRd - d, (VectorReg<uIdxT> &)idx, m);
-        vadd(a, a, b, m);
-        vscatter(a, strWd, (VectorReg<uIdxT> &)idx, m);
-      }
-    }
+    unified_scan_fwd_nocopy_vf<T>(bpeU, tailG, tailN, tailRd, d, tailWd,
+                                  fwdCntU, fullRegs, rbase, BpE, wbase, strG,
+                                  strN, strRd, strWd);
     if (d == 1) {
       copy_lane_gather<T, IdxT, uIdxT>(srcBase, dstBase, d);
     }
+  }
+}
+
+template <typename T>
+__simd_vf__ void
+unified_scan_rev_nocopy_vf(uint32_t bpeU, uint16_t revCCntU, __ubuf__ T *rbase,
+                           int BpE, __ubuf__ T *wbase, int d, uint16_t revGCntU,
+                           int gLo, int last, int tailSize, int N) {
+  using IdxT = std::conditional_t<sizeof(T) == 2, int16_t, int32_t>;
+  using uIdxT = std::conditional_t<sizeof(T) == 2, uint16_t, uint32_t>;
+  VectorReg<T> a, b;
+  VectorReg<IdxT> idx;
+  vector_align valign;
+  vector_bool m, mFull;
+  vci(idx, 0);
+  CREATE_MASK_BY_SIZE(mFull, T, bpeU);
+  for (uint16_t k = 0; k < revCCntU; ++k) { // contiguous bulk, low->high
+    int r = static_cast<int>(k);
+    __ubuf__ T *rb = rbase + r * BpE;
+    __ubuf__ T *wb = wbase + r * BpE;
+    vlds(a, rb, 0, NORM);
+    vldas(valign, rb + d);
+    vldus(b, valign, rb + d);
+    vadd(a, a, b, mFull);
+    vsts(a, wb, 0, NORM_B32, mFull);
+  }
+  for (uint16_t k = 0; k < revGCntU; ++k) { // gather boundary / rest
+    int r = gLo + static_cast<int>(k);
+    int rStart = r * BpE;
+    int sz = (r == last) ? tailSize : BpE;
+    int hi = rStart + sz;
+    int addEnd = (hi < (N - d)) ? hi : (N - d);
+    uint32_t nact = static_cast<uint32_t>(addEnd - rStart);
+    CREATE_MASK_BY_SIZE(m, T, nact);
+    __ubuf__ T *rd = rbase + rStart;
+    __ubuf__ T *wd = wbase + rStart;
+    vgather2(a, rd, (VectorReg<uIdxT> &)idx, m);
+    vgather2(b, rd + d, (VectorReg<uIdxT> &)idx, m);
+    vadd(a, a, b, m);
+    vscatter(a, wd, (VectorReg<uIdxT> &)idx, m);
   }
 }
 
@@ -510,39 +614,8 @@ unified_scan_rev_nocopy(__ubuf__ T *srcBase, __ubuf__ T *dstBase, int N,
     uint16_t revCCntU = static_cast<uint16_t>(revCCnt);
     int revGCnt = (lastActive - gLo + 1 > 0) ? (lastActive - gLo + 1) : 0;
     uint16_t revGCntU = static_cast<uint16_t>(revGCnt);
-    __VEC_SCOPE__ {
-      VectorReg<T> a, b;
-      VectorReg<IdxT> idx;
-      vector_align valign;
-      vector_bool m, mFull;
-      vci(idx, 0);
-      CREATE_MASK_BY_SIZE(mFull, T, bpeU);
-      for (uint16_t k = 0; k < revCCntU; ++k) { // contiguous bulk, low->high
-        int r = static_cast<int>(k);
-        __ubuf__ T *rb = rbase + r * BpE;
-        __ubuf__ T *wb = wbase + r * BpE;
-        vlds(a, rb, 0, NORM);
-        vldas(valign, rb + d);
-        vldus(b, valign, rb + d);
-        vadd(a, a, b, mFull);
-        vsts(a, wb, 0, NORM_B32, mFull);
-      }
-      for (uint16_t k = 0; k < revGCntU; ++k) { // gather boundary / rest
-        int r = gLo + static_cast<int>(k);
-        int rStart = r * BpE;
-        int sz = (r == last) ? tailSize : BpE;
-        int hi = rStart + sz;
-        int addEnd = (hi < (N - d)) ? hi : (N - d);
-        uint32_t nact = static_cast<uint32_t>(addEnd - rStart);
-        CREATE_MASK_BY_SIZE(m, T, nact);
-        __ubuf__ T *rd = rbase + rStart;
-        __ubuf__ T *wd = wbase + rStart;
-        vgather2(a, rd, (VectorReg<uIdxT> &)idx, m);
-        vgather2(b, rd + d, (VectorReg<uIdxT> &)idx, m);
-        vadd(a, a, b, m);
-        vscatter(a, wd, (VectorReg<uIdxT> &)idx, m);
-      }
-    }
+    unified_scan_rev_nocopy_vf<T>(bpeU, revCCntU, rbase, BpE, wbase, d,
+                                  revGCntU, gLo, last, tailSize, N);
     if (d == 1) {
       copy_lane_gather<T, IdxT, uIdxT>(srcBase + (N - d), dstBase + (N - d), d);
     }
