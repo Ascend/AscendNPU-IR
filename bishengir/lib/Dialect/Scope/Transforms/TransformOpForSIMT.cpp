@@ -108,7 +108,18 @@ static void rewriteHoistedLocalLoads(scope::ScopeOp scopeOp,
     return false;
   };
 
+  auto isDirectlyInScope = [&](Operation *op) {
+    return op->getBlock() == &scopeOp.getRegion().front();
+  };
+
   for (hivm::LocalLoadOp localLoad : localLoads) {
+    for (Operation *user : localLoad->getUsers()) {
+      if (!toHoist.contains(user) || isDirectlyInScope(user))
+        continue;
+      blocked.insert(localLoad.getOperation());
+      break;
+    }
+
     Value addr = localLoad.getAddr();
     while (auto castOp = addr.getDefiningOp<memref::CastOp>())
       addr = castOp.getSource();
@@ -122,7 +133,8 @@ static void rewriteHoistedLocalLoads(scope::ScopeOp scopeOp,
       tensorSource = toBuffer.getTensor();
 #endif
 
-    if (!tensorSource || isDefinedInsideScope(tensorSource) ||
+    if (blocked.contains(localLoad.getOperation()) || !tensorSource ||
+        isDefinedInsideScope(tensorSource) ||
         tensorSource.getType() != localLoad.getResult().getType()) {
       blocked.insert(localLoad.getOperation());
       continue;
