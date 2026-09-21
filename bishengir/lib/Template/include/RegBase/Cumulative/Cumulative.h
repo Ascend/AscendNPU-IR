@@ -101,7 +101,10 @@ extern "C" {
           memref_t<__ubuf__ dtype, DIM> *dst,                                  \
           memref_t<__ubuf__ dtype, DIM> *temp, bool reverse,                   \
           bool propagateNan) {                                                 \
-    if (propagateNan) {                                                        \
+    if constexpr (std::is_integral<dtype>::value) {                            \
+      vector_cum_minmax_##DIM##d<dtype, cum_dim, kindv>(src, dst, temp,        \
+                                                        reverse);              \
+    } else if (propagateNan) {                                                 \
       vector_cum_minmax_##DIM##d<dtype, cum_dim, (kindv) | CUM_MM_PROP_NAN>(   \
           src, dst, temp, reverse);                                            \
     } else {                                                                   \

@@ -63,25 +63,60 @@ cum_mm_comb(VectorReg<T> &dst, VectorReg<T> &a, VectorReg<T> &b,
   }
 }
 
+// CCEC crashes on `static_cast<float>(bfloat16_t)`
+static __aiv__ __attribute__((always_inline)) float
+bf16_to_float(bfloat16_t x) {
+  auto bf16_bits = *reinterpret_cast<uint16_t *>(&x);
+  // add 16 zero lower bits to mantissa
+  auto f32_bits = static_cast<uint32_t>(bf16_bits) << 16;
+  return *reinterpret_cast<float *>(&f32_bits);
+}
+
 template <int kind, typename T>
 __aiv__ __attribute__((always_inline)) T cum_mm_comb_s(T a, T b) {
-  if constexpr (!std::is_integral<T>::value) {
+  if constexpr (std::is_integral<T>::value) {
+    static_assert((kind & CUM_MM_PROP_NAN) == 0);
+    if constexpr ((kind & 1) == CUM_MM_MAX) {
+      return (a > b) ? a : b;
+    } else {
+      return (a < b) ? a : b;
+    }
+  } else {
+    // Scalar supports only f32 comparisions,
+    // so we need to convert f16/bf16 to f32 first
+    float valA, valB;
+    if constexpr (std::is_same<T, float>::value) {
+      valA = a;
+      valB = b;
+    } else if constexpr (std::is_same<T, bfloat16_t>::value) {
+      valA = bf16_to_float(a); // static_cast<float>(a);
+      valB = bf16_to_float(b); // static_cast<float>(b);
+    } else {
+      static_assert(std::is_same<T, half>::value);
+      valA = static_cast<float>(a);
+      valB = static_cast<float>(b);
+    }
+
     if constexpr ((kind & CUM_MM_PROP_NAN) != 0) {
       // Propagate NaN (torch.cummax/cummin, arith::Maximum/MinimumFOp):
       // if either operand is NaN, return NaN.
-      if (a != a) return a;
-      if (b != b) return b;
+      if (valA != valA)
+        return a;
+      // No need to check valB: `>` will propagate NaN in second argument
     } else {
       // Ignore NaN (arith::MaxNum/MinNumFOp, ops-math):
       // if one operand is NaN, return the other.
-      if (a != a) return b;
-      if (b != b) return a;
+      if (valB != valB)
+        return a;
+      // No need to check valA: '>' will ignore NaN in first argument
     }
-  }
-  if constexpr ((kind & 1) == CUM_MM_MAX) {
-    return (a > b) ? a : b;
-  } else {
-    return (a < b) ? a : b;
+
+    // `x > y`, `x < y` produce false if either `x` or `y` is NaN
+    if constexpr ((kind & 1) == CUM_MM_MAX) {
+      return (valA > valB) ? a : b; // ignores NaN in a, propagates NaN in b
+    } else {
+      return (valA < valB) ? a : b; // ignores NaN in a, propagates NaN in b
+    }
   }
 }
 
