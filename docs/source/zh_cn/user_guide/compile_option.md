@@ -4,23 +4,32 @@ BiShengIR编译器通过一系列命令行编译选项控制编译流程、功�
 
 ## BiShengIR功能控制选项
 
-| 选项名 | 描述 | 类型 | 默认值 |
-|--------|------|------|--------|
-| --enable-triton-kernel-compile | 启用Triton内核编译功能 | bool | false |
-| --enable-torch-compile | 启用Torch-MLIR编译功能 | bool | false（仅在定义`BISHENGIR_ENABLE_TORCH_CONVERSIONS`编译宏时提供该选项） |
-| --enable-hivm-compile | 启用BiShengHIR HIVM编译功能 | bool | true |
-| --enable-hfusion-compile | 启用BiShengHIR HFusion编译功能 | bool | false |
-| --enable-symbol-analysis | 启用符号分析功能 | bool | false |
-| --enable-multi-kernel | 关闭时计算图必须融合为单个内核；开启时支持外提生成多个内核 | bool | false |
-| --enable-manage-host-resources | 启用主机函数的资源管理功能 | bool | false |
-| --ensure-no-implicit-broadcast | 是否确保不存在隐式广播语义。若存在动态维度到动态维度的广播，将触发运行时错误 | bool | false（仅在定义`BISHENGIR_ENABLE_TORCH_CONVERSIONS`编译宏时提供该选项） |
-| --disable-auto-inject-block-sync | 禁用`injectBlockSync` Pass自动生成块同步`wait/set`指令 | bool | false |
-| --enable-hivm-graph-sync-solver | 使用HIVM计算图同步求解器替代同步注入机制 | bool | false |
-| --disable-auto-cv-work-space-manage | 需与`disableAutoInjectBlockSync`选项搭配使用 | bool | false |
-| --disable-hivm-auto-inject-sync | 禁用核内自动注入同步操作 | bool | false |
-| --disable-hivm-tensor-compile | 禁用BiShengHIR HIVM张量编译功能 | bool | false |
+**适用产品**：
+
+- Ascend 950PR&950DT 系列产品
+- Ascend A2/A3 系列产品
+
+| 选项名 | 描述 | 类型 | 默认值 | 备注 |
+|--------|------|------|--------|----------|
+| --enable-triton-kernel-compile | 启用Triton内核编译功能 | bool | false |  |
+| --enable-torch-compile | 启用Torch-MLIR编译功能 | bool | false（仅在定义`BISHENGIR_ENABLE_TORCH_CONVERSIONS`编译宏时提供该选项） | A2/A3 Only  |
+| --enable-hivm-compile | 启用BiShengHIR HIVM编译功能 | bool | true |  |
+| --enable-hfusion-compile | 启用BiShengHIR HFusion编译功能 | bool | false |  |
+| --enable-symbol-analysis | 启用符号分析功能 | bool | false | A2/A3 Only  |
+| --enable-multi-kernel | 关闭时计算图必须融合为单个内核；开启时支持外提生成多个内核 | bool | false | A2/A3 Only  |
+| --enable-manage-host-resources | 启用主机函数的资源管理功能 | bool | false | A2/A3 Only  |
+| --ensure-no-implicit-broadcast | 是否确保不存在隐式广播语义。若存在动态维度到动态维度的广播，将触发运行时错误 | bool | false（仅在定义`BISHENGIR_ENABLE_TORCH_CONVERSIONS`编译宏时提供该选项） | A2/A3 Only  |
+| --disable-auto-inject-block-sync | 禁用`injectBlockSync` Pass自动生成块同步`wait/set`指令 | bool | false |  |
+| --enable-hivm-graph-sync-solver | 使用HIVM计算图同步求解器替代同步注入机制 | bool | true |  |
+| --disable-auto-cv-work-space-manage | 需与`disableAutoInjectBlockSync`选项搭配使用 | bool | false | A2/A3 Only |
+| --disable-hivm-tensor-compile | 禁用BiShengHIR HIVM张量编译功能 | bool | false | A2/A3 Only |
 
 ## BiShengIR通用优化选项
+
+**适用产品**：
+
+- Ascend 950PR&950DT 系列产品
+- Ascend A2/A3 系列产品
 
 | 选项名 | 描述 | 类型 | 默认值 |
 |--------|------|------|--------|
@@ -30,6 +39,11 @@ BiShengIR编译器通过一系列命令行编译选项控制编译流程、功�
 | --block-dim=\<uint> | 指定使用的块数量 | unsigned | 1 |
 
 ## BiShengIR HFusion优化选项
+
+**适用产品**：
+
+- Ascend 950PR&950DT 系列产品
+- Ascend A2/A3 系列产品
 
 | 选项名 | 描述 | 类型 | 默认值 |
 |--------|------|------|--------|
@@ -41,6 +55,11 @@ BiShengIR编译器通过一系列命令行编译选项控制编译流程、功�
 | --enable-hfusion-count-buffer-dma-opt | 开启后，DMA操作使用的缓冲区不会被向量运算复用 | bool | false |
 
 ## BiShengIR HIVM优化选项
+
+**适用产品**：
+
+- Ascend 950PR&950DT 系列产品
+- Ascend A2/A3 系列产品
 
 | 选项名 | 描述 | 类型 | 默认值 |
 |--------|------|------|--------|

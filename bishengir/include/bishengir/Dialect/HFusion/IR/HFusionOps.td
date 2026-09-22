@@ -1239,7 +1239,7 @@ def MatMulMxOp : HFusion_Op<"matmul_mx", [
   let summary = "Performs a block-scaled matrix multiplication";
   let description = [{
   Performs matrix multiplication in microscaling format where the inputs are implicitly scaled using provided scale factors, which are often used in quantized data types like FP8/FP4. The operation computes C = (A * scale_a) dot (B * scale_b) directly in hardware (Tensor Cores).
-  lhs and rhs use microscaling formats described here: https://www.opencompute.org/documents/ocp-microscaling-formats-mx-v1-0-spec-final-pdf
+  lhs and rhs use microscaling formats described here: [ocp microscaling formats](https://www.opencompute.org/documents/ocp-microscaling-formats-mx-v1-0-spec-final-pdf)
   }];
 
   let arguments = (ins

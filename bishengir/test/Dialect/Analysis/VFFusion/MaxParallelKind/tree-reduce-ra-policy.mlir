@@ -8,7 +8,7 @@
 // NEW-SAME: %{{.*}}: tensor<17x8xf32>, %{{.*}}: tensor<8xf32>)
 // NEW-NEXT: %{{.*}} = linalg.reduce
 // NEW-SAME: hfusion.register_tree_reduction_selected
-// NEW: module attributes {hfusion.regular_tree_reduction_scope, hfusion.tree_reduction_selection_frozen}
+// NEW: module attributes {hfusion.legacy_tree_reduction_scope, hfusion.tree_reduction_selection_frozen}
 // NEW-NOT: hfusion.legacy_tree_reduction_scope
 // NEW-LABEL: func.func private @mixed_ra_ar_fused_0(
 // NEW: %{{.*}} = linalg.reduce
@@ -297,5 +297,36 @@ module {
         linalg.yield %sum : f32
       }
     return %scan, %result : tensor<128x8xf32>, tensor<8xf32>
+  }
+}
+
+// -----
+
+// Elementwise fusion candidate exists through reshape and extract_slice,
+// so the `legacy_tree_reduction scope` should not be used.
+
+// NEW-NOT: hfusion.legacy_tree_reduction_scope
+// NEW: module attributes {hfusion.tree_reduction_selection_frozen}
+module {
+  func.func @reduce_after_reshape_and_extract_slice(
+      %input: tensor<4x4xf32>,
+      %init: tensor<f32>) -> tensor<f32> {
+    %empty = tensor.empty() : tensor<4x4xf32>
+    %exp = linalg.exp
+        ins(%input : tensor<4x4xf32>)
+        outs(%empty : tensor<4x4xf32>) -> tensor<4x4xf32>
+    %reshaped = tensor.collapse_shape %exp [[0, 1]]
+        : tensor<4x4xf32> into tensor<16xf32>
+    %slice = tensor.extract_slice %reshaped[4] [8] [1]
+        : tensor<16xf32> to tensor<8xf32>
+    %result = linalg.reduce
+        ins(%slice : tensor<8xf32>)
+        outs(%init : tensor<f32>)
+        dimensions = [0]
+        (%x: f32, %acc: f32) {
+      %sum = arith.addf %x, %acc : f32
+      linalg.yield %sum : f32
+    }
+    return %result : tensor<f32>
   }
 }

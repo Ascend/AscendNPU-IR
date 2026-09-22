@@ -278,6 +278,14 @@ LogicalResult VCastOp::allocExtraBuffersIfPossible() {
         useExtraScheme = true;
       }
     }
+    // Per-op attribute set by AlignAllocSize for high-rank VCast.
+    // Only honour it when the current rank is still > 3 — FlattenOps may
+    // have collapsed the shape after the attribute was set.
+    auto curRank = cast<ShapedType>(this->getSrc()[0].getType()).getRank();
+    if (curRank > 3 &&
+        getOperation()->hasAttr(hivm::DisableSizeAlignForCastAttr::name)) {
+      useExtraScheme = true;
+    }
 
     SmallVector<int64_t> extraBufSizes;
     if (!useExtraScheme) {
