@@ -839,7 +839,7 @@ void MemLivenessAnalysis::ProcessMarkOp(annotation::MarkOp markOp,
   }
   // TODO: Update buffer kill time when RecursionIR visits any user of the
   // buffer, rather than only getting buffer kill time in last user
-  UpdateOpKillInfo(curOpInfo, maybeAlloc.value(), live);
+  OpKillHandle(curOpInfo, live, markOp->getBlock());
 }
 
 void MemLivenessAnalysis::UpdateMemoryUniqueBufferInfo(
