@@ -1,45 +1,18 @@
 // RUN: bishengir-opt -outline-scope -propagate-simt-mode -split-input-file %s | FileCheck %s
 
-// Test: SIMT scope with sub-block tiling reverted attribute is wrapped in an
-// scf.if guard. The caller directly invokes the SIMT VF, so it is marked MIX.
-// CHECK-LABEL: func.func @test_simt_scope_with_reverted_attr_scope_0(
+// Test: outlining a SIMT scope emits a plain call.
+// The caller directly invokes the SIMT VF, so it is marked MIX.
+// CHECK-LABEL: func.func @test_simt_scope_scope_0(
 // CHECK-SAME: %{{.*}}: memref<f32>) attributes {hivm.vf_mode = #hivm.vf_mode<SIMT>} {
 // CHECK: memref.store
 // CHECK: return
 
-// CHECK-LABEL: func.func @test_simt_scope_with_reverted_attr(
-// CHECK-SAME: %{{.*}}: memref<f32>) attributes {hivm.vf_mode = #hivm.vf_mode<MIX>}
-// CHECK: hivm.hir.get_sub_block_idx
-// CHECK: arith.index_cast
-// CHECK: arith.cmpi eq
-// CHECK: scf.if
-// CHECK: call @test_simt_scope_with_reverted_attr_scope_0
-// CHECK: limit_sub_block_id0
-module attributes {"hivm.tile_and_bind_subblock_reverted"} {
-  func.func @test_simt_scope_with_reverted_attr(%arg0: memref<f32>) {
-    %cst = arith.constant 1.0 : f32
-    scope.scope : () -> () {
-      memref.store %cst, %arg0[] : memref<f32>
-      scope.return
-    } {hivm.vf_mode = #hivm.vf_mode<SIMT>}
-    return
-  }
-}
-
-// -----
-
-// Test: SIMT scope without the reverted attribute produces a plain call. The
-// caller directly invokes the SIMT VF, so it is marked MIX.
-// CHECK-LABEL: func.func @test_simt_scope_without_reverted_attr_scope_0(
-// CHECK: memref.store
-// CHECK: return
-
-// CHECK-LABEL: func.func @test_simt_scope_without_reverted_attr(
+// CHECK-LABEL: func.func @test_simt_scope(
 // CHECK-SAME: %{{.*}}: memref<f32>) attributes {hivm.vf_mode = #hivm.vf_mode<MIX>}
 // CHECK-NOT: hivm.hir.get_sub_block_idx
-// CHECK: call @test_simt_scope_without_reverted_attr_scope_0
+// CHECK: call @test_simt_scope_scope_0
 module {
-  func.func @test_simt_scope_without_reverted_attr(%arg0: memref<f32>) {
+  func.func @test_simt_scope(%arg0: memref<f32>) {
     %cst = arith.constant 1.0 : f32
     scope.scope : () -> () {
       memref.store %cst, %arg0[] : memref<f32>
@@ -98,16 +71,16 @@ module {
 
 // Test: Non-SIMT scope: no SIMT callee anywhere, so no vf_mode is added to
 // any function.
-// CHECK-LABEL: func.func @test_non_simt_scope_with_reverted_attr_scope_0(
+// CHECK-LABEL: func.func @test_non_simt_scope_scope_0(
 // CHECK: memref.store
 // CHECK: return
 
-// CHECK-LABEL: func.func @test_non_simt_scope_with_reverted_attr(
+// CHECK-LABEL: func.func @test_non_simt_scope(
 // CHECK-SAME: %{{.*}}: memref<f32>) {
 // CHECK-NOT: hivm.hir.get_sub_block_idx
-// CHECK: call @test_non_simt_scope_with_reverted_attr_scope_0
-module attributes {"hivm.tile_and_bind_subblock_reverted"} {
-  func.func @test_non_simt_scope_with_reverted_attr(%arg0: memref<f32>) {
+// CHECK: call @test_non_simt_scope_scope_0
+module {
+  func.func @test_non_simt_scope(%arg0: memref<f32>) {
     %cst = arith.constant 1.0 : f32
     scope.scope : () -> () {
       memref.store %cst, %arg0[] : memref<f32>

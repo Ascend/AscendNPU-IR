@@ -380,3 +380,101 @@ func.func @test_multi_elem_extract_outside_tensor() {
 
   return
 }
+
+// -----
+
+func.func @test_hoist_sub_block_idx(%gm: memref<?xf32>, %ub: memref<8xf32>,
+                                    %idx: tensor<8xi64>, %data: tensor<8xf32>) {
+  %c0 = arith.constant 0 : index
+  %c1_i32 = arith.constant 1 : i32
+
+  // CHECK: %[[IDX:.*]] = hivm.hir.get_sub_block_idx -> i64
+  // CHECK-NOT: hivm.hir.get_sub_block_idx
+  // CHECK: scope.scope : () -> () {
+  // CHECK-NOT: hivm.hir.get_sub_block_idx
+  // CHECK:   hivm.hir.local_store
+  // CHECK-NOT: hivm.hir.get_sub_block_idx
+  // CHECK:   %[[CAST:.*]] = arith.index_cast %[[IDX]] : i64 to index
+  // CHECK:   %[[COND:.*]] = arith.cmpi eq, %[[CAST]], %{{.*}} : index
+  // CHECK-NOT: hivm.hir.get_sub_block_idx
+  // CHECK:   scf.if %[[COND]] {
+  // CHECK:     hivm.hir.scatter_store
+  // CHECK:   } {limit_sub_block_id0}
+  // CHECK-NOT: hivm.hir.get_sub_block_idx
+  // CHECK:   scope.return
+  scope.scope : () -> () {
+    %e = tensor.empty() : tensor<8xf32>
+    %g = hivm.hir.gather_load ins(%gm : memref<?xf32>, %idx : tensor<8xi64>, %c1_i32 : i32) outs(%e : tensor<8xf32>) -> tensor<8xf32>
+    hivm.hir.local_store ins(%ub : memref<8xf32>, %g : tensor<8xf32>)
+    %sb = hivm.hir.get_sub_block_idx -> i64
+    %sbi = arith.index_cast %sb : i64 to index
+    %cond = arith.cmpi eq, %sbi, %c0 : index
+    scf.if %cond {
+      hivm.hir.scatter_store ins(%idx : tensor<8xi64>, %g : tensor<8xf32>, %c1_i32 : i32) outs(%gm : memref<?xf32>)
+    } {limit_sub_block_id0}
+    scope.return
+  } {hivm.vf_mode = #hivm.vf_mode<SIMT>}
+
+  return
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_hoist_sub_block_idx_multiple_guard
+func.func @test_hoist_sub_block_idx_multiple_guard(%gm: memref<?xf32>, %idx: tensor<8xi64>,
+                                          %data: tensor<8xf32>) {
+  %c0 = arith.constant 0 : index
+  %c1_i32 = arith.constant 1 : i32
+
+  // CHECK: hivm.hir.get_sub_block_idx -> i64
+  // CHECK-NOT: hivm.hir.get_sub_block_idx
+  // CHECK: scope.scope : () -> () {
+  // CHECK-NOT: hivm.hir.get_sub_block_idx
+  // CHECK: scf.if
+  // CHECK-NOT: hivm.hir.get_sub_block_idx
+  // CHECK: scf.if
+  // CHECK-NOT: hivm.hir.get_sub_block_idx
+  // CHECK: scope.return
+  scope.scope : () -> () {
+    %sb0 = hivm.hir.get_sub_block_idx -> i64
+    %sbi0 = arith.index_cast %sb0 : i64 to index
+    %cond0 = arith.cmpi eq, %sbi0, %c0 : index
+    scf.if %cond0 {
+      hivm.hir.scatter_store ins(%idx : tensor<8xi64>, %data : tensor<8xf32>, %c1_i32 : i32) outs(%gm : memref<?xf32>)
+    } {limit_sub_block_id0}
+    %sb1 = hivm.hir.get_sub_block_idx -> i64
+    %sbi1 = arith.index_cast %sb1 : i64 to index
+    %cond1 = arith.cmpi eq, %sbi1, %c0 : index
+    scf.if %cond1 {
+      hivm.hir.scatter_store ins(%idx : tensor<8xi64>, %data : tensor<8xf32>, %c1_i32 : i32) outs(%gm : memref<?xf32>)
+    } {limit_sub_block_id0}
+    scope.return
+  } {hivm.vf_mode = #hivm.vf_mode<SIMT>}
+
+  return
+}
+
+// -----
+
+// Test: a non-SIMT scope is left alone.
+// CHECK-LABEL: func.func @test_non_simt_scope_untouched
+func.func @test_non_simt_scope_untouched(%gm: memref<?xf32>, %idx: tensor<8xi64>,
+                                         %data: tensor<8xf32>) {
+  %c0 = arith.constant 0 : index
+  %c1_i32 = arith.constant 1 : i32
+
+  // CHECK-NOT: hivm.hir.get_sub_block_idx
+  // CHECK: scope.scope : () -> () {
+  // CHECK:   hivm.hir.get_sub_block_idx -> i64
+  scope.scope : () -> () {
+    %sb = hivm.hir.get_sub_block_idx -> i64
+    %sbi = arith.index_cast %sb : i64 to index
+    %cond = arith.cmpi eq, %sbi, %c0 : index
+    scf.if %cond {
+      hivm.hir.scatter_store ins(%idx : tensor<8xi64>, %data : tensor<8xf32>, %c1_i32 : i32) outs(%gm : memref<?xf32>)
+    } {limit_sub_block_id0}
+    scope.return
+  }
+
+  return
+}
