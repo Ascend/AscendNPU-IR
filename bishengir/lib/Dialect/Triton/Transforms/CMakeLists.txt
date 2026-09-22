@@ -61,6 +61,7 @@ add_bishengir_dialect_library(BiShengIRTritonTransforms
   MLIRSCFDialect
   MLIRNVVMDialect
   BiShengIRHIVMDialect
+  MLIRAnalysis
   MLIRIR
   MLIRDialect
   MLIRPass
