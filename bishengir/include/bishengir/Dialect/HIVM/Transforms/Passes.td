@@ -1722,7 +1722,8 @@ def CreatePreload
   let summary = "Create preload for CV pipelining";
   let constructor = "mlir::hivm::createCreatePreloadPass()";
   let dependentDialects = ["memref::MemRefDialect", "hivm::HIVMDialect",
-                           "mlir::scope::ScopeDialect"];
+                           "mlir::scope::ScopeDialect",
+                           "annotation::AnnotationDialect"];
   let options =
       [Option<"bypassShapeRegistry", "bypass-shape-registry", "bool",
               /*default=*/"false",
@@ -1735,6 +1736,19 @@ def CreatePreload
            "workspaceMultiBufferNum", "set-workspace-multibuffer", "unsigned",
            /*default=*/"0",
            "Workspace multibuffer depth; heuristics require a non-zero value">];
+}
+
+def PeelPreload
+    : HIVMPass<"hivm-peel-preload", AnyOp, [MixKernel, PureAicKernel]> {
+  let summary = "Peel preload prologue and epilogue after GraphSync";
+  let description = [{
+    Peels unit-step preload loops marked with hivm.max_preload_num. Must run
+    after hivm-graph-sync-solver so pipe set/wait flags are inserted on the
+    structured expanded loop before unrolling.
+  }];
+  let constructor = "mlir::hivm::createPeelPreloadPass()";
+  let dependentDialects = ["arith::ArithDialect", "hivm::HIVMDialect",
+                           "scf::SCFDialect"];
 }
 
 def RemoveHIVMDataLayoutAnnotation

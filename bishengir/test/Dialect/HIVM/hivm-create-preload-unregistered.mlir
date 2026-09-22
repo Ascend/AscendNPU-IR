@@ -1,16 +1,21 @@
-// RUN: bishengir-opt %s -create-preload -split-input-file | FileCheck %s
+// RUN: bishengir-opt %s -create-preload -hivm-peel-preload -split-input-file | FileCheck %s
 
 // Off-registry functions keep the unique-slot map: a later scope with the
 // same preload_num overwrites the earlier one. The overwritten scope stays
-// as scope.scope; only the last occupant is rewritten to scf.if.
+// as scope.scope; only the last occupant is rewritten (then peeled). Constant
+// trip >= 2 * max_preload_num folds the peel gate: prologue/epilogue are
+// inlined and the middle loop drops preload_if guards.
 // CHECK-LABEL: func.func @test_multiple_scopes_same_preload_num
-// CHECK: scf.for
-// CHECK: scf.if
 // CHECK: "test.stage1_op"
 // CHECK: scope.scope
 // CHECK: "test.stage0_op_a"
-// CHECK: scf.if
 // CHECK: "test.stage0_op_b"
+// CHECK: scf.for
+// CHECK: "test.stage1_op"
+// CHECK: scope.scope
+// CHECK: "test.stage0_op_a"
+// CHECK: "test.stage0_op_b"
+// CHECK: }
 func.func @test_multiple_scopes_same_preload_num() {
   %c0 = arith.constant 0 : i32
   %c4 = arith.constant 4 : i32

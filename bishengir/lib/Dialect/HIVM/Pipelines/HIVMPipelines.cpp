@@ -569,6 +569,8 @@ static void hivmPostBufferizationOptimizationPipeline(
   }
   // Normal sync (inject-sync, graph-sync-solver) passes.
   hivmNormSyncPipeline(pm, hivmPipelineOptions);
+  if (hivmPipelineOptions.enablePreload)
+    pm.addPass(createPeelPreloadPass());
   pm.addPass(mlir::createMemrefExtLoweringPass());
   pm.nest<func::FuncOp>().addPass(createAddFFTSToSyncBlockSetOpPass());
   pm.nest<func::FuncOp>().addPass(createEnableMultiBufferPass());

@@ -829,6 +829,8 @@ static void hivmPostBufferizationOptimizationPipeline(
   }
   // Intra-Core Auto-Sync passes (Inject-Sync, GSS)
   hivmIntraCoreSyncPipeline(pm, hivmPipelineOptions);
+  if (hivmPipelineOptions.enablePreload)
+    pm.addPass(createPeelPreloadPass());
   pm.addPass(mlir::createMemrefExtLoweringPass());
   pm.nest<func::FuncOp>().addPass(createEnableMultiBufferPass());
   pm.nest<func::FuncOp>().addPass(createLowerMultiBufferCounterPass());
