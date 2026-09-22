@@ -157,6 +157,7 @@ protected:
                                DictionaryAttr tilingDimMapping);
   void processMmadL1Op(hivm::MmadL1Op op, bool isTransposeA = false,
                        bool isTransposeB = false);
+  void processFixpipeOp(hivm::FixpipeOp op);
 
   void startTransaction(Operation *op);
   bool finalizeTransaction();
@@ -172,6 +173,10 @@ protected:
   /// index based on structuralDsu_. If map doesn't exist, it means its a
   /// parallel
   void markDimensions();
+
+  /// Mark the preferred tiling order of a Fixpipe destination according to
+  /// which MMAD operand is produced inside the analyzed loop.
+  void markFixpipeTilingPriority(hivm::FixpipeOp op);
 
   /// Heuristic only: mark transposed dimensions for layout-conversion
   /// transposes.
@@ -241,9 +246,6 @@ protected:
 
   void joinShape(int a, int b) override;
   void joinCollapser(int a, int b) override;
-
-  template <typename StoreOpTy>
-  std::optional<size_t> inferForcedTilingDim(StoreOpTy op);
 
 protected:
   /// Chosen tiling axis index per SSA \c Value; \c -1 when not chosen.
