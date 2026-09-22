@@ -120,7 +120,7 @@ protected:
 
   // Build sync IR occurrences from the operation tree.
   void syncIrBuilder(OperationBase *op, Occurrence *parentOcc = nullptr,
-                     bool isUseless = false);
+                     bool isUseless = false, bool unrollLoops = true);
 
   // Collect pointer-like operands reachable from a Value.
   llvm::SmallVector<Value> tracebackMemVals(Value val);

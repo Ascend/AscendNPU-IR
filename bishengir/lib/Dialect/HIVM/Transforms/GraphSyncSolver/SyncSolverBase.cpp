@@ -51,6 +51,7 @@ using namespace hivm::syncsolver;
 
 SyncSolverVersion
 mlir::hivm::syncsolver::parseSyncSolverVersion(llvm::StringRef value) {
+  return SyncSolverVersion::V1;
   if (value.empty() || value.equals_insensitive("v1")) {
     return SyncSolverVersion::V1;
   }
@@ -2415,9 +2416,46 @@ ConflictPair *SyncSolverBase::handleBarrierConflict(
       corePipeDst, waitOcc->startIndex, waitOcc->startIndex);
   auto *newConflictPair = conflictPair.get();
   conflictPair->isUseless = isUseless;
+  conflictPair->isOccBackwardPair = isBackwardSync(occ1, occ2);
   assert(conflictPair->startIndex <= conflictPair->endIndex);
 
   LLVM_DEBUG({ llvm::dbgs() << conflictPair->str() << '\n'; });
+
+  Loop *parentLCALoopOp{nullptr};
+  Occurrence *parentLCALoopOcc{nullptr};
+
+  // calc parent-loop occ (for backward pairs)
+  if (conflictPair->isOccBackwardPair) {
+    auto [parOcc1, parOcc2] = Occurrence::getLCAPair(occ1, occ2);
+    assert(parOcc1 != nullptr && parOcc2 != nullptr);
+
+    parentLCALoopOcc = parOcc1->getParentOfType<Loop>();
+    assert(parentLCALoopOcc != nullptr);
+
+    parentLCALoopOp = llvm::dyn_cast<Loop>(parentLCALoopOcc->op);
+    assert(parentLCALoopOp != nullptr);
+  }
+
+  auto insertExtraConflictPair = [&](Occurrence *waitOcc) {
+    assert(waitOcc != nullptr);
+    auto extraConflictPair = conflictPair->cloneBarrier(waitOcc);
+    extraConflictPair->isUseless = true;
+    LLVM_DEBUG({
+      llvm::dbgs() << "extra-conflict-pair: " << extraConflictPair->str()
+                   << "\n";
+    });
+    insertConflictPair(std::move(extraConflictPair));
+  };
+  if (conflictPair->isOccBackwardPair) {
+    if (isFirstIterOcc(waitOcc, parentLCALoopOcc)) {
+      auto *waitOccLastIter = getLastIterOcc(waitOcc, parentLCALoopOcc);
+      insertExtraConflictPair(waitOccLastIter);
+    }
+    if (isLastIterOcc(waitOcc, parentLCALoopOcc)) {
+      auto *waitOccFirstIter = getFirstIterOcc(waitOcc, parentLCALoopOcc);
+      insertExtraConflictPair(waitOccFirstIter);
+    }
+  }
 
   insertConflictPair(std::move(conflictPair));
   return newConflictPair;
@@ -3122,6 +3160,7 @@ llvm::LogicalResult SyncSolverBase::runSolver(bool enableOpts1,
     reset();
     insertMergedBackwardSyncPairs();
     processOrders();
+    return llvm::success();
 
     if (llvm::succeeded(tryMovingOutBackwardSyncPairsToOuterLoops())) {
       continue;

@@ -1076,7 +1076,7 @@ std::unique_ptr<Scope> IRTranslator::funcIrBuilder(Region &region,
 // Build the linearized sync IR (syncIr) and record occurrence ranges for
 // analysis.
 void IRTranslator::syncIrBuilder(OperationBase *op, Occurrence *parentOcc,
-                                 bool isUseless) {
+                                 bool isUseless, bool unrollLoops) {
   assert(op != nullptr);
   if (op->preOrderIndex == -1) {
     op->preOrderIndex = globalPreOrderTraversalIndex++;
@@ -1104,15 +1104,17 @@ void IRTranslator::syncIrBuilder(OperationBase *op, Occurrence *parentOcc,
 
   if (auto *loopOp = dyn_cast<Loop>(op)) {
     for (auto &op : loopOp->body) {
-      syncIrBuilder(op.get(), occPtr, isUseless);
+      syncIrBuilder(op.get(), occPtr, isUseless, unrollLoops);
     }
-    occPtr->loopSplitIndex = static_cast<int>(syncIr.size());
-    for (auto &op : loopOp->body) {
-      syncIrBuilder(op.get(), occPtr, true);
+    if (unrollLoops) {
+      occPtr->loopSplitIndex = static_cast<int>(syncIr.size());
+      for (auto &op : loopOp->body) {
+        syncIrBuilder(op.get(), occPtr, true, false);
+      }
     }
   } else if (auto *scopeOp = dyn_cast<Scope>(op)) {
     for (auto &op : scopeOp->body) {
-      syncIrBuilder(op.get(), occPtr, isUseless);
+      syncIrBuilder(op.get(), occPtr, isUseless, unrollLoops);
     }
   }
 
