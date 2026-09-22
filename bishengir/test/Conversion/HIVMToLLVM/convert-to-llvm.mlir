@@ -40,6 +40,27 @@ func.func @test_get_sub_block_num() {
 
 // -----
 
+// Test GetCoreIdInstrOp
+// CHECK-LABEL: get_coreid
+func.func @test_get_coreid() {
+  // CHECK: %[[IDX:.*]] = "hivm.intr.hivm.GET.COREID"() : () -> i64
+  %0 = hivm.hir.get_coreid -> i64
+  return
+}
+
+// -----
+
+// Test SetCondInstrOp
+// CHECK-LABEL: set_cond
+func.func @test_set_cond() {
+  %c64 = arith.constant 64 : i64
+  // CHECK: hivm.intr.hivm.SET.COND
+  hivm.hir.set_cond %c64 : i64
+  return
+}
+
+// -----
+
 // Test AddressSpaceAttr lowering
 func.func @test_addrspaceattr_lowering() {
   // CHECK: llvm.alloca {{.*}} x f32 {alignment = 64 : i64} : (i64) -> !llvm.ptr<6>

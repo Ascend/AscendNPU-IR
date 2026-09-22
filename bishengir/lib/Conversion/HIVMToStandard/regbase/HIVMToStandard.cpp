@@ -2136,7 +2136,7 @@ class PlainOpToLibraryCallPattern : public OpRewritePattern<T> {
     replaceWithLibCall(rewriter, op,
                        cast<OpWithLibraryFunction>(op.getOperation())
                            .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
-                       {}, {});
+                       op->getOperands(), op->getResultTypes());
     return success();
   }
 };
@@ -2164,20 +2164,6 @@ class SIMTOpToLibraryCallPattern : public OpRewritePattern<OpTy> {
 public:
   using OpRewritePattern<OpTy>::OpRewritePattern;
   LogicalResult matchAndRewrite(OpTy op,
-                                PatternRewriter &rewriter) const final {
-    replaceWithLibCall(rewriter, op,
-                       cast<OpWithLibraryFunction>(op.getOperation())
-                           .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
-                       op->getOperands(), {});
-    return success();
-  }
-};
-
-template <typename CustomOpTy>
-class SimpleCustomOpToLibraryCallPattern : public OpRewritePattern<CustomOpTy> {
-public:
-  using OpRewritePattern<CustomOpTy>::OpRewritePattern;
-  LogicalResult matchAndRewrite(CustomOpTy op,
                                 PatternRewriter &rewriter) const final {
     replaceWithLibCall(rewriter, op,
                        cast<OpWithLibraryFunction>(op.getOperation())
