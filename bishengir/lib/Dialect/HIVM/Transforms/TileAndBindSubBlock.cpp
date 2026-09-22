@@ -1081,6 +1081,8 @@ LogicalResult mlir::hivm::limitUniqueSubBlockToStore(func::FuncOp funcOp) {
       funcOp.getContext());
   patterns.add<LimitUniqueSubBlockIdToStoreCopy<hivm::StrideStoreOp>>(
       funcOp.getContext());
+  patterns.add<LimitUniqueSubBlockIdToStoreCopy<hivm::ScatterStoreOp>>(
+      funcOp.getContext());
   patterns.add<LimitUniqueSubBlockIdToStoreCopy<hivm::CustomOp>,
                LimitUniqueSubBlockIdToStoreCopy<hivm::CustomMacroOp>>(
       funcOp.getContext());
@@ -1116,12 +1118,6 @@ static void failAndRevert(func::FuncOp func) {
   LLVM_DEBUG(DBGS() << "tile and bind subblock fail for "
                     << func.getSymNameAttr().str() << "\n\n");
   LLVM_DEBUG(func->dump());
-  // Mark the owning module so that subsequent passes can detect that a tiling
-  // attempt was reverted and adjust their behavior accordingly.
-  if (ModuleOp moduleOp = func->getParentOfType<ModuleOp>()) {
-    moduleOp->setAttr(kTileAndBindSubBlockRevertedAttrName,
-                      UnitAttr::get(func.getContext()));
-  }
   func->erase();
 }
 

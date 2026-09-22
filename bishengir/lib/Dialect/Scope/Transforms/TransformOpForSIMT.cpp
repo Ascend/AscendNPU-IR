@@ -33,6 +33,7 @@
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/RegionUtils.h"
 #include "llvm/ADT/MapVector.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
 
@@ -342,6 +343,46 @@ static void moveFromElementsOutsideScope(scope::ScopeOp scopeOp) {
   }
 }
 
+// 3. Hoist hivm.hir.get_sub_block_idx outside simt_scope:
+//    TileAndBindSubBlock pins an untiled write to a destination shared by both
+//    AIV sub-blocks with scf.if(get_sub_block_idx() == 0), and builds that
+//    guard next to the write. For an explicit simt scope that puts the guard
+//    inside inside the scope. To avoid different get_sub_block_idx() behavior
+//    between simt vf and main function, hoist the get_sub_block_idx() outside
+//    the simt scope. The guard remains inside the scope, but uses the hoisted
+//    value.
+//      Before:
+//          scope {vf_mode="simt"} {
+//            %idx = hivm.hir.get_sub_block_idx -> i64
+//            %i = arith.index_cast %idx : i64 to index
+//            %c = arith.cmpi eq, %i, %c0 : index
+//            scf.if %c { hivm.hir.scatter_store ... } {limit_sub_block_id0}
+//          }
+//      After:
+//          %idx = hivm.hir.get_sub_block_idx -> i64
+//          scope {vf_mode="simt"} {
+//            %i = arith.index_cast %idx : i64 to index
+//            %c = arith.cmpi eq, %i, %c0 : index
+//            scf.if %c { hivm.hir.scatter_store ... } {limit_sub_block_id0}
+//          }
+
+static void hoistSubBlockIdxOutsideScope(scope::ScopeOp scopeOp) {
+  SmallVector<hivm::GetSubBlockIdxOp> idxOps;
+
+  scopeOp.walk([&](hivm::GetSubBlockIdxOp idxOp) { idxOps.push_back(idxOp); });
+  if (idxOps.empty())
+    return;
+
+  // no CSE runs before OutlineScope. Fold them here so the outlined function
+  // gains one argument instead of one per guard.
+  hivm::GetSubBlockIdxOp hoisted = idxOps.front();
+  hoisted->moveBefore(scopeOp);
+  for (hivm::GetSubBlockIdxOp duplicate : llvm::drop_begin(idxOps)) {
+    duplicate.getResult().replaceAllUsesWith(hoisted.getResult());
+    duplicate.erase();
+  }
+}
+
 void TransformOpForSIMTPass::runOnOperation() {
   ModuleOp module = getOperation();
 
@@ -379,6 +420,15 @@ void TransformOpForSIMTPass::runOnOperation() {
     // --- Transformation 2: Move tensor.from_elements outside scope ---
     moveFromElementsOutsideScope(scopeOp);
   });
+
+  // --- Transformation 3: Hoist get_sub_block_idx outside simt scope ---
+  SmallVector<scope::ScopeOp> simtScopes;
+  module.walk([&](scope::ScopeOp scopeOp) {
+    if (hivm::util::isSIMTVF(scopeOp))
+      simtScopes.push_back(scopeOp);
+  });
+  for (scope::ScopeOp scopeOp : simtScopes)
+    hoistSubBlockIdxOutsideScope(scopeOp);
 }
 
 std::unique_ptr<Pass> createTransformOpForSIMTPass() {

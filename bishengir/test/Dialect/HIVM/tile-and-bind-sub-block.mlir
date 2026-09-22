@@ -4496,7 +4496,6 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">, hivm.module_c
 // Sub-block tiling requires bubbling slices through those to_tensor ops;
 // until that succeeds the pass reverts rather than leaving a tiled loop
 // with full tensor<32xi32> if results.
-// CHECK: hivm.tile_and_bind_subblock_reverted
 // CHECK-LABEL: func.func @if_to_tensor_bubble_up_slice_aiv
 // CHECK: scf.if {{.*}} -> (tensor<32xi32>) {
 // CHECK: bufferization.to_tensor {{.*}} restrict writable : memref<32xi32>
@@ -4542,7 +4541,6 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">, hivm.module_c
 // CHECK-LABEL: func.func @tile_and_bind_while_carried_tensor
 // CHECK: scf.while
 // CHECK-SAME: tensor<16x32xf32>
-// CHECK-NOT: tile_and_bind_subblock_reverted
 
 module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
   func.func @tile_and_bind_while_carried_tensor(%lim: i32) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix} {
@@ -4628,7 +4626,6 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">, hivm.module_c
 // Odd 1:2 sub-block split on 210x112 (105-wide tiles): nested dynamic
 // extract-of-extract must bubble so load reaches workspace block arg.
 // CHECK-LABEL: func.func @triton_dot_inner_tile_mix_aiv
-// CHECK-NOT: tile_and_bind_subblock_reverted
 // CHECK: scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} {
 // CHECK:   %{{.*}} = affine.apply
 // CHECK:   %{{.*}} = memref.subview %{{.*}}{{\[}}%{{.*}}, 0] [105, 112] [1, 1] {to_be_bubbled_slice}
