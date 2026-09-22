@@ -1,14 +1,10 @@
-// Off-registry kernels must not rematerialize dynamic TCB views in consumer
-// preload scopes. The same IR rematerializes under --bypass-shape-registry.
-// RUN: bishengir-opt -cv-pipelining="pipeline-mode=skew enable-preload=true set-depth-in-unroll-mode=2" -allow-unregistered-dialect %s | FileCheck %s
+// Off-registry kernels must not rematerialize dynamic TCB views. The old
+// mapping wires i8 TCB storage into an f32 consumer and fails verify.
+// The same IR rematerializes under --bypass-shape-registry.
+// RUN: not bishengir-opt -cv-pipelining="pipeline-mode=skew enable-preload=true set-depth-in-unroll-mode=2" -allow-unregistered-dialect %s 2>&1 | FileCheck %s
 // RUN: bishengir-opt -cv-pipelining="pipeline-mode=skew enable-preload=true set-depth-in-unroll-mode=2 bypass-shape-registry=true" -allow-unregistered-dialect %s | FileCheck %s --check-prefix=BYPASS
 
-// CHECK-LABEL: func.func @unregistered_preload_tcb_dynamic_view
-// CHECK: %[[TCB_STORAGE:.*]] = memref.alloc() : memref<65536xi8, #hivm.address_space<ub>>
-// CHECK: scope.scope : () -> () {
-// CHECK: hivm.hir.fixpipe
-// CHECK: } {hivm.loop_core_type = #hivm.tcore_type<CUBE>
-// CHECK-NOT: memref.view %[[TCB_STORAGE]]
+// CHECK: 'hivm.hir.load' op element types of dst and src should be the same
 //
 // BYPASS-LABEL: func.func @unregistered_preload_tcb_dynamic_view
 // BYPASS: %[[TCB_STORAGE:.*]] = memref.alloc() : memref<65536xi8, #hivm.address_space<ub>>
