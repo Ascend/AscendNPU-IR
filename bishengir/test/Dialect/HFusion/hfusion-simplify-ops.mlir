@@ -763,3 +763,35 @@ func.func @hoist_mul_sub_matmul_chain(%a: tensor<128x17xbf16>, %b: tensor<17x19x
   %matmul3 = linalg.matmul {input_precision = "ieee"} ins(%sub, %d : tensor<128x23xf32>, tensor<23x128xf32>) outs(%init3 : tensor<128x128xf32>) -> tensor<128x128xf32>
   return %matmul3 : tensor<128x128xf32>
 }
+
+// -----
+// Test: an integer narrowing cast followed by a widening cast must NOT be
+// folded away. Unlike floats, the narrowing step drops the high bits, so
+// `i16 -> i8 -> i16` is not an identity. This is semantically required: e.g.
+// `remui i8` is widened to i16 for codegen and returns 0xFFFF for a zero
+// divisor, which must be truncated back to 0xFF before the next op consumes it.
+// CHECK-LABEL: func.func @keepIntegerNarrowThenWiden
+// CHECK: hfusion.cast {{.*}} ins(%{{.*}} : tensor<4xi16>) outs(%{{.*}} : tensor<4xi8>)
+// CHECK: hfusion.cast {{.*}} ins(%{{.*}} : tensor<4xi8>) outs(%{{.*}} : tensor<4xi16>)
+// CHECK: return
+func.func @keepIntegerNarrowThenWiden(%arg0: tensor<4xi16>) -> tensor<4xi16> {
+  %e0 = tensor.empty() : tensor<4xi8>
+  %e1 = tensor.empty() : tensor<4xi16>
+  %t0 = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, enable_overflow = true, round_mode = #hfusion.round_mode<truncwithoverflow>} ins(%arg0 : tensor<4xi16>) outs(%e0 : tensor<4xi8>) -> tensor<4xi8>
+  %t1 = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%t0 : tensor<4xi8>) outs(%e1 : tensor<4xi16>) -> tensor<4xi16>
+  return %t1 : tensor<4xi16>
+}
+
+// -----
+// Test: the lossless integer round trip (widen then narrow) is still folded.
+// CHECK-LABEL: func.func @foldIntegerWidenThenNarrow
+// CHECK-SAME: (%[[arg0:.*]]: tensor<4xi8>)
+// CHECK-NOT: hfusion.cast
+// CHECK: return %[[arg0]] : tensor<4xi8>
+func.func @foldIntegerWidenThenNarrow(%arg0: tensor<4xi8>) -> tensor<4xi8> {
+  %e0 = tensor.empty() : tensor<4xi16>
+  %e1 = tensor.empty() : tensor<4xi8>
+  %t0 = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%arg0 : tensor<4xi8>) outs(%e0 : tensor<4xi16>) -> tensor<4xi16>
+  %t1 = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, enable_overflow = true, round_mode = #hfusion.round_mode<truncwithoverflow>} ins(%t0 : tensor<4xi16>) outs(%e1 : tensor<4xi8>) -> tensor<4xi8>
+  return %t1 : tensor<4xi8>
+}
