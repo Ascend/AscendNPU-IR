@@ -433,6 +433,16 @@
 
 该Pass会将所有非全局内存空间的memref.alloc替换为memref.alloca。
 
+## -hivm-merge-same-preload-scopes
+
+**功能**：合并同一父操作内`preload_num`相同的scope。
+
+**选项**：
+
+- `-bypass-shape-registry`：绕过merge-same-preload启发式的shape registry检查。
+- `-enable-preload`：kernel注册时启用merge-same-preload启发式。
+- `-set-workspace-multibuffer`：工作空间的多缓冲深度，启发式要求非零值。
+
 ## -hivm-normalize-bitwise-select
 
 **功能**：规范化hivm位运算select算子。
@@ -563,6 +573,16 @@
 **选项**：
 
 - `-max-tile-size`：所选SIMT分块维度上每个分块的最大尺寸。
+
+## -hivm-sink-exclusive-preload-work
+
+**功能**：在CVPipelining之后，下沉独占的dest/src算子簇，以及未被Cube消费的load、VF、copy链。
+
+**选项**：
+
+- `-bypass-shape-registry`：绕过exclusive-preload下沉的shape registry检查。
+- `-enable-preload`：kernel注册时启用exclusive-preload下沉。
+- `-set-workspace-multibuffer`：工作空间的多缓冲深度，启发式要求非零值。
 
 ## -hivm-sink-op-to-consumer-in-loop
 

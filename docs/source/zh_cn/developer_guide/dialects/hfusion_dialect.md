@@ -2261,7 +2261,7 @@ operation ::= `hfusion.symbolic_dim` $symbolName attr-dict `:` type($result)
 
 ### BinaryFn
 
-**取值范围**：32位无符号整数0~17
+**取值范围**：32位无符号整数0~20
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :----: | :---: | ------ |
@@ -2283,6 +2283,9 @@ operation ::= `hfusion.symbolic_dim` $symbolName attr-dict `:` type($result)
 | powi | 15 | powi |
 | minnumf | 16 | minnumf |
 | maxnumf | 17 | maxnumf |
+| atan2 | 18 | atan2 |
+| divfhp | 19 | divfhp |
+| copysign | 20 | copysign |
 
 ### CastMode
 
@@ -2408,6 +2411,8 @@ operation ::= `hfusion.symbolic_dim` $symbolName attr-dict `:` type($result)
 | UNDEFINED | 0 | undefined |
 | CUMSUM | 1 | cumsum |
 | CUMPROD | 2 | cumprod |
+| CUMMAX | 3 | cummax |
+| CUMMIN | 4 | cummin |
 
 ### MmMapMode
 
@@ -2454,11 +2459,12 @@ operation ::= `hfusion.symbolic_dim` $symbolName attr-dict `:` type($result)
 
 ### TernaryFn
 
-**取值范围**：32位无符号整数仅0
+**取值范围**：32位无符号整数0~1
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :----: | :---: | ------ |
 | select | 0 | select |
+| fma | 1 | fma |
 
 ### TypeFn
 
@@ -2472,7 +2478,7 @@ operation ::= `hfusion.symbolic_dim` $symbolName attr-dict `:` type($result)
 
 ### UnaryFn
 
-**取值范围**：32位无符号整数0~17
+**取值范围**：32位无符号整数0~26
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :----: | :---: | ------ |
@@ -2494,6 +2500,15 @@ operation ::= `hfusion.symbolic_dim` $symbolName attr-dict `:` type($result)
 | exp2 | 15 | exp2 |
 | expm1 | 16 | expm1 |
 | ilogb | 17 | ilogb |
+| asin | 18 | asin |
+| acos | 19 | acos |
+| asinh | 20 | asinh |
+| acosh | 21 | acosh |
+| atanh | 22 | atanh |
+| sinh | 23 | sinh |
+| lgamma | 24 | lgamma |
+| cosh | 25 | cosh |
+| nearbyint | 26 | nearbyint |
 
 ### UnsignedMode
 

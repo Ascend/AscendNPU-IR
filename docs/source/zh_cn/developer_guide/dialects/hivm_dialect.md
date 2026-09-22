@@ -394,6 +394,7 @@ operation ::= `hivm.hir.convert_layout` $source attr-dict `:` functional-type(op
 | 操作数 | 说明 |
 | :----: | ---- |
 | `source` | 任意类型值的ranked或unranked memref |
+| `output_shape` | 可变参数，index类型 |
 
 **结果**：
 
@@ -504,6 +505,7 @@ hivm.hir.custom "__builtin_gather_load" ins(%src : memref<256xf32>) outs(%dst : 
 | :----: | ---- |
 | `inputs` | 可变参数，任意类型 |
 | `outputs` | 可变参数，任意类型 |
+| `temp_buffers` | 可变参数，任意类型 |
 
 **结果**：
 
@@ -700,6 +702,7 @@ HIVM双目标模式控制。仅当启用nz2nd或normal数据搬移模式、且�
 | `src` | 任意类型值的shaped类型 |
 | `dst` | 任意类型值的shaped类型 |
 | `unit_flag_cond` | 1位无符号整数 |
+| `quant_scale` | 浮点类型 |
 
 **结果**：
 
@@ -2705,6 +2708,7 @@ hivm.hir.vcmp ins(%src0, %src1 : memref<32xf32>, memref<32xf32>) outs(%dst : mem
 | :----: | ---- |
 | `src` | 可变参数，任意类型 |
 | `dst` | 可变参数，任意类型值的shaped类型 |
+| `temp_buffer` | 任意类型值的memref |
 
 **结果**：
 
@@ -2925,6 +2929,7 @@ hivm.hir.vcumprod ins(%src : memref<?xf32>) outs(%dst : memref<?xf32>) cum_dims 
 | :----: | ---- |
 | `src` | 类型为Tensor或Memref |
 | `dst` | 类型为Tensor或Memref |
+| `temp_buffer` | 任意类型值的memref |
 
 **结果**：
 
@@ -2961,6 +2966,7 @@ hivm.hir.vcumsum ins(%src : memref<?xf32>) outs(%dst : memref<?xf32>) cum_dims :
 | :----: | ---- |
 | `src` | 类型为Tensor或Memref |
 | `dst` | 类型为Tensor或Memref |
+| `temp_buffer` | 任意类型值的memref |
 
 **结果**：
 
@@ -5290,6 +5296,14 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 | :--: | :------: | ---- |
 | sync_instr_mode | `::mlir::hivm::SyncBlockInstrMode` | 类型为SyncBlockInstrMode的枚举 |
 
+### SyncBlockLockOrderingAttr
+
+**功能**：定义同步块锁操作的排序方式。选择有序令牌环锁或无序（Lamport bakery）锁，作用于sync_block_lock、sync_block_unlock、free_lock_var操作（默认为ordered）。旧IR可改用unit属性`hivm.sync_block_lock_unordered`，辅助函数会将其视为无序。
+
+| 参数 | C++ 类型 | 说明 |
+| :--: | :------: | ---- |
+| value | `::mlir::hivm::SyncBlockLockOrdering` | 类型为SyncBlockLockOrdering的枚举 |
+
 ### SyncBlockLockUnorderedAttr
 
 **功能**：标记应使用无序锁（Lamport bakery，按到达顺序）而非有序令牌环的create_sync_block_lock、sync_block_lock、sync_block_unlock、free_lock_var操作。
@@ -5456,6 +5470,9 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 | L0B | 4 | cb |
 | L0C | 5 | cc |
 | UB | 6 | ub |
+| SSBUF | 11 | ssbuf |
+| FixBUF | 7 | fixbuf |
+| BiasBUF | 12 | biasbuf |
 
 ### AlignKind
 
@@ -5554,6 +5571,14 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 | nZ | 4 | nZ |
 | zN | 5 | zN |
 | ND | 6 | ND |
+| Fractal | 7 | Fractal |
+| NCHW | 8 | NCHW |
+| NC1HWC0 | 9 | NC1HWC0 |
+| C1HWNC0 | 10 | C1HWNC0 |
+| SCALEA_ND | 11 | SCALEA_ND |
+| SCALEB_DN | 12 | SCALEB_DN |
+| SCALEA_zZ | 13 | SCALEA_zZ |
+| SCALEB_nN | 14 | SCALEB_nN |
 
 ### DeinterleaveMode
 
@@ -5629,6 +5654,7 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 | NO_QUANT | 0 | NO_QUANT |
 | S322I8 | 9 | S322I8 |
 | F322F16 | 1 | F322F16 |
+| QF322F32_PRE | 15 | QF322F32_PRE |
 | F322BF16 | 16 | F322BF16 |
 
 ### FixpipePreReluMode
@@ -5700,6 +5726,10 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 | PerChannelAddWithSplitK | 2 | PerChannelAddWithSplitK |
 | ElementwiseCrossLoopAdd | 4 | ElementwiseCrossLoopAdd |
 | ElementwiseAdd | 3 | ElementwiseAdd |
+| PostPerChannelAddWithSplitK | 5 | PostPerChannelAddWithSplitK |
+| MMInitPerChannelAddWithSplitK | 6 | MMInitPerChannelAddWithSplitK |
+| ZeroInitNoAccumulation | 7 | ZeroInitNoAccumulation |
+| ReuseL0C | 8 | ReuseL0C |
 
 ### MemPlanMode
 
@@ -5775,11 +5805,13 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 | max_with_index_right | 6 | max_with_index_right |
 | min_with_index_left | 7 | min_with_index_left |
 | min_with_index_right | 8 | min_with_index_right |
-| any | 9 | any |
-| all | 10 | all |
-| xori | 11 | xori |
-| ori | 12 | ori |
-| andi | 13 | andi |
+| max_with_index | 9 | max_with_index |
+| min_with_index | 10 | min_with_index |
+| any | 11 | any |
+| all | 12 | all |
+| xori | 13 | xori |
+| ori | 14 | ori |
+| andi | 15 | andi |
 | none | 0 | none |
 
 ### RoundMode
@@ -5805,6 +5837,15 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 | INTER_BLOCK_SYNCHRONIZATION | 0 | INTER_BLOCK_SYNCHRONIZATION |
 | INTER_SUBBLOCK_SYNCHRONIZATION | 1 | INTER_SUBBLOCK_SYNCHRONIZATION |
 | INTRA_BLOCK_SYNCHRONIZATION | 2 | INTRA_BLOCK_SYNCHRONIZATION |
+
+### SyncBlockLockOrdering
+
+**功能**：定义同步块锁操作的排序方式。
+
+| 枚举符号 | 数值 | 标识字符串 |
+| :------: | :--: | ---------- |
+| Ordered | 0 | ordered |
+| Unordered | 1 | unordered |
 
 ### SyncBlockLockPipelinePhase
 
