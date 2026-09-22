@@ -1746,6 +1746,26 @@ bool isOneDimLikeVecType(VectorType vecType) {
   return true;
 }
 
+bool isBeforeInMemoryView(Operation *before, Operation *after) {
+  auto moduleOp = utils::getTopLevelModuleOp(before);
+  // Cache before's parentOps and blocks.
+  DenseMap<Block *, Operation *> block2Op;
+  for (Operation *beforeParentOp = before; beforeParentOp != moduleOp;
+       beforeParentOp = beforeParentOp->getParentOp()) {
+    block2Op.try_emplace(beforeParentOp->getBlock(), beforeParentOp);
+  }
+  for (Operation *afterParentOp = after; afterParentOp != moduleOp;
+       afterParentOp = afterParentOp->getParentOp()) {
+    auto it = block2Op.find(afterParentOp->getBlock());
+    // Check if after and before has same min ParentBlock.
+    if (it != block2Op.end()) {
+      auto *beforeParentOp = it->second;
+      return beforeParentOp->isBeforeInBlock(afterParentOp);
+    }
+  }
+  return false;
+}
+
 static bool canCombineOneSide(const SmallVectorImpl<MemRefType> &memrefTypes,
                               const ReassociationIndices &curIndexGroup,
                               int indexStartPosition) {
