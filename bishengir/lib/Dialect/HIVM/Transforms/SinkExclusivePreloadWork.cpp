@@ -528,6 +528,92 @@ static bool scopeBlocksCopySink(scope::ScopeOp scope) {
   return false;
 }
 
+static std::optional<int64_t> getScopePreloadNum(scope::ScopeOp scope) {
+  if (auto attr = scope->getAttrOfType<IntegerAttr>("hivm.preload_num"))
+    return attr.getInt();
+  return std::nullopt;
+}
+
+static std::optional<hivm::TCoreType> getScopeCoreType(scope::ScopeOp scope) {
+  if (auto core = scope->getAttrOfType<hivm::TCoreTypeAttr>(
+          hivm::kPipelinedLoopCoreTypeAttrName))
+    return core.getTcoretype();
+  return std::nullopt;
+}
+
+static void collectAccessorScopes(Value v, scf::ForOp forOp,
+                                  SmallVectorImpl<scope::ScopeOp> &out) {
+  if (auto scope = v.getDefiningOp<scope::ScopeOp>()) {
+    out.push_back(scope);
+    return;
+  }
+  Value mem = v;
+  if (auto toTensor = v.getDefiningOp<bufferization::ToTensorOp>())
+    mem = toTensor.getMemref();
+  if (!isa<MemRefType>(mem.getType()))
+    return;
+  // Climb to the root buffer so aliases created through other views count.
+  while (Operation *def = mem.getDefiningOp()) {
+    if (!isViewLikeMemrefOp(def))
+      break;
+    mem = def->getOperand(0);
+  }
+
+  if (!isSinkablePreloadMemref(mem))
+    return;
+
+  DenseSet<Value> seen;
+  SmallVector<Value> work = {mem};
+  while (!work.empty()) {
+    Value m = work.pop_back_val();
+    if (!seen.insert(m).second)
+      continue;
+    for (Operation *user : m.getUsers()) {
+      if (isa<annotation::MarkOp>(user))
+        continue;
+      if (isViewLikeMemrefOp(user)) {
+        for (Value res : user->getResults())
+          if (isa<MemRefType>(res.getType()))
+            work.push_back(res);
+        continue;
+      }
+      if (auto scope = enclosingForBodyScope(user, forOp))
+        out.push_back(scope);
+    }
+  }
+}
+
+/// Sinking moves `cluster` from `producer`'s preload stage to `consumer`'s.
+/// If the cluster shares memory with a scope on the other core, that stage
+/// distance is what the buffer's slot count was sized for, and required
+/// to stay odd, so refuse the sink.
+static bool changesCrossCoreDistance(ArrayRef<Operation *> cluster,
+                                     scope::ScopeOp producer,
+                                     scope::ScopeOp consumer,
+                                     scf::ForOp forOp) {
+  if (getScopePreloadNum(producer) == getScopePreloadNum(consumer))
+    return false;
+  auto consumerCore = getScopeCoreType(consumer);
+  DenseSet<Operation *> inCluster(cluster.begin(), cluster.end());
+  for (Operation *op : cluster) {
+    for (Value operand : op->getOperands()) {
+      if (Operation *def = operand.getDefiningOp();
+          def && inCluster.contains(def))
+        continue;
+      SmallVector<scope::ScopeOp> accessors;
+      collectAccessorScopes(operand, forOp, accessors);
+      for (scope::ScopeOp scope : accessors) {
+        if (scope == producer || scope == consumer)
+          continue;
+        auto core = getScopeCoreType(scope);
+        if (!core || !consumerCore || *core != *consumerCore)
+          return true;
+      }
+    }
+  }
+  return false;
+}
+
 /// Move exclusive returned tensor / leftover-memref clusters into the
 /// unique later VECTOR consumer, including MTE2 load through a subview.
 /// Shared tensor.empty stays in the producer; the consumer gets a fresh
@@ -583,6 +669,8 @@ static LogicalResult sinkReturnedTensorsToConsumerImpl(scf::ForOp forOp) {
         if (scopeBlocksCopySink(consumer))
           continue;
         if (cluster.empty())
+          continue;
+        if (changesCrossCoreDistance(cluster, producer, consumer, forOp))
           continue;
         if (llvm::any_of(cluster, [&](Operation *op) {
               return claimed.contains(op);

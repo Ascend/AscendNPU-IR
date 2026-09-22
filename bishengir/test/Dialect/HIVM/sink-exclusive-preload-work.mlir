@@ -1,4 +1,4 @@
-// RUN: bishengir-opt %s -hivm-sink-exclusive-preload-work="bypass-shape-registry=true" | FileCheck %s
+// RUN: bishengir-opt %s -hivm-sink-exclusive-preload-work="bypass-shape-registry=true" -split-input-file | FileCheck %s
 
 func.func @vf_cast(
     %arg0: memref<32x128xbf16, #hivm.address_space<ub>>,
@@ -854,4 +854,93 @@ func.func @sink_forwards_extracted_tensor_extra()
     } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.preload_num = 0 : i32, no_inline}
   }
   return
+}
+
+// -----
+
+// Regression: the preload-1 VECTOR vmul reads a UB buffer that a preload-2
+// CUBE fixpipe writes. Sinking it into the preload-0 consumer moved that
+// cross-core read from distance 1 to 2, so the buffer's two slots collided.
+// CHECK-LABEL: func.func @keep_cluster_reading_cube_written_buffer
+// CHECK:         hivm.hir.fixpipe
+// CHECK:         %[[T:[0-9a-z_]+]] = bufferization.to_tensor
+// CHECK:         %[[R:[0-9a-z_]+]] = scope.scope
+// CHECK-NEXT:      hivm.hir.vmul ins(%[[T]], %{{.*}} :
+// CHECK-NEXT:      scope.return
+// CHECK-NEXT:    } {{.*}}hivm.preload_num = 1 : i32
+// CHECK:           hivm.hir.vadd ins(%{{.*}}, %[[R]] :
+// CHECK:         } {{.*}}hivm.preload_num = 0 : i32
+module attributes {hacc.target = #hacc.target<"Ascend950DT_9582">} {
+func.func @keep_cluster_reading_cube_written_buffer(%scale: f32, %lb: index, %ub: index)
+    attributes {hivm.func_core_type = #hivm.func_core_type<MIX>} {
+  %c1 = arith.constant 1 : index
+  %c32 = arith.constant 32 : index
+  %c64 = arith.constant 64 : index
+  %true = arith.constant true
+  %cst = arith.constant 0.000000e+00 : f32
+  %empty = tensor.empty() : tensor<64x32xf32>
+  %init = hivm.hir.vbrc ins(%cst : f32) outs(%empty : tensor<64x32xf32>) -> tensor<64x32xf32>
+  %res = scf.for %iv = %lb to %ub step %c1 iter_args(%acc = %init) -> (tensor<64x32xf32>) {
+    %lhs = memref.alloc() : memref<8x4x16x8xf32, #hivm.address_space<cbuf>>
+    %rhs = memref.alloc() : memref<4x4x16x8xf32, #hivm.address_space<cbuf>>
+    %tc = memref.alloc() : memref<64x32xf32, #hivm.address_space<ub>>
+    %a = bufferization.to_tensor %lhs restrict writable : memref<8x4x16x8xf32, #hivm.address_space<cbuf>>
+    %b = bufferization.to_tensor %rhs restrict writable : memref<4x4x16x8xf32, #hivm.address_space<cbuf>>
+    scope.scope : () -> () {
+      %l0c = tensor.empty() : tensor<2x4x16x16xf32>
+      %mm = hivm.hir.mmadL1 {already_set_real_mkn, fixpipe_for_result_already_inserted = true, normalized_in_L0C} ins(%a, %b, %true, %c64, %c64, %c32 : tensor<8x4x16x8xf32>, tensor<4x4x16x8xf32>, i1, index, index, index) outs(%l0c : tensor<2x4x16x16xf32>) -> tensor<2x4x16x16xf32>
+      annotation.mark %tc {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<1>} : memref<64x32xf32, #hivm.address_space<ub>>
+      hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%mm : tensor<2x4x16x16xf32>) outs(%tc : memref<64x32xf32, #hivm.address_space<ub>>)
+      scope.return
+    } {hivm.loop_core_type = #hivm.tcore_type<CUBE>, hivm.max_preload_num = 3 : i32, hivm.preload_num = 2 : i32, no_inline}
+    %t = bufferization.to_tensor %tc restrict writable : memref<64x32xf32, #hivm.address_space<ub>>
+    %scaled = scope.scope : () -> (tensor<64x32xf32>) {
+      %m = hivm.hir.vmul ins(%t, %scale : tensor<64x32xf32>, f32) outs(%empty : tensor<64x32xf32>) -> tensor<64x32xf32>
+      scope.return %m : tensor<64x32xf32>
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.max_preload_num = 3 : i32, hivm.preload_num = 1 : i32, no_inline}
+    %next = scope.scope : () -> (tensor<64x32xf32>) {
+      %s = hivm.hir.vadd ins(%acc, %scaled : tensor<64x32xf32>, tensor<64x32xf32>) outs(%empty : tensor<64x32xf32>) -> tensor<64x32xf32>
+      scope.return %s : tensor<64x32xf32>
+    } {hivm.has_loop_carried_dep, hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.max_preload_num = 3 : i32, hivm.preload_num = 0 : i32, no_inline}
+    scf.yield %next : tensor<64x32xf32>
+  } {hivm.cv_pipelined_loop}
+  return
+}
+
+// Same shape with a VECTOR writer: the vmul must still sink into the consumer.
+// CHECK-LABEL: func.func @sink_cluster_reading_vector_written_buffer
+// CHECK:         hivm.hir.load
+// CHECK:         scope.scope : () -> () {
+// CHECK-NEXT:      scope.return
+// CHECK-NEXT:    } {{.*}}hivm.preload_num = 1 : i32
+// CHECK:           %[[M:[0-9a-z_]+]] = hivm.hir.vmul
+// CHECK-NEXT:      hivm.hir.vadd ins(%{{.*}}, %[[M]] :
+// CHECK:         } {{.*}}hivm.preload_num = 0 : i32
+func.func @sink_cluster_reading_vector_written_buffer(
+    %src: memref<64x32xf32, #hivm.address_space<gm>>, %scale: f32, %lb: index, %ub: index)
+    attributes {hivm.func_core_type = #hivm.func_core_type<MIX>} {
+  %c1 = arith.constant 1 : index
+  %cst = arith.constant 0.000000e+00 : f32
+  %empty = tensor.empty() : tensor<64x32xf32>
+  %init = hivm.hir.vbrc ins(%cst : f32) outs(%empty : tensor<64x32xf32>) -> tensor<64x32xf32>
+  %res = scf.for %iv = %lb to %ub step %c1 iter_args(%acc = %init) -> (tensor<64x32xf32>) {
+    %buf = memref.alloc() : memref<64x32xf32, #hivm.address_space<ub>>
+    scope.scope : () -> () {
+      hivm.hir.load ins(%src : memref<64x32xf32, #hivm.address_space<gm>>)
+                    outs(%buf : memref<64x32xf32, #hivm.address_space<ub>>)
+      scope.return
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.max_preload_num = 3 : i32, hivm.preload_num = 2 : i32, no_inline}
+    %t = bufferization.to_tensor %buf restrict writable : memref<64x32xf32, #hivm.address_space<ub>>
+    %scaled = scope.scope : () -> (tensor<64x32xf32>) {
+      %m = hivm.hir.vmul ins(%t, %scale : tensor<64x32xf32>, f32) outs(%empty : tensor<64x32xf32>) -> tensor<64x32xf32>
+      scope.return %m : tensor<64x32xf32>
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.max_preload_num = 3 : i32, hivm.preload_num = 1 : i32, no_inline}
+    %next = scope.scope : () -> (tensor<64x32xf32>) {
+      %s = hivm.hir.vadd ins(%acc, %scaled : tensor<64x32xf32>, tensor<64x32xf32>) outs(%empty : tensor<64x32xf32>) -> tensor<64x32xf32>
+      scope.return %s : tensor<64x32xf32>
+    } {hivm.has_loop_carried_dep, hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.max_preload_num = 3 : i32, hivm.preload_num = 0 : i32, no_inline}
+    scf.yield %next : tensor<64x32xf32>
+  } {hivm.cv_pipelined_loop}
+  return
+}
 }
