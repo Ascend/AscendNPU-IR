@@ -1811,6 +1811,11 @@ bool hfusion::isRegisterTreeReductionCandidate(Operation *op) {
       !initType.hasStaticShape())
     return false;
 
+  // Direct register tree reduction requires FP16/BF16/FP32 input type.
+  auto elemType = initType.getElementType();
+  if (!elemType.isF16() && !elemType.isBF16() && !elemType.isF32())
+    return false;
+
   SmallVector<unsigned> reductionDims;
   linalgOp.getReductionDims(reductionDims);
   if (reductionDims.size() != 1 || reductionDims.front() != 0)

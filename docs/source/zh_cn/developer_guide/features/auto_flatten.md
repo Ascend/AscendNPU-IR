@@ -1,6 +1,12 @@
 # 自动展平
 
-Auto Flatten Pass（HIVMFlattenOps）自动将多维张量操作折叠为低维等价形式，在保持语义正确性的同时降低秩（rank）。该优化简化了内存访问模式，提升了目标加速器上的硬件利用率。
+**适用产品**：
+
+- Ascend 950PR&950DT 系列产品
+- Atlas A3 系列产品
+- Atlas A2 系列产品
+
+Auto Flatten Pass（HIVMFlattenOps）自动将多维张量操作折叠为低维等价形式，在保持语义正确性的同时降低秩。该优化简化了内存访问模式，提升了目标加速器上的硬件利用率。
 
 ## 硬件背景
 
@@ -32,22 +38,22 @@ Auto Flatten Pass（HIVMFlattenOps）自动将多维张量操作折叠为低维�
    重关联映射定义了原始维度如何映射到折叠后的维度：
 
    ```text
-   Original shape: [A, B, C, D, E] (rank 5)
-   Reassociation:  [[0, 1], [2], [3, 4]]
-   Result shape:   [A*B, C, D*E] (rank 3)
+   原始形状: [A, B, C, D, E]（秩 5）
+   重关联:   [[0, 1], [2], [3, 4]]
+   结果形状: [A*B, C, D*E]（秩 3）
    ```
 
-2. **维度分类（三值掩码）**
+2. **维度分类**
 
-   每个维度被分类为以下三种类型之一：
+   每个维度由单元掩码标记是否为单元维度（大小为 1）；此外，受限轴（如归约、广播维度）作为屏障，阻止相邻维度折叠：
 
-   | 类别         | 符号 | 描述          | 折叠行为                   |
-   | ------------ | ---- | ------------- | -------------------------- |
-   | 单元维度     | `U`  | 大小为1的维度 | 被吸收到相邻组中           |
-   | 可折叠维度   | `C`  | 可与邻居合并  | 形成组，吸收相邻单元维度   |
-   | 不可折叠维度 | `N`  | 屏障维度      | 独立存在，阻止单元维度吸收 |
+   | 类别     | 条件                      | 折叠行为                   |
+   | -------- | ------------------------- | -------------------------- |
+   | 单元维度 | 大小为1，且不是受限轴     | 被吸收到相邻组中           |
+   | 受限轴   | 广播/归约等语义受限的维度 | 独立成组，阻止单元维度吸收 |
+   | 其他维度 | 非单元、非受限            | 相邻且连续时并入同一组     |
 
-3. **屏障维度（Barrier Dimensions）**
+3. **屏障维度**
 
    某些维度由于语义要求不能一起折叠：
 
@@ -59,51 +65,52 @@ Auto Flatten Pass（HIVMFlattenOps）自动将多维张量操作折叠为低维�
 
 ```text
 ┌─────────────────────────────────────────────────────────────────┐
-│                    Input Operation                              │
-│            Shape: [1, 64, 1, 128, 1, 256]                       │
+│                            输入操作                             │
+│            形状: [1, 64, 1, 128, 1, 256]                        │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  Stage 1: Unit Dimension Collapse                               │
+│  阶段 1：单元维度折叠                                           │
 │  ─────────────────────────────────────────────                  │
-│  • Identify unit (size-1) dimensions                            │
-│  • Build ternary mask considering barriers                      │
-│  • Collapse units into adjacent non-barrier groups              │
+│  • 识别单元维度（大小为 1）                                     │
+│  • 构建二值单元掩码（不含屏障）                                 │
+│  • 将单元维度折叠进相邻的非屏障组                               │
 │                                                                 │
-│  Mask:    [U,  C, U,   C, U,   C]                               │
-│  Result:  [[0, 1, 2], [3, 4], [5]]  →  Shape: [64, 128, 256]    │
+│  单元掩码: [1, 0, 1, 0, 1, 0]   （1 = 单元维度）                │
+│  结果:  [[0, 1, 2], [3, 4], [5]]  →  形状: [64, 128, 256]       │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  Stage 2: Uniform Reassociation Collapse                        │
+│  阶段 2：均匀重关联折叠                                         │
 │  ─────────────────────────────────────────────                  │
-│  • Check memory contiguity (stride patterns)                    │
-│  • Respect target dimension boundaries                          │
-│  • Apply input consistency checks (for broadcast)               │
+│  • 检查内存连续性（步长模式）                                   │
+│  • 遵守目标维度边界                                             │
+│  • 应用输入一致性检查（用于广播）                               │
 │                                                                 │
-│  Contiguous dims can be further collapsed                       │
-│  Result:  [[0], [1, 2]]  →  Shape: [64, 32768]                  │
+│  连续的维度可进一步折叠                                         │
+│  结果:  [[0], [1, 2]]  →  形状: [64, 32768]                     │
+│  （例如：输入一致性边界使维度 0 保持独立）                      │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  Stage 3: Compose Results                                       │
+│  阶段 3：组合结果                                               │
 │  ─────────────────────────────────────────────                  │
-│  • Combine reassociation maps from all stages                   │
-│  • Adjust target dimension indices                              │
-│  • Update barrier dimension tracking                            │
+│  • 合并各阶段的重关联映射                                       │
+│  • 调整目标维度索引                                             │
+│  • 更新屏障维度追踪                                             │
 │                                                                 │
-│  Final: [[0, 1, 2], [3, 4, 5]]  →  Shape: [64, 32768]           │
+│  最终: [[0, 1, 2], [3, 4, 5]]  →  形状: [64, 32768]             │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                    Output Operation                             │
-│  • Insert memref.collapse_shape for each operand                │
-│  • Clone operation with collapsed operands                      │
-│  • Adjust operation attributes (reduce_dims, broadcast_dims)    │
+│                            输出操作                             │
+│  • 为每个操作数插入 memref.collapse_shape                       │
+│  • 克隆操作并替换为折叠后的操作数                               │
+│  • 调整操作属性（reduce_dims、broadcast_dims）                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -112,39 +119,40 @@ Auto Flatten Pass（HIVMFlattenOps）自动将多维张量操作折叠为低维�
 对于具有内联转置语义的操作，算法分别处理输入和输出重关联映射：
 
 ```text
-Input shape:   [A, B, C, D, E, F]
-Permutation:   [2, 3, 0, 4, 1, 5]
-Output shape:  [C, D, A, E, B, F]
+输入形状:   [A, B, C, D, E, F]
+置换:       [2, 3, 0, 4, 1, 5]
+输出形状:   [C, D, A, E, B, F]
 
-Step 1: Unit collapse on input (if B, D are unit)
-Step 2: Derive permutation blocks from inverse permutation
-Step 3: Generate separate input/init reassociation maps
-Step 4: Compose results maintaining permutation semantics
+步骤 1：对输入做单元维度折叠（若 B、D 为单元维度）
+步骤 2：由逆置换推导置换块
+步骤 3：分别生成输入/init 重关联映射
+步骤 4：在保持置换语义的前提下组合结果
 ```
 
 ### 掩码构建逻辑
 
+单元掩码标记大小为1的维度；受限轴（由`getLimitedAxes()`获取，如广播、归约维度）随后从掩码中剔除，使其独立成组：
+
 ```cpp
-for each dimension i:
-    if (strictBarrierWithUnit && isBarrier[i]):
-        mask[i] = NonCollapsible    // 严格模式：屏障维度独立
-    else if (isUnit[i] && !isBarrier[i]):
-        mask[i] = Unit              // 单元维度被吸收
-    else:
-        mask[i] = Collapsible       // 可形成组
+// 1. 二值单元掩码：某轴在所有操作数中大小均为 1 时为真
+unitMask[i] = allOperandsDimSizeIs1(i);
+
+// 2. 受限轴作为屏障：从单元掩码中剔除（取反后按位与）
+limitationMask = arrayToMask(getLimitedAxes()); // 受限轴为真
+unitMask &= limitationMask.flip();              // 受限轴不再是单元维度
 ```
 
 ### 从掩码生成重关联
 
 ```text
-Input Mask: [U, C, U, N, U, C, U]
+输入的单元掩码: [1, 1, 0, 0, 1, 0, 1]
 
-Processing:
-  Segment 1: [U, C, U] → Group units with collapsible → [[0, 1, 2]]
-  Segment 2: [N]       → Isolated non-collapsible    → [[3]]
-  Segment 3: [U, C, U] → Group units with collapsible → [[4, 5, 6]]
+处理过程:
+  前导单元维度  [0, 1]    → 与第一个非单元维度合并
+  非单元维度    [2, 3, 5] → 各自开启一个新组
+  末尾单元维度  [4, 6]    → 吸收进前一个组
 
-Result: [[0, 1, 2], [3], [4, 5, 6]]
+结果: [[0, 1, 2], [3, 4], [5, 6]]
 ```
 
 ## API
@@ -179,9 +187,6 @@ public:
 
 ```cpp
 struct FlattenOptions {
-  /// 为 true 时，即使是单元维度的屏障也变为 NonCollapsible
-  bool strictBarrierWithUnit = false;
-
   /// 检查步长注释的对齐要求
   bool checkMarkStride = false;
 
@@ -234,11 +239,12 @@ OpTrait::CollapsibleConsecutiveTargetDimsTrait
 | `VBrcOp` | `broadcast_dims` |
 | `VReduceOp` | `reduce_dims` |
 | `VTransposeOp` | `permutation` |
-| `VCumsumOp` / `VCumprodOp` | `cum_dims` |
+| `VCumsumOp` / `VCumprodOp` / `VCummaxOp` / `VCumminOp` | `cum_dims` |
 | `VPadOp` | `static_low`、`static_high` |
 | `VConcatOp` | `dim` |
 | `VFlipOp` | `flip_axis` |
-| 逐元素操作 | `iterator_types`（broadcast/transpose数组） |
+| `VSortOp` | `sort_axis` |
+| 逐元素操作 | `iterator_types`（broadcast、transpose 数组） |
 
 ## 能力与限制
 
@@ -261,7 +267,7 @@ OpTrait::CollapsibleConsecutiveTargetDimsTrait
 | ---------------------------- | --------------------------------------------------------- | ------------------------------------------------------- |
 | 仅支持MemRef类型 | 只折叠`MemRefType`操作数 | 张量必须先进行缓冲化（bufferize） |
 | 需要静态形状 | 动态维度可能无法正确折叠 | 优先运行符号方言或形状推断Pass |
-| 严格屏障模式 | `VFlipOp`需要`strictBarrierWithUnit=true` | 自动处理 |
+| 严格屏障模式 | 屏障维度（受限轴）始终保持独立 | 通过`getLimitedAxes()`自动处理 |
 | 转置后向维度 | 某些操作的最后一个维度不能进行OTF转置 | 算法保留最后一个维度不折叠 |
 | 非HIVMStructuredOp | 未实现接口的操作返回恒等映射 | 实现`FlattenInterface` |
 
@@ -282,7 +288,7 @@ if (failed(res))
 使用`LDBG`宏启用调试日志，可追踪：
 
 - 每个阶段的重关联映射
-- 掩码分类
+- 单元掩码与受限轴
 - 调整后的目标维度
 - 组合结果
 
@@ -291,18 +297,19 @@ if (failed(res))
 **变换前**：
 
 ```mlir
-%0 = hivm.vbrc %input broadcast_dims = [3]
+%0 = hivm.vbrc %input broadcast_dims = [2]
      : memref<1x64x1x128x256xf32> -> memref<1x64x16x128x256xf32>
 ```
 
 **经过Flatten Pass后**：
 
 ```mlir
-// 折叠输入：[[0, 1, 2], [3, 4]] → 秩 2
-%collapsed_input = memref.collapse_shape %input [[0, 1, 2], [3, 4]]
+// 折叠输入：[[0, 1], [2], [3, 4]] → 秩 3
+// （广播维 dim 2 是受限轴，需独立保留；单元维 dim 0 被吸收进第一组）
+%collapsed_input = memref.collapse_shape %input [[0, 1], [2], [3, 4]]
      : memref<1x64x1x128x256xf32> into memref<64x1x32768xf32>
 
-// 广播后调整维度：[1, 3] → [0]（重映射后）
+// 广播维重映射：[2] → [1]
 %0 = hivm.vbrc %collapsed_input broadcast_dims = [1]
      : memref<64x1x32768xf32> -> memref<64x16x32768xf32>
 

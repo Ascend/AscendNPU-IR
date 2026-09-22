@@ -148,7 +148,6 @@ struct BiShengIRCompileMainConfigCLOptions : public BiShengIRCompileMainConfig {
 } // namespace
 
 ManagedStatic<BiShengIRCompileMainConfigCLOptions> clOptionsConfig;
-
 namespace option_handler {
 template <typename T, bool ExternalStorage>
 std::string handleOpt(const cl::opt<T, ExternalStorage> &opt) {

@@ -1,0 +1,38 @@
+name: 🧩 Roadmap Task
+description: 拆解核心模块任务，跟踪设计方案、开发进度
+title: "[Roadmap] <工作项名称>"
+labels: ["roadmap"]
+
+body:
+- type: textarea
+  attributes:
+    value: |
+      ```
+      ## Background
+
+      <描述当前问题的背景、动机和现状，说明为什么需要进行这项工作。>
+
+      ## Design
+
+      <描述整体设计方案、目标架构或实现思路，可包含代码结构示意、流程图等。>
+
+      ## Tasks
+
+      <将工作拆分为多个阶段，每个阶段包含具体的可跟踪任务项。>
+
+      ### Stage 1: <阶段名称>
+
+      <本阶段目标概述>
+
+      - [ ] <任务描述 1> <PR 链接>
+      - [ ] <任务描述 2> <PR 链接>（可选）
+
+      ### Stage 2: <阶段名称>（可选）
+
+      <本阶段目标概述>
+
+      - [ ] <任务描述 1> <PR 链接>（可选）
+      - [ ] <任务描述 2> <PR 链接>（可选）
+      ```
+  validations:
+    required: true

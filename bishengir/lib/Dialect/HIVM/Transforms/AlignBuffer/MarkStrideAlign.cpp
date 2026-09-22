@@ -859,6 +859,15 @@ void MarkStrideAlignPass::runOnOperation() {
       return WalkResult::advance();
     }
 
+    // IndirectLoad performs gather-style access: `src` is indexed by the
+    // runtime `offsets` tensor rather than a linear stride pattern, and its
+    // dst/offsets/mask/other operands do not benefit from stride alignment.
+    // Marking them would only trigger unnecessary UB alloc padding in
+    // EnableStrideAlign. Skip early to preserve the original alloc shape.
+    if (isa<hivm::IndirectLoadOp>(op)) {
+      return WalkResult::advance();
+    }
+
     if (isa<CustomOp, CustomMacroOp>(op)) {
       ArrayAttr argAttrs =
           op->getAttrOfType<ArrayAttr>(CustomOp::kArgAttrsName);
