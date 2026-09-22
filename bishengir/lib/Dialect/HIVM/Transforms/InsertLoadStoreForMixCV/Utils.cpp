@@ -67,13 +67,9 @@ bool isConstZero(Value v) {
   return false;
 }
 
-bool isVectorBroadcast(VBrcOp vbrcOp) {
+bool isCubeAndVectorBroadcast(VBrcOp vbrcOp) {
   auto src = vbrcOp.getSrc();
-  if (!utils::isScalarLike(src))
-    return true;
-
-  // TODO: find why broadcast to l1 doesn't work
-  if (!isConstZero(src))
+  if (utils::isScalarLike(src) && isConstZero(src))
     return true;
 
   return false;
