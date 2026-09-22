@@ -33,6 +33,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVM/Utils/ShapeRegistry.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -114,12 +115,19 @@ struct NormalizeSignExtendedWhileCondition
 
 struct UpliftWhileToForPass
     : public impl::UpliftWhileToForBase<UpliftWhileToForPass> {
+  using Base = impl::UpliftWhileToForBase<UpliftWhileToForPass>;
+  using Base::Base;
   void runOnOperation() final {
     func::FuncOp funcOp = getOperation();
     MLIRContext *ctx = &getContext();
 
     RewritePatternSet patterns(ctx);
-    patterns.add<NormalizeSignExtendedWhileCondition>(ctx);
+    // 3160 sign-extend normalize: whitelist / bypass only. HFusion runs
+    // before HIVM compile flags are threaded, so a registered name is
+    // enough at compile time.
+    if (this->bypassShapeRegistry ||
+        hivm::isLoopShapeRegistered(funcOp.getName()))
+      patterns.add<NormalizeSignExtendedWhileCondition>(ctx);
     scf::populateUpliftWhileToForPatterns(patterns);
 
     if (failed(applyPatternsGreedily(funcOp, std::move(patterns))))
@@ -129,6 +137,7 @@ struct UpliftWhileToForPass
 
 } // namespace
 
-std::unique_ptr<Pass> mlir::hfusion::createUpliftWhileToForPass() {
-  return std::make_unique<UpliftWhileToForPass>();
+std::unique_ptr<Pass> mlir::hfusion::createUpliftWhileToForPass(
+    const UpliftWhileToForOptions &options) {
+  return std::make_unique<UpliftWhileToForPass>(options);
 }

@@ -703,6 +703,19 @@ def ConstantizeBufferSize
   let constructor = "mlir::hivm::createConstantizeBufferSizePass()";
   let dependentDialects = ["affine::AffineDialect", "arith::ArithDialect",
                            "memref::MemRefDialect"];
+  let options =
+      [Option<"bypassShapeRegistry", "bypass-shape-registry", "bool",
+              /*default=*/"false",
+              "Bypass shape registry check for byte-vs-byte buffer "
+              "size comparison">,
+       Option<"enablePreload", "enable-preload", "bool",
+              /*default=*/"false",
+              "Enable byte-vs-byte buffer size comparison when the "
+              "kernel is registered">,
+       Option<
+           "workspaceMultiBufferNum", "set-workspace-multibuffer", "unsigned",
+           /*default=*/"0",
+           "Workspace multibuffer depth; heuristics require a non-zero value">];
 }
 
 def HIVMOptFuncOutput : HIVMPass<"hivm-opt-func-output", "ModuleOp"> {
@@ -747,10 +760,29 @@ def MarkTightlyCoupledBuffer
     assigned on the single MIX function, so both clones inherit identical ids
     and PlanMemory can later pair the AIC/AIV buffers at consistent offsets.
     Only runs for Ascend950 (RegBase) targets.
+    In Skew mode, the early pipeline run can skip registered kernels so they
+    follow the PR 3160 order (infer / constantize / MarkTCB immediately before
+    CVPipelining); unregistered kernels keep the master early-MarkTCB order.
   }];
   let constructor = "mlir::hivm::createMarkTightlyCoupledBufferPass()";
   let dependentDialects = ["hivm::HIVMDialect", "annotation::AnnotationDialect",
                            "memref::MemRefDialect"];
+  let options =
+      [Option<"skipRegisteredKernels", "skip-registered-kernels", "bool",
+              /*default=*/"false",
+              "Skip kernels that pass the loop-shape registry / preload gate">,
+       Option<
+           "bypassShapeRegistry", "bypass-shape-registry", "bool",
+           /*default=*/"false",
+           "Treat every kernel as registered when skip-registered-kernels is "
+           "set">,
+       Option<
+           "enablePreload", "enable-preload", "bool", /*default=*/"false",
+           "Enable registered-kernel skip together with workspace multibuffer">,
+       Option<
+           "workspaceMultiBufferNum", "workspace-multibuffer-num", "unsigned",
+           /*default=*/"0",
+           "Workspace multibuffer count used by the registered-kernel skip">];
 }
 
 def HoistTightlyCoupledAlloc

@@ -1,4 +1,4 @@
-// RUN: bishengir-opt --hivm-constantize-buffer-size -split-input-file -allow-unregistered-dialect %s | FileCheck %s
+// RUN: bishengir-opt --hivm-constantize-buffer-size=bypass-shape-registry=true -split-input-file -allow-unregistered-dialect %s | FileCheck %s
 
 #map = affine_map<(d0) -> (d0, 32)>
 func.func @test0(%arg0 : index) {

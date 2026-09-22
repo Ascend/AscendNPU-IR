@@ -2345,12 +2345,15 @@ LogicalResult CVPipelineImpl::createNewLoopsForPreloadWithScopes() {
       Value toTensor = createToTensor(builder, loc, localOutput.second);
       if (!toTensor)
         return failure();
-      if (toTensor.getType() == localOutput.first.getType()) {
-        globalIRMap.map(localOutput.first, toTensor);
-      } else {
+      if (allowShapeHeuristics &&
+          toTensor.getType() != localOutput.first.getType()) {
+        // Registered / bypass kernels keep the physical TCB storage and
+        // rebuild the logical view in each consumer scope.
         toTensor.getDefiningOp()->erase();
         globalIRMap.erase(localOutput.first);
         viewedTCBOutputStorage[localOutput.first] = localOutput.second;
+      } else {
+        globalIRMap.map(localOutput.first, toTensor);
       }
     }
 

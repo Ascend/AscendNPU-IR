@@ -1,4 +1,4 @@
-// RUN: bishengir-opt %s -hfusion-uplift-while-to-for -split-input-file | FileCheck %s
+// RUN: bishengir-opt %s -hfusion-uplift-while-to-for=bypass-shape-registry=true -split-input-file | FileCheck %s
 
 // Thin downstream wrapper around upstream
 // scf::populateUpliftWhileToForPatterns (see
