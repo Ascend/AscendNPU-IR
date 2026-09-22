@@ -43,8 +43,9 @@ Rules:
   ```text
   Analysis Annotation Arith AscendDPX Bufferization Config Conversion
   ExecutionEngine HACC HFusion HIVM HIVMAVE HIVMRegbaseIntrins Interfaces
-  LLVMIR Linalg MathExt MemRef MemRefExt Pass SCF Scope Symbol Tensor Tools
-  Torch Transform Transforms Triton TritonExt Utils Vector Version
+  LLVMIR Linalg MathExt MemRef MemRefExt Pass SCF Scope Symbol Template
+  Tensor Tools Torch Transform Transforms Triton TritonExt Utils Vector
+  Version
   ```
 
 - For changes under the `Dialect` directory, use the concrete dialect name as
@@ -77,7 +78,7 @@ The versioned `pre-push` hook checks every outgoing commit subject with this
 POSIX extended regular expression:
 
 ```text
-^\[(Analysis|Annotation|Arith|AscendDPX|Bufferization|Config|Conversion|ExecutionEngine|HACC|HFusion|HIVM|HIVMAVE|HIVMRegbaseIntrins|Interfaces|LLVMIR|Linalg|MathExt|MemRef|MemRefExt|Pass|SCF|Scope|Symbol|Tensor|Tools|Torch|Transform|Transforms|Triton|TritonExt|Utils|Vector|Version)\](\[[[:alnum:]_][[:alnum:]_-]*\])? (feat|fix|doc|refactor|chore): [^[:space:]].*$
+^\[(Analysis|Annotation|Arith|AscendDPX|Bufferization|Config|Conversion|ExecutionEngine|HACC|HFusion|HIVM|HIVMAVE|HIVMRegbaseIntrins|Interfaces|LLVMIR|Linalg|MathExt|MemRef|MemRefExt|Pass|SCF|Scope|Symbol|Template|Tensor|Tools|Torch|Transform|Transforms|Triton|TritonExt|Utils|Vector|Version)\](\[[[:alnum:]_][[:alnum:]_-]*\])? (feat|fix|doc|refactor|chore): [^[:space:]].*$
 ```
 
 The hook validates the subject format only. The commit body and the mandatory
