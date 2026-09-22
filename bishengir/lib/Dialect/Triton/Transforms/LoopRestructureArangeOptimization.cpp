@@ -10,6 +10,7 @@
 #include "bishengir/Dialect/Triton/Transforms/Passes.h"
 
 #include "bishengir/Dialect/Utils/Util.h"
+#include "mlir/Analysis/TopologicalSortUtils.h"
 #include "mlir/AsmParser/AsmParser.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -1333,6 +1334,12 @@ private:
       if (allOps.contains(op))
         ordered.push_back(op);
     });
+    // Textual block order need not follow SSA dominance. Build producer maps
+    // before their users, even if the producer's block is printed later.
+    // This only orders clone construction: each copy is still inserted at its
+    // original operation, so neither CFG nor memory-operation order changes.
+    if (!computeTopologicalSorting(ordered))
+      return success();
     PatternRewriter rewriter(func.getContext());
     for (Operation *op : ordered) {
       for (unsigned gi = 0; gi < groups.size(); ++gi) {
