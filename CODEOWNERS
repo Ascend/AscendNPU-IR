@@ -175,3 +175,59 @@
 /bishengir/**/HIVMAVE/**/HoistVstas.* @zzhengxiang @Mark-chen @lingfei_wu @Jiangjiji0527 @hid90099092 @tanshengshun
 /bishengir/**/HIVMAVE/**/DuplicateUnitMaskBroadcast.* @zzhengxiang @Mark-chen @lingfei_wu @Jiangjiji0527 @hid90099092 @tanshengshun
 /bishengir/test/Dialect/HIVMAVE/duplicate-unit-mask-broadcast* @zzhengxiang @Mark-chen @lingfei_wu @Jiangjiji0527 @hid90099092 @tanshengshun
+
+# nddma.
+/bishengir/**/NDDMA/ @xiechenye @liupengcheng2012 @lingfei_wu @hid90099092 @tanshengshun
+/bishengir/**/SinkOpToConsumerInLoop.* @xiechenye @liupengcheng2012 @lingfei_wu @hid90099092 @tanshengshun
+
+# pre-vectorize.
+/bishengir/**/InlineBrc.* @Hu_JJN @lingfei_wu @hid90099092 @tanshengshun
+/bishengir/**/FoldExtractInsertPair.* @Hu_JJN @lingfei_wu @hid90099092 @tanshengshun
+/bishengir/**/PreVectorizationFusion.* @Hu_JJN @lingfei_wu @hid90099092 @tanshengshun
+/bishengir/**/PrepareI1Nx1ForVectorization.* @Hu_JJN @lingfei_wu @hid90099092 @tanshengshun
+
+# tree-reduce.
+/bishengir/**/TreeReduceV2.* @codeer1 @lingfei_wu @hid90099092 @tanshengshun
+
+# vf simplification.
+/bishengir/**/RemoveMaskFromUnalignedReductionLoop.* @Hu_JJN @lingfei_wu @hid90099092 @tanshengshun
+/bishengir/**/PullSliceIntoVectorFunction.* @Hu_JJN @lingfei_wu @hid90099092 @tanshengshun
+/bishengir/**/SimplifyVFArgs.* @Hu_JJN @lingfei_wu @hid90099092 @tanshengshun
+/bishengir/**/LoopInvariantPromotion.* @Hu_JJN @lingfei_wu @hid90099092 @tanshengshun
+/bishengir/**/UnrollAndForward.* @Hu_JJN @lingfei_wu @hid90099092 @tanshengshun
+/bishengir/**/RemoveRedundantWriteAndReadPair.* @Hu_JJN @lingfei_wu @hid90099092 @tanshengshun
+/bishengir/**/OutlineCopyInVF.* @Hu_JJN @lingfei_wu @hid90099092 @tanshengshun
+
+# vf-fusion cost model.
+/bishengir/**/Analysis/VFFusion/ @yeyunpeng1 @Hu_JJN @lingfei_wu @hid90099092 @tanshengshun
+
+# vf-fusion other strategies.
+/bishengir/**/Analysis/VFFusion/VFFusionKind/AllOpKind.* @Hu_JJN @lingfei_wu @hid90099092 @tanshengshun
+/bishengir/**/Analysis/VFFusion/VFFusionAnalyzer/AllOpKindAnalyzer.* @Hu_JJN @lingfei_wu @hid90099092 @tanshengshun
+/bishengir/**/Analysis/VFFusion/VFFusionKind/UBAwareOpKind.* @Hu_JJN @lingfei_wu @hid90099092 @tanshengshun
+/bishengir/**/Analysis/VFFusion/VFFusionAnalyzer/UBAwareOpKindAnalyzer.* @Hu_JJN @lingfei_wu @hid90099092 @tanshengshun
+
+# vf vectorize.
+/bishengir/**/OutlineScope.* @Hu_JJN @lijiawei_123 @lipschitz_von @lingfei_wu @hid90099092 @tanshengshun
+/bishengir/**/VectorizeOps.* @Hu_JJN @lijiawei_123 @lipschitz_von @lingfei_wu @hid90099092 @tanshengshun
+/bishengir/**/AutoVectorizeV2.* @Hu_JJN @lijiawei_123 @lipschitz_von @lingfei_wu @hid90099092 @tanshengshun
+/bishengir/**/AutoVectorize.* @Hu_JJN @lijiawei_123 @lipschitz_von @lingfei_wu @hid90099092 @tanshengshun
+/bishengir/**/AutoVectorize/ @Hu_JJN @lijiawei_123 @lipschitz_von @lingfei_wu @hid90099092 @tanshengshun
+/bishengir/**/OutlineVectorFunction.* @Hu_JJN @lijiawei_123 @lipschitz_von @lingfei_wu @hid90099092 @tanshengshun
+/bishengir/**/AutoVectorizeVerifier.* @Hu_JJN @lijiawei_123 @lipschitz_von @lingfei_wu @hid90099092 @tanshengshun
+/bishengir/**/Conversion/HFusionToVector/ @Hu_JJN @lijiawei_123 @lipschitz_von @lingfei_wu @hid90099092 @tanshengshun
+
+# memory reuse.
+/bishengir/**/OutlineAllocInVF.* @lipschitz_von @liupengcheng2012 @lingfei_wu @hid90099092 @tanshengshun
+/bishengir/**/VFOperandSubstitution.* @lipschitz_von @liupengcheng2012 @lingfei_wu @hid90099092 @tanshengshun
+
+# flatten.
+/bishengir/**/BubbleUpExtractSlice.* @lijiawei_123 @lipschitz_von @lingfei_wu @hid90099092 @tanshengshun
+/bishengir/**/Tensor/Transforms/PropagateReshape.* @lijiawei_123 @lipschitz_von @lingfei_wu @hid90099092 @tanshengshun
+/bishengir/**/Tensor/Transforms/PropagateReshape/ @lijiawei_123 @lipschitz_von @lingfei_wu @hid90099092 @tanshengshun
+/bishengir/**/CanonicalizeTensorReshape.* @lijiawei_123 @lipschitz_von @lingfei_wu @hid90099092 @tanshengshun
+/bishengir/**/HFusion/Transforms/FlattenOps.* @lijiawei_123 @lipschitz_von @lingfei_wu @hid90099092 @tanshengshun
+/bishengir/**/HFusion/Transforms/Flattener/ @lijiawei_123 @lipschitz_von @lingfei_wu @hid90099092 @tanshengshun
+
+# stride align.
+/bishengir/**/AlignBuffer/ @codeer1 @lingfei_wu @hid90099092 @tanshengshun
