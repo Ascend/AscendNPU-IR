@@ -144,6 +144,45 @@ static bool isPseudoBool(Value val) {
   return false;
 }
 
+// For a, b in {0, 1}: b == 1 gives a % 1 == 0, and b == 0 is undefined
+// behavior for arith.remsi/remui. Refining the UB lanes to 0 as well lets the
+// whole remainder fold to a zero constant, and keeps the result a valid bool
+// encoding: the hardware would otherwise return all-ones (0xFF), which is not
+// a legal bool byte and which the host misreads as True.
+template <typename OpTy>
+struct FoldPseudoBoolRemOp : public OpRewritePattern<OpTy> {
+  using OpRewritePattern<OpTy>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(OpTy op,
+                                PatternRewriter &rewriter) const override {
+    if (!isPseudoBool(op->getOperand(0)) || !isPseudoBool(op->getOperand(1)))
+      return failure();
+
+    auto tensorType = dyn_cast<RankedTensorType>(op->getResult(0).getType());
+    if (!tensorType || !tensorType.getElementType().isInteger(8))
+      return failure();
+
+    Location loc = op.getLoc();
+    Type i8Type = tensorType.getElementType();
+
+    SmallVector<Value> dynamicSizes;
+    for (int64_t i = 0; i < tensorType.getRank(); ++i)
+      if (tensorType.isDynamicDim(i))
+        dynamicSizes.push_back(rewriter.create<tensor::DimOp>(
+            loc, op->getOperand(0),
+            rewriter.create<arith::ConstantOp>(loc, rewriter.getIndexAttr(i))));
+
+    Value zeroScalar = rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getIntegerAttr(i8Type, 0));
+    Value init = rewriter.create<tensor::EmptyOp>(loc, tensorType.getShape(),
+                                                  i8Type, dynamicSizes);
+    auto fillOp = rewriter.create<linalg::FillOp>(loc, zeroScalar, init);
+    fillOp->setAttr("was_bool_to_int8", rewriter.getBoolAttr(true));
+    rewriter.replaceOp(op, fillOp.getResult(0));
+    return success();
+  }
+};
+
 template <typename OpTy>
 struct ClampPseudoBoolArithOp : public OpRewritePattern<OpTy> {
   using OpRewritePattern<OpTy>::OpRewritePattern;
@@ -359,9 +398,10 @@ void populateLegalizeBoolCleanPatterns(RewritePatternSet &patterns) {
 
 void populateClampPseudoBoolPatterns(RewritePatternSet &patterns) {
   MLIRContext *context = patterns.getContext();
-  // Register the template pattern for both Addition and Subtraction
   patterns.add<ClampPseudoBoolArithOp<arith::AddIOp>,
-               ClampPseudoBoolArithOp<arith::SubIOp>>(context);
+               ClampPseudoBoolArithOp<arith::SubIOp>,
+               FoldPseudoBoolRemOp<arith::RemSIOp>,
+               FoldPseudoBoolRemOp<arith::RemUIOp>>(context);
 }
 
 class LegalizeBoolPass : public impl::LegalizeBoolPassBase<LegalizeBoolPass> {
@@ -588,7 +628,9 @@ void LegalizeBoolPass::runOnOperation() {
     if (this->enableClamp) {
       RewritePatternSet clampPatterns(context);
       clampPatterns.add<ClampPseudoBoolArithOp<arith::AddIOp>,
-                        ClampPseudoBoolArithOp<arith::SubIOp>>(context);
+                        ClampPseudoBoolArithOp<arith::SubIOp>,
+                        FoldPseudoBoolRemOp<arith::RemSIOp>,
+                        FoldPseudoBoolRemOp<arith::RemUIOp>>(context);
 
       if (failed(applyPatternsGreedily(mod, std::move(clampPatterns)))) {
         LLVM_DEBUG(llvm::dbgs() << "Legalize Bool Arithmetic Clamp Failed\n");
