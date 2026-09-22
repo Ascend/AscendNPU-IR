@@ -93,7 +93,7 @@ def HIVMNormalize : Pass<"hivm-normalize-ops", "func::FuncOp"> {
 
 def TritonGlobalKernelArgsToHIVMOp
     : Pass<"triton-global-kernel-args-to-hivm-op", "func::FuncOp"> {
-  let summary = "";
+  let summary = "Convert triton global kernel args to hivm op";
   let constructor = "mlir::hivm::createTritonGlobalKernelArgsToHIVMOpPass()";
   let dependentDialects = ["hivm::HIVMDialect", "hacc::HACCDialect", "annotation::AnnotationDialect"];
 }

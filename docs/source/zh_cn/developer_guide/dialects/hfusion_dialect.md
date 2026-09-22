@@ -856,7 +856,7 @@ operation ::= `hfusion.flip` $input attr-dict `:` type($input)
 
 **功能**：执行稀疏内存加载，支持可选掩码与回填值。给定源内存缓冲区与偏移张量，按指定偏移位置从源中收集元素生成输出张量。
 
-参数含义如下：
+**参数含义**如下：
 
 - base：待加载数据基地址
 - indices：待加载数据索引
@@ -957,7 +957,7 @@ operation ::= `hfusion.gather_load` `ins` `(` $base `:` type($base) `,` $indices
     dst[i][j][k] = src[i][j][index[i][j][k]]
 ```
 
-参数含义：
+**参数含义**：
 
 - src：源GM内存缓冲区
 - index：UB张量，指定在src中的位置
@@ -1121,7 +1121,7 @@ operation ::= `hfusion.hypot` $x `,` $y (`,` $z^)?
   dst[offset[0] + i][offset[1] + j][index[k]][offset[3] + l] = value[i][j][k][l]
 ```
 
-参数含义：
+**参数含义**：
 
 - dst：GM上目标张量指针
 - index：UB上的索引张量tile指针，指定目标张量中的位置；索引不得重复，且必须为指定scatter_dim维度上目标张量边界内的有效索引
@@ -1182,7 +1182,7 @@ operation ::= `hfusion.index_put` `ins` `(` $dst `:` type($dst) `,`
     dst[i][j][k][l][m] = mask[i][j][k][l][m] ? src[offsets[i][j][k][l][m]] : other[i][j][k][l][m]
 ```
 
-参数含义：
+**参数含义**：
 
 - src：待加载的源内存缓冲区
 - offsets：指定源缓冲区位置的索引
@@ -1247,7 +1247,7 @@ operation ::= `hfusion.indirect_load` `ins` `(` $src `:` type($src) `,` $offsets
     if (mask[i][j][k][l][m]) dst[offsets[i][j][k][l][m]] = src[i][j][k][l][m]
 ```
 
-参数含义：
+**参数含义**：
 
 - src：UB上待存储的源张量
 - offsets：指定目标缓冲区位置的索引
@@ -1660,7 +1660,7 @@ for dim = 2:
 Dst[i][j][index_tile[i][j][k]] = value[i][j][k]
 ```
 
-参数含义：
+**参数含义**：
 
 - dst：目标GM内存缓冲区基指针
 - value：待存储的UB值张量
