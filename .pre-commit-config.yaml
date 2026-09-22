@@ -23,7 +23,11 @@ repos:
             bash -c '
             set +e
             if ! command -v git-clang-format >/dev/null 2>&1; then
-              apt-get update -qq && apt-get install -y -qq clang-format >/dev/null 2>&1
+              if command -v brew >/dev/null 2>&1; then
+                brew install clang-format >/dev/null 2>&1
+              elif command -v apt-get >/dev/null 2>&1; then
+                apt-get update -qq && apt-get install -y -qq clang-format >/dev/null 2>&1
+              fi
               python3 -m pip install -q clang-format 2>/dev/null || true
             fi
             command -v git-clang-format >/dev/null 2>&1 || { echo "git-clang-format unavailable, skip"; exit 0; }
