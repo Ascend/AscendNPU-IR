@@ -30,6 +30,7 @@
 #include "mlir/Interfaces/LoopLikeInterface.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVectorExtras.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include <algorithm>
@@ -260,6 +261,10 @@ bool DimensionAnalyzer::processOperation(Operation *op, Value current) {
           })
           .Case<hivm::MmadL1Op>([this](auto op) {
             processMmadL1Op(op, isATransposed(op), isBTransposed(op));
+            return true;
+          })
+          .Case<hivm::FixpipeOp>([this](auto op) {
+            processFixpipeOp(op);
             return true;
           })
           .Case<hivm::VGatherOp>([this](auto op) {
@@ -564,7 +569,8 @@ void DimensionAnalyzer::processForOp(scf::ForOp op) {
 
 void DimensionAnalyzer::processWhileOp(scf::WhileOp op) {
   LDBG("Processing WhileOp " << op);
-  auto conditionOp = cast<scf::ConditionOp>(op.getBeforeBody()->getTerminator());
+  auto conditionOp =
+      cast<scf::ConditionOp>(op.getBeforeBody()->getTerminator());
   auto yieldOp = cast<scf::YieldOp>(op.getAfterBody()->getTerminator());
   for (const auto &[beforeArg, init, yield] : zip_equal(
            op.getBeforeArguments(), op.getInits(), yieldOp.getOperands())) {
@@ -777,6 +783,69 @@ void DimensionAnalyzer::processMmadL1Op(hivm::MmadL1Op op, bool isTransposeA,
   }
 }
 
+void DimensionAnalyzer::processFixpipeOp(hivm::FixpipeOp op) {
+  Value src = op.getSrc();
+  Value dst = op.getDst();
+  createDummyRefIfNotExist({src, dst});
+
+  auto srcDims = getValueDimIndices(src);
+  auto dstDims = getValueDimIndices(dst);
+  assert(srcDims.size() == dstDims.size() &&
+         "Fixpipe source and destination ranks must match");
+  // Preserve separate shape identities so the destination can carry its own
+  // priority, but connect corresponding axes for common-axis analysis.
+  for (auto [srcDim, dstDim] : llvm::zip_equal(srcDims, dstDims))
+    joinCollapser(srcDim, dstDim);
+
+  for (Value result : op->getResults())
+    processValue(result, dst);
+}
+
+void DimensionAnalyzer::markFixpipeTilingPriority(hivm::FixpipeOp op) {
+  Value src = op.getSrc();
+  auto dstDims = getValueDimIndices(op.getDst());
+  if (dstDims.size() != 2)
+    return;
+
+  auto hasLoadProducerInsideScope = [this](Value root) {
+    SmallVector<Value, 4> worklist = {root};
+    llvm::SmallPtrSet<Operation *, 8> visited;
+    while (!worklist.empty()) {
+      Value current = worklist.pop_back_val();
+      Operation *definingOp = current.getDefiningOp();
+      if (!definingOp || !op_->isProperAncestor(definingOp))
+        continue;
+      if (!visited.insert(definingOp).second)
+        continue;
+      if (isa<hivm::LoadOp>(definingOp))
+        return true;
+      llvm::append_range(worklist, definingOp->getOperands());
+    }
+    return false;
+  };
+
+  Operation *producer = src.getDefiningOp();
+  while (producer && !isa<hivm::MmadL1Op>(producer) &&
+         producer->getNumOperands() > 0) {
+    producer = producer->getOperand(0).getDefiningOp();
+  }
+  auto mmadOp = dyn_cast_or_null<hivm::MmadL1Op>(producer);
+  if (!mmadOp)
+    return;
+
+  bool isAInside = hasLoadProducerInsideScope(mmadOp.getA());
+  bool isBInside = hasLoadProducerInsideScope(mmadOp.getB());
+  if (isAInside == isBInside)
+    return;
+
+  // The analyzer treats a lower order as a higher tiling priority. M is the
+  // default for a rank-2 result; swap the order when the loop marches along N.
+  SmallVector<int64_t, 2> order =
+      isAInside ? SmallVector<int64_t, 2>{0, 1} : SmallVector<int64_t, 2>{1, 0};
+  for (auto [dim, priority] : llvm::zip_equal(dstDims, order))
+    transposedDimMap[equivalentDsu_->find(dim)] = priority;
+}
+
 void DimensionAnalyzer::startTransaction(Operation *op) {
   if (processingOperation)
     finalizeTransaction();
@@ -906,20 +975,18 @@ bool DimensionAnalyzer::finalizeTransaction() {
 }
 
 bool DimensionAnalyzer::isParallelOp(Operation *op) const {
-  return op &&
-         (isElemwiseNaryOpImpl(op) || isa<CopyOpInterface>(op) ||
-          utils::isAllocLikeOp(op) ||
-          isa<memref::MemorySpaceCastOp, bufferization::ToTensorOp,
+  return op && (isElemwiseNaryOpImpl(op) || isa<CopyOpInterface>(op) ||
+                utils::isAllocLikeOp(op) ||
+                isa<memref::MemorySpaceCastOp, bufferization::ToTensorOp,
 #ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
-              bufferization::ToMemrefOp
+                    bufferization::ToMemrefOp
 #else
-              bufferization::ToBufferOp
+                    bufferization::ToBufferOp
 #endif
-              ,
-              arith::SelectOp,
-              bufferization::MaterializeInDestinationOp,
-              hivm::IndirectLoadOp, hivm::IndirectStoreOp,
-              hivm::GatherLoadOp, hivm::ScatterStoreOp>(op));
+                    ,
+                    arith::SelectOp, bufferization::MaterializeInDestinationOp,
+                    hivm::IndirectLoadOp, hivm::IndirectStoreOp,
+                    hivm::GatherLoadOp, hivm::ScatterStoreOp>(op));
 }
 
 void DimensionAnalyzer::combineInferable() {
@@ -1006,6 +1073,7 @@ void DimensionAnalyzer::markDimensions() {
         })
         .Case<tensor::ExtractSliceOp, tensor::InsertSliceOp>(
             [&](auto op) { processSlice(op); })
+        .Case<hivm::FixpipeOp>([&](auto op) { markFixpipeTilingPriority(op); })
         .Case<hivm::VTransposeOp>([&](auto op) { markTransposedDim(op); })
         .Case<memref::AllocOp>([&](auto op) {
           if (!hacc::utils::isRegBasedArch(
@@ -1432,8 +1500,7 @@ void DimensionAnalyzer::dumpOpWithStructuralGroups() {
 
   llvm::errs() << "STRUCTURAL_GROUP: " << *op_ << "\n";
 
-  op_->walk(
-      [&](Operation *op) { op->removeAttr(kStructuralGroupAttrName); });
+  op_->walk([&](Operation *op) { op->removeAttr(kStructuralGroupAttrName); });
 }
 
 } // namespace detail

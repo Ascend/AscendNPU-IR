@@ -71,22 +71,22 @@ bool DimensionAnalyzer::isReduceDim(Dimension dim) {
 }
 
 template <typename StoreOpTy> Value getStoreLikeSrc(StoreOpTy storeOp) {
-  if constexpr (std::is_same_v<
-                    StoreOpTy,
-                    bufferization::MaterializeInDestinationOp>)
+  if constexpr (std::is_same_v<StoreOpTy,
+                               bufferization::MaterializeInDestinationOp>)
     return storeOp.getSource();
   else if constexpr (std::is_same_v<StoreOpTy, hivm::LocalStoreOp>)
     return storeOp.getData();
   else if constexpr (std::is_same_v<StoreOpTy, hivm::DebugOp>)
     return storeOp.getArg();
+  else if constexpr (std::is_same_v<StoreOpTy, hivm::FixpipeOp>)
+    return storeOp.getDst();
   else
     return storeOp.getSrc();
 }
 
 template <typename StoreOpTy> Value getStoreLikeDst(StoreOpTy storeOp) {
-  if constexpr (std::is_same_v<
-                    StoreOpTy,
-                    bufferization::MaterializeInDestinationOp>)
+  if constexpr (std::is_same_v<StoreOpTy,
+                               bufferization::MaterializeInDestinationOp>)
     return storeOp.getDest();
   else if constexpr (std::is_same_v<StoreOpTy, hivm::VReduceOp>)
     return storeOp.getDstValue();
@@ -94,6 +94,16 @@ template <typename StoreOpTy> Value getStoreLikeDst(StoreOpTy storeOp) {
     return storeOp.getAddr();
   else
     return storeOp.getDst();
+}
+
+template <typename StoreOpTy>
+Value getStoreLikeGroupValue(StoreOpTy storeOp, Value tilingValue) {
+  // Membase Fixpipe destinations are memrefs and are not tracked by the value
+  // group DSU. Keep branch grouping anchored at the tensor source while using
+  // the destination dimensions as tiling candidates.
+  if constexpr (std::is_same_v<StoreOpTy, hivm::FixpipeOp>)
+    return storeOp.getSrc();
+  return tilingValue;
 }
 
 void DimensionAnalyzer::processInvalidUpdates(
@@ -361,7 +371,11 @@ bool DimensionAnalyzer::isValidTilingSize(int64_t dim) const {
 template <typename StoreOpTy>
 bool DimensionAnalyzer::checkTileableMaskedStore(StoreOpTy storeOp,
                                                  size_t i) const {
-  auto src = getStoreLikeSrc(storeOp);
+  Value src = [&]() -> Value {
+    if constexpr (std::is_same_v<StoreOpTy, hivm::FixpipeOp>)
+      return storeOp.getSrc();
+    return getStoreLikeSrc(storeOp);
+  }();
   auto dst = getStoreLikeDst(storeOp);
 
   int64_t srcOrigDim = ShapedType::kDynamic;
@@ -434,16 +448,12 @@ void DimensionAnalyzer::computeTilingDimImpl(
       // there will only be 1 group.
       if (rank == 0)
         return;
-      auto groupIndex = getValueGroupIndex(src);
+      auto groupIndex = getValueGroupIndex(getStoreLikeGroupValue(op, src));
       numStoreOps[groupIndex]++;
       LDBG("Checking operation: " << op << " in group " << groupIndex);
       auto shape = utils::getShape(src.getType());
       DenseSet<int> usedParentIdx;
-      std::optional<size_t> forcedDim = inferForcedTilingDim<StoreOpTy>(op);
       for (size_t i = 0; i < rank; i++) {
-        if (forcedDim.has_value() && i != forcedDim.value()) {
-          continue;
-        }
         Dimension dim(src, i);
         if (isParallelDim(dim)) {
           if (!isValidTilingSize(shape[i])) {
@@ -477,62 +487,6 @@ int64_t DimensionAnalyzer::getGlobalTilingAxisId(Value v) {
     return -1;
   auto args = DimensionAnalyzerBase::getValueDimIndices(v);
   return structuralDsu_->find(args[localDimIdx]);
-}
-
-/// Infer whether it is necessary to enforce a specific tiling dimension.
-///
-/// For Matrix Multiplication (C = A * B):
-/// - If A is loaded inside the loop and B is outside, the loop marches along
-/// the M-axis.
-/// - If B is loaded inside the loop and A is outside, the loop marches along
-/// the N-axis.
-template <typename StoreOpTy>
-std::optional<size_t> DimensionAnalyzer::inferForcedTilingDim(StoreOpTy op) {
-  auto hasLoadProducerInsideScope = [this](Value rootVal) -> bool {
-    SmallVector<Value, 4> worklist = {rootVal};
-    llvm::SmallPtrSet<Operation *, 8> visited;
-    while (!worklist.empty()) {
-      Value currVal = worklist.pop_back_val();
-      Operation *defOp = currVal.getDefiningOp();
-
-      if (!defOp || !this->op_->isProperAncestor(defOp))
-        continue;
-      if (!visited.insert(defOp).second)
-        continue;
-
-      if (isa<hivm::LoadOp>(defOp))
-        return true;
-
-      for (Value opnd : defOp->getOperands())
-        worklist.push_back(opnd);
-    }
-    return false;
-  };
-
-  if constexpr (std::is_same_v<StoreOpTy, hivm::FixpipeOp>) {
-    Operation *curr = op.getSrc().getDefiningOp();
-
-    while (curr && !isa<hivm::MmadL1Op>(curr) && curr->getNumOperands() > 0) {
-      curr = curr->getOperand(0).getDefiningOp();
-    }
-
-    if (auto mmadOp = dyn_cast_or_null<hivm::MmadL1Op>(curr)) {
-      bool isAInside = hasLoadProducerInsideScope(mmadOp.getA());
-      bool isBInside = hasLoadProducerInsideScope(mmadOp.getB());
-
-      if (isAInside && !isBInside) {
-        LDBG("Forced tiling dim 0 (M-axis) based on internal Load A");
-        return 0;
-      }
-
-      if (!isAInside && isBInside) {
-        LDBG("Forced tiling dim 1 (N-axis) based on internal Load B");
-        return 1;
-      }
-    }
-  }
-
-  return std::nullopt;
 }
 
 } // namespace detail

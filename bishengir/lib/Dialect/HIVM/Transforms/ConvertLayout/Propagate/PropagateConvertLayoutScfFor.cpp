@@ -466,8 +466,12 @@ struct PropagateConvertLayoutScfForYield
     // Old iter_arg maps to inverse-converted value (original layout)
     mapping.map(forOp.getRegionIterArg(yieldOperandIdx), inverseIterArg);
 
-    // Clone operations (skip convertOp)
-    cloneForBodyOperations(rewriter, forOp, mapping, convertOp.getOperation());
+    // Keep the conversion in the cloned body when it has side users. The
+    // target yield is overridden below, while the remaining users need the
+    // cloned conversion result in their original layout.
+    Operation *skipOp =
+        convertOp.getResult().hasOneUse() ? convertOp.getOperation() : nullptr;
+    cloneForBodyOperations(rewriter, forOp, mapping, skipOp);
 
     // Create new yield - use unconverted value for target position
     Value unconvertedValue = mapping.lookupOrDefault(convertOp.getSource());

@@ -134,13 +134,13 @@ def test_lt(param_list):
 
 **动态shape支持**：kernel自动适配任意长度的1D tensor，用户只需传入实际shape的数据即可。
 
-## Triton Op到Ascend NPU IR Op的转换
+## Triton Op到AscendNPU IR Op的转换
 
 Triton Ascend将Triton方言的高级GPU抽象操作逐级下降为Linalg、HFusion和HIVM等目标方言，最终生成可在Ascend NPU上高效执行的优化中间表示。下表详细列出了各类Triton操作与其在下降过程中所对应的Ascend NPU IR操作。
 
 **访存类Op**：
 
-| Triton Op             | 目标Ascend NPU IR Op                                         | 描述                     |
+| Triton Op             | 目标AscendNPU IR Op                                         | 描述                     |
 | :-------------------- | :----------------------------------------------------------- | :----------------------- |
 | `triton::StoreOp`     | `memref::copy`                                               | 将数据存储到内存         |
 | `triton::LoadOp`      | `memref::copy` + `bufferization::ToTensorOp`                 | 从内存加载数据           |
@@ -150,7 +150,7 @@ Triton Ascend将Triton方言的高级GPU抽象操作逐级下降为Linalg、HFus
 
 **指针运算类Op**：
 
-| Triton Op            | 目标Ascend NPU IR Op        | 描述               |
+| Triton Op            | 目标AscendNPU IR Op        | 描述               |
 | :------------------- | :-------------------------- | :----------------- |
 | `triton::AddPtrOp`   | `memref::ReinterpretCast`   | 对指针进行偏移运算 |
 | `triton::PtrToIntOp` | `arith::IndexCastOp`        | 将指针转换为整数   |
@@ -159,7 +159,7 @@ Triton Ascend将Triton方言的高级GPU抽象操作逐级下降为Linalg、HFus
 
 **程序信息类Op**：
 
-| Triton Op                  | 目标Ascend NPU IR Op                                         | 描述             |
+| Triton Op                  | 目标AscendNPU IR Op                                         | 描述             |
 | :------------------------- | :----------------------------------------------------------- | :--------------- |
 | `triton::GetProgramIdOp`   | `functionOp`的参数                                           | 获取当前程序的ID |
 | `triton::GetNumProgramsOp` | `functionOp`的参数                                           | 获取总程序数量   |
@@ -168,7 +168,7 @@ Triton Ascend将Triton方言的高级GPU抽象操作逐级下降为Linalg、HFus
 
 **张量操作类Op**：
 
-| Triton Op              | 目标Ascend NPU IR Op                                         | 描述                       |
+| Triton Op              | 目标AscendNPU IR Op                                         | 描述                       |
 | :--------------------- | :----------------------------------------------------------- | :------------------------- |
 | `triton::ReshapeOp`    | `tensor::ReshapeOp`                                          | 改变张量形状               |
 | `triton::ExpandDimsOp` | `tensor::ExpandShapeOp`                                      | 扩展张量维度               |
@@ -183,7 +183,7 @@ Triton Ascend将Triton方言的高级GPU抽象操作逐级下降为Linalg、HFus
 
 **数值计算类Op**：
 
-| Triton Op                | 目标Ascend NPU IR Op                                         | 描述                         |
+| Triton Op                | 目标AscendNPU IR Op                                         | 描述                         |
 | :----------------------- | :----------------------------------------------------------- | :--------------------------- |
 | `triton::MulhiUIOp`      | `arith::MulSIExtendedOp`                                     | 无符号整数乘法，返回高位结果 |
 | `triton::PreciseDivFOp`  | `arith::DivFOp`                                              | 执行高精度浮点除法           |
@@ -196,7 +196,7 @@ Triton Ascend将Triton方言的高级GPU抽象操作逐级下降为Linalg、HFus
 
 **归约类Op**：
 
-| Triton Op | 目标Ascend NPU IR Op | 描述 |
+| Triton Op | 目标AscendNPU IR Op | 描述 |
 | :--- | :--- | :--- |
 | `triton::ArgMinOp` | `linalg::ReduceOp` | 返回张量中最小值的索引 |
 | `triton::ArgMaxOp` | `linalg::ReduceOp` | 返回张量中最大值的索引 |

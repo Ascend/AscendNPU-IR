@@ -12,12 +12,13 @@ Assisted-by: AI
 # 3. Allowed Module values (case-sensitive):
 #    Analysis Annotation Arith AscendDPX Bufferization Config Conversion
 #    ExecutionEngine HACC HFusion HIVM HIVMAVE HIVMRegbaseIntrins Interfaces
-#    LLVMIR Linalg MathExt MemRef MemRefExt Pass SCF Scope Symbol Tensor Tools
-#    Torch Transform Transforms Triton TritonExt Utils Vector Version
+#    LLVMIR Linalg MathExt MemRef MemRefExt Pass SCF Scope Symbol Template
+#    Tensor Tools Torch Transform Transforms Triton TritonExt Utils Vector
+#    Version
 # 4. For Dialect changes, use the concrete dialect name as Module; do not use
 #    Dialect itself
 # 5. Blank line + body; wrap lines at about 72 characters
 # 6. If AI assisted the change, keep exactly: Assisted-by: AI
 # 7. Subject regex checked by .githooks/pre-push:
-#    ^\[(Analysis|Annotation|Arith|AscendDPX|Bufferization|Config|Conversion|ExecutionEngine|HACC|HFusion|HIVM|HIVMAVE|HIVMRegbaseIntrins|Interfaces|LLVMIR|Linalg|MathExt|MemRef|MemRefExt|Pass|SCF|Scope|Symbol|Tensor|Tools|Torch|Transform|Transforms|Triton|TritonExt|Utils|Vector|Version)\](\[[[:alnum:]_][[:alnum:]_-]*\])? (feat|fix|doc|refactor|chore): [^[:space:]].*$
+#    ^\[(Analysis|Annotation|Arith|AscendDPX|Bufferization|Config|Conversion|ExecutionEngine|HACC|HFusion|HIVM|HIVMAVE|HIVMRegbaseIntrins|Interfaces|LLVMIR|Linalg|MathExt|MemRef|MemRefExt|Pass|SCF|Scope|Symbol|Template|Tensor|Tools|Torch|Transform|Transforms|Triton|TritonExt|Utils|Vector|Version)\](\[[[:alnum:]_][[:alnum:]_-]*\])? (feat|fix|doc|refactor|chore): [^[:space:]].*$
 # ========================================================================

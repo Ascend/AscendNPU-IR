@@ -16,13 +16,12 @@
 
 **重要说明**：
 
-如需保留当前CANN版本不做升级替换，又想使用AscendNPU IR的新特性，可以从新版CANN工具包中提取AscendNPU IR组件，将当前CANN包中的NPUIR进行版本替换。参考步骤如下：
+如需保留当前CANN版本不做升级替换，又想使用AscendNPU IR的新特性，可以从新版CANN工具包中提取AscendNPU IR组件，将当前CANN包中的AscendNPU IR进行版本替换。参考步骤如下：
 
 ```bash
-# 本示例：在CANN 8.5.0安装中，将其NPUIR替换为CANN 9.0.0包中的版本
+# 本示例：在CANN 8.5.0安装中，将其AscendNPU IR替换为CANN 9.0.0包中的版本
 # 1. 准备变量：新版CANN包路径（<arch>按实际架构填写，如x86_64）、临时解压目录、当前CANN安装路径
-NEW_CANN_PKG="PATH-TO/Ascend-cann-toolkit_9.0.0_linux-<arch>.run"
-NEW_CANN_PKG="PATH-TO/Ascend-cann-toolkit_9.0.0_linux-aarch64.run"
+NEW_CANN_PKG="PATH-TO/Ascend-cann_9.0.0_linux-<arch>.run"
 TMP_PATH="tmp_pkg_files"
 OLD_CANN_PATH="${CANN_850_PATH}/Ascend/cann-8.5.0"
 

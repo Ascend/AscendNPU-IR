@@ -7,29 +7,31 @@ BiShengIR编译器通过一系列命令行编译选项控制编译流程、功�
 **适用产品**：
 
 - Ascend 950PR&950DT 系列产品
-- Ascend A2/A3 系列产品
+- Atlas A2 系列产品
+- Atlas A3 系列产品
 
-| 选项名 | 描述 | 类型 | 默认值 | 备注 |
-|--------|------|------|--------|----------|
-| --enable-triton-kernel-compile | 启用Triton内核编译功能 | bool | false |  |
-| --enable-torch-compile | 启用Torch-MLIR编译功能 | bool | false（仅在定义`BISHENGIR_ENABLE_TORCH_CONVERSIONS`编译宏时提供该选项） | A2/A3 Only  |
-| --enable-hivm-compile | 启用BiShengHIR HIVM编译功能 | bool | true |  |
-| --enable-hfusion-compile | 启用BiShengHIR HFusion编译功能 | bool | false |  |
-| --enable-symbol-analysis | 启用符号分析功能 | bool | false | A2/A3 Only  |
-| --enable-multi-kernel | 关闭时计算图必须融合为单个内核；开启时支持外提生成多个内核 | bool | false | A2/A3 Only  |
-| --enable-manage-host-resources | 启用主机函数的资源管理功能 | bool | false | A2/A3 Only  |
-| --ensure-no-implicit-broadcast | 是否确保不存在隐式广播语义。若存在动态维度到动态维度的广播，将触发运行时错误 | bool | false（仅在定义`BISHENGIR_ENABLE_TORCH_CONVERSIONS`编译宏时提供该选项） | A2/A3 Only  |
-| --disable-auto-inject-block-sync | 禁用`injectBlockSync` Pass自动生成块同步`wait/set`指令 | bool | false |  |
-| --enable-hivm-graph-sync-solver | 使用HIVM计算图同步求解器替代同步注入机制 | bool | true |  |
-| --disable-auto-cv-work-space-manage | 需与`disableAutoInjectBlockSync`选项搭配使用 | bool | false | A2/A3 Only |
-| --disable-hivm-tensor-compile | 禁用BiShengHIR HIVM张量编译功能 | bool | false | A2/A3 Only |
+| 选项名 | 描述 | 类型 | 默认值 |
+|--------|------|------|--------|
+| --enable-triton-kernel-compile | 启用Triton内核编译功能 | bool | false |
+| --enable-torch-compile | 启用Torch-MLIR编译功能（A2/A3 Only） | bool | false（仅在定义`BISHENGIR_ENABLE_TORCH_CONVERSIONS`编译宏时提供该选项） |
+| --enable-hivm-compile | 启用BiShengHIR HIVM编译功能 | bool | true |
+| --enable-hfusion-compile | 启用BiShengHIR HFusion编译功能 | bool | false |
+| --enable-symbol-analysis | 启用符号分析功能（A2/A3 Only） | bool | false |
+| --enable-multi-kernel | 关闭时计算图必须融合为单个内核；开启时支持外提生成多个内核（A2/A3 Only） | bool | false |
+| --enable-manage-host-resources | 启用主机函数的资源管理功能（A2/A3 Only） | bool | false |
+| --ensure-no-implicit-broadcast | 是否确保不存在隐式广播语义。若存在动态维度到动态维度的广播，将触发运行时错误（A2/A3 Only） | bool | false（仅在定义`BISHENGIR_ENABLE_TORCH_CONVERSIONS`编译宏时提供该选项） |
+| --disable-auto-inject-block-sync | 禁用`injectBlockSync` Pass自动生成块同步`wait/set`指令 | bool | false |
+| --enable-hivm-graph-sync-solver | 使用HIVM计算图同步求解器替代同步注入机制 | bool | true |
+| --disable-auto-cv-work-space-manage | 需与`disableAutoInjectBlockSync`选项搭配使用（A2/A3 Only） | bool | false |
+| --disable-hivm-tensor-compile | 禁用BiShengHIR HIVM张量编译功能（A2/A3 Only） | bool | false |
 
 ## BiShengIR通用优化选项
 
 **适用产品**：
 
 - Ascend 950PR&950DT 系列产品
-- Ascend A2/A3 系列产品
+- Atlas A2 系列产品
+- Atlas A3 系列产品
 
 | 选项名 | 描述 | 类型 | 默认值 |
 |--------|------|------|--------|
@@ -43,23 +45,25 @@ BiShengIR编译器通过一系列命令行编译选项控制编译流程、功�
 **适用产品**：
 
 - Ascend 950PR&950DT 系列产品
-- Ascend A2/A3 系列产品
+- Atlas A2 系列产品
+- Atlas A3 系列产品
 
 | 选项名 | 描述 | 类型 | 默认值 |
 |--------|------|------|--------|
-| --enable-deterministic-computing | 开启时计算结果具备确定性；关闭时将启用额外优化以提升性能（例如将规约操作绑定到多个核心执行），但计算结果将不具备确定性 | bool | true |
+| --enable-deterministic-computing | 开启时计算结果具备确定性；关闭时将启用额外优化以提升性能（例如将规约操作绑定到多个核心执行），但计算结果将不具备确定性（A2/A3 Only） | bool | true |
 | --enable-ops-reorder | 在优化流水线中启用算子重排优化 | bool | true |
-| --hfusion-max-horizontal-fusion-size=\<int> | 水平融合的最大尝试次数（默认无限制） | int32_t | -1 |
-| --hfusion-max-buffer-count-tuning=\<long> | HFusion自动调度中的最大缓冲区数量调优阈值 | int64_t | 0 |
-| --cube-tiling-tuning=\<long> | HFusion自动调度中的Cube分块尺寸调优参数 | list int64_t | "" |
-| --enable-hfusion-count-buffer-dma-opt | 开启后，DMA操作使用的缓冲区不会被向量运算复用 | bool | false |
+| --hfusion-max-horizontal-fusion-size=\<int> | 水平融合的最大尝试次数（默认无限制）（A2/A3 Only） | int32_t | -1 |
+| --hfusion-max-buffer-count-tuning=\<long> | HFusion自动调度中的最大缓冲区数量调优阈值（A2/A3 Only） | int64_t | 0 |
+| --cube-tiling-tuning=\<long> | HFusion自动调度中的Cube分块尺寸调优参数（A2/A3 Only） | list int64_t | "" |
+| --enable-hfusion-count-buffer-dma-opt | 开启后，DMA操作使用的缓冲区不会被向量运算复用（A2/A3 Only） | bool | false |
 
 ## BiShengIR HIVM优化选项
 
 **适用产品**：
 
 - Ascend 950PR&950DT 系列产品
-- Ascend A2/A3 系列产品
+- Atlas A2 系列产品
+- Atlas A3 系列产品
 
 | 选项名 | 描述 | 类型 | 默认值 |
 |--------|------|------|--------|
@@ -77,8 +81,9 @@ AI处理器型号及对应查询方式如下：
 
 **适用产品**：
 
-- Ascend 950PR/Ascend 950DT
-- Atlas A3训练系列产品 / Atlas A3推理系列产品
+- Ascend 950PR&950DT 系列产品
+- Atlas A2 系列产品
+- Atlas A3 系列产品
 
 在安装AI处理器的服务器上执行该命令，获取**Chip Name**和**NPU Name**信息，实际配置值为`<Chip Name>_<NPU Name>`。示例：若Chip Name为`Ascendxxx`、NPU Name为`yyy`，则配置值为`Ascendxxx_yyy`。
 
