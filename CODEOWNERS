@@ -231,3 +231,17 @@
 
 # stride align.
 /bishengir/**/AlignBuffer/ @codeer1 @lingfei_wu @hid90099092 @tanshengshun
+
+
+# vf shallow fusion.
+/bishengir/**/MergeVecScope.* @ciggaco @lingfei_wu @hid90099092 @tanshengshun
+
+# normalize.
+/bishengir/**/LegalizeBool.* @ciggaco @xiechenye @lingfei_wu @hid90099092 @tanshengshun
+/bishengir/**/LegalizeScalar.* @ciggaco @xiechenye @lingfei_wu @hid90099092 @tanshengshun
+/bishengir/**/LegalizeBF16.* @ciggaco @xiechenye @lingfei_wu @hid90099092 @tanshengshun
+/bishengir/**/LegalizeFP8.* @ciggaco @xiechenye @lingfei_wu @hid90099092 @tanshengshun
+/bishengir/**/NormalizeSliceOps.* @ciggaco @xiechenye @lingfei_wu @hid90099092 @tanshengshun
+/bishengir/**/HFusion/Transforms/regbase/Normalize/ @ciggaco @xiechenye @lingfei_wu @hid90099092 @tanshengshun
+/bishengir/**/HFusion/Transforms/regbase/Normalize*.h @ciggaco @xiechenye @lingfei_wu @hid90099092 @tanshengshun
+/bishengir/**/HFusion/regbase/Normalize/ @ciggaco @xiechenye @lingfei_wu @hid90099092 @tanshengshun
