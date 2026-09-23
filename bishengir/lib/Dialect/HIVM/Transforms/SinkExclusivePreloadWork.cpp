@@ -21,16 +21,18 @@
 // matching cube anchors.
 //
 // Unified rule: if load / VF / copy in a VECTOR is not read by the next
-// CUBE, move the exclusive chain past that cube so it sits next to the
-// mmad (or the VECTOR that feeds it). Sitting next to the consumer already
-// means there is no intervening unused mmad, so the chain stays.
+// CUBE (the nearest later CUBE, other scopes may sit in between), move
+// the exclusive chain to the first scope after that CUBE that consumes
+// the produced data. Scopes are considered from last to first so a sunk
+// consumer can pull an earlier producer on the next pass.
 //
-// Exclusive dest / src clusters (returned tensor or leftover memref,
-// DPS writer, to_tensor, hir.load through a subview, address arith,
-// expand) move into the unique later VECTOR consumer. An unused CUBE
-// between producer and consumer does not keep the MTE2 load behind.
-// A CUBE consumer is left to the copy-chain sink so VECTOR ops are not
-// inserted into a cube scope.
+// A VECTOR consumer receives the cluster. Several VECTOR consumers: the
+// first one, and the value is returned again for later users. A CUBE
+// consumer does not receive VECTOR ops; the cluster moves into the
+// VECTOR immediately before the first consuming CUBE. No later CUBE, a
+// user that still sits before that destination, or a CUBE that consumes
+// the return while the producer is already the VECTOR in front of it,
+// keeps the cluster. Cross-core preload distance is still preserved.
 //
 // A load → VF → hir.copy chain that writes a loop-level buffer for a later
 // mmad is the same rule: unused intervening mmad → move the whole chain
@@ -261,25 +263,6 @@ rebuildScopeLeavingOps(scope::ScopeOp oldScope, ArrayRef<Value> newReturns,
   return newScope;
 }
 
-/// Unique for-body scope that uses `scopeRes`, and it must sit after
-/// `producer`. Multiple user scopes or a use outside any sibling scope
-/// (e.g. `scf.yield`) reject the move.
-static scope::ScopeOp uniqueLaterUserScope(Value scopeRes,
-                                           scope::ScopeOp producer,
-                                           scf::ForOp forOp) {
-  scope::ScopeOp found;
-  for (Operation *user : scopeRes.getUsers()) {
-    auto scope = enclosingForBodyScope(user, forOp);
-    if (!scope || scope == producer)
-      return nullptr;
-    if (!producer->isBeforeInBlock(scope))
-      return nullptr;
-    if (found && found != scope)
-      return nullptr;
-    found = scope;
-  }
-  return found;
-}
 
 static bool isProducerLocalEmpty(Value v, scope::ScopeOp producer) {
   auto empty = v.getDefiningOp<tensor::EmptyOp>();
@@ -614,11 +597,163 @@ static bool changesCrossCoreDistance(ArrayRef<Operation *> cluster,
   return false;
 }
 
-/// Move exclusive returned tensor / leftover-memref clusters into the
-/// unique later VECTOR consumer, including MTE2 load through a subview.
-/// Shared tensor.empty stays in the producer; the consumer gets a fresh
-/// empty. Scalar extras are cloned (not returned). Runs to a fixpoint so
-/// a forwarded leftover can be sunk on the next iteration.
+/// True when `scope` reads or writes `v`, including through a view /
+/// to_tensor / extract_slice that still carries the returned value.
+static bool valueUsedInsideScope(Value v, scope::ScopeOp scope) {
+  SmallVector<Value> work = {v};
+  DenseSet<Value> seen;
+  while (!work.empty()) {
+    Value cur = work.pop_back_val();
+    if (!seen.insert(cur).second)
+      continue;
+    for (Operation *user : cur.getUsers()) {
+      if (isa<annotation::MarkOp>(user))
+        continue;
+      if (scope->isAncestor(user))
+        return true;
+      if (isViewLikeMemrefOp(user) ||
+          isa<bufferization::ToTensorOp, tensor::ExtractSliceOp,
+              tensor::ExpandShapeOp, tensor::CollapseShapeOp>(user)) {
+        for (Value res : user->getResults())
+          work.push_back(res);
+      }
+    }
+  }
+  return false;
+}
+
+static scope::ScopeOp firstLaterCubeScope(scope::ScopeOp producer) {
+  for (Operation *op = producer->getNextNode(); op; op = op->getNextNode()) {
+    auto scope = dyn_cast<scope::ScopeOp>(op);
+    if (scope && scopeBlocksCopySink(scope))
+      return scope;
+  }
+  return nullptr;
+}
+
+static scope::ScopeOp vectorScopeImmediatelyBefore(scope::ScopeOp cube) {
+  for (Operation *op = cube->getPrevNode(); op; op = op->getPrevNode()) {
+    auto scope = dyn_cast<scope::ScopeOp>(op);
+    if (!scope)
+      continue;
+    if (scopeBlocksCopySink(scope))
+      return nullptr;
+    return scope;
+  }
+  return nullptr;
+}
+
+/// Earliest for-body scope after `after` that uses `scopeRes`.
+static scope::ScopeOp firstConsumingScopeAfter(scope::ScopeOp after,
+                                               Value scopeRes,
+                                               scf::ForOp forOp) {
+  scope::ScopeOp first;
+  for (Operation *user : scopeRes.getUsers()) {
+    auto scope = enclosingForBodyScope(user, forOp);
+    if (!scope || !after->isBeforeInBlock(scope))
+      continue;
+    if (!first || scope->isBeforeInBlock(first))
+      first = scope;
+  }
+  return first;
+}
+
+/// A use in `producer`, outside the for-body scopes, or strictly before
+/// `dest` cannot see a value defined in `dest`.
+static bool hasUserBefore(Value scopeRes, scope::ScopeOp dest,
+                          scope::ScopeOp producer, scf::ForOp forOp) {
+  for (Operation *user : scopeRes.getUsers()) {
+    auto scope = enclosingForBodyScope(user, forOp);
+    if (!scope || scope == producer || scope->isBeforeInBlock(dest))
+      return true;
+  }
+  return false;
+}
+
+/// VECTOR producer only. Cross the nearest later CUBE when it does not
+/// consume `scopeRes`, and land in the first consumer after that CUBE.
+/// A VECTOR consumer takes the cluster; a CUBE consumer takes the VECTOR
+/// immediately in front of it. The nearest CUBE itself consuming the
+/// return uses that same "VECTOR in front" slot, and only when it is
+/// strictly after `producer`.
+static scope::ScopeOp returnedTensorSinkTarget(scope::ScopeOp producer,
+                                               Value scopeRes,
+                                               scf::ForOp forOp) {
+  if (scopeBlocksCopySink(producer))
+    return nullptr;
+  scope::ScopeOp cube = firstLaterCubeScope(producer);
+  if (!cube)
+    return nullptr;
+
+  scope::ScopeOp dest;
+  if (valueUsedInsideScope(scopeRes, cube)) {
+    dest = vectorScopeImmediatelyBefore(cube);
+  } else {
+    scope::ScopeOp consumer = firstConsumingScopeAfter(cube, scopeRes, forOp);
+    if (!consumer)
+      return nullptr;
+    dest = scopeBlocksCopySink(consumer)
+               ? vectorScopeImmediatelyBefore(consumer)
+               : consumer;
+  }
+  if (!dest || dest == producer || !producer->isBeforeInBlock(dest))
+    return nullptr;
+  if (scopeBlocksCopySink(dest))
+    return nullptr;
+  if (hasUserBefore(scopeRes, dest, producer, forOp))
+    return nullptr;
+  return dest;
+}
+
+/// Later users of a value that now lives in `consumer` must read a scope
+/// result. Append `inner` to the return when it is not already yielded.
+static scope::ScopeOp exportSunkValueToLaterUsers(scope::ScopeOp consumer,
+                                                  Value inner,
+                                                  scope::ScopeOp producer) {
+  SmallVector<Operation *> outside;
+  for (Operation *user : inner.getUsers()) {
+    if (consumer->isAncestor(user) || producer->isAncestor(user))
+      continue;
+    outside.push_back(user);
+  }
+  if (outside.empty())
+    return consumer;
+
+  auto ret =
+      dyn_cast<scope::ReturnOp>(consumer.getRegion().front().getTerminator());
+  if (!ret)
+    return consumer;
+  auto rewire = [&](Value exported) {
+    for (Operation *user : outside) {
+      for (OpOperand &use : user->getOpOperands()) {
+        if (use.get() == inner)
+          use.set(exported);
+      }
+    }
+  };
+  for (auto [idx, operand] : llvm::enumerate(ret.getOperands())) {
+    if (operand != inner)
+      continue;
+    rewire(consumer.getResult(idx));
+    return consumer;
+  }
+
+  SmallVector<Value> rets(ret.getOperands().begin(), ret.getOperands().end());
+  rets.push_back(inner);
+  DenseSet<Operation *> none;
+  scope::ScopeOp rebuilt = rebuildScopeLeavingOps(consumer, rets, none);
+  rewire(rebuilt.getResult(rets.size() - 1));
+  consumer.erase();
+  return rebuilt;
+}
+
+/// Move exclusive returned tensor / leftover-memref clusters to the first
+/// consumer after the nearest later CUBE that does not consume the return,
+/// including MTE2 load through a subview. A CUBE consumer receives the
+/// cluster in the VECTOR immediately before it. Shared tensor.empty stays
+/// in the producer; the consumer gets a fresh empty. Scalar extras are
+/// cloned (not returned). Producers are visited last-to-first, and the
+/// walk repeats so an earlier producer can follow a sunk consumer.
 static LogicalResult sinkReturnedTensorsToConsumerImpl(scf::ForOp forOp) {
   for (int iter = 0; iter < 32; ++iter) {
     SmallVector<scope::ScopeOp> scopes;
@@ -628,7 +763,9 @@ static LogicalResult sinkReturnedTensorsToConsumerImpl(scf::ForOp forOp) {
     }
 
     bool changed = false;
-    for (scope::ScopeOp producer : scopes) {
+    // Last scope first: sinking a later consumer moves the use, so an
+    // earlier producer can follow into that same scope on the next pass.
+    for (scope::ScopeOp producer : llvm::reverse(scopes)) {
       if (!producer->getBlock())
         continue;
       auto ret = dyn_cast<scope::ReturnOp>(
@@ -652,7 +789,7 @@ static LogicalResult sinkReturnedTensorsToConsumerImpl(scf::ForOp forOp) {
         if (!isa<RankedTensorType, MemRefType>(retVal.getType()))
           continue;
         Value scopeRes = producer.getResult(idx);
-        auto consumer = uniqueLaterUserScope(scopeRes, producer, forOp);
+        auto consumer = returnedTensorSinkTarget(producer, scopeRes, forOp);
         if (!consumer)
           continue;
 
@@ -663,9 +800,8 @@ static LogicalResult sinkReturnedTensorsToConsumerImpl(scf::ForOp forOp) {
                                              destEmpties, extras))
           continue;
         collectForwardedDepsForScalarExtras(producer, extras);
-        // VECTOR ops stay out of CUBE scopes. Copy-chain sink places
-        // load→VF→copy next to a later mmad; a returned tensor whose
-        // only user is a cube is left here.
+        // VECTOR ops stay out of CUBE scopes. A CUBE consumer is rewritten
+        // to the VECTOR in front of it before we get here.
         if (scopeBlocksCopySink(consumer))
           continue;
         if (cluster.empty())
@@ -773,6 +909,18 @@ static LogicalResult sinkReturnedTensorsToConsumerImpl(scf::ForOp forOp) {
             continue;
           erasePreloadLocalMark(alloc.getResult());
         }
+      }
+
+      // A CUBE consumer, or a later VECTOR, still needs the sunk value as
+      // a scope result of the first consumer.
+      DenseMap<Operation *, scope::ScopeOp> liveConsumer;
+      for (Move &m : moves) {
+        Operation *key = m.consumer.getOperation();
+        scope::ScopeOp current = liveConsumer.lookup(key);
+        if (!current)
+          current = m.consumer;
+        liveConsumer[key] =
+            exportSunkValueToLaterUsers(current, m.dest, producer);
       }
 
       producer.erase();
