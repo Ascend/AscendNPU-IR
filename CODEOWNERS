@@ -120,3 +120,58 @@
 
 /bishengir/hivmc @huchengbei @hid90099092 @tanshengshun
 
+# AVE Loop Optimization.
+/bishengir/**/HIVMAVE/**/AveLoopOptimize.* @wzy_00889928 @lingfei_wu @Jiangjiji0527 @hid90099092 @tanshengshun
+/bishengir/**/HIVMAVE/**/AveLoopAnalysis.* @wzy_00889928 @lingfei_wu @Jiangjiji0527 @hid90099092 @tanshengshun
+/bishengir/**/HIVMAVE/CostModelInfo/ @wzy_00889928 @lingfei_wu @Jiangjiji0527 @hid90099092 @tanshengshun
+/bishengir/test/Dialect/HIVMAVE/ave-loop-optimize* @wzy_00889928 @lingfei_wu @Jiangjiji0527 @hid90099092 @tanshengshun
+
+# AVE i1 UB LD/ST.
+/bishengir/**/HIVMAVE/**/I1opSoftImpl.* @lrb @lingfei_wu @Jiangjiji0527 @hid90099092 @tanshengshun
+/bishengir/test/Dialect/HIVMAVE/i1op-soft-impl* @lrb @lingfei_wu @Jiangjiji0527 @hid90099092 @tanshengshun
+/bishengir/test/Dialect/HIVMAVE/avenormalize_i1_* @lrb @lingfei_wu @Jiangjiji0527 @hid90099092 @tanshengshun
+
+# AVE Layout Optimization.
+/bishengir/**/HIVMAVE/Analyze/ @lijiawei_123 @wzy_00889928 @lingfei_wu @Jiangjiji0527 @hid90099092 @tanshengshun
+/bishengir/test/Dialect/HIVMAVE/analyze-vector-layout* @lijiawei_123 @wzy_00889928 @lingfei_wu @Jiangjiji0527 @hid90099092 @tanshengshun
+/bishengir/test/Dialect/HIVMAVE/vector-layout* @lijiawei_123 @wzy_00889928 @lingfei_wu @Jiangjiji0527 @hid90099092 @tanshengshun
+# Normalization handles both vector layouts and i1 UB loads/stores:
+/bishengir/**/HIVMAVE/**/AVENormalizeOps.* @lijiawei_123 @wzy_00889928 @lrb @lingfei_wu @Jiangjiji0527 @hid90099092 @tanshengshun
+
+# AVE Mask derivation.
+/bishengir/**/AnalyzeArithVectorMask.* @Jiangjiji0527 @linyudong @lingfei_wu @hid90099092 @tanshengshun
+/bishengir/test/Dialect/HIVM/TransformOps/analyze-arith-vector-mask* @Jiangjiji0527 @linyudong @lingfei_wu @hid90099092 @tanshengshun
+
+# AVE Reduce Binary Search Optimization.
+/bishengir/**/HIVMAVE/**/OptimizeReductionLoop.* @wanghuihui @linyudong @lingfei_wu @Jiangjiji0527 @hid90099092 @tanshengshun
+/bishengir/test/Dialect/HIVMAVE/optimize-reduction-loop* @wanghuihui @linyudong @lingfei_wu @Jiangjiji0527 @hid90099092 @tanshengshun
+
+# AVE VSSTB.
+/bishengir/**/HIVMAVE/**/ProcessVsstb.* @linyudong @wanghuihui @lingfei_wu @Jiangjiji0527 @hid90099092 @tanshengshun
+/bishengir/test/Dialect/HIVMAVE/process-vsstb* @linyudong @wanghuihui @lingfei_wu @Jiangjiji0527 @hid90099092 @tanshengshun
+
+# AVE TO-AVE.
+/bishengir/**/Conversion/VectorToHIVMAVE/ @jiadiliu @lrb @lingfei_wu @Jiangjiji0527 @hid90099092 @tanshengshun
+/bishengir/**/Conversion/ArithToHIVMAVE/ @jiadiliu @lrb @lingfei_wu @Jiangjiji0527 @hid90099092 @tanshengshun
+/bishengir/test/Dialect/HIVM/vector-transferop-to-hivm-aveop* @jiadiliu @lrb @lingfei_wu @Jiangjiji0527 @hid90099092 @tanshengshun
+
+# AVE TO-AVE-intrinsic.
+/bishengir/**/Conversion/HIVMAVEToAVEIntrin/ @wzy_00889928 @Mark-chen @lingfei_wu @Jiangjiji0527 @hid90099092 @tanshengshun
+/bishengir/test/Dialect/HIVMAVE/convert-hivmave-to-ave-intrin* @wzy_00889928 @Mark-chen @lingfei_wu @Jiangjiji0527 @hid90099092 @tanshengshun
+
+# AVE To Template Library.
+/bishengir/**/Conversion/HIVMAVEToStandard/ @Mark-chen @wanghuihui @lingfei_wu @Jiangjiji0527 @hid90099092 @tanshengshun
+/bishengir/**/HIVMAVE/Interfaces/AVELibraryFunctionOpInterface.* @Mark-chen @wanghuihui @lingfei_wu @Jiangjiji0527 @hid90099092 @tanshengshun
+# This test covers both template-library and intrinsic lowering:
+/bishengir/test/Dialect/HIVMAVE/convert-hivmave-to-ave-intrin-5.mlir @Mark-chen @wanghuihui @wzy_00889928 @lingfei_wu @Jiangjiji0527 @hid90099092 @tanshengshun
+
+# AVE Instruction Optimization.
+/bishengir/**/HIVMAVE/**/CombineAVEOPs.* @zzhengxiang @Mark-chen @lingfei_wu @Jiangjiji0527 @hid90099092 @tanshengshun
+/bishengir/**/HIVMAVE/**/LegalizeOptHIVMAVE.* @zzhengxiang @Mark-chen @lingfei_wu @Jiangjiji0527 @hid90099092 @tanshengshun
+/bishengir/**/HIVMAVE/**/ReplaceWithVectorScalar.* @zzhengxiang @Mark-chen @lingfei_wu @Jiangjiji0527 @hid90099092 @tanshengshun
+/bishengir/**/HIVMAVE/**/ScalarBroadcastToVLoad.* @zzhengxiang @Mark-chen @lingfei_wu @Jiangjiji0527 @hid90099092 @tanshengshun
+/bishengir/**/HIVMAVE/**/PLTToPGE.* @zzhengxiang @Mark-chen @lingfei_wu @Jiangjiji0527 @hid90099092 @tanshengshun
+/bishengir/**/HIVMAVE/**/PLTToPLTM.* @zzhengxiang @Mark-chen @lingfei_wu @Jiangjiji0527 @hid90099092 @tanshengshun
+/bishengir/**/HIVMAVE/**/HoistVstas.* @zzhengxiang @Mark-chen @lingfei_wu @Jiangjiji0527 @hid90099092 @tanshengshun
+/bishengir/**/HIVMAVE/**/DuplicateUnitMaskBroadcast.* @zzhengxiang @Mark-chen @lingfei_wu @Jiangjiji0527 @hid90099092 @tanshengshun
+/bishengir/test/Dialect/HIVMAVE/duplicate-unit-mask-broadcast* @zzhengxiang @Mark-chen @lingfei_wu @Jiangjiji0527 @hid90099092 @tanshengshun
