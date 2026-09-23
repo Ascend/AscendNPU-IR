@@ -258,38 +258,82 @@ struct InsertConvertLayoutAroundConv : public OpRewritePattern<ConvOpType> {
     if (!op.hasPureTensorSemantics())
       return rewriter.notifyMatchFailure(op, "not tensor based");
 
+    int64_t groups = op.getGroups();
+    if (groups <= 0)
+      return rewriter.notifyMatchFailure(op, "invalid groups");
+
     Value input = op.getInput();
     auto inputType = dyn_cast<RankedTensorType>(input.getType());
-    if (!inputType || !inputType.hasStaticShape() || inputType.getRank() != 4)
+    Value weight = op.getWeight();
+    auto weightType = dyn_cast<RankedTensorType>(weight.getType());
+    bool convertInput = inputType && inputType.hasStaticShape() &&
+                        inputType.getRank() == 4;
+    bool convertWeight = weightType && weightType.hasStaticShape() &&
+                         weightType.getRank() == 4;
+    if (!convertInput && !convertWeight)
+      return rewriter.notifyMatchFailure(
+          op, "neither input nor weight is static rank-4 NCHW");
+    if (convertInput &&
+        !isa<Float16Type, BFloat16Type, Float32Type>(
+            inputType.getElementType()))
       return rewriter.notifyMatchFailure(op,
-                                         "input is not static rank-4 NCHW");
-    Type elementType = inputType.getElementType();
-    if (!isa<Float16Type, BFloat16Type, Float32Type>(elementType))
-      return rewriter.notifyMatchFailure(op, "unsupported input element type");
-
-    int64_t groups = op.getGroups();
-    int64_t channels = inputType.getDimSize(1);
-    if (groups <= 0 || channels % groups != 0)
+                                         "unsupported input element type");
+    if (convertInput && inputType.getDimSize(1) % groups != 0)
       return rewriter.notifyMatchFailure(op, "invalid grouped channels");
+    if (convertWeight &&
+        !isa<Float16Type, BFloat16Type, Float32Type>(
+            weightType.getElementType()))
+      return rewriter.notifyMatchFailure(op,
+                                         "unsupported weight element type");
+    if (convertWeight && weightType.getDimSize(0) % groups != 0)
+      return rewriter.notifyMatchFailure(op,
+                                         "invalid grouped output channels");
 
-    int64_t c0 = elementType.isF32() ? 8 : 16;
-    int64_t channelsPerGroup = channels / groups;
-    int64_t c1PerGroup = (channelsPerGroup + c0 - 1) / c0;
-    SmallVector<int64_t> outputShape{
-        inputType.getDimSize(0), groups * c1PerGroup,
-        inputType.getDimSize(2), inputType.getDimSize(3), c0};
-    auto outputType = RankedTensorType::get(outputShape, elementType);
     auto srcLayout =
         DataLayoutAttr::get(rewriter.getContext(), hivm::DataLayout::NCHW);
-    auto dstLayout =
-        DataLayoutAttr::get(rewriter.getContext(), hivm::DataLayout::NC1HWC0);
-
     rewriter.setInsertionPoint(op);
-    auto converted = rewriter.create<ConvertLayoutOp>(
-        op.getLoc(), outputType, input, srcLayout, dstLayout);
-    converted->setAttr("groups", rewriter.getI64IntegerAttr(groups));
-    rewriter.modifyOpInPlace(
-        op, [&]() { op.getInputMutable().assign(converted.getResult()); });
+
+    if (convertInput) {
+      Type elementType = inputType.getElementType();
+      int64_t channels = inputType.getDimSize(1);
+      int64_t c0 = mlir::utils::getNumPerBlock(elementType);
+      int64_t channelsPerGroup = channels / groups;
+      int64_t c1PerGroup = (channelsPerGroup + c0 - 1) / c0;
+      SmallVector<int64_t> outputShape{
+          inputType.getDimSize(0), groups * c1PerGroup,
+          inputType.getDimSize(2), inputType.getDimSize(3), c0};
+      auto outputType = RankedTensorType::get(outputShape, elementType);
+      auto dstLayout = DataLayoutAttr::get(rewriter.getContext(),
+                                           hivm::DataLayout::NC1HWC0);
+      auto converted = rewriter.create<ConvertLayoutOp>(
+          op.getLoc(), outputType, input, srcLayout, dstLayout);
+      converted->setDiscardableAttr(kConvolutionGroupsAttrName,
+                                    rewriter.getI64IntegerAttr(groups));
+      rewriter.modifyOpInPlace(
+          op, [&]() { op.getInputMutable().assign(converted.getResult()); });
+    }
+
+    if (convertWeight) {
+      Type elementType = weightType.getElementType();
+      int64_t outputChannels = weightType.getDimSize(0);
+      int64_t c0 = mlir::utils::getNumPerBlock(elementType);
+      int64_t c1 = (weightType.getDimSize(1) + c0 - 1) / c0;
+      int64_t outputChannelsPerGroup = outputChannels / groups;
+      int64_t alignedOutputChannelsPerGroup =
+          CEIL_FACTOR(outputChannelsPerGroup, utils::FRACTAL_BLOCK_NUM);
+      SmallVector<int64_t> outputShape{
+          c1, weightType.getDimSize(2), weightType.getDimSize(3),
+          groups * alignedOutputChannelsPerGroup, c0};
+      auto outputType = RankedTensorType::get(outputShape, elementType);
+      auto dstLayout = DataLayoutAttr::get(rewriter.getContext(),
+                                           hivm::DataLayout::C1HWNC0);
+      auto converted = rewriter.create<ConvertLayoutOp>(
+          op.getLoc(), outputType, weight, srcLayout, dstLayout);
+      converted->setDiscardableAttr(kConvolutionGroupsAttrName,
+                                    rewriter.getI64IntegerAttr(groups));
+      rewriter.modifyOpInPlace(
+          op, [&]() { op.getWeightMutable().assign(converted.getResult()); });
+    }
     return success();
   }
 };

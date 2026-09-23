@@ -21,10 +21,42 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
         : memref<1x30x8x8xf16>
     %converted = hivm.hir.convert_layout %input
         output_shape [1, 2, 8, 8, 16]
-        {dstLayout = #hivm.data_layout<NC1HWC0>, groups = 2 : i64,
+        {convolution_groups = 2 : i64,
+         dstLayout = #hivm.data_layout<NC1HWC0>,
          srcLayout = #hivm.data_layout<NCHW>}
         : (tensor<1x30x8x8xf16>) -> tensor<1x2x8x8x16xf16>
     return %converted : tensor<1x2x8x8x16xf16>
+  }
+}
+
+// -----
+
+// CHECK-LABEL: func.func @fold_direct_load_to_nchw2c1hwnc0(
+// CHECK-NOT: hivm.hir.load
+// CHECK-NOT: hivm.hir.convert_layout
+// CHECK: %[[DST:.*]] = memref.alloc() : memref<1x3x3x32x16xf16>
+// CHECK: hivm.hir.nchw2c1hwnc0
+// CHECK-SAME: {groups = 2 : i64}
+// CHECK-SAME: ins(%{{.*}} : memref<30x15x3x3xf16, strided<[135, 9, 3, 1]>>)
+// CHECK-SAME: outs(%[[DST]] : memref<1x3x3x32x16xf16>)
+// CHECK: %[[RESULT:.*]] = bufferization.to_tensor %[[DST]] restrict writable
+// CHECK: return %[[RESULT]] : tensor<1x3x3x32x16xf16>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @fold_direct_load_to_nchw2c1hwnc0(
+      %src: memref<30x15x3x3xf16, strided<[135, 9, 3, 1]>>) -> tensor<1x3x3x32x16xf16> {
+    %alloc = memref.alloc() : memref<30x15x3x3xf16>
+    hivm.hir.load
+        ins(%src : memref<30x15x3x3xf16, strided<[135, 9, 3, 1]>>)
+        outs(%alloc : memref<30x15x3x3xf16>)
+    %weight = bufferization.to_tensor %alloc restrict writable
+        : memref<30x15x3x3xf16>
+    %converted = hivm.hir.convert_layout %weight
+        output_shape [1, 3, 3, 32, 16]
+        {convolution_groups = 2 : i64,
+         dstLayout = #hivm.data_layout<C1HWNC0>,
+         srcLayout = #hivm.data_layout<NCHW>}
+        : (tensor<30x15x3x3xf16>) -> tensor<1x3x3x32x16xf16>
+    return %converted : tensor<1x3x3x32x16xf16>
   }
 }
 

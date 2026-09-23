@@ -116,9 +116,13 @@ bool isNCHW2NC1HWC0Conversion(ConvertLayoutOp op) {
          op.getDstLayout().getDataLayout() == DataLayout::NC1HWC0;
 }
 
-LogicalResult verifyNCHW2NC1HWC0Load(LoadOp loadOp,
-                                    PatternRewriter &rewriter,
-                                    Operation *op) {
+bool isNCHW2C1HWNC0Conversion(ConvertLayoutOp op) {
+  return op.getSrcLayout().getDataLayout() == DataLayout::NCHW &&
+         op.getDstLayout().getDataLayout() == DataLayout::C1HWNC0;
+}
+
+LogicalResult verifyNCHWLoad(LoadOp loadOp, PatternRewriter &rewriter,
+                             Operation *op) {
   if (loadOp.getPadModeAttr() || loadOp.getPadValue() ||
       loadOp.getLeftPaddingNum() || loadOp.getRightPaddingNum() ||
       loadOp.getInitOutBuffer() || loadOp.getInitCondition())
@@ -530,14 +534,46 @@ struct FoldDirectLoadToNCHW2NC1HWC0Pattern
     auto match = matchDirectLoadConvertLayout(op, rewriter);
     if (failed(match))
       return failure();
-    if (failed(verifyNCHW2NC1HWC0Load(match->loadOp, rewriter, op)))
+    if (failed(verifyNCHWLoad(match->loadOp, rewriter, op)))
       return failure();
 
-    auto groupsAttr = op->getAttrOfType<IntegerAttr>("groups");
+    auto groupsAttr = dyn_cast_or_null<IntegerAttr>(
+        op->getDiscardableAttr(kConvolutionGroupsAttrName));
     int64_t groups = groupsAttr ? groupsAttr.getInt() : 1;
     auto createFusedDma = [groups](PatternRewriter &rewriter, Location loc,
                                   LoadOp, Value src, Value dst) {
       rewriter.create<NCHW2NC1HWC0Op>(loc, src, dst,
+                                      rewriter.getI64IntegerAttr(groups));
+    };
+    return rewriteDirectLoadConvertLayout(op, rewriter, *match,
+                                          createFusedDma);
+  }
+};
+
+struct FoldDirectLoadToNCHW2C1HWNC0Pattern
+    : public OpRewritePattern<ConvertLayoutOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(ConvertLayoutOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!isNCHW2C1HWNC0Conversion(op))
+      return rewriter.notifyMatchFailure(op,
+                                         "not an NCHW→C1HWNC0 conversion");
+    ModuleOp module = op->getParentOfType<ModuleOp>();
+    if (!module || !hacc::utils::isAscend950(module))
+      return rewriter.notifyMatchFailure(op, "not an A5 target");
+    auto match = matchDirectLoadConvertLayout(op, rewriter);
+    if (failed(match))
+      return failure();
+    if (failed(verifyNCHWLoad(match->loadOp, rewriter, op)))
+      return failure();
+
+    auto groupsAttr = dyn_cast_or_null<IntegerAttr>(
+        op->getDiscardableAttr(kConvolutionGroupsAttrName));
+    int64_t groups = groupsAttr ? groupsAttr.getInt() : 1;
+    auto createFusedDma = [groups](PatternRewriter &rewriter, Location loc,
+                                  LoadOp, Value src, Value dst) {
+      rewriter.create<NCHW2C1HWNC0Op>(loc, src, dst,
                                       rewriter.getI64IntegerAttr(groups));
     };
     return rewriteDirectLoadConvertLayout(op, rewriter, *match,
@@ -1281,7 +1317,7 @@ void populateCombineOptimizedConvertLayoutPatterns(RewritePatternSet &patterns,
   ConvertLayoutOp::getCanonicalizationPatterns(patterns, context);
   patterns.add<
       FoldDirectLoadToND2NZPattern, FoldDirectLoadToLoadMXScalePattern,
-           FoldDirectLoadToNCHW2NC1HWC0Pattern,
+      FoldDirectLoadToNCHW2NC1HWC0Pattern, FoldDirectLoadToNCHW2C1HWNC0Pattern,
       FoldSubviewLoadToND2NZPattern, FoldSubviewLoadToLoadMXScalePattern,
       FoldFixpipeNz2NzToFractalConvertLayoutPattern,
       FoldTensorLoadToND2NZPattern, FoldTensorLoadToND2NZPattern,
