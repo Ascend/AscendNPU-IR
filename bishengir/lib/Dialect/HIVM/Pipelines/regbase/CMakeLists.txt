@@ -1,4 +1,5 @@
 add_bishengir_dialect_library(BiShengIRHIVMRegbasePipelines
+  AivDisabledPasses.cpp
   HIVMRegbasePipelines.cpp
 
   ADDITIONAL_HEADER_DIRS
@@ -12,6 +13,7 @@ add_bishengir_dialect_library(BiShengIRHIVMRegbasePipelines
   BiShengIRHIVMToStandard
   BiShengIRMemRefExtLowering
   BiShengIRMemRefTransforms
+  BiShengIRPass
   BiShengIRSCFTransforms
   BiShengIRScopeTransforms
   BiShengIRTensorToHIVM
