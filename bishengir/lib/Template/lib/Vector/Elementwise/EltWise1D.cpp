@@ -110,6 +110,26 @@ __aiv__ __attribute__((always_inline)) void normalize_vector_last_axis_1d(
     VectorLastAxisMode *mode) {
   constexpr int num_per_block = INTR_BYTES_PER_BLOCK / sizeof(SRC_T);
   constexpr int new_num_per_block = INTR_BYTES_PER_BLOCK / sizeof(DST_T);
+
+  // tmp_buf is optional: the callers' constraint allows an empty tmp_buf
+  // (scene1: tmp_buf = 0) when no broadcast preprocessing is needed. Check
+  // the need first and bail out early, so a null tmp_buf is never
+  // dereferenced by the unconditional accesses below.
+  if (tmp_buf == nullptr) {
+    bool need_src0_brc =
+        *mode == VectorLastAxisMode::SV ||
+        (*mode != VectorLastAxisMode::SV && src0->sizes[0] != dst->sizes[0] &&
+         src0->sizes[0] == 1);
+    bool need_src1_brc =
+        (*mode == VectorLastAxisMode::VS && !isHardwareSupportedVS<OP>()) ||
+        (*mode != VectorLastAxisMode::V && *mode != VectorLastAxisMode::VS &&
+         src1->sizes[0] != dst->sizes[0] && src1->sizes[0] == 1);
+    if (!need_src0_brc && !need_src1_brc) {
+      *mode = get_preprocessed_mode<OP>(*mode, false, false);
+      return;
+    }
+  }
+
   memref_t<__ubuf__ DST_T, 1> tmp_buf_as_dst_t;
   view_as<SRC_T, DST_T, 1>(tmp_buf, &tmp_buf_as_dst_t);
 
@@ -189,9 +209,10 @@ __aiv__ __attribute__((always_inline)) void normalize_vector_last_axis_1d(
 }
 
 template <VectorOpTy OP, typename T>
-__aiv__ __attribute__((always_inline)) void scalar_eltwise_1d(
-    memref_t<__ubuf__ T, 1> *src0, memref_t<__ubuf__ T, 1> *src1,
-    memref_t<__ubuf__ T, 1> *dst, int64_t size, VectorLastAxisMode mode, T scalar) {
+__aiv__ __attribute__((always_inline)) void
+scalar_eltwise_1d(memref_t<__ubuf__ T, 1> *src0, memref_t<__ubuf__ T, 1> *src1,
+                  memref_t<__ubuf__ T, 1> *dst, int64_t size,
+                  VectorLastAxisMode mode, T scalar) {
 #ifdef ENABLE_CPU_TRACE_INTRINSIC
   WARN_SCALAR_IMPL("eltwise 1d");
 #endif
@@ -203,15 +224,16 @@ __aiv__ __attribute__((always_inline)) void scalar_eltwise_1d(
   int64_t src0_stride0 = 0;
   int64_t src1_stride0 = 0;
   // In some cases, planmemory may cause dst to reuse the address of src.
-  // If dst->offset > src->offset, the result will overwrite src, which causes precision failure.
-  // Therefore, reverse calculation is required.
+  // If dst->offset > src->offset, the result will overwrite src, which causes
+  // precision failure. Therefore, reverse calculation is required.
   bool reverse = false;
-  if (mode == VectorLastAxisMode::VV){
+  if (mode == VectorLastAxisMode::VV) {
     // if sizes==1, set stride=0 so that src_operand will always be that num.
     src0_stride0 = src0->sizes[0] == 1 ? 0 : src0->strides[0];
     src1_stride0 = src1->sizes[0] == 1 ? 0 : src1->strides[0];
-    reverse = (dst->allocated == src0->allocated && dst->offset > src0->offset) ||
-              (dst->allocated == src1->allocated && dst->offset > src1->offset);
+    reverse =
+        (dst->allocated == src0->allocated && dst->offset > src0->offset) ||
+        (dst->allocated == src1->allocated && dst->offset > src1->offset);
   }
   if (mode == VectorLastAxisMode::VS || mode == VectorLastAxisMode::V) {
     src0_stride0 = src0->sizes[0] == 1 ? 0 : src0->strides[0];
@@ -225,7 +247,8 @@ __aiv__ __attribute__((always_inline)) void scalar_eltwise_1d(
     T src0_oprand = T();
     T src1_oprand = T();
     int index0 = reverse ? size - 1 - i : i;
-    if (mode == VectorLastAxisMode::VV || mode == VectorLastAxisMode::VS || mode == VectorLastAxisMode::V) {
+    if (mode == VectorLastAxisMode::VV || mode == VectorLastAxisMode::VS ||
+        mode == VectorLastAxisMode::V) {
       src0_oprand = *(src0_ptr + index0 * src0_stride0);
     } else {
       src0_oprand = scalar;
@@ -235,21 +258,23 @@ __aiv__ __attribute__((always_inline)) void scalar_eltwise_1d(
     } else {
       src1_oprand = scalar;
     }
-    *(dst_ptr + index0 * dst->strides[0]) = handle_vector_operation<OP, T>(src0_oprand, src1_oprand, mode);
+    *(dst_ptr + index0 * dst->strides[0]) =
+        handle_vector_operation<OP, T>(src0_oprand, src1_oprand, mode);
   }
   INTRINSIC(set_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
 }
 
 template <VectorOpTy OP, typename T>
-__aiv__ __attribute__((always_inline)) void eltwise_vv_1d(
-    memref_t<__ubuf__ T, 1> *src0, memref_t<__ubuf__ T, 1> *src1,
-    memref_t<__ubuf__ T, 1> *dst, memref_t<__ubuf__ T, 1> *tmp_buf, VectorLastAxisMode mode) {
+__aiv__ __attribute__((always_inline)) void
+eltwise_vv_1d(memref_t<__ubuf__ T, 1> *src0, memref_t<__ubuf__ T, 1> *src1,
+              memref_t<__ubuf__ T, 1> *dst, memref_t<__ubuf__ T, 1> *tmp_buf,
+              VectorLastAxisMode mode) {
   auto scalar_num = eltwise_get_element_nums_on_scalar<T, 1>(src0, src1, dst);
   memref_t<__ubuf__ T, 1> aligned_src0 = *src0;
   memref_t<__ubuf__ T, 1> aligned_src1 = *src1;
   memref_t<__ubuf__ T, 1> aligned_dst = *dst;
-  if (scalar_num != 0)[[unlikely]] {
+  if (scalar_num != 0) [[unlikely]] {
     if (scalar_num >= dst->sizes[0]) {
       scalar_eltwise_1d<OP, T>(src0, src1, dst, dst->sizes[0], mode, {0});
       return;
@@ -258,21 +283,24 @@ __aiv__ __attribute__((always_inline)) void eltwise_vv_1d(
     move_memref_to_aligned_1d(&aligned_src0, scalar_num);
     move_memref_to_aligned_1d(&aligned_src1, scalar_num);
     move_memref_to_aligned_1d(&aligned_dst, scalar_num);
-    if(aligned_dst.sizes[0] <= 0) {
+    if (aligned_dst.sizes[0] <= 0) {
       return;
     }
   }
-  vector_eltwise_vv_1d<OP, T>(&aligned_src0, &aligned_src1, &aligned_dst, tmp_buf, mode);
+  vector_eltwise_vv_1d<OP, T>(&aligned_src0, &aligned_src1, &aligned_dst,
+                              tmp_buf, mode);
 }
 
 template <VectorOpTy OP, typename T>
-__aiv__ __attribute__((always_inline)) void eltwise_vs_1d(
-    memref_t<__ubuf__ T, 1> *src0, T scalar, memref_t<__ubuf__ T, 1> *dst,
-    memref_t<__ubuf__ T, 1> *tmp_buf, VectorLastAxisMode mode) {
-  auto scalar_num = eltwise_get_element_nums_on_scalar<T, 1>(src0, nullptr, dst);
+__aiv__ __attribute__((always_inline)) void
+eltwise_vs_1d(memref_t<__ubuf__ T, 1> *src0, T scalar,
+              memref_t<__ubuf__ T, 1> *dst, memref_t<__ubuf__ T, 1> *tmp_buf,
+              VectorLastAxisMode mode) {
+  auto scalar_num =
+      eltwise_get_element_nums_on_scalar<T, 1>(src0, nullptr, dst);
   memref_t<__ubuf__ T, 1> aligned_src0 = *src0;
   memref_t<__ubuf__ T, 1> aligned_dst = *dst;
-  if (scalar_num != 0)[[unlikely]] {
+  if (scalar_num != 0) [[unlikely]] {
     if (scalar_num >= dst->sizes[0]) {
       scalar_eltwise_1d<OP, T>(src0, nullptr, dst, dst->sizes[0], mode, scalar);
       return;
@@ -280,21 +308,24 @@ __aiv__ __attribute__((always_inline)) void eltwise_vs_1d(
     scalar_eltwise_1d<OP, T>(src0, nullptr, dst, scalar_num, mode, scalar);
     move_memref_to_aligned_1d(&aligned_src0, scalar_num);
     move_memref_to_aligned_1d(&aligned_dst, scalar_num);
-    if(aligned_dst.sizes[0] <= 0) {
+    if (aligned_dst.sizes[0] <= 0) {
       return;
     }
   }
-  vector_eltwise_vs_1d<OP, T>(&aligned_src0, scalar, &aligned_dst, tmp_buf, mode);
+  vector_eltwise_vs_1d<OP, T>(&aligned_src0, scalar, &aligned_dst, tmp_buf,
+                              mode);
 }
 
 template <VectorOpTy OP, typename T>
-__aiv__ __attribute__((always_inline)) void eltwise_sv_1d(
-    T scalar, memref_t<__ubuf__ T, 1> *src1, memref_t<__ubuf__ T, 1> *dst,
-    memref_t<__ubuf__ T, 1> *tmp_buf, VectorLastAxisMode mode) {
-  auto scalar_num = eltwise_get_element_nums_on_scalar<T, 1>(nullptr, src1, dst);
+__aiv__ __attribute__((always_inline)) void
+eltwise_sv_1d(T scalar, memref_t<__ubuf__ T, 1> *src1,
+              memref_t<__ubuf__ T, 1> *dst, memref_t<__ubuf__ T, 1> *tmp_buf,
+              VectorLastAxisMode mode) {
+  auto scalar_num =
+      eltwise_get_element_nums_on_scalar<T, 1>(nullptr, src1, dst);
   memref_t<__ubuf__ T, 1> aligned_src1 = *src1;
   memref_t<__ubuf__ T, 1> aligned_dst = *dst;
-  if (scalar_num != 0)[[unlikely]] {
+  if (scalar_num != 0) [[unlikely]] {
     if (scalar_num >= dst->sizes[0]) {
       scalar_eltwise_1d<OP, T>(nullptr, src1, dst, dst->sizes[0], mode, scalar);
       return;
@@ -302,21 +333,23 @@ __aiv__ __attribute__((always_inline)) void eltwise_sv_1d(
     scalar_eltwise_1d<OP, T>(nullptr, src1, dst, scalar_num, mode, scalar);
     move_memref_to_aligned_1d(&aligned_src1, scalar_num);
     move_memref_to_aligned_1d(&aligned_dst, scalar_num);
-    if(aligned_dst.sizes[0] <= 0) {
+    if (aligned_dst.sizes[0] <= 0) {
       return;
     }
   }
-  vector_eltwise_sv_1d<OP, T>(scalar, &aligned_src1, &aligned_dst, tmp_buf, mode);
+  vector_eltwise_sv_1d<OP, T>(scalar, &aligned_src1, &aligned_dst, tmp_buf,
+                              mode);
 }
 
 template <VectorOpTy OP, typename T>
-__aiv__ __attribute__((always_inline)) void eltwise_v_1d(
-    memref_t<__ubuf__ T, 1> *src0, memref_t<__ubuf__ T, 1> *dst,
-    memref_t<__ubuf__ T, 1> *tmp_buf, VectorLastAxisMode mode) {
-  auto scalar_num = eltwise_get_element_nums_on_scalar<T, 1>(src0, nullptr, dst);
+__aiv__ __attribute__((always_inline)) void
+eltwise_v_1d(memref_t<__ubuf__ T, 1> *src0, memref_t<__ubuf__ T, 1> *dst,
+             memref_t<__ubuf__ T, 1> *tmp_buf, VectorLastAxisMode mode) {
+  auto scalar_num =
+      eltwise_get_element_nums_on_scalar<T, 1>(src0, nullptr, dst);
   memref_t<__ubuf__ T, 1> aligned_src0 = *src0;
   memref_t<__ubuf__ T, 1> aligned_dst = *dst;
-  if (scalar_num != 0)[[unlikely]] {
+  if (scalar_num != 0) [[unlikely]] {
     if (scalar_num >= dst->sizes[0]) {
       scalar_eltwise_1d<OP, T>(src0, nullptr, dst, dst->sizes[0], mode, {0});
       return;
@@ -324,7 +357,7 @@ __aiv__ __attribute__((always_inline)) void eltwise_v_1d(
     scalar_eltwise_1d<OP, T>(src0, nullptr, dst, scalar_num, mode, {0});
     move_memref_to_aligned_1d(&aligned_src0, scalar_num);
     move_memref_to_aligned_1d(&aligned_dst, scalar_num);
-    if(aligned_dst.sizes[0] <= 0) {
+    if (aligned_dst.sizes[0] <= 0) {
       return;
     }
   }
