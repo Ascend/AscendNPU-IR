@@ -11,6 +11,7 @@ if(BISHENGIR_ENABLE_TRITON_COMPILE)
     GetTritonMetadata.cpp
     LegalizeF16ForTriton.cpp
     SIMTInsertInitAndFinishForDebug.cpp
+    OptimizeAtomicReduction.cpp
     OptimizeLayouts.cpp
     OptimizeLayoutsAnalysis.cpp
     OptimizeLoads.cpp

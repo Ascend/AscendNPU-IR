@@ -244,6 +244,33 @@ def OptimizeSIMTExpressions
   ];
 }
 
+def OptimizeAtomicReduction
+   : Pass<"optimize-atomic-reduction", "mlir::triton::FuncOp"> {
+  let summary = "Skip no-op tt.atomic_rmw reduction operations";
+  let description = [{
+    A `tt.atomic_rmw` reduction whose `$val` is the reduction identity does not
+    modify memory. Identities are `0` for `add`/`fadd`/`or`/`xor`/`umax`,
+    all-ones for `and`/`umin`, signed minimum for `max` (or -inf for floats),
+    and signed maximum for `min` (or +inf for floats). When `$val` is produced
+    by a chain of `arith.select` ops whose leaves are exactly an identity
+    constant and one other value `X`, the atomic is only meaningful on the
+    lanes where the chain evaluates to `X`. This pass folds the select
+    conditions into the atomic's mask
+    (`mask &= (select_chain != identity)`) so the no-op lanes are skipped, and
+    forwards `X` as the new value operand.
+
+    This applies only to atomic reductions, i.e. `tt.atomic_rmw` ops whose
+    result is unused (the result of a masked atomic is undefined for masked-off
+    lanes, so a used value cannot be safely masked). No memory-order check is
+    needed: an atomic update that does not change the memory value cannot act
+    as a synchronization primitive.
+  }];
+  let constructor = "bishengir::triton::createOptimizeAtomicReductionPass()";
+  let dependentDialects = ["mlir::arith::ArithDialect",
+                           "mlir::triton::TritonDialect",
+  ];
+}
+
 def HoistAndFuseDotChains
    : Pass<"hoist-and-fuse-dot-chains", "mlir::triton::FuncOp"> {
   let options = [
