@@ -230,6 +230,28 @@ LoopLikeOpInterface getParentLoopImpl(Value val,
 }
 } // namespace
 
+bool isRemainInL0c(OpOperand &use) {
+  OpResult result = dyn_cast<OpResult>(use.get());
+  if (!result)
+    return false;
+  auto *defOp = result.getDefiningOp();
+  if (!defOp)
+    return false;
+  if (defOp->hasAttr(RemainInL0CAttr::name)) {
+    return true;
+  }
+  auto regionBranchOpInterface = dyn_cast<RegionBranchOpInterface>(defOp);
+  if (!regionBranchOpInterface)
+    return false;
+  auto &region = regionBranchOpInterface->getRegions().front();
+  if (!region.hasOneBlock())
+    return false;
+  auto terminator = region.front().getTerminator();
+  if (!terminator)
+    return false;
+  return isRemainInL0c(terminator->getOpOperand(result.getResultNumber()));
+}
+
 bool isResultInL0C(OpResult result) {
   Operation *op = result.getOwner();
 
