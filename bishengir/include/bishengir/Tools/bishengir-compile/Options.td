@@ -97,6 +97,7 @@ def EnableTorchCompile : FeatureControlOptions<
   "bool",
   "false"
 > {
+  let optionScope = ["A3_ONLY"];
   let passGroup = ["HFUSION"];
 }
 #endif
@@ -126,6 +127,7 @@ def EnableSymbolAnalysis : FeatureControlOptions<
   "bool",
   "false"
 > {
+  let optionScope = ["A3_ONLY"];
   let passGroup = ["HFUSION"];
 }
 
@@ -135,6 +137,7 @@ def EnableMultiKernel : FeatureControlOptions<
   "bool",
   "false"
 > {
+  let optionScope = ["A3_ONLY"];
   let passGroup = ["HFUSION"];
 }
 
@@ -143,6 +146,7 @@ def EnableManageHostResources : FeatureControlOptions<
   "bool",
   "false"
 > {
+  let optionScope = ["A3_ONLY"];
   let passGroup = ["HFUSION"];
 }
 
@@ -173,6 +177,7 @@ def EnsureNoImplicitBroadcast : FeatureControlOptions<
   "bool",
   "false"
 > {
+  let optionScope = ["A3_ONLY"];
   let passGroup = ["HFUSION"];
 }
 #endif
@@ -401,7 +406,9 @@ def EnableDeterministicComputing : HFusionOptimizationControlOptions<
   "However, the result will be non-deterministic.",
   "bool",
   "true"
->;
+> {
+  let optionScope = ["A3_ONLY"];
+}
 
 def EnableOpsReorder : HFusionOptimizationControlOptions<
   "Enable ops reorder to opt pipeline.",
@@ -425,18 +432,23 @@ def HfusionMaxHorizontalFusionSize : HFusionOptimizationControlOptions<
   "Number of horizontal fusion attempt (Default: unlimited).",
   "int32_t",
   "-1"
->;
+> {
+  let optionScope = ["A3_ONLY"];
+}
 
 def HfusionMaxBufferCountTuning : HFusionOptimizationControlOptions<
   "Max buffer count tuning in HFusion auto schedule.",
   "int64_t",
   "0"
->;
+> {
+  let optionScope = ["A3_ONLY"];
+}
 
 def CubeTilingTuning : BiShengIRCompileListOpt<
   "Cube block size tuning in HFusion auto schedule",
   "int64_t"
 > {
+  let optionScope = ["A3_ONLY"];
   let passGroup = ["HFUSION"];
   let compileOptionCategories = ["hfusionOptCategory"];
 }
@@ -446,7 +458,9 @@ def enableHfusionCountBufferDmaOpt : HFusionOptimizationControlOptions<
   "be reused by Vector operations.",
   "bool",
   "false"
->;
+> {
+  let optionScope = ["A3_ONLY"];
+}
 
 //===----------------------------------------------------------------------===//
 // HIVM Optimization Control Options
