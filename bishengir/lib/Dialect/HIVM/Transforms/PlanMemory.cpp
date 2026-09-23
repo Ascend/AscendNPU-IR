@@ -1110,12 +1110,19 @@ void MemLivenessAnalysis::UpdateOpKillInfo(OpInfo *opInfo, Value operand,
   if (!AllDeadAfter(opInfo->operation, aliasBuffers, live)) {
     return;
   }
+  if (llvm::any_of(aliasBuffers, [&](Value aliasBuffer) {
+        return buffer2status.contains(aliasBuffer) &&
+               buffer2status[aliasBuffer] == BufferStatus::GENED &&
+               !isParentOpDominate(aliasBuffer.getDefiningOp(),
+                                   opInfo->operation);
+      })) {
+    return;
+  }
   for (Value aliasBuffer : aliasBuffers) {
     auto iterBuffer = buffer2status.find(aliasBuffer);
     if (iterBuffer == buffer2status.end())
       return;
-    if (iterBuffer->second == BufferStatus::GENED &&
-        isParentOpDominate(aliasBuffer.getDefiningOp(), opInfo->operation)) {
+    if (iterBuffer->second == BufferStatus::GENED) {
       if (IsPreloadBuffer(aliasBuffer)) {
         preloadBufferReuseableInfo[aliasBuffer].killInfo = opInfo;
       }
@@ -1145,7 +1152,7 @@ bool MemLivenessAnalysis::AllDeadAfter(Operation *op, SetVector<Value> aliasVec,
     // isDeadAfter will only check liveOut and last use in op->getBlock(). It
     // will not check ops in other blocks. And if op->getParentOp() don't have
     // opResult, the liveOut set will be empty. So we need to check all users of
-    // aliasBuffer to ensure that they are not before op in memory view.
+    // aliasBuffer to ensure that they are not after op in memory view.
     return live.isDeadAfter(aliasBuffer, op) &&
            llvm::all_of(aliasBuffer.getUsers(), [&](Operation *user) {
              // user is before or equal to (in same op but different block) op.
