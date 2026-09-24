@@ -69,8 +69,10 @@ L1Mmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
   using LayoutL0B = detail::TagToLayout_t<ElementB, LayoutTagL0B>;
   using LayoutL0C = typename detail::LayoutL0C;
 
-  using L1AAlignHelper = Gemm::helper::L1AlignHelper<ElementA, LayoutTagL1A>;
-  using L1BAlignHelper = Gemm::helper::L1AlignHelper<ElementB, LayoutTagL1B>;
+  // l0K is the slice copied into L0. L0A is always zN and L0B is always nZ,
+  // so the footprint follows those alignments even when L1 is transposed.
+  using L0AAlignHelper = Gemm::helper::L1AlignHelper<ElementA, LayoutTagL0A>;
+  using L0BAlignHelper = Gemm::helper::L1AlignHelper<ElementB, LayoutTagL0B>;
 
   using TensorL1A =
       tla::Tensor<AscendCBisheng::LocalTensor<ElementA>, LayoutL1A,
@@ -138,19 +140,19 @@ L1Mmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
   bool enableDoubleBuffer = true;
   uint32_t l0K = RoundDown<C0_NUM_PER_FRACTAL>(
       min(L0A_PINGPONG_BUF_SIZE / sizeof(ElementA) /
-              RoundUp<L1AAlignHelper::M_ALIGNED>(actualM) / L0A_ELE_NUM_PER_C0 *
+              RoundUp<L0AAlignHelper::M_ALIGNED>(actualM) / L0A_ELE_NUM_PER_C0 *
               L0A_ELE_NUM_PER_C0,
           L0B_PINGPONG_BUF_SIZE / sizeof(ElementB) /
-              RoundUp<L1BAlignHelper::N_ALIGNED>(actualN) / L0B_ELE_NUM_PER_C0 *
+              RoundUp<L0BAlignHelper::N_ALIGNED>(actualN) / L0B_ELE_NUM_PER_C0 *
               L0B_ELE_NUM_PER_C0));
   if (l0K == 0) {
     enableDoubleBuffer = false;
     l0K = RoundDown<C0_NUM_PER_FRACTAL>(
         min(2 * L0A_PINGPONG_BUF_SIZE / sizeof(ElementA) /
-                RoundUp<L1AAlignHelper::M_ALIGNED>(actualM) /
+                RoundUp<L0AAlignHelper::M_ALIGNED>(actualM) /
                 L0A_ELE_NUM_PER_C0 * L0A_ELE_NUM_PER_C0,
             2 * L0B_PINGPONG_BUF_SIZE / sizeof(ElementB) /
-                RoundUp<L1BAlignHelper::N_ALIGNED>(actualN) /
+                RoundUp<L0BAlignHelper::N_ALIGNED>(actualN) /
                 L0B_ELE_NUM_PER_C0 * L0B_ELE_NUM_PER_C0));
   }
 
