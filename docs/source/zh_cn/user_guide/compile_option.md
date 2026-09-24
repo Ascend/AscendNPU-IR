@@ -20,9 +20,9 @@ BiShengIR编译器通过一系列命令行编译选项控制编译流程、功�
 | --enable-multi-kernel | 关闭时计算图必须融合为单个内核；开启时支持外提生成多个内核（A2/A3 Only） | bool | false |
 | --enable-manage-host-resources | 启用主机函数的资源管理功能（A2/A3 Only） | bool | false |
 | --ensure-no-implicit-broadcast | 是否确保不存在隐式广播语义。若存在动态维度到动态维度的广播，将触发运行时错误（A2/A3 Only） | bool | false（仅在定义`BISHENGIR_ENABLE_TORCH_CONVERSIONS`编译宏时提供该选项） |
-| --disable-auto-inject-block-sync | 禁用`injectBlockSync` Pass自动生成块同步`wait/set`指令 | bool | false |
 | --enable-hivm-graph-sync-solver | 使用HIVM计算图同步求解器替代同步注入机制 | bool | true |
 | --disable-auto-cv-work-space-manage | 需与`disableAutoInjectBlockSync`选项搭配使用（A2/A3 Only） | bool | false |
+| --disable-hivm-auto-inject-sync | 禁用核内自动注入同步操作 | bool | false |
 | --disable-hivm-tensor-compile | 禁用BiShengHIR HIVM张量编译功能（A2/A3 Only） | bool | false |
 
 ## BiShengIR通用优化选项
