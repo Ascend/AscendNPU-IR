@@ -1064,64 +1064,69 @@ __aiv__ __attribute__((always_inline)) void move_memref_to_aligned_3d(memref_t<_
   }
 }
 
-template <typename T, size_t DIM>
-__aiv__ __attribute__((always_inline)) bool need_broadcast(
-    memref_t<__ubuf__ T, DIM> *src0, memref_t<__ubuf__ T, DIM> *src1, memref_t<__ubuf__ T, DIM> *dst) {
-  for (size_t i = 0; i < DIM; ++i) {
-    int64_t src0_size = src0 == nullptr ? 0 : src0->sizes[i];
-    int64_t src1_size = src1 == nullptr ? 0 : src1->sizes[i];
-    if (src0_size != dst->sizes[i] && src0_size == 1 ||
-      src1_size != dst->sizes[i] && src1_size == 1) {
-      return true;
-    }
-  }
-  return  false;
-}
-
 // Get the number of elements that need to be processed using scalar operations.
-// When the memory alignment of input or output is not suitable for vectorization,
-// some elements must be handled using scalar operations util the rest element is aligned with 32 bytes.
-template <typename T, size_t DIM>
-__aiv__ __attribute__((always_inline)) int64_t eltwise_get_element_nums_on_scalar(
-    memref_t<__ubuf__ T, DIM> *src0, memref_t<__ubuf__ T, DIM> *src1, memref_t<__ubuf__ T, DIM> *dst) {
+// When the memory alignment of input or output is not suitable for
+// vectorization, some elements must be handled using scalar operations util the
+// rest element is aligned with 32 bytes.
+template <bool src0_not_nullptr, bool src1_not_nullptr, typename T, size_t DIM>
+__aiv__ __attribute__((always_inline)) int64_t
+eltwise_get_element_nums_on_scalar_impl(memref_t<__ubuf__ T, DIM> *src0,
+                                        memref_t<__ubuf__ T, DIM> *src1,
+                                        memref_t<__ubuf__ T, DIM> *dst) {
   // Check strides for the last dimension
-  auto src0_last_stride = src0 == nullptr ? 1 : src0->strides[DIM - 1];
-  auto src1_last_stride = src1 == nullptr ? 1 : src1->strides[DIM - 1];
+  int64_t src0_last_stride = 1;
+  int64_t src1_last_stride = 1;
+  if constexpr (src0_not_nullptr)
+    src0_last_stride = src0->strides[DIM - 1];
+  if constexpr (src1_not_nullptr)
+    src1_last_stride = src1->strides[DIM - 1];
   auto dst_last_stride = dst->strides[DIM - 1];
-  bool broadcast_cond = need_broadcast<T, DIM>(src0, src1, dst);
-
   if (src0_last_stride != 1 || src1_last_stride != 1 || dst_last_stride != 1) {
     return dst->sizes[DIM - 1];
   }
 
-  if (!broadcast_cond) {
-    // Check if all other dimensions' strides are aligned to block size
-    for (size_t i = 0; i < DIM - 1; ++i) {
-      auto src0_stride = src0 == nullptr ? 0 : src0->strides[i];
-      auto src1_stride = src1 == nullptr ? 0 : src1->strides[i];
-      auto dst_stride = dst->strides[i];
-      if ((!isSizeAlignedToBlock<T>(src0_stride) && src0_stride != 1) ||
-          (!isSizeAlignedToBlock<T>(src1_stride) && src1_stride != 1) ||
-          (!isSizeAlignedToBlock<T>(dst_stride) && dst_stride != 1)) {
+  for (size_t i = 0; i < DIM - 1; ++i) {
+    if constexpr (src0_not_nullptr) {
+      bool is_broadcast = src0->sizes[i] == 1 && dst->sizes[i] != 1;
+      if (!is_broadcast && !isSizeAlignedToBlock<T>(src0->strides[i]) &&
+          src0->strides[i] != 1) {
         return dst->sizes[DIM - 1];
       }
     }
+    if constexpr (src1_not_nullptr) {
+      bool is_broadcast = src1->sizes[i] == 1 && dst->sizes[i] != 1;
+      if (!is_broadcast && !isSizeAlignedToBlock<T>(src1->strides[i]) &&
+          src1->strides[i] != 1) {
+        return dst->sizes[DIM - 1];
+      }
+    }
+    if (!isSizeAlignedToBlock<T>(dst->strides[i]) && dst->strides[i] != 1) {
+      return dst->sizes[DIM - 1];
+    }
   }
 
-
   // Check offset alignment
-  bool is_src0_aligned = src0 == nullptr ? true : isAddress32ByteAligned(src0->aligned + src0->offset);
-  bool is_src1_aligned = src1 == nullptr ? true : isAddress32ByteAligned(src1->aligned + src1->offset);
+  bool is_src0_aligned = true;
+  bool is_src1_aligned = true;
+  if constexpr (src0_not_nullptr)
+    is_src0_aligned = isAddress32ByteAligned(src0->aligned + src0->offset);
+  if constexpr (src1_not_nullptr)
+    is_src1_aligned = isAddress32ByteAligned(src1->aligned + src1->offset);
   bool is_dst_aligned = isAddress32ByteAligned(dst->aligned + dst->offset);
 
   if (!is_src0_aligned || !is_src1_aligned || !is_dst_aligned) {
-    auto src0_offset = src0 == nullptr ? dst->offset : src0->offset;
-    auto src1_offset = src1 == nullptr ? dst->offset : src1->offset;
     auto dst_offset = dst->offset;
-
-    if ((src0_offset * sizeof(T)) % INTR_BYTES_PER_BLOCK != (dst_offset * sizeof(T)) % INTR_BYTES_PER_BLOCK ||
-        (src1_offset * sizeof(T)) % INTR_BYTES_PER_BLOCK != (dst_offset * sizeof(T)) % INTR_BYTES_PER_BLOCK) {
-      return dst->sizes[DIM - 1];
+    if constexpr (src0_not_nullptr) {
+      if ((src0->offset * sizeof(T)) % INTR_BYTES_PER_BLOCK !=
+          (dst_offset * sizeof(T)) % INTR_BYTES_PER_BLOCK) {
+        return dst->sizes[DIM - 1];
+      }
+    }
+    if constexpr (src1_not_nullptr) {
+      if ((src1->offset * sizeof(T)) % INTR_BYTES_PER_BLOCK !=
+          (dst_offset * sizeof(T)) % INTR_BYTES_PER_BLOCK) {
+        return dst->sizes[DIM - 1];
+      }
     }
 
     auto address = reinterpret_cast<uintptr_t>(dst->aligned + dst->offset);
@@ -1131,6 +1136,22 @@ __aiv__ __attribute__((always_inline)) int64_t eltwise_get_element_nums_on_scala
   }
 
   return 0;
+}
+
+template <typename T, size_t DIM>
+__aiv__ __attribute__((always_inline)) int64_t
+eltwise_get_element_nums_on_scalar(memref_t<__ubuf__ T, DIM> *src0,
+                                   memref_t<__ubuf__ T, DIM> *src1,
+                                   memref_t<__ubuf__ T, DIM> *dst) {
+  if (src0 != nullptr && src1 != nullptr)
+    return eltwise_get_element_nums_on_scalar_impl<true, true>(src0, src1, dst);
+  if (src0 != nullptr)
+    return eltwise_get_element_nums_on_scalar_impl<true, false>(src0, src1,
+                                                                dst);
+  if (src1 != nullptr)
+    return eltwise_get_element_nums_on_scalar_impl<false, true>(src0, src1,
+                                                                dst);
+  return eltwise_get_element_nums_on_scalar_impl<false, false>(src0, src1, dst);
 }
 
 template <VectorOpTy OP, typename T>

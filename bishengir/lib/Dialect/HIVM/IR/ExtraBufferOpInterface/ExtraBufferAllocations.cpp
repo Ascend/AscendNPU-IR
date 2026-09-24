@@ -15,9 +15,9 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
-#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -39,6 +39,118 @@ Value allocExtraBuffer(Operation *op, const SmallVector<int64_t> &bufSize,
   rewriter.setInsertionPoint(op);
   return rewriter.create<memref::AllocOp>(op->getLoc(),
                                           MemRefType::get(bufSize, elemType));
+}
+
+static std::optional<int64_t>
+getAlignedAllocationSize(MemRefType type, ArrayRef<int64_t> strides) {
+  int64_t allocationSize = 1;
+  for (auto [size, stride] : llvm::zip_equal(type.getShape(), strides)) {
+    if (stride < 0)
+      return std::nullopt;
+    allocationSize += (size - 1) * stride;
+  }
+
+  int64_t elementByteWidth = type.getElementTypeBitWidth() / 8;
+  if (elementByteWidth == 0)
+    return std::nullopt;
+  int64_t elementsPerBlock =
+      mlir::utils::INTR_BYTES_PER_BLOCK / elementByteWidth;
+  return hivm::util::ceilFactor(allocationSize, elementsPerBlock);
+}
+
+static Value createNormalizedReduceSource(VReduceOp op, MemRefType srcType,
+                                          ArrayRef<int64_t> dstStrides,
+                                          int64_t allocationSize) {
+  auto layout = StridedLayoutAttr::get(op.getContext(), 0, dstStrides);
+  auto normalizedType =
+      MemRefType::get(srcType.getShape(), srcType.getElementType(), layout,
+                      srcType.getMemorySpace());
+  SmallVector<int64_t> allocationShape{allocationSize};
+  auto allocationType =
+      MemRefType::get(allocationShape, srcType.getElementType(), AffineMap{},
+                      srcType.getMemorySpace());
+
+  IRRewriter rewriter(op.getContext());
+  rewriter.setInsertionPoint(op);
+  Value allocation =
+      rewriter.create<memref::AllocOp>(op.getLoc(), allocationType);
+  SmallVector<OpFoldResult> sizes;
+  SmallVector<OpFoldResult> strides;
+  for (int64_t size : srcType.getShape())
+    sizes.push_back(rewriter.getIndexAttr(size));
+  for (int64_t stride : dstStrides)
+    strides.push_back(rewriter.getIndexAttr(stride));
+  Value normalizedSrc = rewriter.create<memref::ReinterpretCastOp>(
+      op.getLoc(), normalizedType, allocation, rewriter.getIndexAttr(0), sizes,
+      strides);
+  Value originalSrc = op.getSrc();
+  rewriter.create<hivm::CopyOp>(op.getLoc(), TypeRange{}, originalSrc,
+                                normalizedSrc);
+  op.getSrcMutable().set(normalizedSrc);
+  return normalizedSrc;
+}
+
+static void replaceUsesOfReduceSource(VReduceOp op, Value originalSrc,
+                                      Value normalizedSrc) {
+  for (OpOperand &use : llvm::make_early_inc_range(originalSrc.getUses())) {
+    Operation *owner = use.getOwner();
+    if (owner->getBlock() != op->getBlock() || !op->isBeforeInBlock(owner))
+      continue;
+
+    auto dpsOp = dyn_cast<DestinationStyleOpInterface>(owner);
+    if (!dpsOp)
+      continue;
+    SmallVector<OpOperand *> inputs = dpsOp.getDpsInputOperands();
+    bool usesReduceResult = llvm::any_of(inputs, [&](OpOperand *input) {
+      return input->get() == op.getDstValue();
+    });
+    if (usesReduceResult && llvm::is_contained(inputs, &use))
+      use.set(normalizedSrc);
+  }
+}
+
+/// Copy a rank-3 first-axis XOR reduction source to the destination's layout.
+/// Reuse the copy in bitwise operations that combine the source with the
+/// reduction result.
+static void normalizeReduceXorSourceLayout(VReduceOp op) {
+  if (!hacc::utils::isMemBasedArch(op->getParentOfType<ModuleOp>()))
+    return;
+
+  auto srcType = dyn_cast<MemRefType>(op.getSrc().getType());
+  auto dstType = dyn_cast<MemRefType>(op.getDstValue().getType());
+  if (!srcType || !dstType)
+    return;
+
+  ArrayRef<int64_t> reduceDims = op.getReduceDims();
+  if (srcType.getRank() != 3 || dstType.getRank() != 3 ||
+      !srcType.hasStaticShape() || reduceDims.size() != 1 ||
+      reduceDims.front() != 0)
+    return;
+
+  if (op.getArith().getReduceOp() != ReduceOperation::xori)
+    return;
+
+  int64_t srcOffset;
+  int64_t dstOffset;
+  SmallVector<int64_t> srcStrides;
+  SmallVector<int64_t> dstStrides;
+  if (failed(
+          utils::getStridesAndOffsetCompat(srcType, srcStrides, srcOffset)) ||
+      failed(utils::getStridesAndOffsetCompat(dstType, dstStrides, dstOffset)))
+    return;
+  if (srcStrides == dstStrides ||
+      llvm::is_contained(dstStrides, ShapedType::kDynamic))
+    return;
+
+  std::optional<int64_t> allocationSize =
+      getAlignedAllocationSize(srcType, dstStrides);
+  if (!allocationSize)
+    return;
+
+  Value originalSrc = op.getSrc();
+  Value normalizedSrc =
+      createNormalizedReduceSource(op, srcType, dstStrides, *allocationSize);
+  replaceUsesOfReduceSource(op, originalSrc, normalizedSrc);
 }
 
 /// Compute the total number of elements for VCastOp src as if AlignAllocSize
@@ -469,6 +581,8 @@ LogicalResult VReduceOp::allocExtraBuffersIfPossible() {
     return success();
   }
 
+  normalizeReduceXorSourceLayout(*this);
+
   MemRefType srcVecType = cast<MemRefType>(this->getSrc().getType());
   auto bufSizeMaybe = hivm::util::getExtraBufferSizeForReduceOp(
       this->getOperation(), util::BufferSizeUnit::ELEMENT);
@@ -628,9 +742,9 @@ static LogicalResult allocCumOpExtraBuffersIfPossible(CumOpWithTemp op) {
     op.emitWarning("already has extra temp buffer");
     return success();
   }
-  auto moduleOp = op.getOperation()-> template getParentOfType<mlir::ModuleOp>();
+  auto moduleOp = op.getOperation()->template getParentOfType<mlir::ModuleOp>();
   if (hacc::utils::isMemBasedArch(moduleOp)) {
-  // TODO: no temp buffer needed for cumsum and cumprod in Membase
+    // TODO: no temp buffer needed for cumsum and cumprod in Membase
     if constexpr (std::is_same_v<CumOpWithTemp, VCumsumOp> ||
                   std::is_same_v<CumOpWithTemp, VCumprodOp>) {
       return success();

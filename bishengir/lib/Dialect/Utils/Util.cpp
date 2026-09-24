@@ -180,6 +180,25 @@ SmallVector<Value> tracebackImpl(Value memrefVal) {
 
 namespace utils {
 
+LogicalResult getStridesAndOffsetCompat(MemRefType type,
+                                        SmallVectorImpl<int64_t> &strides,
+                                        int64_t &offset) {
+#ifndef __LLVM_MAJOR_VERSION_21_COMPATIBLE__
+  return mlir::getStridesAndOffset(type, strides, offset);
+#else
+  return type.getStridesAndOffset(strides, offset);
+#endif
+}
+
+std::pair<SmallVector<int64_t>, int64_t>
+getStridesAndOffsetCompat(MemRefType type) {
+#ifndef __LLVM_MAJOR_VERSION_21_COMPATIBLE__
+  return mlir::getStridesAndOffset(type);
+#else
+  return type.getStridesAndOffset();
+#endif
+}
+
 namespace debugger {
 std::string getPrettyOpName(Operation *op) {
   std::string str;
