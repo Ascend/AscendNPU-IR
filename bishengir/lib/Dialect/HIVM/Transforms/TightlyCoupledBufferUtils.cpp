@@ -119,3 +119,15 @@ bool mlir::hivm::tracesToTightlyCoupledValue(Value v, Value root) {
   }
   return false;
 }
+
+bool mlir::hivm::isTightlyCoupledValue(Value v) {
+  while (v) {
+    if (getTightlyCoupledMark(v).has_value())
+      return true;
+    Operation *def = v.getDefiningOp();
+    if (!def)
+      return false;
+    v = getTightlyCoupledViewSource(def);
+  }
+  return false;
+}
