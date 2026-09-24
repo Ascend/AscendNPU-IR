@@ -516,10 +516,11 @@ static bool isOverFlowMode(Type inType, Type outType) {
   const bool isF32ToI8 = inType.isF32() && outType.isInteger(8);
   const bool isF16ToI8 = inType.isF16() && outType.isInteger(8);
   const bool isI16ToI8 = inType.isInteger(16) && outType.isInteger(8);
+  const bool isI64ToI32 = inType.isInteger(64) && outType.isInteger(32);
   const bool isI32ToI16 = inType.isInteger(32) && outType.isInteger(16);
   const bool isI32ToI8 = inType.isInteger(32) && outType.isInteger(8);
-  return (isI16ToI8 || isI32ToI16 || isI32ToI8 || isF32ToI16 || isF32ToI8 ||
-          isF16ToI8);
+  return (isI64ToI32 || isI16ToI8 || isI32ToI16 || isI32ToI8 || isF32ToI16 ||
+          isF32ToI8 || isF16ToI8);
 }
 
 /*
@@ -1135,34 +1136,48 @@ struct HIVMToArithMulExtOp: public OpRewritePattern<hivm::VMulExtOp> {
 };
 
 void mlir::hivm::populateHIVMToArithConversionPatterns(RewritePatternSet &patterns) {
-    patterns.add<
-        VectorOpToArithBinary<arith::AndIOp, hivm::VAndOp, true, false, IntegerType::Signless, IntegerType>,
-        VectorOpToArithBinary<arith::XOrIOp, hivm::VXorOp, true, false, IntegerType::Signless, IntegerType>,
-        VectorOpToArithBinary<arith::OrIOp, hivm::VOrOp, true, false, IntegerType::Signless, IntegerType>,
-        VectorOpToArithBinary<arith::AddFOp, hivm::VAddOp, true, false, IntegerType::Signless, FloatType>,
-        VectorOpToArithBinary<arith::AddIOp, hivm::VAddOp, true, false, IntegerType::Signless, IntegerType>,
-        VectorOpToArithBinary<arith::SubFOp, hivm::VSubOp, true, false, IntegerType::Signless, FloatType>,
-        VectorOpToArithBinary<arith::SubIOp, hivm::VSubOp, true, false, IntegerType::Signless, IntegerType>,
-        VectorOpToArithBinary<arith::MulFOp, hivm::VMulOp, true, false, IntegerType::Signless, FloatType>,
-        VectorOpToArithBinary<arith::MulIOp, hivm::VMulOp, true, false, IntegerType::Signless, IntegerType>,
-        VectorOpToArithBinary<arith::DivFOp, hivm::VDivOp, true, false, IntegerType::Signless, FloatType>,
-        VectorOpToArithBinary<arith::DivSIOp, hivm::VDivOp, true, true, IntegerType::Signed, IntegerType>,
-        VectorOpToArithBinary<arith::DivUIOp, hivm::VDivOp, true, true, IntegerType::Unsigned, IntegerType>,
-        VectorOpToArithBinary<arith::MaximumFOp, hivm::VMaxOp, true, false, IntegerType::Signless, FloatType>,
-        VectorOpToArithBinary<arith::MaxSIOp, hivm::VMaxOp, true, true, IntegerType::Signless, IntegerType>,
-        VectorOpToArithBinary<arith::MinimumFOp, hivm::VMinOp, true, false, IntegerType::Signless, FloatType>,
-        VectorOpToArithBinary<arith::MinSIOp, hivm::VMinOp, true, true, IntegerType::Signless, IntegerType>,
-        VectorOpToArithBinary<arith::RemUIOp, hivm::VModUIOp, true, false, IntegerType::Signless, IntegerType>,
-        VectorOpToArithBinary<arith::RemSIOp, hivm::VModOp, true, false, IntegerType::Signless, IntegerType>,
-        VectorOpToArithBinary<arith::RemFOp, hivm::VModOp, true, false, IntegerType::Signless, FloatType>,
-        HIVMToArithNotOp,
-        HIVMToArithCastOp,
-        HIVMToArithCmpOp,
-        HIVMToArithBitcastOp,
-        HIVMToArithSelOp,
-        HIVMToArithRecOp,
-        HIVMToArithReluOp,
-        HIVMToArithMulExtOp,
-        HIVMToArithShROp
-    >(patterns.getContext());
+  patterns.add<VectorOpToArithBinary<arith::ShLIOp, hivm::VShLOp, true, false,
+                                     IntegerType::Signless, IntegerType>,
+               VectorOpToArithBinary<arith::AndIOp, hivm::VAndOp, true, false,
+                                     IntegerType::Signless, IntegerType>,
+               VectorOpToArithBinary<arith::XOrIOp, hivm::VXorOp, true, false,
+                                     IntegerType::Signless, IntegerType>,
+               VectorOpToArithBinary<arith::OrIOp, hivm::VOrOp, true, false,
+                                     IntegerType::Signless, IntegerType>,
+               VectorOpToArithBinary<arith::AddFOp, hivm::VAddOp, true, false,
+                                     IntegerType::Signless, FloatType>,
+               VectorOpToArithBinary<arith::AddIOp, hivm::VAddOp, true, false,
+                                     IntegerType::Signless, IntegerType>,
+               VectorOpToArithBinary<arith::SubFOp, hivm::VSubOp, true, false,
+                                     IntegerType::Signless, FloatType>,
+               VectorOpToArithBinary<arith::SubIOp, hivm::VSubOp, true, false,
+                                     IntegerType::Signless, IntegerType>,
+               VectorOpToArithBinary<arith::MulFOp, hivm::VMulOp, true, false,
+                                     IntegerType::Signless, FloatType>,
+               VectorOpToArithBinary<arith::MulIOp, hivm::VMulOp, true, false,
+                                     IntegerType::Signless, IntegerType>,
+               VectorOpToArithBinary<arith::DivFOp, hivm::VDivOp, true, false,
+                                     IntegerType::Signless, FloatType>,
+               VectorOpToArithBinary<arith::DivSIOp, hivm::VDivOp, true, true,
+                                     IntegerType::Signed, IntegerType>,
+               VectorOpToArithBinary<arith::DivUIOp, hivm::VDivOp, true, true,
+                                     IntegerType::Unsigned, IntegerType>,
+               VectorOpToArithBinary<arith::MaximumFOp, hivm::VMaxOp, true,
+                                     false, IntegerType::Signless, FloatType>,
+               VectorOpToArithBinary<arith::MaxSIOp, hivm::VMaxOp, true, true,
+                                     IntegerType::Signless, IntegerType>,
+               VectorOpToArithBinary<arith::MinimumFOp, hivm::VMinOp, true,
+                                     false, IntegerType::Signless, FloatType>,
+               VectorOpToArithBinary<arith::MinSIOp, hivm::VMinOp, true, true,
+                                     IntegerType::Signless, IntegerType>,
+               VectorOpToArithBinary<arith::RemUIOp, hivm::VModUIOp, true,
+                                     false, IntegerType::Signless, IntegerType>,
+               VectorOpToArithBinary<arith::RemSIOp, hivm::VModOp, true, false,
+                                     IntegerType::Signless, IntegerType>,
+               VectorOpToArithBinary<arith::RemFOp, hivm::VModOp, true, false,
+                                     IntegerType::Signless, FloatType>,
+               HIVMToArithNotOp, HIVMToArithCastOp, HIVMToArithCmpOp,
+               HIVMToArithBitcastOp, HIVMToArithSelOp, HIVMToArithRecOp,
+               HIVMToArithReluOp, HIVMToArithMulExtOp, HIVMToArithShROp>(
+      patterns.getContext());
 }
