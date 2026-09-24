@@ -150,6 +150,8 @@ const std::map<std::string, int> membarType = {
     {"SS_ALL", 12}, {"ST_LD", 13},  {"LD_ST", 14},  {"ST_ST", 15},
 };
 
+bool isRemainInL0c(OpOperand &use);
+
 bool isResultInL0C(OpResult result);
 
 /// Set the input type's memory scope to the input HIVM Address Space.
