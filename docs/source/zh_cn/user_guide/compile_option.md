@@ -6,32 +6,32 @@ BiShengIR编译器通过一系列命令行编译选项控制编译流程、功�
 
 **适用产品**：
 
-- Ascend 950PR&950DT 系列产品
-- Atlas A2 系列产品
-- Atlas A3 系列产品
+- Ascend 950PR&950DT系列产品
+- Atlas A2系列产品
+- Atlas A3系列产品
 
 | 选项名 | 描述 | 类型 | 默认值 |
 |--------|------|------|--------|
 | --enable-triton-kernel-compile | 启用Triton内核编译功能 | bool | false |
-| --enable-torch-compile | 启用Torch-MLIR编译功能（A2/A3 Only） | bool | false（仅在定义`BISHENGIR_ENABLE_TORCH_CONVERSIONS`编译宏时提供该选项） |
+| --enable-torch-compile | 启用Torch-MLIR编译功能（仅支持Atlas A2系列产品、Atlas A3系列产品） | bool | false（仅在定义`BISHENGIR_ENABLE_TORCH_CONVERSIONS`编译宏时提供该选项） |
 | --enable-hivm-compile | 启用BiShengHIR HIVM编译功能 | bool | true |
 | --enable-hfusion-compile | 启用BiShengHIR HFusion编译功能 | bool | false |
-| --enable-symbol-analysis | 启用符号分析功能（A2/A3 Only） | bool | false |
-| --enable-multi-kernel | 关闭时计算图必须融合为单个内核；开启时支持外提生成多个内核（A2/A3 Only） | bool | false |
-| --enable-manage-host-resources | 启用主机函数的资源管理功能（A2/A3 Only） | bool | false |
-| --ensure-no-implicit-broadcast | 是否确保不存在隐式广播语义。若存在动态维度到动态维度的广播，将触发运行时错误（A2/A3 Only） | bool | false（仅在定义`BISHENGIR_ENABLE_TORCH_CONVERSIONS`编译宏时提供该选项） |
+| --enable-symbol-analysis | 启用符号分析功能（仅支持Atlas A2系列产品、Atlas A3系列产品） | bool | false |
+| --enable-multi-kernel | 关闭时计算图必须融合为单个内核；开启时支持外提生成多个内核（仅支持Atlas A2系列产品、Atlas A3系列产品） | bool | false |
+| --enable-manage-host-resources | 启用主机函数的资源管理功能（仅支持Atlas A2系列产品、Atlas A3系列产品） | bool | false |
+| --ensure-no-implicit-broadcast | 是否确保不存在隐式广播语义。若存在动态维度到动态维度的广播，将触发运行时错误（仅支持Atlas A2系列产品、Atlas A3系列产品） | bool | false（仅在定义`BISHENGIR_ENABLE_TORCH_CONVERSIONS`编译宏时提供该选项） |
 | --enable-hivm-graph-sync-solver | 使用HIVM计算图同步求解器替代同步注入机制 | bool | true |
-| --disable-auto-cv-work-space-manage | 需与`disableAutoInjectBlockSync`选项搭配使用（A2/A3 Only） | bool | false |
+| --disable-auto-cv-work-space-manage | 需与`disableAutoInjectBlockSync`选项搭配使用（仅支持Atlas A2系列产品、Atlas A3系列产品） | bool | false |
 | --disable-hivm-auto-inject-sync | 禁用核内自动注入同步操作 | bool | false |
-| --disable-hivm-tensor-compile | 禁用BiShengHIR HIVM张量编译功能（A2/A3 Only） | bool | false |
+| --disable-hivm-tensor-compile | 禁用BiShengHIR HIVM张量编译功能（仅支持Atlas A2系列产品、Atlas A3系列产品） | bool | false |
 
 ## BiShengIR通用优化选项
 
 **适用产品**：
 
-- Ascend 950PR&950DT 系列产品
-- Atlas A2 系列产品
-- Atlas A3 系列产品
+- Ascend 950PR&950DT系列产品
+- Atlas A2系列产品
+- Atlas A3系列产品
 
 | 选项名 | 描述 | 类型 | 默认值 |
 |--------|------|------|--------|
@@ -44,32 +44,32 @@ BiShengIR编译器通过一系列命令行编译选项控制编译流程、功�
 
 **适用产品**：
 
-- Ascend 950PR&950DT 系列产品
-- Atlas A2 系列产品
-- Atlas A3 系列产品
+- Ascend 950PR&950DT系列产品
+- Atlas A2系列产品
+- Atlas A3系列产品
 
 | 选项名 | 描述 | 类型 | 默认值 |
 |--------|------|------|--------|
-| --enable-deterministic-computing | 开启时计算结果具备确定性；关闭时将启用额外优化以提升性能（例如将规约操作绑定到多个核心执行），但计算结果将不具备确定性（A2/A3 Only） | bool | true |
+| --enable-deterministic-computing | 开启时计算结果具备确定性；关闭时将启用额外优化以提升性能（例如将规约操作绑定到多个核心执行），但计算结果将不具备确定性（仅支持Atlas A2系列产品、Atlas A3系列产品） | bool | true |
 | --enable-ops-reorder | 在优化流水线中启用算子重排优化 | bool | true |
-| --hfusion-max-horizontal-fusion-size=\<int> | 水平融合的最大尝试次数（默认无限制）（A2/A3 Only） | int32_t | -1 |
-| --hfusion-max-buffer-count-tuning=\<long> | HFusion自动调度中的最大缓冲区数量调优阈值（A2/A3 Only） | int64_t | 0 |
-| --cube-tiling-tuning=\<long> | HFusion自动调度中的Cube分块尺寸调优参数（A2/A3 Only） | list int64_t | "" |
-| --enable-hfusion-count-buffer-dma-opt | 开启后，DMA操作使用的缓冲区不会被向量运算复用（A2/A3 Only） | bool | false |
+| --hfusion-max-horizontal-fusion-size=\<int> | 水平融合的最大尝试次数（默认无限制）（仅支持Atlas A2系列产品、Atlas A3系列产品） | int32_t | -1 |
+| --hfusion-max-buffer-count-tuning=\<long> | HFusion自动调度中的最大缓冲区数量调优阈值（仅支持Atlas A2系列产品、Atlas A3系列产品） | int64_t | 0 |
+| --cube-tiling-tuning=\<long> | HFusion自动调度中的Cube分块尺寸调优参数（仅支持Atlas A2系列产品、Atlas A3系列产品） | list int64_t | "" |
+| --enable-hfusion-count-buffer-dma-opt | 开启后，DMA操作使用的缓冲区不会被向量运算复用（仅支持Atlas A2系列产品、Atlas A3系列产品） | bool | false |
 
 ## BiShengIR HIVM优化选项
 
 **适用产品**：
 
-- Ascend 950PR&950DT 系列产品
-- Atlas A2 系列产品
-- Atlas A3 系列产品
+- Ascend 950PR&950DT系列产品
+- Atlas A2系列产品
+- Atlas A3系列产品
 
 | 选项名 | 描述 | 类型 | 默认值 |
 |--------|------|------|--------|
 | --limit-auto-multi-buffer-of-local-buffer=\<value> | 开启自动多缓冲后，限定本地缓冲区的多缓冲范围。`no-l0c`表示不对L0C开启多缓冲；`no-limit`表示不做限制 | enum | no-l0c |
-| --limit-auto-multi-buffer-buffer=\<value> | 开启自动多缓冲后，限定MIX算子中多缓冲的作用侧。`only-cube`表示仅Cube侧（L1、L0C）；`only-vector`表示仅Vector侧（UB）；`no-limit`表示不做限制 | enum | Ascend 950PR/Ascend 950DT为`no-limit`；Atlas A3系列产品、Atlas A2系列产品为`only-cube` |
-| --set-workspace-multibuffer=\<uint> | 指定GM Workspace的多缓冲数量 | unsigned | Ascend 950PR/Ascend 950DT为2；Atlas A3系列产品、Atlas A2系列产品为4 |
+| --limit-auto-multi-buffer-buffer=\<value> | 开启自动多缓冲后，限定MIX算子中多缓冲的作用侧。`only-cube`表示仅Cube侧（L1、L0C）；`only-vector`表示仅Vector侧（UB）；`no-limit`表示不做限制 | enum | Ascend 950PR&950DT系列产品为`no-limit`；Atlas A3系列产品、Atlas A2系列产品为`only-cube` |
+| --set-workspace-multibuffer=\<uint> | 指定GM Workspace的多缓冲数量 | unsigned | Ascend 950PR&950DT系列产品为2；Atlas A3系列产品、Atlas A2系列产品为4 |
 
 ## BiShengIR目标平台选项
 
@@ -81,9 +81,9 @@ AI处理器型号及对应查询方式如下：
 
 **适用产品**：
 
-- Ascend 950PR&950DT 系列产品
-- Atlas A2 系列产品
-- Atlas A3 系列产品
+- Ascend 950PR&950DT系列产品
+- Atlas A2系列产品
+- Atlas A3系列产品
 
 在安装AI处理器的服务器上执行该命令，获取**Chip Name**和**NPU Name**信息，实际配置值为`<Chip Name>_<NPU Name>`。示例：若Chip Name为`Ascendxxx`、NPU Name为`yyy`，则配置值为`Ascendxxx_yyy`。
 
@@ -96,6 +96,6 @@ AI处理器型号及对应查询方式如下：
 
 **适用产品**：
 
-- Atlas A2训练系列产品 / Atlas A2推理系列产品
+- Atlas A2系列产品
 
 在安装AI处理器的服务器上执行该命令，查询得到`<Name>`的对应取值，完整配置值为`Ascend<Name>`。示例：若`<Name>`取值为`xxx`，则配置值为`Ascendxxx`。

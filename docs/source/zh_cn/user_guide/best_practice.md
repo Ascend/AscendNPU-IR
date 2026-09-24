@@ -693,7 +693,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
 
 **说明**：
 
-本节内容仅适用于 Atlas A3/A2 系列产品。
+本节内容仅适用于 Atlas A2系列产品、Atlas A3系列产品。
 
 **问题描述**：
 

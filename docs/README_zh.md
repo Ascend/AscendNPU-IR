@@ -34,7 +34,7 @@ apt-get update && apt-get install -y \
 
 ### Python 依赖
 
-在**仓库根目录**下执行：
+在仓库根目录下执行：
 
 ```bash
 python3 -m venv .venv

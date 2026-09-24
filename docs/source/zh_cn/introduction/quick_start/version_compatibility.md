@@ -10,9 +10,9 @@
 
 | AscendNPU IR版本 | Gitcode分支 | 依赖CANN版本 | 硬件支持 |
 | --- | --- | --- | --- |
-| `v1.2.0` | `release/v1.2.x` | CANN 9.1.0 | <ul><li>Ascend 950PR/Ascend 950DT(branch `feature/regbase`)</li><li>Atlas A3训练系列产品/Atlas A3推理系列产品</li><li>Atlas A2训练系列产品/Atlas A2推理系列产品</li></ul> |
-| `v1.1.0` | `release/v1.1.x` | CANN 9.0.0 | <ul><li>Ascend 950PR/Ascend 950DT(branch `feature_a5`)</li><li>Atlas A3训练系列产品/Atlas A3推理系列产品</li><li>Atlas A2训练系列产品/Atlas A2推理系列产品</li></ul> |
-| `v1.0.0` | `release/v1.0.0` | CANN 8.5.0 | <ul><li>Atlas A3训练系列产品/Atlas A3推理系列产品</li><li>Atlas A2训练系列产品/Atlas A2推理系列产品</li></ul> |
+| `v1.2.0` | `release/v1.2.x` | CANN 9.1.0 | <ul><li>Ascend 950PR&950DT系列产品(branch `feature/regbase`)</li><li>Atlas A3系列产品</li><li>Atlas A2系列产品</li></ul> |
+| `v1.1.0` | `release/v1.1.x` | CANN 9.0.0 | <ul><li>Ascend 950PR&950DT系列产品(branch `feature_a5`)</li><li>Atlas A3系列产品</li><li>Atlas A2系列产品</li></ul> |
+| `v1.0.0` | `release/v1.0.0` | CANN 8.5.0 | <ul><li>Atlas A3系列产品</li><li>Atlas A2系列产品</li></ul> |
 
 **重要说明**：
 

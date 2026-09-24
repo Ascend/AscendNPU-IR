@@ -74,7 +74,7 @@ iter 2:                                 [MTE2 load buf0][ V compute buf0 ]...
 
 多缓冲的代价是N倍的内存占用，由此带来两类需要权衡的问题：
 
-- **内存溢出**：UB、L1、L0C容量有限，N倍占用可能导致PlanMemory分配失败并上报overflow。编译器带有溢出回退机制：在Ascend 950PR/Ascend 950DT上，会先只关闭溢出内存空间对应的多缓冲后重试，逐项退让无效时再关闭总开关；在Atlas A3系列产品与Atlas A2系列产品上，则依次关闭`--enable-code-motion`与多缓冲总开关后重试。回退能保证编译成功，但意味着对应层次的收益丢失，此时更合适的做法是减小tiling分块。开启`--enable-tuning-mode`可禁用该重试行为，使溢出直接暴露为编译失败。
+- **内存溢出**：UB、L1、L0C容量有限，N倍占用可能导致PlanMemory分配失败并上报overflow。编译器带有溢出回退机制：在Ascend 950PR&950DT系列产品上，会先只关闭溢出内存空间对应的多缓冲后重试，逐项退让无效时再关闭总开关；在Atlas A3系列产品与Atlas A2系列产品上，则依次关闭`--enable-code-motion`与多缓冲总开关后重试。回退能保证编译成功，但意味着对应层次的收益丢失，此时更合适的做法是减小tiling分块。开启`--enable-tuning-mode`可禁用该重试行为，使溢出直接暴露为编译失败。
 - **分块变小反而变慢**：为容纳多份Buffer而缩小tiling分块，会降低单次DMA的搬运效率、增加循环次数与同步开销。因此并非“开得越多越快”，需要结合实测确认。
 
 此外，多缓冲会改变同步结构（核内的flag ID与跨核的event ID都需要随槽位轮转），在CV跨核等复杂场景下对同步求解的要求更高。若开启多缓冲后出现精度异常或卡死，可先用`--enable-auto-multi-buffer=false`定位问题范围，相关排查手段见[调试调测-调试：工具类](../../user_guide/debug_option.md#调试工具类)。
@@ -117,12 +117,12 @@ annotation.mark %p {hivm.multi_buffer = 2 : i32} : memref<1024xf16, #hivm.addres
 
 `--limit-auto-multi-buffer-buffer`的默认值与目标硬件相关：
 
-- Ascend 950PR/Ascend 950DT：`no-limit`
-- Atlas A3训练系列产品/Atlas A3推理系列产品、Atlas A2训练系列产品/Atlas A2推理系列产品：`only-cube`
+- Ascend 950PR&950DT系列产品：`no-limit`
+- Atlas A3系列产品、Atlas A2系列产品：`only-cube`
 
 显式传入该选项时以用户取值为准。
 
-相关的多缓冲数量选项：`--set-workspace-multibuffer`指定GM Workspace的多缓冲数量，在Ascend 950PR/Ascend 950DT上默认为2，在Atlas A3系列产品与Atlas A2系列产品上默认为4。
+相关的多缓冲数量选项：`--set-workspace-multibuffer`指定GM Workspace的多缓冲数量，在Ascend 950PR&950DT系列产品上默认为2，在Atlas A3系列产品与Atlas A2系列产品上默认为4。
 
 配置示例：
 
@@ -162,7 +162,7 @@ bishengir-compile input.mlir --limit-auto-multi-buffer-buffer=only-vector
 --multibuffer-mode="[(gm, 2), (l1, 2), (l0c, 1), (ub, 1)]"
 ```
 
-新旧选项的等价关系如下，可用于迁移现有配置。下表以Ascend 950PR/Ascend 950DT为基准，即目标为MIX算子、其余选项保持默认（GM数量取`--set-workspace-multibuffer`的默认值2）：
+新旧选项的等价关系如下，可用于迁移现有配置。下表以Ascend 950PR&950DT系列产品为基准，即目标为MIX算子、其余选项保持默认（GM数量取`--set-workspace-multibuffer`的默认值2）：
 
 | 现有配置 | 等价的`--multibuffer-mode` |
 |-----|-----|
