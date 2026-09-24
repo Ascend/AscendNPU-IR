@@ -23,17 +23,27 @@ repos:
               python3 -m pip install -q clang-format 2>/dev/null || true
             fi
             command -v git-clang-format >/dev/null 2>&1 || { echo "git-clang-format unavailable, skip"; exit 0; }
-            # 自适应选 base: 平台检出已把 PR 目标分支 fetch 到 origin/*, 取 rev-list 计数最小者
+            # 平台检出: 先 checkout PR 头(new_<id>)再 merge origin/master, 故 HEAD 是 merge commit, HEAD^1=PR 头
+            # 目标: 只对比 PR 源分支与目标分支, 只检查 PR 自身改动的文件
+            if git rev-parse -q --verify HEAD^2 >/dev/null 2>&1; then
+              PRH=$(git rev-parse HEAD^1)
+            else
+              echo "warning: HEAD 不是 merge commit (无 HEAD^2), 退化为对比 HEAD"
+              PRH=$(git rev-parse HEAD)
+            fi
+            # 选 base: 候选分支与 PR 头取 merge-base, PR 相对其独有提交数最小者(即 PR 的目标分支)
             BEST=""
             BEST_N=999999999
             for b in $(git for-each-ref --format="%(refname:short)" refs/remotes/origin/ | grep -v "^origin/HEAD"); do
-              n=$(git rev-list --count "$b..HEAD" 2>/dev/null)
+              MB=$(git merge-base "$b" "$PRH" 2>/dev/null) || continue
+              [ -z "$MB" ] && continue
+              n=$(git rev-list --count "$MB..$PRH" 2>/dev/null)
               [ -z "$n" ] && continue
               if [ "$n" -lt "$BEST_N" ]; then BEST_N=$n; BEST="$b"; fi
             done
-            BASE=$(git merge-base "${BEST:-origin/master}" HEAD 2>/dev/null || echo origin/master)
-            echo "==== format base: $BASE (branch: ${BEST:-origin/master}, ahead: $BEST_N) ===="
-            OUT=$(git-clang-format --diff "$BASE" HEAD -- bishengir/ 2>/dev/null)
+            BASE=$(git merge-base "${BEST:-origin/master}" "$PRH" 2>/dev/null || echo origin/master)
+            echo "==== format base: $BASE (branch: ${BEST:-origin/master}, PR ahead: $BEST_N) ===="
+            OUT=$(git-clang-format --diff "$BASE" "$PRH" -- bishengir/ 2>/dev/null)
             if echo "$OUT" | grep -q "^diff --git"; then
               echo "$OUT"
               echo "==== GATE RESULT: FAIL - run git-clang-format to fix ===="
