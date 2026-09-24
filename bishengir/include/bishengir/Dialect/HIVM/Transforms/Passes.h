@@ -381,6 +381,9 @@ std::unique_ptr<Pass> createInferSimtVFMemScopeHintPass();
 // modules.
 std::unique_ptr<Pass> createMaterializeSimtVFMemScopePass();
 
+/// Create a pass to normalize SIMT VF operations before Triton conversion.
+std::unique_ptr<Pass> createNormalizeSIMTVFPass();
+
 // Create a pass to serially split oversized SIMT VF tiles.
 std::unique_ptr<Pass>
 createSIMTVFSubTilingPass(const SIMTVFSubTilingOptions &options = {});
