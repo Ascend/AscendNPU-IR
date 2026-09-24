@@ -16,6 +16,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HIVM/Transforms/InsertLoadStoreForMixCV/Utils.h"
+#include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HIVM/IR/CustomOp/CustomOpUtils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
@@ -452,8 +453,8 @@ static void collectRegionFlowEdges(RegionBranchOpInterface branch,
     branch.getSuccessorRegions(region, successorRegions);
     for (RegionSuccessor &successorRegion : successorRegions) {
       for (Block &block : region) {
-        auto terminator = dyn_cast<RegionBranchTerminatorOpInterface>(
-            block.getTerminator());
+        auto terminator =
+            dyn_cast<RegionBranchTerminatorOpInterface>(block.getTerminator());
         if (!terminator)
           continue;
         appendRegionFlowEdges(terminator.getSuccessorOperands(successorRegion),
@@ -564,16 +565,14 @@ UnrealizedConversionCastOp getUpPropagator(OpOperand *operand) {
 UnrealizedConversionCastOp getDownPropagator(OpResult result) {
   if (!result.hasOneUse())
     return nullptr;
-  auto propagateOp =
-      dyn_cast<UnrealizedConversionCastOp>(*result.user_begin());
+  auto propagateOp = dyn_cast<UnrealizedConversionCastOp>(*result.user_begin());
   if (propagateOp && propagateOp->hasAttr(kPropagateDownAttr))
     return propagateOp;
   return nullptr;
 }
 
 UnrealizedConversionCastOp getDownPropagator(Value value) {
-  if (auto propagateOp =
-          value.getDefiningOp<UnrealizedConversionCastOp>();
+  if (auto propagateOp = value.getDefiningOp<UnrealizedConversionCastOp>();
       propagateOp && propagateOp->hasAttr(kPropagateDownAttr))
     return propagateOp;
   for (Operation *user : value.getUsers()) {
@@ -609,7 +608,8 @@ bool haveSamePropagation(UnrealizedConversionCastOp lhs,
   return extractPropagatorInfo(lhs) == extractPropagatorInfo(rhs);
 }
 
-hivm::StoreOp insertStore(Value value, Location loc, PatternRewriter &rewriter) {
+hivm::StoreOp insertStore(Value value, Location loc,
+                          PatternRewriter &rewriter) {
   Type type = value.getType();
   auto tensorType = dyn_cast<TensorType>(type);
   if (!tensorType) {
@@ -633,6 +633,8 @@ hivm::LoadOp insertLoad(Value value, Location loc, PatternRewriter &rewriter) {
 
   Value loadInit = mlir::utils::createEmptyOpWithTargetElemType(
       rewriter, loc, value, elemType, MemRefLayoutAttrInterface{});
+  // Mark buffer_size_in_byte annotation for dynamic shape dst.
+  markBufferSizeUpperBound(rewriter, loc, value, loadInit);
   auto loadOp = rewriter.create<hivm::LoadOp>(
       loc, isBufferized ? TypeRange() : TypeRange(type), value, loadInit);
   loadOp->setAttr(hivm::kInsertedLoadAttr::name, rewriter.getUnitAttr());

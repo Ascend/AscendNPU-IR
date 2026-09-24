@@ -1272,6 +1272,16 @@ SmallVector<Operation *> utils::getAllAnnotateOpsWithAttr(Value v,
   return annotateOpsWithAttr;
 }
 
+SmallVector<Operation *> utils::getAnnotateOpUsers(Value v) {
+  SmallVector<Operation *> annotateOps;
+  for (auto user : v.getUsers()) {
+    auto markOp = dyn_cast<annotation::MarkOp>(user);
+    if (markOp && markOp.getSrc() == v)
+      annotateOps.push_back(user);
+  }
+  return annotateOps;
+}
+
 SmallVector<std::optional<Operation *>>
 utils::getAnnotateOpWithAttrForEachOperand(
     const SmallVectorImpl<Value> &operands, StringRef name) {

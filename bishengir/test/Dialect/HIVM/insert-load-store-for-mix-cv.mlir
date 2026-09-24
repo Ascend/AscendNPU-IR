@@ -76,6 +76,34 @@ func.func @insert_load_between_fixpipe_and_vector(%arg0 : memref<?xf16>, %arg1 :
 }
 
 // -----
+// The load dst mirrors the dynamic shape of the fixpipe result. Its static
+// upper bound is derived from the fixpipe ins chain (extract_slice source
+// tensor<2x128xf32>), i.e. 2 * 128 * 4 = 1024 bytes, and must be annotated
+// with buffer_size_in_byte so later passes can constantize the alloc.
+// CHECK-LABEL: @insert_load_between_dynamic_fixpipe_and_vector(
+// CHECK-SAME: %[[ARG0:.*]]: memref<?xf32>, %[[ARG1:.*]]: memref<?xi8>, %[[N:.*]]: index)
+func.func @insert_load_between_dynamic_fixpipe_and_vector(%arg0 : memref<?xf32>, %arg1 : memref<?xi8>, %n : index) attributes { hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE> } {
+  %cst_1 = arith.constant 2.000000e+00 : f32
+  %reinterpret_cast_fixpipe_0 = memref.reinterpret_cast %arg0 to offset: [0], sizes: [2, %n], strides: [%n, 1] : memref<?xf32> to memref<2x?xf32, strided<[?, 1], offset: 0>>
+  %fixpipe_tmp0_tensor = bufferization.to_tensor %reinterpret_cast_fixpipe_0 restrict writable : memref<2x?xf32, strided<[?, 1], offset: 0>>
+  %1 = tensor.empty() : tensor<2x128xf32>
+  %extracted_slice = tensor.extract_slice %1[0, 0] [2, %n] [1, 1] : tensor<2x128xf32> to tensor<2x?xf32>
+  // CHECK: %[[VAL2:.*]] = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%{{.*}} : tensor<2x?xf32>) outs(%{{.*}} : tensor<2x?xf32>) -> tensor<2x?xf32>
+  // CHECK: %[[VAL3:.*]] = tensor.empty(%{{.*}}) : tensor<2x?xf32>
+  // CHECK: annotation.mark %[[VAL3]] {buffer_size_in_byte = 1024 : i64} : tensor<2x?xf32>
+  // CHECK: %[[VAL4:.*]] = hivm.hir.load ins(%[[VAL2]] : tensor<2x?xf32>) outs(%[[VAL3]] : tensor<2x?xf32>) {"hivm.inserted-load"} core_type = <VECTOR> -> tensor<2x?xf32>
+  %3 = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%extracted_slice : tensor<2x?xf32>)
+                               outs(%fixpipe_tmp0_tensor : tensor<2x?xf32>) -> tensor<2x?xf32>
+  %4 = tensor.empty(%n) : tensor<2x?xf32>
+  %5 = hivm.hir.vmul ins(%3, %cst_1 : tensor<2x?xf32>, f32) outs(%4 : tensor<2x?xf32>) -> tensor<2x?xf32>
+  %reinterpret_cast_0 = memref.reinterpret_cast %arg1 to offset: [0], sizes: [512], strides: [ 1] : memref<?xi8> to memref<512xi8, strided<[1], offset: 0>>
+  %cst0 = arith.constant 0 : index
+  %view = memref.view %reinterpret_cast_0[%cst0][%n] : memref<512xi8, strided<[1], offset: 0>> to memref<2x?xf32>
+  hivm.hir.store ins(%5 : tensor<2x?xf32>) outs(%view : memref<2x?xf32>)
+  return
+}
+
+// -----
 // CHECK-LABEL: @insert_store_between_vector_and_load(
 func.func @insert_store_between_vector_and_load(%arg0 : memref<?xf32>) attributes { hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE> } {
   %1 = memref.reinterpret_cast %arg0 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf32> to memref<16x16xf32, strided<[16, 1], offset: 0>>
