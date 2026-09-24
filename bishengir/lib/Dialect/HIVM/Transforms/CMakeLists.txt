@@ -135,6 +135,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   MergeSamePreloadScopes.cpp
   NormalizeBitwiseSelect.cpp
   NormalizeConvOps.cpp
+  NormalizeSIMTVF.cpp
   NormalizeMatmul.cpp
   NormalizeTmpBufferInVf.cpp
   OptMemPlanForPipeline.cpp
@@ -201,6 +202,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   MLIRMathDialect
   MLIRMemRefDialect
   MLIRMemRefTransforms
+  MLIRTensorDialect
   MLIRVectorDialect
   BiShengIRMemRefExtDialect
   BiShengIRDialectUtils

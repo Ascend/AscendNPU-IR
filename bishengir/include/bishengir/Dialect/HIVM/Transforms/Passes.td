@@ -1573,6 +1573,12 @@ def MaterializeSimtVFMemScope
   let dependentDialects = ["hivm::HIVMDialect", "memref::MemRefDialect"];
 }
 
+def NormalizeSIMTVF : HIVMPass<"normalize-simt-vf", "ModuleOp"> {
+  let summary = "Normalize SIMT VF operations before Triton conversion";
+  let constructor = "mlir::hivm::createNormalizeSIMTVFPass()";
+  let dependentDialects = ["arith::ArithDialect", "tensor::TensorDialect"];
+}
+
 def SIMTVFSubTiling : HIVMPass<"hivm-simt-vf-sub-tiling", "ModuleOp"> {
   let summary = "Split oversized SIMT VF tiles into serial smaller tiles";
   let constructor = "mlir::hivm::createSIMTVFSubTilingPass()";
