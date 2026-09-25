@@ -1411,4 +1411,6 @@ def MultiBufferCounterOp : HIVM_Op<"multi_buffer_counter"> {
   let assemblyFormat = "attr-dict `->` type($counter)";
 }
 
+include "bishengir/Dialect/HIVM/IR/HIVMProtonOps.td"
+
 #endif // BISHENGIR_DIALECT_HIVM_IR_HIVMOPS_TD
