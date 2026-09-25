@@ -714,6 +714,41 @@ module attributes {hacc.target = #hacc.target<"Ascend910B4">, hfusion.disableHfu
 }
 
 // -----
+// A3: scf.if with else branch yielding vbrc (not in L0C) should NOT get
+// hivm.remain_in_l0c, because the else path doesn't keep data in L0C.
+// CHECK-LABEL: func.func @test_a3_dot_reuse_l0c_through_if_else_not_l0c
+// CHECK: %[[VBRC:.*]] = hivm.hir.vbrc
+// CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32}
+// CHECK: scf.if
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
+// CHECK: } else {
+// CHECK: scf.yield %[[VBRC]]
+// CHECK: } {may_not_exec, normalized_in_L0C = [0 : i32]}
+// CHECK-NOT: hivm.remain_in_l0c
+// CHECK: %[[MMAD:.*]] = hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
+// CHECK: hivm.hir.vadd ins(%[[MMAD]], {{.*}})
+// CHECK: return
+module attributes {hacc.target = #hacc.target<"Ascend910B4">} {
+func.func @test_a3_dot_reuse_l0c_through_if_else_not_l0c(
+    %a: tensor<6x9xf16>, %b: tensor<9x160xf16>,
+    %cond: i1) -> tensor<6x160xf32> {
+  %cst = arith.constant 0.000000e+00 : f32
+  %false = arith.constant false
+  %c0 = arith.constant 0 : index
+  %2 = tensor.empty() : tensor<6x160xf32>
+  %3 = hivm.hir.vbrc ins(%cst : f32) outs(%2 : tensor<6x160xf32>) -> tensor<6x160xf32>
+  %17 = scf.if %cond -> (tensor<6x160xf32>) {
+    %19 = hivm.hir.mmadL1 ins(%a, %b, %false, %c0, %c0, %c0 : tensor<6x9xf16>, tensor<9x160xf16>, i1, index, index, index) outs(%3 : tensor<6x160xf32>) -> tensor<6x160xf32>
+    scf.yield %19 : tensor<6x160xf32>
+  } else {
+    scf.yield %3 : tensor<6x160xf32>
+  }
+  %18 = hivm.hir.mmadL1 ins(%a, %b, %false, %c0, %c0, %c0 : tensor<6x9xf16>, tensor<9x160xf16>, i1, index, index, index) outs(%17 : tensor<6x160xf32>) -> tensor<6x160xf32>
+  return %18 : tensor<6x160xf32>
+}
+}
+
+// -----
 // A3: the init compare must be against the loop lower bound. Here C is cleared
 // on iteration 1 rather than 0, so isInitFirstLoopIter() declines and the
 // accumulation stays in L0C: the cmpi is kept and mmadL1 keeps writing into the
