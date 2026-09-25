@@ -190,10 +190,11 @@ SmallVector<Value> getShapeFromMixedSizes(ArrayRef<OpFoldResult> mixedSizes,
 
 /// Express the selected main or tail shape in the coordinate system seen by
 /// `val` by replaying collapse_shape operations from `rootAlloc` to `val`.
-SmallVector<Value>
-applyMemRefCollapseShapes(Value val, memref::AllocOp rootAlloc,
-                          SmallVector<Value> shape, Location loc,
-                          PatternRewriter &rewriter) {
+SmallVector<Value> applyMemRefCollapseShapes(Value val,
+                                             memref::AllocOp rootAlloc,
+                                             SmallVector<Value> shape,
+                                             Location loc,
+                                             PatternRewriter &rewriter) {
   if (auto toTensor = val.getDefiningOp<bufferization::ToTensorOp>())
     val = toTensor.getMemref();
 
@@ -210,8 +211,8 @@ applyMemRefCollapseShapes(Value val, memref::AllocOp rootAlloc,
       // produced by memref.expand_shape.
       return shape;
     }
-    if (auto view = dyn_cast_if_present<ViewLikeOpInterface>(
-            current.getDefiningOp())) {
+    if (auto view =
+            dyn_cast_if_present<ViewLikeOpInterface>(current.getDefiningOp())) {
       current = view.getViewSource();
       continue;
     }
@@ -1053,6 +1054,9 @@ unsigned getResultIndex(Operation &op, Value val) {
   return idx;
 }
 
+// Forward declaration
+static bool couldReuse(Value ccfInVal);
+
 // Set kNormalizedInL0C attribute with proper index for scf::ForOp, scf::IfOp,
 // or UnitAttr for other operations. If the attribute already exists, append
 // the new index to the existing list instead of overwriting.
@@ -1100,16 +1104,30 @@ void setRemainInL0CAttr(PatternRewriter &rewriter, Value ccfInVal) {
 // True if `val` is the result of a CCF op that this pass already normalized to
 // accumulate in L0C, i.e. its index is listed in the op's kNormalizedInL0C.
 bool isCCFOpResultInL0C(Operation *defOp, Value val) {
-  if (!defOp || !isa<scf::ForOp, scf::IfOp>(defOp))
-    return false;
-  unsigned resultIdx = getResultIndex(*defOp, val);
-  if (auto attr = defOp->getAttrOfType<ArrayAttr>(kNormalizedInL0C)) {
-    for (Attribute a : attr) {
-      if (auto idxAttr = mlir::dyn_cast<IntegerAttr>(a))
-        if (idxAttr.getInt() == static_cast<int64_t>(resultIdx))
-          return true;
-    }
+  // Handle scf.if: both then and else branches must be reusable
+  if (auto ifOp = dyn_cast_if_present<scf::IfOp>(defOp)) {
+    unsigned resultIdx = getResultIndex(*defOp, val);
+    Value thenYield = ifOp.thenYield().getOperand(resultIdx);
+    if (!couldReuse(thenYield))
+      return false;
+    if (auto elseYield = ifOp.elseYield())
+      return couldReuse(elseYield.getOperand(resultIdx));
+    return true;
   }
+
+  // Handle scf.for: check normalized_in_L0C attribute
+  if (auto forOp = dyn_cast_if_present<scf::ForOp>(defOp)) {
+    unsigned resultIdx = getResultIndex(*defOp, val);
+    if (auto attr = defOp->getAttrOfType<ArrayAttr>(kNormalizedInL0C)) {
+      for (Attribute a : attr) {
+        if (auto idxAttr = dyn_cast<IntegerAttr>(a))
+          if (idxAttr.getInt() == static_cast<int64_t>(resultIdx))
+            return true;
+      }
+    }
+    return false;
+  }
+
   return false;
 }
 
