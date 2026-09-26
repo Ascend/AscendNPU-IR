@@ -18,6 +18,7 @@ add_bishengir_dialect_library(BiShengIRHIVMRegbasePipelines
   BiShengIRSCFTransforms
   BiShengIRScopeTransforms
   BiShengIRTensorToHIVM
+  BiShengIRProtonToHIVM
   BiShengIRTensorTransforms
   BiShengIRTransform
   BiShengIRVectorTransforms

@@ -296,6 +296,20 @@ def AllocateProtonAscendGlobalScratchBufferPass :
   ];
 }
 
+def ConvertProtonToHIVM : Pass<"convert-proton-to-hivm", "mlir::ModuleOp"> {
+  let summary = "Convert Proton scope records to A5 HIVM boundaries.";
+  let description = [{
+    Validate structured Proton scope pairs, allocate 12-bit DFX region IDs
+    (bits [9:0] = logical id, bit 10 = 1, bit 11 = start/end), preserve scope
+    metadata, and replace each `proton.record` with an atomic HIVM profiling
+    boundary for Ascend A5 targets.
+  }];
+  let constructor =
+      "bishengir::triton::proton::a5::createConvertProtonToHIVMPass()";
+  let dependentDialects = ["mlir::triton::proton::ProtonDialect",
+                           "mlir::hivm::HIVMDialect"];
+}
+
 //===----------------------------------------------------------------------===//
 // HACCToLLVM
 //===----------------------------------------------------------------------===//
