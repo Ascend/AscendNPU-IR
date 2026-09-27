@@ -34,8 +34,7 @@ module {
 
 // -----
 
-// A direct to_memref of an HIVM-produced tensor stops generic memref traceback;
-// the hint pass inspects the tensor source locally and identifies UB.
+// A tensor crossing the SIMD-to-SIMT boundary is backed by UB.
 // CHECK-LABEL: func.func @simt_vf_from_hivm(
 // CHECK-SAME: %arg0: memref<8xi64> {hivm.simt_mem_scope_hint = #hivm.simt_mem_scope_hint<ub>}
 module {
@@ -54,7 +53,7 @@ module {
 
 // -----
 
-// tensor.empty follows the same direct-to-memref stop path and defaults to UB.
+// tensor.empty follows the same SIMD-to-SIMT boundary rule.
 // CHECK-LABEL: func.func @simt_vf_from_tensor_empty(
 // CHECK-SAME: %arg0: memref<8xi64> {hivm.simt_mem_scope_hint = #hivm.simt_mem_scope_hint<ub>}
 module {
@@ -72,19 +71,22 @@ module {
 
 // -----
 
-// An inverse to_tensor -> to_memref pair must continue tracing to the original
-// memref. Here that root is a device-entry argument, so the SIMT hint is GM.
-// CHECK-LABEL: func.func @simt_vf_from_roundtrip(
-// CHECK-SAME: %arg0: memref<8xi64> {hivm.simt_mem_scope_hint = #hivm.simt_mem_scope_hint<gm>}
+// A loop-carried tensor remains UB when converted to memref for a SIMT VF.
+// CHECK-LABEL: func.func @simt_vf_from_loop_iter_arg(
+// CHECK-SAME: %arg0: memref<8xi64> {hivm.simt_mem_scope_hint = #hivm.simt_mem_scope_hint<ub>}
 module {
-  func.func @simt_vf_from_roundtrip(%arg0: memref<8xi64>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, no_inline, outline, hivm.vf_mode = #hivm.vf_mode<SIMT>} {
+  func.func @simt_vf_from_loop_iter_arg(%arg0: memref<8xi64>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, no_inline, outline, hivm.vf_mode = #hivm.vf_mode<SIMT>} {
     return
   }
 
-  func.func @simple_kernel_with_roundtrip(%arg0: memref<8xi64>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vf_mode = #hivm.vf_mode<SIMD>} {
-    %0 = bufferization.to_tensor %arg0 restrict writable : memref<8xi64>
-    %1 = bufferization.to_memref %0 : memref<8xi64>
-    call @simt_vf_from_roundtrip(%1) : (memref<8xi64>) -> ()
+  func.func @simple_kernel_with_loop_iter_arg(%arg0: tensor<8xi64>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vf_mode = #hivm.vf_mode<SIMD>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %0 = scf.for %arg1 = %c0 to %c1 step %c1 iter_args(%arg2 = %arg0) -> tensor<8xi64> {
+      %1 = bufferization.to_memref %arg2 : memref<8xi64>
+      func.call @simt_vf_from_loop_iter_arg(%1) : (memref<8xi64>) -> ()
+      scf.yield %arg2 : tensor<8xi64>
+    }
     return
   }
 }
