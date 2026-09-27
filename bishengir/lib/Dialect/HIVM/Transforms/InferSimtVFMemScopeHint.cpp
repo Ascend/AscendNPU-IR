@@ -57,9 +57,19 @@ LogicalResult setSimtMemScopeHint(func::FuncOp func, unsigned argIdx,
   return success();
 }
 
+bool isToMemref(Value val) {
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+  return val.getDefiningOp<bufferization::ToMemrefOp>() != nullptr;
+#else
+  return val.getDefiningOp<bufferization::ToBufferOp>() != nullptr;
+#endif
+}
+
 bool isMemScopeHintAnchor(Value val) {
   // Stop traceback at values whose storage class is already semantically
   // known at the mixed boundary.
+  if (isToMemref(val))
+    return true;
   if (utils::isAllocLikeOp(val))
     return true;
   if (auto bbArg = dyn_cast<BlockArgument>(val)) {
@@ -72,17 +82,11 @@ bool isMemScopeHintAnchor(Value val) {
 }
 
 std::optional<AddressSpaceAttr> inferMemScopeFromAnchor(Value root) {
-#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
-  if (auto toMemref = root.getDefiningOp<bufferization::ToMemrefOp>()) {
-#else
-  if (auto toMemref = root.getDefiningOp<bufferization::ToBufferOp>()) {
-#endif
-    // Generic memref traceback deliberately stops at a to_memref whose tensor
-    // cannot be traced to an inverse to_tensor. For SIMT VF hint inference,
-    // inspect that tensor source locally so known tensor producers can still
-    // identify the mixed-boundary storage class.
-    return inferMemScopeFromAnchor(toMemref.getTensor());
-  }
+  // Tensor values crossing from SIMD into a SIMT VF are backed by UB in the
+  // mixed ABI. Stop at the conversion instead of applying the memref-only
+  // traceback rules to the tensor producer.
+  if (isToMemref(root))
+    return getAddressSpaceAttr(root.getContext(), hivm::AddressSpace::UB);
 
   if (auto bbArg = dyn_cast<BlockArgument>(root)) {
     auto *parentOp = bbArg.getOwner()->getParentOp();
