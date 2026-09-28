@@ -563,6 +563,37 @@ def NCHW2NC1HWC0Op : HIVM_DmaOp<"nchw2nc1hwc0", [
   let extraClassDeclaration = DmaOpBaseDecl;
 }
 
+def NCHW2C1HWNC0Op : HIVM_DmaOp<"nchw2c1hwnc0", [
+  SinglePipeOpTrait, OpPipeTrait<"PIPE::PIPE_MTE2">,
+  HIVMCoreTypeInterface, CubeCoreTypeTrait, NoMaxRankTrait,
+  OperElemTypeConstraints<[0, 1], [F16, BF16, F32]>,
+  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "Convert grouped NCHW weights from GM to C1HWNC0 in L1";
+  let description = [{
+    Converts a contiguous convolution weight with shape `[N, C, H, W]` in
+    global memory to a contiguous destination with shape
+    `[C1, H, W, G*align(N/G, 16), C0]` in L1, where
+    `C1 = ceil(C / C0)` and `C0 * sizeof(element_type) = 32` bytes. `C` is
+    already the number of input channels per group. Unwritten padding in the
+    aligned N dimension is allowed to retain its previous L1 contents.
+
+    Only `f16`, `bf16`, and `f32` element types are supported. The `groups`
+    attribute specifies how the output-channel dimension is partitioned.
+  }];
+  let arguments = (ins AnyMemRef:$src,
+                       AnyMemRef:$dst,
+                       DefaultValuedAttr<I64Attr, "1">:$groups);
+  let results = (outs);
+  let assemblyFormat = [{
+    attr-dict
+    `ins` `(` $src `:` type($src) `)`
+    `outs` `(` $dst `:` type($dst) `)`
+  }];
+  let hasVerifier = 1;
+  let extraClassDeclaration = DmaOpBaseDecl;
+}
+
 def AtomicCasOp : HIVM_Op<"atomic_cas", [
   NoLibraryFunctionTrait,
   OperElemTypeConstraints<[0], [I8, I16, I32, F16, BF16, F32, F8E4M3FN,

@@ -242,15 +242,7 @@ LogicalResult getElementsFor32ByteAlignment(Type elementType, int64_t &C0) {
   if (!elementType || !elementType.isIntOrFloat()) {
     return failure();
   }
-  const int64_t bytesize = 8;
-  auto elementSize = CEIL_DIV(elementType.getIntOrFloatBitWidth(), bytesize);
-  if (elementSize == 0) {
-    return failure();
-  }
-
-  constexpr int64_t k32ByteAlignment = 32;
-  C0 = CEIL_DIV(k32ByteAlignment, elementSize);
-
+  C0 = mlir::utils::getNumPerBlock(elementType);
   return success();
 }
 
@@ -388,9 +380,87 @@ LogicalResult normalizeInputToNCHW(ConvOpType op,
   return success();
 }
 
-bool hasCanonicalizableInputLoad(Value input) {
-  auto toTensor = input.getDefiningOp<bufferization::ToTensorOp>();
-  if (!toTensor || !input.hasOneUse())
+/// Add the unit H dimension to a Conv1D weight so both Conv1D and Conv2D use
+/// the rank-4 NCHW view expected by NCHW2C1HWNC0Op. Conv2D weights are already
+/// rank-4 and need no change.
+template <typename ConvOpType>
+LogicalResult normalizeWeightToNCHW(ConvOpType op,
+                                    PatternRewriter &rewriter) {
+  static constexpr int64_t baseDims = ConvBaseDims<ConvOpType>::dim;
+
+  Value weight = op.getWeight();
+  auto weightType = cast<RankedTensorType>(weight.getType());
+  if (weightType.getRank() == 4)
+    return success();
+  if constexpr (baseDims != 2) {
+    return failure();
+  }
+  if (weightType.getRank() != 3)
+    return failure();
+
+  ArrayRef<int64_t> shape = weightType.getShape();
+  SmallVector<int64_t> nchwShape{shape[0], shape[1], 1, shape[2]};
+  SmallVector<ReassociationIndices> reassociation{{0}, {1, 2}, {3}};
+  auto nchwType =
+      RankedTensorType::get(nchwShape, weightType.getElementType());
+
+  auto toTensor = weight.getDefiningOp<bufferization::ToTensorOp>();
+  if (!toTensor || !weight.hasOneUse())
+    return failure();
+  Value oldDst = toTensor.getMemref();
+  auto oldAlloc = oldDst.getDefiningOp<memref::AllocOp>();
+  if (!oldAlloc)
+    return failure();
+
+  hivm::LoadOp loadOp;
+  for (Operation *user : oldDst.getUsers()) {
+    if (user == toTensor.getOperation())
+      continue;
+    auto candidate = dyn_cast<hivm::LoadOp>(user);
+    if (!candidate || candidate.getDst() != oldDst || loadOp)
+      return failure();
+    loadOp = candidate;
+  }
+  if (!loadOp || loadOp.getResultTensor())
+    return failure();
+
+  auto srcType = dyn_cast<MemRefType>(loadOp.getSrc().getType());
+  auto dstType = dyn_cast<MemRefType>(oldDst.getType());
+  if (!srcType || !dstType)
+    return failure();
+  auto expandedSrcType = memref::ExpandShapeOp::computeExpandedType(
+      srcType, nchwShape, reassociation);
+  auto expandedDstType = memref::ExpandShapeOp::computeExpandedType(
+      dstType, nchwShape, reassociation);
+  if (failed(expandedSrcType) || failed(expandedDstType))
+    return failure();
+
+  PatternRewriter::InsertionGuard guard(rewriter);
+  rewriter.setInsertionPoint(loadOp);
+  Value expandedSrc = rewriter.create<memref::ExpandShapeOp>(
+      op.getLoc(), *expandedSrcType, loadOp.getSrc(), reassociation);
+  auto newAlloc =
+      rewriter.create<memref::AllocOp>(op.getLoc(), *expandedDstType);
+  newAlloc->setAttrs(oldAlloc->getAttrs());
+  auto newLoad = rewriter.create<hivm::LoadOp>(
+      op.getLoc(), TypeRange{}, expandedSrc, newAlloc.getResult());
+  newLoad->setAttrs(loadOp->getAttrs());
+  auto newToTensor = rewriter.create<bufferization::ToTensorOp>(
+      op.getLoc(), nchwType, newAlloc.getResult(), /*restrict=*/true,
+      /*writable=*/true);
+  newToTensor->setAttrs(toTensor->getAttrs());
+  op.getWeightMutable().assign(newToTensor.getResult());
+
+  rewriter.eraseOp(toTensor);
+  rewriter.eraseOp(loadOp);
+  if (oldAlloc->use_empty())
+    rewriter.eraseOp(oldAlloc);
+  return success();
+}
+
+bool hasCanonicalizableLoad(Value value) {
+  auto toTensor = value.getDefiningOp<bufferization::ToTensorOp>();
+  if (!toTensor || !value.hasOneUse())
     return false;
   Value dst = toTensor.getMemref();
   if (!dst.getDefiningOp<memref::AllocOp>())
@@ -450,14 +520,45 @@ bool canUseNCHW2NC1HWC0(ConvOpType op, RankedTensorType inputType) {
                        ? inputType.getDimSize(hasBatch ? 2 : 1)
                        : 1;
   int64_t width = inputType.getDimSize(inputType.getRank() - 1);
-  int64_t c0 = elementType.isF32() ? 8 : 16;
+  int64_t c0 = mlir::utils::getNumPerBlock(elementType);
   int64_t c1PerGroup = (channels / groups + c0 - 1) / c0;
 
   // These are the field-width limits of copy_gm_to_cbuf_multi_dn2nz used by
   // the NCHW2NC1HWC0 template.
   return channels % groups == 0 && batch * groups <= 4095 &&
          height * width <= 16384 && c1PerGroup * height * width <= 65535 &&
-         hasCanonicalizableInputLoad(op.getInput());
+         hasCanonicalizableLoad(op.getInput());
+}
+
+template <typename ConvOpType>
+bool canUseNCHW2C1HWNC0(ConvOpType op, RankedTensorType weightType) {
+  static constexpr int64_t baseDims = ConvBaseDims<ConvOpType>::dim;
+  if constexpr (baseDims == 4) {
+    return false;
+  }
+
+  if (!isAscend950(op) || !weightType.hasStaticShape())
+    return false;
+  Type elementType = weightType.getElementType();
+  if (!isa<Float16Type, BFloat16Type, Float32Type>(elementType))
+    return false;
+
+  int64_t groups = op.getGroups();
+  int64_t outputChannels = weightType.getDimSize(0);
+  if (groups <= 0 || outputChannels % groups != 0)
+    return false;
+  int64_t outputChannelsPerGroup = outputChannels / groups;
+  int64_t alignedOutputChannels =
+      groups * CEIL_FACTOR(outputChannelsPerGroup, utils::FRACTAL_BLOCK_NUM);
+  int64_t height =
+      baseDims == 3 ? weightType.getDimSize(2) : int64_t{1};
+  int64_t width = weightType.getDimSize(weightType.getRank() - 1);
+  int64_t spatialSize = height * width;
+
+  return outputChannelsPerGroup <= 4095 && spatialSize <= 16384 &&
+         alignedOutputChannels <= 16384 &&
+         spatialSize * alignedOutputChannels <= 16384 &&
+         hasCanonicalizableLoad(op.getWeight());
 }
 
 LogicalResult padDepthForConv3dInput(hivm::Conv3DL1Op op,
@@ -1219,6 +1320,12 @@ public:
 
     bool useNCHW2NC1HWC0 =
         canUseNCHW2NC1HWC0<ConvOpType>(op, cast<RankedTensorType>(inputType));
+    bool useNCHW2C1HWNC0 = canUseNCHW2C1HWNC0<ConvOpType>(
+        op, cast<RankedTensorType>(weightType));
+    if (useNCHW2NC1HWC0 && inputType.getRank() == 4 &&
+        useNCHW2C1HWNC0 && weightType.getRank() == 4)
+      return failure();
+
     if (useNCHW2NC1HWC0) {
       if (failed(normalizeInputToNCHW<ConvOpType>(op, rewriter)))
         return rewriter.notifyMatchFailure(op,
@@ -1228,6 +1335,10 @@ public:
         return rewriter.notifyMatchFailure(op, "Failed to expand to batch");
       }
     }
+    if (useNCHW2C1HWNC0 &&
+        failed(normalizeWeightToNCHW<ConvOpType>(op, rewriter)))
+      return rewriter.notifyMatchFailure(op,
+                                         "Failed to normalize weight to NCHW");
 
     if constexpr (baseDims == 4) {
       auto paddingFront = op.getPaddingFront();
@@ -1275,7 +1386,8 @@ public:
       return rewriter.notifyMatchFailure(
           op, "Failed to insert pad/expand/trans for input");
     }
-    if (failed(insertPadExpandTransToFormatWeight<ConvOpType>(op, rewriter, C0,
+    if (!useNCHW2C1HWNC0 &&
+        failed(insertPadExpandTransToFormatWeight<ConvOpType>(op, rewriter, C0,
                                                               groups, C))) {
       return rewriter.notifyMatchFailure(
           op, "Failed to insert pad/expand/trans for weight");

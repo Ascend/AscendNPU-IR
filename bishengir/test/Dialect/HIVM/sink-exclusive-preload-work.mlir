@@ -1,4 +1,4 @@
-// RUN: bishengir-opt %s -hivm-sink-exclusive-preload-work="bypass-shape-registry=true" | FileCheck %s
+// RUN: bishengir-opt %s -hivm-sink-exclusive-preload-work="bypass-shape-registry=true" -split-input-file | FileCheck %s
 
 func.func @vf_cast(
     %arg0: memref<32x128xbf16, #hivm.address_space<ub>>,
@@ -15,18 +15,19 @@ func.func @vf_consume(
   return
 }
 
-// Test 4: A dest tensor that is only consumed by a later scope is sunk
-// there with its exclusive src (to_tensor) and tensor.empty.
-// CHECK-LABEL: func.func @sink_returned_dest_tensor_to_next_scope
-// CHECK:         scope.scope
-// CHECK:           scope.return
-// CHECK:         } {{{.*}}preload_num = 1
+// No following CUBE: a returned dest stays in the producer even when the
+// next VECTOR is its only user.
+// CHECK-LABEL: func.func @keep_returned_dest_tensor_without_following_cube
 // CHECK:         scope.scope
 // CHECK:           %[[SRC:.*]] = bufferization.to_tensor
 // CHECK:           %[[EMPTY:.*]] = tensor.empty
 // CHECK:           %[[DST:.*]] = hivm.hir.vcast {{.*}} ins(%[[SRC]] {{.*}} outs(%[[EMPTY]]
-// CHECK:           hivm.hir.vexp ins(%[[DST]]
-func.func @sink_returned_dest_tensor_to_next_scope(%arg0: memref<32x128xbf16, #hivm.address_space<ub>>)
+// CHECK:           scope.return %[[DST]]
+// CHECK:         } {{{.*}}preload_num = 1
+// CHECK:         scope.scope
+// CHECK-NOT:       hivm.hir.vcast
+// CHECK:           hivm.hir.vexp ins(%{{.*}} :
+func.func @keep_returned_dest_tensor_without_following_cube(%arg0: memref<32x128xbf16, #hivm.address_space<ub>>)
     attributes {hivm.func_core_type = #hivm.func_core_type<AIV>} {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
@@ -50,22 +51,20 @@ func.func @sink_returned_dest_tensor_to_next_scope(%arg0: memref<32x128xbf16, #h
   return
 }
 
-// Shared DPS init must stay in the producer: later ops still write it.
-// The consumer allocates a fresh empty for the sunk writer. Exclusive
-// to_tensor of the dest src still follows the writer.
-// CHECK-LABEL: func.func @sink_dest_keeps_shared_empty
+// No following CUBE: shared and exclusive writers both stay in the
+// producer. The later VECTOR only consumes the returned tensor.
+// CHECK-LABEL: func.func @keep_dest_without_following_cube
 // CHECK:         scope.scope
 // CHECK:           bufferization.to_tensor
 // CHECK:           %[[SHARED:.*]] = tensor.empty
+// CHECK:           hivm.hir.vcast
 // CHECK:           hivm.hir.vexp {{.*}} outs(%[[SHARED]]
 // CHECK:           scope.return
 // CHECK:         } {{{.*}}preload_num = 1
 // CHECK:         scope.scope
-// CHECK-DAG:       %[[SRC:.*]] = bufferization.to_tensor
-// CHECK-DAG:       tensor.empty
-// CHECK:           %[[DST:.*]] = hivm.hir.vcast {{.*}} ins(%[[SRC]]
-// CHECK:           hivm.hir.vexp ins(%[[DST]]
-func.func @sink_dest_keeps_shared_empty(
+// CHECK-NOT:       hivm.hir.vcast
+// CHECK:           hivm.hir.vexp ins(%{{.*}} :
+func.func @keep_dest_without_following_cube(
     %arg0: memref<32x128xbf16, #hivm.address_space<ub>>,
     %arg1: memref<32x128xf32, #hivm.address_space<ub>>)
     attributes {hivm.func_core_type = #hivm.func_core_type<AIV>} {
@@ -94,19 +93,19 @@ func.func @sink_dest_keeps_shared_empty(
   return
 }
 
-// Q load + to_tensor + vcast follow the last user (vexp).
-// CHECK-LABEL: func.func @sink_q_load_cluster_to_consumer
+// No following CUBE: the Q load stays with the producer VECTOR.
+// CHECK-LABEL: func.func @keep_q_load_cluster_without_following_cube
 // CHECK:         memref.alloc
-// CHECK:         scope.scope
-// CHECK-NOT:       hivm.hir.load
-// CHECK:           scope.return
-// CHECK:         } {{{.*}}preload_num = 1
 // CHECK:         scope.scope
 // CHECK:           hivm.hir.load
 // CHECK:           bufferization.to_tensor
 // CHECK:           hivm.hir.vcast
+// CHECK:           scope.return
+// CHECK:         } {{{.*}}preload_num = 1
+// CHECK:         scope.scope
+// CHECK-NOT:       hivm.hir.load
 // CHECK:           hivm.hir.vexp
-func.func @sink_q_load_cluster_to_consumer(
+func.func @keep_q_load_cluster_without_following_cube(
     %src: memref<32x128xbf16, #hivm.address_space<gm>>)
     attributes {hivm.func_core_type = #hivm.func_core_type<AIV>} {
   %c0 = arith.constant 0 : index
@@ -296,16 +295,9 @@ func.func @sink_returned_memref_load_across_unused_cube(
   return
 }
 
-// Gate load→vmul→vexp→expand→vmul(H) sinks into the unique later
-// user (vadd). The unused dummy scope in between is left alone.
-// CHECK-LABEL: func.func @sink_gate_chain_to_consumer
-// CHECK:         scope.scope
-// CHECK-NOT:       hivm.hir.load
-// CHECK:           scope.return
-// CHECK:         } {{{.*}}preload_num = 1
-// CHECK:         scope.scope
-// CHECK:           memref.load
-// CHECK:         } {{{.*}}preload_num = 0
+// No CUBE after the producer: the gate chain stays, including across the
+// dummy VECTOR scope that does not use the returned tensor.
+// CHECK-LABEL: func.func @keep_gate_chain_without_following_cube
 // CHECK:         scope.scope
 // CHECK:           hivm.hir.load
 // CHECK:           bufferization.to_tensor
@@ -313,9 +305,16 @@ func.func @sink_returned_memref_load_across_unused_cube(
 // CHECK:           hivm.hir.vexp
 // CHECK:           tensor.expand_shape
 // CHECK:           hivm.hir.vmul
+// CHECK:           scope.return
+// CHECK:         } {{{.*}}preload_num = 1
+// CHECK:         scope.scope
+// CHECK:           memref.load
+// CHECK:         } {{{.*}}preload_num = 0
+// CHECK:         scope.scope
+// CHECK-NOT:       hivm.hir.load
 // CHECK:           hivm.hir.vadd
 // CHECK:         } {{{.*}}preload_num = 0
-func.func @sink_gate_chain_to_consumer(
+func.func @keep_gate_chain_without_following_cube(
     %gate: memref<128xf32, #hivm.address_space<gm>>,
     %h: tensor<128x128xf32>) -> tensor<128x128xf32>
     attributes {hivm.func_core_type = #hivm.func_core_type<AIV>} {
@@ -813,13 +812,18 @@ func.func @sink_clones_memref_load_view_chain(
   return
 }
 
-// Second dest-sink iteration: later VECTOR uniquely uses
-// vmul(extract(exp)). Clone the extract and return-forward the tensor.
+// The gate is still used by the extract in the next VECTOR, which sits
+// before the CUBE, so vexp stays at preload 2. The vmul's next CUBE does
+// not read it and the first consumer after that CUBE is the last VECTOR,
+// so the vmul sinks and clones the extract.
 // CHECK-LABEL: func.func @sink_forwards_extracted_tensor_extra
 // CHECK:         scope.scope
 // CHECK:           %[[EXP:.*]] = hivm.hir.vexp
-// CHECK:           tensor.extract %[[EXP]]
 // CHECK:           scope.return %[[EXP]]
+// CHECK:         } {{{.*}}preload_num = 2
+// CHECK:         scope.scope
+// CHECK:           tensor.extract
+// CHECK:           scope.return
 // CHECK:         } {{{.*}}preload_num = 1
 // CHECK:         scope.scope
 // CHECK:         } {{{.*}}CUBE
@@ -854,4 +858,338 @@ func.func @sink_forwards_extracted_tensor_extra()
     } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.preload_num = 0 : i32, no_inline}
   }
   return
+}
+
+// The next CUBE need not be the adjacent scope. It does not read the
+// return, so the cluster sinks into the first VECTOR consumer after it.
+// CHECK-LABEL: func.func @sink_returned_cluster_past_nonadjacent_cube
+// CHECK:         scope.scope
+// CHECK-NOT:       hivm.hir.vcast
+// CHECK:           scope.return
+// CHECK:         } {{{.*}}preload_num = 1
+// CHECK:         scope.scope
+// CHECK:           scope.return
+// CHECK:         } {{{.*}}preload_num = 2
+// CHECK:         scope.scope
+// CHECK:           hivm.hir.mmadL1
+// CHECK:         } {{{.*}}CUBE
+// CHECK:         scope.scope
+// CHECK:           hivm.hir.vcast
+// CHECK:           hivm.hir.vexp
+func.func @sink_returned_cluster_past_nonadjacent_cube(
+    %arg0: memref<32x128xbf16, #hivm.address_space<ub>>,
+    %other: tensor<16x16xbf16>)
+    attributes {hivm.func_core_type = #hivm.func_core_type<MIX>} {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c4 = arith.constant 4 : index
+  %c16 = arith.constant 16 : index
+  %true = arith.constant true
+  scf.for %i = %c0 to %c4 step %c1 {
+    %prod = scope.scope : () -> tensor<32x128xf32> {
+      %src = bufferization.to_tensor %arg0 restrict writable : memref<32x128xbf16, #hivm.address_space<ub>>
+      %empty = tensor.empty() : tensor<32x128xf32>
+      %dst = hivm.hir.vcast {enable_overflow = true, enable_saturate = false,
+                             hivm.unsigned_mode = #hivm.unsigned_mode<si2si>}
+          ins(%src : tensor<32x128xbf16>) outs(%empty : tensor<32x128xf32>)
+          -> tensor<32x128xf32>
+      scope.return %dst : tensor<32x128xf32>
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.preload_num = 1 : i32, no_inline}
+    scope.scope : () -> () {
+      scope.return
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.preload_num = 2 : i32, no_inline}
+    scope.scope : () -> () {
+      %acc = tensor.empty() : tensor<16x16xf32>
+      %m = hivm.hir.mmadL1 ins(%other, %other, %true, %c16, %c16, %c16 : tensor<16x16xbf16>, tensor<16x16xbf16>, i1, index, index, index) outs(%acc : tensor<16x16xf32>) -> tensor<16x16xf32>
+      scope.return
+    } {hivm.loop_core_type = #hivm.tcore_type<CUBE>, hivm.preload_num = 3 : i32, no_inline}
+    scope.scope : () -> () {
+      %out = tensor.empty() : tensor<32x128xf32>
+      %e = hivm.hir.vexp ins(%prod : tensor<32x128xf32>) outs(%out : tensor<32x128xf32>) -> tensor<32x128xf32>
+      scope.return
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.preload_num = 0 : i32, no_inline}
+  }
+  return
+}
+
+// The adjacent CUBE consumes the returned tensor, so the cluster stays
+// in the producer instead of moving past that CUBE.
+// CHECK-LABEL: func.func @keep_returned_cluster_consumed_by_adjacent_cube
+// CHECK:         scope.scope
+// CHECK:           hivm.hir.vcast
+// CHECK:           scope.return
+// CHECK:         } {{{.*}}preload_num = 1
+// CHECK:         scope.scope
+// CHECK:           hivm.hir.mmadL1
+// CHECK-NOT:       hivm.hir.vcast
+// CHECK:         } {{{.*}}CUBE
+func.func @keep_returned_cluster_consumed_by_adjacent_cube(
+    %arg0: memref<16x16xbf16, #hivm.address_space<ub>>,
+    %other: tensor<16x16xbf16>)
+    attributes {hivm.func_core_type = #hivm.func_core_type<MIX>} {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c4 = arith.constant 4 : index
+  %c16 = arith.constant 16 : index
+  %true = arith.constant true
+  scf.for %i = %c0 to %c4 step %c1 {
+    %prod = scope.scope : () -> tensor<16x16xf32> {
+      %src = bufferization.to_tensor %arg0 restrict writable : memref<16x16xbf16, #hivm.address_space<ub>>
+      %empty = tensor.empty() : tensor<16x16xf32>
+      %dst = hivm.hir.vcast {enable_overflow = true, enable_saturate = false,
+                             hivm.unsigned_mode = #hivm.unsigned_mode<si2si>}
+          ins(%src : tensor<16x16xbf16>) outs(%empty : tensor<16x16xf32>)
+          -> tensor<16x16xf32>
+      scope.return %dst : tensor<16x16xf32>
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.preload_num = 1 : i32, no_inline}
+    scope.scope : () -> () {
+      %m = hivm.hir.mmadL1 ins(%other, %other, %true, %c16, %c16, %c16 : tensor<16x16xbf16>, tensor<16x16xbf16>, i1, index, index, index) outs(%prod : tensor<16x16xf32>) -> tensor<16x16xf32>
+      scope.return
+    } {hivm.loop_core_type = #hivm.tcore_type<CUBE>, hivm.preload_num = 2 : i32, no_inline}
+    scope.scope : () -> () {
+      scope.return
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.preload_num = 0 : i32, no_inline}
+  }
+  return
+}
+
+// The first consuming CUBE is not adjacent. Copy-related returned work
+// moves into the VECTOR immediately before that CUBE and is returned so
+// the CUBE still reads it. Several consuming CUBEs would use the first.
+// CHECK-LABEL: func.func @sink_returned_cluster_before_consuming_cube
+// CHECK:         scope.scope
+// CHECK-NOT:       hivm.hir.vcast
+// CHECK:           scope.return
+// CHECK:         } {{{.*}}preload_num = 1
+// CHECK:         scope.scope
+// CHECK:           hivm.hir.vcast
+// CHECK:           scope.return
+// CHECK:         } {{{.*}}preload_num = 2
+// CHECK:         scope.scope
+// CHECK:           hivm.hir.mmadL1
+// CHECK-NOT:       hivm.hir.vcast
+// CHECK:         } {{{.*}}CUBE
+func.func @sink_returned_cluster_before_consuming_cube(
+    %arg0: memref<16x16xbf16, #hivm.address_space<ub>>,
+    %other: tensor<16x16xbf16>)
+    attributes {hivm.func_core_type = #hivm.func_core_type<MIX>} {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c4 = arith.constant 4 : index
+  %c16 = arith.constant 16 : index
+  %true = arith.constant true
+  scf.for %i = %c0 to %c4 step %c1 {
+    %prod = scope.scope : () -> tensor<16x16xf32> {
+      %src = bufferization.to_tensor %arg0 restrict writable : memref<16x16xbf16, #hivm.address_space<ub>>
+      %empty = tensor.empty() : tensor<16x16xf32>
+      %dst = hivm.hir.vcast {enable_overflow = true, enable_saturate = false,
+                             hivm.unsigned_mode = #hivm.unsigned_mode<si2si>}
+          ins(%src : tensor<16x16xbf16>) outs(%empty : tensor<16x16xf32>)
+          -> tensor<16x16xf32>
+      scope.return %dst : tensor<16x16xf32>
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.preload_num = 1 : i32, no_inline}
+    scope.scope : () -> () {
+      scope.return
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.preload_num = 2 : i32, no_inline}
+    scope.scope : () -> () {
+      %m = hivm.hir.mmadL1 ins(%other, %other, %true, %c16, %c16, %c16 : tensor<16x16xbf16>, tensor<16x16xbf16>, i1, index, index, index) outs(%prod : tensor<16x16xf32>) -> tensor<16x16xf32>
+      scope.return
+    } {hivm.loop_core_type = #hivm.tcore_type<CUBE>, hivm.preload_num = 3 : i32, no_inline}
+  }
+  return
+}
+
+// Several VECTOR consumers: the cluster lands in the first one and is
+// returned for the later consumer. The next CUBE does not read it.
+// CHECK-LABEL: func.func @sink_returned_cluster_to_first_vector_consumer
+// CHECK:         scope.scope
+// CHECK-NOT:       hivm.hir.vcast
+// CHECK:           scope.return
+// CHECK:         } {{{.*}}preload_num = 1
+// CHECK:         scope.scope
+// CHECK:         } {{{.*}}CUBE
+// CHECK:         scope.scope
+// CHECK:           hivm.hir.vcast
+// CHECK:           hivm.hir.vexp
+// CHECK:           scope.return
+// CHECK:         scope.scope
+// CHECK-NOT:       hivm.hir.vcast
+// CHECK:           hivm.hir.vexp
+func.func @sink_returned_cluster_to_first_vector_consumer(
+    %arg0: memref<32x128xbf16, #hivm.address_space<ub>>,
+    %other: tensor<16x16xbf16>)
+    attributes {hivm.func_core_type = #hivm.func_core_type<MIX>} {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c4 = arith.constant 4 : index
+  %c16 = arith.constant 16 : index
+  %true = arith.constant true
+  scf.for %i = %c0 to %c4 step %c1 {
+    %prod = scope.scope : () -> tensor<32x128xf32> {
+      %src = bufferization.to_tensor %arg0 restrict writable : memref<32x128xbf16, #hivm.address_space<ub>>
+      %empty = tensor.empty() : tensor<32x128xf32>
+      %dst = hivm.hir.vcast {enable_overflow = true, enable_saturate = false,
+                             hivm.unsigned_mode = #hivm.unsigned_mode<si2si>}
+          ins(%src : tensor<32x128xbf16>) outs(%empty : tensor<32x128xf32>)
+          -> tensor<32x128xf32>
+      scope.return %dst : tensor<32x128xf32>
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.preload_num = 1 : i32, no_inline}
+    scope.scope : () -> () {
+      %acc = tensor.empty() : tensor<16x16xf32>
+      %m = hivm.hir.mmadL1 ins(%other, %other, %true, %c16, %c16, %c16 : tensor<16x16xbf16>, tensor<16x16xbf16>, i1, index, index, index) outs(%acc : tensor<16x16xf32>) -> tensor<16x16xf32>
+      scope.return
+    } {hivm.loop_core_type = #hivm.tcore_type<CUBE>, hivm.preload_num = 2 : i32, no_inline}
+    scope.scope : () -> () {
+      %out = tensor.empty() : tensor<32x128xf32>
+      %e = hivm.hir.vexp ins(%prod : tensor<32x128xf32>) outs(%out : tensor<32x128xf32>) -> tensor<32x128xf32>
+      scope.return
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.preload_num = 0 : i32, no_inline}
+    scope.scope : () -> () {
+      %out = tensor.empty() : tensor<32x128xf32>
+      %e = hivm.hir.vexp ins(%prod : tensor<32x128xf32>) outs(%out : tensor<32x128xf32>) -> tensor<32x128xf32>
+      scope.return
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.preload_num = 0 : i32, no_inline}
+  }
+  return
+}
+
+// Later scope first. The vmul (and the expand of the earlier return) sinks
+// into the last VECTOR. The earlier exclusive vexp then follows it there.
+// CHECK-LABEL: func.func @sink_returned_chain_from_later_scope
+// CHECK:         scope.scope
+// CHECK-NOT:       hivm.hir.vexp
+// CHECK:           scope.return
+// CHECK:         } {{{.*}}preload_num = 1
+// CHECK:         scope.scope
+// CHECK-NOT:       hivm.hir.vexp
+// CHECK:           scope.return
+// CHECK:         } {{{.*}}preload_num = 0
+// CHECK:         scope.scope
+// CHECK:         } {{{.*}}CUBE
+// CHECK:         scope.scope
+// CHECK:           hivm.hir.vexp
+// CHECK:           tensor.expand_shape
+// CHECK:           hivm.hir.vexp
+// CHECK:           hivm.hir.vexp
+func.func @sink_returned_chain_from_later_scope()
+    attributes {hivm.func_core_type = #hivm.func_core_type<MIX>} {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c4 = arith.constant 4 : index
+  %c16 = arith.constant 16 : index
+  %true = arith.constant true
+  %other = tensor.empty() : tensor<16x16xbf16>
+  scf.for %i = %c0 to %c4 step %c1 {
+    %gate = scope.scope : () -> tensor<64xf32> {
+      %empty = tensor.empty() : tensor<64xf32>
+      %exp = hivm.hir.vexp ins(%empty : tensor<64xf32>) outs(%empty : tensor<64xf32>) -> tensor<64xf32>
+      scope.return %exp : tensor<64xf32>
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.preload_num = 1 : i32, no_inline}
+    %prod = scope.scope : () -> tensor<64x1xf32> {
+      %expanded = tensor.expand_shape %gate [[0, 1]] output_shape [64, 1] : tensor<64xf32> into tensor<64x1xf32>
+      %out = tensor.empty() : tensor<64x1xf32>
+      %scaled = hivm.hir.vexp ins(%expanded : tensor<64x1xf32>) outs(%out : tensor<64x1xf32>) -> tensor<64x1xf32>
+      scope.return %scaled : tensor<64x1xf32>
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.preload_num = 0 : i32, no_inline}
+    scope.scope : () -> () {
+      %acc = tensor.empty() : tensor<16x16xf32>
+      %m = hivm.hir.mmadL1 ins(%other, %other, %true, %c16, %c16, %c16 : tensor<16x16xbf16>, tensor<16x16xbf16>, i1, index, index, index) outs(%acc : tensor<16x16xf32>) -> tensor<16x16xf32>
+      scope.return
+    } {hivm.loop_core_type = #hivm.tcore_type<CUBE>, hivm.preload_num = 2 : i32, no_inline}
+    scope.scope : () -> () {
+      %out = tensor.empty() : tensor<64x1xf32>
+      %e = hivm.hir.vexp ins(%prod : tensor<64x1xf32>) outs(%out : tensor<64x1xf32>) -> tensor<64x1xf32>
+      scope.return
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.preload_num = 0 : i32, no_inline}
+  }
+  return
+}
+
+// -----
+
+// Regression: the preload-1 VECTOR vmul reads a UB buffer that a preload-2
+// CUBE fixpipe writes. Sinking it into the preload-0 consumer moved that
+// cross-core read from distance 1 to 2, so the buffer's two slots collided.
+// CHECK-LABEL: func.func @keep_cluster_reading_cube_written_buffer
+// CHECK:         hivm.hir.fixpipe
+// CHECK:         %[[T:[0-9a-z_]+]] = bufferization.to_tensor
+// CHECK:         %[[R:[0-9a-z_]+]] = scope.scope
+// CHECK-NEXT:      hivm.hir.vmul ins(%[[T]], %{{.*}} :
+// CHECK-NEXT:      scope.return
+// CHECK-NEXT:    } {{.*}}hivm.preload_num = 1 : i32
+// CHECK:           hivm.hir.vadd ins(%{{.*}}, %[[R]] :
+// CHECK:         } {{.*}}hivm.preload_num = 0 : i32
+module attributes {hacc.target = #hacc.target<"Ascend950DT_9582">} {
+func.func @keep_cluster_reading_cube_written_buffer(%scale: f32, %lb: index, %ub: index)
+    attributes {hivm.func_core_type = #hivm.func_core_type<MIX>} {
+  %c1 = arith.constant 1 : index
+  %c32 = arith.constant 32 : index
+  %c64 = arith.constant 64 : index
+  %true = arith.constant true
+  %cst = arith.constant 0.000000e+00 : f32
+  %empty = tensor.empty() : tensor<64x32xf32>
+  %init = hivm.hir.vbrc ins(%cst : f32) outs(%empty : tensor<64x32xf32>) -> tensor<64x32xf32>
+  %res = scf.for %iv = %lb to %ub step %c1 iter_args(%acc = %init) -> (tensor<64x32xf32>) {
+    %lhs = memref.alloc() : memref<8x4x16x8xf32, #hivm.address_space<cbuf>>
+    %rhs = memref.alloc() : memref<4x4x16x8xf32, #hivm.address_space<cbuf>>
+    %tc = memref.alloc() : memref<64x32xf32, #hivm.address_space<ub>>
+    %a = bufferization.to_tensor %lhs restrict writable : memref<8x4x16x8xf32, #hivm.address_space<cbuf>>
+    %b = bufferization.to_tensor %rhs restrict writable : memref<4x4x16x8xf32, #hivm.address_space<cbuf>>
+    scope.scope : () -> () {
+      %l0c = tensor.empty() : tensor<2x4x16x16xf32>
+      %mm = hivm.hir.mmadL1 {already_set_real_mkn, fixpipe_for_result_already_inserted = true, normalized_in_L0C} ins(%a, %b, %true, %c64, %c64, %c32 : tensor<8x4x16x8xf32>, tensor<4x4x16x8xf32>, i1, index, index, index) outs(%l0c : tensor<2x4x16x16xf32>) -> tensor<2x4x16x16xf32>
+      annotation.mark %tc {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<1>} : memref<64x32xf32, #hivm.address_space<ub>>
+      hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%mm : tensor<2x4x16x16xf32>) outs(%tc : memref<64x32xf32, #hivm.address_space<ub>>)
+      scope.return
+    } {hivm.loop_core_type = #hivm.tcore_type<CUBE>, hivm.max_preload_num = 3 : i32, hivm.preload_num = 2 : i32, no_inline}
+    %t = bufferization.to_tensor %tc restrict writable : memref<64x32xf32, #hivm.address_space<ub>>
+    %scaled = scope.scope : () -> (tensor<64x32xf32>) {
+      %m = hivm.hir.vmul ins(%t, %scale : tensor<64x32xf32>, f32) outs(%empty : tensor<64x32xf32>) -> tensor<64x32xf32>
+      scope.return %m : tensor<64x32xf32>
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.max_preload_num = 3 : i32, hivm.preload_num = 1 : i32, no_inline}
+    %next = scope.scope : () -> (tensor<64x32xf32>) {
+      %s = hivm.hir.vadd ins(%acc, %scaled : tensor<64x32xf32>, tensor<64x32xf32>) outs(%empty : tensor<64x32xf32>) -> tensor<64x32xf32>
+      scope.return %s : tensor<64x32xf32>
+    } {hivm.has_loop_carried_dep, hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.max_preload_num = 3 : i32, hivm.preload_num = 0 : i32, no_inline}
+    scf.yield %next : tensor<64x32xf32>
+  } {hivm.cv_pipelined_loop}
+  return
+}
+
+// Same shape with a VECTOR writer and no following CUBE: the vmul stays.
+// CHECK-LABEL: func.func @keep_cluster_reading_vector_written_buffer
+// CHECK:         hivm.hir.load
+// CHECK:         %[[M:[0-9a-z_]+]] = scope.scope
+// CHECK-NEXT:      hivm.hir.vmul
+// CHECK-NEXT:      scope.return
+// CHECK-NEXT:    } {{.*}}hivm.preload_num = 1 : i32
+// CHECK:           hivm.hir.vadd ins(%{{.*}}, %[[M]] :
+// CHECK:         } {{.*}}hivm.preload_num = 0 : i32
+func.func @keep_cluster_reading_vector_written_buffer(
+    %src: memref<64x32xf32, #hivm.address_space<gm>>, %scale: f32, %lb: index, %ub: index)
+    attributes {hivm.func_core_type = #hivm.func_core_type<MIX>} {
+  %c1 = arith.constant 1 : index
+  %cst = arith.constant 0.000000e+00 : f32
+  %empty = tensor.empty() : tensor<64x32xf32>
+  %init = hivm.hir.vbrc ins(%cst : f32) outs(%empty : tensor<64x32xf32>) -> tensor<64x32xf32>
+  %res = scf.for %iv = %lb to %ub step %c1 iter_args(%acc = %init) -> (tensor<64x32xf32>) {
+    %buf = memref.alloc() : memref<64x32xf32, #hivm.address_space<ub>>
+    scope.scope : () -> () {
+      hivm.hir.load ins(%src : memref<64x32xf32, #hivm.address_space<gm>>)
+                    outs(%buf : memref<64x32xf32, #hivm.address_space<ub>>)
+      scope.return
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.max_preload_num = 3 : i32, hivm.preload_num = 2 : i32, no_inline}
+    %t = bufferization.to_tensor %buf restrict writable : memref<64x32xf32, #hivm.address_space<ub>>
+    %scaled = scope.scope : () -> (tensor<64x32xf32>) {
+      %m = hivm.hir.vmul ins(%t, %scale : tensor<64x32xf32>, f32) outs(%empty : tensor<64x32xf32>) -> tensor<64x32xf32>
+      scope.return %m : tensor<64x32xf32>
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.max_preload_num = 3 : i32, hivm.preload_num = 1 : i32, no_inline}
+    %next = scope.scope : () -> (tensor<64x32xf32>) {
+      %s = hivm.hir.vadd ins(%acc, %scaled : tensor<64x32xf32>, tensor<64x32xf32>) outs(%empty : tensor<64x32xf32>) -> tensor<64x32xf32>
+      scope.return %s : tensor<64x32xf32>
+    } {hivm.has_loop_carried_dep, hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.max_preload_num = 3 : i32, hivm.preload_num = 0 : i32, no_inline}
+    scf.yield %next : tensor<64x32xf32>
+  } {hivm.cv_pipelined_loop}
+  return
+}
 }

@@ -1648,7 +1648,7 @@ static LogicalResult setOperationsCoreTypeForA5(OpBuilder builder,
           };
 
           TCoreTypeAttr newTcoretype = inferNewCoreType(upProp);
-          if (newTcoretype && newTcoretype.getTcoretype() == TCoreType::VECTOR) {
+          if (newTcoretype) {
             LDBG("set tcoretype for " << vbrcOp << " to " << newTcoretype);
             vbrcOp->setAttr(hivm::TCoreTypeAttr::name,
                             builder.getAttr<hivm::TCoreTypeAttr>(

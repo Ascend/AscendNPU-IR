@@ -869,7 +869,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // -----
 
 // CHECK-LABEL: func.func @test_scalar_vbrc_mmad_outs
-// CHECK: %[[VBRC:.*]] = hivm.hir.vbrc ins(%{{.*}} : f32) outs(%{{.*}} : tensor<16x16xf32>) -> tensor<16x16xf32>
+// CHECK: %[[VBRC:.*]] = hivm.hir.vbrc {hivm.tcore_type = #hivm.tcore_type<CUBE>} ins(%{{.*}} : f32) outs(%{{.*}} : tensor<16x16xf32>) -> tensor<16x16xf32>
 // CHECK: hivm.hir.mmadL1 {{.*}} outs(%[[VBRC]] :
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   func.func @test_scalar_vbrc_mmad_outs(%a : tensor<16x16xf32>, %b : tensor<16x16xf32>, %dst : tensor<16x16xf32>)
@@ -896,7 +896,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // VECTOR (store) and CUBE (mmad); do not insert TightCoupledBuffer copies.
 // CHECK-LABEL: func.func @vbrc_store_and_mmad_outs
 // CHECK: %[[VBRC_VEC:.*]] = hivm.hir.vbrc {hivm.tcore_type = #hivm.tcore_type<VECTOR>} ins(%{{.*}} : f32) outs(%{{.*}} : tensor<16x16xf32>) -> tensor<16x16xf32>
-// CHECK: %[[VBRC_CUBE:.*]] = hivm.hir.vbrc ins(%{{.*}} : f32) outs(%{{.*}} : tensor<16x16xf32>) -> tensor<16x16xf32>
+// CHECK: %[[VBRC_CUBE:.*]] = hivm.hir.vbrc {hivm.tcore_type = #hivm.tcore_type<CUBE>} ins(%{{.*}} : f32) outs(%{{.*}} : tensor<16x16xf32>) -> tensor<16x16xf32>
 // CHECK-NOT: hivm.hir.copy
 // CHECK-NOT: "hivm.inserted-fixpipe"
 // CHECK: hivm.hir.store ins(%[[VBRC_VEC]] : tensor<16x16xf32>)
@@ -930,7 +930,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // fixpipes.
 // CHECK-LABEL: func.func @vbrc_store_and_remain_in_l0c_if
 // CHECK: %[[VBRC_VEC:.*]] = hivm.hir.vbrc {hivm.tcore_type = #hivm.tcore_type<VECTOR>} ins(%{{.*}} : f32) outs(%{{.*}} : tensor<16x16xf32>) -> tensor<16x16xf32>
-// CHECK: %[[VBRC_CUBE:.*]] = hivm.hir.vbrc ins(%{{.*}} : f32) outs(%{{.*}} : tensor<16x16xf32>) -> tensor<16x16xf32>
+// CHECK: %[[VBRC_CUBE:.*]] = hivm.hir.vbrc {hivm.tcore_type = #hivm.tcore_type<CUBE>} ins(%{{.*}} : f32) outs(%{{.*}} : tensor<16x16xf32>) -> tensor<16x16xf32>
 // CHECK-NOT: hivm.hir.copy
 // CHECK-NOT: "hivm.inserted-fixpipe"
 // CHECK-NOT: "hivm.inserted-store"

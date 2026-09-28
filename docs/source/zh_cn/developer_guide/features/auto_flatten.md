@@ -2,9 +2,9 @@
 
 **适用产品**：
 
-- Ascend 950PR&950DT 系列产品
-- Atlas A3 系列产品
-- Atlas A2 系列产品
+- Ascend 950PR&950DT系列产品
+- Atlas A3系列产品
+- Atlas A2系列产品
 
 Auto Flatten Pass（HIVMFlattenOps）自动将多维张量操作折叠为低维等价形式，在保持语义正确性的同时降低秩。该优化简化了内存访问模式，提升了目标加速器上的硬件利用率。
 

@@ -2,9 +2,9 @@
 
 **适用产品**：
 
-- Ascend 950PR&950DT 系列产品
-- Atlas A3 系列产品
-- Atlas A2 系列产品
+- Ascend 950PR&950DT系列产品
+- Atlas A3系列产品
+- Atlas A2系列产品
 
 本文介绍HIVM中的存储对齐（Stride Alignment）机制，包括 `hivm-pre-mark-stride-align`、`hivm-mark-stride-align` 和 `hivm-enable-stride-align` 三个Pass的硬件背景、算法原理、接口说明和使用约束。
 
@@ -72,7 +72,7 @@ hivm-enable-stride-align        // 使能阶段：传播注解 + 重分配内存
 
 > **说明**：
 >
-> 本节内容仅适用于 Ascend 950PR&950DT 系列产品。
+> 本节内容仅适用于Ascend 950PR&950DT系列产品。
 
 ### 功能概述
 
@@ -106,8 +106,8 @@ hivm-enable-stride-align        // 使能阶段：传播注解 + 重分配内存
 2. 收集算子的memref操作数类型，跳过全rank-0或全shape为1的操作数。
 3. 判断是否为UB DMA操作（`hivm.hir.load`/`store`/`copy`），DMA操作的对齐判断规则与普通计算op不同。
 4. 根据架构走不同分析路径：
-   - **reg-based（A5/950）**：由于A5的 `hfusion-flatten` 已合并轴，直接将memref视为已flatten的状态，用 `getLastDiscontinuousDimRegBased` 查找最后不连续维度。对Fixpipe有专门的对齐约束计算。
-   - **非reg-based（A2/A3）**：通过 `FlattenInterface` 的 `getFlattened` 获取flatten后的关联组和类型，用 `getLastDiscontinuousDim` 在flatten后的类型上查找，再映射回原始维度。
+   - **reg-based（Ascend 950PR&950DT系列产品）**：由于 Ascend 950PR&950DT系列产品 的 `hfusion-flatten` 已合并轴，直接将memref视为已flatten的状态，用 `getLastDiscontinuousDimRegBased` 查找最后不连续维度。对Fixpipe有专门的对齐约束计算。
+   - **非reg-based（Atlas A2系列产品、Atlas A3系列产品）**：通过 `FlattenInterface` 的 `getFlattened` 获取flatten后的关联组和类型，用 `getLastDiscontinuousDim` 在flatten后的类型上查找，再映射回原始维度。
 5. 取UB空间的操作数（`getTargetSpaceOperands(UB)`），调用 `markAlignedDim` 为每个操作数创建对齐注解。
 
 #### 2. 最后不连续维度查找
@@ -116,7 +116,7 @@ hivm-enable-stride-align        // 使能阶段：传播注解 + 重分配内存
 
 - 如果任何memref的最低维stride不为1（最低维不连续），则最低维就是对齐目标维度。
 - 如果最低维stride为1（最低维连续），则在更高维中查找最后一个stride≠size的维度。
-- 对UB DMA操作（`copy_gm_to_ub`等），在Ascend 950PR/Ascend 950DT上只考虑最低维的stride，如果次低维已对齐且最低维无tail-jump问题，则无需对齐。
+- 对UB DMA操作（`copy_gm_to_ub`等），在Ascend 950PR&950DT系列产品上只考虑最低维的stride，如果次低维已对齐且最低维无tail-jump问题，则无需对齐。
 - 对1D memref，不存在不连续维度，返回 `nullopt`。
 
 #### 3. Fixpipe特殊处理
@@ -235,7 +235,7 @@ annotation.mark %alloc {hivm.stride_align_dims = array<i32: 2>, hivm.stride_alig
 
    若对齐后形状与原始形状相同（无需padding），仅移除对齐属性，不创建新alloc。
 
-8. AIC→AIV对齐传播（仅Ascend 950PR/Ascend 950DT）
+8. AIC→AIV对齐传播（仅支持Ascend 950PR&950DT系列产品）
    对于TightlyCoupledBuffer（紧密耦合Buffer），AIC和AIV共享同一物理内存。如果AIC侧的alloc做了stride对齐，AIV侧的对应alloc也需要相同对齐。`AddStrideAlignInfoForAiv` 通过TightlyCoupledBuffer的ID匹配AIC和AIV的alloc，将对齐信息从AIC传播到AIV。
 
 9. 后处理

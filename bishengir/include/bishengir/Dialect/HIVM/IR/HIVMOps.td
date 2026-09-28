@@ -169,9 +169,11 @@ def ConvertLayoutOp : HIVM_Op<"convert_layout",
     Dynamic dimensions are indicated by `ShapedType::kDynamic` in
     the static shape attribute.
 
-    `groups` is present for grouped NCHW to NC1HWC0 conversions. It records
-    that channel padding is applied independently to each group; it defaults
-    to one when omitted.
+    The discardable `convolution_groups` attribute is present for grouped NCHW
+    to NC1HWC0 and C1HWNC0 conversions. For NC1HWC0, channel padding is applied
+    independently to each group. For C1HWNC0, output-channel alignment is
+    applied independently to each group. The attribute defaults to one when
+    omitted.
   }];
 
   let arguments = (ins TensorOrMemref:$source,

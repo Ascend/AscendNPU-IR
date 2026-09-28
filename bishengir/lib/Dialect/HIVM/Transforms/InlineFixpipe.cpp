@@ -551,6 +551,7 @@ static FixpipeOp insertFixpipe(PatternRewriter &rewriter, Operation *point,
 
   auto fixpipe = (isMovingToL1 ? insertFixpipeToL1
                                : insertFixpipeToLocal)(rewriter, point, src);
+
   rewriter.replaceUsesWithIf(
       src, fixpipe.getResultTensor(), [](OpOperand &use) {
         auto *op = use.getOwner();
@@ -568,8 +569,7 @@ static FixpipeOp insertFixpipe(PatternRewriter &rewriter, Operation *point,
         // handle normalized_in_l0c and remain_in_l0c, including nested
         // scf.for yields whose enclosing loop (or the mmad itself) keeps
         // the value in L0C.
-        auto *defOp = use.get().getDefiningOp();
-        if (defOp->hasAttr(RemainInL0CAttr::name) && shouldKeepYieldInL0C(use))
+        if (isRemainInL0c(use) && shouldKeepYieldInL0C(use))
           return false;
         return true;
       });

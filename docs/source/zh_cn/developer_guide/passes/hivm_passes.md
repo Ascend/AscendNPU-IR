@@ -512,7 +512,7 @@
 
 ## -hivm-plan-memory-regbase
 
-**功能**：在A5上为HIVM算子执行内存规划。
+**功能**：在Ascend 950PR&950DT系列产品上为HIVM算子执行内存规划。
 
 **选项**：
 

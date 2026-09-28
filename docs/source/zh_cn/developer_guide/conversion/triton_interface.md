@@ -339,7 +339,7 @@ def triton_matmul_exp():
 
 **限制**：
 
-目前Atlas A2训练系列产品/Atlas A2推理系列产品最多支持2个Vector核。
+目前Atlas A2系列产品最多支持2个Vector核。
 
 **写法样例**：
 
@@ -839,7 +839,7 @@ def index_select_simd():
 
 ## Triton独有定制化操作
 
-在Ascend 950PR/Ascend 950DT架构中，Triton-Ascend的Custom Op支持用户自行定制操作并使用它。定制操作在运行时转换为对设备侧实现函数的调用，可以调用已有的库函数，也可以调用由用户提供的源码或字节码编译生成的实现函数。
+在Ascend 950PR&950DT系列产品架构中，Triton-Ascend的Custom Op支持用户自行定制操作并使用它。定制操作在运行时转换为对设备侧实现函数的调用，可以调用已有的库函数，也可以调用由用户提供的源码或字节码编译生成的实现函数。
 
 ### 注册与使用定制操作
 

@@ -6,7 +6,7 @@
 
 昇腾硬件片上内存使用Buffer机制，主要包含Cube（矩阵）计算单元和Vector（矢量）计算单元所涉及的存储单元。软件需要显式控制内存地址，并确保操作地址的对齐。
 
-以Atlas A2训练系列产品 / Atlas A2推理系列产品为例，硬件架构图如下：
+以Atlas A2系列产品为例，硬件架构图如下：
 ![image](../../../images/developer_guide/HardwareStructure_zh.png)
 
 各类Buffer的对齐要求与功能如下：

@@ -848,6 +848,45 @@ public:
     src = op.getOperand(0);
     dst = op.getOperand(1);
 
+    // Check if a subview/slice op can be reduced by its own pattern pass
+    auto willSlicingBeReduced = [](Value val) -> bool {
+      if (!val || !val.getDefiningOp())
+        return false;
+
+      auto *defOp = val.getDefiningOp();
+      SmallVector<int64_t> srcShape;
+      SmallVector<int64_t> resShape;
+
+      if (auto subview = dyn_cast<memref::SubViewOp>(defOp)) {
+        srcShape = utils::getShape(subview.getSourceType());
+        resShape = utils::getShape(subview.getType());
+      } else if (auto slice = dyn_cast<tensor::ExtractSliceOp>(defOp)) {
+        srcShape = utils::getShape(slice.getSourceType());
+        resShape = utils::getShape(slice.getType());
+      } else {
+        return false;
+      }
+
+      // Check if the result consists entirely of static 1 dimensions.
+      // If true, bypass the guard to let DropUnitDimsLoadStorePattern
+      // fold it cleanly to 1D.
+      if (!resShape.empty() &&
+          llvm::all_of(resShape, [](int64_t dim) { return dim == 1; })) {
+        return false;
+      }
+
+      auto squeezedShape = reshape_utils::getSqueezedShape(srcShape);
+      return squeezedShape != srcShape;
+    };
+
+    // If either the source or destination subview is about to be folded later,
+    // wait for it. The driver will return to this copy op once they are
+    // flattened.
+    if (willSlicingBeReduced(src) || willSlicingBeReduced(dst)) {
+      return rewriter.notifyMatchFailure(
+          op, "Deferring until upstream subviews eliminate unit dimensions.");
+    }
+
     Value collapsedSrc, collapsedDst;
     bool needUpdate = false;
     std::optional<Value> maybeCollapsedSrc, maybeCollapsedDst;
@@ -869,7 +908,15 @@ public:
           checkValueMatchPattern<memref::ExpandShapeOp, memref::SubViewOp>(
               dst, rewriter);
     }
-    if (maybeCollapsedSrc.has_value() && maybeCollapsedDst.has_value()) {
+
+    // Check if source and destination have same shapes
+    auto haveSameShape = [](Value lhs, Value rhs) {
+      return cast<ShapedType>(lhs.getType()).getShape() ==
+             cast<ShapedType>(rhs.getType()).getShape();
+    };
+
+    if (maybeCollapsedSrc.has_value() && maybeCollapsedDst.has_value() &&
+        haveSameShape(maybeCollapsedSrc.value(), maybeCollapsedDst.value())) {
       collapsedSrc = maybeCollapsedSrc.value();
       collapsedDst = maybeCollapsedDst.value();
       needUpdate = true;

@@ -2224,3 +2224,55 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     return
   }
 }
+
+// -----
+
+// A scalar zero vbrc used by mmadL1 and as the initializer of a vector loop
+// is cloned into one cube vbrc and one vector vbrc. The vector copy is the
+// loop-carried value consumed by vadd, and the loop result is stored.
+// CHECK-LABEL: @vbrc_split_cube_and_vector(
+// CHECK-NOT: hivm.hir.vbrc
+// CHECK: %[[CUBE_VBRC:.*]] = hivm.hir.vbrc {hivm.tcore_type = #hivm.tcore_type<CUBE>}
+// CHECK-NOT: hivm.hir.vbrc {{.*}}#hivm.tcore_type<CUBE>
+// CHECK: %[[VEC_VBRC:.*]] = hivm.hir.vbrc {hivm.tcore_type = #hivm.tcore_type<VECTOR>}
+// CHECK-NOT: hivm.hir.vbrc
+// CHECK: hivm.hir.mmadL1 {{.*}} ins(%[[CUBE_VBRC]],
+// CHECK: scf.for {{.*}} iter_args(%[[ACC:.*]] = %[[VEC_VBRC]])
+// CHECK: hivm.hir.vadd ins(%[[ACC]],
+// CHECK: scf.yield
+// CHECK: hivm.hir.store
+// CHECK-NOT: hivm.hir.vbrc
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @vbrc_split_cube_and_vector(
+      %rhs: tensor<1x1xf32>, %out: memref<1x1xf32>)
+      attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %cst = arith.constant 0.000000e+00 : f32
+    %c0_i32 = arith.constant 0 : i32
+    %c1_i32 = arith.constant 1 : i32
+    %c2_i32 = arith.constant 2 : i32
+    %c1 = arith.constant 1 : index
+    %true = arith.constant true
+    %empty = tensor.empty() : tensor<1x1xf32>
+    %vbrc = hivm.hir.vbrc ins(%cst : f32) outs(%empty : tensor<1x1xf32>)
+        -> tensor<1x1xf32>
+    %mmad_out = tensor.empty() : tensor<1x1xf32>
+    %mmad = hivm.hir.mmadL1 {already_set_real_mkn, fixpipe_for_result_already_inserted = true, normalized_in_L0C}
+        ins(%vbrc, %rhs, %true, %c1, %c1, %c1
+            : tensor<1x1xf32>, tensor<1x1xf32>, i1, index, index, index)
+        outs(%mmad_out : tensor<1x1xf32>) -> tensor<1x1xf32>
+    %fix_out = tensor.empty() : tensor<1x1xf32>
+    %fix = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+        ins(%mmad : tensor<1x1xf32>) outs(%fix_out : tensor<1x1xf32>)
+        -> tensor<1x1xf32>
+    %abs = hivm.hir.vabs ins(%fix : tensor<1x1xf32>) outs(%empty : tensor<1x1xf32>)
+        -> tensor<1x1xf32>
+    %loop = scf.for %i = %c0_i32 to %c2_i32 step %c1_i32
+        iter_args(%acc = %vbrc) -> (tensor<1x1xf32>) : i32 {
+      %add = hivm.hir.vadd ins(%acc, %abs : tensor<1x1xf32>, tensor<1x1xf32>)
+          outs(%empty : tensor<1x1xf32>) -> tensor<1x1xf32>
+      scf.yield %add : tensor<1x1xf32>
+    }
+    hivm.hir.store ins(%loop : tensor<1x1xf32>) outs(%out : memref<1x1xf32>)
+    return
+  }
+}

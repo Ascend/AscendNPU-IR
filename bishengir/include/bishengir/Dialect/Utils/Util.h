@@ -339,6 +339,9 @@ std::optional<Operation *> getAnnotateOpWithAttr(Value v, StringRef name);
 /// Search the users of value v to find all the annotation ops with attr `name`.
 SmallVector<Operation *> getAllAnnotateOpsWithAttr(Value v, StringRef name);
 
+/// Return the annotation ops whose src operand is v.
+SmallVector<Operation *> getAnnotateOpUsers(Value v);
+
 /// Search the users of each operand to find the annotation op with attr `name`.
 SmallVector<std::optional<Operation *>>
 getAnnotateOpWithAttrForEachOperand(const SmallVectorImpl<Value> &operands,

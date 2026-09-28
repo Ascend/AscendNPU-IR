@@ -244,17 +244,17 @@ A5InsertionPattern::matchAndRewrite(Operation *op,
   return TypeSwitch<Operation *, LogicalResult>(op)
       .Case<hivm::VBrcOp>([&](auto vbrcOp) {
         // vbrc from scalar that can only be run on cube core
-        if (isVectorBroadcast(vbrcOp)) {
-          PropagatorUtil::createPropagatorsUp(op, TCoreType::VECTOR,
-                                              hivm::AddressSpace::UB, rewriter);
-          PropagatorUtil::createPropagatorsDown(
-              op, TCoreType::VECTOR, hivm::AddressSpace::UB, rewriter);
+        if (isCubeAndVectorBroadcast(vbrcOp)) {
+          PropagatorUtil::createPropagatorsUp(op, TCoreType::CUBE_AND_VECTOR,
+                                              rewriter);
+          PropagatorUtil::createPropagatorsDown(op, TCoreType::CUBE_AND_VECTOR,
+                                                rewriter);
           return success();
         }
-        PropagatorUtil::createPropagatorsUp(vbrcOp, TCoreType::CUBE_AND_VECTOR,
-                                            rewriter);
-        PropagatorUtil::createPropagatorsDown(
-            vbrcOp, TCoreType::CUBE_AND_VECTOR, rewriter);
+        PropagatorUtil::createPropagatorsUp(vbrcOp, TCoreType::VECTOR,
+                                            hivm::AddressSpace::UB, rewriter);
+        PropagatorUtil::createPropagatorsDown(vbrcOp, TCoreType::VECTOR,
+                                              hivm::AddressSpace::UB, rewriter);
         return success();
       })
       .Case<tensor::InsertSliceOp>([&](Operation *op) {

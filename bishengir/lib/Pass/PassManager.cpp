@@ -18,14 +18,12 @@
 #include "bishengir/Pass/PassManager.h"
 #include "bishengir/Config/bishengir-config.h"
 #include "bishengir/Pass/CPURunnerMetadata.h"
+#include "bishengir/Pass/PassExecutionPolicy.h"
 #include "bishengir/Tools/BiShengIRConfigBase/Config.h"
 
-#if MLIR_ENABLE_EXECUTION_ENGINE
-#include "bishengir/ExecutionEngine/Passes.h"
-#include "bishengir/Pass/PassManager.h"
 #include "mlir/Pass/Pass.h"
-#include "llvm/ADT/ScopeExit.h"
-#include "llvm/Support/ScopedPrinter.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/Support/Debug.h"
 
 #define DEBUG_TYPE "bishengir-pass-manager"
 #define DBGS() (llvm::dbgs() << "[" DEBUG_TYPE "]: ")
@@ -34,6 +32,106 @@
 
 using namespace mlir;
 using namespace bishengir;
+
+namespace bishengir {
+
+// Always compiled, independently of MLIR_ENABLE_EXECUTION_ENGINE: the pass
+// filtering rides on the MLIR action infrastructure (MLIRIR), not on the
+// execution engine, and it used to be registered unconditionally from the
+// header constructors.
+BiShengIRPassManager::~BiShengIRPassManager() {
+  // The context keeps the last registered handler and it may outlive this
+  // manager, so deactivate the shared policy state: the stale handler becomes
+  // inert for the per-run Mix/Aiv filter (see PolicyState in the header).
+  policyState->managerAlive.store(false, std::memory_order_release);
+}
+
+void BiShengIRPassManager::initializeActionHandler(MLIRContext *ctx) {
+  // The handler is stored in the context and can outlive this manager; capture
+  // the shared state, never `this`. The state outlives the manager as well, so
+  // a stale handler never dereferences destroyed memory.
+  std::shared_ptr<PolicyState> state = policyState;
+  ctx->registerActionHandler([state](llvm::function_ref<void()> execute,
+                                     const mlir::tracing::Action &action) {
+    auto *passAction = llvm::dyn_cast<mlir::PassExecutionAction>(&action);
+    if (!passAction) {
+      execute();
+      return;
+    }
+
+    mlir::Operation *op = passAction->getOp();
+    const mlir::Pass &pass = passAction->getPass();
+
+    // 1. Aiv-mode global denylist, keyed by pass argument. Mix mode
+    // short-circuits inside the policy, so full pipelines pay one
+    // predictable branch per pass execution. Only a live manager filters:
+    // its mode belongs to the pipeline it is running.
+    if (state->managerAlive.load(std::memory_order_acquire) &&
+        state->policy.shouldSkipGlobally(pass, op))
+      return;
+
+    llvm::StringRef passArg = pass.getArgument();
+
+    // Adaptor passes (empty argument) orchestrate nested pipelines — always
+    // let them through so nested ops still get processed.
+    if (passArg.empty()) {
+      execute();
+      return;
+    }
+
+    // Helper: returns true if passArg is excluded by a FilterPassesAttr.
+    auto isFiltered = [&](mlir::Operation *candidate) -> bool {
+      auto attr = candidate->getAttrOfType<mlir::annotation::FilterPassesAttr>(
+          mlir::annotation::FilterPassesAttr::name);
+      if (!attr)
+        return false;
+      llvm::SmallVector<llvm::StringRef> allowed;
+      attr.getPasses().getValue().split(allowed, ',');
+      for (llvm::StringRef entry : allowed)
+        if (entry.trim() == passArg)
+          return false;
+      return true; // attr present but passArg not listed
+    };
+
+    // 2. Per-op FilterPassesAttr whitelist — skip entirely.
+    if (isFiltered(op)) {
+      LLVM_DEBUG(DBGS() << "skip '" << passArg
+                        << "' reason=FilterPassesAttr\n");
+      return;
+    }
+
+    // Op is a module — temporarily remove child ops that are filtered for
+    // this pass, execute, then restore them in order.
+    if (auto mod = llvm::dyn_cast<mlir::ModuleOp>(op)) {
+      mlir::Block *body = mod.getBody();
+
+      // Collect ops to hide.
+      llvm::SmallVector<mlir::Operation *> hidden;
+      for (mlir::Operation &childOp : llvm::make_early_inc_range(*body)) {
+        if (isFiltered(&childOp)) {
+          hidden.push_back(&childOp);
+          childOp.remove();
+        }
+      }
+
+      execute();
+
+      // Restore in original order: insert each op after its predecessor.
+      for (auto *hiddenOp : llvm::reverse(hidden))
+        body->push_front(hiddenOp);
+      return;
+    }
+
+    execute();
+  });
+}
+
+} // namespace bishengir
+
+#if MLIR_ENABLE_EXECUTION_ENGINE
+#include "bishengir/ExecutionEngine/Passes.h"
+#include "llvm/ADT/ScopeExit.h"
+#include "llvm/Support/ScopedPrinter.h"
 
 namespace bishengir {
 
@@ -92,8 +190,8 @@ bool CPURunnerMetadataParser<includePassInfo>::parse(llvm::cl::Option &opt,
   return failed(value.options.parseFromString(args.back()));
 }
 
-template struct bishengir::CPURunnerMetadataParser<true>;
-template struct bishengir::CPURunnerMetadataParser<false>;
+template struct CPURunnerMetadataParser<true>;
+template struct CPURunnerMetadataParser<false>;
 } // namespace bishengir
 
 namespace {

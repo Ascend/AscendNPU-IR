@@ -1581,6 +1581,8 @@ FailureOr<DataLayoutAttr> Conv1DL1Op::getWeightLayout() {
   switch (*rank) {
   case kDimThree:
     return DataLayoutAttr::get(getContext(), DataLayout::NCHW);
+  case kDimFour:
+    return DataLayoutAttr::get(getContext(), DataLayout::NCHW);
   case kDimFive:
     return DataLayoutAttr::get(getContext(), DataLayout::C1HWNC0);
   default:

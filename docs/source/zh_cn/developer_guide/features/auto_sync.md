@@ -176,7 +176,7 @@ barrier-all调试模式（`--enable-hivm-inject-barrier-all-sync`）会在每个
 | `--disable-hivm-auto-inject-sync` | bool | false | 完全禁用核内自动同步（GraphSyncSolver与InjectSync） |
 | `--enable-hivm-inject-barrier-all-sync` | bool | false | 强制InjectSync走barrier-all模式（同时覆盖GraphSyncSolver选择）；用于诊断自动同步失败 |
 | `--enable-hivm-inject-block-all-sync` | bool | false | 强制块同步走block-all插入（InjectBlockSync / CrossCoreGSS / DelayedCrossCoreGSS） |
-| `--enable-hivm-unit-flag-sync` | bool | false* | 对支持的操作启用unit-flag同步。*在Ascend950/RegBase上，除非显式指定该标志，否则默认启用 |
+| `--enable-hivm-unit-flag-sync` | bool | false* | 对支持的操作启用unit-flag同步。*在Ascend 950PR&950DT系列产品/RegBase上，除非显式指定该标志，否则默认启用 |
 | `--enable-hivm-assume-alive-loops` | bool | false | 假设`for`/`while`循环至少执行一次（影响InjectSync / InjectBlockSync分析） |
 
 管线选择摘要：

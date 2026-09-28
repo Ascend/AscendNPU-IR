@@ -1,7 +1,7 @@
-// RUN: bishengir-opt -allow-unregistered-dialect -optimize-dps-op-with-yielded-insert-slice %s | FileCheck %s
+// RUN: bishengir-opt -allow-unregistered-dialect -optimize-dps-op-with-yielded-insert-slice --split-input-file %s | FileCheck %s
 // RUN: bishengir-opt -allow-unregistered-dialect \
 // RUN:   -optimize-dps-op-with-yielded-insert-slice \
-// RUN:   -one-shot-bufferize=allow-unknown-ops -cse -canonicalize %s | FileCheck %s -check-prefix=CHECK-ONE-SHOT
+// RUN:   -one-shot-bufferize=allow-unknown-ops -cse -canonicalize --split-input-file %s | FileCheck %s -check-prefix=CHECK-ONE-SHOT
 
 func.func @optimize_dps_inits(%lb: index, %ub: index, %step: index) -> tensor<64xf32> {
   %c0 = arith.constant 0 : index
@@ -82,6 +82,21 @@ func.func @load_problem(%lb: index, %ub: index, %step: index) -> tensor<18x111x3
   }
   return %res : tensor<18x111x3xf32>
 }
+
+// -----
+
+// CHECK-LABEL: func.func @vtranspose_source_keep_init(
+//  CHECK-SAME:     %[[SRC:.*]]: tensor<32x8xf32>, %[[DEST:.*]]: tensor<64x64xf32>)
+func.func @vtranspose_source_keep_init(%src: tensor<32x8xf32>, %init: tensor<64x64xf32>) -> tensor<64x64xf32> {
+  // CHECK: %[[EMPTY:.*]] = tensor.empty() : tensor<8x32xf32>
+  // CHECK-NOT: tensor.extract_slice
+  // CHECK: hivm.hir.vtranspose ins(%[[SRC]] : tensor<32x8xf32>) outs(%[[EMPTY]] : tensor<8x32xf32>) permutation = [1, 0] -> tensor<8x32xf32>
+  %empty = tensor.empty() : tensor<8x32xf32>
+  %t = hivm.hir.vtranspose ins(%src : tensor<32x8xf32>) outs(%empty : tensor<8x32xf32>) permutation = [1, 0] -> tensor<8x32xf32>
+  %inserted = tensor.insert_slice %t into %init[0, 0] [8, 32] [1, 1] : tensor<8x32xf32> into tensor<64x64xf32>
+  return %inserted : tensor<64x64xf32>
+}
+
 
 // -----
 

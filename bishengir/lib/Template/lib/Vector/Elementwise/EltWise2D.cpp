@@ -560,6 +560,28 @@ __aiv__ __attribute__((always_inline)) void normalize_vector_last_axis_2d(
     VectorLastAxisMode *mode) {
   constexpr int num_per_block = INTR_BYTES_PER_BLOCK / sizeof(SRC_T);
   constexpr int new_num_per_block = INTR_BYTES_PER_BLOCK / sizeof(DST_T);
+
+  // tmp_buf is optional: the callers' constraint allows an empty tmp_buf
+  // (vv scene1 / v scene1&2: tmp_buf = 0) when no broadcast preprocessing
+  // is needed. Check the need first and bail out early, so a null tmp_buf
+  // is never dereferenced by the unconditional accesses below.
+  if (tmp_buf == nullptr) {
+    bool need_src0_brc =
+        *mode == VectorLastAxisMode::SV || *mode == VectorLastAxisMode::SB ||
+        (*mode != VectorLastAxisMode::SV && *mode != VectorLastAxisMode::SB &&
+         src0->sizes[1] != dst->sizes[1] && src0->sizes[1] == 1);
+    bool need_src1_brc =
+        ((*mode == VectorLastAxisMode::VS || *mode == VectorLastAxisMode::BS) &&
+         !isHardwareSupportedVS<OP>()) ||
+        (*mode != VectorLastAxisMode::V && *mode != VectorLastAxisMode::B &&
+         *mode != VectorLastAxisMode::VS && *mode != VectorLastAxisMode::BS &&
+         src1->sizes[1] != dst->sizes[1] && src1->sizes[1] == 1);
+    if (!need_src0_brc && !need_src1_brc) {
+      *mode = get_preprocessed_mode<OP>(*mode, false, false);
+      return;
+    }
+  }
+
   memref_t<__ubuf__ DST_T, 1> tmp_buf_as_dst_t;
   view_as<SRC_T, DST_T, 1>(tmp_buf, &tmp_buf_as_dst_t);
 
@@ -622,10 +644,11 @@ __aiv__ __attribute__((always_inline)) void normalize_vector_last_axis_2d(
             {1}};
         vector_last_axis_brc_2d<SRC_T, DST_T>(src1, new_src1, &new_tmp_buf);
         tmp_buf_as_dst_t.offset =
-            tmp_buf_as_dst_t.offset + (src1->sizes[0] == 1
-                ? new_num_per_block
-                : new_num_per_block *
-                      CEIL_FACTOR(src1->sizes[0], kSrcNumPerRepeatOfVBRCB));
+            tmp_buf_as_dst_t.offset +
+            (src1->sizes[0] == 1
+                 ? new_num_per_block
+                 : new_num_per_block *
+                       CEIL_FACTOR(src1->sizes[0], kSrcNumPerRepeatOfVBRCB));
       }
     }
   }

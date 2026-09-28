@@ -455,13 +455,16 @@ function(link_one_group_to_meta_op out_dir arch core_type)
             VERBATIM
         )
         get_optimize_meta_op_args(${arch} ${core_type} opt_args)
+        # ${out_file}.linked.bc is the declared input of this post-link step,
+        # so it must stay on disk: deleting it here makes ninja regenerate it
+        # (and re-run this post-link) on every subsequent build. It stays a
+        # build-tree intermediate only and is never installed.
         add_custom_command(
             OUTPUT "${out_file}"
             COMMAND ${BISHENG_TOOL} ${opt_args}
                     -emit-llvm
                     -c ${out_file}.linked.bc
                     -o ${out_file}
-            COMMAND ${CMAKE_COMMAND} -E rm -f "${out_file}.linked.bc"
             DEPENDS "${out_file}.linked.bc"
             COMMENT "[ccec-post-link] ${out_file}.linked.bc -> ${out_file}"
             VERBATIM

@@ -38,7 +38,7 @@ constexpr llvm::StringLiteral kPropagateUpAttr = "propagate_up";
 constexpr llvm::StringLiteral kPropagateDownAttr = "propagate_down";
 
 bool isConstZero(Value v);
-bool isVectorBroadcast(VBrcOp vbrcOp);
+bool isCubeAndVectorBroadcast(VBrcOp vbrcOp);
 namespace PropagatorUtil {
 
 const llvm::SmallDenseMap<hivm::AddressSpace, TCoreType, 2>

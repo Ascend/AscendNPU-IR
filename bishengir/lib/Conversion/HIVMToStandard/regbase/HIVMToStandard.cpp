@@ -684,6 +684,25 @@ public:
   }
 };
 
+class NCHW2C1HWNC0OpToLibraryCallPattern
+    : public OpRewritePattern<hivm::NCHW2C1HWNC0Op> {
+public:
+  using OpRewritePattern<hivm::NCHW2C1HWNC0Op>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(NCHW2C1HWNC0Op op,
+                                PatternRewriter &rewriter) const final {
+    SmallVector<Value> operands;
+    operands.append(op->getOperands().begin(), op->getOperands().end());
+    operands.push_back(rewriter.create<arith::ConstantIntOp>(
+        op.getLoc(), op.getGroups(), 64));
+    replaceWithLibCall(rewriter, op,
+                       cast<OpWithLibraryFunction>(op.getOperation())
+                           .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
+                       operands, {});
+    return success();
+  }
+};
+
 class NZ2NDOpToLibraryCallPattern : public OpRewritePattern<hivm::NZ2NDOp> {
   using OpRewritePattern<hivm::NZ2NDOp>::OpRewritePattern;
 
@@ -2180,6 +2199,7 @@ void populateHIVMToStandardConversionPatternsRegBase(
                ND2NZOpToLibraryCallPattern,
                LoadMXScaleOpToLibraryCallPattern,
                NCHW2NC1HWC0OpToLibraryCallPattern,
+               NCHW2C1HWNC0OpToLibraryCallPattern,
                NZ2NDOpToLibraryCallPattern,
                L12UBOpToLibraryCallPattern,
                FixpipeOpToLibraryCallPattern,
@@ -2265,6 +2285,7 @@ LogicalResult ConvertHIVMToStandardRegBasePass::runOnOperation(
                       hivm::Conv2DL1Op,
                       hivm::ND2NZOp,
                       hivm::NCHW2NC1HWC0Op,
+                      hivm::NCHW2C1HWNC0Op,
                       hivm::NZ2NDOp,
                       hivm::FixpipeOp,
                       hivm::MatmulOp,

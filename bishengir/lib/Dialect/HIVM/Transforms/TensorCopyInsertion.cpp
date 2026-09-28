@@ -25,7 +25,9 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
@@ -74,6 +76,10 @@ struct ConvertAllocTensorCopyToHIVMCopy
     rewriter.setInsertionPoint(allocTensorOp);
     Location loc = allocTensorOp.getLoc();
     auto value = utils::createAllocTensorOp(rewriter, loc, copySrc);
+    // Carry over the source's annotation marks to the new buffer and ensure
+    // a buffer_size_in_byte bound for dynamic shapes.
+    hivm::cloneAnnotationMarks(rewriter, loc, copySrc, value);
+    hivm::markBufferSizeUpperBound(rewriter, loc, copySrc, value);
     auto copyOp = rewriter.create<hivm::CopyOp>(loc, allocTensorOp.getType(),
                                                 copySrc, value);
     rewriter.replaceOp(allocTensorOp, copyOp.getResult(0));

@@ -15,7 +15,8 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// Shared helpers for MarkTightlyCoupledBuffer / HoistTightlyCoupledAlloc.
+// Shared helpers for MarkTightlyCoupledBuffer / HoistTightlyCoupledAlloc /
+// SplitMixKernel tightly-coupled buffer handling.
 //
 //===----------------------------------------------------------------------===//
 
@@ -58,6 +59,9 @@ Value getTightlyCoupledViewSource(Operation *op);
 
 /// True when `v` is derived from `root` only through forwarding/view ops.
 bool tracesToTightlyCoupledValue(Value v, Value root);
+
+/// True when `v` is a tightly coupled buffer, or a view/to_tensor of one.
+bool isTightlyCoupledValue(Value v);
 
 } // namespace hivm
 } // namespace mlir
