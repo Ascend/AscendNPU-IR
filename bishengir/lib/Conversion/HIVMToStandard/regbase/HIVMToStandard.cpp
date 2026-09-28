@@ -147,7 +147,9 @@ static func::CallOp createLibCall(PatternRewriter &rewriter, Operation *op,
     // type of original op.
     std::optional<hivm::TFuncCoreType> funcCoreType;
     if (llvm::StringRef(libCallName).starts_with("_mlir_ciface_init_debug") ||
-        llvm::StringRef(libCallName).starts_with("_mlir_ciface_finish_debug")) {
+        llvm::StringRef(libCallName).starts_with("_mlir_ciface_finish_debug") ||
+        llvm::StringRef(libCallName)
+            .starts_with("_mlir_ciface_proton_scope_boundary")) {
       funcCoreType = hivm::TFuncCoreType::AIC_OR_AIV;
     } else if (auto infer = dyn_cast<CoreTypeInterface>(op)) {
       auto coreTypeMaybe = infer.getCoreType();
@@ -2141,6 +2143,19 @@ class PlainOpToLibraryCallPattern : public OpRewritePattern<T> {
   }
 };
 
+class ProtonScopeBoundaryOpToLibraryCallPattern
+    : public OpRewritePattern<hivm::ProtonScopeBoundaryOp> {
+  using OpRewritePattern<hivm::ProtonScopeBoundaryOp>::OpRewritePattern;
+  LogicalResult matchAndRewrite(hivm::ProtonScopeBoundaryOp op,
+                                PatternRewriter &rewriter) const final {
+    Value regionId = rewriter.create<arith::ConstantIntOp>(
+        op->getLoc(), op.getRegionIdAttr().getInt(), 32);
+    replaceWithLibCall(rewriter, op, "_mlir_ciface_proton_scope_boundary",
+                       {regionId}, {});
+    return success();
+  }
+};
+
 template <typename SyncBlockOp>
 class SyncBlockOpToLibraryCallPattern : public OpRewritePattern<SyncBlockOp> {
 public:
@@ -2231,6 +2246,7 @@ void populateHIVMToStandardConversionPatternsRegBase(
                VInterleaveOpToLibraryCallPattern,
                PlainOpToLibraryCallPattern<hivm::InitDebugOp>,
                PlainOpToLibraryCallPattern<hivm::FinishDebugOp>,
+               ProtonScopeBoundaryOpToLibraryCallPattern,
                SyncBlockOpToLibraryCallPattern<hivm::SyncBlockLockOp>,
                SyncBlockOpToLibraryCallPattern<hivm::SyncBlockUnlockOp>,
                SyncBlockOpToLibraryCallPattern<hivm::FreeLockVarOp>,
@@ -2319,6 +2335,7 @@ LogicalResult ConvertHIVMToStandardRegBasePass::runOnOperation(
                       hivm::VGatherOp,
                       hivm::VGatherMaskOp,
                       hivm::DebugOp,
+                      hivm::ProtonScopeBoundaryOp,
                       hivm::SyncBlockLockOp,
                       hivm::SyncBlockUnlockOp,
                       hivm::FreeLockVarOp,
