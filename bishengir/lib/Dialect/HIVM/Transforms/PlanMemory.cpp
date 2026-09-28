@@ -2214,7 +2214,12 @@ MemPlan::GetReorderRootStorageEntry(StorageEntry *rootStorageEntry) {
             memUniqueStorageEntryVec.push_back(storageEntry);
             return false;
           }
-          if (dmaFirstPipelineOpt.IsDmaBuffer(buffer)) {
+          // L1 tightly coupled buffers are not MTE2/MTE3/FIX, so IsDmaBuffer
+          // is false and they used to be planned after every load. Give them
+          // the same reorder priority as those loads.
+          if (dmaFirstPipelineOpt.IsDmaBuffer(buffer) ||
+              (it->second.bufferScope == AddressSpace::L1 &&
+               it->second.cvMixId >= 0)) {
             touchDmaStorageEntryVec.push_back(storageEntry);
             return false;
           }
