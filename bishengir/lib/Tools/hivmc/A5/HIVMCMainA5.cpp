@@ -516,10 +516,10 @@ LogicalResult runDeviceBiShengLIRCompile(
   bool setKeepFlag = !config.shouldCompileLIR();
   // For security reasons, we want to honor saving of .ll files with
   // --save-temps option in internal builds only.
-#if (!BISHENGIR_PUBLISH)
+
   if (!config.shouldSaveTemps().empty())
     setKeepFlag = true;
-#endif
+
   SmallVector<IRFilePair> llvmTempFiles =
       saveToFiles(llvmModules, tempFilesPath, setKeepFlag);
   if (std::any_of(llvmTempFiles.begin(), llvmTempFiles.end(),
