@@ -1,6 +1,10 @@
 // RUN: bishengir-opt %s -split-input-file -loop-restructure-arange-optimization | FileCheck %s
 // RUN: bishengir-opt %s -split-input-file -loop-restructure-arange-optimization -canonicalize -cse -o /dev/null
 
+// The hundred-thousands digit enables this pass (9 selects greedy grouping).
+// Without the mode attribute, getPassColumnDigit returns 0 and the pass is a
+// no-op, so each split module must retain it to exercise clone construction.
+
 // Valid SSA does not require textual block order to follow dominance. The
 // producer block is printed after its consumer but executes before it. Clone
 // construction must visit producers first without moving copies between blocks.
