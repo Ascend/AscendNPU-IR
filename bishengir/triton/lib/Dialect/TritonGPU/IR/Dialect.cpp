@@ -132,7 +132,7 @@ bool isExpensiveView(Type srcType, Type dstType) {
  */
 static SmallVector<unsigned> eraseOrder(ArrayRef<unsigned> order,
                                         unsigned dim) {
-  unsigned rank = order.size();
+  [[maybe_unused]] unsigned rank = order.size();
   assert(dim < rank && "Invalid dim to erase");
   SmallVector<unsigned> resOrder;
   for (unsigned i : order)
@@ -534,17 +534,17 @@ static LogicalResult parseIntArrayAttr(AsmParser &parser,
     res.push_back(value);
   }
   return success();
-};
+}
 
 static LogicalResult parseUInt(AsmParser &parser, const NamedAttribute &attr,
                                unsigned &value, StringRef desc) {
   return parseIntAttrValue(parser, attr.getValue(), value, desc);
-};
+}
 
 static LogicalResult parseBool(AsmParser &parser, const NamedAttribute &attr,
                                bool &value, StringRef desc) {
   return parseBoolAttrValue(parser, attr.getValue(), value, desc);
-};
+}
 
 static LogicalResult parseType(AsmParser &parser, const NamedAttribute &attr,
                                std::optional<Type> &value, StringRef desc) {
@@ -823,7 +823,7 @@ Attribute LinearEncodingAttr::parse(AsmParser &parser, Type type) {
 
   // Generate standared outDimNames (dim0, dim1, ...)
   SmallVector<StringAttr> outDimNames;
-  for (int i = 0; i < rank; ++i) {
+  for (int i = 0; i < static_cast<int>(rank); ++i) {
     outDimNames.push_back(
         StringAttr::get(parser.getContext(), "dim" + llvm::Twine(i)));
   }
@@ -964,7 +964,8 @@ SmallVector<unsigned> LinearEncodingAttr::getSizePerThread() const {
     auto dim = it - basis.begin();
     reverseRepOrder.insert(dim);
     // As soon as we stop finding reps, we stop
-    if (dim != reverseRepOrder.back() || 2 * basis[dim] != ctaShape[dim]) {
+    if (static_cast<unsigned>(dim) != reverseRepOrder.back() ||
+        2 * basis[dim] != static_cast<int>(ctaShape[dim])) {
       break;
     }
     ctaShape[dim] /= 2;
@@ -1214,7 +1215,7 @@ void AMDMfmaEncodingAttr::print(AsmPrinter &printer) const {
           << "version = " << getVersion() //
           << ", warpsPerCTA = [" << getWarpsPerCTA() << "]";
 
-  auto tilesPerWarp = getTilesPerWarp();
+  [[maybe_unused]] auto tilesPerWarp = getTilesPerWarp();
   if (!hasUnitTilesPerWarp()) {
     printer << ", tilesPerWarp = [" << getTilesPerWarp() << "]";
   }
@@ -1877,7 +1878,7 @@ SwizzledSharedEncodingAttr AMDMfmaEncodingAttr::composeSharedLayoutForOperand(
   if (needTrans)
     kDimIndex = 1 - kDimIndex;
 
-  bool isKContig = sharedOrder[0] == kDimIndex;
+  bool isKContig = sharedOrder[0] == static_cast<unsigned>(kDimIndex);
   // GFX950 supports LDS transpose load instructions, so we need swizzling even
   // when K dimension is not the contiguous dimension.
   bool isGFX950 = getVersion() == 4;
@@ -1969,7 +1970,7 @@ SwizzledSharedEncodingAttr AMDWmmaEncodingAttr::composeSharedLayoutForOperand(
     ArrayRef<unsigned> sharedOrder, unsigned kWidth, unsigned elemBitWidth,
     bool needTrans) const {
   int kDimIndex = operandIdx == 0 ? 1 : 0;
-  bool isKContig = sharedOrder[0] == kDimIndex;
+  bool isKContig = sharedOrder[0] == static_cast<unsigned>(kDimIndex);
 
   if (!isKContig) {
     // Do not swizzle. In this case accesses will go in different banks even
@@ -2125,9 +2126,9 @@ LogicalResult DotOperandEncodingAttr::verify(
   }
 
   if (auto parentAttr = mlir::dyn_cast<AMDWmmaEncodingAttr>(parent)) {
-    if (kWidth != 8 && kWidth != 16 && parentAttr.getVersion() == 1 ||
-        kWidth != 4 && kWidth != 8 && kWidth != 16 &&
-            parentAttr.getVersion() == 2)
+    if ((kWidth != 8 && kWidth != 16 && parentAttr.getVersion() == 1) ||
+        (kWidth != 4 && kWidth != 8 && kWidth != 16 &&
+         parentAttr.getVersion() == 2))
       return emitError() << "ttg.dot_op kWidth parameter must be 8/16 for "
                             "gfx11 and 4/8/16 for gfx12 (including packed "
                             "cases for `scaled_dot`)";
@@ -2453,7 +2454,7 @@ struct TritonGPUInferLayoutInterface
     // sizePerThread[dim], threadsPerWarp[dim], and warpsPerCTA[dim].  (We make
     // an exception if the block is larger than the shape.)
     auto checkDivisibility = [&](StringRef name, ArrayRef<unsigned> subblock) {
-      for (int dim = 0; dim < srcShape.size(); dim++) {
+      for (int dim = 0; dim < static_cast<int>(srcShape.size()); dim++) {
         if (srcShape[dim] >= subblock[dim] &&
             srcShape[dim] % subblock[dim] != 0) {
           return failure();
@@ -2526,7 +2527,7 @@ struct TritonGPUInferLayoutInterface
           }
 
           // Check that more-minor dims all have 1 in shapeRemaining.
-          for (int j = i + 1; j < srcDims.size(); j++) {
+          for (int j = i + 1; j < static_cast<int>(srcDims.size()); j++) {
             if (shapeRemaining[j] != 1) {
               return failure();
             }
@@ -2738,7 +2739,7 @@ struct TritonGPUInferLayoutInterface
     // Try join on last dim
     auto axis = dstShape.size() - 1;
     auto newLl = LinearLayout::empty();
-    auto result =
+    [[maybe_unused]] auto result =
         tryJoinOnAxis(ctx, ll, newLl, /*fwdInference=*/true, axis, loc);
 
     assert(result.succeeded());
@@ -2877,7 +2878,7 @@ struct TritonGPUVerifyTensorLayoutInterface
       return makeErr()
              << "Non-distributed layout is not allowed in tensor type.";
     auto rank = distr.getRepOrder().size();
-    if (rank != rankedTy.getRank())
+    if (rank != static_cast<size_t>(rankedTy.getRank()))
       return makeErr() << "Layout has rank " << rank
                        << ", but the tensor it's attached to has rank "
                        << rankedTy.getRank() << ".";
@@ -2984,7 +2985,7 @@ std::string getSharedLayoutStr(RankedTensorType type, bool useHWPointOfView) {
   // that way
   int32_t idx = 0;
   // Enumerate all the offsets for each block
-  for (int32_t block = 0; block < numBlocks; block++) {
+  for (int32_t block = 0; block < static_cast<int32_t>(numBlocks); block++) {
     for (int32_t offset = 0; offset < blockSize; offset++) {
       SmallVector<std::pair<StringAttr, int32_t>> inputs = {
           {kBlock, block},
@@ -3001,7 +3002,7 @@ std::string getSharedLayoutStr(RankedTensorType type, bool useHWPointOfView) {
 
       value += "(";
       // We can build up both strings (for hw/non-hw layouts) concurrently
-      for (int i = 0; i < outputs.size(); i++) {
+      for (int i = 0; i < static_cast<int>(outputs.size()); i++) {
         // Based on the formatting from LinearLayout::toString, the format for
         // the hw layout is slightly different. HW layouts use "," vs ":".
         if (i > 0) {
@@ -3058,7 +3059,7 @@ std::string getSharedLayoutStr(RankedTensorType type, bool useHWPointOfView) {
   } else {
     // For the HW view here, print the (block, offset) --> (r,c) mapping
     uint32_t idx = 0;
-    for (int32_t block = 0; block < numBlocks; block++) {
+    for (int32_t block = 0; block < static_cast<int32_t>(numBlocks); block++) {
       layoutStr += "Block: " + std::to_string(block) + ":\n";
       for (int32_t offset = 0; offset < (tensorSize / numBlocks); offset++) {
         layoutStr += "Offset: " + std::to_string(offset) + " -> ";
@@ -3091,9 +3092,9 @@ std::string getDistributedLayoutStr(RankedTensorType tensorType,
   unsigned numWarpsPerCTA = ll.getInDimSize(kWarp);
   unsigned numBlocks = ll.getInDimSize(kBlock);
   int numElementsPerThreads = ll.getInDimSize(kRegister);
-  for (int blockId = 0; blockId < numBlocks; ++blockId) {
-    for (int warpId = 0; warpId < numWarpsPerCTA; warpId++) {
-      for (int tid = 0; tid < threadsPerWarp; ++tid) {
+  for (int blockId = 0; blockId < static_cast<int>(numBlocks); ++blockId) {
+    for (int warpId = 0; warpId < static_cast<int>(numWarpsPerCTA); warpId++) {
+      for (int tid = 0; tid < static_cast<int>(threadsPerWarp); ++tid) {
         for (int idx = 0; idx < numElementsPerThreads; ++idx) {
           SmallVector<std::pair<StringAttr, int32_t>> inputs = {
               {kBlock, blockId},
@@ -3123,7 +3124,7 @@ std::string getDistributedLayoutStr(RankedTensorType tensorType,
                    std::to_string(idx);
           // Now also compute the thread mapping.
           std::string threadInfo = "(";
-          for (int i = 0; i < outputs.size(); i++) {
+          for (int i = 0; i < static_cast<int>(outputs.size()); i++) {
             if (i > 0)
               threadInfo += ",";
             threadInfo +=
@@ -3171,20 +3172,21 @@ std::string getDistributedLayoutStr(RankedTensorType tensorType,
     }
   } else {
     // Printing the elements in each physical reg/warps/threads.
-    for (int blockId = 0; blockId < numBlocks; blockId++) {
+    for (int blockId = 0; blockId < static_cast<int>(numBlocks); blockId++) {
       if (numBlocks > 1)
         layoutStr += "Block" + std::to_string(blockId) + ":\n";
-      for (int warpId = 0; warpId < numWarpsPerCTA; warpId++) {
+      for (int warpId = 0; warpId < static_cast<int>(numWarpsPerCTA);
+           warpId++) {
         layoutStr += "Warp" + std::to_string(warpId) + ":\n";
         for (int idx = 0; idx < numElementsPerThreads; ++idx) {
-          for (int tid = 0; tid < threadsPerWarp; ++tid) {
+          for (int tid = 0; tid < static_cast<int>(threadsPerWarp); ++tid) {
             int linearizedIdx =
                 blockId * numWarpsPerCTA * threadsPerWarp *
                     numElementsPerThreads +
                 warpId * threadsPerWarp * numElementsPerThreads +
                 tid * numElementsPerThreads + idx;
             layoutStr += threadMapping[linearizedIdx];
-            if (tid < threadsPerWarp - 1)
+            if (tid < static_cast<int>(threadsPerWarp) - 1)
               layoutStr += ", ";
           }
           layoutStr += "\n";
@@ -3397,12 +3399,12 @@ bool triton::gpu::areLayoutsEquivalent(ArrayRef<int64_t> shape,
 }
 
 bool triton::gpu::isInnermostContiguous(MemDescType type, unsigned numElems) {
-  ArrayRef<int64_t> shape = type.getShape();
+  [[maybe_unused]] ArrayRef<int64_t> shape = type.getShape();
   Attribute enc = type.getEncoding();
-  MLIRContext *ctx = enc.getContext();
+  [[maybe_unused]] MLIRContext *ctx = enc.getContext();
 
   LinearLayout actual = toLinearLayout(type);
-  StringAttr fastestIn = *actual.getInDimNames().begin();
+  [[maybe_unused]] StringAttr fastestIn = *actual.getInDimNames().begin();
 
   // Flatten actual outs in reverse order to produce a row-major flattening
   // of the layout
@@ -3411,7 +3413,7 @@ bool triton::gpu::isInnermostContiguous(MemDescType type, unsigned numElems) {
   std::reverse(revOut.begin(), revOut.end());
   actual = actual.transposeOuts(revOut).flattenOuts();
 
-  return actual.getNumConsecutiveInOut() >= numElems;
+  return actual.getNumConsecutiveInOut() >= static_cast<int32_t>(numElems);
 }
 
 LinearLayout triton::gpu::inferReshapeLinearLayout(TensorOrMemDesc srcTy,

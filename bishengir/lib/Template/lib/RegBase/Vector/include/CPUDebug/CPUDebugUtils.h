@@ -24,14 +24,30 @@
 // prcess cce special grammar
 #ifdef ENABLE_CPU_TRACE_INTRINSIC
 // remove cce special grammer
+#ifndef __aiv__
 #define __aiv__
+#endif
+#ifndef __gm__
 #define __gm__
+#endif
+#ifndef __ubuf__
 #define __ubuf__
+#endif
+#ifndef __ca__
 #define __ca__
+#endif
+#ifndef __cb__
 #define __cb__
+#endif
+#ifndef __cc__
 #define __cc__
+#endif
+#ifndef __cbuf__
 #define __cbuf__
+#endif
+#ifndef __aicore__
 #define __aicore__
+#endif
 
 // define cce built-in type
 struct Half {
@@ -96,7 +112,7 @@ typedef enum {
 } addr_cal_mode_t;
 
 typedef enum {
-  PAD_NONE  = 0,
+  PAD_NONE = 0,
   PAD_MODE1 = 1,
   PAD_MODE2 = 2,
   PAD_MODE3 = 3,

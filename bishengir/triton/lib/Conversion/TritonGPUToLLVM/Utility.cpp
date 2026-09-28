@@ -41,11 +41,11 @@ static int __builtin_ctz(unsigned x) {
 // TODO: remove when new implementation performance reaches target level
 namespace {
 
-LinearLayout getRegToSharedLayout(MLIRContext *ctx, ArrayRef<int64_t> shape,
-                                  LinearLayout regLayout,
-                                  triton::gpu::SharedEncodingTrait dstEnc,
-                                  int elemBitWidth,
-                                  ArrayRef<int64_t> allocShape) {
+[[maybe_unused]] LinearLayout
+getRegToSharedLayout(MLIRContext *ctx, ArrayRef<int64_t> shape,
+                     LinearLayout regLayout,
+                     triton::gpu::SharedEncodingTrait dstEnc, int elemBitWidth,
+                     ArrayRef<int64_t> allocShape) {
   StringAttr kBlock = StringAttr::get(ctx, ("block"));
   int rank = shape.size();
 
@@ -158,7 +158,7 @@ Value matrixVectorProd(TritonLLVMOpBuilder &b, const LinearLayout &A, Value x) {
   auto nCol = A.getTotalInDimSizeLog2();
   auto nRow = A.getTotalOutDimSizeLog2();
   SmallVector<int32_t> matrix = flatten(A.getBases().begin()->second);
-  assert(matrix.size() == nCol);
+  assert(matrix.size() == static_cast<size_t>(nCol));
 
   // Row-wise popcount to detect rows that appear exactly once across columns.
   uint32_t rowsUnique = 0;
@@ -244,7 +244,8 @@ Value matrixVectorProd(TritonLLVMOpBuilder &b, const LinearLayout &A, Value x) {
       if (basis == 0)
         continue;
       auto select = b.select(bit_is_zero, zero, b.i32_val(basis));
-      if ((rowsUnique & basis) == basis) {
+      if ((rowsUnique & static_cast<uint32_t>(basis)) ==
+          static_cast<uint32_t>(basis)) {
         ors.push_back(select);
       } else {
         xors.push_back(select);
@@ -292,7 +293,7 @@ applyLinearLayout(Location loc, RewriterBase &rewriter,
                   const LinearLayout &layout,
                   ArrayRef<std::pair<StringAttr, Value>> indices) {
   auto b = TritonLLVMOpBuilder(loc, rewriter);
-  assert(layout.getNumInDims() == indices.size());
+  assert(static_cast<size_t>(layout.getNumInDims()) == indices.size());
   assert(llvm::equal(layout.getInDimNames(), llvm::make_first_range(indices)));
   // Trivial layout
   if (layout.getNumOutDims() == 0) {
@@ -488,13 +489,14 @@ emitIndices(Location loc, RewriterBase &rewriter, const TargetInfoBase &target,
 
   // Vectorize over registers
   SmallVector<uint32_t> registerIndices;
-  for (unsigned reg = 0; reg < ll.getInDimSize(kRegister); ++reg)
+  for (uint32_t reg = 0;
+       reg < static_cast<uint32_t>(ll.getInDimSize(kRegister)); ++reg)
     registerIndices.push_back(reg);
 
   auto vecIndices =
       applyLinearLayoutVec(loc, rewriter, ll, commonIndices, registerIndices);
 
-  unsigned rank = shape.size();
+  [[maybe_unused]] unsigned rank = shape.size();
   SmallVector<SmallVector<Value>> ret;
   for (auto &indices : vecIndices) {
     SmallVector<Value> vals;
@@ -582,24 +584,24 @@ lowerLdStShared(Location loc, MLIRContext *ctx, LinearLayout cvt,
       Value valsVec =
           packLLVector(loc, ArrayRef<Value>(vals).slice(idx, length), rewriter);
       if (switchToGM) {
-        targetInfo.storeDGlobal(rewriter, loc, shmemAddr, std::nullopt,
-                                valsVec, /*pred=*/b.true_val());
+        targetInfo.storeDGlobal(rewriter, loc, shmemAddr, std::nullopt, valsVec,
+                                /*pred=*/b.true_val());
       } else {
-        targetInfo.storeDShared(rewriter, loc, shmemAddr, std::nullopt,
-                                valsVec, /*pred=*/b.true_val());
+        targetInfo.storeDShared(rewriter, loc, shmemAddr, std::nullopt, valsVec,
+                                /*pred=*/b.true_val());
       }
       return {};
     } else {
       assert(vals.empty());
       Value valsVec;
       if (switchToGM) {
-        valsVec =
-            targetInfo.loadDGlobal(rewriter, loc, shmemAddr, std::nullopt, vecTy,
-                                   /*pred=*/b.true_val(), localLoadOp);
+        valsVec = targetInfo.loadDGlobal(rewriter, loc, shmemAddr, std::nullopt,
+                                         vecTy,
+                                         /*pred=*/b.true_val(), localLoadOp);
       } else {
-        valsVec =
-            targetInfo.loadDShared(rewriter, loc, shmemAddr, std::nullopt, vecTy,
-                                   /*pred=*/b.true_val(), localLoadOp);
+        valsVec = targetInfo.loadDShared(rewriter, loc, shmemAddr, std::nullopt,
+                                         vecTy,
+                                         /*pred=*/b.true_val(), localLoadOp);
       }
       return unpackLLVector(loc, valsVec, rewriter);
     }
@@ -629,14 +631,14 @@ lowerLdStShared(Location loc, MLIRContext *ctx, LinearLayout cvt,
     if (isStore) {
       Value valsVec =
           packLLVector(loc, ArrayRef<Value>(vals).slice(idx, length), rewriter);
-      targetInfo.storeDShared(rewriter, loc, shmemAddr, std::nullopt,
-                              valsVec, /*pred=*/b.true_val());
+      targetInfo.storeDShared(rewriter, loc, shmemAddr, std::nullopt, valsVec,
+                              /*pred=*/b.true_val());
       return {};
     } else {
       assert(vals.empty());
       Value valsVec =
           targetInfo.loadDShared(rewriter, loc, shmemAddr, std::nullopt, vecTy,
-                                /*pred=*/b.true_val(), localLoadOp);
+                                 /*pred=*/b.true_val(), localLoadOp);
       return unpackLLVector(loc, valsVec, rewriter);
     }
   };
@@ -662,7 +664,7 @@ SmallVector<Value> lowerLdSt(
   bool isStore = !vals.empty();
   auto b = TritonLLVMOpBuilder(loc, rewriter);
 #ifdef BSPUB_DAVINCI_BISHENGIR
-  assert(smemBase.getType().isa<LLVM::LLVMPointerType>() &&
+  assert(mlir::isa<LLVM::LLVMPointerType>(smemBase.getType()) &&
          "smemBase must be a pointer type");
   auto smemPtrTy = dyn_cast<LLVM::LLVMPointerType>(smemBase.getType());
 #else
@@ -807,9 +809,9 @@ bool emitTransferBetweenRegistersAndShared(
   StringAttr kRegister = str_attr("register");
   StringAttr kLane = str_attr("lane");
   StringAttr kWarp = str_attr("warp");
-  StringAttr kOffset = str_attr("offset");
+  [[maybe_unused]] StringAttr kOffset = str_attr("offset");
 
-  auto shape = sharedTy.getShape();
+  [[maybe_unused]] auto shape = sharedTy.getShape();
   auto paddedEnc =
       dyn_cast<triton::gpu::PaddedSharedEncodingAttr>(sharedTy.getEncoding());
   LinearLayout regToSharedLayout = LinearLayout::empty();
@@ -976,7 +978,7 @@ Value packLLVector(Location loc, ValueRange vals, RewriterBase &rewriter) {
   auto vecType = vec_ty(vals[0].getType(), vals.size());
   auto b = TritonLLVMOpBuilder(loc, rewriter);
   Value vec = b.undef(vecType);
-  for (int i = 0; i < vals.size(); i++) {
+  for (int i = 0; i < static_cast<int>(vals.size()); i++) {
     vec = b.insert_element(vec, vals[i], b.i32_val(i));
   }
   return vec;
@@ -1004,9 +1006,8 @@ std::optional<LLVM::AtomicBinOp> matchAtomicOp(RMWOp atomicOp) {
     return LLVM::AtomicBinOp::umin;
   case RMWOp::XCHG:
     return LLVM::AtomicBinOp::xchg;
-  default:
-    return {};
   }
+  return std::nullopt;
 }
 
 std::optional<LLVM::AtomicOrdering> getMemoryOrdering(MemSemantic memOrdering) {
@@ -1019,9 +1020,8 @@ std::optional<LLVM::AtomicOrdering> getMemoryOrdering(MemSemantic memOrdering) {
     return LLVM::AtomicOrdering::release;
   case MemSemantic::ACQUIRE_RELEASE:
     return LLVM::AtomicOrdering::acq_rel;
-  default:
-    return {};
   }
+  return std::nullopt;
 }
 
 llvm::MapVector<StringAttr, int32_t> getAllFreeVarMasks(MLIRContext *ctx) {
@@ -1234,7 +1234,8 @@ SharedMemoryObject::getMaskSpanOffsets(triton::gpu::MemDescType srcTy) {
   auto ret = 0;
   for (auto [dim, shapes] : llvm::enumerate(llvm::zip(shape, allocShape))) {
     auto [shape, allocShape] = shapes;
-    for (int j = llvm::Log2_32(shape); j < llvm::Log2_32(allocShape); ++j) {
+    for (int j = static_cast<int>(llvm::Log2_32(shape));
+         j < static_cast<int>(llvm::Log2_32(allocShape)); ++j) {
       logicalOffsets[dim].second = 1 << j;
       ret |= invLl.apply(logicalOffsets)[0].second;
     }

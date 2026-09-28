@@ -44,7 +44,8 @@ public:
     bool hasElse = false;
     funcOp->walk([&](scf::IfOp ifOp) {
       if (ifOp.elseBlock()) {
-        for (Operation &op : ifOp.elseBlock()->getOperations()) {
+        for ([[maybe_unused]] Operation &op :
+             ifOp.elseBlock()->getOperations()) {
           hasElse = true;
         }
       }

@@ -34,7 +34,8 @@ namespace bishengir {
 namespace regbase {
 namespace {
 
-bool shouldUseDirectRegBasePipeline(const BiShengIRCompileMainConfig &config) {
+[[maybe_unused]] bool
+shouldUseDirectRegBasePipeline(const BiShengIRCompileMainConfig &config) {
   if (config.getPureSimt())
     return false;
 #if defined(BISHENGIR_ENABLE_TRITON_COMPILE) && BISHENGIR_ENABLE_TRITON_COMPILE
@@ -44,7 +45,8 @@ bool shouldUseDirectRegBasePipeline(const BiShengIRCompileMainConfig &config) {
   return true;
 }
 
-int runExternalRegBaseCompile(ArrayRef<std::string> originalCLArgs) {
+[[maybe_unused]] int
+runExternalRegBaseCompile(ArrayRef<std::string> originalCLArgs) {
   SmallVector<StringRef> arguments;
   arguments.push_back(""); // placeholder, replaced by execute with full path
   for (const auto &arg : originalCLArgs)

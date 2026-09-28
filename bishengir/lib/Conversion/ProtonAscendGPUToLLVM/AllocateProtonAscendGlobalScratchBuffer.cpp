@@ -10,8 +10,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "bishengir/Conversion/ProtonAscendGPUToLLVM/ProtonAscendGPUToLLVM.h"
 #include "Dialect/ProtonGPU/IR/Dialect.h"
+#include "bishengir/Conversion/ProtonAscendGPUToLLVM/ProtonAscendGPUToLLVM.h"
 #include "mlir/Dialect/LLVMIR/NVVMDialect.h"
 #include "mlir/Pass/Pass.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
@@ -58,8 +58,9 @@ struct AllocateProtonAscendGlobalScratchBufferPass
     std::vector<uint32_t> alignments;
 
     func.walk([&](mlir::triton::proton::gpu::GlobalScratchAllocOp op) {
-      int offset = llvm::alignTo(cumulativeMemorySize,
-                                 mlir::triton::proton::gpu::getBytesPerClockEntry());
+      int offset =
+          llvm::alignTo(cumulativeMemorySize,
+                        mlir::triton::proton::gpu::getBytesPerClockEntry());
       op->setAttr("offset",
                   IntegerAttr::get(IntegerType::get(ctx, 32), offset));
       cumulativeMemorySize += op.getNbytes();
@@ -68,8 +69,8 @@ struct AllocateProtonAscendGlobalScratchBufferPass
     if (alignments.empty())
       return;
 
-    bool allAlignmentsEqual = std::equal(alignments.begin() + 1,
-                                         alignments.end(), alignments.begin());
+    [[maybe_unused]] bool allAlignmentsEqual = std::equal(
+        alignments.begin() + 1, alignments.end(), alignments.begin());
     assert(allAlignmentsEqual &&
            "all global scratch buffer alignment values must be the same");
     mod->setAttr("ttg.profile_scratch_memory_size",
@@ -79,7 +80,8 @@ struct AllocateProtonAscendGlobalScratchBufferPass
   }
 };
 
-std::unique_ptr<mlir::Pass> createAllocateProtonAscendGlobalScratchBufferPass() {
+std::unique_ptr<mlir::Pass>
+createAllocateProtonAscendGlobalScratchBufferPass() {
   return std::make_unique<AllocateProtonAscendGlobalScratchBufferPass>();
 }
 

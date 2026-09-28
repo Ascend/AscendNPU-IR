@@ -15,7 +15,7 @@ enum class GetScratchSizeFunction {
 struct TestAllocationPass
     : public PassWrapper<TestAllocationPass, OperationPass<ModuleOp>> {
 
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(TestAllocationPass);
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(TestAllocationPass)
 
   TestAllocationPass() = default;
   TestAllocationPass(const TestAllocationPass &other)

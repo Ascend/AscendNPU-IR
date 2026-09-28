@@ -19,10 +19,12 @@
 #include "Macro/common.h"
 #include "Macro/functional.h"
 
+#ifndef __aicore__
 #ifdef __CCE_KT_TEST__
 #define __aicore__
 #else
 #define __aicore__ [aicore]
+#endif
 #endif
 
 /////////////////////////////////////////////////////
@@ -36,9 +38,9 @@ template <typename DataType> struct l1_to_fb<ArchType::ASCEND_V220, DataType> {
   static constexpr uint32_t BLOCK_SIZE =
       HardwareParams::fbBlockSize / sizeof(DataType);
 
-  __aicore__ __attribute__((always_inline))
-  l1_to_fb(__fbuf__ DataType *fbAddr, __cbuf__ DataType *l1Addr,
-           uint32_t ntileActual) {
+  __aicore__ __attribute__((always_inline)) l1_to_fb(__fbuf__ DataType *fbAddr,
+                                                     __cbuf__ DataType *l1Addr,
+                                                     uint32_t ntileActual) {
     copy_cbuf_to_fbuf(fbAddr, l1Addr, 1, CeilDiv<BLOCK_SIZE>(ntileActual), 0,
                       0);
   };

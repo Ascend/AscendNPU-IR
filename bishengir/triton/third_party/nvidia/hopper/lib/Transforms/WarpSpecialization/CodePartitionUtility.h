@@ -65,8 +65,8 @@ struct TmemDataChannel : Channel {
                   Operation *tmemLoadOp, unsigned operandIdx,
                   unsigned numBuffers)
       : Channel(producer, consumers, tmemLoadOp, operandIdx, numBuffers),
-        tmemAllocOp(tmemAllocOp), tmemProducerOp(tmemAllocOp),
-        tmemMmaOp(tmemMmaOp) {
+        tmemAllocOp(tmemAllocOp), tmemMmaOp(tmemMmaOp),
+        tmemProducerOp(tmemAllocOp) {
     assert(consumers.size() == 1 &&
            "TmemDataChannel must have a single consumer");
     channelKind = DataChannelKind::TMEM;
@@ -74,7 +74,7 @@ struct TmemDataChannel : Channel {
 
   ttng::TMEMAllocOp getAllocOp() { return tmemAllocOp; }
   ttng::TCGen5MMAOp getMmaOp() { return tmemMmaOp; }
-  virtual Operation *getSrcOp() { return tmemProducerOp; }
+  Operation *getSrcOp() override { return tmemProducerOp; }
 };
 } // namespace nvidia_gpu
 } // namespace triton

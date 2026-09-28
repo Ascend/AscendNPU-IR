@@ -37,6 +37,8 @@
 #include "mlir/Pass/PassRegistry.h"
 #include "llvm/Support/CommandLine.h"
 
+#include <memory>
+
 using namespace mlir;
 using namespace mlir::triton;
 
@@ -76,31 +78,33 @@ void buildBiShengHIRPipeline(OpPassManager &pm,
 
 #if BISHENGIR_ENABLE_TORCH_CONVERSIONS
   if (config.getEnableTorchCompile()) {
-    TorchToNamedOpPipelineOptions torchToNamedOpOptions;
-    torchToNamedOpOptions.ensureNoImplicitBroadcast =
+    auto torchToNamedOpOptions =
+        std::make_unique<TorchToNamedOpPipelineOptions>();
+    torchToNamedOpOptions->ensureNoImplicitBroadcast =
         config.getEnsureNoImplicitBroadcast();
-    createTorchBackendToNamedOpBackendPipeline(pm, torchToNamedOpOptions);
+    createTorchBackendToNamedOpBackendPipeline(pm, *torchToNamedOpOptions);
   }
 #endif
 
   if (config.getEnableHfusionCompile()) {
-    hfusion::HFusionPipelineOptions hfusionPipelineOptions;
-    setupHFusionPipelineOptions(hfusionPipelineOptions, config);
-    hfusion::buildHFusionPipelines(pm, hfusionPipelineOptions);
+    auto options = std::make_unique<hfusion::HFusionPipelineOptions>();
+    setupHFusionPipelineOptions(*options, config);
+    hfusion::buildHFusionPipelines(pm, *options);
   }
 
   if (config.getEnableHIVMCompile()) {
     // Build convert to HIVM Dialect pipeline.
-    hivm::ConvertToHIVMPipelineOptions convertToHIVMOptions;
-    convertToHIVMOptions.enableTritonKernelCompile =
+    auto convertOptions =
+        std::make_unique<hivm::ConvertToHIVMPipelineOptions>();
+    convertOptions->enableTritonKernelCompile =
         config.getEnableTritonKernelCompile();
-    convertToHIVMOptions.enableUbufSaving = config.getEnableUbufSaving();
-    convertToHIVMOptions.disableSizeAlignForCast =
+    convertOptions->enableUbufSaving = config.getEnableUbufSaving();
+    convertOptions->disableSizeAlignForCast =
         config.getDisableSizeAlignForCast();
-    hivm::buildConvertToHIVMPipeline(pm, convertToHIVMOptions);
-    hivm::HIVMPipelineOptions options;
-    setupHIVMPipelineOptions(options, config);
-    hivm::buildOptimizeHIVMPipeline(pm, options);
+    hivm::buildConvertToHIVMPipeline(pm, *convertOptions);
+    auto options = std::make_unique<hivm::HIVMPipelineOptions>();
+    setupHIVMPipelineOptions(*options, config);
+    hivm::buildOptimizeHIVMPipeline(pm, *options);
   }
 }
 

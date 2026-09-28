@@ -59,8 +59,7 @@ static Type getFP8Ty(PatternRewriter &rewriter) {
 }
 
 // TODO-A5: requires proper Dialect/Utils/Util.h porting
-template <typename T>
-static T selectRoundMode(Type inType, Type outType) {
+template <typename T> static T selectRoundMode(Type inType, Type outType) {
   if (isa<Float8E5M2Type>(inType) || isa<Float8E4M3FNType>(inType) ||
       isa<Float8E5M2Type>(outType) || isa<Float8E4M3FNType>(outType))
     return T::RINT;
@@ -80,8 +79,8 @@ static Value castFP8ToF32(PatternRewriter &rewriter, Value src) {
 
 // TODO-A5: requires proper Dialect/Utils/Util.h porting
 static Value castF32ToFP8(PatternRewriter &rewriter, Value src, Type fp8Ty) {
-  auto roundMode = selectRoundMode<hfusion::RoundMode>(
-      rewriter.getF32Type(), fp8Ty);
+  auto roundMode =
+      selectRoundMode<hfusion::RoundMode>(rewriter.getF32Type(), fp8Ty);
   return castTo(rewriter, src, fp8Ty, roundMode);
 }
 
@@ -251,7 +250,7 @@ static void createF32ElementTypeOp(Op fp8Op, PatternRewriter &rewriter) {
   rewriter.setInsertionPoint(fp8Op);
 
   Type fp8Type = getFP8Ty<FP8Type>(rewriter);
-  Type f32Type = rewriter.getF32Type();
+  [[maybe_unused]] Type f32Type = rewriter.getF32Type();
 
   // Count all the OPs that require casting.
   SmallVector<Value> castedOperands;
@@ -269,7 +268,8 @@ static void createF32ElementTypeOp(Op fp8Op, PatternRewriter &rewriter) {
   SmallVector<Value> castedResults;
   for (auto res : newOp->getResults()) {
     auto resType = getElementTypeOrSelf(res.getType());
-    Value castedResult = resType.isF32() ? castF32ToFP8(rewriter, res, fp8Type) : res;
+    Value castedResult =
+        resType.isF32() ? castF32ToFP8(rewriter, res, fp8Type) : res;
     castedResults.push_back(castedResult);
   }
 
@@ -285,8 +285,7 @@ static LogicalResult legalizeFP8(Op op, PatternRewriter &rewriter) {
   return success();
 }
 
-template <typename Op>
-struct LegalizeFP8E4M3 : public OpRewritePattern<Op> {
+template <typename Op> struct LegalizeFP8E4M3 : public OpRewritePattern<Op> {
   using OpRewritePattern<Op>::OpRewritePattern;
   LogicalResult matchAndRewrite(Op op,
                                 PatternRewriter &rewriter) const override {
@@ -294,8 +293,7 @@ struct LegalizeFP8E4M3 : public OpRewritePattern<Op> {
   }
 };
 
-template <typename Op>
-struct LegalizeFP8E5M2 : public OpRewritePattern<Op> {
+template <typename Op> struct LegalizeFP8E5M2 : public OpRewritePattern<Op> {
   using OpRewritePattern<Op>::OpRewritePattern;
   LogicalResult matchAndRewrite(Op op,
                                 PatternRewriter &rewriter) const override {
@@ -319,8 +317,8 @@ void populateLegalizeFP8Pattern(RewritePatternSet &patterns) {
               mlir::linalg::ReduceOp, mlir::hfusion::CastOp,
               mlir::hfusion::CompareOp, mlir::hfusion::CumsumOp,
               mlir::hfusion::ElemwiseBinaryOp, mlir::hfusion::ElemwiseUnaryOp,
-              mlir::hfusion::ReduceWithIndexOp,
-              mlir::hfusion::PrintOp>(patterns);
+              mlir::hfusion::ReduceWithIndexOp, mlir::hfusion::PrintOp>(
+      patterns);
 }
 
 void LegalizeFP8Pass::runOnOperation() {

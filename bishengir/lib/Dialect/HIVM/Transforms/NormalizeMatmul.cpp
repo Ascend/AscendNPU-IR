@@ -1081,7 +1081,7 @@ void setNormalizedInL0CWithIndex(PatternRewriter &rewriter,
   auto newIdxAttr = rewriter.getI32IntegerAttr(resultIdx);
   bool isDuplicate = false;
   for (Attribute attr : indices) {
-    if (auto idxAttr = attr.dyn_cast<IntegerAttr>()) {
+    if (auto idxAttr = mlir::dyn_cast<IntegerAttr>(attr)) {
       if (idxAttr.getInt() == static_cast<int64_t>(resultIdx)) {
         isDuplicate = true;
         break;

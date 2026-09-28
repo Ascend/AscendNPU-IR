@@ -66,9 +66,9 @@ using namespace mlir::hivm;
 
 #define DEBUG_TYPE "split-mixed-if-conditionals"
 
-static constexpr llvm::StringLiteral kBranchSplitDoneAttr =
+[[maybe_unused]] static constexpr llvm::StringLiteral kBranchSplitDoneAttr =
     "hivm.branch_split_done";
-static constexpr llvm::StringLiteral kCoreSplitDoneAttr =
+[[maybe_unused]] static constexpr llvm::StringLiteral kCoreSplitDoneAttr =
     "hivm.core_split_done";
 
 //===----------------------------------------------------------------------===//
@@ -76,8 +76,8 @@ static constexpr llvm::StringLiteral kCoreSplitDoneAttr =
 //===----------------------------------------------------------------------===//
 
 namespace {
-constexpr llvm::StringLiteral kCubeOnlyAttr = "hivm.cube_only";
-constexpr llvm::StringLiteral kVecOnlyAttr = "hivm.vec_only";
+[[maybe_unused]] constexpr llvm::StringLiteral kCubeOnlyAttr = "hivm.cube_only";
+[[maybe_unused]] constexpr llvm::StringLiteral kVecOnlyAttr = "hivm.vec_only";
 constexpr llvm::StringLiteral kBranchSplitDoneAttr = "hivm.branch_split_done";
 constexpr llvm::StringLiteral kCoreSplitDoneAttr = "hivm.core_split_done";
 

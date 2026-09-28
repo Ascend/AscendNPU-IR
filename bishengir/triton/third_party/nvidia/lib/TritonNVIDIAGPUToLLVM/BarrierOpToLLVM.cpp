@@ -159,7 +159,7 @@ struct WaitBarrierOpConversion
         op.getLoc(), adaptor.getAlloc(),
         typeConverter->convertType(op.getAlloc().getType().getElementType()),
         rewriter);
-    auto loc = op.getLoc();
+    [[maybe_unused]] auto loc = op.getLoc();
     bool predicated =
         adaptor.getPred() && !matchPattern(op.getPred(), m_NonZero());
     std::string ptx;

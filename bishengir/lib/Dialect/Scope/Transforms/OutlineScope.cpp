@@ -77,7 +77,7 @@ class OutlineScopeOp : public OpRewritePattern<scope::ScopeOp> {
 
   SmallVector<Value> getInputs(ScopeOp scopeOp) const {
     SetVector<Value> inputs;
-    scopeOp.walk<WalkOrder::PreOrder>([&inputs, &scopeOp, this](Operation *op) {
+    scopeOp.walk<WalkOrder::PreOrder>([&inputs, &scopeOp](Operation *op) {
       for (auto &opr : op->getOpOperands()) {
         auto val = opr.get();
 
@@ -167,8 +167,8 @@ class OutlineScopeOp : public OpRewritePattern<scope::ScopeOp> {
     // constant values instead of extra outlined function arguments.
     for (Operation *constantOp : getExternalConstantLikeOps(scopeOp)) {
       auto *newConstOp = rewriter.clone(*constantOp, currentMap);
-      for (auto [oldRes, newRes] : llvm::zip_equal(
-               constantOp->getResults(), newConstOp->getResults())) {
+      for (auto [oldRes, newRes] : llvm::zip_equal(constantOp->getResults(),
+                                                   newConstOp->getResults())) {
         currentMap.map(oldRes, newRes);
       }
     }

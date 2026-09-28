@@ -24,9 +24,9 @@ constexpr unsigned kMinElementWidthBits = 8;
 constexpr unsigned kMinWordWidthBits = 32;
 constexpr unsigned kMaxTransferWidthBits = 128;
 constexpr unsigned kMaxVectorSize = 4;
-constexpr int kSharedMemoryAddressSpace =
+[[maybe_unused]] constexpr int kSharedMemoryAddressSpace =
     static_cast<int>(ascend_dpx::AscendDPXAddressSpace::SHARED_MEM);
-constexpr int kGlobalMemoryAddressSpace =
+[[maybe_unused]] constexpr int kGlobalMemoryAddressSpace =
     static_cast<int>(ascend_dpx::AscendDPXAddressSpace::GLOBAL_MEM);
 constexpr int64_t kConstantTruePredValue = -1;
 
@@ -105,7 +105,7 @@ void TargetInfo::storeDShared(RewriterBase &rewriter, Location loc, Value ptr,
                               std::optional<Value> ctaId, Value val,
                               Value pred) const {
   auto b = TritonLLVMOpBuilder(loc, rewriter);
-  auto ptrTy = cast<LLVM::LLVMPointerType>(ptr.getType());
+  [[maybe_unused]] auto ptrTy = cast<LLVM::LLVMPointerType>(ptr.getType());
   assert(ptrTy.getAddressSpace() == kSharedMemoryAddressSpace &&
          "Invalid addr space for store_dsmem");
 
@@ -184,7 +184,7 @@ Value TargetInfo::loadDShared(RewriterBase &rewriter, Location loc, Value ptr,
                               std::optional<Value> ctaId, Type loadTy,
                               Value pred, Operation *localLoadOp) const {
   auto b = TritonLLVMOpBuilder(loc, rewriter);
-  auto ptrTy = cast<LLVM::LLVMPointerType>(ptr.getType());
+  [[maybe_unused]] auto ptrTy = cast<LLVM::LLVMPointerType>(ptr.getType());
   assert(ptrTy.getAddressSpace() == kSharedMemoryAddressSpace &&
          "Invalid addr space for load_dsmem");
 
@@ -250,7 +250,8 @@ Value TargetInfo::loadDShared(RewriterBase &rewriter, Location loc, Value ptr,
   assert(elemBitwidth >= kMinElementWidthBits);
   assert(elemTy.isInteger());
   assert(1 <= vec && vec <= kMaxVectorSize);
-  assert(static_cast<unsigned int>(vec) * elemBitwidth <= kMaxTransferWidthBits);
+  assert(static_cast<unsigned int>(vec) * elemBitwidth <=
+         kMaxTransferWidthBits);
 
   Type loadResTy =
       vec > 1 ? VectorType::get({static_cast<long>(vec)}, elemTy) : elemTy;
@@ -285,7 +286,7 @@ void TargetInfo::storeDGlobal(RewriterBase &rewriter, Location loc, Value ptr,
                               std::optional<Value> ctaId, Value val,
                               Value pred) const {
   auto b = TritonLLVMOpBuilder(loc, rewriter);
-  auto ptrTy = cast<LLVM::LLVMPointerType>(ptr.getType());
+  [[maybe_unused]] auto ptrTy = cast<LLVM::LLVMPointerType>(ptr.getType());
   assert(ptrTy.getAddressSpace() == kGlobalMemoryAddressSpace &&
          "Invalid addr space for store_dgmem");
 
@@ -364,7 +365,7 @@ Value TargetInfo::loadDGlobal(RewriterBase &rewriter, Location loc, Value ptr,
                               std::optional<Value> ctaId, Type loadTy,
                               Value pred, Operation *localLoadOp) const {
   auto b = TritonLLVMOpBuilder(loc, rewriter);
-  auto ptrTy = cast<LLVM::LLVMPointerType>(ptr.getType());
+  [[maybe_unused]] auto ptrTy = cast<LLVM::LLVMPointerType>(ptr.getType());
   assert(ptrTy.getAddressSpace() == kGlobalMemoryAddressSpace &&
          "Invalid addr space for load_dgmem");
 
@@ -430,7 +431,8 @@ Value TargetInfo::loadDGlobal(RewriterBase &rewriter, Location loc, Value ptr,
   assert(elemBitwidth >= kMinElementWidthBits);
   assert(elemTy.isInteger());
   assert(1 <= vec && vec <= kMaxVectorSize);
-  assert(static_cast<unsigned int>(vec) * elemBitwidth <= kMaxTransferWidthBits);
+  assert(static_cast<unsigned int>(vec) * elemBitwidth <=
+         kMaxTransferWidthBits);
 
   Type loadResTy =
       vec > 1 ? VectorType::get({static_cast<long>(vec)}, elemTy) : elemTy;

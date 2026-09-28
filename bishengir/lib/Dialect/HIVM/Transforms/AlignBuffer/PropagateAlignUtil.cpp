@@ -99,10 +99,11 @@ std::optional<int> getExpandedDim(
   llvm::report_fatal_error("unsupport propagation mode");
 }
 
-std::optional<int> getCollapsedDim(
-    int dim, const ArrayRef<ReassociationIndices> &collapseReassociations,
-    ArrayRef<int64_t> collapseSrcShapes, std::string alignDimAttrName,
-    bool isContiguous = true) {
+std::optional<int>
+getCollapsedDim(int dim,
+                const ArrayRef<ReassociationIndices> &collapseReassociations,
+                ArrayRef<int64_t> collapseSrcShapes,
+                std::string alignDimAttrName, bool isContiguous = true) {
   for (size_t i = 0; i < collapseReassociations.size(); i++) {
     const auto &group = collapseReassociations[i];
     if (group.back() < dim) {
@@ -198,9 +199,9 @@ LogicalResult propagateAlignInfoByCollapse(
   bool isContiguous = propagateFromTy.getLayout().getAffineMap().isIdentity();
   llvm::SmallVector<int32_t> mappedAlignDims(alignDims.size());
   for (size_t i = 0; i < alignDims.size(); ++i) {
-    auto mappedDim = getCollapsedDim(alignDims[i], reassociations,
-                                     propagateFromShapes, alignDimAttrName,
-                                     isContiguous);
+    auto mappedDim =
+        getCollapsedDim(alignDims[i], reassociations, propagateFromShapes,
+                        alignDimAttrName, isContiguous);
     if (!mappedDim.has_value()) {
       return op.emitError() << "cannot align " << alignDims[i] << " axis for "
                             << propagateFromValue;
@@ -485,21 +486,22 @@ LogicalResult propagateAlignDown(
   auto [unionAlignDims, unionAlignBytes] = unionAlignInfo(
       alreadyAlignDims, alreadyAlignBytes, alignDims, alignBytes);
 
-  if (util::AlignInfo(alignDims, alignBytes) == util::AlignInfo(unionAlignDims, unionAlignBytes)) {
+  if (util::AlignInfo(alignDims, alignBytes) ==
+      util::AlignInfo(unionAlignDims, unionAlignBytes)) {
     return failure();
   }
-  rewriter.modifyOpInPlace(alreadyAnnotateOp, [&rewriter, &alreadyAnnotateOp,
-                                               &alignDimAttrName,
-                                               &alignBytesAttrName,
-                                               unionAlignDims = unionAlignDims,
-                                               unionAlignBytes = unionAlignBytes]() {
-    alreadyAnnotateOp->setAttr(
-        alignDimAttrName, DenseI32ArrayAttr::get(rewriter.getContext(),
-                                                 ArrayRef(unionAlignDims)));
-    alreadyAnnotateOp->setAttr(
-        alignBytesAttrName, DenseI32ArrayAttr::get(rewriter.getContext(),
-                                                   ArrayRef(unionAlignBytes)));
-  });
+  rewriter.modifyOpInPlace(
+      alreadyAnnotateOp,
+      [&rewriter, &alreadyAnnotateOp, &alignDimAttrName, &alignBytesAttrName,
+       unionAlignDims = unionAlignDims, unionAlignBytes = unionAlignBytes]() {
+        alreadyAnnotateOp->setAttr(
+            alignDimAttrName, DenseI32ArrayAttr::get(rewriter.getContext(),
+                                                     ArrayRef(unionAlignDims)));
+        alreadyAnnotateOp->setAttr(
+            alignBytesAttrName,
+            DenseI32ArrayAttr::get(rewriter.getContext(),
+                                   ArrayRef(unionAlignBytes)));
+      });
   return success();
 }
 
@@ -558,7 +560,8 @@ LogicalResult propagateDownAlignInfo(
             })
             .Case([&rewriter, &v, &alignDims, &alignBytes, &alignDimAttrName,
                    &alignBytesAttrName](scf::YieldOp scfYieldOp) {
-              if (hacc::utils::isRegBasedArch(scfYieldOp->getParentOfType<ModuleOp>()))
+              if (hacc::utils::isRegBasedArch(
+                      scfYieldOp->getParentOfType<ModuleOp>()))
                 return failure();
               return propagateAlignDown(rewriter, scfYieldOp, v, alignDims,
                                         alignBytes, alignDimAttrName,
@@ -748,14 +751,17 @@ mlir::LogicalResult propagateAlignUp(
   return propagateAlign ? success() : failure();
 }
 
-mlir::LogicalResult processYieldOp(mlir::PatternRewriter &rewriter, Operation *markedOp,
-    ArrayRef<int32_t> alignDims, ArrayRef<int32_t> alignBytes,
-    const std::string alignDimAttrName,
-    const std::string alignBytesAttrName) {
-  for (Operation *user :markedOp->getUsers()) {
+mlir::LogicalResult processYieldOp(mlir::PatternRewriter &rewriter,
+                                   Operation *markedOp,
+                                   ArrayRef<int32_t> alignDims,
+                                   ArrayRef<int32_t> alignBytes,
+                                   const std::string alignDimAttrName,
+                                   const std::string alignBytesAttrName) {
+  for (Operation *user : markedOp->getUsers()) {
     if (isa<scf::YieldOp>(user)) {
       auto yieldOperands = user->getOperands();
-      auto it = std::find(yieldOperands.begin(), yieldOperands.end(), markedOp->getResult(0));
+      auto it = std::find(yieldOperands.begin(), yieldOperands.end(),
+                          markedOp->getResult(0));
       if (it == yieldOperands.end()) {
         continue;
       }
@@ -763,17 +769,16 @@ mlir::LogicalResult processYieldOp(mlir::PatternRewriter &rewriter, Operation *m
 
       auto yieldOp = user;
       Block *yieldBlock = yieldOp->getBlock();
-      Operation * parentOp = yieldBlock->getParentOp();
+      Operation *parentOp = yieldBlock->getParentOp();
       if (auto forOp = dyn_cast<scf::ForOp>(parentOp)) {
         ValueRange allOperands = forOp.getOperands();
         int iterArgsIdx = 3;
         ValueRange iterArgs = allOperands.drop_front(iterArgsIdx);
 
         if (!iterArgs.empty()) {
-            Value iterArg = iterArgs[yieldIndex];
-            createAlignMarkOp(rewriter, iterArg.getLoc(), iterArg,
-                              alignDims, alignBytes, alignDimAttrName,
-                              alignBytesAttrName);
+          Value iterArg = iterArgs[yieldIndex];
+          createAlignMarkOp(rewriter, iterArg.getLoc(), iterArg, alignDims,
+                            alignBytes, alignDimAttrName, alignBytesAttrName);
         } else {
           forOp->emitWarning("No iter_args found");
           return failure();
@@ -825,8 +830,8 @@ mlir::LogicalResult propagateAlignUp(
 
     if (!hacc::utils::isRegBasedArch(markedOp->getParentOfType<ModuleOp>()) &&
         failed(processYieldOp(rewriter, markedOp, alignDims, alignBytes,
-                                alignDimAttrName, alignBytesAttrName))) {
-        return failure();
+                              alignDimAttrName, alignBytesAttrName))) {
+      return failure();
     }
 
     return success();
@@ -856,9 +861,10 @@ propagateSubViewOp(RewriterBase &rewriter,
   return newConversionOp;
 }
 
-static LogicalResult handlePropagateFailure(RewriterBase &rewriter,
-                                            UnrealizedConversionCastOp conversionOp,
-                                            OpOperand* user){
+[[maybe_unused]] static LogicalResult
+handlePropagateFailure(RewriterBase &rewriter,
+                       UnrealizedConversionCastOp conversionOp,
+                       OpOperand *user) {
   auto loc = conversionOp.getLoc();
 
   auto src = conversionOp.getInputs()[0];
@@ -873,7 +879,8 @@ static LogicalResult handlePropagateFailure(RewriterBase &rewriter,
 }
 
 /// Push down an UnrealizedConversionCastOp past a CollapseShapeOp.
-static FailureOrCastVec propagateCollapseShapeOp(RewriterBase &rewriter,
+static FailureOrCastVec
+propagateCollapseShapeOp(RewriterBase &rewriter,
                          UnrealizedConversionCastOp conversionOp,
                          memref::CollapseShapeOp op) {
   OpBuilder::InsertionGuard g(rewriter);
@@ -885,24 +892,25 @@ static FailureOrCastVec propagateCollapseShapeOp(RewriterBase &rewriter,
 
   auto reassociation = op.getReassociationIndices();
 
-  // TODO: this condition can be rewritten using isGuaranteedCollapsibleStrictly method.
+  // TODO: this condition can be rewritten using isGuaranteedCollapsibleStrictly
+  // method.
   if (!srcBadTy.getLayout().isIdentity() &&
-          !util::isGuaranteedCollapsibleUnStrictly(srcBadTy, reassociation))
-      return failure();
+      !util::isGuaranteedCollapsibleUnStrictly(srcBadTy, reassociation))
+    return failure();
 
   MemRefType collapsedBadTy =
       memref::CollapseShapeOp::computeCollapsedType(srcBadTy, reassociation);
 
-  auto collapsedBadOp = rewriter.create<memref::CollapseShapeOp>(op.getLoc(),
-      collapsedBadTy, conversionOp.getOperand(0), reassociation);
+  auto collapsedBadOp = rewriter.create<memref::CollapseShapeOp>(
+      op.getLoc(), collapsedBadTy, conversionOp.getOperand(0), reassociation);
 
   if (collapsedBadTy == op.getResultType()) {
     rewriter.replaceOp(op, collapsedBadOp.getResult());
     return UnrealizedCastOpVec{conversionOp};
   }
 
-  auto newConversionOp = rewriter.create<UnrealizedConversionCastOp>(op.getLoc(),
-      op.getType(), collapsedBadOp.getResult());
+  auto newConversionOp = rewriter.create<UnrealizedConversionCastOp>(
+      op.getLoc(), op.getType(), collapsedBadOp.getResult());
 
   rewriter.replaceOp(op, newConversionOp.getResult(0));
   return UnrealizedCastOpVec{newConversionOp};
@@ -1216,7 +1224,7 @@ FailureOrCastVec propagateScopeReturnOp(RewriterBase &rewriter,
                                         scope::ReturnOp returnOp,
                                         unsigned int operandIndex) {
   LDBG("propagate unrealized conversion cast down scope.return op : "
-      << *returnOp);
+       << *returnOp);
   auto scopeOp = cast<scope::ScopeOp>(returnOp->getParentOp());
 
   // Replace scope.return operand with conversion input (aligned type)
@@ -1459,7 +1467,9 @@ bool util::AlignInfo::operator==(const AlignInfo &other) {
   return true;
 }
 
-bool util::AlignInfo::operator!=(const AlignInfo &other) { return !(*this == other); }
+bool util::AlignInfo::operator!=(const AlignInfo &other) {
+  return !(*this == other);
+}
 
 /// Follow aliases / marks to recover a tightly-coupled buffer id, if any.
 static std::optional<int32_t> getTightlyCoupledBufferId(Value value) {
@@ -1690,7 +1700,8 @@ void mlir::hivm::materializeRemainingStaticUBLayoutCasts(RewriterBase &rewriter,
         dyn_cast_or_null<hivm::AddressSpaceAttr>(srcType.getMemorySpace());
     auto dstSpace =
         dyn_cast_or_null<hivm::AddressSpaceAttr>(dstType.getMemorySpace());
-    auto srcLayout = dyn_cast<StridedLayoutAttr>(srcType.getLayout());
+    [[maybe_unused]] auto srcLayout =
+        dyn_cast<StridedLayoutAttr>(srcType.getLayout());
     assert(!srcType.getElementType().isInteger(1) &&
            "PropagateAlignUtil: i1 type is not supported");
     if (!srcSpace || !dstSpace ||

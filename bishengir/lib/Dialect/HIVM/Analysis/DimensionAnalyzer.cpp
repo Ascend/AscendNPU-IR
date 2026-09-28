@@ -42,7 +42,8 @@ bool DimensionAnalyzer::isParallelDim(Dimension dim) {
   createDummyRefIfNotExist({dim.first});
   auto args = getValueDimIndices(dim.first);
   auto solverCollapserIndex = structuralDsu_->find(args[dim.second]);
-  auto solverShapeIndex = equivalentDsu_->find(args[dim.second]);
+  [[maybe_unused]] auto solverShapeIndex =
+      equivalentDsu_->find(args[dim.second]);
   LDBG("Checking parallelDim of " << solverCollapserIndex << "("
                                   << solverShapeIndex << ")");
   auto tilingDimKindVal =
@@ -59,7 +60,8 @@ bool DimensionAnalyzer::isReduceDim(Dimension dim) {
   createDummyRefIfNotExist({dim.first});
   auto args = getValueDimIndices(dim.first);
   auto solverCollapserIndex = structuralDsu_->find(args[dim.second]);
-  auto solverShapeIndex = equivalentDsu_->find(args[dim.second]);
+  [[maybe_unused]] auto solverShapeIndex =
+      equivalentDsu_->find(args[dim.second]);
   LDBG("Checking reduceDim of " << solverCollapserIndex << "("
                                 << solverShapeIndex << ")");
   auto tilingDimKindVal =

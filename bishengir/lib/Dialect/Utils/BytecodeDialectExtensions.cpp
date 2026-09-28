@@ -15,16 +15,16 @@
 //
 //===----------------------------------------------------------------------===//
 
-#if (!BISHENGIR_BUILD_STANDALONE_IR_ONLY)
+#if !defined(BISHENGIR_BUILD_STANDALONE_IR_ONLY)
 #include "bishengir/Dialect/Utils/BytecodeDialectExtensions.h"
 
-#include "llvm/ADT/SmallVector.h"
 #include "mlir/Bytecode/BytecodeImplementation.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/DialectRegistry.h"
+#include "llvm/ADT/SmallVector.h"
 
 using namespace mlir;
 
@@ -86,8 +86,9 @@ public:
     return std::make_unique<BufferizationDialectVersion>(version);
   }
 
-  LogicalResult upgradeFromVersion(Operation *topLevelOp,
-                                   const DialectVersion &version) const override {
+  LogicalResult
+  upgradeFromVersion(Operation *topLevelOp,
+                     const DialectVersion &version) const override {
     if (!topLevelOp)
       return success();
 
@@ -124,10 +125,10 @@ struct FuncBytecodeDialectInterface : public BytecodeDialectInterface {
 } // namespace
 
 void bishengir::registerBytecodeDialectExtensions(DialectRegistry &registry) {
-  registry.addExtension(+[](MLIRContext *,
-                            bufferization::BufferizationDialect *dialect) {
-    dialect->addInterfaces<BufferizationBytecodeDialectInterface>();
-  });
+  registry.addExtension(
+      +[](MLIRContext *, bufferization::BufferizationDialect *dialect) {
+        dialect->addInterfaces<BufferizationBytecodeDialectInterface>();
+      });
   registry.addExtension(+[](MLIRContext *, func::FuncDialect *dialect) {
     dialect->addInterfaces<FuncBytecodeDialectInterface>();
   });

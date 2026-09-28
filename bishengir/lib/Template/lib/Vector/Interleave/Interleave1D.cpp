@@ -40,18 +40,22 @@
 /// int16/uint16 view as half, and int32/uint32 view as float in interleave op
 
 template <typename T>
+__aiv__ __attribute__((always_inline)) void vector_interleave_1d_core(
+    memref_t<__ubuf__ T, 1> *src0, memref_t<__ubuf__ T, 1> *src1,
+    memref_t<__ubuf__ T, 1> *dst, memref_t<__ubuf__ T, 1> *temp);
+
+template <typename T>
 __aiv__ __attribute__((always_inline)) void vector_interleave_1d(
     memref_t<__ubuf__ T, 1> *src0, memref_t<__ubuf__ T, 1> *src1,
     memref_t<__ubuf__ T, 1> *dst, memref_t<__ubuf__ T, 1> *temp) {
   // Check alignment conditions
-  if (is_unaligned_interleave_1d(src0, src1, dst)) [[unlikely]] {
+  if (is_unaligned_interleave_1d(src0, src1, dst)) {
     interleave_1d_scalar<T>(src0, src1, dst);
     return;
   }
 
   vector_interleave_1d_core<T>(src0, src1, dst, temp);
-
-  }
+}
 
 template <typename T>
 __aiv__ __attribute__((always_inline)) void vector_interleave_1d_core(
@@ -112,9 +116,9 @@ __aiv__ __attribute__((always_inline)) void vector_interleave_1d_core(
 template <>
 __aiv__ __attribute__((always_inline)) void
 vector_interleave_1d_core<bfloat16_t>(memref_t<__ubuf__ bfloat16_t, 1> *src0,
-                                 memref_t<__ubuf__ bfloat16_t, 1> *src1,
-                                 memref_t<__ubuf__ bfloat16_t, 1> *dst,
-                                 memref_t<__ubuf__ bfloat16_t, 1> *temp) {
+                                      memref_t<__ubuf__ bfloat16_t, 1> *src1,
+                                      memref_t<__ubuf__ bfloat16_t, 1> *dst,
+                                      memref_t<__ubuf__ bfloat16_t, 1> *temp) {
   // convert bfloat16_t memref to half memref
   memref_t<__ubuf__ half, 1> src0_as_half;
   memref_t<__ubuf__ half, 1> src1_as_half;
@@ -125,7 +129,7 @@ vector_interleave_1d_core<bfloat16_t>(memref_t<__ubuf__ bfloat16_t, 1> *src0,
   view_as<bfloat16_t, half, 1>(dst, &dst_as_half);
   view_as<bfloat16_t, half, 1>(temp, &temp_as_half);
   vector_interleave_1d_core<half>(&src0_as_half, &src1_as_half, &dst_as_half,
-                             &temp_as_half);
+                                  &temp_as_half);
 }
 
 template <>
@@ -142,7 +146,7 @@ __aiv__ __attribute__((always_inline)) void vector_interleave_1d_core<int16_t>(
   view_as<int16_t, half, 1>(dst, &dst_as_half);
   view_as<int16_t, half, 1>(temp, &temp_as_half);
   vector_interleave_1d_core<half>(&src0_as_half, &src1_as_half, &dst_as_half,
-                             &temp_as_half);
+                                  &temp_as_half);
 }
 
 template <>
@@ -159,7 +163,7 @@ __aiv__ __attribute__((always_inline)) void vector_interleave_1d_core<uint16_t>(
   view_as<uint16_t, half, 1>(dst, &dst_as_half);
   view_as<uint16_t, half, 1>(temp, &temp_as_half);
   vector_interleave_1d_core<half>(&src0_as_half, &src1_as_half, &dst_as_half,
-                             &temp_as_half);
+                                  &temp_as_half);
 }
 
 template <>
@@ -175,8 +179,8 @@ __aiv__ __attribute__((always_inline)) void vector_interleave_1d_core<int32_t>(
   view_as<int32_t, float, 1>(src1, &src1_as_float);
   view_as<int32_t, float, 1>(dst, &dst_as_float);
   view_as<int32_t, float, 1>(temp, &temp_as_float);
-  vector_interleave_1d_core<float>(&src0_as_float, &src1_as_float, &dst_as_float,
-                              &temp_as_float);
+  vector_interleave_1d_core<float>(&src0_as_float, &src1_as_float,
+                                   &dst_as_float, &temp_as_float);
 }
 
 template <>
@@ -192,8 +196,8 @@ __aiv__ __attribute__((always_inline)) void vector_interleave_1d_core<uint32_t>(
   view_as<uint32_t, float, 1>(src1, &src1_as_float);
   view_as<uint32_t, float, 1>(dst, &dst_as_float);
   view_as<uint32_t, float, 1>(temp, &temp_as_float);
-  vector_interleave_1d_core<float>(&src0_as_float, &src1_as_float, &dst_as_float,
-                              &temp_as_float);
+  vector_interleave_1d_core<float>(&src0_as_float, &src1_as_float,
+                                   &dst_as_float, &temp_as_float);
 }
 
 template <typename T>
@@ -236,8 +240,8 @@ interleave_vsel_1d(memref_t<__ubuf__ T, 1> *src0, memref_t<__ubuf__ T, 1> *src1,
 template <typename T>
 __aiv__ __attribute__((always_inline)) void
 interleave_1d_scalar(memref_t<__ubuf__ T, 1> *src0,
-                            memref_t<__ubuf__ T, 1> *src1,
-                            memref_t<__ubuf__ T, 1> *dst) {
+                     memref_t<__ubuf__ T, 1> *src1,
+                     memref_t<__ubuf__ T, 1> *dst) {
 #ifdef ENABLE_CPU_TRACE_INTRINSIC
   WARN_SCALAR_IMPL("vector_interleave_1d");
 #endif
@@ -272,12 +276,11 @@ is_unaligned_interleave_1d(memref_t<__ubuf__ T, 1> *src0,
 
   // Check offset alignment
   bool is_offset_aligned = isAddress32ByteAligned<T>(src0_ptr) &&
-                          isAddress32ByteAligned<T>(src1_ptr) &&
-                          isAddress32ByteAligned<T>(dst_ptr);
+                           isAddress32ByteAligned<T>(src1_ptr) &&
+                           isAddress32ByteAligned<T>(dst_ptr);
   // Check stride alignment
-  bool is_stride_aligned = (src0->strides[0] == 1) &&
-                          (src1->strides[0] == 1) &&
-                          (dst->strides[0] == 1);
+  bool is_stride_aligned = (src0->strides[0] == 1) && (src1->strides[0] == 1) &&
+                           (dst->strides[0] == 1);
 
   return !is_offset_aligned || !is_stride_aligned;
 }

@@ -420,8 +420,8 @@ LogicalResult Fp4ToFpOp::verify() {
     return emitError() << "only bf16 or f16 is supported for now, got "
                        << elemType;
 
-  for (int i = 0; i < rank; ++i) {
-    if (i == axis) {
+  for (int i = 0; i < static_cast<int>(rank); ++i) {
+    if (i == static_cast<int>(axis)) {
       if (resShape[i] != srcShape[i] * 2)
         return emitError() << "axis " << axis
                            << " dimension must be 2x source dimension (src="
@@ -442,13 +442,13 @@ void Fp4ToFpOp::build(OpBuilder &builder, OperationState &state,
                       int32_t axis) {
   auto srcTy = src.getType();
   auto shape = llvm::to_vector(srcTy.getShape());
-  auto rank = srcTy.getRank();
+  [[maybe_unused]] auto rank = srcTy.getRank();
   assert(0 <= axis && axis < rank);
   shape[axis] *= 2;
 
   Attribute inEnc = srcTy.getEncoding();
   Attribute outEnc;
-  auto result =
+  [[maybe_unused]] auto result =
       inEnc.getDialect()
           .getRegisteredInterface<triton::DialectInferLayoutInterface>()
           ->inferFp4ToFpOpEncoding(shape, axis, inEnc, outEnc,
@@ -749,7 +749,7 @@ LogicalResult MemDescIndexOp::verify() {
   if (!correctRank) {
     return emitError("result rank must be input rank - 1");
   }
-  if (srcTy.getAllocShape().size() != srcTy.getRank()) {
+  if (srcTy.getAllocShape().size() != static_cast<size_t>(srcTy.getRank())) {
     return emitError("We don't allow taking memdesc_index of a memdesc_index");
   }
 
@@ -791,7 +791,7 @@ LogicalResult MemDescSubsliceOp::verify() {
   if (srcTy.getElementType() != dstTy.getElementType()) {
     return emitError("result element type must match desc element type");
   }
-  if (getOffsets().size() != srcTy.getRank()) {
+  if (getOffsets().size() != static_cast<size_t>(srcTy.getRank())) {
     return emitError("offsets must have the same rank as input");
   }
   if (srcTy.getRank() != dstTy.getRank()) {
@@ -1020,7 +1020,8 @@ void WarpSpecializeOp::build(OpBuilder &builder, OperationState &state,
   build(builder, state, resultTypes, /*explicitCaptures=*/ValueRange(),
         partitionNumWarps, {}, {}, {});
   OpBuilder::InsertionGuard guard(builder);
-  Block *container = builder.createBlock(state.regions.back().get());
+  [[maybe_unused]] Block *container =
+      builder.createBlock(state.regions.back().get());
   builder.create<WarpSpecializePartitionsOp>(state.location,
                                              partitionNumRegions);
 }
@@ -1049,7 +1050,7 @@ ParseResult WarpSpecializeOp::parse(OpAsmParser &p, OperationState &result) {
   while (succeeded(p.parseOptionalKeyword(
       ("partition" + Twine(partitionNumWarps.size()).str())))) {
     partitionArgs.clear();
-    SMLoc regionLoc = p.getCurrentLocation();
+    [[maybe_unused]] SMLoc regionLoc = p.getCurrentLocation();
     if (p.parseArgumentList(partitionArgs, AsmParser::Delimiter::Paren,
                             /*allowType=*/true) ||
         p.parseKeyword("num_warps") || p.parseLParen() ||

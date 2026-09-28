@@ -132,7 +132,7 @@ private:
     // indices in `offsets` that hold unique values, and only accumulate over
     // those.
     llvm::MapVector<ArrayRef<unsigned>, int> uniqueOffsets;
-    for (int i = 0; i < offsets.size(); ++i) {
+    for (int i = 0; i < static_cast<int>(offsets.size()); ++i) {
       uniqueOffsets.insert({offsets[i], i});
     }
 
@@ -203,7 +203,7 @@ private:
         SmallVector<SmallVector<unsigned>> resultOffset =
             emitOffsetForLayout(resultLayout, resultTy);
         SmallVector<Value> resultVals;
-        for (int j = 0; j < resultElems; j++) {
+        for (int j = 0; j < static_cast<int>(resultElems); j++) {
           auto key = resultOffset[j];
           key.insert(key.begin() + axis, 0);
           resultVals.push_back(accs[key][i]);
@@ -334,8 +334,8 @@ private:
     triton::ReduceOp op = helper.getOperation();
     Location loc = op.getLoc();
     auto b = TritonLLVMOpBuilder(loc, rewriter);
-    auto srcLayout = helper.getSrcLayout();
-    auto axis = op.getAxis();
+    [[maybe_unused]] auto srcLayout = helper.getSrcLayout();
+    [[maybe_unused]] auto axis = op.getAxis();
     auto smemOrder = helper.getOrderWithAxisAtBeginning();
     SmallVector<Value> results(op.getNumOperands());
     for (unsigned i = 0; i < op.getNumOperands(); ++i) {

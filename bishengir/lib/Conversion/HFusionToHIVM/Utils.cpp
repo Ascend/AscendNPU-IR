@@ -21,6 +21,7 @@
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "llvm/Support/ErrorHandling.h"
 
 #include <set>
 
@@ -97,12 +98,12 @@ hivm::RoundMode mapRoundModeHFusionToHiVM(hfusion::RoundMode hsRndMode) {
     return hivm::RoundMode::ODD;
   case (hfusion::RoundMode::TRUNCWITHOVERFLOW):
     return hivm::RoundMode::TRUNCWITHOVERFLOW;
-  default:
-    llvm::report_fatal_error("unsupported hfusion::RoundMode");
   }
+  llvm::report_fatal_error("unsupported hfusion::RoundMode");
 }
 
-hivm::UnsignedMode mapUnsignedModeHFusionToHiVM(hfusion::UnsignedMode hsUniMode) {
+hivm::UnsignedMode
+mapUnsignedModeHFusionToHiVM(hfusion::UnsignedMode hsUniMode) {
   switch (hsUniMode) {
   case (hfusion::UnsignedMode::SI2SI):
     return hivm::UnsignedMode::SI2SI;
@@ -112,9 +113,8 @@ hivm::UnsignedMode mapUnsignedModeHFusionToHiVM(hfusion::UnsignedMode hsUniMode)
     return hivm::UnsignedMode::UI2SI;
   case (hfusion::UnsignedMode::UI2UI):
     return hivm::UnsignedMode::UI2UI;
-  default:
-    llvm::report_fatal_error("unsupported hfusion::UnsignedMode");
   }
+  llvm::report_fatal_error("unsupported hfusion::UnsignedMode");
 }
 
 } // namespace hfusion_conversion_utils

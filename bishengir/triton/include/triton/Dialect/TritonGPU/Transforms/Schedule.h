@@ -25,7 +25,7 @@ loadOpsToIndirectionLevel(scf::ForOp forOp, bool pipelineWithoutDot,
                           triton::ModuleAxisInfoAnalysis &axisInfoAnalysis,
                           int numStages, bool filterSmall = true);
 
-}; // namespace gpu
+} // namespace gpu
 
 /// Pipeline the TMA stores in the loop.
 bool pipelineTMAStores(scf::ForOp forOp);
@@ -188,7 +188,7 @@ public:
     cluster = stageCluster.second;
   }
 
-  void notifyOperationInserted(Operation *op, InsertPoint previous) {
+  void notifyOperationInserted(Operation *op, InsertPoint previous) override {
     if (stage && cluster)
       schedule.insert(op, *stage, *cluster);
   }

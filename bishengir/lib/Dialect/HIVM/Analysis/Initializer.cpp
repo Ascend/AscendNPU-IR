@@ -56,7 +56,7 @@ LogicalResult DimensionAnalyzer::initialize() {
   llvm::sort(invalidUpdates);
   invalidUpdates.erase(llvm::unique(invalidUpdates), invalidUpdates.end());
   LDBG("InvalidUpdates: ");
-  for (auto &[rep, indices] : invalidUpdates) {
+  for ([[maybe_unused]] auto &[rep, indices] : invalidUpdates) {
     LLVM_DEBUG({
       llvm::dbgs() << rep << ' ' << utils::debugger::to_string(indices) << '\n';
     });
