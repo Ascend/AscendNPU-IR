@@ -50,18 +50,15 @@ struct LegalizeBoolForSimtVFPass
 // Get VCastOp with empty tensor.
 Value getVCastOpWithEmpty(
     Type typeToCast, Value valToCast, OpBuilder &builder) {
-  auto defOp = valToCast.getDefiningOp();
   Value dstEmpty = utils::createEmptyOpWithTargetElemType(
-      builder, defOp->getLoc(), valToCast, typeToCast);
+      builder, valToCast.getLoc(), valToCast, typeToCast);
   auto roundModeAttr =
       builder.getAttr<hivm::RoundModeAttr>(hivm::RoundMode::RINT);
   Value castedRet =
       builder
-          .create<hivm::VCastOp>(defOp->getLoc(),
-              TypeRange(dstEmpty.getType()),
-              valToCast,
-              dstEmpty,
-              roundModeAttr,
+          .create<hivm::VCastOp>(
+              valToCast.getLoc(), TypeRange(dstEmpty.getType()), valToCast,
+              dstEmpty, roundModeAttr,
               builder.getAttr<hivm::TypeFnAttr>(hivm::TypeFn::cast_signed))
           .getResults()[0];
   return castedRet;
@@ -70,37 +67,42 @@ Value getVCastOpWithEmpty(
 void LegalizeBoolForSimtVFPass::dealWithReferenceOutOfScope(
     scope::ScopeOp scopeOp, OpBuilder &builder) {
   scopeOp.getBody()->walk([&](Operation *op) {
+    auto legalizeBool = [&](Value boolTensor, unsigned idx) {
+      // Cast the external i1 tensor to i8 before entering the scope.
+      Value extVal = getVCastOpWithEmpty(IntegerType::get(&getContext(), 8),
+                                         boolTensor, builder);
+      builder.setInsertionPoint(op);
+      // Inside the scope, cast back to i1 to keep consistent with the
+      // original operation type.
+      Value truncVal = getVCastOpWithEmpty(IntegerType::get(&getContext(), 1),
+                                           extVal, builder);
+      op->setOperand(idx, truncVal);
+    };
     for (unsigned i = 0; i < op->getNumOperands(); i++) {
       auto operand = op->getOperand(i);
-      auto defOp = operand.getDefiningOp();
-      if (!defOp)
+      auto tensorType = llvm::dyn_cast<RankedTensorType>(operand.getType());
+      if (!tensorType || !tensorType.getElementType().isInteger(1))
         continue;
-      // If the operand is a ranked tensor and the defOp is not in the scope,
-      // we need to extend the tensor to i8 when the element type is i1.
-      if (llvm::isa<RankedTensorType>(operand.getType())
-          && !scopeOp->isAncestor(defOp)) {
-        auto opResult = llvm::dyn_cast<OpResult>(operand);
-        if (!opResult)
+
+      // Block arguments owned by an enclosing region are external to the
+      // scope.
+      if (auto blockArg = llvm::dyn_cast<BlockArgument>(operand)) {
+        Operation *parentOp = blockArg.getOwner()->getParentOp();
+        if (parentOp == scopeOp || scopeOp->isAncestor(parentOp))
           continue;
-        // Tensor used inside scope may from op with multi results, for example:
-        // scf.if -> (i32, f32, tensor, i64, tensor)
-        unsigned operandIdx = opResult.getResultNumber();
-        auto defOpElemTy = llvm::dyn_cast<RankedTensorType>(
-            defOp->getResult(operandIdx).getType())
-                               .getElementType();
-        if (!defOpElemTy.isInteger(1))
+
+        builder.setInsertionPoint(scopeOp);
+        legalizeBool(operand, i);
+        continue;
+      }
+
+      // Operation results defined outside the scope are external to the
+      // scope.
+      if (auto defOp = operand.getDefiningOp()) {
+        if (scopeOp->isAncestor(defOp))
           continue;
         builder.setInsertionPointAfter(defOp);
-        // Cast the i1 tensor to i8 tensor followed its defining op.
-        Value extVal = getVCastOpWithEmpty(IntegerType::get(&getContext(), 8),
-            defOp->getResult(operandIdx),
-            builder);
-        builder.setInsertionPoint(op);
-        // Inside the scope, cast back to i1 tensor to keep consistent with
-        // the original type.
-        Value truncVal = getVCastOpWithEmpty(
-            IntegerType::get(&getContext(), 1), extVal, builder);
-        op->setOperand(i, truncVal);
+        legalizeBool(operand, i);
       }
     }
   });

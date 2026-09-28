@@ -153,3 +153,35 @@ module {
     return
   }
 }
+
+// This case tests: bool tensor used inside scope is a loop-carried block
+// argument (scf.for iter_arg), which has no defining op.
+// CHECK-LABEL: func.func @scope_use_loop_iter_i1
+// CHECK: %[[W_INIT:.*]] = hivm.hir.vcast ins(%{{.*}} : tensor<128xi1>) outs(%{{.*}} : tensor<128xi8>) -> tensor<128xi8>
+// CHECK: scf.for {{.*}} iter_args({{.*}}) -> (tensor<128xi1>) {
+// CHECK:   %[[E_IT:.*]] = tensor.empty() : tensor<128xi8>
+// CHECK:   %[[W_IT:.*]] = hivm.hir.vcast ins(%{{.*}} : tensor<128xi1>) outs(%[[E_IT]] : tensor<128xi8>) -> tensor<128xi8>
+// CHECK:   scope.scope : () -> tensor<128xi8> {
+// CHECK:     %[[T_IT:.*]] = hivm.hir.vcast ins(%[[W_IT]] : tensor<128xi8>) outs(%{{.*}} : tensor<128xi1>) -> tensor<128xi1>
+// CHECK:     %[[T_INIT:.*]] = hivm.hir.vcast ins(%[[W_INIT]] : tensor<128xi8>) outs(%{{.*}} : tensor<128xi1>) -> tensor<128xi1>
+// CHECK:     %[[AND:.*]] = hivm.hir.vand ins(%[[T_IT]], %[[T_INIT]] : tensor<128xi1>, tensor<128xi1>) outs(%{{.*}} : tensor<128xi1>) -> tensor<128xi1>
+module {
+  func.func @scope_use_loop_iter_i1(%arg0: memref<128xi32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %c0_i32 = arith.constant 0 : i32
+    %0 = bufferization.to_tensor %arg0 restrict writable : memref<128xi32>
+    %1 = tensor.empty() : tensor<128xi1>
+    %2 = hivm.hir.vcmp ins(%0, %c0_i32 : tensor<128xi32>, i32) outs(%1 : tensor<128xi1>) compare_mode = <ne> -> tensor<128xi1>
+    %3 = scf.for %i = %c0 to %c4 step %c1 iter_args(%arg = %2) -> (tensor<128xi1>) {
+      %4 = scope.scope : () -> tensor<128xi1> {
+        %5 = tensor.empty() : tensor<128xi1>
+        %6 = hivm.hir.vand ins(%arg, %2 : tensor<128xi1>, tensor<128xi1>) outs(%5 : tensor<128xi1>) -> tensor<128xi1>
+        scope.return %6 : tensor<128xi1>
+      } {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vf_mode = #hivm.vf_mode<SIMT>, no_inline, outline, vector_mode = "simt"}
+      scf.yield %4 : tensor<128xi1>
+    }
+    return
+  }
+}
