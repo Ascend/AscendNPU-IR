@@ -540,6 +540,16 @@ static void hivmPreBufferizationOptimizationPipeline(
                 hivmPipelineOptions.setWorkspaceMultibuffer));
       }
       pm.nest<func::FuncOp>().addPass(createCVPipeliningPass(pipelineOptions));
+      // Before the second MarkMultiBuffer so buffer-count marking sees the
+      // split scopes. Registered kernels only. mb=1 alloc sinking is not
+      // done here; MarkMultiBuffer sinks those after it writes the marks.
+      if (enableRegisteredPreloadHeuristics(hivmPipelineOptions)) {
+        RepositionPreloadWorkOptions repositionOpts;
+        repositionOpts.enablePreload = true;
+        repositionOpts.workspaceMultiBufferNum =
+            hivmPipelineOptions.setWorkspaceMultibuffer;
+        pm.addPass(createRepositionPreloadWorkPass(repositionOpts));
+      }
       pm.addNestedPass<func::FuncOp>(
           createMarkMultiBufferPass(multiBufferOptions));
     }
@@ -569,17 +579,10 @@ static void hivmPreBufferizationOptimizationPipeline(
   pm.nest<func::FuncOp>().addPass(createMarkTightlyCoupledBufferPass());
   pm.nest<func::FuncOp>().addPass(createHoistTightlyCoupledAllocPass());
 
-  // Post-CVPipelining sink on the unsplit MIX function: exclusive dest/src
-  // clusters (including MTE2 across an unused CUBE) and load→VF→copy
-  // chains that sit across an unused mmad. Flattening same preload_num
-  // scopes stays after split. Registered kernels only, and only with preload.
-  if (enableRegisteredPreloadHeuristics(hivmPipelineOptions)) {
-    SinkExclusivePreloadWorkOptions sinkOpts;
-    sinkOpts.enablePreload = true;
-    sinkOpts.workspaceMultiBufferNum =
-        hivmPipelineOptions.setWorkspaceMultibuffer;
-    pm.addPass(createSinkExclusivePreloadWorkPass(sinkOpts));
-  }
+  // Exclusive dest / copy-chain sinking now runs in
+  // RepositionPreloadWork, immediately after CVPipelining. mb=1 alloc
+  // sinking runs inside MarkMultiBuffer. Flattening same preload_num scopes
+  // stays after split and skips hivm.independent_preload_prefix.
 
   // Preserve the legacy pass order when CV pipelining is disabled by SSBuffer
   // or explicitly turned off: run code motion after cross-core sync.
