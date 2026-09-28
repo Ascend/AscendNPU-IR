@@ -17,7 +17,9 @@
 //
 // Merge scopes sharing identical preload_num within the same parent loop op.
 // Exclusive dest / src / copy-chain sinking lives in
-// hivm-sink-exclusive-preload-work (after CVPipelining, before SplitMix).
+// hivm-reposition-preload-work (after CVPipelining, before
+// MarkMultiBuffer). Scopes marked hivm.independent_preload_prefix are not
+// merged: that mark is the cube-independent prefix of a same preload_num.
 //
 //===----------------------------------------------------------------------===//
 
@@ -54,6 +56,11 @@ static LogicalResult processForOp(scf::ForOp forOp, func::FuncOp funcOp) {
     DenseMap<int32_t, SmallVector<scope::ScopeOp, 4>> preloadNumToScopes;
     for (Operation &op : *body) {
       if (auto scopeOp = dyn_cast<scope::ScopeOp>(&op)) {
+        // RepositionPreloadWork splits a same-preload_num prefix so
+        // cube-independent vector work stays in front of the cube wait.
+        // Folding it back into the consumer scope undoes that split.
+        if (scopeOp->hasAttr("hivm.independent_preload_prefix"))
+          continue;
         if (auto attr = scopeOp->getAttrOfType<IntegerAttr>(
                 hivm::PreloadNumAttr::name)) {
           preloadNumToScopes[attr.getInt()].push_back(scopeOp);

@@ -889,6 +889,47 @@ def MergeSamePreloadScopes : HIVMPass<"hivm-merge-same-preload-scopes",
            "Workspace multibuffer depth; heuristics require a non-zero value">];
 }
 
+def RepositionPreloadWork
+    : HIVMPass<"hivm-reposition-preload-work", "ModuleOp",
+               [MixKernel, PureAicKernel]> {
+  let summary =
+      "Reposition ops between and inside preload scopes after CVPipelining.";
+  let description = [{
+    Runs after CVPipelining and before MarkMultiBuffer, on the unsplit MIX
+    function. It repositions ops both between preload scopes and inside a
+    scope. Inside a VECTOR scope, ops that do not use an earlier sibling
+    scope move into a new scope placed immediately before the current one,
+    but only when a later scope is CUBE. That cube is the first subsequent
+    CUBE scope, skipping non-cube scopes in between. An op used only after
+    that cube stays put. The new scope keeps the same `hivm.preload_num`
+    and is marked `hivm.independent_preload_prefix` so
+    MergeSamePreloadScopes leaves it alone. A VECTOR scope with no later
+    CUBE scope is left whole. Also sinks exclusive dest/src
+    clusters and unused-CUBE load/VF/copy chains. Does not sink
+    `multi_buffer = 1` allocs; MarkMultiBuffer does that after it writes
+    the marks.
+  }];
+  let constructor = "mlir::hivm::createRepositionPreloadWorkPass()";
+  let dependentDialects = ["scope::ScopeDialect", "func::FuncDialect",
+                           "hivm::HIVMDialect", "scf::SCFDialect",
+                           "annotation::AnnotationDialect",
+                           "memref::MemRefDialect", "affine::AffineDialect",
+                           "arith::ArithDialect",
+                           "bufferization::BufferizationDialect",
+                           "tensor::TensorDialect"];
+  let options =
+      [Option<"bypassShapeRegistry", "bypass-shape-registry", "bool",
+              /*default=*/"false",
+              "Bypass shape registry check for preload-work reposition">,
+       Option<"enablePreload", "enable-preload", "bool",
+              /*default=*/"false",
+              "Enable preload-work reposition when the kernel is registered">,
+       Option<
+           "workspaceMultiBufferNum", "set-workspace-multibuffer", "unsigned",
+           /*default=*/"0",
+           "Workspace multibuffer depth; heuristics require a non-zero value">];
+}
+
 def SinkExclusivePreloadWork
     : HIVMPass<"hivm-sink-exclusive-preload-work",
                "ModuleOp", [MixKernel, PureAicKernel]> {

@@ -41,6 +41,7 @@ bool isLoopShapeRegistered(llvm::StringRef name);
 /// Also covers the 3160 sign-extended while-bound normalize, byte-vs-byte
 /// buffer-size compare, dynamic-TCB view rematerialization, and pre-CVP
 /// buffer-size prep.
+/// Also covers the post-CVP independent-preload hoist.
 inline bool allowLoopShapeHeuristics(bool bypassShapeRegistry,
                                      llvm::StringRef funcName,
                                      bool enablePreload,
