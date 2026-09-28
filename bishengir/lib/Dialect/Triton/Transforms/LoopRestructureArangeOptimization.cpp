@@ -622,9 +622,7 @@ cloneConstantOp(PatternRewriter &rewriter, Location loc,
   // restricts those constants to splats.
   if (!newResultTypes.empty() && newResultTypes[0] != constOp.getType()) {
     auto newResRT = cast<RankedTensorType>(newResultTypes[0]);
-    auto dense = dyn_cast<DenseElementsAttr>(valAttr);
-    assert(dense && dense.isSplat() &&
-           "preflight must only allow resizing splat constants");
+    auto dense = cast<SplatElementsAttr>(valAttr);
     newValAttr =
         SplatElementsAttr::get(newResRT, dense.getSplatValue<Attribute>());
   }
