@@ -436,6 +436,7 @@ void buildBiShengTTIRPipeline(OpPassManager &pm,
 void buildBiShengHIRFinishPipeline(mlir::OpPassManager &pm,
                                    const BiShengIRCompileMainConfig &config) {
   pm.addPass(hivm::createWriteBackSharedPass());
+  pm.addPass(hivm::createHoistSimtScalarCallsToSimdPass());
 }
 
 // Build the complete SIMD/SIMT mixed flow in one place. Pure-SIMT compilation
