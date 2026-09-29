@@ -75,10 +75,11 @@ module {
 
 // -----
 
-// A tensor-valued conditional is not necessarily backed by UB: inverse
-// bufferization pairs can forward global buffers through either branch.
+// Tensor values crossing into a SIMT VF stop traceback at the to_memref
+// boundary and are backed by UB in the mixed ABI, even when every traced
+// source is uniformly GM-backed.
 // CHECK-LABEL: func.func @simt_from_gm_region(
-// CHECK-SAME: %arg0: memref<8xi64> {hivm.simt_mem_scope_hint = #hivm.simt_mem_scope_hint<gm>}
+// CHECK-SAME: %arg0: memref<8xi64> {hivm.simt_mem_scope_hint = #hivm.simt_mem_scope_hint<ub>}
 module {
   func.func @simt_from_gm_region(%arg0: memref<8xi64>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, no_inline, outline, hivm.vf_mode = #hivm.vf_mode<SIMT>} {
     return
@@ -93,6 +94,74 @@ module {
     }
     %buffer = bufferization.to_memref %result : memref<8xi64>
     call @simt_from_gm_region(%buffer) : (memref<8xi64>) -> ()
+    return
+  }
+}
+
+// -----
+
+// The mixed-ABI UB rule at the to_memref boundary also covers region results
+// with conflicting sources (GM vs UB) and unsupported loop forms such as
+// tensor-valued scf.while; the tensor producers are never inspected.
+// CHECK-LABEL: func.func @simt_from_mixed_region(
+// CHECK-SAME: %arg0: memref<8xi64> {hivm.simt_mem_scope_hint = #hivm.simt_mem_scope_hint<ub>}
+module {
+  func.func @simt_from_mixed_region(%arg0: memref<8xi64>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, no_inline, outline, hivm.vf_mode = #hivm.vf_mode<SIMT>} {
+    return
+  }
+  func.func @mixed_caller(%gm: memref<8xi64>, %cond: i1) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %global = bufferization.to_tensor %gm restrict writable : memref<8xi64>
+    %local = tensor.empty() : tensor<8xi64>
+    %result = scf.if %cond -> tensor<8xi64> {
+      scf.yield %global : tensor<8xi64>
+    } else {
+      scf.yield %local : tensor<8xi64>
+    }
+    %buffer = bufferization.to_memref %result : memref<8xi64>
+    call @simt_from_mixed_region(%buffer) : (memref<8xi64>) -> ()
+    return
+  }
+}
+
+// -----
+
+// CHECK-LABEL: func.func @simt_from_tensor_while(
+// CHECK-SAME: %arg0: memref<8xi64> {hivm.simt_mem_scope_hint = #hivm.simt_mem_scope_hint<ub>}
+module {
+  func.func @simt_from_tensor_while(%arg0: memref<8xi64>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, no_inline, outline, hivm.vf_mode = #hivm.vf_mode<SIMT>} {
+    return
+  }
+  func.func @while_caller(%cond: i1) {
+    %local = tensor.empty() : tensor<8xi64>
+    %result = scf.while (%iter = %local) : (tensor<8xi64>) -> tensor<8xi64> {
+      scf.condition(%cond) %iter : tensor<8xi64>
+    } do {
+    ^bb0(%arg: tensor<8xi64>):
+      scf.yield %arg : tensor<8xi64>
+    }
+    %buffer = bufferization.to_memref %result : memref<8xi64>
+    call @simt_from_tensor_while(%buffer) : (memref<8xi64>) -> ()
+    return
+  }
+}
+
+// -----
+
+// CHECK-LABEL: func.func @simt_from_unknown_region(
+// CHECK-SAME: %arg0: memref<8xi64> {hivm.simt_mem_scope_hint = #hivm.simt_mem_scope_hint<ub>}
+module {
+  func.func @simt_from_unknown_region(%arg0: memref<8xi64>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, no_inline, outline, hivm.vf_mode = #hivm.vf_mode<SIMT>} {
+    return
+  }
+  func.func @unknown_caller(%unknown: tensor<8xi64>, %cond: i1) {
+    %local = tensor.empty() : tensor<8xi64>
+    %result = scf.if %cond -> tensor<8xi64> {
+      scf.yield %unknown : tensor<8xi64>
+    } else {
+      scf.yield %local : tensor<8xi64>
+    }
+    %buffer = bufferization.to_memref %result : memref<8xi64>
+    call @simt_from_unknown_region(%buffer) : (memref<8xi64>) -> ()
     return
   }
 }
