@@ -10,6 +10,39 @@
 // RUN:   -pass-pipeline="builtin.module(                        \
 // RUN:     func.func(hivm-mark-multi-buffer{enable-auto=true disable-multi-buffer-on-ub=true}),cse)" \
 // RUN:   -split-input-file -verify-diagnostics | FileCheck %s --check-prefix=DISABLE-UB
+// RUN: bishengir-opt -allow-unregistered-dialect %s \
+// RUN:   --hivm-mark-multi-buffer="enable-auto=true ub-multi-buffer-num=3 l1-multi-buffer-num=1 l0c-multi-buffer-num=1 gm-multi-buffer-num=1" \
+// RUN:   -split-input-file | FileCheck %s --check-prefix=UB3
+// RUN: bishengir-opt -allow-unregistered-dialect %s \
+// RUN:   --hivm-mark-multi-buffer="enable-auto=true ub-multi-buffer-num=1 l1-multi-buffer-num=2 l0c-multi-buffer-num=1 gm-multi-buffer-num=1" \
+// RUN:   -split-input-file | FileCheck %s --check-prefix=L1-ONLY
+// RUN: bishengir-opt -allow-unregistered-dialect %s \
+// RUN:   --hivm-mark-multi-buffer="enable-auto=true ub-multi-buffer-num=1 l1-multi-buffer-num=1 l0c-multi-buffer-num=2 gm-multi-buffer-num=1" \
+// RUN:   -split-input-file | FileCheck %s --check-prefix=L0C
+// RUN: bishengir-opt -allow-unregistered-dialect %s \
+// RUN:   --hivm-mark-multi-buffer="enable-auto=true multibuffer-mode=[(gm,2),(l1,1),(l0c,1),(ub,1)]" \
+// RUN:   -split-input-file | FileCheck %s --check-prefix=GM2
+// RUN: bishengir-opt -allow-unregistered-dialect %s \
+// RUN:   --hivm-mark-multi-buffer="enable-auto=true multibuffer-mode=[(UB,1),(L0C,1),(L1,1),(GM,2)]" \
+// RUN:   -split-input-file | FileCheck %s --check-prefix=GM2
+// RUN: bishengir-opt -allow-unregistered-dialect %s \
+// RUN:   --hivm-mark-multi-buffer="enable-auto=true multibuffer-mode=[(gm,1),(l1,1),(l0c,1),(ub,1)]" \
+// RUN:   -split-input-file | FileCheck %s --check-prefix=MODE-ALL-OFF
+// RUN: bishengir-opt -allow-unregistered-dialect %s \
+// RUN:   --hivm-mark-multi-buffer="enable-auto=true multibuffer-mode=[(gm,1),(l1,1),(l0c,1),(ub,3)]" \
+// RUN:   -split-input-file | FileCheck %s --check-prefix=MODE-UB3
+// RUN: bishengir-opt -allow-unregistered-dialect %s \
+// RUN:   --hivm-mark-multi-buffer="enable-auto=true multibuffer-mode=[(gm,1),(l1,2),(l0c,1),(ub,1)]" \
+// RUN:   -split-input-file | FileCheck %s --check-prefix=MODE-L1-ONLY
+// RUN: bishengir-opt -allow-unregistered-dialect %s \
+// RUN:   --hivm-mark-multi-buffer="enable-auto=true multibuffer-mode=[(gm,1),(l1,1),(l0c,3),(ub,1)]" \
+// RUN:   -split-input-file | FileCheck %s --check-prefix=MODE-L0C3
+// RUN: bishengir-opt -allow-unregistered-dialect %s \
+// RUN:   --hivm-mark-multi-buffer="enable-auto=true multibuffer-mode=[(gm,2),(l1,3),(l0c,4),(ub,5)]" \
+// RUN:   -split-input-file | FileCheck %s --check-prefix=MODE-ALL
+// RUN: not bishengir-opt -allow-unregistered-dialect %s \
+// RUN:   --hivm-mark-multi-buffer="enable-auto=true multibuffer-mode=[(gm,0),(l1,2),(l0c,1),(ub,2)]" \
+// RUN:   -split-input-file 2>&1 | FileCheck %s --check-prefix=ZERO
 
 // -----
 // CHECK-LABEL: func.func @test_mark_multi_buffer(
@@ -334,6 +367,147 @@ func.func @test_disable_multi_buffer_on_ub_keeps_l1(
     %ub = memref.alloca() : memref<8xf32, #hivm.address_space<ub>>
     hivm.hir.load ins(%in_ub : memref<8xf32, #hivm.address_space<gm>>) outs(%ub : memref<8xf32, #hivm.address_space<ub>>)
     hivm.hir.store ins(%ub : memref<8xf32, #hivm.address_space<ub>>) outs(%out : memref<8xf32, #hivm.address_space<gm>>)
+  }
+  return
+}
+
+// -----
+// UB3-LABEL: func.func @test_ub_count
+// L1-ONLY-LABEL: func.func @test_ub_count
+// GM2-LABEL: func.func @test_ub_count
+// MODE-ALL-OFF-LABEL: func.func @test_ub_count
+// MODE-UB3-LABEL: func.func @test_ub_count
+// MODE-L1-ONLY-LABEL: func.func @test_ub_count
+// MODE-L0C3-LABEL: func.func @test_ub_count
+// MODE-ALL-LABEL: func.func @test_ub_count
+func.func @test_ub_count(%in : memref<8xf32, #hivm.address_space<gm>>,
+                         %out : memref<8xf32, #hivm.address_space<gm>>) {
+  %c0 = arith.constant 0 : index
+  %c4 = arith.constant 4 : index
+  %c16 = arith.constant 16 : index
+  scf.for %i0 = %c0 to %c16 step %c4 {
+    %tmp = memref.alloca() : memref<8xf32, #hivm.address_space<ub>>
+    // UB3: annotation.mark %{{.*}} {hivm.multi_buffer = 3 : i32}
+    // MODE-UB3: annotation.mark %{{.*}} {hivm.multi_buffer = 3 : i32}
+    // MODE-ALL: annotation.mark %{{.*}} {hivm.multi_buffer = 5 : i32}
+    // L1-ONLY-NOT: annotation.mark
+    // GM2-NOT: annotation.mark
+    // MODE-ALL-OFF-NOT: annotation.mark
+    // MODE-L1-ONLY-NOT: annotation.mark
+    // MODE-L0C3-NOT: annotation.mark
+    hivm.hir.load ins(%in : memref<8xf32, #hivm.address_space<gm>>) outs(%tmp : memref<8xf32, #hivm.address_space<ub>>)
+    hivm.hir.store ins(%tmp : memref<8xf32, #hivm.address_space<ub>>) outs(%out : memref<8xf32, #hivm.address_space<gm>>)
+  }
+  return
+}
+
+// -----
+// L1-ONLY-LABEL: func.func @test_l1_nd2nz
+// GM2-LABEL: func.func @test_l1_nd2nz
+// MODE-ALL-OFF-LABEL: func.func @test_l1_nd2nz
+// MODE-UB3-LABEL: func.func @test_l1_nd2nz
+// MODE-L1-ONLY-LABEL: func.func @test_l1_nd2nz
+// MODE-L0C3-LABEL: func.func @test_l1_nd2nz
+// MODE-ALL-LABEL: func.func @test_l1_nd2nz
+func.func @test_l1_nd2nz(%in : memref<64x128xf16, #hivm.address_space<gm>>) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c4 = arith.constant 4 : index
+  scf.for %i = %c0 to %c4 step %c1 {
+    %alloc = memref.alloc() : memref<8x4x16x16xf16, #hivm.address_space<cbuf>>
+    // L1-ONLY: annotation.mark %{{.*}} {hivm.multi_buffer = 2 : i32}
+    // MODE-L1-ONLY: annotation.mark %{{.*}} {hivm.multi_buffer = 2 : i32}
+    // MODE-ALL: annotation.mark %{{.*}} {hivm.multi_buffer = 3 : i32}
+    // GM2-NOT: annotation.mark
+    // MODE-ALL-OFF-NOT: annotation.mark
+    // MODE-UB3-NOT: annotation.mark
+    // MODE-L0C3-NOT: annotation.mark
+    hivm.hir.nd2nz {dst_continuous} ins(%in : memref<64x128xf16, #hivm.address_space<gm>>) outs(%alloc : memref<8x4x16x16xf16, #hivm.address_space<cbuf>>)
+  }
+  return
+}
+
+// -----
+// L0C-LABEL: func.func @test_l0c_fixpipe
+// GM2-LABEL: func.func @test_l0c_fixpipe
+// MODE-ALL-OFF-LABEL: func.func @test_l0c_fixpipe
+// MODE-UB3-LABEL: func.func @test_l0c_fixpipe
+// MODE-L1-ONLY-LABEL: func.func @test_l0c_fixpipe
+// MODE-L0C3-LABEL: func.func @test_l0c_fixpipe
+// MODE-ALL-LABEL: func.func @test_l0c_fixpipe
+func.func @test_l0c_fixpipe(%out : memref<64x64xf32, #hivm.address_space<gm>>) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c4 = arith.constant 4 : index
+  scf.for %i = %c0 to %c4 step %c1 {
+    %acc = memref.alloc() : memref<8x4x16x16xf32, #hivm.address_space<cc>>
+    // L0C: annotation.mark %{{.*}} {hivm.multi_buffer = 2 : i32}
+    // MODE-L0C3: annotation.mark %{{.*}} {hivm.multi_buffer = 3 : i32}
+    // MODE-ALL: annotation.mark %{{.*}} {hivm.multi_buffer = 4 : i32}
+    // GM2-NOT: annotation.mark
+    // MODE-ALL-OFF-NOT: annotation.mark
+    // MODE-UB3-NOT: annotation.mark
+    // MODE-L1-ONLY-NOT: annotation.mark
+    hivm.hir.fixpipe {enable_nz2nd} ins(%acc : memref<8x4x16x16xf32, #hivm.address_space<cc>>) outs(%out : memref<64x64xf32, #hivm.address_space<gm>>)
+  }
+  return
+}
+
+// -----
+module {
+  // GM2-LABEL: func.func @test_gm_workspace
+  // MODE-ALL-OFF-LABEL: func.func @test_gm_workspace
+  // MODE-UB3-LABEL: func.func @test_gm_workspace
+  // MODE-L1-ONLY-LABEL: func.func @test_gm_workspace
+  // MODE-L0C3-LABEL: func.func @test_gm_workspace
+  // MODE-ALL-LABEL: func.func @test_gm_workspace
+  func.func @test_gm_workspace(
+      %arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>},
+      %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>},
+      %arg2: memref<64x16xf32>)
+      attributes {global_kernel = "local", hacc.entry = "", hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<MIX>} {
+    %c0_i32 = arith.constant 0 : i32
+    %c1_i32 = arith.constant 1 : i32
+    %c4_i32 = arith.constant 4 : i32
+    %true = arith.constant true
+    %c16 = arith.constant 16 : index
+    %1 = tensor.empty() : tensor<16x16xf32>
+    %2 = tensor.empty() : tensor<16x16xf32>
+    scf.for %arg3 = %c0_i32 to %c4_i32 step %c1_i32 : i32 {
+      %3 = tensor.empty() : tensor<16x16xf32>
+      %4 = hivm.hir.mmadL1 ins(%1, %2, %true, %c16, %c16, %c16 : tensor<16x16xf32>, tensor<16x16xf32>, i1, index, index, index) outs(%3 : tensor<16x16xf32>) -> tensor<16x16xf32>
+      %5 = memref_ext.alloc_workspace() from %arg1 : from memref<?xi8> to memref<16x16xf32>
+      // GM2: annotation.mark %{{.*}} {hivm.multi_buffer = 2 : i32}
+      // MODE-ALL: annotation.mark %{{.*}} {hivm.multi_buffer = 2 : i32}
+      // MODE-ALL-OFF-NOT: annotation.mark
+      // MODE-UB3-NOT: annotation.mark
+      // MODE-L1-ONLY-NOT: annotation.mark
+      // MODE-L0C3-NOT: annotation.mark
+      %6 = bufferization.to_tensor %5 restrict writable : memref<16x16xf32>
+      %7 = hivm.hir.fixpipe {enable_nz2nd} ins(%4 : tensor<16x16xf32>) outs(%6 : tensor<16x16xf32>) -> tensor<16x16xf32>
+      "test.use"(%7) : (tensor<16x16xf32>) -> ()
+      // Terminate the preceding CHECK-NOT ranges at the end of this fixture;
+      // later split-input sections may legitimately contain local marks.
+      // MODE-ALL-OFF: return
+      // MODE-UB3: return
+      // MODE-L1-ONLY: return
+      // MODE-L0C3: return
+    }
+    return
+  }
+}
+
+// -----
+// ZERO: invalid --multibuffer-mode
+// ZERO: must be >= 1
+func.func @test_zero_is_illegal(%in : memref<8xf32, #hivm.address_space<gm>>,
+                                %out : memref<8xf32, #hivm.address_space<gm>>) {
+  %c0 = arith.constant 0 : index
+  %c4 = arith.constant 4 : index
+  %c16 = arith.constant 16 : index
+  scf.for %i0 = %c0 to %c16 step %c4 {
+    %tmp = memref.alloca() : memref<8xf32, #hivm.address_space<ub>>
+    hivm.hir.load ins(%in : memref<8xf32, #hivm.address_space<gm>>) outs(%tmp : memref<8xf32, #hivm.address_space<ub>>)
   }
   return
 }

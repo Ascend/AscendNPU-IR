@@ -100,16 +100,16 @@ std::unique_ptr<Pass> createAllocToAllocaPass();
 std::unique_ptr<Pass> createCloneTensorEmptyPass();
 
 /// Create a pass to infer data layout information for HIVM Ops.
-std::unique_ptr<Pass> createInferHIVMDataLayoutPass(
-    const InferHIVMDataLayoutOptions &options = {});
+std::unique_ptr<Pass>
+createInferHIVMDataLayoutPass(const InferHIVMDataLayoutOptions &options = {});
 
 /// Create a pass to infer vf mode for HIVM Ops.
 std::unique_ptr<Pass> createInferVFModePass();
 
 /// Create a pass to mark multi buffer for HIVM Ops.
 /// If options is {}, enableAuto is false as default.
-/// And this pass contains method for marking workspace multiple buffer, which
-/// could be turned off by option 'limitAutoMultiBufferOnlyForLocalBuffer'
+/// Workspace marking is disabled when gm count is 1 (legacy:
+/// 'limitAutoMultiBufferOnlyForLocalBuffer', or --multibuffer-mode gm=1).
 std::unique_ptr<Pass>
 createMarkMultiBufferPass(const MarkMultiBufferOptions &options = {});
 
@@ -273,8 +273,8 @@ std::unique_ptr<Pass>
 createInlineFixpipePass(const InlineFixpipeOptions &options = {});
 
 // Create a pass to tile batch matmul into loop
-std::unique_ptr<Pass> createTileBatchMMIntoLoopPass(
-    const TileBatchMMIntoLoopOptions &options = {});
+std::unique_ptr<Pass>
+createTileBatchMMIntoLoopPass(const TileBatchMMIntoLoopOptions &options = {});
 
 // Create a pass to lift zero rank
 std::unique_ptr<Pass> createLiftZeroRankPass();

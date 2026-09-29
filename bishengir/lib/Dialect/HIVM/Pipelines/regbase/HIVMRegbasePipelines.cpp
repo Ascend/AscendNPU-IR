@@ -39,8 +39,8 @@ namespace mlir {
 namespace hivm {
 namespace regbase {
 
-static bool enableRegisteredPreloadHeuristics(
-    const HIVMPipelineOptions &pipelineOpts) {
+static bool
+enableRegisteredPreloadHeuristics(const HIVMPipelineOptions &pipelineOpts) {
   return pipelineOpts.enablePreload &&
          pipelineOpts.setWorkspaceMultibuffer != 0;
 }
@@ -146,7 +146,8 @@ hivmCrossCoreAutoSyncINJPipeline(OpPassManager &pm,
                                  CrossCoreAutoSyncMode mode) {
   if (mode == CrossCoreAutoSyncMode::CCGSS_STEP_1) {
     canonicalizationHIVMPipeline(pm);
-    pm.addPass(createMarkRealCoreTypePass(markCoreTypeOpts(hivmPipelineOptions)));
+    pm.addPass(
+        createMarkRealCoreTypePass(markCoreTypeOpts(hivmPipelineOptions)));
     InjectBlockSyncOptions blockSyncOption;
     blockSyncOption.blockAllSync =
         hivmPipelineOptions.enableHIVMInjectBlockAllSync;
@@ -162,7 +163,8 @@ hivmCrossCoreAutoSyncGSSPipeline(OpPassManager &pm,
                                  CrossCoreAutoSyncMode mode) {
   if (mode == CrossCoreAutoSyncMode::CCGSS_STEP_1) {
     canonicalizationHIVMPipeline(pm);
-    pm.addPass(createMarkRealCoreTypePass(markCoreTypeOpts(hivmPipelineOptions)));
+    pm.addPass(
+        createMarkRealCoreTypePass(markCoreTypeOpts(hivmPipelineOptions)));
     CrossCoreGSSOptions crossCoreGSSOptions;
     crossCoreGSSOptions.solverVersion =
         hivmPipelineOptions.hivmSyncSolverVersion;
@@ -182,7 +184,8 @@ static void hivmDelayedCrossCoreAutoSyncGSSPipeline(
     // pipeline does not merge operations that must stay separated for the
     // delayed cross-core autosync flow. Remove this once auto-vectorize no
     // longer depends on the presence of sync ops to preserve those boundaries.
-    pm.addPass(createMarkRealCoreTypePass(markCoreTypeOpts(hivmPipelineOptions)));
+    pm.addPass(
+        createMarkRealCoreTypePass(markCoreTypeOpts(hivmPipelineOptions)));
     CrossCoreGSSOptions crossCoreGSSOptions;
     crossCoreGSSOptions.enableCVPatterns = false;
     crossCoreGSSOptions.solverVersion =
@@ -197,7 +200,8 @@ static void hivmDelayedCrossCoreAutoSyncGSSPipeline(
         markCoreTypeOpts(hivmPipelineOptions, /*removeCoreTypeAttrs=*/true)));
   } else if (mode == CrossCoreAutoSyncMode::CCGSS_STEP_2) {
     canonicalizationHIVMPipeline(pm);
-    pm.addPass(createMarkRealCoreTypePass(markCoreTypeOpts(hivmPipelineOptions)));
+    pm.addPass(
+        createMarkRealCoreTypePass(markCoreTypeOpts(hivmPipelineOptions)));
     DelayedCrossCoreGSSOptions delayedcrossCoreGSSOptions;
     delayedcrossCoreGSSOptions.blockAllSync =
         hivmPipelineOptions.enableHIVMInjectBlockAllSync;
@@ -409,9 +413,12 @@ static void hivmPreBufferizationOptimizationPipeline(
       hivmPipelineOptions.limitAutoMultiBufferBuffer;
   multiBufferOptions.workspaceMultiBufferNum =
       hivmPipelineOptions.setWorkspaceMultibuffer;
-  multiBufferOptions.enablePreload = hivmPipelineOptions.enablePreload;
   multiBufferOptions.disableMultiBufferOnUB =
       hivmPipelineOptions.disableMultiBufferOnUB;
+  multiBufferOptions.enablePreload = hivmPipelineOptions.enablePreload;
+  multiBufferOptions.multiBufferMode = hivmPipelineOptions.multibufferMode;
+  if (hivmPipelineOptions.setWorkspaceMultibuffer == 0)
+    multiBufferOptions.gmMultiBufferNum = 1;
   // MarkTightlyCoupledBuffer before CVPipelining is only needed in Skew
   // (preload) mode: createNewLoopsForPreloadWithScopes uses TCB marks to
   // decide which local outputs bypass scope.return.  Running it for
@@ -652,9 +659,12 @@ static void hivmPostBufferizationOptimizationPipeline(
       hivmPipelineOptions.limitAutoMultiBufferOfLocalBuffer;
   multiBufferOptions.limitMixAutoMultiBufferBuffer =
       hivmPipelineOptions.limitAutoMultiBufferBuffer;
-  multiBufferOptions.enablePreload = hivmPipelineOptions.enablePreload;
   multiBufferOptions.disableMultiBufferOnUB =
       hivmPipelineOptions.disableMultiBufferOnUB;
+  multiBufferOptions.enablePreload = hivmPipelineOptions.enablePreload;
+  multiBufferOptions.multiBufferMode = hivmPipelineOptions.multibufferMode;
+  // Force-disable GM so the local stage does not rematerialize workspace marks.
+  multiBufferOptions.gmMultiBufferNum = 1;
   pm.nest<func::FuncOp>().addPass(
       createMarkMultiBufferPass(multiBufferOptions));
   PlanMemoryRegBaseOptions planMemoryOption;
