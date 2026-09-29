@@ -38,4 +38,28 @@ module {
     hivm.hir.local_store ins(%arg2 : memref<2xi64, #hivm.address_space<ub>>, %0 : tensor<2xi64>)
     return
   }
+
+  // CHECK-LABEL: tt.func @nested_reinterpret_collapse
+  // CHECK-SAME:  %{{arg[0-9]+}}: !tt.ptr<i32>, %[[ROOT32:arg[0-9]+]]: !tt.ptr<i32>,
+  // CHECK:       %[[COLLAPSE_OFF:.*]] = arith.index_cast %{{.*}} : index to i64
+  // CHECK:       %[[COLLAPSE_PTR:.*]] = tt.addptr %[[ROOT32]], %[[COLLAPSE_OFF]]
+  // CHECK:       %[[COLLAPSE_LOAD:.*]] = tt.load %[[COLLAPSE_PTR]]
+  // CHECK-NOT:   memref.reinterpret_cast
+  // CHECK-NOT:   memref.collapse_shape
+  // CHECK-NOT:   unrealized_conversion_cast
+  func.func @nested_reinterpret_collapse(
+      %arg0: memref<?xi32>, %arg1: index,
+      %arg2: memref<16xi32, #hivm.address_space<ub>>)
+      attributes {no_inline, outline, vector_function,
+                  vf_mode = #hivm.vf_mode<SIMT>} {
+    %c0 = arith.constant 0 : index
+    %view = memref.reinterpret_cast %arg0 to offset: [%arg1], sizes: [1, 1], strides: [1, 1] : memref<?xi32> to memref<1x1xi32, strided<[1, 1], offset: ?>>
+    %collapsed = memref.collapse_shape %view [[0, 1]] : memref<1x1xi32, strided<[1, 1], offset: ?>> into memref<1xi32, strided<[1], offset: ?>>
+    %value = memref.load %collapsed[%c0] : memref<1xi32, strided<[1], offset: ?>>
+    %empty = tensor.empty() : tensor<16xi32>
+    %broadcast = hivm.hir.vbrc ins(%value : i32) outs(%empty : tensor<16xi32>) -> tensor<16xi32>
+    hivm.hir.local_store ins(%arg2 : memref<16xi32, #hivm.address_space<ub>>, %broadcast : tensor<16xi32>)
+    return
+  }
+
 }

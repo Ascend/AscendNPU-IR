@@ -152,6 +152,59 @@ public:
   }
 };
 
+// A one-element 2-D view may be immediately collapsed. Keep
+// this conversion deliberately narrow: general reassociation needs runtime
+// stride reasoning that does not belong in this scalar access path.
+class CollapseShapeOpConversion
+    : public OpConversionPattern<memref::CollapseShapeOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  using OpConversionPattern<memref::CollapseShapeOp>::OneToNOpAdaptor;
+
+  LogicalResult
+  matchAndRewrite(memref::CollapseShapeOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    FailureOr<hivm::MemRefDescriptor> src = hivm::getMemRefDescriptor(
+        rewriter, op.getLoc(), op.getSrcType(), adaptor.getSrc());
+    if (failed(src))
+      return op.emitError("source is not a descriptor");
+
+    SmallVector<int64_t> sourceStrides, resultStrides;
+    [[maybe_unused]] int64_t sourceOffset, resultOffset;
+    if (op.getSrcType().getRank() != 2 || op.getResultType().getRank() != 1 ||
+        op.getSrcType().getDimSize(0) != 1 ||
+        op.getSrcType().getDimSize(1) != 1 ||
+        op.getResultType().getDimSize(0) != 1 ||
+        op.getReassociationIndices().size() != 1 ||
+        op.getReassociationIndices().front().size() != 2 ||
+        op.getReassociationIndices().front()[0] != 0 ||
+        op.getReassociationIndices().front()[1] != 1 ||
+        failed(getStridesAndOffset(op.getSrcType(), sourceStrides,
+                                   sourceOffset)) ||
+        failed(getStridesAndOffset(op.getResultType(), resultStrides,
+                                   resultOffset)) ||
+        sourceStrides.size() != 2 || sourceStrides[0] != 1 ||
+        sourceStrides[1] != 1 || resultStrides.size() != 1 ||
+        resultStrides[0] != 1)
+      return op.emitError("supports only contiguous 1x1 to 1 collapse");
+
+    hivm::MemRefDescriptor result;
+    result.allocPtr = src->allocPtr;
+    result.alignedPtr = src->alignedPtr;
+    result.offset = src->offset;
+    for (int64_t size : op.getResultType().getShape())
+      result.sizes.push_back(
+          rewriter.create<arith::ConstantIntOp>(op.getLoc(), size, 64));
+    for (int64_t stride : resultStrides)
+      result.strides.push_back(
+          rewriter.create<arith::ConstantIntOp>(op.getLoc(), stride, 64));
+
+    SmallVector<Value> flat = result.flatten();
+    rewriter.replaceOpWithMultiple(op, {ValueRange(flat)});
+    return success();
+  }
+};
+
 // Reads the descriptor for one MemRef operand and returns the address of the
 // element at `indices`:  basePtr + offset + sum_d indices[d] * strides[d].
 // Everything comes from the adaptor - no view op is traced, no layout is read.
@@ -267,6 +320,7 @@ void mlir::hivm::populateMemRefToTritonPatterns(TritonTypeConverter &converter,
   // The view producers rewrite the descriptor in place so offsets compose; the
   // scalar accesses read the composed result straight off it.
   patterns.add<ReinterpretCastOpConversion, SubViewOpConversion,
-               MemRefLoadOpPattern, MemRefStoreOpPattern,
-               ExtractAlignedPointerAsIndexOpPattern>(converter, ctx);
+               CollapseShapeOpConversion, MemRefLoadOpPattern,
+               MemRefStoreOpPattern, ExtractAlignedPointerAsIndexOpPattern>(
+      converter, ctx);
 }
