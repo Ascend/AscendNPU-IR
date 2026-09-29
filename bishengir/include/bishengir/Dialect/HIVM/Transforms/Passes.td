@@ -897,7 +897,10 @@ def RepositionPreloadWork
   let description = [{
     Runs after CVPipelining and before MarkMultiBuffer, on the unsplit MIX
     function. It repositions ops both between preload scopes and inside a
-    scope. Inside a VECTOR scope, ops that do not use an earlier sibling
+    scope. A later `mmadL1` that reads the same left matrix as an earlier
+    one is moved, with its fixpipe, to just after that earlier matmul when
+    every operand it needs is already available there. Inside a VECTOR
+    scope, ops that do not use an earlier sibling
     scope move into a new scope placed immediately before the current one,
     but only when a later scope is CUBE. That cube is the first subsequent
     CUBE scope, skipping non-cube scopes in between. An op used only after
