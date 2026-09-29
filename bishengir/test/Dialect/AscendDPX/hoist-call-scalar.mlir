@@ -22,9 +22,23 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
     %13 = llvm.udiv %11, %8  : i64
     %14 = llvm.mlir.constant(0 : i64) : i64
     %15 = llvm.inttoptr %14 {hivm.shared_memory} : i64 to !llvm.ptr<6>
-    // CHECK: llvm.call
-    // CHECK: llvm.call
-    // CHECK: llvm.store
+
+    // CHECK: %[[S0:.*]] = llvm.call @_mlir_ciface_simt_div_magic_shift_uint32_t(%arg10)
+    // CHECK: llvm.store %[[S0]], %{{.*}} {use_shmem_offset = 0 : i32}
+    // CHECK: %[[M0:.*]] = llvm.call @_mlir_ciface_simt_div_magic_mul_uint32_t(%arg10, %[[S0]])
+    // CHECK: llvm.store %[[M0]], %{{.*}} {use_shmem_offset = 16 : i32}
+    // CHECK: %[[S1:.*]] = llvm.call @_mlir_ciface_simt_div_magic_shift_uint32_t(%arg9)
+    // CHECK: llvm.store %[[S1]], %{{.*}} {use_shmem_offset = 32 : i32}
+    // CHECK: %[[M1:.*]] = llvm.call @_mlir_ciface_simt_div_magic_mul_uint32_t(%arg9, %[[S1]])
+    // CHECK: llvm.store %[[M1]], %{{.*}} {use_shmem_offset = 48 : i32}
+    // CHECK: %[[S2:.*]] = llvm.call @_mlir_ciface_simt_div_magic_shift_uint32_t(%arg8)
+    // CHECK: llvm.store %[[S2]], %{{.*}} {use_shmem_offset = 64 : i32}
+    // CHECK: %[[M2:.*]] = llvm.call @_mlir_ciface_simt_div_magic_mul_uint32_t(%arg8, %[[S2]])
+    // CHECK: llvm.store %[[M2]], %{{.*}} {use_shmem_offset = 80 : i32}
+    // CHECK: %[[S3:.*]] = llvm.call @_mlir_ciface_simt_div_magic_shift_uint32_t(%arg7)
+    // CHECK: llvm.store %[[S3]], %{{.*}} {use_shmem_offset = 96 : i32}
+    // CHECK: %[[M3:.*]] = llvm.call @_mlir_ciface_simt_div_magic_mul_uint32_t(%arg7, %[[S3]])
+    // CHECK: llvm.store %[[M3]], %{{.*}} {use_shmem_offset = 112 : i32}
     hivm_regbaseintrins.intrins.launch_func @_gather_kernel_4_vf_simt threads in (%0, %1, %2) args(%arg0, %arg1, %arg2, %arg6, %arg7, %arg8, %arg9, %arg10, %arg11, %arg12, %arg13, %arg14, %arg15, %arg16, %arg17, %arg18, %arg19, %arg20, %7, %10, %15) : !llvm.ptr<1>, !llvm.ptr<1>, !llvm.ptr<1>, i32, i32, i32, i32, i32, i32, i32, i32, i32, i32, i32, i32, i32, i32, i32, i64, i64, !llvm.ptr<6>
     llvm.return
   }

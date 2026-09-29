@@ -30,6 +30,7 @@
 #include "bishengir/Dialect/AscendDPX/IR/AscendDPX.h"
 #include "bishengir/Dialect/AscendDPX/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/Utils/SimtScalarCalls.h"
 #include "bishengir/Dialect/HIVMRegbaseIntrins/IR/HIVMRegbaseIntrins.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/Builders.h"
@@ -171,11 +172,12 @@ private:
 
         auto offset = csOp.getUseShmemOffset();
         if (offset && callerSmemBase) {
-          // Store result to shared memory.
           for (auto result : clonedCall.getResults()) {
             Value ptr = getSmemOffsetPtr(callerB, callLoc, ctx, callerSmemBase,
                                          static_cast<int32_t>(*offset));
-            callerB.create<LLVM::StoreOp>(callLoc, result, ptr);
+            auto storeOp = callerB.create<LLVM::StoreOp>(callLoc, result, ptr);
+            storeOp->setAttr(hivm::kShmemOffsetStampName,
+                             csOp.getUseShmemOffsetAttr());
           }
         } else {
           // Collect result to pass as a new argument.
