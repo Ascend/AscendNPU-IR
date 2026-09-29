@@ -1,5 +1,6 @@
 
-//===-------- HIVMCMainA5.cpp - HIVMC A5 Compile Tool Support C++-*--------------==//
+//===-------- HIVMCMainA5.cpp - HIVMC A5 Compile Tool Support
+// C++-*--------------==//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -7,13 +8,13 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "bishengir/Tools/hivmc/HIVMCA5.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/Triton/Pipelines/Passes.h"
 #include "bishengir/Pass/PassManager.h"
 #include "bishengir/Tools/hivmc/AdapterSanitizer.h"
 #include "bishengir/Tools/hivmc/Config.h"
+#include "bishengir/Tools/hivmc/HIVMCA5.h"
 #include "bishengir/Tools/hivmc/PassPipelineA5.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Object/ObjectFile.h"
@@ -59,9 +60,9 @@ MixedModules getMixedModules(ModuleOp topMod) {
 
 std::optional<std::string>
 compileDeviceKernel(StringRef bishengPath, const std::string &llvmirFilepath,
-                    const std::string &outputBinFilepath, SubCoreTarget coreType,
-                    const HIVMCMainConfig &config, bool isMixKernel,
-                    bool mixKernelHasDebugOrShmem,
+                    const std::string &outputBinFilepath,
+                    SubCoreTarget coreType, const HIVMCMainConfig &config,
+                    bool isMixKernel, bool mixKernelHasDebugOrShmem,
                     const std::map<SubCoreTarget, std::string> &bitcodePaths) {
   bool regbaseCompile = hacc::utils::isRegBasedArch(config.getTargetBackend());
   std::string extension = config.shouldSaveLinkedIR() ? ".ll" : ".o";
@@ -515,10 +516,10 @@ LogicalResult runDeviceBiShengLIRCompile(
   bool setKeepFlag = !config.shouldCompileLIR();
   // For security reasons, we want to honor saving of .ll files with
   // --save-temps option in internal builds only.
-#if (!BISHENGIR_PUBLISH)
+
   if (!config.shouldSaveTemps().empty())
     setKeepFlag = true;
-#endif
+
   SmallVector<IRFilePair> llvmTempFiles =
       saveToFiles(llvmModules, tempFilesPath, setKeepFlag);
   if (std::any_of(llvmTempFiles.begin(), llvmTempFiles.end(),
@@ -808,10 +809,12 @@ LogicalResult runHostBiShengLIRCompile(
   // because hacc dialect has the LLVMTranslationDialectInterface.
   mod->removeAttr(hacc::TargetAttr::name);
 
-  // Remove simt_entry attribute to avoid the internal-linkage set of simt_vf decls.
+  // Remove simt_entry attribute to avoid the internal-linkage set of simt_vf
+  // decls.
   mod->walk([&](LLVM::LLVMFuncOp funcOp) {
-    if (auto cconvAttr = funcOp->getAttr(hivm_regbaseintrins::kDavinciCallingConvAttrName)) {
-      if (cconvAttr.isa<hivm_regbaseintrins::SIMT_EntryAttr>()) {
+    if (auto cconvAttr =
+            funcOp->getAttr(hivm_regbaseintrins::kDavinciCallingConvAttrName)) {
+      if (mlir::isa<hivm_regbaseintrins::SIMT_EntryAttr>(cconvAttr)) {
         funcOp->removeAttr(hivm_regbaseintrins::kDavinciCallingConvAttrName);
       }
     }
@@ -939,8 +942,7 @@ LogicalResult bishengir::runBiShengLIRCompileA5(
   return success();
 }
 LogicalResult bishengir::runHIVMCCompileA5(ModuleOp hirCompileModule,
-                                         HIVMCMainConfig config) {
-
+                                           HIVMCMainConfig config) {
 
   MLIRContext *ctx = hirCompileModule->getContext();
   mlir::DiagnosticEngine &diagEngine = ctx->getDiagEngine();
@@ -950,7 +952,7 @@ LogicalResult bishengir::runHIVMCCompileA5(ModuleOp hirCompileModule,
   auto handlerID =
       diagEngine.registerHandler([&collectedDiagnostics](Diagnostic &diag) {
         collectedDiagnostics.emplace_back(std::move(diag));
-  });
+      });
 
   LogicalResult runPipelineStatus = failure();
   if (config.shouldEnableSimdSimtMixCompile()) {

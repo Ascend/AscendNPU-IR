@@ -26,7 +26,8 @@ Value loadC(Value tensor, Value llTensor,
          "Currently, we only support $c with a mma layout.");
   // Load a normal C tensor with mma layout, that should be a
   // LLVM::struct with fcSize elements.
-  auto structTy = cast<LLVM::LLVMStructType>(llTensor.getType());
+  [[maybe_unused]] auto structTy =
+      cast<LLVM::LLVMStructType>(llTensor.getType());
   assert(structTy.getBody().size() == fcSize &&
          "DotOp's $c operand should pass the same number of values as $d in "
          "mma layout.");
@@ -40,7 +41,7 @@ Value loadC(Value tensor, Value llTensor,
     auto cElemTy = tensorTy.getElementType();
     int numCPackedElem = 4 / numMmaRets;
     Type cPackTy = vec_ty(cElemTy, numCPackedElem);
-    for (int i = 0; i < fcSize; i += numCPackedElem) {
+    for (int i = 0; i < static_cast<int>(fcSize); i += numCPackedElem) {
       Value pack = rewriter.create<LLVM::UndefOp>(loc, cPackTy);
       for (int j = 0; j < numCPackedElem; ++j) {
         pack = b.insert_element(cPackTy, pack,
@@ -75,7 +76,7 @@ ValueTableV2 getValuesFromDotOperandLayoutStruct(
 
   auto packVec = [&](std::array<int, 3> dstIdx) {
     Value vec = b.undef(vecTy);
-    for (auto i = 0; i < numElemsPerVec; ++i) {
+    for (auto i = 0; i < static_cast<int>(numElemsPerVec); ++i) {
       vec = b.insert_element(vec, b.bitcast(elems[offset + i], eltTy),
                              b.i32_val(i));
     }
@@ -119,7 +120,7 @@ ValueTableV2 getValuesFromDotOperandLayoutStruct(
       //  2nd MMA: [[2, 3], [10, 11], [18, 19], [26, 27]]
       //  3rd MMA: [[4, 5], [12, 13], [20, 21], [28, 29]]
       //  4th MMA: [[6, 7], [14, 15], [22, 23], [30, 31]]
-      if (kIters <= repK) {
+      if (static_cast<int>(kIters) <= repK) {
         for (size_t kRep = 0; kRep < kWidth / numElemsPerVec; ++kRep)
           for (size_t tile = 0; tile < 4; ++tile)
             for (size_t e = 0; e < numElemsPerVec; ++e) {
@@ -187,7 +188,7 @@ ValueTableV2 getValuesFromDotOperandLayoutStruct(
       //  2nd MMA: [[2, 3], [10, 11]]
       //  3rd MMA: [[4, 5], [12, 13]]
       //  4th MMA: [[6, 7], [14, 15]]
-      if (kIters <= repK) {
+      if (static_cast<int>(kIters) <= repK) {
         for (size_t kRep = 0; kRep < kWidth / numElemsPerVec; ++kRep)
           for (size_t tile = 0; tile < 2; ++tile)
             for (size_t e = 0; e < numElemsPerVec; ++e) {
@@ -221,8 +222,8 @@ ValueTableV2 getValuesFromDotOperandLayoutStruct(
 
     auto step = si.size();
     SmallVector<Value> perm(step);
-    for (auto i = 0; i < elems.size() / step; ++i) {
-      for (auto j = 0; j < step; ++j) {
+    for (size_t i = 0; i < elems.size() / step; ++i) {
+      for (size_t j = 0; j < step; ++j) {
         perm[j] = elems[i * step + si[j]];
       }
       std::copy(perm.begin(), perm.end(), elems.begin() + i * step);
@@ -436,14 +437,14 @@ static void callMmaTuringInt8(PTXBuilder &builder, int b, int m, int n, int k,
   auto retArgs1 = builder.newListOperand(numMmaRets / 2, "=r");
   auto retArgs2 = builder.newListOperand(numMmaRets / 2, "=r");
   auto cArgs1 = builder.newListOperand();
-  for (int i = 0; i < numMmaRets / 2; ++i) {
+  for (int i = 0; i < static_cast<int>(numMmaRets / 2); ++i) {
     cArgs1->listAppend(
         builder.newOperand(fc[(m * colsPerThread + 4 * n) / numCPackedElem + i],
                            std::to_string(i)));
     // reuse the output registers
   }
   auto cArgs2 = builder.newListOperand();
-  for (int i = numMmaRets / 2; i < numMmaRets; ++i) {
+  for (int i = numMmaRets / 2; i < static_cast<int>(numMmaRets); ++i) {
     cArgs2->listAppend(
         builder.newOperand(fc[(m * colsPerThread + 4 * n) / numCPackedElem + i],
                            std::to_string(i)));
@@ -482,7 +483,7 @@ static void callMmaTuringFp16(PTXBuilder &builder, int b, int m, int n, int k,
                               const SmallVector<Value> &fc, bool isAccF16) {
   auto retArgs = builder.newListOperand(numMmaRets, isAccF16 ? "=r" : "=f");
   auto cArgs = builder.newListOperand();
-  for (int i = 0; i < numMmaRets; ++i) {
+  for (int i = 0; i < static_cast<int>(numMmaRets); ++i) {
     cArgs->listAppend(
         builder.newOperand(fc[(m * colsPerThread + 4 * n) / numCPackedElem + i],
                            std::to_string(i)));
@@ -511,14 +512,14 @@ static void callMmaAmpereFp64(PTXBuilder &builder, int b, int m, int n, int k,
   auto retArgs1 = builder.newListOperand(numMmaRets / 2, "=d");
   auto retArgs2 = builder.newListOperand(numMmaRets / 2, "=d");
   auto cArgs1 = builder.newListOperand();
-  for (int i = 0; i < numMmaRets / 2; ++i) {
+  for (int i = 0; i < static_cast<int>(numMmaRets / 2); ++i) {
     cArgs1->listAppend(builder.newOperand(
         fc[(m * colsPerThread + 4 * n) / numCPackedElem + i + batchOffset * b],
         std::to_string(i)));
     // reuse the output registers
   }
   auto cArgs2 = builder.newListOperand();
-  for (int i = numMmaRets / 2; i < numMmaRets; ++i) {
+  for (int i = numMmaRets / 2; i < static_cast<int>(numMmaRets); ++i) {
     cArgs2->listAppend(builder.newOperand(
         fc[(m * colsPerThread + 4 * n) / numCPackedElem + i + batchOffset * b],
         std::to_string(i)));
@@ -548,7 +549,7 @@ static void callMmaV2(PTXBuilder &builder, int b, int m, int n, int k,
                       const std::string &constraintAB, int numVecK) {
   auto retArgs = builder.newListOperand(numMmaRets, constraintRet);
   auto cArgs = builder.newListOperand();
-  for (int i = 0; i < numMmaRets; ++i) {
+  for (int i = 0; i < static_cast<int>(numMmaRets); ++i) {
     cArgs->listAppend(builder.newOperand(
         fc[(m * colsPerThread + 4 * n) / numCPackedElem + i + batchOffset * b],
         std::to_string(i)));
@@ -692,7 +693,7 @@ LogicalResult convertDot(const LLVMTypeConverter *typeConverter,
   Type structTy = LLVM::LLVMStructType::getLiteral(
       ctx, SmallVector<Type>(fc.size() * numCPackedElem, resElemTy));
   SmallVector<Value> results(fc.size() * numCPackedElem);
-  for (int i = 0; i < fc.size(); ++i) {
+  for (int i = 0; i < static_cast<int>(fc.size()); ++i) {
     for (int j = 0; j < numCPackedElem; ++j) {
       results[i * numCPackedElem + j] =
           numCPackedElem > 1

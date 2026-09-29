@@ -12,7 +12,7 @@ bool getPeelEpilogue(scf::ForOp forOp) {
 struct TestLoopPeelingPass
     : public PassWrapper<TestLoopPeelingPass, OperationPass<ModuleOp>> {
 
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(TestLoopPeelingPass);
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(TestLoopPeelingPass)
 
   StringRef getArgument() const final { return "triton-test-loop-peeling"; }
   StringRef getDescription() const final {

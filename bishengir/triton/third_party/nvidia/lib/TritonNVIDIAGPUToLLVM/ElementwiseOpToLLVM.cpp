@@ -295,7 +295,7 @@ static ConverterT makeConverterFromPtx(const std::string &ptxAsm, Type inType,
     int inVecWidth = inVecWidthBits / inBitwidth;
     auto inVecTy = vec_ty(inType, inVecWidth);
     SmallVector<Value> inPacked(numElements / inVecWidth, b.undef(inVecTy));
-    for (size_t i = 0; i < numElements; i++)
+    for (size_t i = 0; i < static_cast<size_t>(numElements); i++)
       inPacked[i / inVecWidth] = b.insert_element(
           inVecTy, inPacked[i / inVecWidth], v[i], b.i32_val(i % inVecWidth));
     for (size_t i = 0; i < inPacked.size(); i++)
@@ -330,7 +330,7 @@ static ConverterT makeConverterFromPtx(const std::string &ptxAsm, Type inType,
     }
     // unpack the output
     SmallVector<Value> ret;
-    for (size_t i = 0; i < numElements; i++)
+    for (size_t i = 0; i < static_cast<size_t>(numElements); i++)
       ret.push_back(b.extract_element(outType, outPacked[i / outVecWidth],
                                       b.i32_val(i % outVecWidth)));
     return ret;
@@ -368,7 +368,8 @@ struct FpToFpOpConversion
     case RoundingMode::RTZ:
       name = "llvm.nvvm.f2bf16.rz";
       break;
-    default:
+    }
+    if (name.empty()) {
       emitError(loc) << "unsupported rounding mode for f32->bf16 conversion: "
                      << stringifyRoundingMode(rounding) << "\n";
       llvm::report_fatal_error(
@@ -391,7 +392,8 @@ struct FpToFpOpConversion
     case RoundingMode::RTZ:
       ptx = "cvt.rz.f16.f32";
       break;
-    default:
+    }
+    if (ptx.empty()) {
       emitError(loc) << "unsupported rounding mode for f32->f16 conversion: "
                      << stringifyRoundingMode(rounding) << "\n";
       llvm::report_fatal_error(
@@ -413,7 +415,7 @@ struct FpToFpOpConversion
     auto F16TyID = TypeID::get<Float16Type>();
     auto BF16TyID = TypeID::get<BFloat16Type>();
     auto F32TyID = TypeID::get<Float32Type>();
-    auto F64TyID = TypeID::get<Float64Type>();
+    [[maybe_unused]] auto F64TyID = TypeID::get<Float64Type>();
 
     auto undefRounding = static_cast<RoundingMode>(-1);
 
@@ -618,7 +620,7 @@ struct SIToFPOpConversion
   }
 
 private:
-  int computeCapability;
+  [[maybe_unused]] int computeCapability;
 };
 
 struct FPToSIOpConversion
@@ -631,7 +633,7 @@ struct FPToSIOpConversion
                                    ConversionPatternRewriter &rewriter,
                                    Type elemTy, MultipleOperandsRange operands,
                                    Location loc) const {
-    auto inElemTy = getElementType(op.getIn());
+    [[maybe_unused]] auto inElemTy = getElementType(op.getIn());
     return {rewriter.create<LLVM::FPToSIOp>(loc, elemTy, operands[0][0])};
   }
 };
@@ -691,12 +693,12 @@ struct ClampFOpConversion
     //   %160 = tt.clamp %158, %cst_6, %cst_7
     bool patternFound = false;
 
-    auto getSplatInitializer = [](Value v) -> std::optional<double> {
+    auto getSplatInitializer = [](Value v) -> std::optional<APFloat> {
       if (auto constOp = v.getDefiningOp<arith::ConstantOp>()) {
         if (auto attr = mlir::dyn_cast<DenseIntOrFPElementsAttr>(
                 constOp.getValueAttr())) {
           if (attr.isSplat()) {
-            return attr.getSplatValue<APFloat>().convertToDouble();
+            return attr.getSplatValue<APFloat>();
           }
         }
       }
@@ -707,16 +709,18 @@ struct ClampFOpConversion
       if (auto subOp = op.getOperand(1).getDefiningOp<arith::SubFOp>()) {
         if (subOp.getOperand(1) == op.getOperand(2)) {
           auto initializer = getSplatInitializer(subOp.getOperand(0));
-          if (initializer.has_value() && initializer.value() == 0.0) {
+          if (initializer.has_value() && initializer->isZero()) {
             patternFound = true;
           }
         }
       } else {
         auto initializer1 = getSplatInitializer(op.getOperand(1));
         auto initializer2 = getSplatInitializer(op.getOperand(2));
-        if (initializer1.has_value() && initializer2.has_value() &&
-            initializer1.value() == -initializer2.value()) {
-          patternFound = true;
+        if (initializer1.has_value() && initializer2.has_value()) {
+          APFloat negatedInitializer2 = *initializer2;
+          negatedInitializer2.changeSign();
+          patternFound =
+              initializer1->compare(negatedInitializer2) == APFloat::cmpEqual;
         }
       }
     }

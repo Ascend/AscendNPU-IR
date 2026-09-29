@@ -55,6 +55,7 @@ L1Mmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
        bool hasBias, int64_t l1BOuterStride = 0) {
   if constexpr (HF32) {
     AscendCBisheng::SetHF32Mode(true);
+    AscendCBisheng::SetHF32TransMode(true);
   }
 
   using ArchTag = Arch::AtlasA5;
@@ -280,6 +281,7 @@ L1Mmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
 
   if constexpr (HF32) {
     AscendCBisheng::SetHF32Mode(false);
+    AscendCBisheng::SetHF32TransMode(false);
   }
 }
 
@@ -303,6 +305,7 @@ CATLASS_DEVICE void BatchL1Mmad(
 
   if constexpr (HF32) {
     AscendCBisheng::SetHF32Mode(true);
+    AscendCBisheng::SetHF32TransMode(true);
   }
 
   using ArchTag = Arch::AtlasA5;
@@ -427,6 +430,7 @@ CATLASS_DEVICE void BatchL1Mmad(
   }
   if constexpr (HF32) {
     AscendCBisheng::SetHF32Mode(false);
+    AscendCBisheng::SetHF32TransMode(false);
   }
 }
 

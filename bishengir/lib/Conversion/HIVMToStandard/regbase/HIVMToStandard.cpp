@@ -437,11 +437,10 @@ public:
   LogicalResult matchAndRewrite(hivm::Conv1DL1Op op,
                                 PatternRewriter &rewriter) const final {
     SmallVector<Value> libParams = op.getLibraryCallOperands(rewriter);
-    replaceWithLibCall(
-        rewriter, op,
-        cast<OpWithLibraryFunction>(op.getOperation())
-            .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
-        libParams, {});
+    replaceWithLibCall(rewriter, op,
+                       cast<OpWithLibraryFunction>(op.getOperation())
+                           .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
+                       libParams, {});
     return success();
   }
 };
@@ -454,11 +453,10 @@ public:
   LogicalResult matchAndRewrite(hivm::Conv2DL1Op op,
                                 PatternRewriter &rewriter) const final {
     SmallVector<Value> libParams = op.getLibraryCallOperands(rewriter);
-    replaceWithLibCall(
-        rewriter, op,
-        cast<OpWithLibraryFunction>(op.getOperation())
-            .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
-        libParams, {});
+    replaceWithLibCall(rewriter, op,
+                       cast<OpWithLibraryFunction>(op.getOperation())
+                           .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
+                       libParams, {});
     return success();
   }
 };
@@ -531,16 +529,17 @@ public:
     auto loop = rewriter.create<scf::ForOp>(loc, zero, batch, one);
 
     rewriter.setInsertionPointToStart(loop.getBody());
-    Value matrixA = createBatchSlice(op.getA(), loop.getInductionVar(),
-                                     rewriter, loc);
-    Value matrixB = createBatchSlice(op.getB(), loop.getInductionVar(),
-                                     rewriter, loc);
-    Value matrixC = createBatchSlice(op.getC(), loop.getInductionVar(),
-                                     rewriter, loc);
+    Value matrixA =
+        createBatchSlice(op.getA(), loop.getInductionVar(), rewriter, loc);
+    Value matrixB =
+        createBatchSlice(op.getB(), loop.getInductionVar(), rewriter, loc);
+    Value matrixC =
+        createBatchSlice(op.getC(), loop.getInductionVar(), rewriter, loc);
 
-    SmallVector<Value> libParams{matrixA, matrixB, op.getInitCondition(),
-                                 op.getRealM(), op.getRealK(), op.getRealN(),
-                                 matrixC};
+    SmallVector<Value> libParams{
+        matrixA,       matrixB,       op.getInitCondition(),
+        op.getRealM(), op.getRealK(), op.getRealN(),
+        matrixC};
     llvm::append_range(libParams, op.getSyncRelatedArgs());
     libParams.push_back(op.getUnitFlagModeLibValue(rewriter));
     libParams.push_back(op.getUnitFlagGroupIdValue(rewriter));
@@ -556,17 +555,15 @@ private:
     auto type = cast<MemRefType>(value.getType());
     assert(type.getRank() == 5 && "expected a rank-5 batch matrix tile");
 
-    SmallVector<OpFoldResult> offsets(type.getRank(),
-                                      rewriter.getIndexAttr(0));
+    SmallVector<OpFoldResult> offsets(type.getRank(), rewriter.getIndexAttr(0));
     SmallVector<OpFoldResult> sizes;
-    SmallVector<OpFoldResult> strides(type.getRank(),
-                                      rewriter.getIndexAttr(1));
+    SmallVector<OpFoldResult> strides(type.getRank(), rewriter.getIndexAttr(1));
     offsets[0] = batchIdx;
     sizes.push_back(rewriter.getIndexAttr(1));
     for (int64_t dim = 1; dim < type.getRank(); ++dim) {
       if (type.isDynamicDim(dim))
-        sizes.push_back(rewriter.create<memref::DimOp>(loc, value, dim)
-                            .getResult());
+        sizes.push_back(
+            rewriter.create<memref::DimOp>(loc, value, dim).getResult());
       else
         sizes.push_back(rewriter.getIndexAttr(type.getDimSize(dim)));
     }
@@ -574,8 +571,8 @@ private:
     SmallVector<int64_t> reducedShape(type.getShape().drop_front());
     auto reducedType = cast<MemRefType>(inferRankReducedResultType(
         reducedShape, type, offsets, sizes, strides, {0}));
-    return rewriter.create<memref::SubViewOp>(
-        loc, reducedType, value, offsets, sizes, strides);
+    return rewriter.create<memref::SubViewOp>(loc, reducedType, value, offsets,
+                                              sizes, strides);
   }
 };
 
@@ -674,8 +671,8 @@ public:
                                 PatternRewriter &rewriter) const final {
     SmallVector<Value> operands;
     operands.append(op->getOperands().begin(), op->getOperands().end());
-    operands.push_back(rewriter.create<arith::ConstantIntOp>(
-        op.getLoc(), op.getGroups(), 64));
+    operands.push_back(
+        rewriter.create<arith::ConstantIntOp>(op.getLoc(), op.getGroups(), 64));
     replaceWithLibCall(rewriter, op,
                        cast<OpWithLibraryFunction>(op.getOperation())
                            .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
@@ -950,6 +947,7 @@ public:
   }
 };
 
+[[maybe_unused]]
 /// Adds dimension identifier for different multi-dimensional ops.
 std::string addDimName(int64_t rank, int64_t maxOpRank) {
   assert(rank > 0 && "Invalid operand rank.");
@@ -2050,7 +2048,8 @@ class DebugOpToLibraryCallPattern : public OpRewritePattern<hivm::DebugOp> {
   using OpRewritePattern<hivm::DebugOp>::OpRewritePattern;
 
   static constexpr llvm::StringLiteral HIVMDebugTypePrint = "print";
-  static constexpr llvm::StringLiteral HIVMDebugTypeAssert = "assert";
+  [[maybe_unused]] static constexpr llvm::StringLiteral HIVMDebugTypeAssert =
+      "assert";
   inline static int prefixNumber = 0;
 
   LogicalResult matchAndRewrite(hivm::DebugOp op,

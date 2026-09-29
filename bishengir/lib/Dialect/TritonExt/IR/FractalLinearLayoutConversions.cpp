@@ -1,4 +1,5 @@
-//===- FractalLinearLayoutConversions.cpp ------------------------*- C++ -*-===//
+//===- FractalLinearLayoutConversions.cpp ------------------------*- C++
+//-*-===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -80,7 +81,7 @@ LinearLayout combineCtaCgaWithShape(LinearLayout ctaLayout,
   ctaLayout = ensureLayoutNotLargerThan(ctaLayout, ctaShape);
 
   LinearLayout ret = (ctaLayout * cgaLayout).transposeOuts(outDimNames);
-  for (auto dim : ret.getOutDimNames()) {
+  for ([[maybe_unused]] auto dim : ret.getOutDimNames()) {
     assert(ret.getOutDimSize(dim) == labeledShape[dim]);
   }
   return ret;

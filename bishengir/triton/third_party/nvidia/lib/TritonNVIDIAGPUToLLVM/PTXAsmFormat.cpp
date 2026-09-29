@@ -52,7 +52,8 @@ PTXBuilder::Operand *PTXBuilder::newOperand(StringRef constraint, bool init) {
 }
 
 PTXBuilder::Operand *PTXBuilder::newOperand(unsigned operandIndex) {
-  assert(operandIndex < oprCounter && "operand index out of range");
+  assert(oprCounter >= 0 && operandIndex < static_cast<unsigned>(oprCounter) &&
+         "operand index out of range");
   auto *opr = newOperand();
   opr->idx = oprCounter++;
   opr->constraint = std::to_string(operandIndex);

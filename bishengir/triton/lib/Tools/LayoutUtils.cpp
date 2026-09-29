@@ -39,7 +39,7 @@ LinearLayout
 ensureLayoutNotLargerThan(const LinearLayout &layout,
                           const llvm::SmallDenseMap<StringAttr, int64_t> &shape,
                           bool broadcastRegisters) {
-  assert(shape.size() == layout.getNumOutDims());
+  assert(shape.size() == static_cast<size_t>(layout.getNumOutDims()));
   if (shape.empty()) {
     return layout;
   }
@@ -115,7 +115,7 @@ ensureLayoutNotLargerThan(const LinearLayout &layout,
 LinearLayout ensureLayoutNotSmallerThan(
     const LinearLayout &layout,
     const llvm::SmallDenseMap<StringAttr, int64_t> &shape) {
-  assert(shape.size() == layout.getNumOutDims());
+  assert(shape.size() == static_cast<size_t>(layout.getNumOutDims()));
   if (shape.empty()) {
     return layout;
   }
@@ -169,7 +169,7 @@ LinearLayout identityStandardND(StringAttr inDimName, ArrayRef<unsigned> shape,
   SmallVector<StringAttr> outDimNames = standardOutDimNames(ctx, rank);
 
   LinearLayout ret = LinearLayout::empty();
-  for (int i = 0; i < shape.size(); i++) {
+  for (size_t i = 0; i < shape.size(); i++) {
     // Start with the most-minor dimension, which is order[0].
     int dim = order[i];
     ret *= LinearLayout::identity1D(shape[dim], inDimName, outDimNames[dim]);
@@ -227,8 +227,8 @@ std::optional<ColumnAction> regPermForDivide(const LinearLayout &A,
   auto multiplyByTileSize =
       [&](ArrayRef<int32_t> bBasis) -> std::vector<int32_t> {
     std::vector<int32_t> result;
-    size_t idx = 0;
-    assert(bBasis.size() == A.getNumOutDims());
+    [[maybe_unused]] size_t idx = 0;
+    assert(bBasis.size() == static_cast<size_t>(A.getNumOutDims()));
     for (auto [dim, b] : llvm::zip(A.getOutDimNames(), bBasis)) {
       result.push_back(b << log2QuotSize.lookup(dim));
     }
@@ -296,8 +296,8 @@ actionAdditiveStrides(const LinearLayout &layout, const LinearLayout addrLayout,
   assert(layout.getNumInDims() != 0);
   auto kReg = *layout.getInDimNames().begin();
   assert(kReg.str() == "register");
-  auto kLane = StringAttr::get(kReg.getContext(), "lane");
-  auto kWarp = StringAttr::get(kReg.getContext(), "warp");
+  [[maybe_unused]] auto kLane = StringAttr::get(kReg.getContext(), "lane");
+  [[maybe_unused]] auto kWarp = StringAttr::get(kReg.getContext(), "warp");
   assert(layout.getNumOutDims() == 1);
   uint32_t bits = maskSpanOffsets;
   llvm::SetVector<uint32_t> tileBases;
@@ -326,7 +326,8 @@ SmallVector<Value> broadcastAs(const SmallVector<Value> &values,
   auto kReg = *layout.getInDimNames().begin();
   assert(kReg.str() == "register");
   uint32_t broadcastMask = layout.getFreeVariableMasks().lookup(kReg);
-  assert((layout.getInDimSize(kReg) / (1 << llvm::popcount(broadcastMask))) ==
+  assert(static_cast<size_t>(layout.getInDimSize(kReg) /
+                             (1 << llvm::popcount(broadcastMask))) ==
          values.size());
 
   std::vector<std::vector<int32_t>> newBases;
@@ -365,14 +366,16 @@ SmallVector<StringAttr> supremum(const SmallVector<StringAttr> &x,
     posY[elem] = idx;
   int i = 0, j = 0;
   const int INF = std::numeric_limits<int>::max();
-  while (i < x.size() || j < y.size()) {
-    while (i < x.size() && result.contains(x[i]))
+  const int xSize = static_cast<int>(x.size());
+  const int ySize = static_cast<int>(y.size());
+  while (i < xSize || j < ySize) {
+    while (i < xSize && result.contains(x[i]))
       ++i;
-    while (j < y.size() && result.contains(y[j]))
+    while (j < ySize && result.contains(y[j]))
       ++j;
-    if (i >= x.size() && j >= y.size())
+    if (i >= xSize && j >= ySize)
       break;
-    if (i < x.size() && j < y.size() && x[i] == y[j]) {
+    if (i < xSize && j < ySize && x[i] == y[j]) {
       if (posY[x[i]] < j)
         llvm_unreachable("Supremum does not exist");
       result.insert(x[i]);
@@ -380,20 +383,20 @@ SmallVector<StringAttr> supremum(const SmallVector<StringAttr> &x,
       continue;
     }
     int candX = INF, candY = INF;
-    if (i < x.size()) {
+    if (i < xSize) {
       if (posY.count(x[i]) && posY[x[i]] >= j)
         candX = posY[x[i]];
     }
-    if (j < y.size()) {
+    if (j < ySize) {
       if (posX.count(y[j]) && posX[y[j]] >= i)
         candY = posX[y[j]];
     }
-    if (i < x.size() && candX == INF) {
+    if (i < xSize && candX == INF) {
       result.insert(x[i]);
       ++i;
       continue;
     }
-    if (j < y.size() && candY == INF) {
+    if (j < ySize && candY == INF) {
       result.insert(y[j]);
       ++j;
       continue;

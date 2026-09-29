@@ -379,7 +379,7 @@ DelayedCrossCoreIRTranslator::buildDelayedFuncIr() {
         assert(coreType == TCoreType::CUBE || coreType == TCoreType::VECTOR);
 
         auto anchorBeforeOp = mixAnchorInfo.anchorBefore;
-        auto anchorAfterOp = mixAnchorInfo.anchorAfter;
+        [[maybe_unused]] auto anchorAfterOp = mixAnchorInfo.anchorAfter;
         assert(anchorBeforeOp->parentOp == anchorAfterOp->parentOp);
         auto parentScopeOp = dyn_cast<Scope>(anchorBeforeOp->parentOp);
         assert(parentScopeOp != nullptr);
@@ -455,7 +455,7 @@ DelayedCrossCoreIRTranslator::buildDelayedFuncIr() {
     }
 
     auto anchorBeforeOp = mixAnchorInfo.anchorBefore;
-    auto anchorAfterOp = mixAnchorInfo.anchorAfter;
+    [[maybe_unused]] auto anchorAfterOp = mixAnchorInfo.anchorAfter;
     assert(anchorBeforeOp->parentOp == anchorAfterOp->parentOp);
     auto parentScopeOp = dyn_cast<Scope>(anchorBeforeOp->parentOp);
     assert(parentScopeOp != nullptr);
@@ -1132,8 +1132,8 @@ void DelayedCrossCoreGSSPass::eraseOldIntraBlockSyncOps(func::FuncOp funcOp) {
 
 void DelayedCrossCoreGSSPass::runOnOperation() {
   ModuleOp mod = getOperation();
-  bool isMemBasedArch = hacc::utils::isMemBasedArch(mod);
-  bool isRegBasedArch = hacc::utils::isRegBasedArch(mod);
+  [[maybe_unused]] bool isMemBasedArch = hacc::utils::isMemBasedArch(mod);
+  [[maybe_unused]] bool isRegBasedArch = hacc::utils::isRegBasedArch(mod);
   assert(isMemBasedArch != isRegBasedArch);
 
   auto triplets = findTriplets(mod);

@@ -86,7 +86,6 @@ struct CVPipelineImpl {
                  bool bypassShapeRegistry = false, bool enablePreload = false)
       : pipelineLoop(loop), newLoop(nullptr), builder(loop->getContext()),
         numMultibuffer(multibuffer), pipelineMode(pipelineMode),
-        bypassShapeRegistry(bypassShapeRegistry),
         allowShapeHeuristics(
             computeAllowShapeHeuristics(bypassShapeRegistry, enablePreload,
                                         multibuffer, loop.getOperation())),
@@ -207,9 +206,6 @@ private:
 
   // Pipeline mode for CV-pipelining.
   CVPipelineMode pipelineMode;
-
-  // Bypass shape registry check for registered-kernel heuristics.
-  bool bypassShapeRegistry = false;
 
   // True when the parent function is registered, preload is on, and
   // workspace multibuffer is non-zero, or LIT bypass is on.
@@ -1275,10 +1271,12 @@ LogicalResult CVPipelineImpl::checkWorkItemDependencies() {
         // Off-registry kernels keep the pre-3530 contract: any cross-WI
         // tensor carry is rejected. The same-stage exception is a registered
         // (or LIT `--bypass-shape-registry`) heuristic.
-        bool sameStage = consumerItem->hasLoopCarriedDep &&
-                         producerItem->hasLoopCarriedDep;
-        bool hasAnyIndependentItem = llvm::any_of(
-            worklist, [](const auto &item) { return !item->hasLoopCarriedDep; });
+        bool sameStage =
+            consumerItem->hasLoopCarriedDep && producerItem->hasLoopCarriedDep;
+        bool hasAnyIndependentItem =
+            llvm::any_of(worklist, [](const auto &item) {
+              return !item->hasLoopCarriedDep;
+            });
         if (!allowShapeHeuristics || !sameStage || !hasAnyIndependentItem ||
             pipelineMode == CVPipelineMode::Unroll) {
           InFlightDiagnostic diag =

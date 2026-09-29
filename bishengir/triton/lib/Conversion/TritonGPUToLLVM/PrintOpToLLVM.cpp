@@ -94,7 +94,7 @@ struct PrintOpConversion : public ConvertOpToLLVMPattern<triton::PrintOp> {
     assert(elems.size() == indices.size());
     assert(dimWidths.size() == indices.front().size());
 
-    size_t rank = dimWidths.size();
+    [[maybe_unused]] size_t rank = dimWidths.size();
 
     // Format is:
     //   pid (<x>, <y>, <z>) idx (<i1>, <i2>, ...)<prefix> (operand <n>) <elem>
@@ -105,7 +105,7 @@ struct PrintOpConversion : public ConvertOpToLLVMPattern<triton::PrintOp> {
 
     Value formatStrValue;
     int formatStrByteCount = 0;
-    for (int i = 0; i < elems.size(); i++) {
+    for (int i = 0; i < static_cast<int>(elems.size()); i++) {
       std::string formatStr;
       llvm::raw_string_ostream os(formatStr);
 
@@ -118,7 +118,7 @@ struct PrintOpConversion : public ConvertOpToLLVMPattern<triton::PrintOp> {
       // not known at compile-time, this would require nontrivial device-side
       // work.
       os << "pid (";
-      for (int j = 0; j < pid.size(); j++) {
+      for (int j = 0; j < static_cast<int>(pid.size()); j++) {
         if (j != 0) {
           os << ", ";
         }
@@ -138,7 +138,7 @@ struct PrintOpConversion : public ConvertOpToLLVMPattern<triton::PrintOp> {
         if (dim != 0) {
           os << ", ";
         }
-        if (dim == maxAllowedRank) {
+        if (static_cast<int>(dim) == maxAllowedRank) {
           os << "... (truncated)";
           break;
         }

@@ -587,7 +587,7 @@ Operation *LayoutPropagation::rewriteWhileOp(scf::WhileOp whileOp) {
                        bbArgLocsBefore);
   rewriter.createBlock(&newWhileOp.getAfter(), {}, returnTypes, bbArgLocsAfter);
 
-  for (int i = 0; i < whileOp.getNumRegions(); ++i) {
+  for (int i = 0; i < static_cast<int>(whileOp.getNumRegions()); ++i) {
     newWhileOp->getRegion(i).front().getOperations().splice(
         newWhileOp->getRegion(i).front().getOperations().begin(),
         whileOp->getRegion(i).front().getOperations());

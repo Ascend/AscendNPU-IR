@@ -171,7 +171,7 @@ tt::CoarseSchedule::getOpsInOrder(scf::ForOp forOp) const {
     orderClusters[clusterId].push_back(make_tuple(&op, stage, cluster));
   }
   SmallVector<std::tuple<Operation *, int, Cluster>> opsInOrder;
-  for (int i = 0; i < orderClusters.size(); i++) {
+  for (int i = 0; i < static_cast<int>(orderClusters.size()); i++) {
     for (auto [op, stage, cluster] : orderClusters[i]) {
       opsInOrder.push_back({op, stage, cluster});
     }

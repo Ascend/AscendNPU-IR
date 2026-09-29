@@ -76,8 +76,7 @@ CollapseGroup Flattener::getCollapseGroup(Value res) const {
   assert(!currentIndices.empty());
   indices.push_back(currentIndices);
 
-  LLVM_DEBUG(for (auto a
-                  : indices) {
+  LLVM_DEBUG(for (auto a : indices) {
     for (auto b : a) {
       llvm::dbgs() << b << " ";
     }
@@ -280,7 +279,8 @@ void Flattener::collapseMemrefArg(Value arg, OpBuilder &builder) {
     LLVM_DEBUG(llvm::dbgs() << "checking *defOp: " << *defOp << "\n";);
     if (defOp == collapseOp)
       return false;
-    if (isa<memref::DimOp>(defOp) || isa<memref::ExtractStridedMetadataOp>(defOp))
+    if (isa<memref::DimOp>(defOp) ||
+        isa<memref::ExtractStridedMetadataOp>(defOp))
       return false;
     // If this arg is directly returned, no need to reshape
     if (isTailOperation(defOp) || isHeadOperation(defOp)) {
@@ -729,8 +729,7 @@ void Flattener::adjustTransposeOp(linalg::TransposeOp transposeOp,
   transposeOp.setPermutationAttr(builder.getDenseI64ArrayAttr(newPerm));
 }
 
-template <class T>
-void Flattener::adjustReduceLikeOpBody(T reduceOp) const {
+template <class T> void Flattener::adjustReduceLikeOpBody(T reduceOp) const {
   auto collapseGroup = getCollapseGroup(reduceOp.getDpsInputs()[0]);
   auto newDimensions = adjustCollapseDimensions(reduceOp, collapseGroup);
   reduceOp.setDimensionsAttr(
@@ -748,8 +747,7 @@ void Flattener::adjustReduceLikeOpBody(T reduceOp) const {
   });
 }
 
-template <class T>
-void Flattener::adjustCumOp(T cumOp, OpBuilder &builder) {
+template <class T> void Flattener::adjustCumOp(T cumOp, OpBuilder &builder) {
   auto collapseGroups = getCollapseGroup(cumOp.getODSOperands(0)[0]);
   int64_t tmpCumDim = cumOp.getCumDims()[0];
   int64_t newCumDim = 0;
@@ -944,7 +942,8 @@ void Flattener::calculateSliceStrides(
   Value src = sliceOp.getSource();
   if (std::is_same_v<T, tensor::InsertSliceOp>)
     src = sliceOp.getResult();
-  auto previousTy = dyn_cast<RankedTensorType>(previousType_[src]);
+  [[maybe_unused]] auto previousTy =
+      dyn_cast<RankedTensorType>(previousType_[src]);
   assert(previousTy &&
          "extract_slice source must have previous ranked tensor type");
 
@@ -1259,16 +1258,16 @@ void Flattener::adjustCastOp(memref::CastOp castOp, mlir::OpBuilder &builder) {
   int64_t srcOffset, oldResOffset;
 
   MemRefType newResType;
-  #ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
   if (succeeded(getStridesAndOffset(srcType, srcStrides, srcOffset)) &&
-  #else
+#else
   if (succeeded(srcType.getStridesAndOffset(srcStrides, srcOffset)) &&
-  #endif
-      #ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+#endif
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
       succeeded(getStridesAndOffset(oldResType, oldResStrides, oldResOffset))) {
-      #else
+#else
       succeeded(oldResType.getStridesAndOffset(oldResStrides, oldResOffset))) {
-      #endif
+#endif
     auto newLayout =
         StridedLayoutAttr::get(castOp->getContext(), oldResOffset, srcStrides);
     newResType = MemRefType::get(srcType.getShape(), srcType.getElementType(),
@@ -1719,13 +1718,15 @@ FailureOr<Operation *> Flattener::expandForTail(OpTy &tensorOutOp,
   LLVM_DEBUG(llvm::dbgs() << "\nCollapsing " << collapsedVal << "\n";);
   if (!previousType_.contains(collapsedVal)) {
     LLVM_DEBUG(llvm::dbgs()
-               << "Source is not expandable, previousType_ not found" << "\n");
+               << "Source is not expandable, previousType_ not found"
+               << "\n");
     return failure();
   }
 
   CollapseGroup collapseGroup = getCollapseGroup(collapsedVal);
   if (collapseGroup.empty()) {
-    LLVM_DEBUG(llvm::dbgs() << "Collapse group invalid" << "\n");
+    LLVM_DEBUG(llvm::dbgs() << "Collapse group invalid"
+                            << "\n");
     return failure();
   }
 
@@ -1765,11 +1766,11 @@ FailureOr<Operation *> Flattener::expandForTail(OpTy &tensorOutOp,
     }
     SmallVector<int64_t> targetStrides;
     int64_t targetOffset;
-    #ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
     if (failed(getStridesAndOffset(cast<MemRefType>(expandedType),
-    #else
+#else
     if (failed(cast<MemRefType>(expandedType.getStridesAndOffset(),
-    #endif
+#endif
                                    targetStrides, targetOffset))) {
       return failure();
     }

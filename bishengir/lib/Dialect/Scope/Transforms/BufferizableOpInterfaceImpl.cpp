@@ -96,7 +96,7 @@ struct ScopeOpInterface
     rewriter.setInsertionPoint(returnOp);
     for (Value operand : returnOp.getOperands()) {
       // Handle non-tensor type(pass)
-      if (!operand.getType().isa<TensorType>()) {
+      if (!mlir::isa<TensorType>(operand.getType())) {
         newReturnOperands.push_back(operand);
         newResultTypes.push_back(operand.getType());
         continue;

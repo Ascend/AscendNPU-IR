@@ -589,8 +589,8 @@ getTranspositionSelectors(SmallVector<std::pair<int, int>> &mixedTranspositions,
     if (nPack == 2) {
       int otherLow = 1 - lowBit;
       int b = next(otherLow);
-      if (next(lowBit) == lowBit && b >= nPack && !pairedRegBits.contains(b) &&
-          !pairedRegBits.contains(otherLow)) {
+      if (static_cast<int>(next(lowBit)) == lowBit && b >= nPack &&
+          !pairedRegBits.contains(b) && !pairedRegBits.contains(otherLow)) {
         preShufLoBits.push_back(otherLow);
         regBases[prev(otherLow)][0] = 1 << b;
         pairedRegBits.insert(b);
@@ -648,7 +648,8 @@ getTranspositionSelectors(SmallVector<std::pair<int, int>> &mixedTranspositions,
         preShufLoBits.insert(preShufLoBits.begin(), tail);
       }
     } else {
-      if (next(rBit) != rBit && pairedRegBits.contains(next(rBit))) {
+      if (static_cast<int>(next(rBit)) != rBit &&
+          pairedRegBits.contains(next(rBit))) {
         // Symmetric noncommutative case. E.g. (l0 r0 l1 r1)
         preShufLoBits.erase(preShufLoBits.begin());
         postShufLoBits.pop_back();
@@ -713,17 +714,19 @@ getReshapeDecomposition(ArrayRef<int64_t> srcShape,
   int dstIdx = 0;
   int srcNElems = 1;
   int dstNElems = 1;
-  while (srcIdx < srcShape.size() || dstIdx < dstShape.size()) {
+  while (srcIdx < static_cast<int>(srcShape.size()) ||
+         dstIdx < static_cast<int>(dstShape.size())) {
     if (srcNElems < dstNElems || //
-        (srcIdx < srcShape.size() && srcNElems == 1) ||
-        (srcIdx < srcShape.size() && srcShape[srcIdx] == 1)) {
-      assert(srcIdx < srcShape.size());
+        (srcIdx < static_cast<int>(srcShape.size()) && srcNElems == 1) ||
+        (srcIdx < static_cast<int>(srcShape.size()) && srcShape[srcIdx] == 1)) {
+      assert(srcIdx < static_cast<int>(srcShape.size()));
       srcNElems *= srcShape[srcIdx];
       ret.back().first.push_back(srcIdx);
       srcIdx++;
     } else if (dstNElems < srcNElems ||
-               (dstIdx < dstShape.size() && dstShape[dstIdx] == 1)) {
-      assert(dstIdx < dstShape.size());
+               (dstIdx < static_cast<int>(dstShape.size()) &&
+                dstShape[dstIdx] == 1)) {
+      assert(dstIdx < static_cast<int>(dstShape.size()));
       dstNElems *= dstShape[dstIdx];
       ret.back().second.push_back(dstIdx);
       dstIdx++;
@@ -889,7 +892,7 @@ bool supportMMA(triton::DotOp op, int version) {
       return false;
     }
     // If k size is smaller than the native mma size, we cannot use MMA.
-    if (k < 256 / aElemTy.getIntOrFloatBitWidth())
+    if (k < static_cast<int>(256 / aElemTy.getIntOrFloatBitWidth()))
       return false;
     if (!(retShapePerCTA[rank - 2] % 64 == 0 &&
           retShapePerCTA[rank - 1] % 16 == 0))
@@ -903,7 +906,7 @@ bool supportMMA(triton::DotOp op, int version) {
     RankedTensorType typeA = op.getA().getType();
     int k = typeA.getShape().back();
     // If k size is smaller than the native mma size, we cannot use MMA.
-    if (k < 256 / aElemTy.getIntOrFloatBitWidth())
+    if (k < static_cast<int>(256 / aElemTy.getIntOrFloatBitWidth()))
       return false;
     auto retShapePerCTA = getShapePerCTA(retType);
     auto rank = retShapePerCTA.size();
@@ -962,7 +965,8 @@ LinearLayout minimalCvtLayout(Type srcTy_, Type dstTy_) {
   auto sDims = to_vector(srcLayout.getInDimNames());
   auto dDims = to_vector(dstLayout.getInDimNames());
   SmallVector<StringAttr> dims;
-  for (int i = 0; i < std::min(sDims.size(), dDims.size()); ++i) {
+  for (int i = 0; i < static_cast<int>(std::min(sDims.size(), dDims.size()));
+       ++i) {
     auto srcDim = sDims[sDims.size() - i - 1];
     auto dstDim = dDims[dDims.size() - i - 1];
     if (srcDim != dstDim) {

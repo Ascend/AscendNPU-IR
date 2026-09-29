@@ -869,9 +869,9 @@ createBlockedScalesSMEMDescriptor(ConversionPatternRewriter &rewriter,
                 "Descriptor size should be 64 bits.");
   NVIDIA::SMEMDescriptor desc;
   desc.descriptor = 0;
-  desc.swizzlingMode = 0;                    // No swizzling for now
-  desc.leadDimensionBaseOffset = 16 >> 4;    // 16 bytes
-  desc.strideDimensionBaseOffset = 128 >> 4; // 8 x 16 bytes
+  desc.fields.swizzlingMode = 0;                    // No swizzling for now
+  desc.fields.leadDimensionBaseOffset = 16 >> 4;    // 16 bytes
+  desc.fields.strideDimensionBaseOffset = 128 >> 4; // 8 x 16 bytes
   // See matrix-descriptor-encode(x) function in the ptx doc.
   // matrix-descriptor-encode(addr) = (addr & 0x3FFFF) >> 4
   auto smemAddr = b.ptrtoint(i64_ty, baseSrc);

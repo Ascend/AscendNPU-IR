@@ -17,10 +17,9 @@ namespace {
 Value getLinearId(Location loc, ConversionPatternRewriter &rewriter) {
   auto b = TritonLLVMOpBuilder(loc, rewriter);
 #if BSPUB_DAVINCI_BISHENGIR
-    Value linearId = rewriter.create<arith::IndexCastOp>(
-      loc, i32_ty,
-      rewriter.create<mlir::gpu::LinearBlockIdOp>(loc));
-    return linearId;
+  Value linearId = rewriter.create<arith::IndexCastOp>(
+      loc, i32_ty, rewriter.create<mlir::gpu::LinearBlockIdOp>(loc));
+  return linearId;
 #else
   // Note:
   // 1. We compute use i64 data type to compute and then truncate to i32
@@ -119,7 +118,8 @@ struct FinalizeOpConversion
     //  | profiled data (allocBufferSize bytes)         |
     //  +-----------------------------------------------+
     const int metadataWordSize = circularHeaderWordSize + numWarps;
-    const int scratchWordSize = metadataWordSize + bufferSizeInWords;
+    [[maybe_unused]] const int scratchWordSize =
+        metadataWordSize + bufferSizeInWords;
 
     auto &tritonTargetInfo = targetInfo.getTritonTargetInfo();
 
@@ -328,7 +328,7 @@ struct GlobalScratchAllocOpConversion
     auto loc = op.getLoc();
     auto b = TritonLLVMOpBuilder(loc, rewriter);
     auto *ctx = rewriter.getContext();
-    auto &tritonTargetInfo = targetInfo.getTritonTargetInfo();
+    [[maybe_unused]] auto &tritonTargetInfo = targetInfo.getTritonTargetInfo();
 
     auto funcOp = op->getParentOfType<LLVM::LLVMFuncOp>();
     if (!funcOp) {
@@ -452,7 +452,7 @@ struct RestoreCtxOpConversion
 
     auto mod = op.getOperation()->getParentOfType<ModuleOp>();
     auto b = TritonLLVMOpBuilder(loc, rewriter);
-    int numWarps = getTotalNumWarps(mod);
+    [[maybe_unused]] int numWarps = getTotalNumWarps(mod);
 
     // We need to use the absolute warp id in case warp specialization is used.
     Value threadId = getRawThreadId(rewriter, loc);
@@ -500,7 +500,7 @@ struct SaveCtxOpConversion
     auto mod = op.getOperation()->getParentOfType<ModuleOp>();
     auto b = TritonLLVMOpBuilder(loc, rewriter);
 
-    int numWarps = getTotalNumWarps(mod);
+    [[maybe_unused]] int numWarps = getTotalNumWarps(mod);
 
     int numLanes = triton::gpu::TritonGPUDialect::getThreadsPerWarp(mod);
     Value warpSize = b.i32_val(numLanes);

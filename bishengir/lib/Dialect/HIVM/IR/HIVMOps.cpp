@@ -387,8 +387,8 @@ void hivm::detail::printHIVMStructuredDPSOp(OpAsmPrinter &p, Operation *op,
 }
 
 namespace {
-bool shouldMapToUnsigned(IntegerType::SignednessSemantics val,
-                         hivm::TypeFn casting) {
+[[maybe_unused]] bool shouldMapToUnsigned(IntegerType::SignednessSemantics val,
+                                          hivm::TypeFn casting) {
   if (hivm::TypeFn::cast_unsigned == casting)
     return true;
 
@@ -613,7 +613,7 @@ void IndirectStoreOp::getEffects(
 //===----------------------------------------------------------------------===//
 
 namespace {
-std::string debugCallNameMangleSuffix(Operation *op) {
+[[maybe_unused]] std::string debugCallNameMangleSuffix(Operation *op) {
   std::string suffix = "";
   ModuleOp moduleOp = op->getParentOfType<ModuleOp>();
   if (!moduleOp) {

@@ -22,10 +22,12 @@
 
 #include "Macro/operators/iterator.h"
 
+#ifndef __aicore__
 #ifdef __CCE_KT_TEST__
 #define __aicore__
 #else
 #define __aicore__ [aicore]
+#endif
 #endif
 
 template <ArchType ArchTag, typename ElementBias, typename TileParams>

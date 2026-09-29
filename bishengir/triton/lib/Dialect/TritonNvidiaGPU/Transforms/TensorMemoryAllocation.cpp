@@ -48,7 +48,8 @@ struct MemoryBitMap {
   }
   void alloc(const TMemChunk &chunk) {
     // Ensure the underlying data fits the allocation.
-    while ((chunk.startCol + chunk.numCols) * kNumRows >= elements.size())
+    while (static_cast<size_t>((chunk.startCol + chunk.numCols) * kNumRows) >=
+           elements.size())
       elements.resize(2 * elements.size(), false);
 
     for (int i = 0; i < chunk.numCols; i++) {
@@ -103,12 +104,12 @@ struct MemoryBitMap {
 
 private:
   bool isUsed(int row, int col) const {
-    if (row + col * kNumRows >= elements.size())
+    if (static_cast<size_t>(row + col * kNumRows) >= elements.size())
       return false;
     return elements[row + col * kNumRows];
   }
   void setUsed(int row, int col, bool used) {
-    assert(row + col * kNumRows < elements.size());
+    assert(static_cast<size_t>(row + col * kNumRows) < elements.size());
     elements[row + col * kNumRows] = used;
   }
 
@@ -399,7 +400,7 @@ public:
 
   void runOnOperation() override {
     ModuleOp mod = getOperation();
-    MLIRContext *ctx = &getContext();
+    [[maybe_unused]] MLIRContext *ctx = &getContext();
 
     DenseMap<triton::nvidia_gpu::TMEMAllocOp, int> offsets;
     // TODO: handle cases with multiple function with TMEMAllocOp.

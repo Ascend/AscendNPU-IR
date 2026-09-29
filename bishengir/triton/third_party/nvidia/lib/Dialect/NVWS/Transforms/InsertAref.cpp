@@ -47,7 +47,7 @@ SmallVector<ProducedValueInfo> getProducedValues(Operation *op, Block *loopBody,
   }
 
   return producedValues;
-};
+}
 
 template <typename AllocOp, typename LoadOp>
 std::optional<std::pair<AllocOp, LoadOp>> isLoadAndAlloc(Value result) {
@@ -182,8 +182,8 @@ SmallVector<Operation *> createArefPut(PartitionBuilder &builder,
   Type token{builder.getType<AsyncTokenType>()};
   auto c0Enter = builder.intCst(0);
   auto putEnterOp = builder.createInto<ArefPutEnterOp>(
-      *producerPartition, stageCluster, SmallVector{dataBufType}, token, aref,
-      c0Enter, c0Enter);
+      *producerPartition, stageCluster, SmallVector<Type>{dataBufType}, token,
+      aref, c0Enter, c0Enter);
   schedule.insert(producerPartition, putEnterOp);
   schedule.insert(producerPartition, c0Enter.getDefiningOp());
   auto dataBuf = putEnterOp.getBuffers()[0];
@@ -234,7 +234,7 @@ SmallVector<Operation *> createArefPut(PartitionBuilder &builder,
   schedule.insert(producerPartition, c0Exit.getDefiningOp());
 
   return staleOps;
-};
+}
 
 SetVector<Operation *> getTransitiveConsumers(Operation *op,
                                               Partition *consumerPartition,
@@ -325,7 +325,7 @@ void createArefGet(PartitionBuilder &builder, scf::ForOp loop,
   // In the second case, we only need to emit one enter / exit since we know
   // that the two results are used by consumers in the same partition.
   assert(results.size() == 1 || results.size() == 2);
-  auto loc = results[0].getLoc();
+  [[maybe_unused]] auto loc = results[0].getLoc();
 
   auto filterUse = [&](Operation *use) {
     return schedule.getPartition(use) == consumerPartition;
@@ -338,8 +338,8 @@ void createArefGet(PartitionBuilder &builder, scf::ForOp loop,
   Type tokenType = builder.getType<AsyncTokenType>();
   auto c0Enter = builder.intCst(0);
   auto getEnterOp = builder.createInto<ArefGetEnterOp>(
-      *consumerPartition, stageClusterEnter, SmallVector{bufferType}, tokenType,
-      aref, c0Enter, c0Enter);
+      *consumerPartition, stageClusterEnter, SmallVector<Type>{bufferType},
+      tokenType, aref, c0Enter, c0Enter);
   schedule.insert(consumerPartition, getEnterOp);
   schedule.insert(consumerPartition, c0Enter.getDefiningOp());
 
@@ -365,7 +365,7 @@ void createArefGet(PartitionBuilder &builder, scf::ForOp loop,
 
   for (auto result : results) {
     if (auto localAlloc = result.getDefiningOp<LocalAllocOp>()) {
-      auto memDescType = cast<MemDescType>(result.getType());
+      [[maybe_unused]] auto memDescType = cast<MemDescType>(result.getType());
       auto callback = [&](Operation *oldOp, Operation *newOp) {
         assert(schedule.getPartition(oldOp) == consumerPartition);
         schedule.insert(consumerPartition, newOp);
@@ -396,7 +396,7 @@ void createArefGet(PartitionBuilder &builder, scf::ForOp loop,
       builder.getArrayAttr(asyncKinds));
   schedule.insert(consumerPartition, getExitOp);
   schedule.insert(consumerPartition, c0Exit.getDefiningOp());
-};
+}
 
 bool insertArefs(PartitionBuilder &builder, scf::ForOp loop,
                  WarpSchedule &schedule, ProducedValueInfo producedValue,

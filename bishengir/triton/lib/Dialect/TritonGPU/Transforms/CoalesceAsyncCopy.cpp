@@ -48,7 +48,7 @@ struct ClipAsyncCopySizePerThread
     auto sharedEnc = dyn_cast<SwizzledSharedEncodingAttr>(dstTy.getEncoding());
     if (!sharedEnc)
       return failure();
-    auto sharedVec = sharedEnc.getVec();
+    [[maybe_unused]] auto sharedVec = sharedEnc.getVec();
 
     // obtain max contiguous copy size
     // Note this can be further optimized, as copyContigSize can be even
@@ -63,7 +63,7 @@ struct ClipAsyncCopySizePerThread
     auto contigPerThread = getContigPerThread(srcTy);
     auto blockContigSize = contigPerThread[blockedEnc.getOrder()[0]];
 
-    if (blockContigSize <= copyContigSize)
+    if (blockContigSize <= static_cast<unsigned>(copyContigSize))
       return rewriter.notifyMatchFailure(
           copyOp,
           "blocked sizePerThread along contiguous dim must be greater than the "

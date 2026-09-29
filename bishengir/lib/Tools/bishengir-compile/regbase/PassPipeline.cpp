@@ -134,7 +134,6 @@ void setupHIVMPipelineOptions(
     }
   }
 
-
   // When cv-pipelining is off, disable workspace multibuffer entirely
   // so downstream passes do not allocate extra buffer slots for CV software
   // pipelining that will not be applied.
@@ -327,13 +326,13 @@ static void buildDelayedHFusionRegBaseVectorizePipeline(
 void buildFinalHIVMPipelines(mlir::OpPassManager &pm,
                              const BiShengIRCompileMainConfig &config) {
   if (config.getEnableHIVMCompile()) {
-    hivm::regbase::HIVMPipelineOptions hivmPipelineOptions;
-    setupHIVMPipelineOptions(hivmPipelineOptions, config);
+    auto options = std::make_unique<hivm::regbase::HIVMPipelineOptions>();
+    setupHIVMPipelineOptions(*options, config);
     if (config.getEnableSimdSimtMixCompile()) {
       buildDelayedHFusionRegBaseVectorizePipeline(
           pm, config, /*shouldInferFuncCoreType=*/true);
     }
-    hivm::regbase::buildLowerHIVMPipelines(pm, hivmPipelineOptions);
+    hivm::regbase::buildLowerHIVMPipelines(pm, *options);
   }
 }
 
@@ -371,8 +370,7 @@ void setupLowerTritonPipelineOptions(
   // max size of shared memory available for simt vf.
   options.sharedDynamicSize = config.getSharedMemDynamicSize();
   // encode our own compile optimization
-  options.simtOptimizationMode =
-      config.getSimtOptimizationMode();
+  options.simtOptimizationMode = config.getSimtOptimizationMode();
   options.enableCGroupingDotTileLowering =
       config.getEnableCGroupingDotTileLowering();
 #endif
@@ -472,35 +470,36 @@ void buildBiShengHIRPipeline(OpPassManager &pm,
   pm.addPass(createCanonicalizeModulePass());
 #if BISHENGIR_ENABLE_TORCH_CONVERSIONS
   if (config.getEnableTorchCompile()) {
-    TorchToNamedOpPipelineOptions torchToNamedOpOptions;
-    torchToNamedOpOptions.ensureNoImplicitBroadcast =
+    auto torchOptions = std::make_unique<TorchToNamedOpPipelineOptions>();
+    torchOptions->ensureNoImplicitBroadcast =
         config.getEnsureNoImplicitBroadcast();
-    createTorchBackendToNamedOpBackendPipeline(pm, torchToNamedOpOptions);
+    createTorchBackendToNamedOpBackendPipeline(pm, *torchOptions);
   }
 #endif
 
-  hfusion::HFusionPipelineOptions hfusionPipelineOptions;
   if (config.getEnableHfusionCompile()) {
-    setupHFusionPipelineOptions(hfusionPipelineOptions, config);
+    auto options = std::make_unique<hfusion::HFusionPipelineOptions>();
+    setupHFusionPipelineOptions(*options, config);
     if (config.getEnableSimdSimtMixCompile()) {
       // Delay reg-based vectorization until SIMT code is split out and we can
       // re-run it only on the main module.
-      hfusionPipelineOptions.disableHfusionVectorize = true;
+      options->disableHfusionVectorize = true;
     }
-    hfusion::regbase::buildHFusionPipelines(pm, hfusionPipelineOptions);
+    hfusion::regbase::buildHFusionPipelines(pm, *options);
   }
 
   if (config.getEnableHIVMCompile()) {
     // Build convert to HIVM Dialect pipeline.
-    hivm::regbase::ConvertToHIVMPipelineOptions convertToHIVMOptions;
-    convertToHIVMOptions.enableTritonKernelCompile =
+    auto convertOptions =
+        std::make_unique<hivm::regbase::ConvertToHIVMPipelineOptions>();
+    convertOptions->enableTritonKernelCompile =
         config.getEnableTritonKernelCompile();
-    convertToHIVMOptions.enableRegBaseHIVMPipe =
+    convertOptions->enableRegBaseHIVMPipe =
         hacc::utils::isRegBasedArch(config.getTarget());
-    hivm::regbase::HIVMPipelineOptions hivmPipelineOptions;
-    setupHIVMPipelineOptions(hivmPipelineOptions, config);
-    hivm::regbase::buildConvertToHIVMPipeline(pm, convertToHIVMOptions);
-    hivm::regbase::buildHIVMTensorOptimizations(pm, hivmPipelineOptions);
+    auto options = std::make_unique<hivm::regbase::HIVMPipelineOptions>();
+    setupHIVMPipelineOptions(*options, config);
+    hivm::regbase::buildConvertToHIVMPipeline(pm, *convertOptions);
+    hivm::regbase::buildHIVMTensorOptimizations(pm, *options);
     if (config.shouldEnableMixedCV()) {
       HIVMAggregatedDecomposeOpOptions decomposeOption;
       decomposeOption.decomposePhase = bishengir::DecomposePhase::NO_CONSTRAINT;

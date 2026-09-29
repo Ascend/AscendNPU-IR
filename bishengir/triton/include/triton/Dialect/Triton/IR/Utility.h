@@ -97,13 +97,13 @@ template <typename T>
 #ifndef NDEBUG
   SmallVector<T> sortedPerm(permutation);
   llvm::sort(sortedPerm);
-  for (int i = 0; i < sortedPerm.size(); ++i) {
-    assert(sortedPerm[i] == i);
+  for (int i = 0; i < static_cast<int>(sortedPerm.size()); ++i) {
+    assert(static_cast<size_t>(sortedPerm[i]) == static_cast<size_t>(i));
   }
 #endif
 
   SmallVector<T> ret(permutation.size());
-  for (int i = 0; i < permutation.size(); ++i) {
+  for (int i = 0; i < static_cast<int>(permutation.size()); ++i) {
     ret[permutation[i]] = i;
   }
   return ret;
@@ -158,7 +158,7 @@ template <typename VecT> bool isPermutationOfIota(const VecT &vec) {
 // Is `vec` [i, i+1, ..., i+n]?  Returns true on empty list.
 template <typename T> bool isConsecutive(ArrayRef<T> vec) {
   static_assert(std::is_integral_v<T>);
-  for (int i = 1; i < vec.size(); i++) {
+  for (int i = 1; i < static_cast<int>(vec.size()); i++) {
     if (vec[i] != vec[i - 1] + 1) {
       return false;
     }

@@ -1,9 +1,9 @@
 #include "AscendReduceScanCommon.h"
 
-#include "bishengir/Conversion/TritonAscendGPUToLLVM/TargetInfo.h"
 #include "bishengir/Analysis/AscendUtility.h"
-#include "bishengir/Dialect/Utils/Util.h"
 #include "bishengir/Conversion/TritonAscendGPUToLLVM/PatternTritonAscendGPUOpToLLVM.h"
+#include "bishengir/Conversion/TritonAscendGPUToLLVM/TargetInfo.h"
+#include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/Support/LLVM.h"
 #include "triton/Conversion/TritonGPUToLLVM/TargetInfoBase.h"
@@ -29,9 +29,10 @@ struct AscendReduceOpConversion
     : public ConvertTritonGPUReduceScanToLLVMPattern<triton::ReduceOp> {
 public:
   AscendReduceOpConversion(LLVMTypeConverter &typeConverter,
-                           const TargetInfoBase &targetInfo, PatternBenefit benefit)
+                           const TargetInfoBase &targetInfo,
+                           PatternBenefit benefit)
       : ConvertTritonGPUReduceScanToLLVMPattern<triton::ReduceOp>(typeConverter,
-                                                                   benefit),
+                                                                  benefit),
         targetInfo(targetInfo) {}
 
   LogicalResult
@@ -59,24 +60,27 @@ public:
     // can be extended to handle larger cases.
     bool ReplaceBFlyWithinWarps =
         ReplaceButterflyReduction && helper.isSharedMemoryReductionPreferred();
-    auto mod = op->getParentOfType<ModuleOp>();
+    [[maybe_unused]] auto mod = op->getParentOfType<ModuleOp>();
     LDBG(" * accs.size() = " << accs.size());
     LDBG(" * sizeIntraWarps = " << helper.getIntraWarpSizeWithUniqueData());
     LDBG(" * layout interleave = " << helper.getThreadOffsetOnReductionAxis());
     LDBG(" * corrected layout interleave = "
          << helper.getCorrectedThreadOffsetOnReductionAxis());
-    LDBG(" * numLanes = " << triton::gpu::TritonGPUDialect::getThreadsPerWarp(mod));
+    LDBG(" * numLanes = " << triton::gpu::TritonGPUDialect::getThreadsPerWarp(
+             mod));
     LDBG(" * numWarps = " << triton::gpu::lookupNumWarps(op));
-    LDBG(" * shared mem preferred = " << helper.isSharedMemoryReductionPreferred());
+    LDBG(" * shared mem preferred = "
+         << helper.isSharedMemoryReductionPreferred());
     LDBG(" * Butterfly replacement within warps is "
-        << (ReplaceBFlyWithinWarps ? "ON" : "OFF"));
+         << (ReplaceBFlyWithinWarps ? "ON" : "OFF"));
     reduceWithinWarps(helper, accs, rewriter, ReplaceBFlyWithinWarps);
 
     if (helper.isWarpSynchronous()) {
       // If all the values to be reduced are within the same warp there is
       // nothing left to do.
       packResults(helper, accs, rewriter);
-      LDBG(" * Warp-synchronous reduction does not require further butterfly replacement");
+      LDBG(" * Warp-synchronous reduction does not require further butterfly "
+           "replacement");
       return success();
     }
 
@@ -97,7 +101,8 @@ public:
     //
     // Each thread needs to process:
     //   elemsPerThread = sizeInterWarps * s1 * s2 .. Sn / numThreads
-    accumulatePartialReductions(helper, smemBases, rewriter, ReplaceButterflyReduction);
+    accumulatePartialReductions(helper, smemBases, rewriter,
+                                ReplaceButterflyReduction);
 
     // We could avoid this barrier in some of the layouts, however this is not
     // the general case.
@@ -127,8 +132,8 @@ private:
     LDBG(" * Butterfly replacement is "
          << (ReplaceButterflyReduction ? "ON" : "OFF"));
     LDBG(" * is variadic: " << (isVariadic ? "TRUE" : "FALSE"));
-    auto srcShape = op.getOperands()[0].getType()
-                        .cast<RankedTensorType>().getShape();
+    auto srcShape =
+        mlir::cast<RankedTensorType>(op.getOperands()[0].getType()).getShape();
     if (srcShape.size() == 1) {
       ReplaceButterflyReduction = false;
       LDBG(" * Butterfly replacement is disabled for 1D shapes");
@@ -223,8 +228,9 @@ private:
       return;
 
     // Get the physical warp size to bound the butterfly range.
-    // shuffleXor with offset >= numLanes wraps back to the same lane (self-shuffle),
-    // which doubles the accumulated value instead of exchanging with a peer.
+    // shuffleXor with offset >= numLanes wraps back to the same lane
+    // (self-shuffle), which doubles the accumulated value instead of exchanging
+    // with a peer.
     auto mod = op->getParentOfType<ModuleOp>();
     unsigned numLanes = static_cast<unsigned>(
         triton::gpu::TritonGPUDialect::getThreadsPerWarp(mod));
@@ -258,7 +264,7 @@ private:
         Value readPtr =
             b.gep(smemBases[i].getType(), elemTy, smemBases[i], readOff);
         items[VIdx].push_back(targetInfo.loadShared(rewriter, loc, readPtr,
-                                                     elemTy, threadIsNeeded));
+                                                    elemTy, threadIsNeeded));
       }
       if (VIdx == 0) {
         for (unsigned AccIdx = 0; AccIdx < op.getNumOperands(); ++AccIdx) {
@@ -283,7 +289,7 @@ private:
     if (ReplaceButterflyReduction) {
       LDBG(" * Butterfly replacement within warps applied");
       auto smemShape = helper.getScratchRepShape();
-      unsigned axis = op.getAxis();
+      [[maybe_unused]] unsigned axis = op.getAxis();
       SmallVector<Value> smemBases =
           getSmemBases(op, product<unsigned>(smemShape), rewriter, targetInfo);
       auto mod = op->getParentOfType<ModuleOp>();
@@ -302,7 +308,8 @@ private:
       Value newLane = b.udiv(threadId, b.i32_val(sizeIntraWarps * interleave));
       Value newIndex = b.urem(threadId, b.i32_val(sizeIntraWarps * interleave));
       if (interleave > 1) {
-        newLane = b.add(b.mul(newLane, b.i32_val(interleave)), b.urem(threadId, b.i32_val(interleave)));
+        newLane = b.add(b.mul(newLane, b.i32_val(interleave)),
+                        b.urem(threadId, b.i32_val(interleave)));
         newIndex = b.udiv(newIndex, b.i32_val(interleave));
       }
       auto *combineOp = &op.getCombineOp();
@@ -328,15 +335,18 @@ private:
       for (auto &it : accs) {
         const SmallVector<unsigned> &key = it.first;
         SmallVector<Value> &acc = accs[key];
-        // Now store data in memory, such that each working thread is accessing data
-        Value dataOffset = b.add(newLane, b.mul(newIndex, b.i32_val(workingThreads)));
+        // Now store data in memory, such that each working thread is accessing
+        // data
+        Value dataOffset =
+            b.add(newLane, b.mul(newIndex, b.i32_val(workingThreads)));
         Value writeOffset = b.add(dataOffset, b.i32_val(accOffset * AccIdx));
         Value ValTrue = b.true_val();
         for (size_t i = 0; i < op.getNumOperands(); i++) {
           auto elemTy = getElementType(op, i);
           Value writePtr =
               b.gep(smemBases[i].getType(), elemTy, smemBases[i], writeOffset);
-          targetInfo.storeShared(rewriter, loc, writePtr, acc[i], /*writeIsNeeded*/ ValTrue);
+          targetInfo.storeShared(rewriter, loc, writePtr, acc[i],
+                                 /*writeIsNeeded*/ ValTrue);
         }
         AccIdx++;
       }
@@ -344,27 +354,30 @@ private:
       // Now put a barrier to ensure all data is in shared memory.
       sync(rewriter, loc, op);
 
-      // Now we put in an if condition to only work on threads that are packed into working warps
+      // Now we put in an if condition to only work on threads that are packed
+      // into working warps
       SmallVector<Type> resultTypes;
       auto threadIsNeeded = b.icmp_slt(threadId, b.i32_val(neededTIDs));
-      auto IfStmt = rewriter.create<scf::IfOp>(loc, resultTypes, threadIsNeeded, true);
+      auto IfStmt =
+          rewriter.create<scf::IfOp>(loc, resultTypes, threadIsNeeded, true);
       rewriter.setInsertionPointToStart(&IfStmt.getThenRegion().front());
       SmallVector<Value> resultsThen;
       AccIdx = 0;
       for (size_t idx = 0; idx < accs.size(); ++idx) {
-        // Point the rewriter to the body of the 'then' block and generate the reduction.
+        // Point the rewriter to the body of the 'then' block and generate the
+        // reduction.
         Value ValTrue = b.true_val();
         SmallVector<Value> local_acc(op.getNumOperands());
         for (unsigned VIdx = 0; VIdx < sizeIntraWarps; VIdx++) {
           SmallVector<Value> items;
-          Value readOffset =
-              b.add(threadId, b.i32_val(VIdx * workingThreads + AccIdx * accOffset));
+          Value readOffset = b.add(
+              threadId, b.i32_val(VIdx * workingThreads + AccIdx * accOffset));
           for (unsigned i = 0; i < op.getNumOperands(); ++i) {
             auto elemTy = getElementType(op, i);
             Value readPtr =
                 b.gep(smemBases[i].getType(), elemTy, smemBases[i], readOffset);
-            items.push_back(targetInfo.loadShared(rewriter, loc, readPtr, elemTy,
-                                                  ValTrue));
+            items.push_back(
+                targetInfo.loadShared(rewriter, loc, readPtr, elemTy, ValTrue));
           }
           if (VIdx == 0) {
             for (unsigned OpIdx = 0; OpIdx < op.getNumOperands(); ++OpIdx) {
@@ -377,11 +390,11 @@ private:
         // Store accumulator result into shared memory at the threadId spot.
         for (size_t i = 0; i < op.getNumOperands(); i++) {
           auto elemTy = getElementType(op, i);
-          Value writeOffset =
-              b.add(threadId, b.i32_val(AccIdx * accOffset));
+          Value writeOffset = b.add(threadId, b.i32_val(AccIdx * accOffset));
           Value resultPtr =
               b.gep(smemBases[i].getType(), elemTy, smemBases[i], writeOffset);
-          targetInfo.storeShared(rewriter, loc, resultPtr, local_acc[i], ValTrue);
+          targetInfo.storeShared(rewriter, loc, resultPtr, local_acc[i],
+                                 ValTrue);
         }
         AccIdx++;
       }
@@ -401,11 +414,11 @@ private:
         for (size_t i = 0; i < op.getNumOperands(); i++) {
           auto elemTy = getElementType(op, i);
           Value ValTrue = b.true_val();
-          Value readOffset =
-              b.add(newLane, b.i32_val(AccIdx * accOffset));
+          Value readOffset = b.add(newLane, b.i32_val(AccIdx * accOffset));
           Value readPtr =
               b.gep(smemBases[i].getType(), elemTy, smemBases[i], readOffset);
-          acc[i] = targetInfo.loadShared(rewriter, loc, readPtr, elemTy, ValTrue);
+          acc[i] =
+              targetInfo.loadShared(rewriter, loc, readPtr, elemTy, ValTrue);
         }
         AccIdx++;
       }
@@ -455,8 +468,7 @@ private:
       AscendReduceOpHelper &helper,
       std::map<SmallVector<unsigned>, SmallVector<Value>> &accs,
       std::map<SmallVector<unsigned>, SmallVector<Value>> &indices,
-      SmallVector<Value> &smemBases,
-      ConversionPatternRewriter &rewriter,
+      SmallVector<Value> &smemBases, ConversionPatternRewriter &rewriter,
       bool &ReplaceButterflyReduction) const {
     triton::ReduceOp op = helper.getOperation();
     Location loc = op.getLoc();
@@ -487,7 +499,8 @@ private:
     // job would be reduced. The warp packing only makes sense if we use
     // fewer threads.
     auto mod = op->getParentOfType<ModuleOp>();
-    unsigned numLanes = static_cast<unsigned>(triton::gpu::TritonGPUDialect::getThreadsPerWarp(mod));
+    unsigned numLanes = static_cast<unsigned>(
+        triton::gpu::TritonGPUDialect::getThreadsPerWarp(mod));
     int numWarps = triton::gpu::lookupNumWarps(op);
     int numThreads = static_cast<int>(numLanes) * numWarps;
     unsigned elems = product<unsigned>(smemShape);
@@ -503,13 +516,14 @@ private:
     LDBG(" * MEM write -> axis = " << axis);
     LDBG(" * MEM write -> smemOrder.size() = " << smemOrder.size());
     if (ReplaceButterflyReduction) {
-      // For next stage we want the warp threads taking adjacent elements from memory, but
-      // each thread takes an element that it itself will be reducing, so not related to
-      // other threads. We do this to optimize memory access pattern. So, we need a stride for
-      // data storage. We can easily do this by swapping smemOrder, assuming smemOrder has
-      // more than 1 element. One possible improvement is to add padding to the memory
-      // reorganization, which is more than just reshaping the tensor. That would speed
-      // things up even for some of the more odd shapes.
+      // For next stage we want the warp threads taking adjacent elements from
+      // memory, but each thread takes an element that it itself will be
+      // reducing, so not related to other threads. We do this to optimize
+      // memory access pattern. So, we need a stride for data storage. We can
+      // easily do this by swapping smemOrder, assuming smemOrder has more than
+      // 1 element. One possible improvement is to add padding to the memory
+      // reorganization, which is more than just reshaping the tensor. That
+      // would speed things up even for some of the more odd shapes.
       unsigned elemsPerThread = std::max<unsigned>(elems / numThreads, 1);
       if ((smemOrder.size() > 1) && (elemsPerThread <= numLanes)) {
         auto tmp = smemOrder[smemOrder.size() - 1];
@@ -568,7 +582,8 @@ private:
       LDBG(" * elems = " << elems);
       LDBG(" * sizeInterWarps = " << sizeInterWarps);
       LDBG(" * axis = " << op.getAxis());
-      LDBG(" * numLanes = " << triton::gpu::TritonGPUDialect::getThreadsPerWarp(mod));
+      LDBG(" * numLanes = "
+           << triton::gpu::TritonGPUDialect::getThreadsPerWarp(mod));
       LDBG(" * numWarps = " << triton::gpu::lookupNumWarps(op));
       Value threadIsNeeded = b.icmp_slt(threadId, b.i32_val(elems));
       Value readOffset = threadId;
@@ -592,7 +607,8 @@ private:
               b.gep(smemBases[i].getType(), elemTy, smemBases[i], writeOffset);
         }
 
-        Value laneIdModSizeInterWarps = b.urem(laneId, b.i32_val(sizeInterWarps));
+        Value laneIdModSizeInterWarps =
+            b.urem(laneId, b.i32_val(sizeInterWarps));
         Value laneIdModSizeInterWarpsIsZero =
             b.icmp_eq(laneIdModSizeInterWarps, zero);
         Value pred = b.and_(threadIsNeeded, laneIdModSizeInterWarpsIsZero);
@@ -622,7 +638,8 @@ private:
       LDBG(" * stride = " << stride);
       LDBG(" * axis = " << axis);
       LDBG(" * redAxisSize = " << reductionAxisSize);
-      LDBG(" * numLanes = " << triton::gpu::TritonGPUDialect::getThreadsPerWarp(mod));
+      LDBG(" * numLanes = "
+           << triton::gpu::TritonGPUDialect::getThreadsPerWarp(mod));
       LDBG(" * numWarps = " << triton::gpu::lookupNumWarps(op));
       LDBG(" * maxThreadsNeeded = " << maxThreadsNeeded);
       LDBG(" * elements = " << elems);
@@ -633,11 +650,13 @@ private:
         resultTypes.push_back(getElementType(op, i));
       }
       auto threadIsNeeded = b.icmp_slt(threadId, b.i32_val(maxThreadsNeeded));
-      auto IfStmt = rewriter.create<scf::IfOp>(loc, resultTypes, threadIsNeeded, true);
+      auto IfStmt =
+          rewriter.create<scf::IfOp>(loc, resultTypes, threadIsNeeded, true);
       rewriter.setInsertionPointToStart(&IfStmt.getThenRegion().front());
 
-      loadVectorAndAccumulateSingleAcc(helper, smemBases, readOffset, acc, threadId,
-                                       rewriter, loc, sizeInterWarps, stride, ValTrue);
+      loadVectorAndAccumulateSingleAcc(helper, smemBases, readOffset, acc,
+                                       threadId, rewriter, loc, sizeInterWarps,
+                                       stride, ValTrue);
       SmallVector<Value> resultsThen;
       for (size_t i = 0; i < op.getNumOperands(); i++) {
         resultsThen.push_back(acc[i]);
@@ -648,7 +667,8 @@ private:
       rewriter.setInsertionPointToStart(&IfStmt.getElseRegion().front());
       SmallVector<Value> resultsElse;
       for (size_t i = 0; i < op.getNumOperands(); i++) {
-        resultsElse.push_back(rewriter.create<LLVM::UndefOp>(loc, resultTypes[i]));
+        resultsElse.push_back(
+            rewriter.create<LLVM::UndefOp>(loc, resultTypes[i]));
       }
       rewriter.create<scf::YieldOp>(loc, resultsElse);
 
@@ -670,7 +690,8 @@ private:
             b.gep(smemBases[i].getType(), elemTy, smemBases[i], writeOffset);
       }
       for (unsigned i = 0; i < op.getNumOperands(); ++i) {
-        targetInfo.storeShared(rewriter, loc, writePtrs[i], IfStmt.getResult(i), threadIsNeeded);
+        targetInfo.storeShared(rewriter, loc, writePtrs[i], IfStmt.getResult(i),
+                               threadIsNeeded);
       }
     }
   }
@@ -737,8 +758,8 @@ private:
 
           for (unsigned g = 1; g < numGroups; ++g) {
             Value groupOffset = b.add(readOffset, b.i32_val(g * numLanes));
-            Value groupPtr =
-                b.gep(smemBases[i].getType(), elemTy, smemBases[i], groupOffset);
+            Value groupPtr = b.gep(smemBases[i].getType(), elemTy, smemBases[i],
+                                   groupOffset);
             SmallVector<Value> groupVal = {b.load(elemTy, groupPtr)};
             accumulate(loc, rewriter, op.getCombineOp(), acc, groupVal);
           }

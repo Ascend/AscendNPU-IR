@@ -16,14 +16,14 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HACC/IR/HACC.h"
-#include "bishengir/Tools/hivmc/HIVMCA3.h"
-#include "bishengir/Tools/hivmc/PassPipelineA3.h"
-#include "bishengir/Tools/hivmc/Utility.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Pass/PassManager.h"
 #include "bishengir/Tools/hivmc/AdapterSanitizer.h"
 #include "bishengir/Tools/hivmc/Config.h"
+#include "bishengir/Tools/hivmc/HIVMCA3.h"
+#include "bishengir/Tools/hivmc/PassPipelineA3.h"
+#include "bishengir/Tools/hivmc/Utility.h"
 
 #include "mlir/Support/FileUtilities.h"
 #include "mlir/Support/Timing.h"
@@ -171,7 +171,7 @@ StringRef getAscendPath() {
 }
 
 /// Modify the ir string for downgrade the llvm version
-std::string modifyForVersionMismatch(std::string src) {
+[[maybe_unused]] std::string modifyForVersionMismatch(std::string src) {
   std::regex downgradeMemRe("memory\\(([^()]*)\\)");
   std::map<std::string, unsigned> rwMap = {
       {"readwrite", 3}, {"write", 2}, {"read", 1}, {"none", 0}};
@@ -443,12 +443,12 @@ void attachMetadataToLLVMIR(llvm::Module &llMod) {
   }
 }
 
-std::optional<std::string> compileDeviceKernel(
-    StringRef bishengPath, const std::string &llvmirFilepath,
-    const std::string &outputBinFilepath, SubCoreTarget arch,
-    const HIVMCMainConfig &config,
-    bool isMixKernel, bool mixKernelBothDebugOrShmem,
-    std::map<SubCoreTarget, std::string> bitcodePaths) {
+std::optional<std::string>
+compileDeviceKernel(StringRef bishengPath, const std::string &llvmirFilepath,
+                    const std::string &outputBinFilepath, SubCoreTarget arch,
+                    const HIVMCMainConfig &config, bool isMixKernel,
+                    bool mixKernelBothDebugOrShmem,
+                    std::map<SubCoreTarget, std::string> bitcodePaths) {
   if (!bitcodePaths.count(arch))
     return std::nullopt;
   std::string metaOpFilePath = bitcodePaths[arch];
@@ -520,9 +520,9 @@ std::optional<std::string> compileDeviceKernel(
   // TODO: may avoid StringRef since its lifetime is hard to maintain
   // link the llir with meta_op_mix and produce the
   // final .o
-  SubCoreTarget mixCoreType =
-      arch == SubCoreTarget::AIC ? SubCoreTarget::MIX_AIC
-                                            : SubCoreTarget::MIX_AIV;
+  SubCoreTarget mixCoreType = arch == SubCoreTarget::AIC
+                                  ? SubCoreTarget::MIX_AIC
+                                  : SubCoreTarget::MIX_AIV;
   if (!bitcodePaths.count(mixCoreType))
     return std::nullopt;
   std::string metaOpMixPartFilePath = bitcodePaths[mixCoreType];
@@ -606,10 +606,11 @@ LogicalResult relocBinary(const std::string &unrelocFile,
   return success();
 }
 
-bool lowerDeviceToBinary(
-    const SmallVector<IRFilePair> &outputLLVMIRs, const std::string &outputFile,
-    const HIVMCMainConfig &config, bool isMixKernel, bool mixKernelBothDebugOrShmem,
-    std::map<SubCoreTarget, std::string> bitcodePaths) {
+bool lowerDeviceToBinary(const SmallVector<IRFilePair> &outputLLVMIRs,
+                         const std::string &outputFile,
+                         const HIVMCMainConfig &config, bool isMixKernel,
+                         bool mixKernelBothDebugOrShmem,
+                         std::map<SubCoreTarget, std::string> bitcodePaths) {
   LDBG("Lowering device module from BiShengLIR to binary");
   SmallVector<std::optional<std::string>> outputObjects(outputLLVMIRs.size());
 
@@ -703,10 +704,10 @@ translateDeviceKernelToLLVM(ArrayRef<ModuleOp> modulesToLower,
 }
 
 #if (!BISHENGIR_PUBLISH)
-std::optional<std::string> compileToCPUDynamicLib(
-    StringRef hostDebugPath, const std::string &llvmirFilepath,
-    SubCoreTarget arch,
-    std::map<SubCoreTarget, std::string> bitcodePaths) {
+std::optional<std::string>
+compileToCPUDynamicLib(StringRef hostDebugPath,
+                       const std::string &llvmirFilepath, SubCoreTarget arch,
+                       std::map<SubCoreTarget, std::string> bitcodePaths) {
   if (!bitcodePaths.count(arch))
     return std::nullopt;
   std::string metaOpFilePath = bitcodePaths[arch];
@@ -727,9 +728,9 @@ std::optional<std::string> compileToCPUDynamicLib(
   return outputBin;
 }
 
-LogicalResult lowerToCPUDynamicLib(
-    const SmallVector<IRFilePair> &outputLLVMIRs,
-    std::map<SubCoreTarget, std::string> bitcodePaths) {
+LogicalResult
+lowerToCPUDynamicLib(const SmallVector<IRFilePair> &outputLLVMIRs,
+                     std::map<SubCoreTarget, std::string> bitcodePaths) {
   SmallVector<std::optional<std::string>> outputObjects;
   if (outputLLVMIRs.size() > 1) {
     llvm_unreachable("Just support one module to cpu target compilation yet");
@@ -752,10 +753,11 @@ LogicalResult lowerToCPUDynamicLib(
 }
 #endif
 
-LogicalResult runDeviceBiShengLIRCompile(
-    ModuleOp mod, const HIVMCMainConfig &config, const std::string &outputFile,
-    const std::string &tempFilesPath,
-    std::map<SubCoreTarget, std::string> bitcodePaths) {
+LogicalResult
+runDeviceBiShengLIRCompile(ModuleOp mod, const HIVMCMainConfig &config,
+                           const std::string &outputFile,
+                           const std::string &tempFilesPath,
+                           std::map<SubCoreTarget, std::string> bitcodePaths) {
   LDBG("Lowering device module from BiShengLIR to binary");
   // split the input mix module to 2 separate modules
   SmallVector<ModuleOp, 2> modulesAfterSplit;
@@ -777,7 +779,7 @@ LogicalResult runDeviceBiShengLIRCompile(
     isMixKernel = true;
     // short-circuiting is fine
     mixKernelBothDebugOrShmem = isDebugOrShmemPresent(modulesAfterSplit[0]) &&
-                         isDebugOrShmemPresent(modulesAfterSplit[1]);
+                                isDebugOrShmemPresent(modulesAfterSplit[1]);
   } else {
     modulesAfterSplit.push_back(mod);
   }
@@ -805,10 +807,10 @@ LogicalResult runDeviceBiShengLIRCompile(
   // NOTICE: in future, this saving may not be necessary.
   bool setKeepFlag = !config.shouldCompileLIR();
 #if (!BISHENGIR_PUBLISH)
-  // For security reasons, we want to honor saving of .ll files with --save-temps
-  // option in internal builds only.
+  // For security reasons, we want to honor saving of .ll files with
+  // --save-temps option in internal builds only.
   if (!config.shouldSaveTemps().empty())
-	  setKeepFlag = true;
+    setKeepFlag = true;
 #endif
   SmallVector<IRFilePair> llvmTempFiles =
       saveToFiles(llvmModules, tempFilesPath, setKeepFlag);
@@ -828,7 +830,7 @@ LogicalResult runDeviceBiShengLIRCompile(
   }
 #endif
 
-  // NEXT: remove isMixKernel and mixKernelBothDebugOrShmem after refactoring  to
+  // NEXT: remove isMixKernel and mixKernelBothDebugOrShmem after refactoring to
   // enable bisheng link two bc files compile llvm ir files to the final binary
   if (!lowerDeviceToBinary(llvmTempFiles, outputFile, config, isMixKernel,
                            mixKernelBothDebugOrShmem, bitcodePaths)) {
@@ -871,8 +873,7 @@ LogicalResult lowerHostToBinary(
   auto bishengPath = getBiShengCompilerInstallPath();
   if (!bitcodePaths.count(SubCoreTarget::HOST))
     return failure();
-  std::string hostTilingFuncFilePath =
-      bitcodePaths[SubCoreTarget::HOST];
+  std::string hostTilingFuncFilePath = bitcodePaths[SubCoreTarget::HOST];
 
   arguments.push_back("-x");
   arguments.push_back("ir");
@@ -899,9 +900,10 @@ LogicalResult lowerHostToBinary(
   return success();
 }
 
-LogicalResult runHostBiShengLIRCompile(
-    ModuleOp mod, const HIVMCMainConfig &config, const std::string &outputFile,
-    std::map<SubCoreTarget, std::string> bitcodePaths) {
+LogicalResult
+runHostBiShengLIRCompile(ModuleOp mod, const HIVMCMainConfig &config,
+                         const std::string &outputFile,
+                         std::map<SubCoreTarget, std::string> bitcodePaths) {
   if (!(config.shouldCompileLIR() && hacc::existHost(mod)))
     return success();
 
@@ -941,8 +943,7 @@ LogicalResult runHostBiShengLIRCompile(
     return mod->emitError(
         "Failed to translate host module from LLVM Dialect IR to BiShengLIR\n");
   SmallVector<IRModulePair> llvmHostFile;
-  llvmHostFile.emplace_back(std::move(llvmModule),
-                            SubCoreTarget::HOST);
+  llvmHostFile.emplace_back(std::move(llvmModule), SubCoreTarget::HOST);
 
   LDBG("Lowering host module from BiShengLIR to binary");
   auto tempLLVMFileName = saveToFiles(llvmHostFile, outputFile, false, true);
@@ -955,7 +956,6 @@ LogicalResult runHostBiShengLIRCompile(
   return success();
 }
 } // namespace
-
 
 FailureOr<PipelineModuleResult> bishengir::runBiShengLIRCompileA3(
     ModuleOp module, HIVMCMainConfig config,
@@ -985,10 +985,12 @@ FailureOr<PipelineModuleResult> bishengir::runBiShengLIRCompileA3(
     }
     if (!llvm::sys::fs::exists(saveTempsDir))
       if (auto ec = llvm::sys::fs::create_directories(saveTempsDir)) {
-        llvm::errs() << "[ERROR] Failed to create save-temps directory: " << saveTempsDir << "\n";
+        llvm::errs() << "[ERROR] Failed to create save-temps directory: "
+                     << saveTempsDir << "\n";
         return failure();
       }
-    llvm::sys::path::append(saveTempsDir, llvm::sys::path::filename(outputFile));
+    llvm::sys::path::append(saveTempsDir,
+                            llvm::sys::path::filename(outputFile));
     tempFilesOutputPath = std::string(saveTempsDir);
   }
 
@@ -1015,7 +1017,8 @@ FailureOr<PipelineModuleResult> bishengir::runBiShengLIRCompileA3(
   return res;
 }
 
-mlir::LogicalResult bishengir::runHIVMCCompileA3(ModuleOp module, HIVMCMainConfig config) {
+mlir::LogicalResult bishengir::runHIVMCCompileA3(ModuleOp module,
+                                                 HIVMCMainConfig config) {
   auto buildPipeline = std::bind(buildBiShengHIRHIVMToLLVMPipeline,
                                  std::placeholders::_1, config);
   if (failed(runPipeline(module, buildPipeline, config,

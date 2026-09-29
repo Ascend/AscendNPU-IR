@@ -49,11 +49,7 @@ int registerHIVMDialect(MlirContext ctx) {
     strcat(hivmOp, "hivm.hir.");
     strcat(hivmOp, hivmOps[i]);
 
-    char format[60] = {""};
-    strcat(format, hivmOp);
-    strcat(format, " is_registered: %d\n");
-
-    fprintf(stderr, format,
+    fprintf(stderr, "%s is_registered: %d\n", hivmOp,
             mlirContextIsRegisteredOperation(
                 ctx, mlirStringRefCreateFromCString(hivmOp)));
   }
