@@ -1914,13 +1914,205 @@ static bool isSplitMixModule(ModuleOp moduleOp) {
   return false;
 }
 
-// All-zero scopes execute in the same iteration. Moving a returned tensor's
-// writer into its consumer can place it after an intervening read.
-static bool allScopesPinnedToZero(scf::ForOp loop) {
-  auto scopes = loop.getBody()->getOps<scope::ScopeOp>();
-  return !scopes.empty() && llvm::all_of(scopes, [](scope::ScopeOp scope) {
-    return getScopePreloadNum(scope) == 0;
+static bool dominatesOp(Operation *def, Operation *user) {
+  if (def->getBlock() == user->getBlock())
+    return def->isBeforeInBlock(user);
+  Operation *parent = user->getParentOp();
+  if (!parent)
+    return false;
+  if (def->getBlock() == parent->getBlock())
+    return def->isBeforeInBlock(parent);
+  return dominatesOp(def, parent);
+}
+
+/// Follow scope results back to the value the scope actually returns, so a
+/// matmul that reads a left matrix through an earlier scope matches the
+/// matmul that produced that matrix inside the scope.
+static Value traceThroughScopeResults(Value v) {
+  DenseSet<Value> seen;
+  while (Operation *def = v.getDefiningOp()) {
+    if (!seen.insert(v).second)
+      break;
+    auto scope = dyn_cast<scope::ScopeOp>(def);
+    if (!scope)
+      break;
+    auto ret =
+        dyn_cast<scope::ReturnOp>(scope.getRegion().front().getTerminator());
+    if (!ret)
+      break;
+    auto result = dyn_cast<OpResult>(v);
+    if (!result || result.getResultNumber() >= ret->getNumOperands())
+      break;
+    v = ret->getOperand(result.getResultNumber());
+  }
+  return v;
+}
+
+/// Identity of a matmul's left matrix: the memref behind a `to_tensor`, or
+/// the SSA value itself when the matrix is not buffer-backed.
+static Value leftMatrixIdentity(Value v) {
+  v = traceThroughScopeResults(v);
+  auto toTensor = v.getDefiningOp<bufferization::ToTensorOp>();
+  if (!toTensor)
+    return v;
+  Value mem = toTensor.getMemref();
+  while (Operation *def = mem.getDefiningOp()) {
+    if (auto cast = dyn_cast<memref::MemorySpaceCastOp>(def))
+      mem = cast.getSource();
+    else if (auto sub = dyn_cast<memref::SubViewOp>(def))
+      mem = sub.getSource();
+    else if (auto castOp = dyn_cast<memref::CastOp>(def))
+      mem = castOp.getSource();
+    else if (auto reinterpret = dyn_cast<memref::ReinterpretCastOp>(def))
+      mem = reinterpret.getSource();
+    else
+      break;
+  }
+  return mem;
+}
+
+/// Outermost op that still sits directly in `loop`'s body and contains `op`.
+static Operation *outermostInLoop(Operation *op, scf::ForOp loop) {
+  if (!op || !loop->isAncestor(op))
+    return nullptr;
+  while (op->getParentOp() != loop)
+    op = op->getParentOp();
+  return op;
+}
+
+/// The loop-body op that should be treated as the end of this matmul: its
+/// fixpipe when that fixpipe is a later sibling container, otherwise the
+/// matmul's own container.
+static Operation *matmulEndInLoop(hivm::MmadL1Op mmad, scf::ForOp loop) {
+  Operation *end = outermostInLoop(mmad, loop);
+  for (Operation *user : mmad->getUsers()) {
+    if (!isa<hivm::FixpipeOp>(user))
+      continue;
+    Operation *userTop = outermostInLoop(user, loop);
+    if (userTop && end && userTop->getBlock() == end->getBlock() &&
+        end->isBeforeInBlock(userTop))
+      end = userTop;
+  }
+  return end;
+}
+
+/// Move a later `mmadL1` that reads the same left matrix as an earlier one
+/// up to that earlier matmul. Containers are the ops directly in the loop
+/// body, so a matmul wrapped in a scope moves together with that scope.
+/// The later matmul stays put when an operand it needs is produced by
+/// something that has to remain between them.
+static void clusterSharedLeftMatrixMads(scf::ForOp loop) {
+  bool moved = true;
+  while (moved) {
+    moved = false;
+    SmallVector<hivm::MmadL1Op> mmads;
+    loop.walk([&](hivm::MmadL1Op mmad) { mmads.push_back(mmad); });
+
+    for (size_t i = 0; i < mmads.size() && !moved; ++i) {
+      hivm::MmadL1Op first = mmads[i];
+      Operation *anchor = matmulEndInLoop(first, loop);
+      if (!anchor)
+        continue;
+      for (size_t j = i + 1; j < mmads.size() && !moved; ++j) {
+        hivm::MmadL1Op second = mmads[j];
+        if (leftMatrixIdentity(second.getA()) !=
+            leftMatrixIdentity(first.getA()))
+          continue;
+        Operation *secondMmadTop = outermostInLoop(second, loop);
+        Operation *secondEnd = matmulEndInLoop(second, loop);
+        if (!secondMmadTop || !secondEnd ||
+            secondEnd->getBlock() != anchor->getBlock() ||
+            !anchor->isBeforeInBlock(secondMmadTop))
+          continue;
+
+        DenseSet<Operation *> cluster;
+        cluster.insert(secondMmadTop);
+        cluster.insert(secondEnd);
+        bool grew = true;
+        while (grew) {
+          grew = false;
+          SmallVector<Operation *> snapshot(cluster.begin(), cluster.end());
+          for (Operation *root : snapshot) {
+            root->walk([&](Operation *op) {
+              for (Value operand : op->getOperands()) {
+                Operation *def = operand.getDefiningOp();
+                if (!def)
+                  continue;
+                Operation *defTop = outermostInLoop(def, loop);
+                if (!defTop || cluster.contains(defTop) ||
+                    defTop->getBlock() != anchor->getBlock())
+                  continue;
+                if (anchor->isBeforeInBlock(defTop) &&
+                    (defTop == secondEnd ||
+                     defTop->isBeforeInBlock(secondEnd))) {
+                  cluster.insert(defTop);
+                  grew = true;
+                }
+              }
+            });
+          }
+        }
+
+        bool stuck = false;
+        for (Operation *root : cluster) {
+          root->walk([&](Operation *op) {
+            if (stuck)
+              return;
+            for (Value operand : op->getOperands()) {
+              Operation *def = operand.getDefiningOp();
+              if (!def || root->isAncestor(def))
+                continue;
+              Operation *defTop = outermostInLoop(def, loop);
+              if (defTop && cluster.contains(defTop))
+                continue;
+              if (def == anchor || anchor->isAncestor(def))
+                continue;
+              if (!dominatesOp(def, anchor))
+                stuck = true;
+            }
+          });
+          if (stuck)
+            break;
+        }
+        if (stuck)
+          continue;
+
+        bool alreadyTogether = true;
+        for (Operation *op = anchor->getNextNode(); op && op != secondMmadTop;
+             op = op->getNextNode()) {
+          if (!cluster.contains(op)) {
+            alreadyTogether = false;
+            break;
+          }
+        }
+        if (alreadyTogether)
+          continue;
+
+        SmallVector<Operation *> ordered(cluster.begin(), cluster.end());
+        llvm::sort(ordered, [](Operation *a, Operation *b) {
+          return a->isBeforeInBlock(b);
+        });
+        Operation *ip = anchor;
+        for (Operation *op : ordered) {
+          op->moveAfter(ip);
+          ip = op;
+        }
+        moved = true;
+      }
+    }
+  }
+}
+
+static bool allScopesPinnedToZero(scf::ForOp forOp) {
+  bool sawScope = false;
+  bool allZero = true;
+  forOp.walk([&](scope::ScopeOp scope) {
+    sawScope = true;
+    auto attr = scope->getAttrOfType<IntegerAttr>(hivm::PreloadNumAttr::name);
+    if (!attr || attr.getInt() != 0)
+      allZero = false;
   });
+  return sawScope && allZero;
 }
 
 void SinkExclusivePreloadWorkPass::runOnOperation() {
@@ -1935,6 +2127,9 @@ void SinkExclusivePreloadWorkPass::runOnOperation() {
     SmallVector<scf::ForOp> forOps;
     funcOp.walk([&](scf::ForOp forOp) { forOps.push_back(forOp); });
     for (scf::ForOp forOp : forOps) {
+      // Every scope at preload_num 0 means the next iteration is not
+      // overlapped. Sinking a returned dest across those scopes can place
+      // it before the value it reads.
       if (!allScopesPinnedToZero(forOp) &&
           failed(sinkReturnedTensorsToConsumerImpl(forOp)))
         return signalPassFailure();
@@ -1965,11 +2160,12 @@ void RepositionPreloadWorkPass::runOnOperation() {
     SmallVector<scf::ForOp> forOps;
     funcOp.walk([&](scf::ForOp forOp) { forOps.push_back(forOp); });
     for (scf::ForOp forOp : forOps) {
-      // Sink first. Hoisting afterwards must not be undone: the prefix
-      // scope's results are exactly the values the remaining scope still
-      // needs, and dest-sink would pull that cluster back. mb=1 alloc
-      // sinking is intentionally not done here.
-      if (failed(sinkReturnedTensorsToConsumerImpl(forOp)))
+      clusterSharedLeftMatrixMads(forOp);
+      // Every scope at preload_num 0 means the next iteration is not
+      // overlapped. Sinking a returned dest across those scopes can place
+      // it before the value it reads.
+      if (!allScopesPinnedToZero(forOp) &&
+          failed(sinkReturnedTensorsToConsumerImpl(forOp)))
         return signalPassFailure();
       if (failed(sinkCopyChainPastUnusedMmad(forOp)))
         return signalPassFailure();
