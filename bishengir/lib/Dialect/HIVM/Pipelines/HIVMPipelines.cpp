@@ -37,8 +37,8 @@
 namespace mlir {
 namespace hivm {
 
-static bool enableRegisteredPreloadHeuristics(
-    const HIVMPipelineOptions &pipelineOpts) {
+static bool
+enableRegisteredPreloadHeuristics(const HIVMPipelineOptions &pipelineOpts) {
   return pipelineOpts.enablePreload &&
          pipelineOpts.setWorkspaceMultibuffer != 0;
 }
@@ -297,7 +297,12 @@ static void hivmPreBufferizationOptimizationPipeline(
         hivmPipelineOptions.limitAutoMultiBufferBuffer;
     multiBufferOptions.workspaceMultiBufferNum =
         hivmPipelineOptions.setWorkspaceMultibuffer;
+    multiBufferOptions.disableMultiBufferOnUB =
+        hivmPipelineOptions.disableMultiBufferOnUB;
     multiBufferOptions.enablePreload = hivmPipelineOptions.enablePreload;
+    multiBufferOptions.multiBufferMode = hivmPipelineOptions.multibufferMode;
+    if (hivmPipelineOptions.setWorkspaceMultibuffer == 0)
+      multiBufferOptions.gmMultiBufferNum = 1;
     pm.addNestedPass<func::FuncOp>(
         createMarkMultiBufferPass(multiBufferOptions));
   }
@@ -507,7 +512,12 @@ static void hivmPostBufferizationOptimizationPipeline(
       hivmPipelineOptions.limitAutoMultiBufferOfLocalBuffer;
   multiBufferOptions.limitMixAutoMultiBufferBuffer =
       hivmPipelineOptions.limitAutoMultiBufferBuffer;
+  multiBufferOptions.disableMultiBufferOnUB =
+      hivmPipelineOptions.disableMultiBufferOnUB;
   multiBufferOptions.enablePreload = hivmPipelineOptions.enablePreload;
+  multiBufferOptions.multiBufferMode = hivmPipelineOptions.multibufferMode;
+  // Force-disable GM so the local stage does not rematerialize workspace marks.
+  multiBufferOptions.gmMultiBufferNum = 1;
   pm.nest<func::FuncOp>().addPass(
       createMarkMultiBufferPass(multiBufferOptions));
   PlanMemoryOptions planMemoryOption;
