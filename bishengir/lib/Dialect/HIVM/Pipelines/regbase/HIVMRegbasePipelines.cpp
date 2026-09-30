@@ -773,6 +773,7 @@ static void hivmPostBufferizationOptimizationPipeline(
         vector::createPeelLoopsContainingTransposePass());
     pm.addPass(createCanonicalizerPass());
     pm.nest<func::FuncOp>().addPass(vector::createNormalizeVectorPass());
+    pm.nest<func::FuncOp>().addPass(vector::createHoistConstantMasksPass());
     pm.nest<func::FuncOp>().addPass(createCSEPass());
     pm.nest<func::FuncOp>().addPass(createArithVectorMaskAnalysisPass());
   }

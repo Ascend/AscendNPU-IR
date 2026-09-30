@@ -9,10 +9,10 @@
 // CHECK-LABEL: func.func @binary_search_unrolled_vf_0
 // CHECK: %[[MASK:.*]] = vector.constant_mask [1] : vector<64xi1>
 // CHECK-NEXT: annotation.mark %[[MASK]] {mask_op_idx = 0 : i32} : vector<64xi1>
-// The final midpoint select feeding the masked write must carry the
-// reached-mask annotation.
-// CHECK: annotation.mark %139 {reached_mask_ops_idx = 0 : i32} : vector<64xi32>
-// CHECK-NEXT: vector.transfer_write %139, %arg4[%c0], %[[MASK]] {in_bounds = [true]} : vector<64xi32>, memref<1xi32, #hivm.address_space<ub>>
+// Values in the flow must carry the reached-mask annotation with a direct
+// reference to the mask, and the final masked write must use the same mask.
+// CHECK: annotation.mark %{{.*}} {reached_mask_ops_idx = 0 : i32} keys = ["reached_mask_value"] values = [%[[MASK]] : vector<64xi1>] : vector<64xi32>
+// CHECK: vector.transfer_write %{{.*}}, %arg4[%c0], %[[MASK]] {in_bounds = [true]} : vector<64xi32>, memref<1xi32, #hivm.address_space<ub>>
 func.func @binary_search_unrolled_vf_0(%arg0: memref<1xi32, #hivm.address_space<ub>>, %arg1: memref<1xi32, #hivm.address_space<ub>>, %arg2: memref<1xi32, #hivm.address_space<ub>>, %arg3: memref<1xi32, #hivm.address_space<ub>>, %arg4: memref<1xi32, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
   %v1 = arith.constant dense<0> : vector<64xi32>
   %v2 = arith.constant dense<-2147483648> : vector<64xi32>

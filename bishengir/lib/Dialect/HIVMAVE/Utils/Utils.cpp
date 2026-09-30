@@ -508,42 +508,38 @@ Value hivmave::createMaskByPGE(VectorType vecTy, PatternRewriter &rewriter,
 
 Value hivmave::findReuseableMask(Operation *maskedOp,
                                  PatternRewriter &rewriter) {
-  Value mask;
-  if (utils::getAnnotateOpWithAttr(maskedOp->getResults()[0],
-                                   utils::reachedMaskOpsIdx)) {
-    annotation::MarkOp mark = dyn_cast<annotation::MarkOp>(
-        utils::getAnnotateOpWithAttr(maskedOp->getResults()[0],
-                                     utils::reachedMaskOpsIdx)
-            .value());
-    int reachedMaskOpIdx = static_cast<int>(
-        mark->template getAttrOfType<IntegerAttr>(utils::reachedMaskOpsIdx)
-            .getValue()
-            .getZExtValue());
-    auto funcOp = maskedOp->getParentOfType<func::FuncOp>();
-    funcOp->walk([&](Operation *op) {
-      if (op->getNumResults() > 0 &&
-          utils::getAnnotateOpWithAttr(op->getResults()[0], utils::maskOpIdx)) {
-        annotation::MarkOp candidateMaskOpMark = dyn_cast<annotation::MarkOp>(
-            utils::getAnnotateOpWithAttr(op->getResults()[0], utils::maskOpIdx)
-                .value());
-        int candidateMaskOpIdx =
-            candidateMaskOpMark
-                ->template getAttrOfType<IntegerAttr>(utils::maskOpIdx)
-                .getValue()
-                .getZExtValue();
-        if (reachedMaskOpIdx == candidateMaskOpIdx) {
-          DominanceInfo domInfo(op);
-          if (domInfo.dominates(op, maskedOp)) {
-            mask = op->getResults()[0];
-          } else if (op->getBlock() == maskedOp->getBlock()) {
-            Operation *cloneOp = rewriter.clone(*op);
-            mask = cloneOp->getResults()[0];
-          }
-        }
-      }
-    });
+  auto markOpt = utils::getAnnotateOpWithAttr(maskedOp->getResults()[0],
+                                              utils::reachedMaskOpsIdx);
+  if (!markOpt)
+    return {};
+  auto mark = dyn_cast<annotation::MarkOp>(markOpt.value());
+  // The dynamic reference is written by AnalyzeArithVectorMask on the keep
+  // path only, so it stays consistent with the static reached_mask_ops_idx.
+  // The isAnnotatedByDynamicAttr guard also protects against the null-keys
+  // case inside getDynamicAttrValue.
+  if (!mark || !mark.isAnnotatedByDynamicAttr(utils::reachedMaskValue))
+    return {};
+  Value mask = mark.getDynamicAttrValue(utils::reachedMaskValue);
+  if (!mask)
+    return {};
+  Operation *defOp = mask.getDefiningOp();
+  if (!defOp)
+    return {};
+  DominanceInfo domInfo(maskedOp);
+  if (domInfo.dominates(defOp, maskedOp))
+    return mask;
+  if (defOp->getBlock() == maskedOp->getBlock()) {
+    // Cloning keeps the original operands. They must be available before the
+    // insertion point even when the mask itself is defined later in the block.
+    auto insertionPoint = rewriter.getInsertionPoint();
+    if (insertionPoint == rewriter.getInsertionBlock()->end() ||
+        !llvm::all_of(defOp->getOperands(), [&](Value operand) {
+          return domInfo.properlyDominates(operand, &*insertionPoint);
+        }))
+      return {};
+    return rewriter.clone(*defOp)->getResult(0);
   }
-  return mask;
+  return {};
 }
 
 Value hivmave::findReuseableMaskOrCreateOne(Operation *maskedOp,
