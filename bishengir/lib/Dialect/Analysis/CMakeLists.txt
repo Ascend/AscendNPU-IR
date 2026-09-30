@@ -1,3 +1,4 @@
+add_subdirectory(Partition)
 add_subdirectory(Schedule)
 add_subdirectory(VFFusion)
 

@@ -96,4 +96,24 @@ def VFFusion : Pass<"vf-fusion", "mlir::ModuleOp"> {
        ];
 }
 
+def VFFusionHIVM : Pass<"vf-fusion-hivm", "mlir::ModuleOp"> {
+  let summary = "Outline HIVM vector ops into vector functions";
+  let description = [{
+    HIVM-level counterpart of `--vf-fusion`. Groups tensor `hivm.hir.*`
+    compute ops, outlines them into a private VF with
+    `hivm.vector_function`, and leaves a `func.call` at the original site.
+  }];
+  let constructor = "mlir::analysis::createVFFusionHIVMPass()";
+  let dependentDialects = ["mlir::func::FuncDialect",
+                           "mlir::hivm::HIVMDialect"];
+  let options = [Option<"fusionMode", "fusion-mode",
+                        "::mlir::analysis::partition::hivm::VFFusionMode",
+                        "analysis::partition::hivm::VFFusionMode::LinearScan",
+                        "Named relation pipeline for HIVM VF outlining",
+                        [{::llvm::cl::values(
+            clEnumValN(analysis::partition::hivm::VFFusionMode::LinearScan,
+                       "linear-scan",
+                       "Maximal intervals of vectorizable ops from the same block"))}]>];
+}
+
 #endif // BISHENGIR_DIALECT_ANALYSIS_VFFUSION_PASSES_TD
