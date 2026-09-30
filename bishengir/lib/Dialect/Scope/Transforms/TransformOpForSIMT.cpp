@@ -251,7 +251,8 @@ convertMultiElemExtract(tensor::ExtractOp extractOp, scope::ScopeOp scopeOp,
         builder.create<memref::AllocOp>(scopeOp.getLoc(), memrefType);
     tensorToBuffer[tensor] = buffer;
 
-    if (auto defOp = tensor.getDefiningOp())
+    Operation *defOp = tensor.getDefiningOp();
+    if (defOp && scopeOp->isAncestor(defOp))
       builder.setInsertionPointAfter(defOp);
     else
       builder.setInsertionPointToStart(&scopeBlock);

@@ -352,3 +352,31 @@ func.func @test_region_captured_local_load_blocks_hoist(
 
   return
 }
+
+// -----
+
+// Test 14: A multi-elem tensor.extract may read a tensor defined OUTSIDE the
+// scope, because scope.scope is not IsolatedFromAbove. The generated buffer
+// write is a SIMT-to-SIMD transfer and must stay inside the SIMT scope; it must
+// not be anchored to the out-of-scope producer in the SIMD module.
+// CHECK-LABEL: func.func @test_multi_elem_extract_outside_tensor
+func.func @test_multi_elem_extract_outside_tensor() {
+  %c0 = arith.constant 0 : index
+  %tensor = tensor.empty() : tensor<128xi32>
+
+  // CHECK: %[[TENSOR:.*]] = tensor.empty() : tensor<128xi32>
+  // CHECK: %[[BUF:.*]] = memref.alloc() : memref<128xi32>
+  // CHECK-NOT: hivm.hir.local_store
+  // CHECK: scope.scope : () -> () {
+  // CHECK:   hivm.hir.local_store ins(%[[BUF]] : memref<128xi32>, %[[TENSOR]] : tensor<128xi32>)
+  // CHECK:   %[[SUBVIEW:.*]] = memref.subview %[[BUF]][%{{.*}}] [1] [1]
+  // CHECK:   %[[SCALAR:.*]] = memref.load %[[SUBVIEW]]
+  // CHECK:   scope.return
+  // CHECK-NOT: hivm.hir.local_store
+  scope.scope : () -> () {
+    %extracted = tensor.extract %tensor[%c0] : tensor<128xi32>
+    scope.return
+  } {hivm.vf_mode = #hivm.vf_mode<SIMT>}
+
+  return
+}
