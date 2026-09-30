@@ -691,6 +691,10 @@ This section introduces the performance optimization guide for Triton NPU operat
 
 ### Using bitwise_mask to Optimize Memory Access Masks
 
+**Note:**
+
+This section applies only to Atlas A3/A2 series products.
+
 **Problem description**:
 
 On Ascend hardware, tensors of the Boolean type (`i1`) are actually stored as `i8` (one byte) in global memory (GM). When Triton Ascend processes operations that take an `i1` tensor as input, it loads the `i1` as `i8`; however, in certain cases (for example, when used as the condition mask of `tl.where`), the result must be converted back to `i1`, causing unnecessary type conversions and performance loss.

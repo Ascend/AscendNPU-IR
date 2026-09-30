@@ -33,12 +33,12 @@ func.func @test_pipeline(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<wor
     %alloc = memref.alloc() : memref<16x16xf16>
     hivm.hir.load ins(%sliding_input : memref<16x16xf16>) outs(%alloc : memref<16x16xf16>)
     %tensor2 = bufferization.to_tensor %alloc : memref<16x16xf16>
-    %dest = tensor.empty() : tensor<16x16xf16>
-    %dot = hivm.hir.mmadL1 ins(%tensor1, %tensor2, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%dest : tensor<16x16xf16>) -> tensor<16x16xf16>
+    %dest = tensor.empty() : tensor<16x16xf32>
+    %dot = hivm.hir.mmadL1 ins(%tensor1, %tensor2, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%dest : tensor<16x16xf32>) -> tensor<16x16xf32>
     %ws = memref_ext.alloc_workspace() from %arg0 : from memref<?xi8> to memref<16x16xf16>
     annotation.mark %ws {hivm.multi_buffer = 2 : i32} : memref<16x16xf16>
     %wst = bufferization.to_tensor %ws : memref<16x16xf16>
-    %gmdot = hivm.hir.fixpipe ins(%dot : tensor<16x16xf16>) outs(%wst : tensor<16x16xf16>) -> tensor<16x16xf16>
+    %gmdot = hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%dot : tensor<16x16xf32>) outs(%wst : tensor<16x16xf16>) -> tensor<16x16xf16>
     %newinc = arith.addi %inc, %offset : index
     %next = memref.reinterpret_cast %input2 to offset: [%newinc], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16>
 
@@ -60,19 +60,19 @@ func.func @test_pipeline(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<wor
     // Another cube with iter arg/yield
     %t = tensor.empty() : tensor<16x16xf16>
     %l1 = hivm.hir.load ins(%wso:tensor<16x16xf16>) outs(%t:tensor<16x16xf16>) -> tensor<16x16xf16>
-    %t1 = tensor.empty() : tensor<16x16xf16>
-    %dot1 = hivm.hir.mmadL1 ins(%itercube, %l1, %true, %c16, %c16, %c16: tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%t1:tensor<16x16xf16>) -> tensor<16x16xf16>
+    %t1 = tensor.empty() : tensor<16x16xf32>
+    %dot1 = hivm.hir.mmadL1 ins(%itercube, %l1, %true, %c16, %c16, %c16: tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%t1:tensor<16x16xf32>) -> tensor<16x16xf32>
     %ws2 = memref_ext.alloc_workspace() from %arg0 : from memref<?xi8> to memref<16x16xf16>
     annotation.mark %ws2 {hivm.multi_buffer = 2 : i32} : memref<16x16xf16>
     %wst2 = bufferization.to_tensor %ws2 : memref<16x16xf16>
-    %gmdot2 = hivm.hir.fixpipe ins(%dot1 : tensor<16x16xf16>) outs(%wst2 : tensor<16x16xf16>) -> tensor<16x16xf16>
+    %gmdot2 = hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%dot1 : tensor<16x16xf32>) outs(%wst2 : tensor<16x16xf16>) -> tensor<16x16xf16>
 
     // Second vector
     %ubdot = hivm.hir.load ins(%gmdot2:tensor<16x16xf16>) outs(%vdest:tensor<16x16xf16>) -> tensor<16x16xf16>
     %add = hivm.hir.vadd ins(%ubdot,%exp:tensor<16x16xf16>,tensor<16x16xf16>) outs(%vdest:tensor<16x16xf16>) -> tensor<16x16xf16>
     %res = hivm.hir.store ins(%add:tensor<16x16xf16>) outs(%gm2:tensor<16x16xf16>) -> tensor<16x16xf16>
 
-    scf.yield %next, %newinc, %dot1 : memref<16x16xf16>, index, tensor<16x16xf16>
+    scf.yield %next, %newinc, %gmdot2 : memref<16x16xf16>, index, tensor<16x16xf16>
   }
   return
 }
@@ -116,12 +116,12 @@ func.func @test_nested_cross_workitems(%arg0: memref<?xi8> {hacc.arg_type = #hac
     %alloc = memref.alloc() : memref<16x16xf16>
     hivm.hir.load ins(%sliding_input : memref<16x16xf16>) outs(%alloc : memref<16x16xf16>)
     %tensor2 = bufferization.to_tensor %alloc : memref<16x16xf16>
-    %dest = tensor.empty() : tensor<16x16xf16>
-    %dot = hivm.hir.mmadL1 ins(%tensor1, %tensor2, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%dest : tensor<16x16xf16>) -> tensor<16x16xf16>
+    %dest = tensor.empty() : tensor<16x16xf32>
+    %dot = hivm.hir.mmadL1 ins(%tensor1, %tensor2, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%dest : tensor<16x16xf32>) -> tensor<16x16xf32>
     %ws = memref_ext.alloc_workspace() from %arg0 : from memref<?xi8> to memref<16x16xf16>
     annotation.mark %ws {hivm.multi_buffer = 2 : i32} : memref<16x16xf16>
     %wst = bufferization.to_tensor %ws : memref<16x16xf16>
-    %gmdot = hivm.hir.fixpipe ins(%dot : tensor<16x16xf16>) outs(%wst : tensor<16x16xf16>) -> tensor<16x16xf16>
+    %gmdot = hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%dot : tensor<16x16xf32>) outs(%wst : tensor<16x16xf16>) -> tensor<16x16xf16>
     %newinc = arith.addi %inc, %offset : index
     %next = memref.reinterpret_cast %input2 to offset: [%newinc], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16>
 
@@ -161,20 +161,20 @@ func.func @test_pipeline_debug(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_ty
   %c16 = arith.constant 16 : index
   %step = arith.constant 2 : i32
   %bound = "some_op"() : () -> i32
-  %cinit = "some_op"() : () -> tensor<16x16xf16>
+  %cinit = "some_op"() : () -> tensor<16x16xf32>
   %gm2 = "some_op"() : () -> tensor<16x16xf16>
   %vdest = tensor.empty() : tensor<16x16xf16>
-  scf.for %i = %c0 to %bound step %step iter_args(%sliding_input = %initin, %inc = %c0i, %itercube = %cinit) -> (memref<16x16xf16>, index, tensor<16x16xf16>) : i32 {
+  scf.for %i = %c0 to %bound step %step iter_args(%sliding_input = %initin, %inc = %c0i, %itercube = %cinit) -> (memref<16x16xf16>, index, tensor<16x16xf32>) : i32 {
     // Cube ops
     %alloc = memref.alloc() : memref<16x16xf16>
     hivm.hir.load ins(%sliding_input : memref<16x16xf16>) outs(%alloc : memref<16x16xf16>)
     %tensor2 = bufferization.to_tensor %alloc : memref<16x16xf16>
-    %dest = tensor.empty() : tensor<16x16xf16>
-    %dot = hivm.hir.mmadL1 ins(%tensor1, %tensor2, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%dest : tensor<16x16xf16>) -> tensor<16x16xf16>
+    %dest = tensor.empty() : tensor<16x16xf32>
+    %dot = hivm.hir.mmadL1 ins(%tensor1, %tensor2, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%dest : tensor<16x16xf32>) -> tensor<16x16xf32>
     %ws = memref_ext.alloc_workspace() from %arg0 : from memref<?xi8> to memref<16x16xf16>
     annotation.mark %ws {hivm.multi_buffer = 2 : i32} : memref<16x16xf16>
     %wst = bufferization.to_tensor %ws : memref<16x16xf16>
-    %gmdot = hivm.hir.fixpipe ins(%dot : tensor<16x16xf16>) outs(%wst : tensor<16x16xf16>) -> tensor<16x16xf16>
+    %gmdot = hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%dot : tensor<16x16xf32>) outs(%wst : tensor<16x16xf16>) -> tensor<16x16xf16>
     hivm.hir.debug {debugtype = "print", hex = false, prefix = " gmdot: ", tcoretype = #hivm.tcore_type<CUBE>} %gmdot : tensor<16x16xf16>
     %newinc = arith.addi %inc, %offset : index
     %next = memref.reinterpret_cast %input2 to offset: [%newinc], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16>
@@ -185,7 +185,7 @@ func.func @test_pipeline_debug(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_ty
     %exp = hivm.hir.vexp ins(%loaded : tensor<16x16xf16>) outs(%vdest1 : tensor<16x16xf16>) -> tensor<16x16xf16>
     %res = hivm.hir.store ins(%exp:tensor<16x16xf16>) outs(%gm2:tensor<16x16xf16>) -> tensor<16x16xf16>
 
-    scf.yield %next, %newinc, %dot : memref<16x16xf16>, index, tensor<16x16xf16>
+    scf.yield %next, %newinc, %dot : memref<16x16xf16>, index, tensor<16x16xf32>
   }
   return
 }
@@ -236,10 +236,10 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
       %tensor2 = bufferization.to_tensor %alloc : memref<16x16xf16>
 
       // CUBE op consuming the load result
-      %dest = tensor.empty() : tensor<16x16xf16>
-      %dot = hivm.hir.mmadL1 ins(%tensor1, %tensor2, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%dest : tensor<16x16xf16>) -> tensor<16x16xf16>
+      %dest = tensor.empty() : tensor<16x16xf32>
+      %dot = hivm.hir.mmadL1 ins(%tensor1, %tensor2, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%dest : tensor<16x16xf32>) -> tensor<16x16xf32>
       %ub0 = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
-      hivm.hir.fixpipe ins(%dot : tensor<16x16xf16>) outs(%ub0 : memref<16x16xf16, #hivm.address_space<ub>>)
+      hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%dot : tensor<16x16xf32>) outs(%ub0 : memref<16x16xf16, #hivm.address_space<ub>>)
       %ub0_cast = memref.memory_space_cast %ub0 : memref<16x16xf16, #hivm.address_space<ub>> to memref<16x16xf16>
       %wst = bufferization.to_tensor %ub0_cast : memref<16x16xf16>
 
@@ -304,10 +304,10 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
       %tensor2 = bufferization.to_tensor %alloc : memref<16x16xf16>
       annotation.mark %tensor2 {cv_pipeline_lazy_load = true} : tensor<16x16xf16>
 
-      %dest = tensor.empty() : tensor<16x16xf16>
-      %dot = hivm.hir.mmadL1 ins(%tensor1, %tensor2, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%dest : tensor<16x16xf16>) -> tensor<16x16xf16>
+      %dest = tensor.empty() : tensor<16x16xf32>
+      %dot = hivm.hir.mmadL1 ins(%tensor1, %tensor2, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%dest : tensor<16x16xf32>) -> tensor<16x16xf32>
       %ub0 = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
-      hivm.hir.fixpipe ins(%dot : tensor<16x16xf16>) outs(%ub0 : memref<16x16xf16, #hivm.address_space<ub>>)
+      hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%dot : tensor<16x16xf32>) outs(%ub0 : memref<16x16xf16, #hivm.address_space<ub>>)
       %ub0_cast = memref.memory_space_cast %ub0 : memref<16x16xf16, #hivm.address_space<ub>> to memref<16x16xf16>
       %wst = bufferization.to_tensor %ub0_cast : memref<16x16xf16>
 
@@ -357,13 +357,13 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
       %alloc = memref.alloc() : memref<16x16xf16>
       hivm.hir.load ins(%sliding_input : memref<16x16xf16>) outs(%alloc : memref<16x16xf16>)
       %tensor2 = bufferization.to_tensor %alloc : memref<16x16xf16>
-      %dest = tensor.empty() : tensor<16x16xf16>
-      %dot = hivm.hir.mmadL1 ins(%tensor1, %tensor2, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%dest : tensor<16x16xf16>) -> tensor<16x16xf16>
+      %dest = tensor.empty() : tensor<16x16xf32>
+      %dot = hivm.hir.mmadL1 ins(%tensor1, %tensor2, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%dest : tensor<16x16xf32>) -> tensor<16x16xf32>
       %ub0 = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
       // Fixpipe nested inside scf.if — the scf.if must be lifted to a
       // separator so the workitem boundary sits across it.
       scf.if %cond {
-        hivm.hir.fixpipe ins(%dot : tensor<16x16xf16>) outs(%ub0 : memref<16x16xf16, #hivm.address_space<ub>>)
+        hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%dot : tensor<16x16xf32>) outs(%ub0 : memref<16x16xf16, #hivm.address_space<ub>>)
       }
       %ub0_cast = memref.memory_space_cast %ub0 : memref<16x16xf16, #hivm.address_space<ub>> to memref<16x16xf16>
       %wst = bufferization.to_tensor %ub0_cast : memref<16x16xf16>
@@ -411,10 +411,10 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
       %tensor2 = bufferization.to_tensor %alloc : memref<16x16xf16>
 
       // CUBE consumer
-      %dest = tensor.empty() : tensor<16x16xf16>
-      %dot = hivm.hir.mmadL1 ins(%tensor1, %tensor2, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%dest : tensor<16x16xf16>) -> tensor<16x16xf16>
+      %dest = tensor.empty() : tensor<16x16xf32>
+      %dot = hivm.hir.mmadL1 ins(%tensor1, %tensor2, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%dest : tensor<16x16xf32>) -> tensor<16x16xf32>
       %ub0 = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
-      hivm.hir.fixpipe ins(%dot : tensor<16x16xf16>) outs(%ub0 : memref<16x16xf16, #hivm.address_space<ub>>)
+      hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%dot : tensor<16x16xf32>) outs(%ub0 : memref<16x16xf16, #hivm.address_space<ub>>)
       %ub0_cast = memref.memory_space_cast %ub0 : memref<16x16xf16, #hivm.address_space<ub>> to memref<16x16xf16>
       // Fixpipe-backed to_tensor; hint here must be ignored.
       %wst = bufferization.to_tensor %ub0_cast : memref<16x16xf16>
@@ -460,9 +460,9 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
       %allocC = memref.alloc() : memref<16x16xf16>
       hivm.hir.load ins(%input2 : memref<16x16xf16>) outs(%allocC : memref<16x16xf16>)
       %tensor2 = bufferization.to_tensor %allocC : memref<16x16xf16>
-      %dest = tensor.empty() : tensor<16x16xf16>
-      %dot = hivm.hir.mmadL1 ins(%tensor1, %tensor2, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%dest : tensor<16x16xf16>) -> tensor<16x16xf16>
-      hivm.hir.fixpipe ins(%dot : tensor<16x16xf16>) outs(%gmArg : memref<16x16xf16>)
+      %dest = tensor.empty() : tensor<16x16xf32>
+      %dot = hivm.hir.mmadL1 ins(%tensor1, %tensor2, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%dest : tensor<16x16xf32>) -> tensor<16x16xf32>
+      hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%dot : tensor<16x16xf32>) outs(%gmArg : memref<16x16xf16>)
 
       // VECTOR work item: loads from gmArg — the same function argument the
       // cube work item just wrote to. Pipelining would reorder the fixpipe
@@ -504,12 +504,12 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
       %allocC = memref.alloc() : memref<16x16xf16>
       hivm.hir.load ins(%input2 : memref<16x16xf16>) outs(%allocC : memref<16x16xf16>)
       %tensor2 = bufferization.to_tensor %allocC : memref<16x16xf16>
-      %dest = tensor.empty() : tensor<16x16xf16>
-      %dot = hivm.hir.mmadL1 ins(%tensor1, %tensor2, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%dest : tensor<16x16xf16>) -> tensor<16x16xf16>
+      %dest = tensor.empty() : tensor<16x16xf32>
+      %dot = hivm.hir.mmadL1 ins(%tensor1, %tensor2, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%dest : tensor<16x16xf32>) -> tensor<16x16xf32>
       // Fixpipe (cube-only) writing to the GM func arg is nested inside
       // scf.if — the nested-region walk in markOutputs must still catch it.
       scf.if %cond {
-        hivm.hir.fixpipe ins(%dot : tensor<16x16xf16>) outs(%gmArg : memref<16x16xf16>)
+        hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%dot : tensor<16x16xf32>) outs(%gmArg : memref<16x16xf16>)
       }
 
       %allocV = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
@@ -551,7 +551,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     %A = bufferization.to_tensor %inA : memref<16x16xf16>
     %inB1 = "some_op"() : () -> memref<16x16xf16>
     %B1 = bufferization.to_tensor %inB1 : memref<16x16xf16>
-    %unrelated_in = "some_op"() : () -> tensor<16x16xf16>
+    %unrelated_in = "some_op"() : () -> tensor<16x16xf32>
     %c0 = arith.constant 0 : i32
     %true = arith.constant true
     %c16 = arith.constant 16 : index
@@ -560,14 +560,14 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     scf.for %i = %c0 to %bound step %step : i32 {
       // Accumulator init from an opaque op so expandOutputInits cannot
       // expand it via the tensor.empty / to_tensor branches.
-      %init_complex = "some_op"() : () -> tensor<16x16xf16>
-      %dot0 = hivm.hir.mmadL1 ins(%A, %B1, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%init_complex : tensor<16x16xf16>) -> tensor<16x16xf16>
+      %init_complex = "some_op"() : () -> tensor<16x16xf32>
+      %dot0 = hivm.hir.mmadL1 ins(%A, %B1, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%init_complex : tensor<16x16xf32>) -> tensor<16x16xf32>
 
       // Unrelated separator chain producing a value mmad1 reads via %B2.
       // This forces mmad1 to be blocked behind the cross-core copy and
       // would otherwise drop into a separate CUBE WorkItem from mmad0.
       %ub = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
-      hivm.hir.fixpipe ins(%unrelated_in : tensor<16x16xf16>) outs(%ub : memref<16x16xf16, #hivm.address_space<ub>>)
+      hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%unrelated_in : tensor<16x16xf32>) outs(%ub : memref<16x16xf16, #hivm.address_space<ub>>)
       %ub_cast = memref.memory_space_cast %ub : memref<16x16xf16, #hivm.address_space<ub>> to memref<16x16xf16>
       %ub_t = bufferization.to_tensor %ub_cast : memref<16x16xf16>
       %vd = tensor.empty() : tensor<16x16xf16>
@@ -578,9 +578,9 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
       %B2 = bufferization.to_tensor %cb_cast : memref<16x16xf16>
 
       // Chained mmad: outs(%dot0) and ins downstream of the cross-core copy.
-      %dot1 = hivm.hir.mmadL1 ins(%A, %B2, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%dot0 : tensor<16x16xf16>) -> tensor<16x16xf16>
+      %dot1 = hivm.hir.mmadL1 ins(%A, %B2, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%dot0 : tensor<16x16xf32>) -> tensor<16x16xf32>
       %out_buf = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
-      hivm.hir.fixpipe ins(%dot1 : tensor<16x16xf16>) outs(%out_buf : memref<16x16xf16, #hivm.address_space<ub>>)
+      hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%dot1 : tensor<16x16xf32>) outs(%out_buf : memref<16x16xf16, #hivm.address_space<ub>>)
     }
     return
   }
@@ -641,12 +641,12 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
       %allocK = memref.alloc() : memref<16x16xf16>
       hivm.hir.load ins(%k_src : memref<16x16xf16>) outs(%allocK : memref<16x16xf16>)
       %tensorK = bufferization.to_tensor %allocK : memref<16x16xf16>
-      %dest1 = tensor.empty() : tensor<16x16xf16>
-      %dot1 = hivm.hir.mmadL1 ins(%A, %tensorK, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%dest1 : tensor<16x16xf16>) -> tensor<16x16xf16>
+      %dest1 = tensor.empty() : tensor<16x16xf32>
+      %dot1 = hivm.hir.mmadL1 ins(%A, %tensorK, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%dest1 : tensor<16x16xf32>) -> tensor<16x16xf32>
 
       // Cube -> UB fixpipe (separator #1).
       %ub0 = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
-      hivm.hir.fixpipe ins(%dot1 : tensor<16x16xf16>) outs(%ub0 : memref<16x16xf16, #hivm.address_space<ub>>)
+      hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%dot1 : tensor<16x16xf32>) outs(%ub0 : memref<16x16xf16, #hivm.address_space<ub>>)
       %ub0_cast = memref.memory_space_cast %ub0 : memref<16x16xf16, #hivm.address_space<ub>> to memref<16x16xf16>
       %wst = bufferization.to_tensor %ub0_cast : memref<16x16xf16>
 
@@ -673,12 +673,12 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
       %tensorV = bufferization.to_tensor %allocV_cast : memref<1x1x16x16xf16>
 
       // Second mmad consumes the cross-core copy result and the nd2nz V tile.
-      %dest2 = tensor.empty() : tensor<16x16xf16>
-      %dot2 = hivm.hir.mmadL1 ins(%copy_out, %tensorV, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<1x1x16x16xf16>, i1, index, index, index) outs(%dest2 : tensor<16x16xf16>) -> tensor<16x16xf16>
+      %dest2 = tensor.empty() : tensor<16x16xf32>
+      %dot2 = hivm.hir.mmadL1 ins(%copy_out, %tensorV, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<1x1x16x16xf16>, i1, index, index, index) outs(%dest2 : tensor<16x16xf32>) -> tensor<16x16xf32>
 
       // Final fixpipe to GM (separator #3) — write to a func arg so
       // populateDependencies accepts the destination.
-      hivm.hir.fixpipe ins(%dot2 : tensor<16x16xf16>) outs(%gm_dst : memref<16x16xf16>)
+      hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%dot2 : tensor<16x16xf32>) outs(%gm_dst : memref<16x16xf16>)
     }
     return
   }
@@ -722,9 +722,9 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
       // This tensor.empty is only used as the tensor LoadOp's DPS init.
       %load_init = tensor.empty() : tensor<16x16xf16>
       %loaded = hivm.hir.load ins(%stored : tensor<16x16xf16>) outs(%load_init : tensor<16x16xf16>) {"inserted-load"} init_out_buffer = false core_type = <CUBE> -> tensor<16x16xf16>
-      %dot_init = tensor.empty() : tensor<16x16xf16>
-      %dot = hivm.hir.mmadL1 ins(%a, %loaded, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%dot_init : tensor<16x16xf16>) -> tensor<16x16xf16>
-      hivm.hir.fixpipe ins(%dot : tensor<16x16xf16>) outs(%gm_dst : memref<16x16xf16>)
+      %dot_init = tensor.empty() : tensor<16x16xf32>
+      %dot = hivm.hir.mmadL1 ins(%a, %loaded, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%dot_init : tensor<16x16xf32>) -> tensor<16x16xf32>
+      hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%dot : tensor<16x16xf32>) outs(%gm_dst : memref<16x16xf16>)
     }
     return
   }
@@ -772,10 +772,10 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
       %tensorK = bufferization.to_tensor %allocK_cast : memref<1x1x16x16xf16>
       annotation.mark %tensorK {cv_pipeline_lazy_load = true} : tensor<1x1x16x16xf16>
 
-      %dest1 = tensor.empty() : tensor<16x16xf16>
-      %dot1 = hivm.hir.mmadL1 ins(%A, %tensorK, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<1x1x16x16xf16>, i1, index, index, index) outs(%dest1 : tensor<16x16xf16>) -> tensor<16x16xf16>
+      %dest1 = tensor.empty() : tensor<16x16xf32>
+      %dot1 = hivm.hir.mmadL1 ins(%A, %tensorK, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<1x1x16x16xf16>, i1, index, index, index) outs(%dest1 : tensor<16x16xf32>) -> tensor<16x16xf32>
       %ub0 = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
-      hivm.hir.fixpipe ins(%dot1 : tensor<16x16xf16>) outs(%ub0 : memref<16x16xf16, #hivm.address_space<ub>>)
+      hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%dot1 : tensor<16x16xf32>) outs(%ub0 : memref<16x16xf16, #hivm.address_space<ub>>)
       %ub0_cast = memref.memory_space_cast %ub0 : memref<16x16xf16, #hivm.address_space<ub>> to memref<16x16xf16>
       %wst = bufferization.to_tensor %ub0_cast : memref<16x16xf16>
 
@@ -786,9 +786,9 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
       %ws_t = bufferization.to_tensor %ws_cast : memref<16x16xf16>
       %copy_out = hivm.hir.copy ins(%exp : tensor<16x16xf16>) outs(%ws_t : tensor<16x16xf16>) -> tensor<16x16xf16>
 
-      %dest2 = tensor.empty() : tensor<16x16xf16>
-      %dot2 = hivm.hir.mmadL1 ins(%copy_out, %tensorK, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<1x1x16x16xf16>, i1, index, index, index) outs(%dest2 : tensor<16x16xf16>) -> tensor<16x16xf16>
-      hivm.hir.fixpipe ins(%dot2 : tensor<16x16xf16>) outs(%gm_dst : memref<16x16xf16>)
+      %dest2 = tensor.empty() : tensor<16x16xf32>
+      %dot2 = hivm.hir.mmadL1 ins(%copy_out, %tensorK, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<1x1x16x16xf16>, i1, index, index, index) outs(%dest2 : tensor<16x16xf32>) -> tensor<16x16xf32>
+      hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%dot2 : tensor<16x16xf32>) outs(%gm_dst : memref<16x16xf16>)
     }
     return
   }
@@ -842,10 +842,10 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
       %tensor2 = bufferization.to_tensor %alloc : memref<16x16xf16>
 
       // CUBE consumer
-      %dest = tensor.empty() : tensor<16x16xf16>
-      %dot = hivm.hir.mmadL1 ins(%tensor1, %tensor2, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%dest : tensor<16x16xf16>) -> tensor<16x16xf16>
+      %dest = tensor.empty() : tensor<16x16xf32>
+      %dot = hivm.hir.mmadL1 ins(%tensor1, %tensor2, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%dest : tensor<16x16xf32>) -> tensor<16x16xf32>
       %ub0 = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
-      hivm.hir.fixpipe ins(%dot : tensor<16x16xf16>) outs(%ub0 : memref<16x16xf16, #hivm.address_space<ub>>)
+      hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%dot : tensor<16x16xf32>) outs(%ub0 : memref<16x16xf16, #hivm.address_space<ub>>)
       %ub0_cast = memref.memory_space_cast %ub0 : memref<16x16xf16, #hivm.address_space<ub>> to memref<16x16xf16>
       %wst = bufferization.to_tensor %ub0_cast : memref<16x16xf16>
 
@@ -943,12 +943,12 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
       %K = bufferization.to_tensor %allocK : memref<16x16xf16>
 
       // (C) Cube: mmadL1 + fixpipe (separator) to UB.
-      %dest = tensor.empty() : tensor<16x16xf16>
+      %dest = tensor.empty() : tensor<16x16xf32>
       %dot = hivm.hir.mmadL1 ins(%A, %K, %true, %c16_idx, %c16_idx, %c16_idx
           : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index)
-          outs(%dest : tensor<16x16xf16>) -> tensor<16x16xf16>
+          outs(%dest : tensor<16x16xf32>) -> tensor<16x16xf32>
       %ub0 = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
-      hivm.hir.fixpipe ins(%dot : tensor<16x16xf16>)
+      hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%dot : tensor<16x16xf32>)
           outs(%ub0 : memref<16x16xf16, #hivm.address_space<ub>>)
       %ub0_cast = memref.memory_space_cast %ub0
           : memref<16x16xf16, #hivm.address_space<ub>> to memref<16x16xf16>
@@ -1016,10 +1016,10 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
       %alloc = memref.alloc() : memref<16x16xf16>
       hivm.hir.load ins(%initin : memref<16x16xf16>) outs(%alloc : memref<16x16xf16>)
       %tensor2 = bufferization.to_tensor %alloc : memref<16x16xf16>
-      %dest = tensor.empty() : tensor<16x16xf16>
-      %dot = hivm.hir.mmadL1 ins(%tensor1, %tensor2, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%dest : tensor<16x16xf16>) -> tensor<16x16xf16>
+      %dest = tensor.empty() : tensor<16x16xf32>
+      %dot = hivm.hir.mmadL1 ins(%tensor1, %tensor2, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%dest : tensor<16x16xf32>) -> tensor<16x16xf32>
       %ub0 = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
-      hivm.hir.fixpipe ins(%dot : tensor<16x16xf16>) outs(%ub0 : memref<16x16xf16, #hivm.address_space<ub>>)
+      hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%dot : tensor<16x16xf32>) outs(%ub0 : memref<16x16xf16, #hivm.address_space<ub>>)
       %ub0_cast = memref.memory_space_cast %ub0 : memref<16x16xf16, #hivm.address_space<ub>> to memref<16x16xf16>
       %wst = bufferization.to_tensor %ub0_cast : memref<16x16xf16>
 
@@ -1081,25 +1081,25 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     %c16 = arith.constant 16 : index
     %true = arith.constant true
     %input = "some_op"() : () -> tensor<16x16xf16>
-    %init = tensor.empty() : tensor<16x16xf16>
+    %init = tensor.empty() : tensor<16x16xf32>
     %out = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
 
     scf.for %outer = %c0 to %c4 step %c1 : i32 {
       %counter = memref.alloca() {normalize_matmul_counter} : memref<i32>
       memref.store %c0, %counter[] : memref<i32>
 
-      %cube = scf.if %true -> tensor<16x16xf16> {
+      %cube = scf.if %true -> tensor<16x16xf32> {
         %count = memref.load %counter[] : memref<i32>
         %first = arith.cmpi eq, %count, %c0 : i32
-        %dot = hivm.hir.mmadL1 ins(%input, %input, %first, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%init : tensor<16x16xf16>) -> tensor<16x16xf16>
+        %dot = hivm.hir.mmadL1 ins(%input, %input, %first, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%init : tensor<16x16xf32>) -> tensor<16x16xf32>
         %next = arith.addi %count, %c1 : i32
         memref.store %next, %counter[] : memref<i32>
-        scf.yield %dot : tensor<16x16xf16>
+        scf.yield %dot : tensor<16x16xf32>
       } else {
-        scf.yield %init : tensor<16x16xf16>
+        scf.yield %init : tensor<16x16xf32>
       }
 
-      hivm.hir.fixpipe ins(%cube : tensor<16x16xf16>) outs(%out : memref<16x16xf16, #hivm.address_space<ub>>)
+      hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%cube : tensor<16x16xf32>) outs(%out : memref<16x16xf16, #hivm.address_space<ub>>)
       %out_cast = memref.memory_space_cast %out : memref<16x16xf16, #hivm.address_space<ub>> to memref<16x16xf16>
       %tensor = bufferization.to_tensor %out_cast : memref<16x16xf16>
       %vdest = tensor.empty() : tensor<16x16xf16>
@@ -1135,7 +1135,7 @@ func.func @test_pipeline_nested_static_counter() {
   %c4 = arith.constant 4 : index
   %c16 = arith.constant 16 : index
   %true = arith.constant true
-  %input = "some_op"() : () -> tensor<16x16xf16>
+  %input = "some_op"() : () -> tensor<16x16xf32>
   %out = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
 
   %init_static = tensor.empty() : tensor<16xf16>
@@ -1150,12 +1150,13 @@ func.func @test_pipeline_nested_static_counter() {
       memref.store %next, %counter[] : memref<i32>
 
       %first = arith.cmpi eq, %count, %c0_i32 : i32
-      %dot = hivm.hir.mmadL1 ins(%input, %input, %first, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%input : tensor<16x16xf16>) -> tensor<16x16xf16>
+      %init = tensor.empty() : tensor<16x16xf32>
+      %dot = hivm.hir.mmadL1 ins(%input, %input, %first, %c16, %c16, %c16 : tensor<16x16xf32>, tensor<16x16xf32>, i1, index, index, index) outs(%init : tensor<16x16xf32>) -> tensor<16x16xf32>
 
       scf.yield %iter : tensor<16xf16>
     }
 
-    hivm.hir.fixpipe ins(%input : tensor<16x16xf16>) outs(%out : memref<16x16xf16, #hivm.address_space<ub>>)
+    hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%input : tensor<16x16xf32>) outs(%out : memref<16x16xf16, #hivm.address_space<ub>>)
     %out_cast = memref.memory_space_cast %out : memref<16x16xf16, #hivm.address_space<ub>> to memref<16x16xf16>
     %tensor = bufferization.to_tensor %out_cast : memref<16x16xf16>
 

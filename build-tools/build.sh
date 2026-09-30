@@ -126,6 +126,7 @@ init_variables() {
   BISHENGIR_PUBLISH="ON"
   LLVM_BUILD_TARGETS="host"
   BISHENGIR_BUILD_TEMPLATE="OFF"
+  BISHENGIR_OPTIMIZE_TEMPLATE_BITCODE="ON"
   BISHENG_COMPILER=""
   BUILD_TEST=""
   NO_INSTALL=""
@@ -286,6 +287,10 @@ parse_arguments() {
                 ;;
             -t|--build-bishengir-template)
                 BISHENGIR_BUILD_TEMPLATE="ON"
+                shift
+                ;;
+            --optimize-bishengir-template)
+                BISHENGIR_OPTIMIZE_TEMPLATE_BITCODE="ON"
                 shift
                 ;;
             --build-bishengir-template=*)
@@ -714,6 +719,7 @@ cmake_generate() {
     -DBISHENGIR_PUBLISH="${BISHENGIR_PUBLISH}" \
     -DBISHENG_COMPILER_PATH="${BISHENG_COMPILER}" \
     -DBISHENGIR_BUILD_TEMPLATE="${BISHENGIR_BUILD_TEMPLATE}" \
+    -DBISHENGIR_OPTIMIZE_TEMPLATE_BITCODE="${BISHENGIR_OPTIMIZE_TEMPLATE_BITCODE}" \
     -DSHMEM_BUILD_TEMPLATE="${SHMEM_BUILD_TEMPLATE}" \
     ${HIVMC_BUILD_OPTION} \
     ${CMAKE_OPTIONS}

@@ -76,6 +76,25 @@ struct HIVMNormalizeMulExtTraits : public hivm::NormalizeTraitsBase {
   }
 };
 
+struct HIVMNormalizeMulExtUiTraits : public hivm::NormalizeTraitsBase {
+  static bool shouldNormalizeMulExt(hivm::VMulExtUiOp op) {
+    return op.hasPureTensorSemantics() && op.getBroadcast().empty() &&
+           op.getTranspose().empty();
+  }
+
+  static Value getMulExtLhs(hivm::VMulExtUiOp op) {
+    return op.getDpsInputs()[0];
+  }
+
+  static Value getMulExtRhs(hivm::VMulExtUiOp op) {
+    return op.getDpsInputs()[1];
+  }
+
+  static Type getMulExtExtendedType(PatternRewriter &rewriter, Type inputType) {
+    return inputType.isInteger(32) ? rewriter.getI64Type() : Type();
+  }
+};
+
 /// normalize vsub(s, v) to vadd(vmuls(v, -1), s).
 /// eg.
 ///   %res = vsub %brc_s, %x : f32, tensor<16xf32>
@@ -283,6 +302,8 @@ using NormalizeVPowiToPowf =
     NormalizeVPowiToPowfTemplate<hivm::VPowOp, HIVMNormalizeVPowiToPowfTraits>;
 using NormalizeMulExtOp =
     NormalizeMulExtOpTemplate<hivm::VMulExtOp, HIVMNormalizeMulExtTraits>;
+using NormalizeMulExtUiOp = NormalizeMulExtOpTemplate<
+    hivm::VMulExtUiOp, HIVMNormalizeMulExtUiTraits, /*IsUnsigned=*/true>;
 using NormalizeSubVSToVMulAndVAdd =
     NormalizeSubVSToVMulAndVAddTemplate<hivm::VSubOp,
                                         HIVMNormalizeSubVSToVMulAndVAddTraits>;
@@ -309,6 +330,7 @@ void mlir::hivm::populateNormalizeArithmeticPatterns(
 void mlir::hivm::populateNormalizePreFinalArithmeticPatterns(
     RewritePatternSet &patterns) {
   patterns.add<NormalizeMulExtOp>(patterns.getContext());
+  patterns.add<NormalizeMulExtUiOp>(patterns.getContext());
 }
 
 void mlir::hivm::populateNormalizeFinalArithmeticPatterns(

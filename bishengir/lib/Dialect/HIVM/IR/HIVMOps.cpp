@@ -387,8 +387,8 @@ void hivm::detail::printHIVMStructuredDPSOp(OpAsmPrinter &p, Operation *op,
 }
 
 namespace {
-bool shouldMapToUnsigned(IntegerType::SignednessSemantics val,
-                         hivm::TypeFn casting) {
+[[maybe_unused]] bool shouldMapToUnsigned(IntegerType::SignednessSemantics val,
+                                          hivm::TypeFn casting) {
   if (hivm::TypeFn::cast_unsigned == casting)
     return true;
 
@@ -448,12 +448,15 @@ LogicalResult ConvertLayoutOp::verify() {
            << numDynamic << " dynamic dimensions but got "
            << getOutputShape().size();
   }
-  if (auto groupsAttr = (*this)->getAttr("groups")) {
+  if (auto groupsAttr =
+          getOperation()->getDiscardableAttr(kConvolutionGroupsAttrName)) {
     auto groups = dyn_cast<IntegerAttr>(groupsAttr);
     if (!groups || !groups.getType().isInteger(64))
-      return emitOpError("requires groups to be an i64 integer attribute");
+      return emitOpError() << "requires " << kConvolutionGroupsAttrName
+                           << " to be an i64 integer attribute";
     if (groups.getInt() <= 0)
-      return emitOpError("requires groups to be positive");
+      return emitOpError() << "requires " << kConvolutionGroupsAttrName
+                           << " to be positive";
   }
   return success();
 }
@@ -610,7 +613,7 @@ void IndirectStoreOp::getEffects(
 //===----------------------------------------------------------------------===//
 
 namespace {
-std::string debugCallNameMangleSuffix(Operation *op) {
+[[maybe_unused]] std::string debugCallNameMangleSuffix(Operation *op) {
   std::string suffix = "";
   ModuleOp moduleOp = op->getParentOfType<ModuleOp>();
   if (!moduleOp) {

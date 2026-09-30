@@ -10,10 +10,10 @@
 #ifndef BISHENGIR_DIALECT_HFUSION_TRANSFORMS_AUTOVECTORIZE_FUSIONUTILS_H
 #define BISHENGIR_DIALECT_HFUSION_TRANSFORMS_AUTOVECTORIZE_FUSIONUTILS_H
 
-#include "llvm/ADT/DenseSet.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Transform/IR/TransformOps.h"
 #include "mlir/IR/Builders.h"
+#include "llvm/ADT/DenseSet.h"
 
 namespace mlir {
 

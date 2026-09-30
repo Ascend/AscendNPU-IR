@@ -49,7 +49,7 @@ def CacheReadOp : Op<Transform_Dialect, "structured.cache_read", [
     If the `targets` handle points to `%a`, the IR after transformation is:
 
     ```mlir
-    %empty = tensor.emtpy() : tensor<16x16xf16>
+    %empty = tensor.empty() : tensor<16x16xf16>
     %cached = linalg.copy ins(%a : tensor<16x16xf16>) outs(%empty : tensor<16x16xf16>)
     "some_op"(%cached) : tensor<16x16xf16> -> ()
     ```
@@ -104,7 +104,7 @@ def CacheWriteOp : Op<Transform_Dialect, "structured.cache_write", [
 
     ```mlir
     %a = "some_op"(%init) : (tensor<16x16xf16>) -> tensor<16x16xf16>
-    %empty = tensor.emtpy() : tensor<16x16xf16>
+    %empty = tensor.empty() : tensor<16x16xf16>
     %cached = linalg.copy ins(%a : tensor<16x16xf16>) outs(%empty : tensor<16x16xf16>)
     ```
 
@@ -113,7 +113,7 @@ def CacheWriteOp : Op<Transform_Dialect, "structured.cache_write", [
     if the operation does not read from the init operand.*
 
     ```mlir
-    %empty = tensor.emtpy() : tensor<16x16xf16>
+    %empty = tensor.empty() : tensor<16x16xf16>
     %a = "some_op"(%empty) : (tensor<16x16xf16>) -> tensor<16x16xf16>
     %cached = linalg.copy ins(%a : tensor<16x16xf16>) outs(%init : tensor<16x16xf16>)
     ```
@@ -125,7 +125,7 @@ def CacheWriteOp : Op<Transform_Dialect, "structured.cache_write", [
 
     ```mlir
     %a = "some_op"(%init) : (tensor<16x16xf16>) -> tensor<16x16xf16>
-    %empty = tensor.emtpy() : tensor<16x16xf16>
+    %empty = tensor.empty() : tensor<16x16xf16>
     %cached = linalg.copy ins(%a : tensor<16x16xf16>) outs(%empty : tensor<16x16xf16>)
     "some_use"(%a) : tensor<16x16xf16> -> ()
     // code omitted

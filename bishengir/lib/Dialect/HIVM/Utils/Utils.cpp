@@ -32,8 +32,8 @@
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Tensor/Utils/Utils.h"
@@ -229,6 +229,28 @@ LoopLikeOpInterface getParentLoopImpl(Value val,
   return consumerLoop ? consumerLoop : parentLoop;
 }
 } // namespace
+
+bool isRemainInL0c(OpOperand &use) {
+  OpResult result = dyn_cast<OpResult>(use.get());
+  if (!result)
+    return false;
+  auto *defOp = result.getDefiningOp();
+  if (!defOp)
+    return false;
+  if (defOp->hasAttr(RemainInL0CAttr::name)) {
+    return true;
+  }
+  auto regionBranchOpInterface = dyn_cast<RegionBranchOpInterface>(defOp);
+  if (!regionBranchOpInterface)
+    return false;
+  auto &region = regionBranchOpInterface->getRegions().front();
+  if (!region.hasOneBlock())
+    return false;
+  auto terminator = region.front().getTerminator();
+  if (!terminator)
+    return false;
+  return isRemainInL0c(terminator->getOpOperand(result.getResultNumber()));
+}
 
 bool isResultInL0C(OpResult result) {
   Operation *op = result.getOwner();
@@ -1050,6 +1072,72 @@ Value createAllocWithMark(PatternRewriter &rewriter, Location loc,
   return alloc;
 }
 
+namespace {
+/// Trace `value`'s defining chain up to a statically-shaped ancestor and
+/// return its size in bytes as a sound upper bound of `value`'s byte size.
+/// Returns std::nullopt when no static ancestor can be reached.
+// TODO: Get rid of this ad-hoc tracing. Bind values to the dynamic dims of
+// extract_slice via the symbol dialect so sizes can be reused globally.
+std::optional<int64_t> getBufferSizeInBytesUpperBound(Value value) {
+  auto shapedType = dyn_cast<ShapedType>(value.getType());
+  if (shapedType && shapedType.hasStaticShape()) {
+    auto numElems = utils::getStaticTotalSize(shapedType.getShape());
+    if (!numElems) {
+      return std::nullopt;
+    }
+    int64_t elemBits = getElementTypeOrSelf(value).getIntOrFloatBitWidth();
+    return llvm::divideCeil(*numElems * elemBits, utils::kBitsToByte);
+  }
+
+  Operation *defOp = value.getDefiningOp();
+  if (isa_and_nonnull<FixpipeOp, StoreOp>(defOp)) {
+    // fixpipe / store preserve the element count.
+    return getBufferSizeInBytesUpperBound(defOp->getOperand(0));
+  }
+  if (auto sliceOp = dyn_cast_if_present<tensor::ExtractSliceOp>(defOp)) {
+    // A slice never holds more elements than its source.
+    return getBufferSizeInBytesUpperBound(sliceOp.getSource());
+  }
+  if (auto castOp = dyn_cast_if_present<UnrealizedConversionCastOp>(defOp);
+      castOp && castOp->getNumOperands() == 1) {
+    // The propagator forwards the wrapped value unchanged.
+    return getBufferSizeInBytesUpperBound(castOp->getOperand(0));
+  }
+  return std::nullopt;
+}
+} // namespace
+
+/// Clone all annotation marks from `src` onto `dst`.
+void cloneAnnotationMarks(PatternRewriter &rewriter, Location loc, Value src,
+                          Value dst) {
+  for (Operation *op : utils::getAnnotateOpUsers(src)) {
+    auto markOp = cast<annotation::MarkOp>(op);
+    auto clonedMarkOp = rewriter.create<annotation::MarkOp>(
+        loc, dst, markOp.getValues(), markOp.getKeysAttr());
+    for (NamedAttribute attr : markOp->getAttrs())
+      clonedMarkOp->setAttr(attr.getName(), attr.getValue());
+  }
+}
+
+/// Mark dynamically shaped `dst` with a static buffer_size_in_byte upper
+/// bound derived from `src`'s defining chain. The bound is computed purely
+/// from `src` (`dst`'s shape and element type are not consulted), so callers
+/// must guarantee `src` and `dst` describe the same buffer. No-op when `dst`
+/// is statically shaped or already carries a buffer_size_in_byte mark.
+void markBufferSizeUpperBound(PatternRewriter &rewriter, Location loc,
+                              Value src, Value dst) {
+  auto shapedType = dyn_cast<ShapedType>(dst.getType());
+  if (!shapedType || shapedType.hasStaticShape())
+    return;
+  if (utils::getAnnotateOpWithAttr(dst, hivm::kBufferSizeInByteAttr))
+    return;
+  if (auto sizeInBytes = getBufferSizeInBytesUpperBound(src)) {
+    auto markOp = rewriter.create<annotation::MarkOp>(loc, dst);
+    markOp->setAttr(hivm::kBufferSizeInByteAttr,
+                    rewriter.getI64IntegerAttr(*sizeInBytes));
+  }
+}
+
 Value createAllocLocalWorkSpace(OpBuilder &builder, Location loc,
                                 ArrayRef<int64_t> shape, Type elementType) {
   assert(!ShapedType::isDynamicShape(shape) &&
@@ -1153,10 +1241,91 @@ hivm::CreateSyncBlockLockOp createSyncBlockLockVar(OpBuilder &builder,
   auto elementType = builder.getI64Type();
   Type memrefType = MemRefType::get(shape, elementType);
 
-  auto createSyncBlockLockOp =
-      builder.create<hivm::CreateSyncBlockLockOp>(loc, memrefType,
-                                                  /*workspaceArg*/ Value());
-  return createSyncBlockLockOp;
+  return builder.create<hivm::CreateSyncBlockLockOp>(loc, memrefType,
+                                                     /*workspaceArg*/ Value());
+}
+
+static hivm::SyncBlockLockOrderingAttr
+getSyncBlockLockOrderingAttr(MLIRContext *ctx,
+                             hivm::SyncBlockLockOrdering ordering) {
+  return hivm::SyncBlockLockOrderingAttr::get(ctx, ordering);
+}
+
+hivm::SyncBlockLockOp
+createSyncBlockLock(OpBuilder &builder, Location loc, Value lockVar,
+                    hivm::SyncBlockLockOrdering ordering) {
+  return builder.create<hivm::SyncBlockLockOp>(
+      loc, lockVar,
+      getSyncBlockLockOrderingAttr(builder.getContext(), ordering));
+}
+
+hivm::SyncBlockUnlockOp
+createSyncBlockUnlock(OpBuilder &builder, Location loc, Value lockVar,
+                      hivm::SyncBlockLockOrdering ordering) {
+  return builder.create<hivm::SyncBlockUnlockOp>(
+      loc, lockVar,
+      getSyncBlockLockOrderingAttr(builder.getContext(), ordering));
+}
+
+hivm::SyncBlockLockOrdering getSyncBlockLockOpOrdering(Operation *op) {
+  assert(op && "expected sync block lock-related op");
+  // Legacy unit attr from older producers (Triton / AscendNPU-IR). Prefer the
+  // native `$ordering` enum for new IR; keep recognizing this until upstream
+  // migrates. Check discardable attrs explicitly: properties-based ops store
+  // this marker outside inherent `$ordering`.
+  if (op->getDiscardableAttr(SyncBlockLockUnorderedAttr::name) ||
+      op->hasAttr(SyncBlockLockUnorderedAttr::name))
+    return hivm::SyncBlockLockOrdering::Unordered;
+
+  if (auto lockOp = dyn_cast<hivm::SyncBlockLockOp>(op))
+    return lockOp.getOrdering();
+  if (auto unlockOp = dyn_cast<hivm::SyncBlockUnlockOp>(op))
+    return unlockOp.getOrdering();
+  if (auto freeOp = dyn_cast<hivm::FreeLockVarOp>(op))
+    return freeOp.getOrdering();
+  return hivm::SyncBlockLockOrdering::Ordered;
+}
+
+static std::optional<hivm::SyncBlockLockOrdering>
+getOrderingFromLockUsers(Value lockVar) {
+  for (Operation *user : lockVar.getUsers()) {
+    if (isa<hivm::SyncBlockLockOp, hivm::SyncBlockUnlockOp,
+            hivm::FreeLockVarOp>(user))
+      return getSyncBlockLockOpOrdering(user);
+  }
+  return std::nullopt;
+}
+
+hivm::SyncBlockLockOrdering getSyncBlockLockOrdering(Value lockVar) {
+  Value current = lockVar;
+  while (current) {
+    if (auto orderingFromUsers = getOrderingFromLockUsers(current))
+      return *orderingFromUsers;
+
+    if (auto createOp =
+            current.getDefiningOp<hivm::CreateSyncBlockLockOp>()) {
+      // Legacy: unordered marker on create_sync_block_lock itself.
+      return getSyncBlockLockOpOrdering(createOp);
+    }
+
+    if (auto viewOp = current.getDefiningOp<memref::ViewOp>()) {
+      current = viewOp.getViewSource();
+      continue;
+    }
+
+    if (auto castOp = current.getDefiningOp<memref::CastOp>()) {
+      current = castOp.getSource();
+      continue;
+    }
+
+    if (auto subviewOp = current.getDefiningOp<memref::SubViewOp>()) {
+      current = subviewOp.getSource();
+      continue;
+    }
+
+    break;
+  }
+  return hivm::SyncBlockLockOrdering::Ordered;
 }
 
 std::vector<std::pair<Value, Value>> getOperationAliasInfo(Operation *op) {

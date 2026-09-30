@@ -7,6 +7,7 @@ set(A5_REGBASE_CUBE_SOURCES
     LocalMmadMx.cpp
     l12ub.cpp
     loadMXScale.cpp
+    nchw2c1hwnc0.cpp
     nchw2nc1hwc0.cpp
     nd2nz.cpp
     set2d.cpp

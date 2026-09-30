@@ -603,7 +603,7 @@ SmallVector<T> repeatInterleave(const SmallVectorImpl<T> &vs, int nRepeat) {
   SmallVector<T> result;
   result.reserve(vs.size() * nRepeat);
   for (auto v : vs)
-    for (auto _ : llvm::seq(nRepeat))
+    for ([[maybe_unused]] auto _ : llvm::seq(nRepeat))
       result.push_back(v);
   return result;
 }
@@ -775,9 +775,10 @@ void ReshapeOp::build(OpBuilder &builder, OperationState &state,
   auto srcEnc = srcTy.getEncoding();
   Attribute dstEnc;
   if (srcEnc) {
-    auto result = cast<DialectInferLayoutInterface>(&srcEnc.getDialect())
-                      ->inferReshapeOpEncoding(srcTy.getShape(), srcEnc, shape,
-                                               dstEnc, state.location);
+    [[maybe_unused]] auto result =
+        cast<DialectInferLayoutInterface>(&srcEnc.getDialect())
+            ->inferReshapeOpEncoding(srcTy.getShape(), srcEnc, shape, dstEnc,
+                                     state.location);
     assert(succeeded(result));
   }
   auto dstTy = RankedTensorType::get(shape, srcTy.getElementType(), dstEnc);
@@ -1403,7 +1404,7 @@ static LogicalResult verifyDescriptorLoadStoreType(Operation *op,
   ArrayRef<int64_t> tensorShape = tensor.getShape();
   if (blockShape.size() > tensorShape.size()) {
     // Allow ranked reduced load if the leading dimensions are all 1s.
-    for (int i = 0; i < blockShape.size() - tensorShape.size(); ++i) {
+    for (size_t i = 0; i < blockShape.size() - tensorShape.size(); ++i) {
       if (blockShape[i] != 1)
         return op->emitOpError(
             "ranked reduce load only allowed for unit dimension leading dim.");

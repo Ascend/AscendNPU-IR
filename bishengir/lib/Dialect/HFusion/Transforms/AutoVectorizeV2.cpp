@@ -12,7 +12,6 @@
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
-#include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/TilingUtils.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoVectorize/Attrs.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoVectorize/PlanContext.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoVectorize/Verify.h"
@@ -336,21 +335,6 @@ static bool isCubeScopeOp(Operation *op) {
   return attr.getTcoretype() == mlir::hivm::TCoreType::CUBE;
 }
 
-/// If two fusable ops are conflict with each other, they cannot be fused into
-/// the same VF:
-/// 1. The producer(upstream op) and consumer(downstream op) of
-///    NonVectorizableOp are confilict with each other. For example:
-///       A(FusableOp)
-///       B(NonVectorizableOp, use A)
-///       C(FusableOp, use B)
-///    Then A and C are confilict with each other
-/// 2. The previous and following of scf.for/hivm.hir.sync_block_wait/
-///    hivm.hir.sync_block_set are confilict with each other. For example:
-///       A(FusableOp)
-///       hivm.hir.sync_block_wait
-///       B(FusableOp)
-///    Then A and B are confilict with each other
-
 // A fusable op is output node when its all users is NonVectorizableOp or
 // terminator op.
 static bool isFusableOutputNode(Operation *op, Block *block) {
@@ -507,17 +491,9 @@ static bool isProducerConsumed(Operation *target, Operation *source) {
   DenseSet<Value> visited;
   if (target->isBeforeInBlock(source)) {
     return isProducerConsumedImpl(target, source, visited);
-  } else {
-    return isProducerConsumedImpl(source, target, visited);
   }
+  return isProducerConsumedImpl(source, target, visited);
 }
-
-// fuse sibling will clone all users of those front siblings behind fused loop
-// which will cause existing handle lost or IR order changed. So we move those
-// front siblings and their users to their new positions after fuse. For
-// example: we have 4 nodes in order A B C(use A) D, and A and D should fuse
-// sibling, then we move A before D and move C hehind D, after moving the order
-// will be B A D C(use A).
 
 /// Returns true if an op's results are used by "many" distinct users.
 /// We count distinct owning operations across all result values.
@@ -625,8 +601,8 @@ findBestFusedNodeForProducer(Block *block, Operation *producer,
 
   FusableOpInfo &producerInfo = ctx.getInfo(producer);
   int numUsersInBestFusedNode = 0;
-  for (auto user : DenseSet<Operation *>(producer->getUsers().begin(),
-                                         producer->getUsers().end())) {
+  for (auto *user : DenseSet<Operation *>(producer->getUsers().begin(),
+                                          producer->getUsers().end())) {
     if (bestFusedNode->contains(user)) {
       numUsersInBestFusedNode++;
       if (isa<linalg::TransposeOp>(user) && !isVsstbPatternTransposeOp(user))
@@ -1013,7 +989,7 @@ void AutoVectorizeV2::planFuseSiblingForLeafNodes(Block *block,
   if (leafNodes.empty())
     return;
   // Group leafNodes, all leafNodes in the same group will be fused siblings
-  for (auto leafNode : leafNodes) {
+  for (auto *leafNode : leafNodes) {
     if (ctx.size() == 0) {
       ctx.add(leafNode);
       continue;
@@ -1050,7 +1026,7 @@ void AutoVectorizeV2::planFuseProducersIntoConsumers(Block *block,
     }
   }
   while (!queue.empty()) {
-    auto consumer = queue.front();
+    auto *consumer = queue.front();
     queue.pop();
     for (Value operand : consumer->getOperands()) {
       Operation *producer = operand.getDefiningOp();
@@ -1399,59 +1375,9 @@ void AutoVectorizeV2::applyCleanUp(OpBuilder &builder,
       SmallVector<Attribute>{builder.getStringAttr("SimplifyTrivialLoops")}));
 }
 
-// Workaround: keep the stack limit disabled for this specific large
-// pure-linalg case.  The limit is bound to multiple-consumer fusion and so is
-// on by default here; enabling it breaks the fusion on the use-def chain and
-// scatters one chain's ops into several fused nodes.
-//
-// The scattered layout defeats the conflict analysis: with ops linked as A->B
-// on one chain and C->D on another, the nodes become [A] [B C] [D], and the
-// D-A conflict cannot be computed because conflicts are still collected per-op
-// rather than per-node.
-//
-// Remove this once either (1) the stack limit is no longer bound to
-// multiple-consumer fusion and stays off by default, or (2) conflict updates
-// collect upstream/downstream at node granularity.
-static bool cannotOpenStackLimitWorkaround(func::FuncOp func) {
-  if (func.getArgumentTypes().size() <= 20 ||
-      func.getResultTypes().size() <= 50 || !func.isPrivate())
-    return false;
-  auto genericCnt = llvm::range_size(func.getOps<linalg::GenericOp>());
-  auto collapseCnt = llvm::range_size(func.getOps<tensor::CollapseShapeOp>());
-  auto expandCnt = llvm::range_size(func.getOps<tensor::ExpandShapeOp>());
-  if (genericCnt <= 60 || collapseCnt <= 10 || expandCnt <= 50)
-    return false;
-  if (!llvm::all_of(func.getOps<tensor::CollapseShapeOp>(), [](auto op) {
-        auto ty = dyn_cast<ShapedType>(op.getResultType());
-        return ty && ty.getRank() == 1 && ty.getDimSize(0) >= 64 &&
-               ty.getElementType().isF32();
-      }))
-    return false;
-  if (!llvm::all_of(func.getOps<tensor::ExpandShapeOp>(), [](auto op) {
-        auto ty = dyn_cast<ShapedType>(op.getResultType());
-        return ty && ty.getRank() == 2 && ty.getDimSize(0) == 1 &&
-               ty.getDimSize(1) >= 64 && ty.getElementType().isF32();
-      }))
-    return false;
-  if (!llvm::all_of(func.getOps<linalg::GenericOp>(), [](linalg::GenericOp op) {
-        return llvm::all_of(op->getResultTypes(), [](auto t) {
-          auto ty = dyn_cast<ShapedType>(t);
-          return ty && ty.getRank() == 1 && ty.getDimSize(0) >= 64 &&
-                 ty.getElementType().isF32();
-        });
-      }))
-    return false;
-  return llvm::all_of(func.getOps(), [](auto &op) {
-    return isa<tensor::ExpandShapeOp /*53*/, tensor::CollapseShapeOp /*11*/,
-               linalg::GenericOp /*64*/, func::ReturnOp /*1*/,
-               tensor::EmptyOp /*1*/, arith::ConstantOp /*9*/>(op);
-  });
-}
-
 transform::SequenceOp AutoVectorizeV2::buildTransformSequence(
     func::FuncOp func, RetriedOptions &retryCtx, OpBuilder &builder) {
-  analysis::VFStackInfoBuilder vfStack{retryCtx.enableVFStackLimit &&
-                                       !cannotOpenStackLimitWorkaround(func)};
+  analysis::VFStackInfoBuilder vfStack{retryCtx.enableVFStackLimit};
   PlanContext ctx(retryCtx, vfStack);
   ctx.initFusableOpInfoFrom(func);
   SmallVector<std::pair<std::string, SmallVector<int64_t>>>

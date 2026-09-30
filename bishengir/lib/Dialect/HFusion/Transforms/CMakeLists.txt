@@ -27,6 +27,7 @@ add_bishengir_dialect_library(BiShengIRHFusionTransforms
   ConstantizeTilingData.cpp
   ConvertGenericToNamedOp.cpp
   Decompose.cpp
+  DecomposeAtomicSync.cpp
   DecomposeOpInterfaceImpl.cpp
   DecomposeMulti.cpp
   DropSymbols.cpp

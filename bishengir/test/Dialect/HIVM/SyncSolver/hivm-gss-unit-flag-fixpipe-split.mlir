@@ -19,9 +19,7 @@
 //   1. dma_mode == NZ2DN  (allow_hw_dual_for_transform is hardcoded false)
 //   2. channel_split == true
 //   3. pre_quant != NO_QUANT  (explicit quantization)
-//   4. pre_quant == NO_QUANT but src/dst types imply auto-quant
-//      (f32→f16, f32→bf16, or i32→i8; genPreQuant fills the quant mode)
-//   5. pre_relu != NO_RELU  (pre-stage ReLU fusion)
+//   4. pre_relu != NO_RELU  (pre-stage ReLU fusion)
 
 // =============================================================================
 // Group 1: UF enabled — fixpipe does NOT split
@@ -198,15 +196,13 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
 
 // -----
 
-// 2.4: ROW_SPLIT + implicit quant (f32→f16, pre_quant=NO_QUANT) —
-//      genPreQuant auto-fills pre_quant=F322F16 from the element types,
-//      causing a split.
-// CHECK-LABEL: @no_uf_dual_implicit_f322f16
+// 2.4: ROW_SPLIT + explicit F322F16 quantization causes a split.
+// CHECK-LABEL: @no_uf_dual_f322f16
 // CHECK: hivm.hir.set_flag[<PIPE_M>, <PIPE_FIX>
 // CHECK: hivm.hir.wait_flag[<PIPE_M>, <PIPE_FIX>
 // CHECK-NOT: hivm.hir.fixpipe {{.*}}unit_flag_mode
 module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
-  func.func @no_uf_dual_implicit_f322f16(%arg0: memref<16xf32, #hivm.address_space<gm>>, %arg1: memref<16xf32, #hivm.address_space<gm>>) {
+  func.func @no_uf_dual_f322f16(%arg0: memref<16xf32, #hivm.address_space<gm>>, %arg1: memref<16xf32, #hivm.address_space<gm>>) {
     %c0_i64 = arith.constant 0 : i64
     %c64_i64 = arith.constant 64 : i64
     %true = arith.constant true
@@ -219,7 +215,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
     %buf_cc = hivm.hir.pointer_cast(%c0_i64) : memref<256xf32, #hivm.address_space<cc>>
     hivm.hir.mmadL1 ins(%buf_a, %buf_b, %true, %c16, %c256, %c16 : memref<16xf32, #hivm.address_space<cbuf>>, memref<16xf32, #hivm.address_space<cbuf>>, i1, index, index, index) outs(%buf_cc : memref<256xf32, #hivm.address_space<cc>>)
     %buf_ub = memref.alloc() : memref<256xf16, #hivm.address_space<ub>>
-    hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, dual_dst_mode = #hivm.fixpipe_dual_dst_mode<ROW_SPLIT>}
+    hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, dual_dst_mode = #hivm.fixpipe_dual_dst_mode<ROW_SPLIT>, pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>}
       ins(%buf_cc : memref<256xf32, #hivm.address_space<cc>>)
       outs(%buf_ub : memref<256xf16, #hivm.address_space<ub>>)
     return
@@ -228,14 +224,13 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
 
 // -----
 
-// 2.5: ROW_SPLIT + implicit quant (f32→bf16, pre_quant=NO_QUANT) —
-//      genPreQuant auto-fills pre_quant=F322BF16 from the element types.
-// CHECK-LABEL: @no_uf_dual_implicit_f322bf16
+// 2.5: ROW_SPLIT + explicit F322BF16 quantization causes a split.
+// CHECK-LABEL: @no_uf_dual_f322bf16
 // CHECK: hivm.hir.set_flag[<PIPE_M>, <PIPE_FIX>
 // CHECK: hivm.hir.wait_flag[<PIPE_M>, <PIPE_FIX>
 // CHECK-NOT: hivm.hir.fixpipe {{.*}}unit_flag_mode
 module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
-  func.func @no_uf_dual_implicit_f322bf16(%arg0: memref<16xf32, #hivm.address_space<gm>>, %arg1: memref<16xf32, #hivm.address_space<gm>>) {
+  func.func @no_uf_dual_f322bf16(%arg0: memref<16xf32, #hivm.address_space<gm>>, %arg1: memref<16xf32, #hivm.address_space<gm>>) {
     %c0_i64 = arith.constant 0 : i64
     %c64_i64 = arith.constant 64 : i64
     %true = arith.constant true
@@ -248,7 +243,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
     %buf_cc = hivm.hir.pointer_cast(%c0_i64) : memref<256xf32, #hivm.address_space<cc>>
     hivm.hir.mmadL1 ins(%buf_a, %buf_b, %true, %c16, %c256, %c16 : memref<16xf32, #hivm.address_space<cbuf>>, memref<16xf32, #hivm.address_space<cbuf>>, i1, index, index, index) outs(%buf_cc : memref<256xf32, #hivm.address_space<cc>>)
     %buf_ub = memref.alloc() : memref<256xbf16, #hivm.address_space<ub>>
-    hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, dual_dst_mode = #hivm.fixpipe_dual_dst_mode<ROW_SPLIT>}
+    hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, dual_dst_mode = #hivm.fixpipe_dual_dst_mode<ROW_SPLIT>, pre_quant = #hivm.fixpipe_pre_quant_mode<F322BF16>}
       ins(%buf_cc : memref<256xf32, #hivm.address_space<cc>>)
       outs(%buf_ub : memref<256xbf16, #hivm.address_space<ub>>)
     return

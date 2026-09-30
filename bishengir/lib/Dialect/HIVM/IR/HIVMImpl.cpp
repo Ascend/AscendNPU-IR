@@ -147,7 +147,7 @@ static bool userCanReachMatmulOuts(Value current,
       getTerminatorSuccessorRegions(user, branchOp, successors);
       for (const RegionSuccessor &successor : successors) {
         ValueRange inputs = successor.getSuccessorInputs();
-        if (idx.value() >= inputs.size())
+        if (static_cast<size_t>(idx.value()) >= inputs.size())
           continue;
         if (userCanReachMatmulOuts(inputs[idx.value()], visited))
           return true;

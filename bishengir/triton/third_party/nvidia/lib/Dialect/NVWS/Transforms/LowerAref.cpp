@@ -167,12 +167,12 @@ BarrierCount getArrivalCount(ArefCreateOp op) {
 Value createBarriers(ImplicitLocOpBuilder &b1, ImplicitLocOpBuilder &b2,
                      int numBarriers, int arrivalCount) {
   Value barrierAlloc = createScalarAlloc(b1, b1.getI64Type(), numBarriers);
-  for (unsigned i = 0; i < numBarriers; i++) {
+  for (unsigned i = 0; i < static_cast<unsigned>(numBarriers); i++) {
     Value barrierView = createSingleBufferView(b1, barrierAlloc, i);
     b1.create<InitBarrierOp>(barrierView, arrivalCount);
   }
   // Invalidate and deallocate the barriers.
-  for (unsigned i = 0; i < numBarriers; i++) {
+  for (unsigned i = 0; i < static_cast<unsigned>(numBarriers); i++) {
     Value barrierView = createSingleBufferView(b2, barrierAlloc, i);
     b2.create<InvalBarrierOp>(barrierView);
   }
@@ -211,7 +211,7 @@ SmallVector<Value> getSubViews(ArefValue arefVal, Value stage, Location loc,
   for (auto buffer : arefVal.buffers) {
     auto memDescType = cast<MemDescType>(buffer.getType());
     auto shape = memDescType.getShape();
-    auto rank = shape.size() - 1;
+    [[maybe_unused]] auto rank = shape.size() - 1;
 
     SmallVector<int64_t> tensorShape(shape.begin() + 1, shape.end());
     auto memDescTypeNew = MemDescType::get(
@@ -290,7 +290,7 @@ void rewritePutEnterOp(ArefCreateOp arefOp, ArefPutEnterOp op,
   lowerAsyncLoads(op, rewriter, arefVal);
 
   // replaces uses with views
-  for (int i = 0; i < arefVal.buffers.size(); ++i)
+  for (int i = 0; i < static_cast<int>(arefVal.buffers.size()); ++i)
     op.getBuffers()[i].replaceAllUsesWith(views[i]);
 }
 
@@ -304,7 +304,7 @@ void rewriteGetEnterOp(ArefCreateOp arefOp, ArefGetEnterOp op,
   auto views = getSubViews(arefVal, op.getStage(), loc, rewriter);
   assert(views.size() == op.getBuffers().size());
 
-  for (int i = 0; i < arefVal.buffers.size(); ++i)
+  for (int i = 0; i < static_cast<int>(arefVal.buffers.size()); ++i)
     op.getBuffers()[i].replaceAllUsesWith(views[i]);
 }
 
@@ -329,7 +329,6 @@ void insertArriveBarrier(Location loc, ArrayAttr asyncOps,
       // nothing to do, TMA load is handled by lowering putEnterOp
       break;
     case AsyncOp::CpAsync:
-    default:
       llvm_unreachable("unknown async op");
     }
     if (arriveOp)

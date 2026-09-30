@@ -28,6 +28,7 @@
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/FormatVariadic.h"
 
 #include <optional>
@@ -229,25 +230,29 @@ bool isAscend910_95(TargetDevice targetDevice) {
       TargetDevice::Ascend910_9599,
       // Ascend950PR series
       TargetDevice::Ascend950PR_950z, TargetDevice::Ascend950PR_9579,
-      TargetDevice::Ascend950PR_957a, TargetDevice::Ascend950PR_957b,
-      TargetDevice::Ascend950PR_957c, TargetDevice::Ascend950PR_957d,
-      TargetDevice::Ascend950PR_9589, TargetDevice::Ascend950PR_958a,
-      TargetDevice::Ascend950PR_958b, TargetDevice::Ascend950PR_958c,
-      TargetDevice::Ascend950PR_958d, TargetDevice::Ascend950PR_9599,
-      TargetDevice::Ascend950PR_959a, TargetDevice::Ascend950PR_959b,
+      TargetDevice::Ascend950PR_9579x, TargetDevice::Ascend950PR_957a,
+      TargetDevice::Ascend950PR_957b, TargetDevice::Ascend950PR_957c,
+      TargetDevice::Ascend950PR_957d, TargetDevice::Ascend950PR_9589,
+      TargetDevice::Ascend950PR_958a, TargetDevice::Ascend950PR_958b,
+      TargetDevice::Ascend950PR_958c, TargetDevice::Ascend950PR_958d,
+      TargetDevice::Ascend950PR_9599, TargetDevice::Ascend950PR_959a,
+      TargetDevice::Ascend950PR_959b, TargetDevice::Ascend950PR_957bx,
+      TargetDevice::Ascend950PR_958bx,
       // Ascend950DT series
       TargetDevice::Ascend950DT_950x, TargetDevice::Ascend950DT_950y,
       TargetDevice::Ascend950DT_9571, TargetDevice::Ascend950DT_9572,
       TargetDevice::Ascend950DT_9573, TargetDevice::Ascend950DT_9574,
       TargetDevice::Ascend950DT_9575, TargetDevice::Ascend950DT_9576,
       TargetDevice::Ascend950DT_9577, TargetDevice::Ascend950DT_9578,
-      TargetDevice::Ascend950DT_9581, TargetDevice::Ascend950DT_9582,
+      TargetDevice::Ascend950DT_9581, TargetDevice::Ascend950DT_9581x,
+      TargetDevice::Ascend950DT_9582, TargetDevice::Ascend950DT_9582x,
       TargetDevice::Ascend950DT_9583, TargetDevice::Ascend950DT_9584,
       TargetDevice::Ascend950DT_9585, TargetDevice::Ascend950DT_9586,
       TargetDevice::Ascend950DT_9587, TargetDevice::Ascend950DT_9588,
       TargetDevice::Ascend950DT_9591, TargetDevice::Ascend950DT_9592,
       TargetDevice::Ascend950DT_9595, TargetDevice::Ascend950DT_9596,
-      TargetDevice::Ascend950DT_95A1, TargetDevice::Ascend950DT_95A2};
+      TargetDevice::Ascend950DT_95A1, TargetDevice::Ascend950DT_95A2,
+      TargetDevice::Ascend950DT_9572x};
 
   return ascend910_95Devices.find(targetDevice) != ascend910_95Devices.end();
 }
@@ -304,30 +309,33 @@ bool isAscend310B(TargetDevice targetDevice) {
 // use unordered_set to speedup because this func is frequently called
 bool isAscend950(TargetDevice targetDevice) {
   static const std::unordered_set<TargetDevice> ascend950Devices = {
-      TargetDevice::Ascend910_950z,   TargetDevice::Ascend910_9579,
-      TargetDevice::Ascend910_957b,   TargetDevice::Ascend910_957d,
-      TargetDevice::Ascend910_9581,   TargetDevice::Ascend910_9589,
-      TargetDevice::Ascend910_958a,   TargetDevice::Ascend910_958b,
-      TargetDevice::Ascend910_9599,   TargetDevice::Ascend950PR_950z,
-      TargetDevice::Ascend950PR_9579, TargetDevice::Ascend950PR_957a,
-      TargetDevice::Ascend950PR_957b, TargetDevice::Ascend950PR_957c,
-      TargetDevice::Ascend950PR_957d, TargetDevice::Ascend950PR_9589,
-      TargetDevice::Ascend950PR_958a, TargetDevice::Ascend950PR_958b,
-      TargetDevice::Ascend950PR_958c, TargetDevice::Ascend950PR_958d,
-      TargetDevice::Ascend950PR_9599, TargetDevice::Ascend950PR_959a,
-      TargetDevice::Ascend950PR_959b, TargetDevice::Ascend950DT_950x,
-      TargetDevice::Ascend950DT_950y, TargetDevice::Ascend950DT_9571,
-      TargetDevice::Ascend950DT_9572, TargetDevice::Ascend950DT_9573,
-      TargetDevice::Ascend950DT_9574, TargetDevice::Ascend950DT_9575,
-      TargetDevice::Ascend950DT_9576, TargetDevice::Ascend950DT_9577,
-      TargetDevice::Ascend950DT_9578, TargetDevice::Ascend950DT_9581,
-      TargetDevice::Ascend950DT_9582, TargetDevice::Ascend950DT_9583,
-      TargetDevice::Ascend950DT_9584, TargetDevice::Ascend950DT_9585,
-      TargetDevice::Ascend950DT_9586, TargetDevice::Ascend950DT_9587,
-      TargetDevice::Ascend950DT_9588, TargetDevice::Ascend950DT_9591,
-      TargetDevice::Ascend950DT_9592, TargetDevice::Ascend950DT_9595,
-      TargetDevice::Ascend950DT_9596, TargetDevice::Ascend950DT_95A1,
-      TargetDevice::Ascend950DT_95A2};
+      TargetDevice::Ascend910_950z,    TargetDevice::Ascend910_9579,
+      TargetDevice::Ascend910_957b,    TargetDevice::Ascend910_957d,
+      TargetDevice::Ascend910_9581,    TargetDevice::Ascend910_9589,
+      TargetDevice::Ascend910_958a,    TargetDevice::Ascend910_958b,
+      TargetDevice::Ascend910_9599,    TargetDevice::Ascend950PR_950z,
+      TargetDevice::Ascend950PR_9579,  TargetDevice::Ascend950PR_9579x,
+      TargetDevice::Ascend950PR_957a,  TargetDevice::Ascend950PR_957b,
+      TargetDevice::Ascend950PR_957c,  TargetDevice::Ascend950PR_957d,
+      TargetDevice::Ascend950PR_9589,  TargetDevice::Ascend950PR_958a,
+      TargetDevice::Ascend950PR_958b,  TargetDevice::Ascend950PR_958c,
+      TargetDevice::Ascend950PR_958d,  TargetDevice::Ascend950PR_9599,
+      TargetDevice::Ascend950PR_959a,  TargetDevice::Ascend950PR_959b,
+      TargetDevice::Ascend950PR_957bx, TargetDevice::Ascend950PR_958bx,
+      TargetDevice::Ascend950DT_950x,  TargetDevice::Ascend950DT_950y,
+      TargetDevice::Ascend950DT_9571,  TargetDevice::Ascend950DT_9572,
+      TargetDevice::Ascend950DT_9573,  TargetDevice::Ascend950DT_9574,
+      TargetDevice::Ascend950DT_9575,  TargetDevice::Ascend950DT_9576,
+      TargetDevice::Ascend950DT_9577,  TargetDevice::Ascend950DT_9578,
+      TargetDevice::Ascend950DT_9581,  TargetDevice::Ascend950DT_9581x,
+      TargetDevice::Ascend950DT_9582,  TargetDevice::Ascend950DT_9582x,
+      TargetDevice::Ascend950DT_9583,  TargetDevice::Ascend950DT_9584,
+      TargetDevice::Ascend950DT_9585,  TargetDevice::Ascend950DT_9586,
+      TargetDevice::Ascend950DT_9587,  TargetDevice::Ascend950DT_9588,
+      TargetDevice::Ascend950DT_9591,  TargetDevice::Ascend950DT_9592,
+      TargetDevice::Ascend950DT_9595,  TargetDevice::Ascend950DT_9596,
+      TargetDevice::Ascend950DT_95A1,  TargetDevice::Ascend950DT_95A2,
+      TargetDevice::Ascend950DT_9572x};
 
   return ascend950Devices.find(targetDevice) != ascend950Devices.end();
 }
@@ -424,7 +432,16 @@ resetDeclFuncLoc(LLVM::LLVMFuncOp /* don't need reference */ llvmFunc) {
   /// empty.
   if (auto originalLoc =
           llvm::dyn_cast_if_present<FusedLoc>(llvmFunc.getLoc())) {
-    auto originalAttr = cast<LLVM::DISubprogramAttr>(originalLoc.getMetadata());
+
+    // This check and dyn_cast were added after merging hivmc binary into bishengir-compile binary
+    // Before the merge hivmc would be called from a separate file (e.g. loc("/path/test/tmp/module.hivm.opt.mlir":2:3))
+    // After the merge the location is already FUSED (e.g. loc(fused["y"("/path/softcap_npu.py":104:27), "/path/softcap_npu.py":83:0]))
+    // So it can't be directly casted via llvm::cast, and we need to use dyn_cast to exclude exceptions.
+    // If the merge will become stable, this function can be moved to exclude redundant dyn_cast (the location is already fused)
+    // this can increase compile-time perf a bit.
+    auto originalAttr = llvm::dyn_cast_if_present<LLVM::DISubprogramAttr>(originalLoc.getMetadata());
+    if (!originalAttr)
+      return;
 #if defined(__LLVM_MAJOR_VERSION_20_COMPATIBLE__) || defined(__LLVM_MAJOR_VERSION_22_COMPATIBLE__)
     auto newAttr = LLVM::DISubprogramAttr::get(
         llvmFunc->getContext(), DistinctAttr(), LLVM::DICompileUnitAttr(),

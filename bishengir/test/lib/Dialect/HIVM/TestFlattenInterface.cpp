@@ -43,10 +43,11 @@ struct TestFlattenInterface
   void runOnOperation() override {
     func::FuncOp funcOp = getOperation();
 
-    unsigned instructionCounter = 0;
+    [[maybe_unused]] unsigned instructionCounter = 0;
 
     funcOp.walk([&](FlattenInterface hivmFlattenInterface) {
-      Operation *currentOperation = hivmFlattenInterface.getOperation();
+      [[maybe_unused]] Operation *currentOperation =
+          hivmFlattenInterface.getOperation();
       auto res = hivmFlattenInterface.getFlattened(FlattenOptions());
       LDBG("Current operation: " << *currentOperation);
       if (failed(res)) {
@@ -54,7 +55,7 @@ struct TestFlattenInterface
         return;
       }
       LDBG(to_string(res->reassociation));
-      for (auto ty : res->operandTypes)
+      for ([[maybe_unused]] auto ty : res->operandTypes)
         LDBG((ty.first ? "DpsInput" : "DpsInit") << " " << ty.second);
     });
   }

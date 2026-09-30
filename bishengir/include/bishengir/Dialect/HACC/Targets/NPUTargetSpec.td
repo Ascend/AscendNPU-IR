@@ -300,6 +300,12 @@ def Ascend950PR_9579_Spec : Ascend950_BaseSpec<"Ascend950PR_9579"> {
   let VectorCoreCount = 56;
 }
 
+def Ascend950PR_9579x_Spec : Ascend950_BaseSpec<"Ascend950PR_9579x"> {
+  let AiCoreCount = 28;
+  let CubeCoreCount = 28;
+  let VectorCoreCount = 56;
+}
+
 def Ascend950PR_957a_Spec : Ascend950_BaseSpec<"Ascend950PR_957a"> {
   let AiCoreCount = 28;
   let CubeCoreCount = 28;
@@ -372,6 +378,18 @@ def Ascend950PR_959b_Spec : Ascend950_BaseSpec<"Ascend950PR_959b"> {
   let VectorCoreCount = 72;
 }
 
+def Ascend950PR_957bx_Spec : Ascend950_BaseSpec<"Ascend950PR_957bx"> {
+  let AiCoreCount = 28;
+  let CubeCoreCount = 28;
+  let VectorCoreCount = 56;
+}
+
+def Ascend950PR_958bx_Spec : Ascend950_BaseSpec<"Ascend950PR_958bx"> {
+  let AiCoreCount = 32;
+  let CubeCoreCount = 32;
+  let VectorCoreCount = 64;
+}
+
 def Ascend950DT_950x_Spec : Ascend950_BaseSpec<"Ascend950DT_950x"> {
   let AiCoreCount = 8;
   let CubeCoreCount = 8;
@@ -391,6 +409,12 @@ def Ascend950DT_9571_Spec : Ascend950_BaseSpec<"Ascend950DT_9571"> {
 }
 
 def Ascend950DT_9572_Spec : Ascend950_BaseSpec<"Ascend950DT_9572"> {
+  let AiCoreCount = 28;
+  let CubeCoreCount = 28;
+  let VectorCoreCount = 56;
+}
+
+def Ascend950DT_9572x_Spec : Ascend950_BaseSpec<"Ascend950DT_9572x"> {
   let AiCoreCount = 28;
   let CubeCoreCount = 28;
   let VectorCoreCount = 56;
@@ -438,7 +462,19 @@ def Ascend950DT_9581_Spec : Ascend950_BaseSpec<"Ascend950DT_9581"> {
   let VectorCoreCount = 64;
 }
 
+def Ascend950DT_9581x_Spec : Ascend950_BaseSpec<"Ascend950DT_9581x"> {
+  let AiCoreCount = 32;
+  let CubeCoreCount = 32;
+  let VectorCoreCount = 64;
+}
+
 def Ascend950DT_9582_Spec : Ascend950_BaseSpec<"Ascend950DT_9582"> {
+  let AiCoreCount = 32;
+  let CubeCoreCount = 32;
+  let VectorCoreCount = 64;
+}
+
+def Ascend950DT_9582x_Spec : Ascend950_BaseSpec<"Ascend950DT_9582x"> {
   let AiCoreCount = 32;
   let CubeCoreCount = 32;
   let VectorCoreCount = 64;

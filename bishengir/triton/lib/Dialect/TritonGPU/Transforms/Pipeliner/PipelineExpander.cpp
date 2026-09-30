@@ -496,7 +496,7 @@ LogicalResult LoopPipelinerInternal::createKernel(
   SmallVector<Value> predicates(maxStage + 1, nullptr);
   if (!peelEpilogue) {
     // Create a predicate for each stage except the last stage.
-    Location loc = newForOp.getLoc();
+    [[maybe_unused]] Location loc = newForOp.getLoc();
     for (unsigned i = 0; i < maxStage; i++) {
       // c = ub - (maxStage - i) * step
       predicates[i] = emitPredicateStageFn(rewriter, newForOp.getInductionVar(),

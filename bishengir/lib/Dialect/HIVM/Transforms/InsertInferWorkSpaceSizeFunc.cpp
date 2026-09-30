@@ -91,7 +91,7 @@ calculateWorkspaceByte(ArrayRef<Operation *> allocWorkspaceOps,
       return op->emitOpError("illegal op when calculate workspace size");
 
     size_t offsetSize = allocWorkspaceOp.getOffset().size();
-    bool validOffsetSize =
+    [[maybe_unused]] bool validOffsetSize =
         !allocWorkspaceOp.getOffset().empty() &&
         (offsetSize <= 2 || (isMemBasedArch && offsetSize == 4));
     assert(validOffsetSize &&
@@ -151,13 +151,14 @@ static std::string getWorkspaceShapeFuncName(func::FuncOp funcOp) {
                                 hivm::TFuncCoreTypeAttr::name)
                             .getFuncCoreType();
     if (funcCoreType == hivm::TFuncCoreType::AIC) {
-      auto consumeResult = funcName.consume_back("_mix_aic");
+      [[maybe_unused]] auto consumeResult = funcName.consume_back("_mix_aic");
       assert(consumeResult && "Incorrect suffix of AIC kernel");
     } else if (funcCoreType == hivm::TFuncCoreType::AIV) {
-      auto consumeResult = funcName.consume_back("_mix_aiv");
+      [[maybe_unused]] auto consumeResult = funcName.consume_back("_mix_aiv");
       assert(consumeResult && "Incorrect suffix of AIV kernel");
     } else {
-      llvm::report_fatal_error("FuncCoreType must be either AIC or AIV for Splitted kernel");
+      llvm::report_fatal_error(
+          "FuncCoreType must be either AIC or AIV for Splitted kernel");
     }
   }
   return hacc::constructHostFunctionName(
@@ -169,11 +170,10 @@ static std::string getWorkspaceShapeFuncName(func::FuncOp funcOp) {
 void insertInferWorkspaceSizeFunc(func::FuncOp funcOp, int64_t workspaceByte,
                                   bool isRegBasedArch) {
   std::string callbackFuncName =
-      isRegBasedArch
-          ? getWorkspaceShapeFuncName(funcOp)
-          : hacc::constructHostFunctionName(
-                funcOp.getSymName().str(),
-                hacc::HostFuncType::kInferWorkspaceShapeFunction);
+      isRegBasedArch ? getWorkspaceShapeFuncName(funcOp)
+                     : hacc::constructHostFunctionName(
+                           funcOp.getSymName().str(),
+                           hacc::HostFuncType::kInferWorkspaceShapeFunction);
   func::FuncOp callbackFunc =
       insertInferWorkspaceSizeFuncImpl(funcOp, workspaceByte, callbackFuncName);
 
@@ -261,8 +261,7 @@ void InsertInferWorkSpaceSizeFuncPass::runOnOperation() {
       return WalkResult::advance();
 
     // 1. After plan-workspace, here calculate total workspace size
-    auto workspaceByte =
-        calculateWorkspaceByte(allocWorkspaceOps, isMemBased);
+    auto workspaceByte = calculateWorkspaceByte(allocWorkspaceOps, isMemBased);
     if (failed(workspaceByte))
       return WalkResult::interrupt();
 

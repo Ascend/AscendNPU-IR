@@ -196,7 +196,7 @@ void DimensionAnalyzerBase::createDummyRefIfNotExist(ArrayRef<Value> values) {
     if (valueToDimIndicesIndex_.contains(curVal))
       continue;
     LDBG("[Create] Creating dummy for value(" << curVal.getAsOpaquePointer()
-                                               << "): " << curVal);
+                                              << "): " << curVal);
     // init elements
     auto [rank, shape] = utils::getValueShapeInfo(curVal).value_or(
         std::make_pair(0, DimensionShape{}));
@@ -288,8 +288,8 @@ void DimensionAnalyzerBase::mergeArgumentRefs(int64_t lhsRefPtr,
   assert(lhsRef.size() == rhsRef.size() &&
          "Merged dim-index vectors must have the same rank");
   for (const auto &[idx, lhsDim] : llvm::enumerate(lhsRef)) {
-    LLVM_DEBUG(llvm::dbgs() << "Unifying " << lhsDim << " with " << rhsRef[idx]
-                            << "\n");
+    LLVM_DEBUG(llvm::dbgs()
+               << "Unifying " << lhsDim << " with " << rhsRef[idx] << "\n");
     joinShape(lhsDim, rhsRef[idx]);
   }
 }
@@ -342,7 +342,8 @@ void DimensionAnalyzerBase::spreadConnection() {
       << "[ShapeIdx]: shape, parent, leftConnected, rightConnected\n";);
   for (int i = 0; i < argumentTotalLength_; ++i) {
     isConnected_[i] = isConnected_[structuralDsu_->find(i)];
-    auto [_, shape] = equivalentDsu_->getMinParentAndShapePair(i);
+    [[maybe_unused]] auto [_, shape] =
+        equivalentDsu_->getMinParentAndShapePair(i);
     // check if this is available in the arguments
     LLVM_DEBUG(llvm::dbgs()
                    << "[" << i << "]: " << shape << ", "

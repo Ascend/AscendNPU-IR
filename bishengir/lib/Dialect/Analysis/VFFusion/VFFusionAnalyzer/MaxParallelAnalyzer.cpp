@@ -506,8 +506,7 @@ bool MaxParallelAnalyzer::areFusibleOps(const int producerIndex,
       if (!consumerGroup.count(user) && !producerGroup.count(user))
         return false;
 
-  if (!isInFusionWhiteList(producerOp) ||
-      !isInFusionWhiteList(consumerOp))
+  if (!isInFusionWhiteList(producerOp) || !isInFusionWhiteList(consumerOp))
     return false;
 
   auto producerLinalgOp = dyn_cast<linalg::LinalgOp>(producerOp);
@@ -659,7 +658,7 @@ bool MaxParallelAnalyzer::canFuseGroups(int producerGroupId,
                                         int consumerGroupId, int producerIndex,
                                         int consumerIndex) {
   Operation *const candidateOp = opsInBlock[producerIndex];
-  auto &consumerGroup = AllFusedGroupBlocks[consumerGroupId];
+  [[maybe_unused]] auto &consumerGroup = AllFusedGroupBlocks[consumerGroupId];
   // enableCastOpt only takes effect in max-parallel mode.
   if (this->option.enableCastOpt) {
     if (tryFuseByCastStrategy(producerGroupId, consumerGroupId, producerIndex,
@@ -842,7 +841,7 @@ bool MaxParallelAnalyzer::isSmallShapeGroup(int groupId) {
   }
   int instNum = computeGroupInstNum(AllFusedGroupBlocks[groupId]);
   LDBG("isSmallShapeGroup: group " << groupId << " instNum=" << instNum);
-  return instNum < kIssueQueueLen;
+  return static_cast<unsigned>(instNum) < kIssueQueueLen;
 }
 
 bool MaxParallelAnalyzer::mergeGroups(const int producerGroupId,
@@ -1407,7 +1406,7 @@ bool MaxParallelAnalyzer::fuseShapeBoundGroupsWithNearestConsumer() {
 }
 
 void MaxParallelAnalyzer::printValidGroupCount() {
-  int64_t count = 0;
+  [[maybe_unused]] int64_t count = 0;
   std::vector<int> validGroupIds;
 
   LDBG("=============================================");
@@ -1427,7 +1426,7 @@ void MaxParallelAnalyzer::printValidGroupCount() {
   LDBG("=============================================");
   LDBG("Total valid groups: " << count);
   LDBG("All Valid Group IDs: ");
-  for (int id : validGroupIds) {
+  for ([[maybe_unused]] int id : validGroupIds) {
     LDBG("  - " << id);
   }
   LDBG("=============================================\n");

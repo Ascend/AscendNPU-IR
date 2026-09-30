@@ -2,7 +2,7 @@
 
 set -eu
 
-allowed_modules='Analysis|Annotation|Arith|AscendDPX|Bufferization|Config|Conversion|ExecutionEngine|HACC|HFusion|HIVM|HIVMAVE|HIVMRegbaseIntrins|Interfaces|LLVMIR|Linalg|MathExt|MemRef|MemRefExt|Pass|SCF|Scope|Symbol|Tensor|Tools|Torch|Transform|Transforms|Triton|TritonExt|Utils|Vector|Version'
+allowed_modules='Analysis|Annotation|Arith|AscendDPX|Bufferization|Config|Conversion|ExecutionEngine|HACC|HFusion|HIVM|HIVMAVE|HIVMRegbaseIntrins|Interfaces|LLVMIR|Linalg|MathExt|MemRef|MemRefExt|Pass|SCF|Scope|Symbol|Template|Tensor|Tools|Torch|Transform|Transforms|Triton|TritonExt|Utils|Vector|Version'
 subject_regex="^\[(${allowed_modules})\](\[[[:alnum:]_][[:alnum:]_-]*\])? (feat|fix|doc|refactor|chore): [^[:space:]].*$"
 zero_oid=0000000000000000000000000000000000000000
 failed=0

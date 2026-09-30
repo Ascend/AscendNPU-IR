@@ -44,6 +44,7 @@ namespace {
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h.inc"
 
 namespace {
+#ifndef NDEBUG
 void printEffects(ArrayRef<MemoryEffects::EffectInstance> effects) {
   for (const auto &effect : effects) {
     auto *effectType = effect.getEffect();
@@ -67,6 +68,7 @@ void printEffects(ArrayRef<MemoryEffects::EffectInstance> effects) {
     }
   }
 }
+#endif
 
 bool hasMemDependency(ArrayRef<MemoryEffects::EffectInstance> effects1,
                       ArrayRef<MemoryEffects::EffectInstance> effects2,
@@ -128,7 +130,7 @@ bool analyzeMemrefDepdencies(Operation *op1, Operation *op2,
   }
 
   bool hasDep = hasMemDependency(effects1, effects2, isAlias);
-  LLVM_DEBUG(if(hasDep){
+  LLVM_DEBUG(if (hasDep) {
     LDBG("analyze memref dependency, op1: " << op1->getName());
     printEffects(effects1);
     LDBG("analyze memref dependency, op2: " << op2->getName());
@@ -202,21 +204,21 @@ public:
 
   void verify() const {
     for (const auto &entry : vfDeps) {
-      Operation *user = entry.first;
+      [[maybe_unused]] Operation *user = entry.first;
       assert(vfUsers.count(user) && "missing VF users node");
       for (Operation *dep : entry.second) {
         assert(user != dep && "unexpected VF self dependency");
-        auto usersIt = vfUsers.find(dep);
+        [[maybe_unused]] auto usersIt = vfUsers.find(dep);
         assert(usersIt != vfUsers.end() && usersIt->second.contains(user) &&
                "VF dependency is missing its reverse user edge");
       }
     }
     for (const auto &entry : vfUsers) {
-      Operation *dep = entry.first;
+      [[maybe_unused]] Operation *dep = entry.first;
       assert(vfDeps.count(dep) && "missing VF dependencies node");
       for (Operation *user : entry.second) {
         assert(user != dep && "unexpected VF self user");
-        auto depsIt = vfDeps.find(user);
+        [[maybe_unused]] auto depsIt = vfDeps.find(user);
         assert(depsIt != vfDeps.end() && depsIt->second.contains(dep) &&
                "VF user edge is missing its forward dependency");
       }
@@ -279,6 +281,22 @@ private:
 
 bool isIgnoredBetweenOp(Operation *op) { return isa<hivm::AnchorOp>(op); }
 
+// SSA and memref dependencies do not capture ordering through synchronization
+// events, including communication with another core. Do not move operations or
+// merge calls across these barriers, even when they are nested in a region.
+// Before intra-core sync insertion and lock finalization, preserve block sync,
+// lock resources, and pipe barriers from explicit barriers or block-all sync.
+bool containsVFMergeBarrier(Operation *op) {
+  WalkResult result = op->walk([](Operation *nestedOp) {
+    if (isa<hivm::SyncBlockSetOp, hivm::SyncBlockWaitOp, hivm::SyncBlockOp,
+            hivm::CreateSyncBlockLockOp, hivm::SyncBlockLockOp,
+            hivm::SyncBlockUnlockOp, hivm::PipeBarrierOp>(nestedOp))
+      return WalkResult::interrupt();
+    return WalkResult::advance();
+  });
+  return result.wasInterrupted();
+}
+
 bool containsAnchor(Operation *op) {
   if (isa<hivm::AnchorOp>(op))
     return true;
@@ -291,14 +309,12 @@ bool containsAnchor(Operation *op) {
 }
 
 bool isHIVMMemoryOp(Operation *op) {
-  if (isa<hivm::LoadOp, hivm::StoreOp, hivm::CopyOp, hivm::IndirectStoreOp>(
-          op))
+  if (isa<hivm::LoadOp, hivm::StoreOp, hivm::CopyOp, hivm::IndirectStoreOp>(op))
     return true;
 
   StringRef opName = op->getName().getStringRef();
   return opName == "hivm.hir.indirect_load" ||
-         opName == "hivm.hir.stride_load" ||
-         opName == "hivm.hir.stride_store";
+         opName == "hivm.hir.stride_load" || opName == "hivm.hir.stride_store";
 }
 
 DependMap computeDependencyClosure(const DependMap &directDeps) {
@@ -478,7 +494,8 @@ void MergeVecScopePass::runOnOperation() {
       vfs.push_back(f);
   });
 
-  unsigned int numberVfBefore = static_cast<unsigned int>(vfs.size());
+  [[maybe_unused]] unsigned int numberVfBefore =
+      static_cast<unsigned int>(vfs.size());
 
   // get call function/root
   func::FuncOp root = nullptr;
@@ -659,13 +676,14 @@ void MergeVecScopePass::runOnOperation() {
   // Adjust the VF merging order
   SmallVector<int> useIncrIdx(vfs.size());
   std::iota(useIncrIdx.begin(), useIncrIdx.end(), 0);
-  std::stable_partition(useIncrIdx.begin(), useIncrIdx.end(),
-                        [&useScoreTotal, &useIncrIdx](int bValue) {
-                          auto it = std::find(useIncrIdx.begin(),
-                                              useIncrIdx.end(), bValue);
-                          size_t index = static_cast<size_t>(std::distance(useIncrIdx.begin(), it));
-                          return useScoreTotal[index] == 0;
-                        });
+  std::stable_partition(
+      useIncrIdx.begin(), useIncrIdx.end(),
+      [&useScoreTotal, &useIncrIdx](int bValue) {
+        auto it = std::find(useIncrIdx.begin(), useIncrIdx.end(), bValue);
+        size_t index =
+            static_cast<size_t>(std::distance(useIncrIdx.begin(), it));
+        return useScoreTotal[index] == 0;
+      });
   LLVM_DEBUG(size_t n = useIncrIdx.size(); if (n > 0) {
     llvm::dbgs() << "useIncrIdx(" << n << " entries) = [";
     for (size_t i = 0; i < n - 1; ++i) {
@@ -827,7 +845,7 @@ void MergeVecScopePass::runOnOperation() {
     if (hivm::isVF(f))
       vfsAfter.push_back(f);
   });
-  unsigned int numberVfafter = vfsAfter.size();
+  [[maybe_unused]] unsigned int numberVfafter = vfsAfter.size();
   // debug
   // mod->dump();
 
@@ -882,8 +900,8 @@ bool MergeVecScopePass::tryMerge(func::FuncOp root, func::FuncOp vf1,
   // will be converted V->S wait, which will prevent double buffering.
   if (!hasCompatibleResultExtractKind(call1, call2)) {
     LLVM_DEBUG(llvm::dbgs()
-               << "Result extract kind mismatch prevents VF merge: "
-               << vf1.getName() << " <-> " << vf2.getName() << "\n";);
+                   << "Result extract kind mismatch prevents VF merge: "
+                   << vf1.getName() << " <-> " << vf2.getName() << "\n";);
     return false;
   }
 
@@ -900,13 +918,9 @@ bool MergeVecScopePass::tryMerge(func::FuncOp root, func::FuncOp vf1,
     between = between->getNextNode();
   }
 
-  for (Operation *op : betweenOps) {
-    if (isa<hivm::SyncBlockSetOp>(op) || isa<hivm::SyncBlockWaitOp>(op)) {
-      // temporarily regard sync_block instr as memory op
-      // so that vf1 and vf2 would not be merged
-      LLVM_DEBUG(llvm::dbgs() << "SyncBlock|Load op prevents fusion\n";);
-      return false;
-    }
+  if (llvm::any_of(betweenOps, containsVFMergeBarrier)) {
+    LDBG("Synchronization barrier prevents VF merge");
+    return false;
   }
 
   // Identify ops that must NOT move because moving them would reorder
@@ -1176,8 +1190,7 @@ void MergeVecScopePass::GetMemOps(const SmallVector<Operation *> &betweenOps,
   // TODO: add Flag to not move DMA ops
   for (Operation *op : betweenOps) {
     if (isHIVMMemoryOp(op) ||
-        isa<
-            hfusion::LoadOp, hfusion::StoreOp, hfusion::IndirectLoadOp,
+        isa<hfusion::LoadOp, hfusion::StoreOp, hfusion::IndirectLoadOp,
             hfusion::StrideLoadOp, hfusion::StrideStoreOp,
             hfusion::IndirectStoreOp, memref::LoadOp, memref::StoreOp,
             memref::CopyOp, memref::SubViewOp, memref::AllocOp,
@@ -1317,7 +1330,8 @@ void MergeVecScopePass::mergeNoBetween(func::FuncOp root, func::FuncOp vf1,
   auto vf1FuncCoreType = getFuncCoreType(vf1);
   auto vf2FuncCoreType = getFuncCoreType(vf2);
   if (vf1FuncCoreType != vf2FuncCoreType) {
-    llvm::report_fatal_error(vf1.getName() + " must have the same func_core_type as " +
+    llvm::report_fatal_error(vf1.getName() +
+                             " must have the same func_core_type as " +
                              vf2.getName() + "\n");
   }
 

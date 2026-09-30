@@ -535,3 +535,213 @@ func.func @keep_hfusion_depthwise_conv2d_unit_channel(
       outs(%init : tensor<16x6x6xf16>) -> tensor<16x6x6xf16>
   return %result : tensor<16x6x6xf16>
 }
+
+// -----
+
+// Squeezing multi-unit dimensions from view-changing allocations and casts
+// must natively propagate into contiguous 1D subview components. Downstream
+// metadata expand/collapse layers must completely cancel out, directly
+// linking the optimized flat layout memory copies.
+// CHECK-LABEL: func.func @test_moe_sum_reduce_minimized(
+// CHECK-SAME:    %[[ARG0:.*]]: memref<?xf16>, %[[ARG1:.*]]: index, %[[ARG2:.*]]: index, %[[ARG3:.*]]: index, %[[ARG4:.*]]: index, %[[ARG5:.*]]: index, %[[ARG6:.*]]: index, %[[ARG7:.*]]: index)
+// CHECK:      %[[CAST:.*]] = memref.reinterpret_cast %[[ARG0]] to offset: [%[[ARG1]]], sizes: [2048], strides: [1] : memref<?xf16> to memref<2048xf16, strided<[1], offset: ?>>
+// CHECK:      %[[ALLOC:.*]] = memref.alloc() : memref<2048xf16>
+// CHECK:      %[[MUL:.*]] = arith.muli %[[ARG4]], %[[ARG5]] : index
+// CHECK:      %[[SRC:.*]] = memref.subview %[[CAST]][0] [%[[MUL]]] [1] : memref<2048xf16, strided<[1], offset: ?>> to memref<?xf16, strided<[1], offset: ?>>
+// CHECK:      %[[DST:.*]] = memref.subview %[[ALLOC]][%[[ARG7]]] [%[[MUL]]] [1] : memref<2048xf16> to memref<?xf16, strided<[1], offset: ?>>
+// CHECK:      memref.copy %[[SRC]], %[[DST]] : memref<?xf16, strided<[1], offset: ?>> to memref<?xf16, strided<[1], offset: ?>>
+// CHECK:      return
+func.func @test_moe_sum_reduce_minimized(
+    %arg1: memref<?xf16>,
+    %offset: index,
+    %stride0: index,
+    %stride1: index,
+    %size0: index,
+    %size1: index,
+    %dest_offset0: index,
+    %dest_offset1: index
+) -> () {
+  %reinterpret_cast_1 = memref.reinterpret_cast %arg1 to offset: [%offset], sizes: [1, 1, 2048], strides: [%stride0, %stride1, 1]
+    : memref<?xf16> to memref<1x1x2048xf16, strided<[?, ?, 1], offset: ?>>
+  %alloc = memref.alloc() : memref<1x1x2048xf16>
+  %subview_2 = memref.subview %reinterpret_cast_1[0, 0, 0] [%size0, 1, %size1] [1, 1, 1]
+    : memref<1x1x2048xf16, strided<[?, ?, 1], offset: ?>> to memref<?x1x?xf16, strided<[?, ?, 1], offset: ?>>
+  %subview_3 = memref.subview %alloc[%dest_offset0, 0, %dest_offset1] [%size0, 1, %size1] [1, 1, 1]
+    : memref<1x1x2048xf16> to memref<?x1x?xf16, strided<[2048, 2048, 1], offset: ?>>
+  memref.copy %subview_2, %subview_3
+    : memref<?x1x?xf16, strided<[?, ?, 1], offset: ?>> to memref<?x1x?xf16, strided<[2048, 2048, 1], offset: ?>>
+  return
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_materialize_destination(
+// CHECK-SAME:    %[[ARG0:.*]]: memref<?xf16>, %[[ARG1:.*]]: index, %[[ARG2:.*]]: index, %[[ARG3:.*]]: tensor<1x2048xf16>, %[[ARG4:.*]]: index, %[[ARG5:.*]]: index, %[[ARG6:.*]]: index, %[[ARG7:.*]]: index)
+// CHECK:      %[[CAST:.*]] = memref.reinterpret_cast %[[ARG0]] to offset: [%[[ARG1]]], sizes: [2048], strides: [1] : memref<?xf16> to memref<2048xf16, strided<[1], offset: ?>>
+// CHECK:      %[[COLLAPSE:.*]] = tensor.collapse_shape %[[ARG3]] {{\[}}[0, 1]] : tensor<1x2048xf16> into tensor<2048xf16>
+// CHECK:      %[[MUL:.*]] = arith.muli %[[ARG6]], %[[ARG7]] : index
+// CHECK:      %[[SLICE:.*]] = tensor.extract_slice %[[COLLAPSE]][%[[ARG5]]] [%[[MUL]]] [1] : tensor<2048xf16> to tensor<?xf16>
+// CHECK:      %[[SUBVIEW:.*]] = memref.subview %[[CAST]][0] [%[[MUL]]] [1] : memref<2048xf16, strided<[1], offset: ?>> to memref<?xf16, strided<[1], offset: ?>>
+// CHECK:      bufferization.materialize_in_destination %[[SLICE]] in writable %[[SUBVIEW]] : (tensor<?xf16>, memref<?xf16, strided<[1], offset: ?>>) -> ()
+// CHECK:      return
+func.func @test_materialize_destination(
+  %buffer: memref<?xf16>,
+  %buf_offset: index,
+  %buf_stride: index,
+  %src_tensor: tensor<1x2048xf16>,
+  %src_row_offset: index,
+  %src_col_offset: index,
+  %slice_rows: index,
+  %slice_cols: index
+) {
+  %reinterpret_cast = memref.reinterpret_cast %buffer to offset: [%buf_offset], sizes: [1, 2048], strides: [%buf_stride, 1]
+    : memref<?xf16> to memref<1x2048xf16, strided<[?, 1], offset: ?>>
+  %extracted_slice = tensor.extract_slice %src_tensor[%src_row_offset, %src_col_offset] [%slice_rows, %slice_cols] [1, 1]
+    : tensor<1x2048xf16> to tensor<?x?xf16>
+  %subview = memref.subview %reinterpret_cast[0, 0] [%slice_rows, %slice_cols] [1, 1]
+    : memref<1x2048xf16, strided<[?, 1], offset: ?>> to memref<?x?xf16, strided<[?, 1], offset: ?>>
+  bufferization.materialize_in_destination %extracted_slice in writable %subview
+    : (tensor<?x?xf16>, memref<?x?xf16, strided<[?, 1], offset: ?>>) -> ()
+
+  return
+}
+
+// -----
+
+// Multi-consumer lookahead optimization must seamlessly process shared view
+// dependencies. When a single squeezed subview flows concurrently into
+// multiple downstream copy allocations, the engine must safely clear all
+// wrapper chains, routing the flat 1D dataflow directly to each target buffer.
+// CHECK-LABEL: func.func @shared_slice(
+// CHECK-SAME:    %[[ARG0:.*]]: memref<?xf32>, %[[ARG1:.*]]: memref<?xf32>, %[[ARG2:.*]]: memref<?xf32>, %[[ARG3:.*]]: index, %[[ARG4:.*]]: index)
+// CHECK:      %[[CAST:.*]] = memref.reinterpret_cast %[[ARG0]] to offset: [0], sizes: [8], strides: [1] : memref<?xf32> to memref<8xf32, strided<[1]>>
+// CHECK:      %[[MUL:.*]] = arith.muli %[[ARG3]], %[[ARG4]] : index
+// CHECK:      %[[SRC:.*]] = memref.subview %[[CAST]][0] [%[[MUL]]] [1] : memref<8xf32, strided<[1]>> to memref<?xf32, strided<[1]>>
+// CHECK:      %[[ALLOC1:.*]] = memref.alloc() : memref<8xf32>
+// CHECK:      %[[DST1:.*]] = memref.subview %[[ALLOC1]][0] [%[[MUL]]] [1] : memref<8xf32> to memref<?xf32, strided<[1]>>
+// CHECK:      memref.copy %[[SRC]], %[[DST1]] : memref<?xf32, strided<[1]>> to memref<?xf32, strided<[1]>>
+// CHECK:      %[[ALLOC2:.*]] = memref.alloc() : memref<8xf32>
+// CHECK:      %[[DST2:.*]] = memref.subview %[[ALLOC2]][0] [%[[MUL]]] [1] : memref<8xf32> to memref<?xf32, strided<[1]>>
+// CHECK:      memref.copy %[[SRC]], %[[DST2]] : memref<?xf32, strided<[1]>> to memref<?xf32, strided<[1]>>
+// CHECK:      return
+func.func @shared_slice(%src: memref<?xf32>, %dst1: memref<?xf32>, %dst2: memref<?xf32>, %row_valid: index, %cols: index) {
+  %reinterpret_cast_src = memref.reinterpret_cast %src to offset: [0], sizes: [1, 8], strides: [8, 1] : memref<?xf32> to memref<1x8xf32, strided<[8, 1]>>
+  %subview_src = memref.subview %reinterpret_cast_src[0, 0] [%row_valid, %cols] [1, 1] : memref<1x8xf32, strided<[8, 1]>> to memref<?x?xf32, strided<[8, 1]>>
+
+  %alloc1 = memref.alloc() : memref<1x8xf32>
+  %subview_dst1 = memref.subview %alloc1[0, 0] [%row_valid, %cols] [1, 1] : memref<1x8xf32> to memref<?x?xf32, strided<[8, 1]>>
+  memref.copy %subview_src, %subview_dst1 : memref<?x?xf32, strided<[8, 1]>> to memref<?x?xf32, strided<[8, 1]>>
+
+  %alloc2 = memref.alloc() : memref<1x8xf32>
+  %subview_dst2 = memref.subview %alloc2[0, 0] [%row_valid, %cols] [1, 1] : memref<1x8xf32> to memref<?x?xf32, strided<[8, 1]>>
+  memref.copy %subview_src, %subview_dst2 : memref<?x?xf32, strided<[8, 1]>> to memref<?x?xf32, strided<[8, 1]>>
+
+  return
+}
+
+// -----
+
+// When a squeezed subview flows directly into a compute operator that has not
+// yet been transformed (Phase 2), the lookahead engine cannot safely bypass the
+// wrappers. It must cleanly materialize canonical fallback expand_shape ops to
+// preserve the expected multi-dimensional compute iteration domain.
+// CHECK-LABEL: func.func @test_linalg_generic(
+// CHECK-SAME:    %[[ARG0:.*]]: memref<?xf32>, %[[ARG1:.*]]: index, %[[ARG2:.*]]: index)
+// CHECK:      %[[CAST:.*]] = memref.reinterpret_cast %[[ARG0]] to offset: [0], sizes: [8], strides: [1] : memref<?xf32> to memref<8xf32, strided<[1]>>
+// CHECK:      %[[ALLOC:.*]] = memref.alloc() : memref<8xf32>
+// CHECK:      %[[MUL:.*]] = arith.muli %[[ARG1]], %[[ARG2]] : index
+// CHECK:      %[[SRC_SUB:.*]] = memref.subview %[[CAST]][0] [%[[MUL]]] [1] : memref<8xf32, strided<[1]>> to memref<?xf32, strided<[1]>>
+// CHECK:      %[[SRC_EXP:.*]] = memref.expand_shape %[[SRC_SUB]] {{\[\[}}0, 1]] output_shape [%[[ARG1]], %[[ARG2]]] : memref<?xf32, strided<[1]>> into memref<?x?xf32>
+// CHECK:      %[[DST_SUB:.*]] = memref.subview %[[ALLOC]][0] [%[[MUL]]] [1] : memref<8xf32> to memref<?xf32, strided<[1]>>
+// CHECK:      %[[DST_EXP:.*]] = memref.expand_shape %[[DST_SUB]] {{\[\[}}0, 1]] output_shape [%[[ARG1]], %[[ARG2]]] : memref<?xf32, strided<[1]>> into memref<?x?xf32>
+// CHECK:      linalg.generic {indexing_maps = [{{#.*}}, {{#.*}}], iterator_types = ["parallel", "parallel"]} ins(%[[SRC_EXP]] : memref<?x?xf32>) outs(%[[DST_EXP]] : memref<?x?xf32>)
+// CHECK:      return
+#map = affine_map<(d0, d1) -> (d0, d1)>
+func.func @test_linalg_generic(%arg0: memref<?xf32>, %row: index, %cols: index) {
+  %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [0], sizes: [1, 8], strides: [8, 1] : memref<?xf32> to memref<1x8xf32, strided<[8, 1]>>
+  %alloc = memref.alloc() : memref<1x8xf32>
+  %subview = memref.subview %reinterpret_cast[0, 0] [%row, %cols] [1, 1] : memref<1x8xf32, strided<[8, 1]>> to memref<?x?xf32, strided<[8, 1]>>
+  %subview_1 = memref.subview %alloc[0, 0] [%row, %cols] [1, 1] : memref<1x8xf32> to memref<?x?xf32, strided<[8, 1]>>
+  linalg.generic {indexing_maps = [#map, #map], iterator_types = ["parallel","parallel"]}
+      ins(%subview : memref<?x?xf32, strided<[8, 1]>>) outs(%subview_1 : memref<?x?xf32, strided<[8, 1]>>) {
+    ^bb0(%in: f32, %out: f32):
+      linalg.yield %in : f32
+  }
+  return
+}
+
+// -----
+
+// When a 1x1 slice encounters asymmetrical strides (128 vs 1), the lookahead
+// engine and stride selection filter must uniformly drop the row dimension 0.
+// This forces both pipelines to converge identically on a contiguous stride-1
+// output, completely removing all intermediate expand/collapse shapes.
+// CHECK-LABEL: func.func @test_subview_rank1_collapse(
+// CHECK-SAME:    %[[ARG0:.*]]: memref<?xf16>)
+// CHECK:      %[[CAST:.*]] = memref.reinterpret_cast %[[ARG0]] to offset: [0], sizes: [128], strides: [1] : memref<?xf16> to memref<128xf16, strided<[1]>>
+// CHECK:      %[[ALLOC:.*]] = memref.alloc() : memref<128xf16>
+// CHECK:      %[[SRC:.*]] = memref.subview %[[CAST]][0] [1] [1] : memref<128xf16, strided<[1]>> to memref<1xf16, strided<[1]>>
+// CHECK:      %[[DST:.*]] = memref.subview %[[ALLOC]][0] [1] [1] : memref<128xf16> to memref<1xf16, strided<[1]>>
+// CHECK:      memref.copy %[[SRC]], %[[DST]] : memref<1xf16, strided<[1]>> to memref<1xf16, strided<[1]>>
+// CHECK:      return
+func.func @test_subview_rank1_collapse(
+    %arg0: memref<?xf16>
+) {
+  %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [0], sizes: [1, 128], strides: [128, 1]
+    : memref<?xf16> to memref<1x128xf16, strided<[128, 1]>>
+  %alloc = memref.alloc() : memref<1x128xf16>
+  %subview_src = memref.subview %reinterpret_cast[0, 0] [1, 1] [1, 1]
+    : memref<1x128xf16, strided<[128, 1]>> to memref<1x1xf16, strided<[128, 1]>>
+  %subview_dst = memref.subview %alloc[0, 0] [1, 1] [1, 1]
+    : memref<1x128xf16> to memref<1x1xf16, strided<[128, 1]>>
+  memref.copy %subview_src, %subview_dst
+    : memref<1x1xf16, strided<[128, 1]>> to memref<1x1xf16, strided<[128, 1]>>
+
+  return
+}
+
+// -----
+
+// CHECK-LABEL: func.func @triton_reduction_collapse(
+// CHECK-SAME:    %[[ARG0:.*]]: memref<1x4x5x7xi32>) -> tensor<140xi32>
+// CHECK:      %[[MEM_COLLAPSE:.*]] = memref.collapse_shape %[[ARG0]] {{\[\[}}0, 1], [2], [3]] : memref<1x4x5x7xi32> into memref<4x5x7xi32>
+// CHECK:      %[[TENSOR:.*]] = bufferization.to_tensor %[[MEM_COLLAPSE]] restrict writable : memref<4x5x7xi32>
+// CHECK:      %[[TENS_COLLAPSE:.*]] = tensor.collapse_shape %[[TENSOR]] {{\[\[}}0, 1, 2]] : tensor<4x5x7xi32> into tensor<140xi32>
+// CHECK:      return %[[TENS_COLLAPSE]] : tensor<140xi32>
+func.func @triton_reduction_collapse(%alloc: memref<1x4x5x7xi32>) -> tensor<140xi32> {
+  %0 = bufferization.to_tensor %alloc restrict writable : memref<1x4x5x7xi32>
+  %collapsed = tensor.collapse_shape %0 [[0, 1, 2, 3]] : tensor<1x4x5x7xi32> into tensor<140xi32>
+  return %collapsed : tensor<140xi32>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @reassoc_overlap(
+// CHECK-SAME:    %[[ARG0:.*]]: memref<1x2x1x3xf32>) -> tensor<1x2x3xf32>
+// CHECK:      %[[MEM_COLLAPSE:.*]] = memref.collapse_shape %[[ARG0]] {{\[\[}}0, 1, 2], [3]] : memref<1x2x1x3xf32> into memref<2x3xf32>
+// CHECK:      %[[TENSOR:.*]] = bufferization.to_tensor %[[MEM_COLLAPSE]] restrict writable : memref<2x3xf32>
+// CHECK:      %[[TENS_EXPAND:.*]] = tensor.expand_shape %[[TENSOR]] {{\[\[}}0, 1], [2]] output_shape [1, 2, 3] : tensor<2x3xf32> into tensor<1x2x3xf32>
+// CHECK:      return %[[TENS_EXPAND]] : tensor<1x2x3xf32>
+func.func @reassoc_overlap(%src: memref<1x2x1x3xf32>) -> tensor<1x2x3xf32> {
+  %t = bufferization.to_tensor %src restrict writable : memref<1x2x1x3xf32>
+  %c = tensor.collapse_shape %t [[0], [1], [2, 3]] : tensor<1x2x1x3xf32> into tensor<1x2x3xf32>
+  return %c : tensor<1x2x3xf32>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @fallback_dominance(
+// CHECK-SAME:    %[[ARG0:.*]]: memref<1x4x5x7xf32>) -> tensor<140xf32>
+// CHECK:      %[[MEM_COLLAPSE:.*]] = memref.collapse_shape %[[ARG0]] {{\[\[}}0, 1], [2], [3]] : memref<1x4x5x7xf32> into memref<4x5x7xf32>
+// CHECK:      %[[SQUEEZED_TENSOR:.*]] = bufferization.to_tensor %[[MEM_COLLAPSE]] restrict writable : memref<4x5x7xf32>
+// CHECK:      %[[FALLBACK_EXPAND:.*]] = tensor.expand_shape %[[SQUEEZED_TENSOR]] {{\[\[}}0, 1], [2], [3]] output_shape [1, 4, 5, 7] : tensor<4x5x7xf32> into tensor<1x4x5x7xf32>
+// CHECK:      call @consume(%[[FALLBACK_EXPAND]]) : (tensor<1x4x5x7xf32>) -> ()
+// CHECK:      %[[FINAL_COLLAPSE:.*]] = tensor.collapse_shape %[[SQUEEZED_TENSOR]] {{\[\[}}0, 1, 2]] : tensor<4x5x7xf32> into tensor<140xf32>
+// CHECK:      return %[[FINAL_COLLAPSE]] : tensor<140xf32>
+func.func private @consume(tensor<1x4x5x7xf32>)
+func.func @fallback_dominance(%src: memref<1x4x5x7xf32>) -> tensor<140xf32> {
+  %t = bufferization.to_tensor %src restrict writable : memref<1x4x5x7xf32>
+  func.call @consume(%t) : (tensor<1x4x5x7xf32>) -> ()
+  %c = tensor.collapse_shape %t [[0, 1, 2, 3]] : tensor<1x4x5x7xf32> into tensor<140xf32>
+  return %c : tensor<140xf32>
+}

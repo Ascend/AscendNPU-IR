@@ -97,6 +97,7 @@ def EnableTorchCompile : FeatureControlOptions<
   "bool",
   "false"
 > {
+  let optionScope = ["A3_ONLY"];
   let passGroup = ["HFUSION"];
 }
 #endif
@@ -126,6 +127,7 @@ def EnableSymbolAnalysis : FeatureControlOptions<
   "bool",
   "false"
 > {
+  let optionScope = ["A3_ONLY"];
   let passGroup = ["HFUSION"];
 }
 
@@ -135,6 +137,7 @@ def EnableMultiKernel : FeatureControlOptions<
   "bool",
   "false"
 > {
+  let optionScope = ["A3_ONLY"];
   let passGroup = ["HFUSION"];
 }
 
@@ -143,6 +146,7 @@ def EnableManageHostResources : FeatureControlOptions<
   "bool",
   "false"
 > {
+  let optionScope = ["A3_ONLY"];
   let passGroup = ["HFUSION"];
 }
 
@@ -164,6 +168,7 @@ def EnableBinRelocation : FeatureControlOptions<
   bit isSharedWithDownstreamToolchain = 1;
 }
 
+
 #ifdef BISHENGIR_ENABLE_TORCH_CONVERSIONS
 def EnsureNoImplicitBroadcast : FeatureControlOptions<
   "Whether to ensure that there is no implicit broadcast "
@@ -172,6 +177,7 @@ def EnsureNoImplicitBroadcast : FeatureControlOptions<
   "bool",
   "false"
 > {
+  let optionScope = ["A3_ONLY"];
   let passGroup = ["HFUSION"];
 }
 #endif
@@ -400,7 +406,9 @@ def EnableDeterministicComputing : HFusionOptimizationControlOptions<
   "However, the result will be non-deterministic.",
   "bool",
   "true"
->;
+> {
+  let optionScope = ["A3_ONLY"];
+}
 
 def EnableOpsReorder : HFusionOptimizationControlOptions<
   "Enable ops reorder to opt pipeline.",
@@ -424,18 +432,23 @@ def HfusionMaxHorizontalFusionSize : HFusionOptimizationControlOptions<
   "Number of horizontal fusion attempt (Default: unlimited).",
   "int32_t",
   "-1"
->;
+> {
+  let optionScope = ["A3_ONLY"];
+}
 
 def HfusionMaxBufferCountTuning : HFusionOptimizationControlOptions<
   "Max buffer count tuning in HFusion auto schedule.",
   "int64_t",
   "0"
->;
+> {
+  let optionScope = ["A3_ONLY"];
+}
 
 def CubeTilingTuning : BiShengIRCompileListOpt<
   "Cube block size tuning in HFusion auto schedule",
   "int64_t"
 > {
+  let optionScope = ["A3_ONLY"];
   let passGroup = ["HFUSION"];
   let compileOptionCategories = ["hfusionOptCategory"];
 }
@@ -445,7 +458,9 @@ def enableHfusionCountBufferDmaOpt : HFusionOptimizationControlOptions<
   "be reused by Vector operations.",
   "bool",
   "false"
->;
+> {
+  let optionScope = ["A3_ONLY"];
+}
 
 //===----------------------------------------------------------------------===//
 // HIVM Optimization Control Options
@@ -674,42 +689,46 @@ def Target : BiShengIRCompileOpt<
 > {
   let additionalOptFlags = [{
 llvm::cl::values(
-#define TO_STRING(x) #x
-    #define REGISTER_TARGET(TARGET)                                              \
+  #define TO_STRING(x) #x
+  #define REGISTER_TARGET(TARGET)                                              \
   clEnumValN(mlir::hacc::TargetDevice::TARGET, TO_STRING(TARGET),              \
              TO_STRING(TARGET))
                 // Ascend910B series
-  REGISTER_TARGET(Ascend910B1), REGISTER_TARGET(Ascend910B2),
-  REGISTER_TARGET(Ascend910B3), REGISTER_TARGET(Ascend910B4),
+                REGISTER_TARGET(Ascend910B1), REGISTER_TARGET(Ascend910B2),
+                REGISTER_TARGET(Ascend910B3), REGISTER_TARGET(Ascend910B4),
                 clEnumValN(mlir::hacc::TargetDevice::Ascend910B4_1,
                               "Ascend910B4-1", "Ascend910B4-1"),
                 REGISTER_TARGET(Ascend910B2C),
                 // Ascend910_93 series
-  REGISTER_TARGET(Ascend910_9362), REGISTER_TARGET(Ascend910_9363),
-  REGISTER_TARGET(Ascend910_9372),
-  REGISTER_TARGET(Ascend910_9381), REGISTER_TARGET(Ascend910_9382),
-  REGISTER_TARGET(Ascend910_9391), REGISTER_TARGET(Ascend910_9392),
+                REGISTER_TARGET(Ascend910_9362), REGISTER_TARGET(Ascend910_9363),
+                REGISTER_TARGET(Ascend910_9372),
+                REGISTER_TARGET(Ascend910_9381), REGISTER_TARGET(Ascend910_9382),
+                REGISTER_TARGET(Ascend910_9391), REGISTER_TARGET(Ascend910_9392),
                 // Ascend910_95 series
-  REGISTER_TARGET(Ascend910_950z), REGISTER_TARGET(Ascend910_9579),
-  REGISTER_TARGET(Ascend910_957b), REGISTER_TARGET(Ascend910_957d),
-  REGISTER_TARGET(Ascend910_9581), REGISTER_TARGET(Ascend910_9589),
-  REGISTER_TARGET(Ascend910_958a), REGISTER_TARGET(Ascend910_958b),
+                REGISTER_TARGET(Ascend910_950z), REGISTER_TARGET(Ascend910_9579),
+                REGISTER_TARGET(Ascend910_957b), REGISTER_TARGET(Ascend910_957d),
+                REGISTER_TARGET(Ascend910_9581), REGISTER_TARGET(Ascend910_9589),
+                REGISTER_TARGET(Ascend910_958a), REGISTER_TARGET(Ascend910_958b),
                 REGISTER_TARGET(Ascend910_9599),
                 // Ascend950PR series
                 REGISTER_TARGET(Ascend950PR_950z), REGISTER_TARGET(Ascend950PR_9579),
-                REGISTER_TARGET(Ascend950PR_957a), REGISTER_TARGET(Ascend950PR_957b),
-                REGISTER_TARGET(Ascend950PR_957c), REGISTER_TARGET(Ascend950PR_957d),
-                REGISTER_TARGET(Ascend950PR_9589), REGISTER_TARGET(Ascend950PR_958a),
-                REGISTER_TARGET(Ascend950PR_958b), REGISTER_TARGET(Ascend950PR_958c),
-                REGISTER_TARGET(Ascend950PR_958d), REGISTER_TARGET(Ascend950PR_9599),
-                REGISTER_TARGET(Ascend950PR_959a), REGISTER_TARGET(Ascend950PR_959b),
+                REGISTER_TARGET(Ascend950PR_9579x), REGISTER_TARGET(Ascend950PR_957a),
+                REGISTER_TARGET(Ascend950PR_957b), REGISTER_TARGET(Ascend950PR_957c),
+                REGISTER_TARGET(Ascend950PR_957d), REGISTER_TARGET(Ascend950PR_9589),
+                REGISTER_TARGET(Ascend950PR_958a), REGISTER_TARGET(Ascend950PR_958b),
+                REGISTER_TARGET(Ascend950PR_958c), REGISTER_TARGET(Ascend950PR_958d),
+                REGISTER_TARGET(Ascend950PR_9599), REGISTER_TARGET(Ascend950PR_959a),
+                REGISTER_TARGET(Ascend950PR_959b), REGISTER_TARGET(Ascend950PR_957bx),
+                REGISTER_TARGET(Ascend950PR_958bx),
                 // Ascend950DT series
                 REGISTER_TARGET(Ascend950DT_950x), REGISTER_TARGET(Ascend950DT_950y),
                 REGISTER_TARGET(Ascend950DT_9571), REGISTER_TARGET(Ascend950DT_9572),
+                REGISTER_TARGET(Ascend950DT_9572x),
                 REGISTER_TARGET(Ascend950DT_9573), REGISTER_TARGET(Ascend950DT_9574),
                 REGISTER_TARGET(Ascend950DT_9575), REGISTER_TARGET(Ascend950DT_9576),
                 REGISTER_TARGET(Ascend950DT_9577), REGISTER_TARGET(Ascend950DT_9578),
-                REGISTER_TARGET(Ascend950DT_9581), REGISTER_TARGET(Ascend950DT_9582),
+                REGISTER_TARGET(Ascend950DT_9581), REGISTER_TARGET(Ascend950DT_9581x),
+                REGISTER_TARGET(Ascend950DT_9582), REGISTER_TARGET(Ascend950DT_9582x),
                 REGISTER_TARGET(Ascend950DT_9583), REGISTER_TARGET(Ascend950DT_9584),
                 REGISTER_TARGET(Ascend950DT_9585), REGISTER_TARGET(Ascend950DT_9586),
                 REGISTER_TARGET(Ascend950DT_9587), REGISTER_TARGET(Ascend950DT_9588),
@@ -717,8 +736,8 @@ llvm::cl::values(
                 REGISTER_TARGET(Ascend950DT_9595), REGISTER_TARGET(Ascend950DT_9596),
                 REGISTER_TARGET(Ascend950DT_95A1), REGISTER_TARGET(Ascend950DT_95A2),
                 REGISTER_TARGET(Unknown)
-#undef REGISTER_TARGET
-#undef TO_STRING
+  #undef REGISTER_TARGET
+  #undef TO_STRING
 )
   }];
   let compileOptionCategories = ["targetCategory"];

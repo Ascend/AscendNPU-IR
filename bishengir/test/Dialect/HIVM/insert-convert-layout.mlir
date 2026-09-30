@@ -163,11 +163,12 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // CHECK-SAME: {dstLayout = #hivm.data_layout<ND>, srcLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>}
 // CHECK: %[[FIX:.*]] = hivm.hir.fixpipe ins(%[[ACC_ND]] : tensor<16x16xf32>){{.*}}-> tensor<2x1x16x8xf32>
 // CHECK-NOT: hivm.hir.convert_layout %[[FIX]]
-// CHECK: %[[MMAD1:.*]] = hivm.hir.mmadL1 {{.*}} ins(%[[FIX]], %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}} : tensor<2x1x16x8xf32>, tensor<1x1x16x16xf16>, i1, index, index, index)
+// CHECK: %[[MMAD1:.*]] = hivm.hir.mmadL1 {{.*}} ins(%[[FIX]], %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}} : tensor<2x1x16x8xf32>, tensor<2x1x16x8xf32>, i1, index, index, index)
 // CHECK: %[[RES:.*]] = hivm.hir.convert_layout %[[MMAD1]] output_shape [16, 16]
 // CHECK: return %[[RES]] : tensor<16x16xf32>
 func.func @fixpipe_nz2nz_chain_retargets_to_fractal(
-    %a: tensor<16x16xf16>, %b: tensor<16x16xf16>) -> tensor<16x16xf32> {
+    %a: tensor<16x16xf16>, %b: tensor<16x16xf16>,
+    %next_b: tensor<16x16xf32>) -> tensor<16x16xf32> {
   %true = arith.constant true
   %c16 = arith.constant 16 : index
   %acc_out = tensor.empty() : tensor<16x16xf32>
@@ -182,8 +183,8 @@ func.func @fixpipe_nz2nz_chain_retargets_to_fractal(
       -> tensor<16x16xf32>
   %out = tensor.empty() : tensor<16x16xf32>
   %mmad = hivm.hir.mmadL1 {already_set_real_mkn}
-      ins(%fix, %b, %true, %c16, %c16, %c16
-          : tensor<16x16xf32>, tensor<16x16xf16>, i1, index, index, index)
+      ins(%fix, %next_b, %true, %c16, %c16, %c16
+          : tensor<16x16xf32>, tensor<16x16xf32>, i1, index, index, index)
       outs(%out : tensor<16x16xf32>) -> tensor<16x16xf32>
   return %mmad : tensor<16x16xf32>
 }
@@ -197,9 +198,10 @@ func.func @fixpipe_nz2nz_chain_retargets_to_fractal(
 // CHECK: %[[FIX:.*]] = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%[[ACC_ND]] : tensor<16x16xf32>){{.*}}-> tensor<16x16xf32>
 // CHECK: %[[A_FR:.*]] = hivm.hir.convert_layout %[[FIX]] output_shape [2, 1, 16, 8]
 // CHECK-SAME: {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 8]>, srcLayout = #hivm.data_layout<ND>}
-// CHECK: hivm.hir.mmadL1 {{.*}} ins(%[[A_FR]], %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}} : tensor<2x1x16x8xf32>, tensor<1x1x16x16xf16>, i1, index, index, index)
+// CHECK: hivm.hir.mmadL1 {{.*}} ins(%[[A_FR]], %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}} : tensor<2x1x16x8xf32>, tensor<2x1x16x8xf32>, i1, index, index, index)
 func.func @fixpipe_nz2nd_still_gets_nd_to_fractal(
-    %a: tensor<16x16xf16>, %b: tensor<16x16xf16>) -> tensor<16x16xf32> {
+    %a: tensor<16x16xf16>, %b: tensor<16x16xf16>,
+    %next_b: tensor<16x16xf32>) -> tensor<16x16xf32> {
   %true = arith.constant true
   %c16 = arith.constant 16 : index
   %acc_out = tensor.empty() : tensor<16x16xf32>
@@ -213,8 +215,8 @@ func.func @fixpipe_nz2nd_still_gets_nd_to_fractal(
       -> tensor<16x16xf32>
   %out = tensor.empty() : tensor<16x16xf32>
   %mmad = hivm.hir.mmadL1 {already_set_real_mkn}
-      ins(%fix, %b, %true, %c16, %c16, %c16
-          : tensor<16x16xf32>, tensor<16x16xf16>, i1, index, index, index)
+      ins(%fix, %next_b, %true, %c16, %c16, %c16
+          : tensor<16x16xf32>, tensor<16x16xf32>, i1, index, index, index)
       outs(%out : tensor<16x16xf32>) -> tensor<16x16xf32>
   return %mmad : tensor<16x16xf32>
 }

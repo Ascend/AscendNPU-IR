@@ -57,25 +57,26 @@ enum class HIVMMatmulDataformat : uint32_t {
   FP4E2M1_T = 3,
 };
 
-CATLASS_DEVICE inline bool isFp4Format(HIVMMatmulDataformat format) {
+CATLASS_DEVICE bool isFp4Format(HIVMMatmulDataformat format) {
   return format == HIVMMatmulDataformat::FP4E2M1_T;
 }
 
-CATLASS_DEVICE inline uint32_t getMxFormatKFactor(HIVMMatmulDataformat format) {
+CATLASS_DEVICE uint32_t getMxFormatKFactor(HIVMMatmulDataformat format) {
   return isFp4Format(format) ? 2 : 1;
 }
 
-CATLASS_DEVICE inline uint32_t toMxStorageK(uint32_t logicalK,
-                                            HIVMMatmulDataformat format) {
+CATLASS_DEVICE uint32_t toMxStorageK(uint32_t logicalK,
+                                     HIVMMatmulDataformat format) {
   return isFp4Format(format) ? CeilDiv<2>(logicalK) : logicalK;
 }
 
 template <class ElementAMx, class ArchTag, class LayoutTagL1A,
           class LayoutTagL0A, class TensorMxScale>
-CATLASS_DEVICE void copyTransposedAInTypedFormat(
-    __cbuf__ int8_t *l1A, uint32_t l1M, uint32_t l1K, uint32_t actualM,
-    uint32_t kL0Actual, uint32_t kL0Idx, uint32_t l0K, uint32_t pingPongId,
-    TensorMxScale const &tensorTileL1MxScaleA) {
+CATLASS_DEVICE void
+copyTransposedAInTypedFormat(__cbuf__ int8_t *l1A, uint32_t l1M, uint32_t l1K,
+                             uint32_t actualM, uint32_t kL0Actual,
+                             uint32_t kL0Idx, uint32_t l0K, uint32_t pingPongId,
+                             TensorMxScale const &tensorTileL1MxScaleA) {
   using LayoutL1AMx = detail::TagToLayout_t<ElementAMx, LayoutTagL1A>;
   using LayoutL0AMx = detail::TagToLayout_t<ElementAMx, LayoutTagL0A>;
   using TensorL1AMx =
@@ -100,15 +101,12 @@ CATLASS_DEVICE void copyTransposedAInTypedFormat(
   // ping-pong byte offset so half-byte FP4 types still advance by L0A_SIZE / 2
   // bytes physically.
   auto l0ATileMx =
-      l0ATensorMx[pingPongId * (ArchTag::L0A_SIZE / 2) /
-                   sizeof(ElementAMx)];
+      l0ATensorMx[pingPongId * (ArchTag::L0A_SIZE / 2) / sizeof(ElementAMx)];
   auto tensorL0AMx = tla::MakeTensor(
-      l0ATileMx,
-      tla::MakeLayout<ElementAMx, LayoutTagL0A>(actualM, kL0Actual),
+      l0ATileMx, tla::MakeLayout<ElementAMx, LayoutTagL0A>(actualM, kL0Actual),
       Arch::PositionL0A{});
-  auto tensorTileL1AMx =
-      GetTile(tensorL1AMx, tla::MakeCoord(0, kL0Idx * l0K),
-              tla::MakeShape(actualM, kL0Actual));
+  auto tensorTileL1AMx = GetTile(tensorL1AMx, tla::MakeCoord(0, kL0Idx * l0K),
+                                 tla::MakeShape(actualM, kL0Actual));
 
   CopyL1ToL0AMx copyL1ToL0AMx;
   copyL1ToL0AMx(tensorL0AMx, tensorTileL1AMx, tensorTileL1MxScaleA);
@@ -125,22 +123,20 @@ CATLASS_DEVICE void copyTransposedAByFormat(
     uint32_t l0K, uint32_t pingPongId) {
   if (lhsFormat == HIVMMatmulDataformat::FP8E5M2_T) {
     copyTransposedAInTypedFormat<float8_e5m2_t, ArchTag, LayoutTagL1A,
-                                 LayoutTagL0A>(l1A, l1M, l1K, actualM,
-                                               kL0Actual, kL0Idx, l0K,
-                                               pingPongId, tensorTileL1MxScaleA);
+                                 LayoutTagL0A>(
+        l1A, l1M, l1K, actualM, kL0Actual, kL0Idx, l0K, pingPongId,
+        tensorTileL1MxScaleA);
   } else if (lhsFormat == HIVMMatmulDataformat::FP8E4M3_T) {
     copyTransposedAInTypedFormat<float8_e4m3_t, ArchTag, LayoutTagL1A,
-                                 LayoutTagL0A>(l1A, l1M, l1K, actualM,
-                                               kL0Actual, kL0Idx, l0K,
-                                               pingPongId, tensorTileL1MxScaleA);
+                                 LayoutTagL0A>(
+        l1A, l1M, l1K, actualM, kL0Actual, kL0Idx, l0K, pingPongId,
+        tensorTileL1MxScaleA);
   } else if (lhsFormat == HIVMMatmulDataformat::FP4E2M1_T) {
     // Move packed FP4 as B8, exactly like FP8. Each int8_t stores two
     // consecutive logical K values; mad_mx still consumes L0A as FP4x2.
-    copyTransposedAInTypedFormat<int8_t, ArchTag, LayoutTagL1A,
-                                 LayoutTagL0A>(l1A, l1M, l1K, actualM,
-                                               CeilDiv<2>(kL0Actual), kL0Idx,
-                                               l0K / 2,
-                                               pingPongId, tensorTileL1MxScaleA);
+    copyTransposedAInTypedFormat<int8_t, ArchTag, LayoutTagL1A, LayoutTagL0A>(
+        l1A, l1M, l1K, actualM, CeilDiv<2>(kL0Actual), kL0Idx, l0K / 2,
+        pingPongId, tensorTileL1MxScaleA);
   } else {
     copyL1ToL0A(tensorL0A, tensorTileL1A, tensorTileL1MxScaleA);
   }
@@ -149,9 +145,9 @@ CATLASS_DEVICE void copyTransposedAByFormat(
 // A5 mad_mx has no separate bias operand. Bias table address is packed into
 // Xd[63:32], with C address in Xd[31:0] (same as AscendC MmadCal).
 template <class ElementACC>
-CATLASS_DEVICE __cc__ ElementACC *packCWithBiasAddr(__cc__ ElementACC *l0CPhyAddr,
-                                                    uint64_t biasAddr,
-                                                    bool hasBias) {
+CATLASS_DEVICE __cc__ ElementACC *
+packCWithBiasAddr(__cc__ ElementACC *l0CPhyAddr, uint64_t biasAddr,
+                  bool hasBias) {
   if (!hasBias)
     return l0CPhyAddr;
   uint64_t xd = (reinterpret_cast<uint64_t>(l0CPhyAddr) & 0xffffffffULL) |
@@ -161,18 +157,17 @@ CATLASS_DEVICE __cc__ ElementACC *packCWithBiasAddr(__cc__ ElementACC *l0CPhyAdd
 
 template <class ElementACC, class L0CPhyAddr, class L0APhyAddr,
           class L0BPhyAddr>
-CATLASS_DEVICE void madMxByFormat(L0CPhyAddr l0CPhyAddr, L0APhyAddr l0APhyAddr,
-                                  L0BPhyAddr l0BPhyAddr, uint32_t actualM,
-                                  uint32_t kL0Actual, uint32_t actualN,
-                                  uint8_t unitFlag, bool initC,
-                                  HIVMMatmulDataformat lhsFormat,
-                                  HIVMMatmulDataformat rhsFormat,
-                                  uint64_t biasAddr = 0, bool hasBias = false) {
+CATLASS_DEVICE void
+madMxByFormat(L0CPhyAddr l0CPhyAddr, L0APhyAddr l0APhyAddr,
+              L0BPhyAddr l0BPhyAddr, uint32_t actualM, uint32_t kL0Actual,
+              uint32_t actualN, uint8_t unitFlag, bool initC,
+              HIVMMatmulDataformat lhsFormat, HIVMMatmulDataformat rhsFormat,
+              uint64_t biasAddr = 0, bool hasBias = false) {
   // With bias: C comes from bias table (cmatrixSource=true), so initC is false.
   const bool cmatrixSource = hasBias;
   const bool cmatrixInitVal = initC && !hasBias;
-  auto *cAddr = packCWithBiasAddr<ElementACC>(
-      (__cc__ ElementACC *)l0CPhyAddr, biasAddr, hasBias);
+  auto *cAddr = packCWithBiasAddr<ElementACC>((__cc__ ElementACC *)l0CPhyAddr,
+                                              biasAddr, hasBias);
   if (lhsFormat == HIVMMatmulDataformat::FP8E5M2_T &&
       rhsFormat == HIVMMatmulDataformat::FP8E5M2_T) {
     INTRINSIC(mad_mx, cAddr, (__ca__ float8_e5m2_t *)l0APhyAddr,
@@ -210,15 +205,15 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
          __cbuf__ ElementMxScaleA *l1MxScaleA,
          __cbuf__ ElementMxScaleB *l1MxScaleB, __cbuf__ ElementBias *l1Bias,
          uint32_t l1M, uint32_t l1K, uint32_t l1N, uint32_t actualM,
-         uint32_t actualK, uint32_t actualN,
-         uint32_t l1AMTE2MTE1EventId, uint32_t l1ScaleAMTE2MTE1EventId,
-         uint32_t l1BMTE2MTE1EventId, uint32_t l1ScaleBMTE2MTE1EventId,
-         uint32_t l1AMTE1MTE2EventId, uint32_t l1ScaleAMTE1MTE2EventId,
-         uint32_t l1BMTE1MTE2EventId, uint32_t l1ScaleBMTE1MTE2EventId,
-         bool isL1FirstK, bool isL1LastK, bool enable_unit_flag,
-         bool hasBias = false) {
+         uint32_t actualK, uint32_t actualN, uint32_t l1AMTE2MTE1EventId,
+         uint32_t l1ScaleAMTE2MTE1EventId, uint32_t l1BMTE2MTE1EventId,
+         uint32_t l1ScaleBMTE2MTE1EventId, uint32_t l1AMTE1MTE2EventId,
+         uint32_t l1ScaleAMTE1MTE2EventId, uint32_t l1BMTE1MTE2EventId,
+         uint32_t l1ScaleBMTE1MTE2EventId, bool isL1FirstK, bool isL1LastK,
+         bool enable_unit_flag, bool hasBias = false) {
   if constexpr (HF32) {
     AscendCBisheng::SetHF32Mode(true);
+    AscendCBisheng::SetHF32TransMode(true);
   }
 
   using ArchTag = Arch::AtlasA5;
@@ -308,22 +303,21 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
   AscendCBisheng::LocalTensor<ElementACC> btTile = bTTensor;
 
   bool enableDoubleBuffer = true;
-  uint32_t l0K = RoundDown<64>(
-      min(L0A_PINGPONG_BUF_SIZE / sizeof(ElementA) /
-              RoundUp<L1AAlignHelper::M_ALIGNED>(actualM) /
-              L0A_ELE_NUM_PER_C0 * L0A_ELE_NUM_PER_C0,
-          L0B_PINGPONG_BUF_SIZE / sizeof(ElementB) /
-              RoundUp<L1BAlignHelper::N_ALIGNED>(actualN) /
-              L0B_ELE_NUM_PER_C0 * L0B_ELE_NUM_PER_C0));
+  uint32_t l0K =
+      RoundDown<64>(min(L0A_PINGPONG_BUF_SIZE / sizeof(ElementA) /
+                            RoundUp<L1AAlignHelper::M_ALIGNED>(actualM) /
+                            L0A_ELE_NUM_PER_C0 * L0A_ELE_NUM_PER_C0,
+                        L0B_PINGPONG_BUF_SIZE / sizeof(ElementB) /
+                            RoundUp<L1BAlignHelper::N_ALIGNED>(actualN) /
+                            L0B_ELE_NUM_PER_C0 * L0B_ELE_NUM_PER_C0));
   if (l0K == 0) {
     enableDoubleBuffer = false;
-    l0K = RoundDown<64>(
-        min(2 * L0A_PINGPONG_BUF_SIZE / sizeof(ElementA) /
-                RoundUp<L1AAlignHelper::M_ALIGNED>(actualM) /
-                L0A_ELE_NUM_PER_C0 * L0A_ELE_NUM_PER_C0,
-            2 * L0B_PINGPONG_BUF_SIZE / sizeof(ElementB) /
-                RoundUp<L1BAlignHelper::N_ALIGNED>(actualN) /
-                L0B_ELE_NUM_PER_C0 * L0B_ELE_NUM_PER_C0));
+    l0K = RoundDown<64>(min(2 * L0A_PINGPONG_BUF_SIZE / sizeof(ElementA) /
+                                RoundUp<L1AAlignHelper::M_ALIGNED>(actualM) /
+                                L0A_ELE_NUM_PER_C0 * L0A_ELE_NUM_PER_C0,
+                            2 * L0B_PINGPONG_BUF_SIZE / sizeof(ElementB) /
+                                RoundUp<L1BAlignHelper::N_ALIGNED>(actualN) /
+                                L0B_ELE_NUM_PER_C0 * L0B_ELE_NUM_PER_C0));
   }
 
   uint32_t kL0Loop = CeilDiv(actualK, l0K);
@@ -359,30 +353,46 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
     // independent Wait→Copy→Set chain.
     if constexpr (TA) {
       if (kL0Idx == 0) {
-        if (l1AMTE2MTE1EventId      != -1) AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::MTE2_MTE1>(l1AMTE2MTE1EventId);
-        if (l1ScaleAMTE2MTE1EventId != -1) AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::MTE2_MTE1>(l1ScaleAMTE2MTE1EventId);
+        if (l1AMTE2MTE1EventId != -1)
+          AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::MTE2_MTE1>(
+              l1AMTE2MTE1EventId);
+        if (l1ScaleAMTE2MTE1EventId != -1)
+          AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::MTE2_MTE1>(
+              l1ScaleAMTE2MTE1EventId);
       }
       copyL1ToL0A(tensorL0A, tensorTileL1A, tensorTileL1MxScaleA);
       if (kL0Idx == kL0Loop - 1) {
-        if (l1AMTE1MTE2EventId      != -1) AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::MTE1_MTE2>(l1AMTE1MTE2EventId);
-        if (l1ScaleAMTE1MTE2EventId != -1) AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::MTE1_MTE2>(l1ScaleAMTE1MTE2EventId);
+        if (l1AMTE1MTE2EventId != -1)
+          AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::MTE1_MTE2>(
+              l1AMTE1MTE2EventId);
+        if (l1ScaleAMTE1MTE2EventId != -1)
+          AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::MTE1_MTE2>(
+              l1ScaleAMTE1MTE2EventId);
       }
     } else {
       // --- A: Wait → Copy → Set ---
       if (kL0Idx == 0) {
-        if (l1AMTE2MTE1EventId != -1) AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::MTE2_MTE1>(l1AMTE2MTE1EventId);
+        if (l1AMTE2MTE1EventId != -1)
+          AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::MTE2_MTE1>(
+              l1AMTE2MTE1EventId);
       }
       copyL1ToL0A(tensorL0A, tensorTileL1A);
       if (kL0Idx == kL0Loop - 1) {
-        if (l1AMTE1MTE2EventId != -1) AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::MTE1_MTE2>(l1AMTE1MTE2EventId);
+        if (l1AMTE1MTE2EventId != -1)
+          AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::MTE1_MTE2>(
+              l1AMTE1MTE2EventId);
       }
       // --- ScaleA: Wait → Copy → Set ---
       if (kL0Idx == 0) {
-        if (l1ScaleAMTE2MTE1EventId != -1) AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::MTE2_MTE1>(l1ScaleAMTE2MTE1EventId);
+        if (l1ScaleAMTE2MTE1EventId != -1)
+          AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::MTE2_MTE1>(
+              l1ScaleAMTE2MTE1EventId);
       }
       copyL1ToL0A.copyScaleTensor(tensorL0A, tensorTileL1MxScaleA);
       if (kL0Idx == kL0Loop - 1) {
-        if (l1ScaleAMTE1MTE2EventId != -1) AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::MTE1_MTE2>(l1ScaleAMTE1MTE2EventId);
+        if (l1ScaleAMTE1MTE2EventId != -1)
+          AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::MTE1_MTE2>(
+              l1ScaleAMTE1MTE2EventId);
       }
     }
 
@@ -399,19 +409,27 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
         tla::MakeShape(CeilDiv<MX_SCALE_GROUP_NUM>(kL0Actual), actualN));
     // --- B: Wait → Copy → Set ---
     if (kL0Idx == 0) {
-      if (l1BMTE2MTE1EventId != -1) AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::MTE2_MTE1>(l1BMTE2MTE1EventId);
+      if (l1BMTE2MTE1EventId != -1)
+        AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::MTE2_MTE1>(
+            l1BMTE2MTE1EventId);
     }
     copyL1ToL0B(tensorL0B, tensorTileL1B);
     if (kL0Idx == kL0Loop - 1) {
-      if (l1BMTE1MTE2EventId != -1) AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::MTE1_MTE2>(l1BMTE1MTE2EventId);
+      if (l1BMTE1MTE2EventId != -1)
+        AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::MTE1_MTE2>(
+            l1BMTE1MTE2EventId);
     }
     // --- ScaleB: Wait → Copy → Set ---
     if (kL0Idx == 0) {
-      if (l1ScaleBMTE2MTE1EventId != -1) AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::MTE2_MTE1>(l1ScaleBMTE2MTE1EventId);
+      if (l1ScaleBMTE2MTE1EventId != -1)
+        AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::MTE2_MTE1>(
+            l1ScaleBMTE2MTE1EventId);
     }
     copyL1ToL0B.copyScaleTensor(tensorL0B, tensorTileL1MxScaleB);
     if (kL0Idx == kL0Loop - 1) {
-      if (l1ScaleBMTE1MTE2EventId != -1) AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::MTE1_MTE2>(l1ScaleBMTE1MTE2EventId);
+      if (l1ScaleBMTE1MTE2EventId != -1)
+        AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::MTE1_MTE2>(
+            l1ScaleBMTE1MTE2EventId);
     }
 
     const bool initC = isL1FirstK && (kL0Idx == 0);
@@ -423,7 +441,8 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
         auto layoutBiasInL1 = tla::MakeLayout(actualN);
         auto tensorL1Bias =
             tla::MakeTensor(l1BiasTensor, layoutBiasInL1, Arch::PositionL1{});
-        btTile = bTTensor[pingPongId * BT_PINGPONG_BUF_SIZE / sizeof(ElementACC)];
+        btTile =
+            bTTensor[pingPongId * BT_PINGPONG_BUF_SIZE / sizeof(ElementACC)];
         auto layoutBiasInBT = tla::MakeLayout(actualN);
         auto tensorL0Bias =
             tla::MakeTensor(btTile, layoutBiasInBT, Arch::PositionBias{});
@@ -431,11 +450,12 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
             AscendCBisheng::LocalTensor<ElementBias>,
             detail::TagToLayout_t<ElementBias, layout::VectorLayout>,
             tla::Coord<tla::_0>, AscendCBisheng::TPosition::A1>;
-        using TensorL0Bias = tla::Tensor<
-            AscendCBisheng::LocalTensor<ElementACC>,
-            detail::TagToLayout_t<ElementACC, layout::VectorLayout>,
-            tla::Coord<tla::_0>, AscendCBisheng::TPosition::C2>;
-        using CopyL1ToBT = Gemm::Tile::TileCopyTla<ArchTag, TensorL1Bias, TensorL0Bias>;
+        using TensorL0Bias =
+            tla::Tensor<AscendCBisheng::LocalTensor<ElementACC>,
+                        detail::TagToLayout_t<ElementACC, layout::VectorLayout>,
+                        tla::Coord<tla::_0>, AscendCBisheng::TPosition::C2>;
+        using CopyL1ToBT =
+            Gemm::Tile::TileCopyTla<ArchTag, TensorL1Bias, TensorL0Bias>;
         CopyL1ToBT copyL1ToBT;
         copyL1ToBT(tensorL0Bias, tensorL1Bias);
       }
@@ -452,8 +472,7 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
     auto *cAddr = packCWithBiasAddr<ElementACC>(
         (__cc__ ElementACC *)tensorL0C.data().GetPhyAddr(),
         applyBias ? (uint64_t)tensorL0Bias.data().GetPhyAddr() : 0, applyBias);
-    INTRINSIC(mad_mx, cAddr,
-              (__ca__ ElementA *)tensorL0A.data().GetPhyAddr(),
+    INTRINSIC(mad_mx, cAddr, (__ca__ ElementA *)tensorL0A.data().GetPhyAddr(),
               (__cb__ ElementB *)tensorL0B.data().GetPhyAddr(), actualM,
               kL0Actual, actualN,
               /* unitFlag = */ 0b00, true, /* cmatrixSource = */ applyBias,
@@ -465,6 +484,7 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
 
   if constexpr (HF32) {
     AscendCBisheng::SetHF32Mode(false);
+    AscendCBisheng::SetHF32TransMode(false);
   }
 }
 
@@ -475,16 +495,16 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
          __cbuf__ ElementMxScaleA *l1MxScaleA,
          __cbuf__ ElementMxScaleB *l1MxScaleB, __cbuf__ ElementBias *l1Bias,
          uint32_t l1M, uint32_t l1K, uint32_t l1N, uint32_t actualM,
-         uint32_t actualK, uint32_t actualN,
-         uint32_t l1AMTE2MTE1EventId, uint32_t l1ScaleAMTE2MTE1EventId,
-         uint32_t l1BMTE2MTE1EventId, uint32_t l1ScaleBMTE2MTE1EventId,
-         uint32_t l1AMTE1MTE2EventId, uint32_t l1ScaleAMTE1MTE2EventId,
-         uint32_t l1BMTE1MTE2EventId, uint32_t l1ScaleBMTE1MTE2EventId,
-         bool isL1FirstK, bool isL1LastK, bool enable_unit_flag,
-         HIVMMatmulDataformat lhsFormat, HIVMMatmulDataformat rhsFormat,
-         bool hasBias = false) {
+         uint32_t actualK, uint32_t actualN, uint32_t l1AMTE2MTE1EventId,
+         uint32_t l1ScaleAMTE2MTE1EventId, uint32_t l1BMTE2MTE1EventId,
+         uint32_t l1ScaleBMTE2MTE1EventId, uint32_t l1AMTE1MTE2EventId,
+         uint32_t l1ScaleAMTE1MTE2EventId, uint32_t l1BMTE1MTE2EventId,
+         uint32_t l1ScaleBMTE1MTE2EventId, bool isL1FirstK, bool isL1LastK,
+         bool enable_unit_flag, HIVMMatmulDataformat lhsFormat,
+         HIVMMatmulDataformat rhsFormat, bool hasBias = false) {
   if constexpr (HF32) {
     AscendCBisheng::SetHF32Mode(true);
+    AscendCBisheng::SetHF32TransMode(true);
   }
 
   using ArchTag = Arch::AtlasA5;
@@ -535,13 +555,11 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
   AscendCBisheng::LocalTensor<ElementMxScaleA> l1MxScaleATensor{
       AscendCBisheng::TPosition::A1,
       (uint32_t)reinterpret_cast<int64_t>(l1MxScaleA),
-      l1M * l1K * getMxFormatKFactor(lhsFormat) /
-          MX_SCALE_GROUP_NUM};
+      l1M * l1K * getMxFormatKFactor(lhsFormat) / MX_SCALE_GROUP_NUM};
   AscendCBisheng::LocalTensor<ElementMxScaleB> l1MxScaleBTensor{
       AscendCBisheng::TPosition::A1,
       (uint32_t)reinterpret_cast<int64_t>(l1MxScaleB),
-      l1K * l1N * getMxFormatKFactor(rhsFormat) /
-          MX_SCALE_GROUP_NUM};
+      l1K * l1N * getMxFormatKFactor(rhsFormat) / MX_SCALE_GROUP_NUM};
   AscendCBisheng::LocalTensor<ElementA> l0ATensor{AscendCBisheng::TPosition::A2,
                                                   0, ArchTag::L0A_SIZE};
   AscendCBisheng::LocalTensor<ElementB> l0BTensor{AscendCBisheng::TPosition::B2,
@@ -563,8 +581,7 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
       tla::MakeTensor(l1MxScaleATensor, layoutMxScaleAInL1, Arch::PositionL1{});
   auto layoutMxScaleBInL1 =
       tla::MakeMxScaleLayout<ElementMxScaleB, LayoutTagL1MxScaleB, true>(
-          l1K * getMxFormatKFactor(rhsFormat) / MX_SCALE_GROUP_NUM,
-          l1N);
+          l1K * getMxFormatKFactor(rhsFormat) / MX_SCALE_GROUP_NUM, l1N);
   auto tensorL1MxScaleB =
       tla::MakeTensor(l1MxScaleBTensor, layoutMxScaleBInL1, Arch::PositionL1{});
   auto layoutInL0C = tla::MakeLayoutL0C(actualM, actualN);
@@ -580,22 +597,21 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
 
   actualK *= getMxFormatKFactor(lhsFormat);
   bool enableDoubleBuffer = true;
-  uint32_t l0K = RoundDown<64>(
-      min(L0A_PINGPONG_BUF_SIZE / sizeof(ElementA) /
-              RoundUp<L1AAlignHelper::M_ALIGNED>(actualM) /
-              L0A_ELE_NUM_PER_C0 * L0A_ELE_NUM_PER_C0,
-          L0B_PINGPONG_BUF_SIZE / sizeof(ElementB) /
-              RoundUp<L1BAlignHelper::N_ALIGNED>(actualN) /
-              L0B_ELE_NUM_PER_C0 * L0B_ELE_NUM_PER_C0));
+  uint32_t l0K =
+      RoundDown<64>(min(L0A_PINGPONG_BUF_SIZE / sizeof(ElementA) /
+                            RoundUp<L1AAlignHelper::M_ALIGNED>(actualM) /
+                            L0A_ELE_NUM_PER_C0 * L0A_ELE_NUM_PER_C0,
+                        L0B_PINGPONG_BUF_SIZE / sizeof(ElementB) /
+                            RoundUp<L1BAlignHelper::N_ALIGNED>(actualN) /
+                            L0B_ELE_NUM_PER_C0 * L0B_ELE_NUM_PER_C0));
   if (l0K == 0) {
     enableDoubleBuffer = false;
-    l0K = RoundDown<64>(
-        min(2 * L0A_PINGPONG_BUF_SIZE / sizeof(ElementA) /
-                RoundUp<L1AAlignHelper::M_ALIGNED>(actualM) /
-                L0A_ELE_NUM_PER_C0 * L0A_ELE_NUM_PER_C0,
-            2 * L0B_PINGPONG_BUF_SIZE / sizeof(ElementB) /
-                RoundUp<L1BAlignHelper::N_ALIGNED>(actualN) /
-                L0B_ELE_NUM_PER_C0 * L0B_ELE_NUM_PER_C0));
+    l0K = RoundDown<64>(min(2 * L0A_PINGPONG_BUF_SIZE / sizeof(ElementA) /
+                                RoundUp<L1AAlignHelper::M_ALIGNED>(actualM) /
+                                L0A_ELE_NUM_PER_C0 * L0A_ELE_NUM_PER_C0,
+                            2 * L0B_PINGPONG_BUF_SIZE / sizeof(ElementB) /
+                                RoundUp<L1BAlignHelper::N_ALIGNED>(actualN) /
+                                L0B_ELE_NUM_PER_C0 * L0B_ELE_NUM_PER_C0));
   }
 
   uint32_t kL0Loop = CeilDiv(actualK, l0K);
@@ -619,8 +635,7 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
     auto tensorL0A = tla::MakeTensor(l0ATile, layoutAInL0, Arch::PositionL0A{});
     // Locate the current tile of matrix A on L1
     auto tensorTileL1A = GetTile(
-        tensorL1A,
-        tla::MakeCoord(0, toMxStorageK(kL0Idx * l0K, lhsFormat)),
+        tensorL1A, tla::MakeCoord(0, toMxStorageK(kL0Idx * l0K, lhsFormat)),
         tla::MakeShape(actualM, kL0AStorageActual));
     // Locate the current tile of matrix mxScaleA on L1
     auto tensorTileL1MxScaleA = GetTile(
@@ -633,33 +648,49 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
     // FIXME: this need to refactor back into one without if branch.
     if constexpr (TA) {
       if (kL0Idx == 0) {
-        if (l1AMTE2MTE1EventId      != -1) AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::MTE2_MTE1>(l1AMTE2MTE1EventId);
-        if (l1ScaleAMTE2MTE1EventId != -1) AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::MTE2_MTE1>(l1ScaleAMTE2MTE1EventId);
+        if (l1AMTE2MTE1EventId != -1)
+          AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::MTE2_MTE1>(
+              l1AMTE2MTE1EventId);
+        if (l1ScaleAMTE2MTE1EventId != -1)
+          AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::MTE2_MTE1>(
+              l1ScaleAMTE2MTE1EventId);
       }
       copyTransposedAByFormat<ArchTag, LayoutTagL1A, LayoutTagL0A>(
           copyL1ToL0A, tensorL0A, tensorTileL1A, tensorTileL1MxScaleA,
           lhsFormat, reinterpret_cast<__cbuf__ int8_t *>(l1A), l1M, l1K,
           actualM, kL0Actual, kL0Idx, l0K, pingPongId);
       if (kL0Idx == kL0Loop - 1) {
-        if (l1AMTE1MTE2EventId      != -1) AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::MTE1_MTE2>(l1AMTE1MTE2EventId);
-        if (l1ScaleAMTE1MTE2EventId != -1) AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::MTE1_MTE2>(l1ScaleAMTE1MTE2EventId);
+        if (l1AMTE1MTE2EventId != -1)
+          AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::MTE1_MTE2>(
+              l1AMTE1MTE2EventId);
+        if (l1ScaleAMTE1MTE2EventId != -1)
+          AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::MTE1_MTE2>(
+              l1ScaleAMTE1MTE2EventId);
       }
     } else {
       // --- A: Wait → Copy → Set ---
       if (kL0Idx == 0) {
-        if (l1AMTE2MTE1EventId != -1) AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::MTE2_MTE1>(l1AMTE2MTE1EventId);
+        if (l1AMTE2MTE1EventId != -1)
+          AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::MTE2_MTE1>(
+              l1AMTE2MTE1EventId);
       }
       copyL1ToL0A(tensorL0A, tensorTileL1A);
       if (kL0Idx == kL0Loop - 1) {
-        if (l1AMTE1MTE2EventId != -1) AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::MTE1_MTE2>(l1AMTE1MTE2EventId);
+        if (l1AMTE1MTE2EventId != -1)
+          AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::MTE1_MTE2>(
+              l1AMTE1MTE2EventId);
       }
       // --- ScaleA: Wait → Copy → Set ---
       if (kL0Idx == 0) {
-        if (l1ScaleAMTE2MTE1EventId != -1) AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::MTE2_MTE1>(l1ScaleAMTE2MTE1EventId);
+        if (l1ScaleAMTE2MTE1EventId != -1)
+          AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::MTE2_MTE1>(
+              l1ScaleAMTE2MTE1EventId);
       }
       copyL1ToL0A.copyScaleTensor(tensorL0A, tensorTileL1MxScaleA);
       if (kL0Idx == kL0Loop - 1) {
-        if (l1ScaleAMTE1MTE2EventId != -1) AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::MTE1_MTE2>(l1ScaleAMTE1MTE2EventId);
+        if (l1ScaleAMTE1MTE2EventId != -1)
+          AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::MTE1_MTE2>(
+              l1ScaleAMTE1MTE2EventId);
       }
     }
 
@@ -671,27 +702,34 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
         tla::MakeLayout<ElementB, LayoutTagL0B>(kL0BStorageActual, actualN);
     auto tensorL0B = tla::MakeTensor(l0BTile, layoutBInL0, Arch::PositionL0B{});
     auto tensorTileL1B = GetTile(
-        tensorL1B,
-        tla::MakeCoord(toMxStorageK(kL0Idx * l0K, rhsFormat), 0),
+        tensorL1B, tla::MakeCoord(toMxStorageK(kL0Idx * l0K, rhsFormat), 0),
         tla::MakeShape(kL0BStorageActual, actualN));
     auto tensorTileL1MxScaleB = GetTile(
         tensorL1MxScaleB, tla::MakeCoord(kL0Idx * l0K / MX_SCALE_GROUP_NUM, 0),
         tla::MakeShape(CeilDiv<MX_SCALE_GROUP_NUM>(kL0Actual), actualN));
     // --- B: Wait → Copy → Set ---
     if (kL0Idx == 0) {
-      if (l1BMTE2MTE1EventId != -1) AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::MTE2_MTE1>(l1BMTE2MTE1EventId);
+      if (l1BMTE2MTE1EventId != -1)
+        AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::MTE2_MTE1>(
+            l1BMTE2MTE1EventId);
     }
     copyL1ToL0B(tensorL0B, tensorTileL1B);
     if (kL0Idx == kL0Loop - 1) {
-      if (l1BMTE1MTE2EventId != -1) AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::MTE1_MTE2>(l1BMTE1MTE2EventId);
+      if (l1BMTE1MTE2EventId != -1)
+        AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::MTE1_MTE2>(
+            l1BMTE1MTE2EventId);
     }
     // --- ScaleB: Wait → Copy → Set ---
     if (kL0Idx == 0) {
-      if (l1ScaleBMTE2MTE1EventId != -1) AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::MTE2_MTE1>(l1ScaleBMTE2MTE1EventId);
+      if (l1ScaleBMTE2MTE1EventId != -1)
+        AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::MTE2_MTE1>(
+            l1ScaleBMTE2MTE1EventId);
     }
     copyL1ToL0B.copyScaleTensor(tensorL0B, tensorTileL1MxScaleB);
     if (kL0Idx == kL0Loop - 1) {
-      if (l1ScaleBMTE1MTE2EventId != -1) AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::MTE1_MTE2>(l1ScaleBMTE1MTE2EventId);
+      if (l1ScaleBMTE1MTE2EventId != -1)
+        AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::MTE1_MTE2>(
+            l1ScaleBMTE1MTE2EventId);
     }
 
     bool initC = isL1FirstK && (kL0Idx == 0);
@@ -703,7 +741,8 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
         auto layoutBiasInL1 = tla::MakeLayout(actualN);
         auto tensorL1Bias =
             tla::MakeTensor(l1BiasTensor, layoutBiasInL1, Arch::PositionL1{});
-        btTile = bTTensor[pingPongId * BT_PINGPONG_BUF_SIZE / sizeof(ElementACC)];
+        btTile =
+            bTTensor[pingPongId * BT_PINGPONG_BUF_SIZE / sizeof(ElementACC)];
         auto layoutBiasInBT = tla::MakeLayout(actualN);
         auto tensorL0Bias =
             tla::MakeTensor(btTile, layoutBiasInBT, Arch::PositionBias{});
@@ -711,11 +750,12 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
             AscendCBisheng::LocalTensor<ElementBias>,
             detail::TagToLayout_t<ElementBias, layout::VectorLayout>,
             tla::Coord<tla::_0>, AscendCBisheng::TPosition::A1>;
-        using TensorL0Bias = tla::Tensor<
-            AscendCBisheng::LocalTensor<ElementACC>,
-            detail::TagToLayout_t<ElementACC, layout::VectorLayout>,
-            tla::Coord<tla::_0>, AscendCBisheng::TPosition::C2>;
-        using CopyL1ToBT = Gemm::Tile::TileCopyTla<ArchTag, TensorL1Bias, TensorL0Bias>;
+        using TensorL0Bias =
+            tla::Tensor<AscendCBisheng::LocalTensor<ElementACC>,
+                        detail::TagToLayout_t<ElementACC, layout::VectorLayout>,
+                        tla::Coord<tla::_0>, AscendCBisheng::TPosition::C2>;
+        using CopyL1ToBT =
+            Gemm::Tile::TileCopyTla<ArchTag, TensorL1Bias, TensorL0Bias>;
         CopyL1ToBT copyL1ToBT;
         copyL1ToBT(tensorL0Bias, tensorL1Bias);
       }
@@ -744,8 +784,7 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
         tensorL0C.data().GetPhyAddr(), tensorL0A.data().GetPhyAddr(),
         tensorL0B.data().GetPhyAddr(), actualM, kL0Actual, actualN, unitFlag,
         initC, lhsFormat, rhsFormat,
-        applyBias ? (uint64_t)tensorL0Bias.data().GetPhyAddr() : 0,
-        applyBias);
+        applyBias ? (uint64_t)tensorL0Bias.data().GetPhyAddr() : 0, applyBias);
 
     // Notify to move the next L0B tile
     AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::M_MTE1>(l0EventId);
@@ -753,6 +792,7 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
 
   if constexpr (HF32) {
     AscendCBisheng::SetHF32Mode(false);
+    AscendCBisheng::SetHF32TransMode(false);
   }
 }
 
@@ -765,26 +805,23 @@ __aicore__ __attribute__((always_inline)) void mmamx_tile_core(
     memref_t<__cbuf__ B_TYPE, 4> *mb,
     memref_t<__cbuf__ ElementMxScaleA, 1> *l1MxScaleA,
     memref_t<__cbuf__ ElementMxScaleB, 1> *l1MxScaleB, bool init, int64_t m,
-    int64_t k, int64_t n,
-    int64_t mmad_l1_wait_l1a_event,
-    int64_t mmad_l1_wait_l1scalea_event,
-    int64_t mmad_l1_wait_l1b_event, int64_t mmad_l1_wait_l1scaleb_event, int64_t l1a_wait_mmad_l1_event,
-    int64_t l1scalea_wait_mmad_l1_event,
-    int64_t l1b_wait_mmad_l1_event, int64_t l1scaleb_wait_mmad_l1_event) {
-  Catlass::Gemm::L1MxMmad<A_TYPE, B_TYPE, BIAS_TYPE, DST_TYPE, TA, TB,
-                          false>(
+    int64_t k, int64_t n, int64_t mmad_l1_wait_l1a_event,
+    int64_t mmad_l1_wait_l1scalea_event, int64_t mmad_l1_wait_l1b_event,
+    int64_t mmad_l1_wait_l1scaleb_event, int64_t l1a_wait_mmad_l1_event,
+    int64_t l1scalea_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,
+    int64_t l1scaleb_wait_mmad_l1_event) {
+  Catlass::Gemm::L1MxMmad<A_TYPE, B_TYPE, BIAS_TYPE, DST_TYPE, TA, TB, false>(
       mc->aligned + mc->offset, ma->aligned + ma->offset,
       mb->aligned + mb->offset, l1MxScaleA->aligned + l1MxScaleA->offset,
       l1MxScaleB->aligned + l1MxScaleB->offset, nullptr,
       (TA ? (ma->sizes[0] * ma->sizes[3]) : (ma->sizes[1] * ma->sizes[2])),
       (TA ? (ma->sizes[1] * ma->sizes[2]) : (ma->sizes[0] * ma->sizes[3])),
-      (TB ? (mb->sizes[1] * mb->sizes[2]) : (mb->sizes[0] * mb->sizes[3])),
-      m, k, n,
-      mmad_l1_wait_l1a_event, mmad_l1_wait_l1scalea_event,
+      (TB ? (mb->sizes[1] * mb->sizes[2]) : (mb->sizes[0] * mb->sizes[3])), m,
+      k, n, mmad_l1_wait_l1a_event, mmad_l1_wait_l1scalea_event,
       mmad_l1_wait_l1b_event, mmad_l1_wait_l1scaleb_event,
       l1a_wait_mmad_l1_event, l1scalea_wait_mmad_l1_event,
-      l1b_wait_mmad_l1_event, l1scaleb_wait_mmad_l1_event,
-      init, true, false, false);
+      l1b_wait_mmad_l1_event, l1scaleb_wait_mmad_l1_event, init, true, false,
+      false);
 }
 
 template <typename A_TYPE, typename B_TYPE, typename DST_TYPE,
@@ -799,35 +836,34 @@ __aicore__ __attribute__((always_inline)) void mmamx_tile_bias(
     int64_t mmad_l1_wait_l1b_event, int64_t mmad_l1_wait_l1scaleb_event,
     int64_t l1a_wait_mmad_l1_event, int64_t l1scalea_wait_mmad_l1_event,
     int64_t l1b_wait_mmad_l1_event, int64_t l1scaleb_wait_mmad_l1_event) {
-  Catlass::Gemm::L1MxMmad<A_TYPE, B_TYPE, BIAS_TYPE, DST_TYPE, TA, TB,
-                          false>(
+  Catlass::Gemm::L1MxMmad<A_TYPE, B_TYPE, BIAS_TYPE, DST_TYPE, TA, TB, false>(
       mc->aligned + mc->offset, ma->aligned + ma->offset,
       mb->aligned + mb->offset, l1MxScaleA->aligned + l1MxScaleA->offset,
       l1MxScaleB->aligned + l1MxScaleB->offset, bias->aligned + bias->offset,
       (TA ? (ma->sizes[0] * ma->sizes[3]) : (ma->sizes[1] * ma->sizes[2])),
       (TA ? (ma->sizes[1] * ma->sizes[2]) : (ma->sizes[0] * ma->sizes[3])),
-      (TB ? (mb->sizes[1] * mb->sizes[2]) : (mb->sizes[0] * mb->sizes[3])),
-      m, k, n, mmad_l1_wait_l1a_event, mmad_l1_wait_l1scalea_event,
+      (TB ? (mb->sizes[1] * mb->sizes[2]) : (mb->sizes[0] * mb->sizes[3])), m,
+      k, n, mmad_l1_wait_l1a_event, mmad_l1_wait_l1scalea_event,
       mmad_l1_wait_l1b_event, mmad_l1_wait_l1scaleb_event,
       l1a_wait_mmad_l1_event, l1scalea_wait_mmad_l1_event,
-      l1b_wait_mmad_l1_event, l1scaleb_wait_mmad_l1_event, init, true, false, true);
+      l1b_wait_mmad_l1_event, l1scaleb_wait_mmad_l1_event, init, true, false,
+      true);
 }
 
 template <typename SRC_TYPE, typename DST_TYPE, typename BIAS_TYPE,
           bool TA = false, bool TB = false>
-__aicore__ __attribute__((always_inline)) void
-mmamx_tile_core(memref_t<__cc__ DST_TYPE, 4> *mc,
-                memref_t<__cbuf__ SRC_TYPE, 4> *ma,
-                memref_t<__cbuf__ SRC_TYPE, 4> *mb,
-                memref_t<__cbuf__ ElementMxScaleA, 1> *l1MxScaleA,
-                memref_t<__cbuf__ ElementMxScaleB, 1> *l1MxScaleB, bool init,
-                int64_t m, int64_t k, int64_t n,
-                int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1scalea_event,
-                int64_t mmad_l1_wait_l1b_event, int64_t mmad_l1_wait_l1scaleb_event,
-                int64_t l1a_wait_mmad_l1_event, int64_t l1scalea_wait_mmad_l1_event,
-                int64_t l1b_wait_mmad_l1_event, int64_t l1scaleb_wait_mmad_l1_event,
-                Catlass::Gemm::HIVMMatmulDataformat lhsFormat,
-                Catlass::Gemm::HIVMMatmulDataformat rhsFormat) {
+__aicore__ __attribute__((always_inline)) void mmamx_tile_core(
+    memref_t<__cc__ DST_TYPE, 4> *mc, memref_t<__cbuf__ SRC_TYPE, 4> *ma,
+    memref_t<__cbuf__ SRC_TYPE, 4> *mb,
+    memref_t<__cbuf__ ElementMxScaleA, 1> *l1MxScaleA,
+    memref_t<__cbuf__ ElementMxScaleB, 1> *l1MxScaleB, bool init, int64_t m,
+    int64_t k, int64_t n, int64_t mmad_l1_wait_l1a_event,
+    int64_t mmad_l1_wait_l1scalea_event, int64_t mmad_l1_wait_l1b_event,
+    int64_t mmad_l1_wait_l1scaleb_event, int64_t l1a_wait_mmad_l1_event,
+    int64_t l1scalea_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,
+    int64_t l1scaleb_wait_mmad_l1_event,
+    Catlass::Gemm::HIVMMatmulDataformat lhsFormat,
+    Catlass::Gemm::HIVMMatmulDataformat rhsFormat) {
   Catlass::Gemm::L1MxMmad<SRC_TYPE, SRC_TYPE, BIAS_TYPE, DST_TYPE, TA, TB,
                           false>(
       mc->aligned + mc->offset, ma->aligned + ma->offset,
@@ -835,31 +871,28 @@ mmamx_tile_core(memref_t<__cc__ DST_TYPE, 4> *mc,
       l1MxScaleB->aligned + l1MxScaleB->offset, nullptr,
       (TA ? (ma->sizes[0] * ma->sizes[3]) : (ma->sizes[1] * ma->sizes[2])),
       (TA ? (ma->sizes[1] * ma->sizes[2]) : (ma->sizes[0] * ma->sizes[3])),
-      (TB ? (mb->sizes[1] * mb->sizes[2]) : (mb->sizes[0] * mb->sizes[3])),
-      m, k, n,
-      mmad_l1_wait_l1a_event, mmad_l1_wait_l1scalea_event,
+      (TB ? (mb->sizes[1] * mb->sizes[2]) : (mb->sizes[0] * mb->sizes[3])), m,
+      k, n, mmad_l1_wait_l1a_event, mmad_l1_wait_l1scalea_event,
       mmad_l1_wait_l1b_event, mmad_l1_wait_l1scaleb_event,
       l1a_wait_mmad_l1_event, l1scalea_wait_mmad_l1_event,
-      l1b_wait_mmad_l1_event, l1scaleb_wait_mmad_l1_event,
-      init, true, false, lhsFormat, rhsFormat, false);
+      l1b_wait_mmad_l1_event, l1scaleb_wait_mmad_l1_event, init, true, false,
+      lhsFormat, rhsFormat, false);
 }
 
 template <typename SRC_TYPE, typename DST_TYPE, typename BIAS_TYPE,
           bool TA = false, bool TB = false>
-__aicore__ __attribute__((always_inline)) void
-mmamx_tile_bias(memref_t<__cc__ DST_TYPE, 4> *mc,
-                memref_t<__cbuf__ SRC_TYPE, 4> *ma,
-                memref_t<__cbuf__ SRC_TYPE, 4> *mb,
-                memref_t<__cbuf__ ElementMxScaleA, 1> *l1MxScaleA,
-                memref_t<__cbuf__ ElementMxScaleB, 1> *l1MxScaleB, bool init,
-                int64_t m, int64_t k, int64_t n,
-                memref_t<__cbuf__ BIAS_TYPE, 4> *bias,
-                int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1scalea_event,
-                int64_t mmad_l1_wait_l1b_event, int64_t mmad_l1_wait_l1scaleb_event,
-                int64_t l1a_wait_mmad_l1_event, int64_t l1scalea_wait_mmad_l1_event,
-                int64_t l1b_wait_mmad_l1_event, int64_t l1scaleb_wait_mmad_l1_event,
-                Catlass::Gemm::HIVMMatmulDataformat lhsFormat,
-                Catlass::Gemm::HIVMMatmulDataformat rhsFormat) {
+__aicore__ __attribute__((always_inline)) void mmamx_tile_bias(
+    memref_t<__cc__ DST_TYPE, 4> *mc, memref_t<__cbuf__ SRC_TYPE, 4> *ma,
+    memref_t<__cbuf__ SRC_TYPE, 4> *mb,
+    memref_t<__cbuf__ ElementMxScaleA, 1> *l1MxScaleA,
+    memref_t<__cbuf__ ElementMxScaleB, 1> *l1MxScaleB, bool init, int64_t m,
+    int64_t k, int64_t n, memref_t<__cbuf__ BIAS_TYPE, 4> *bias,
+    int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1scalea_event,
+    int64_t mmad_l1_wait_l1b_event, int64_t mmad_l1_wait_l1scaleb_event,
+    int64_t l1a_wait_mmad_l1_event, int64_t l1scalea_wait_mmad_l1_event,
+    int64_t l1b_wait_mmad_l1_event, int64_t l1scaleb_wait_mmad_l1_event,
+    Catlass::Gemm::HIVMMatmulDataformat lhsFormat,
+    Catlass::Gemm::HIVMMatmulDataformat rhsFormat) {
   Catlass::Gemm::L1MxMmad<SRC_TYPE, SRC_TYPE, BIAS_TYPE, DST_TYPE, TA, TB,
                           false>(
       mc->aligned + mc->offset, ma->aligned + ma->offset,
@@ -867,8 +900,8 @@ mmamx_tile_bias(memref_t<__cc__ DST_TYPE, 4> *mc,
       l1MxScaleB->aligned + l1MxScaleB->offset, bias->aligned + bias->offset,
       (TA ? (ma->sizes[0] * ma->sizes[3]) : (ma->sizes[1] * ma->sizes[2])),
       (TA ? (ma->sizes[1] * ma->sizes[2]) : (ma->sizes[0] * ma->sizes[3])),
-      (TB ? (mb->sizes[1] * mb->sizes[2]) : (mb->sizes[0] * mb->sizes[3])),
-      m, k, n, mmad_l1_wait_l1a_event, mmad_l1_wait_l1scalea_event,
+      (TB ? (mb->sizes[1] * mb->sizes[2]) : (mb->sizes[0] * mb->sizes[3])), m,
+      k, n, mmad_l1_wait_l1a_event, mmad_l1_wait_l1scalea_event,
       mmad_l1_wait_l1b_event, mmad_l1_wait_l1scaleb_event,
       l1a_wait_mmad_l1_event, l1scalea_wait_mmad_l1_event,
       l1b_wait_mmad_l1_event, l1scaleb_wait_mmad_l1_event, init, true, false,
@@ -886,30 +919,54 @@ REGISTER_MMA_MX_BIAS(float8_e5m2_t, float8_e5m2_t, float, float);
 REGISTER_MMA_MX_BIAS(float8_e4m3_t, float8_e4m3_t, float, float);
 REGISTER_MMA_MX_BIAS(float8_e4m3_t, float8_e5m2_t, float, float);
 REGISTER_MMA_MX_BIAS(float8_e5m2_t, float8_e4m3_t, float, float);
-REGISTER_MMA_MX_TRANS(float8_e5m2_t, float8_e5m2_t, float, float, _ta, true, false);
-REGISTER_MMA_MX_TRANS(float8_e5m2_t, float8_e5m2_t, float, float, _tb, false, true);
-REGISTER_MMA_MX_TRANS(float8_e5m2_t, float8_e5m2_t, float, float, _ta_tb, true, true);
-REGISTER_MMA_MX_TRANS(float8_e4m3_t, float8_e4m3_t, float, float, _ta, true, false);
-REGISTER_MMA_MX_TRANS(float8_e4m3_t, float8_e4m3_t, float, float, _tb, false, true);
-REGISTER_MMA_MX_TRANS(float8_e4m3_t, float8_e4m3_t, float, float, _ta_tb, true, true);
-REGISTER_MMA_MX_TRANS(float8_e4m3_t, float8_e5m2_t, float, float, _ta, true, false);
-REGISTER_MMA_MX_TRANS(float8_e4m3_t, float8_e5m2_t, float, float, _tb, false, true);
-REGISTER_MMA_MX_TRANS(float8_e4m3_t, float8_e5m2_t, float, float, _ta_tb, true, true);
-REGISTER_MMA_MX_TRANS(float8_e5m2_t, float8_e4m3_t, float, float, _ta, true, false);
-REGISTER_MMA_MX_TRANS(float8_e5m2_t, float8_e4m3_t, float, float, _tb, false, true);
-REGISTER_MMA_MX_TRANS(float8_e5m2_t, float8_e4m3_t, float, float, _ta_tb, true, true);
-REGISTER_MMA_MX_BIAS_TRANS(float8_e5m2_t, float8_e5m2_t, float, float, _ta, true, false);
-REGISTER_MMA_MX_BIAS_TRANS(float8_e5m2_t, float8_e5m2_t, float, float, _tb, false, true);
-REGISTER_MMA_MX_BIAS_TRANS(float8_e5m2_t, float8_e5m2_t, float, float, _ta_tb, true, true);
-REGISTER_MMA_MX_BIAS_TRANS(float8_e4m3_t, float8_e4m3_t, float, float, _ta, true, false);
-REGISTER_MMA_MX_BIAS_TRANS(float8_e4m3_t, float8_e4m3_t, float, float, _tb, false, true);
-REGISTER_MMA_MX_BIAS_TRANS(float8_e4m3_t, float8_e4m3_t, float, float, _ta_tb, true, true);
-REGISTER_MMA_MX_BIAS_TRANS(float8_e4m3_t, float8_e5m2_t, float, float, _ta, true, false);
-REGISTER_MMA_MX_BIAS_TRANS(float8_e4m3_t, float8_e5m2_t, float, float, _tb, false, true);
-REGISTER_MMA_MX_BIAS_TRANS(float8_e4m3_t, float8_e5m2_t, float, float, _ta_tb, true, true);
-REGISTER_MMA_MX_BIAS_TRANS(float8_e5m2_t, float8_e4m3_t, float, float, _ta, true, false);
-REGISTER_MMA_MX_BIAS_TRANS(float8_e5m2_t, float8_e4m3_t, float, float, _tb, false, true);
-REGISTER_MMA_MX_BIAS_TRANS(float8_e5m2_t, float8_e4m3_t, float, float, _ta_tb, true, true);
+REGISTER_MMA_MX_TRANS(float8_e5m2_t, float8_e5m2_t, float, float, _ta, true,
+                      false);
+REGISTER_MMA_MX_TRANS(float8_e5m2_t, float8_e5m2_t, float, float, _tb, false,
+                      true);
+REGISTER_MMA_MX_TRANS(float8_e5m2_t, float8_e5m2_t, float, float, _ta_tb, true,
+                      true);
+REGISTER_MMA_MX_TRANS(float8_e4m3_t, float8_e4m3_t, float, float, _ta, true,
+                      false);
+REGISTER_MMA_MX_TRANS(float8_e4m3_t, float8_e4m3_t, float, float, _tb, false,
+                      true);
+REGISTER_MMA_MX_TRANS(float8_e4m3_t, float8_e4m3_t, float, float, _ta_tb, true,
+                      true);
+REGISTER_MMA_MX_TRANS(float8_e4m3_t, float8_e5m2_t, float, float, _ta, true,
+                      false);
+REGISTER_MMA_MX_TRANS(float8_e4m3_t, float8_e5m2_t, float, float, _tb, false,
+                      true);
+REGISTER_MMA_MX_TRANS(float8_e4m3_t, float8_e5m2_t, float, float, _ta_tb, true,
+                      true);
+REGISTER_MMA_MX_TRANS(float8_e5m2_t, float8_e4m3_t, float, float, _ta, true,
+                      false);
+REGISTER_MMA_MX_TRANS(float8_e5m2_t, float8_e4m3_t, float, float, _tb, false,
+                      true);
+REGISTER_MMA_MX_TRANS(float8_e5m2_t, float8_e4m3_t, float, float, _ta_tb, true,
+                      true);
+REGISTER_MMA_MX_BIAS_TRANS(float8_e5m2_t, float8_e5m2_t, float, float, _ta,
+                           true, false);
+REGISTER_MMA_MX_BIAS_TRANS(float8_e5m2_t, float8_e5m2_t, float, float, _tb,
+                           false, true);
+REGISTER_MMA_MX_BIAS_TRANS(float8_e5m2_t, float8_e5m2_t, float, float, _ta_tb,
+                           true, true);
+REGISTER_MMA_MX_BIAS_TRANS(float8_e4m3_t, float8_e4m3_t, float, float, _ta,
+                           true, false);
+REGISTER_MMA_MX_BIAS_TRANS(float8_e4m3_t, float8_e4m3_t, float, float, _tb,
+                           false, true);
+REGISTER_MMA_MX_BIAS_TRANS(float8_e4m3_t, float8_e4m3_t, float, float, _ta_tb,
+                           true, true);
+REGISTER_MMA_MX_BIAS_TRANS(float8_e4m3_t, float8_e5m2_t, float, float, _ta,
+                           true, false);
+REGISTER_MMA_MX_BIAS_TRANS(float8_e4m3_t, float8_e5m2_t, float, float, _tb,
+                           false, true);
+REGISTER_MMA_MX_BIAS_TRANS(float8_e4m3_t, float8_e5m2_t, float, float, _ta_tb,
+                           true, true);
+REGISTER_MMA_MX_BIAS_TRANS(float8_e5m2_t, float8_e4m3_t, float, float, _ta,
+                           true, false);
+REGISTER_MMA_MX_BIAS_TRANS(float8_e5m2_t, float8_e4m3_t, float, float, _tb,
+                           false, true);
+REGISTER_MMA_MX_BIAS_TRANS(float8_e5m2_t, float8_e4m3_t, float, float, _ta_tb,
+                           true, true);
 REGISTER_MMA_MX_FORMAT(int8_t, float, float, fp8_e5m2_t, fp8_e5m2_t,
                        Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T,
                        Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T);
@@ -928,18 +985,18 @@ REGISTER_MMA_MX_FORMAT_TRANS(int8_t, float, float, fp8_e5m2_t, fp8_e5m2_t,
                              _ta_tb, true, true,
                              Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T,
                              Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T);
-REGISTER_MMA_MX_BIAS_FORMAT_TRANS(int8_t, float, float, fp8_e5m2_t, fp8_e5m2_t,
-                                  _ta, true, false,
-                                  Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T,
-                                  Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T);
-REGISTER_MMA_MX_BIAS_FORMAT_TRANS(int8_t, float, float, fp8_e5m2_t, fp8_e5m2_t,
-                                  _tb, false, true,
-                                  Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T,
-                                  Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T);
-REGISTER_MMA_MX_BIAS_FORMAT_TRANS(int8_t, float, float, fp8_e5m2_t, fp8_e5m2_t,
-                                  _ta_tb, true, true,
-                                  Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T,
-                                  Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T);
+REGISTER_MMA_MX_BIAS_FORMAT_TRANS(
+    int8_t, float, float, fp8_e5m2_t, fp8_e5m2_t, _ta, true, false,
+    Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T,
+    Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T);
+REGISTER_MMA_MX_BIAS_FORMAT_TRANS(
+    int8_t, float, float, fp8_e5m2_t, fp8_e5m2_t, _tb, false, true,
+    Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T,
+    Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T);
+REGISTER_MMA_MX_BIAS_FORMAT_TRANS(
+    int8_t, float, float, fp8_e5m2_t, fp8_e5m2_t, _ta_tb, true, true,
+    Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T,
+    Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T);
 REGISTER_MMA_MX_FORMAT(int8_t, float, float, fp8_e5m2_t, fp8_e4m3_t,
                        Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T,
                        Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T);
@@ -958,18 +1015,18 @@ REGISTER_MMA_MX_FORMAT_TRANS(int8_t, float, float, fp8_e5m2_t, fp8_e4m3_t,
                              _ta_tb, true, true,
                              Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T,
                              Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T);
-REGISTER_MMA_MX_BIAS_FORMAT_TRANS(int8_t, float, float, fp8_e5m2_t, fp8_e4m3_t,
-                                  _ta, true, false,
-                                  Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T,
-                                  Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T);
-REGISTER_MMA_MX_BIAS_FORMAT_TRANS(int8_t, float, float, fp8_e5m2_t, fp8_e4m3_t,
-                                  _tb, false, true,
-                                  Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T,
-                                  Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T);
-REGISTER_MMA_MX_BIAS_FORMAT_TRANS(int8_t, float, float, fp8_e5m2_t, fp8_e4m3_t,
-                                  _ta_tb, true, true,
-                                  Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T,
-                                  Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T);
+REGISTER_MMA_MX_BIAS_FORMAT_TRANS(
+    int8_t, float, float, fp8_e5m2_t, fp8_e4m3_t, _ta, true, false,
+    Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T,
+    Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T);
+REGISTER_MMA_MX_BIAS_FORMAT_TRANS(
+    int8_t, float, float, fp8_e5m2_t, fp8_e4m3_t, _tb, false, true,
+    Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T,
+    Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T);
+REGISTER_MMA_MX_BIAS_FORMAT_TRANS(
+    int8_t, float, float, fp8_e5m2_t, fp8_e4m3_t, _ta_tb, true, true,
+    Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T,
+    Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T);
 REGISTER_MMA_MX_FORMAT(int8_t, float, float, fp8_e4m3_t, fp8_e5m2_t,
                        Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T,
                        Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T);
@@ -988,18 +1045,18 @@ REGISTER_MMA_MX_FORMAT_TRANS(int8_t, float, float, fp8_e4m3_t, fp8_e5m2_t,
                              _ta_tb, true, true,
                              Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T,
                              Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T);
-REGISTER_MMA_MX_BIAS_FORMAT_TRANS(int8_t, float, float, fp8_e4m3_t, fp8_e5m2_t,
-                                  _ta, true, false,
-                                  Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T,
-                                  Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T);
-REGISTER_MMA_MX_BIAS_FORMAT_TRANS(int8_t, float, float, fp8_e4m3_t, fp8_e5m2_t,
-                                  _tb, false, true,
-                                  Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T,
-                                  Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T);
-REGISTER_MMA_MX_BIAS_FORMAT_TRANS(int8_t, float, float, fp8_e4m3_t, fp8_e5m2_t,
-                                  _ta_tb, true, true,
-                                  Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T,
-                                  Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T);
+REGISTER_MMA_MX_BIAS_FORMAT_TRANS(
+    int8_t, float, float, fp8_e4m3_t, fp8_e5m2_t, _ta, true, false,
+    Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T,
+    Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T);
+REGISTER_MMA_MX_BIAS_FORMAT_TRANS(
+    int8_t, float, float, fp8_e4m3_t, fp8_e5m2_t, _tb, false, true,
+    Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T,
+    Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T);
+REGISTER_MMA_MX_BIAS_FORMAT_TRANS(
+    int8_t, float, float, fp8_e4m3_t, fp8_e5m2_t, _ta_tb, true, true,
+    Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T,
+    Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T);
 REGISTER_MMA_MX_FORMAT(int8_t, float, float, fp8_e4m3_t, fp8_e4m3_t,
                        Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T,
                        Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T);
@@ -1018,38 +1075,38 @@ REGISTER_MMA_MX_FORMAT_TRANS(int8_t, float, float, fp8_e4m3_t, fp8_e4m3_t,
                              _ta_tb, true, true,
                              Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T,
                              Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T);
-REGISTER_MMA_MX_BIAS_FORMAT_TRANS(int8_t, float, float, fp8_e4m3_t, fp8_e4m3_t,
-                                  _ta, true, false,
-                                  Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T,
-                                  Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T);
-REGISTER_MMA_MX_BIAS_FORMAT_TRANS(int8_t, float, float, fp8_e4m3_t, fp8_e4m3_t,
-                                  _tb, false, true,
-                                  Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T,
-                                  Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T);
-REGISTER_MMA_MX_BIAS_FORMAT_TRANS(int8_t, float, float, fp8_e4m3_t, fp8_e4m3_t,
-                                  _ta_tb, true, true,
-                                  Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T,
-                                  Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T);
+REGISTER_MMA_MX_BIAS_FORMAT_TRANS(
+    int8_t, float, float, fp8_e4m3_t, fp8_e4m3_t, _ta, true, false,
+    Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T,
+    Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T);
+REGISTER_MMA_MX_BIAS_FORMAT_TRANS(
+    int8_t, float, float, fp8_e4m3_t, fp8_e4m3_t, _tb, false, true,
+    Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T,
+    Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T);
+REGISTER_MMA_MX_BIAS_FORMAT_TRANS(
+    int8_t, float, float, fp8_e4m3_t, fp8_e4m3_t, _ta_tb, true, true,
+    Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T,
+    Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T);
 REGISTER_MMA_MX_FP4(int8_t, float, float, fp4x2_e2m1_t, fp4x2_e2m1_t);
 REGISTER_MMA_MX_BIAS_FORMAT(int8_t, float, float, fp4x2_e2m1_t, fp4x2_e2m1_t,
                             Catlass::Gemm::HIVMMatmulDataformat::FP4E2M1_T,
                             Catlass::Gemm::HIVMMatmulDataformat::FP4E2M1_T);
-REGISTER_MMA_MX_FP4_TRANS(int8_t, float, float, fp4x2_e2m1_t,
-                          fp4x2_e2m1_t, _ta, true, false);
-REGISTER_MMA_MX_FP4_TRANS(int8_t, float, float, fp4x2_e2m1_t,
-                          fp4x2_e2m1_t, _tb, false, true);
-REGISTER_MMA_MX_FP4_TRANS(int8_t, float, float, fp4x2_e2m1_t,
-                          fp4x2_e2m1_t, _ta_tb, true, true);
-REGISTER_MMA_MX_BIAS_FORMAT_TRANS(int8_t, float, float, fp4x2_e2m1_t,
-                                  fp4x2_e2m1_t, _ta, true, false,
-                                  Catlass::Gemm::HIVMMatmulDataformat::FP4E2M1_T,
-                                  Catlass::Gemm::HIVMMatmulDataformat::FP4E2M1_T);
-REGISTER_MMA_MX_BIAS_FORMAT_TRANS(int8_t, float, float, fp4x2_e2m1_t,
-                                  fp4x2_e2m1_t, _tb, false, true,
-                                  Catlass::Gemm::HIVMMatmulDataformat::FP4E2M1_T,
-                                  Catlass::Gemm::HIVMMatmulDataformat::FP4E2M1_T);
-REGISTER_MMA_MX_BIAS_FORMAT_TRANS(int8_t, float, float, fp4x2_e2m1_t,
-                                  fp4x2_e2m1_t, _ta_tb, true, true,
-                                  Catlass::Gemm::HIVMMatmulDataformat::FP4E2M1_T,
-                                  Catlass::Gemm::HIVMMatmulDataformat::FP4E2M1_T);
+REGISTER_MMA_MX_FP4_TRANS(int8_t, float, float, fp4x2_e2m1_t, fp4x2_e2m1_t, _ta,
+                          true, false);
+REGISTER_MMA_MX_FP4_TRANS(int8_t, float, float, fp4x2_e2m1_t, fp4x2_e2m1_t, _tb,
+                          false, true);
+REGISTER_MMA_MX_FP4_TRANS(int8_t, float, float, fp4x2_e2m1_t, fp4x2_e2m1_t,
+                          _ta_tb, true, true);
+REGISTER_MMA_MX_BIAS_FORMAT_TRANS(
+    int8_t, float, float, fp4x2_e2m1_t, fp4x2_e2m1_t, _ta, true, false,
+    Catlass::Gemm::HIVMMatmulDataformat::FP4E2M1_T,
+    Catlass::Gemm::HIVMMatmulDataformat::FP4E2M1_T);
+REGISTER_MMA_MX_BIAS_FORMAT_TRANS(
+    int8_t, float, float, fp4x2_e2m1_t, fp4x2_e2m1_t, _tb, false, true,
+    Catlass::Gemm::HIVMMatmulDataformat::FP4E2M1_T,
+    Catlass::Gemm::HIVMMatmulDataformat::FP4E2M1_T);
+REGISTER_MMA_MX_BIAS_FORMAT_TRANS(
+    int8_t, float, float, fp4x2_e2m1_t, fp4x2_e2m1_t, _ta_tb, true, true,
+    Catlass::Gemm::HIVMMatmulDataformat::FP4E2M1_T,
+    Catlass::Gemm::HIVMMatmulDataformat::FP4E2M1_T);
 }

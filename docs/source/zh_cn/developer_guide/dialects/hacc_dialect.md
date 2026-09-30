@@ -70,6 +70,30 @@
 | :-------: | :-------: | ----------- |
 | funcName | `::mlir::FlatSymbolRefAttr` | 目标函数符号名 |
 
+### HIVMCCompatiblePrintAttr
+
+**语法**：`#hacc.hivmc_compatible_print`
+
+**功能**：为true时，按HIVMC版本生成MLIR。
+
+### HIVMCVersionAttr
+
+**语法**：
+
+```mlir
+#hacc.hivmc_version<
+  StringAttr   # version
+>
+```
+
+**功能**：表示hivmc版本信息。
+
+**参数**：
+
+| 参数名 | C++类型 | 说明 |
+| :-------: | :-------: | ----------- |
+| version | `StringAttr` | 版本号 |
+
 ### HostFuncTypeAttr
 
 **语法**：
@@ -153,6 +177,24 @@
 ```
 
 **功能**：绑定函数，用于推导任务类型与混合计算比例。
+
+**参数**：
+
+| 参数名 | C++类型 | 说明 |
+| :-------: | :-------: | ----------- |
+| funcName | `::mlir::FlatSymbolRefAttr` | 目标函数符号名 |
+
+### InferVFModeFunctionAttr
+
+**语法**：
+
+```mlir
+#hacc.infer_vf_mode_function<
+  ::mlir::FlatSymbolRefAttr   # funcName
+>
+```
+
+**功能**：绑定主机侧接口函数，用于获取设备函数的VF模式。
 
 **参数**：
 
@@ -254,6 +296,12 @@
 | :-------: | :-------: | ----------- |
 | targetName | `::mlir::FlatSymbolRefAttr` | 函数符号名 |
 
+### SIMTModuleAttr
+
+**语法**：`#hacc.simt_module`
+
+**功能**：标识SIMT模块。
+
 ### TargetAttr
 
 **语法**：
@@ -334,6 +382,9 @@ HACC设备硬件规格枚举
 | UB_ALIGN_SIZE | 8 | UB_ALIGN_SIZE |
 | L1_ALIGN_SIZE | 9 | L1_ALIGN_SIZE |
 | L0C_ALIGN_SIZE | 10 | L0C_ALIGN_SIZE |
+| MINIMAL_D_CACHE_SIZE | 11 | MINIMAL_D_CACHE_SIZE |
+| MAXIMUM_D_CACHE_SIZE | 12 | MAXIMUM_D_CACHE_SIZE |
+| ARCH | 13 | ARCH |
 
 ### HACCFuncType
 
@@ -358,6 +409,7 @@ HACC主机函数细分类型枚举
 | kInferSyncBlockLockInitFunction | 6 | infer_sync_block_lock_init_function |
 | kGetTilingStructSizeFunction | 7 | get_tiling_struct_size_function |
 | kInferTaskTypeFunction | 8 | infer_task_type_function |
+| kInferVFModeFunction | 9 | infer_vf_mode_function |
 
 ### KernelArgType
 
@@ -376,13 +428,16 @@ HACC主机函数细分类型枚举
 | kTilingStruct | 8 | tiling_struct |
 | kMeshArg | 9 | mesh_arg |
 | kSanitizerAddr | 10 | sanitizer_addr |
+| kGMAddr | 11 | gm_addr |
+| kSubWorkspace | 12 | sub_workspace |
 
 ### HACCToLLVMIRTranslateAttr
 
-取值范围：32位无符号整数0、1、2
+取值范围：32位无符号整数0、1、2、3
 
 | 枚举符号 | 数值 | 字符串标识 |
 | :----: | :---: | ------ |
 | ENTRY | 0 | hacc.entry |
 | MIX_ENTRY | 1 | hacc.mix_entry |
 | ALWAYS_INLINE | 2 | hacc.always_inline |
+| NOINLINE | 3 | hacc.noinline |

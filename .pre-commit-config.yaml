@@ -10,7 +10,51 @@ repos:
     -   id: end-of-file-fixer
     -   id: check-ast
     -   id: check-added-large-files
--   repo: https://gitcode.com/psf/black
-    rev: 24.4.2
+-   repo: local
     hooks:
-    -   id: black
+    -   id: git-clang-format
+        name: git-clang-format
+        description: Check PR changed lines against .clang-format (auto-detect target branch)
+        entry: |-
+            bash -c '
+            set +e
+            if ! command -v git-clang-format >/dev/null 2>&1; then
+              if command -v brew >/dev/null 2>&1; then
+                brew install clang-format >/dev/null 2>&1
+              elif command -v apt-get >/dev/null 2>&1; then
+                apt-get update -qq && apt-get install -y -qq clang-format >/dev/null 2>&1
+              fi
+              python3 -m pip install -q clang-format 2>/dev/null || true
+            fi
+            command -v git-clang-format >/dev/null 2>&1 || { echo "git-clang-format unavailable, skip"; exit 0; }
+            # 平台检出: 先 checkout PR 头(new_<id>)再 merge origin/master, 故 HEAD 是 merge commit, HEAD^1=PR 头
+            # 目标: 只对比 PR 源分支与目标分支, 只检查 PR 自身改动的文件
+            if git rev-parse -q --verify HEAD^2 >/dev/null 2>&1; then
+              PRH=$(git rev-parse HEAD^1)
+            else
+              echo "warning: HEAD 不是 merge commit (无 HEAD^2), 退化为对比 HEAD"
+              PRH=$(git rev-parse HEAD)
+            fi
+            # 选 base: 候选分支与 PR 头取 merge-base, PR 相对其独有提交数最小者(即 PR 的目标分支)
+            BEST=""
+            BEST_N=999999999
+            for b in $(git for-each-ref --format="%(refname:short)" refs/remotes/origin/ | grep -v "^origin/HEAD"); do
+              MB=$(git merge-base "$b" "$PRH" 2>/dev/null) || continue
+              [ -z "$MB" ] && continue
+              n=$(git rev-list --count "$MB..$PRH" 2>/dev/null)
+              [ -z "$n" ] && continue
+              if [ "$n" -lt "$BEST_N" ]; then BEST_N=$n; BEST="$b"; fi
+            done
+            BASE=$(git merge-base "${BEST:-origin/master}" "$PRH" 2>/dev/null || echo origin/master)
+            echo "==== format base: $BASE (branch: ${BEST:-origin/master}, PR ahead: $BEST_N) ===="
+            OUT=$(git-clang-format --diff "$BASE" "$PRH" -- bishengir/ 2>/dev/null)
+            if echo "$OUT" | grep -q "^diff --git"; then
+              echo "$OUT"
+              echo "==== GATE RESULT: FAIL - run git-clang-format to fix ===="
+              exit 1
+            fi
+            exit 0'
+        language: system
+        types_or: [c, c++]
+        pass_filenames: false
+        require_serial: true

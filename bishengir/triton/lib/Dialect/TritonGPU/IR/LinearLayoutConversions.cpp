@@ -90,9 +90,9 @@ LinearLayout makeCgaLayout(CTALayoutAttr layout) {
 LinearLayout combineCtaCgaWithShape(LinearLayout ctaLayout,
                                     CTALayoutAttr cgaLayoutAttr,
                                     ArrayRef<int64_t> shape) {
-  int rank = shape.size();
+  int rank = static_cast<int>(shape.size());
   assert(ctaLayout.getNumOutDims() == rank);
-  assert(cgaLayoutAttr.getCTAOrder().size() == rank);
+  assert(cgaLayoutAttr.getCTAOrder().size() == static_cast<size_t>(rank));
   MLIRContext *ctx = cgaLayoutAttr.getContext();
 
   SmallVector<StringAttr> outDimNames = standardOutDimNames(ctx, rank);
@@ -120,7 +120,7 @@ LinearLayout combineCtaCgaWithShape(LinearLayout ctaLayout,
   ctaLayout = ensureLayoutNotLargerThan(ctaLayout, ctaShape);
 
   LinearLayout ret = (ctaLayout * cgaLayout).transposeOuts(outDimNames);
-  for (auto dim : ret.getOutDimNames()) {
+  for ([[maybe_unused]] auto dim : ret.getOutDimNames()) {
     assert(ret.getOutDimSize(dim) == labeledShape[dim]);
   }
   return ret;
@@ -392,8 +392,8 @@ static LinearLayout broadcastedDotOperandLayout(MLIRContext *ctx,
 
 LinearLayout
 AMDMfmaEncodingAttr::toLinearLayout(ArrayRef<int64_t> shape) const {
-  int rank = shape.size();
-  assert(rank == getRank());
+  int rank = static_cast<int>(shape.size());
+  assert(rank == static_cast<int>(getRank()));
 
   bool hasBatchDim = rank == 3;
   int mIndex = 0 + hasBatchDim;
@@ -732,7 +732,7 @@ LinearLayout mfmaDotToLinearLayout(DotOperandEncodingAttr dotMfmaLayout,
 
   auto rank = shape.size();
   bool hasBatchDim = rank == 3;
-  int mIndex = 0 + hasBatchDim;
+  [[maybe_unused]] int mIndex = 0 + hasBatchDim;
 
   int32_t kWidth = dotMfmaLayout.getKWidth();
   auto kDimIndex = dotMfmaLayout.getOpIdx() == 0 ? rank - 1 : rank - 2;
@@ -820,8 +820,8 @@ LinearLayout mfmaDotToLinearLayout(DotOperandEncodingAttr dotMfmaLayout,
 
 LinearLayout
 AMDWmmaEncodingAttr::toLinearLayout(ArrayRef<int64_t> shape) const {
-  int rank = shape.size();
-  assert(rank == getRank());
+  int rank = static_cast<int>(shape.size());
+  assert(rank == static_cast<int>(getRank()));
 
   bool hasBatchDim = rank == 3;
   int mIndex = 0 + hasBatchDim;
@@ -848,8 +848,10 @@ AMDWmmaEncodingAttr::toLinearLayout(ArrayRef<int64_t> shape) const {
   // We use the order from fastest varying to slowest varying. So each base
   // vector is a tuple of values mapping to matrix C's (N, M[, B]) indices.
   auto threadOrder = getMatrixOrder(rank, /*rowMajor*/ !getIsTransposed());
-  assert(threadOrder[0] == mIndex || threadOrder[0] == nIndex);
-  assert(threadOrder[1] == mIndex || threadOrder[1] == nIndex);
+  assert(static_cast<int>(threadOrder[0]) == mIndex ||
+         static_cast<int>(threadOrder[0]) == nIndex);
+  assert(static_cast<int>(threadOrder[1]) == mIndex ||
+         static_cast<int>(threadOrder[1]) == nIndex);
 
   // For wmma with 16x16 output, each of the 32 threads holds 8 elements.
   //
@@ -915,12 +917,12 @@ LinearLayout wmmaDotOperandToLinearLayout(DotOperandEncodingAttr dotWmmaLayout,
   auto rank = shape.size();
   bool hasBatchDim = rank == 3;
   auto kDim = dotWmmaLayout.getOpIdx() == 0 ? rank - 1 : rank - 2;
-  int32_t kSize = shape[kDim];
+  [[maybe_unused]] int32_t kSize = shape[kDim];
   MLIRContext *ctx = dotWmmaLayout.getContext();
   SmallVector<StringAttr> outDimNames = standardOutDimNames(ctx, rank);
   StringAttr kRegister = S("register");
   StringAttr kLane = S("lane");
-  StringAttr kWarp = S("warp");
+  [[maybe_unused]] StringAttr kWarp = S("warp");
   // lane order
   // operand A: [1, 0] / [2, 1, 0]
   // operand B: [0, 1] / [1, 2, 0]
@@ -1045,9 +1047,9 @@ LinearLayout nvidiaMmaTile(MLIRContext *ctx, ArrayRef<unsigned> tileShape,
   auto inner = order[0];
   auto outer = order[1];
 
-  assert(tileShape.size() == rank);
-  int m = tileShape[outer];
-  int n = tileShape[inner];
+  assert(tileShape.size() == static_cast<size_t>(rank));
+  int m = static_cast<int>(tileShape[outer]);
+  int n = static_cast<int>(tileShape[inner]);
 
   // The relative order of registers and lanes is given by:
   // - Inner dim: kWidth registers
@@ -1074,8 +1076,8 @@ LinearLayout nvidiaMmaTile(MLIRContext *ctx, ArrayRef<unsigned> tileShape,
 LinearLayout
 NvidiaMmaEncodingAttr::toLinearLayout(ArrayRef<int64_t> shape) const {
   auto ctx = getContext();
-  int rank = shape.size();
-  assert(rank == getRank());
+  int rank = static_cast<int>(shape.size());
+  assert(rank == static_cast<int>(getRank()));
 
   SmallVector<unsigned> tileShape;
   if (isAmpere()) {
@@ -1138,7 +1140,7 @@ DotOperandEncodingAttr::toLinearLayout(ArrayRef<int64_t> shape) const {
   } else if (auto wmmaLayout = mlir::dyn_cast<AMDWmmaEncodingAttr>(parent)) {
     return wmmaDotOperandToLinearLayout(*this, shape);
   } else {
-    auto mma = mlir::cast<NvidiaMmaEncodingAttr>(parent);
+    [[maybe_unused]] auto mma = mlir::cast<NvidiaMmaEncodingAttr>(parent);
     return nvidiaDotToLinearLayout(shape, *this);
   }
 }
@@ -1367,7 +1369,7 @@ LinearLayout chooseShemLayoutForRegToRegConversion(
   SmallVector<StringAttr> kOffsetDims;
   auto totalIters = 1;
   auto totalOffsets = 1;
-  for (int i = 0; i < tensorShape.size(); i++) {
+  for (int i = 0; i < static_cast<int>(tensorShape.size()); i++) {
     int dim = order[i];
     StringAttr kIteration = S("iteration" + std::to_string(dim));
     StringAttr kOffset = S("offset" + std::to_string(dim));
@@ -1408,14 +1410,13 @@ LinearLayout chooseScaledMfmaScaleLayout(MLIRContext *ctx, int dotOperandIdx,
                                          unsigned mfmaMDim,
                                          ArrayRef<unsigned> tilesPerWarp,
                                          ArrayRef<unsigned> warpsPerCTA) {
-  using basisT = std::vector<std::vector<int32_t>>;
   unsigned rank = dotOperandShape.size();
   auto order = mlir::triton::gpu::getMatrixOrder(rank, /*rowMajor=*/true);
   auto standardOutDims = standardOutDimNames(ctx, rank);
   StringAttr kRegister = StringAttr::get(ctx, "register");
   StringAttr kLane = StringAttr::get(ctx, "lane");
   StringAttr kWarp = StringAttr::get(ctx, "warp");
-  StringAttr kBlock = StringAttr::get(ctx, "block");
+  [[maybe_unused]] StringAttr kBlock = StringAttr::get(ctx, "block");
 
   // Fetch the tilesPerWarp value in the M dimension for operand A, or in the N
   // dimension for operand B.
@@ -1447,7 +1448,8 @@ LinearLayout chooseScaledMfmaScaleLayout(MLIRContext *ctx, int dotOperandIdx,
   for (int32_t elem = threadsInKDim; elem < kSize; elem *= 2)
     registerBase.emplace_back(std::vector<int32_t>{elem, 0});
 
-  for (int32_t elem = mfmaMDim; elem < tilePerWarpMN * mfmaMDim; elem *= 2)
+  for (int32_t elem = mfmaMDim;
+       elem < static_cast<int32_t>(tilePerWarpMN * mfmaMDim); elem *= 2)
     registerBase.emplace_back(std::vector<int32_t>{0, elem});
 
   if (mfmaMDim == 32) {
@@ -1691,9 +1693,8 @@ getTmemLoadStoreLayout16x256(int M, int N, RankedTensorType oldType,
   SmallVector<int64_t> shape = getShapePerCTA(oldType);
   MLIRContext *ctx = ctaLayout.getContext();
 
-  using basisT = std::vector<std::vector<int32_t>>;
   StringAttr kRegister = StringAttr::get(ctx, "register");
-  StringAttr kLane = StringAttr::get(ctx, "lane");
+  [[maybe_unused]] StringAttr kLane = StringAttr::get(ctx, "lane");
   StringAttr kWarp = StringAttr::get(ctx, "warp");
   SmallVector<StringAttr> outDimNames = standardOutDimNames(ctx, 2);
 

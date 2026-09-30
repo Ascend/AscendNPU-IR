@@ -307,7 +307,7 @@ def FixFusedCat: Pass<"fix-fused-cat", "mlir::ModuleOp"> {
                             "mlir::triton::TritonDialect"];
 }
 
-def RewriteSliceOpToMemoryOps 
+def RewriteSliceOpToMemoryOps
     : Pass<"rewrite-slice-op-to-memory-ops", "mlir::ModuleOp"> {
   let summary = "";
   let constructor = "bishengir::triton::createRewriteSliceOpToMemoryOpsPass()";
@@ -405,7 +405,7 @@ def LowerRemainingTensorDialect
     : Pass<"lower-remaining-tensor-dialect", "mlir::ModuleOp"> {
   let summary = "Lower leftover tensor dialect ops";
   let description = [{
-    Lowers remaining tensor dialect ops if possible. 
+    Lowers remaining tensor dialect ops if possible.
     Otherwise signals a pass failure.
   }];
   let constructor = "bishengir::triton::createLowerRemainingTensorDialectPass()";

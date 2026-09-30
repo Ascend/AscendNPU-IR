@@ -18,7 +18,7 @@ using namespace mlir::triton;
 using namespace mlir::triton::gpu;
 using mlir::LLVM::NVIDIA::lowerLdStMatrix;
 
-constexpr int kPtrBitWidth = 64;
+[[maybe_unused]] constexpr int kPtrBitWidth = 64;
 struct ConvertLayoutOpSwizzlingConversion
     : public ConvertOpToLLVMPattern<triton::gpu::ConvertLayoutOp> {
   const NVIDIA::TargetInfo &targetInfo;
@@ -34,7 +34,7 @@ struct ConvertLayoutOpSwizzlingConversion
                   ConversionPatternRewriter &rewriter) const override {
     MLIRContext *ctx = op.getContext();
 
-    const auto &shape = op.getType().getShape();
+    [[maybe_unused]] const auto &shape = op.getType().getShape();
     auto srcTy = op.getSrc().getType();
     auto dstTy = op.getType();
 
@@ -167,7 +167,8 @@ struct ConvertLayoutOpSwizzlingConversion
 
     auto tileSize = storeCvt.getInDimSize(kReg);
 
-    assert(permutedInVals.size() == tileSize * nReps);
+    assert(static_cast<int64_t>(permutedInVals.size()) ==
+           static_cast<int64_t>(tileSize) * nReps);
     SmallVector<Value> outVals;
     auto affineOffset = b.i32_val(0);
     auto maskSpanAffineOffset = 0;
@@ -188,7 +189,7 @@ struct ConvertLayoutOpSwizzlingConversion
       } else {
         assert(idxSrc == 1 || idxSrc == 2);
         bool transpose = idxSrc == 2;
-        auto result = lowerLdStMatrix(
+        [[maybe_unused]] auto result = lowerLdStMatrix(
             loc, storeCvt, transpose, tileInVals, smemBase, affineOffset,
             maskSpanAffineOffset, llvmElemTy, rewriter, targetInfo);
         assert(succeeded(result));
@@ -204,7 +205,7 @@ struct ConvertLayoutOpSwizzlingConversion
       } else {
         assert(idxDst == 1 || idxDst == 2);
         bool transpose = idxDst == 2;
-        auto result = lowerLdStMatrix(
+        [[maybe_unused]] auto result = lowerLdStMatrix(
             loc, loadCvt, transpose, tileOutVals, smemBase, affineOffset,
             maskSpanAffineOffset, llvmElemTy, rewriter, targetInfo);
         assert(succeeded(result));
@@ -284,7 +285,7 @@ private:
                               OpAdaptor adaptor,
                               ConversionPatternRewriter &rewriter,
                               const NVIDIA::TargetInfo &targetInfo) const {
-    MLIRContext *ctx = rewriter.getContext();
+    [[maybe_unused]] MLIRContext *ctx = rewriter.getContext();
     auto loc = op.getLoc();
     auto b = TritonLLVMOpBuilder(loc, rewriter);
     auto typeConverter = getTypeConverter();

@@ -138,7 +138,8 @@ Value TargetInfo::getClusterCTAId(RewriterBase &rewriter, Location loc) const {
 Value TargetInfo::ballot(RewriterBase &rewriter, Location loc, Type type,
                          Value cmp) const {
   auto b = TritonLLVMOpBuilder(loc, rewriter);
-  Value threadMask = b.int_val(type.getIntOrFloatBitWidth(), -1);
+  [[maybe_unused]] Value threadMask =
+      b.int_val(type.getIntOrFloatBitWidth(), -1);
 #if !BSPUB_DAVINCI_BISHENGIR
   return rewriter.create<NVVM::VoteSyncOp>(loc, type, threadMask, cmp,
                                            NVVM::VoteSyncKind::ballot);
@@ -192,7 +193,7 @@ void TargetInfo::storeDShared(RewriterBase &rewriter, Location loc, Value ptr,
                               Value pred) const {
   auto b = TritonLLVMOpBuilder(loc, rewriter);
   MLIRContext *ctx = rewriter.getContext();
-  auto ptrTy = cast<LLVM::LLVMPointerType>(ptr.getType());
+  [[maybe_unused]] auto ptrTy = cast<LLVM::LLVMPointerType>(ptr.getType());
   assert(ptrTy.getAddressSpace() == 3 && "Invalid addr space for load_dsmem");
 
   if (!isa<VectorType>(val.getType())) {
@@ -239,7 +240,7 @@ void TargetInfo::storeDShared(RewriterBase &rewriter, Location loc, Value ptr,
     SmallVector<Value> oldVals = unpackLLVector(loc, val, rewriter);
 
     SmallVector<Value> newVals;
-    for (int i = 0; i < vec / elemsPerPack; i++) {
+    for (int i = 0; i < static_cast<int>(vec / elemsPerPack); i++) {
       Value v = packLLVector(
           loc, ArrayRef(oldVals).slice(i * elemsPerPack, elemsPerPack),
           rewriter);
@@ -255,9 +256,9 @@ void TargetInfo::storeDShared(RewriterBase &rewriter, Location loc, Value ptr,
     assert(elemBitwidth == 32 || elemBitwidth == 64);
     int maxVec = 128 / elemBitwidth;
 
-    auto newVecTy = vec_ty(elemTy, maxVec);
+    [[maybe_unused]] auto newVecTy = vec_ty(elemTy, maxVec);
     SmallVector<Value> vals = unpackLLVector(loc, val, rewriter);
-    for (int i = 0; i < vec / maxVec; i++) {
+    for (int i = 0; i < static_cast<int>(vec / maxVec); i++) {
       auto newPtr = b.gep(ptr.getType(), elemTy, ptr, b.i32_val(i * maxVec)
 #if !BSPUB_DAVINCI_BISHENGIR
                                                           ,
@@ -298,7 +299,7 @@ void TargetInfo::storeDShared(RewriterBase &rewriter, Location loc, Value ptr,
     std::string constraint = getConstraintForBitwidth(elemBitwidth);
     if (vec > 1) {
       SmallVector<std::pair<Value, std::string>> vecVals;
-      for (int i = 0; i < vec; i++) {
+      for (int i = 0; i < static_cast<int>(vec); i++) {
         vecVals.push_back({b.extract_element(val, b.i32_val(i)), constraint});
       }
       valOpr = builder.newListOperand(vecVals);
@@ -315,7 +316,7 @@ Value TargetInfo::loadDShared(RewriterBase &rewriter, Location loc, Value ptr,
                               Value pred, Operation *localLoadOp) const {
   auto b = TritonLLVMOpBuilder(loc, rewriter);
   MLIRContext *ctx = rewriter.getContext();
-  auto ptrTy = cast<LLVM::LLVMPointerType>(ptr.getType());
+  [[maybe_unused]] auto ptrTy = cast<LLVM::LLVMPointerType>(ptr.getType());
   assert(ptrTy.getAddressSpace() == 3 && "Invalid addr space for load_dsmem");
 
   if (!isa<VectorType>(loadTy)) {
@@ -378,7 +379,7 @@ Value TargetInfo::loadDShared(RewriterBase &rewriter, Location loc, Value ptr,
     int maxVec = 128 / elemBitwidth;
 
     SmallVector<Value> vals;
-    for (int i = 0; i < vec / maxVec; i++) {
+    for (int i = 0; i < static_cast<int>(vec / maxVec); i++) {
       auto newPtr = b.gep(ptr.getType(), elemTy, ptr, b.i32_val(i * maxVec)
 #if !BSPUB_DAVINCI_BISHENGIR
                                                           ,
@@ -420,7 +421,7 @@ Value TargetInfo::loadDShared(RewriterBase &rewriter, Location loc, Value ptr,
     if (vec > 1) {
       Type structTy = struct_ty(SmallVector<Type>(vec, int_ty(elemBitwidth)));
       Value structValue = b.undef(structTy);
-      for (int i = 0; i < vec; i++) {
+      for (int i = 0; i < static_cast<int>(vec); i++) {
         structValue = b.insert_val(structTy, structValue,
                                    b.extract_element(load, b.i32_val(i)), i);
       }
@@ -529,7 +530,8 @@ void TargetInfo::printf(RewriterBase &rewriter, Value formatStrStart,
                         ArrayRef<bool> isSigned) const {
   auto *ctx = rewriter.getContext();
   Type ptr = ptr_ty(ctx);
-  auto moduleOp = rewriter.getBlock()->getParent()->getParentOfType<ModuleOp>();
+  [[maybe_unused]] auto moduleOp =
+      rewriter.getBlock()->getParent()->getParentOfType<ModuleOp>();
   auto funcOp = getVprintfDeclaration(rewriter);
   auto loc = UnknownLoc::get(ctx);
   auto b = TritonLLVMOpBuilder(loc, rewriter);
@@ -586,7 +588,8 @@ void TargetInfo::assertFail(RewriterBase &rewriter, Location loc,
                             int line) const {
   auto b = TritonLLVMOpBuilder(loc, rewriter);
   auto funcOp = getAssertfailDeclaration(rewriter);
-  auto moduleOp = rewriter.getBlock()->getParent()->getParentOfType<ModuleOp>();
+  [[maybe_unused]] auto moduleOp =
+      rewriter.getBlock()->getParent()->getParentOfType<ModuleOp>();
   llvm::SmallString<64> messageString(message), fileString(file),
       funcString(func);
   messageString.push_back('\0');

@@ -679,6 +679,20 @@ static bool isBRCDist(Value dist) {
          distValue == (uint32_t)hivmave::LoadDist::BRC_B32;
 }
 
+// Map HIVMAVE LoadDist for i1/predicate loads onto CCE MaskDist encodings for
+// hivm.plds.b8. HIVMAVE enum values US=24 / DS=25 must not be passed through:
+// AscendC / __clang_cce_vector_intrinsics Dist::DIST_US=1, DIST_DS=2.
+static uint32_t mapLoadDistToPldsMaskDist(hivmave::LoadDist pattern) {
+  switch (pattern) {
+  case hivmave::LoadDist::US:
+    return 1;
+  case hivmave::LoadDist::DS:
+    return 2;
+  default:
+    return 0; // NORM
+  }
+}
+
 static bool isONEPTDist(Value dist) {
   // check store dist is onept
   auto constantOp = dyn_cast<LLVM::ConstantOp>(dist.getDefiningOp());
@@ -932,8 +946,11 @@ struct HIVMLoadOpLowering : public ConvertOpToLLVMPattern<VFLoadOp> {
                                                            offset, dist, mode);
       rewriter.replaceOp(load, result);
     } else if (elementType.isInteger(1)) {
-      dist = rewriter.create<LLVM::ConstantOp>(loc, rewriter.getI32Type(),
-                                               rewriter.getI32IntegerAttr(0));
+      // Do not hardcode NORM: honor MaskDist US/DS for plds.
+      dist = rewriter.create<LLVM::ConstantOp>(
+          loc, rewriter.getI32Type(),
+          rewriter.getI32IntegerAttr(
+              mapLoadDistToPldsMaskDist(load.getPattern())));
       auto pLoadOp = rewriter.create<PLoadB8InstOp>(loc, vtype, dataPtr, offset,
                                                     dist, mode);
       Value pLoadRes = pLoadOp->getResult(0);

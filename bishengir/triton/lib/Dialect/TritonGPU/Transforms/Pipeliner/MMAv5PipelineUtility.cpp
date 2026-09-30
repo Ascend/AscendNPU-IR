@@ -87,12 +87,12 @@ void ttng::MMAv5PipelineableOperandsHelper::run() {
   // For scaled MMA check if the scales are passed through shared memory, and
   // also coming from load or outside the loop.
   if (auto scaledOp = dyn_cast<ttng::TCGen5MMAScaledOp>(mmaOp.getOperation())) {
-    if (!isa<ttg::SharedEncodingTrait>(
-            scaledOp.getAScale().getType().getEncoding()) &&
-            !forOp.isDefinedOutsideOfLoop(scaledOp.getAScale()) ||
-        !isa<ttg::SharedEncodingTrait>(
-            scaledOp.getBScale().getType().getEncoding()) &&
-            !forOp.isDefinedOutsideOfLoop(scaledOp.getBScale())) {
+    if ((!isa<ttg::SharedEncodingTrait>(
+             scaledOp.getAScale().getType().getEncoding()) &&
+         !forOp.isDefinedOutsideOfLoop(scaledOp.getAScale())) ||
+        (!isa<ttg::SharedEncodingTrait>(
+             scaledOp.getBScale().getType().getEncoding()) &&
+         !forOp.isDefinedOutsideOfLoop(scaledOp.getBScale()))) {
       // Undecidable, we could follow the tmem use-def chain to find the first
       // tmem_load.
       isOperandsStateDetermined = false;
@@ -269,7 +269,7 @@ bool ttng::hasLoadsAfterMMA(ttng::MMAv5OpInterface mma, scf::ForOp forOp) {
 ttng::TMEMAllocOp ttng::createTMemAlloc(OpBuilder &builder,
                                         ttng::TMEMAllocOp oldTMemAllocOp,
                                         bool multiBufferred, int numStages) {
-  Location loc = oldTMemAllocOp.getLoc();
+  [[maybe_unused]] Location loc = oldTMemAllocOp.getLoc();
   auto oldRetType = oldTMemAllocOp.getType();
   SmallVector<int64_t> shape = {oldRetType.getShape().begin(),
                                 oldRetType.getShape().end()};

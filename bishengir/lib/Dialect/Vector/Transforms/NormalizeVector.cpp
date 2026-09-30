@@ -991,8 +991,8 @@ class TransferReadToGatheringLoadPattern
     if (!permMap.isPermutation())
       return rewriter.notifyMatchFailure(readop, "unsupported permutation map");
 
-    // we don't touch the ones with (1) identity, (2) broadcast (constant)
-    if (permMap.isIdentity() || permMap.isConstant())
+    // Broadcasts are handled by the existing broadcast lowering.
+    if (permMap.isConstant())
       return failure();
 
     memrefType = dyn_cast<MemRefType>(readop.getSource().getType());
@@ -1001,6 +1001,34 @@ class TransferReadToGatheringLoadPattern
     destType = dyn_cast<VectorType>(readop.getResult().getType());
     if (!destType || !destType.hasStaticShape())
       return failure();
+
+    if (permMap.isIdentity()) {
+      // Limit identity reads to 1-D: unmasked offsets form an arithmetic
+      // sequence even for dynamic extents, and the mask can be reused directly.
+      // Higher-rank reads may produce non-arithmetic index constants that AVE
+      // cannot lower; their masks also need correct flattening.
+      // TODO: Support higher-rank identity reads by extending index lowering
+      // and preserving mask semantics when flattening.
+      if (memrefType.getRank() != 1 || memrefType.getDimSize(0) == 1 ||
+          readop.hasOutOfBoundsDim())
+        return failure();
+      int64_t offset;
+      // For a 1-D view, unit stride is contiguous even with a dynamic extent.
+      if (failed(getStridesAndOffset(memrefType, strides, offset)) ||
+          strides.front() <= 1)
+        return failure();
+      isFullMask = true;
+      if (auto mask = readop.getMask()) {
+        if (auto constantMask = mask.getDefiningOp<vector::ConstantMaskOp>()) {
+          // Keep inactive indices zero, as on the existing constant-mask path,
+          // so that a large stride does not overflow unused gather indices.
+          constantMaskBounds.push_back(
+              cast<IntegerAttr>(constantMask.getMaskDimSizes()[0]).getInt());
+          isFullMask = false;
+        }
+      }
+      return success();
+    }
 
     // must have static shape
     // dynamic shape size is represented by a large negative number
@@ -1030,24 +1058,11 @@ class TransferReadToGatheringLoadPattern
         }
       }
     }
-    // must have static stride (if strided)
-    auto memrefLayout = memrefType.getLayout();
-    if (auto strided = dyn_cast<StridedLayoutAttr>(memrefLayout)) {
-      for (auto v : strided.getStrides()) {
-        if (v < 1)
-          return failure();
-        strides.push_back(v);
-      }
-
-    } else {
-      // not strided; compute the strides from the dimensions
-      strides.resize(shape.size(), 1);
-      if (shape.size() > 1) {
-        for (unsigned i = shape.size() - 1; i >= 1; --i) {
-          strides[i - 1] = strides[i] * shape[i];
-        }
-      }
-    }
+    // Extract physical strides from both strided and affine layouts.
+    int64_t offset;
+    if (failed(getStridesAndOffset(memrefType, strides, offset)) ||
+        llvm::any_of(strides, [](int64_t stride) { return stride < 1; }))
+      return failure();
 
     // if transpose dim with 1 mask value
     // no need to change transfer_read to gather
@@ -1264,8 +1279,8 @@ class TransferReadToGatheringLoadPattern
 
   LogicalResult matchAndRewrite(vector::TransferReadOp readop,
                                 PatternRewriter &rewriter) const override {
-    // convert vector.transfer_read with non-identity permutation map
-    // to vector.gather and index computations doing the same operations
+    // Convert permuted or 1-D identity-strided reads using the existing
+    // physical offset computation and gather lowering.
     auto permMap = readop.getPermutationMap();
     MemRefType memrefType;
     VectorType destType;
@@ -1303,7 +1318,9 @@ class TransferReadToGatheringLoadPattern
     decltype(readop.getMask()) newMask;
     VectorType maskType =
         VectorType::get({totalDestSize}, rewriter.getI1Type());
-    if (!isFullMask) {
+    if (permMap.isIdentity() && readop.getMask()) {
+      newMask = readop.getMask();
+    } else if (!isFullMask) {
       // check if we can convert the constant mask to something simple
       // currently we only try to create another constant mask
       // if there are more patterns we can support, update them here

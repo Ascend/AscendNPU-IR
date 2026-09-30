@@ -27,6 +27,8 @@ module {
 使用`bishengir-compile`生成设备端二进制：
 
 ```bash
+# 确保使用的bishengir-compile是从CANN安装包中获取；若从源码自编译该工具，需添加 -t（--build-bishengir-template）参数构建模板库，端到端编译必须依赖该组件。
+
 # 编译命令
 bishengir-compile add.mlir -enable-hivm-compile -o kernel.o
 ```

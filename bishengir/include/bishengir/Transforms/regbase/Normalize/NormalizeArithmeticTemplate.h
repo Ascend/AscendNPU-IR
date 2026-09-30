@@ -285,12 +285,15 @@ private:
 /// `>>s` is an arithmetic right shift. After the widening multiply, `high`
 /// keeps bits `[2N-1:N]` and `low` keeps bits `[N-1:0]`.
 ///
+/// When `IsUnsigned` is set, the operands are zero-extended instead of
+/// sign-extended and the right shifts are logical instead of arithmetic.
+///
 /// Example for `i8`:
 ///   x = 20, y = 13
 ///   p = sext_i16(20) * sext_i16(13) = 260 = 0x0104
 ///   low  = trunc_i8(0x0104) = 0x04
 ///   high = trunc_i8(0x0104 >> 8) = 0x01
-template <typename MulExtOpType, typename Traits>
+template <typename MulExtOpType, typename Traits, bool IsUnsigned = false>
 struct NormalizeMulExtOpTemplate : public OpRewritePattern<MulExtOpType> {
 public:
   using OpRewritePattern<MulExtOpType>::OpRewritePattern;
@@ -308,13 +311,20 @@ public:
     if (!extendedType || lhsType != rhsType)
       return failure();
 
+    constexpr CastSignKind widenSignKind =
+        IsUnsigned ? CastSignKind::Unsigned : CastSignKind::Signed;
+    constexpr ShiftKind highShiftKind =
+        IsUnsigned ? ShiftKind::RightUnsigned : ShiftKind::RightSigned;
+
     Location loc = op.getLoc();
     // Widen both operands before multiplying so the full 2N-bit product is
     // available for the low/high extraction below.
     Value lhsExt = Traits::createCastOp(rewriter, loc, lhs, extendedType,
-                                        CastRoundKind::RInt);
+                                        CastRoundKind::RInt, Value(),
+                                        widenSignKind);
     Value rhsExt = Traits::createCastOp(rewriter, loc, rhs, extendedType,
-                                        CastRoundKind::RInt);
+                                        CastRoundKind::RInt, Value(),
+                                        widenSignKind);
 
     Value mulInit = utils::createEmptyOp(rewriter, loc, lhsExt);
     Value mulRes = Traits::createBinaryOp(rewriter, loc, lhsExt, rhsExt, mulInit,
@@ -322,16 +332,18 @@ public:
 
     int64_t bitWidth = lhsType.getIntOrFloatBitWidth();
 
-    // Signed right shift by N keeps the upper N bits of the 2N-bit product.
+    // A right shift by N keeps the upper N bits of the 2N-bit product. The
+    // shift must be logical for unsigned products to avoid sign replication.
     Value high = createConstantShift<Traits>(rewriter, loc, mulRes, bitWidth,
-                                             ShiftKind::RightSigned);
+                                             highShiftKind);
 
     // `(p << N) >> N` clears the upper half and leaves only the lower N bits in
-    // the widened lane, ready for truncation back to the original type.
+    // the widened lane, ready for truncation back to the original type. The
+    // shift kind does not affect the truncated low half.
     Value lowShift = createConstantShift<Traits>(
         rewriter, loc, mulRes, bitWidth, ShiftKind::Left);
     Value low = createConstantShift<Traits>(rewriter, loc, lowShift, bitWidth,
-                                            ShiftKind::RightSigned);
+                                            highShiftKind);
 
     Type resultType = lhsType;
     // Truncate each extracted half back to the original element type.

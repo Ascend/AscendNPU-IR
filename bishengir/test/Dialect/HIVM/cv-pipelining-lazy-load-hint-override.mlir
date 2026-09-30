@@ -32,10 +32,10 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
       annotation.mark %tensor2 {cv_pipeline_lazy_load = false} : tensor<16x16xf16>
 
       // CUBE-only consumer of the load result.
-      %dest = tensor.empty() : tensor<16x16xf16>
-      %dot = hivm.hir.mmadL1 ins(%tensor1, %tensor2, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%dest : tensor<16x16xf16>) -> tensor<16x16xf16>
+      %dest = tensor.empty() : tensor<16x16xf32>
+      %dot = hivm.hir.mmadL1 ins(%tensor1, %tensor2, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%dest : tensor<16x16xf32>) -> tensor<16x16xf32>
       %ub0 = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
-      hivm.hir.fixpipe ins(%dot : tensor<16x16xf16>) outs(%ub0 : memref<16x16xf16, #hivm.address_space<ub>>)
+      hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%dot : tensor<16x16xf32>) outs(%ub0 : memref<16x16xf16, #hivm.address_space<ub>>)
       %ub0_cast = memref.memory_space_cast %ub0 : memref<16x16xf16, #hivm.address_space<ub>> to memref<16x16xf16>
       %wst = bufferization.to_tensor %ub0_cast : memref<16x16xf16>
 
@@ -84,10 +84,10 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
       %tensor2 = bufferization.to_tensor %alloc : memref<16x16xf16>
       annotation.mark %tensor2 {cv_pipeline_lazy_load = true} : tensor<16x16xf16>
 
-      %dest = tensor.empty() : tensor<16x16xf16>
-      %dot = hivm.hir.mmadL1 ins(%tensor1, %tensor2, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%dest : tensor<16x16xf16>) -> tensor<16x16xf16>
+      %dest = tensor.empty() : tensor<16x16xf32>
+      %dot = hivm.hir.mmadL1 ins(%tensor1, %tensor2, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%dest : tensor<16x16xf32>) -> tensor<16x16xf32>
       %ub0 = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
-      hivm.hir.fixpipe ins(%dot : tensor<16x16xf16>) outs(%ub0 : memref<16x16xf16, #hivm.address_space<ub>>)
+      hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%dot : tensor<16x16xf32>) outs(%ub0 : memref<16x16xf16, #hivm.address_space<ub>>)
       %ub0_cast = memref.memory_space_cast %ub0 : memref<16x16xf16, #hivm.address_space<ub>> to memref<16x16xf16>
       %wst = bufferization.to_tensor %ub0_cast : memref<16x16xf16>
 
@@ -139,10 +139,10 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
       annotation.mark %tensor2 {cv_pipeline_lazy_load = false} : tensor<16x16xf16>
 
       // CUBE consumer
-      %dest = tensor.empty() : tensor<16x16xf16>
-      %dot = hivm.hir.mmadL1 ins(%tensor1, %tensor2, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%dest : tensor<16x16xf16>) -> tensor<16x16xf16>
+      %dest = tensor.empty() : tensor<16x16xf32>
+      %dot = hivm.hir.mmadL1 ins(%tensor1, %tensor2, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%dest : tensor<16x16xf32>) -> tensor<16x16xf32>
       %ub0 = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
-      hivm.hir.fixpipe ins(%dot : tensor<16x16xf16>) outs(%ub0 : memref<16x16xf16, #hivm.address_space<ub>>)
+      hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%dot : tensor<16x16xf32>) outs(%ub0 : memref<16x16xf16, #hivm.address_space<ub>>)
       %ub0_cast = memref.memory_space_cast %ub0 : memref<16x16xf16, #hivm.address_space<ub>> to memref<16x16xf16>
       %wst = bufferization.to_tensor %ub0_cast : memref<16x16xf16>
 

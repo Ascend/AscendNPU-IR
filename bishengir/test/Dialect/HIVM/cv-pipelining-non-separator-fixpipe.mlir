@@ -38,10 +38,10 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
       %allocC = memref.alloc() : memref<16x16xf16>
       hivm.hir.load ins(%gmIn2 : memref<16x16xf16>) outs(%allocC : memref<16x16xf16>)
       %tensor2 = bufferization.to_tensor %allocC : memref<16x16xf16>
-      %dest = tensor.empty() : tensor<16x16xf16>
-      %dot = hivm.hir.mmadL1 ins(%tensor1, %tensor2, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%dest : tensor<16x16xf16>) -> tensor<16x16xf16>
+      %dest = tensor.empty() : tensor<16x16xf32>
+      %dot = hivm.hir.mmadL1 ins(%tensor1, %tensor2, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%dest : tensor<16x16xf32>) -> tensor<16x16xf32>
       %ub0 = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
-      hivm.hir.fixpipe ins(%dot : tensor<16x16xf16>) outs(%ub0 : memref<16x16xf16, #hivm.address_space<ub>>)
+      hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%dot : tensor<16x16xf32>) outs(%ub0 : memref<16x16xf16, #hivm.address_space<ub>>)
 
       // V2: Vector op 2
       %ub_tensor = bufferization.to_tensor %ub0 : memref<16x16xf16, #hivm.address_space<ub>>
@@ -88,10 +88,10 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
       %allocC = memref.alloc() : memref<16x16xf16>
       hivm.hir.load ins(%gmIn2 : memref<16x16xf16>) outs(%allocC : memref<16x16xf16>)
       %tensor2 = bufferization.to_tensor %allocC : memref<16x16xf16>
-      %dest = tensor.empty() : tensor<16x16xf16>
-      %dot = hivm.hir.mmadL1 ins(%tensor1, %tensor2, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%dest : tensor<16x16xf16>) -> tensor<16x16xf16>
+      %dest = tensor.empty() : tensor<16x16xf32>
+      %dot = hivm.hir.mmadL1 ins(%tensor1, %tensor2, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%dest : tensor<16x16xf32>) -> tensor<16x16xf32>
       %cbuf0 = memref.alloc() : memref<16x16xf16, #hivm.address_space<cbuf>>
-      hivm.hir.fixpipe ins(%dot : tensor<16x16xf16>) outs(%cbuf0 : memref<16x16xf16, #hivm.address_space<cbuf>>)
+      hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%dot : tensor<16x16xf32>) outs(%cbuf0 : memref<16x16xf16, #hivm.address_space<cbuf>>)
 
       // V2: Vector op 2
       %v2_alloc = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>

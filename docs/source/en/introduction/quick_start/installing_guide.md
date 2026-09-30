@@ -152,6 +152,7 @@ ninja -j32
 | `-DLLVM_TARGETS_TO_BUILD="host;Native"` | Enables the CPU runner |
 | `-DBISHENGIR_PUBLISH=OFF` | Disables unpublished features |
 | `-DBISHENGIR_BUILD_TEMPLATE=ON -DBISHENG_COMPILER_PATH=...` | Builds the BiShengIR template library |
+| `-DBISHENGIR_OPTIMIZE_TEMPLATE_BITCODE=OFF` | Disables C310 template bitcode optimization (enabled by default) |
 
 ### Binary Installation (No Compilation Required)
 

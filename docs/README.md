@@ -16,6 +16,35 @@ This directory is the Sphinx documentation project for AscendNPU IR. It supports
 
 Directory names and document file names under `docs/` (including `docs/source/`) adopt a unified lowercase **snake_case** style, for example: `quick_start/`, `installing_guide.md`, `user_guide/`，to keep consistent paths and URLs.
 
+## Prerequisites
+
+Example for a clean Ubuntu 22.04 environment (install the equivalents on other systems):
+
+### System packages
+
+```bash
+apt-get update && apt-get install -y \
+    clang lld git make ccache \
+    python3 python3-pip python3-venv
+```
+
+- `git`: used to auto-fetch the `third-party/llvm-project` submodule on first build (not needed if the submodule is already present).
+- `clang`, `ccache`: required to build the doc generator tools (mlir-tblgen etc.) once when no project build exists locally.
+- `lld`: optional, speeds up linking.
+
+### Python dependencies
+
+From the **repository root**:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install cmake ninja
+pip install -r docs/requirements.txt
+```
+
+> **Note**: install `cmake` and `ninja` via pip (or another up-to-date channel) — building the doc generator tools requires CMake ≥ 3.28 and Ninja ≥ 1.12, while the Ubuntu 22.04 default repositories only ship CMake 3.22 / Ninja 1.10, which fail at configure time.
+
 ## How to build
 
 From the **repository root**:

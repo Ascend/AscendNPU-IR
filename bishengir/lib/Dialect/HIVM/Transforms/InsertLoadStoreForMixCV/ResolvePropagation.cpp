@@ -203,6 +203,7 @@ static LogicalResult ensureFixpipeToUB(UnrealizedConversionCastOp downPropOp,
   SmallVector<Value> oprs({fixpipeOp.getSrc(), coupledBuffer.spacedMemref});
   if (auto quantScale = fixpipeOp.getQuantScale())
     oprs.push_back(quantScale);
+  rewriter.setInsertionPointAfter(fixpipeOp);
   rewriter.create<FixpipeOp>(downPropOp.getLoc(), TypeRange{}, oprs,
                              fixpipeOp->getAttrs());
   rewriter.replaceOp(fixpipeOp, toTensorOp.getResult());
@@ -307,6 +308,19 @@ LogicalResult TightCoupledBufferResolvePropagationPattern::matchAndRewrite(
   auto [upCoreType, upAddressSpace] =
       PropagatorUtil::extractPropagatorInfo(upPropOp);
   rewriter.setInsertionPointAfter(downPropOp);
+  if (downCoreType == TCoreType::CUBE_AND_VECTOR &&
+      llvm::find(upAddressSpace, hivm::AddressSpace::UB) !=
+          upAddressSpace.end() &&
+      downPropOp.getInputs()[0].getDefiningOp<FixpipeOp>()) {
+    LDBG("Ensuring Fixpipe to UB: " << downPropOp << "\n" << upPropOp << "\n");
+    return ensureFixpipeToUB(downPropOp, upPropOp, rewriter);
+  }
+  if (upCoreType == TCoreType::CUBE_AND_VECTOR ||
+      downCoreType == TCoreType::CUBE_AND_VECTOR) {
+    LDBG("Resolving Local to Local: " << downPropOp << "\n"
+                                      << upPropOp << "\n");
+    return failure();
+  }
   if (llvm::find(downAddressSpace, hivm::AddressSpace::L0C) !=
           downAddressSpace.end() &&
       llvm::find(upAddressSpace, hivm::AddressSpace::L1) !=
@@ -321,30 +335,14 @@ LogicalResult TightCoupledBufferResolvePropagationPattern::matchAndRewrite(
     LDBG("Resolving CC to UB: " << downPropOp << "\n" << upPropOp << "\n");
     return resolveL0CToUB(downPropOp, upPropOp, rewriter);
   }
-  if (downCoreType == TCoreType::CUBE_AND_VECTOR &&
-      llvm::find(upAddressSpace, hivm::AddressSpace::UB) !=
-          upAddressSpace.end()) {
-    LDBG("Ensuring Fixpipe to UB: " << downPropOp << "\n" << upPropOp << "\n");
-    return ensureFixpipeToUB(downPropOp, upPropOp, rewriter);
-  }
-  if (downCoreType == TCoreType::CUBE_OR_VECTOR &&
-      llvm::find(upAddressSpace, hivm::AddressSpace::GM) ==
-          upAddressSpace.end()) {
-    LDBG("Resolving Local to UB: " << downPropOp << "\n" << upPropOp << "\n");
-    return resolveGMtoLocal(downPropOp, upPropOp, rewriter);
-  }
-  if (downCoreType != TCoreType::CUBE_AND_VECTOR &&
-      upCoreType != TCoreType::CUBE_AND_VECTOR &&
-      llvm::find(downAddressSpace, hivm::AddressSpace::UB) !=
+  if (llvm::find(downAddressSpace, hivm::AddressSpace::UB) !=
           downAddressSpace.end() &&
       llvm::find(upAddressSpace, hivm::AddressSpace::L1) !=
           upAddressSpace.end()) {
     LDBG("Resolving UB to L1: " << downPropOp << "\n" << upPropOp << "\n");
     return resolveUBToL1(downPropOp, upPropOp, rewriter);
   }
-  if (downCoreType != TCoreType::CUBE_AND_VECTOR &&
-      upCoreType != TCoreType::CUBE_AND_VECTOR &&
-      llvm::find(downAddressSpace, hivm::AddressSpace::L1) !=
+  if (llvm::find(downAddressSpace, hivm::AddressSpace::L1) !=
           downAddressSpace.end() &&
       llvm::find(upAddressSpace, hivm::AddressSpace::UB) !=
           upAddressSpace.end()) {

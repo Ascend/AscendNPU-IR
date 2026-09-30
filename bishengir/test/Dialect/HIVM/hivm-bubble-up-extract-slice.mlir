@@ -1497,3 +1497,22 @@ func.func @bubble_up_collapse_subblock_offset_uses_input_dim(%arg0: tensor<1x32x
   } {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
   return
 }
+
+// -----
+
+// Multi-result elementwise ops (e.g. vmulextui) are not supported by the
+// elementwise bubble-up strategy and must be left unchanged instead of
+// crashing on the multi-result replacement.
+// CHECK-LABEL:   func.func @bubble_up_multi_result_not_supported(
+// CHECK:           %[[INIT:.*]] = tensor.empty() : tensor<4xi32>
+// CHECK:           %[[MULEXTUI:.*]]:2 = hivm.hir.vmulextui ins(%[[ARG0:.*]], %[[ARG1:.*]] : tensor<4xi32>, tensor<4xi32>) outs(%[[INIT]], %[[INIT]] : tensor<4xi32>, tensor<4xi32>) -> tensor<4xi32>, tensor<4xi32>
+// CHECK:           %[[SLICE:.*]] = tensor.extract_slice %[[MULEXTUI]]#1[1] [2] [1] {to_be_bubbled_slice} : tensor<4xi32> to tensor<2xi32>
+// CHECK:           return %[[SLICE]] : tensor<2xi32>
+// CHECK:         }
+func.func @bubble_up_multi_result_not_supported(%arg0: tensor<4xi32>, %arg1: tensor<4xi32>) -> tensor<2xi32> {
+  %0 = tensor.empty() : tensor<4xi32>
+  %1 = tensor.empty() : tensor<4xi32>
+  %2:2 = hivm.hir.vmulextui ins(%arg0, %arg1 : tensor<4xi32>, tensor<4xi32>) outs(%0, %1 : tensor<4xi32>, tensor<4xi32>) -> tensor<4xi32>, tensor<4xi32>
+  %extracted_slice = tensor.extract_slice %2#1[1] [2] [1] {to_be_bubbled_slice} : tensor<4xi32> to tensor<2xi32>
+  return %extracted_slice : tensor<2xi32>
+}

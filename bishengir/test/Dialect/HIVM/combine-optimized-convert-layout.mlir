@@ -21,10 +21,42 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
         : memref<1x30x8x8xf16>
     %converted = hivm.hir.convert_layout %input
         output_shape [1, 2, 8, 8, 16]
-        {dstLayout = #hivm.data_layout<NC1HWC0>, groups = 2 : i64,
+        {convolution_groups = 2 : i64,
+         dstLayout = #hivm.data_layout<NC1HWC0>,
          srcLayout = #hivm.data_layout<NCHW>}
         : (tensor<1x30x8x8xf16>) -> tensor<1x2x8x8x16xf16>
     return %converted : tensor<1x2x8x8x16xf16>
+  }
+}
+
+// -----
+
+// CHECK-LABEL: func.func @fold_direct_load_to_nchw2c1hwnc0(
+// CHECK-NOT: hivm.hir.load
+// CHECK-NOT: hivm.hir.convert_layout
+// CHECK: %[[DST:.*]] = memref.alloc() : memref<1x3x3x32x16xf16>
+// CHECK: hivm.hir.nchw2c1hwnc0
+// CHECK-SAME: {groups = 2 : i64}
+// CHECK-SAME: ins(%{{.*}} : memref<30x15x3x3xf16, strided<[135, 9, 3, 1]>>)
+// CHECK-SAME: outs(%[[DST]] : memref<1x3x3x32x16xf16>)
+// CHECK: %[[RESULT:.*]] = bufferization.to_tensor %[[DST]] restrict writable
+// CHECK: return %[[RESULT]] : tensor<1x3x3x32x16xf16>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @fold_direct_load_to_nchw2c1hwnc0(
+      %src: memref<30x15x3x3xf16, strided<[135, 9, 3, 1]>>) -> tensor<1x3x3x32x16xf16> {
+    %alloc = memref.alloc() : memref<30x15x3x3xf16>
+    hivm.hir.load
+        ins(%src : memref<30x15x3x3xf16, strided<[135, 9, 3, 1]>>)
+        outs(%alloc : memref<30x15x3x3xf16>)
+    %weight = bufferization.to_tensor %alloc restrict writable
+        : memref<30x15x3x3xf16>
+    %converted = hivm.hir.convert_layout %weight
+        output_shape [1, 3, 3, 32, 16]
+        {convolution_groups = 2 : i64,
+         dstLayout = #hivm.data_layout<C1HWNC0>,
+         srcLayout = #hivm.data_layout<NCHW>}
+        : (tensor<30x15x3x3xf16>) -> tensor<1x3x3x32x16xf16>
+    return %converted : tensor<1x3x3x32x16xf16>
   }
 }
 
@@ -54,11 +86,11 @@ func.func @fold_one_use_subview(%arg0: memref<16x16xf16, strided<[?, 1], offset:
 // CHECK-LABEL: func.func @fold_convert_fixpipe
 // CHECK-SAME: %[[DSTR:.*]]: memref<128x256xf16
 // CHECK-NOT: hivm.hir.convert_layout
-// CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%{{.*}} : tensor<16x8x16x16xf32>) outs(%[[DSTR]] : memref<128x256xf16
+// CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%{{.*}} : tensor<16x8x16x16xf32>) outs(%[[DSTR]] : memref<128x256xf16
 func.func @fold_convert_fixpipe(%dst: memref<128x256xf16, strided<[1024, 1], offset: ?>>) {
   %mmad_out = arith.constant dense<0.0> : tensor<16x8x16x16xf32>
   %conv = hivm.hir.convert_layout %mmad_out output_shape [128, 256] {dstLayout = #hivm.data_layout<ND>, srcLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>} : (tensor<16x8x16x16xf32>) -> tensor<128x256xf32>
-  hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%conv : tensor<128x256xf32>) outs(%dst : memref<128x256xf16, strided<[1024, 1], offset: ?>>)
+  hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>, dma_mode = #hivm.dma_mode<nz2nd>} ins(%conv : tensor<128x256xf32>) outs(%dst : memref<128x256xf16, strided<[1024, 1], offset: ?>>)
   return
 }
 
@@ -376,14 +408,14 @@ module {
 // CHECK-LABEL: func.func @test_nz2nz_fixpipe_fold_convert
 // CHECK-SAME: %[[DST:.*]]: memref<128x80xf16
 // CHECK-NOT: hivm.hir.convert_layout
-// CHECK: hivm.hir.fixpipe ins(%{{.*}} : tensor<8x5x16x16xf32>) outs(%[[DST]] : memref<128x80xf16
+// CHECK: hivm.hir.fixpipe {{.*pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>.*}} ins(%{{.*}} : tensor<8x5x16x16xf32>) outs(%[[DST]] : memref<128x80xf16
 func.func @test_nz2nz_fixpipe_fold_convert(%dst: memref<128x80xf16, strided<[640, 1], offset: ?>>) {
   %fractal = arith.constant dense<0.0> : tensor<8x5x16x16xf32>
   %nd = hivm.hir.convert_layout %fractal output_shape [128, 80]
       {dstLayout = #hivm.data_layout<ND>,
        srcLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>}
       : (tensor<8x5x16x16xf32>) -> tensor<128x80xf32>
-  hivm.hir.fixpipe ins(%nd : tensor<128x80xf32>) outs(%dst : memref<128x80xf16, strided<[640, 1], offset: ?>>)
+  hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%nd : tensor<128x80xf32>) outs(%dst : memref<128x80xf16, strided<[640, 1], offset: ?>>)
   return
 }
 
@@ -393,8 +425,8 @@ func.func @test_nz2nz_fixpipe_fold_convert(%dst: memref<128x80xf16, strided<[640
 // CHECK-LABEL: func.func @test_nz2nz_fixpipe_fold_multi_use
 // CHECK: %[[FRACTAL:.*]] = arith.constant
 // CHECK: %[[ND:.*]] = hivm.hir.convert_layout %[[FRACTAL]]
-// CHECK: hivm.hir.fixpipe ins(%[[FRACTAL]] : tensor<8x5x16x16xf32>)
-// CHECK: hivm.hir.fixpipe ins(%[[FRACTAL]] : tensor<8x5x16x16xf32>)
+// CHECK: hivm.hir.fixpipe {{.*pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>.*}} ins(%[[FRACTAL]] : tensor<8x5x16x16xf32>)
+// CHECK: hivm.hir.fixpipe {{.*pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>.*}} ins(%[[FRACTAL]] : tensor<8x5x16x16xf32>)
 // CHECK: return %[[ND]] : tensor<128x80xf32>
 func.func @test_nz2nz_fixpipe_fold_multi_use(
     %dst0: memref<128x80xf16, strided<[640, 1], offset: ?>>,
@@ -405,9 +437,9 @@ func.func @test_nz2nz_fixpipe_fold_multi_use(
       {dstLayout = #hivm.data_layout<ND>,
       srcLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>}
       : (tensor<8x5x16x16xf32>) -> tensor<128x80xf32>
-  hivm.hir.fixpipe ins(%nd : tensor<128x80xf32>)
+  hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%nd : tensor<128x80xf32>)
       outs(%dst0 : memref<128x80xf16, strided<[640, 1], offset: ?>>)
-  hivm.hir.fixpipe ins(%nd : tensor<128x80xf32>)
+  hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%nd : tensor<128x80xf32>)
       outs(%dst1 : memref<128x80xf16, strided<[640, 1], offset: ?>>)
   return %nd : tensor<128x80xf32>
 }
@@ -419,7 +451,7 @@ func.func @test_nz2nz_fixpipe_fold_multi_use(
 // CHECK-SAME: %[[DST:.*]]: memref<128x80xf16
 // CHECK-NOT: hivm.hir.convert_layout
 // CHECK: %[[FR_SLICE:.*]] = tensor.extract_slice %{{.*}}[0, 0, 0, 0] {{\[}}%{{.*}}, %{{.*}}, 16, 16] [1, 1, 1, 1] : tensor<8x5x16x16xf32> to tensor<?x?x16x16xf32>
-// CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%[[FR_SLICE]] : tensor<?x?x16x16xf32>)
+// CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%[[FR_SLICE]] : tensor<?x?x16x16xf32>)
 func.func @test_nz2nd_extract_slice_fixpipe_fold(%dst: memref<128x80xf16, strided<[640, 1], offset: ?>>, %s0: index, %s1: index) {
   %fractal = arith.constant dense<0.0> : tensor<8x5x16x16xf32>
   %nd = hivm.hir.convert_layout %fractal output_shape [128, 80]
@@ -428,7 +460,7 @@ func.func @test_nz2nd_extract_slice_fixpipe_fold(%dst: memref<128x80xf16, stride
       : (tensor<8x5x16x16xf32>) -> tensor<128x80xf32>
   %slice = tensor.extract_slice %nd[0, 0] [%s0, %s1] [1, 1] : tensor<128x80xf32> to tensor<?x?xf32>
   %subview = memref.subview %dst[0, 0] [%s0, %s1] [1, 1] : memref<128x80xf16, strided<[640, 1], offset: ?>> to memref<?x?xf16, strided<[640, 1], offset: ?>>
-  hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%slice : tensor<?x?xf32>) outs(%subview : memref<?x?xf16, strided<[640, 1], offset: ?>>)
+  hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>, dma_mode = #hivm.dma_mode<nz2nd>} ins(%slice : tensor<?x?xf32>) outs(%subview : memref<?x?xf16, strided<[640, 1], offset: ?>>)
   return
 }
 
@@ -490,7 +522,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9599">} {
         : (tensor<2x10x16x32xi32>) -> tensor<160x64xi32>
     %strided = memref.cast %gm : memref<2x10x16x32xi8, #hivm.address_space<gm>>
         to memref<2x10x16x32xi8, strided<[?, ?, ?, ?], offset: ?>, #hivm.address_space<gm>>
-    hivm.hir.fixpipe ins(%conv : tensor<160x64xi32>) outs(%strided : memref<2x10x16x32xi8, strided<[?, ?, ?, ?], offset: ?>, #hivm.address_space<gm>>)
+    hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<S322I8>} ins(%conv : tensor<160x64xi32>) outs(%strided : memref<2x10x16x32xi8, strided<[?, ?, ?, ?], offset: ?>, #hivm.address_space<gm>>)
     return
   }
 }
@@ -684,15 +716,15 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // CHECK-SAME: %[[DST:.*]]: memref<16x16xf16
 // CHECK-NOT: hivm.hir.convert_layout
 // CHECK-NOT: channel_split = true
-// CHECK: hivm.hir.fixpipe ins(%{{.*}} : tensor<1x1x16x16xf16>) outs(%[[DST]] : memref<16x16xf16
+// CHECK: hivm.hir.fixpipe {{.*pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>.*}} ins(%{{.*}} : tensor<1x1x16x16xf32>) outs(%[[DST]] : memref<16x16xf16
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   func.func @fold_convert_fixpipe_no_channel_split_f16_regbase(%dst: memref<16x16xf16, strided<[16, 1], offset: ?>>) {
-    %fractal = arith.constant dense<0.0> : tensor<1x1x16x16xf16>
+    %fractal = arith.constant dense<0.0> : tensor<1x1x16x16xf32>
     %nd = hivm.hir.convert_layout %fractal output_shape [16, 16]
         {dstLayout = #hivm.data_layout<ND>,
          srcLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>}
-        : (tensor<1x1x16x16xf16>) -> tensor<16x16xf16>
-    hivm.hir.fixpipe ins(%nd : tensor<16x16xf16>) outs(%dst : memref<16x16xf16, strided<[16, 1], offset: ?>>)
+        : (tensor<1x1x16x16xf32>) -> tensor<16x16xf32>
+    hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%nd : tensor<16x16xf32>) outs(%dst : memref<16x16xf16, strided<[16, 1], offset: ?>>)
     return
   }
 }

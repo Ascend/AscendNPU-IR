@@ -36,8 +36,8 @@ struct ConvertLayoutOpConversion
                                      const TargetInfoBase &targetInfo,
                                      PatternBenefit benefit = 1,
                                      bool switchToGM = false)
-      : ConvertOpToLLVMPattern(typeConverter, benefit), targetInfo(targetInfo), switchToGM(switchToGM) {
-  }
+      : ConvertOpToLLVMPattern(typeConverter, benefit), targetInfo(targetInfo),
+        switchToGM(switchToGM) {}
 #else
   // Set benefit to 2 so that this pattern applies before other convert-layout
   // conversions.  TODO(jlebar): Eventually we want this to be the only pattern.
@@ -53,7 +53,7 @@ struct ConvertLayoutOpConversion
                   ConversionPatternRewriter &rewriter) const override {
     MLIRContext *ctx = op.getContext();
 
-    const auto &shape = op.getType().getShape();
+    [[maybe_unused]] const auto &shape = op.getType().getShape();
     auto srcTy = op.getSrc().getType();
     auto dstTy = op.getType();
 
@@ -71,9 +71,11 @@ struct ConvertLayoutOpConversion
     auto dims = conversion.getInDimNames();
 #ifdef BSPUB_DAVINCI_BISHENGIR
     if (!switchToGM && op->hasAttr("store_to_gmem")) {
-      return rewriter.notifyMatchFailure(op, "store_to_gmem without switchToGM");
+      return rewriter.notifyMatchFailure(op,
+                                         "store_to_gmem without switchToGM");
     } else if (switchToGM && !(op->hasAttr("store_to_gmem"))) {
-      return rewriter.notifyMatchFailure(op, "no store_to_gmem with switchToGM");
+      return rewriter.notifyMatchFailure(op,
+                                         "no store_to_gmem with switchToGM");
     }
 #endif
 
@@ -117,11 +119,11 @@ struct ConvertLayoutOpConversion
     StringAttr kRegister = str_attr("register");
     assert(!cvtNeedsSharedMemory(op.getSrc().getType(), op.getType()));
 
-    auto srcTy = op.getSrc().getType();
-    auto dstTy = op.getType();
+    [[maybe_unused]] auto srcTy = op.getSrc().getType();
+    [[maybe_unused]] auto dstTy = op.getType();
     auto inVals = unpackLLElements(loc, adaptor.getSrc(), rewriter);
     SmallVector<Value> outVals(conversion.getInDimSize(kRegister));
-    for (int i = 0; i < outVals.size(); i++) {
+    for (int i = 0; i < static_cast<int>(outVals.size()); i++) {
       auto srcIdx = conversion.apply({{kRegister, i}}).begin()->second;
       outVals[i] = inVals[srcIdx];
     }
@@ -220,7 +222,7 @@ struct ConvertLayoutOpConversion
 
     auto tileSize = storeCvt.getInDimSize(kReg);
 
-    assert(permutedInVals.size() == tileSize * nReps);
+    assert(permutedInVals.size() == static_cast<size_t>(tileSize * nReps));
     SmallVector<Value> outVals;
     auto affineOffset = b.i32_val(0);
     auto maskSpanAffineOffset = 0;
@@ -240,9 +242,10 @@ struct ConvertLayoutOpConversion
                       rewriter, targetInfo, nullptr, switchToGM);
       targetInfo.barrier(loc, rewriter, isWarpSync);
       // Load
-      SmallVector<Value> tileOutVals = lowerLdStShared(
-          loc, ctx, loadCvt, {}, llvmElemTy, smemBase, noPaddingOffset,
-          affineOffset, maskSpanAffineOffset, rewriter, targetInfo, nullptr, switchToGM);
+      SmallVector<Value> tileOutVals =
+          lowerLdStShared(loc, ctx, loadCvt, {}, llvmElemTy, smemBase,
+                          noPaddingOffset, affineOffset, maskSpanAffineOffset,
+                          rewriter, targetInfo, nullptr, switchToGM);
 #else
       // Store
       lowerLdStShared(loc, ctx, storeCvt, tileInVals, llvmElemTy, smemBase,
@@ -265,8 +268,9 @@ struct ConvertLayoutOpConversion
 #ifdef BSPUB_DAVINCI_BISHENGIR
   virtual
 #endif
-  void transferWithinBlockSwizzling(ConvertLayoutOp op, Value src,
-                                    ConversionPatternRewriter &rewriter) const {
+      void
+      transferWithinBlockSwizzling(ConvertLayoutOp op, Value src,
+                                   ConversionPatternRewriter &rewriter) const {
     auto loc = op.getLoc();
     auto *ctx = op.getContext();
     auto srcTy = op.getSrc().getType();
@@ -354,7 +358,7 @@ struct ConvertLayoutOpConversion
       SmallVector<Value> original(inVals.begin(), inVals.end());
       inVals.clear();
       inVals.reserve(pRegDim);
-      while (inVals.size() < pRegDim)
+      while (inVals.size() < static_cast<size_t>(pRegDim))
         inVals.append(original.begin(), original.end());
       regDim = pRegDim;
     }
@@ -464,11 +468,11 @@ struct ConvertLayoutOpConversion
       ArrayRef<TranspositionInfo> mixedTranspositions) const {
     auto *ctx = rewriter.getContext();
     auto b = TritonLLVMOpBuilder(loc, rewriter);
-    StringAttr kReg = str_attr("register");
+    [[maybe_unused]] StringAttr kReg = str_attr("register");
     StringAttr kLane = str_attr("lane");
 
     SmallVector<Value> vals(inVals.begin(), inVals.end());
-    int m = mixedTranspositions.size();
+    [[maybe_unused]] int m = mixedTranspositions.size();
     int numRegs = inVals.size();
     // A single mixed transposition (r_i l_j) which swaps the i-th register
     // index bit and the j-th lane index bit of an element applies a tiled 2x2
@@ -629,16 +633,16 @@ struct ConvertLayoutOpConversion
 
 #ifdef BSPUB_DAVINCI_BISHENGIR
 // Secondary pattern that uses the GM path for convert layout op conversions.
-struct ConvertLayoutOpConversionGM
-    : public ConvertLayoutOpConversion {
+struct ConvertLayoutOpConversionGM : public ConvertLayoutOpConversion {
 
   explicit ConvertLayoutOpConversionGM(LLVMTypeConverter &typeConverter,
-                                     const TargetInfoBase &targetInfo,
-                                     PatternBenefit benefit = 1)
+                                       const TargetInfoBase &targetInfo,
+                                       PatternBenefit benefit = 1)
       : ConvertLayoutOpConversion(typeConverter, targetInfo, benefit, true) {}
 
-  void transferWithinBlockSwizzling(ConvertLayoutOp op, Value src,
-                                    ConversionPatternRewriter &rewriter) const override {
+  void transferWithinBlockSwizzling(
+      ConvertLayoutOp op, Value src,
+      ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
     auto *ctx = op.getContext();
     auto srcTy = op.getSrc().getType();
@@ -659,12 +663,13 @@ struct ConvertLayoutOpConversionGM
     auto llvmElemTy = getTypeConverter()->convertType(srcTy.getElementType());
 
     auto funcOp = op->getParentOfType<LLVM::LLVMFuncOp>();
-    auto opOffsetAttr = op->getAttrOfType<mlir::IntegerAttr>("allocation.offset");
+    auto opOffsetAttr =
+        op->getAttrOfType<mlir::IntegerAttr>("allocation.offset");
     assert(opOffsetAttr && "allocation.offset attribute is missing");
     auto opOffset = opOffsetAttr.getValue().getZExtValue();
     auto b = TritonLLVMOpBuilder(loc, rewriter);
-    auto gmemBase =
-        LLVM::getGlobalScratchPtr(loc, rewriter, targetInfo, funcOp, b.i32_val(opOffset));
+    auto gmemBase = LLVM::getGlobalScratchPtr(loc, rewriter, targetInfo, funcOp,
+                                              b.i32_val(opOffset));
 
     auto inVals = unpackLLElements(loc, src, rewriter);
     auto outVals = transferWithinBlockSwizzlingImpl(

@@ -17,7 +17,6 @@
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
-
 namespace bishengir_test {
 using namespace mlir;
 struct TestHIVMTransformsPass
@@ -51,7 +50,7 @@ struct TestHIVMTransformsPass
 static LogicalResult applyHoistAffinePatterns(Operation *rootOp) {
   RewritePatternSet patterns(rootOp->getContext());
   hivm::detail::populateHoistAffinePattern(patterns);
-  return applyPatternsAndFoldGreedily(rootOp, std::move(patterns));
+  return applyPatternsGreedily(rootOp, std::move(patterns));
 }
 
 void TestHIVMTransformsPass::runOnOperation() {

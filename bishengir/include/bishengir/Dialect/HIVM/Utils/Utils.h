@@ -150,6 +150,8 @@ const std::map<std::string, int> membarType = {
     {"SS_ALL", 12}, {"ST_LD", 13},  {"LD_ST", 14},  {"ST_ST", 15},
 };
 
+bool isRemainInL0c(OpOperand &use);
+
 bool isResultInL0C(OpResult result);
 
 /// Set the input type's memory scope to the input HIVM Address Space.
@@ -226,6 +228,13 @@ struct ForallRewriteResult {
 DiagnosedSilenceableFailure mapForallToBlocksImpl(
     RewriterBase &rewriter, scf::ForallOp forallOp, ForallRewriteResult &result,
     std::optional<transform::TransformOpInterface> transformOp = std::nullopt);
+
+/// Move a producer-scope dest / src tensor or leftover-memref cluster into
+/// the unique later VECTOR consumer, including MTE2 load through a subview.
+/// Callers must first allow the parent function via `--bypass-shape-registry`
+/// or (`--enable-preload`, non-zero `--set-workspace-multibuffer`, and
+/// `isLoopShapeRegistered`); the pass filters before calling the impl.
+LogicalResult sinkReturnedTensorsToConsumer(scf::ForOp forOp);
 
 /// Remove attr from markOp, and remove markOp if no attr left.
 void removeMarkOpAttr(annotation::MarkOp markOp, ::llvm::StringLiteral attrName,
@@ -404,6 +413,18 @@ Value createAllocWithMark(PatternRewriter &rewriter, Location loc,
                           MemRefType memrefType, ValueRange dynamicDims,
                           ArrayRef<int64_t> staticAllocSize, Type elemType);
 
+/// Clone all annotation marks from `src` onto `dst`.
+void cloneAnnotationMarks(PatternRewriter &rewriter, Location loc, Value src,
+                          Value dst);
+
+/// Mark dynamically shaped `dst` with a static buffer_size_in_byte upper
+/// bound derived from `src`'s defining chain. The bound is computed purely
+/// from `src` (`dst`'s shape and element type are not consulted), so callers
+/// must guarantee `src` and `dst` describe the same buffer. No-op when `dst`
+/// is statically shaped or already carries a buffer_size_in_byte mark.
+void markBufferSizeUpperBound(PatternRewriter &rewriter, Location loc,
+                              Value src, Value dst);
+
 // Create local workspace of current block (static shape only).
 Value createAllocLocalWorkSpace(OpBuilder &builder, Location loc,
                                 ArrayRef<int64_t> shape, Type elementType);
@@ -429,6 +450,24 @@ Value getLocalWorkSpaceTensor(
 hivm::CreateSyncBlockLockOp createSyncBlockLockVar(OpBuilder &builder,
                                                    Location loc);
 
+hivm::SyncBlockLockOp
+createSyncBlockLock(OpBuilder &builder, Location loc, Value lockVar,
+                    hivm::SyncBlockLockOrdering ordering =
+                        hivm::SyncBlockLockOrdering::Ordered);
+
+hivm::SyncBlockUnlockOp
+createSyncBlockUnlock(OpBuilder &builder, Location loc, Value lockVar,
+                      hivm::SyncBlockLockOrdering ordering =
+                          hivm::SyncBlockLockOrdering::Ordered);
+
+/// Resolve ordering on a lock/unlock/free (or create) op.
+/// Recognizes native `$ordering` and legacy unit attr
+/// `hivm.sync_block_lock_unordered`.
+hivm::SyncBlockLockOrdering getSyncBlockLockOpOrdering(Operation *op);
+
+// Resolve sync block lock ordering from lock/unlock/free users of lock memref,
+// falling back to a legacy unordered marker on create_sync_block_lock.
+hivm::SyncBlockLockOrdering getSyncBlockLockOrdering(Value lockVar);
 
 /// get Operation alias pair.
 std::vector<std::pair<Value, Value>> getOperationAliasInfo(Operation *op);

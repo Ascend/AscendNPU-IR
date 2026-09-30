@@ -27,6 +27,7 @@ using namespace mlir;
 
 namespace bishengir {
 
+
 /// Configuration options for the hivmc tool.
 /// This is intended to help building tools like hivmc by collecting
 /// the supported options.
@@ -41,7 +42,6 @@ public:
   static void registerCLOptions();
   /// Create a new config with the default set from the CL options.
   static HIVMCMainConfig createFromCLOptions();
-
   // -------------------------------------------------------------------------//
   //                       Feature control options                            //
   // -------------------------------------------------------------------------//
@@ -423,12 +423,12 @@ public:
   }
   int32_t enableVfMergeLevel() const { return enableVfMergeLevelFlag; }
 
-  HIVMCMainConfig &enableBishengirSimtOptimization(int enable) {
-    enableBishengirSimtOptimizationFlag = enable;
+  HIVMCMainConfig &simtOptimizationMode(int mode) {
+    simtOptimizationModeFlag = mode;
     return *this;
   }
-  int getEnableBishengirSimtOptimize() const {
-    return enableBishengirSimtOptimizationFlag;
+  int simtOptimizationMode() const {
+    return simtOptimizationModeFlag;
   }
 
   HIVMCMainConfig &enableSIMTFastDiv(bool enable) {
@@ -1023,7 +1023,7 @@ protected:
   /// one
   bool enableAutoBlockifyLoopFlag{false};
 
-  int enableBishengirSimtOptimizationFlag{000};
+  int simtOptimizationModeFlag{0000000};
 
   std::optional<int32_t> simtStackLimitFlag{};
 

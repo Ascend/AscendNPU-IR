@@ -36,16 +36,26 @@ def HIVMRegbaseIntrins_Dialect : Dialect {
 //===----------------------------------------------------------------------===//
 // HIVM regbase Intrinsic op definitions
 //===----------------------------------------------------------------------===//
-class HIVMRegbaseIntrins_Op<string mnemonic, list<int> overloadedResults = [], list<int> overloadOperands = [],
-                       list<Trait> traits = [], int numResults = 1>
+class HIVMRegbaseIntrins_Op<string mnemonic, list<int> overloadedResults = [],
+                            list<int> overloadOperands = [],
+                            list<Trait> traits = [], int numResults = 1>
     : LLVM_IntrOpBase<
           /*Dialect dialect=*/HIVMRegbaseIntrins_Dialect,
-          /*string opName=*/"intr." #mnemonic,
-          /*string enumName=*/"HIVMIntrinsics::" # !subst(".", "_", mnemonic),
+          /*string opName=*/"intr."#mnemonic,
+          /*string enumName=*/"HIVMIntrinsics::"#!subst(".", "_", mnemonic),
           /*list<int> overloadedResults=*/overloadedResults,
           /*list<int> overloadedOperands=*/overloadOperands,
           /*list<Trait> traits=*/traits,
-          /*int numResults=*/numResults>;
+          /*int numResults=*/numResults> {
+  let llvmBuilder = [{
+    (void)op;
+    convertHIVMRegbaseIntrinsic(
+        opInst, builder, moduleTranslation, llvm::Intrinsic::}]#!interleave(
+      ["HIVMIntrinsics::"#!subst(".", "_", mnemonic), ""#numResults,
+       overloadedResultsCpp, overloadedOperandsCpp],
+      ", ")#[{);
+  }];
+}
 
 // An representation of regbased architecturte operations.
 // TODO: need to be split into a dedicated file.
@@ -86,9 +96,11 @@ def predicateVector : Type<And<[VectorOfLengthAndType<[256], [I1]>.predicate,
                            CPred<"::mlir::cast<::mlir::ShapedType>($_self).getRank() == 1">]>,
     "vector<256xi1>">;
 
-def AlignedVector : Type<Or<[VectorOfLengthAndType<[32], [I8]>.predicate,
-                           CPred<"$_self.cast<::mlir::ShapedType>().getRank() == 1">]>,
-    "vector<32xi8>">;
+def AlignedVector
+    : Type<Or<[VectorOfLengthAndType<[32], [I8]>.predicate,
+               CPred<
+                   "::mlir::cast<::mlir::ShapedType>($_self).getRank() == 1">]>,
+           "vector<32xi8>">;
 
 def LDOrSTVector : Type<And<[IsVectorTypePred,
                              CPred<"::mlir::cast<::mlir::ShapedType>($_self).getRank() == 1">,
@@ -2779,12 +2791,20 @@ def LaunchFuncOp : GenericSIMT_Op<"launch_func"> {
       attr-dict (`args``(`$opnds^`)` `:` type($opnds))? }];
 }
 
-class HIVMRegbaseIntrinsSIMT_IntrOp<string mnemonic, string intr, int numResults = 0,
-                     list<int> overloadedOperands = [], list<Trait> traits = []>
+class HIVMRegbaseIntrinsSIMT_IntrOp<
+    string mnemonic, string intr, int numResults = 0,
+    list<int> overloadedOperands = [], list<Trait> traits = []>
     : LLVM_IntrOpBase<HIVMRegbaseIntrins_Dialect, mnemonic,
-                      /*enumName*/ "hivm_" # intr,
+                      /*enumName*/ "hivm_"#intr,
                       /*overloadedResult*/[], overloadedOperands, traits,
-                      /*numResults*/ numResults>;
+                      /*numResults*/ numResults> {
+  let llvmBuilder = [{
+    (void)op;
+    convertHIVMRegbaseIntrinsic(
+        opInst, builder, moduleTranslation, llvm::Intrinsic::}]#!interleave(
+      ["hivm_"#intr, ""#numResults, "{}", overloadedOperandsCpp], ", ")#[{);
+  }];
+}
 
 def VFSIMTInfoOp: HIVMRegbaseIntrinsSIMT_IntrOp<"store_vfsimt_info","store_vfsimt_info"> {
   let arguments = (ins I64: $config);

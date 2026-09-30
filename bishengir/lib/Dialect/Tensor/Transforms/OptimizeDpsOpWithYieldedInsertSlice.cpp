@@ -16,6 +16,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/Tensor/Transforms/Passes.h"
 #include "bishengir/Dialect/Tensor/Transforms/Transforms.h"
@@ -25,6 +26,7 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Dominance.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/PatternMatch.h"
@@ -196,6 +198,10 @@ struct ModifyDpsInitToSlicedIterArg : public OpRewritePattern<InsertSliceOp> {
     if (!isa_and_nonnull<DestinationStyleOpInterface>(srcDefiningOp))
       return rewriter.notifyMatchFailure(insertSliceOp,
                                          "source is not destination style");
+
+    if (isa<hivm::VTransposeOp>(srcDefiningOp))
+      return rewriter.notifyMatchFailure(insertSliceOp,
+                                         "source is a transpose");
 
     auto dpsSrc = cast<DestinationStyleOpInterface>(srcDefiningOp);
     auto resultNumber = cast<OpResult>(insertSrc).getResultNumber();

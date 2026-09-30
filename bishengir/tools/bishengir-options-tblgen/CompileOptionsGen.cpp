@@ -23,6 +23,7 @@
 #include "bishengir/Tools/ConfigOptions/Options.h"
 
 #include "mlir/TableGen/GenInfo.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/TableGen/Error.h"

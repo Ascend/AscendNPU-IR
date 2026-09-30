@@ -105,7 +105,7 @@ struct RecognizeDisContinuousStore : public OpRewritePattern<hivm::StoreOp> {
     int64_t channelNum = computeChannelNum(srcTy, 32);
     Type elemType = srcTy.getElementType();
     Attribute memSpace = srcTy.getMemorySpace();
-    MLIRContext *ctx = rewriter.getContext();
+    [[maybe_unused]] MLIRContext *ctx = rewriter.getContext();
 
     // Static sizing decision:
     //   - src static: alloc uses static src dims (no upper-bound tracing).
@@ -175,19 +175,16 @@ struct RecognizeDisContinuousStore : public OpRewritePattern<hivm::StoreOp> {
     allocShape.push_back(channelNum);
     // allocShape is self-consistent with allocStrides -> always default
     // row-major layout, no StridedLayoutAttr needed.
-    auto allocTy =
-        MemRefType::get(allocShape, elemType, MemRefLayoutAttrInterface{},
-                        memSpace);
+    auto allocTy = MemRefType::get(allocShape, elemType,
+                                   MemRefLayoutAttrInterface{}, memSpace);
     auto alignedAlloc = rewriter.create<memref::AllocOp>(loc, allocTy);
 
     // Narrow alloc to actual (possibly dynamic) sizes so vbrc's non-broadcast
     // dims match the expand shape. Required for dynamic src (upper bounds >
     // actual dims); harmless for static src (narrow == full alloc).
     Value vbrcDst = alignedAlloc.getResult();
-    SmallVector<OpFoldResult> narrowOffsets(rank + 1,
-                                            rewriter.getIndexAttr(0));
-    SmallVector<OpFoldResult> narrowStrides(rank + 1,
-                                            rewriter.getIndexAttr(1));
+    SmallVector<OpFoldResult> narrowOffsets(rank + 1, rewriter.getIndexAttr(0));
+    SmallVector<OpFoldResult> narrowStrides(rank + 1, rewriter.getIndexAttr(1));
     SmallVector<OpFoldResult> narrowSizes;
     for (int64_t i = 0; i < rank; ++i)
       narrowSizes.push_back(getDimSize(i));
@@ -196,9 +193,8 @@ struct RecognizeDisContinuousStore : public OpRewritePattern<hivm::StoreOp> {
                                      srcTy.getShape().end());
     narrowShape.push_back(channelNum);
     SmallVector<int64_t> zeros(rank + 1, 0), ones(rank + 1, 1);
-    auto narrowSubviewTy =
-        cast<MemRefType>(memref::SubViewOp::inferResultType(
-            allocTy, zeros, narrowShape, ones));
+    auto narrowSubviewTy = cast<MemRefType>(
+        memref::SubViewOp::inferResultType(allocTy, zeros, narrowShape, ones));
     vbrcDst = rewriter
                   .create<memref::SubViewOp>(
                       loc, narrowSubviewTy, alignedAlloc.getResult(),

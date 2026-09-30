@@ -1169,6 +1169,22 @@ func.func @matmul_transpose_b_static_dimension(%arg0: tensor<1024x20x2048x20xf16
 
 // -----
 
+// A linalg.batch_matmul registers a collapse group during the dimension
+// analysis, so it must be recognized as a legal op by the collapser.
+// Previously isLegalOp rejected it and the collapser asserted.
+
+// CHECK-LABEL: func.func @batch_matmul(
+// CHECK: linalg.batch_matmul ins(%{{.*}}, %{{.*}} : tensor<4x128x64xf16>, tensor<4x64x256xf16>) outs(%{{.*}} : tensor<4x128x256xf32>) -> tensor<4x128x256xf32>
+// CHECK: return
+func.func @batch_matmul(%arg0: tensor<4x128x64xf16>, %arg1: tensor<4x64x256xf16>) -> tensor<4x128x256xf32>
+attributes {hivm.entry, hivm.dso_local, hivm.spir_kernel} {
+  %0 = tensor.empty() : tensor<4x128x256xf32>
+  %1 = linalg.batch_matmul ins(%arg0, %arg1 : tensor<4x128x64xf16>, tensor<4x64x256xf16>) outs(%0 : tensor<4x128x256xf32>) -> tensor<4x128x256xf32>
+  return %1 : tensor<4x128x256xf32>
+}
+
+// -----
+
 // CHECK-LABEL: func.func @check_rank0_reduce(
 // CHECK: linalg.reduce ins(%{{.*}} : tensor<393216xf32>) outs(%{{.*}} : tensor<f32>) dimensions = [0]
 // CHECK: return

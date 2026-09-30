@@ -21,6 +21,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVMInterfaces.h"
 #include "bishengir/Dialect/HIVM/Transforms/DistributedTransformUtils.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVM/Transforms/TightlyCoupledBufferUtils.h"
 #include "bishengir/Dialect/HIVM/Utils/RegbaseUtils.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
@@ -222,6 +223,20 @@ static bool shouldKeepScalarResult(bool opIsPreserved, Value result) {
   return opIsPreserved && !isa<ShapedType>(result.getType());
 }
 
+/// Tightly coupled buffers are shared across cube and vector. A preserved cube
+/// preload scope still returns that buffer on AIV; replacing the result with
+/// tensor.empty leaves vector ops reading an uninitialized stub.
+static bool shouldKeepScopeResult(bool opIsPreserved, scope::ScopeOp scopeOp,
+                                  unsigned index) {
+  Value result = scopeOp.getResult(index);
+  if (shouldKeepScalarResult(opIsPreserved, result))
+    return true;
+  if (!opIsPreserved)
+    return false;
+  Value yielded = scopeOp.getBody()->getTerminator()->getOperand(index);
+  return isTightlyCoupledValue(yielded);
+}
+
 static SmallVector<Value> getOutOperands(Operation *op, bool opIsPreserved) {
   if (op->getResults().empty()) {
     return {};
@@ -351,11 +366,14 @@ static SmallVector<Value> getOutOperands(Operation *op, bool opIsPreserved) {
   // For scope ops: derive replacement values from the terminator's operands.
   // Values defined outside the scope are used directly; values defined inside
   // are replaced with zero/empty stubs created immediately before the scope op.
+  // Preserved scopes keep scalar results and tightly coupled buffer results so
+  // AIV still consumes the cube-produced TCB instead of an empty stub.
   if (auto scopeOp = dyn_cast<scope::ScopeOp>(op)) {
     Operation *terminator = scopeOp.getBody()->getTerminator();
     SmallVector<Value> outVals;
     for (auto [index, result] : llvm::enumerate(scopeOp.getResults())) {
-      if (result.use_empty() || shouldKeepScalarResult(opIsPreserved, result)) {
+      if (result.use_empty() ||
+          shouldKeepScopeResult(opIsPreserved, scopeOp, index)) {
         // Sentinel: no replacement needed.
         outVals.push_back(Value());
         continue;
@@ -436,8 +454,15 @@ LogicalResult replaceResultWithInitOperand(Operation *op,
     OpResult res = op->getResult(i);
     if (!outOperands[i]) {
       // Null sentinel is only valid when the result needs no replacement.
-      if (!res.use_empty() && !shouldKeepScalarResult(opIsPreserved, res))
-        return failure();
+      if (!res.use_empty()) {
+        bool keep;
+        if (auto scopeOp = dyn_cast<scope::ScopeOp>(op))
+          keep = shouldKeepScopeResult(opIsPreserved, scopeOp, i);
+        else
+          keep = shouldKeepScalarResult(opIsPreserved, res);
+        if (!keep)
+          return failure();
+      }
       continue;
     }
     res.replaceAllUsesWith(outOperands[i]);

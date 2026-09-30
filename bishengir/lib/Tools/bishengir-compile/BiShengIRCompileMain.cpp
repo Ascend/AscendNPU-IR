@@ -25,6 +25,10 @@
 #include "bishengir/Tools/Utils/Utils.h"
 #include "bishengir/Tools/bishengir-compile/BiShengIRCompile.h"
 #include "bishengir/Tools/bishengir-compile/PassPipeline.h"
+#include "bishengir/Tools/hivmc/Config.h"
+#include "bishengir/Version/Version.h"
+#include "bishengir/Tools/hivmc/HIVMC.h"
+#include "bishengir/Tools/hivmc/HIVMCA3.h"
 
 #include "mlir/Parser/Parser.h"
 #include "mlir/Support/FileUtilities.h"
@@ -123,70 +127,7 @@ StringRef getHIVMCName() {
   return kBiShengIRHIVMBinaryName;
 }
 
-std::vector<std::string> skipOptions(const std::vector<std::string> &options,
-                                     const std::set<std::string> &skip) {
-  std::vector<std::string> result;
-  for (const std::string &arg : options) {
-    StringRef argRef = arg;
-    SmallVector<StringRef> parts;
-    argRef.split(parts, '=');
-    if (parts.empty()) {
-      continue;
-    }
-    std::string trimArg = parts[0].trim().ltrim('-').str();
-    if (skip.count(trimArg) != 0) {
-      continue;
-    }
-    result.push_back(arg);
-  }
-  return result;
-}
-
-std::vector<std::string>
-skipDebugOptions(const std::vector<std::string> &options) {
-  std::set<std::string> debugOptions = {"debug", "debug-only",
-                                        "mlir-print-ir-before-all",
-                                        "mlir-print-ir-after-all"};
-  return skipOptions(options, debugOptions);
-}
-
-std::vector<std::string>
-getCompatibleOptions(const std::vector<std::string> &arguments,
-                     const BiShengIRCompileMainConfig &config) {
-  std::vector<std::string> options = arguments;
-  // if enabled, skip debug options for compatibility.
-  options = skipDebugOptions(options);
-  if (mlir::hacc::utils::isMemBasedArch(config.getTarget())) {
-    // TODO: Remove this after unify A3/A5 arguments for hivmc.
-    std::set<std::string> unsupported = {"target",
-                                         "enable-triton-kernel-compile"};
-    options = skipOptions(options, unsupported);
-  }
-  // TODO: support hivmc compatibility for different versions
-  auto version = bishengir::parseHIVMCVersion(config.getHIVMCVersion());
-  if (!version.has_value() || version.value().empty()) {
-    // null or empty version means we are using unknown or legacy hivmc
-    // 1. legacy hivmc does not support debug or print
-    options = skipDebugOptions(options);
-    // 2. legacy hivmc has to manually enable triton compile pipeline
-    if (config.getEnableTritonKernelCompile()) {
-      options.push_back("--enable-triton-kernel-compile=true");
-    }
-    // 3. legacy hivmc has some unsupported options
-    std::set<std::string> unsupported = {"enable-lir-compile",
-                                         "enable-cpu-trace-intrinsic",
-                                         "link-aicore-bitcode"};
-    options = skipOptions(options, unsupported);
-  } else if (version.value().getAsString() == "0.1.0") {
-    // 0.1.0 version means we are using legacy hivmc
-    std::set<std::string> unsupported = {"link-aicore-bitcode"};
-    options = skipOptions(options, unsupported);
-  }
-  return options;
-}
-
-LogicalResult runExternalHIVMC(ModuleOp module,
-                               const BiShengIRCompileMainConfig &config) {
+LogicalResult handleSaveTemps(ModuleOp& module, BiShengIRCompileMainConfig& config) {
   TempDirectoriesStore tempDirsStore;
   std::string inputFile = "module.hivm.opt.mlir";
   std::string outputFile = config.getOutputFile();
@@ -201,61 +142,81 @@ LogicalResult runExternalHIVMC(ModuleOp module,
     }
     if (!llvm::sys::fs::exists(saveTempsDir))
       if (auto ec = llvm::sys::fs::create_directories(saveTempsDir)) {
-        llvm::errs() << "[ERROR] Failed to create save-temps directory: "
-                     << saveTempsDir << "\n";
+        llvm::errs() << "[ERROR] Failed to create save-temps directory: " << saveTempsDir << "\n";
         return failure();
       }
     llvm::sys::path::append(saveTempsDir, inputFile);
     std::string errorMessage;
     inputFileHandler = mlir::openOutputFile(saveTempsDir, &errorMessage);
     if (!inputFileHandler) {
-      llvm::errs() << "[ERROR] Failed to open save-temps file: " << errorMessage
-                   << "\n";
+      llvm::errs() << "[ERROR] Failed to open save-temps file: " << errorMessage << "\n";
       return failure();
     }
-    // Make sure module.hivm.opt.mlir will not be deleted.
     inputFileHandler->keep();
-    // If --save-temps is not set, use a temporary directory for
-    // module.hivm.opt.mlir
   } else {
     inputFileHandler = getTempFile(inputFile, tempDirsStore);
     if (!inputFileHandler) {
-      llvm::dbgs() << "[ERROR] Failed to create temporary input file needed to "
-                      "run hivm compile.\n";
+      llvm::dbgs() << "[ERROR] Failed to create temporary input file needed to run hivmc compile.\n";
       return failure();
     }
   }
   inputFile = inputFileHandler->outputFilename();
 
-  std::string content;
-  llvm::raw_string_ostream buffer(content);
-  module.print(buffer,
-               mlir::OpPrintingFlags().enableDebugInfo(
-                   config.getEnableSanitizer() || config.getEnableDebugInfo()));
-
-  // TODO: Once version 0.2.0 is released, warning should be added to notice the
-  // user upgrade the hivmc version.
-  // TODO: Once version 0.1.0 is not supported, the following regex should be
-  // removed.
-  std::regex re("hacc\\.(hivmc_compatible_print|hivmc_version)[^,]*,");
-  std::string modified = std::regex_replace(content, re, "");
-
-  inputFileHandler->os() << modified;
+  module.print(inputFileHandler->os(), mlir::OpPrintingFlags().enableDebugInfo(
+                                         config.getEnableSanitizer() ||
+                                         config.getEnableDebugInfo()));
   inputFileHandler->os().flush();
-
-  std::vector<std::string> arguments;
-  arguments.emplace_back("");
-  arguments.push_back(inputFile);
-
-  auto hivmcArgs = getCompatibleOptions(config.getHIVMCArgsDashDash(), config);
-  arguments.insert(arguments.end(), hivmcArgs.begin(), hivmcArgs.end());
-  arguments.emplace_back("-o");
-  arguments.push_back(outputFile);
-  SmallVector<StringRef> argumentsRef(arguments.begin(), arguments.end());
-  if (failed(executeBinary(getHIVMCName(), argumentsRef))) {
-    return failure();
-  }
   return success();
+}
+
+HIVMCMainConfig HIVMCFromBiShengIRConfig(BiShengIRCompileMainConfig& config) {
+    HIVMCMainConfig hivmcConfig;
+    /// A3-specific
+    hivmcConfig.targetBackend(hacc::TargetDevice::Unknown);
+    hivmcConfig.autoVectorizeV2(true);
+    hivmcConfig.compileTriton(false);
+    ///
+
+    hivmcConfig.limitAutoMultiBufferForLocalBuffer(true);
+    hivmcConfig.deterministicComputing(true);
+    hivmcConfig.simtOptimizationMode(1900101);
+    hivmcConfig.enableAutoCVBalance(true);
+    hivmcConfig.setUseDPX(true);
+    hivmcConfig.onlyRunHIVMPipeline(false);
+
+    hivmcConfig.appendBishengOptions(config.getAppendBishengOptions());
+    hivmcConfig.compileTriton(config.getEnableTritonKernelCompile());
+    hivmcConfig.compileTritonDialect(config.getEnableTritonIRCompile());
+    hivmcConfig.enableSimdSimtMixCompile(config.getEnableSimdSimtMixCompile());
+    hivmcConfig.enableSIMTOnly(config.getPureSimt());
+    hivmcConfig.enableSanitizer(config.getEnableSanitizer());
+    hivmcConfig.enableSIMTFastDiv(config.getEnableSIMTFastDiv());
+    hivmcConfig.enableDebugVariables(config.getEnableDebugVariables());
+    hivmcConfig.enableDebugInfo(config.getEnableDebugInfo());
+    hivmcConfig.saveTemps(config.getSaveTemps());
+    hivmcConfig.injectBarrierAllSync(config.getEnableHIVMInjectBarrierAllSync());
+    hivmcConfig.setExtraDeviceBCPaths(config.getLinkAicoreBitcode());
+    hivmcConfig.setDisableFMA(config.getDisableFMA());
+    hivmcConfig.setSaveLinkedIR(config.getSaveLinkedIR());
+    hivmcConfig.setNumWarps(config.getNumWarps());
+    hivmcConfig.setThreadsPerWarp(config.getThreadsPerWarp());
+    hivmcConfig.setSharedDynamicSize(config.getSharedMemDynamicSize());
+    hivmcConfig.tritonMetadataOutput(config.getTritonMetadataOutput());
+    hivmcConfig.disableDecomposeReduction(config.getDisableDecomposeReduction());
+    hivmcConfig.disableReorderInstruction(config.getDisableReorderInstruction());
+
+    if (hivmcConfig.getTritonGridDim().size() > 3) {
+        report_fatal_error(
+            "Invalid --simt-triton-grid: at most 3 elements allowed x,y,z\n");
+    }
+    hivmcConfig.setOutputFile(config.getOutputFile());
+
+    StringTmpPath path(hivmcConfig.outputFile());
+
+    // TODO: investigate if this check is redundant
+    llvm::cantFail(llvm::errorCodeToError(hivmcCanonicalizePath(path)));
+    hivmcConfig.setOutputFile(path.str().str());
+    return hivmcConfig;
 }
 } // namespace
 FailureOr<OwningModuleRef>
@@ -342,7 +303,13 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
   // Skip for legacy hivmc (version 0.1.0 or empty) which does not support it.
   addBitcodeAttrsToModule(mod, config.getExecutablePath(), config);
 
-  auto res = runExternalHIVMC(mod, config);
+  auto savedTemp = handleSaveTemps(mod, config);
+  if (failed(savedTemp)) {
+    return failure();
+  }
+
+  auto hivmcConfig = HIVMCFromBiShengIRConfig(config);
+  auto res = runHIVMCCompileA3(mod, hivmcConfig);
   if (res.failed()) {
     mod.emitError("External hivmc run fails, returning module before running "
                   "external compiler");

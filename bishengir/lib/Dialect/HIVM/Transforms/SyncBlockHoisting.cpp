@@ -21,6 +21,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMInterfaces.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -119,8 +120,8 @@ struct HoistingSyncBlockPattern
 
     bool hasUnorderedLock = false;
     for (auto lockOp : lockVec)
-      hasUnorderedLock |=
-          lockOp->hasAttr(hivm::SyncBlockLockUnorderedAttr::name);
+      hasUnorderedLock |= getSyncBlockLockOpOrdering(lockOp) ==
+                          SyncBlockLockOrdering::Unordered;
 
     // Do NOT hoist unordered lock/unlock out of loops. The unordered bakery
     // lock supports skipped participants, so it does not need the old ordered
@@ -189,6 +190,8 @@ struct HoistingSyncBlockPattern
     }
 
     Value lockMemref = lockVec.front().getLockVar();
+    SyncBlockLockOrdering ordering =
+        getSyncBlockLockOpOrdering(lockVec.front());
 
     auto primaryCreate =
         cast<CreateSyncBlockLockOp>(lockMemref.getDefiningOp());
@@ -206,9 +209,9 @@ struct HoistingSyncBlockPattern
 
     OpBuilder::InsertionGuard guard(rewriter);
     rewriter.setInsertionPoint(loopOp);
-    rewriter.create<hivm::SyncBlockLockOp>(op->getLoc(), lockMemref);
+    createSyncBlockLock(rewriter, op->getLoc(), lockMemref, ordering);
     rewriter.setInsertionPointAfter(loopOp);
-    rewriter.create<hivm::SyncBlockUnlockOp>(op->getLoc(), lockMemref);
+    createSyncBlockUnlock(rewriter, op->getLoc(), lockMemref, ordering);
     return success();
   }
 };

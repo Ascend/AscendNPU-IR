@@ -48,7 +48,7 @@ void DimensionAnalyzerBase::processBFS() {
   DenseSet<Value> visited(argumentList_.begin(), argumentList_.end());
   combineInferable();
 
-  size_t processedCount = 0;
+  [[maybe_unused]] size_t processedCount = 0;
   while (!bfsQueue.empty()) {
     Value current = bfsQueue.front();
     if (options.registerBased)

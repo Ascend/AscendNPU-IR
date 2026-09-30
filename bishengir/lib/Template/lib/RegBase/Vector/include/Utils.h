@@ -25,15 +25,21 @@
 #include <CL/sycl.hpp>
 namespace sycl = cl::sycl;
 using namespace cl::sycl;
+#ifndef __aiv__
 #define __aiv__ SYCL_EXTERNAL __aivector__[aicore]
+#endif
 #else
+#ifndef __aiv__
 #define __aiv__ [aicore]
 #endif
+#endif
 
+#ifndef __aicore__
 #ifdef __CCE_KT_TEST__
 #define __aicore__
 #else
 #define __aicore__ [aicore]
+#endif
 #endif
 #endif
 
@@ -108,9 +114,6 @@ __aiv__ __attribute__((always_inline)) constexpr int bitwidthOf() {
 
 // Determine whether the starting address is 32byte aligned.
 template <typename T>
-#if defined(__DAV_C310__)
-__simd_callee__
-#endif
 __aiv__ __attribute__((always_inline)) bool
 isAddress32ByteAligned(__ubuf__ T *ptr) {
   auto address = reinterpret_cast<uintptr_t>(ptr);

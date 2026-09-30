@@ -37,7 +37,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // CHECK: hivm.hir.mmadL1 {{.*}} ins(%{{.*}}, %[[COPY]]
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   func.func @fixpipe_nd_rhs_gets_convert_layout(
-      %lhs: tensor<16x16xf16>, %rhs: tensor<16x16xf32>) -> tensor<16x16xf32>
+      %lhs: tensor<16x16xf32>, %rhs: tensor<16x16xf32>) -> tensor<16x16xf32>
       attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
     %c16 = arith.constant 16 : index
     %true = arith.constant true
@@ -48,7 +48,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     %out = tensor.empty() : tensor<16x16xf32>
     %mmad = hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
         ins(%lhs, %fix, %true, %c16, %c16, %c16
-            : tensor<16x16xf16>, tensor<16x16xf32>, i1, index, index, index)
+            : tensor<16x16xf32>, tensor<16x16xf32>, i1, index, index, index)
         outs(%out : tensor<16x16xf32>) -> tensor<16x16xf32>
     return %mmad : tensor<16x16xf32>
   }

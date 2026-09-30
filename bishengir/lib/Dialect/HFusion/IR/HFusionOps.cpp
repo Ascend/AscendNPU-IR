@@ -16,12 +16,12 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Config/bishengir-config.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HFusion/IR/HFusionImpl.h"
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/MathExt/IR/MathExt.h"
 #include "bishengir/Dialect/Utils/Util.h"
-#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "mlir/AsmParser/AsmParser.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -131,16 +131,16 @@ getConvIntArrayAttrElement(Attribute attr, StringRef attrName, Dim dim,
   return (*values)[static_cast<size_t>(dim)];
 }
 
-FailureOr<int64_t> getConvPaddingAttrElement(
-    Attribute attr, size_t spatialRank, size_t symmetricDim,
-    size_t explicitSide, function_ref<InFlightDiagnostic()> emitError) {
+FailureOr<int64_t>
+getConvPaddingAttrElement(Attribute attr, size_t spatialRank,
+                          size_t symmetricDim, size_t explicitSide,
+                          function_ref<InFlightDiagnostic()> emitError) {
   if (auto intAttr = dyn_cast<IntegerAttr>(attr))
     return intAttr.getInt();
 
   SmallVector<int64_t, 6> values;
   if (auto denseAttr = dyn_cast<DenseI64ArrayAttr>(attr)) {
-    values.append(denseAttr.asArrayRef().begin(),
-                  denseAttr.asArrayRef().end());
+    values.append(denseAttr.asArrayRef().begin(), denseAttr.asArrayRef().end());
   } else if (auto arrayAttr = dyn_cast<ArrayAttr>(attr)) {
     values.reserve(arrayAttr.size());
     for (Attribute element : arrayAttr) {
@@ -183,11 +183,10 @@ LogicalResult checkConvOutputDim(Operation *op, ShapedType inputTy,
 
   int64_t inputSize = inputTy.getDimSize(inputDim);
   int64_t weightSize = weightTy.getDimSize(weightDim);
-  int64_t expectedOutputSize =
-      (inputSize + paddingBegin + paddingEnd -
-       dilation * (weightSize - 1) - 1) /
-          stride +
-      1;
+  int64_t expectedOutputSize = (inputSize + paddingBegin + paddingEnd -
+                                dilation * (weightSize - 1) - 1) /
+                                   stride +
+                               1;
   if (outputTy.getDimSize(outputDim) != expectedOutputSize)
     return op->emitOpError()
            << "requires output " << dimName << " to be computed as: "
@@ -220,8 +219,7 @@ using RegionBuilderFn = llvm::function_ref<void(
 /// `regionBuilder`. All output types are asserted to be ShapedType.
 static void fillStructuredOpRegion(OpBuilder &opBuilder, Region &region,
                                    TypeRange inputTypes, TypeRange outputTypes,
-                                   ArrayRef<NamedAttribute> attrs,
-                                   Location loc,
+                                   ArrayRef<NamedAttribute> attrs, Location loc,
                                    RegionBuilderFn regionBuilder) {
   assert(llvm::all_of(outputTypes,
                       [](Type t) { return llvm::isa<ShapedType>(t); }));
@@ -399,9 +397,9 @@ static ParseResult parseNamedStructuredOpRegion(
   }
 
   OpBuilder opBuilder(parser.getContext());
-  fillStructuredOpRegion(opBuilder, region, inputTypes, outputTypes, attrs,
-                         parser.getEncodedSourceLoc(parser.getCurrentLocation()),
-                         regionBuilder);
+  fillStructuredOpRegion(
+      opBuilder, region, inputTypes, outputTypes, attrs,
+      parser.getEncodedSourceLoc(parser.getCurrentLocation()), regionBuilder);
   return success();
 }
 
@@ -2657,7 +2655,8 @@ void ArangeOp::getEffects(
 /// isFiniteOp decompose:
 /// eg.
 /// isFiniteOp = !(isnanOp(x) || isinfOp(x))
-FailureOr<SmallVector<Value>> IsFiniteOp::decomposeOperation(PatternRewriter &b) {
+FailureOr<SmallVector<Value>>
+IsFiniteOp::decomposeOperation(PatternRewriter &b) {
   auto loc = getLoc();
   auto input = getInput();
 
@@ -3289,16 +3288,13 @@ struct CumsumFuseSextInput : public OpRewritePattern<CumsumOp> {
     if (producer.getInputs().empty())
       return failure();
     auto origInput = producer.getInputs()[0];
-    auto producerInputType =
-        dyn_cast<RankedTensorType>(origInput.getType());
+    auto producerInputType = dyn_cast<RankedTensorType>(origInput.getType());
     if (!producerInputType ||
         !producerInputType.getElementType().isInteger(32) ||
         !producerInputType.getShape().equals(inputType.getShape()))
       return failure();
 
-    rewriter.modifyOpInPlace(op, [&]() {
-      op->setOperand(0, origInput);
-    });
+    rewriter.modifyOpInPlace(op, [&]() { op->setOperand(0, origInput); });
     // Erase the cast if it is now dead.
     if (producer->use_empty())
       rewriter.eraseOp(producer);
@@ -3478,7 +3474,7 @@ LogicalResult HistogramOp::verify() {
 
 Value createConstIntZero(OpBuilder &b, Location loc, Value src) {
   auto ty = cast<IntegerType>(src.getType());
-#if !defined(__LLVM_MAJOR_VERSION_22_COMPATIBLE__) && \
+#if !defined(__LLVM_MAJOR_VERSION_22_COMPATIBLE__) &&                          \
     !defined(BSPUB_DAVINCI_BISHENGIR_A5)
   return b.create<arith::ConstantIntOp>(loc, 0, ty);
 #else
@@ -3499,9 +3495,9 @@ Value buildHistogramWriteMask(OpBuilder &b, Location loc, Value maskI16,
   }
   Value skipCond = b.create<arith::OrIOp>(loc, isNeg, outRange);
   return b.create<arith::AndIOp>(
-             loc, maskCond,
-             b.create<arith::XOrIOp>(
-                 loc, skipCond, b.create<arith::ConstantIntOp>(loc, 1, 1)));
+      loc, maskCond,
+      b.create<arith::XOrIOp>(loc, skipCond,
+                              b.create<arith::ConstantIntOp>(loc, 1, 1)));
 }
 
 Value buildHistogramConditionalWrite(OpBuilder &b, Location loc, Value hist,
@@ -3528,7 +3524,8 @@ Value buildHistogramConditionalWrite(OpBuilder &b, Location loc, Value hist,
   return ifOp.getResult(0);
 }
 
-FailureOr<SmallVector<Value>> HistogramOp::decomposeOperation(PatternRewriter &b) {
+FailureOr<SmallVector<Value>>
+HistogramOp::decomposeOperation(PatternRewriter &b) {
   OpBuilder::InsertionGuard guard(b);
   b.setInsertionPoint(getOperation());
 
@@ -3540,7 +3537,7 @@ FailureOr<SmallVector<Value>> HistogramOp::decomposeOperation(PatternRewriter &b
   auto inTy = cast<RankedTensorType>(input.getType());
   auto outTy = cast<RankedTensorType>(getOutput().getType());
   Type outEltTy = outTy.getElementType();
-  Type idxTy = b.getIndexType();
+  [[maybe_unused]] Type idxTy = b.getIndexType();
 
   // Helpers
   auto cstIdx = [&](int64_t v) -> Value {
@@ -3837,8 +3834,8 @@ MatMulMxOp::decomposeOperation(PatternRewriter &builder) {
                      ->getResult(0);
 #else
   auto linalgKindAttr = builder.getNamedAttr(
-      "kind", linalg::ElementwiseKindAttr::get(
-          builder.getContext(), linalg::ElementwiseKind::mul));
+      "kind", linalg::ElementwiseKindAttr::get(builder.getContext(),
+                                               linalg::ElementwiseKind::mul));
   Value emptyA = builder.create<tensor::EmptyOp>(location, aType, ValueRange{});
   Value emptyB = builder.create<tensor::EmptyOp>(location, bType, ValueRange{});
   Value aFinal = builder
@@ -4229,15 +4226,13 @@ Conv1DOp::getRegionBuilder() {
 //===----------------------------------------------------------------------===//
 
 FailureOr<int64_t> Conv2DOp::getStrideH() {
-  return getConvIntArrayAttrElement<2>(
-      getStrideAttr(), "stride", Conv2DDim::H,
-      [&]() { return emitOpError(); });
+  return getConvIntArrayAttrElement<2>(getStrideAttr(), "stride", Conv2DDim::H,
+                                       [&]() { return emitOpError(); });
 }
 
 FailureOr<int64_t> Conv2DOp::getStrideW() {
-  return getConvIntArrayAttrElement<2>(
-      getStrideAttr(), "stride", Conv2DDim::W,
-      [&]() { return emitOpError(); });
+  return getConvIntArrayAttrElement<2>(getStrideAttr(), "stride", Conv2DDim::W,
+                                       [&]() { return emitOpError(); });
 }
 
 FailureOr<int64_t> Conv2DOp::getPaddingT() {
@@ -4265,15 +4260,15 @@ FailureOr<int64_t> Conv2DOp::getPaddingR() {
 }
 
 FailureOr<int64_t> Conv2DOp::getDilationH() {
-  return getConvIntArrayAttrElement<2>(
-      getDilationAttr(), "dilation", Conv2DDim::H,
-      [&]() { return emitOpError(); });
+  return getConvIntArrayAttrElement<2>(getDilationAttr(), "dilation",
+                                       Conv2DDim::H,
+                                       [&]() { return emitOpError(); });
 }
 
 FailureOr<int64_t> Conv2DOp::getDilationW() {
-  return getConvIntArrayAttrElement<2>(
-      getDilationAttr(), "dilation", Conv2DDim::W,
-      [&]() { return emitOpError(); });
+  return getConvIntArrayAttrElement<2>(getDilationAttr(), "dilation",
+                                       Conv2DDim::W,
+                                       [&]() { return emitOpError(); });
 }
 
 LogicalResult Conv2DOp::verify() {
@@ -4388,10 +4383,10 @@ LogicalResult Conv2DOp::verify() {
   int64_t inputHDim = (inputRank == 3) ? 1 : 2;
   int64_t outputHDim = (initRank == 3) ? 1 : 2;
 
-  if (failed(checkConvOutputDim(
-          getOperation(), inputTy, weightTy, initTy, inputHDim,
-          /*weightDim=*/2, outputHDim, *paddingT, *paddingB, *dilationH,
-          *strideH, "height oH")))
+  if (failed(checkConvOutputDim(getOperation(), inputTy, weightTy, initTy,
+                                inputHDim,
+                                /*weightDim=*/2, outputHDim, *paddingT,
+                                *paddingB, *dilationH, *strideH, "height oH")))
     return failure();
 
   // Check output width oW
@@ -4594,21 +4589,18 @@ Conv2DOp::getRegionBuilder() {
 //===----------------------------------------------------------------------===//
 
 FailureOr<int64_t> Conv3DOp::getStrideD() {
-  return getConvIntArrayAttrElement<3>(
-      getStrideAttr(), "stride", Conv3DDim::D,
-      [&]() { return emitOpError(); });
+  return getConvIntArrayAttrElement<3>(getStrideAttr(), "stride", Conv3DDim::D,
+                                       [&]() { return emitOpError(); });
 }
 
 FailureOr<int64_t> Conv3DOp::getStrideH() {
-  return getConvIntArrayAttrElement<3>(
-      getStrideAttr(), "stride", Conv3DDim::H,
-      [&]() { return emitOpError(); });
+  return getConvIntArrayAttrElement<3>(getStrideAttr(), "stride", Conv3DDim::H,
+                                       [&]() { return emitOpError(); });
 }
 
 FailureOr<int64_t> Conv3DOp::getStrideW() {
-  return getConvIntArrayAttrElement<3>(
-      getStrideAttr(), "stride", Conv3DDim::W,
-      [&]() { return emitOpError(); });
+  return getConvIntArrayAttrElement<3>(getStrideAttr(), "stride", Conv3DDim::W,
+                                       [&]() { return emitOpError(); });
 }
 
 FailureOr<int64_t> Conv3DOp::getPaddingFront() {
@@ -4648,21 +4640,21 @@ FailureOr<int64_t> Conv3DOp::getPaddingR() {
 }
 
 FailureOr<int64_t> Conv3DOp::getDilationD() {
-  return getConvIntArrayAttrElement<3>(
-      getDilationAttr(), "dilation", Conv3DDim::D,
-      [&]() { return emitOpError(); });
+  return getConvIntArrayAttrElement<3>(getDilationAttr(), "dilation",
+                                       Conv3DDim::D,
+                                       [&]() { return emitOpError(); });
 }
 
 FailureOr<int64_t> Conv3DOp::getDilationH() {
-  return getConvIntArrayAttrElement<3>(
-      getDilationAttr(), "dilation", Conv3DDim::H,
-      [&]() { return emitOpError(); });
+  return getConvIntArrayAttrElement<3>(getDilationAttr(), "dilation",
+                                       Conv3DDim::H,
+                                       [&]() { return emitOpError(); });
 }
 
 FailureOr<int64_t> Conv3DOp::getDilationW() {
-  return getConvIntArrayAttrElement<3>(
-      getDilationAttr(), "dilation", Conv3DDim::W,
-      [&]() { return emitOpError(); });
+  return getConvIntArrayAttrElement<3>(getDilationAttr(), "dilation",
+                                       Conv3DDim::W,
+                                       [&]() { return emitOpError(); });
 }
 
 LogicalResult Conv3DOp::verify() {
@@ -4808,10 +4800,10 @@ LogicalResult Conv3DOp::verify() {
           getOperation(), inputTy, weightTy, initTy, inputHDim,
           /*weightDim=*/3, outputHDim, *paddingT, *paddingB, *dilationH,
           *strideH, "height oH")) ||
-      failed(checkConvOutputDim(
-          getOperation(), inputTy, weightTy, initTy, inputWDim,
-          /*weightDim=*/4, outputWDim, *paddingL, *paddingR, *dilationW,
-          *strideW, "width oW")))
+      failed(checkConvOutputDim(getOperation(), inputTy, weightTy, initTy,
+                                inputWDim,
+                                /*weightDim=*/4, outputWDim, *paddingL,
+                                *paddingR, *dilationW, *strideW, "width oW")))
     return failure();
 
   return success();

@@ -18,6 +18,7 @@
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/HFusion/Analysis/ReshapeAnalyzer.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HFusion/IR/HFusionImpl.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
@@ -31,6 +32,7 @@
 
 #include "mlir/Analysis/SliceAnalysis.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
+#include "mlir/Dialect/Linalg/Utils/Utils.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/PatternMatch.h"
 
@@ -1811,6 +1813,11 @@ bool hfusion::isRegisterTreeReductionCandidate(Operation *op) {
       !initType.hasStaticShape())
     return false;
 
+  // Direct register tree reduction requires FP16/BF16/FP32 input type.
+  auto elemType = initType.getElementType();
+  if (!elemType.isF16() && !elemType.isBF16() && !elemType.isF32())
+    return false;
+
   SmallVector<unsigned> reductionDims;
   linalgOp.getReductionDims(reductionDims);
   if (reductionDims.size() != 1 || reductionDims.front() != 0)
@@ -2049,9 +2056,74 @@ bool hfusion::shouldUseLegacyTreeReductionScope(Operation *op) {
   if (!isRegisterTreeReductionCandidate(op))
     return false;
 
-  // Always use the TreeReduceV2 in case when we don's use the tree-reduce
-  // algorithm ion autovectorize-v2.
-  return !shouldUseTreeReduction(op);
+  auto linalgOp = cast<linalg::LinalgOp>(op);
+  SmallVector<unsigned> reductionDims;
+  linalgOp.getReductionDims(reductionDims);
+  int64_t reductionSize = linalgOp.getStaticLoopRanges()[reductionDims.front()];
+  unsigned candidateCount = 0;
+  unsigned totalReductionCount = 0;
+  unsigned cumsumCount = 0;
+  int64_t cost = getRegisterTreeReductionCost(op, candidateCount,
+                                              totalReductionCount, cumsumCount);
+  // This fallback must precede the direct-register cost limit below.  A large
+  // reduction has a correspondingly large direct-tree cost, while the legacy
+  // path selected here uses a bounded hierarchical tree instead of fully
+  // expanding every leaf in registers.
+  bool singleChunkReduction =
+      candidateCount == 1 && totalReductionCount == 1 && cumsumCount == 0;
+  if (singleChunkReduction &&
+      isLoopCarriedF32ChunkedSum(linalgOp, reductionSize))
+    return true;
+
+  constexpr int64_t maxLegacyTreeReductionCost = 128;
+  // A bounded scope with more than one canonical RA reduction cannot use the
+  // single-loop direct rewrite safely. Preserve the established TreeReduceV2
+  // route when every reduction in the scope is such a candidate (the
+  // prepare_wy shape), rather than changing its summation order through
+  // regular fusion. A scope which also contains other reductions must remain
+  // on the regular path: TreeReduceV2 rewrites the surrounding loop and is
+  // not safe for that mixed graph. Retain the original one-candidate mixed
+  // scope behavior for compatibility.
+  bool allReductionsAreRegisterCandidates =
+      candidateCount > 1 && candidateCount == totalReductionCount;
+  bool singleCandidateMixedScope =
+      candidateCount == 1 && totalReductionCount > 1;
+  // A cumsum followed by the block-total reduction is accuracy-sensitive to
+  // the reduction association. Preserve the pre-policy TreeReduceV2 route for
+  // this exact one-scan/one-reduction shape, including its 128-element tile.
+  bool cumsumWithSingleReduction =
+      cumsumCount == 1 && candidateCount == 1 && totalReductionCount == 1;
+  // A single canonical 64-row RA reduction would otherwise use the direct
+  // register tree and exceed VF stack. Keep it on the established
+  // TreeReduceV2 lowering.
+  bool registerPressureFallback =
+      reductionSize == 64 && cumsumCount == 0 && candidateCount == 1 &&
+      totalReductionCount == 1;
+  constexpr int64_t maxLegacyTreeReductionSize = 64;
+  constexpr int64_t maxCumsumTreeReductionSize = 128;
+  bool supportedSize = reductionSize <= maxLegacyTreeReductionSize ||
+                       (cumsumWithSingleReduction &&
+                        reductionSize <= maxCumsumTreeReductionSize);
+  if (supportedSize &&
+      (allReductionsAreRegisterCandidates || singleCandidateMixedScope ||
+       cumsumWithSingleReduction || registerPressureFallback) &&
+      cost <= maxLegacyTreeReductionCost)
+    return true;
+
+  auto hasFusionCandidate = [](linalg::LinalgOp op) {
+    return llvm::any_of(op.getDpsInputOperands(), [](OpOperand *opOpnd) {
+      // Get initial value before reshape\slice.
+      auto init =
+          hfusion::traceReshapeOrSliceSingleProducerOrSelf(opOpnd->get());
+      auto defOp = init.getDefiningOp<linalg::LinalgOp>();
+      return defOp && linalg::isElementwise(defOp);
+    });
+  };
+
+  // Currently, the new tree reduction algorithm can outperform TreeReduceV2
+  // only when it enables fusion with a producer of a reduction input.
+  // Without fusion candidates, TreeReduceV2 is better.
+  return !hasFusionCandidate(linalgOp);
 }
 
 bool hfusion::shouldUseMaterializedTreeReduction(Operation *op) {

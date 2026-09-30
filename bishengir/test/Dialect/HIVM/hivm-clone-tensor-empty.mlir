@@ -14,10 +14,11 @@ module {
     %1 = hivm.hir.copy ins(%arg1 : tensor<16x16xf16>) outs(%0 : tensor<16x16xf16>) -> tensor<16x16xf16>
     // CHECK: tensor.empty() : tensor<16x16xf16>
     %2 = hivm.hir.copy ins(%arg2 : tensor<16x16xf16>) outs(%0 : tensor<16x16xf16>) -> tensor<16x16xf16>
+    %c_init = tensor.empty() : tensor<16x16xf32>
+    // CHECK: tensor.empty() : tensor<16x16xf32>
+    %4 = hivm.hir.mmadL1 ins(%1, %2, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%c_init : tensor<16x16xf32>) -> tensor<16x16xf32>
     // CHECK: tensor.empty() : tensor<16x16xf16>
-    %4 = hivm.hir.mmadL1 ins(%1, %2, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%0 : tensor<16x16xf16>) -> tensor<16x16xf16>
-    // CHECK: tensor.empty() : tensor<16x16xf16>
-    %5 = hivm.hir.fixpipe {enable_nz2nd} ins(%4 : tensor<16x16xf16>) outs(%0 : tensor<16x16xf16>) -> tensor<16x16xf16>
+    %5 = hivm.hir.fixpipe {enable_nz2nd, pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%4 : tensor<16x16xf32>) outs(%0 : tensor<16x16xf16>) -> tensor<16x16xf16>
     %6 = hivm.hir.copy ins(%5 : tensor<16x16xf16>) outs(%arg3 : tensor<16x16xf16>) -> tensor<16x16xf16>
     return %6 : tensor<16x16xf16>
   }

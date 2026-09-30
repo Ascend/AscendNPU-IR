@@ -9,8 +9,8 @@
 
 #define DEBUG_TYPE "hfusion-auto-vectorize-v2"
 
-#include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoVectorize/PlanContext.h"
+#include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Scope/Utils/Utils.h"
@@ -238,17 +238,17 @@ void computeConflictListsForCopyOpOperand(PlanContext &ctx,
   }
   auto memRef = optMemRef.value();
 
-  for (auto previousOp : previousOps) {
+  for (auto *previousOp : previousOps) {
     if (hasMemRefInOperands(previousOp, memRef)) {
-      for (auto followingOp : followingOps) {
+      for (auto *followingOp : followingOps) {
         ctx.addCopyConflict(previousOp, followingOp);
       }
     }
   }
 
-  for (auto followingOp : followingOps) {
+  for (auto *followingOp : followingOps) {
     if (hasMemRefInOperands(followingOp, memRef)) {
-      for (auto previousOp : previousOps) {
+      for (auto *previousOp : previousOps) {
         ctx.addCopyConflict(previousOp, followingOp);
       }
     }
@@ -300,9 +300,9 @@ static std::optional<StaticView> getStaticRankOneView(Value value) {
     auto stride = getStaticInt(strides.front());
     if (!parent || !offset || !size || !stride || *stride < 0)
       return std::optional<StaticView>();
-    return std::optional<StaticView>(StaticView{parent->root,
-                                                parent->offset + *offset * parent->stride,
-                                                parent->stride * *stride, *size});
+    return std::optional<StaticView>(
+        StaticView{parent->root, parent->offset + *offset * parent->stride,
+                   parent->stride * *stride, *size});
   };
 
   if (auto subview = value.getDefiningOp<memref::SubViewOp>())
@@ -311,13 +311,15 @@ static std::optional<StaticView> getStaticRankOneView(Value value) {
 
   if (auto reinterpret = value.getDefiningOp<memref::ReinterpretCastOp>())
     return composeView(reinterpret.getSource(), reinterpret.getMixedOffsets(),
-                       reinterpret.getMixedSizes(), reinterpret.getMixedStrides());
+                       reinterpret.getMixedSizes(),
+                       reinterpret.getMixedStrides());
 
   return std::nullopt;
 }
 
 static GMAccessRange getGMAccessRange(memref::LoadOp load) {
-  auto root = mlir::utils::tracebackMemRefToAllocOrBlockArgument(load.getMemRef());
+  auto root =
+      mlir::utils::tracebackMemRefToAllocOrBlockArgument(load.getMemRef());
   if (!root)
     return {};
   auto view = getStaticRankOneView(load.getMemRef());
@@ -332,8 +334,8 @@ static GMAccessRange getGMAccessRange(memref::LoadOp load) {
 
 static GMAccessRange
 getGMAccessRange(bufferization::MaterializeInDestinationOp materialize) {
-  auto root = mlir::utils::tracebackMemRefToAllocOrBlockArgument(
-      materialize.getDest());
+  auto root =
+      mlir::utils::tracebackMemRefToAllocOrBlockArgument(materialize.getDest());
   if (!root)
     return {};
   auto view = getStaticRankOneView(materialize.getDest());
@@ -342,7 +344,8 @@ getGMAccessRange(bufferization::MaterializeInDestinationOp materialize) {
   if (view->size == 0)
     return {view->root, 1, 0};
   int64_t last = view->offset + (view->size - 1) * view->stride;
-  return {view->root, std::min(view->offset, last), std::max(view->offset, last)};
+  return {view->root, std::min(view->offset, last),
+          std::max(view->offset, last)};
 }
 
 static bool mayOverlap(const GMAccessRange &lhs, const GMAccessRange &rhs) {
@@ -430,8 +433,8 @@ void PlanContext::computeConflictLists(func::FuncOp func) {
         DenseSet<Operation *> visitedDownstreamOps;
         findDownstreamFusableOpOf(op, block, downstreamOps,
                                   visitedDownstreamOps);
-        for (auto upstreamOp : upstreamOps) {
-          for (auto downstreamOp : downstreamOps) {
+        for (auto *upstreamOp : upstreamOps) {
+          for (auto *downstreamOp : downstreamOps) {
             addOpConflict(upstreamOp, downstreamOp, op);
           }
         }
@@ -473,8 +476,8 @@ void PlanContext::computeConflictLists(func::FuncOp func) {
                          : WalkResult::advance();
             };
             if (op->walk(walker).wasInterrupted()) {
-              for (auto previousOp : previousOps) {
-                for (auto followingOp : followingOps) {
+              for (auto *previousOp : previousOps) {
+                for (auto *followingOp : followingOps) {
                   addSyncConflict(previousOp, followingOp);
                 }
               }
@@ -502,8 +505,8 @@ void PlanContext::computeConflictLists(func::FuncOp func) {
             DenseSet<Operation *> followingOps;
             findPreviousAndFollowingFusableOpOf(op, block, previousOps,
                                                 followingOps);
-            for (auto previousOp : previousOps) {
-              for (auto followingOp : followingOps) {
+            for (auto *previousOp : previousOps) {
+              for (auto *followingOp : followingOps) {
                 addSyncConflict(previousOp, followingOp);
               }
             }

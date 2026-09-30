@@ -463,7 +463,7 @@ static void refineLoads(SmallVectorImpl<CollectedLoadInfo> &loadInfo) {
 
     // create a new filtered condChain
     SmallVector<std::pair<Value, bool>> filteredCondChain;
-    bool removedAny = false;
+    [[maybe_unused]] bool removedAny = false;
 
     for (auto &condPair : info.condChain) {
       Value condValue = condPair.first;
@@ -663,7 +663,7 @@ static void refineLoads(SmallVectorImpl<CollectedLoadInfo> &loadInfo) {
 
 /// replace old load with new load using finalMask
 triton::LoadOp buildNewMaskedLoad(triton::LoadOp oldLoad, Value finalMask,
-                                      RewriterBase &rewriter) {
+                                  RewriterBase &rewriter) {
   NamedAttrList attrs(oldLoad->getAttrs());
 
   // Set operandSegmentSizes correctly based on the actual operands
@@ -681,8 +681,7 @@ triton::LoadOp buildNewMaskedLoad(triton::LoadOp oldLoad, Value finalMask,
   return newLoad;
 }
 
-static void optimizeLoadMasks(triton::StoreOp storeOp,
-                              IRRewriter &rewriter) {
+static void optimizeLoadMasks(triton::StoreOp storeOp, IRRewriter &rewriter) {
   LLVM_DEBUG(llvm::dbgs() << "work on " << storeOp << "\n");
   Value valueToStore = storeOp.getValue();
 
@@ -707,11 +706,8 @@ static void optimizeLoadMasks(triton::StoreOp storeOp,
 
     auto newLoad = buildNewMaskedLoad(info.loadOp, finalMask, rewriter);
     rewriter.replaceOpUsesWithIf(
-      info.loadOp,
-      newLoad->getResults(),
-      [&](OpOperand &use) {
-        return use.getOwner() == info.reachingUser;
-    });
+        info.loadOp, newLoad->getResults(),
+        [&](OpOperand &use) { return use.getOwner() == info.reachingUser; });
 
     if (info.loadOp.use_empty())
       rewriter.eraseOp(info.loadOp);
@@ -731,7 +727,7 @@ struct MoveLoadsAsLateAsPossiblePattern
     Operation *earliestUser = nullptr;
     Block *loadBlock = loadOp->getBlock();
 
-    for (auto* user : loadOp->getUsers()) {
+    for (auto *user : loadOp->getUsers()) {
       // TODO: we only consider users in the same block for simplicity right
       // now might need to expand
       if (user->getBlock() != loadBlock) {
@@ -769,9 +765,10 @@ public:
     if (digit != 0) {
       RewritePatternSet patterns(context);
       patterns.add<MoveLoadsAsLateAsPossiblePattern>(context);
-      auto success = applyPatternsGreedily(module, std::move(patterns));
-      LLVM_DEBUG(if (failed(success))
-        llvm::dbgs() << "apply MoveLoadsAsLateAsPossiblePattern failed\n";);
+      [[maybe_unused]] auto success =
+          applyPatternsGreedily(module, std::move(patterns));
+      LLVM_DEBUG(if (failed(success)) llvm::dbgs()
+                     << "apply MoveLoadsAsLateAsPossiblePattern failed\n";);
 
       IRRewriter rewriter(module.getContext());
       module.walk([&rewriter](triton::StoreOp storeOp) {

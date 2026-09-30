@@ -19,10 +19,12 @@
 #include "Macro/common.h"
 #include "Macro/functional.h"
 
+#ifndef __aicore__
 #ifdef __CCE_KT_TEST__
 #define __aicore__
 #else
 #define __aicore__ [aicore]
+#endif
 #endif
 
 /////////////////////////////////////////////////////

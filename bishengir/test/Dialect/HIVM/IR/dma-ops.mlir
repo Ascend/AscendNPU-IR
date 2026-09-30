@@ -48,48 +48,48 @@ func.func @test_nd2nz_tensor_init_out_buffer(%arg0: memref<?x?x?x?xf32, #hivm.ad
 // -----
 // CHECK-LABEL: test_fixpipe
 func.func @test_fixpipe() {
-  %gmC = memref.alloc() : memref<1024x2048xf16>
+  %gmC = memref.alloc() : memref<1024x2048xf32>
   %gmCSubview = memref.subview %gmC[0, 0][256, 128][1, 1]
-                       : memref<1024x2048xf16> to
-                         memref<256x128xf16, strided<[2048, 1], offset: 0>>
-  %l0c = memref.alloc() : memref<256x128xf16>
+                       : memref<1024x2048xf32> to
+                         memref<256x128xf32, strided<[2048, 1], offset: 0>>
+  %l0c = memref.alloc() : memref<256x128xf32>
   // Normal data movement
-  hivm.hir.fixpipe ins(%l0c : memref<256x128xf16>)
-                   outs(%gmCSubview : memref<256x128xf16, strided<[2048, 1], offset: 0>>)
+  hivm.hir.fixpipe ins(%l0c : memref<256x128xf32>)
+                   outs(%gmCSubview : memref<256x128xf32, strided<[2048, 1], offset: 0>>)
   // NZ2ND data movement
-  hivm.hir.fixpipe {enable_nz2nd} ins(%l0c : memref<256x128xf16>)
-                                  outs(%gmCSubview : memref<256x128xf16, strided<[2048, 1], offset: 0>>)
+  hivm.hir.fixpipe {enable_nz2nd} ins(%l0c : memref<256x128xf32>)
+                                  outs(%gmCSubview : memref<256x128xf32, strided<[2048, 1], offset: 0>>)
   return
 }
 // -----
 // CHECK-LABEL: test_fixpipe_A5_features
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   func.func @test_fixpipe_A5_features() {
-    %gmC = memref.alloc() : memref<1024x2048xf16>
+    %gmC = memref.alloc() : memref<1024x2048xf32>
     %gmCSubview = memref.subview %gmC[0, 0][256, 128][1, 1]
-                        : memref<1024x2048xf16> to
-                          memref<256x128xf16, strided<[2048, 1], offset: 0>>
-    %l0c = memref.alloc() : memref<256x128xf16>
+                        : memref<1024x2048xf32> to
+                          memref<256x128xf32, strided<[2048, 1], offset: 0>>
+    %l0c = memref.alloc() : memref<256x128xf32>
     // Normal data movement
-    hivm.hir.fixpipe ins(%l0c : memref<256x128xf16>)
-                    outs(%gmCSubview : memref<256x128xf16, strided<[2048, 1], offset: 0>>)
+    hivm.hir.fixpipe ins(%l0c : memref<256x128xf32>)
+                    outs(%gmCSubview : memref<256x128xf32, strided<[2048, 1], offset: 0>>)
     // NZ2ND data movement
-    hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%l0c : memref<256x128xf16>)
-                                    outs(%gmCSubview : memref<256x128xf16, strided<[2048, 1], offset: 0>>)
+    hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%l0c : memref<256x128xf32>)
+                                    outs(%gmCSubview : memref<256x128xf32, strided<[2048, 1], offset: 0>>)
     // DUAL DST data movement
-    %l0c1 = memref.alloc() : memref<16x16xf16, #hivm.address_space<cc>>
-    %ub = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
-    hivm.hir.fixpipe ins(%l0c1 : memref<16x16xf16, #hivm.address_space<cc>>)
-                    outs(%ub : memref<16x16xf16, #hivm.address_space<ub>>)
+    %l0c1 = memref.alloc() : memref<16x16xf32, #hivm.address_space<cc>>
+    %ub = memref.alloc() : memref<16x16xf32, #hivm.address_space<ub>>
+    hivm.hir.fixpipe ins(%l0c1 : memref<16x16xf32, #hivm.address_space<cc>>)
+                    outs(%ub : memref<16x16xf32, #hivm.address_space<ub>>)
                     dual_dst_mode = #hivm.fixpipe_dual_dst_mode<NO_DUAL>
 
     // NZ2DN data movement
-    hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2dn>} ins(%l0c : memref<256x128xf16>)
-                                    outs(%gmCSubview : memref<256x128xf16, strided<[2048, 1], offset: 0>>)
+    hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2dn>} ins(%l0c : memref<256x128xf32>)
+                                    outs(%gmCSubview : memref<256x128xf32, strided<[2048, 1], offset: 0>>)
     // C0 padding disabled (default is enabled / omitted)
     // CHECK: hivm.hir.fixpipe {{{.*}}c0_pad_en = false{{.*}}}
-    hivm.hir.fixpipe {c0_pad_en = false} ins(%l0c : memref<256x128xf16>)
-                    outs(%gmCSubview : memref<256x128xf16, strided<[2048, 1], offset: 0>>)
+    hivm.hir.fixpipe {c0_pad_en = false} ins(%l0c : memref<256x128xf32>)
+                    outs(%gmCSubview : memref<256x128xf32, strided<[2048, 1], offset: 0>>)
     return
   }
 }
@@ -97,26 +97,30 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // -----
 // CHECK-LABEL: test_fixpipe_tensor
 func.func @test_fixpipe_tensor() {
-  %gmC = tensor.empty() : tensor<1024x2048xf16>
+  %gmC = tensor.empty() : tensor<1024x2048xf32>
   %gmCSubview = tensor.extract_slice %gmC[0, 0][256, 128][1, 1]
+                       : tensor<1024x2048xf32> to
+                         tensor<256x128xf32>
+  %l0c = tensor.empty() : tensor<256x128xf32>
+  // Normal data movement
+  %ret = hivm.hir.fixpipe ins(%l0c : tensor<256x128xf32>)
+                          outs(%gmCSubview : tensor<256x128xf32>) -> tensor<256x128xf32>
+  // NZ2ND data movement
+  %ret1 = hivm.hir.fixpipe {enable_nz2nd} ins(%l0c : tensor<256x128xf32>)
+                                          outs(%gmCSubview : tensor<256x128xf32>) -> tensor<256x128xf32>
+  // f322f16 pre quant on the fly
+  %gmCq = tensor.empty() : tensor<1024x2048xf16>
+  %gmCSubviewQ = tensor.extract_slice %gmCq[0, 0][256, 128][1, 1]
                        : tensor<1024x2048xf16> to
                          tensor<256x128xf16>
-  %l0c = tensor.empty() : tensor<256x128xf16>
-  // Normal data movement
-  %ret = hivm.hir.fixpipe ins(%l0c : tensor<256x128xf16>)
-                          outs(%gmCSubview : tensor<256x128xf16>) -> tensor<256x128xf16>
-  // NZ2ND data movement
-  %ret1 = hivm.hir.fixpipe {enable_nz2nd} ins(%l0c : tensor<256x128xf16>)
-                                          outs(%gmCSubview : tensor<256x128xf16>) -> tensor<256x128xf16>
-  // f322f16 pre quant on the fly
   %l0c1 = tensor.empty() : tensor<256x128xf32>
   %ret2 = hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>}
                            ins(%l0c1 : tensor<256x128xf32>)
-                           outs(%gmCSubview : tensor<256x128xf16>) -> tensor<256x128xf16>
+                           outs(%gmCSubviewQ : tensor<256x128xf16>) -> tensor<256x128xf16>
   // leaky relu on the fly
   %ret3 = hivm.hir.fixpipe {pre_relu = #hivm.fixpipe_pre_relu_mode<LEAKY_RELU>}
-                           ins(%l0c : tensor<256x128xf16>)
-                           outs(%gmCSubview : tensor<256x128xf16>) -> tensor<256x128xf16>
+                           ins(%l0c : tensor<256x128xf32>)
+                           outs(%gmCSubview : tensor<256x128xf32>) -> tensor<256x128xf32>
   return
 }
 
@@ -255,5 +259,56 @@ func.func @test_l12bt(
   hivm.hir.l12bt ins(%src : memref<256xf32, #hivm.address_space<cbuf>>)
                  outs(%dst : memref<256xf32, #hivm.address_space<biasbuf>>)
                  n = %n
+  return
+}
+
+// -----
+
+// Fixpipe source element type is permanently constrained to f32/i32.
+// Positive: f32 tensor source with F322F16 quant into an f16 destination
+// (the destination element type is not constrained).
+// CHECK-LABEL: test_fixpipe_f32_src_f16_dst_quant
+func.func @test_fixpipe_f32_src_f16_dst_quant() {
+  %src = tensor.empty() : tensor<16x16xf32>
+  %dst = tensor.empty() : tensor<16x16xf16>
+  %r = hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%src : tensor<16x16xf32>) outs(%dst : tensor<16x16xf16>) -> tensor<16x16xf16>
+  return
+}
+
+// -----
+
+// Positive: i32 memref source.
+// CHECK-LABEL: test_fixpipe_i32_memref_src
+func.func @test_fixpipe_i32_memref_src() {
+  %src = memref.alloc() : memref<16x16xi32, #hivm.address_space<cc>>
+  %dst = memref.alloc() : memref<16x16xi32, #hivm.address_space<gm>>
+  hivm.hir.fixpipe ins(%src : memref<16x16xi32, #hivm.address_space<cc>>) outs(%dst : memref<16x16xi32, #hivm.address_space<gm>>)
+  return
+}
+
+// -----
+// Fixpipe pre-quant mode type contracts (positive coverage).
+// CHECK-LABEL: test_fixpipe_pre_quant_signatures
+func.func @test_fixpipe_pre_quant_signatures() {
+  // F322F16: f32 -> f16.
+  %src_f16 = tensor.empty() : tensor<16x16xf32>
+  %dst_f16 = tensor.empty() : tensor<16x16xf16>
+  %f322f16 = hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%src_f16 : tensor<16x16xf32>) outs(%dst_f16 : tensor<16x16xf16>) -> tensor<16x16xf16>
+  // F322BF16: f32 -> bf16.
+  %src_bf16 = tensor.empty() : tensor<16x16xf32>
+  %dst_bf16 = tensor.empty() : tensor<16x16xbf16>
+  %f322bf16 = hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322BF16>} ins(%src_bf16 : tensor<16x16xf32>) outs(%dst_bf16 : tensor<16x16xbf16>) -> tensor<16x16xbf16>
+  // S322I8: i32 -> i8.
+  %src_i8 = tensor.empty() : tensor<16x16xi32>
+  %dst_i8 = tensor.empty() : tensor<16x16xi8>
+  %s322i8 = hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<S322I8>} ins(%src_i8 : tensor<16x16xi32>) outs(%dst_i8 : tensor<16x16xi8>) -> tensor<16x16xi8>
+  // QF322F32_PRE: f32 -> f32.
+  %src_q = tensor.empty() : tensor<16x16xf32>
+  %dst_q = tensor.empty() : tensor<16x16xf32>
+  %qf = hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<QF322F32_PRE>} ins(%src_q : tensor<16x16xf32>) outs(%dst_q : tensor<16x16xf32>) -> tensor<16x16xf32>
+  // Explicit NO_QUANT: i32 -> i32 (the default mode's other signature).
+  %src_n = tensor.empty() : tensor<16x16xi32>
+  %dst_n = tensor.empty() : tensor<16x16xi32>
+  %nq = hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<NO_QUANT>} ins(%src_n : tensor<16x16xi32>) outs(%dst_n : tensor<16x16xi32>) -> tensor<16x16xi32>
   return
 }

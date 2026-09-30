@@ -50,7 +50,7 @@ struct LowerTritonPipelineOptions
       llvm::cl::desc("disable reorder instruction"), llvm::cl::init(false)};
   PassOptions::Option<bool> disableSliceOptimizations{
       *this, "disable-slice-optimizations",
-      llvm::cl::desc("disable RewriteSliceOpToMemoryOps pass"), 
+      llvm::cl::desc("disable RewriteSliceOpToMemoryOps pass"),
       llvm::cl::init(false)};
   PassOptions::Option<bool> enableSinkDPXLoad{
       *this, "enable-sink-dpx-load",

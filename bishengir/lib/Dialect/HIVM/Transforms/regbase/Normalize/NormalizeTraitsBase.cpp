@@ -397,10 +397,12 @@ mlir::Value mlir::hivm::NormalizeTraitsBase::createShiftOp(
       auto shiftOp = cast<hivm::VShROp>(sourceOp);
       round = shiftOp.getRoundAttr();
     }
+    BoolAttr isSigned = rewriter.getBoolAttr(kind == ShiftKind::RightSigned);
     return rewriter
         .create<hivm::VShROp>(loc, TypeRange(dst.getType()),
-                              ValueRange({lhs, rhs}), ValueRange({dst}), round,
-                              DenseI64ArrayAttr(), DenseI64ArrayAttr())
+                              ValueRange({lhs, rhs}), ValueRange({dst}),
+                              isSigned, round, DenseI64ArrayAttr(),
+                              DenseI64ArrayAttr())
         .getResult()[0];
   }
   }

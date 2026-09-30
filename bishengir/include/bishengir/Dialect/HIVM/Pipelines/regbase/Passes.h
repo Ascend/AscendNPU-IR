@@ -58,6 +58,11 @@ void buildHIVMTensorOptimizations(
 void buildLowerHIVMPipelines(OpPassManager &pm,
                              const HIVMPipelineOptions &hivmPipelineOptions);
 
+/// Register the RegBase passes that must not run in Aiv (pure VV) pipeline
+/// mode. Idempotent; called by the pipeline builders themselves, so no
+/// explicit initialization call is needed by the tools.
+void registerAivDisabledPassesForRegbase();
+
 /// Register the "ConvertToHIVM" pipeline.
 void registerConvertToHIVMPipelines();
 

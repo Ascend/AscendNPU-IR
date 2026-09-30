@@ -339,11 +339,9 @@ PropagateUpPattern::matchAndRewrite(UnrealizedConversionCastOp propagateOp,
     return failure();
   return TypeSwitch<Operation *, LogicalResult>(defOp)
       .Case([&](RegionBranchOpInterface branch) {
-        if (step != PropagationStep::ALL)
+        if (step != PropagationStep::ALL || isResultInL0C(res))
           return failure();
 
-        if (isResultInL0C(res))
-          return failure();
         // Unstructured load case should be propagated from the inside.
         if (auto forOp = dyn_cast<scf::ForOp>(branch.getOperation())) {
           if (forOp->hasAttr(ExtractLoadStoreAttr) &&

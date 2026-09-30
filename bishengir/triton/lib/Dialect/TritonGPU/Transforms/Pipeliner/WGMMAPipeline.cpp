@@ -218,12 +218,13 @@ static void threadValuesThroughWait(ttng::WarpGroupDotWaitOp wait,
         newWait->getBlock()->findAncestorOpInBlock(*operand.getOwner());
     return opInThisBlock && newWait->isBeforeInBlock(opInThisBlock);
   };
-  for (int i = 0; i < origNumOperands; i++) {
+  for (int i = 0; i < static_cast<int>(origNumOperands); i++) {
     Value operand = wait.getResult(i);
     if (!isa<ttg::MemDescType>(operand.getType()))
       operand.replaceAllUsesWith(newWait.getResult(i));
   }
-  for (int i = origNumOperands; i < newOperands.size(); i++) {
+  for (int i = static_cast<int>(origNumOperands);
+       i < static_cast<int>(newOperands.size()); i++) {
     Value operand = newWait.getOperand(i);
     if (!isa<ttg::MemDescType>(operand.getType()))
       operand.replaceUsesWithIf(newWait.getResult(i), dominatedByNewWait);
@@ -276,7 +277,7 @@ SmallVector<Value> splitLhs(OpBuilder &builder,
     // These convert_layout ops are noops by construction
     assert(isNoop(v.getDefiningOp()));
   }
-  assert(ret.size() == nSplits);
+  assert(ret.size() == static_cast<size_t>(nSplits));
   return ret;
 }
 
@@ -329,8 +330,10 @@ std::vector<ttng::WarpGroupDotOp> splitRSDot(ttng::WarpGroupDotOp dotOp) {
   auto loc = dotOp.getLoc();
   auto lhss = splitLhs(builder, a, newK);
   auto rhss = splitRhs(builder, b, newK);
-  assert(lhss.size() == numSplits && "lhs must have the same number of splits");
-  assert(rhss.size() == numSplits && "rhs must have the same number of splits");
+  assert(lhss.size() == static_cast<size_t>(numSplits) &&
+         "lhs must have the same number of splits");
+  assert(rhss.size() == static_cast<size_t>(numSplits) &&
+         "rhs must have the same number of splits");
 
   Value useC = dotOp.getUseC();
   Value C = dotOp.getC();

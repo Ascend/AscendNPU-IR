@@ -179,6 +179,20 @@ LogicalResult markAllocAlign(func::FuncOp funcOp) {
         return WalkResult::skip();
       }
 
+      // Skip alloc size alignment for high-rank (>3) VCast ops.
+      // The cast template only needs the last two dims to be 32×32 aligned
+      // for the transpose-based overflow path.  For rank > 3, padding the
+      // alloc's last two dims inflates memory far more than the extra temp
+      // buffer needed by the _no_size_align template variant.  Setting the
+      // per-op attribute makes ExtraBufferAllocations and
+      // getVCastOpLibraryCallName pick the matching scheme automatically.
+      auto srcMemref = dyn_cast<MemRefType>(castOp.getSrc()[0].getType());
+      if (srcMemref && srcMemref.getRank() > 3) {
+        castOp->setAttr(hivm::DisableSizeAlignForCastAttr::name,
+                        UnitAttr::get(builder.getContext()));
+        return WalkResult::skip();
+      }
+
       if (failed(alignAllocSize(castOp, builder))) {
         return WalkResult::interrupt();
       }

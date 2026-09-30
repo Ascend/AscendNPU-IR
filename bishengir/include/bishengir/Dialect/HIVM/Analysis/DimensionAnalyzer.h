@@ -40,8 +40,8 @@ public:
   explicit DimensionAnalyzer(Operation *op, int64_t tilingSize = 2);
   LogicalResult initialize() override;
 
-  /// Annotates operations under \c op_ with temporary \c value_group attributes,
-  /// dumps \c op_, then removes those attributes.
+  /// Annotates operations under \c op_ with temporary \c value_group
+  /// attributes, dumps \c op_, then removes those attributes.
   void dumpOpWithValueGroups();
 
   /// Annotates operations under \c op_ with temporary \c structural_group
@@ -157,6 +157,7 @@ protected:
                                DictionaryAttr tilingDimMapping);
   void processMmadL1Op(hivm::MmadL1Op op, bool isTransposeA = false,
                        bool isTransposeB = false);
+  void processFixpipeOp(hivm::FixpipeOp op);
 
   void startTransaction(Operation *op);
   bool finalizeTransaction();
@@ -173,10 +174,18 @@ protected:
   /// parallel
   void markDimensions();
 
+  /// Mark the preferred tiling order of a Fixpipe destination according to
+  /// which MMAD operand is produced inside the analyzed loop.
+  void markFixpipeTilingPriority(hivm::FixpipeOp op);
+
   /// Heuristic only: mark transposed dimensions for layout-conversion
   /// transposes.
   void markTransposedDim(hivm::VTransposeOp op);
   void markUnalignedDim(hivm::CopyOp op);
+
+  /// Mark \p structuralIdx / \p shapeIdx as Reduce unless already marked.
+  void tryMarkReduceDim(int64_t structuralIdx, int64_t shapeIdx);
+  void tryMarkReduceDimShape(int64_t shapeIdx);
 
   /// transfer marked information through the dimensions merged by
   /// structuralDsu_
@@ -237,9 +246,6 @@ protected:
 
   void joinShape(int a, int b) override;
   void joinCollapser(int a, int b) override;
-
-  template <typename StoreOpTy>
-  std::optional<size_t> inferForcedTilingDim(StoreOpTy op);
 
 protected:
   /// Chosen tiling axis index per SSA \c Value; \c -1 when not chosen.

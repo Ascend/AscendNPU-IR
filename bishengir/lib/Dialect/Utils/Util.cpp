@@ -1272,6 +1272,16 @@ SmallVector<Operation *> utils::getAllAnnotateOpsWithAttr(Value v,
   return annotateOpsWithAttr;
 }
 
+SmallVector<Operation *> utils::getAnnotateOpUsers(Value v) {
+  SmallVector<Operation *> annotateOps;
+  for (auto user : v.getUsers()) {
+    auto markOp = dyn_cast<annotation::MarkOp>(user);
+    if (markOp && markOp.getSrc() == v)
+      annotateOps.push_back(user);
+  }
+  return annotateOps;
+}
+
 SmallVector<std::optional<Operation *>>
 utils::getAnnotateOpWithAttrForEachOperand(
     const SmallVectorImpl<Value> &operands, StringRef name) {
@@ -1487,7 +1497,7 @@ bool isLegalOp(Operation *op) {
           linalg::ElemwiseBinaryOp, linalg::ElemwiseUnaryOp,
 #endif
           linalg::BroadcastOp, linalg::ReduceOp, linalg::TransposeOp,
-          linalg::MatmulOp, linalg::MatmulTransposeAOp,
+          linalg::MatmulOp, linalg::BatchMatmulOp, linalg::MatmulTransposeAOp,
           linalg::MatmulTransposeBOp, tensor::ExtractOp>(op)) {
     return true;
   }
@@ -1914,6 +1924,27 @@ bool utils::isTransferWriteSuitForStoreWithStride(Operation *op) {
     return false;
   }
   LLVM_DEBUG(DBGS() << " matched!! for transferWriteWithStride\n");
+  return true;
+}
+
+namespace {
+bool isGMSafeSource(Value v) {
+  Operation *defOp = v.getDefiningOp();
+  return utils::isAllocLikeOp(v) || hivm::util::isGMPointerCastOp(defOp) ||
+         (defOp && isa<memref::GetGlobalOp>(defOp));
+}
+} // namespace
+
+bool utils::isFromGMSpace(Value v) {
+  SmallVector<Value> targetOPVec =
+      utils::tracebackMemRefVecByTargetFn(v, isGMSafeSource);
+  for (auto targetOP : targetOPVec) {
+    auto defOp = targetOP.getDefiningOp();
+    if (defOp != nullptr && !isa<hivm::PointerCastOp>(defOp) &&
+        !isa<memref::GetGlobalOp>(defOp)) {
+      return false;
+    }
+  }
   return true;
 }
 

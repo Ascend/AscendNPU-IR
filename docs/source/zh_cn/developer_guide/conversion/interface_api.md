@@ -45,9 +45,9 @@
 
 支持的目标设备包括：
 
-- Ascend 950PR/Ascend 950DT
-- Atlas A3训练系列产品/Atlas A3推理系列产品
-- Atlas A2训练系列产品/Atlas A2推理系列产品
+- Ascend 950PR&950DT系列产品
+- Atlas A3系列产品
+- Atlas A2系列产品
 
 ### 函数属性
 

@@ -25,12 +25,14 @@
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/InitAllDialects.h"
 #include "bishengir/InitAllExtensions.h"
+#include "bishengir/InitAllTranslations.h"
 #include "bishengir/InitAllPasses.h"
 #include "bishengir/Pass/PassManager.h"
 #include "bishengir/Tools/Utils/Utils.h"
 #include "bishengir/Tools/bishengir-compile/BiShengIRCompile.h"
 #include "bishengir/Tools/bishengir-compile/regbase/Driver.h"
 #include "bishengir/Version/Version.h"
+
 
 #include "mlir/InitAllDialects.h"
 #include "mlir/InitAllExtensions.h"
@@ -135,6 +137,8 @@ int main(int argc, char **argv) {
 
   // Register translations.
   mlir::registerAllToLLVMIRTranslations(registry);
+  bishengir::registerAllTranslations();
+  bishengir::registerAllToLLVMIRTranslations(registry);
 
   // Parse command line.
   registerAndParseCLIOptions(argc, argv);

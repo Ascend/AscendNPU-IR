@@ -33,7 +33,7 @@ Synchronization ops are defined in `bishengir/include/bishengir/Dialect/HIVM/IR/
 
 - **`hivm.sync_block_set`**
   Operands/attributes:
-    - `tcore_type` — target core type (vector/cube)
+    - `tcore_type` — target core type (`TCoreTypeAttr`: CUBE/VECTOR/CUBE_OR_VECTOR/CUBE_AND_VECTOR; CUBE = cube core, VECTOR = vector core)
     - `tpipe`, `pipe` — set/wait pipes on the target core
     - flag id (`static_flag_id` and/or `dynamic_flag_id`)
     - optional `ffts_base_addr` (required on memory-based architectures such as Ascend910B)
@@ -44,7 +44,7 @@ Synchronization ops are defined in `bishengir/include/bishengir/Dialect/HIVM/IR/
 
 - **`hivm.sync_block_wait`**
   Operands/attributes:
-    - `tcore_type` — target core type (vector/cube)
+    - `tcore_type` — target core type (`TCoreTypeAttr`: CUBE/VECTOR/CUBE_OR_VECTOR/CUBE_AND_VECTOR; CUBE = cube core, VECTOR = vector core)
     - `tpipe`, `pipe` — set/wait pipes on the target core
     - flag id (`static_flag_id` and/or `dynamic_flag_id`)
     - `tsync_instr_mode` (default `INTRA_BLOCK_SYNCHRONIZATION`)
@@ -66,7 +66,7 @@ The codebase provides two families of auto-sync solutions. Pipelines select betw
 
 - **`InjectSync` / `InjectBlockSync`** (fallback)
 
-  Multi-stage inject passes: insert needed syncs, move/remove redundant ones, and allocate flag/event ids via liveliness analysis. Used when graph sync is disabled, or when barrier-all / block-all debug modes force the inject path.
+  Each is a single pass with multiple internal stages (IR translation → sync analysis → redundant-sync cleanup → id allocation → codegen) that inserts needed syncs, moves/removes redundant ones, and allocates flag/event ids via liveliness analysis. Used when graph sync is disabled, or when barrier-all / block-all debug modes force the inject path.
 
 In Triton-Ascend, graph sync can also be selected via `sync_solver=True` (maps to the graph-sync-solver path).
 
@@ -102,7 +102,7 @@ In Triton-Ascend, graph sync can also be selected via `sync_solver=True` (maps t
 - Same solver stack as intra-core GSS, configured for `CROSS_CORE_SYNC`.
 - Runs only on **MIX** kernels (not host, not pure AIC/AIV).
 - On memory-based architectures, inserts `SetFFTSBaseAddrOp` when an FFTS base-addr kernel argument is present.
-- Supports CV patterns, multibuffer flag-id strategies, round-robin event-id retry on mem-based arches, and block-all mode.
+- Supports CV patterns, multibuffer flag-id strategies, round-robin event-id retry on mem-based arches.
 
 ### DelayedCrossCoreGSS
 
@@ -113,7 +113,7 @@ In Triton-Ascend, graph sync can also be selected via `sync_solver=True` (maps t
 **Working Principles**:
 
 1. **Step 1** (before split): Run CrossCoreGSS (often with CV patterns disabled), then `InsertAnchorsAndBackup` to place `hivm.anchor` markers and clone a backup mix function.
-2. **Step 2** (after split): `DelayedCrossCoreGSS` matches backup mix + split cube/vector functions, removes stale intra-block syncs, rebuilds interval RW info from anchors, solves, and materializes syncs into mix/cube/vector functions; cleanup removes anchors/backups.
+2. **Step 2** (after plan-memory rewrites): `DelayedCrossCoreGSS` matches backup mix + split cube/vector functions, removes stale intra-block syncs, rebuilds interval RW info from anchors, solves, and materializes syncs into mix/cube/vector functions; cleanup removes anchors/backups. The solve is delayed until after `PlanMemoryRegBase` (and before `HIVMLowerToLoops`) because earlier sync results would be invalidated by bufferization / memory-planning rewrites.
 
 Enabled when both `--enable-hivm-cross-core-gss` and `--enable-hivm-delayed-cross-core-gss` are true (both default `true` on the RegBase compile surface).
 
@@ -144,7 +144,7 @@ Enabled when both `--enable-hivm-cross-core-gss` and `--enable-hivm-delayed-cros
 6. **SyncCodegen**:
    Emit `hivm.set_flag` / `hivm.wait_flag` / `hivm.pipe_barrier`.
 
-Barrier-all debug mode (`--enable-hivm-inject-barrier-all-sync`) inserts `pipe_barrier(PIPE_ALL)` before memory-effect ops instead of the normal analysis path.
+Barrier-all debug mode (`--enable-hivm-inject-barrier-all-sync`) inserts `pipe_barrier(PIPE_ALL)` before every HIVM op, memref/tensor load/store, `func::ReturnOp`, and `func::CallOp` (forces full pipeline serialization; debug only) instead of the normal analysis path.
 
 ### InjectBlockSync
 

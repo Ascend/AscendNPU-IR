@@ -47,3 +47,47 @@ func.func @no_expand_through_rank_reducing_insert(
       tensor<2xi32> into tensor<2x1xi32>
   return %expanded : tensor<2x1xi32>
 }
+
+// -----
+
+// A load -> expand -> collapse -> elementwise -> store chain. The expand's only
+// user is a collapse, but the expand must still lift across the to_tensor
+// boundary so it lands as a memref.expand_shape on the load side.
+// CHECK-LABEL: func.func @expand_collapse_load_store
+// CHECK: %[[EXPANDED:.*]] = memref.expand_shape %arg0 {{\[\[}}0], [1, 2]]
+// CHECK-SAME: output_shape [1, 2, 2] : memref<1x4xf32> into memref<1x2x2xf32>
+// CHECK: %[[TENSOR:.*]] = bufferization.to_tensor %[[EXPANDED]] : memref<1x2x2xf32>
+// CHECK: %[[COLLAPSED:.*]] = tensor.collapse_shape %[[TENSOR]] {{\[\[}}0, 1], [2]] : tensor<1x2x2xf32> into tensor<2x2xf32>
+// CHECK-NOT: tensor.expand_shape
+// CHECK: bufferization.materialize_in_destination %{{.*}} in writable %arg1 : (tensor<2x2xf32>, memref<2x2xf32>) -> ()
+func.func @expand_collapse_load_store(%src: memref<1x4xf32>, %dst: memref<2x2xf32>) {
+  %t = bufferization.to_tensor %src : memref<1x4xf32>
+  %expanded = tensor.expand_shape %t [[0], [1, 2]] output_shape [1, 2, 2] : tensor<1x4xf32> into tensor<1x2x2xf32>
+  %collapsed = tensor.collapse_shape %expanded [[0, 1], [2]] : tensor<1x2x2xf32> into tensor<2x2xf32>
+  %empty = tensor.empty() : tensor<2x2xf32>
+  %res = linalg.generic {
+      indexing_maps = [affine_map<(d0, d1) -> (d0, d1)>, affine_map<(d0, d1) -> (d0, d1)>],
+      iterator_types = ["parallel", "parallel"]}
+      ins(%collapsed : tensor<2x2xf32>) outs(%empty : tensor<2x2xf32>) {
+  ^bb0(%in: f32, %out: f32):
+    linalg.yield %in : f32
+  } -> tensor<2x2xf32>
+  bufferization.materialize_in_destination %res in writable %dst : (tensor<2x2xf32>, memref<2x2xf32>) -> ()
+  return
+}
+
+// -----
+
+// CHECK-LABEL: func.func @no_unit_expand_through_to_tensor
+// CHECK: %[[T:.*]] = bufferization.to_tensor %arg0 : memref<64x1xf32>
+// CHECK-NEXT: %[[E:.*]] = tensor.expand_shape %[[T]] {{\[\[}}0, 1], [2]]
+// CHECK-SAME: output_shape [1, 64, 1] : tensor<64x1xf32> into tensor<1x64x1xf32>
+// CHECK-NEXT: %[[C:.*]] = tensor.collapse_shape %[[E]] {{\[\[}}0], [1, 2]] : tensor<1x64x1xf32> into tensor<1x64xf32>
+// CHECK-NOT: memref.expand_shape
+// CHECK: return %[[C]] : tensor<1x64xf32>
+func.func @no_unit_expand_through_to_tensor(%src: memref<64x1xf32>) -> tensor<1x64xf32> {
+  %t = bufferization.to_tensor %src : memref<64x1xf32>
+  %expanded = tensor.expand_shape %t [[0, 1], [2]] output_shape [1, 64, 1] : tensor<64x1xf32> into tensor<1x64x1xf32>
+  %collapsed = tensor.collapse_shape %expanded [[0], [1, 2]] : tensor<1x64x1xf32> into tensor<1x64xf32>
+  return %collapsed : tensor<1x64xf32>
+}

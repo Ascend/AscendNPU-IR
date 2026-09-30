@@ -374,7 +374,7 @@ static LogicalResult emitKTilingBlockPtr(triton::DotOp dot,
     return failure();
 
   auto aTy = cast<RankedTensorType>(loadA.getResult().getType());
-  int64_t K = aTy.getDimSize(1); // A is [M, K]
+  [[maybe_unused]] int64_t K = aTy.getDimSize(1); // A is [M, K]
 
   // Build new ptr types: A -> [M, kTile], B -> [kTile, N].
   SmallVector<int32_t> tileShapeA{static_cast<int32_t>(M),
@@ -648,7 +648,7 @@ emitKTilingBlockPtrFromBase(triton::DotOp dot, triton::LoadOp loadA,
   int64_t M = dTy.getDimSize(0);
   int64_t N = dTy.getDimSize(1);
   auto aTy = cast<RankedTensorType>(loadA.getResult().getType());
-  int64_t K = aTy.getDimSize(1);
+  [[maybe_unused]] int64_t K = aTy.getDimSize(1);
 
   rewriter.setInsertionPoint(dot);
 
@@ -1770,7 +1770,7 @@ struct TileDotPattern : public OpRewritePattern<triton::DotOp> {
 
     auto aTy = cast<RankedTensorType>(dot.getA().getType());
     auto dTy = cast<RankedTensorType>(dot.getResult().getType());
-    int64_t M = dTy.getDimSize(0), N = dTy.getDimSize(1);
+    [[maybe_unused]] int64_t M = dTy.getDimSize(0), N = dTy.getDimSize(1);
     int64_t K = aTy.getDimSize(1);
     int64_t realKSize = K;
     if (dot->hasAttr(realKSizeAttr)) {
@@ -2065,7 +2065,7 @@ static Value loadStagedScratchTile(PatternRewriter &rewriter, Location loc,
       /*padding=*/std::optional<triton::PaddingOption>(),
       triton::CacheModifier::NONE, triton::EvictionPolicy::NORMAL,
       /*isVolatile=*/false);
-  
+
   loadOp->setAttr("startConst", rewriter.getI32IntegerAttr(0));
   loadOp->setAttr("otherStart", rewriter.getI32IntegerAttr(0));
   loadOp->setAttr("kAxis", rewriter.getI32IntegerAttr(kAxis));
@@ -2584,7 +2584,7 @@ struct StageNonLoadOperandPattern : public OpRewritePattern<triton::DotOp> {
       auto storeOp = rewriter.create<triton::StoreOp>(
           loc, envPtrs, dot.getA(), /*mask=*/Value(),
           triton::CacheModifier::NONE, triton::EvictionPolicy::NORMAL);
-      
+
       storeOp->setAttr("startConst", rewriter.getI32IntegerAttr(0));
       storeOp->setAttr("otherStart", rewriter.getI32IntegerAttr(0));
       storeOp->setAttr("kAxis", rewriter.getI32IntegerAttr(1));
@@ -2732,7 +2732,7 @@ struct StageNonLoadOperandPattern : public OpRewritePattern<triton::DotOp> {
           /*padding=*/std::optional<triton::PaddingOption>(),
           triton::CacheModifier::NONE, triton::EvictionPolicy::NORMAL,
           /*isVolatile=*/false);
-      
+
       loadOp->setAttr("startConst", rewriter.getI32IntegerAttr(0));
       loadOp->setAttr("otherStart", rewriter.getI32IntegerAttr(0));
       loadOp->setAttr("kAxis", rewriter.getI32IntegerAttr(kAxis));
@@ -2765,9 +2765,8 @@ struct StageNonLoadOperandPattern : public OpRewritePattern<triton::DotOp> {
         Value tiledKRange1D =
             rewriter.create<arith::AddIOp>(loc, kBaseSplat, hoistedKRangeBase);
         if (tiledBLoopStrideAddition)
-          tiledKRange1D =
-              rewriter.create<arith::AddIOp>(loc, tiledKRange1D,
-                                             tiledBLoopStrideAddition);
+          tiledKRange1D = rewriter.create<arith::AddIOp>(
+              loc, tiledKRange1D, tiledBLoopStrideAddition);
         bTile = emitTensorOfPtrsBKAxis0Tile(rewriter, loc, bLoad, *bTopInfo,
                                             *bHoisted, N, kTile, tiledKRange1D);
         if (!bTile) {
@@ -2918,9 +2917,9 @@ struct TileCGroupPattern : public OpRewritePattern<triton::DotOp> {
           rewriter, loc, scratchArg, dimOther, /*tileSize=*/envSize,
           /*envSize=*/envSize, kAxis, /*tileIdxI32=*/Value(),
           /*startConst=*/0, elemTy);
-      auto storeOp = rewriter.create<triton::StoreOp>(loc, envPtrs, v, /*mask=*/Value(),
-                                       triton::CacheModifier::NONE,
-                                       triton::EvictionPolicy::NORMAL);
+      auto storeOp = rewriter.create<triton::StoreOp>(
+          loc, envPtrs, v, /*mask=*/Value(), triton::CacheModifier::NONE,
+          triton::EvictionPolicy::NORMAL);
       stagedOperands.push_back({v, scratchArg});
 
       storeOp->setAttr("startConst", rewriter.getI32IntegerAttr(0));
@@ -3024,7 +3023,10 @@ struct TileCGroupPattern : public OpRewritePattern<triton::DotOp> {
           loadOp->setAttr("kAxis", rewriter.getI32IntegerAttr(kAxis));
           loadOp->setAttr("tileSize", rewriter.getI32IntegerAttr(kTile));
           loadOp->setAttr("dimOther", rewriter.getI32IntegerAttr(dimOther));
-          loadOp->setAttr("rowStride", rewriter.getI32IntegerAttr((kAxis == 0 && scratchOtherDim > 0) ? scratchOtherDim : dimOther));
+          loadOp->setAttr("rowStride", rewriter.getI32IntegerAttr(
+                                           (kAxis == 0 && scratchOtherDim > 0)
+                                               ? scratchOtherDim
+                                               : dimOther));
           loadOp->setAttr("isStatic", rewriter.getBoolAttr(false));
           return loadOp.getResult();
         }
@@ -3270,15 +3272,17 @@ struct TileABChainPattern : public OpRewritePattern<triton::DotOp> {
           /*tileSize=*/kAxis == 0 ? rt.getDimSize(0) : rt.getDimSize(1),
           /*envSize=*/kAxis == 0 ? rt.getDimSize(0) : rt.getDimSize(1), kAxis,
           /*tileIdxI32=*/Value(), /*startConst=*/0, rt.getElementType());
-      auto storeOp = rewriter.create<triton::StoreOp>(loc, envPtrs, v, /*mask=*/Value(),
-                                       triton::CacheModifier::NONE,
-                                       triton::EvictionPolicy::NORMAL);
+      auto storeOp = rewriter.create<triton::StoreOp>(
+          loc, envPtrs, v, /*mask=*/Value(), triton::CacheModifier::NONE,
+          triton::EvictionPolicy::NORMAL);
       stagedOperands.push_back({v, scratchArg});
 
       storeOp->setAttr("startConst", rewriter.getI32IntegerAttr(0));
       storeOp->setAttr("otherStart", rewriter.getI32IntegerAttr(0));
       storeOp->setAttr("kAxis", rewriter.getI32IntegerAttr(kAxis));
-      storeOp->setAttr("tileSize", rewriter.getI32IntegerAttr(kAxis == 0 ? rt.getDimSize(0) : rt.getDimSize(1)));
+      storeOp->setAttr("tileSize",
+                       rewriter.getI32IntegerAttr(
+                           kAxis == 0 ? rt.getDimSize(0) : rt.getDimSize(1)));
       storeOp->setAttr("dimOther", rewriter.getI32IntegerAttr(dimOther));
       storeOp->setAttr("rowStride", rewriter.getI32IntegerAttr(dimOther));
       storeOp->setAttr("isStatic", rewriter.getBoolAttr(true));

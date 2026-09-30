@@ -202,8 +202,7 @@ SyncSolverBase::buildSiblingIfExtraConflictOccs(
     const SetWaitPairInfo &setWaitPairInfo, ConflictPair &conflictPair,
     Occurrence *setOcc, Occurrence *waitOcc) {
   assert(setWaitPairInfo.setWaitInside);
-  auto collectBranchOccs = [&](Occurrence *occ, Occurrence *ifOcc,
-                               bool isSet) {
+  auto collectBranchOccs = [&](Occurrence *occ, Occurrence *ifOcc, bool isSet) {
     llvm::SmallVector<Occurrence *, 2> branchOccs{occ};
     if (ifOcc != nullptr) {
       if (auto *mirrorOcc = getElseBranchOcc(ifOcc, isSet))
@@ -216,8 +215,7 @@ SyncSolverBase::buildSiblingIfExtraConflictOccs(
       collectBranchOccs(setOcc, setWaitPairInfo.setIfOcc, /*isSet=*/true);
   auto waitOccs =
       collectBranchOccs(waitOcc, setWaitPairInfo.waitIfOcc, /*isSet=*/false);
-  conflictPair.mirrorSetIfOcc =
-      setOccs.size() > 1 ? setOccs.back() : nullptr;
+  conflictPair.mirrorSetIfOcc = setOccs.size() > 1 ? setOccs.back() : nullptr;
   conflictPair.mirrorWaitIfOcc =
       waitOccs.size() > 1 ? waitOccs.back() : nullptr;
 
@@ -226,9 +224,8 @@ SyncSolverBase::buildSiblingIfExtraConflictOccs(
     for (auto *extraWaitOcc : waitOccs)
       extraOccPairs.push_back({extraSetOcc, extraWaitOcc, nullptr});
 
-  auto *ifOcc = setWaitPairInfo.setIfOcc != nullptr
-                    ? setWaitPairInfo.setIfOcc
-                    : setWaitPairInfo.waitIfOcc;
+  auto *ifOcc = setWaitPairInfo.setIfOcc != nullptr ? setWaitPairInfo.setIfOcc
+                                                    : setWaitPairInfo.waitIfOcc;
   assert(ifOcc != nullptr);
   extraOccPairs.push_back({setOcc, waitOcc, ifOcc->parentOcc});
   return extraOccPairs;
@@ -310,7 +307,7 @@ Occurrence *SyncSolverBase::getFirstIterOcc(Occurrence *occ,
   assert(parOcc1 != nullptr && parOcc2 != nullptr);
 
   while (parOcc2 != occ) {
-    bool found = false;
+    [[maybe_unused]] bool found = false;
     for (auto [childOcc1, childOcc2] :
          llvm::zip(parOcc1->childOccs, parOcc2->childOccs)) {
       if (childOcc2->isAncestor(occ)) {
@@ -351,7 +348,7 @@ Occurrence *SyncSolverBase::getLastIterOcc(Occurrence *occ,
   assert(parOcc1 != nullptr && parOcc2 != nullptr);
 
   while (parOcc1 != occ) {
-    bool found = false;
+    [[maybe_unused]] bool found = false;
     for (auto [childOcc1, childOcc2] :
          llvm::zip(parOcc1->childOccs, parOcc2->childOccs)) {
       if (childOcc1->isAncestor(occ)) {
@@ -1209,7 +1206,7 @@ SyncSolverBase::checkCVPreloadingEventIdInfo(Occurrence *occ1, Occurrence *occ2,
                                  : 1;
 
     if (options.isCrossCoreMode()) {
-      assert(preloadDiff % 2 == 1);
+      assert(preloadDiff % 2 == 1 || preloadDiff == 0);
       if (multibufferNum >= eventIdNum) {
         EventIdInfo eventIdInfo(multibufferNum);
         eventIdInfo.cvPreloadingInfo =
@@ -1225,7 +1222,8 @@ SyncSolverBase::checkCVPreloadingEventIdInfo(Occurrence *occ1, Occurrence *occ2,
             CVPreloadingInfo(parentCVPipeliningLoop1, parentScope1,
                              parentScope2, preloadOffset1, preloadOffset2);
         return eventIdInfo;
-      } else if (multibufferNum == 1) {
+      }
+      if (multibufferNum == 1) {
         // instead of inserting outside of the scopes, use the unlikely trick
         EventIdInfo eventIdInfo(1);
         eventIdInfo.cvPreloadingInfo =
@@ -1648,16 +1646,12 @@ SyncSolverBase::getFixedSetWaitOcc(Occurrence *occ1, Occurrence *occ2,
     if (waitCondition == nullptr ||
         waitBranchOcc->op != waitCondition->getTrueScope())
       waitIfOcc = nullptr;
-    auto [setLCAOp, waitLCAOp] =
-        OperationBase::getLCAPair(occ1->op, occ2->op);
+    auto [setLCAOp, waitLCAOp] = OperationBase::getLCAPair(occ1->op, occ2->op);
 
-    auto *expectedSetLCA =
-        setIfOcc != nullptr ? setIfOcc->op : occ1->op;
-    auto *expectedWaitLCA =
-        waitIfOcc != nullptr ? waitIfOcc->op : occ2->op;
+    auto *expectedSetLCA = setIfOcc != nullptr ? setIfOcc->op : occ1->op;
+    auto *expectedWaitLCA = waitIfOcc != nullptr ? waitIfOcc->op : occ2->op;
     bool bothEndpointsInIf = setIfOcc != nullptr && waitIfOcc != nullptr;
-    bool areDifferentIfs =
-        bothEndpointsInIf && setIfOcc->op != waitIfOcc->op;
+    bool areDifferentIfs = bothEndpointsInIf && setIfOcc->op != waitIfOcc->op;
     bool lcaMatchesEndpoints =
         setLCAOp == expectedSetLCA && waitLCAOp == expectedWaitLCA;
     if (bothEndpointsInIf && areDifferentIfs && lcaMatchesEndpoints) {
@@ -2118,8 +2112,7 @@ ConflictPair *SyncSolverBase::handleSetWaitConflict(
   assert((!setWaitPairInfo.isOpForwardPair ||
           !setWaitPairInfo.isSetWaitBackwardPair) ||
          setWaitPairInfo.isCVPipelining || setWaitPairInfo.isCVPreloading ||
-         setWaitPairInfo.setWaitInside ||
-         options.enableUnitFlagFeature);
+         setWaitPairInfo.setWaitInside || options.enableUnitFlagFeature);
 
   bool movedToOuterLoop{false};
   Loop *parentLCALoopOp{nullptr};
@@ -2130,9 +2123,12 @@ ConflictPair *SyncSolverBase::handleSetWaitConflict(
   // calc norm scope occs
   Occurrence *parOcc1 = setOcc->parentOcc;
   Occurrence *parOcc2 = waitOcc->parentOcc;
-
+  if (setWaitPairInfo.isCVPipelining) {
+    parOcc1 = setOcc->getNthParent(3);
+    parOcc2 = waitOcc->getNthParent(3);
+  }
   assert(parOcc1->op == parOcc2->op || setWaitPairInfo.isCVPreloading ||
-         setWaitPairInfo.isCVPipelining || setWaitPairInfo.setWaitInside);
+         setWaitPairInfo.setWaitInside);
 
   // create set/wait conflict-pair
   auto conflictPair = std::make_unique<ConflictPair>(
@@ -2367,8 +2363,8 @@ ConflictPair *SyncSolverBase::handleSetWaitConflict(
   }
   if (setWaitPairInfo.setWaitInside) {
     for (auto [extraSetOcc, extraWaitOcc, parentOcc] :
-         buildSiblingIfExtraConflictOccs(setWaitPairInfo, *conflictPair,
-                                         setOcc, waitOcc)) {
+         buildSiblingIfExtraConflictOccs(setWaitPairInfo, *conflictPair, setOcc,
+                                         waitOcc)) {
       if (!insertExtraConflictPair(extraSetOcc, extraWaitOcc, parentOcc,
                                    /*couldNotRun=*/false)) {
         return nullptr;
@@ -2888,16 +2884,16 @@ SyncBeforeAfterMap SyncSolverBase::getBeforeAfterSyncMaps() {
       });
       assert(setOp != nullptr && waitOp != nullptr);
       if (conflictPair->mirrorSetIfOcc != nullptr) {
-        auto setMirror = setOp->clone(
-            conflictPair->mirrorSetIfOcc->op->op,
-            conflictPair->mirrorSetIfOcc->op->parentOp);
+        auto setMirror =
+            setOp->clone(conflictPair->mirrorSetIfOcc->op->op,
+                         conflictPair->mirrorSetIfOcc->op->parentOp);
         syncMapAfter[conflictPair->mirrorSetIfOcc->op].push_back(
             std::move(setMirror));
       }
       if (conflictPair->mirrorWaitIfOcc != nullptr) {
-        auto waitMirror = waitOp->clone(
-            conflictPair->mirrorWaitIfOcc->op->op,
-            conflictPair->mirrorWaitIfOcc->op->parentOp);
+        auto waitMirror =
+            waitOp->clone(conflictPair->mirrorWaitIfOcc->op->op,
+                          conflictPair->mirrorWaitIfOcc->op->parentOp);
         syncMapBefore[conflictPair->mirrorWaitIfOcc->op].push_front(
             std::move(waitMirror));
       }

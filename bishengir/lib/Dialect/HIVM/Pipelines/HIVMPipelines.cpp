@@ -37,6 +37,22 @@
 namespace mlir {
 namespace hivm {
 
+static bool enableRegisteredPreloadHeuristics(
+    const HIVMPipelineOptions &pipelineOpts) {
+  return pipelineOpts.enablePreload &&
+         pipelineOpts.setWorkspaceMultibuffer != 0;
+}
+
+static MarkRealCoreTypeOptions
+markCoreTypeOpts(const HIVMPipelineOptions &pipelineOpts,
+                 bool removeCoreTypeAttrs = false) {
+  MarkRealCoreTypeOptions opts;
+  opts.enablePreload = pipelineOpts.enablePreload;
+  opts.workspaceMultiBufferNum = pipelineOpts.setWorkspaceMultibuffer;
+  opts.removeCoreTypeAttrs = removeCoreTypeAttrs;
+  return opts;
+}
+
 void canonicalizationHIVMPipeline(OpPassManager &pm) {
   pm.addPass(createArithToAffineConversionPass());
   pm.nest<func::FuncOp>().addPass(scf::createCanonicalizeIterArgPass());
@@ -79,7 +95,7 @@ hivmCrossCoreSyncPipeline(OpPassManager &pm,
   // synchronization passes.
   // Canonicalize first, since some ops may be rewritten or removed.
   canonicalizationHIVMPipeline(pm);
-  pm.addPass(createMarkRealCoreTypePass());
+  pm.addPass(createMarkRealCoreTypePass(markCoreTypeOpts(hivmPipelineOptions)));
   if (hivmPipelineOptions.enableHIVMCrossCoreGSS &&
       !hivmPipelineOptions.enableHIVMInjectBlockAllSync &&
       !hivmPipelineOptions.disableAutoInjectBlockSync) {
@@ -102,9 +118,8 @@ hivmCrossCoreSyncPipeline(OpPassManager &pm,
   // passes. Note that they are only inserted by mark-real-core-type pass so
   // it's safe to remove them. And after split-mix-kernel pass, they are not
   // needed.
-  MarkRealCoreTypeOptions markRealCoreTypeOptions;
-  markRealCoreTypeOptions.removeCoreTypeAttrs = true;
-  pm.addPass(createMarkRealCoreTypePass(markRealCoreTypeOptions));
+  pm.addPass(createMarkRealCoreTypePass(
+      markCoreTypeOpts(hivmPipelineOptions, /*removeCoreTypeAttrs=*/true)));
 }
 
 static void inferAndSetBufferSizePipeline(OpPassManager &pm) {
@@ -299,6 +314,7 @@ static void hivmPreBufferizationOptimizationPipeline(
           hivmPipelineOptions.setWorkspaceMultibuffer;
       pipelineOptions.enableLazyLoading = hivmPipelineOptions.enableLazyLoading;
       pipelineOptions.pipelineMode = hivmPipelineOptions.setCVPipelineMode;
+      pipelineOptions.enablePreload = hivmPipelineOptions.enablePreload;
       // Workspace allocation with dyn size, requires setbuffersize pass to get
       // fixed size.
       pm.nest<func::FuncOp>().addPass(createSetBufferSizePass());
@@ -354,6 +370,13 @@ static void hivmPreBufferizationOptimizationPipeline(
   // Split mix kernel is done before bufferization because it depends on
   // tensor SSA property.
   pm.addPass(createSplitMixKernelPass());
+  if (enableRegisteredPreloadHeuristics(hivmPipelineOptions)) {
+    MergeSamePreloadScopesOptions mergeOpts;
+    mergeOpts.enablePreload = true;
+    mergeOpts.workspaceMultiBufferNum =
+        hivmPipelineOptions.setWorkspaceMultibuffer;
+    pm.addPass(createMergeSamePreloadScopesPass(mergeOpts));
+  }
   pm.addPass(scope::createInlineScopePass());
   if (!hivmPipelineOptions.skipHIVMBindSubBlockPass) {
     TileAndBindSubBlockOptions tileOptions;
@@ -502,7 +525,11 @@ static void hivmPostBufferizationOptimizationPipeline(
   syncBlockLockPipeline(pm, SyncBlockLockPipelinePhase::Prepare);
   pm.addPass(createInferHIVMMemScopePass());
   if (hivmPipelineOptions.enablePreload) {
-    pm.addPass(createCreatePreloadPass());
+    CreatePreloadOptions preloadOpts;
+    preloadOpts.enablePreload = true;
+    preloadOpts.workspaceMultiBufferNum =
+        hivmPipelineOptions.setWorkspaceMultibuffer;
+    pm.addPass(createCreatePreloadPass(preloadOpts));
   }
   // Normal sync (inject-sync, graph-sync-solver) passes.
   hivmNormSyncPipeline(pm, hivmPipelineOptions);

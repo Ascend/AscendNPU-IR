@@ -67,4 +67,6 @@ add_public_tablegen_target(BiShengIRHIVMAttributesIncGen)
 add_dependencies(mlir-headers BiShengIRHIVMEnumsIncGen)
 add_dependencies(mlir-headers BiShengIRHIVMAttributesIncGen)
 
+add_subdirectory(Contracts)
+
 add_bishengir_doc(HIVMDoc HIVMDialect Dialects/ -gen-dialect-doc -dialect=hivm)

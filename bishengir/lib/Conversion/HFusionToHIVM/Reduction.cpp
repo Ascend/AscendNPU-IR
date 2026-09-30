@@ -69,7 +69,7 @@ static BoolAttr getReduceUnsignedSourceAttr(Operation *op) {
   return BoolAttr::get(ctx, false);
 }
 
-static hivm::ReduceOperation
+[[maybe_unused]] static hivm::ReduceOperation
 getReduceWithIndexKind(hfusion::ReduceWithIndexOp reduceOp) {
   auto reduceKind = reduceOp.getReduceKindAttr().getReduceWithIndexKind();
   if (reduceKind == hfusion::ReduceWithIndexKind::MAX) {
@@ -195,16 +195,18 @@ struct LinalgToHIVMReduceLikeOp : public OpRewritePattern<ReduceOpTy> {
     // For reduce with index op that has index as input, note that the index is
     // not used in the hivm op because hivm op creates its own index.
     auto indices = (reduceOpInputs.size() > 1) ? reduceOpInputs[1] : nullptr;
-    auto hivmOp = isRegBasedArch
-        ? rewriter.create<hivm::VReduceOp>(
-            reduceOp.getLoc(), TypeRange(resTypeVec), reduceOpInputs[0],
-            ValueRange(expandShapeOps), getReduceOpAttr(reduceOp),
-            getReduceUnsignedSourceAttr(reduceOp),
-            getReduceTieBreakLeftAttr(reduceOp), reduceOp.getDimensionsAttr())
-        : rewriter.create<hivm::VReduceOp>(
-            reduceOp.getLoc(), TypeRange(resTypeVec), reduceOpInputs[0],
-            ValueRange(expandShapeOps), getReduceOpAttr(reduceOp),
-            reduceOp.getDimensionsAttr(), indices);
+    auto hivmOp =
+        isRegBasedArch
+            ? rewriter.create<hivm::VReduceOp>(
+                  reduceOp.getLoc(), TypeRange(resTypeVec), reduceOpInputs[0],
+                  ValueRange(expandShapeOps), getReduceOpAttr(reduceOp),
+                  getReduceUnsignedSourceAttr(reduceOp),
+                  getReduceTieBreakLeftAttr(reduceOp),
+                  reduceOp.getDimensionsAttr())
+            : rewriter.create<hivm::VReduceOp>(
+                  reduceOp.getLoc(), TypeRange(resTypeVec), reduceOpInputs[0],
+                  ValueRange(expandShapeOps), getReduceOpAttr(reduceOp),
+                  reduceOp.getDimensionsAttr(), indices);
 
     if (isRegBasedArch && reduceOp->hasAttr("already_initialize_init"))
       hivmOp->setDiscardableAttr("already_initialize_init",

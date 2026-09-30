@@ -18,11 +18,26 @@
 #include "mlir/Target/LLVMIR/ModuleTranslation.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/IntrinsicsHIVM.h"
+#include "llvm/Support/Compiler.h"
 
 using namespace mlir;
 using namespace mlir::LLVM;
 
 namespace {
+
+LLVM_ATTRIBUTE_NOINLINE void
+convertHIVMRegbaseIntrinsic(Operation &opInst, llvm::IRBuilderBase &builder,
+                            LLVM::ModuleTranslation &moduleTranslation,
+                            llvm::Intrinsic::ID intrinsic, unsigned numResults,
+                            ArrayRef<unsigned> overloadedResults,
+                            ArrayRef<unsigned> overloadedOperands) {
+  auto *inst = LLVM::detail::createIntrinsicCall(
+      builder, moduleTranslation, &opInst, intrinsic, numResults,
+      overloadedResults, overloadedOperands, /*immArgPositions=*/{},
+      /*immArgAttrNames=*/{});
+  if (numResults != 0)
+    moduleTranslation.mapValue(opInst.getResult(0), inst);
+}
 
 /// Create metadata nodes as {mdName, value} and attach to func
 void addAnnotationMD(llvm::Function *func, StringRef mdName, uint32_t value) {
@@ -34,8 +49,33 @@ void addAnnotationMD(llvm::Function *func, StringRef mdName, uint32_t value) {
           llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), value))};
 
   llvm::MDNode *mdNode = llvm::MDNode::get(ctx, mdVals);
-  assert(mdNode!=nullptr);
+  assert(mdNode != nullptr);
   func->addMetadata(llvm::LLVMContext::MD_annotation, *mdNode);
+}
+
+LogicalResult convertLaunchFunc(hivm_regbaseintrins::LaunchFuncOp launchOp,
+                                llvm::IRBuilderBase &builder,
+                                LLVM::ModuleTranslation &moduleTranslation) {
+  llvm::Value *blockX =
+      moduleTranslation.lookupValues(launchOp.getBlockSizeX()).front();
+  llvm::Value *blockY =
+      moduleTranslation.lookupValues(launchOp.getBlockSizeY()).front();
+  constexpr uint64_t configValYShift = 16;
+  llvm::Value *blockZ =
+      moduleTranslation.lookupValues(launchOp.getBlockSizeZ()).front();
+  constexpr uint64_t configValZShift = 32;
+  llvm::Value *operand =
+      builder.CreateOr(builder.CreateShl(blockY, configValYShift),
+                       builder.CreateShl(blockZ, configValZShift));
+  operand = builder.CreateOr(operand, blockX);
+  builder.CreateIntrinsic(llvm::Intrinsic::hivm_store_vfsimt_info, {},
+                          {operand});
+
+  llvm::Function *func = moduleTranslation.lookupFunction(launchOp.getKernel());
+  auto funcOperands = moduleTranslation.lookupValues(launchOp.getOpnds());
+  auto *callInst = builder.CreateCall(func, funcOperands);
+  callInst->setCallingConv(llvm::CallingConv::TPE_SIMTEntry);
+  return success();
 }
 
 /// Implementation of the dialect interface that converts operations belonging
@@ -56,36 +96,8 @@ public:
     // `hivm_regbaseintrins.launch_func` will emit two instructions:
     // - hivm.store.vfsimt.info
     // - call simt_func @foo
-    if (auto launchOp = dyn_cast<hivm_regbaseintrins::LaunchFuncOp>(op)) {
-      // Firstly setup the configuration for vfsimt.info, verified with
-      // test/CodeGen/HiIPU/V310/simt_entry_args_convert/cast_address_space.ll
-      // | reserve |    z    |    y    |    x    |
-      // 64       48        32        16         0
-      llvm::Value *blockX =
-          moduleTranslation.lookupValues(launchOp.getBlockSizeX()).front();
-      llvm::Value *blockY =
-          moduleTranslation.lookupValues(launchOp.getBlockSizeY()).front();
-      constexpr uint64_t configValYShift = 16;
-      llvm::Value *blockZ =
-          moduleTranslation.lookupValues(launchOp.getBlockSizeZ()).front();
-      constexpr uint64_t configValZShift = 32;
-      llvm::Value *operand =
-          builder.CreateOr(builder.CreateShl(blockY, configValYShift),
-                           builder.CreateShl(blockZ, configValZShift));
-      operand = builder.CreateOr(operand, blockX);
-      // Create the intrinsic with the proper block dimensions
-      builder.CreateIntrinsic(llvm::Intrinsic::hivm_store_vfsimt_info, {},
-                              {operand});
-
-      // Now generate the CallInst
-      llvm::Function *func =
-          moduleTranslation.lookupFunction(launchOp.getKernel());
-      auto funcOperands = moduleTranslation.lookupValues(launchOp.getOpnds());
-      auto *callInst = builder.CreateCall(func, funcOperands);
-      // ... and set the calling convention
-      callInst->setCallingConv(llvm::CallingConv::TPE_SIMTEntry);
-      return success();
-    }
+    if (auto launchOp = dyn_cast<hivm_regbaseintrins::LaunchFuncOp>(op))
+      return convertLaunchFunc(launchOp, builder, moduleTranslation);
     return failure();
   }
 

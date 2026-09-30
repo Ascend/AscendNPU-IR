@@ -42,7 +42,7 @@ void tensormap_cp_fenceproxy(Location loc, MLIRContext *ctx,
   cp(outAddrOpr, inAddrOpr, sizeOpr).predicate(pred);
 
   ptxBuilder.launch(rewriter, loc, void_ty(ctx));
-};
+}
 
 void tensormap_replace_generic(Location loc, MLIRContext *ctx,
                                ConversionPatternRewriter &rewriter,

@@ -52,7 +52,7 @@ void doTaskPartition(triton::FuncOp &funcOp, unsigned numWarpGroups) {
   if (loops.empty() || loads.empty() || dots.empty())
     return;
 
-  auto getLoopLevel = [&](Operation *op) {
+  [[maybe_unused]] auto getLoopLevel = [&](Operation *op) {
     // Compute loop depth
     unsigned depth = 0;
     Operation *parent = op->getParentOp();

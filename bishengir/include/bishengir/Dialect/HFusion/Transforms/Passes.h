@@ -120,7 +120,8 @@ std::unique_ptr<Pass>
 createHFusionAutoVectorizeV2Pass(const AutoVectorizeV2Options &options = {});
 
 /// Register Tree Reduce v2 pass
-std::unique_ptr<Pass> createTreeReduceV2Pass(const TreeReduceV2Options &options = {});
+std::unique_ptr<Pass>
+createTreeReduceV2Pass(const TreeReduceV2Options &options = {});
 
 // Create a pass to perform elemwise op fusion before vectorization
 std::unique_ptr<Pass> createPreVectorizationFusionPass(
@@ -188,8 +189,7 @@ createPackTilingDataPass(const PackTilingDataOptions &options = {});
 std::unique_ptr<Pass> createConstantizeTilingDataPass();
 
 /// Create a pass to label the triton entry kernel
-std::unique_ptr<Pass>
-createAdaptTritonKernelPass();
+std::unique_ptr<Pass> createAdaptTritonKernelPass();
 
 /// Create a pass to infer func fusion kind
 std::unique_ptr<Pass> createInferFuncFusionKind();
@@ -211,7 +211,8 @@ std::unique_ptr<Pass> createLegalizeFP8Pass();
 
 /// Create a pass to legalize bool
 std::unique_ptr<Pass> createLegalizeBoolPass();
-std::unique_ptr<Pass> createLegalizeBoolPass(const LegalizeBoolPassOptions &options);
+std::unique_ptr<Pass>
+createLegalizeBoolPass(const LegalizeBoolPassOptions &options);
 
 /// create a pass to reorder hfusion ops by bfs
 std::unique_ptr<Pass> createReorderOpsByBFS();
@@ -273,7 +274,8 @@ std::unique_ptr<Pass> createPrepareI1Nx1ForVectorizationPass();
 std::unique_ptr<Pass> createSimplifyVFArgsPass();
 
 // Create a pass to Merge VF function
-std::unique_ptr<Pass> createMergeVecScopePass(const MergeVecScopeOptions &options = {});
+std::unique_ptr<Pass>
+createMergeVecScopePass(const MergeVecScopeOptions &options = {});
 
 /// Create a pass to pull slice into vector function.
 std::unique_ptr<Pass> createPullSliceIntoVectorFunctionPass();
@@ -291,7 +293,6 @@ std::unique_ptr<Pass> createRemoveRedundantWriteAndReadPairPass();
 // Create a pass to unroll small trip-count scf.for in VF and forward
 // transfer_write -> transfer_read so intermediates stay in vector registers.
 std::unique_ptr<Pass> createUnrollAndForwardPass();
-
 
 // Create a pass to hoist loop-carried transfer_read/transfer_write pairs out of
 // scf.for loops, keeping the temporary value in registers across iterations.
