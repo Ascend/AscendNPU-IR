@@ -231,6 +231,18 @@ def OptimizeMath
   ];
 }
 
+def OptimizeSIMTExpressions
+    : Pass<"optimize-simt-expressions", "mlir::triton::FuncOp"> {
+  let summary = "Optimize shared expressions across small Triton broadcasts";
+  let description = [{
+    Partition pure elementwise consumers of a small broadcast, including
+    two-term additive reductions, and simplify conditional XOR updates.
+  }];
+  let constructor = "bishengir::triton::createOptimizeSIMTExpressionsPass()";
+  let dependentDialects = ["mlir::arith::ArithDialect",
+                           "mlir::triton::TritonDialect",
+  ];
+}
 
 def HoistAndFuseDotChains
    : Pass<"hoist-and-fuse-dot-chains", "mlir::triton::FuncOp"> {

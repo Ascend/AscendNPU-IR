@@ -129,6 +129,9 @@ createTileDotLoadsPass(const TileDotLoadsOptions &options = {});
 /// adjacent constant-splat scale)
 std::unique_ptr<mlir::Pass> createOptimizeMathPass();
 
+/// Optimize shared expressions after SIMT auto blockification.
+std::unique_ptr<mlir::Pass> createOptimizeSIMTExpressionsPass();
+
 /// Run two complementary transformations on K-tile chain loops:
 ///   1. Hoist any tt.trans whose source is loop-invariant out of every
 ///      scf.for (targeted LICM specialization).

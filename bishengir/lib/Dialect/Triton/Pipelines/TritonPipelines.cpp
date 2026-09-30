@@ -121,6 +121,8 @@ void buildLowerTritonPipeline(OpPassManager &pm,
     pm.addNestedPass<mlir::triton::FuncOp>(
         bishengir::triton::createSIMTAutoBlockifyPass(
             options.superBlockFactor));
+  pm.addNestedPass<mlir::triton::FuncOp>(
+      bishengir::triton::createOptimizeSIMTExpressionsPass());
   pm.addPass(bishengir::triton::createOptimizeLoadsPass());
   pm.addPass(bishengir::triton::createLoopRestructureArangeOptimizationPass());
   if (options.enableCGroupingDotTileLowering)

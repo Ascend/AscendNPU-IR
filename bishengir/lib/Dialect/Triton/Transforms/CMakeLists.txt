@@ -31,6 +31,7 @@ if(BISHENGIR_ENABLE_TRITON_COMPILE)
     TileDotLoads.cpp
     DotTilingCostModel.cpp
     OptimizeMath.cpp
+    OptimizeSIMTExpressions.cpp
     HoistAndFuseDotChains.cpp
     GroupDotChainsForOverlap.cpp
   )

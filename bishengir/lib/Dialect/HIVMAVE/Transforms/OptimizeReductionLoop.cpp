@@ -5,6 +5,7 @@
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVMAVE/IR/HIVMAVE.h"
 #include "bishengir/Dialect/HIVMAVE/Transforms/Passes.h"
 #include "bishengir/Dialect/Utils/Util.h"
@@ -15,12 +16,16 @@
 #include "mlir/Dialect/SCF/Transforms/Transforms.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Operation.h"
+#include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/Value.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#include "llvm/ADT/MapVector.h"
 
 #define DEBUG_TYPE "optimize-reduction-loop"
 #define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] ")
@@ -35,6 +40,199 @@ using namespace mlir::hivmave;
 
 constexpr auto REDUCTION_LOOP_ATTR = "reductionLoop";
 constexpr auto REDUCTION_OP_ATTR = "reductionOp";
+
+namespace {
+
+// Trace supported views to their source buffers. This check only compares
+// pointer_cast base addresses; it does not account for view offsets or extents.
+// Unsupported view operations remain unknown.
+static Value getBufferRoot(Value value) {
+  while (Operation *op = value.getDefiningOp()) {
+    if (auto subview = dyn_cast<memref::SubViewOp>(op))
+      value = subview.getSource();
+    else if (auto cast = dyn_cast<memref::CastOp>(op))
+      value = cast.getSource();
+    else if (auto collapse = dyn_cast<memref::CollapseShapeOp>(op))
+      value = collapse.getSrc();
+    else if (auto expand = dyn_cast<memref::ExpandShapeOp>(op))
+      value = expand.getSrc();
+    else if (auto bitcast = dyn_cast<hivm::BitcastOp>(op)) {
+      if (!isa<MemRefType>(bitcast.getSrc().getType()))
+        break;
+      value = bitcast.getSrc();
+    } else
+      break;
+  }
+  return value;
+}
+
+static bool haveDisjointAddressSpaces(Value lhs, Value rhs) {
+  auto lhsType = cast<MemRefType>(lhs.getType());
+  auto rhsType = cast<MemRefType>(rhs.getType());
+  auto lhsSpace =
+      dyn_cast_or_null<hivm::AddressSpaceAttr>(lhsType.getMemorySpace());
+  auto rhsSpace =
+      dyn_cast_or_null<hivm::AddressSpaceAttr>(rhsType.getMemorySpace());
+  return lhsSpace && rhsSpace && lhsSpace != rhsSpace;
+}
+
+// Check address equality only, not overlap of the described memory ranges.
+// Different casts can reuse the same address despite having different types.
+static bool haveDifferentBaseAddresses(Value lhs, Value rhs) {
+  if (haveDisjointAddressSpaces(lhs, rhs))
+    return true;
+  auto lhsCast = lhs.getDefiningOp<hivm::PointerCastOp>();
+  auto rhsCast = rhs.getDefiningOp<hivm::PointerCastOp>();
+  if (!lhsCast || !rhsCast)
+    return false;
+  // Check every multi-buffer address, not only the first or matching slots.
+  for (Value lhsAddress : lhsCast.getAddrs()) {
+    auto lhsConstant = getConstantIntValue(lhsAddress);
+    for (Value rhsAddress : rhsCast.getAddrs()) {
+      auto rhsConstant = getConstantIntValue(rhsAddress);
+      if (lhsAddress == rhsAddress || !lhsConstant || !rhsConstant ||
+          *lhsConstant == *rhsConstant)
+        return false;
+    }
+  }
+  return true;
+}
+
+// Compare actual arguments within the kernel. Only views and selects are
+// followed; kernel arguments and other unknown sources remain conservative.
+static bool mayShareBaseAddressInCaller(Value lhs, Value rhs) {
+  lhs = getBufferRoot(lhs);
+  rhs = getBufferRoot(rhs);
+  if (lhs == rhs)
+    return true;
+  if (haveDifferentBaseAddresses(lhs, rhs))
+    return false;
+  // Multi-buffer lowering turns the address list into selects before this
+  // pass. Their results are fixed for one VF invocation, so a shared condition
+  // selects only true/true or false/false, never a cross-branch pair.
+  auto lhsSelect = lhs.getDefiningOp<arith::SelectOp>();
+  auto rhsSelect = rhs.getDefiningOp<arith::SelectOp>();
+  if (lhsSelect && rhsSelect &&
+      lhsSelect.getCondition() == rhsSelect.getCondition())
+    return mayShareBaseAddressInCaller(lhsSelect.getTrueValue(),
+                                       rhsSelect.getTrueValue()) ||
+           mayShareBaseAddressInCaller(lhsSelect.getFalseValue(),
+                                       rhsSelect.getFalseValue());
+  if (lhsSelect)
+    return mayShareBaseAddressInCaller(lhsSelect.getTrueValue(), rhs) ||
+           mayShareBaseAddressInCaller(lhsSelect.getFalseValue(), rhs);
+  if (rhsSelect)
+    return mayShareBaseAddressInCaller(lhs, rhsSelect.getTrueValue()) ||
+           mayShareBaseAddressInCaller(lhs, rhsSelect.getFalseValue());
+  return true;
+}
+
+// An outlined VF is called directly by one kernel, possibly at multiple sites.
+static SmallVector<func::CallOp> getVFCallSites(func::FuncOp func,
+                                                ModuleOp module) {
+  auto uses = SymbolTable::getSymbolUses(func, module);
+  if (!uses)
+    return {};
+  SmallVector<func::CallOp> calls;
+  [[maybe_unused]] func::FuncOp caller;
+  for (const SymbolTable::SymbolUse &use : *uses) {
+    auto call = cast<func::CallOp>(use.getUser());
+    assert(SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(
+               call, call.getCalleeAttr()) == func &&
+           "expected a direct call to the VF");
+    auto parent = call->getParentOfType<func::FuncOp>();
+    assert(parent && parent != func &&
+           !parent->hasAttr("hivm.vector_function") &&
+           "expected the VF to be called directly from a kernel");
+    assert((!caller || caller == parent) &&
+           "expected all VF call sites to belong to one caller function");
+    caller = parent;
+    calls.push_back(call);
+  }
+  return calls;
+}
+
+// Compute before rewriting any functions: greedy rewriting may replace call
+// sites and their operands. Function arguments remain stable during this pass.
+struct CallerBufferAddressInfo {
+public:
+  explicit CallerBufferAddressInfo(ModuleOp module) {
+    module.walk([&](func::FuncOp func) {
+      if (func.isExternal() || !func->hasAttr("hivm.vector_function"))
+        return;
+      auto calls = getVFCallSites(func, module);
+      // Standalone VF test inputs can omit the caller; keep addresses unknown.
+      if (calls.empty())
+        return;
+      for (auto [i, lhs] : llvm::enumerate(func.getArguments())) {
+        if (!isa<MemRefType>(lhs.getType()))
+          continue;
+        for (BlockArgument rhs : func.getArguments().drop_front(i + 1)) {
+          if (!isa<MemRefType>(rhs.getType()))
+            continue;
+          bool alias = llvm::any_of(
+              calls,
+              [lhsIndex = i, rhsIndex = rhs.getArgNumber()](func::CallOp call) {
+                return mayShareBaseAddressInCaller(call.getOperand(lhsIndex),
+                                                   call.getOperand(rhsIndex));
+              });
+          aliases[{lhs, rhs}] = alias;
+          aliases[{rhs, lhs}] = alias;
+        }
+      }
+    });
+  }
+
+  bool mayShareBaseAddress(Value lhs, Value rhs) const {
+    auto it = aliases.find({lhs, rhs});
+    if (it != aliases.end())
+      return it->second;
+    // VF-local selects may change between reordered loop iterations. Only
+    // caller operands have the invocation-invariant selection used above.
+    return !haveDifferentBaseAddresses(lhs, rhs);
+  }
+
+private:
+  using BufferPair = std::pair<Value, Value>;
+  DenseMap<BufferPair, bool> aliases;
+};
+
+// Reject conflicts between buffers with different element types whose base
+// addresses may have been reused by memory planning. Same-element-type aliases
+// retain the existing split behavior. This is not a general loop-carried
+// dependence or reduction-use analysis.
+static bool
+hasConflictingBufferAddresses(scf::ForOp loop,
+                              const CallerBufferAddressInfo &aliases) {
+  llvm::MapVector<Value, bool> buffers;
+  for (Operation &op : loop.getBody()->without_terminator()) {
+    auto effects = getEffectsRecursively(&op);
+    if (!effects)
+      return true;
+    for (const auto &effect : *effects) {
+      if (!isa<MemoryEffects::Read, MemoryEffects::Write>(effect.getEffect()))
+        return true;
+      Value value = effect.getValue();
+      if (!value || !isa<MemRefType>(value.getType()) ||
+          effect.getResource() != SideEffects::DefaultResource::get())
+        return true;
+      buffers[getBufferRoot(value)] |=
+          isa<MemoryEffects::Write>(effect.getEffect());
+    }
+  }
+  for (auto [i, lhs] : llvm::enumerate(buffers))
+    for (auto rhs : llvm::drop_begin(buffers, i + 1))
+      if ((lhs.second || rhs.second) &&
+          // FIXME: Replace the element-type heuristic with a PartialAlias
+          // check. Allow splitting for MustAlias and NoAlias.
+          cast<MemRefType>(lhs.first.getType()).getElementType() !=
+              cast<MemRefType>(rhs.first.getType()).getElementType() &&
+          aliases.mayShareBaseAddress(lhs.first, rhs.first))
+        return true;
+  return false;
+}
+
+} // namespace
 
 /// Remove Redunant vsel in loop
 /// clang-format off
@@ -300,9 +498,12 @@ struct ReduceSplitPattern : public OpRewritePattern<scf::ForOp> {
   static constexpr auto SPLIT_DEPTH_ATTR = "splitDepth";
 
   int maxSplitThreshold;
+  const CallerBufferAddressInfo &aliases;
 
-  ReduceSplitPattern(MLIRContext *context, int maxSplit)
-      : OpRewritePattern<scf::ForOp>(context), maxSplitThreshold(maxSplit) {}
+  ReduceSplitPattern(MLIRContext *context, int maxSplit,
+                     const CallerBufferAddressInfo &aliases)
+      : OpRewritePattern<scf::ForOp>(context), maxSplitThreshold(maxSplit),
+        aliases(aliases) {}
 
   LogicalResult matchAndRewrite(scf::ForOp forOp,
                                 PatternRewriter &rewriter) const override {
@@ -315,6 +516,10 @@ struct ReduceSplitPattern : public OpRewritePattern<scf::ForOp> {
     }
     if (currentDepth >= maxSplitThreshold)
       return failure();
+    if (hasConflictingBufferAddresses(forOp, aliases))
+      return rewriter.notifyMatchFailure(forOp,
+                                         "potentially identical caller buffer "
+                                         "addresses have memory conflicts");
 
     // get reductionLoop & reductionOp info
     Location loc = forOp.getLoc();
@@ -452,10 +657,12 @@ struct OptimizeReductionLoopHIVMAVEPass
 
 public:
   void runOnOperation() override {
+    CallerBufferAddressInfo aliases(getOperation());
     RewritePatternSet patterns(&getContext());
     patterns.add<RemoveRedundantVselPattern>(patterns.getContext());
     patterns.add<FoldAffineMinToStepPattern>(patterns.getContext());
-    patterns.add<ReduceSplitPattern>(patterns.getContext(), this->maxSplit);
+    patterns.add<ReduceSplitPattern>(patterns.getContext(), this->maxSplit,
+                                     aliases);
     patterns.add<EliminateReductionLoopInitPattern>(patterns.getContext());
     if (failed(applyPatternsGreedily(getOperation(), std::move(patterns))))
       signalPassFailure();
