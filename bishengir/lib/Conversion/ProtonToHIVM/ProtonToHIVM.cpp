@@ -8,18 +8,25 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMProtonOps.h"
 
+#include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/Visitors.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 #include "mlir/Pass/Pass.h"
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/Casting.h"
+#include "llvm/Support/JSON.h"
+#include "llvm/Support/raw_ostream.h"
 
 #include "proton/Dialect/include/Dialect/Proton/IR/Dialect.h"
 
 namespace bishengir::triton::proton::a5 {
 #define GEN_PASS_DEF_CONVERTPROTONTOHIVM
+#define GEN_PASS_DEF_GETPROTONMETADATA
 #include "bishengir/Conversion/Passes.h.inc"
 } // namespace bishengir::triton::proton::a5
 
@@ -38,14 +45,20 @@ inline bool operator==(const ActiveScope &lhs, const ActiveScope &rhs) {
   return std::tie(lhs.logicalId, lhs.name) == std::tie(rhs.logicalId, rhs.name);
 }
 
+struct ScopeDescriptor {
+  std::string name;
+  std::int32_t parentId;
+};
+
 class ProtonScopePlan {
-  std::uint32_t scopeCount{0};
+  SmallVector<ScopeDescriptor> scopes;
   DenseMap<Operation *, std::uint32_t> recordRegionIds;
 
 public:
   static FailureOr<ProtonScopePlan> build(ModuleOp module);
 
   std::uint32_t getRegionId(mlir::triton::proton::RecordOp record) const;
+  ArrayRef<ScopeDescriptor> getScopes() const;
 
 private:
   LogicalResult analyzeRegion(Region &region,
@@ -97,6 +110,8 @@ ProtonScopePlan::getRegionId(mlir::triton::proton::RecordOp record) const {
   return recordRegionIds.lookup(record.getOperation());
 }
 
+ArrayRef<ScopeDescriptor> ProtonScopePlan::getScopes() const { return scopes; }
+
 LogicalResult
 ProtonScopePlan::analyzeRegion(Region &region,
                                ArrayRef<ActiveScope> inheritedScopes) {
@@ -144,13 +159,19 @@ ProtonScopePlan::analyzeRecord(mlir::triton::proton::RecordOp record,
         })) {
       return record.emitError("scope name '") << name << "' is already active";
     }
-    if (scopeCount >= hivm::proton::kMaxScopeCount) {
+    if (scopes.size() >= hivm::proton::kMaxScopeCount) {
       return record.emitError(
           "too many A5 Proton scopes; 10-bit logical region IDs allow at "
           "most 1024 scopes per module");
     }
 
-    uint32_t logicalId = scopeCount++;
+    uint32_t logicalId = static_cast<std::uint32_t>(scopes.size());
+    std::int32_t parentId = -1;
+    if (!activeScopes.empty()) {
+      parentId = static_cast<std::int32_t>(activeScopes.back().logicalId);
+    }
+    scopes.push_back(ScopeDescriptor{name.str(), parentId});
+
     activeScopes.push_back(ActiveScope{logicalId, name.str()});
     recordRegionIds[record.getOperation()] =
         hivm::proton::getStartRegionId(logicalId);
@@ -171,6 +192,32 @@ ProtonScopePlan::analyzeRecord(mlir::triton::proton::RecordOp record,
   recordRegionIds[record.getOperation()] =
       hivm::proton::getEndRegionId(logicalId);
   return success();
+}
+
+void attachMetadata(ModuleOp module, ArrayRef<ScopeDescriptor> scopes) {
+  Builder builder{module.getContext()};
+  SmallVector<Attribute> scopeAttrs;
+  scopeAttrs.reserve(scopes.size());
+
+  for (auto [logicalId, scope] : llvm::enumerate(scopes)) {
+    uint32_t id = static_cast<uint32_t>(logicalId);
+    scopeAttrs.push_back(builder.getDictionaryAttr(
+        {builder.getNamedAttr("name", builder.getStringAttr(scope.name)),
+         builder.getNamedAttr("parent_id",
+                              builder.getI32IntegerAttr(scope.parentId)),
+         builder.getNamedAttr(
+             "start_region_id",
+             builder.getI32IntegerAttr(hivm::proton::getStartRegionId(id))),
+         builder.getNamedAttr(
+             "end_region_id",
+             builder.getI32IntegerAttr(hivm::proton::getEndRegionId(id)))}));
+  }
+
+  module->setAttr(
+      "proton.metadata",
+      builder.getDictionaryAttr(
+          {builder.getNamedAttr("format_version", builder.getI32IntegerAttr(1)),
+           builder.getNamedAttr("scopes", builder.getArrayAttr(scopeAttrs))}));
 }
 
 class ConvertProtonToHIVMPass
@@ -205,12 +252,96 @@ void ConvertProtonToHIVMPass::runOnOperation() {
         record->getLoc(), builder.getI32IntegerAttr(plan->getRegionId(record)));
     record->erase();
   }
+
+  attachMetadata(module, plan->getScopes());
+}
+
+class GetProtonMetadataPass
+    : public impl::GetProtonMetadataBase<GetProtonMetadataPass> {
+public:
+  explicit GetProtonMetadataPass(const GetProtonMetadataOptions &options);
+
+  void runOnOperation() override;
+};
+
+GetProtonMetadataPass::GetProtonMetadataPass(
+    const GetProtonMetadataOptions &options)
+    : impl::GetProtonMetadataBase<GetProtonMetadataPass>(options) {}
+
+void GetProtonMetadataPass::runOnOperation() {
+  auto module = getOperation();
+  auto proton = module->getAttrOfType<DictionaryAttr>("proton.metadata");
+  if (!proton || protonMetadataOutput == "") {
+    return;
+  }
+
+  auto formatVersion = proton.getAs<IntegerAttr>("format_version");
+  auto scopes = proton.getAs<ArrayAttr>("scopes");
+  if (!formatVersion || !scopes) {
+    module.emitError("malformed Proton metadata"); /// TODO: raiify
+    return signalPassFailure();
+  }
+
+  llvm::json::Array jsonScopes;
+  for (auto attr : scopes) {
+    auto scope = llvm::dyn_cast<DictionaryAttr>(attr);
+    if (!scope) {
+      module->emitError("malformed Proton scope metadata");
+      return signalPassFailure();
+    }
+
+    auto name = scope.getAs<StringAttr>("name");
+    auto parentId = scope.getAs<IntegerAttr>("parent_id");
+    auto startRegionId = scope.getAs<IntegerAttr>("start_region_id");
+    auto endRegionId = scope.getAs<IntegerAttr>("end_region_id");
+    if (!name || !parentId || !startRegionId || !endRegionId) {
+      module->emitError("malformed Proton scope metadata");
+      return signalPassFailure();
+    }
+
+    jsonScopes.push_back(
+        llvm::json::Object{/// TODO: remove explicit types in aggregates
+                           {"name", name.getValue()},
+                           {"parent_id", parentId.getInt()},
+                           {"start_region_id", startRegionId.getInt()},
+                           {"end_region_id", endRegionId.getInt()}});
+  }
+
+  llvm::json::Value json{llvm::json::Object{
+      {"proton", llvm::json::Object{{"format_version", formatVersion.getInt()},
+                                    {"scopes", std::move(jsonScopes)}}}}};
+
+  if (protonMetadataOutput == "--") {
+    llvm::outs() << json << "\n";
+    return;
+  }
+
+  std::error_code ec;
+  llvm::raw_fd_ostream os(protonMetadataOutput, ec);
+  if (ec) {
+    module->emitError("Failed to open Proton metadata output: ")
+        << ec.message();
+    return signalPassFailure();
+  }
+
+  os << json << "\n";
+  os.close();
+  if (os.has_error()) {
+    module->emitError("Failed to write Proton metadata: ")
+        << os.error().message();
+    signalPassFailure();
+  }
 }
 
 } // unnamed namespace
 
 std::unique_ptr<mlir::Pass> createConvertProtonToHIVMPass() {
   return std::make_unique<ConvertProtonToHIVMPass>();
+}
+
+std::unique_ptr<mlir::Pass>
+createGetProtonMetadataPass(const GetProtonMetadataOptions &options) {
+  return std::make_unique<GetProtonMetadataPass>(options);
 }
 
 } // namespace bishengir::triton::proton::a5

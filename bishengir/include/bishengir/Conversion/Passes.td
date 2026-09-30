@@ -310,6 +310,20 @@ def ConvertProtonToHIVM : Pass<"convert-proton-to-hivm", "mlir::ModuleOp"> {
                            "mlir::hivm::HIVMDialect"];
 }
 
+def GetProtonMetadata : Pass<"get-proton-metadata", "mlir::ModuleOp"> {
+  let summary = "Write A5 Proton scope metadata.";
+  let description = [{
+    Dump Proton's metadata as JSON. Each scope entry has `name`, `parent_id`,
+    `start_region_id`, and `end_region_id`. Host tools should map hardware
+    trace region ids using these fields.
+  }];
+  let constructor =
+      "bishengir::triton::proton::a5::createGetProtonMetadataPass()";
+  let options = [Option<"protonMetadataOutput", "proton-metadata-output",
+                        "std::string", "",
+                        "File to write Proton metadata. -- means stdout">];
+}
+
 //===----------------------------------------------------------------------===//
 // HACCToLLVM
 //===----------------------------------------------------------------------===//
