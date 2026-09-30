@@ -64,7 +64,8 @@ Value buildSubBlockEqCond(OpBuilder &builder, Location loc, int64_t core) {
 /// is left untagged.
 void markIfSubBlockReguarded(Operation &op) {
   if (isa<hivm::StoreOp, hivm::IndirectStoreOp, hivm::StrideStoreOp,
-          hivm::CopyOp, hivm::CustomOp, hivm::CustomMacroOp>(&op))
+          hivm::ScatterStoreOp, hivm::CopyOp, hivm::CustomOp,
+          hivm::CustomMacroOp>(&op))
     op.setAttr(kSubBlockBoundOpAttrName, UnitAttr::get(op.getContext()));
 }
 

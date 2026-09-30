@@ -167,8 +167,8 @@ class OutlineScopeOp : public OpRewritePattern<scope::ScopeOp> {
     // constant values instead of extra outlined function arguments.
     for (Operation *constantOp : getExternalConstantLikeOps(scopeOp)) {
       auto *newConstOp = rewriter.clone(*constantOp, currentMap);
-      for (auto [oldRes, newRes] : llvm::zip_equal(
-               constantOp->getResults(), newConstOp->getResults())) {
+      for (auto [oldRes, newRes] : llvm::zip_equal(constantOp->getResults(),
+                                                   newConstOp->getResults())) {
         currentMap.map(oldRes, newRes);
       }
     }
@@ -202,44 +202,9 @@ class OutlineScopeOp : public OpRewritePattern<scope::ScopeOp> {
 
     Location loc = scopeOp->getLoc();
 
-    // For SIMT scopes, wrap the call in an scf.if guard that checks
-    // get_sub_block_idx() == 0. Also apply this guard when sub-block tiling
-    // was reverted in TileAndBindSubBlockPass: the reverted function only
-    // produces valid results on sub-block 0, so the call must be guarded the
-    // same way as a SIMT scope.
-    auto mod = scopeOp->getParentOfType<ModuleOp>();
-    bool subBlockTilingReverted =
-        mod && mod->hasAttr(hivm::kTileAndBindSubBlockRevertedAttrName);
-    if (hivm::util::isSIMTVF(scopeOp) && subBlockTilingReverted) {
-      LDBG("Wrapping SIMT scope call in scf.if guard");
-
-      // Build condition: get_sub_block_idx() == 0
-      auto subBlockIdxOp =
-          rewriter.create<hivm::GetSubBlockIdxOp>(loc, rewriter.getI64Type());
-      Value subBlockIndex =
-          rewriter
-              .create<arith::IndexCastOp>(loc, rewriter.getIndexType(),
-                                          subBlockIdxOp.getResult())
-              .getResult();
-      Value zero = rewriter.create<arith::ConstantIndexOp>(loc, 0);
-      Value cond = rewriter.create<arith::CmpIOp>(loc, rewriter.getI1Type(),
-                                                  arith::CmpIPredicate::eq,
-                                                  subBlockIndex, zero);
-
-      // Create scf.if with the call inside
-      auto ifOp = rewriter.create<scf::IfOp>(loc, scopeOp->getResultTypes(),
-                                             cond, /*withElseRegion=*/false);
-      ifOp->setAttr("limit_sub_block_id0", rewriter.getUnitAttr());
-      rewriter.setInsertionPointToStart(ifOp.thenBlock());
-      rewriter.create<func::CallOp>(loc, funcOp, inputs);
-
-      // Replace scope op with if op results
-      rewriter.replaceOp(scopeOp, ifOp.getResults());
-    } else {
-      func::CallOp callOp = rewriter.create<func::CallOp>(loc, funcOp, inputs);
-      LDBG("created callOp: " << callOp);
-      rewriter.replaceOp(scopeOp, callOp);
-    }
+    func::CallOp callOp = rewriter.create<func::CallOp>(loc, funcOp, inputs);
+    LDBG("created callOp: " << callOp);
+    rewriter.replaceOp(scopeOp, callOp);
 
     return success();
   }
