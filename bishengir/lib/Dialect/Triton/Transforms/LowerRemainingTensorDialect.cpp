@@ -15,13 +15,15 @@
 #include "bishengir/Dialect/Triton/Transforms/Passes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
-#include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
+#include "llvm/ADT/Twine.h"
+#include "llvm/ADT/TypeSwitch.h"
+#include <optional>
 
 namespace bishengir::triton {
 #define GEN_PASS_DEF_LOWERREMAININGTENSORDIALECT
@@ -51,19 +53,65 @@ Value createZeroTensor(OpBuilder &builder, Location loc,
   return tensor;
 }
 
+// Returns the error message for the given op if it cannot be lowered, otherwise
+// returns std::nullopt if supported
+std::optional<Twine> getError(Operation *op) {
+  if (!isa<tensor::TensorDialect>(op->getDialect())) {
+    return std::nullopt;
+  }
+  return llvm::TypeSwitch<Operation *, std::optional<Twine>>(op)
+      .Case<tensor::EmptyOp>([](tensor::EmptyOp op) -> std::optional<Twine> {
+        if (op.getDynamicSizes().size() > 0) {
+          return "tensor::EmptyOp's with dynamic sizes are not supported "
+                 "in SIMT mode";
+        }
+        return std::nullopt;
+      })
+      .Case<tensor::FromElementsOp>(
+          [](tensor::FromElementsOp op) -> std::optional<Twine> {
+            if (op->getNumOperands() > 1) {
+              return "tensor::FromElementsOp's with more than 1 scalar operand "
+                     "are not supported in SIMT mode";
+            }
+            return std::nullopt;
+          })
+      .Default([](Operation *op) -> std::optional<Twine> {
+        return op->getName().getStringRef() +
+               " is an unsupported tensor dialect operation";
+      });
+}
+
 struct EmptyOpToConstantOp : public OpRewritePattern<tensor::EmptyOp> {
   using OpRewritePattern<tensor::EmptyOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(tensor::EmptyOp op,
                                 PatternRewriter &rewriter) const override {
-    // Return failure if tensor shape is not known at compile time
-    if (op.getDynamicSizes().size() > 0) {
+    if (getError(op)) {
       return failure();
     }
+
     Location loc = op->getLoc();
     RankedTensorType type = op.getType();
     Value constTensor = createZeroTensor(rewriter, loc, type);
     rewriter.replaceOp(op, constTensor);
+    return success();
+  }
+};
+
+struct FromElementsToSplatOp : public OpRewritePattern<tensor::FromElementsOp> {
+  using OpRewritePattern<tensor::FromElementsOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(tensor::FromElementsOp op,
+                                PatternRewriter &rewriter) const override {
+    if (getError(op)) {
+      return failure();
+    }
+    Location loc = op->getLoc();
+    RankedTensorType resultType = op.getType();
+    Value scalar = op->getOperand(0);
+    Value replacement =
+        rewriter.create<triton::SplatOp>(loc, resultType, scalar);
+    rewriter.replaceOp(op, replacement);
     return success();
   }
 };
@@ -79,7 +127,7 @@ public:
     auto *ctx = &getContext();
 
     RewritePatternSet patterns(ctx);
-    patterns.add<EmptyOpToConstantOp>(ctx);
+    patterns.add<EmptyOpToConstantOp, FromElementsToSplatOp>(ctx);
 
     if (failed(applyPatternsGreedily(mod, std::move(patterns)))) {
       mod.emitError(
@@ -91,10 +139,10 @@ public:
     // Anything left over is an unsupported tensor dialect op
     bool hasRemainingTensorOps = false;
     mod.walk([&](Operation *op) {
-      if (isa<tensor::TensorDialect>(op->getDialect())) {
-        op->emitError(op->getName().getStringRef() +
-                      " is an unsupported tensor dialect operation");
+      std::optional<Twine> errorMsg = getError(op);
+      if (errorMsg) {
         hasRemainingTensorOps = true;
+        op->emitError(*errorMsg);
       }
     });
     if (hasRemainingTensorOps) {
