@@ -406,9 +406,22 @@ SmallVector<Value> getAliasValues(Operation *op, OpOperand &operand) {
         values.push_back(forOp.getRegionIterArg(resNum));
       })
       .Case<scf::WhileOp>([&](scf::WhileOp whileOp) {
-        values.push_back(whileOp.getResult(resNum));
-        values.push_back(whileOp.getBefore().front().getArgument(resNum));
-        values.push_back(whileOp.getAfter().front().getArgument(resNum));
+        if (isa<scf::ConditionOp>(operand.getOwner())) {
+          // Operand 0 is the continuation predicate and has no alias; the
+          // remaining operands map to result/after-argument `resNum - 1`.
+          if (resNum == 0)
+            return;
+          unsigned argNum = resNum - 1;
+          if (argNum < whileOp.getNumResults())
+            values.push_back(whileOp.getResult(argNum));
+          if (argNum < whileOp.getAfterArguments().size())
+            values.push_back(whileOp.getAfterArguments()[argNum]);
+          return;
+        }
+        // `scf.yield` operand `resNum` becomes before-region argument `resNum`
+        // on the next iteration.
+        if (resNum < whileOp.getBeforeArguments().size())
+          values.push_back(whileOp.getBeforeArguments()[resNum]);
       })
       .Default([&](Operation *otherOp) {
         llvm::report_fatal_error("unsupported loop like op!");
