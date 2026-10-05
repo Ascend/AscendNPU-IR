@@ -46,6 +46,31 @@ BiShengIRPassManager::~BiShengIRPassManager() {
   policyState->managerAlive.store(false, std::memory_order_release);
 }
 
+namespace {
+/// After a pass whose HIVMPass `classifyKernel` bit is set, invoke the
+/// callback HIVM installed (InferFuncCoreType). Skipped while that callback
+/// itself is running, so the follow-up pass cannot re-enter classification.
+void maybeClassifyKernel(const mlir::Pass &pass, mlir::Operation *op) {
+  if (!passClassifiesKernel(pass.getArgument()))
+    return;
+  ClassifyKernelCallback callback = getClassifyKernelCallback();
+  if (!callback)
+    return;
+
+  static thread_local bool inClassifyKernel = false;
+  if (inClassifyKernel)
+    return;
+
+  inClassifyKernel = true;
+  mlir::LogicalResult result = callback(op);
+  inClassifyKernel = false;
+  if (mlir::failed(result)) {
+    op->emitError() << "classifyKernel follow-up failed after '"
+                    << pass.getArgument() << "'";
+  }
+}
+} // namespace
+
 void BiShengIRPassManager::initializeActionHandler(MLIRContext *ctx) {
   // The handler is stored in the context and can outlive this manager; capture
   // the shared state, never `this`. The state outlives the manager as well, so
@@ -62,15 +87,37 @@ void BiShengIRPassManager::initializeActionHandler(MLIRContext *ctx) {
     mlir::Operation *op = passAction->getOp();
     const mlir::Pass &pass = passAction->getPass();
 
-    // 1. Aiv-mode global denylist, keyed by pass argument. Mix mode
-    // short-circuits inside the policy, so full pipelines pay one
-    // predictable branch per pass execution. Only a live manager filters:
-    // its mode belongs to the pipeline it is running.
+    // 1. Kernel-kind filter, keyed by pass argument. An unspecified core
+    // type short-circuits inside the policy, so a module with no core type
+    // pays one predictable branch per pass execution. Only a live manager
+    // filters: its mode belongs to the pipeline it is running.
     if (state->managerAlive.load(std::memory_order_acquire) &&
-        state->policy.shouldSkipGlobally(pass, op))
+        state->policy.shouldSkipGlobally(pass, op)) {
+      // The denylist skip is the only path that tries a substitute. No
+      // registration means the pass is dropped, as before.
+      static thread_local bool inAivSubstitute = false;
+      if (!inAivSubstitute) {
+        if (AivSubstituteCallback substitute =
+                getAivSubstitute(pass.getArgument())) {
+          inAivSubstitute = true;
+          mlir::LogicalResult result = substitute(op, pass);
+          inAivSubstitute = false;
+          if (mlir::failed(result)) {
+            op->emitError() << "aiv substitute failed for skipped pass '"
+                            << pass.getArgument() << "'";
+          }
+        }
+      }
       return;
+    }
 
     llvm::StringRef passArg = pass.getArgument();
+
+    auto executeThenClassify = [&]() {
+      execute();
+      if (state->managerAlive.load(std::memory_order_acquire))
+        maybeClassifyKernel(pass, op);
+    };
 
     // Adaptor passes (empty argument) orchestrate nested pipelines — always
     // let them through so nested ops still get processed.
@@ -114,7 +161,7 @@ void BiShengIRPassManager::initializeActionHandler(MLIRContext *ctx) {
         }
       }
 
-      execute();
+      executeThenClassify();
 
       // Restore in original order: insert each op after its predecessor.
       for (auto *hiddenOp : llvm::reverse(hidden))
@@ -122,7 +169,7 @@ void BiShengIRPassManager::initializeActionHandler(MLIRContext *ctx) {
       return;
     }
 
-    execute();
+    executeThenClassify();
   });
 }
 

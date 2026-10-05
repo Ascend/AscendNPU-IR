@@ -1,9 +1,12 @@
 add_bishengir_dialect_library(BiShengIRHIVMRegbasePipelines
-  AivDisabledPasses.cpp
+  KernelKindPasses.cpp
   HIVMRegbasePipelines.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${MLIR_MAIN_INCLUDE_DIR}/bishengir/Dialect/HIVM/Pipelines/regbase
+
+  DEPENDS
+  BiShengIRHIVMTransformsIncGen
 
   LINK_LIBS PUBLIC
   BiShengIRArithToAffine
