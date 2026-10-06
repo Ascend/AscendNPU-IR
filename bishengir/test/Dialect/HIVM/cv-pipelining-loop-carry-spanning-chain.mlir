@@ -1,31 +1,45 @@
-// Off-registry: the whitelist already rejects cross-WI tensor carry.
-// RUN: bishengir-opt -cv-pipelining="pipeline-mode=skew enable-preload=true set-depth-in-unroll-mode=2" -allow-unregistered-dialect -split-input-file %s | FileCheck %s
-// Registered-heuristic path (3530 same-stage): every work item is LCD, so
-// pipelining is still rejected — there is no independent stage to skew against.
-// RUN: bishengir-opt -cv-pipelining="pipeline-mode=skew enable-preload=true set-depth-in-unroll-mode=2 bypass-shape-registry=true" -allow-unregistered-dialect -split-input-file %s | FileCheck %s
+// RUN: sed 's/chunk_gated_delta_product_fwd_kernel_h_blockdim64/off_registry/g' %s | bishengir-opt -cv-pipelining="pipeline-mode=skew enable-preload=true set-depth-in-unroll-mode=2" -allow-unregistered-dialect | FileCheck %s
+// RUN: bishengir-opt %s -cv-pipelining="pipeline-mode=skew enable-preload=false set-depth-in-unroll-mode=2" -allow-unregistered-dialect | FileCheck %s
+// RUN: bishengir-opt %s -cv-pipelining="pipeline-mode=skew enable-preload=true set-depth-in-unroll-mode=0" -allow-unregistered-dialect | FileCheck %s
+// RUN: bishengir-opt %s -cv-pipelining="pipeline-mode=unroll enable-preload=true set-depth-in-unroll-mode=2" -allow-unregistered-dialect | FileCheck %s
+// The registered gated kernel keeps same-iteration scopes.
+// RUN: bishengir-opt -cv-pipelining="pipeline-mode=skew enable-preload=true set-depth-in-unroll-mode=2" -allow-unregistered-dialect -split-input-file %s | FileCheck %s --check-prefix=BYPASS --implicit-check-not="hivm.preload_num = 1"
+// Registry bypass: every work item is LCD, so there is no
+// independent stage to skew against. Scopes are still formed, each pinned
+// to preload_num 0.
+// RUN: bishengir-opt -cv-pipelining="pipeline-mode=skew enable-preload=true set-depth-in-unroll-mode=2 bypass-shape-registry=true" -allow-unregistered-dialect -split-input-file %s | FileCheck %s --check-prefix=BYPASS
 
 // Regression test (extracted from a gated-delta-product kernel): the inner
 // reduction loop carries %arg15 across iterations. The carried tensor is
 // consumed at the top of the body (hivm.hir.store of an extract_slice and a
 // vtranspose chain feeding both mmadL1 ops) and produced at the bottom
 // (vadd). The transitive consumer chain therefore spans every candidate
-// work item, leaving no LCD-free stage to skew against. Pipelining must be
-// rejected: a skewed consumer stage would read the carried tensor several
-// iterations stale and corrupt both matmuls.
+// work item, leaving no LCD-free stage to skew against. Off-registry kernels
+// stay unscoped. The registered path still forms scopes at preload_num 0.
 
-// CHECK-LABEL: func.func @chunk_gated_delta_product_fwd_kernel_h_blockdim64
+// CHECK-LABEL: func.func @
 // CHECK-NOT: scope.scope
 // CHECK: scf.for %{{.*}} = %c0_i32 to %13 step %c1_i32 iter_args(%{{.*}} = %35) -> (tensor<64x64xf32>)
-// CHECK-NOT: scope.scope
-// CHECK: hivm.hir.store
 // CHECK-NOT: scope.scope
 // CHECK: hivm.hir.mmadL1
 // CHECK-NOT: scope.scope
 // CHECK: hivm.hir.vadd
-// CHECK-NOT: scope.scope
 // CHECK: scf.yield %{{.*}} : tensor<64x64xf32>
 // CHECK-NOT: scope.scope
 // CHECK-NOT: hivm.cv_pipelined_loop
+
+// BYPASS-LABEL: func.func @chunk_gated_delta_product_fwd_kernel_h_blockdim64
+// BYPASS: scf.for %{{.*}} = %c0_i32 to %13 step %c1_i32 iter_args(%{{.*}} = %35) -> (tensor<64x64xf32>)
+// BYPASS: scope.scope
+// BYPASS: hivm.preload_num = 0 : i32
+// BYPASS: hivm.hir.mmadL1
+// BYPASS: %[[SUM:.*]] = hivm.hir.vadd
+// BYPASS: %[[STORE:.*]] = tensor.extract_slice %[[SUM]]
+// BYPASS-NOT: hivm.hir.store
+// BYPASS: hivm.hir.copy
+// BYPASS: hivm.hir.store ins(%[[STORE]]
+// BYPASS: scf.yield %{{.*}} : tensor<64x64xf32>
+// BYPASS-NOT: hivm.preload_num = {{[1-9]}}
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">, ssbuffer.insertionOptimization} {
   func.func @chunk_gated_delta_product_fwd_kernel_h_blockdim64(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf32> {tt.tensor_kind = 0 : i32}, %arg3: memref<?xf32> {tt.tensor_kind = 0 : i32}, %arg4: memref<?xf32> {tt.tensor_kind = 0 : i32}, %arg5: memref<?xf32> {tt.tensor_kind = 1 : i32}, %arg6: memref<?xf32> {tt.tensor_kind = 1 : i32}, %arg7: memref<?xf32> {tt.tensor_kind = 0 : i32}, %arg8: memref<?xf32> {tt.tensor_kind = 1 : i32}, %arg9: i32, %arg10: i32, %arg11: i32, %arg12: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, func_dyn_memref_args = dense<[true, true, true, true, true, true, true, true, true, false, false, false, false]> : vector<13xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix", parallel_mode = "simd"} {
     %c64_i64 = arith.constant 64 : i64

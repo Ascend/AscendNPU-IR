@@ -215,6 +215,9 @@ private:
   // workspace multibuffer is non-zero, or LIT bypass is on.
   bool allowShapeHeuristics = false;
 
+  // Preserve same-iteration scope scheduling when a tensor carry cannot skew.
+  bool pinAllPreloadNumToZero = false;
+
   // Worklist builder — owns dep-tracking machinery, separator/dependence
   // discovery, lazy-load hint surface, and outputMemrefMap. Held as a member
   // so post-build queries (e.g. wlBuilder.shouldLazyLoadFor in markOutputs)
@@ -1268,18 +1271,11 @@ LogicalResult CVPipelineImpl::checkWorkItemDependencies() {
 
     for (auto [consumerItem, consumerOp] : consumerUses(iterArg)) {
       if (consumerItem != producerItem) {
-        // In skew mode a loop-carried iter_arg is only honored when the
-        // producing and the consuming work items run at the same preload
-        // stage: stage k executes original iteration i-(maxPreload-1-k) of
-        // the rewritten loop, so a producer/consumer preload mismatch skews
-        // the carried value by the difference of the two stages. Work items
-        // with hasLoopCarriedDep are pinned to preload 0, so a cross-item
-        // carry is legal only when BOTH items carry the flag. At least one
-        // independent item must remain as well; with none, maxPreloadNum
-        // degenerates to 1 and the rewrite adds no pipelining at all.
-        // Off-registry kernels keep the pre-3530 contract: any cross-WI
-        // tensor carry is rejected. The same-stage exception is a registered
-        // (or LIT `--bypass-shape-registry`) heuristic.
+        // A cross-work-item carry can overlap iterations only when its
+        // producer and consumer share stage zero and an independent stage
+        // remains. Otherwise registered skew loops retain their scopes with
+        // every item at stage zero. Unroll and off-registry behavior stay
+        // unchanged.
         bool sameStage =
             consumerItem->hasLoopCarriedDep && producerItem->hasLoopCarriedDep;
         bool hasAnyIndependentItem =
@@ -1288,6 +1284,10 @@ LogicalResult CVPipelineImpl::checkWorkItemDependencies() {
             });
         if (!allowShapeHeuristics || !sameStage || !hasAnyIndependentItem ||
             pipelineMode == CVPipelineMode::Unroll) {
+          if (allowShapeHeuristics && pipelineMode == CVPipelineMode::Skew) {
+            pinAllPreloadNumToZero = true;
+            continue;
+          }
           InFlightDiagnostic diag =
               pipelineLoop->emitWarning()
               << "[cv-pipelining] cannot pipeline loop: loop-carried tensor "
@@ -2190,12 +2190,12 @@ LogicalResult CVPipelineImpl::createNewLoopsForPreloadWithScopes() {
       worklist, [](const auto &item) { return item->hasLoopCarriedDep; });
   unsigned numIndependent = llvm::count_if(
       worklist, [](const auto &item) { return !item->hasLoopCarriedDep; });
-  int32_t preloadNum = hasAnyLoopCarriedItem
-                           ? static_cast<int32_t>(numIndependent)
-                           : static_cast<int32_t>(worklist.size()) - 1;
   int32_t maxPreloadNum = hasAnyLoopCarriedItem
                               ? static_cast<int32_t>(numIndependent) + 1
                               : static_cast<int32_t>(worklist.size());
+  if (pinAllPreloadNumToZero)
+    maxPreloadNum = 1;
+  int32_t preloadNum = maxPreloadNum - 1;
   for (auto &item : worklist) {
     // Reset insertion point after we're done with this item
     OpBuilder::InsertionGuard g(builder);
@@ -2389,7 +2389,7 @@ LogicalResult CVPipelineImpl::createNewLoopsForPreloadWithScopes() {
     }
 
     item->scopeOp = newScopeOp;
-    if (!item->hasLoopCarriedDep)
+    if (!pinAllPreloadNumToZero && !item->hasLoopCarriedDep)
       preloadNum--;
   }
 
@@ -2422,12 +2422,12 @@ static bool isStorePriorityCBuf(Value value) {
   return space && space.getAddressSpace() == AddressSpace::L1;
 }
 
-/// Prioritize the transposed CBUF copy over the GM output of the same cast.
+/// Prioritize the transposed CBUF copy over the GM output of the same tensor.
 /// Keep this local to tensor-form preload scopes, before memory planning and
 /// sync insertion account for the delayed store's buffer lifetime.
 /// Callers must first pass `allowShapeHeuristics` (registry + preload +
 /// non-zero workspace multibuffer, or LIT bypass).
-static void prioritizePreloadCrossCoreCopy(Block &body) {
+static void prioritizePreloadCrossCoreCopy(Block &body, bool sameIteration) {
   if (llvm::any_of(body, [](Operation &op) { return isa<SetAtomicOp>(op); }))
     return;
 
@@ -2455,9 +2455,14 @@ static void prioritizePreloadCrossCoreCopy(Block &body) {
       continue;
 
     Value source = stripStorePriorityTensorViews(store.getSrc());
-    auto castOp = source.getDefiningOp<VCastOp>();
-    if (!castOp || !isMemoryEffectFree(castOp) || castOp.getDst().size() != 1 ||
-        !castOp.getDst()[0].getDefiningOp<tensor::EmptyOp>())
+    Operation *producer = source.getDefiningOp();
+    if (!producer ||
+        !(isa<VCastOp>(producer) || (sameIteration && isa<VAddOp>(producer))) ||
+        !isMemoryEffectFree(producer))
+      continue;
+    auto dps = cast<DestinationStyleOpInterface>(producer);
+    if (dps.getNumDpsInits() != 1 ||
+        !dps.getDpsInitOperand(0)->get().getDefiningOp<tensor::EmptyOp>())
       continue;
 
     Operation *insertAfter = nullptr;
@@ -2483,7 +2488,7 @@ static void prioritizePreloadCrossCoreCopy(Block &body) {
           continue;
       }
       // Unknown memory effects, other GM accesses and synchronization are
-      // boundaries. Pure tensor/index operations do not overwrite the cast.
+      // boundaries. Pure tensor/index operations do not overwrite the tensor.
       if (!isMemoryEffectFree(op))
         break;
       // Keep the store after trailing pure vector work as well. Otherwise VF
@@ -2513,7 +2518,8 @@ LogicalResult CVPipelineImpl::markScopesForPreload() {
   if (allowShapeHeuristics) {
     for (auto &item : worklist)
       if (item->core == TCoreType::VECTOR && item->scopeOp)
-        prioritizePreloadCrossCoreCopy(item->scopeOp.getRegion().front());
+        prioritizePreloadCrossCoreCopy(item->scopeOp.getRegion().front(),
+                                       pinAllPreloadNumToZero);
   }
 
   LLVM_DEBUG({
@@ -2573,8 +2579,9 @@ LogicalResult CVPipelineImpl::markScopesForPreload() {
     }
 
     if (!toErase.contains(usrOp)) {
-      LLVM_DEBUG(dbgs() << "func" << "\n\nDef: " << *eraseOp
-                        << "\nUser: " << *usrOp << '\n');
+      LLVM_DEBUG(dbgs() << "func"
+                        << "\n\nDef: " << *eraseOp << "\nUser: " << *usrOp
+                        << '\n');
       return usrOp->emitWarning(
           "[cv-pipelining] cannot erase user of pipelined op, aborting "
           "pipelining pass");
