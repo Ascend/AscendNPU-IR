@@ -2,14 +2,13 @@
 
 // CHECK-LABEL:   func.func @test_broadcast(
 // CHECK-SAME:      %[[VAL_0:.*]]: memref<32xf32>, %[[VAL_1:.*]]: memref<4096xf32>
-// CHECK:           %[[VAL_2:.*]] = memref.reinterpret_cast %[[VAL_0]] to offset: [0], sizes: [32], strides: [1] : memref<32xf32> to memref<32xf32, strided<[1]>>
-// CHECK:           %[[VAL_3:.*]] = memref.alloc() : memref<32xf32>
-// CHECK:           memref.copy %[[VAL_2]], %[[VAL_3]] : memref<32xf32, strided<[1]>> to memref<32xf32>
-// CHECK:           %[[VAL_4:.*]] = bufferization.to_tensor %[[VAL_3]] restrict writable : memref<32xf32>
-// CHECK:           %[[VAL_5:.*]] = tensor.expand_shape %[[VAL_4]] {{\[}}[0, 1, 2]] output_shape {{\[}}1, 4, 8] : tensor<32xf32> into tensor<1x4x8xf32>
+// CHECK:           %[[VAL_2:.*]] = memref.reinterpret_cast %[[VAL_0]] to offset: [0], sizes: [4, 8], strides: [8, 1] : memref<32xf32> to memref<4x8xf32>
+// CHECK:           %[[VAL_3:.*]] = memref.alloc() : memref<4x8xf32>
+// CHECK:           memref.copy %[[VAL_2]], %[[VAL_3]] : memref<4x8xf32> to memref<4x8xf32>
+// CHECK:           %[[VAL_4:.*]] = bufferization.to_tensor %[[VAL_3]] restrict writable : memref<4x8xf32>
 // CHECK:           %[[VAL_6:.*]] = tensor.empty() : tensor<128x4x8xf32>
-// CHECK:           %[[VAL_7:.*]] = tensor.collapse_shape %[[VAL_5]] {{\[}}[0, 1], [2]] : tensor<1x4x8xf32> into tensor<4x8xf32>
-// CHECK:           %[[VAL_8:.*]] = linalg.broadcast ins(%[[VAL_7]] : tensor<4x8xf32>) outs(%1 : tensor<128x4x8xf32>) dimensions = [0]
+// CHECK-NOT:       tensor.expand_shape
+// CHECK:           %[[VAL_8:.*]] = linalg.broadcast ins(%[[VAL_4]] : tensor<4x8xf32>) outs(%[[VAL_6]] : tensor<128x4x8xf32>) dimensions = [0]
 // CHECK:           %[[VAL_9:.*]] = tensor.collapse_shape %[[VAL_8]] {{\[}}[0, 1, 2]] : tensor<128x4x8xf32> into tensor<4096xf32>
 // CHECK:           %[[VAL_10:.*]] = memref.reinterpret_cast %[[VAL_1]] to offset: [0], sizes: [4096], strides: [1] : memref<4096xf32> to memref<4096xf32, strided<[1]>>
 // CHECK:           bufferization.materialize_in_destination %[[VAL_9]] in writable %[[VAL_10]] : (tensor<4096xf32>, memref<4096xf32, strided<[1]>>) -> ()
