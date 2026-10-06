@@ -1005,6 +1005,10 @@ void AutoVectorizeV2::planFuseSiblingForLeafNodes(Block *block,
         continue;
       if (!canShareTreeReductionSiblingLoop(leafNode, node, ctx, treeReduce))
         continue;
+      if (llvm::any_of(node->leafOps(), [&](Operation *otherLeafNode) {
+            return isProducerConsumed(leafNode, otherLeafNode);
+          }))
+        continue;
       node->addLeaf(leafNode);
       isInserted = true;
       break;
