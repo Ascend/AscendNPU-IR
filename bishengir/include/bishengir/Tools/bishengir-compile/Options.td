@@ -364,11 +364,15 @@ def EnableAutoMultiBuffer : GeneralOptimizationControlOptions<
   let passGroup = ["HFUSION", "HIVM"];
 }
 
-def LimitAutoMultiBufferOnlyForLocalBuffer : GeneralOptimizationControlOptions<
-  "When enable-auto-multi-buffer = true, limit it only to work for local buffer",
-  "bool",
-  "false"
-> {
+def LimitAutoMultiBufferOnlyForLocalBuffer
+    : GeneralOptimizationControlOptions<
+          "DEPRECATED (removed in BiShengIR 1.4.0): when "
+          "enable-auto-multi-buffer = true, "
+          "limit it only to work for local buffer (disables GM workspace "
+          "multi-buffer). "
+          "Use --multibuffer-mode and set gm=1. A3 default gm=4, A5 default "
+          "gm=2.",
+          "bool", "false"> {
   let passGroup = ["HIVM"];
 }
 
@@ -475,11 +479,14 @@ class HIVMOptimizationControlOptions<
   let passGroup = ["HIVM"];
 }
 
-def LimitAutoMultiBufferOfLocalBuffer : HIVMOptimizationControlOptions<
-  "When enable-auto-multi-buffer = true, limit local buffer mode.",
-  "MultiBufferStrategy",
-  "MultiBufferStrategy::CUBE_NO_L0C"
-> {
+def LimitAutoMultiBufferOfLocalBuffer
+    : HIVMOptimizationControlOptions<
+          "DEPRECATED (removed in BiShengIR 1.4.0): when "
+          "enable-auto-multi-buffer = true, "
+          "limit local buffer mode. Use --multibuffer-mode and set l0c=1 for "
+          "no-l0c, "
+          "or l0c>1 for no-limit.",
+          "MultiBufferStrategy", "MultiBufferStrategy::CUBE_NO_L0C"> {
   let additionalOptFlags = [{
 llvm::cl::values(
   clEnumValN(MultiBufferStrategy::NO_LIMIT, "no-limit", "No limit"),
@@ -500,13 +507,18 @@ def DisableMultiBufferOnUB : HIVMOptimizationControlOptions<
   "false"
 >;
 
-def LimitAutoMultiBufferBuffer : HIVMOptimizationControlOptions<
-  "When enable-auto-multi-buffer = true, limit it to only cube, only vector or no limit. "
-  "TableGen/CLI default is only-cube (A3/membase); Ascend950/RegBase applies "
-  "no-limit when this flag is not explicitly set.",
-  "MultiBufferStrategy",
-  "MultiBufferStrategy::ONLY_CUBE"
-> {
+def LimitAutoMultiBufferBuffer
+    : HIVMOptimizationControlOptions<
+          "DEPRECATED (removed in BiShengIR 1.4.0): when "
+          "enable-auto-multi-buffer = true, "
+          "limit it to only cube, only vector or no limit. TableGen/CLI "
+          "default is "
+          "only-cube (A3/membase); Ascend950/RegBase applies no-limit when "
+          "this flag is "
+          "not explicitly set. Use --multibuffer-mode instead "
+          "(only-cube: ub=1; only-vector: l1=1,l0c=1; no-limit: keep l1/ub > "
+          "1).",
+          "MultiBufferStrategy", "MultiBufferStrategy::ONLY_CUBE"> {
   let additionalOptFlags = [{
 llvm::cl::values(
     clEnumValN(MultiBufferStrategy::NO_LIMIT, "no-limit", "No limit"),
@@ -515,6 +527,18 @@ llvm::cl::values(
 )
   }];
 }
+
+def MultibufferMode
+    : HIVMOptimizationControlOptions<
+          "Per-level multi-buffer counts: [(gm, N), (l1, N), (l0c, N), (ub, "
+          "N)]. "
+          "N>1 enables that memory space with N slots; N=1 disables it; N=0 is "
+          "an "
+          "error. Empty preserves the deprecated limit-auto-multi-buffer-* "
+          "behavior; "
+          "typical MixedCV defaults are A3: gm=4,l1=2,l0c=1,ub=1 and "
+          "A5: gm=2,l1=2,l0c=1,ub=2.",
+          "std::string", "\"\"">;
 
 def PlanMemoryStrategy : HIVMOptimizationControlOptions<
   "Plan memory strategy for storage entry reorder.",

@@ -108,8 +108,9 @@ def MarkMultiBuffer : Pass<"hivm-mark-multi-buffer", "func::FuncOp"> {
   let summary = "Mark multi buffer for HIVM Ops";
   let description = [{
     This pass mark multi buffer for hivm ops if the option enable-auto is true.
-    Note that Buffer with scope L0C would not be marked.
-    If enable-auto is false, do nothing.
+    Per-level counts come from --multibuffer-mode or the legacy limit-* flags.
+    Count 1 disables that memory space; count 0 is illegal.
+    If enable-auto is false, do nothing (preload marks may still run).
   }];
 
   let constructor = "mlir::hivm::createMarkMultiBufferPass()";
@@ -117,17 +118,16 @@ def MarkMultiBuffer : Pass<"hivm-mark-multi-buffer", "func::FuncOp"> {
     "hivm::HIVMDialect",
     "annotation::AnnotationDialect",
   ];
-  let options = [
-    Option<"enableAuto", "enable-auto", "bool",
-           /*default=*/"false", "Mark multi buffer automatically.">,
-    Option<"limitAutoMultiBufferOnlyForLocalBuffer",
-           "limit-auto-multi-buffer-only-for-local-buffer", "bool",
-           /*default=*/"false", "Disable multi-buffer mark on workspace">,
-    Option<"limitAutoMultiBufferOfLocalBuffer",
-           "limit-auto-multi-buffer-of-local-buffer", "MultiBufferStrategy",
-           /*default*/ "MultiBufferStrategy::CUBE_NO_L0C",
-           "Limit local buffer auto multi buffer",
-           [{::llvm::cl::values(
+  let options =
+      [Option<"enableAuto", "enable-auto", "bool",
+              /*default=*/"false", "Mark multi buffer automatically.">,
+       Option<"limitAutoMultiBufferOnlyForLocalBuffer",
+              "limit-auto-multi-buffer-only-for-local-buffer", "bool",
+              /*default=*/"false", "Disable multi-buffer mark on workspace">,
+       Option<"limitAutoMultiBufferOfLocalBuffer",
+              "limit-auto-multi-buffer-of-local-buffer", "MultiBufferStrategy",
+              /*default*/ "MultiBufferStrategy::CUBE_NO_L0C",
+              "Limit local buffer auto multi buffer", [{::llvm::cl::values(
                clEnumValN(MultiBufferStrategy::NO_LIMIT, "no-limit",
                           "no limit for local multi buffer"),
                clEnumValN(MultiBufferStrategy::ONLY_CUBE, "only-cube",
@@ -136,11 +136,11 @@ def MarkMultiBuffer : Pass<"hivm-mark-multi-buffer", "func::FuncOp"> {
                           "only vector for local multi buffer"),
                clEnumValN(MultiBufferStrategy::CUBE_NO_L0C, "no-l0c",
                           "Disable l0c multi buffer"))}]>,
-    Option<"limitMixAutoMultiBufferBuffer",
-           "limit-mix-auto-multi-buffer-buffer", "MultiBufferStrategy",
-           /*default=*/"MultiBufferStrategy::ONLY_CUBE",
-           "Disable multi-buffer-buffer on cube, vector Or no limit",
-           [{::llvm::cl::values(
+       Option<"limitMixAutoMultiBufferBuffer",
+              "limit-mix-auto-multi-buffer-buffer", "MultiBufferStrategy",
+              /*default=*/"MultiBufferStrategy::ONLY_CUBE",
+              "Disable multi-buffer-buffer on cube, vector Or no limit",
+              [{::llvm::cl::values(
                clEnumValN(MultiBufferStrategy::NO_LIMIT, "no-limit",
                           "no limit for mix auto multi buffer"),
                clEnumValN(MultiBufferStrategy::ONLY_CUBE, "only-cube",
@@ -149,14 +149,37 @@ def MarkMultiBuffer : Pass<"hivm-mark-multi-buffer", "func::FuncOp"> {
                           "only vector for mix auto multi buffer"),
                clEnumValN(MultiBufferStrategy::CUBE_NO_L0C, "no-l0c",
                           "Disable l0c for mix auto multi buffer"))}]>,
-    Option<"workspaceMultiBufferNum", "set-workspace-multibuffer", "unsigned",
-           /*default=*/"4", "Override for multibuffer number for workspace">,
-    Option<"disableMultiBufferOnUB",
-           "disable-multi-buffer-on-ub", "bool",
-           /*default=*/"false",
-           "Skip multi-buffer mark for UB (Vector Load/Store) buffers">,
-    Option<"enablePreload", "enable-preload", "bool",
-           /*default=*/"false", "Mark multi buffer for preload.">,
+       Option<"workspaceMultiBufferNum", "set-workspace-multibuffer",
+              "unsigned",
+              /*default=*/"4", "Override for multibuffer number for workspace">,
+       Option<"disableMultiBufferOnUB", "disable-multi-buffer-on-ub", "bool",
+              /*default=*/"false",
+              "Skip multi-buffer mark for UB (Vector Load/Store) buffers">,
+       Option<"disableMultiBufferOnL0C", "disable-multi-buffer-on-l0c", "bool",
+              /*default=*/"false",
+              "Skip multi-buffer mark for L0C (Cube accumulator, Fixpipe) "
+              "buffers">,
+       Option<"disableMultiBufferOnL1", "disable-multi-buffer-on-l1", "bool",
+              /*default=*/"false",
+              "Skip multi-buffer mark for L1 (cbuf, ND2NZ) buffers">,
+       Option<"enablePreload", "enable-preload", "bool",
+              /*default=*/"false", "Mark multi buffer for preload.">,
+       Option<"multiBufferMode", "multibuffer-mode", "std::string",
+              /*default=*/"\"\"",
+              "Per-level counts: [(gm, N), (l1, N), (l0c, N), (ub, N)]. "
+              "Overrides the legacy limit-* flags when non-empty.">,
+       Option<"gmMultiBufferNum", "gm-multi-buffer-num", "unsigned",
+              /*default=*/"0",
+              "Override GM workspace multi-buffer count. 0 means unset.">,
+       Option<"l1MultiBufferNum", "l1-multi-buffer-num", "unsigned",
+              /*default=*/"0",
+              "Override L1 multi-buffer count. 0 means unset.">,
+       Option<"l0cMultiBufferNum", "l0c-multi-buffer-num", "unsigned",
+              /*default=*/"0",
+              "Override L0C multi-buffer count. 0 means unset.">,
+       Option<"ubMultiBufferNum", "ub-multi-buffer-num", "unsigned",
+              /*default=*/"0",
+              "Override UB multi-buffer count. 0 means unset.">,
   ];
 }
 
