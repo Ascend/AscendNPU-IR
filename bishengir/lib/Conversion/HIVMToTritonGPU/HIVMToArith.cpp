@@ -155,7 +155,7 @@ static bool broadcast_split(PatternRewriter &rewriter, Operation *op) {
             continue;
         }
         Value input = operand->get();
-        RankedTensorType inputShapedType = cast<RankedTensorType>(input.getType());
+        auto inputShapedType = dyn_cast<RankedTensorType>(input.getType());
         if (!inputShapedType) {
             continue;
         }
