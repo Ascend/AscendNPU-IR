@@ -39,23 +39,22 @@ namespace bishengir {
 using OwningModuleRef = mlir::OwningOpRef<mlir::ModuleOp>;
 
 /// Detect the CANN version (major.minor.patch) by reading
-/// {ASCEND_TOOLKIT_HOME}/Ascend/ascend-toolkit/latest/<arch>-linux/
-/// ascend_toolkit_install.info, mirroring triton-ascend's backend/utils.py.
-/// The first line containing "version" is parsed for a
-/// "<major>.<minor>[.<patch>]" version string. Returns std::nullopt when the
-/// variable, the file, or a parseable version is unavailable.
+/// {ASCEND_HOME_PATH}/<arch>-linux/ascend_toolkit_install.info, mirroring
+/// triton-ascend's backend/utils.py. The first line containing "version" is
+/// parsed for a "<major>.<minor>[.<patch>]" version string. Returns
+/// std::nullopt when the variable, the file, or a parseable version is
+/// unavailable.
 inline std::optional<std::tuple<unsigned, unsigned, unsigned>>
 detectCannVersion() {
-  std::optional<std::string> toolkitHome =
-      llvm::sys::Process::GetEnv("ASCEND_TOOLKIT_HOME");
-  if (!toolkitHome || toolkitHome->empty())
+  std::optional<std::string> homePath =
+      llvm::sys::Process::GetEnv("ASCEND_HOME_PATH");
+  if (!homePath || homePath->empty())
     return std::nullopt;
   llvm::Triple hostTriple(llvm::sys::getProcessTriple());
-  llvm::SmallString<256> versionFile(*toolkitHome);
-  llvm::sys::path::append(versionFile, "Ascend", "ascend-toolkit", "latest");
-  llvm::sys::path::append(
-      versionFile, llvm::Twine(hostTriple.getArchName()) + "-linux",
-      "ascend_toolkit_install.info");
+  llvm::SmallString<256> versionFile(*homePath);
+  llvm::sys::path::append(versionFile,
+                          llvm::Twine(hostTriple.getArchName()) + "-linux",
+                          "ascend_toolkit_install.info");
   llvm::ErrorOr<std::unique_ptr<llvm::MemoryBuffer>> file =
       llvm::MemoryBuffer::getFile(versionFile);
   if (std::error_code ec = file.getError())

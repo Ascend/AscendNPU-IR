@@ -816,13 +816,13 @@ def LinkAicoreBitcode : BiShengIRCompileListOpt<
   bit isSharedWithDownstreamToolchain = 1;
 }
 
-def EnableOptimizedMetaop : BiShengIRCompileOpt<
-  "Enable optimized (O2) template bitcode; false selects the unoptimized "
-  "O0 variant. true attaches the matching ../lib/meta_op.*.O2.bc and "
-  "../lib/host.O2.bc files to the module.",
-  "bool",
-  "true"
-> {
+def EnableOptimizedMetaop
+    : BiShengIRCompileOpt<
+          "Enable optimized (O2) template bitcode; false selects the "
+          "unoptimized "
+          "O0 variant. true attaches the matching ../lib/meta_op.*.O2.bc and "
+          "../lib/host.O2.bc files to the module.",
+          "bool", "true"> {
   let compileOptionCategories = ["targetCategory"];
 }
 
