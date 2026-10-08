@@ -98,46 +98,58 @@ static void addBitcodeAttrsToModule(ModuleOp module, StringRef executablePath,
         createAttr(ctx, mlir::StringAttr::get(ctx, canonicalPath.str().str())));
   };
 
+  // Template bitcode is installed with an optimization-level suffix
+  // (e.g. meta_op.aic.c220.O2.bc); pick the variant selected by
+  // --template-bitcode-opt-level.
+  std::string optLevel = config.getTemplateBitcodeOptLevel();
+  auto bitcodeFileName = [&](StringRef base) -> std::string {
+    return base + "." + optLevel + ".bc";
+  };
+
   if (mlir::hacc::utils::isAscend950(config.getTarget())) {
-    addIfExists("meta_op.aic.c310.bc", mlir::hivm::AIC_BITCODEAttr::name,
+    addIfExists(bitcodeFileName("meta_op.aic.c310").c_str(),
+                mlir::hivm::AIC_BITCODEAttr::name,
                 [](MLIRContext *c, mlir::StringAttr s) -> mlir::Attribute {
                   return mlir::hivm::AIC_BITCODEAttr::get(c, s);
                 });
-    addIfExists("meta_op.aiv.c310.bc", mlir::hivm::AIV_BITCODEAttr::name,
+    addIfExists(bitcodeFileName("meta_op.aiv.c310").c_str(),
+                mlir::hivm::AIV_BITCODEAttr::name,
                 [](MLIRContext *c, mlir::StringAttr s) -> mlir::Attribute {
                   return mlir::hivm::AIV_BITCODEAttr::get(c, s);
                 });
-    addIfExists("meta_op.mix.aic.c310.bc",
+    addIfExists(bitcodeFileName("meta_op.mix.aic.c310").c_str(),
                 mlir::hivm::MIX_AIC_BITCODEAttr::name,
                 [](MLIRContext *c, mlir::StringAttr s) -> mlir::Attribute {
                   return mlir::hivm::MIX_AIC_BITCODEAttr::get(c, s);
                 });
-    addIfExists("meta_op.mix.aiv.c310.bc",
+    addIfExists(bitcodeFileName("meta_op.mix.aiv.c310").c_str(),
                 mlir::hivm::MIX_AIV_BITCODEAttr::name,
                 [](MLIRContext *c, mlir::StringAttr s) -> mlir::Attribute {
                   return mlir::hivm::MIX_AIV_BITCODEAttr::get(c, s);
                 });
   } else {
-    addIfExists("meta_op.aic.c220.bc", mlir::hivm::AIC_BITCODEAttr::name,
+    addIfExists(bitcodeFileName("meta_op.aic.c220").c_str(),
+                mlir::hivm::AIC_BITCODEAttr::name,
                 [](MLIRContext *c, mlir::StringAttr s) -> mlir::Attribute {
                   return mlir::hivm::AIC_BITCODEAttr::get(c, s);
                 });
-    addIfExists("meta_op.aiv.c220.bc", mlir::hivm::AIV_BITCODEAttr::name,
+    addIfExists(bitcodeFileName("meta_op.aiv.c220").c_str(),
+                mlir::hivm::AIV_BITCODEAttr::name,
                 [](MLIRContext *c, mlir::StringAttr s) -> mlir::Attribute {
                   return mlir::hivm::AIV_BITCODEAttr::get(c, s);
                 });
-    addIfExists("meta_op.mix.aic.c220.bc",
+    addIfExists(bitcodeFileName("meta_op.mix.aic.c220").c_str(),
                 mlir::hivm::MIX_AIC_BITCODEAttr::name,
                 [](MLIRContext *c, mlir::StringAttr s) -> mlir::Attribute {
                   return mlir::hivm::MIX_AIC_BITCODEAttr::get(c, s);
                 });
-    addIfExists("meta_op.mix.aiv.c220.bc",
+    addIfExists(bitcodeFileName("meta_op.mix.aiv.c220").c_str(),
                 mlir::hivm::MIX_AIV_BITCODEAttr::name,
                 [](MLIRContext *c, mlir::StringAttr s) -> mlir::Attribute {
                   return mlir::hivm::MIX_AIV_BITCODEAttr::get(c, s);
                 });
   }
-  addIfExists("host.bc", mlir::hivm::HOST_BITCODEAttr::name,
+  addIfExists(bitcodeFileName("host").c_str(), mlir::hivm::HOST_BITCODEAttr::name,
               [](MLIRContext *c, mlir::StringAttr s) -> mlir::Attribute {
                 return mlir::hivm::HOST_BITCODEAttr::get(c, s);
               });
