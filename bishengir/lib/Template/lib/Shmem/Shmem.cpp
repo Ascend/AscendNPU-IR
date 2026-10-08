@@ -375,9 +375,13 @@ ACLSHMEM_ATOMIC_ADD_WRAPPER(bfloat16, bfloat16_t)
 ACLSHMEM_ATOMIC_ADD_WRAPPER(half, half)
 ACLSHMEM_ATOMIC_ADD_WRAPPER(int32, int32_t)
 ACLSHMEM_ATOMIC_ADD_WRAPPER(float, float)
+// Extended atomic-add types require Ascend950; see the support matrix in
+// device/gm2gm/shmem_device_amo.h.
+#if defined(__DAV_C310__)
 ACLSHMEM_ATOMIC_ADD_WRAPPER(uint32, uint32_t)
 ACLSHMEM_ATOMIC_ADD_WRAPPER(uint64, uint64_t)
 ACLSHMEM_ATOMIC_ADD_WRAPPER(int64, int64_t)
+#endif
 
 #undef ACLSHMEM_ATOMIC_ADD_WRAPPER
 
@@ -403,6 +407,9 @@ ACLSHMEM_G_WRAPPER(bfloat16, bfloat16_t)
 
 #undef ACLSHMEM_G_WRAPPER
 
+// The following atomic operations require Ascend950; see the support matrices
+// in device/gm2gm/shmem_device_amo.h.
+#if defined(__DAV_C310__)
 // Macro to generate wrappers for aclshmem_atomic_fetch_add
 #define ACLSHMEM_ATOMIC_FETCH_ADD_WRAPPER(NAME, TYPE)                          \
   __aicore__ __attribute__((always_inline)) TYPE                               \
@@ -606,6 +613,7 @@ ACLSHMEM_ATOMIC_COMPARE_SWAP_WRAPPER(int64, int64_t)
 ACLSHMEM_ATOMIC_COMPARE_SWAP_WRAPPER(uint64, uint64_t)
 
 #undef ACLSHMEM_ATOMIC_COMPARE_SWAP_WRAPPER
+#endif
 
 // Macro to generate wrappers for aclshmem_##NAME##_wait_until functions
 #define ACLSHMEM_WAIT_UNTIL_WRAPPER(NAME, TYPE)                                \
