@@ -100,9 +100,9 @@ void addBitcodeAttrsToModule(ModuleOp module, StringRef executablePath,
   };
 
   // Template bitcode is installed with an optimization-level suffix
-  // (e.g. meta_op.aic.c220.O2.bc); pick the variant selected by
-  // --enable-optimized-metaop (true=O2, false=O0).
-  std::string optLevel = config.getEnableOptimizedMetaop() ? "O2" : "O0";
+  // (e.g. meta_op.aic.c220.O2.bc); pick the variant with priority: explicit
+  // --enable-optimized-metaop > CANN version (>= 9.2.0 uses O2) > default O2.
+  std::string optLevel = resolveTemplateBitcodeOptLevel(config);
   auto bitcodeFileName = [&](StringRef base) -> std::string {
     return (base + "." + optLevel + ".bc").str();
   };
