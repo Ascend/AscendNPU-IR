@@ -1219,9 +1219,7 @@ void AdaptTritonKernelPass::runOnOperation() {
 
   // membase-only
   if (hacc::utils::isMemBasedArch(module)) {
-    if (hacc::utils::getHIVMCVersion(module) > llvm::VersionTuple(0, 0, 0)) {
-      module->setAttr(utils::kMemrefAsPtr, UnitAttr::get(context));
-    }
+    module->setAttr(utils::kMemrefAsPtr, UnitAttr::get(context));
   }
 }
 
