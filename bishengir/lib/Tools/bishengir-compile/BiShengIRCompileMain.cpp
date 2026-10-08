@@ -101,8 +101,8 @@ void addBitcodeAttrsToModule(ModuleOp module, StringRef executablePath,
 
   // Template bitcode is installed with an optimization-level suffix
   // (e.g. meta_op.aic.c220.O2.bc); pick the variant selected by
-  // --template-bitcode-opt-level.
-  std::string optLevel = config.getTemplateBitcodeOptLevel();
+  // --enable-optimized-metaop (true=O2, false=O0).
+  std::string optLevel = config.getEnableOptimizedMetaop() ? "O2" : "O0";
   auto bitcodeFileName = [&](StringRef base) -> std::string {
     return (base + "." + optLevel + ".bc").str();
   };
