@@ -104,7 +104,7 @@ void addBitcodeAttrsToModule(ModuleOp module, StringRef executablePath,
   // --template-bitcode-opt-level.
   std::string optLevel = config.getTemplateBitcodeOptLevel();
   auto bitcodeFileName = [&](StringRef base) -> std::string {
-    return base + "." + optLevel + ".bc";
+    return (base + "." + optLevel + ".bc").str();
   };
 
   addIfExists(bitcodeFileName("meta_op.aic.c220").c_str(),
