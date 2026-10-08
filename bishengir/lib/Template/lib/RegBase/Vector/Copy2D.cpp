@@ -620,10 +620,93 @@ copy_ubuf_to_ubuf_2d_core(memref_t<__ubuf__ T, 2> *src,
   return;
 }
 
+// A byte view requires byte-aligned row starts and contiguous elements.
+static __aiv__ __attribute__((always_inline)) bool
+is_byte_aligned_bool_2d(const memref_t<__ubuf__ bool, 2> *ref) {
+  return ref->offset % 8 == 0 && ref->strides[0] % 8 == 0 &&
+         ref->strides[1] == 1;
+}
+
+// Copy contiguous bits without crossing either byte boundary. The caller must
+// ensure unit inner strides, distinct allocations, and scalar pipeline access.
+static __aiv__ __attribute__((always_inline)) void
+copy_ubuf_to_ubuf_2d_bool_by_fragment(const memref_t<__ubuf__ bool, 2> *src,
+                                      const memref_t<__ubuf__ bool, 2> *dst) {
+  auto *srcBytes = reinterpret_cast<__ubuf__ const uint8_t *>(src->aligned);
+  auto *dstBytes = reinterpret_cast<__ubuf__ uint8_t *>(dst->aligned);
+  for (int64_t i = 0; i < src->sizes[0]; ++i) {
+    int64_t srcBit = src->offset + i * src->strides[0];
+    int64_t dstBit = dst->offset + i * dst->strides[0];
+    int64_t remaining = src->sizes[1];
+    while (remaining > 0) {
+      const int srcShift = srcBit % 8;
+      const int dstShift = dstBit % 8;
+      int64_t count = remaining;
+      if (count > 8 - srcShift)
+        count = 8 - srcShift;
+      if (count > 8 - dstShift)
+        count = 8 - dstShift;
+      const uint8_t lowMask = static_cast<uint8_t>((1u << count) - 1u);
+      const uint8_t bits = (srcBytes[srcBit / 8] >> srcShift) & lowMask;
+      const uint8_t dstMask = static_cast<uint8_t>(lowMask << dstShift);
+      dstBytes[dstBit / 8] =
+          (dstBytes[dstBit / 8] & static_cast<uint8_t>(~dstMask)) |
+          static_cast<uint8_t>(bits << dstShift);
+      srcBit += count;
+      dstBit += count;
+      remaining -= count;
+    }
+  }
+}
+
+// Preserve per-bit access order for strided elements or shared allocations.
+// The caller must synchronize vector producers before scalar access.
+static __aiv__ __attribute__((always_inline)) void
+copy_ubuf_to_ubuf_2d_bool_by_bit(const memref_t<__ubuf__ bool, 2> *src,
+                                 const memref_t<__ubuf__ bool, 2> *dst) {
+  auto *srcBytes = reinterpret_cast<__ubuf__ const uint8_t *>(src->aligned);
+  auto *dstBytes = reinterpret_cast<__ubuf__ uint8_t *>(dst->aligned);
+  for (int64_t i = 0; i < src->sizes[0]; ++i) {
+    for (int64_t j = 0; j < src->sizes[1]; ++j) {
+      const int64_t srcBit =
+          src->offset + i * src->strides[0] + j * src->strides[1];
+      const int64_t dstBit =
+          dst->offset + i * dst->strides[0] + j * dst->strides[1];
+      const uint8_t bit = (srcBytes[srcBit / 8] >> (srcBit % 8)) & 1u;
+      const uint8_t dstMask = static_cast<uint8_t>(1u << (dstBit % 8));
+      dstBytes[dstBit / 8] =
+          (dstBytes[dstBit / 8] & static_cast<uint8_t>(~dstMask)) |
+          static_cast<uint8_t>(bit << (dstBit % 8));
+    }
+  }
+}
+
+// Own the vector/scalar handoff once for either scalar copy implementation.
+static __aiv__ __attribute__((always_inline)) void
+copy_ubuf_to_ubuf_2d_bool_by_scalar(const memref_t<__ubuf__ bool, 2> *src,
+                                    const memref_t<__ubuf__ bool, 2> *dst) {
+  INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+  if (src->strides[1] == 1 && dst->strides[1] == 1 &&
+      src->allocated != dst->allocated) {
+    copy_ubuf_to_ubuf_2d_bool_by_fragment(src, dst);
+  } else {
+    copy_ubuf_to_ubuf_2d_bool_by_bit(src, dst);
+  }
+  INTRINSIC(set_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+}
+
 template <>
 __aiv__ __attribute__((always_inline)) void
 copy_ubuf_to_ubuf_2d_core(memref_t<__ubuf__ bool, 2> *src,
                           memref_t<__ubuf__ bool, 2> *dst) {
+  // A bool memref is bit-packed. Preserve the actual bit strides when a byte
+  // view cannot represent the rows (for example, a compact [32, 5] mask).
+  if (!is_byte_aligned_bool_2d(src) || !is_byte_aligned_bool_2d(dst)) {
+    copy_ubuf_to_ubuf_2d_bool_by_scalar(src, dst);
+    return;
+  }
   // convert bool memref to int8 memref
   memref_t<__ubuf__ int8_t, 2> src_as_int8;
   memref_t<__ubuf__ int8_t, 2> dst_as_int8;
