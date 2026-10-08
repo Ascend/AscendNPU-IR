@@ -135,6 +135,37 @@ tt.func @elementwiseOp(%ptr1: !tt.ptr<f32>, %ptr2: !tt.ptr<f32>, %ptr3: !tt.ptr<
 
 // -----
 
+// CHECK-LABEL: @selectThenReduce
+// CHECK: %[[SELECTED:.*]] = arith.select {{.*}} : tensor<4xi1>, tensor<4xf32>
+// CHECK: %[[IDENTITY:.*]] = arith.constant dense<0.0{{.*}}> : tensor<4xf32>
+// CHECK: %[[PADDED:.*]] = arith.select {{.*}}, %[[SELECTED]], %[[IDENTITY]] : tensor<4xi1>, tensor<4xf32>
+// CHECK: "tt.reduce"(%[[PADDED]])
+tt.func @selectThenReduce(%ptr1: !tt.ptr<f32>, %ptr2: !tt.ptr<f32>, %maskPtr: !tt.ptr<i1>) -> f32 {
+  %0 = tt.make_range {end = 3 : i32, start = 0 : i32} : tensor<3xi32>
+  %1 = tt.splat %ptr1 : !tt.ptr<f32> -> tensor<3x!tt.ptr<f32>>
+  %2 = tt.addptr %1, %0 : tensor<3x!tt.ptr<f32>>, tensor<3xi32>
+  %3 = tt.load %2 : tensor<3x!tt.ptr<f32>>
+
+  %4 = tt.splat %ptr2 : !tt.ptr<f32> -> tensor<3x!tt.ptr<f32>>
+  %5 = tt.addptr %4, %0 : tensor<3x!tt.ptr<f32>>, tensor<3xi32>
+  %6 = tt.load %5 : tensor<3x!tt.ptr<f32>>
+
+  %7 = tt.splat %maskPtr : !tt.ptr<i1> -> tensor<3x!tt.ptr<i1>>
+  %8 = tt.addptr %7, %0 : tensor<3x!tt.ptr<i1>>, tensor<3xi32>
+  %9 = tt.load %8 : tensor<3x!tt.ptr<i1>>
+  %selected = arith.select %9, %3, %6 : tensor<3xi1>, tensor<3xf32>
+
+  %res = "tt.reduce"(%selected) <{axis = 0 : i32}> ({
+    ^bb0(%arg0: f32, %arg1: f32):
+      %sum = arith.addf %arg0, %arg1 : f32
+      "tt.reduce.return"(%sum) : (f32) -> ()
+    }) : (tensor<3xf32>) -> f32
+
+  tt.return %res : f32
+}
+
+// -----
+
 // CHECK-LABEL: @reduce1D_1Tensor_Identity
 // CHECK: arith.constant dense<1.0{{.*}}>
 // CHECK: arith.select
@@ -708,6 +739,21 @@ tt.func @castOpExtf(%ptr1: !tt.ptr<f16>, %ptr2: !tt.ptr<f32>) {
 
 // -----
 
+// CHECK-LABEL: @tensorEmptyNonPowerTwo
+// CHECK: %[[EMPTY:.*]] = tensor.empty() : tensor<4xf32>
+// CHECK: tt.store %{{.*}}, %[[EMPTY]] {boundaryCheck = array<i32: 0>} : !tt.ptr<tensor<4xf32>>
+tt.func @tensorEmptyNonPowerTwo(%dst: !tt.ptr<f32>) {
+  %size = arith.constant 3 : i64
+  %stride = arith.constant 1 : i64
+  %offset = arith.constant 0 : i32
+  %ptr = tt.make_tensor_ptr %dst, [%size], [%stride], [%offset] {order = array<i32: 0>} : !tt.ptr<tensor<3xf32>>
+  %empty = tensor.empty() : tensor<3xf32>
+  tt.store %ptr, %empty : !tt.ptr<tensor<3xf32>>
+  tt.return
+}
+
+// -----
+
 // CHECK-LABEL: @tensorPtr
 // CHECK: %[[CST_64:.*]] = arith.constant 64 : i64
 // CHECK: %[[CST_1:.*]] = arith.constant 1 : i64
@@ -1152,6 +1198,30 @@ tt.func @extractSliceSplit(%ptr0: !tt.ptr<f32>, %ptr1: !tt.ptr<f32>) {
 
 // -----
 
+// CHECK-LABEL: @extractSliceSplitDynamicOffset
+// CHECK-SAME: %[[OFFSET:arg[0-9]+]]: index)
+// CHECK: %[[DYNAMIC_SOURCE:.*]] = tt.addptr {{.*}} : tensor<16x!tt.ptr<f32>>, tensor<16xi32>
+// CHECK: %[[FIRST_EXT:.*]] = tensor.extract_slice %[[DYNAMIC_SOURCE]][{{.*}}] [4] [1]
+// CHECK: %[[OFFSET_DELTA:.*]] = arith.constant 4 : index
+// CHECK: %[[NEXT_OFFSET:.*]] = arith.addi %[[OFFSET_DELTA]], %[[OFFSET]] : index
+// CHECK: %[[SECOND_EXT:.*]] = tensor.extract_slice %[[DYNAMIC_SOURCE]][%[[NEXT_OFFSET]]] [1] [1]
+tt.func @extractSliceSplitDynamicOffset(%ptr0: !tt.ptr<f32>, %ptr1: !tt.ptr<f32>, %offset: index) {
+  %0 = tt.make_range {end = 15 : i32, start = 0 : i32} : tensor<15xi32>
+  %1 = tt.splat %ptr0 : !tt.ptr<f32> -> tensor<15x!tt.ptr<f32>>
+  %2 = tt.addptr %1, %0 : tensor<15x!tt.ptr<f32>>, tensor<15xi32>
+
+  %3 = tensor.extract_slice %2[%offset] [5] [1] : tensor<15x!tt.ptr<f32>> to tensor<5x!tt.ptr<f32>>
+  %4 = tt.load %3 : tensor<5x!tt.ptr<f32>>
+
+  %5 = tt.make_range {end = 5 : i32, start = 0 : i32} : tensor<5xi32>
+  %6 = tt.splat %ptr1 : !tt.ptr<f32> -> tensor<5x!tt.ptr<f32>>
+  %7 = tt.addptr %6, %5 : tensor<5x!tt.ptr<f32>>, tensor<5xi32>
+  tt.store %7, %4 : tensor<5x!tt.ptr<f32>>
+  tt.return
+}
+
+// -----
+
 // CHECK-LABEL: @insertSlice
 // CHECK: tensor.insert_slice {{.*}} into {{.*}}[0, 3] [4, 4] [1, 1] : tensor<4x4xf32> into tensor<4x8xf32>
 tt.func @insertSlice(%ptr0: !tt.ptr<f32>, %ptr1: !tt.ptr<f32>) {
@@ -1231,6 +1301,33 @@ tt.func @insertSliceSplitBounds(%ptr0: !tt.ptr<f32>, %ptr1: !tt.ptr<f32>) {
 
   %8 = tensor.insert_slice %3 into %7[10] [5] [1] : tensor<5xf32> into tensor<15xf32>
   tt.store %6, %8 : tensor<15x!tt.ptr<f32>>
+  tt.return
+}
+
+// -----
+
+// CHECK-LABEL: @insertSliceSplitDynamicOffset
+// CHECK-SAME: %[[OFFSET:arg[0-9]+]]: index)
+// CHECK: %[[DYNAMIC_DEST:.*]] = tt.addptr {{.*}} : tensor<16x!tt.ptr<f32>>, tensor<16xi32>
+// CHECK: %[[FIRST_SRC:.*]] = tensor.extract_slice {{.*}}[0] [4] [1]
+// CHECK: %[[FIRST_INSERT:.*]] = tensor.insert_slice %[[FIRST_SRC]] into %{{.*}}[{{.*}}] [4] [1]
+// CHECK: %[[SECOND_SRC:.*]] = tensor.extract_slice {{.*}}[4] [1] [1]
+// CHECK: %[[OFFSET_DELTA:.*]] = arith.constant 4 : index
+// CHECK: %[[NEXT_OFFSET:.*]] = arith.addi %[[OFFSET_DELTA]], %[[OFFSET]] : index
+// CHECK: tensor.insert_slice %[[SECOND_SRC]] into %[[FIRST_INSERT]][%[[NEXT_OFFSET]]] [1] [1]
+tt.func @insertSliceSplitDynamicOffset(%ptr0: !tt.ptr<f32>, %ptr1: !tt.ptr<f32>, %offset: index) {
+  %0 = tt.make_range {end = 5 : i32, start = 0 : i32} : tensor<5xi32>
+  %1 = tt.splat %ptr0 : !tt.ptr<f32> -> tensor<5x!tt.ptr<f32>>
+  %2 = tt.addptr %1, %0 : tensor<5x!tt.ptr<f32>>, tensor<5xi32>
+  %3 = tt.load %2 : tensor<5x!tt.ptr<f32>>
+
+  %4 = tt.make_range {end = 9 : i32, start = 0 : i32} : tensor<9xi32>
+  %5 = tt.splat %ptr1 : !tt.ptr<f32> -> tensor<9x!tt.ptr<f32>>
+  %6 = tt.addptr %5, %4 : tensor<9x!tt.ptr<f32>>, tensor<9xi32>
+  %7 = tt.load %6 : tensor<9x!tt.ptr<f32>>
+
+  %8 = tensor.insert_slice %3 into %7[%offset] [5] [1] : tensor<5xf32> into tensor<9xf32>
+  tt.store %6, %8 : tensor<9x!tt.ptr<f32>>
   tt.return
 }
 

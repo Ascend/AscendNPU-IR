@@ -412,7 +412,8 @@ struct SliceOpData {
 };
 
 bool isTensorProducer(Operation *op) {
-  return isa<triton::SplatOp, triton::MakeRangeOp, arith::ConstantOp>(op);
+  return isa<triton::SplatOp, triton::MakeRangeOp, arith::ConstantOp,
+             tensor::EmptyOp>(op);
 }
 
 bool isGenericTensorOp(Operation *op) {
@@ -679,7 +680,7 @@ bool isSupportedOp(Operation *op) {
     return true;
   }
 
-  if (isa<tensor::InsertOp, tensor::ExtractOp>(op)) {
+  if (isa<tensor::InsertOp, tensor::ExtractOp, tensor::EmptyOp>(op)) {
     return true;
   }
 
@@ -1967,6 +1968,13 @@ Value getReplacementCreationOp(OpBuilder &builder, Operation *tensorCreatorOp,
         res = builder.create<triton::MakeRangeOp>(
             loc, RankedTensorType::get(data.localVirtualShape, elementType),
             start, start + data.localVirtualShapeSize);
+      })
+      .Case<tensor::EmptyOp>([&](tensor::EmptyOp emptyOp) {
+        Type elementType = emptyOp.getType().getElementType();
+        RankedTensorType newType =
+            RankedTensorType::get(data.localVirtualShape, elementType);
+        
+        res = builder.create<tensor::EmptyOp>(loc, newType, ValueRange{});
       });
 
   return res;
