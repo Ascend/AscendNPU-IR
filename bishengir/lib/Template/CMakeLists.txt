@@ -7,6 +7,11 @@ else()
     message("-- No CMAKE_SYSROOT specified. Omitting sysroot flag.")
 endif()
 
+# Template bitcode is compiled at two optimization levels so that
+# bishengir-compile can link either variant into the final binary. Outputs
+# carry the level as a suffix (e.g. meta_op.aic.c220.O2.bc).
+set(BISHENGIR_TEMPLATE_OPT_LEVELS O2 O0)
+
 # Track headers used by the template sources. ccec is invoked as a custom
 # command rather than through CMake's native C++ rules, so CMake cannot infer
 # header dependencies from compiler-generated depfiles here.
@@ -44,7 +49,7 @@ endfunction()
 #[[Compile single xx.cpp to xx.bc
  Core_type: "aic" "aiv" "host"
  Platform_type: "Ascend910B"]]
-function(compile_single_cpp_to_bc cpp_with_path core_type platform_type)
+function(compile_single_cpp_to_bc cpp_with_path core_type platform_type opt_level)
     # Get name of xx.bc
     string(REGEX MATCHALL "[0-9A-Za-z_]*.cpp" cpp_name ${cpp_with_path})
 
@@ -55,8 +60,9 @@ function(compile_single_cpp_to_bc cpp_with_path core_type platform_type)
     list(APPEND bisheng_args --cce-aicore-only)
     list(APPEND bisheng_args --cce-generic-addrspace=off)
     list(APPEND bisheng_args -mllvm -disable-llvm-optzns)
-    if ((NOT "${platform_type}" STREQUAL "Ascend910D") OR
-        (BISHENGIR_OPTIMIZE_TEMPLATE_BITCODE STREQUAL "ON"))
+    if (("${opt_level}" STREQUAL "O2") AND
+        ((NOT "${platform_type}" STREQUAL "Ascend910D") OR
+         (BISHENGIR_OPTIMIZE_TEMPLATE_BITCODE STREQUAL "ON")))
         list(APPEND bisheng_args -O2)
     endif ()
     if ("${platform_type}" STREQUAL "Ascend910D" AND
@@ -82,9 +88,9 @@ function(compile_single_cpp_to_bc cpp_with_path core_type platform_type)
         endif ()
         list(APPEND bisheng_args --cce-enable-print)
         if (${core_type} STREQUAL "aic")
-            string(REGEX REPLACE ".cpp" ".aic${bc_arch_suffix}.bc" bc_name ${cpp_name})
+            string(REGEX REPLACE ".cpp" ".aic${bc_arch_suffix}.${opt_level}.bc" bc_name ${cpp_name})
         else ()
-            string(REGEX REPLACE ".cpp" ".mix.aic${bc_arch_suffix}.bc" bc_name ${cpp_name})
+            string(REGEX REPLACE ".cpp" ".mix.aic${bc_arch_suffix}.${opt_level}.bc" bc_name ${cpp_name})
         endif ()
     elseif ((${core_type} STREQUAL "aiv") OR (${core_type} STREQUAL "mix_aiv"))
         if (${platform_type} STREQUAL "Ascend910D")
@@ -97,12 +103,12 @@ function(compile_single_cpp_to_bc cpp_with_path core_type platform_type)
         endif ()
         list(APPEND bisheng_args --cce-enable-print)
         if (${core_type} STREQUAL "aiv")
-            string(REGEX REPLACE ".cpp" ".aiv${bc_arch_suffix}.bc" bc_name ${cpp_name})
+            string(REGEX REPLACE ".cpp" ".aiv${bc_arch_suffix}.${opt_level}.bc" bc_name ${cpp_name})
         else ()
-            string(REGEX REPLACE ".cpp" ".mix.aiv${bc_arch_suffix}.bc" bc_name ${cpp_name})
+            string(REGEX REPLACE ".cpp" ".mix.aiv${bc_arch_suffix}.${opt_level}.bc" bc_name ${cpp_name})
         endif ()
     elseif (${core_type} STREQUAL "host")
-        string(REGEX REPLACE ".cpp" ".host.bc" bc_name ${cpp_name})
+        string(REGEX REPLACE ".cpp" ".host.${opt_level}.bc" bc_name ${cpp_name})
         list(APPEND bisheng_args --cce-host-only)
     else ()
         message(FATAL_ERROR "Core type must be aic/mix_aic/aiv/mix_aiv or host.")
@@ -133,12 +139,13 @@ function(compile_single_cpp_to_bc cpp_with_path core_type platform_type)
         list(APPEND bisheng_args --sysroot=${CMAKE_SYSROOT})
     endif()
 
-    # Derive a tag for grouping .bc outputs by (core_type, arch) for the link step.
+    # Derive a tag for grouping .bc outputs by (core_type, arch, opt_level)
+    # for the link step.
     if (${core_type} STREQUAL "host")
-        set(bc_arch_tag "host")
+        set(bc_arch_tag "host_${opt_level}")
     else ()
         string(REPLACE "." "_" arch_suffix_tok "${bc_arch_suffix}")
-        set(bc_arch_tag "${core_type}${arch_suffix_tok}")
+        set(bc_arch_tag "${core_type}${arch_suffix_tok}_${opt_level}")
     endif ()
 
     set(bc_output "${CMAKE_CURRENT_BINARY_DIR}/${bc_name}")
@@ -166,6 +173,14 @@ function(compile_single_cpp_to_bc cpp_with_path core_type platform_type)
 endfunction()
 
 function(compile_shmem_to_bc cpp_with_path core_type platform_type)
+    # Shmem sources feed every (core_type, arch, opt_level) group, so compile
+    # one bitcode per optimization level.
+    foreach (opt_level ${BISHENGIR_TEMPLATE_OPT_LEVELS})
+        compile_shmem_to_bc_single(${cpp_with_path} ${core_type} ${platform_type} ${opt_level})
+    endforeach ()
+endfunction()
+
+function(compile_shmem_to_bc_single cpp_with_path core_type platform_type opt_level)
     # Get name of xx.bc
     string(REGEX MATCHALL "[0-9A-Za-z_]*.cpp" cpp_name ${cpp_with_path})
 
@@ -177,12 +192,14 @@ function(compile_shmem_to_bc cpp_with_path core_type platform_type)
     list(APPEND bisheng_args --cce-generic-addrspace=off)
     list(APPEND bisheng_args -mllvm -disable-llvm-optzns)
     list(APPEND bisheng_args --cce-enable-print)
-    if ((NOT "${platform_type}" STREQUAL "Ascend910D") OR
-        (BISHENGIR_OPTIMIZE_TEMPLATE_BITCODE STREQUAL "ON"))
+    if (("${opt_level}" STREQUAL "O2") AND
+        ((NOT "${platform_type}" STREQUAL "Ascend910D") OR
+         (BISHENGIR_OPTIMIZE_TEMPLATE_BITCODE STREQUAL "ON")))
         list(APPEND bisheng_args -O2)
     endif ()
     if ("${platform_type}" STREQUAL "Ascend910D" AND
-        BISHENGIR_OPTIMIZE_TEMPLATE_BITCODE STREQUAL "ON")
+        BISHENGIR_OPTIMIZE_TEMPLATE_BITCODE STREQUAL "ON" AND
+        "${opt_level}" STREQUAL "O2")
         list(APPEND bisheng_args -mllvm -cce-aicore-addr-transform=false)
     endif ()
     # open --cce-enable-sanitizer after shmem upgrade to 1.6.x
@@ -202,9 +219,9 @@ function(compile_shmem_to_bc cpp_with_path core_type platform_type)
         endif ()
         list(APPEND bisheng_args --cce-enable-print)
         if (${core_type} STREQUAL "aic")
-            string(REGEX REPLACE ".cpp" ".aic${bc_arch_suffix}.bc" bc_name ${cpp_name})
+            string(REGEX REPLACE ".cpp" ".aic${bc_arch_suffix}.${opt_level}.bc" bc_name ${cpp_name})
         else ()
-            string(REGEX REPLACE ".cpp" ".mix.aic${bc_arch_suffix}.bc" bc_name ${cpp_name})
+            string(REGEX REPLACE ".cpp" ".mix.aic${bc_arch_suffix}.${opt_level}.bc" bc_name ${cpp_name})
         endif ()
     elseif ((${core_type} STREQUAL "aiv") OR (${core_type} STREQUAL "mix_aiv"))
         if (${platform_type} STREQUAL "Ascend910D")
@@ -216,12 +233,12 @@ function(compile_shmem_to_bc cpp_with_path core_type platform_type)
         endif ()
         list(APPEND bisheng_args --cce-enable-print)
         if (${core_type} STREQUAL "aiv")
-            string(REGEX REPLACE ".cpp" ".aiv${bc_arch_suffix}.bc" bc_name ${cpp_name})
+            string(REGEX REPLACE ".cpp" ".aiv${bc_arch_suffix}.${opt_level}.bc" bc_name ${cpp_name})
         else ()
-            string(REGEX REPLACE ".cpp" ".mix.aiv${bc_arch_suffix}.bc" bc_name ${cpp_name})
+            string(REGEX REPLACE ".cpp" ".mix.aiv${bc_arch_suffix}.${opt_level}.bc" bc_name ${cpp_name})
         endif ()
     elseif (${core_type} STREQUAL "host")
-        string(REGEX REPLACE ".cpp" ".host.bc" bc_name ${cpp_name})
+        string(REGEX REPLACE ".cpp" ".host.${opt_level}.bc" bc_name ${cpp_name})
     else ()
         message(FATAL_ERROR "Core type must be aic/mix_aic/aiv/mix_aiv or host.")
     endif ()
@@ -252,7 +269,7 @@ function(compile_shmem_to_bc cpp_with_path core_type platform_type)
     # its matching meta_op group; mixing them makes hivmc consume C310 device
     # bitcode while compiling an Ascend910B module.
     string(REPLACE "." "_" arch_suffix_tok "${bc_arch_suffix}")
-    set(bc_arch_tag "${core_type}${arch_suffix_tok}")
+    set(bc_arch_tag "${core_type}${arch_suffix_tok}_${opt_level}")
 
     set(bc_output "${CMAKE_CURRENT_BINARY_DIR}/${bc_name}")
     string(REGEX REPLACE ";" " " compile_command "${BISHENG_TOOL} ${bisheng_args}")
@@ -298,7 +315,9 @@ function(compile_single_cpp_to_bc_debug cpp_with_path core_type platform_type)
     elseif (${core_type} STREQUAL "aiv")
         string(REGEX REPLACE ".cpp" ".aiv.bc" bc_name ${cpp_name})
     elseif (${core_type} STREQUAL "host")
-        string(REGEX REPLACE ".cpp" ".host.bc" bc_name ${cpp_name})
+        # The debug compile always runs with -O2, so name its host output as
+        # the O2 variant to keep a single host.<opt>.bc scheme for consumers.
+        string(REGEX REPLACE ".cpp" ".host.O2.bc" bc_name ${cpp_name})
     else ()
         message(FATAL_ERROR "Core type must be aic/aiv or host.")
     endif ()
@@ -310,10 +329,10 @@ function(compile_single_cpp_to_bc_debug cpp_with_path core_type platform_type)
 
     # Debug-mode .bc files (no arch suffix) are not linked into meta_op:
     # link_all_to_meta_op only handles c220/c310/host. Tag host outputs as
-    # "host" so they participate in the host link; aic/aiv debug outputs are
-    # tagged separately and left unlinked, matching the old behavior.
+    # "host_O2" so they participate in the host link; aic/aiv debug outputs
+    # are tagged separately and left unlinked, matching the old behavior.
     if (${core_type} STREQUAL "host")
-        set(bc_arch_tag "host")
+        set(bc_arch_tag "host_O2")
     else ()
         set(bc_arch_tag "${core_type}_debug")
     endif ()
@@ -371,10 +390,13 @@ function(compile_cpp_to_bc)
             (NOT ${core_type} STREQUAL "mix_aic") AND
             (NOT ${core_type} STREQUAL "mix_aiv"))
             compile_single_cpp_to_bc_debug(${cpp_with_path} ${core_type} "DEBUG")
+            list(APPEND this_call_outputs ${bc_output})
         else ()
-            compile_single_cpp_to_bc(${cpp_with_path} ${core_type} ${platform_type})
+            foreach (opt_level ${BISHENGIR_TEMPLATE_OPT_LEVELS})
+                compile_single_cpp_to_bc(${cpp_with_path} ${core_type} ${platform_type} ${opt_level})
+                list(APPEND this_call_outputs ${bc_output})
+            endforeach ()
         endif ()
-        list(APPEND this_call_outputs ${bc_output})
     endforeach ()
     bishengir_register_bcgen_target("${this_call_outputs}")
 endfunction()
@@ -425,14 +447,14 @@ endif()
 # (bishengir_register_bcgen_target) make those custom-command rules emitted
 # into the build. The ALL driver target just triggers the custom command.
 # Each group is its own ALL target so ninja can run the link steps in parallel.
-function(link_one_group_to_meta_op out_dir arch core_type)
+function(link_one_group_to_meta_op out_dir arch core_type opt_level)
     if (${core_type} STREQUAL "host")
-        set(tag "host")
-        set(out_file "${out_dir}/host.bc")
+        set(tag "host_${opt_level}")
+        set(out_file "${out_dir}/host.${opt_level}.bc")
     else()
         string(REPLACE "_" "." core_type_metaop_name "${core_type}")
-        set(tag "${core_type}_${arch}")
-        set(out_file "${out_dir}/meta_op.${core_type_metaop_name}.${arch}.bc")
+        set(tag "${core_type}_${arch}_${opt_level}")
+        set(out_file "${out_dir}/meta_op.${core_type_metaop_name}.${arch}.${opt_level}.bc")
     endif()
     get_property(inputs GLOBAL PROPERTY bishengir_bc_outputs_${tag})
     if(NOT inputs)
@@ -442,7 +464,8 @@ function(link_one_group_to_meta_op out_dir arch core_type)
     string(REGEX REPLACE "[^0-9A-Za-z_]" "_" target_suffix "${tag}")
     set(link_target "bishengir_link_${target_suffix}")
     if (BISHENGIR_OPTIMIZE_TEMPLATE_BITCODE STREQUAL "ON" AND
-        "${arch}" STREQUAL "c310")
+        "${arch}" STREQUAL "c310" AND
+        "${opt_level}" STREQUAL "O2")
         string(REPLACE ";" "\n" link_signature_content
                "${LLVM_LINK_TOOL}\n${inputs}\n-o\n${out_file}.linked.bc")
         set(link_signature "${out_file}.llvm-link.args")
@@ -491,20 +514,22 @@ function(link_all_to_meta_op)
     set(BITCODE_OUTPUT_DIR "${CMAKE_BINARY_DIR}/lib")
     file(MAKE_DIRECTORY ${BITCODE_OUTPUT_DIR})
 
-    # c220 (Ascend910B / A3): use .c220 suffix.
-    link_one_group_to_meta_op(${BITCODE_OUTPUT_DIR} "c220" "aic")
-    link_one_group_to_meta_op(${BITCODE_OUTPUT_DIR} "c220" "aiv")
-    link_one_group_to_meta_op(${BITCODE_OUTPUT_DIR} "c220" "mix_aic")
-    link_one_group_to_meta_op(${BITCODE_OUTPUT_DIR} "c220" "mix_aiv")
+    foreach (opt_level ${BISHENGIR_TEMPLATE_OPT_LEVELS})
+        # c220 (Ascend910B / A3): use .c220 suffix.
+        link_one_group_to_meta_op(${BITCODE_OUTPUT_DIR} "c220" "aic" ${opt_level})
+        link_one_group_to_meta_op(${BITCODE_OUTPUT_DIR} "c220" "aiv" ${opt_level})
+        link_one_group_to_meta_op(${BITCODE_OUTPUT_DIR} "c220" "mix_aic" ${opt_level})
+        link_one_group_to_meta_op(${BITCODE_OUTPUT_DIR} "c220" "mix_aiv" ${opt_level})
 
-    # c310 (Ascend910D / A5): use .c310 suffix.
-    link_one_group_to_meta_op(${BITCODE_OUTPUT_DIR} "c310" "aic")
-    link_one_group_to_meta_op(${BITCODE_OUTPUT_DIR} "c310" "aiv")
-    link_one_group_to_meta_op(${BITCODE_OUTPUT_DIR} "c310" "mix_aic")
-    link_one_group_to_meta_op(${BITCODE_OUTPUT_DIR} "c310" "mix_aiv")
+        # c310 (Ascend910D / A5): use .c310 suffix.
+        link_one_group_to_meta_op(${BITCODE_OUTPUT_DIR} "c310" "aic" ${opt_level})
+        link_one_group_to_meta_op(${BITCODE_OUTPUT_DIR} "c310" "aiv" ${opt_level})
+        link_one_group_to_meta_op(${BITCODE_OUTPUT_DIR} "c310" "mix_aic" ${opt_level})
+        link_one_group_to_meta_op(${BITCODE_OUTPUT_DIR} "c310" "mix_aiv" ${opt_level})
 
-    # Host bitcode (arch-agnostic).
-    link_one_group_to_meta_op("${BITCODE_OUTPUT_DIR}" "host" "host")
+        # Host bitcode (arch-agnostic).
+        link_one_group_to_meta_op("${BITCODE_OUTPUT_DIR}" "host" "host" ${opt_level})
+    endforeach ()
 
     # NOTE: the install-component -> link-target dependency is wired after the
     # install() call below (the install-bishengir-publish-products target only
@@ -527,16 +552,20 @@ please check ${BISHENG_TOOL} or ${LLVM_LINK_TOOL} exist or not!")
     add_subdirectory(lib)
     link_all_to_meta_op()
 
-    install(FILES
-            ${CMAKE_BINARY_DIR}/lib/meta_op.aic.c220.bc
-            ${CMAKE_BINARY_DIR}/lib/meta_op.aiv.c220.bc
-            ${CMAKE_BINARY_DIR}/lib/meta_op.mix.aic.c220.bc
-            ${CMAKE_BINARY_DIR}/lib/meta_op.mix.aiv.c220.bc
-            ${CMAKE_BINARY_DIR}/lib/meta_op.aic.c310.bc
-            ${CMAKE_BINARY_DIR}/lib/meta_op.aiv.c310.bc
-            ${CMAKE_BINARY_DIR}/lib/meta_op.mix.aic.c310.bc
-            ${CMAKE_BINARY_DIR}/lib/meta_op.mix.aiv.c310.bc
-            ${CMAKE_BINARY_DIR}/lib/host.bc
+    set(bishengir_install_bitcode_files)
+    foreach (opt_level ${BISHENGIR_TEMPLATE_OPT_LEVELS})
+        list(APPEND bishengir_install_bitcode_files
+             ${CMAKE_BINARY_DIR}/lib/meta_op.aic.c220.${opt_level}.bc
+             ${CMAKE_BINARY_DIR}/lib/meta_op.aiv.c220.${opt_level}.bc
+             ${CMAKE_BINARY_DIR}/lib/meta_op.mix.aic.c220.${opt_level}.bc
+             ${CMAKE_BINARY_DIR}/lib/meta_op.mix.aiv.c220.${opt_level}.bc
+             ${CMAKE_BINARY_DIR}/lib/meta_op.aic.c310.${opt_level}.bc
+             ${CMAKE_BINARY_DIR}/lib/meta_op.aiv.c310.${opt_level}.bc
+             ${CMAKE_BINARY_DIR}/lib/meta_op.mix.aic.c310.${opt_level}.bc
+             ${CMAKE_BINARY_DIR}/lib/meta_op.mix.aiv.c310.${opt_level}.bc
+             ${CMAKE_BINARY_DIR}/lib/host.${opt_level}.bc)
+    endforeach ()
+    install(FILES ${bishengir_install_bitcode_files}
             DESTINATION lib
             COMPONENT bishengir-publish-products)
     # Wire the install component to depend on every link target so that

@@ -816,6 +816,16 @@ def LinkAicoreBitcode : BiShengIRCompileListOpt<
   bit isSharedWithDownstreamToolchain = 1;
 }
 
+def EnableOptimizedMetaop
+    : BiShengIRCompileOpt<
+          "Enable optimized (O2) template bitcode; false selects the "
+          "unoptimized "
+          "O0 variant. true attaches the matching ../lib/meta_op.*.O2.bc and "
+          "../lib/host.O2.bc files to the module.",
+          "bool", "true"> {
+  let compileOptionCategories = ["targetCategory"];
+}
+
 /// Note that we don't own `mlir-print-ir-after-all` and
 /// `mlir-print-ir-before-all` as they are upstream options.
 /// We add it here because we can capture their values and forward
