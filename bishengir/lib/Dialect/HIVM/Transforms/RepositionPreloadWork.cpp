@@ -384,7 +384,7 @@ static bool collectExclusiveReturnedCluster(
       if (isa<MemRefType>(root.getType()) && op == rootOp)
         addMemrefUsers(root);
       if (auto toTensor = dyn_cast<bufferization::ToTensorOp>(op))
-        addMemrefUsers(toTensor.getMemref());
+        addMemrefUsers(toTensor->getOperand(0));
       if (auto load = dyn_cast<hivm::LoadOp>(op))
         addMemrefUsers(load.getDst());
       if (auto dps = dyn_cast<DestinationStyleOpInterface>(op)) {
@@ -488,7 +488,7 @@ static void collectAccessorScopes(Value v, scf::ForOp forOp,
   }
   Value mem = v;
   if (auto toTensor = v.getDefiningOp<bufferization::ToTensorOp>())
-    mem = toTensor.getMemref();
+    mem = toTensor->getOperand(0);
   if (!isa<MemRefType>(mem.getType()))
     return;
   // Climb to the root buffer so aliases created through other views count.
@@ -1007,7 +1007,7 @@ static bool collectExclusiveCopyCluster(hivm::CopyOp copy,
           grew = true;
       };
       if (auto toTensor = dyn_cast<bufferization::ToTensorOp>(op))
-        addMemrefUsers(toTensor.getMemref());
+        addMemrefUsers(toTensor->getOperand(0));
       if (auto load = dyn_cast<hivm::LoadOp>(op))
         addMemrefUsers(load.getDst());
       if (auto cpy = dyn_cast<hivm::CopyOp>(op))
@@ -1495,7 +1495,7 @@ static bool definedByEarlierScope(Value v, scope::ScopeOp current,
   if (isa<MemRefType>(v.getType()) && memrefTouchedByEarlierScope(v, earlier))
     return true;
   if (auto toTensor = dyn_cast<bufferization::ToTensorOp>(def)) {
-    if (memrefTouchedByEarlierScope(toTensor.getMemref(), earlier))
+    if (memrefTouchedByEarlierScope(toTensor->getOperand(0), earlier))
       return true;
   }
   for (Value operand : def->getOperands())
@@ -1815,7 +1815,7 @@ static Value leftMatrixIdentity(Value v) {
   auto toTensor = v.getDefiningOp<bufferization::ToTensorOp>();
   if (!toTensor)
     return v;
-  Value mem = toTensor.getMemref();
+  Value mem = toTensor->getOperand(0);
   while (Operation *def = mem.getDefiningOp()) {
     if (auto cast = dyn_cast<memref::MemorySpaceCastOp>(def))
       mem = cast.getSource();
@@ -1963,16 +1963,13 @@ static void clusterSharedLeftMatrixMads(scf::ForOp loop) {
   }
 }
 
-static bool allScopesPinnedToZero(scf::ForOp forOp) {
-  bool sawScope = false;
-  bool allZero = true;
-  forOp.walk([&](scope::ScopeOp scope) {
-    sawScope = true;
-    auto attr = scope->getAttrOfType<IntegerAttr>(hivm::PreloadNumAttr::name);
-    if (!attr || attr.getInt() != 0)
-      allZero = false;
+// All-zero scopes execute in the same iteration. Moving a returned tensor's
+// writer into its consumer can place it after an intervening read.
+static bool allScopesPinnedToZero(scf::ForOp loop) {
+  auto scopes = loop.getBody()->getOps<scope::ScopeOp>();
+  return !scopes.empty() && llvm::all_of(scopes, [](scope::ScopeOp scope) {
+    return getScopePreloadNum(scope) == 0;
   });
-  return sawScope && allZero;
 }
 
 void SinkExclusivePreloadWorkPass::runOnOperation() {
@@ -2027,7 +2024,9 @@ void RepositionPreloadWorkPass::runOnOperation() {
         return signalPassFailure();
       if (failed(sinkCopyChainPastUnusedMmad(forOp)))
         return signalPassFailure();
-      if (failed(hoistIndependentPreloadWork(forOp)))
+      // Avoid additional independent prefixes on all-zero loops.
+      if (!allScopesPinnedToZero(forOp) &&
+          failed(hoistIndependentPreloadWork(forOp)))
         return signalPassFailure();
     }
   }

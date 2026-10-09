@@ -1,10 +1,27 @@
 // RUN: bishengir-opt %s -hivm-reposition-preload-work="bypass-shape-registry=true" | FileCheck %s
+// RUN: sed -E 's/hivm.preload_num = [0-9]+/hivm.preload_num = 0/g; s/hivm.max_preload_num = [0-9]+/hivm.max_preload_num = 1/g' %s > %t
+// RUN: bishengir-opt %t -hivm-reposition-preload-work="bypass-shape-registry=true" | FileCheck %s --check-prefix=ZERO --implicit-check-not=hivm.independent_preload_prefix
 
 func.func @cube_touch(%arg0: memref<32x128xf32, #hivm.address_space<ub>>)
     attributes {hivm.func_core_type = #hivm.func_core_type<AIC>,
                 no_inline} {
   return
 }
+
+// All-zero loops retain same-iteration scope grouping. The mask chain stays
+// beside the cube-dependent multiply; do not add a hoisted prefix. The normal
+// CHECK run still verifies hoisting for the multi-stage version of this input.
+// ZERO-LABEL: func.func @hoist_mask_chain_before_cube_use
+// ZERO: scope.scope
+// ZERO: func.call @cube_touch
+// ZERO: scope.return
+// ZERO: scope.scope
+// ZERO: hivm.hir.vmul
+// ZERO: hivm.hir.vcast
+// ZERO: hivm.hir.vcast
+// ZERO: hivm.hir.vsub
+// ZERO: scope.return
+// ZERO: } {{.*}}hivm.preload_num = 0
 
 // Mask vcast does not use the cube tensor. It moves into a new scope with
 // the same preload_num, in front of the scope that multiplies the cube
