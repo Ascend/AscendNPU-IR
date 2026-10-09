@@ -1548,6 +1548,17 @@ def CVPipelining
               "Enable registered-kernel CV-pipelining heuristics">];
 }
 
+def OutlineCVScopes
+    : HIVMPass<"outline-cv-scopes", "func::FuncOp", [MixKernel, PureAicKernel]> {
+  let summary = "Partition mixed-core loops into scoped work items for CV pipelining v2";
+  let constructor = "mlir::hivm::createOutlineCVScopesPass()";
+  let dependentDialects = ["hivm::HIVMDialect", "scf::SCFDialect",
+                           "mlir::scope::ScopeDialect",
+                           "bishengir::memref_ext::MemRefExtDialect",
+                           "bufferization::BufferizationDialect",
+                           "memref::MemRefDialect"];
+}
+
 def AutoBlockifyParallelLoop
     : HIVMPass<"auto-blockify-parallel-loop", "func::FuncOp"> {
   let summary = "Enable auto loop on blocks when logical blocknum is larger "
