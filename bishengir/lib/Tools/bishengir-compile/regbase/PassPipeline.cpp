@@ -89,6 +89,16 @@ void setupHFusionPipelineOptions(
   auto &options = hfusionPipelineOptions;
 #define GEN_HFUSION_OPTION_SETUP
 #include "bishengir/Tools/bishengir-compile/ConfigUtils.cpp.inc"
+  // The new TreeReduce lowering can overflow the stack with CANN < 9.2.0.
+  // Fall back to TreeReduceV2 before configuring VFFusion and vectorization,
+  // including the delayed vectorization pipeline. Preserve the RA/AR mode.
+  // Keep the requested settings when the toolkit version is unavailable.
+  if (auto version = detectCannVersion();
+      version && *version < std::make_tuple(9u, 2u, 0u)) {
+    hfusionPipelineOptions.enableTreeReduce = false;
+    hfusionPipelineOptions.enableTreeReduceV2 = true;
+  }
+
   hfusionPipelineOptions.insertFFTS =
       !hfusionPipelineOptions.disableFFTS &&
       hacc::utils::isFFTSSupportedArch(config.getTarget());
