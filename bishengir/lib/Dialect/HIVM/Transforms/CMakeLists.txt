@@ -74,6 +74,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   HIVMOptFuncOutput.cpp
   HIVMOptSinglePoint.cpp
   HIVMVectorizeOps.cpp
+  HoistSimtScalarCallsToSimd.cpp
   HoistTightlyCoupledAlloc.cpp
   InferFuncCoreType.cpp
   InferHIVMDataLayout.cpp

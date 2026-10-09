@@ -397,6 +397,10 @@ std::unique_ptr<Pass> createAutoScopePass();
 std::unique_ptr<Pass> createInsertAllocBasePlaceholderPass();
 std::unique_ptr<Pass> createWriteBackSharedPass();
 
+/// Hoist the SIMT wrapper's scalar calls into the SIMD caller, rebuilt in
+/// func/memref dialect so the sync solver can order them against the VF call.
+std::unique_ptr<Pass> createHoistSimtScalarCallsToSimdPass();
+
 /// Create a pass to tile cube and vector loop on local buffer.
 std::unique_ptr<Pass>
 createTileCubeVectorLoopPass(const TileCubeVectorLoopOptions &options = {});

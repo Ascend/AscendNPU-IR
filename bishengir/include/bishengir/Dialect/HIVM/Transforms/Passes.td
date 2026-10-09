@@ -1560,4 +1560,12 @@ def FlattenModule : Pass<"hivm-flatten-module", "ModuleOp"> {
                            "LLVM::LLVMDialect"];
 }
 
+def HoistSimtScalarCallsToSimd
+    : Pass<"hoist-simt-scalar-calls-to-simd", "ModuleOp"> {
+  let summary = "Hoist the SIMT wrapper's scalar calls into the SIMD caller";
+  let constructor = "mlir::hivm::createHoistSimtScalarCallsToSimdPass()";
+  let dependentDialects = ["arith::ArithDialect", "func::FuncDialect",
+                           "hivm::HIVMDialect", "memref::MemRefDialect"];
+}
+
 #endif // BISHENGIR_DIALECT_HIVM_TRANSFORMS_PASSES_TD
