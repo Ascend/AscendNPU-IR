@@ -249,10 +249,13 @@ func.func @bare_destination_stays_with_consumer(
 // returned from the prefix. CreatePreload cannot rematerialize affine.apply
 // in the preload skip branch.
 // CHECK-LABEL: func.func @keep_affine_index_with_consumer
+// CHECK-NOT:     memref.alloc
 // CHECK:         hivm.hir.vcast
 // CHECK:         } {{{.*}}hivm.independent_preload_prefix
-// CHECK:         affine.apply
-// CHECK:         tensor.extract_slice
+// CHECK:         %[[IDX:.*]] = affine.apply
+// CHECK:         %[[NEXT:.*]] = arith.addi %[[IDX]]
+// CHECK:         tensor.extract_slice {{.*}}[%[[NEXT]], 0]
+// CHECK:         tensor.extract_slice {{.*}}[%[[IDX]], 0]
 #map = affine_map<()[s0] -> (s0)>
 func.func @keep_affine_index_with_consumer(
     %arg0: memref<32x128xf32, #hivm.address_space<ub>>,
@@ -273,7 +276,15 @@ func.func @keep_affine_index_with_consumer(
     scope.scope : () -> () {
       %empty = tensor.empty() : tensor<32x128xf32>
       %empty16 = tensor.empty() : tensor<32x128xf16>
+      // This view's affine offset keeps it in the consumer. Exporting the
+      // allocation from the hoisted prefix would break CreatePreload.
+      %local = memref.alloc() : memref<32x128xf32>
+      %local_tensor = bufferization.to_tensor %local restrict writable : memref<32x128xf32>
       %idx = affine.apply #map()[%i]
+      %local_view = memref.subview %local[%idx, 0] [1, 128] [1, 1] :
+          memref<32x128xf32> to memref<1x128xf32, strided<[128, 1], offset: ?>>
+      %local_sum = hivm.hir.vadd ins(%cube, %local_tensor : tensor<32x128xf32>, tensor<32x128xf32>)
+          outs(%empty : tensor<32x128xf32>) -> tensor<32x128xf32>
       %cast16 = hivm.hir.vcast {enable_overflow = true, enable_saturate = false,
                                 hivm.unsigned_mode = #hivm.unsigned_mode<si2si>}
           ins(%arg1 : tensor<32x128xi8>) outs(%empty16 : tensor<32x128xf16>)
@@ -282,6 +293,10 @@ func.func @keep_affine_index_with_consumer(
                               hivm.unsigned_mode = #hivm.unsigned_mode<si2si>}
           ins(%cast16 : tensor<32x128xf16>) outs(%empty : tensor<32x128xf32>)
           -> tensor<32x128xf32>
+      // The entire use chain must stay when %idx cannot be exported.
+      %next = arith.addi %idx, %c1 : index
+      %mask_slice = tensor.extract_slice %mask[%next, 0] [1, 128] [1, 1] :
+          tensor<32x128xf32> to tensor<1x128xf32>
       %slice = tensor.extract_slice %cube[%idx, 0] [1, 128] [1, 1] :
           tensor<32x128xf32> to tensor<1x128xf32>
       %scaled = hivm.hir.vmul ins(%cube, %scale : tensor<32x128xf32>, f32)
