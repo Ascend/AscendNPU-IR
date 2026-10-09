@@ -154,3 +154,40 @@ module {
     tt.return
   }
 }
+
+// -----
+// Test 8: Keep one shared-pointer group in pointer form when it has vector,
+// scalar, and rank-zero accesses. Converting only the vector access would
+// leave the scalar and rank-zero accesses using a memdesc as a pointer.
+
+// CHECK-LABEL: tt.func @mixed_unsupported_accesses
+// CHECK-SAME:  (%[[ARG:.*]]: !tt.ptr<i32, 6>)
+// CHECK-NOT:     ttg.local_load
+// CHECK:         tt.load %{{.*}} : tensor<8x!tt.ptr<i32, 6>>
+// CHECK-NOT:     ttg.local_load
+// CHECK:         tt.load %{{.*}} : !tt.ptr<i32, 6>
+// CHECK-NOT:     ttg.local_load
+// CHECK:         tt.load %{{.*}} : tensor<!tt.ptr<i32, 6>>
+// CHECK-NOT:     ttg.local_load
+// CHECK:         tt.return
+module {
+  tt.func @mixed_unsupported_accesses(%arg0: !tt.ptr<i32, 6>) {
+    %offsets = tt.make_range {end = 8 : i32, start = 0 : i32}
+        : tensor<8xi32>
+    %vector_base = tt.splat %arg0 : !tt.ptr<i32, 6>
+        -> tensor<8x!tt.ptr<i32, 6>>
+    %vector_ptr = tt.addptr %vector_base, %offsets
+        : tensor<8x!tt.ptr<i32, 6>>, tensor<8xi32>
+    %vector = tt.load %vector_ptr : tensor<8x!tt.ptr<i32, 6>>
+
+    %scalar_offset = arith.constant 3 : i32
+    %scalar_ptr = tt.addptr %arg0, %scalar_offset
+        : !tt.ptr<i32, 6>, i32
+    %scalar = tt.load %scalar_ptr : !tt.ptr<i32, 6>
+
+    %rank_zero_ptr = tt.splat %arg0 : !tt.ptr<i32, 6>
+        -> tensor<!tt.ptr<i32, 6>>
+    %rank_zero = tt.load %rank_zero_ptr : tensor<!tt.ptr<i32, 6>>
+    tt.return
+  }
+}

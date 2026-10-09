@@ -399,6 +399,7 @@ void buildBiShengTTIRPipeline(OpPassManager &pm,
     // Materialize SIMT mem scopes only after split so the main module can stay
     // free of address-spaced memrefs before delayed reg-based vectorization.
     pm.addPass(hivm::createMaterializeSimtVFMemScopePass());
+    pm.addPass(hivm::createNormalizeSIMTVFPass());
     pm.addPass(createHIVMToTritonGPUConversionPass());
   }
 

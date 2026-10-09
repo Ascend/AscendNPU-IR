@@ -118,6 +118,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   MemoryDisplay.cpp
   NormalizeBitwiseSelect.cpp
   NormalizeConvOps.cpp
+  NormalizeSIMTVF.cpp
   NormalizeToTensorOp.cpp
   TensorCopyInsertion.cpp
   NormalizeMatmul.cpp
@@ -180,6 +181,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   MLIRMathDialect
   MLIRMemRefDialect
   MLIRMemRefTransforms
+  MLIRTensorDialect
   MLIRVectorDialect
   BiShengIRMemRefExtDialect
   BiShengIRDialectUtils

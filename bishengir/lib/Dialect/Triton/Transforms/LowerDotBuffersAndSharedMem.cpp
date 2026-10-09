@@ -725,6 +725,10 @@ struct BasePtrInfo {
   Attribute fractalAttr;
   SmallVector<triton::LoadOp> loads;
   SmallVector<triton::StoreOp> stores;
+  /// True when the same base has an access this pass cannot lower. Keeping the
+  /// whole group in ptr form avoids changing the base type for only the
+  /// vector accesses and leaving scalar tt.load/tt.store ops behind.
+  bool hasUnsupportedAccess = false;
   /// Chains of AddPtrOp / SplatOp to DCE after rewriting.
   SmallVector<Operation *> deadOps;
 };
@@ -842,6 +846,14 @@ private:
     // --- Step 1: Gather all shared-memory load/store ops ----------------
     DenseMap<Value, BasePtrInfo> baseMap;
 
+    auto markUnsupportedAccess = [&](Value ptr) {
+      if (!isSharedPtr(ptr.getType()) && !isSharedPtrTensor(ptr.getType()))
+        return;
+      Value basePtr = traceToBasePtr(ptr);
+      if (isa<BlockArgument>(basePtr))
+        baseMap[basePtr].hasUnsupportedAccess = true;
+    };
+
     auto processOp = [&](Operation *op, Value ptrTensor,
                          ArrayRef<int64_t> shape, Type elemType) {
       if (!isSharedPtrTensor(ptrTensor.getType()))
@@ -874,16 +886,20 @@ private:
 
     func.walk([&](triton::StoreOp store) {
       auto dataTy = dyn_cast<RankedTensorType>(store.getValue().getType());
-      if (!dataTy)
+      if (!dataTy || dataTy.getRank() == 0) {
+        markUnsupportedAccess(store.getPtr());
         return;
+      }
       processOp(store, store.getPtr(), dataTy.getShape(),
                 dataTy.getElementType());
     });
 
     func.walk([&](triton::LoadOp load) {
       auto resTy = dyn_cast<RankedTensorType>(load.getResult().getType());
-      if (!resTy)
+      if (!resTy || resTy.getRank() == 0) {
+        markUnsupportedAccess(load.getPtr());
         return;
+      }
       processOp(load, load.getPtr(), resTy.getShape(), resTy.getElementType());
     });
 
@@ -894,6 +910,12 @@ private:
     OpBuilder builder(ctx);
 
     for (auto &[basePtr, info] : baseMap) {
+      if (info.hasUnsupportedAccess) {
+        LLVM_DEBUG(llvm::dbgs()
+                   << "[LowerDotBuffersAndSharedMem] skip base with "
+                      "unsupported scalar memory access\n");
+        continue;
+      }
       auto memDescTy =
           buildMemDescType(ctx, info.shape, info.elemType, info.fractalAttr);
       auto blockArg = cast<BlockArgument>(basePtr);

@@ -11,8 +11,9 @@
 // Core design:
 // 1. AutoScope uses a conservative boundary and only clones the tensor/SSA
 //    subgraph needed by each SIMT seed.
-// 2. Backward collection stops as soon as it reaches a memref-typed value, so
-//    memory-access producers stay outside the SIMT scope by default.
+// 2. Backward collection stops at memref-typed values and dependencies that
+//    cannot be proven memory-effect-free. Memory accesses and unknown effects
+//    stay outside the SIMT scope.
 // 3. This keeps scope placement independent from alloc sharing and matches the
 //    default preference for leaving memory movement in surrounding SIMD code.
 // 4. Broader scope expansion is left to future cost-model driven policies.
@@ -28,6 +29,7 @@
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/Value.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Support/LLVM.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
@@ -156,6 +158,13 @@ void collectOpDependencies(OrderedOps &simtVFOps, VisitedOps &visitedOps,
   // Keep dynamic-sized slices and their enclosing dependencies outside the
   // SIMT scope. Their results become inputs to the in-scope operations.
   if (containsDynamicallySizedInsertSlice(op)) {
+    return;
+  }
+  // Keep memory effects (including unknown effects) outside the scope. Cloning
+  // a dependency can repeat writes or move a read past an intervening write.
+  // The recursive effect check also protects region bodies; pure SSA and tensor
+  // computations remain eligible for cloning.
+  if (!isMemoryEffectFree(op)) {
     return;
   }
   for (auto operand : op->getOperands()) {

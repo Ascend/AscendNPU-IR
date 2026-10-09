@@ -1,15 +1,18 @@
 // RUN: bishengir-opt --auto-scope --split-input-file %s | FileCheck %s
 
+// to_tensor is a memory boundary, not a proven memory-effect-free dependency.
+// Keep it at its original position and capture its tensor result in each scope.
 module {
   // CHECK-LABEL: func.func @simple_indirect_load_kernel
   // CHECK:         %[[REINTERPRETCAST:.*]] = memref.reinterpret_cast %[[ARG3:.*]] to offset: [0], sizes: [8], strides: [1] : memref<?xi64> to memref<8xi64, strided<[1]>>
   // CHECK:         %[[ALLOC:.*]] = memref.alloc() : memref<8xi64>
   // CHECK:         hivm.hir.load ins(%[[REINTERPRETCAST]] : memref<8xi64, strided<[1]>>) outs(%[[ALLOC]] : memref<8xi64>)
+  // CHECK:         %[[TOTENSOR:.*]] = bufferization.to_tensor %[[ALLOC]] restrict writable : memref<8xi64>
   // CHECK:         %[[SCOPE:.*]] = scope.scope
   // CHECK-NOT:       memref.reinterpret_cast
   // CHECK-NOT:       hivm.hir.load
-  // CHECK:           %[[TOTENSOR:.*]] = bufferization.to_tensor %[[ALLOC]] restrict writable : memref<8xi64>
-  // CHECK-NEXT:      %[[EMPTY:.*]] = tensor.empty() : tensor<8xf32>
+  // CHECK-NOT:       bufferization.to_tensor
+  // CHECK:           %[[EMPTY:.*]] = tensor.empty() : tensor<8xf32>
   // CHECK-NEXT:      %[[GATHERLOAD:.*]] = hivm.hir.gather_load ins(%[[ARG2:.*]] : memref<?xf32>, %[[TOTENSOR]] : tensor<8xi64>, %[[c:.*]] : i32) outs(%[[EMPTY]] : tensor<8xf32>) -> tensor<8xf32>
   // CHECK-NEXT:      scope.return %[[GATHERLOAD]] : tensor<8xf32>
   func.func @simple_indirect_load_kernel(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %arg2: memref<?xf32>, %arg3: memref<?xi64>, %arg4: memref<?xf32>, %arg5: i32, %arg6: i32, %arg7: i32) {
@@ -38,17 +41,18 @@ module {
   // CHECK:         %[[REINTERPRET:.*]] = memref.reinterpret_cast %[[INDICES:.*]] to offset: [0], sizes: [8], strides: [1] : memref<?xi64> to memref<8xi64, strided<[1]>>
   // CHECK:         %[[ALLOC:.*]] = memref.alloc() : memref<8xi64>
   // CHECK:         hivm.hir.load ins(%[[REINTERPRET]] : memref<8xi64, strided<[1]>>) outs(%[[ALLOC]] : memref<8xi64>)
+  // CHECK:         %[[TOTENSOR:.*]] = bufferization.to_tensor %[[ALLOC]] restrict writable : memref<8xi64>
   // CHECK:         %[[SCOPE0:.*]] = scope.scope
   // CHECK-NOT:      memref.reinterpret_cast
   // CHECK-NOT:      hivm.hir.load
-  // CHECK:           %[[TOTENSOR0:.*]] = bufferization.to_tensor %[[ALLOC]] restrict writable : memref<8xi64>
-  // CHECK:           %[[GATHER0:.*]] = hivm.hir.gather_load ins(%[[BASE0:.*]] : memref<?xf32>, %[[TOTENSOR0]] : tensor<8xi64>, %[[C1:.*]] : i32) outs(%[[EMPTY0:.*]] : tensor<8xf32>) -> tensor<8xf32>
+  // CHECK-NOT:      bufferization.to_tensor
+  // CHECK:           %[[GATHER0:.*]] = hivm.hir.gather_load ins(%[[BASE0:.*]] : memref<?xf32>, %[[TOTENSOR]] : tensor<8xi64>, %[[C1:.*]] : i32) outs(%[[EMPTY0:.*]] : tensor<8xf32>) -> tensor<8xf32>
   // CHECK:           scope.return %[[GATHER0]] : tensor<8xf32>
   // CHECK:         %[[SCOPE1:.*]] = scope.scope
   // CHECK-NOT:      memref.reinterpret_cast
   // CHECK-NOT:      hivm.hir.load
-  // CHECK:           %[[TOTENSOR1:.*]] = bufferization.to_tensor %[[ALLOC]] restrict writable : memref<8xi64>
-  // CHECK:           %[[GATHER1:.*]] = hivm.hir.gather_load ins(%[[BASE1:.*]] : memref<?xf32>, %[[TOTENSOR1]] : tensor<8xi64>, %[[C1]] : i32) outs(%[[EMPTY1:.*]] : tensor<8xf32>) -> tensor<8xf32>
+  // CHECK-NOT:      bufferization.to_tensor
+  // CHECK:           %[[GATHER1:.*]] = hivm.hir.gather_load ins(%[[BASE1:.*]] : memref<?xf32>, %[[TOTENSOR]] : tensor<8xi64>, %[[C1]] : i32) outs(%[[EMPTY1:.*]] : tensor<8xf32>) -> tensor<8xf32>
   // CHECK:           scope.return %[[GATHER1]] : tensor<8xf32>
   func.func @shared_alloc_backed_indices_two_gathers(%base0: memref<?xf32>, %base1: memref<?xf32>, %indices_gm: memref<?xi64>) {
     %c1_i32 = arith.constant 1 : i32
@@ -73,17 +77,18 @@ module {
   // CHECK:         %[[REINTERPRET:.*]] = memref.reinterpret_cast %[[INDICES:.*]] to offset: [0], sizes: [8], strides: [1] : memref<?xi64> to memref<8xi64, strided<[1]>>
   // CHECK:         %[[ALLOC:.*]] = memref.alloc() : memref<8xi64>
   // CHECK:         hivm.hir.load ins(%[[REINTERPRET]] : memref<8xi64, strided<[1]>>) outs(%[[ALLOC]] : memref<8xi64>)
+  // CHECK:         %[[TOTENSOR:.*]] = bufferization.to_tensor %[[ALLOC]] restrict writable : memref<8xi64>
   // CHECK:         %[[SCOPE0:.*]] = scope.scope
   // CHECK-NOT:       memref.reinterpret_cast
   // CHECK-NOT:       hivm.hir.load
-  // CHECK:           %[[TOTENSOR0:.*]] = bufferization.to_tensor %[[ALLOC]] restrict writable : memref<8xi64>
-  // CHECK:           %[[GATHER0:.*]] = hivm.hir.gather_load ins(%[[BASE0:.*]] : memref<?xf32>, %[[TOTENSOR0]] : tensor<8xi64>, %[[C1:.*]] : i32) outs(%[[EMPTY0:.*]] : tensor<8xf32>) -> tensor<8xf32>
+  // CHECK-NOT:       bufferization.to_tensor
+  // CHECK:           %[[GATHER0:.*]] = hivm.hir.gather_load ins(%[[BASE0:.*]] : memref<?xf32>, %[[TOTENSOR]] : tensor<8xi64>, %[[C1:.*]] : i32) outs(%[[EMPTY0:.*]] : tensor<8xf32>) -> tensor<8xf32>
   // CHECK:           scope.return %[[GATHER0]] : tensor<8xf32>
   // CHECK:         scope.scope
   // CHECK-NOT:       memref.reinterpret_cast
   // CHECK-NOT:       hivm.hir.load
-  // CHECK:           %[[TOTENSOR1:.*]] = bufferization.to_tensor %[[ALLOC]] restrict writable : memref<8xi64>
-  // CHECK:           hivm.hir.scatter_store ins(%[[TOTENSOR1]] : tensor<8xi64>, %[[SCOPE0]] : tensor<8xf32>, %[[C1]] : i32) outs(%[[BASE1:.*]] : memref<?xf32>)
+  // CHECK-NOT:       bufferization.to_tensor
+  // CHECK:           hivm.hir.scatter_store ins(%[[TOTENSOR]] : tensor<8xi64>, %[[SCOPE0]] : tensor<8xf32>, %[[C1]] : i32) outs(%[[BASE1:.*]] : memref<?xf32>)
   // CHECK:           scope.return
   func.func @shared_alloc_backed_indices_gather_and_scatter(%base0: memref<?xf32>, %base1: memref<?xf32>, %indices_gm: memref<?xi64>) -> tensor<8xf32> {
     %c1_i32 = arith.constant 1 : i32
