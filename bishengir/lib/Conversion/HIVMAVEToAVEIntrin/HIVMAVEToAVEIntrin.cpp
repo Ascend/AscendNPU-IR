@@ -973,6 +973,15 @@ struct HIVMLoadOpLowering : public ConvertOpToLLVMPattern<VFLoadOp> {
   }
 };
 
+// TODO:Limit the workaround to the ordinary aligned PB16 stores covered by the
+// indirect-mask regression. This uses the existing aligned-UB padding contract;
+// absence of UnalignedAttr alone is not a general buffer-capacity proof.
+static bool shouldUseAlignedPB16StoreWorkaround(VFMaskedStoreOp store,
+                                                int pbMode) {
+  return pbMode == 16 && store.getPattern() == StoreDist::NORM_B8 &&
+         !store->hasAttr(UnalignedAttr::name);
+}
+
 struct HIVMStoreOpLowering : public ConvertOpToLLVMPattern<VFMaskedStoreOp> {
   explicit HIVMStoreOpLowering(LLVMTypeConverter &converter)
       : ConvertOpToLLVMPattern<VFMaskedStoreOp>(converter) {}
@@ -1126,12 +1135,24 @@ struct HIVMStoreOpLowering : public ConvertOpToLLVMPattern<VFMaskedStoreOp> {
           loc, data, dataPtr, offset, dist, mode, mask);
       rewriter.replaceOp(store, result);
     } else if (dElemType.isInteger(1)) {
-      // if store data is sparse, need to convert compact
+      // Select the store sequence for the predicate layout.
       int pbMode = getBitWidthFromAttr(store);
-      if (archIs910_95 && (pbMode == 16 || pbMode == 32)) {
-        auto asResult = createPstuOp(data, dataPtr, rewriter, pbMode);
-        rewriter.replaceOp(store, asResult);
+      if (archIs910_95 && shouldUseAlignedPB16StoreWorkaround(store, pbMode)) {
+        // Compact ordinary aligned PB16 predicates before storing as PB8.
+        Value part = rewriter.create<arith::ConstantOp>(
+            loc, rewriter.getI32IntegerAttr(0));
+        data = buildPpackOp(loc, part, data, rewriter)->getResult(0);
+        dist = rewriter.create<LLVM::ConstantOp>(loc, rewriter.getI32Type(),
+                                                 rewriter.getI32IntegerAttr(0));
+        auto result = rewriter.create<PStoreB8InstOp>(loc, data, dataPtr,
+                                                      offset, dist, mode);
+        rewriter.replaceOp(store, result);
+      } else if (archIs910_95 && (pbMode == 16 || pbMode == 32)) {
+        // Keep PSTU/VSTAS for the remaining sparse predicate layouts.
+        auto result = createPstuOp(data, dataPtr, rewriter, pbMode);
+        rewriter.replaceOp(store, result);
       } else {
+        // Preserve the direct PB8 store for all other cases.
         dist = rewriter.create<LLVM::ConstantOp>(loc, rewriter.getI32Type(),
                                                  rewriter.getI32IntegerAttr(0));
         auto result = rewriter.create<PStoreB8InstOp>(loc, data, dataPtr,
