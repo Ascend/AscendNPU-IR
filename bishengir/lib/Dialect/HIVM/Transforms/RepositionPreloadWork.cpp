@@ -2316,6 +2316,93 @@ static void sinkCopyIndependentWork(scf::ForOp loop) {
   }
 }
 
+/// Preserve a copy boundary when its tail reads a private cube-result buffer.
+/// VF merging would otherwise make the copy wait for that unrelated result.
+/// Keep operation order and old-state reads; this is not general buffer-read
+/// sinking across scopes.
+static void splitCopyBufferReadTails(scf::ForOp loop) {
+  auto isPrivateBufferView = [&](Value value) {
+    auto view = traceThroughScopeResults(value)
+                    .getDefiningOp<bufferization::ToTensorOp>();
+    if (!view)
+      return false;
+    auto alloc =
+        traceMemrefRoot(view->getOperand(0)).getDefiningOp<memref::AllocOp>();
+    return alloc && loop->isProperAncestor(alloc);
+  };
+  for (auto scope :
+       llvm::make_early_inc_range(loop.getBody()->getOps<scope::ScopeOp>())) {
+    if (!isVectorPreloadScope(scope) || getScopePreloadNum(scope) != 0)
+      continue;
+    auto copies = getPreloadCopies(scope);
+    if (copies.empty())
+      continue;
+    Operation *lastCopy = copies.back();
+    auto tail = llvm::make_range(std::next(Block::iterator(lastCopy)),
+                                 std::prev(scope.getRegion().front().end()));
+    if (!llvm::any_of(tail, [&](Operation &op) {
+          return llvm::any_of(op.getOperands(), isPrivateBufferView);
+        }))
+      continue;
+    SmallVector<Operation *> prefix, empties;
+    for (Operation &op : scope.getRegion().front()) {
+      auto empty = dyn_cast<tensor::EmptyOp>(op);
+      if (empty && empty.getDynamicSizes().empty() &&
+          llvm::all_of(op.getUsers(), [&](Operation *user) {
+            return user->getBlock() == lastCopy->getBlock() &&
+                   lastCopy->isBeforeInBlock(user) &&
+                   !isa<scope::ReturnOp>(user);
+          }))
+        empties.push_back(&op);
+      else
+        prefix.push_back(&op);
+      if (&op == lastCopy)
+        break;
+    }
+    DenseSet<Value> overwrittenArgs;
+    for (auto [arg, yielded] :
+         llvm::zip(loop.getRegionIterArgs(), loop.getYieldedValues()))
+      if (llvm::is_contained(
+              prefix,
+              topLevelInScope(traceThroughScopeResults(yielded).getDefiningOp(),
+                              scope)))
+        overwrittenArgs.insert(arg);
+    if (llvm::any_of(tail, [&](Operation &op) {
+          return op.getNumRegions() || !isMemoryEffectFree(&op) ||
+                 llvm::any_of(op.getOperands(), [&](Value value) {
+                   return !isCopyTailValue(value, overwrittenArgs) &&
+                          !isPrivateBufferView(value);
+                 });
+        }))
+      continue;
+    auto exported = collectPrefixResults(scope, prefix);
+    if (llvm::any_of(exported, [&](Value value) {
+          DenseSet<Value> seen;
+          return isa<BaseMemRefType>(value.getType()) ||
+                 !scalarChainRematerializable(value, scope, seen);
+        }))
+      continue;
+    Operation *firstTail = lastCopy->getNextNode();
+    for (Operation *empty : empties)
+      empty->moveBefore(firstTail);
+    extractPreloadPrefix(scope, prefix, exported);
+    // Forward prefix results directly. Returning them again from the tail
+    // would add redundant preload-buffer writebacks.
+    SmallVector<Value> tailReturns;
+    auto *ret = scope.getRegion().front().getTerminator();
+    for (auto [value, result] :
+         llvm::zip(ret->getOperands(), scope.getResults())) {
+      if (value.getDefiningOp() &&
+          scope->isProperAncestor(value.getDefiningOp()))
+        tailReturns.push_back(value);
+      else
+        result.replaceAllUsesWith(value);
+    }
+    rebuildScopeLeavingOps(scope, tailReturns, {});
+    scope.erase();
+  }
+}
+
 // All-zero scopes execute in the same iteration. Moving a returned tensor's
 // writer into its consumer can place it after an intervening read.
 static bool allScopesPinnedToZero(scf::ForOp loop) {
@@ -2382,6 +2469,8 @@ void RepositionPreloadWorkPass::runOnOperation() {
       if (!allScopesPinnedToZero(forOp))
         hoistIndependentPreloadWork(forOp);
       sinkCopyIndependentWork(forOp);
+      if (allScopesPinnedToZero(forOp))
+        splitCopyBufferReadTails(forOp);
     }
   }
 }
