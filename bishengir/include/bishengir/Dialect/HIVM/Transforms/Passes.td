@@ -910,7 +910,8 @@ def RepositionPreloadWork
     CUBE scope is left whole. Also sinks exclusive dest/src
     clusters and unused-CUBE load/VF/copy chains. Does not sink
     `multi_buffer = 1` allocs; MarkMultiBuffer does that after it writes
-    the marks.
+    the marks. Finally, sink pure work outside stage-zero L1-copy dependencies
+    to same-stage consumers, keeping old loop-state reads before writeback.
   }];
   let constructor = "mlir::hivm::createRepositionPreloadWorkPass()";
   let dependentDialects = ["scope::ScopeDialect", "func::FuncDialect",
