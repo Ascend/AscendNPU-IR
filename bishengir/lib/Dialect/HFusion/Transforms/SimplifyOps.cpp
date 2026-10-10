@@ -120,9 +120,11 @@ bool isValuePreservingIntegerCastChain(ArrayRef<CastOp> castChain) {
         getElementTypeOrSelf(cast.getInputs().front().getType()));
     auto outputType = dyn_cast<IntegerType>(
         getElementTypeOrSelf(cast.getOutputs().front().getType()));
-    // Leave mixed integer/float chains to the floating point precision logic.
+    // Mixed integer/float casts are left to the floating point precision
+    // logic, but they must not stop the scan: an integer narrowing cast can
+    // sit deeper in the chain, past a crossing cast.
     if (!inputType || !outputType)
-      return true;
+      continue;
     if (outputType.getWidth() < inputType.getWidth())
       return false;
   }
