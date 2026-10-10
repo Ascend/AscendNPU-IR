@@ -57,7 +57,7 @@ align_pad_for_load_b64_2d(memref_t<__ubuf__ T, 2> *dst, int64_t pad_value,
   int64_t repeat_times = dst->sizes[0];
   int64_t loop_num = repeat_times / INTR_MAX_REPEAT_CNTS;
   for (int64_t i = 0; i < loop_num; ++i) {
-    apply_padding_b64<T, 2>(dst,
+    apply_padding_b64<T, 2>(dst, left_padding_num,
                             (i * stride_dst * INTR_MAX_REPEAT_CNTS +
                              padding_shift_count * num_per_repeat) *
                                 factor,
@@ -66,7 +66,7 @@ align_pad_for_load_b64_2d(memref_t<__ubuf__ T, 2> *dst, int64_t pad_value,
   }
   if (repeat_times % INTR_MAX_REPEAT_CNTS != 0) {
     int64_t remain_repeat_times = repeat_times % INTR_MAX_REPEAT_CNTS;
-    apply_padding_b64<T, 2>(dst,
+    apply_padding_b64<T, 2>(dst, left_padding_num,
                             (loop_num * stride_dst * INTR_MAX_REPEAT_CNTS +
                              padding_shift_count * num_per_repeat) *
                                 factor,
@@ -119,7 +119,11 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_2d_core(
     INTRINSIC(set_mov_pad_val, 0);
   }
 
-  auto dst_ptr = dst->aligned + dst->offset;
+  // The MTE starts writing at the pulled-back DMA start when left padding is
+  // present, so the alignment gate must check that address, not the logical
+  // destination. left_padding_num = offset % num_per_block by IR construction,
+  // so dst->offset - left_padding_num is the 32B aligned DMA start.
+  auto dst_ptr = dst->aligned + dst->offset - left_padding_num;
   if (!isAddress32ByteAligned(dst_ptr)) {
     load_gm_to_ubuf_2d_by_scalar<T>(src, dst);
     return;
@@ -129,7 +133,6 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_2d_core(
   int64_t stride1_ub = dst->strides[1];
   int64_t stride0_gm = src->strides[0];
   int64_t stride0_ub = dst->strides[0];
-  bool has_padding = left_padding_num != 0;
   if (stride1_gm < 0 || stride0_gm < 0 || stride1_ub < 0 || stride0_ub < 0)
       [[unlikely]] {
     load_gm_to_ubuf_2d_by_scalar<T>(src, dst);
@@ -148,8 +151,10 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_2d_core(
 
   uint8_t l2_cache_ctl = static_cast<uint8_t>(eviction_policy);
   if (stride1_gm == 1 && stride1_ub == 1) [[likely]] {
-    // last dimension is contiguous
-    if (!has_padding && !isStrideAligned<T>(stride0_ub)) {
+    // last dimension is contiguous. The row stride must stay 32B aligned for
+    // every burst of the vector DMA, including the padded pull-back case
+    // (the MTE writes leftPad+data+rightPad per burst at dst + i*dst_stride).
+    if (!isStrideAligned<T>(stride0_ub)) {
       load_gm_to_ubuf_2d_by_scalar<T>(src, dst);
       return;
     }
