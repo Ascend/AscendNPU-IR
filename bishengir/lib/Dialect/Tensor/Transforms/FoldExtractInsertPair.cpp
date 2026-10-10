@@ -6,12 +6,14 @@
 //
 //===---------------------------------------------------------------------===//
 #include "bishengir/Dialect/Tensor/Transforms/Passes.h"
+#include "mlir/Dialect/Affine/ViewLikeInterfaceUtils.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Arith/Utils/Utils.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Linalg/Utils/Utils.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/Dialect/Tensor/Transforms/Transforms.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
@@ -347,6 +349,49 @@ public:
   }
 };
 
+/// Folds an insert_slice into an extract_slice that is inserted back into the
+/// same tensor:
+///
+///   %slice = tensor.extract_slice %full[po] [ps] [pst]
+///   %inner = tensor.insert_slice %src into %slice[co] [cs] [cst]
+///   %res = tensor.insert_slice %inner into %full[po] [ps] [pst]
+///
+/// into a single insert_slice that writes %src directly into %full at the
+/// merged position, provided %inner has no other uses. This cleans up the
+/// slice chains that FoldSliceIntoScfForPattern creates inside the loop body.
+struct FoldInsertSliceIntoExtractedSlice
+    : public OpRewritePattern<tensor::InsertSliceOp> {
+  using OpRewritePattern<tensor::InsertSliceOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(tensor::InsertSliceOp backOp,
+                                PatternRewriter &rewriter) const override {
+    auto innerOp = backOp.getSource().getDefiningOp<tensor::InsertSliceOp>();
+    if (!innerOp || !innerOp->hasOneUse())
+      return failure();
+    auto extractOp = innerOp.getDest().getDefiningOp<tensor::ExtractSliceOp>();
+    if (!extractOp)
+      return failure();
+    // The write-back must target the same tensor the slice was taken from,
+    // at the same position.
+    if (extractOp.getSource() != backOp.getDest())
+      return failure();
+    if (backOp.getMixedOffsets() != extractOp.getMixedOffsets() ||
+        backOp.getMixedSizes() != extractOp.getMixedSizes() ||
+        backOp.getMixedStrides() != extractOp.getMixedStrides())
+      return failure();
+
+    SmallVector<OpFoldResult> offsets, sizes, strides;
+    if (failed(affine::mergeOffsetsSizesAndStrides(
+            rewriter, backOp.getLoc(), extractOp, innerOp,
+            extractOp.getDroppedDims(), offsets, sizes, strides)))
+      return failure();
+    rewriter.replaceOpWithNewOp<tensor::InsertSliceOp>(
+        backOp, innerOp.getSource(), extractOp.getSource(), offsets, sizes,
+        strides);
+    return success();
+  }
+};
+
 struct FoldExtractInsertPairPass
     : public impl::FoldExtractInsertPairBase<FoldExtractInsertPairPass> {
   void getDependentDialects(DialectRegistry &registry) const override {
@@ -363,6 +408,8 @@ void FoldExtractInsertPairPass::runOnOperation() {
   patterns.add<FoldExtractInsertPair>(ctx);
   patterns.add<FoldExtractSliceInsertSlice>(ctx);
   patterns.add<NormalizeFilledSliceToSelect>(ctx);
+  patterns.add<FoldInsertSliceIntoExtractedSlice>(ctx);
+  tensor::populateMergeConsecutiveInsertExtractSlicePatterns(patterns);
   if (failed(applyPatternsGreedily(funcOp, std::move(patterns)))) {
     signalPassFailure();
   }

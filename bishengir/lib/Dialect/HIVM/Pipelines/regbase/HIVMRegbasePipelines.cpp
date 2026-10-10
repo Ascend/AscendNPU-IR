@@ -335,8 +335,9 @@ bufferizationPipeline(OpPassManager &pm,
     pm.addPass(hfusion::createMergeVecScopePass(VfMergeOpsOpt));
   }
   pm.addPass(hfusion::createSimplifyVFArgsPass());
-  // Fold redundant extract_slice -> transfer_write -> insert_slice pattern
-  // before bufferization to avoid unnecessary memref operations
+  // Fold extract_slice/insert_slice pairs around scf.for loops into the loop
+  // body, then fold the redundant slice round trips this creates.
+  pm.nest<func::FuncOp>().addPass(tensor::createFoldSliceIntoScfForPass());
   pm.nest<func::FuncOp>().addPass(tensor::createFoldExtractInsertPairPass());
   // TODO: support process toTensorOp in one-shot-bufferize.
   // Expose memref-level writes (e.g., hivm.hir.load) to tensor-level analysis

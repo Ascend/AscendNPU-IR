@@ -97,3 +97,36 @@ func.func @test_offsets_do_not_match(%arg0: tensor<4x64xf32>) -> tensor<4x64xf32
   %inserted = tensor.insert_slice %written into %slice[%c1, %c0] [4, 64] [1, 1] : tensor<4x64xf32> into tensor<4x64xf32>
   return %inserted : tensor<4x64xf32>
 }
+
+// -----
+
+// The write-back insert uses different offsets than the extract: no fold.
+// CHECK-LABEL: func.func @no_fold_mismatched_offsets(
+// CHECK: tensor.extract_slice %arg0[%arg1, 0, 0] [1, 16, 16] [1, 1, 1] : tensor<16x16x16xf32> to tensor<16x16xf32>
+// CHECK: scf.for {{.*}} iter_args({{%.*}} = %{{.*}}) -> (tensor<16x16xf32>) {
+// CHECK: tensor.insert_slice %{{.*}} into %arg0[%arg2, 0, 0] [1, 16, 16] [1, 1, 1] : tensor<16x16xf32> into tensor<16x16x16xf32>
+func.func @no_fold_mismatched_offsets(%arg0: tensor<16x16x16xf32>, %lb: index, %ub: index, %step: index) -> tensor<16x16x16xf32> {
+  %extracted = tensor.extract_slice %arg0[%lb, 0, 0] [1, 16, 16] [1, 1, 1] : tensor<16x16x16xf32> to tensor<16x16xf32>
+  %r = scf.for %i = %lb to %ub step %step iter_args(%arg = %extracted) -> (tensor<16x16xf32>) {
+    scf.yield %arg : tensor<16x16xf32>
+  }
+  %inserted = tensor.insert_slice %r into %arg0[%ub, 0, 0] [1, 16, 16] [1, 1, 1] : tensor<16x16xf32> into tensor<16x16x16xf32>
+  return %inserted : tensor<16x16x16xf32>
+}
+
+// -----
+
+// An insert_slice into an extracted slice, written back into the same tensor
+// at the same position, folds into a single insert_slice on the original
+// tensor. This is the chain FoldSliceIntoScfForPattern creates inside the
+// loop body.
+// CHECK-LABEL: func.func @test_fold_insert_into_extracted_slice(
+// CHECK: %[[INS:.*]] = tensor.insert_slice %{{.*}} into %arg0[%arg1, %arg2, 0] [1, 1, 16] [1, 1, 1] : tensor<16xf32> into tensor<16x16x16xf32>
+// CHECK-NOT: tensor.insert_slice
+// CHECK: return %[[INS]]
+func.func @test_fold_insert_into_extracted_slice(%arg0: tensor<16x16x16xf32>, %arg1: index, %arg2: index, %src: tensor<16xf32>) -> tensor<16x16x16xf32> {
+  %extracted = tensor.extract_slice %arg0[%arg1, 0, 0] [1, 16, 16] [1, 1, 1] : tensor<16x16x16xf32> to tensor<16x16xf32>
+  %inner = tensor.insert_slice %src into %extracted[%arg2, 0] [1, 16] [1, 1] : tensor<16xf32> into tensor<16x16xf32>
+  %res = tensor.insert_slice %inner into %arg0[%arg1, 0, 0] [1, 16, 16] [1, 1, 1] : tensor<16x16xf32> into tensor<16x16x16xf32>
+  return %res : tensor<16x16x16xf32>
+}

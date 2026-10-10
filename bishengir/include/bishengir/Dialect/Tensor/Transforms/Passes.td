@@ -40,7 +40,7 @@ let summary = "Fold tensor empty";
 def FoldExtractInsertPair : Pass<"fold-extract-insert-pair", "func::FuncOp"> {
   let summary = "Fold redundant extract/insert pairs on tensors";
   let description = [{
-    Folds two redundant tensor round-trip patterns:
+    Folds redundant tensor extract/insert round trips:
 
     1. tensor.extract followed by tensor.insert of the extracted scalar
        back into a tensor.empty destination, when both operate on the same
@@ -49,9 +49,34 @@ def FoldExtractInsertPair : Pass<"fold-extract-insert-pair", "func::FuncOp"> {
     2. tensor.extract_slice whose result is fully overwritten by a
        vector.transfer_write and written back with tensor.insert_slice at
        the same offsets, sizes and unit strides.
+
+    It also applies the merge-consecutive-insert-extract-slice patterns and
+    folds an insert_slice into an extract_slice that is written back into
+    the same tensor at the same position, so the slice chains that
+    fold-slice-into-scf-for creates inside the loop body collapse into a
+    single insert_slice.
   }];
   let constructor = "mlir::tensor::createFoldExtractInsertPairPass()";
   let dependentDialects = ["tensor::TensorDialect", "vector::VectorDialect", ];
+}
+
+def FoldSliceIntoScfFor : Pass<"fold-slice-into-scf-for", "func::FuncOp"> {
+  let summary = "Fold extract_slice/insert_slice pairs around scf.for loops "
+                "into the loop body";
+  let description = [{
+    Folds a tensor.extract_slice whose result is used as an scf.for iter arg
+    init, together with the tensor.insert_slice that writes the loop result
+    back into the same tensor, into the loop body: the iter arg is widened
+    to the full tensor, the extract_slice is moved to the start of the loop
+    body reading from the widened iter arg, and the insert_slice is moved
+    in front of the scf.yield writing the result back into the iter arg.
+    The consecutive-slice chains this creates are cleaned up by
+    fold-extract-insert-pair.
+  }];
+  let constructor = "mlir::tensor::createFoldSliceIntoScfForPass()";
+  let dependentDialects = ["mlir::scf::SCFDialect",
+                           "mlir::tensor::TensorDialect",
+  ];
 }
 
 def NormalizeTensorOps : Pass<"normalize-tensor-ops", "func::FuncOp"> {

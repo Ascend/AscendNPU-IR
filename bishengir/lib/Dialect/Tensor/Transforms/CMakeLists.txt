@@ -4,6 +4,7 @@ add_bishengir_library(BiShengIRTensorTransforms
   CanonicalizeTensorReshape.cpp
   DecomposeTensorConcat.cpp
   FoldExtractInsertPair.cpp
+  FoldSliceIntoScfFor.cpp
   FoldTensorEmpty.cpp
   MergeConsecutiveInsertExtractSlice.cpp
   NarrowTensorOp.cpp
@@ -36,12 +37,15 @@ add_bishengir_library(BiShengIRTensorTransforms
   BiShengIRDialectUtils
   BiShengIRMemRefTransforms
   BiShengIRTensorUtils
+  MLIRAffineUtils
   MLIRControlFlowDialect
   MLIRTensorDialect
   MLIRLinalgDialect
   MLIRIR
   MLIRDialect
   MLIRPass
+  MLIRSCFDialect
+  MLIRTensorTransforms
   BiShengIRAnnotationDialect
   BiShengIRHACCUtils
   BiShengIRHFusionDialect

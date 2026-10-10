@@ -155,6 +155,10 @@ bufferizationPipeline(OpPassManager &pm,
     pm.nest<func::FuncOp>().addPass(createCloneTensorEmptyPass());
     pm.nest<func::FuncOp>().addPass(createSinkOpToConsumerInLoopPass());
   }
+  // Fold extract_slice/insert_slice pairs around scf.for loops into the loop
+  // body, then fold the redundant slice round trips this creates.
+  pm.nest<func::FuncOp>().addPass(tensor::createFoldSliceIntoScfForPass());
+  pm.nest<func::FuncOp>().addPass(tensor::createFoldExtractInsertPairPass());
   // TODO: support process toTensorOp in one-shot-bufferize.
   // Expose memref-level writes (e.g., hivm.hir.load) to tensor-level analysis
   // by inserting an `alloc_tensor(copy...)` for each writable to_tensor.
