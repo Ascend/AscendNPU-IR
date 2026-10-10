@@ -2,9 +2,15 @@
 
 **适用产品**：
 
-- Ascend 950PR&950DT系列产品
-- Atlas A3系列产品
-- Atlas A2系列产品
+<!-- npu="950" id1 -->
+- <term>Ascend 950PR&950DT系列产品</term>
+<!-- end id1 -->
+<!-- npu="A3" id2 -->
+- <term>Atlas A3系列产品</term>
+<!-- end id2 -->
+<!-- npu="910b" id3 -->
+- <term>Atlas A2系列产品</term>
+<!-- end id3 -->
 
 本文介绍HIVM中的存储对齐（Stride Alignment）机制，包括 `hivm-pre-mark-stride-align`、`hivm-mark-stride-align` 和 `hivm-enable-stride-align` 三个Pass的硬件背景、算法原理、接口说明和使用约束。
 
@@ -68,11 +74,12 @@ hivm-enable-stride-align        // 使能阶段：传播注解 + 重分配内存
 - 标记阶段在FuncOp级别运行（`func::FuncOp`），可并行处理不同函数。
 - 使能阶段在ModuleOp级别运行（`mlir::ModuleOp`），因为对齐传播可能跨 `func.call` 边界影响Vector Function被调用者，FuncOp并行嵌套会引发数据竞争。
 
+<!-- npu="950" id4 -->
 ## hivm-pre-mark-stride-align
 
 > **说明**：
 >
-> 本节内容仅适用于Ascend 950PR&950DT系列产品。
+> 本节内容仅适用于<term>Ascend 950PR&950DT系列产品</term>。
 
 ### 功能概述
 
@@ -89,6 +96,7 @@ hivm-enable-stride-align        // 使能阶段：传播注解 + 重分配内存
 3. 若确认流向vload，则回溯到根alloc（`memref.alloc`），在其后插入 `annotation.mark` 并设置 `hivm.skip_stride_align_for_vload` 属性。
 
 > 注：当VF被调用者仅有声明（declaration，无函数体，如SplitSimtModule后的情况）时，无法判断参数是否被vload，因此跳过该Buffer的标记。
+<!-- end id4 -->
 
 ## hivm-mark-stride-align
 
@@ -106,8 +114,12 @@ hivm-enable-stride-align        // 使能阶段：传播注解 + 重分配内存
 2. 收集算子的memref操作数类型，跳过全rank-0或全shape为1的操作数。
 3. 判断是否为UB DMA操作（`hivm.hir.load`/`store`/`copy`），DMA操作的对齐判断规则与普通计算op不同。
 4. 根据架构走不同分析路径：
+   <!-- npu="950" id5 -->
    - **reg-based（Ascend 950PR&950DT系列产品）**：由于 Ascend 950PR&950DT系列产品 的 `hfusion-flatten` 已合并轴，直接将memref视为已flatten的状态，用 `getLastDiscontinuousDimRegBased` 查找最后不连续维度。对Fixpipe有专门的对齐约束计算。
+   <!-- end id5 -->
+   <!-- npu="A3,910b" id6 -->
    - **非reg-based（Atlas A2系列产品、Atlas A3系列产品）**：通过 `FlattenInterface` 的 `getFlattened` 获取flatten后的关联组和类型，用 `getLastDiscontinuousDim` 在flatten后的类型上查找，再映射回原始维度。
+   <!-- end id6 -->
 5. 取UB空间的操作数（`getTargetSpaceOperands(UB)`），调用 `markAlignedDim` 为每个操作数创建对齐注解。
 
 #### 2. 最后不连续维度查找
@@ -116,7 +128,9 @@ hivm-enable-stride-align        // 使能阶段：传播注解 + 重分配内存
 
 - 如果任何memref的最低维stride不为1（最低维不连续），则最低维就是对齐目标维度。
 - 如果最低维stride为1（最低维连续），则在更高维中查找最后一个stride≠size的维度。
+<!-- npu="950" id7 -->
 - 对UB DMA操作（`copy_gm_to_ub`等），在Ascend 950PR&950DT系列产品上只考虑最低维的stride，如果次低维已对齐且最低维无tail-jump问题，则无需对齐。
+<!-- end id7 -->
 - 对1D memref，不存在不连续维度，返回 `nullopt`。
 
 #### 3. Fixpipe特殊处理
@@ -169,9 +183,11 @@ alignSize = shape[subTailDim] * 16 / gcd(shape[subTailDim], 16) + 1
 
 当Store操作的UB操作数经过trailing-unit rank-reduced subview（如 `memref<3x1x1xi32>` → `memref<1x1xi32>`）时，对齐维度可能落在被丢弃的维度上。此时需要将标记目标从subview结果回溯到subview的source，并调整对齐维度索引。
 
+<!-- npu="950" id11 -->
 #### 6. Vector Function参数标记（仅reg-based）
 
 对 `func.call` 的参数，如果尚未被标记且属于本地Buffer，则走与结构化算子相同的最后不连续维度分析，为参数添加对齐注解。同时跳过被PreMarkStrideAlign标记为 `SkipStrideAlignForVLoad` 的参数。
+<!-- end id11 -->
 
 ### 标记效果示例
 

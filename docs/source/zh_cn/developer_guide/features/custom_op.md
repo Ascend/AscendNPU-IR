@@ -305,11 +305,12 @@ class my_custom_op_extra_buf:
     "pure_op" ins(...) outs(...) -> ...
 ```
 
+<!-- npu="A3,910b" id1 -->
 ### Triton自定义算子示例
 
 **说明**：
 
-本节内容仅适用于 Atlas A3系列产品、Atlas A2系列产品。
+本节内容仅适用于 <term>Atlas A3系列产品</term>、<term>Atlas A2系列产品</term>。
 
 #### 标准自定义算子示例
 
@@ -618,3 +619,4 @@ module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
   }
 }
 ```
+<!-- end id1 -->
