@@ -623,12 +623,12 @@ class MemPlan {
 public:
   MemPlan(MemPlanMode planMode, bool enableGlobalReuse,
           bool enableMemoryDisplay, bool restrictInplaceAsISA,
-          int simtVFDynamicSize, bool disableVFReachableCheck,
+          int sharedMemDynamicSize, bool disableVFReachableCheck,
           PlanMemoryStrategy planMemoryStrategy = PlanMemoryStrategy::DEFAULT)
       : enableMemoryDisplay(enableMemoryDisplay), planMode(planMode),
         enableGlobalReuse(enableGlobalReuse),
         restrictInplaceAsISA(restrictInplaceAsISA),
-        simtVFDynamicSize(simtVFDynamicSize),
+        sharedMemDynamicSize(sharedMemDynamicSize),
         disableVFReachableCheck(disableVFReachableCheck),
         planMemoryStrategy(planMemoryStrategy), vfInplaceReuseInfo(nullptr) {}
 
@@ -718,8 +718,8 @@ private:
   /// enable HIVM op plan memory inplace
   bool restrictInplaceAsISA;
 
-  /// Dynamic ub size(KB) for simt VF. Default is 216
-  int simtVFDynamicSize;
+  /// Dynamic UB size(in bytes) for simtVF.
+  int sharedMemDynamicSize;
 
   /// Disable VF load/store reachability check for inplace reuse.
   bool disableVFReachableCheck;
