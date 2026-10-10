@@ -76,6 +76,12 @@ void canonicalizationHIVMPipeline(OpPassManager &pm) {
   ADD_CANONICALIZER_PASS_WITHOUT_OPTION_DEFS;
 }
 
+static void hivmCodeMotionPipeline(OpPassManager &pm) {
+  pm.addPass(createLoopInvariantCodeMotionPass());
+  pm.addPass(createLoopInvariantSubsetHoistingPass());
+  canonicalizationHIVMPipeline(pm);
+}
+
 static void hivmAutoInsertLdStForMixCVPipeline(
     OpPassManager &pm, const HIVMPipelineOptions &hivmPipelineOptions) {
   InsertLoadStoreForMixCVOptions options;
@@ -484,6 +490,10 @@ static void hivmPreBufferizationOptimizationPipeline(
     pm.addPass(createSinkExclusivePreloadWorkPass(sinkOpts));
   }
 
+  if (hivmPipelineOptions.enableCodeMotion &&
+      hivmPipelineOptions.setCVPipelineMode != CVPipelineMode::Off)
+    hivmCodeMotionPipeline(pm);
+
   // Cross-Core Auto-Sync passes STEP=1
   hivmCrossCoreAutoSyncPipeline(pm, hivmPipelineOptions,
                                 CrossCoreAutoSyncMode::CCGSS_STEP_1);
@@ -517,13 +527,9 @@ static void hivmPreBufferizationOptimizationPipeline(
   hivmWorkspacePipeline(pm, hivmPipelineOptions);
   pm.nest<func::FuncOp>().addPass(tensor::createFoldTensorEmptyPass());
   canonicalizationHIVMPipeline(pm);
-  if (hivmPipelineOptions.enableCodeMotion) {
-    // call canonicalization to contantize the variable, then hoist can work for
-    // some cases
-    pm.addPass(createLoopInvariantCodeMotionPass());
-    pm.addPass(createLoopInvariantSubsetHoistingPass());
-    canonicalizationHIVMPipeline(pm);
-  }
+  if (hivmPipelineOptions.enableCodeMotion &&
+      hivmPipelineOptions.setCVPipelineMode == CVPipelineMode::Off)
+    hivmCodeMotionPipeline(pm);
   pm.addPass(hfusion::createSimplifyVFArgsPass());
   pm.nest<func::FuncOp>().addPass(createCloneTensorEmptyPass());
   pm.nest<func::FuncOp>().addPass(createHIVMInlineOTFLoadStorePass());
