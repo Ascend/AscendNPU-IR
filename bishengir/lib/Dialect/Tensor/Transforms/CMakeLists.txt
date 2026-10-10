@@ -3,6 +3,7 @@ add_bishengir_library(BiShengIRTensorTransforms
   BubbleUpExtractSlice.cpp
   CanonicalizeTensorReshape.cpp
   DecomposeTensorConcat.cpp
+  FoldExtractInsertPair.cpp
   FoldTensorEmpty.cpp
   MergeConsecutiveInsertExtractSlice.cpp
   NarrowTensorOp.cpp
@@ -47,4 +48,5 @@ add_bishengir_library(BiShengIRTensorTransforms
   BiShengIRHFusionUtils
   BiShengIRHIVMDialect
   MLIRLinalgTransforms
+  MLIRVectorDialect
 )

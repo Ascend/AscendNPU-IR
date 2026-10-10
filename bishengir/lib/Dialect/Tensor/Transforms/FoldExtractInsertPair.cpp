@@ -5,12 +5,12 @@
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===---------------------------------------------------------------------===//
-#include "bishengir/Dialect/HFusion/Transforms/Passes.h"
+#include "bishengir/Dialect/Tensor/Transforms/Passes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Arith/Utils/Utils.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Linalg/Utils/Utils.h"
-#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
@@ -19,11 +19,10 @@
 #include <limits>
 namespace mlir {
 #define GEN_PASS_DEF_FOLDEXTRACTINSERTPAIR
-#include "bishengir/Dialect/HFusion/Transforms/Passes.h.inc"
+#include "bishengir/Dialect/Tensor/Transforms/Passes.h.inc"
 } // namespace mlir
 
 using namespace mlir;
-using namespace mlir::hfusion;
 #define DEBUG_TYPE "fold-extract-insert-pair"
 
 namespace {
@@ -177,12 +176,12 @@ static bool isStaticOneElementTensor(Type type) {
 ///
 /// This removes chains like:
 ///
-///   %93 = linalg.elemwise_binary ...
-///   %extracted_14 = tensor.extract %93[%c0] : tensor<1xf32>
-///   %inserted_15 = tensor.insert %extracted_14 into %empty[%c0]
-///   %94 = linalg.elemwise_unary ins(%inserted_15) ...
+///   %result = linalg.elemwise_binary ...
+///   %extracted = tensor.extract %result[%c0] : tensor<1xf32>
+///   %inserted = tensor.insert %extracted into %empty[%c0]
+///   %consumer = linalg.elemwise_unary ins(%inserted) ...
 ///
-/// and rewrites the unary op to consume %93 directly.
+/// and rewrites the consumer to use %result directly.
 class FoldExtractInsertPair : public OpRewritePattern<tensor::InsertOp> {
 public:
   using OpRewritePattern<tensor::InsertOp>::OpRewritePattern;
@@ -211,14 +210,10 @@ public:
       return rewriter.notifyMatchFailure(insertOp,
                                          "extract and insert indices differ");
 
-    // Optional conservative check:
-    // Require the destination to be tensor.empty. This matches your generated
-    // IR and avoids surprising rewrites on non-empty destinations.
-    //
-    // For a statically one-element tensor, this rewrite is also valid even if
-    // the destination is not tensor.empty, because the only element is
-    // replaced. Keep this check if you want the transformation to be narrowly
-    // targeted.
+    // Conservatively require the destination to be tensor.empty. For a
+    // statically one-element tensor the rewrite would also be valid on other
+    // destinations, since the only element is replaced, but restricting it to
+    // tensor.empty keeps the transformation narrowly targeted.
     if (!insertOp.getDest().getDefiningOp<tensor::EmptyOp>())
       return rewriter.notifyMatchFailure(
           insertOp, "insert destination is not tensor.empty");
@@ -255,7 +250,7 @@ public:
 /// 4. The sizes and strides of extract_slice and insert_slice match
 ///
 /// This is redundant because %written already has the same shape as %slice,
-/// and inserting it back at offset [0,0] with the same size is a no-op.
+/// and inserting it back at the same offset with the same size is a no-op.
 class FoldExtractSliceInsertSlice
     : public OpRewritePattern<tensor::InsertSliceOp> {
 public:
@@ -373,6 +368,6 @@ void FoldExtractInsertPairPass::runOnOperation() {
   }
 }
 
-std::unique_ptr<Pass> mlir::hfusion::createFoldExtractInsertPairPass() {
+std::unique_ptr<Pass> mlir::tensor::createFoldExtractInsertPairPass() {
   return std::make_unique<FoldExtractInsertPairPass>();
 }

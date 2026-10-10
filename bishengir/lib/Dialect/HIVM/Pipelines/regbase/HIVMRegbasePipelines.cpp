@@ -337,7 +337,7 @@ bufferizationPipeline(OpPassManager &pm,
   pm.addPass(hfusion::createSimplifyVFArgsPass());
   // Fold redundant extract_slice -> transfer_write -> insert_slice pattern
   // before bufferization to avoid unnecessary memref operations
-  pm.nest<func::FuncOp>().addPass(hfusion::createFoldExtractInsertPairPass());
+  pm.nest<func::FuncOp>().addPass(tensor::createFoldExtractInsertPairPass());
   // TODO: support process toTensorOp in one-shot-bufferize.
   // Expose memref-level writes (e.g., hivm.hir.load) to tensor-level analysis
   // by inserting an `alloc_tensor(copy...)` for each writable to_tensor.

@@ -37,6 +37,23 @@ let summary = "Fold tensor empty";
   ];
 }
 
+def FoldExtractInsertPair : Pass<"fold-extract-insert-pair", "func::FuncOp"> {
+  let summary = "Fold redundant extract/insert pairs on tensors";
+  let description = [{
+    Folds two redundant tensor round-trip patterns:
+
+    1. tensor.extract followed by tensor.insert of the extracted scalar
+       back into a tensor.empty destination, when both operate on the same
+       statically one-element tensor type and indices.
+
+    2. tensor.extract_slice whose result is fully overwritten by a
+       vector.transfer_write and written back with tensor.insert_slice at
+       the same offsets, sizes and unit strides.
+  }];
+  let constructor = "mlir::tensor::createFoldExtractInsertPairPass()";
+  let dependentDialects = ["tensor::TensorDialect", "vector::VectorDialect", ];
+}
+
 def NormalizeTensorOps : Pass<"normalize-tensor-ops", "func::FuncOp"> {
   let summary = "Optimization patterns for tensor ops";
   let options = [

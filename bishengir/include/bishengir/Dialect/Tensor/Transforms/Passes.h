@@ -46,6 +46,10 @@ std::unique_ptr<Pass> createFoldCollapseIntoAllocWithLoadPass();
 /// Create a pass to fold tensor empty.
 std::unique_ptr<Pass> createFoldTensorEmptyPass();
 
+/// Create a pass to fold redundant tensor extract/insert pairs, including
+/// extract_slice -> transfer_write -> insert_slice round trips.
+std::unique_ptr<Pass> createFoldExtractInsertPairPass();
+
 /// Create a pass to normalize tensor ops.
 std::unique_ptr<Pass>
 createNormalizeTensorOpsPass(bool skipAlignedSlice = false);
