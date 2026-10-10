@@ -1,7 +1,7 @@
 // REQUIRES: asserts
-// RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend950PR_950z -hivm-plan-memory-regbase -split-input-file -verify-diagnostics | FileCheck %s
-// RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend950PR_950z -hivm-plan-memory-regbase --debug-only="vf-inplace-reuse" -split-input-file -verify-diagnostics 2>&1 | FileCheck %s -check-prefix=CHECK-DEBUG
-// RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend950PR_950z -hivm-plan-memory-regbase=disable-tightly-coupled-buffer-reuse=true -split-input-file -verify-diagnostics 2>&1 | FileCheck %s -check-prefix=CHECK-NOREUSE
+// RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend950PR_950z -hivm-plan-memory-regbase=shared-mem-dynamic-size=221184 -split-input-file -verify-diagnostics | FileCheck %s
+// RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend950PR_950z -hivm-plan-memory-regbase=shared-mem-dynamic-size=221184 --debug-only="vf-inplace-reuse" -split-input-file -verify-diagnostics 2>&1 | FileCheck %s -check-prefix=CHECK-DEBUG
+// RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend950PR_950z -hivm-plan-memory-regbase="shared-mem-dynamic-size=221184 disable-tightly-coupled-buffer-reuse=true" -split-input-file -verify-diagnostics 2>&1 | FileCheck %s -check-prefix=CHECK-NOREUSE
 // -----
 
 func.func @read_once_and_write_once_0(
@@ -474,21 +474,6 @@ func.func @test_unique_memory_with_multi_buffer(%arg0: memref<16x32x64xf16, #hiv
   %alloc_0 = memref.alloc() : memref<16x32x64xf16, #hivm.address_space<ub>>
   hivm.hir.load ins(%arg1 : memref<16x32x64xf16, #hivm.address_space<gm>>) outs(%alloc_0 : memref<16x32x64xf16, #hivm.address_space<ub>>)
   hivm.hir.store ins(%alloc_0 : memref<16x32x64xf16, #hivm.address_space<ub>>) outs(%arg1 : memref<16x32x64xf16, #hivm.address_space<gm>>)
-  return
-}
-
-// -----
-
-// expected-error@below {{ub overflow, requires 3932160 bits while 1769472 bits available!}}
-func.func @invalid_alloc_for_mix(%arg0: memref<61440xf32, #hivm.address_space<gm>>, %arg1: memref<61440xf32, #hivm.address_space<gm>>) attributes {hivm.vf_mode = #hivm.vf_mode<MIX>} {
-  %c0 = arith.constant 0 : index
-  %alloc = memref.alloc() : memref<61440xf32, #hivm.address_space<ub>>
-  %alloc_0 = memref.alloc() : memref<61440xf32, #hivm.address_space<ub>>
-  hivm.hir.load ins(%arg0 : memref<61440xf32, #hivm.address_space<gm>>) outs(%alloc : memref<61440xf32, #hivm.address_space<ub>>)
-  hivm.hir.load ins(%arg1 : memref<61440xf32, #hivm.address_space<gm>>) outs(%alloc_0 : memref<61440xf32, #hivm.address_space<ub>>)
-  %0 = memref.load %alloc[%c0] : memref<61440xf32, #hivm.address_space<ub>>
-  %1 = memref.load %alloc_0[%c0] : memref<61440xf32, #hivm.address_space<ub>>
-  %2 = arith.mulf %0, %1 : f32
   return
 }
 

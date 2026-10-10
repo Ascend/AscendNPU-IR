@@ -94,11 +94,6 @@ struct HIVMCMainConfigCLOptions : public HIVMCMainConfig {
         "pure-simt", cl::desc("SIMT only compile."),
         cl::location(enableSIMTOnlyFlag), cl::init(false));
 
-    static cl::opt<int, /*ExternalStorage=*/true> simtVFDynamicSize(
-        "simt-vf-dynamic-size",
-        cl::desc("Dynamic ub size(KB) for simt VF. Default is 216."),
-        cl::location(simtVFDynamicSizeFlag), cl::init(216));
-
     static cl::list<int64_t> gridDim(
         "simt-triton-grid",
         cl::CommaSeparated, // allow comma-separated like 2,2,2

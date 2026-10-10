@@ -223,7 +223,7 @@ def Ascend910_9392_Spec : Ascend910_93_BaseSpec<"Ascend910_9392"> {
 class Ascend950_BaseSpec <string name> : TargetSpec<name> {
   let UbSize = 2031616; // bits = 248KB, reserve 8KB for compiler
   let MinimalDCacheSize = 262144; // bits = 32KB
-  let MaximumDCacheSize = 983040; // bits = 120KB
+  let MaximumDCacheSize = 1048576; // bits = 128KB
   let L1Size = 4194304; // bits = 512KB
   let L0aSize = 524288; // bits = 64KB
   let L0bSize = 524288; // bits = 64KB

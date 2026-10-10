@@ -175,11 +175,6 @@ struct HIVMAVEPipelineOptions
       *this, "disable-reorder-instruction",
       llvm::cl::desc("Disable reorder instruction"), llvm::cl::init(false)};
 
-  PassOptions::Option<int> simtVFDynamicSize{
-      *this, "simt-vf-dynamic-size",
-      llvm::cl::desc("Dynamic ub size(KB) for simt VF. Default is 216"),
-      llvm::cl::init(216)};
-
   PassOptions::Option<int> maxReductionSplitNum{
       *this, "max-reduction-split",
       llvm::cl::desc("Max split times for reductionLoop. Default is 1"),

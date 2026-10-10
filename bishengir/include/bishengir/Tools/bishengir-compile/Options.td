@@ -930,14 +930,6 @@ def PureSimt : FeatureControlOptions<
   bit isSharedWithDownstreamToolchain = 1;
 }
 
-def SimtVFDynamicSize : FeatureControlOptions<
-  "Dynamic ub size(KB) for simt VF. Default is 216.",
-  "int",
-  "216"
-> {
-  let passGroup = ["HIVM"];
-}
-
 def EnableSimtVFSubTiling : FeatureControlOptions<
   "Enable SIMT VF sub-tiling after split-simt-module.",
   "bool",
@@ -1100,15 +1092,14 @@ def ThreadsPerWarp : FeatureControlOptions<
 > {
   bit isSharedWithDownstreamToolchain = 1;
 }
-
-def SharedMemDynamicSize : FeatureControlOptions<
-  "Dynamic size of shared memory (in bytes)",
-  "int32_t",
-  "122880"
-> {
-  bit isSharedWithDownstreamToolchain = 1;
-}
 #endif
+
+def SharedMemDynamicSize
+    : FeatureControlOptions<"Dynamic size of shared memory (in bytes)",
+                            "int32_t", "-1"> {
+  bit isSharedWithDownstreamToolchain = 1;
+  let passGroup = ["HIVM"];
+}
 
 def EnableSimdSimtMixCompile : HIVMOptimizationControlOptions<
   "Enable simd-simt mix kernel compile",

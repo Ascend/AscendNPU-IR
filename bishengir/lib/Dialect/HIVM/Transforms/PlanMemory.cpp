@@ -2890,13 +2890,17 @@ LogicalResult MemPlan::DynamicSetUbSpaceSize(
   if (!hacc::utils::isRegBasedArch(funcOp->getParentOfType<ModuleOp>())) {
     return success();
   }
+  // Only LOCAL_MEM_PLAN allocates UB buffers, so the SIMT/MIX UB capacity
+  // adjustment and range check below only apply in that plan mode.
+  if (planMode != MemPlanMode::LOCAL_MEM_PLAN) {
+    return success();
+  }
   if (const auto vfModeAttr =
           funcOp->getAttrOfType<VFModeAttr>(VFModeAttr::name)) {
     if (vfModeAttr.getValue() == VFMode::SIMT ||
         vfModeAttr.getValue() == VFMode::MIX) {
       constexpr int numBitsInByte = 8;
-      constexpr int numByteInKB = 1024;
-      auto simtVFUbSize = this->simtVFDynamicSize * numByteInKB * numBitsInByte;
+      auto simtVFUbSize = this->sharedMemDynamicSize * numBitsInByte;
       auto minimalDCacheSize =
           cast<IntegerAttr>(specInterface
                                 .getSpecForIdentifierEnum(
@@ -2912,11 +2916,10 @@ LogicalResult MemPlan::DynamicSetUbSpaceSize(
       if (simtVFUbSize < (ubSpaceSize - maximumDCacheSize) ||
           simtVFUbSize > (ubSpaceSize - minimalDCacheSize)) {
         funcOp->emitError()
-            << "PlanMemory Fail : SimtVFDynamicSize have to in range ["
-            << (ubSpaceSize - maximumDCacheSize) / numByteInKB / numBitsInByte
-            << ", "
-            << (ubSpaceSize - minimalDCacheSize) / numByteInKB / numBitsInByte
-            << "], but got " << simtVFDynamicSize << "!";
+            << "PlanMemory Fail : SharedMemDynamicSize have to in range ["
+            << (ubSpaceSize - maximumDCacheSize) / numBitsInByte << ", "
+            << (ubSpaceSize - minimalDCacheSize) / numBitsInByte
+            << "], but got " << sharedMemDynamicSize << "!";
         return failure();
       }
       ubSpaceSize = simtVFUbSize;
@@ -3123,7 +3126,7 @@ PlanMemoryPass::planMemoryForFuncOp(
 
     MemPlan memPlan(this->memMode, this->enableGlobalReuse,
                     this->enableMemoryDisplay, this->restrictInplaceAsISA,
-                    this->simtVFDynamicSize, this->disableVFReachableCheck,
+                    this->sharedMemDynamicSize, this->disableVFReachableCheck,
                     this->planMemoryStrategy);
     if (failed(memPlan.InitMemSpecsFromModule(funcOp))) {
       return std::nullopt;
