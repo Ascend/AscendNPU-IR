@@ -109,6 +109,7 @@ AICore架构详情可查阅官方文档：[基本架构](https://www.hiascend.co
 - 在内存型架构上，当内核参数存在FFTS基址时插入`SetFFTSBaseAddrOp`。
 - 支持CV pattern、multibuffer flag-id策略、内存型架构上的round-robin event-id重试。（block-all模式**不是**CrossCoreGSS的能力——启用`--enable-hivm-inject-block-all-sync`会将管线从CrossCoreGSS切换到InjectBlockSync。）
 
+<!-- npu="950" id1 -->
 ### DelayedCrossCoreGSS
 
 **目的**（RegBase管线）：在mix内核拆分**之后**再求解跨核同步；通过anchor与备份mix函数，使位置相关的读写信息在cube/vector拆分后仍然可用。
@@ -121,6 +122,7 @@ AICore架构详情可查阅官方文档：[基本架构](https://www.hiascend.co
 2. **Step 2**（plan-memory改写后）：`DelayedCrossCoreGSS`匹配备份mix与拆分后的cube/vector函数，清除旧的块内同步，基于anchor重建区间读写信息，求解并将同步物化回mix/cube/vector；最后清理anchor与备份函数。求解推迟到`PlanMemoryRegBase`之后（`HIVMLowerToLoops`之前）——提前求解的同步会被bufferization / 内存规划改写失效。
 
 当`--enable-hivm-cross-core-gss`与`--enable-hivm-delayed-cross-core-gss`同时为true时启用（RegBase编译面上二者默认均为`true`）。
+<!-- end id1 -->
 
 ### InjectSync
 

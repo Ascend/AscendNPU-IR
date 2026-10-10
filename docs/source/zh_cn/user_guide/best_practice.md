@@ -689,11 +689,12 @@ module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
 
 本章节介绍Triton NPU算子性能优化指南。
 
+<!-- npu="A3,910b" id1 -->
 ### 使用bitwise_mask优化访存掩码
 
 **说明**：
 
-本节内容仅适用于 Atlas A2系列产品、Atlas A3系列产品。
+本节内容仅适用于 <term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term>。
 
 **问题描述**：
 
@@ -931,6 +932,7 @@ def test_where_lt_case1(param_list):
 > **注意**：
 >
 > 由于Triton前端会将`i1`转换为`i8`，如果对其他类型如`i16`/`i32`等进行`bitwise_mask`操作反而会带来性能损耗，因此此功能只支持`i8`类型的`mask`。
+<!-- end id1 -->
 
 ### 使用手动对齐提升尾轴不对齐场景的编译器优化效率
 

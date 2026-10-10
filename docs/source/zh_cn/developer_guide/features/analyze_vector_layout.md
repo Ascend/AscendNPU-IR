@@ -2,7 +2,9 @@
 
 **适用产品**：
 
-- Ascend 950PR&950DT系列产品
+<!-- npu="950" id1 -->
+- <term>Ascend 950PR&950DT系列产品</term>
+<!-- end id1 -->
 
 本文介绍HIVMAVE中的向量布局分析变换（AnalyzeVectorLayoutPass），包括硬件布局规划、算法原理、编译选项和使用约束。
 

@@ -2,9 +2,15 @@
 
 **适用产品**：
 
-- Ascend 950PR&950DT系列产品
-- Atlas A3系列产品
-- Atlas A2系列产品
+<!-- npu="950" id1 -->
+- <term>Ascend 950PR&950DT系列产品</term>
+<!-- end id1 -->
+<!-- npu="A3" id2 -->
+- <term>Atlas A3系列产品</term>
+<!-- end id2 -->
+<!-- npu="910b" id3 -->
+- <term>Atlas A2系列产品</term>
+<!-- end id3 -->
 
 ## 硬件背景
 
