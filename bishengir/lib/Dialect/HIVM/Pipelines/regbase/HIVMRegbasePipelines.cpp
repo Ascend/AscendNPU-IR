@@ -12,6 +12,7 @@
 #include "bishengir/Conversion/TensorToHIVM/TensorToHIVM.h"
 #include "bishengir/Dialect/Annotation/Transforms/Passes.h"
 #include "bishengir/Dialect/Arith/Transforms/Passes.h"
+#include "bishengir/Dialect/Bufferization/Transforms/Passes.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
@@ -338,8 +339,9 @@ bufferizationPipeline(OpPassManager &pm,
   pm.nest<func::FuncOp>().addPass(hfusion::createFoldExtractInsertPairPass());
   // TODO: support process toTensorOp in one-shot-bufferize.
   // Expose memref-level writes (e.g., hivm.hir.load) to tensor-level analysis
-  // by replacing to_tensor writable with hivm.hir.copy
-  pm.nest<func::FuncOp>().addPass(hivm::createNormalizeToTensorOpPass());
+  // by inserting an `alloc_tensor(copy...)` for each writable to_tensor.
+  pm.nest<func::FuncOp>().addPass(
+      bufferization::createNormalizeToTensorOpPass());
   bufferization::OneShotBufferizationOptions oneShotOptions;
   oneShotOptions.bufferizeFunctionBoundaries = true;
   oneShotOptions.setFunctionBoundaryTypeConversion(
@@ -348,10 +350,10 @@ bufferizationPipeline(OpPassManager &pm,
   oneShotOptions.allowUnknownOps = true;
   oneShotOptions.analysisHeuristic =
       bufferization::OneShotBufferizationOptions::AnalysisHeuristic::TopDown;
-  // Run a first round of analysis + tensor copy insertion. The inserted
-  // copies (and the HIVM copy/store op's `to_be_replaced` cleanup in
-  // resolveConflicts) can expose conflicts that were previously masked.
-  pm.addPass(hivm::createTensorCopyInsertionPass(oneShotOptions));
+  pm.addPass(createDecomposeAllocTensorCopyPass());
+  // Run a first round of analysis + tensor copy insertion.
+  pm.addPass(bufferization::createTensorCopyInsertionPass(oneShotOptions));
+  pm.addPass(createDecomposeAllocTensorCopyPass());
   pm.addPass(bufferization::createOneShotBufferizePass(oneShotOptions));
   if (hivmPipelineOptions.enableVfMergeLevel == 2) {
     MergeVecScopeOptions VfMergeOpsOpt;

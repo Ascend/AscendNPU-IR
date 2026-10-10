@@ -23,6 +23,7 @@
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 
+#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -369,8 +370,9 @@ memref::StoreOp createSinglePointStore(
 Value createEmptyOp(OpBuilder &builder, Location loc, Value source);
 
 /// Create bufferization.alloc_tensor op with the same type as source
-Value createAllocTensorOp(OpBuilder &builder, Location loc, Value source,
-                          bool copy = false);
+bufferization::AllocTensorOp createAllocTensorOp(OpBuilder &builder,
+                                                 Location loc, Value source,
+                                                 bool copy = false);
 
 ///  Create tensor.empty or memref.alloc op with the same shape as source
 ///  but with element type targetElemType

@@ -6,6 +6,7 @@ add_bishengir_dialect_library(BiShengIRHIVMPipelines
   ${MLIR_MAIN_INCLUDE_DIR}/bishengir/Dialect/HIVM
 
   LINK_LIBS PUBLIC
+  BiShengIRBufferizationTransforms
   BiShengIRHFusionToHIVM
   BiShengIRHFusionTransforms
   BiShengIRHIVMTransforms

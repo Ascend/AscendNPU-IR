@@ -40,6 +40,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   ComposeCollapseExpand.cpp
   ComposeMemRefViews.cpp
   ConstantizeBufferSize.cpp
+  DecomposeAllocTensorCopy.cpp
   ConvertNonContiguousReshapeToCopy.cpp
   ConvertToHIVMOp.cpp
   InsertAnchorsAndBackup.cpp
@@ -118,8 +119,6 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   MergeSamePreloadScopes.cpp
   NormalizeBitwiseSelect.cpp
   NormalizeConvOps.cpp
-  NormalizeToTensorOp.cpp
-  TensorCopyInsertion.cpp
   NormalizeMatmul.cpp
   OptMemPlanForPipeline.cpp
   OutlineAllocInVF.cpp

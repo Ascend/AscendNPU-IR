@@ -345,8 +345,8 @@ Value createEmptyOp(OpBuilder &builder, Location loc, Value source) {
   return memref::createMemRefAllocOp(builder, loc, source);
 }
 
-Value createAllocTensorOp(OpBuilder &builder, Location loc, Value source,
-                          bool copy) {
+bufferization::AllocTensorOp
+createAllocTensorOp(OpBuilder &builder, Location loc, Value source, bool copy) {
   if (!llvm::isa<RankedTensorType>(source.getType())) {
     llvm::report_fatal_error("not support unranked tensor type");
   }
@@ -354,9 +354,8 @@ Value createAllocTensorOp(OpBuilder &builder, Location loc, Value source,
   llvm::SmallVector<Value, 2> dynamicSizes;
   if (copy) {
     // Create AllocTensorOp.
-    auto allocTensorOp = builder.create<bufferization::AllocTensorOp>(
+    return builder.create<bufferization::AllocTensorOp>(
         loc, tensorType, dynamicSizes, /*copy=*/source);
-    return allocTensorOp.getResult();
   }
   auto targetElemType = getElementTypeOrSelf(source);
   ArrayRef<int64_t> staticShapes = tensorType.getShape();
@@ -366,9 +365,8 @@ Value createAllocTensorOp(OpBuilder &builder, Location loc, Value source,
       dynamicSizes.push_back(dynDimOp->getResults()[0]);
     }
   }
-  auto allocTensorOp = builder.create<bufferization::AllocTensorOp>(
+  return builder.create<bufferization::AllocTensorOp>(
       loc, RankedTensorType::get(staticShapes, targetElemType), dynamicSizes);
-  return allocTensorOp.getResult();
 }
 
 tensor::EmptyOp createStaticShapeEmptyOp(OpBuilder &builder, Location loc,

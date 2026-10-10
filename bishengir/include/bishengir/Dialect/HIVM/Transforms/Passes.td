@@ -247,27 +247,6 @@ def InferHIVMDataLayout : HIVMPass<"hivm-infer-data-layout", "func::FuncOp"> {
       "l2_cache_mode annotation on a matmul operand">];
 }
 
-def NormalizeToTensorOp : HIVMPass<"hivm-normalize-to-tensor", "func::FuncOp"> {
-  let summary = "Normalize bufferization.to_tensor ops.";
-  let description = [{
-    Normalize `bufferization.to_tensor` ops before bufferization:
-
-    1. Isolate the hivm memory-space information carried by the memref operand
-       by inserting a `memref.memory_space_cast` before the `to_tensor` when the
-       memref has an hivm address-space attribute, keeping the address-space
-       attr out of the tensor bufferization path.
-
-    2. Expose memref-level writes (e.g., hivm.hir.load) to tensor-level analysis
-       by adding a copyOp for the toTensorOp and replacing all users of the
-       toTensorOp. This makes memref-level writes visible to One-Shot
-       Bufferization analysis, enabling RAW conflict detection and correct copy
-       insertion.
-  }];
-  let constructor = "mlir::hivm::createNormalizeToTensorOpPass()";
-  let dependentDialects = ["bufferization::BufferizationDialect",
-                           "memref::MemRefDialect"];
-}
-
 def InferVFMode : HIVMPass<"hivm-infer-vf-mode", "func::FuncOp"> {
   let summary = "Infer vf mode for Ops";
   let constructor = "mlir::hivm::createInferVFModePass()";
@@ -1669,39 +1648,26 @@ def FuseTransposeIntoLoad
   ];
 }
 
-def TensorCopyInsertion : HIVMPass<"hivm-tensor-copy-insertion", "ModuleOp"> {
-  let summary = "Run One-Shot analysis and insert tensor copies to resolve "
-                "bufferization conflicts";
+def DecomposeAllocTensorCopy
+    : HIVMPass<"hivm-decompose-alloc-tensor-copy", "ModuleOp"> {
+  let summary = "Rewrite bufferization.alloc_tensor(copy...) into an "
+                "alloc_tensor + hivm.hir.copy pair";
   let description = [{
-    This pass runs One-Shot Bufferize analysis (without bufferizing) and
-    inserts `bufferization.alloc_tensor` copies wherever a conflict (e.g.,
-    RaW) was detected. It is equivalent to the analyze + insertTensorCopies
-    phase of `one-shot-bufferize`, but without the final bufferization step.
+    `bufferization.alloc_tensor(copy...)` carries no in-place write, so a
+    subsequent One-Shot Bufferization analysis cannot see/deal with the write
+    it represents, which blocks the conflict analysis. This pass rewrites it
+    into a `bufferization.alloc_tensor` + `hivm.hir.copy` pair;
+    `hivm.hir.copy` carries an in-place write, keeping the write visible to
+    the following conflict analysis.
 
-    Running this pass before `one-shot-bufferize` (with `copy-before-write`
-    or the default analyze+copy path) allows a second round of analysis to
-    catch conflicts that were exposed by the first round's copy insertion.
+    allocTensorCopyOp should be decomposed before RaW conflict analysis pass
+    (TensorCopyInsertion and OneShotBufferize)
   }];
-  let constructor = "mlir::hivm::createTensorCopyInsertionPass()";
+  let constructor = "mlir::hivm::createDecomposeAllocTensorCopyPass()";
   let dependentDialects = ["annotation::AnnotationDialect",
                            "bufferization::BufferizationDialect",
-                           "memref::MemRefDialect", "tensor::TensorDialect",
-                           "hivm::HIVMDialect",
-  ];
-  let options =
-      [Option<"allowReturnAllocsFromLoops", "allow-return-allocs-from-loops",
-              "bool", /*default=*/"false",
-              "Allows returning/yielding new allocations from a loop.">,
-       Option<"allowUnknownOps", "allow-unknown-ops", "bool",
-              /*default=*/"false",
-              "Allows unknown (not bufferizable) ops in the input IR.">,
-       Option<"analysisHeuristic", "analysis-heuristic", "std::string",
-              /*default=*/"\"bottom-up\"",
-              "Heuristic that control the IR traversal during analysis">,
-       Option<"bufferizeFunctionBoundaries", "bufferize-function-boundaries",
-              "bool", /*default=*/"false",
-              "Bufferize function boundaries (experimental).">,
-  ];
+                           "hivm::HIVMDialect", "memref::MemRefDialect",
+                           "tensor::TensorDialect"];
 }
 
 def FlattenModule : HIVMPass<"hivm-flatten-module", "ModuleOp"> {

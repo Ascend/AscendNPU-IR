@@ -11,6 +11,7 @@ add_bishengir_dialect_library(BiShengIRHIVMRegbasePipelines
   LINK_LIBS PUBLIC
   BiShengIRArithToAffine
   BiShengIRArithTransforms
+  BiShengIRBufferizationTransforms
   BiShengIRHFusionTransforms
   BiShengIRHIVMTransforms
   BiShengIRHIVMToStandard
