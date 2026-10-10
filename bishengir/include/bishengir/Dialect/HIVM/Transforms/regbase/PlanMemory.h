@@ -545,17 +545,17 @@ using StorageEntryPair = std::pair<const StorageEntry *, const StorageEntry *>;
 
 class MemPlanRegBase {
 public:
-MemPlanRegBase(MemPlanMode planMode, bool enableGlobalReuse,
-           bool enablePrintMemoryAllocatedSize, bool restrictInplaceAsISA,
-           int simtVFDynamicSize, bool disableVFReachableCheck,
-           PlanMemoryStrategy planMemoryStrategy = PlanMemoryStrategy::DEFAULT)
+  MemPlanRegBase(
+      MemPlanMode planMode, bool enableGlobalReuse,
+      bool enablePrintMemoryAllocatedSize, bool restrictInplaceAsISA,
+      int sharedMemDynamicSize, bool disableVFReachableCheck,
+      PlanMemoryStrategy planMemoryStrategy = PlanMemoryStrategy::DEFAULT)
       : planMode(planMode), enableGlobalReuse(enableGlobalReuse),
         enablePrintMemoryAllocatedSize(enablePrintMemoryAllocatedSize),
         restrictInplaceAsISA(restrictInplaceAsISA),
-        simtVFDynamicSize(simtVFDynamicSize),
+        sharedMemDynamicSize(sharedMemDynamicSize),
         disableVFReachableCheck(disableVFReachableCheck),
-        planMemoryStrategy(planMemoryStrategy),
-        vfInplaceReuseInfo(nullptr) {}
+        planMemoryStrategy(planMemoryStrategy), vfInplaceReuseInfo(nullptr) {}
 
   LogicalResult plan(bool emitErrors = true);
 
@@ -621,8 +621,8 @@ protected:
   /// enable HIVM op plan memory inplace
   bool restrictInplaceAsISA;
 
-  // Dynamic ub size(KB) for simt VF. Default is 216
-  int simtVFDynamicSize;
+  // Dynamic UB size(in bytes) for simt VF.
+  int sharedMemDynamicSize;
 
   /// Disable VF reachable check. Default is false
   bool disableVFReachableCheck;

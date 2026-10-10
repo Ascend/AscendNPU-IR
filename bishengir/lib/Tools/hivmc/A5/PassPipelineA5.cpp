@@ -152,7 +152,6 @@ public:
     enableAutoStorageAlign = pass.enableAutoStorageAlign;
     enableND2NZOnVector = pass.enableND2NZOnVector;
     enablefusedMultiplyAdd = pass.enablefusedMultiplyAdd;
-    simtVFDynamicSize = pass.simtVFDynamicSize;
   }
   StringRef getArgument() const override { return "hivmc"; }
   StringRef getDescription() const override {
@@ -222,8 +221,7 @@ public:
         .autoStorageAlign(enableAutoStorageAlign)
         .enableND2NZOnVector(enableND2NZOnVector)
         .enablefusedMultiplyAdd(enablefusedMultiplyAdd)
-        .autoBlockifyLoop(enableAutoBlockifyLoop)
-        .setSimtVFDynamicSize(simtVFDynamicSize);
+        .autoBlockifyLoop(enableAutoBlockifyLoop);
     if (failed(runHIVMCCompile(moduleOp, config)))
       signalPassFailure();
   }
@@ -430,10 +428,6 @@ protected:
       llvm::cl::desc(
           "Enable auto loop on blocks for all parallel (Default = OFF)"),
       llvm::cl::init(false)};
-  Pass::Option<int> simtVFDynamicSize{
-      *this, "simt-vf-dynamic-size",
-      llvm::cl::desc("Dynamic ub size(KB) for simt VF. Default is 216"),
-      llvm::cl::init(216)};
 };
 
 } // namespace bishengir

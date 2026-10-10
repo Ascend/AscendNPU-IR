@@ -53,6 +53,14 @@ CompileFlow getCompileFlow(const BiShengIRCompileMainConfig &config) {
   return CompileFlow::Simd;
 }
 
+/// Return true if the command line option (dashed name, e.g.
+/// "shared-mem-dynamic-size") was explicitly passed by the frontend.
+static bool hasExplicitCLOption(StringRef optionName) {
+  auto &registeredOptions = cl::getRegisteredOptions();
+  auto it = registeredOptions.find(optionName);
+  return it != registeredOptions.end() && it->second->getNumOccurrences() != 0;
+}
+
 /// Get the lib directory path (../lib relative to bishengir-compile
 /// executable). Returns canonical absolute path without ".." or ".".
 static std::string getLibDirFromExecutable(StringRef executablePath) {
@@ -388,12 +396,21 @@ bishengir::regbase::runRegBasePipeline(ModuleOp mod,
     hasCbufOverflow = false;
 
     if (compileFlow == CompileFlow::Mixed) {
+      if (!hasExplicitCLOption("shared-mem-dynamic-size"))
+        config.setSharedMemDynamicSize(221184);
       success = runMixedPipelines(hirCompileMode, config);
     } else if (compileFlow == CompileFlow::PureSimt) {
+      // In the SIMT-only flow, fall back to 120KB (122880 bytes) of dynamic
+      // shared memory when the frontend did not explicitly pass
+      // --shared-mem-dynamic-size.
+      if (!hasExplicitCLOption("shared-mem-dynamic-size"))
+        config.setSharedMemDynamicSize(122880);
       success = runModulePipeline(hirCompileMode,
                                   regbase::buildBiShengTTIRPipeline, config,
                                   "BiShengSIMT");
     } else {
+      if (!hasExplicitCLOption("shared-mem-dynamic-size"))
+        config.setSharedMemDynamicSize(221184);
       // Standard HIR compile path (no SIMD/SIMT split)
       success = runModulePipeline(hirCompileMode,
                                   regbase::buildBiShengHIRPipeline, config,

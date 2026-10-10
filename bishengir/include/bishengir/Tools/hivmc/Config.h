@@ -85,12 +85,6 @@ public:
   }
   bool shouldEnableSIMTOnly() const { return enableSIMTOnlyFlag; }
 
-  HIVMCMainConfig &setSimtVFDynamicSize(int simtVFDynamicSize) {
-    simtVFDynamicSizeFlag = simtVFDynamicSize;
-    return *this;
-  }
-  int getSimtVFDynamicSize() const { return simtVFDynamicSizeFlag; }
-
   HIVMCMainConfig &setTritonGridDim(const std::vector<int64_t> &params) {
     gridDimFlags = params;
     return *this;
@@ -794,8 +788,6 @@ protected:
   bool disableHFusionVectorizeFlag{false};
 
   bool enableSIMTOnlyFlag{false};
-
-  int simtVFDynamicSizeFlag{216};
 
   std::vector<int64_t> gridDimFlags{};
 

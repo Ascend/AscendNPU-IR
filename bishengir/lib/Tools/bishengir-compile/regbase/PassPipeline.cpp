@@ -156,7 +156,6 @@ void setupHIVMAVEPipelineOptions(
   hivmAVEPipelineOptions.enableMixedCV = config.shouldEnableMixedCV();
   hivmAVEPipelineOptions.enableLayoutOptimization =
       config.shouldEnableLayoutOptimization();
-  hivmAVEPipelineOptions.simtVFDynamicSize = config.getSimtVFDynamicSize();
   hivmAVEPipelineOptions.enableAutoBlockifyLoop =
       config.getEnableAutoBlockifyLoop();
   hivmAVEPipelineOptions.enableAutoMultiBuffer =
