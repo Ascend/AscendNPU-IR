@@ -60,11 +60,7 @@ function(compile_single_cpp_to_bc cpp_with_path core_type platform_type opt_leve
     list(APPEND bisheng_args --cce-aicore-only)
     list(APPEND bisheng_args --cce-generic-addrspace=off)
     list(APPEND bisheng_args -mllvm -disable-llvm-optzns)
-    if (("${opt_level}" STREQUAL "O2") AND
-        ((NOT "${platform_type}" STREQUAL "Ascend910D") OR
-         (BISHENGIR_OPTIMIZE_TEMPLATE_BITCODE STREQUAL "ON")))
-        list(APPEND bisheng_args -O2)
-    endif ()
+    list(APPEND bisheng_args -O2)
     if ("${platform_type}" STREQUAL "Ascend910D" AND
         BISHENGIR_OPTIMIZE_TEMPLATE_BITCODE STREQUAL "ON")
         list(APPEND bisheng_args -mllvm -cce-aicore-addr-transform=false)
@@ -192,11 +188,7 @@ function(compile_shmem_to_bc_single cpp_with_path core_type platform_type opt_le
     list(APPEND bisheng_args --cce-generic-addrspace=off)
     list(APPEND bisheng_args -mllvm -disable-llvm-optzns)
     list(APPEND bisheng_args --cce-enable-print)
-    if (("${opt_level}" STREQUAL "O2") AND
-        ((NOT "${platform_type}" STREQUAL "Ascend910D") OR
-         (BISHENGIR_OPTIMIZE_TEMPLATE_BITCODE STREQUAL "ON")))
-        list(APPEND bisheng_args -O2)
-    endif ()
+    list(APPEND bisheng_args -O2)
     if ("${platform_type}" STREQUAL "Ascend910D" AND
         BISHENGIR_OPTIMIZE_TEMPLATE_BITCODE STREQUAL "ON" AND
         "${opt_level}" STREQUAL "O2")
@@ -302,10 +294,7 @@ function(compile_single_cpp_to_bc_debug cpp_with_path core_type platform_type)
     set(bisheng_args ${cpp_with_path})
     list(APPEND bisheng_args -emit-llvm -c)
     list(APPEND bisheng_args -mllvm -disable-llvm-optzns)
-    if ((NOT "${platform_type}" STREQUAL "Ascend910D") OR
-        (BISHENGIR_OPTIMIZE_TEMPLATE_BITCODE STREQUAL "ON"))
-        list(APPEND bisheng_args -O2)
-    endif ()
+    list(APPEND bisheng_args -O2)
     if ("${platform_type}" STREQUAL "Ascend910D" AND
         BISHENGIR_OPTIMIZE_TEMPLATE_BITCODE STREQUAL "ON")
         list(APPEND bisheng_args -mllvm -cce-aicore-addr-transform=false)
@@ -464,7 +453,7 @@ function(link_one_group_to_meta_op out_dir arch core_type opt_level)
     string(REGEX REPLACE "[^0-9A-Za-z_]" "_" target_suffix "${tag}")
     set(link_target "bishengir_link_${target_suffix}")
     if (BISHENGIR_OPTIMIZE_TEMPLATE_BITCODE STREQUAL "ON" AND
-        NOT "${core_type}" STREQUAL "host" AND
+        "${arch}" STREQUAL "c310" AND
         "${opt_level}" STREQUAL "O2")
         string(REPLACE ";" "\n" link_signature_content
                "${LLVM_LINK_TOOL}\n${inputs}\n-o\n${out_file}.linked.bc")
