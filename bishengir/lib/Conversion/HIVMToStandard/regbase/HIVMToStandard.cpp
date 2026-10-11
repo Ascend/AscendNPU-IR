@@ -1098,6 +1098,13 @@ public:
         cast<OpWithLibraryFunction>(op.getOperation())
             .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
 
+    if constexpr (std::is_same_v<CopyOpType, hivm::LoadOp>) {
+      if (op->hasAttr(kDisableDCacheAttr) &&
+          getHIVMAddressSpace(op.getSrc().getType()) == AddressSpace::GM &&
+          getHIVMAddressSpace(op.getDst().getType()) == AddressSpace::UB)
+        fnName += "_nocache";
+    }
+
     int maxOpRank = cast<OpWithLibraryFunction>(op.getOperation())
                         .getOpLibraryMaxRank()
                         .value();

@@ -441,12 +441,33 @@ copy_ubuf_to_cbuf_1d_core(memref_t<__ubuf__ T, 1> *src,
                           memref_t<__cbuf__ T, 1> *dst);
 #endif
 
+// A regular scalar load if DisableDCache is false,
+// otherwise uses ld.dev to bypass DCache.
+template <typename T, bool DisableDCache>
+__aiv__ __attribute__((always_inline)) T load_gm_scalar(__gm__ T *ptr) {
+#if defined(__DAV_C310__)
+  if constexpr (DisableDCache) {
+    static_assert(sizeof(T) == 1 || sizeof(T) == 2 || sizeof(T) == 4 ||
+                  sizeof(T) == 8);
+    using Bits = std::conditional_t<
+        sizeof(T) == 1, uint8_t,
+        std::conditional_t<
+            sizeof(T) == 2, uint16_t,
+            std::conditional_t<sizeof(T) == 4, uint32_t, uint64_t>>>;
+    Bits bits = static_cast<Bits>(
+        INTRINSIC(ld_dev, reinterpret_cast<__gm__ Bits *>(ptr), 0));
+    return __builtin_bit_cast(T, bits);
+  }
+#endif
+  return *ptr;
+}
+
 #define REGISTE_COPY_UB_TO_UB_1D_FUNC(type)                                    \
   template __aiv__ __attribute__((always_inline)) void                         \
   copy_ubuf_to_ubuf_1d_core<type>(memref_t<__ubuf__ type, 1> * src,            \
                                   memref_t<__ubuf__ type, 1> * dst)
 
-template <typename T>
+template <typename T, bool DisableDCache = false>
 __aiv__ __attribute__((always_inline)) void
 load_gm_to_ubuf_1d_by_scalar(memref_t<__gm__ T, 1> *src,
                              memref_t<__ubuf__ T, 1> *dst) {
@@ -455,13 +476,14 @@ load_gm_to_ubuf_1d_by_scalar(memref_t<__gm__ T, 1> *src,
   INTRINSIC(set_flag, PIPE_MTE2, PIPE_S, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_MTE2, PIPE_S, LIB_EVENT_ID0);
   for (int i = 0; i < src->sizes[0]; i++) {
-    *(dst_ptr + i * dst->strides[0]) = *(src_ptr + i * src->strides[0]);
+    *(dst_ptr + i * dst->strides[0]) =
+        load_gm_scalar<T, DisableDCache>(src_ptr + i * src->strides[0]);
   }
   INTRINSIC(set_flag, PIPE_S, PIPE_MTE2, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_S, PIPE_MTE2, LIB_EVENT_ID0);
 }
 
-template <typename T>
+template <typename T, bool DisableDCache = false>
 __aiv__ __attribute__((always_inline)) void
 load_gm_to_ubuf_2d_by_scalar(memref_t<__gm__ T, 2> *src,
                              memref_t<__ubuf__ T, 2> *dst) {
@@ -472,14 +494,15 @@ load_gm_to_ubuf_2d_by_scalar(memref_t<__gm__ T, 2> *src,
   for (int i = 0; i < src->sizes[0]; ++i) {
     for (int j = 0; j < src->sizes[1]; ++j) {
       *(dst_ptr + i * dst->strides[0] + j * dst->strides[1]) =
-          *(src_ptr + i * src->strides[0] + j * src->strides[1]);
+          load_gm_scalar<T, DisableDCache>(src_ptr + i * src->strides[0] +
+                                           j * src->strides[1]);
     }
   }
   INTRINSIC(set_flag, PIPE_S, PIPE_MTE2, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_S, PIPE_MTE2, LIB_EVENT_ID0);
 }
 
-template <typename T>
+template <typename T, bool DisableDCache = false>
 __aiv__ __attribute__((always_inline)) void
 load_gm_to_ubuf_3d_by_scalar(memref_t<__gm__ T, 3> *src,
                              memref_t<__ubuf__ T, 3> *dst) {
@@ -497,7 +520,7 @@ load_gm_to_ubuf_3d_by_scalar(memref_t<__gm__ T, 3> *src,
                                    dst->offset + i * dst->strides[0],
                                    {dst->sizes[1], dst->sizes[2]},
                                    {dst->strides[1], dst->strides[2]}};
-    load_gm_to_ubuf_2d_by_scalar<T>(&src_2d, &dst_2d);
+    load_gm_to_ubuf_2d_by_scalar<T, DisableDCache>(&src_2d, &dst_2d);
   }
 }
 
@@ -619,7 +642,7 @@ load_gm_to_ubuf_1d_core_with_contiguous_last_dim(memref_t<__gm__ T, 1> *gm,
 
 /// Compact GM -> UB load with `burst_len = dtypeBytes`.
 /// Prerequisites: `strideUB[0] == 1, strideGM[0] != 1`.
-template <typename T>
+template <typename T, bool DisableDCache = false>
 __aiv__ __attribute__((always_inline)) void
 load_gm_to_ubuf_1d_core_with_ubuf_contiguous_last_dim(
     memref_t<__gm__ T, 1> *gm, memref_t<__ubuf__ T, 1> *ub,
@@ -638,7 +661,7 @@ load_gm_to_ubuf_1d_core_with_ubuf_contiguous_last_dim(
       static_cast<uint64_t>(stride0_gm) > INTRIN_MAX_STRIDE / bytes;
 
   if (invalid_src_stride) [[unlikely]] {
-    load_gm_to_ubuf_1d_by_scalar<T>(gm, ub);
+    load_gm_to_ubuf_1d_by_scalar<T, DisableDCache>(gm, ub);
     return;
   }
 #endif
@@ -739,7 +762,7 @@ store_ubuf_to_gm_1d_core_with_contiguous_last_dim(memref_t<__ubuf__ T, 1> *ub,
 ///     dtypeBytes
 ///                 load_gm_to_ubuf_intrin_core
 ///     ```
-template <typename T>
+template <typename T, bool DisableDCache = false>
 __aiv__ __attribute__((always_inline)) void
 load_gm_to_ubuf_2d_core_with_contiguous_last_dim(memref_t<__gm__ T, 2> *gm,
                                                  memref_t<__ubuf__ T, 2> *ub,
@@ -756,7 +779,7 @@ load_gm_to_ubuf_2d_core_with_contiguous_last_dim(memref_t<__gm__ T, 2> *gm,
   if (is_over_gap || 0 > ub_gap || 0 > gm_gap) [[unlikely]] {
     // special cases of stride, unlikely used
     if (stride0_ub * bytes % INTR_BYTES_PER_BLOCK != 0) {
-      load_gm_to_ubuf_2d_by_scalar<T>(gm, ub);
+      load_gm_to_ubuf_2d_by_scalar<T, DisableDCache>(gm, ub);
       return;
     }
     // then we ensure call of load_gm_to_ubuf_1d_core_with_contiguous_last_dim
@@ -818,7 +841,7 @@ load_gm_to_ubuf_2d_core_with_contiguous_last_dim(memref_t<__gm__ T, 2> *gm,
 /// m300 arch
 ///========================================
 // Copy 2d, where the last dimension is contiguous i.e. stride1 = 1.
-template <typename T>
+template <typename T, bool DisableDCache = false>
 __aiv__ __attribute__((always_inline)) void
 load_gm_to_ubuf_2d_core_with_contiguous_last_dim(memref_t<__gm__ T, 2> *gm,
                                                  memref_t<__ubuf__ T, 2> *ub,
@@ -1112,7 +1135,7 @@ store_ubuf_to_gm_2d_core_with_contiguous_last_dim(memref_t<__ubuf__ T, 2> *ub,
 ///       + UB `stride3D[0] * dtypeBytes % 32B != 0`: no axis with 32B-aligned
 ///       stride
 ///         fall back to looped scalar transfer
-template <typename T>
+template <typename T, bool DisableDCache = false>
 __aiv__ __attribute__((always_inline)) void
 load_gm_to_ubuf_3d_core_with_contiguous_last_dim(memref_t<__gm__ T, 3> *gm,
                                                  memref_t<__ubuf__ T, 3> *ub,
@@ -1138,7 +1161,7 @@ load_gm_to_ubuf_3d_core_with_contiguous_last_dim(memref_t<__gm__ T, 3> *gm,
                                   ub->offset,
                                   {size0, size1 * size2},
                                   {stride0_ub, 1}};
-    load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T>(
+    load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T, DisableDCache>(
         &gm_2d, &ub_2d, left_padding_num, l2_cache_ctl);
     return;
   }
@@ -1155,7 +1178,7 @@ load_gm_to_ubuf_3d_core_with_contiguous_last_dim(memref_t<__gm__ T, 3> *gm,
                                   ub->offset,
                                   {size0 * size1, size2},
                                   {stride1_ub, 1}};
-    load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T>(
+    load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T, DisableDCache>(
         &gm_2d, &ub_2d, left_padding_num, l2_cache_ctl);
     return;
   }
@@ -1163,7 +1186,7 @@ load_gm_to_ubuf_3d_core_with_contiguous_last_dim(memref_t<__gm__ T, 3> *gm,
   constexpr int num_per_block = INTR_BYTES_PER_BLOCK / sizeof(T);
   if (stride0_ub % num_per_block != 0) {
     // stride1_ub is not 32B aligned either
-    load_gm_to_ubuf_3d_by_scalar<T>(gm, ub);
+    load_gm_to_ubuf_3d_by_scalar<T, DisableDCache>(gm, ub);
     return;
   }
 
@@ -1182,7 +1205,7 @@ load_gm_to_ubuf_3d_core_with_contiguous_last_dim(memref_t<__gm__ T, 3> *gm,
                                       ub->offset + i * stride0_ub,
                                       {size1, size2},
                                       {stride1_ub, 1}};
-        load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T>(
+        load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T, DisableDCache>(
             &gm_2d, &ub_2d, left_padding_num, l2_cache_ctl);
       }
       return;
@@ -1199,7 +1222,7 @@ load_gm_to_ubuf_3d_core_with_contiguous_last_dim(memref_t<__gm__ T, 3> *gm,
                                     ub->offset + i * stride1_ub,
                                     {size0, size2},
                                     {stride0_ub, 1}};
-      load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T>(
+      load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T, DisableDCache>(
           &gm_2d, &ub_2d, left_padding_num, l2_cache_ctl);
     }
     return;
@@ -1219,7 +1242,7 @@ load_gm_to_ubuf_3d_core_with_contiguous_last_dim(memref_t<__gm__ T, 3> *gm,
                                   ub->offset + i * stride0_ub,
                                   {size1, size2},
                                   {stride1_ub, 1}};
-    load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T>(
+    load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T, DisableDCache>(
         &gm_2d, &ub_2d, left_padding_num, l2_cache_ctl);
   }
   return;
@@ -1229,7 +1252,7 @@ load_gm_to_ubuf_3d_core_with_contiguous_last_dim(memref_t<__gm__ T, 3> *gm,
 /// m300 arch
 ///========================================
 // Copy 3d, where the last dim is contiguous i.e. stride2=1
-template <typename T>
+template <typename T, bool DisableDCache = false>
 __aiv__ __attribute__((always_inline)) void
 load_gm_to_ubuf_3d_core_with_contiguous_last_dim(memref_t<__gm__ T, 3> *gm,
                                                  memref_t<__ubuf__ T, 3> *ub,
@@ -1294,7 +1317,7 @@ load_gm_to_ubuf_3d_core_with_contiguous_last_dim(memref_t<__gm__ T, 3> *gm,
                                      {size1, size2},
                                      {stride1_ub, 1}};
 
-    load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T>(
+    load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T, DisableDCache>(
         &gm_2d, &ub_2d, left_padding_num, l2_cache_ctl);
   }
 }
@@ -2310,6 +2333,20 @@ template <> struct PadValueType<float8_e5m2_t> {
 
 template <typename T> using PadValueT = typename PadValueType<T>::type;
 
+#if defined(__DAV_C310__)
+#define REGISTE_DMA_LOAD_NOCACHE(dim, type)                                    \
+  __aiv__ __attribute__((always_inline)) void                                  \
+      _mlir_ciface_load_gm_to_ubuf_##dim##d_##type##_nocache(                  \
+          memref_t<__gm__ type, dim> *src, memref_t<__ubuf__ type, dim> *dst,  \
+          PadMode pad_mode, PadValueT<type> pad_value,                         \
+          int64_t left_padding_num, EvictionPolicy eviction_policy) {          \
+    load_gm_to_ubuf_##dim##d_core<type, true>(                                 \
+        src, dst, pad_mode, pad_value, left_padding_num, eviction_policy);     \
+  }
+#else
+#define REGISTE_DMA_LOAD_NOCACHE(dim, type)
+#endif
+
 #define DECLARE_DMA_LOAD(dim, type)                                            \
   __aiv__ __attribute__((always_inline)) void                                  \
       _mlir_ciface_load_gm_to_ubuf_##dim##d_##type(                            \
@@ -2321,7 +2358,8 @@ template <typename T> using PadValueT = typename PadValueType<T>::type;
   DECLARE_DMA_LOAD(dim, type) {                                                \
     load_gm_to_ubuf_##dim##d_core<type>(src, dst, pad_mode, pad_value,         \
                                         left_padding_num, eviction_policy);    \
-  }
+  }                                                                            \
+  REGISTE_DMA_LOAD_NOCACHE(dim, type)
 
 #if BISHENG_TPL_REGBASE
 
@@ -2336,7 +2374,8 @@ template <typename T> using PadValueT = typename PadValueType<T>::type;
   DECLARE_DMA_LOAD_FP8(dim, type) {                                            \
     load_gm_to_ubuf_##dim##d_core<type>(src, dst, pad_mode, pad_value,         \
                                         left_padding_num, eviction_policy);    \
-  }
+  }                                                                            \
+  REGISTE_DMA_LOAD_NOCACHE(dim, type)
 
 #endif
 

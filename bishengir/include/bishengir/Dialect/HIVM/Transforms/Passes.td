@@ -1474,7 +1474,7 @@ def InsertInitAndFinishForDebug
 }
 
 def MarkDisableLoad : HIVMPass<"hivm-mark-disable-load", "ModuleOp"> {
-  let summary = "mark the memref.loads that need to disable dcache";
+  let summary = "mark scalar and structured loads that need to disable dcache";
   let constructor = "mlir::hivm::createMarkDisableLoadPass()";
   let dependentDialects = ["hivm::HIVMDialect", "memref::MemRefDialect"];
 }

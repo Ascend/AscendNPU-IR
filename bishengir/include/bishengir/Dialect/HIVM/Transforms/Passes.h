@@ -380,7 +380,8 @@ std::unique_ptr<Pass> createHIVMVectorizeOpsPass();
 // Create a pass to insert init and finish for debug.
 std::unique_ptr<Pass> createInsertInitAndFinishForDebugPass();
 
-// Create a pass to mark memref.loads that need to disable dcache.
+// Create a pass to mark scalar and structured loads that need to disable
+// dcache.
 std::unique_ptr<Pass> createMarkDisableLoadPass();
 
 /// Create a pass to mark sync_block_lock/sync_block_unlock with
