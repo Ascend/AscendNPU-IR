@@ -140,7 +140,10 @@ void VFFusionPass::runOnOperation() {
     llvm::report_fatal_error("unsupported at the moment");
 
   auto freezeRegisterTreeSelection = [&]() {
-    if (!enableNewTreeReducePolicy || !enableRA)
+    // Freeze whenever RA is enabled, even when the new tree-reduce policy is
+    // off: the module walk in getRegisterTreeReductionCost otherwise runs in
+    // parallel downstream and races.
+    if (!enableRA)
       return;
     moduleOp->removeAttr(hfusion::kTreeReductionSelectionFrozenAttr);
     moduleOp->removeAttr(hfusion::kRegularTreeReductionScopeAttr);
@@ -157,18 +160,23 @@ void VFFusionPass::runOnOperation() {
     for (Operation *op : registerCandidates) {
       bool selected = hfusion::shouldUseRegisterTreeReduction(op);
       selectedAllRegisterTrees &= selected;
-      selectedAnyLegacyTree |= hfusion::shouldUseLegacyTreeReductionScope(op);
+      // Scope attrs are only read under enableNewTreeReducePolicy; computing
+      // them off-policy just adds a module walk no consumer uses.
+      if (enableNewTreeReducePolicy)
+        selectedAnyLegacyTree |= hfusion::shouldUseLegacyTreeReductionScope(op);
       llvm::StringLiteral selectedAttr =
           selected ? hfusion::kRegisterTreeReductionSelectedAttr
                    : hfusion::kRegularTreeReductionSelectedAttr;
       op->setAttr(selectedAttr, UnitAttr::get(&getContext()));
     }
-    if (selectedAnyLegacyTree)
-      moduleOp->setAttr(hfusion::kLegacyTreeReductionScopeAttr,
-                        UnitAttr::get(&getContext()));
-    else if (!registerCandidates.empty() && !selectedAllRegisterTrees)
-      moduleOp->setAttr(hfusion::kRegularTreeReductionScopeAttr,
-                        UnitAttr::get(&getContext()));
+    if (enableNewTreeReducePolicy) {
+      if (selectedAnyLegacyTree)
+        moduleOp->setAttr(hfusion::kLegacyTreeReductionScopeAttr,
+                          UnitAttr::get(&getContext()));
+      else if (!registerCandidates.empty() && !selectedAllRegisterTrees)
+        moduleOp->setAttr(hfusion::kRegularTreeReductionScopeAttr,
+                          UnitAttr::get(&getContext()));
+    }
     // Later nested function passes may run in parallel and may also create
     // canonical linalg ops.  From this point on, consumers must use only the
     // per-op decisions above instead of walking a module which is being

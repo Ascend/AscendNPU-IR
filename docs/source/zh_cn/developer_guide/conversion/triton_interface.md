@@ -337,9 +337,11 @@ def triton_matmul_exp():
 | `num_stages` | int | 流水线阶段数（可选） | `parallel(0, 10, num_stages=3)` |
 | `loop_unroll_factor` | int | 循环展开因子（可选） | `parallel(0, 10, loop_unroll_factor=4)` |
 
+<!-- npu="910b" id1 -->
 **限制**：
 
 目前Atlas A2系列产品最多支持2个Vector核。
+<!-- end id1 -->
 
 **写法样例**：
 
@@ -837,6 +839,7 @@ def index_select_simd():
     # ...
 ```
 
+<!-- npu="950" id2 -->
 ## Triton独有定制化操作
 
 在Ascend 950PR&950DT系列产品架构中，Triton-Ascend的Custom Op支持用户自行定制操作并使用它。定制操作在运行时转换为对设备侧实现函数的调用，可以调用已有的库函数，也可以调用由用户提供的源码或字节码编译生成的实现函数。
@@ -1171,6 +1174,7 @@ def my_kernel(...):
     x = my_custom_op(src, index)
     ...
 ```
+<!-- end id2 -->
 
 ## Triton独有扩展枚举
 
