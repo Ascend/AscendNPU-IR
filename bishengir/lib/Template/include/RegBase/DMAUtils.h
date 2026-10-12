@@ -1999,6 +1999,12 @@ apply_padding_b64(memref_t<__ubuf__ T, DIM> *dst, int64_t left_padding_num,
   // Defensive guard: base below addresses base + i*stride + k*num_per_block,
   // which stays 32B aligned only when left_padding_num stays inside one
   // block and the row stride is a whole number of blocks (multi-row case).
+  // NOTE: the only live caller (the C310 contiguous-last-dim path in
+  // load_gm_to_ubuf_2d_core) already diverts non-block-aligned row strides
+  // to the scalar fallback before entering the vector DMA, so the stride
+  // condition here is a last-resort defense, not the primary gate. If it
+  // ever fires, skipping the repair (data lanes stay intact) is the safe
+  // behavior.
   if (left_padding_num < 0 || left_padding_num >= num_per_block ||
       (repeat > 1 && stride % num_per_block != 0)) {
     return;
@@ -2013,13 +2019,17 @@ apply_padding_b64(memref_t<__ubuf__ T, DIM> *dst, int64_t left_padding_num,
   // 32B aligned DMA start: the address the MTE actually begins writing at.
   __ubuf__ T *block_ptr = dst->aligned + dst->offset - left_padding_num;
   int shift_num = block_end - num_per_block;
-  uint32_t vl_all = num_per_block;
-  uint32_t vl_val = num_per_block - align_pad; // >= 1, no underflow
   __VEC_SCOPE__ {
     for (uint16_t i = 0; i < static_cast<uint16_t>(repeat); ++i) {
       __ubuf__ T *till_block_ptr =
           i * stride + block_ptr + shift_num; // 32B aligned per guard
-      // make mask
+      // make mask. The counters MUST be re-initialized per row:
+      // plt_2xvl_b64(..., POST_UPDATE) consumes/advances its counter (the
+      // chaining convention, cf. ReductionWithIndex), so hoisting these
+      // declarations out of the loop leaves rows 1..N with exhausted
+      // counters and silently skips their repair.
+      uint32_t vl_all = num_per_block;
+      uint32_t vl_val = num_per_block - align_pad; // >= 1, no underflow
       vector_bool mask_all = plt_2xvl_b64(vl_all, POST_UPDATE);
       vector_bool mask_val = plt_2xvl_b64(vl_val, POST_UPDATE);
       VectorReg<T> v_src;
