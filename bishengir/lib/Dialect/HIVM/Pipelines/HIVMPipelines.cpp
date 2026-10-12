@@ -263,7 +263,9 @@ static void hivmPreBufferizationOptimizationPipeline(
       pipelineOptions.pipelineMode = hivmPipelineOptions.setCVPipelineMode;
       pipelineOptions.enablePreload = hivmPipelineOptions.enablePreload;
       // Workspace allocation with dyn size, requires setbuffersize pass to get
-      // fixed size.
+      // fixed size. Infer buffer size upper bounds first so setbuffersize can
+      // consume them.
+      pm.nest<func::FuncOp>().addPass(createInferBufferSizeFromSlicePass());
       pm.nest<func::FuncOp>().addPass(createSetBufferSizePass());
       pm.nest<func::FuncOp>().addPass(createCVPipeliningPass(pipelineOptions));
     }
@@ -286,6 +288,7 @@ static void hivmPreBufferizationOptimizationPipeline(
   }
 
   if (!hivmPipelineOptions.disableAutoCVWorkSpaceManage) {
+    pm.nest<func::FuncOp>().addPass(createInferBufferSizeFromSlicePass());
     inferAndSetBufferSizePipeline(pm, hivmPipelineOptions);
     PlanMemoryOptions planMemoryOption;
     planMemoryOption.memMode = MemPlanMode::GLOBAL_WORKSPACE_PLAN;

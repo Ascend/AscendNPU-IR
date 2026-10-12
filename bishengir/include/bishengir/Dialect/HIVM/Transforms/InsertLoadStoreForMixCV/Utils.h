@@ -20,6 +20,7 @@
 
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/Utils/Util.h"
+
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -29,7 +30,6 @@
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/LogicalResult.h"
-#include <optional>
 
 namespace mlir {
 namespace hivm {
@@ -280,8 +280,7 @@ bool haveSamePropagation(UnrealizedConversionCastOp lhs,
 
 /// Insert a store that materializes `value` into a local buffer. UB targets use
 /// memref.alloc; GM workspace targets use memref_ext.alloc_workspace.
-hivm::StoreOp
-insertStore(Value value, Location loc, PatternRewriter &rewriter);
+hivm::StoreOp insertStore(Value value, Location loc, PatternRewriter &rewriter);
 
 /// Insert a load that rematerializes `value` with matching element type.
 hivm::LoadOp insertLoad(Value value, Location loc, PatternRewriter &rewriter);
@@ -290,15 +289,13 @@ hivm::LoadOp insertLoad(Value value, Location loc, PatternRewriter &rewriter);
 /// element type.
 std::tuple<AllocationResult, bufferization::ToTensorOp>
 insertTightCoupledBufferToL1(Value value, Location loc,
-                             PatternRewriter &rewriter,
-                             ArrayRef<int64_t> maybeStaticTotalSize);
+                             PatternRewriter &rewriter);
 
 /// Insert tight coupled buffer to UB that rematerializes `value` with matching
 /// element type.
 std::tuple<AllocationResult, bufferization::ToTensorOp>
 insertTightCoupledBufferToUB(Value value, Location loc,
-                             PatternRewriter &rewriter,
-                             ArrayRef<int64_t> maybeStaticTotalSize);
+                             PatternRewriter &rewriter);
 
 /// Insert a fixpipe that rematerializes `value` with matching element type.
 hivm::FixpipeOp insertFixpipe(Value value, Location loc,
@@ -313,8 +310,8 @@ tensor::EmptyOp insertTensor(Value value, Location loc,
                              hivm::AddressSpace addressSpace);
 
 /// Convenience helper to insert store followed by load for `value`.
-std::pair<hivm::StoreOp, hivm::LoadOp> insertStoreAndLoad(
-    Value value, Location loc, PatternRewriter &rewriter);
+std::pair<hivm::StoreOp, hivm::LoadOp>
+insertStoreAndLoad(Value value, Location loc, PatternRewriter &rewriter);
 
 } // namespace PropagatorUtil
 

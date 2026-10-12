@@ -19,21 +19,14 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "bishengir/Conversion/Passes.h"
-#include "bishengir/Dialect/HACC/Utils/Utils.h"
-#include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
-#include "bishengir/Dialect/Utils/Util.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
-#include "mlir/Dialect/Linalg/IR/Linalg.h"
-#include "mlir/Dialect/Linalg/Transforms/Transforms.h"
+
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
-#include "llvm/ADT/TypeSwitch.h"
+
 #include "llvm/Support/Casting.h"
 
 namespace mlir {
@@ -54,53 +47,13 @@ struct InsertWorkSpaceForMixCVPass
 };
 } // namespace
 
-// For dynamic-shaped tensors, trace through the ExtractSliceOp chain to find
-// the original static alloc shape.
-// Return std::nullopt for static tensors.
-// Ops with DestinationStyleOpInterface appear between ExtractSliceOps by
-// tracing through their init operands.
-static std::optional<ArrayRef<int64_t>>
-traceStaticAllocShape(ShapedType dstType,
-                      DestinationStyleOpInterface storeLikeOp) {
-  if (dstType.hasStaticShape())
-    return std::nullopt;
-
-  Value currentValue = storeLikeOp.getDpsInputs()[0];
-  while (true) {
-    auto extractSliceDefOp = traceDefOp<tensor::ExtractSliceOp>(currentValue);
-    if (extractSliceDefOp.has_value()) {
-      auto extractSliceOp =
-          cast<tensor::ExtractSliceOp>(extractSliceDefOp.value());
-      auto extractSliceSource = extractSliceOp.getSource();
-      auto sourceType = cast<ShapedType>(extractSliceSource.getType());
-      if (sourceType.hasStaticShape())
-        return sourceType.getShape();
-      currentValue = extractSliceSource;
-      continue;
-    }
-
-    if (auto defOp = currentValue.getDefiningOp()) {
-      if (auto dstStyleOp = dyn_cast<DestinationStyleOpInterface>(defOp)) {
-        auto inits = dstStyleOp.getDpsInits();
-        if (!inits.empty()) {
-          currentValue = inits[0];
-          continue;
-        }
-      }
-    }
-
-    // Cannot trace further: e.g. init from dynamic tensor.empty (EmptyOp has
-    // no inits), or unsupported op.
-    llvm::report_fatal_error(
-        "Unable to trace to a static alloc shape from a dynamic shape");
-  }
-}
-
 // Match CC/CV/VC/VV junction and replace emptyOp with workspace
 // CC: mmadL1 -> fixpipe -> load -> mmadL1
 // CV: mmadL1 -> fixpipe -> load -> vector
 // VC: vector -> store -> load -> mmadL1
 // VV: vector -> store -> load -> vector
+// The buffer_size_in_byte mark for dynamic workspaces is produced later by
+// hivm-infer-buffer-size.
 template <typename OpType>
 struct InsertWorkSpace : public OpRewritePattern<OpType> {
   using OpRewritePattern<OpType>::OpRewritePattern;
@@ -137,14 +90,13 @@ struct InsertWorkSpace : public OpRewritePattern<OpType> {
       auto emptyOp = emptyDefOp.value();
       auto dstType = cast<ShapedType>(emptyOp->getResultTypes()[0]);
       auto dstShape = dstType.getShape();
-      auto staticAllocShape = traceStaticAllocShape(dstType, gmStoreOp);
 
       rewriter.setInsertionPoint(emptyOp);
       auto dstTensor = getLocalWorkSpaceTensor(
           rewriter, emptyOp->getLoc(), dstShape,
           hivm::getTensorDynamicValues(rewriter, emptyOp->getLoc(),
-                                      emptyOp->getResults()[0]),
-          getElementTypeOrSelf(dstType), staticAllocShape);
+                                       emptyOp->getResults()[0]),
+          getElementTypeOrSelf(dstType));
       rewriter.replaceAllUsesWith(emptyOp->getResult(0), dstTensor);
     }
     return success();
