@@ -76,6 +76,18 @@ void canonicalizationHIVMPipeline(OpPassManager &pm) {
   ADD_CANONICALIZER_PASS_WITHOUT_OPTION_DEFS;
 }
 
+static void hivmCodeMotionPipeline(OpPassManager &pm) {
+  pm.addPass(createLoopInvariantCodeMotionPass());
+  pm.addPass(createLoopInvariantSubsetHoistingPass());
+  canonicalizationHIVMPipeline(pm);
+}
+
+static bool
+isCVPipeliningDisabled(const HIVMPipelineOptions &hivmPipelineOptions) {
+  return hivmPipelineOptions.setWorkspaceMultibuffer == 0 ||
+         hivmPipelineOptions.setCVPipelineMode == CVPipelineMode::Off;
+}
+
 static void hivmAutoInsertLdStForMixCVPipeline(
     OpPassManager &pm, const HIVMPipelineOptions &hivmPipelineOptions) {
   InsertLoadStoreForMixCVOptions options;
@@ -484,6 +496,12 @@ static void hivmPreBufferizationOptimizationPipeline(
     pm.addPass(createSinkExclusivePreloadWorkPass(sinkOpts));
   }
 
+  // Preserve the legacy pass order when CV pipelining is disabled by SSBuffer
+  // or explicitly turned off: run code motion after cross-core sync.
+  if (hivmPipelineOptions.enableCodeMotion &&
+      !isCVPipeliningDisabled(hivmPipelineOptions))
+    hivmCodeMotionPipeline(pm);
+
   // Cross-Core Auto-Sync passes STEP=1
   hivmCrossCoreAutoSyncPipeline(pm, hivmPipelineOptions,
                                 CrossCoreAutoSyncMode::CCGSS_STEP_1);
@@ -517,13 +535,9 @@ static void hivmPreBufferizationOptimizationPipeline(
   hivmWorkspacePipeline(pm, hivmPipelineOptions);
   pm.nest<func::FuncOp>().addPass(tensor::createFoldTensorEmptyPass());
   canonicalizationHIVMPipeline(pm);
-  if (hivmPipelineOptions.enableCodeMotion) {
-    // call canonicalization to contantize the variable, then hoist can work for
-    // some cases
-    pm.addPass(createLoopInvariantCodeMotionPass());
-    pm.addPass(createLoopInvariantSubsetHoistingPass());
-    canonicalizationHIVMPipeline(pm);
-  }
+  if (hivmPipelineOptions.enableCodeMotion &&
+      isCVPipeliningDisabled(hivmPipelineOptions))
+    hivmCodeMotionPipeline(pm);
   pm.addPass(hfusion::createSimplifyVFArgsPass());
   pm.nest<func::FuncOp>().addPass(createCloneTensorEmptyPass());
   pm.nest<func::FuncOp>().addPass(createHIVMInlineOTFLoadStorePass());
