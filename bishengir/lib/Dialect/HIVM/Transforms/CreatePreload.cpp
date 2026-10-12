@@ -751,6 +751,8 @@ void CreatePreloadPass::runOnOperation() {
   pm.addPass(createCSEPass());
   pm.addPass(createCanonicalizerPass());
   pm.addPass(scope::createInlineScopePass());
+  // Unwrapping scope regions may expose new folding opportunities.
+  pm.addPass(createCanonicalizerPass());
 
   if (failed(pm.run(moduleOp))) {
     signalPassFailure();

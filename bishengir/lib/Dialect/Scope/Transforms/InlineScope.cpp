@@ -22,16 +22,10 @@
 
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Scope/Transforms/Passes.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/Dialect/Transform/Interfaces/TransformInterfaces.h"
 #include "mlir/IR/BuiltinOps.h"
-#include "mlir/IR/SymbolTable.h"
 #include "mlir/Pass/Pass.h"
-#include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
-#include "mlir/Transforms/Passes.h"
 #include <memory>
-#include <string>
 
 #define DEBUG_TYPE "inline-scope"
 #define DBGS() (llvm::dbgs() << "[" DEBUG_TYPE "]: ")
@@ -98,14 +92,7 @@ void InlineScopePass::runOnOperation() {
   RewritePatternSet patterns(&getContext());
   patterns.add<ExtractOpsFromBodyPattern>(&getContext());
   if (failed(applyPatternsGreedily(moduleOp, std::move(patterns))))
-    return signalPassFailure();
-
-  // FIXME: Consider moving it outside the pass
-  // Inline the calls that became bodyless (e.g. outlined vector functions).
-  PassManager pm(moduleOp->getContext());
-  pm.addPass(createInlinerPass());
-  if (failed(pm.run(moduleOp)))
-    return signalPassFailure();
+    signalPassFailure();
 }
 
 std::unique_ptr<Pass>
