@@ -1991,7 +1991,7 @@ template <typename T, int DIM,
                                       std::is_same_v<T, uint64_t>>>
 __aiv__ __attribute__((always_inline)) void
 apply_padding_b64(memref_t<__ubuf__ T, DIM> *dst, int64_t left_padding_num,
-                  int64_t offset, int64_t pad_value, int64_t repeat,
+                  int64_t row_base, int64_t pad_value, int64_t repeat,
                   int64_t padding_shift_count) {
   constexpr int num_per_block = INTR_BYTES_PER_BLOCK / sizeof(T);
   int64_t size = dst->sizes[DIM - 1];
@@ -2017,7 +2017,12 @@ apply_padding_b64(memref_t<__ubuf__ T, DIM> *dst, int64_t left_padding_num,
     return;
   }
   // 32B aligned DMA start: the address the MTE actually begins writing at.
-  __ubuf__ T *block_ptr = dst->aligned + dst->offset - left_padding_num;
+  // row_base is the first row of this chunk: align_pad_for_load_b64_2d
+  // splits tiles taller than INTR_MAX_REPEAT_CNTS (255) into chunks and
+  // must repair rows [row_base, row_base + repeat), not restart at row 0
+  // (rows 255+ of >255-row tiles kept the MTE-truncated pad otherwise).
+  __ubuf__ T *block_ptr =
+      dst->aligned + dst->offset - left_padding_num + row_base * stride;
   int shift_num = block_end - num_per_block;
   __VEC_SCOPE__ {
     for (uint16_t i = 0; i < static_cast<uint16_t>(repeat); ++i) {
@@ -2053,7 +2058,7 @@ template <typename T, int DIM,
                                       std::is_same_v<T, uint64_t>>>
 __aiv__ __attribute__((always_inline)) void
 apply_padding_b64(memref_t<__ubuf__ T, DIM> *dst, int64_t left_padding_num,
-                  int64_t offset, int64_t pad_value, int64_t repeat,
+                  int64_t row_base, int64_t pad_value, int64_t repeat,
                   int64_t padding_shift_count) {
   // m300: b64 tail padding repair is not implemented; keep the signature in
   // sync with the C310 variant so shared callers compile on both arches.

@@ -62,8 +62,8 @@ align_pad_for_load_b64_1d(memref_t<__ubuf__ T, 1> *dst, int64_t pad_value,
     padding_shift_count = padding_shift_count - 1;
   }
   apply_padding_b64<T, 1>(dst, left_padding_num,
-                          padding_shift_count * num_per_repeat * factor,
-                          pad_value, /*repeat=*/1, padding_shift_count);
+                          /*row_base=*/0, pad_value, /*repeat=*/1,
+                          padding_shift_count);
 }
 
 #if BISHENG_TPL_REGBASE

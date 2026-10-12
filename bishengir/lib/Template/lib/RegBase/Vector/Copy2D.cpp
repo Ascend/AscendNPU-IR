@@ -58,18 +58,13 @@ align_pad_for_load_b64_2d(memref_t<__ubuf__ T, 2> *dst, int64_t pad_value,
   int64_t loop_num = repeat_times / INTR_MAX_REPEAT_CNTS;
   for (int64_t i = 0; i < loop_num; ++i) {
     apply_padding_b64<T, 2>(dst, left_padding_num,
-                            (i * stride_dst * INTR_MAX_REPEAT_CNTS +
-                             padding_shift_count * num_per_repeat) *
-                                factor,
-                            pad_value, INTR_MAX_REPEAT_CNTS,
-                            padding_shift_count);
+                            /*row_base=*/i * INTR_MAX_REPEAT_CNTS, pad_value,
+                            INTR_MAX_REPEAT_CNTS, padding_shift_count);
   }
   if (repeat_times % INTR_MAX_REPEAT_CNTS != 0) {
     int64_t remain_repeat_times = repeat_times % INTR_MAX_REPEAT_CNTS;
     apply_padding_b64<T, 2>(dst, left_padding_num,
-                            (loop_num * stride_dst * INTR_MAX_REPEAT_CNTS +
-                             padding_shift_count * num_per_repeat) *
-                                factor,
+                            /*row_base=*/loop_num * INTR_MAX_REPEAT_CNTS,
                             pad_value, remain_repeat_times,
                             padding_shift_count);
   }
