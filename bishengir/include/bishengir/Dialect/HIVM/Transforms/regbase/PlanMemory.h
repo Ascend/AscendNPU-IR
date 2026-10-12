@@ -216,6 +216,12 @@ struct PlanRecord {
   uint64_t allExtent;
   /// inserted memory bound node
   std::shared_ptr<MemoryBound> firstMemBound;
+  /// list position of firstMemBound in the outline at plan time. Stays valid
+  /// until this record is rolled back: rollback is strictly LIFO, std::list
+  /// splice/erase on other nodes never invalidates it, and RollbackOutline
+  /// moves records so `replaced` nodes are the originals (never copies that
+  /// would let the referenced node be destroyed).
+  MemBoundListConstIter firstMemBoundIt;
   /// replaced memory bound node
   MemBoundList replaced;
   /// When the current PlanRecord is rolled back, it must be rolled back
@@ -689,8 +695,13 @@ protected:
                               PlanRecHis &history, StorageEntry *entry);
 
   /// plan buffer in speculative ways.
-  LogicalResult SpecAlloc(MemBoundList &outline, PlanRecHis &his,
-                          StorageEntry *e, const SpecInfo &si, int localLevel);
+  /// stage0Memo caches VerifyConflictStage0 results per outline bound; it is
+  /// only valid while the outline is unchanged (i.e. across the spec-level
+  /// retries of one MultiSpecPlan call).
+  LogicalResult
+  SpecAlloc(MemBoundList &outline, PlanRecHis &his, StorageEntry *e,
+            const SpecInfo &si, int localLevel,
+            DenseMap<const MemoryBound *, bool> &stage0Memo);
 
   /// spec_level == SPEC_LEVEL_2, mte2/3 do not reuse with vector.
   /// Check whether current buffer conflicts with the history buffers.
@@ -807,9 +818,21 @@ protected:
   /// operation with pipe type `Pipe`.
   template <PIPE Pipe> bool IsInplaceReuseReachable(Value allocValue);
 
-  /// Get overlap buffer life.
-  DenseMap<ValuePair, BufferLife>
-  GetOverlapBufferLife(const BufferLifeVec &b1, const BufferLifeVec &b2) const;
+  /// Get overlap buffer life. Appends at most one window per buffer pair
+  /// (first intersection wins, mirroring the previous DenseMap::try_emplace
+  /// behavior). Both vectors must be merge-normalized (disjoint and sorted
+  /// by allocTime), which is the same invariant the two-pointer sweep
+  /// already relies on.
+  void GetOverlapBufferLife(
+      const BufferLifeVec &b1, const BufferLifeVec &b2,
+      SmallVectorImpl<std::pair<ValuePair, BufferLife>> &intersection) const;
+
+  /// True when either life vector's first buffer has
+  /// BufferInfo::memoryUnique set and the cvMixId pair is not cross-scope
+  /// reuse-safe. Memoized per first-buffer Value pair; BufferInfo and
+  /// cvMixIdReuseAllowedPairs are immutable while planning.
+  bool HasUniqueConflict(const BufferLifeVec &b1,
+                         const BufferLifeVec &b2) const;
 
   /// Reorder and make the storage entries of firstbuffer and otherbuffer
   /// continuous.
@@ -906,6 +929,13 @@ protected:
 
   /// Map from the storage entry pair to its pipeDma conflict info.
   DenseMap<StorageEntryPair, bool> pipeDmaConflictMap;
+
+  /// Map from the storage entry pair to its same-loop conflict info.
+  DenseMap<StorageEntryPair, bool> sameLoopConflictMap;
+
+  /// Memo of HasUniqueConflict keyed by the first-buffer Value pair of the
+  /// two life vectors being compared.
+  mutable DenseMap<ValuePair, bool> uniqueConflictMemo;
 
   /// First buffer storage entry corresponding to reused additional otherbuffer
   /// entries. When a single-buffer entry is expanded to use

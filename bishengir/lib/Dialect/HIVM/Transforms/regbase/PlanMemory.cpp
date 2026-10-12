@@ -32,6 +32,8 @@
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
+#include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/LogicalResult.h"
 #include "llvm/Support/WithColor.h"
@@ -2045,12 +2047,16 @@ LogicalResult MemPlanRegBase::MultiSpecPlan(SpecInfo &si, MemBoundList &outline,
                                             PlanRecHis &history,
                                             StorageEntry *entry) {
   LogicalResult planResult = failure();
+  // VerifyConflictStage0 depends only on the entry and the outline bound.
+  // The outline is unchanged between spec-level retries (it only changes on
+  // success, which stops the level loop), so results can be memoized.
+  DenseMap<const MemoryBound *, bool> stage0Memo;
   LDBG("[MultiSpecPlan] try entry childIdx="
        << si.childIdx << " needBits=" << entry->alignedConstBits
        << " from level=" << si.specLevel << " down to minLevel=" << si.minLevel
        << " historySize=" << history.size() << "\n");
   for (int i = si.specLevel; i >= si.minLevel; i--) {
-    planResult = SpecAlloc(outline, history, entry, si, i);
+    planResult = SpecAlloc(outline, history, entry, si, i, stage0Memo);
     if (succeeded(planResult)) {
       LDBG("[MultiSpecPlan] SUCCESS at level="
            << i << " offset=" << entry->bitsOffset
@@ -2093,9 +2099,10 @@ void MemPlanRegBase::RecordAllocatedEntry(const StorageEntry *e) {
   }
 }
 
-LogicalResult MemPlanRegBase::SpecAlloc(MemBoundList &outline, PlanRecHis &his,
-                                        StorageEntry *e, const SpecInfo &si,
-                                        int localLevel) {
+LogicalResult
+MemPlanRegBase::SpecAlloc(MemBoundList &outline, PlanRecHis &his,
+                          StorageEntry *e, const SpecInfo &si, int localLevel,
+                          DenseMap<const MemoryBound *, bool> &stage0Memo) {
   if (std::any_of(his.begin(), his.end(),
                   [e](PlanRecord &r) { return r.entry && r.entry == e; })) {
     // If the plan has already been completed, return success directly.
@@ -2113,10 +2120,15 @@ LogicalResult MemPlanRegBase::SpecAlloc(MemBoundList &outline, PlanRecHis &his,
     for (MemBoundListConstIter end = start; end != outline.end(); ++end) {
       std::shared_ptr<MemoryBound> last = *end;
       size += last->extent;
+      auto [stage0It, stage0Inserted] =
+          stage0Memo.try_emplace(last.get(), false);
+      if (stage0Inserted) {
+        stage0It->second = VerifyConflictStage0(e, last);
+      }
       // if index & addr are as same as last rollback result,
       // continue to find next result
       if (IsSamePlanAsLastRollBack(allocOffset, e->childIdx, si) ||
-          VerifyConflictStage0(e, last)) {
+          stage0It->second) {
         start = end;
         break;
       }
@@ -2329,8 +2341,9 @@ bool MemPlanRegBase::IsBufferLifeVecConflict(PlanRecord &r, uint64_t offset,
                                              const StorageEntry *e) const {
   if ((r.firstMemBound->offset + r.allExtent > offset) &&
       (r.firstMemBound->offset < offset + e->alignedConstBits)) {
-    DenseMap<ValuePair, BufferLife> intersection =
-        GetOverlapBufferLife(r.entry->bufferLifeVec, e->bufferLifeVec);
+    SmallVector<std::pair<ValuePair, BufferLife>, 4> intersection;
+    GetOverlapBufferLife(r.entry->bufferLifeVec, e->bufferLifeVec,
+                         intersection);
     return !intersection.empty();
   }
   return false;
@@ -2462,12 +2475,18 @@ bool MemPlanRegBase::PipeConflictInSameLoop(const StorageEntry *e1,
   if (e1 == nullptr || e2 == nullptr) {
     return false;
   }
+  auto sePair = std::make_pair(e1, e2);
+  auto [iter, isInserted] = sameLoopConflictMap.try_emplace(sePair, false);
+  if (!isInserted) {
+    return iter->second;
+  }
   auto parentLoop1 = GetBufferParentLoop(e1->inplaceBuffers);
   auto parentLoop2 = GetBufferParentLoop(e2->inplaceBuffers);
   if (parentLoop1 != parentLoop2) {
     return false;
   }
   // Cannot be reused under the same region.
+  iter->second = true;
   return true;
 }
 
@@ -2520,6 +2539,7 @@ void MemPlanRegBase::UpdateOutline(MemBoundList &outline, PlanRecHis &his,
                               e,
                               e->alignedConstBits,
                               splitBound[0],
+                              end,
                               {},
                               outlineInfo.isDirectlyRollback});
   e->appliedSpecLevel = localLevel;
@@ -2605,8 +2625,8 @@ inline bool
 MemPlanRegBase::VerifyConflictStage0(StorageEntry *e,
                                      const std::shared_ptr<MemoryBound> &last) {
   // level_0: offset = 0, offset means life distance
-  DenseMap<ValuePair, BufferLife> intersection =
-      GetOverlapBufferLife(e->bufferLifeVec, last->bufferLifeVec);
+  SmallVector<std::pair<ValuePair, BufferLife>, 4> intersection;
+  GetOverlapBufferLife(e->bufferLifeVec, last->bufferLifeVec, intersection);
   return !intersection.empty();
 }
 
@@ -2625,61 +2645,82 @@ MemPlanRegBase::VerifyConflictStage0(StorageEntry *e,
 //            | |
 // free_time  ---
 // Meantime, the overlap is the intersected buffer_life.
-DenseMap<ValuePair, BufferLife>
-MemPlanRegBase::GetOverlapBufferLife(const BufferLifeVec &b1,
-                                     const BufferLifeVec &b2) const {
-  DenseMap<ValuePair, BufferLife> intersection;
-  size_t i = 0;
-  size_t j = 0;
+bool MemPlanRegBase::HasUniqueConflict(const BufferLifeVec &b1,
+                                       const BufferLifeVec &b2) const {
+  const ValuePair key = std::make_pair(b1[0]->buffer, b2[0]->buffer);
+  auto [memoIt, inserted] = uniqueConflictMemo.try_emplace(key, false);
+  if (!inserted) {
+    return memoIt->second;
+  }
+  // if buffer in b1 has mem_unique, b1 will have only one element.
+  auto bufferInfoIt1 = bufferInfos.find(key.first);
+  auto bufferInfoIt2 = bufferInfos.find(key.second);
+  if (!bufferInfoIt1->second.memoryUnique &&
+      !bufferInfoIt2->second.memoryUnique) {
+    return false;
+  }
+  // Allow lifetime-based reuse between two tightly-coupled CV buffers
+  // when both have memoryUnique=true (owning-side CV) AND their cvMixIds
+  // appear with non-overlapping markOp ranges in EVERY function (AIC +
+  // AIV) that references both — i.e., the pair was pre-computed as
+  // "cross-scope safe" by PlanMemoryPass::BuildCVReuseAllowedPairs.
+  //
+  // When the pair is NOT cross-scope safe, mark as conflicting and bail.
+  // When it IS safe, fall through to the lifetime-intersection loop
+  // below: the cross-scope analysis is necessary but not sufficient on
+  // its own. Its use-range computation is a single linear pre-order walk
+  // and has no awareness of MultiBufferAttr; at depth N>1 the producer
+  // writes slot[i] while the consumer of the prior iter still reads
+  // slot[i-1], so the markOp positions can be textually disjoint while
+  // the real lifetimes overlap. The lifetime-intersection loop using
+  // alloc/free times catches that overlap. This matches the behavior on
+  // PR 1198, where the depth-2 CV multi-buffer aliasing introduced by
+  // bdc020c20's unconditional short-circuit was not present.
+  int32_t cvA = bufferInfoIt1->second.cvMixId;
+  int32_t cvB = bufferInfoIt2->second.cvMixId;
+  bool crossScopeSafe =
+      cvA >= 0 && cvB >= 0 && cvA != cvB &&
+      cvMixIdReuseAllowedPairs.count(std::make_pair(cvA, cvB));
+  memoIt->second = !crossScopeSafe;
+  return memoIt->second;
+}
+
+void MemPlanRegBase::GetOverlapBufferLife(
+    const BufferLifeVec &b1, const BufferLifeVec &b2,
+    SmallVectorImpl<std::pair<ValuePair, BufferLife>> &intersection) const {
   size_t b1Len = b1.size();
   size_t b2Len = b2.size();
   if (b1Len == 0 || b2Len == 0) {
-    return intersection;
+    return;
   }
-  // if buffer in b1 has mem_unique, b1 will have only one element.
-  auto bufferInfoIt1 = bufferInfos.find(b1[0]->buffer);
-  auto bufferInfoIt2 = bufferInfos.find(b2[0]->buffer);
-  if (bufferInfoIt1->second.memoryUnique ||
-      bufferInfoIt2->second.memoryUnique) {
-    // Allow lifetime-based reuse between two tightly-coupled CV buffers
-    // when both have memoryUnique=true (owning-side CV) AND their cvMixIds
-    // appear with non-overlapping markOp ranges in EVERY function (AIC +
-    // AIV) that references both — i.e., the pair was pre-computed as
-    // "cross-scope safe" by PlanMemoryPass::BuildCVReuseAllowedPairs.
-    //
-    // When the pair is NOT cross-scope safe, mark as conflicting and bail.
-    // When it IS safe, fall through to the lifetime-intersection loop
-    // below: the cross-scope analysis is necessary but not sufficient on
-    // its own. Its use-range computation is a single linear pre-order walk
-    // and has no awareness of MultiBufferAttr; at depth N>1 the producer
-    // writes slot[i] while the consumer of the prior iter still reads
-    // slot[i-1], so the markOp positions can be textually disjoint while
-    // the real lifetimes overlap. The lifetime-intersection loop using
-    // alloc/free times catches that overlap. This matches the behavior on
-    // PR 1198, where the depth-2 CV multi-buffer aliasing introduced by
-    // bdc020c20's unconditional short-circuit was not present.
-    int32_t cvA = bufferInfoIt1->second.cvMixId;
-    int32_t cvB = bufferInfoIt2->second.cvMixId;
-    bool crossScopeSafe =
-        cvA >= 0 && cvB >= 0 && cvA != cvB &&
-        cvMixIdReuseAllowedPairs.count(std::make_pair(cvA, cvB));
-    if (!crossScopeSafe) {
-      intersection.try_emplace(std::make_pair(b1[0]->buffer, b2[0]->buffer),
-                               BufferLife(nullptr));
-      return intersection;
-    }
+  if (HasUniqueConflict(b1, b2)) {
+    intersection.emplace_back(std::make_pair(b1[0]->buffer, b2[0]->buffer),
+                              BufferLife(nullptr));
+    return;
   }
+  // Merge-normalized (disjoint, allocTime-sorted) life vectors whose time
+  // ranges do not overlap cannot intersect.
+  if (b1.back()->freeTime < b2.front()->allocTime ||
+      b2.back()->freeTime < b1.front()->allocTime) {
+    return;
+  }
+  // Keep only the first intersection window per buffer pair, mirroring the
+  // previous DenseMap::try_emplace behavior.
+  llvm::SmallDenseSet<ValuePair, 8> seen;
+  size_t i = 0;
+  size_t j = 0;
   while (i < b1Len && j < b2Len) {
     auto lo = std::max(b1[i]->allocTime, b2[j]->allocTime);
     auto hi = std::min(b1[i]->freeTime, b2[j]->freeTime);
     if (lo <= hi) {
-      BufferLife bufferLife(nullptr, lo, hi);
       ValuePair key =
           lo == b1[i]->allocTime && hi == b2[j]->freeTime
               ? std::make_pair(b1[i]->buffer,
                                b2[j]->buffer) // case in the diagram
               : std::make_pair(b2[j]->buffer, b1[i]->buffer); // opposing case
-      intersection.try_emplace(key, bufferLife);
+      if (seen.insert(key).second) {
+        intersection.emplace_back(key, BufferLife(nullptr, lo, hi));
+      }
     }
     if (b1[i]->freeTime < b2[j]->freeTime) {
       i += 1;
@@ -2687,7 +2728,6 @@ MemPlanRegBase::GetOverlapBufferLife(const BufferLifeVec &b1,
       j += 1;
     }
   }
-  return intersection;
 }
 
 PlanStatus MemPlanRegBase::ApplyFailStrategy(StatusWrapper &statusWrapper,
@@ -2907,8 +2947,13 @@ void MemPlanRegBase::RollBackForAllocFailInner(StatusWrapper &statusWrapper,
 
 PlanRecord MemPlanRegBase::RollbackOutline(PlanRecHis &history,
                                            MemBoundList &outline) const {
-  auto r = history.back();
-  auto it = std::find(outline.begin(), outline.end(), r.firstMemBound);
+  // Move (not copy) the record out of the history so that `replaced`
+  // transfers the original outline nodes back instead of copies: older
+  // records' firstMemBoundIt iterators address those exact nodes and must
+  // not dangle.
+  PlanRecord r = std::move(history.back());
+  history.pop_back();
+  auto it = r.firstMemBoundIt;
   // |--head--|--split entry--|--tail--|
   // erase head
   if (r.headed) {
@@ -2925,7 +2970,6 @@ PlanRecord MemPlanRegBase::RollbackOutline(PlanRecHis &history,
   }
   // restore outline and replaced
   outline.splice(it, r.replaced);
-  history.pop_back();
   return r;
 }
 
