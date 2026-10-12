@@ -104,6 +104,33 @@ bool isSafeToSimplifyCast(CastOp castOp) {
            (inputType.isInteger() && isa<FloatType>(outputType)));
 }
 
+// A chain of integer casts may only be removed when it is value preserving.
+// Unlike floating point, where the precision checks guard the optimization, an
+// integer narrowing cast silently drops the high bits, so a round trip such as
+// `i16 -> i8 -> i16` is *not* an identity. Such chains are semantically
+// meaningful: e.g. `remui i8` is widened to i16 for codegen and can produce
+// 0xFFFF for a zero divisor, which must be truncated back to 0xFF before the
+// value is consumed by a following operation.
+// `castChain.front()` is the outermost cast being removed (it narrows back to
+// the original element type); the remaining casts produce its input and must
+// not narrow.
+bool isValuePreservingIntegerCastChain(ArrayRef<CastOp> castChain) {
+  for (CastOp cast : castChain.drop_front()) {
+    auto inputType = dyn_cast<IntegerType>(
+        getElementTypeOrSelf(cast.getInputs().front().getType()));
+    auto outputType = dyn_cast<IntegerType>(
+        getElementTypeOrSelf(cast.getOutputs().front().getType()));
+    // Mixed integer/float casts are left to the floating point precision
+    // logic, but they must not stop the scan: an integer narrowing cast can
+    // sit deeper in the chain, past a crossing cast.
+    if (!inputType || !outputType)
+      continue;
+    if (outputType.getWidth() < inputType.getWidth())
+      return false;
+  }
+  return true;
+}
+
 struct CastOpPattern : public OpRewritePattern<CastOp> {
   // Return the cast op that defines all inputs of the given op, skipping
   // tensor reshape operations. The skipped operations are recorded so that the
@@ -284,6 +311,12 @@ public:
             break;
           }
         }
+
+        // Integer casts need an explicit guard: a narrowing step followed by a
+        // widening step does not reconstruct the original value and must not be
+        // folded away (see isValuePreservingIntegerCastChain).
+        if (!isValuePreservingIntegerCastChain(castChain))
+          break;
 
         if (reshapes.empty()) {
           rewriter.replaceOp(castOp, nextCast.getInputs());
