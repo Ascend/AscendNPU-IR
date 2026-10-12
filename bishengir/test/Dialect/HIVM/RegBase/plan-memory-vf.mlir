@@ -1,7 +1,7 @@
 // REQUIRES: asserts
-// RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend950PR_950z -hivm-plan-memory-regbase=shared-mem-dynamic-size=221184 -split-input-file -verify-diagnostics | FileCheck %s
-// RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend950PR_950z -hivm-plan-memory-regbase=shared-mem-dynamic-size=221184 --debug-only="vf-inplace-reuse" -split-input-file -verify-diagnostics 2>&1 | FileCheck %s -check-prefix=CHECK-DEBUG
-// RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend950PR_950z -hivm-plan-memory-regbase="shared-mem-dynamic-size=221184 disable-tightly-coupled-buffer-reuse=true" -split-input-file -verify-diagnostics 2>&1 | FileCheck %s -check-prefix=CHECK-NOREUSE
+// RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend950PR_950z -hivm-plan-memory-regbase -split-input-file -verify-diagnostics | FileCheck %s
+// RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend950PR_950z -hivm-plan-memory-regbase --debug-only="vf-inplace-reuse" -split-input-file -verify-diagnostics 2>&1 | FileCheck %s -check-prefix=CHECK-DEBUG
+// RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend950PR_950z -hivm-plan-memory-regbase=disable-tightly-coupled-buffer-reuse=true -split-input-file -verify-diagnostics 2>&1 | FileCheck %s -check-prefix=CHECK-NOREUSE
 // -----
 
 func.func @read_once_and_write_once_0(
