@@ -21,10 +21,85 @@
 #include "bishengir/Tools/bishengir-compile/Config.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Support/LLVM.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/CommandLine.h"
+#include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/Path.h"
+#include "llvm/Support/Process.h"
+#include "llvm/Support/Regex.h"
+#include "llvm/TargetParser/Host.h"
+#include "llvm/TargetParser/Triple.h"
+
+#include <optional>
+#include <tuple>
+#include <utility>
 
 namespace bishengir {
 
 using OwningModuleRef = mlir::OwningOpRef<mlir::ModuleOp>;
+
+/// Detect the CANN version (major.minor.patch) by reading
+/// {ASCEND_HOME_PATH}/<arch>-linux/ascend_toolkit_install.info, mirroring
+/// triton-ascend's backend/utils.py. The first line containing "version" is
+/// parsed for a "<major>.<minor>[.<patch>]" version string. Returns
+/// std::nullopt when the variable, the file, or a parseable version is
+/// unavailable.
+inline std::optional<std::tuple<unsigned, unsigned, unsigned>>
+detectCannVersion() {
+  std::optional<std::string> homePath =
+      llvm::sys::Process::GetEnv("ASCEND_HOME_PATH");
+  if (!homePath || homePath->empty())
+    return std::nullopt;
+  llvm::Triple hostTriple(llvm::sys::getProcessTriple());
+  llvm::SmallString<256> versionFile(*homePath);
+  llvm::sys::path::append(versionFile,
+                          llvm::Twine(hostTriple.getArchName()) + "-linux",
+                          "ascend_toolkit_install.info");
+  llvm::ErrorOr<std::unique_ptr<llvm::MemoryBuffer>> file =
+      llvm::MemoryBuffer::getFile(versionFile);
+  if (std::error_code ec = file.getError())
+    return std::nullopt;
+  llvm::Regex versionPattern("[0-9]+\\.[0-9]+(\\.[0-9]+)?");
+  llvm::SmallVector<llvm::StringRef, 8> lines;
+  (*file)->getBuffer().split(lines, '\n');
+  for (llvm::StringRef line : lines) {
+    if (!line.contains_insensitive("version"))
+      continue;
+    llvm::SmallVector<llvm::StringRef, 2> matches;
+    if (!versionPattern.match(line, &matches) || matches.empty())
+      continue;
+    llvm::SmallVector<llvm::StringRef, 3> parts;
+    matches[0].split(parts, '.');
+    unsigned major = 0;
+    unsigned minor = 0;
+    unsigned patch = 0;
+    if (parts.size() < 2 || parts[0].getAsInteger(10, major) ||
+        parts[1].getAsInteger(10, minor))
+      continue;
+    if (parts.size() > 2 && parts[2].getAsInteger(10, patch))
+      continue;
+    return std::tuple<unsigned, unsigned, unsigned>{major, minor, patch};
+  }
+  return std::nullopt;
+}
+
+/// Resolve the template bitcode optimization level to use, in priority order:
+/// 1. an explicit --enable-optimized-metaop flag (true=O2, false=O0);
+/// 2. the CANN version detected from the environment (>= 9.2.0 uses O2,
+///    older versions use O0);
+/// 3. the default: O2.
+inline std::string
+resolveTemplateBitcodeOptLevel(const BiShengIRCompileMainConfig &config) {
+  auto &registeredOptions = llvm::cl::getRegisteredOptions();
+  auto optIt = registeredOptions.find("enable-optimized-metaop");
+  if (optIt != registeredOptions.end() &&
+      optIt->second->getNumOccurrences() > 0)
+    return config.getEnableOptimizedMetaop() ? "O2" : "O0";
+  if (std::optional<std::tuple<unsigned, unsigned, unsigned>> version =
+          detectCannVersion())
+    return *version >= std::make_tuple(9u, 2u, 0u) ? "O2" : "O0";
+  return "O2";
+}
 
 /// Main entry point to run BiShengIR pipeline to compile module into binary.
 llvm::FailureOr<OwningModuleRef>

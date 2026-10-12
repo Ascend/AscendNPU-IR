@@ -245,3 +245,7 @@
 /bishengir/**/HFusion/Transforms/regbase/Normalize/ @ciggaco @xiechenye @lingfei_wu @hid90099092 @tanshengshun
 /bishengir/**/HFusion/Transforms/regbase/Normalize*.h @ciggaco @xiechenye @lingfei_wu @hid90099092 @tanshengshun
 /bishengir/**/HFusion/regbase/Normalize/ @ciggaco @xiechenye @lingfei_wu @hid90099092 @tanshengshun
+
+# Custom op.
+/bishengir/**/CustomOp/ @danielcm585 @hid90099092 @tanshengshun
+/bishengir/test/**/custom-op* @danielcm585 @hid90099092 @tanshengshun

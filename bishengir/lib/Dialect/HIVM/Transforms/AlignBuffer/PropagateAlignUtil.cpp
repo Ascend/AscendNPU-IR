@@ -1023,6 +1023,54 @@ FailureOrCastVec propagateScfForOp(RewriterBase &rewriter,
   op.getInitArgsMutable()[initIndx].assign(conversionOp.getOperand(0));
   auto origType = conversionOp.getResult(0).getType();
   auto newType = conversionOp.getOperand(0).getType();
+
+  // Reclaim the yield side's legacy: the plain-init fallback of
+  // propagateScfForYieldOp may have installed a dense buffer (a
+  // content-preserving copy of an aligned value) as the yielded value.
+  // Now that this unification switches the loop types to \p newType, that
+  // copy is vestigial when its source already has exactly \p newType:
+  // forward the yield to the copy's source and drop the copy and the
+  // buffer, so the two boundary unifications do not leave a redundant
+  // strided->dense->strided copy round trip (plus an unpadded strided
+  // allocation from the residual yield bridge) behind.
+  Value yielded = op.getYieldedValues()[initIndx];
+  // The yielded value may be a block argument (e.g. the loop's own iter
+  // arg), whose getDefiningOp() is null; getDefiningOp<OpTy>() handles
+  // that case safely.
+  if (auto yieldedAlloc = yielded.getDefiningOp<memref::AllocOp>()) {
+    hivm::CopyOp writer = nullptr;
+    auto yieldOp = dyn_cast<scf::YieldOp>(op.getBody()->getTerminator());
+    bool foreign = false;
+    for (Operation *user : yielded.getUsers()) {
+      if (auto copyOp = dyn_cast<hivm::CopyOp>(user)) {
+        if (copyOp.getDst() == yielded && !writer) {
+          writer = copyOp;
+          continue;
+        }
+      }
+      if (user == yieldOp)
+        continue;
+      foreign = true;
+    }
+    // The fallback installs the copy in the loop body's top-level block,
+    // right before the yield. Require the same structure so the forwarding
+    // cannot reach into a nested region (where the copy's source might not
+    // dominate the yield, or a conditional copy would change semantics).
+    if (writer && yieldOp && !foreign &&
+        writer->getBlock() == yieldOp->getBlock() &&
+        writer.getSrc().getType() == newType && !writer->hasAttr("pad_mode") &&
+        !writer->hasAttr("collapse_reassociation") &&
+        llvm::all_of(writer.getSrc().getUsers(),
+                     [&](Operation *u) { return u == writer; })) {
+      LDBG("reclaim yield-side legacy: forward " << writer.getSrc() << " past "
+                                                 << yielded);
+      rewriter.modifyOpInPlace(
+          yieldOp, [&] { yieldOp.setOperand(initIndx, writer.getSrc()); });
+      rewriter.eraseOp(writer);
+      rewriter.eraseOp(yieldedAlloc);
+    }
+  }
+
   op.getRegionIterArg(initIndx).setType(newType);
   op.getResult(initIndx).setType(newType);
 
@@ -1048,12 +1096,14 @@ FailureOrCastVec propagateScfForOp(RewriterBase &rewriter,
   // insert unrealized conversion cast before yield op
   rewriter.setInsertionPoint(op.getBody()->getTerminator());
   auto yieldValues = op.getYieldedValues();
-  auto yieldValueConversionOp = rewriter.create<UnrealizedConversionCastOp>(
-      op.getLoc(), newType, yieldValues[initIndx]);
-  auto mutableYieldValues = op.getYieldedValuesMutable();
-  assert(mutableYieldValues.has_value());
-  mutableYieldValues.value()[initIndx].assign(
-      yieldValueConversionOp.getResult(0));
+  if (yieldValues[initIndx].getType() != newType) {
+    auto yieldValueConversionOp = rewriter.create<UnrealizedConversionCastOp>(
+        op.getLoc(), newType, yieldValues[initIndx]);
+    auto mutableYieldValues = op.getYieldedValuesMutable();
+    assert(mutableYieldValues.has_value());
+    mutableYieldValues.value()[initIndx].assign(
+        yieldValueConversionOp.getResult(0));
+  }
 
   return newConversionOps;
 }
