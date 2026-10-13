@@ -47,4 +47,71 @@ module {
     }
     return
   }
+  // CHECK-LABEL: func.func @multi_use_loop_result(
+  // CHECK-ONE-SHOT-LABEL: func.func @multi_use_loop_result(
+  // CHECK: %[[OUTER:.*]] = scf.for
+  // CHECK: %[[INNER:.*]] = scf.for
+  // CHECK: %[[SLICE:.*]] = tensor.extract_slice %[[INNER]][%{{.*}}, %{{.*}}, %{{.*}}] [1, 16, 16] [1, 1, 1] : tensor<16x16x16xf32> to tensor<16x16xf32>
+  // CHECK: hivm.hir.debug {{.*}} %[[SLICE]] : tensor<16x16xf32>
+  // CHECK-NOT: tensor.extract_slice
+  // CHECK-NOT: tensor.insert_slice
+  // CHECK: scf.yield %[[INNER]] : tensor<16x16x16xf32>
+  // CHECK: return %[[OUTER]] : tensor<16x16x16xf32>
+  // CHECK-ONE-SHOT: hivm.hir.debug {{.*}} : memref<16x16xf32, strided<[16, 1], offset: ?>>
+  // CHECK-ONE-SHOT: scf.yield %{{.*}} : memref<16x16x16xf32>
+  func.func @multi_use_loop_result(%arg0: tensor<16x16x16xf32>, %arg1: tensor<16x16x16xf32>) -> tensor<16x16x16xf32> attributes {hivm.vector_function, no_inline} {
+    %cst = arith.constant 0.000000e+00 : f32
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %0 = vector.constant_mask [16] : vector<64xi1>
+    %1 = scf.for %arg2 = %c0 to %c16 step %c1 iter_args(%arg3 = %arg1) -> (tensor<16x16x16xf32>) {
+      %extracted_slice = tensor.extract_slice %arg3[%arg2, %c0, %c0] [1, 16, 16] [1, 1, 1] : tensor<16x16x16xf32> to tensor<16x16xf32>
+      %2 = scf.for %arg4 = %c0 to %c16 step %c1 iter_args(%arg5 = %extracted_slice) -> (tensor<16x16xf32>) {
+        %extracted_slice_0 = tensor.extract_slice %arg0[%arg2, %arg4, 0] [1, 1, 16] [1, 1, 1] : tensor<16x16x16xf32> to tensor<16xf32>
+        %extracted_slice_1 = tensor.extract_slice %arg5[%arg4, %c0] [1, 16] [1, 1] : tensor<16x16xf32> to tensor<16xf32>
+        %3 = vector.transfer_read %extracted_slice_0[%c0], %cst, %0 {in_bounds = [true]} : tensor<16xf32>, vector<64xf32>
+        %4 = vector.transfer_write %3, %extracted_slice_1[%c0], %0 {in_bounds = [true]} : vector<64xf32>, tensor<16xf32>
+        %inserted_slice_2 = tensor.insert_slice %4 into %arg5[%arg4, %c0] [1, 16] [1, 1] : tensor<16xf32> into tensor<16x16xf32>
+        scf.yield %inserted_slice_2 : tensor<16x16xf32>
+      }
+      %inserted_slice = tensor.insert_slice %2 into %arg3[%arg2, %c0, %c0] [1, 16, 16] [1, 1, 1] : tensor<16x16xf32> into tensor<16x16x16xf32>
+      hivm.hir.debug {debugtype = "print", hex = false, prefix = " slice : "} %2 : tensor<16x16xf32>
+      scf.yield %inserted_slice : tensor<16x16x16xf32>
+    }
+    return %1 : tensor<16x16x16xf32>
+  }
+  // CHECK-LABEL: func.func @multi_use_insert_result(
+  // CHECK-ONE-SHOT-LABEL: func.func @multi_use_insert_result(
+  // CHECK: %[[OUTER:.*]] = scf.for
+  // CHECK: %[[INNER:.*]] = scf.for
+  // CHECK: hivm.hir.debug {{.*}} %[[INNER]] : tensor<16x16x16xf32>
+  // CHECK-NOT: tensor.extract_slice
+  // CHECK-NOT: tensor.insert_slice
+  // CHECK: scf.yield %[[INNER]] : tensor<16x16x16xf32>
+  // CHECK: return %[[OUTER]] : tensor<16x16x16xf32>
+  // CHECK-ONE-SHOT: hivm.hir.debug {{.*}} : memref<16x16x16xf32>
+  // CHECK-ONE-SHOT: scf.yield %{{.*}} : memref<16x16x16xf32>
+  func.func @multi_use_insert_result(%arg0: tensor<16x16x16xf32>, %arg1: tensor<16x16x16xf32>) -> tensor<16x16x16xf32> attributes {hivm.vector_function, no_inline} {
+    %cst = arith.constant 0.000000e+00 : f32
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %0 = vector.constant_mask [16] : vector<64xi1>
+    %1 = scf.for %arg2 = %c0 to %c16 step %c1 iter_args(%arg3 = %arg1) -> (tensor<16x16x16xf32>) {
+      %extracted_slice = tensor.extract_slice %arg3[%arg2, %c0, %c0] [1, 16, 16] [1, 1, 1] : tensor<16x16x16xf32> to tensor<16x16xf32>
+      %2 = scf.for %arg4 = %c0 to %c16 step %c1 iter_args(%arg5 = %extracted_slice) -> (tensor<16x16xf32>) {
+        %extracted_slice_0 = tensor.extract_slice %arg0[%arg2, %arg4, 0] [1, 1, 16] [1, 1, 1] : tensor<16x16x16xf32> to tensor<16xf32>
+        %extracted_slice_1 = tensor.extract_slice %arg5[%arg4, %c0] [1, 16] [1, 1] : tensor<16x16xf32> to tensor<16xf32>
+        %3 = vector.transfer_read %extracted_slice_0[%c0], %cst, %0 {in_bounds = [true]} : tensor<16xf32>, vector<64xf32>
+        %4 = vector.transfer_write %3, %extracted_slice_1[%c0], %0 {in_bounds = [true]} : vector<64xf32>, tensor<16xf32>
+        %inserted_slice_2 = tensor.insert_slice %4 into %arg5[%arg4, %c0] [1, 16] [1, 1] : tensor<16xf32> into tensor<16x16xf32>
+        scf.yield %inserted_slice_2 : tensor<16x16xf32>
+      }
+      %inserted_slice = tensor.insert_slice %2 into %arg3[%arg2, %c0, %c0] [1, 16, 16] [1, 1, 1] : tensor<16x16xf32> into tensor<16x16x16xf32>
+      hivm.hir.debug {debugtype = "print", hex = false, prefix = " full : "} %inserted_slice : tensor<16x16x16xf32>
+      scf.yield %inserted_slice : tensor<16x16x16xf32>
+    }
+    return %1 : tensor<16x16x16xf32>
+  }
 }

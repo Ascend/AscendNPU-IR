@@ -75,16 +75,19 @@ struct FoldSliceIntoScfForPattern : public OpRewritePattern<scf::ForOp> {
 
     // The loop result must be written back into the same tensor, with the
     // same offsets, sizes and strides as the extract.
-    if (!forOp.getResult(idx).hasOneUse())
-      return failure();
-    auto insertOp = dyn_cast<tensor::InsertSliceOp>(
-        forOp.getResult(idx).getUses().begin()->getOwner());
-    if (!insertOp || insertOp.getDest() != fullTensor ||
-        insertOp.getSource() != forOp.getResult(idx))
-      return failure();
-    if (insertOp.getMixedOffsets() != outerExtract.getMixedOffsets() ||
-        insertOp.getMixedSizes() != outerExtract.getMixedSizes() ||
-        insertOp.getMixedStrides() != outerExtract.getMixedStrides())
+    tensor::InsertSliceOp insertOp = nullptr;
+    for (auto *user : forOp.getResult(idx).getUsers()) {
+      auto candidate = dyn_cast<tensor::InsertSliceOp>(user);
+      if (candidate && candidate.getDest() == fullTensor &&
+          candidate.getSource() == forOp.getResult(idx) &&
+          candidate.getMixedOffsets() == outerExtract.getMixedOffsets() &&
+          candidate.getMixedSizes() == outerExtract.getMixedSizes() &&
+          candidate.getMixedStrides() == outerExtract.getMixedStrides()) {
+        insertOp = candidate;
+        break;
+      }
+    }
+    if (!insertOp)
       return failure();
 
     // Widen the iter arg, its init value and the loop result to the full
@@ -94,6 +97,17 @@ struct FoldSliceIntoScfForPattern : public OpRewritePattern<scf::ForOp> {
       forOp.getRegionIterArg(idx).setType(fullType);
       forOp->getResult(idx).setType(fullType);
     });
+
+    // Clone the extract_slice after the loop for the remaining users of the
+    // loop result.
+    auto *newExtract = rewriter.clone(*outerExtract);
+    rewriter.moveOpAfter(newExtract, forOp);
+    rewriter.modifyOpInPlace(newExtract, [&]() {
+      newExtract->getOpOperand(0).set(forOp.getResult(idx));
+    });
+    rewriter.replaceAllUsesExcept(forOp.getResult(idx),
+                                  newExtract->getResult(0), newExtract);
+
     // Replace all uses of the insert_slice with the loop result.
     rewriter.replaceAllUsesWith(insertOp.getResult(), forOp.getResult(idx));
 
