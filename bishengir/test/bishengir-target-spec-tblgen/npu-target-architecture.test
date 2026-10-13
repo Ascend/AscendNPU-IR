@@ -1,0 +1,31 @@
+# RUN: bishengir-target-spec-tblgen -I %bishengir_src_root/include \
+# RUN:   -gen-target-spec-decls \
+# RUN:   %bishengir_src_root/include/bishengir/Dialect/HACC/Targets/NPUTargetSpec.td \
+# RUN:   | FileCheck %s --check-prefix=DECL --implicit-check-not='getArch('
+# RUN: bishengir-target-spec-tblgen -I %bishengir_src_root/include \
+# RUN:   -gen-target-spec-defs \
+# RUN:   %bishengir_src_root/include/bishengir/Dialect/HACC/Targets/NPUTargetSpec.td \
+# RUN:   | FileCheck %s --check-prefix=DEF --implicit-check-not='getArch('
+
+# DECL: #include "bishengir/Target/NPU/NPUArchitecture.h"
+# DECL: ::bishengir::npu::NPUArchitectureKind getArchitecture(TargetDevice dev);
+# DECL: ::bishengir::npu::NPUArchitectureKind Arch;
+
+# Arch remains a string when serialized as a DeviceSpec attribute.
+# DEF: Attribute wrap(::bishengir::npu::NPUArchitectureKind rawVal, OpBuilder& builder)
+# DEF: return builder.getStringAttr(::bishengir::npu::stringifyNPUArchitecture(rawVal));
+# DEF: if (specEntry == DeviceSpec::ARCH)
+# DEF: return wrap(Arch, builder);
+
+# Check every family, including both C310 naming schemes.
+# DEF-LABEL: ::bishengir::npu::NPUArchitectureKind getArchitecture(TargetDevice dev)
+# DEF-DAG: case TargetDevice::Ascend310B1: return ::bishengir::npu::NPUArchitectureKind::kDavM300;
+# DEF-DAG: case TargetDevice::Ascend910B1: return ::bishengir::npu::NPUArchitectureKind::kDavC220;
+# DEF-DAG: case TargetDevice::Ascend910_9362: return ::bishengir::npu::NPUArchitectureKind::kDavC220;
+# DEF-DAG: case TargetDevice::Ascend910_9579: return ::bishengir::npu::NPUArchitectureKind::kDavC310;
+# DEF-DAG: case TargetDevice::Ascend950PR_9579: return ::bishengir::npu::NPUArchitectureKind::kDavC310;
+# DEF-DAG: case TargetDevice::Ascend950DT_950x: return ::bishengir::npu::NPUArchitectureKind::kDavC310;
+# DEF-DAG: case TargetDevice::Unknown: return ::bishengir::npu::NPUArchitectureKind::kUnknown;
+
+# Invalid enum values, unlike the explicit Unknown enumerator, remain fatal.
+# DEF: llvm::report_fatal_error("Unknown TargetDevice value");

@@ -8,6 +8,7 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
     // CHECK: llvm.mlir.global private constant @_debug_msg_keep("message") {addr_space = 1 : i32}
     llvm.mlir.global private constant @_debug_msg_keep("message") {addr_space = 1 : i32}
     // CHECK-LABEL: @adapt_gpu_kernel_test
+    // CHECK-SAME: hivm_regbaseintrins.target = #hivm_regbaseintrins.target<"dav-c310">
     // CHECK: %[[BLOCKIDX:.*]] = hivm.hir.get_block_idx -> i64
     // CHECK-NEXT: %[[DIMX:.*]] = llvm.zext %[[ARG2:.*]] : i32 to i64
     // CHECK-NEXT: %[[DIMY:.*]] = llvm.zext %[[ARG3:.*]] : i32 to i64

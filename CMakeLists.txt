@@ -245,6 +245,7 @@ add_subdirectory(bishengir/tools/bishengir-hfusion-ods-gen)
 if (BISHENGIR_BUILD_STANDALONE_IR_ONLY)
   add_definitions(-DBISHENGIR_BUILD_STANDALONE_IR_ONLY)
   add_subdirectory(bishengir/include/bishengir/Interfaces)
+  add_subdirectory(bishengir/include/bishengir/Target)
   set(STANDALONE_IR_BUILD_DIALECT
   Annotation
   HACC
