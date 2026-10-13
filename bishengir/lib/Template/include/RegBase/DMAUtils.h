@@ -1973,19 +1973,27 @@ __aiv__ __attribute__((always_inline)) T set_pad_value_null() {
 }
 
 #if BISHENG_TPL_REGBASE
-/// Rewrite the per-row tail padding of a b64 UB buffer with pad_value.
+/// Rewrite the per-row padding of a b64 UB buffer with pad_value.
 ///
 /// All addressing is anchored at the aligned DMA start
 ///   base = dst->aligned + dst->offset - left_padding_num,
 /// which is 32B aligned by construction of left_padding_num
 /// (= dst->offset % num_per_block, guaranteed by the IR layer), even when
 /// dst->offset itself is not aligned. In this coordinate system row i holds
-/// valid data in [lp + i*stride, lp + i*stride + size) and the tail block to
-/// repair is [CEIL(lp+size, num_per_block) - num_per_block,
-/// CEIL(lp+size, num_per_block)): inside one block the valid data is always
-/// a prefix, so prefix-only plt masks suffice - pad on plt(all lanes) then
-/// restore data on plt(valid lanes). align_pad is in [0, num_per_block) by
-/// construction, so the valid-lane count never underflows.
+/// valid data in [lp + i*stride, lp + i*stride + size).
+///
+/// Two regions are repaired per row (the MTE writes both with the pad value
+/// truncated to the low 32 bits, sign-extended, for b64):
+/// - left pad [0, lp) of the row's first block: only the pad lanes are
+///   touched (data starts at lane lp), so no restore step is needed;
+/// - tail block [CEIL(lp+size, npb) - npb, CEIL(lp+size, npb)): the valid
+///   data inside it is always a prefix, so pad is written on plt(all lanes)
+///   and the data prefix restored on plt(valid lanes).
+///
+/// When the whole row span fits in one block (lp + size <= npb) the tail
+/// block is also the first block and its restore mask covers the left pad
+/// lanes too; the left-pad rewrite runs before the tail snapshot, so the
+/// restore writes back the corrected pad value, not the truncated one.
 template <typename T, int DIM,
           typename = std::enable_if_t<std::is_same_v<T, int64_t> ||
                                       std::is_same_v<T, uint64_t>>>
@@ -2013,7 +2021,7 @@ apply_padding_b64(memref_t<__ubuf__ T, DIM> *dst, int64_t left_padding_num,
   int64_t data_end = left_padding_num + size;
   int64_t block_end = CEIL_FACTOR(data_end, num_per_block);
   int64_t align_pad = block_end - data_end; // in [0, num_per_block)
-  if (align_pad == 0) {
+  if (align_pad == 0 && left_padding_num == 0) {
     return;
   }
   // 32B aligned DMA start: the address the MTE actually begins writing at.
@@ -2026,6 +2034,25 @@ apply_padding_b64(memref_t<__ubuf__ T, DIM> *dst, int64_t left_padding_num,
   int shift_num = block_end - num_per_block;
   __VEC_SCOPE__ {
     for (uint16_t i = 0; i < static_cast<uint16_t>(repeat); ++i) {
+      // Left-pad rewrite: restore the true 64-bit pad_value in
+      // [0, left_padding_num) of the row's first block. Data begins at lane
+      // left_padding_num, so the masked store cannot touch it.
+      // This MUST run before the tail-block snapshot below: when the whole
+      // row span fits in one block (lp + size <= num_per_block) the tail
+      // block IS this block and the tail restore's mask covers [0, lp) as
+      // well, so the snapshot must capture the corrected pad for the
+      // restore to write it back instead of the MTE-truncated value.
+      if (left_padding_num > 0) {
+        __ubuf__ T *first_block_ptr = i * stride + block_ptr;
+        uint32_t vl_lp = left_padding_num; // re-init per row (plt consumes)
+        vector_bool mask_lpad = plt_2xvl_b64(vl_lp, POST_UPDATE);
+        VectorReg<T> v_lpad;
+        vdup(v_lpad, pad_value, mask_lpad, MODE_ZEROING);
+        vsts(v_lpad, first_block_ptr, 0, mask_lpad);
+      }
+      if (align_pad == 0) {
+        continue; // data fills the tail block completely; nothing to repair
+      }
       __ubuf__ T *till_block_ptr =
           i * stride + block_ptr + shift_num; // 32B aligned per guard
       // make mask. The counters MUST be re-initialized per row:
