@@ -130,12 +130,6 @@ void addBitcodeAttrsToModule(ModuleOp module, StringRef executablePath,
               });
 }
 
-/// Get the HIVMC binary name.
-StringRef getHIVMCName() {
-  const char *kBiShengIRHIVMBinaryName = "hivmc";
-  return kBiShengIRHIVMBinaryName;
-}
-
 LogicalResult handleSaveTemps(ModuleOp& module, BiShengIRCompileMainConfig& config) {
   TempDirectoriesStore tempDirsStore;
   std::string inputFile = "module.hivm.opt.mlir";
