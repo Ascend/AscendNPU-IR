@@ -50,10 +50,9 @@ template <typename T>
 __aiv__ __attribute__((always_inline)) int64_t calc_ub_gap(int64_t stride,
                                                            int64_t size) {
   constexpr int32_t bytes = sizeof(T);
-  int32_t factor = 1;
-  if constexpr (bytes == BYTES_B64) {
-    factor = 2;
-  }
+  // B32 elements per element of T; sub-B32 dtypes stay in their own unit.
+  constexpr int64_t factor =
+      bytes == BYTES_B64 ? sizeof(T) / sizeof(uint32_t) : 1;
 
   const int64_t n_elems_of_aligned_unit = UB_ALIGN_BYTES / bytes * factor;
   const int64_t gap = CEIL_DIV(stride * factor, n_elems_of_aligned_unit) -
@@ -261,7 +260,9 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_intrin_core(
               gm_ptr + gm_offset, 0, burst_cnt, burst_len, left_padding_num,
               rightPaddingNum, src_gap, dst_align_gap);
   } else if constexpr (bytes == BYTES_B64) {
-    int32_t factor = 2;
+    // The intrinsic receives uint32_t pointers, so its padding counts are
+    // expressed in B32 elements, cf. the C310 variant above.
+    constexpr int64_t factor = sizeof(T) / sizeof(uint32_t);
     INTRINSIC(copy_gm_to_ubuf_align,
               reinterpret_cast<__ubuf__ uint32_t *>(ub_ptr + ub_offset -
                                                     left_padding_num),
@@ -288,7 +289,9 @@ store_ubuf_to_gm_intrin_core(__ubuf__ T *ub_ptr, int64_t ub_offset,
     INTRINSIC(copy_ubuf_to_gm_align_v2, gm_ptr + gm_offset, ub_ptr + ub_offset,
               0, burst_cnt, burst_len, l2_cache_ctl, dst_stride, src_stride);
   } else if constexpr (bytes == BYTES_B64) {
-    int32_t factor = 2;
+    // The intrinsic receives uint32_t pointers, so the offsets scale to B32
+    // elements: one B64 element holds two B32 elements.
+    constexpr int64_t factor = sizeof(T) / sizeof(uint32_t);
     INTRINSIC(copy_ubuf_to_gm_align_v2,
               reinterpret_cast<__gm__ uint32_t *>(gm_ptr) + gm_offset * factor,
               reinterpret_cast<__ubuf__ uint32_t *>(ub_ptr) +
@@ -312,7 +315,9 @@ store_ubuf_to_gm_intrin_core(__ubuf__ T *ub_ptr, int64_t ub_offset,
     INTRINSIC(copy_ubuf_to_gm_align, gm_ptr + gm_offset, ub_ptr + ub_offset, 0,
               burst_cnt, burst_len, src_align_gap, dst_gap);
   } else if constexpr (bytes == BYTES_B64) {
-    int32_t factor = 2;
+    // The intrinsic receives uint32_t pointers, so the offsets scale to B32
+    // elements, cf. the C310 variant above.
+    constexpr int64_t factor = sizeof(T) / sizeof(uint32_t);
     INTRINSIC(copy_ubuf_to_gm_align,
               reinterpret_cast<__gm__ uint32_t *>(gm_ptr) + gm_offset * factor,
               reinterpret_cast<__ubuf__ uint32_t *>(ub_ptr) +
@@ -1999,8 +2004,7 @@ template <typename T, int DIM,
                                       std::is_same_v<T, uint64_t>>>
 __aiv__ __attribute__((always_inline)) void
 apply_padding_b64(memref_t<__ubuf__ T, DIM> *dst, int64_t left_padding_num,
-                  int64_t row_base, int64_t pad_value, int64_t repeat,
-                  int64_t padding_shift_count) {
+                  int64_t row_base, int64_t pad_value, int64_t repeat) {
   constexpr int num_per_block = INTR_BYTES_PER_BLOCK / sizeof(T);
   int64_t size = dst->sizes[DIM - 1];
   int64_t stride = dst->strides[0];
@@ -2014,7 +2018,7 @@ apply_padding_b64(memref_t<__ubuf__ T, DIM> *dst, int64_t left_padding_num,
   // ever fires, skipping the repair (data lanes stay intact) is the safe
   // behavior.
   if (left_padding_num < 0 || left_padding_num >= num_per_block ||
-      (repeat > 1 && stride % num_per_block != 0)) {
+      ((repeat > 1 || row_base > 0) && stride % num_per_block != 0)) {
     return;
   }
   // Per-row span in dma coordinates (relative to the aligned DMA start).
@@ -2085,8 +2089,7 @@ template <typename T, int DIM,
                                       std::is_same_v<T, uint64_t>>>
 __aiv__ __attribute__((always_inline)) void
 apply_padding_b64(memref_t<__ubuf__ T, DIM> *dst, int64_t left_padding_num,
-                  int64_t row_base, int64_t pad_value, int64_t repeat,
-                  int64_t padding_shift_count) {
+                  int64_t row_base, int64_t pad_value, int64_t repeat) {
   // m300: b64 tail padding repair is not implemented; keep the signature in
   // sync with the C310 variant so shared callers compile on both arches.
 }
