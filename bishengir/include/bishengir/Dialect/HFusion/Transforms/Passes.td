@@ -296,18 +296,22 @@ def Normalize : Pass<"hfusion-normalize-ops", "func::FuncOp"> {
   let dependentDialects = ["hfusion::HFusionDialect", "hivm::HIVMDialect",
                            "bufferization::BufferizationDialect",
                            "scope::ScopeDialect"];
-  let options = [
-    Option<"useRegBase", "use-regbase", "bool", /*default=*/"false",
-           "Forcefully use RegBase normalize implementation.">,
-    Option<"enableHighPrecision", "enable-high-precision", "bool",
-           /*default=*/"true",
-           "Enable high precision calculation for sin/cos in HFusion.">,
-    Option<
-      "enableFastDiv", "enable-fast-div", "bool",
-      /*default=*/"true",
-      "Enable conversion of div with constant denominator into mul "
-      "excluding cases when reciprocal value is denormal or inf value">
-  ];
+  let options =
+      [Option<"useRegBase", "use-regbase", "bool", /*default=*/"false",
+              "Forcefully use RegBase normalize implementation.">,
+       Option<"enableHighPrecision", "enable-high-precision", "bool",
+              /*default=*/"true",
+              "Enable high precision calculation for sin/cos in HFusion.">,
+       Option<"enableFastDiv", "enable-fast-div", "bool",
+              /*default=*/"true",
+              "Enable conversion of div with constant denominator into mul "
+              "excluding cases when reciprocal value is denormal or inf value">,
+       Option<"enableDivRemPow2", "enable-div-rem-pow2", "bool",
+              /*default=*/"true",
+              "Enable strength reduction of integer div/div_unsigned/mod/modui "
+              "with "
+              "a power-of-two constant divisor into shift/and ops (regbased "
+              "Ascend950 only)">];
 }
 
 def NormalizeSliceOps : Pass<"hfusion-normalize-slice-ops", "func::FuncOp"> {
