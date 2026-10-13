@@ -778,12 +778,8 @@ private:
                               PlanRecHis &history, StorageEntry *entry);
 
   /// plan buffer in speculative ways.
-  /// stage0Memo caches VerifyConflictStage0 results per outline bound; it is
-  /// only valid while the outline is unchanged (i.e. across the spec-level
-  /// retries of one MultiSpecPlan call).
   LogicalResult SpecAlloc(MemBoundList &outline, PlanRecHis &his,
-                          StorageEntry *e, const SpecInfo &si, int localLevel,
-                          DenseMap<const MemoryBound *, bool> &stage0Memo);
+                          StorageEntry *e, const SpecInfo &si, int localLevel);
 
   /// Check whether current buffer conflicts with the history buffers.
   bool VerifyConflictStageCommon(
@@ -1063,6 +1059,20 @@ private:
 
   /// Map from the storage entry pair to its same-loop conflict info.
   DenseMap<StorageEntryPair, bool> sameLoopConflictMap;
+
+  /// Attempt-scoped memo of VerifyConflictStage0 per (entry, bound) pair.
+  /// Bounds are immutable after creation and MemPlan is rebuilt per planning
+  /// attempt, so verdicts are stable; stage0MemoKeepAlive pins every
+  /// memoized bound so its pointer key can never be recycled by a fresh
+  /// allocation (ABA).
+  DenseMap<std::pair<const StorageEntry *, const MemoryBound *>, bool>
+      stage0ConflictMemo;
+  SmallVector<std::shared_ptr<MemoryBound>, 64> stage0MemoKeepAlive;
+
+  /// Attempt-scoped memo of the lifetime-overlap part of
+  /// IsBufferLifeVecConflict per entry pair. Entry life vectors are
+  /// immutable while planning.
+  mutable DenseMap<StorageEntryPair, bool> lifeVecConflictMemo;
 
   /// Memo of BufferInfo::memoryUnique keyed by the first buffer Value of a
   /// buffer life vector. BufferInfo is immutable while planning.
