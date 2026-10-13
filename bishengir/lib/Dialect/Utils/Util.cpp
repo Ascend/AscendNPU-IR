@@ -27,7 +27,6 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/DLTI/DLTI.h"
-#include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/Interfaces/CallInterfaces.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #if (!BISHENGIR_BUILD_STANDALONE_IR_ONLY)
@@ -680,7 +679,7 @@ inline void markDynShapeAlloc(OpBuilder &builder, Value source,
   // for dynamic case, set buffer size by annotation.mark op
   auto tmpMarkOp = builder.create<annotation::MarkOp>(tmpAllocOp->getLoc(),
                                                       tmpAllocOp->getResult(0));
-  tmpMarkOp->setAttr(hivm::kBufferSizeInByteAttr,
+  tmpMarkOp->setAttr(utils::kBufferSizeInByteAttr,
                      builder.getI64IntegerAttr(allocSize));
 }
 
@@ -1291,6 +1290,24 @@ SmallVector<Operation *> utils::getAnnotateOpUsers(Value v) {
       annotateOps.push_back(user);
   }
   return annotateOps;
+}
+
+bool utils::cloneAnnotateOpWithAttr(RewriterBase &rewriter, Value src,
+                                    Value dst, StringRef name) {
+  bool modified = false;
+  for (Operation *op : utils::getAnnotateOpUsers(src)) {
+    auto markOp = cast<annotation::MarkOp>(op);
+    if (!markOp->hasAttr(name))
+      continue;
+    auto clonedMarkOp = rewriter.create<annotation::MarkOp>(
+        markOp.getLoc(), dst, markOp.getValues(), markOp.getKeysAttr());
+    // TODO: Cloning all attrs may be dangerous; need to define a canonical attr
+    // set for mark ops and clone only those attrs in the future.
+    for (NamedAttribute attr : markOp->getAttrs())
+      clonedMarkOp->setAttr(attr.getName(), attr.getValue());
+    modified = true;
+  }
+  return modified;
 }
 
 SmallVector<std::optional<Operation *>>

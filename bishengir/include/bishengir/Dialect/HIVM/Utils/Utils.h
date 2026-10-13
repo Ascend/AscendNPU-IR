@@ -98,10 +98,6 @@ static constexpr llvm::StringLiteral kMarkDCacheVisitedAttr =
 static constexpr llvm::StringLiteral kHIVMDataLayoutAttrName =
     "hivm_data_layout";
 
-/// TODO: add into hivm attrs
-static constexpr llvm::StringLiteral kBufferSizeInByteAttr =
-    "buffer_size_in_byte";
-
 static constexpr llvm::StringLiteral kLogicalBlockNumAttr = "logical_block_num";
 
 static constexpr llvm::StringLiteral kTilingDimMappingAttrName =
@@ -412,10 +408,6 @@ SmallVector<Value> getTensorDynamicValues(OpBuilder &builder, Location loc,
 Value createAllocWithMark(PatternRewriter &rewriter, Location loc,
                           MemRefType memrefType, ValueRange dynamicDims,
                           ArrayRef<int64_t> staticAllocSize, Type elemType);
-
-/// Clone all annotation marks from `src` onto `dst`.
-void cloneAnnotationMarks(PatternRewriter &rewriter, Location loc, Value src,
-                          Value dst);
 
 /// Mark dynamically shaped `dst` with a static buffer_size_in_byte upper
 /// bound derived from `src`'s defining chain. The bound is computed purely

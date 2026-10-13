@@ -701,6 +701,8 @@ static void hivmPostBufferizationOptimizationPipeline(
       bishengir::DecomposePhase::AFTER_RECOGNIZE_BROADCAST;
   pm.nest<func::FuncOp>().addPass(
       createHIVMAggregatedDecomposeOpPass(decomposeOption));
+  // buffer_size_in_byte is needed in alignStoragePipeline
+  pm.nest<func::FuncOp>().addPass(createInferBufferSizeFromSlicePass());
   // align alloc size for special hivm op
   alignStoragePipeline(pm, hivmPipelineOptions);
   // Decompose {vconcat} after stride alignment

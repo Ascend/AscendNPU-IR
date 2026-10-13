@@ -234,6 +234,10 @@ LogicalResult substituteMarkRealCoreType(Operation *op, const Pass &pass);
 // Create a pass to run the HIVM canonicalization pass pipeline on a function.
 std::unique_ptr<Pass> createHIVMCanonicalizationPipelinePass();
 
+// Create a pass to infer buffer size upper bounds from slice chains. Must
+// run before createSetBufferSizePass, which consumes the inserted marks.
+std::unique_ptr<Pass> createInferBufferSizeFromSlicePass();
+
 // Create a pass to set buffer size
 std::unique_ptr<Pass> createSetBufferSizePass();
 

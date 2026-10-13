@@ -16,7 +16,6 @@
 //===----------------------------------------------------------------------===//
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
-#include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
@@ -37,11 +36,12 @@ using namespace mlir::hivm;
 
 namespace {
 inline int64_t getBufferSizeFromAnnotation(annotation::MarkOp markOp) {
-  return markOp->getAttrOfType<IntegerAttr>(kBufferSizeInByteAttr).getInt();
+  return markOp->getAttrOfType<IntegerAttr>(utils::kBufferSizeInByteAttr)
+      .getInt();
 }
 
 inline bool hasBufferSizeInfoInAnnotation(annotation::MarkOp markOp) {
-  return markOp->hasAttrOfType<IntegerAttr>(kBufferSizeInByteAttr);
+  return markOp->hasAttrOfType<IntegerAttr>(utils::kBufferSizeInByteAttr);
 }
 
 struct SetBufferSizePass : public impl::SetBufferSizeBase<SetBufferSizePass> {
@@ -74,7 +74,7 @@ void SetBufferSizePass::runOnOperation() {
         cast<MemRefType>(definingOp->getOpResult(0).getType());
     if (maybeMemRefType.hasStaticShape()) {
       // If the memref alloc has static shape, only remove buffer size attr
-      removeMarkOpAttr(markOp, kBufferSizeInByteAttr);
+      removeMarkOpAttr(markOp, utils::kBufferSizeInByteAttr);
       return WalkResult::advance();
     }
     int64_t currentBufferSize = getBufferSizeFromAnnotation(markOp);
@@ -85,7 +85,7 @@ void SetBufferSizePass::runOnOperation() {
       return WalkResult::interrupt();
     }
     alloc2BufferSize.insert({definingOp, currentBufferSize});
-    removeMarkOpAttr(markOp, kBufferSizeInByteAttr);
+    removeMarkOpAttr(markOp, utils::kBufferSizeInByteAttr);
     return WalkResult::advance();
   });
   if (walkResult.wasInterrupted())
