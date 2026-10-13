@@ -191,3 +191,94 @@ module {
     tt.return
   }
 }
+
+// -----
+// Test 9: A padded 2x15 UB load must retain its compact row stride and mask.
+// Replacing it with a 2x16 local_load would read row 1 from offset 16 rather
+// than offset 15 and drop the element at offset 15.
+
+// CHECK-LABEL: tt.func @masked_compact_rows
+// CHECK-SAME:  (%[[ARG:.*]]: !tt.ptr<f32, 6>)
+// CHECK-NOT:     ttg.local_load
+// CHECK:         tt.load %{{.*}}, %{{.*}} : tensor<2x16x!tt.ptr<f32, 6>>
+// CHECK-NOT:     ttg.local_load
+// CHECK:         tt.return
+module {
+  tt.func @masked_compact_rows(%arg0: !tt.ptr<f32, 6>) {
+    %row = tt.make_range {end = 2 : i32, start = 0 : i32}
+        : tensor<2xi32>
+    %col = tt.make_range {end = 16 : i32, start = 0 : i32}
+        : tensor<16xi32>
+    %stride = arith.constant dense<15> : tensor<2xi32>
+    %limit = arith.constant dense<15> : tensor<16xi32>
+    %row_offset = arith.muli %row, %stride : tensor<2xi32>
+    %row_2d = tt.expand_dims %row_offset {axis = 1 : i32}
+        : tensor<2xi32> -> tensor<2x1xi32>
+    %col_2d = tt.expand_dims %col {axis = 0 : i32}
+        : tensor<16xi32> -> tensor<1x16xi32>
+    %offset = tt.broadcast %row_2d : tensor<2x1xi32> -> tensor<2x16xi32>
+    %col_offset = tt.broadcast %col_2d : tensor<1x16xi32> -> tensor<2x16xi32>
+    %indices = arith.addi %offset, %col_offset : tensor<2x16xi32>
+    %valid_col = arith.cmpi slt, %col, %limit : tensor<16xi32>
+    %valid_2d = tt.expand_dims %valid_col {axis = 0 : i32}
+        : tensor<16xi1> -> tensor<1x16xi1>
+    %mask = tt.broadcast %valid_2d : tensor<1x16xi1> -> tensor<2x16xi1>
+    %base = tt.splat %arg0 : !tt.ptr<f32, 6>
+        -> tensor<2x16x!tt.ptr<f32, 6>>
+    %ptr = tt.addptr %base, %indices
+        : tensor<2x16x!tt.ptr<f32, 6>>, tensor<2x16xi32>
+    %value = tt.load %ptr, %mask
+        : tensor<2x16x!tt.ptr<f32, 6>>
+    tt.return
+  }
+}
+
+// -----
+// Test 10: A masked shared-pointer store must also retain its address and mask.
+
+// CHECK-LABEL: tt.func @masked_store
+// CHECK-SAME:  (%[[ARG:.*]]: !tt.ptr<i32, 6>)
+// CHECK-NOT:     ttg.local_store
+// CHECK:         tt.store %{{.*}}, %{{.*}}, %{{.*}} : tensor<8x!tt.ptr<i32, 6>>
+// CHECK-NOT:     ttg.local_store
+// CHECK:         tt.return
+module {
+  tt.func @masked_store(%arg0: !tt.ptr<i32, 6>) {
+    %range = tt.make_range {end = 8 : i32, start = 0 : i32}
+        : tensor<8xi32>
+    %limit = arith.constant dense<7> : tensor<8xi32>
+    %mask = arith.cmpi slt, %range, %limit : tensor<8xi32>
+    %base = tt.splat %arg0 : !tt.ptr<i32, 6>
+        -> tensor<8x!tt.ptr<i32, 6>>
+    %ptr = tt.addptr %base, %range
+        : tensor<8x!tt.ptr<i32, 6>>, tensor<8xi32>
+    tt.store %ptr, %range, %mask : tensor<8x!tt.ptr<i32, 6>>
+    tt.return
+  }
+}
+
+// -----
+// Test 11: A masked load keeps all accesses to the same base in pointer form.
+
+// CHECK-LABEL: tt.func @mixed_masked_and_unmasked_loads
+// CHECK-SAME:  (%[[ARG:.*]]: !tt.ptr<i32, 6>)
+// CHECK-NOT:     ttg.local_load
+// CHECK:         tt.load %{{.*}} : tensor<8x!tt.ptr<i32, 6>>
+// CHECK:         tt.load %{{.*}}, %{{.*}} : tensor<8x!tt.ptr<i32, 6>>
+// CHECK-NOT:     ttg.local_load
+// CHECK:         tt.return
+module {
+  tt.func @mixed_masked_and_unmasked_loads(%arg0: !tt.ptr<i32, 6>) {
+    %range = tt.make_range {end = 8 : i32, start = 0 : i32}
+        : tensor<8xi32>
+    %limit = arith.constant dense<7> : tensor<8xi32>
+    %mask = arith.cmpi slt, %range, %limit : tensor<8xi32>
+    %base = tt.splat %arg0 : !tt.ptr<i32, 6>
+        -> tensor<8x!tt.ptr<i32, 6>>
+    %ptr = tt.addptr %base, %range
+        : tensor<8x!tt.ptr<i32, 6>>, tensor<8xi32>
+    %unmasked = tt.load %ptr : tensor<8x!tt.ptr<i32, 6>>
+    %masked = tt.load %ptr, %mask : tensor<8x!tt.ptr<i32, 6>>
+    tt.return
+  }
+}
