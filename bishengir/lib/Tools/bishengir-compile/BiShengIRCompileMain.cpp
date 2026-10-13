@@ -76,10 +76,6 @@ std::string getLibDirFromExecutable(StringRef executablePath) {
 /// Paths are canonical (no ".." or ".") before being stored in attributes.
 void addBitcodeAttrsToModule(ModuleOp module, StringRef executablePath,
                              const BiShengIRCompileMainConfig &config) {
-  auto version = bishengir::parseHIVMCVersion(config.getHIVMCVersion());
-  if (!version.has_value() || version.value().empty() ||
-      version.value().getAsString() == "0.1.0")
-    return;
   std::string libDir = getLibDirFromExecutable(executablePath);
   MLIRContext *ctx = module->getContext();
 
@@ -239,18 +235,6 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
   mlir::DiagnosticEngine &diagEngine = ctx->getDiagEngine();
   std::vector<std::unique_ptr<Diagnostic>> collectedDiagnostics;
 
-  // Resolve hivmc backward compatibility
-  auto versionMaybe = detectHIVMCVersion(getHIVMCName());
-  if (versionMaybe.has_value()) {
-    llvm::VersionTuple hivmcVersion = versionMaybe.value();
-    config.setHIVMCVersion(hivmcVersion.getAsString());
-  } else {
-    // Not return failure directly to support run compile without hivmc.
-    // Let user to specify hivmc version by commandline.
-    llvm::dbgs() << "[WARNING] Failed to detect hivmc version for backward "
-                    "compatibility\n";
-  }
-
   // Collect diagnostics and emit them afterwards because we have tuning
   // mechanism.
   auto handlerID = diagEngine.registerHandler([&](Diagnostic &diag) {
@@ -311,11 +295,8 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
 
     return OwningModuleRef(mod);
   }
-
   // Add bitcode path attributes from ../lib/*.bc to ModuleOp before hivmc.
-  // Skip for legacy hivmc (version 0.1.0 or empty) which does not support it.
   addBitcodeAttrsToModule(mod, config.getExecutablePath(), config);
-
   auto savedTemp = handleSaveTemps(mod, config);
   if (failed(savedTemp)) {
     return failure();

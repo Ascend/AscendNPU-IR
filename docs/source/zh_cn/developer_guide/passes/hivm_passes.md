@@ -421,11 +421,13 @@
 
 当模块为mix类型时，该Pass会标记那些不在带`limit_sub_block_id0`属性的`scf.if`内的sync_block_lock与sync_block_unlock算子。被标记的算子会获得`sync_block_lock_with_subblock`属性，表示其应使用基于subblockid的block_idx计算方式（`get_block_idx * get_subblocknum + get_subblockid`）。
 
+<!-- npu="950" id2 -->
 ## -hivm-mark-tightly-coupled-buffer
 
 **功能**：为L1、UB alloc标记tightly-coupled-buffer id（RegBase支持）。
 
 在`-hivm-split-mix-kernel`之前于MIX函数上分配id，使AIC、AIV克隆继承相同id。
+<!-- end id2 -->
 
 ## -hivm-memref-alloc-to-alloca
 
@@ -510,6 +512,7 @@
 - `-enable-global-workspace-reuse`：启用全局工作空间复用，默认关闭。
 - `-restrict-inplace-as-isa`：限制内存就地操作与ISA保持一致，默认关闭。
 
+<!-- npu="950" id1 -->
 ## -hivm-plan-memory-regbase
 
 **功能**：在Ascend 950PR&950DT系列产品上为HIVM算子执行内存规划。
@@ -524,6 +527,7 @@
 - `-disable-tightly-coupled-buffer-reuse`：禁用紧耦合缓冲区复用，默认关闭。
 - `-disable-vf-reachable-check`：禁用VF可达性检查，默认关闭。
 - `-plan-memory-strategy`：存储条目重排序的内存规划策略。
+<!-- end id1 -->
 
 ## -hivm-pre-mark-stride-align
 
@@ -598,7 +602,9 @@
 
 - 若在主机函数内调用Mix kernel，会为最终的Kernel启动生成函数声明；当前不支持在设备函数内调用Mix kernel。
 - 若存在混合核`scf.if`，请先显式运行`-hivm-split-mixed-if-conditionals`（独立Pass，不在默认pipeline中）。
+<!-- npu="950" id3 -->
 - 在Regbase芯片上，还需先运行`-hivm-mark-tightly-coupled-buffer`、`-hivm-hoist-tightly-coupled-alloc`。
+<!-- end id3 -->
 
 **转换示例**：
 

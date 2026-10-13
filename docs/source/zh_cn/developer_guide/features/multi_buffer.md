@@ -117,8 +117,12 @@ annotation.mark %p {hivm.multi_buffer = 2 : i32} : memref<1024xf16, #hivm.addres
 
 `--limit-auto-multi-buffer-buffer`的默认值与目标硬件相关：
 
-- Ascend 950PR&950DT系列产品：`no-limit`
-- Atlas A3系列产品、Atlas A2系列产品：`only-cube`
+<!-- npu="950" id1 -->
+- <term>Ascend 950PR&950DT系列产品</term>：`no-limit`
+<!-- end id1 -->
+<!-- npu="A3,910b" id2 -->
+- <term>Atlas A3系列产品</term>、<term>Atlas A2系列产品</term>：`only-cube`
+<!-- end id2 -->
 
 显式传入该选项时以用户取值为准。
 

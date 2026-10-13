@@ -151,9 +151,7 @@ void AppendDeviceSpec::runOnOperation() {
   hacc::utils::setNPUTargetSpec(moduleOp, targetSpec);
 
   if (hacc::utils::isMemBasedArch(moduleOp)) {
-    llvm::VersionTuple hivmcVersion;
-    if (hivmcVersion.tryParse(HIVMCVersion))
-      hivmcVersion = llvm::VersionTuple(0, 0, 0);
+    auto hivmcVersion = llvm::VersionTuple(0, 0, 0);
     moduleOp->setAttr(hacc::HIVMCVersionAttr::name,
                       hacc::HIVMCVersionAttr::get(ctx, hivmcVersion));
     moduleOp->setAttr(hacc::HIVMCCompatiblePrintAttr::name,

@@ -16,22 +16,6 @@ module attributes {hacc.hivmc_version = #hacc.hivmc_version<"0.2.0">} {
 
 // -----
 
-// @inserts_free_lock_before_return, but no free_lock_var is inserted.
-// CHECK-LABEL: func.func @skips_when_hivmc_below_0_2_0
-// CHECK: hivm.hir.create_sync_block_lock
-// CHECK: hivm.hir.sync_block_lock
-// CHECK-NOT: hivm.hir.free_lock_var
-// CHECK: return
-module attributes {hacc.hivmc_version = #hacc.hivmc_version<"0.1.0">} {
-  func.func @skips_when_hivmc_below_0_2_0() attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
-    %lock = hivm.hir.create_sync_block_lock : memref<1xi64>
-    hivm.hir.sync_block_lock lock_var(%lock : memref<1xi64>)
-    hivm.hir.sync_block_unlock lock_var(%lock : memref<1xi64>)
-    return
-  }
-}
-
-// -----
 
 // Regbase modules do not carry hivmc_version today; the pass should still
 // insert free_lock_var instead of bailing out on the version check.
