@@ -667,8 +667,8 @@ class HIVM_ElementwiseBinaryOp<string mnemonic, list<Trait> traits = [], Type sr
 def VAddOp
     : HIVM_ElementwiseBinaryOp<
           "vadd", [SameOperandsElementType, VectorizableTrait,
-                   OperElemTypeConstraints<[0, 1], [I8, I16, I32, F16, F32,
-                                                    I64]>,
+                   OperElemTypeConstraints<[0, 1], [I8, I16, I32, F16, BF16,
+                                                    F32, I64]>,
                    CommutativeOpTrait, VectorOnlyTrait<0>,
                    DeclareOpInterfaceMethods<
                        ExtraBufferOpInterface, ["getExtraBufferSize"]>,
@@ -704,8 +704,8 @@ def VAddOp
 def VMulOp
     : HIVM_ElementwiseBinaryOp<
           "vmul", [SameOperandsElementType, VectorizableTrait,
-                   OperElemTypeConstraints<[0, 1], [I8, I16, I32, F16, F32,
-                                                    I64]>,
+                   OperElemTypeConstraints<[0, 1], [I8, I16, I32, F16, BF16,
+                                                    F32, I64]>,
                    CommutativeOpTrait, VectorOnlyTrait<0>,
                    DeclareOpInterfaceMethods<
                        ExtraBufferOpInterface, ["getExtraBufferSize"]>,
@@ -779,8 +779,8 @@ def VMulExtUiOp : HIVM_ElementwiseBinaryOp<"vmulextui",
 def VSubOp
     : HIVM_ElementwiseBinaryOp<
           "vsub", [SameOperandsElementType, VectorizableTrait,
-                   OperElemTypeConstraints<[0, 1], [I8, I16, I32, F16, F32,
-                                                    I64]>,
+                   OperElemTypeConstraints<[0, 1], [I8, I16, I32, F16, BF16,
+                                                    F32, I64]>,
                    DeclareOpInterfaceMethods<
                        ExtraBufferOpInterface, ["getExtraBufferSize"]>,
                    DeclareOpInterfaceMethods<
