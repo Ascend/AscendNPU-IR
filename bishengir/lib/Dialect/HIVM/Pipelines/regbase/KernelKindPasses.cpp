@@ -26,7 +26,10 @@
 // InferFuncCoreType after the pass and replaces an existing core-type
 // annotation. A function already split out of a mix kernel
 // (`hivm.part_of_mix`) keeps its stamp, and its presence keeps the module
-// core-type attribute. Other functions in that module are still cleared.
+// core-type attribute. A declaration with no body also keeps its stamp:
+// InferFuncCoreType skips external call-graph nodes, and a caller of an
+// unannotated external function fails. Other functions in that module are
+// still cleared.
 //
 //===----------------------------------------------------------------------===//
 
@@ -53,6 +56,11 @@ void clearFuncCoreTypeAttrs(ModuleOp module) {
       partOfMix = true;
       return;
     }
+    // SplitSimtModule leaves the SIMT VF as a private declaration in the
+    // SIMD module. There is no body to re-infer, and dropping the stamp
+    // makes the caller's core-type inference fail.
+    if (func.isExternal())
+      return;
     func->removeAttr(hivm::TFuncCoreTypeAttr::name);
   });
   if (!partOfMix)

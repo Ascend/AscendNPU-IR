@@ -706,6 +706,68 @@ TEST_F(PassExecutionPolicyTest, PartOfMixCoreTypeIsNotCleared) {
   EXPECT_EQ(moduleType.getModuleCoreType(), hivm::TModuleCoreType::MIX);
 }
 
+// A bodyless declaration keeps its core type. Clearing it makes the caller
+// fail during the classifyKernel follow-up, which is what split-simt-module
+// leaves behind for an outlined SIMT VF.
+TEST_F(PassExecutionPolicyTest, ExternalFuncCoreTypeIsNotCleared) {
+  context.loadDialect<hivm::HIVMDialect, memref::MemRefDialect,
+                      func::FuncDialect>();
+  mlir::hivm::regbase::registerKernelKindPassesForRegbase();
+
+  auto loc = builder->getUnknownLoc();
+  OwningOpRef<ModuleOp> mod = builder->create<ModuleOp>(loc);
+  auto memTy = MemRefType::get({4}, builder->getF32Type());
+  func::FuncOp stub;
+  {
+    OpBuilder::InsertionGuard g(*builder);
+    builder->setInsertionPointToEnd(mod.get().getBody());
+    stub = builder->create<func::FuncOp>(loc, "simt_stub",
+                                         builder->getFunctionType({}, {}));
+    stub.setPrivate();
+    stub->setAttr(
+        hivm::TFuncCoreTypeAttr::name,
+        hivm::TFuncCoreTypeAttr::get(&context, hivm::TFuncCoreType::AIV));
+  }
+  {
+    OpBuilder::InsertionGuard g(*builder);
+    builder->setInsertionPointToEnd(mod.get().getBody());
+    auto func = builder->create<func::FuncOp>(
+        loc, "caller", builder->getFunctionType({memTy, memTy}, {}));
+    func->setAttr(
+        hivm::TFuncCoreTypeAttr::name,
+        hivm::TFuncCoreTypeAttr::get(&context, hivm::TFuncCoreType::MIX));
+    func.addEntryBlock();
+    builder->setInsertionPointToEnd(&func.getBody().front());
+    builder->create<hivm::LoadOp>(loc, TypeRange{}, func.getArgument(0),
+                                  func.getArgument(1));
+    builder->create<func::CallOp>(loc, stub, ValueRange{});
+    builder->create<func::ReturnOp>(loc);
+  }
+
+  bishengir::BiShengIRPassManager pm(&context, "builtin.module",
+                                     mlir::PassManager::Nesting::Implicit);
+  pm.addPass(mlir::hivm::createInlineFixpipePass());
+  ASSERT_TRUE(succeeded(static_cast<mlir::PassManager &>(pm).run(mod.get())));
+
+  func::FuncOp caller;
+  for (func::FuncOp func : mod.get().getOps<func::FuncOp>()) {
+    if (func.getName() == "caller")
+      caller = func;
+    else if (func.getName() == "simt_stub")
+      stub = func;
+  }
+  ASSERT_TRUE(caller);
+  ASSERT_TRUE(stub.isExternal());
+  auto stubType = stub->getAttrOfType<hivm::TFuncCoreTypeAttr>(
+      hivm::TFuncCoreTypeAttr::name);
+  auto callerType = caller->getAttrOfType<hivm::TFuncCoreTypeAttr>(
+      hivm::TFuncCoreTypeAttr::name);
+  ASSERT_TRUE(stubType);
+  ASSERT_TRUE(callerType);
+  EXPECT_EQ(stubType.getFuncCoreType(), hivm::TFuncCoreType::AIV);
+  EXPECT_EQ(callerType.getFuncCoreType(), hivm::TFuncCoreType::AIV);
+}
+
 // The production RegBase kernel-kind lists must be reachable through the
 // real registration entry point the pipeline builders call.
 TEST_F(PassExecutionPolicyTest, ProductionRegbaseKernelKindsRegistered) {
