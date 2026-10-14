@@ -57,6 +57,12 @@ _mlir_ciface_aclshmem_team_translate_pe(aclshmem_team_t src_team, int src_pe,
   return aclshmem_team_translate_pe(src_team, src_pe, dest_team);
 }
 
+// Wrapper for aclshmem_team_pe_mapping
+__aicore__ __attribute__((always_inline)) int
+_mlir_ciface_aclshmem_team_pe_mapping(aclshmem_team_t team, int pe) {
+  return aclshmem_team_pe_mapping(team, pe);
+}
+
 // Wrapper for aclshmem_barrier
 __aicore__ __attribute__((always_inline)) void
 _mlir_ciface_aclshmem_barrier(aclshmem_team_t team) {
@@ -91,6 +97,30 @@ _mlir_ciface_aclshmem_quiet(void) {
 __aicore__ __attribute__((always_inline)) void
 _mlir_ciface_aclshmem_fence(void) {
   aclshmem_fence();
+}
+
+// Wrapper for aclshmem_sync
+__aicore__ __attribute__((always_inline)) void
+_mlir_ciface_aclshmem_sync(aclshmem_team_t team) {
+  aclshmem_sync(team);
+}
+
+// Wrapper for aclshmem_sync_all
+__aicore__ __attribute__((always_inline)) void
+_mlir_ciface_aclshmem_sync_all(void) {
+  aclshmem_sync_all();
+}
+
+// Wrapper for aclshmemx_sync_vec
+__aicore__ __attribute__((always_inline)) void
+_mlir_ciface_aclshmemx_sync_vec(aclshmem_team_t team) {
+  aclshmemx_sync_vec(team);
+}
+
+// Wrapper for aclshmemx_sync_vec_all
+__aicore__ __attribute__((always_inline)) void
+_mlir_ciface_aclshmemx_sync_vec_all(void) {
+  aclshmemx_sync_vec_all();
 }
 
 // Wrapper for aclshmemx_signal_op
@@ -345,11 +375,245 @@ ACLSHMEM_ATOMIC_ADD_WRAPPER(bfloat16, bfloat16_t)
 ACLSHMEM_ATOMIC_ADD_WRAPPER(half, half)
 ACLSHMEM_ATOMIC_ADD_WRAPPER(int32, int32_t)
 ACLSHMEM_ATOMIC_ADD_WRAPPER(float, float)
+// Extended atomic-add types require Ascend950; see the support matrix in
+// device/gm2gm/shmem_device_amo.h.
+#if defined(__DAV_C310__)
 ACLSHMEM_ATOMIC_ADD_WRAPPER(uint32, uint32_t)
 ACLSHMEM_ATOMIC_ADD_WRAPPER(uint64, uint64_t)
 ACLSHMEM_ATOMIC_ADD_WRAPPER(int64, int64_t)
+#endif
 
 #undef ACLSHMEM_ATOMIC_ADD_WRAPPER
+
+// Macro to generate wrappers for aclshmem_g_##NAME functions (scalar get)
+#define ACLSHMEM_G_WRAPPER(NAME, TYPE)                                         \
+  __aicore__ __attribute__((always_inline)) TYPE                               \
+  _mlir_ciface_aclshmem_g_##NAME(memref_t<__gm__ TYPE, 1> *src, int pe) {      \
+    return aclshmem_##NAME##_g(src->aligned + src->offset, pe);                \
+  }
+
+ACLSHMEM_G_WRAPPER(half, half)
+ACLSHMEM_G_WRAPPER(float, float)
+ACLSHMEM_G_WRAPPER(int8, int8_t)
+ACLSHMEM_G_WRAPPER(int16, int16_t)
+ACLSHMEM_G_WRAPPER(int32, int32_t)
+ACLSHMEM_G_WRAPPER(int64, int64_t)
+ACLSHMEM_G_WRAPPER(uint8, uint8_t)
+ACLSHMEM_G_WRAPPER(uint16, uint16_t)
+ACLSHMEM_G_WRAPPER(uint32, uint32_t)
+ACLSHMEM_G_WRAPPER(uint64, uint64_t)
+ACLSHMEM_G_WRAPPER(char, char)
+ACLSHMEM_G_WRAPPER(bfloat16, bfloat16_t)
+
+#undef ACLSHMEM_G_WRAPPER
+
+// The following atomic operations require Ascend950; see the support matrices
+// in device/gm2gm/shmem_device_amo.h.
+#if defined(__DAV_C310__)
+// Macro to generate wrappers for aclshmem_atomic_fetch_add
+#define ACLSHMEM_ATOMIC_FETCH_ADD_WRAPPER(NAME, TYPE)                          \
+  __aicore__ __attribute__((always_inline)) TYPE                               \
+  _mlir_ciface_aclshmem_atomic_fetch_add_##NAME(memref_t<__gm__ TYPE, 1> *dst, \
+                                                const TYPE value, int pe) {    \
+    return aclshmem_##NAME##_atomic_fetch_add(dst->aligned + dst->offset,      \
+                                              value, pe);                      \
+  }
+
+ACLSHMEM_ATOMIC_FETCH_ADD_WRAPPER(int32, int32_t)
+ACLSHMEM_ATOMIC_FETCH_ADD_WRAPPER(uint32, uint32_t)
+ACLSHMEM_ATOMIC_FETCH_ADD_WRAPPER(int64, int64_t)
+ACLSHMEM_ATOMIC_FETCH_ADD_WRAPPER(uint64, uint64_t)
+
+#undef ACLSHMEM_ATOMIC_FETCH_ADD_WRAPPER
+
+// Macro to generate wrappers for aclshmem_atomic_inc
+#define ACLSHMEM_ATOMIC_INC_WRAPPER(NAME, TYPE)                                \
+  __aicore__ __attribute__((always_inline)) void                               \
+  _mlir_ciface_aclshmem_atomic_inc_##NAME(memref_t<__gm__ TYPE, 1> *dst,       \
+                                          int pe) {                            \
+    aclshmem_##NAME##_atomic_inc(dst->aligned + dst->offset, pe);              \
+  }
+
+ACLSHMEM_ATOMIC_INC_WRAPPER(int32, int32_t)
+ACLSHMEM_ATOMIC_INC_WRAPPER(uint32, uint32_t)
+ACLSHMEM_ATOMIC_INC_WRAPPER(int64, int64_t)
+ACLSHMEM_ATOMIC_INC_WRAPPER(uint64, uint64_t)
+
+#undef ACLSHMEM_ATOMIC_INC_WRAPPER
+
+// Macro to generate wrappers for aclshmem_atomic_fetch_inc
+#define ACLSHMEM_ATOMIC_FETCH_INC_WRAPPER(NAME, TYPE)                          \
+  __aicore__ __attribute__((always_inline)) TYPE                               \
+  _mlir_ciface_aclshmem_atomic_fetch_inc_##NAME(memref_t<__gm__ TYPE, 1> *dst, \
+                                                int pe) {                      \
+    return aclshmem_##NAME##_atomic_fetch_inc(dst->aligned + dst->offset, pe); \
+  }
+
+ACLSHMEM_ATOMIC_FETCH_INC_WRAPPER(int32, int32_t)
+ACLSHMEM_ATOMIC_FETCH_INC_WRAPPER(uint32, uint32_t)
+ACLSHMEM_ATOMIC_FETCH_INC_WRAPPER(int64, int64_t)
+ACLSHMEM_ATOMIC_FETCH_INC_WRAPPER(uint64, uint64_t)
+
+#undef ACLSHMEM_ATOMIC_FETCH_INC_WRAPPER
+
+// Macro to generate wrappers for aclshmem_atomic_and
+#define ACLSHMEM_ATOMIC_AND_WRAPPER(NAME, TYPE)                                \
+  __aicore__ __attribute__((always_inline)) void                               \
+  _mlir_ciface_aclshmem_atomic_and_##NAME(memref_t<__gm__ TYPE, 1> *dst,       \
+                                          const TYPE value, int pe) {          \
+    aclshmem_##NAME##_atomic_and(dst->aligned + dst->offset, value, pe);       \
+  }
+
+ACLSHMEM_ATOMIC_AND_WRAPPER(int32, int32_t)
+ACLSHMEM_ATOMIC_AND_WRAPPER(uint32, uint32_t)
+ACLSHMEM_ATOMIC_AND_WRAPPER(int64, int64_t)
+ACLSHMEM_ATOMIC_AND_WRAPPER(uint64, uint64_t)
+
+#undef ACLSHMEM_ATOMIC_AND_WRAPPER
+
+// Macro to generate wrappers for aclshmem_atomic_or
+#define ACLSHMEM_ATOMIC_OR_WRAPPER(NAME, TYPE)                                 \
+  __aicore__ __attribute__((always_inline)) void                               \
+  _mlir_ciface_aclshmem_atomic_or_##NAME(memref_t<__gm__ TYPE, 1> *dst,        \
+                                         const TYPE value, int pe) {           \
+    aclshmem_##NAME##_atomic_or(dst->aligned + dst->offset, value, pe);        \
+  }
+
+ACLSHMEM_ATOMIC_OR_WRAPPER(int32, int32_t)
+ACLSHMEM_ATOMIC_OR_WRAPPER(uint32, uint32_t)
+ACLSHMEM_ATOMIC_OR_WRAPPER(int64, int64_t)
+ACLSHMEM_ATOMIC_OR_WRAPPER(uint64, uint64_t)
+
+#undef ACLSHMEM_ATOMIC_OR_WRAPPER
+
+// Macro to generate wrappers for aclshmem_atomic_xor
+#define ACLSHMEM_ATOMIC_XOR_WRAPPER(NAME, TYPE)                                \
+  __aicore__ __attribute__((always_inline)) void                               \
+  _mlir_ciface_aclshmem_atomic_xor_##NAME(memref_t<__gm__ TYPE, 1> *dst,       \
+                                          const TYPE value, int pe) {          \
+    aclshmem_##NAME##_atomic_xor(dst->aligned + dst->offset, value, pe);       \
+  }
+
+ACLSHMEM_ATOMIC_XOR_WRAPPER(int32, int32_t)
+ACLSHMEM_ATOMIC_XOR_WRAPPER(uint32, uint32_t)
+ACLSHMEM_ATOMIC_XOR_WRAPPER(int64, int64_t)
+ACLSHMEM_ATOMIC_XOR_WRAPPER(uint64, uint64_t)
+
+#undef ACLSHMEM_ATOMIC_XOR_WRAPPER
+
+// Macro to generate wrappers for aclshmem_atomic_fetch_and
+#define ACLSHMEM_ATOMIC_FETCH_AND_WRAPPER(NAME, TYPE)                          \
+  __aicore__ __attribute__((always_inline)) TYPE                               \
+  _mlir_ciface_aclshmem_atomic_fetch_and_##NAME(memref_t<__gm__ TYPE, 1> *dst, \
+                                                const TYPE value, int pe) {    \
+    return aclshmem_##NAME##_atomic_fetch_and(dst->aligned + dst->offset,      \
+                                              value, pe);                      \
+  }
+
+ACLSHMEM_ATOMIC_FETCH_AND_WRAPPER(int32, int32_t)
+ACLSHMEM_ATOMIC_FETCH_AND_WRAPPER(uint32, uint32_t)
+ACLSHMEM_ATOMIC_FETCH_AND_WRAPPER(int64, int64_t)
+ACLSHMEM_ATOMIC_FETCH_AND_WRAPPER(uint64, uint64_t)
+
+#undef ACLSHMEM_ATOMIC_FETCH_AND_WRAPPER
+
+// Macro to generate wrappers for aclshmem_atomic_fetch_or
+#define ACLSHMEM_ATOMIC_FETCH_OR_WRAPPER(NAME, TYPE)                           \
+  __aicore__ __attribute__((always_inline)) TYPE                               \
+  _mlir_ciface_aclshmem_atomic_fetch_or_##NAME(memref_t<__gm__ TYPE, 1> *dst,  \
+                                               const TYPE value, int pe) {     \
+    return aclshmem_##NAME##_atomic_fetch_or(dst->aligned + dst->offset,       \
+                                             value, pe);                       \
+  }
+
+ACLSHMEM_ATOMIC_FETCH_OR_WRAPPER(int32, int32_t)
+ACLSHMEM_ATOMIC_FETCH_OR_WRAPPER(uint32, uint32_t)
+ACLSHMEM_ATOMIC_FETCH_OR_WRAPPER(int64, int64_t)
+ACLSHMEM_ATOMIC_FETCH_OR_WRAPPER(uint64, uint64_t)
+
+#undef ACLSHMEM_ATOMIC_FETCH_OR_WRAPPER
+
+// Macro to generate wrappers for aclshmem_atomic_fetch_xor
+#define ACLSHMEM_ATOMIC_FETCH_XOR_WRAPPER(NAME, TYPE)                          \
+  __aicore__ __attribute__((always_inline)) TYPE                               \
+  _mlir_ciface_aclshmem_atomic_fetch_xor_##NAME(memref_t<__gm__ TYPE, 1> *dst, \
+                                                const TYPE value, int pe) {    \
+    return aclshmem_##NAME##_atomic_fetch_xor(dst->aligned + dst->offset,      \
+                                              value, pe);                      \
+  }
+
+ACLSHMEM_ATOMIC_FETCH_XOR_WRAPPER(int32, int32_t)
+ACLSHMEM_ATOMIC_FETCH_XOR_WRAPPER(uint32, uint32_t)
+ACLSHMEM_ATOMIC_FETCH_XOR_WRAPPER(int64, int64_t)
+ACLSHMEM_ATOMIC_FETCH_XOR_WRAPPER(uint64, uint64_t)
+
+#undef ACLSHMEM_ATOMIC_FETCH_XOR_WRAPPER
+
+// Macro to generate wrappers for aclshmem_atomic_fetch
+#define ACLSHMEM_ATOMIC_FETCH_WRAPPER(NAME, TYPE)                              \
+  __aicore__ __attribute__((always_inline)) TYPE                               \
+  _mlir_ciface_aclshmem_atomic_fetch_##NAME(memref_t<__gm__ TYPE, 1> *src,     \
+                                            int pe) {                          \
+    return aclshmem_##NAME##_atomic_fetch(src->aligned + src->offset, pe);     \
+  }
+
+ACLSHMEM_ATOMIC_FETCH_WRAPPER(int32, int32_t)
+ACLSHMEM_ATOMIC_FETCH_WRAPPER(uint32, uint32_t)
+ACLSHMEM_ATOMIC_FETCH_WRAPPER(int64, int64_t)
+ACLSHMEM_ATOMIC_FETCH_WRAPPER(uint64, uint64_t)
+
+#undef ACLSHMEM_ATOMIC_FETCH_WRAPPER
+
+// Macro to generate wrappers for aclshmem_atomic_set
+#define ACLSHMEM_ATOMIC_SET_WRAPPER(NAME, TYPE)                                \
+  __aicore__ __attribute__((always_inline)) void                               \
+  _mlir_ciface_aclshmem_atomic_set_##NAME(memref_t<__gm__ TYPE, 1> *dst,       \
+                                          const TYPE value, int pe) {          \
+    aclshmem_##NAME##_atomic_set(dst->aligned + dst->offset, value, pe);       \
+  }
+
+ACLSHMEM_ATOMIC_SET_WRAPPER(int32, int32_t)
+ACLSHMEM_ATOMIC_SET_WRAPPER(uint32, uint32_t)
+ACLSHMEM_ATOMIC_SET_WRAPPER(int64, int64_t)
+ACLSHMEM_ATOMIC_SET_WRAPPER(uint64, uint64_t)
+ACLSHMEM_ATOMIC_SET_WRAPPER(float, float)
+
+#undef ACLSHMEM_ATOMIC_SET_WRAPPER
+
+// Macro to generate wrappers for aclshmem_atomic_swap
+#define ACLSHMEM_ATOMIC_SWAP_WRAPPER(NAME, TYPE)                               \
+  __aicore__ __attribute__((always_inline)) TYPE                               \
+  _mlir_ciface_aclshmem_atomic_swap_##NAME(memref_t<__gm__ TYPE, 1> *dst,      \
+                                           const TYPE value, int pe) {         \
+    return aclshmem_##NAME##_atomic_swap(dst->aligned + dst->offset, value,    \
+                                         pe);                                  \
+  }
+
+ACLSHMEM_ATOMIC_SWAP_WRAPPER(int32, int32_t)
+ACLSHMEM_ATOMIC_SWAP_WRAPPER(uint32, uint32_t)
+ACLSHMEM_ATOMIC_SWAP_WRAPPER(int64, int64_t)
+ACLSHMEM_ATOMIC_SWAP_WRAPPER(uint64, uint64_t)
+ACLSHMEM_ATOMIC_SWAP_WRAPPER(float, float)
+
+#undef ACLSHMEM_ATOMIC_SWAP_WRAPPER
+
+// Macro to generate wrappers for aclshmem_atomic_compare_swap
+#define ACLSHMEM_ATOMIC_COMPARE_SWAP_WRAPPER(NAME, TYPE)                       \
+  __aicore__ __attribute__((always_inline)) TYPE                               \
+  _mlir_ciface_aclshmem_atomic_compare_swap_##NAME(                            \
+      memref_t<__gm__ TYPE, 1> *dst, const TYPE cond, const TYPE value,        \
+      int pe) {                                                                \
+    return aclshmem_##NAME##_atomic_compare_swap(dst->aligned + dst->offset,   \
+                                                 cond, value, pe);             \
+  }
+
+ACLSHMEM_ATOMIC_COMPARE_SWAP_WRAPPER(int32, int32_t)
+ACLSHMEM_ATOMIC_COMPARE_SWAP_WRAPPER(uint32, uint32_t)
+ACLSHMEM_ATOMIC_COMPARE_SWAP_WRAPPER(int64, int64_t)
+ACLSHMEM_ATOMIC_COMPARE_SWAP_WRAPPER(uint64, uint64_t)
+
+#undef ACLSHMEM_ATOMIC_COMPARE_SWAP_WRAPPER
+#endif
 
 // Macro to generate wrappers for aclshmem_##NAME##_wait_until functions
 #define ACLSHMEM_WAIT_UNTIL_WRAPPER(NAME, TYPE)                                \
@@ -398,7 +662,7 @@ ACLSHMEM_WAIT_WRAPPER(int64, int64_t)
 // Macro to generate wrappers for scalar consume_token functions
 #define CONSUME_TOKEN_SCALAR_WRAPPER(NAME, TYPE)                               \
   __aicore__ __attribute__((always_inline)) TYPE                               \
-      _mlir_ciface_aclshmem_consume_token_##NAME(TYPE value, int token) {      \
+  _mlir_ciface_aclshmem_consume_token_##NAME(TYPE value, int token) {          \
     return value;                                                              \
   }
 
