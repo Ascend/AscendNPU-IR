@@ -1,0 +1,13 @@
+set(LLVM_TARGET_DEFINITIONS NPUArchitecture.td)
+bishengir_target_tablegen(NPUArchitecture.h.inc
+  -gen-npu-architecture-decls)
+add_public_tablegen_target(BiShengIRNPUArchitectureIncGen)
+add_dependencies(mlir-headers BiShengIRNPUArchitectureIncGen)
+
+set(LLVM_TARGET_DEFINITIONS NPUArchitectureFeatures.td)
+bishengir_target_tablegen(NPUArchitectureFeatures.h.inc
+  -gen-npu-architecture-feature-decls)
+add_public_tablegen_target(BiShengIRNPUArchitectureFeaturesIncGen)
+add_dependencies(BiShengIRNPUArchitectureFeaturesIncGen
+  BiShengIRNPUArchitectureIncGen)
+add_dependencies(mlir-headers BiShengIRNPUArchitectureFeaturesIncGen)

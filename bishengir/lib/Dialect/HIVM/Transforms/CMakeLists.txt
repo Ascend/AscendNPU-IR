@@ -156,6 +156,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
 
   DEPENDS
   BiShengIRHIVMTransformsIncGen
+  BiShengIRNPUArchitectureFeaturesIncGen
 
   LINK_LIBS PUBLIC
   MLIRAffineDialect

@@ -18,6 +18,7 @@
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Target/NPU/NPUArchitectureFeatures.h"
 
 #include "mlir/Analysis/CallGraph.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -54,12 +55,12 @@ public:
 
   void runOnOperation() override {
     auto module = getOperation();
-    // For the V300 Arch, there is no need to go through mix kernel related
-    // analysis and processing.
-    // TODO: Refactor this later.
-    // Note: isAscend310B is currently stubbed false on master until Ascend310B
-    // target enums/specs are ported from f9.
-    if (hacc::utils::isAscend310B(module)) {
+    auto target = hacc::utils::getTargetDevice(module);
+    // Preserve the legacy inference path for missing or unknown targets.
+    // Coupled cores do not need MIX kernel analysis and processing.
+    if (target && *target != hacc::TargetDevice::Unknown &&
+        bishengir::npu::getCubeVectorMode(hacc::getArchitecture(*target)) ==
+            bishengir::npu::CubeVectorMode::kCoupled) {
       module->setAttr(hivm::TModuleCoreTypeAttr::name,
                       hivm::TModuleCoreTypeAttr::get(
                           module->getContext(), hivm::TModuleCoreType::AIV));
