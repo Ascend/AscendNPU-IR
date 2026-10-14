@@ -1131,8 +1131,15 @@ transform::ExtendedFuseIntoContainingOp::fuseIntoOneContaining(
     std::tie(producerOp, producerIndex) = *nextProducer;
 
     // Default diagnostic, to be complemented with more failure information.
+    // Only build the full message in debug builds: MLIR's Diagnostic formats
+    // `Operation` operands eagerly, and the tiled loop keeps growing as more
+    // producers are fused into it. Printing it once per producer makes the
+    // fusion O(producers * loop-size) and dominates the pass time, so the
+    // message is deferred to the (rare) failure path otherwise.
     Diagnostic diag(producerOp->getLoc(), DiagnosticSeverity::Remark);
-    diag << "could not fuse " << *producerOp << " into " << *containingOp;
+    LLVM_DEBUG({
+      diag << "could not fuse " << *producerOp << " into " << *containingOp;
+    });
 
     // Union the multiple consumers in containing op.
     bishengir::unionProducerUsers(rewriter, diag, producerOp, containingOp);
