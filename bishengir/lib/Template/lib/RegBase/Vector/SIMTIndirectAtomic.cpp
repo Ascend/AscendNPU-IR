@@ -14,39 +14,39 @@
  * limitations under the License.
  */
 
- #if defined(__DAV_C310__)
+#include "ArchDefs.h"
+#if BISHENG_TPL_REGBASE
 
- #include "__clang_cce_simt_intrinsics.h"
- #include "RegBase/VecUtils.h"
+#include "RegBase/VecUtils.h"
+#include "__clang_cce_simt_intrinsics.h"
 
- constexpr unsigned int MAX_THREAD_NUM = 1024;
+constexpr unsigned int MAX_THREAD_NUM = 1024;
 
- enum class IndirectAtomicOp { Add, Min, Max, Or, And, XOr, Xchg, Cas };
+enum class IndirectAtomicOp { Add, Min, Max, Or, And, XOr, Xchg, Cas };
 
- template <typename DTYPE>
- inline constexpr bool kAtomicHalfPrecVoidReturn =
-     std::is_same<DTYPE, half>::value ||
-     std::is_same<DTYPE, bfloat16_t>::value;
+template <typename DTYPE>
+inline constexpr bool kAtomicHalfPrecVoidReturn =
+    std::is_same<DTYPE, half>::value || std::is_same<DTYPE, bfloat16_t>::value;
 
- template <IndirectAtomicOp Op, typename DTYPE>
- __simt_callee__ __aiv__ __attribute__((always_inline)) static void
- indirectAtomicInvokeVoid(__gm__ DTYPE *addr, DTYPE val) {
-   if constexpr (Op == IndirectAtomicOp::Add) {
-     atomicAdd(addr, val);
-   } else if constexpr (Op == IndirectAtomicOp::Min) {
-     atomicMin(addr, val);
-   } else if constexpr (Op == IndirectAtomicOp::Max) {
-     atomicMax(addr, val);
-   } else if constexpr (Op == IndirectAtomicOp::Or) {
-     atomicOr(addr, val);
-   } else if constexpr (Op == IndirectAtomicOp::And) {
-     atomicAnd(addr, val);
-   } else if constexpr (Op == IndirectAtomicOp::XOr) {
-     atomicXOr(addr, val);
-   } else if constexpr (Op == IndirectAtomicOp::Xchg) {
-     atomicExch(addr, val);
-   }
- }
+template <IndirectAtomicOp Op, typename DTYPE>
+__simt_callee__ __aiv__ __attribute__((always_inline)) static void
+indirectAtomicInvokeVoid(__gm__ DTYPE *addr, DTYPE val) {
+  if constexpr (Op == IndirectAtomicOp::Add) {
+    atomicAdd(addr, val);
+  } else if constexpr (Op == IndirectAtomicOp::Min) {
+    atomicMin(addr, val);
+  } else if constexpr (Op == IndirectAtomicOp::Max) {
+    atomicMax(addr, val);
+  } else if constexpr (Op == IndirectAtomicOp::Or) {
+    atomicOr(addr, val);
+  } else if constexpr (Op == IndirectAtomicOp::And) {
+    atomicAnd(addr, val);
+  } else if constexpr (Op == IndirectAtomicOp::XOr) {
+    atomicXOr(addr, val);
+  } else if constexpr (Op == IndirectAtomicOp::Xchg) {
+    atomicExch(addr, val);
+  }
+}
 
  template <IndirectAtomicOp Op, typename DTYPE>
  __simt_callee__ __aiv__ __attribute__((always_inline)) static DTYPE

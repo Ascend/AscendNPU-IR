@@ -14,3 +14,13 @@ set(A5_REGBASE_CUBE_SOURCES
 )
 
 compile_cpp_to_bc("aic" "Ascend910D" ${A5_REGBASE_CUBE_SOURCES})
+
+
+# 920r1 ccec does provide GM->CBUF (L1) MTE2 intrinsics:
+# copy_gm_to_cbuf_multi_nd2nz (10-arg pre_allocation form) and
+# copy_gm_to_cbuf_align_v2 (12-arg pre_allocation form); the corresponding
+# 920r1 branches in ND2NZ.h / DMAUtils.h select them.
+set(A6_REGBASE_CUBE_SOURCES
+    ${A5_REGBASE_CUBE_SOURCES}
+)
+compile_cpp_to_bc("aic" "Ascend960" ${A6_REGBASE_CUBE_SOURCES})

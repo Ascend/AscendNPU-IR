@@ -17,6 +17,7 @@
 #ifndef HIVMAVE_MLIR_TEMPLATE_VECTOR_UTILS_H
 #define HIVMAVE_MLIR_TEMPLATE_VECTOR_UTILS_H
 
+#include "ArchDefs.h"
 #include "Utils.h"
 #include <type_traits>
 
@@ -36,7 +37,7 @@ struct VectorTy;
 DEFINE_VECTOR_MAPPING(float, vector_f32);
 DEFINE_VECTOR_MAPPING(half, vector_f16);
 DEFINE_VECTOR_MAPPING(bfloat16_t, vector_bf16);
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 DEFINE_VECTOR_MAPPING(float8_e4m3_t, vector_f8e4m3);
 DEFINE_VECTOR_MAPPING(float8_e5m2_t, vector_f8e5m2);
 // 64-bit integers
@@ -103,7 +104,7 @@ using VectorReg = typename VectorTy<T>::type;
 DEFINE_AVE_VECTOR_TYPE(long long, ave_vector_i64, 64); // <64xi64>
 DEFINE_AVE_PREG_TYPE(bool, ave_preg, AVE_PREDICATE_LENGTH);
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 // helper Micros to convert between ave types and backend defined types
 #define convertAVEVec64To2xvl64(v) (*reinterpret_cast<vector_2xvl_s64 *>(&(v)))
 #define convert2xvl64ToAVEVec64(v) (*reinterpret_cast<ave_vector_i64 *>(&(v)))
@@ -1025,6 +1026,12 @@ vdiv_int_scalar(memref_t<__ubuf__ T, dim> *src0,
                                   numel0, numel1, numel2);                    \
   }
 
+#if BISHENG_TPL_AVE_SHIFT_AMOUNT_IS_VECTOR
+#define AVE_SHIFT_AMOUNT(x) ((vector_u32)(x))
+#else
+#define AVE_SHIFT_AMOUNT(x) (x)
+#endif
+
 #define DECLARE_SHIFT_VV(op_name)                                              \
   __aiv__ __attribute__((always_inline)) void                                  \
   _mlir_ciface_##op_name##_int64_t(                                            \
@@ -1034,17 +1041,18 @@ vdiv_int_scalar(memref_t<__ubuf__ T, dim> *src0,
 #define REGISTE_SHIFT_VV(op_name)                                              \
   DECLARE_SHIFT_VV(op_name) {                                                  \
     vector_bool p = convertAVEPregToVecBool(preg);                             \
-    vector_s32 shift;                                                          \
     vector_f32 tmp;                                                            \
+    vector_s32 shift;                                                          \
     vcvt(tmp, *src1, ROUND_C);                                                 \
     vcvt(shift, tmp, p, ROUND_C, RS_ENABLE);                                   \
     if (!sign) {                                                               \
       vector_2xvl_u64 unsignSrc0 = vector_2xvl_u64(*src0);                     \
       vector_2xvl_u64 unsignSret;                                              \
-      op_name(unsignSret, unsignSrc0, shift, p, MODE_ZEROING);                 \
+      op_name(unsignSret, unsignSrc0, AVE_SHIFT_AMOUNT(shift), p,              \
+              MODE_ZEROING);                                                   \
       *sret = vector_2xvl_s64(unsignSret);                                     \
     } else {                                                                   \
-      op_name(*sret, *src0, shift, p, MODE_ZEROING);                           \
+      op_name(*sret, *src0, AVE_SHIFT_AMOUNT(shift), p, MODE_ZEROING);         \
     }                                                                          \
   }
 

@@ -16,6 +16,7 @@
 
 #ifndef HIVM_MLIR_TEMPLATE_FIXPIPE_UTILS_H
 #define HIVM_MLIR_TEMPLATE_FIXPIPE_UTILS_H
+#include "ArchDefs.h"
 #include "Utils.h"
 
 enum class TransformMode : uint32_t {
@@ -32,12 +33,12 @@ enum DualDstMode {
 };
 
 // accept certain declarations in this architecture
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 #define D_C310(f, ...) f(__VA_ARGS__)
 #else
 #define D_C310(f, ...)
 #endif
-#if defined(__DAV_M300__)
+#if BISHENG_TPL_M300
 #define D_M300(f, ...) f(__VA_ARGS__)
 #else
 #define D_M300(f, ...)
@@ -172,7 +173,7 @@ get_quant_mode(int64_t pre_quant) {
   if (pre_quant == static_cast<int64_t>(QuantMode_t::F322F16)) {
     return QuantMode_t::F322F16;
   }
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
   if (pre_quant == static_cast<int64_t>(QuantMode_t::QF322F32_PRE)) {
     return QuantMode_t::QF322F32_PRE;
   }
@@ -213,7 +214,7 @@ template <typename SRC_TYPE, typename DST_TYPE>
 __aicore__ __attribute__((always_inline)) void copy_matrix_cc_to_gm_intrin(
     copy_matrix_cc_to_gm_intrin_args<SRC_TYPE, DST_TYPE> args) {
 #define FIXPIPE_ARGS_XT1 FIXPIPE_ARGS_XT1_TO_GM
-#if !defined(__DAV_M300__) && !defined(__DAV_C310__)
+#if BISHENG_TPL_MEMBASE
 #define FIXPIPE_ARGS                                                           \
   args.dst, args.src, args.sid, args.n_size, args.m_size, args.dst_D,          \
       args.src_stride, args.unit_flag_mode, args.pre_quant, args.pre_relu,     \
@@ -427,7 +428,7 @@ DECLARE_FIXPIPE_NOSUFFIX(cc, gm, 4, 2, float, float, nz2nd,
 DECLARE_FIXPIPE_NOSUFFIX(cc, gm, 4, 2, int32_t, int32_t, nz2nd,
                          TransformMode::NZ_2_ND);
 
-#if !defined(__DAV_M300__)
+#if !BISHENG_TPL_M300
 DECLARE_FIXPIPE(cc, gm, 4, 2, int32_t, int8_t, nz2nd, TransformMode::NZ_2_ND);
 DECLARE_FIXPIPE(cc, gm, 4, 2, int32_t, half, nz2nd, TransformMode::NZ_2_ND);
 
@@ -435,14 +436,14 @@ DECLARE_FIXPIPE_NOSUFFIX(cc, gm, 4, 2, int32_t, int8_t, nz2nd,
                          TransformMode::NZ_2_ND);
 DECLARE_FIXPIPE_NOSUFFIX(cc, gm, 4, 2, int32_t, half, nz2nd,
                          TransformMode::NZ_2_ND);
-#if !defined(__DAV_C310__)
+#if !BISHENG_TPL_REGBASE
 DECLARE_FIXPIPE(cc, gm, 4, 2, int32_t, int16_t, nz2nd, TransformMode::NZ_2_ND);
 DECLARE_FIXPIPE_NOSUFFIX(cc, gm, 4, 2, int32_t, int16_t, nz2nd,
                          TransformMode::NZ_2_ND);
-#endif // !defined(__DAV_C310__)
-#endif // !defined(__DAV_M300__)
+#endif // !BISHENG_TPL_REGBASE
+#endif // !BISHENG_TPL_M300
 
-#if defined(__DAV_M300__) || defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE_OR_M300
 DECLARE_FIXPIPE(cc, ubuf, 4, 2, float, half, nz2nd, TransformMode::NZ_2_ND);
 DECLARE_FIXPIPE(cc, ubuf, 4, 2, float, bfloat16_t, nz2nd,
                 TransformMode::NZ_2_ND);
@@ -456,9 +457,9 @@ DECLARE_FIXPIPE(cc, ubuf, 4, 2, int32_t, uint8_t, nz2nd,
                 TransformMode::NZ_2_ND);
 DECLARE_FIXPIPE(cc, ubuf, 4, 2, int32_t, int32_t, nz2nd,
                 TransformMode::NZ_2_ND);
-#endif // defined(__DAV_M300__)
+#endif // BISHENG_TPL_REGBASE_OR_M300
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 DECLARE_FIXPIPE_DUAL(cc, ubuf, 4, 2, float, half, nz2nd,
                      TransformMode::NZ_2_ND);
 DECLARE_FIXPIPE_DUAL(cc, ubuf, 4, 2, float, bfloat16_t, nz2nd,
@@ -576,6 +577,6 @@ DECLARE_FIXPIPE(cc, ubuf, 4, 2, int32_t, int32_t, nz2dn,
 DECLARE_FIXPIPE(cc, cbuf, 4, 2, float, half, nz2dn, TransformMode::NZ_2_DN);
 DECLARE_FIXPIPE(cc, cbuf, 4, 2, float, bfloat16_t, nz2dn,
                 TransformMode::NZ_2_DN);
-#endif // defined(__DAV_C310__)
+#endif // BISHENG_TPL_REGBASE
 }
 #endif // HIVM_MLIR_TEMPLATE_FIXPIPE_UTILS_H

@@ -7,6 +7,13 @@ else()
     message("-- No CMAKE_SYSROOT specified. Omitting sysroot flag.")
 endif()
 
+# The Shmem template for A6 (dav-920r1) requires an A6-capable CANN
+# tikcfw header set, which older CANN toolkits (e.g. 9.1.0 used by A5 CI)
+# do not provide. So build it only when explicitly enabled;
+# Remove it once the A6-capable toolkit lands in CI. @TODO
+option(BISHENGIR_BUILD_TEMPLATE_ASCEND960
+    "Build the A6 Shmem template bitcode." OFF)
+
 # Template bitcode is compiled at two optimization levels so that
 # bishengir-compile can link either variant into the final binary. Outputs
 # carry the level as a suffix (e.g. meta_op.aic.c220.O2.bc).
@@ -77,6 +84,9 @@ function(compile_single_cpp_to_bc cpp_with_path core_type platform_type opt_leve
         if (${platform_type} STREQUAL "Ascend910D")
             list(APPEND bisheng_args --cce-aicore-arch=dav-c310-cube)
             set(bc_arch_suffix ".c310")
+        elseif (${platform_type} STREQUAL "Ascend960")
+            list(APPEND bisheng_args --cce-aicore-arch=dav-920r1-cube)
+            set(bc_arch_suffix ".920r1")
         else ()
             list(APPEND bisheng_args --cce-aicore-arch=dav-c220-cube)
             list(APPEND bisheng_args --cce-enable-sanitizer)
@@ -92,6 +102,9 @@ function(compile_single_cpp_to_bc cpp_with_path core_type platform_type opt_leve
         if (${platform_type} STREQUAL "Ascend910D")
             list(APPEND bisheng_args --cce-aicore-arch=dav-c310-vec)
             set(bc_arch_suffix ".c310")
+        elseif (${platform_type} STREQUAL "Ascend960")
+            list(APPEND bisheng_args --cce-aicore-arch=dav-920r1-vec)
+            set(bc_arch_suffix ".920r1")
         else ()
             list(APPEND bisheng_args --cce-aicore-arch=dav-c220-vec)
             list(APPEND bisheng_args --cce-enable-sanitizer)
@@ -114,15 +127,18 @@ function(compile_single_cpp_to_bc cpp_with_path core_type platform_type opt_leve
         message(STATUS "Running on host platform.")
     else ()
         if (NOT ${platform_type} STREQUAL "Ascend910B" AND
-            NOT ${platform_type} STREQUAL "Ascend910D")
+            NOT ${platform_type} STREQUAL "Ascend910D" AND
+            NOT ${platform_type} STREQUAL "Ascend960")
             message(FATAL_ERROR
-                    "Unsupported platform! Currently support Ascend910B and Ascend910D.")
+                    "Unsupported platform! Currently support Ascend910B, Ascend910D and Ascend960.")
         endif ()
     endif ()
 
     list(APPEND bisheng_args -std=c++17)
-    if ("${platform_type}" STREQUAL "Ascend910D")
-        # RegBase sources carry private C310 variants of shared headers here.
+    if ("${platform_type}" STREQUAL "Ascend910D" OR
+        "${platform_type}" STREQUAL "Ascend960")
+        # RegBase sources carry private RegBase variants of shared headers
+        # here (used for the c310/920r1 arch compiles).
         # Keeping this path ahead of the global include path prevents the A5
         # ABI from replacing Ascend910B declarations.
         list(APPEND bisheng_args -I ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -205,6 +221,9 @@ function(compile_shmem_to_bc_single cpp_with_path core_type platform_type opt_le
         if (${platform_type} STREQUAL "Ascend910D")
             list(APPEND bisheng_args --cce-aicore-arch=dav-c310-cube)
             set(bc_arch_suffix ".c310")
+        elseif (${platform_type} STREQUAL "Ascend960")
+            list(APPEND bisheng_args --cce-aicore-arch=dav-920r1-cube)
+            set(bc_arch_suffix ".920r1")
         else ()
             list(APPEND bisheng_args --cce-aicore-arch=dav-c220-cube)
             set(bc_arch_suffix ".c220")
@@ -219,6 +238,9 @@ function(compile_shmem_to_bc_single cpp_with_path core_type platform_type opt_le
         if (${platform_type} STREQUAL "Ascend910D")
             list(APPEND bisheng_args --cce-aicore-arch=dav-c310-vec)
             set(bc_arch_suffix ".c310")
+        elseif (${platform_type} STREQUAL "Ascend960")
+            list(APPEND bisheng_args --cce-aicore-arch=dav-920r1-vec)
+            set(bc_arch_suffix ".920r1")
         else ()
             list(APPEND bisheng_args --cce-aicore-arch=dav-c220-vec)
             set(bc_arch_suffix ".c220")
@@ -317,7 +339,7 @@ function(compile_single_cpp_to_bc_debug cpp_with_path core_type platform_type)
     list(APPEND bisheng_args -o ${bc_name})
 
     # Debug-mode .bc files (no arch suffix) are not linked into meta_op:
-    # link_all_to_meta_op only handles c220/c310/host. Tag host outputs as
+    # link_all_to_meta_op only handles c220/c310/920r1/host. Tag host outputs as
     # "host_O2" so they participate in the host link; aic/aiv debug outputs
     # are tagged separately and left unlinked, matching the old behavior.
     if (${core_type} STREQUAL "host")
@@ -396,6 +418,8 @@ if (BISHENGIR_OPTIMIZE_TEMPLATE_BITCODE STREQUAL "ON")
             set(aicore_arch "dav-c310")
         elseif ("${arch}" STREQUAL "c220")
             set(aicore_arch "dav-c220")
+        elseif ("${arch}" STREQUAL "920r1")
+            set(aicore_arch "dav-920r1")
         else()
             message(FATAL_ERROR, "Unsupported meta op arch: ${arch}")
         endif()
@@ -516,6 +540,12 @@ function(link_all_to_meta_op)
         link_one_group_to_meta_op(${BITCODE_OUTPUT_DIR} "c310" "mix_aic" ${opt_level})
         link_one_group_to_meta_op(${BITCODE_OUTPUT_DIR} "c310" "mix_aiv" ${opt_level})
 
+        # 920r1 (Ascend960 / A6): use .920r1 suffix.
+        link_one_group_to_meta_op(${BITCODE_OUTPUT_DIR} "920r1" "aic" ${opt_level})
+        link_one_group_to_meta_op(${BITCODE_OUTPUT_DIR} "920r1" "aiv" ${opt_level})
+        link_one_group_to_meta_op(${BITCODE_OUTPUT_DIR} "920r1" "mix_aic" ${opt_level})
+        link_one_group_to_meta_op(${BITCODE_OUTPUT_DIR} "920r1" "mix_aiv" ${opt_level})
+
         # Host bitcode (arch-agnostic).
         link_one_group_to_meta_op("${BITCODE_OUTPUT_DIR}" "host" "host" ${opt_level})
     endforeach ()
@@ -552,6 +582,10 @@ please check ${BISHENG_TOOL} or ${LLVM_LINK_TOOL} exist or not!")
              ${CMAKE_BINARY_DIR}/lib/meta_op.aiv.c310.${opt_level}.bc
              ${CMAKE_BINARY_DIR}/lib/meta_op.mix.aic.c310.${opt_level}.bc
              ${CMAKE_BINARY_DIR}/lib/meta_op.mix.aiv.c310.${opt_level}.bc
+             ${CMAKE_BINARY_DIR}/lib/meta_op.aic.920r1.${opt_level}.bc
+             ${CMAKE_BINARY_DIR}/lib/meta_op.aiv.920r1.${opt_level}.bc
+             ${CMAKE_BINARY_DIR}/lib/meta_op.mix.aic.920r1.${opt_level}.bc
+             ${CMAKE_BINARY_DIR}/lib/meta_op.mix.aiv.920r1.${opt_level}.bc
              ${CMAKE_BINARY_DIR}/lib/host.${opt_level}.bc)
     endforeach ()
     install(FILES ${bishengir_install_bitcode_files}

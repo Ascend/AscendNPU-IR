@@ -14,10 +14,11 @@
  * limitations under the License.
  */
 
+#include "ArchDefs.h"
 #include "RegBase/SimtUtils.h"
 #include "Utils.h"
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 /// normalize powf(baseNum, exponent) as below
 /// powf(x, y) = 1, when abs(x) = 1 and abs(y) = inf
 ///            = nan, when x = -inf and y is not integer value or y is finite

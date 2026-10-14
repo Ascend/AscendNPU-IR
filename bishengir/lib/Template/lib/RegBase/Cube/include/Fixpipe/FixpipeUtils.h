@@ -16,6 +16,7 @@
 
 #ifndef HIVM_MLIR_TEMPLATE_FIXPIPE_UTILS_H
 #define HIVM_MLIR_TEMPLATE_FIXPIPE_UTILS_H
+#include "ArchDefs.h"
 #include "Utils.h"
 
 enum class TransformMode : uint32_t {
@@ -31,16 +32,28 @@ enum DualDstMode {
   COLUMN_SPLIT = 2,
 };
 
-// accept certain declarations in this architecture
-#if defined(__DAV_C310__)
+// accept certain declarations in this architecture; the dispatcher macros
+// derive from the ArchDefs.h membership/family macros so a new backend only
+// needs to be registered there.
+#if BISHENG_TPL_C310
 #define D_C310(f, ...) f(__VA_ARGS__)
 #else
 #define D_C310(f, ...)
 #endif
-#if defined(__DAV_M300__)
+#if BISHENG_TPL_M300
 #define D_M300(f, ...) f(__VA_ARGS__)
 #else
 #define D_M300(f, ...)
+#endif
+#if BISHENG_TPL_920R1
+#define D_920R1(f, ...) f(__VA_ARGS__)
+#else
+#define D_920R1(f, ...)
+#endif
+#if BISHENG_TPL_REGBASE
+#define D_REGBASE(f, ...) f(__VA_ARGS__)
+#else
+#define D_REGBASE(f, ...)
 #endif
 
 #define WRAP(...) __VA_ARGS__
@@ -50,33 +63,35 @@ enum DualDstMode {
 #define REQUIRE_3(x, D1, D2, D3) D1(x) D2(x) D3(x)
 
 #define FIXPIPE_XT1_ARG_LIST_TO_UB(f, DUAL_DST_INIT, SUB_BLOCKID_INIT)         \
-  REQUIRE_1(WRAP(f, uint8_t, dual_dst_ctl, DUAL_DST_INIT), D_C310)             \
-  REQUIRE_1(WRAP(f, bool, sub_blockid, SUB_BLOCKID_INIT), D_C310)              \
-  REQUIRE_2(WRAP(f, uint8_t, clip_relu_pre, 0), D_C310, D_M300)
+  REQUIRE_1(WRAP(f, uint8_t, dual_dst_ctl, DUAL_DST_INIT), D_REGBASE)          \
+  REQUIRE_1(WRAP(f, bool, sub_blockid, SUB_BLOCKID_INIT), D_REGBASE)           \
+  REQUIRE_3(WRAP(f, uint8_t, clip_relu_pre, 0), D_C310, D_M300, D_920R1)
 
 #define FIXPIPE_XT1_ARG_LIST_TO_L1(f)                                          \
-  REQUIRE_1(WRAP(f, uint8_t, l2_cache_ctl, 0), D_C310)                         \
-  REQUIRE_2(WRAP(f, uint8_t, clip_relu_pre, 0), D_C310, D_M300)
+  REQUIRE_1(WRAP(f, uint8_t, l2_cache_ctl, 0), D_REGBASE)                      \
+  REQUIRE_3(WRAP(f, uint8_t, clip_relu_pre, 0), D_C310, D_M300, D_920R1)
 
 #define FIXPIPE_XT1_ARG_LIST_TO_GM(f)                                          \
-  REQUIRE_1(WRAP(f, uint8_t, l2_cache_ctl, 0), D_C310)                         \
-  REQUIRE_2(WRAP(f, uint8_t, clip_relu_pre, 0), D_C310, D_M300)
+  REQUIRE_1(WRAP(f, uint8_t, dual_dst_ctl, 0), D_920R1)                        \
+  REQUIRE_1(WRAP(f, bool, sub_blockid, false), D_920R1)                        \
+  REQUIRE_1(WRAP(f, uint8_t, l2_cache_ctl, 0), D_REGBASE)                      \
+  REQUIRE_3(WRAP(f, uint8_t, clip_relu_pre, 0), D_C310, D_M300, D_920R1)
 
 // Extended XT2 list: NZ2DN_INIT and C0_PAD_INIT are selectable; all other
 // fields keep the existing defaults.
 #define FIXPIPE_XT2_ARG_LIST_EX(f, NZ2DN_INIT, C0_PAD_INIT)                    \
-  REQUIRE_2(WRAP(f, uint64_t, quant_post, 0), D_C310, D_M300)                  \
-  REQUIRE_2(WRAP(f, uint8_t, relu_post, 0), D_C310, D_M300)                    \
-  REQUIRE_2(WRAP(f, bool, clip_relu_post, false), D_C310, D_M300)              \
-  REQUIRE_1(WRAP(f, bool, loop_enhance_en, false), D_C310)                     \
-  REQUIRE_2(WRAP(f, uint8_t, eltwise_op, 0), D_C310, D_M300)                   \
+  REQUIRE_3(WRAP(f, uint64_t, quant_post, 0), D_C310, D_M300, D_920R1)         \
+  REQUIRE_3(WRAP(f, uint8_t, relu_post, 0), D_C310, D_M300, D_920R1)           \
+  REQUIRE_3(WRAP(f, bool, clip_relu_post, false), D_C310, D_M300, D_920R1)     \
+  REQUIRE_1(WRAP(f, bool, loop_enhance_en, false), D_REGBASE)                  \
+  REQUIRE_3(WRAP(f, uint8_t, eltwise_op, 0), D_C310, D_M300, D_920R1)          \
   REQUIRE_1(WRAP(f, uint8_t, eltwise_antq_cfg, 0), D_M300)                     \
-  REQUIRE_1(WRAP(f, bool, eltwise_antq_en, false), D_C310)                     \
-  REQUIRE_1(WRAP(f, bool, loop_enhance_merge_en, false), D_C310)               \
-  REQUIRE_2(WRAP(f, bool, C0_pad_en, C0_PAD_INIT), D_C310, D_M300)             \
-  REQUIRE_1(WRAP(f, bool, wino_post_en, false), D_C310)                        \
-  REQUIRE_1(WRAP(f, bool, broadcast_en, false), D_C310)                        \
-  REQUIRE_1(WRAP(f, bool, NZ2DN_en, NZ2DN_INIT), D_C310)
+  REQUIRE_1(WRAP(f, bool, eltwise_antq_en, false), D_REGBASE)                  \
+  REQUIRE_1(WRAP(f, bool, loop_enhance_merge_en, false), D_REGBASE)            \
+  REQUIRE_3(WRAP(f, bool, C0_pad_en, C0_PAD_INIT), D_C310, D_M300, D_920R1)    \
+  REQUIRE_1(WRAP(f, bool, wino_post_en, false), D_REGBASE)                     \
+  REQUIRE_1(WRAP(f, bool, broadcast_en, false), D_REGBASE)                     \
+  REQUIRE_1(WRAP(f, bool, NZ2DN_en, NZ2DN_INIT), D_REGBASE)
 
 // Default XT2 list: C0_pad_en remains false for compatibility.
 #define FIXPIPE_XT2_ARG_LIST(f, NZ2DN_INIT)                                    \
@@ -180,7 +195,7 @@ get_quant_mode(int64_t pre_quant) {
   if (pre_quant == static_cast<int64_t>(QuantMode_t::F322F16)) {
     return QuantMode_t::F322F16;
   }
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
   if (pre_quant == static_cast<int64_t>(QuantMode_t::QF322F32_PRE)) {
     return QuantMode_t::QF322F32_PRE;
   }
@@ -221,17 +236,28 @@ template <typename SRC_TYPE, typename DST_TYPE>
 __aicore__ __attribute__((always_inline)) void copy_matrix_cc_to_gm_intrin(
     copy_matrix_cc_to_gm_intrin_args<SRC_TYPE, DST_TYPE> args) {
 #define FIXPIPE_ARGS_XT1 FIXPIPE_ARGS_XT1_TO_GM
-#if !defined(__DAV_M300__) && !defined(__DAV_C310__)
+#if BISHENG_TPL_HAS_FIXPIPE_EXPANDED_OVERLOAD
+// A6/DV121 920r1 fixpipe expanded interface (see interface_change.md and
+// cce_aicore_intrinsics.txt): GM is a 26-arg form with sid, l2_cache_ctl and
+// the new quant_pre_rnd inserted after l2_cache_ctl. dual_dst_ctl and
+// sub_blockid do not exist for the GM overload and must not be passed.
 #define FIXPIPE_ARGS                                                           \
   args.dst, args.src, args.sid, args.n_size, args.m_size, args.dst_D,          \
-      args.src_stride, args.unit_flag_mode, args.pre_quant, args.pre_relu,     \
-      args.channel_split, args.nz2nd_en
-#else
+      args.src_stride, args.xt1.l2_cache_ctl, false /*quant_pre_rnd*/,         \
+      args.xt1.clip_relu_pre, args.unit_flag_mode,                             \
+      static_cast<uint64_t>(args.pre_quant), args.pre_relu,                    \
+      args.channel_split, args.nz2nd_en FIXPIPE_ARGS_XT2
+#elif BISHENG_TPL_HAS_FIXPIPE_XT1_ARGS
 #define FIXPIPE_ARGS                                                           \
   args.dst, args.src, args.sid, args.n_size, args.m_size, args.dst_D,          \
       args.src_stride, FIXPIPE_ARGS_XT1 args.unit_flag_mode,                   \
       static_cast<uint64_t>(args.pre_quant), args.pre_relu,                    \
       args.channel_split, args.nz2nd_en FIXPIPE_ARGS_XT2
+#else
+#define FIXPIPE_ARGS                                                           \
+  args.dst, args.src, args.sid, args.n_size, args.m_size, args.dst_D,          \
+      args.src_stride, args.unit_flag_mode, args.pre_quant, args.pre_relu,     \
+      args.channel_split, args.nz2nd_en
 #endif
 
   INTRINSIC(copy_matrix_cc_to_gm, FIXPIPE_ARGS);
@@ -241,7 +267,23 @@ template <typename SRC_TYPE, typename DST_TYPE>
 __aicore__ __attribute__((always_inline)) void copy_matrix_cc_to_cbuf_intrin(
     copy_matrix_cc_to_cbuf_intrin_args<SRC_TYPE, DST_TYPE> args) {
 #undef FIXPIPE_ARGS_XT1
+#if BISHENG_TPL_HAS_FIXPIPE_EXPANDED_OVERLOAD
+// A6/DV121 920r1 CBUF fixpipe is a 24-arg expanded overload (see
+// cce_aicore_intrinsics.txt #1032): NO sid, NO l2_cache_ctl; new
+// quant_pre_rnd inserted after loop_src_stride.
+#define FIXPIPE_ARGS                                                           \
+  args.dst, args.src, args.n_size, args.m_size, args.dst_D, args.src_stride,   \
+      false /*quant_pre_rnd*/, args.xt1.clip_relu_pre, args.unit_flag_mode,    \
+      static_cast<uint64_t>(args.pre_quant), args.pre_relu,                    \
+      args.channel_split, args.nz2nd_en FIXPIPE_ARGS_XT2
+#else
 #define FIXPIPE_ARGS_XT1 FIXPIPE_ARGS_XT1_TO_L1
+#define FIXPIPE_ARGS                                                           \
+  args.dst, args.src, args.sid, args.n_size, args.m_size, args.dst_D,          \
+      args.src_stride, FIXPIPE_ARGS_XT1 args.unit_flag_mode,                   \
+      static_cast<uint64_t>(args.pre_quant), args.pre_relu,                    \
+      args.channel_split, args.nz2nd_en FIXPIPE_ARGS_XT2
+#endif
   INTRINSIC(copy_matrix_cc_to_cbuf, FIXPIPE_ARGS);
 #undef FIXPIPE_ARGS_XT1
 }
@@ -251,6 +293,28 @@ __aicore__ __attribute__((always_inline)) void copy_matrix_cc_to_ubuf_intrin(
     copy_matrix_cc_to_ubuf_intrin_args<SRC_TYPE, DST_TYPE> args) {
 #undef FIXPIPE_ARGS_XT1
 #define FIXPIPE_ARGS_XT1 FIXPIPE_ARGS_XT1_TO_UB
+#if BISHENG_TPL_HAS_FIXPIPE_EXPANDED_OVERLOAD
+// A6/DV121 920r1 UB fixpipe 26-arg overload (cce_aicore_intrinsics.txt
+// #1384): NO sid; dual_dst_ctl, sub_blockid and the new quant_pre_rnd
+// inserted after loop_src_stride.
+#define FIXPIPE_ARGS                                                           \
+  args.dst, args.src, args.n_size, args.m_size, args.dst_D, args.src_stride,   \
+      args.xt1.dual_dst_ctl, args.xt1.sub_blockid, false /*quant_pre_rnd*/,    \
+      args.xt1.clip_relu_pre, args.unit_flag_mode,                             \
+      static_cast<uint64_t>(args.pre_quant), args.pre_relu,                    \
+      args.channel_split, args.nz2nd_en FIXPIPE_ARGS_XT2
+#elif BISHENG_TPL_HAS_FIXPIPE_XT1_ARGS
+#define FIXPIPE_ARGS                                                           \
+  args.dst, args.src, args.sid, args.n_size, args.m_size, args.dst_D,          \
+      args.src_stride, FIXPIPE_ARGS_XT1 args.unit_flag_mode,                   \
+      static_cast<uint64_t>(args.pre_quant), args.pre_relu,                    \
+      args.channel_split, args.nz2nd_en FIXPIPE_ARGS_XT2
+#else
+#define FIXPIPE_ARGS                                                           \
+  args.dst, args.src, args.sid, args.n_size, args.m_size, args.dst_D,          \
+      args.src_stride, args.unit_flag_mode, args.pre_quant, args.pre_relu,     \
+      args.channel_split, args.nz2nd_en
+#endif
   INTRINSIC(copy_matrix_cc_to_ub, FIXPIPE_ARGS);
 #undef FIXPIPE_ARGS_XT1
 #undef FIXPIPE_ARGS
@@ -462,7 +526,7 @@ DECLARE_FIXPIPE(cc, gm, 5, 3, float, bfloat16_t, nz2nd, TransformMode::NZ_2_ND);
 DECLARE_FIXPIPE(cc, gm, 5, 3, float, float, nz2nd, TransformMode::NZ_2_ND);
 DECLARE_FIXPIPE(cc, gm, 5, 3, int32_t, int32_t, nz2nd, TransformMode::NZ_2_ND);
 
-#if !defined(__DAV_M300__)
+#if !BISHENG_TPL_M300
 DECLARE_FIXPIPE(cc, gm, 4, 2, int32_t, int8_t, nz2nd, TransformMode::NZ_2_ND);
 DECLARE_FIXPIPE(cc, gm, 4, 2, int32_t, half, nz2nd, TransformMode::NZ_2_ND);
 
@@ -470,14 +534,14 @@ DECLARE_FIXPIPE_NOSUFFIX(cc, gm, 4, 2, int32_t, int8_t, nz2nd,
                          TransformMode::NZ_2_ND);
 DECLARE_FIXPIPE_NOSUFFIX(cc, gm, 4, 2, int32_t, half, nz2nd,
                          TransformMode::NZ_2_ND);
-#if !defined(__DAV_C310__)
+#if !BISHENG_TPL_REGBASE
 DECLARE_FIXPIPE(cc, gm, 4, 2, int32_t, int16_t, nz2nd, TransformMode::NZ_2_ND);
 DECLARE_FIXPIPE_NOSUFFIX(cc, gm, 4, 2, int32_t, int16_t, nz2nd,
                          TransformMode::NZ_2_ND);
-#endif // !defined(__DAV_C310__)
-#endif // !defined(__DAV_M300__)
+#endif // !BISHENG_TPL_REGBASE
+#endif // !BISHENG_TPL_M300
 
-#if defined(__DAV_M300__) || defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE_OR_M300
 DECLARE_FIXPIPE(cc, ubuf, 4, 2, float, half, nz2nd, TransformMode::NZ_2_ND);
 DECLARE_FIXPIPE(cc, ubuf, 4, 2, float, bfloat16_t, nz2nd,
                 TransformMode::NZ_2_ND);
@@ -491,9 +555,9 @@ DECLARE_FIXPIPE(cc, ubuf, 4, 2, int32_t, uint8_t, nz2nd,
                 TransformMode::NZ_2_ND);
 DECLARE_FIXPIPE(cc, ubuf, 4, 2, int32_t, int32_t, nz2nd,
                 TransformMode::NZ_2_ND);
-#endif // defined(__DAV_M300__)
+#endif // BISHENG_TPL_REGBASE_OR_M300
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 DECLARE_FIXPIPE_DUAL(cc, ubuf, 4, 2, float, half, nz2nd,
                      TransformMode::NZ_2_ND);
 DECLARE_FIXPIPE_DUAL(cc, ubuf, 4, 2, float, bfloat16_t, nz2nd,
@@ -615,6 +679,6 @@ DECLARE_FIXPIPE(cc, ubuf, 4, 2, int32_t, int32_t, nz2dn,
 DECLARE_FIXPIPE(cc, cbuf, 4, 2, float, half, nz2dn, TransformMode::NZ_2_DN);
 DECLARE_FIXPIPE(cc, cbuf, 4, 2, float, bfloat16_t, nz2dn,
                 TransformMode::NZ_2_DN);
-#endif // defined(__DAV_C310__)
+#endif // BISHENG_TPL_REGBASE
 }
 #endif // HIVM_MLIR_TEMPLATE_FIXPIPE_UTILS_H

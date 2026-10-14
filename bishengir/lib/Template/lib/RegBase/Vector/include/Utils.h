@@ -17,6 +17,7 @@
 #ifndef HIVM_MLIR_TEMPLATE_UTILS_H
 #define HIVM_MLIR_TEMPLATE_UTILS_H
 
+#include "ArchDefs.h"
 #include <CPUDebug/CPUDebugUtils.h>
 
 #if ENABLE_CPU_TRACE_INTRINSIC
@@ -120,7 +121,7 @@ isAddress32ByteAligned(__ubuf__ T *ptr) {
   return (address & 0x1F) == 0;
 }
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 template <typename T>
 __simt_callee__ __aiv__ __attribute__((always_inline)) T UintDivImpl(T dividend,
                                                                      T magic,

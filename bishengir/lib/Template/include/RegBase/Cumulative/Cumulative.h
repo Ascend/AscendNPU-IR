@@ -17,11 +17,12 @@
 #ifndef BISHENGIR_LIB_TEMPLATE_INCLUDE_REGBASE_CUMULATIVE_UTILS_H
 #define BISHENGIR_LIB_TEMPLATE_INCLUDE_REGBASE_CUMULATIVE_UTILS_H
 
+#include "ArchDefs.h"
 #include "DMA/DMAUtils.h"
 #include "RegBase/VecUtils.h"
 #include "Utils.h"
 #include "Vector/VecUtils.h"
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 
 template <typename T, int cum_dim>
 __aiv__ __attribute__((always_inline)) void
@@ -393,5 +394,5 @@ DECLARE_CUMSUM(3, float, 1);
 DECLARE_CUMSUM(3, bfloat16_t, 1);
 DECLARE_CUMSUM_COMP(3, float, 1);
 }
-#endif // defined(__DAV_C310__)
+#endif // BISHENG_TPL_REGBASE
 #endif // BISHENGIR_LIB_TEMPLATE_INCLUDE_REGBASE_CUMULATIVE_UTILS_H

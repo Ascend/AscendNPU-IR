@@ -141,7 +141,7 @@ __aiv__ __attribute__((always_inline)) bool is_no_op(int64_t sizes[Dim]) {
   return false;
 }
 
-#if !defined(__DAV_M300__)
+#if !BISHENG_TPL_M300
 /// get max repeat times of vcmpv/vcmpvs intr
 /// for normal vector intr, max repeat time is fixed 255, but for cmp vec op,
 /// the max repeat time need guarantee dst operand alignment
@@ -234,7 +234,7 @@ select_channel0_from_block(memref_t<__ubuf__ T, DIM> *src,
 
   INTRINSIC_NO_ARGS(set_mask_norm);
 }
-#endif // !defined(__DAV_M300__)
+#endif // !BISHENG_TPL_M300
 
 // view as new type. if sizeof(dst_type) is n multiple of size_of(src_type),
 // the size will be larger when size of src is not multiple of n.
@@ -298,7 +298,7 @@ throw_Nd_to_Md_args(memref_t<__ubuf__ T, N> *buf_Nd,
   }
 }
 
-#if !defined(__DAV_M300__)
+#if !BISHENG_TPL_M300
 /// dst = vector_select(condition, src0, src1)
 /// here condition_addr_buf is the ub buffer which store the addr of condition
 template <typename T>
@@ -1290,5 +1290,5 @@ DECLARE_ELTWISE_V(vnot, VectorOpTy::VNOT, 3, uint32_t);
 DECLARE_ELTWISE_V(vnot, VectorOpTy::VNOT, 3, int64_t);
 DECLARE_ELTWISE_V(vnot, VectorOpTy::VNOT, 3, uint64_t);
 }
-#endif // !defined(__DAV_M300__)
+#endif // !BISHENG_TPL_M300
 #endif // HIVM_MLIR_TEMPLATE_VECTOR_UTILS_H

@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include "ArchDefs.h"
 #include "RegBase/ReductionUtils.h"
 #include "Utils.h"
 #include <type_traits>
@@ -177,7 +178,7 @@ struct ReduceImpl<OP, TIE_BREAK, T0, T1, __cce_simd::UnAlignedHint,
   reduce_leading_dim(__ubuf__ T0 *data_UB, __ubuf__ T0 *reduce_val_UB,
                      __ubuf__ int32_t *reduce_idx_UB, uint16_t loop_a,
                      uint16_t dim_a, uint16_t loop_r, uint16_t src_r_stride) {
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
     unsigned int plt_size = dim_a;
     const uint16_t ele_per_VL = VL_IN_BYTE / sizeof(T0);
     const uint32_t ele_per_VL_B32 = VL_IN_BYTE / sizeof(int32_t);
@@ -250,7 +251,7 @@ struct ReduceImpl<OP, TIE_BREAK, T0, T1, __cce_simd::UnAlignedHint,
       __ubuf__ int32_t *reduce_idx_UB, uint16_t dim_a, uint16_t dim_r,
       uint16_t src_a_stride, uint16_t dst_val_stride, uint16_t dst_idx_stride,
       T0 initvalue, uint16_t main_loop, uint16_t ele_per_VL) {
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
     constexpr int dsize = sizeof(T0);
 
     VectorReg<T0> cur_val, acc_val, reduced_val, brc_reduced_val;
@@ -339,7 +340,7 @@ struct ReduceImpl<OP, TIE_BREAK, T0, T1, AlignedHint,
   reduce_leading_dim(__ubuf__ T0 *data_UB, __ubuf__ T0 *reduce_val_UB,
                      __ubuf__ int32_t *reduce_idx_UB, uint16_t loop_a,
                      uint16_t dim_a, uint16_t loop_r, uint16_t src_r_stride) {
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
     unsigned int plt_size = dim_a;
     const uint16_t ele_per_VL =
         2 * VL_IN_BYTE / sizeof(T0); // using 2x32bit vec registers for 64 bit
@@ -404,7 +405,7 @@ struct ReduceImpl<OP, TIE_BREAK, T0, T1, AlignedHint,
       __ubuf__ int32_t *reduce_idx_UB, uint16_t dim_a, uint16_t dim_r,
       uint16_t src_a_stride, uint16_t dst_val_stride, uint16_t dst_idx_stride,
       T0 initvalue, uint16_t main_loop, uint16_t ele_per_VL) {
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
     constexpr int dsize = sizeof(T0);
 
     VectorReg<T0> cur_val, acc_val, reduced_val, brc_reduced_val;
@@ -512,7 +513,7 @@ vf_wrapper_reduce_ar_last_axis_contiguous(
 
 // TODO: if the OP is tiled along the reduction axis, then a start index
 // maybe needed
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
     if (isAddress32ByteAligned(data_UB + src_a_stride) &&
         isAddress32ByteAligned(data_UB)) {
       ReduceImpl<OP, TIE_BREAK, T0, T1>::reduce_last_axis_contiguous_vec(
@@ -546,7 +547,7 @@ vf_wrapper_reduce_ra_last_axis_contiguous(__ubuf__ T0 *data_UB,
   uint16_t loop_r = dim_r > 1 ? (dim_r - 1) : 0;
 
   __VEC_SCOPE__ {
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
     if (isAddress32ByteAligned(data_UB + src_r_stride) &&
         isAddress32ByteAligned(data_UB)) {
       ReduceImpl<OP, TIE_BREAK, T0, T1>::reduce_leading_dim(
@@ -584,7 +585,7 @@ vf_wrapper_reduce_ra0a1_last_axis_contiguous(
       __ubuf__ T0 *cur_reduce_val_UB = a0 * dst_val_a0_stride + reduce_val_UB;
       __ubuf__ int32_t *cur_reduce_idx_UB =
           a0 * dst_idx_a0_stride + reduce_idx_UB;
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
       if (isAddress32ByteAligned(cur_data_UB + src_r_stride) &&
           isAddress32ByteAligned(cur_data_UB)) {
         ReduceImpl<OP, TIE_BREAK, T0, T1>::reduce_leading_dim(

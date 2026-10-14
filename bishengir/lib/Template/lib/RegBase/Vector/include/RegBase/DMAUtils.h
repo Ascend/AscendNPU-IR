@@ -17,6 +17,7 @@
 #ifndef HIVM_MLIR_TEMPLATE_DMA_UTILS_H
 #define HIVM_MLIR_TEMPLATE_DMA_UTILS_H
 
+#include "ArchDefs.h"
 #include "RegBase/VecUtils.h"
 #include "Utils.h"
 #include "Vector/VecUtils.h"
@@ -25,7 +26,7 @@
 constexpr uint16_t INTRIN_MAX_BURST_CNT = (1 << 12) - 1;             // 4095
 constexpr uint32_t INTRIN_MAX_BURST_LEN = ((1 << 21) - 1) / 32 * 32; // 2097120
 constexpr uint32_t INTRIN_MAX_GAP = (1lu << 32) - 1; // 4294967295
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 constexpr uint64_t INTRIN_MAX_STRIDE = (1lu << 40) - 1; // 1099511627775
 #endif
 
@@ -243,6 +244,59 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_intrin_core(
     uint16_t burst_cnt, uint32_t burst_len, int64_t left_padding_num,
     uint64_t src_gap, uint32_t dst_gap, uint8_t l2_cache_ctl) {
   constexpr int32_t bytes = sizeof(T);
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201)
+  // dav-920r1: `copy_gm_to_ubuf_align(_v2)` does not support the target
+  // feature (L311-only scalar). Route through the nddma descriptor DMA instead.
+  if (left_padding_num != 0) [[unlikely]] {
+    // nddma loop descriptors cannot neither express an inline left-padding run
+    // nor guarantee 32B alignment of the dst base when padding is present;
+    // fall back to a synchronized scalar copy in that case.
+    INTRINSIC(set_flag, PIPE_MTE2, PIPE_S, LIB_EVENT_ID0);
+    INTRINSIC(wait_flag, PIPE_MTE2, PIPE_S, LIB_EVENT_ID0);
+    const uint32_t elems_per_burst = burst_len / bytes;
+    for (uint16_t b = 0; b < burst_cnt; b++) {
+      __ubuf__ T *ub_row =
+          ub_ptr + ub_offset + b * ((burst_len + dst_gap) / bytes);
+      __ubuf__ uint8_t *ub_pad_bytes =
+          reinterpret_cast<__ubuf__ uint8_t *>(ub_row - left_padding_num);
+      for (int64_t p = 0; p < left_padding_num * bytes; p++)
+        ub_pad_bytes[p] = 0;
+      __gm__ T *gm_row =
+          gm_ptr + gm_offset + b * ((burst_len + src_gap) / bytes);
+      for (uint32_t e = 0; e < elems_per_burst; e++)
+        ub_row[e] = gm_row[e];
+    }
+    INTRINSIC(set_flag, PIPE_S, PIPE_MTE2, LIB_EVENT_ID0);
+    INTRINSIC(wait_flag, PIPE_S, PIPE_MTE2, LIB_EVENT_ID0);
+    return;
+  }
+  if constexpr (bytes == BYTES_B8 || bytes == BYTES_B16 || bytes == BYTES_B32) {
+    using nddma_elem_t = std::conditional_t<
+        bytes == BYTES_B8, uint8_t,
+        std::conditional_t<bytes == BYTES_B16, uint16_t, uint32_t>>;
+    const uint32_t elems_per_burst = burst_len / bytes;
+    const uint32_t dst_stride_elems = (burst_len + dst_gap) / bytes;
+    const uint64_t src_stride_bytes = burst_len + src_gap;
+    nddma_desc::loop_desc loop0(elems_per_burst, 1, 1);
+    nddma_desc::loop_desc loop1(burst_cnt, dst_stride_elems, src_stride_bytes);
+    nddma_desc desc(loop1, loop0);
+    INTRINSIC(nddma_out_to_ub,
+              reinterpret_cast<__ubuf__ nddma_elem_t *>(ub_ptr + ub_offset),
+              reinterpret_cast<__gm__ nddma_elem_t *>(gm_ptr + gm_offset), 0,
+              desc, 0, NEAREST_PADDING, l2_cache_ctl);
+  } else if constexpr (bytes == BYTES_B64) {
+    const uint32_t elems_per_burst = (burst_len / bytes) * 2;
+    const uint32_t dst_stride_elems = ((burst_len + dst_gap) / bytes) * 2;
+    const uint64_t src_stride_bytes = burst_len + src_gap;
+    nddma_desc::loop_desc loop0(elems_per_burst, 1, 1);
+    nddma_desc::loop_desc loop1(burst_cnt, dst_stride_elems, src_stride_bytes);
+    nddma_desc desc(loop1, loop0);
+    INTRINSIC(nddma_out_to_ub,
+              reinterpret_cast<__ubuf__ uint32_t *>(ub_ptr + ub_offset),
+              reinterpret_cast<__gm__ uint32_t *>(gm_ptr + gm_offset), 0, desc,
+              0, NEAREST_PADDING, l2_cache_ctl);
+  }
+#else
   // Use rightPaddingNum to pad and the pad_value is 0 as default.
   auto sizeWithPad = burst_len + (left_padding_num * bytes);
   auto rightPaddingNum =
@@ -262,6 +316,7 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_intrin_core(
               burst_cnt, burst_len, left_padding_num, rightPaddingNum, src_gap,
               dst_align_gap);
   }
+#endif
 }
 #endif
 
@@ -300,6 +355,23 @@ store_ubuf_to_gm_intrin_core(__ubuf__ T *ub_ptr, int64_t ub_offset,
                              uint16_t burst_cnt, uint32_t burst_len,
                              uint32_t src_gap, uint64_t dst_gap) {
   constexpr int32_t bytes = sizeof(T);
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201)
+  // dav-920r1: `copy_ubuf_to_gm_align(_v2)` does not support the target
+  // feature and no UB->GM nddma descriptor is available, use a synchronized
+  // scalar store fallback.
+  INTRINSIC(set_flag, PIPE_MTE3, PIPE_S, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_MTE3, PIPE_S, LIB_EVENT_ID0);
+  const uint32_t elems_per_burst = burst_len / bytes;
+  for (uint16_t b = 0; b < burst_cnt; b++) {
+    __ubuf__ T *ub_row =
+        ub_ptr + ub_offset + b * ((burst_len + src_gap) / bytes);
+    __gm__ T *gm_row = gm_ptr + gm_offset + b * ((burst_len + dst_gap) / bytes);
+    for (uint32_t e = 0; e < elems_per_burst; e++)
+      gm_row[e] = ub_row[e];
+  }
+  INTRINSIC(set_flag, PIPE_S, PIPE_MTE3, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_S, PIPE_MTE3, LIB_EVENT_ID0);
+#else
   uint32_t src_align_gap = src_gap / UB_ALIGN_BYTES;
   if constexpr (bytes == BYTES_B8 || bytes == BYTES_B16 || bytes == BYTES_B32) {
     INTRINSIC(copy_ubuf_to_gm_align, gm_ptr + gm_offset, ub_ptr + ub_offset, 0,
@@ -312,6 +384,7 @@ store_ubuf_to_gm_intrin_core(__ubuf__ T *ub_ptr, int64_t ub_offset,
                   ub_offset * factor,
               0, burst_cnt, burst_len, src_align_gap, dst_gap);
   }
+#endif
 }
 #endif
 
@@ -319,7 +392,7 @@ template <typename T>
 __aiv__ __attribute__((always_inline)) void
 copy_ubuf_to_ubuf_1d_core(memref_t<__ubuf__ T, 1> *src,
                           memref_t<__ubuf__ T, 1> *dst);
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 template <typename T>
 __aiv__ __attribute__((always_inline)) void
 copy_ubuf_to_cbuf_1d_core(memref_t<__ubuf__ T, 1> *src,
@@ -404,7 +477,7 @@ store_ubuf_to_gm_1d_by_scalar(memref_t<__ubuf__ T, 1> *src,
   for (int i = 0; i < src->sizes[0]; i++) {
     __gm__ T *gm_ptr = dst_ptr + i * dst->strides[0];
     __ubuf__ T *ub_ptr = src_ptr + i * src->strides[0];
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
     if constexpr (bytes == BYTES_B32 || bytes == BYTES_B64) {
       INTRINSIC(st_dev, (T)*ub_ptr, (__gm__ T *)gm_ptr, 0);
     } else if constexpr (bytes == BYTES_B16) {
@@ -440,7 +513,7 @@ store_ubuf_to_gm_2d_by_scalar(memref_t<__ubuf__ T, 2> *src,
     for (int j = 0; j < src->sizes[1]; j++) {
       __gm__ T *gm_ptr = dst_ptr + i * dst->strides[0] + j * dst->strides[1];
       __ubuf__ T *ub_ptr = src_ptr + i * src->strides[0] + j * src->strides[1];
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
       if constexpr (bytes == BYTES_B32 || bytes == BYTES_B64) {
         INTRINSIC(st_dev, (T)*ub_ptr, (__gm__ T *)gm_ptr, 0);
       } else if constexpr (bytes == BYTES_B16) {
@@ -550,7 +623,7 @@ store_ubuf_to_gm_1d_core_with_contiguous_last_dim(memref_t<__ubuf__ T, 1> *ub,
   store_ubuf_to_gm_intrin_core(src_ptr, 0, dst_ptr, 0, 1, size0 * bytes, 0, 0);
 }
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 /// 2D GM -> UB core func mainly using DMA
 /// Prerequisites: `strideUB[1] == strideGM[1] == 1` and startUBAddr is 32B
 /// aligned
@@ -738,7 +811,7 @@ load_gm_to_ubuf_2d_core_with_contiguous_last_dim(memref_t<__gm__ T, 2> *gm,
 }
 #endif
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 /// 2D UB -> GM core func mainly using DMA
 /// Prerequisites: `strideUB[1] == strideGM[1] == 1` and startUBAddr is 32B
 /// aligned
@@ -910,7 +983,7 @@ store_ubuf_to_gm_2d_core_with_contiguous_last_dim(memref_t<__ubuf__ T, 2> *ub,
 }
 #endif
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 /// 3D GM -> UB core func mainly using DMA
 /// + `UB&GM stride[1] == stride[2] * size[2]`: dimension 1 is contiguous
 ///   - Convert to 2D: `offset2D = offset3D, size2D = [size3D[0], size3D[1] *
@@ -1150,7 +1223,7 @@ load_gm_to_ubuf_3d_core_with_contiguous_last_dim(memref_t<__gm__ T, 3> *gm,
 }
 #endif
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 /// 3D UB -> GM core func mainly using DMA
 /// + `UB&GM stride[1] == stride[2] * size[2]`: dimension 1 is contiguous
 ///   - Convert to 2D: `offset2D = offset3D, size2D = [size3D[0], size3D[1] *
@@ -1392,7 +1465,7 @@ copy_ubuf_to_ubuf_intrin_core(__ubuf__ T *dst_ptr, __ubuf__ T *src_ptr,
             burst_cnt, burst_len, MAX(src_gap, 0), MAX(dst_gap, 0));
 }
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 /// Requirement: `stride[0] == 1`
 /// - `src|dst` starting address not 32B aligned:
 /// `vector_dma_unalign_offset_vv_1d_vf`
@@ -1514,7 +1587,7 @@ copy_ubuf_to_ubuf_2d_to_1d_core_with_contiguous_last_dim(
   }
 }
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 /// Requirement: `stride[1] == 1`
 /// - `src|dst` starting address not 32B aligned:
 ///   - `copy_ubuf_to_ubuf_2d_to_1d_core_with_contiguous_last_dim`
@@ -1639,7 +1712,7 @@ copy_ubuf_to_ubuf_3d_core_with_contiguous_last_dim(
   }
 }
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 /// func of copy ub -> cbuf intrin for 1d and 2d, all dtypes are supported.
 /// eg.
 ///  if copy 1d, burst_cnt is 1 and gap is 0.
@@ -1965,7 +2038,7 @@ __aiv__ __attribute__((always_inline)) T set_pad_value_null() {
   }
 }
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 template <typename T, int DIM,
           typename = std::enable_if_t<std::is_same_v<T, int64_t> ||
                                       std::is_same_v<T, uint64_t>>>
@@ -2032,7 +2105,7 @@ template <typename T> struct PadValueType {
   using type = T;
 };
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 template <> struct PadValueType<float8_e4m3_t> {
   using type = float;
 };
@@ -2057,7 +2130,7 @@ template <typename T> using PadValueT = typename PadValueType<T>::type;
                                         left_padding_num, eviction_policy);    \
   }
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 
 #define DECLARE_DMA_LOAD_FP8(dim, type)                                        \
   __aiv__ __attribute__((always_inline)) void                                  \
@@ -2128,7 +2201,7 @@ DECLARE_DMA_LOAD(1, uint64_t);
 DECLARE_DMA_LOAD(1, half);
 DECLARE_DMA_LOAD(1, float);
 DECLARE_DMA_LOAD(1, bfloat16_t);
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 DECLARE_DMA_LOAD_FP8(1, float8_e4m3_t);
 DECLARE_DMA_LOAD_FP8(1, float8_e5m2_t);
 #endif
@@ -2147,7 +2220,7 @@ DECLARE_DMA_LOAD(2, uint64_t);
 DECLARE_DMA_LOAD(2, half);
 DECLARE_DMA_LOAD(2, float);
 DECLARE_DMA_LOAD(2, bfloat16_t);
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 DECLARE_DMA_LOAD_FP8(2, float8_e4m3_t);
 DECLARE_DMA_LOAD_FP8(2, float8_e5m2_t);
 #endif
@@ -2168,7 +2241,7 @@ DECLARE_DMA_LOAD(3, float);
 DECLARE_DMA_LOAD(3, bfloat16_t);
 DECLARE_DMA_LOAD(3, int8_t);
 DECLARE_DMA_LOAD(3, uint8_t);
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 DECLARE_DMA_LOAD_FP8(3, float8_e4m3_t);
 DECLARE_DMA_LOAD_FP8(3, float8_e5m2_t);
 #endif
@@ -2225,7 +2298,7 @@ DECLARE_DMA_STORE(1, uint64_t);
 DECLARE_DMA_STORE(1, half);
 DECLARE_DMA_STORE(1, float);
 DECLARE_DMA_STORE(1, bfloat16_t);
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 DECLARE_DMA_STORE(1, float8_e4m3_t);
 DECLARE_DMA_STORE(1, float8_e5m2_t);
 #endif
@@ -2244,7 +2317,7 @@ DECLARE_DMA_STORE(2, uint64_t);
 DECLARE_DMA_STORE(2, half);
 DECLARE_DMA_STORE(2, float);
 DECLARE_DMA_STORE(2, bfloat16_t);
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 DECLARE_DMA_STORE(2, float8_e4m3_t);
 DECLARE_DMA_STORE(2, float8_e5m2_t);
 #endif
@@ -2262,7 +2335,7 @@ DECLARE_DMA_STORE(3, uint64_t);
 DECLARE_DMA_STORE(3, half);
 DECLARE_DMA_STORE(3, float);
 DECLARE_DMA_STORE(3, bfloat16_t);
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 DECLARE_DMA_STORE(3, float8_e4m3_t);
 DECLARE_DMA_STORE(3, float8_e5m2_t);
 #endif
@@ -2281,7 +2354,7 @@ DECLARE_DMA_UB_COPY(ubuf, ubuf, 1, uint64_t);
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 1, half);
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 1, float);
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 1, bfloat16_t);
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 1, float8_e4m3_t);
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 1, float8_e5m2_t);
 #endif
@@ -2301,7 +2374,7 @@ DECLARE_DMA_UB_COPY(ubuf, ubuf, 2, uint64_t);
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 2, half);
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 2, float);
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 2, bfloat16_t);
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 2, float8_e4m3_t);
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 2, float8_e5m2_t);
 #endif
@@ -2321,12 +2394,12 @@ DECLARE_DMA_UB_COPY(ubuf, ubuf, 3, uint64_t);
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 3, half);
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 3, float);
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 3, bfloat16_t);
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 3, float8_e4m3_t);
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 3, float8_e5m2_t);
 #endif
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 //===-------------------------------------------------------------------===//
 // ub to cbuf, 1 dim
 //===-------------------------------------------------------------------===//
