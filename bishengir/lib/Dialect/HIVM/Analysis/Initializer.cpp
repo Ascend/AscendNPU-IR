@@ -36,6 +36,7 @@ namespace detail {
 
 DimensionAnalyzer::DimensionAnalyzer(Operation *op, int64_t tilingSize)
     : DimensionAnalyzerBase(op), tilingSize(tilingSize) {
+  options.registerBased = true;
   assert(tilingSize > 0 && "Tiling Size must be positive integer");
 }
 
@@ -105,6 +106,7 @@ int64_t DimensionAnalyzer::allocateArguments(int rank,
   auto startingIdx = argumentTotalLength_;
   DimensionAnalyzerBase::allocateArguments(rank, dimensionRef);
   exclusiveDimIdx.resize(argumentTotalLength_);
+  invalidDimIdx.resize(argumentTotalLength_);
   for (int64_t i = 0; i < rank; ++i) {
     int64_t currentIndex = startingIdx + i;
     for (int64_t j = 0; j < rank; ++j) {
