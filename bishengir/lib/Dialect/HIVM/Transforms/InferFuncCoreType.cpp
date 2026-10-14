@@ -39,7 +39,6 @@ using namespace mlir;
 #define DEBUG_TYPE "infer-core-type"
 
 namespace {
-
 /// Inference the core type of each function, based on the operations used
 /// inside the function body.
 ///
@@ -304,24 +303,6 @@ private:
         return WalkResult::interrupt();
       }
 
-      // LoadOp and DebugOp infer a missing core type by walking users, which
-      // calls back into this query. An explicit tcoretype is local, so count
-      // it. Otherwise skip: other operations determine the constraint.
-      if (auto debugOp = dyn_cast<hivm::DebugOp>(op)) {
-        if (std::optional<hivm::TCoreTypeAttr> attr = debugOp.getTcoretype()) {
-          if (attr->getTcoretype() != hivm::TCoreType::CUBE_OR_VECTOR)
-            refineConstraint(c, attr->getTcoretype());
-        }
-        return WalkResult::advance();
-      }
-      if (auto loadOp = dyn_cast<hivm::LoadOp>(op)) {
-        if (auto attr = loadOp.getTcoretype()) {
-          if (attr.getTcoretype() != hivm::TCoreType::CUBE_OR_VECTOR)
-            refineConstraint(c, attr.getTcoretype());
-        }
-        return WalkResult::advance();
-      }
-
       // op with 'CoretypeInterface' must succeed to inference, otherwise
       // it's an implementation error.
       if (auto infer = dyn_cast<hivm::CoreTypeInterface>(op)) {
@@ -330,6 +311,24 @@ private:
           LLVM_DEBUG(llvm::dbgs()
                      << "  -> Fail Reason: single op inference failure\n"
                      << "  -> Failed Op: " << infer << "\n");
+
+          fail = true;
+          return WalkResult::interrupt();
+        }
+
+        LLVM_DEBUG(llvm::dbgs()
+                   << "  -- " << *op << ": " << coreTypeMaybe.value() << "\n");
+
+        refineConstraint(c, coreTypeMaybe.value());
+      }
+
+      // TODO: enhance the getCoreType of the debug op
+      if (auto debugOp = dyn_cast<hivm::DebugOp>(op)) {
+        auto coreTypeMaybe = debugOp.inferCoreType();
+        if (!coreTypeMaybe) {
+          LLVM_DEBUG(llvm::dbgs()
+                     << "  -> Fail Reason: single op inference failure\n"
+                     << "  -> Failed Op: " << debugOp << "\n");
 
           fail = true;
           return WalkResult::interrupt();
