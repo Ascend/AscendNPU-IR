@@ -24,6 +24,7 @@
 
 #include "bishengir/Dialect/HIVMRegbaseIntrins/IR/HIVMRegbaseIntrins.h"
 
+#include <optional>
 #include <thread>
 #include <vector>
 
@@ -36,6 +37,73 @@ using namespace mlir;
 using namespace object;
 
 namespace {
+
+// A device compile failed for a reason the driver cannot act on, in some
+// stage or tool that has already reported the details on stderr. Carries no
+// message of its own and is never inspected: callers only ever tell it apart
+// from a VF stack overflow, through bishengir::isVFStackOverflowError().
+//
+// Neither error here is ever logged or turned into an error code, because
+// every one of them is classified and then consumed while the stage that
+// raised it has already printed its own diagnostics. log() and
+// convertToErrorCode() are implemented only because ErrorInfoBase declares
+// them pure virtual; their text reaches no output, so do not phrase a
+// user-facing message as if it did.
+class DeviceCompileError : public llvm::ErrorInfo<DeviceCompileError> {
+public:
+  static char ID;
+
+  void log(llvm::raw_ostream &os) const override {
+    os << "device compile failed";
+  }
+  std::error_code convertToErrorCode() const override {
+    return llvm::inconvertibleErrorCode();
+  }
+};
+
+// A device kernel's outlined vector function is taken to have overflowed the
+// VF stack; see where it is raised for how that is inferred. Private to this
+// file: callers ask bishengir::isVFStackOverflowError() instead of naming the
+// class, which keeps the one distinction they need out of the error taxonomy.
+class VFStackOverflowError : public llvm::ErrorInfo<VFStackOverflowError> {
+public:
+  static char ID;
+
+  void log(llvm::raw_ostream &os) const override {
+    os << "vector function exceeded the VF stack";
+  }
+  std::error_code convertToErrorCode() const override {
+    return llvm::inconvertibleErrorCode();
+  }
+};
+
+char DeviceCompileError::ID = 0;
+char VFStackOverflowError::ID = 0;
+
+// Reduces the per-kernel failures of one device compile to the single one the
+// caller can act on: a VF stack overflow wins over any other failure, since a
+// mix kernel's other half may have failed for an unrelated reason. The rest
+// are consumed; each stage has already reported itself on stderr.
+llvm::Error
+joinDeviceFailures(MutableArrayRef<std::optional<llvm::Error>> slots) {
+  llvm::Error chosen = llvm::Error::success();
+  bool chosenIsOverflow = false;
+  for (std::optional<llvm::Error> &slot : slots) {
+    if (!slot)
+      continue;
+    llvm::Error err = std::move(*slot);
+    slot.reset();
+    bool isOverflow = isVFStackOverflowError(err);
+    if (!chosen || (isOverflow && !chosenIsOverflow)) {
+      llvm::consumeError(std::move(chosen));
+      chosen = std::move(err);
+      chosenIsOverflow = isOverflow;
+      continue;
+    }
+    llvm::consumeError(std::move(err));
+  }
+  return chosen;
+}
 
 static constexpr llvm::StringLiteral kSIMTModule = "hacc.simt_module";
 using MixedModules = std::pair<ModuleOp, SmallVector<ModuleOp, 2>>;
@@ -58,7 +126,7 @@ MixedModules getMixedModules(ModuleOp topMod) {
   return res;
 }
 
-std::optional<std::string>
+llvm::Expected<std::string>
 compileDeviceKernel(StringRef bishengPath, const std::string &llvmirFilepath,
                     const std::string &outputBinFilepath,
                     SubCoreTarget coreType, const HIVMCMainConfig &config,
@@ -187,7 +255,7 @@ compileDeviceKernel(StringRef bishengPath, const std::string &llvmirFilepath,
     if (bitcodePathList.empty()) {
       llvm::errs() << "[ERROR]cannot find any bitcode files for coreType:"
                    << static_cast<int>(coreType) << " \n";
-      return std::nullopt;
+      return llvm::make_error<DeviceCompileError>();
     }
     for (const auto &BCPath : bitcodePathList) {
       arguments.push_back("-cce-link-aicore-ll-module");
@@ -195,7 +263,17 @@ compileDeviceKernel(StringRef bishengPath, const std::string &llvmirFilepath,
     }
     if (failed(execute(bishengBin, bishengPath, arguments))) {
       llvm::errs() << "[ERROR] failed to execute bisheng\n";
-      return std::nullopt;
+      // Taken as a VF stack overflow, although nothing here actually says
+      // so. There is no precise signal for the overflow short of matching
+      // ccec's stderr against its wording, which is undocumented and not a
+      // contract this driver should depend on. What justifies the guess is
+      // that a kernel reaching ccec has already passed the whole pipeline,
+      // and the VF stack is what ccec then rejects it for in practice. The
+      // approximation is coarser than it looks: `execute` fails the same way
+      // when ccec cannot be found at all, so that lands here too. Either way
+      // the cost of guessing wrong is one extra attempt, not a wrong
+      // result. This is the place to narrow once a precise signal exists.
+      return llvm::make_error<VFStackOverflowError>();
     }
     return outputBin;
   }
@@ -215,7 +293,7 @@ compileDeviceKernel(StringRef bishengPath, const std::string &llvmirFilepath,
 
   if (bitcodePathList.empty()) {
     llvm::errs() << "[ERROR]cannot find any bitcode files\n";
-    return std::nullopt;
+    return llvm::make_error<DeviceCompileError>();
   }
   for (const auto &BCPath : bitcodePathList) {
     arguments.push_back("-cce-link-aicore-ll-module");
@@ -223,7 +301,8 @@ compileDeviceKernel(StringRef bishengPath, const std::string &llvmirFilepath,
   }
   if (failed(execute(bishengBin, bishengPath, arguments))) {
     llvm::errs() << "[ERROR] failed to execute bisheng\n";
-    return std::nullopt;
+    // Taken as a VF stack overflow for the reason given above.
+    return llvm::make_error<VFStackOverflowError>();
   }
   if (config.shouldSaveLinkedIR()) {
     llvm::errs()
@@ -312,13 +391,19 @@ LogicalResult relocBinary(const std::string &unrelocFile,
   return success();
 }
 
-bool lowerDeviceToBinary(
-    const SmallVector<IRFilePair> &outputLLVMIRs, const std::string &outputFile,
-    const HIVMCMainConfig &config, bool isMixKernel,
-    bool mixKernelHasDebugOrShmem,
-    const std::map<SubCoreTarget, std::string> &bitcodePaths) {
+llvm::Error
+lowerDeviceToBinary(const SmallVector<IRFilePair> &outputLLVMIRs,
+                    const std::string &outputFile,
+                    const HIVMCMainConfig &config, bool isMixKernel,
+                    bool mixKernelHasDebugOrShmem,
+                    const std::map<SubCoreTarget, std::string> &bitcodePaths) {
   LDBG("Lowering device module from BiShengLIR to binary");
-  SmallVector<std::optional<std::string>> outputObjects(outputLLVMIRs.size());
+  SmallVector<std::string> outputObjects(outputLLVMIRs.size());
+  // One slot per device kernel so the concurrent compiles below never share
+  // state; joined into a single failure once they finish. Held in optionals
+  // and only ever emplaced, because assigning over an llvm::Error that has
+  // not been checked is itself a fatal error.
+  SmallVector<std::optional<llvm::Error>> errors(outputLLVMIRs.size());
 
   auto compileDeviceModule = [&](size_t i) {
     const IRFilePair &pair = outputLLVMIRs[i];
@@ -331,10 +416,14 @@ bool lowerDeviceToBinary(
             ? tryReplaceExtension(pair.first->getFilename().str(), "o")
             : outputFile;
 
-    outputObjects[i] = compileDeviceKernel(
+    llvm::Expected<std::string> binOrErr = compileDeviceKernel(
         getBiShengInstallPath(), pair.first->getFilename().str(),
         kernelOutputPath, coreType, config, isMixKernel,
         mixKernelHasDebugOrShmem, bitcodePaths);
+    if (binOrErr)
+      outputObjects[i] = std::move(*binOrErr);
+    else
+      errors[i].emplace(binOrErr.takeError());
   };
 
   // The AIC and AIV device modules are independent: they read disjoint .ll
@@ -353,29 +442,24 @@ bool lowerDeviceToBinary(
       compileDeviceModule(i);
   }
 
-  if (std::any_of(
-          outputObjects.begin(), outputObjects.end(),
-          [](const std::optional<std::string> &o) { return !o.has_value(); })) {
-    return false;
-  }
+  if (llvm::Error err = joinDeviceFailures(errors))
+    return err;
 
   if (outputLLVMIRs.size() > 1) {
     SmallVector<StringRef> linkerInputs(outputObjects.size());
     std::transform(outputObjects.begin(), outputObjects.end(),
                    linkerInputs.begin(),
-                   [](const std::optional<std::string> &o) {
-                     return StringRef(o.value());
-                   });
+                   [](const std::string &o) { return StringRef(o); });
     auto bishengPath = getBiShengInstallPath();
     auto finalObjectMaybe =
         linkMixKernel(bishengPath, linkerInputs,
                       tryReplaceExtension(outputFile, "o"), config);
     if (!finalObjectMaybe) {
-      return false;
+      return llvm::make_error<DeviceCompileError>();
     }
   }
 
-  return true;
+  return llvm::Error::success();
 }
 
 SmallVector<IRModulePair>
@@ -469,7 +553,7 @@ lowerToCPUDynamicLib(const SmallVector<IRFilePair> &outputLLVMIRs,
 }
 #endif
 
-LogicalResult runDeviceBiShengLIRCompile(
+llvm::Error runDeviceBiShengLIRCompile(
     ModuleOp mod, const HIVMCMainConfig &config, const std::string &outputFile,
     const std::string &tempFilesPath,
     const std::map<SubCoreTarget, std::string> &bitcodePaths) {
@@ -486,7 +570,7 @@ LogicalResult runDeviceBiShengLIRCompile(
     std::optional<std::pair<ModuleOp, ModuleOp>> splitMaybe =
         splitMixModule(mod);
     if (!splitMaybe) {
-      return failure();
+      return llvm::make_error<DeviceCompileError>();
     }
     modulesAfterSplit = {splitMaybe.value().first, splitMaybe.value().second};
     {
@@ -506,7 +590,7 @@ LogicalResult runDeviceBiShengLIRCompile(
       translateDeviceKernelToLLVM(modulesAfterSplit, config, llvmContext);
   if (std::any_of(llvmModules.begin(), llvmModules.end(),
                   [](const IRModulePair &pair) { return !pair.first; })) {
-    return failure();
+    return llvm::make_error<DeviceCompileError>();
   }
 
   // attach necessary metadata to the generated llvm ir
@@ -531,40 +615,43 @@ LogicalResult runDeviceBiShengLIRCompile(
       saveToFiles(llvmModules, tempFilesPath, setKeepFlag);
   if (std::any_of(llvmTempFiles.begin(), llvmTempFiles.end(),
                   [](const IRFilePair &pair) { return !pair.first; })) {
-    return failure();
+    return llvm::make_error<DeviceCompileError>();
   }
 
   if (!config.shouldCompileLIR()) {
-    return success();
+    return llvm::Error::success();
   }
 
 #if (!BISHENGIR_PUBLISH)
   if (config.enableCPUTraceIntrinsic()) {
-    return lowerToCPUDynamicLib(llvmTempFiles, config, bitcodePaths);
+    if (failed(lowerToCPUDynamicLib(llvmTempFiles, config, bitcodePaths)))
+      return llvm::make_error<DeviceCompileError>();
+    return llvm::Error::success();
   }
 #endif
 
   // TODO: remove isMixKernel and mixKernelHasDebugOrShmem after refactoring
   //       to enable bisheng link two bc files
   // compile llvm ir files to the final binary
-  if (!lowerDeviceToBinary(llvmTempFiles, outputFile, config, isMixKernel,
-                           mixKernelHasDebugOrShmem, bitcodePaths)) {
-    return failure();
+  if (llvm::Error err =
+          lowerDeviceToBinary(llvmTempFiles, outputFile, config, isMixKernel,
+                              mixKernelHasDebugOrShmem, bitcodePaths)) {
+    return err;
   }
 
   if (config.shouldSaveLinkedIR()) {
-    return success();
+    return llvm::Error::success();
   }
 
   // if enable bin relocation, do relocation to verify func is all defined
   // note: the reloc binary will replace outputFile
   if (config.shouldRelocateBinary()) {
     if (failed(relocBinary(outputFile, config))) {
-      return failure();
+      return llvm::make_error<DeviceCompileError>();
     }
   }
 
-  return success();
+  return llvm::Error::success();
 }
 
 // Checks per-thread stack usage and returns failure if it exceeds the
@@ -887,7 +974,11 @@ bool runSIMDToLLVMCompile(ModuleOp module, HIVMCMainConfig &config) {
 }
 } // namespace
 
-LogicalResult bishengir::runBiShengLIRCompileA5(
+bool bishengir::isVFStackOverflowError(const llvm::Error &err) {
+  return err.isA<VFStackOverflowError>();
+}
+
+llvm::Error bishengir::runBiShengLIRCompileA5(
     ModuleOp module, HIVMCMainConfig config,
     const std::map<SubCoreTarget, std::string> &bitcodePaths) {
   auto separatedModule = hacc::separateHostDeviceModule(module);
@@ -907,13 +998,13 @@ LogicalResult bishengir::runBiShengLIRCompileA5(
     llvm::SmallString<256> saveTempsDir(config.shouldSaveTemps());
     if (llvm::sys::fs::make_absolute(saveTempsDir)) {
       llvm::errs() << "[ERROR] Failed to get absolute path for save-temps.\n";
-      return failure();
+      return llvm::make_error<DeviceCompileError>();
     }
     if (!llvm::sys::fs::exists(saveTempsDir))
       if (auto ec = llvm::sys::fs::create_directories(saveTempsDir)) {
         llvm::errs() << "[ERROR] Failed to create save-temps directory: "
                      << saveTempsDir << "\n";
-        return failure();
+        return llvm::make_error<DeviceCompileError>();
       }
     llvm::sys::path::append(saveTempsDir,
                             llvm::sys::path::filename(outputFile));
@@ -922,19 +1013,20 @@ LogicalResult bishengir::runBiShengLIRCompileA5(
 
   size_t deviceInputParamSize = hacc::countDeviceArgSizeInByte(deviceModule);
   config.updateMaxInputParamsSizeInBytes(deviceInputParamSize);
-  if (failed(runDeviceBiShengLIRCompile(deviceModule, config, outputFile,
-                                        tempFilesOutputPath, bitcodePaths))) {
+  if (llvm::Error err =
+          runDeviceBiShengLIRCompile(deviceModule, config, outputFile,
+                                     tempFilesOutputPath, bitcodePaths)) {
     deviceModule->emitError("Failed to compile BiShengLIR for device");
-    return failure();
+    return err;
   }
 
   if (failed(
           checkSIMTStackLimit(config, tryReplaceExtension(outputFile, "o")))) {
-    return failure();
+    return llvm::make_error<DeviceCompileError>();
   }
 
   if (!(config.shouldCompileLIR() && hacc::existHost(hostModule)))
-    return success();
+    return llvm::Error::success();
 
   // set tmp output file path for host ir
   // TODO: find a better way to create temp files
@@ -943,14 +1035,14 @@ LogicalResult bishengir::runBiShengLIRCompileA5(
   if (failed(runHostBiShengLIRCompile(hostModule, config, outputFile,
                                       bitcodePaths))) {
     deviceModule->emitError("Failed to compile BiShengLIR for host");
-    return failure();
+    return llvm::make_error<DeviceCompileError>();
   }
 
-  return success();
+  return llvm::Error::success();
 }
-LogicalResult bishengir::runHIVMCCompileA5(ModuleOp hirCompileModule,
-                                           HIVMCMainConfig config) {
 
+llvm::Error bishengir::runHIVMCCompileA5(ModuleOp hirCompileModule,
+                                         HIVMCMainConfig config) {
   MLIRContext *ctx = hirCompileModule->getContext();
   mlir::DiagnosticEngine &diagEngine = ctx->getDiagEngine();
   std::vector<Diagnostic> collectedDiagnostics;
@@ -994,7 +1086,7 @@ LogicalResult bishengir::runHIVMCCompileA5(ModuleOp hirCompileModule,
     for (auto &diag : llvm::reverse(collectedDiagnostics)) {
       diagEngine.emit(std::move(diag));
     }
-    return failure();
+    return llvm::make_error<DeviceCompileError>();
   }
 
   if (config.shouldOnlyRunHIVMPipeline()) {
@@ -1004,14 +1096,14 @@ LogicalResult bishengir::runHIVMCCompileA5(ModuleOp hirCompileModule,
     if (!fileHandle) {
       llvm::errs() << "[ERROR] Failed to open: " << outputFile
                    << " error message: " << errorMessage << "\n";
-      return failure();
+      return llvm::make_error<DeviceCompileError>();
     }
     hirCompileModule.print(
         fileHandle->os(),
         mlir::OpPrintingFlags().enableDebugInfo(
             config.shouldEnableSanitizer() || config.shouldEnableDebugInfo()));
     fileHandle->keep();
-    return success();
+    return llvm::Error::success();
   }
 
   if (config.shouldEnableCPURunner()) {
@@ -1020,14 +1112,10 @@ LogicalResult bishengir::runHIVMCCompileA5(ModuleOp hirCompileModule,
     assert(fileHandle != nullptr);
     fileHandle->os() << hirCompileModule << '\n';
     fileHandle->keep();
-    return success();
+    return llvm::Error::success();
   }
 
   auto bishengPath = getBiShengInstallPath();
   auto bitcodePaths = getBitcodePathsBySubCoreTarget(hirCompileModule);
-  if (failed(runBiShengLIRCompileA5(hirCompileModule, config, bitcodePaths))) {
-    return failure();
-  }
-
-  return success();
+  return runBiShengLIRCompileA5(hirCompileModule, config, bitcodePaths);
 }
