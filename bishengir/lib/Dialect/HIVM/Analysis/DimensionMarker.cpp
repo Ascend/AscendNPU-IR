@@ -997,8 +997,7 @@ bool DimensionAnalyzer::finalizeTransaction() {
   for (auto &indices : indicesAfterTransaction) {
     for (size_t i = 0; i < indices.size(); i++) {
       for (size_t j = i + 1; j < indices.size(); j++) {
-        if (exclusiveDimIdx[indices[i]].contains(indices[j]) ||
-            invalidDimIdx[indices[i]].contains(indices[j])) {
+        if (exclusiveDimIdx[indices[i]].contains(indices[j])) {
           invalidMerges.insert(indices[i]);
           invalidMerges.insert(indices[j]);
         }
@@ -1011,33 +1010,6 @@ bool DimensionAnalyzer::finalizeTransaction() {
   for (int i = 0; i < static_cast<int>(compArgIdx.size()); i++) {
     auto pIdx = transArgDSU.find(i);
     indicesAfterTransaction[pIdx].push_back(compArgIdx[i]);
-  }
-  auto hasExclusiveInvalidOverlap = [this](int64_t invalidOwner,
-                                           int64_t exclusiveOwner) {
-    for (auto invalidDim : invalidDimIdx[invalidOwner])
-      if (exclusiveDimIdx[exclusiveOwner].contains(invalidDim))
-        return true;
-    return false;
-  };
-  for (auto &indices : indicesAfterTransaction) {
-    bool isInvalid = false;
-    for (size_t i = 0; i < indices.size(); i++) {
-      auto parIdx = structuralDsu_->find(indices[i]);
-      for (size_t j = i + 1; j < indices.size(); j++) {
-        auto otherParIdx = structuralDsu_->find(indices[j]);
-        if (hasExclusiveInvalidOverlap(otherParIdx, parIdx) ||
-            hasExclusiveInvalidOverlap(parIdx, otherParIdx)) {
-          isInvalid = true;
-          i = j = indices.size();
-        }
-      }
-    }
-    if (isInvalid) {
-      for (auto idx : indices) {
-        auto parIdx = structuralDsu_->find(idx);
-        invalidMerges.insert(parIdx);
-      }
-    }
   }
   for (auto res : op->getResults()) {
     if (!isa<ShapedType>(res.getType()))
@@ -1055,22 +1027,17 @@ bool DimensionAnalyzer::finalizeTransaction() {
   for (const auto &[rIdx, indices] : llvm::enumerate(indicesAfterTransaction)) {
     DimensionIndex invalidIndices;
     for (size_t i = 0; i < indices.size(); i++) {
-      auto rep = structuralDsu_->find(repIdx[rIdx]);
       auto parIdx = structuralDsu_->find(indices[i]);
       if (repIdx[rIdx] == indices[i] || !invalidMerges.contains(parIdx))
         continue;
-      if (rep != parIdx) {
-        invalidDimIdx[rep].insert(parIdx);
-        invalidDimIdx[parIdx].insert(rep);
-      }
       invalidIndices.push_back(indices[i]);
     }
-    if (invalidIndices.empty())
-      continue;
-    invalidUpdates.emplace_back(repIdx[rIdx], invalidIndices);
-    LDBG("Adding invalid updates: ("
-         << structuralDsu_->find(repIdx[rIdx]) << ", "
-         << utils::debugger::to_string(invalidIndices) << ") ");
+    if (!invalidIndices.empty()) {
+      invalidUpdates.emplace_back(repIdx[rIdx], invalidIndices);
+      LDBG("Adding invalid updates: ("
+           << structuralDsu_->find(repIdx[rIdx]) << ", "
+           << utils::debugger::to_string(invalidIndices) << ") ");
+    }
   }
 
   LDBG("argIndices: " << utils::debugger::to_string(argIndices));
@@ -1598,14 +1565,6 @@ void DimensionAnalyzer::joinShape(int a, int b) {
       assert(!exclusiveDimIdx[exIdx].contains(exIdx));
     }
     exclusiveDimIdx[parA].clear();
-    for (auto invalidIdx : invalidDimIdx[parA]) {
-      invalidDimIdx[parB].insert(invalidIdx);
-      invalidDimIdx[invalidIdx].erase(parA);
-      invalidDimIdx[invalidIdx].insert(parB);
-      assert(!invalidDimIdx[parB].contains(parB));
-      assert(!invalidDimIdx[invalidIdx].contains(invalidIdx));
-    }
-    invalidDimIdx[parA].clear();
   }
 }
 
@@ -1628,14 +1587,6 @@ void DimensionAnalyzer::joinCollapser(int a, int b) {
       assert(!exclusiveDimIdx[exIdx].contains(exIdx));
     }
     exclusiveDimIdx[parA].clear();
-    for (auto invalidIdx : invalidDimIdx[parA]) {
-      invalidDimIdx[parB].insert(invalidIdx);
-      invalidDimIdx[invalidIdx].erase(parA);
-      invalidDimIdx[invalidIdx].insert(parB);
-      assert(!invalidDimIdx[parB].contains(parB));
-      assert(!invalidDimIdx[invalidIdx].contains(invalidIdx));
-    }
-    invalidDimIdx[parA].clear();
   }
 }
 
