@@ -1883,7 +1883,7 @@ class PlainOpToLibraryCallPattern : public OpRewritePattern<T> {
     replaceWithLibCall(rewriter, op,
                        cast<OpWithLibraryFunction>(op.getOperation())
                            .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
-                       /*inputOperands=*/{}, {});
+                       op->getOperands(), op->getResultTypes());
     return success();
   }
 };

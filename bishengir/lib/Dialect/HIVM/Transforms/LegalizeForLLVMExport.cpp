@@ -45,6 +45,11 @@ using GetSubBlockIdxLowering =
 using GetSubBlockNumLowering =
     OneToOneConvertToLLVMPattern<GetSubBlockNumOp, GetSubBlockNumInstrOp>;
 
+using GetCoreIdLowering =
+    OneToOneConvertToLLVMPattern<GetCoreIdOp, GetCoreIdInstrOp>;
+
+using SetCondLowering = OneToOneConvertToLLVMPattern<SetCondOp, SetCondInstrOp>;
+
 template <typename Op> LogicalResult convertToImmInstrOp(Op convertOp) {
   if (convertOp.getStaticEventId().has_value()) {
     return success();
@@ -553,6 +558,7 @@ void mlir::populateHIVMLegalizeForLLVMExportPatterns(
   // clang-format off
   patterns.add<GetBlockIdxLowering, GetBlockNumLowering,
                GetSubBlockIdxLowering, GetSubBlockNumLowering,
+               GetCoreIdLowering, SetCondLowering,
                HIVMSetFlagOpLowering,
                HIVMWaitFlagOpLowering,
                HIVMPipeBarrierOpLowering,
@@ -579,6 +585,8 @@ void mlir::configureHIVMLegalizeForExportTarget(LLVMConversionTarget &target) {
   target.addLegalOp<GetBlockNumInstrOp>();
   target.addLegalOp<GetSubBlockIdxInstrOp>();
   target.addLegalOp<GetSubBlockNumInstrOp>();
+  target.addLegalOp<GetCoreIdInstrOp>();
+  target.addLegalOp<SetCondInstrOp>();
   target.addLegalOp<SetFlagImmInstrOp>();
   target.addLegalOp<WaitFlagImmInstrOp>();
   target.addLegalOp<SetFlagRegInstrOp>();

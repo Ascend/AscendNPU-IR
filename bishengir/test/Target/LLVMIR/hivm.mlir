@@ -36,6 +36,24 @@ llvm.func @test_get_sub_block_num() {
 
 // -----
 
+// CHECK-LABEL: define void @test_get_coreid(
+// CHECK: %[[CALL:.*]] = call i64 @llvm.hivm.GET.COREID()
+llvm.func @test_get_coreid() {
+  %0 = "hivm.intr.hivm.GET.COREID"() : () -> i64
+  llvm.return
+}
+
+// -----
+
+// CHECK-LABEL: define void @test_set_cond
+// CHECK: call void @llvm.hivm.SET.COND(i64 %0)
+llvm.func @test_set_cond(%arg : i64) {
+  "hivm.intr.hivm.SET.COND"(%arg) : (i64) -> ()
+  llvm.return
+}
+
+// -----
+
 // CHECK-LABEL: define void @test_pipe_barrier() {
 // CHECK: call void @llvm.hivm.BARRIER(i64 6)
 llvm.func @test_pipe_barrier() {

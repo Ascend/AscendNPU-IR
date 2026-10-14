@@ -1712,8 +1712,8 @@ static std::string getIndirectAtomicLibraryCallName(CustomOpT op) {
 }
 
 template <typename CustomOpT>
-std::string inferCustomOpMaxRank(Operation *op,
-                                 std::optional<bool> isOpsAligned) {
+std::string customOpLibraryCallName(Operation *op,
+                                    std::optional<bool> isOpsAligned) {
   auto concreteOp = cast<CustomOpT>(op);
 
   if (concreteOp.isBuiltin()) {
@@ -1766,7 +1766,7 @@ std::string inferCustomOpMaxRank(Operation *op,
   template <>                                                                  \
   std::string InferMaxRankExternalModel<OP>::getOpLibraryCallName(             \
       Operation *op, std::optional<bool> isOpsAligned) const {                 \
-    return inferCustomOpMaxRank<OP>(op, isOpsAligned);                         \
+    return customOpLibraryCallName<OP>(op, isOpsAligned);                      \
   }
 
 DEFINE_CUSTOM_OP_INFER_MAX_RANK(CustomOp)
