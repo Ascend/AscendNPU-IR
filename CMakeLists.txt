@@ -167,13 +167,6 @@ set(BISHENGIR_TARGET_SPEC_TABLEGEN_TARGET
     "${BISHENGIR_TARGET_SPEC_TABLEGEN_TARGET}"
     CACHE INTERNAL "")
 
-# bishengir-options-tblgen links BiShengIRConfigOptions. The full build
-# creates that library from bishengir/lib. The standalone IR build does not
-# add bishengir/lib, so create the library here or the link becomes
-# -lBiShengIRConfigOptions.
-if(BISHENGIR_BUILD_STANDALONE_IR_ONLY)
-  add_subdirectory(bishengir/lib/Tools/ConfigOptions)
-endif()
 add_subdirectory(bishengir/tools/bishengir-options-tblgen)
 add_subdirectory(bishengir/tools/bishengir-hivm-ir-contract-tblgen)
 set(BISHENGIR_OPTIONS_TABLEGEN_EXE

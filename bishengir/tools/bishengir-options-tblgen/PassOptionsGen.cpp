@@ -92,7 +92,8 @@ static void genPassOptionsForGroups(
 /// Main entry to emit target spec decls.
 static bool emitPassOptions(const RecordKeeper &records, raw_ostream &OS,
                             bool isPipeline = false) {
-  auto specs = records.getAllDerivedDefinitions(kOptionClassName);
+  std::vector<Record *> specs =
+      records.getAllDerivedDefinitions(kOptionClassName);
   StringMap<SmallVector<ConfigOption>> passGroup2Options;
   for (const Record *R : specs) {
     ConfigOption cfgOpt(R);
