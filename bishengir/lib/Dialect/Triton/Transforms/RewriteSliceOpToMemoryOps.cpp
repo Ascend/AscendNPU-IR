@@ -1146,6 +1146,16 @@ struct ExtractSliceToLoadPattern
 
   LogicalResult matchAndRewrite(tensor::ExtractSliceOp op,
                                 PatternRewriter &rewriter) const override {
+    // The HIVM tiling / BubbleUpExtractSlice passes mark mixed SIMT/SIMD
+    // sub-block slices with the "to_be_bubbled_slice" attribute to indicate
+    // they must survive as tensor.extract_slice ops so the dynamic sub-block
+    // offset (e.g. sub_block_idx * row stride) is preserved. Rewriting one of
+    // these slices into a smaller load folds its offset into the tt.addptr
+    // chain, producing a uniform offset that the shared-memory load lowering
+    // cannot represent and silently drops, so leave them untouched.
+    if (op->hasAttrOfType<UnitAttr>("to_be_bubbled_slice"))
+      return failure();
+
     std::optional<SliceInfo> potentialSliceInfo = getSliceInfo(op);
     if (!potentialSliceInfo) {
       // unsupported slice op
