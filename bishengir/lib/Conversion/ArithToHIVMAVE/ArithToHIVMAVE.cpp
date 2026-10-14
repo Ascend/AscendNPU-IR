@@ -1541,6 +1541,221 @@ struct ConstantOpToHivmVCIVCPLowering
   }
 };
 
+///
+/// Piecewise-arithmetic pattern handles integer index vectors that are
+/// arithmetic within fixed-size segments but have a constant gap between
+/// segments.  These are produced by lowering a rank > 1 identity
+/// `vector.transfer_read` on a strided (non-packed) memref to `vector.gather`:
+/// the gather index of lane k is
+///
+///   offset(k) = sum_d coord_d(k) * stride_d
+///
+/// which, for a 2-D `memref<RxC, strided<[S0, S1]>>`, is
+///
+///   offset(k) = (k / C) * S0 + (k % C) * S1
+///
+/// For `memref<2x32xf32, strided<[64, 1]>>` that is
+/// `[0..31, 64..95]` - arithmetic inside each 32-lane row, but with a jump of
+/// 33 between rows, so `ConstantOpToHivmVCIVCPLowering` (which requires a
+/// single global common difference) rejects it.
+///
+/// This pattern decomposes such a vector as
+///
+///   offset(k) = innerStep * k + segGap * (k / segLen) + base
+///
+/// and emits it with VCI plus vector-scalar arithmetic:
+///
+///  BEFORE:
+///  ```mlir
+///  %cst = arith.constant dense<[0,1,...,31,64,65,...,95]> : vector<64xi32>
+///  ```
+///
+///  AFTER:
+///  ```mlir
+///  %idx  = ave.hir.vci 0 <INCREASE>            // [0, 1, ..., 63]
+///  %seg  = ave.hir.vdivui %idx, %segLenSplat   // [0 x32, 1 x32]
+///  %gap  = ave.hir.vmuls %seg, segGap          // [0 x32, 32 x32]
+///  %lin  = ave.hir.vmuls %idx, innerStep       // [0, 1, ..., 63]
+///  %cst  = ave.hir.vadd  %lin, %gap            // [0..31, 64..95]
+///  ```
+///
+/// Only integer element types are handled: these vectors are gather indices,
+/// and a float index vector is never produced by that path.
+struct ConstantOpToHivmSegmentedVCILowering
+    : public OpConversionPattern<arith::ConstantOp> {
+  using OpConversionPattern<arith::ConstantOp>::OpConversionPattern;
+
+  // One `gap * (k / len)` staircase term.
+  struct GapTerm {
+    int64_t len;
+    int64_t gap;
+  };
+
+  // Describes
+  //   value(k) = base + innerStep * k + sum_j gap_j * (k / len_j)
+  // One term per source dim that introduces a jump, so a rank-N read needs at
+  // most N-1 terms.
+  struct SegmentedForm {
+    int64_t base;
+    int64_t innerStep;
+    SmallVector<GapTerm, 3> terms;
+  };
+
+  // A rank-N read contributes at most N-1 staircase terms; cap the search so a
+  // pathological vector cannot blow up compile time, and so we never emit an
+  // unreasonably long instruction sequence.
+  static constexpr int64_t kMaxGapTerms = 3;
+
+  /// Try to recover a `SegmentedForm` from `values`.
+  /// Returns std::nullopt when the vector does not have that shape.
+  ///
+  /// Peels staircase terms from the innermost (shortest) segment outwards:
+  /// after subtracting the linear part, the residual is piecewise constant,
+  /// and each distinct step is one `gap * (k / len)` term.
+  static std::optional<SegmentedForm>
+  matchSegmentedForm(ArrayRef<APInt> values) {
+    int64_t n = static_cast<int64_t>(values.size());
+    // Need at least two full segments to observe a gap.
+    if (n < 4)
+      return std::nullopt;
+
+    auto at = [&](int64_t i) { return values[i].getSExtValue(); };
+
+    int64_t base = at(0);
+    int64_t innerStep = at(1) - at(0);
+
+    // Strip the linear part; what remains must be a sum of staircases.
+    SmallVector<int64_t, 0> resid;
+    resid.reserve(n);
+    for (int64_t k = 0; k < n; ++k)
+      resid.push_back(at(k) - (base + innerStep * k));
+
+    SegmentedForm form{base, innerStep, {}};
+    while (true) {
+      // Find the first lane where the residual steps; that lane index is the
+      // segment length of the innermost remaining staircase.
+      int64_t stepAt = -1;
+      for (int64_t i = 1; i < n; ++i) {
+        if (resid[i] != resid[i - 1]) {
+          stepAt = i;
+          break;
+        }
+      }
+      // Residual is flat: it must be all zero (the constant part was already
+      // folded into `base`), otherwise this is not a sum of staircases.
+      if (stepAt < 0)
+        break;
+
+      // Segments must tile the vector evenly, and there must be >= 2 of them.
+      if (n % stepAt != 0 || n / stepAt < 2)
+        return std::nullopt;
+      if (static_cast<int64_t>(form.terms.size()) >= kMaxGapTerms)
+        return std::nullopt;
+
+      int64_t gap = resid[stepAt] - resid[stepAt - 1];
+      if (gap == 0)
+        return std::nullopt;
+      for (int64_t k = 0; k < n; ++k)
+        resid[k] -= gap * (k / stepAt);
+      form.terms.push_back({stepAt, gap});
+    }
+
+    if (llvm::any_of(resid, [](int64_t r) { return r != 0; }))
+      return std::nullopt;
+
+    // No staircase at all: a plain arithmetic sequence, which the cheaper
+    // VCI/VCP pattern already handles.  Do not steal it.
+    if (form.terms.empty())
+      return std::nullopt;
+
+    // Verify the recovered closed form against every lane.  This is the
+    // safety net that guarantees we never emit arithmetic that disagrees with
+    // the original constant.
+    for (int64_t k = 0; k < n; ++k) {
+      int64_t expected = form.base + form.innerStep * k;
+      for (const GapTerm &t : form.terms)
+        expected += t.gap * (k / t.len);
+      if (at(k) != expected)
+        return std::nullopt;
+    }
+    return form;
+  }
+
+  LogicalResult
+  matchAndRewrite(arith::ConstantOp constantOp,
+                  arith::ConstantOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto tileType = dyn_cast<VectorType>(constantOp.getResult().getType());
+    if (!tileType || !mlir::utils::isValidHIVMTileVectorType(tileType))
+      return failure();
+
+    auto denseAttr = dyn_cast<DenseElementsAttr>(constantOp.getValueAttr());
+    if (!denseAttr || denseAttr.isSplat())
+      return failure();
+
+    auto elemType = dyn_cast<IntegerType>(tileType.getElementType());
+    if (!elemType)
+      return failure();
+    // `ave.hir.vdiv` is defined for i16/i32/i64 only, and an 8-bit index
+    // cannot address a strided view large enough to need this pattern.
+    unsigned width = elemType.getWidth();
+    if (width != 16 && width != 32 && width != 64)
+      return failure();
+
+    auto values = llvm::to_vector<0>(denseAttr.getValues<APInt>());
+    auto formOr = matchSegmentedForm(values);
+    if (!formOr)
+      return rewriter.notifyMatchFailure(
+          constantOp, "not a piecewise-arithmetic index vector");
+    SegmentedForm form = *formOr;
+
+    Location loc = constantOp.getLoc();
+    Value mask = findReuseableMaskOrCreateOne(constantOp, tileType, rewriter);
+
+    auto makeScalar = [&](int64_t v) -> Value {
+      return rewriter.create<arith::ConstantOp>(
+          loc, rewriter.getIntegerAttr(elemType, v));
+    };
+
+    // %idx = vci 0 : [0, 1, 2, ...]
+    Value zero = makeScalar(0);
+    Value idx = rewriter.create<hivmave::VFVCIOp>(loc, tileType, zero,
+                                                  hivmave::VCIType::INCREASE);
+
+    // result = innerStep * idx
+    Value result = idx;
+    if (form.innerStep != 1)
+      result = rewriter.create<hivmave::VFMulsOp>(
+          loc, tileType, idx, makeScalar(form.innerStep), mask);
+
+    // result += gap_j * (idx / len_j) for every staircase term
+    for (const GapTerm &term : form.terms) {
+      // %seg = idx / len   (unsigned: gather indices are non-negative)
+      Value lenSplat =
+          getBroadcastOp(makeScalar(term.len), tileType, rewriter, loc)
+              ->getResult(0);
+      Value seg = rewriter.create<hivmave::VFDivOp>(
+          loc, tileType, idx, lenSplat, mask,
+          TypeFnAttr::get(constantOp->getContext(), TypeFn::cast_unsigned));
+
+      Value gapTerm = seg;
+      if (term.gap != 1)
+        gapTerm = rewriter.create<hivmave::VFMulsOp>(
+            loc, tileType, seg, makeScalar(term.gap), mask);
+
+      result = rewriter.create<hivmave::VFAddOp>(loc, tileType, result, gapTerm,
+                                                 mask);
+    }
+
+    if (form.base != 0)
+      result = rewriter.create<hivmave::VFAddsOp>(loc, tileType, result,
+                                                  makeScalar(form.base), mask);
+
+    rewriter.replaceOp(constantOp, result);
+    return success();
+  }
+};
+
 template <typename ArithCmpOp>
 static hivmave::CmpType getHIVMCmpType(ArithCmpOp op) {
   hivmave::CmpType cmpType;
@@ -2151,6 +2366,11 @@ void mlir::hivmave::populateArithToHIVMAVEConversionPatterns(
       VFTypeConvertionPattern<arith::FPToUIOp>, ConstantOpToHivmPLTLowering,
       ConstantOpToHivmBroadcastLowering, ConstantOpToHivmVCIVCPLowering,
       SelectOpPattern, BitcastOpPattern, FmaOpLowering>(patterns.getContext());
+  // Lower benefit than `ConstantOpToHivmVCIVCPLowering`: a plain arithmetic
+  // sequence must keep using the cheaper VCI/VCP form, and this pattern only
+  // runs for the piecewise-arithmetic index vectors that one rejects.
+  patterns.add<ConstantOpToHivmSegmentedVCILowering>(patterns.getContext(),
+                                                     /*benefit=*/0);
 }
 
 std::unique_ptr<Pass> mlir::createArithToHIVMAVEConversionPass() {

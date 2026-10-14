@@ -409,13 +409,47 @@ struct TransferReadOpPattern : public OpRewritePattern<vector::TransferReadOp> {
       else if (dataWidth == 64)
         loadOp.setPattern(hivmave::LoadDist::BRC_B64);
     }
+
+    Value result = loadOp.getResult(0);
+
+    // A multi-dim `vector.transfer_read` mask (new with the Issue #588
+    // multi-dim read support) must leave the inactive lanes at the padding
+    // value: `ave.hir.vload` has no masking, so select between the loaded
+    // data and a padding splat.  Rank-1 masks keep the pre-existing backend
+    // contract instead: the mask is propagated to the consuming ops by
+    // arith-vector-mask-analyze, so no select is inserted for them.
+    if (Value mask = readOp.getMask()) {
+      auto maskVecType = cast<VectorType>(mask.getType());
+      if (maskVecType.getRank() != 1) {
+        // Flatten the mask to match `resVecType`.
+        VectorType flatMaskType =
+            VectorType::get(SmallVector<int64_t>{maskVecType.getNumElements()},
+                            rewriter.getI1Type());
+        mask = rewriter.create<vector::ShapeCastOp>(loc, flatMaskType, mask);
+
+        Value padding = readOp.getPadding();
+        Value paddingVec;
+        if (auto constPad = padding.getDefiningOp<arith::ConstantOp>()) {
+          paddingVec = rewriter.create<arith::ConstantOp>(
+              loc, resVecType,
+              DenseElementsAttr::get(resVecType, constPad.getValueAttr()));
+        } else {
+          paddingVec = rewriter.create<hivmave::VFBroadcastScalarOp>(
+              loc, resVecType, padding);
+        }
+
+        result = rewriter.create<hivmave::VFSelectOp>(loc, resVecType, mask,
+                                                      result, paddingVec);
+      }
+    }
+
     if (resVecType != vecType) {
-      Operation *op = rewriter.create<vector::ShapeCastOp>(loc, vecType,
-                                                           loadOp.getResult(0));
+      Operation *op =
+          rewriter.create<vector::ShapeCastOp>(loc, vecType, result);
       rewriter.replaceOp(readOp, op);
       return success();
     }
-    rewriter.replaceOp(readOp, loadOp);
+    rewriter.replaceOp(readOp, result);
     return success();
   }
 };
