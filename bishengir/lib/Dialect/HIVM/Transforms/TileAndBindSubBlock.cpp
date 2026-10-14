@@ -22,8 +22,8 @@
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/AutoScheduleBase.h"
-#include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/Analysis/DimensionAnalyzer.h"
+#include "bishengir/Dialect/HIVM/IR/CustomOp/CustomOpUtils.h"
 #include "bishengir/Dialect/HIVM/IR/CustomOp/DistributedTransformUtils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
@@ -818,7 +818,8 @@ private:
         op.getUnsignedSrcAttr(), op.getTieBreakLeftAttr(),
         op.getReduceDimsAttr(), op.getIndices());
     newReduceOp->setAttr(tileAndSliceFailure, rewriter.getUnitAttr());
-    rewriter.replaceAllUsesExcept(op->getResult(0), newReduceOp->getResult(0), storeOp);
+    rewriter.replaceAllUsesExcept(op->getResult(0), newReduceOp->getResult(0),
+                                  storeOp);
     return success();
   }
 };
@@ -1149,6 +1150,16 @@ static bool isTightlyCoupledMarkInCbufAddressSpace(annotation::MarkOp markOp) {
   return maybeSpace && *maybeSpace == AddressSpace::L1;
 }
 
+static bool hasUnrankedCustomLikeValue(func::FuncOp func) {
+  return func
+      .walk([](Operation *op) {
+        if (isCustomLikeOp(op) && hasUnrankedCustomLikeOperandsOrResults(op))
+          return WalkResult::interrupt();
+        return WalkResult::advance();
+      })
+      .wasInterrupted();
+}
+
 static LogicalResult
 tileAndSliceOp(func::FuncOp func,
                DenseMap<int32_t, int64_t> &tightlyCoupledBufferToTilingDim,
@@ -1223,6 +1234,11 @@ tileAndSliceOp(func::FuncOp func,
   }
 
   RewritePatternSet patterns(func->getContext());
+  // FIXME: Leaf-only CustomOp/CustomMacroOp tiling is intentionally not
+  // supported yet. It requires a CustomOp-owned tiling-dimension candidate
+  // when no Store/Copy anchor exists, plus a leaf-aware success criterion.
+  // CustomOp tiling in this version must be driven by a downstream Store/Copy
+  // slice and handled later by CustomOpBubbleUpStrategy.
   patterns.add<TileAndSliceStoreCopyOp<hivm::StoreOp>,
                TileAndSliceStoreCopyOp<hivm::CopyOp>,
                TileAndSliceStoreCopyOp<
@@ -1326,6 +1342,8 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
     return failure();
   }
 
+  // Keep broadcast-specific strict-mode relaxation local to this function.
+  bool effectiveStrictMode = strictMode;
   if (isBroadcastAxisCase) {
     emitRemark(newFunc.getLoc())
         << "Selected tiling dim might have broadcast two different axis. "
@@ -1338,7 +1356,7 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
                                   })
                                   .wasInterrupted();
     if (!hasRestrictiveAttr)
-      strictMode = false;
+      effectiveStrictMode = false;
   }
 
   // If all the pattern fails due to the tilingDim=-1
@@ -1382,7 +1400,7 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
   LDBG("After tileAndSliceStore: " << newFunc);
 
   PassManager pm2(newFunc->getContext());
-  populateBindSubBlockBubbleUpPassManager(pm2, strictMode,
+  populateBindSubBlockBubbleUpPassManager(pm2, effectiveStrictMode,
                                           newFunc->getParentOfType<ModuleOp>());
 
   LogicalResult bubbleUpResult = pm2.run(newFunc);
@@ -1429,18 +1447,15 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
 static bool shouldLimitAllAivToSubBlock0(ArrayRef<func::FuncOp> aivFunctions,
                                          ArrayRef<func::FuncOp> aicFunctions,
                                          ModuleOp moduleOp) {
+  // Unranked custom operands or results cannot be tiled. Limit all AIV
+  // functions before attempting to tile any of them.
+  if (llvm::any_of(aivFunctions, hasUnrankedCustomLikeValue))
+    return true;
+
   // if core_ratio is already x:1
   if (llvm::any_of(aivFunctions, [](func::FuncOp aivFunc) {
         auto ratio = getCoreRatioAttr(aivFunc);
         return ratio && ratio.getVector() < 2;
-      }))
-    return true;
-
-  // Custom ops may have side effects and variadic outs/results, and must never
-  // be cloned into the 1:2 sub-block loop.
-  // TODO: wait for sych of
-  if (llvm::any_of(aivFunctions, [](func::FuncOp aivFunc) {
-        return hfusion::util::hasCustomOp(aivFunc);
       }))
     return true;
 

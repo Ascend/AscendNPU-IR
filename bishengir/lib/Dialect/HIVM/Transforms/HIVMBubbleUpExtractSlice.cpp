@@ -117,7 +117,9 @@ public:
             !(isa<scf::ForOp>(srcDefOp) &&
               srcDefOp->hasAttr("ExtractedLoadOrStore")) &&
             !srcDefOp->hasAttr(tiledOp)) {
-          if (strictMode) {
+          // Untiled custom-like producers cannot safely feed a tiled store.
+          if (strictMode ||
+              isa<hivm::CustomOp, hivm::CustomMacroOp>(srcDefOp)) {
             return WalkResult::interrupt();
           }
           extractSliceOp->emitWarning("Extract slice is not fully bubbled up");
@@ -222,6 +224,7 @@ private:
     strategies.push_back(std::make_shared<ScopeBubbleUpStrategy>());
     strategies.push_back(std::make_shared<SelectBubbleUpStrategy>());
     strategies.push_back(std::make_shared<FixpipeBubbleUpStrategy>());
+    strategies.push_back(std::make_shared<CustomOpBubbleUpStrategy>());
     strategies.push_back(std::make_shared<IndirectLoadBubbleUpStrategy>());
     strategies.push_back(std::make_shared<GatherLoadBubbleUpStrategy>());
     strategies.push_back(std::make_shared<StrideLoadBubbleUpStrategy>());

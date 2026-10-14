@@ -1901,6 +1901,1073 @@ module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
 
 // -----
 
+// Empty iterator_types and indexing_map do not prove elementwise semantics.
+// Keep the CustomOp at full extent; only the Store requires a sub-block guard.
+// CHECK-LABEL: func.func @custom_no_iter_static
+// CHECK-NOT: {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+// CHECK-NOT: tensor.extract_slice
+// CHECK-NOT: memref.subview
+// CHECK: %[[FALLBACK_RESULT:.*]] = hivm.hir.custom
+// CHECK-SAME: "user.op"
+// CHECK-SAME: ins(%{{[A-Za-z0-9_]+}} : tensor<16x16xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : tensor<16x16xf16>)
+// CHECK-SAME: -> tensor<16x16xf16>
+// CHECK: scf.if
+// CHECK: hivm.hir.store
+// CHECK-SAME: ins(%[[FALLBACK_RESULT]] : tensor<16x16xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : memref<16x16xf16{{.*}}>)
+// CHECK: } {limit_sub_block_id0}
+// CHECK-NOT: tensor.extract_slice
+// CHECK-NOT: memref.subview
+// CHECK: return
+module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @custom_no_iter_static(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf16> {tt.divisibility = 16 : i32}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32}) attributes {WorkspaceArgIdx = 0 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+    hivm.hir.set_ffts_base_addr %arg0
+    hivm.hir.set_mask_norm
+    %0 = tensor.empty() : tensor<16x16xf16>
+    %reinterpret_cast = memref.reinterpret_cast %arg2 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16, strided<[16, 1]>>
+    %alloc = memref.alloc() : memref<16x16xf16>
+    hivm.hir.load ins(%reinterpret_cast : memref<16x16xf16, strided<[16, 1]>>) outs(%alloc : memref<16x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
+    %1 = bufferization.to_tensor %alloc restrict writable : memref<16x16xf16>
+    %2 = hivm.hir.custom {no_side_effect, hivm.tcore_type = #hivm.tcore_type<VECTOR>, hivm.pipe = #hivm.pipe<PIPE_V>, hivm.vf_mode = #hivm.vf_mode<SIMD>, symbol = "user_op"} "user.op" ins(%1 : tensor<16x16xf16>) outs(%0 : tensor<16x16xf16>) -> tensor<16x16xf16>
+    %reinterpret_cast_0 = memref.reinterpret_cast %arg3 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16, strided<[16, 1]>>
+    hivm.hir.store ins(%2 : tensor<16x16xf16>) outs(%reinterpret_cast_0 : memref<16x16xf16, strided<[16, 1]>>)
+    return
+  }
+}
+
+// -----
+
+// Explicit parallel iterator types and identity indexing maps must
+// rebuild CustomOp for the 8x16 sub-block extent rather than retain a full
+// 16x16 CustomOp.
+// CHECK: #[[$IDENTITY_MAP:[A-Za-z0-9_]+]] = affine_map<(d0, d1) -> (d0, d1)>
+// CHECK-LABEL: func.func @custom_explicit_identity
+// CHECK-NOT: hivm.hir.custom{{.*}}tensor<16x16xf16>
+// CHECK: scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} {
+// CHECK-NOT: hivm.hir.custom{{.*}}tensor<16x16xf16>
+// CHECK: %[[CUSTOM:.*]] = hivm.hir.custom
+// CHECK-SAME: indexing_map = [#[[$IDENTITY_MAP]], #[[$IDENTITY_MAP]]]
+// CHECK-SAME: iterator_types = [#hivm.iterator_type<parallel>, #hivm.iterator_type<parallel>]
+// CHECK-SAME: "user.explicit_identity"
+// CHECK-SAME: ins(%{{[A-Za-z0-9_]+}} : tensor<8x16xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : tensor<8x16xf16>)
+// CHECK-SAME: -> tensor<8x16xf16>
+// CHECK-NOT: hivm.hir.custom{{.*}}tensor<16x16xf16>
+// CHECK: hivm.hir.store
+// CHECK-SAME: ins(%[[CUSTOM]] : tensor<8x16xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : memref<8x16xf16{{.*}}>)
+// CHECK-NOT: hivm.hir.custom{{.*}}tensor<16x16xf16>
+// CHECK: } {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+// CHECK-NOT: hivm.hir.custom{{.*}}tensor<16x16xf16>
+// CHECK: return
+#map_explicit_identity = affine_map<(d0, d1) -> (d0, d1)>
+module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @custom_explicit_identity(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf16> {tt.divisibility = 16 : i32}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32}) attributes {WorkspaceArgIdx = 0 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+    hivm.hir.set_ffts_base_addr %arg0
+    hivm.hir.set_mask_norm
+    %0 = tensor.empty() : tensor<16x16xf16>
+    %reinterpret_cast = memref.reinterpret_cast %arg2 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16, strided<[16, 1]>>
+    %alloc = memref.alloc() : memref<16x16xf16>
+    hivm.hir.load ins(%reinterpret_cast : memref<16x16xf16, strided<[16, 1]>>) outs(%alloc : memref<16x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
+    %1 = bufferization.to_tensor %alloc restrict writable : memref<16x16xf16>
+    %2 = hivm.hir.custom {no_side_effect, hivm.tcore_type = #hivm.tcore_type<VECTOR>, hivm.pipe = #hivm.pipe<PIPE_V>, hivm.vf_mode = #hivm.vf_mode<SIMD>, iterator_types = [#hivm.iterator_type<parallel>, #hivm.iterator_type<parallel>], indexing_map = [#map_explicit_identity, #map_explicit_identity], symbol = "user_explicit_identity"} "user.explicit_identity" ins(%1 : tensor<16x16xf16>) outs(%0 : tensor<16x16xf16>) -> tensor<16x16xf16>
+    %reinterpret_cast_0 = memref.reinterpret_cast %arg3 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16, strided<[16, 1]>>
+    hivm.hir.store ins(%2 : tensor<16x16xf16>) outs(%reinterpret_cast_0 : memref<16x16xf16, strided<[16, 1]>>)
+    return
+  }
+}
+
+// -----
+
+// The parallel dimension is tiled from 16 to 8, while the reduction
+// dimension keeps its full extent of 16. The rank-1 result is tiled to 8.
+// CHECK-DAG: #[[$REDUCTION_INPUT_MAP:[A-Za-z0-9_]+]] = affine_map<(d0, d1) -> (d0, d1)>
+// CHECK-DAG: #[[$REDUCTION_OUTPUT_MAP:[A-Za-z0-9_]+]] = affine_map<(d0, d1) -> (d0)>
+// CHECK-LABEL: func.func @custom_reduction
+// CHECK-NOT: hivm.hir.custom{{.*}}tensor<16x16xf16>
+// CHECK: scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} {
+// CHECK-NOT: hivm.hir.custom{{.*}}tensor<{{[0-9?]+}}x{{(1|2|4|8)}}xf16>
+// CHECK: %[[CUSTOM:.*]] = hivm.hir.custom
+// CHECK-SAME: indexing_map = [#[[$REDUCTION_INPUT_MAP]], #[[$REDUCTION_OUTPUT_MAP]]]
+// CHECK-SAME: iterator_types = [#hivm.iterator_type<parallel>, #hivm.iterator_type<reduction>]
+// CHECK-SAME: "user.red"
+// CHECK-SAME: ins(%{{[A-Za-z0-9_]+}} : tensor<8x16xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : tensor<8xf16>)
+// CHECK-SAME: -> tensor<8xf16>
+// CHECK-NOT: hivm.hir.custom{{.*}}tensor<{{[0-9?]+}}x{{(1|2|4|8)}}xf16>
+// CHECK: hivm.hir.store
+// CHECK-SAME: ins(%[[CUSTOM]] : tensor<8xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : memref<8xf16{{.*}}>)
+// CHECK-NOT: hivm.hir.custom{{.*}}tensor<16x16xf16>
+// CHECK: } {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+// CHECK-NOT: hivm.hir.custom{{.*}}tensor<16x16xf16>
+// CHECK: return
+#map_reduction_input = affine_map<(d0, d1) -> (d0, d1)>
+#map_reduction_output = affine_map<(d0, d1) -> (d0)>
+module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @custom_reduction(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf16> {tt.divisibility = 16 : i32}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32}) attributes {WorkspaceArgIdx = 0 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+    hivm.hir.set_ffts_base_addr %arg0
+    hivm.hir.set_mask_norm
+    %0 = tensor.empty() : tensor<16xf16>
+    %reinterpret_cast = memref.reinterpret_cast %arg2 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16, strided<[16, 1]>>
+    %alloc = memref.alloc() : memref<16x16xf16>
+    hivm.hir.load ins(%reinterpret_cast : memref<16x16xf16, strided<[16, 1]>>) outs(%alloc : memref<16x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
+    %1 = bufferization.to_tensor %alloc restrict writable : memref<16x16xf16>
+    %2 = hivm.hir.custom {no_side_effect, hivm.tcore_type = #hivm.tcore_type<VECTOR>, hivm.pipe = #hivm.pipe<PIPE_V>, hivm.vf_mode = #hivm.vf_mode<SIMD>, iterator_types = [#hivm.iterator_type<parallel>, #hivm.iterator_type<reduction>], indexing_map = [#map_reduction_input, #map_reduction_output], symbol = "user_red"} "user.red" ins(%1 : tensor<16x16xf16>) outs(%0 : tensor<16xf16>) -> tensor<16xf16>
+    %reinterpret_cast_0 = memref.reinterpret_cast %arg3 to offset: [0], sizes: [16], strides: [1] : memref<?xf16> to memref<16xf16, strided<[1]>>
+    hivm.hir.store ins(%2 : tensor<16xf16>) outs(%reinterpret_cast_0 : memref<16xf16, strided<[1]>>)
+    return
+  }
+}
+
+// -----
+
+// A same-rank result may retain a reduction dimension, as Softmax does. The
+// first dimension is reduction and must remain 16, while the second parallel
+// dimension is tiled from 16 to 8.
+// CHECK-DAG: #[[$REDUCTION_FIRST_IDENTITY:[A-Za-z0-9_]+]] = affine_map<(d0, d1) -> (d0, d1)>
+// CHECK-LABEL: func.func @custom_reduction_first_same_rank
+// CHECK-NOT: hivm.tile_and_bind_subblock_reverted
+// CHECK: scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} {
+// CHECK: %[[CUSTOM:.*]] = hivm.hir.custom
+// CHECK-SAME: indexing_map = [#[[$REDUCTION_FIRST_IDENTITY]], #[[$REDUCTION_FIRST_IDENTITY]]]
+// CHECK-SAME: iterator_types = [#hivm.iterator_type<reduction>, #hivm.iterator_type<parallel>]
+// CHECK-SAME: "user.reduction_first_same_rank"
+// CHECK-SAME: ins(%{{[A-Za-z0-9_]+}} : tensor<16x8xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : tensor<16x8xf16>)
+// CHECK-SAME: -> tensor<16x8xf16>
+// CHECK: hivm.hir.store
+// CHECK-SAME: ins(%[[CUSTOM]] : tensor<16x8xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : memref<16x8xf16{{.*}}>)
+// CHECK: } {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+// CHECK-NOT: limit_sub_block_id0
+// CHECK: return
+#map_reduction_first_identity = affine_map<(d0, d1) -> (d0, d1)>
+module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @custom_reduction_first_same_rank(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf16> {tt.divisibility = 16 : i32}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32}) attributes {WorkspaceArgIdx = 0 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+    hivm.hir.set_ffts_base_addr %arg0
+    hivm.hir.set_mask_norm
+    %init = tensor.empty() : tensor<16x16xf16>
+    %input_view = memref.reinterpret_cast %arg2 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16, strided<[16, 1]>>
+    %input_buffer = memref.alloc() : memref<16x16xf16>
+    hivm.hir.load ins(%input_view : memref<16x16xf16, strided<[16, 1]>>) outs(%input_buffer : memref<16x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
+    %input = bufferization.to_tensor %input_buffer restrict writable : memref<16x16xf16>
+    %result = hivm.hir.custom {no_side_effect, hivm.tcore_type = #hivm.tcore_type<VECTOR>, hivm.pipe = #hivm.pipe<PIPE_V>, hivm.vf_mode = #hivm.vf_mode<SIMD>, iterator_types = [#hivm.iterator_type<reduction>, #hivm.iterator_type<parallel>], indexing_map = [#map_reduction_first_identity, #map_reduction_first_identity], symbol = "user_reduction_first_same_rank"} "user.reduction_first_same_rank" ins(%input : tensor<16x16xf16>) outs(%init : tensor<16x16xf16>) -> tensor<16x16xf16>
+    %output_view = memref.reinterpret_cast %arg3 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16, strided<[16, 1]>>
+    hivm.hir.store ins(%result : tensor<16x16xf16>) outs(%output_view : memref<16x16xf16, strided<[16, 1]>>)
+    return
+  }
+}
+
+// -----
+
+// Two independent CustomOps sharing one input are both tiled to 8x16,
+// and each tiled result is consumed by its own Store.
+// CHECK-LABEL: func.func @custom_two_independent
+// CHECK-NOT: hivm.hir.custom{{.*}}tensor<16x16xf16>
+// CHECK: scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} {
+// CHECK-NOT: hivm.hir.custom{{.*}}tensor<16x16xf16>
+// CHECK: %[[CUSTOM_ONE:.*]] = hivm.hir.custom
+// CHECK-SAME: "user.one"
+// CHECK-SAME: ins(%{{[A-Za-z0-9_]+}} : tensor<8x16xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : tensor<8x16xf16>)
+// CHECK-SAME: -> tensor<8x16xf16>
+// CHECK-NOT: hivm.hir.custom{{.*}}tensor<16x16xf16>
+// CHECK: %[[CUSTOM_TWO:.*]] = hivm.hir.custom
+// CHECK-SAME: "user.two"
+// CHECK-SAME: ins(%{{[A-Za-z0-9_]+}} : tensor<8x16xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : tensor<8x16xf16>)
+// CHECK-SAME: -> tensor<8x16xf16>
+// CHECK-NOT: hivm.hir.custom{{.*}}tensor<16x16xf16>
+// CHECK: hivm.hir.store
+// CHECK-SAME: ins(%[[CUSTOM_ONE]] : tensor<8x16xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : memref<8x16xf16{{.*}}>)
+// CHECK-NOT: hivm.hir.custom{{.*}}tensor<16x16xf16>
+// CHECK: hivm.hir.store
+// CHECK-SAME: ins(%[[CUSTOM_TWO]] : tensor<8x16xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : memref<8x16xf16{{.*}}>)
+// CHECK-NOT: hivm.hir.custom{{.*}}tensor<16x16xf16>
+// CHECK: } {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+// CHECK-NOT: hivm.hir.custom{{.*}}tensor<16x16xf16>
+// CHECK: return
+#map_two_independent_identity = affine_map<(d0, d1) -> (d0, d1)>
+module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @custom_two_independent(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf16> {tt.divisibility = 16 : i32}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32}, %arg4: memref<?xf16> {tt.divisibility = 16 : i32}) attributes {WorkspaceArgIdx = 0 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+    hivm.hir.set_ffts_base_addr %arg0
+    hivm.hir.set_mask_norm
+    %init0 = tensor.empty() : tensor<16x16xf16>
+    %init1 = tensor.empty() : tensor<16x16xf16>
+    %reinterpret_cast = memref.reinterpret_cast %arg2 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16, strided<[16, 1]>>
+    %alloc = memref.alloc() : memref<16x16xf16>
+    hivm.hir.load ins(%reinterpret_cast : memref<16x16xf16, strided<[16, 1]>>) outs(%alloc : memref<16x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
+    %x = bufferization.to_tensor %alloc restrict writable : memref<16x16xf16>
+    %r0 = hivm.hir.custom {no_side_effect, hivm.tcore_type = #hivm.tcore_type<VECTOR>, hivm.pipe = #hivm.pipe<PIPE_V>, hivm.vf_mode = #hivm.vf_mode<SIMD>, iterator_types = [#hivm.iterator_type<parallel>, #hivm.iterator_type<parallel>], indexing_map = [#map_two_independent_identity, #map_two_independent_identity], symbol = "user_one"} "user.one" ins(%x : tensor<16x16xf16>) outs(%init0 : tensor<16x16xf16>) -> tensor<16x16xf16>
+    %r1 = hivm.hir.custom {no_side_effect, hivm.tcore_type = #hivm.tcore_type<VECTOR>, hivm.pipe = #hivm.pipe<PIPE_V>, hivm.vf_mode = #hivm.vf_mode<SIMD>, iterator_types = [#hivm.iterator_type<parallel>, #hivm.iterator_type<parallel>], indexing_map = [#map_two_independent_identity, #map_two_independent_identity], symbol = "user_two"} "user.two" ins(%x : tensor<16x16xf16>) outs(%init1 : tensor<16x16xf16>) -> tensor<16x16xf16>
+    %rc1 = memref.reinterpret_cast %arg3 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16, strided<[16, 1]>>
+    %rc2 = memref.reinterpret_cast %arg4 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16, strided<[16, 1]>>
+    hivm.hir.store ins(%r0 : tensor<16x16xf16>) outs(%rc1 : memref<16x16xf16, strided<[16, 1]>>)
+    hivm.hir.store ins(%r1 : tensor<16x16xf16>) outs(%rc2 : memref<16x16xf16, strided<[16, 1]>>)
+    return
+  }
+}
+
+// -----
+
+// A Store-driven slice bubbles through VAdd and then CustomOp. Both
+// VAdd inputs and the entire CustomOp-to-Store chain use the 8x16 tile extent.
+// CHECK-LABEL: func.func @custom_in_chain
+// CHECK-NOT: hivm.hir.{{(custom|vadd).*}}tensor<16x16xf16>
+// CHECK: scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} {
+// CHECK-NOT: hivm.hir.{{(custom|vadd).*}}tensor<16x16xf16>
+// CHECK: %[[CUSTOM:.*]] = hivm.hir.custom
+// CHECK-SAME: "user.mid"
+// CHECK-SAME: ins(%[[TILED_A:[A-Za-z0-9_]+]] : tensor<8x16xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : tensor<8x16xf16>)
+// CHECK-SAME: -> tensor<8x16xf16>
+// CHECK-NOT: hivm.hir.{{(custom|vadd).*}}tensor<16x16xf16>
+// CHECK: %[[VADD:.*]] = hivm.hir.vadd
+// CHECK-SAME: ins(%[[CUSTOM]], %[[TILED_B:[A-Za-z0-9_]+]] : tensor<8x16xf16>, tensor<8x16xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : tensor<8x16xf16>)
+// CHECK-SAME: -> tensor<8x16xf16>
+// CHECK-NOT: hivm.hir.{{(custom|vadd).*}}tensor<16x16xf16>
+// CHECK: hivm.hir.store
+// CHECK-SAME: ins(%[[VADD]] : tensor<8x16xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : memref<8x16xf16{{.*}}>)
+// CHECK-NOT: hivm.hir.{{(custom|vadd).*}}tensor<16x16xf16>
+// CHECK: } {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+// CHECK-NOT: hivm.hir.{{(custom|vadd).*}}tensor<16x16xf16>
+// CHECK: return
+#map_chain_identity = affine_map<(d0, d1) -> (d0, d1)>
+module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @custom_in_chain(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf16> {tt.divisibility = 16 : i32}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32}, %arg4: memref<?xf16> {tt.divisibility = 16 : i32}) attributes {WorkspaceArgIdx = 0 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+    hivm.hir.set_ffts_base_addr %arg0
+    hivm.hir.set_mask_norm
+    %custom_init = tensor.empty() : tensor<16x16xf16>
+    %sum_init = tensor.empty() : tensor<16x16xf16>
+    %rc0 = memref.reinterpret_cast %arg2 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16, strided<[16, 1]>>
+    %alloc0 = memref.alloc() : memref<16x16xf16>
+    hivm.hir.load ins(%rc0 : memref<16x16xf16, strided<[16, 1]>>) outs(%alloc0 : memref<16x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
+    %a = bufferization.to_tensor %alloc0 restrict writable : memref<16x16xf16>
+    %rc1 = memref.reinterpret_cast %arg3 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16, strided<[16, 1]>>
+    %alloc1 = memref.alloc() : memref<16x16xf16>
+    hivm.hir.load ins(%rc1 : memref<16x16xf16, strided<[16, 1]>>) outs(%alloc1 : memref<16x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
+    %b = bufferization.to_tensor %alloc1 restrict writable : memref<16x16xf16>
+    %c = hivm.hir.custom {no_side_effect, hivm.tcore_type = #hivm.tcore_type<VECTOR>, hivm.pipe = #hivm.pipe<PIPE_V>, hivm.vf_mode = #hivm.vf_mode<SIMD>, iterator_types = [#hivm.iterator_type<parallel>, #hivm.iterator_type<parallel>], indexing_map = [#map_chain_identity, #map_chain_identity], symbol = "user_mid"} "user.mid" ins(%a : tensor<16x16xf16>) outs(%custom_init : tensor<16x16xf16>) -> tensor<16x16xf16>
+    %sum = hivm.hir.vadd ins(%c, %b : tensor<16x16xf16>, tensor<16x16xf16>) outs(%sum_init : tensor<16x16xf16>) -> tensor<16x16xf16>
+    %rc2 = memref.reinterpret_cast %arg4 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16, strided<[16, 1]>>
+    hivm.hir.store ins(%sum : tensor<16x16xf16>) outs(%rc2 : memref<16x16xf16, strided<[16, 1]>>)
+    return
+  }
+}
+
+// -----
+
+// A memref CustomOp input is not supported by the tensor slice bubble-up
+// path. Keep the CustomOp at full extent; only the Store requires a guard.
+// CHECK-LABEL: func.func @custom_memref_input
+// CHECK-NOT: {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+// CHECK-NOT: tensor.extract_slice
+// CHECK-NOT: memref.subview
+// CHECK: %[[FALLBACK_RESULT:.*]] = hivm.hir.custom
+// CHECK-SAME: "user.mem"
+// CHECK-SAME: ins(%{{[A-Za-z0-9_]+}} : memref<16x16xf16{{[^)]*}})
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : tensor<16x16xf16>)
+// CHECK-SAME: -> tensor<16x16xf16>
+// CHECK: scf.if
+// CHECK: hivm.hir.store
+// CHECK-SAME: ins(%[[FALLBACK_RESULT]] : tensor<16x16xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : memref<16x16xf16{{.*}})
+// CHECK: } {limit_sub_block_id0}
+// CHECK-NOT: tensor.extract_slice
+// CHECK-NOT: memref.subview
+// CHECK: return
+module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @custom_memref_input(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf16> {tt.divisibility = 16 : i32}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32}) attributes {WorkspaceArgIdx = 0 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+    hivm.hir.set_ffts_base_addr %arg0
+    hivm.hir.set_mask_norm
+    %init = tensor.empty() : tensor<16x16xf16>
+    %rc0 = memref.reinterpret_cast %arg2 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16, strided<[16, 1]>>
+    %c = hivm.hir.custom {no_side_effect, hivm.tcore_type = #hivm.tcore_type<VECTOR>, hivm.pipe = #hivm.pipe<PIPE_V>, hivm.vf_mode = #hivm.vf_mode<SIMD>, symbol = "user_mem"} "user.mem" ins(%rc0 : memref<16x16xf16, strided<[16, 1]>>) outs(%init : tensor<16x16xf16>) -> tensor<16x16xf16>
+    %rc1 = memref.reinterpret_cast %arg3 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16, strided<[16, 1]>>
+    hivm.hir.store ins(%c : tensor<16x16xf16>) outs(%rc1 : memref<16x16xf16, strided<[16, 1]>>)
+    return
+  }
+}
+
+// -----
+
+// Mixed tensor/memref CustomOp outputs are valid in mixed bufferization mode,
+// but are not supported by the tensor-only slice rebuild path. Keep the op at
+// full extent; only its Store consumer requires a sub-block guard.
+// CHECK-LABEL: func.func @custom_mixed_tensor_memref_outputs
+// CHECK-NOT: {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+// CHECK-NOT: tensor.extract_slice
+// CHECK-NOT: memref.subview
+// CHECK: %[[FALLBACK_RESULT:.*]] = hivm.hir.custom
+// CHECK-SAME: "user.mixed.output"
+// CHECK-SAME: ins(%{{[A-Za-z0-9_]+}} : tensor<16x16xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}}, %{{[A-Za-z0-9_]+}} : tensor<16x16xf16>, memref<16x16xf16{{.*}}>)
+// CHECK-SAME: -> tensor<16x16xf16>
+// CHECK: scf.if
+// CHECK: hivm.hir.store
+// CHECK-SAME: ins(%[[FALLBACK_RESULT]] : tensor<16x16xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : memref<16x16xf16{{.*}}>)
+// CHECK: } {limit_sub_block_id0}
+// CHECK-NOT: tensor.extract_slice
+// CHECK-NOT: memref.subview
+// CHECK: return
+#map_mixed_output_identity = affine_map<(d0, d1) -> (d0, d1)>
+module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @custom_mixed_tensor_memref_outputs(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf16> {tt.divisibility = 16 : i32}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32}, %arg4: memref<?xf16> {tt.divisibility = 16 : i32}) attributes {WorkspaceArgIdx = 0 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+    hivm.hir.set_ffts_base_addr %arg0
+    hivm.hir.set_mask_norm
+    %init = tensor.empty() : tensor<16x16xf16>
+    %src = memref.reinterpret_cast %arg2 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16, strided<[16, 1]>>
+    %alloc = memref.alloc() : memref<16x16xf16>
+    hivm.hir.load ins(%src : memref<16x16xf16, strided<[16, 1]>>) outs(%alloc : memref<16x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
+    %input = bufferization.to_tensor %alloc restrict writable : memref<16x16xf16>
+    %aux = memref.reinterpret_cast %arg3 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16, strided<[16, 1]>>
+    %result = hivm.hir.custom {no_side_effect, hivm.tcore_type = #hivm.tcore_type<VECTOR>, hivm.pipe = #hivm.pipe<PIPE_V>, hivm.vf_mode = #hivm.vf_mode<SIMD>, iterator_types = [#hivm.iterator_type<parallel>, #hivm.iterator_type<parallel>], indexing_map = [#map_mixed_output_identity, #map_mixed_output_identity, #map_mixed_output_identity], symbol = "user_mixed_output"} "user.mixed.output" ins(%input : tensor<16x16xf16>) outs(%init, %aux : tensor<16x16xf16>, memref<16x16xf16, strided<[16, 1]>>) -> tensor<16x16xf16>
+    %dst = memref.reinterpret_cast %arg4 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16, strided<[16, 1]>>
+    hivm.hir.store ins(%result : tensor<16x16xf16>) outs(%dst : memref<16x16xf16, strided<[16, 1]>>)
+    return
+  }
+}
+
+// -----
+
+// A plain Tensor-to-Store path and a CustomOp-to-Store path coexist in
+// one function. Both paths must use the same sub-block loop and 8x16 tile
+// extent, while the second Store must consume the tiled CustomOp result.
+// CHECK-LABEL: func.func @mix_store_and_custom
+// CHECK-NOT: hivm.hir.{{(custom|store).*}}tensor<16x16xf16>
+// CHECK: scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} {
+// CHECK-NOT: hivm.hir.{{(custom|store).*}}tensor<16x16xf16>
+// CHECK: %[[CUSTOM:.*]] = hivm.hir.custom
+// CHECK-SAME: "user.mixed_store"
+// CHECK-SAME: ins(%{{[A-Za-z0-9_]+}} : tensor<8x16xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : tensor<8x16xf16>)
+// CHECK-SAME: -> tensor<8x16xf16>
+// CHECK-NOT: hivm.hir.{{(custom|store).*}}tensor<16x16xf16>
+// CHECK: hivm.hir.store
+// CHECK-SAME: ins(%{{[A-Za-z0-9_]+}} : tensor<8x16xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : memref<8x16xf16{{.*}}>)
+// CHECK-NOT: hivm.hir.{{(custom|store).*}}tensor<16x16xf16>
+// CHECK: hivm.hir.store
+// CHECK-SAME: ins(%[[CUSTOM]] : tensor<8x16xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : memref<8x16xf16{{.*}}>)
+// CHECK-NOT: hivm.hir.{{(custom|store).*}}tensor<16x16xf16>
+// CHECK: } {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+// CHECK-NOT: {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+// CHECK-NOT: hivm.hir.{{(custom|store).*}}tensor<16x16xf16>
+// CHECK: return
+#map_mixed_store_identity = affine_map<(d0, d1) -> (d0, d1)>
+module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @mix_store_and_custom(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf16> {tt.divisibility = 16 : i32}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32}, %arg4: memref<?xf16> {tt.divisibility = 16 : i32}) attributes {WorkspaceArgIdx = 0 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+    hivm.hir.set_ffts_base_addr %arg0
+    hivm.hir.set_mask_norm
+    %init = tensor.empty() : tensor<16x16xf16>
+    %rc0 = memref.reinterpret_cast %arg2 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16, strided<[16, 1]>>
+    %alloc0 = memref.alloc() : memref<16x16xf16>
+    hivm.hir.load ins(%rc0 : memref<16x16xf16, strided<[16, 1]>>) outs(%alloc0 : memref<16x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
+    %a = bufferization.to_tensor %alloc0 restrict writable : memref<16x16xf16>
+    %c = hivm.hir.custom {no_side_effect, hivm.tcore_type = #hivm.tcore_type<VECTOR>, hivm.pipe = #hivm.pipe<PIPE_V>, hivm.vf_mode = #hivm.vf_mode<SIMD>, iterator_types = [#hivm.iterator_type<parallel>, #hivm.iterator_type<parallel>], indexing_map = [#map_mixed_store_identity, #map_mixed_store_identity], symbol = "user_mixed_store"} "user.mixed_store" ins(%a : tensor<16x16xf16>) outs(%init : tensor<16x16xf16>) -> tensor<16x16xf16>
+    %rc1 = memref.reinterpret_cast %arg3 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16, strided<[16, 1]>>
+    %rc2 = memref.reinterpret_cast %arg4 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16, strided<[16, 1]>>
+    hivm.hir.store ins(%a : tensor<16x16xf16>) outs(%rc1 : memref<16x16xf16, strided<[16, 1]>>)
+    hivm.hir.store ins(%c : tensor<16x16xf16>) outs(%rc2 : memref<16x16xf16, strided<[16, 1]>>)
+    return
+  }
+}
+
+// -----
+
+// A tileable Store and an independent side-effecting CustomOp share the same
+// input. The extra input user prevents strict slice bubbling, so the attempted
+// tiling must be rolled back. The CustomOp remains unguarded because it has no
+// GM address operands; the Store is restricted to sub-block 0.
+// CHECK: hivm.tile_and_bind_subblock_reverted
+// CHECK-LABEL: func.func @mix_store_and_independent_side_effect
+// CHECK-NOT: {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+// CHECK-NOT: scf.for
+// CHECK: %[[INPUT:.*]] = bufferization.to_tensor
+// CHECK: %[[CUSTOM_RESULT:.*]] = hivm.hir.custom
+// CHECK-SAME: "user.independent.side.effect"
+// CHECK-SAME: ins(%[[INPUT]] : tensor<16x16xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : tensor<16x16xf16>)
+// CHECK-SAME: -> tensor<16x16xf16>
+// CHECK: scf.if
+// CHECK: hivm.hir.store
+// CHECK-SAME: ins(%[[INPUT]] : tensor<16x16xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : memref<16x16xf16{{.*}}>)
+// CHECK: } {limit_sub_block_id0}
+// CHECK-NOT: {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+// CHECK-NOT: tensor<8x16xf16>
+// CHECK: return
+module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @mix_store_and_independent_side_effect(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf16> {tt.divisibility = 16 : i32}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32}) attributes {WorkspaceArgIdx = 0 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+    hivm.hir.set_ffts_base_addr %arg0
+    hivm.hir.set_mask_norm
+    %init = tensor.empty() : tensor<16x16xf16>
+    %src = memref.reinterpret_cast %arg2 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16, strided<[16, 1]>>
+    %alloc = memref.alloc() : memref<16x16xf16>
+    hivm.hir.load ins(%src : memref<16x16xf16, strided<[16, 1]>>) outs(%alloc : memref<16x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
+    %input = bufferization.to_tensor %alloc restrict writable : memref<16x16xf16>
+    %unused = hivm.hir.custom {hivm.tcore_type = #hivm.tcore_type<VECTOR>, hivm.pipe = #hivm.pipe<PIPE_V>, hivm.vf_mode = #hivm.vf_mode<SIMD>, symbol = "user_independent_side_effect"} "user.independent.side.effect" ins(%input : tensor<16x16xf16>) outs(%init : tensor<16x16xf16>) -> tensor<16x16xf16>
+    %dst = memref.reinterpret_cast %arg3 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16, strided<[16, 1]>>
+    hivm.hir.store ins(%input : tensor<16x16xf16>) outs(%dst : memref<16x16xf16, strided<[16, 1]>>)
+    return
+  }
+}
+
+// -----
+
+// A registered builtin CustomOp is not covered by the current tiling
+// contract. It stays at full extent; only its Store requires a guard.
+// CHECK-LABEL: func.func @custom_builtin_name
+// CHECK-NOT: {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+// CHECK-NOT: tensor.extract_slice
+// CHECK-NOT: memref.subview
+// CHECK: %[[FALLBACK_RESULT:.*]] = hivm.hir.custom
+// CHECK-SAME: "__builtin_index_select"
+// CHECK-SAME: ins(%{{[A-Za-z0-9_]+}} : tensor<16x16xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : tensor<16x16xf16>)
+// CHECK-SAME: -> tensor<16x16xf16>
+// CHECK: scf.if
+// CHECK: hivm.hir.store
+// CHECK-SAME: ins(%[[FALLBACK_RESULT]] : tensor<16x16xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : memref<16x16xf16{{.*}}>)
+// CHECK: } {limit_sub_block_id0}
+// CHECK-NOT: tensor.extract_slice
+// CHECK-NOT: memref.subview
+// CHECK: return
+module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @custom_builtin_name(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf16> {tt.divisibility = 16 : i32}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32}) attributes {WorkspaceArgIdx = 0 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+    hivm.hir.set_ffts_base_addr %arg0
+    hivm.hir.set_mask_norm
+    %init = tensor.empty() : tensor<16x16xf16>
+    %rc0 = memref.reinterpret_cast %arg2 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16, strided<[16, 1]>>
+    %alloc0 = memref.alloc() : memref<16x16xf16>
+    hivm.hir.load ins(%rc0 : memref<16x16xf16, strided<[16, 1]>>) outs(%alloc0 : memref<16x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
+    %a = bufferization.to_tensor %alloc0 restrict writable : memref<16x16xf16>
+    %c = hivm.hir.custom {no_side_effect, hivm.tcore_type = #hivm.tcore_type<VECTOR>, hivm.pipe = #hivm.pipe<PIPE_V>, hivm.vf_mode = #hivm.vf_mode<SIMT>} "__builtin_index_select" ins(%a : tensor<16x16xf16>) outs(%init : tensor<16x16xf16>) -> tensor<16x16xf16>
+    %rc1 = memref.reinterpret_cast %arg3 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16, strided<[16, 1]>>
+    hivm.hir.store ins(%c : tensor<16x16xf16>) outs(%rc1 : memref<16x16xf16, strided<[16, 1]>>)
+    return
+  }
+}
+
+// -----
+
+// Every dimension has size 1, so DimensionAnalyzer finds no legal
+// tiling dimension. The attempt rolls back; only the Store requires a guard.
+// CHECK-LABEL: func.func @custom_too_small
+// CHECK-NOT: {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+// CHECK-NOT: tensor.extract_slice
+// CHECK-NOT: memref.subview
+// CHECK: %[[FALLBACK_RESULT:.*]] = hivm.hir.custom
+// CHECK-SAME: "user.too_small"
+// CHECK-SAME: ins(%{{[A-Za-z0-9_]+}} : tensor<1x1xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : tensor<1x1xf16>)
+// CHECK-SAME: -> tensor<1x1xf16>
+// CHECK: scf.if
+// CHECK: hivm.hir.store
+// CHECK-SAME: ins(%[[FALLBACK_RESULT]] : tensor<1x1xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : memref<1x1xf16{{.*}}>)
+// CHECK: } {limit_sub_block_id0}
+// CHECK-NOT: tensor.extract_slice
+// CHECK-NOT: memref.subview
+// CHECK-NOT: {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+// CHECK: return
+#map_too_small_identity = affine_map<(d0, d1) -> (d0, d1)>
+module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @custom_too_small(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf16> {tt.divisibility = 16 : i32}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32}) attributes {WorkspaceArgIdx = 0 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+    hivm.hir.set_ffts_base_addr %arg0
+    hivm.hir.set_mask_norm
+    %init = tensor.empty() : tensor<1x1xf16>
+    %rc0 = memref.reinterpret_cast %arg2 to offset: [0], sizes: [1, 1], strides: [16, 1] : memref<?xf16> to memref<1x1xf16, strided<[16, 1]>>
+    %alloc0 = memref.alloc() : memref<1x1xf16>
+    hivm.hir.load ins(%rc0 : memref<1x1xf16, strided<[16, 1]>>) outs(%alloc0 : memref<1x1xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
+    %a = bufferization.to_tensor %alloc0 restrict writable : memref<1x1xf16>
+    %c = hivm.hir.custom {no_side_effect, hivm.tcore_type = #hivm.tcore_type<VECTOR>, hivm.pipe = #hivm.pipe<PIPE_V>, hivm.vf_mode = #hivm.vf_mode<SIMD>, iterator_types = [#hivm.iterator_type<parallel>, #hivm.iterator_type<parallel>], indexing_map = [#map_too_small_identity, #map_too_small_identity], symbol = "user_too_small"} "user.too_small" ins(%a : tensor<1x1xf16>) outs(%init : tensor<1x1xf16>) -> tensor<1x1xf16>
+    %rc1 = memref.reinterpret_cast %arg3 to offset: [0], sizes: [1, 1], strides: [16, 1] : memref<?xf16> to memref<1x1xf16, strided<[16, 1]>>
+    hivm.hir.store ins(%c : tensor<1x1xf16>) outs(%rc1 : memref<1x1xf16, strided<[16, 1]>>)
+    return
+  }
+}
+
+// -----
+
+// Extra-buffer metadata requests scratch allocation, whose per-sub-block
+// ownership is not defined yet. Preserve the metadata at full extent.
+// CHECK-LABEL: func.func @custom_extra_buffer_metadata
+// CHECK-NOT: {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+// CHECK-NOT: tensor.extract_slice
+// CHECK-NOT: memref.subview
+// CHECK: %[[FALLBACK_RESULT:.*]] = hivm.hir.custom
+// CHECK-DAG: extra_buffers_types = [f16]
+// CHECK-DAG: extra_buffers_sizes = [256]
+// CHECK-SAME: "user.extra_buffer"
+// CHECK-SAME: ins(%{{[A-Za-z0-9_]+}} : tensor<16x16xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : tensor<16x16xf16>)
+// CHECK-SAME: -> tensor<16x16xf16>
+// CHECK: scf.if
+// CHECK: hivm.hir.store
+// CHECK-SAME: ins(%[[FALLBACK_RESULT]] : tensor<16x16xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : memref<16x16xf16{{.*}}>)
+// CHECK: } {limit_sub_block_id0}
+// CHECK-NOT: tensor.extract_slice
+// CHECK-NOT: memref.subview
+// CHECK-NOT: {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+// CHECK: return
+#map_extra_buffer_identity = affine_map<(d0, d1) -> (d0, d1)>
+module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @custom_extra_buffer_metadata(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf16> {tt.divisibility = 16 : i32}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32}) attributes {WorkspaceArgIdx = 0 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+    hivm.hir.set_ffts_base_addr %arg0
+    hivm.hir.set_mask_norm
+    %init = tensor.empty() : tensor<16x16xf16>
+    %rc0 = memref.reinterpret_cast %arg2 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16, strided<[16, 1]>>
+    %alloc0 = memref.alloc() : memref<16x16xf16>
+    hivm.hir.load ins(%rc0 : memref<16x16xf16, strided<[16, 1]>>) outs(%alloc0 : memref<16x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
+    %a = bufferization.to_tensor %alloc0 restrict writable : memref<16x16xf16>
+    %c = hivm.hir.custom {no_side_effect, hivm.tcore_type = #hivm.tcore_type<VECTOR>, hivm.pipe = #hivm.pipe<PIPE_V>, hivm.vf_mode = #hivm.vf_mode<SIMD>, iterator_types = [#hivm.iterator_type<parallel>, #hivm.iterator_type<parallel>], indexing_map = [#map_extra_buffer_identity, #map_extra_buffer_identity], extra_buffers_types = [f16], extra_buffers_sizes = [256 : i64], symbol = "user_extra_buffer"} "user.extra_buffer" ins(%a : tensor<16x16xf16>) outs(%init : tensor<16x16xf16>) -> tensor<16x16xf16>
+    %rc1 = memref.reinterpret_cast %arg3 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16, strided<[16, 1]>>
+    hivm.hir.store ins(%c : tensor<16x16xf16>) outs(%rc1 : memref<16x16xf16, strided<[16, 1]>>)
+    return
+  }
+}
+
+// -----
+
+// An already materialized temp-buffer operand has the same unsupported
+// ownership boundary. Preserve the tmps operand at full extent.
+// CHECK-LABEL: func.func @custom_temp_buffer_operand
+// CHECK-NOT: {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+// CHECK-NOT: tensor.extract_slice
+// CHECK-NOT: memref.subview
+// CHECK: %[[TMP:.*]] = memref.alloc() : memref<256xf16>
+// CHECK: %[[FALLBACK_RESULT:.*]] = hivm.hir.custom
+// CHECK-SAME: "user.temp_buffer"
+// CHECK-SAME: ins(%{{[A-Za-z0-9_]+}} : tensor<16x16xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : tensor<16x16xf16>)
+// CHECK-SAME: tmps(%[[TMP]] : memref<256xf16>)
+// CHECK-SAME: -> tensor<16x16xf16>
+// CHECK: scf.if
+// CHECK: hivm.hir.store
+// CHECK-SAME: ins(%[[FALLBACK_RESULT]] : tensor<16x16xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : memref<16x16xf16{{.*}}>)
+// CHECK: } {limit_sub_block_id0}
+// CHECK-NOT: tensor.extract_slice
+// CHECK-NOT: memref.subview
+// CHECK-NOT: {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+// CHECK: return
+module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @custom_temp_buffer_operand(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf16> {tt.divisibility = 16 : i32}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32}) attributes {WorkspaceArgIdx = 0 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+    hivm.hir.set_ffts_base_addr %arg0
+    hivm.hir.set_mask_norm
+    %init = tensor.empty() : tensor<16x16xf16>
+    %rc0 = memref.reinterpret_cast %arg2 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16, strided<[16, 1]>>
+    %alloc0 = memref.alloc() : memref<16x16xf16>
+    hivm.hir.load ins(%rc0 : memref<16x16xf16, strided<[16, 1]>>) outs(%alloc0 : memref<16x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
+    %a = bufferization.to_tensor %alloc0 restrict writable : memref<16x16xf16>
+    %tmp = memref.alloc() : memref<256xf16>
+    %c = hivm.hir.custom {no_side_effect, hivm.tcore_type = #hivm.tcore_type<VECTOR>, hivm.pipe = #hivm.pipe<PIPE_V>, hivm.vf_mode = #hivm.vf_mode<SIMD>, symbol = "user_temp_buffer"} "user.temp_buffer" ins(%a : tensor<16x16xf16>) outs(%init : tensor<16x16xf16>) tmps(%tmp : memref<256xf16>) -> tensor<16x16xf16>
+    %rc1 = memref.reinterpret_cast %arg3 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16, strided<[16, 1]>>
+    hivm.hir.store ins(%c : tensor<16x16xf16>) outs(%rc1 : memref<16x16xf16, strided<[16, 1]>>)
+    return
+  }
+}
+
+// -----
+
+// The first input broadcasts along d0. Its constant-zero dimension must
+// remain independent and keep extent 1, while the identity input, output init,
+// result, and Store are tiled from 16x16 to 8x16 in one sub-block loop.
+// CHECK-DAG: #[[$BROADCAST_INPUT_MAP:[A-Za-z0-9_]+]] = affine_map<(d0, d1) -> (0, d1)>
+// CHECK-DAG: #[[$BROADCAST_IDENTITY_MAP:[A-Za-z0-9_]+]] = affine_map<(d0, d1) -> (d0, d1)>
+// CHECK-LABEL: func.func @custom_broadcast
+// CHECK-NOT: hivm.hir.custom{{.*}}tensor<16x16xf16>
+// CHECK: scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} {
+// CHECK-NOT: hivm.hir.custom{{.*}}tensor<16x16xf16>
+// CHECK: %[[CUSTOM:.*]] = hivm.hir.custom
+// CHECK-SAME: indexing_map = [#[[$BROADCAST_INPUT_MAP]], #[[$BROADCAST_IDENTITY_MAP]], #[[$BROADCAST_IDENTITY_MAP]]]
+// CHECK-SAME: iterator_types = [#hivm.iterator_type<parallel>, #hivm.iterator_type<parallel>]
+// CHECK-SAME: "user.broadcast"
+// CHECK-SAME: ins(%[[BROADCAST_INPUT:[A-Za-z0-9_]+]], %[[TILED_INPUT:[A-Za-z0-9_]+]] : tensor<1x16xf16>, tensor<8x16xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : tensor<8x16xf16>)
+// CHECK-SAME: -> tensor<8x16xf16>
+// CHECK-NOT: hivm.hir.custom{{.*}}tensor<16x16xf16>
+// CHECK: hivm.hir.store
+// CHECK-SAME: ins(%[[CUSTOM]] : tensor<8x16xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : memref<8x16xf16{{.*}}>)
+// CHECK-NOT: hivm.hir.custom{{.*}}tensor<16x16xf16>
+// CHECK: } {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+// CHECK-NOT: {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+// CHECK-NOT: hivm.hir.custom{{.*}}tensor<16x16xf16>
+// CHECK: return
+#map_broadcast_input = affine_map<(d0, d1) -> (0, d1)>
+#map_broadcast_identity = affine_map<(d0, d1) -> (d0, d1)>
+module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @custom_broadcast(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf16> {tt.divisibility = 16 : i32}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32}, %arg4: memref<?xf16> {tt.divisibility = 16 : i32}) attributes {WorkspaceArgIdx = 0 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+    hivm.hir.set_ffts_base_addr %arg0
+    hivm.hir.set_mask_norm
+    %init = tensor.empty() : tensor<16x16xf16>
+    %rcB = memref.reinterpret_cast %arg2 to offset: [0], sizes: [1, 16], strides: [16, 1] : memref<?xf16> to memref<1x16xf16, strided<[16, 1]>>
+    %allocB = memref.alloc() : memref<1x16xf16>
+    hivm.hir.load ins(%rcB : memref<1x16xf16, strided<[16, 1]>>) outs(%allocB : memref<1x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
+    %b = bufferization.to_tensor %allocB restrict writable : memref<1x16xf16>
+    %rcA = memref.reinterpret_cast %arg3 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16, strided<[16, 1]>>
+    %allocA = memref.alloc() : memref<16x16xf16>
+    hivm.hir.load ins(%rcA : memref<16x16xf16, strided<[16, 1]>>) outs(%allocA : memref<16x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
+    %a = bufferization.to_tensor %allocA restrict writable : memref<16x16xf16>
+    %c = hivm.hir.custom {no_side_effect, hivm.tcore_type = #hivm.tcore_type<VECTOR>, hivm.pipe = #hivm.pipe<PIPE_V>, hivm.vf_mode = #hivm.vf_mode<SIMD>, iterator_types = [#hivm.iterator_type<parallel>, #hivm.iterator_type<parallel>], indexing_map = [#map_broadcast_input, #map_broadcast_identity, #map_broadcast_identity], symbol = "user_broadcast"} "user.broadcast" ins(%b, %a : tensor<1x16xf16>, tensor<16x16xf16>) outs(%init : tensor<16x16xf16>) -> tensor<16x16xf16>
+    %rcOut = memref.reinterpret_cast %arg4 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16, strided<[16, 1]>>
+    hivm.hir.store ins(%c : tensor<16x16xf16>) outs(%rcOut : memref<16x16xf16, strided<[16, 1]>>)
+    return
+  }
+}
+
+// -----
+
+// A pure leaf CustomOp whose result is consumed only by annotation.mark
+// has no supported tiling root yet. Keep it at full extent and reconnect the
+// annotation to its unchanged result.
+// CHECK-LABEL: func.func @custom_leaf
+// CHECK-NOT: {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+// CHECK-NOT: tensor.extract_slice
+// CHECK-NOT: memref.subview
+// CHECK: %[[FALLBACK_RESULT:.*]] = hivm.hir.custom
+// CHECK-SAME: "user.leaf"
+// CHECK-SAME: ins(%{{[A-Za-z0-9_]+}} : tensor<16x16xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : tensor<16x16xf16>)
+// CHECK-SAME: -> tensor<16x16xf16>
+// CHECK: annotation.mark %[[FALLBACK_RESULT]] : tensor<16x16xf16>
+// CHECK-NOT: hivm.hir.store
+// CHECK-NOT: tensor.extract_slice
+// CHECK-NOT: memref.subview
+// CHECK-NOT: {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+// CHECK: return
+#map_leaf_identity = affine_map<(d0, d1) -> (d0, d1)>
+module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @custom_leaf(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf16> {tt.divisibility = 16 : i32}) attributes {WorkspaceArgIdx = 0 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+    hivm.hir.set_ffts_base_addr %arg0
+    hivm.hir.set_mask_norm
+    %init = tensor.empty() : tensor<16x16xf16>
+    %rc0 = memref.reinterpret_cast %arg2 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16, strided<[16, 1]>>
+    %alloc0 = memref.alloc() : memref<16x16xf16>
+    hivm.hir.load ins(%rc0 : memref<16x16xf16, strided<[16, 1]>>) outs(%alloc0 : memref<16x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
+    %a = bufferization.to_tensor %alloc0 restrict writable : memref<16x16xf16>
+    %c = hivm.hir.custom {no_side_effect, hivm.tcore_type = #hivm.tcore_type<VECTOR>, hivm.pipe = #hivm.pipe<PIPE_V>, hivm.vf_mode = #hivm.vf_mode<SIMD>, iterator_types = [#hivm.iterator_type<parallel>, #hivm.iterator_type<parallel>], indexing_map = [#map_leaf_identity, #map_leaf_identity], symbol = "user_leaf"} "user.leaf" ins(%a : tensor<16x16xf16>) outs(%init : tensor<16x16xf16>) -> tensor<16x16xf16>
+    // The result has no Store-like consumer that could provide a tiling root.
+    annotation.mark %c : tensor<16x16xf16>
+    return
+  }
+}
+
+// -----
+
+// A CustomOp with a transposing indexing_map `(d0, d1) -> (d1, d0)` on its
+// input. isSupportedOperation rejects non-order-preserving maps (AffineDimExpr
+// positions must be strictly increasing), so the slice cannot bubble through and
+// the Store rolls back and receives `limit_sub_block_id0`.
+// Regression guard: the transpose map previously passed (only AffineDimExpr, no
+// duplicates) and the Pass tiled it — locked here.
+// CHECK-DAG: #[[$TRANSPOSE_IDENTITY_MAP:[A-Za-z0-9_]+]] = affine_map<(d0, d1) -> (d0, d1)>
+// CHECK-DAG: #[[$TRANSPOSE_INPUT_MAP:[A-Za-z0-9_]+]] = affine_map<(d0, d1) -> (d1, d0)>
+// CHECK-LABEL: func.func @custom_transpose_reject
+// CHECK-NOT: {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+// CHECK-NOT: tensor.extract_slice
+// CHECK-NOT: memref.subview
+// CHECK: %[[FALLBACK_RESULT:.*]] = hivm.hir.custom
+// CHECK-SAME: indexing_map = [#[[$TRANSPOSE_INPUT_MAP]], #[[$TRANSPOSE_IDENTITY_MAP]]]
+// CHECK-SAME: iterator_types = [#hivm.iterator_type<parallel>, #hivm.iterator_type<parallel>]
+// CHECK-SAME: "user.transpose"
+// CHECK-SAME: ins(%{{[A-Za-z0-9_]+}} : tensor<16x16xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : tensor<16x16xf16>)
+// CHECK-SAME: -> tensor<16x16xf16>
+// CHECK: scf.if
+// CHECK: hivm.hir.store
+// CHECK-SAME: ins(%[[FALLBACK_RESULT]] : tensor<16x16xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : memref<16x16xf16{{.*}}>)
+// CHECK: } {limit_sub_block_id0}
+// CHECK-NOT: tensor.extract_slice
+// CHECK-NOT: memref.subview
+// CHECK-NOT: {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+// CHECK: return
+#map_transpose_identity = affine_map<(d0, d1) -> (d0, d1)>
+#map_transpose_input = affine_map<(d0, d1) -> (d1, d0)>
+module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @custom_transpose_reject(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf16> {tt.divisibility = 16 : i32}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32}) attributes {WorkspaceArgIdx = 0 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+    hivm.hir.set_ffts_base_addr %arg0
+    hivm.hir.set_mask_norm
+    %init = tensor.empty() : tensor<16x16xf16>
+    %rc0 = memref.reinterpret_cast %arg2 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16, strided<[16, 1]>>
+    %alloc0 = memref.alloc() : memref<16x16xf16>
+    hivm.hir.load ins(%rc0 : memref<16x16xf16, strided<[16, 1]>>) outs(%alloc0 : memref<16x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
+    %a = bufferization.to_tensor %alloc0 restrict writable : memref<16x16xf16>
+    %c = hivm.hir.custom {no_side_effect, hivm.tcore_type = #hivm.tcore_type<VECTOR>, hivm.pipe = #hivm.pipe<PIPE_V>, hivm.vf_mode = #hivm.vf_mode<SIMD>, iterator_types = [#hivm.iterator_type<parallel>, #hivm.iterator_type<parallel>], indexing_map = [#map_transpose_input, #map_transpose_identity], symbol = "user_transpose"} "user.transpose" ins(%a : tensor<16x16xf16>) outs(%init : tensor<16x16xf16>) -> tensor<16x16xf16>
+    %rc1 = memref.reinterpret_cast %arg3 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16, strided<[16, 1]>>
+    hivm.hir.store ins(%c : tensor<16x16xf16>) outs(%rc1 : memref<16x16xf16, strided<[16, 1]>>)
+    return
+  }
+}
+
+// -----
+
+// A multi-result CustomOp. All results share the same iteration space
+// and have identical shape/indexing_map, so they are tiled together. Both
+// outputs are sliced and both result types shrink to the tile shape.
+//
+// Regression guard: this used to create a DPS mismatch because execute() only
+// updated the consumed result's type while slicing every output.
+// CHECK: #[[$MULTI_RESULT_IDENTITY_MAP:[A-Za-z0-9_]+]] = affine_map<(d0, d1) -> (d0, d1)>
+// CHECK-LABEL: func.func @custom_multi_result
+// CHECK-NOT: hivm.hir.custom{{.*}}tensor<16x16xf16>
+// CHECK: scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} {
+// CHECK-NOT: hivm.hir.custom{{.*}}tensor<16x16xf16>
+// CHECK: %[[CUSTOM:.*]]:2 = hivm.hir.custom
+// CHECK-SAME: indexing_map = [#[[$MULTI_RESULT_IDENTITY_MAP]], #[[$MULTI_RESULT_IDENTITY_MAP]], #[[$MULTI_RESULT_IDENTITY_MAP]], #[[$MULTI_RESULT_IDENTITY_MAP]]]
+// CHECK-SAME: iterator_types = [#hivm.iterator_type<parallel>, #hivm.iterator_type<parallel>]
+// CHECK-SAME: "user.multi_result"
+// CHECK-SAME: ins(%{{[A-Za-z0-9_]+}}, %{{[A-Za-z0-9_]+}} : tensor<8x16xf16>, tensor<8x16xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}}, %{{[A-Za-z0-9_]+}} : tensor<8x16xf16>, tensor<8x16xf16>)
+// CHECK-SAME: -> (tensor<8x16xf16>, tensor<8x16xf16>)
+// CHECK-NOT: hivm.hir.custom{{.*}}tensor<16x16xf16>
+// CHECK: hivm.hir.store
+// CHECK-SAME: ins(%[[CUSTOM]]#0 : tensor<8x16xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : memref<8x16xf16{{.*}}>)
+// CHECK: hivm.hir.store
+// CHECK-SAME: ins(%[[CUSTOM]]#1 : tensor<8x16xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : memref<8x16xf16{{.*}}>)
+// CHECK-NOT: hivm.hir.custom{{.*}}tensor<16x16xf16>
+// CHECK: } {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+// CHECK-NOT: {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+// CHECK-NOT: hivm.hir.custom{{.*}}tensor<16x16xf16>
+// CHECK: return
+#map_multi_result_identity = affine_map<(d0, d1) -> (d0, d1)>
+module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @custom_multi_result(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf16> {tt.divisibility = 16 : i32}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32}, %arg4: memref<?xf16> {tt.divisibility = 16 : i32}, %arg5: memref<?xf16> {tt.divisibility = 16 : i32}) attributes {WorkspaceArgIdx = 0 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+    hivm.hir.set_ffts_base_addr %arg0
+    hivm.hir.set_mask_norm
+    %init0 = tensor.empty() : tensor<16x16xf16>
+    %init1 = tensor.empty() : tensor<16x16xf16>
+    %rc0 = memref.reinterpret_cast %arg2 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16, strided<[16, 1]>>
+    %alloc0 = memref.alloc() : memref<16x16xf16>
+    hivm.hir.load ins(%rc0 : memref<16x16xf16, strided<[16, 1]>>) outs(%alloc0 : memref<16x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
+    %a = bufferization.to_tensor %alloc0 restrict writable : memref<16x16xf16>
+    %rc_second = memref.reinterpret_cast %arg5 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16, strided<[16, 1]>>
+    %alloc_second = memref.alloc() : memref<16x16xf16>
+    hivm.hir.load ins(%rc_second : memref<16x16xf16, strided<[16, 1]>>) outs(%alloc_second : memref<16x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
+    %b = bufferization.to_tensor %alloc_second restrict writable : memref<16x16xf16>
+    %sum, %diff = hivm.hir.custom {no_side_effect, hivm.tcore_type = #hivm.tcore_type<VECTOR>, hivm.pipe = #hivm.pipe<PIPE_V>, hivm.vf_mode = #hivm.vf_mode<SIMD>, iterator_types = [#hivm.iterator_type<parallel>, #hivm.iterator_type<parallel>], indexing_map = [#map_multi_result_identity, #map_multi_result_identity, #map_multi_result_identity, #map_multi_result_identity], symbol = "user_multi_result"} "user.multi_result" ins(%a, %b : tensor<16x16xf16>, tensor<16x16xf16>) outs(%init0, %init1 : tensor<16x16xf16>, tensor<16x16xf16>) -> (tensor<16x16xf16>, tensor<16x16xf16>)
+    %rc1 = memref.reinterpret_cast %arg3 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16, strided<[16, 1]>>
+    %rc2 = memref.reinterpret_cast %arg4 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16, strided<[16, 1]>>
+    hivm.hir.store ins(%sum : tensor<16x16xf16>) outs(%rc1 : memref<16x16xf16, strided<[16, 1]>>)
+    hivm.hir.store ins(%diff : tensor<16x16xf16>) outs(%rc2 : memref<16x16xf16, strided<[16, 1]>>)
+    return
+  }
+}
+
+// -----
+
+// Scalar passthrough does not make empty indexing semantics safe. Without
+// iterator_types and indexing_map, keep the CustomOp at full extent and guard
+// only the Store.
+// CHECK-LABEL: func.func @custom_scalar_implicit
+// CHECK: %[[SCALE:.*]] = arith.constant 2.000000e+00 : f32
+// CHECK-NOT: {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+// CHECK-NOT: tensor.extract_slice
+// CHECK-NOT: memref.subview
+// CHECK: %[[FALLBACK_RESULT:.*]] = hivm.hir.custom
+// CHECK-SAME: "user.scalar.implicit"
+// CHECK-SAME: ins(%{{[A-Za-z0-9_]+}}, %[[SCALE]] : tensor<16x16xf16>, f32)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : tensor<16x16xf16>)
+// CHECK-SAME: -> tensor<16x16xf16>
+// CHECK: scf.if
+// CHECK: hivm.hir.store
+// CHECK-SAME: ins(%[[FALLBACK_RESULT]] : tensor<16x16xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : memref<16x16xf16{{.*}}>)
+// CHECK: } {limit_sub_block_id0}
+// CHECK-NOT: tensor.extract_slice
+// CHECK-NOT: memref.subview
+// CHECK: return
+module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @custom_scalar_implicit(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf16> {tt.divisibility = 16 : i32}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32}) attributes {WorkspaceArgIdx = 0 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+    hivm.hir.set_ffts_base_addr %arg0
+    hivm.hir.set_mask_norm
+    %scale = arith.constant 2.000000e+00 : f32
+    %init = tensor.empty() : tensor<16x16xf16>
+    %src = memref.reinterpret_cast %arg2 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16, strided<[16, 1]>>
+    %alloc = memref.alloc() : memref<16x16xf16>
+    hivm.hir.load ins(%src : memref<16x16xf16, strided<[16, 1]>>) outs(%alloc : memref<16x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
+    %input = bufferization.to_tensor %alloc restrict writable : memref<16x16xf16>
+    %result = hivm.hir.custom {no_side_effect, hivm.tcore_type = #hivm.tcore_type<VECTOR>, hivm.pipe = #hivm.pipe<PIPE_V>, hivm.vf_mode = #hivm.vf_mode<SIMD>, symbol = "user_scalar_implicit"} "user.scalar.implicit" ins(%input, %scale : tensor<16x16xf16>, f32) outs(%init : tensor<16x16xf16>) -> tensor<16x16xf16>
+    %dst = memref.reinterpret_cast %arg3 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16, strided<[16, 1]>>
+    hivm.hir.store ins(%result : tensor<16x16xf16>) outs(%dst : memref<16x16xf16, strided<[16, 1]>>)
+    return
+  }
+}
+
+// -----
+
+// With explicit parallel identity semantics, an empty-result map means
+// that the scalar is not mapped to any iteration dimension. The rebuilt tiled
+// CustomOp must still receive the original scalar SSA value unchanged.
+// CHECK-DAG: #[[$SCALAR_IDENTITY_MAP:[A-Za-z0-9_]+]] = affine_map<(d0, d1) -> (d0, d1)>
+// CHECK-DAG: #[[$SCALAR_PASSTHROUGH_MAP:[A-Za-z0-9_]+]] = affine_map<(d0, d1) -> ()>
+// CHECK-LABEL: func.func @custom_scalar_explicit
+// CHECK-NOT: hivm.hir.custom{{.*}}tensor<16x16xf16>
+// CHECK: %[[SCALE:.*]] = arith.constant 3.000000e+00 : f32
+// CHECK-NOT: hivm.hir.custom{{.*}}tensor<16x16xf16>
+// CHECK: scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} {
+// CHECK-NOT: hivm.hir.custom{{.*}}tensor<16x16xf16>
+// CHECK: %[[CUSTOM:.*]] = hivm.hir.custom
+// CHECK-SAME: indexing_map = [#[[$SCALAR_IDENTITY_MAP]], #[[$SCALAR_PASSTHROUGH_MAP]], #[[$SCALAR_IDENTITY_MAP]]]
+// CHECK-SAME: iterator_types = [#hivm.iterator_type<parallel>, #hivm.iterator_type<parallel>]
+// CHECK-SAME: "user.scalar.explicit"
+// CHECK-SAME: ins(%{{[A-Za-z0-9_]+}}, %[[SCALE]] : tensor<8x16xf16>, f32)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : tensor<8x16xf16>)
+// CHECK-SAME: -> tensor<8x16xf16>
+// CHECK-NOT: hivm.hir.custom{{.*}}tensor<16x16xf16>
+// CHECK: hivm.hir.store
+// CHECK-SAME: ins(%[[CUSTOM]] : tensor<8x16xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : memref<8x16xf16{{.*}}>)
+// CHECK-NOT: hivm.hir.custom{{.*}}tensor<16x16xf16>
+// CHECK: } {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+// CHECK-NOT: hivm.hir.custom{{.*}}tensor<16x16xf16>
+// CHECK: return
+#map_scalar_identity = affine_map<(d0, d1) -> (d0, d1)>
+#map_scalar_passthrough = affine_map<(d0, d1) -> ()>
+module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @custom_scalar_explicit(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf16> {tt.divisibility = 16 : i32}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32}) attributes {WorkspaceArgIdx = 0 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+    hivm.hir.set_ffts_base_addr %arg0
+    hivm.hir.set_mask_norm
+    %scale = arith.constant 3.000000e+00 : f32
+    %init = tensor.empty() : tensor<16x16xf16>
+    %src = memref.reinterpret_cast %arg2 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16, strided<[16, 1]>>
+    %alloc = memref.alloc() : memref<16x16xf16>
+    hivm.hir.load ins(%src : memref<16x16xf16, strided<[16, 1]>>) outs(%alloc : memref<16x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
+    %input = bufferization.to_tensor %alloc restrict writable : memref<16x16xf16>
+    %result = hivm.hir.custom {no_side_effect, hivm.tcore_type = #hivm.tcore_type<VECTOR>, hivm.pipe = #hivm.pipe<PIPE_V>, hivm.vf_mode = #hivm.vf_mode<SIMD>, iterator_types = [#hivm.iterator_type<parallel>, #hivm.iterator_type<parallel>], indexing_map = [#map_scalar_identity, #map_scalar_passthrough, #map_scalar_identity], symbol = "user_scalar_explicit"} "user.scalar.explicit" ins(%input, %scale : tensor<16x16xf16>, f32) outs(%init : tensor<16x16xf16>) -> tensor<16x16xf16>
+    %dst = memref.reinterpret_cast %arg3 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16, strided<[16, 1]>>
+    hivm.hir.store ins(%result : tensor<16x16xf16>) outs(%dst : memref<16x16xf16, strided<[16, 1]>>)
+    return
+  }
+}
+
+// -----
+
+// A CustomOp without no_side_effect is not safe to duplicate across
+// sub-blocks. The transformation rolls back to full extent. With no GM address
+// operands, the CustomOp remains unguarded and only the Store is restricted.
+// CHECK-LABEL: func.func @custom_side_effect_fallback
+// CHECK-NOT: {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+// CHECK-NOT: scf.for
+// CHECK-NOT: tensor.extract_slice
+// CHECK-NOT: memref.subview
+// CHECK-NOT: {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+// CHECK-NOT: scf.for
+// CHECK-NOT: no_side_effect
+// CHECK: %[[FALLBACK_RESULT:.*]] = hivm.hir.custom
+// CHECK-SAME: "user.side.effect"
+// CHECK-SAME: ins(%{{[A-Za-z0-9_]+}} : tensor<16x16xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : tensor<16x16xf16>)
+// CHECK-SAME: -> tensor<16x16xf16>
+// CHECK-NOT: tensor<8x16xf16>
+// CHECK-NOT: {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+// CHECK-NOT: scf.for
+// CHECK: %[[STORE_SUB_BLOCK:.*]] = hivm.hir.get_sub_block_idx -> i64
+// CHECK: %[[STORE_SUB_BLOCK_INDEX:.*]] = arith.index_cast %[[STORE_SUB_BLOCK]] : i64 to index
+// CHECK: %[[IS_STORE_SUB_BLOCK_ZERO:.*]] = arith.cmpi eq, %[[STORE_SUB_BLOCK_INDEX]], %{{.*}} : index
+// CHECK: scf.if %[[IS_STORE_SUB_BLOCK_ZERO]] {
+// CHECK: hivm.hir.store
+// CHECK-SAME: ins(%[[FALLBACK_RESULT]] : tensor<16x16xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : memref<16x16xf16{{.*}}>)
+// CHECK: } {limit_sub_block_id0}
+// CHECK-NOT: {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+// CHECK-NOT: scf.for
+// CHECK-NOT: tensor.extract_slice
+// CHECK-NOT: memref.subview
+// CHECK: return
+module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @custom_side_effect_fallback(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf16> {tt.divisibility = 16 : i32}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32}) attributes {WorkspaceArgIdx = 0 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+    hivm.hir.set_ffts_base_addr %arg0
+    hivm.hir.set_mask_norm
+    %init = tensor.empty() : tensor<16x16xf16>
+    %src = memref.reinterpret_cast %arg2 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16, strided<[16, 1]>>
+    %alloc = memref.alloc() : memref<16x16xf16>
+    hivm.hir.load ins(%src : memref<16x16xf16, strided<[16, 1]>>) outs(%alloc : memref<16x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
+    %input = bufferization.to_tensor %alloc restrict writable : memref<16x16xf16>
+    %result = hivm.hir.custom {hivm.tcore_type = #hivm.tcore_type<VECTOR>, hivm.pipe = #hivm.pipe<PIPE_V>, hivm.vf_mode = #hivm.vf_mode<SIMD>, symbol = "user_side_effect"} "user.side.effect" ins(%input : tensor<16x16xf16>) outs(%init : tensor<16x16xf16>) -> tensor<16x16xf16>
+    %dst = memref.reinterpret_cast %arg3 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16, strided<[16, 1]>>
+    hivm.hir.store ins(%result : tensor<16x16xf16>) outs(%dst : memref<16x16xf16, strided<[16, 1]>>)
+    return
+  }
+}
+
+// -----
+
+// Cover non-DPS results, unranked inputs, and non-strict fallback.
+// CHECK-LABEL: func.func @custom_edge_case_fallback
+// CHECK: "dist.non_dps_result"
+// CHECK-NOT: mapping = [#hivm.sub_block<x>]
+// CHECK: %[[EDGE_RESULT:.*]] = hivm.hir.custom
+// CHECK-SAME: "user.unranked_input"
+// CHECK-SAME: memref<*xf16>
+// CHECK-SAME: tensor<64x64xf16>
+// CHECK: scf.if
+// CHECK: hivm.hir.store
+// CHECK-SAME: ins(%[[EDGE_RESULT]] : tensor<64x64xf16>)
+// CHECK: } {limit_sub_block_id0}
+// CHECK-NOT: mapping = [#hivm.sub_block<x>]
+#map_custom_edge_identity = affine_map<(d0, d1) -> (d0, d1)>
+module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @custom_edge_case_fallback(%input: tensor<64xf16>, %unranked: memref<*xf16>, %dst: memref<64x64xf16>) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+    %seed = tensor.empty() : tensor<64x64xf16>
+    %token = hivm.hir.custom {hivm.is_distributed, hivm.pipe = #hivm.pipe<PIPE_V>, hivm.tcore_type = #hivm.tcore_type<VECTOR>, hivm.vf_mode = #hivm.vf_mode<SIMD>, iterator_types = [#hivm.iterator_type<parallel>, #hivm.iterator_type<reduction>], indexing_map = [#map_custom_edge_identity], symbol = "non_dps_result"} "dist.non_dps_result" ins(%seed : tensor<64x64xf16>) -> i32
+    %vectorInit = tensor.empty() : tensor<64xf16>
+    %vector = hivm.hir.vln ins(%input : tensor<64xf16>) outs(%vectorInit : tensor<64xf16>) -> tensor<64xf16>
+    %column = tensor.expand_shape %vector [[0, 1]] output_shape [64, 1] : tensor<64xf16> into tensor<64x1xf16>
+    %row = tensor.expand_shape %vector [[0, 1]] output_shape [1, 64] : tensor<64xf16> into tensor<1x64xf16>
+    %sumInit = tensor.empty() : tensor<64x64xf16>
+    %sum = hivm.hir.vadd ins(%column, %row : tensor<64x1xf16>, tensor<1x64xf16>) outs(%sumInit : tensor<64x64xf16>) broadcast = [0, 1] -> tensor<64x64xf16>
+    %customInit = tensor.empty() : tensor<64x64xf16>
+    %result = hivm.hir.custom {no_side_effect, hivm.pipe = #hivm.pipe<PIPE_V>, hivm.tcore_type = #hivm.tcore_type<VECTOR>, hivm.vf_mode = #hivm.vf_mode<SIMD>, iterator_types = [#hivm.iterator_type<parallel>, #hivm.iterator_type<parallel>], indexing_map = [#map_custom_edge_identity, #map_custom_edge_identity, #map_custom_edge_identity], symbol = "unranked_input"} "user.unranked_input" ins(%sum, %unranked : tensor<64x64xf16>, memref<*xf16>) outs(%customInit : tensor<64x64xf16>) -> tensor<64x64xf16>
+    hivm.hir.store ins(%result : tensor<64x64xf16>) outs(%dst : memref<64x64xf16>)
+    return
+  }
+}
+
+// -----
+
+
+// =============================================================================
+// CustomMacroOp (hivm.hir.custom_macro) sub-block tiling. Shares the
+// HIVM_CustomOp base / HIVMStructuredOpInterface with CustomOp, so it reuses the
+// same analysis and bubble-up implementation. The focused cases below cover
+// basic reconstruction, macro-only sync restrictions, and multi-result operand
+// segment rebuilding.
+// =============================================================================
+
+// Empty iterator_types and indexing_map are also rejected for CustomMacroOp.
+// Keep the macro at full extent and guard only the Store.
+// CHECK-LABEL: func.func @custom_macro_no_iter_static
+// CHECK-NOT: {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+// CHECK-NOT: tensor.extract_slice
+// CHECK-NOT: memref.subview
+// CHECK: %[[FALLBACK_RESULT:.*]] = hivm.hir.custom_macro
+// CHECK-SAME: "user.macro"
+// CHECK-SAME: ins(%{{[A-Za-z0-9_]+}} : tensor<16x16xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : tensor<16x16xf16>)
+// CHECK-SAME: -> tensor<16x16xf16>
+// CHECK: scf.if
+// CHECK: hivm.hir.store
+// CHECK-SAME: ins(%[[FALLBACK_RESULT]] : tensor<16x16xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : memref<16x16xf16{{.*}}>)
+// CHECK: } {limit_sub_block_id0}
+// CHECK-NOT: tensor.extract_slice
+// CHECK-NOT: memref.subview
+// CHECK: return
+module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @custom_macro_no_iter_static(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf16> {tt.divisibility = 16 : i32}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32}) attributes {WorkspaceArgIdx = 0 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+    hivm.hir.set_ffts_base_addr %arg0
+    hivm.hir.set_mask_norm
+    %0 = tensor.empty() : tensor<16x16xf16>
+    %reinterpret_cast = memref.reinterpret_cast %arg2 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16, strided<[16, 1]>>
+    %alloc = memref.alloc() : memref<16x16xf16>
+    hivm.hir.load ins(%reinterpret_cast : memref<16x16xf16, strided<[16, 1]>>) outs(%alloc : memref<16x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
+    %1 = bufferization.to_tensor %alloc restrict writable : memref<16x16xf16>
+    %2 = hivm.hir.custom_macro {no_side_effect, hivm.tcore_type = #hivm.tcore_type<VECTOR>, hivm.pipe_in = #hivm.pipe<PIPE_V>, hivm.pipe_out = #hivm.pipe<PIPE_V>, symbol = "user_macro"} "user.macro" ins(%1 : tensor<16x16xf16>) outs(%0 : tensor<16x16xf16>) -> tensor<16x16xf16>
+    %reinterpret_cast_0 = memref.reinterpret_cast %arg3 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16, strided<[16, 1]>>
+    hivm.hir.store ins(%2 : tensor<16x16xf16>) outs(%reinterpret_cast_0 : memref<16x16xf16, strided<[16, 1]>>)
+    return
+  }
+}
+
+// -----
+
+// `sync_event_slots` have no per-sub-block event ownership contract yet,
+// so the macro stays at full extent and only the Store is guarded.
+// CHECK-LABEL: func.func @custom_macro_sync_slots
+// CHECK-NOT: {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+// CHECK-NOT: tensor.extract_slice
+// CHECK-NOT: memref.subview
+// CHECK: %[[FALLBACK_RESULT:.*]] = hivm.hir.custom_macro
+// CHECK-SAME: sync_event_slots
+// CHECK-SAME: "user.macro.sync"
+// CHECK-SAME: ins(%{{[A-Za-z0-9_]+}} : tensor<16x16xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : tensor<16x16xf16>)
+// CHECK-SAME: -> tensor<16x16xf16>
+// CHECK: scf.if
+// CHECK: hivm.hir.store
+// CHECK-SAME: ins(%[[FALLBACK_RESULT]] : tensor<16x16xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : memref<16x16xf16{{.*}}>)
+// CHECK: } {limit_sub_block_id0}
+// CHECK-NOT: tensor.extract_slice
+// CHECK-NOT: memref.subview
+// CHECK-NOT: {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+// CHECK: return
+#map_macro_sync_identity = affine_map<(d0, d1) -> (d0, d1)>
+module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @custom_macro_sync_slots(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf16> {tt.divisibility = 16 : i32}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32}) attributes {WorkspaceArgIdx = 0 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+    hivm.hir.set_ffts_base_addr %arg0
+    hivm.hir.set_mask_norm
+    %0 = tensor.empty() : tensor<16x16xf16>
+    %reinterpret_cast = memref.reinterpret_cast %arg2 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16, strided<[16, 1]>>
+    %alloc = memref.alloc() : memref<16x16xf16>
+    hivm.hir.load ins(%reinterpret_cast : memref<16x16xf16, strided<[16, 1]>>) outs(%alloc : memref<16x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
+    %1 = bufferization.to_tensor %alloc restrict writable : memref<16x16xf16>
+    %2 = hivm.hir.custom_macro {no_side_effect, hivm.tcore_type = #hivm.tcore_type<VECTOR>, hivm.pipe_in = #hivm.pipe<PIPE_MTE2>, hivm.pipe_out = #hivm.pipe<PIPE_V>, iterator_types = [#hivm.iterator_type<parallel>, #hivm.iterator_type<parallel>], indexing_map = [#map_macro_sync_identity, #map_macro_sync_identity], sync_event_slots = [#hivm.sync_event_slot<#hivm.pipe<PIPE_MTE2>, #hivm.pipe<PIPE_MTE1>>], symbol = "user_macro_sync"} "user.macro.sync" ins(%1 : tensor<16x16xf16>) outs(%0 : tensor<16x16xf16>) -> tensor<16x16xf16>
+    %reinterpret_cast_0 = memref.reinterpret_cast %arg3 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16, strided<[16, 1]>>
+    hivm.hir.store ins(%2 : tensor<16x16xf16>) outs(%reinterpret_cast_0 : memref<16x16xf16, strided<[16, 1]>>)
+    return
+  }
+}
+
+// -----
+
+// A multi-result macro; both results tile together and shrink to the tile shape.
+// CHECK-LABEL: func.func @custom_macro_multi_result
+// CHECK-NOT: hivm.hir.custom_macro{{.*}}tensor<16x16xf16>
+// CHECK: scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} {
+// CHECK-NOT: hivm.hir.custom_macro{{.*}}tensor<16x16xf16>
+// CHECK: %[[MACRO:.*]]:2 = hivm.hir.custom_macro
+// CHECK-SAME: "user.macro.multi_result"
+// CHECK-SAME: ins(%{{[A-Za-z0-9_]+}}, %{{[A-Za-z0-9_]+}} : tensor<8x16xf16>, tensor<8x16xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}}, %{{[A-Za-z0-9_]+}} : tensor<8x16xf16>, tensor<8x16xf16>)
+// CHECK-SAME: -> (tensor<8x16xf16>, tensor<8x16xf16>)
+// CHECK: hivm.hir.store
+// CHECK-SAME: ins(%[[MACRO]]#0 : tensor<8x16xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : memref<8x16xf16{{.*}}>)
+// CHECK: hivm.hir.store
+// CHECK-SAME: ins(%[[MACRO]]#1 : tensor<8x16xf16>)
+// CHECK-SAME: outs(%{{[A-Za-z0-9_]+}} : memref<8x16xf16{{.*}}>)
+// CHECK: } {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+// CHECK-NOT: hivm.hir.custom_macro{{.*}}tensor<16x16xf16>
+// CHECK: return
+#map_macro_multi_result_identity = affine_map<(d0, d1) -> (d0, d1)>
+module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @custom_macro_multi_result(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf16> {tt.divisibility = 16 : i32}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32}, %arg4: memref<?xf16> {tt.divisibility = 16 : i32}) attributes {WorkspaceArgIdx = 0 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+    hivm.hir.set_ffts_base_addr %arg0
+    hivm.hir.set_mask_norm
+    %init0 = tensor.empty() : tensor<16x16xf16>
+    %init1 = tensor.empty() : tensor<16x16xf16>
+    %rc0 = memref.reinterpret_cast %arg2 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16, strided<[16, 1]>>
+    %alloc0 = memref.alloc() : memref<16x16xf16>
+    hivm.hir.load ins(%rc0 : memref<16x16xf16, strided<[16, 1]>>) outs(%alloc0 : memref<16x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
+    %a = bufferization.to_tensor %alloc0 restrict writable : memref<16x16xf16>
+    %sum, %diff = hivm.hir.custom_macro {no_side_effect, hivm.tcore_type = #hivm.tcore_type<VECTOR>, hivm.pipe_in = #hivm.pipe<PIPE_V>, hivm.pipe_out = #hivm.pipe<PIPE_V>, iterator_types = [#hivm.iterator_type<parallel>, #hivm.iterator_type<parallel>], indexing_map = [#map_macro_multi_result_identity, #map_macro_multi_result_identity, #map_macro_multi_result_identity, #map_macro_multi_result_identity], symbol = "user_macro_multi_result"} "user.macro.multi_result" ins(%a, %a : tensor<16x16xf16>, tensor<16x16xf16>) outs(%init0, %init1 : tensor<16x16xf16>, tensor<16x16xf16>) -> (tensor<16x16xf16>, tensor<16x16xf16>)
+    %rc1 = memref.reinterpret_cast %arg3 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16, strided<[16, 1]>>
+    %rc2 = memref.reinterpret_cast %arg4 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16, strided<[16, 1]>>
+    hivm.hir.store ins(%sum : tensor<16x16xf16>) outs(%rc1 : memref<16x16xf16, strided<[16, 1]>>)
+    hivm.hir.store ins(%diff : tensor<16x16xf16>) outs(%rc2 : memref<16x16xf16, strided<[16, 1]>>)
+    return
+  }
+}
+
+// -----
+
 // CHECK-LABEL:   func.func @prepare_wy_repr_fwd_kernel_chunk64_mix_aiv(
 
 #map = affine_map<()[s0, s1] -> (s0 + s1 * 1024)>
@@ -3103,6 +4170,7 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
 }
 
 // -----
+
 // Test that 1:2 tiling succeeds when cbuf tightly-coupled buffers are present
 // alongside UB buffers. Cbuf marks must not leak into
 // tightlyCoupledBufferToTilingDim and cause a false "UB not tiled" failure.

@@ -144,6 +144,12 @@ protected:
                                         std::is_same_v<T, hivm::VCummaxOp> ||
                                         std::is_same_v<T, hivm::VCumminOp>>>
   void processVCumOp(T op);
+  // Shared by hivm::CustomOp and hivm::CustomMacroOp (same base +
+  // HIVMStructuredOpInterface, identical dimension-merge logic).
+  template <typename T,
+            typename = std::enable_if_t<std::is_same_v<T, hivm::CustomOp> ||
+                                        std::is_same_v<T, hivm::CustomMacroOp>>>
+  void processCustomOpLike(T op, Value current);
   void processYieldOp(scf::YieldOp op);
   void processForOp(scf::ForOp op);
   void processWhileOp(scf::WhileOp op);

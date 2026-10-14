@@ -17,6 +17,7 @@
 
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/Analysis/DimensionAnalyzer.h"
+#include "bishengir/Dialect/HIVM/IR/CustomOp/CustomOpUtils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/Helper.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
@@ -71,7 +72,7 @@ static bool isBTransposed(Operation *op) {
 void DimensionAnalyzer::handleValueGroupForUse(Operation *user, Value current,
                                                OpOperand *use,
                                                unsigned operandNumber) {
-  if (!isa<ShapedType>(current.getType()))
+  if (!utils::hasRank(current.getType()))
     return;
   createDummyRefIfNotExist({current});
   if (auto forOp = dyn_cast<scf::ForOp>(user)) {
@@ -99,16 +100,16 @@ void DimensionAnalyzer::handleValueGroupForUse(Operation *user, Value current,
     }
   } else if (isParallelOp(user)) {
     for (auto opr : user->getOperands()) {
-      if (isa<ShapedType>(opr.getType()))
+      if (utils::hasRank(opr.getType()))
         joinValueGroup(current, opr);
     }
     for (auto res : user->getResults()) {
-      if (isa<ShapedType>(res.getType()))
+      if (utils::hasRank(res.getType()))
         joinValueGroup(current, res);
     }
   } else {
     for (auto res : user->getResults()) {
-      if (isa<ShapedType>(res.getType())) {
+      if (utils::hasRank(res.getType())) {
         joinValueGroup(current, res);
         LDBG(res << " is mapped to "
                  << utils::debugger::to_string(getValueDimIndices(res)));
@@ -290,6 +291,10 @@ bool DimensionAnalyzer::processOperation(Operation *op, Value current) {
           .Case<hivm::VCumsumOp, hivm::VCumprodOp, hivm::VCummaxOp,
                 hivm::VCumminOp>([this](auto op) {
             processVCumOp(op);
+            return true;
+          })
+          .Case<hivm::CustomOp, hivm::CustomMacroOp>([this, &current](auto op) {
+            processCustomOpLike(op, current);
             return true;
           })
           .Case<scf::YieldOp>([this](auto op) {
@@ -540,6 +545,89 @@ template <typename T, typename> void DimensionAnalyzer::processVCumOp(T op) {
 
   outputs.push_back(output);
   mergeValues({input}, outputs, getMutatedDims(op), reverse);
+}
+
+template <typename T, typename>
+void DimensionAnalyzer::processCustomOpLike(T op, Value current) {
+  LDBG("Processing CustomOp-like " << op);
+
+  Operation *opOp = op.getOperation();
+  unsigned nIn = op.getInputs().size();
+  unsigned nOut = op.getOutputs().size();
+
+  // Leave unranked custom values opaque; dimension analysis requires rank.
+  if (hasUnrankedCustomLikeOperandsOrResults(opOp)) {
+    DimensionAnalyzerBase::processOperation(op, current);
+    return;
+  }
+
+  // Sub-block tiling requires explicit indexing semantics.
+  if (!customOpHasExplicitSemantics(opOp)) {
+    DimensionAnalyzerBase::processOperation(op, current);
+    return;
+  }
+
+  auto iterTypes = op.getIteratorTypesArray();
+  auto idxMaps = op.getIndexingMapsArray();
+  bool allParallel = llvm::all_of(
+      iterTypes, [](IteratorType t) { return t == IteratorType::kParallel; });
+
+  // Handle strict identity maps as ordinary elementwise semantics.
+  if (allParallel &&
+      hasStrictIdentityMaps(opOp->getOperands().take_front(nIn + nOut), idxMaps,
+                            iterTypes.size())) {
+    processParallelOp(op, current);
+    return;
+  }
+
+  // Reject incomplete maps before projecting parallel dimensions.
+  if (idxMaps.size() < nIn + nOut) {
+    DimensionAnalyzerBase::processOperation(op, current);
+    return;
+  }
+
+  SmallVector<int64_t> parallelDims;
+  cast<HIVMStructuredOp>(opOp).getParallelLoopDims(parallelDims);
+
+  auto joinAcrossDimExpr = [&](AffineMap m, Value v, int64_t parDim,
+                               int &firstRef) {
+    if (!isa<ShapedType>(v.getType()))
+      return;
+    createDummyRefIfNotExist({v});
+    auto refs = getValueDimIndices(v);
+    // refs[k] aligns with map result k only if the map's result count matches
+    // v's rank; guard against a malformed map to avoid an out-of-bounds read.
+    if (m.getNumResults() != refs.size())
+      return;
+    for (unsigned k = 0, e = m.getNumResults(); k < e; ++k) {
+      auto d = dyn_cast<AffineDimExpr>(m.getResult(k));
+      if (!d || static_cast<int64_t>(d.getPosition()) != parDim)
+        continue;
+      if (firstRef < 0)
+        firstRef = refs[k];
+      else
+        joinShape(firstRef, refs[k]);
+    }
+  };
+
+  for (int64_t parDim : parallelDims) {
+    int firstRef = -1;
+    for (unsigned i = 0; i < nIn + nOut; ++i)
+      joinAcrossDimExpr(idxMaps[i], opOp->getOperand(i), parDim, firstRef);
+    for (Value resV : opOp->getResults()) {
+      auto resR = dyn_cast<OpResult>(resV);
+      if (!resR)
+        continue;
+      // Non-DPS results have no output indexing map.
+      unsigned resultNo = resR.getResultNumber();
+      if (resultNo >= nOut)
+        continue;
+      unsigned resultMapIdx = nIn + resultNo;
+      if (resultMapIdx >= idxMaps.size())
+        continue;
+      joinAcrossDimExpr(idxMaps[resultMapIdx], resV, parDim, firstRef);
+    }
+  }
 }
 
 void DimensionAnalyzer::processYieldOp(scf::YieldOp op) {
@@ -1051,6 +1139,50 @@ void DimensionAnalyzer::combineInferable() {
 }
 
 void DimensionAnalyzer::markDimensions() {
+  auto markCustomReductionDims = [this](auto customOp) {
+    if (!customOpHasExplicitSemantics(customOp))
+      return;
+    auto iterTypes = customOp.getIteratorTypesArray();
+    auto indexingMaps = customOp.getIndexingMapsArray();
+
+    auto markValue = [&](Value value, AffineMap indexingMap) {
+      auto shapedType = dyn_cast<ShapedType>(value.getType());
+      if (!shapedType || !shapedType.hasRank() ||
+          indexingMap.getNumDims() != iterTypes.size() ||
+          indexingMap.getNumResults() !=
+              static_cast<unsigned>(shapedType.getRank()))
+        return;
+
+      createDummyRefIfNotExist({value});
+      auto valueRefs = getValueDimIndices(value);
+      for (auto [dimIdx, expr] : llvm::enumerate(indexingMap.getResults())) {
+        auto iterDim = dyn_cast<AffineDimExpr>(expr);
+        if (!iterDim || iterDim.getPosition() >= iterTypes.size() ||
+            iterTypes[iterDim.getPosition()] != IteratorType::kReduction)
+          continue;
+        tilingDimKindMapForCollapser[structuralDsu_->find(valueRefs[dimIdx])] =
+            TilingDimensionKind::Reduce;
+        tilingDimKindMapForShape[equivalentDsu_->find(valueRefs[dimIdx])] =
+            TilingDimensionKind::Reduce;
+        LDBG("CustomOp reduction dim " << dimIdx << " of " << value);
+      }
+    };
+
+    unsigned numInputs = customOp.getInputs().size();
+    unsigned numOutputs = customOp.getOutputs().size();
+    for (unsigned idx = 0; idx < numInputs + numOutputs; ++idx) {
+      if (idx >= indexingMaps.size())
+        return;
+      markValue(customOp->getOperand(idx), indexingMaps[idx]);
+    }
+    for (auto [resultIdx, result] : llvm::enumerate(customOp.getResults())) {
+      if (resultIdx >= numOutputs ||
+          numInputs + resultIdx >= indexingMaps.size())
+        continue;
+      markValue(result, indexingMaps[numInputs + resultIdx]);
+    }
+  };
+
   auto processSlice = [this](auto sliceOp) {
     if (!valueToDimIndicesIndex_.contains(sliceOp.getSource()))
       return;
@@ -1104,6 +1236,8 @@ void DimensionAnalyzer::markDimensions() {
                  << equivalentDsu_->find(reduceDstRef[reduceDim]));
           }
         })
+        .Case<hivm::CustomOp, hivm::CustomMacroOp>(
+            [&](auto op) { markCustomReductionDims(op); })
         .Case<tensor::ExtractSliceOp, tensor::InsertSliceOp>(
             [&](auto op) { processSlice(op); })
         .Case<hivm::FixpipeOp>([&](auto op) { markFixpipeTilingPriority(op); })

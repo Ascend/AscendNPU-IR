@@ -650,17 +650,17 @@ getCustomOpExtraBuffersInfo(CustomOpT op) {
   return res;
 }
 
-template <typename CustomOpT>
 void getEffectsForCustomOps(
-    CustomOpT op,
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
-  if (!op.getNoSideEffect()) {
-    effects.emplace_back(MemoryEffects::Write::get(),
-                         SideEffects::DefaultResource::get());
-    effects.emplace_back(MemoryEffects::Read::get(),
-                         SideEffects::DefaultResource::get());
-  }
+  // `no_side_effect` means that the op only reads its declared inputs and
+  // writes its declared outputs. Keep the same conservative resource-level
+  // effects for both forms: downstream scheduling still relies on them, and a
+  // bufferized CustomOp must remain ordered before consumers of its DPS output.
+  effects.emplace_back(MemoryEffects::Write::get(),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Read::get(),
+                       SideEffects::DefaultResource::get());
 }
 } // namespace
 
@@ -703,11 +703,11 @@ CustomMacroOp::getExtraBuffersInfo() const {
 void CustomOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
-  getEffectsForCustomOps(*this, effects);
+  getEffectsForCustomOps(effects);
 }
 
 void CustomMacroOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
-  getEffectsForCustomOps(*this, effects);
+  getEffectsForCustomOps(effects);
 }
