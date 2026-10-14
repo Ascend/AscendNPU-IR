@@ -997,8 +997,13 @@ bool DimensionAnalyzer::finalizeTransaction() {
   for (auto &indices : indicesAfterTransaction) {
     for (size_t i = 0; i < indices.size(); i++) {
       for (size_t j = i + 1; j < indices.size(); j++) {
-        if (exclusiveDimIdx[indices[i]].contains(indices[j]) ||
-            invalidDimIdx[indices[i]].contains(indices[j])) {
+        // Only genuinely exclusive (sibling) dims within one transaction
+        // are structural conflicts that block joins. Recorded merge bans
+        // (invalidDimIdx) are consumed by the exclusive/invalid propagation
+        // below and by the candidate-group selection; feeding them back
+        // here would over-mark structural conflicts and fragment store-like
+        // dims across structural parents.
+        if (exclusiveDimIdx[indices[i]].contains(indices[j])) {
           invalidMerges.insert(indices[i]);
           invalidMerges.insert(indices[j]);
         }
@@ -1019,6 +1024,13 @@ bool DimensionAnalyzer::finalizeTransaction() {
         return true;
     return false;
   };
+  // Parents invalidated only through the exclusive/invalid cross-check above
+  // are propagated separately: they still produce invalid updates for the
+  // candidate-group selection, but they do not block the structural joins of
+  // this transaction. Blocking the joins here fragments store-like dims
+  // across structural parents so that no candidate group can cover all
+  // store-like ops later, which loses the tiling dim entirely.
+  DenseSet<int> propagatedInvalidMerges;
   for (auto &indices : indicesAfterTransaction) {
     bool isInvalid = false;
     for (size_t i = 0; i < indices.size(); i++) {
@@ -1035,7 +1047,7 @@ bool DimensionAnalyzer::finalizeTransaction() {
     if (isInvalid) {
       for (auto idx : indices) {
         auto parIdx = structuralDsu_->find(idx);
-        invalidMerges.insert(parIdx);
+        propagatedInvalidMerges.insert(parIdx);
       }
     }
   }
@@ -1045,8 +1057,10 @@ bool DimensionAnalyzer::finalizeTransaction() {
     createDummyRefIfNotExist(res);
     for (auto arg : getValueDimIndices(res)) {
       auto parIdx = structuralDsu_->find(arg);
-      if (!invalidMerges.contains(parIdx) ||
-          !llvm::binary_search(compArgIdx, arg))
+      if (!invalidMerges.contains(parIdx) &&
+          !propagatedInvalidMerges.contains(parIdx))
+        continue;
+      if (!llvm::binary_search(compArgIdx, arg))
         continue;
       parIdx = llvm::lower_bound(compArgIdx, arg) - compArgIdx.begin();
       repIdx[transArgDSU.find(parIdx)] = compArgIdx[parIdx];
@@ -1057,7 +1071,9 @@ bool DimensionAnalyzer::finalizeTransaction() {
     for (size_t i = 0; i < indices.size(); i++) {
       auto rep = structuralDsu_->find(repIdx[rIdx]);
       auto parIdx = structuralDsu_->find(indices[i]);
-      if (repIdx[rIdx] == indices[i] || !invalidMerges.contains(parIdx))
+      if (repIdx[rIdx] == indices[i] ||
+          (!invalidMerges.contains(parIdx) &&
+           !propagatedInvalidMerges.contains(parIdx)))
         continue;
       if (rep != parIdx) {
         invalidDimIdx[rep].insert(parIdx);
@@ -1599,6 +1615,13 @@ void DimensionAnalyzer::joinShape(int a, int b) {
     }
     exclusiveDimIdx[parA].clear();
     for (auto invalidIdx : invalidDimIdx[parA]) {
+      // parA is joined into parB even though a merge ban between them was
+      // recorded earlier (e.g. by the exclusive/invalid propagation, which
+      // does not block structural joins). The joined parent is the ground
+      // truth, so the stale mutual ban is dropped instead of becoming a
+      // self-ban.
+      if (invalidIdx == parB)
+        continue;
       invalidDimIdx[parB].insert(invalidIdx);
       invalidDimIdx[invalidIdx].erase(parA);
       invalidDimIdx[invalidIdx].insert(parB);
@@ -1606,6 +1629,7 @@ void DimensionAnalyzer::joinShape(int a, int b) {
       assert(!invalidDimIdx[invalidIdx].contains(invalidIdx));
     }
     invalidDimIdx[parA].clear();
+    invalidDimIdx[parB].erase(parA);
   }
 }
 
@@ -1629,6 +1653,10 @@ void DimensionAnalyzer::joinCollapser(int a, int b) {
     }
     exclusiveDimIdx[parA].clear();
     for (auto invalidIdx : invalidDimIdx[parA]) {
+      // See joinShape: stale mutual bans are dropped when the structural
+      // join makes them self-referential.
+      if (invalidIdx == parB)
+        continue;
       invalidDimIdx[parB].insert(invalidIdx);
       invalidDimIdx[invalidIdx].erase(parA);
       invalidDimIdx[invalidIdx].insert(parB);
@@ -1636,6 +1664,7 @@ void DimensionAnalyzer::joinCollapser(int a, int b) {
       assert(!invalidDimIdx[invalidIdx].contains(invalidIdx));
     }
     invalidDimIdx[parA].clear();
+    invalidDimIdx[parB].erase(parA);
   }
 }
 
