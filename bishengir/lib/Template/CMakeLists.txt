@@ -464,7 +464,7 @@ function(link_one_group_to_meta_op out_dir arch core_type opt_level)
     string(REGEX REPLACE "[^0-9A-Za-z_]" "_" target_suffix "${tag}")
     set(link_target "bishengir_link_${target_suffix}")
     if (BISHENGIR_OPTIMIZE_TEMPLATE_BITCODE STREQUAL "ON" AND
-        "${arch}" STREQUAL "c310" AND
+        ("${arch}" STREQUAL "c310" OR "${arch}" STREQUAL "c220") AND
         "${opt_level}" STREQUAL "O2")
         string(REPLACE ";" "\n" link_signature_content
                "${LLVM_LINK_TOOL}\n${inputs}\n-o\n${out_file}.linked.bc")
