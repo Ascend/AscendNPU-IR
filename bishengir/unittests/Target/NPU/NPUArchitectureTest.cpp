@@ -52,6 +52,8 @@ std::optional<ExpectedArchitecture> getExpectedArchitecture(StringRef device) {
   if (device.starts_with("Ascend910_95") ||
       device.starts_with("Ascend950PR_") || device.starts_with("Ascend950DT_"))
     return ExpectedArchitecture{NPUArchitectureKind::kDavC310, "dav-c310"};
+  if (device.starts_with("Ascend960"))
+    return ExpectedArchitecture{NPUArchitectureKind::kDav920R1, "dav-920r1"};
   return std::nullopt;
 }
 
@@ -134,6 +136,8 @@ TEST(NPUArchitectureTest, PublicHACCPassPreservesDeviceSpecSerialization) {
        4194304, 2097152, true, 262144, 983040},
       {TargetDevice::Ascend950DT_95A2, "Ascend950DT_95A2", 36, 72, 2031616,
        4194304, 2097152, true, 262144, 983040},
+      {TargetDevice::Ascend960, "Ascend960", 64, 64, 3080192, 4194304, 2097152,
+       true, 262144, 983040},
   };
 
   MLIRContext context;
@@ -194,6 +198,66 @@ TEST(NPUArchitectureTest, PublicHACCPassPreservesDeviceSpecSerialization) {
     ASSERT_TRUE(expectedArchitecture.has_value());
     EXPECT_EQ(attr.getValue(), expectedArchitecture->spelling);
   }
+}
+
+TEST(NPUArchitectureTest, Ascend960MapsToDav920R1Architecture) {
+  // Ascend960 (A6, dav-920r1) is a new architecture added alongside the
+  // legacy C220/M300/C310 families and must round-trip through the stringify
+  // / symbolize APIs and the generated architecture mapping.
+  EXPECT_EQ(stringifyTargetDeviceEnum(TargetDevice::Ascend960), "Ascend960");
+  EXPECT_EQ(symbolizeTargetDeviceEnum("Ascend960"), TargetDevice::Ascend960);
+  EXPECT_EQ(getArchitecture(TargetDevice::Ascend960),
+            NPUArchitectureKind::kDav920R1);
+  EXPECT_EQ(stringifyNPUArchitecture(NPUArchitectureKind::kDav920R1),
+            "dav-920r1");
+  EXPECT_EQ(symbolizeNPUArchitecture("dav-920r1"),
+            NPUArchitectureKind::kDav920R1);
+
+  // The module-level TargetSpec serialization must still emit the spelling.
+  MLIRContext context;
+  OpBuilder builder(&context);
+  TargetSpec spec{};
+  spec.device = TargetDevice::Ascend960;
+  spec.Arch = getArchitecture(TargetDevice::Ascend960);
+  auto attr =
+      dyn_cast<StringAttr>(spec.getSpecEntry(DeviceSpec::ARCH, builder));
+  ASSERT_TRUE(attr);
+  EXPECT_EQ(attr.getValue(), "dav-920r1");
+}
+
+TEST(NPUArchitectureTest, Ascend960IsFFTSSupported) {
+  // isFFTSSupportedArch() was extended to include the Ascend960 family in
+  // addition to Ascend910B/910_93/950.
+  EXPECT_TRUE(hacc::utils::isAscend960(TargetDevice::Ascend960));
+  EXPECT_TRUE(hacc::utils::isAscend960(StringRef("Ascend960")));
+  EXPECT_FALSE(hacc::utils::isAscend960(TargetDevice::Ascend910B1));
+  EXPECT_FALSE(hacc::utils::isAscend960(TargetDevice::Ascend950PR_9589));
+  EXPECT_FALSE(hacc::utils::isAscend960(StringRef("Ascend950PR_9589")));
+  EXPECT_FALSE(hacc::utils::isAscend960(StringRef("not-a-device")));
+
+  EXPECT_TRUE(hacc::utils::isFFTSSupportedArch(TargetDevice::Ascend960));
+  EXPECT_TRUE(hacc::utils::isFFTSSupportedArch(TargetDevice::Ascend910B1));
+  EXPECT_TRUE(hacc::utils::isFFTSSupportedArch(TargetDevice::Ascend950PR_9589));
+  EXPECT_FALSE(hacc::utils::isFFTSSupportedArch(TargetDevice::Unknown));
+  EXPECT_FALSE(hacc::utils::isFFTSSupportedArch(TargetDevice::Ascend310B1));
+}
+
+TEST(NPUArchitectureTest, Ascend960ModuleLevelArchitecture) {
+  MLIRContext context;
+  context.loadDialect<HACCDialect>();
+  OpBuilder builder(&context);
+  OwningOpRef<ModuleOp> module = ModuleOp::create(builder.getUnknownLoc());
+
+  // Without a target attribute the default is 910B (membase), so Ascend960
+  // must not be selected.
+  EXPECT_FALSE(hacc::utils::isAscend960(*module));
+  EXPECT_FALSE(hacc::utils::isRegBasedArch(*module));
+  EXPECT_TRUE(hacc::utils::isMemBasedArch(*module));
+
+  hacc::utils::setTargetDevice(*module, TargetDevice::Ascend960);
+  EXPECT_TRUE(hacc::utils::isAscend960(*module));
+  EXPECT_TRUE(hacc::utils::isRegBasedArch(*module));
+  EXPECT_FALSE(hacc::utils::isMemBasedArch(*module));
 }
 
 } // namespace

@@ -153,6 +153,9 @@ bool isAscend310B(TargetDevice targetDevice);
 bool isAscend950(TargetDevice targetDevice);
 bool isAscend950(llvm::StringRef targetDevice);
 
+bool isAscend960(TargetDevice targetDevice);
+bool isAscend960(llvm::StringRef targetDevice);
+
 bool isRegBasedArch(TargetDevice targetDevice);
 bool isRegBasedArch(llvm::StringRef targetDevice);
 
@@ -167,6 +170,8 @@ bool isMemBasedArch(ModuleOp op);
 bool isAscend310B(ModuleOp op);
 
 bool isAscend950(ModuleOp op);
+
+bool isAscend960(ModuleOp op);
 
 /// Returns true if the module already has hacc.target set.
 ///

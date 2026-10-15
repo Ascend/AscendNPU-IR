@@ -856,7 +856,8 @@ struct HIVMLoadOpLowering : public ConvertOpToLLVMPattern<VFLoadOp> {
     Value dist = rewriter.create<LLVM::ConstantOp>(
         loc, rewriter.getI32Type(), static_cast<uint32_t>(load.getPattern()));
     auto moduleOp = load->getParentOfType<mlir::ModuleOp>();
-    bool archIs910_95 = hacc::utils::isAscend950(moduleOp);
+    bool archIs910_95 = hacc::utils::isAscend950(moduleOp) ||
+                        hacc::utils::isAscend960(moduleOp);
 
     if (archIs910_95 && load->hasAttr(UnalignedAttr::name) &&
         !isBRCDist(dist)) {
@@ -1024,7 +1025,8 @@ struct HIVMStoreOpLowering : public ConvertOpToLLVMPattern<VFMaskedStoreOp> {
     Value dist = rewriter.create<LLVM::ConstantOp>(
         loc, rewriter.getI32Type(), static_cast<uint32_t>(store.getPattern()));
     auto moduleOp = store->getParentOfType<mlir::ModuleOp>();
-    bool archIs910_95 = hacc::utils::isAscend950(moduleOp);
+    bool archIs910_95 = hacc::utils::isAscend950(moduleOp) ||
+                        hacc::utils::isAscend960(moduleOp);
     Value mask = getVLRegValueOrSelf(store.getMask(), rewriter);
 
     if (archIs910_95 && store->hasAttr(UnalignedAttr::name) &&
@@ -1716,6 +1718,110 @@ struct HIVMReductionOpLowering : public ConvertOpToLLVMPattern<ReductionOp> {
   }
 
 private:
+  // Davinci 920r1 (Ascend960) add reduction. The typed vcgaddv2 does a
+  // per-bank group reduce (the i8/i16 sources widen into 32-bit group
+  // results), then the mask-less vcaddv2 cross-folds the group results.
+  // Narrowed element types are converted back after the fold.
+  Value matchAndRewriteVcaddV2(ReductionOp reduction,
+                               ConversionPatternRewriter &rewriter,
+                               Location loc, Type elementType, Value src,
+                               Value mask) const {
+    auto cstValue = [&](auto enumVal) -> Value {
+      return rewriter.create<LLVM::ConstantOp>(loc, rewriter.getI32Type(),
+                                               static_cast<uint32_t>(enumVal));
+    };
+    Type v64i32Ty =
+        hivm_regbaseintrins::createVLVectorType(rewriter.getI32Type());
+    if (elementType.isUnsignedInteger(8)) {
+      Value group =
+          rewriter.create<VcgaddV2V256U8XInstrOp>(loc, v64i32Ty, src, mask)
+              ->getResult(0);
+      Value folded =
+          rewriter.create<VcaddV2V64U32XInstrOp>(loc, v64i32Ty, group)
+              ->getResult(0);
+      Type truncType =
+          hivm_regbaseintrins::createVLVectorType(rewriter.getI8Type());
+      return rewriter
+          .create<VcvtiiU322U8InstrOp>(loc, truncType, folded, mask,
+                                       cstValue(0), cstValue(0))
+          ->getResult(0);
+    }
+    if (elementType.isSignedInteger(8) || elementType.isSignlessInteger(8)) {
+      Value group =
+          rewriter.create<VcgaddV2V256S8XInstrOp>(loc, v64i32Ty, src, mask)
+              ->getResult(0);
+      Value folded =
+          rewriter.create<VcaddV2V64S32XInstrOp>(loc, v64i32Ty, group)
+              ->getResult(0);
+      Type truncType =
+          hivm_regbaseintrins::createVLVectorType(rewriter.getI8Type());
+      return rewriter
+          .create<VcvtiiS322U8InstrOp>(loc, truncType, folded, mask,
+                                       cstValue(0), cstValue(0))
+          ->getResult(0);
+    }
+    if (elementType.isUnsignedInteger(16)) {
+      Value group =
+          rewriter.create<VcgaddV2V128U16XInstrOp>(loc, v64i32Ty, src, mask)
+              ->getResult(0);
+      Value folded =
+          rewriter.create<VcaddV2V64U32XInstrOp>(loc, v64i32Ty, group)
+              ->getResult(0);
+      Type truncType =
+          hivm_regbaseintrins::createVLVectorType(rewriter.getI16Type());
+      return rewriter
+          .create<VcvtiiU322U16InstrOp>(loc, truncType, folded, mask,
+                                        cstValue(0), cstValue(0))
+          ->getResult(0);
+    }
+    if (elementType.isSignedInteger(16) || elementType.isSignlessInteger(16)) {
+      Value group =
+          rewriter.create<VcgaddV2V128S16XInstrOp>(loc, v64i32Ty, src, mask)
+              ->getResult(0);
+      Value folded =
+          rewriter.create<VcaddV2V64S32XInstrOp>(loc, v64i32Ty, group)
+              ->getResult(0);
+      Type truncType =
+          hivm_regbaseintrins::createVLVectorType(rewriter.getI16Type());
+      return rewriter
+          .create<VcvtiiS322S16InstrOp>(loc, truncType, folded, mask,
+                                        cstValue(0), cstValue(0))
+          ->getResult(0);
+    }
+    Type vType = hivm_regbaseintrins::createVLVectorType(elementType);
+    if (elementType.isF16()) {
+      Value group =
+          rewriter.create<VcgaddV2V128F16XInstrOp>(loc, vType, src, mask)
+              ->getResult(0);
+      return rewriter.create<VcaddV2V128F16XInstrOp>(loc, vType, group)
+          ->getResult(0);
+    }
+    if (elementType.isUnsignedInteger(32)) {
+      Value group =
+          rewriter.create<VcgaddV2V64U32XInstrOp>(loc, vType, src, mask)
+              ->getResult(0);
+      return rewriter.create<VcaddV2V64U32XInstrOp>(loc, vType, group)
+          ->getResult(0);
+    }
+    if (elementType.isSignedInteger(32) || elementType.isSignlessInteger(32)) {
+      Value group =
+          rewriter.create<VcgaddV2V64S32XInstrOp>(loc, vType, src, mask)
+              ->getResult(0);
+      return rewriter.create<VcaddV2V64S32XInstrOp>(loc, vType, group)
+          ->getResult(0);
+    }
+    if (elementType.isF32()) {
+      Value group =
+          rewriter.create<VcgaddV2V64F32XInstrOp>(loc, vType, src, mask)
+              ->getResult(0);
+      return rewriter.create<VcaddV2V64F32XInstrOp>(loc, vType, group)
+          ->getResult(0);
+    }
+    std::ignore = rewriter.notifyMatchFailure(
+        reduction, "unsupported element type for vcadd");
+    return src;
+  }
+
   LogicalResult matchAndRewriteVcadd(ReductionOp reduction,
                                      ConversionPatternRewriter &rewriter,
                                      Location loc, Value vector,
@@ -1731,11 +1837,29 @@ private:
     Value srcCasted =
         rewriter.create<UnrealizedConversionCastOp>(loc, srcVLVectorTy, vector)
             ->getResult(0);
+    // On Davinci 920r1 (Ascend960) the native vcadd is a two-stage composite:
+    // a vcgadd (per-bank group reduce) followed by a vcadd (cross fold). The
+    // single-word vcadd alone only performs the fold stage there, so the typed
+    // vcgaddv2/vcaddv2 pair is used instead. vcaddv2 takes no predicate.
+    bool isAscend960 =
+        reduction->getParentOfType<ModuleOp>() &&
+        hacc::utils::isAscend960(reduction->getParentOfType<ModuleOp>());
+    if (isAscend960) {
+      result = matchAndRewriteVcaddV2(reduction, rewriter, loc, elementType,
+                                      srcCasted, mask);
+      rewriter.replaceOp(reduction, result);
+      return success();
+    }
+    auto createVcadd = [&](Type type, Value src, bool isUnsigned) -> Value {
+      return isUnsigned ? rewriter.create<VcaddUXInstrOp>(loc, type, src, mask)
+                              ->getResult(0)
+                        : rewriter.create<VcaddSXInstrOp>(loc, type, src, mask)
+                              ->getResult(0);
+    };
     if (elementType.isUnsignedInteger(8)) {
       Type i16VecType =
           hivm_regbaseintrins::createVLVectorType(rewriter.getI16Type());
-      vcaddOp =
-          rewriter.create<VcaddUXInstrOp>(loc, i16VecType, srcCasted, mask);
+      vcaddOp = createVcadd(i16VecType, srcCasted, true).getDefiningOp();
       Type truncType =
           hivm_regbaseintrins::createVLVectorType(rewriter.getI8Type());
       result = rewriter
@@ -1747,8 +1871,7 @@ private:
                elementType.isSignlessInteger(8)) {
       Type i16VecType =
           hivm_regbaseintrins::createVLVectorType(rewriter.getI16Type());
-      vcaddOp =
-          rewriter.create<VcaddSXInstrOp>(loc, i16VecType, srcCasted, mask);
+      vcaddOp = createVcadd(i16VecType, srcCasted, false).getDefiningOp();
       Type truncType =
           hivm_regbaseintrins::createVLVectorType(rewriter.getI8Type());
       result = rewriter
@@ -1759,8 +1882,7 @@ private:
     } else if (elementType.isUnsignedInteger(16)) {
       Type i32VecType =
           hivm_regbaseintrins::createVLVectorType(rewriter.getI32Type());
-      vcaddOp =
-          rewriter.create<VcaddUXInstrOp>(loc, i32VecType, srcCasted, mask);
+      vcaddOp = createVcadd(i32VecType, srcCasted, true).getDefiningOp();
       Type truncType =
           hivm_regbaseintrins::createVLVectorType(rewriter.getI16Type());
       result = rewriter
@@ -1772,8 +1894,7 @@ private:
                elementType.isSignlessInteger(16)) {
       Type i32VecType =
           hivm_regbaseintrins::createVLVectorType(rewriter.getI32Type());
-      vcaddOp =
-          rewriter.create<VcaddSXInstrOp>(loc, i32VecType, srcCasted, mask);
+      vcaddOp = createVcadd(i32VecType, srcCasted, false).getDefiningOp();
       Type truncType =
           hivm_regbaseintrins::createVLVectorType(rewriter.getI16Type());
       result = rewriter
@@ -1782,18 +1903,14 @@ private:
                                                  cstValue(0), cstValue(0))
                    ->getResult(0);
     } else if (elementType.isF16()) {
-      result = rewriter.create<VcaddSXInstrOp>(loc, vType, srcCasted, mask)
-                   ->getResult(0);
+      result = createVcadd(vType, srcCasted, false);
     } else if (elementType.isUnsignedInteger(32)) {
-      result = rewriter.create<VcaddUXInstrOp>(loc, vType, srcCasted, mask)
-                   ->getResult(0);
+      result = createVcadd(vType, srcCasted, true);
     } else if (elementType.isSignedInteger(32) ||
                elementType.isSignlessInteger(32)) {
-      result = rewriter.create<VcaddSXInstrOp>(loc, vType, srcCasted, mask)
-                   ->getResult(0);
+      result = createVcadd(vType, srcCasted, false);
     } else if (elementType.isF32()) {
-      result = rewriter.create<VcaddSXInstrOp>(loc, vType, srcCasted, mask)
-                   ->getResult(0);
+      result = createVcadd(vType, srcCasted, false);
     } else {
       std::ignore = rewriter.notifyMatchFailure(
           reduction, "unsupported element type for vcadd");
@@ -1802,6 +1919,157 @@ private:
 
     rewriter.replaceOp(reduction, result);
     return success();
+  }
+
+  // Davinci 920r1 (Ascend960) min/max reduction. Like vcadd, the native
+  // vcmin/vcmax is a two-stage composite: a masked vcgminv2/vcgmaxv2 group
+  // reduce followed by the mask-less vcminv2/vcmaxv2 cross fold. The v2 forms
+  // only exist for 16/32-bit integers and f16/f32; i8/u8 sources are widened
+  // to i16 first and re-truncated after the fold.
+  template <typename OpGroup, typename OpFold>
+  Value buildV2MinMaxComposite(ConversionPatternRewriter &rewriter,
+                               Location loc, Type vType, Value src,
+                               Value mask) const {
+    Value group = rewriter.create<OpGroup>(loc, vType, src, mask)->getResult(0);
+    return rewriter.create<OpFold>(loc, vType, group)->getResult(0);
+  }
+
+  template <hivmave::CombiningKind kind>
+  FailureOr<Value>
+  matchAndRewriteVcMinMaxV2(ReductionOp reduction,
+                            ConversionPatternRewriter &rewriter, Location loc,
+                            Type elementType, Value src, Value mask) const {
+    constexpr bool isMax = kind == hivmave::CombiningKind::MAX ||
+                           kind == hivmave::CombiningKind::UMAX;
+    constexpr bool isUnsigned = kind == hivmave::CombiningKind::UMIN ||
+                                kind == hivmave::CombiningKind::UMAX;
+    auto cstValue = [&](auto enumVal) -> Value {
+      return rewriter.create<LLVM::ConstantOp>(loc, rewriter.getI32Type(),
+                                               static_cast<uint32_t>(enumVal));
+    };
+    Type i8VecTy =
+        hivm_regbaseintrins::createVLVectorType(rewriter.getI8Type());
+    Type i16VecTy =
+        hivm_regbaseintrins::createVLVectorType(rewriter.getI16Type());
+    Type vType = hivm_regbaseintrins::createVLVectorType(elementType);
+
+    // Integer unsignedness is carried by the combining kind (umin/umax),
+    // mirroring the single-word lowering. For i8/u8, widen (sign/zero extend
+    // according to the kind) to i16 before the composite and truncate back.
+    auto legalize8Bit = [&](Value widened, Value folded) -> Value {
+      if constexpr (isUnsigned)
+        return rewriter
+            .create<VcvtiiU162U8InstrOp>(loc, i8VecTy, folded, mask,
+                                         cstValue(0), cstValue(0))
+            ->getResult(0);
+      else
+        return rewriter
+            .create<VcvtiiS162U8InstrOp>(loc, i8VecTy, folded, mask,
+                                         cstValue(0), cstValue(0))
+            ->getResult(0);
+    };
+
+    if (elementType.isUnsignedInteger(8) || elementType.isSignedInteger(8) ||
+        elementType.isSignlessInteger(8)) {
+      Value widened;
+      if constexpr (isUnsigned)
+        widened = rewriter
+                      .create<VcvtiiU82U16InstrOp>(loc, i16VecTy, src, mask,
+                                                   cstValue(0))
+                      ->getResult(0);
+      else
+        widened = rewriter
+                      .create<VcvtiiS82S16InstrOp>(loc, i16VecTy, src, mask,
+                                                   cstValue(0))
+                      ->getResult(0);
+      Value folded;
+      if constexpr (isMax) {
+        if constexpr (isUnsigned)
+          folded = buildV2MinMaxComposite<VcgmaxV2V128U16XInstrOp,
+                                          VcmaxV2V128U16XInstrOp>(
+              rewriter, loc, i16VecTy, widened, mask);
+        else
+          folded = buildV2MinMaxComposite<VcgmaxV2V128S16XInstrOp,
+                                          VcmaxV2V128S16XInstrOp>(
+              rewriter, loc, i16VecTy, widened, mask);
+      } else {
+        if constexpr (isUnsigned)
+          folded = buildV2MinMaxComposite<VcgminV2V128U16XInstrOp,
+                                          VcminV2V128U16XInstrOp>(
+              rewriter, loc, i16VecTy, widened, mask);
+        else
+          folded = buildV2MinMaxComposite<VcgminV2V128S16XInstrOp,
+                                          VcminV2V128S16XInstrOp>(
+              rewriter, loc, i16VecTy, widened, mask);
+      }
+      return legalize8Bit(widened, folded);
+    }
+    if (elementType.isUnsignedInteger(16) || elementType.isSignedInteger(16) ||
+        elementType.isSignlessInteger(16)) {
+      if constexpr (isMax) {
+        if constexpr (isUnsigned)
+          return buildV2MinMaxComposite<VcgmaxV2V128U16XInstrOp,
+                                        VcmaxV2V128U16XInstrOp>(
+              rewriter, loc, i16VecTy, src, mask);
+        else
+          return buildV2MinMaxComposite<VcgmaxV2V128S16XInstrOp,
+                                        VcmaxV2V128S16XInstrOp>(
+              rewriter, loc, i16VecTy, src, mask);
+      } else {
+        if constexpr (isUnsigned)
+          return buildV2MinMaxComposite<VcgminV2V128U16XInstrOp,
+                                        VcminV2V128U16XInstrOp>(
+              rewriter, loc, i16VecTy, src, mask);
+        else
+          return buildV2MinMaxComposite<VcgminV2V128S16XInstrOp,
+                                        VcminV2V128S16XInstrOp>(
+              rewriter, loc, i16VecTy, src, mask);
+      }
+    }
+    if (elementType.getIntOrFloatBitWidth() == 32 && elementType.isInteger()) {
+      if constexpr (isMax) {
+        if constexpr (isUnsigned)
+          return buildV2MinMaxComposite<VcgmaxV2V64U32XInstrOp,
+                                        VcmaxV2V64U32XInstrOp>(
+              rewriter, loc, vType, src, mask);
+        else
+          return buildV2MinMaxComposite<VcgmaxV2V64S32XInstrOp,
+                                        VcmaxV2V64S32XInstrOp>(
+              rewriter, loc, vType, src, mask);
+      } else {
+        if constexpr (isUnsigned)
+          return buildV2MinMaxComposite<VcgminV2V64U32XInstrOp,
+                                        VcminV2V64U32XInstrOp>(
+              rewriter, loc, vType, src, mask);
+        else
+          return buildV2MinMaxComposite<VcgminV2V64S32XInstrOp,
+                                        VcminV2V64S32XInstrOp>(
+              rewriter, loc, vType, src, mask);
+      }
+    }
+    if (elementType.isF16()) {
+      if constexpr (isMax)
+        return buildV2MinMaxComposite<VcgmaxV2V128F16XInstrOp,
+                                      VcmaxV2V128F16XInstrOp>(rewriter, loc,
+                                                              vType, src, mask);
+      else
+        return buildV2MinMaxComposite<VcgminV2V128F16XInstrOp,
+                                      VcminV2V128F16XInstrOp>(rewriter, loc,
+                                                              vType, src, mask);
+    }
+    if (elementType.isF32()) {
+      if constexpr (isMax)
+        return buildV2MinMaxComposite<VcgmaxV2V64F32XInstrOp,
+                                      VcmaxV2V64F32XInstrOp>(rewriter, loc,
+                                                             vType, src, mask);
+      else
+        return buildV2MinMaxComposite<VcgminV2V64F32XInstrOp,
+                                      VcminV2V64F32XInstrOp>(rewriter, loc,
+                                                             vType, src, mask);
+    }
+    std::ignore = rewriter.notifyMatchFailure(
+        reduction, "unsupported element type for vcmin/vcmax on Ascend960");
+    return failure();
   }
 
   template <bool uOp, int width, typename OpS, typename OpU, typename OpF>
@@ -1856,6 +2124,21 @@ private:
                                         Location loc, Value vector,
                                         VectorType vType, Type elementType,
                                         Value mask) const {
+    // On Davinci 920r1 (Ascend960) the single-word vcmin/vcmax only performs
+    // the fold stage, so the typed vcgminv2/vcgmaxv2 (group reduce) and
+    // vcminv2/vcmaxv2 (cross fold) composite is used instead.
+    bool isAscend960 =
+        reduction->getParentOfType<ModuleOp>() &&
+        hacc::utils::isAscend960(reduction->getParentOfType<ModuleOp>());
+    if (isAscend960) {
+      FailureOr<Value> result = matchAndRewriteVcMinMaxV2<kind>(
+          reduction, rewriter, loc, elementType, vector, mask);
+      if (succeeded(result)) {
+        rewriter.replaceOp(reduction, *result);
+        return success();
+      }
+      return failure();
+    }
     FailureOr<Operation *> op;
 
     op = buildVcMinMaxOp<kind,

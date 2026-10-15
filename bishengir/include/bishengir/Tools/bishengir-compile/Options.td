@@ -759,6 +759,8 @@ llvm::cl::values(
                 REGISTER_TARGET(Ascend950DT_9591), REGISTER_TARGET(Ascend950DT_9592),
                 REGISTER_TARGET(Ascend950DT_9595), REGISTER_TARGET(Ascend950DT_9596),
                 REGISTER_TARGET(Ascend950DT_95A1), REGISTER_TARGET(Ascend950DT_95A2),
+                // Ascend960 series
+                REGISTER_TARGET(Ascend960),
                 REGISTER_TARGET(Unknown)
   #undef REGISTER_TARGET
   #undef TO_STRING

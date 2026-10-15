@@ -77,9 +77,13 @@ compileDeviceKernel(StringRef bishengPath, const std::string &llvmirFilepath,
   arguments.push_back(llvmirFilepath);
   arguments.push_back("-o");
   arguments.push_back(outputBin);
-  std::string archBase = hacc::utils::isAscend950(config.getTargetBackend())
-                             ? "dav-c310"
-                             : "dav-c220";
+  std::string archBase;
+  if (hacc::utils::isAscend960(config.getTargetBackend()))
+    archBase = "dav-920r1";
+  else if (hacc::utils::isAscend950(config.getTargetBackend()))
+    archBase = "dav-c310";
+  else
+    archBase = "dav-c220";
   std::string archSuffix =
       (coreType == SubCoreTarget::AIC || coreType == SubCoreTarget::MIX_AIC)
           ? "-cube"
@@ -133,7 +137,8 @@ compileDeviceKernel(StringRef bishengPath, const std::string &llvmirFilepath,
   }
   arguments.push_back("-mllvm");
   arguments.push_back("-cce-aicore-dcci-insert-for-scalar=false");
-  if (hacc::utils::isAscend950(config.getTargetBackend())) {
+  if (hacc::utils::isAscend950(config.getTargetBackend()) ||
+      hacc::utils::isAscend960(config.getTargetBackend())) {
     arguments.push_back("-mllvm");
     arguments.push_back("-cce-vf-aa-between-iters=true");
     arguments.push_back("-mllvm");
