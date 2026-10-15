@@ -18,6 +18,7 @@
 #include "bishengir/Dialect/HIVM/Pipelines/ConvertToHIVMPipeline.h"
 #include "bishengir/Dialect/HIVM/Pipelines/regbase/Passes.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVM/Utils/ShapeRegistry.h"
 #include "bishengir/Dialect/MemRef/Transforms/Passes.h"
 #include "bishengir/Dialect/SCF/Transforms/Passes.h"
 #include "bishengir/Dialect/Scope/Transforms/Passes.h"
@@ -32,6 +33,7 @@
 #include "mlir/Dialect/GPU/Transforms/Passes.h"
 #include "mlir/Dialect/Linalg/Passes.h"
 #include "mlir/Dialect/SCF/Transforms/Passes.h"
+#include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/Passes.h"
 
@@ -45,6 +47,14 @@ enableRegisteredPreloadHeuristics(const HIVMPipelineOptions &pipelineOpts) {
          pipelineOpts.setWorkspaceMultibuffer != 0;
 }
 
+static ConstantizeBufferSizeOptions
+constantizeBufferSizeOpts(const HIVMPipelineOptions &pipelineOpts) {
+  ConstantizeBufferSizeOptions opts;
+  opts.enablePreload = pipelineOpts.enablePreload;
+  opts.workspaceMultiBufferNum = pipelineOpts.setWorkspaceMultibuffer;
+  return opts;
+}
+
 static MarkRealCoreTypeOptions
 markCoreTypeOpts(const HIVMPipelineOptions &pipelineOpts,
                  bool removeCoreTypeAttrs = false) {
@@ -54,6 +64,68 @@ markCoreTypeOpts(const HIVMPipelineOptions &pipelineOpts,
   opts.removeCoreTypeAttrs = removeCoreTypeAttrs;
   return opts;
 }
+
+static MarkTightlyCoupledBufferOptions
+earlySkewMarkTCBOpts(const HIVMPipelineOptions &pipelineOpts) {
+  MarkTightlyCoupledBufferOptions opts;
+  opts.skipRegisteredKernels = true;
+  opts.enablePreload = pipelineOpts.enablePreload;
+  opts.workspaceMultiBufferNum = pipelineOpts.setWorkspaceMultibuffer;
+  return opts;
+}
+
+// Unregistered Skew kernels keep master's early MarkTCB. Registered kernels
+// skip that run and take PR 3160's infer / affine / constantize / set /
+// MarkTCB immediately before CVPipelining.
+struct PrepareRegisteredSkewTCBPass
+    : public PassWrapper<PrepareRegisteredSkewTCBPass,
+                         OperationPass<func::FuncOp>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PrepareRegisteredSkewTCBPass)
+
+  PrepareRegisteredSkewTCBPass(bool enablePreload, unsigned workspaceMB)
+      : enablePreload(enablePreload), workspaceMultiBufferNum(workspaceMB) {}
+
+  PrepareRegisteredSkewTCBPass(const PrepareRegisteredSkewTCBPass &other)
+      : PassWrapper(other), enablePreload(other.enablePreload),
+        workspaceMultiBufferNum(other.workspaceMultiBufferNum) {}
+
+  StringRef getArgument() const override {
+    return "hivm-prepare-registered-skew-tcb";
+  }
+  StringRef getDescription() const override {
+    return "PR 3160 infer/constantize/MarkTCB for registered Skew kernels";
+  }
+
+  void runOnOperation() override {
+    func::FuncOp func = getOperation();
+    if (!allowLoopShapeHeuristics(/*bypassShapeRegistry=*/false, func.getName(),
+                                  enablePreload, workspaceMultiBufferNum))
+      return;
+
+    OpPassManager nested(func::FuncOp::getOperationName());
+    nested.addPass(createAutoInferBufferSizePass());
+    nested.addPass(createArithToAffineConversionPass());
+    nested.addPass(
+        createConstantizeBufferSizePass(constantizeBufferSizeOptsFromFlags(
+            enablePreload, workspaceMultiBufferNum)));
+    nested.addPass(createSetBufferSizePass());
+    nested.addPass(createMarkTightlyCoupledBufferPass());
+    if (failed(runPipeline(nested, func)))
+      signalPassFailure();
+  }
+
+  bool enablePreload;
+  unsigned workspaceMultiBufferNum;
+
+private:
+  static ConstantizeBufferSizeOptions
+  constantizeBufferSizeOptsFromFlags(bool enablePreload, unsigned workspaceMB) {
+    ConstantizeBufferSizeOptions opts;
+    opts.enablePreload = enablePreload;
+    opts.workspaceMultiBufferNum = workspaceMB;
+    return opts;
+  }
+};
 
 #define ADD_CANONICALIZER_PASS                                                 \
   CanonicalizerOptions options;                                                \
@@ -437,8 +509,11 @@ static void hivmPreBufferizationOptimizationPipeline(
   // standard CVPipelining causes migrateOps to clone the TCB-marked allocs
   // into work-item loops; those dead clones retain their marks and force
   // PlanMemory to allocate them as independent buffers, causing UB overflow.
+  // Registered kernels skip this early run and take the PR 3160 sequence
+  // immediately before CVPipelining.
   if (hivmPipelineOptions.setCVPipelineMode == CVPipelineMode::Skew) {
-    pm.nest<func::FuncOp>().addPass(createMarkTightlyCoupledBufferPass());
+    pm.nest<func::FuncOp>().addPass(createMarkTightlyCoupledBufferPass(
+        earlySkewMarkTCBOpts(hivmPipelineOptions)));
   }
   pm.addNestedPass<func::FuncOp>(createMarkMultiBufferPass(multiBufferOptions));
   // Call canonicalize before inline OTF broadcast to optimize redundant 1-to-1
@@ -454,6 +529,12 @@ static void hivmPreBufferizationOptimizationPipeline(
       pipelineOptions.enableLazyLoading = hivmPipelineOptions.enableLazyLoading;
       pipelineOptions.pipelineMode = hivmPipelineOptions.setCVPipelineMode;
       pipelineOptions.enablePreload = hivmPipelineOptions.enablePreload;
+      if (hivmPipelineOptions.setCVPipelineMode == CVPipelineMode::Skew) {
+        pm.nest<func::FuncOp>().addPass(
+            std::make_unique<PrepareRegisteredSkewTCBPass>(
+                hivmPipelineOptions.enablePreload,
+                hivmPipelineOptions.setWorkspaceMultibuffer));
+      }
       pm.nest<func::FuncOp>().addPass(createCVPipeliningPass(pipelineOptions));
       pm.addNestedPass<func::FuncOp>(
           createMarkMultiBufferPass(multiBufferOptions));
@@ -644,7 +725,8 @@ static void hivmPostBufferizationOptimizationPipeline(
   // the memref type to find the dynamic allocs.
   ADD_CANONICALIZER_PASS_WITHOUT_OPTION_DEFS;
   pm.nest<func::FuncOp>().addPass(createAutoInferBufferSizePass());
-  pm.nest<func::FuncOp>().addPass(createConstantizeBufferSizePass());
+  pm.nest<func::FuncOp>().addPass(createConstantizeBufferSizePass(
+      constantizeBufferSizeOpts(hivmPipelineOptions)));
   pm.nest<func::FuncOp>().addPass(createSetBufferSizePass());
   pm.nest<func::FuncOp>().addPass(createFlattenOpsPass());
   decomposeOption.decomposePhase =

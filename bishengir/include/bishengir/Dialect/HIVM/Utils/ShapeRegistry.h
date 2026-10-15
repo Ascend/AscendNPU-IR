@@ -34,9 +34,11 @@ bool isLoopShapeRegistered(llvm::StringRef name);
 /// Otherwise `--enable-preload`, a non-zero `--set-workspace-multibuffer`,
 /// and a registered kernel name are all required.
 /// Covers LCD backup extraction (intra-WI and cross-WI), dest-sink / delay /
-/// merge-same-preload heuristics, and the 3530 same-stage cross-WI carry
+/// merge-same-preload heuristics, the 3530 same-stage cross-WI carry
 /// exception (collect LCD ops on the standard path; pin both ends to
-/// preload 0 only when an independent stage remains).
+/// preload 0 only when an independent stage remains), and the 3160
+/// sign-extended while-bound normalize, byte-vs-byte buffer-size compare,
+/// dynamic-TCB view rematerialization, and pre-CVP buffer-size prep.
 inline bool allowLoopShapeHeuristics(bool bypassShapeRegistry,
                                      llvm::StringRef funcName,
                                      bool enablePreload,

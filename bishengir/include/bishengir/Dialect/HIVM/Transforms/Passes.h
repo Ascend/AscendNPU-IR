@@ -174,7 +174,8 @@ std::unique_ptr<Pass> createHIVMRecognizeDisContinuousStorePass();
 std::unique_ptr<Pass> createHIVMOptSinglePointPass();
 
 /// Create a pass to constantize buffers with dynamic sizes.
-std::unique_ptr<Pass> createConstantizeBufferSizePass();
+std::unique_ptr<Pass> createConstantizeBufferSizePass(
+    const ConstantizeBufferSizeOptions &options = {});
 
 /// Create a pass to allocate extra buffer
 std::unique_ptr<Pass> createAllocExtraBufferPass();
@@ -213,6 +214,8 @@ std::unique_ptr<Pass> createSplitMixedIfConditionalsPass();
 // Create a pass to mark L1/UB allocs with the tightly-coupled-buffer attribute
 // before SplitMixKernel clones the MIX function.
 std::unique_ptr<Pass> createMarkTightlyCoupledBufferPass();
+std::unique_ptr<Pass> createMarkTightlyCoupledBufferPass(
+    const MarkTightlyCoupledBufferOptions &options);
 
 // Create a pass to hoist yielded tightly-coupled allocs out of inner regions so
 // the AIC/AIV multi-buffer anchor stays consistent after SplitMixKernel.

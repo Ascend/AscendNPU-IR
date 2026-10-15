@@ -30,6 +30,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Transforms/TightlyCoupledBufferUtils.h"
+#include "bishengir/Dialect/HIVM/Utils/ShapeRegistry.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -51,6 +52,7 @@ namespace {
 
 struct MarkTightlyCoupledBufferPass
     : public impl::MarkTightlyCoupledBufferBase<MarkTightlyCoupledBufferPass> {
+  using Base::Base;
   void runOnOperation() override;
 };
 
@@ -121,6 +123,14 @@ void MarkTightlyCoupledBufferPass::runOnOperation() {
   if (!moduleOp || !hacc::utils::isAscend950(moduleOp))
     return;
 
+  // Unregistered kernels keep master's early MarkTCB. Registered kernels skip
+  // this run and take the PR 3160 infer/constantize/MarkTCB sequence later.
+  if (this->skipRegisteredKernels &&
+      allowLoopShapeHeuristics(this->bypassShapeRegistry, func.getName(),
+                               this->enablePreload,
+                               this->workspaceMultiBufferNum))
+    return;
+
   markTightlyCoupledBufferOnFunc(func);
 }
 
@@ -128,4 +138,9 @@ void MarkTightlyCoupledBufferPass::runOnOperation() {
 
 std::unique_ptr<Pass> mlir::hivm::createMarkTightlyCoupledBufferPass() {
   return std::make_unique<MarkTightlyCoupledBufferPass>();
+}
+
+std::unique_ptr<Pass> mlir::hivm::createMarkTightlyCoupledBufferPass(
+    const MarkTightlyCoupledBufferOptions &options) {
+  return std::make_unique<MarkTightlyCoupledBufferPass>(options);
 }
