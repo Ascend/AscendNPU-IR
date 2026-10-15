@@ -143,7 +143,6 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   OptimizeTransposePlacement/RootReachability.cpp
   OptimizeTransposePlacement/Utils.cpp
   OutlineAllocInVF.cpp
-  OutlineCopyInVF.cpp
   PlanMemory.cpp
   RecognizeDeinterleaveOp.cpp
   RecognizeDiscontiguousStore.cpp
