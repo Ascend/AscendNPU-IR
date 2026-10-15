@@ -50,6 +50,16 @@ def GetSubBlockIdxInstrOp : HIVM_IntrinOp<"hivm.GET.SUBBLOCKID">;
 
 def GetSubBlockNumInstrOp : HIVM_IntrinOp<"hivm.GET.SUBBLOCKDIM">;
 
+def GetCoreIdInstrOp : HIVM_IntrinOp<"hivm.GET.COREID">;
+
+def SetCondInstrOp : HIVM_IntrinOp<
+                         /*string opName=*/"hivm.SET.COND",
+                         /*list<int> overloadedOperands=*/[],
+                         /*list<Trait> traits=*/[],
+                         /*int numResults=*/0> {
+  let arguments = (ins I<64>:$cond);
+}
+
 class SetWaitFlag_InstrOp<string mnemonic, int numResults = 0>
     : HIVM_IntrinOp<
           /*string opName=*/mnemonic,

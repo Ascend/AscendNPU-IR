@@ -75,6 +75,33 @@ def GetSubBlockNumOp : HIVM_Op<"get_sub_block_num", [Pure, CubeVectorCoreTypeTra
   let assemblyFormat = "attr-dict `->` type($result)";
 }
 
+def GetCoreIdOp
+    : HIVM_Op<"get_coreid", [Pure, CubeVectorCoreTypeTrait, OpPipeInterface,
+                             SinglePipeOpTrait, OpPipeTrait<"PIPE::PIPE_S">,
+]> {
+  let summary = "Returns the physical core ID.";
+  let description = [{
+    This operation gets the core id of the current device thread.
+    This op will be lowered to a cce intrinsic call.
+  }];
+  let results = (outs I64:$result);
+  let assemblyFormat = "attr-dict `->` type($result)";
+}
+
+def SetCondOp
+    : HIVM_Op<"set_cond", [CubeVectorCoreTypeTrait, OpPipeInterface,
+                           SinglePipeOpTrait, OpPipeTrait<"PIPE::PIPE_S">,
+]> {
+  let summary = "Set condition register.";
+  let description = [{
+    This operation stores its argument of type int64
+    into a fixed 'condition' register via a cce intrinsic call.
+  }];
+  let arguments = (ins I64:$cond);
+  let results = (outs);
+  let assemblyFormat = "$cond attr-dict `:` type($cond)";
+}
+
 def GetSysCntOp : HIVM_Op<"get_sys_cnt", [Pure, CubeVectorCoreTypeTrait]> {
   let summary = "Get sys cnt of the current device";
   let description = [{

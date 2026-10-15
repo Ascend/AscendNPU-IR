@@ -21,6 +21,7 @@
 
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HACC/IR/HACC.h"
+#include "bishengir/Target/NPU/NPUArchitectureFeatures.h"
 
 #include "mlir/Conversion/LLVMCommon/TypeConverter.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -296,7 +297,12 @@ bool isAscend910_93(TargetDevice targetDevice) {
 }
 
 bool isMemBasedArch(TargetDevice targetDevice) {
-  return isAscend910B(targetDevice) || isAscend910_93(targetDevice);
+  // TargetDevice enumerators are contiguous; preserve the legacy false result
+  // for Unknown and out-of-range values before calling the strict identity API.
+  if (static_cast<unsigned>(targetDevice) >= targetDevices.size())
+    return false;
+  return bishengir::npu::getExecutionModel(getArchitecture(targetDevice)) ==
+         bishengir::npu::ExecutionModel::kMemBased;
 }
 
 bool isAscend310B(TargetDevice targetDevice) {
@@ -345,7 +351,10 @@ bool isAscend950(llvm::StringRef targetDevice) {
 }
 
 bool isRegBasedArch(TargetDevice targetDevice) {
-  return isAscend310B(targetDevice) || isAscend950(targetDevice);
+  if (static_cast<unsigned>(targetDevice) >= targetDevices.size())
+    return false;
+  return bishengir::npu::getExecutionModel(getArchitecture(targetDevice)) ==
+         bishengir::npu::ExecutionModel::kRegBased;
 }
 
 bool isRegBasedArch(llvm::StringRef targetDevice) {

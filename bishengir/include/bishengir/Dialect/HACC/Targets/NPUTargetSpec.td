@@ -18,6 +18,8 @@
 #ifndef BISHENGIR_DIALECT_HACC_TARGETS_NPUTARGETSPEC_TD
 #define BISHENGIR_DIALECT_HACC_TARGETS_NPUTARGETSPEC_TD
 
+include "bishengir/Target/NPU/NPUArchitecture.td"
+
 /// Base class for the Target Specification info.
 class TargetSpec <string name> {
   // The target device's name.
@@ -62,8 +64,8 @@ class TargetSpec <string name> {
   // Align size of L0c buffer in bits.
   int L0cAlignSize = ?;
 
-  // Arch
-  string Arch = ?;
+  // Instruction architecture shared by all SKUs in this TargetSpec family.
+  NPUArchitecture Arch = ?;
 }
 
 //===----------------------------------------------------------------------===//
@@ -79,7 +81,7 @@ class Ascend910B_BaseSpec <string name> : TargetSpec<name> {
   let UbAlignSize = 256; // bits = 32B
   let L1AlignSize = 256; // bits = 32B
   let L0cAlignSize = 4096; // bits = 512B
-  let Arch = "dav-c220";
+  let Arch = Dav_C220;
 }
 
 def Ascend910B1Spec : Ascend910B_BaseSpec<"Ascend910B1"> {
@@ -131,7 +133,7 @@ class Ascend310B_BaseSpec <string name> : TargetSpec<name> {
   let UbAlignSize = 256; // bits = 32B
   let L1AlignSize = 256; // bits = 32B
   let L0cAlignSize = 4096; // bits = 512B
-  let Arch = "dav-m300";
+  let Arch = Dav_M300;
 }
 
 def Ascend310B1Spec : Ascend310B_BaseSpec<"Ascend310B1"> {
@@ -171,7 +173,7 @@ class Ascend910_93_BaseSpec <string name> : TargetSpec<name> {
   let UbAlignSize = 256; // bits = 32B
   let L1AlignSize = 256; // bits = 32B
   let L0cAlignSize = 4096; // bits = 512B
-  let Arch = "dav-c220";
+  let Arch = Dav_C220;
 }
 
 def Ascend910_9362_Spec : Ascend910_93_BaseSpec<"Ascend910_9362"> {
@@ -231,7 +233,7 @@ class Ascend950_BaseSpec <string name> : TargetSpec<name> {
   let UbAlignSize = 256; // bits = 32B
   let L1AlignSize = 256; // bits = 32B
   let L0cAlignSize = 4096; // bits = 512B
-  let Arch = "dav-c310";
+  let Arch = Dav_C310;
 }
 
 def Ascend910_950z_Spec : Ascend950_BaseSpec<"Ascend910_950z"> {

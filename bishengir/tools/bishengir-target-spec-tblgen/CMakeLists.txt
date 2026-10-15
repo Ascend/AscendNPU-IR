@@ -7,6 +7,8 @@ set(LLVM_LINK_COMPONENTS
 
 add_tablegen(bishengir-target-spec-tblgen BISHENGIR_TARGET_SPEC
   bishengir-target-spec-tblgen.cpp
+  NPUArchitectureGen.cpp
+  NPUArchitectureFeatureGen.cpp
   TargetSpecGen.cpp
 )
 

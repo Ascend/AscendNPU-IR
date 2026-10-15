@@ -15,13 +15,14 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/HIVM/IR/CustomOp/DistributedTransformUtils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMDialectExtension.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMInterfaces.h"
 #include "bishengir/Dialect/HIVM/Interfaces/LibraryFunctionOpInterface.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
-#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/IR/Builders.h"
@@ -1711,8 +1712,8 @@ static std::string getIndirectAtomicLibraryCallName(CustomOpT op) {
 }
 
 template <typename CustomOpT>
-std::string inferCustomOpMaxRank(Operation *op,
-                                 std::optional<bool> isOpsAligned) {
+std::string customOpLibraryCallName(Operation *op,
+                                    std::optional<bool> isOpsAligned) {
   auto concreteOp = cast<CustomOpT>(op);
 
   if (concreteOp.isBuiltin()) {
@@ -1746,6 +1747,12 @@ std::string inferCustomOpMaxRank(Operation *op,
   if (!hasMemrefInArgOrRet()) {
     prefix = "_mlir_ciface_" + prefix;
   }
+  if constexpr (std::is_same_v<CustomOpT, hivm::CustomOp>) {
+    // User CustomOps name their implementation directly. Distributed ops keep
+    // the MIX core suffix used by their runtime entry points.
+    if (!isDistributedTypeCustomOp(op))
+      return prefix;
+  }
   return prefix + callNameMangleSuffix(op);
 }
 } // namespace
@@ -1759,7 +1766,7 @@ std::string inferCustomOpMaxRank(Operation *op,
   template <>                                                                  \
   std::string InferMaxRankExternalModel<OP>::getOpLibraryCallName(             \
       Operation *op, std::optional<bool> isOpsAligned) const {                 \
-    return inferCustomOpMaxRank<OP>(op, isOpsAligned);                         \
+    return customOpLibraryCallName<OP>(op, isOpsAligned);                      \
   }
 
 DEFINE_CUSTOM_OP_INFER_MAX_RANK(CustomOp)
