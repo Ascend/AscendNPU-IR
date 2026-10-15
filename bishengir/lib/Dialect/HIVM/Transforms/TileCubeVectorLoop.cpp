@@ -70,9 +70,11 @@ namespace transform_utils {
 using SequenceBodyBuilderFn =
     std::function<void(OpBuilder &, Location, BlockArgument)>;
 
-void applyCleanUpPatterns(OpBuilder &builder, Location loc, Value target) {
-  auto bodyBuilderFn = [](OpBuilder &p, Location loc) {
-    p.create<transform::ApplyCanonicalizationPatternsOp>(loc);
+void applyCleanUpPatterns(OpBuilder &builder, Location loc, Value target,
+                          bool withCanonicalization = true) {
+  auto bodyBuilderFn = [&withCanonicalization](OpBuilder &p, Location loc) {
+    if (withCanonicalization)
+      p.create<transform::ApplyCanonicalizationPatternsOp>(loc);
   };
   auto applyPatternsOp =
       builder.create<transform::ApplyPatternsOp>(loc,
@@ -588,17 +590,27 @@ protected:
   /// Create a `for_each` loop to fuse producers into loop one-by-one, while
   /// performing canonicalization.
   ///
-  /// \note this is a member function because we want to get access to to global
-  /// function handle of the transform sequence, which is stored in `funcHandle`
+  /// \note the per-iteration cleanup is scoped to the tiled `loop` because only
+  /// its body changes between iterations; the whole function is cleaned up once
+  /// after the sequence.
   void createForEachFuseIntoBlock(OpBuilder &builder, Location loc,
                                   Value producer, Value loop) const {
     ImplicitLocOpBuilder::InsertionGuard g(builder);
     size_t kNumContainingLoops = 1;
-    auto forEachRegionBuilderFn = [&kNumContainingLoops, &loc, &loop, &builder,
-                                   this](ImplicitLocOpBuilder &forEachBuilder,
-                                         Block &block) -> void {
+    auto forEachRegionBuilderFn =
+        [&kNumContainingLoops, &loc, &loop,
+         &builder](ImplicitLocOpBuilder &forEachBuilder, Block &block) -> void {
       auto blockArg = block.getArgument(0);
-      transform_utils::applyCleanUpPatterns(builder, loc, this->funcHandle);
+      // Canonicalize only the tiled loop instead of the whole function. The
+      // loop grows with every fused producer, so scoping the per-producer
+      // cleanup to it avoids O(producers * func-size) work. The final cleanup
+      // in the sequence still canonicalizes the whole function once.
+      // Per-iteration cleanup runs CSE only: rebuilding the full
+      // canonicalization pattern set once per fused producer dominates the
+      // pass time, and the final whole-function cleanup still canonicalizes
+      // everything once at the end of the sequence.
+      transform_utils::applyCleanUpPatterns(builder, loc, loop,
+                                            /*withCanonicalization=*/false);
       auto op = transform_utils::createFuseIntoContainingOp(
           forEachBuilder, loc, blockArg, SmallVector<Value>{loop},
           kNumContainingLoops);
@@ -1733,10 +1745,12 @@ void TileCubeVectorLoopPass::runOnOperation() {
       cloned->erase();
     } else {
       topLevelModule.getBodyRegion().getBlocks().clear();
-      IRMapping map;
-      cloned.getBodyRegion().cloneInto(&topLevelModule.getBodyRegion(),
-                                       topLevelModule.getBodyRegion().begin(),
-                                       map);
+      // The transform sequence has already erased itself, so `cloned` only
+      // holds the transformed payload. Move the blocks over instead of
+      // deep-copying them back into the original module.
+      topLevelModule.getBodyRegion().getBlocks().splice(
+          topLevelModule.getBodyRegion().end(),
+          cloned.getBodyRegion().getBlocks());
       cloned->erase();
     }
     if (failed(loopInfo->performPostTransformationAction(topLevelModule)))
