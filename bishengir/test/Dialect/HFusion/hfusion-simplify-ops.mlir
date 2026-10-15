@@ -763,3 +763,43 @@ func.func @hoist_mul_sub_matmul_chain(%a: tensor<128x17xbf16>, %b: tensor<17x19x
   %matmul3 = linalg.matmul {input_precision = "ieee"} ins(%sub, %d : tensor<128x23xf32>, tensor<23x128xf32>) outs(%init3 : tensor<128x128xf32>) -> tensor<128x128xf32>
   return %matmul3 : tensor<128x128xf32>
 }
+
+// -----
+// CHECK-LABEL: @fp8DownUpKept
+// CHECK: hfusion.cast
+// CHECK: hfusion.cast
+// CHECK: return
+func.func @fp8DownUpKept(%arg0: tensor<f32>) -> tensor<f32> {
+    %empty_f8 = tensor.empty() : tensor<f8E4M3FN>
+    %empty_f32 = tensor.empty() : tensor<f32>
+    %0 = hfusion.cast ins(%arg0 : tensor<f32>) outs(%empty_f8 : tensor<f8E4M3FN>) -> tensor<f8E4M3FN>
+    %1 = hfusion.cast ins(%0 : tensor<f8E4M3FN>) outs(%empty_f32 : tensor<f32>) -> tensor<f32>
+    return %1 : tensor<f32>
+}
+
+// -----
+// CHECK-LABEL: @fp8E5M2DownUpKept
+// CHECK: hfusion.cast
+// CHECK: hfusion.cast
+// CHECK: return
+func.func @fp8E5M2DownUpKept(%arg0: tensor<f32>) -> tensor<f32> {
+    %empty_f8 = tensor.empty() : tensor<f8E5M2>
+    %empty_f32 = tensor.empty() : tensor<f32>
+    %0 = hfusion.cast ins(%arg0 : tensor<f32>) outs(%empty_f8 : tensor<f8E5M2>) -> tensor<f8E5M2>
+    %1 = hfusion.cast ins(%0 : tensor<f8E5M2>) outs(%empty_f32 : tensor<f32>) -> tensor<f32>
+    return %1 : tensor<f32>
+}
+
+// -----
+// CHECK-LABEL: @fp8DownUpFastmathFolds
+// CHECK-NOT: hfusion.cast
+// CHECK: return
+func.func @fp8DownUpFastmathFolds(%arg0: tensor<f32>) -> tensor<f32> {
+    %empty_f8 = tensor.empty() : tensor<f8E4M3FN>
+    %empty_f32 = tensor.empty() : tensor<f32>
+    %0 = hfusion.cast {arith.fastmath = #arith.fastmath<contract>} ins(%arg0 : tensor<f32>) outs(%empty_f8 : tensor<f8E4M3FN>) -> tensor<f8E4M3FN>
+    %1 = hfusion.cast ins(%0 : tensor<f8E4M3FN>) outs(%empty_f32 : tensor<f32>) -> tensor<f32>
+    return %1 : tensor<f32>
+}
+
+// -----
