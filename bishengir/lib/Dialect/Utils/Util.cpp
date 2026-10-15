@@ -19,6 +19,7 @@
 #include "bishengir/Config/bishengir-config.h"
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HACC/IR/HACC.h"
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/MemRef/IR/MemRefImpl.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
@@ -122,6 +123,8 @@ SmallVector<Value> tracebackImpl(Value memrefVal) {
   // ViewLikeOpInterface, plus generic ViewLikeOpInterface ops.
   if (auto op = dyn_cast<memref::TransposeOp>(def)) {
     result.emplace_back(op.getIn());
+  } else if (auto op = dyn_cast<hivm::BitcastOp>(def)) {
+    result.emplace_back(op.getSrc());
   } else if (auto op = dyn_cast<UnrealizedConversionCastOp>(def)) {
     result.emplace_back(
         op.getOperand(cast<OpResult>(memrefVal).getResultNumber()));

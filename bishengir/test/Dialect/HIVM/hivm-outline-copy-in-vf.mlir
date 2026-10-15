@@ -255,3 +255,218 @@ func.func @i64_copy_tiled_by_register_pair_caller() {
   func.call @i64_copy_tiled_by_register_pair(%src, %dst) {hivm.vector_function, no_inline} : (memref<256xi64>, memref<256xi64>) -> ()
   return
 }
+
+// -----
+
+// Both operands may be reshape chains rooted in VF arguments.
+// CHECK-LABEL: func.func @reshape_chain_copy_vf
+// CHECK-NOT: hivm.hir.copy
+// CHECK: vector.transfer_read
+// CHECK: vector.transfer_write
+// CHECK-NOT: hivm.hir.copy
+// CHECK: return
+func.func @reshape_chain_copy_vf(%src: memref<2x8xf32>, %dst: memref<16xf32>) attributes {hivm.vector_function, no_inline} {
+  %collapsed = memref.collapse_shape %src [[0, 1]] : memref<2x8xf32> into memref<16xf32>
+  %expanded_src = memref.expand_shape %collapsed [[0, 1]] output_shape [1, 16] : memref<16xf32> into memref<1x16xf32>
+  %expanded_dst = memref.expand_shape %dst [[0, 1]] output_shape [1, 16] : memref<16xf32> into memref<1x16xf32>
+  hivm.hir.copy ins(%expanded_src : memref<1x16xf32>) outs(%expanded_dst : memref<1x16xf32>)
+  return
+}
+
+// Keep the copy when an operand traces to a local allocation instead of a VF argument.
+// CHECK-LABEL: func.func @reshape_alloc_copy_vf
+// CHECK-NOT: vector.transfer
+// CHECK: hivm.hir.copy
+// CHECK-NOT: vector.transfer
+// CHECK: return
+func.func @reshape_alloc_copy_vf(%dst: memref<1x16xf32>) attributes {hivm.vector_function, no_inline} {
+  %src = memref.alloc() : memref<16xf32>
+  %expanded = memref.expand_shape %src [[0, 1]] output_shape [1, 16] : memref<16xf32> into memref<1x16xf32>
+  hivm.hir.copy ins(%expanded : memref<1x16xf32>) outs(%dst : memref<1x16xf32>)
+  return
+}
+
+// -----
+
+// Keep DMA copies with an explicit non-UB memory space.
+// CHECK-LABEL: func.func @ub_to_l1_reshape_vf
+// CHECK-NOT: vector.transfer
+// CHECK: hivm.hir.copy
+// CHECK-NOT: vector.transfer
+// CHECK: return
+func.func @ub_to_l1_reshape_vf(%src: memref<16xf32, #hivm.address_space<ub>>, %dst: memref<1x16xf32, #hivm.address_space<cbuf>>) attributes {hivm.vector_function, no_inline} {
+  %expanded = memref.expand_shape %src [[0, 1]] output_shape [1, 16] : memref<16xf32, #hivm.address_space<ub>> into memref<1x16xf32, #hivm.address_space<ub>>
+  hivm.hir.copy ins(%expanded : memref<1x16xf32, #hivm.address_space<ub>>) outs(%dst : memref<1x16xf32, #hivm.address_space<cbuf>>)
+  return
+}
+
+// -----
+
+// A prior write prevents hoisting the ui32 copy out of the VF.
+// Lowering reinterprets both buffers as i32 so arith.constant can provide valid transfer padding.
+// CHECK-LABEL: func.func @ui32_copy_vf
+// CHECK-NOT: hivm.hir.copy
+// CHECK-DAG: hivm.hir.bitcast %arg0 : memref<16xui32> -> memref<16xi32>
+// CHECK-DAG: hivm.hir.bitcast %arg1 : memref<16xui32> -> memref<16xi32>
+// CHECK-DAG: arith.constant 0 : i32
+// CHECK: vector.transfer_read {{.*}} : memref<16xi32>, vector<64xi32>
+// CHECK: vector.transfer_write {{.*}} : vector<64xi32>, memref<16xi32>
+// CHECK-NOT: hivm.hir.copy
+// CHECK: return
+func.func @ui32_copy_vf(%src: memref<16xui32>, %dst: memref<16xui32>, %value: ui32) attributes {hivm.vector_function, no_inline} {
+  %c0 = arith.constant 0 : index
+  memref.store %value, %dst[%c0] : memref<16xui32>
+  hivm.hir.copy ins(%src : memref<16xui32>) outs(%dst : memref<16xui32>)
+  return
+}
+
+// -----
+
+// A write through B's signless bitcast must prevent hoisting B-to-C.
+// The non-unit destination stride keeps B-to-C as a copy.
+// CHECK-LABEL: func.func @bitcast_alias_vf
+// CHECK: %[[B:.*]] = hivm.hir.bitcast %arg1
+// CHECK: vector.transfer_write {{.*}}, %[[B]][
+// CHECK: hivm.hir.copy ins(%arg1
+// CHECK: return
+func.func @bitcast_alias_vf(%a: memref<16xui32>, %b: memref<16xui32>, %c: memref<16xui32, strided<[2]>>) attributes {hivm.vector_function, no_inline} {
+  %c0 = arith.constant 0 : index
+  %zero = arith.constant 0 : i32
+  %a_signless = hivm.hir.bitcast %a : memref<16xui32> -> memref<16xi32>
+  %b_signless = hivm.hir.bitcast %b : memref<16xui32> -> memref<16xi32>
+  %value = vector.transfer_read %a_signless[%c0], %zero {in_bounds = [true]} : memref<16xi32>, vector<16xi32>
+  vector.transfer_write %value, %b_signless[%c0] {in_bounds = [true]} : vector<16xi32>, memref<16xi32>
+  hivm.hir.copy ins(%b : memref<16xui32>) outs(%c : memref<16xui32, strided<[2]>>)
+  return
+}
+
+// CHECK-LABEL: func.func @bitcast_alias_caller
+// CHECK-NOT: hivm.hir.copy
+// CHECK: call @bitcast_alias_vf
+// CHECK-NOT: hivm.hir.copy
+// CHECK: return
+func.func @bitcast_alias_caller(%a: memref<16xui32>, %b: memref<16xui32>, %c: memref<16xui32, strided<[2]>>) {
+  func.call @bitcast_alias_vf(%a, %b, %c) {hivm.vector_function, no_inline} : (memref<16xui32>, memref<16xui32>, memref<16xui32, strided<[2]>>) -> ()
+  return
+}
+
+// -----
+
+// The unknown write prevents argument-to-argument copies from being outlined.
+// CHECK-LABEL: func.func @dynamic_src_stride_vf
+// CHECK-NOT: vector.transfer
+// CHECK: hivm.hir.copy
+// CHECK-NOT: vector.transfer
+// CHECK: return
+func.func @dynamic_src_stride_vf(%src: memref<16xf32, strided<[?], offset: ?>>, %dst: memref<16xf32>) attributes {hivm.vector_function, no_inline} {
+  "test.unknown_write"(%dst) : (memref<16xf32>) -> ()
+  hivm.hir.copy ins(%src : memref<16xf32, strided<[?], offset: ?>>) outs(%dst : memref<16xf32>)
+  return
+}
+
+// -----
+
+// CHECK-LABEL: func.func @dynamic_dst_stride_vf
+// CHECK-NOT: vector.transfer
+// CHECK: hivm.hir.copy
+// CHECK-NOT: vector.transfer
+// CHECK: return
+func.func @dynamic_dst_stride_vf(%src: memref<16xf32>, %dst: memref<16xf32, strided<[?], offset: ?>>) attributes {hivm.vector_function, no_inline} {
+  "test.unknown_write"(%dst) : (memref<16xf32, strided<[?], offset: ?>>) -> ()
+  hivm.hir.copy ins(%src : memref<16xf32>) outs(%dst : memref<16xf32, strided<[?], offset: ?>>)
+  return
+}
+
+// Unit lane stride remains legal with static or dynamic offsets.
+// CHECK-LABEL: func.func @static_offset_unit_stride_vf
+// CHECK: vector.transfer_read
+// CHECK: vector.transfer_write
+// CHECK-NOT: hivm.hir.copy
+func.func @static_offset_unit_stride_vf(%src: memref<16xf32, strided<[1], offset: 4>>, %dst: memref<16xf32, strided<[1], offset: 4>>) attributes {hivm.vector_function, no_inline} {
+  "test.unknown_write"(%dst) : (memref<16xf32, strided<[1], offset: 4>>) -> ()
+  hivm.hir.copy ins(%src : memref<16xf32, strided<[1], offset: 4>>) outs(%dst : memref<16xf32, strided<[1], offset: 4>>)
+  return
+}
+
+// CHECK-LABEL: func.func @dynamic_offset_unit_stride_vf
+// CHECK: vector.transfer_read
+// CHECK: vector.transfer_write
+// CHECK-NOT: hivm.hir.copy
+func.func @dynamic_offset_unit_stride_vf(%src: memref<16xf32, strided<[1], offset: ?>>, %dst: memref<16xf32, strided<[1], offset: ?>>) attributes {hivm.vector_function, no_inline} {
+  "test.unknown_write"(%dst) : (memref<16xf32, strided<[1], offset: ?>>) -> ()
+  hivm.hir.copy ins(%src : memref<16xf32, strided<[1], offset: ?>>) outs(%dst : memref<16xf32, strided<[1], offset: ?>>)
+  return
+}
+
+// Non-unit lane stride remains unsupported.
+// CHECK-LABEL: func.func @static_nonunit_stride_vf
+// CHECK-NOT: vector.transfer
+// CHECK: hivm.hir.copy
+func.func @static_nonunit_stride_vf(%src: memref<16xf32, strided<[2], offset: 4>>, %dst: memref<16xf32, strided<[2], offset: 4>>) attributes {hivm.vector_function, no_inline} {
+  "test.unknown_write"(%dst) : (memref<16xf32, strided<[2], offset: 4>>) -> ()
+  hivm.hir.copy ins(%src : memref<16xf32, strided<[2], offset: 4>>) outs(%dst : memref<16xf32, strided<[2], offset: 4>>)
+  return
+}
+
+// -----
+
+// Dynamic outer strides are not supported by the AVE stride-store lowering.
+// The preceding write prevents caller-side hoisting, so these checks exercise
+// transfer legality for the source and destination separately.
+// CHECK-LABEL: func.func @dynamic_outer_src_stride_vf
+// CHECK-NOT: vector.transfer
+// CHECK: hivm.hir.copy
+// CHECK-NOT: vector.transfer
+// CHECK: return
+func.func @dynamic_outer_src_stride_vf(%src: memref<2x8xf32, strided<[?, 1], offset: ?>, #hivm.address_space<ub>>, %dst: memref<2x8xf32, #hivm.address_space<ub>>) attributes {hivm.vector_function, no_inline} {
+  "test.unknown_write"(%dst) : (memref<2x8xf32, #hivm.address_space<ub>>) -> ()
+  hivm.hir.copy ins(%src : memref<2x8xf32, strided<[?, 1], offset: ?>, #hivm.address_space<ub>>) outs(%dst : memref<2x8xf32, #hivm.address_space<ub>>)
+  return
+}
+
+// CHECK-LABEL: func.func @dynamic_outer_dst_stride_vf
+// CHECK-NOT: vector.transfer
+// CHECK: hivm.hir.copy
+// CHECK-NOT: vector.transfer
+// CHECK: return
+func.func @dynamic_outer_dst_stride_vf(%src: memref<2x8xf32, #hivm.address_space<ub>>, %dst: memref<2x8xf32, strided<[?, 1], offset: ?>, #hivm.address_space<ub>>) attributes {hivm.vector_function, no_inline} {
+  "test.unknown_write"(%dst) : (memref<2x8xf32, strided<[?, 1], offset: ?>, #hivm.address_space<ub>>) -> ()
+  hivm.hir.copy ins(%src : memref<2x8xf32, #hivm.address_space<ub>>) outs(%dst : memref<2x8xf32, strided<[?, 1], offset: ?>, #hivm.address_space<ub>>)
+  return
+}
+
+// -----
+
+// A write through the dst argument does not hoist the view copy. The copy is
+// lowered at its original position, after the write.
+// CHECK-LABEL: func.func @view_copy_after_dst_write_vf
+// CHECK: memref.store
+// CHECK: vector.transfer_read
+// CHECK: vector.transfer_write
+// CHECK-NOT: hivm.hir.copy
+// CHECK: return
+func.func @view_copy_after_dst_write_vf(%src: memref<2x8xf32>, %dst: memref<16xf32>, %value: f32) attributes {hivm.vector_function, no_inline} {
+  %c0 = arith.constant 0 : index
+  memref.store %value, %dst[%c0] : memref<16xf32>
+  %collapsed = memref.collapse_shape %src [[0, 1]] : memref<2x8xf32> into memref<16xf32>
+  %expanded_src = memref.expand_shape %collapsed [[0, 1]] output_shape [1, 16] : memref<16xf32> into memref<1x16xf32>
+  %expanded_dst = memref.expand_shape %dst [[0, 1]] output_shape [1, 16] : memref<16xf32> into memref<1x16xf32>
+  hivm.hir.copy ins(%expanded_src : memref<1x16xf32>) outs(%expanded_dst : memref<1x16xf32>)
+  return
+}
+
+// A subview copy following a producer write is lowered in place.
+// CHECK-LABEL: func.func @subview_copy_after_write_vf
+// CHECK: memref.store
+// CHECK: vector.transfer_read
+// CHECK: vector.transfer_write
+// CHECK-NOT: hivm.hir.copy
+// CHECK: return
+func.func @subview_copy_after_write_vf(%src: memref<16xf32>, %dst: memref<16xf32>, %value: f32) attributes {hivm.vector_function, no_inline} {
+  %c0 = arith.constant 0 : index
+  memref.store %value, %src[%c0] : memref<16xf32>
+  %src_view = memref.subview %src[%c0] [4] [1] : memref<16xf32> to memref<4xf32, strided<[1], offset: ?>>
+  %dst_view = memref.subview %dst[%c0] [4] [1] : memref<16xf32> to memref<4xf32, strided<[1], offset: ?>>
+  hivm.hir.copy ins(%src_view : memref<4xf32, strided<[1], offset: ?>>) outs(%dst_view : memref<4xf32, strided<[1], offset: ?>>)
+  return
+}

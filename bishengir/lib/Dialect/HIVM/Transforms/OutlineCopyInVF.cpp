@@ -93,8 +93,26 @@ static bool hasModificationBefore(hivm::CopyOp copyOp, Value funcArg) {
   return false;
 }
 
-static bool isSubviewValue(Value value) {
-  return isa_and_nonnull<memref::SubViewOp>(value.getDefiningOp());
+static bool isMemSpaceUBOrNone(Value value) {
+  auto space = hivm::getOptionalHIVMAddressSpace(value.getType());
+  return !space.has_value() || space.value() == hivm::AddressSpace::UB;
+}
+
+static bool hasSupportedTransferLayout(Value value) {
+  // Identity layout is always supported.
+  auto type = cast<MemRefType>(value.getType());
+  if (type.getLayout().isIdentity())
+    return true;
+
+  // AVE loads and stores require consecutive elements in the last dimension,
+  // so its stride must be 1. The stride-store lowering also requires static
+  // outer strides. Offsets may be static or dynamic.
+  if (auto strided = dyn_cast<StridedLayoutAttr>(type.getLayout())) {
+    auto strides = strided.getStrides();
+    return !strides.empty() && strides.back() == 1 &&
+           llvm::none_of(strides, ShapedType::isDynamic);
+  }
+  return false;
 }
 
 static bool canLowerToTransferPair(hivm::CopyOp copyOp) {
@@ -109,6 +127,9 @@ static bool canLowerToTransferPair(hivm::CopyOp copyOp) {
   auto srcType = dyn_cast<MemRefType>(copyOp.getSource().getType());
   auto dstType = dyn_cast<MemRefType>(copyOp.getDst().getType());
   if (!srcType || !dstType)
+    return false;
+  if (!hasSupportedTransferLayout(copyOp.getSource()) ||
+      !hasSupportedTransferLayout(copyOp.getDst()))
     return false;
   if (srcType.getRank() < 1 || dstType.getRank() < 1)
     return false;
@@ -174,6 +195,7 @@ static void insertTransferPairToLoop(IRRewriter &rewriter, Location loc, Value s
 static void tileCopyUsingForAndTransferPair(IRRewriter &rewriter,
                                             hivm::CopyOp copyOp) {
   Value src = copyOp.getSource();
+  Value dst = copyOp.getDst();
   auto srcType = dyn_cast<MemRefType>(src.getType());
   Type elemType = srcType.getElementType();
   SmallVector<int64_t> tileSizes(srcType.getRank(), 1);
@@ -195,6 +217,20 @@ static void tileCopyUsingForAndTransferPair(IRRewriter &rewriter,
   OpBuilder::InsertionGuard guard(rewriter);
   rewriter.setInsertionPoint(copyOp);
   Location loc = copyOp.getLoc();
+  if (auto intType = dyn_cast<IntegerType>(elemType);
+      intType && !intType.isSignless()) {
+    // We need emit arith.constant for padding value during lowering.
+    // But arith.constant does not support unsigned types such as ui32.
+    // The padding type must match the transfer's element type.
+    // So we bitcast both buffers to the corresponding signless type before
+    // creating the transfers.
+    auto signlessType = rewriter.getIntegerType(intType.getWidth());
+    src =
+        rewriter.create<hivm::BitcastOp>(loc, srcType.clone(signlessType), src);
+    auto dstType = cast<MemRefType>(dst.getType());
+    dst =
+        rewriter.create<hivm::BitcastOp>(loc, dstType.clone(signlessType), dst);
+  }
   auto srcShape = srcType.getShape();
   SmallVector<Value> lbs, ubs, steps;
   for (size_t i = 0; i < srcShape.size(); ++i) {
@@ -211,8 +247,8 @@ static void tileCopyUsingForAndTransferPair(IRRewriter &rewriter,
   SmallVector<Value> inductionVars;
   scf::ForOp loopInsertTransfer =
       createLoopsNest(rewriter, loc, lbs, ubs, steps, inductionVars);
-  insertTransferPairToLoop(rewriter, loc, src, copyOp.getDst(), ubs,
-                           inductionVars, tileSizes, loopInsertTransfer);
+  insertTransferPairToLoop(rewriter, loc, src, dst, ubs, inductionVars,
+                           tileSizes, loopInsertTransfer);
 }
 
 static LogicalResult lowerCopyToTransferPair(hivm::CopyOp copyOp,
@@ -234,8 +270,8 @@ static LogicalResult lowerCopyToTransferPair(hivm::CopyOp copyOp,
 /// It handles three cases:
 /// 1. Safe VF-entry argument-to-argument copies are outlined to caller-side
 ///    `hivm.hir.copy`.
-/// 2. Copy-style ops that must stay in the callee, such as subview-based
-///    copies or argument copies after earlier writes, are normalized to
+/// 2. Copies through subview/reshape chains rooted in VF arguments that
+///    must stay in the callee are normalized to
 ///    `vector.transfer_read` + `vector.transfer_write` when that pair is
 ///    semantically identical to the original copy.
 /// 3. All other copies are left unchanged.
@@ -290,11 +326,9 @@ void OutlineCopyInVFPass::runOnOperation() {
       auto dstArgNumber = getFuncArgNumber(copyOp.getDst(), funcOp);
       bool operandsAreFuncArgs =
           srcArgNumber.has_value() && dstArgNumber.has_value();
-      bool operandsFromSubviews =
-          isSubviewValue(copyOp.getSource()) || isSubviewValue(copyOp.getDst());
 
       // Only outline direct function-argument copies that still behave like a
-      // pure entry DMA. Other argument/subview copies stay in the VF and are
+      // pure entry DMA. All other copies stay in the VF and are
       // only normalized to vector transfers when the replacement is exactly
       // equivalent to the original hivm.hir.copy.
       if (operandsAreFuncArgs &&
@@ -305,8 +339,22 @@ void OutlineCopyInVFPass::runOnOperation() {
         return;
       }
 
-      if (operandsAreFuncArgs || operandsFromSubviews)
-        copiesToLower.push_back(copyOp);
+      Value srcArg = utils::tracebackMemRef(copyOp.getSource());
+      Value dstArg = utils::tracebackMemRef(copyOp.getDst());
+      bool copyOpndAreFuncArg = getFuncArgNumber(srcArg, funcOp).has_value() &&
+                                getFuncArgNumber(dstArg, funcOp).has_value();
+
+      // InferHIVMMemScope assigns UB to VF arguments with unspecified memory
+      // space. Accept that case here, but reject explicit non-UB spaces.
+      bool isUBtoUBCopy = isMemSpaceUBOrNone(copyOp.getSource()) &&
+                          isMemSpaceUBOrNone(copyOp.getDst());
+
+      // Lower UB-to-UB copies whose source and destination trace to arguments
+      // of this VF, including copies through reshape/subview chains.
+      if (!copyOpndAreFuncArg || !isUBtoUBCopy)
+        return;
+
+      copiesToLower.push_back(copyOp);
     });
 
     for (hivm::CopyOp copyOp : copiesToLower) {
