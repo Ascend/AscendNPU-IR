@@ -120,3 +120,26 @@ AscendNPU-IR-specific behavior isolated from community LLVM/MLIR behavior.
   ninja -C build check-mlir
   ninja -C build check-bishengir
   ```
+
+## CODEOWNERS Local Check Tool
+
+`tools/codeowners-check/` is a local CODEOWNERS impact checker. Use it when a
+change touches `CODEOWNERS` or reassigns file owners, or when confirming a path's
+owners without a GitCode round-trip.
+
+Agent behavior: after a change that touches file ownership, remind the developer
+to verify locally before wrapping up — point at the DEVELOPER guide for the exact
+command, do not inline it here.
+
+- Edited `CODEOWNERS` → prompt the developer to confirm the owner-reassignment
+  diff (see DEVELOPER, workflow 1).
+- Added, moved, or deleted files → prompt the developer to confirm the affected
+  paths land on the intended owners (see DEVELOPER, workflow 2).
+
+- [tools/codeowners-check/TLDR.md](tools/codeowners-check/TLDR.md) (中文) /
+  [TLDR.en.md](tools/codeowners-check/TLDR.en.md) — command reference, common
+  scenarios, edge behavior.
+- [tools/codeowners-check/DEVELOPER.md](tools/codeowners-check/DEVELOPER.md) (中文) /
+  [DEVELOPER.en.md](tools/codeowners-check/DEVELOPER.en.md) — three developer
+  workflows (diff confirm, owner self-check, local-vs-GitCode mismatch triage)
+  and how the tool encodes GitCode matching semantics.

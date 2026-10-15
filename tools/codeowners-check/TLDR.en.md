@@ -1,6 +1,6 @@
 # codeowners-check.py — User Manual
 
-> 中文手册见 [TLDR.md](TLDR.md)
+> 中文手册见 [TLDR.md](TLDR.md) · Developer workflows / iteration: [DEVELOPER.en.md](DEVELOPER.en.md)
 
 Prerequisite: `pip install 'pathspec>=1.0'`. **Local git only** — no remote, no `git fetch` by default
 (only when you pass a remote ref explicitly).

@@ -1,6 +1,6 @@
 # codeowners-check.py — 用户手册
 
-> English: [TLDR.en.md](TLDR.en.md)
+> English: [TLDR.en.md](TLDR.en.md) · 开发者工作流 / 迭代：[DEVELOPER.md](DEVELOPER.md)
 
 前置：`pip install 'pathspec>=1.0'`。**全程本地 git**，默认不碰远端、无需 `git fetch`（只有显式传远端 ref 才碰）。
 
