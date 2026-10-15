@@ -14,7 +14,8 @@
 * limitations under the License.
 */
 
-#if defined(__DAV_C310__)
+#include "ArchDefs.h"
+#if BISHENG_TPL_REGBASE
 
 #include "__clang_cce_simt_intrinsics.h"
 #include "RegBase/VecUtils.h"

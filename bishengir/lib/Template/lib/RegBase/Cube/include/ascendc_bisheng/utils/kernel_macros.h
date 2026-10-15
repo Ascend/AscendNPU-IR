@@ -110,10 +110,11 @@
 #if defined(__DAV_C220_VEC__) || defined(__DAV_C310_VEC__) || defined(__DAV_310R6_VEC__)
 #define SPLIT_CORE_VEC
 #endif
-#if (defined(__NPU_ARCH__) &&                                               \
-     ((__NPU_ARCH__ == 1001) || (__NPU_ARCH__ == 2002) ||                   \
-      (__NPU_ARCH__ == 2201) || (__NPU_ARCH__ == 3002) ||                   \
-      (__NPU_ARCH__ == 3510) || (__NPU_ARCH__ == 5102)))
+#if (defined(__NPU_ARCH__) &&                                                  \
+     ((__NPU_ARCH__ == 1001) || (__NPU_ARCH__ == 2002) ||                      \
+      (__NPU_ARCH__ == 2201) || (__NPU_ARCH__ == 3002) ||                      \
+      (__NPU_ARCH__ == 3510) || (__NPU_ARCH__ == 5102) ||                      \
+      (__NPU_ARCH__ == 9201)))
 #ifndef ASCENDC_DUMP
 #define ASCENDC_DUMP 1
 #endif
@@ -124,9 +125,11 @@
 #endif
 
 namespace AscendCBisheng {
-#if defined(__NPU_ARCH__) && ((__NPU_ARCH__ == 2002) || (__NPU_ARCH__ == 2201) ||           \
-    (__NPU_ARCH__ == 3002) || (__NPU_ARCH__ == 3102) || (__NPU_ARCH__ == 3510) ||           \
-    (__NPU_ARCH__ == 5102)) // Available for V200 and V210
+#if defined(__NPU_ARCH__) &&                                                   \
+    ((__NPU_ARCH__ == 2002) || (__NPU_ARCH__ == 2201) ||                       \
+     (__NPU_ARCH__ == 3002) || (__NPU_ARCH__ == 3102) ||                       \
+     (__NPU_ARCH__ == 3510) || (__NPU_ARCH__ == 5102) ||                       \
+     (__NPU_ARCH__ == 9201)) // Available for V200 and V210
 constexpr int32_t QUE_MAX_EVENT = 8;
 #else
 constexpr int32_t QUE_MAX_EVENT = 4;

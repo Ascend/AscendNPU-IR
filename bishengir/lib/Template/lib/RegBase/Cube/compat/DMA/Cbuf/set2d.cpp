@@ -15,6 +15,7 @@
  */
 
 #include "DMA/SET2D.h"
+#include "ArchDefs.h"
 #include "Vector/VecUtils.h"
 
 template <typename T>
@@ -44,7 +45,7 @@ set_cbuf_to_2d_core(T scalar, memref_t<__cbuf__ T, 1> *l1) {
   set_cbuf_to_2d_intrin_core(set2d_intrin_args<T>{l1_ptr, config, scalar});
 }
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 template <typename T>
 __aicore__ __attribute__((always_inline)) void
 set_cbuf_to_2d_core_fp8(int8_t scalar, memref_t<__cbuf__ T, 1> *l1) {
@@ -67,7 +68,7 @@ set_cbuf_to_2d_core_fp8(int8_t scalar, memref_t<__cbuf__ T, 1> *l1) {
 #endif
 
 extern "C" {
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 REGISTE_SET2D_FP8(cbuf, 1, float8_e4m3_t);
 REGISTE_SET2D_FP8(cbuf, 1, float8_e5m2_t);
 #endif

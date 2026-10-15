@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include "ArchDefs.h"
 #include "RegBase/DMAUtils.h"
 
 __aiv__ __attribute__((always_inline)) void
@@ -64,7 +65,7 @@ align_pad_for_load_b64_1d(memref_t<__ubuf__ T, 1> *dst, int64_t pad_value,
                           pad_value, /*repeat=*/1, padding_shift_count);
 }
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 /// Core func of loading gm -> ub, 1D
 /// UB starting address must be 32B aligned; otherwise, it degrades to looped
 /// scalar transfer: `load_gm_to_ubuf_1d_by_scalar` As long as the UB starting
@@ -231,7 +232,7 @@ check_inputs_of_store_ubuf_to_gm_1d_core(memref_t<__ubuf__ T, 1> *src,
 #endif
 }
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 /// Core func of storing ub -> gm, 1D
 /// UB starting address must be 32B aligned; otherwise, it degrades to looped
 /// scalar transfer: `store_ubuf_to_gm_1d_by_scalar` As long as the UB starting
@@ -415,7 +416,7 @@ copy_ubuf_to_ubuf_1d_core(memref_t<__ubuf__ bool, 1> *src,
   copy_ubuf_to_ubuf_1d_core<int8_t>(&src_as_int8, &dst_as_int8);
 }
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 template <typename T>
 __aiv__ __attribute__((always_inline)) void
 check_inputs_of_copy_ubuf_to_cbuf_1d_core(memref_t<__ubuf__ T, 1> *src,
@@ -460,7 +461,7 @@ REGISTE_DMA_LOAD(1, uint64_t);
 REGISTE_DMA_LOAD(1, half);
 REGISTE_DMA_LOAD(1, float);
 REGISTE_DMA_LOAD(1, bfloat16_t);
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 REGISTE_DMA_LOAD_FP8(1, float8_e4m3_t);
 REGISTE_DMA_LOAD_FP8(1, float8_e5m2_t);
 #endif
@@ -478,7 +479,7 @@ REGISTE_DMA_STORE(1, uint64_t);
 REGISTE_DMA_STORE(1, half);
 REGISTE_DMA_STORE(1, float);
 REGISTE_DMA_STORE(1, bfloat16_t);
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 REGISTE_DMA_STORE(1, float8_e4m3_t);
 REGISTE_DMA_STORE(1, float8_e5m2_t);
 #endif
@@ -497,7 +498,7 @@ REGISTE_DMA_UB_COPY(ubuf, ubuf, 1, uint64_t)
 REGISTE_DMA_UB_COPY(ubuf, ubuf, 1, half)
 REGISTE_DMA_UB_COPY(ubuf, ubuf, 1, float)
 REGISTE_DMA_UB_COPY(ubuf, ubuf, 1, bfloat16_t)
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 REGISTE_DMA_UB_COPY(ubuf, ubuf, 1, float8_e4m3_t);
 REGISTE_DMA_UB_COPY(ubuf, ubuf, 1, float8_e5m2_t);
 #endif
@@ -517,7 +518,7 @@ REGISTE_COPY_UB_TO_UB_1D_FUNC(half);
 REGISTE_COPY_UB_TO_UB_1D_FUNC(float);
 REGISTE_COPY_UB_TO_UB_1D_FUNC(bfloat16_t);
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 //===-------------------------------------------------------------------===//
 // ub to cbuf, 1 dim
 //===-------------------------------------------------------------------===//

@@ -17,8 +17,9 @@
 #ifndef HIVM_MLIR_TEMPLATE_SIMT_UTILS_H
 #define HIVM_MLIR_TEMPLATE_SIMT_UTILS_H
 
+#include "ArchDefs.h"
 #include "Utils.h"
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 
 static constexpr float PI_0 = 3.140625;
 static constexpr float PI_1 = 0.0009670257568359375;

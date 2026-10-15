@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include "ArchDefs.h"
 #include "RegBase/DMAUtils.h"
 
 template <typename T>
@@ -74,7 +75,7 @@ align_pad_for_load_b64_2d(memref_t<__ubuf__ T, 2> *dst, int64_t pad_value,
   }
 }
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 /// Core func of loading gm -> ub, 2D
 /// UB starting address must be 32B aligned; otherwise, it degrades to looped
 /// scalar transfer:
@@ -313,7 +314,7 @@ check_inputs_of_store_ubuf_to_gm_2d_core(memref_t<__ubuf__ T, 2> *src,
 #endif
 }
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 /// Core func of loading ub -> gm, 2D
 /// UB starting address must be 32B aligned; otherwise, it degrades to looped
 /// scalar transfer.
@@ -716,7 +717,7 @@ copy_ubuf_to_ubuf_2d_core(memref_t<__ubuf__ bool, 2> *src,
   copy_ubuf_to_ubuf_2d_core<int8_t>(&src_as_int8, &dst_as_int8);
 }
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 template <typename T>
 __aiv__ __attribute__((always_inline)) void
 check_inputs_of_copy_ubuf_to_cbuf_2d_core(memref_t<__ubuf__ T, 2> *src,
@@ -772,7 +773,7 @@ REGISTE_DMA_LOAD(2, uint64_t);
 REGISTE_DMA_LOAD(2, half);
 REGISTE_DMA_LOAD(2, float);
 REGISTE_DMA_LOAD(2, bfloat16_t);
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 REGISTE_DMA_LOAD_FP8(2, float8_e4m3_t);
 REGISTE_DMA_LOAD_FP8(2, float8_e5m2_t);
 #endif
@@ -790,7 +791,7 @@ REGISTE_DMA_STORE(2, uint64_t);
 REGISTE_DMA_STORE(2, half);
 REGISTE_DMA_STORE(2, float);
 REGISTE_DMA_STORE(2, bfloat16_t);
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 REGISTE_DMA_STORE(2, float8_e4m3_t);
 REGISTE_DMA_STORE(2, float8_e5m2_t);
 #endif
@@ -809,12 +810,12 @@ REGISTE_DMA_UB_COPY(ubuf, ubuf, 2, uint64_t)
 REGISTE_DMA_UB_COPY(ubuf, ubuf, 2, half)
 REGISTE_DMA_UB_COPY(ubuf, ubuf, 2, float)
 REGISTE_DMA_UB_COPY(ubuf, ubuf, 2, bfloat16_t)
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 REGISTE_DMA_UB_COPY(ubuf, ubuf, 2, float8_e4m3_t);
 REGISTE_DMA_UB_COPY(ubuf, ubuf, 2, float8_e5m2_t);
 #endif
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 //===-------------------------------------------------------------------===//
 // ub to cbuf, 2 dim
 //===-------------------------------------------------------------------===//

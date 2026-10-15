@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include "ArchDefs.h"
 #include "RegBase/DMAUtils.h"
 
 template <typename T>
@@ -36,7 +37,7 @@ check_inputs_of_load_gm_to_ubuf_3d_core(memref_t<__gm__ T, 3> *src,
 #endif
 }
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 template <typename T>
 __aiv__ __attribute__((always_inline)) bool
 hasUnalignedUbufStrideFor3dDma(int64_t size1, int64_t size2, int64_t stride0_ub,
@@ -367,7 +368,7 @@ check_inputs_of_store_ubuf_to_gm_3d_core(memref_t<__ubuf__ T, 3> *src,
 #endif
 }
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 /// Core func of loading UB -> GM, 3D
 /// UB starting address must be 32B aligned; otherwise, it degrades to looped
 /// scalar transfer.
@@ -801,7 +802,7 @@ copy_ubuf_to_ubuf_3d_core(memref_t<__ubuf__ bool, 3> *src,
   copy_ubuf_to_ubuf_3d_core<int8_t>(&src_as_int8, &dst_as_int8);
 }
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 template <typename T>
 __aiv__ __attribute__((always_inline)) void
 check_inputs_of_copy_ubuf_to_cbuf_3d_core(memref_t<__ubuf__ T, 3> *src,
@@ -857,7 +858,7 @@ REGISTE_DMA_LOAD(3, uint64_t);
 REGISTE_DMA_LOAD(3, half);
 REGISTE_DMA_LOAD(3, float);
 REGISTE_DMA_LOAD(3, bfloat16_t);
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 REGISTE_DMA_LOAD_FP8(3, float8_e4m3_t);
 REGISTE_DMA_LOAD_FP8(3, float8_e5m2_t);
 #endif
@@ -875,7 +876,7 @@ REGISTE_DMA_STORE(3, uint64_t);
 REGISTE_DMA_STORE(3, half);
 REGISTE_DMA_STORE(3, float);
 REGISTE_DMA_STORE(3, bfloat16_t);
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 REGISTE_DMA_STORE(3, float8_e4m3_t);
 REGISTE_DMA_STORE(3, float8_e5m2_t);
 #endif
@@ -894,12 +895,12 @@ REGISTE_DMA_UB_COPY(ubuf, ubuf, 3, uint64_t)
 REGISTE_DMA_UB_COPY(ubuf, ubuf, 3, half)
 REGISTE_DMA_UB_COPY(ubuf, ubuf, 3, float)
 REGISTE_DMA_UB_COPY(ubuf, ubuf, 3, bfloat16_t)
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 REGISTE_DMA_UB_COPY(ubuf, ubuf, 3, float8_e4m3_t);
 REGISTE_DMA_UB_COPY(ubuf, ubuf, 3, float8_e5m2_t);
 #endif
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 //===-------------------------------------------------------------------===//
 // ub to cbuf, 2 dim
 //===-------------------------------------------------------------------===//

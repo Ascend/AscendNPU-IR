@@ -1,4 +1,5 @@
 #include "compat/Fixpipe/Fixpipe.cpp"
+#include "ArchDefs.h"
 
 // The included file closes its own extern "C" block, so everything registered
 // below needs its own. These are _mlir_ciface_* entry points the conversion
@@ -32,7 +33,7 @@ REGISTE_FIXPIPE(cc, ubuf, 5, 3, float, float, nz2nd, TransformMode::NZ_2_ND);
 REGISTE_FIXPIPE(cc, ubuf, 5, 3, int32_t, int32_t, nz2nd,
                 TransformMode::NZ_2_ND);
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 REGISTE_FIXPIPE_DUAL(cc, ubuf, 4, 2, float, half, nz2nd, TransformMode::NZ_2_ND);
 REGISTE_FIXPIPE_DUAL(cc, ubuf, 4, 2, float, bfloat16_t, nz2nd, TransformMode::NZ_2_ND);
 REGISTE_FIXPIPE_DUAL(cc, ubuf, 4, 2, float, int8_t, nz2nd, TransformMode::NZ_2_ND);
@@ -129,6 +130,6 @@ REGISTE_FIXPIPE(cc, ubuf, 4, 2, int32_t, int32_t, nz2dn, TransformMode::NZ_2_DN)
 
 REGISTE_FIXPIPE(cc, cbuf, 4, 2, float, half, nz2dn, TransformMode::NZ_2_DN);
 REGISTE_FIXPIPE(cc, cbuf, 4, 2, float, bfloat16_t, nz2dn, TransformMode::NZ_2_DN);
-#endif // defined(__DAV_C310__)
+#endif // BISHENG_TPL_REGBASE
 
 } // extern "C"

@@ -248,7 +248,8 @@ __aicore__ constexpr TQueConfig GetTQueConfig(const TQueConfig *conf) {
 }
 
 #if defined(__NPU_ARCH__) &&                                                   \
-        ((__NPU_ARCH__ == 3510) || (__NPU_ARCH__ == 5102)) ||                  \
+        ((__NPU_ARCH__ == 3510) || (__NPU_ARCH__ == 5102) ||                   \
+         (__NPU_ARCH__ == 9201)) ||                                            \
     defined(__ASC_NPU_HOST__)
 __aicore__ constexpr bool UseAltBufId(TPosition queDstPos,
                                       TPosition dstConsumerPos,
@@ -290,7 +291,8 @@ __aicore__ constexpr bool SupportType() {
 }
 
 #if defined(__NPU_ARCH__) &&                                                   \
-        ((__NPU_ARCH__ == 3510) || (__NPU_ARCH__ == 5102)) ||                  \
+        ((__NPU_ARCH__ == 3510) || (__NPU_ARCH__ == 5102) ||                   \
+         (__NPU_ARCH__ == 9201)) ||                                            \
     defined(__ASC_NPU_HOST__)
 template <typename T> struct GetComplexElementType {
   using Type = T;

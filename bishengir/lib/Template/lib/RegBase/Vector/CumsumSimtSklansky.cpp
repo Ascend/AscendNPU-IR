@@ -26,12 +26,13 @@
 // is the scratch; each block gets `scratch + base/32` for non-overlapping
 // per-warp slices.
 
+#include "ArchDefs.h"
 #include "RegBase/Cumulative/Cumulative.h"
 #include "Utils.h"
 
 #include <type_traits>
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 
 constexpr int CUMSUM_WARP = 32;
 
@@ -769,4 +770,4 @@ _mlir_ciface_cumsum_1d_int32_t_to_int64_t_dim0(
 }
 }
 
-#endif // __DAV_C310__
+#endif // BISHENG_TPL_REGBASE

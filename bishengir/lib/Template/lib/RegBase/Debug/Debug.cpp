@@ -1,3 +1,4 @@
-#if defined(__DAV_M300__) || defined(__DAV_C310__)
+#include "ArchDefs.h"
+#if BISHENG_TPL_REGBASE_OR_M300
 #include "../../Debug/Debug.cpp"
 #endif
