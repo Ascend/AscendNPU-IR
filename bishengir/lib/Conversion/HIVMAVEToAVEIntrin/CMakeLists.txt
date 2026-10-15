@@ -12,7 +12,11 @@ add_bishengir_conversion_library(MLIRHIVMAVEToAVEIntrin
 
   LINK_LIBS PUBLIC
   BiShengIRDialectUtils
+  MLIRAffineDialect
+  MLIRAnalysis
   MLIRFuncDialect
+  MLIRMemRefDialect
+  MLIRValueBoundsOpInterface
   MLIRAVEDialect
   MLIRHIVMRegbaseIntrinsDialect
   MLIRHIVMRegbaseIntrinsUtils

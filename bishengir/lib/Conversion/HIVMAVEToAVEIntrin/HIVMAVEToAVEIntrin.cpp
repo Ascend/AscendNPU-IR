@@ -15,24 +15,34 @@
 #include "bishengir/Dialect/HIVMRegbaseIntrins/IR/HIVMRegbaseIntrins.h"
 #include "bishengir/Dialect/HIVMRegbaseIntrins/Utils/RegbaseUtils.h"
 #include "bishengir/Dialect/Utils/Util.h"
+#include "mlir/Analysis/AliasAnalysis.h"
 #include "mlir/Conversion/ArithToLLVM/ArithToLLVM.h"
 #include "mlir/Conversion/LLVMCommon/ConversionTarget.h"
 #include "mlir/Conversion/LLVMCommon/Pattern.h"
 #include "mlir/Conversion/LLVMCommon/TypeConverter.h"
+#include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/PatternMatch.h"
+#include "mlir/IR/SymbolTable.h"
+#include "mlir/Interfaces/ValueBoundsOpInterface.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/FloatingPointMode.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/LogicalResult.h"
+#include "llvm/Support/MathExtras.h"
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <type_traits>
 
@@ -973,11 +983,7 @@ struct HIVMLoadOpLowering : public ConvertOpToLLVMPattern<VFLoadOp> {
   }
 };
 
-// TODO:Limit the workaround to the ordinary aligned PB16 stores covered by the
-// indirect-mask regression. This uses the existing aligned-UB padding contract;
-// absence of UnalignedAttr alone is not a general buffer-capacity proof.
-static bool shouldUseAlignedPB16StoreWorkaround(VFMaskedStoreOp store,
-                                                int pbMode) {
+static bool shouldUsePackedPB16Store(VFMaskedStoreOp store, int pbMode) {
   return pbMode == 16 && store.getPattern() == StoreDist::NORM_B8 &&
          !store->hasAttr(UnalignedAttr::name);
 }
@@ -1137,13 +1143,12 @@ struct HIVMStoreOpLowering : public ConvertOpToLLVMPattern<VFMaskedStoreOp> {
     } else if (dElemType.isInteger(1)) {
       // Select the store sequence for the predicate layout.
       int pbMode = getBitWidthFromAttr(store);
-      if (archIs910_95 && shouldUseAlignedPB16StoreWorkaround(store, pbMode)) {
-        // Compact ordinary aligned PB16 predicates before storing as PB8.
-        Value part = rewriter.create<arith::ConstantOp>(
-            loc, rewriter.getI32IntegerAttr(0));
-        data = buildPpackOp(loc, part, data, rewriter)->getResult(0);
+      if (archIs910_95 && shouldUsePackedPB16Store(store, pbMode)) {
+        // CCE MaskDist::DIST_PACK (1) stores the 128 even predicate bits as
+        // 16 bytes. PPACK followed by DIST_NORM would also overwrite the next
+        // 16 bytes, which need not be padding owned by this store.
         dist = rewriter.create<LLVM::ConstantOp>(loc, rewriter.getI32Type(),
-                                                 rewriter.getI32IntegerAttr(0));
+                                                 rewriter.getI32IntegerAttr(1));
         auto result = rewriter.create<PStoreB8InstOp>(loc, data, dataPtr,
                                                       offset, dist, mode);
         rewriter.replaceOp(store, result);
@@ -3368,6 +3373,710 @@ void populateHIVMAVEToAVEIntrinPatterns(LLVMTypeConverter &converter,
 }
 
 namespace {
+// Describe the data actually written, independently of its producer. A sparse
+// value can occupy the whole register while storing only a quarter of its bits.
+// Ordinary vectors have 2048 physical bits; predicates have only 256.
+struct StorePayload {
+  memref::ReinterpretCastOp view;
+  int64_t registerBits;
+  int64_t elementBits;
+  int64_t elements;
+  int64_t laneStride;
+
+  bool isPredicate() const { return elementBits == 1; }
+  int64_t sizeBits() const { return elements * elementBits; }
+  bool isUnderfilled() const { return sizeBits() < registerBits; }
+};
+
+static std::optional<StorePayload> analyzeStorePayload(VFMaskedStoreOp store) {
+  // The store verifier does not tie indices, data, mask and distribution
+  // together. Only analyze the normalized addressing and layouts below.
+  auto view = store.getBase().getDefiningOp<memref::ReinterpretCastOp>();
+  if (!view || view.getType().getRank() != 1 ||
+      store.getIndices().size() != 1 ||
+      getConstantIntValue(store.getIndices().front()) != 0 ||
+      mlir::getConstantIntValue(view.getMixedStrides().front()) != 1)
+    return std::nullopt;
+  auto space =
+      dyn_cast_or_null<hivm::AddressSpaceAttr>(view.getType().getMemorySpace());
+  if (!space || space.getAddressSpace() != hivm::AddressSpace::UB)
+    return std::nullopt;
+  VectorType dataType = store.getVectorType();
+  if (dataType.getRank() != 1 || dataType.isScalable())
+    return std::nullopt;
+  int64_t bits = view.getType().getElementTypeBitWidth();
+  int64_t stride = 1;
+  int64_t registerBits = bits == 1 ? util::PREDICATE_BITS : util::VL_BITS;
+  if (bits == 1) {
+    int pb = getBitWidthFromAttr(store);
+    if (store.getPattern() != StoreDist::NORM_B8 ||
+        (pb != 8 && pb != 16 && pb != 32) ||
+        !dataType.getElementType().isInteger(1))
+      return std::nullopt;
+    stride = pb / 8;
+  } else {
+    switch (store.getPattern()) {
+    case StoreDist::PK_B16:
+      if (bits != 8 || dataType.getElementTypeBitWidth() != 16)
+        return std::nullopt;
+      stride = 2;
+      break;
+    case StoreDist::PK_B32:
+      if (bits != 16 || dataType.getElementTypeBitWidth() != 32)
+        return std::nullopt;
+      stride = 2;
+      break;
+    case StoreDist::PK4_B32:
+      if (bits != 8 || dataType.getElementTypeBitWidth() != 32)
+        return std::nullopt;
+      stride = 4;
+      break;
+    default:
+      if (!((bits == 8 && store.getPattern() == StoreDist::NORM_B8) ||
+            (bits == 16 && store.getPattern() == StoreDist::NORM_B16) ||
+            (bits == 32 && store.getPattern() == StoreDist::NORM_B32)) ||
+          dataType.getElementType() != view.getType().getElementType())
+        return std::nullopt;
+      break;
+    }
+    // Unaligned vector stores consume a dense prefix. Normalize their packing
+    // distribution before considering them here.
+    if (stride != 1 && store->hasAttr(UnalignedAttr::name))
+      return std::nullopt;
+  }
+  int64_t capacity = registerBits / (bits * stride);
+  // AveMaskType also admits the custom AVE mask type; only fixed vectors have
+  // the lane counts used by this analysis.
+  auto maskType = dyn_cast<VectorType>(store.getMask().getType());
+  if (!maskType || maskType.getRank() != 1 || maskType.isScalable())
+    return std::nullopt;
+  Operation *maskOp = store.getMask().getDefiningOp();
+  if (!maskOp)
+    return std::nullopt;
+  int64_t maskWidth = getBitWidthFromAttr(maskOp);
+  if (maskWidth == -1)
+    maskWidth = util::VL_BITS / maskType.getNumElements();
+  int64_t expectedWidth = bits == 1 ? stride * 8 : bits * stride;
+  if (maskWidth != expectedWidth)
+    return std::nullopt;
+  int64_t count;
+  if (auto pge = dyn_cast<VFPgeOp>(maskOp)) {
+    if (pge.getPattern() == PgePattern::ALL) {
+      // Both aligned and unaligned lowering must agree on the full footprint.
+      if (maskType.getNumElements() != capacity)
+        return std::nullopt;
+      count = capacity;
+    } else {
+      // Predicate stores do not have a hardware write mask. Do not turn a
+      // partial logical mask into a full packed write.
+      if (bits == 1 || stride != 1)
+        return std::nullopt;
+      count = pge.getPattern() == PgePattern::H ? capacity / 2
+                                                : getNumfromPgePattern(pge);
+    }
+  } else if (auto plt = dyn_cast<VFPltOp>(maskOp)) {
+    auto active = getConstantIntValue(plt.getTrueShape());
+    if (bits == 1 || stride != 1 || !active)
+      return std::nullopt;
+    count = *active;
+  } else {
+    return std::nullopt;
+  }
+  // Neither the logical vector type nor the view alone proves the hardware
+  // footprint. Keep the payload within both and reject partial sparse layouts.
+  if (count <= 0 || count > capacity || dataType.getNumElements() < count ||
+      dataType.getNumElements() > capacity ||
+      (stride != 1 && dataType.getNumElements() != capacity) ||
+      ShapedType::isDynamic(view.getType().getDimSize(0)) ||
+      view.getType().getDimSize(0) < count)
+    return std::nullopt;
+  return StorePayload{view, registerBits, bits, count, stride};
+}
+
+// reinterpret_cast offsets are relative to the underlying aligned pointer,
+// not the source view's offset. Only peel operations preserving that pointer.
+static Value getStoreRoot(Value value) {
+  while (true) {
+    if (auto metadata = value.getDefiningOp<memref::ExtractStridedMetadataOp>())
+      value = metadata.getSource();
+    else if (auto cast = value.getDefiningOp<memref::CastOp>()) {
+      // This project-specific cast folds the source offset into the pointer.
+      // It cannot be peeled like an ordinary descriptor-preserving cast.
+      if (cast->hasAttr(mlir::utils::KFoldOffsetMarker))
+        return value;
+      value = cast.getSource();
+    } else if (auto view = value.getDefiningOp<memref::ReinterpretCastOp>())
+      value = view.getSource();
+    else
+      return value;
+  }
+}
+
+static bool hasAlignedStoreBase(Value root, VFMaskedStoreOp store,
+                                int64_t alignment) {
+  if (auto alloc = root.getDefiningOp<memref::AllocOp>()) {
+    auto baseAlignment = alloc.getAlignment();
+    // The alloc verifier only requires nonnegative alignment, not a power of
+    // two, so a larger alignment need not be divisible by the required one.
+    return baseAlignment &&
+           *baseAlignment >= static_cast<uint64_t>(alignment) &&
+           *baseAlignment % alignment == 0;
+  }
+  // Reuse the AVE ABI alignment contract for UB function parameters and
+  // globals. Require a zero layout offset; the new view supplies its own
+  // absolute offset.
+  SmallVector<int64_t> strides;
+  int64_t offset;
+  if (failed(getStridesAndOffset(cast<MemRefType>(root.getType()), strides,
+                                 offset)) ||
+      offset != 0)
+    return false;
+  return isLoadStoreIndexAligned(root, store.getIndices().take_front(0));
+}
+
+static bool areAdjacentAlignedStores(memref::ReinterpretCastOp first,
+                                     memref::ReinterpretCastOp second,
+                                     int64_t elements,
+                                     int64_t offsetAlignment) {
+  SmallVector<Value> operands;
+  SmallVector<AffineExpr> offsets;
+  auto *ctx = first.getContext();
+  for (auto view : {first, second}) {
+    OpFoldResult offset = view.getMixedOffsets().front();
+    if (auto value = dyn_cast<Value>(offset)) {
+      offsets.push_back(getAffineDimExpr(operands.size(), ctx));
+      operands.push_back(value);
+    } else {
+      offsets.push_back(getAffineConstantExpr(
+          cast<IntegerAttr>(cast<Attribute>(offset)).getInt(), ctx));
+    }
+  }
+  auto map = AffineMap::get(operands.size(), 0, offsets, ctx);
+  affine::fullyComposeAffineMapAndOperands(&map, &operands);
+  affine::canonicalizeMapAndOperands(&map, &operands);
+  map = simplifyAffineMap(map);
+  auto delta = dyn_cast<AffineConstantExpr>(
+      simplifyAffineExpr(map.getResult(1) - map.getResult(0), map.getNumDims(),
+                         map.getNumSymbols()));
+  return delta && delta.getValue() == elements &&
+         map.getResult(0).getLargestKnownDivisor() % offsetAlignment == 0;
+}
+
+// A call-site proof is about the actual accesses, not about whole arguments:
+// in-place i8-to-i1 compression intentionally aliases the input and output UB.
+struct StoreAccess {
+  Value root;
+  OpFoldResult offset;
+  int64_t elementBits;
+  int64_t sizeBits;
+};
+
+static std::optional<StoreAccess> getStoreAccess(Operation *op) {
+  Value base;
+  ValueRange indices;
+  VectorType vectorType;
+  if (auto load = dyn_cast<VFLoadOp>(op)) {
+    if ((load.getPattern() != LoadDist::NORM &&
+         load.getPattern() != LoadDist::UNPK4_B8) ||
+        load.getRes1())
+      return std::nullopt;
+    base = load.getBase();
+    indices = load.getIndices();
+    vectorType = load.getVectorType();
+  } else if (auto store = dyn_cast<VFMaskedStoreOp>(op)) {
+    if (auto payload = analyzeStorePayload(store))
+      return StoreAccess{getStoreRoot(payload->view.getSource()),
+                         payload->view.getMixedOffsets().front(),
+                         payload->elementBits, payload->sizeBits()};
+    if (store.getPattern() != StoreDist::NORM_B8 &&
+        store.getPattern() != StoreDist::NORM_B16 &&
+        store.getPattern() != StoreDist::NORM_B32)
+      return std::nullopt;
+    base = store.getBase();
+    indices = store.getIndices();
+    vectorType = store.getVectorType();
+  } else {
+    return std::nullopt;
+  }
+  auto view = base.getDefiningOp<memref::ReinterpretCastOp>();
+  if (!view || view.getType().getRank() != 1 || indices.size() != 1 ||
+      getConstantIntValue(indices.front()) != 0 ||
+      getConstantIntValue(view.getMixedStrides().front()) != 1 ||
+      vectorType.isScalable() ||
+      vectorType.getElementType() != view.getType().getElementType())
+    return std::nullopt;
+  auto space =
+      dyn_cast_or_null<hivm::AddressSpaceAttr>(view.getType().getMemorySpace());
+  if (!space || space.getAddressSpace() != hivm::AddressSpace::UB)
+    return std::nullopt;
+  // Require the full physical register size for normal vector accesses;
+  // smaller logical vectors can still lower to a full-register memory access.
+  int64_t bits = vectorType.getElementTypeBitWidth();
+  int64_t count = vectorType.getNumElements();
+  auto dist = op->getAttrOfType<FunctionDistTypeAttr>("functionType");
+  if (!dist)
+    return std::nullopt;
+  if (auto load = dyn_cast<VFLoadOp>(op)) {
+    if (load.getPattern() == LoadDist::UNPK4_B8) {
+      if (bits != 8 || count != 64 || dist.getValue() != FunctionDistType::PK4)
+        return std::nullopt;
+    } else if ((bits != 16 && bits != 32) || count != 2048 / bits ||
+               dist.getValue() != FunctionDistType::NORM) {
+      return std::nullopt;
+    }
+  } else {
+    auto store = cast<VFMaskedStoreOp>(op);
+    if (bits == 1) {
+      if (count != 64 || dist.getValue() != FunctionDistType::PB32 ||
+          !store->hasAttr(UnalignedAttr::name))
+        return std::nullopt;
+    } else if (count != 2048 / bits ||
+               dist.getValue() != FunctionDistType::NORM ||
+               !((bits == 16 && store.getPattern() == StoreDist::NORM_B16) ||
+                 (bits == 32 && store.getPattern() == StoreDist::NORM_B32))) {
+      return std::nullopt;
+    }
+  }
+  // The supported layouts above bound bits * count by util::VL_BITS.
+  return StoreAccess{getStoreRoot(view.getSource()),
+                     view.getMixedOffsets().front(), bits, bits * count};
+}
+
+// These operations preserve the aligned pointer. In particular, a
+// reinterpret_cast replaces the descriptor offset; its source offset must not
+// be added again. memref.view and unknown pointer arithmetic are not peeled.
+static bool collectUBAddresses(Value value, SmallVectorImpl<int64_t> &addresses,
+                               unsigned depth = 0) {
+  // These are compile-time analysis budgets, not hardware limits. Bound both
+  // view/select traversal and the address combinations checked at call sites.
+  if (depth > 16 || addresses.size() >= 16)
+    return false;
+  Value root = getStoreRoot(value);
+  if (root != value)
+    return collectUBAddresses(root, addresses, depth + 1);
+  if (auto subview = value.getDefiningOp<memref::SubViewOp>())
+    return collectUBAddresses(subview.getSource(), addresses, depth + 1);
+  if (auto expand = value.getDefiningOp<memref::ExpandShapeOp>())
+    return collectUBAddresses(expand.getSrc(), addresses, depth + 1);
+  if (auto collapse = value.getDefiningOp<memref::CollapseShapeOp>())
+    return collectUBAddresses(collapse.getSrc(), addresses, depth + 1);
+  if (auto select = value.getDefiningOp<arith::SelectOp>())
+    return collectUBAddresses(select.getTrueValue(), addresses, depth + 1) &&
+           collectUBAddresses(select.getFalseValue(), addresses, depth + 1);
+  auto pointer = value.getDefiningOp<hivm::PointerCastOp>();
+  // PointerCastOp permits multiple addresses; this proof models one UB base.
+  if (!pointer || pointer.getAddrs().size() != 1)
+    return false;
+  auto space = dyn_cast_or_null<hivm::AddressSpaceAttr>(
+      cast<MemRefType>(value.getType()).getMemorySpace());
+  auto address = getConstantIntValue(pointer.getAddrs().front());
+  if (!space || space.getAddressSpace() != hivm::AddressSpace::UB || !address ||
+      *address < 0 || *address > std::numeric_limits<uint32_t>::max())
+    return false;
+  addresses.push_back(*address);
+  return true;
+}
+
+static bool getCallSiteUBAddresses(Value root, func::CallOp call,
+                                   SmallVectorImpl<int64_t> &addresses) {
+  auto arg = dyn_cast<BlockArgument>(root);
+  if (!arg || !isa<func::FuncOp>(arg.getOwner()->getParentOp()))
+    return false;
+  // Calls are collected for this VF; func.call verification guarantees the
+  // operand count and types match its parameters.
+  return collectUBAddresses(call.getOperand(arg.getArgNumber()), addresses);
+}
+
+static bool hasAlignedCallSiteBase(Value root, ArrayRef<func::CallOp> calls,
+                                   int64_t alignment) {
+  return llvm::all_of(calls, [&](func::CallOp call) {
+    SmallVector<int64_t> addresses;
+    // Every call and every possible selected base must satisfy alignment.
+    return getCallSiteUBAddresses(root, call, addresses) &&
+           llvm::all_of(addresses,
+                        [&](int64_t addr) { return addr % alignment == 0; });
+  });
+}
+
+static bool areDisjointAtCallSites(VFMaskedStoreOp first, Operation *other,
+                                   ArrayRef<func::CallOp> calls) {
+  auto a = getStoreAccess(first);
+  auto b = getStoreAccess(other);
+  if (!a || !b)
+    return false;
+  SmallVector<Value> operands;
+  auto *ctx = first.getContext();
+  auto getOffset = [&](const StoreAccess &access) {
+    // Bound element offsets before scaling, so conversion to bits cannot
+    // overflow an affine constant. Larger offsets cannot address this UB.
+    ValueBoundsConstraintSet::Variable offset(access.offset);
+    auto lo = ValueBoundsConstraintSet::computeConstantBound(
+        presburger::BoundType::LB, offset);
+    auto hi = ValueBoundsConstraintSet::computeConstantBound(
+        presburger::BoundType::UB, offset, nullptr, /*closedUB=*/true);
+    constexpr int64_t maxOffset = int64_t(1) << 32;
+    if (failed(lo) || failed(hi) || *lo < -maxOffset || *hi > maxOffset)
+      return AffineExpr();
+    AffineExpr expr;
+    if (auto value = dyn_cast<Value>(access.offset)) {
+      // StoreAccess offsets come from verified memref.reinterpret_cast ops,
+      // whose dynamic offsets are Index operands.
+      expr = getAffineDimExpr(operands.size(), ctx);
+      operands.push_back(value);
+    } else {
+      expr = getAffineConstantExpr(
+          cast<IntegerAttr>(cast<Attribute>(access.offset)).getInt(), ctx);
+    }
+    return expr * access.elementBits;
+  };
+  AffineExpr aOffset = getOffset(*a), bOffset = getOffset(*b);
+  if (!aOffset || !bOffset)
+    return false;
+  auto map = AffineMap::get(operands.size(), 0,
+                            {aOffset, bOffset, bOffset - aOffset}, ctx);
+  affine::fullyComposeAffineMapAndOperands(&map, &operands);
+  affine::canonicalizeMapAndOperands(&map, &operands);
+  map = simplifyAffineMap(map);
+  auto bound = [&](unsigned result, presburger::BoundType type) {
+    return ValueBoundsConstraintSet::computeConstantBound(
+        type,
+        ValueBoundsConstraintSet::Variable(map.getSubMap({result}), operands),
+        /*stopCondition=*/nullptr, /*closedUB=*/true);
+  };
+  auto aLo = bound(0, presburger::BoundType::LB);
+  auto aHi = bound(0, presburger::BoundType::UB);
+  auto bLo = bound(1, presburger::BoundType::LB);
+  auto bHi = bound(1, presburger::BoundType::UB);
+  auto deltaLo = bound(2, presburger::BoundType::LB);
+  auto deltaHi = bound(2, presburger::BoundType::UB);
+  // Unknown bounds do not prove disjointness, even if the bases are constant.
+  if (failed(aLo) || failed(aHi) || failed(bLo) || failed(bHi) ||
+      failed(deltaLo) || failed(deltaHi))
+    return false;
+  if (a->root == b->root &&
+      (*deltaLo >= a->sizeBits || *deltaHi <= -b->sizeBits))
+    return true;
+  if (calls.empty())
+    return false;
+  // Reject wrapping/negative address arithmetic. Bounds and footprints are in
+  // bits so i1 and byte-addressed pointer_cast operands use the same units.
+  auto fitsAddress = [](int64_t addr, int64_t lo, int64_t hi, int64_t size) {
+    int64_t begin, end;
+    return !llvm::AddOverflow(addr * 8, lo, begin) && begin >= 0 &&
+           !llvm::AddOverflow(addr * 8, hi, end) &&
+           !llvm::AddOverflow(end, size, end) &&
+           end <= (int64_t(std::numeric_limits<uint32_t>::max()) + 1) * 8;
+  };
+  for (func::CallOp call : calls) {
+    SmallVector<int64_t> aAddresses, bAddresses;
+    if (!getCallSiteUBAddresses(a->root, call, aAddresses) ||
+        !getCallSiteUBAddresses(b->root, call, bAddresses))
+      return false;
+    // Do not assume selects share a condition. Check all base combinations;
+    // incompatible choices may prevent a merge until correlation is modeled.
+    for (int64_t aAddr : aAddresses) {
+      for (int64_t bAddr : bAddresses) {
+        if (!fitsAddress(aAddr, *aLo, *aHi, a->sizeBits) ||
+            !fitsAddress(bAddr, *bLo, *bHi, b->sizeBits))
+          return false;
+        int64_t lo, hi, baseDelta = (bAddr - aAddr) * 8;
+        if (llvm::AddOverflow(baseDelta, *deltaLo, lo) ||
+            llvm::AddOverflow(baseDelta, *deltaHi, hi) ||
+            !(lo >= a->sizeBits || hi <= -b->sizeBits))
+          return false;
+      }
+    }
+  }
+  return true;
+}
+
+static bool canSinkStorePast(Operation *op, VFMaskedStoreOp first, Value root,
+                             AliasAnalysis &aliasAnalysis,
+                             ArrayRef<func::CallOp> calls) {
+  // Do not cross control flow, barriers, calls, or unknown side effects. Loads
+  // and stores to proven-disjoint allocations may occur between the compares.
+  if (op->getNumRegions() != 0)
+    return false;
+  if (isMemoryEffectFree(op))
+    return true;
+  Value base;
+  if (auto load = dyn_cast<VFLoadOp>(op))
+    base = load.getBase();
+  else if (auto store = dyn_cast<VFMaskedStoreOp>(op))
+    base = store.getBase();
+  return base && (aliasAnalysis.alias(root, getStoreRoot(base)).isNo() ||
+                  areDisjointAtCallSites(first, op, calls));
+}
+
+// Packing is a target decision, separate from payload discovery. Sparse stores
+// use deinterleave; dense unaligned prefixes can share the alignment register.
+// N sparse stores become N-1 deinterleaves and one store: no extra data
+// instructions, with fewer memory instructions. A stream replaces 2N store/
+// flush instructions with N stores and one flush, without shuffling data.
+// A dense aligned prefix is still a candidate, but has no cheaper plan here.
+static bool canPackStore(VFMaskedStoreOp store, StorePayload payload) {
+  return payload.isUnderfilled() &&
+         (payload.laneStride > 1 ||
+          (!payload.isPredicate() && store->hasAttr(UnalignedAttr::name)));
+}
+
+static Value packStoreValues(ArrayRef<VFMaskedStoreOp> stores,
+                             StorePayload payload, PatternRewriter &rewriter) {
+  Location loc = stores.back()->getLoc();
+  SmallVector<Value> values;
+  for (auto store : stores) {
+    Type element = store.getVectorType().getElementType();
+    auto physical = VectorType::get(
+        {payload.registerBits / element.getIntOrFloatBitWidth()}, element);
+    Value value = store.getVal();
+    if (value.getType() != physical)
+      value = rewriter.create<UnrealizedConversionCastOp>(loc, physical, value)
+                  .getResult(0);
+    values.push_back(value);
+  }
+  int64_t stride = payload.laneStride;
+  while (values.size() > 1) {
+    stride /= 2;
+    SmallVector<Value> next;
+    for (unsigned i = 0; i < values.size(); i += 2) {
+      Value a = values[i], b = values[i + 1];
+      Type element = rewriter.getIntegerType(
+          payload.isPredicate() ? 1 : payload.elementBits * stride);
+      auto physical = VectorType::get(
+          {payload.registerBits / element.getIntOrFloatBitWidth()}, element);
+      if (a.getType() != physical)
+        a = rewriter.create<LLVM::BitcastOp>(loc, physical, a);
+      if (b.getType() != physical)
+        b = rewriter.create<LLVM::BitcastOp>(loc, physical, b);
+      auto pairType = LLVM::LLVMStructType::getLiteral(rewriter.getContext(),
+                                                       {physical, physical});
+      Value pair;
+      if (!payload.isPredicate())
+        pair = rewriter.create<VDintlvInstrOp>(loc, pairType, a, b);
+      else if (stride == 2)
+        pair = rewriter.create<PDintlvB16InstrOp>(loc, pairType, a, b);
+      else
+        pair = rewriter.create<PDintlvB8InstrOp>(loc, pairType, a, b);
+      next.push_back(rewriter.create<LLVM::ExtractValueOp>(loc, pair, 0));
+    }
+    values = std::move(next);
+  }
+  return values.front();
+}
+
+static void emitPackedStore(ArrayRef<VFMaskedStoreOp> stores,
+                            StorePayload payload, PatternRewriter &rewriter) {
+  auto first = stores.front();
+  Location loc = stores.back()->getLoc();
+  Value data = packStoreValues(stores, payload, rewriter);
+  int64_t count = payload.elements * stores.size();
+  int64_t stride = payload.laneStride / stores.size();
+  auto element = payload.view.getType().getElementType();
+  auto dataType = VectorType::get({count}, element);
+  FunctionDistType dist = FunctionDistType::NORM;
+  StoreDist pattern = first.getPattern();
+  if (payload.isPredicate()) {
+    data = rewriter.create<UnrealizedConversionCastOp>(loc, dataType, data)
+               .getResult(0);
+    dist = stride == 1 ? FunctionDistType::PB8 : FunctionDistType::PB16;
+  } else if (stride == 1) {
+    if (data.getType() != dataType)
+      data = rewriter.create<LLVM::BitcastOp>(loc, dataType, data);
+    pattern =
+        payload.elementBits == 8 ? StoreDist::NORM_B8 : StoreDist::NORM_B16;
+  } else {
+    // Two PK4_B32 stores form one PK_B16 store, still only 128 bytes.
+    pattern = StoreDist::PK_B16;
+    dist = FunctionDistType::PK;
+  }
+  auto viewType =
+      MemRefType::get({count}, element, payload.view.getType().getLayout(),
+                      payload.view.getType().getMemorySpace());
+  Value view = rewriter.create<memref::ReinterpretCastOp>(
+      loc, viewType, payload.view.getSource(),
+      payload.view.getMixedOffsets()[0],
+      ArrayRef<OpFoldResult>{rewriter.getIndexAttr(count)},
+      ArrayRef<OpFoldResult>{rewriter.getIndexAttr(1)});
+  auto maskType = VectorType::get({count}, rewriter.getI1Type());
+  auto mask = rewriter.create<VFPgeOp>(loc, maskType, PgePattern::ALL);
+  int64_t maskWidth =
+      payload.isPredicate() ? stride * 8 : payload.elementBits * stride;
+  FunctionDistType maskDist = maskWidth == 8    ? FunctionDistType::PB8
+                              : maskWidth == 16 ? FunctionDistType::PB16
+                                                : FunctionDistType::PB32;
+  mask->setAttr("functionType",
+                FunctionDistTypeAttr::get(rewriter.getContext(), maskDist));
+  auto merged = rewriter.create<VFMaskedStoreOp>(
+      loc, pattern, view, first.getIndices(), mask, data);
+  merged->setAttrs(first->getAttrs());
+  merged.setPattern(pattern);
+  merged->setAttr("functionType",
+                  FunctionDistTypeAttr::get(rewriter.getContext(), dist));
+  merged->removeAttr(UnalignedAttr::name);
+  merged->removeAttr("hivm.is_continuous");
+}
+
+static void emitStoreStream(ArrayRef<VFMaskedStoreOp> stores,
+                            StorePayload payload, PatternRewriter &rewriter) {
+  Location loc = stores.back()->getLoc();
+  LLVMTypeConverter converter(rewriter.getContext());
+  populateHIVMAddressSpaceAttributeConversions(converter);
+  Value descriptor = rewriter
+                         .create<UnrealizedConversionCastOp>(
+                             loc, converter.convertType(payload.view.getType()),
+                             payload.view.getResult())
+                         .getResult(0);
+  MemRefDescriptor memref(descriptor);
+  Value base = memref.alignedPtr(rewriter, loc);
+  Value offset = memref.offset(rewriter, loc);
+  Type element = payload.view.getType().getElementType();
+  Value pointer = rewriter.create<LLVM::GEPOp>(loc, base.getType(), element,
+                                               base, ValueRange{offset});
+  Value alignment = rewriter.create<InitVectorAlignDataInstrOp>(
+      loc, VectorType::get({32}, rewriter.getI8Type()));
+  auto physical =
+      VectorType::get({util::VL_BITS / payload.elementBits}, element);
+  for (auto store : stores) {
+    auto part = analyzeStorePayload(store);
+    Value count = rewriter.create<LLVM::ConstantOp>(
+        loc, rewriter.getI32Type(),
+        rewriter.getI32IntegerAttr(part->sizeBits() / 8));
+    Value data = store.getVal();
+    if (data.getType() != physical)
+      data = rewriter.create<UnrealizedConversionCastOp>(loc, physical, data)
+                 .getResult(0);
+    auto result = buildVstusPostOp(data, pointer, count, alignment, rewriter);
+    alignment =
+        rewriter.create<LLVM::ExtractValueOp>(loc, result->getResult(0), 0);
+    pointer =
+        rewriter.create<LLVM::ExtractValueOp>(loc, result->getResult(0), 1);
+  }
+  buildVstasOp(alignment, pointer, rewriter);
+}
+
+static void mergeUnderfilledStoresIn(Operation *scope, ModuleOp module,
+                                     ArrayRef<func::CallOp> calls,
+                                     bool allUsesKnown) {
+  SmallVector<VFMaskedStoreOp> stores;
+  scope->walk([&](VFMaskedStoreOp store) { stores.push_back(store); });
+  llvm::SmallPtrSet<Operation *, 16> erased;
+  AliasAnalysis aliasAnalysis(module);
+  PatternRewriter rewriter(module.getContext());
+  for (auto first : stores) {
+    // The worklist predates rewrites; an earlier group may have erased this op.
+    if (erased.contains(first))
+      continue;
+    auto payload = analyzeStorePayload(first);
+    if (!payload || !canPackStore(first, *payload))
+      continue;
+    bool stream = payload->laneStride == 1;
+    Value root = getStoreRoot(payload->view.getSource());
+    SmallVector<VFMaskedStoreOp> group{first};
+    unsigned bestSize = 0;
+    int64_t elements = payload->elements;
+    for (Operation *op = first->getNextNode(); op; op = op->getNextNode()) {
+      auto next = dyn_cast<VFMaskedStoreOp>(op);
+      auto nextPayload = next ? analyzeStorePayload(next) : std::nullopt;
+      // Preserve all store attributes until their semantic relevance is
+      // modeled explicitly; matching payloads alone is not sufficient.
+      if (nextPayload && nextPayload->isUnderfilled() &&
+          nextPayload->view.getType().getElementType() ==
+              payload->view.getType().getElementType() &&
+          nextPayload->laneStride == payload->laneStride &&
+          (stream || nextPayload->elements == payload->elements) &&
+          getStoreRoot(nextPayload->view.getSource()) == root &&
+          first->getAttrDictionary() == next->getAttrDictionary() &&
+          (elements + nextPayload->elements) * payload->elementBits <=
+              payload->registerBits &&
+          areAdjacentAlignedStores(payload->view, nextPayload->view, elements,
+                                   /*offsetAlignment=*/1)) {
+        group.push_back(next);
+        elements += nextPayload->elements;
+        if (stream) {
+          bestSize = group.size();
+        } else if (llvm::isPowerOf2_64(group.size())) {
+          // Pairwise deinterleave requires a power-of-two group. Retain the
+          // largest proven group if a later candidate cannot be included.
+          int64_t alignment = payload->isPredicate() ? elements / 8 : 32;
+          auto argument = dyn_cast<BlockArgument>(root);
+          bool isParameter =
+              argument && isa<func::FuncOp>(argument.getOwner()->getParentOp());
+          if (hasAlignedStoreBase(root, first, alignment) &&
+              (!isParameter ||
+               (allUsesKnown &&
+                (calls.empty() ||
+                 hasAlignedCallSiteBase(root, calls, alignment)))) &&
+              areAdjacentAlignedStores(payload->view, nextPayload->view,
+                                       elements - nextPayload->elements,
+                                       alignment * 8 / payload->elementBits))
+            bestSize = group.size();
+        }
+        // Stop at the hardware capacity or the compile-time grouping budget.
+        if (elements * payload->elementBits == payload->registerBits ||
+            group.size() == 16)
+          break;
+        continue;
+      }
+      // All pending stores are delayed, so checking only the first would miss
+      // a read or write that conflicts with another member of the group.
+      if (!llvm::all_of(group, [&](VFMaskedStoreOp pending) {
+            return canSinkStorePast(op, pending, root, aliasAnalysis, calls);
+          }))
+        break;
+    }
+    if (bestSize < 2)
+      continue;
+    group.resize(bestSize);
+    rewriter.setInsertionPoint(group.back());
+    if (stream)
+      emitStoreStream(group, *payload, rewriter);
+    else
+      emitPackedStore(group, *payload, rewriter);
+    for (auto store : group) {
+      erased.insert(store);
+      rewriter.eraseOp(store);
+    }
+  }
+}
+
+// Outlined VFs are only called by their kernel, so all call sites are available
+// in this module. Optimize the original VF in place only when every call site
+// satisfies the required proofs. Reject non-call symbol uses conservatively;
+// access-specific proofs must never become blanket noalias metadata.
+static void mergeUnderfilledStores(ModuleOp module) {
+  if (!hacc::utils::isAscend950(module))
+    return;
+  module.walk([&](func::FuncOp func) {
+    if (func.isExternal())
+      return;
+    SmallVector<func::CallOp> calls;
+    bool allUsesKnown = true;
+    if (func->hasAttr(hivm::VectorFunctionAttr::name) &&
+        !hacc::utils::isDeviceEntry(func)) {
+      auto uses = SymbolTable::getSymbolUses(func, module);
+      // Kernel-only callers make module-local analysis sufficient, but do not
+      // make arbitrary symbol references direct calls. Unknown use enumeration
+      // or non-callee references must not yield a partial call-site proof.
+      allUsesKnown =
+          uses && llvm::all_of(*uses, [&](const SymbolTable::SymbolUse &use) {
+            auto call = dyn_cast<func::CallOp>(use.getUser());
+            // getSymbolUses already identifies this symbol in its scope; only
+            // verify that this reference is the call's callee attribute.
+            if (!call || call.getCalleeAttr() != use.getSymbolRef())
+              return false;
+            calls.push_back(call);
+            return true;
+          });
+      if (!allUsesKnown)
+        calls.clear();
+    }
+    // Gather call sites before any rewrite: even adjacent stores need their
+    // actual base alignment checked before upgrading to an aligned store.
+    // Local allocations do not depend on the caller's argument alignment.
+    mergeUnderfilledStoresIn(func, module, calls, allUsesKnown);
+  });
+}
+
 struct ForOpIVNarrowing final : public OpRewritePattern<scf::ForOp> {
 public:
   using OpRewritePattern::OpRewritePattern;
@@ -3519,6 +4228,7 @@ struct HIVMAVEToAVEIntrinPass
 
   /// Run the dialect converter on the module.
   void runOnOperation() override {
+    mergeUnderfilledStores(getOperation());
     // If applicable, narrow loop ivs to help generate hardware loops.
     narrowSCFForIV();
 
