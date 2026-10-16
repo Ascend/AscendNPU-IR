@@ -266,6 +266,16 @@ def EnableFastDiv : FeatureControlOptions<
   let passGroup = ["HFUSION"];
 }
 
+def EnableDivRemPow2
+    : FeatureControlOptions<
+          "Enable strength reduction of integer div/div_unsigned/mod/modui "
+          "with "
+          "a power-of-two constant divisor into shift/and ops (regbased "
+          "Ascend950 only)",
+          "bool", "true"> {
+  let passGroup = ["HFUSION"];
+}
+
 def EnableLegacyInsertLoadStoreForMixCV : FeatureControlOptions<
   "Use legacy InsertLoadStoreForMixCV.",
   "bool",
