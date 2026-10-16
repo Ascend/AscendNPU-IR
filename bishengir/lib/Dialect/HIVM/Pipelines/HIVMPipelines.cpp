@@ -19,6 +19,7 @@
 #include "bishengir/Conversion/Passes.h"
 #include "bishengir/Dialect/Annotation/Transforms/Passes.h"
 #include "bishengir/Dialect/Arith/Transforms/Passes.h"
+#include "bishengir/Dialect/Bufferization/Transforms/Passes.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Pipelines/Passes.h"
@@ -156,8 +157,9 @@ bufferizationPipeline(OpPassManager &pm,
   }
   // TODO: support process toTensorOp in one-shot-bufferize.
   // Expose memref-level writes (e.g., hivm.hir.load) to tensor-level analysis
-  // by replacing to_tensor writable with hivm.hir.copy
-  pm.nest<func::FuncOp>().addPass(hivm::createNormalizeToTensorOpPass());
+  // by inserting an `alloc_tensor(copy...)` for each writable to_tensor.
+  pm.nest<func::FuncOp>().addPass(
+      bufferization::createNormalizeToTensorOpPass());
   bufferization::OneShotBufferizationOptions oneShotOptions;
   oneShotOptions.bufferizeFunctionBoundaries = true;
   oneShotOptions.setFunctionBoundaryTypeConversion(
@@ -177,10 +179,10 @@ bufferizationPipeline(OpPassManager &pm,
       };
   oneShotOptions.analysisHeuristic =
       bufferization::OneShotBufferizationOptions::AnalysisHeuristic::TopDown;
-  // Run a first round of analysis + tensor copy insertion. The inserted
-  // copies (and the HIVM copy/store op's `to_be_replaced` cleanup in
-  // resolveConflicts) can expose conflicts that were previously masked.
-  pm.addPass(hivm::createTensorCopyInsertionPass(oneShotOptions));
+  pm.addPass(createDecomposeAllocTensorCopyPass());
+  // Run a first round of analysis + tensor copy insertion.
+  pm.addPass(bufferization::createTensorCopyInsertionPass(oneShotOptions));
+  pm.addPass(createDecomposeAllocTensorCopyPass());
   pm.addPass(bufferization::createOneShotBufferizePass(oneShotOptions));
   canonicalizationHIVMPipeline(pm);
   if (hivmPipelineOptions.enableTritonKernelCompile) {
@@ -472,6 +474,8 @@ static void hivmPostBufferizationOptimizationPipeline(
       bishengir::DecomposePhase::AFTER_RECOGNIZE_BROADCAST;
   pm.nest<func::FuncOp>().addPass(
       createHIVMAggregatedDecomposeOpPass(decomposeOption));
+  // buffer_size_in_byte is needed in alignStoragePipeline
+  pm.nest<func::FuncOp>().addPass(createInferBufferSizeFromSlicePass());
   // align alloc size for special hivm op
   alignStoragePipeline(pm, hivmPipelineOptions);
   // Decompose {vconcat} after stride alignment

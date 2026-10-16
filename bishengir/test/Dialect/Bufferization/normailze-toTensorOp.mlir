@@ -1,5 +1,5 @@
-// RUN: bishengir-opt %s -hivm-normalize-to-tensor -split-input-file -verify-diagnostics | FileCheck %s
-// RUN: bishengir-opt %s -hivm-normalize-to-tensor -one-shot-bufferize="allow-return-allocs-from-loops bufferize-function-boundaries analysis-heuristic=top-down function-boundary-type-conversion=identity-layout-map unknown-type-conversion=identity-layout-map" -split-input-file | FileCheck %s --check-prefix=CHECK-ONE-SHOT
+// RUN: bishengir-opt %s -normalize-to-tensor -split-input-file -verify-diagnostics | FileCheck %s
+// RUN: bishengir-opt %s -normalize-to-tensor -hivm-decompose-alloc-tensor-copy -one-shot-bufferize="allow-return-allocs-from-loops bufferize-function-boundaries analysis-heuristic=top-down function-boundary-type-conversion=identity-layout-map unknown-type-conversion=identity-layout-map" -split-input-file | FileCheck %s --check-prefix=CHECK-ONE-SHOT
 
 func.func @test_to_tensorOp(%arg0: i32, %arg1 : memref<256xf16>,
                                       %arg2 : tensor<256xf16>) -> tensor<256xf16> {
@@ -27,17 +27,14 @@ func.func @test_to_tensorOp(%arg0: i32, %arg1 : memref<256xf16>,
 
 // -----
 
-// Test: a writable to_tensor whose memref was DPS-written before is exposed as
-// copy{to_be_replaced} into a fresh tensor.empty. For a dynamic-typed
-// to_tensor the empty must be created with dim sizes (a bare tensor.empty
-// would be invalid IR), and the helper dim/empty must keep referencing the
-// to_tensor result (retargeting them to the later copy breaks dominance).
+// Test: a writable to_tensor whose memref was DPS-written before is exposed
+// as an alloc_tensor(copy...) {to_be_replaced}, making the memref-level write
+// visible to One-Shot Bufferization. The copy operand provides the shape, so
+// a dynamic-typed to_tensor needs no dim sizes.
 
 // CHECK-LABEL: func.func @dynamic_to_tensor(
 // CHECK: %[[T:.+]] = bufferization.to_tensor %{{.+}} restrict writable {write_exposed} : memref<?x20x16x16xf16>
-// CHECK: %[[DIM:.+]] = tensor.dim %[[T]], %{{.+}} : tensor<?x20x16x16xf16>
-// CHECK: %[[EMPTY:.+]] = bufferization.alloc_tensor(%[[DIM]]) : tensor<?x20x16x16xf16>
-// CHECK: %[[CP:.+]] = hivm.hir.copy ins(%[[T]] : tensor<?x20x16x16xf16>) outs(%[[EMPTY]] : tensor<?x20x16x16xf16>) {to_be_replaced}
+// CHECK: %[[CP:.+]] = bufferization.alloc_tensor() copy(%[[T]]) {to_be_replaced} : tensor<?x20x16x16xf16>
 // CHECK: hivm.hir.vadd ins(%[[CP]], %[[CP]] :
 func.func @dynamic_to_tensor(%arg0: memref<?x20x16x16xf16>, %arg1: index) -> tensor<?x20x16x16xf16> {
   %alloc = memref.alloc(%arg1) : memref<?x20x16x16xf16>
@@ -50,13 +47,12 @@ func.func @dynamic_to_tensor(%arg0: memref<?x20x16x16xf16>, %arg1: index) -> ten
 
 // -----
 
-// Static shapes keep the original form (no tensor.dim needed).
+// Static shapes keep the same form: the copy operand provides the shape.
 
 // CHECK-LABEL: func.func @static_to_tensor(
 // CHECK: %[[T:.+]] = bufferization.to_tensor %{{.+}} restrict writable {write_exposed} : memref<5x20x16x16xf16>
-// CHECK: %[[EMPTY:.+]] = bufferization.alloc_tensor() : tensor<5x20x16x16xf16>
-// CHECK: hivm.hir.copy ins(%[[T]] : tensor<5x20x16x16xf16>) outs(%[[EMPTY]] : tensor<5x20x16x16xf16>) {to_be_replaced}
-// CHECK-NOT: tensor.dim
+// CHECK: %[[CP:.+]] = bufferization.alloc_tensor() copy(%[[T]]) {to_be_replaced} : tensor<5x20x16x16xf16>
+// CHECK: hivm.hir.vadd ins(%[[CP]], %[[CP]] :
 func.func @static_to_tensor(%arg0: memref<5x20x16x16xf16>) -> tensor<5x20x16x16xf16> {
   %alloc = memref.alloc() : memref<5x20x16x16xf16>
   hivm.hir.load ins(%arg0 : memref<5x20x16x16xf16>) outs(%alloc : memref<5x20x16x16xf16>)
@@ -93,4 +89,42 @@ func.func @memspace_to_tensor(%arg0: memref<256xf16>) -> tensor<256xf16> {
   %alloc = memref.alloc() : memref<256xf16, #hivm.address_space<ub>>
   %t = bufferization.to_tensor %alloc restrict writable : memref<256xf16, #hivm.address_space<ub>>
   return %t : tensor<256xf16>
+}
+
+// -----
+
+// A writable to_tensor whose operand is a pre-existing
+// `memref.memory_space_cast` of a DPS-written memref (the cast may pre-date
+// the pass, e.g. from a previous run of the memspace isolation or from an
+// upstream lowering). The cast's only user is the to_tensor itself, so the
+// write exposure must trace up through the cast's source to see the
+// `hivm.hir.load` write.
+
+// CHECK-LABEL: func.func @memspace_cast_preexisting(
+// CHECK: %[[CAST:.+]] = memref.memory_space_cast %{{.+}} : memref<5x20x16x16xf16, #hivm.address_space<ub>> to memref<5x20x16x16xf16>
+// CHECK: %[[T:.+]] = bufferization.to_tensor %[[CAST]] restrict writable {write_exposed} : memref<5x20x16x16xf16>
+// CHECK: %[[CP:.+]] = bufferization.alloc_tensor() copy(%[[T]]) {to_be_replaced} : tensor<5x20x16x16xf16>
+// CHECK: hivm.hir.vadd ins(%[[CP]], %[[CP]] :
+func.func @memspace_cast_preexisting(%arg0: memref<5x20x16x16xf16>) -> tensor<5x20x16x16xf16> {
+  %alloc = memref.alloc() : memref<5x20x16x16xf16, #hivm.address_space<ub>>
+  hivm.hir.load ins(%arg0 : memref<5x20x16x16xf16>) outs(%alloc : memref<5x20x16x16xf16, #hivm.address_space<ub>>)
+  %cast = memref.memory_space_cast %alloc : memref<5x20x16x16xf16, #hivm.address_space<ub>> to memref<5x20x16x16xf16>
+  %t = bufferization.to_tensor %cast restrict writable : memref<5x20x16x16xf16>
+  %e = tensor.empty() : tensor<5x20x16x16xf16>
+  %r = hivm.hir.vadd ins(%t, %t : tensor<5x20x16x16xf16>, tensor<5x20x16x16xf16>) outs(%e : tensor<5x20x16x16xf16>) -> tensor<5x20x16x16xf16>
+  return %r : tensor<5x20x16x16xf16>
+}
+
+// -----
+
+// Negative: the DPS write on the function argument happens after the
+// to_tensor and does not dominate it -> nothing is exposed.
+
+// CHECK-LABEL: func.func @func_arg_write_after_to_tensor(
+// CHECK-NOT: to_be_replaced
+func.func @func_arg_write_after_to_tensor(%arg0: memref<5x20x16x16xf16>, %arg1: tensor<5x20x16x16xf16>) -> tensor<5x20x16x16xf16> {
+  %t = bufferization.to_tensor %arg0 restrict writable : memref<5x20x16x16xf16>
+  %e = tensor.empty() : tensor<5x20x16x16xf16>
+  %r = hivm.hir.load ins(%t : tensor<5x20x16x16xf16>) outs(%e : tensor<5x20x16x16xf16>) -> tensor<5x20x16x16xf16>
+  return %r : tensor<5x20x16x16xf16>
 }

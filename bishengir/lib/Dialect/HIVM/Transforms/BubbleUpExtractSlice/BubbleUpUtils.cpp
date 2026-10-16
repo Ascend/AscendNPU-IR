@@ -4,23 +4,16 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/Helper.h"
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/TileUtils.h"
-#include "bishengir/Dialect/HIVM/Utils/Utils.h"
-#include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
-#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
-#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/BuiltinAttributeInterfaces.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
-#include "mlir/IR/IRMapping.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVectorExtras.h"
-#include "llvm/Support/Casting.h"
 #include "llvm/Support/Debug.h"
-#include "llvm/Support/LogicalResult.h"
 
 #define DEBUG_TYPE "hivm-bind-sub-block"
 #define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] ")
@@ -199,8 +192,9 @@ void markTiledTightlyCoupledAllocIfNeeded(RewriterBase &rewriter,
       });
 }
 
-/// For dynamic sliced allocs, attach `kBufferSizeInByteAttr` so later passes
-/// know the byte size of the odd-sized tile relative to the original buffer.
+/// For dynamic sliced allocs, attach `utils::kBufferSizeInByteAttr` so later
+/// passes know the byte size of the odd-sized tile relative to the original
+/// buffer.
 static LogicalResult
 markOddTilingBufferSizeIfNeeded(MemRefType slicedType, MemRefType sourceType,
                                 Value buffer, int64_t tilingDim,
@@ -213,7 +207,7 @@ markOddTilingBufferSizeIfNeeded(MemRefType slicedType, MemRefType sourceType,
       calculateBufferSizeInBytes(slicedType, sourceType.getShape(), tilingDim);
 
   auto newMarkOp = rewriter.create<annotation::MarkOp>(buffer.getLoc(), buffer);
-  newMarkOp->setAttr(kBufferSizeInByteAttr,
+  newMarkOp->setAttr(utils::kBufferSizeInByteAttr,
                      rewriter.getI64IntegerAttr(bufferSize));
   return success();
 }

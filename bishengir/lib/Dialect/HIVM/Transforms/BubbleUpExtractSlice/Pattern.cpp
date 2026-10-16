@@ -1402,15 +1402,16 @@ static bool isTrailingAxisBlockAligned(ShapedType shapedType) {
     return false;
 
   int64_t trailingBytes =
-      trailingSize * static_cast<int64_t>(elementBitWidth / util::BITS_PER_BYTE);
+      trailingSize *
+      static_cast<int64_t>(elementBitWidth / util::BITS_PER_BYTE);
   return trailingBytes % util::INTR_BYTES_PER_BLOCK == 0;
 }
 
 /// Guard a known failing case: a 3-D while result split 1:2 on its middle axis
 /// with an unaligned trailing axis.
 /// TODO: Prove and fix the underlying issue, then remove this workaround.
-static bool isUnsafeThreeDimensionalMiddleAxisSplit(
-    tensor::ExtractSliceOp sliceOp) {
+static bool
+isUnsafeThreeDimensionalMiddleAxisSplit(tensor::ExtractSliceOp sliceOp) {
   RankedTensorType sourceType = sliceOp.getSourceType();
   RankedTensorType resultType = sliceOp.getResultType();
   if (sourceType.getRank() != 3 || resultType.getRank() != 3)
@@ -1668,11 +1669,10 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
     return failure();
   auto tilingDim = *extractDims.begin();
 
-  UnrealizedConversionCastOp upAtToTensor =
-      createBubblePropagatorUpLinkBefore(
-          toTensorOp, oldMemrefAtToTensor, slicedMemrefAtToTensor,
-          sliceOp.getMixedOffsets()[tilingDim],
-          sliceOp.getMixedSizes()[tilingDim], tilingDim, rewriter);
+  UnrealizedConversionCastOp upAtToTensor = createBubblePropagatorUpLinkBefore(
+      toTensorOp, oldMemrefAtToTensor, slicedMemrefAtToTensor,
+      sliceOp.getMixedOffsets()[tilingDim], sliceOp.getMixedSizes()[tilingDim],
+      tilingDim, rewriter);
 
   rewriter.setInsertionPointAfter(toTensorOp);
   auto newToTensorOp = rewriter.create<bufferization::ToTensorOp>(
@@ -1710,13 +1710,12 @@ LocalLoadBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   if (extractDims.size() != 1)
     return failure();
   auto tilingDim = *extractDims.begin();
-  auto slicedMemrefType =
-      getSlicedMemRefType(oldMemrefType, slicedTensorType);
+  auto slicedMemrefType = getSlicedMemRefType(oldMemrefType, slicedTensorType);
 
   auto upAtLocalLoad = createBubblePropagatorUpLinkBefore(
       localLoad, localLoad.getAddr(), slicedMemrefType,
-      sliceOp.getMixedOffsets()[tilingDim],
-      sliceOp.getMixedSizes()[tilingDim], tilingDim, rewriter);
+      sliceOp.getMixedOffsets()[tilingDim], sliceOp.getMixedSizes()[tilingDim],
+      tilingDim, rewriter);
 
   rewriter.setInsertionPointAfter(localLoad);
   auto newLocalLoad = rewriter.create<hivm::LocalLoadOp>(
@@ -2686,7 +2685,8 @@ MarkEmptySliceBufferSize::matchAndRewrite(tensor::ExtractSliceOp sliceOp,
                                        "expected exactly 1 extract dim");
 
   // 4) No existing buffer_size annotation.
-  if (utils::getAnnotateOpWithAttr(sliceOp.getResult(), kBufferSizeInByteAttr))
+  if (utils::getAnnotateOpWithAttr(sliceOp.getResult(),
+                                   utils::kBufferSizeInByteAttr))
     return rewriter.notifyMatchFailure(sliceOp, "already has buffer_size mark");
 
   auto tilingDim = *extractDims.begin();
@@ -2697,7 +2697,7 @@ MarkEmptySliceBufferSize::matchAndRewrite(tensor::ExtractSliceOp sliceOp,
   rewriter.setInsertionPointAfter(sliceOp);
   auto newMarkOp = rewriter.create<annotation::MarkOp>(sliceOp->getLoc(),
                                                        sliceOp.getResult());
-  newMarkOp->setAttr(kBufferSizeInByteAttr,
+  newMarkOp->setAttr(utils::kBufferSizeInByteAttr,
                      rewriter.getI64IntegerAttr(bufferSize));
   return success();
 }
@@ -2733,8 +2733,7 @@ IndirectLoadBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   markCreatedExtractSliceOp(rewriter, newDst);
   Value newMask = nullptr;
   if (auto mask = indirectLoadOp.getMask()) {
-    newMask = rewriter.create<tensor::ExtractSliceOp>(loc, mask, offsets,
-    sizes,
+    newMask = rewriter.create<tensor::ExtractSliceOp>(loc, mask, offsets, sizes,
                                                       strides);
     markCreatedExtractSliceOp(rewriter, newMask.getDefiningOp());
   }
@@ -2826,18 +2825,16 @@ GatherLoadBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
 
 bool StrideLoadBubbleUpStrategy::isSupportedOperation(
     tensor::ExtractSliceOp sliceOp) const {
-  auto strideLoadOp =
-  sliceOp.getSource().getDefiningOp<hivm::StrideLoadOp>(); int64_t rank =
-  sliceOp.getType().getRank(); return strideLoadOp && rank >= 1 && rank <= 3
-  &&
-         !isDynamicSlice(sliceOp);
+  auto strideLoadOp = sliceOp.getSource().getDefiningOp<hivm::StrideLoadOp>();
+  int64_t rank = sliceOp.getType().getRank();
+  return strideLoadOp && rank >= 1 && rank <= 3 && !isDynamicSlice(sliceOp);
 }
 
 LogicalResult
 StrideLoadBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
                                     PatternRewriter &rewriter) const {
-  auto strideLoadOp =
-  sliceOp.getSource().getDefiningOp<hivm::StrideLoadOp>(); if (!strideLoadOp)
+  auto strideLoadOp = sliceOp.getSource().getDefiningOp<hivm::StrideLoadOp>();
+  if (!strideLoadOp)
     return failure();
 
   auto loc = sliceOp.getLoc();
@@ -2845,8 +2842,7 @@ StrideLoadBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   auto sizes = sliceOp.getMixedSizes();
   auto strides = sliceOp.getMixedStrides();
   int64_t rank = sliceOp.getType().getRank();
-  if (rank < 1 || rank > 3 ||
-      offsets.size() != static_cast<size_t>(rank) ||
+  if (rank < 1 || rank > 3 || offsets.size() != static_cast<size_t>(rank) ||
       sizes.size() != static_cast<size_t>(rank) ||
       strides.size() != static_cast<size_t>(rank) ||
       strideLoadOp.getStride().size() != static_cast<size_t>(rank) ||
@@ -2867,11 +2863,9 @@ StrideLoadBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   Value newOffset = strideLoadOp.getOffset();
   Type indexType = newOffset.getType();
   Value zero =
-      rewriter.create<arith::ConstantOp>(loc, IntegerAttr::get(indexType,
-      0));
+      rewriter.create<arith::ConstantOp>(loc, IntegerAttr::get(indexType, 0));
   Value one =
-      rewriter.create<arith::ConstantOp>(loc, IntegerAttr::get(indexType,
-      1));
+      rewriter.create<arith::ConstantOp>(loc, IntegerAttr::get(indexType, 1));
   for (int64_t i = 0; i < rank; ++i) {
     Value oldStride = strideLoadOp.getStride()[i];
     Value oldNumel = strideLoadOp.getNumel()[i];
@@ -2904,8 +2898,7 @@ StrideLoadBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
     Value strideMinusOne =
         rewriter.create<arith::SubIOp>(loc, sliceStride, one);
     Value ceilNumerator =
-        rewriter.create<arith::AddIOp>(loc, positiveRemaining,
-        strideMinusOne);
+        rewriter.create<arith::AddIOp>(loc, positiveRemaining, strideMinusOne);
     Value validInSlice =
         rewriter.create<arith::DivSIOp>(loc, ceilNumerator, sliceStride);
     newNumels.push_back(
@@ -2913,8 +2906,8 @@ StrideLoadBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   }
 
   auto newOp = rewriter.create<hivm::StrideLoadOp>(
-      strideLoadOp.getLoc(), sliceOp.getType(), strideLoadOp.getSrc(),
-      newDst, newOffset, strideLoadOp.getOther(), newStrides, newNumels);
+      strideLoadOp.getLoc(), sliceOp.getType(), strideLoadOp.getSrc(), newDst,
+      newOffset, strideLoadOp.getOther(), newStrides, newNumels);
 
   for (auto attr : strideLoadOp->getAttrs()) {
     if (!newOp->hasAttr(attr.getName()))

@@ -25,10 +25,12 @@
 
 #include "bishengir/Config/bishengir-config.h"
 #include "bishengir/Conversion/Passes.h"
+#include "bishengir/Conversion/TritonAscendGPUToLLVM/Passes.h"
 #include "bishengir/Dialect/Analysis/VFFusion/Passes.h"
 #include "bishengir/Dialect/Annotation/Transforms/Passes.h"
 #include "bishengir/Dialect/Arith/Transforms/Passes.h"
 #include "bishengir/Dialect/AscendDPX/Transforms/Passes.h"
+#include "bishengir/Dialect/Bufferization/Transforms/Passes.h"
 #include "bishengir/Dialect/HACC/Transforms/Passes.h"
 #include "bishengir/Dialect/HFusion/Pipelines/Passes.h"
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
@@ -42,10 +44,9 @@
 #include "bishengir/Dialect/Scope/Transforms/Passes.h"
 #include "bishengir/Dialect/Symbol/Transforms/Passes.h"
 #include "bishengir/Dialect/Tensor/Transforms/Passes.h"
-#include "bishengir/Dialect/Vector/Transforms/Passes.h"
-#include "bishengir/Conversion/TritonAscendGPUToLLVM/Passes.h"
 #include "bishengir/Dialect/Triton/Pipelines/Passes.h"
 #include "bishengir/Dialect/Triton/Transforms/Passes.h"
+#include "bishengir/Dialect/Vector/Transforms/Passes.h"
 #include "bishengir/Tools/bishengir-compile/PassPipeline.h"
 #include "bishengir/Tools/bishengir-compile/regbase/PassPipeline.h"
 #include "bishengir/Transforms/Passes.h"
@@ -77,6 +78,7 @@ inline void registerAllPasses() {
   mlir::annotation::registerAnnotationPasses();
   mlir::arith::registerBiShengIRArithPasses();
   mlir::ascend_dpx::registerBishengIRTransformsPasses();
+  mlir::bufferization::registerBiShengIRBufferizationPasses();
   mlir::hfusion::registerHFusionPasses();
   mlir::hivm::registerHIVMPasses();
   mlir::hivmave::registerAVEPasses();
