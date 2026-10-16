@@ -1216,6 +1216,27 @@ func.func @bubble_up_extract_of_extract_different_dim(
 }
 
 // -----
+// ExtractSliceBubbleUpStrategy: Extract→Extract different dim, dynamic source dim
+// Parent extracts dim1 with a static size from a tensor with dynamic dim1.
+// After bubble-up: the new inner slice materializes the dynamic size via
+// tensor.dim (instead of baking kDynamic into static_sizes).
+// CHECK-LABEL:   func.func @bubble_up_extract_of_extract_different_dim_dyn_src(
+// CHECK:           %[[VAL_0:.*]] = arith.constant 1 : index
+// CHECK:           %[[VAL_1:.*]] = tensor.dim %arg0, %[[VAL_0]] : tensor<4x?x16xf32>
+// CHECK:           %[[VAL_2:.*]] = tensor.extract_slice %arg0[0, 0, %arg2] [4, %[[VAL_1]], 8] [1, 1, 1] {to_be_bubbled_slice} : tensor<4x?x16xf32> to tensor<4x?x8xf32>
+// CHECK:           %[[VAL_3:.*]] = tensor.extract_slice %[[VAL_2]][0, %arg1, 0] [4, 8, 8] [1, 1, 1] : tensor<4x?x8xf32> to tensor<4x8x8xf32>
+// CHECK:           return %[[VAL_3]] : tensor<4x8x8xf32>
+// CHECK:         }
+func.func @bubble_up_extract_of_extract_different_dim_dyn_src(
+    %arg0: tensor<4x?x16xf32>, %arg1: index, %arg2: index) -> tensor<4x8x8xf32> {
+  %0 = tensor.extract_slice %arg0[0, %arg1, 0] [4, 8, 16] [1, 1, 1]
+      : tensor<4x?x16xf32> to tensor<4x8x16xf32>
+  %1 = tensor.extract_slice %0[0, 0, %arg2] [4, 8, 8] [1, 1, 1] {to_be_bubbled_slice}
+      : tensor<4x8x16xf32> to tensor<4x8x8xf32>
+  return %1 : tensor<4x8x8xf32>
+}
+
+// -----
 // ExtractSliceBubbleUpStrategy: Extract→Extract rank-reduced
 // Parent does rank-reduce (4x16x16 -> 16x16), to_be_bubbled_slice extracts from result
 // After bubble-up: extract from original tensor first, then rank-reduce
@@ -1231,6 +1252,23 @@ func.func @bubble_up_extract_of_extract_rank_reduced(
   %1 = tensor.extract_slice %0[%arg2, 0] [8, 8] [1, 1] {to_be_bubbled_slice}
       : tensor<16x16xf32> to tensor<8x8xf32>
   return %1 : tensor<8x8xf32>
+}
+
+// -----
+// ExtractSliceBubbleUpStrategy: Extract→Extract rank-reduced, dynamic parent size
+// The parent slice has a dynamic size: no bubble-up.
+// CHECK-LABEL:   func.func @no_bubble_up_extract_of_extract_rank_reduced_dyn_size(
+// CHECK:           %[[VAL_0:.*]] = tensor.extract_slice %arg0[0, %arg1, 0] [1, %arg3, 16] [1, 1, 1] : tensor<4x16x16xf32> to tensor<?x16xf32>
+// CHECK:           %[[VAL_1:.*]] = tensor.extract_slice %[[VAL_0]][0, %arg2] [%arg3, 8] [1, 1] {to_be_bubbled_slice} : tensor<?x16xf32> to tensor<?x8xf32>
+// CHECK:           return %[[VAL_1]] : tensor<?x8xf32>
+// CHECK:         }
+func.func @no_bubble_up_extract_of_extract_rank_reduced_dyn_size(
+    %arg0: tensor<4x16x16xf32>, %arg1: index, %arg2: index, %arg3: index) -> tensor<?x8xf32> {
+  %0 = tensor.extract_slice %arg0[0, %arg1, 0] [1, %arg3, 16] [1, 1, 1]
+      : tensor<4x16x16xf32> to tensor<?x16xf32>
+  %1 = tensor.extract_slice %0[0, %arg2] [%arg3, 8] [1, 1] {to_be_bubbled_slice}
+      : tensor<?x16xf32> to tensor<?x8xf32>
+  return %1 : tensor<?x8xf32>
 }
 
 // -----
