@@ -812,3 +812,97 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     return %1 : tensor<16xi8>
   }
 }
+
+// -----
+
+// RegBase has no native i64 -> i16 truncating narrow (only rint), so the
+// truncation-overflow form must be split through i32.
+// CHECK-LABEL: @test_NormalizeCastLowering_i64_to_i16_trunc_ascend950(
+// CHECK-SAME: %[[ARG0:.*]]: tensor<16xi64>
+// CHECK: hfusion.cast {{.*}} ins(%[[ARG0]] : tensor<16xi64>) outs({{.*}} : tensor<16xi32>) -> tensor<16xi32>
+// CHECK: hfusion.cast {{.*}} ins({{.*}} : tensor<16xi32>) outs({{.*}} : tensor<16xi16>) -> tensor<16xi16>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @test_NormalizeCastLowering_i64_to_i16_trunc_ascend950(%arg0: tensor<16xi64>) -> tensor<16xi16> {
+    %0 = tensor.empty() : tensor<16xi16>
+    %1 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<truncwithoverflow>} ins(%arg0 : tensor<16xi64>) outs(%0 : tensor<16xi16>) -> tensor<16xi16>
+    return %1 : tensor<16xi16>
+  }
+}
+
+// -----
+
+// The rint form of i64 -> i16 is native on RegBase and must stay untouched.
+// CHECK-LABEL: @test_NormalizeCastLowering_i64_to_i16_rint_ascend950(
+// CHECK: hfusion.cast {{.*}} : tensor<16xi64>) outs({{.*}} : tensor<16xi16>) -> tensor<16xi16>
+// CHECK-NOT: tensor<16xi32>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @test_NormalizeCastLowering_i64_to_i16_rint_ascend950(%arg0: tensor<16xi64>) -> tensor<16xi16> {
+    %0 = tensor.empty() : tensor<16xi16>
+    %1 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%arg0 : tensor<16xi64>) outs(%0 : tensor<16xi16>) -> tensor<16xi16>
+    return %1 : tensor<16xi16>
+  }
+}
+
+// -----
+
+// Bailing out for the native rint form is not a rewrite, so it must not consume
+// the overflow annotation (a rewrite pattern may not mutate on failure).
+// CHECK-LABEL: @test_NormalizeCastLowering_i64_to_i16_rint_keeps_annotation(
+// CHECK: annotation.mark {{.*}} {overflow_mode = "trunc"} : tensor<16xi16>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @test_NormalizeCastLowering_i64_to_i16_rint_keeps_annotation(%arg0: tensor<16xi64>) -> tensor<16xi16> {
+    %0 = tensor.empty() : tensor<16xi16>
+    %1 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%arg0 : tensor<16xi64>) outs(%0 : tensor<16xi16>) -> tensor<16xi16>
+    annotation.mark %1 {overflow_mode = "trunc"} : tensor<16xi16>
+    return %1 : tensor<16xi16>
+  }
+}
+
+// -----
+
+// A saturating signed i64 -> i16 narrow carries enable_saturate, so it must go
+// through the saturate lowering (f32/f16) and keep enable_saturate instead of
+// being turned into a plain i32 truncation split.
+// CHECK-LABEL: @test_NormalizeCastLowering_i64_to_i16_saturate_ascend950(
+// CHECK-SAME: %[[ARG0:.*]]: tensor<16xi64>
+// CHECK: hfusion.cast {{.*}} ins(%[[ARG0]] : tensor<16xi64>) outs({{.*}} : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: hfusion.cast {{.*}} ins({{.*}} : tensor<16xf32>) outs({{.*}} : tensor<16xf16>) -> tensor<16xf16>
+// CHECK: hfusion.cast {{.*}}enable_saturate = true{{.*}} ins({{.*}} : tensor<16xf16>) outs({{.*}} : tensor<16xi16>) -> tensor<16xi16>
+// CHECK-NOT: tensor<16xi32>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @test_NormalizeCastLowering_i64_to_i16_saturate_ascend950(%arg0: tensor<16xi64>) -> tensor<16xi16> {
+    %0 = tensor.empty() : tensor<16xi16>
+    %1 = hfusion.cast {enable_overflow = true, enable_saturate = true, round_mode = #hfusion.round_mode<truncwithoverflow>} ins(%arg0 : tensor<16xi64>) outs(%0 : tensor<16xi16>) -> tensor<16xi16>
+    return %1 : tensor<16xi16>
+  }
+}
+
+// -----
+
+// RegBase has no native i64 -> i8 truncating narrow (only rint), so the
+// truncation-overflow form must be split through i32.
+// CHECK-LABEL: @test_NormalizeCastLowering_i64_to_i8_trunc_ascend950(
+// CHECK-SAME: %[[ARG0:.*]]: tensor<16xi64>
+// CHECK: hfusion.cast {{.*}} ins(%[[ARG0]] : tensor<16xi64>) outs({{.*}} : tensor<16xi32>) -> tensor<16xi32>
+// CHECK: hfusion.cast {{.*}} ins({{.*}} : tensor<16xi32>) outs({{.*}} : tensor<16xi8>) -> tensor<16xi8>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @test_NormalizeCastLowering_i64_to_i8_trunc_ascend950(%arg0: tensor<16xi64>) -> tensor<16xi8> {
+    %0 = tensor.empty() : tensor<16xi8>
+    %1 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<truncwithoverflow>} ins(%arg0 : tensor<16xi64>) outs(%0 : tensor<16xi8>) -> tensor<16xi8>
+    return %1 : tensor<16xi8>
+  }
+}
+
+// -----
+
+// The rint form of i64 -> i8 is native on RegBase and must stay untouched.
+// CHECK-LABEL: @test_NormalizeCastLowering_i64_to_i8_rint_ascend950(
+// CHECK: hfusion.cast {{.*}} : tensor<16xi64>) outs({{.*}} : tensor<16xi8>) -> tensor<16xi8>
+// CHECK-NOT: tensor<16xi32>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @test_NormalizeCastLowering_i64_to_i8_rint_ascend950(%arg0: tensor<16xi64>) -> tensor<16xi8> {
+    %0 = tensor.empty() : tensor<16xi8>
+    %1 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%arg0 : tensor<16xi64>) outs(%0 : tensor<16xi8>) -> tensor<16xi8>
+    return %1 : tensor<16xi8>
+  }
+}
