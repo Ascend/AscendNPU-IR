@@ -672,9 +672,12 @@ static void hivmPostBufferizationOptimizationPipeline(
     // Move VF entry DMA on argument buffers to the caller before VF cleanup.
     pm.addPass(createOutlineCopyInVFPass());
     pm.addPass(bufferization::createDropEquivalentBufferResultsPass());
-    // make sure VFFusion function can be inlined
-    // so InferHIVMMemScope can work correctly
-    pm.addPass(scope::createInlineScopePass());
+    // Inline fusion helpers before inferring memory spaces. Expand affine.apply
+    // only in helpers that survive ordinary inlining, preserving affine IR in
+    // the caller and vector functions for subsequent optimizations.
+    InlineScopeOptions inlineOptions;
+    inlineOptions.lowerAffineApplyForInlining = true;
+    pm.addPass(scope::createInlineScopePass(inlineOptions));
   }
   // Bind buffer should be done after outline alloc in vf because the source
   // allocs might be inside the VF.
