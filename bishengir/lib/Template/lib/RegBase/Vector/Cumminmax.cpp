@@ -14,13 +14,14 @@
  * limitations under the License.
  */
 
+#include "ArchDefs.h"
 #include "DMA/DMAUtils.h"
 #include "RegBase/Cumulative/Cumulative.h"
 #include "RegBase/VecUtils.h"
 #include "Utils.h"
 #include "Vector/VecUtils.h"
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 
 enum cum_minmax_kind {
   CUM_MM_MAX = 0,

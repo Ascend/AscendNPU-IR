@@ -20,16 +20,17 @@
 #include "../RegBase/VecUtils.h"
 #include "../Utils.h"
 #include "../Vector/VecUtils.h"
+#include "ArchDefs.h"
 #include "Utils.h"
 #include <type_traits>
-#if !defined(__DAV_M300__) && !defined(__DAV_C310__)
+#if BISHENG_TPL_MEMBASE
 #include "Vector/Broadcast/BrcUtils.h"
 #endif
 
 constexpr uint16_t INTRIN_MAX_BURST_CNT = (1 << 12) - 1;             // 4095
 constexpr uint32_t INTRIN_MAX_BURST_LEN = ((1 << 21) - 1) / 32 * 32; // 2097120
 constexpr uint32_t INTRIN_MAX_GAP = (1lu << 32) - 1; // 4294967295
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 constexpr uint64_t INTRIN_MAX_STRIDE = (1lu << 40) - 1; // 1099511627775
 #endif
 
@@ -66,7 +67,7 @@ __aicore__ __attribute__((always_inline)) void load_gm_to_cbuf_intrin_core(
     __gm__ T *gm_ptr, int64_t gm_offset, __cbuf__ T *cbuf_ptr,
     int64_t cbuf_offset, uint16_t burst_cnt, uint32_t burst_len,
     uint32_t src_gap, uint32_t dst_gap, pad_t pad_mode) {
-#if !defined(__DAV_C310__)
+#if !BISHENG_TPL_REGBASE
   INTRINSIC(copy_gm_to_cbuf,
             cbuf_ptr + cbuf_offset, // dst
             gm_ptr + gm_offset,     // src
@@ -102,7 +103,7 @@ load_gm_to_cbuf_1d_core_with_contiguous_last_dim(memref_t<__gm__ T, 1> *gm,
   auto dst_ptr = cbuf->aligned + cbuf->offset;
   const int64_t size0 = gm->sizes[0];
   constexpr int bytes = sizeof(T);
-#if !defined(__DAV_C310__)
+#if !BISHENG_TPL_REGBASE
   // burst_len of gm <-> l1 is in units of 32bytes.
   uint32_t burst_len = CEIL_DIV(size0 * bytes, L1_ALIGN_BYTES);
 #else
@@ -226,7 +227,7 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_intrin_core(
   auto rightPaddingNum =
       (CEIL_FACTOR(sizeWithPad, UB_ALIGN_BYTES) - sizeWithPad) / bytes;
   uint32_t dst_align_gap = dst_gap / UB_ALIGN_BYTES;
-#if defined(__DAV_M300__)
+#if BISHENG_TPL_M300
   if (left_padding_num == 0)
     rightPaddingNum = 0;
   if constexpr (bytes == BYTES_B8 || bytes == BYTES_B16 || bytes == BYTES_B32) {
@@ -241,7 +242,7 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_intrin_core(
               burst_cnt, burst_len, left_padding_num, rightPaddingNum, src_gap,
               dst_align_gap);
   }
-#elif defined(__DAV_C310__)
+#elif BISHENG_TPL_REGBASE
   // TODO: figure out what are these fields for
   bool data_select_bit = true;
   const uint64_t src_stride = src_gap + burst_len;
@@ -293,7 +294,7 @@ store_ubuf_to_gm_intrin_core(__ubuf__ T *ub_ptr, int64_t ub_offset,
                              uint32_t src_gap, uint64_t dst_gap) {
   constexpr int32_t bytes = sizeof(T);
   uint32_t src_align_gap = src_gap / UB_ALIGN_BYTES;
-#if defined(__DAV_M300__)
+#if BISHENG_TPL_M300
   if constexpr (bytes == BYTES_B8 || bytes == BYTES_B16 || bytes == BYTES_B32) {
     INTRINSIC(copy_ubuf_to_gm_align, gm_ptr + gm_offset, ub_ptr + ub_offset, 0,
               burst_cnt, burst_len, src_align_gap, dst_gap);
@@ -305,7 +306,7 @@ store_ubuf_to_gm_intrin_core(__ubuf__ T *ub_ptr, int64_t ub_offset,
                   ub_offset * factor,
               0, burst_cnt, burst_len, src_align_gap, dst_gap);
   }
-#elif defined(__DAV_C310__)
+#elif BISHENG_TPL_REGBASE
   uint8_t l2_cache_ctl = 0;
   const uint32_t src_stride = src_gap + burst_len;
   const uint64_t dst_stride = dst_gap + burst_len;
@@ -343,7 +344,7 @@ template <typename T>
 __aiv__ __attribute__((always_inline)) void
 copy_ubuf_to_ubuf_1d_core(memref_t<__ubuf__ T, 1> *src,
                           memref_t<__ubuf__ T, 1> *dst);
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 template <typename T>
 __aiv__ __attribute__((always_inline)) void
 copy_ubuf_to_cbuf_1d_core(memref_t<__ubuf__ T, 1> *src,
@@ -395,7 +396,7 @@ load_gm_to_ubuf_2d_core_with_contiguous_last_dim(memref_t<__gm__ T, 2> *gm,
   constexpr int32_t bytes = sizeof(T);
   const int64_t ub_gap = (stride0_ub - size1) * bytes;
   const int64_t gm_gap = (stride0_gm - size1) * bytes;
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
   bool is_over_gap = stride0_gm * bytes > INTRIN_MAX_STRIDE;
 #else
   bool is_over_gap = gm_gap > INTRIN_MAX_GAP;
@@ -466,7 +467,7 @@ store_ubuf_to_gm_2d_core_with_contiguous_last_dim(memref_t<__ubuf__ T, 2> *ub,
   constexpr int32_t bytes = sizeof(T);
   const int64_t ub_gap = (stride0_ub - size1) * bytes;
   const int64_t gm_gap = (stride0_gm - size1) * bytes;
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
   bool is_over_gap = stride0_gm * bytes > INTRIN_MAX_STRIDE;
 #else
   bool is_over_gap = gm_gap > INTRIN_MAX_GAP;
@@ -624,7 +625,7 @@ store_ubuf_to_gm_3d_core_with_contiguous_last_dim(memref_t<__ubuf__ T, 3> *ub,
     return;
   }
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
   if ((size0 > size1) && ((ub->strides[1] * sizeof(T) % UB_ALIGN_BYTES) == 0)) {
     size0 = size1;
     size1 = gm->sizes[0];
@@ -697,7 +698,7 @@ copy_ubuf_to_ubuf_1d_core_with_contiguous_last_dim(
   constexpr int num_per_block = INTR_BYTES_PER_BLOCK / sizeof(T);
   int burst_len = CEIL_DIV(size0, num_per_block);
 
-#if !defined(__DAV_M300__) && !defined(__DAV_C310__)
+#if BISHENG_TPL_MEMBASE
   if (size0 % num_per_block != 0) {
     // In order to prevent repeated use of vmax/vor instead of copy_ub_to_ub.
     if constexpr (std::is_same<float, T>::value ||
@@ -709,7 +710,7 @@ copy_ubuf_to_ubuf_1d_core_with_contiguous_last_dim(
     return;
   }
 #endif
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
   if (!isAddress32ByteAligned(src_ptr) || !isAddress32ByteAligned(dst_ptr)) {
     vector_dma_unalign_offset_vv_1d_vf<T>(src, dst);
     return;
@@ -801,7 +802,7 @@ copy_ubuf_to_ubuf_2d_core_with_contiguous_last_dim(
 
   if (0 > src_gap || 0 > dst_gap) [[unlikely]] {
     copy_ubuf_to_ubuf_2d_to_1d_core_with_contiguous_last_dim(src, dst);
-#if !defined(__DAV_M300__) && !defined(__DAV_C310__)
+#if BISHENG_TPL_MEMBASE
   } else if (size1 % num_per_block != 0) {
     // In order to prevent repeated use of vmax/vor instead of copy_ub_to_ub.
     if constexpr (std::is_same<float, T>::value ||
@@ -812,7 +813,7 @@ copy_ubuf_to_ubuf_2d_core_with_contiguous_last_dim(
     }
 #endif
   } else {
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
     if ((!isAddress32ByteAligned(src_ptr) ||
          !isAddress32ByteAligned(dst_ptr)) ||
         src_stride0 % num_per_block != 0 ||
@@ -863,7 +864,7 @@ copy_ubuf_to_ubuf_3d_core_with_contiguous_last_dim(
   }
 }
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 /// func of copy ub -> cbuf intrin for 1d and 2d, all dtypes are supported.
 /// eg.
 ///  if copy 1d, burst_cnt is 1 and gap is 0.
@@ -1298,7 +1299,7 @@ apply_padding_b64(memref_t<__ubuf__ T, DIM> *dst, int64_t offset,
   int64_t size = dst->sizes[DIM - 1];
   int64_t size_aligned =
       (DIM == 2) ? dst->strides[0] : CEIL_FACTOR(size, num_per_block);
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
   int shift_num = size_aligned - num_per_block;
   int64_t align_pad = size_aligned - size;
   if (align_pad == 0) {
@@ -1324,7 +1325,7 @@ apply_padding_b64(memref_t<__ubuf__ T, DIM> *dst, int64_t offset,
       vsts(v_src, till_block_ptr, 0, mask_val);
     }
   }
-#elif !defined(__DAV_M300__)
+#elif !BISHENG_TPL_M300
   // if size and stride is too high, we cant fit the mask so we shift
   constexpr int num_per_repeat = INTR_BYTES_PER_REPEAT / sizeof(T);
   int64_t align_pad = (size_aligned - size) * factor;
@@ -1374,7 +1375,7 @@ struct PadValueType {
   using type = T;
 };
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 template <>
 struct PadValueType<float8_e4m3_t> {
   using type = float;
@@ -1402,7 +1403,7 @@ using PadValueT = typename PadValueType<T>::type;
                                         left_padding_num, eviction_policy);    \
   }
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 
 #define DECLARE_DMA_LOAD_FP8(dim, type)                                        \
   __aiv__ __attribute__((always_inline)) void                                  \
@@ -1473,7 +1474,7 @@ DECLARE_DMA_LOAD(1, uint64_t);
 DECLARE_DMA_LOAD(1, half);
 DECLARE_DMA_LOAD(1, float);
 DECLARE_DMA_LOAD(1, bfloat16_t);
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 DECLARE_DMA_LOAD_FP8(1, float8_e4m3_t);
 DECLARE_DMA_LOAD_FP8(1, float8_e5m2_t);
 #endif
@@ -1492,7 +1493,7 @@ DECLARE_DMA_LOAD(2, uint64_t);
 DECLARE_DMA_LOAD(2, half);
 DECLARE_DMA_LOAD(2, float);
 DECLARE_DMA_LOAD(2, bfloat16_t);
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 DECLARE_DMA_LOAD_FP8(2, float8_e4m3_t);
 DECLARE_DMA_LOAD_FP8(2, float8_e5m2_t);
 #endif
@@ -1513,7 +1514,7 @@ DECLARE_DMA_LOAD(3, float);
 DECLARE_DMA_LOAD(3, bfloat16_t);
 DECLARE_DMA_LOAD(3, int8_t);
 DECLARE_DMA_LOAD(3, uint8_t);
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 DECLARE_DMA_LOAD_FP8(3, float8_e4m3_t);
 DECLARE_DMA_LOAD_FP8(3, float8_e5m2_t);
 #endif
@@ -1570,7 +1571,7 @@ DECLARE_DMA_STORE(1, uint64_t);
 DECLARE_DMA_STORE(1, half);
 DECLARE_DMA_STORE(1, float);
 DECLARE_DMA_STORE(1, bfloat16_t);
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 DECLARE_DMA_STORE(1, float8_e4m3_t);
 DECLARE_DMA_STORE(1, float8_e5m2_t);
 #endif
@@ -1589,7 +1590,7 @@ DECLARE_DMA_STORE(2, uint64_t);
 DECLARE_DMA_STORE(2, half);
 DECLARE_DMA_STORE(2, float);
 DECLARE_DMA_STORE(2, bfloat16_t);
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 DECLARE_DMA_STORE(2, float8_e4m3_t);
 DECLARE_DMA_STORE(2, float8_e5m2_t);
 #endif
@@ -1607,7 +1608,7 @@ DECLARE_DMA_STORE(3, uint64_t);
 DECLARE_DMA_STORE(3, half);
 DECLARE_DMA_STORE(3, float);
 DECLARE_DMA_STORE(3, bfloat16_t);
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 DECLARE_DMA_STORE(3, float8_e4m3_t);
 DECLARE_DMA_STORE(3, float8_e5m2_t);
 #endif
@@ -1626,7 +1627,7 @@ DECLARE_DMA_UB_COPY(ubuf, ubuf, 1, uint64_t);
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 1, half);
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 1, float);
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 1, bfloat16_t);
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 1, float8_e4m3_t);
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 1, float8_e5m2_t);
 #endif
@@ -1646,7 +1647,7 @@ DECLARE_DMA_UB_COPY(ubuf, ubuf, 2, uint64_t);
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 2, half);
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 2, float);
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 2, bfloat16_t);
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 2, float8_e4m3_t);
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 2, float8_e5m2_t);
 #endif
@@ -1666,12 +1667,12 @@ DECLARE_DMA_UB_COPY(ubuf, ubuf, 3, uint64_t);
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 3, half);
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 3, float);
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 3, bfloat16_t);
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 3, float8_e4m3_t);
 DECLARE_DMA_UB_COPY(ubuf, ubuf, 3, float8_e5m2_t);
 #endif
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 //===-------------------------------------------------------------------===//
 // ub to cbuf, 1 dim
 //===-------------------------------------------------------------------===//

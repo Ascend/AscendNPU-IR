@@ -14,10 +14,11 @@
  * limitations under the License.
  */
 
+#include "ArchDefs.h"
 #include "RegBase/SimtUtils.h"
 #include "Utils.h"
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 /// Normalize tanh(x)=(exp(x)-exp(-x))/(exp(x)+exp(-x))
 ///                  =(exp(2x)-1)/(exp(2x)+1)
 ///                  =(exp(2x')-1)/(exp(2x')+1)

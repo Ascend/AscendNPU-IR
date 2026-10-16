@@ -1,4 +1,4 @@
-// RUN: bishengir-opt --hivm-constantize-buffer-size -split-input-file -allow-unregistered-dialect %s | FileCheck %s
+// RUN: bishengir-opt --hivm-constantize-buffer-size=bypass-shape-registry=true -split-input-file -allow-unregistered-dialect %s | FileCheck %s
 
 #map = affine_map<(d0) -> (d0, 32)>
 func.func @test0(%arg0 : index) {
@@ -7,13 +7,13 @@ func.func @test0(%arg0 : index) {
   // CHECK: %[[VIEW:.*]] = memref.view %[[ALLOC]]
   // CHECK: "some_use"(%[[VIEW]])
   %alloc = memref.alloc(%size) : memref<?x16xi32>
-  annotation.mark %alloc {buffer_size_in_byte = 16384 : i64} : memref<?x16xi32>
+  annotation.mark %alloc {buffer_size_in_byte = 2048 : i64} : memref<?x16xi32>
   "some_use"(%alloc) : (memref<?x16xi32>) -> ()
   // CHECK: %[[ALLOCA:.*]] = memref.alloca() : memref<2048xi8>
   // CHECK: %[[VIEW1:.*]] = memref.view %[[ALLOCA]]
   // CHECK: "some_use"(%[[VIEW1]])
   %alloca = memref.alloca(%size) : memref<?x16xi32>
-  annotation.mark %alloca {buffer_size_in_byte = 16384 : i64} : memref<?x16xi32>
+  annotation.mark %alloca {buffer_size_in_byte = 2048 : i64} : memref<?x16xi32>
   "some_use"(%alloca) : (memref<?x16xi32>) -> ()
 }
 
@@ -28,13 +28,13 @@ func.func @test0(%arg0 : index, %arg1 : index) {
   // CHECK: %[[VIEW:.*]] = memref.view %[[ALLOC]]
   // CHECK: "some_use"(%[[VIEW]])
   %alloc = memref.alloc(%size) : memref<16x?xi32>
-  annotation.mark %alloc {buffer_size_in_byte = 16384 : i64} : memref<16x?xi32>
+  annotation.mark %alloc {buffer_size_in_byte = 2048 : i64} : memref<16x?xi32>
   "some_use"(%alloc) : (memref<16x?xi32>) -> ()
   // CHECK: %[[ALLOCA:.*]] = memref.alloca() : memref<19922944xi8>
   // CHECK: %[[VIEW1:.*]] = memref.view %[[ALLOCA]]
   // CHECK: "some_use"(%[[VIEW1]])
   %alloca = memref.alloca(%size, %size1) : memref<16x?x38x4x?xi32>
-  annotation.mark %alloca {buffer_size_in_byte = 159383552 : i64} : memref<16x?x38x4x?xi32>
+  annotation.mark %alloca {buffer_size_in_byte = 19922944 : i64} : memref<16x?x38x4x?xi32>
   "some_use"(%alloca) : (memref<16x?x38x4x?xi32>) -> ()
 }
 
@@ -140,7 +140,7 @@ func.func @affine_min_constant_branch(%arg0 : index) {
   %ic = arith.index_cast %size : index to i64
   %size2 = arith.index_cast %ic : i64 to index
   %alloc = memref.alloc(%size2) : memref<?x16xi32>
-  annotation.mark %alloc {buffer_size_in_byte = 16384 : i64} : memref<?x16xi32>
+  annotation.mark %alloc {buffer_size_in_byte = 1024 : i64} : memref<?x16xi32>
   "some_use"(%alloc) : (memref<?x16xi32>) -> ()
 }
 
@@ -161,6 +161,6 @@ func.func @affine_max_all_branches_bounded(%arg0 : index, %arg1 : index) {
   %ic = arith.index_cast %size : index to i64
   %size2 = arith.index_cast %ic : i64 to index
   %alloc = memref.alloc(%size2) : memref<?x16xi32>
-  annotation.mark %alloc {buffer_size_in_byte = 16384 : i64} : memref<?x16xi32>
+  annotation.mark %alloc {buffer_size_in_byte = 2048 : i64} : memref<?x16xi32>
   "some_use"(%alloc) : (memref<?x16xi32>) -> ()
 }

@@ -682,6 +682,19 @@ def UpliftWhileToFor : Pass<"hfusion-uplift-while-to-for", "func::FuncOp"> {
   let summary = "Uplift scf.while loops to scf.for when possible";
   let constructor = "mlir::hfusion::createUpliftWhileToForPass()";
   let dependentDialects = ["scf::SCFDialect", "arith::ArithDialect"];
+  let options =
+      [Option<"bypassShapeRegistry", "bypass-shape-registry", "bool",
+              /*default=*/"false",
+              "Bypass shape registry check for the 3160 "
+              "sign-extended while-bound normalize">,
+       Option<"enablePreload", "enable-preload", "bool",
+              /*default=*/"false",
+              "Enable the 3160 sign-extended while-bound normalize "
+              "when the kernel is registered">,
+       Option<
+           "workspaceMultiBufferNum", "set-workspace-multibuffer", "unsigned",
+           /*default=*/"0",
+           "Workspace multibuffer depth; heuristics require a non-zero value">];
 }
 
 def LoopInvariantPromotion

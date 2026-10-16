@@ -14,10 +14,11 @@
  * limitations under the License.
  */
 
+#include "ArchDefs.h"
 #include "RegBase/SimtUtils.h"
 #include "Utils.h"
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 template <typename TYPE>
 __aicore__ __attribute__((always_inline)) TYPE simt_rsqrt(TYPE src) {
   return 1.0f / __sqrtf((float)src);

@@ -1,6 +1,7 @@
 
 #ifndef HIVM_MLIR_TEMPLATE_LOAD_MX_SCALE_UTILS_H
 #define HIVM_MLIR_TEMPLATE_LOAD_MX_SCALE_UTILS_H
+#include "ArchDefs.h"
 #include "Utils.h"
 
 #define DECLARE_LOAD_MX_SCALE(src_scope, dst_scope, src_dim, dst_dim, type)    \
@@ -14,7 +15,7 @@
     copy_##src_scope##_to_##dst_scope##_load_mx_scale_core<type>(src, dst);    \
   }
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 extern "C" {
 DECLARE_LOAD_MX_SCALE(gm, cbuf, 2, 4, int8_t);
 }

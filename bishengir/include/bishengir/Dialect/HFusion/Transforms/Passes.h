@@ -259,7 +259,8 @@ std::unique_ptr<Pass> createEliminateDuplicateFuncsPass();
 std::unique_ptr<Pass> createRemoveCacheIO();
 
 /// Create a pass to uplift while loops to for loops.
-std::unique_ptr<Pass> createUpliftWhileToForPass();
+std::unique_ptr<Pass>
+createUpliftWhileToForPass(const UpliftWhileToForOptions &options = {});
 
 /// Create a pass to fold unit dims in linalg ops on tensors
 std::unique_ptr<Pass> createHFusionFoldUnitDimsPass();

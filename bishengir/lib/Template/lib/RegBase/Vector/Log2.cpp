@@ -14,9 +14,10 @@
  * limitations under the License.
  */
 
+#include "ArchDefs.h"
 #include "RegBase/SimtUtils.h"
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 /// normalize logb(x) to ln(x) * (1 / ln(b)) when log base b is not e
 /// eg.
 /// y = log2(x)  is normalized to

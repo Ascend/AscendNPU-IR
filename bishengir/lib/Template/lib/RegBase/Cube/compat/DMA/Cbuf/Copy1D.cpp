@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include "ArchDefs.h"
 #include "DMA/DMAUtils.h"
 
 template <typename T>
@@ -75,14 +76,14 @@ REGISTE_DMA_L1_LOAD(1, int16_t);
 REGISTE_DMA_L1_LOAD(1, uint16_t);
 REGISTE_DMA_L1_LOAD(1, int32_t);
 REGISTE_DMA_L1_LOAD(1, uint32_t);
-#if !defined(__DAV_C310__)
+#if !BISHENG_TPL_REGBASE
 REGISTE_DMA_L1_LOAD(1, int64_t);
 REGISTE_DMA_L1_LOAD(1, uint64_t);
 #endif
 REGISTE_DMA_L1_LOAD(1, half);
 REGISTE_DMA_L1_LOAD(1, float);
 REGISTE_DMA_L1_LOAD(1, bfloat16_t);
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 REGISTE_DMA_L1_LOAD(1, float8_e4m3_t);
 REGISTE_DMA_L1_LOAD(1, float8_e5m2_t);
 #endif

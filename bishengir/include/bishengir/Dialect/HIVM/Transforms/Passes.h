@@ -26,6 +26,7 @@
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 
 #include "mlir/Dialect/Bufferization/Transforms/OneShotAnalysis.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Pass/Pass.h"
 
 #include <memory>
@@ -174,7 +175,8 @@ std::unique_ptr<Pass> createHIVMRecognizeDisContinuousStorePass();
 std::unique_ptr<Pass> createHIVMOptSinglePointPass();
 
 /// Create a pass to constantize buffers with dynamic sizes.
-std::unique_ptr<Pass> createConstantizeBufferSizePass();
+std::unique_ptr<Pass> createConstantizeBufferSizePass(
+    const ConstantizeBufferSizeOptions &options = {});
 
 /// Create a pass to allocate extra buffer
 std::unique_ptr<Pass> createAllocExtraBufferPass();
@@ -213,6 +215,8 @@ std::unique_ptr<Pass> createSplitMixedIfConditionalsPass();
 // Create a pass to mark L1/UB allocs with the tightly-coupled-buffer attribute
 // before SplitMixKernel clones the MIX function.
 std::unique_ptr<Pass> createMarkTightlyCoupledBufferPass();
+std::unique_ptr<Pass> createMarkTightlyCoupledBufferPass(
+    const MarkTightlyCoupledBufferOptions &options);
 
 // Create a pass to hoist yielded tightly-coupled allocs out of inner regions so
 // the AIC/AIV multi-buffer anchor stays consistent after SplitMixKernel.
@@ -221,6 +225,12 @@ std::unique_ptr<Pass> createHoistTightlyCoupledAllocPass();
 // Create a pass to mark scalar operations with core-type attribute.
 std::unique_ptr<Pass>
 createMarkRealCoreTypePass(const MarkRealCoreTypeOptions &options = {});
+
+// Aiv substitute for hivm-mark-real-core-type. The mix path clones the
+// module and splits it to learn CUBE vs VECTOR. Pure AIV has no cube side,
+// so this stamps VECTOR on the same scalar-pipe ops, or removes those attrs
+// when the skipped pass is the cleanup invocation.
+LogicalResult substituteMarkRealCoreType(Operation *op, const Pass &pass);
 
 // Create a pass to run the HIVM canonicalization pass pipeline on a function.
 std::unique_ptr<Pass> createHIVMCanonicalizationPipelinePass();
@@ -282,6 +292,12 @@ std::unique_ptr<Pass> createLiftZeroRankPass();
 // Create a pass to insert load/store op for mix cv function.
 std::unique_ptr<Pass> createInsertLoadStoreForMixCVPass(
     const InsertLoadStoreForMixCVOptions &options = {});
+
+// Aiv substitute for hivm-insert-load-store-for-mix-cv. The mix path
+// inserts cube/vector boundary copies. Pure AIV still needs the VECTOR
+// core type that pass would have written, without those copies.
+LogicalResult substituteInsertLoadStoreForMixCV(Operation *op,
+                                                const Pass &pass);
 
 std::unique_ptr<Pass> createInsertLoadStoreForScalarPass();
 

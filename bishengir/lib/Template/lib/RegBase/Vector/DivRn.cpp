@@ -14,10 +14,11 @@
  * limitations under the License.
  */
 
+#include "ArchDefs.h"
 #include "RegBase/SimtUtils.h"
 #include "Utils.h"
 
-#if defined(__DAV_C310__)
+#if BISHENG_TPL_REGBASE
 
 __aicore__ __attribute__((always_inline)) float div_rn_fp32(float a, float b) {
     // Standard hardware division result used for fallback in special cases (b=0, inf, etc.)

@@ -42,6 +42,8 @@
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "llvm/ADT/TypeSwitch.h"
 
+#include <functional>
+
 #define DEBUG_TYPE "cv-pipelining"
 
 using llvm::dbgs;
@@ -183,6 +185,8 @@ private:
   Value createSubview(OpBuilder &builder, Location loc, Value from, Type to,
                       Value iv);
   Value createToTensor(OpBuilder &builder, Location loc, Value src);
+  FailureOr<Value> rematerializeTCBOutputView(Value output, Value storage,
+                                              IRMapping &scopeMap);
   // Returns failure() on malformed input. On success, the returned Value may
   // still be nullptr when there is no masking subview to update.
   FailureOr<Value> updateMaskingSubview(OpBuilder &builder, Location loc,
@@ -239,6 +243,11 @@ private:
 
   // Corresponding expanded tensors for each output of work items
   DenseMap<Value, Value> expandedTensorMap;
+
+  // TCB outputs whose logical tensor type is recovered through a view of the
+  // physical backing allocation. Rebuild the view in each consumer scope so
+  // its dynamic sizes remain local to that scope.
+  DenseMap<Value, Value> viewedTCBOutputStorage;
 
   // Mapping from each op under atomic effect to its atomic kind and data type
   DenseMap<Operation *, AtomicEffect> atomicEffectMap;
@@ -1310,6 +1319,87 @@ Value CVPipelineImpl::createToTensor(OpBuilder &builder, Location loc,
                                                    /*writable*/ true);
 }
 
+FailureOr<Value>
+CVPipelineImpl::rematerializeTCBOutputView(Value output, Value storage,
+                                           IRMapping &scopeMap) {
+  auto toTensor = output.getDefiningOp<bufferization::ToTensorOp>();
+  if (!toTensor) {
+    auto dps = dyn_cast_if_present<DestinationStyleOpInterface>(
+        output.getDefiningOp());
+    if (dps && dps.getNumDpsInits() == 1) {
+      Value init = dps.getDpsInitOperand(0)->get();
+      toTensor = init.getDefiningOp<bufferization::ToTensorOp>();
+    }
+  }
+  if (!toTensor) {
+    pipelineLoop->emitWarning(
+        "[cv-pipelining] expected viewed TCB output to have a to_tensor "
+        "destination");
+    return failure();
+  }
+
+  SmallVector<Operation *> aliasOps;
+  Value current = toTensor.getMemref();
+  while (current != storage) {
+    Operation *defining = current.getDefiningOp();
+    if (!defining || defining->getNumResults() != 1 ||
+        defining->getResult(0) != current ||
+        !isa<CastOpInterface, ViewLikeOpInterface>(defining)) {
+      pipelineLoop->emitWarning(
+          "[cv-pipelining] unsupported alias chain for viewed TCB output");
+      return failure();
+    }
+    aliasOps.push_back(defining);
+    current = defining->getOperand(0);
+  }
+
+  IRMapping aliasMap(scopeMap);
+  // A producer-local offset or size may still map into the producer scope.
+  // Rebuild its scalar expression in this scope, just like the view itself.
+  std::function<LogicalResult(Value)> remapScalar = [&](Value value) {
+    if (!value.getType().isIntOrIndex())
+      return failure();
+    if (!pipelineLoop->isAncestor(value.getParentBlock()->getParentOp()))
+      return success();
+    if (isa<BlockArgument>(value))
+      return success(value.getParentBlock() == pipelineLoop.getBody());
+    Value mapped = aliasMap.lookupOrDefault(value);
+    if (mapped.getParentBlock() == builder.getInsertionBlock())
+      return success();
+    Operation *def = value.getDefiningOp();
+    if (def->getBlock() != pipelineLoop.getBody() ||
+        def->getNumRegions() != 0 || !isMemoryEffectFree(def) ||
+        !llvm::all_of(def->getResultTypes(),
+                      [](Type type) { return type.isIntOrIndex(); }))
+      return failure();
+    for (Value operand : def->getOperands())
+      if (failed(remapScalar(operand)))
+        return failure();
+    builder.clone(*def, aliasMap);
+    return success();
+  };
+  for (Operation *alias : llvm::reverse(aliasOps)) {
+    for (Value operand : alias->getOperands().drop_front()) {
+      if (failed(remapScalar(operand))) {
+        pipelineLoop->emitWarning("[cv-pipelining] unsupported scalar "
+                                  "dependency of viewed TCB output");
+        return failure();
+      }
+    }
+    builder.clone(*alias, aliasMap);
+  }
+
+  Value logicalMemref = aliasMap.lookupOrDefault(toTensor.getMemref());
+  Value rematerialized =
+      createToTensor(builder, output.getLoc(), logicalMemref);
+  if (!rematerialized || rematerialized.getType() != output.getType()) {
+    pipelineLoop->emitWarning(
+        "[cv-pipelining] failed to recover viewed TCB output type");
+    return failure();
+  }
+  return rematerialized;
+}
+
 LogicalResult CVPipelineImpl::expandOutputInits(WorkItem *item) {
   OpBuilder::InsertionGuard g(builder);
   builder.setInsertionPointToStart(newLoop.getBody());
@@ -2188,12 +2278,30 @@ LogicalResult CVPipelineImpl::createNewLoopsForPreloadWithScopes() {
       if (toTensorOp)
         tcbToTensorOps.insert(toTensorOp);
     }
+    SmallVector<Value> scopeViewedTCBOutputs;
     for (Operation &op : parentFor.getBody()->getOperations()) {
       if (!item->ops.contains(&op))
         continue;
       toErase.insert(&op);
       if (tcbToTensorOps.contains(&op))
         continue;
+      WalkResult remapResult = op.walk([&](Operation *nested) {
+        for (Value operand : nested->getOperands()) {
+          auto storage = viewedTCBOutputStorage.find(operand);
+          if (storage == viewedTCBOutputStorage.end() ||
+              scopeMap.contains(operand))
+            continue;
+          FailureOr<Value> rematerialized =
+              rematerializeTCBOutputView(operand, storage->second, scopeMap);
+          if (failed(rematerialized))
+            return WalkResult::interrupt();
+          scopeMap.map(operand, *rematerialized);
+          scopeViewedTCBOutputs.push_back(operand);
+        }
+        return WalkResult::advance();
+      });
+      if (remapResult.wasInterrupted())
+        return failure();
       auto atomicIt = atomicEffectMap.find(&op);
       if (atomicIt != atomicEffectMap.end()) {
         const AtomicEffect &effect = atomicIt->getSecond();
@@ -2204,6 +2312,8 @@ LogicalResult CVPipelineImpl::createNewLoopsForPreloadWithScopes() {
         builder.create<SetAtomicOp>(op.getLoc(), AtomicKind::NONE,
                                     atomicIt->getSecond().type);
     }
+    for (Value output : scopeViewedTCBOutputs)
+      scopeMap.erase(output);
     item->irMap = scopeMap;
 
     for (Operation *workspaceOutput : item->workspaceOutputs) {
@@ -2235,7 +2345,16 @@ LogicalResult CVPipelineImpl::createNewLoopsForPreloadWithScopes() {
       Value toTensor = createToTensor(builder, loc, localOutput.second);
       if (!toTensor)
         return failure();
-      globalIRMap.map(localOutput.first, toTensor);
+      if (allowShapeHeuristics &&
+          toTensor.getType() != localOutput.first.getType()) {
+        // Registered / bypass kernels keep the physical TCB storage and
+        // rebuild the logical view in each consumer scope.
+        toTensor.getDefiningOp()->erase();
+        globalIRMap.erase(localOutput.first);
+        viewedTCBOutputStorage[localOutput.first] = localOutput.second;
+      } else {
+        globalIRMap.map(localOutput.first, toTensor);
+      }
     }
 
     size_t resultIdx = 0;

@@ -19,14 +19,18 @@
 #define BISHENGIR_DIALECT_HIVM_TRANSFORMS_PASSES_TD
 
 include "mlir/Pass/PassBase.td"
+include "bishengir/Dialect/HIVM/Transforms/HIVMPass.td"
 
-def InferFuncCoreType : Pass<"hivm-infer-func-core-type", "ModuleOp"> {
+def InferFuncCoreType : HIVMPass<"hivm-infer-func-core-type", "ModuleOp"> {
   let summary = "Infer the core type of each function";
   let constructor = "mlir::hivm::createInferFuncCoreTypePass()";
   let dependentDialects = ["hivm::HIVMDialect", ];
 }
 
-def ConvertToHIVMOp : Pass<"convert-to-hivm-op"> {
+def ConvertToHIVMOp
+    : HIVMPass<"convert-to-hivm-op", AnyOp, AllKernelKinds, true> {
+  // Last step of the HFusion/tensor/triton lowering into HIVM. Re-infer
+  // function core types once those HIVM ops exist.
   let summary = "Convert Ops from other dialects to HIVM Ops";
   let constructor = "mlir::hivm::createConvertToHIVMOpPass()";
   let dependentDialects = ["arith::ArithDialect", "hivm::HIVMDialect",
@@ -34,7 +38,7 @@ def ConvertToHIVMOp : Pass<"convert-to-hivm-op"> {
   ];
 }
 
-def EnableHIVMCCompatiblePrint : Pass<"enable-hivmc-compatible-print"> {
+def EnableHIVMCCompatiblePrint : HIVMPass<"enable-hivmc-compatible-print"> {
   let summary = "Enable HIVMC version-compatible IR print";
   let description = [{
     Once HIVMC version-compatible IR print is enabled,
@@ -45,7 +49,8 @@ def EnableHIVMCCompatiblePrint : Pass<"enable-hivmc-compatible-print"> {
   let dependentDialects = ["hivm::HIVMDialect"];
 }
 
-def NormalizeMatmul : Pass<"hivm-normalize-matmul"> {
+def NormalizeMatmul
+    : HIVMPass<"hivm-normalize-matmul", AnyOp, [MixKernel, PureAicKernel]> {
   let summary = "Normalize hivm matmul op";
   let constructor = "mlir::hivm::createNormalizeMatmulPass()";
   let dependentDialects = ["arith::ArithDialect", "hivm::HIVMDialect",
@@ -53,17 +58,19 @@ def NormalizeMatmul : Pass<"hivm-normalize-matmul"> {
   ];
 }
 
-def NormalizeConvOps : Pass<"hivm-normalize-convops"> {
+def NormalizeConvOps
+    : HIVMPass<"hivm-normalize-convops", AnyOp, [MixKernel, PureAicKernel]> {
   let summary = "Normalize hivm conv op";
   let constructor = "mlir::hivm::createNormalizeConvOpsPass()";
   let dependentDialects = ["arith::ArithDialect", "hivm::HIVMDialect",
-                           "tensor::TensorDialect", "annotation::AnnotationDialect",
+                           "tensor::TensorDialect",
+                           "annotation::AnnotationDialect",
                            "bufferization::BufferizationDialect",
                            "memref::MemRefDialect",
   ];
 }
 
-def NormalizeBitwiseSelect : Pass<"hivm-normalize-bitwise-select"> {
+def NormalizeBitwiseSelect : HIVMPass<"hivm-normalize-bitwise-select"> {
   let summary = "Normalize hivm bitwise select op";
   let constructor = "mlir::hivm::createNormalizeBitwiseSelectPass()";
   let dependentDialects = ["arith::ArithDialect", "hivm::HIVMDialect",
@@ -71,40 +78,36 @@ def NormalizeBitwiseSelect : Pass<"hivm-normalize-bitwise-select"> {
   ];
 }
 
-def HIVMNormalize : Pass<"hivm-normalize-ops", "func::FuncOp"> {
+def HIVMNormalize : HIVMPass<"hivm-normalize-ops", "func::FuncOp"> {
   let summary = "Normalize HIVM";
   let constructor = "mlir::hivm::createHIVMNormalizeOpsPass()";
-  let dependentDialects = [
-    "annotation::AnnotationDialect",
-    "arith::ArithDialect",
-    "hivm::HIVMDialect",
-    "tensor::TensorDialect",
-    "bufferization::BufferizationDialect",
-    "memref::MemRefDialect",
-    "scope::ScopeDialect",
+  let dependentDialects = ["annotation::AnnotationDialect",
+                           "arith::ArithDialect", "hivm::HIVMDialect",
+                           "tensor::TensorDialect",
+                           "bufferization::BufferizationDialect",
+                           "memref::MemRefDialect", "scope::ScopeDialect",
   ];
-  let options = [
-    Option<
+  let options = [Option<
       "enableHighPrecision", "enable-high-precision", "bool",
       /*default=*/"true",
-      "Enable high precision calculation for sin/cos in HIVM.">
-  ];
+      "Enable high precision calculation for sin/cos in HIVM.">];
 }
 
 def TritonGlobalKernelArgsToHIVMOp
-    : Pass<"triton-global-kernel-args-to-hivm-op", "func::FuncOp"> {
+    : HIVMPass<"triton-global-kernel-args-to-hivm-op", "func::FuncOp"> {
   let summary = "Convert triton global kernel args to hivm op";
   let constructor = "mlir::hivm::createTritonGlobalKernelArgsToHIVMOpPass()";
-  let dependentDialects = ["hivm::HIVMDialect", "hacc::HACCDialect", "annotation::AnnotationDialect"];
+  let dependentDialects = ["hivm::HIVMDialect", "hacc::HACCDialect",
+                           "annotation::AnnotationDialect"];
 }
 
-def InferHIVMMemScope : Pass<"hivm-infer-mem-scope"> {
+def InferHIVMMemScope : HIVMPass<"hivm-infer-mem-scope"> {
   let summary = "Infer memory scope for HIVM Ops";
   let constructor = "mlir::hivm::createInferHIVMMemScopePass()";
   let dependentDialects = ["hivm::HIVMDialect", "memref::MemRefDialect", ];
 }
 
-def MarkMultiBuffer : Pass<"hivm-mark-multi-buffer", "func::FuncOp"> {
+def MarkMultiBuffer : HIVMPass<"hivm-mark-multi-buffer", "func::FuncOp"> {
   let summary = "Mark multi buffer for HIVM Ops";
   let description = [{
     This pass mark multi buffer for hivm ops if the option enable-auto is true.
@@ -114,9 +117,7 @@ def MarkMultiBuffer : Pass<"hivm-mark-multi-buffer", "func::FuncOp"> {
   }];
 
   let constructor = "mlir::hivm::createMarkMultiBufferPass()";
-  let dependentDialects = [
-    "hivm::HIVMDialect",
-    "annotation::AnnotationDialect",
+  let dependentDialects = ["hivm::HIVMDialect", "annotation::AnnotationDialect",
   ];
   let options =
       [Option<"enableAuto", "enable-auto", "bool",
@@ -183,7 +184,7 @@ def MarkMultiBuffer : Pass<"hivm-mark-multi-buffer", "func::FuncOp"> {
   ];
 }
 
-def EnableMultiBuffer : Pass<"hivm-enable-multi-buffer", "func::FuncOp"> {
+def EnableMultiBuffer : HIVMPass<"hivm-enable-multi-buffer", "func::FuncOp"> {
   let summary = "Enable multi buffer";
   let description = [{
     This pass enable multi buffer for hivm op if the op is marked "hivm.multi_buffer".
@@ -193,7 +194,8 @@ def EnableMultiBuffer : Pass<"hivm-enable-multi-buffer", "func::FuncOp"> {
   let dependentDialects = ["mlir::affine::AffineDialect", ];
 }
 
-def AddFFTSToSyncBlockSetOp : Pass<"hivm-add-ffts-to-syncblocksetop", "func::FuncOp"> {
+def AddFFTSToSyncBlockSetOp
+    : HIVMPass<"hivm-add-ffts-to-syncblocksetop", "func::FuncOp"> {
   let summary = "Add FFTS (arg0) to SyncBlockSetOp";
   let description = [{
     This pass adds FFTS (arg0) to SyncBlockSetOp.
@@ -204,7 +206,7 @@ def AddFFTSToSyncBlockSetOp : Pass<"hivm-add-ffts-to-syncblocksetop", "func::Fun
 }
 
 def LowerMultiBufferCounter
-    : Pass<"hivm-lower-multi-buffer-counter", "func::FuncOp"> {
+    : HIVMPass<"hivm-lower-multi-buffer-counter", "func::FuncOp"> {
   let summary = "Lower HIVM multi-buffer counter anchors to memref state.";
   let description = [{
     This pass lowers hivm.hir.multi_buffer_counter to the concrete alloca-based
@@ -212,15 +214,12 @@ def LowerMultiBufferCounter
   }];
 
   let constructor = "mlir::hivm::createLowerMultiBufferCounterPass()";
-  let dependentDialects = [
-    "arith::ArithDialect",
-    "hivm::HIVMDialect",
-    "memref::MemRefDialect",
-    "scf::SCFDialect",
+  let dependentDialects = ["arith::ArithDialect", "hivm::HIVMDialect",
+                           "memref::MemRefDialect", "scf::SCFDialect",
   ];
 }
 
-def AllocToAlloca : Pass<"hivm-memref-alloc-to-alloca"> {
+def AllocToAlloca : HIVMPass<"hivm-memref-alloc-to-alloca"> {
   let summary = "Convert local AllocOp to AllocaOp";
   let description = [{This pass replace all memref.alloc with non -
                       global memory space to memref.alloca.}];
@@ -228,28 +227,27 @@ def AllocToAlloca : Pass<"hivm-memref-alloc-to-alloca"> {
   let dependentDialects = ["memref::MemRefDialect"];
 }
 
-def CloneTensorEmpty : Pass<"hivm-clone-tensor-empty", "func::FuncOp"> {
+def CloneTensorEmpty : HIVMPass<"hivm-clone-tensor-empty", "func::FuncOp"> {
   let summary = "Output clones to different empty tensors based on hivmOp.";
   let description = [{This pass clone different tensor.empty to hivmOp output}];
   let constructor = "mlir::hivm::createCloneTensorEmptyPass()";
   let dependentDialects = ["hivm::HIVMDialect", "tensor::TensorDialect"];
 }
 
-def InferHIVMDataLayout : Pass<"hivm-infer-data-layout", "func::FuncOp"> {
+def InferHIVMDataLayout : HIVMPass<"hivm-infer-data-layout", "func::FuncOp"> {
   let summary = "Infer data layout for HIVM Ops";
   let constructor = "mlir::hivm::createInferHIVMDataLayoutPass()";
   let dependentDialects = ["affine::AffineDialect", "hivm::HIVMDialect",
                            "annotation::AnnotationDialect",
   ];
   let options = [Option<
-    "batchMatmul", "batch-matmul", "bool",
-    /*default=*/"false",
-    "Fold a rank-3 ND2NZ into one MTE2 descriptor and honour an "
-    "l2_cache_mode annotation on a matmul operand">];
+      "batchMatmul", "batch-matmul", "bool",
+      /*default=*/"false",
+      "Fold a rank-3 ND2NZ into one MTE2 descriptor and honour an "
+      "l2_cache_mode annotation on a matmul operand">];
 }
 
-def NormalizeToTensorOp
-    : Pass<"hivm-normalize-to-tensor", "func::FuncOp"> {
+def NormalizeToTensorOp : HIVMPass<"hivm-normalize-to-tensor", "func::FuncOp"> {
   let summary = "Normalize bufferization.to_tensor ops.";
   let description = [{
     Normalize `bufferization.to_tensor` ops before bufferization:
@@ -266,108 +264,110 @@ def NormalizeToTensorOp
        insertion.
   }];
   let constructor = "mlir::hivm::createNormalizeToTensorOpPass()";
-  let dependentDialects =
-    ["bufferization::BufferizationDialect", "memref::MemRefDialect"];
+  let dependentDialects = ["bufferization::BufferizationDialect",
+                           "memref::MemRefDialect"];
 }
 
-def InferVFMode : Pass<"hivm-infer-vf-mode", "func::FuncOp"> {
+def InferVFMode : HIVMPass<"hivm-infer-vf-mode", "func::FuncOp"> {
   let summary = "Infer vf mode for Ops";
   let constructor = "mlir::hivm::createInferVFModePass()";
   let dependentDialects = ["hivm::HIVMDialect"];
 }
 
 def VFOperandSubstitution
-    : Pass<"hivm-vf-operand-substitution", "ModuleOp"> {
-  let summary =
-      "Reuse a VF input buffer for its output via callsite operand substitution";
+    : HIVMPass<"hivm-vf-operand-substitution", "ModuleOp"> {
+  let summary = "Reuse a VF input buffer for its output via callsite operand "
+                "substitution";
   let constructor = "mlir::hivm::createVFOperandSubstitutionPass()";
-  let dependentDialects = [
-    "arith::ArithDialect", "func::FuncDialect", "memref::MemRefDialect",
-    "hivm::HIVMDialect"
-  ];
+  let dependentDialects = ["arith::ArithDialect", "func::FuncDialect",
+                           "memref::MemRefDialect", "hivm::HIVMDialect"];
 }
 
-def PlanMemory : Pass<"hivm-plan-memory", "ModuleOp"> {
+def PlanMemory : HIVMPass<"hivm-plan-memory", "ModuleOp"> {
   let summary = "Plan memory for HIVM Ops";
   let constructor = "mlir::hivm::createPlanMemoryPass()";
   let dependentDialects = ["hivm::HIVMDialect", ];
-  let options = [
-    Option<"memMode", "mem-plan-mode", "hivm::MemPlanMode",
-           "hivm::MemPlanMode::LOCAL_MEM_PLAN",
-           "plan mem mode (default is LOCAL_MEM_PLAN)",
-           [{::llvm::cl::values(
+  let options =
+      [Option<"memMode", "mem-plan-mode", "hivm::MemPlanMode",
+              "hivm::MemPlanMode::LOCAL_MEM_PLAN",
+              "plan mem mode (default is LOCAL_MEM_PLAN)",
+              [{::llvm::cl::values(
                clEnumValN(hivm::MemPlanMode::LOCAL_MEM_PLAN, "local-mem-plan",
                           "plan mem mode is for memref.alloc"),
                clEnumValN(
                    hivm::MemPlanMode::GLOBAL_WORKSPACE_PLAN,
                    "global-work-space-plan",
                    "plan mem mode is for memref_ext.alloc_workspace"))}]>,
-    Option<"enableGlobalReuse", "enable-global-workspace-reuse", "bool",
-           /*default=*/"false",
-           "Enable global workspace reuse ,default : false">,
-    Option<"enableMemoryDisplay", "enable-memory-display", "bool",
-           /*default=*/"false",
-           "Enable memory display, default : false">,
-    Option<"restrictInplaceAsISA", "restrict-inplace-as-isa", "bool",
-           /*default=*/"false",
-           "restrict memory inplace as isa, default : false">,
-    Option<"disableTightlyCoupledBufferReuse", "disable-tightly-coupled-buffer-reuse", "bool",
-           /*default=*/"false",
-           "Disable tightly coupled buffer reuse, default : false">,
-    Option<"simtVFDynamicSize", "simt-vf-dynamic-size", "int",
-           /*default=*/"216",
-           "Dynamic ub size(KB) for simt VF, default : 216">,
-    Option<"planMemoryStrategy", "plan-memory-strategy", "::mlir::hivm::PlanMemoryStrategy",
-           "mlir::hivm::PlanMemoryStrategy::DEFAULT",
-           "Plan memory strategy for storage entry reorder",
-           [{::llvm::cl::values(
+       Option<"enableGlobalReuse", "enable-global-workspace-reuse", "bool",
+              /*default=*/"false",
+              "Enable global workspace reuse ,default : false">,
+       Option<"enableMemoryDisplay", "enable-memory-display", "bool",
+              /*default=*/"false", "Enable memory display, default : false">,
+       Option<"restrictInplaceAsISA", "restrict-inplace-as-isa", "bool",
+              /*default=*/"false",
+              "restrict memory inplace as isa, default : false">,
+       Option<"disableTightlyCoupledBufferReuse",
+              "disable-tightly-coupled-buffer-reuse", "bool",
+              /*default=*/"false",
+              "Disable tightly coupled buffer reuse, default : false">,
+       Option<"simtVFDynamicSize", "simt-vf-dynamic-size", "int",
+              /*default=*/"216",
+              "Dynamic ub size(KB) for simt VF, default : 216">,
+       Option<"planMemoryStrategy", "plan-memory-strategy",
+              "::mlir::hivm::PlanMemoryStrategy",
+              "mlir::hivm::PlanMemoryStrategy::DEFAULT",
+              "Plan memory strategy for storage entry reorder",
+              [{::llvm::cl::values(
                clEnumValN(mlir::hivm::PlanMemoryStrategy::DEFAULT, "default",
                           "keep original storage entry order without sorting"),
                clEnumValN(mlir::hivm::PlanMemoryStrategy::LARGEST_FIRST, "largest-first",
                           "sort storage entries by const bits descending, allocate larger buffer first"))}]>,
-    Option<"disableVFReachableCheck", "disable-vf-reachable-check", "bool",
-           /*default=*/"false",
-           "Disable VF reachable check, default : false">,
+       Option<"disableVFReachableCheck", "disable-vf-reachable-check", "bool",
+              /*default=*/"false",
+              "Disable VF reachable check, default : false">,
   ];
 }
 
-def PlanMemoryRegBase : Pass<"hivm-plan-memory-regbase", "ModuleOp"> {
+def PlanMemoryRegBase : HIVMPass<"hivm-plan-memory-regbase", "ModuleOp"> {
   let summary = "Plan memory for HIVM Ops on A5";
   let constructor = "mlir::hivm::createPlanMemoryRegBasePass()";
   let dependentDialects = ["hivm::HIVMDialect", ];
-  let options = [
-    Option<"memMode", "mem-plan-mode", "hivm::MemPlanMode",
-           "hivm::MemPlanMode::LOCAL_MEM_PLAN",
-           "plan mem mode (default is LOCAL_MEM_PLAN)",
-           [{::llvm::cl::values(
+  let options =
+      [Option<"memMode", "mem-plan-mode", "hivm::MemPlanMode",
+              "hivm::MemPlanMode::LOCAL_MEM_PLAN",
+              "plan mem mode (default is LOCAL_MEM_PLAN)",
+              [{::llvm::cl::values(
                clEnumValN(hivm::MemPlanMode::LOCAL_MEM_PLAN, "local-mem-plan",
                           "plan mem mode is for memref.alloc"),
                clEnumValN(
                    hivm::MemPlanMode::GLOBAL_WORKSPACE_PLAN,
                    "global-work-space-plan",
                    "plan mem mode is for memref_ext.alloc_workspace"))}]>,
-    Option<"enableGlobalReuse", "enable-global-workspace-reuse", "bool",
-           /*default=*/"false",
-           "Enable global workspace reuse ,default : false">,
-    Option<"enablePrintMemoryAllocatedSize", "enable-print-memory-allocated-size", "bool",
-           /*default=*/"false",
-           "Enable print memory allocated size, default : false">,
-    Option<"restrictInplaceAsISA", "restrict-inplace-as-isa", "bool",
-           /*default=*/"false",
-           "restrict memory inplace as isa, default : false">,
-    Option<"simtVFDynamicSize", "simt-vf-dynamic-size", "int",
-           /*default=*/"216",
-           "Dynamic ub size(KB) for simt VF, default : 216">,
-    Option<"disableTightlyCoupledBufferReuse", "disable-tightly-coupled-buffer-reuse", "bool",
-           /*default=*/"false",
-           "Disable tightly coupled buffer reuse, default : false">,
-    Option<"disableVFReachableCheck", "disable-vf-reachable-check", "bool",
-           /*default=*/"false",
-           "Disable VF reachable check, default : false">,
-    Option<"planMemoryStrategy", "plan-memory-strategy", "::mlir::hivm::PlanMemoryStrategy",
-           "mlir::hivm::PlanMemoryStrategy::DEFAULT",
-           "Plan memory strategy for storage entry reorder",
-           [{::llvm::cl::values(
+       Option<"enableGlobalReuse", "enable-global-workspace-reuse", "bool",
+              /*default=*/"false",
+              "Enable global workspace reuse ,default : false">,
+       Option<"enablePrintMemoryAllocatedSize",
+              "enable-print-memory-allocated-size", "bool",
+              /*default=*/"false",
+              "Enable print memory allocated size, default : false">,
+       Option<"restrictInplaceAsISA", "restrict-inplace-as-isa", "bool",
+              /*default=*/"false",
+              "restrict memory inplace as isa, default : false">,
+       Option<"simtVFDynamicSize", "simt-vf-dynamic-size", "int",
+              /*default=*/"216",
+              "Dynamic ub size(KB) for simt VF, default : 216">,
+       Option<"disableTightlyCoupledBufferReuse",
+              "disable-tightly-coupled-buffer-reuse", "bool",
+              /*default=*/"false",
+              "Disable tightly coupled buffer reuse, default : false">,
+       Option<"disableVFReachableCheck", "disable-vf-reachable-check", "bool",
+              /*default=*/"false",
+              "Disable VF reachable check, default : false">,
+       Option<"planMemoryStrategy", "plan-memory-strategy",
+              "::mlir::hivm::PlanMemoryStrategy",
+              "mlir::hivm::PlanMemoryStrategy::DEFAULT",
+              "Plan memory strategy for storage entry reorder",
+              [{::llvm::cl::values(
                clEnumValN(mlir::hivm::PlanMemoryStrategy::DEFAULT, "default",
                           "keep original storage entry order without sorting"),
                clEnumValN(mlir::hivm::PlanMemoryStrategy::LARGEST_FIRST, "largest-first",
@@ -375,7 +375,7 @@ def PlanMemoryRegBase : Pass<"hivm-plan-memory-regbase", "ModuleOp"> {
   ];
 }
 
-def InjectSync : Pass<"hivm-inject-sync", "func::FuncOp"> {
+def InjectSync : HIVMPass<"hivm-inject-sync", "func::FuncOp"> {
   let summary = "auto inject sync ";
   let constructor = "mlir::hivm::createInjectSyncPass()";
   let dependentDialects = ["affine::AffineDialect", "hivm::HIVMDialect", ];
@@ -388,34 +388,35 @@ def InjectSync : Pass<"hivm-inject-sync", "func::FuncOp"> {
                    "inject sync mode is inject pipe all, only for debug"),
                clEnumValN(hivm::SyncMode::NORMAL, "normal",
                           "inject sync mode is inject sync"))}]>,
-                  Option<"enableUnitFlag", "enable-unit-flag",
-                          "bool", /*default=*/"false",
-                          "Enable unit-flag modes for synchronization">,
-                  Option<"assumeAliveLoops", "assume-alive-loops",
-                          "bool", /*default=*/"false",
-                          "Assume that all loops (forOp whileOp) will execute at least once.">
-  ];
+                 Option<"enableUnitFlag", "enable-unit-flag", "bool",
+                        /*default=*/"false",
+                        "Enable unit-flag modes for synchronization">,
+                 Option<"assumeAliveLoops", "assume-alive-loops", "bool",
+                        /*default=*/"false",
+                        "Assume that all loops (forOp whileOp) will execute at "
+                        "least once.">];
 }
 
-def InjectBlockSync : Pass<"hivm-inject-block-sync", "func::FuncOp"> {
+def InjectBlockSync : HIVMPass<"hivm-inject-block-sync",
+                               "func::FuncOp", [MixKernel, PureAicKernel]> {
   let summary = "auto inject block sync";
   let constructor = "mlir::hivm::createInjectBlockSyncPass()";
   let dependentDialects = ["hacc::HACCDialect", "hivm::HIVMDialect",
                            "tensor::TensorDialect",
   ];
-  let options = [Option<"blockAllSync",
-           "block-all-sync", "bool",/*default=*/"false",
-           "Enable inject all block sync for HIVM injectBlockSync.">,
-            Option<"assumeAliveLoops", "assume-alive-loops",
-            "bool", /*default=*/"false",
-            "Assume that all loops (forOp whileOp) will execute at least once.">,
-            Option<"disableAutoInjectBlockSync", "disable-auto-inject-block-sync",
-           "bool", /*default=*/"false",
-           "Toggle auto set/wait insertion, always keep SetFFTSBaseAddrOp">
-  ];
+  let options =
+      [Option<"blockAllSync", "block-all-sync", "bool", /*default=*/"false",
+              "Enable inject all block sync for HIVM injectBlockSync.">,
+       Option<
+           "assumeAliveLoops", "assume-alive-loops", "bool",
+           /*default=*/"false",
+           "Assume that all loops (forOp whileOp) will execute at least once.">,
+       Option<"disableAutoInjectBlockSync", "disable-auto-inject-block-sync",
+              "bool", /*default=*/"false",
+              "Toggle auto set/wait insertion, always keep SetFFTSBaseAddrOp">];
 }
 
-def GraphSyncSolver : Pass<"hivm-graph-sync-solver", "func::FuncOp"> {
+def GraphSyncSolver : HIVMPass<"hivm-graph-sync-solver", "func::FuncOp"> {
   let summary = "graph sync solver ";
   let constructor = "mlir::hivm::createGraphSyncSolverPass()";
   let dependentDialects = ["affine::AffineDialect", "hivm::HIVMDialect"];
@@ -445,7 +446,8 @@ def GraphSyncSolver : Pass<"hivm-graph-sync-solver", "func::FuncOp"> {
   ];
 }
 
-def CrossCoreGSS : Pass<"hivm-cross-core-gss", "func::FuncOp"> {
+def CrossCoreGSS : HIVMPass<"hivm-cross-core-gss",
+                            "func::FuncOp", [MixKernel, PureAicKernel]> {
   let summary = "cross-core graph-sync-solver ";
   let constructor = "mlir::hivm::createCrossCoreGSSPass()";
   let dependentDialects = ["hacc::HACCDialect", "hivm::HIVMDialect",
@@ -482,7 +484,8 @@ def CrossCoreGSS : Pass<"hivm-cross-core-gss", "func::FuncOp"> {
   ];
 }
 
-def DelayedCrossCoreGSS : Pass<"hivm-delayed-cross-core-gss", "ModuleOp"> {
+def DelayedCrossCoreGSS : HIVMPass<"hivm-delayed-cross-core-gss",
+                                   "ModuleOp", [MixKernel, PureAicKernel]> {
   let summary = "Delayed cross-core gss auto-sync pass.";
   let description = [{
     Resolves cross-core synchronization for mixed kernels after splitting.
@@ -525,8 +528,8 @@ def DelayedCrossCoreGSS : Pass<"hivm-delayed-cross-core-gss", "ModuleOp"> {
   ];
 }
 
-def InsertAnchorsAndBackup
-    : Pass<"hivm-insert-anchors-and-backup", "ModuleOp"> {
+def InsertAnchorsAndBackup : HIVMPass<"hivm-insert-anchors-and-backup",
+                                      "ModuleOp", [MixKernel, PureAicKernel]> {
   let summary = "Insert anchor operations and backup mixed functions.";
   let description = [{
     Preprocessing pass that records positional information in mixed functions:
@@ -554,22 +557,24 @@ def InsertAnchorsAndBackup
               "bool", /*default=*/"false",
               "Insert Anchor Ops before all operations, if not enabled, will "
               "only insert them before ops that could have cross-core memory">,
-       Option<"insertAnchorOpsBeforeMemEffectOps", "insert-anchor-ops-before-mem-effect-ops",
-              "bool", /*default=*/"false",
+       Option<"insertAnchorOpsBeforeMemEffectOps",
+              "insert-anchor-ops-before-mem-effect-ops", "bool",
+              /*default=*/"false",
               "Insert Anchor Ops before operations that have memory effect">,
-       Option<"insertAnchorOnlyBeforeCubeOps", "insert-anchor-only-before-cube-ops",
-              "bool", /*default=*/"false",
+       Option<"insertAnchorOnlyBeforeCubeOps",
+              "insert-anchor-only-before-cube-ops", "bool", /*default=*/"false",
               "Insert Anchor Ops before cube ops only">,
-       Option<"insertAnchorOnlyBeforeVectorOps", "insert-anchor-only-before-vector-ops",
-              "bool", /*default=*/"false",
-              "Insert Anchor Ops before vector ops only">,
-       Option<"insertAnchorBeforeCubeAndVectorOps", "insert-anchor-before-cube-and-vector-ops",
-              "bool", /*default=*/"true",
+       Option<"insertAnchorOnlyBeforeVectorOps",
+              "insert-anchor-only-before-vector-ops", "bool",
+              /*default=*/"false", "Insert Anchor Ops before vector ops only">,
+       Option<"insertAnchorBeforeCubeAndVectorOps",
+              "insert-anchor-before-cube-and-vector-ops", "bool",
+              /*default=*/"true",
               "Insert Anchor Ops before cube and vector ops only">,
   ];
 }
 
-def HIVMDecomposeOp : Pass<"hivm-decompose-op", "func::FuncOp"> {
+def HIVMDecomposeOp : HIVMPass<"hivm-decompose-op", "func::FuncOp"> {
   let summary = "decompose compound hivm op to multiple hivm ops according to "
                 "hardware ability.";
   let description = [{
@@ -581,20 +586,21 @@ def HIVMDecomposeOp : Pass<"hivm-decompose-op", "func::FuncOp"> {
   }];
   let constructor = "mlir::hivm::createHIVMDecomposeOpPass()";
   let dependentDialects = ["hivm::HIVMDialect", "memref::MemRefDialect",
-                           "tensor::TensorDialect", "annotation::AnnotationDialect"];
+                           "tensor::TensorDialect",
+                           "annotation::AnnotationDialect"];
 }
 
-def HIVMAggregatedDecomposeOp : Pass<"hivm-aggregated-decompose-op", "func::FuncOp"> {
+def HIVMAggregatedDecomposeOp
+    : HIVMPass<"hivm-aggregated-decompose-op", "func::FuncOp"> {
   let summary = "decompose hivm ops that use hivm AggregatedOpInterface";
   let constructor = "mlir::hivm::createHIVMAggregatedDecomposeOpPass()";
   let dependentDialects = ["hivm::HIVMDialect", "memref::MemRefDialect",
-                           "tensor::TensorDialect", "annotation::AnnotationDialect"];
-  let options = [
-    Option<
-        "decomposePhase", "decompose-phase", "bishengir::DecomposePhase",
-        /*default=*/"bishengir::DecomposePhase::NO_CONSTRAINT",
-        "Specify which decompose phase to apply.",
-        [{::llvm::cl::values(
+                           "tensor::TensorDialect",
+                           "annotation::AnnotationDialect"];
+  let options =
+      [Option<"decomposePhase", "decompose-phase", "bishengir::DecomposePhase",
+              /*default=*/"bishengir::DecomposePhase::NO_CONSTRAINT",
+              "Specify which decompose phase to apply.", [{::llvm::cl::values(
             clEnumValN(bishengir::DecomposePhase::NO_CONSTRAINT,
                        "no-constraint",
                        "decompose with no constraint specified"),
@@ -624,14 +630,15 @@ def HIVMAggregatedDecomposeOp : Pass<"hivm-aggregated-decompose-op", "func::Func
   ];
 }
 
-def HIVMLowerToLoops : Pass<"hivm-lower-to-loops", "func::FuncOp"> {
+def HIVMLowerToLoops : HIVMPass<"hivm-lower-to-loops", "func::FuncOp"> {
   let summary = "lower hivm ops to loops";
   let constructor = "mlir::hivm::createHIVMLowerToLoopsPass()";
   let dependentDialects = ["hivm::HIVMDialect", "memref::MemRefDialect",
                            "tensor::TensorDialect"];
 }
 
-def HIVMRecognizeDeinterleaveOp : Pass<"hivm-recognize-deinterleave-op", "func::FuncOp"> {
+def HIVMRecognizeDeinterleaveOp
+    : HIVMPass<"hivm-recognize-deinterleave-op", "func::FuncOp"> {
   let summary = "optimize uncontinuous access to deinterleave.";
   let description = [{
     This pass optimize uncontinuous memory access using deinterleave.
@@ -641,7 +648,8 @@ def HIVMRecognizeDeinterleaveOp : Pass<"hivm-recognize-deinterleave-op", "func::
                            "tensor::TensorDialect"];
 }
 
-def HIVMRecognizeDisContinuousStore : Pass<"hivm-recognize-discontinuous-store", "func::FuncOp"> {
+def HIVMRecognizeDisContinuousStore
+    : HIVMPass<"hivm-recognize-discontinuous-store", "func::FuncOp"> {
   let summary = "construct 32B-aligned view for ub->gm store.";
   let description = [{
     This pass constructs a 32B-aligned view of ub src(last dim continuous)
@@ -653,7 +661,7 @@ def HIVMRecognizeDisContinuousStore : Pass<"hivm-recognize-discontinuous-store",
                            "tensor::TensorDialect"];
 }
 
-def HIVMOptSinglePointOp : Pass<"hivm-opt-single-point", "func::FuncOp"> {
+def HIVMOptSinglePointOp : HIVMPass<"hivm-opt-single-point", "func::FuncOp"> {
   let summary = "optimize single point hivm op by scalar operation.";
   let description =
       [{This pass optimize the single point hivm op by scalar operation.}];
@@ -662,28 +670,29 @@ def HIVMOptSinglePointOp : Pass<"hivm-opt-single-point", "func::FuncOp"> {
                            "math::MathDialect", "memref::MemRefDialect"];
 }
 
-def AllocExtraBuffer : Pass<"hivm-alloc-extra-buffer", "func::FuncOp"> {
+def AllocExtraBuffer : HIVMPass<"hivm-alloc-extra-buffer", "func::FuncOp"> {
   let summary = "allocate additional temporary buffer for op needed";
   let constructor = "mlir::hivm::createAllocExtraBufferPass()";
   let dependentDialects = ["hivm::HIVMDialect", ];
 }
 
-def OutlineAllocInVF : Pass<"hivm-outline-alloc-in-VF", "ModuleOp"> {
+def OutlineAllocInVF : HIVMPass<"hivm-outline-alloc-in-VF", "ModuleOp"> {
   let summary = "outline memref.alloc with static shape in VF";
   let constructor = "mlir::hivm::createOutlineAllocInVFPass()";
   let dependentDialects = ["func::FuncDialect", "hivm::HIVMDialect",
                            "memref::MemRefDialect"];
 }
 
-def OutlineCopyInVF : Pass<"hivm-outline-copy-in-VF", "ModuleOp"> {
-  let summary = "rewrite hivm.load to hivm.copy in VF when operands are VF args";
+def OutlineCopyInVF : HIVMPass<"hivm-outline-copy-in-VF", "ModuleOp"> {
+  let summary =
+      "rewrite hivm.load to hivm.copy in VF when operands are VF args";
   let constructor = "mlir::hivm::createOutlineCopyInVFPass()";
   let dependentDialects = ["arith::ArithDialect", "hivm::HIVMDialect",
                            "memref::MemRefDialect", "vector::VectorDialect"];
 }
 
 def ConstantizeBufferSize
-    : Pass<"hivm-constantize-buffer-size", "func::FuncOp"> {
+    : HIVMPass<"hivm-constantize-buffer-size", "func::FuncOp"> {
   let summary = "Try to constantize dynamic shape buffers.";
   let description = [{
     This pass tries to constantize dyanmic shape buffers by upper-bounding
@@ -694,17 +703,32 @@ def ConstantizeBufferSize
   let constructor = "mlir::hivm::createConstantizeBufferSizePass()";
   let dependentDialects = ["affine::AffineDialect", "arith::ArithDialect",
                            "memref::MemRefDialect"];
+  let options =
+      [Option<"bypassShapeRegistry", "bypass-shape-registry", "bool",
+              /*default=*/"false",
+              "Bypass shape registry check for byte-vs-byte buffer "
+              "size comparison">,
+       Option<"enablePreload", "enable-preload", "bool",
+              /*default=*/"false",
+              "Enable byte-vs-byte buffer size comparison when the "
+              "kernel is registered">,
+       Option<
+           "workspaceMultiBufferNum", "set-workspace-multibuffer", "unsigned",
+           /*default=*/"0",
+           "Workspace multibuffer depth; heuristics require a non-zero value">];
 }
 
-def HIVMOptFuncOutput : Pass<"hivm-opt-func-output", "ModuleOp"> {
+def HIVMOptFuncOutput : HIVMPass<"hivm-opt-func-output", "ModuleOp"> {
   let summary = "Try to optimize function output after bufferization.";
   let description = [{Try to remove unnecessary address return.}];
   let constructor = "mlir::hivm::createHIVMOptFuncOutputPass()";
   let dependentDialects = ["memref::MemRefDialect"];
 }
 
-def InsertInferTaskTypeFunc : Pass<"hivm-insert-infer-task-type-func", "ModuleOp"> {
-  let summary = "Infer the module's task type and emit a host function that returns it.";
+def InsertInferTaskTypeFunc
+    : HIVMPass<"hivm-insert-infer-task-type-func", "ModuleOp"> {
+  let summary =
+      "Infer the module's task type and emit a host function that returns it.";
   let description = [{
     Detect whether the module is CubeVectorMix, CubeOnly, VectorOnly or Unknown,
     then emit a host‑side function `<original_func>_infer_task_type_function` that
@@ -715,7 +739,8 @@ def InsertInferTaskTypeFunc : Pass<"hivm-insert-infer-task-type-func", "ModuleOp
   let dependentDialects = ["func::FuncDialect", "hacc::HACCDialect"];
 }
 
-def InsertInferVFModeFunc : Pass<"hivm-insert-vf-mode-func", "func::FuncOp"> {
+def InsertInferVFModeFunc
+    : HIVMPass<"hivm-insert-vf-mode-func", "func::FuncOp"> {
   let summary = "Insert infer-vf-mode callback func for host";
   let description = "Infer a function's VF mode {SIMD, SIMT, MIX}, "
                     "and then create host callback to return its VF mode";
@@ -725,7 +750,8 @@ def InsertInferVFModeFunc : Pass<"hivm-insert-vf-mode-func", "func::FuncOp"> {
 }
 
 def MarkTightlyCoupledBuffer
-    : Pass<"hivm-mark-tightly-coupled-buffer", "func::FuncOp"> {
+    : HIVMPass<"hivm-mark-tightly-coupled-buffer",
+               "func::FuncOp", [MixKernel, PureAicKernel]> {
   let summary = "Mark L1/UB allocs with tightly-coupled-buffer attribute.";
   let description = [{
     Before SplitMixKernel clones a MIX function into AIC/AIV copies, every
@@ -734,14 +760,34 @@ def MarkTightlyCoupledBuffer
     assigned on the single MIX function, so both clones inherit identical ids
     and PlanMemory can later pair the AIC/AIV buffers at consistent offsets.
     Only runs for Ascend950 (RegBase) targets.
+    In Skew mode, the early pipeline run can skip registered kernels so they
+    follow the PR 3160 order (infer / constantize / MarkTCB immediately before
+    CVPipelining); unregistered kernels keep the master early-MarkTCB order.
   }];
   let constructor = "mlir::hivm::createMarkTightlyCoupledBufferPass()";
   let dependentDialects = ["hivm::HIVMDialect", "annotation::AnnotationDialect",
                            "memref::MemRefDialect"];
+  let options =
+      [Option<"skipRegisteredKernels", "skip-registered-kernels", "bool",
+              /*default=*/"false",
+              "Skip kernels that pass the loop-shape registry / preload gate">,
+       Option<
+           "bypassShapeRegistry", "bypass-shape-registry", "bool",
+           /*default=*/"false",
+           "Treat every kernel as registered when skip-registered-kernels is "
+           "set">,
+       Option<
+           "enablePreload", "enable-preload", "bool", /*default=*/"false",
+           "Enable registered-kernel skip together with workspace multibuffer">,
+       Option<
+           "workspaceMultiBufferNum", "workspace-multibuffer-num", "unsigned",
+           /*default=*/"0",
+           "Workspace multibuffer count used by the registered-kernel skip">];
 }
 
 def HoistTightlyCoupledAlloc
-    : Pass<"hivm-hoist-tightly-coupled-alloc", "func::FuncOp"> {
+    : HIVMPass<"hivm-hoist-tightly-coupled-alloc",
+               "func::FuncOp", [MixKernel, PureAicKernel]> {
   let summary = "Hoist yielded tightly-coupled allocs out of inner regions.";
   let description = [{
     A tightly-coupled `memref.alloc` whose tensor view (through
@@ -762,7 +808,7 @@ def HoistTightlyCoupledAlloc
 }
 
 def SplitMixedIfConditionals
-    : Pass<"hivm-split-mixed-if-conditionals", "func::FuncOp"> {
+    : HIVMPass<"hivm-split-mixed-if-conditionals", "func::FuncOp"> {
   let summary = "Split mixed-core scf.if ops into per-core if chains.";
   let description = [{
     Splits MIX-function `scf.if` ops whose then/else bodies contain both CUBE
@@ -776,7 +822,8 @@ def SplitMixedIfConditionals
                            "tensor::TensorDialect", "scf::SCFDialect"];
 }
 
-def SplitMixKernel : Pass<"hivm-split-mix-kernel", "ModuleOp"> {
+def SplitMixKernel : HIVMPass<"hivm-split-mix-kernel",
+                              "ModuleOp", [MixKernel, PureAicKernel]> {
   let summary =
       "Split Mix device functions into AICube and AIVector functions.";
   let description = [{
@@ -821,74 +868,80 @@ def SplitMixKernel : Pass<"hivm-split-mix-kernel", "ModuleOp"> {
                            "hacc::HACCDialect"];
 }
 
-def MergeSamePreloadScopes : Pass<"hivm-merge-same-preload-scopes", "ModuleOp"> {
-  let summary = "Merge scopes sharing identical preload_num within the same parent op.";
+def MergeSamePreloadScopes : HIVMPass<"hivm-merge-same-preload-scopes",
+                                      "ModuleOp", [MixKernel, PureAicKernel]> {
+  let summary =
+      "Merge scopes sharing identical preload_num within the same parent op.";
   let constructor = "mlir::hivm::createMergeSamePreloadScopesPass()";
-  let dependentDialects = [
-    "scope::ScopeDialect",
-    "func::FuncDialect",
-    "hivm::HIVMDialect",
-    "scf::SCFDialect"
-  ];
-  let options = [Option<"bypassShapeRegistry", "bypass-shape-registry", "bool",
-                        /*default=*/"false",
-                        "Bypass shape registry check for merge-same-preload heuristics">,
-                 Option<"enablePreload", "enable-preload", "bool",
-                        /*default=*/"false",
-                        "Enable merge-same-preload heuristics when the kernel is registered">,
-                 Option<"workspaceMultiBufferNum", "set-workspace-multibuffer", "unsigned",
-                        /*default=*/"0",
-                        "Workspace multibuffer depth; heuristics require a non-zero value">];
+  let dependentDialects = ["scope::ScopeDialect", "func::FuncDialect",
+                           "hivm::HIVMDialect", "scf::SCFDialect"];
+  let options =
+      [Option<"bypassShapeRegistry", "bypass-shape-registry", "bool",
+              /*default=*/"false",
+              "Bypass shape registry check for merge-same-preload heuristics">,
+       Option<"enablePreload", "enable-preload", "bool",
+              /*default=*/"false",
+              "Enable merge-same-preload heuristics when the kernel is "
+              "registered">,
+       Option<
+           "workspaceMultiBufferNum", "set-workspace-multibuffer", "unsigned",
+           /*default=*/"0",
+           "Workspace multibuffer depth; heuristics require a non-zero value">];
 }
 
-def SinkExclusivePreloadWork : Pass<"hivm-sink-exclusive-preload-work", "ModuleOp"> {
-  let summary = "Sink exclusive dest/src clusters and unused-CUBE load/VF/copy chains after CVPipelining.";
+def SinkExclusivePreloadWork
+    : HIVMPass<"hivm-sink-exclusive-preload-work",
+               "ModuleOp", [MixKernel, PureAicKernel]> {
+  let summary = "Sink exclusive dest/src clusters and unused-CUBE load/VF/copy "
+                "chains after CVPipelining.";
   let constructor = "mlir::hivm::createSinkExclusivePreloadWorkPass()";
-  let dependentDialects = [
-    "scope::ScopeDialect",
-    "func::FuncDialect",
-    "hivm::HIVMDialect",
-    "scf::SCFDialect",
-    "annotation::AnnotationDialect",
-    "memref::MemRefDialect",
-    "affine::AffineDialect",
-    "arith::ArithDialect",
-    "bufferization::BufferizationDialect",
-    "tensor::TensorDialect"
-  ];
-  let options = [Option<"bypassShapeRegistry", "bypass-shape-registry", "bool",
-                        /*default=*/"false",
-                        "Bypass shape registry check for exclusive-preload sink">,
-                 Option<"enablePreload", "enable-preload", "bool",
-                        /*default=*/"false",
-                        "Enable exclusive-preload sink when the kernel is registered">,
-                 Option<"workspaceMultiBufferNum", "set-workspace-multibuffer", "unsigned",
-                        /*default=*/"0",
-                        "Workspace multibuffer depth; heuristics require a non-zero value">];
+  let dependentDialects = ["scope::ScopeDialect", "func::FuncDialect",
+                           "hivm::HIVMDialect", "scf::SCFDialect",
+                           "annotation::AnnotationDialect",
+                           "memref::MemRefDialect", "affine::AffineDialect",
+                           "arith::ArithDialect",
+                           "bufferization::BufferizationDialect",
+                           "tensor::TensorDialect"];
+  let options =
+      [Option<"bypassShapeRegistry", "bypass-shape-registry", "bool",
+              /*default=*/"false",
+              "Bypass shape registry check for exclusive-preload sink">,
+       Option<"enablePreload", "enable-preload", "bool",
+              /*default=*/"false",
+              "Enable exclusive-preload sink when the kernel is registered">,
+       Option<
+           "workspaceMultiBufferNum", "set-workspace-multibuffer", "unsigned",
+           /*default=*/"0",
+           "Workspace multibuffer depth; heuristics require a non-zero value">];
 }
 
-def MarkRealCoreType : Pass<"hivm-mark-real-core-type", "ModuleOp"> {
+def MarkRealCoreType : HIVMPass<"hivm-mark-real-core-type",
+                                "ModuleOp", [MixKernel, PureAicKernel]> {
   let summary = "Mark scalar operations with core-type attribute.";
   let constructor = "mlir::hivm::createMarkRealCoreTypePass()";
   let dependentDialects = ["func::FuncDialect", "annotation::AnnotationDialect",
                            "hacc::HACCDialect"];
-  let options = [Option<"removeCoreTypeAttrs", "remove-core-type-attrs", "bool",
-                        /*default=*/"false",
-                        "Remove all core type attributes. If set to true, this "
-                        "pass becomes a cleanup pass.">,
-                 Option<"bypassShapeRegistry", "bypass-shape-registry", "bool",
-                        /*default=*/"false",
-                        "Bypass shape registry check for parent-scope core-type inheritance">,
-                 Option<"enablePreload", "enable-preload", "bool",
-                        /*default=*/"false",
-                        "Enable parent-scope core-type inheritance when the kernel is registered">,
-                 Option<"workspaceMultiBufferNum", "set-workspace-multibuffer", "unsigned",
-                        /*default=*/"0",
-                        "Workspace multibuffer depth; heuristics require a non-zero value">];
+  let options =
+      [Option<"removeCoreTypeAttrs", "remove-core-type-attrs", "bool",
+              /*default=*/"false",
+              "Remove all core type attributes. If set to true, this "
+              "pass becomes a cleanup pass.">,
+       Option<"bypassShapeRegistry", "bypass-shape-registry", "bool",
+              /*default=*/"false",
+              "Bypass shape registry check for parent-scope core-type "
+              "inheritance">,
+       Option<"enablePreload", "enable-preload", "bool",
+              /*default=*/"false",
+              "Enable parent-scope core-type inheritance when the kernel is "
+              "registered">,
+       Option<
+           "workspaceMultiBufferNum", "set-workspace-multibuffer", "unsigned",
+           /*default=*/"0",
+           "Workspace multibuffer depth; heuristics require a non-zero value">];
 }
 
 def HIVMCanonicalizationPipeline
-    : Pass<"hivm-canonicalization-pipeline", "func::FuncOp"> {
+    : HIVMPass<"hivm-canonicalization-pipeline", "func::FuncOp"> {
   let summary = "Run HIVM canonicalization pass pipeline on one function";
   let constructor = "mlir::hivm::createHIVMCanonicalizationPipelinePass()";
   let dependentDialects = ["hivm::HIVMDialect", "func::FuncDialect",
@@ -896,12 +949,13 @@ def HIVMCanonicalizationPipeline
                            "scf::SCFDialect"];
 }
 
-def SetBufferSize : Pass<"hivm-set-buffer-size", "func::FuncOp"> {
+def SetBufferSize : HIVMPass<"hivm-set-buffer-size", "func::FuncOp"> {
   let constructor = "mlir::hivm::createSetBufferSizePass()";
   let dependentDialects = ["arith::ArithDialect", "memref::MemRefDialect"];
 }
 
-def HIVMMapForallToBlocks : Pass<"hivm-map-forall-to-blocks", "func::FuncOp"> {
+def HIVMMapForallToBlocks
+    : HIVMPass<"hivm-map-forall-to-blocks", "func::FuncOp"> {
   let summary = "Map forall to hivm blocks.";
   let description = [{
     This pass maps each scf.forall operations to HIVM block ops.
@@ -912,19 +966,20 @@ def HIVMMapForallToBlocks : Pass<"hivm-map-forall-to-blocks", "func::FuncOp"> {
   let dependentDialects = ["hivm::HIVMDialect", ];
 }
 
-def HIVMFlattenOps : Pass<"hivm-flatten-ops", "func::FuncOp"> {
+def HIVMFlattenOps : HIVMPass<"hivm-flatten-ops", "func::FuncOp"> {
   let summary = "Flatten HIVM ops.";
   let constructor = "mlir::hivm::createFlattenOpsPass()";
   let dependentDialects = ["memref::MemRefDialect", "hivm::HIVMDialect", ];
 }
 
-def SinkOpToConsumerInLoop : Pass<"hivm-sink-op-to-consumer-in-loop", "func::FuncOp"> {
+def SinkOpToConsumerInLoop
+    : HIVMPass<"hivm-sink-op-to-consumer-in-loop", "func::FuncOp"> {
   let summary = "Sink op to consumer in loop.";
   let constructor = "mlir::hivm::createSinkOpToConsumerInLoopPass()";
   let dependentDialects = ["hivm::HIVMDialect"];
 }
 
-def AlignAllocSize : Pass<"hivm-align-alloc-size", "mlir::ModuleOp"> {
+def AlignAllocSize : HIVMPass<"hivm-align-alloc-size", "mlir::ModuleOp"> {
   let summary =
       "Automatically align memref.alloc size for special hivm op that "
       "has to access aligned size";
@@ -938,7 +993,8 @@ def AlignAllocSize : Pass<"hivm-align-alloc-size", "mlir::ModuleOp"> {
                            "annotation::AnnotationDialect"];
 }
 
-def PreMarkStrideAlign : Pass<"hivm-pre-mark-stride-align", "func::FuncOp"> {
+def PreMarkStrideAlign
+    : HIVMPass<"hivm-pre-mark-stride-align", "func::FuncOp"> {
   let summary =
       "Pre-analysis for stride alignment: mark allocs that must skip alignment";
   let description = [{
@@ -948,13 +1004,12 @@ def PreMarkStrideAlign : Pass<"hivm-pre-mark-stride-align", "func::FuncOp"> {
   }];
   let constructor = "mlir::hivm::createPreMarkStrideAlignPass()";
   let dependentDialects = ["mlir::func::FuncDialect",
-                           "mlir::memref::MemRefDialect",
-                           "hivm::HIVMDialect",
+                           "mlir::memref::MemRefDialect", "hivm::HIVMDialect",
                            "annotation::AnnotationDialect",
   ];
 }
 
-def MarkStrideAlign : Pass<"hivm-mark-stride-align", "func::FuncOp"> {
+def MarkStrideAlign : HIVMPass<"hivm-mark-stride-align", "func::FuncOp"> {
   let summary =
       "Automatically annotate stride_align marks for operands of hivm ops";
   let description = [{
@@ -966,7 +1021,7 @@ def MarkStrideAlign : Pass<"hivm-mark-stride-align", "func::FuncOp"> {
   ];
 }
 
-def EnableStrideAlign : Pass<"hivm-enable-stride-align", "ModuleOp"> {
+def EnableStrideAlign : HIVMPass<"hivm-enable-stride-align", "ModuleOp"> {
   let summary = "Align memref allocations according to stride align marks";
   let description = [{
     Re-allocate memrefs according to anntations of storage_align marks.
@@ -980,7 +1035,7 @@ def EnableStrideAlign : Pass<"hivm-enable-stride-align", "ModuleOp"> {
   ];
 }
 
-def LiftLowestStride : Pass<"hivm-lift-lowest-stride", "func::FuncOp"> {
+def LiftLowestStride : HIVMPass<"hivm-lift-lowest-stride", "func::FuncOp"> {
   let summary = "Lift lowest stride of operands of hivm ops";
   let description = [{
     For most hivm structured op, lift the lowest stride of operands,
@@ -997,38 +1052,41 @@ def LiftLowestStride : Pass<"hivm-lift-lowest-stride", "func::FuncOp"> {
   ];
 }
 
-def ReduceRankSubview : Pass<"hivm-reduce-rank-subview", "func::FuncOp"> {
+def ReduceRankSubview : HIVMPass<"hivm-reduce-rank-subview", "func::FuncOp"> {
   let summary = "Reduce rank using subview";
   let constructor = "mlir::hivm::createReduceRankSubviewPass()";
   let dependentDialects = ["mlir::memref::MemRefDialect", "hivm::HIVMDialect",
   ];
 }
 
-def InlineOTFBroadcast : Pass<"hivm-inline-otf-broadcast", "func::FuncOp"> {
+def InlineOTFBroadcast : HIVMPass<"hivm-inline-otf-broadcast", "func::FuncOp"> {
   let summary = "Inline OTF broadcast";
   let constructor = "mlir::hivm::createInlineOTFBroadcastPass()";
   let dependentDialects = ["mlir::memref::MemRefDialect", "hivm::HIVMDialect",
   ];
 }
 
-def InlineLoadCopy : Pass<"hivm-inline-load-copy", "func::FuncOp"> {
+def InlineLoadCopy : HIVMPass<"hivm-inline-load-copy", "func::FuncOp"> {
   let summary = "Inline Copied load";
   let constructor = "mlir::hivm::createInlineLoadCopyPass()";
   let dependentDialects = ["mlir::memref::MemRefDialect", "hivm::HIVMDialect",
   ];
 }
 
-def InitEntryKernel : Pass<"hivm-init-entry-kernel", "func::FuncOp"> {
+def InitEntryKernel : HIVMPass<"hivm-init-entry-kernel", "func::FuncOp"> {
   let summary = "Insert set_mask_norm() at the beginning of entry kernel";
   let constructor = "mlir::hivm::createInitEntryKernelPass()";
   let dependentDialects = ["hivm::HIVMDialect", ];
 }
 
-def InlineFixpipe : Pass<"hivm-inline-fixpipe"> {
+def InlineFixpipe
+    : HIVMPass<"hivm-inline-fixpipe", AnyOp, [MixKernel, PureAicKernel], true> {
+  // Inlining can drop vector ops that made an earlier classification MIX.
   let summary = "Convert ops to HIVM Fixpipe op";
   let constructor = "mlir::hivm::createInlineFixpipePass()";
-  let dependentDialects =
-      ["hivm::HIVMDialect", "bishengir::memref_ext::MemRefExtDialect", "annotation::AnnotationDialect"];
+  let dependentDialects = ["hivm::HIVMDialect",
+                           "bishengir::memref_ext::MemRefExtDialect",
+                           "annotation::AnnotationDialect"];
   let options = [Option<
       "inlineQuantScale", "inline-quant-scale", "bool",
       /*default=*/"false",
@@ -1036,32 +1094,35 @@ def InlineFixpipe : Pass<"hivm-inline-fixpipe"> {
       "register-based targets.">];
 }
 
-def InsertFixpipe : Pass<"hivm-insert-fixpipe"> {
+def InsertFixpipe
+    : HIVMPass<"hivm-insert-fixpipe", AnyOp, [MixKernel, PureAicKernel]> {
   let summary = "Insert HIVM Fixpipe ops";
   let constructor = "mlir::hivm::createInsertFixpipePass()";
-  let dependentDialects =
-      ["hivm::HIVMDialect", "bishengir::memref_ext::MemRefExtDialect",
-       "bufferization::BufferizationDialect"];
+  let dependentDialects = ["hivm::HIVMDialect",
+                           "bishengir::memref_ext::MemRefExtDialect",
+                           "bufferization::BufferizationDialect"];
 }
 
-def TileBatchMMIntoLoop : Pass<"hivm-tile-batchmm-into-loop", "func::FuncOp"> {
+def TileBatchMMIntoLoop : HIVMPass<"hivm-tile-batchmm-into-loop",
+                                   "func::FuncOp", [MixKernel, PureAicKernel]> {
   let summary = "Tile batch matmul into loop with iteration on batch dimension";
   let constructor = "mlir::hivm::createTileBatchMMIntoLoopPass()";
   let dependentDialects = ["hivm::HIVMDialect"];
   let options = [Option<
-    "keepRegBaseBatch", "keep-regbase-batch", "bool",
-    /*default=*/"false",
-    "Leave a RegBase batch matmul untiled so it can lower to the batched "
-    "mmad macro">];
+      "keepRegBaseBatch", "keep-regbase-batch", "bool",
+      /*default=*/"false",
+      "Leave a RegBase batch matmul untiled so it can lower to the batched "
+      "mmad macro">];
 }
 
-def LiftZeroRank : Pass<"hivm-lift-zero-rank", "func::FuncOp"> {
+def LiftZeroRank : HIVMPass<"hivm-lift-zero-rank", "func::FuncOp"> {
   let constructor = "mlir::hivm::createLiftZeroRankPass()";
   let dependentDialects = ["arith::ArithDialect", "memref::MemRefDialect"];
 }
 
 def InsertLoadStoreForMixCV
-    : Pass<"hivm-insert-load-store-for-mix-cv", "func::FuncOp"> {
+    : HIVMPass<"hivm-insert-load-store-for-mix-cv",
+               "func::FuncOp", [MixKernel, PureAicKernel]> {
   let summary = "insert load store op for mix cv";
   let constructor = "mlir::hivm::createInsertLoadStoreForMixCVPass()";
   let dependentDialects = ["hivm::HIVMDialect",
@@ -1084,7 +1145,8 @@ def InsertLoadStoreForMixCV
 }
 
 def InsertCVTightCoupledBuffer
-    : Pass<"hivm-insert-cv-tight-coupled-buffer", "func::FuncOp"> {
+    : HIVMPass<"hivm-insert-cv-tight-coupled-buffer",
+               "func::FuncOp", [MixKernel, PureAicKernel]> {
   let summary = "insert cv tight coupled buffer for mix cv";
   let constructor = "mlir::hivm::createInsertCVTightCoupledBufferPass()";
   let dependentDialects = ["hivm::HIVMDialect",
@@ -1097,8 +1159,10 @@ def InsertCVTightCoupledBuffer
 }
 
 def InsertLoadStoreForScalar
-    : Pass<"hivm-insert-load-store-for-scalar", "func::FuncOp"> {
-  let summary = "Insert explicit load/store boundaries for scalar values crossing vector and cube cores";
+    : HIVMPass<"hivm-insert-load-store-for-scalar",
+               "func::FuncOp", [MixKernel, PureAicKernel]> {
+  let summary = "Insert explicit load/store boundaries for scalar values "
+                "crossing vector and cube cores";
   let constructor = "mlir::hivm::createInsertLoadStoreForScalarPass()";
   let dependentDialects = ["hivm::HIVMDialect",
                            "bishengir::memref_ext::MemRefExtDialect",
@@ -1106,25 +1170,23 @@ def InsertLoadStoreForScalar
                            "annotation::AnnotationDialect"];
 }
 
-def InsertInferWorkSpaceSizeFunc : Pass<"hivm-insert-infer-workspace-size-func",
-                                        "ModuleOp"> {
+def InsertInferWorkSpaceSizeFunc
+    : HIVMPass<"hivm-insert-infer-workspace-size-func", "ModuleOp"> {
   let summary = "Insert infer-workspace callback func for host";
   let description =
-                "Calculate total static workspace size after plan-workspace "
-                "pass and then create host callback to return this size";
+      "Calculate total static workspace size after plan-workspace "
+      "pass and then create host callback to return this size";
 
   let constructor = "mlir::hivm::createInsertInferWorkSpaceSizeFuncPass()";
-  let dependentDialects = ["memref::MemRefDialect",
-                           "hivm::HIVMDialect",
+  let dependentDialects = ["memref::MemRefDialect", "hivm::HIVMDialect",
                            "bishengir::memref_ext::MemRefExtDialect"];
 }
 
-def BindWorkSpaceArg : Pass<"hivm-bind-workspace-arg", "func::FuncOp"> {
+def BindWorkSpaceArg : HIVMPass<"hivm-bind-workspace-arg", "func::FuncOp"> {
   let summary = "Bind func augument with hacc.workspace to AllocWorkspaceOp";
 
   let constructor = "mlir::hivm::createBindWorkSpaceArgPass()";
-  let dependentDialects = ["memref::MemRefDialect",
-                           "hivm::HIVMDialect",
+  let dependentDialects = ["memref::MemRefDialect", "hivm::HIVMDialect",
                            "bishengir::memref_ext::MemRefExtDialect"];
 
   let options = [Option<
@@ -1133,45 +1195,46 @@ def BindWorkSpaceArg : Pass<"hivm-bind-workspace-arg", "func::FuncOp"> {
       "Insert sub workspace argument and bind to sub workspace">];
 }
 
-def BindSyncBlockLockArg : Pass<"hivm-bind-sync-block-lock-arg", "func::FuncOp"> {
-  let summary = "Bind func augument with hacc.syncblocklock to CreateSyncBlockLockOp";
+def BindSyncBlockLockArg
+    : HIVMPass<"hivm-bind-sync-block-lock-arg", "func::FuncOp"> {
+  let summary =
+      "Bind func augument with hacc.syncblocklock to CreateSyncBlockLockOp";
 
   let constructor = "mlir::hivm::createBindSyncBlockLockArgPass()";
-  let dependentDialects = ["memref::MemRefDialect",
-                           "hivm::HIVMDialect"];
+  let dependentDialects = ["memref::MemRefDialect", "hivm::HIVMDialect"];
 }
 
-def SyncBlockHoisting : Pass<"hivm-sync-block-hoisting", "func::FuncOp"> {
-  let summary = "Hoist syncblock lock and unlock operation to the parent region "
-                "if it is in the scf.for or scf.while";
+def SyncBlockHoisting : HIVMPass<"hivm-sync-block-hoisting", "func::FuncOp"> {
+  let summary =
+      "Hoist syncblock lock and unlock operation to the parent region "
+      "if it is in the scf.for or scf.while";
 
   let constructor = "mlir::hivm::createSyncBlockHoistingPass()";
-  let dependentDialects = ["memref::MemRefDialect",
-                           "hivm::HIVMDialect"];
+  let dependentDialects = ["memref::MemRefDialect", "hivm::HIVMDialect"];
 }
 
-def InsertInferSyncBlockLockNumAndInitFunc : Pass<"hivm-insert-infer-sync-block-lock-num-and-init-func",
-                                        "func::FuncOp"> {
+def InsertInferSyncBlockLockNumAndInitFunc
+    : HIVMPass<"hivm-insert-infer-sync-block-lock-num-and-init-func",
+               "func::FuncOp"> {
   let summary = "Insert infer-sync-block-lock callback func for host";
-  let description =
-                "Calculate total static sync block lock num and init"
-                "and then create host callback to return this size";
+  let description = "Calculate total static sync block lock num and init"
+                    "and then create host callback to return this size";
 
-  let constructor = "mlir::hivm::createInsertInferSyncBlockLockNumAndInitFuncPass()";
-  let dependentDialects = ["memref::MemRefDialect",
-                           "hivm::HIVMDialect"];
+  let constructor =
+      "mlir::hivm::createInsertInferSyncBlockLockNumAndInitFuncPass()";
+  let dependentDialects = ["memref::MemRefDialect", "hivm::HIVMDialect"];
 }
 
-def LowerCreateSyncBlockLock : Pass<"hivm-lower-create-sync-block-lock", "func::FuncOp"> {
+def LowerCreateSyncBlockLock
+    : HIVMPass<"hivm-lower-create-sync-block-lock", "func::FuncOp"> {
   let summary = "Lower CreateSyncBlockLockOp to ViewOp";
 
   let constructor = "mlir::hivm::createSyncBlockLockLoweringPass()";
-  let dependentDialects = ["memref::MemRefDialect",
-                           "hivm::HIVMDialect"];
+  let dependentDialects = ["memref::MemRefDialect", "hivm::HIVMDialect"];
 }
 
-def InsertFreeLockVarBeforeReturn : Pass<"hivm-insert-free-lock-var-before-return",
-                                        "ModuleOp"> {
+def InsertFreeLockVarBeforeReturn
+    : HIVMPass<"hivm-insert-free-lock-var-before-return", "ModuleOp"> {
   let summary = "Insert FreeLockVarOp before return to prevent deadlock "
                 "when control flow skips sync_block_lock/unlock";
   let description = [{
@@ -1184,7 +1247,8 @@ def InsertFreeLockVarBeforeReturn : Pass<"hivm-insert-free-lock-var-before-retur
   let dependentDialects = ["func::FuncDialect", "hivm::HIVMDialect"];
 }
 
-def AutoInferBufferSize : Pass<"hivm-auto-infer-buffer-size", "func::FuncOp"> {
+def AutoInferBufferSize
+    : HIVMPass<"hivm-auto-infer-buffer-size", "func::FuncOp"> {
   let summary = "Auto infer buffer size";
   let description = "infer buffer size by inserting annotation.mark Op";
 
@@ -1192,90 +1256,83 @@ def AutoInferBufferSize : Pass<"hivm-auto-infer-buffer-size", "func::FuncOp"> {
   let dependentDialects = ["annotation::AnnotationDialect"];
 }
 
-def InsertWorkSpaceForMixCV : Pass<"insert-workspace-for-mix-cv"> {
+def InsertWorkSpaceForMixCV : HIVMPass<"insert-workspace-for-mix-cv",
+                                       AnyOp, [MixKernel, PureAicKernel]> {
   let summary = "insert workspace for mix cv";
   let constructor = "mlir::hivm::createInsertWorkSpaceForMixCVPass()";
-  let dependentDialects = [
-    "hivm::HIVMDialect", "bishengir::memref_ext::MemRefExtDialect",
-                         "bufferization::BufferizationDialect",
-                         "annotation::AnnotationDialect"
-  ];
+  let dependentDialects = ["hivm::HIVMDialect",
+                           "bishengir::memref_ext::MemRefExtDialect",
+                           "bufferization::BufferizationDialect",
+                           "annotation::AnnotationDialect"];
 }
 
-def HIVMInlineOTFLoadStore : Pass<"hivm-inline-otf-load-store", "func::FuncOp"> {
+def HIVMInlineOTFLoadStore
+    : HIVMPass<"hivm-inline-otf-load-store", "func::FuncOp"> {
   let summary = "On the fly Inline Load and Store operations";
   let constructor = "mlir::hivm::createHIVMInlineOTFLoadStorePass()";
   let dependentDialects = ["bufferization::BufferizationDialect",
-                           "memref::MemRefDialect","tensor::TensorDialect",
+                           "memref::MemRefDialect", "tensor::TensorDialect",
                            "hivm::HIVMDialect"];
 }
 
-def AnalyzeArithVectorMask : Pass<"arith-vector-mask-analyze", "func::FuncOp"> {
+def AnalyzeArithVectorMask
+    : HIVMPass<"arith-vector-mask-analyze", "func::FuncOp"> {
   let summary = "Analyze arith/vector mask to eliminate select OP";
   let constructor = "mlir::hivm::createArithVectorMaskAnalysisPass()";
   let dependentDialects = ["arith::ArithDialect", "vector::VectorDialect",
                            "annotation::AnnotationDialect"];
 }
 
-def AnnotateVFAlias : Pass<"hivm-annotate-vf-alias", "func::FuncOp"> {
+def AnnotateVFAlias : HIVMPass<"hivm-annotate-vf-alias", "func::FuncOp"> {
   let summary = "Annotate alias info within VF";
   let constructor = "mlir::hivm::createAnnotateVFAliasPass()";
   let dependentDialects = ["func::FuncDialect", "LLVM::LLVMDialect",
                            "memref::MemRefDialect", "vector::VectorDialect"];
 }
 
-def TileAndBindSubBlock : Pass<"hivm-bind-sub-block", "ModuleOp"> {
+def TileAndBindSubBlock
+    : HIVMPass<"hivm-bind-sub-block", "ModuleOp", [MixKernel, PureAicKernel]> {
   let summary = "tile and bind sub block";
   let constructor = "mlir::hivm::createTileAndBindSubBlockPass()";
-  let dependentDialects = [
-    "annotation::AnnotationDialect",
-    "func::FuncDialect",
-    "hivm::HIVMDialect",
-    "bufferization::BufferizationDialect",
-    "scope::ScopeDialect"
-  ];
+  let dependentDialects = ["annotation::AnnotationDialect", "func::FuncDialect",
+                           "hivm::HIVMDialect",
+                           "bufferization::BufferizationDialect",
+                           "scope::ScopeDialect"];
   let options = [Option<
-  // TODO: Please remove the strictMode option,
-    "strictMode", "strict-mode", "bool",
-    /*default=*/"true",
-    "Run on strict mode when bubble up extract slice">,
-    Option<
-    "enableTile", "enable-tile", "bool",
-    /*default=*/"true",
-    "Enable TileAndBindSubBlock pass">,
-    Option<
-    "batchMatmul", "batch-matmul", "bool",
-    /*default=*/"false",
-    "Roll back to CV1:1 when a fixpipe destination is tiled on a dim the "
-    "dual-dst split cannot express, which a batched matmul draining into UB "
-    "produces">];
+                     // TODO: Please remove the strictMode option,
+                     "strictMode", "strict-mode", "bool",
+                     /*default=*/"true",
+                     "Run on strict mode when bubble up extract slice">,
+                 Option<"enableTile", "enable-tile", "bool",
+                        /*default=*/"true", "Enable TileAndBindSubBlock pass">,
+                 Option<"batchMatmul", "batch-matmul", "bool",
+                        /*default=*/"false",
+                        "Roll back to CV1:1 when a fixpipe destination is "
+                        "tiled on a dim the "
+                        "dual-dst split cannot express, which a batched matmul "
+                        "draining into UB "
+                        "produces">];
 }
 
 def PartitionAndBindSubBlock
-    : Pass<"hivm-partition-and-bind-sub-block", "ModuleOp"> {
+    : HIVMPass<"hivm-partition-and-bind-sub-block",
+               "ModuleOp", [MixKernel, PureAicKernel]> {
   let summary =
       "Lower {sub_block = n} scope.scope regions to operand-parallel guards";
   let constructor = "mlir::hivm::createPartitionAndBindSubBlockPass()";
-  let options = [
-    Option<"pinFreeNodes", "pin-free-nodes", "bool",
-           /*default=*/"false",
-           "Testing only: pin every free op to sub-block 0 instead of "
-           "load-balancing across both AIV sub-cores">
-  ];
-  let dependentDialects = [
-    "scope::ScopeDialect",
-    "hivm::HIVMDialect",
-    "scf::SCFDialect",
-    "arith::ArithDialect",
-    "tensor::TensorDialect",
-    "func::FuncDialect"
-  ];
+  let options = [Option<
+      "pinFreeNodes", "pin-free-nodes", "bool",
+      /*default=*/"false",
+      "Testing only: pin every free op to sub-block 0 instead of "
+      "load-balancing across both AIV sub-cores">];
+  let dependentDialects = ["scope::ScopeDialect", "hivm::HIVMDialect",
+                           "scf::SCFDialect", "arith::ArithDialect",
+                           "tensor::TensorDialect", "func::FuncDialect"];
 }
 
-def SubBlockGuardCleanup
-    : Pass<"hivm-sub-block-guard-cleanup", "ModuleOp"> {
-  let summary =
-      "Clean up value-returning operand-parallel sub-block guards";
+def SubBlockGuardCleanup : HIVMPass<"hivm-sub-block-guard-cleanup",
+                                    "ModuleOp", [MixKernel, PureAicKernel]> {
+  let summary = "Clean up value-returning operand-parallel sub-block guards";
   let description = [{
     STAGE 3 of operand-parallel sub-block partition. Runs after bufferization +
     DropEquivalentBufferResults. Cleans up each value-returning
@@ -1292,50 +1349,46 @@ def SubBlockGuardCleanup
     condition intact); only partition guards stay result-bearing here.
   }];
   let constructor = "mlir::hivm::createSubBlockGuardCleanupPass()";
-  let dependentDialects = [
-    "hivm::HIVMDialect",
-    "scf::SCFDialect",
-    "arith::ArithDialect",
-    "memref::MemRefDialect"
-  ];
+  let dependentDialects = ["hivm::HIVMDialect", "scf::SCFDialect",
+                           "arith::ArithDialect", "memref::MemRefDialect"];
 }
 
-def HIVMBubbleUpExtractSlice : Pass<"hivm-bubble-up-extract-slice", "func::FuncOp"> {
+def HIVMBubbleUpExtractSlice
+    : HIVMPass<"hivm-bubble-up-extract-slice", "func::FuncOp"> {
   let summary = "tile and bind sub block";
   let constructor = "mlir::hivm::createHIVMBubbleUpExtractSlicePass()";
-  let dependentDialects = [
-    "annotation::AnnotationDialect", "func::FuncDialect", "hivm::HIVMDialect"
-  ];
-  let options = [Option<
-    "strictMode", "strict-mode", "bool",
-    /*default=*/"true",
-    "Run on strict mode when bubble up extract slice">];
+  let dependentDialects = ["annotation::AnnotationDialect", "func::FuncDialect",
+                           "hivm::HIVMDialect"];
+  let options = [Option<"strictMode", "strict-mode", "bool",
+                        /*default=*/"true",
+                        "Run on strict mode when bubble up extract slice">];
 }
 
-def HIVMVectorizeOps : Pass<"hivm-vectorize-ops", "func::FuncOp"> {
+def HIVMVectorizeOps : HIVMPass<"hivm-vectorize-ops", "func::FuncOp"> {
   let summary = "Vectorize HIVM ops in a vector function using VL packing";
   let constructor = "mlir::hivm::createHIVMVectorizeOpsPass()";
   let dependentDialects = ["arith::ArithDialect", "func::FuncDialect",
                            "hivm::HIVMDialect", "math::MathDialect",
-                           "mathExt::MathExtDialect",
-                           "memref::MemRefDialect", "tensor::TensorDialect",
-                           "vector::VectorDialect"];
+                           "mathExt::MathExtDialect", "memref::MemRefDialect",
+                           "tensor::TensorDialect", "vector::VectorDialect"];
 }
 
-def InsertInitAndFinishForDebug : Pass<"hivm-insert-init-and-finish-for-debug"> {
+def InsertInitAndFinishForDebug
+    : HIVMPass<"hivm-insert-init-and-finish-for-debug"> {
   let summary = "insert init and finish for debug";
   let constructor = "mlir::hivm::createInsertInitAndFinishForDebugPass()";
   let dependentDialects = ["hivm::HIVMDialect"];
 }
 
-def MarkDisableLoad : Pass<"hivm-mark-disable-load", "ModuleOp"> {
+def MarkDisableLoad : HIVMPass<"hivm-mark-disable-load", "ModuleOp"> {
   let summary = "mark the memref.loads that need to disable dcache";
   let constructor = "mlir::hivm::createMarkDisableLoadPass()";
   let dependentDialects = ["hivm::HIVMDialect", "memref::MemRefDialect"];
 }
 
-def MarkSyncBlockLockWithSubblock : Pass<"hivm-mark-sync-block-lock-with-subblock",
-                                         "ModuleOp"> {
+def MarkSyncBlockLockWithSubblock
+    : HIVMPass<"hivm-mark-sync-block-lock-with-subblock",
+               "ModuleOp", [MixKernel, PureAicKernel]> {
   let summary = "Mark sync_block_lock and sync_block_unlock ops with "
                 "sync_block_lock_with_subblock tag when they are not inside "
                 "limit_sub_block_id0 if op in mix module";
@@ -1350,117 +1403,113 @@ def MarkSyncBlockLockWithSubblock : Pass<"hivm-mark-sync-block-lock-with-subbloc
   let dependentDialects = ["hivm::HIVMDialect", "scf::SCFDialect"];
 }
 
-def InsertNZ2NDForDebug : Pass<"hivm-insert-nz2nd-for-debug"> {
+def InsertNZ2NDForDebug : HIVMPass<"hivm-insert-nz2nd-for-debug",
+                                   AnyOp, [MixKernel, PureAicKernel]> {
   let summary = "insert nz2nd for debug";
   let constructor = "mlir::hivm::createInsertNZ2NDForDebugPass()";
-  let dependentDialects = [
-    "hivm::HIVMDialect",
-    "bishengir::memref_ext::MemRefExtDialect",
-    "bufferization::BufferizationDialect"
-  ];
+  let dependentDialects = ["hivm::HIVMDialect",
+                           "bishengir::memref_ext::MemRefExtDialect",
+                           "bufferization::BufferizationDialect"];
 }
 
-def InsertL12UBForDebug : Pass<"hivm-insert-l12ub-for-debug"> {
+def InsertL12UBForDebug : HIVMPass<"hivm-insert-l12ub-for-debug",
+                                   AnyOp, [MixKernel, PureAicKernel]> {
   let summary = "insert l12ub for debug";
   let constructor = "mlir::hivm::createInsertL12UBForDebugPass()";
-  let dependentDialects = [
-    "hivm::HIVMDialect",
-    "bishengir::memref_ext::MemRefExtDialect",
-    "bufferization::BufferizationDialect"
-  ];
+  let dependentDialects = ["hivm::HIVMDialect",
+                           "bishengir::memref_ext::MemRefExtDialect",
+                           "bufferization::BufferizationDialect"];
 }
 
-def CVPipelining : Pass<"cv-pipelining", "func::FuncOp"> {
-  let summary = "Cube and vector core pipelining for multi-buffer'ed mix-cv ops";
+def CVPipelining
+    : HIVMPass<"cv-pipelining", "func::FuncOp", [MixKernel, PureAicKernel]> {
+  let summary =
+      "Cube and vector core pipelining for multi-buffer'ed mix-cv ops";
   let constructor = "mlir::hivm::createCVPipeliningPass()";
   let dependentDialects = ["hivm::HIVMDialect", "scf::SCFDialect",
                            "mlir::scope::ScopeDialect",
                            "bishengir::memref_ext::MemRefExtDialect",
                            "annotation::AnnotationDialect"];
-  let options = [Option<"setDepthInUnrollMode", "set-depth-in-unroll-mode", "int",
-                        /*default=*/"-1",
-                        "Specify pipeline depth for cv-pipelining.">,
-                 Option<"pipelineMode", "pipeline-mode", "CVPipelineMode",
-                        "CVPipelineMode::Unroll",
-                        "Pipeline mode for CV-pipelining.",
-                        [{::llvm::cl::values(
+  let options =
+      [Option<"setDepthInUnrollMode", "set-depth-in-unroll-mode", "int",
+              /*default=*/"-1", "Specify pipeline depth for cv-pipelining.">,
+       Option<"pipelineMode", "pipeline-mode", "CVPipelineMode",
+              "CVPipelineMode::Unroll", "Pipeline mode for CV-pipelining.",
+              [{::llvm::cl::values(
                clEnumValN(CVPipelineMode::Unroll, "unroll",
                           "Default unroll-mode pipelining"),
                clEnumValN(CVPipelineMode::Skew, "skew",
                           "Preload/skew-mode pipelining"),
                clEnumValN(CVPipelineMode::Dynamic, "dynamic",
                           "Dyanmic-mode pipelining (developing)"))}]>,
-                 Option<"enableLazyLoading", "enable-lazy-loading", "bool",
-                        /*default=*/"false",
-                        "Allow load ops to be cloned into multiple work items "
-                        "to reduce intermediate buffer expansion">,
-                 Option<"bypassShapeRegistry", "bypass-shape-registry", "bool",
-                        /*default=*/"false",
-                        "Bypass shape registry check for registered-kernel "
-                        "CV-pipelining heuristics">,
-                 Option<"enablePreload", "enable-preload", "bool",
-                        /*default=*/"false",
-                        "Enable registered-kernel CV-pipelining heuristics">];
+       Option<"enableLazyLoading", "enable-lazy-loading", "bool",
+              /*default=*/"false",
+              "Allow load ops to be cloned into multiple work items "
+              "to reduce intermediate buffer expansion">,
+       Option<"bypassShapeRegistry", "bypass-shape-registry", "bool",
+              /*default=*/"false",
+              "Bypass shape registry check for registered-kernel "
+              "CV-pipelining heuristics">,
+       Option<"enablePreload", "enable-preload", "bool",
+              /*default=*/"false",
+              "Enable registered-kernel CV-pipelining heuristics">];
 }
 
 def AutoBlockifyParallelLoop
-    : Pass<"auto-blockify-parallel-loop", "func::FuncOp"> {
-  let summary = "Enable auto loop on blocks when logical blocknum is larger than physical one";
+    : HIVMPass<"auto-blockify-parallel-loop", "func::FuncOp"> {
+  let summary = "Enable auto loop on blocks when logical blocknum is larger "
+                "than physical one";
   let constructor = "mlir::hivm::createAutoBlockifyParallelLoopPass()";
   let dependentDialects = ["hivm::HIVMDialect", "hacc::HACCDialect"];
 }
 
-def ComposeCollapseExpand : Pass<"compose-collapse-expand"> {
+def ComposeCollapseExpand : HIVMPass<"compose-collapse-expand"> {
   let summary = "compose collapse and expand op";
   let constructor = "mlir::hivm::createComposeCollapseExpandPass()";
 }
 
-def InferSimtVFMemEffect : Pass<"infer-simt-vf-memory-effect"> {
+def InferSimtVFMemEffect : HIVMPass<"infer-simt-vf-memory-effect"> {
   let summary = "Infer simt vf func args memory effect";
   let constructor = "mlir::hivm::createInferSimtVFMemEffectPass()";
 }
 
 def InferSimtVFMemScopeHint
-    : Pass<"infer-simt-vf-memory-scope-hint", "ModuleOp"> {
+    : HIVMPass<"infer-simt-vf-memory-scope-hint", "ModuleOp"> {
   let summary = "Infer memory scope hints for simt vf arguments";
   let constructor = "mlir::hivm::createInferSimtVFMemScopeHintPass()";
   let dependentDialects = ["hivm::HIVMDialect", "memref::MemRefDialect"];
 }
 
 def MaterializeSimtVFMemScope
-    : Pass<"materialize-simt-vf-memory-scope", "ModuleOp"> {
+    : HIVMPass<"materialize-simt-vf-memory-scope", "ModuleOp"> {
   let summary = "Materialize explicit memory scopes inside split simt modules";
   let constructor = "mlir::hivm::createMaterializeSimtVFMemScopePass()";
   let dependentDialects = ["hivm::HIVMDialect", "memref::MemRefDialect"];
 }
 
-def SIMTVFSubTiling
-    : Pass<"hivm-simt-vf-sub-tiling", "ModuleOp"> {
+def SIMTVFSubTiling : HIVMPass<"hivm-simt-vf-sub-tiling", "ModuleOp"> {
   let summary = "Split oversized SIMT VF tiles into serial smaller tiles";
   let constructor = "mlir::hivm::createSIMTVFSubTilingPass()";
-  let dependentDialects = [
-    "annotation::AnnotationDialect",
-    "arith::ArithDialect",
-    "bufferization::BufferizationDialect",
-    "func::FuncDialect",
-    "hivm::HIVMDialect",
-    "memref::MemRefDialect",
-    "scf::SCFDialect",
-    "tensor::TensorDialect"
-  ];
+  let dependentDialects = ["annotation::AnnotationDialect",
+                           "arith::ArithDialect",
+                           "bufferization::BufferizationDialect",
+                           "func::FuncDialect", "hivm::HIVMDialect",
+                           "memref::MemRefDialect", "scf::SCFDialect",
+                           "tensor::TensorDialect"];
   let options = [Option<
       "maxTileSize", "max-tile-size", "int64_t",
       /*default=*/"64",
       "Maximum per-tile size on the selected SIMT tiling dimension">];
 }
 
-def SplitSimtModule : Pass<"split-simt-module"> {
+def SplitSimtModule : HIVMPass<"split-simt-module"> {
   let summary = "Split simt module for every simt vf";
   let constructor = "mlir::hivm::createSplitSimtModulePass()";
 }
 
-def MarkSimtScopeNoInline : Pass<"mark-simt-scope-no-inline", "ModuleOp"> {
-  let summary = "Mark SIMT scopes no_inline so inline-scope keeps them outlined";
+def MarkSimtScopeNoInline : HIVMPass<"mark-simt-scope-no-inline", "ModuleOp"> {
+  let summary =
+      "Mark SIMT scopes no_inline so inline-scope keeps them outlined";
   let description = [{
     SIMT scopes are lowered to independent SIMT vector functions by the mixed
     SIMD/SIMT pipeline and must stay outlined. This pass marks every
@@ -1471,23 +1520,25 @@ def MarkSimtScopeNoInline : Pass<"mark-simt-scope-no-inline", "ModuleOp"> {
   let dependentDialects = ["scope::ScopeDialect"];
 }
 
-def AutoScope : Pass<"auto-scope"> {
+def AutoScope : HIVMPass<"auto-scope"> {
   let summary = "Create scope for gather_load and scatter_store";
   let constructor = "mlir::hivm::createAutoScopePass()";
   let dependentDialects = ["hivm::HIVMDialect", "scope::ScopeDialect"];
 }
 
-def InsertAllocBasePlaceholder : Pass<"insert-alloc-base-placeholder", "ModuleOp"> {
+def InsertAllocBasePlaceholder
+    : HIVMPass<"insert-alloc-base-placeholder", "ModuleOp"> {
   let summary = "Insert placeholder memref.alloc with a dummy size";
   let constructor = "mlir::hivm::createInsertAllocBasePlaceholderPass()";
 }
 
-def WriteBackShared : Pass<"write-back-shared", "ModuleOp"> {
-  let summary = "Set the actual size of memref.alloc which represent used shared memory in simt vf";
+def WriteBackShared : HIVMPass<"write-back-shared", "ModuleOp"> {
+  let summary = "Set the actual size of memref.alloc which represent used "
+                "shared memory in simt vf";
   let constructor = "mlir::hivm::createWriteBackSharedPass()";
 }
 
-def TileCubeVectorLoop : Pass<"tile-cube-vector-loop", "ModuleOp"> {
+def TileCubeVectorLoop : HIVMPass<"tile-cube-vector-loop", "ModuleOp"> {
   let summary = "Tile cube and vector loops on local buffer";
   let description = [{
     This pass will attemp to tile cube and vector ops again on the
@@ -1497,114 +1548,128 @@ def TileCubeVectorLoop : Pass<"tile-cube-vector-loop", "ModuleOp"> {
       2. we can make the tiling size bigger.
   }];
   let constructor = "mlir::hivm::createTileCubeVectorLoopPass()";
-  let options = [
-    Option<
-      "tiledMixVectorLoopNumber", "tile-mix-vector-loop", "unsigned",
-      /*default=*/"1",
-      "The trip count of the tiled vector loop for mix kernels">,
-    Option<
-      "tiledMixCubeLoopNumber", "tile-mix-cube-loop", "unsigned",
-      /*default=*/"1",
-      "The trip count of the tiled cube loop for mix kernels">,
+  let options =
+      [Option<"tiledMixVectorLoopNumber", "tile-mix-vector-loop", "unsigned",
+              /*default=*/"1",
+              "The trip count of the tiled vector loop for mix kernels">,
+       Option<"tiledMixCubeLoopNumber", "tile-mix-cube-loop", "unsigned",
+              /*default=*/"1",
+              "The trip count of the tiled cube loop for mix kernels">,
   ];
   let dependentDialects = ["transform::TransformDialect"];
 }
 
-def ConvertNonContiguousReshapeToCopy : Pass<"convert-non-contiguous-reshape-to-copy"> {
-  let summary = "Generate copy for reassociative reshape that might be non-contiguous";
+def ConvertNonContiguousReshapeToCopy
+    : HIVMPass<"convert-non-contiguous-reshape-to-copy"> {
+  let summary =
+      "Generate copy for reassociative reshape that might be non-contiguous";
   let constructor = "mlir::hivm::createNonContiguousReshapeToCopyPass()";
   let dependentDialects = ["memref::MemRefDialect", "hivm::HIVMDialect"];
 }
 
-def InsertConvertLayout : Pass<"hivm-insert-convert-layout", "func::FuncOp"> {
+def InsertConvertLayout : HIVMPass<"hivm-insert-convert-layout",
+                                   "func::FuncOp", [MixKernel, PureAicKernel]> {
   let summary = "Insert convert layout for matmul operations";
   let constructor = "mlir::hivm::createInsertConvertLayoutPass()";
   let dependentDialects = ["hivm::HIVMDialect", ];
 }
 
-def PropagateConvertLayout : Pass<"hivm-propagate-convert-layout", "func::FuncOp"> {
+def PropagateConvertLayout
+    : HIVMPass<"hivm-propagate-convert-layout",
+               "func::FuncOp", [MixKernel, PureAicKernel]> {
   let summary = "Propagate convert layout for matmul operations";
   let constructor = "mlir::hivm::createPropagateConvertLayoutPass()";
   let dependentDialects = ["hivm::HIVMDialect", ];
 
-  let options = [Option<"allowAgnosticOps", "allow-agnostic-ops", "bool",
-                        /*default=*/"false",
-                        "Enable allow agnostic ops propagate reshape."
-                        "Currently disabled because other passes has not supported"
-                        "fractal-layout operations.">,
-                 Option<"enableElementwisePropagate", "enable-elementwise-propagate", "bool",
-                        /*default=*/"false",
-                        "Enable elementwise convert layout propagation patterns.">];
+  let options =
+      [Option<"allowAgnosticOps", "allow-agnostic-ops", "bool",
+              /*default=*/"false",
+              "Enable allow agnostic ops propagate reshape."
+              "Currently disabled because other passes has not supported"
+              "fractal-layout operations.">,
+       Option<"enableElementwisePropagate", "enable-elementwise-propagate",
+              "bool",
+              /*default=*/"false",
+              "Enable elementwise convert layout propagation patterns.">];
 }
 
-def LegalizeBoolForSimtVF : Pass<"legalize-bool-for-simtvf"> {
+def LegalizeBoolForSimtVF : HIVMPass<"legalize-bool-for-simtvf"> {
   let summary = "Legalize bool value used in simt vf";
   let constructor = "mlir::hivm::createLegalizeBoolForSimtVFPass()";
 }
 
-def InsertMemSemanticForSimtVF : Pass<"insert-memory-semantic-for-simtvf"> {
+def InsertMemSemanticForSimtVF : HIVMPass<"insert-memory-semantic-for-simtvf"> {
   let summary = "Insert memory semantic for simt vf";
   let constructor = "mlir::hivm::createInsertMemSemanticForSimtVFPass()";
 }
 
-def ConvertLayoutToTranspose : Pass<"hivm-convert-layout-to-transpose", "func::FuncOp"> {
+def ConvertLayoutToTranspose
+    : HIVMPass<"hivm-convert-layout-to-transpose",
+               "func::FuncOp", [MixKernel, PureAicKernel]> {
   let summary = "Convert layout to transpose decomposition";
   let constructor = "mlir::hivm::createConvertLayoutToTransposePass()";
   let dependentDialects = ["hivm::HIVMDialect", ];
-  let options = [
-    Option<"use3dTranspose", "use-3d-transpose", "bool",
-           /*default=*/"true",
-           "Use staged 3D transpose decomposition for ND->Fractal conversions.">
-  ];
+  let options = [Option<
+      "use3dTranspose", "use-3d-transpose", "bool",
+      /*default=*/"true",
+      "Use staged 3D transpose decomposition for ND->Fractal conversions.">];
 }
 
-def CombineOptimizedConvertLayout : Pass<"hivm-combine-optimized-convert-layout", "func::FuncOp"> {
-  let summary = "Fold some convert layout patterns and change it into optimized form";
+def CombineOptimizedConvertLayout
+    : HIVMPass<"hivm-combine-optimized-convert-layout",
+               "func::FuncOp", [MixKernel, PureAicKernel]> {
+  let summary =
+      "Fold some convert layout patterns and change it into optimized form";
   let constructor = "mlir::hivm::createCombineOptimizedConvertLayoutPass()";
   let dependentDialects = ["hivm::HIVMDialect", ];
 }
 
-def CreatePreload : Pass<"create-preload"> {
+def CreatePreload
+    : HIVMPass<"create-preload", AnyOp, [MixKernel, PureAicKernel]> {
   let summary = "Create preload for CV pipelining";
   let constructor = "mlir::hivm::createCreatePreloadPass()";
-  let dependentDialects = ["memref::MemRefDialect", "hivm::HIVMDialect", "mlir::scope::ScopeDialect"];
-  let options = [Option<"bypassShapeRegistry", "bypass-shape-registry", "bool",
-                        /*default=*/"false",
-                        "Bypass shape registry check for same-preload_num multi-scope">,
-                 Option<"enablePreload", "enable-preload", "bool",
-                        /*default=*/"false",
-                        "Enable same-preload_num multi-scope when the kernel is registered">,
-                 Option<"workspaceMultiBufferNum", "set-workspace-multibuffer", "unsigned",
-                        /*default=*/"0",
-                        "Workspace multibuffer depth; heuristics require a non-zero value">];
+  let dependentDialects = ["memref::MemRefDialect", "hivm::HIVMDialect",
+                           "mlir::scope::ScopeDialect"];
+  let options =
+      [Option<"bypassShapeRegistry", "bypass-shape-registry", "bool",
+              /*default=*/"false",
+              "Bypass shape registry check for same-preload_num multi-scope">,
+       Option<
+           "enablePreload", "enable-preload", "bool",
+           /*default=*/"false",
+           "Enable same-preload_num multi-scope when the kernel is registered">,
+       Option<
+           "workspaceMultiBufferNum", "set-workspace-multibuffer", "unsigned",
+           /*default=*/"0",
+           "Workspace multibuffer depth; heuristics require a non-zero value">];
 }
 
-def RemoveHIVMDataLayoutAnnotation : Pass<"hivm-remove-layout-annotation", "func::FuncOp"> {
+def RemoveHIVMDataLayoutAnnotation
+    : HIVMPass<"hivm-remove-layout-annotation", "func::FuncOp"> {
   let summary = "Remove HIVM data layout annotation";
   let constructor = "mlir::hivm::createRemoveHIVMDataLayoutAnnotationPass()";
   let dependentDialects = ["annotation::AnnotationDialect"];
 }
 
-def RemoveCopyOps : Pass<"hivm-remove-copy-ops", "func::FuncOp"> {
+def RemoveCopyOps : HIVMPass<"hivm-remove-copy-ops", "func::FuncOp"> {
   let summary = "Remove redundant copy operations in VF functions";
   let constructor = "mlir::hivm::createRemoveCopyOpsPass()";
   let dependentDialects = ["hivm::HIVMDialect", "memref::MemRefDialect"];
 }
 
-def FuseTransposeIntoLoad : Pass<"hivm-fuse-transpose-into-load", "func::FuncOp"> {
-  let summary = "Fuse linalg.transpose into hivm.hir.load by leveraging DMA on-the-fly transpose";
+def FuseTransposeIntoLoad
+    : HIVMPass<"hivm-fuse-transpose-into-load", "func::FuncOp"> {
+  let summary = "Fuse linalg.transpose into hivm.hir.load by leveraging DMA "
+                "on-the-fly transpose";
   let constructor = "mlir::hivm::createFuseTransposeIntoLoadPass()";
-  let dependentDialects = [
-    "arith::ArithDialect",
-    "bufferization::BufferizationDialect",
-    "hivm::HIVMDialect",
-    "linalg::LinalgDialect",
-    "memref::MemRefDialect",
-    "scf::SCFDialect",
+  let dependentDialects = ["arith::ArithDialect",
+                           "bufferization::BufferizationDialect",
+                           "hivm::HIVMDialect", "linalg::LinalgDialect",
+                           "memref::MemRefDialect", "scf::SCFDialect",
   ];
 }
 
-def TensorCopyInsertion : Pass<"hivm-tensor-copy-insertion", "ModuleOp"> {
+def TensorCopyInsertion : HIVMPass<"hivm-tensor-copy-insertion", "ModuleOp"> {
   let summary = "Run One-Shot analysis and insert tensor copies to resolve "
                 "bufferization conflicts";
   let description = [{
@@ -1623,23 +1688,23 @@ def TensorCopyInsertion : Pass<"hivm-tensor-copy-insertion", "ModuleOp"> {
                            "memref::MemRefDialect", "tensor::TensorDialect",
                            "hivm::HIVMDialect",
   ];
-  let options = [
-    Option<"allowReturnAllocsFromLoops", "allow-return-allocs-from-loops",
-           "bool", /*default=*/"false",
-           "Allows returning/yielding new allocations from a loop.">,
-    Option<"allowUnknownOps", "allow-unknown-ops", "bool",
-           /*default=*/"false",
-           "Allows unknown (not bufferizable) ops in the input IR.">,
-    Option<"analysisHeuristic", "analysis-heuristic", "std::string",
-           /*default=*/"\"bottom-up\"",
-           "Heuristic that control the IR traversal during analysis">,
-    Option<"bufferizeFunctionBoundaries", "bufferize-function-boundaries",
-           "bool", /*default=*/"false",
-           "Bufferize function boundaries (experimental).">,
+  let options =
+      [Option<"allowReturnAllocsFromLoops", "allow-return-allocs-from-loops",
+              "bool", /*default=*/"false",
+              "Allows returning/yielding new allocations from a loop.">,
+       Option<"allowUnknownOps", "allow-unknown-ops", "bool",
+              /*default=*/"false",
+              "Allows unknown (not bufferizable) ops in the input IR.">,
+       Option<"analysisHeuristic", "analysis-heuristic", "std::string",
+              /*default=*/"\"bottom-up\"",
+              "Heuristic that control the IR traversal during analysis">,
+       Option<"bufferizeFunctionBoundaries", "bufferize-function-boundaries",
+              "bool", /*default=*/"false",
+              "Bufferize function boundaries (experimental).">,
   ];
 }
 
-def FlattenModule : Pass<"hivm-flatten-module", "ModuleOp"> {
+def FlattenModule : HIVMPass<"hivm-flatten-module", "ModuleOp"> {
   let summary = "Flatten nested sub modules in one top mlir module";
   let constructor = "mlir::hivm::createFlattenModulePass()";
   let dependentDialects = ["hivm::HIVMDialect",
