@@ -140,6 +140,13 @@ compileDeviceKernel(StringRef bishengPath, const std::string &llvmirFilepath,
     arguments.push_back("-cce-vf-enable-loop-fusion=false");
   }
 
+  // Disable the reserved AscendC UB and raise the VF stack size from the
+  // 6 KB default (0x1800) to 8 KB (0x2000) so deep VF-fusion kernels do
+  // not spill past the stack limit.
+  arguments.push_back("--cce-disable-asc-reserved-ubuf");
+  arguments.push_back("-mllvm");
+  arguments.push_back("-cce-vf-stack-size=0x2000");
+
   if (config.shouldEnableVFFusion())
     arguments.push_back("--cce-simd-vf-fusion=false");
 
