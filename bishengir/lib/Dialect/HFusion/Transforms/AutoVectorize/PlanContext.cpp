@@ -156,12 +156,6 @@ void PlanContext::initFusableOpInfoFrom(func::FuncOp func) {
     LLVM_DEBUG(llvm::dbgs() << "++++++++copy conflicts++++++++\n");
     for (auto *op : info.copyConflicts)
       LLVM_DEBUG(llvm::dbgs() << *op << "\n");
-    LLVM_DEBUG(llvm::dbgs() << "++++++++op conflicts++++++++\n");
-    for (auto &[op, _] : info.opConflicts)
-      LLVM_DEBUG(llvm::dbgs() << *op << "\n");
-    LLVM_DEBUG(llvm::dbgs() << "++++++++group conflicts++++++++\n");
-    for (auto &[op, _] : info.groupConflicts)
-      LLVM_DEBUG(llvm::dbgs() << *op << "\n");
   }
   LLVM_DEBUG(llvm::dbgs() << "\n");
 #endif
@@ -185,22 +179,6 @@ void PlanContext::computeTileSize() {
 //===----------------------------------------------------------------------===//
 
 namespace {
-
-template <typename PivotTy>
-static void
-dissolvePivotImpl(FusableOpInfo::ConflictPivotMap<PivotTy> &conflictA,
-                  Operation *a,
-                  FusableOpInfo::ConflictPivotMap<PivotTy> &conflictB,
-                  Operation *b, PivotTy pivot) {
-  if (!conflictA.contains(b) || !conflictB.contains(a) ||
-      (conflictA[b].erase(pivot) != conflictB[a].erase(pivot) && a != b) ||
-      conflictA[b].empty() != conflictB[a].empty())
-    llvm::report_fatal_error("inconsistent conflict state");
-  if (!conflictA[b].empty())
-    return;
-  conflictA.erase(b);
-  conflictB.erase(a);
-}
 
 void findPreviousAndFollowingFusableOpOf(Operation *barrierOp, Block *block,
                                          DenseSet<Operation *> &previousOps,
@@ -391,34 +369,6 @@ static void findNearestDownstreamFusableOps(Operation *op, Block *block,
 
 } // namespace
 
-void PlanContext::dissolvePivot(Operation *newOp, const FusedNode *node,
-                                Block *block) {
-  // Step 1 — discharge op-level def-use conflicts induced by `newOp`.
-  // When `newOp` was standalone it sat between upstreamOps and their
-  // downstream, creating pivot entries in opConflicts. Now that `newOp`
-  // is fused into `node`, erase it from every (ancestor, descendant)
-  // pair so that pairs that lose their last pivot also lose the conflict.
-  DenseSet<Operation *> upstreamOps;
-  DenseSet<Operation *> visitedUpstreamOps;
-  findUpstreamFusableOpOf(newOp, block, upstreamOps, visitedUpstreamOps);
-  for (Operation *upstreamOp : upstreamOps) {
-    auto &conflicts = getInfo(upstreamOp).opConflicts;
-    for (auto [otherOp, pivotSet] : llvm::make_early_inc_range(conflicts)) {
-      auto &otherConflicts = getInfo(otherOp).opConflicts;
-      dissolvePivotImpl(conflicts, upstreamOp, otherConflicts, otherOp, newOp);
-    }
-  }
-
-  // Step 2 — discharge group-level conflicts where `node` blocks
-  // `newOp` from sharing a loop with other ops. Since `newOp` just
-  // joined `node`, the group is no longer a barrier between them.
-  auto &conflicts = getInfo(newOp).groupConflicts;
-  for (auto [otherOp, pivotSet] : llvm::make_early_inc_range(conflicts)) {
-    auto &otherConflicts = getInfo(otherOp).groupConflicts;
-    dissolvePivotImpl(conflicts, newOp, otherConflicts, otherOp, node);
-  }
-}
-
 void PlanContext::computeConflictLists(func::FuncOp func) {
   func.walk([&](Block *block) {
     if (isa<func::FuncOp, scf::ForOp, scf::IfOp, scf::WhileOp, scope::ScopeOp>(
@@ -426,19 +376,6 @@ void PlanContext::computeConflictLists(func::FuncOp func) {
       block->walk([&](Operation *op) {
         if (!isOpInBlock(op, block))
           return;
-        DenseSet<Operation *> upstreamOps;
-        DenseSet<Operation *> visitedUpstreamOps;
-        findUpstreamFusableOpOf(op, block, upstreamOps, visitedUpstreamOps);
-        DenseSet<Operation *> downstreamOps;
-        DenseSet<Operation *> visitedDownstreamOps;
-        findDownstreamFusableOpOf(op, block, downstreamOps,
-                                  visitedDownstreamOps);
-        for (auto *upstreamOp : upstreamOps) {
-          for (auto *downstreamOp : downstreamOps) {
-            addOpConflict(upstreamOp, downstreamOp, op);
-          }
-        }
-
         if (isNonVectorizableOp(op)) {
           if (enableCrossIfFusion) {
             // Only region-bearing ops or explicit sync/copy ops need the
@@ -554,23 +491,6 @@ void PlanContext::addSyncConflict(Operation *a, Operation *b) {
 void PlanContext::addCopyConflict(Operation *a, Operation *b) {
   getInfo(a).copyConflicts.insert(b);
   getInfo(b).copyConflicts.insert(a);
-}
-void PlanContext::addOpConflict(Operation *a, Operation *b, Operation *pivot) {
-  getInfo(a).opConflicts[b].insert(pivot);
-  getInfo(b).opConflicts[a].insert(pivot);
-}
-void PlanContext::addGroupConflict(Operation *a, Operation *b,
-                                   const FusedNode *pivot) {
-  getInfo(a).groupConflicts[b].insert(pivot);
-  getInfo(b).groupConflicts[a].insert(pivot);
-}
-
-bool PlanContext::hasConflict(const FusableOpInfo &a, Operation *b) const {
-  return a.syncConflicts.contains(b) || a.copyConflicts.contains(b) ||
-         a.opConflicts.contains(b) || a.groupConflicts.contains(b);
-}
-bool PlanContext::hasConflict(Operation *a, Operation *b) const {
-  return hasConflict(getInfo(a), b);
 }
 
 } // namespace hfusion
