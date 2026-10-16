@@ -232,10 +232,11 @@ static bool isSignedI8DestMode(hivm::UnsignedMode mode, bool hasUniAttr) {
   return mode == hivm::UnsignedMode::SI2SI || mode == hivm::UnsignedMode::UI2SI;
 }
 
-/// Hardware has no s322s8 / s162s8. Direct s322u8 / s162u8 treats the
-/// destination as unsigned and drops negatives. For wrap (arith.trunci),
-/// keep the low 8 bits first so the unsigned narrow is in [0, 255] and
-/// the stored i8 bit pattern matches two's-complement wrap.
+/// Hardware has no s322s8 / s162s8. Direct s322u8 / s162u8 (and their
+/// u32/u16 counterparts) saturate outside the destination range even with
+/// the sat flag cleared. For wrap (arith.trunci), keep the low 8 bits first
+/// so the narrow is exact for signed and unsigned destinations alike; the
+/// stored i8 bit pattern matches two's-complement wrap.
 static Operation *createSignedWrapTruncToI8(ConversionPatternRewriter &rewriter,
                                             Location loc, Value src, Value mask,
                                             VectorType outVecType, BoolAttr sat,
@@ -415,11 +416,15 @@ struct VFTypeConvertionPattern : public OpConversionPattern<OpToBeConverted> {
         const bool saturate = sat.getValue();
         const bool signedI8Dest =
             isSignedI8DestMode(hvUniMode, unsignedAttr != nullptr);
-        if (!saturate && signedI8Dest) {
+        // Wrap truncation keeps the low 8 bits for signed and unsigned
+        // destinations alike. Direct s322u8/u322u8 saturates outside
+        // [0, 255] even with the sat flag cleared, so mask 0xFF first in
+        // every destination mode.
+        if (!saturate) {
           newOp =
               createSignedWrapTruncToI8(rewriter, loc, in, adjustedMask,
                                         outVecType, sat, nullptr, pp, s2uAttr);
-        } else if (saturate && signedI8Dest) {
+        } else if (signedI8Dest) {
           auto f16VecType =
               VectorType::get(inVecType.getShape(), rewriter.getF16Type());
           Value maskF16 =
@@ -566,10 +571,10 @@ struct VFTypeConvertionPattern : public OpConversionPattern<OpToBeConverted> {
               loc, newOutVecType, in, maskForI32, sat, part, nullptr, nullptr);
           hivm::UnsignedModeAttr s2uAttr = hivm::UnsignedModeAttr::get(
               op->getContext(), hivm::UnsignedMode::SI2UI);
-          const bool signedI8Dest =
-              isSignedI8DestMode(hvUniMode, unsignedAttr != nullptr);
-          // i32 -> i8/i16
-          if (outElemType.isSignlessInteger(8) && signedI8Dest) {
+          // i32 -> i8/i16. Wrap truncation to i8 needs the 0xFF mask for
+          // every destination mode; direct s322u8/u322u8 saturates even with
+          // the sat flag cleared.
+          if (outElemType.isSignlessInteger(8)) {
             newOp = createSignedWrapTruncToI8(rewriter, loc, i32Op.getResult(),
                                               adjustedMask, outVecType, sat,
                                               nullptr, pp, s2uAttr);
@@ -584,8 +589,9 @@ struct VFTypeConvertionPattern : public OpConversionPattern<OpToBeConverted> {
           }
         }
       } else if (inElemType.isSignlessInteger(16) &&
-                 outElemType.isSignlessInteger(8) && !sat.getValue() &&
-                 isSignedI8DestMode(hvUniMode, unsignedAttr != nullptr)) {
+                 outElemType.isSignlessInteger(8) && !sat.getValue()) {
+        // Wrap truncation to i8 keeps the low 8 bits for signed and
+        // unsigned destinations alike; direct s162u8/u162u8 saturates.
         hivm::UnsignedModeAttr s2uAttr = hivm::UnsignedModeAttr::get(
             op->getContext(), hivm::UnsignedMode::SI2UI);
         newOp =
