@@ -1855,6 +1855,21 @@ void InsertLoadStoreForMixCVPass::runOnOperation() {
   if (failed(pm3.run(funcOp))) {
     return signalPassFailure();
   }
+
+  if (!supportsRegBaseMixedCV())
+    return;
+
+  PassManager pm4(ctx);
+  pm4.addPass(createCSEPass());
+  if (failed(pm4.run(funcOp))) {
+    return signalPassFailure();
+  }
+
+  PassManager pm5(ctx);
+  pm5.addPass(createCloneTensorEmptyPass());
+  if (failed(pm5.run(funcOp))) {
+    return signalPassFailure();
+  }
 }
 
 std::unique_ptr<Pass> mlir::hivm::createInsertLoadStoreForMixCVPass(
