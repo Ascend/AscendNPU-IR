@@ -16,13 +16,13 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HFusion/TransformOps/HFusionTransformOps.h"
-#include "bishengir/Dialect/Transform/IR/TransformOps.h"
 #include "bishengir/Dialect/HIVM/Analysis/DimensionAnalyzer.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
+#include "bishengir/Dialect/Transform/IR/TransformOps.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/Linalg/TransformOps/LinalgTransformOps.h"
@@ -444,7 +444,9 @@ class LoopInfo {
 public:
   explicit LoopInfo(size_t idxIn, int64_t targetTripCount,
                     hivm::TCoreType loopCoreTypeIn)
-      : idx(idxIn), loopCoreType(loopCoreTypeIn), tripCount(targetTripCount) {}
+      : idx(idxIn), loopCoreType(loopCoreTypeIn) {
+    setTripCount(targetTripCount);
+  }
 
   virtual ~LoopInfo() = default;
 
@@ -463,12 +465,12 @@ public:
   /// Get the unique index of the loop.
   size_t getIdx() const { return idx; };
 
-  /// Get or set the target trip count of the tiled loop.
+  /// Get or set the target trip count of the tiled loop. The count must
+  /// stay positive; external values are checked by `validateTripCount`.
   int64_t getTripCount() const { return tripCount; }
   void setTripCount(int64_t newTripCount) {
-    if (newTripCount < 0)
-      return;
-
+    if (newTripCount <= 0)
+      llvm::report_fatal_error("invalid sub-tiling trip count");
     tripCount = newTripCount;
   }
 
@@ -908,6 +910,11 @@ private:
   template <typename OpType>
   LogicalResult collectVectorLoopInfo(OpType vectorLoop);
 
+  /// Reject a non-positive sub-tiling trip count, which would divide by zero
+  /// inside the pass.
+  LogicalResult validateTripCount(Operation *op, int64_t tripCount,
+                                  llvm::StringRef source);
+
   // Obtains independent cube calculation branch.
   template <typename OpType>
   LogicalResult extractCubeBranches(hivm::detail::DimensionAnalyzer &analyzer,
@@ -1131,6 +1138,17 @@ void TileCubeVectorLoopPass::collectLoopInfo(ModuleOp topLevelModule) {
   });
 }
 
+LogicalResult
+TileCubeVectorLoopPass::validateTripCount(Operation *op, int64_t tripCount,
+                                          llvm::StringRef source) {
+  if (tripCount > 0)
+    return success();
+  op->emitOpError("invalid sub-tiling trip count ")
+      << tripCount << " from '" << source << "'; expected a positive value";
+  signalPassFailure();
+  return failure();
+}
+
 static bool
 areValuesAlignedAfterTiling(ValueRange valueRange,
                             mlir::hivm::detail::DimensionAnalyzer &analyzer,
@@ -1182,18 +1200,27 @@ areValuesAlignedAfterTiling(ValueRange valueRange,
 /// both the store and the yielded values.
 template <typename OpType>
 LogicalResult TileCubeVectorLoopPass::collectVectorLoopInfo(OpType vectorLoop) {
-  VectorLoopInfo info(loopsToTile.size(),
-                      static_cast<int64_t>(this->tiledMixVectorLoopNumber));
+  int64_t targetTripCount =
+      static_cast<int64_t>(this->tiledMixVectorLoopNumber);
+
   // Skip subtiling for vector loop with complex control flow.
   if (hasComplexControlFlow(vectorLoop)) {
     LLVM_DEBUG(llvm::dbgs()
                << "[tile-cube-vector-loop] skip tiling: vector loop has "
                   "complex control flow with multiple blocks\n");
-    info.setTripCount(1);
+    return success();
   }
 
-  if (info.getTripCount() == 1)
+  if (targetTripCount == 1)
     return success();
+
+  // Validate only when the trip count is actually consumed, so that loops
+  // skipped above are not rejected because of an unused option.
+  if (failed(validateTripCount(vectorLoop.getOperation(), targetTripCount,
+                               "tile-mix-vector-loop")))
+    return failure();
+
+  VectorLoopInfo info(loopsToTile.size(), targetTripCount);
 
   hivm::detail::DimensionAnalyzer analyzer(vectorLoop);
   if (failed(analyzer.initialize()))
@@ -1269,8 +1296,7 @@ LogicalResult TileCubeVectorLoopPass::collectVectorLoopInfo(OpType vectorLoop) {
 }
 
 template <typename OpType>
-std::optional<int64_t> getMixCubeLoopNumber(OpType cubeLoop,
-                                            CubeLoopInfo &info) {
+std::optional<int64_t> getMixCubeLoopNumber(OpType cubeLoop) {
   std::optional<int64_t> tileCubeLoopNum;
   cubeLoop->walk([&tileCubeLoopNum](hivm::MmadL1Op op) {
     if (op->hasAttr(hivm::TileMixCubeNumAttr::name)) {
@@ -1541,24 +1567,24 @@ LogicalResult TileCubeVectorLoopPass::groupBranchesByCommonAxis(
 /// and tags them for downstream Transform Dialect tiling and fusion.
 template <typename OpType>
 LogicalResult TileCubeVectorLoopPass::collectCubeLoopInfo(OpType cubeLoop) {
-  CubeLoopInfo info(loopsToTile.size(),
-                    static_cast<int64_t>(this->tiledMixCubeLoopNumber));
-
-  auto tileCubeLoopNum = getMixCubeLoopNumber(cubeLoop, info);
-  if (tileCubeLoopNum.has_value()) {
-    info.setTileCubeAttr(true);
-    info.setTripCount(tileCubeLoopNum.value());
-  }
+  // The IR attribute overrides the compile option when present.
+  auto tileCubeLoopNum = getMixCubeLoopNumber(cubeLoop);
+  bool hasTileCubeAttr = tileCubeLoopNum.has_value();
+  int64_t targetTripCount =
+      hasTileCubeAttr ? tileCubeLoopNum.value()
+                      : static_cast<int64_t>(this->tiledMixCubeLoopNumber);
+  llvm::StringRef tripCountSource =
+      hasTileCubeAttr ? hivm::TileMixCubeNumAttr::name : "tile-mix-cube-loop";
 
   // Skip subtiling for cube loops with complex control flow.
   if (hasComplexControlFlow(cubeLoop)) {
     LLVM_DEBUG(llvm::dbgs()
                << "[tile-cube-vector-loop] skip tiling: cube loop has "
                   "complex control flow with multiple blocks\n");
-    info.setTripCount(1);
+    return success();
   }
 
-  if (info.getTripCount() == 1)
+  if (targetTripCount == 1)
     return success();
 
   hivm::detail::DimensionAnalyzer analyzer(cubeLoop.getOperation());
@@ -1575,19 +1601,24 @@ LogicalResult TileCubeVectorLoopPass::collectCubeLoopInfo(OpType cubeLoop) {
 
   // If the cube loop uses L0C-resident MmadL1 accumulation, tiling would
   // break the partial-result accumulation pattern.
-  if (hasL0CAccumulation(allBranches, info.getTripCount(),
-                         info.getTileCubeAttr())) {
+  if (hasL0CAccumulation(allBranches, targetTripCount, hasTileCubeAttr)) {
     LDBG("Skipping cube loop tiling: L0C accumulation detected");
-    info.setTripCount(1);
     return success();
   }
 
-  if (canFitBranchInBuffer(allBranches, info.getTripCount(),
-                           info.getTileCubeAttr())) {
+  if (canFitBranchInBuffer(allBranches, targetTripCount, hasTileCubeAttr)) {
     LDBG("No need to tile because sum of branches can fit on L0C");
-    info.setTripCount(1);
     return success();
   }
+
+  // Validate only when the trip count is actually consumed, so that loops
+  // skipped above are not rejected because of an unused option.
+  if (failed(validateTripCount(cubeLoop.getOperation(), targetTripCount,
+                               tripCountSource)))
+    return failure();
+
+  CubeLoopInfo info(loopsToTile.size(), targetTripCount);
+  info.setTileCubeAttr(hasTileCubeAttr);
 
   SmallVector<CubeLoopGroup, 2> loopGroups;
   if (failed(groupBranchesByCommonAxis(analyzer, allBranches, loopGroups,
