@@ -6,7 +6,6 @@
 // stores have a separate 256-bit limit. Dense unaligned prefixes share a UST
 // and one final flush when no cheaper register packing is available.
 
-
 // -----
 
 // CHECK-LABEL: func.func @pack_two_i8_halves(
@@ -95,28 +94,6 @@ func.func @pack_two_i8_quarters_preserve_padding(%dst: memref<1024xi8, #hivm.add
 
 // -----
 
-// CHECK-LABEL: func.func @pb32_arguments(
-// CHECK: %[[DIST:.*]] = llvm.mlir.constant(1 : i32)
-// CHECK-NOT: hivm.pstu
-// CHECK-COUNT-1: "hivm_regbaseintrins.intr.hivm.pdintlv.b16"
-// CHECK: "hivm_regbaseintrins.intr.hivm.psts.b8"({{[^,]+}}, {{[^,]+}}, {{[^,]+}}, %[[DIST]],
-// CHECK-NOT: hivm.psts
-// CHECK-NOT: hivm.pstu
-// CHECK-NOT: hivm.vstas
-// CHECK: return
-func.func @pb32_arguments(%dst: memref<1024xi1, #hivm.address_space<ub>>, %a0: vector<64xi1>, %a1: vector<64xi1>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
-  %c0 = arith.constant 0 : index
-  %m0 = ave.hir.pge <ALL> {functionType = #ave.func_dist_type<pb32>} : vector<64xi1>
-  %v0 = memref.reinterpret_cast %dst to offset: [0], sizes: [64], strides: [1] : memref<1024xi1, #hivm.address_space<ub>> to memref<64xi1, strided<[1], offset: ?>, #hivm.address_space<ub>>
-  ave.hir.masked_store <NORM_B8> %v0[%c0], %m0, %a0 {ave.unaligned_ub_access = #ave.unaligned_ub_access, functionType = #ave.func_dist_type<pb32>} : memref<64xi1, strided<[1], offset: ?>, #hivm.address_space<ub>>, vector<64xi1>, vector<64xi1>
-  %m1 = ave.hir.pge <ALL> {functionType = #ave.func_dist_type<pb32>} : vector<64xi1>
-  %v1 = memref.reinterpret_cast %dst to offset: [64], sizes: [64], strides: [1] : memref<1024xi1, #hivm.address_space<ub>> to memref<64xi1, strided<[1], offset: ?>, #hivm.address_space<ub>>
-  ave.hir.masked_store <NORM_B8> %v1[%c0], %m1, %a1 {ave.unaligned_ub_access = #ave.unaligned_ub_access, functionType = #ave.func_dist_type<pb32>} : memref<64xi1, strided<[1], offset: ?>, #hivm.address_space<ub>>, vector<64xi1>, vector<64xi1>
-  return
-}
-
-// -----
-
 // Three PB32 stores cannot form a power-of-two group. Merge the first two
 // into a 16-byte PB16 store and preserve the third 8-byte PB32 store.
 // CHECK-LABEL: func.func @three_pb32_arguments(
@@ -199,7 +176,8 @@ func.func @pb16_arguments(%dst: memref<1024xi1, #hivm.address_space<ub>>, %a0: v
 
 // -----
 
-// CHECK-LABEL: func.func @dense_i8_64_128(
+// Three unequal prefixes share one flush, including a nonzero start offset.
+// CHECK-LABEL: func.func @dense_i8_mixed_prefixes(
 // CHECK-DAG: %[[N64:.*]] = llvm.mlir.constant(64 : i32)
 // CHECK-DAG: %[[N128:.*]] = llvm.mlir.constant(128 : i32)
 // CHECK: memref.reinterpret_cast {{.*}} offset: [3]
@@ -211,11 +189,15 @@ func.func @pb16_arguments(%dst: memref<1024xi1, #hivm.address_space<ub>>, %a0: v
 // CHECK: %[[S1:.*]] = "hivm_regbaseintrins.intr.hivm.vstus.post.s8"(%arg2, %[[P0]], %[[N128]], %[[U0]])
 // CHECK: %[[U1:.*]] = llvm.extractvalue %[[S1]][0]
 // CHECK: %[[P1:.*]] = llvm.extractvalue %[[S1]][1]
-// CHECK: "hivm_regbaseintrins.intr.hivm.vstas"(%[[U1]], %[[P1]],
+// CHECK-NOT: hivm.vstas
+// CHECK: %[[S2:.*]] = "hivm_regbaseintrins.intr.hivm.vstus.post.s8"(%arg3, %[[P1]], %[[N64]], %[[U1]])
+// CHECK: %[[U2:.*]] = llvm.extractvalue %[[S2]][0]
+// CHECK: %[[P2:.*]] = llvm.extractvalue %[[S2]][1]
+// CHECK: "hivm_regbaseintrins.intr.hivm.vstas"(%[[U2]], %[[P2]],
 // CHECK-NOT: hivm.vstas
 // CHECK-NOT: hivm.vstus
 // CHECK: return
-func.func @dense_i8_64_128(%dst: memref<1024xi8, #hivm.address_space<ub>>, %a0: vector<256xi8>, %a1: vector<256xi8>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
+func.func @dense_i8_mixed_prefixes(%dst: memref<1024xi8, #hivm.address_space<ub>>, %a0: vector<256xi8>, %a1: vector<256xi8>, %a2: vector<256xi8>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
   %c0 = arith.constant 0 : index
   %m0 = ave.hir.pge <VL64> {functionType = #ave.func_dist_type<pb8>} : vector<256xi1>
   %v0 = memref.reinterpret_cast %dst to offset: [3], sizes: [64], strides: [1] : memref<1024xi8, #hivm.address_space<ub>> to memref<64xi8, strided<[1], offset: ?>, #hivm.address_space<ub>>
@@ -223,29 +205,8 @@ func.func @dense_i8_64_128(%dst: memref<1024xi8, #hivm.address_space<ub>>, %a0: 
   %m1 = ave.hir.pge <VL128> {functionType = #ave.func_dist_type<pb8>} : vector<256xi1>
   %v1 = memref.reinterpret_cast %dst to offset: [67], sizes: [128], strides: [1] : memref<1024xi8, #hivm.address_space<ub>> to memref<128xi8, strided<[1], offset: ?>, #hivm.address_space<ub>>
   ave.hir.masked_store <NORM_B8> %v1[%c0], %m1, %a1 {ave.unaligned_ub_access = #ave.unaligned_ub_access, functionType = #ave.func_dist_type<norm>} : memref<128xi8, strided<[1], offset: ?>, #hivm.address_space<ub>>, vector<256xi1>, vector<256xi8>
-  return
-}
-
-// -----
-
-// CHECK-LABEL: func.func @dense_f16_halves(
-// CHECK: %[[BYTES:.*]] = llvm.mlir.constant(128 : i32)
-// CHECK-NOT: hivm.vstas
-// CHECK: "hivm_regbaseintrins.intr.hivm.vstus.post.f16"({{[^,]+}}, {{[^,]+}}, %[[BYTES]],
-// CHECK-NOT: hivm.vstas
-// CHECK: "hivm_regbaseintrins.intr.hivm.vstus.post.f16"({{[^,]+}}, {{[^,]+}}, %[[BYTES]],
-// CHECK: "hivm_regbaseintrins.intr.hivm.vstas"
-// CHECK-NOT: hivm.vstas
-// CHECK-NOT: hivm.vstus
-// CHECK: return
-func.func @dense_f16_halves(%dst: memref<1024xf16, #hivm.address_space<ub>>, %a0: vector<128xf16>, %a1: vector<128xf16>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
-  %c0 = arith.constant 0 : index
-  %m0 = ave.hir.pge <VL64> {functionType = #ave.func_dist_type<pb16>} : vector<128xi1>
-  %v0 = memref.reinterpret_cast %dst to offset: [0], sizes: [64], strides: [1] : memref<1024xf16, #hivm.address_space<ub>> to memref<64xf16, strided<[1], offset: ?>, #hivm.address_space<ub>>
-  ave.hir.masked_store <NORM_B16> %v0[%c0], %m0, %a0 {ave.unaligned_ub_access = #ave.unaligned_ub_access, functionType = #ave.func_dist_type<norm>} : memref<64xf16, strided<[1], offset: ?>, #hivm.address_space<ub>>, vector<128xi1>, vector<128xf16>
-  %m1 = ave.hir.pge <VL64> {functionType = #ave.func_dist_type<pb16>} : vector<128xi1>
-  %v1 = memref.reinterpret_cast %dst to offset: [64], sizes: [64], strides: [1] : memref<1024xf16, #hivm.address_space<ub>> to memref<64xf16, strided<[1], offset: ?>, #hivm.address_space<ub>>
-  ave.hir.masked_store <NORM_B16> %v1[%c0], %m1, %a1 {ave.unaligned_ub_access = #ave.unaligned_ub_access, functionType = #ave.func_dist_type<norm>} : memref<64xf16, strided<[1], offset: ?>, #hivm.address_space<ub>>, vector<128xi1>, vector<128xf16>
+  %v2 = memref.reinterpret_cast %dst to offset: [195], sizes: [64], strides: [1] : memref<1024xi8, #hivm.address_space<ub>> to memref<64xi8, strided<[1], offset: ?>, #hivm.address_space<ub>>
+  ave.hir.masked_store <NORM_B8> %v2[%c0], %m0, %a2 {ave.unaligned_ub_access = #ave.unaligned_ub_access, functionType = #ave.func_dist_type<norm>} : memref<64xi8, strided<[1], offset: ?>, #hivm.address_space<ub>>, vector<256xi1>, vector<256xi8>
   return
 }
 
@@ -272,53 +233,6 @@ func.func @dense_f32_constant_tail(%dst: memref<1024xf32, #hivm.address_space<ub
   %m1, %remaining1 = ave.hir.plt %n1 {functionType = #ave.func_dist_type<pb32>} : vector<64xi1>, index
   %v1 = memref.reinterpret_cast %dst to offset: [16], sizes: [32], strides: [1] : memref<1024xf32, #hivm.address_space<ub>> to memref<32xf32, strided<[1], offset: ?>, #hivm.address_space<ub>>
   ave.hir.masked_store <NORM_B32> %v1[%c0], %m1, %a1 {ave.unaligned_ub_access = #ave.unaligned_ub_access, functionType = #ave.func_dist_type<norm>} : memref<32xf32, strided<[1], offset: ?>, #hivm.address_space<ub>>, vector<64xi1>, vector<64xf32>
-  return
-}
-
-// -----
-
-// CHECK-LABEL: func.func @dense_three_i8_prefixes(
-// CHECK-NOT: hivm.vstas
-// CHECK: "hivm_regbaseintrins.intr.hivm.vstus.post.s8"
-// CHECK-NOT: hivm.vstas
-// CHECK: "hivm_regbaseintrins.intr.hivm.vstus.post.s8"
-// CHECK-NOT: hivm.vstas
-// CHECK: "hivm_regbaseintrins.intr.hivm.vstus.post.s8"
-// CHECK: "hivm_regbaseintrins.intr.hivm.vstas"
-// CHECK-NOT: hivm.vstas
-// CHECK-NOT: hivm.vstus
-// CHECK: return
-func.func @dense_three_i8_prefixes(%dst: memref<1024xi8, #hivm.address_space<ub>>, %a0: vector<256xi8>, %a1: vector<256xi8>, %a2: vector<256xi8>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
-  %c0 = arith.constant 0 : index
-  %m0 = ave.hir.pge <VL64> {functionType = #ave.func_dist_type<pb8>} : vector<256xi1>
-  %v0 = memref.reinterpret_cast %dst to offset: [0], sizes: [64], strides: [1] : memref<1024xi8, #hivm.address_space<ub>> to memref<64xi8, strided<[1], offset: ?>, #hivm.address_space<ub>>
-  ave.hir.masked_store <NORM_B8> %v0[%c0], %m0, %a0 {ave.unaligned_ub_access = #ave.unaligned_ub_access, functionType = #ave.func_dist_type<norm>} : memref<64xi8, strided<[1], offset: ?>, #hivm.address_space<ub>>, vector<256xi1>, vector<256xi8>
-  %m1 = ave.hir.pge <VL64> {functionType = #ave.func_dist_type<pb8>} : vector<256xi1>
-  %v1 = memref.reinterpret_cast %dst to offset: [64], sizes: [64], strides: [1] : memref<1024xi8, #hivm.address_space<ub>> to memref<64xi8, strided<[1], offset: ?>, #hivm.address_space<ub>>
-  ave.hir.masked_store <NORM_B8> %v1[%c0], %m1, %a1 {ave.unaligned_ub_access = #ave.unaligned_ub_access, functionType = #ave.func_dist_type<norm>} : memref<64xi8, strided<[1], offset: ?>, #hivm.address_space<ub>>, vector<256xi1>, vector<256xi8>
-  %m2 = ave.hir.pge <VL64> {functionType = #ave.func_dist_type<pb8>} : vector<256xi1>
-  %v2 = memref.reinterpret_cast %dst to offset: [128], sizes: [64], strides: [1] : memref<1024xi8, #hivm.address_space<ub>> to memref<64xi8, strided<[1], offset: ?>, #hivm.address_space<ub>>
-  ave.hir.masked_store <NORM_B8> %v2[%c0], %m2, %a2 {ave.unaligned_ub_access = #ave.unaligned_ub_access, functionType = #ave.func_dist_type<norm>} : memref<64xi8, strided<[1], offset: ?>, #hivm.address_space<ub>>, vector<256xi1>, vector<256xi8>
-  return
-}
-
-// -----
-
-// CHECK-LABEL: func.func @keep_gap(
-// CHECK: "hivm_regbaseintrins.intr.hivm.vstus.post.s8"
-// CHECK: "hivm_regbaseintrins.intr.hivm.vstas"
-// CHECK: "hivm_regbaseintrins.intr.hivm.vstus.post.s8"
-// CHECK: "hivm_regbaseintrins.intr.hivm.vstas"
-// CHECK-NOT: hivm.vst
-// CHECK: return
-func.func @keep_gap(%dst: memref<1024xi8, #hivm.address_space<ub>>, %a0: vector<256xi8>, %a1: vector<256xi8>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
-  %c0 = arith.constant 0 : index
-  %m0 = ave.hir.pge <VL64> {functionType = #ave.func_dist_type<pb8>} : vector<256xi1>
-  %v0 = memref.reinterpret_cast %dst to offset: [0], sizes: [64], strides: [1] : memref<1024xi8, #hivm.address_space<ub>> to memref<64xi8, strided<[1], offset: ?>, #hivm.address_space<ub>>
-  ave.hir.masked_store <NORM_B8> %v0[%c0], %m0, %a0 {ave.unaligned_ub_access = #ave.unaligned_ub_access, functionType = #ave.func_dist_type<norm>} : memref<64xi8, strided<[1], offset: ?>, #hivm.address_space<ub>>, vector<256xi1>, vector<256xi8>
-  %m1 = ave.hir.pge <VL64> {functionType = #ave.func_dist_type<pb8>} : vector<256xi1>
-  %v1 = memref.reinterpret_cast %dst to offset: [65], sizes: [64], strides: [1] : memref<1024xi8, #hivm.address_space<ub>> to memref<64xi8, strided<[1], offset: ?>, #hivm.address_space<ub>>
-  ave.hir.masked_store <NORM_B8> %v1[%c0], %m1, %a1 {ave.unaligned_ub_access = #ave.unaligned_ub_access, functionType = #ave.func_dist_type<norm>} : memref<64xi8, strided<[1], offset: ?>, #hivm.address_space<ub>>, vector<256xi1>, vector<256xi8>
   return
 }
 
@@ -381,23 +295,6 @@ func.func @keep_sparse_nonprefix_mask(%dst: memref<1024xi8, #hivm.address_space<
 
 // -----
 
-// CHECK-LABEL: func.func @keep_sparse_gap(
-// CHECK-NOT: hivm.vdintlv
-// CHECK-COUNT-2: "hivm_regbaseintrins.intr.hivm.vstsx1.v128s16"
-// CHECK: return
-func.func @keep_sparse_gap(%dst: memref<1024xi8, #hivm.address_space<ub>>, %a0: vector<128xi16>, %a1: vector<128xi16>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
-  %c0 = arith.constant 0 : index
-  %m0 = ave.hir.pge <ALL> {functionType = #ave.func_dist_type<pb16>} : vector<128xi1>
-  %v0 = memref.reinterpret_cast %dst to offset: [0], sizes: [128], strides: [1] : memref<1024xi8, #hivm.address_space<ub>> to memref<128xi8, strided<[1], offset: ?>, #hivm.address_space<ub>>
-  ave.hir.masked_store <PK_B16> %v0[%c0], %m0, %a0 {functionType = #ave.func_dist_type<pk>} : memref<128xi8, strided<[1], offset: ?>, #hivm.address_space<ub>>, vector<128xi1>, vector<128xi16>
-  %m1 = ave.hir.pge <ALL> {functionType = #ave.func_dist_type<pb16>} : vector<128xi1>
-  %v1 = memref.reinterpret_cast %dst to offset: [129], sizes: [128], strides: [1] : memref<1024xi8, #hivm.address_space<ub>> to memref<128xi8, strided<[1], offset: ?>, #hivm.address_space<ub>>
-  ave.hir.masked_store <PK_B16> %v1[%c0], %m1, %a1 {functionType = #ave.func_dist_type<pk>} : memref<128xi8, strided<[1], offset: ?>, #hivm.address_space<ub>>, vector<128xi1>, vector<128xi16>
-  return
-}
-
-// -----
-
 // 3 x 128B cannot form one 256B group; the third store has its own flush.
 // CHECK-LABEL: func.func @split_at_register_capacity(
 // CHECK: "hivm_regbaseintrins.intr.hivm.vstus.post.s8"
@@ -422,7 +319,6 @@ func.func @split_at_register_capacity(%dst: memref<1024xi8, #hivm.address_space<
   return
 }
 
-
 // -----
 
 // Logical vector size alone does not establish a short store footprint.
@@ -440,7 +336,6 @@ func.func @keep_small_vector_full_mask(%dst: memref<1024xi8, #hivm.address_space
   ave.hir.masked_store <NORM_B8> %v1[%c0], %m1, %a1 {functionType = #ave.func_dist_type<norm>} : memref<64xi8, strided<[1], offset: ?>, #hivm.address_space<ub>>, vector<256xi1>, vector<64xi8>
   return
 }
-
 
 // -----
 

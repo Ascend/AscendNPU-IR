@@ -6,12 +6,12 @@
 
 // The complete original VF loop, including both vsel users and intervening
 // f32 loads/stores. The caller retains the planned UB addresses and double
-// buffering from bwd_qkv_kernel. Input i8 and output i1 SHARE the same storage;
+// buffering. Input i8 and output i1 SHARE the same storage;
 // replacing the output with a fresh allocation would miss this regression.
 // Outlined VFs are only called by their kernel. Optimize the original VF
 // in place after proving all call sites, preserving its name and call target.
 // CHECK-DAG: #[[$ROWOFFSET:map[0-9]*]] = affine_map<()[s0] -> (s0 * 256)>
-// CHECK-LABEL: func.func @bwd_qkv_kernel_mix_aiv_outlined_vf_3(
+// CHECK-LABEL: func.func @merge_pb32_inplace_loop(
 // CHECK-DAG: %[[PACK:.*]] = llvm.mlir.constant(1 : i32)
 // CHECK-DAG: %[[DIVISOR:.*]] = llvm.mlir.constant(8 : index)
 // CHECK: scf.for
@@ -39,7 +39,7 @@
 #map16 = affine_map<(d0, d1)[s0] -> (d0 * 1040 + d1 + s0)>
 #map17 = affine_map<()[s0] -> (s0 * 128 + 64)>
 #map18 = affine_map<()[s0] -> (s0 * 256 + 64)>
-  func.func @bwd_qkv_kernel_mix_aiv_outlined_vf_3(%arg0: memref<64x1xf32, #hivm.address_space<ub>>, %arg1: memref<64x128xi8, #hivm.address_space<ub>>, %arg2: memref<64x128xf32, #hivm.address_space<ub>>, %arg3: f32, %arg4: memref<8x64x16xbf16, strided<[1040, 16, 1]>, #hivm.address_space<ub>>, %arg5: memref<64x128xf32, #hivm.address_space<ub>>, %arg6: memref<64x128xi1, strided<[256, 1]>, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
+  func.func @merge_pb32_inplace_loop(%arg0: memref<64x1xf32, #hivm.address_space<ub>>, %arg1: memref<64x128xi8, #hivm.address_space<ub>>, %arg2: memref<64x128xf32, #hivm.address_space<ub>>, %arg3: f32, %arg4: memref<8x64x16xbf16, strided<[1040, 16, 1]>, #hivm.address_space<ub>>, %arg5: memref<64x128xf32, #hivm.address_space<ub>>, %arg6: memref<64x128xi1, strided<[256, 1]>, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
     %c1040 = arith.constant 1040 : index
     %c0 = arith.constant 0 : index
     %c64 = arith.constant 64 : index
@@ -130,10 +130,10 @@
     return
   }
 
-// CHECK-LABEL: func.func @original_caller(
-// CHECK: call @bwd_qkv_kernel_mix_aiv_outlined_vf_3(
+// CHECK-LABEL: func.func @caller_merge_pb32_inplace_loop(
+// CHECK: call @merge_pb32_inplace_loop(
 // CHECK: return
-func.func @original_caller(%ping: i1, %scale: f32) {
+func.func @caller_merge_pb32_inplace_loop(%ping: i1, %scale: f32) {
   %c0 = arith.constant 0 : i64
   %c8192 = arith.constant 8192 : i64
   %c16384 = arith.constant 16384 : i64
@@ -160,6 +160,6 @@ func.func @original_caller(%ping: i1, %scale: f32) {
   %d = arith.select %ping, %d1, %d0 : memref<64x256x1xi1, #hivm.address_space<ub>>
   %dbase, %do, %dsz:3, %dst:3 = memref.extract_strided_metadata %d : memref<64x256x1xi1, #hivm.address_space<ub>> -> memref<i1, #hivm.address_space<ub>>, index, index, index, index, index, index, index
   %arg6 = memref.reinterpret_cast %dbase to offset: [0], sizes: [64, 128], strides: [256, 1] : memref<i1, #hivm.address_space<ub>> to memref<64x128xi1, strided<[256, 1]>, #hivm.address_space<ub>>
-  func.call @bwd_qkv_kernel_mix_aiv_outlined_vf_3(%arg0, %arg1, %arg2, %scale, %arg4, %arg5, %arg6) : (memref<64x1xf32, #hivm.address_space<ub>>, memref<64x128xi8, #hivm.address_space<ub>>, memref<64x128xf32, #hivm.address_space<ub>>, f32, memref<8x64x16xbf16, strided<[1040, 16, 1]>, #hivm.address_space<ub>>, memref<64x128xf32, #hivm.address_space<ub>>, memref<64x128xi1, strided<[256, 1]>, #hivm.address_space<ub>>) -> ()
+  func.call @merge_pb32_inplace_loop(%arg0, %arg1, %arg2, %scale, %arg4, %arg5, %arg6) : (memref<64x1xf32, #hivm.address_space<ub>>, memref<64x128xi8, #hivm.address_space<ub>>, memref<64x128xf32, #hivm.address_space<ub>>, f32, memref<8x64x16xbf16, strided<[1040, 16, 1]>, #hivm.address_space<ub>>, memref<64x128xf32, #hivm.address_space<ub>>, memref<64x128xi1, strided<[256, 1]>, #hivm.address_space<ub>>) -> ()
   return
 }

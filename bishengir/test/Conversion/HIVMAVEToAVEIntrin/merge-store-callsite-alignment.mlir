@@ -28,19 +28,20 @@ func.func @adjacent_multiple_all_aligned(%dst: memref<256xi1, #hivm.address_spac
 // CHECK: call @adjacent_multiple_all_aligned(
 // CHECK: call @adjacent_multiple_all_aligned(
 // CHECK: return
-func.func @caller_adjacent_multiple_all_aligned(%a: vector<64xi1>, %b: vector<64xi1>) {
+func.func @caller_adjacent_multiple_all_aligned(%choose: i1, %a: vector<64xi1>, %b: vector<64xi1>) {
   %addr0 = arith.constant 16 : i64
   %d0 = hivm.hir.pointer_cast(%addr0) : memref<256xi1, #hivm.address_space<ub>>
   func.call @adjacent_multiple_all_aligned(%d0, %a, %b) : (memref<256xi1, #hivm.address_space<ub>>, vector<64xi1>, vector<64xi1>) -> ()
   %addr1 = arith.constant 32 : i64
   %d1 = hivm.hir.pointer_cast(%addr1) : memref<256xi1, #hivm.address_space<ub>>
-  func.call @adjacent_multiple_all_aligned(%d1, %a, %b) : (memref<256xi1, #hivm.address_space<ub>>, vector<64xi1>, vector<64xi1>) -> ()
+  %selected = arith.select %choose, %d0, %d1 : memref<256xi1, #hivm.address_space<ub>>
+  func.call @adjacent_multiple_all_aligned(%selected, %a, %b) : (memref<256xi1, #hivm.address_space<ub>>, vector<64xi1>, vector<64xi1>) -> ()
   return
 }
 
 // -----
 
-// One safe call does not authorize the second unaligned call.
+// Every call and every select alternative must preserve alignment.
 // CHECK-LABEL: func.func @adjacent_multiple_one_unaligned(
 // CHECK: "hivm_regbaseintrins.intr.hivm.pstu.b32"
 // CHECK: "hivm_regbaseintrins.intr.hivm.pstu.b32"
@@ -58,73 +59,14 @@ func.func @adjacent_multiple_one_unaligned(%dst: memref<256xi1, #hivm.address_sp
 // CHECK: call @adjacent_multiple_one_unaligned(
 // CHECK: call @adjacent_multiple_one_unaligned(
 // CHECK: return
-func.func @caller_adjacent_multiple_one_unaligned(%a: vector<64xi1>, %b: vector<64xi1>) {
+func.func @caller_adjacent_multiple_one_unaligned(%choose: i1, %a: vector<64xi1>, %b: vector<64xi1>) {
   %addr0 = arith.constant 16 : i64
   %d0 = hivm.hir.pointer_cast(%addr0) : memref<256xi1, #hivm.address_space<ub>>
   func.call @adjacent_multiple_one_unaligned(%d0, %a, %b) : (memref<256xi1, #hivm.address_space<ub>>, vector<64xi1>, vector<64xi1>) -> ()
   %addr1 = arith.constant 24 : i64
   %d1 = hivm.hir.pointer_cast(%addr1) : memref<256xi1, #hivm.address_space<ub>>
-  func.call @adjacent_multiple_one_unaligned(%d1, %a, %b) : (memref<256xi1, #hivm.address_space<ub>>, vector<64xi1>, vector<64xi1>) -> ()
-  return
-}
-
-// -----
-
-// All pointer choices must preserve alignment.
-// CHECK-LABEL: func.func @adjacent_select_all_aligned(
-// CHECK: %[[PACK:.*]] = llvm.mlir.constant(1 : i32)
-// CHECK: %[[PAIR:.*]] = "hivm_regbaseintrins.intr.hivm.pdintlv.b16"
-// CHECK: %[[EVEN:.*]] = llvm.extractvalue %[[PAIR]][0]
-// CHECK: "hivm_regbaseintrins.intr.hivm.psts.b8"(%[[EVEN]], {{.*}}, {{.*}}, %[[PACK]], {{.*}})
-// CHECK: return
-func.func @adjacent_select_all_aligned(%dst: memref<256xi1, #hivm.address_space<ub>>, %a: vector<64xi1>, %b: vector<64xi1>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
-  %c0 = arith.constant 0 : index
-  %mask = ave.hir.pge <ALL> {functionType = #ave.func_dist_type<pb32>} : vector<64xi1>
-  %v0_dst = memref.reinterpret_cast %dst to offset: [0], sizes: [64], strides: [1] : memref<256xi1, #hivm.address_space<ub>> to memref<64xi1, strided<[1], offset: ?>, #hivm.address_space<ub>>
-  ave.hir.masked_store <NORM_B8> %v0_dst[%c0], %mask, %a {ave.unaligned_ub_access = #ave.unaligned_ub_access, functionType = #ave.func_dist_type<pb32>} : memref<64xi1, strided<[1], offset: ?>, #hivm.address_space<ub>>, vector<64xi1>, vector<64xi1>
-  %v1_dst = memref.reinterpret_cast %dst to offset: [64], sizes: [64], strides: [1] : memref<256xi1, #hivm.address_space<ub>> to memref<64xi1, strided<[1], offset: ?>, #hivm.address_space<ub>>
-  ave.hir.masked_store <NORM_B8> %v1_dst[%c0], %mask, %b {ave.unaligned_ub_access = #ave.unaligned_ub_access, functionType = #ave.func_dist_type<pb32>} : memref<64xi1, strided<[1], offset: ?>, #hivm.address_space<ub>>, vector<64xi1>, vector<64xi1>
-  return
-}
-// CHECK-LABEL: func.func @caller_adjacent_select_all_aligned(
-// CHECK: call @adjacent_select_all_aligned(
-// CHECK: return
-func.func @caller_adjacent_select_all_aligned(%choose: i1, %a: vector<64xi1>, %b: vector<64xi1>) {
-  %lo0 = arith.constant 16 : i64
-  %hi0 = arith.constant 32 : i64
-  %dlo = hivm.hir.pointer_cast(%lo0) : memref<256xi1, #hivm.address_space<ub>>
-  %dhi = hivm.hir.pointer_cast(%hi0) : memref<256xi1, #hivm.address_space<ub>>
-  %d0 = arith.select %choose, %dlo, %dhi : memref<256xi1, #hivm.address_space<ub>>
-  func.call @adjacent_select_all_aligned(%d0, %a, %b) : (memref<256xi1, #hivm.address_space<ub>>, vector<64xi1>, vector<64xi1>) -> ()
-  return
-}
-
-// -----
-
-// All pointer choices must preserve alignment.
-// CHECK-LABEL: func.func @adjacent_select_one_unaligned(
-// CHECK: "hivm_regbaseintrins.intr.hivm.pstu.b32"
-// CHECK: "hivm_regbaseintrins.intr.hivm.pstu.b32"
-// CHECK: return
-func.func @adjacent_select_one_unaligned(%dst: memref<256xi1, #hivm.address_space<ub>>, %a: vector<64xi1>, %b: vector<64xi1>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
-  %c0 = arith.constant 0 : index
-  %mask = ave.hir.pge <ALL> {functionType = #ave.func_dist_type<pb32>} : vector<64xi1>
-  %v0_dst = memref.reinterpret_cast %dst to offset: [0], sizes: [64], strides: [1] : memref<256xi1, #hivm.address_space<ub>> to memref<64xi1, strided<[1], offset: ?>, #hivm.address_space<ub>>
-  ave.hir.masked_store <NORM_B8> %v0_dst[%c0], %mask, %a {ave.unaligned_ub_access = #ave.unaligned_ub_access, functionType = #ave.func_dist_type<pb32>} : memref<64xi1, strided<[1], offset: ?>, #hivm.address_space<ub>>, vector<64xi1>, vector<64xi1>
-  %v1_dst = memref.reinterpret_cast %dst to offset: [64], sizes: [64], strides: [1] : memref<256xi1, #hivm.address_space<ub>> to memref<64xi1, strided<[1], offset: ?>, #hivm.address_space<ub>>
-  ave.hir.masked_store <NORM_B8> %v1_dst[%c0], %mask, %b {ave.unaligned_ub_access = #ave.unaligned_ub_access, functionType = #ave.func_dist_type<pb32>} : memref<64xi1, strided<[1], offset: ?>, #hivm.address_space<ub>>, vector<64xi1>, vector<64xi1>
-  return
-}
-// CHECK-LABEL: func.func @caller_adjacent_select_one_unaligned(
-// CHECK: call @adjacent_select_one_unaligned(
-// CHECK: return
-func.func @caller_adjacent_select_one_unaligned(%choose: i1, %a: vector<64xi1>, %b: vector<64xi1>) {
-  %lo0 = arith.constant 16 : i64
-  %hi0 = arith.constant 24 : i64
-  %dlo = hivm.hir.pointer_cast(%lo0) : memref<256xi1, #hivm.address_space<ub>>
-  %dhi = hivm.hir.pointer_cast(%hi0) : memref<256xi1, #hivm.address_space<ub>>
-  %d0 = arith.select %choose, %dlo, %dhi : memref<256xi1, #hivm.address_space<ub>>
-  func.call @adjacent_select_one_unaligned(%d0, %a, %b) : (memref<256xi1, #hivm.address_space<ub>>, vector<64xi1>, vector<64xi1>) -> ()
+  %selected = arith.select %choose, %d0, %d1 : memref<256xi1, #hivm.address_space<ub>>
+  func.call @adjacent_multiple_one_unaligned(%selected, %a, %b) : (memref<256xi1, #hivm.address_space<ub>>, vector<64xi1>, vector<64xi1>) -> ()
   return
 }
 
