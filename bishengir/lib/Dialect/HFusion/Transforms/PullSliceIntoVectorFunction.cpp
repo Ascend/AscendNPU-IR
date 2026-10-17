@@ -1,4 +1,4 @@
-//===- PullSliceIntoVectorFunction.cpp - Pull extract/insert_slice into VF -===//
+//===- PullSliceIntoVectorFunction.cpp - Pull slice/fill ops into VF -===//
 //
 // Part of the BiShengIR Project, under the Apache License v2.0 with LLVM
 // Exceptions. See https://llvm.org/LICENSE.txt for license information.
@@ -10,18 +10,26 @@
 // into Vector Function (VF) callees to help one-shot-bufferize reduce copies.
 // Applied when a CallOp operand is produced by extract_slice with non-standard
 // stride (stride != 1 or shape change).
+// Also rematerializes constant 0-rank tensor linalg.fill operations that
+// haven't been outlined inside SIMD VFs and are passed as arguments.
 //
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
+#include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Affine/Utils.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/ImplicitLocOpBuilder.h"
+#include "mlir/IR/Matchers.h"
+#include "mlir/IR/SymbolTable.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
 #include <limits>
@@ -34,6 +42,144 @@ namespace mlir {
 using namespace mlir;
 
 namespace {
+
+/// Reconstruct an incoming fill-initialized 0-rank tensor at VF entry, while
+/// preserving its caller-provided destination:
+///
+///   %filled = linalg.fill ins(%seed) outs(%dst)
+///   %result = call @vf(%filled)
+///
+/// becomes call @vf(%dst), with a constant vector and tensor transfer_write at
+/// VF entry. LoopInvariantPromotion and canonicalization can then fold the
+/// accumulator's initial read to the constant and remove the initialization
+/// write, leaving only the final write to the original destination.
+struct PullConstantFillIntoVectorFunction
+    : public OpRewritePattern<func::CallOp> {
+  PullConstantFillIntoVectorFunction(MLIRContext *ctx, ModuleOp module)
+      : OpRewritePattern<func::CallOp>(ctx), module(module) {}
+
+  LogicalResult matchAndRewrite(func::CallOp call,
+                                PatternRewriter &rewriter) const override {
+    if (!hfusion::util::isSIMDVectorFunction(call))
+      return failure();
+    auto callee = utils::getCalledFunction<func::FuncOp, func::CallOp>(call);
+    if (!callee || callee.isExternal() ||
+        !hfusion::util::isSIMDVectorFunction(callee) ||
+        callee->isAncestor(call))
+      return failure();
+
+    /// TODO: skip VFs containing any masked
+    /// transfer reads through tensor reshapes. Current MLIR canonicalizer can
+    /// incorrectly replace such a read with a shape-cast result and lose the
+    /// transfer-read padding/masked semantics.
+    if (hasMaskedReshapedTransferRead(callee))
+      return failure();
+
+    auto uses = callee.getSymbolUses(module);
+    // Outlined VFs are compiler-internal, even when their symbol visibility
+    // is public. Specializing a shared/address-taken VF would change other
+    // invocations. Count all symbol uses, not just marked VF calls.
+    if (!uses.has_value() || !llvm::hasSingleElement(*uses) ||
+        uses->begin()->getUser() != call.getOperation())
+      return failure();
+
+    for (auto [argIdx, operand] : llvm::enumerate(call.getOperands())) {
+      auto fill = operand.getDefiningOp<linalg::FillOp>();
+      if (!fill)
+        continue;
+      auto type = dyn_cast<RankedTensorType>(operand.getType());
+      if (!type || !isSupportedFillType(type))
+        continue;
+      Attribute seed;
+
+      /// linalg.fill may cast its scalar input to the destination element type.
+      /// Only rematerialize seeds that do not require such a conversion.
+      if (!matchFillSeed(fill, type.getElementType(), seed))
+        continue;
+
+      const auto arg = callee.getArgument(argIdx);
+      if (arg.use_empty())
+        continue;
+
+      OpBuilder::InsertionGuard guard(rewriter);
+      rewriter.setInsertionPointToStart(&callee.getBody().front());
+      auto initialized =
+          buildVectorInitializer(rewriter, fill.getLoc(), arg, type, seed);
+      rewriter.replaceAllUsesExcept(arg, initialized.getResult(), initialized);
+      rewriter.modifyOpInPlace(call, [&, argIdx = argIdx]() {
+        call.setOperand(argIdx, fill.getDpsInits().front());
+      });
+      if (fill->use_empty())
+        rewriter.eraseOp(fill);
+      return success();
+    }
+    return failure();
+  }
+
+private:
+  static bool isSupportedFillType(RankedTensorType type) {
+    if (type.getRank() != 0 || type.getEncoding())
+      return false;
+
+    auto elementType = type.getElementType();
+    return elementType.isF16() || elementType.isBF16() || elementType.isF32();
+  }
+
+  static bool matchFillSeed(linalg::FillOp fill, Type elementType,
+                            Attribute &seed) {
+    if (!matchPattern(fill.getInputs().front(), m_Constant(&seed)))
+      return false;
+    auto typedSeed = dyn_cast<TypedAttr>(seed);
+    if (!typedSeed || typedSeed.getType() != elementType)
+      return false;
+    return isa<FloatAttr>(seed);
+  }
+
+  static vector::TransferWriteOp
+  buildVectorInitializer(PatternRewriter &rewriter, Location loc,
+                         Value destination, RankedTensorType tensorType,
+                         Attribute seed) {
+    auto vectorType = VectorType::get({}, tensorType.getElementType());
+    auto constant = rewriter.create<arith::ConstantOp>(
+        loc, vectorType, DenseElementsAttr::get(vectorType, seed));
+    return rewriter.create<vector::TransferWriteOp>(loc, constant, destination,
+                                                    ValueRange{});
+  }
+
+  static bool hasReshapeOrigin(Value value) {
+    if (value.getDefiningOp<tensor::ExpandShapeOp>() ||
+        value.getDefiningOp<tensor::CollapseShapeOp>())
+      return true;
+
+    auto arg = dyn_cast<BlockArgument>(value);
+    auto forOp = arg ? dyn_cast<scf::ForOp>(arg.getOwner()->getParentOp())
+                     : value.getDefiningOp<scf::ForOp>();
+    if (!forOp || (arg && arg.getArgNumber() == 0))
+      return false;
+
+    auto tripCount = constantTripCount(forOp.getLowerBound(),
+                                       forOp.getUpperBound(), forOp.getStep());
+    if (!tripCount || *tripCount != 1)
+      return false;
+
+    if (arg)
+      return hasReshapeOrigin(forOp.getInitArgs()[arg.getArgNumber() - 1]);
+    return hasReshapeOrigin(
+        forOp.getYieldedValues()[cast<OpResult>(value).getResultNumber()]);
+  }
+
+  static bool hasMaskedReshapedTransferRead(func::FuncOp func) {
+    bool affected = false;
+    func.walk([&](vector::TransferReadOp read) {
+      if (affected || !read.getMask())
+        return;
+      affected = hasReshapeOrigin(read.getSource());
+    });
+    return affected;
+  }
+
+  ModuleOp module;
+};
 
 //===----------------------------------------------------------------------===//
 // PullExtractInsertSliceIntoVectorFunction: slice operand/result handling
@@ -138,7 +284,6 @@ struct PullExtractInsertSliceIntoVectorFunction
   }
 
 private:
-
   bool isStandardStride(tensor::ExtractSliceOp op) const {
     auto src = op.getSource();
     auto srcShape = cast<RankedTensorType>(src.getType()).getShape();
@@ -164,8 +309,6 @@ private:
     }
     return true;
   }
-
-
 
   bool sliceParamsMatch(tensor::ExtractSliceOp extractOp,
                         tensor::InsertSliceOp insertOp) const {
@@ -250,8 +393,8 @@ private:
       for (auto [resIdx, callResult] : llvm::enumerate(call.getResults())) {
         if (auto insOp =
                 tryMatchInsertSliceUser(callResult, src, extractSlice)) {
-          return SlicePullMatch{extractSlice, idx,
-                                static_cast<int64_t>(resIdx), insOp};
+          return SlicePullMatch{extractSlice, idx, static_cast<int64_t>(resIdx),
+                                insOp};
         }
       }
 
@@ -450,8 +593,8 @@ private:
                                                    ValueRange values) {
     SmallVector<Value> args;
     for (Value value : values)
-      args.push_back(block.insertArgument(pos++, value.getType(),
-                                          value.getLoc()));
+      args.push_back(
+          block.insertArgument(pos++, value.getType(), value.getLoc()));
     return args;
   }
 
@@ -723,13 +866,11 @@ struct SwapUnitDimExpandShapeOfExtractSlice
 
   LogicalResult matchAndRewrite(tensor::ExpandShapeOp expandOp,
                                 PatternRewriter &rewriter) const override {
-    auto extractOp =
-        expandOp.getSrc().getDefiningOp<tensor::ExtractSliceOp>();
+    auto extractOp = expandOp.getSrc().getDefiningOp<tensor::ExtractSliceOp>();
     if (!extractOp)
       return failure();
 
-    auto srcType =
-        cast<RankedTensorType>(extractOp.getSource().getType());
+    auto srcType = cast<RankedTensorType>(extractOp.getSource().getType());
     auto sliceType = extractOp.getType();
     auto expandedType = expandOp.getResultType();
 
@@ -775,8 +916,8 @@ struct SwapUnitDimExpandShapeOfExtractSlice
       expandedSrcOutputShape.push_back(rewriter.getIndexAttr(dim));
 
     auto newExpand = rewriter.create<tensor::ExpandShapeOp>(
-        expandOp.getLoc(), expandedSrcType, extractOp.getSource(),
-        reassoc, expandedSrcOutputShape);
+        expandOp.getLoc(), expandedSrcType, extractOp.getSource(), reassoc,
+        expandedSrcOutputShape);
 
     SmallVector<OpFoldResult> newOffsets, newSizes, newStrides;
     auto oldOffsets = extractOp.getMixedOffsets();
@@ -828,13 +969,11 @@ struct FoldRankReducingSliceExpandShape
 
   LogicalResult matchAndRewrite(tensor::ExpandShapeOp expandOp,
                                 PatternRewriter &rewriter) const override {
-    auto extractOp =
-        expandOp.getSrc().getDefiningOp<tensor::ExtractSliceOp>();
+    auto extractOp = expandOp.getSrc().getDefiningOp<tensor::ExtractSliceOp>();
     if (!extractOp)
       return failure();
 
-    auto srcType =
-        cast<RankedTensorType>(extractOp.getSource().getType());
+    auto srcType = cast<RankedTensorType>(extractOp.getSource().getType());
     auto sliceType = extractOp.getType();
     auto resultType = expandOp.getResultType();
 
@@ -849,8 +988,7 @@ struct FoldRankReducingSliceExpandShape
     // The extract_slice sizes (in source rank) must match the expand result
     // shape exactly, so we can directly produce a non-rank-reducing
     // extract_slice with the expand result type.
-    if (ArrayRef<int64_t>(extractOp.getStaticSizes()) !=
-        resultType.getShape())
+    if (ArrayRef<int64_t>(extractOp.getStaticSizes()) != resultType.getShape())
       return failure();
 
     rewriter.replaceOpWithNewOp<tensor::ExtractSliceOp>(
@@ -903,8 +1041,8 @@ struct SwapCollapseShapeOfExtractSlice
     }
 
     auto newCollapse = rewriter.create<tensor::CollapseShapeOp>(
-        collapseOp.getLoc(), params->collapsedSourceType,
-        extractOp.getSource(), reassoc);
+        collapseOp.getLoc(), params->collapsedSourceType, extractOp.getSource(),
+        reassoc);
 
     rewriter.replaceOpWithNewOp<tensor::ExtractSliceOp>(
         collapseOp, collapsedType, newCollapse, params->offsets, params->sizes,
@@ -920,8 +1058,7 @@ private:
     SmallVector<OpFoldResult> strides;
   };
 
-  static int64_t product(ArrayRef<int64_t> shape,
-                         ArrayRef<int64_t> dims) {
+  static int64_t product(ArrayRef<int64_t> shape, ArrayRef<int64_t> dims) {
     int64_t result = 1;
     for (int64_t dim : dims) {
       result *= shape[dim];
@@ -956,9 +1093,8 @@ private:
       }
     }
 
-    return product(sourceShape,
-                   group.slice(*lastActivePos + 1,
-                               group.size() - *lastActivePos - 1));
+    return product(sourceShape, group.slice(*lastActivePos + 1,
+                                            group.size() - *lastActivePos - 1));
   }
 
   static OpFoldResult linearizeOffsets(OpBuilder &builder, Location loc,
@@ -1021,8 +1157,8 @@ private:
       params.strides.push_back(builder.getIndexAttr(*collapsedStride));
     }
 
-    params.collapsedSourceType =
-        RankedTensorType::get(collapsedSourceShape, sourceType.getElementType());
+    params.collapsedSourceType = RankedTensorType::get(
+        collapsedSourceShape, sourceType.getElementType());
     return params;
   }
 };
@@ -1055,6 +1191,9 @@ struct PullSliceIntoVectorFunction
     patterns.add<PullExtractInsertSliceIntoVectorFunction,
                  PullInsertedSliceOperandIntoVectorFunction>(
         patterns.getContext());
+    patterns.add<PullConstantFillIntoVectorFunction>(patterns.getContext(),
+                                                     getOperation());
+
     if (failed(applyPatternsGreedily(getOperation(), std::move(patterns))))
       signalPassFailure();
   }
