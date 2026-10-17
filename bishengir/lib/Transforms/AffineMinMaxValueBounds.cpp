@@ -336,6 +336,87 @@ void AffineMinMaxValueBoundsCollector::populate(Operation *root) {
   });
 }
 
+/// Is `expr` non-decreasing in every dim and symbol it reads?
+///
+/// The extremes of such an expression over a box of operand intervals are
+/// attained at the all-lower and the all-upper corner, so evaluating it twice
+/// bounds it exactly. `mod` is not monotone, and neither is a scale that may be
+/// negative, so those are rejected rather than approximated.
+static bool isNonDecreasingAffineExpr(AffineExpr expr) {
+  switch (expr.getKind()) {
+  case AffineExprKind::Constant:
+  case AffineExprKind::DimId:
+  case AffineExprKind::SymbolId:
+    return true;
+  case AffineExprKind::Mod:
+    return false;
+  case AffineExprKind::Mul:
+  case AffineExprKind::FloorDiv:
+  case AffineExprKind::CeilDiv: {
+    // Canonical affine expressions keep the constant on the right for these.
+    auto bin = cast<AffineBinaryOpExpr>(expr);
+    auto rhs = dyn_cast<AffineConstantExpr>(bin.getRHS());
+    return rhs && rhs.getValue() > 0 && isNonDecreasingAffineExpr(bin.getLHS());
+  }
+  case AffineExprKind::Add: {
+    auto bin = cast<AffineBinaryOpExpr>(expr);
+    return isNonDecreasingAffineExpr(bin.getLHS()) &&
+           isNonDecreasingAffineExpr(bin.getRHS());
+  }
+  }
+  llvm_unreachable("unexpected affine expr kind");
+}
+
+/// Bound an `affine.apply` result from intervals already known for its
+/// operands.
+///
+/// Tiling can rescale a remainder before using it as a loop bound, as in
+/// `affine.min(...) floordiv 2` when a consumer that interleaves two inputs is
+/// tiled. `ValueBoundsConstraintSet` does not see the interval `value2bounds`
+/// holds for that `min`, so carry it across the rescaling here.
+static std::optional<std::pair<int64_t, int64_t>> computeAffineApplyBounds(
+    affine::AffineApplyOp applyOp,
+    const llvm::DenseMap<Value, std::pair<int64_t, int64_t>> &value2bounds) {
+  AffineMap map = applyOp.getAffineMap();
+  if (map.getNumResults() != 1 || !isNonDecreasingAffineExpr(map.getResult(0)))
+    return std::nullopt;
+
+  Builder builder(applyOp.getContext());
+  SmallVector<Attribute> lowerOperands, upperOperands;
+  for (Value operand : applyOp.getMapOperands()) {
+    int64_t lower, upper;
+    if (auto cst = getArithConstantIndexValue(operand)) {
+      lower = upper = *cst;
+    } else {
+      auto it = value2bounds.find(operand);
+      if (it == value2bounds.end())
+        return std::nullopt;
+      std::tie(lower, upper) = it->second;
+    }
+    lowerOperands.push_back(builder.getIndexAttr(lower));
+    upperOperands.push_back(builder.getIndexAttr(upper));
+  }
+
+  // Let the affine folder apply the map so that the expression semantics stay
+  // in one place; a poisoned result (such as a division by zero) is discarded.
+  auto evaluate = [&](ArrayRef<Attribute> operands) -> std::optional<int64_t> {
+    SmallVector<Attribute> results;
+    bool hasPoison = false;
+    if (failed(map.constantFold(operands, results, &hasPoison)) || hasPoison)
+      return std::nullopt;
+    auto value = dyn_cast<IntegerAttr>(results.front());
+    if (!value)
+      return std::nullopt;
+    return value.getInt();
+  };
+
+  auto lower = evaluate(lowerOperands);
+  auto upper = evaluate(upperOperands);
+  if (!lower || !upper || *lower > *upper)
+    return std::nullopt;
+  return std::make_pair(*lower, *upper);
+}
+
 static bool provesSingleIterationViaAffineMinMaxHeader(
     scf::ForOp forOp,
     const llvm::DenseMap<Value, std::pair<int64_t, int64_t>> &value2bounds) {
@@ -366,6 +447,12 @@ static bool provesSingleIterationViaAffineMinMaxHeader(
     } else if (auto c = getCollapsedConstantIndexValue(forOp.getUpperBound())) {
       upperLB = *c;
       upperUB = *c;
+    } else if (auto applyOp = forOp.getUpperBound()
+                                  .getDefiningOp<affine::AffineApplyOp>()) {
+      if (auto bounds = computeAffineApplyBounds(applyOp, value2bounds)) {
+        upperLB = bounds->first;
+        upperUB = bounds->second;
+      }
     }
   }
 
@@ -388,15 +475,20 @@ static bool provesSingleIterationViaAffineMinMaxHeader(
 bool AffineMinMaxValueBoundsCollector::provesSingleIterationScfFor(
     scf::ForOp forOp) const {
   if (!forOp->getAttrs().empty())
- 	  return false;
- 	Value lb = forOp.getLowerBound();
- 	Value ub = forOp.getUpperBound();
- 	Value step = forOp.getStep();
-  if (!lb.getDefiningOp() || !ub.getDefiningOp() || !step.getDefiningOp() ||
-      !isa<arith::ConstantIndexOp, affine::AffineMinOp>(lb.getDefiningOp()) ||
- 	    !isa<arith::ConstantIndexOp, affine::AffineMinOp>(ub.getDefiningOp()) ||
- 	    !isa<arith::ConstantIndexOp, affine::AffineMinOp>(step.getDefiningOp()))
- 	  return false;
+    return false;
+  // Tiling may rescale a header value through an `affine.apply`, so accept that
+  // too. A bound still has to resolve to a constant or to a known interval for
+  // either proof below to succeed; this filter only keeps a header that neither
+  // proof can use from being examined at all.
+  auto isKnownHeaderValue = [](Value value) {
+    Operation *defOp = value.getDefiningOp();
+    return defOp && isa<arith::ConstantIndexOp, affine::AffineMinOp,
+                        affine::AffineApplyOp>(defOp);
+  };
+  if (!isKnownHeaderValue(forOp.getLowerBound()) ||
+      !isKnownHeaderValue(forOp.getUpperBound()) ||
+      !isKnownHeaderValue(forOp.getStep()))
+    return false;
   int64_t tripCount = 0;
   auto tripOk = getSingleIterationTripCount(forOp, tripCount);
   if (succeeded(tripOk) && tripOk.value() && tripCount == 1)
