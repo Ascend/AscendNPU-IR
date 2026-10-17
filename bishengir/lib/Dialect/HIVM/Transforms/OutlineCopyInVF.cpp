@@ -175,8 +175,22 @@ static void tileCopyUsingForAndTransferPair(IRRewriter &rewriter,
                                             hivm::CopyOp copyOp) {
   Value src = copyOp.getSource();
   auto srcType = dyn_cast<MemRefType>(src.getType());
+  Type elemType = srcType.getElementType();
   SmallVector<int64_t> tileSizes(srcType.getRank(), 1);
-  tileSizes.back() = utils::getNumPerRepeat(srcType.getElementType());
+  // Tile by the number of elements one AVE vector operation covers, which is
+  // not always the number that fits in one VL: an i64 vector occupies a
+  // register pair and so covers twice as many. The template library only
+  // implements that register-pair width, so tiling by the VL count would ask
+  // for a load whose width has no library primitive and yet mangles onto the
+  // same symbol as the supported one.
+  //
+  // getVectorSizeByElementType divides by the element byte count, so it only
+  // describes byte-sized elements; keep the VL count for narrower ones, which
+  // have no AVE vector form of their own anyway.
+  tileSizes.back() =
+      elemType.getIntOrFloatBitWidth() >= utils::INTR_BITS_PER_BYTE
+          ? utils::getVectorSizeByElementType(elemType)
+          : utils::getNumPerRepeat(elemType);
 
   OpBuilder::InsertionGuard guard(rewriter);
   rewriter.setInsertionPoint(copyOp);
