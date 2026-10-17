@@ -50,11 +50,10 @@ def FoldExtractInsertPair : Pass<"fold-extract-insert-pair", "func::FuncOp"> {
        vector.transfer_write and written back with tensor.insert_slice at
        the same offsets, sizes and unit strides.
 
-    It also applies the merge-consecutive-insert-extract-slice patterns and
-    folds an insert_slice into an extract_slice that is written back into
-    the same tensor at the same position, so the slice chains that
-    fold-slice-into-scf-for creates inside the loop body collapse into a
-    single insert_slice.
+    It also folds an insert_slice into an extract_slice that is written
+    back into the same tensor at the same position, so the slice chains
+    that fold-slice-into-scf-for creates inside the loop body collapse
+    into a single insert_slice.
   }];
   let constructor = "mlir::tensor::createFoldExtractInsertPairPass()";
   let dependentDialects = ["tensor::TensorDialect", "vector::VectorDialect", ];

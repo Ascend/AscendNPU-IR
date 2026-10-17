@@ -13,7 +13,6 @@
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Linalg/Utils/Utils.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
-#include "mlir/Dialect/Tensor/Transforms/Transforms.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
@@ -409,7 +408,6 @@ void FoldExtractInsertPairPass::runOnOperation() {
   patterns.add<FoldExtractSliceInsertSlice>(ctx);
   patterns.add<NormalizeFilledSliceToSelect>(ctx);
   patterns.add<FoldInsertSliceIntoExtractedSlice>(ctx);
-  tensor::populateMergeConsecutiveInsertExtractSlicePatterns(patterns);
   if (failed(applyPatternsGreedily(funcOp, std::move(patterns)))) {
     signalPassFailure();
   }
