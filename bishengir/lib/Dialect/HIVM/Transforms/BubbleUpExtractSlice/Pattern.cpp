@@ -653,6 +653,10 @@ handleExtractRankReducedCase(tensor::ExtractSliceOp sliceOp,
                              PatternRewriter &rewriter) {
   auto parentSliceOp =
       cast<tensor::ExtractSliceOp>(sliceOp.getSource().getDefiningOp());
+  // Dynamic parent sizes are not supported: the re-application of parent
+  // offsets/sizes below assumes static extents.
+  if (isDynamicSlice(parentSliceOp))
+    return failure();
   auto parentSizes = parentSliceOp.getStaticSizes();
   // Currently we only try to handle the following ranked-reduced case,
   // which is safe to bubble up. other scenarios might not be safe to bubble up.
@@ -739,7 +743,16 @@ handleExtractOfExtractDifferentDimCase(tensor::ExtractSliceOp sliceOp,
   auto strides = sliceOp.getMixedStrides();
   for (auto dim : getExtractOrInsertDim(parentSliceOp)) {
     std::swap(parentOffsets[dim], offsets[dim]);
-    parentSizes[dim] = rewriter.getIndexAttr(srcType.getDimSize(dim));
+    if (srcType.isDynamicDim(dim)) {
+      // The full size of a dynamic dimension must be materialized as a value;
+      // embedding ShapedType::kDynamic into an index attribute would produce
+      // an extract_slice whose static_sizes claim a dynamic size without a
+      // matching dynamic size operand.
+      parentSizes[dim] = rewriter.createOrFold<tensor::DimOp>(
+          sliceOp->getLoc(), parentSliceOp.getSource(), dim);
+    } else {
+      parentSizes[dim] = rewriter.getIndexAttr(srcType.getDimSize(dim));
+    }
   }
   for (auto dim : getExtractOrInsertDim(sliceOp)) {
     std::swap(parentOffsets[dim], offsets[dim]);
