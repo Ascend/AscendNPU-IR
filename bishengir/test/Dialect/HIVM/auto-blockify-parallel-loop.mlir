@@ -65,6 +65,34 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
 
 // -----
 
+// The Triton M-fast contract assigns each physical core one contiguous range
+// of logical program IDs.  Uneven tails are distributed to the first cores.
+// CHECK-LABEL: func.func @blockify_contiguous(
+// CHECK-SAME:    %[[N:.*]]: i32
+// CHECK:         annotation.mark %[[N]] {logical_block_num}
+// CHECK:         %[[BLOCK_ID_64:.*]] = hivm.hir.get_block_idx
+// CHECK:         %[[PHYSICAL:.*]] = arith.constant 28 : i32
+// CHECK:         %[[ONE:.*]] = arith.constant 1 : i32
+// CHECK:         %[[BLOCK_ID:.*]] = arith.trunci %[[BLOCK_ID_64]]
+// CHECK:         %[[BASE_COUNT:.*]] = arith.divsi %[[N]], %[[PHYSICAL]]
+// CHECK:         %[[EXTRA_CORES:.*]] = arith.remsi %[[N]], %[[PHYSICAL]]
+// CHECK:         %[[FIRST:.*]] = arith.muli %[[BLOCK_ID]], %[[BASE_COUNT]]
+// CHECK:         %[[PREFIX:.*]] = arith.minsi %[[BLOCK_ID]], %[[EXTRA_CORES]]
+// CHECK:         %[[LOWER:.*]] = arith.addi %[[FIRST]], %[[PREFIX]]
+// CHECK:         %[[COUNT:.*]] = arith.addi %[[BASE_COUNT]],
+// CHECK:         %[[UPPER:.*]] = arith.addi %[[LOWER]], %[[COUNT]]
+// CHECK:         scf.for %{{.*}} = %[[LOWER]] to %[[UPPER]] step %[[ONE]]
+// CHECK:         autoblockify.subloop
+module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 28 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 28 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 56 : i32>, #dlti.dl_entry<"UB_SIZE", 1572864 : i32>, #dlti.dl_entry<"L1_SIZE", 4194304 : i32>, #dlti.dl_entry<"L0A_SIZE", 524288 : i32>, #dlti.dl_entry<"L0B_SIZE", 524288 : i32>, #dlti.dl_entry<"L0C_SIZE", 1048576 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L1_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L0C_ALIGN_SIZE", 4096 : i32>>>, hivm.module_core_type = #hivm.module_core_type<MIX>, triton_ascend.contiguous_mfast_pid} {
+  func.func @blockify_contiguous(%n: i32) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.core_ratio = #hivm.core_ratio<1, 0>, hivm.func_core_type = #hivm.func_core_type<MIX>} {
+    annotation.mark %n {logical_block_num} : i32
+    %0 = hivm.hir.get_block_idx -> i64
+    return
+  }
+}
+
+// -----
+
 // Cube-only blocks.
 // CHECK-LABEL: func.func @blockify_ratio_1_0(
 // CHECK:         %[[STEP:.*]] = arith.constant 28 : i32

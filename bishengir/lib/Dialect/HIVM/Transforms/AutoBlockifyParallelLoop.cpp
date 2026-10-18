@@ -56,6 +56,8 @@ using namespace mlir::hivm;
 
 static constexpr llvm::StringLiteral BlockifyLoopAttrName =
     "autoblockify.subloop";
+static constexpr llvm::StringLiteral ContiguousBlockOrderAttrName =
+    "triton_ascend.contiguous_mfast_pid";
 
 namespace {
 /// This pass will add a loop over the blocks when the logical block num is
@@ -404,8 +406,32 @@ static LogicalResult loopOnLogicBlock(func::FuncOp funcOp,
         rewriter.create<arith::CeilDivSIOp>(loc, upperBound, blockifyV2);
   auto blockID = rewriter.create<arith::TruncIOp>(loc, rewriter.getI32Type(),
                                                   getBlockIdxOp);
-  auto forOp =
-      rewriter.create<scf::ForOp>(loc, blockID, upperBound, physicalBlockNum);
+  auto moduleOp = funcOp->getParentOfType<ModuleOp>();
+  Value lowerBound = blockID;
+  Value loopUpperBound = upperBound;
+  Value step = physicalBlockNum;
+  if (moduleOp && moduleOp->hasAttr(ContiguousBlockOrderAttrName)) {
+    Value blocksPerCore = rewriter.create<arith::DivSIOp>(
+        loc, upperBound, physicalBlockNum);
+    Value extraCores = rewriter.create<arith::RemSIOp>(
+        loc, upperBound, physicalBlockNum);
+    Value first =
+        rewriter.create<arith::MulIOp>(loc, blockID, blocksPerCore);
+    Value prefix = rewriter.create<arith::MinSIOp>(loc, blockID, extraCores);
+    lowerBound = rewriter.create<arith::AddIOp>(loc, first, prefix);
+    Value zero = rewriter.create<arith::ConstantIntOp>(loc, 0, intBits);
+    Value one = rewriter.create<arith::ConstantIntOp>(loc, 1, intBits);
+    Value isExtra = rewriter.create<arith::CmpIOp>(
+        loc, arith::CmpIPredicate::slt, blockID, extraCores);
+    Value extra = rewriter.create<arith::SelectOp>(loc, isExtra, one, zero);
+    Value blockCount =
+        rewriter.create<arith::AddIOp>(loc, blocksPerCore, extra);
+    loopUpperBound =
+        rewriter.create<arith::AddIOp>(loc, lowerBound, blockCount);
+    step = one;
+  }
+  auto forOp = rewriter.create<scf::ForOp>(loc, lowerBound, loopUpperBound,
+                                            step);
 
   Block *loopBody = forOp.getBody();
   Operation *yieldOp = loopBody->getTerminator();
