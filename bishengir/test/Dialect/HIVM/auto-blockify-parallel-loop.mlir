@@ -93,6 +93,43 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
 
 // -----
 
+// Tail-wave splitting gives every core nine contiguous main IDs and gives the
+// first 16 cores one split-tail ID starting at 252, preserving M-fast reuse
+// while widening the final wave.
+// CHECK-LABEL: func.func @blockify_tail_wave_balanced(
+// CHECK:         %[[PHYSICAL:.*]] = arith.constant 28 : i32
+// CHECK:         %[[BLOCK_ID:.*]] = arith.trunci
+// CHECK:         scf.for %{{.*}} = %[[BLOCK_ID]] to %{{.*}} step %[[PHYSICAL]]
+// CHECK:           %[[MAIN_COUNT:.*]] = arith.constant 252 : i32
+// CHECK:           %[[MAIN_PER_CORE:.*]] = arith.constant 9 : i32
+// CHECK:           %[[ITER:.*]] = arith.divsi %{{.*}}, %[[PHYSICAL]]
+// CHECK:           %[[MAIN_BASE:.*]] = arith.muli %[[BLOCK_ID]], %[[MAIN_PER_CORE]]
+// CHECK:           %[[MAIN:.*]] = arith.addi %[[MAIN_BASE]], %[[ITER]]
+// CHECK:           %[[TAIL:.*]] = arith.addi %[[MAIN_COUNT]], %[[BLOCK_ID]]
+// CHECK:           %[[IS_TAIL:.*]] = arith.cmpi sge, %[[ITER]], %[[MAIN_PER_CORE]]
+// CHECK:           %[[LOGICAL:.*]] = arith.select %[[IS_TAIL]], %[[TAIL]], %[[MAIN]]
+// CHECK:         autoblockify.subloop
+module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 28 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 28 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 56 : i32>, #dlti.dl_entry<"UB_SIZE", 1572864 : i32>, #dlti.dl_entry<"L1_SIZE", 4194304 : i32>, #dlti.dl_entry<"L0A_SIZE", 524288 : i32>, #dlti.dl_entry<"L0B_SIZE", 524288 : i32>, #dlti.dl_entry<"L0C_SIZE", 1048576 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L1_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L0C_ALIGN_SIZE", 4096 : i32>>>, hivm.module_core_type = #hivm.module_core_type<MIX>, triton_ascend.tail_wave_balanced_pid} {
+  func.func @blockify_tail_wave_balanced(%n: i32) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.core_ratio = #hivm.core_ratio<1, 0>, hivm.func_core_type = #hivm.func_core_type<MIX>} {
+    annotation.mark %n {logical_block_num} : i32
+    %0 = hivm.hir.get_block_idx -> i64
+    return
+  }
+}
+
+// -----
+
+// expected-error @+2 {{tail-wave cyclic and contiguous program-ID contracts conflict}}
+module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 28 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 28 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 56 : i32>>>, hivm.module_core_type = #hivm.module_core_type<MIX>, triton_ascend.contiguous_mfast_pid, triton_ascend.tail_wave_balanced_pid} {
+  func.func @blockify_conflicting_order(%n: i32) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.core_ratio = #hivm.core_ratio<1, 0>, hivm.func_core_type = #hivm.func_core_type<MIX>} {
+    annotation.mark %n {logical_block_num} : i32
+    %0 = hivm.hir.get_block_idx -> i64
+    return
+  }
+}
+
+// -----
+
 // Cube-only blocks.
 // CHECK-LABEL: func.func @blockify_ratio_1_0(
 // CHECK:         %[[STEP:.*]] = arith.constant 28 : i32

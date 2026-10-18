@@ -58,6 +58,8 @@ static constexpr llvm::StringLiteral BlockifyLoopAttrName =
     "autoblockify.subloop";
 static constexpr llvm::StringLiteral ContiguousBlockOrderAttrName =
     "triton_ascend.contiguous_mfast_pid";
+static constexpr llvm::StringLiteral TailWaveBalancedOrderAttrName =
+    "triton_ascend.tail_wave_balanced_pid";
 
 namespace {
 /// This pass will add a loop over the blocks when the logical block num is
@@ -407,10 +409,17 @@ static LogicalResult loopOnLogicBlock(func::FuncOp funcOp,
   auto blockID = rewriter.create<arith::TruncIOp>(loc, rewriter.getI32Type(),
                                                   getBlockIdxOp);
   auto moduleOp = funcOp->getParentOfType<ModuleOp>();
+  bool useContiguousOrder =
+      moduleOp && moduleOp->hasAttr(ContiguousBlockOrderAttrName);
+  bool useTailWaveBalancedOrder =
+      moduleOp && moduleOp->hasAttr(TailWaveBalancedOrderAttrName);
+  if (useContiguousOrder && useTailWaveBalancedOrder)
+    return funcOp->emitError(
+        "tail-wave cyclic and contiguous program-ID contracts conflict");
   Value lowerBound = blockID;
   Value loopUpperBound = upperBound;
   Value step = physicalBlockNum;
-  if (moduleOp && moduleOp->hasAttr(ContiguousBlockOrderAttrName)) {
+  if (useContiguousOrder) {
     Value blocksPerCore = rewriter.create<arith::DivSIOp>(
         loc, upperBound, physicalBlockNum);
     Value extraCores = rewriter.create<arith::RemSIOp>(
@@ -435,12 +444,38 @@ static LogicalResult loopOnLogicBlock(func::FuncOp funcOp,
 
   Block *loopBody = forOp.getBody();
   Operation *yieldOp = loopBody->getTerminator();
+  Value logicalProgramID = forOp.getInductionVar();
+  if (useTailWaveBalancedOrder) {
+    // The TA contract is exact: 252 complete programs followed by 16 split
+    // tail programs on a 28-Cube-core A5.  The ordinary cyclic loop gives the
+    // first 16 cores ten iterations and the remaining 12 cores nine. Remap
+    // the first nine iterations to a contiguous main range for B-tile reuse,
+    // and the optional tenth iteration to one tail slice.
+    if (blockifyNum != 1 || kPhysicalBlockNum.value() != 28)
+      return funcOp->emitError(
+          "tail-wave balanced scheduling requires 28 cores and blockify size 1");
+    rewriter.setInsertionPointToStart(loopBody);
+    Value cMainPrograms = rewriter.create<arith::ConstantIntOp>(loc, 252, intBits);
+    Value cMainPerCore = rewriter.create<arith::ConstantIntOp>(loc, 9, intBits);
+    Value iteration = rewriter.create<arith::DivSIOp>(
+        loc, forOp.getInductionVar(), physicalBlockNum);
+    Value mainBase =
+        rewriter.create<arith::MulIOp>(loc, blockID, cMainPerCore);
+    Value mainProgram =
+        rewriter.create<arith::AddIOp>(loc, mainBase, iteration);
+    Value tailProgram =
+        rewriter.create<arith::AddIOp>(loc, cMainPrograms, blockID);
+    Value isTail = rewriter.create<arith::CmpIOp>(
+        loc, arith::CmpIPredicate::sge, iteration, cMainPerCore);
+    logicalProgramID = rewriter.create<arith::SelectOp>(
+        loc, isTail, tailProgram, mainProgram);
+  }
   for (Operation *op : opsToMove) {
     if (exceptions.count(op) == 0) {
       op->moveBefore(yieldOp);
     }
   }
-  replaceBlockIdUsers(rewriter, getBlockIdxOp, forOp.getInductionVar(),
+  replaceBlockIdUsers(rewriter, getBlockIdxOp, logicalProgramID,
                       logicBlockNum, blockID, blockifyV2);
   auto unit = UnitAttr::get(forOp->getContext());
   forOp->setAttr(BlockifyLoopAttrName, unit);
