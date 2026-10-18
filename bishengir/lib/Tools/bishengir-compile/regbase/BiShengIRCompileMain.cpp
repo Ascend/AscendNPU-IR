@@ -47,6 +47,7 @@ using PipelineBuilder = std::function<void(mlir::PassManager &,
                                            const BiShengIRCompileMainConfig &)>;
 
 enum class CompileFlow {
+  Affinity,
   Mixed,
   PureSimt,
   Simd,
@@ -125,6 +126,8 @@ static bool isReduceOnlyModule(ModuleOp module) {
 }
 
 CompileFlow getCompileFlow(const BiShengIRCompileMainConfig &config) {
+  if (config.getEnableTlaMode())
+    return CompileFlow::Affinity;
   if (config.getEnableSimdSimtMixCompile())
     return CompileFlow::Mixed;
   if (config.getPureSimt())
@@ -329,6 +332,12 @@ static bool runMixedPipelines(ModuleOp mixedModule,
   }
   return runModulePipeline(mainMod, regbase::buildBiShengHIRAVEToLLVMPipeline,
                            config, "BiShengSIMD");
+}
+
+static bool runAffinityPipelines(ModuleOp affinityModule,
+                                 BiShengIRCompileMainConfig &config) {
+  return runModulePipeline(affinityModule, regbase::buildAffinityPipeline,
+                           config, "AffinityHIR");
 }
 
 LogicalResult handleSaveTemps(ModuleOp module,
@@ -557,7 +566,9 @@ bishengir::regbase::runRegBasePipeline(ModuleOp mod,
     bool success = true;
     hasUboverflow = false;
 
-    if (compileFlow == CompileFlow::Mixed) {
+    if (compileFlow == CompileFlow::Affinity) {
+      success = runAffinityPipelines(hirCompileMode, config);
+    } else if (compileFlow == CompileFlow::Mixed) {
       success = runMixedPipelines(hirCompileMode, config);
     } else if (compileFlow == CompileFlow::PureSimt) {
       success =

@@ -73,6 +73,14 @@ def EnableTritonKernelCompile : FeatureControlOptions<
   bit isSharedWithDownstreamToolchain = 1;
 }
 
+def EnableTlaMode : FeatureControlOptions<
+  "Enable TLA affinity pipeline for NPU IR.",
+  "bool",
+  "false"
+> {
+  let optionScope = ["A5_ONLY"];
+}
+
 def EnableUbufSaving : FeatureControlOptions<
   "Enable ub buffer saving mode.",
   "bool",
