@@ -157,3 +157,122 @@ module {
 
 // CHECK-LABEL: func.func @affine_min_multi_dim
 // CHECK: affine.min
+
+// -----
+
+// Rescaled header: tiling feeds an affine.min remainder through an
+// affine.apply before using it as the upper bound. The outer loop clamps the
+// remainder to 64, so the rescaled bound is at most 32 and the inner loop runs
+// exactly once, even though no bound here is a constant.
+
+#clamp = affine_map<(d0) -> (-d0 + 2062, 64)>
+#halve = affine_map<()[s0] -> (s0 floordiv 2)>
+
+module {
+  func.func @apply_rescaled_upper_bound(%arg0: i32) -> i32 {
+    %c0 = arith.constant 0 : index
+    %c64 = arith.constant 64 : index
+    %c2062 = arith.constant 2062 : index
+    %r = scf.for %outer = %c0 to %c2062 step %c64 iter_args(%acc = %arg0) -> (i32) {
+      %rem = affine.min #clamp(%outer)
+      %half = affine.apply #halve()[%rem]
+      %inner = scf.for %iv = %c0 to %half step %c64 iter_args(%a = %acc) -> (i32) {
+        %sum = arith.addi %a, %arg0 : i32
+        scf.yield %sum : i32
+      }
+      scf.yield %inner : i32
+    }
+    return %r : i32
+  }
+}
+
+// CHECK-LABEL: func.func @apply_rescaled_upper_bound
+// CHECK: scf.for
+// CHECK-NOT: scf.for
+// CHECK: arith.addi
+// CHECK: return
+
+// -----
+
+// Same rescaling, but the clamp leaves room for two iterations of the inner
+// loop (bound is at most 64 while the step is 32), so it must survive.
+
+#clamp2 = affine_map<(d0) -> (-d0 + 2062, 128)>
+#halve2 = affine_map<()[s0] -> (s0 floordiv 2)>
+
+module {
+  func.func @apply_rescaled_two_iterations(%arg0: i32) -> i32 {
+    %c0 = arith.constant 0 : index
+    %c32 = arith.constant 32 : index
+    %c128 = arith.constant 128 : index
+    %c2062 = arith.constant 2062 : index
+    %r = scf.for %outer = %c0 to %c2062 step %c128 iter_args(%acc = %arg0) -> (i32) {
+      %rem = affine.min #clamp2(%outer)
+      %half = affine.apply #halve2()[%rem]
+      %inner = scf.for %iv = %c0 to %half step %c32 iter_args(%a = %acc) -> (i32) {
+        %sum = arith.addi %a, %arg0 : i32
+        scf.yield %sum : i32
+      }
+      scf.yield %inner : i32
+    }
+    return %r : i32
+  }
+}
+
+// CHECK-LABEL: func.func @apply_rescaled_two_iterations
+// CHECK: scf.for
+// CHECK: scf.for
+
+// -----
+
+// `mod` is not monotone, so its interval cannot be read off the corners of the
+// operand interval. The bound stays unknown and the loop survives.
+
+#clamp3 = affine_map<(d0) -> (-d0 + 2062, 64)>
+#wrap = affine_map<()[s0] -> (s0 mod 17)>
+
+module {
+  func.func @apply_mod_is_rejected(%arg0: i32) -> i32 {
+    %c0 = arith.constant 0 : index
+    %c64 = arith.constant 64 : index
+    %c2062 = arith.constant 2062 : index
+    %r = scf.for %outer = %c0 to %c2062 step %c64 iter_args(%acc = %arg0) -> (i32) {
+      %rem = affine.min #clamp3(%outer)
+      %wrapped = affine.apply #wrap()[%rem]
+      %inner = scf.for %iv = %c0 to %wrapped step %c64 iter_args(%a = %acc) -> (i32) {
+        %sum = arith.addi %a, %arg0 : i32
+        scf.yield %sum : i32
+      }
+      scf.yield %inner : i32
+    }
+    return %r : i32
+  }
+}
+
+// CHECK-LABEL: func.func @apply_mod_is_rejected
+// CHECK: scf.for
+// CHECK: scf.for
+
+// -----
+
+// The rescaled bound may be zero when the remainder is small, so the loop can
+// be empty and must not be promoted: `affine.apply` of a fully dynamic operand
+// gives no interval to reason with.
+
+#halve3 = affine_map<()[s0] -> (s0 floordiv 2)>
+
+module {
+  func.func @apply_unknown_operand(%n: index, %arg0: i32) -> i32 {
+    %c0 = arith.constant 0 : index
+    %c64 = arith.constant 64 : index
+    %half = affine.apply #halve3()[%n]
+    %r = scf.for %iv = %c0 to %half step %c64 iter_args(%acc = %arg0) -> (i32) {
+      %sum = arith.addi %acc, %arg0 : i32
+      scf.yield %sum : i32
+    }
+    return %r : i32
+  }
+}
+
+// CHECK-LABEL: func.func @apply_unknown_operand
+// CHECK: scf.for
