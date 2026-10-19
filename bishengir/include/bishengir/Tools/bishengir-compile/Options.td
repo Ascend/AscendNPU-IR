@@ -1076,6 +1076,11 @@ def EnableVFStackLimit : FeatureControlOptions<
   let passGroup = ["HFUSION"];
 }
 
+def EnableVFStackOverflowRetry
+    : FeatureControlOptions<"Automatically retry with enable-vf-stack-limit "
+                            "when the bisheng device compile fails",
+                            "bool", "true">;
+
 def VfFusionMode : FeatureControlOptions<
   "VF fusion mode(max-parallel | all-op |). default is max-parallel",
   "mlir::analysis::FusionMode",

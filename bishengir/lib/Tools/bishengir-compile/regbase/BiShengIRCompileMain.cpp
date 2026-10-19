@@ -13,17 +13,17 @@
 
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
-#include "bishengir/Tools/hivmc/Config.h"
-#include "bishengir/Tools/hivmc/HIVMC.h"
-#include "bishengir/Tools/hivmc/HIVMCA5.h"
 #include "bishengir/Pass/PassManager.h"
-#include "bishengir/Version/Version.h"
 #include "bishengir/Tools/Utils/Utils.h"
 #include "bishengir/Tools/bishengir-compile/BiShengIRCompile.h"
 #include "bishengir/Tools/bishengir-compile/regbase/PassPipeline.h"
 #include "bishengir/Tools/bishengir-compile/regbase/Utility.h"
-#include "mlir/Support/FileUtilities.h"
+#include "bishengir/Tools/hivmc/Config.h"
+#include "bishengir/Tools/hivmc/HIVMC.h"
+#include "bishengir/Tools/hivmc/HIVMCA5.h"
+#include "bishengir/Version/Version.h"
 #include "mlir/IR/AsmState.h"
+#include "mlir/Support/FileUtilities.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/LogicalResult.h"
 #include "llvm/Support/Path.h"
@@ -236,7 +236,8 @@ static bool runMixedPipelines(ModuleOp mixedModule,
                            config, "BiShengSIMD");
 }
 
-LogicalResult handleSaveTemps(ModuleOp module, BiShengIRCompileMainConfig& config) {
+LogicalResult handleSaveTemps(ModuleOp module,
+                              BiShengIRCompileMainConfig &config) {
   TempDirectoriesStore tempDirsStore;
   std::string inputFile = "module.hivm.opt.mlir";
   std::string outputFile = config.getOutputFile();
@@ -251,92 +252,95 @@ LogicalResult handleSaveTemps(ModuleOp module, BiShengIRCompileMainConfig& confi
     }
     if (!llvm::sys::fs::exists(saveTempsDir))
       if (auto ec = llvm::sys::fs::create_directories(saveTempsDir)) {
-        llvm::errs() << "[ERROR] Failed to create save-temps directory: " << saveTempsDir << "\n";
+        llvm::errs() << "[ERROR] Failed to create save-temps directory: "
+                     << saveTempsDir << "\n";
         return failure();
       }
     llvm::sys::path::append(saveTempsDir, inputFile);
     std::string errorMessage;
     inputFileHandler = mlir::openOutputFile(saveTempsDir, &errorMessage);
     if (!inputFileHandler) {
-      llvm::errs() << "[ERROR] Failed to open save-temps file: " << errorMessage << "\n";
+      llvm::errs() << "[ERROR] Failed to open save-temps file: " << errorMessage
+                   << "\n";
       return failure();
     }
     inputFileHandler->keep();
   } else {
     inputFileHandler = getTempFile(inputFile, tempDirsStore);
     if (!inputFileHandler) {
-      llvm::dbgs() << "[ERROR] Failed to create temporary input file needed to run hivmc compile.\n";
+      llvm::dbgs() << "[ERROR] Failed to create temporary input file needed to "
+                      "run hivmc compile.\n";
       return failure();
     }
   }
   inputFile = inputFileHandler->outputFilename();
 
-  module.print(inputFileHandler->os(), mlir::OpPrintingFlags().enableDebugInfo(
-                                         config.getEnableSanitizer() ||
-                                         config.getEnableDebugInfo()));
+  module.print(inputFileHandler->os(),
+               mlir::OpPrintingFlags().enableDebugInfo(
+                   config.getEnableSanitizer() || config.getEnableDebugInfo()));
   inputFileHandler->os().flush();
   return success();
 }
 
-HIVMCMainConfig HIVMCFromBiShengIRConfig(BiShengIRCompileMainConfig& config) {
-    HIVMCMainConfig hivmcConfig;
+HIVMCMainConfig HIVMCFromBiShengIRConfig(BiShengIRCompileMainConfig &config) {
+  HIVMCMainConfig hivmcConfig;
 
-    /// TODO: add flag difference logic for hivmc and bishengir flags in Options.td
-    /// These flags are set manually due to mismatch in
-    /// HIVMCConfigCLOptions constructor and Options.td
-    ///
-    /// Options.td is used both by bishengir pipeline and hivmc pipeline,
-    /// So the flags which are both in bishengir pipeline and hivmc pipeline are just
-    /// copied from the BiShengIRCompileMainConfig through dispatch table
-    /// (which is generated in CompileOptionsGen.cpp)
-    /// P.S : the same problem is also on A3 pipeline, check the translation there
+  /// TODO: add flag difference logic for hivmc and bishengir flags in
+  /// Options.td These flags are set manually due to mismatch in
+  /// HIVMCConfigCLOptions constructor and Options.td
+  ///
+  /// Options.td is used both by bishengir pipeline and hivmc pipeline,
+  /// So the flags which are both in bishengir pipeline and hivmc pipeline are
+  /// just copied from the BiShengIRCompileMainConfig through dispatch table
+  /// (which is generated in CompileOptionsGen.cpp)
+  /// P.S : the same problem is also on A3 pipeline, check the translation there
 
-    /// A5-specific
-    hivmcConfig.autoVectorizeV2(false);
-    hivmcConfig.targetBackend(config.getTarget());
-    ///
+  /// A5-specific
+  hivmcConfig.autoVectorizeV2(false);
+  hivmcConfig.targetBackend(config.getTarget());
+  ///
 
-    hivmcConfig.limitAutoMultiBufferForLocalBuffer(true);
-    hivmcConfig.deterministicComputing(true);
-    hivmcConfig.simtOptimizationMode(1900101);
-    hivmcConfig.enableAutoCVBalance(true);
-    hivmcConfig.setUseDPX(true);
-    hivmcConfig.onlyRunHIVMPipeline(false);
+  hivmcConfig.limitAutoMultiBufferForLocalBuffer(true);
+  hivmcConfig.deterministicComputing(true);
+  hivmcConfig.simtOptimizationMode(1900101);
+  hivmcConfig.enableAutoCVBalance(true);
+  hivmcConfig.setUseDPX(true);
+  hivmcConfig.onlyRunHIVMPipeline(false);
 
-    hivmcConfig.appendBishengOptions(config.getAppendBishengOptions());
-    hivmcConfig.compileTriton(config.getEnableTritonKernelCompile());
-    hivmcConfig.compileTritonDialect(config.getEnableTritonIRCompile());
-    hivmcConfig.enableSimdSimtMixCompile(config.getEnableSimdSimtMixCompile());
-    hivmcConfig.enableSIMTOnly(config.getPureSimt());
-    hivmcConfig.enableSanitizer(config.getEnableSanitizer());
-    hivmcConfig.enableSIMTFastDiv(config.getEnableSIMTFastDiv());
-    hivmcConfig.enableDebugVariables(config.getEnableDebugVariables());
-    hivmcConfig.enableDebugInfo(config.getEnableDebugInfo());
-    hivmcConfig.saveTemps(config.getSaveTemps());
-    hivmcConfig.injectBarrierAllSync(config.getEnableHIVMInjectBarrierAllSync());
-    hivmcConfig.setExtraDeviceBCPaths(config.getLinkAicoreBitcode());
-    hivmcConfig.setDisableFMA(config.getDisableFMA());
-    hivmcConfig.setSaveLinkedIR(config.getSaveLinkedIR());
-    hivmcConfig.setNumWarps(config.getNumWarps());
-    hivmcConfig.setThreadsPerWarp(config.getThreadsPerWarp());
-    hivmcConfig.setSharedDynamicSize(config.getSharedMemDynamicSize());
-    hivmcConfig.simtStackLimit(config.getSimtStackLimit());
-    hivmcConfig.tritonMetadataOutput(config.getTritonMetadataOutput());
-    hivmcConfig.disableDecomposeReduction(config.getDisableDecomposeReduction());
-    hivmcConfig.disableReorderInstruction(config.getDisableReorderInstruction());
+  hivmcConfig.appendBishengOptions(config.getAppendBishengOptions());
+  hivmcConfig.compileTriton(config.getEnableTritonKernelCompile());
+  hivmcConfig.compileTritonDialect(config.getEnableTritonIRCompile());
+  hivmcConfig.enableSimdSimtMixCompile(config.getEnableSimdSimtMixCompile());
+  hivmcConfig.enableSIMTOnly(config.getPureSimt());
+  hivmcConfig.enableSanitizer(config.getEnableSanitizer());
+  hivmcConfig.enableSIMTFastDiv(config.getEnableSIMTFastDiv());
+  hivmcConfig.enableDebugVariables(config.getEnableDebugVariables());
+  hivmcConfig.enableDebugInfo(config.getEnableDebugInfo());
+  hivmcConfig.saveTemps(config.getSaveTemps());
+  hivmcConfig.injectBarrierAllSync(config.getEnableHIVMInjectBarrierAllSync());
+  hivmcConfig.setExtraDeviceBCPaths(config.getLinkAicoreBitcode());
+  hivmcConfig.setDisableFMA(config.getDisableFMA());
+  hivmcConfig.setSaveLinkedIR(config.getSaveLinkedIR());
+  hivmcConfig.setNumWarps(config.getNumWarps());
+  hivmcConfig.setThreadsPerWarp(config.getThreadsPerWarp());
+  hivmcConfig.setSharedDynamicSize(config.getSharedMemDynamicSize());
+  hivmcConfig.simtStackLimit(config.getSimtStackLimit());
+  hivmcConfig.tritonMetadataOutput(config.getTritonMetadataOutput());
+  hivmcConfig.disableDecomposeReduction(config.getDisableDecomposeReduction());
+  hivmcConfig.disableReorderInstruction(config.getDisableReorderInstruction());
 
-    if (hivmcConfig.getTritonGridDim().size() > 3) {
-        report_fatal_error(
-            "Invalid --simt-triton-grid: at most 3 elements allowed x,y,z\n");
-    }
-    hivmcConfig.setOutputFile(config.getOutputFile());
+  if (hivmcConfig.getTritonGridDim().size() > 3) {
+    report_fatal_error(
+        "Invalid --simt-triton-grid: at most 3 elements allowed x,y,z\n");
+  }
+  hivmcConfig.setOutputFile(config.getOutputFile());
 
-    StringTmpPath path(hivmcConfig.outputFile());
+  StringTmpPath path(hivmcConfig.outputFile());
 
-    // TODO: investigate if this check is redundant
-    llvm::cantFail(llvm::errorCodeToError(hivmcCanonicalizePath(path)));
-    hivmcConfig.setOutputFile(path.str().str());
-    return hivmcConfig;
+  // TODO: investigate if this check is redundant
+  llvm::cantFail(llvm::errorCodeToError(hivmcCanonicalizePath(path)));
+  hivmcConfig.setOutputFile(path.str().str());
+  return hivmcConfig;
 }
 
 } // namespace
@@ -390,6 +394,59 @@ bishengir::regbase::runRegBasePipeline(ModuleOp mod,
     tryTimes = 1;
   }
   CompileFlow compileFlow = getCompileFlow(config);
+
+  // Set once this driver has turned the VF stack limit on itself, which the
+  // UB overflow fallback below distinguishes from the user having asked for
+  // the limit on the command line: only a rescue in progress extends the
+  // attempt budget and says so.
+  bool vfStackLimitRetried = false;
+  // Keeps the UB overflow fallback below once per compilation.
+  bool ubOverflowFallbackApplied = false;
+  // Retries a kernel whose vector function overflowed the VF stack with the
+  // conservative stack slot limit, which keeps that function within the
+  // stack. The retry is enabled by default; users can disable it explicitly
+  // when they need the pre-retry behavior. Only an overflow is retried:
+  // failures in other stages or tools are not helped by a smaller vector
+  // function. Decline too when the limit is already in force, where the
+  // retry would change nothing.
+  //
+  // Tuning mode is deliberately not excluded, even though it caps tryTimes
+  // at 1 above: that cap is about the plan-memory retries a tuner sweeps
+  // itself, and no tuner varies the stack limit -- it is undocumented and
+  // unreferenced outside this driver. A tuner therefore sees the same retry
+  // behavior as normal compilation unless the option is explicitly disabled.
+  auto tryVFStackRetry = [&](int attempt) {
+    // The limit being in force already covers having retried once, since the
+    // retry is what turns it on and nothing turns it back off.
+    if (!config.getEnableVFStackOverflowRetry() ||
+        config.getEnableVFStackLimit())
+      return false;
+    vfStackLimitRetried = true;
+    config.setEnableVFStackLimit(true);
+    llvm::errs() << "[NOTE] VF stack overflow suspected; retrying with "
+                    "enable-vf-stack-limit=true.\n";
+    // Budget two more attempts, one per lever still unused against an
+    // overflow, applied cumulatively as the UB overflow fallback is too:
+    //   the next attempt    the stack limit applied just above;
+    //   the one after that  the buffer-count bump at the bottom of the loop,
+    //                       which raises maxBufferCnt and so shrinks the
+    //                       tiles the vector function works on.
+    // Budgeting only one would leave that second lever unused, and a kernel
+    // the buffer bump rescues today would start failing instead.
+    if (tryTimes < attempt + 3)
+      tryTimes = attempt + 3;
+    return true;
+  };
+
+  // Restore the default diagnostic handler on every exit path, including the
+  // early return inside the loop below (eraseHandler is keyed, so a double
+  // erase is a no-op).
+  struct DiagHandlerGuard {
+    ~DiagHandlerGuard() { diagEngine.eraseHandler(handlerID); }
+    mlir::DiagnosticEngine &diagEngine;
+    mlir::DiagnosticEngine::HandlerID handlerID;
+  } diagHandlerGuard{diagEngine, handlerID};
+
   for (int i = 0; i < tryTimes; i++) {
     LDBG("Attempt number: " << i << " with max buffer count tuning delta: "
                             << config.getHfusionMaxBufferCountTuning());
@@ -414,8 +471,21 @@ bishengir::regbase::runRegBasePipeline(ModuleOp mod,
                                              config, "buildFinalHIVMPipelines");
     }
     if (!success) {
-      if (hasUboverflow &&
-          config.getVfFusionMode() == mlir::analysis::FusionMode::MaxParallel) {
+      // The pre-existing UB overflow fallback (all-op fusion plus more
+      // auto-schedule buffers); combined with the stack limit when that was
+      // already applied as a retry.
+      if (hasUboverflow && !ubOverflowFallbackApplied &&
+          (vfStackLimitRetried ||
+           config.getVfFusionMode() ==
+               mlir::analysis::FusionMode::MaxParallel)) {
+        ubOverflowFallbackApplied = true;
+        if (vfStackLimitRetried) {
+          llvm::errs() << "[NOTE] the VF stack retry hit a UB overflow; "
+                          "retrying with vf-fusion-mode=all-op and "
+                          "hfusion-max-buffer-count-tuning+2.\n";
+          if (tryTimes < i + 2)
+            tryTimes = i + 2;
+        }
         LDBG("ub overflow detected at attempt "
              << (i + 1) << "/" << tryTimes << ", fallback with all-op mode");
         config.setVfFusionMode(mlir::analysis::FusionMode::AllOp);
@@ -436,7 +506,6 @@ bishengir::regbase::runRegBasePipeline(ModuleOp mod,
                                   config, "BiShengSIMD");
     }
 
-
     addBitcodeAttrsToModule(hirCompileMode, config.getExecutablePath(), config);
 
     auto savedTemp = handleSaveTemps(hirCompileMode, config);
@@ -445,17 +514,31 @@ bishengir::regbase::runRegBasePipeline(ModuleOp mod,
     }
 
     auto hivmcConfig = HIVMCFromBiShengIRConfig(config);
-    if (success && succeeded(runHIVMCCompileA5(hirCompileMode, hivmcConfig))) {
-      hirCompileSuccess = true;
-      mod = hirCompileMode.clone();
-      break;
+    // Only a VF stack overflow is worth retrying with the stack limit; the
+    // error is otherwise unused since every stage reports its own failure on
+    // stderr.
+    bool vfStackOverflow = false;
+    if (success) {
+      llvm::Error err = runHIVMCCompileA5(hirCompileMode, hivmcConfig);
+      if (!err) {
+        hirCompileSuccess = true;
+        mod = hirCompileMode.clone();
+        break;
+      }
+      vfStackOverflow = isVFStackOverflowError(err);
+      llvm::consumeError(std::move(err));
+    }
+
+    if (vfStackOverflow && tryVFStackRetry(i)) {
+      continue;
     }
 
     // increase max buffers by 2 in HFusion auto schedule
     config.increaseHfusionMaxBufferCountTuning(2);
   }
 
-  // Restore to the default handler.
+  // Restore the default handler so the re-emitted diagnostics below print
+  // instead of being collected again.
   diagEngine.eraseHandler(handlerID);
 
   if (!hirCompileSuccess) {
