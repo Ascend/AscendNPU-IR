@@ -43,8 +43,13 @@ static mlir::GenRegistration
                    os << records;
                    return false;
                  });
+#if defined(__LLVM_MAJOR_VERSION_20_COMPATIBLE__) ||                           \
+    defined(__LLVM_MAJOR_VERSION_21_COMPATIBLE__)
 static bool bishengirTargetSpecGenMain(raw_ostream &os,
                                        const RecordKeeper &records) {
+#else
+static bool bishengirTargetSpecGenMain(raw_ostream &os, RecordKeeper &records) {
+#endif
   if (!generator) {
     os << records;
     return false;
