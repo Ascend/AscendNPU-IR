@@ -1619,7 +1619,7 @@ struct ConstantOpToHivmSegmentedVCILowering
     if (n < 4)
       return std::nullopt;
 
-    auto at = [&](int64_t i) { return values[i].getSExtValue(); };
+    auto at = [&values](int64_t i) { return values[i].getSExtValue(); };
 
     int64_t base = at(0);
     int64_t innerStep = at(1) - at(0);
