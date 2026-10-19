@@ -94,10 +94,12 @@ static Value traceToRootMemref(Value v) {
   return Value();
 }
 
-static scope::ScopeOp traceToParentScope(Operation *op) {
-  // Trace to the innermost ScopeOp enclosing `op`, if any.
+static scope::ScopeOp traceToParentPreloadScope(Operation *op) {
+  // A nested fusion boundary does not define a new preload stage. Trace through
+  // such scopes to the innermost scope carrying the operation's stage number.
   for (Operation *p = op->getParentOp(); p; p = p->getParentOp())
-    if (auto scopeOp = dyn_cast<scope::ScopeOp>(p))
+    if (auto scopeOp = dyn_cast<scope::ScopeOp>(p);
+        scopeOp && scopeOp->hasAttr(hivm::PreloadNumAttr::name))
       return scopeOp;
   return nullptr;
 }
@@ -165,13 +167,13 @@ void traceToScopes(Operation *op, SmallVectorImpl<scope::ScopeOp> &scopes,
   if (isa<annotation::MarkOp>(op)) {
     return;
   }
-  if (auto scopeOp = traceToParentScope(op)) {
+  if (auto scopeOp = traceToParentPreloadScope(op)) {
     scopes.push_back(scopeOp);
     return;
   }
   for (OpResult res : op->getResults()) {
     for (Operation *user : res.getUsers()) {
-      if (auto scopeOp = traceToParentScope(user)) {
+      if (auto scopeOp = traceToParentPreloadScope(user)) {
         scopes.push_back(scopeOp);
       } else {
         traceToScopes(user, scopes, visited);
