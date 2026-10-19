@@ -1414,7 +1414,7 @@ def EnableSIMTFastDiv : SIMTOptimizationControlOptions<
 def EnableSIMTDeviceDebug : SIMTOptimizationControlOptions<
   "Enable SIMT device print and assert lowering",
   "bool",
-  "false"
+  "true"
 > {
   bit isSharedWithDownstreamToolchain = 0;
 }
