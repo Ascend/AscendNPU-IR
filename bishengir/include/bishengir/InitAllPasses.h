@@ -78,7 +78,7 @@ inline void registerAllPasses() {
   mlir::annotation::registerAnnotationPasses();
   mlir::arith::registerBiShengIRArithPasses();
   mlir::ascend_dpx::registerBishengIRTransformsPasses();
-  mlir::bufferization::registerBiShengIRBufferizationPasses();
+  bishengir::bufferization::registerBiShengIRBufferizationPasses();
   mlir::hfusion::registerHFusionPasses();
   mlir::hivm::registerHIVMPasses();
   mlir::hivmave::registerAVEPasses();

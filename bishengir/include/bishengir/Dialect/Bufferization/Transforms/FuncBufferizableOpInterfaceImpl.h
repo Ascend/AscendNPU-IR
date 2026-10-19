@@ -1,4 +1,4 @@
-//===- FuncBufferizableOpInterfaceImpl.h - Impl. of BufferizableOpInterface -===//
+//===- FuncBufferizableOpInterfaceImpl.h - BufferizableOpInterface Impl. --===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -11,10 +11,13 @@
 
 namespace mlir {
 class DialectRegistry;
-
-namespace bufferization_ext {
-void registerFuncBufferizableOpInterfaceExternalModels(DialectRegistry &registry);
-} // namespace bufferization_ext
 } // namespace mlir
+
+namespace bishengir {
+namespace bufferization {
+void registerFuncBufferizableOpInterfaceExternalModels(
+    mlir::DialectRegistry &registry);
+} // namespace bufferization
+} // namespace bishengir
 
 #endif // BISHENGIR_DIALECT_BUFFERIZATION_FUNCBUFFERIZABLEOPINTERFACEIMPL_H
