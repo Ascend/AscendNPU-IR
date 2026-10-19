@@ -23,6 +23,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/HIVMAVE/IR/HIVMAVE.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "bishengir/Dialect/SCF/Utils/Utils.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
@@ -842,6 +843,18 @@ IRTranslator::getCallOp(func::CallOp callOp, OperationBase *parentOp) {
 #endif
     } else if (auto gatherOp = dyn_cast<vector::GatherOp>(op)) {
       handleRWValue(gatherOp.getBase(), MemoryEffect::READ);
+    } else if (auto loadOp = dyn_cast<hivmave::VFLoadOp>(op)) {
+      handleRWValue(loadOp.getBase(), MemoryEffect::READ);
+    } else if (auto gatherOp = dyn_cast<hivmave::VFGatherOp>(op)) {
+      handleRWValue(gatherOp.getBase(), MemoryEffect::READ);
+    } else if (auto storeOp = dyn_cast<hivmave::VFMaskedStoreOp>(op)) {
+      handleRWValue(storeOp.getBase(), MemoryEffect::WRITE);
+    } else if (auto storeOp = dyn_cast<hivmave::VFUnalignedMaskedStoreOp>(op)) {
+      handleRWValue(storeOp.getBase(), MemoryEffect::WRITE);
+    } else if (auto storeOp = dyn_cast<hivmave::VFStoreWithStrideOp>(op)) {
+      handleRWValue(storeOp.getBase(), MemoryEffect::WRITE);
+    } else if (auto scatterOp = dyn_cast<hivmave::VFScatterOp>(op)) {
+      handleRWValue(scatterOp.getBase(), MemoryEffect::WRITE);
     }
   });
 

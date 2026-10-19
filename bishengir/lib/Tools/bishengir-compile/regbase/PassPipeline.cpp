@@ -205,9 +205,27 @@ void buildAffinityPipeline(OpPassManager &pm,
   planMemoryOptions.planMemoryStrategy = config.getPlanMemoryStrategy();
   pm.addPass(hivm::createPlanMemoryRegBasePass(planMemoryOptions));
 
-  hivm::regbase::canonicalizationHIVMPipeline(pm);
+  // Fold addresses and views while preserving input instruction choices.
   pm.addPass(createCanonicalizerPass());
   pm.nest<func::FuncOp>().addPass(createCSEPass());
+
+  // Affinity auto-sync is enabled by default and always uses GraphSyncSolver.
+  // Algorithm selection and barrier-all options do not select InjectSync.
+  if (!config.getDisableHIVMAutoInjectSync()) {
+    GraphSyncSolverOptions syncOptions;
+    syncOptions.enableUnitFlag = config.getEnableHIVMUnitFlagSync();
+    syncOptions.solverVersion = config.getHIVMSyncSolverVersion();
+    pm.nest<func::FuncOp>().addPass(
+        hivm::createGraphSyncSolverPass(syncOptions));
+
+    // Materialize declared slots after GSS so synchronization and buffer
+    // selection share the same loop counter. Frontends must reject multibuffer
+    // hints when auto-sync is disabled; users then manage slots explicitly.
+    pm.nest<func::FuncOp>().addPass(hivm::createEnableMultiBufferPass());
+    pm.nest<func::FuncOp>().addPass(hivm::createLowerMultiBufferCounterPass());
+    pm.addPass(createCanonicalizerPass());
+    pm.nest<func::FuncOp>().addPass(createCSEPass());
+  }
 
   // Lower the prepared AVE directly, without the shared AVE optimizations.
   buildLowerToLLVMPipeline(pm, config);

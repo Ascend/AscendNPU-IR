@@ -259,7 +259,6 @@ def DisableHIVMAutoInjectSync : FeatureControlOptions<
   "bool",
   "false"
 > {
-  let optionScope = ["A3_ONLY"];
   let passGroup = ["HFUSION", "HIVM"];
 }
 
