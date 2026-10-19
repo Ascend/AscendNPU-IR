@@ -306,7 +306,8 @@ def ConvertProtonToHIVM : Pass<"convert-proton-to-hivm", "mlir::ModuleOp"> {
   }];
   let constructor =
       "bishengir::triton::proton::a5::createConvertProtonToHIVMPass()";
-  let dependentDialects = ["mlir::triton::proton::ProtonDialect",
+  let dependentDialects = ["::mlir::arith::ArithDialect",
+                           "mlir::triton::proton::ProtonDialect",
                            "mlir::hivm::HIVMDialect"];
 }
 

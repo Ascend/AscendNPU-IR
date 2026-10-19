@@ -927,6 +927,8 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
           "__builtin_proton_get_sys_cnt";
       static constexpr StringLiteral kBuiltinProtonCircularStoreName =
           "__builtin_proton_circular_store";
+      static constexpr StringLiteral kBuiltinProtonScopeBoundaryName =
+          "__builtin_proton_scope_boundary";
 
       static constexpr StringLiteral kExtraAttrName = "extra_attr";
 
@@ -1410,7 +1412,5 @@ def MultiBufferCounterOp : HIVM_Op<"multi_buffer_counter"> {
   let results = (outs I64:$counter);
   let assemblyFormat = "attr-dict `->` type($counter)";
 }
-
-include "bishengir/Dialect/HIVM/IR/HIVMProtonOps.td"
 
 #endif // BISHENGIR_DIALECT_HIVM_IR_HIVMOPS_TD

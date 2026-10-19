@@ -8,6 +8,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMProtonOps.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -248,8 +249,15 @@ void ConvertProtonToHIVMPass::runOnOperation() {
 
   for (auto record : records) {
     OpBuilder builder{record};
-    builder.create<hivm::ProtonScopeBoundaryOp>(
-        record->getLoc(), builder.getI32IntegerAttr(plan->getRegionId(record)));
+    Value regionId = builder.create<arith::ConstantIntOp>(
+        record.getLoc(), static_cast<int64_t>(plan->getRegionId(record)), 32);
+    auto boundary = builder.create<hivm::CustomOp>(
+        record.getLoc(), hivm::CustomOp::kBuiltinProtonScopeBoundaryName,
+        ValueRange{regionId}, ValueRange{});
+    boundary.setCoreType(hivm::TCoreType::CUBE_OR_VECTOR);
+    boundary.setPipe(hivm::PIPE::PIPE_S);
+    boundary.setVFMode(hivm::VFMode::SIMD);
+    boundary.setInlineMode(hivm::InlineMode::AlwaysInline);
     record->erase();
   }
 

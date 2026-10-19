@@ -1,30 +1,39 @@
-// RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend910_9589 -convert-hivm-to-std="mark-libcall-noinline=true" | FileCheck %s --check-prefix=A5
-// RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend910B1 -convert-hivm-to-std | FileCheck %s --check-prefix=A3
+// RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend910_9589 -convert-hivm-to-std="mark-libcall-noinline=true" | FileCheck %s
+// RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend910B1 -convert-hivm-to-std="mark-libcall-noinline=true" | FileCheck %s
 
 module {
-  func.func @lower_scope_boundary() {
-    hivm.hir.proton_scope_boundary {region_id = 0 : i32}
-    hivm.hir.proton_scope_boundary {region_id = 1 : i32}
+  func.func @lower_scope_boundary() attributes {hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %start = arith.constant 0 : i32
+    %end = arith.constant 1 : i32
+    hivm.hir.custom
+        {hivm.inline_mode = #hivm.inline_mode<always_inline>,
+         hivm.pipe = #hivm.pipe<PIPE_S>,
+         hivm.tcore_type = #hivm.tcore_type<CUBE_OR_VECTOR>,
+         hivm.vf_mode = #hivm.vf_mode<SIMD>}
+        "__builtin_proton_scope_boundary" ins(%start : i32)
+    hivm.hir.custom
+        {hivm.inline_mode = #hivm.inline_mode<always_inline>,
+         hivm.pipe = #hivm.pipe<PIPE_S>,
+         hivm.tcore_type = #hivm.tcore_type<CUBE_OR_VECTOR>,
+         hivm.vf_mode = #hivm.vf_mode<SIMD>}
+        "__builtin_proton_scope_boundary" ins(%end : i32)
     return
   }
 }
 
-// One private declaration serves every boundary. AIC_OR_AIV stays always_inline
-// when mark-libcall-noinline is set; that flag applies only to AIV libcalls.
-// A5: func.func private @_mlir_ciface_proton_scope_boundary(i32)
-// A5-SAME: hacc.always_inline
-// A5-SAME: hivm.func_core_type = #hivm.func_core_type<AIC_OR_AIV>
-// A5-SAME: llvm.emit_c_interface
-// A5-NOT: hacc.noinline
-// A5-LABEL: func.func @lower_scope_boundary
-// A5-DAG: %[[START:.*]] = arith.constant 0 : i32
-// A5-DAG: %[[END:.*]] = arith.constant 1 : i32
-// A5: call @_mlir_ciface_proton_scope_boundary(%[[START]]) : (i32) -> ()
-// A5: call @_mlir_ciface_proton_scope_boundary(%[[END]]) : (i32) -> ()
-// A5-NOT: hivm.hir.proton_scope_boundary
-// A5-NOT: func.func private
-
-// A3: func.func @lower_scope_boundary
-// A3: hivm.hir.proton_scope_boundary {region_id = 0 : i32}
-// A3: hivm.hir.proton_scope_boundary {region_id = 1 : i32}
-// A3-NOT: _mlir_ciface_proton_scope_boundary
+// One private declaration serves every boundary. The builtin is legal on both
+// AIC and AIV, so the declaration stays AIC_OR_AIV and always_inline.
+// mark-libcall-noinline applies to AIV libcalls and to custom ops that do not
+// set hivm.inline_mode.
+// CHECK: func.func private @proton_scope_boundary(i32)
+// CHECK-SAME: hacc.always_inline
+// CHECK-SAME: hivm.func_core_type = #hivm.func_core_type<AIC_OR_AIV>
+// CHECK-SAME: llvm.emit_c_interface
+// CHECK-NOT: hacc.noinline
+// CHECK-LABEL: func.func @lower_scope_boundary
+// CHECK-DAG: %[[START:.*]] = arith.constant 0 : i32
+// CHECK-DAG: %[[END:.*]] = arith.constant 1 : i32
+// CHECK: call @proton_scope_boundary(%[[START]]) : (i32) -> ()
+// CHECK: call @proton_scope_boundary(%[[END]]) : (i32) -> ()
+// CHECK-NOT: hivm.hir.custom
+// CHECK-NOT: func.func private

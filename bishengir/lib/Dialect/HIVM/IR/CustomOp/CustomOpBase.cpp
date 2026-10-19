@@ -17,9 +17,11 @@
 
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/IR/HIVMProtonOps.h"
 
 #include "mlir/AsmParser/AsmParser.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/IR/OpImplementation.h"
 #include "mlir/Support/LogicalResult.h"
 
@@ -62,6 +64,8 @@ const DenseMap<StringRef, CustomOp::BuiltinInfo> CustomOp::kBuiltins{
      BuiltinInfo{TCoreType::VECTOR, PIPE::PIPE_S, VFMode::SIMD, {}}},
     {kBuiltinProtonCircularStoreName,
      BuiltinInfo{TCoreType::VECTOR, PIPE::PIPE_S, VFMode::SIMD, {0}}},
+    {kBuiltinProtonScopeBoundaryName,
+     BuiltinInfo{TCoreType::CUBE_OR_VECTOR, PIPE::PIPE_S, VFMode::SIMD, {}}},
 };
 
 void CustomMacroOp::setInPipe(PIPE pipe) {
@@ -662,6 +666,22 @@ void getEffectsForCustomOps(
   effects.emplace_back(MemoryEffects::Read::get(),
                        SideEffects::DefaultResource::get());
 }
+
+LogicalResult verifyProtonScopeBoundary(CustomOp op) {
+  auto inputs = op.getInputs();
+  if (inputs.size() != 1 || !inputs.front().getType().isInteger(32) ||
+      !op.getOutputs().empty())
+    return op.emitOpError("expects one i32 region_id operand and no results");
+
+  IntegerAttr regionIdAttr;
+  if (!matchPattern(inputs.front(), m_Constant(&regionIdAttr)))
+    return op.emitOpError("region_id must be a constant");
+
+  int64_t regionId = regionIdAttr.getValue().getSExtValue();
+  if (regionId < 0 || regionId > static_cast<int64_t>(proton::kMaxRegionId))
+    return op.emitOpError("region_id must fit in 12 bits");
+  return success();
+}
 } // namespace
 
 ParseResult CustomOp::parse(OpAsmParser &parser, OperationState &result) {
@@ -683,7 +703,13 @@ void CustomMacroOp::print(OpAsmPrinter &p) {
       << ")";
 }
 
-LogicalResult CustomOp::verify() { return verifyCustomOp(*this); }
+LogicalResult CustomOp::verify() {
+  if (failed(verifyCustomOp(*this)))
+    return failure();
+  if (getName() == kBuiltinProtonScopeBoundaryName)
+    return verifyProtonScopeBoundary(*this);
+  return success();
+}
 
 LogicalResult CustomMacroOp::verify() {
   if (failed(verifyCustomOp(*this)))
