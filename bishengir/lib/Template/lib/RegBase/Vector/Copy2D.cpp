@@ -376,8 +376,9 @@ store_ubuf_to_gm_2d_core(memref_t<__ubuf__ T, 2> *src,
   }
   if (stride1_gm == 1 && stride1_ub == 1) [[likely]] {
     // last dimension is contiguous
-    // Check if stride0 is 32B aligned, otherwise use scalar path.
-    if (!isStrideAligned<T>(stride0_ub)) {
+    // Compact mode allows byte-aligned UB row strides when rows are packed.
+    const bool is_compact_mode = stride0_ub == src->sizes[1];
+    if (!isStrideAligned<T>(stride0_ub) && !is_compact_mode) {
       store_ubuf_to_gm_2d_by_scalar<T>(src, dst);
       set_store_atomic_none(atomic_kind);
       return;
