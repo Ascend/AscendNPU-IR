@@ -1,4 +1,4 @@
-// RUN: bishengir-opt -cv-pipelining="set-depth-in-unroll-mode=2" -allow-unregistered-dialect -split-input-file -verify-diagnostics %s | FileCheck %s --implicit-check-not="DuplicateTensorExtractForCube::replacementLabel"
+// RUN: bishengir-opt -cv-pipelining="pipeline-mode=unroll set-depth-in-unroll-mode=2" -allow-unregistered-dialect -split-input-file -verify-diagnostics %s | FileCheck %s --implicit-check-not="DuplicateTensorExtractForCube::replacementLabel"
 
 // Test: a single-element scalar produced on the VECTOR side is consumed by both
 // a CUBE stage and a later VECTOR stage -- the V[producer], C[user], V[user]
