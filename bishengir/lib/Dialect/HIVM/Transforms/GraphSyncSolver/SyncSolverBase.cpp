@@ -1046,6 +1046,16 @@ std::optional<EventIdInfo> SyncSolverBase::getMultiBufferEventIdInfo(
   return eventIdInfo;
 }
 
+bool SyncSolverBase::checkAllParentLoopsAreForLoopsCached(Operation *op) {
+  auto it = allParentLoopsAreForLoopsCache.find(op);
+  if (it != allParentLoopsAreForLoopsCache.end()) {
+    return it->second;
+  }
+  bool result = checkAllParentLoopsAreForLoops(op);
+  allParentLoopsAreForLoopsCache[op] = result;
+  return result;
+}
+
 std::optional<EventIdInfo>
 SyncSolverBase::checkMultiBufferEventIdInfo(Occurrence *occ1, Occurrence *occ2,
                                             RWOperation *rwOp1,
@@ -1055,8 +1065,8 @@ SyncSolverBase::checkMultiBufferEventIdInfo(Occurrence *occ1, Occurrence *occ2,
     return {};
   }
   if (!options.isTestMode()) {
-    if (!checkAllParentLoopsAreForLoops(rwOp1->op) ||
-        !checkAllParentLoopsAreForLoops(rwOp2->op)) {
+    if (!checkAllParentLoopsAreForLoopsCached(rwOp1->op) ||
+        !checkAllParentLoopsAreForLoopsCached(rwOp2->op)) {
       return {};
     }
   }
