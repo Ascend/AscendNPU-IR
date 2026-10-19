@@ -40,8 +40,7 @@ static GenRegistration
                    return false;
                  });
 
-static bool bishengirOptionsGenMain(raw_ostream &os,
-                                    const RecordKeeper &records) {
+static bool bishengirOptionsGenMain(raw_ostream &os, RecordKeeper &records) {
   if (!generator) {
     os << records;
     return false;

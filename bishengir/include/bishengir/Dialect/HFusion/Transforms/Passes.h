@@ -171,7 +171,7 @@ createHFusionNormalizeOpsPass(const NormalizeOptions &options = {});
 
 /// Run the RegBase normalize.
 LogicalResult runNormalizeRegBase(Operation *op, bool enableHighPrecision,
-                                  bool enableFastDiv);
+                                  bool enableFastDiv, bool enableDivRemPow2);
 
 /// Create a pass to normalize slice operations, including
 /// extract_slice/insert_slice.

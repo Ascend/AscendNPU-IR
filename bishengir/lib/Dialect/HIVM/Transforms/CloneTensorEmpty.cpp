@@ -14,12 +14,11 @@
 // limitations under the License.
 //
 //===----------------------------------------------------------------------===//
-#include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/RegbaseUtils.h"
-#include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
@@ -36,35 +35,24 @@ using namespace mlir::hivm;
 namespace {
 void copyAnnotationMark(Value src, Value dst, PatternRewriter &rewriter) {
   auto *dstDefiningOp = dst.getDefiningOp();
-  if (!dstDefiningOp)
-    return;
+  assert(dstDefiningOp && "dst must be an op result");
 
   OpBuilder::InsertionGuard guard(rewriter);
   rewriter.setInsertionPointAfter(dstDefiningOp);
-  for (Operation *user : llvm::make_early_inc_range(src.getUsers())) {
-    auto markOp = dyn_cast<annotation::MarkOp>(user);
-    if (!markOp || markOp.getSrc() != src)
-      continue;
-    // Only copy markOp that contains buffer_size_in_byte attribute
-    if (!markOp->hasAttr(hivm::kBufferSizeInByteAttr))
-      continue;
-    auto clonedMarkOp = rewriter.create<annotation::MarkOp>(
-        markOp.getLoc(), dst, markOp.getValues(), markOp.getKeysAttr());
-    for (NamedAttribute attr : markOp->getAttrs())
-      clonedMarkOp->setAttr(attr.getName(), attr.getValue());
-  }
+  (void)utils::cloneAnnotateOpWithAttr(rewriter, src, dst,
+                                       utils::kBufferSizeInByteAttr);
 }
 
 void cloneNewTensorEmpty(HIVMStructuredOp op, PatternRewriter &rewriter) {
   for (Value dst : op.getDpsInits()) {
-    auto * dstDefiningOp = dst.getDefiningOp();
+    auto *dstDefiningOp = dst.getDefiningOp();
     if (!dstDefiningOp)
       continue;
     if (!isa<TensorType>(dst.getType()))
       continue;
     if (isa<tensor::EmptyOp>(dstDefiningOp)) {
       rewriter.setInsertionPoint(op);
-      auto * clonedOp = rewriter.clone(*dstDefiningOp);
+      auto *clonedOp = rewriter.clone(*dstDefiningOp);
       copyAnnotationMark(dst, clonedOp->getResult(0), rewriter);
       op->replaceUsesOfWith(dst, clonedOp->getResult(0));
     }
@@ -183,15 +171,13 @@ public:
   void runOnOperation() override;
 };
 
-template <typename OpType>
-void registerOne(RewritePatternSet &patterns) {
+template <typename OpType> void registerOne(RewritePatternSet &patterns) {
   patterns.add<CloneTensorEmptyHIVMStructuredOpPattern<OpType>>(
       patterns.getContext());
 }
 
 /// Variadic helper function.
-template <typename... OpTypes>
-void registerAll(RewritePatternSet &patterns) {
+template <typename... OpTypes> void registerAll(RewritePatternSet &patterns) {
   (registerOne<OpTypes>(patterns), ...);
 }
 

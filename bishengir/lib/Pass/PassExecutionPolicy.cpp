@@ -17,12 +17,12 @@
 
 #include "bishengir/Pass/PassExecutionPolicy.h"
 
-#include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Operation.h"
-#include "llvm/ADT/StringMap.h"
-#include "llvm/ADT/StringSet.h"
 #include "llvm/Support/Debug.h"
+
+#include <optional>
 
 #define DEBUG_TYPE "bishengir-pass-manager"
 #define DBGS() (llvm::dbgs() << "[" DEBUG_TYPE "]: ")
@@ -35,137 +35,77 @@ namespace bishengir {
 // PipelineMode detection
 //===----------------------------------------------------------------------===//
 
+/// The `mix_mode` function attribute spelling. It is a plain StringAttr with
+/// exactly two recognized values, "mix" (full pipeline) and "aiv" (pure VV
+/// pipeline); it is consumed by several existing passes (regbase
+/// inferMixedCV, OptimizeScalarTransfers, MarkSyncBlockLockWithSubblock).
+static constexpr StringRef kMixModeAttrName = "mix_mode";
+static constexpr StringRef kMixModeValueMix = "mix";
+static constexpr StringRef kMixModeValueAiv = "aiv";
+
 PipelineMode detectPipelineMode(ModuleOp module) {
-  // One attribute lookup. Do not walk functions: the module core type is the
-  // summary of the device functions. A missing or unrecognized value does
-  // not select a kernel kind.
-  auto attr = module->getAttrOfType<hivm::TModuleCoreTypeAttr>(
-      hivm::TModuleCoreTypeAttr::name);
-  if (!attr)
-    return PipelineMode::Unspecified;
-  switch (attr.getModuleCoreType()) {
-  case hivm::TModuleCoreType::AIV:
-    return PipelineMode::Aiv;
-  case hivm::TModuleCoreType::AIC:
-    return PipelineMode::Aic;
-  case hivm::TModuleCoreType::MIX:
-    return PipelineMode::Mix;
-  }
-  return PipelineMode::Unspecified;
+  // Collect the mode declared by every function that carries `mix_mode`.
+  // Functions without the attribute do not constrain the mode: the module
+  // may legitimately contain host helpers or device functions that are not
+  // part of the VV pipeline.
+  std::optional<PipelineMode> detected;
+  module.walk([&](func::FuncOp func) {
+    auto modeAttr = func->getAttrOfType<StringAttr>(kMixModeAttrName);
+    if (!modeAttr)
+      return WalkResult::advance();
+
+    PipelineMode funcMode = PipelineMode::Mix;
+    StringRef value = modeAttr.getValue();
+    if (value == kMixModeValueAiv) {
+      funcMode = PipelineMode::Aiv;
+    } else if (value != kMixModeValueMix) {
+      // Unknown value: writers of this attribute are external toolchains,
+      // so fail safe to the full pipeline instead of erroring out.
+      LLVM_DEBUG(DBGS() << "detectPipelineMode: unknown mix_mode='" << value
+                        << "' on function '" << func.getSymName()
+                        << "', treating as mix\n");
+    }
+
+    if (detected && *detected != funcMode) {
+      // Disagreeing functions: not a pure VV module, run the full pipeline.
+      LLVM_DEBUG(DBGS() << "detectPipelineMode: functions disagree on "
+                        << kMixModeAttrName << ", falling back to mix\n");
+      detected = PipelineMode::Mix;
+      return WalkResult::interrupt();
+    }
+    detected = funcMode;
+    return WalkResult::advance();
+  });
+
+  return detected.value_or(PipelineMode::Mix);
 }
 
 //===----------------------------------------------------------------------===//
-// Kernel-kind applicability
+// AivDisabledPasses denylist
 //===----------------------------------------------------------------------===//
 
 namespace {
-/// Bit set of PipelineMode values a pass applies to. Unspecified is not a
-/// kind and has no bit. Function-local so construction does not depend on
-/// static initialization order across the pipeline libraries that register.
-llvm::StringMap<unsigned> &mutablePassKernelKinds() {
-  static llvm::StringMap<unsigned> passKernelKinds;
-  return passKernelKinds;
-}
-
-unsigned kernelKindBit(PipelineMode kind) {
-  switch (kind) {
-  case PipelineMode::Mix:
-    return 1u << 0;
-  case PipelineMode::Aiv:
-    return 1u << 1;
-  case PipelineMode::Aic:
-    return 1u << 2;
-  case PipelineMode::Unspecified:
-    return 0;
-  }
-  return 0;
-}
-
-const char *pipelineModeName(PipelineMode mode) {
-  switch (mode) {
-  case PipelineMode::Unspecified:
-    return "unspecified";
-  case PipelineMode::Mix:
-    return "mix";
-  case PipelineMode::Aiv:
-    return "aiv";
-  case PipelineMode::Aic:
-    return "aic";
-  }
-  return "unspecified";
+/// The single mutable handle to the denylist. It is a function-local static so
+/// that it is constructed on first use, independent of static initialization
+/// order across the pipeline libraries that register entries.
+llvm::StringSet<> &mutableAivDisabledPasses() {
+  static llvm::StringSet<> aivDisabledPasses;
+  return aivDisabledPasses;
 }
 } // namespace
 
-void registerKernelKindPasses(PipelineMode kind,
-                              std::initializer_list<StringRef> args) {
-  unsigned bit = kernelKindBit(kind);
-  if (bit == 0)
-    return;
-  // Registration happens while a pipeline is being built, before it runs.
-  auto &kinds = mutablePassKernelKinds();
-  for (StringRef arg : args) {
-    if (!arg.empty())
-      kinds[arg] |= bit;
-  }
+const llvm::StringSet<> &getAivDisabledPasses() {
+  // PipelineMode itself is NOT stored here: it is per-run state, because one
+  // MLIRContext may compile different modules sequentially.
+  return mutableAivDisabledPasses();
 }
 
-bool passAppliesToKernelKind(StringRef passArg, PipelineMode kind) {
-  unsigned bit = kernelKindBit(kind);
-  if (passArg.empty() || bit == 0)
-    return false;
-  const auto &kinds = mutablePassKernelKinds();
-  auto it = kinds.find(passArg);
-  return it != kinds.end() && (it->second & bit) != 0;
-}
-
-namespace {
-llvm::StringSet<> &mutableClassifyKernelPasses() {
-  static llvm::StringSet<> classifyKernelPasses;
-  return classifyKernelPasses;
-}
-
-ClassifyKernelCallback &mutableClassifyKernelCallback() {
-  static ClassifyKernelCallback callback = nullptr;
-  return callback;
-}
-} // namespace
-
-void registerClassifyKernelPasses(std::initializer_list<StringRef> args) {
-  auto &set = mutableClassifyKernelPasses();
+void registerAivDisabledPasses(std::initializer_list<StringRef> args) {
+  // Registration happens during static pipeline registration, before any
+  // compile runs on any thread.
+  auto &set = mutableAivDisabledPasses();
   for (StringRef arg : args)
     set.insert(arg);
-}
-
-bool passClassifiesKernel(StringRef passArg) {
-  return !passArg.empty() && mutableClassifyKernelPasses().contains(passArg);
-}
-
-void registerClassifyKernelCallback(ClassifyKernelCallback callback) {
-  mutableClassifyKernelCallback() = callback;
-}
-
-ClassifyKernelCallback getClassifyKernelCallback() {
-  return mutableClassifyKernelCallback();
-}
-
-namespace {
-llvm::StringMap<AivSubstituteCallback> &mutableAivSubstitutes() {
-  static llvm::StringMap<AivSubstituteCallback> substitutes;
-  return substitutes;
-}
-} // namespace
-
-void registerAivSubstitute(StringRef skippedPassArg,
-                           AivSubstituteCallback callback) {
-  mutableAivSubstitutes()[skippedPassArg] = callback;
-}
-
-AivSubstituteCallback getAivSubstitute(StringRef skippedPassArg) {
-  auto &substitutes = mutableAivSubstitutes();
-  auto it = substitutes.find(skippedPassArg);
-  if (it == substitutes.end())
-    return nullptr;
-  return it->second;
 }
 
 //===----------------------------------------------------------------------===//
@@ -174,40 +114,42 @@ AivSubstituteCallback getAivSubstitute(StringRef skippedPassArg) {
 
 bool PassExecutionPolicy::shouldSkipGlobally(const Pass &pass,
                                              Operation *op) const {
-  // Re-read the module core type on every decision. Classify-kernel follow-up
-  // and InferFuncCoreType replace or delete it between passes; a mode frozen
-  // on the first action would keep skipping after the module stopped being
-  // that kind, or keep running the pass after the module became a kind the
-  // pass does not list.
-  Operation *root = op;
-  while (root && !isa<ModuleOp>(root))
-    root = root->getParentOp();
-  PipelineMode detected = PipelineMode::Unspecified;
-  if (root)
-    detected = detectPipelineMode(cast<ModuleOp>(root));
-  PipelineMode previous = mode.exchange(detected, std::memory_order_acq_rel);
-  if (previous != detected) {
+  // Detect the pipeline mode once per run, from the top-level module the
+  // pipeline executes on. Every action of a run sees the same module tree, so
+  // the first action is representative and the mode is frozen afterwards,
+  // keeping the per-action cost a single branch in Mix mode.
+  if (!modeDetected.load(std::memory_order_acquire)) {
+    // MLIR can dispatch per-operation actions from worker threads, so two
+    // threads may detect at the same time. Both read the same module and
+    // compute the same mode, so this is a benign race on a plain value store.
+    Operation *root = op;
+    while (root && !isa<ModuleOp>(root))
+      root = root->getParentOp();
+    PipelineMode detected = PipelineMode::Mix;
+    if (root)
+      detected = detectPipelineMode(cast<ModuleOp>(root));
+    mode.store(detected, std::memory_order_release);
+    modeDetected.store(true, std::memory_order_release);
     LLVM_DEBUG(DBGS() << "PassExecutionPolicy: pipeline mode="
-                      << pipelineModeName(detected) << "\n");
+                      << (detected == PipelineMode::Aiv ? "aiv" : "mix")
+                      << "\n");
   }
 
-  // No recognized core type: the kernel kind is not known, so every pass
-  // runs. Adaptor passes only orchestrate nested pipelines.
-  StringRef passArg = pass.getArgument();
-  if (detected == PipelineMode::Unspecified || passArg.empty())
+  if (mode.load(std::memory_order_acquire) != PipelineMode::Aiv)
     return false;
 
-  // A pass with no kernel-kind registration is not an HIVMPass list entry.
-  const auto &kinds = mutablePassKernelKinds();
-  auto it = kinds.find(passArg);
-  if (it == kinds.end() || (it->second & kernelKindBit(detected)) != 0)
+  // The denylist is keyed by pass argument, mirroring the FilterPassesAttr
+  // pass identity. Adaptor passes (empty argument) only orchestrate nested
+  // pipelines and are never skipped.
+  StringRef passArg = pass.getArgument();
+  if (passArg.empty() || !getAivDisabledPasses().contains(passArg))
     return false;
 
   // Exemption: the delayed cross-core graph sync solver needs the backup
   // functions produced by the mix-CV flow, so an op that is (or a module whose
-  // body contains) such a backup function is never kernel-kind-filtered. This
-  // is deliberately conservative — it can only run *more* passes, never drop
-  // a step of the backup closed loop.
+  // body contains) such a backup function is never denylist-filtered. This is
+  // deliberately conservative — it can only run *more* passes, never drop a
+  // step of the backup closed loop.
   auto hasBackup = [](Operation *candidate) {
     return candidate->hasAttr("hivm.backup_function");
   };
@@ -220,7 +162,7 @@ bool PassExecutionPolicy::shouldSkipGlobally(const Pass &pass,
     return false;
   }
 
-  LLVM_DEBUG(DBGS() << "skip '" << passArg << "' reason=KernelKind\n");
+  LLVM_DEBUG(DBGS() << "skip '" << passArg << "' reason=AivDisabledPasses\n");
   return true;
 }
 

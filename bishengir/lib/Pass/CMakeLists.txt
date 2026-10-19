@@ -11,7 +11,6 @@ add_bishengir_library(BiShengIRPass
   mlir-generic-headers
 
   LINK_LIBS PUBLIC
-  BiShengIRHIVMDialect
   MLIRAnalysis
   MLIRFuncDialect
   MLIRIR

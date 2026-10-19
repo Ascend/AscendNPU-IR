@@ -107,7 +107,8 @@ bool emitCompileOption(const ConfigOption &option, raw_ostream &OS) {
 }
 
 bool emitCollectConfigs(const RecordKeeper &records, raw_ostream &OS) {
-  auto specs = records.getAllDerivedDefinitions(kOptionClassName);
+  std::vector<Record *> specs =
+      records.getAllDerivedDefinitions(kOptionClassName);
   OS << "#ifdef GEN_OPTION_COLLECTION\n";
   for (const Record *R : specs) {
     ConfigOption cfgOpt(R);
@@ -143,7 +144,8 @@ if ({2}optStr.str() == "{0}") {
 
 /// Main entry to emit compile tool's command line option registration.
 bool emitCompileOptions(const RecordKeeper &records, raw_ostream &OS) {
-  auto specs = records.getAllDerivedDefinitions(kOptionClassName);
+  std::vector<Record *> specs =
+      records.getAllDerivedDefinitions(kOptionClassName);
   OS << "#ifdef GEN_OPTION_REGISTRATIONS\n";
 
   for (const Record *R : specs) {

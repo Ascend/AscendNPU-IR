@@ -111,8 +111,39 @@ bool supportsDirectTruncWithOverflow(OverflowCastKind kind) {
           kind == OverflowCastKind::I16ToI8);
 }
 
+/// Architecture capability-gap predicate for cast transformations.
+///
+/// A5/RegBase has no native i64 -> i16/i8 truncating narrow: only the rint form
+/// (int64_t_to_int16_t_rintmode / int64_t_to_int8_t_rintmode) exists in the
+/// ISA, so the truncating forms must be rebuilt through i32. This predicate
+/// returns true exactly for those casts, i.e. it answers "must this cast be
+/// split because the A5 architecture lacks the needed instruction?".
+///
+/// This is a round_mode capability gap and is independent of the
+/// overflow/saturate semantics (enable_overflow / enable_saturate), which are
+/// dispatched separately in lowerOverflowMode.
+///
+/// NOTE (architecture gating): the A5/RegBase capability is currently detected
+/// with archIsRegbased(), which covers the whole RegBase family
+/// (Ascend310B + Ascend950/A5) and is used here as a proxy for "the A5 ISA has
+/// no such narrow". If a future architecture (e.g. A6) adds native support for
+/// these casts, this blanket flag is not sufficient: the branch must be
+/// redesigned to be extension-friendly (e.g. an explicit per-architecture
+/// native-cast capability query) instead of reusing archIsRegbased().
+template <typename Traits, typename CastOpType>
+bool requiresWideIntNarrowSplit(CastOpType op, OverflowCastKind kind) {
+  if (!Traits::archIsRegbased())
+    return false;
+  if (kind != OverflowCastKind::I64ToI16 && kind != OverflowCastKind::I64ToI8)
+    return false;
+  return Traits::matchCastRoundMode(op, CastRoundKind::Trunc) ||
+         Traits::matchCastRoundMode(op, CastRoundKind::TruncWithOverflow);
+}
+
 template <typename Traits, typename CastOpType>
 bool canNormalizeTruncOverflow(CastOpType op, OverflowCastKind kind) {
+  if (requiresWideIntNarrowSplit<Traits>(op, kind))
+    return true;
   if (Traits::archIsRegbased())
     return kind == OverflowCastKind::F32ToI16 ||
            kind == OverflowCastKind::F32ToI8;
@@ -288,14 +319,15 @@ LogicalResult lowerTruncOverflowMode(CastOpType op,
   if (!canNormalizeTruncOverflow<Traits>(op, kind))
     return failure();
 
-  eraseCastAnnotationIfPresent(rewriter, op, kOverflowModeAttr);
-  eraseCastAnnotationIfPresent(rewriter, op, kEnableOverflowAttr);
-
   Location loc = op.getLoc();
   Type outType = getElementTypeOrSelf(op.getDpsInits()[0].getType());
   Value input = op.getDpsInputs()[0];
 
   auto replaceWith = [&rewriter, op](Value value) {
+    // Consume the overflow annotations only once the cast is actually rebuilt:
+    // a case that bails out with failure() must not mutate the IR.
+    eraseCastAnnotationIfPresent(rewriter, op, kOverflowModeAttr);
+    eraseCastAnnotationIfPresent(rewriter, op, kEnableOverflowAttr);
     rewriter.replaceOp(op, value);
     return success();
   };
@@ -602,7 +634,24 @@ LogicalResult lowerSaturateOverflowMode(CastOpType op,
 
 template <typename Traits, typename CastOpType>
 LogicalResult lowerOverflowMode(CastOpType op, PatternRewriter &rewriter) {
-  if (hasSaturateOverflowModeAnnotation(op)) {
+  // Route every saturating narrow through the saturate lowering. The saturate
+  // flag may be carried either by the overflow annotation or by the
+  // enable_saturate attribute (e.g. signed i64 -> i16/i8); the truncation path
+  // would otherwise silently turn the saturation into a plain wrap.
+  //
+  // NOTE: the Traits::hasSaturateEnabled branch (enable_saturate attribute
+  // without the overflow annotation) is defensive. In-tree there is no producer
+  // of such an input: enable_saturate is only set by the saturate lowering's
+  // own final cast, while the conversions (ArithToHFusion / ArithToHIVMAVE /
+  // HFusionToHIVM) only read it, so an attribute-only saturating cast can only
+  // come from an external frontend or hand-written IR. If such a scenario ever
+  // appears, also check the precision caveat: the dedicated saturate lowering
+  // rebuilds a signed i64 -> i16 as i64 -> f32 -> f16 -> i16 (see
+  // lowerRegbaseSaturateOverflowMode), and f16 cannot represent the full i16
+  // range (|v| > 2048 starts losing precision). That pre-existing imprecision
+  // would need clamping in the i64 domain followed by the precise
+  // i64 -> i32 -> i16 split.
+  if (Traits::hasSaturateEnabled(op) || hasSaturateOverflowModeAnnotation(op)) {
     return lowerSaturateOverflowMode<Traits>(op, rewriter);
   }
 

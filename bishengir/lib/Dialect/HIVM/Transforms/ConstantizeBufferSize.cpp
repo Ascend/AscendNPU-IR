@@ -18,7 +18,6 @@
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/ShapeRegistry.h"
-#include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
@@ -263,8 +262,8 @@ std::optional<ResolvedDim> resolveDynamicDimToBoundImpl(Value dim) {
         isExact = false;
         continue;
       }
-      bound = bound.has_value() ? std::min(*bound, branch->value)
-                                : branch->value;
+      bound =
+          bound.has_value() ? std::min(*bound, branch->value) : branch->value;
       if (!branch->isExact)
         isExact = false;
     }
@@ -442,7 +441,7 @@ public:
     }
 
     auto newType =
-        MemRefType::get({totalBytes}, rewriter.getI8Type(), mlir::AffineMap {},
+        MemRefType::get({totalBytes}, rewriter.getI8Type(), mlir::AffineMap{},
                         currentMemRefType.getMemorySpace());
     Location loc = op->getLoc();
     auto newAlloc = rewriter.create<AllocLikeOp>(loc, newType);
@@ -457,19 +456,20 @@ public:
 private:
   std::optional<int64_t> getAnnotatedBufferSizeInBytes(Value value) const {
     std::optional<Operation *> markMaybe =
-        utils::getAnnotateOpWithAttr(value, kBufferSizeInByteAttr);
+        utils::getAnnotateOpWithAttr(value, utils::kBufferSizeInByteAttr);
     if (!markMaybe.has_value()) {
       return std::nullopt;
     }
     auto markOp = cast<annotation::MarkOp>(markMaybe.value());
-    return markOp->getAttrOfType<IntegerAttr>(kBufferSizeInByteAttr).getInt();
+    return markOp->getAttrOfType<IntegerAttr>(utils::kBufferSizeInByteAttr)
+        .getInt();
   }
 
   void eraseAnnotateBufferSizeUsers(Value value,
                                     PatternRewriter &rewriter) const {
     SmallVector<Operation *> annotateUsers;
     llvm::for_each(value.getUsers(), [&](Operation *user) {
-      if (utils::isAnnotationWithAttr(user, kBufferSizeInByteAttr))
+      if (utils::isAnnotationWithAttr(user, utils::kBufferSizeInByteAttr))
         annotateUsers.push_back(user);
     });
 

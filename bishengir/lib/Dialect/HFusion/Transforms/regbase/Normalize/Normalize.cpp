@@ -28,13 +28,15 @@ thread_local bool archisAscend310B{false};
 thread_local bool archisMembased{false};
 
 void populateNormalizeHFusionRegBasePatterns(RewritePatternSet &patterns,
-                                         bool enableHighPrecision,
-                                         bool enableFastDiv) {
+                                             bool enableHighPrecision,
+                                             bool enableFastDiv,
+                                             bool enableDivRemPow2) {
   populateNormalizeF16ToF32Patterns(patterns);
   populateNormalizeTrigPatterns(patterns, enableHighPrecision);
   populateNormalizeI8I32CmpPatterns(patterns);
   populateNormalizeMulRecPatterns(patterns);
   populateNormalizeModPatterns(patterns);
+  populateNormalizePow2DivRemPatterns(patterns, enableDivRemPow2);
   populateNormalizeCmpToCastPatterns(patterns);
   populateNormalizeArithmeticPatterns(patterns, enableFastDiv);
   populateNormalizePrimaryMathPatterns(patterns);
@@ -62,7 +64,7 @@ void populateNormalizeHFusionRegBasePatterns(RewritePatternSet &patterns,
 }
 
 LogicalResult runNormalizeRegBase(Operation *op, bool enableHighPrecision,
-                                   bool enableFastDiv) {
+                                  bool enableFastDiv, bool enableDivRemPow2) {
   ModuleOp moduleOp = op->getParentOfType<ModuleOp>();
   archIsRegbased = hacc::utils::isRegBasedArch(moduleOp);
   archisAscend950 = hacc::utils::isAscend950(moduleOp);
@@ -70,7 +72,7 @@ LogicalResult runNormalizeRegBase(Operation *op, bool enableHighPrecision,
   archisMembased = hacc::utils::isMemBasedArch(moduleOp);
   RewritePatternSet patterns(op->getContext());
   populateNormalizeHFusionRegBasePatterns(patterns, enableHighPrecision,
-                                          enableFastDiv);
+                                          enableFastDiv, enableDivRemPow2);
   return applyPatternsGreedily(op, std::move(patterns));
 }
 

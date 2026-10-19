@@ -27,7 +27,6 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/DLTI/DLTI.h"
-#include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/Interfaces/CallInterfaces.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #if (!BISHENGIR_BUILD_STANDALONE_IR_ONLY)
@@ -345,8 +344,8 @@ Value createEmptyOp(OpBuilder &builder, Location loc, Value source) {
   return memref::createMemRefAllocOp(builder, loc, source);
 }
 
-Value createAllocTensorOp(OpBuilder &builder, Location loc, Value source,
-                          bool copy) {
+bufferization::AllocTensorOp
+createAllocTensorOp(OpBuilder &builder, Location loc, Value source, bool copy) {
   if (!llvm::isa<RankedTensorType>(source.getType())) {
     llvm::report_fatal_error("not support unranked tensor type");
   }
@@ -354,9 +353,8 @@ Value createAllocTensorOp(OpBuilder &builder, Location loc, Value source,
   llvm::SmallVector<Value, 2> dynamicSizes;
   if (copy) {
     // Create AllocTensorOp.
-    auto allocTensorOp = builder.create<bufferization::AllocTensorOp>(
+    return builder.create<bufferization::AllocTensorOp>(
         loc, tensorType, dynamicSizes, /*copy=*/source);
-    return allocTensorOp.getResult();
   }
   auto targetElemType = getElementTypeOrSelf(source);
   ArrayRef<int64_t> staticShapes = tensorType.getShape();
@@ -366,9 +364,8 @@ Value createAllocTensorOp(OpBuilder &builder, Location loc, Value source,
       dynamicSizes.push_back(dynDimOp->getResults()[0]);
     }
   }
-  auto allocTensorOp = builder.create<bufferization::AllocTensorOp>(
+  return builder.create<bufferization::AllocTensorOp>(
       loc, RankedTensorType::get(staticShapes, targetElemType), dynamicSizes);
-  return allocTensorOp.getResult();
 }
 
 tensor::EmptyOp createStaticShapeEmptyOp(OpBuilder &builder, Location loc,
@@ -409,22 +406,9 @@ SmallVector<Value> getAliasValues(Operation *op, OpOperand &operand) {
         values.push_back(forOp.getRegionIterArg(resNum));
       })
       .Case<scf::WhileOp>([&](scf::WhileOp whileOp) {
-        if (isa<scf::ConditionOp>(operand.getOwner())) {
-          // Operand 0 is the continuation predicate and has no alias; the
-          // remaining operands map to result/after-argument `resNum - 1`.
-          if (resNum == 0)
-            return;
-          unsigned argNum = resNum - 1;
-          if (argNum < whileOp.getNumResults())
-            values.push_back(whileOp.getResult(argNum));
-          if (argNum < whileOp.getAfterArguments().size())
-            values.push_back(whileOp.getAfterArguments()[argNum]);
-          return;
-        }
-        // `scf.yield` operand `resNum` becomes before-region argument `resNum`
-        // on the next iteration.
-        if (resNum < whileOp.getBeforeArguments().size())
-          values.push_back(whileOp.getBeforeArguments()[resNum]);
+        values.push_back(whileOp.getResult(resNum));
+        values.push_back(whileOp.getBefore().front().getArgument(resNum));
+        values.push_back(whileOp.getAfter().front().getArgument(resNum));
       })
       .Default([&](Operation *otherOp) {
         llvm::report_fatal_error("unsupported loop like op!");
@@ -682,7 +666,7 @@ inline void markDynShapeAlloc(OpBuilder &builder, Value source,
   // for dynamic case, set buffer size by annotation.mark op
   auto tmpMarkOp = builder.create<annotation::MarkOp>(tmpAllocOp->getLoc(),
                                                       tmpAllocOp->getResult(0));
-  tmpMarkOp->setAttr(hivm::kBufferSizeInByteAttr,
+  tmpMarkOp->setAttr(utils::kBufferSizeInByteAttr,
                      builder.getI64IntegerAttr(allocSize));
 }
 
@@ -1293,6 +1277,24 @@ SmallVector<Operation *> utils::getAnnotateOpUsers(Value v) {
       annotateOps.push_back(user);
   }
   return annotateOps;
+}
+
+bool utils::cloneAnnotateOpWithAttr(RewriterBase &rewriter, Value src,
+                                    Value dst, StringRef name) {
+  bool modified = false;
+  for (Operation *op : utils::getAnnotateOpUsers(src)) {
+    auto markOp = cast<annotation::MarkOp>(op);
+    if (!markOp->hasAttr(name))
+      continue;
+    auto clonedMarkOp = rewriter.create<annotation::MarkOp>(
+        markOp.getLoc(), dst, markOp.getValues(), markOp.getKeysAttr());
+    // TODO: Cloning all attrs may be dangerous; need to define a canonical attr
+    // set for mark ops and clone only those attrs in the future.
+    for (NamedAttribute attr : markOp->getAttrs())
+      clonedMarkOp->setAttr(attr.getName(), attr.getValue());
+    modified = true;
+  }
+  return modified;
 }
 
 SmallVector<std::optional<Operation *>>

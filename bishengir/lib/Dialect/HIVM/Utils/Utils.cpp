@@ -1063,7 +1063,7 @@ Value createAllocWithMark(PatternRewriter &rewriter, Location loc,
   if (maybeStaticTotalSize.has_value()) {
     int64_t allocSizeInByte = maybeStaticTotalSize.value() / utils::kBitsToByte;
     auto markOp = rewriter.create<annotation::MarkOp>(loc, alloc);
-    markOp->setAttr(hivm::kBufferSizeInByteAttr,
+    markOp->setAttr(utils::kBufferSizeInByteAttr,
                     rewriter.getI64IntegerAttr(allocSizeInByte));
   } else {
     llvm::report_fatal_error(
@@ -1107,18 +1107,6 @@ std::optional<int64_t> getBufferSizeInBytesUpperBound(Value value) {
 }
 } // namespace
 
-/// Clone all annotation marks from `src` onto `dst`.
-void cloneAnnotationMarks(PatternRewriter &rewriter, Location loc, Value src,
-                          Value dst) {
-  for (Operation *op : utils::getAnnotateOpUsers(src)) {
-    auto markOp = cast<annotation::MarkOp>(op);
-    auto clonedMarkOp = rewriter.create<annotation::MarkOp>(
-        loc, dst, markOp.getValues(), markOp.getKeysAttr());
-    for (NamedAttribute attr : markOp->getAttrs())
-      clonedMarkOp->setAttr(attr.getName(), attr.getValue());
-  }
-}
-
 /// Mark dynamically shaped `dst` with a static buffer_size_in_byte upper
 /// bound derived from `src`'s defining chain. The bound is computed purely
 /// from `src` (`dst`'s shape and element type are not consulted), so callers
@@ -1129,11 +1117,11 @@ void markBufferSizeUpperBound(PatternRewriter &rewriter, Location loc,
   auto shapedType = dyn_cast<ShapedType>(dst.getType());
   if (!shapedType || shapedType.hasStaticShape())
     return;
-  if (utils::getAnnotateOpWithAttr(dst, hivm::kBufferSizeInByteAttr))
+  if (utils::getAnnotateOpWithAttr(dst, utils::kBufferSizeInByteAttr))
     return;
   if (auto sizeInBytes = getBufferSizeInBytesUpperBound(src)) {
     auto markOp = rewriter.create<annotation::MarkOp>(loc, dst);
-    markOp->setAttr(hivm::kBufferSizeInByteAttr,
+    markOp->setAttr(utils::kBufferSizeInByteAttr,
                     rewriter.getI64IntegerAttr(*sizeInBytes));
   }
 }
@@ -1218,7 +1206,7 @@ Value getLocalWorkSpaceTensor(
     int64_t allocSizeInByte = maybeStaticTotalSize.value() / utils::kBitsToByte;
     auto tmpMarkOp = rewriter.create<annotation::MarkOp>(
         localWorkSpaceOp->getLoc(), localWorkSpaceOp->getResult(0));
-    tmpMarkOp->setAttr(hivm::kBufferSizeInByteAttr,
+    tmpMarkOp->setAttr(utils::kBufferSizeInByteAttr,
                        rewriter.getI64IntegerAttr(allocSizeInByte));
   }
 
@@ -1302,8 +1290,7 @@ hivm::SyncBlockLockOrdering getSyncBlockLockOrdering(Value lockVar) {
     if (auto orderingFromUsers = getOrderingFromLockUsers(current))
       return *orderingFromUsers;
 
-    if (auto createOp =
-            current.getDefiningOp<hivm::CreateSyncBlockLockOp>()) {
+    if (auto createOp = current.getDefiningOp<hivm::CreateSyncBlockLockOp>()) {
       // Legacy: unordered marker on create_sync_block_lock itself.
       return getSyncBlockLockOpOrdering(createOp);
     }

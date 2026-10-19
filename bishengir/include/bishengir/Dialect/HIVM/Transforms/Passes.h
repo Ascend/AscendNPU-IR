@@ -25,7 +25,6 @@
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 
-#include "mlir/Dialect/Bufferization/Transforms/OneShotAnalysis.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Pass/Pass.h"
 
@@ -66,10 +65,6 @@ namespace mlir {
 namespace hivm {
 /// Create a pass to infer the core type of each function.
 std::unique_ptr<Pass> createInferFuncCoreTypePass();
-
-/// Create a pass to normalize bufferization.to_tensor ops: isolate the hivm
-/// memory-space info and expose memref-level writes to tensor-level analysis.
-std::unique_ptr<Pass> createNormalizeToTensorOpPass();
 
 /// Create a pass to convert ops from other dialects to HIVM Ops.
 std::unique_ptr<Pass> createConvertToHIVMOpPass();
@@ -187,6 +182,10 @@ std::unique_ptr<Pass> createOutlineAllocInVFPass();
 /// Create a pass to outline hivm.load in VF by rewriting it to hivm.copy.
 std::unique_ptr<Pass> createOutlineCopyInVFPass();
 
+/// Create a pass to rewrite bufferization.alloc_tensor(copy...) into a
+/// bufferization.alloc_tensor + hivm.hir.copy pair.
+std::unique_ptr<Pass> createDecomposeAllocTensorCopyPass();
+
 /// Create a pass to remove unnecessary buffer address return
 std::unique_ptr<Pass> createHIVMOptFuncOutputPass();
 
@@ -226,14 +225,12 @@ std::unique_ptr<Pass> createHoistTightlyCoupledAllocPass();
 std::unique_ptr<Pass>
 createMarkRealCoreTypePass(const MarkRealCoreTypeOptions &options = {});
 
-// Aiv substitute for hivm-mark-real-core-type. The mix path clones the
-// module and splits it to learn CUBE vs VECTOR. Pure AIV has no cube side,
-// so this stamps VECTOR on the same scalar-pipe ops, or removes those attrs
-// when the skipped pass is the cleanup invocation.
-LogicalResult substituteMarkRealCoreType(Operation *op, const Pass &pass);
-
 // Create a pass to run the HIVM canonicalization pass pipeline on a function.
 std::unique_ptr<Pass> createHIVMCanonicalizationPipelinePass();
+
+// Create a pass to infer buffer size upper bounds from slice chains. Must
+// run before createSetBufferSizePass, which consumes the inserted marks.
+std::unique_ptr<Pass> createInferBufferSizeFromSlicePass();
 
 // Create a pass to set buffer size
 std::unique_ptr<Pass> createSetBufferSizePass();
@@ -292,12 +289,6 @@ std::unique_ptr<Pass> createLiftZeroRankPass();
 // Create a pass to insert load/store op for mix cv function.
 std::unique_ptr<Pass> createInsertLoadStoreForMixCVPass(
     const InsertLoadStoreForMixCVOptions &options = {});
-
-// Aiv substitute for hivm-insert-load-store-for-mix-cv. The mix path
-// inserts cube/vector boundary copies. Pure AIV still needs the VECTOR
-// core type that pass would have written, without those copies.
-LogicalResult substituteInsertLoadStoreForMixCV(Operation *op,
-                                                const Pass &pass);
 
 std::unique_ptr<Pass> createInsertLoadStoreForScalarPass();
 
@@ -467,12 +458,6 @@ std::unique_ptr<Pass> createRemoveCopyOpsPass();
 /// Create a pass to fuse linalg.transpose into hivm.hir.load via DMA
 /// on-the-fly transpose.
 std::unique_ptr<Pass> createFuseTransposeIntoLoadPass();
-
-/// Create a pass that runs One-Shot analysis and inserts tensor copies to
-/// resolve bufferization conflicts, without performing the bufferization.
-std::unique_ptr<Pass> createTensorCopyInsertionPass();
-std::unique_ptr<Pass> createTensorCopyInsertionPass(
-    const bufferization::OneShotBufferizationOptions &options);
 
 //===----------------------------------------------------------------------===//
 // Registration
