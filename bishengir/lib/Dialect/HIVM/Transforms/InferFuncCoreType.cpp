@@ -16,6 +16,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/HIVM/IR/CustomOp/DistributedTransformUtils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Target/NPU/NPUArchitectureFeatures.h"
@@ -174,6 +175,34 @@ public:
 
       func->setAttr(hivm::TFuncCoreTypeAttr::name,
                     hivm::TFuncCoreTypeAttr::get(func->getContext(), e));
+
+      // Flexible distributed operations do not constrain function inference.
+      // Once the function core type is known, run them on its active cores.
+      // In MIX functions both copies must survive until kernel splitting.
+      auto distributedCoreType = hivm::TCoreType::CUBE_AND_VECTOR;
+      if (e == hivm::TFuncCoreType::AIC)
+        distributedCoreType = hivm::TCoreType::CUBE;
+      else if (e == hivm::TFuncCoreType::AIV)
+        distributedCoreType = hivm::TCoreType::VECTOR;
+      func.walk([&](Operation *op) {
+        if (!hivm::isDistributedTypeCustomOp(op))
+          return;
+        auto coreTypeAttr =
+            op->getAttrOfType<hivm::TCoreTypeAttr>(hivm::TCoreTypeAttr::name);
+        if (!coreTypeAttr ||
+            coreTypeAttr.getTcoretype() != hivm::TCoreType::CUBE_OR_VECTOR)
+          return;
+        auto infer = cast<hivm::InferCoreTypeInterface>(op);
+        // Use inference so SHMEM notify operations retain their selection
+        // based on preceding work instead of being duplicated on both cores.
+        auto coreType = infer.inferCoreType();
+        if (!coreType)
+          return;
+        if (*coreType == hivm::TCoreType::CUBE_OR_VECTOR)
+          coreType = distributedCoreType;
+        op->setAttr(hivm::TCoreTypeAttr::name,
+                    hivm::TCoreTypeAttr::get(func.getContext(), *coreType));
+      });
 
       auto parentModule = func->getParentOfType<ModuleOp>();
       // Materialize the A6 default before sub-block partitioning and MIX

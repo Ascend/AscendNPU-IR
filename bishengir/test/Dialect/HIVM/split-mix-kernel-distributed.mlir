@@ -1,4 +1,5 @@
 // RUN: bishengir-opt %s -hivm-split-mix-kernel -split-input-file -verify-diagnostics | FileCheck %s
+// RUN: sed s/CUBE_AND_VECTOR/CUBE_OR_VECTOR/g %s | bishengir-opt -hivm-split-mix-kernel -split-input-file -verify-diagnostics | FileCheck %s
 
 // Test inferDistributedCoreType - core type inference for distributed CustomOp in SplitMixKernel pass
 
