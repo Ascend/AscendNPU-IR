@@ -578,7 +578,7 @@ static void inferDistributedCoreType(func::FuncOp mixedFunc) {
                             ->getAttrOfType<hivm::TFuncCoreTypeAttr>(
                                 hivm::TFuncCoreTypeAttr::name)
                             .getFuncCoreType();
-    if (cur == TCoreType::CUBE_AND_VECTOR) {
+    if (cur == TCoreType::CUBE_AND_VECTOR || cur == TCoreType::CUBE_OR_VECTOR) {
       return kTFuncCoreType2TCoreType.at(funcCoreType);
     }
     return cur;
@@ -739,9 +739,14 @@ SplitMixKernelPass::lowerSingleCoreRatio(func::FuncOp func,
 void SplitMixKernelPass::splitMixKernel(func::FuncOp &func) {
   auto funcCoreTypeAttr = func->getAttrOfType<hivm::TFuncCoreTypeAttr>(
       hivm::TFuncCoreTypeAttr::name);
-  if (!funcCoreTypeAttr ||
-      funcCoreTypeAttr.getFuncCoreType() != TFuncCoreType::MIX)
+  if (!funcCoreTypeAttr)
     return;
+  if (funcCoreTypeAttr.getFuncCoreType() != TFuncCoreType::MIX) {
+    if (funcCoreTypeAttr.getFuncCoreType() == TFuncCoreType::AIC ||
+        funcCoreTypeAttr.getFuncCoreType() == TFuncCoreType::AIV)
+      inferDistributedCoreType(func);
+    return;
+  }
 
   // On Ascend950, MIX ratios 0:1 and 1:0 use a standalone vector/cube entry
   // inside a MIX module.
