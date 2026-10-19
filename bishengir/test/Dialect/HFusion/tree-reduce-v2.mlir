@@ -97,6 +97,65 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
     return %0 : tensor<384xf16>
   }
 
+  // Trace through the padded scratch buffer and the masked conversion to the
+  // real input. The scratch value is deliberately the lhs of the add to verify
+  // that inference does not depend on the operand order of a commutative op.
+  // CHECK-LABEL: func.func @tree_reduce_scratch_buffer
+  // CHECK: %[[C8192:c8192_[0-9]+]] = arith.constant 8192 : index
+  // CHECK: scf.for {{.*}} to %[[C8192]] step %{{.*}} iter_args
+  // CHECK: tensor.extract_slice %arg1
+  // CHECK: vector<1x16xf16>
+  // CHECK-NOT: vector<1x64xf32>
+  // CHECK: return
+  func.func @tree_reduce_scratch_buffer(
+      %arg0: tensor<1x64xf32>, %arg1: tensor<8192x6xf16>,
+      %arg2: tensor<8192x6xf32>, %arg3: tensor<8192xf32>)
+      -> tensor<8192xf32> attributes {hivm.vector_function, no_inline} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c6 = arith.constant 6 : index
+    %c8192 = arith.constant 8192 : index
+    %zero_f16 = arith.constant 0.000000e+00 : f16
+    %zero_f32 = arith.constant 0.000000e+00 : f32
+    %zero = arith.constant dense<0.000000e+00> : vector<1x64xf32>
+    %0 = scf.for %arg4 = %c0 to %c8192 step %c1
+        iter_args(%arg5 = %arg3) -> tensor<8192xf32> {
+      %cleared = vector.transfer_write %zero, %arg0[%c0, %c0]
+          : vector<1x64xf32>, tensor<1x64xf32>
+      %scratch_slice = tensor.extract_slice %cleared[0, 0] [1, 6] [1, 1]
+          : tensor<1x64xf32> to tensor<1x6xf32>
+      %input_slice = tensor.extract_slice %arg1[%arg4, 0] [1, 6] [1, 1]
+          : tensor<8192x6xf16> to tensor<1x6xf16>
+      %convert_slice = tensor.extract_slice %arg2[%arg4, 0] [1, 6] [1, 1]
+          : tensor<8192x6xf32> to tensor<1x6xf32>
+      %mask = vector.create_mask %c1, %c6 : vector<1x64xi1>
+      %input = vector.mask %mask { vector.transfer_read %input_slice[%c0, %c0], %zero_f16 {in_bounds = [true, true]} : tensor<1x6xf16>, vector<1x64xf16> } : vector<1x64xi1> -> vector<1x64xf16>
+      %extended = arith.extf %input : vector<1x64xf16> to vector<1x64xf32>
+      %converted = vector.mask %mask { vector.transfer_write %extended, %convert_slice[%c0, %c0] {in_bounds = [true, true]} : vector<1x64xf32>, tensor<1x6xf32> } : vector<1x64xi1> -> tensor<1x6xf32>
+      %converted_read = vector.mask %mask { vector.transfer_read %converted[%c0, %c0], %zero_f32 {in_bounds = [true, true]} : tensor<1x6xf32>, vector<1x64xf32> } : vector<1x64xi1> -> vector<1x64xf32>
+      %scratch_read = vector.mask %mask { vector.transfer_read %scratch_slice[%c0, %c0], %zero_f32 {in_bounds = [true, true]} : tensor<1x6xf32>, vector<1x64xf32> } : vector<1x64xi1> -> vector<1x64xf32>
+      %combined = arith.addf %scratch_read, %converted_read {reductionOp}
+          : vector<1x64xf32>
+      %updated_scratch = vector.mask %mask { vector.transfer_write %combined, %scratch_slice[%c0, %c0] {in_bounds = [true, true]} : vector<1x64xf32>, tensor<1x6xf32> } : vector<1x64xi1> -> tensor<1x6xf32>
+      %padded = tensor.insert_slice %updated_scratch into %cleared[0, 0]
+          [1, 6] [1, 1] : tensor<1x6xf32> into tensor<1x64xf32>
+      %source = vector.transfer_read %padded[%c0, %c0], %zero_f32
+          : tensor<1x64xf32>, vector<1x64xf32>
+      %acc_slice = tensor.extract_slice %arg5[%arg4] [1] [1]
+          : tensor<8192xf32> to tensor<1xf32>
+      %acc = vector.transfer_read %acc_slice[%c0], %zero_f32
+          : tensor<1xf32>, vector<1xf32>
+      %sum = vector.multi_reduction <add>, %source, %acc
+          {withoutInitMergeOp} [1] : vector<1x64xf32> to vector<1xf32>
+      %written = vector.transfer_write %sum, %acc_slice[%c0]
+          : vector<1xf32>, tensor<1xf32>
+      %inserted = tensor.insert_slice %written into %arg5[%arg4] [1] [1]
+          : tensor<1xf32> into tensor<8192xf32>
+      scf.yield %inserted : tensor<8192xf32>
+    }
+    return %0 : tensor<8192xf32>
+  }
+
   // The reduction input is also returned and remains live after the
   // reduction. TreeReduceV2 must use a separate tensor for partial sums so
   // that one-shot bufferization cannot overwrite %arg0 in place.
