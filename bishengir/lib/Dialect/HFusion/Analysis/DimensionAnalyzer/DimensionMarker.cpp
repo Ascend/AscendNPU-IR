@@ -386,7 +386,40 @@ void DimensionAnalyzer::processForOp(scf::ForOp op) {
              op.getRegionIterArgs(), op.getInitArgs(), yieldOp.getResults())) {
       createDummyRefIfNotExist({regionArg, initArg, yieldVal});
       processValue(regionArg, initArg);
-      processValue(yieldVal, initArg);
+      if (yieldVal == initArg || yieldVal == regionArg) {
+        processValue(yieldVal, initArg);
+      } else {
+        auto yieldRef = getValueDimIndices(yieldVal);
+        auto initRef = getValueDimIndices(initArg);
+        bool safeToBind = yieldRef.size() == initRef.size();
+        if (safeToBind) {
+          for (size_t i = 0; i < yieldRef.size(); ++i) {
+            auto [yParent, yShape] =
+                equivalentDsu_->getMinParentAndShapePair(yieldRef[i]);
+            auto [iParent, iShape] =
+                equivalentDsu_->getMinParentAndShapePair(initRef[i]);
+            bool yDynamic = ShapedType::isDynamic(yShape);
+            bool iDynamic = ShapedType::isDynamic(iShape);
+            if (yDynamic != iDynamic || (yDynamic && yParent != iParent)) {
+              safeToBind = false;
+              break;
+            }
+          }
+        }
+
+        if (safeToBind) {
+          processValue(yieldVal, initArg);
+        } else {
+          auto disconnectedChain = [&](Value v) {
+            auto ref = getValueDimIndices(v);
+            for (size_t i = 0; i + 1 < ref.size(); ++i)
+              disconnect(ref[i], ref[i + 1]);
+          };
+          disconnectedChain(initArg);
+          disconnectedChain(regionArg);
+          disconnectedChain(yieldVal);
+        }
+      }
     }
   } else {
     for (const auto &[regionArg, initArg] :
@@ -457,7 +490,18 @@ void DimensionAnalyzer::processSubviewOp(memref::SubViewOp slicingOp) {
             : ElementKind::NoMutation;
     LDBG("From the extract slice: "
          << stringtifyElementKind(isConnected_[srcRefPtr[i]].elementKind));
-    joinShape(srcRefPtr[i], resRefPtr[resPtr]);
+    auto srcSize = getConstantIntValue(srcShape[i]);
+    auto resSize = getConstantIntValue(resShape[i]);
+    bool shapeBindable = false;
+    if (srcSize.has_value() && resSize.has_value()) {
+      shapeBindable = (srcSize.value() == resSize.value());
+    } else if (!srcSize.has_value() && !resSize.has_value()) {
+      shapeBindable = true;
+    }
+    if (shapeBindable)
+      joinShape(srcRefPtr[i], resRefPtr[resPtr]);
+    else
+      joinCollapser(srcRefPtr[i], resRefPtr[resPtr]);
     // Used the resPtr
     resPtr++;
   }
