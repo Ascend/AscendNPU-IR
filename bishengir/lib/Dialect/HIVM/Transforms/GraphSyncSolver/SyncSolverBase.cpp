@@ -51,7 +51,6 @@ using namespace hivm::syncsolver;
 
 SyncSolverVersion
 mlir::hivm::syncsolver::parseSyncSolverVersion(llvm::StringRef value) {
-  return SyncSolverVersion::V1;
   if (value.empty() || value.equals_insensitive("v1")) {
     return SyncSolverVersion::V1;
   }
@@ -284,86 +283,66 @@ bool SyncSolverBase::isLastIterOcc(Occurrence *occ, Occurrence *loopOcc) {
   return false;
 }
 
-Occurrence *SyncSolverBase::getFirstIterOcc(Occurrence *occ,
-                                            Occurrence *loopOcc) {
-  assert(loopOcc->isAncestor(occ));
-  if (isFirstIterOcc(occ, loopOcc)) {
-    return occ;
+// Map a child index of `fromOcc` onto `toOcc`, another occurrence of the same
+// op.
+static size_t getCounterpartChildIndex(Occurrence *fromOcc, Occurrence *toOcc,
+                                       size_t index, bool lastIter) {
+  // Scope / Condition: both sides have the same children.
+  auto *loopOp = dyn_cast<Loop>(fromOcc->op);
+  if (loopOp == nullptr) {
+    assert(fromOcc->childOccs.size() == toOcc->childOccs.size());
+    return index;
   }
 
-  auto firstIterScopeOccs = loopOcc->getLoopFirstIterOccs();
-  auto lastIterScopeOccs = loopOcc->getLoopSecondIterOccs();
-  assert(firstIterScopeOccs.size() == lastIterScopeOccs.size());
+  // Loop: children are the body regions, copied once or twice.
+  size_t bodyNum = loopOp->body.size();
+  size_t regionIndex = index % bodyNum;
 
-  Occurrence *parOcc1{nullptr};
-  Occurrence *parOcc2{nullptr};
-  for (auto [scopeOcc1, scopeOcc2] :
-       llvm::zip(firstIterScopeOccs, lastIterScopeOccs)) {
-    if (scopeOcc2->isAncestor(occ)) {
-      parOcc1 = scopeOcc1;
-      parOcc2 = scopeOcc2;
-      break;
-    }
+  // Linearized loop: the single body copy.
+  if (toOcc->loopSplitIndex == -1) {
+    assert(toOcc->childOccs.size() == bodyNum);
+    return regionIndex;
   }
-  assert(parOcc1 != nullptr && parOcc2 != nullptr);
 
-  while (parOcc2 != occ) {
+  // Split loop: the first or the last body copy.
+  assert(toOcc->childOccs.size() == 2 * bodyNum);
+  return lastIter ? bodyNum + regionIndex : regionIndex;
+}
+
+// Find the occurrence of `occ`'s op under `toLoopOcc`, given `occ` under
+// `fromLoopOcc`, two occurrences of one loop. Descends through the first or
+// the last body copy of every split loop on the way.
+static Occurrence *getCounterpartOcc(Occurrence *occ, Occurrence *fromLoopOcc,
+                                     Occurrence *toLoopOcc, bool lastIter) {
+  assert(fromLoopOcc->isAncestor(occ));
+  assert(fromLoopOcc->op == toLoopOcc->op);
+  Occurrence *fromOcc = fromLoopOcc;
+  Occurrence *toOcc = toLoopOcc;
+  while (fromOcc != occ) {
     [[maybe_unused]] bool found = false;
-    for (auto [childOcc1, childOcc2] :
-         llvm::zip(parOcc1->childOccs, parOcc2->childOccs)) {
-      if (childOcc2->isAncestor(occ)) {
+    for (auto [index, childOcc] : llvm::enumerate(fromOcc->childOccs)) {
+      if (childOcc->isAncestor(occ)) {
         found = true;
-        parOcc1 = childOcc1;
-        parOcc2 = childOcc2;
+        toOcc = toOcc->childOccs[getCounterpartChildIndex(fromOcc, toOcc, index,
+                                                          lastIter)];
+        fromOcc = childOcc;
+        assert(fromOcc->op == toOcc->op);
         break;
       }
     }
     assert(found);
   }
+  return toOcc;
+}
 
-  assert(parOcc2 == occ && parOcc1 != nullptr);
-  return parOcc1;
+Occurrence *SyncSolverBase::getFirstIterOcc(Occurrence *occ,
+                                            Occurrence *loopOcc) {
+  return getCounterpartOcc(occ, loopOcc, loopOcc, /*lastIter=*/false);
 }
 
 Occurrence *SyncSolverBase::getLastIterOcc(Occurrence *occ,
                                            Occurrence *loopOcc) {
-  assert(loopOcc->isAncestor(occ));
-  if (isLastIterOcc(occ, loopOcc)) {
-    return occ;
-  }
-
-  auto firstIterScopeOccs = loopOcc->getLoopFirstIterOccs();
-  auto lastIterScopeOccs = loopOcc->getLoopSecondIterOccs();
-  assert(firstIterScopeOccs.size() == lastIterScopeOccs.size());
-
-  Occurrence *parOcc1{nullptr};
-  Occurrence *parOcc2{nullptr};
-  for (auto [scopeOcc1, scopeOcc2] :
-       llvm::zip(firstIterScopeOccs, lastIterScopeOccs)) {
-    if (scopeOcc1->isAncestor(occ)) {
-      parOcc1 = scopeOcc1;
-      parOcc2 = scopeOcc2;
-      break;
-    }
-  }
-  assert(parOcc1 != nullptr && parOcc2 != nullptr);
-
-  while (parOcc1 != occ) {
-    [[maybe_unused]] bool found = false;
-    for (auto [childOcc1, childOcc2] :
-         llvm::zip(parOcc1->childOccs, parOcc2->childOccs)) {
-      if (childOcc1->isAncestor(occ)) {
-        found = true;
-        parOcc1 = childOcc1;
-        parOcc2 = childOcc2;
-        break;
-      }
-    }
-    assert(found);
-  }
-
-  assert(parOcc1 == occ && parOcc2 != nullptr);
-  return parOcc2;
+  return getCounterpartOcc(occ, loopOcc, loopOcc, /*lastIter=*/true);
 }
 
 std::pair<CorePipeInfo, CorePipeInfo>
@@ -2299,6 +2278,36 @@ ConflictPair *SyncSolverBase::handleSetWaitConflict(
         std::make_pair(std::move(extraConflictPair), parentScope));
     return true;
   };
+  // A linearized copy of the parent loop never yields this pair as backward,
+  // so every reservation below is repeated on each of them.
+  llvm::ArrayRef<Occurrence *> linearLoopOccs;
+  if (parentLCALoopOcc != nullptr) {
+    linearLoopOccs = parentLCALoopOcc->linearizedLoopOccs;
+  }
+  // A null endpoint means the copy's before or after placeholder, any other
+  // one is mapped into the copy.
+  auto reserveOnLinearCopies = [&](Occurrence *setEnd, Occurrence *waitEnd,
+                                   bool couldNotRun) -> bool {
+    for (auto *linearLoopOcc : linearLoopOccs) {
+      auto toLinear = [&](Occurrence *occ) {
+        return getCounterpartOcc(occ, parentLCALoopOcc, linearLoopOcc,
+                                 /*lastIter=*/false);
+      };
+      // Both placeholders sit outside the loop, so a range between them lives
+      // in its parent scope; any other range has an end inside the loop.
+      if (!insertExtraConflictPair(
+              setEnd != nullptr ? toLinear(setEnd)
+                                : tryGetBeforePlaceHolderOcc(linearLoopOcc),
+              waitEnd != nullptr ? toLinear(waitEnd)
+                                 : tryGetAfterPlaceHolderOcc(linearLoopOcc),
+              setEnd == nullptr && waitEnd == nullptr ? linearLoopOcc->parentOcc
+                                                      : linearLoopOcc,
+              couldNotRun)) {
+        return false;
+      }
+    }
+    return true;
+  };
   if (conflictPair->isOccBackwardPair && !conflictPair->isSetWaitBackwardPair) {
     // Occurrence conflict is backward, but the inserted set/wait pair is
     // forward because it sits in the first or last iteration (e.g. unlikely
@@ -2319,6 +2328,12 @@ ConflictPair *SyncSolverBase::handleSetWaitConflict(
       if (!insertExtraConflictPair(setOccFirstIter, waitOccFirstIter,
                                    parentLCALoopOcc,
                                    /*couldNotRun=*/true)) {
+        return nullptr;
+      }
+    }
+    if (isFirstIterOcc(setOcc, parentLCALoopOcc) ||
+        isLastIterOcc(setOcc, parentLCALoopOcc)) {
+      if (!reserveOnLinearCopies(setOcc, waitOcc, /*couldNotRun=*/true)) {
         return nullptr;
       }
     }
@@ -2347,6 +2362,10 @@ ConflictPair *SyncSolverBase::handleSetWaitConflict(
                                    options.moveOutAndMergeBackwardSyncPairs)) {
         return nullptr;
       }
+      if (!reserveOnLinearCopies(/*setEnd=*/nullptr, /*waitEnd=*/nullptr,
+                                 options.moveOutAndMergeBackwardSyncPairs)) {
+        return nullptr;
+      }
     }
   }
   if (conflictPair->isInnerBackwardPair) {
@@ -2359,6 +2378,12 @@ ConflictPair *SyncSolverBase::handleSetWaitConflict(
     }
     if (!insertExtraConflictPair(loopOpOcc2, parentLCALoopAfterPHOcc,
                                  parentLCALoopOcc, /*couldNotRun=*/true)) {
+      return nullptr;
+    }
+    if (!reserveOnLinearCopies(/*setEnd=*/nullptr, waitOcc,
+                               /*couldNotRun=*/true) ||
+        !reserveOnLinearCopies(setOcc, /*waitEnd=*/nullptr,
+                               /*couldNotRun=*/true)) {
       return nullptr;
     }
   }
@@ -2421,7 +2446,6 @@ ConflictPair *SyncSolverBase::handleBarrierConflict(
 
   LLVM_DEBUG({ llvm::dbgs() << conflictPair->str() << '\n'; });
 
-  Loop *parentLCALoopOp{nullptr};
   Occurrence *parentLCALoopOcc{nullptr};
 
   // calc parent-loop occ (for backward pairs)
@@ -2431,9 +2455,7 @@ ConflictPair *SyncSolverBase::handleBarrierConflict(
 
     parentLCALoopOcc = parOcc1->getParentOfType<Loop>();
     assert(parentLCALoopOcc != nullptr);
-
-    parentLCALoopOp = llvm::dyn_cast<Loop>(parentLCALoopOcc->op);
-    assert(parentLCALoopOp != nullptr);
+    assert(llvm::isa_and_present<Loop>(parentLCALoopOcc->op));
   }
 
   auto insertExtraConflictPair = [&](Occurrence *waitOcc) {
@@ -2448,12 +2470,17 @@ ConflictPair *SyncSolverBase::handleBarrierConflict(
   };
   if (conflictPair->isOccBackwardPair) {
     if (isFirstIterOcc(waitOcc, parentLCALoopOcc)) {
-      auto *waitOccLastIter = getLastIterOcc(waitOcc, parentLCALoopOcc);
-      insertExtraConflictPair(waitOccLastIter);
+      insertExtraConflictPair(getLastIterOcc(waitOcc, parentLCALoopOcc));
     }
     if (isLastIterOcc(waitOcc, parentLCALoopOcc)) {
-      auto *waitOccFirstIter = getFirstIterOcc(waitOcc, parentLCALoopOcc);
-      insertExtraConflictPair(waitOccFirstIter);
+      insertExtraConflictPair(getFirstIterOcc(waitOcc, parentLCALoopOcc));
+    }
+    // The barrier runs in every linearized copy too, which never yields this
+    // conflict; model it there so no redundant sync is added.
+    for (auto *linearLoopOcc : parentLCALoopOcc->linearizedLoopOccs) {
+      insertExtraConflictPair(getCounterpartOcc(waitOcc, parentLCALoopOcc,
+                                                linearLoopOcc,
+                                                /*lastIter=*/false));
     }
   }
 
@@ -3160,7 +3187,6 @@ llvm::LogicalResult SyncSolverBase::runSolver(bool enableOpts1,
     reset();
     insertMergedBackwardSyncPairs();
     processOrders();
-    return llvm::success();
 
     if (llvm::succeeded(tryMovingOutBackwardSyncPairsToOuterLoops())) {
       continue;

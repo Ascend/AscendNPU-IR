@@ -480,25 +480,17 @@ void SyncSolverV1::generateProcessingOrders(RWOperation *rwOp1,
 void SyncSolverV1::buildOfflineProcessingOrders(Occurrence *occ,
                                                 bool isUseless) {
   assert(occ != nullptr);
-  if (auto *loopOp = dyn_cast<Loop>(occ->op)) {
-    if (occ->loopSplitIndex != -1) {
-      int64_t childNum = static_cast<int64_t>(occ->childOccs.size());
-      assert(childNum % 2 == 0);
-      for (int64_t i = 0; i < childNum / 2; ++i) {
-        buildOfflineProcessingOrders(occ->childOccs[i], isUseless);
-      }
-      for (int64_t i = childNum / 2; i < childNum; ++i) {
-        buildOfflineProcessingOrders(occ->childOccs[i], true);
-      }
-      generateProcessingOrders(loopOp, occ, isUseless);
-    } else {
-      auto *scopeOp = dyn_cast<Scope>(occ->op);
-      assert(scopeOp != nullptr);
-      for (auto *childOcc : occ->childOccs) {
-        buildOfflineProcessingOrders(childOcc, isUseless);
-      }
-      generateProcessingOrders(scopeOp, occ, isUseless);
+  auto *loopOp = dyn_cast<Loop>(occ->op);
+  if (loopOp != nullptr && occ->loopSplitIndex != -1) {
+    int64_t childNum = static_cast<int64_t>(occ->childOccs.size());
+    assert(childNum % 2 == 0);
+    for (int64_t i = 0; i < childNum / 2; ++i) {
+      buildOfflineProcessingOrders(occ->childOccs[i], isUseless);
     }
+    for (int64_t i = childNum / 2; i < childNum; ++i) {
+      buildOfflineProcessingOrders(occ->childOccs[i], true);
+    }
+    generateProcessingOrders(loopOp, occ, isUseless);
   } else if (auto *scopeOp = dyn_cast<Scope>(occ->op)) {
     for (auto *childOcc : occ->childOccs) {
       buildOfflineProcessingOrders(childOcc, isUseless);

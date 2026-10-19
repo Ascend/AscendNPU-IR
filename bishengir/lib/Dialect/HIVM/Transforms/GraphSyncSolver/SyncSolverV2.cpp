@@ -863,8 +863,9 @@ void SyncSolverV2::collectProcessingOrders(Occurrence *occ, bool isUseless) {
         collectProcessingOrders(scopeOcc, true);
       }
       generateProcessingOrders(loopOp, occ, isUseless);
+      return;
     }
-    return;
+    // A linearized loop has no second copy; Loop is a Scope, so fall through.
   }
 
   if (auto *scopeOp = dyn_cast<Scope>(occ->op)) {

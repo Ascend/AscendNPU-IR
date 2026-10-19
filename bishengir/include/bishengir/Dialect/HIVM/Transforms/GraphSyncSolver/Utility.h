@@ -111,6 +111,9 @@ struct SyncSolverOptions {
 
   bool enableSiblingIfSync{true};
 
+  // Avoid recursively unrolling nested loops in repeated iterations.
+  bool enableNonRecursiveLoopUnrolling{true};
+
   // Build unrolled sync IR.
   bool buildUnrolledSyncIR{true};
 
@@ -221,6 +224,8 @@ struct Occurrence {
   int startIndex{-1};
   int endIndex{-1};
   int loopSplitIndex{-1};
+  // Set on a split loop occurrence: the linearized copies of that loop.
+  llvm::SmallVector<Occurrence *> linearizedLoopOccs;
   bool hasUnitFlagFeat{false};
   UnitFlagInfo unitFlagInfo;
   llvm::SmallVector<Occurrence *> childOccs;

@@ -76,7 +76,11 @@ private:
   bool enableMultiBuffer{false};
   bool performanceOnly{false};
   SyncMode syncMode{SyncMode::TEST_INTRA_CORE_MODE};
-  SyncSolverVersion solverVersion{SyncSolverVersion::V1};
+  // Solver switches the pass was given; the tester picks its own sync mode and
+  // architecture, so test() only carries these over.
+  SyncSolverOptions solverOptions{SyncMode::TEST_INTRA_CORE_MODE,
+                                  /*isMemBasedArch=*/false,
+                                  /*isRegBasedArch=*/false};
   std::unique_ptr<std::mt19937> randGenerator;
   llvm::DenseMap<Scope *, int> countersMap;
 
@@ -88,13 +92,13 @@ private:
 
 public:
   SyncTester(int numOperations, int numPointers, bool enableMultiBuffer,
-             bool enableCrossCoreMode, SyncSolverVersion solverVersion,
+             bool enableCrossCoreMode, const SyncSolverOptions &solverOptions,
              std::optional<int64_t> seed = {}, bool performanceOnly = false)
       : numOperations(numOperations), numPointers(numPointers),
         enableMultiBuffer(enableMultiBuffer), performanceOnly(performanceOnly),
         syncMode(enableCrossCoreMode ? SyncMode::TEST_CROSS_CORE_MODE
                                      : SyncMode::TEST_INTRA_CORE_MODE),
-        solverVersion(solverVersion) {
+        solverOptions(solverOptions) {
     this->initSeed =
         seed.has_value()
             ? seed.value()

@@ -58,6 +58,8 @@ void GraphSyncSolverPass::runOnOperation() {
                                     /*isMemBasedArch=*/false,
                                     /*isRegBasedArch=*/false);
     solverOptions.enableSiblingIfSync = this->enableSiblingIfSync;
+    solverOptions.enableNonRecursiveLoopUnrolling =
+        this->enableNonRecursiveLoopUnrolling;
     solverOptions.solverVersion = parseSyncSolverVersion(this->solverVersion);
     SyncTester::runTestMode(testerOptions, solverOptions);
     return;
@@ -84,6 +86,8 @@ void GraphSyncSolverPass::runOnOperation() {
   options.enableSubviewConflictRefinement =
       this->enableSubviewConflictRefinement;
   options.enableSiblingIfSync = this->enableSiblingIfSync;
+  options.enableNonRecursiveLoopUnrolling =
+      this->enableNonRecursiveLoopUnrolling;
   options.solverVersion = parseSyncSolverVersion(this->solverVersion);
 
   auto irTranslator = std::make_unique<IRTranslator>(funcOp, options);
