@@ -189,8 +189,14 @@ public:
 
     // Helper to get precision rank for float types (higher = more precision)
     auto getPrecisionRank = [](Type type) -> int {
-      if (auto floatType = mlir::dyn_cast<mlir::FloatType>(type))
-        return floatType.getFPMantissaWidth();
+      if (type.isBF16())
+        return 0; // lowest precision
+      if (type.isF16())
+        return 1;
+      if (type.isF32())
+        return 2;
+      if (type.isF64())
+        return 3; // highest precision
       return -1;  // non-float type
     };
 

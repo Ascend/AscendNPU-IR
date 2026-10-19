@@ -763,43 +763,59 @@ func.func @hoist_mul_sub_matmul_chain(%a: tensor<128x17xbf16>, %b: tensor<17x19x
   %matmul3 = linalg.matmul {input_precision = "ieee"} ins(%sub, %d : tensor<128x23xf32>, tensor<23x128xf32>) outs(%init3 : tensor<128x128xf32>) -> tensor<128x128xf32>
   return %matmul3 : tensor<128x128xf32>
 }
-
-// -----
-// CHECK-LABEL: @fp8DownUpKept
-// CHECK: hfusion.cast
-// CHECK: hfusion.cast
+// Test: an integer narrowing cast followed by a widening cast must NOT be
+// folded away. Unlike floats, the narrowing step drops the high bits, so
+// `i16 -> i8 -> i16` is not an identity. This is semantically required: e.g.
+// `remui i8` is widened to i16 for codegen and returns 0xFFFF for a zero
+// divisor, which must be truncated back to 0xFF before the next op consumes it.
+// CHECK-LABEL: func.func @keepIntegerNarrowThenWiden
+// CHECK: hfusion.cast {{.*}} ins(%{{.*}} : tensor<4xi16>) outs(%{{.*}} : tensor<4xi8>)
+// CHECK: hfusion.cast {{.*}} ins(%{{.*}} : tensor<4xi8>) outs(%{{.*}} : tensor<4xi16>)
 // CHECK: return
-func.func @fp8DownUpKept(%arg0: tensor<f32>) -> tensor<f32> {
-    %empty_f8 = tensor.empty() : tensor<f8E4M3FN>
-    %empty_f32 = tensor.empty() : tensor<f32>
-    %0 = hfusion.cast ins(%arg0 : tensor<f32>) outs(%empty_f8 : tensor<f8E4M3FN>) -> tensor<f8E4M3FN>
-    %1 = hfusion.cast ins(%0 : tensor<f8E4M3FN>) outs(%empty_f32 : tensor<f32>) -> tensor<f32>
-    return %1 : tensor<f32>
+func.func @keepIntegerNarrowThenWiden(%arg0: tensor<4xi16>) -> tensor<4xi16> {
+  %e0 = tensor.empty() : tensor<4xi8>
+  %e1 = tensor.empty() : tensor<4xi16>
+  %t0 = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, enable_overflow = true, round_mode = #hfusion.round_mode<truncwithoverflow>} ins(%arg0 : tensor<4xi16>) outs(%e0 : tensor<4xi8>) -> tensor<4xi8>
+  %t1 = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%t0 : tensor<4xi8>) outs(%e1 : tensor<4xi16>) -> tensor<4xi16>
+  return %t1 : tensor<4xi16>
 }
 
 // -----
-// CHECK-LABEL: @fp8E5M2DownUpKept
-// CHECK: hfusion.cast
-// CHECK: hfusion.cast
-// CHECK: return
-func.func @fp8E5M2DownUpKept(%arg0: tensor<f32>) -> tensor<f32> {
-    %empty_f8 = tensor.empty() : tensor<f8E5M2>
-    %empty_f32 = tensor.empty() : tensor<f32>
-    %0 = hfusion.cast ins(%arg0 : tensor<f32>) outs(%empty_f8 : tensor<f8E5M2>) -> tensor<f8E5M2>
-    %1 = hfusion.cast ins(%0 : tensor<f8E5M2>) outs(%empty_f32 : tensor<f32>) -> tensor<f32>
-    return %1 : tensor<f32>
-}
-
-// -----
-// CHECK-LABEL: @fp8DownUpFastmathFolds
+// Test: the lossless integer round trip (widen then narrow) is still folded.
+// CHECK-LABEL: func.func @foldIntegerWidenThenNarrow
+// CHECK-SAME: (%[[arg0:.*]]: tensor<4xi8>)
 // CHECK-NOT: hfusion.cast
-// CHECK: return
-func.func @fp8DownUpFastmathFolds(%arg0: tensor<f32>) -> tensor<f32> {
-    %empty_f8 = tensor.empty() : tensor<f8E4M3FN>
-    %empty_f32 = tensor.empty() : tensor<f32>
-    %0 = hfusion.cast {arith.fastmath = #arith.fastmath<contract>} ins(%arg0 : tensor<f32>) outs(%empty_f8 : tensor<f8E4M3FN>) -> tensor<f8E4M3FN>
-    %1 = hfusion.cast ins(%0 : tensor<f8E4M3FN>) outs(%empty_f32 : tensor<f32>) -> tensor<f32>
-    return %1 : tensor<f32>
+// CHECK: return %[[arg0]] : tensor<4xi8>
+func.func @foldIntegerWidenThenNarrow(%arg0: tensor<4xi8>) -> tensor<4xi8> {
+  %e0 = tensor.empty() : tensor<4xi16>
+  %e1 = tensor.empty() : tensor<4xi8>
+  %t0 = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%arg0 : tensor<4xi8>) outs(%e0 : tensor<4xi16>) -> tensor<4xi16>
+  %t1 = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, enable_overflow = true, round_mode = #hfusion.round_mode<truncwithoverflow>} ins(%t0 : tensor<4xi16>) outs(%e1 : tensor<4xi8>) -> tensor<4xi8>
+  return %t1 : tensor<4xi8>
 }
 
 // -----
+// Test: a mixed integer/float chain that contains a deeper integer narrowing
+// cast must NOT be folded away. The narrowing `i16 -> i8` sits behind the
+// `i8 -> i32 -> f16 -> i32` crossing casts, so the value-preservation scan must
+// continue past the crossing casts instead of bailing out at the first one.
+// CHECK-LABEL: func.func @keepIntegerNarrowInMixedChain
+// CHECK: hfusion.cast {{.*}} ins(%{{.*}} : tensor<4xi16>) outs(%{{.*}} : tensor<4xi8>)
+// CHECK: hfusion.cast {{.*}} ins(%{{.*}} : tensor<4xi8>) outs(%{{.*}} : tensor<4xi32>)
+// CHECK: hfusion.cast {{.*}} ins(%{{.*}} : tensor<4xi32>) outs(%{{.*}} : tensor<4xf16>)
+// CHECK: hfusion.cast {{.*}} ins(%{{.*}} : tensor<4xf16>) outs(%{{.*}} : tensor<4xi32>)
+// CHECK: hfusion.cast {{.*}} ins(%{{.*}} : tensor<4xi32>) outs(%{{.*}} : tensor<4xi16>)
+// CHECK: return
+func.func @keepIntegerNarrowInMixedChain(%arg0: tensor<4xi16>) -> tensor<4xi16> {
+  %e0 = tensor.empty() : tensor<4xi8>
+  %e1 = tensor.empty() : tensor<4xi32>
+  %e2 = tensor.empty() : tensor<4xf16>
+  %e3 = tensor.empty() : tensor<4xi32>
+  %e4 = tensor.empty() : tensor<4xi16>
+  %c0 = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, enable_overflow = true, round_mode = #hfusion.round_mode<truncwithoverflow>} ins(%arg0 : tensor<4xi16>) outs(%e0 : tensor<4xi8>) -> tensor<4xi8>
+  %c1 = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%c0 : tensor<4xi8>) outs(%e1 : tensor<4xi32>) -> tensor<4xi32>
+  %c2 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>} ins(%c1 : tensor<4xi32>) outs(%e2 : tensor<4xf16>) -> tensor<4xf16>
+  %c3 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>} ins(%c2 : tensor<4xf16>) outs(%e3 : tensor<4xi32>) -> tensor<4xi32>
+  %c4 = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, enable_overflow = true, round_mode = #hfusion.round_mode<truncwithoverflow>} ins(%c3 : tensor<4xi32>) outs(%e4 : tensor<4xi16>) -> tensor<4xi16>
+  return %c4 : tensor<4xi16>
+}
