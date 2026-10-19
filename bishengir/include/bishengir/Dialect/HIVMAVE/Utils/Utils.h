@@ -28,9 +28,14 @@ ValueRange getIndices(mlir::Operation *op);
 Value computeLinearMemRefOffset(OpBuilder &builder, Location loc, Value memref,
                                 ValueRange indices, Type resultType);
 
-/// Check whether the memref with indices is aligned by 32B.
+/// Check whether the memref with indices meets the default hardware alignment.
 bool isLoadStoreIndexAligned(Value memrefVal,
                              mlir::Operation::operand_range indices);
+
+/// Check whether the memref with indices meets the specified alignment.
+bool isLoadStoreIndexAligned(Value memrefVal,
+                             mlir::Operation::operand_range indices,
+                             uint32_t requiredAlignBytes);
 
 /// Get lowest element number from PGE pattern.
 uint32_t getNumfromPgePattern(VFPgeOp pge);
