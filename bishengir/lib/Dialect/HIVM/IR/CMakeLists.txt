@@ -1,3 +1,29 @@
+# Loop-shape fingerprints consumed by CV / HFusion heuristics are generated at
+# build time. Declare the dependency before creating the dialect library so its
+# object library also waits for the generated include.
+set(SHAPE_REGISTRY
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../build-tools/coverage/shape_registry.py")
+if(NOT EXISTS "${SHAPE_REGISTRY}" AND DEFINED LLVM_EXTERNAL_BISHENGIR_SOURCE_DIR)
+  set(SHAPE_REGISTRY
+      "${LLVM_EXTERNAL_BISHENGIR_SOURCE_DIR}/../build-tools/coverage/shape_registry.py")
+endif()
+find_package(Python3 QUIET COMPONENTS Interpreter)
+set(SKEW_SHAPE_TABLE ${CMAKE_CURRENT_BINARY_DIR}/SkewShapeTable.inc)
+set(SKEW_SHAPE_TABLE_TARGET)
+if(Python3_Interpreter_FOUND)
+  add_custom_command(
+    OUTPUT ${SKEW_SHAPE_TABLE}
+    COMMAND ${Python3_EXECUTABLE} ${SHAPE_REGISTRY} --emit-cxx ${SKEW_SHAPE_TABLE}
+    DEPENDS ${SHAPE_REGISTRY}
+    COMMENT "Generating loop-shape fingerprints"
+    VERBATIM)
+  add_custom_target(BiShengIRSkewShapeTable DEPENDS ${SKEW_SHAPE_TABLE})
+  set(SKEW_SHAPE_TABLE_TARGET BiShengIRSkewShapeTable)
+else()
+  file(WRITE ${SKEW_SHAPE_TABLE}
+       "namespace {\nconstexpr unsigned kSpanKeyCount = 0;\nconstexpr uint64_t kSpanKeys[kSpanKeyCount] = {0ULL};\n}\n")
+endif()
+
 file(GLOB HIVM_FLATTEN ${CMAKE_CURRENT_SOURCE_DIR}/FlattenInterface/*.cpp)
 file(GLOB HIVM_STRUCTURE ${CMAKE_CURRENT_SOURCE_DIR}/StructuredOpInterface/*.cpp)
 file(GLOB HIVM_AGGREGATED ${CMAKE_CURRENT_SOURCE_DIR}/BiShengIRAggregatedOpInterface/*.cpp)
@@ -46,6 +72,7 @@ add_bishengir_dialect_library(BiShengIRHIVMDialect
   StoreLikeOpInterface.cpp
   ../Utils/Utils.cpp
   ../Utils/ShapeRegistry.cpp
+  ${SKEW_SHAPE_TABLE}
   ../Utils/RegbaseUtils.cpp
   ../Utils/MultiBufferLoopAdapter.cpp
   ../Utils/WorklistBuilder.cpp
@@ -57,6 +84,7 @@ add_bishengir_dialect_library(BiShengIRHIVMDialect
   ${MLIR_MAIN_INCLUDE_DIR}/bishengir/Dialect/HIVM/Utils
 
   DEPENDS
+  ${SKEW_SHAPE_TABLE_TARGET}
   BiShengIRFixpipePreQuantContractIncGen
   BiShengIRHIVMIncGen
   BiShengIRHIVMEnumsIncGen
@@ -93,26 +121,4 @@ add_bishengir_dialect_library(BiShengIRHIVMDialect
   BiShengIRHACCUtils
 )
 
-# Loop-shape fingerprints consumed by CV / HFusion heuristics: generated from
-# the coverage registry at configure time so the compiler only carries mixed keys.
-set(SHAPE_REGISTRY
-    "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../build-tools/coverage/shape_registry.py")
-if(NOT EXISTS "${SHAPE_REGISTRY}" AND DEFINED LLVM_EXTERNAL_BISHENGIR_SOURCE_DIR)
-  set(SHAPE_REGISTRY
-      "${LLVM_EXTERNAL_BISHENGIR_SOURCE_DIR}/../build-tools/coverage/shape_registry.py")
-endif()
-find_package(Python3 QUIET COMPONENTS Interpreter)
-set(SKEW_SHAPE_TABLE ${CMAKE_CURRENT_BINARY_DIR}/SkewShapeTable.inc)
-if(Python3_Interpreter_FOUND)
-  add_custom_command(
-    OUTPUT ${SKEW_SHAPE_TABLE}
-    COMMAND ${Python3_EXECUTABLE} ${SHAPE_REGISTRY} --emit-cxx ${SKEW_SHAPE_TABLE}
-    DEPENDS ${SHAPE_REGISTRY}
-    COMMENT "Generating loop-shape fingerprints")
-  add_custom_target(BiShengIRSkewShapeTable DEPENDS ${SKEW_SHAPE_TABLE})
-  add_dependencies(BiShengIRHIVMDialect BiShengIRSkewShapeTable)
-else()
-  file(WRITE ${SKEW_SHAPE_TABLE}
-       "namespace {\nconstexpr unsigned kSpanKeyCount = 0;\nconstexpr uint64_t kSpanKeys[kSpanKeyCount] = {0ULL};\n}\n")
-endif()
 target_include_directories(BiShengIRHIVMDialect PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
