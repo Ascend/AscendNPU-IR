@@ -178,10 +178,9 @@ getBufferType(Operation *op, Value value, const BufferizationOptions &options,
   assert(funcOp && "expected CallOp to a FuncOp");
 
   FunctionType funcType = funcOp.getFunctionType();
-  Type resultType =
-      funcType.getResult(cast<OpResult>(value).getResultNumber());
+  Type resultType = funcType.getResult(cast<OpResult>(value).getResultNumber());
   if (auto memRefType = dyn_cast<BaseMemRefType>(resultType))
-      return memRefType;
+    return memRefType;
 
   // Outlined callees may still have tensor signatures when one-shot
   // bufferization resolves tensor copy conflicts inside enclosing loops.
@@ -208,7 +207,7 @@ getBufferType(Operation *op, Value value, const BufferizationOptions &options,
   assert(isa<TensorType>(resultType) && "expected tensor result type");
   auto memSpace = options.defaultMemorySpaceFn(cast<TensorType>(resultType));
   if (!memSpace.has_value())
-      return op->emitError("could not infer memory space");
+    return op->emitError("could not infer memory space");
   return getMemRefType(value, options, /*layout=*/{}, *memSpace);
 }
 } // namespace CallOpInterfaceOverwriter
@@ -231,5 +230,6 @@ RegisterOpInterfaceOverride(
     /*Impl=*/
     &CallOpInterfaceOverwriter::bufferize);
 
-void mlir::bufferization_ext::registerFuncBufferizableOpInterfaceExternalModels(
-    mlir::DialectRegistry &registry) {}
+void bishengir::bufferization::
+    registerFuncBufferizableOpInterfaceExternalModels(
+        mlir::DialectRegistry &registry) {}

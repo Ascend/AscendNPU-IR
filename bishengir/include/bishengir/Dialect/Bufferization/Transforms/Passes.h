@@ -25,25 +25,25 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Pass/Pass.h"
 
-namespace mlir {
+namespace bishengir {
+namespace bufferization {
 #define GEN_PASS_DECL
 #include "bishengir/Dialect/Bufferization/Transforms/Passes.h.inc"
-namespace bufferization {
 
 /// Create a pass to normalize bufferization.to_tensor ops: isolate the
 /// memory-space info and expose memref-level writes to tensor-level
 /// analysis.
-std::unique_ptr<Pass> createNormalizeToTensorOpPass();
+std::unique_ptr<mlir::Pass> createNormalizeToTensorOpPass();
 
 /// Create a pass that runs One-Shot analysis and inserts tensor copies to
 /// resolve bufferization conflicts, without performing the bufferization.
-std::unique_ptr<Pass> createTensorCopyInsertionPass();
-std::unique_ptr<Pass>
-createTensorCopyInsertionPass(const OneShotBufferizationOptions &options);
+std::unique_ptr<mlir::Pass> createTensorCopyInsertionPass();
+std::unique_ptr<mlir::Pass> createTensorCopyInsertionPass(
+    const mlir::bufferization::OneShotBufferizationOptions &options);
 
 #define GEN_PASS_REGISTRATION
 #include "bishengir/Dialect/Bufferization/Transforms/Passes.h.inc"
 } // namespace bufferization
-} // namespace mlir
+} // namespace bishengir
 
 #endif // BISHENGIR_DIALECT_BUFFERIZATION_TRANSFORMS_PASSES_H

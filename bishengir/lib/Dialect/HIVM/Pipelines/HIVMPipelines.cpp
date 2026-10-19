@@ -159,7 +159,7 @@ bufferizationPipeline(OpPassManager &pm,
   // Expose memref-level writes (e.g., hivm.hir.load) to tensor-level analysis
   // by inserting an `alloc_tensor(copy...)` for each writable to_tensor.
   pm.nest<func::FuncOp>().addPass(
-      bufferization::createNormalizeToTensorOpPass());
+      bishengir::bufferization::createNormalizeToTensorOpPass());
   bufferization::OneShotBufferizationOptions oneShotOptions;
   oneShotOptions.bufferizeFunctionBoundaries = true;
   oneShotOptions.setFunctionBoundaryTypeConversion(
@@ -181,7 +181,8 @@ bufferizationPipeline(OpPassManager &pm,
       bufferization::OneShotBufferizationOptions::AnalysisHeuristic::TopDown;
   pm.addPass(createDecomposeAllocTensorCopyPass());
   // Run a first round of analysis + tensor copy insertion.
-  pm.addPass(bufferization::createTensorCopyInsertionPass(oneShotOptions));
+  pm.addPass(
+      bishengir::bufferization::createTensorCopyInsertionPass(oneShotOptions));
   pm.addPass(createDecomposeAllocTensorCopyPass());
   pm.addPass(bufferization::createOneShotBufferizePass(oneShotOptions));
   canonicalizationHIVMPipeline(pm);
