@@ -45,33 +45,18 @@ template <typename T, typename = std::enable_if_t<std::is_same_v<T, int64_t> ||
 __aiv__ __attribute__((always_inline)) void
 align_pad_for_load_b64_2d(memref_t<__ubuf__ T, 2> *dst, int64_t pad_value,
                           int64_t left_padding_num) {
-  const int64_t factor = sizeof(T) / sizeof(uint32_t);
-  int64_t stride_dst = dst->strides[0];
-  // if size and stride is too high, we cant fit the mask so we shift
-  constexpr int num_per_repeat = INTR_BYTES_PER_REPEAT / sizeof(T);
-  int64_t padding_shift_count = stride_dst / num_per_repeat;
-  if (stride_dst % num_per_repeat == 0) {
-    padding_shift_count = padding_shift_count - 1;
-  }
-  // Assume align_pad < num_per_repeat (Maximum mask size)
   int64_t repeat_times = dst->sizes[0];
   int64_t loop_num = repeat_times / INTR_MAX_REPEAT_CNTS;
   for (int64_t i = 0; i < loop_num; ++i) {
-    apply_padding_b64<T, 2>(dst,
-                            (i * stride_dst * INTR_MAX_REPEAT_CNTS +
-                             padding_shift_count * num_per_repeat) *
-                                factor,
-                            pad_value, INTR_MAX_REPEAT_CNTS,
-                            padding_shift_count);
+    apply_padding_b64<T, 2>(dst, left_padding_num,
+                            /*row_base=*/i * INTR_MAX_REPEAT_CNTS, pad_value,
+                            INTR_MAX_REPEAT_CNTS);
   }
   if (repeat_times % INTR_MAX_REPEAT_CNTS != 0) {
     int64_t remain_repeat_times = repeat_times % INTR_MAX_REPEAT_CNTS;
-    apply_padding_b64<T, 2>(dst,
-                            (loop_num * stride_dst * INTR_MAX_REPEAT_CNTS +
-                             padding_shift_count * num_per_repeat) *
-                                factor,
-                            pad_value, remain_repeat_times,
-                            padding_shift_count);
+    apply_padding_b64<T, 2>(dst, left_padding_num,
+                            /*row_base=*/loop_num * INTR_MAX_REPEAT_CNTS,
+                            pad_value, remain_repeat_times);
   }
 }
 
@@ -119,7 +104,11 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_2d_core(
     INTRINSIC(set_mov_pad_val, 0);
   }
 
-  auto dst_ptr = dst->aligned + dst->offset;
+  // The MTE starts writing at the pulled-back DMA start when left padding is
+  // present, so the alignment gate must check that address, not the logical
+  // destination. left_padding_num = offset % num_per_block by IR construction,
+  // so dst->offset - left_padding_num is the 32B aligned DMA start.
+  auto dst_ptr = dst->aligned + dst->offset - left_padding_num;
   if (!isAddress32ByteAligned(dst_ptr)) {
     load_gm_to_ubuf_2d_by_scalar<T>(src, dst);
     return;
@@ -129,7 +118,6 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_2d_core(
   int64_t stride1_ub = dst->strides[1];
   int64_t stride0_gm = src->strides[0];
   int64_t stride0_ub = dst->strides[0];
-  bool has_padding = left_padding_num != 0;
   if (stride1_gm < 0 || stride0_gm < 0 || stride1_ub < 0 || stride0_ub < 0)
       [[unlikely]] {
     load_gm_to_ubuf_2d_by_scalar<T>(src, dst);
@@ -148,8 +136,16 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_2d_core(
 
   uint8_t l2_cache_ctl = static_cast<uint8_t>(eviction_policy);
   if (stride1_gm == 1 && stride1_ub == 1) [[likely]] {
-    // last dimension is contiguous
-    if (!has_padding && !isStrideAligned<T>(stride0_ub)) {
+    // last dimension is contiguous. The row stride must stay 32B aligned for
+    // every burst of the vector DMA, and each padded burst spans
+    // CEIL(lp+size1, npb) elements starting at the row's pulled-back DMA
+    // start, which must not overrun into the next row's span. Both hold for
+    // well-formed subviews of an aligned tile (off+size1 <= stride0_ub and
+    // lp <= off); these checks are the explicit, last-resort defense against
+    // IR that bypasses the subview verifier.
+    if (!isStrideAligned<T>(stride0_ub) ||
+        CEIL_FACTOR(left_padding_num + src->sizes[1],
+                    INTR_BYTES_PER_BLOCK / sizeof(T)) > stride0_ub) {
       load_gm_to_ubuf_2d_by_scalar<T>(src, dst);
       return;
     }
