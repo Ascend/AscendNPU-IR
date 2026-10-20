@@ -1386,6 +1386,13 @@ def HIVM_CVPipelinedLoopAttr
   }];
 }
 
+def HIVM_FusedLCDAttr
+    : HIVM_Attr<"FusedLCD", "fused_lcd"> {
+  let description = [{
+    Marks a scope as a fused scope of loop-carried dependent scopes.
+  }];
+}
+
 def HIVM_UnlikelyConditionAttr
     : HIVM_Attr<"UnlikelyCondition", "unlikely_condition"> {
   let description = [{

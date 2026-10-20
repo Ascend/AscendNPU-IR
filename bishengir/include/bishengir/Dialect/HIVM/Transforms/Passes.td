@@ -1587,6 +1587,20 @@ def MergeCVScopes
                            "tensor::TensorDialect"];
 }
 
+def PipelineStaging
+    : HIVMPass<"pipeline-staging", "func::FuncOp"> {
+  let summary = "Assign preload number to scopes";
+  let constructor = "mlir::hivm::createPipelineStagingPass()";
+  let dependentDialects = ["hivm::HIVMDialect", "scf::SCFDialect",
+                           "mlir::scope::ScopeDialect",
+                           "bishengir::memref_ext::MemRefExtDialect",
+                           "bufferization::BufferizationDialect",
+                           "memref::MemRefDialect"];
+  let options = [Option<"maxPipelineMultibuffer", "max-pipeline-multibuffer", "int",
+                        /*default=*/"3",
+                        "Maximum pipeline multibuffer.">];
+}
+
 def AutoBlockifyParallelLoop
     : HIVMPass<"auto-blockify-parallel-loop", "func::FuncOp"> {
   let summary = "Enable auto loop on blocks when logical blocknum is larger "

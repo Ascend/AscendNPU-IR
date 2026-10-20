@@ -353,6 +353,9 @@ static void buildCVPipelineV2(OpPassManager &pm,
                               const HIVMPipelineOptions &hivmPipelineOptions) {
   pm.nest<func::FuncOp>().addPass(createOutlineCVScopesPass());
   pm.nest<func::FuncOp>().addPass(createMergeCVScopesPass());
+  PipelineStagingOptions options;
+  options.maxPipelineMultibuffer = hivmPipelineOptions.setMaxPipelineMultibuffer;
+  pm.nest<func::FuncOp>().addPass(createPipelineStagingPass(options));
 }
 
 static void hivmPreBufferizationOptimizationPipeline(
