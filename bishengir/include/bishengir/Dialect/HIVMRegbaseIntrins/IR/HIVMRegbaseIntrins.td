@@ -1703,6 +1703,89 @@ def VcgaddUXInstrOp : ReductionInstrOp<"hivm.vcgadd.u.x"> {
 }
 def VcgaddSXInstrOp : ReductionInstrOp<"hivm.vcgadd.s.x">;
 
+//
+// V2 (Davinci 920r1 / Ascend960) reduction ops. These are fully typed, so no
+// overload resolution is performed and the src/result lanes may differ (the
+// per-pair source lanes are summed into 32-bit group results).
+//
+class ReductionV2InstrOp<string mnemonic>
+    : HIVMRegbaseIntrins_Op<
+          /*string opName=*/mnemonic,
+          /*list<int> overloadedResults=*/[],
+          /*list<int> overloadedOperands=*/[],
+          /*list<Trait> traits=*/[],
+          /*int numResults=*/1> {
+  let arguments = (ins ValidVector:$src, predicateVector:$mask);
+  let results = (outs ValidVector:$res);
+}
+
+class ReductionV2UnaryInstrOp<string mnemonic>
+    : HIVMRegbaseIntrins_Op<
+          /*string opName=*/mnemonic,
+          /*list<int> overloadedResults=*/[],
+          /*list<int> overloadedOperands=*/[],
+          /*list<Trait> traits=*/[],
+          /*int numResults=*/1> {
+  let arguments = (ins ValidVector:$src);
+  let results = (outs ValidVector:$res);
+}
+
+def VcgaddV2V64S32XInstrOp : ReductionV2InstrOp<"hivm.vcgaddv2.v64s32.x">;
+def VcgaddV2V64U32XInstrOp : ReductionV2InstrOp<"hivm.vcgaddv2.v64u32.x">;
+def VcgaddV2V128S16XInstrOp : ReductionV2InstrOp<"hivm.vcgaddv2.v128s16.x">;
+def VcgaddV2V128U16XInstrOp : ReductionV2InstrOp<"hivm.vcgaddv2.v128u16.x">;
+def VcgaddV2V256S8XInstrOp : ReductionV2InstrOp<"hivm.vcgaddv2.v256s8.x">;
+def VcgaddV2V256U8XInstrOp : ReductionV2InstrOp<"hivm.vcgaddv2.v256u8.x">;
+def VcgaddV2V128F16XInstrOp : ReductionV2InstrOp<"hivm.vcgaddv2.v128f16.x">;
+def VcgaddV2V64F32XInstrOp : ReductionV2InstrOp<"hivm.vcgaddv2.v64f32.x">;
+
+def VcaddV2V64S32XInstrOp : ReductionV2UnaryInstrOp<"hivm.vcaddv2.v64s32.x">;
+def VcaddV2V64U32XInstrOp : ReductionV2UnaryInstrOp<"hivm.vcaddv2.v64u32.x">;
+def VcaddV2V128F16XInstrOp : ReductionV2UnaryInstrOp<"hivm.vcaddv2.v128f16.x">;
+def VcaddV2V64F32XInstrOp : ReductionV2UnaryInstrOp<"hivm.vcaddv2.v64f32.x">;
+
+// Group max/min reduce, masked, same element type for src and group results.
+def VcgmaxV2V128F16XInstrOp : ReductionV2InstrOp<"hivm.vcgmaxv2.v128f16.x">;
+def VcgmaxV2V64F32XInstrOp : ReductionV2InstrOp<"hivm.vcgmaxv2.v64f32.x">;
+def VcgmaxV2V128U16XInstrOp : ReductionV2InstrOp<"hivm.vcgmaxv2.v128u16.x">;
+def VcgmaxV2V128S16XInstrOp : ReductionV2InstrOp<"hivm.vcgmaxv2.v128s16.x">;
+def VcgmaxV2V64U32XInstrOp : ReductionV2InstrOp<"hivm.vcgmaxv2.v64u32.x">;
+def VcgmaxV2V64S32XInstrOp : ReductionV2InstrOp<"hivm.vcgmaxv2.v64s32.x">;
+
+def VcgminV2V128F16XInstrOp : ReductionV2InstrOp<"hivm.vcgminv2.v128f16.x">;
+def VcgminV2V64F32XInstrOp : ReductionV2InstrOp<"hivm.vcgminv2.v64f32.x">;
+def VcgminV2V128U16XInstrOp : ReductionV2InstrOp<"hivm.vcgminv2.v128u16.x">;
+def VcgminV2V128S16XInstrOp : ReductionV2InstrOp<"hivm.vcgminv2.v128s16.x">;
+def VcgminV2V64U32XInstrOp : ReductionV2InstrOp<"hivm.vcgminv2.v64u32.x">;
+def VcgminV2V64S32XInstrOp : ReductionV2InstrOp<"hivm.vcgminv2.v64s32.x">;
+
+// Cross-fold max/min, operates on the group results, no mask.
+def VcmaxV2V128F16XInstrOp : ReductionV2UnaryInstrOp<"hivm.vcmaxv2.v128f16.x">;
+def VcmaxV2V64F32XInstrOp : ReductionV2UnaryInstrOp<"hivm.vcmaxv2.v64f32.x">;
+def VcmaxV2V128U16XInstrOp : ReductionV2UnaryInstrOp<"hivm.vcmaxv2.v128u16.x">;
+def VcmaxV2V128S16XInstrOp : ReductionV2UnaryInstrOp<"hivm.vcmaxv2.v128s16.x">;
+def VcmaxV2V64U32XInstrOp : ReductionV2UnaryInstrOp<"hivm.vcmaxv2.v64u32.x">;
+def VcmaxV2V64S32XInstrOp : ReductionV2UnaryInstrOp<"hivm.vcmaxv2.v64s32.x">;
+
+def VcminV2V128F16XInstrOp : ReductionV2UnaryInstrOp<"hivm.vcminv2.v128f16.x">;
+def VcminV2V64F32XInstrOp : ReductionV2UnaryInstrOp<"hivm.vcminv2.v64f32.x">;
+def VcminV2V128U16XInstrOp : ReductionV2UnaryInstrOp<"hivm.vcminv2.v128u16.x">;
+def VcminV2V128S16XInstrOp : ReductionV2UnaryInstrOp<"hivm.vcminv2.v128s16.x">;
+def VcminV2V64U32XInstrOp : ReductionV2UnaryInstrOp<"hivm.vcminv2.v64u32.x">;
+def VcminV2V64S32XInstrOp : ReductionV2UnaryInstrOp<"hivm.vcminv2.v64s32.x">;
+
+// Pair reduce, adjacent element pairs are summed, masked.
+def VcpaddV2V128F16XInstrOp : ReductionV2InstrOp<"hivm.vcpaddv2.v128f16.x">;
+def VcpaddV2V64F32XInstrOp : ReductionV2InstrOp<"hivm.vcpaddv2.v64f32.x">;
+
+// Pack, unary, same element type for src and result.
+def VpackV2V128U16XInstrOp : ReductionV2UnaryInstrOp<"hivm.vpackv2.v128u16.x">;
+def VpackV2V128S16XInstrOp : ReductionV2UnaryInstrOp<"hivm.vpackv2.v128s16.x">;
+def VpackV2V128F16XInstrOp : ReductionV2UnaryInstrOp<"hivm.vpackv2.v128f16.x">;
+def VpackV2V64U32XInstrOp : ReductionV2UnaryInstrOp<"hivm.vpackv2.v64u32.x">;
+def VpackV2V64S32XInstrOp : ReductionV2UnaryInstrOp<"hivm.vpackv2.v64s32.x">;
+def VpackV2V64F32XInstrOp : ReductionV2UnaryInstrOp<"hivm.vpackv2.v64f32.x">;
+
 def VcgmaxUInstrOp : ReductionInstrOp<"hivm.vcgmax.u.x"> {
   let summary = "A V300 vector maximum group reduction instruction";
   let description = [{
