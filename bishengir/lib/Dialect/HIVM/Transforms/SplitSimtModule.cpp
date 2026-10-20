@@ -108,6 +108,7 @@ void SplitSimtModulePass::runOnOperation() {
     builder.setInsertionPointToStart(modBlock);
     newMod->setAttrs(mod->getAttrs());
     newMod->setAttr(hacc::SIMTModuleAttr::name, builder.getUnitAttr());
+    newMod->setAttr("hacc.simd_simt_mix_compile", builder.getUnitAttr());
   }
 
   llvm::SmallVector<Operation *> simdFuncs;
@@ -118,6 +119,7 @@ void SplitSimtModulePass::runOnOperation() {
   }
   auto newMod = builder.create<ModuleOp>(mod->getLoc());
   newMod->setAttrs(mod->getAttrs());
+  newMod->setAttr("hacc.simd_simt_mix_compile", builder.getUnitAttr());
   mod->setAttrs(llvm::ArrayRef<NamedAttribute>{});
   builder.setInsertionPointToStart(newMod.getBody());
   for (auto op : simdFuncs) {

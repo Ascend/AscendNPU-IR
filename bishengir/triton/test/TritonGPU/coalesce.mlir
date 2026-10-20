@@ -199,3 +199,44 @@ tt.func @coalesce_poison(%arg0: !tt.ptr<f16> {tt.divisibility = 16 : i32}, %arg1
 }
 
 }
+
+// -----
+
+// Test argSort without the mixed compilation flag: when all dimensions have
+// equal contiguity, argSort falls back to the non-stable upstream ordering,
+// so the resulting order is implementation-defined.
+#blocked_eq = #ttg.blocked<{sizePerThread = [1, 1], threadsPerWarp = [16, 2], warpsPerCTA = [2, 2], order = [1, 0]}>
+module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 4 : i32} {
+
+// CHECK-LABEL: @coalesce_equal_contiguity
+// CHECK: tt.load
+tt.func @coalesce_equal_contiguity(%arg0: !tt.ptr<f32> {tt.divisibility = 16 : i32}) {
+  // All dims have contiguity 1 (splat-based pointers), testing deterministic tie-breaking.
+  %ptrs = tt.splat %arg0 : !tt.ptr<f32> -> tensor<64x64x!tt.ptr<f32>, #blocked_eq>
+  %val = tt.load %ptrs : tensor<64x64x!tt.ptr<f32>, #blocked_eq>
+  tt.store %ptrs, %val : tensor<64x64x!tt.ptr<f32>, #blocked_eq>
+  tt.return
+}
+
+}
+
+// -----
+
+// Test argSort tie-breaking in SIMD/SIMT mixed compilation mode (module
+// carries hacc.simd_simt_mix_compile, set by the SplitSimtModule pass):
+// when all dimensions have equal contiguity, the sort must deterministically
+// prefer row-major (higher index = more inner), i.e. order = [1, 0].
+#blocked_eq_mix = #ttg.blocked<{sizePerThread = [1, 1], threadsPerWarp = [16, 2], warpsPerCTA = [2, 2], order = [1, 0]}>
+module attributes {hacc.simd_simt_mix_compile, "ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 4 : i32} {
+
+// CHECK-LABEL: @coalesce_equal_contiguity_mix_compile
+// CHECK: tt.load
+tt.func @coalesce_equal_contiguity_mix_compile(%arg0: !tt.ptr<f32> {tt.divisibility = 16 : i32}) {
+  // All dims have contiguity 1 (splat-based pointers), testing deterministic tie-breaking.
+  %ptrs = tt.splat %arg0 : !tt.ptr<f32> -> tensor<64x64x!tt.ptr<f32>, #blocked_eq_mix>
+  %val = tt.load %ptrs : tensor<64x64x!tt.ptr<f32>, #blocked_eq_mix>
+  tt.store %ptrs, %val : tensor<64x64x!tt.ptr<f32>, #blocked_eq_mix>
+  tt.return
+}
+
+}

@@ -92,11 +92,21 @@ bool isLoadFromTensorPtr(triton::LoadOp op) {
   return mlir::triton::isTensorPointerType(op.getPtr().getType());
 }
 
-SmallVector<unsigned, 4> argSort(const SmallVector<int64_t> &arr) {
+SmallVector<unsigned, 4> argSort(const SmallVector<int64_t> &arr,
+                                 bool stableSort) {
   SmallVector<unsigned, 4> ret(arr.size());
   std::iota(ret.begin(), ret.end(), 0);
-  std::stable_sort(ret.begin(), ret.end(),
-                   [&](unsigned x, unsigned y) { return arr[x] > arr[y]; });
+  if (stableSort) {
+    // SIMD/SIMT mixed compilation mode: break ties deterministically towards
+    // row-major order so that the derived layouts stay consistent with the
+    // SIMD part of the mixed module.
+    std::stable_sort(ret.begin(), ret.end(), [&](unsigned x, unsigned y) {
+      return arr[x] > arr[y] || (arr[x] == arr[y] && x > y);
+    });
+  } else {
+    std::sort(ret.begin(), ret.end(),
+              [&](unsigned x, unsigned y) { return arr[x] > arr[y]; });
+  }
   return ret;
 }
 
