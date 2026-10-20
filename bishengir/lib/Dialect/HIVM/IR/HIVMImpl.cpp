@@ -448,6 +448,37 @@ bool isIdentityStrides(MemRefType shapedType) {
   return stridedLayout.isIdentity();
 }
 
+bool isI1LayoutByteExpressible(MemRefType shapedType) {
+  if (!shapedType.getElementType().isInteger(1))
+    return true;
+  if (shapedType.getRank() == 0)
+    return true;
+
+  SmallVector<int64_t> strides;
+  int64_t offset = 0;
+  if (failed(utils::getStridesAndOffsetCompat(shapedType, strides, offset)))
+    return false;
+  if (offset == ShapedType::kDynamic)
+    return false;
+  if (offset % util::BITS_PER_BYTE != 0)
+    return false;
+  // view_as maps non-last strides to CEIL_DIV(stride, 8) bytes and keeps the
+  // last-dim stride verbatim but in i8-element units, so only a unit bit
+  // stride maps to a unit byte stride.
+  for (int64_t dim = 0; dim < shapedType.getRank() - 1; ++dim) {
+    if (strides[dim] == ShapedType::kDynamic)
+      return false;
+    if (strides[dim] % util::BITS_PER_BYTE != 0)
+      return false;
+  }
+  if (strides.back() == ShapedType::kDynamic || strides.back() != 1)
+    return false;
+  int64_t lastDim = shapedType.getShape().back();
+  if (lastDim == ShapedType::kDynamic)
+    return false;
+  return lastDim % util::BITS_PER_BYTE == 0;
+}
+
 using AlignInfoMap = SmallVector<int64_t>;
 SmallVector<int64_t> getAlignedSizes(ArrayRef<int64_t> baseSizes,
                                      AlignInfoMap &alignInfo) {
