@@ -2837,3 +2837,21 @@ func.func @test_ara_peeled_strided_xori_i32() {
   hivm.hir.vreduce <xori> ins(%src : memref<2x100x3xi32, strided<[1600, 16, 1]>>) outs(%dst : memref<2x1x3xi32, strided<[16, 16, 1]>>) reduce_dims = [1]
   return
 }
+
+// -----
+
+// RA0A1 XOR
+// CHECK-LABEL: func.func @test_ra0ar_xor
+// CHECK: %[[NORMALIZED_ALLOC:.*]] = memref.alloc() : memref<128xi32>
+// CHECK: %[[COPY:.*]] = memref.reinterpret_cast %[[NORMALIZED_ALLOC]]
+// CHECK: hivm.hir.copy ins(%arg0 : memref<2x8x2xi32>) outs(%[[COPY]] : memref<2x8x2xi32, strided<[64, 8, 1]>>)
+// CHECK: %[[TEMP:.*]] = memref.alloc() : memref<64xi32>
+// CHECK: hivm.hir.vreduce <xori> ins(%[[COPY]]
+// CHECK-SAME: temp_buffer(%[[TEMP]] : memref<64xi32>)
+func.func @test_ra0ar_xor(%arg0: memref<2x8x2xi32>, %arg1: memref<1x2x2x2x8x1xi32>, %arg2: memref<1x8x2xi32>) {
+  %subview = memref.subview %arg1[0, 0, 0, 0, 0, 0] [1, 2, 2, 2, 2, 1] [1, 1, 1, 1, 1, 1] : memref<1x2x2x2x8x1xi32> to memref<1x2x2x2x2xi32, strided<[64, 32, 16, 8, 1]>>
+  %collapse_shape = memref.collapse_shape %subview [[0], [1, 2, 3], [4]] : memref<1x2x2x2x2xi32, strided<[64, 32, 16, 8, 1]>> into memref<1x8x2xi32, strided<[64, 8, 1]>>
+  hivm.hir.vreduce <xori> ins(%arg0 : memref<2x8x2xi32>) outs(%collapse_shape : memref<1x8x2xi32, strided<[64, 8, 1]>>) reduce_dims = [0]
+  memref.copy %collapse_shape, %arg2 : memref<1x8x2xi32, strided<[64, 8, 1]>> to memref<1x8x2xi32>
+  return
+}

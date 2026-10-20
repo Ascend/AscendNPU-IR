@@ -67,6 +67,14 @@ constexpr static unsigned int FRACTAL_BLOCK_NUM = 16;
 
 /// Number of elements that fit in one DMA/UB align block for type `t`.
 int64_t getNumPerBlock(Type t);
+
+/// Compatibility wrappers for the LLVM 21 MemRefType stride API change.
+LogicalResult getStridesAndOffsetCompat(MemRefType type,
+                                        SmallVectorImpl<int64_t> &strides,
+                                        int64_t &offset);
+std::pair<SmallVector<int64_t>, int64_t>
+getStridesAndOffsetCompat(MemRefType type);
+
 constexpr static int64_t kUBAlignSizeInBits = 32 * 8;
 static constexpr llvm::StringLiteral kEnableAutoMarkBufferSize =
     "enable_auto_mark_buffer_size";
