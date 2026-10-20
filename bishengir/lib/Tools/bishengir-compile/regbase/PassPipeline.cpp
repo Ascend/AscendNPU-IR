@@ -14,6 +14,7 @@
 #include "bishengir/Conversion/HIVMAVEToStandard/HIVMAVEToStandard.h"
 #include "bishengir/Conversion/HIVMToStandard/HIVMToStandard.h"
 #include "bishengir/Conversion/Passes.h"
+#include "bishengir/Conversion/ProtonToHIVM/ProtonToHIVM.h"
 #include "bishengir/Dialect/Annotation/Transforms/Passes.h"
 #include "bishengir/Dialect/AscendDPX/Transforms/Passes.h"
 #include "bishengir/Dialect/HACC/IR/HACC.h"
@@ -343,6 +344,14 @@ void buildFinalHIVMPipelines(mlir::OpPassManager &pm,
           pm, config, /*shouldInferFuncCoreType=*/true);
     }
     hivm::regbase::buildLowerHIVMPipelines(pm, *options);
+#if BISHENGIR_ENABLE_TRITON_COMPILE
+    if (hacc::utils::isAscend950(config.getTarget()) &&
+        config.getEnableTritonKernelCompile() &&
+        !config.getProtonMetadataOutput().empty()) {
+      pm.addPass(triton::proton::a5::createGetProtonMetadataPass(
+          {config.getProtonMetadataOutput()}));
+    }
+#endif
   }
 }
 

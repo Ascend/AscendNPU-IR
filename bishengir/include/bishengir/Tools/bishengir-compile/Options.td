@@ -1352,6 +1352,13 @@ def TritonMetadataOutput : BiShengIRCompileOpt<
   bit isSharedWithDownstreamToolchain = 1;
 }
 
+def ProtonMetadataOutput
+    : BiShengIRCompileOpt<
+          "File to dump A5 Proton scope metadata. -- means stdout",
+          "std::string", "\"\""> {
+  bit isSharedWithDownstreamToolchain = 0;
+}
+
 def DisableDecomposeReduction : SIMTOptimizationControlOptions<
   "Disable SIMT decompose reduction pass",
   "bool",

@@ -9,6 +9,7 @@
 #include "bishengir/Conversion/ArithToAffine/ArithToAffine.h"
 #include "bishengir/Conversion/HFusionToHIVM/HFusionToHIVMPass.h"
 #include "bishengir/Conversion/LowerMemRefExt/LowerMemRefExt.h"
+#include "bishengir/Conversion/ProtonToHIVM/ProtonToHIVM.h"
 #include "bishengir/Conversion/TensorToHIVM/TensorToHIVM.h"
 #include "bishengir/Dialect/Annotation/Transforms/Passes.h"
 #include "bishengir/Dialect/Arith/Transforms/Passes.h"
@@ -822,6 +823,7 @@ static void hivmPostBufferizationOptimizationPipeline(
 
 void buildConvertToHIVMPipeline(OpPassManager &pm,
                                 const ConvertToHIVMPipelineOptions &options) {
+  pm.addPass(bishengir::triton::proton::a5::createConvertProtonToHIVMPass());
   registerAivDisabledPassesForRegbase();
   ConvertHFusionToHIVMOptions hfs2hivmOptions;
   hfs2hivmOptions.mmMapMode = options.enableTritonKernelCompile

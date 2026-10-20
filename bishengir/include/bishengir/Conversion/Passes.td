@@ -296,6 +296,35 @@ def AllocateProtonAscendGlobalScratchBufferPass :
   ];
 }
 
+def ConvertProtonToHIVM : Pass<"convert-proton-to-hivm", "mlir::ModuleOp"> {
+  let summary = "Convert Proton scope records to A5 HIVM boundaries.";
+  let description = [{
+    Validate structured Proton scope pairs, allocate 12-bit DFX region IDs
+    (bits [9:0] = logical id, bit 10 = 1, bit 11 = start/end), preserve scope
+    metadata, and replace each `proton.record` with an atomic HIVM profiling
+    boundary for Ascend A5 targets.
+  }];
+  let constructor =
+      "bishengir::triton::proton::a5::createConvertProtonToHIVMPass()";
+  let dependentDialects = ["::mlir::arith::ArithDialect",
+                           "mlir::triton::proton::ProtonDialect",
+                           "mlir::hivm::HIVMDialect"];
+}
+
+def GetProtonMetadata : Pass<"get-proton-metadata", "mlir::ModuleOp"> {
+  let summary = "Write A5 Proton scope metadata.";
+  let description = [{
+    Dump Proton's metadata as JSON. Each scope entry has `name`, `parent_id`,
+    `start_region_id`, and `end_region_id`. Host tools should map hardware
+    trace region ids using these fields.
+  }];
+  let constructor =
+      "bishengir::triton::proton::a5::createGetProtonMetadataPass()";
+  let options = [Option<"protonMetadataOutput", "proton-metadata-output",
+                        "std::string", "",
+                        "File to write Proton metadata. -- means stdout">];
+}
+
 //===----------------------------------------------------------------------===//
 // HACCToLLVM
 //===----------------------------------------------------------------------===//
