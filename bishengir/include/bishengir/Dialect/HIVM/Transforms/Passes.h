@@ -424,6 +424,10 @@ std::unique_ptr<Pass> createOutlineCVScopesPass();
 // Create Merge CV Scopes pass for CV pipelining v2
 std::unique_ptr<Pass> createMergeCVScopesPass();
 
+// Create a CV Pipelining Staging pass
+std::unique_ptr<Pass>
+createPipelineStagingPass(const PipelineStagingOptions &options = {});
+
 // Create a pass to compose expands and collapses ops
 std::unique_ptr<Pass> createComposeCollapseExpandPass();
 

@@ -1670,6 +1670,13 @@ def UseDPX : BiShengIRCompileOpt<
 > {
   bit isSharedWithDownstreamToolchain = 1;
 }
+
+def SetMaxPipelineMultibuffer : HIVMOptimizationControlOptions<
+  "Maximum number of multibuffers for pipeline staging. ",
+  "unsigned",
+  "3"
+>;
+
 } // let optionScope = ["A5_ONLY"]
 
 #endif // BISHENGIR_TOOLS_BISHENGIR_COMPILE_OPTIONS_TD
