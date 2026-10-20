@@ -1,10 +1,10 @@
 // RUN: bishengir-opt --split-simt-module --split-input-file %s | FileCheck %s
 
 // CHECK: module {
-// CHECK-NEXT: module {
+// CHECK-NEXT: module attributes {hacc.simd_simt_mix_compile} {
 // CHECK-NEXT: func.func private @simple_indirect_load_kernel_scope_0
 // CHECK-NEXT: func.func @simple_indirect_load_kernel
-// CHECK: module attributes {hacc.simt_module} {
+// CHECK: module attributes {hacc.simd_simt_mix_compile, hacc.simt_module} {
 // CHECK-NEXT: func.func @simple_indirect_load_kernel_scope_0
 
 module {
@@ -37,10 +37,10 @@ module {
 
 // -----
 // CHECK: module {
-// CHECK-NEXT: module {
+// CHECK-NEXT: module attributes {hacc.simd_simt_mix_compile} {
 // CHECK-NEXT: func.func private @simple_indirect_store_kernel_scope_0
 // CHECK-NEXT: func.func @simple_indirect_store_kernel
-// CHECK: module attributes {hacc.simt_module} {
+// CHECK: module attributes {hacc.simd_simt_mix_compile, hacc.simt_module} {
 // CHECK-NEXT: func.func @simple_indirect_store_kernel_scope_0
 module {
   func.func @simple_indirect_store_kernel_scope_0(%arg0: memref<?xi64, #hivm.address_space<gm>> {hivm.memory_effect = #hivm.memory_effect<read>}, %arg1: memref<8xi64, #hivm.address_space<ub>>, %arg2: memref<8xf32, #hivm.address_space<ub>>, %arg3: memref<?xf32, #hivm.address_space<gm>> {hivm.memory_effect = #hivm.memory_effect<write>}, %arg4: i32, %arg5: memref<1024xi8, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vf_mode = #hivm.vf_mode<SIMT>, no_inline, outline} {

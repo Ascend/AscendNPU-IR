@@ -39,7 +39,14 @@ struct CoalescePass : public impl::TritonGPUCoalesceBase<CoalescePass> {
     });
 
     auto contiguity = axisInfoAnalysis.getAxisInfo(ptr)->getContiguity();
-    SmallVector<unsigned> order = argSort(contiguity);
+    // In SIMD/SIMT mixed compilation mode (module marked by
+    // SplitSimtModule), argSort must break ties deterministically
+    // (row-major) so that the derived layouts stay consistent with the SIMD
+    // part of the mixed module.
+    ModuleOp parentModule = op->getParentOfType<ModuleOp>();
+    bool stableSortOrder =
+        parentModule && parentModule->hasAttr("hacc.simd_simt_mix_compile");
+    SmallVector<unsigned> order = argSort(contiguity, stableSortOrder);
     LDBG("order=[" << triton::join(order, ", ") << "]");
 
     auto matchesShape = [&refTensorType](const Value &val) {
@@ -57,7 +64,8 @@ struct CoalescePass : public impl::TritonGPUCoalesceBase<CoalescePass> {
         if (!val || !matchesShape(val) || memAccessesSameOrder.contains(use))
           continue;
         auto currOrder =
-            argSort(axisInfoAnalysis.getAxisInfo(val)->getContiguity());
+            argSort(axisInfoAnalysis.getAxisInfo(val)->getContiguity(),
+                    stableSortOrder);
         if (order == currOrder) {
           LDBG("multi-root-slice: insert to memAccessesSameOrder " << *use);
           memAccessesSameOrder.insert(use);
