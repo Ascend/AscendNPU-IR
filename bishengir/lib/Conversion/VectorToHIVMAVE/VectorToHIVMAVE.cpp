@@ -213,6 +213,106 @@ struct StoreOpPattern : public OpRewritePattern<vector::StoreOp> {
   }
 };
 
+// Check whether it's possible to read the non-identity permutation map
+// in the same way as a regular, straightforward memory segment: a plain load
+// ignores both the map and the source strides and reads consecutive elements
+static bool isUnitDimBroadcastPermutation(AffineMap permMap,
+                                          ArrayRef<int64_t> vectorShape,
+                                          MemRefType srcType) {
+  ArrayRef<int64_t> srcShape = srcType.getShape();
+  if (permMap.getNumSymbols() != 0 ||
+      permMap.getNumResults() != vectorShape.size() ||
+      permMap.getNumDims() != srcShape.size()) {
+    return false;
+  }
+
+  int64_t lastSeenDim = -1;
+  // (source dim, vector position) of every real source dimension
+  SmallVector<std::pair<int64_t, unsigned>> realDims;
+  const auto &results = permMap.getResults();
+  for (unsigned idx = 0; idx < permMap.getNumResults(); ++idx) {
+    const auto &res = results[idx];
+    // Check that all real (extent > 1 or dynamic) source dimensions are read
+    // in the natural order, that is the map does not rearrange anything.
+    // Source dimensions with extent 1 are skipped
+    if (auto dimExpr = dyn_cast<AffineDimExpr>(res)) {
+      int64_t dim = dimExpr.getPosition();
+      if (!ShapedType::isDynamic(srcShape[dim]) && srcShape[dim] == 1) {
+        // A unit source dimension is only skippable if the vector does not
+        // step over it either, otherwise the read strides through memory
+        if (vectorShape[idx] != 1) {
+          return false;
+        }
+        continue;
+      }
+      if (dim <= lastSeenDim) {
+        // reordered (or repeated) relative to source order
+        return false;
+      }
+      lastSeenDim = dim;
+      realDims.push_back({dim, idx});
+      continue;
+    }
+    // Check that what is not directly readable corresponds exactly to dimension
+    // 1 which means that no actual broadcast is taking place
+    auto constExpr = dyn_cast<AffineConstantExpr>(res);
+    if (!constExpr || vectorShape[idx] != 1) {
+      return false;
+    }
+  }
+
+  // Check that the real source dimensions form one dense row-major block,
+  // so that a plain load really reads them.
+  SmallVector<int64_t> strides;
+  int64_t offset;
+  if (failed(getStridesAndOffset(srcType, strides, offset))) {
+    return false;
+  }
+  int64_t expectedStride = 1;
+  for (auto [idx, dimAndPos] : llvm::enumerate(llvm::reverse(realDims))) {
+    auto [dim, vecPos] = dimAndPos;
+    if (strides[dim] != expectedStride) {
+      return false;
+    }
+    // Only the outermost real dimension may be read partially; every inner
+    // one must be read in full, or consecutive rows leave gaps
+    if (idx + 1 < realDims.size()) {
+      if (ShapedType::isDynamic(srcShape[dim]) ||
+          vectorShape[vecPos] != srcShape[dim]) {
+        return false;
+      }
+      expectedStride *= srcShape[dim];
+    }
+  }
+  return true;
+}
+
+static constexpr llvm::StringLiteral kPermutedReadNotGatheredMsg =
+    "non-identity permutation transfer_read must be lowered to a gather, not "
+    "a plain load";
+
+// Non-identity permutations must already be lowered to a gather by
+// TransferReadToGatheringLoadPattern, or TransferReadOpPattern silently emits
+// a wrong-address plain load.
+// Exempt: single-element vectors/sources (nothing to reorder) and
+// unit-dim-broadcast maps like (d0) -> (0, d0).
+// NOT exempt: permMap.isConstant() alone with a multi-element source --
+// BRC_* only fires for a single-element source type, so this would
+// otherwise fall through to a NORM load reading the wrong data.
+static bool isPlainLoadableTransferRead(vector::TransferReadOp readOp) {
+  auto srcType = dyn_cast<MemRefType>(readOp.getSource().getType());
+  if (!srcType) {
+    return true;
+  }
+  VectorType vecType = readOp.getVectorType();
+  AffineMap permMap = readOp.getPermutationMap();
+  bool singleElementSource =
+      srcType.hasStaticShape() && srcType.getNumElements() == 1;
+  return permMap.isIdentity() || vecType.getNumElements() <= 1 ||
+         singleElementSource ||
+         isUnitDimBroadcastPermutation(permMap, vecType.getShape(), srcType);
+}
+
 struct TransferReadOpPattern : public OpRewritePattern<vector::TransferReadOp> {
   using OpRewritePattern<vector::TransferReadOp>::OpRewritePattern;
   LogicalResult matchAndRewrite(vector::TransferReadOp readOp,
@@ -223,6 +323,9 @@ struct TransferReadOpPattern : public OpRewritePattern<vector::TransferReadOp> {
     Type elementType = srcType.getElementType();
     int64_t dataWidth = srcType.getElementTypeBitWidth();
     VectorType vecType = readOp.getVectorType();
+    if (!isPlainLoadableTransferRead(readOp)) {
+      return rewriter.notifyMatchFailure(readOp, kPermutedReadNotGatheredMsg);
+    }
     VectorType resVecType = vecType;
     if (vecType.getShape().size() != 1)
       resVecType = VectorType::get(
@@ -569,33 +672,40 @@ private:
         rewriter.create<arith::ConstantOp>(loc, secondaryIndexAttr);
     Value secondaryIndexVec = secondaryIndexConstant.getResult();
 
+    auto resDtype = resultType.getElementType();
+    VectorType resVecType = VectorType::get({256}, resDtype);
+    VectorType i8VecType = VectorType::get({256}, rewriter.getI8Type());
+    VectorType i16VecType = VectorType::get({128}, rewriter.getI16Type());
+
+    // The native b8 gather is a 128-lane, 16-bit-index instruction,
+    // zero-extended up to a 256-lane result: each requested byte lands in
+    // the low 8 bits of its own 16-bit lane, the high 8 bits are always zero.
     auto gather1 = rewriter.create<hivmave::VFGatherOp>(
-        loc, resultType, base, indices, indexVec, mask);
+        loc, i16VecType, base, indices, indexVec, mask);
     auto gather2 = rewriter.create<hivmave::VFGatherOp>(
-        loc, resultType, base, indices, secondaryIndexVec, mask);
+        loc, i16VecType, base, indices, secondaryIndexVec, mask);
     Value gather1Result = gather1.getResult();
     Value gather2Result = gather2.getResult();
 
-    auto resDtype = resultType.getElementType();
-    VectorType vecTy = VectorType::get({256}, resDtype);
-    auto i8Type = rewriter.getI8Type();
-    VectorType i8VecTy = VectorType::get({256}, i8Type);
-    Value cstZero = rewriter.create<arith::ConstantOp>(
-        loc, i8Type, rewriter.getIntegerAttr(i8Type, 0));
-    Value cstZeroVec =
-        rewriter.create<hivmave::VFBroadcastScalarOp>(loc, i8VecTy, cstZero);
-    if (isa<Float8E4M3FNType>(resDtype) || isa<Float8E5M2Type>(resDtype)) {
-      cstZeroVec = rewriter.create<arith::BitcastOp>(loc, vecTy, cstZeroVec);
-    }
-    auto resEven = rewriter.create<hivmave::VFDeInterleaveOp>(
-        loc, vecTy, vecTy, gather1Result, cstZeroVec,
-        hivmave::Layout_Change::DENSE);
-    auto resOdd = rewriter.create<hivmave::VFDeInterleaveOp>(
-        loc, vecTy, vecTy, gather2Result, cstZeroVec,
-        hivmave::Layout_Change::DENSE);
+    constexpr int32_t kVpackPartLower = 0;
+    auto packDenseHalf = [&](Value gatherResult) -> Value {
+      Value packed = rewriter
+                         .create<hivmave::VFVpackOp>(
+                             loc, i8VecType, gatherResult,
+                             rewriter.getI32IntegerAttr(kVpackPartLower))
+                         .getRes();
+      if (isa<Float8E4M3FNType>(resDtype) || isa<Float8E5M2Type>(resDtype))
+        packed = rewriter.create<arith::BitcastOp>(loc, resVecType, packed);
+      return packed;
+    };
+    Value resEven = packDenseHalf(gather1Result);
+    Value resOdd = packDenseHalf(gather2Result);
 
+    // Interleaving the even and odd halves puts result element i in lane i,
+    // so the first resultType lanes of the interleaved register are exactly
+    // the requested elements
     auto res = rewriter.create<hivmave::VFInterleaveOp>(
-        loc, vecTy, vecTy, resEven.getResult(0), resOdd.getResult(0));
+        loc, resultType, resultType, resEven, resOdd);
     Value finalResult = res.getResult(0);
 
     return finalResult;
@@ -966,6 +1076,21 @@ struct VectorToHIVMAVEPass
     ModuleOp moduleOp = cast<ModuleOp>(getOperation());
     if (moduleOp) {
       tagConstantArguments(moduleOp);
+    }
+    // Reject reads that TransferReadOpPattern cannot lower correctly up front,
+    // so the failure is reported with its actual reason instead of the
+    // generic "failed to legalize" from the conversion driver
+    WalkResult unloweredRead =
+        moduleOp->walk([](vector::TransferReadOp readOp) {
+          if (isPlainLoadableTransferRead(readOp)) {
+            return WalkResult::advance();
+          }
+          readOp.emitOpError(kPermutedReadNotGatheredMsg);
+          return WalkResult::interrupt();
+        });
+    if (unloweredRead.wasInterrupted()) {
+      signalPassFailure();
+      return;
     }
     target.addLegalDialect<hivmave::AVEDialect, arith::ArithDialect,
                            BuiltinDialect, annotation::AnnotationDialect>();
