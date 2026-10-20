@@ -243,8 +243,7 @@ class BinaryVecScalarOp<string mnemonic,
                 /*list<Trait> traits=*/traits,
                 /*int numResults=*/1> {
   let arguments = (ins ValidVector:$vec,
-                       AnyTypeOf<[ I8, I16, I32, F16, F32 ]>:$scalar,
-                       predicateVector:$mask);
+      AnyTypeOf<[I8, I16, I32, F16, F32]>:$scalar, predicateVector:$mask);
   let results = (outs ValidVector:$res);
 }
 

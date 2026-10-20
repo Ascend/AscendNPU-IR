@@ -1,6 +1,6 @@
 // REQUIRES: asserts
-// RUN: bishengir-opt -cv-pipelining="set-depth-in-unroll-mode=2" -allow-unregistered-dialect -split-input-file %s | FileCheck %s --check-prefix=CHECK-IR
-// RUN: bishengir-opt -mlir-disable-threading -cv-pipelining="set-depth-in-unroll-mode=2" -debug-only=cv-pipelining -allow-unregistered-dialect -split-input-file %s 2>&1 | FileCheck %s --check-prefixes=CHECK-IR,CHECK-DEBUG
+// RUN: bishengir-opt -cv-pipelining="pipeline-mode=unroll set-depth-in-unroll-mode=2" -allow-unregistered-dialect -split-input-file %s | FileCheck %s --check-prefix=CHECK-IR
+// RUN: bishengir-opt -mlir-disable-threading -cv-pipelining="pipeline-mode=unroll set-depth-in-unroll-mode=2" -debug-only=cv-pipelining -allow-unregistered-dialect -split-input-file %s 2>&1 | FileCheck %s --check-prefixes=CHECK-IR,CHECK-DEBUG
 
 // Test 1: Cross-core fixpipe (to UB) IS a separator.
 // In V1 -> C -> V2, fixpipe(UB) separates V1 and V2 across C into distinct VECTOR workitems.

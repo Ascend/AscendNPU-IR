@@ -50,7 +50,8 @@ public:
 
 /// Main entry to emit compile configs.
 bool emitCompileConfigs(const RecordKeeper &records, raw_ostream &OS) {
-  auto specs = records.getAllDerivedDefinitions(kOptionClassName);
+  std::vector<Record *> specs =
+      records.getAllDerivedDefinitions(kOptionClassName);
   for (const Record *R : specs) {
     ConfigOption cfgOpt(R);
 

@@ -177,6 +177,7 @@ function(compile_single_cpp_to_bc cpp_with_path core_type platform_type opt_leve
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
         COMMAND ${BISHENG_TOOL} ${bisheng_args}
         DEPENDS "${cpp_with_path}" ${BISHENGIR_TEMPLATE_HEADERS} "${compile_signature}"
+                "${BISHENG_TOOL}"
         COMMENT "[ccec] ${cpp_name} -> ${bc_name}"
         VERBATIM
     )
@@ -298,6 +299,7 @@ function(compile_shmem_to_bc_single cpp_with_path core_type platform_type opt_le
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
         COMMAND ${BISHENG_TOOL} ${bisheng_args}
         DEPENDS "${cpp_with_path}" ${BISHENGIR_TEMPLATE_HEADERS} "${compile_signature}"
+                "${BISHENG_TOOL}"
         COMMENT "[ccec] ${cpp_name} -> ${bc_name}"
         VERBATIM
     )
@@ -361,6 +363,7 @@ function(compile_single_cpp_to_bc_debug cpp_with_path core_type platform_type)
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
         COMMAND ${BISHENG_TOOL} ${bisheng_args}
         DEPENDS "${cpp_with_path}" ${BISHENGIR_TEMPLATE_HEADERS} "${compile_signature}"
+                "${BISHENG_TOOL}"
         COMMENT "[ccec] ${cpp_name} -> ${bc_name}"
         VERBATIM
     )
@@ -477,7 +480,7 @@ function(link_one_group_to_meta_op out_dir arch core_type opt_level)
     string(REGEX REPLACE "[^0-9A-Za-z_]" "_" target_suffix "${tag}")
     set(link_target "bishengir_link_${target_suffix}")
     if (BISHENGIR_OPTIMIZE_TEMPLATE_BITCODE STREQUAL "ON" AND
-        "${arch}" STREQUAL "c310" AND
+        ("${arch}" STREQUAL "c310" OR "${arch}" STREQUAL "c220") AND
         "${opt_level}" STREQUAL "O2")
         string(REPLACE ";" "\n" link_signature_content
                "${LLVM_LINK_TOOL}\n${inputs}\n-o\n${out_file}.linked.bc")
@@ -486,7 +489,7 @@ function(link_one_group_to_meta_op out_dir arch core_type opt_level)
         add_custom_command(
             OUTPUT "${out_file}.linked.bc"
             COMMAND ${LLVM_LINK_TOOL} ${inputs} -o "${out_file}.linked.bc"
-            DEPENDS ${inputs} "${link_signature}"
+            DEPENDS ${inputs} "${link_signature}" "${LLVM_LINK_TOOL}"
             COMMENT "[llvm-link] ${tag} -> ${out_file}.linked.bc"
             VERBATIM
         )
@@ -501,7 +504,7 @@ function(link_one_group_to_meta_op out_dir arch core_type opt_level)
                     -emit-llvm
                     -c ${out_file}.linked.bc
                     -o ${out_file}
-            DEPENDS "${out_file}.linked.bc"
+            DEPENDS "${out_file}.linked.bc" "${BISHENG_TOOL}"
             COMMENT "[ccec-post-link] ${out_file}.linked.bc -> ${out_file}"
             VERBATIM
         )
@@ -513,7 +516,7 @@ function(link_one_group_to_meta_op out_dir arch core_type opt_level)
         add_custom_command(
             OUTPUT "${out_file}"
             COMMAND ${LLVM_LINK_TOOL} ${inputs} -o "${out_file}"
-            DEPENDS ${inputs} "${link_signature}"
+            DEPENDS ${inputs} "${link_signature}" "${LLVM_LINK_TOOL}"
             COMMENT "[llvm-link] ${tag} -> ${out_file}"
             VERBATIM
         )

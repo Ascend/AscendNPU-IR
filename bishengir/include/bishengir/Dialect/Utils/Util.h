@@ -23,6 +23,7 @@
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 
+#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -69,6 +70,13 @@ int64_t getNumPerBlock(Type t);
 constexpr static int64_t kUBAlignSizeInBits = 32 * 8;
 static constexpr llvm::StringLiteral kEnableAutoMarkBufferSize =
     "enable_auto_mark_buffer_size";
+/// IntegerAttr on an markOp carrying a static buffer size in bytes (an upper
+/// bound for dynamically shaped buffers). Produced by the buffer size
+/// inference passes (hivm-infer-buffer-size-from-slice,
+/// hivm-auto-infer-buffer-size) and consumed by hivm-set-buffer-size /
+/// hivm-constantize-buffer-size when rewriting dynamic allocs into static
+/// ones.
+constexpr llvm::StringLiteral kBufferSizeInByteAttr = "buffer_size_in_byte";
 static constexpr llvm::StringLiteral kMemrefAsPtr = "memref.memref_as_ptr";
 static constexpr llvm::StringLiteral maskOpIdx = "mask_op_idx";
 static constexpr llvm::StringLiteral reachedMaskOpsIdx = "reached_mask_ops_idx";
@@ -342,6 +350,12 @@ SmallVector<Operation *> getAllAnnotateOpsWithAttr(Value v, StringRef name);
 /// Return the annotation ops whose src operand is v.
 SmallVector<Operation *> getAnnotateOpUsers(Value v);
 
+/// Clone every annotation.mark on `src` that carries the attr `name` onto
+/// `dst`, preserving the mark's attributes. The rewriter's insertion point
+/// must be set by the caller. Returns true when a mark was cloned.
+bool cloneAnnotateOpWithAttr(RewriterBase &rewriter, Value src, Value dst,
+                             StringRef name);
+
 /// Search the users of each operand to find the annotation op with attr `name`.
 SmallVector<std::optional<Operation *>>
 getAnnotateOpWithAttrForEachOperand(const SmallVectorImpl<Value> &operands,
@@ -369,8 +383,9 @@ memref::StoreOp createSinglePointStore(
 Value createEmptyOp(OpBuilder &builder, Location loc, Value source);
 
 /// Create bufferization.alloc_tensor op with the same type as source
-Value createAllocTensorOp(OpBuilder &builder, Location loc, Value source,
-                          bool copy = false);
+bufferization::AllocTensorOp createAllocTensorOp(OpBuilder &builder,
+                                                 Location loc, Value source,
+                                                 bool copy = false);
 
 ///  Create tensor.empty or memref.alloc op with the same shape as source
 ///  but with element type targetElemType
@@ -923,8 +938,7 @@ namespace mlir {
 
 namespace triton {
 
-inline const char AttrSimtOptimizationModeName[] =
-    "ttg.simt-optimization-mode";
+inline const char AttrSimtOptimizationModeName[] = "ttg.simt-optimization-mode";
 inline const char AttrEnableGlobalScratchAllocationName[] =
     "ttg.enable-global-scratch-allocation";
 

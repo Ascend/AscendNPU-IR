@@ -105,8 +105,8 @@ static std::optional<int64_t> getMultiBufferCount(Value v) {
   auto maybe = utils::getAnnotateOpWithAttr(v, hivm::MultiBufferAttr::name);
   if (!maybe)
     return std::nullopt;
-  auto intAttr =
-      dyn_cast_or_null<IntegerAttr>((*maybe)->getAttr(hivm::MultiBufferAttr::name));
+  auto intAttr = dyn_cast_or_null<IntegerAttr>(
+      (*maybe)->getAttr(hivm::MultiBufferAttr::name));
   if (!intAttr)
     return std::nullopt;
   return intAttr.getInt();
@@ -138,8 +138,8 @@ static void eraseSingleSlotPreloadMarks(Value v) {
   collect(hivm::MultiBufferAttr::name);
   for (annotation::MarkOp mark : marks) {
     mark->removeAttr(hivm::PreloadLocalBufferAttr::name);
-    auto intAttr =
-        dyn_cast_or_null<IntegerAttr>(mark->getAttr(hivm::MultiBufferAttr::name));
+    auto intAttr = dyn_cast_or_null<IntegerAttr>(
+        mark->getAttr(hivm::MultiBufferAttr::name));
     if (intAttr && intAttr.getInt() == 1)
       mark->removeAttr(hivm::MultiBufferAttr::name);
     if (mark.isAttrEmpty())
@@ -232,8 +232,7 @@ rebuildScopeLeavingOps(scope::ScopeOp oldScope, ArrayRef<Value> newReturns,
   for (Value v : newReturns)
     types.push_back(v.getType());
 
-  auto newScope =
-      builder.create<scope::ScopeOp>(oldScope.getLoc(), types);
+  auto newScope = builder.create<scope::ScopeOp>(oldScope.getLoc(), types);
   newScope->setAttrs(oldScope->getAttrDictionary());
 
   Block &oldBody = oldScope.getRegion().front();
@@ -262,7 +261,6 @@ rebuildScopeLeavingOps(scope::ScopeOp oldScope, ArrayRef<Value> newReturns,
   }
   return newScope;
 }
-
 
 static bool isProducerLocalEmpty(Value v, scope::ScopeOp producer) {
   auto empty = v.getDefiningOp<tensor::EmptyOp>();
@@ -342,10 +340,10 @@ static bool tryAddToReturnedCluster(Operation *op, scope::ScopeOp producer,
 /// `hir.load` that writes a subview of the to_tensor alloc is still pulled
 /// into the cluster. Direct users of the root alloc do not include that
 /// load, which otherwise leaves MTE2 in the producer.
-static bool addMemrefViewTree(
-    Value memref, scope::ScopeOp producer, DenseSet<Operation *> &cluster,
-    SmallVector<Operation *> &order,
-    llvm::function_ref<bool(Operation *)> tryAdd) {
+static bool addMemrefViewTree(Value memref, scope::ScopeOp producer,
+                              DenseSet<Operation *> &cluster,
+                              SmallVector<Operation *> &order,
+                              llvm::function_ref<bool(Operation *)> tryAdd) {
   if (!isa<MemRefType>(memref.getType()))
     return false;
   bool grew = false;
@@ -379,13 +377,14 @@ static bool addMemrefViewTree(
   return grew;
 }
 
-static bool addMemrefViewTreeToReturnedCluster(Value memref,
-                                               scope::ScopeOp producer,
-                                               DenseSet<Operation *> &cluster,
-                                               SmallVector<Operation *> &order) {
-  return addMemrefViewTree(memref, producer, cluster, order, [&](Operation *op) {
-    return tryAddToReturnedCluster(op, producer, cluster, order);
-  });
+static bool
+addMemrefViewTreeToReturnedCluster(Value memref, scope::ScopeOp producer,
+                                   DenseSet<Operation *> &cluster,
+                                   SmallVector<Operation *> &order) {
+  return addMemrefViewTree(
+      memref, producer, cluster, order, [&](Operation *op) {
+        return tryAddToReturnedCluster(op, producer, cluster, order);
+      });
 }
 
 /// Grow the exclusive producer-local slice of a returned tensor or leftover
@@ -396,10 +395,9 @@ static bool addMemrefViewTreeToReturnedCluster(Value memref,
 /// forwarded; scalar extras are cloned into the consumer together with
 /// any producer-local memref view chain they load (CreatePreload cannot
 /// rematerialize index / i1 as scope results).
-static bool collectExclusiveReturnedCluster(Value root, scope::ScopeOp producer,
-                                            SmallVector<Operation *> &clusterOps,
-                                            SmallVector<Value> &destEmpties,
-                                            SmallVector<Value> &extras) {
+static bool collectExclusiveReturnedCluster(
+    Value root, scope::ScopeOp producer, SmallVector<Operation *> &clusterOps,
+    SmallVector<Value> &destEmpties, SmallVector<Value> &extras) {
   Operation *rootOp = root.getDefiningOp();
   if (!rootOp || !producer->isProperAncestor(rootOp) ||
       !isAllowedReturnedSliceOp(rootOp))
@@ -808,9 +806,8 @@ static LogicalResult sinkReturnedTensorsToConsumerImpl(scf::ForOp forOp) {
           continue;
         if (changesCrossCoreDistance(cluster, producer, consumer, forOp))
           continue;
-        if (llvm::any_of(cluster, [&](Operation *op) {
-              return claimed.contains(op);
-            }))
+        if (llvm::any_of(cluster,
+                         [&](Operation *op) { return claimed.contains(op); }))
           continue;
 
         Move m;
@@ -895,8 +892,7 @@ static LogicalResult sinkReturnedTensorsToConsumerImpl(scf::ForOp forOp) {
               if (auto it = clonedScalars.find(sz); it != clonedScalars.end())
                 dyn.push_back(it->second);
               else
-                dyn.push_back(
-                    remapThroughReturns(sz, newReturns, newProducer));
+                dyn.push_back(remapThroughReturns(sz, newReturns, newProducer));
             }
             operand.set(builder.create<tensor::EmptyOp>(
                 oldEmpty.getLoc(), oldEmpty.getType(), dyn));
@@ -952,12 +948,11 @@ static bool hasInterveningMmadScope(scope::ScopeOp producer,
 
 static scope::ScopeOp createVectorScopeBefore(scope::ScopeOp cube) {
   OpBuilder builder(cube);
-  auto newScope =
-      builder.create<scope::ScopeOp>(cube.getLoc(), TypeRange{});
+  auto newScope = builder.create<scope::ScopeOp>(cube.getLoc(), TypeRange{});
   newScope.setNoInline(true);
-  newScope->setAttr(hivm::kPipelinedLoopCoreTypeAttrName,
-                    hivm::TCoreTypeAttr::get(builder.getContext(),
-                                             hivm::TCoreType::VECTOR));
+  newScope->setAttr(
+      hivm::kPipelinedLoopCoreTypeAttrName,
+      hivm::TCoreTypeAttr::get(builder.getContext(), hivm::TCoreType::VECTOR));
   Block *body = builder.createBlock(&newScope.getRegion());
   builder.setInsertionPointToEnd(body);
   builder.create<scope::ReturnOp>(cube.getLoc());
@@ -1019,12 +1014,14 @@ static bool tryAddToCopyCluster(Operation *op, scope::ScopeOp producer,
   return true;
 }
 
-static bool addMemrefViewTreeToCopyCluster(Value memref, scope::ScopeOp producer,
+static bool addMemrefViewTreeToCopyCluster(Value memref,
+                                           scope::ScopeOp producer,
                                            DenseSet<Operation *> &cluster,
                                            SmallVector<Operation *> &order) {
-  return addMemrefViewTree(memref, producer, cluster, order, [&](Operation *op) {
-    return tryAddToCopyCluster(op, producer, cluster, order);
-  });
+  return addMemrefViewTree(
+      memref, producer, cluster, order, [&](Operation *op) {
+        return tryAddToCopyCluster(op, producer, cluster, order);
+      });
 }
 
 static bool collectExclusiveCopyCluster(hivm::CopyOp copy,
@@ -1167,16 +1164,14 @@ static void moveEarlyToTensorsAfter(Value dest, scope::ScopeOp destScope) {
       continue;
     if (destScope->isAncestor(toTensor))
       continue;
-    if (!toTensor->getBlock() ||
-        toTensor->getBlock() != destScope->getBlock())
+    if (!toTensor->getBlock() || toTensor->getBlock() != destScope->getBlock())
       continue;
     if (!toTensor->isBeforeInBlock(destScope))
       continue;
     early.push_back(toTensor);
   }
-  llvm::sort(early, [](Operation *a, Operation *b) {
-    return a->isBeforeInBlock(b);
-  });
+  llvm::sort(early,
+             [](Operation *a, Operation *b) { return a->isBeforeInBlock(b); });
   for (Operation *op : llvm::reverse(early))
     op->moveAfter(destScope);
 }
@@ -1214,8 +1209,7 @@ static Value cloneProducerScalar(Value v, scope::ScopeOp producer,
     return v;
   IRMapping mapping;
   for (Value operand : def->getOperands()) {
-    Value mapped =
-        cloneProducerScalar(operand, producer, insertBefore, cloned);
+    Value mapped = cloneProducerScalar(operand, producer, insertBefore, cloned);
     if (mapped != operand)
       mapping.map(operand, mapped);
   }
@@ -1278,8 +1272,7 @@ static void remapClonedScalarOperands(const DenseMap<Value, Value> &cloned,
     if (!copy)
       continue;
     for (OpOperand &operand : copy->getOpOperands()) {
-      operand.set(
-          remapThroughReturns(operand.get(), newReturns, newProducer));
+      operand.set(remapThroughReturns(operand.get(), newReturns, newProducer));
     }
   }
 }
@@ -1386,11 +1379,10 @@ static LogicalResult sinkCopyChainPastUnusedMmad(scf::ForOp forOp) {
             if (auto it = clonedScalars.find(sz); it != clonedScalars.end())
               dyn.push_back(it->second);
             else
-              dyn.push_back(
-                  remapThroughReturns(sz, newReturns, newProducer));
+              dyn.push_back(remapThroughReturns(sz, newReturns, newProducer));
           }
-          operand.set(builder.create<tensor::EmptyOp>(
-              oldEmpty.getLoc(), oldEmpty.getType(), dyn));
+          operand.set(builder.create<tensor::EmptyOp>(oldEmpty.getLoc(),
+                                                      oldEmpty.getType(), dyn));
         }
       }
       moveOpsBefore(cluster, insertBefore);
@@ -1419,7 +1411,8 @@ uniqueAllocUserScope(Value alloc, scf::ForOp forOp) {
   DenseSet<scope::ScopeOp> scopes;
   SmallVector<Operation *> views;
   DenseSet<Operation *> seen;
-  SmallVector<Operation *> work(alloc.getUsers().begin(), alloc.getUsers().end());
+  SmallVector<Operation *> work(alloc.getUsers().begin(),
+                                alloc.getUsers().end());
   while (!work.empty()) {
     Operation *user = work.pop_back_val();
     if (!seen.insert(user).second)
@@ -1497,7 +1490,6 @@ static LogicalResult sinkPreloadLocalAllocs(scf::ForOp forOp) {
   return success();
 }
 
-
 struct SinkExclusivePreloadWorkPass
     : public impl::SinkExclusivePreloadWorkBase<SinkExclusivePreloadWorkPass> {
   using Base = impl::SinkExclusivePreloadWorkBase<SinkExclusivePreloadWorkPass>;
@@ -1516,19 +1508,29 @@ static bool isSplitMixModule(ModuleOp moduleOp) {
   return false;
 }
 
+// All-zero scopes execute in the same iteration. Moving a returned tensor's
+// writer into its consumer can place it after an intervening read.
+static bool allScopesPinnedToZero(scf::ForOp loop) {
+  auto scopes = loop.getBody()->getOps<scope::ScopeOp>();
+  return !scopes.empty() && llvm::all_of(scopes, [](scope::ScopeOp scope) {
+    return getScopePreloadNum(scope) == 0;
+  });
+}
+
 void SinkExclusivePreloadWorkPass::runOnOperation() {
   ModuleOp moduleOp = getOperation();
   if (isSplitMixModule(moduleOp))
     return;
   for (auto funcOp : moduleOp.getOps<func::FuncOp>()) {
-    if (!hivm::allowLoopShapeHeuristics(
-            this->bypassShapeRegistry, funcOp.getName(), this->enablePreload,
-            this->workspaceMultiBufferNum))
+    if (!hivm::allowLoopShapeHeuristics(this->bypassShapeRegistry,
+                                        funcOp.getName(), this->enablePreload,
+                                        this->workspaceMultiBufferNum))
       continue;
     SmallVector<scf::ForOp> forOps;
     funcOp.walk([&](scf::ForOp forOp) { forOps.push_back(forOp); });
     for (scf::ForOp forOp : forOps) {
-      if (failed(sinkReturnedTensorsToConsumerImpl(forOp)))
+      if (!allScopesPinnedToZero(forOp) &&
+          failed(sinkReturnedTensorsToConsumerImpl(forOp)))
         return signalPassFailure();
       if (failed(sinkCopyChainPastUnusedMmad(forOp)))
         return signalPassFailure();

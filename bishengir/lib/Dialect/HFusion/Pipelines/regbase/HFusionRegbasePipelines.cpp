@@ -194,6 +194,7 @@ static void preProcess(OpPassManager &pm,
 
   NormalizeOptions normalizeOptions;
   normalizeOptions.enableHighPrecision = options.enableHighPrecision;
+  normalizeOptions.enableDivRemPow2 = options.enableDivRemPow2;
   pm.nest<func::FuncOp>().addPass(
       createHFusionNormalizeOpsPass(normalizeOptions));
 
@@ -353,6 +354,7 @@ static void postProcess(OpPassManager &pm,
   // - tile reduction may generate unsupported elemwise op requiring normalize
   NormalizeOptions normalizeOptions;
   normalizeOptions.enableHighPrecision = options.enableHighPrecision;
+  normalizeOptions.enableDivRemPow2 = options.enableDivRemPow2;
   pm.nest<func::FuncOp>().addPass(
       createHFusionNormalizeOpsPass(normalizeOptions));
 
@@ -592,6 +594,7 @@ void buildHFusionRegBasePipeline(OpPassManager &pm,
   NormalizeOptions normalizeOptions;
   normalizeOptions.enableHighPrecision = options.enableHighPrecision;
   normalizeOptions.enableFastDiv = options.enableFastDiv;
+  normalizeOptions.enableDivRemPow2 = options.enableDivRemPow2;
   pm.nest<func::FuncOp>().addPass(
       createHFusionNormalizeOpsPass(normalizeOptions));
 

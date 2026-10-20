@@ -266,6 +266,16 @@ def EnableFastDiv : FeatureControlOptions<
   let passGroup = ["HFUSION"];
 }
 
+def EnableDivRemPow2
+    : FeatureControlOptions<
+          "Enable strength reduction of integer div/div_unsigned/mod/modui "
+          "with "
+          "a power-of-two constant divisor into shift/and ops (regbased "
+          "Ascend950 only)",
+          "bool", "true"> {
+  let passGroup = ["HFUSION"];
+}
+
 def EnableLegacyInsertLoadStoreForMixCV : FeatureControlOptions<
   "Use legacy InsertLoadStoreForMixCV.",
   "bool",
@@ -1068,6 +1078,11 @@ def EnableVFStackLimit : FeatureControlOptions<
   let passGroup = ["HFUSION"];
 }
 
+def EnableVFStackOverflowRetry
+    : FeatureControlOptions<"Automatically retry with enable-vf-stack-limit "
+                            "when the bisheng device compile fails",
+                            "bool", "true">;
+
 def VfFusionMode : FeatureControlOptions<
   "VF fusion mode(max-parallel | all-op |). default is max-parallel",
   "mlir::analysis::FusionMode",
@@ -1406,7 +1421,7 @@ def EnableSIMTFastDiv : SIMTOptimizationControlOptions<
 def EnableSIMTDeviceDebug : SIMTOptimizationControlOptions<
   "Enable SIMT device print and assert lowering",
   "bool",
-  "false"
+  "true"
 > {
   bit isSharedWithDownstreamToolchain = 0;
 }

@@ -53,8 +53,6 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/LogicalResult.h"
 
-#include <optional>
-
 namespace mlir {
 #define GEN_PASS_DEF_INSERTLOADSTOREFORMIXCV
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h.inc"
@@ -122,8 +120,6 @@ private:
                                        PropagationStep step);
   LogicalResult ensureAllocInUbAddressSpace(func::FuncOp funcOp);
   LogicalResult addConvertLayoutUBToL1(func::FuncOp funcOp);
-  /// Write core types from the propagator result. The AIV substitute stamps
-  /// VECTOR itself and does not call this.
   LogicalResult setOperationsCoreType(OpBuilder builder, func::FuncOp funcOp);
 };
 
@@ -1752,42 +1748,12 @@ static LogicalResult setOperationsCoreTypeForA3(OpBuilder builder,
   return success();
 }
 
-static bool hasExplicitCoreType(TCoreTypeAttr attr) {
-  return attr && attr.getTcoretype() != TCoreType::CUBE_OR_VECTOR;
-}
-
-/// Attribute that stores the core type for an op the propagator path updates.
-/// `DebugOp` and `LoadOp` use their ODS `tcoretype` argument. `VBrcOp` and
-/// `tensor.extract` carry the free `tcore_type` attribute.
-static std::optional<StringRef> forcedCoreTypeAttrName(Operation *op) {
-  if (auto debugOp = dyn_cast<hivm::DebugOp>(op))
-    return debugOp.getTcoretypeAttrName().getValue();
-  if (auto loadOp = dyn_cast<hivm::LoadOp>(op))
-    return loadOp.getTcoretypeAttrName().getValue();
-  if (isa<hivm::VBrcOp, tensor::ExtractOp>(op))
-    return TCoreTypeAttr::name;
-  return std::nullopt;
-}
-
-/// Stamp `coreType` on the ops the propagator path would update. Existing
-/// explicit core types are left unchanged.
-static void setForcedOperationsCoreType(func::FuncOp funcOp,
-                                        TCoreType coreType) {
-  auto forcedAttr = TCoreTypeAttr::get(funcOp.getContext(), coreType);
-  funcOp->walk([&](Operation *op) {
-    auto attrName = forcedCoreTypeAttrName(op);
-    if (!attrName ||
-        hasExplicitCoreType(op->getAttrOfType<TCoreTypeAttr>(*attrName)))
-      return;
-    op->setAttr(*attrName, forcedAttr);
-  });
-}
-
 LogicalResult
 InsertLoadStoreForMixCVPass::setOperationsCoreType(OpBuilder builder,
                                                    func::FuncOp funcOp) {
-  if (isA5Target())
+  if (isA5Target()) {
     return setOperationsCoreTypeForA5(builder, funcOp);
+  }
   return setOperationsCoreTypeForA3(builder, funcOp);
 }
 
@@ -1844,18 +1810,24 @@ void InsertLoadStoreForMixCVPass::runOnOperation() {
   if (failed(pm3.run(funcOp))) {
     return signalPassFailure();
   }
+
+  if (!isA5Target())
+    return;
+
+  PassManager pm4(ctx);
+  pm4.addPass(createCSEPass());
+  if (failed(pm4.run(funcOp))) {
+    return signalPassFailure();
+  }
+
+  PassManager pm5(ctx);
+  pm5.addPass(createCloneTensorEmptyPass());
+  if (failed(pm5.run(funcOp))) {
+    return signalPassFailure();
+  }
 }
 
 std::unique_ptr<Pass> mlir::hivm::createInsertLoadStoreForMixCVPass(
     const InsertLoadStoreForMixCVOptions &options) {
   return std::make_unique<InsertLoadStoreForMixCVPass>(options);
-}
-
-LogicalResult mlir::hivm::substituteInsertLoadStoreForMixCV(Operation *op,
-                                                            const Pass &) {
-  auto func = dyn_cast<func::FuncOp>(op);
-  if (!func)
-    return success();
-  setForcedOperationsCoreType(func, TCoreType::VECTOR);
-  return success();
 }

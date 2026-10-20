@@ -36,16 +36,17 @@ bool isLoopShapeRegistered(llvm::StringRef name);
 /// Covers LCD backup extraction (intra-WI and cross-WI), dest-sink / delay /
 /// merge-same-preload heuristics, the 3530 same-stage cross-WI carry
 /// exception (collect LCD ops on the standard path; pin both ends to
-/// preload 0 only when an independent stage remains), and the 3160
-/// sign-extended while-bound normalize, byte-vs-byte buffer-size compare,
-/// dynamic-TCB view rematerialization, and pre-CVP buffer-size prep.
+/// preload 0 when an independent stage remains). Otherwise registered skew
+/// loops can retain all scopes at stage zero without overlapping iterations.
+/// Also covers the 3160 sign-extended while-bound normalize, byte-vs-byte
+/// buffer-size compare, dynamic-TCB view rematerialization, and pre-CVP
+/// buffer-size prep.
 inline bool allowLoopShapeHeuristics(bool bypassShapeRegistry,
                                      llvm::StringRef funcName,
                                      bool enablePreload,
                                      int64_t workspaceMultiBuffer) {
-  return bypassShapeRegistry ||
-         (enablePreload && workspaceMultiBuffer != 0 &&
-          isLoopShapeRegistered(funcName));
+  return bypassShapeRegistry || (enablePreload && workspaceMultiBuffer != 0 &&
+                                 isLoopShapeRegistered(funcName));
 }
 
 } // namespace hivm

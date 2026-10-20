@@ -245,13 +245,8 @@ LogicalResult processAlignPropagationAmongOperationOperands(
   }
 
   bool isChanged = false;
-  const bool isCopy = isa<hivm::CopyOp>(op);
-  for (auto [idx, pair] : llvm::enumerate(
-           llvm::zip(maybeMarkOps, tobeStrideAlignOperands))) {
-    if (isCopy && idx == 0) {
-      continue;
-    }
-    auto [maybeMarkOp, tobeStrideAlignOperand] = pair;
+  for (auto [maybeMarkOp, tobeStrideAlignOperand] :
+       llvm::zip(maybeMarkOps, tobeStrideAlignOperands)) {
     if (!maybeMarkOp.has_value()) {
       // no storage align info, just create new one to add info
       isChanged =
@@ -341,16 +336,16 @@ static void scaleBufferSizeMarks(PatternRewriter &rewriter, Value bufferValue,
   // The dynamic dims are identical on both types (padding only grows static
   // dims), so the byte size scales by the static-volume ratio.
   auto sizeMarks = utils::getAllAnnotateOpsWithAttr(
-      bufferValue, hivm::kBufferSizeInByteAttr);
+      bufferValue, utils::kBufferSizeInByteAttr);
   for (auto *markOp : sizeMarks) {
     int64_t oldSize =
-        markOp->getAttrOfType<IntegerAttr>(hivm::kBufferSizeInByteAttr)
+        markOp->getAttrOfType<IntegerAttr>(utils::kBufferSizeInByteAttr)
             .getInt();
     // ceil-divide so the buffer is never under-allocated.
     assert(unalignedVol != 0);
     int64_t newSize = (oldSize * alignedVol + unalignedVol - 1) / unalignedVol;
     rewriter.modifyOpInPlace(markOp, [&]() {
-      markOp->setAttr(hivm::kBufferSizeInByteAttr,
+      markOp->setAttr(utils::kBufferSizeInByteAttr,
                       rewriter.getI64IntegerAttr(newSize));
     });
   }
@@ -477,7 +472,6 @@ void populatePropagateAlignAmongOpOperandsPatterns(
 #define GET_OP_LIST
 #include "bishengir/Dialect/HIVM/IR/HIVMVectorOps.cpp.inc"
       >(patterns);
-  registerOne<::mlir::hivm::CopyOp>(patterns);
 }
 
 bool isSame(std::map<Operation *, std::unique_ptr<util::AlignInfo>> *lhs,
@@ -501,7 +495,8 @@ bool isSame(std::map<Operation *, std::unique_ptr<util::AlignInfo>> *lhs,
   return true;
 }
 
-void dump(std::map<Operation *, std::unique_ptr<util::AlignInfo>> *alignInfoMap) {
+void dump(
+    std::map<Operation *, std::unique_ptr<util::AlignInfo>> *alignInfoMap) {
 #ifndef NDEBUG
   LDBG("dump align info map");
   for (auto &it : *alignInfoMap) {

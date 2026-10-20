@@ -40,8 +40,10 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   ComposeCollapseExpand.cpp
   ComposeMemRefViews.cpp
   ConstantizeBufferSize.cpp
+  DecomposeAllocTensorCopy.cpp
   ConvertNonContiguousReshapeToCopy.cpp
   ConvertToHIVMOp.cpp
+  InferBufferSizeFromSlice.cpp
   InsertAnchorsAndBackup.cpp
   ConvertLayout/ShapeConversion/ConvertLayoutToFractalsUtils.cpp
   ConvertLayout/ShapeConversion/ConvertLayoutFromFractalsUtils.cpp
@@ -118,8 +120,6 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   MergeSamePreloadScopes.cpp
   NormalizeBitwiseSelect.cpp
   NormalizeConvOps.cpp
-  NormalizeToTensorOp.cpp
-  TensorCopyInsertion.cpp
   NormalizeMatmul.cpp
   OptMemPlanForPipeline.cpp
   OutlineAllocInVF.cpp
@@ -160,6 +160,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   LINK_LIBS PUBLIC
   MLIRAffineDialect
   MLIRAffineTransforms
+  MLIRAnalysis
   MLIRArithDialect
   MLIRArithUtils
   BiShengIRAnnotationDialect

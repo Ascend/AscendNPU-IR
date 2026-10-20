@@ -44,11 +44,6 @@ using namespace mlir;
 using namespace mlir::transform;
 using namespace mlir::hfusion;
 
-namespace {
-static constexpr llvm::StringLiteral kBufferSizeInByteAttr =
-    "buffer_size_in_byte";
-} // namespace
-
 //===----------------------------------------------------------------------===//
 // CacheReadOp
 //===----------------------------------------------------------------------===//
@@ -204,7 +199,8 @@ void setBufferSizeForOpResult(Operation *op, int64_t resultNumber,
   rewriter.setInsertionPointAfter(op);
   auto mark = rewriter.create<annotation::MarkOp>(op->getLoc(),
                                                   op->getResult(resultNumber));
-  mark->setAttr(kBufferSizeInByteAttr, rewriter.getI64IntegerAttr(bufferSize));
+  mark->setAttr(utils::kBufferSizeInByteAttr,
+                rewriter.getI64IntegerAttr(bufferSize));
 }
 
 DiagnosedSilenceableFailure

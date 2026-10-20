@@ -26,8 +26,6 @@ using namespace mlir;
 using namespace mlir::annotation;
 
 namespace {
-static constexpr llvm::StringLiteral kBufferSizeInByteAttr =
-    "buffer_size_in_byte";
 static constexpr llvm::StringLiteral kMayImplicitTransposeWithLastAxis =
     "MayImplicitTransposeWithLastAxis";
 } // namespace
@@ -54,7 +52,7 @@ void MarkOp::build(OpBuilder &odsBuilder, OperationState &odsState, Value src,
 
 /// Fold buffer size annotation to mark the root alloc.
 LogicalResult foldBufferSizeAnnotationToAlloc(MarkOp markOp) {
-  if (!markOp.isAnnotatedByStaticAttr(kBufferSizeInByteAttr))
+  if (!markOp.isAnnotatedByStaticAttr(utils::kBufferSizeInByteAttr))
     return failure();
 
   // find the root alloc and move upwards
@@ -81,7 +79,7 @@ struct FoldUselessBufferSizeMarkOp
 
   LogicalResult matchAndRewrite(annotation::MarkOp markOp,
                                 PatternRewriter &rewriter) const override {
-    if (!markOp.isAnnotatedByStaticAttr(kBufferSizeInByteAttr))
+    if (!markOp.isAnnotatedByStaticAttr(utils::kBufferSizeInByteAttr))
       return failure();
 
     if (markOp.getAttrNum() != 1)
@@ -127,8 +125,7 @@ struct EraseDeadTransposeMarkAndSrc
 
   LogicalResult matchAndRewrite(annotation::MarkOp markOp,
                                 PatternRewriter &rewriter) const override {
-    if (!markOp.isAnnotatedByStaticAttr(
-            kMayImplicitTransposeWithLastAxis))
+    if (!markOp.isAnnotatedByStaticAttr(kMayImplicitTransposeWithLastAxis))
       return failure();
 
     auto srcVal = markOp.getSrc();
