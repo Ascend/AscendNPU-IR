@@ -6,12 +6,17 @@
 //
 //===---------------------------------------------------------------------===//
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/Linalg/IR/Linalg.h"
+#include "mlir/Dialect/Linalg/Utils/Utils.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
-#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "llvm/ADT/STLExtras.h"
+#include <limits>
 namespace mlir {
 #define GEN_PASS_DEF_FOLDEXTRACTINSERTPAIR
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h.inc"
@@ -22,6 +27,129 @@ using namespace mlir::hfusion;
 #define DEBUG_TYPE "fold-extract-insert-pair"
 
 namespace {
+
+/// Recover a padded slice as an independent elementwise select:
+///
+///   %slice = tensor.extract_slice %x[offsets] [sizes] [1, ...]
+///   %masked = tensor.insert_slice %slice into %fill[offsets] [sizes] [1, ...]
+///
+/// A new linalg.generic yields select(in_slice(index), x_element, fill_value).
+/// Require one eligible use so that subsequent elementwise fusion can remove
+/// the intermediate tensor. Leave the consumer's body and fusion decisions to
+/// the existing passes, preserving its arithmetic and other users of %x.
+class NormalizeFilledSliceToSelect
+    : public OpRewritePattern<tensor::InsertSliceOp> {
+public:
+  using OpRewritePattern<tensor::InsertSliceOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(tensor::InsertSliceOp insertOp,
+                                PatternRewriter &rewriter) const override {
+    auto extractOp =
+        insertOp.getSource().getDefiningOp<tensor::ExtractSliceOp>();
+    auto fillOp = insertOp.getDest().getDefiningOp<linalg::FillOp>();
+    if (!extractOp || !fillOp || !insertOp->hasOneUse())
+      return failure();
+
+    auto fullType = insertOp.getType();
+    // linalg.fill can cast its scalar input to the output element type.
+    // A select needs matching types, so leave such fills unchanged.
+    if (fillOp.getInputs().front().getType() != fullType.getElementType())
+      return failure();
+    // Matching complete shapes makes every new input access in bounds, even
+    // outside the selected slice. Exclude rank reduction and dynamic full
+    // shapes: equal dynamic types alone do not prove equal runtime extents.
+    if (!fullType.hasStaticShape() || fullType.getRank() == 0 ||
+        extractOp.getSourceType() != fullType ||
+        extractOp.getType().getRank() != fullType.getRank())
+      return failure();
+    // AVE does not support vector<...xindex>. Valid unit-stride slices of
+    // these static dimensions have i32-representable offsets and sizes.
+    if (llvm::any_of(fullType.getShape(), [](int64_t size) {
+          return size > std::numeric_limits<int32_t>::max();
+        }))
+      return failure();
+    if (!mlir::detail::sameOffsetsSizesAndStrides(
+            extractOp, insertOp,
+            [](OpFoldResult lhs, OpFoldResult rhs) {
+              return isEqualConstantIntOrValue(lhs, rhs);
+            }) ||
+        !llvm::all_of(insertOp.getMixedStrides(), [](OpFoldResult stride) {
+          return isConstantIntValue(stride, 1);
+        }))
+      return failure();
+
+    OpOperand &use = *insertOp->getUses().begin();
+    auto consumer = dyn_cast<linalg::LinalgOp>(use.getOwner());
+    // Conservatively require a pointwise input use in the same block, where
+    // subsequent fusion is likely to avoid materializing the selected tensor.
+    if (!consumer || consumer->getBlock() != insertOp->getBlock() ||
+        !consumer.hasPureTensorSemantics() || !consumer.isDpsInput(&use) ||
+        !linalg::isElementwise(consumer) ||
+        !llvm::all_of(consumer.getIndexingMapsArray(),
+                      [](AffineMap map) { return map.isIdentity(); }))
+      return failure();
+
+    OpBuilder::InsertionGuard guard(rewriter);
+    Location loc = insertOp.getLoc();
+    auto offsets = insertOp.getMixedOffsets();
+    auto sizes = insertOp.getMixedSizes();
+    SmallVector<Value> offsetsI32(fullType.getRank());
+    SmallVector<Value> sizesI32(fullType.getRank());
+    rewriter.setInsertionPoint(insertOp);
+    for (int64_t dim = 0; dim < fullType.getRank(); ++dim) {
+      if (isConstantIntValue(offsets[dim], 0) &&
+          isConstantIntValue(sizes[dim], fullType.getDimSize(dim)))
+        continue;
+      Value offset =
+          getValueOrCreateConstantIndexOp(rewriter, loc, offsets[dim]);
+      Value size = getValueOrCreateConstantIndexOp(rewriter, loc, sizes[dim]);
+      offsetsI32[dim] = rewriter.createOrFold<arith::IndexCastOp>(
+          loc, rewriter.getI32Type(), offset);
+      sizesI32[dim] = rewriter.createOrFold<arith::IndexCastOp>(
+          loc, rewriter.getI32Type(), size);
+    }
+    Value empty = rewriter.create<tensor::EmptyOp>(loc, fullType, ValueRange{});
+    AffineMap identity = rewriter.getMultiDimIdentityMap(fullType.getRank());
+    auto selected = rewriter.create<linalg::GenericOp>(
+        loc, TypeRange{fullType}, ValueRange{extractOp.getSource()},
+        ValueRange{empty}, SmallVector<AffineMap>{identity, identity},
+        SmallVector<utils::IteratorType>(fullType.getRank(),
+                                         utils::IteratorType::parallel),
+        [&](OpBuilder &builder, Location loc, ValueRange args) {
+          Value inSlice;
+          for (int64_t dim = 0; dim < fullType.getRank(); ++dim) {
+            if (!sizesI32[dim])
+              continue;
+            Value index = builder.create<linalg::IndexOp>(loc, dim);
+            index = builder.create<arith::IndexCastOp>(
+                loc, builder.getI32Type(), index);
+            Value offset = offsetsI32[dim];
+            Value relative = builder.create<arith::SubIOp>(loc, index, offset);
+            Value belowUpper = builder.create<arith::CmpIOp>(
+                loc, arith::CmpIPredicate::ult, relative, sizesI32[dim]);
+            Value inDim = belowUpper;
+            if (!isConstantIntValue(offsets[dim], 0)) {
+              Value aboveLower = builder.create<arith::CmpIOp>(
+                  loc, arith::CmpIPredicate::uge, index, offset);
+              inDim =
+                  builder.create<arith::AndIOp>(loc, aboveLower, belowUpper);
+            }
+            inSlice = inSlice
+                          ? builder.create<arith::AndIOp>(loc, inSlice, inDim)
+                          : inDim;
+          }
+          Value element = args.front();
+          if (inSlice)
+            element = builder.create<arith::SelectOp>(
+                loc, inSlice, element, fillOp.getInputs().front());
+          builder.create<linalg::YieldOp>(loc, element);
+        });
+    rewriter.replaceOp(insertOp, selected.getResults());
+    if (extractOp->use_empty())
+      rewriter.eraseOp(extractOp);
+    return success();
+  }
+};
 
 static bool isStaticOneElementTensor(Type type) {
   auto rankedTy = dyn_cast<RankedTensorType>(type);
@@ -75,21 +203,22 @@ public:
           insertOp, "source tensor type and insert result type differ");
 
     if (!isStaticOneElementTensor(resultType))
-      return rewriter.notifyMatchFailure(
-          insertOp, "not a statically one-element tensor");
+      return rewriter.notifyMatchFailure(insertOp,
+                                         "not a statically one-element tensor");
 
     // Be conservative: require extracting and inserting at the same indices.
     if (!llvm::equal(extractOp.getIndices(), insertOp.getIndices()))
-      return rewriter.notifyMatchFailure(
-          insertOp, "extract and insert indices differ");
+      return rewriter.notifyMatchFailure(insertOp,
+                                         "extract and insert indices differ");
 
     // Optional conservative check:
-    // Require the destination to be tensor.empty. This matches your generated IR
-    // and avoids surprising rewrites on non-empty destinations.
+    // Require the destination to be tensor.empty. This matches your generated
+    // IR and avoids surprising rewrites on non-empty destinations.
     //
     // For a statically one-element tensor, this rewrite is also valid even if
-    // the destination is not tensor.empty, because the only element is replaced.
-    // Keep this check if you want the transformation to be narrowly targeted.
+    // the destination is not tensor.empty, because the only element is
+    // replaced. Keep this check if you want the transformation to be narrowly
+    // targeted.
     if (!insertOp.getDest().getDefiningOp<tensor::EmptyOp>())
       return rewriter.notifyMatchFailure(
           insertOp, "insert destination is not tensor.empty");
@@ -119,8 +248,10 @@ public:
 ///
 /// This pattern matches when:
 /// 1. %slice is defined by tensor.extract_slice
-/// 2. %written is defined by vector.transfer_write to %slice at the same offsets
-/// 3. %result is tensor.insert_slice of %written into %slice at the same offsets
+/// 2. %written is defined by vector.transfer_write to %slice at the same
+/// offsets
+/// 3. %result is tensor.insert_slice of %written into %slice at the same
+/// offsets
 /// 4. The sizes and strides of extract_slice and insert_slice match
 ///
 /// This is redundant because %written already has the same shape as %slice,
@@ -162,8 +293,7 @@ public:
       return rewriter.notifyMatchFailure(insertOp, "offset sizes differ");
     }
 
-    for (auto [writeIdx, insertOff] :
-         llvm::zip(writeIndices, insertOffsets)) {
+    for (auto [writeIdx, insertOff] : llvm::zip(writeIndices, insertOffsets)) {
       auto writeInt = mlir::getConstantIntValue(writeIdx);
       auto insertInt = mlir::getConstantIntValue(insertOff);
 
@@ -174,8 +304,7 @@ public:
       }
 
       // For dynamic values, require exact match
-      if (auto insertVal =
-              mlir::dyn_cast_if_present<mlir::Value>(insertOff)) {
+      if (auto insertVal = mlir::dyn_cast_if_present<mlir::Value>(insertOff)) {
         if (writeIdx != insertVal) {
           return rewriter.notifyMatchFailure(insertOp, "offsets do not match");
         }
@@ -191,8 +320,7 @@ public:
       return rewriter.notifyMatchFailure(insertOp, "size ranks differ");
     }
 
-    for (auto [extractSz, insertSz] :
-         llvm::zip(extractSizes, insertSizes)) {
+    for (auto [extractSz, insertSz] : llvm::zip(extractSizes, insertSizes)) {
       auto extractInt = mlir::getConstantIntValue(extractSz);
       auto insertInt = mlir::getConstantIntValue(insertSz);
 
@@ -202,10 +330,8 @@ public:
         }
       } else if (extractSz != insertSz) {
         // For dynamic sizes, require exact value match
-        auto extractVal =
-            mlir::dyn_cast_if_present<mlir::Value>(extractSz);
-        auto insertVal =
-            mlir::dyn_cast_if_present<mlir::Value>(insertSz);
+        auto extractVal = mlir::dyn_cast_if_present<mlir::Value>(extractSz);
+        auto insertVal = mlir::dyn_cast_if_present<mlir::Value>(insertSz);
         if (!extractVal || !insertVal || extractVal != insertVal) {
           return rewriter.notifyMatchFailure(insertOp, "sizes do not match");
         }
@@ -228,6 +354,9 @@ public:
 
 struct FoldExtractInsertPairPass
     : public impl::FoldExtractInsertPairBase<FoldExtractInsertPairPass> {
+  void getDependentDialects(DialectRegistry &registry) const override {
+    registry.insert<arith::ArithDialect, linalg::LinalgDialect>();
+  }
   void runOnOperation() override;
 };
 } // namespace
@@ -238,6 +367,7 @@ void FoldExtractInsertPairPass::runOnOperation() {
   RewritePatternSet patterns(ctx);
   patterns.add<FoldExtractInsertPair>(ctx);
   patterns.add<FoldExtractSliceInsertSlice>(ctx);
+  patterns.add<NormalizeFilledSliceToSelect>(ctx);
   if (failed(applyPatternsGreedily(funcOp, std::move(patterns)))) {
     signalPassFailure();
   }
