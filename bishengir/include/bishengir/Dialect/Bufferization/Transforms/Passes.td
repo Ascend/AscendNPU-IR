@@ -20,7 +20,7 @@
 
 include "mlir/Pass/PassBase.td"
 
-def NormalizeToTensorOp : Pass<"normalize-to-tensor", "func::FuncOp"> {
+def NormalizeToTensorOp : Pass<"normalize-to-tensor", "mlir::func::FuncOp"> {
   let summary = "Normalize bufferization.to_tensor ops.";
   let description = [{
     Normalize `bufferization.to_tensor` ops before bufferization:
@@ -36,12 +36,12 @@ def NormalizeToTensorOp : Pass<"normalize-to-tensor", "func::FuncOp"> {
        memref-level writes visible to One-Shot Bufferization analysis,
        enabling RAW conflict detection and correct copy insertion.
   }];
-  let constructor = "mlir::bufferization::createNormalizeToTensorOpPass()";
-  let dependentDialects = ["bufferization::BufferizationDialect",
-                           "memref::MemRefDialect"];
+  let constructor = "bishengir::bufferization::createNormalizeToTensorOpPass()";
+  let dependentDialects = ["mlir::bufferization::BufferizationDialect",
+                           "mlir::memref::MemRefDialect"];
 }
 
-def TensorCopyInsertion : Pass<"tensor-copy-insertion", "ModuleOp"> {
+def TensorCopyInsertion : Pass<"tensor-copy-insertion", "mlir::ModuleOp"> {
   let summary = "Run One-Shot analysis and insert tensor copies to resolve "
                 "bufferization conflicts";
   let description = [{
@@ -54,9 +54,10 @@ def TensorCopyInsertion : Pass<"tensor-copy-insertion", "ModuleOp"> {
     or the default analyze+copy path) allows a second round of analysis to
     catch conflicts that were exposed by the first round's copy insertion.
   }];
-  let constructor = "mlir::bufferization::createTensorCopyInsertionPass()";
-  let dependentDialects = ["bufferization::BufferizationDialect",
-                           "memref::MemRefDialect", "tensor::TensorDialect",
+  let constructor = "bishengir::bufferization::createTensorCopyInsertionPass()";
+  let dependentDialects = ["mlir::bufferization::BufferizationDialect",
+                           "mlir::memref::MemRefDialect",
+                           "mlir::tensor::TensorDialect",
   ];
   let options =
       [Option<"allowReturnAllocsFromLoops", "allow-return-allocs-from-loops",

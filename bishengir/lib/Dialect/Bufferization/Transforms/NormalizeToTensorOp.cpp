@@ -58,10 +58,11 @@
 
 #include "llvm/Support/ErrorHandling.h"
 
-namespace mlir {
+namespace bishengir::bufferization {
+using namespace mlir;
 #define GEN_PASS_DEF_NORMALIZETOTENSOROP
 #include "bishengir/Dialect/Bufferization/Transforms/Passes.h.inc"
-} // namespace mlir
+} // namespace bishengir::bufferization
 
 using namespace mlir;
 using namespace mlir::bufferization;
@@ -190,7 +191,8 @@ struct ExposeMemrefWriteToTensorPattern : public OpRewritePattern<ToTensorOp> {
 };
 
 struct NormalizeToTensorOpPass
-    : public impl::NormalizeToTensorOpBase<NormalizeToTensorOpPass> {
+    : public bishengir::bufferization::impl::NormalizeToTensorOpBase<
+          NormalizeToTensorOpPass> {
 
   void runOnOperation() override {
     func::FuncOp funcOp = getOperation();
@@ -206,6 +208,7 @@ struct NormalizeToTensorOpPass
 
 } // namespace
 
-std::unique_ptr<Pass> mlir::bufferization::createNormalizeToTensorOpPass() {
+std::unique_ptr<Pass>
+bishengir::bufferization::createNormalizeToTensorOpPass() {
   return std::make_unique<NormalizeToTensorOpPass>();
 }

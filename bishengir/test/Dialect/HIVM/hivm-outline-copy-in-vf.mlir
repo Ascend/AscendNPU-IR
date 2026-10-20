@@ -222,3 +222,36 @@ func.func @i1_copy_caller() {
   func.call @i1_copy_callee_vf(%src, %dst) {hivm.vector_function, no_inline} : (memref<16xi1>, memref<16xi1>) -> ()
   return
 }
+
+// -----
+
+// An i64 copy that cannot be outlined stays in the VF as a transfer pair. It
+// must be tiled by the width one AVE vector operation covers, which for i64 is
+// a register pair of 64 elements, because that is the only i64 load the
+// template library implements. Tiling by the 32 elements that fit in one VL
+// would emit a load that mangles onto the same library symbol as the supported
+// width but needs a different signature.
+// CHECK-LABEL: func.func @i64_copy_tiled_by_register_pair
+// CHECK-NOT: hivm.hir.copy
+// CHECK: %[[C64:.*]] = arith.constant 64 : index
+// CHECK: scf.for %{{.*}} = %{{.*}} to %{{.*}} step %[[C64]]
+// CHECK: vector.transfer_read {{.*}} vector<64xi64>
+// CHECK: vector.transfer_write {{.*}} vector<64xi64>
+func.func @i64_copy_tiled_by_register_pair(%arg0: memref<256xi64>, %arg1: memref<256xi64>)
+    attributes {hivm.vector_function, no_inline} {
+  %cst = arith.constant dense<0> : vector<1xi64>
+  %c0 = arith.constant 0 : index
+  // Write through a subview first so the copy is not a pure entry DMA and
+  // therefore cannot be hoisted to the caller.
+  %subview = memref.subview %arg1[%c0] [1] [1] : memref<256xi64> to memref<1xi64, strided<[1], offset: ?>>
+  vector.transfer_write %cst, %subview[%c0] {in_bounds = [true]} : vector<1xi64>, memref<1xi64, strided<[1], offset: ?>>
+  hivm.hir.copy ins(%arg0 : memref<256xi64>) outs(%arg1 : memref<256xi64>)
+  return
+}
+
+func.func @i64_copy_tiled_by_register_pair_caller() {
+  %src = memref.alloc() : memref<256xi64>
+  %dst = memref.alloc() : memref<256xi64>
+  func.call @i64_copy_tiled_by_register_pair(%src, %dst) {hivm.vector_function, no_inline} : (memref<256xi64>, memref<256xi64>) -> ()
+  return
+}

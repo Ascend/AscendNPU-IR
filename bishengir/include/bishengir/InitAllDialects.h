@@ -38,12 +38,8 @@
 #if (!BISHENGIR_BUILD_STANDALONE_IR_ONLY)
 #include "bishengir/Conversion/Passes.h"
 #include "bishengir/Conversion/TritonAscendGPUToLLVM/Passes.h"
-#include "bishengir/Dialect/AscendDPX/IR/AscendDPX.h"
-#include "bishengir/Dialect/HIVMAVE/IR/HIVMAVE.h"
-#include "bishengir/Dialect/HIVMRegbaseIntrins/IR/HIVMRegbaseIntrins.h"
-#include "bishengir/Dialect/Triton/Transforms/Passes.h"
-#include "bishengir/Dialect/TritonExt/IR/TritonExtAttrs.h"
 #include "bishengir/Dialect/Annotation/Transforms/BufferizableOpInterfaceImpl.h"
+#include "bishengir/Dialect/AscendDPX/IR/AscendDPX.h"
 #include "bishengir/Dialect/Bufferization/Transforms/FuncBufferizableOpInterfaceImpl.h"
 #include "bishengir/Dialect/Bufferization/Transforms/TilingInterfaceImpl.h"
 #include "bishengir/Dialect/HFusion/Transforms/BufferizableOpInterfaceImpl.h"
@@ -51,9 +47,13 @@
 #include "bishengir/Dialect/HFusion/Transforms/TilingInterfaceImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/BufferizableOpInterfaceImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/HIVMTilingInterfaceImpl.h"
+#include "bishengir/Dialect/HIVMAVE/IR/HIVMAVE.h"
+#include "bishengir/Dialect/HIVMRegbaseIntrins/IR/HIVMRegbaseIntrins.h"
 #include "bishengir/Dialect/SCF/Transforms/BufferizableOpInterfaceImpl.h"
 #include "bishengir/Dialect/Scope/Transforms/BufferizableOpInterfaceImpl.h"
 #include "bishengir/Dialect/Tensor/Transforms/TilingInterfaceImpl.h"
+#include "bishengir/Dialect/Triton/Transforms/Passes.h"
+#include "bishengir/Dialect/TritonExt/IR/TritonExtAttrs.h"
 #endif // BISHENGIR_BUILD_STANDALONE_IR_ONLY
 
 #if BISHENGIR_ENABLE_TORCH_CONVERSIONS
@@ -117,7 +117,7 @@ inline void registerAllDialects(mlir::DialectRegistry &registry) {
   mlir::hfusion::registerDecomposeInterfaceExternalModels(registry);
   mlir::hivm::registerTilingInterfaceExternalModels(registry);
   mlir::scf_ext::registerBufferizableOpInterfaceExternalModels(registry);
-  mlir::bufferization_ext::registerFuncBufferizableOpInterfaceExternalModels(
+  bishengir::bufferization::registerFuncBufferizableOpInterfaceExternalModels(
       registry);
   mlir::scope::registerBufferizableOpInterfaceExternalModels(registry);
   bishengir::tensor::registerTilingInterfaceExternalModels(registry);

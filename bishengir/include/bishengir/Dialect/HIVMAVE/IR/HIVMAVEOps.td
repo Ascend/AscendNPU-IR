@@ -118,8 +118,7 @@ class AVE_VecScalarOp<string mnemonic, list<Trait> traits = []> :
     ])> {
   let summary = "Ave vector-scalar op " # mnemonic # ".";
   let arguments = (ins AveExtValidVector:$vec,
-                       AnyTypeOf<[ I8, I16, I32, I64, F16, F32 ]>:$scalar,
-                       AveMaskType:$mask);
+      AnyTypeOf<[I8, I16, I32, I64, F16, F32]>:$scalar, AveMaskType:$mask);
   let results = (outs AveExtValidVector:$out);
 
   let assemblyFormat = [{

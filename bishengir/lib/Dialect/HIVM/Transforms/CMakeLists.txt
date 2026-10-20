@@ -160,6 +160,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   LINK_LIBS PUBLIC
   MLIRAffineDialect
   MLIRAffineTransforms
+  MLIRAnalysis
   MLIRArithDialect
   MLIRArithUtils
   BiShengIRAnnotationDialect

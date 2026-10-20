@@ -664,18 +664,19 @@ class HIVM_ElementwiseBinaryOp<string mnemonic, list<Trait> traits = [], Type sr
   HIVM_ElementwiseNaryOp<mnemonic,
                          !listconcat([ElementwiseNaryOpTrait<2>], traits), srcType>;
 
-def VAddOp : HIVM_ElementwiseBinaryOp<"vadd",
-    [SameOperandsElementType,
-     VectorizableTrait,
-     OperElemTypeConstraints<[0, 1], [I8, I16, I32, F16, F32, I64]>,
-     CommutativeOpTrait, VectorOnlyTrait<0>,
-     DeclareOpInterfaceMethods<ExtraBufferOpInterface,
-       ["getExtraBufferSize"]>,
-     DeclareOpInterfaceMethods<ImplByScalarOpInterface>,
-     DeclareOpInterfaceMethods<BiShengIRAggregatedOpInterface,
-       ["decomposeOperation","getDecomposePhase"]>,
-     BroadcastableOTF
-    ]> {
+def VAddOp
+    : HIVM_ElementwiseBinaryOp<
+          "vadd", [SameOperandsElementType, VectorizableTrait,
+                   OperElemTypeConstraints<[0, 1], [I8, I16, I32, F16, F32,
+                                                    I64]>,
+                   CommutativeOpTrait, VectorOnlyTrait<0>,
+                   DeclareOpInterfaceMethods<
+                       ExtraBufferOpInterface, ["getExtraBufferSize"]>,
+                   DeclareOpInterfaceMethods<ImplByScalarOpInterface>,
+                   DeclareOpInterfaceMethods<
+                       BiShengIRAggregatedOpInterface, ["decomposeOperation",
+                                                        "getDecomposePhase"]>,
+                   BroadcastableOTF]> {
   let summary = "Elementwise Binary Vector Addition Op";
   let description = baseClassDescription # [{
     Additional constraints:
@@ -700,18 +701,19 @@ def VAddOp : HIVM_ElementwiseBinaryOp<"vadd",
   let extraClassDeclaration = elemwiseOpBaseDecls;
 }
 
-def VMulOp : HIVM_ElementwiseBinaryOp<"vmul",
-    [SameOperandsElementType,
-     VectorizableTrait,
-     OperElemTypeConstraints<[0, 1], [I8, I16, I32, F16, F32, I64]>,
-     CommutativeOpTrait, VectorOnlyTrait<0>,
-     DeclareOpInterfaceMethods<ExtraBufferOpInterface,
-       ["getExtraBufferSize"]>,
-     DeclareOpInterfaceMethods<ImplByScalarOpInterface>,
-     DeclareOpInterfaceMethods<BiShengIRAggregatedOpInterface,
-       ["decomposeOperation","getDecomposePhase"]>,
-     BroadcastableOTF
-    ]> {
+def VMulOp
+    : HIVM_ElementwiseBinaryOp<
+          "vmul", [SameOperandsElementType, VectorizableTrait,
+                   OperElemTypeConstraints<[0, 1], [I8, I16, I32, F16, F32,
+                                                    I64]>,
+                   CommutativeOpTrait, VectorOnlyTrait<0>,
+                   DeclareOpInterfaceMethods<
+                       ExtraBufferOpInterface, ["getExtraBufferSize"]>,
+                   DeclareOpInterfaceMethods<ImplByScalarOpInterface>,
+                   DeclareOpInterfaceMethods<
+                       BiShengIRAggregatedOpInterface, ["decomposeOperation",
+                                                        "getDecomposePhase"]>,
+                   BroadcastableOTF]> {
   let summary = "Elementwise Binary Vector Multiplication Op";
   let description = baseClassDescription # [{
     Additional constraints:
@@ -776,13 +778,14 @@ def VMulExtUiOp : HIVM_ElementwiseBinaryOp<"vmulextui",
 
 def VSubOp
     : HIVM_ElementwiseBinaryOp<
-          "vsub", [SameOperandsElementType,
-                   VectorizableTrait,
-                   OperElemTypeConstraints<[0, 1], [I8, I16, I32, F16, F32, I64]>,
-                   DeclareOpInterfaceMethods<ExtraBufferOpInterface,
-                     ["getExtraBufferSize"]>,
-                   DeclareOpInterfaceMethods<BiShengIRAggregatedOpInterface,
-                     ["decomposeOperation","getDecomposePhase"]>,
+          "vsub", [SameOperandsElementType, VectorizableTrait,
+                   OperElemTypeConstraints<[0, 1], [I8, I16, I32, F16, F32,
+                                                    I64]>,
+                   DeclareOpInterfaceMethods<
+                       ExtraBufferOpInterface, ["getExtraBufferSize"]>,
+                   DeclareOpInterfaceMethods<
+                       BiShengIRAggregatedOpInterface, ["decomposeOperation",
+                                                        "getDecomposePhase"]>,
                    DeclareOpInterfaceMethods<ImplByScalarOpInterface>,
                    BroadcastableOTF]> {
   let summary = "Elementwise Binary Vector Subtraction Op";

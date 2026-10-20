@@ -1,4 +1,5 @@
 // RUN: bishengir-opt -cv-pipelining="pipeline-mode=skew bypass-shape-registry=true" -allow-unregistered-dialect %s | FileCheck %s
+// RUN: bishengir-opt -cv-pipelining="bypass-shape-registry=true" -allow-unregistered-dialect %s | FileCheck %s
 
 // CHECK-LABEL: func.func @a5_preload_workspace
 // CHECK-DAG: %[[WS0:.*]] = memref_ext.alloc_workspace() from %arg0 : from memref<?xi8> to memref<4x16x16xf32>

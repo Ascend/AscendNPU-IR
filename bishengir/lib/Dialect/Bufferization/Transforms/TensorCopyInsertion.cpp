@@ -27,10 +27,11 @@
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Pass/Pass.h"
 
-namespace mlir {
+namespace bishengir::bufferization {
+using namespace mlir;
 #define GEN_PASS_DEF_TENSORCOPYINSERTION
 #include "bishengir/Dialect/Bufferization/Transforms/Passes.h.inc"
-} // namespace mlir
+} // namespace bishengir::bufferization
 
 using namespace mlir;
 using namespace mlir::bufferization;
@@ -51,11 +52,12 @@ parseHeuristicOption(const std::string &s) {
 
 namespace {
 struct TensorCopyInsertionPass
-    : public impl::TensorCopyInsertionBase<TensorCopyInsertionPass> {
+    : public bishengir::bufferization::impl::TensorCopyInsertionBase<
+          TensorCopyInsertionPass> {
   TensorCopyInsertionPass() = default;
 
   explicit TensorCopyInsertionPass(
-      const bufferization::OneShotBufferizationOptions &options)
+      const mlir::bufferization::OneShotBufferizationOptions &options)
       : options(options) {}
 
   void runOnOperation() override {
@@ -78,15 +80,16 @@ struct TensorCopyInsertionPass
   }
 
 private:
-  std::optional<bufferization::OneShotBufferizationOptions> options;
+  std::optional<mlir::bufferization::OneShotBufferizationOptions> options;
 };
 } // namespace
 
-std::unique_ptr<Pass> mlir::bufferization::createTensorCopyInsertionPass() {
+std::unique_ptr<Pass>
+bishengir::bufferization::createTensorCopyInsertionPass() {
   return std::make_unique<TensorCopyInsertionPass>();
 }
 
-std::unique_ptr<Pass> mlir::bufferization::createTensorCopyInsertionPass(
-    const bufferization::OneShotBufferizationOptions &options) {
+std::unique_ptr<Pass> bishengir::bufferization::createTensorCopyInsertionPass(
+    const mlir::bufferization::OneShotBufferizationOptions &options) {
   return std::make_unique<TensorCopyInsertionPass>(options);
 }

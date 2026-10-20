@@ -504,6 +504,10 @@ compileDeviceKernel(StringRef bishengPath, const std::string &llvmirFilepath,
   }
   arguments.push_back("-mllvm");
   arguments.push_back("-cce-aicore-dcci-insert-for-scalar=false");
+  // Inline functions from linked modules (e.g. template bitcode) into the
+  // kernel during device compilation.
+  arguments.push_back("-mllvm");
+  arguments.push_back("-enable-module-inliner");
 
   std::string paramSizeArg =
       "--cce-aicore-input-parameter-size=" +
