@@ -23,6 +23,7 @@ add_bishengir_library(BiShengIRDialectUtils
   BiShengIRHFusionDialect
   MLIRIR
   MLIRLinalgDialect
+  MLIRLLVMDialect
   MLIRMemRefDialect
   MLIRSCFDialect
   MLIRTensorDialect
