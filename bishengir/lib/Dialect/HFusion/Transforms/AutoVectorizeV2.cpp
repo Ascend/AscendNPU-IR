@@ -1279,6 +1279,7 @@ void AutoVectorizeV2::buildTileAndFuseTransformSequenceForBlock(
         &otherVectorizableOps,
     PlanContext &ctx) {
   ctx.resetForBlock();
+  ctx.constraint().compute(block, ctx);
   planFuseSiblingForLeafNodes(block, ctx);
   planFuseProducersIntoConsumers(block, ctx);
   ctx.computeTileSize();
