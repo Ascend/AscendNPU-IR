@@ -18,7 +18,7 @@
 #define BISHENGIR_LIB_TEMPLATE_INCLUDE_REGBASE_CUMULATIVE_UTILS_H
 
 #include "ArchDefs.h"
-#include "DMA/DMAUtils.h"
+#include "RegBase/DMAUtils.h"
 #include "RegBase/VecUtils.h"
 #include "Utils.h"
 #include "Vector/VecUtils.h"

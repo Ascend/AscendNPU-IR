@@ -15,8 +15,8 @@
  */
 
 #include "ArchDefs.h"
-#include "DMA/DMAUtils.h"
 #include "RegBase/Cumulative/Cumulative.h"
+#include "RegBase/DMAUtils.h"
 #include "RegBase/VecUtils.h"
 #include "Utils.h"
 #include "Vector/VecUtils.h"
