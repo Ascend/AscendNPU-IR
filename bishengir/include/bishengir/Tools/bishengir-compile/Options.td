@@ -738,6 +738,8 @@ llvm::cl::values(
                 REGISTER_TARGET(Ascend910_9372),
                 REGISTER_TARGET(Ascend910_9381), REGISTER_TARGET(Ascend910_9382),
                 REGISTER_TARGET(Ascend910_9391), REGISTER_TARGET(Ascend910_9392),
+                // Ascend950 generic
+                REGISTER_TARGET(Ascend950),
                 // Ascend910_95 series
                 REGISTER_TARGET(Ascend910_950z), REGISTER_TARGET(Ascend910_9579),
                 REGISTER_TARGET(Ascend910_957b), REGISTER_TARGET(Ascend910_957d),

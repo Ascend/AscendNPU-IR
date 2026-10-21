@@ -1,6 +1,7 @@
 // RUN: bishengir-opt %s --hacc-append-device-spec=target=Ascend910B1 -split-input-file | FileCheck --check-prefix=910B1 %s
 // RUN: bishengir-opt %s --hacc-append-device-spec -split-input-file | FileCheck --check-prefix=UNKNOWN %s
 // RUN: bishengir-opt %s --hacc-append-device-spec="target=Ascend950PR_9589 custom-aic-number=5 custom-aiv-number=10" -split-input-file | FileCheck --check-prefix=OVERRIDE %s
+// RUN: bishengir-opt %s --hacc-append-device-spec="target=Ascend950 custom-aic-number=8 custom-aiv-number=16" -split-input-file | FileCheck --check-prefix=GENERIC950 %s
 // RUN: bishengir-opt %s --hacc-append-device-spec="target=Ascend910B1 custom-aic-number=10" -split-input-file | FileCheck --check-prefix=ONLY_AIC %s
 // RUN: bishengir-opt %s --hacc-append-device-spec="target=Ascend910B1 custom-aiv-number=16" -split-input-file | FileCheck --check-prefix=ONLY_AIV %s
 // RUN: bishengir-opt %s --hacc-append-device-spec="target=Ascend910B1 custom-aic-number=1000 custom-aiv-number=1000" -split-input-file | FileCheck --check-prefix=NO_LIMIT %s
@@ -13,6 +14,13 @@
 // OVERRIDE: "AI_CORE_COUNT", 5
 // OVERRIDE-SAME: "CUBE_CORE_COUNT", 5
 // OVERRIDE-SAME: "VECTOR_CORE_COUNT", 10
+// GENERIC950: "AI_CORE_COUNT", 8
+// GENERIC950-SAME: "CUBE_CORE_COUNT", 8
+// GENERIC950-SAME: "VECTOR_CORE_COUNT", 16
+// GENERIC950-SAME: "UB_SIZE", 2031616
+// GENERIC950-SAME: "L0C_SIZE", 2097152
+// GENERIC950-SAME: "MINIMAL_D_CACHE_SIZE", 262144
+// GENERIC950-SAME: "ARCH", "dav-c310"
 // ONLY_AIC: "AI_CORE_COUNT", 10
 // ONLY_AIC-SAME: "CUBE_CORE_COUNT", 10
 // ONLY_AIC-SAME: "VECTOR_CORE_COUNT", 48
