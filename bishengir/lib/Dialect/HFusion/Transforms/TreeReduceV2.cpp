@@ -27,6 +27,7 @@
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Debug.h"
 
@@ -528,89 +529,96 @@ struct TreeReducePattern : public OpRewritePattern<func::FuncOp> {
   }
 };
 
-Value traceBackToOriginalTensor(Value val) {
-  Value currentVal = val;
-  while (currentVal) {
-    Operation *defOp = currentVal.getDefiningOp();
-    if (!defOp)
-      break;
+void collectOriginalTensorCandidates(Value value, llvm::DenseSet<Value> &seen,
+                                     SmallVectorImpl<Value> &candidates) {
+  if (!seen.insert(value).second)
+    return;
 
-    if (auto maskOp = dyn_cast<vector::MaskOp>(defOp)) {
-      vector::TransferReadOp innerRead = nullptr;
-      maskOp.walk([&](vector::TransferReadOp op) { innerRead = op; });
-      if (innerRead) {
-        currentVal = innerRead.getSource();
-        continue;
-      }
-    }
-    if (auto readOp = dyn_cast<vector::TransferReadOp>(defOp)) {
-      currentVal = readOp.getSource();
-      continue;
-    }
-    if (auto writeOp = dyn_cast<vector::TransferWriteOp>(defOp)) {
-      currentVal = writeOp.getSource();
-      continue;
-    }
-    if (auto extractOp = dyn_cast<tensor::ExtractSliceOp>(defOp)) {
-      currentVal = extractOp.getSource();
-      continue;
-    }
-    if (auto insertOp = dyn_cast<tensor::InsertSliceOp>(defOp)) {
-      currentVal = insertOp.getDest();
-      continue;
-    }
-    if (auto shapeCastOp = dyn_cast<vector::ShapeCastOp>(defOp)) {
-      currentVal = shapeCastOp.getSource();
-      continue;
-    }
-    if (auto extfOp = dyn_cast<arith::ExtFOp>(defOp)) {
-      currentVal = extfOp.getIn();
-      continue;
-    }
-    if (auto truncfOp = dyn_cast<arith::TruncFOp>(defOp)) {
-      currentVal = truncfOp.getIn();
-      continue;
-    }
-    if (auto extiOp = dyn_cast<arith::ExtSIOp>(defOp)) {
-      currentVal = extiOp.getIn();
-      continue;
-    }
-    if (auto trunciOp = dyn_cast<arith::TruncIOp>(defOp)) {
-      currentVal = trunciOp.getIn();
-      continue;
-    }
-    if (auto fptosiOp = dyn_cast<arith::FPToSIOp>(defOp)) {
-      currentVal = fptosiOp.getIn();
-      continue;
-    }
-    if (auto sitofpOp = dyn_cast<arith::SIToFPOp>(defOp)) {
-      currentVal = sitofpOp.getIn();
-      continue;
-    }
-
-    if (auto addfOp = dyn_cast<arith::AddFOp>(defOp)) {
-      currentVal = addfOp.getLhs();
-      continue;
-    }
-    if (auto forOp = dyn_cast<scf::ForOp>(defOp)) {
-      if (forOp->hasAttr("reductionLoop")) {
-        (void)forOp.walk([&](tensor::ExtractSliceOp sliceOp) {
-          Value source = sliceOp.getSource();
-          if (!llvm::is_contained(forOp.getRegionIterArgs(), source)) {
-            currentVal = source;
-            return WalkResult::interrupt();
-          }
-          return WalkResult::advance();
-        });
-        break;
-      }
-      break;
-    }
-    LDBG("traceBackToOriginalTensor: stopping at unrecognized op: "
-         << defOp->getName());
-    break;
+  Operation *defOp = value.getDefiningOp();
+  if (!defOp) {
+    if (isa<RankedTensorType>(value.getType()))
+      candidates.push_back(value);
+    return;
   }
-  return currentVal;
+
+  if (auto maskOp = dyn_cast<vector::MaskOp>(defOp)) {
+    Operation *maskedOp = maskOp.getMaskableOp();
+    if (auto readOp = dyn_cast_or_null<vector::TransferReadOp>(maskedOp)) {
+      collectOriginalTensorCandidates(readOp.getSource(), seen, candidates);
+      return;
+    }
+    if (auto writeOp = dyn_cast_or_null<vector::TransferWriteOp>(maskedOp)) {
+      collectOriginalTensorCandidates(writeOp.getVector(), seen, candidates);
+      return;
+    }
+  }
+  if (auto readOp = dyn_cast<vector::TransferReadOp>(defOp)) {
+    collectOriginalTensorCandidates(readOp.getSource(), seen, candidates);
+    return;
+  }
+  if (auto writeOp = dyn_cast<vector::TransferWriteOp>(defOp)) {
+    collectOriginalTensorCandidates(writeOp.getVector(), seen, candidates);
+    return;
+  }
+  if (auto extractOp = dyn_cast<tensor::ExtractSliceOp>(defOp)) {
+    collectOriginalTensorCandidates(extractOp.getSource(), seen, candidates);
+    return;
+  }
+  if (auto insertOp = dyn_cast<tensor::InsertSliceOp>(defOp)) {
+    collectOriginalTensorCandidates(insertOp.getSource(), seen, candidates);
+    return;
+  }
+  if (auto shapeCastOp = dyn_cast<vector::ShapeCastOp>(defOp)) {
+    collectOriginalTensorCandidates(shapeCastOp.getSource(), seen, candidates);
+    return;
+  }
+  if (auto extfOp = dyn_cast<arith::ExtFOp>(defOp)) {
+    collectOriginalTensorCandidates(extfOp.getIn(), seen, candidates);
+    return;
+  }
+  if (auto truncfOp = dyn_cast<arith::TruncFOp>(defOp)) {
+    collectOriginalTensorCandidates(truncfOp.getIn(), seen, candidates);
+    return;
+  }
+  if (auto extiOp = dyn_cast<arith::ExtSIOp>(defOp)) {
+    collectOriginalTensorCandidates(extiOp.getIn(), seen, candidates);
+    return;
+  }
+  if (auto trunciOp = dyn_cast<arith::TruncIOp>(defOp)) {
+    collectOriginalTensorCandidates(trunciOp.getIn(), seen, candidates);
+    return;
+  }
+  if (auto fptosiOp = dyn_cast<arith::FPToSIOp>(defOp)) {
+    collectOriginalTensorCandidates(fptosiOp.getIn(), seen, candidates);
+    return;
+  }
+  if (auto sitofpOp = dyn_cast<arith::SIToFPOp>(defOp)) {
+    collectOriginalTensorCandidates(sitofpOp.getIn(), seen, candidates);
+    return;
+  }
+
+  if (auto addfOp = dyn_cast<arith::AddFOp>(defOp)) {
+    collectOriginalTensorCandidates(addfOp.getLhs(), seen, candidates);
+    collectOriginalTensorCandidates(addfOp.getRhs(), seen, candidates);
+    return;
+  }
+  if (auto forOp = dyn_cast<scf::ForOp>(defOp)) {
+    if (!forOp->hasAttr("reductionLoop"))
+      return;
+    (void)forOp.walk([&](tensor::ExtractSliceOp sliceOp) {
+      Value source = sliceOp.getSource();
+      if (llvm::is_contained(forOp.getRegionIterArgs(), source))
+        return WalkResult::advance();
+      collectOriginalTensorCandidates(source, seen, candidates);
+      return WalkResult::interrupt();
+    });
+    return;
+  }
+
+  if (isa<RankedTensorType>(value.getType()))
+    candidates.push_back(value);
+  LDBG("collectOriginalTensorCandidates: stopping at unrecognized op: "
+       << defOp->getName());
 }
 
 class TreeReductionBuilder {
@@ -1902,32 +1910,14 @@ void TreeReduceV2Pass::runOnOperation() {
       continue;
     }
 
-    Value inputTensor = traceBackToOriginalTensor(targetReduceOp.getSource());
+    llvm::DenseSet<Value> seen;
+    SmallVector<Value> inputCandidates;
+    collectOriginalTensorCandidates(targetReduceOp.getSource(), seen,
+                                    inputCandidates);
+
+    Value inputTensor;
     int64_t dimR = -1, dimA = -1;
     bool isAR = false;
-    if (!isValid2DReduction(targetReduceOp, inputTensor, dimR, dimA, isAR)) {
-      LDBG("Skipping - not a valid 2D reduction (input rank != 2)");
-      continue;
-    }
-    LDBG("Valid 2D reduction: dimR=" << dimR << " dimA=" << dimA
-                                     << " isAR=" << isAR);
-
-    auto inputTensorType = cast<RankedTensorType>(inputTensor.getType());
-    Type inElemTy = inputTensorType.getElementType();
-    if (!inElemTy.isF32() && !inElemTy.isF16() && !inElemTy.isBF16()) {
-      LDBG("Skipping - unsupported element type: " << inElemTy);
-      continue;
-    }
-
-    // Early exit if the corresponding direction is disabled.
-    if (isAR && !enableAR) {
-      LDBG("Skipping - AR disabled (enableAR=false)");
-      continue;
-    }
-    if (!isAR && !enableRA) {
-      LDBG("Skipping - RA disabled (enableRA=false)");
-      continue;
-    }
 
     scf::ForOp targetForOp = targetReduceOp->getParentOfType<scf::ForOp>();
     if (!targetForOp) {
@@ -1972,7 +1962,63 @@ void TreeReduceV2Pass::runOnOperation() {
     rewriter.setInsertionPoint(targetForOp);
 
     auto accTensorType =
-        cast<RankedTensorType>(targetForOp.getInitArgs()[0].getType());
+        dyn_cast<RankedTensorType>(targetForOp.getInitArgs()[0].getType());
+    if (!accTensorType) {
+      LDBG("Skipping - accumulator is not a ranked tensor");
+      continue;
+    }
+
+    bool hasAmbiguousInput = false;
+    for (Value candidate : inputCandidates) {
+      int64_t candidateDimR = -1, candidateDimA = -1;
+      bool candidateIsAR = false;
+      if (!isValid2DReduction(targetReduceOp, candidate, candidateDimR,
+                              candidateDimA, candidateIsAR))
+        continue;
+
+      bool hasCompatibleShape = false;
+      if (accTensorType.getRank() == 0) {
+        hasCompatibleShape = candidateDimA == 1;
+      } else if (accTensorType.getRank() == 1) {
+        int64_t accSize = accTensorType.getShape().front();
+        hasCompatibleShape =
+            !ShapedType::isDynamic(accSize) && accSize == candidateDimA;
+      }
+      if (!hasCompatibleShape)
+        continue;
+
+      if (inputTensor && inputTensor != candidate) {
+        hasAmbiguousInput = true;
+        break;
+      }
+      inputTensor = candidate;
+      dimR = candidateDimR;
+      dimA = candidateDimA;
+      isAR = candidateIsAR;
+    }
+    if (!inputTensor || hasAmbiguousInput) {
+      LDBG("Skipping - could not infer a unique reduction input");
+      continue;
+    }
+    LDBG("Valid 2D reduction: dimR=" << dimR << " dimA=" << dimA
+                                     << " isAR=" << isAR);
+
+    auto inputTensorType = cast<RankedTensorType>(inputTensor.getType());
+    Type inElemTy = inputTensorType.getElementType();
+    if (!inElemTy.isF32() && !inElemTy.isF16() && !inElemTy.isBF16()) {
+      LDBG("Skipping - unsupported element type: " << inElemTy);
+      continue;
+    }
+
+    // Early exit if the corresponding direction is disabled.
+    if (isAR && !enableAR) {
+      LDBG("Skipping - AR disabled (enableAR=false)");
+      continue;
+    }
+    if (!isAR && !enableRA) {
+      LDBG("Skipping - RA disabled (enableRA=false)");
+      continue;
+    }
     Type computeElemTy = inElemTy;
     if (isa<FloatType>(inElemTy) && inElemTy.getIntOrFloatBitWidth() < 32)
       computeElemTy = rewriter.getF32Type();
