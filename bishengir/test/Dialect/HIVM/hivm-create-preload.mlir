@@ -220,10 +220,12 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
 // CHECK-DAG:       %[[LOCALBUFFER1_ADDR1:.*]] = arith.constant 99328 : i64
 // CHECK-DAG:       %[[LOCALBUFFER1_ADDR2:.*]] = arith.constant 99072 : i64
 // CHECK-DAG:       %[[LOCALBUFFER1_ADDR3:.*]] = arith.constant 98816 : i64
+// CHECK-DAG:       %[[C98304_I64:.*]] = arith.constant 98304 : i64
+// CHECK-DAG:       %[[INIT3:.*]] = hivm.hir.pointer_cast(%[[C98304_I64]]) : memref<64xf32, #hivm.address_space<ub>>
 // CHECK:           %[[PRELOAD_WORKSPACE1:.*]] = memref.view %[[VAL_2]]{{\[}}%[[VAL_61:.*]]][] : memref<?xi8, #hivm.address_space<gm>> to memref<4x128x512xbf16, #hivm.address_space<gm>>
 // CHECK:           %[[PRELOAD_WORKSPACE2:.*]] = memref.view %[[VAL_2]]{{\[}}%[[VAL_63:.*]]][] : memref<?xi8, #hivm.address_space<gm>> to memref<4x128x128xf32, #hivm.address_space<gm>>
 // CHECK:           %[[PRELOAD_WORKSPACE3:.*]] = memref.view %[[VAL_2]]{{\[}}%[[VAL_62:.*]]][] : memref<?xi8, #hivm.address_space<gm>> to memref<4x128x512xf32, #hivm.address_space<gm>>
-// CHECK:             %[[VAL_92:.*]]:2 = scf.for %[[IND_VAR:.*]] = %[[C0_I32]] to %[[C10240_I32]] step %[[C512_I32]] iter_args(%[[ITER1:.*]] = %[[INIT1]], %[[ITER2:.*]] = %[[INIT2]]) -> (memref<64xf32, #hivm.address_space<ub>>, memref<64x128xf32, #hivm.address_space<ub>>)  : i32 {
+// CHECK:             %[[VAL_92:.*]]:3 = scf.for %[[IND_VAR:.*]] = %[[C0_I32]] to %[[C10240_I32]] step %[[C512_I32]] iter_args(%[[ITER1:.*]] = %[[INIT1]], %[[ITER2:.*]] = %[[INIT2]], %[[ITER3:.*]] = %[[INIT3]]) -> (memref<64xf32, #hivm.address_space<ub>>, memref<64x128xf32, #hivm.address_space<ub>>, memref<64xf32, #hivm.address_space<ub>>)  : i32 {
 // CHECK:               %[[PRELOAD2_IND_VAR:.*]] = arith.subi %[[IND_VAR]], %[[C512_I32]] : i32
 // CHECK:               %[[PRELOAD0_IND_VAR:.*]] = arith.subi %[[IND_VAR]], %[[C1536_I32]] : i32
 // CHECK:               %[[PRELOAD2_LOCAL_BUFFER1:.*]] = hivm.hir.pointer_cast(%[[LOCALBUFFER1_ADDR0]], %[[LOCALBUFFER1_ADDR3]], %[[LOCALBUFFER1_ADDR2]], %[[LOCALBUFFER1_ADDR1]]) : memref<64xf32, #hivm.address_space<ub>>
@@ -236,7 +238,7 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
 // CHECK:               %[[PRELOAD2_LB:.*]] = arith.cmpi sge, %[[PRELOAD2_IND_VAR]], %[[C0_I32]] : i32
 // CHECK:               %[[PRELOAD2_UB:.*]] = arith.cmpi slt, %[[PRELOAD2_IND_VAR]], %[[C8192_I32]] : i32
 // CHECK:               %[[PRELOAD2_COND:.*]] = arith.andi %[[PRELOAD2_LB]], %[[PRELOAD2_UB]] : i1
-// CHECK:               %[[ITER1_RET:.*]] = scf.if %[[PRELOAD2_COND]] -> (memref<64xf32, #hivm.address_space<ub>>) {
+// CHECK:               %[[ITER1_RET:.*]]:2 = scf.if %[[PRELOAD2_COND]] -> (memref<64xf32, #hivm.address_space<ub>>, memref<64xf32, #hivm.address_space<ub>>) {
 // CHECK:                 %[[VAL_116:.*]] = memref.subview %[[PRELOAD_WORKSPACE1]][0, 0, 0] [1, 128, 512] [1, 1, 1] {{{.*}}hivm.preload_workspace{{.*}}}
 // CHECK:                 %[[VAL_120:.*]] = memref.subview %[[PRELOAD_WORKSPACE3]][0, %[[VAL_69:.*]], 0] [4, 64, 512] [1, 1, 1] {to_be_bubbled_slice} : memref<4x128x512xf32, #hivm.address_space<gm>> to memref<4x64x512xf32, strided<[65536, 512, 1], offset: ?>, #hivm.address_space<gm>>
 // CHECK:                 %[[VAL_121:.*]] = memref.subview %[[VAL_120]][0, 0, 0] [1, 64, 512] [1, 1, 1] {{{.*}}hivm.preload_workspace{{.*}}}
@@ -245,9 +247,9 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
 // CHECK:                   %[[VAL_160:.*]] = memref.subview %[[PRELOAD2_LOCAL_BUFFER1]]{{\[}}%[[VAL_129:.*]]] [16] [1] : memref<64xf32, #hivm.address_space<ub>> to memref<16xf32, strided<[1], offset: ?>, #hivm.address_space<ub>>
 // CHECK:                   %[[VAL_161:.*]] = memref.subview %[[ITER1]]{{\[}}%[[VAL_129:.*]]] [16] [1] : memref<64xf32, #hivm.address_space<ub>> to memref<16xf32, strided<[1], offset: ?>, #hivm.address_space<ub>>
 // CHECK:                 }
-// CHECK:                 scf.yield %[[PRELOAD2_ITER1]] : memref<64xf32, #hivm.address_space<ub>>
+// CHECK:                 scf.yield %[[ITER3]], %[[PRELOAD2_ITER1]] : memref<64xf32, #hivm.address_space<ub>>, memref<64xf32, #hivm.address_space<ub>>
 // CHECK:               } else {
-// CHECK:                 scf.yield %[[ITER1]] : memref<64xf32, #hivm.address_space<ub>>
+// CHECK:                 scf.yield %[[ITER3]], %[[ITER1]] : memref<64xf32, #hivm.address_space<ub>>, memref<64xf32, #hivm.address_space<ub>>
 // CHECK:               }
 // CHECK:               %[[PRELOAD0_LB:.*]] = arith.cmpi sge, %[[PRELOAD0_IND_VAR]], %[[C0_I32]] : i32
 // CHECK:               %[[PRELOAD0_UB:.*]] = arith.cmpi slt, %[[PRELOAD0_IND_VAR]], %[[C8192_I32]] : i32
@@ -262,7 +264,7 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
 // CHECK:               } else {
 // CHECK:                 scf.yield %[[ITER2]] : memref<64x128xf32, #hivm.address_space<ub>>
 // CHECK:               }
-// CHECK:               scf.yield %[[ITER1_RET]], %[[ITER2_RET]] : memref<64xf32, #hivm.address_space<ub>>, memref<64x128xf32, #hivm.address_space<ub>>
+// CHECK:               scf.yield %[[ITER1_RET]]#1, %[[ITER2_RET]], %[[ITER1_RET]]#0 : memref<64xf32, #hivm.address_space<ub>>, memref<64x128xf32, #hivm.address_space<ub>>, memref<64xf32, #hivm.address_space<ub>>
 // CHECK:             }
 // CHECK:           return
 // CHECK:         }

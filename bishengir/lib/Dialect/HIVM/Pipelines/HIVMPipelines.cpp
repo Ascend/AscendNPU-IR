@@ -34,6 +34,7 @@
 #include "mlir/Dialect/Bufferization/Transforms/Passes.h"
 #include "mlir/Dialect/SCF/Transforms/Passes.h"
 #include "mlir/Pass/PassManager.h"
+#include "mlir/Transforms/Passes.h"
 
 namespace mlir {
 namespace hivm {
@@ -592,6 +593,7 @@ void buildOptimizeHIVMPipeline(OpPassManager &pm,
   // all `scope.scope` ops.
   pm.addPass(
       scope::createInlineScopePass(InlineScopeOptions{/*forceInline=*/true}));
+  pm.addPass(createInlinerPass());
   pm.addPass(createEnableHIVMCCompatiblePrintPass());
   pm.addPass(annotation::createAnnotationLoweringPass());
   // Convert non-GM memref.alloc to alloca after annotations are lowered.

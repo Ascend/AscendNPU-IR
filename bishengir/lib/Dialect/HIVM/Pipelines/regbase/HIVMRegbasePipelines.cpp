@@ -620,6 +620,8 @@ static void hivmPreBufferizationOptimizationPipeline(
   // inline-scope below runs.
   pm.addPass(createMarkSimtScopeNoInlinePass());
   pm.addPass(scope::createInlineScopePass());
+  // TileAndBindSubBlock needs the complete def-use chain across outlined VFs.
+  pm.addPass(createInlinerPass());
   if (!hivmPipelineOptions.skipHIVMBindSubBlockPass) {
     TileAndBindSubBlockOptions tileOptions;
     tileOptions.enableTile = hivmPipelineOptions.enableAutoBindSubBlock;
@@ -683,9 +685,8 @@ static void hivmPostBufferizationOptimizationPipeline(
     // Move VF entry DMA on argument buffers to the caller before VF cleanup.
     pm.addPass(createOutlineCopyInVFPass());
     pm.addPass(bufferization::createDropEquivalentBufferResultsPass());
-    // make sure VFFusion function can be inlined
-    // so InferHIVMMemScope can work correctly
     pm.addPass(scope::createInlineScopePass());
+    pm.addPass(createInlinerPass());
   }
   // Bind buffer should be done after outline alloc in vf because the source
   // allocs might be inside the VF.
@@ -894,6 +895,7 @@ void buildLowerHIVMPipelines(OpPassManager &pm,
   // all `scope.scope` ops.
   pm.addPass(
       scope::createInlineScopePass(InlineScopeOptions{/*forceInline=*/true}));
+  pm.addPass(createInlinerPass());
   pm.addPass(
       bishengir::createInjectIRPass(hivmPipelineOptions.injectIRFromFile));
 }
