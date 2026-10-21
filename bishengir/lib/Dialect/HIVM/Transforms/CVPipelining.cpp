@@ -20,6 +20,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/TileUtils.h"
+#include "bishengir/Dialect/HIVM/Utils/HIVMAliasAnalysis.h"
 #include "bishengir/Dialect/HIVM/Utils/ShapeRegistry.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/Utils/WorkItem.h"
@@ -37,10 +38,12 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/SCF/Utils/Utils.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/IR/IRMapping.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Interfaces/DestinationStyleOpInterface.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "llvm/ADT/TypeSwitch.h"
+#include "llvm/Support/MathExtras.h"
 
 #include <functional>
 
@@ -1055,6 +1058,73 @@ void CVPipelineImpl::expandWorkspace(OpBuilder &builder) {
   }
 }
 
+/// Clone an address slice, keeping values outside the loop unchanged. Only
+/// view operations and side-effect-free scalar calculations can be cloned.
+static Value cloneGMAccess(Value value, scf::ForOp loop, OpBuilder &builder,
+                           IRMapping &mapping, unsigned &remaining,
+                           unsigned depth = 0) {
+  if (Value mapped = mapping.lookupOrNull(value))
+    return mapped;
+  if (loop.isDefinedOutsideOfLoop(value))
+    return value;
+  Operation *op = value.getDefiningOp();
+  if (!op || depth > 32 || !remaining || op->getNumRegions() ||
+      !isMemoryEffectFree(op))
+    return {};
+  if (!value.getType().isIntOrIndex() &&
+      !isa<memref::ReinterpretCastOp, memref::SubViewOp, memref::CastOp,
+           memref::MemorySpaceCastOp>(op))
+    return {};
+  --remaining;
+  for (Value operand : op->getOperands()) {
+    Value cloned =
+        cloneGMAccess(operand, loop, builder, mapping, remaining, depth + 1);
+    if (!cloned)
+      return {};
+    mapping.map(operand, cloned);
+  }
+  builder.clone(*op, mapping);
+  return mapping.lookup(value);
+}
+
+/// Check the GM pairs that may cross during skewing. Build future views in a
+/// private block and let the alias utility compare the actual memref values.
+static bool areGMAccessesIndependent(Value lhs, Value rhs, scf::ForOp loop,
+                                     int64_t maxDistance,
+                                     utils::HIVMAliasAnalysis &aliasAnalysis) {
+  auto step = getConstantIntValue(loop.getStep());
+  if (!step || *step <= 0 || loop->hasAttr("unsignedCmp"))
+    return false;
+  Value iv = loop.getInductionVar();
+  // CV pipelining assumes signed GM address arithmetic never overflows,
+  // including intermediate i32 offset calculations before casts to index.
+  for (int64_t distance = 1; distance <= maxDistance; ++distance) {
+    int64_t displacement;
+    if (llvm::MulOverflow(*step, distance, displacement))
+      return false;
+    if (auto type = dyn_cast<IntegerType>(iv.getType());
+        type && !llvm::isIntN(type.getWidth(), displacement))
+      return false;
+    Region scratch;
+    OpBuilder builder(loop.getContext());
+    builder.setInsertionPointToEnd(&scratch.emplaceBlock());
+    auto shift = builder.create<arith::ConstantOp>(
+        loop.getLoc(), builder.getIntegerAttr(iv.getType(), displacement));
+    Value nextIV = builder.create<arith::AddIOp>(loop.getLoc(), iv, shift);
+    IRMapping mapping;
+    mapping.map(iv, nextIV);
+    unsigned remaining = 256;
+    Value futureA = cloneGMAccess(lhs, loop, builder, mapping, remaining);
+    Value futureB = cloneGMAccess(rhs, loop, builder, mapping, remaining);
+    // Only assumptions established before the loop can justify preloading.
+    if (!futureA || !futureB ||
+        !aliasAnalysis.alias(lhs, futureB, loop).isNo() ||
+        !aliasAnalysis.alias(rhs, futureA, loop).isNo())
+      return false;
+  }
+  return true;
+}
+
 LogicalResult CVPipelineImpl::markOutputs() {
   for (const auto &item : worklist) {
     for (Operation *op : item->ops) {
@@ -1117,55 +1187,93 @@ LogicalResult CVPipelineImpl::markOutputs() {
     }
   }
 
-  // Detect cross-workitem aliasing on function arguments: if a Fixpipe/Store
-  // writes to a func arg that another workitem loads from, pipelining would
-  // reorder the store past the load and break correctness. Walk into nested
-  // regions since item->ops may contain whole region ops (scf.if / inner
-  // scf.for) whose nested Fixpipe/Store/Load would otherwise be missed.
-  DenseMap<BlockArgument, WorkItem *> storedFuncArgs;
+  // Preserve the existing function-argument alias groups, but retain every
+  // access: remembering only the last writer can hide a conflicting store.
+  // Iterate in work-item order so the same-iteration ordering check below
+  // compares the original program order with the proposed stage order.
+  struct GMAccess {
+    Operation *op;
+    Value view;
+    WorkItem *item;
+    bool writes;
+  };
+  llvm::MapVector<BlockArgument, SmallVector<GMAccess>> accesses;
   for (const auto &item : worklist) {
     for (Operation *op : item->ops) {
       op->walk([&](Operation *nested) {
-        Value dst;
-        // TODO: Use StoreLikeOpInterface when available
-        if (auto fixpipe = dyn_cast<FixpipeOp>(nested))
-          dst = fixpipe.getDst();
-        else if (auto store = dyn_cast<StoreOp>(nested))
-          dst = store.getDst();
-        else
+        Value view;
+        bool writes = false;
+        if (auto load = dyn_cast<LoadOp>(nested))
+          view = load.getSrc();
+        else if (auto nd2nz = dyn_cast<ND2NZOp>(nested))
+          view = nd2nz.getSrc();
+        else if (auto store = dyn_cast<StoreOp>(nested)) {
+          view = store.getDst();
+          writes = true;
+        } else if (auto fixpipe = dyn_cast<FixpipeOp>(nested)) {
+          view = fixpipe.getDst();
+          writes = true;
+        } else {
           return;
-        BlockArgument funcArg = traceToFuncArg(dst);
-        if (!funcArg)
-          return;
-        storedFuncArgs[funcArg] = item.get();
+        }
+        if (BlockArgument arg = traceToFuncArg(view))
+          accesses[arg].push_back({nested, view, item.get(), writes});
       });
     }
   }
-  for (const auto &item : worklist) {
-    for (Operation *op : item->ops) {
-      WalkResult result = op->walk([&](Operation *nested) {
-        // TODO: replace this with a LoadLikeOpInterface
-        if (!isa<LoadOp, ND2NZOp>(nested))
-          return WalkResult::advance();
-        BlockArgument funcArg;
-        if (auto load = dyn_cast<LoadOp>(nested))
-          funcArg = traceToFuncArg(load.getSrc());
-        else if (auto nd2nz = dyn_cast<ND2NZOp>(nested))
-          funcArg = traceToFuncArg(nd2nz.getSrc());
-        else
-          llvm_unreachable("Replace with LoadLikeOpInterface.getSrc()");
-        if (!funcArg)
-          return WalkResult::advance();
-        auto it = storedFuncArgs.find(funcArg);
-        if (it != storedFuncArgs.end() && it->second != item.get()) {
-          nested->emitWarning(
-              "[cv-pipelining] using GM as intermediate buffer is unsupported");
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      });
-      if (result.wasInterrupted())
+  utils::HIVMAliasAnalysis aliasAnalysis(
+      pipelineLoop->getParentOfType<func::FuncOp>());
+  for (auto &entry : accesses) {
+    const auto &group = entry.second;
+    // Only analyze buffers read and written by different work items.
+    bool hasCrossItemReadWrite = false;
+    for (const GMAccess &writer : group) {
+      if (!writer.writes)
+        continue;
+      for (const GMAccess &reader : group) {
+        if (reader.writes || reader.item == writer.item)
+          continue;
+        hasCrossItemReadWrite = true;
+        break;
+      }
+      if (hasCrossItemReadWrite)
+        break;
+    }
+    if (!hasCrossItemReadWrite)
+      continue;
+    for (unsigned i = 0; i < group.size(); ++i) {
+      for (unsigned j = i + 1; j < group.size(); ++j) {
+        const GMAccess &a = group[i], &b = group[j];
+        if (a.item == b.item || (!a.writes && !b.writes))
+          continue;
+        if (pipelineMode != CVPipelineMode::Skew && a.writes && b.writes)
+          continue;
+        Operation *aTop = getContainedParent(pipelineLoop, a.op);
+        Operation *bTop = getContainedParent(pipelineLoop, b.op);
+        // Cross-iteration independence alone cannot justify reversing a RAW,
+        // WAR or WAW dependence within an iteration. Region-internal ordering
+        // and repeated copies of the same access remain conservative.
+        // A loop-carried stage is pinned to preload 0; a later independent
+        // stage would execute the same iteration before it.
+        bool preservesOrder =
+            aTop != bTop && aTop->isBeforeInBlock(bTop) &&
+            (!a.item->hasLoopCarriedDep || b.item->hasLoopCarriedDep);
+        // The largest preload depth assigned by
+        // createNewLoopsForPreloadWithScopes is at most worklist.size().
+        // Checking both directions through that distance conservatively
+        // covers every access pair whose relative order can change.
+        if (pipelineMode == CVPipelineMode::Skew && preservesOrder &&
+            areGMAccessesIndependent(a.view, b.view, pipelineLoop,
+                                     worklist.size(), aliasAnalysis))
+          continue;
+        // Keep the existing diagnostic anchored at the read when possible.
+        LLVM_DEBUG(dbgs() << "[cv-pipelining] cannot prove GM independence: "
+                          << *a.op << "\n  versus " << *b.op << '\n');
+        Operation *diagnosticOp = a.writes ? b.op : a.op;
+        diagnosticOp->emitWarning(
+            "[cv-pipelining] using GM as intermediate buffer is unsupported");
         return failure();
+      }
     }
   }
   return success();
