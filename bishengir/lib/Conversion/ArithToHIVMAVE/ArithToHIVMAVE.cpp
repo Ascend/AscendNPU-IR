@@ -1003,6 +1003,63 @@ struct ConstantOpToHivmPLTLowering
 };
 
 ///
+/// Restore the constant tail of a vector whose leading `activeLen` lanes were
+/// rebuilt from a closed form.
+///
+/// A constant feeding a masked consumer ends in a run of one repeated value:
+/// `NormalizeVector` zeroes the gather index of every masked-off lane, so an
+/// otherwise regular index vector arrives here as "regular prefix + flat
+/// tail".  Recognising only the prefix is not enough -- the rewritten value
+/// must still equal the original on every lane, because the constant may have
+/// other users -- so the tail is written back with a prefix predicate and a
+/// select.
+///
+/// Returns failure when no prefix predicate can be built for `activeLen`;
+/// callers must then decline the rewrite rather than emit a wrong constant.
+static FailureOr<Value>
+emitActivePrefixSelect(ConversionPatternRewriter &rewriter, Location loc,
+                       VectorType tileType, Value sequence, Value tailSplat,
+                       int64_t activeLen, int64_t totalLen) {
+  // A predicate register holds at most one bit per VL lane.
+  if (activeLen < 0 || activeLen >= static_cast<int64_t>(util::VL_BITS))
+    return failure();
+
+  auto maskType = VectorType::get({totalLen}, rewriter.getI1Type());
+  Value pred;
+  // `pge` covers a fixed set of lane counts; `plt` builds the prefix for any
+  // other active length.
+  if (auto pgePattern = getPgePatternAttr(rewriter, activeLen, totalLen);
+      succeeded(pgePattern)) {
+    pred = rewriter.create<hivmave::VFPgeOp>(loc, maskType, pgePattern.value())
+               ->getResult(0);
+  } else {
+    Value trueShape = rewriter.create<arith::ConstantIndexOp>(loc, activeLen);
+    pred = rewriter
+               .create<hivmave::VFPltOp>(loc, maskType, rewriter.getIndexType(),
+                                         trueShape)
+               ->getResult(0);
+  }
+
+  return rewriter
+      .create<hivmave::VFSelectOp>(loc, tileType, pred, sequence, tailSplat)
+      .getResult();
+}
+
+/// Length of the leading region of `values` that is followed by a run of
+/// repeated lanes, or `values.size()` when there is no such tail.
+///
+/// A single trailing lane that happens to equal its predecessor cannot be
+/// told apart from a closed form that simply ends there, so require a run of
+/// at least two.
+static int64_t constantTailStart(ArrayRef<APInt> values) {
+  int64_t n = static_cast<int64_t>(values.size());
+  int64_t tail = values.back().getSExtValue();
+  int64_t start = n;
+  while (start > 0 && values[start - 1].getSExtValue() == tail)
+    --start;
+  return (n - start >= 2) ? start : n;
+}
+
 /// VCI/VCP pattern handles integer constant vectors that can be generated
 /// from existing vector instructions (VCI/VCP)
 ///
@@ -1394,6 +1451,12 @@ struct ConstantOpToHivmVCIVCPLowering
   }
 
   /** Pattern3 */
+  // NOTE: this is an older, inline copy of what `emitActivePrefixSelect` does
+  // for `ConstantOpToHivmSegmentedVCILowering`.  It should be migrated onto
+  // that helper so the "regular prefix + flat tail" convention has a single
+  // implementation, but its `plt` fallback below passes the *full* vector
+  // length as the true shape rather than `valueCheckRange`, so migrating it
+  // would change behaviour on a path no test covers.  Left as is on purpose.
   template <typename TileElementType, typename APType>
   Operation *
   handleTailPadding(ConversionPatternRewriter &rewriter,
@@ -1604,6 +1667,12 @@ struct ConstantOpToHivmSegmentedVCILowering
   // A rank-N read contributes at most N-1 staircase terms; cap the search so a
   // pathological vector cannot blow up compile time, and so we never emit an
   // unreasonably long instruction sequence.
+  //
+  // TODO: the producer in NormalizeVector accepts a higher rank than this
+  // consumer supports: vector<2x2x2x2x4xf32> with strides [256, 128, 64, 16, 1]
+  // needs four gap terms and cannot be lowered here.  Either share one
+  // representability check with the producer, or raise this cap after
+  // evaluating the instruction count and register pressure it costs.
   static constexpr int64_t kMaxGapTerms = 3;
 
   /// Try to recover a `SegmentedForm` from `values`.
@@ -1612,6 +1681,12 @@ struct ConstantOpToHivmSegmentedVCILowering
   /// Peels staircase terms from the innermost (shortest) segment outwards:
   /// after subtracting the linear part, the residual is piecewise constant,
   /// and each distinct step is one `gap * (k / len)` term.
+  ///
+  /// TODO: NormalizeVector already knows the shape and the strides, so it
+  /// could hand over a structured index description instead of enumerating a
+  /// dense index vector that this matcher then has to reverse-engineer.  That
+  /// implicit cross-pass contract should be replaced by a shared
+  /// representability check when the pipeline is refactored.
   static std::optional<SegmentedForm>
   matchSegmentedForm(ArrayRef<APInt> values) {
     int64_t n = static_cast<int64_t>(values.size());
@@ -1698,12 +1773,33 @@ struct ConstantOpToHivmSegmentedVCILowering
       return failure();
     // `ave.hir.vdiv` is defined for i16/i32/i64 only, and an 8-bit index
     // cannot address a strided view large enough to need this pattern.
+    //
+    // TODO: the rank>1 gather path picks its index width from the element
+    // bit width, while this lowering has its own type restrictions.  Document
+    // the supported dtype / index-range matrix and cover narrow-index
+    // boundaries and non-zero offsets, so the two ends cannot drift apart.
     unsigned width = elemType.getWidth();
     if (width != 16 && width != 32 && width != 64)
       return failure();
 
     auto values = llvm::to_vector<0>(denseAttr.getValues<APInt>());
+    // Try the whole vector first, so every case that matched before still
+    // takes the cheaper form with no tail select.
+    int64_t activeLen = static_cast<int64_t>(values.size());
     auto formOr = matchSegmentedForm(values);
+    if (!formOr) {
+      // An index vector for a masked gather ends in a flat tail (the index of
+      // every masked-off lane is zeroed), which is not a staircase.  Retry on
+      // the active prefix; the tail is written back below so the rewritten
+      // value still equals the original on every lane.
+      int64_t prefixLen = constantTailStart(values);
+      if (prefixLen != activeLen) {
+        formOr = matchSegmentedForm(
+            ArrayRef<APInt>(values).take_front(static_cast<size_t>(prefixLen)));
+        if (formOr)
+          activeLen = prefixLen;
+      }
+    }
     if (!formOr)
       return rewriter.notifyMatchFailure(
           constantOp, "not a piecewise-arithmetic index vector");
@@ -1729,6 +1825,11 @@ struct ConstantOpToHivmSegmentedVCILowering
           loc, tileType, idx, makeScalar(form.innerStep), mask);
 
     // result += gap_j * (idx / len_j) for every staircase term
+    //
+    // TODO: each term costs a vdiv plus a vmuls and a vadd.  A power-of-two
+    // `len` could use `VFShrOp` instead, once the index is known to be
+    // unsigned and the target dtype is confirmed.  Measure the instruction
+    // count and register pressure before changing this.
     for (const GapTerm &term : form.terms) {
       // %seg = idx / len   (unsigned: gather indices are non-negative)
       Value lenSplat =
@@ -1750,6 +1851,21 @@ struct ConstantOpToHivmSegmentedVCILowering
     if (form.base != 0)
       result = rewriter.create<hivmave::VFAddsOp>(loc, tileType, result,
                                                   makeScalar(form.base), mask);
+
+    // The closed form was only fitted to the active prefix, so put the
+    // original tail value back on the remaining lanes.
+    if (activeLen != static_cast<int64_t>(values.size())) {
+      Value tailSplat = getBroadcastOp(makeScalar(values.back().getSExtValue()),
+                                       tileType, rewriter, loc)
+                            ->getResult(0);
+      FailureOr<Value> selected = emitActivePrefixSelect(
+          rewriter, loc, tileType, result, tailSplat, activeLen,
+          static_cast<int64_t>(values.size()));
+      if (failed(selected))
+        return rewriter.notifyMatchFailure(
+            constantOp, "cannot build a prefix predicate for the active lanes");
+      result = *selected;
+    }
 
     rewriter.replaceOp(constantOp, result);
     return success();
