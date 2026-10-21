@@ -232,6 +232,11 @@ DiagnosedSilenceableFailure mapForallToBlocksImpl(
 /// `isLoopShapeRegistered`); the pass filters before calling the impl.
 LogicalResult sinkReturnedTensorsToConsumer(scf::ForOp forOp);
 
+/// Sink `multi_buffer = 1` + `preload_local_buffer` allocs into the unique
+/// consumer scope and drop those two marks. `multi_buffer > 1` stays at loop
+/// scope. Called from MarkMultiBuffer, after that pass has applied the marks.
+void sinkSingleSlotPreloadAllocs(scf::ForOp forOp);
+
 /// Remove attr from markOp, and remove markOp if no attr left.
 void removeMarkOpAttr(annotation::MarkOp markOp, ::llvm::StringLiteral attrName,
                       bool removeOp = true);

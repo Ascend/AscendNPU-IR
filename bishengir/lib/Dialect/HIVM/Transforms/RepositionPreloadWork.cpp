@@ -1,4 +1,4 @@
-//===- SinkExclusivePreloadWork.cpp ----------------------------*- C++ -*-===//
+//===- RepositionPreloadWork.cpp ------------------------------*- C++ -*-===//
 //
 // Copyright (c) Huawei Technologies Co., Ltd. 2026. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,10 +15,18 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// Post-CVPipelining sink on the unsplit MIX function. Cube/Vector
-// interaction is visible here; InsertAnchors / SplitMixKernel then clone
-// the placement onto backup / AIC / AIV so DelayedCrossCoreGSS still sees
-// matching cube anchors.
+// Post-CVPipelining placement on the unsplit MIX function. Cube/Vector
+// interaction is visible here; SplitMixKernel then clones the placement
+// onto backup / AIC / AIV so DelayedCrossCoreGSS still sees matching cube
+// anchors.
+//
+// Runs immediately after CVPipelining and before the second MarkMultiBuffer.
+// Shared-A matmuls are clustered first, followed by copy-chain sinking and
+// extraction of independent work on loops with multiple preload stages.
+// Finally, sink pure work outside L1-copy dependencies to same-stage consumers.
+// Extracted prefixes keep their preload stage and are prevented from merging
+// back into its consumer. MarkMultiBuffer handles single-slot alloc sinking
+// after buffer-count annotations are available.
 //
 // Unified rule: if load / VF / copy in a VECTOR is not read by the next
 // CUBE (the nearest later CUBE, other scopes may sit in between), move
@@ -72,10 +80,11 @@
 #include <optional>
 #include <utility>
 
-#define DEBUG_TYPE "hivm-sink-exclusive-preload-work"
+#define DEBUG_TYPE "hivm-reposition-preload-work"
 
 namespace mlir {
 #define GEN_PASS_DEF_SINKEXCLUSIVEPRELOADWORK
+#define GEN_PASS_DEF_REPOSITIONPRELOADWORK
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h.inc"
 } // namespace mlir
 
@@ -426,7 +435,7 @@ static bool collectExclusiveReturnedCluster(
       if (isa<MemRefType>(root.getType()) && op == rootOp)
         addMemrefUsers(root);
       if (auto toTensor = dyn_cast<bufferization::ToTensorOp>(op))
-        addMemrefUsers(toTensor.getMemref());
+        addMemrefUsers(toTensor->getOperand(0));
       if (auto load = dyn_cast<hivm::LoadOp>(op))
         addMemrefUsers(load.getDst());
       if (auto dps = dyn_cast<DestinationStyleOpInterface>(op)) {
@@ -530,7 +539,7 @@ static void collectAccessorScopes(Value v, scf::ForOp forOp,
   }
   Value mem = v;
   if (auto toTensor = v.getDefiningOp<bufferization::ToTensorOp>())
-    mem = toTensor.getMemref();
+    mem = toTensor->getOperand(0);
   if (!isa<MemRefType>(mem.getType()))
     return;
   // Climb to the root buffer so aliases created through other views count.
@@ -1049,7 +1058,7 @@ static bool collectExclusiveCopyCluster(hivm::CopyOp copy,
           grew = true;
       };
       if (auto toTensor = dyn_cast<bufferization::ToTensorOp>(op))
-        addMemrefUsers(toTensor.getMemref());
+        addMemrefUsers(toTensor->getOperand(0));
       if (auto load = dyn_cast<hivm::LoadOp>(op))
         addMemrefUsers(load.getDst());
       if (auto cpy = dyn_cast<hivm::CopyOp>(op))
@@ -1443,7 +1452,7 @@ uniqueAllocUserScope(Value alloc, scf::ForOp forOp) {
 /// parent loop body, move it (and its view chain) next to the first use.
 /// TCB / tiling marks stay. `multi_buffer > 1` stays at loop scope so
 /// PlanMemory can still rotate slots across iterations.
-static void sinkSingleSlotPreloadAllocs(scf::ForOp forOp) {
+static void sinkSingleSlotPreloadAllocsImpl(scf::ForOp forOp) {
   SmallVector<memref::AllocOp> allocs;
   forOp.walk([&](memref::AllocOp alloc) {
     Value v = alloc.getResult();
@@ -1485,9 +1494,356 @@ static void sinkSingleSlotPreloadAllocs(scf::ForOp forOp) {
   }
 }
 
-static LogicalResult sinkPreloadLocalAllocs(scf::ForOp forOp) {
-  sinkSingleSlotPreloadAllocs(forOp);
-  return success();
+static constexpr llvm::StringLiteral kIndependentPreloadPrefixAttr =
+    "hivm.independent_preload_prefix";
+
+static bool isVectorPreloadScope(scope::ScopeOp scope) {
+  return getScopePreloadNum(scope).has_value() &&
+         getScopeCoreType(scope) == hivm::TCoreType::VECTOR;
+}
+
+/// Sibling scope in `scope`'s block that contains `user`, if any.
+static scope::ScopeOp siblingScopeOf(Operation *user, scope::ScopeOp scope) {
+  for (Operation *parent = user->getParentOp(); parent;
+       parent = parent->getParentOp()) {
+    if (parent->getBlock() != scope->getBlock())
+      continue;
+    return dyn_cast<scope::ScopeOp>(parent);
+  }
+  return nullptr;
+}
+
+/// True when every user of `op` is consumed by `scope` itself, by `cube`, or
+/// by a sibling that still sits before `cube`. A use after that first cube
+/// belongs to a later consumer and must stay in `scope`.
+static bool consumedBeforeOrByCube(Operation *op, scope::ScopeOp scope,
+                                   scope::ScopeOp cube) {
+  for (Value result : op->getResults()) {
+    for (Operation *user : result.getUsers()) {
+      if (scope->isAncestor(user))
+        continue;
+      scope::ScopeOp userScope = siblingScopeOf(user, scope);
+      if (!userScope)
+        return false;
+      if (userScope == cube)
+        continue;
+      if (!userScope->isBeforeInBlock(cube))
+        return false;
+    }
+  }
+  return true;
+}
+
+static Value traceMemrefRoot(Value v) {
+  while (Operation *def = v.getDefiningOp()) {
+    if (auto sub = dyn_cast<memref::SubViewOp>(def)) {
+      v = sub.getSource();
+      continue;
+    }
+    if (auto exp = dyn_cast<memref::ExpandShapeOp>(def)) {
+      v = exp.getSrc();
+      continue;
+    }
+    if (auto col = dyn_cast<memref::CollapseShapeOp>(def)) {
+      v = col.getSrc();
+      continue;
+    }
+    if (auto cast = dyn_cast<memref::CastOp>(def)) {
+      v = cast.getSource();
+      continue;
+    }
+    if (auto rcast = dyn_cast<memref::ReinterpretCastOp>(def)) {
+      v = rcast.getSource();
+      continue;
+    }
+    if (auto mcast = dyn_cast<memref::MemorySpaceCastOp>(def)) {
+      v = mcast.getSource();
+      continue;
+    }
+    break;
+  }
+  return v;
+}
+
+/// True when an earlier sibling scope reads or writes this memref (through
+/// views). Cube fixpipe into a UB alloc, then `to_tensor` between scopes, is
+/// the usual way a vector scope observes the previous scope.
+static bool
+memrefTouchedByEarlierScope(Value memref,
+                            const DenseSet<scope::ScopeOp> &earlier) {
+  Value root = traceMemrefRoot(memref);
+  SmallVector<Operation *> work(root.getUsers().begin(), root.getUsers().end());
+  DenseSet<Operation *> seen;
+  while (!work.empty()) {
+    Operation *user = work.pop_back_val();
+    if (!seen.insert(user).second)
+      continue;
+    if (isViewLikeMemrefOp(user) || isa<annotation::MarkOp>(user) ||
+        isa<memref::MemorySpaceCastOp>(user)) {
+      for (Value res : user->getResults())
+        for (Operation *next : res.getUsers())
+          work.push_back(next);
+      continue;
+    }
+    for (scope::ScopeOp scope : earlier)
+      if (scope->isProperAncestor(user))
+        return true;
+  }
+  return false;
+}
+
+static bool definedByEarlierScope(Value v, scope::ScopeOp current,
+                                  const DenseSet<scope::ScopeOp> &earlier,
+                                  DenseSet<Value> &seen) {
+  if (!seen.insert(v).second)
+    return false;
+  if (auto result = dyn_cast<OpResult>(v)) {
+    if (auto scope = dyn_cast<scope::ScopeOp>(result.getOwner()))
+      if (earlier.contains(scope))
+        return true;
+  }
+  Operation *def = v.getDefiningOp();
+  if (!def)
+    return false;
+  for (scope::ScopeOp scope : earlier)
+    if (scope->isProperAncestor(def))
+      return true;
+  if (current->isProperAncestor(def))
+    return false;
+  if (isa<MemRefType>(v.getType()) && memrefTouchedByEarlierScope(v, earlier))
+    return true;
+  if (auto toTensor = dyn_cast<bufferization::ToTensorOp>(def)) {
+    if (memrefTouchedByEarlierScope(toTensor->getOperand(0), earlier))
+      return true;
+  }
+  for (Value operand : def->getOperands())
+    if (definedByEarlierScope(operand, current, earlier, seen))
+      return true;
+  return false;
+}
+
+static Operation *topLevelInScope(Operation *op, scope::ScopeOp scope) {
+  while (op && op->getParentOp() != scope.getOperation())
+    op = op->getParentOp();
+  return op;
+}
+
+static bool opDependsOnEarlier(Operation *op, scope::ScopeOp scope,
+                               const DenseSet<scope::ScopeOp> &earlier,
+                               const DenseSet<Operation *> &dependentTops) {
+  bool bad = false;
+  op->walk([&](Operation *inner) {
+    if (bad)
+      return WalkResult::interrupt();
+    for (Value operand : inner->getOperands()) {
+      DenseSet<Value> seen;
+      if (definedByEarlierScope(operand, scope, earlier, seen)) {
+        bad = true;
+        return WalkResult::interrupt();
+      }
+      Operation *def = operand.getDefiningOp();
+      if (!def || !scope->isProperAncestor(def))
+        continue;
+      Operation *top = topLevelInScope(def, scope);
+      if (top && dependentTops.contains(top)) {
+        bad = true;
+        return WalkResult::interrupt();
+      }
+    }
+    return WalkResult::advance();
+  });
+  return bad;
+}
+
+static bool isHoistableWork(Operation *op) {
+  if (isa<func::CallOp, bufferization::ToTensorOp>(op))
+    return true;
+  return op->getDialect() && op->getDialect()->getNamespace() == "hivm";
+}
+
+/// A bare destination buffer: no operands, so the dependence scan always calls
+/// it independent even when the only reader is a DPS op that stays behind.
+static bool isBareDestination(Operation *op) {
+  return isa<tensor::EmptyOp, bufferization::AllocTensorOp, memref::AllocOp,
+             memref::AllocaOp>(op);
+}
+
+/// A result escapes when any user stays outside the extracted operations.
+static bool usedOutsidePrefix(Value value, scope::ScopeOp scope,
+                              const DenseSet<Operation *> &prefix) {
+  return llvm::any_of(value.getUsers(), [&](Operation *user) {
+    return !prefix.contains(topLevelInScope(user, scope));
+  });
+}
+
+static SmallVector<Value> collectPrefixResults(scope::ScopeOp scope,
+                                               ArrayRef<Operation *> ops) {
+  DenseSet<Operation *> prefix(ops.begin(), ops.end());
+  SmallVector<Value> results;
+  for (Operation *op : ops)
+    for (Value value : op->getResults())
+      if (usedOutsidePrefix(value, scope, prefix))
+        results.push_back(value);
+  return results;
+}
+
+/// CreatePreload's skip branch can rebuild a scope result only when it is a
+/// shaped value (bufferized before that pass), a pointer cast, or an `arith`
+/// op whose operands are likewise rebuildable. `affine.apply` index results
+/// are none of those and hit `Unhandled scope result case`.
+static bool scalarChainRematerializable(Value v, scope::ScopeOp scope,
+                                        DenseSet<Value> &seen) {
+  if (isa<ShapedType>(v.getType()))
+    return true;
+  Operation *def = v.getDefiningOp();
+  if (!def || !scope->isProperAncestor(def))
+    return true;
+  if (!seen.insert(v).second)
+    return true;
+  bool remat =
+      isa<hivm::PointerCastOp>(def) ||
+      (def->getDialect() && isa<arith::ArithDialect>(def->getDialect()));
+  if (!remat)
+    return false;
+  return llvm::all_of(def->getOperands(), [&](Value operand) {
+    return scalarChainRematerializable(operand, scope, seen);
+  });
+}
+
+/// Keep memref exports, unsupported scalars, and their consumers in the
+/// original scope. Prune to a fixed point: dropping an operation can leave a
+/// retained user without its definition, or make another scalar escape the
+/// prefix. Unused destination allocations also stay with the consumer so stride
+/// alignment still sees the allocation rather than a scope result.
+static void prunePreloadPrefix(SmallVectorImpl<Operation *> &ops,
+                               scope::ScopeOp scope) {
+  DenseSet<Operation *> prefix(ops.begin(), ops.end());
+  bool changed;
+  do {
+    changed = false;
+    for (Operation *op : ops) {
+      if (!prefix.contains(op))
+        continue;
+      WalkResult dependencies = op->walk([&](Operation *inner) {
+        for (Value operand : inner->getOperands()) {
+          Operation *def = topLevelInScope(operand.getDefiningOp(), scope);
+          if (def && !prefix.contains(def))
+            return WalkResult::interrupt();
+        }
+        return WalkResult::advance();
+      });
+      bool unusedDestination =
+          isBareDestination(op) &&
+          llvm::none_of(op->getUsers(), [&](Operation *user) {
+            Operation *top = topLevelInScope(user, scope);
+            return top != op && prefix.contains(top);
+          });
+      bool unsafeExport = llvm::any_of(op->getResults(), [&](Value value) {
+        if (!usedOutsidePrefix(value, scope, prefix))
+          return false;
+        DenseSet<Value> seen;
+        return isa<BaseMemRefType>(value.getType()) ||
+               !scalarChainRematerializable(value, scope, seen);
+      });
+      if (dependencies.wasInterrupted() || unusedDestination || unsafeExport) {
+        prefix.erase(op);
+        changed = true;
+      }
+    }
+  } while (changed);
+  llvm::erase_if(ops, [&](Operation *op) { return !prefix.contains(op); });
+}
+
+/// Preserve an extracted prefix as a separate scope through outlining.
+static void extractPreloadPrefix(scope::ScopeOp scope,
+                                 ArrayRef<Operation *> independent,
+                                 ValueRange exported) {
+  OpBuilder builder(scope);
+  SmallVector<Type> types;
+  for (Value v : exported)
+    types.push_back(v.getType());
+  auto newScope = builder.create<scope::ScopeOp>(scope.getLoc(), types);
+  newScope->setAttrs(scope->getAttrDictionary());
+  newScope->setAttr(kIndependentPreloadPrefixAttr, builder.getUnitAttr());
+  newScope.setNoInline(true);
+  Block *newBody = builder.createBlock(&newScope.getRegion());
+  for (Operation *op : independent)
+    op->moveBefore(newBody, newBody->end());
+  builder.setInsertionPointToEnd(newBody);
+  builder.create<scope::ReturnOp>(scope.getLoc(), exported);
+  for (auto [val, res] : llvm::zip(exported, newScope.getResults())) {
+    val.replaceUsesWithIf(res, [&](OpOperand &use) {
+      return !newScope->isProperAncestor(use.getOwner());
+    });
+  }
+}
+
+/// Move ops that do not use an earlier sibling scope into a new scope placed
+/// immediately before `scope`, with the same preload_num. Ops that use the
+/// earlier scope stay. Only ops consumed by this scope, or by a sibling at
+/// or before the first subsequent CUBE scope, are split out. A VECTOR scope
+/// with no later cube is left whole. MergeSamePreloadScopes must not fold
+/// the new scope back; it is marked `hivm.independent_preload_prefix`.
+static void
+hoistIndependentOpsInScope(scope::ScopeOp scope,
+                           const DenseSet<scope::ScopeOp> &earlier) {
+  if (!isVectorPreloadScope(scope) ||
+      scope->hasAttr(kIndependentPreloadPrefixAttr))
+    return;
+  scope::ScopeOp cube = firstLaterCubeScope(scope);
+  if (!cube)
+    return;
+  Block &body = scope.getRegion().front();
+  Operation *terminator = body.getTerminator();
+
+  DenseSet<Operation *> dependent;
+  bool grew = true;
+  while (grew) {
+    grew = false;
+    for (Operation &op : body) {
+      if (&op == terminator || dependent.contains(&op))
+        continue;
+      if (!opDependsOnEarlier(&op, scope, earlier, dependent))
+        continue;
+      dependent.insert(&op);
+      grew = true;
+    }
+  }
+
+  SmallVector<Operation *> independent;
+  for (Operation &op : body) {
+    if (&op == terminator || dependent.contains(&op))
+      continue;
+    independent.push_back(&op);
+  }
+  llvm::erase_if(independent, [&](Operation *op) {
+    return !consumedBeforeOrByCube(op, scope, cube);
+  });
+  prunePreloadPrefix(independent, scope);
+  if (independent.empty() || dependent.empty())
+    return;
+  if (!llvm::any_of(independent, isHoistableWork))
+    return;
+
+  extractPreloadPrefix(scope, independent,
+                       collectPrefixResults(scope, independent));
+}
+
+static void hoistIndependentPreloadWork(scf::ForOp forOp) {
+  SmallVector<scope::ScopeOp> scopes;
+  for (Operation &op : *forOp.getBody()) {
+    if (auto scope = dyn_cast<scope::ScopeOp>(&op))
+      scopes.push_back(scope);
+  }
+  for (scope::ScopeOp scope : scopes) {
+    DenseSet<scope::ScopeOp> earlier;
+    for (Operation *prev = scope->getPrevNode(); prev;
+         prev = prev->getPrevNode()) {
+      if (auto earlierScope = dyn_cast<scope::ScopeOp>(prev))
+        earlier.insert(earlierScope);
+    }
+    hoistIndependentOpsInScope(scope, earlier);
+  }
 }
 
 struct SinkExclusivePreloadWorkPass
@@ -1506,6 +1862,545 @@ static bool isSplitMixModule(ModuleOp moduleOp) {
       return true;
   }
   return false;
+}
+
+static bool dominatesOp(Operation *def, Operation *user) {
+  if (def->getBlock() == user->getBlock())
+    return def->isBeforeInBlock(user);
+  Operation *parent = user->getParentOp();
+  if (!parent)
+    return false;
+  if (def->getBlock() == parent->getBlock())
+    return def->isBeforeInBlock(parent);
+  return dominatesOp(def, parent);
+}
+
+/// Follow scope results back to the value the scope actually returns, so a
+/// matmul that reads a left matrix through an earlier scope matches the
+/// matmul that produced that matrix inside the scope.
+static Value traceThroughScopeResults(Value v) {
+  DenseSet<Value> seen;
+  while (Operation *def = v.getDefiningOp()) {
+    if (!seen.insert(v).second)
+      break;
+    auto scope = dyn_cast<scope::ScopeOp>(def);
+    if (!scope)
+      break;
+    auto ret =
+        dyn_cast<scope::ReturnOp>(scope.getRegion().front().getTerminator());
+    if (!ret)
+      break;
+    auto result = dyn_cast<OpResult>(v);
+    if (!result || result.getResultNumber() >= ret->getNumOperands())
+      break;
+    v = ret->getOperand(result.getResultNumber());
+  }
+  return v;
+}
+
+/// Identity of a matmul's left matrix: the memref behind a `to_tensor`, or
+/// the SSA value itself when the matrix is not buffer-backed.
+static Value leftMatrixIdentity(Value v) {
+  v = traceThroughScopeResults(v);
+  auto toTensor = v.getDefiningOp<bufferization::ToTensorOp>();
+  if (!toTensor)
+    return v;
+  return traceMemrefRoot(toTensor->getOperand(0));
+}
+
+/// Outermost op that still sits directly in `loop`'s body and contains `op`.
+static Operation *outermostInLoop(Operation *op, scf::ForOp loop) {
+  if (!op || !loop->isAncestor(op))
+    return nullptr;
+  while (op->getParentOp() != loop)
+    op = op->getParentOp();
+  return op;
+}
+
+/// The loop-body op that should be treated as the end of this matmul: its
+/// fixpipe when that fixpipe is a later sibling container, otherwise the
+/// matmul's own container.
+static Operation *matmulEndInLoop(hivm::MmadL1Op mmad, scf::ForOp loop) {
+  Operation *end = outermostInLoop(mmad, loop);
+  for (Operation *user : mmad->getUsers()) {
+    if (!isa<hivm::FixpipeOp>(user))
+      continue;
+    Operation *userTop = outermostInLoop(user, loop);
+    if (userTop && end && userTop->getBlock() == end->getBlock() &&
+        end->isBeforeInBlock(userTop))
+      end = userTop;
+  }
+  return end;
+}
+
+/// Move a later `mmadL1` that reads the same left matrix as an earlier one
+/// up to that earlier matmul. Containers are the ops directly in the loop
+/// body, so a matmul wrapped in a scope moves together with that scope.
+/// The later matmul stays put when an operand it needs is produced by
+/// something that has to remain between them.
+static void clusterSharedLeftMatrixMads(scf::ForOp loop) {
+  bool moved = true;
+  while (moved) {
+    moved = false;
+    SmallVector<hivm::MmadL1Op> mmads;
+    loop.walk([&](hivm::MmadL1Op mmad) { mmads.push_back(mmad); });
+
+    for (size_t i = 0; i < mmads.size() && !moved; ++i) {
+      hivm::MmadL1Op first = mmads[i];
+      Operation *anchor = matmulEndInLoop(first, loop);
+      if (!anchor)
+        continue;
+      for (size_t j = i + 1; j < mmads.size() && !moved; ++j) {
+        hivm::MmadL1Op second = mmads[j];
+        if (leftMatrixIdentity(second.getA()) !=
+            leftMatrixIdentity(first.getA()))
+          continue;
+        Operation *secondMmadTop = outermostInLoop(second, loop);
+        Operation *secondEnd = matmulEndInLoop(second, loop);
+        if (!secondMmadTop || !secondEnd ||
+            secondEnd->getBlock() != anchor->getBlock() ||
+            !anchor->isBeforeInBlock(secondMmadTop))
+          continue;
+
+        DenseSet<Operation *> cluster;
+        cluster.insert(secondMmadTop);
+        cluster.insert(secondEnd);
+        bool grew = true;
+        while (grew) {
+          grew = false;
+          SmallVector<Operation *> snapshot(cluster.begin(), cluster.end());
+          for (Operation *root : snapshot) {
+            root->walk([&](Operation *op) {
+              for (Value operand : op->getOperands()) {
+                Operation *def = operand.getDefiningOp();
+                if (!def)
+                  continue;
+                Operation *defTop = outermostInLoop(def, loop);
+                if (!defTop || cluster.contains(defTop) ||
+                    defTop->getBlock() != anchor->getBlock())
+                  continue;
+                if (anchor->isBeforeInBlock(defTop) &&
+                    (defTop == secondEnd ||
+                     defTop->isBeforeInBlock(secondEnd))) {
+                  cluster.insert(defTop);
+                  grew = true;
+                }
+              }
+            });
+          }
+        }
+
+        bool stuck = false;
+        for (Operation *root : cluster) {
+          root->walk([&](Operation *op) {
+            if (stuck)
+              return;
+            for (Value operand : op->getOperands()) {
+              Operation *def = operand.getDefiningOp();
+              if (!def || root->isAncestor(def))
+                continue;
+              Operation *defTop = outermostInLoop(def, loop);
+              if (defTop && cluster.contains(defTop))
+                continue;
+              if (def == anchor || anchor->isAncestor(def))
+                continue;
+              if (!dominatesOp(def, anchor))
+                stuck = true;
+            }
+          });
+          if (stuck)
+            break;
+        }
+        if (stuck)
+          continue;
+
+        bool alreadyTogether = true;
+        for (Operation *op = anchor->getNextNode(); op && op != secondMmadTop;
+             op = op->getNextNode()) {
+          if (!cluster.contains(op)) {
+            alreadyTogether = false;
+            break;
+          }
+        }
+        if (alreadyTogether)
+          continue;
+
+        SmallVector<Operation *> ordered(cluster.begin(), cluster.end());
+        llvm::sort(ordered, [](Operation *a, Operation *b) {
+          return a->isBeforeInBlock(b);
+        });
+        Operation *ip = anchor;
+        for (Operation *op : ordered) {
+          op->moveAfter(ip);
+          ip = op;
+        }
+        moved = true;
+      }
+    }
+  }
+}
+
+/// Tensor views of mutable buffers cannot be delayed across another scope.
+static bool isCopyTailValue(Value value,
+                            const DenseSet<Value> &overwrittenArgs = {}) {
+  while (true) {
+    value = traceThroughScopeResults(value);
+    if (overwrittenArgs.contains(value))
+      return false;
+    Operation *def = value.getDefiningOp();
+    if (!def)
+      return !isa<BaseMemRefType>(value.getType());
+    if (isa<bufferization::ToTensorOp>(def) ||
+        isa<BaseMemRefType>(value.getType()))
+      return false;
+    if (auto op = dyn_cast<tensor::ExpandShapeOp>(def))
+      value = op.getSrc();
+    else if (auto op = dyn_cast<tensor::CollapseShapeOp>(def))
+      value = op.getSrc();
+    else if (auto op = dyn_cast<tensor::ExtractSliceOp>(def))
+      value = op.getSource();
+    else if (auto op = dyn_cast<tensor::CastOp>(def))
+      value = op.getSource();
+    else if (auto op = dyn_cast<hivm::BitcastOp>(def))
+      value = op.getSrc();
+    else
+      return true;
+  }
+}
+
+static SmallVector<Operation *> getPreloadCopies(scope::ScopeOp scope) {
+  SmallVector<Operation *> copies;
+  for (Operation &op : scope.getRegion().front()) {
+    auto copy = dyn_cast<hivm::CopyOp>(&op);
+    if (!copy || !copy->hasAttr(hivm::kInsertedCopyAttr::name))
+      continue;
+    auto space = hivm::GetBufferSpaceAttr(copy.getDst());
+    if (space && space->getAddressSpace() == hivm::AddressSpace::L1)
+      copies.push_back(&op);
+  }
+  return copies;
+}
+
+/// Follow scope results as well as ordinary SSA edges. All copies contribute
+/// to the slice, including copies whose source is computed in another scope.
+static DenseSet<Operation *>
+collectCopyDependencies(ArrayRef<Operation *> copies, scf::ForOp loop) {
+  SmallVector<Operation *> pending(copies.begin(), copies.end());
+  DenseSet<Operation *> dependencies;
+  while (!pending.empty()) {
+    Operation *op = pending.pop_back_val();
+    if (!dependencies.insert(op).second)
+      continue;
+    op->walk([&](Operation *nested) {
+      for (Value operand : nested->getOperands()) {
+        auto def = traceThroughScopeResults(operand).getDefiningOp();
+        if (def && loop->isProperAncestor(def))
+          pending.push_back(def);
+      }
+    });
+  }
+  return dependencies;
+}
+
+/// Visit users through scope.return forwarding, preserving the ordering of
+/// intermediate scopes that pass the value on to later consumers.
+static bool allCopyTailUsers(Value value,
+                             llvm::function_ref<bool(Operation *)> predicate) {
+  SmallVector<Value> pending{value};
+  DenseSet<Value> seen;
+  while (!pending.empty()) {
+    Value current = pending.pop_back_val();
+    if (!seen.insert(current).second)
+      continue;
+    for (OpOperand &use : current.getUses()) {
+      if (auto ret = dyn_cast<scope::ReturnOp>(use.getOwner())) {
+        if (!predicate(ret))
+          return false;
+        auto scope = cast<scope::ScopeOp>(ret->getParentOp());
+        pending.push_back(scope.getResult(use.getOperandNumber()));
+      } else if (!predicate(use.getOwner())) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+/// Keep copy dependencies in the producer and move pure tensor/scalar work to
+/// a same-stage consumer after the copy boundary. Effectful operations and
+/// buffer-backed reads stay put; their operand dependencies stay with them.
+static void sinkCopyIndependentWork(scope::ScopeOp producer,
+                                    scope::ScopeOp boundary,
+                                    ArrayRef<Operation *> copies,
+                                    scf::ForOp loop) {
+  auto dependencies = collectCopyDependencies(copies, loop);
+  DenseSet<Operation *> selected;
+  for (Operation &op : producer.getRegion().front().without_terminator()) {
+    if (dependencies.contains(&op) || !isMemoryEffectFree(&op) ||
+        isa<annotation::MarkOp>(&op) || op.getNumResults() == 0)
+      continue;
+    if (op.walk([&](Operation *nested) {
+            return llvm::all_of(
+                       nested->getOperands(),
+                       [](Value value) { return isCopyTailValue(value); }) &&
+                           llvm::all_of(nested->getResults(),
+                                        [](Value value) {
+                                          return isCopyTailValue(value);
+                                        })
+                       ? WalkResult::advance()
+                       : WalkResult::interrupt();
+          }).wasInterrupted())
+      continue;
+    selected.insert(&op);
+  }
+
+  // A kept user also keeps its definitions. In particular, do not move a
+  // value beyond a copy merely because that copy uses it indirectly.
+  bool changed;
+  do {
+    changed = false;
+    // Preload bufferization writes yielded tensors back inside the producing
+    // scope. Keep reads of the old iteration value before that writeback,
+    // including reads through tensor views or forwarding scope results.
+    DenseSet<Value> overwrittenArgs;
+    for (auto [arg, yielded] :
+         llvm::zip(loop.getRegionIterArgs(), loop.getYieldedValues())) {
+      Operation *def = traceThroughScopeResults(yielded).getDefiningOp();
+      Operation *local = def ? topLevelInScope(def, producer) : nullptr;
+      if (isa<TensorType>(arg.getType()) && local && !selected.contains(local))
+        overwrittenArgs.insert(arg);
+    }
+    for (Operation &op : producer.getRegion().front().without_terminator()) {
+      if (!selected.contains(&op))
+        continue;
+      if (op.walk([&](Operation *nested) {
+              return llvm::all_of(nested->getOperands(),
+                                  [&](Value operand) {
+                                    return isCopyTailValue(operand,
+                                                           overwrittenArgs);
+                                  })
+                         ? WalkResult::advance()
+                         : WalkResult::interrupt();
+            }).wasInterrupted()) {
+        selected.erase(&op);
+        changed = true;
+        continue;
+      }
+      bool canSink = llvm::all_of(op.getResults(), [&](Value value) {
+        return allCopyTailUsers(value, [&](Operation *user) {
+          if (isa<scope::ReturnOp>(user) && user->getParentOp() == producer)
+            return true;
+          if (Operation *local = topLevelInScope(user, producer))
+            return selected.contains(local);
+          Operation *top = outermostInLoop(user, loop);
+          return top && boundary->isBeforeInBlock(top);
+        });
+      });
+      if (!canSink) {
+        selected.erase(&op);
+        changed = true;
+      }
+    }
+  } while (changed);
+  if (!llvm::any_of(selected, [](Operation *op) {
+        return isHoistableWork(op) && !op->use_empty();
+      }))
+    return;
+
+  SmallVector<Operation *> moved, kept;
+  for (Operation &op : producer.getRegion().front().without_terminator())
+    (selected.contains(&op) ? moved : kept).push_back(&op);
+  auto newReturns = collectPrefixResults(producer, kept);
+  auto movedReturns = collectPrefixResults(producer, moved);
+  auto ret = producer.getRegion().front().getTerminator();
+  SmallVector<Value> empties;
+  llvm::erase_if(newReturns, [&](Value value) {
+    auto empty = value.getDefiningOp<tensor::EmptyOp>();
+    if (!empty || !empty.getDynamicSizes().empty() ||
+        llvm::is_contained(ret->getOperands(), value))
+      return false;
+    empties.push_back(value);
+    return true;
+  });
+  // New scope results must be representable on both split cores and in the
+  // inactive CreatePreload branch. Do not create arbitrary memref exports.
+  for (Value value : llvm::concat<Value>(newReturns, movedReturns)) {
+    DenseSet<Value> seen;
+    if (isa<BaseMemRefType>(value.getType()) ||
+        !scalarChainRematerializable(value, producer, seen))
+      return;
+  }
+
+  Operation *firstUser = nullptr;
+  for (Value value : movedReturns)
+    allCopyTailUsers(value, [&](Operation *user) {
+      if (topLevelInScope(user, producer))
+        return true;
+      Operation *top = outermostInLoop(user, loop);
+      if (!firstUser || top->isBeforeInBlock(firstUser))
+        firstUser = top;
+      return true;
+    });
+  auto consumer = dyn_cast_or_null<scope::ScopeOp>(firstUser);
+  auto nextCube = firstLaterCubeScope(boundary);
+  // Prefer the actual consumer when it prepares another copy. Otherwise do
+  // not introduce a wait for a later CUBE merely to reuse its vector consumer.
+  bool crossesCube = consumer && nextCube &&
+                     nextCube->isBeforeInBlock(consumer) &&
+                     getPreloadCopies(consumer).empty();
+  if (!consumer || !isVectorPreloadScope(consumer) || crossesCube ||
+      getScopePreloadNum(consumer) != getScopePreloadNum(producer)) {
+    OpBuilder builder(boundary);
+    builder.setInsertionPointAfter(boundary);
+    consumer = builder.create<scope::ScopeOp>(producer.getLoc(), TypeRange{});
+    consumer->setAttrs(producer->getAttrDictionary());
+    consumer->setAttr(kIndependentPreloadPrefixAttr, builder.getUnitAttr());
+    builder.createBlock(&consumer.getRegion());
+    builder.create<scope::ReturnOp>(producer.getLoc());
+  }
+
+  for (auto [inner, result] :
+       llvm::zip(ret->getOperands(), producer.getResults()))
+    if (!llvm::is_contained(newReturns, inner))
+      result.replaceAllUsesWith(inner);
+  auto rebuilt = rebuildScopeLeavingOps(producer, newReturns, selected);
+  if (producer == boundary)
+    rebuilt->setAttr(kIndependentPreloadPrefixAttr,
+                     UnitAttr::get(producer.getContext()));
+  Operation *insertBefore = &consumer.getRegion().front().front();
+  OpBuilder builder(insertBefore);
+  IRMapping mapping;
+  for (Value empty : empties)
+    builder.clone(*empty.getDefiningOp(), mapping);
+  for (Operation *op : moved) {
+    op->walk([&](Operation *nested) {
+      for (OpOperand &operand : nested->getOpOperands())
+        operand.set(mapping.lookupOrDefault(
+            remapThroughReturns(operand.get(), newReturns, rebuilt)));
+    });
+    op->moveBefore(insertBefore);
+  }
+  for (Value value : movedReturns)
+    consumer = exportSunkValueToLaterUsers(consumer, value, producer);
+  producer.erase();
+}
+
+static void sinkCopyIndependentWork(scf::ForOp loop) {
+  SmallVector<scope::ScopeOp> scopes;
+  for (auto scope : loop.getBody()->getOps<scope::ScopeOp>())
+    scopes.push_back(scope);
+  // Split later copy scopes first so an earlier producer can follow its
+  // consumer into the newly created copy-independent tail.
+  for (auto producer : llvm::reverse(scopes)) {
+    if (!isVectorPreloadScope(producer) || getScopePreloadNum(producer) != 0)
+      continue;
+    auto boundary = producer;
+    auto copies = getPreloadCopies(boundary);
+    if (copies.empty() && producer->hasAttr(kIndependentPreloadPrefixAttr)) {
+      for (Operation *next = producer->getNextNode(); next;
+           next = next->getNextNode()) {
+        auto scope = dyn_cast<scope::ScopeOp>(next);
+        if (!scope)
+          continue;
+        if (!isVectorPreloadScope(scope) || getScopePreloadNum(scope) != 0)
+          break;
+        copies = getPreloadCopies(scope);
+        if (!copies.empty()) {
+          boundary = scope;
+          break;
+        }
+      }
+    }
+    if (!copies.empty())
+      sinkCopyIndependentWork(producer, boundary, copies, loop);
+  }
+}
+
+/// Preserve a copy boundary when its tail reads a private cube-result buffer.
+/// VF merging would otherwise make the copy wait for that unrelated result.
+/// Keep operation order and old-state reads; this is not general buffer-read
+/// sinking across scopes.
+static void splitCopyBufferReadTails(scf::ForOp loop) {
+  auto isPrivateBufferView = [&](Value value) {
+    auto view = traceThroughScopeResults(value)
+                    .getDefiningOp<bufferization::ToTensorOp>();
+    if (!view)
+      return false;
+    auto alloc =
+        traceMemrefRoot(view->getOperand(0)).getDefiningOp<memref::AllocOp>();
+    return alloc && loop->isProperAncestor(alloc);
+  };
+  for (auto scope :
+       llvm::make_early_inc_range(loop.getBody()->getOps<scope::ScopeOp>())) {
+    if (!isVectorPreloadScope(scope) || getScopePreloadNum(scope) != 0)
+      continue;
+    auto copies = getPreloadCopies(scope);
+    if (copies.empty())
+      continue;
+    Operation *lastCopy = copies.back();
+    auto tail = llvm::make_range(std::next(Block::iterator(lastCopy)),
+                                 std::prev(scope.getRegion().front().end()));
+    if (!llvm::any_of(tail, [&](Operation &op) {
+          return llvm::any_of(op.getOperands(), isPrivateBufferView);
+        }))
+      continue;
+    SmallVector<Operation *> prefix, empties;
+    for (Operation &op : scope.getRegion().front()) {
+      auto empty = dyn_cast<tensor::EmptyOp>(op);
+      if (empty && empty.getDynamicSizes().empty() &&
+          llvm::all_of(op.getUsers(), [&](Operation *user) {
+            return user->getBlock() == lastCopy->getBlock() &&
+                   lastCopy->isBeforeInBlock(user) &&
+                   !isa<scope::ReturnOp>(user);
+          }))
+        empties.push_back(&op);
+      else
+        prefix.push_back(&op);
+      if (&op == lastCopy)
+        break;
+    }
+    DenseSet<Value> overwrittenArgs;
+    for (auto [arg, yielded] :
+         llvm::zip(loop.getRegionIterArgs(), loop.getYieldedValues()))
+      if (llvm::is_contained(
+              prefix,
+              topLevelInScope(traceThroughScopeResults(yielded).getDefiningOp(),
+                              scope)))
+        overwrittenArgs.insert(arg);
+    if (llvm::any_of(tail, [&](Operation &op) {
+          return op.getNumRegions() || !isMemoryEffectFree(&op) ||
+                 llvm::any_of(op.getOperands(), [&](Value value) {
+                   return !isCopyTailValue(value, overwrittenArgs) &&
+                          !isPrivateBufferView(value);
+                 });
+        }))
+      continue;
+    auto exported = collectPrefixResults(scope, prefix);
+    if (llvm::any_of(exported, [&](Value value) {
+          DenseSet<Value> seen;
+          return isa<BaseMemRefType>(value.getType()) ||
+                 !scalarChainRematerializable(value, scope, seen);
+        }))
+      continue;
+    Operation *firstTail = lastCopy->getNextNode();
+    for (Operation *empty : empties)
+      empty->moveBefore(firstTail);
+    extractPreloadPrefix(scope, prefix, exported);
+    // Forward prefix results directly. Returning them again from the tail
+    // would add redundant preload-buffer writebacks.
+    SmallVector<Value> tailReturns;
+    auto *ret = scope.getRegion().front().getTerminator();
+    for (auto [value, result] :
+         llvm::zip(ret->getOperands(), scope.getResults())) {
+      if (value.getDefiningOp() &&
+          scope->isProperAncestor(value.getDefiningOp()))
+        tailReturns.push_back(value);
+      else
+        result.replaceAllUsesWith(value);
+    }
+    rebuildScopeLeavingOps(scope, tailReturns, {});
+    scope.erase();
+  }
 }
 
 // All-zero scopes execute in the same iteration. Moving a returned tensor's
@@ -1529,13 +2424,53 @@ void SinkExclusivePreloadWorkPass::runOnOperation() {
     SmallVector<scf::ForOp> forOps;
     funcOp.walk([&](scf::ForOp forOp) { forOps.push_back(forOp); });
     for (scf::ForOp forOp : forOps) {
+      // Every scope at preload_num 0 means the next iteration is not
+      // overlapped. Sinking a returned dest across those scopes can place
+      // it before the value it reads.
       if (!allScopesPinnedToZero(forOp) &&
           failed(sinkReturnedTensorsToConsumerImpl(forOp)))
         return signalPassFailure();
       if (failed(sinkCopyChainPastUnusedMmad(forOp)))
         return signalPassFailure();
-      if (failed(sinkPreloadLocalAllocs(forOp)))
+      sinkSingleSlotPreloadAllocsImpl(forOp);
+    }
+  }
+}
+
+struct RepositionPreloadWorkPass
+    : public impl::RepositionPreloadWorkBase<RepositionPreloadWorkPass> {
+  using Base = impl::RepositionPreloadWorkBase<RepositionPreloadWorkPass>;
+  using Base::Base;
+  void runOnOperation() override;
+};
+
+void RepositionPreloadWorkPass::runOnOperation() {
+  ModuleOp moduleOp = getOperation();
+  if (isSplitMixModule(moduleOp))
+    return;
+  for (auto funcOp : moduleOp.getOps<func::FuncOp>()) {
+    if (!hivm::allowLoopShapeHeuristics(this->bypassShapeRegistry,
+                                        funcOp.getName(), this->enablePreload,
+                                        this->workspaceMultiBufferNum))
+      continue;
+    SmallVector<scf::ForOp> forOps;
+    funcOp.walk([&](scf::ForOp forOp) { forOps.push_back(forOp); });
+    for (scf::ForOp forOp : forOps) {
+      clusterSharedLeftMatrixMads(forOp);
+      // Only returned-tensor sinking is unsafe for all-zero scopes: moving
+      // its writer can place writeback before a read of the old state.
+      if (!allScopesPinnedToZero(forOp) &&
+          failed(sinkReturnedTensorsToConsumerImpl(forOp)))
         return signalPassFailure();
+      if (failed(sinkCopyChainPastUnusedMmad(forOp)))
+        return signalPassFailure();
+      // Same-iteration copy scheduling already has its own sink. Avoid
+      // introducing additional independent prefixes on all-zero loops.
+      if (!allScopesPinnedToZero(forOp))
+        hoistIndependentPreloadWork(forOp);
+      sinkCopyIndependentWork(forOp);
+      if (allScopesPinnedToZero(forOp))
+        splitCopyBufferReadTails(forOp);
     }
   }
 }
@@ -1546,7 +2481,16 @@ LogicalResult mlir::hivm::sinkReturnedTensorsToConsumer(scf::ForOp forOp) {
   return sinkReturnedTensorsToConsumerImpl(forOp);
 }
 
+void mlir::hivm::sinkSingleSlotPreloadAllocs(scf::ForOp forOp) {
+  sinkSingleSlotPreloadAllocsImpl(forOp);
+}
+
 std::unique_ptr<Pass> mlir::hivm::createSinkExclusivePreloadWorkPass(
     const SinkExclusivePreloadWorkOptions &options) {
   return std::make_unique<SinkExclusivePreloadWorkPass>(options);
+}
+
+std::unique_ptr<Pass> mlir::hivm::createRepositionPreloadWorkPass(
+    const RepositionPreloadWorkOptions &options) {
+  return std::make_unique<RepositionPreloadWorkPass>(options);
 }
