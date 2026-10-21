@@ -91,6 +91,40 @@ public:
   convertOperation(Operation *op, llvm::IRBuilderBase &builder,
                    LLVM::ModuleTranslation &moduleTranslation) const final {
     Operation &opInst = *op;
+
+    // hivm.vdintlv: the default toolchain lowers `llvm.hivm.vdintlv.<vec>`
+    // (2 results) while a toolchain that only provides the v2 form registers
+    // `llvm.hivm.vdintlvv2.<vec>(src0, src1, part) -> <vec>` where
+    // part = 0(LOWER)/1(HIGHER). When the module is flagged with the v2
+    // intrinsics attribute, split the single op into two v2 calls and
+    // reassemble the struct result; otherwise fall through to the generated
+    // conversion below to keep the original behavior.
+    if (auto vdintlvOp = dyn_cast<hivm_regbaseintrins::VDintlvInstrOp>(op)) {
+      auto moduleOp = op->getParentOfType<mlir::ModuleOp>();
+      if (moduleOp &&
+          moduleOp->hasAttr(
+              hivm_regbaseintrins::kDavinciV2IntrinsicsModuleAttrName)) {
+        auto operands = moduleTranslation.lookupValues(vdintlvOp.getOperands());
+        llvm::Value *src0 = operands[0];
+        llvm::Value *src1 = operands[1];
+        llvm::Type *vecType = src0->getType();
+        llvm::Function *fn = llvm::Intrinsic::getDeclaration(
+            builder.GetInsertBlock()->getModule(),
+            llvm::Intrinsic::HIVMIntrinsics::hivm_vdintlvv2, {vecType});
+        llvm::Value *resLo =
+            builder.CreateCall(fn, {src0, src1, builder.getInt32(0)});
+        llvm::Value *resHi =
+            builder.CreateCall(fn, {src0, src1, builder.getInt32(1)});
+        llvm::Type *structType =
+            moduleTranslation.convertType(vdintlvOp.getRes().getType());
+        llvm::Value *structVal = llvm::PoisonValue::get(structType);
+        structVal = builder.CreateInsertValue(structVal, resLo, 0);
+        structVal = builder.CreateInsertValue(structVal, resHi, 1);
+        moduleTranslation.mapValue(vdintlvOp.getRes()) = structVal;
+        return success();
+      }
+    }
+
 #include "bishengir/Dialect/HIVMRegbaseIntrins/IR/HIVMRegbaseConversions.inc"
 
     // `hivm_regbaseintrins.launch_func` will emit two instructions:
@@ -107,8 +141,13 @@ public:
                  LLVM::ModuleTranslation &moduleTranslation) const final {
 
     LLVM::LLVMFuncOp func = dyn_cast<LLVM::LLVMFuncOp>(op);
-    if (!func)
+    if (!func) {
+      // Module-level attributes (e.g. hivm_regbaseintrins.v2intrins) do not
+      // need per-function handling.
+      if (isa<mlir::ModuleOp>(op))
+        return success();
       return op->emitError("Attribute not applicable to non-function ops.");
+    }
 
     llvm::Function *llvmFunc = moduleTranslation.lookupFunction(func.getName());
     Attribute baseAttr = attribute.getValue();

@@ -495,6 +495,14 @@ translateDeviceKernelToLLVM(const SmallVector<ModuleOp, 2> &modulesToLower,
     // ModuleOp if hacc's attr exists
     // because hacc dialect has the LLVMTranslationDialectInterface.
     m->removeAttr(hacc::TargetAttr::name);
+    // Some target toolchains register the v2 forms of certain vector
+    // intrinsics (e.g. llvm.hivm.vdintlvv2) instead of the plain ones. Tag
+    // the module so the HIVMRegbaseIntrins translation can branch on it. The
+    // hivm_regbaseintrins.target function attribute cannot be used here
+    // because both affected targets share the same attribute value.
+    if (hacc::utils::isAscend960(config.getTargetBackend()))
+      m->setAttr(hivm_regbaseintrins::kDavinciV2IntrinsicsModuleAttrName,
+                 mlir::UnitAttr::get(m->getContext()));
     std::unique_ptr<llvm::Module> llvmModule =
         translateModuleToLLVMIR(m, llvmContext);
     if (!llvmModule) {

@@ -36,6 +36,11 @@ namespace hivm_regbaseintrins {
 constexpr char kDavinciCallingConvAttrName[] = "hivm_regbaseintrins.cconv";
 constexpr char kDavinciTargetAttrName[] = "hivm_regbaseintrins.target";
 constexpr char kDavinciKernelAttrName[] = "hivm_regbaseintrins.kernel";
+// Set on the device ModuleOp when the target toolchain registers the v2
+// forms of some vector intrinsics (e.g. llvm.hivm.vdintlvv2) instead of the
+// plain ones, so the translation must branch on it.
+constexpr char kDavinciV2IntrinsicsModuleAttrName[] =
+    "hivm_regbaseintrins.v2intrins";
 } // namespace hivm_regbaseintrins
 } // namespace mlir
 
