@@ -1,17 +1,32 @@
-// RUN: bishengir-opt %s -hfusion-fold-extract-insert-pair | FileCheck %s
+// RUN: bishengir-opt %s -fold-extract-insert-pair | FileCheck %s
 
-// Test case: Fold redundant extract_slice -> transfer_write -> insert_slice pattern
-// in a reduction loop where the insert_slice is unnecessary.
-//
-// Pattern:
-//   %slice = tensor.extract_slice %src[offsets] [sizes] [strides]
-//   %written = vector.transfer_write %vec, %slice[0, 0] {mask}
-//   %result = tensor.insert_slice %written into %slice[0, 0] [sizes] [1, 1]
-//
-// Should be folded to:
-//   %result = %written
+// Fold a tensor.extract -> tensor.insert round trip on a statically
+// one-element tensor back to the source tensor.
+
+// CHECK-LABEL: @test_fold_extract_insert_pair
+// CHECK-NOT: tensor.extract
+// CHECK-NOT: tensor.insert
+func.func @test_fold_extract_insert_pair(%arg0: i32, %arg1: tensor<1xf32>, %arg2: tensor<1xf32>) -> tensor<1xf32> {
+  %c0 = arith.constant 0 : index
+  %tmp = tensor.empty() : tensor<1xf32>
+  %sub = linalg.elemwise_binary {fun = #linalg.binary_fn<sub>} ins(%arg1, %arg2 : tensor<1xf32>, tensor<1xf32>) outs(%tmp : tensor<1xf32>) -> tensor<1xf32>
+  %extracted_14 = tensor.extract %sub[%c0] : tensor<1xf32>
+  %inserted_15 = tensor.insert %extracted_14 into %tmp[%c0] : tensor<1xf32>
+  %exp = linalg.elemwise_unary {fun = #linalg.unary_fn<exp>} ins(%inserted_15 : tensor<1xf32>) outs(%tmp : tensor<1xf32>) -> tensor<1xf32>
+  return %exp : tensor<1xf32>
+}
 
 // -----
+
+// Fold redundant extract_slice -> transfer_write -> insert_slice pattern:
+//
+//   %slice = tensor.extract_slice %src[offsets] [sizes] [strides]
+//   %written = vector.transfer_write %vec, %slice[offsets] {mask}
+//   %result = tensor.insert_slice %written into %slice[offsets] [sizes] [1, 1]
+//
+// into:
+//
+//   %result = %written
 
 // CHECK-LABEL: @test_fold_extract_slice_insert_slice_in_loop
 // CHECK-NOT: tensor.insert_slice {{.*}} into %extracted_slice
@@ -45,7 +60,6 @@ func.func @test_fold_extract_slice_insert_slice_in_loop(%arg0: tensor<1x8777xf16
   return %3, %0#0 : tensor<1xf32>, tensor<1x8777xf32>
 }
 
-
 // -----
 
 // CHECK-LABEL: @test_fold_extract_slice_insert_slice_static_shape
@@ -68,6 +82,9 @@ func.func @test_fold_extract_slice_insert_slice_static_shape(%arg0: tensor<4x64x
 }
 
 // -----
+
+// Negative: the transfer_write and insert_slice offsets differ, so the
+// insert_slice must be kept.
 // CHECK-LABEL: @test_offsets_do_not_match
 // CHECK: tensor.insert_slice %{{.*}} into %{{.*}}[%c1, %c0]
 func.func @test_offsets_do_not_match(%arg0: tensor<4x64xf32>) -> tensor<4x64xf32> {
@@ -79,4 +96,37 @@ func.func @test_offsets_do_not_match(%arg0: tensor<4x64xf32>) -> tensor<4x64xf32
   %written = vector.transfer_write %vec, %slice[%c0, %c0] {in_bounds = [true, true]} : vector<4x64xf32>, tensor<4x64xf32>
   %inserted = tensor.insert_slice %written into %slice[%c1, %c0] [4, 64] [1, 1] : tensor<4x64xf32> into tensor<4x64xf32>
   return %inserted : tensor<4x64xf32>
+}
+
+// -----
+
+// The write-back insert uses different offsets than the extract: no fold.
+// CHECK-LABEL: func.func @no_fold_mismatched_offsets(
+// CHECK: tensor.extract_slice %arg0[%arg1, 0, 0] [1, 16, 16] [1, 1, 1] : tensor<16x16x16xf32> to tensor<16x16xf32>
+// CHECK: scf.for {{.*}} iter_args({{%.*}} = %{{.*}}) -> (tensor<16x16xf32>) {
+// CHECK: tensor.insert_slice %{{.*}} into %arg0[%arg2, 0, 0] [1, 16, 16] [1, 1, 1] : tensor<16x16xf32> into tensor<16x16x16xf32>
+func.func @no_fold_mismatched_offsets(%arg0: tensor<16x16x16xf32>, %lb: index, %ub: index, %step: index) -> tensor<16x16x16xf32> {
+  %extracted = tensor.extract_slice %arg0[%lb, 0, 0] [1, 16, 16] [1, 1, 1] : tensor<16x16x16xf32> to tensor<16x16xf32>
+  %r = scf.for %i = %lb to %ub step %step iter_args(%arg = %extracted) -> (tensor<16x16xf32>) {
+    scf.yield %arg : tensor<16x16xf32>
+  }
+  %inserted = tensor.insert_slice %r into %arg0[%ub, 0, 0] [1, 16, 16] [1, 1, 1] : tensor<16x16xf32> into tensor<16x16x16xf32>
+  return %inserted : tensor<16x16x16xf32>
+}
+
+// -----
+
+// An insert_slice into an extracted slice, written back into the same tensor
+// at the same position, folds into a single insert_slice on the original
+// tensor. This is the chain FoldSliceIntoScfForPattern creates inside the
+// loop body.
+// CHECK-LABEL: func.func @test_fold_insert_into_extracted_slice(
+// CHECK: %[[INS:.*]] = tensor.insert_slice %{{.*}} into %arg0[%arg1, %arg2, 0] [1, 1, 16] [1, 1, 1] : tensor<16xf32> into tensor<16x16x16xf32>
+// CHECK-NOT: tensor.insert_slice
+// CHECK: return %[[INS]]
+func.func @test_fold_insert_into_extracted_slice(%arg0: tensor<16x16x16xf32>, %arg1: index, %arg2: index, %src: tensor<16xf32>) -> tensor<16x16x16xf32> {
+  %extracted = tensor.extract_slice %arg0[%arg1, 0, 0] [1, 16, 16] [1, 1, 1] : tensor<16x16x16xf32> to tensor<16x16xf32>
+  %inner = tensor.insert_slice %src into %extracted[%arg2, 0] [1, 16] [1, 1] : tensor<16xf32> into tensor<16x16xf32>
+  %res = tensor.insert_slice %inner into %arg0[%arg1, 0, 0] [1, 16, 16] [1, 1, 1] : tensor<16x16xf32> into tensor<16x16x16xf32>
+  return %res : tensor<16x16x16xf32>
 }

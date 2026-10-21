@@ -5,12 +5,13 @@
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===---------------------------------------------------------------------===//
-#include "bishengir/Dialect/HFusion/Transforms/Passes.h"
+#include "bishengir/Dialect/Tensor/Transforms/Passes.h"
+#include "mlir/Dialect/Affine/ViewLikeInterfaceUtils.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Arith/Utils/Utils.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Linalg/Utils/Utils.h"
-#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
@@ -19,11 +20,10 @@
 #include <limits>
 namespace mlir {
 #define GEN_PASS_DEF_FOLDEXTRACTINSERTPAIR
-#include "bishengir/Dialect/HFusion/Transforms/Passes.h.inc"
+#include "bishengir/Dialect/Tensor/Transforms/Passes.h.inc"
 } // namespace mlir
 
 using namespace mlir;
-using namespace mlir::hfusion;
 #define DEBUG_TYPE "fold-extract-insert-pair"
 
 namespace {
@@ -177,12 +177,12 @@ static bool isStaticOneElementTensor(Type type) {
 ///
 /// This removes chains like:
 ///
-///   %93 = linalg.elemwise_binary ...
-///   %extracted_14 = tensor.extract %93[%c0] : tensor<1xf32>
-///   %inserted_15 = tensor.insert %extracted_14 into %empty[%c0]
-///   %94 = linalg.elemwise_unary ins(%inserted_15) ...
+///   %result = linalg.elemwise_binary ...
+///   %extracted = tensor.extract %result[%c0] : tensor<1xf32>
+///   %inserted = tensor.insert %extracted into %empty[%c0]
+///   %consumer = linalg.elemwise_unary ins(%inserted) ...
 ///
-/// and rewrites the unary op to consume %93 directly.
+/// and rewrites the consumer to use %result directly.
 class FoldExtractInsertPair : public OpRewritePattern<tensor::InsertOp> {
 public:
   using OpRewritePattern<tensor::InsertOp>::OpRewritePattern;
@@ -211,14 +211,10 @@ public:
       return rewriter.notifyMatchFailure(insertOp,
                                          "extract and insert indices differ");
 
-    // Optional conservative check:
-    // Require the destination to be tensor.empty. This matches your generated
-    // IR and avoids surprising rewrites on non-empty destinations.
-    //
-    // For a statically one-element tensor, this rewrite is also valid even if
-    // the destination is not tensor.empty, because the only element is
-    // replaced. Keep this check if you want the transformation to be narrowly
-    // targeted.
+    // Conservatively require the destination to be tensor.empty. For a
+    // statically one-element tensor the rewrite would also be valid on other
+    // destinations, since the only element is replaced, but restricting it to
+    // tensor.empty keeps the transformation narrowly targeted.
     if (!insertOp.getDest().getDefiningOp<tensor::EmptyOp>())
       return rewriter.notifyMatchFailure(
           insertOp, "insert destination is not tensor.empty");
@@ -255,7 +251,7 @@ public:
 /// 4. The sizes and strides of extract_slice and insert_slice match
 ///
 /// This is redundant because %written already has the same shape as %slice,
-/// and inserting it back at offset [0,0] with the same size is a no-op.
+/// and inserting it back at the same offset with the same size is a no-op.
 class FoldExtractSliceInsertSlice
     : public OpRewritePattern<tensor::InsertSliceOp> {
 public:
@@ -352,6 +348,49 @@ public:
   }
 };
 
+/// Folds an insert_slice into an extract_slice that is inserted back into the
+/// same tensor:
+///
+///   %slice = tensor.extract_slice %full[po] [ps] [pst]
+///   %inner = tensor.insert_slice %src into %slice[co] [cs] [cst]
+///   %res = tensor.insert_slice %inner into %full[po] [ps] [pst]
+///
+/// into a single insert_slice that writes %src directly into %full at the
+/// merged position, provided %inner has no other uses. This cleans up the
+/// slice chains that FoldSliceIntoScfForPattern creates inside the loop body.
+struct FoldInsertSliceIntoExtractedSlice
+    : public OpRewritePattern<tensor::InsertSliceOp> {
+  using OpRewritePattern<tensor::InsertSliceOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(tensor::InsertSliceOp backOp,
+                                PatternRewriter &rewriter) const override {
+    auto innerOp = backOp.getSource().getDefiningOp<tensor::InsertSliceOp>();
+    if (!innerOp || !innerOp->hasOneUse())
+      return failure();
+    auto extractOp = innerOp.getDest().getDefiningOp<tensor::ExtractSliceOp>();
+    if (!extractOp)
+      return failure();
+    // The write-back must target the same tensor the slice was taken from,
+    // at the same position.
+    if (extractOp.getSource() != backOp.getDest())
+      return failure();
+    if (backOp.getMixedOffsets() != extractOp.getMixedOffsets() ||
+        backOp.getMixedSizes() != extractOp.getMixedSizes() ||
+        backOp.getMixedStrides() != extractOp.getMixedStrides())
+      return failure();
+
+    SmallVector<OpFoldResult> offsets, sizes, strides;
+    if (failed(affine::mergeOffsetsSizesAndStrides(
+            rewriter, backOp.getLoc(), extractOp, innerOp,
+            extractOp.getDroppedDims(), offsets, sizes, strides)))
+      return failure();
+    rewriter.replaceOpWithNewOp<tensor::InsertSliceOp>(
+        backOp, innerOp.getSource(), extractOp.getSource(), offsets, sizes,
+        strides);
+    return success();
+  }
+};
+
 struct FoldExtractInsertPairPass
     : public impl::FoldExtractInsertPairBase<FoldExtractInsertPairPass> {
   void getDependentDialects(DialectRegistry &registry) const override {
@@ -368,11 +407,12 @@ void FoldExtractInsertPairPass::runOnOperation() {
   patterns.add<FoldExtractInsertPair>(ctx);
   patterns.add<FoldExtractSliceInsertSlice>(ctx);
   patterns.add<NormalizeFilledSliceToSelect>(ctx);
+  patterns.add<FoldInsertSliceIntoExtractedSlice>(ctx);
   if (failed(applyPatternsGreedily(funcOp, std::move(patterns)))) {
     signalPassFailure();
   }
 }
 
-std::unique_ptr<Pass> mlir::hfusion::createFoldExtractInsertPairPass() {
+std::unique_ptr<Pass> mlir::tensor::createFoldExtractInsertPairPass() {
   return std::make_unique<FoldExtractInsertPairPass>();
 }

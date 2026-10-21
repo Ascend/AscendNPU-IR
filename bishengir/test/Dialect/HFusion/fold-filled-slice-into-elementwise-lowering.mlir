@@ -1,6 +1,6 @@
-// RUN: bishengir-opt %s -hfusion-fold-extract-insert-pair -hfusion-pre-vectorization-fusion -canonicalize | FileCheck %s --check-prefix=FUSION --implicit-check-not=tensor.insert_slice --implicit-check-not=linalg.elemwise_binary
-// RUN: bishengir-opt %s -hfusion-fold-extract-insert-pair -hfusion-pre-vectorization-fusion -one-shot-bufferize="bufferize-function-boundaries" -canonicalize | FileCheck %s --check-prefix=BUFFER --implicit-check-not=memref.copy --implicit-check-not=linalg.fill
-// RUN: bishengir-opt %s -hacc-append-device-spec="target=Ascend950PR_9579" -hfusion-fold-extract-insert-pair -hfusion-pre-vectorization-fusion -hfusion-auto-vectorize-v2 -outline-vector-function -convert-hfusion-to-vector -lift-arith-indexcast -canonicalize | FileCheck %s --check-prefix=VECTOR --implicit-check-not=linalg.generic --implicit-check-not='vector<1x64xindex>'
+// RUN: bishengir-opt %s -fold-extract-insert-pair -hfusion-pre-vectorization-fusion -canonicalize | FileCheck %s --check-prefix=FUSION --implicit-check-not=tensor.insert_slice --implicit-check-not=linalg.elemwise_binary
+// RUN: bishengir-opt %s -fold-extract-insert-pair -hfusion-pre-vectorization-fusion -one-shot-bufferize="bufferize-function-boundaries" -canonicalize | FileCheck %s --check-prefix=BUFFER --implicit-check-not=memref.copy --implicit-check-not=linalg.fill
+// RUN: bishengir-opt %s -hacc-append-device-spec="target=Ascend950PR_9579" -fold-extract-insert-pair -hfusion-pre-vectorization-fusion -hfusion-auto-vectorize-v2 -outline-vector-function -convert-hfusion-to-vector -lift-arith-indexcast -canonicalize | FileCheck %s --check-prefix=VECTOR --implicit-check-not=linalg.generic --implicit-check-not='vector<1x64xindex>'
 
 // Existing fusion absorbs the select into the consumer.
 // FUSION-LABEL: func.func @prefix

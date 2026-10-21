@@ -326,7 +326,6 @@ bufferizationPipeline(OpPassManager &pm,
   if (hivmPipelineOptions.enableTritonKernelCompile) {
     pm.nest<func::FuncOp>().addPass(
         tensor::createOptimizeDpsOpWithYieldedInsertSlicePass());
-    pm.nest<func::FuncOp>().addPass(createCloneTensorEmptyPass());
     pm.nest<func::FuncOp>().addPass(createSinkOpToConsumerInLoopPass());
   }
   if (hivmPipelineOptions.enableVfMergeLevel == 1) {
@@ -335,9 +334,17 @@ bufferizationPipeline(OpPassManager &pm,
     pm.addPass(hfusion::createMergeVecScopePass(VfMergeOpsOpt));
   }
   pm.addPass(hfusion::createSimplifyVFArgsPass());
-  // Fold redundant extract_slice -> transfer_write -> insert_slice pattern
-  // before bufferization to avoid unnecessary memref operations
-  pm.nest<func::FuncOp>().addPass(hfusion::createFoldExtractInsertPairPass());
+  // Fold extract_slice/insert_slice pairs around scf.for loops into the loop
+  // body, merge the consecutive slice chains this creates and CSE away the
+  // duplicated slices, so fold-extract-insert-pair can fold the redundant
+  // slice round trips.
+  pm.nest<func::FuncOp>().addPass(tensor::createFoldSliceIntoScfForPass());
+  pm.nest<func::FuncOp>().addPass(
+      tensor::createMergeConsecutiveInsertExtractSlicePass());
+  pm.nest<func::FuncOp>().addPass(createCSEPass());
+  pm.nest<func::FuncOp>().addPass(tensor::createFoldExtractInsertPairPass());
+  // CSE merges identical tensor.empty ops; need to run clone-tensor-empty
+  pm.nest<func::FuncOp>().addPass(createCloneTensorEmptyPass());
   // TODO: support process toTensorOp in one-shot-bufferize.
   // Expose memref-level writes (e.g., hivm.hir.load) to tensor-level analysis
   // by inserting an `alloc_tensor(copy...)` for each writable to_tensor.

@@ -1,4 +1,4 @@
-// RUN: bishengir-opt %s -hfusion-fold-extract-insert-pair -canonicalize | FileCheck %s
+// RUN: bishengir-opt %s -fold-extract-insert-pair -canonicalize | FileCheck %s
 
 // Recover a standalone select, preserve the named consumer and other source
 // users, and omit the predicate for the fully covered column dimension.

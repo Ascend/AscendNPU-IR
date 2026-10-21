@@ -723,11 +723,6 @@ def HFusionGeneralizePass : Pass<"hfusion-generalize", "func::FuncOp"> {
   let dependentDialects = ["linalg::LinalgDialect", "hfusion::HFusionDialect"];
 }
 
-def FoldExtractInsertPair : Pass<"hfusion-fold-extract-insert-pair", "func::FuncOp"> {
-  let summary = "Fold Extract Insert Pair.";
-  let constructor = "mlir::hfusion::createFoldExtractInsertPairPass()";
-}
-
 def PrepareI1Nx1ForVectorization
     : Pass<"hfusion-prepare-i1-nx1-for-vectorization", "func::FuncOp"> {
   let summary = "Collapse Nx1 linalg.generic with expanded i1 input before vectorization";
