@@ -11,11 +11,11 @@
 // CHECK: scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} iter_args(%[[ITER_ARG:.*]] = %{{.*}}) -> (tensor<2x2xf32>)
 // CHECK: scope.scope
 // CHECK: tensor.insert_slice %[[ITER_ARG]]
-// CHECK: } {hivm.has_loop_carried_dep, hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.max_preload_num = 1 : i32, hivm.preload_num = 0 : i32, no_inline}
+// CHECK: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.max_preload_num = 1 : i32, hivm.preload_num = 0 : i32, no_inline}
 // CHECK: scope.scope
 // CHECK: hivm.hir.mmadL1
 // CHECK: hivm.hir.fixpipe
-// CHECK: } {hivm.has_loop_carried_dep, hivm.loop_core_type = #hivm.tcore_type<CUBE>, hivm.max_preload_num = 1 : i32, hivm.preload_num = 0 : i32, no_inline}
+// CHECK: } {hivm.loop_core_type = #hivm.tcore_type<CUBE>, hivm.max_preload_num = 1 : i32, hivm.preload_num = 0 : i32, no_inline}
 // CHECK: scf.yield
 // CHECK-NOT: hivm.preload_num = {{[1-9]}}
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
@@ -75,7 +75,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // CHECK:   %[[VEC_OUT:.*]] = scope.scope : () -> tensor<16x16xf32> {
 // CHECK:     hivm.hir.vadd
 // CHECK:     scope.return
-// CHECK:   } {hivm.has_loop_carried_dep, hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.max_preload_num = 2 : i32, hivm.preload_num = 0 : i32, no_inline}
+// CHECK:   } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.max_preload_num = 2 : i32, hivm.preload_num = 0 : i32, no_inline}
 // CHECK:   scf.yield %[[VEC_OUT]] : tensor<16x16xf32>
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   func.func @multi_stage_loop_carry_skew(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}) attributes {WorkspaceArgIdx = 0 : i16, func_dyn_memref_args = dense<true> : vector<1xi1>, global_kernel = "local", hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix"} {
