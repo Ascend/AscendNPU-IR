@@ -556,11 +556,10 @@ def Ascend950DT_95A2_Spec : Ascend950_BaseSpec<"Ascend950DT_95A2"> {
 
 //===----------------------------------------------------------------------===//
 // Ascend960 (dav-920r1, RegBase lineage)
-// Some parameters are not correct @TODO
 //===----------------------------------------------------------------------===//
 
 class Ascend960_BaseSpec<string name> : TargetSpec<name> {
-  let UbSize = 3080192;           // bits = 376KB, reserve 8KB for compiler
+  let UbSize = 2031616; // bits = 248KB, reserve 8KB for compiler
   let MinimalDCacheSize = 262144; // bits = 32KB
   let MaximumDCacheSize = 983040; // bits = 120KB
   let L1Size = 4194304;           // bits = 512KB
@@ -570,12 +569,12 @@ class Ascend960_BaseSpec<string name> : TargetSpec<name> {
   let UbAlignSize = 256;          // bits = 32B
   let L1AlignSize = 256;          // bits = 32B
   let L0cAlignSize = 4096;        // bits = 512B
-  let Arch = Dav_920R1;
+  let Arch = Dav_C310;
 }
 
 def Ascend960_Spec : Ascend960_BaseSpec<"Ascend960"> {
-  let AiCoreCount = 64;
-  let CubeCoreCount = 64;
+  let AiCoreCount = 32;
+  let CubeCoreCount = 32;
   let VectorCoreCount = 64;
 }
 
