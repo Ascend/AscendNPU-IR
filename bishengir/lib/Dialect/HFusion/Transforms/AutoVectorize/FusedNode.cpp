@@ -14,7 +14,6 @@
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
-#include "mlir/IR/Dominance.h"
 #include "mlir/IR/Verifier.h"
 #include "llvm/Support/Debug.h"
 
@@ -28,19 +27,26 @@ namespace hfusion {
 //===----------------------------------------------------------------------===//
 
 void FusedNode::addProducer(Operation *op) {
+  // Restore contiguity while op is still a standalone ordering unit; reorder()
+  // can then move the pair's intervening successors without resolving op
+  // to an erased key.
+  consolidateToTail(op);
+  // Contract op's ordering unit into this node's unit BEFORE committing
+  // membership, so getUnit(op) above still resolves to the standalone op.
+  ctx.constraint().merge(ctx.getUnit(op), FusionUnit(this));
   producers.insert(op);
   insertOrdered(op);
   ctx.getInfo(op).fusedNode = shared_from_this();
-  consolidateToTail();
-  updateConflicts(op);
 }
 
 void FusedNode::addLeaf(Operation *op) {
+  consolidateToTail(op);
+  // Contract op's ordering unit into this node's unit BEFORE committing
+  // membership, so getUnit(op) above still resolves to the standalone op.
+  ctx.constraint().merge(ctx.getUnit(op), FusionUnit(this));
   leaf.insert(op);
   insertOrdered(op);
   ctx.getInfo(op).fusedNode = shared_from_this();
-  consolidateToTail();
-  updateConflicts(op);
 }
 
 void FusedNode::insertOrdered(Operation *op) {
@@ -52,36 +58,6 @@ void FusedNode::insertOrdered(Operation *op) {
   else
     opsOrdered.push_back(op);
   assert(opsOrdered.size() == size());
-}
-
-// Move the group as a unit, preserving order and contiguity. pos is pinned to
-// an extreme of the node containing it so the sweep never splits that node:
-//   a member anchor becomes this group's head;
-//   an anchor in another node is pinned to that node's tail, so this group
-//   lands wholly after it.
-void FusedNode::moveAfter(Operation *pos) const {
-  if (contains(pos))
-    pos = opsOrdered.front();
-  else if (auto *node = ctx.tryGetNode(pos))
-    pos = node->opsOrdered.back();
-  for (auto *op : rops())
-    if (op != pos)
-      op->moveAfter(pos);
-}
-
-// Move the group as a unit, preserving order and contiguity. pos is pinned to
-// an extreme of the node containing it so the sweep never splits that node:
-//   a member anchor becomes this group's tail;
-//   an anchor in another node is pinned to that node's head, so this group
-//   lands wholly before it.
-void FusedNode::moveBefore(Operation *pos) const {
-  if (contains(pos))
-    pos = opsOrdered.back();
-  else if (auto *node = ctx.tryGetNode(pos))
-    pos = node->opsOrdered.front();
-  for (auto *op : ops())
-    if (op != pos)
-      op->moveBefore(pos);
 }
 
 bool FusedNode::hasCommonAxis(Operation *op) const {
@@ -111,9 +87,16 @@ bool FusedNode::hasRankReducing() const {
   return llvm::any_of(ops(), hasRankReducingIndexingMap);
 }
 
-bool FusedNode::conflictsWith(const FusableOpInfo &otherInfo) const {
-  return llvm::any_of(
-      ops(), [&](Operation *op) { return ctx.hasConflict(otherInfo, op); });
+bool FusedNode::conflictsWith(Operation *candidate) const {
+  const FusableOpInfo &otherInfo = ctx.getInfo(candidate);
+  // Copy/sync conflicts are still tracked as op sets (op-level Cartesian
+  // product); op/group conflicts are the ordering constraint at unit level.
+  if (llvm::any_of(ops(), [&](Operation *op) {
+        return otherInfo.copyConflicts.contains(op) ||
+               otherInfo.syncConflicts.contains(op);
+      }))
+    return true;
+  return !ctx.constraint().canAccept(FusionUnit(this), ctx.getUnit(candidate));
 }
 
 bool FusedNode::canAccept(Operation *candidate, AcceptContext actx) const {
@@ -133,79 +116,24 @@ bool FusedNode::canAccept(Operation *candidate, AcceptContext actx) const {
     return false;
   if (hasRankReducing() && analysis::isVsstbPatternTransposeOp(candidate))
     return false;
-  return hasCommonAxis(candidate) && !conflictsWith(ctx.getInfo(candidate));
+  return hasCommonAxis(candidate) && !conflictsWith(candidate);
 }
 
 //===----------------------------------------------------------------------===//
 // Helpers for consolidateToTail
 //===----------------------------------------------------------------------===//
 
-using SuperOpTy = llvm::PointerUnion<Operation *, FusedNode const *>;
-
-static void climbedForwardSlice(PlanContext &ctx, SuperOpTy sop,
-                                SetVector<SuperOpTy> &forwardSlice,
-                                DenseSet<SuperOpTy> &visited,
-                                const DominanceInfo &domInfo,
-                                Operation *anchor) {
-  if (!visited.insert(sop).second)
-    llvm::report_fatal_error(
-        "Find circular dependency between the fused nodes.");
-
-  auto climb = [anchor](auto *op) {
-    return anchor->getBlock()->findAncestorOpInBlock(*op);
-  };
-  auto visit = [&](auto *op) {
-    if (domInfo.dominates(anchor, op))
-      return;
-    FusedNode const *node = ctx.tryGetNode(op);
-    SuperOpTy user = node ? SuperOpTy(node) : SuperOpTy(op);
-    if (forwardSlice.count(user))
-      return;
-    climbedForwardSlice(ctx, user, forwardSlice, visited, domInfo, anchor);
-  };
-
-  if (auto *node = sop.dyn_cast<FusedNode const *>()) {
-    for (auto *op : node->rops()) {
-      for (Operation *userOp : map_range(op->getUsers(), climb)) {
-        if (node->contains(userOp))
-          continue;
-        visit(userOp);
-      }
-    }
-  } else {
-    auto *op = sop.get<Operation *>();
-    for (Operation *userOp : map_range(op->getUsers(), climb))
-      visit(userOp);
-  }
-
-  forwardSlice.insert(sop);
-}
-
-// Restore contiguity after an insertion: move the node's forward-slice users
-// past the tail, then pull the node's own ops back together before it.
-void FusedNode::consolidateToTail() const {
-  if (opsOrdered.size() == 1)
+// Restore contiguity before an insertion: reorder the successors of the
+// earlier of this node and newOp that sit between them past the later entity,
+// then bring newOp adjacent to this node.
+void FusedNode::consolidateToTail(Operation *newOp) const {
+  // The first leaf has no node to reorder next to.
+  if (opsOrdered.empty())
     return;
 
-  // opsOrdered is maintained in block order by insertOrdered, so back() is the
-  // node tail.
-  Operation *lastOp = opsOrdered.back();
-
-  DominanceInfo domInfo(opsOrdered.front());
-  DenseSet<SuperOpTy> visited;
-  SetVector<SuperOpTy> forwardSlice;
-  climbedForwardSlice(ctx, this, forwardSlice, visited, domInfo, lastOp);
-
-  // drop_end skips the node itself.
-  for (auto userOp : drop_end(forwardSlice)) {
-    if (auto *node = userOp.dyn_cast<FusedNode const *>()) {
-      node->moveAfter(lastOp);
-      continue;
-    }
-    auto *op = userOp.get<Operation *>();
-    op->moveAfter(lastOp);
-  }
-  moveBefore(lastOp);
+  // canAccept() rejected any candidate that conflicts with this node, so the
+  // reordered successors are never required to stay between the two.
+  ctx.constraint().reorder(ctx.getUnit(newOp), FusionUnit(this));
 
   // Guard the contiguity invariant insertOrdered depends on.
   for (auto node : ctx.nodes())
@@ -216,29 +144,6 @@ void FusedNode::consolidateToTail() const {
             "consolidateToTail make wrong order in " + node->loopLabel));
   if (failed(verify(opsOrdered.back()->getParentOp())))
     llvm::report_fatal_error("consolidateToTail produced invalid IR");
-}
-
-void FusedNode::updateConflicts(Operation *newOp) const {
-  Block *block = newOp->getBlock();
-  ctx.dissolvePivot(newOp, this, block);
-
-  DenseSet<Operation *> upstreamOps;
-  DenseSet<Operation *> visitedUpstreamOps;
-  DenseSet<Operation *> downstreamOps;
-  DenseSet<Operation *> visitedDownstreamOps;
-  for (Operation *op : ops()) {
-    findUpstreamFusableOpOf(op, block, upstreamOps, visitedUpstreamOps);
-    findDownstreamFusableOpOf(op, block, downstreamOps, visitedDownstreamOps);
-  }
-  for (Operation *op : ops()) {
-    upstreamOps.erase(op);
-    downstreamOps.erase(op);
-  }
-  for (auto upstreamOp : upstreamOps) {
-    for (auto downstreamOp : downstreamOps) {
-      ctx.addGroupConflict(upstreamOp, downstreamOp, this);
-    }
-  }
 }
 
 void FusedNode::estimateTileSizeForOp(
