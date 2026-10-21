@@ -133,6 +133,8 @@ void CrossCoreGSSPass::runOnOperation() {
   if (this->enableCVPatterns) {
     options.enableCVPatterns = true;
   }
+  options.enableNonRecursiveLoopUnrolling =
+      this->enableNonRecursiveLoopUnrolling;
   options.roundRobinEventIds = this->roundRobinEventIds && isMemBasedArch;
   if (this->blockAllSync) {
     options.enableBlockAllMode = true;

@@ -85,18 +85,14 @@ public:
     auto scopeOp = funcIrBuilder(func.getRegion(), funcOp.get());
     funcOp->body.push_back(std::move(scopeOp));
     funcIr = std::move(funcOp);
-    if (options.buildUnrolledSyncIR) {
-      syncIrBuilder(funcIr.get());
-    }
+    buildSyncIr();
   }
 
   IRTranslator(std::unique_ptr<OperationBase> funcIr, SyncSolverOptions options)
       : options(options), funcIr(std::move(funcIr)) {
     if (this->funcIr && this->funcIr->op)
       funcOp = dyn_cast<func::FuncOp>(this->funcIr->op);
-    if (options.buildUnrolledSyncIR) {
-      syncIrBuilder(this->funcIr.get());
-    }
+    buildSyncIr();
   }
 
 protected:
@@ -118,9 +114,22 @@ protected:
   std::unique_ptr<OperationBase>
   getDecomposedMmadMxL1(hivm::MmadMxL1Op mmadMxL1Op, OperationBase *parentOp);
 
+  // Build the sync IR the solver analyzes, when it asked for one.
+  void buildSyncIr() {
+    if (!options.buildUnrolledSyncIR) {
+      return;
+    }
+    syncIrBuilder(funcIr.get());
+    recordLinearizedLoopOccs();
+  }
+
   // Build sync IR occurrences from the operation tree.
   void syncIrBuilder(OperationBase *op, Occurrence *parentOcc = nullptr,
-                     bool isUseless = false);
+                     bool isUseless = false, bool unrollLoops = true);
+
+  // Group the occurrences the sync IR gave each loop op, handing the split one
+  // the linearized copies of that loop.
+  void recordLinearizedLoopOccs();
 
   // Collect pointer-like operands reachable from a Value.
   llvm::SmallVector<Value> tracebackMemVals(Value val);
@@ -187,9 +196,7 @@ public:
     funcOp = tripletKernels.mixFuncOp;
     initIRTranslators();
     funcIr = buildDelayedFuncIr();
-    if (options.buildUnrolledSyncIR) {
-      syncIrBuilder(funcIr.get());
-    }
+    buildSyncIr();
   }
 
   void initIRTranslators();

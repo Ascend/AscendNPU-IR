@@ -806,7 +806,10 @@ llvm::LogicalResult SyncTester::test() {
   SyncSolverOptions options(syncMode, /*isMemBasedArch=*/false,
                             /*isRegBasedArch=*/false);
   options.enableCVPatterns = true;
-  options.solverVersion = solverVersion;
+  options.solverVersion = solverOptions.solverVersion;
+  options.enableSiblingIfSync = solverOptions.enableSiblingIfSync;
+  options.enableNonRecursiveLoopUnrolling =
+      solverOptions.enableNonRecursiveLoopUnrolling;
 
   auto irTranslator =
       std::make_unique<IRTranslator>(std::move(funcIr), options);
@@ -893,7 +896,7 @@ void SyncTester::runTestMode(const SmallVector<int64_t> &options,
                << "\n";
 
   SyncTester tester(numOperations, numPointers, enableMultiBuffer,
-                    enableCrossCoreMode, solverOptions.solverVersion, initSeed,
+                    enableCrossCoreMode, solverOptions, initSeed,
                     performanceOnly);
 
   llvm::LogicalResult result = llvm::success();
