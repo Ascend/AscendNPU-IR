@@ -68,7 +68,7 @@ public:
 //===----------------------------------------------------------------------===//
 
 // Check if a callee block arg is read by vector::TransferReadOp (vload).
-// Walk all users through SubView/View chains (not only the first user).
+// Walk all users through view-like and cast chains (not only the first user).
 static bool isArgUsedByVLoad(func::FuncOp callee, int argIdx) {
   auto barg = callee.getArgument(argIdx);
   SmallVector<Operation *> worklist(barg.getUsers().begin(),
@@ -80,9 +80,11 @@ static bool isArgUsedByVLoad(func::FuncOp callee, int argIdx) {
       continue;
     if (isa<vector::TransferReadOp>(cur))
       return true;
-    if (isa<memref::SubViewOp, memref::ViewOp>(cur)) {
-      for (Operation *user : cur->getUsers())
-        worklist.push_back(user);
+    if (isa<ViewLikeOpInterface, memref::CastOp>(cur)) {
+      for (Value result : cur->getResults()) {
+        for (Operation *user : result.getUsers())
+          worklist.push_back(user);
+      }
     }
   }
   return false;
