@@ -752,10 +752,16 @@ def MergeVecScope : Pass<"hfusion-merge-vf", "ModuleOp"> {
 
 def PullSliceIntoVectorFunction
     : Pass<"hfusion-pull-slice-into-vector-function", "ModuleOp"> {
-  let summary = "Pull tensor slice ops into VF callees to reduce buffer copies";
+  let summary = "Pull tensor slice ops and constant scalar fills into VF callees";
+  let description = [{
+    Pull slice operands and matching result insertions into vector functions to
+    reduce buffer copies, and move constant 0-rank tensor fills to the SIMD VF entry
+    when the VF has exactly one direct caller.
+  }];
   let constructor = "mlir::hfusion::createPullSliceIntoVectorFunctionPass()";
   let dependentDialects = ["tensor::TensorDialect", "func::FuncDialect",
-                           "hivm::HIVMDialect", "scf::SCFDialect"];
+                           "hivm::HIVMDialect", "scf::SCFDialect",
+                           "arith::ArithDialect", "vector::VectorDialect"];
 }
 
 def VectorizeOps : Pass<"hfusion-vectorize-ops", "ModuleOp"> {
