@@ -190,6 +190,8 @@ def TreeReduceV2 : Pass<"tree-reduce-v2", "ModuleOp"> {
            "Rewrite only loops marked for direct register reduction.">,
     Option<"directRegisterRA", "direct-register-ra", "bool", "false",
            "Use the direct balanced register-tree RA lowering.">,
+    Option<"ascendStyleAR", "ascend-style-ar", "bool", "true",
+           "Use the AscendC-style multi-pass in-place folding AR lowering.">,
     Option<"onlyLegacyScope", "only-legacy-scope", "bool", "false",
            "Rewrite only modules selected for the legacy tree strategy.">,
   ];
