@@ -25,23 +25,16 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
   // CHECK-LABEL: func.func @triton_sum_2D_dim0_outlined_vf_1
   // CHECK-NOT: linalg.copy
   // CHECK-NOT: vector.multi_reduction <add>
-  // CHECK: scf.for
-  // CHECK:   scf.for
-  // CHECK:     arith.divui
-  // CHECK:     scf.for
-  // CHECK:       vector.create_mask
-  // CHECK:       scf.for
-  // CHECK:         vector.mask {{.*}} { vector.transfer_read {{.*}} : tensor<1x?xf32>, vector<1x64xf32> }
-  // CHECK:         arith.addf {{.*}} : vector<1x64xf32>
-  // CHECK:         vector.mask {{.*}} { vector.transfer_write {{.*}} : vector<1x64xf32>, tensor<1x?xf32> }
-  // CHECK:     scf.for
-  // CHECK:       vector.create_mask
-  // CHECK:       vector.mask {{.*}} { vector.transfer_read {{.*}} : tensor<1x?xf32>, vector<1x64xf32> }
-  // CHECK:       arith.addf {{.*}} : vector<1x64xf32>
-  // CHECK:       vector.shape_cast {{.*}} : vector<1x64xf32> to vector<64xf32>
-  // CHECK:       vector.mask {{.*}} { vector.transfer_read {{.*}} : tensor<?xf32>, vector<64xf32> }
-  // CHECK:       arith.addf {{.*}} : vector<64xf32>
-  // CHECK:       vector.mask {{.*}} { vector.transfer_write {{.*}} : vector<64xf32>, tensor<?xf32> }
+  // CHECK: scf.for {{.*}} iter_args({{.*}}) -> (tensor<384xf32>, tensor<128x384xf32>)
+  // CHECK: scf.for {{.*}} iter_args({{.*}}) -> (tensor<384xf32>, tensor<128x384xf32>)
+  // CHECK: vector.create_mask {{.*}} : vector<64xi1>
+  // CHECK: scf.for {{.*}} iter_args({{.*}}) -> (tensor<128x384xf32>)
+  // CHECK: vector.mask {{.*}} { vector.transfer_read {{.*}} : tensor<128x384xf32>, vector<64xf32> }
+  // CHECK: arith.addf {{.*}} : vector<64xf32>
+  // CHECK: vector.mask {{.*}} { vector.transfer_write {{.*}} : vector<64xf32>, tensor<128x384xf32> }
+  // CHECK: vector.mask {{.*}} { vector.transfer_read {{.*}} : tensor<384xf32>, vector<64xf32> }
+  // CHECK: arith.addf {{.*}} : vector<64xf32>
+  // CHECK: vector.mask {{.*}} { vector.transfer_write {{.*}} : vector<64xf32>, tensor<384xf32> }
   // CHECK: return
 
   func.func @triton_sum_2D_dim0_outlined_vf_1(%arg0: tensor<128x384xf32>, %arg1: index, %arg2: index, %arg3: index, %arg4: index, %arg5: index, %arg6: tensor<384xf32>) -> tensor<384xf32> attributes {hivm.vector_function, no_inline} {
@@ -160,33 +153,32 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
   // reduction. TreeReduceV2 must use a separate tensor for partial sums so
   // that one-shot bufferization cannot overwrite %arg0 in place.
   // CHECK-LABEL: func.func @tree_reduce_preserve_live_input
-  // CHECK: %[[EMPTY:.*]] = tensor.empty() : tensor<3x768xf32>
+  // CHECK: %[[EMPTY:.*]] = tensor.empty() : tensor<2x768xf32>
   // CHECK-NOT: linalg.copy
-  // CHECK: %[[TAIL:.*]] = scf.for {{.*}} iter_args({{.*}} = %[[EMPTY]])
-  // CHECK: tensor.extract_slice %arg0[
-  // CHECK: vector.transfer_read
-  // CHECK: tensor.extract_slice %arg0[
-  // CHECK: vector.transfer_read
+  // CHECK: scf.for {{.*}} iter_args({{.*}} = %[[EMPTY]])
+  // CHECK: vector.transfer_read {{.*}} : tensor<3x768xf32>, vector<64xf32>
+  // CHECK: vector.transfer_read {{.*}} : tensor<3x768xf32>, vector<64xf32>
   // CHECK: arith.addf
-  // CHECK: vector.transfer_write
-  // CHECK: tensor.insert_slice
-  // CHECK: scf.for
-  // CHECK: tensor.extract_slice %[[TAIL]][
-  // CHECK: vector.transfer_read
-  // CHECK: tensor.extract_slice %arg0[
-  // CHECK: vector.transfer_read
+  // CHECK: vector.transfer_write {{.*}} : vector<64xf32>, tensor<2x768xf32>
+  // CHECK: vector.transfer_read {{.*}} : tensor<2x768xf32>, vector<64xf32>
+  // CHECK: vector.transfer_read {{.*}} : tensor<3x768xf32>, vector<64xf32>
   // CHECK: arith.addf
+  // CHECK: vector.transfer_read {{.*}} : tensor<768xf32>, vector<64xf32>
+  // CHECK: arith.addf
+  // CHECK: vector.transfer_write {{.*}} : vector<64xf32>, tensor<768xf32>
   // CHECK: return %arg0, {{.*}} : tensor<3x768xf32>, tensor<768xf32>
   // BUFFERIZE-LABEL: func.func @tree_reduce_preserve_live_input
-  // BUFFERIZE: %[[ALLOC:.*]] = memref.alloc
+  // BUFFERIZE: %[[ALLOC:.*]] = memref.alloc() {{.*}} : memref<2x768xf32>
   // BUFFERIZE-NOT: memref.copy %arg0, %[[ALLOC]]
   // BUFFERIZE: scf.for {{.*}} iter_args({{.*}} = %[[ALLOC]])
-  // BUFFERIZE: memref.subview %arg0[
-  // BUFFERIZE: vector.transfer_read
-  // BUFFERIZE: memref.subview %arg0[
-  // BUFFERIZE: vector.transfer_read
+  // BUFFERIZE: vector.transfer_read {{.*}} : memref<3x768xf32, {{.*}}>, vector<64xf32>
+  // BUFFERIZE: vector.transfer_read {{.*}} : memref<3x768xf32, {{.*}}>, vector<64xf32>
   // BUFFERIZE: arith.addf
-  // BUFFERIZE: vector.transfer_write
+  // BUFFERIZE: vector.transfer_write {{.*}} : vector<64xf32>, memref<2x768xf32>
+  // BUFFERIZE: vector.transfer_read {{.*}} : memref<2x768xf32>, vector<64xf32>
+  // BUFFERIZE: vector.transfer_read {{.*}} : memref<3x768xf32, {{.*}}>, vector<64xf32>
+  // BUFFERIZE: arith.addf
+  // BUFFERIZE: vector.transfer_write {{.*}} : vector<64xf32>, memref<768xf32, {{.*}}>
   // BUFFERIZE: return %arg0, {{.*}} : memref<3x768xf32, {{.*}}>, memref<768xf32, {{.*}}>
   func.func @tree_reduce_preserve_live_input(
       %arg0: tensor<3x768xf32>, %arg1: tensor<768xf32>)
@@ -228,26 +220,35 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
   // This gives later tree stages a fully initialized working frontier without
   // copying the whole input tensor.
   // CHECK-LABEL: func.func @tree_reduce_preserve_live_input_large
-  // CHECK: %[[LARGE_EMPTY:.*]] = tensor.empty() : tensor<23x768xf32>
+  // CHECK: %[[LARGE_EMPTY:.*]] = tensor.empty() : tensor<16x768xf32>
   // CHECK-NOT: linalg.copy
   // CHECK: scf.for {{.*}} iter_args({{.*}} = %[[LARGE_EMPTY]])
-  // CHECK: tensor.extract_slice %arg0[
-  // CHECK: tensor.extract_slice %arg0[
+  // CHECK: vector.transfer_read {{.*}} : tensor<23x768xf32>, vector<64xf32>
+  // CHECK: vector.transfer_read {{.*}} : tensor<23x768xf32>, vector<64xf32>
   // CHECK: arith.addf
-  // CHECK: vector.transfer_write
+  // CHECK: vector.transfer_write {{.*}} : vector<64xf32>, tensor<16x768xf32>
   // CHECK: scf.for
+  // CHECK: vector.transfer_read {{.*}} : tensor<23x768xf32>, vector<64xf32>
+  // CHECK: vector.transfer_write {{.*}} : vector<64xf32>, tensor<16x768xf32>
   // CHECK: scf.for
-  // CHECK: tensor.extract_slice %arg0[
-  // CHECK: vector.transfer_read
-  // CHECK: vector.transfer_write
-  // CHECK: scf.for
+  // CHECK: vector.transfer_read {{.*}} : tensor<16x768xf32>, vector<64xf32>
+  // CHECK: arith.addf {{.*}} : vector<64xf32>
+  // CHECK: vector.transfer_write {{.*}} : vector<64xf32>, tensor<16x768xf32>
+  // CHECK: vector.transfer_read {{.*}} : tensor<16x768xf32>, vector<64xf32>
+  // CHECK: vector.transfer_read {{.*}} : tensor<768xf32>, vector<64xf32>
+  // CHECK: arith.addf
+  // CHECK: vector.transfer_write {{.*}} : vector<64xf32>, tensor<768xf32>
   // CHECK: return %arg0, {{.*}} : tensor<23x768xf32>, tensor<768xf32>
   // BUFFERIZE-LABEL: func.func @tree_reduce_preserve_live_input_large
-  // BUFFERIZE: %[[LARGE_ALLOC:.*]] = memref.alloc
+  // BUFFERIZE: %[[LARGE_ALLOC:.*]] = memref.alloc() {{.*}} : memref<16x768xf32>
   // BUFFERIZE-NOT: memref.copy %arg0, %[[LARGE_ALLOC]]
-  // BUFFERIZE: memref.subview %arg0[
-  // BUFFERIZE: vector.transfer_read
-  // BUFFERIZE: vector.transfer_write
+  // BUFFERIZE: scf.for {{.*}} iter_args({{.*}} = %[[LARGE_ALLOC]])
+  // BUFFERIZE: vector.transfer_read {{.*}} : memref<23x768xf32, {{.*}}>, vector<64xf32>
+  // BUFFERIZE: vector.transfer_write {{.*}} : vector<64xf32>, memref<16x768xf32>
+  // BUFFERIZE: vector.transfer_read {{.*}} : memref<16x768xf32>, vector<64xf32>
+  // BUFFERIZE: vector.transfer_read {{.*}} : memref<768xf32, {{.*}}>, vector<64xf32>
+  // BUFFERIZE: arith.addf
+  // BUFFERIZE: vector.transfer_write {{.*}} : vector<64xf32>, memref<768xf32, {{.*}}>
   // BUFFERIZE: return %arg0, {{.*}} : memref<23x768xf32, {{.*}}>, memref<768xf32, {{.*}}>
   func.func @tree_reduce_preserve_live_input_large(
       %arg0: tensor<23x768xf32>, %arg1: tensor<768xf32>)

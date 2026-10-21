@@ -192,6 +192,8 @@ def TreeReduceV2 : Pass<"tree-reduce-v2", "ModuleOp"> {
            "Use the direct balanced register-tree RA lowering.">,
     Option<"ascendStyleAR", "ascend-style-ar", "bool", "true",
            "Use the AscendC-style multi-pass in-place folding AR lowering.">,
+    Option<"ascendStyleRA", "ascend-style-ra", "bool", "true",
+           "Use the AscendC-style multi-stage tree-folding RA lowering.">,
     Option<"onlyLegacyScope", "only-legacy-scope", "bool", "false",
            "Rewrite only modules selected for the legacy tree strategy.">,
   ];
