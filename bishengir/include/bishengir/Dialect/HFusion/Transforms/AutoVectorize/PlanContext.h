@@ -27,9 +27,6 @@ namespace hfusion {
 // Every fusable op(including LinalgOp and interleave/deinterleave) corresponds
 // to a FusableOpInfo.
 struct FusableOpInfo {
-  template <typename PivotTy>
-  using ConflictPivotMap = DenseMap<Operation *, DenseSet<PivotTy>>;
-
   std::string label;
   int64_t numLoops = 0;
   unsigned numReductionLoops = 0;
@@ -37,13 +34,10 @@ struct FusableOpInfo {
   SmallVector<int64_t> tileSize;
   SmallVector<int64_t> tileInterchange;
   unsigned maxElemBitWidth = 1;
-  // TODO: Conflict storage (copy/sync/op/group) currently lives in PlanContext
-  // for convenience. Move to a dedicated ConflictTracker class to separate plan
-  // state from conflict tracking, making incremental update semantics clearer.
+  // Copy/sync conflicts are still tracked as op sets; op/group conflicts are
+  // now derived from OrderingConstraint (see computeConflictLists).
   DenseSet<Operation *> copyConflicts;
   DenseSet<Operation *> syncConflicts;
-  ConflictPivotMap<Operation *> opConflicts;
-  ConflictPivotMap<const FusedNode *> groupConflicts;
   std::shared_ptr<FusedNode> fusedNode = nullptr;
 };
 
@@ -139,13 +133,6 @@ public:
 
   void addSyncConflict(Operation *a, Operation *b);
   void addCopyConflict(Operation *a, Operation *b);
-  void addOpConflict(Operation *a, Operation *b, Operation *pivot);
-  void addGroupConflict(Operation *a, Operation *b, const FusedNode *pivot);
-
-  bool hasConflict(Operation *a, Operation *b) const;
-  bool hasConflict(const FusableOpInfo &a, Operation *b) const;
-
-  void dissolvePivot(Operation *newOp, const FusedNode *node, Block *block);
 
 private:
   // Register a fusable op with its label; computes numLoops/shape/bitWidth.

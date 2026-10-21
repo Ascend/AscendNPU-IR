@@ -85,9 +85,6 @@ public:
     return llvm::make_range(producers.begin(), producers.end());
   }
 
-  void moveAfter(Operation *pos) const;
-  void moveBefore(Operation *pos) const;
-
   void addProducer(Operation *op);
   void addLeaf(Operation *op);
 
@@ -119,13 +116,12 @@ private:
   reductionConsumerNeedsFullDomain(Operation *producer,
                                    ArrayRef<int64_t> estimatedTileSize) const;
 
-  bool conflictsWith(const FusableOpInfo &otherInfo) const;
+  bool conflictsWith(Operation *candidate) const;
   bool hasCommonAxis(Operation *op) const;
   bool canFitStack(Operation *candidate) const;
   bool hasRankReducing() const;
 
-  void consolidateToTail() const;
-  void updateConflicts(Operation *newOp) const;
+  void consolidateToTail(Operation *newOp) const;
   void insertOrdered(Operation *op);
 
   bool useAsDpsInits(Operation *op) const;
