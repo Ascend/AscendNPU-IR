@@ -8,9 +8,10 @@
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
-#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "llvm/ADT/STLExtras.h"
 namespace mlir {
 #define GEN_PASS_DEF_FOLDEXTRACTINSERTPAIR
@@ -75,21 +76,22 @@ public:
           insertOp, "source tensor type and insert result type differ");
 
     if (!isStaticOneElementTensor(resultType))
-      return rewriter.notifyMatchFailure(
-          insertOp, "not a statically one-element tensor");
+      return rewriter.notifyMatchFailure(insertOp,
+                                         "not a statically one-element tensor");
 
     // Be conservative: require extracting and inserting at the same indices.
     if (!llvm::equal(extractOp.getIndices(), insertOp.getIndices()))
-      return rewriter.notifyMatchFailure(
-          insertOp, "extract and insert indices differ");
+      return rewriter.notifyMatchFailure(insertOp,
+                                         "extract and insert indices differ");
 
     // Optional conservative check:
-    // Require the destination to be tensor.empty. This matches your generated IR
-    // and avoids surprising rewrites on non-empty destinations.
+    // Require the destination to be tensor.empty. This matches your generated
+    // IR and avoids surprising rewrites on non-empty destinations.
     //
     // For a statically one-element tensor, this rewrite is also valid even if
-    // the destination is not tensor.empty, because the only element is replaced.
-    // Keep this check if you want the transformation to be narrowly targeted.
+    // the destination is not tensor.empty, because the only element is
+    // replaced. Keep this check if you want the transformation to be narrowly
+    // targeted.
     if (!insertOp.getDest().getDefiningOp<tensor::EmptyOp>())
       return rewriter.notifyMatchFailure(
           insertOp, "insert destination is not tensor.empty");
@@ -119,8 +121,10 @@ public:
 ///
 /// This pattern matches when:
 /// 1. %slice is defined by tensor.extract_slice
-/// 2. %written is defined by vector.transfer_write to %slice at the same offsets
-/// 3. %result is tensor.insert_slice of %written into %slice at the same offsets
+/// 2. %written is defined by vector.transfer_write to %slice at the same
+/// offsets
+/// 3. %result is tensor.insert_slice of %written into %slice at the same
+/// offsets
 /// 4. The sizes and strides of extract_slice and insert_slice match
 ///
 /// This is redundant because %written already has the same shape as %slice,
@@ -162,8 +166,7 @@ public:
       return rewriter.notifyMatchFailure(insertOp, "offset sizes differ");
     }
 
-    for (auto [writeIdx, insertOff] :
-         llvm::zip(writeIndices, insertOffsets)) {
+    for (auto [writeIdx, insertOff] : llvm::zip(writeIndices, insertOffsets)) {
       auto writeInt = mlir::getConstantIntValue(writeIdx);
       auto insertInt = mlir::getConstantIntValue(insertOff);
 
@@ -174,8 +177,7 @@ public:
       }
 
       // For dynamic values, require exact match
-      if (auto insertVal =
-              mlir::dyn_cast_if_present<mlir::Value>(insertOff)) {
+      if (auto insertVal = mlir::dyn_cast_if_present<mlir::Value>(insertOff)) {
         if (writeIdx != insertVal) {
           return rewriter.notifyMatchFailure(insertOp, "offsets do not match");
         }
@@ -191,8 +193,7 @@ public:
       return rewriter.notifyMatchFailure(insertOp, "size ranks differ");
     }
 
-    for (auto [extractSz, insertSz] :
-         llvm::zip(extractSizes, insertSizes)) {
+    for (auto [extractSz, insertSz] : llvm::zip(extractSizes, insertSizes)) {
       auto extractInt = mlir::getConstantIntValue(extractSz);
       auto insertInt = mlir::getConstantIntValue(insertSz);
 
@@ -202,10 +203,8 @@ public:
         }
       } else if (extractSz != insertSz) {
         // For dynamic sizes, require exact value match
-        auto extractVal =
-            mlir::dyn_cast_if_present<mlir::Value>(extractSz);
-        auto insertVal =
-            mlir::dyn_cast_if_present<mlir::Value>(insertSz);
+        auto extractVal = mlir::dyn_cast_if_present<mlir::Value>(extractSz);
+        auto insertVal = mlir::dyn_cast_if_present<mlir::Value>(insertSz);
         if (!extractVal || !insertVal || extractVal != insertVal) {
           return rewriter.notifyMatchFailure(insertOp, "sizes do not match");
         }

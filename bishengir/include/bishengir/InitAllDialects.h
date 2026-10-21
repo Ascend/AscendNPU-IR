@@ -105,6 +105,7 @@ inline void registerAllDialects(mlir::DialectRegistry &registry) {
   mlir::triton::ascend::registerAllocateAscendSharedMemoryPass();
   registerConvertTritonAscendGPUToLLVMPass();
   registerConvertProtonAscendGPUToLLVMPass();
+  registerConvertProtonToHIVMPass();
   triton::registerGetTritonMetadataPass();
 #endif
 

@@ -610,6 +610,18 @@ LogicalResult VFTruncIOp::verify() {
   return emitOpError("Improper setting of #part and #pp, please check ISA");
 }
 
+LogicalResult VFVpackOp::verify() {
+  Type inType = cast<VectorType>(getSrc().getType()).getElementType();
+  Type outType = cast<VectorType>(getRes().getType()).getElementType();
+
+  if ((inType.isSignlessInteger(16) && outType.isSignlessInteger(8)) ||
+      (inType.isSignlessInteger(32) && outType.isSignlessInteger(16)))
+    return success();
+
+  return emitOpError("Invalid element type combination for vpack, only "
+                     "b16->b8 and b32->b16 narrowing are supported");
+}
+
 LogicalResult VFFpToSIntOp::verify() {
   Type inType = cast<VectorType>(getSrc().getType()).getElementType();
   Type outType = cast<VectorType>(getRes().getType()).getElementType();

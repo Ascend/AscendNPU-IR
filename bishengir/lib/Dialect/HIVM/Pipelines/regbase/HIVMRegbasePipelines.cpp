@@ -9,6 +9,7 @@
 #include "bishengir/Conversion/ArithToAffine/ArithToAffine.h"
 #include "bishengir/Conversion/HFusionToHIVM/HFusionToHIVMPass.h"
 #include "bishengir/Conversion/LowerMemRefExt/LowerMemRefExt.h"
+#include "bishengir/Conversion/ProtonToHIVM/ProtonToHIVM.h"
 #include "bishengir/Conversion/TensorToHIVM/TensorToHIVM.h"
 #include "bishengir/Dialect/Annotation/Transforms/Passes.h"
 #include "bishengir/Dialect/Arith/Transforms/Passes.h"
@@ -822,7 +823,8 @@ static void hivmPostBufferizationOptimizationPipeline(
 
 void buildConvertToHIVMPipeline(OpPassManager &pm,
                                 const ConvertToHIVMPipelineOptions &options) {
-  registerAivDisabledPassesForRegbase();
+  pm.addPass(bishengir::triton::proton::a5::createConvertProtonToHIVMPass());
+  registerKernelKindPassesForRegbase();
   ConvertHFusionToHIVMOptions hfs2hivmOptions;
   hfs2hivmOptions.mmMapMode = options.enableTritonKernelCompile
                                   ? hfusion::MmMapMode::MacroInstr
@@ -849,7 +851,7 @@ void buildConvertToHIVMPipeline(OpPassManager &pm,
 
 void buildHIVMTensorOptimizations(
     OpPassManager &pm, const HIVMPipelineOptions &hivmPipelineOptions) {
-  registerAivDisabledPassesForRegbase();
+  registerKernelKindPassesForRegbase();
   pm.nest<func::FuncOp>().addPass(createInitEntryKernelPass());
   pm.nest<func::FuncOp>().addPass(mlir::hivm::createHIVMNormalizeOpsPass());
   hivmPreBufferizationOptimizationPipeline(pm, hivmPipelineOptions);
@@ -857,7 +859,7 @@ void buildHIVMTensorOptimizations(
 
 void buildLowerHIVMPipelines(OpPassManager &pm,
                              const HIVMPipelineOptions &hivmPipelineOptions) {
-  registerAivDisabledPassesForRegbase();
+  registerKernelKindPassesForRegbase();
   bufferizationPipeline(pm, hivmPipelineOptions);
   // Self-gated: only rewrites guards whose get_sub_block_idx carries the
   // partition provenance stamp

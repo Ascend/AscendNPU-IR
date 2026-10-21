@@ -13,6 +13,7 @@
 #include "bishengir/Dialect/HIVMAVE/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVMAVE/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -597,11 +598,23 @@ struct AVEPgePattern : public OpRewritePattern<VFPgeOp> {
     PgePattern pattern = pge.getPattern();
     PgePattern normPattern = pattern;
     if (pattern == PgePattern::ALL &&
-        dstTyNumElems != util::VL_BITS / elementAlignment)
-      normPattern = hivmave::getPgePatternAttr(rewriter, dstTyNumElems,
-                                           util::PREDICATE_BITS)
-                    .value()
-                    .getValue();
+        dstTyNumElems != util::VL_BITS / elementAlignment) {
+      // ALL on a vector narrower than the register means its first
+      // dstTyNumElems lanes. Without a matching VLn pattern express
+      // that as plt with the same element granularity instead.
+      FailureOr<PgePatternAttr> vlPattern = hivmave::getPgePatternAttr(
+          rewriter, dstTyNumElems, util::PREDICATE_BITS);
+      if (failed(vlPattern)) {
+        Value numElems = rewriter.create<arith::ConstantIndexOp>(pge.getLoc(),
+                                                                 dstTyNumElems);
+        auto plt = rewriter.create<VFPltOp>(pge.getLoc(), dstType,
+                                            rewriter.getIndexType(), numElems);
+        plt->setDiscardableAttrs(pge->getDiscardableAttrDictionary());
+        rewriter.replaceOp(pge, plt->getResult(0));
+        return success();
+      }
+      normPattern = vlPattern->getValue();
+    }
     // Use pattern all/half instead of const int
     switch (elementAlignment) {
     case 8:

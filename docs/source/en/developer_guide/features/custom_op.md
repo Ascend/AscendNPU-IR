@@ -242,38 +242,6 @@ class tiled_custom_op:
 
 #### Operand Alignment Attribute (align_dim, arg_attrs)
 
-#### Sub-block tiling support
-
-For an AIV function, the `hivm-bind-sub-block` Pass can use `iterator_types`
-and `indexing_map` to distribute a CustomOp's `parallel` iteration dimension
-across two sub-blocks. Whether each operand is reduced to a tile is determined
-by its `indexing_map`; broadcast and reduction-only dimensions remain at full
-extent.
-
-A CustomOp currently participates in sub-block tiling only when:
-
-- its result ultimately reaches a Store/Copy-like operation; a leaf CustomOp
-  without such a downstream consumer is not currently supported;
-- it carries `no_side_effect`, is not a builtin, and uses neither
-  `temp_buffers` nor `extra_buffers_*`; a CustomMacroOp also has no sync
-  metadata;
-- tensor inputs, output inits, and results are `RankedTensorType` with
-  statically known tile sizes; scalar inputs pass through unchanged, while
-  `memref` inputs are not currently supported;
-- `iterator_types` and `indexing_map` are both present; a CustomOp does not
-  participate in sub-block tiling when either attribute is empty;
-- each `indexing_map` uses ordered, non-repeated iteration dimensions or
-  constant `0` for input broadcast; a tiled dimension is `parallel`, while a
-  reduction dimension remains at full extent; and
-- each output init has the same shape and `indexing_map` as its result and is
-  not broadcast; all results of a multi-result CustomOp use the same tile type
-  and reach supported consumer paths.
-
-If a condition is not met, the Pass keeps the full-extent computation or
-falls back to 1:1 execution. This optimization does not change the external
-CustomOp kernel interface; after tiling, both sub-blocks still invoke the same
-kernel and process different data tiles.
-
 `align_dim` is used to mark the dimension of a specified operand that needs to be aligned. In MLIR, this attribute is attached to the operand at the corresponding index through `arg_attrs`. An example is as follows:
 
 ```mlir

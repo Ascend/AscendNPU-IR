@@ -542,12 +542,17 @@ struct ReduceSplitPattern : public OpRewritePattern<scf::ForOp> {
       return failure();
     }
     SmallVector<Operation *, 4> reductionOps;
-    for (auto &op : forOp.getBody()->getOperations()) {
-      if (op.hasAttr(REDUCTION_OP_ATTR))
-        reductionOps.push_back(&op);
-    }
-    if (reductionOps.empty()) {
-      return failure();
+    auto yieldOp = cast<scf::YieldOp>(forOp.getBody()->getTerminator());
+    for (Value yielded : yieldOp.getOperands()) {
+      Operation *reductionOp = yielded.getDefiningOp();
+      // It is not always the case that all operands in yieldOp are tagged.
+      // TODO: Instead of giving up on the opt, we can try split the tagged acc
+      // and keep others as single running value.
+      if (!reductionOp || reductionOp->getBlock() != forOp.getBody() ||
+          !reductionOp->hasAttr(REDUCTION_OP_ATTR))
+        return rewriter.notifyMatchFailure(
+            forOp, "expected a tagged reduction for every loop result");
+      reductionOps.push_back(reductionOp);
     }
     const bool isOdd = ((unsigned int)tripCount & 0x1);
     int64_t halfCount = tripCount / 2;

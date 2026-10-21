@@ -12,6 +12,7 @@
 #include "bishengir/Dialect/Vector/Transforms/Passes.h"
 #include "bishengir/Dialect/Vector/Transforms/Transforms.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/Dialect/Vector/Transforms/LoweringPatterns.h"
 #include "mlir/Dialect/Vector/Transforms/VectorRewritePatterns.h"
@@ -1177,12 +1178,21 @@ class TransferReadToGatheringLoadPattern
                                           int64_t totalDestSize) const {
     SmallVector<Value, 2> indexVecValues;
 
-    IntegerType indexVecElementType = IntegerType::get(
-        rewriter.getContext(), memrefType.getElementTypeBitWidth());
+    // B8 gather indices are computed as 16-bit values because an 8-bit
+    // element type cannot represent the full range of memref-relative byte
+    // offsets a gather may need to index. A single HIVM AVE tile register
+    // can hold at most 128 16-bit indices so only a B8 gather wider than
+    // that needs its index vector split across two registers. A narrower B8
+    // gather fits a single native gather directly.
+    bool isB8 = memrefType.getElementTypeBitWidth() == 8;
+    unsigned indexBitWidth = isB8 ? 16 : memrefType.getElementTypeBitWidth();
+    IntegerType indexVecElementType =
+        IntegerType::get(rewriter.getContext(), indexBitWidth);
     auto indexVecType = VectorType::get(totalDestSize, indexVecElementType);
 
-    bool is256xi8 = (indexVecType.getNumElements() == 256) &&
-                    (indexVecElementType.getWidth() == 8);
+    int64_t subIndexLanes =
+        mlir::utils::getHIVMTileSliceMinNumElts(indexVecElementType);
+    bool isDualGather = isB8 && totalDestSize > subIndexLanes;
 
     auto checkIndex = [](const SmallVector<APInt, 0> &src,
                          const DenseElementsAttr &attr) {
@@ -1194,16 +1204,20 @@ class TransferReadToGatheringLoadPattern
       }
     };
 
-    if (is256xi8) {
+    if (isDualGather) {
       SmallVector<APInt, 0> gatherIndices1, gatherIndices2;
       for (unsigned i = 0; i < gatherIndices.size(); ++i) {
         (i % 2 == 0) ? gatherIndices1.push_back(gatherIndices[i])
                      : gatherIndices2.push_back(gatherIndices[i]);
       }
+      // Below the full VL width each half holds fewer than subIndexLanes
+      // real indices. Fill the rest with offset 0
+      gatherIndices1.resize(subIndexLanes, APInt(indexBitWidth, 0));
+      gatherIndices2.resize(subIndexLanes, APInt(indexBitWidth, 0));
 
       IntegerType i16Type = IntegerType::get(
           rewriter.getContext(), 16, indexVecElementType.getSignedness());
-      VectorType subIndexVecType = VectorType::get(128, i16Type);
+      VectorType subIndexVecType = VectorType::get(subIndexLanes, i16Type);
 
       auto processIndexVec =
           [&indexVecElementType, &i16Type, &subIndexVecType, &rewriter,
@@ -1297,20 +1311,25 @@ class TransferReadToGatheringLoadPattern
         lastDisabledBit{-1};
     int64_t totalDestSize = 1;
     bool indexOverflow = false;
-    computeGatherIndicesAndMasks(
-        readop, permMap, memrefType, destType, strides, isFullMask,
-        constantMaskBounds, gatherIndices, gatherMasks, firstEnabledBit,
-        lastEnabledBit, firstDisabledBit, lastDisabledBit,
-        totalDestSize, indexOverflow);
+    computeGatherIndicesAndMasks(readop, permMap, memrefType, destType, strides,
+                                 isFullMask, constantMaskBounds, gatherIndices,
+                                 gatherMasks, firstEnabledBit, lastEnabledBit,
+                                 firstDisabledBit, lastDisabledBit,
+                                 totalDestSize, indexOverflow);
     // Not support gather index overflow.
     // Such as, gather B8/B16 type date with 65537 index.
     // Todo: Use template lib to extend scenarios.
     if (indexOverflow)
       return failure();
-    // Not support gather B8 with data size not equal 256
-    // Todo: createIndexVector need enhance.
-    if (memrefType.getElementTypeBitWidth() == 8 && totalDestSize != 256)
-      return failure();
+    // A B8 gather wider than one native gather (128 16-bit indices) is split
+    // into two sub-gathers by index parity. Two sub-gathers cover at most VL
+    // elements; nothing wider is supported.
+    if (memrefType.getElementTypeBitWidth() == hivm::util::BITS_PER_BYTE &&
+        totalDestSize > hivm::util::VL) {
+      return readop.emitError()
+             << "unsupported B8 transpose gather width " << totalDestSize
+             << ": expected <= " << hivm::util::VL;
+    }
 
     auto indexVecValues = createIndexVector(readop, rewriter, memrefType,
                                             gatherIndices, totalDestSize);
@@ -1345,8 +1364,7 @@ class TransferReadToGatheringLoadPattern
 
     if (indexVecValues.size() == 2) {
       auto eltType = destType.getElementType();
-      VectorType subDestType =
-        VectorType::get({totalDestSize}, eltType);
+      VectorType subDestType = VectorType::get({totalDestSize}, eltType);
       Value padding =
           createPaddingValue(readop, rewriter, subDestType, totalDestSize);
 

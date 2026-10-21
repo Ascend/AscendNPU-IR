@@ -1729,6 +1729,8 @@ std::string customOpLibraryCallName(Operation *op,
       return "proton_get_sys_cnt";
     if (concreteOp.getName() == CustomOpT::kBuiltinProtonCircularStoreName)
       return "proton_circular_store";
+    if (concreteOp.getName() == CustomOpT::kBuiltinProtonScopeBoundaryName)
+      return "proton_scope_boundary";
     llvm::report_fatal_error("Unsupported builtin CustomOp");
   }
 

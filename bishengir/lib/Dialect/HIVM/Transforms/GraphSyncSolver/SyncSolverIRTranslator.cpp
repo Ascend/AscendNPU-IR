@@ -698,6 +698,11 @@ IRTranslator::getDestinationStyleInterfaceOp(Operation *op,
 
 std::unique_ptr<OperationBase>
 IRTranslator::translateRWLikeOp(Operation *op, OperationBase *parentOp) {
+  if (auto customOp = dyn_cast<hivm::CustomOp>(op);
+      customOp &&
+      customOp.getName() == hivm::CustomOp::kBuiltinProtonScopeBoundaryName)
+    return nullptr;
+
   Operation *dstStyleOp = nullptr;
   if (options.isRegBasedArch) {
     if (auto dsiOp = dyn_cast<DestinationStyleOpInterface>(op)) {

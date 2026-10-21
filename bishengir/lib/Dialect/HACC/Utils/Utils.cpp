@@ -350,6 +350,14 @@ bool isAscend950(llvm::StringRef targetDevice) {
   return isAscend950(symbolizeTargetDeviceEnum(targetDevice));
 }
 
+bool isAscend960(TargetDevice targetDevice) {
+  return targetDevice == TargetDevice::Ascend960;
+}
+
+bool isAscend960(llvm::StringRef targetDevice) {
+  return isAscend960(symbolizeTargetDeviceEnum(targetDevice));
+}
+
 bool isRegBasedArch(TargetDevice targetDevice) {
   if (static_cast<unsigned>(targetDevice) >= targetDevices.size())
     return false;
@@ -363,7 +371,7 @@ bool isRegBasedArch(llvm::StringRef targetDevice) {
 
 bool isFFTSSupportedArch(TargetDevice targetDevice) {
   return isAscend910B(targetDevice) || isAscend910_93(targetDevice) ||
-         isAscend950(targetDevice);
+         isAscend950(targetDevice) || isAscend960(targetDevice);
 }
 
 bool isAscend910B(ModuleOp op) {
@@ -409,6 +417,15 @@ bool isAscend950(ModuleOp op) {
     // if no target device exists in the IR.
     return false;
   return isAscend950(maybeTargetDevice.value());
+}
+
+bool isAscend960(ModuleOp op) {
+  auto maybeTargetDevice = getTargetDevice(op);
+  if (!maybeTargetDevice.has_value())
+    // Default is 910B. To ensure compatibility, return false
+    // if no target device exists in the IR.
+    return false;
+  return isAscend960(maybeTargetDevice.value());
 }
 
 bool isRegBasedArch(ModuleOp op) {
