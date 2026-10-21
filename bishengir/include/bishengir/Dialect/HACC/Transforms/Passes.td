@@ -123,10 +123,12 @@ def AppendTargetDeviceSpec : Pass<"hacc-append-device-spec", "ModuleOp"> {
     >,
     Option<"customAICNumber", "custom-aic-number", "int",
        /*default=*/"-1",
-       "custom aic cores number to use, default : -1 (no override)">,
+       "custom aic cores number to use, must be strictly positive, "
+       "-1 (no override) keeps the target's default">,
     Option<"customAIVNumber", "custom-aiv-number", "int",
        /*default=*/"-1",
-       "custom aiv cores number to use, default : -1 (no override)">,
+       "custom aiv cores number to use, must be strictly positive, "
+       "-1 (no override) keeps the target's default">,
     Option<"HIVMCVersion", "hivmc-version", "std::string",
                         /*default=*/"\"\"", "HIVMC Version">
   ];

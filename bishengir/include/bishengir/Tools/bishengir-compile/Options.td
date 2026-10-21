@@ -782,13 +782,13 @@ llvm::cl::values(
 }
 
 def CustomAICNumber : BiShengIRCompileOpt<
-  "Custom amount of aic cores to use (should be lower or equal than targets' real number, default is no override)",
+  "Custom amount of aic cores to use. Must be strictly positive. The target's real number is used when not specified. Required for targets without default core counts.",
   "int32_t",
   "-1"
 >;
 
 def CustomAIVNumber : BiShengIRCompileOpt<
-  "Custom amount of aiv cores to use (should be lower or equal than targets' real number, default is no override)",
+  "Custom amount of aiv cores to use. Must be strictly positive. The target's real number is used when not specified. Required for targets without default core counts.",
   "int32_t",
   "-1"
 >;
