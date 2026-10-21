@@ -420,7 +420,19 @@ struct TransferReadOpPattern : public OpRewritePattern<vector::TransferReadOp> {
     // arith-vector-mask-analyze, so no select is inserted for them.
     if (Value mask = readOp.getMask()) {
       auto maskVecType = cast<VectorType>(mask.getType());
-      if (maskVecType.getRank() != 1) {
+      // A mask that -normalize-vector flattened and then cast back to the
+      // read's shape carries no more information than its rank-1 source, and
+      // that source already matches the flattened lane order.  Follow the
+      // rank-1 contract for it rather than materializing a padding splat:
+      // the splat has no lowering for every element type (i64 reaches
+      // HIVMSelectOpLowering and aborts with "Invalid element bit width for a
+      // predicate vector"), and it is redundant when the mask the consumers
+      // get propagated is the very same one.
+      bool isFlattenedRank1Mask = false;
+      if (auto shapeCast = mask.getDefiningOp<vector::ShapeCastOp>())
+        isFlattenedRank1Mask =
+            cast<VectorType>(shapeCast.getSource().getType()).getRank() == 1;
+      if (maskVecType.getRank() != 1 && !isFlattenedRank1Mask) {
         // Flatten the mask to match `resVecType`.
         VectorType flatMaskType =
             VectorType::get(SmallVector<int64_t>{maskVecType.getNumElements()},
