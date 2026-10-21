@@ -213,12 +213,65 @@ struct StoreOpPattern : public OpRewritePattern<vector::StoreOp> {
   }
 };
 
+// Return empty bounds when the mask cannot be recovered or mapped.
+static SmallVector<int64_t>
+restoreSourceMaskBounds(AffineMap permutationMap,
+                        ArrayRef<int64_t> maskBounds) {
+  SmallVector<bool> usedDims(permutationMap.getNumDims(), false);
+  for (AffineExpr result : permutationMap.getResults())
+    if (auto dim = dyn_cast<AffineDimExpr>(result))
+      usedDims[dim.getPosition()] = true;
+  SmallVector<int64_t> bounds(permutationMap.getNumDims(), 1);
+  unsigned maskDim = 0;
+  for (unsigned sourceDim = 0; sourceDim < usedDims.size(); ++sourceDim) {
+    if (!usedDims[sourceDim])
+      continue;
+    if (maskDim >= maskBounds.size())
+      return {};
+    bounds[sourceDim] = maskBounds[maskDim++];
+  }
+  if (maskDim != maskBounds.size())
+    return {};
+  return bounds;
+}
+
+static SmallVector<int64_t> getConstantMaskBounds(Value mask,
+                                                  VectorType maskType,
+                                                  AffineMap permutationMap) {
+  if (!mask || !maskType)
+    return {};
+  // Unwrap all shape casts before recovering bounds in the read's mask type.
+  while (auto castOp = mask.getDefiningOp<vector::ShapeCastOp>()) {
+    auto srcType = dyn_cast<VectorType>(castOp.getSource().getType());
+    if (!srcType || srcType.getNumElements() != maskType.getNumElements())
+      return {};
+    mask = castOp.getSource();
+  }
+  auto constMask = mask.getDefiningOp<vector::ConstantMaskOp>();
+  if (!constMask)
+    return {};
+  int64_t enabledLanes = 1;
+  for (Attribute dimSize : constMask.getMaskDimSizes())
+    enabledLanes *= cast<IntegerAttr>(dimSize).getInt();
+  SmallVector<int64_t> maskBounds(maskType.getRank());
+  int64_t innerExtent = 1;
+  for (int64_t dim = maskType.getRank() - 1; dim >= 0; --dim) {
+    int64_t lanesAlongDim =
+        static_cast<int64_t>(llvm::divideCeil(enabledLanes, innerExtent));
+    maskBounds[dim] = std::min(lanesAlongDim, maskType.getDimSize(dim));
+    innerExtent *= maskType.getDimSize(dim);
+  }
+
+  return restoreSourceMaskBounds(permutationMap, maskBounds);
+}
+
 // Check whether it's possible to read the non-identity permutation map
 // in the same way as a regular, straightforward memory segment: a plain load
 // ignores both the map and the source strides and reads consecutive elements
 static bool isUnitDimBroadcastPermutation(AffineMap permMap,
                                           ArrayRef<int64_t> vectorShape,
-                                          MemRefType srcType) {
+                                          MemRefType srcType,
+                                          ArrayRef<int64_t> maskBounds) {
   ArrayRef<int64_t> srcShape = srcType.getShape();
   if (permMap.getNumSymbols() != 0 ||
       permMap.getNumResults() != vectorShape.size() ||
@@ -241,7 +294,9 @@ static bool isUnitDimBroadcastPermutation(AffineMap permMap,
         // A unit source dimension is only skippable if the vector does not
         // step over it either, otherwise the read strides through memory
         if (vectorShape[idx] != 1) {
-          return false;
+          if (dim >= static_cast<int64_t>(maskBounds.size()) ||
+              maskBounds[dim] != 1)
+            return false;
         }
         continue;
       }
@@ -308,9 +363,13 @@ static bool isPlainLoadableTransferRead(vector::TransferReadOp readOp) {
   AffineMap permMap = readOp.getPermutationMap();
   bool singleElementSource =
       srcType.hasStaticShape() && srcType.getNumElements() == 1;
-  return permMap.isIdentity() || vecType.getNumElements() <= 1 ||
-         singleElementSource ||
-         isUnitDimBroadcastPermutation(permMap, vecType.getShape(), srcType);
+  if (permMap.isIdentity() || vecType.getNumElements() <= 1 ||
+      singleElementSource)
+    return true;
+  auto maskBounds =
+      getConstantMaskBounds(readOp.getMask(), readOp.getMaskType(), permMap);
+  return isUnitDimBroadcastPermutation(permMap, vecType.getShape(), srcType,
+                                       maskBounds);
 }
 
 struct TransferReadOpPattern : public OpRewritePattern<vector::TransferReadOp> {
@@ -323,9 +382,6 @@ struct TransferReadOpPattern : public OpRewritePattern<vector::TransferReadOp> {
     Type elementType = srcType.getElementType();
     int64_t dataWidth = srcType.getElementTypeBitWidth();
     VectorType vecType = readOp.getVectorType();
-    if (!isPlainLoadableTransferRead(readOp)) {
-      return rewriter.notifyMatchFailure(readOp, kPermutedReadNotGatheredMsg);
-    }
     VectorType resVecType = vecType;
     if (vecType.getShape().size() != 1)
       resVecType = VectorType::get(
