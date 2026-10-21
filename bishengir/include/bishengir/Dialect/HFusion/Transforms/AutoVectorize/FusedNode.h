@@ -78,6 +78,8 @@ public:
   auto rops() const {
     return llvm::make_range(opsOrdered.rbegin(), opsOrdered.rend());
   }
+  Operation *front() const { return opsOrdered.front(); }
+  Operation *back() const { return opsOrdered.back(); }
   auto leafOps() const { return llvm::make_range(leaf.begin(), leaf.end()); }
   auto producerOps() const {
     return llvm::make_range(producers.begin(), producers.end());

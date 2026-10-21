@@ -12,7 +12,9 @@
 
 #include "bishengir/Dialect/Analysis/VFFusion/VFStackInfo.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoVectorize/FusedNode.h"
+#include "bishengir/Dialect/HFusion/Transforms/AutoVectorize/FusionUnit.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoVectorize/FusionUtils.h"
+#include "bishengir/Dialect/HFusion/Transforms/AutoVectorize/Ordering/OrderingConstraint.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoVectorize/RetriedOptions.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "llvm/ADT/MapVector.h"
@@ -61,6 +63,8 @@ class PlanContext {
   llvm::MapVector<Operation *, FusableOpInfo> opInfoMap;
 
   SmallVector<std::shared_ptr<FusedNode>> fusedNodesInBlock;
+
+  OrderingConstraint orderingConstraint;
 
 public:
   PlanContext(const RetriedOptions &options,
@@ -113,6 +117,17 @@ public:
   auto *tryGetNode(Operation *op) const {
     return hasOpInfo(op) ? getInfo(op).fusedNode.get() : nullptr;
   }
+
+  // Resolve an op to the ordering unit currently containing it: its FusedNode
+  // once fused, the standalone op otherwise.
+  FusionUnit getUnit(Operation *op) const {
+    if (const FusedNode *node = tryGetNode(op))
+      return FusionUnit(node);
+    return FusionUnit(op);
+  }
+
+  OrderingConstraint &constraint() { return orderingConstraint; }
+  const OrderingConstraint &constraint() const { return orderingConstraint; }
 
   // Populate op info from `func`: label fusable ops, compute shapes, build
   // conflict lists. This is the main entry point for initializing PlanContext
