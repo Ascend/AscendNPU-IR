@@ -2446,14 +2446,15 @@ ConflictPair *SyncSolverBase::handleBarrierConflict(
 
   LLVM_DEBUG({ llvm::dbgs() << conflictPair->str() << '\n'; });
 
+  // calc the loop occ whose body copies this barrier is mirrored into
   Occurrence *parentLCALoopOcc{nullptr};
-
-  // calc parent-loop occ (for backward pairs)
-  if (conflictPair->isOccBackwardPair) {
+  if (occ1 != occ2) {
     auto [parOcc1, parOcc2] = Occurrence::getLCAPair(occ1, occ2);
     assert(parOcc1 != nullptr && parOcc2 != nullptr);
 
     parentLCALoopOcc = parOcc1->getParentOfType<Loop>();
+  }
+  if (conflictPair->isOccBackwardPair) {
     assert(parentLCALoopOcc != nullptr);
     assert(llvm::isa_and_present<Loop>(parentLCALoopOcc->op));
   }
@@ -2475,8 +2476,12 @@ ConflictPair *SyncSolverBase::handleBarrierConflict(
     if (isLastIterOcc(waitOcc, parentLCALoopOcc)) {
       insertExtraConflictPair(getFirstIterOcc(waitOcc, parentLCALoopOcc));
     }
-    // The barrier runs in every linearized copy too, which never yields this
-    // conflict; model it there so no redundant sync is added.
+  }
+  // Every linearized copy runs this barrier too, so give it one as well. The
+  // copy has to carry the same barriers as the split loop: a copy short of one
+  // both invites redundant sync and lets a later useless barrier claim a pipe
+  // the real body never drains.
+  if (parentLCALoopOcc != nullptr && parentLCALoopOcc->isAncestor(waitOcc)) {
     for (auto *linearLoopOcc : parentLCALoopOcc->linearizedLoopOccs) {
       insertExtraConflictPair(getCounterpartOcc(waitOcc, parentLCALoopOcc,
                                                 linearLoopOcc,
