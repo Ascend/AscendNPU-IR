@@ -2350,16 +2350,9 @@ bool MemPlanRegBase::IsBufferLifeVecConflict(PlanRecord &r, uint64_t offset,
       (r.firstMemBound->offset >= offset + e->alignedConstBits)) {
     return false;
   }
-  // The lifetime overlap of two entries is immutable while planning; memoize
-  // it per entry pair.
-  auto [iter, inserted] = lifeVecConflictMemo.try_emplace({r.entry, e}, false);
-  if (inserted) {
-    SmallVector<std::pair<ValuePair, BufferLife>, 4> intersection;
-    GetOverlapBufferLife(r.entry->bufferLifeVec, e->bufferLifeVec,
-                         intersection);
-    iter->second = !intersection.empty();
-  }
-  return iter->second;
+  SmallVector<std::pair<ValuePair, BufferLife>, 4> intersection;
+  GetOverlapBufferLife(r.entry->bufferLifeVec, e->bufferLifeVec, intersection);
+  return !intersection.empty();
 }
 
 void MemPlanRegBase::RetireRelationOtherBufferEntries(
@@ -2561,7 +2554,6 @@ void MemPlanRegBase::UpdateOutline(MemBoundList &outline, PlanRecHis &his,
                               e,
                               e->alignedConstBits,
                               splitBound[0],
-                              end,
                               {},
                               outlineInfo.isDirectlyRollback});
   e->appliedSpecLevel = localLevel;
@@ -2679,46 +2671,6 @@ MemPlanRegBase::VerifyConflictStage0(StorageEntry *e,
 //            | |
 // free_time  ---
 // Meantime, the overlap is the intersected buffer_life.
-bool MemPlanRegBase::HasUniqueConflict(const BufferLifeVec &b1,
-                                       const BufferLifeVec &b2) const {
-  const ValuePair key = std::make_pair(b1[0]->buffer, b2[0]->buffer);
-  auto [memoIt, inserted] = uniqueConflictMemo.try_emplace(key, false);
-  if (!inserted) {
-    return memoIt->second;
-  }
-  // if buffer in b1 has mem_unique, b1 will have only one element.
-  auto bufferInfoIt1 = bufferInfos.find(key.first);
-  auto bufferInfoIt2 = bufferInfos.find(key.second);
-  if (!bufferInfoIt1->second.memoryUnique &&
-      !bufferInfoIt2->second.memoryUnique) {
-    return false;
-  }
-  // Allow lifetime-based reuse between two tightly-coupled CV buffers
-  // when both have memoryUnique=true (owning-side CV) AND their cvMixIds
-  // appear with non-overlapping markOp ranges in EVERY function (AIC +
-  // AIV) that references both — i.e., the pair was pre-computed as
-  // "cross-scope safe" by PlanMemoryPass::BuildCVReuseAllowedPairs.
-  //
-  // When the pair is NOT cross-scope safe, mark as conflicting and bail.
-  // When it IS safe, fall through to the lifetime-intersection loop
-  // below: the cross-scope analysis is necessary but not sufficient on
-  // its own. Its use-range computation is a single linear pre-order walk
-  // and has no awareness of MultiBufferAttr; at depth N>1 the producer
-  // writes slot[i] while the consumer of the prior iter still reads
-  // slot[i-1], so the markOp positions can be textually disjoint while
-  // the real lifetimes overlap. The lifetime-intersection loop using
-  // alloc/free times catches that overlap. This matches the behavior on
-  // PR 1198, where the depth-2 CV multi-buffer aliasing introduced by
-  // bdc020c20's unconditional short-circuit was not present.
-  int32_t cvA = bufferInfoIt1->second.cvMixId;
-  int32_t cvB = bufferInfoIt2->second.cvMixId;
-  bool crossScopeSafe =
-      cvA >= 0 && cvB >= 0 && cvA != cvB &&
-      cvMixIdReuseAllowedPairs.count(std::make_pair(cvA, cvB));
-  memoIt->second = !crossScopeSafe;
-  return memoIt->second;
-}
-
 void MemPlanRegBase::GetOverlapBufferLife(
     const BufferLifeVec &b1, const BufferLifeVec &b2,
     SmallVectorImpl<std::pair<ValuePair, BufferLife>> &intersection) const {
@@ -2727,10 +2679,38 @@ void MemPlanRegBase::GetOverlapBufferLife(
   if (b1Len == 0 || b2Len == 0) {
     return;
   }
-  if (HasUniqueConflict(b1, b2)) {
-    intersection.emplace_back(std::make_pair(b1[0]->buffer, b2[0]->buffer),
-                              BufferLife(nullptr));
-    return;
+  // if buffer in b1 has mem_unique, b1 will have only one element.
+  auto bufferInfoIt1 = bufferInfos.find(b1[0]->buffer);
+  auto bufferInfoIt2 = bufferInfos.find(b2[0]->buffer);
+  if (bufferInfoIt1->second.memoryUnique ||
+      bufferInfoIt2->second.memoryUnique) {
+    // Allow lifetime-based reuse between two tightly-coupled CV buffers
+    // when both have memoryUnique=true (owning-side CV) AND their cvMixIds
+    // appear with non-overlapping markOp ranges in EVERY function (AIC +
+    // AIV) that references both — i.e., the pair was pre-computed as
+    // "cross-scope safe" by PlanMemoryPass::BuildCVReuseAllowedPairs.
+    //
+    // When the pair is NOT cross-scope safe, mark as conflicting and bail.
+    // When it IS safe, fall through to the lifetime-intersection loop
+    // below: the cross-scope analysis is necessary but not sufficient on
+    // its own. Its use-range computation is a single linear pre-order walk
+    // and has no awareness of MultiBufferAttr; at depth N>1 the producer
+    // writes slot[i] while the consumer of the prior iter still reads
+    // slot[i-1], so the markOp positions can be textually disjoint while
+    // the real lifetimes overlap. The lifetime-intersection loop using
+    // alloc/free times catches that overlap. This matches the behavior on
+    // PR 1198, where the depth-2 CV multi-buffer aliasing introduced by
+    // bdc020c20's unconditional short-circuit was not present.
+    int32_t cvA = bufferInfoIt1->second.cvMixId;
+    int32_t cvB = bufferInfoIt2->second.cvMixId;
+    bool crossScopeSafe =
+        cvA >= 0 && cvB >= 0 && cvA != cvB &&
+        cvMixIdReuseAllowedPairs.count(std::make_pair(cvA, cvB));
+    if (!crossScopeSafe) {
+      intersection.emplace_back(std::make_pair(b1[0]->buffer, b2[0]->buffer),
+                                BufferLife(nullptr));
+      return;
+    }
   }
   // Merge-normalized (disjoint, allocTime-sorted) life vectors whose time
   // ranges do not overlap cannot intersect.
@@ -2982,13 +2962,8 @@ void MemPlanRegBase::RollBackForAllocFailInner(StatusWrapper &statusWrapper,
 
 PlanRecord MemPlanRegBase::RollbackOutline(PlanRecHis &history,
                                            MemBoundList &outline) const {
-  // Move (not copy) the record out of the history so that `replaced`
-  // transfers the original outline nodes back instead of copies: older
-  // records' firstMemBoundIt iterators address those exact nodes and must
-  // not dangle.
-  PlanRecord r = std::move(history.back());
-  history.pop_back();
-  auto it = r.firstMemBoundIt;
+  auto r = history.back();
+  auto it = std::find(outline.begin(), outline.end(), r.firstMemBound);
   // |--head--|--split entry--|--tail--|
   // erase head
   if (r.headed) {
@@ -3005,6 +2980,7 @@ PlanRecord MemPlanRegBase::RollbackOutline(PlanRecHis &history,
   }
   // restore outline and replaced
   outline.splice(it, r.replaced);
+  history.pop_back();
   return r;
 }
 

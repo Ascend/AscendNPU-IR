@@ -216,12 +216,6 @@ struct PlanRecord {
   uint64_t allExtent;
   /// inserted memory bound node
   std::shared_ptr<MemoryBound> firstMemBound;
-  /// list position of firstMemBound in the outline at plan time. Stays valid
-  /// until this record is rolled back: rollback is strictly LIFO, std::list
-  /// splice/erase on other nodes never invalidates it, and RollbackOutline
-  /// moves records so `replaced` nodes are the originals (never copies that
-  /// would let the referenced node be destroyed).
-  MemBoundListConstIter firstMemBoundIt;
   /// replaced memory bound node
   MemBoundList replaced;
   /// When the current PlanRecord is rolled back, it must be rolled back
@@ -822,13 +816,6 @@ protected:
       const BufferLifeVec &b1, const BufferLifeVec &b2,
       SmallVectorImpl<std::pair<ValuePair, BufferLife>> &intersection) const;
 
-  /// True when either life vector's first buffer has
-  /// BufferInfo::memoryUnique set and the cvMixId pair is not cross-scope
-  /// reuse-safe. Memoized per first-buffer Value pair; BufferInfo and
-  /// cvMixIdReuseAllowedPairs are immutable while planning.
-  bool HasUniqueConflict(const BufferLifeVec &b1,
-                         const BufferLifeVec &b2) const;
-
   /// Reorder and make the storage entries of firstbuffer and otherbuffer
   /// continuous.
   void ReorderContinuousFirstBufferOtherBufferEntry(
@@ -943,18 +930,6 @@ protected:
       stage0ConflictMemo;
   SmallVector<std::shared_ptr<MemoryBound>, 64> stage0MemoKeepAlive;
 
-  /// Attempt-scoped memo of the lifetime-overlap part of
-  /// IsBufferLifeVecConflict per entry pair. Entry life vectors are
-  /// immutable while planning. Keys may reference relation-otherbuffer
-  /// entries; those stay address-pinned via
-  /// retiredRelationOtherBufferEntries for the memo's whole lifetime, so a
-  /// key pointer is never recycled by a fresh allocation (ABA stale hit).
-  mutable DenseMap<StorageEntryPair, bool> lifeVecConflictMemo;
-
-  /// Memo of HasUniqueConflict keyed by the first-buffer Value pair of the
-  /// two life vectors being compared.
-  mutable DenseMap<ValuePair, bool> uniqueConflictMemo;
-
   /// First buffer storage entry corresponding to reused additional otherbuffer
   /// entries. When a single-buffer entry is expanded to use
   /// otherbuffers, this stores one StorageEntry per otherbuffers.
@@ -964,7 +939,8 @@ protected:
   /// Retired relation-otherbuffer entries, kept alive until this
   /// MemPlanRegBase is destroyed. Rollback/re-plan points move entries here
   /// instead of destroying them, so their addresses are never recycled
-  /// while lifeVecConflictMemo (keyed by entry pointers) is alive.
+  /// while the entry-pair conflict memos (sameLoopConflictMap,
+  /// pipeDmaConflictMap) are alive.
   SmallVector<std::unique_ptr<StorageEntry>, 16>
       retiredRelationOtherBufferEntries;
 

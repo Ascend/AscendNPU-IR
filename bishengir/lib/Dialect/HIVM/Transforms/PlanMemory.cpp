@@ -2660,16 +2660,9 @@ bool MemPlan::IsBufferLifeVecConflict(PlanRecord &r, uint64_t offset,
       (r.firstMemBound->offset >= offset + e->alignedConstBits)) {
     return false;
   }
-  // The lifetime overlap of two entries is immutable while planning; memoize
-  // it per entry pair.
-  auto [iter, inserted] = lifeVecConflictMemo.try_emplace({r.entry, e}, false);
-  if (inserted) {
-    SmallVector<std::pair<ValuePair, BufferLife>, 4> intersection;
-    GetOverlapBufferLife(r.entry->bufferLifeVec, e->bufferLifeVec,
-                         intersection);
-    iter->second = !intersection.empty();
-  }
-  return iter->second;
+  SmallVector<std::pair<ValuePair, BufferLife>, 4> intersection;
+  GetOverlapBufferLife(r.entry->bufferLifeVec, e->bufferLifeVec, intersection);
+  return !intersection.empty();
 }
 
 void MemPlan::RetireRelationOtherBufferEntries(
@@ -2868,7 +2861,6 @@ void MemPlan::UpdateOutline(MemBoundList &outline, PlanRecHis &his,
                               e,
                               e->alignedConstBits,
                               splitBound[0],
-                              end,
                               {},
                               outlineInfo.isDirectlyRollback});
   e->appliedSpecLevel = localLevel;
@@ -2960,15 +2952,6 @@ bool MemPlan::IsSamePlanAsLastRollBack(uint64_t allocOffset, int curChildIdx,
   return curChildIdx == si.rollbackIdx && allocOffset == si.rollbackAddr;
 }
 
-bool MemPlan::IsFirstBufferMemoryUnique(const BufferLifeVec &bufferLife) const {
-  const Value buffer = bufferLife[0]->buffer;
-  auto [iter, inserted] = firstBufferMemoryUnique.try_emplace(buffer, false);
-  if (inserted) {
-    iter->second = bufferInfos.find(buffer)->second.memoryUnique;
-  }
-  return iter->second;
-}
-
 // spec_level == SPEC_LEVEL_0
 inline bool MemPlan::VerifyConflictStage0(
     StorageEntry *e, const std::shared_ptr<MemoryBound> &last,
@@ -2976,8 +2959,10 @@ inline bool MemPlan::VerifyConflictStage0(
   if (e->bufferLifeVec.empty() || last->bufferLifeVec.empty()) {
     return false;
   }
-  if (IsFirstBufferMemoryUnique(e->bufferLifeVec) ||
-      IsFirstBufferMemoryUnique(last->bufferLifeVec)) {
+  auto *bufferInfoIt1 = bufferInfos.find(e->bufferLifeVec[0]->buffer);
+  auto *bufferInfoIt2 = bufferInfos.find(last->bufferLifeVec[0]->buffer);
+  if (bufferInfoIt1->second.memoryUnique ||
+      bufferInfoIt2->second.memoryUnique) {
     return true;
   }
   // level_0: offset = 0, offset means life distance
@@ -3307,13 +3292,8 @@ void MemPlan::RollBackForAllocFailInner(StatusWrapper &statusWrapper,
 
 PlanRecord MemPlan::RollbackOutline(PlanRecHis &history,
                                     MemBoundList &outline) const {
-  // Move (not copy) the record out of the history so that `replaced`
-  // transfers the original outline nodes back instead of copies: older
-  // records' firstMemBoundIt iterators address those exact nodes and must
-  // not dangle.
-  PlanRecord r = std::move(history.back());
-  history.pop_back();
-  auto it = r.firstMemBoundIt;
+  auto r = history.back();
+  auto it = std::find(outline.begin(), outline.end(), r.firstMemBound);
   // |--head--|--split entry--|--tail--|
   // erase head
   if (r.headed) {
@@ -3330,6 +3310,7 @@ PlanRecord MemPlan::RollbackOutline(PlanRecHis &history,
   }
   // restore outline and replaced
   outline.splice(it, r.replaced);
+  history.pop_back();
   return r;
 }
 
