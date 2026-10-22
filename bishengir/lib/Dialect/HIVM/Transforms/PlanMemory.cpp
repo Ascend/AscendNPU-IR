@@ -2660,9 +2660,8 @@ bool MemPlan::IsBufferLifeVecConflict(PlanRecord &r, uint64_t offset,
       (r.firstMemBound->offset >= offset + e->alignedConstBits)) {
     return false;
   }
-  SmallVector<std::pair<ValuePair, BufferLife>, 4> intersection;
-  GetOverlapBufferLife(r.entry->bufferLifeVec, e->bufferLifeVec, intersection);
-  return !intersection.empty();
+  return !GetOverlapBufferLife(r.entry->bufferLifeVec, e->bufferLifeVec)
+              .empty();
 }
 
 void MemPlan::RetireRelationOtherBufferEntries(
@@ -2966,8 +2965,8 @@ inline bool MemPlan::VerifyConflictStage0(
     return true;
   }
   // level_0: offset = 0, offset means life distance
-  SmallVector<std::pair<ValuePair, BufferLife>, 4> intersection;
-  GetOverlapBufferLife(e->bufferLifeVec, last->bufferLifeVec, intersection);
+  llvm::SmallDenseMap<ValuePair, BufferLife, 32> intersection =
+      GetOverlapBufferLife(e->bufferLifeVec, last->bufferLifeVec);
   if (intersection.empty()) {
     return false;
   }
@@ -3035,37 +3034,34 @@ bool MemPlan::IsInplacableBufferPairMatched(
 //            | |
 // free_time  ---
 // Meantime, the overlap is the intersected buffer_life.
-void MemPlan::GetOverlapBufferLife(
-    const BufferLifeVec &b1, const BufferLifeVec &b2,
-    SmallVectorImpl<std::pair<ValuePair, BufferLife>> &intersection) const {
+llvm::SmallDenseMap<ValuePair, BufferLife, 32>
+MemPlan::GetOverlapBufferLife(const BufferLifeVec &b1,
+                              const BufferLifeVec &b2) const {
+  llvm::SmallDenseMap<ValuePair, BufferLife, 32> intersection;
+  size_t i = 0;
+  size_t j = 0;
   size_t b1Len = b1.size();
   size_t b2Len = b2.size();
   if (b1Len == 0 || b2Len == 0) {
-    return;
+    return intersection;
   }
   // Merge-normalized (disjoint, allocTime-sorted) life vectors whose time
   // ranges do not overlap cannot intersect.
   if (b1.back()->freeTime < b2.front()->allocTime ||
       b2.back()->freeTime < b1.front()->allocTime) {
-    return;
+    return intersection;
   }
-  // Keep only the first intersection window per buffer pair, mirroring the
-  // previous DenseMap::try_emplace behavior.
-  llvm::SmallDenseSet<ValuePair, 8> seen;
-  size_t i = 0;
-  size_t j = 0;
   while (i < b1Len && j < b2Len) {
     auto lo = std::max(b1[i]->allocTime, b2[j]->allocTime);
     auto hi = std::min(b1[i]->freeTime, b2[j]->freeTime);
     if (lo <= hi) {
+      BufferLife bufferLife(nullptr, lo, hi);
       ValuePair key =
           lo == b1[i]->allocTime && hi == b2[j]->freeTime
               ? std::make_pair(b1[i]->buffer,
                                b2[j]->buffer) // case in the diagram
               : std::make_pair(b2[j]->buffer, b1[i]->buffer); // opposing case
-      if (seen.insert(key).second) {
-        intersection.emplace_back(key, BufferLife(nullptr, lo, hi));
-      }
+      intersection.try_emplace(key, bufferLife);
     }
     if (b1[i]->freeTime < b2[j]->freeTime) {
       i += 1;
@@ -3073,6 +3069,7 @@ void MemPlan::GetOverlapBufferLife(
       j += 1;
     }
   }
+  return intersection;
 }
 
 PlanStatus MemPlan::ApplyFailStrategy(StatusWrapper &statusWrapper,

@@ -807,14 +807,13 @@ protected:
   /// operation with pipe type `Pipe`.
   template <PIPE Pipe> bool IsInplaceReuseReachable(Value allocValue);
 
-  /// Get overlap buffer life. Appends at most one window per buffer pair
-  /// (first intersection wins, mirroring the previous DenseMap::try_emplace
-  /// behavior). Both vectors must be merge-normalized (disjoint and sorted
-  /// by allocTime), which is the same invariant the two-pointer sweep
-  /// already relies on.
-  void GetOverlapBufferLife(
-      const BufferLifeVec &b1, const BufferLifeVec &b2,
-      SmallVectorImpl<std::pair<ValuePair, BufferLife>> &intersection) const;
+  /// Get overlap buffer life. Keeps at most one intersection window per
+  /// buffer pair (first window wins, via DenseMap::try_emplace). Both
+  /// vectors must be merge-normalized (disjoint and sorted by allocTime),
+  /// which is the same invariant the two-pointer sweep relies on. The
+  /// inline capacity avoids per-call heap allocation in the common case.
+  llvm::SmallDenseMap<ValuePair, BufferLife, 32>
+  GetOverlapBufferLife(const BufferLifeVec &b1, const BufferLifeVec &b2) const;
 
   /// Reorder and make the storage entries of firstbuffer and otherbuffer
   /// continuous.
