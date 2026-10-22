@@ -50,10 +50,9 @@ template <typename T>
 __aiv__ __attribute__((always_inline)) int64_t calc_ub_gap(int64_t stride,
                                                            int64_t size) {
   constexpr int32_t bytes = sizeof(T);
-  int32_t factor = 1;
-  if constexpr (bytes == BYTES_B64) {
-    factor = 2;
-  }
+  // B32 elements per element of T; sub-B32 dtypes stay in their own unit.
+  constexpr int64_t factor =
+      bytes == BYTES_B64 ? sizeof(T) / sizeof(uint32_t) : 1;
 
   const int64_t n_elems_of_aligned_unit = UB_ALIGN_BYTES / bytes * factor;
   const int64_t gap = CEIL_DIV(stride * factor, n_elems_of_aligned_unit) -
@@ -223,12 +222,17 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_intrin_core(
               rightPaddingNum, data_select_bit, l2_cache_ctl, src_stride,
               dst_stride);
   } else if constexpr (bytes == BYTES_B64) {
+    // The intrinsic receives uint32_t pointers here, so its padding counts
+    // are expressed in B32 elements: one B64 element holds two B32 elements.
+    // burst_len and strides stay byte-based.
+    constexpr int64_t factor = sizeof(T) / sizeof(uint32_t);
     INTRINSIC(copy_gm_to_ubuf_align_v2,
               reinterpret_cast<__ubuf__ uint32_t *>(ub_ptr + ub_offset -
                                                     left_padding_num),
               reinterpret_cast<__gm__ uint32_t *>(gm_ptr + gm_offset), 0,
-              burst_cnt, burst_len, left_padding_num, rightPaddingNum,
-              data_select_bit, l2_cache_ctl, src_stride, dst_stride);
+              burst_cnt, burst_len, left_padding_num * factor,
+              rightPaddingNum * factor, data_select_bit, l2_cache_ctl,
+              src_stride, dst_stride);
   }
 }
 #else
@@ -309,12 +313,15 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_intrin_core(
               gm_ptr + gm_offset, 0, burst_cnt, burst_len, left_padding_num,
               rightPaddingNum, src_gap, dst_align_gap);
   } else if constexpr (bytes == BYTES_B64) {
+    // The intrinsic receives uint32_t pointers, so its padding counts are
+    // expressed in B32 elements, cf. the C310 variant above.
+    constexpr int64_t factor = sizeof(T) / sizeof(uint32_t);
     INTRINSIC(copy_gm_to_ubuf_align,
               reinterpret_cast<__ubuf__ uint32_t *>(ub_ptr + ub_offset -
                                                     left_padding_num),
               reinterpret_cast<__gm__ uint32_t *>(gm_ptr + gm_offset), 0,
-              burst_cnt, burst_len, left_padding_num, rightPaddingNum, src_gap,
-              dst_align_gap);
+              burst_cnt, burst_len, left_padding_num * factor,
+              rightPaddingNum * factor, src_gap, dst_align_gap);
   }
 #endif
 }
@@ -336,7 +343,9 @@ store_ubuf_to_gm_intrin_core(__ubuf__ T *ub_ptr, int64_t ub_offset,
     INTRINSIC(copy_ubuf_to_gm_align_v2, gm_ptr + gm_offset, ub_ptr + ub_offset,
               0, burst_cnt, burst_len, l2_cache_ctl, dst_stride, src_stride);
   } else if constexpr (bytes == BYTES_B64) {
-    int32_t factor = 2;
+    // The intrinsic receives uint32_t pointers, so the offsets scale to B32
+    // elements: one B64 element holds two B32 elements.
+    constexpr int64_t factor = sizeof(T) / sizeof(uint32_t);
     INTRINSIC(copy_ubuf_to_gm_align_v2,
               reinterpret_cast<__gm__ uint32_t *>(gm_ptr) + gm_offset * factor,
               reinterpret_cast<__ubuf__ uint32_t *>(ub_ptr) +
@@ -377,7 +386,9 @@ store_ubuf_to_gm_intrin_core(__ubuf__ T *ub_ptr, int64_t ub_offset,
     INTRINSIC(copy_ubuf_to_gm_align, gm_ptr + gm_offset, ub_ptr + ub_offset, 0,
               burst_cnt, burst_len, src_align_gap, dst_gap);
   } else if constexpr (bytes == BYTES_B64) {
-    int32_t factor = 2;
+    // The intrinsic receives uint32_t pointers, so the offsets scale to B32
+    // elements, cf. the C310 variant above.
+    constexpr int64_t factor = sizeof(T) / sizeof(uint32_t);
     INTRINSIC(copy_ubuf_to_gm_align,
               reinterpret_cast<__gm__ uint32_t *>(gm_ptr) + gm_offset * factor,
               reinterpret_cast<__ubuf__ uint32_t *>(ub_ptr) +
@@ -575,8 +586,8 @@ load_gm_to_ubuf_1d_core_with_contiguous_last_dim(memref_t<__gm__ T, 1> *gm,
                               left_padding_num, 0, 0, l2_cache_ctl);
 }
 
-/// `load_gm_to_ubuf_intrin_core` with `numBurst = size[0], burst_len =
-/// dtypeBytes` Prerequisites: `strideUB[0] == 1, strideGM[0] != 1`
+/// Compact GM -> UB load with `burst_len = dtypeBytes`.
+/// Prerequisites: `strideUB[0] == 1, strideGM[0] != 1`.
 template <typename T>
 __aiv__ __attribute__((always_inline)) void
 load_gm_to_ubuf_1d_core_with_ubuf_contiguous_last_dim(
@@ -585,27 +596,43 @@ load_gm_to_ubuf_1d_core_with_ubuf_contiguous_last_dim(
   auto src_ptr = gm->aligned + gm->offset;
   auto dst_ptr = ub->aligned + ub->offset;
   const int64_t size0 = gm->sizes[0];
-  constexpr int bytes = sizeof(T);
-
   const int64_t stride0_gm = gm->strides[0];
-  const int64_t dma_copy_size = FLOOR_FACTOR(size0, (UB_ALIGN_BYTES / bytes));
-  load_gm_to_ubuf_intrin_core(src_ptr, 0, dst_ptr, 0, dma_copy_size, bytes,
-                              left_padding_num, (stride0_gm - 1) * bytes, 0,
-                              l2_cache_ctl);
-  const int64_t scalar_copy_size = size0 - dma_copy_size;
-  if (scalar_copy_size) {
-    // Use scalar loop to handle the remaining unaligned tail section.
-    memref_t<__gm__ T, 1> gm_scalar = {gm->allocated,
-                                       gm->aligned,
-                                       gm->offset + stride0_gm * dma_copy_size,
-                                       {scalar_copy_size},
-                                       {stride0_gm}};
-    memref_t<__ubuf__ T, 1> ub_scalar = {ub->allocated,
-                                         ub->aligned,
-                                         ub->offset + dma_copy_size,
-                                         {scalar_copy_size},
-                                         {1}};
-    load_gm_to_ubuf_1d_by_scalar<T>(&gm_scalar, &ub_scalar);
+  constexpr uint64_t bytes = sizeof(T);
+
+#if defined(__DAV_C310__)
+  // src_stride is an unsigned forward byte step; negative or over-limit
+  // strides cannot be encoded, fall back to scalar.
+  const bool invalid_src_stride =
+      stride0_gm <= 0 ||
+      static_cast<uint64_t>(stride0_gm) > INTRIN_MAX_STRIDE / bytes;
+
+  if (invalid_src_stride) [[unlikely]] {
+    load_gm_to_ubuf_1d_by_scalar<T>(gm, ub);
+    return;
+  }
+#endif
+
+  constexpr uint16_t num_per_block = INTR_BYTES_PER_BLOCK / bytes;
+  constexpr uint16_t aligned_max_burst_cnt =
+      FLOOR_FACTOR(INTRIN_MAX_BURST_CNT, num_per_block);
+  const int64_t main_count = size0 / aligned_max_burst_cnt;
+  const uint16_t tail_burst_cnt = size0 % aligned_max_burst_cnt;
+  const uint64_t src_stride = static_cast<uint64_t>(stride0_gm) * bytes;
+  const uint64_t src_gap = src_stride - bytes;
+
+  for (int64_t i = 0; i < main_count; ++i) {
+    const int64_t gm_offset = i * aligned_max_burst_cnt * stride0_gm;
+    const int64_t ub_offset = i * aligned_max_burst_cnt;
+    load_gm_to_ubuf_intrin_core(src_ptr, gm_offset, dst_ptr, ub_offset,
+                                aligned_max_burst_cnt, bytes, left_padding_num,
+                                src_gap, 0, l2_cache_ctl);
+  }
+  if (tail_burst_cnt > 0) {
+    const int64_t gm_offset = main_count * aligned_max_burst_cnt * stride0_gm;
+    const int64_t ub_offset = main_count * aligned_max_burst_cnt;
+    load_gm_to_ubuf_intrin_core(src_ptr, gm_offset, dst_ptr, ub_offset,
+                                tail_burst_cnt, bytes, left_padding_num,
+                                src_gap, 0, l2_cache_ctl);
   }
 }
 
@@ -2039,30 +2066,94 @@ __aiv__ __attribute__((always_inline)) T set_pad_value_null() {
 }
 
 #if BISHENG_TPL_REGBASE
+/// Rewrite the per-row padding of a b64 UB buffer with pad_value.
+///
+/// All addressing is anchored at the aligned DMA start
+///   base = dst->aligned + dst->offset - left_padding_num,
+/// which is 32B aligned by construction of left_padding_num
+/// (= dst->offset % num_per_block, guaranteed by the IR layer), even when
+/// dst->offset itself is not aligned. In this coordinate system row i holds
+/// valid data in [lp + i*stride, lp + i*stride + size).
+///
+/// Two regions are repaired per row (the MTE writes both with the pad value
+/// truncated to the low 32 bits, sign-extended, for b64):
+/// - left pad [0, lp) of the row's first block: only the pad lanes are
+///   touched (data starts at lane lp), so no restore step is needed;
+/// - tail block [CEIL(lp+size, npb) - npb, CEIL(lp+size, npb)): the valid
+///   data inside it is always a prefix, so pad is written on plt(all lanes)
+///   and the data prefix restored on plt(valid lanes).
+///
+/// When the whole row span fits in one block (lp + size <= npb) the tail
+/// block is also the first block and its restore mask covers the left pad
+/// lanes too; the left-pad rewrite runs before the tail snapshot, so the
+/// restore writes back the corrected pad value, not the truncated one.
 template <typename T, int DIM,
           typename = std::enable_if_t<std::is_same_v<T, int64_t> ||
                                       std::is_same_v<T, uint64_t>>>
 __aiv__ __attribute__((always_inline)) void
-apply_padding_b64(memref_t<__ubuf__ T, DIM> *dst, int64_t offset,
-                  int64_t pad_value, int64_t repeat,
-                  int64_t padding_shift_count) {
-  const int64_t factor = sizeof(T) / sizeof(uint32_t);
+apply_padding_b64(memref_t<__ubuf__ T, DIM> *dst, int64_t left_padding_num,
+                  int64_t row_base, int64_t pad_value, int64_t repeat) {
   constexpr int num_per_block = INTR_BYTES_PER_BLOCK / sizeof(T);
   int64_t size = dst->sizes[DIM - 1];
-  int64_t size_aligned = CEIL_FACTOR(size, num_per_block);
-  int shift_num = size_aligned - num_per_block;
-  int64_t align_pad = size_aligned - size;
-  if (align_pad == 0) {
+  int64_t stride = dst->strides[0];
+  // Defensive guard: base below addresses base + i*stride + k*num_per_block,
+  // which stays 32B aligned only when left_padding_num stays inside one
+  // block and the row stride is a whole number of blocks (multi-row case).
+  // NOTE: the only live caller (the C310 contiguous-last-dim path in
+  // load_gm_to_ubuf_2d_core) already diverts non-block-aligned row strides
+  // to the scalar fallback before entering the vector DMA, so the stride
+  // condition here is a last-resort defense, not the primary gate. If it
+  // ever fires, skipping the repair (data lanes stay intact) is the safe
+  // behavior.
+  if (left_padding_num < 0 || left_padding_num >= num_per_block ||
+      ((repeat > 1 || row_base > 0) && stride % num_per_block != 0)) {
     return;
   }
-  __ubuf__ T *block_ptr = dst->aligned + dst->offset;
+  // Per-row span in dma coordinates (relative to the aligned DMA start).
+  int64_t data_end = left_padding_num + size;
+  int64_t block_end = CEIL_FACTOR(data_end, num_per_block);
+  int64_t align_pad = block_end - data_end; // in [0, num_per_block)
+  if (align_pad == 0 && left_padding_num == 0) {
+    return;
+  }
+  // 32B aligned DMA start: the address the MTE actually begins writing at.
+  // row_base is the first row of this chunk: align_pad_for_load_b64_2d
+  // splits tiles taller than INTR_MAX_REPEAT_CNTS (255) into chunks and
+  // must repair rows [row_base, row_base + repeat), not restart at row 0
+  // (rows 255+ of >255-row tiles kept the MTE-truncated pad otherwise).
+  __ubuf__ T *block_ptr =
+      dst->aligned + dst->offset - left_padding_num + row_base * stride;
+  int shift_num = block_end - num_per_block;
   __VEC_SCOPE__ {
     for (uint16_t i = 0; i < static_cast<uint16_t>(repeat); ++i) {
+      // Left-pad rewrite: restore the true 64-bit pad_value in
+      // [0, left_padding_num) of the row's first block. Data begins at lane
+      // left_padding_num, so the masked store cannot touch it.
+      // This MUST run before the tail-block snapshot below: when the whole
+      // row span fits in one block (lp + size <= num_per_block) the tail
+      // block IS this block and the tail restore's mask covers [0, lp) as
+      // well, so the snapshot must capture the corrected pad for the
+      // restore to write it back instead of the MTE-truncated value.
+      if (left_padding_num > 0) {
+        __ubuf__ T *first_block_ptr = i * stride + block_ptr;
+        uint32_t vl_lp = left_padding_num; // re-init per row (plt consumes)
+        vector_bool mask_lpad = plt_2xvl_b64(vl_lp, POST_UPDATE);
+        VectorReg<T> v_lpad;
+        vdup(v_lpad, pad_value, mask_lpad, MODE_ZEROING);
+        vsts(v_lpad, first_block_ptr, 0, mask_lpad);
+      }
+      if (align_pad == 0) {
+        continue; // data fills the tail block completely; nothing to repair
+      }
       __ubuf__ T *till_block_ptr =
-          i * dst->strides[0] + block_ptr + shift_num;
-      // make mask
+          i * stride + block_ptr + shift_num; // 32B aligned per guard
+      // make mask. The counters MUST be re-initialized per row:
+      // plt_2xvl_b64(..., POST_UPDATE) consumes/advances its counter (the
+      // chaining convention, cf. ReductionWithIndex), so hoisting these
+      // declarations out of the loop leaves rows 1..N with exhausted
+      // counters and silently skips their repair.
       uint32_t vl_all = num_per_block;
-      uint32_t vl_val = num_per_block - align_pad;
+      uint32_t vl_val = num_per_block - align_pad; // >= 1, no underflow
       vector_bool mask_all = plt_2xvl_b64(vl_all, POST_UPDATE);
       vector_bool mask_val = plt_2xvl_b64(vl_val, POST_UPDATE);
       VectorReg<T> v_src;
@@ -2085,14 +2176,10 @@ template <typename T, int DIM,
           typename = std::enable_if_t<std::is_same_v<T, int64_t> ||
                                       std::is_same_v<T, uint64_t>>>
 __aiv__ __attribute__((always_inline)) void
-apply_padding_b64(memref_t<__ubuf__ T, DIM> *dst, int64_t offset,
-                  int64_t pad_value, int64_t repeat,
-                  int64_t padding_shift_count) {
-  const int64_t factor = sizeof(T) / sizeof(uint32_t);
-  constexpr int num_per_block = INTR_BYTES_PER_BLOCK / sizeof(T);
-  int64_t size = dst->sizes[DIM - 1];
-  int64_t size_aligned =
-      (DIM == 2) ? dst->strides[0] : CEIL_FACTOR(size, num_per_block);
+apply_padding_b64(memref_t<__ubuf__ T, DIM> *dst, int64_t left_padding_num,
+                  int64_t row_base, int64_t pad_value, int64_t repeat) {
+  // m300: b64 tail padding repair is not implemented; keep the signature in
+  // sync with the C310 variant so shared callers compile on both arches.
 }
 #endif
 

@@ -27,6 +27,7 @@
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Debug.h"
 
@@ -528,89 +529,96 @@ struct TreeReducePattern : public OpRewritePattern<func::FuncOp> {
   }
 };
 
-Value traceBackToOriginalTensor(Value val) {
-  Value currentVal = val;
-  while (currentVal) {
-    Operation *defOp = currentVal.getDefiningOp();
-    if (!defOp)
-      break;
+void collectOriginalTensorCandidates(Value value, llvm::DenseSet<Value> &seen,
+                                     SmallVectorImpl<Value> &candidates) {
+  if (!seen.insert(value).second)
+    return;
 
-    if (auto maskOp = dyn_cast<vector::MaskOp>(defOp)) {
-      vector::TransferReadOp innerRead = nullptr;
-      maskOp.walk([&](vector::TransferReadOp op) { innerRead = op; });
-      if (innerRead) {
-        currentVal = innerRead.getSource();
-        continue;
-      }
-    }
-    if (auto readOp = dyn_cast<vector::TransferReadOp>(defOp)) {
-      currentVal = readOp.getSource();
-      continue;
-    }
-    if (auto writeOp = dyn_cast<vector::TransferWriteOp>(defOp)) {
-      currentVal = writeOp.getSource();
-      continue;
-    }
-    if (auto extractOp = dyn_cast<tensor::ExtractSliceOp>(defOp)) {
-      currentVal = extractOp.getSource();
-      continue;
-    }
-    if (auto insertOp = dyn_cast<tensor::InsertSliceOp>(defOp)) {
-      currentVal = insertOp.getDest();
-      continue;
-    }
-    if (auto shapeCastOp = dyn_cast<vector::ShapeCastOp>(defOp)) {
-      currentVal = shapeCastOp.getSource();
-      continue;
-    }
-    if (auto extfOp = dyn_cast<arith::ExtFOp>(defOp)) {
-      currentVal = extfOp.getIn();
-      continue;
-    }
-    if (auto truncfOp = dyn_cast<arith::TruncFOp>(defOp)) {
-      currentVal = truncfOp.getIn();
-      continue;
-    }
-    if (auto extiOp = dyn_cast<arith::ExtSIOp>(defOp)) {
-      currentVal = extiOp.getIn();
-      continue;
-    }
-    if (auto trunciOp = dyn_cast<arith::TruncIOp>(defOp)) {
-      currentVal = trunciOp.getIn();
-      continue;
-    }
-    if (auto fptosiOp = dyn_cast<arith::FPToSIOp>(defOp)) {
-      currentVal = fptosiOp.getIn();
-      continue;
-    }
-    if (auto sitofpOp = dyn_cast<arith::SIToFPOp>(defOp)) {
-      currentVal = sitofpOp.getIn();
-      continue;
-    }
-
-    if (auto addfOp = dyn_cast<arith::AddFOp>(defOp)) {
-      currentVal = addfOp.getLhs();
-      continue;
-    }
-    if (auto forOp = dyn_cast<scf::ForOp>(defOp)) {
-      if (forOp->hasAttr("reductionLoop")) {
-        (void)forOp.walk([&](tensor::ExtractSliceOp sliceOp) {
-          Value source = sliceOp.getSource();
-          if (!llvm::is_contained(forOp.getRegionIterArgs(), source)) {
-            currentVal = source;
-            return WalkResult::interrupt();
-          }
-          return WalkResult::advance();
-        });
-        break;
-      }
-      break;
-    }
-    LDBG("traceBackToOriginalTensor: stopping at unrecognized op: "
-         << defOp->getName());
-    break;
+  Operation *defOp = value.getDefiningOp();
+  if (!defOp) {
+    if (isa<RankedTensorType>(value.getType()))
+      candidates.push_back(value);
+    return;
   }
-  return currentVal;
+
+  if (auto maskOp = dyn_cast<vector::MaskOp>(defOp)) {
+    Operation *maskedOp = maskOp.getMaskableOp();
+    if (auto readOp = dyn_cast_or_null<vector::TransferReadOp>(maskedOp)) {
+      collectOriginalTensorCandidates(readOp.getSource(), seen, candidates);
+      return;
+    }
+    if (auto writeOp = dyn_cast_or_null<vector::TransferWriteOp>(maskedOp)) {
+      collectOriginalTensorCandidates(writeOp.getVector(), seen, candidates);
+      return;
+    }
+  }
+  if (auto readOp = dyn_cast<vector::TransferReadOp>(defOp)) {
+    collectOriginalTensorCandidates(readOp.getSource(), seen, candidates);
+    return;
+  }
+  if (auto writeOp = dyn_cast<vector::TransferWriteOp>(defOp)) {
+    collectOriginalTensorCandidates(writeOp.getVector(), seen, candidates);
+    return;
+  }
+  if (auto extractOp = dyn_cast<tensor::ExtractSliceOp>(defOp)) {
+    collectOriginalTensorCandidates(extractOp.getSource(), seen, candidates);
+    return;
+  }
+  if (auto insertOp = dyn_cast<tensor::InsertSliceOp>(defOp)) {
+    collectOriginalTensorCandidates(insertOp.getSource(), seen, candidates);
+    return;
+  }
+  if (auto shapeCastOp = dyn_cast<vector::ShapeCastOp>(defOp)) {
+    collectOriginalTensorCandidates(shapeCastOp.getSource(), seen, candidates);
+    return;
+  }
+  if (auto extfOp = dyn_cast<arith::ExtFOp>(defOp)) {
+    collectOriginalTensorCandidates(extfOp.getIn(), seen, candidates);
+    return;
+  }
+  if (auto truncfOp = dyn_cast<arith::TruncFOp>(defOp)) {
+    collectOriginalTensorCandidates(truncfOp.getIn(), seen, candidates);
+    return;
+  }
+  if (auto extiOp = dyn_cast<arith::ExtSIOp>(defOp)) {
+    collectOriginalTensorCandidates(extiOp.getIn(), seen, candidates);
+    return;
+  }
+  if (auto trunciOp = dyn_cast<arith::TruncIOp>(defOp)) {
+    collectOriginalTensorCandidates(trunciOp.getIn(), seen, candidates);
+    return;
+  }
+  if (auto fptosiOp = dyn_cast<arith::FPToSIOp>(defOp)) {
+    collectOriginalTensorCandidates(fptosiOp.getIn(), seen, candidates);
+    return;
+  }
+  if (auto sitofpOp = dyn_cast<arith::SIToFPOp>(defOp)) {
+    collectOriginalTensorCandidates(sitofpOp.getIn(), seen, candidates);
+    return;
+  }
+
+  if (auto addfOp = dyn_cast<arith::AddFOp>(defOp)) {
+    collectOriginalTensorCandidates(addfOp.getLhs(), seen, candidates);
+    collectOriginalTensorCandidates(addfOp.getRhs(), seen, candidates);
+    return;
+  }
+  if (auto forOp = dyn_cast<scf::ForOp>(defOp)) {
+    if (!forOp->hasAttr("reductionLoop"))
+      return;
+    (void)forOp.walk([&](tensor::ExtractSliceOp sliceOp) {
+      Value source = sliceOp.getSource();
+      if (llvm::is_contained(forOp.getRegionIterArgs(), source))
+        return WalkResult::advance();
+      collectOriginalTensorCandidates(source, seen, candidates);
+      return WalkResult::interrupt();
+    });
+    return;
+  }
+
+  if (isa<RankedTensorType>(value.getType()))
+    candidates.push_back(value);
+  LDBG("collectOriginalTensorCandidates: stopping at unrecognized op: "
+       << defOp->getName());
 }
 
 class TreeReductionBuilder {
@@ -887,6 +895,17 @@ private:
                TreeReductionBuilder &builder, scf::ForOp targetForOp,
                Value inputTensor, int64_t dimR, int64_t dimA,
                RankedTensorType accTensorType) const;
+  // AscendC-style AR folding, mirroring `ReduceAR` in
+  // op_common/atvoss/reduce/reduce_operator.h: `mainR` is the largest power of
+  // two not exceeding dimR (so the vector count mainR/vlElems is itself a
+  // power of two), the tail [mainR, dimR) is folded into the head first, and
+  // each stage then folds 16 vectors into one until fewer than 16 remain.
+  // Unlike buildAR's single-pass chunk accumulation this walks the reduction
+  // extent log16 times, writing every intermediate back to the working tensor.
+  void buildAscendStyleAR(IRRewriter &rewriter, Location loc,
+                          TreeReductionBuilder &builder, scf::ForOp targetForOp,
+                          Value inputTensor, int64_t dimR, int64_t dimA,
+                          RankedTensorType accTensorType) const;
 };
 
 void TreeReduceV2Pass::buildDirectRegisterRA(
@@ -1677,6 +1696,12 @@ void TreeReduceV2Pass::buildAR(IRRewriter &rewriter, Location loc,
     return;
   }
 
+  if (ascendStyleAR) {
+    buildAscendStyleAR(rewriter, loc, builder, targetForOp, inputTensor, dimR,
+                       dimA, accTensorType);
+    return;
+  }
+
   auto loopA =
       rewriter.create<scf::ForOp>(loc, builder.c0, builder.dimAVal, builder.c1,
                                   ValueRange{targetForOp.getInitArgs()[0]});
@@ -1843,6 +1868,290 @@ void TreeReduceV2Pass::buildAR(IRRewriter &rewriter, Location loc,
   rewriter.replaceOp(targetForOp, loopA.getResult(0));
 }
 
+void TreeReduceV2Pass::buildAscendStyleAR(
+    IRRewriter &rewriter, Location loc, TreeReductionBuilder &builder,
+    scf::ForOp targetForOp, Value inputTensor, int64_t dimR, int64_t dimA,
+    RankedTensorType accTensorType) const {
+  int64_t vlElems = builder.vectorLength;
+
+  // Largest power-of-two multiple of vlElems not exceeding dimR, so the
+  // vector count `base` is a power of two and every fold stage is exact.
+  int64_t mainR = vlElems;
+  while (mainR * 2 <= dimR)
+    mainR *= 2;
+  int64_t tailR = dimR - mainR;
+  int64_t base = mainR / vlElems;
+  int64_t folds = llvm::Log2_64(base);
+  int64_t mainTimes = folds / 4;
+  int64_t tailFolds = folds % 4;
+  // AscendC's inplaceRepeats: how many vectors of the head the tail touches.
+  int64_t tailVecs = (tailR + vlElems - 1) / vlElems;
+  int64_t numLeaves = 1LL << tailFolds;
+  LDBG("buildAscendStyleAR: dimR="
+       << dimR << " dimA=" << dimA << " mainR=" << mainR << " tailR=" << tailR
+       << " base=" << base << " folds=" << folds << " mainTimes=" << mainTimes
+       << " tailFolds=" << tailFolds << " tailVecs=" << tailVecs);
+
+  AffineMap minMap = AffineMap::get(
+      1, 1,
+      {rewriter.getAffineConstantExpr(vlElems),
+       rewriter.getAffineSymbolExpr(0) - rewriter.getAffineDimExpr(0)},
+      rewriter.getContext());
+
+  Value sourceTensor = inputTensor;
+  bool needsFoldStage = tailR > 0 || mainTimes > 0;
+  // The AscendC kernel folds in place in UB.  That is only legal here when the
+  // input is dead after the reduction and already carries the compute type;
+  // otherwise the stages run on a private tensor of the compute type.
+  bool useSeparateWorkingTensor =
+      needsFoldStage && (builder.inElemTy != builder.computeElemTy ||
+                         hasUseOutsideScope(inputTensor, targetForOp));
+  Value workingTensor = inputTensor;
+  if (useSeparateWorkingTensor)
+    workingTensor = rewriter.create<tensor::EmptyOp>(
+        loc, ArrayRef<int64_t>{dimA, dimR}, builder.computeElemTy);
+  LDBG("buildAscendStyleAR state: useSeparateWorkingTensor="
+       << useSeparateWorkingTensor << " numLeaves=" << numLeaves);
+
+  // Reads one vector of the reduction axis at [aIdx, rIdx) and promotes it to
+  // the compute type.  A non-null mask zero-fills the inactive lanes, which is
+  // the additive identity, so a partial tail vector folds like a full one.
+  auto readVec = [&builder](Value tensor, Value aIdx, Value rIdx,
+                            Value mask1D) -> Value {
+    auto elemTy = cast<RankedTensorType>(tensor.getType()).getElementType();
+    bool isCompute = elemTy == builder.computeElemTy;
+    Value raw = builder.readSliceMaskedAR(
+        tensor, aIdx, rIdx, mask1D,
+        isCompute ? builder.vec1DComputeTy : builder.vec1DInTy,
+        isCompute ? builder.computeCstZero : builder.inputCstZero);
+    if (isCompute)
+      return raw;
+    return builder.castToComputeTy(raw);
+  };
+
+  // Writes a full compute-type vector back to [aIdx, rIdx); every fold target
+  // lies inside [0, mainR), so the transfer is always in bounds.
+  auto writeVec = [&rewriter, loc, &builder, vlElems](Value vec1D, Value tensor,
+                                                      Value aIdx,
+                                                      Value rIdx) -> Value {
+    auto elemTy = cast<RankedTensorType>(tensor.getType()).getElementType();
+    auto sliceTy = RankedTensorType::get({vlElems}, elemTy);
+    SmallVector<OpFoldResult> offsets = {aIdx, rIdx};
+    SmallVector<OpFoldResult> sizes = {rewriter.getIndexAttr(1),
+                                       rewriter.getIndexAttr(vlElems)};
+    SmallVector<OpFoldResult> strides = {rewriter.getIndexAttr(1),
+                                         rewriter.getIndexAttr(1)};
+    Value slice = rewriter.create<tensor::ExtractSliceOp>(
+        loc, sliceTy, tensor, offsets, sizes, strides);
+    Value written = rewriter
+                        .create<vector::TransferWriteOp>(loc, vec1D, slice,
+                                                         ValueRange{builder.c0},
+                                                         ArrayRef<bool>{true})
+                        .getResult();
+    return rewriter
+        .create<tensor::InsertSliceOp>(loc, written, tensor, offsets, sizes,
+                                       strides)
+        .getResult();
+  };
+
+  Value baseVal = rewriter.create<arith::ConstantIndexOp>(loc, base);
+
+  // Stage 0: fold the non-power-of-two tail into the head, one vector at a
+  // time, exactly like the needInplaceAdd prologue of ReduceAR.
+  if (tailR > 0) {
+    Value tailRVal = rewriter.create<arith::ConstantIndexOp>(loc, tailR);
+    Value mainRVal = rewriter.create<arith::ConstantIndexOp>(loc, mainR);
+    Value tailVecsVal = rewriter.create<arith::ConstantIndexOp>(loc, tailVecs);
+    Value zeroVec = rewriter.create<vector::BroadcastOp>(
+        loc, builder.vec1DComputeTy, builder.computeCstZero);
+
+    auto loopA =
+        rewriter.create<scf::ForOp>(loc, builder.c0, builder.dimAVal,
+                                    builder.c1, ValueRange{workingTensor});
+    rewriter.setInsertionPointToStart(loopA.getBody());
+    Value loopAAcc = loopA.getRegionIterArg(0), ivA = loopA.getInductionVar();
+
+    auto loopR = rewriter.create<scf::ForOp>(loc, builder.c0, tailVecsVal,
+                                             builder.c1, ValueRange{loopAAcc});
+    rewriter.setInsertionPointToStart(loopR.getBody());
+    Value loopRAcc = loopR.getRegionIterArg(0), ivR = loopR.getInductionVar();
+
+    Value rIdx = rewriter.create<arith::MulIOp>(loc, ivR, builder.c64);
+    Value minLen = rewriter.create<affine::AffineMinOp>(
+        loc, minMap, ValueRange{rIdx, tailRVal});
+    Value mask1D = builder.createLoopMask1D(minLen);
+    Value tailIdx = rewriter.create<arith::AddIOp>(loc, rIdx, mainRVal);
+
+    // When folding in place the write chain runs through loopRAcc; read from
+    // it as well so the dependence survives bufferization.  The offsets never
+    // overlap across iterations, so this reads the same values either way.
+    Value readTensor = useSeparateWorkingTensor ? sourceTensor : loopRAcc;
+    Value mainVec = readVec(readTensor, ivA, rIdx, nullptr);
+    Value tailVec = readVec(readTensor, ivA, tailIdx, mask1D);
+    Value cleanTail =
+        rewriter.create<arith::SelectOp>(loc, mask1D, tailVec, zeroVec);
+    Value folded = builder.createAdd(mainVec, cleanTail);
+    Value insertSliceOp = writeVec(folded, loopRAcc, ivA, rIdx);
+
+    rewriter.create<scf::YieldOp>(loc, ValueRange{insertSliceOp});
+    rewriter.setInsertionPointAfter(loopR);
+    rewriter.create<scf::YieldOp>(loc, ValueRange{loopR.getResult(0)});
+    rewriter.setInsertionPointAfter(loopA);
+    workingTensor = loopA.getResult(0);
+  }
+
+  // The main stage reads every vector of [0, mainR) from the working tensor,
+  // but stage 0 only materialized the first `tailVecs` of them.  Forward the
+  // rest.  Without a main stage the final fold selects its source per leaf
+  // instead, so no copy is needed there.
+  if (useSeparateWorkingTensor && mainTimes > 0 && tailVecs < base) {
+    Value tailVecsVal = rewriter.create<arith::ConstantIndexOp>(loc, tailVecs);
+    auto loopA =
+        rewriter.create<scf::ForOp>(loc, builder.c0, builder.dimAVal,
+                                    builder.c1, ValueRange{workingTensor});
+    rewriter.setInsertionPointToStart(loopA.getBody());
+    Value loopAAcc = loopA.getRegionIterArg(0), ivA = loopA.getInductionVar();
+
+    auto loopR = rewriter.create<scf::ForOp>(loc, tailVecsVal, baseVal,
+                                             builder.c1, ValueRange{loopAAcc});
+    rewriter.setInsertionPointToStart(loopR.getBody());
+    Value loopRAcc = loopR.getRegionIterArg(0), ivR = loopR.getInductionVar();
+
+    Value rIdx = rewriter.create<arith::MulIOp>(loc, ivR, builder.c64);
+    Value forwarded = readVec(sourceTensor, ivA, rIdx, nullptr);
+    Value insertSliceOp = writeVec(forwarded, loopRAcc, ivA, rIdx);
+
+    rewriter.create<scf::YieldOp>(loc, ValueRange{insertSliceOp});
+    rewriter.setInsertionPointAfter(loopR);
+    rewriter.create<scf::YieldOp>(loc, ValueRange{loopR.getResult(0)});
+    rewriter.setInsertionPointAfter(loopA);
+    workingTensor = loopA.getResult(0);
+  }
+
+  // Main stages: each one folds 16 vectors into one and quarters the live
+  // vector count twice over, i.e. `loopRNum >>= 4` in the kernel.
+  if (mainTimes > 0) {
+    Value mainTimesVal =
+        rewriter.create<arith::ConstantIndexOp>(loc, mainTimes);
+    auto loopMain =
+        rewriter.create<scf::ForOp>(loc, builder.c0, mainTimesVal, builder.c1,
+                                    ValueRange{workingTensor, baseVal});
+    rewriter.setInsertionPointToStart(loopMain.getBody());
+    Value loopMainAcc = loopMain.getRegionIterArg(0),
+          currentVecs = loopMain.getRegionIterArg(1);
+    Value nextVecs =
+        rewriter.create<arith::DivUIOp>(loc, currentVecs, builder.c16);
+    Value offsetR = rewriter.create<arith::MulIOp>(loc, nextVecs, builder.c64);
+
+    auto loopA = rewriter.create<scf::ForOp>(
+        loc, builder.c0, builder.dimAVal, builder.c1, ValueRange{loopMainAcc});
+    rewriter.setInsertionPointToStart(loopA.getBody());
+    Value loopAAcc = loopA.getRegionIterArg(0), ivA = loopA.getInductionVar();
+
+    auto loopR = rewriter.create<scf::ForOp>(loc, builder.c0, nextVecs,
+                                             builder.c1, ValueRange{loopAAcc});
+    rewriter.setInsertionPointToStart(loopR.getBody());
+    Value loopRAcc = loopR.getRegionIterArg(0), ivR = loopR.getInductionVar();
+    Value rBase = rewriter.create<arith::MulIOp>(loc, ivR, builder.c64);
+
+    SmallVector<Value> vRegs;
+    vRegs.reserve(16);
+    for (int i = 0; i < 16; ++i) {
+      Value iVal = rewriter.create<arith::ConstantIndexOp>(loc, i);
+      Value stride = rewriter.create<arith::MulIOp>(loc, iVal, offsetR);
+      Value rIdx = rewriter.create<arith::AddIOp>(loc, rBase, stride);
+      vRegs.push_back(readVec(loopRAcc, ivA, rIdx, nullptr));
+    }
+    Value reducedVec = builder.buildTreeReduction(vRegs);
+    Value insertSliceOp = writeVec(reducedVec, loopRAcc, ivA, rBase);
+
+    rewriter.create<scf::YieldOp>(loc, ValueRange{insertSliceOp});
+    rewriter.setInsertionPointAfter(loopR);
+    rewriter.create<scf::YieldOp>(loc, ValueRange{loopR.getResult(0)});
+    rewriter.setInsertionPointAfter(loopA);
+    rewriter.create<scf::YieldOp>(loc,
+                                  ValueRange{loopA.getResult(0), nextVecs});
+    rewriter.setInsertionPointAfter(loopMain);
+    workingTensor = loopMain.getResult(0);
+  }
+
+  // Final fold: the 2^tailFolds surviving vectors go through one register
+  // tree, then the single vector collapses onto the accumulator element.  The
+  // kernel spells the collapse out as log2(VL) DeInterleave steps; here
+  // vector.multi_reduction carries that lowering.
+  auto loopATail =
+      rewriter.create<scf::ForOp>(loc, builder.c0, builder.dimAVal, builder.c1,
+                                  ValueRange{targetForOp.getInitArgs()[0]});
+  rewriter.setInsertionPointToStart(loopATail.getBody());
+  Value loopAAcc = loopATail.getRegionIterArg(0),
+        ivA = loopATail.getInductionVar();
+
+  SmallVector<Value> leaves;
+  leaves.reserve(numLeaves);
+  for (int64_t i = 0; i < numLeaves; ++i) {
+    Value rIdx = rewriter.create<arith::ConstantIndexOp>(loc, i * vlElems);
+    Value readTensor = workingTensor;
+    if (useSeparateWorkingTensor && mainTimes == 0 && i >= tailVecs)
+      readTensor = sourceTensor;
+    leaves.push_back(readVec(readTensor, ivA, rIdx, nullptr));
+  }
+  Value finalVec = builder.buildTreeReduction(leaves);
+
+  Type elemTy = builder.computeElemTy;
+  auto vec2DTy = VectorType::get({1, vlElems}, elemTy);
+  Value accVec2D = rewriter.create<vector::ShapeCastOp>(loc, vec2DTy, finalVec);
+
+  auto vec1xAccTy = VectorType::get({1}, builder.accElemTy);
+  auto vec1xComputeTy = VectorType::get({1}, elemTy);
+
+  SmallVector<OpFoldResult> offsets = {ivA};
+  SmallVector<OpFoldResult> sizes = {rewriter.getIndexAttr(1)};
+  SmallVector<OpFoldResult> strides = {rewriter.getIndexAttr(1)};
+  auto sliceTy = RankedTensorType::get({1}, builder.accElemTy);
+  Value extractedSlice = rewriter.create<tensor::ExtractSliceOp>(
+      loc, sliceTy, loopAAcc, offsets, sizes, strides);
+
+  Value accRead = rewriter.create<vector::TransferReadOp>(
+      loc, vec1xAccTy, extractedSlice, ValueRange{builder.c0},
+      builder.accCstZero);
+  Value accReadCompute = accRead;
+  if (builder.accElemTy != elemTy) {
+    accReadCompute =
+        isa<FloatType>(builder.accElemTy)
+            ? rewriter.create<arith::ExtFOp>(loc, vec1xComputeTy, accRead)
+                  .getResult()
+            : rewriter.create<arith::ExtSIOp>(loc, vec1xComputeTy, accRead)
+                  .getResult();
+  }
+
+  SmallVector<int64_t> reduceDims = {1};
+  auto multiReduceOp = rewriter.create<vector::MultiDimReductionOp>(
+      loc, vector::CombiningKind::ADD, accVec2D, accReadCompute,
+      rewriter.getI64ArrayAttr(reduceDims));
+  multiReduceOp->setAttr("withoutInitMergeOp", rewriter.getUnitAttr());
+  Value toWriteAcc = multiReduceOp.getResult();
+  if (builder.accElemTy != elemTy) {
+    toWriteAcc =
+        isa<FloatType>(builder.accElemTy)
+            ? rewriter.create<arith::TruncFOp>(loc, vec1xAccTy, toWriteAcc)
+                  .getResult()
+            : rewriter.create<arith::TruncIOp>(loc, vec1xAccTy, toWriteAcc)
+                  .getResult();
+  }
+
+  Value writtenSlice =
+      rewriter
+          .create<vector::TransferWriteOp>(loc, toWriteAcc, extractedSlice,
+                                           ValueRange{builder.c0})
+          .getResult();
+  Value nextAcc = rewriter.create<tensor::InsertSliceOp>(
+      loc, writtenSlice, loopAAcc, offsets, sizes, strides);
+
+  rewriter.create<scf::YieldOp>(loc, ValueRange{nextAcc});
+  rewriter.setInsertionPointAfter(loopATail);
+  rewriter.replaceOp(targetForOp, loopATail.getResult(0));
+}
+
 static bool isCVCases(ModuleOp moduleOp) {
   auto result = moduleOp.walk([](Operation *op) {
     if (auto funcOp = dyn_cast<func::FuncOp>(op)) {
@@ -1902,32 +2211,14 @@ void TreeReduceV2Pass::runOnOperation() {
       continue;
     }
 
-    Value inputTensor = traceBackToOriginalTensor(targetReduceOp.getSource());
+    llvm::DenseSet<Value> seen;
+    SmallVector<Value> inputCandidates;
+    collectOriginalTensorCandidates(targetReduceOp.getSource(), seen,
+                                    inputCandidates);
+
+    Value inputTensor;
     int64_t dimR = -1, dimA = -1;
     bool isAR = false;
-    if (!isValid2DReduction(targetReduceOp, inputTensor, dimR, dimA, isAR)) {
-      LDBG("Skipping - not a valid 2D reduction (input rank != 2)");
-      continue;
-    }
-    LDBG("Valid 2D reduction: dimR=" << dimR << " dimA=" << dimA
-                                     << " isAR=" << isAR);
-
-    auto inputTensorType = cast<RankedTensorType>(inputTensor.getType());
-    Type inElemTy = inputTensorType.getElementType();
-    if (!inElemTy.isF32() && !inElemTy.isF16() && !inElemTy.isBF16()) {
-      LDBG("Skipping - unsupported element type: " << inElemTy);
-      continue;
-    }
-
-    // Early exit if the corresponding direction is disabled.
-    if (isAR && !enableAR) {
-      LDBG("Skipping - AR disabled (enableAR=false)");
-      continue;
-    }
-    if (!isAR && !enableRA) {
-      LDBG("Skipping - RA disabled (enableRA=false)");
-      continue;
-    }
 
     scf::ForOp targetForOp = targetReduceOp->getParentOfType<scf::ForOp>();
     if (!targetForOp) {
@@ -1972,7 +2263,63 @@ void TreeReduceV2Pass::runOnOperation() {
     rewriter.setInsertionPoint(targetForOp);
 
     auto accTensorType =
-        cast<RankedTensorType>(targetForOp.getInitArgs()[0].getType());
+        dyn_cast<RankedTensorType>(targetForOp.getInitArgs()[0].getType());
+    if (!accTensorType) {
+      LDBG("Skipping - accumulator is not a ranked tensor");
+      continue;
+    }
+
+    bool hasAmbiguousInput = false;
+    for (Value candidate : inputCandidates) {
+      int64_t candidateDimR = -1, candidateDimA = -1;
+      bool candidateIsAR = false;
+      if (!isValid2DReduction(targetReduceOp, candidate, candidateDimR,
+                              candidateDimA, candidateIsAR))
+        continue;
+
+      bool hasCompatibleShape = false;
+      if (accTensorType.getRank() == 0) {
+        hasCompatibleShape = candidateDimA == 1;
+      } else if (accTensorType.getRank() == 1) {
+        int64_t accSize = accTensorType.getShape().front();
+        hasCompatibleShape =
+            !ShapedType::isDynamic(accSize) && accSize == candidateDimA;
+      }
+      if (!hasCompatibleShape)
+        continue;
+
+      if (inputTensor && inputTensor != candidate) {
+        hasAmbiguousInput = true;
+        break;
+      }
+      inputTensor = candidate;
+      dimR = candidateDimR;
+      dimA = candidateDimA;
+      isAR = candidateIsAR;
+    }
+    if (!inputTensor || hasAmbiguousInput) {
+      LDBG("Skipping - could not infer a unique reduction input");
+      continue;
+    }
+    LDBG("Valid 2D reduction: dimR=" << dimR << " dimA=" << dimA
+                                     << " isAR=" << isAR);
+
+    auto inputTensorType = cast<RankedTensorType>(inputTensor.getType());
+    Type inElemTy = inputTensorType.getElementType();
+    if (!inElemTy.isF32() && !inElemTy.isF16() && !inElemTy.isBF16()) {
+      LDBG("Skipping - unsupported element type: " << inElemTy);
+      continue;
+    }
+
+    // Early exit if the corresponding direction is disabled.
+    if (isAR && !enableAR) {
+      LDBG("Skipping - AR disabled (enableAR=false)");
+      continue;
+    }
+    if (!isAR && !enableRA) {
+      LDBG("Skipping - RA disabled (enableRA=false)");
+      continue;
+    }
     Type computeElemTy = inElemTy;
     if (isa<FloatType>(inElemTy) && inElemTy.getIntOrFloatBitWidth() < 32)
       computeElemTy = rewriter.getF32Type();

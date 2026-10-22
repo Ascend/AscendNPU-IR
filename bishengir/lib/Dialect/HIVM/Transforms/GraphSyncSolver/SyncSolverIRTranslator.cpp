@@ -1081,7 +1081,7 @@ std::unique_ptr<Scope> IRTranslator::funcIrBuilder(Region &region,
 // Build the linearized sync IR (syncIr) and record occurrence ranges for
 // analysis.
 void IRTranslator::syncIrBuilder(OperationBase *op, Occurrence *parentOcc,
-                                 bool isUseless) {
+                                 bool isUseless, bool unrollLoops) {
   assert(op != nullptr);
   if (op->preOrderIndex == -1) {
     op->preOrderIndex = globalPreOrderTraversalIndex++;
@@ -1109,15 +1109,18 @@ void IRTranslator::syncIrBuilder(OperationBase *op, Occurrence *parentOcc,
 
   if (auto *loopOp = dyn_cast<Loop>(op)) {
     for (auto &op : loopOp->body) {
-      syncIrBuilder(op.get(), occPtr, isUseless);
+      syncIrBuilder(op.get(), occPtr, isUseless, unrollLoops);
     }
-    occPtr->loopSplitIndex = static_cast<int>(syncIr.size());
-    for (auto &op : loopOp->body) {
-      syncIrBuilder(op.get(), occPtr, true);
+    if (unrollLoops) {
+      occPtr->loopSplitIndex = static_cast<int>(syncIr.size());
+      for (auto &op : loopOp->body) {
+        syncIrBuilder(op.get(), occPtr, true,
+                      !options.enableNonRecursiveLoopUnrolling);
+      }
     }
   } else if (auto *scopeOp = dyn_cast<Scope>(op)) {
     for (auto &op : scopeOp->body) {
-      syncIrBuilder(op.get(), occPtr, isUseless);
+      syncIrBuilder(op.get(), occPtr, isUseless, unrollLoops);
     }
   }
 
@@ -1125,4 +1128,32 @@ void IRTranslator::syncIrBuilder(OperationBase *op, Occurrence *parentOcc,
   occPtr->endIndex = endIndex;
   occPtr->syncIrEndIndex = static_cast<int>(syncIr.size());
   occPtr->initMemInfoTree();
+}
+
+// Non-recursive unrolling leaves a loop nested in the second body copy of an
+// unrolled one linearized, so a loop has one split occurrence and one
+// linearized copy per enclosing unroll site. Hand the split one all of them.
+// Unrolling recursively instead splits every copy and leaves none to record.
+void IRTranslator::recordLinearizedLoopOccs() {
+  if (!options.enableNonRecursiveLoopUnrolling) {
+    return;
+  }
+  for (auto &[op, occs] : opAllOccurrences) {
+    if (!isa<Loop>(op)) {
+      continue;
+    }
+    Occurrence *splitLoopOcc = nullptr;
+    llvm::SmallVector<Occurrence *> linearLoopOccs;
+    for (auto *occ : occs) {
+      if (occ->loopSplitIndex == -1) {
+        linearLoopOccs.push_back(occ);
+      } else {
+        assert(splitLoopOcc == nullptr && "expected one split occurrence");
+        splitLoopOcc = occ;
+      }
+    }
+    if (splitLoopOcc != nullptr) {
+      splitLoopOcc->linearizedLoopOccs = std::move(linearLoopOccs);
+    }
+  }
 }

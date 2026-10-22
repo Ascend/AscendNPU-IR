@@ -111,6 +111,9 @@ struct SyncSolverOptions {
 
   bool enableSiblingIfSync{true};
 
+  // Avoid recursively unrolling nested loops in repeated iterations.
+  bool enableNonRecursiveLoopUnrolling{true};
+
   // Build unrolled sync IR.
   bool buildUnrolledSyncIR{true};
 
@@ -221,6 +224,8 @@ struct Occurrence {
   int startIndex{-1};
   int endIndex{-1};
   int loopSplitIndex{-1};
+  // Set on a split loop occurrence: the linearized copies of that loop.
+  llvm::SmallVector<Occurrence *> linearizedLoopOccs;
   bool hasUnitFlagFeat{false};
   UnitFlagInfo unitFlagInfo;
   llvm::SmallVector<Occurrence *> childOccs;
@@ -287,7 +292,7 @@ struct Occurrence {
   }
 
   void initMemInfoTree1() {
-    if (isa<Loop>(op)) {
+    if (isa<Loop>(op) && loopSplitIndex != -1) {
       for (auto childOcc : getLoopSecondIterOccs()) {
         memInfoTree1.merge(childOcc->memInfoTree1);
       }
@@ -321,7 +326,7 @@ struct Occurrence {
   }
 
   void initMemInfoTree2() {
-    if (isa<Loop>(op)) {
+    if (isa<Loop>(op) && loopSplitIndex != -1) {
       for (auto childOcc : getLoopFirstIterOccs()) {
         memInfoTree2.merge(childOcc->memInfoTree2);
       }
@@ -444,6 +449,13 @@ struct ConflictPair {
       this->endIndex = waitOcc->startIndex;
     }
   }
+  void updateBarrierWaitOcc(Occurrence *waitOcc) {
+    if (waitOcc != nullptr) {
+      this->setOcc = this->waitOcc = waitOcc;
+      this->setOp = this->waitOp = waitOcc->op;
+      this->startIndex = this->endIndex = waitOcc->startIndex;
+    }
+  }
 
   std::unique_ptr<ConflictPair> clone() {
     auto clonedConflictPair = std::make_unique<ConflictPair>(
@@ -480,6 +492,12 @@ struct ConflictPair {
   std::unique_ptr<ConflictPair> clone(Occurrence *setOcc, Occurrence *waitOcc) {
     auto clonedConflictPair = this->clone();
     clonedConflictPair->updateSetWaitOccs(setOcc, waitOcc);
+    return clonedConflictPair;
+  }
+
+  std::unique_ptr<ConflictPair> cloneBarrier(Occurrence *waitOcc) {
+    auto clonedConflictPair = this->clone();
+    clonedConflictPair->updateBarrierWaitOcc(waitOcc);
     return clonedConflictPair;
   }
 };

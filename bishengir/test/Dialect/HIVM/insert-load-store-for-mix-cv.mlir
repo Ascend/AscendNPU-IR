@@ -444,6 +444,29 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
 }
 
 // -----
+// CHECK-LABEL: @scatterT_dst_should_stay_gm(
+// CHECK-SAME: %[[DST:.*]]: memref<?xf32>
+// CHECK-NOT: hivm.hir.load ins(%[[DST]] : memref<?xf32>)
+// CHECK: hivm.hir.scatterT ins(%[[DST]] : memref<?xf32>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @scatterT_dst_should_stay_gm(%dst: memref<?xf32>, %src: memref<2x2xf32>, %idx: memref<2x2xi64>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv"} {
+    %c0_i32 = arith.constant 0 : i32
+    %c2_i32 = arith.constant 2 : i32
+    %c1_i64 = arith.constant 1 : i64
+    %c2_i64 = arith.constant 2 : i64
+    %c4_i64 = arith.constant 4 : i64
+    %alloc = memref.alloc() : memref<2x2xf32>
+    hivm.hir.load ins(%src : memref<2x2xf32>) outs(%alloc : memref<2x2xf32>)
+    %value = bufferization.to_tensor %alloc restrict writable : memref<2x2xf32>
+    %alloc_1 = memref.alloc() : memref<2x2xi64>
+    hivm.hir.load ins(%idx : memref<2x2xi64>) outs(%alloc_1 : memref<2x2xi64>)
+    %index_tile = bufferization.to_tensor %alloc_1 restrict writable : memref<2x2xi64>
+    hivm.hir.scatterT ins(%dst : memref<?xf32>, %value : tensor<2x2xf32>, %index_tile : tensor<2x2xi64>, %c4_i64 : i64, %c0_i32 : i32, [%c2_i64, %c1_i64 : i64, i64], [%c2_i32, %c2_i32 : i32, i32], [%c0_i32, %c0_i32 : i32, i32]) {hivm.vf_mode = #hivm.vf_mode<SIMT>}
+    return
+  }
+}
+
+// -----
 // CHECK-LABEL: @insert_load_store_between_cross_loop_vector_and_cube(
 // CHECK-SAME: %[[ARG0:.*]]: tensor<128x64xf32>, %[[ARG1:.*]]: tensor<64x64xf32>) -> tensor<128x64xf32>
 module {

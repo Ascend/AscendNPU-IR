@@ -155,3 +155,33 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_950z">} {
     return
   }
 }
+
+// -----
+
+module {
+  func.func private @sibling_if_vf(%arg0: memref<16xf32, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline}
+
+  // CHECK-LABEL: func.func @test_sibling_if_alias_not_killed
+  // CHECK: hivm.hir.pointer_cast
+  func.func @test_sibling_if_alias_not_killed(%cond: i1) {
+    %shared = memref.alloc() : memref<16xf32, #hivm.address_space<ub>>
+    %other = memref.alloc() : memref<16xf32, #hivm.address_space<ub>>
+    scf.if %cond {
+      %tile = memref.alloc() : memref<16xf32, #hivm.address_space<ub>>
+      %r = scf.if %cond -> (memref<16xf32, #hivm.address_space<ub>>) {
+        scf.yield %tile : memref<16xf32, #hivm.address_space<ub>>
+      } else {
+        scf.yield %shared : memref<16xf32, #hivm.address_space<ub>>
+      }
+      func.call @sibling_if_vf(%r) {hivm.vector_function, no_inline} : (memref<16xf32, #hivm.address_space<ub>>) -> ()
+    } else {
+      %r2 = scf.if %cond -> (memref<16xf32, #hivm.address_space<ub>>) {
+        scf.yield %other : memref<16xf32, #hivm.address_space<ub>>
+      } else {
+        scf.yield %shared : memref<16xf32, #hivm.address_space<ub>>
+      }
+      func.call @sibling_if_vf(%r2) {hivm.vector_function, no_inline} : (memref<16xf32, #hivm.address_space<ub>>) -> ()
+    }
+    return
+  }
+}

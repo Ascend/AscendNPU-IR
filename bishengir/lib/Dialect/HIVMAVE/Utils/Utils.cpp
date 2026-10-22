@@ -25,10 +25,13 @@
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/Support/Debug.h"
 #include <cassert>
 #include <climits>
 #include <limits>
 #include <optional>
+
+#define DEBUG_TYPE "hivmave-utils"
 
 using namespace mlir;
 using namespace mlir::hivmave;
@@ -397,9 +400,9 @@ static bool isMemrefAligned(Value memrefVal, int64_t hwAlignBits,
       isByteShiftAlign = isValueKnownMultipleOf(v, requiredByteOffsetAlignment);
     }
     return isByteShiftAlign;
-  } else if (auto collapseOp = dyn_cast<memref::CollapseShapeOp>(defOp)) {
-    auto srcValue = collapseOp.getSrc();
-    llvm::errs() << "collapseOp src: " << srcValue << "\n";
+  } else if (isa<memref::CollapseShapeOp, memref::ExpandShapeOp>(defOp)) {
+    Value srcValue = defOp->getOperand(0);
+    LLVM_DEBUG(llvm::dbgs() << "Reshape src: " << srcValue << "\n");
     return isMemrefAligned(srcValue, hwAlignBits, elemBits);
   } else if (auto getGlobal = dyn_cast<memref::GetGlobalOp>(defOp)) {
     auto global = SymbolTable::lookupNearestSymbolFrom<memref::GlobalOp>(
