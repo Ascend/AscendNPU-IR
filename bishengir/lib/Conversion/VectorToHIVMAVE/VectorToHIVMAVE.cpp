@@ -432,6 +432,17 @@ struct TransferReadOpPattern : public OpRewritePattern<vector::TransferReadOp> {
       if (auto shapeCast = mask.getDefiningOp<vector::ShapeCastOp>())
         isFlattenedRank1Mask =
             cast<VectorType>(shapeCast.getSource().getType()).getRank() == 1;
+      // Reaching the select below needs a rank>1 mask that is not such a
+      // flattened one, which in practice means a mask with no defining op at
+      // all -- a `vector<...xi1>` block argument.  Every rank>1 mask *produced
+      // by an op* is handled before this point: a multi-dim
+      // `vector.constant_mask` is rewritten to a rank-1 `ave.hir.pge` (or
+      // rejected when its active region is not a prefix), and a multi-dim
+      // `vector.create_mask` is rejected outright.  Those rewrites only win
+      // the race because the mask op precedes the read in program order --
+      // `applyPartialConversion` gives no ordering guarantee -- and a block
+      // argument is not an op, so no pattern ever converts it.  The select is
+      // therefore the fallback for that one case and must stay.
       if (maskVecType.getRank() != 1 && !isFlattenedRank1Mask) {
         // Flatten the mask to match `resVecType`.
         VectorType flatMaskType =
