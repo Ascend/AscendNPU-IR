@@ -13,7 +13,9 @@ target_link_libraries(BiShengIRNPUArchitectureTests PRIVATE
   BiShengIRHACCDialect
   BiShengIRHACCTransforms
   BiShengIRHACCUtils
+  MLIRArithDialect
   MLIRDLTIDialect
   MLIRIR
+  MLIRLinalgDialect
   MLIRPass
 )
