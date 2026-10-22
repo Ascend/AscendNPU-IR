@@ -124,12 +124,14 @@ def EliminateSingleIterationScfFor
     "arith::ArithDialect",
     "scf::SCFDialect",
   ];
-  let options = [
-    Option<"dumpAffineMinmaxBounds",
-           "dump-affine-minmax-bounds", "bool", "false",
-           "If true, dump AffineMinMaxValueBoundsCollector value2bounds to "
-           "stderr in a stable format (for lit/FileCheck).">
-  ];
+  let options =
+      [Option<"dumpAffineMinmaxBounds", "dump-affine-minmax-bounds", "bool",
+              "false",
+              "If true, dump AffineMinMaxValueBoundsCollector value2bounds to "
+              "stderr in a stable format (for lit/FileCheck).">,
+       Option<"foldDominatedMins", "fold-dominated-mins", "bool", "true",
+              "Replace an affine.min whose candidate is proven no greater "
+              "than every other with that candidate.">];
 }
 
 //===----------------------------------------------------------------------===//
