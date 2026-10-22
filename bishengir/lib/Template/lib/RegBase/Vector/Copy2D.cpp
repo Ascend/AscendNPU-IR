@@ -124,6 +124,21 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_2d_core(
     return;
   }
 
+  // The pulled-back, padded vector DMA below is only sound for a unit-stride
+  // innermost axis: MTE's leftPaddingNum addresses whole contiguous rows, so
+  // the contiguous-last-dim path pads the row head/tail of multi-element
+  // bursts. With a non-unit innermost stride the copy is decomposed into
+  // per-element bursts (transpose/collapse/per-row paths), where a non-zero
+  // left padding corrupts the descriptor (padding count exceeds the burst
+  // length and the pulled-back dst start leaves the row's span). These loads
+  // used to be rejected by the logical-address alignment check; keep them on
+  // the scalar path, which ignores the padding and copies the valid window
+  // element by element.
+  if (left_padding_num != 0 && (stride1_gm != 1 || stride1_ub != 1)) {
+    load_gm_to_ubuf_2d_by_scalar<T>(src, dst);
+    return;
+  }
+
   if ((stride0_gm < stride1_gm || stride0_ub < stride1_ub)) {
     // Implicit transposition scenarios need to be moved through scalar
     if constexpr (std::is_same_v<T, int64_t> || std::is_same_v<T, uint64_t>) {
