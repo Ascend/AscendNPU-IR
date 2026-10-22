@@ -206,6 +206,10 @@ std::optional<TCoreType> WaitFlagOp::inferCoreType() {
   return inferCoreTypeBasedOnPipes({p1, p2});
 }
 
+std::optional<TCoreType> TryWaitOp::inferCoreType() {
+  return inferCoreTypeBasedOnPipes({hivm::PIPE::PIPE_S});
+}
+
 std::optional<TCoreType> SyncBlockSetOp::inferCoreType() {
   return getTcoreTypeAttr().getTcoretype();
 }
