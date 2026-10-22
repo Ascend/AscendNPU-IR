@@ -1,11 +1,11 @@
-// RUN: bishengir-opt %s -cse -canonicalize -scf-for-loop-canonicalization  -one-shot-bufferize='bufferize-function-boundaries' -sccp -cse  -scf-for-loop-canonicalization -canonicalize -drop-equivalent-buffer-results -split-input-file | FileCheck %s
+// RUN: bishengir-opt %s -fold-slice-into-scf-for -merge-consecutive-insert-extract-slice -fold-extract-insert-pair -one-shot-bufferize='allow-return-allocs-from-loops bufferize-function-boundaries analysis-heuristic=top-down function-boundary-type-conversion=identity-layout-map unknown-type-conversion=identity-layout-map' -cse -canonicalize -split-input-file | FileCheck %s
 
 // CHECK-LABEL: func.func @test_loop_dominance_1d
 // CHECK-NOT: memref.alloc
 // CHECK-NOT: memref.copy
 #map = affine_map<(d0)[s0] -> (-d0 + s0, 64)>
 module {
-  func.func @test_loop_dominance_1d(%arg0: index, %arg1: tensor<?x128xf32>, %arg2: tensor<?xf32>, %arg3: tensor<?xf32>) -> tensor<?xf32> {
+  func.func @test_loop_dominance_1d(%arg0: index, %arg1: tensor<?x128xf32>, %arg2: tensor<?xf32>, %arg3: tensor<?xf32>) -> (tensor<?xf32>, tensor<?xf32>) {
     %cst = arith.constant dense<1.000000e+00> : vector<64xf32>
     %cst_0 = arith.constant dense<1.000000e-01> : vector<64xf32>
     %cst_1 = arith.constant dense<7.812500e-03> : vector<64xf32>
@@ -14,11 +14,11 @@ module {
     %c1 = arith.constant 1 : index
     %c64 = arith.constant 64 : index
     %c0 = arith.constant 0 : index
-    %0 = scf.for %arg4 = %c0 to %arg0 step %c64 iter_args(%arg5 = %arg3) -> (tensor<?xf32>) {
+    %0:2 = scf.for %arg4 = %c0 to %arg0 step %c64 iter_args(%arg5 = %arg3, %arg10 = %arg2) -> (tensor<?xf32>, tensor<?xf32>) {
       %1 = affine.min #map(%arg4)[%arg0]
       %extracted_slice = tensor.extract_slice %arg5[%arg4] [%1] [1] : tensor<?xf32> to tensor<?xf32>
       %extracted_slice_3 = tensor.extract_slice %arg1[%arg4, 0] [%1, 128] [1, 1] : tensor<?x128xf32> to tensor<?x128xf32>
-      %extracted_slice_4 = tensor.extract_slice %arg2[%arg4] [%1] [1] : tensor<?xf32> to tensor<?xf32>
+      %extracted_slice_4 = tensor.extract_slice %arg10[%arg4] [%1] [1] : tensor<?xf32> to tensor<?xf32>
       %2 = scf.for %arg6 = %c0 to %1 step %c1 iter_args(%arg7 = %extracted_slice_4) -> (tensor<?xf32>) {
         %extracted_slice_5 = tensor.extract_slice %arg7[%arg6] [1] [1] : tensor<?xf32> to tensor<1xf32>
         %10 = vector.transfer_read %extracted_slice_5[%c0], %cst_2 {in_bounds = [true]} : tensor<1xf32>, vector<1xf32>
@@ -41,17 +41,21 @@ module {
       %8 = arith.divf %cst, %7 : vector<64xf32>
       %9 = vector.transfer_write %8, %extracted_slice[%c0], %3 {in_bounds = [true]} : vector<64xf32>, tensor<?xf32>
       %inserted_slice = tensor.insert_slice %9 into %arg5[%arg4] [%1] [1] : tensor<?xf32> into tensor<?xf32>
-      scf.yield %inserted_slice : tensor<?xf32>
+      %inserted_slice_1 = tensor.insert_slice %2 into %arg10[%arg4] [%1] [1] : tensor<?xf32> into tensor<?xf32>
+      scf.yield %inserted_slice, %inserted_slice_1 : tensor<?xf32>, tensor<?xf32>
     }
-    return %0 : tensor<?xf32>
+    return %0#0, %0#1 : tensor<?xf32>, tensor<?xf32>
   }
 }
 
 // -----
+// one-shot-bufferize generates a memref.copy because the inner loop (%2)
+// writes %arg00, but %arg00 is not included in the iter_args of the outer
+// loops (%0 and %1).
 
 // CHECK-LABEL: func.func @test_loop_dominance_2d
-// CHECK-NOT: memref.alloc
-// CHECK-NOT: memref.copy
+// CHECK: memref.alloc
+// CHECK: memref.copy
 module {
     func.func @test_loop_dominance_2d(%arg0: tensor<128x128xf32>, %arg00: tensor<128x128xf32>) -> tensor<128x128xf32> {
         %cst = arith.constant dense<1.000000e+00> : vector<64x64xf32>
@@ -61,7 +65,6 @@ module {
         %c0 = arith.constant 0 : index
         %cst_2 = arith.constant 0.000000e+00 : f32
         %cst_3 = arith.constant dense<2.000000e+00> : tensor<64x64xf32>
-        %empty = tensor.empty() : tensor<64x64xf32>
         %0 = scf.for %arg1 = %c0 to %c128 step %c64 iter_args(%arg2 = %arg0) -> (tensor<128x128xf32>) {
             %1 = scf.for %arg3 = %c0 to %c128 step %c64 iter_args(%arg4 = %arg2) -> (tensor<128x128xf32>) {
                 %extracted_slice = tensor.extract_slice %arg00[%arg1, %arg3] [64, 64] [1, 1] : tensor<128x128xf32> to tensor<64x64xf32>
@@ -86,7 +89,7 @@ module {
 // -----
 
 // CHECK-LABEL: func.func @loop_dominance_2d_with_constant_dim
-func.func @loop_dominance_2d_with_constant_dim(%arg0: tensor<2x8x1024xf16>, %arg1: tensor<2x8xf32>, %arg2: tensor<2x8xf16>) -> tensor<2x8xf16> attributes {hivm.vector_function} {
+func.func @loop_dominance_2d_with_constant_dim(%arg0: tensor<2x8x1024xf16>, %arg1: tensor<2x8xf32>, %arg2: tensor<2x8xf16>) -> (tensor<2x8xf16>, tensor<2x8xf32>) attributes {hivm.vector_function} {
   %c8 = arith.constant 8 : index
   %cst = arith.constant 0.000000e+00 : f32
   %cst_0 = arith.constant 0.000000e+00 : f16
@@ -96,9 +99,9 @@ func.func @loop_dominance_2d_with_constant_dim(%arg0: tensor<2x8x1024xf16>, %arg
   %c64 = arith.constant 64 : index
   %c1024 = arith.constant 1024 : index
   %0 = vector.constant_mask [1, 8] : vector<1x64xi1>
-  %1 = scf.for %arg3 = %c0 to %c2 step %c1 iter_args(%arg4 = %arg2) -> (tensor<2x8xf16>) {
+  %1:2 = scf.for %arg3 = %c0 to %c2 step %c1 iter_args(%arg4 = %arg2, %arg9 = %arg1) -> (tensor<2x8xf16>, tensor<2x8xf32>) {
     %extracted_slice = tensor.extract_slice %arg0[%arg3, 0, 0] [1, 8, 1024] [1, 1, 1] : tensor<2x8x1024xf16> to tensor<1x8x1024xf16>
-    %extracted_slice_1 = tensor.extract_slice %arg1[%arg3, 0] [1, 8] [1, 1] : tensor<2x8xf32> to tensor<1x8xf32>
+    %extracted_slice_1 = tensor.extract_slice %arg9[%arg3, 0] [1, 8] [1, 1] : tensor<2x8xf32> to tensor<1x8xf32>
     // CHECK-NOT: memref.alloc
     // CHECK-NOT: memref.copy
     %2 = scf.for %arg5 = %c0 to %c8 step %c1 iter_args(%arg6 = %extracted_slice_1) -> (tensor<1x8xf32>) {
@@ -120,9 +123,10 @@ func.func @loop_dominance_2d_with_constant_dim(%arg0: tensor<2x8x1024xf16>, %arg
     %4 = arith.truncf %3 {round_mode = #hfusion.round_mode<rint>} : vector<1x64xf32> to vector<1x64xf16>
     %5 = vector.transfer_write %4, %extracted_slice_2[%c0, %c0], %0 {in_bounds = [true, true]} : vector<1x64xf16>, tensor<1x8xf16>
     %inserted_slice = tensor.insert_slice %5 into %arg4[%arg3, 0] [1, 8] [1, 1] : tensor<1x8xf16> into tensor<2x8xf16>
-    scf.yield %inserted_slice : tensor<2x8xf16>
+    %inserted_slice_1 = tensor.insert_slice %2 into %arg9[%arg3, 0] [1, 8] [1, 1] : tensor<1x8xf32> into tensor<2x8xf32>
+    scf.yield %inserted_slice, %inserted_slice_1 : tensor<2x8xf16>, tensor<2x8xf32>
   }
-  return %1 : tensor<2x8xf16>
+  return %1#0, %1#1 : tensor<2x8xf16>, tensor<2x8xf32>
 }
 
 // -----

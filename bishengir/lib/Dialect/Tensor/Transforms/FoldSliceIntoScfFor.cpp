@@ -78,7 +78,8 @@ struct FoldSliceIntoScfForPattern : public OpRewritePattern<scf::ForOp> {
     tensor::InsertSliceOp insertOp = nullptr;
     for (auto *user : forOp.getResult(idx).getUsers()) {
       auto candidate = dyn_cast<tensor::InsertSliceOp>(user);
-      if (candidate && candidate.getDest() == fullTensor &&
+      if (candidate && candidate->getBlock() == forOp->getBlock() &&
+          candidate.getDest() == fullTensor &&
           candidate.getSource() == forOp.getResult(idx) &&
           candidate.getMixedOffsets() == outerExtract.getMixedOffsets() &&
           candidate.getMixedSizes() == outerExtract.getMixedSizes() &&
