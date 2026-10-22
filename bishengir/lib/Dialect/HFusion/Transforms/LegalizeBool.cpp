@@ -29,6 +29,7 @@
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Debug.h"
 
 #define DEBUG_TYPE "hfusion-legalize-bool"
@@ -130,18 +131,77 @@ static Value getPseudoBoolSource(Value val) {
   return {};
 }
 
+// Returns true when `val` is a boolean value that is only represented in i8:
+// a value carrying the pseudo-bool marker, or boolean arithmetic.
 static bool isPseudoBool(Value val) {
-  if (auto defOp = val.getDefiningOp()) {
-    if (hasPseudoBoolAttr(defOp)) {
-      return true;
-    }
+  Operation *defOp = val.getDefiningOp();
+  if (!defOp)
+    return false;
 
-    Value source = getPseudoBoolSource(val);
-    if (source) {
-      return isPseudoBool(source);
-    }
+  if (hasPseudoBoolAttr(defOp))
+    return true;
+
+  Value source = getPseudoBoolSource(val);
+  if (source && isPseudoBool(source))
+    return true;
+
+  if (!isa<arith::AddIOp, arith::SubIOp>(defOp))
+    return false;
+
+  return isPseudoBool(defOp->getOperand(0)) &&
+         isPseudoBool(defOp->getOperand(1));
+}
+
+// Boolean arithmetic and genuine int8 arithmetic are the same at the i8 level.
+// Rewriting them into bitwise logic is only valid when the result is actually
+// consumed as a boolean.
+static bool isConsumedAsBool(Value val);
+
+// A boolean addition/subtraction keeps the boolean property only when both
+// operands are booleans and the result is consumed as one.
+template <typename OpTy> static bool isBoolArithConsumer(OpTy op) {
+  return isPseudoBool(op.getLhs()) && isPseudoBool(op.getRhs()) &&
+         isConsumedAsBool(op.getResult());
+}
+
+// Returns true when every use of `val` still treats it as a boolean value.
+static bool isBoolConsumer(OpOperand &use) {
+  Operation *user = use.getOwner();
+
+  if (isa<annotation::MarkOp>(user))
+    return true;
+
+  if (isa<tensor::ExtractSliceOp, tensor::ExpandShapeOp,
+          tensor::CollapseShapeOp, tensor::ReshapeOp, tensor::CastOp>(user)) {
+    return isConsumedAsBool(user->getResult(0));
   }
+
+  if (auto addOp = dyn_cast<arith::AddIOp>(user))
+    return isBoolArithConsumer(addOp);
+  if (auto subOp = dyn_cast<arith::SubIOp>(user))
+    return isBoolArithConsumer(subOp);
+
+  if (isa<arith::AndIOp, arith::OrIOp, arith::XOrIOp>(user))
+    return true;
+
+  if (auto binaryOp = dyn_cast<hfusion::ElemwiseBinaryOp>(user)) {
+    return binaryOp.getFun() == hfusion::BinaryFn::vand ||
+           binaryOp.getFun() == hfusion::BinaryFn::vor ||
+           binaryOp.getFun() == hfusion::BinaryFn::vxor;
+  }
+
+  // Logical reductions require each element to be canonicalized to {0, 1}.
+  if (auto reduceOp = dyn_cast<linalg::ReduceOp>(user))
+    return reduceOp.isDpsInput(&use);
+
   return false;
+}
+
+static bool isConsumedAsBool(Value val) {
+  if (val.use_empty())
+    return false;
+  return llvm::all_of(val.getUses(),
+                      [](OpOperand &use) { return isBoolConsumer(use); });
 }
 
 // For a, b in {0, 1}: b == 1 gives a % 1 == 0, and b == 0 is undefined
@@ -189,16 +249,11 @@ struct ClampPseudoBoolArithOp : public OpRewritePattern<OpTy> {
 
   LogicalResult matchAndRewrite(OpTy op,
                                 PatternRewriter &rewriter) const override {
-    bool hasPseudoBool = false;
+    // All operands must be boolean
     for (auto operand : op->getOperands()) {
-      if (isPseudoBool(operand)) {
-        hasPseudoBool = true;
-        break;
+      if (!isPseudoBool(operand)) {
+        return failure();
       }
-    }
-
-    if (!hasPseudoBool) {
-      return failure();
     }
 
     // Avoid re-applying normalization to already processed operations
@@ -212,6 +267,12 @@ struct ClampPseudoBoolArithOp : public OpRewritePattern<OpTy> {
 
     auto tensorType = dyn_cast<RankedTensorType>(op->getResult(0).getType());
     if (!tensorType || !tensorType.getElementType().isInteger(8)) {
+      return failure();
+    }
+
+    // Only restore boolean semantics when the result is actually consumed as a
+    // boolean.
+    if (!isConsumedAsBool(op->getResult(0))) {
       return failure();
     }
 
