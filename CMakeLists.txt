@@ -258,6 +258,7 @@ if (BISHENGIR_BUILD_STANDALONE_IR_ONLY)
   HACC
   HFusion
   HIVM
+  HIVMAVE
   MemRef
   MemRefExt
   Scope
