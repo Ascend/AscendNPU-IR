@@ -12,7 +12,6 @@
 #include "bishengir/Dialect/HIVM/Transforms/ConvertLayoutUtils.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -24,7 +23,6 @@
 
 #include <bishengir/Dialect/Tensor/Transforms/PropagateReshape/Utils.h>
 
-#include "bishengir/Dialect/HIVM/Utils/ShapeRegistry.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 
 #define DEBUG_TYPE "hivm-combine-optimized-convert-layout"
@@ -1309,125 +1307,6 @@ struct FoldUninitL1NDConvertToEmptyPattern
   }
 };
 
-/// Returns true if `value` is a view of a buffer. The contents of such a tensor
-/// can be changed by an interleaved memref-level writer, so two copies of it
-/// are not necessarily copies of the same bytes.
-static bool isBufferBackedTensor(Value value) {
-  while (Operation *def = value.getDefiningOp()) {
-    if (isa<bufferization::ToTensorOp>(def))
-      return true;
-    if (auto expand = dyn_cast<tensor::ExpandShapeOp>(def)) {
-      value = expand.getSrc();
-      continue;
-    }
-    if (auto collapse = dyn_cast<tensor::CollapseShapeOp>(def)) {
-      value = collapse.getSrc();
-      continue;
-    }
-    if (auto slice = dyn_cast<tensor::ExtractSliceOp>(def)) {
-      value = slice.getSource();
-      continue;
-    }
-    if (auto castOp = dyn_cast<tensor::CastOp>(def)) {
-      value = castOp.getSource();
-      continue;
-    }
-    return false;
-  }
-  return false;
-}
-
-/// Matches the staging buffer of `copyOp`: a freshly allocated destination that
-/// `copyOp` is the sole writer of and that is read back through a single
-/// `to_tensor` view. Returns that view, and sets `allocOp`, on success.
-static bufferization::ToTensorOp
-getStagingBufferView(CopyOp copyOp, memref::AllocOp &allocOp) {
-  allocOp = copyOp.getDst().getDefiningOp<memref::AllocOp>();
-  if (!allocOp)
-    return nullptr;
-  bufferization::ToTensorOp view = nullptr;
-  for (Operation *user : allocOp->getUsers()) {
-    if (user == copyOp.getOperation())
-      continue;
-    auto toTensor = dyn_cast<bufferization::ToTensorOp>(user);
-    if (!toTensor || view)
-      return nullptr;
-    view = toTensor;
-  }
-  return view;
-}
-
-/// Two inserted stagings are interchangeable when they move the same tensor,
-/// with the same settings, into a buffer of the same type.
-static bool isEquivalentStaging(CopyOp lhs, CopyOp rhs) {
-  return lhs->hasAttr(kInsertedCopyAttr::name) && !lhs.getResultTensor() &&
-         lhs.getSrc() == rhs.getSrc() &&
-         lhs.getDst().getType() == rhs.getDst().getType() &&
-         lhs.getPadValue() == rhs.getPadValue() &&
-         lhs->getAttrDictionary() == rhs->getAttrDictionary();
-}
-
-/// Drop an L1 staging that repeats an earlier one.
-///
-/// The mix-CV load/store inserter stages a vector-side tensor into L1 once per
-/// cube consumer, so a value feeding two `mmadL1` ops gets two L1 buffers and
-/// two copies. CSE unifies the two sources but cannot touch the destinations,
-/// because a copy is a destination-passing-style op, and the duplicate then
-/// survives to the end of the pipeline: the vector core moves the same bytes to
-/// L1 twice and the two matmuls can no longer issue back to back.
-///
-/// ```mlir
-///   %a = memref.alloc() : memref<8x4x16x16xf16, #hivm.address_space<cbuf>>
-///   %va = bufferization.to_tensor %a restrict writable
-///   hivm.hir.copy ins(%src) outs(%a) {"hivm.inserted-copy"}
-///   %b = memref.alloc() : memref<8x4x16x16xf16, #hivm.address_space<cbuf>>
-///   %vb = bufferization.to_tensor %b restrict writable
-///   hivm.hir.copy ins(%src) outs(%b) {"hivm.inserted-copy"}  // erased
-/// ```
-///
-/// after which every reader of `%vb` reads `%va`.
-struct DedupInsertedL1StagingPattern : public OpRewritePattern<CopyOp> {
-  using OpRewritePattern::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(CopyOp copyOp,
-                                PatternRewriter &rewriter) const override {
-    auto parent = copyOp->getParentOfType<func::FuncOp>();
-    if (!parent || !isLoopShapeRegistered(parent.getName()))
-      return rewriter.notifyMatchFailure(copyOp, "kernel is not registered");
-    if (!copyOp->hasAttr(kInsertedCopyAttr::name))
-      return rewriter.notifyMatchFailure(copyOp, "not an inserted staging");
-    if (copyOp.getResultTensor())
-      return rewriter.notifyMatchFailure(copyOp, "has tensor semantics");
-    if (isBufferBackedTensor(copyOp.getSrc()))
-      return rewriter.notifyMatchFailure(copyOp, "source aliases a buffer");
-
-    memref::AllocOp allocOp;
-    bufferization::ToTensorOp view = getStagingBufferView(copyOp, allocOp);
-    if (!view)
-      return rewriter.notifyMatchFailure(copyOp, "buffer is not private");
-
-    for (Operation *prev = copyOp->getPrevNode(); prev;
-         prev = prev->getPrevNode()) {
-      auto prevCopy = dyn_cast<CopyOp>(prev);
-      if (!prevCopy || !isEquivalentStaging(prevCopy, copyOp))
-        continue;
-      memref::AllocOp prevAllocOp;
-      bufferization::ToTensorOp prevView =
-          getStagingBufferView(prevCopy, prevAllocOp);
-      // The earlier view has to dominate every reader of the later one. Being
-      // ahead of it in the same block is enough, and is all this pass sees.
-      if (!prevView || prevView->getBlock() != view->getBlock() ||
-          !prevView->isBeforeInBlock(view))
-        continue;
-      rewriter.eraseOp(copyOp);
-      rewriter.replaceOp(view, prevView.getResult());
-      rewriter.eraseOp(allocOp);
-      return success();
-    }
-    return rewriter.notifyMatchFailure(copyOp, "no earlier equal staging");
-  }
-};
-
 void populateCombineOptimizedConvertLayoutPatterns(RewritePatternSet &patterns,
                                                    MLIRContext *context) {
   ConvertLayoutOp::getCanonicalizationPatterns(patterns, context);
@@ -1441,8 +1320,7 @@ void populateCombineOptimizedConvertLayoutPatterns(RewritePatternSet &patterns,
       FoldConvertLayoutFixpipePattern,
       FoldConvertLayoutExtractSliceFixpipePattern,
       FoldFixpipeStoreConvertLayoutPattern, FoldUninitL1NDConvertToEmptyPattern,
-      RouteVectorFractalizeViaGMPattern, DedupInsertedL1StagingPattern>(
-      context);
+      RouteVectorFractalizeViaGMPattern>(context);
 }
 
 } // namespace

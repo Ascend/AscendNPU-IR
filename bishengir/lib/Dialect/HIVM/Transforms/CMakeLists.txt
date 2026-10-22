@@ -132,7 +132,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   RemoveHIVMDataLayoutAnnotation.cpp
   RemoveCopyOps.cpp
   SetBufferSize.cpp
-  RepositionPreloadWork.cpp
+  SinkExclusivePreloadWork.cpp
   SinkOpToConsumerInLoop.cpp
   SIMTVFSubTiling.cpp
   SplitSimtModule.cpp
