@@ -17,7 +17,6 @@
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
@@ -530,23 +529,6 @@ public:
       : OpRewritePattern<StoreOpType>(ctx), multiBufferNum(multiBufferNum) {}
 };
 
-/// mb=1 preload-local allocs do not rotate. Sink them into the consumer
-/// scope after marks exist. Before CVPipelining there is no preload_num
-/// scope, so this is a no-op on the first MarkMultiBuffer run.
-static void sinkSingleSlotPreloadLocals(func::FuncOp funcOp) {
-  bool hasPreloadScope = false;
-  funcOp.walk([&](scope::ScopeOp scope) {
-    if (scope->hasAttr(hivm::PreloadNumAttr::name))
-      hasPreloadScope = true;
-  });
-  if (!hasPreloadScope)
-    return;
-  SmallVector<scf::ForOp> fors;
-  funcOp.walk([&](scf::ForOp forOp) { fors.push_back(forOp); });
-  for (scf::ForOp forOp : fors)
-    sinkSingleSlotPreloadAllocs(forOp);
-}
-
 void MarkMultiBufferPass::runOnOperation() {
   auto funcOp = getOperation();
   if (!enableAuto) {
@@ -557,12 +539,10 @@ void MarkMultiBufferPass::runOnOperation() {
       patterns.insert<MarkScopeTightlyMultiBuffer>(patterns.getContext());
       patterns.insert<MarkScopeMultiBuffer>(patterns.getContext());
 
-      if (failed(applyPatternsGreedily(funcOp, std::move(patterns)))) {
+      if (failed(applyPatternsGreedily(funcOp, std::move(patterns))))
         signalPassFailure();
-        return;
-      }
     }
-    sinkSingleSlotPreloadLocals(funcOp);
+
     return;
   }
   if (hacc::utils::isHost(funcOp))
@@ -639,11 +619,8 @@ void MarkMultiBufferPass::runOnOperation() {
                     MarkWorkspaceMultiBuffer<hivm::FixpipeOp>>(
         patterns.getContext(), mode.gm);
 
-  if (failed(applyPatternsGreedily(funcOp, std::move(patterns)))) {
+  if (failed(applyPatternsGreedily(funcOp, std::move(patterns))))
     signalPassFailure();
-    return;
-  }
-  sinkSingleSlotPreloadLocals(funcOp);
 }
 } // end anonymous namespace
 
