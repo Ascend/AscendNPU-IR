@@ -91,11 +91,5 @@ def Dav_M300FeatureProfile
 def Dav_C310FeatureProfile
     : ArchitectureFeatureProfile<Dav_C310, [RegBased, Separated,
                                             OnChipSupported]>;
-// dav-920r1 (Ascend960 / A6) follows the dav-c310 reg-based lineage: vector
-// register execution model, separated Cube/Vector cores, and on-chip
-// Cube/Vector data exchange paths (UB <-> L1, Fixpipe -> UB).
-def Dav_920R1FeatureProfile
-    : ArchitectureFeatureProfile<Dav_920R1, [RegBased, Separated,
-                                             OnChipSupported]>;
 
 #endif // BISHENGIR_TARGET_NPU_NPUARCHITECTUREFEATURES_TD

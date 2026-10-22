@@ -12,7 +12,6 @@ def Enabled : EnumArchitectureFeatureValue<NameFeature, "Enabled">;
 def DavC220FeatureProfile : ArchitectureFeatureProfile<Dav_C220, [Enabled]>;
 def DavM300FeatureProfile : ArchitectureFeatureProfile<Dav_M300, [Enabled]>;
 def DavC310FeatureProfile : ArchitectureFeatureProfile<Dav_C310, [Enabled]>;
-def Dav920R1FeatureProfile : ArchitectureFeatureProfile<Dav_920R1, [Enabled]>;
 
 // CHECK: enum class name {
 // CHECK: inline name symbolizename(::llvm::StringRef name) {

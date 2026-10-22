@@ -16,16 +16,13 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HACC/IR/HACC.h"
+#include "bishengir/Dialect/HACC/Targets/NPUTargetSpecUtils.h"
 #include "bishengir/Dialect/HACC/Transforms/Passes.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/Interfaces/DataLayoutInterfaces.h"
-
-#include <cassert>
-
-/// The generated target spec declaration
-#include "bishengir/Dialect/HACC/Targets/NPUTargetSpec.cpp.inc"
+#include "llvm/Support/ErrorHandling.h"
 
 namespace mlir {
 namespace hacc {
@@ -145,8 +142,11 @@ void AppendDeviceSpec::runOnOperation() {
   // Prefer option if there exist one
   TargetDevice finalTarget =
       isKnownTarget(targetFromOption) ? targetFromOption : targetFromIR;
-  const TargetSpec *spec = getTargetSpec(finalTarget).value_or(nullptr);
-  assert(spec && "target device is missing from the target spec table");
+  auto maybeSpec = lookupTargetSpec(finalTarget);
+  if (!maybeSpec.has_value() ||
+      maybeSpec.value()->device == TargetDevice::Unknown)
+    llvm::report_fatal_error("Unknown target device");
+  const TargetSpec *spec = *maybeSpec;
 
   // Override warn
   if (isKnownTarget(targetFromOption) && isKnownTarget(targetFromIR) &&

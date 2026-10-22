@@ -1806,4 +1806,37 @@ def FlattenModule : HIVMPass<"hivm-flatten-module", "ModuleOp"> {
                            "LLVM::LLVMDialect"];
 }
 
+//===----------------------------------------------------------------------===//
+// MIX pipeline passes
+//===----------------------------------------------------------------------===//
+
+def V2SplitKernel : HIVMPass<"hivm-v2-split-kernel", "ModuleOp"> {
+  let summary = "Split a MIX kernel on memref IR";
+  let constructor = "mlir::hivm::createV2SplitKernelPass()";
+  let dependentDialects = ["func::FuncDialect", "hivm::HIVMDialect",
+                           "scf::SCFDialect"];
+  let options = [
+    Option<"ghost", "ghost", "bool", /*default=*/"true",
+           "Keep the MIX function unsplit">
+  ];
+}
+
+def V2VerifyStage : HIVMPass<"hivm-v2-verify-stage", "ModuleOp"> {
+  let summary = "Verify the MIX pipeline stage invariants";
+  let description = [{
+    Debug-only stage checker for the v2 pipeline: asserts that the IR is still
+    tensor/memref, still unsplit, and so on at the requested stage.
+
+    TODO(v2): remove this pass from the final pipeline. It only exists while
+    the v2 stages are being brought up; the stage mechanism is as short-lived
+    as decompose.
+  }];
+  let constructor = "mlir::hivm::createV2VerifyStagePass()";
+  let options = [
+    Option<"stage", "stage", "std::string", /*default=*/"\"tail\"",
+           "Pipeline stage to verify: tensor, bufferized, planned, solved, "
+           "split, tail">
+  ];
+}
+
 #endif // BISHENGIR_DIALECT_HIVM_TRANSFORMS_PASSES_TD

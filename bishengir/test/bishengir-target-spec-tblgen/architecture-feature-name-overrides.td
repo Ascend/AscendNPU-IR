@@ -15,8 +15,6 @@ def LowLatency : EnumArchitectureFeatureValue<URLModeFeature, "LowLatency",
 def DavC220FeatureProfile : ArchitectureFeatureProfile<Dav_C220, [HTTPReady]>;
 def DavM300FeatureProfile : ArchitectureFeatureProfile<Dav_M300, [LowLatency]>;
 def DavC310FeatureProfile : ArchitectureFeatureProfile<Dav_C310, [LowLatency]>;
-def Dav920R1FeatureProfile
-    : ArchitectureFeatureProfile<Dav_920R1, [LowLatency]>;
 
 // CHECK: enum class URLMode {
 // CHECK: case URLMode::kHTTPReady: return "http-ready";

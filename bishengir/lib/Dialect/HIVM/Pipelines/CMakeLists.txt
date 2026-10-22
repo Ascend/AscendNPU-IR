@@ -26,3 +26,4 @@ add_bishengir_dialect_library(BiShengIRHIVMPipelines
 )
 
 add_subdirectory(regbase)
+add_subdirectory(v2)

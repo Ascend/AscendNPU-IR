@@ -108,6 +108,13 @@ def EnableHIVMCompile : FeatureControlOptions<
   "true"
 >;
 
+def UsePipelineVersion : FeatureControlOptions<
+  "Select the HIVM pipeline version: 1 = A5 regbase (default), "
+  "2 = hivm-v2-pipeline.",
+  "int",
+  "1"
+>;
+
 def EnableHfusionCompile : FeatureControlOptions<
   "Enable BiShengHIR HFusion compilation.",
   "bool",
