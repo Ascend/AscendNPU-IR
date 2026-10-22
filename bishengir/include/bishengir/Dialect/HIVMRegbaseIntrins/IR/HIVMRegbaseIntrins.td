@@ -2508,6 +2508,36 @@ class VDintlvInstrOp<string mnemonic> : HIVMRegbaseIntrins_Op<
 
 def VDintlvInstrOp: VDintlvInstrOp<"hivm.vdintlv">;
 
+class VintlvV2InstrOp<string mnemonic> : HIVMRegbaseIntrins_Op<
+                                         /*string opName=*/mnemonic,
+                                         /*list<int> overloadedResults=*/[0],
+                                         /*list<int> overloadedOperands=*/[],
+                                         /*list<Trait> traits=*/[],
+                                         /*int numResults=*/1> {
+  let arguments = (ins ValidVector:$src0,
+                       ValidVector:$src1,
+                       I32:$part
+                       );
+  let results = (outs ValidVector:$res);
+}
+
+def VintlvV2InstrOp: VintlvV2InstrOp<"hivm.vintlvv2">;
+
+class VDintlvV2InstrOp<string mnemonic> : HIVMRegbaseIntrins_Op<
+                                         /*string opName=*/mnemonic,
+                                         /*list<int> overloadedResults=*/[0],
+                                         /*list<int> overloadedOperands=*/[],
+                                         /*list<Trait> traits=*/[],
+                                         /*int numResults=*/1> {
+  let arguments = (ins ValidVector:$src0,
+                       ValidVector:$src1,
+                       I32:$part
+                       );
+  let results = (outs ValidVector:$res);
+}
+
+def VDintlvV2InstrOp: VDintlvV2InstrOp<"hivm.vdintlvv2">;
+
 class PintlvInstrOp<string mnemonic> : HIVMRegbaseIntrins_Op<
                                          /*string opName=*/mnemonic,
                                          /*list<int> overloadedResults=*/[],

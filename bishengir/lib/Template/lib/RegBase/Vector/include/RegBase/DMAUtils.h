@@ -365,21 +365,27 @@ store_ubuf_to_gm_intrin_core(__ubuf__ T *ub_ptr, int64_t ub_offset,
                              uint32_t src_gap, uint64_t dst_gap) {
   constexpr int32_t bytes = sizeof(T);
 #if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201)
-  // dav-920r1: `copy_ubuf_to_gm_align(_v2)` does not support the target
-  // feature and no UB->GM nddma descriptor is available, use a synchronized
-  // scalar store fallback.
-  INTRINSIC(set_flag, PIPE_MTE3, PIPE_S, LIB_EVENT_ID0);
-  INTRINSIC(wait_flag, PIPE_MTE3, PIPE_S, LIB_EVENT_ID0);
-  const uint32_t elems_per_burst = burst_len / bytes;
-  for (uint16_t b = 0; b < burst_cnt; b++) {
-    __ubuf__ T *ub_row =
-        ub_ptr + ub_offset + b * ((burst_len + src_gap) / bytes);
-    __gm__ T *gm_row = gm_ptr + gm_offset + b * ((burst_len + dst_gap) / bytes);
-    for (uint32_t e = 0; e < elems_per_burst; e++)
-      gm_row[e] = ub_row[e];
+  // `copy_ubuf_to_gm_align(_v2)` only has the 12-param form with
+  // rsw_ctrl/rsw_packet_ctrl/rsw_buffset_size/non_eod_ctrl; keep them off to
+  // preserve the plain 8-param semantics.
+  uint8_t l2_cache_ctl = 0;
+  const uint32_t src_stride = src_gap + burst_len;
+  const uint64_t dst_stride = dst_gap + burst_len;
+  if constexpr (bytes == BYTES_B8 || bytes == BYTES_B16 || bytes == BYTES_B32) {
+    INTRINSIC(copy_ubuf_to_gm_align_v2, gm_ptr + gm_offset, ub_ptr + ub_offset,
+              0, burst_cnt, burst_len, /*rsw_ctrl=*/false,
+              /*rsw_packet_ctrl=*/false, /*rsw_buffset_size=*/0, l2_cache_ctl,
+              dst_stride, src_stride, /*non_eod_ctrl=*/false);
+  } else if constexpr (bytes == BYTES_B64) {
+    int32_t factor = 2;
+    INTRINSIC(copy_ubuf_to_gm_align_v2,
+              reinterpret_cast<__gm__ uint32_t *>(gm_ptr) + gm_offset * factor,
+              reinterpret_cast<__ubuf__ uint32_t *>(ub_ptr) +
+                  ub_offset * factor,
+              0, burst_cnt, burst_len, /*rsw_ctrl=*/false,
+              /*rsw_packet_ctrl=*/false, /*rsw_buffset_size=*/0, l2_cache_ctl,
+              dst_stride, src_stride, /*non_eod_ctrl=*/false);
   }
-  INTRINSIC(set_flag, PIPE_S, PIPE_MTE3, LIB_EVENT_ID0);
-  INTRINSIC(wait_flag, PIPE_S, PIPE_MTE3, LIB_EVENT_ID0);
 #else
   uint32_t src_align_gap = src_gap / UB_ALIGN_BYTES;
   if constexpr (bytes == BYTES_B8 || bytes == BYTES_B16 || bytes == BYTES_B32) {
