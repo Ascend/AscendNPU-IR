@@ -1000,8 +1000,28 @@ findAndMergeMultipleExtractUses(transform::TransformRewriter &rewriter,
       rewriter.replaceOp(extractUserOp, newInnerExtractSliceOp);
     }
   }
-  containingForOp->walk(
-      [&](LoopLikeOpInterface loopLike) { moveLoopInvariantCode(loopLike); });
+  // Sink loop-invariant code into the loops that use it. The containing op is
+  // treated specially: the caller is in the middle of fusing producers into
+  // it, and hoisting a producer's slice past its header would leave the
+  // producer with no use inside the container for `FuseIntoContainingOp` to
+  // find. Hold the slices back there and let everything else leave as before.
+  containingForOp->walk([&](LoopLikeOpInterface loopLike) {
+    if (loopLike == containingForOp) {
+      moveLoopInvariantCode(
+          loopLike.getLoopRegions(),
+          [&](Value value, Region *) {
+            return loopLike.isDefinedOutsideOfLoop(value);
+          },
+          [&](Operation *op, Region *) {
+            if (isa<tensor::ExtractSliceOp>(op))
+              return false;
+            return isMemoryEffectFree(op) && isSpeculatable(op);
+          },
+          [&](Operation *op, Region *) { loopLike.moveOutOfLoop(op); });
+      return;
+    }
+    moveLoopInvariantCode(loopLike);
+  });
 }
 
 //===----------------------------------------------------------------------===//

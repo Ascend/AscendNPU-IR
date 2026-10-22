@@ -190,6 +190,10 @@ def TreeReduceV2 : Pass<"tree-reduce-v2", "ModuleOp"> {
            "Rewrite only loops marked for direct register reduction.">,
     Option<"directRegisterRA", "direct-register-ra", "bool", "false",
            "Use the direct balanced register-tree RA lowering.">,
+    Option<"ascendStyleAR", "ascend-style-ar", "bool", "true",
+           "Use the AscendC-style multi-pass in-place folding AR lowering.">,
+    Option<"ascendStyleRA", "ascend-style-ra", "bool", "true",
+           "Use the AscendC-style multi-stage tree-folding RA lowering.">,
     Option<"onlyLegacyScope", "only-legacy-scope", "bool", "false",
            "Rewrite only modules selected for the legacy tree strategy.">,
   ];
@@ -723,11 +727,6 @@ def HFusionGeneralizePass : Pass<"hfusion-generalize", "func::FuncOp"> {
   let dependentDialects = ["linalg::LinalgDialect", "hfusion::HFusionDialect"];
 }
 
-def FoldExtractInsertPair : Pass<"hfusion-fold-extract-insert-pair", "func::FuncOp"> {
-  let summary = "Fold Extract Insert Pair.";
-  let constructor = "mlir::hfusion::createFoldExtractInsertPairPass()";
-}
-
 def PrepareI1Nx1ForVectorization
     : Pass<"hfusion-prepare-i1-nx1-for-vectorization", "func::FuncOp"> {
   let summary = "Collapse Nx1 linalg.generic with expanded i1 input before vectorization";
@@ -757,10 +756,16 @@ def MergeVecScope : Pass<"hfusion-merge-vf", "ModuleOp"> {
 
 def PullSliceIntoVectorFunction
     : Pass<"hfusion-pull-slice-into-vector-function", "ModuleOp"> {
-  let summary = "Pull tensor slice ops into VF callees to reduce buffer copies";
+  let summary = "Pull tensor slice ops and constant scalar fills into VF callees";
+  let description = [{
+    Pull slice operands and matching result insertions into vector functions to
+    reduce buffer copies, and move constant 0-rank tensor fills to the SIMD VF entry
+    when the VF has exactly one direct caller.
+  }];
   let constructor = "mlir::hfusion::createPullSliceIntoVectorFunctionPass()";
   let dependentDialects = ["tensor::TensorDialect", "func::FuncDialect",
-                           "hivm::HIVMDialect", "scf::SCFDialect"];
+                           "hivm::HIVMDialect", "scf::SCFDialect",
+                           "arith::ArithDialect", "vector::VectorDialect"];
 }
 
 def VectorizeOps : Pass<"hfusion-vectorize-ops", "ModuleOp"> {

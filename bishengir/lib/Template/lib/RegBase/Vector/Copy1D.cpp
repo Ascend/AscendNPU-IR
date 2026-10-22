@@ -51,18 +51,8 @@ template <typename T, typename = std::enable_if_t<std::is_same_v<T, int64_t> ||
 __aiv__ __attribute__((always_inline)) void
 align_pad_for_load_b64_1d(memref_t<__ubuf__ T, 1> *dst, int64_t pad_value,
                           int64_t left_padding_num) {
-  const int64_t factor = sizeof(T) / sizeof(uint32_t);
-  int64_t size = dst->sizes[0];
-  constexpr int num_per_block = INTR_BYTES_PER_BLOCK / sizeof(T);
-  int64_t size_aligned = CEIL_FACTOR(size, num_per_block);
-  constexpr int num_per_repeat = INTR_BYTES_PER_REPEAT / sizeof(T);
-  // if size and stride is too high, we cant fit the mask so we shift
-  int64_t padding_shift_count = size_aligned / num_per_repeat;
-  if (size_aligned % num_per_repeat == 0) {
-    padding_shift_count = padding_shift_count - 1;
-  }
-  apply_padding_b64<T, 1>(dst, padding_shift_count * num_per_repeat * factor,
-                          pad_value, /*repeat=*/1, padding_shift_count);
+  apply_padding_b64<T, 1>(dst, left_padding_num,
+                          /*row_base=*/0, pad_value, /*repeat=*/1);
 }
 
 #if BISHENG_TPL_REGBASE

@@ -120,6 +120,18 @@ ARADichotomyParams computeARADichotomy(int64_t s1) {
   return {mainSize, tailSize, dichotomyNum, dichotomyNum + tailSize};
 }
 
+/// Compute the scratch space used by the XOR front-end of reduce_ra0a1.
+std::optional<int64_t> computeRA0A1XorExtraBufferSize(ShapedType srcType,
+                                                      int64_t fallback) {
+  if (srcType.getRank() != 3 || !srcType.hasStaticShape())
+    return fallback;
+
+  int64_t s1 = srcType.getShape()[1];
+  int64_t s2 = srcType.getShape()[2];
+  int64_t numPerBlock = getNumPerBlock(srcType.getElementType());
+  return s1 * ceilFactor(s2, numPerBlock);
+}
+
 /// Compute the extra buffer size for a 3D middle-axis reduce (ARA).
 /// The reduce_ara template has two runtime paths:
 ///   1. Dichotomy: repeatTimes <= s0, uses tmp of (mainSize/2)*s0*alignedS2
@@ -585,6 +597,8 @@ getExtraBufferSizeForReduceOpSingleDim(Operation *op, BufferSizeUnit unit,
       int64_t elementPerBlock =
           vectorBlockSizeBit / srcType.getElementTypeBitWidth();
       int64_t baseline = srcAllocTotalSize.value() + elementPerBlock;
+      if (srcType.getRank() == 3 && reductionDim == 0)
+        return computeRA0A1XorExtraBufferSize(srcType, baseline);
       return computeARAExtraBufferSize(srcType, baseline, /*isXor=*/true);
     }
     // reduce_xor last axis reduce(R/AR)

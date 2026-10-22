@@ -394,7 +394,7 @@ static void
 hfusionAutoVectorizePipeline(OpPassManager &pm,
                              const HFusionPipelineOptions &hfusionOptions) {
   canonicalizationPipeline(pm, hfusionOptions);
-  pm.nest<func::FuncOp>().addPass(createFoldExtractInsertPairPass());
+  pm.nest<func::FuncOp>().addPass(tensor::createFoldExtractInsertPairPass());
   pm.nest<func::FuncOp>().addPass(hivm::createSinkOpToConsumerInLoopPass());
   hfusionVectorizeManualScopePipeline(pm, hfusionOptions);
   // Prepare tree reduce options for RA / AR control.

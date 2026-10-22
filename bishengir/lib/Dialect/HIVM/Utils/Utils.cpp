@@ -1611,11 +1611,7 @@ computeCollapsedLayoutMap(MemRefType srcType,
   int64_t srcOffset;
   SmallVector<int64_t> srcStrides;
   auto srcShape = srcType.getShape();
-#ifndef __LLVM_MAJOR_VERSION_21_COMPATIBLE__
-  if (failed(getStridesAndOffset(srcType, srcStrides, srcOffset)))
-#else
-  if (failed(srcType.getStridesAndOffset(srcStrides, srcOffset)))
-#endif
+  if (failed(utils::getStridesAndOffsetCompat(srcType, srcStrides, srcOffset)))
     return failure();
 
   // The result stride of a reassociation group is the stride of the last
@@ -1741,11 +1737,7 @@ bool isLastDimContiguous(Value operand) {
 
   auto mem = cast<MemRefType>(operType);
   auto shape = mem.getShape();
-#ifndef __LLVM_MAJOR_VERSION_21_COMPATIBLE__
-  auto [strides, offset] = getStridesAndOffset(mem);
-#else
-  auto [strides, offset] = mem.getStridesAndOffset();
-#endif
+  auto [strides, offset] = utils::getStridesAndOffsetCompat(mem);
   assert(!strides.empty() && "strides should not be empty.");
 
   return *shape.rbegin() == 1 || *strides.rbegin() == 1;
@@ -1819,6 +1811,26 @@ bool isOneDimLikeVecType(VectorType vecType) {
       return false;
   }
   return true;
+}
+
+bool isBeforeInMemoryView(Operation *before, Operation *after) {
+  auto moduleOp = utils::getTopLevelModuleOp(before);
+  // Cache before's parentOps and blocks.
+  DenseMap<Block *, Operation *> block2Op;
+  for (Operation *beforeParentOp = before; beforeParentOp != moduleOp;
+       beforeParentOp = beforeParentOp->getParentOp()) {
+    block2Op.try_emplace(beforeParentOp->getBlock(), beforeParentOp);
+  }
+  for (Operation *afterParentOp = after; afterParentOp != moduleOp;
+       afterParentOp = afterParentOp->getParentOp()) {
+    auto it = block2Op.find(afterParentOp->getBlock());
+    // Check if after and before has same min ParentBlock.
+    if (it != block2Op.end()) {
+      auto *beforeParentOp = it->second;
+      return beforeParentOp->isBeforeInBlock(afterParentOp);
+    }
+  }
+  return false;
 }
 
 static bool canCombineOneSide(const SmallVectorImpl<MemRefType> &memrefTypes,

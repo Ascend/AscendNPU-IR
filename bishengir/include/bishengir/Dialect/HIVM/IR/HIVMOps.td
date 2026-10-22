@@ -927,6 +927,8 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
           "__builtin_proton_get_sys_cnt";
       static constexpr StringLiteral kBuiltinProtonCircularStoreName =
           "__builtin_proton_circular_store";
+      static constexpr StringLiteral kBuiltinProtonScopeBoundaryName =
+          "__builtin_proton_scope_boundary";
 
       static constexpr StringLiteral kExtraAttrName = "extra_attr";
 

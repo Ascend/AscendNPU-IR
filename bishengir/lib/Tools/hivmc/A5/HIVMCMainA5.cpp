@@ -145,9 +145,13 @@ compileDeviceKernel(StringRef bishengPath, const std::string &llvmirFilepath,
   arguments.push_back(llvmirFilepath);
   arguments.push_back("-o");
   arguments.push_back(outputBin);
-  std::string archBase = hacc::utils::isAscend950(config.getTargetBackend())
-                             ? "dav-c310"
-                             : "dav-c220";
+  std::string archBase;
+  if (hacc::utils::isAscend960(config.getTargetBackend()))
+    archBase = "dav-920r1";
+  else if (hacc::utils::isAscend950(config.getTargetBackend()))
+    archBase = "dav-c310";
+  else
+    archBase = "dav-c220";
   std::string archSuffix =
       (coreType == SubCoreTarget::AIC || coreType == SubCoreTarget::MIX_AIC)
           ? "-cube"
@@ -205,7 +209,8 @@ compileDeviceKernel(StringRef bishengPath, const std::string &llvmirFilepath,
   // kernel during device compilation.
   arguments.push_back("-mllvm");
   arguments.push_back("-enable-module-inliner");
-  if (hacc::utils::isAscend950(config.getTargetBackend())) {
+  if (hacc::utils::isAscend950(config.getTargetBackend()) ||
+      hacc::utils::isAscend960(config.getTargetBackend())) {
     arguments.push_back("-mllvm");
     arguments.push_back("-cce-vf-aa-between-iters=true");
     arguments.push_back("-mllvm");
@@ -490,6 +495,14 @@ translateDeviceKernelToLLVM(const SmallVector<ModuleOp, 2> &modulesToLower,
     // ModuleOp if hacc's attr exists
     // because hacc dialect has the LLVMTranslationDialectInterface.
     m->removeAttr(hacc::TargetAttr::name);
+    // Some target toolchains register the v2 forms of certain vector
+    // intrinsics (e.g. llvm.hivm.vdintlvv2) instead of the plain ones. Tag
+    // the module so the HIVMRegbaseIntrins translation can branch on it. The
+    // hivm_regbaseintrins.target function attribute cannot be used here
+    // because both affected targets share the same attribute value.
+    if (hacc::utils::isAscend960(config.getTargetBackend()))
+      m->setAttr(hivm_regbaseintrins::kDavinciV2IntrinsicsModuleAttrName,
+                 mlir::UnitAttr::get(m->getContext()));
     std::unique_ptr<llvm::Module> llvmModule =
         translateModuleToLLVMIR(m, llvmContext);
     if (!llvmModule) {

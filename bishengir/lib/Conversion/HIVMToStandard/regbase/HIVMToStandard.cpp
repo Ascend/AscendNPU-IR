@@ -147,7 +147,8 @@ static func::CallOp createLibCall(PatternRewriter &rewriter, Operation *op,
     // type of original op.
     std::optional<hivm::TFuncCoreType> funcCoreType;
     if (llvm::StringRef(libCallName).starts_with("_mlir_ciface_init_debug") ||
-        llvm::StringRef(libCallName).starts_with("_mlir_ciface_finish_debug")) {
+        llvm::StringRef(libCallName).starts_with("_mlir_ciface_finish_debug") ||
+        llvm::StringRef(libCallName).starts_with("proton_scope_boundary")) {
       funcCoreType = hivm::TFuncCoreType::AIC_OR_AIV;
     } else if (auto infer = dyn_cast<CoreTypeInterface>(op)) {
       auto coreTypeMaybe = infer.getCoreType();

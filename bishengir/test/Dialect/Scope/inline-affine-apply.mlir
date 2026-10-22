@@ -1,4 +1,4 @@
-// RUN: bishengir-opt %s --inline-scope --split-input-file | FileCheck %s --check-prefix=DEFAULT
+// RUN: bishengir-opt %s --inline-scope --inline --split-input-file | FileCheck %s --check-prefix=DEFAULT
 // RUN: bishengir-opt %s --inline-scope='lower-affine-apply-for-inlining=true' --split-input-file | FileCheck %s --check-prefix=LOWER
 
 // A helper called from SCF must inline without lowering affine in the caller.

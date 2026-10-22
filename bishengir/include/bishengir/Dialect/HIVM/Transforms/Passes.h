@@ -225,6 +225,12 @@ std::unique_ptr<Pass> createHoistTightlyCoupledAllocPass();
 std::unique_ptr<Pass>
 createMarkRealCoreTypePass(const MarkRealCoreTypeOptions &options = {});
 
+// Aiv substitute for hivm-mark-real-core-type. The mix path clones the
+// module and splits it to learn CUBE vs VECTOR. Pure AIV has no cube side,
+// so this stamps VECTOR on the same scalar-pipe ops, or removes those attrs
+// when the skipped pass is the cleanup invocation.
+LogicalResult substituteMarkRealCoreType(Operation *op, const Pass &pass);
+
 // Create a pass to run the HIVM canonicalization pass pipeline on a function.
 std::unique_ptr<Pass> createHIVMCanonicalizationPipelinePass();
 
@@ -289,6 +295,12 @@ std::unique_ptr<Pass> createLiftZeroRankPass();
 // Create a pass to insert load/store op for mix cv function.
 std::unique_ptr<Pass> createInsertLoadStoreForMixCVPass(
     const InsertLoadStoreForMixCVOptions &options = {});
+
+// Aiv substitute for hivm-insert-load-store-for-mix-cv. The mix path
+// inserts cube/vector boundary copies. Pure AIV still needs the VECTOR
+// core type that pass would have written, without those copies.
+LogicalResult substituteInsertLoadStoreForMixCV(Operation *op,
+                                                const Pass &pass);
 
 std::unique_ptr<Pass> createInsertLoadStoreForScalarPass();
 

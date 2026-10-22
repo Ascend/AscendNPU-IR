@@ -31,7 +31,7 @@ AscendNPU IR已为上游模型支持丰富的算子集合。但部分业务场�
 | `VFMode` | 在向量单元上的运行模式 | 参见`VFModeAttr`。当核类型为Cube时此属性被忽略。注意：内置算子可指定或不指定，编译器会检查正确性并规范化 |
 | `Symbol` | 实现函数的名称 | - |
 | `sync_event_slots` | Macro自定义算子的同步槽位元信息。`GraphSyncSolver`会据此填充`sync_related_args`，并在macro前后注入`set/wait flag`。 | 列表长度必须与macro实现体内、同一Pipe对上的`set_flag`/`wait_flag`对数一致。详见[Macro sync_event_slots](#macro算子同步槽位sync_event_slots) |
-| `iterator_types` | 逐操作数的迭代器语义，供结构化降级与flatten类Pass使用（`HIVM_IteratorTypeAttr`） | 可选；设置时长度应覆盖参与tiling的输入与输出 |
+| `iterator_types` | 各迭代维的迭代器类型，供结构化降级、切分与flatten类Pass使用（`HIVM_IteratorTypeAttr`） | 可选；数组长度为迭代空间的维数，参与子块切分时需与各索引映射的输入维数一致 |
 | `indexing_map` | 逐操作数的仿射索引映射（与Linalg的`indexing_maps`作用相同） | 可选，类型为`ArrayAttr<AffineMapAttr>` |
 | `max_rank` | flatten/布局类Pass支持的最大张量秩 | 可选`i64`属性，默认值5 |
 | `align_dim` | 逐操作数的维度对齐提示 | 通过`arg_attrs`挂在对应操作数上 |
@@ -39,7 +39,7 @@ AscendNPU IR已为上游模型支持丰富的算子集合。但部分业务场�
 | `extra_buffers_types` | 临时buffer的元素类型 | 由`hivm-alloc-extra-buffer` Pass分配`memref`并追加到`temp_buffers`（汇编中为`tmps`） |
 | `extra_buffers_sizes` | 临时buffer的一维大小（元素个数） | 同上 |
 | `temp_buffers` | 传给设备实现的临时`memref`（`tmps`操作数段） | 通常由`extra_buffers_*`属性自动填充，无需手动设置 |
-| `no_side_effect` | 表示算子无副作用 | - |
+| `no_side_effect` | 表示算子除读取声明的输入、写入声明的输出外，没有其他副作用 | 设置后仍保留对声明输出的写入语义 |
 | `bitcode` / `source` / `compile` | 实现产物路径及可选编译命令 | 通常由Triton前端设置 |
 
 ## 降级流程
@@ -75,12 +75,12 @@ AscendNPU IR已为上游模型支持丰富的算子集合。但部分业务场�
 | VFMode | 自定义算子在向量核上的运行模式：SIMT/SIMD/MIX |
 | Symbol | 使用者提供的函数名称 |
 | sync_event_slots | Macro同步槽位声明，用于GraphSyncSolver集成 |
-| iterator_types | Tiling / flatten的逐操作数迭代器语义 |
+| iterator_types | 切分与flatten所需的各迭代维类型 |
 | indexing_map | 结构化降级的逐操作数仿射映射 |
 | max_rank | 布局Pass支持的最大张量秩（默认5） |
 | align_dim / arg_attrs | 对齐调整Pass的逐操作数对齐提示 |
 | extra_buffers_* / tmps | 临时buffer声明与分配 |
-| no_side_effect | 纯算子标记，便于优化 |
+| no_side_effect | 无额外副作用标记，便于优化，仍允许写入声明的输出 |
 | 内置算子 | 一组内置算子（名称预留） |
 
 ## 限制约束
@@ -240,32 +240,6 @@ class tiled_custom_op:
         ]
 ```
 
-#### Sub-Block切分支持
-
-对于AIV函数，`hivm-bind-sub-block` Pass可根据`iterator_types`和
-`indexing_map`，将CustomOp的`parallel`迭代维分配到两个sub-block执行。各
-operand是否随之缩小由对应的`indexing_map`决定；broadcast维和仅用于reduction
-的维保持全量。
-
-当前参与sub-block切分的CustomOp需满足：
-
-- result最终流向Store/Copy类算子；暂不支持没有此类下游消费路径的leaf
-  CustomOp；
-- 设置`no_side_effect`，且为非builtin，不使用`temp_buffers`或
-  `extra_buffers_*`；CustomMacroOp还不能携带同步元信息；
-- tensor input、output(init)和result为`RankedTensorType`，tile size静态可知；
-  scalar input原样传递，当前不支持`memref` input；
-- `iterator_types`和`indexing_map`必须同时提供；任一属性为空时不参与
-  sub-block切分；
-- `indexing_map`仅使用按原顺序出现且不重复的迭代维，或以常量`0`表示input
-  broadcast；被切分的维必须是`parallel`，reduction维保持全量；
-- output(init)与对应result具有相同shape和`indexing_map`，不使用broadcast；
-  multi-result CustomOp的所有result使用相同tile类型并流向受支持的消费路径。
-
-不满足条件时，Pass会保留全量计算或回退到1:1执行。该优化不会改变CustomOp的
-外部kernel接口；切分后，两个sub-block仍调用同一个kernel，分别处理不同的数据
-分片。
-
 #### 操作数对齐属性（align_dim、arg_attrs）
 
 `align_dim`用于标记指定操作数需要对齐的维度。在MLIR中，该属性通过`arg_attrs`挂载到对应索引的操作数上，示例如下：
@@ -324,12 +298,32 @@ class my_custom_op_extra_buf:
 
 #### no_side_effect
 
-该属性用于标记仅读取输入、仅写入声明输出的纯算子，示例如下：
+该属性表示算子仅读取声明的输入、仅写入声明的输出，不产生其他副作用。完成缓冲化后，算子仍会写入输出缓冲区，编译器会保留读写副作用信息，避免算子被错误删除，并维持其与下游算子的执行顺序。示例如下：
 
 ```mlir
 %0 = hivm.hir.custom {no_side_effect, symbol = "pure_kernel", ...}
     "pure_op" ins(...) outs(...) -> ...
 ```
+
+### Sub-Block 切分
+
+在混合核（MIX）场景下，对于标记为`hivm.part_of_mix`的AIV函数，`hivm-bind-sub-block` Pass可根据自定义算子的`iterator_types`和`indexing_map`沿`parallel`迭代维对计算进行切分，并将不同的数据分片分配到两个Sub-Block上执行。
+
+普通自定义算子和Macro自定义算子均可参与Sub-Block切分。各操作数是否随计算一起切分由对应的`indexing_map`决定，广播维、归约维以及其他未参与切分的维度保持原有范围。
+
+使用该能力时，自定义算子需满足以下条件：
+
+- 必须同时提供非空的`iterator_types`和`indexing_map`。`indexing_map`需为每个输入和输出操作数提供对应的索引映射，各映射的输入维数需等于`iterator_types`的长度，张量索引映射的结果数需等于对应张量的秩。
+- 被切分的结果维必须映射到`parallel`类型的迭代维。当前索引映射仅支持按原顺序排列且不重复的迭代维，以及表示广播维的常量`0`。
+- 算子需设置`no_side_effect`属性，且当前不支持使用`temp_buffers`或`extra_buffers_*`的自定义算子参与切分。普通自定义算子还需为非内置算子。
+- Macro自定义算子的同步槽位`sync_event_slots`和同步参数`sync_related_args`均需为空。
+- 张量输入、用于初始化输出的操作数和计算结果均需为`RankedTensorType`类型。切片各维的大小以及输入中保留完整范围的维度大小需在编译时确定，切片步长需为`1`。标量输入会原样传递，当前不支持`memref`类型的输入。
+- 用于初始化输出的操作数需与计算结果一一对应，并具有相同的形状和索引映射。对于多结果算子，所有结果及对应输出的形状和索引映射均需一致，各结果切分后的张量类型也需相同。
+- 各计算结果均需进入受支持的下游切分路径，例如由`StoreOp`、`CopyOp`使用。暂不支持未使用的结果，以及同一结果仍被未参与切分的路径使用或需要生成多个独立切片的情况。
+
+除上述算子级条件外，函数整体还需满足`hivm-bind-sub-block` Pass的切分要求，例如存在满足切分条件的并行维。条件不满足时，自定义算子保持未切分状态。
+
+切分后，两个Sub-Block仍调用同一个设备内核实现函数，分别处理各自的数据分片，无需修改自定义算子的调用接口。
 
 <!-- npu="A3,910b" id1 -->
 ### Triton自定义算子示例

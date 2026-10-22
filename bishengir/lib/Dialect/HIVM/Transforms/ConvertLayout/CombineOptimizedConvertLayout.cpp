@@ -142,8 +142,7 @@ LogicalResult verifyNCHWLoad(LoadOp loadOp, PatternRewriter &rewriter,
   (void)offset;
   int64_t expectedStride = 1;
   for (int64_t dim = 3; dim >= 0; --dim) {
-    if (ShapedType::isDynamic(strides[dim]) ||
-        strides[dim] != expectedStride)
+    if (ShapedType::isDynamic(strides[dim]) || strides[dim] != expectedStride)
       return rewriter.notifyMatchFailure(op,
                                          "load source is not contiguous NCHW");
     expectedStride *= srcType.getDimSize(dim);
@@ -526,8 +525,7 @@ struct FoldDirectLoadToNCHW2NC1HWC0Pattern
   LogicalResult matchAndRewrite(ConvertLayoutOp op,
                                 PatternRewriter &rewriter) const override {
     if (!isNCHW2NC1HWC0Conversion(op))
-      return rewriter.notifyMatchFailure(op,
-                                         "not an NCHW→NC1HWC0 conversion");
+      return rewriter.notifyMatchFailure(op, "not an NCHW→NC1HWC0 conversion");
     ModuleOp module = op->getParentOfType<ModuleOp>();
     if (!module || !hacc::utils::isAscend950(module))
       return rewriter.notifyMatchFailure(op, "not an A5 target");
@@ -541,12 +539,11 @@ struct FoldDirectLoadToNCHW2NC1HWC0Pattern
         op->getDiscardableAttr(kConvolutionGroupsAttrName));
     int64_t groups = groupsAttr ? groupsAttr.getInt() : 1;
     auto createFusedDma = [groups](PatternRewriter &rewriter, Location loc,
-                                  LoadOp, Value src, Value dst) {
+                                   LoadOp, Value src, Value dst) {
       rewriter.create<NCHW2NC1HWC0Op>(loc, src, dst,
                                       rewriter.getI64IntegerAttr(groups));
     };
-    return rewriteDirectLoadConvertLayout(op, rewriter, *match,
-                                          createFusedDma);
+    return rewriteDirectLoadConvertLayout(op, rewriter, *match, createFusedDma);
   }
 };
 
@@ -557,8 +554,7 @@ struct FoldDirectLoadToNCHW2C1HWNC0Pattern
   LogicalResult matchAndRewrite(ConvertLayoutOp op,
                                 PatternRewriter &rewriter) const override {
     if (!isNCHW2C1HWNC0Conversion(op))
-      return rewriter.notifyMatchFailure(op,
-                                         "not an NCHW→C1HWNC0 conversion");
+      return rewriter.notifyMatchFailure(op, "not an NCHW→C1HWNC0 conversion");
     ModuleOp module = op->getParentOfType<ModuleOp>();
     if (!module || !hacc::utils::isAscend950(module))
       return rewriter.notifyMatchFailure(op, "not an A5 target");
@@ -572,12 +568,11 @@ struct FoldDirectLoadToNCHW2C1HWNC0Pattern
         op->getDiscardableAttr(kConvolutionGroupsAttrName));
     int64_t groups = groupsAttr ? groupsAttr.getInt() : 1;
     auto createFusedDma = [groups](PatternRewriter &rewriter, Location loc,
-                                  LoadOp, Value src, Value dst) {
+                                   LoadOp, Value src, Value dst) {
       rewriter.create<NCHW2C1HWNC0Op>(loc, src, dst,
                                       rewriter.getI64IntegerAttr(groups));
     };
-    return rewriteDirectLoadConvertLayout(op, rewriter, *match,
-                                          createFusedDma);
+    return rewriteDirectLoadConvertLayout(op, rewriter, *match, createFusedDma);
   }
 };
 

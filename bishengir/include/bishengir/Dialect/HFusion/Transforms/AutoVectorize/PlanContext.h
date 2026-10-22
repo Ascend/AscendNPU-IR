@@ -12,7 +12,9 @@
 
 #include "bishengir/Dialect/Analysis/VFFusion/VFStackInfo.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoVectorize/FusedNode.h"
+#include "bishengir/Dialect/HFusion/Transforms/AutoVectorize/FusionUnit.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoVectorize/FusionUtils.h"
+#include "bishengir/Dialect/HFusion/Transforms/AutoVectorize/Ordering/OrderingConstraint.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoVectorize/RetriedOptions.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "llvm/ADT/MapVector.h"
@@ -25,9 +27,6 @@ namespace hfusion {
 // Every fusable op(including LinalgOp and interleave/deinterleave) corresponds
 // to a FusableOpInfo.
 struct FusableOpInfo {
-  template <typename PivotTy>
-  using ConflictPivotMap = DenseMap<Operation *, DenseSet<PivotTy>>;
-
   std::string label;
   int64_t numLoops = 0;
   unsigned numReductionLoops = 0;
@@ -35,13 +34,10 @@ struct FusableOpInfo {
   SmallVector<int64_t> tileSize;
   SmallVector<int64_t> tileInterchange;
   unsigned maxElemBitWidth = 1;
-  // TODO: Conflict storage (copy/sync/op/group) currently lives in PlanContext
-  // for convenience. Move to a dedicated ConflictTracker class to separate plan
-  // state from conflict tracking, making incremental update semantics clearer.
+  // Copy/sync conflicts are still tracked as op sets; op/group conflicts are
+  // now derived from OrderingConstraint (see computeConflictLists).
   DenseSet<Operation *> copyConflicts;
   DenseSet<Operation *> syncConflicts;
-  ConflictPivotMap<Operation *> opConflicts;
-  ConflictPivotMap<const FusedNode *> groupConflicts;
   std::shared_ptr<FusedNode> fusedNode = nullptr;
 };
 
@@ -61,6 +57,8 @@ class PlanContext {
   llvm::MapVector<Operation *, FusableOpInfo> opInfoMap;
 
   SmallVector<std::shared_ptr<FusedNode>> fusedNodesInBlock;
+
+  OrderingConstraint orderingConstraint;
 
 public:
   PlanContext(const RetriedOptions &options,
@@ -114,6 +112,17 @@ public:
     return hasOpInfo(op) ? getInfo(op).fusedNode.get() : nullptr;
   }
 
+  // Resolve an op to the ordering unit currently containing it: its FusedNode
+  // once fused, the standalone op otherwise.
+  FusionUnit getUnit(Operation *op) const {
+    if (const FusedNode *node = tryGetNode(op))
+      return FusionUnit(node);
+    return FusionUnit(op);
+  }
+
+  OrderingConstraint &constraint() { return orderingConstraint; }
+  const OrderingConstraint &constraint() const { return orderingConstraint; }
+
   // Populate op info from `func`: label fusable ops, compute shapes, build
   // conflict lists. This is the main entry point for initializing PlanContext
   // from a device function before fusion planning.
@@ -124,13 +133,6 @@ public:
 
   void addSyncConflict(Operation *a, Operation *b);
   void addCopyConflict(Operation *a, Operation *b);
-  void addOpConflict(Operation *a, Operation *b, Operation *pivot);
-  void addGroupConflict(Operation *a, Operation *b, const FusedNode *pivot);
-
-  bool hasConflict(Operation *a, Operation *b) const;
-  bool hasConflict(const FusableOpInfo &a, Operation *b) const;
-
-  void dissolvePivot(Operation *newOp, const FusedNode *node, Block *block);
 
 private:
   // Register a fusable op with its label; computes numLoops/shape/bitWidth.

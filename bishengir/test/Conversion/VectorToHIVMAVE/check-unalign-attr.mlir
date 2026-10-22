@@ -310,3 +310,20 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     return %1 : vector<64xf32>
   }
 }
+
+// Expanding a subview with an aligned offset preserves load/store alignment.
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  // CHECK-LABEL: func.func @aligned_offset_expand(
+  // CHECK: %[[ALIGNED_OFFSET_EXPAND:.*]] = memref.expand_shape
+  // CHECK: ave.hir.vload <NORM> %[[ALIGNED_OFFSET_EXPAND]][%c0, %c0] : memref<1x64xf32
+  // CHECK: ave.hir.masked_store <NORM_B32> %[[ALIGNED_OFFSET_EXPAND]][%c0, %c0], %{{.*}}, %{{.*}} : memref<1x64xf32
+  func.func @aligned_offset_expand(%base: memref<128xf32, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
+    %c0 = arith.constant 0 : index
+    %zero = arith.constant 0.0 : f32
+    %view = memref.subview %base[64] [64] [1] : memref<128xf32, #hivm.address_space<ub>> to memref<64xf32, strided<[1], offset: 64>, #hivm.address_space<ub>>
+    %expanded = memref.expand_shape %view [[0, 1]] output_shape [1, 64] : memref<64xf32, strided<[1], offset: 64>, #hivm.address_space<ub>> into memref<1x64xf32, strided<[64, 1], offset: 64>, #hivm.address_space<ub>>
+    %value = vector.transfer_read %expanded[%c0, %c0], %zero {in_bounds = [true, true]} : memref<1x64xf32, strided<[64, 1], offset: 64>, #hivm.address_space<ub>>, vector<1x64xf32>
+    vector.transfer_write %value, %expanded[%c0, %c0] {in_bounds = [true, true]} : vector<1x64xf32>, memref<1x64xf32, strided<[64, 1], offset: 64>, #hivm.address_space<ub>>
+    return
+  }
+}

@@ -402,6 +402,8 @@ bool shouldApplyFlattenOpsPass(func::FuncOp);
 
 bool isFromFunctionArg(mlir::Value v);
 
+bool isSIMDVectorFunction(Operation *op);
+
 } // namespace util
 
 namespace trig {

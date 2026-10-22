@@ -17,6 +17,9 @@ add_bishengir_dialect_library(BiShengIRHFusionTransforms
   AutoVectorize/FusedNode.cpp
   AutoVectorize/FusionUtils.cpp
   AutoVectorize/PlanContext.cpp
+  AutoVectorize/Ordering/OrderingConstraint.cpp
+  AutoVectorize/Ordering/Rule/SsaOrderingRule.cpp
+  AutoVectorize/Ordering/Rule/MemrefValueFlowOrderingRule.cpp
   AutoVectorize/Verify.cpp
   AutoVectorizeV2.cpp
   AutoVectorizeVerifier.cpp
@@ -33,8 +36,6 @@ add_bishengir_dialect_library(BiShengIRHFusionTransforms
   DropSymbols.cpp
   EliminateDuplicateFuncs.cpp
   FlattenOps.cpp
-  FoldExtractInsertPair.cpp
-  FoldExtractInsertPair.cpp
   FoldUnitDims.cpp
   FoldSymbolicDim.cpp
   GenericUnroller.cpp

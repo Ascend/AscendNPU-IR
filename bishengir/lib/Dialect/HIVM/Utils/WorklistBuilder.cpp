@@ -1036,7 +1036,7 @@ void WorklistBuilder::populateLoopCarriedDependencies() {
       Operation *yieldedOp = yieldedVal.getDefiningOp();
       while (!userTraceStack.empty()) {
         Operation *op = userTraceStack.pop_back_val();
-        if (!isCoreOp(*op))
+        if (!(isCoreOp(*op) || isa<BitcastOp>(op)))
           continue;
         auto it = dependenceMap.find(op);
         if (yieldedOp && it != dependenceMap.end() && it->second &&
@@ -1090,7 +1090,8 @@ void WorklistBuilder::collectLoopCarriedDependentOps() {
     if (!visited.insert(op).second)
       continue;
 
-    if (isCoreOp(*op)) {
+    const bool isLoopCarriedTrackedOp = isCoreOp(*op) || isa<BitcastOp>(op);
+    if (isLoopCarriedTrackedOp) {
       if (!isLoadLikeOp(op) ||
           !(enableLazyLoading || shouldLazyLoadFor(op).value_or(false)))
         loopCarriedDependentOps.insert(op);
@@ -1446,7 +1447,7 @@ WorklistBuilder::populateWorkItem(SmallVector<Operation *> &availableOps,
   if (traceDependentOps(*item).failed())
     return failure();
 
-  if (isLoopMode) {
+  if (isLoopMode && useLcdBackup) {
     item->hasLoopCarriedDep = llvm::any_of(item->ops, [&](Operation *op) {
       return loopCarriedDependentOps.contains(op);
     });
@@ -1464,6 +1465,22 @@ WorklistBuilder::populateWorkItem(SmallVector<Operation *> &availableOps,
 
   worklist.push_back(item);
   return success();
+}
+
+static TCoreType inferBitcastOpCoreType(BitcastOp op) {
+  // A bitcast only reinterprets the element type of its operand; it neither
+  // moves data nor changes the memory scope, so it carries no core type of its
+  // own. Infer the core type from the consumers of the result: if any consumer
+  // resolves to a definite VECTOR or CUBE core op, the bitcast runs on the same
+  // core. Otherwise it stays CUBE_OR_VECTOR and is resolved later.
+  for (Operation *user : op.getResult().getUsers()) {
+    TCoreType userCoreType =
+        queryCoreTypeHelper(user).value_or(TCoreType::CUBE_OR_VECTOR);
+
+    if (userCoreType == TCoreType::VECTOR || userCoreType == TCoreType::CUBE)
+      return userCoreType;
+  }
+  return TCoreType::CUBE_OR_VECTOR;
 }
 
 /// Find ops that have no dependencies; can be executed if all other previously
@@ -1500,11 +1517,15 @@ WorklistBuilder::extractAvailableOps(SmallVector<Operation *> &extractedOps,
                               ? TCoreType::VECTOR
                               : TCoreType::CUBE_OR_VECTOR;
     if (maybeCore == hivm::TCoreType::CUBE_OR_VECTOR) {
-      if (!isCoreOp(op) || isLoadLikeOp(&op))
+      if (!(isCoreOp(op) ||
+            (isa<BitcastOp>(&op) && loopCarriedDependentOps.contains(&op))) ||
+          isLoadLikeOp(&op))
         continue;
       maybeCore = queryCoreTypeHelper(&op).value_or(TCoreType::CUBE_OR_VECTOR);
       if (maybeCore != TCoreType::VECTOR && isCrossCoreCopy(&op))
         maybeCore = TCoreType::VECTOR;
+      if (isa<BitcastOp>(&op) && loopCarriedDependentOps.contains(&op))
+        maybeCore = inferBitcastOpCoreType(dyn_cast<BitcastOp>(&op));
       // Block-mode-only: CUBE_OR_VECTOR core ops (e.g. plain tensor-level
       // hivm.hir.copy) get pulled in as deps of consuming core ops via
       // traceDependentOps; silently skip here. Loop mode falls through to
@@ -1582,10 +1603,11 @@ WorklistBuilder::extractAvailableOps(SmallVector<Operation *> &extractedOps,
 
     // Propagate the loop-carried dependencies through the available ops
     SmallVector<Operation *> dfsStack;
+    DenseSet<Operation *> visited;
     dfsStack.append(deferredOps.begin(), deferredOps.end());
     while (!dfsStack.empty()) {
       Operation *op = dfsStack.pop_back_val();
-      if (deferredOps.contains(op))
+      if (!visited.insert(op).second)
         continue;
       if (potentiallyAvailable.contains(op))
         deferredOps.insert(op);

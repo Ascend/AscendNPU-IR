@@ -70,6 +70,7 @@ add_bishengir_dialect_library(BiShengIRHIVMDialect
   HIVMTraits.cpp
   HIVMVectorOps.cpp
   StoreLikeOpInterface.cpp
+  ../Utils/HIVMAliasAnalysis.cpp
   ../Utils/Utils.cpp
   ../Utils/ShapeRegistry.cpp
   ${SKEW_SHAPE_TABLE}
@@ -101,8 +102,11 @@ add_bishengir_dialect_library(BiShengIRHIVMDialect
   BiShengIRAnnotationDialect
   BiShengIRScopeDialect
   BiShengIRMathExtDialect
+  MLIRAnalysis
+  MLIRAffineDialect
   MLIRBufferizationDialect
   MLIRArithDialect
+  MLIRDataLayoutInterfaces
   MLIRDestinationStyleOpInterface
   MLIRLinalgDialect
   MLIRLLVMDialect
@@ -113,6 +117,7 @@ add_bishengir_dialect_library(BiShengIRHIVMDialect
   MLIRSCFDialect
   MLIRTransformUtils
   MLIRTensorDialect
+  MLIRValueBoundsOpInterface
   MLIRVectorDialect
   MLIRViewLikeInterface
   MLIRVectorDialect

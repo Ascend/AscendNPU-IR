@@ -9,6 +9,7 @@
 #include "bishengir/Conversion/ArithToAffine/ArithToAffine.h"
 #include "bishengir/Conversion/HFusionToHIVM/HFusionToHIVMPass.h"
 #include "bishengir/Conversion/LowerMemRefExt/LowerMemRefExt.h"
+#include "bishengir/Conversion/ProtonToHIVM/ProtonToHIVM.h"
 #include "bishengir/Conversion/TensorToHIVM/TensorToHIVM.h"
 #include "bishengir/Dialect/Annotation/Transforms/Passes.h"
 #include "bishengir/Dialect/Arith/Transforms/Passes.h"
@@ -142,9 +143,12 @@ void canonicalizationHIVMPipeline(OpPassManager &pm) {
   ADD_CANONICALIZER_PASS;
   pm.addPass(createSCFForLoopCanonicalizationPass());
   pm.addPass(createCSEPass());
-  ADD_CANONICALIZER_PASS_WITHOUT_OPTION_DEFS;
+  // No canonicalizer between cse and single-point: its folds are subsumed by
+  // the trailing canonicalizer of this cluster.
   pm.nest<func::FuncOp>().addPass(createHIVMOptSinglePointPass());
-  ADD_CANONICALIZER_PASS_WITHOUT_OPTION_DEFS;
+  // No canonicalizer between single-point and dead store elimination:
+  // dead-store matching does not depend on its rewrites, and the trailing
+  // canonicalizer subsumes them.
   pm.nest<func::FuncOp>().addPass(memref::createDeadStoreEliminationPass());
   ADD_CANONICALIZER_PASS_WITHOUT_OPTION_DEFS;
 }
@@ -325,7 +329,6 @@ bufferizationPipeline(OpPassManager &pm,
   if (hivmPipelineOptions.enableTritonKernelCompile) {
     pm.nest<func::FuncOp>().addPass(
         tensor::createOptimizeDpsOpWithYieldedInsertSlicePass());
-    pm.nest<func::FuncOp>().addPass(createCloneTensorEmptyPass());
     pm.nest<func::FuncOp>().addPass(createSinkOpToConsumerInLoopPass());
   }
   if (hivmPipelineOptions.enableVfMergeLevel == 1) {
@@ -334,9 +337,17 @@ bufferizationPipeline(OpPassManager &pm,
     pm.addPass(hfusion::createMergeVecScopePass(VfMergeOpsOpt));
   }
   pm.addPass(hfusion::createSimplifyVFArgsPass());
-  // Fold redundant extract_slice -> transfer_write -> insert_slice pattern
-  // before bufferization to avoid unnecessary memref operations
-  pm.nest<func::FuncOp>().addPass(hfusion::createFoldExtractInsertPairPass());
+  // Fold extract_slice/insert_slice pairs around scf.for loops into the loop
+  // body, merge the consecutive slice chains this creates and CSE away the
+  // duplicated slices, so fold-extract-insert-pair can fold the redundant
+  // slice round trips.
+  pm.nest<func::FuncOp>().addPass(tensor::createFoldSliceIntoScfForPass());
+  pm.nest<func::FuncOp>().addPass(
+      tensor::createMergeConsecutiveInsertExtractSlicePass());
+  pm.nest<func::FuncOp>().addPass(createCSEPass());
+  pm.nest<func::FuncOp>().addPass(tensor::createFoldExtractInsertPairPass());
+  // CSE merges identical tensor.empty ops; need to run clone-tensor-empty
+  pm.nest<func::FuncOp>().addPass(createCloneTensorEmptyPass());
   // TODO: support process toTensorOp in one-shot-bufferize.
   // Expose memref-level writes (e.g., hivm.hir.load) to tensor-level analysis
   // by inserting an `alloc_tensor(copy...)` for each writable to_tensor.
@@ -609,6 +620,8 @@ static void hivmPreBufferizationOptimizationPipeline(
   // inline-scope below runs.
   pm.addPass(createMarkSimtScopeNoInlinePass());
   pm.addPass(scope::createInlineScopePass());
+  // TileAndBindSubBlock needs the complete def-use chain across outlined VFs.
+  pm.addPass(createInlinerPass());
   if (!hivmPipelineOptions.skipHIVMBindSubBlockPass) {
     TileAndBindSubBlockOptions tileOptions;
     tileOptions.enableTile = hivmPipelineOptions.enableAutoBindSubBlock;
@@ -672,9 +685,15 @@ static void hivmPostBufferizationOptimizationPipeline(
     // Move VF entry DMA on argument buffers to the caller before VF cleanup.
     pm.addPass(createOutlineCopyInVFPass());
     pm.addPass(bufferization::createDropEquivalentBufferResultsPass());
-    // Inline fusion helpers before inferring memory spaces. Expand affine.apply
-    // only in helpers that survive ordinary inlining, preserving affine IR in
-    // the caller and vector functions for subsequent optimizations.
+    // Late pipeline workaround for VFFusion/tree-reduce fusion helpers. This
+    // recovery is separate from InlineScope's regular scope-unwrapping role.
+    // Such helpers may survive earlier inlining because the affine inliner
+    // rejects their top-level affine.apply operations at scf.for call sites.
+    // Lower those operations and retry inlining before InferHIVMMemScope
+    // encounters the remaining helper memref-result boundaries, avoiding
+    // module-wide affine lowering.
+    // TODO: Remove this workaround once helper generation or earlier helper
+    // elimination fixes the underlying issue.
     InlineScopeOptions inlineOptions;
     inlineOptions.lowerAffineApplyForInlining = true;
     pm.addPass(scope::createInlineScopePass(inlineOptions));
@@ -771,19 +790,34 @@ static void hivmPostBufferizationOptimizationPipeline(
   multiBufferOptions.gmMultiBufferNum = 1;
   pm.nest<func::FuncOp>().addPass(
       createMarkMultiBufferPass(multiBufferOptions));
-  PlanMemoryRegBaseOptions planMemoryOption;
-  planMemoryOption.enablePrintMemoryAllocatedSize =
-      hivmPipelineOptions.enablePrintMemoryAllocatedSize;
-  planMemoryOption.simtVFDynamicSize = hivmPipelineOptions.simtVFDynamicSize;
-  planMemoryOption.disableTightlyCoupledBufferReuse =
-      hivmPipelineOptions.disableTightlyCoupledBufferReuse;
-  planMemoryOption.disableVFReachableCheck =
-      hivmPipelineOptions.disableVFReachableCheck;
-  if (hivmPipelineOptions.enableVFOperandSubstitution) {
-    pm.addPass(createVFOperandSubstitutionPass());
+  if (hivmPipelineOptions.setWorkspaceMultibuffer == 0) {
+    if (hivmPipelineOptions.enableVFOperandSubstitution) {
+      pm.addPass(createVFOperandSubstitutionPass());
+    }
+    PlanMemoryRegBaseOptions planMemoryOption;
+    planMemoryOption.enablePrintMemoryAllocatedSize =
+        hivmPipelineOptions.enablePrintMemoryAllocatedSize;
+    planMemoryOption.simtVFDynamicSize = hivmPipelineOptions.simtVFDynamicSize;
+    planMemoryOption.disableTightlyCoupledBufferReuse =
+        hivmPipelineOptions.disableTightlyCoupledBufferReuse;
+    planMemoryOption.disableVFReachableCheck =
+        hivmPipelineOptions.disableVFReachableCheck;
+    planMemoryOption.planMemoryStrategy =
+        hivmPipelineOptions.planMemoryStrategy;
+    pm.addPass(createPlanMemoryRegBasePass(planMemoryOption));
+  } else {
+    PlanMemoryOptions planMemoryOption;
+    planMemoryOption.enableMemoryDisplay =
+        hivmPipelineOptions.enableMemoryDisplay;
+    planMemoryOption.simtVFDynamicSize = hivmPipelineOptions.simtVFDynamicSize;
+    planMemoryOption.disableTightlyCoupledBufferReuse =
+        hivmPipelineOptions.disableTightlyCoupledBufferReuse;
+    planMemoryOption.disableVFReachableCheck =
+        hivmPipelineOptions.disableVFReachableCheck;
+    planMemoryOption.planMemoryStrategy =
+        hivmPipelineOptions.planMemoryStrategy;
+    pm.addPass(createPlanMemoryPass(planMemoryOption));
   }
-  planMemoryOption.planMemoryStrategy = hivmPipelineOptions.planMemoryStrategy;
-  pm.addPass(createPlanMemoryRegBasePass(planMemoryOption));
 
   // Cross-Core Auto-Sync passes STEP=2
   hivmCrossCoreAutoSyncPipeline(pm, hivmPipelineOptions,
@@ -825,7 +859,8 @@ static void hivmPostBufferizationOptimizationPipeline(
 
 void buildConvertToHIVMPipeline(OpPassManager &pm,
                                 const ConvertToHIVMPipelineOptions &options) {
-  registerAivDisabledPassesForRegbase();
+  pm.addPass(bishengir::triton::proton::a5::createConvertProtonToHIVMPass());
+  registerKernelKindPassesForRegbase();
   ConvertHFusionToHIVMOptions hfs2hivmOptions;
   hfs2hivmOptions.mmMapMode = options.enableTritonKernelCompile
                                   ? hfusion::MmMapMode::MacroInstr
@@ -852,7 +887,7 @@ void buildConvertToHIVMPipeline(OpPassManager &pm,
 
 void buildHIVMTensorOptimizations(
     OpPassManager &pm, const HIVMPipelineOptions &hivmPipelineOptions) {
-  registerAivDisabledPassesForRegbase();
+  registerKernelKindPassesForRegbase();
   pm.nest<func::FuncOp>().addPass(createInitEntryKernelPass());
   pm.nest<func::FuncOp>().addPass(mlir::hivm::createHIVMNormalizeOpsPass());
   hivmPreBufferizationOptimizationPipeline(pm, hivmPipelineOptions);
@@ -860,7 +895,7 @@ void buildHIVMTensorOptimizations(
 
 void buildLowerHIVMPipelines(OpPassManager &pm,
                              const HIVMPipelineOptions &hivmPipelineOptions) {
-  registerAivDisabledPassesForRegbase();
+  registerKernelKindPassesForRegbase();
   bufferizationPipeline(pm, hivmPipelineOptions);
   // Self-gated: only rewrites guards whose get_sub_block_idx carries the
   // partition provenance stamp
@@ -870,6 +905,7 @@ void buildLowerHIVMPipelines(OpPassManager &pm,
   // all `scope.scope` ops.
   pm.addPass(
       scope::createInlineScopePass(InlineScopeOptions{/*forceInline=*/true}));
+  pm.addPass(createInlinerPass());
   pm.addPass(
       bishengir::createInjectIRPass(hivmPipelineOptions.injectIRFromFile));
 }

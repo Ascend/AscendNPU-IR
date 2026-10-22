@@ -26,7 +26,6 @@
 #include "mlir/Dialect/Affine/Utils.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/Dialect/Transform/Interfaces/TransformInterfaces.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/SymbolTable.h"
@@ -36,7 +35,6 @@
 #include "mlir/Transforms/Passes.h"
 #include "llvm/ADT/SetVector.h"
 #include <memory>
-#include <string>
 
 #define DEBUG_TYPE "inline-scope"
 #define DBGS() (llvm::dbgs() << "[" DEBUG_TYPE "]: ")
@@ -108,21 +106,23 @@ void InlineScopePass::runOnOperation() {
   if (failed(applyPatternsGreedily(moduleOp, std::move(patterns))))
     return signalPassFailure();
 
-  // FIXME: Consider moving it outside the pass
-  // Inline the calls that became bodyless (e.g. outlined vector functions).
+  // Keep ordinary scope unwrapping independent of function inlining. The
+  // explicit affine-helper recovery option also requests function inlining.
+  if (!lowerAffineApplyForInlining)
+    return;
+
+  // Try ordinary inlining before lowering only the helpers that remain.
   PassManager pm(moduleOp->getContext());
   pm.addPass(createInlinerPass());
   if (failed(pm.run(moduleOp)))
     return signalPassFailure();
 
-  if (!lowerAffineApplyForInlining)
-    return;
-
-  // Affine's inliner rejects affine.apply when the destination is an SCF
-  // region. Tree-reduction helpers can therefore survive the first inlining
-  // attempt and retain unscoped memref results. Restrict the fallback to
-  // remaining private callees: lowering affine throughout the module loses
-  // information used by later address and loop optimizations.
+  // Late fallback for fusion helpers whose top-level affine.apply operations
+  // prevent inlining at scf.for call sites. Lower those operations in remaining
+  // eligible private callees and retry before memory-space inference encounters
+  // the helper memref-result boundaries, avoiding module-wide affine lowering.
+  // TODO: Remove this workaround once helper generation or earlier helper
+  // elimination fixes the underlying issue.
   llvm::SetVector<func::FuncOp> callees;
   moduleOp.walk([&callees](func::CallOp call) {
     if (call->hasAttr("no_inline"))

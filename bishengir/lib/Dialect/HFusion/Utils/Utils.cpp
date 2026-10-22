@@ -857,6 +857,13 @@ bool isFromFunctionArg(mlir::Value v) {
   return utils::tracebackMemRef(v).getDefiningOp() == nullptr;
 }
 
+bool isSIMDVectorFunction(Operation *op) {
+  if (!op->hasAttr(hivm::VectorFunctionAttr::name))
+    return false;
+  auto mode = op->getAttrOfType<hivm::VFModeAttr>(hivm::VFModeAttr::name);
+  return !mode || mode.getValue() == hivm::VFMode::SIMD;
+}
+
 } // namespace util
 } // namespace hfusion
 } // namespace mlir

@@ -49,37 +49,46 @@ struct MarkRealCoreTypePass
       : MarkRealCoreTypeBase(options) {}
   ~MarkRealCoreTypePass() override = default;
   void runOnOperation() override;
-
-  bool isOpTypeToBeMarked(Operation *op) const {
-    // scalar-pipe operations.
-    if (isa<memref::LoadOp, memref::StoreOp, affine::AffineLoadOp,
-            affine::AffineStoreOp, tensor::ExtractOp, tensor::InsertOp,
-            tensor::InsertSliceOp, tensor::ExtractSliceOp>(op)) {
-      return true;
-    }
-    if (isa<hivm::CustomOp, hivm::CustomMacroOp>(op)) {
-      return false;
-    }
-    if (isa<hivm::VBrcOp>(op))
-      return false;
-    if (isa<hivm::InferCoreTypeInterface>(op)) {
-      return true;
-    }
-    return false;
-  }
+  bool shouldRemoveCoreTypeAttrs() const { return removeCoreTypeAttrs; }
 };
+
+// Scalar-pipe ops and InferCoreTypeInterface ops get a real core-type
+// stamp. Custom/VBrc keep inferred types.
+static bool isOpTypeToBeMarked(Operation *op) {
+  if (isa<memref::LoadOp, memref::StoreOp, affine::AffineLoadOp,
+          affine::AffineStoreOp, tensor::ExtractOp, tensor::InsertOp,
+          tensor::InsertSliceOp, tensor::ExtractSliceOp>(op)) {
+    return true;
+  }
+  if (isa<hivm::CustomOp, hivm::CustomMacroOp, hivm::VBrcOp>(op))
+    return false;
+  return isa<hivm::InferCoreTypeInterface>(op);
+}
+
+static void removeMarkedCoreTypeAttrs(ModuleOp module) {
+  module.walk([](Operation *op) {
+    if (isOpTypeToBeMarked(op) && op->hasAttr(hivm::TCoreTypeAttr::name))
+      op->removeAttr(hivm::TCoreTypeAttr::name);
+  });
+}
+
+// Pure AIV has no cube side, so every markable op is VECTOR. Skip the
+// clone+SplitMixKernel walk the mix path uses to distinguish CUBE vs VECTOR.
+static void stampVectorCoreTypeAttrs(ModuleOp module) {
+  auto *ctx = module.getContext();
+  auto vectorAttr = hivm::TCoreTypeAttr::get(ctx, hivm::TCoreType::VECTOR);
+  module.walk([&](Operation *op) {
+    if (!isOpTypeToBeMarked(op) || op->hasAttr(hivm::TCoreTypeAttr::name))
+      return;
+    op->setAttr(hivm::TCoreTypeAttr::name, vectorAttr);
+  });
+}
 
 void MarkRealCoreTypePass::runOnOperation() {
   auto moduleOp = getOperation();
 
   if (this->removeCoreTypeAttrs) {
-    moduleOp.walk([&](Operation *op) {
-      if (isOpTypeToBeMarked(op)) {
-        if (op->hasAttr(hivm::TCoreTypeAttr::name)) {
-          op->removeAttr(hivm::TCoreTypeAttr::name);
-        }
-      }
-    });
+    removeMarkedCoreTypeAttrs(moduleOp);
     return;
   }
 
@@ -189,4 +198,21 @@ void MarkRealCoreTypePass::runOnOperation() {
 std::unique_ptr<Pass>
 mlir::hivm::createMarkRealCoreTypePass(const MarkRealCoreTypeOptions &options) {
   return std::make_unique<MarkRealCoreTypePass>(options);
+}
+
+LogicalResult mlir::hivm::substituteMarkRealCoreType(Operation *op,
+                                                     const Pass &pass) {
+  auto module = dyn_cast<ModuleOp>(op);
+  if (!module)
+    return success();
+
+  bool removeCoreTypeAttrs = false;
+  if (auto *typed = dyn_cast<MarkRealCoreTypePass>(&pass))
+    removeCoreTypeAttrs = typed->shouldRemoveCoreTypeAttrs();
+
+  if (removeCoreTypeAttrs)
+    removeMarkedCoreTypeAttrs(module);
+  else
+    stampVectorCoreTypeAttrs(module);
+  return success();
 }

@@ -373,17 +373,21 @@ bool SyncSolverV1::skipLaterIterations(Occurrence *occ1, Occurrence *occ2) {
   assert(occ1 != nullptr && occ2 != nullptr);
   if (occ1->parentOcc != nullptr) {
     if (isa<Loop>(occ1->parentOcc->op)) {
-      if (occ1->syncIrIndex < occ1->parentOcc->loopSplitIndex &&
-          occ1->parentOcc->loopSplitIndex <= occ2->syncIrIndex) {
-        return true;
+      if (occ1->parentOcc->loopSplitIndex != -1) {
+        if (occ1->syncIrIndex < occ1->parentOcc->loopSplitIndex &&
+            occ1->parentOcc->loopSplitIndex <= occ2->syncIrIndex) {
+          return true;
+        }
       }
     }
   }
   if (occ2->parentOcc != nullptr) {
     if (isa<Loop>(occ2->parentOcc->op)) {
-      if (occ1->syncIrIndex < occ2->parentOcc->loopSplitIndex &&
-          occ2->parentOcc->loopSplitIndex <= occ2->syncIrIndex) {
-        return true;
+      if (occ2->parentOcc->loopSplitIndex != -1) {
+        if (occ1->syncIrIndex < occ2->parentOcc->loopSplitIndex &&
+            occ2->parentOcc->loopSplitIndex <= occ2->syncIrIndex) {
+          return true;
+        }
       }
     }
   }
@@ -476,7 +480,8 @@ void SyncSolverV1::generateProcessingOrders(RWOperation *rwOp1,
 void SyncSolverV1::buildOfflineProcessingOrders(Occurrence *occ,
                                                 bool isUseless) {
   assert(occ != nullptr);
-  if (auto *loopOp = dyn_cast<Loop>(occ->op)) {
+  auto *loopOp = dyn_cast<Loop>(occ->op);
+  if (loopOp != nullptr && occ->loopSplitIndex != -1) {
     int64_t childNum = static_cast<int64_t>(occ->childOccs.size());
     assert(childNum % 2 == 0);
     for (int64_t i = 0; i < childNum / 2; ++i) {
