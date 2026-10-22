@@ -104,6 +104,56 @@ static bool isViewLikeMemrefOp(Operation *op) {
              memref::MemorySpaceCastOp>(op);
 }
 
+static bool hasAnnot(Value v, StringRef name) {
+  return utils::getAnnotateOpWithAttr(v, name).has_value();
+}
+
+static std::optional<int64_t> getMultiBufferCount(Value v) {
+  auto maybe = utils::getAnnotateOpWithAttr(v, hivm::MultiBufferAttr::name);
+  if (!maybe)
+    return std::nullopt;
+  auto intAttr = dyn_cast_or_null<IntegerAttr>(
+      (*maybe)->getAttr(hivm::MultiBufferAttr::name));
+  if (!intAttr)
+    return std::nullopt;
+  return intAttr.getInt();
+}
+
+/// Single-slot preload-local: `hivm.multi_buffer = 1` and
+/// `hivm.preload_local_buffer = 1`. These do not rotate across iterations,
+/// so the loop-level lifetime / mark is unnecessary once the alloc lives
+/// inside its consumer scope.
+static bool isSingleSlotPreloadLocal(Value v) {
+  if (!hasAnnot(v, hivm::PreloadLocalBufferAttr::name))
+    return false;
+  auto mb = getMultiBufferCount(v);
+  return mb && *mb == 1;
+}
+
+/// Drop the `multi_buffer=1` + `preload_local_buffer=1` marks. Other marks
+/// on the same value (TCB, tiling, …) are left alone.
+static void eraseSingleSlotPreloadMarks(Value v) {
+  SmallVector<annotation::MarkOp> marks;
+  DenseSet<Operation *> seen;
+  auto collect = [&](StringRef name) {
+    for (Operation *op : utils::getAllAnnotateOpsWithAttr(v, name)) {
+      if (seen.insert(op).second)
+        marks.push_back(cast<annotation::MarkOp>(op));
+    }
+  };
+  collect(hivm::PreloadLocalBufferAttr::name);
+  collect(hivm::MultiBufferAttr::name);
+  for (annotation::MarkOp mark : marks) {
+    mark->removeAttr(hivm::PreloadLocalBufferAttr::name);
+    auto intAttr = dyn_cast_or_null<IntegerAttr>(
+        mark->getAttr(hivm::MultiBufferAttr::name));
+    if (intAttr && intAttr.getInt() == 1)
+      mark->removeAttr(hivm::MultiBufferAttr::name);
+    if (mark.isAttrEmpty())
+      mark.erase();
+  }
+}
+
 /// Drop `preload_local_buffer` after the load leaves the preload producer.
 /// Keep `multi_buffer` so later MarkMultiBuffer can still rotate slots.
 static void erasePreloadLocalMark(Value v) {
@@ -1360,6 +1410,95 @@ static LogicalResult sinkCopyChainPastUnusedMmad(scf::ForOp forOp) {
   return failure();
 }
 
+/// Walk marks and memref views to the unique for-body scope that actually
+/// consumes `alloc`. View ops (subview / reshape / cast) in the loop body
+/// are treated as part of the alloc, not as an outside use.
+static std::optional<std::pair<scope::ScopeOp, SmallVector<Operation *>>>
+uniqueAllocUserScope(Value alloc, scf::ForOp forOp) {
+  DenseSet<scope::ScopeOp> scopes;
+  SmallVector<Operation *> views;
+  DenseSet<Operation *> seen;
+  SmallVector<Operation *> work(alloc.getUsers().begin(),
+                                alloc.getUsers().end());
+  while (!work.empty()) {
+    Operation *user = work.pop_back_val();
+    if (!seen.insert(user).second)
+      continue;
+    if (isa<annotation::MarkOp>(user))
+      continue;
+    if (isa<scope::ReturnOp, scf::YieldOp>(user))
+      return std::nullopt;
+    if (isViewLikeMemrefOp(user)) {
+      views.push_back(user);
+      for (Operation *next : user->getUsers())
+        work.push_back(next);
+      continue;
+    }
+    auto scope = enclosingForBodyScope(user, forOp);
+    if (!scope)
+      return std::nullopt;
+    scopes.insert(scope);
+  }
+  if (scopes.size() != 1)
+    return std::nullopt;
+  return std::make_pair(*scopes.begin(), std::move(views));
+}
+
+/// `multi_buffer=1` + `preload_local_buffer=1` allocs whose only non-mark
+/// (and non-view) users sit in one scope become ordinary scope-private
+/// buffers: delete those two marks and, if the alloc still lives in the
+/// parent loop body, move it (and its view chain) next to the first use.
+/// TCB / tiling marks stay. `multi_buffer > 1` stays at loop scope so
+/// PlanMemory can still rotate slots across iterations.
+/// This stays on SinkExclusivePreloadWork. MarkMultiBuffer does not sink
+/// these allocs or strip the marks.
+static void sinkSingleSlotPreloadAllocs(scf::ForOp forOp) {
+  SmallVector<memref::AllocOp> allocs;
+  forOp.walk([&](memref::AllocOp alloc) {
+    Value v = alloc.getResult();
+    if (!isSinkablePreloadMemref(v) || !isSingleSlotPreloadLocal(v))
+      return;
+    if (llvm::any_of(v.getUsers(), [](Operation *user) {
+          return isa<scope::ReturnOp, scf::YieldOp>(user);
+        }))
+      return;
+    allocs.push_back(alloc);
+  });
+
+  for (memref::AllocOp alloc : allocs) {
+    auto target = uniqueAllocUserScope(alloc, forOp);
+    if (!target)
+      continue;
+
+    scope::ScopeOp scope = target->first;
+    ArrayRef<Operation *> views = target->second;
+    if (!scope->isAncestor(alloc.getOperation())) {
+      Operation *insertBefore = firstUseInScope(alloc, scope);
+      for (Operation *view : views) {
+        if (insertBefore)
+          break;
+        insertBefore = firstUseInScope(view->getResult(0), scope);
+      }
+      if (!insertBefore)
+        insertBefore = consumerInsertPoint(scope);
+      SmallVector<Operation *> cluster;
+      cluster.push_back(alloc.getOperation());
+      collectMarks(alloc, cluster);
+      for (Operation *view : views) {
+        if (!scope->isAncestor(view))
+          cluster.push_back(view);
+      }
+      moveOpsBefore(cluster, insertBefore);
+    }
+    eraseSingleSlotPreloadMarks(alloc);
+  }
+}
+
+static LogicalResult sinkPreloadLocalAllocs(scf::ForOp forOp) {
+  sinkSingleSlotPreloadAllocs(forOp);
+  return success();
+}
+
 static constexpr llvm::StringLiteral kIndependentPreloadPrefixAttr =
     "hivm.independent_preload_prefix";
 
@@ -2297,6 +2436,8 @@ void SinkExclusivePreloadWorkPass::runOnOperation() {
           failed(sinkReturnedTensorsToConsumerImpl(forOp)))
         return signalPassFailure();
       if (failed(sinkCopyChainPastUnusedMmad(forOp)))
+        return signalPassFailure();
+      if (failed(sinkPreloadLocalAllocs(forOp)))
         return signalPassFailure();
     }
   }
