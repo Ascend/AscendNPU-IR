@@ -806,7 +806,8 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
                            HIVMStructuredOpInterface, ["getIteratorTypesArray",
                                                        "getIndexingMaps"]>,
                        DeclareOpInterfaceMethods<
-                           HIVMInferCoreTypeInterface, ["inferCoreType"]>],
+                           HIVMInferCoreTypeInterface, ["inferCoreType"]>,
+                       CustomLikeOpInterface],
                       traits)> {
 
   string customOpSummary = [{
