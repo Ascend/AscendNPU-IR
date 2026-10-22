@@ -25,6 +25,7 @@
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Analysis/AliasAnalysis.h"
+#include "mlir/Analysis/SliceAnalysis.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
@@ -34,6 +35,7 @@
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/Visitors.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
+#include "mlir/Interfaces/ViewLikeInterface.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Transforms/RegionUtils.h"
 #include "llvm/ADT/APFloat.h"
@@ -53,9 +55,6 @@ namespace mlir {
 
 using namespace mlir;
 using namespace mlir::hivm;
-
-static constexpr llvm::StringLiteral BlockifyLoopAttrName =
-    "autoblockify.subloop";
 
 namespace {
 /// This pass will add a loop over the blocks when the logical block num is
@@ -356,6 +355,70 @@ static void replaceBlockIdUsers(IRRewriter &rewriter,
   rewriter.replaceAllUsesExcept(getBlockIdxOp, castedMulOp, castedBlockID);
 }
 
+static bool isInAtomicMode(Operation *op) {
+  for (Operation *cur = op; cur != nullptr && !isa<func::FuncOp>(cur);
+       cur = cur->getParentOp()) {
+    for (Operation *prev = cur->getPrevNode(); prev != nullptr;
+         prev = prev->getPrevNode()) {
+      if (auto setAtomicOp = dyn_cast<hivm::SetAtomicOp>(prev)) {
+        return setAtomicOp.getKind() != hivm::AtomicKind::NONE;
+      }
+    }
+  }
+  return false;
+}
+
+/// Whether `dst` is a view of a kernel argument at a block-indexed offset.
+static bool isBlockIndexedDst(func::FuncOp funcOp, Value dst, Value blockId,
+                              const SetVector<Operation *> &blockIdUsers) {
+  if (!isa<BaseMemRefType>(dst.getType())) {
+    return false;
+  }
+  auto isFromBlockId = [&](Value value) {
+    return value == blockId || blockIdUsers.contains(value.getDefiningOp());
+  };
+  bool isBlockIndexed = false;
+  bool offsetApplies = true;
+  Value root = dst;
+  while (auto viewOp = root.getDefiningOp<ViewLikeOpInterface>()) {
+    if (offsetApplies) {
+      if (auto offsetOp =
+              dyn_cast<OffsetSizeAndStrideOpInterface>(viewOp.getOperation())) {
+        isBlockIndexed |= llvm::any_of(offsetOp.getOffsets(), isFromBlockId);
+      }
+      // A reinterpret_cast sets an absolute offset, so the views above it no
+      // longer move `dst`.
+      offsetApplies = !isa<memref::ReinterpretCastOp>(*viewOp);
+    }
+    root = viewOp.getViewSource();
+  }
+  auto funcArg = dyn_cast<BlockArgument>(root);
+  return isBlockIndexed && funcArg &&
+         funcArg.getOwner()->getParentOp() == funcOp;
+}
+
+/// Mark the non-atomic stores and fixpipes of the blockify loop that write a
+/// kernel argument at a block-indexed offset.
+static void markBlockifyDMAs(func::FuncOp funcOp, scf::ForOp forOp) {
+  Value blockId = forOp.getInductionVar();
+  SetVector<Operation *> blockIdUsers;
+  getForwardSlice(blockId, &blockIdUsers);
+  auto unit = UnitAttr::get(forOp->getContext());
+  forOp.walk([&](Operation *op) {
+    if (!isa<hivm::StoreOp, hivm::FixpipeOp>(op) ||
+        cast<hivm::StoreLikeOpInterface>(op).isAtomic() || isInAtomicMode(op)) {
+      return;
+    }
+    auto dsts = cast<DestinationStyleOpInterface>(op).getDpsInits();
+    if (dsts.empty() || !llvm::all_of(dsts, [&](Value dst) {
+          return isBlockIndexedDst(funcOp, dst, blockId, blockIdUsers);
+        })) {
+      return;
+    }
+    op->setAttr(hivm::AutoBlockifyDMAAttr::name, unit);
+  });
+}
+
 static LogicalResult loopOnLogicBlock(func::FuncOp funcOp,
                                       IRRewriter &rewriter) {
   auto &entryBlock = funcOp.getBody().front();
@@ -417,7 +480,8 @@ static LogicalResult loopOnLogicBlock(func::FuncOp funcOp,
   replaceBlockIdUsers(rewriter, getBlockIdxOp, forOp.getInductionVar(),
                       logicBlockNum, blockID, blockifyV2);
   auto unit = UnitAttr::get(forOp->getContext());
-  forOp->setAttr(BlockifyLoopAttrName, unit);
+  forOp->setAttr(hivm::AutoBlockifySubloopAttr::name, unit);
+  markBlockifyDMAs(funcOp, forOp);
   return success();
 }
 } // namespace
@@ -443,7 +507,7 @@ void AutoBlockifyParallelLoopPass::runOnOperation() {
   AliasAnalysis aliasAnalysis(funOp);
   SmallVector<scf::ForOp> blockifyLoops;
   funOp.walk([&](scf::ForOp loop) {
-    if (loop->hasAttr(BlockifyLoopAttrName))
+    if (loop->hasAttr(hivm::AutoBlockifySubloopAttr::name))
       blockifyLoops.push_back(loop);
   });
   // Only loops marked by loopOnLogicBlock are transformed; user-written
