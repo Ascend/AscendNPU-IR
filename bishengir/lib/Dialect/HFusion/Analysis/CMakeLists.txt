@@ -1,5 +1,4 @@
 add_bishengir_dialect_library(BiShengIRHFusionAnalysis
-  IntermediateValuesAnalyzer/IntermediateValuesAnalyzer.cpp
   ReshapeAnalyzer/ReshapeAnalyzer.cpp
   DimensionAnalyzer/DimensionAnalyzer.cpp
   DimensionAnalyzer/DimensionMarker.cpp
@@ -19,7 +18,6 @@ add_bishengir_dialect_library(BiShengIRHFusionAnalysis
   BiShengIRHACCDialect
   BiShengIRHACCUtils
   MLIRAffineDialect
-  MLIRAnalysis
   MLIRArithDialect
   MLIRDialectUtils
   MLIRFuncDialect

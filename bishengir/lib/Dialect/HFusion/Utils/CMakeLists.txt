@@ -1,7 +1,6 @@
 add_bishengir_dialect_library(BiShengIRHFusionUtils
   BufferUtils.cpp
   ExtraBuffer.cpp
-  ScalarOptimizationsUtils.cpp
   Utils.cpp
 
   ADDITIONAL_HEADER_DIRS
@@ -12,7 +11,6 @@ add_bishengir_dialect_library(BiShengIRHFusionUtils
   BiShengIRMathExtDialect
   MLIRArithDialect
   BiShengIRHFusionDialect
-  MLIRLinalgDialect
   MLIRMemRefDialect
   MLIRBufferizationTransforms
   MLIRFuncTransforms
