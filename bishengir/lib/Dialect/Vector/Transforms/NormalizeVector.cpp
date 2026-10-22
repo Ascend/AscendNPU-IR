@@ -1040,6 +1040,13 @@ class TransferReadToGatheringLoadPattern
     : public OpRewritePattern<vector::TransferReadOp> {
   using OpRewritePattern::OpRewritePattern;
 
+  /// Decide whether `readop` can be rewritten as a gather and, if so, collect
+  /// what the rewrite needs: the source and destination types, the physical
+  /// `strides`, and the mask description (`isFullMask`, `constantMaskBounds`).
+  ///
+  /// None of the `analyze*` helpers creates IR, so each one is free to bail
+  /// out -- see `matchAndRewrite` for why every rejecting check has to run
+  /// before the first `rewriter.create`.
   LogicalResult analyzeTransferRead(vector::TransferReadOp readop,
                                     PatternRewriter &rewriter,
                                     AffineMap &permMap, MemRefType &memrefType,
@@ -1062,87 +1069,123 @@ class TransferReadToGatheringLoadPattern
       return failure();
 
     if (permMap.isIdentity()) {
-      // Out-of-bounds reads need the transfer_read padding semantics, which
-      // the gather path does not reproduce for partially in-bounds dims.
-      if (readop.hasOutOfBoundsDim())
+      if (failed(analyzeIdentityLayout(readop, memrefType, destType, strides)))
         return failure();
-      int64_t offset;
-      if (failed(getStridesAndOffset(memrefType, strides, offset)))
-        return failure();
-      // A negative or dynamic stride cannot be turned into a static index
-      // vector.
-      if (llvm::any_of(strides, [](int64_t stride) {
-            return ShapedType::isDynamic(stride) || stride < 1;
-          }))
-        return failure();
+      return analyzeIdentityMask(readop, memrefType, isFullMask,
+                                 constantMaskBounds);
+    }
 
-      int64_t rank = memrefType.getRank();
-      if (rank == 1) {
-        // For a 1-D view, unit stride is contiguous even with a dynamic
-        // extent, so only a real stride needs the gather path.
-        if (memrefType.getDimSize(0) == 1 || strides.front() <= 1)
-          return failure();
-      } else {
-        // For rank > 1 the index vector is materialized from the static
-        // extents, so every dim must be static.
-        if (!memrefType.hasStaticShape())
-          return failure();
-        if (memrefType.getNumElements() == 1)
-          return failure();
-        // Detect whether the *tile being read* is densely packed.  Contiguity
-        // follows the tile extents, not the source extents: reading
-        // vector<2x32> out of memref<2x64, strided<[32, 1]>> touches lanes
-        // 0..63 and is contiguous, while the same tile out of a packed
-        // memref<2x64> (strides [64, 1]) touches 0..31 and 64..95 and is not.
-        // Note: identity permutation alone does not imply contiguity, and
-        // checking only the innermost stride is not enough either.
-        auto tileShape = destType.getShape();
-        bool isPacked = true;
-        int64_t expectedStride = 1;
-        for (int64_t d = rank - 1; d >= 0; --d) {
-          if (strides[d] != expectedStride) {
-            isPacked = false;
-            break;
-          }
-          expectedStride *= tileShape[d];
-        }
-        if (isPacked)
-          return failure();
-      }
+    return analyzePermutedRead(readop, permMap, memrefType, isFullMask,
+                               constantMaskBounds, strides);
+  }
 
-      isFullMask = true;
-      if (auto mask = readop.getMask()) {
-        auto constantMask = mask.getDefiningOp<vector::ConstantMaskOp>();
-        if (!constantMask) {
-          // A non-constant mask cannot be flattened per lane at compile time.
-          // A rank-1 mask, however, already matches the flattened gather lane
-          // order and is reused as-is by the rewrite, so it needs no
-          // flattening (dynamic tail masks from loop peeling hit this path).
-          //
-          // FIXME: a multi-dim runtime mask on a strided source is not
-          // supported.  Rejecting it here falls back to the contiguous
-          // VFLoad, which loses the stride semantics -- a match failure is
-          // not a correctness guarantee.  A stride-aware runtime mask path is
-          // needed; this is a pre-existing gap, not a regression.
-          if (cast<VectorType>(mask.getType()).getRank() != 1)
-            return failure();
-        } else if (!constantMask.isAllOnesMask()) {
-          // Keep inactive indices zero, as on the existing constant-mask path,
-          // so that a large stride does not overflow unused gather indices.
-          for (auto v : constantMask.getMaskDimSizes())
-            constantMaskBounds.push_back(
-                cast<IntegerAttr>(v).getValue().getSExtValue());
-          // `computeGatherIndicesAndMasks` indexes `constantMaskBounds` with
-          // the source dim, so a mask that does not cover every dim would read
-          // out of bounds.
-          if (constantMaskBounds.size() != static_cast<size_t>(rank))
-            return failure();
-          isFullMask = false;
-        }
-      }
+  /// Identity path, layout half: accept only a read whose tile is laid out
+  /// with a gap, which is what makes a contiguous load wrong, and fill in
+  /// `strides`.
+  LogicalResult analyzeIdentityLayout(vector::TransferReadOp readop,
+                                      MemRefType memrefType,
+                                      VectorType destType,
+                                      SmallVector<int64_t, 4> &strides) const {
+    // Out-of-bounds reads need the transfer_read padding semantics, which
+    // the gather path does not reproduce for partially in-bounds dims.
+    if (readop.hasOutOfBoundsDim())
+      return failure();
+    int64_t offset;
+    if (failed(getStridesAndOffset(memrefType, strides, offset)))
+      return failure();
+    // A negative or dynamic stride cannot be turned into a static index
+    // vector.
+    if (llvm::any_of(strides, [](int64_t stride) {
+          return ShapedType::isDynamic(stride) || stride < 1;
+        }))
+      return failure();
+
+    int64_t rank = memrefType.getRank();
+    if (rank == 1) {
+      // For a 1-D view, unit stride is contiguous even with a dynamic
+      // extent, so only a real stride needs the gather path.
+      if (memrefType.getDimSize(0) == 1 || strides.front() <= 1)
+        return failure();
       return success();
     }
 
+    // For rank > 1 the index vector is materialized from the static
+    // extents, so every dim must be static.
+    if (!memrefType.hasStaticShape())
+      return failure();
+    if (memrefType.getNumElements() == 1)
+      return failure();
+    // Detect whether the *tile being read* is densely packed.  Contiguity
+    // follows the tile extents, not the source extents: reading
+    // vector<2x32> out of memref<2x64, strided<[32, 1]>> touches lanes
+    // 0..63 and is contiguous, while the same tile out of a packed
+    // memref<2x64> (strides [64, 1]) touches 0..31 and 64..95 and is not.
+    // Note: identity permutation alone does not imply contiguity, and
+    // checking only the innermost stride is not enough either.
+    auto tileShape = destType.getShape();
+    bool isPacked = true;
+    int64_t expectedStride = 1;
+    for (int64_t d = rank - 1; d >= 0; --d) {
+      if (strides[d] != expectedStride) {
+        isPacked = false;
+        break;
+      }
+      expectedStride *= tileShape[d];
+    }
+    if (isPacked)
+      return failure();
+
+    return success();
+  }
+
+  /// Identity path, mask half: classify the mask as full, or record its
+  /// per-dim bounds in `constantMaskBounds`.
+  LogicalResult
+  analyzeIdentityMask(vector::TransferReadOp readop, MemRefType memrefType,
+                      bool &isFullMask,
+                      SmallVector<int64_t, 4> &constantMaskBounds) const {
+    isFullMask = true;
+    if (auto mask = readop.getMask()) {
+      auto constantMask = mask.getDefiningOp<vector::ConstantMaskOp>();
+      if (!constantMask) {
+        // A non-constant mask cannot be flattened per lane at compile time.
+        // A rank-1 mask, however, already matches the flattened gather lane
+        // order and is reused as-is by the rewrite, so it needs no
+        // flattening (dynamic tail masks from loop peeling hit this path).
+        //
+        // FIXME: a multi-dim runtime mask on a strided source is not
+        // supported.  Rejecting it here falls back to the contiguous
+        // VFLoad, which loses the stride semantics -- a match failure is
+        // not a correctness guarantee.  A stride-aware runtime mask path is
+        // needed; this is a pre-existing gap, not a regression.
+        if (cast<VectorType>(mask.getType()).getRank() != 1)
+          return failure();
+      } else if (!constantMask.isAllOnesMask()) {
+        // Keep inactive indices zero, as on the existing constant-mask path,
+        // so that a large stride does not overflow unused gather indices.
+        for (auto v : constantMask.getMaskDimSizes())
+          constantMaskBounds.push_back(
+              cast<IntegerAttr>(v).getValue().getSExtValue());
+        // `computeGatherIndicesAndMasks` indexes `constantMaskBounds` with
+        // the source dim, so a mask that does not cover every dim would read
+        // out of bounds.
+        if (constantMaskBounds.size() !=
+            static_cast<size_t>(memrefType.getRank()))
+          return failure();
+        isFullMask = false;
+      }
+    }
+    return success();
+  }
+
+  /// Permuted (transposing) path: check the shape and the mask, fill in
+  /// `strides`, and decline a transpose whose permuted dims are masked down
+  /// to a single element, which needs no gather.
+  LogicalResult analyzePermutedRead(vector::TransferReadOp readop,
+                                    AffineMap permMap, MemRefType memrefType,
+                                    bool &isFullMask,
+                                    SmallVector<int64_t, 4> &constantMaskBounds,
+                                    SmallVector<int64_t, 4> &strides) const {
     // must have static shape
     // dynamic shape size is represented by a large negative number
     auto shape = memrefType.getShape();
@@ -1181,18 +1224,19 @@ class TransferReadToGatheringLoadPattern
     // no need to change transfer_read to gather
     bool permDimWithOneMask = true;
     if (!constantMaskBounds.empty()) {
-    for(unsigned int i = 0; i < permMap.getNumResults(); i++) {
-      unsigned int targetDim = permMap.getDimPosition(i);
-      if (i != targetDim) {
-        if (constantMaskBounds[i] != 1 || constantMaskBounds[targetDim] != 1) {
-          permDimWithOneMask = false;
-          break;
+      for (unsigned int i = 0; i < permMap.getNumResults(); i++) {
+        unsigned int targetDim = permMap.getDimPosition(i);
+        if (i != targetDim) {
+          if (constantMaskBounds[i] != 1 ||
+              constantMaskBounds[targetDim] != 1) {
+            permDimWithOneMask = false;
+            break;
+          }
         }
       }
+      if (permDimWithOneMask)
+        return failure();
     }
-    if (permDimWithOneMask)
-      return failure();
-  }
 
     return success();
   }
