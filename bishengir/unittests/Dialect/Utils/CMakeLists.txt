@@ -1,7 +1,6 @@
 add_bishengir_unittest(BiShengIRDialectUtilsTests
   ReportFatalErrorDeathTest.cpp
   SelectRoundModeTest.cpp
-  IntermediateValuesAnalyzerTest.cpp
   UnionFindTest.cpp
 )
 
@@ -10,7 +9,6 @@ target_link_libraries(BiShengIRDialectUtilsTests PRIVATE
   MLIRArithDialect
   MLIRLLVMDialect
   BiShengIRDialectUtils
-  BiShengIRHFusionAnalysis
   BiShengIRHFusionDialect
   BiShengIRHFusionTransforms
   BiShengIRHIVMDialect
