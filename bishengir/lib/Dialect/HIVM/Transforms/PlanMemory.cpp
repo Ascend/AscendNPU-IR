@@ -2672,6 +2672,15 @@ bool MemPlan::IsBufferLifeVecConflict(PlanRecord &r, uint64_t offset,
   return iter->second;
 }
 
+void MemPlan::RetireRelationOtherBufferEntries(
+    SmallVectorImpl<std::unique_ptr<StorageEntry>> &entries) {
+  for (auto &entry : entries) {
+    if (entry)
+      retiredRelationOtherBufferEntries.push_back(std::move(entry));
+  }
+  entries.clear();
+}
+
 void MemPlan::PlanRelationOtherBufferEntryAddress(
     llvm::ArrayRef<uint64_t> otherBufferOffsets, StorageEntry *e) {
   // First loop: assign offsets to existing otherBufferRelationEntries.
@@ -2691,7 +2700,7 @@ void MemPlan::PlanRelationOtherBufferEntryAddress(
   // index multiBufferNum-1 to the end of otherBufferOffsets) and store them
   // in firstBufferEntry2RelationOtherBufferEntry as a vector.
   auto &vec = firstBufferEntry2RelationOtherBufferEntry[e];
-  vec.clear();
+  RetireRelationOtherBufferEntries(vec);
   vec.reserve(otherBufferOffsets.size());
   for (size_t i = e->multiBufferNum - 1; i < otherBufferOffsets.size(); ++i) {
     auto entry = std::make_unique<StorageEntry>();
@@ -3271,6 +3280,7 @@ void MemPlan::RollBackForAllocFailInner(StatusWrapper &statusWrapper,
         RollbackOutline(statusWrapper.history, statusWrapper.outline);
     auto iter = firstBufferEntry2RelationOtherBufferEntry.find(r.entry);
     if (iter != firstBufferEntry2RelationOtherBufferEntry.end()) {
+      RetireRelationOtherBufferEntries(iter->second);
       firstBufferEntry2RelationOtherBufferEntry.erase(iter);
     }
     if (ShouldRollbackMuiltiBuffer(r)) {

@@ -844,6 +844,12 @@ protected:
   void PlanRelationOtherBufferEntryAddress(
       llvm::ArrayRef<uint64_t> otherBufferOffsets, StorageEntry *e);
 
+  /// Retire relation-otherbuffer entries: move them into
+  /// retiredRelationOtherBufferEntries (instead of destroying them) and
+  /// clear the input vector.
+  void RetireRelationOtherBufferEntries(
+      SmallVectorImpl<std::unique_ptr<StorageEntry>> &entries);
+
   /// Processing otherbuffer Storage Entry Information.
   void SpecAllocRelationOtherBufferEntry(MemBoundList &outline, PlanRecHis &his,
                                          StorageEntry *e, uint64_t offset);
@@ -939,7 +945,10 @@ protected:
 
   /// Attempt-scoped memo of the lifetime-overlap part of
   /// IsBufferLifeVecConflict per entry pair. Entry life vectors are
-  /// immutable while planning.
+  /// immutable while planning. Keys may reference relation-otherbuffer
+  /// entries; those stay address-pinned via
+  /// retiredRelationOtherBufferEntries for the memo's whole lifetime, so a
+  /// key pointer is never recycled by a fresh allocation (ABA stale hit).
   mutable DenseMap<StorageEntryPair, bool> lifeVecConflictMemo;
 
   /// Memo of HasUniqueConflict keyed by the first-buffer Value pair of the
@@ -951,6 +960,13 @@ protected:
   /// otherbuffers, this stores one StorageEntry per otherbuffers.
   DenseMap<StorageEntry *, SmallVector<std::unique_ptr<StorageEntry>, 4>>
       firstBufferEntry2RelationOtherBufferEntry;
+
+  /// Retired relation-otherbuffer entries, kept alive until this
+  /// MemPlanRegBase is destroyed. Rollback/re-plan points move entries here
+  /// instead of destroying them, so their addresses are never recycled
+  /// while lifeVecConflictMemo (keyed by entry pointers) is alive.
+  SmallVector<std::unique_ptr<StorageEntry>, 16>
+      retiredRelationOtherBufferEntries;
 
   DenseMap<hivm::AddressSpace, SmallVector<const StorageEntry *>>
       memscope2allocatedEntry;
