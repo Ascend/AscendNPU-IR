@@ -1,6 +1,7 @@
 add_bishengir_dialect_library(MLIRAVEDialect
   HIVMAVE.cpp
   HIVMAVEOps.cpp
+  ComputeOffset.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${MLIR_MAIN_INCLUDE_DIR}/bishengir/Dialect/HIVMAVE
@@ -20,6 +21,7 @@ add_bishengir_dialect_library(MLIRAVEDialect
   MLIRLinalgDialect
   MLIRLLVMDialect
   MLIRMathDialect
+  MLIRMemRefDialect
   BiShengIRMemRefDialect
   BiShengIRMemRefExtDialect
   MLIRSideEffectInterfaces

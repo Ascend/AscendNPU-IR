@@ -176,7 +176,7 @@ def AVE_VFGatherOp : AVE_LibFnOp<"vgather",[DeclareOpInterfaceMethods<AVELibrary
   let arguments = (ins Arg<AnyMemRef, "load base", [MemRead]>:$base,
                        Variadic<Index>:$indices,
                        // TODO: Add verifier for index_vec
-                       FixedVectorOf<[AnyInteger, Index]>:$index_vec,
+                       VectorOfRankAndType<[1], [AnyInteger, Index]>:$index_vec,
                        AveMaskType:$mask);
   let results = (outs AveExtValidVector:$res);
   let assemblyFormat = "$base `[` $indices `]` `[` $index_vec `]` `,` $mask attr-dict `:`"
@@ -193,7 +193,7 @@ def AVE_VFScatterOp : AVE_LibFnOp<"vscatter",[DeclareOpInterfaceMethods<AVELibra
   let summary = "Scatter operation for AVE.";
   let arguments = (ins Arg<AnyMemRef, "store base", [MemWrite]>:$base,
                        Variadic<Index>:$indices,
-                       FixedVectorOf<[Index]>:$index_vec, // TODO: Add verifier for index_vec
+                       VectorOfRankAndType<[1], [Index]>:$index_vec, // TODO: Add verifier for index_vec
                        AveMaskType:$mask,
                        AveExtValidVector:$val);
   let assemblyFormat = "$base `[` $indices `]` `[` $index_vec `]` `,` $mask `,` $val attr-dict `:`"
@@ -669,13 +669,6 @@ def AVE_ReductionOp :
       }
     }
   }];
-  let builders = [
-    // Builders that infers the type of `dest`.
-    OpBuilder<(ins "CombiningKind":$kind, "Value":$vector, "Value":$acc)>,
-    // Builder that infers the type of `dest` and has no accumulator.
-    OpBuilder<(ins "CombiningKind":$kind, "Value":$vector)>
-  ];
-
   let assemblyFormat = "$kind `,` $vector `,` $mask attr-dict"
                        " `:` type($vector) `,` type($mask) `->` type($result)";
 }
