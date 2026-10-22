@@ -813,8 +813,9 @@ vector_eltwise_vs_intrin(intrin_args<1, SRC_TYPE, DST_TYPE> args) {
   } else if constexpr (OP == VectorOpTy::VSHL) {
     INTRINSIC(vshl, ELTWISE_VS_ARGS);
   } else if constexpr (OP == VectorOpTy::VSHR) {
-    // TODO support arithmetic shit right (i16/i32)
-    // set round mode as 0 by default (logic shift right)
+    // The trailing 0 only disables rounding; it does NOT select a logical
+    // shift. Per the vshr intrinsic spec, uint16/uint32 inputs shift
+    // logically while int16/int32 inputs shift arithmetically.
     INTRINSIC(vshr, ELTWISE_VS_ARGS, 0);
   } else if constexpr (OP == VectorOpTy::VCMPS_EQ) {
     INTRINSIC(vcmpvs_eq, ELTWISE_VS_ARGS);
@@ -1155,8 +1156,28 @@ eltwise_get_element_nums_on_scalar(memref_t<__ubuf__ T, DIM> *src0,
 }
 
 template <VectorOpTy OP, typename T>
-__aiv__ __attribute__((always_inline)) T scalar_operation(T src0_oprand, T src1_oprand) {
-  if constexpr (OP == VectorOpTy::VADD || OP == VectorOpTy::VADDS) {
+__aiv__ __attribute__((always_inline)) T scalar_operation(T src0_oprand,
+                                                          T src1_oprand) {
+  if constexpr (std::is_same_v<T, int32_t> &&
+                (OP == VectorOpTy::VADD || OP == VectorOpTy::VADDS ||
+                 OP == VectorOpTy::VSUB || OP == VectorOpTy::VMUL ||
+                 OP == VectorOpTy::VMULS)) {
+    // Match vector low-32-bit arithmetic, including unaligned scalar prefixes.
+    // Signed overflow is undefined in C++; integer division compensation needs
+    // the wrapped product even when its exact mathematical value exceeds i32.
+    uint32_t lhs = static_cast<uint32_t>(src0_oprand);
+    uint32_t rhs = static_cast<uint32_t>(src1_oprand);
+    uint32_t bits;
+    if constexpr (OP == VectorOpTy::VADD || OP == VectorOpTy::VADDS)
+      bits = lhs + rhs;
+    else if constexpr (OP == VectorOpTy::VSUB)
+      bits = lhs - rhs;
+    else
+      bits = lhs * rhs;
+    // Convert the bit pattern without an out-of-range unsigned-to-signed cast.
+    return bits <= 0x7fffffffu ? static_cast<int32_t>(bits)
+                               : -1 - static_cast<int32_t>(~bits);
+  } else if constexpr (OP == VectorOpTy::VADD || OP == VectorOpTy::VADDS) {
     return src0_oprand + src1_oprand;
   } else if constexpr (OP == VectorOpTy::VSUB) {
     return src0_oprand - src1_oprand;
