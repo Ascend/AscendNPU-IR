@@ -49,13 +49,10 @@ module {
 }
 
 // -----
-// one-shot-bufferize generates a memref.copy because the inner loop (%2)
-// writes %arg00, but %arg00 is not included in the iter_args of the outer
-// loops (%0 and %1).
 
 // CHECK-LABEL: func.func @test_loop_dominance_2d
-// CHECK: memref.alloc
-// CHECK: memref.copy
+// CHECK-NOT: memref.alloc
+// CHECK-NOT: memref.copy
 module {
     func.func @test_loop_dominance_2d(%arg0: tensor<128x128xf32>, %arg00: tensor<128x128xf32>) -> tensor<128x128xf32> {
         %cst = arith.constant dense<1.000000e+00> : vector<64x64xf32>
