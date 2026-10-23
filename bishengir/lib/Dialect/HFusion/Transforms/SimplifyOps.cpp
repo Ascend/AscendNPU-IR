@@ -27,6 +27,7 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Matchers.h"
+#include "mlir/Interfaces/CastInterfaces.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
 #define DEBUG_TYPE "hfusion-simplify-ops"
@@ -92,6 +93,105 @@ bool involvesLinalgMatmul(mlir::Value value) {
   llvm::SmallPtrSet<mlir::Value, 32> seenValues;
   llvm::SmallPtrSet<mlir::Operation *, 32> seenOps;
   return involvesLinalgMatmulImpl(value, seenValues, seenOps);
+}
+
+// Return true when every use reachable from `root` ends at a memory sink.
+//
+// A precision down-up cast chain normally cannot be removed: the narrow cast
+// changes the value, and the later upcast does not restore the discarded
+// precision.  A store-only chain is different when the final store performs
+// the required conversion anyway.  In that case, removing the transport
+// round-trip preserves the value observed in memory and avoids redundant
+// work.  This helper proves that the intermediate value has no live compute
+// consumer before that fold is allowed.
+//
+// The walk is deliberately conservative.  It accepts only:
+// * terminal stores and bufferization materialization operations, where the
+//   value is the stored/source operand;
+// * floating-point casts and cast-interface operations, so the value can be
+//   followed through type conversions; and
+// * tensor shape/slice/insertion operations when the value is their data
+//   operand. Every other use is treated as observable and rejects the fold.
+// A worklist and a visited set make the check safe for shared values and
+// cyclic-looking SSA graphs formed by loop-carried IR.
+bool reachesStoreOnly(Value root) {
+  assert(root && "store-liveness walk requires a root value");
+  SmallVector<Value> worklist{root};
+  llvm::SmallPtrSet<Value, 16> seen;
+  while (!worklist.empty()) {
+    Value value = worklist.pop_back_val();
+    if (!seen.insert(value).second)
+      continue;
+
+    for (OpOperand &use : value.getUses()) {
+      Operation *user = use.getOwner();
+
+      // These are terminal sinks.  The value must be the data/source operand,
+      // not an address, index, destination, or another auxiliary operand.
+      if (auto materializeOp =
+              dyn_cast<bufferization::MaterializeInDestinationOp>(user)) {
+        if (materializeOp.getSource() == value)
+          continue;
+        return false;
+      }
+      if (auto storeOp = dyn_cast<memref::StoreOp>(user)) {
+        if (storeOp.getValueToStore() == value)
+          continue;
+        return false;
+      }
+      if (auto atomicOp = dyn_cast<memref::AtomicRMWOp>(user)) {
+        if (atomicOp.getValue() == value)
+          continue;
+        return false;
+      }
+
+      // Follow HFusion casts only when they remain floating-point casts.  A
+      // cast output used as an `outs` buffer is not a transparent value use.
+      if (auto userCast = dyn_cast<CastOp>(user)) {
+        if (!llvm::is_contained(userCast.getInputs(), value) ||
+            llvm::is_contained(userCast.getOutputs(), value))
+          return false;
+        if (!isa<FloatType>(
+                getElementTypeOrSelf(userCast.getInputs().front().getType())) ||
+            !isa<FloatType>(
+                getElementTypeOrSelf(userCast.getOutputs().front().getType())))
+          return false;
+        worklist.push_back(userCast->getResult(0));
+        continue;
+      }
+
+      // Other cast-interface implementations are accepted under the same
+      // strict one-input/one-result floating-point rules.
+      if (auto interfaceCast = dyn_cast<CastOpInterface>(user)) {
+        if (interfaceCast->getNumOperands() != 1 ||
+            interfaceCast->getNumResults() != 1 || use.getOperandNumber() != 0)
+          return false;
+        if (!isa<FloatType>(
+                getElementTypeOrSelf(interfaceCast->getOperand(0).getType())) ||
+            !isa<FloatType>(
+                getElementTypeOrSelf(interfaceCast->getResult(0).getType())))
+          return false;
+        worklist.push_back(interfaceCast->getResult(0));
+        continue;
+      }
+
+      // Shape-only tensor operations do not inspect element values.  Only
+      // their data operand is transparent; shape/index operands are not.
+      if (isa<tensor::ExtractSliceOp, tensor::InsertSliceOp, tensor::InsertOp,
+              tensor::ExpandShapeOp, tensor::CollapseShapeOp,
+              tensor::ReshapeOp>(user)) {
+        if (use.getOperandNumber() != 0)
+          return false;
+        worklist.push_back(user->getResult(0));
+        continue;
+      }
+
+      // Comparisons, arithmetic, copies, and all unknown consumers make the
+      // precision loss observable, so the cast chain must be retained.
+      return false;
+    }
+  }
+  return true;
 }
 
 // TODO: Optimize to solve it generally by canonicalize
@@ -165,9 +265,10 @@ struct CastOpPattern : public OpRewritePattern<CastOp> {
     return {};
   }
 
-  // Rebuild a transparent reshape op using the source value and its element type.
+  // Rebuild a transparent reshape op using the source value and its element
+  // type.
   static Value buildReshapeTo(Operation *reshapeTo, Value source,
-                           PatternRewriter &rewriter) {
+                              PatternRewriter &rewriter) {
 
     auto elementType = getElementTypeOrSelf(source);
     auto resultType =
@@ -216,15 +317,9 @@ public:
 
     // Helper to get precision rank for float types (higher = more precision)
     auto getPrecisionRank = [](Type type) -> int {
-      if (type.isBF16())
-        return 0; // lowest precision
-      if (type.isF16())
-        return 1;
-      if (type.isF32())
-        return 2;
-      if (type.isF64())
-        return 3; // highest precision
-      return -1;  // non-float type
+      if (auto floatType = mlir::dyn_cast<mlir::FloatType>(type))
+        return static_cast<int>(floatType.getFPMantissaWidth());
+      return -1;
     };
 
     // Helper to check if chain has precision down-then-up pattern
@@ -275,6 +370,8 @@ public:
     auto allHaveFastMathContract = [&isPrecisionUpcast, &hasFastMathContract](
                                        SmallVector<CastOp> &chain) -> bool {
       for (CastOp op : chain) {
+        if (op->hasAttr("round_mode"))
+          return false;
         // Skip precision upcasts - they are safe
         if (isPrecisionUpcast(op))
           continue;
@@ -307,7 +404,8 @@ public:
         // must have fastmath contract to allow optimization.
         if (hasPrecisionDownUpPattern(castChain) &&
             !allHaveFastMathContract(castChain)) {
-          if (!involvesLinalgMatmul(castChain[0].getOperand(0))) {
+          if (!involvesLinalgMatmul(castChain[0].getOperand(0)) &&
+              !reachesStoreOnly(castOp.getResults().front())) {
             break;
           }
         }
