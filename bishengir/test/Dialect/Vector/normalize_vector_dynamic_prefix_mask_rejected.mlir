@@ -33,4 +33,3 @@ func.func @partial_inner_bound_rejected(%r: index) -> vector<2x32xi1> {
   %m = vector.create_mask %r, %c16 : vector<2x32xi1>
   return %m : vector<2x32xi1>
 }
-
