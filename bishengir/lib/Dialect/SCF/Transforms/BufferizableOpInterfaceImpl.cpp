@@ -8,6 +8,7 @@
 
 #include "bishengir/Dialect/SCF/Transforms/BufferizableOpInterfaceImpl.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/Utils/RegbaseUtils.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/OpInterfaceUtils.h"
 
@@ -15,10 +16,8 @@
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Bufferization/Transforms/Bufferize.h"
 #include "mlir/Dialect/Bufferization/Transforms/OneShotAnalysis.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Dialect.h"
-#include "mlir/IR/Dominance.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/PatternMatch.h"
 
@@ -122,106 +121,13 @@ AliasingOpOperandList getAliasingOpOperands(Operation *op, Value value,
   return {{yieldOpOperand, BufferRelation::Equivalent}};
 }
 
-// Reads and writes of two distinct ops that are both nested inside the loop
-// region do not conflict at the loop boundary.
+// We believe that forOp's result should not be conflict with ops in for's
+// region. Conlict in VF should be caused by read or write ops.
 bool isNotConflicting(Operation *op, OpOperand *uRead, OpOperand *uWrite,
                       const AnalysisState &state) {
-  return uRead->getOwner() != uWrite->getOwner() &&
+  return hivm::isVF(op->getParentOfType<func::FuncOp>()) &&
          op->isAncestor(uRead->getOwner()) &&
          op->isAncestor(uWrite->getOwner());
-}
-
-/// Helper function for loop bufferization. Return the indices of all values
-/// that have a tensor type.
-static DenseSet<int64_t> getTensorIndices(ValueRange values) {
-  DenseSet<int64_t> result;
-  for (const auto &it : llvm::enumerate(values))
-    if (isa<TensorType>(it.value().getType()))
-      result.insert(it.index());
-  return result;
-}
-
-//===----------------------------------------------------------------------===//
-// This file contains code from the LLVM Project.
-// Original License: Apache License v2.0 with LLVM Exceptions
-// Original Copyright: NA
-// Original Source:
-// https://github.com/llvm/llvm-project/blob/main/mlir/lib/Dialect/SCF/Transforms/BufferizableOpInterfaceImpl.cpp
-//===----------------------------------------------------------------------===//
-LogicalResult resolveConflicts(Operation *op, RewriterBase &rewriter,
-                               const AnalysisState &state) {
-  auto bufferizableOp = cast<BufferizableOpInterface>(op);
-  if (failed(bufferizableOp.resolveTensorOpOperandConflicts(rewriter, state)))
-    return failure();
-
-  if (!state.getOptions().enforceAliasingInvariants)
-    return success();
-
-  // According to the `getAliasing...` implementations, a bufferized OpResult
-  // may alias only with the corresponding bufferized init_arg (or with a
-  // newly allocated buffer) and not with other buffers defined outside of the
-  // loop. I.e., the i-th OpResult may alias with the i-th init_arg;
-  // but not with any other OpOperand.
-  auto forOp = cast<scf::ForOp>(op);
-  auto yieldOp = cast<scf::YieldOp>(forOp.getBody()->getTerminator());
-  OpBuilder::InsertionGuard g(rewriter);
-
-  // Indices of all iter_args that have tensor type. These are the ones that
-  // are bufferized.
-  DenseSet<int64_t> indices = getTensorIndices(forOp.getInitArgs());
-  // For every yielded value, does it alias with something defined outside of
-  // the loop?
-  auto iterArgs = forOp.getRegionIterArgs();
-  auto &oneShotState = static_cast<const OneShotAnalysisState &>(state);
-  for (const auto it : llvm::enumerate(yieldOp.getResults())) {
-    // Note: `state` is guaranteed to be a `OneShotAnalysisState`, but this
-    // type cannot be used in the signature of `resolveConflicts` because the
-    // op interface is in the "IR" build unit and the `OneShotAnalysisState`
-    // is defined in the "Transforms" build unit.
-    if (!indices.contains(it.index())) {
-      continue;
-    }
-
-    bool conflict = false;
-    oneShotState.applyOnAliases(it.value(), [&](Value alias) {
-      if (alias != iterArgs[it.index()] && llvm::is_contained(iterArgs, alias))
-        conflict = true;
-    });
-    if (conflict) {
-      rewriter.setInsertionPoint(yieldOp);
-      FailureOr<Value> alloc = allocateTensorForShapedValue(
-          rewriter, yieldOp.getLoc(), it.value(), state.getOptions());
-      if (failed(alloc))
-        return failure();
-      rewriter.modifyOpInPlace(
-          yieldOp, [&]() { yieldOp.setOperand(it.index(), alloc.value()); });
-      continue;
-    }
-
-    bool definedOutLoopAndUsedInLoop = false;
-    auto initValue = forOp.getInitArgs()[it.index()];
-    DominanceInfo domInfo(forOp->getParentOfType<func::FuncOp>());
-    oneShotState.applyOnAliases(initValue, [&](Value alias) {
-      auto *owner = getOwnerOfValue(alias);
-      if (domInfo.properlyDominates(owner, forOp) &&
-          llvm::any_of(alias.getUsers(), [&](Operation *user) {
-            return forOp->isProperAncestor(user);
-          }))
-        definedOutLoopAndUsedInLoop = true;
-    });
-    if (definedOutLoopAndUsedInLoop) {
-      rewriter.setInsertionPoint(forOp);
-      FailureOr<Value> alloc = allocateTensorForShapedValue(
-          rewriter, forOp.getLoc(), initValue, state.getOptions());
-      if (failed(alloc))
-        return failure();
-      rewriter.modifyOpInPlace(forOp, [&]() {
-        forOp.getInitArgsMutable()[it.index()].assign(alloc.value());
-      });
-    }
-  }
-
-  return success();
 }
 } // namespace ForOpInterfaceForOpReuseInPlanMemory
 
@@ -241,10 +147,7 @@ AliasingValueList getAliasingValues(Operation *op, OpOperand &opOperand,
   } else if (isa<scf::ForOp>(op->getParentOp())) {
     auto iterArg = dyn_cast<scf::ForOp>(op->getParentOp())
                        .getTiedLoopRegionIterArg(opResult);
-    aliases.addAlias(AliasingValue(iterArg, BufferRelation::Equivalent,
-                                   /*isDefinite=*/false));
-    aliases.addAlias(AliasingValue(opResult, BufferRelation::Equivalent,
-                                   /*isDefinite=*/false));
+    aliases.addAlias(AliasingValue(iterArg, BufferRelation::Equivalent));
   } else if (isa<scf::WhileOp>(op->getParentOp())) {
     auto whileOp = dyn_cast<scf::WhileOp>(op->getParentOp());
     auto beforeArg = whileOp.getBeforeArguments()[opResult.getResultNumber()];
@@ -395,12 +298,6 @@ RegisterOpInterfaceOverride(
     /*InterfaceMethod=*/isNotConflicting,
     /*Impl=*/
     &ForOpInterfaceForOpReuseInPlanMemory::isNotConflicting);
-
-RegisterOpInterfaceOverride(
-    /*Op=*/scf::ForOp, /*Interface=*/BufferizableOpInterface,
-    /*InterfaceMethod=*/resolveConflicts,
-    /*Impl=*/
-    &ForOpInterfaceForOpReuseInPlanMemory::resolveConflicts);
 
 RegisterOpInterfaceOverride(
     /*Op=*/scf::ConditionOp, /*Interface=*/BufferizableOpInterface,
