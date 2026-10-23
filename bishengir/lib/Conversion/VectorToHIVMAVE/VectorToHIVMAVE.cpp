@@ -346,6 +346,58 @@ static constexpr llvm::StringLiteral kPermutedReadNotGatheredMsg =
     "non-identity permutation transfer_read must be lowered to a gather, not "
     "a plain load";
 
+static constexpr llvm::StringLiteral kWidePaddingSelectMsg =
+    "masked transfer_read with a rank>1 mask needs a padding select, which has "
+    "no AVE lowering for element types wider than 32 bits";
+
+/// True when `TransferReadOpPattern` will materialize a padding splat and a
+/// select for `readOp`'s mask.
+///
+/// A mask that `-normalize-vector` flattened and then cast back to the read's
+/// shape carries no more information than its rank-1 source, and that source
+/// already matches the flattened lane order, so it follows the rank-1 contract
+/// instead (the mask is propagated to the consuming ops by
+/// arith-vector-mask-analyze).  What is left is a rank>1 mask with no such
+/// cast, which in practice means a mask with no defining op at all -- a
+/// `vector<...xi1>` block argument.  Every rank>1 mask *produced by an op* is
+/// handled earlier: a multi-dim `vector.constant_mask` is rewritten to a
+/// rank-1 `ave.hir.pge` (or rejected when its active region is not a prefix),
+/// and a multi-dim `vector.create_mask` is rejected outright.  Those rewrites
+/// only win the race because the mask op precedes the read in program order --
+/// `applyPartialConversion` gives no ordering guarantee -- and a block argument
+/// is not an op, so no pattern ever converts it.
+static bool transferReadNeedsPaddingSelect(vector::TransferReadOp readOp) {
+  Value mask = readOp.getMask();
+  if (!mask)
+    return false;
+  auto maskVecType = dyn_cast<VectorType>(mask.getType());
+  if (!maskVecType || maskVecType.getRank() == 1)
+    return false;
+  if (auto shapeCast = mask.getDefiningOp<vector::ShapeCastOp>())
+    if (cast<VectorType>(shapeCast.getSource().getType()).getRank() == 1)
+      return false;
+  return true;
+}
+
+/// Whether the padding splat and select that `transferReadNeedsPaddingSelect`
+/// asks for can actually be lowered.
+///
+/// `HIVMBroadCastScalarOpLowering` only covers 8/16/32-bit elements, and the
+/// `vsel` instruction is defined for b16/b32 sources only (i1 goes through
+/// predicate logic instead).  A wider element type leaves both ops in the IR
+/// un-lowered, which fails much later at LLVM translation -- the exact failure
+/// mode that made 122 test_quantile cases fail before the i1 branch existed.
+///
+/// TODO: an unobservable padding needs no select at all, which would let these
+/// reads through instead of rejecting them.  Proving it unobservable means
+/// showing every consumer of the result reads only the active lanes (the
+/// repro's `maskedstore` with the same mask does), which needs a cross-op
+/// analysis rather than the local check here.
+static bool canLowerPaddingSelect(vector::TransferReadOp readOp) {
+  Type elemType = readOp.getVectorType().getElementType();
+  return elemType.getIntOrFloatBitWidth() <= 32;
+}
+
 // Non-identity permutations must already be lowered to a gather by
 // TransferReadToGatheringLoadPattern, or TransferReadOpPattern silently emits
 // a wrong-address plain load.
@@ -418,32 +470,14 @@ struct TransferReadOpPattern : public OpRewritePattern<vector::TransferReadOp> {
     // data and a padding splat.  Rank-1 masks keep the pre-existing backend
     // contract instead: the mask is propagated to the consuming ops by
     // arith-vector-mask-analyze, so no select is inserted for them.
+    //
+    // `transferReadNeedsPaddingSelect` documents which masks land here; reads
+    // whose element type has no lowering for the splat and the select are
+    // rejected up front in the pass, so this point is only reached for types
+    // that can be lowered.
     if (Value mask = readOp.getMask()) {
-      auto maskVecType = cast<VectorType>(mask.getType());
-      // A mask that -normalize-vector flattened and then cast back to the
-      // read's shape carries no more information than its rank-1 source, and
-      // that source already matches the flattened lane order.  Follow the
-      // rank-1 contract for it rather than materializing a padding splat:
-      // the splat has no lowering for every element type (i64 reaches
-      // HIVMSelectOpLowering and aborts with "Invalid element bit width for a
-      // predicate vector"), and it is redundant when the mask the consumers
-      // get propagated is the very same one.
-      bool isFlattenedRank1Mask = false;
-      if (auto shapeCast = mask.getDefiningOp<vector::ShapeCastOp>())
-        isFlattenedRank1Mask =
-            cast<VectorType>(shapeCast.getSource().getType()).getRank() == 1;
-      // Reaching the select below needs a rank>1 mask that is not such a
-      // flattened one, which in practice means a mask with no defining op at
-      // all -- a `vector<...xi1>` block argument.  Every rank>1 mask *produced
-      // by an op* is handled before this point: a multi-dim
-      // `vector.constant_mask` is rewritten to a rank-1 `ave.hir.pge` (or
-      // rejected when its active region is not a prefix), and a multi-dim
-      // `vector.create_mask` is rejected outright.  Those rewrites only win
-      // the race because the mask op precedes the read in program order --
-      // `applyPartialConversion` gives no ordering guarantee -- and a block
-      // argument is not an op, so no pattern ever converts it.  The select is
-      // therefore the fallback for that one case and must stay.
-      if (maskVecType.getRank() != 1 && !isFlattenedRank1Mask) {
+      if (transferReadNeedsPaddingSelect(readOp)) {
+        auto maskVecType = cast<VectorType>(mask.getType());
         // Flatten the mask to match `resVecType`.
         VectorType flatMaskType =
             VectorType::get(SmallVector<int64_t>{maskVecType.getNumElements()},
@@ -1195,11 +1229,19 @@ struct VectorToHIVMAVEPass
     // generic "failed to legalize" from the conversion driver
     WalkResult unloweredRead =
         moduleOp->walk([](vector::TransferReadOp readOp) {
-          if (isPlainLoadableTransferRead(readOp)) {
-            return WalkResult::advance();
+          if (!isPlainLoadableTransferRead(readOp)) {
+            readOp.emitOpError(kPermutedReadNotGatheredMsg);
+            return WalkResult::interrupt();
           }
-          readOp.emitOpError(kPermutedReadNotGatheredMsg);
-          return WalkResult::interrupt();
+          // Without this the splat and the select are emitted anyway and then
+          // survive every later pass un-lowered, with a zero exit code, until
+          // LLVM translation rejects them.
+          if (transferReadNeedsPaddingSelect(readOp) &&
+              !canLowerPaddingSelect(readOp)) {
+            readOp.emitOpError(kWidePaddingSelectMsg);
+            return WalkResult::interrupt();
+          }
+          return WalkResult::advance();
         });
     if (unloweredRead.wasInterrupted()) {
       signalPassFailure();
