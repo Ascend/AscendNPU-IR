@@ -143,9 +143,12 @@ void canonicalizationHIVMPipeline(OpPassManager &pm) {
   ADD_CANONICALIZER_PASS;
   pm.addPass(createSCFForLoopCanonicalizationPass());
   pm.addPass(createCSEPass());
-  ADD_CANONICALIZER_PASS_WITHOUT_OPTION_DEFS;
+  // No canonicalizer between cse and single-point: its folds are subsumed by
+  // the trailing canonicalizer of this cluster.
   pm.nest<func::FuncOp>().addPass(createHIVMOptSinglePointPass());
-  ADD_CANONICALIZER_PASS_WITHOUT_OPTION_DEFS;
+  // No canonicalizer between single-point and dead store elimination:
+  // dead-store matching does not depend on its rewrites, and the trailing
+  // canonicalizer subsumes them.
   pm.nest<func::FuncOp>().addPass(memref::createDeadStoreEliminationPass());
   ADD_CANONICALIZER_PASS_WITHOUT_OPTION_DEFS;
 }

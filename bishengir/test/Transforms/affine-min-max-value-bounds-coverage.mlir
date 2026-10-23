@@ -1,4 +1,4 @@
-// RUN: bishengir-opt --eliminate-single-iteration-scf-for="dump-affine-minmax-bounds=true" -split-input-file %s -o - | FileCheck --check-prefixes=CHECK,CHECK-BOUNDS %s
+// RUN: bishengir-opt --eliminate-single-iteration-scf-for="dump-affine-minmax-bounds=true fold-dominated-mins=false" -split-input-file %s -o - | FileCheck --check-prefixes=CHECK,CHECK-BOUNDS %s
 
 // Bounds dump is printed at the start of stdout; CHECK-BOUNDS must run before any
 // CHECK-LABEL so FileCheck's scan cursor is still at the beginning of the tool output.

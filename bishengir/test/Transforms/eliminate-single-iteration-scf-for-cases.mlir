@@ -276,3 +276,37 @@ module {
 
 // CHECK-LABEL: func.func @apply_unknown_operand
 // CHECK: scf.for
+
+// -----
+
+// A rescaled header whose operand is an induction variable. Only `affine.min`
+// and `affine.max` results carry a recorded interval, so bounding this
+// `affine.apply` has to fall back to the induction variable's own range.
+// Tiling feeds induction variables straight into the maps it emits, and the
+// slice cleanup turns an `affine.min` with a dominated candidate into exactly
+// this shape, so a header like it must stay provable.
+
+#iv_id = affine_map<(d0) -> (d0)>
+
+// CHECK-LABEL: func.func @apply_over_induction_variable
+// CHECK: scf.for
+// CHECK-NOT: scf.for
+// CHECK: arith.addi
+// CHECK: return
+module {
+  func.func @apply_over_induction_variable(%arg0: i32) -> i32 {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c32 = arith.constant 32 : index
+    %c64 = arith.constant 64 : index
+    %r = scf.for %i = %c1 to %c32 step %c1 iter_args(%a = %arg0) -> (i32) {
+      %ub = affine.apply #iv_id(%i)
+      %inner = scf.for %j = %c0 to %ub step %c64 iter_args(%b = %a) -> (i32) {
+        %s = arith.addi %b, %arg0 : i32
+        scf.yield %s : i32
+      }
+      scf.yield %inner : i32
+    }
+    return %r : i32
+  }
+}

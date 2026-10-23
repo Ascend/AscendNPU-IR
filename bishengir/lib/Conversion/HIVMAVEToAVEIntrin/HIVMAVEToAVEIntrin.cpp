@@ -2867,6 +2867,34 @@ struct HIVMInterleaveOpLowering
         rewriter.create<UnrealizedConversionCastOp>(loc, llvmVecVLType, src1);
     UnrealizedConversionCastOp src2Casted =
         rewriter.create<UnrealizedConversionCastOp>(loc, llvmVecVLType, src2);
+
+    auto moduleOp = op->getParentOfType<mlir::ModuleOp>();
+    if (moduleOp && hacc::utils::isAscend960(moduleOp)) {
+      // vintlvv2(src0, src1, part) -> dst
+      // part = 0(LOWER)/1(HIGHER), single result per call.
+      Value part0 = rewriter.create<LLVM::ConstantOp>(
+          loc, rewriter.getI32Type(), rewriter.getI32IntegerAttr(0));
+      Value part1 = rewriter.create<LLVM::ConstantOp>(
+          loc, rewriter.getI32Type(), rewriter.getI32IntegerAttr(1));
+      Value v2Res0 = rewriter
+                         .create<VintlvV2InstrOp>(
+                             loc, llvmVecVLType, src1Casted->getResult(0),
+                             src2Casted->getResult(0), part0)
+                         ->getResult(0);
+      Value v2Res1 = rewriter
+                         .create<VintlvV2InstrOp>(
+                             loc, llvmVecVLType, src1Casted->getResult(0),
+                             src2Casted->getResult(0), part1)
+                         ->getResult(0);
+      UnrealizedConversionCastOp res0Casted =
+          rewriter.create<UnrealizedConversionCastOp>(loc, llvmVecType, v2Res0);
+      UnrealizedConversionCastOp res1Casted =
+          rewriter.create<UnrealizedConversionCastOp>(loc, llvmVecType, v2Res1);
+      rewriter.replaceOp(op,
+                         {res0Casted->getResult(0), res1Casted->getResult(0)});
+      return success();
+    }
+
     Type intlvType = LLVM::LLVMStructType::getLiteral(
         rewriter.getContext(), {llvmVecVLType, llvmVecVLType});
 
@@ -2950,6 +2978,33 @@ struct HIVMDeInterleaveOpLowering
         rewriter.create<UnrealizedConversionCastOp>(loc, llvmVecVLType, src1);
     UnrealizedConversionCastOp src2Casted =
         rewriter.create<UnrealizedConversionCastOp>(loc, llvmVecVLType, src2);
+
+    auto moduleOp = op->getParentOfType<mlir::ModuleOp>();
+    if (moduleOp && hacc::utils::isAscend960(moduleOp)) {
+      // vdintlvv2(src0, src1, part) -> dst
+      // part = 0(LOWER)/1(HIGHER), single result per call.
+      Value part0 = rewriter.create<LLVM::ConstantOp>(
+          loc, rewriter.getI32Type(), rewriter.getI32IntegerAttr(0));
+      Value part1 = rewriter.create<LLVM::ConstantOp>(
+          loc, rewriter.getI32Type(), rewriter.getI32IntegerAttr(1));
+      Value v2Res0 = rewriter
+                         .create<VDintlvV2InstrOp>(
+                             loc, llvmVecVLType, src1Casted->getResult(0),
+                             src2Casted->getResult(0), part0)
+                         ->getResult(0);
+      Value v2Res1 = rewriter
+                         .create<VDintlvV2InstrOp>(
+                             loc, llvmVecVLType, src1Casted->getResult(0),
+                             src2Casted->getResult(0), part1)
+                         ->getResult(0);
+      UnrealizedConversionCastOp res0Casted =
+          rewriter.create<UnrealizedConversionCastOp>(loc, llvmVecType, v2Res0);
+      UnrealizedConversionCastOp res1Casted =
+          rewriter.create<UnrealizedConversionCastOp>(loc, llvmVecType, v2Res1);
+      rewriter.replaceOp(op,
+                         {res0Casted->getResult(0), res1Casted->getResult(0)});
+      return success();
+    }
 
     Type deintlvType = LLVM::LLVMStructType::getLiteral(
         rewriter.getContext(), {llvmVecVLType, llvmVecVLType});

@@ -344,8 +344,7 @@ static bool hasLegacyWideningCast(scf::ForOp forOp) {
 }
 
 static bool shouldRunLegacyUnroll(scf::ForOp forOp) {
-  if (!forOp->hasAttr(kLegacyFallbackAttr) || !isInnermostLoop(forOp) ||
-      hasContinuousOnePointStore(forOp))
+  if (!forOp->hasAttr(kLegacyFallbackAttr) || !isInnermostLoop(forOp))
     return false;
 
   auto lowerBound = hivmave::getConstantIntValue(forOp.getLowerBound());
@@ -977,11 +976,6 @@ static void annotateGroups(ArrayRef<SmallWidthGroup> groups,
 static LogicalResult optimizeLoop(scf::ForOp forOp, unsigned maxMergeFactor,
                                   int64_t &nextGroupId,
                                   PatternRewriter &rewriter) {
-  // HoistVstas cannot yet carry one continuous ONEPT stream across unrolled
-  // clones. Preserve the original loop until that state can be shared.
-  if (hasContinuousOnePointStore(forOp))
-    return failure();
-
   std::optional<SmallWidthMergePlan> plan =
       buildMergePlan(forOp, maxMergeFactor, nextGroupId);
   if (!plan)
@@ -1092,6 +1086,14 @@ struct aveLoopOptimizePass
     for (scf::ForOp forOp : loops) {
       if (!forOp || !forOp->getBlock())
         continue;
+
+      // HoistVstas cannot yet carry one continuous ONEPT stream across unrolled
+      // clones. Preserve the original loop until that state can be shared.
+      // The loop can't be unrolled both in original and fallback cases if this
+      // check fires so skip such forOp's
+      if (hasContinuousOnePointStore(forOp))
+        continue;
+
       if (failed(optimizeLoop(forOp, maxSmallWidthMergeFactor, nextGroupId,
                               rewriter))) {
         removeTemporaryAttrs(*forOp.getOperation());
