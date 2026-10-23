@@ -685,6 +685,21 @@ def OutlineCopyInVF : HIVMPass<"hivm-outline-copy-in-VF", "ModuleOp"> {
                            "memref::MemRefDialect", "vector::VectorDialect"];
 }
 
+def NormalizeTmpBufferInVf
+    : HIVMPass<"hivm-normalize-tmp-buffer-in-vf", "func::FuncOp"> {
+  let summary = "Normalize temporary tensor buffers in vector functions.";
+  let description = [{
+    For `hivm.vector_function` functions, promote a temporary tensor that is
+    read-modify-written inside a nested `scf.for` into an iter_arg of the
+    enclosing loop. This keeps the buffer in the loop-carried SSA chain so
+    one-shot-bufferize can reuse it in place instead of inserting a
+    `memref.copy`.
+  }];
+  let constructor = "mlir::hivm::createNormalizeTmpBufferInVfPass()";
+  let dependentDialects = ["func::FuncDialect", "scf::SCFDialect",
+                           "tensor::TensorDialect"];
+}
+
 def ConstantizeBufferSize
     : HIVMPass<"hivm-constantize-buffer-size", "func::FuncOp"> {
   let summary = "Constantize dynamic shape buffers from index bounds";

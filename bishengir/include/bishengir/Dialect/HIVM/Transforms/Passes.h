@@ -182,6 +182,10 @@ std::unique_ptr<Pass> createOutlineAllocInVFPass();
 /// Create a pass to outline hivm.load in VF by rewriting it to hivm.copy.
 std::unique_ptr<Pass> createOutlineCopyInVFPass();
 
+/// Create a pass that promotes temporary tensor buffers inside vector
+/// functions into enclosing loop iter_args.
+std::unique_ptr<Pass> createNormalizeTmpBufferInVfPass();
+
 /// Create a pass to rewrite bufferization.alloc_tensor(copy...) into a
 /// bufferization.alloc_tensor + hivm.hir.copy pair.
 std::unique_ptr<Pass> createDecomposeAllocTensorCopyPass();
