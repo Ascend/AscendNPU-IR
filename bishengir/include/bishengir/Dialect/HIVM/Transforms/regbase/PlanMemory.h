@@ -137,7 +137,20 @@ struct BufferLife {
 /// a list of buffer life for a given storage entry
 using BufferLifeVec = SmallVector<std::shared_ptr<BufferLife>>;
 
+/// Conflict-memo id types. Ids are unique per MemPlanRegBase instance;
+/// the two names distinguish entry ids from bound ids at memo-key sites.
+using EntryMemoId = uint32_t;
+using BoundMemoId = uint32_t;
+
 struct StorageEntry {
+  explicit StorageEntry(EntryMemoId memoId) : memoId(memoId) {}
+  /// Non-copyable: a copy would duplicate the memo id and alias memo keys.
+  StorageEntry(const StorageEntry &) = delete;
+  StorageEntry &operator=(const StorageEntry &) = delete;
+  StorageEntry &operator=(StorageEntry &&) = delete;
+  // Only move constructor is allowed.
+  StorageEntry(StorageEntry &&) = default;
+
   /// The the buffer plan info.
   BufferInfo *bufInfo{nullptr};
 
@@ -178,14 +191,25 @@ struct StorageEntry {
   /// optimization.
   uint32_t multiBufferNum{1};
 
+  /// Conflict-memo id, assigned at construction from the owning
+  /// MemPlanRegBase's id counter; unique per instance, never reused.
+  const EntryMemoId memoId;
+
   /// Get Bufferlife by vaule
   std::shared_ptr<BufferLife> GetBufferLifeByValue(const Value v) const;
 };
 
 struct MemoryBound {
-  MemoryBound(BufferLifeVec life, uint64_t o, uint64_t e, const StorageEntry *s)
+  MemoryBound(BufferLifeVec life, uint64_t o, uint64_t e, const StorageEntry *s,
+              BoundMemoId memoId)
       : bufferLifeVec(std::move(life)), offset(o), extent(e),
-        lastStorageEntry(s) {}
+        lastStorageEntry(s), memoId(memoId) {}
+  /// Non-copyable: a copy would duplicate the memo id and alias memo keys.
+  MemoryBound(const MemoryBound &) = delete;
+  MemoryBound &operator=(const MemoryBound &) = delete;
+  MemoryBound &operator=(MemoryBound &&) = delete;
+  // Only move constructor is allowed.
+  MemoryBound(MemoryBound &&) = default;
   /// collection of buffer plan and free time which use this Memory
   BufferLifeVec bufferLifeVec;
   /// offset of tagged memory
@@ -194,6 +218,9 @@ struct MemoryBound {
   uint64_t extent;
   /// always record storage entry of last plan
   const StorageEntry *lastStorageEntry;
+  /// Conflict-memo id, assigned at construction from the owning
+  /// MemPlanRegBase's id counter; unique per instance, never reused.
+  const BoundMemoId memoId;
 };
 using MemBoundList = std::list<std::shared_ptr<MemoryBound>>;
 using MemBoundListConstIter = MemBoundList::const_iterator;
@@ -541,7 +568,7 @@ protected:
 };
 
 /// Pair of StorageEntry.
-using StorageEntryPair = std::pair<const StorageEntry *, const StorageEntry *>;
+using StorageEntryIdPair = std::pair<EntryMemoId, EntryMemoId>;
 
 class MemPlanRegBase {
 public:
@@ -720,7 +747,7 @@ protected:
 
   /// check if e1 and e2 has pipe conflict.
   bool PipeConflict(const StorageEntry *e1, const StorageEntry *e2,
-                    DenseMap<StorageEntryPair, bool> &conflictMap);
+                    DenseMap<StorageEntryIdPair, bool> &conflictMap);
 
   /// check if e1 and e2 has same parent loop.
   bool PipeConflictInSameLoop(const StorageEntry *e1, const StorageEntry *e2);
@@ -807,8 +834,12 @@ protected:
   /// operation with pipe type `Pipe`.
   template <PIPE Pipe> bool IsInplaceReuseReachable(Value allocValue);
 
-  /// Get overlap buffer life.
-  DenseMap<ValuePair, BufferLife>
+  /// Get overlap buffer life. Keeps at most one intersection window per
+  /// buffer pair (first window wins, via DenseMap::try_emplace). Both
+  /// vectors must be merge-normalized (disjoint and sorted by allocTime),
+  /// which is the same invariant the two-pointer sweep relies on. The
+  /// inline capacity avoids per-call heap allocation in the common case.
+  llvm::SmallDenseMap<ValuePair, BufferLife, 32>
   GetOverlapBufferLife(const BufferLifeVec &b1, const BufferLifeVec &b2) const;
 
   /// Reorder and make the storage entries of firstbuffer and otherbuffer
@@ -904,8 +935,25 @@ protected:
   /// Inplace reuse reachable map for checking if a buffer is used by hivmPipeOp
   InplaceReuseReachableMap reachableMap;
 
-  /// Map from the storage entry pair to its pipeDma conflict info.
-  DenseMap<StorageEntryPair, bool> pipeDmaConflictMap;
+  /// Per-instance id sources stamped at entry/bound construction and used
+  /// as conflict-memo keys instead of pointers. Ids are never reused within
+  /// this MemPlanRegBase instance, so a destroyed entry/bound can never
+  /// have its address recycled into a stale memo key (ABA); no keep-alive
+  /// pinning is needed. Mutable: bounds are also created in const planning
+  /// methods.
+  mutable EntryMemoId nextEntryMemoId = 1;
+  mutable BoundMemoId nextBoundMemoId = 1;
+
+  /// Map from the storage entry memo-id pair to its pipeDma conflict info.
+  DenseMap<StorageEntryIdPair, bool> pipeDmaConflictMap;
+
+  /// Map from the storage entry memo-id pair to its same-loop conflict info.
+  DenseMap<StorageEntryIdPair, bool> sameLoopConflictMap;
+
+  /// Entry-scoped memo of VerifyConflictStage0 per (entry, bound) pair,
+  /// keyed by memo ids. Bounds are immutable after creation and MemPlan is
+  /// rebuilt per planning attempt, so verdicts are stable.
+  DenseMap<std::pair<EntryMemoId, BoundMemoId>, bool> stage0ConflictMemo;
 
   /// First buffer storage entry corresponding to reused additional otherbuffer
   /// entries. When a single-buffer entry is expanded to use
