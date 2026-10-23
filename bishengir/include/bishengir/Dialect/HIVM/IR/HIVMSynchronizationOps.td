@@ -74,6 +74,46 @@ def WaitFlagOp : HIVM_SynchronizationOp<"wait_flag"> {
   let hasVerifier = 1;
 }
 
+def TryWaitOp : HIVM_SynchronizationOp<"try_wait", [
+    OpPipeInterface, SinglePipeOpTrait, OpPipeTrait<"PIPE::PIPE_S">]> {
+  let summary = "Query a synchronization counter without blocking.";
+  let description = [{
+    `try_wait` reads a synchronization counter without consuming its token.
+    It is available on Ascend950 (A5) and later generations. The legacy
+    memory-based (A3) pipeline is not supported. Only `intra_block`
+    (hardware mode 1) is supported. Other hardware modes are intentionally
+    not implemented.
+
+    A CUBE wait for two VECTOR sub-blocks observes two physical counters,
+    `flag_id` and `flag_id + 16`. A nonblocking readiness check must query
+    both. The original blocking wait still consumes the tokens after both
+    queries succeed. Dynamic IDs must stay in [0, 31]. The operation runs
+    on PIPE_S and has unknown effects to prevent CSE and speculation.
+
+    The result is used only to test readiness; it does not replace WAIT.
+    Both static and dynamic flag IDs lower directly to a call to
+    `llvm.hivm.TRY.WAIT.mode(flag, 1)`, recognized by CCE. The mode argument
+    selects the queried counter; mode 1 is the intra-block counter, as
+    documented in the Ascend950 CCE instruction manual.
+    No template wrapper or local LLVM intrinsic registration is required.
+  }];
+  let arguments = (ins OptionalAttr<Builtin_IntegerAttr>:$static_flag_id,
+                       Optional<I64>:$dynamic_flag_id,
+                       HIVM_TryWaitSyncModeAttr:$sync_mode);
+  let results = (outs I64:$counter);
+  let assemblyFormat = [{
+    `flag` `=` custom<FlagID>($static_flag_id, $dynamic_flag_id)
+    `,` `sync_mode` `=` $sync_mode attr-dict `:` type($counter)
+  }];
+  let builders = [OpBuilder<(ins "OpFoldResult":$flag_id,
+      "hivm::TryWaitSyncMode":$sync_mode)>];
+  let extraClassDeclaration = [{
+    ::mlir::OpFoldResult getFlagId();
+  }];
+  let hasVerifier = 1;
+}
+
+
 def PipeBarrierOp : HIVM_SynchronizationOp<"pipe_barrier"> {
   let summary = "hivm pipe barrier.";
   let arguments = (ins HIVM_PipeAttr:$pipe);

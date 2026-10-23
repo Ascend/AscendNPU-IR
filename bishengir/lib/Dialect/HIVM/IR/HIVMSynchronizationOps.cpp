@@ -145,6 +145,41 @@ LogicalResult WaitFlagOp::verify() {
 }
 
 //===----------------------------------------------------------------------===//
+// TryWaitOp
+//===----------------------------------------------------------------------===//
+
+OpFoldResult TryWaitOp::getFlagId() {
+  if (auto attr = getStaticFlagId())
+    return *attr;
+  return getDynamicFlagId();
+}
+
+LogicalResult TryWaitOp::verify() {
+  auto flagIdAttr = getStaticFlagId();
+  Value flagId = getDynamicFlagId();
+  if (flagIdAttr.has_value() && flagId)
+    return emitOpError("only one flag ID is supported");
+  if (!flagIdAttr.has_value() && !flagId)
+    return emitOpError("flag ID is needed");
+  if (flagIdAttr &&
+      (flagIdAttr->getValue().isNegative() || flagIdAttr->getValue().ugt(31)))
+    return emitOpError("static flag ID must fit the 5-bit Xt field (0..31)");
+  return success();
+}
+
+void TryWaitOp::build(OpBuilder &builder, OperationState &state,
+                      OpFoldResult flagId, TryWaitSyncMode syncMode) {
+  auto syncModeAttr = TryWaitSyncModeAttr::get(builder.getContext(), syncMode);
+  if (auto attr = dyn_cast_if_present<Attribute>(flagId)) {
+    build(builder, state, builder.getI64Type(), cast<IntegerAttr>(attr),
+          nullptr, syncModeAttr);
+    return;
+  }
+  build(builder, state, builder.getI64Type(), nullptr, cast<Value>(flagId),
+        syncModeAttr);
+}
+
+//===----------------------------------------------------------------------===//
 // SyncBlockSetOp
 //===----------------------------------------------------------------------===//
 

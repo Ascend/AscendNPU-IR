@@ -124,6 +124,58 @@ struct HIVMSetWaitFlagOpLowering : public ConvertOpToLLVMPattern<Op> {
   }
 };
 
+// TRY_WAIT hardware mode. Per the Ascend950 CCE instruction manual, mode 1
+// queries the intra-block synchronization counter.
+constexpr int64_t kTryWaitIntraBlockMode = 1;
+static_assert(kTryWaitIntraBlockMode ==
+                  static_cast<int64_t>(TryWaitSyncMode::INTRA_BLOCK),
+              "TRY_WAIT mode must match the intra_block sync mode");
+
+// CCE recognizes this intrinsic by name. Keep the declaration opaque to the
+// local LLVM optimizer, which does not have CCE's intrinsic ID table.
+struct HIVMTryWaitOpLowering : public ConvertOpToLLVMPattern<TryWaitOp> {
+  using ConvertOpToLLVMPattern<TryWaitOp>::ConvertOpToLLVMPattern;
+
+  LogicalResult
+  matchAndRewrite(TryWaitOp op, TryWaitOp::Adaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    ModuleOp module = op->getParentOfType<ModuleOp>();
+    // try_wait is introduced on A5 and later generations have to support it
+    // as well. Reject the legacy memory-based (A3) pipeline instead of
+    // naming a single generation.
+    if (hacc::utils::isMemBasedArch(module))
+      return op.emitOpError(
+          "is not supported on memory-based (A3) architectures");
+
+    constexpr StringLiteral name = "llvm.hivm.TRY.WAIT.mode";
+    auto i64 = rewriter.getI64Type();
+    auto type = LLVM::LLVMFunctionType::get(i64, {i64, i64});
+    auto callee = module.lookupSymbol<LLVM::LLVMFuncOp>(name);
+    if (callee && callee.getFunctionType() != type)
+      return op.emitOpError("incompatible declaration of ") << name;
+    if (!callee) {
+      OpBuilder::InsertionGuard guard(rewriter);
+      rewriter.setInsertionPointToStart(module.getBody());
+      callee = rewriter.create<LLVM::LLVMFuncOp>(op.getLoc(), name, type);
+      // The declaration is introduced before mixed modules are split.
+      callee->setAttr(TFuncCoreTypeAttr::name,
+                      TFuncCoreTypeAttr::get(rewriter.getContext(),
+                                             TFuncCoreType::AIC_OR_AIV));
+    }
+
+    Value flag = adaptor.getDynamicFlagId();
+    if (auto id = op.getStaticFlagId())
+      flag = rewriter.create<LLVM::ConstantOp>(
+          op.getLoc(), i64, rewriter.getI64IntegerAttr(id->getInt()));
+    Value mode = rewriter.create<LLVM::ConstantOp>(
+        op.getLoc(), i64, rewriter.getI64IntegerAttr(kTryWaitIntraBlockMode));
+    auto call = rewriter.create<LLVM::CallOp>(op.getLoc(), callee,
+                                              ValueRange{flag, mode});
+    rewriter.replaceOp(op, call.getResults());
+    return success();
+  }
+};
+
 struct HIVMPipeBarrierOpLowering
     : public ConvertOpToLLVMPattern<PipeBarrierOp> {
   explicit HIVMPipeBarrierOpLowering(LLVMTypeConverter &converter)
@@ -562,6 +614,7 @@ void mlir::populateHIVMLegalizeForLLVMExportPatterns(
                HIVMSetFlagOpLowering,
                HIVMWaitFlagOpLowering,
                HIVMPipeBarrierOpLowering,
+               HIVMTryWaitOpLowering,
                HIVMSetFFTSBaseAddrOpLowering,
                HIVMSetMaskNormOpLowering,
                HIVMSetCtrlOpLowering,
