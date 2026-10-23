@@ -39,8 +39,7 @@ std::optional<ExecutionModel> getLegacyExecutionModel(StringRef device) {
   if (device.starts_with("Ascend910B") || device.starts_with("Ascend910_93"))
     return ExecutionModel::kMemBased;
   if (device.starts_with("Ascend310B") || device.starts_with("Ascend910_95") ||
-      device.starts_with("Ascend950PR_") ||
-      device.starts_with("Ascend950DT_") || device.starts_with("Ascend960"))
+      device.starts_with("Ascend950") || device.starts_with("Ascend960"))
     return ExecutionModel::kRegBased;
   return std::nullopt;
 }
@@ -113,8 +112,7 @@ TEST(NPUArchitectureFeatureTest, EveryDeviceHasReviewedCubeVectorFeatures) {
     // profiles, the architecture mapping, and ExecutionModel.
     bool isM300 = spelling.starts_with("Ascend310B");
     bool isC310 = spelling.starts_with("Ascend910_95") ||
-                  spelling.starts_with("Ascend950PR_") ||
-                  spelling.starts_with("Ascend950DT_");
+                  spelling.starts_with("Ascend950");
     bool isC220 = spelling.starts_with("Ascend910B") ||
                   spelling.starts_with("Ascend910_93");
     // Ascend960 (dav-920r1) follows the dav-c310 reg-based lineage.
