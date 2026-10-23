@@ -51,6 +51,7 @@ enum class CastRoundKind {
   Trunc,
   TruncEnableOverflow,
   TruncWithOverflow,
+  Odd,
 };
 enum class CastSignKind { Preserve, Signed, Unsigned };
 enum class CastUnsignedModeKind {

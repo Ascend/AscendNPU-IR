@@ -399,8 +399,9 @@ struct VFTypeConvertionPattern : public OpConversionPattern<OpToBeConverted> {
         newOp = rewriter.create<VFExtSIOp>(loc, outVecType, in, adjustedMask,
                                            part, nullptr);
     } else if constexpr (std::is_same_v<OpToBeConverted, arith::ExtFOp>) {
-      newOp =
-          rewriter.create<VFExtFOp>(loc, outVecType, in, adjustedMask, part);
+      // mode is optional; default Merging.
+      newOp = rewriter.create<VFExtFOp>(loc, outVecType, in, adjustedMask, part,
+                                        nullptr);
     } else if constexpr (std::is_same_v<OpToBeConverted, arith::TruncIOp>) {
       const bool isI32ToI8 =
           inElemType.isSignlessInteger(32) && outElemType.isSignlessInteger(8);
@@ -447,8 +448,10 @@ struct VFTypeConvertionPattern : public OpConversionPattern<OpToBeConverted> {
                 hivmave::findReuseableMaskOrCreateOne(op, f32VecType, rewriter);
             auto f32Op = rewriter.create<VFSIntToFpOp>(loc, f32VecType, in,
                                                        maskF32, rnd, nullptr);
-            auto f16Op = rewriter.create<VFTruncFOp>(
-                loc, f16VecType, f32Op.getResult(), maskF32, rnd, sat, part);
+            // mode is optional; default Merging.
+            auto f16Op =
+                rewriter.create<VFTruncFOp>(loc, f16VecType, f32Op.getResult(),
+                                            maskF32, rnd, sat, part, nullptr);
             newOp = rewriter.create<VFFpToSIntOp>(
                 loc, outVecType, f16Op.getResult(), maskF16, rnd, sat, part);
           }
@@ -601,8 +604,9 @@ struct VFTypeConvertionPattern : public OpConversionPattern<OpToBeConverted> {
         newOp = rewriter.create<VFTruncIOp>(loc, outVecType, in, adjustedMask,
                                             sat, part, nullptr, uni);
     } else if constexpr (std::is_same_v<OpToBeConverted, arith::TruncFOp>) {
+      // mode is optional; default Merging.
       newOp = rewriter.create<VFTruncFOp>(loc, outVecType, in, adjustedMask,
-                                          rnd, sat, part);
+                                          rnd, sat, part, nullptr);
     } else if constexpr (std::is_same_v<OpToBeConverted, arith::SIToFPOp>) {
       if (inElemType.isSignlessInteger(64))
         newOp = rewriter.create<VFSIntToFpOp>(loc, outVecType, in, adjustedMask,
