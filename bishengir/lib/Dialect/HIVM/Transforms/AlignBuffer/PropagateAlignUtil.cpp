@@ -22,11 +22,18 @@
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/DialectRegistry.h"
 #include "mlir/IR/Dominance.h"
+#include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/Value.h"
+#include "llvm/ADT/Hashing.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/Support/LogicalResult.h"
 
 #define DEBUG_TYPE "hivm-align-buffer-util"
@@ -861,6 +868,164 @@ propagateSubViewOp(RewriterBase &rewriter,
   return newConversionOp;
 }
 
+/// Builds a bit-exact elementwise copy between two i1 buffers whose layouts
+/// the DMA copy library cannot express (see isI1LayoutByteExpressible).
+/// Singleton vector<1xi1> transfer pairs lower into predicate-block RMWs
+/// (I1opSoftImpl) that preserve every neighboring bit.
+static void buildBitExactI1CopyNest(RewriterBase &rewriter, Location loc,
+                                    Value src, Value dst) {
+  auto srcType = cast<MemRefType>(src.getType());
+  auto dstType = cast<MemRefType>(dst.getType());
+  assert(srcType.getShape() == dstType.getShape() &&
+         "i1 fallback copy expects matching shapes");
+  int64_t rank = srcType.getRank();
+
+  Value zero = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+  Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+  SmallVector<Value> lbs, ubs, steps;
+  for (int64_t dim = 0; dim < rank; ++dim) {
+    lbs.push_back(zero);
+    steps.push_back(one);
+    if (srcType.isDynamicDim(dim)) {
+      Value idx = rewriter.create<arith::ConstantIndexOp>(loc, dim);
+      ubs.push_back(rewriter.create<memref::DimOp>(loc, src, idx));
+    } else {
+      ubs.push_back(rewriter.create<arith::ConstantIndexOp>(
+          loc, srcType.getDimSize(dim)));
+    }
+  }
+
+  // The loop nest touches exactly one element per innermost body; the
+  // caller's insertion point is respected for write-back bridges.
+  OpBuilder::InsertionGuard guard(rewriter);
+  SmallVector<Value> inductionVars;
+  for (int64_t dim = 0; dim < rank; ++dim) {
+    auto loop =
+        rewriter.create<scf::ForOp>(loc, lbs[dim], ubs[dim], steps[dim]);
+    inductionVars.push_back(loop.getInductionVar());
+    rewriter.setInsertionPointToStart(loop.getBody());
+  }
+
+  // Singleton rank-1 views keep each transfer one element wide, as the
+  // broadcast load/store patterns require.
+  SmallVector<OpFoldResult> elemOffsets(inductionVars.begin(),
+                                        inductionVars.end());
+  SmallVector<OpFoldResult> unitSizes(rank, rewriter.getIndexAttr(1));
+  SmallVector<OpFoldResult> unitStrides(rank, rewriter.getIndexAttr(1));
+  auto elemSrcTy =
+      cast<MemRefType>(memref::SubViewOp::inferRankReducedResultType(
+          {1}, srcType, elemOffsets, unitSizes, unitStrides));
+  auto elemDstTy =
+      cast<MemRefType>(memref::SubViewOp::inferRankReducedResultType(
+          {1}, dstType, elemOffsets, unitSizes, unitStrides));
+  Value elemSrc = rewriter.create<memref::SubViewOp>(
+      loc, elemSrcTy, src, elemOffsets, unitSizes, unitStrides);
+  Value elemDst = rewriter.create<memref::SubViewOp>(
+      loc, elemDstTy, dst, elemOffsets, unitSizes, unitStrides);
+
+  auto vecTy = VectorType::get({1}, rewriter.getI1Type());
+  AffineMap identity = rewriter.getMultiDimIdentityMap(1);
+  auto inBounds = rewriter.getBoolArrayAttr(SmallVector<bool>{true});
+  Value padding = rewriter.create<arith::ConstantOp>(
+      loc, rewriter.getI1Type(), rewriter.getZeroAttr(rewriter.getI1Type()));
+  Value scalar = rewriter.create<vector::TransferReadOp>(
+      loc, vecTy, elemSrc, SmallVector<Value>{zero}, identity, padding, Value(),
+      inBounds);
+  rewriter.create<vector::TransferWriteOp>(
+      loc, scalar, elemDst, SmallVector<Value>{zero},
+      AffineMapAttr::get(identity), Value(), inBounds);
+}
+
+/// Outlines the elementwise fallback into a module-level private VF function
+/// and returns it, reusing an existing one per (srcType, dstType)
+/// signature. I1opSoftImpl's <VL x i1> RMW results can only be split inside
+/// a VF (PTC_SimdVf) function, so the fallback cannot be emitted inline in
+/// a non-VF caller. `symtab` is the enclosing module's table, built once per
+/// pass instead of once per bridge.
+static func::FuncOp getOrCreateBitExactI1CopyFunc(RewriterBase &rewriter,
+                                                  Location loc, Value src,
+                                                  Value dst,
+                                                  SymbolTable &symtab) {
+  auto srcType = cast<MemRefType>(src.getType());
+  auto dstType = cast<MemRefType>(dst.getType());
+  ModuleOp module = src.getParentRegion()->getParentOfType<ModuleOp>();
+  assert(module && symtab.getOp() == module &&
+         "bridge symbol table must match the enclosing module");
+
+  // The hash-named key keeps repeated compilations symbol-stable.
+  std::string signature;
+  llvm::raw_string_ostream os(signature);
+  os << srcType << "|" << dstType;
+  uint64_t signatureHash = llvm::hash_value(llvm::StringRef(os.str()));
+  std::string key = ("i1_bitexact_copy_" + Twine(srcType.getRank()) + "d_" +
+                     Twine(signatureHash))
+                        .str();
+  if (auto existing = symtab.lookup<func::FuncOp>(key))
+    return existing;
+
+  IRRewriter builder(module.getContext());
+  builder.setInsertionPointToStart(module.getBody());
+  auto copyFunc = builder.create<func::FuncOp>(
+      loc, key, builder.getFunctionType(TypeRange{srcType, dstType}, {}));
+  copyFunc.setPrivate();
+  copyFunc->setAttr(hivm::VectorFunctionAttr::name, builder.getUnitAttr());
+  copyFunc->setAttr("no_inline", builder.getUnitAttr());
+  // Inherit the core type so InferVFMode/InjectSync classify the outlined
+  // copy like the caller it was carved out of.
+  if (Operation *caller = src.getParentRegion()->getParentOp();
+      auto coreType = caller->getAttrOfType<hivm::TFuncCoreTypeAttr>(
+          hivm::TFuncCoreTypeAttr::name))
+    copyFunc->setAttr(hivm::TFuncCoreTypeAttr::name, coreType);
+  symtab.insert(copyFunc);
+
+  Block *entry = copyFunc.addEntryBlock();
+  builder.setInsertionPointToStart(entry);
+  buildBitExactI1CopyNest(builder, loc, entry->getArgument(0),
+                          entry->getArgument(1));
+  builder.create<func::ReturnOp>(loc);
+  return copyFunc;
+}
+
+/// Creates a call to the outlined fallback at the rewriter's current
+/// insertion point and returns the call op.
+static Operation *createBitExactI1Copy(RewriterBase &rewriter, Location loc,
+                                       Value src, Value dst,
+                                       SymbolTable &symtab) {
+  // The vector dialect may not be loaded when this pass runs standalone.
+  rewriter.getContext()->loadDialect<mlir::vector::VectorDialect>();
+
+  func::FuncOp copyFunc =
+      getOrCreateBitExactI1CopyFunc(rewriter, loc, src, dst, symtab);
+  auto call = rewriter.create<func::CallOp>(loc, copyFunc,
+                                            SmallVector<Value>{src, dst});
+  call->setAttr(hivm::VectorFunctionAttr::name, rewriter.getUnitAttr());
+  return call.getOperation();
+}
+
+/// Returns true when the DMA library cannot copy between src and dst without
+/// corrupting the i1 bit layout.
+static bool needsBitExactI1Copy(Value src, Value dst) {
+  auto srcType = dyn_cast<MemRefType>(src.getType());
+  auto dstType = dyn_cast<MemRefType>(dst.getType());
+  if (!srcType || !dstType)
+    return false;
+  if (!srcType.getElementType().isInteger(1))
+    return false;
+  return !isI1LayoutByteExpressible(srcType) ||
+         !isI1LayoutByteExpressible(dstType);
+}
+
+/// Creates the bridge copy between src and dst: an hivm::CopyOp when the
+/// DMA library can express it losslessly, otherwise the outlined bit-exact
+/// i1 fallback. Returns the created top-level operation.
+static Operation *createBridgeCopy(RewriterBase &rewriter, Location loc,
+                                   Value src, Value dst, SymbolTable &symtab) {
+  if (needsBitExactI1Copy(src, dst)) {
+    return createBitExactI1Copy(rewriter, loc, src, dst, symtab);
+  }
+  return rewriter.create<hivm::CopyOp>(loc, TypeRange{}, src, dst);
+}
+
 [[maybe_unused]] static LogicalResult
 handlePropagateFailure(RewriterBase &rewriter,
                        UnrealizedConversionCastOp conversionOp,
@@ -872,7 +1037,8 @@ handlePropagateFailure(RewriterBase &rewriter,
 
   rewriter.setInsertionPoint(user->getOwner());
   auto newDst = utils::createEmptyOp(rewriter, loc, dst);
-  rewriter.create<hivm::CopyOp>(loc, TypeRange{}, src, newDst);
+  SymbolTable symtab(src.getParentRegion()->getParentOfType<ModuleOp>());
+  createBridgeCopy(rewriter, loc, src, newDst, symtab);
 
   rewriter.modifyOpInPlace(user->getOwner(), [&] { user->set(newDst); });
   return success();
@@ -1357,7 +1523,10 @@ FailureOrCastVec propagateFuncCallOp(RewriterBase &rewriter,
   ModuleOp module = callOp->getParentOfType<ModuleOp>();
   SymbolTable symtab(module);
   auto callee = symtab.lookup<func::FuncOp>(callOp.getCallee());
-  if (!callee)
+  // An external declaration (e.g. an outlined scope stub without a body)
+  // cannot be rewritten in-place, so bail out and let the caller fall back
+  // to a copy via handlePropagateFailure.
+  if (!callee || callee.isExternal())
     return FailureOrCastVec{};
 
   std::optional<unsigned> argIdx;
@@ -1676,7 +1845,8 @@ static void findWriteOp(Value mem, SmallVector<Operation *> &writeOps) {
 }
 
 void mlir::hivm::handlePropagateFailure(RewriterBase &rewriter,
-                                        func::FuncOp &funcOp) {
+                                        func::FuncOp &funcOp,
+                                        SymbolTable &symtab) {
   funcOp->walk([&](UnrealizedConversionCastOp conversion) {
     if (!conversion->hasAttr(propagateFailureName))
       return WalkResult::skip();
@@ -1692,25 +1862,31 @@ void mlir::hivm::handlePropagateFailure(RewriterBase &rewriter,
       auto dst = conversion.getOutputs()[0];
       rewriter.setInsertionPoint(user);
       auto newDst = utils::createEmptyOp(rewriter, loc, dst);
-      Operation *newCopy =
-          rewriter.create<hivm::CopyOp>(loc, TypeRange{}, src, newDst);
+      Operation *fwdBridge =
+          createBridgeCopy(rewriter, loc, src, newDst, symtab);
+      Operation *newCopy = newDst.getDefiningOp();
       rewriter.modifyOpInPlace(user, [&] { use.set(newDst); });
 
+      // Collect later writes to newDst for the write-back bridge, dropping
+      // the forward bridge itself: it may write newDst as a CopyOp or the
+      // outlined fallback call.
       SmallVector<Operation *> writeNewDst;
       findWriteOp(newDst, writeNewDst);
+      SmallPtrSet<Operation *, 4> fwdBridgeOps;
+      fwdBridgeOps.insert(fwdBridge);
       DominanceInfo domInfo(newCopy);
       for (Operation *writeOp : writeNewDst) {
-        if (writeOp == newCopy)
+        if (fwdBridgeOps.contains(writeOp))
           continue;
         if (domInfo.dominates(newCopy, writeOp)) {
           rewriter.setInsertionPointAfter(writeOp);
-          rewriter.create<hivm::CopyOp>(loc, TypeRange{}, newDst, src);
+          createBridgeCopy(rewriter, loc, newDst, src, symtab);
         }
       }
       for (Operation *writeOp : writeSrc) {
         if (domInfo.dominates(newCopy, writeOp)) {
           rewriter.setInsertionPointAfter(writeOp);
-          rewriter.create<hivm::CopyOp>(loc, TypeRange{}, src, newDst);
+          createBridgeCopy(rewriter, loc, src, newDst, symtab);
         }
       }
     }
@@ -1726,7 +1902,8 @@ void mlir::hivm::handlePropagateFailure(RewriterBase &rewriter,
 }
 
 void mlir::hivm::materializeRemainingStaticUBLayoutCasts(RewriterBase &rewriter,
-                                                         func::FuncOp funcOp) {
+                                                         func::FuncOp funcOp,
+                                                         SymbolTable &symtab) {
   SmallVector<UnrealizedConversionCastOp> conversions;
   funcOp.walk([&](UnrealizedConversionCastOp conversion) {
     conversions.push_back(conversion);
@@ -1750,10 +1927,6 @@ void mlir::hivm::materializeRemainingStaticUBLayoutCasts(RewriterBase &rewriter,
         dyn_cast_or_null<hivm::AddressSpaceAttr>(srcType.getMemorySpace());
     auto dstSpace =
         dyn_cast_or_null<hivm::AddressSpaceAttr>(dstType.getMemorySpace());
-    [[maybe_unused]] auto srcLayout =
-        dyn_cast<StridedLayoutAttr>(srcType.getLayout());
-    assert(!srcType.getElementType().isInteger(1) &&
-           "PropagateAlignUtil: i1 type is not supported");
     if (!srcSpace || !dstSpace ||
         srcSpace.getAddressSpace() != hivm::AddressSpace::UB ||
         dstSpace.getAddressSpace() != hivm::AddressSpace::UB ||
@@ -1765,8 +1938,7 @@ void mlir::hivm::materializeRemainingStaticUBLayoutCasts(RewriterBase &rewriter,
     rewriter.setInsertionPoint(conversion);
     Value newDst =
         rewriter.create<memref::AllocOp>(conversion.getLoc(), dstType);
-    rewriter.create<hivm::CopyOp>(conversion.getLoc(), TypeRange{}, src,
-                                  newDst);
+    createBridgeCopy(rewriter, conversion.getLoc(), src, newDst, symtab);
     rewriter.replaceAllUsesWith(dst, newDst);
     rewriter.eraseOp(conversion);
   }

@@ -565,6 +565,12 @@ bool isScalarLike(Type type);
 ///         false otherwise
 bool isIdentityStrides(MemRefType shapedType);
 
+/// Checks if an i1 MemRefType layout survives the byte reinterpretation
+/// (view_as<bool, int8_t>) used by the DMA copy library: byte-aligned
+/// offset, non-last strides and last-dim size multiples of 8, and a unit
+/// last-dim stride. Non-i1 types always return true.
+bool isI1LayoutByteExpressible(MemRefType shapedType);
+
 using AlignInfoMap = SmallVector<int64_t>;
 /// Computes aligned sizes by rounding up each dimension to its alignment
 /// requirement.

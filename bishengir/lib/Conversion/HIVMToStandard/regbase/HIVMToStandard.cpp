@@ -1091,6 +1091,16 @@ public:
     assert(op.hasPureBufferSemantics() &&
            "Operating on tensor, please bufferize.");
     MemRefType srcType = dyn_cast<MemRefType>(op.getSrcOperandType());
+    MemRefType dstType = dyn_cast<MemRefType>(op.getDstOperandType());
+
+    // The DMA library's view_as<bool, int8_t> would corrupt a
+    // non-byte-expressible i1 layout; such copies are decomposed earlier.
+    if (srcType && dstType &&
+        (!hivm::isI1LayoutByteExpressible(srcType) ||
+         !hivm::isI1LayoutByteExpressible(dstType)))
+      return rewriter.notifyMatchFailure(
+          op, "i1 copy layout is not byte-expressible; the DMA library "
+              "would corrupt the bit packing");
 
     int64_t rank = srcType.getRank();
     std::string fnName =

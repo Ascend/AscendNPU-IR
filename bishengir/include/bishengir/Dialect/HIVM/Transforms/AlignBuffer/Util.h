@@ -26,6 +26,7 @@
 #include "llvm/ADT/TypeSwitch.h"
 
 namespace mlir {
+class SymbolTable;
 namespace hivm {
 
 // Attribute name used to mark operations that failed during unrealized
@@ -124,11 +125,15 @@ calculateAlignedShape(OpBuilder &b, const Location loc,
                       const SmallVector<int> &alignUnits);
 
 /// Handle ops marked with propagateFailureName after allocation processing.
-void handlePropagateFailure(RewriterBase &rewriter, func::FuncOp &funcOp);
+/// `symtab` is the enclosing module's symbol table, shared so the outlined
+/// i1 fallback helpers are looked up without rebuilding it per bridge.
+void handlePropagateFailure(RewriterBase &rewriter, func::FuncOp &funcOp,
+                            SymbolTable &symtab);
 /// Materialize final static UB layout-changing casts created by stride-align.
 /// This is required only by the reg-based (A5) lowering path.
 void materializeRemainingStaticUBLayoutCasts(RewriterBase &rewriter,
-                                             func::FuncOp funcOp);
+                                             func::FuncOp funcOp,
+                                             SymbolTable &symtab);
 LogicalResult replaceAndPropagateMemRefType(RewriterBase &rewriter,
                                             const Location loc, Value from,
                                             Value to);

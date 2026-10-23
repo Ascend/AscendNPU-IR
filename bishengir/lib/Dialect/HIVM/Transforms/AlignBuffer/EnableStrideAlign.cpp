@@ -23,6 +23,7 @@
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
+#include "mlir/IR/SymbolTable.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "mlir/Transforms/Passes.h"
 
@@ -739,6 +740,8 @@ void EnableStrideAlignPass::runOnOperation() {
 
   // Sequential FuncOp walk: EnableAlignAllocation may update VF callees via
   // propagateFuncCallOp; nesting under parallel FuncOp adaptors races.
+  // One shared table: the outlined i1 fallback helpers live at module level.
+  SymbolTable bridgeSymtab(mod);
   mod->walk([&](func::FuncOp funcOp) {
     if (failedPass || hacc::utils::isHost(funcOp))
       return WalkResult::advance();
@@ -788,9 +791,9 @@ void EnableStrideAlignPass::runOnOperation() {
     }
 
     IRRewriter rewriter(context);
-    handlePropagateFailure(rewriter, funcOp);
+    handlePropagateFailure(rewriter, funcOp, bridgeSymtab);
     if (archIsRegbased)
-      materializeRemainingStaticUBLayoutCasts(rewriter, funcOp);
+      materializeRemainingStaticUBLayoutCasts(rewriter, funcOp, bridgeSymtab);
 
     // Master metadata contract, membase only: regbase (A5) targets must not
     // carry this attribute.
