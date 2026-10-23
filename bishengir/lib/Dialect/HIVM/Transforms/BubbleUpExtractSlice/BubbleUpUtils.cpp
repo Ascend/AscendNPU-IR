@@ -171,9 +171,14 @@ void markTiledTightlyCoupledAllocIfNeeded(RewriterBase &rewriter,
   if (!attr || !attr.getId().has_value())
     return;
   auto existing = markOp->getAttrOfType<IntegerAttr>(hivm::AICAttrTilingDim);
-  bool shouldOverwriteTilingDim =
-      tilingDim >= 0 &&
-      !(existing && existing.getValue().getSExtValue() == tilingDim);
+  int64_t existingDim =
+      existing ? existing.getValue().getSExtValue() : int64_t(-1);
+  bool shouldOverwriteTilingDim = tilingDim >= 0 && existingDim != tilingDim;
+  // A prior stamp of -1 (or no stamp at all) means the vector-side analysis
+  // had no tiling decision for this buffer, so overwriting it is not an
+  // inconsistency and must not be flagged. Only a concrete, conflicting
+  // vector-side tiling dim is worth the warning.
+  bool shouldWarnInconsistent = shouldOverwriteTilingDim && existingDim >= 0;
   rewriter.modifyOpInPlace(
       markOp, [&]() {
         markOp->setAttr(kTiledTightlyCoupledAlloc,
@@ -186,9 +191,10 @@ void markTiledTightlyCoupledAllocIfNeeded(RewriterBase &rewriter,
         LLVM_DEBUG(DBGS() << "tile and bind subblock overwrite tiling dim for "
                           << markOp << " to " << tilingDim << "\n\n");
         LLVM_DEBUG(markOp.dump());
-        markOp.emitWarning()
-            << "[hivm-bind-sub-block] AIC tightly coupled buffer tiling dim is "
-               "inconsistent with vector and is overwritten";
+        if (shouldWarnInconsistent)
+          markOp.emitWarning()
+              << "[hivm-bind-sub-block] AIC tightly coupled buffer tiling dim "
+                 "is inconsistent with vector and is overwritten";
       });
 }
 
