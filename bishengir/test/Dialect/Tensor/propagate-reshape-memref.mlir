@@ -256,3 +256,118 @@ func.func @reject_incompatible_swap_layout() -> f32 {
   %value = memref.load %expanded[%c0, %c0] : memref<3x2xf32>
   return %value : f32
 }
+
+// -----
+
+// RegBase: expanding a subview of a 1-D buffer into 1x5 gives a unit-dim
+// stride (5) that differs from the propagated subview's stride (8), which
+// memref.cast cannot bridge. The relayout must not read metadata from the
+// original expand_shape, otherwise the pattern re-matches it forever and the
+// greedy driver fails to converge.
+// REGBASE-LABEL: func.func @expand_subview_unit_dim_stride_relayout(
+// REGBASE-SAME: %[[SRC:[a-zA-Z0-9]+]]: memref<8xf32, strided<[1], offset: ?>>
+// REGBASE: %[[EXPANDED:.*]] = memref.expand_shape %[[SRC]] {{\[\[}}0, 1]] output_shape [1, 8]
+// REGBASE: %[[SUBVIEW:.*]] = memref.subview %[[EXPANDED]][0, 0] [1, 5] [1, 1]
+// REGBASE: %[[COLLAPSED:.*]] = memref.collapse_shape %[[SUBVIEW]] {{\[\[}}0, 1]]
+// REGBASE: scf.for
+// REGBASE-NOT: memref.expand_shape
+// REGBASE: %{{.*}}, %[[OFFSET:.*]], %{{.*}}, %{{.*}} = memref.extract_strided_metadata %[[COLLAPSED]]
+// REGBASE: %[[CAST:.*]] = memref.reinterpret_cast %{{.*}} to offset: [%[[OFFSET]]], sizes: [1, 5], strides: [5, 1]
+// REGBASE-SAME: to memref<1x5xf32, strided<[5, 1], offset: ?>>
+// REGBASE: memref.copy %[[CAST]]
+func.func @expand_subview_unit_dim_stride_relayout(
+    %src: memref<8xf32, strided<[1], offset: ?>>, %dst: memref<1x5xf32>,
+    %n: index) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %subview = memref.subview %src[0] [5] [1] :
+      memref<8xf32, strided<[1], offset: ?>> to
+      memref<5xf32, strided<[1], offset: ?>>
+  scf.for %i = %c0 to %n step %c1 {
+    %expanded = memref.expand_shape %subview [[0, 1]] output_shape [1, 5] :
+        memref<5xf32, strided<[1], offset: ?>> into
+        memref<1x5xf32, strided<[5, 1], offset: ?>>
+    memref.copy %expanded, %dst :
+        memref<1x5xf32, strided<[5, 1], offset: ?>> to memref<1x5xf32>
+  }
+  return
+}
+
+// -----
+
+// RegBase relayout with a dynamic leading stride: the expand_shape layout
+// [s * 2, s, 5, 1] is rebuilt from the stride s of the original subview
+// (read from the replacement collapse_shape), not from the expand_shape.
+// REGBASE-LABEL: func.func @expand_subview_relayout_dynamic_stride(
+// REGBASE: %[[C2:.*]] = arith.constant 2 : index
+// REGBASE: %[[EXPANDED:.*]] = memref.expand_shape %{{.*}} {{\[\[}}0, 1], [2, 3]] output_shape [1, 4, 1, 64]
+// REGBASE: %[[SUBVIEW:.*]] = memref.subview %[[EXPANDED]][0, %{{.*}}, 0, 3] [1, 2, 1, 5] [1, 1, 1, 1]
+// REGBASE: %[[COLLAPSED:.*]] = memref.collapse_shape %[[SUBVIEW]] {{\[\[}}0, 1], [2, 3]]
+// REGBASE: %{{.*}}, %[[OFFSET:.*]], %{{.*}}:2, %[[STRIDES:.*]]:2 = memref.extract_strided_metadata %[[COLLAPSED]]
+// REGBASE: %[[OUTER:.*]] = arith.muli %[[STRIDES]]#0, %[[C2]] : index
+// REGBASE: %[[CAST:.*]] = memref.reinterpret_cast %{{.*}} to offset: [%[[OFFSET]]], sizes: [1, 2, 1, 5], strides: [%[[OUTER]], %[[STRIDES]]#0, 5, 1]
+// REGBASE-SAME: to memref<1x2x1x5xf32, strided<[?, ?, 5, 1], offset: ?>>
+// REGBASE: memref.copy %[[CAST]]
+func.func @expand_subview_relayout_dynamic_stride(
+    %src: memref<4x64xf32, strided<[?, 1], offset: ?>>, %i: index,
+    %dst: memref<1x2x1x5xf32>) {
+  %subview = memref.subview %src[%i, 3] [2, 5] [1, 1] :
+      memref<4x64xf32, strided<[?, 1], offset: ?>> to
+      memref<2x5xf32, strided<[?, 1], offset: ?>>
+  %expanded = memref.expand_shape %subview [[0, 1], [2, 3]]
+      output_shape [1, 2, 1, 5] :
+      memref<2x5xf32, strided<[?, 1], offset: ?>> into
+      memref<1x2x1x5xf32, strided<[?, ?, 5, 1], offset: ?>>
+  memref.copy %expanded, %dst :
+      memref<1x2x1x5xf32, strided<[?, ?, 5, 1], offset: ?>> to
+      memref<1x2x1x5xf32>
+  return
+}
+
+// -----
+
+// RegBase relayout keeps a dynamic output_shape size.
+// REGBASE-LABEL: func.func @expand_subview_relayout_dynamic_output_shape(
+// REGBASE-SAME: %{{[a-zA-Z0-9]+}}: memref<?x8xf32, strided<[8, 1], offset: ?>>, %{{[a-zA-Z0-9]+}}: index, %[[M:[a-zA-Z0-9]+]]: index
+// REGBASE: %[[SUBVIEW:.*]] = memref.subview %{{.*}}[%{{.*}}, 0, 0] [%[[M]], 1, 5] [1, 1, 1]
+// REGBASE: %[[COLLAPSED:.*]] = memref.collapse_shape %[[SUBVIEW]] {{\[\[}}0], [1, 2]]
+// REGBASE: %{{.*}}, %[[OFFSET:.*]], %{{.*}}:2, %{{.*}}:2 = memref.extract_strided_metadata %[[COLLAPSED]]
+// REGBASE: %[[CAST:.*]] = memref.reinterpret_cast %{{.*}} to offset: [%[[OFFSET]]], sizes: [%[[M]], 1, 5], strides: [8, 5, 1]
+// REGBASE-SAME: to memref<?x1x5xf32, strided<[8, 5, 1], offset: ?>>
+// REGBASE: memref.copy %[[CAST]]
+func.func @expand_subview_relayout_dynamic_output_shape(
+    %src: memref<?x8xf32, strided<[8, 1], offset: ?>>, %i: index, %m: index,
+    %dst: memref<?x1x5xf32>) {
+  %subview = memref.subview %src[%i, 0] [%m, 5] [1, 1] :
+      memref<?x8xf32, strided<[8, 1], offset: ?>> to
+      memref<?x5xf32, strided<[8, 1], offset: ?>>
+  %expanded = memref.expand_shape %subview [[0], [1, 2]]
+      output_shape [%m, 1, 5] :
+      memref<?x5xf32, strided<[8, 1], offset: ?>> into
+      memref<?x1x5xf32, strided<[8, 5, 1], offset: ?>>
+  memref.copy %expanded, %dst :
+      memref<?x1x5xf32, strided<[8, 5, 1], offset: ?>> to memref<?x1x5xf32>
+  return
+}
+
+// -----
+
+// RegBase relayout with a fully static layout needs no metadata.
+// REGBASE-LABEL: func.func @expand_subview_relayout_static_offset(
+// REGBASE: %[[EXPANDED:.*]] = memref.expand_shape %{{.*}} {{\[\[}}0], [1, 2]] output_shape [4, 1, 8]
+// REGBASE: %[[SUBVIEW:.*]] = memref.subview %[[EXPANDED]][2, 0, 0] [1, 1, 5] [1, 1, 1]
+// REGBASE-NOT: memref.extract_strided_metadata
+// REGBASE: %[[CAST:.*]] = memref.reinterpret_cast %[[SUBVIEW]] to offset: [16], sizes: [1, 1, 5], strides: [8, 5, 1]
+// REGBASE: memref.copy %[[CAST]]
+func.func @expand_subview_relayout_static_offset(%src: memref<4x8xf32>,
+                                                 %dst: memref<1x1x5xf32>) {
+  %subview = memref.subview %src[2, 0] [1, 5] [1, 1] :
+      memref<4x8xf32> to memref<1x5xf32, strided<[8, 1], offset: 16>>
+  %expanded = memref.expand_shape %subview [[0], [1, 2]]
+      output_shape [1, 1, 5] :
+      memref<1x5xf32, strided<[8, 1], offset: 16>> into
+      memref<1x1x5xf32, strided<[8, 5, 1], offset: 16>>
+  memref.copy %expanded, %dst :
+      memref<1x1x5xf32, strided<[8, 5, 1], offset: 16>> to memref<1x1x5xf32>
+  return
+}
