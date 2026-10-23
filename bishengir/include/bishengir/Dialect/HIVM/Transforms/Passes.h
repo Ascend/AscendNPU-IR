@@ -461,6 +461,9 @@ std::unique_ptr<Pass> createNormalizeConvOpsPass();
 std::unique_ptr<Pass>
 createCreatePreloadPass(const CreatePreloadOptions &options = {});
 
+/// Peel preload prologue/epilogue after GraphSyncSolver.
+std::unique_ptr<Pass> createPeelPreloadPass();
+
 /// Create a pass to remove HIVM data layout annotation.
 std::unique_ptr<Pass> createRemoveHIVMDataLayoutAnnotationPass();
 

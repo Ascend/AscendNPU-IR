@@ -1,5 +1,5 @@
 // RUN: bishengir-opt %s -create-preload -split-input-file | FileCheck %s --check-prefix=PRELOAD
-// RUN: bishengir-opt %s -create-preload -hivm-graph-sync-solver -split-input-file | FileCheck %s --check-prefix=SYNC
+// RUN: bishengir-opt %s -create-preload -hivm-graph-sync-solver -hivm-peel-preload -split-input-file | FileCheck %s --check-prefix=SYNC
 
 // Each page writes a disjoint L1 slice. Preserve the existing parallel marker
 // when rebuilding the loop inside a preload scope, so sync analysis does not

@@ -1433,14 +1433,17 @@ def HIVM_TileMixCubeNumAttr
 def HIVM_PreloadNumAttr
     : HIVM_Attr<"PreloadNum", "preload_num"> {
   let description = [{
-    Specifies the preload number of scope op.
+    Specifies the preload stage index of a scope. CreatePreload records the
+    same index on `annotation.mark` of the guard condition for
+    `hivm-peel-preload`.
   }];
 }
 
 def HIVM_MaxPreloadNumAttr
     : HIVM_Attr<"MaxPreloadNum", "max_preload_num"> {
   let description = [{
-    Specifies the max preload number of scope op.
+    Specifies the max preload number of a scope op, or of a rewritten
+    preload `scf.for` for `hivm-peel-preload`.
   }];
 }
 
