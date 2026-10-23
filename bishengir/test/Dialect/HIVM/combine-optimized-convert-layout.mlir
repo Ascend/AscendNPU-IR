@@ -861,3 +861,91 @@ func.func @do_not_fold_uninit_ub_convert() -> tensor<12x8x16x16xbf16> {
       : (tensor<128x192xbf16>) -> tensor<12x8x16x16xbf16>
   return %conv : tensor<12x8x16x16xbf16>
 }
+
+// -----
+
+// Two inserted L1 stagings of the same tensor collapse into one.
+// CHECK-LABEL: func.func @parallel_path_fwd_kernel
+// CHECK: %[[ALLOC:.*]] = memref.alloc() : memref<8x4x16x16xf16, #hivm.address_space<cbuf>>
+// CHECK: %[[VIEW:.*]] = bufferization.to_tensor %[[ALLOC]] restrict writable
+// CHECK: hivm.hir.copy ins(%{{.*}}) outs(%[[ALLOC]]
+// CHECK-NOT: memref.alloc
+// CHECK-NOT: hivm.hir.copy
+// CHECK: return %[[VIEW]], %[[VIEW]]
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @parallel_path_fwd_kernel(%src: tensor<8x4x16x16xf16>)
+      -> (tensor<8x4x16x16xf16>, tensor<8x4x16x16xf16>) {
+    %a = memref.alloc() : memref<8x4x16x16xf16, #hivm.address_space<cbuf>>
+    %va = bufferization.to_tensor %a restrict writable : memref<8x4x16x16xf16, #hivm.address_space<cbuf>>
+    hivm.hir.copy ins(%src : tensor<8x4x16x16xf16>)
+        outs(%a : memref<8x4x16x16xf16, #hivm.address_space<cbuf>>) {"hivm.inserted-copy"}
+    %b = memref.alloc() : memref<8x4x16x16xf16, #hivm.address_space<cbuf>>
+    %vb = bufferization.to_tensor %b restrict writable : memref<8x4x16x16xf16, #hivm.address_space<cbuf>>
+    hivm.hir.copy ins(%src : tensor<8x4x16x16xf16>)
+        outs(%b : memref<8x4x16x16xf16, #hivm.address_space<cbuf>>) {"hivm.inserted-copy"}
+    return %va, %vb : tensor<8x4x16x16xf16>, tensor<8x4x16x16xf16>
+  }
+}
+
+// -----
+
+// Distinct sources: keep both stagings.
+// CHECK-LABEL: func.func @keep_distinct_inserted_l1_staging
+// CHECK-COUNT-2: hivm.hir.copy
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @keep_distinct_inserted_l1_staging(%src0: tensor<8x4x16x16xf16>,
+      %src1: tensor<8x4x16x16xf16>)
+      -> (tensor<8x4x16x16xf16>, tensor<8x4x16x16xf16>) {
+    %a = memref.alloc() : memref<8x4x16x16xf16, #hivm.address_space<cbuf>>
+    %va = bufferization.to_tensor %a restrict writable : memref<8x4x16x16xf16, #hivm.address_space<cbuf>>
+    hivm.hir.copy ins(%src0 : tensor<8x4x16x16xf16>)
+        outs(%a : memref<8x4x16x16xf16, #hivm.address_space<cbuf>>) {"hivm.inserted-copy"}
+    %b = memref.alloc() : memref<8x4x16x16xf16, #hivm.address_space<cbuf>>
+    %vb = bufferization.to_tensor %b restrict writable : memref<8x4x16x16xf16, #hivm.address_space<cbuf>>
+    hivm.hir.copy ins(%src1 : tensor<8x4x16x16xf16>)
+        outs(%b : memref<8x4x16x16xf16, #hivm.address_space<cbuf>>) {"hivm.inserted-copy"}
+    return %va, %vb : tensor<8x4x16x16xf16>, tensor<8x4x16x16xf16>
+  }
+}
+
+// -----
+
+// A buffer-backed source can be rewritten in between: keep both stagings.
+// CHECK-LABEL: func.func @keep_buffer_backed_inserted_l1_staging
+// CHECK-COUNT-2: hivm.hir.copy
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @keep_buffer_backed_inserted_l1_staging(
+      %ub: memref<8x4x16x16xf16, #hivm.address_space<ub>>)
+      -> (tensor<8x4x16x16xf16>, tensor<8x4x16x16xf16>) {
+    %src = bufferization.to_tensor %ub restrict writable : memref<8x4x16x16xf16, #hivm.address_space<ub>>
+    %a = memref.alloc() : memref<8x4x16x16xf16, #hivm.address_space<cbuf>>
+    %va = bufferization.to_tensor %a restrict writable : memref<8x4x16x16xf16, #hivm.address_space<cbuf>>
+    hivm.hir.copy ins(%src : tensor<8x4x16x16xf16>)
+        outs(%a : memref<8x4x16x16xf16, #hivm.address_space<cbuf>>) {"hivm.inserted-copy"}
+    %b = memref.alloc() : memref<8x4x16x16xf16, #hivm.address_space<cbuf>>
+    %vb = bufferization.to_tensor %b restrict writable : memref<8x4x16x16xf16, #hivm.address_space<cbuf>>
+    hivm.hir.copy ins(%src : tensor<8x4x16x16xf16>)
+        outs(%b : memref<8x4x16x16xf16, #hivm.address_space<cbuf>>) {"hivm.inserted-copy"}
+    return %va, %vb : tensor<8x4x16x16xf16>, tensor<8x4x16x16xf16>
+  }
+}
+
+// -----
+
+// Copies the mix-CV inserter did not create are left alone.
+// CHECK-LABEL: func.func @keep_unmarked_l1_staging
+// CHECK-COUNT-2: hivm.hir.copy
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @keep_unmarked_l1_staging(%src: tensor<8x4x16x16xf16>)
+      -> (tensor<8x4x16x16xf16>, tensor<8x4x16x16xf16>) {
+    %a = memref.alloc() : memref<8x4x16x16xf16, #hivm.address_space<cbuf>>
+    %va = bufferization.to_tensor %a restrict writable : memref<8x4x16x16xf16, #hivm.address_space<cbuf>>
+    hivm.hir.copy ins(%src : tensor<8x4x16x16xf16>)
+        outs(%a : memref<8x4x16x16xf16, #hivm.address_space<cbuf>>)
+    %b = memref.alloc() : memref<8x4x16x16xf16, #hivm.address_space<cbuf>>
+    %vb = bufferization.to_tensor %b restrict writable : memref<8x4x16x16xf16, #hivm.address_space<cbuf>>
+    hivm.hir.copy ins(%src : tensor<8x4x16x16xf16>)
+        outs(%b : memref<8x4x16x16xf16, #hivm.address_space<cbuf>>)
+    return %va, %vb : tensor<8x4x16x16xf16>, tensor<8x4x16x16xf16>
+  }
+}

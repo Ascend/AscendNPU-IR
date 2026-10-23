@@ -17,7 +17,9 @@
 //
 // Merge scopes sharing identical preload_num within the same parent loop op.
 // Exclusive dest / src / copy-chain sinking lives in
-// hivm-sink-exclusive-preload-work (after CVPipelining, before SplitMix).
+// hivm-reposition-preload-work (after CVPipelining, before
+// MarkMultiBuffer). Scopes marked hivm.independent_preload_prefix are not
+// merged: that mark is the cube-independent prefix of a same preload_num.
 //
 //===----------------------------------------------------------------------===//
 
@@ -54,6 +56,19 @@ static LogicalResult processForOp(scf::ForOp forOp, func::FuncOp funcOp) {
     DenseMap<int32_t, SmallVector<scope::ScopeOp, 4>> preloadNumToScopes;
     for (Operation &op : *body) {
       if (auto scopeOp = dyn_cast<scope::ScopeOp>(&op)) {
+        // RepositionPreloadWork splits a same-preload_num prefix so
+        // cube-independent vector work stays in front of the cube wait.
+        // Folding it back into the consumer scope undoes that split.
+        if (scopeOp->hasAttr("hivm.independent_preload_prefix")) {
+          // A protected prefix is also a boundary: collecting matching scopes
+          // on both sides would inline the prefix as part of their span.
+          if (llvm::any_of(preloadNumToScopes, [](const auto &entry) {
+                return entry.second.size() > 1;
+              }))
+            break;
+          preloadNumToScopes.clear();
+          continue;
+        }
         if (auto attr = scopeOp->getAttrOfType<IntegerAttr>(
                 hivm::PreloadNumAttr::name)) {
           preloadNumToScopes[attr.getInt()].push_back(scopeOp);
@@ -89,9 +104,19 @@ static LogicalResult processForOp(scf::ForOp forOp, func::FuncOp funcOp) {
     opsInSpan.push_back(&*it); // lastScope
     ++it;
 
-    // Include ops after last scope until next scope or terminator (e.g.
-    // scf.yield)
-    for (; it != body->end(); ++it) {
+    // Views between the last scope and a protected prefix can be used by
+    // that prefix. Leave this suffix outside the merged scope so those
+    // values still dominate their consumers.
+    bool beforePrefix = false;
+    for (auto next = it; next != body->end(); ++next) {
+      if (isa<scope::ScopeOp>(*next) ||
+          next->hasTrait<OpTrait::IsTerminator>()) {
+        beforePrefix = next->hasAttr("hivm.independent_preload_prefix");
+        break;
+      }
+    }
+    // Otherwise include ops after last scope until next scope or terminator.
+    for (; !beforePrefix && it != body->end(); ++it) {
       Operation *op = &*it;
       if (isa<scope::ScopeOp>(op) || op->hasTrait<OpTrait::IsTerminator>())
         break;
