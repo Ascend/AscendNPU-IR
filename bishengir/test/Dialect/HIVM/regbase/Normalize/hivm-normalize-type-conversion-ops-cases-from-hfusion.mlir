@@ -417,14 +417,14 @@ func.func @test_NormalizeCumOpI8ToTargetType_cumprod_i8(%arg0: tensor<4x64xi8>) 
 
 // -----
 
-// CHECK-LABEL: func.func @test_ReduceI1AddToSelectMaxCompare_from_hfusion
+// CHECK-LABEL: func.func @test_ReduceI1AddToSelectXorCompare_from_hfusion
 // CHECK: %[[ONES:.*]] = linalg.fill
 // CHECK: %[[ZEROS:.*]] = linalg.fill
 // CHECK: %[[SEL:.*]] = hivm.hir.vsel ins(%arg0, %[[ONES]], %[[ZEROS]] : tensor<8xi1>, tensor<8xi16>, tensor<8xi16>) outs(%{{.*}} : tensor<8xi16>) -> tensor<8xi16>
-// CHECK: %[[RED:.*]] = hivm.hir.vreduce <max> ins(%[[SEL]] : tensor<8xi16>) outs(%{{.*}} : tensor<1xi16>) unsigned_src = false reduce_dims = [0] -> tensor<1xi16>
+// CHECK: %[[RED:.*]] = hivm.hir.vreduce <xori> ins(%[[SEL]] : tensor<8xi16>) outs(%{{.*}} : tensor<1xi16>) unsigned_src = false reduce_dims = [0] -> tensor<1xi16>
 // CHECK: hivm.hir.vcmp ins(%[[RED]], {{.*}} : tensor<1xi16>, i16) outs(%{{.*}} : tensor<1xi1>) compare_mode = <ne> -> tensor<1xi1>
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
-  func.func @test_ReduceI1AddToSelectMaxCompare_from_hfusion(%arg0: tensor<8xi1>) -> tensor<i1> {
+  func.func @test_ReduceI1AddToSelectXorCompare_from_hfusion(%arg0: tensor<8xi1>) -> tensor<i1> {
     %cst_0 = arith.constant false
     %0 = bufferization.alloc_tensor() : tensor<i1>
     %1 = linalg.fill ins(%cst_0 : i1) outs(%0 : tensor<i1>) -> tensor<i1>

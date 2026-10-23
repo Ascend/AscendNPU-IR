@@ -185,7 +185,7 @@ func.func @test_NormalizeToTargetType_reduce_with_index_i1_return_index(%arg0: t
 // -----
 
 // CHECK-LABEL: @test_NormalizeToTargetType_reduce_i1_addi
-// CHECK: %[[reduce:.*]] = linalg.reduce { arith.ori }
+// CHECK: %[[reduce:.*]] = linalg.reduce { arith.xori }
 func.func @test_NormalizeToTargetType_reduce_i1_addi(%arg0: tensor<16x32x64xi1>) -> tensor<16x64xi1> {
   %0 = tensor.empty() : tensor<16x64xi1>
   %reduce = linalg.reduce { arith.addi } ins(%arg0 : tensor<16x32x64xi1>) outs(%0 : tensor<16x64xi1>) dimensions = [1]
@@ -617,13 +617,13 @@ func.func @test_NormalizeCumOpI8ToTargetType_cumprod_b8(%arg0: tensor<4x64xi8>, 
 
 // -----
 
-// CHECK-LABEL: @test_ReduceI1AddToSelectMaxCompare_reduce_i1_add_to_select_max_compare
+// CHECK-LABEL: @test_ReduceI1AddToSelectXorCompare_reduce_i1_add_to_select_xor_compare
 // CHECK: hfusion.select
 // CHECK: linalg.reduce
-// CHECK: arith.maxsi
+// CHECK: arith.xori
 // CHECK: hfusion.compare
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
-  func.func @test_ReduceI1AddToSelectMaxCompare_reduce_i1_add_to_select_max_compare(%arg0: tensor<8xi1> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}) -> tensor<i1> attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"} {
+  func.func @test_ReduceI1AddToSelectXorCompare_reduce_i1_add_to_select_xor_compare(%arg0: tensor<8xi1> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}) -> tensor<i1> attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"} {
     %cst_0 = arith.constant false
     %0 = bufferization.alloc_tensor() : tensor<i1>
     %1 = linalg.fill ins(%cst_0 : i1) outs(%0 : tensor<i1>) -> tensor<i1>
