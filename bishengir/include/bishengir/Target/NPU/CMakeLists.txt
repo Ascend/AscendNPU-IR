@@ -11,3 +11,13 @@ add_public_tablegen_target(BiShengIRNPUArchitectureFeaturesIncGen)
 add_dependencies(BiShengIRNPUArchitectureFeaturesIncGen
   BiShengIRNPUArchitectureIncGen)
 add_dependencies(mlir-headers BiShengIRNPUArchitectureFeaturesIncGen)
+
+set(LLVM_TARGET_DEFINITIONS FixpipeCapabilityProfile.td)
+bishengir_target_tablegen(FixpipeCapability.h.inc
+  -gen-target-capability-decls)
+bishengir_target_tablegen(FixpipeCapability.cpp.inc
+  -gen-target-capability-defs)
+add_public_tablegen_target(BiShengIRFixpipeCapabilityIncGen)
+add_dependencies(BiShengIRFixpipeCapabilityIncGen
+  BiShengIRNPUArchitectureIncGen)
+add_dependencies(mlir-headers BiShengIRFixpipeCapabilityIncGen)
