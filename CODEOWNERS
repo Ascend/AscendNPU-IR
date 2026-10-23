@@ -34,6 +34,8 @@
 /bishengir/**/GraphSyncSolver/* @AmmarDab3an @tanzirui123123 @hi_sy @hid90099092 @tanshengshun
 /bishengir/**/InjectSync/* @AmmarDab3an @tanzirui123123 @hi_sy @hid90099092 @tanshengshun
 /bishengir/**/InjectBlockSync.* @AmmarDab3an @tanzirui123123 @hi_sy @hid90099092 @tanshengshun
+/bishengir/**/UnitFlagInfoBase.* @AmmarDab3an @tanzirui123123 @hi_sy @hid90099092 @tanshengshun
+/bishengir/test/**/*unit-flag* @AmmarDab3an @tanzirui123123 @hi_sy @hid90099092 @tanshengshun
 
 # AutoBlockify.
 /bishengir/**/Autoblockify.* @Alae-eddine @jy834507063 @hid90099092 @tanshengshun
