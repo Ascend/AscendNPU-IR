@@ -400,6 +400,9 @@ bool isAccumulation(Operation *op) {
   if (auto mmadOp = dyn_cast<hivm::MmadL1Op>(op))
     return isAccumulationImpl(op, mmadOp.getC());
 
+  if (auto mmadMxOp = dyn_cast<hivm::MmadMxL1Op>(op))
+    return isAccumulationImpl(op, mmadMxOp.getC());
+
   if (auto conv1d = dyn_cast<hivm::Conv1DL1Op>(op))
     return isAccumulationImpl(op, conv1d.getInit());
 
@@ -559,12 +562,18 @@ static FixpipeOp insertFixpipe(PatternRewriter &rewriter, Operation *point,
             isa<annotation::MarkOp>(op)) {
           return false;
         }
-        if (auto mmadOp = dyn_cast<hivm::MmadL1Op>(op)) {
-          return !(llvm::any_of(
-              mmadOp.getDpsInitsMutable(), [&use](OpOperand &init) {
-                return &use == &init &&
-                       init.get().getDefiningOp<hivm::MmadL1Op>();
-              }));
+        // mmadL1 and mmadmxL1 both implement LocalMatmulLikeOpInterface, and
+        // their C operand is the DPS init. Keep that init on a raw result of
+        // the same op so the L0C accumulator is not replaced by a fixpipe.
+        // batchMmadL1 is the other implementer; a direct same-op C chain is
+        // treated the same way. A/B uses still take the fixpipe.
+        if (isa<hivm::LocalMatmulLikeOpInterface>(op)) {
+          auto dpsOp = cast<DestinationStyleOpInterface>(op);
+          return !llvm::any_of(
+              dpsOp.getDpsInitsMutable(), [&](OpOperand &init) {
+                Operation *def = init.get().getDefiningOp();
+                return &use == &init && def && def->getName() == op->getName();
+              });
         }
         // handle normalized_in_l0c and remain_in_l0c, including nested
         // scf.for yields whose enclosing loop (or the mmad itself) keeps
