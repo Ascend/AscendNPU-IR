@@ -118,7 +118,6 @@ void inlineFixpipeWithQuant(PatternRewriter &rewriter, Location loc,
   }
   auto quantModeAttr =
       FixpipePreQuantModeAttr::get(op.getContext(), quantMode.value());
-  auto reluModeAttr = op.getPreReluAttr();
 
   hivm::VCastOp lastCast = castChain.back();
   rewriter.setInsertionPointAfter(lastCast);
@@ -129,11 +128,10 @@ void inlineFixpipeWithQuant(PatternRewriter &rewriter, Location loc,
   FixpipeDMAModeAttr dmaModeAttr =
       regBased ? op.getDmaModeAttr()
                : FixpipeDMAModeAttr::get(ctx, FixpipeDMAMode::NZ2ND);
-  auto newFixpipeOp = rewriter.create<FixpipeOp>(
-      loc, fixpipeInit.getType(), /*src=*/newFixpipeSrcTensor,
-      /*dst=*/fixpipeInit, dmaModeAttr, op.getDualDstModeAttr(),
-      op.getSubBlockIdxAttr(), quantModeAttr, reluModeAttr,
-      op.getChannelSplitAttr(), op.getC0PadEnAttr(), op.getQuantScale());
+  auto newFixpipeOp = FixpipeOp::clone(
+      rewriter, op, newFixpipeSrcTensor, fixpipeInit,
+      {rewriter.getNamedAttr(op.getDmaModeAttrName(), dmaModeAttr),
+       rewriter.getNamedAttr(op.getPreQuantAttrName(), quantModeAttr)});
   rewriter.replaceAllUsesWith(lastCast.getResult()[0],
                               newFixpipeOp.getResultTensor());
   for (hivm::VCastOp castOp : llvm::reverse(castChain))
@@ -160,13 +158,8 @@ void inlineFixpipeWithStore(PatternRewriter &rewriter, Location loc,
   auto storeAttr = storeOp.getAtomicKindAttr();
   auto noneAtomicAttr =
       AtomicKindAttr::get(op->getContext(), ::mlir::hivm::AtomicKind::NONE);
-  OperationState state(loc, op->getName());
-  state.addAttributes(op->getAttrs());
-  SmallVector<Value> operands(op->getOperands());
-  operands[0] = fixpipeSrcTensor;
-  operands[1] = dst;
-  state.addOperands(operands);
-  auto newFixpipeOp = cast<hivm::FixpipeOp>(rewriter.create(state));
+  // The fused fixpipe writes the store destination, so it carries no result.
+  auto newFixpipeOp = FixpipeOp::clone(rewriter, op, fixpipeSrcTensor, dst);
   if (storeAttr) {
     auto typeAttr =
         TypeAttr::get(mlir::cast<ShapedType>(dst.getType()).getElementType());
@@ -221,12 +214,12 @@ void inlineFixpipeWithQuantScale(PatternRewriter &rewriter, hivm::FixpipeOp op,
   }
 
   rewriter.setInsertionPointAfter(vMulOp);
-  auto newFixpipe = rewriter.create<FixpipeOp>(
-      op.getLoc(), dst.getType(), op.getSource(), dst, op.getUnitFlagCond(),
-      op.getDmaModeAttr(), op.getDualDstModeAttr(), op.getSubBlockIdxAttr(),
-      FixpipePreQuantModeAttr::get(rewriter.getContext(), preQuant),
-      op.getPreReluAttr(), op.getChannelSplitAttr(), op.getC0PadEnAttr(),
-      quantScale, op.getUnitFlagModeAttr(), op.getUnitFlagGroupIdAttr());
+  auto newFixpipe = FixpipeOp::clone(
+      rewriter, op, op.getSource(), dst,
+      {rewriter.getNamedAttr(
+          op.getPreQuantAttrName(),
+          FixpipePreQuantModeAttr::get(rewriter.getContext(), preQuant))});
+  newFixpipe.getQuantScaleMutable().assign(quantScale);
   for (Operation *user : llvm::make_early_inc_range(vMulOp->getUsers())) {
     if (isa<annotation::MarkOp>(user)) {
       newFixpipe->setAttr(utils::kInlinedQuantScaleAttr,
@@ -239,31 +232,38 @@ void inlineFixpipeWithQuantScale(PatternRewriter &rewriter, hivm::FixpipeOp op,
   LDBG("InlineFixpipeWithQuantScale");
 }
 
-void inlineFixpipeWithTranspose(PatternRewriter &rewriter, hivm::FixpipeOp op,
+bool inlineFixpipeWithTranspose(PatternRewriter &rewriter, hivm::FixpipeOp op,
                                 hivm::VTransposeOp transpose) {
   rewriter.setInsertionPointAfter(transpose);
   auto dmaMode =
       FixpipeDMAModeAttr::get(rewriter.getContext(), FixpipeDMAMode::NZ2DN);
-  auto newFixpipe = rewriter.create<FixpipeOp>(
-      op.getLoc(), transpose.getResult()[0].getType(), op.getSource(),
-      transpose.getDst(), dmaMode, op.getDualDstModeAttr(),
-      op.getSubBlockIdxAttr(), op.getPreQuantAttr(), op.getPreReluAttr(),
-      op.getChannelSplitAttr(), op.getC0PadEnAttr(), op.getQuantScale());
+  auto newFixpipe = FixpipeOp::clone(
+      rewriter, op, op.getSource(), transpose.getDst(),
+      {rewriter.getNamedAttr(op.getDmaModeAttrName(), dmaMode)});
   Value newResult = newFixpipe.getResultTensor();
-  // The mark usually sits on the old fixpipe, which is before this new
-  // result. Clone it after the result so the use dominates.
-  for (Operation *user :
-       llvm::make_early_inc_range(op.getResultTensor().getUsers())) {
-    if (!isa<annotation::MarkOp>(user))
-      continue;
-    rewriter.setInsertionPointAfterValue(newResult);
-    Operation *cloned = rewriter.clone(*user);
-    cloned->replaceUsesOfWith(op.getResultTensor(), newResult);
-    rewriter.eraseOp(user);
+  if (newResult) {
+    // The mark usually sits on the old fixpipe, which is before this new
+    // result. Clone it after the result so the use dominates.
+    for (Operation *user :
+         llvm::make_early_inc_range(op.getResultTensor().getUsers())) {
+      if (!isa<annotation::MarkOp>(user))
+        continue;
+      rewriter.setInsertionPointAfterValue(newResult);
+      Operation *cloned = rewriter.clone(*user);
+      cloned->replaceUsesOfWith(op.getResultTensor(), newResult);
+      rewriter.eraseOp(user);
+    }
+    rewriter.replaceOp(transpose, newResult);
+  } else {
+    // A memref destination yields the buffer form of the fixpipe, which has no
+    // result. The buffer-form transpose has no result either, so there is
+    // nothing to replace: dropping it lets the fused fixpipe write the
+    // destination directly.
+    rewriter.eraseOp(transpose);
   }
-  rewriter.replaceOp(transpose, newResult);
   rewriter.eraseOp(op);
   LDBG("InlineFixpipeWithTranspose");
+  return true;
 }
 
 void swapFixpipeWithExtractSlice(PatternRewriter &rewriter, Location loc,
@@ -280,10 +280,7 @@ void swapFixpipeWithExtractSlice(PatternRewriter &rewriter, Location loc,
       extractSliceOp.getMixedStrides());
 
   auto newExtractSliceResult = newExtractSliceOp->getResult(0);
-  auto quantModeAttr = op.getPreQuantAttr();
-  auto reluModeAttr = op.getPreReluAttr();
-  Value fixpipeInit = nullptr;
-  fixpipeInit = utils::createEmptyOpWithTargetElemType(
+  Value fixpipeInit = utils::createEmptyOpWithTargetElemType(
       rewriter, extractSliceOp.getLoc(), newExtractSliceResult,
       getInitType(newExtractSliceResult, op.getPreQuant(), rewriter));
 
@@ -292,12 +289,9 @@ void swapFixpipeWithExtractSlice(PatternRewriter &rewriter, Location loc,
   FixpipeDMAModeAttr dmaModeAttr =
       regBased ? op.getDmaModeAttr()
                : FixpipeDMAModeAttr::get(ctx, FixpipeDMAMode::NZ2ND);
-  auto newFixpipeOp = rewriter.create<FixpipeOp>(
-      extractSliceOp.getLoc(), fixpipeInit.getType(),
-      /*src=*/newExtractSliceResult, /*dst=*/fixpipeInit, dmaModeAttr,
-      op.getDualDstModeAttr(), op.getSubBlockIdxAttr(), quantModeAttr,
-      reluModeAttr, op.getChannelSplitAttr(), op.getC0PadEnAttr(),
-      op.getQuantScale());
+  auto newFixpipeOp = FixpipeOp::clone(
+      rewriter, op, newExtractSliceResult, fixpipeInit,
+      {rewriter.getNamedAttr(op.getDmaModeAttrName(), dmaModeAttr)});
   rewriter.replaceOp(extractSliceOp, newFixpipeOp.getResultTensor());
   rewriter.eraseOp(op);
   LDBG("InlineFixpipeWithExtractSliceReshape");
@@ -310,33 +304,43 @@ bool traceDownStoreOpWithSingleChain(Value v) {
   return traceSingleChainUser(v, isMachedOp);
 }
 
-void moveFixpipeOutOfScfFor(PatternRewriter &rewriter, Location loc,
+bool moveFixpipeOutOfScfFor(PatternRewriter &rewriter, Location loc,
                             hivm::FixpipeOp fixPipeOp, scf::ForOp scfForOp,
                             Value fixpipeResTensor) {
   SmallVector<Value> yieldValues = llvm::to_vector(scfForOp.getYieldedValues());
   auto idx = findIdx(yieldValues, fixpipeResTensor);
-  if (idx.has_value()) {
-    LDBG("InlineFixpipeWithYield");
-    rewriter.replaceAllUsesWith(fixpipeResTensor,
-                                fixPipeOp.getDpsInputOperand(0)->get());
+  if (!idx.has_value())
+    return false;
 
-    rewriter.setInsertionPointAfter(scfForOp);
-    auto fixpipeInit =
-        utils::createEmptyOp(rewriter, scfForOp->getLoc(), fixpipeResTensor);
-    auto quantModeAttr = fixPipeOp.getPreQuantAttr();
-    auto reluModeAttr = fixPipeOp.getPreReluAttr();
-    MLIRContext *ctx = rewriter.getContext();
-    FixpipeDMAModeAttr dmaModeAttr =
-        FixpipeDMAModeAttr::get(ctx, FixpipeDMAMode::NZ2ND);
-    auto newFixpipeOp = rewriter.create<FixpipeOp>(
-        fixPipeOp.getLoc(), TypeRange{fixpipeInit},
-        scfForOp->getResult(idx.value()), fixpipeInit, dmaModeAttr,
-        FixpipeDualDstModeAttr{}, fixPipeOp.getSubBlockIdxAttr(), quantModeAttr,
-        reluModeAttr);
-    rewriter.replaceAllUsesExcept(scfForOp->getResult(idx.value()),
-                                  newFixpipeOp.getResultTensor(), newFixpipeOp);
+  // A value defined inside the loop body is not available after it.
+  auto isLoopLocal = [scfForOp](Value operand) {
+    if (Operation *defOp = operand.getDefiningOp())
+      return scfForOp->isProperAncestor(defOp);
+    auto blockArg = dyn_cast<BlockArgument>(operand);
+    return blockArg && scfForOp->isAncestor(blockArg.getOwner()->getParentOp());
+  };
+  for (Value operand : fixPipeOp->getOperands()) {
+    if (operand == fixPipeOp.getSrc() || operand == fixPipeOp.getDst())
+      continue;
+    if (isLoopLocal(operand)) {
+      LDBG("Cannot hoist fixpipe with loop-local operand " << operand);
+      return false;
+    }
   }
+
+  LDBG("InlineFixpipeWithYield");
+  rewriter.replaceAllUsesWith(fixpipeResTensor,
+                              fixPipeOp.getDpsInputOperand(0)->get());
+
+  rewriter.setInsertionPointAfter(scfForOp);
+  auto fixpipeInit =
+      utils::createEmptyOp(rewriter, scfForOp->getLoc(), fixpipeResTensor);
+  auto newFixpipeOp = FixpipeOp::clone(
+      rewriter, fixPipeOp, scfForOp->getResult(idx.value()), fixpipeInit);
+  rewriter.replaceAllUsesExcept(scfForOp->getResult(idx.value()),
+                                newFixpipeOp.getResultTensor(), newFixpipeOp);
   LDBG("moveFixpipeOutOfScfFor");
+  return true;
 }
 
 } // namespace mlir::hivm
