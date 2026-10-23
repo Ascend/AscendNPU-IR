@@ -36,8 +36,8 @@
 /bishengir/**/InjectBlockSync.* @AmmarDab3an @tanzirui123123 @hi_sy @hid90099092 @tanshengshun
 
 # AutoBlockify.
-/bishengir/**/Autoblockify.* @Alae-eddine @jy834507063 @hid90099092 @tanshengshun
-/bishengir/test/**/*auto-blockify-parallel-loop* @Alae-eddine @jy834507063 @hid90099092 @tanshengshun
+/bishengir/**/AutoBlockify* @Alae-eddine @jy834507063 @hid90099092 @tanshengshun
+/bishengir/test/Dialect/HIVM/**/*auto-blockify-* @Alae-eddine @jy834507063 @hid90099092 @tanshengshun
 
 # Cube Op Template.
 /bishengir/**/Template/**/Cube/ @Alae-eddine @ZhaoWentengZWT @zhufang_hw @jqran @hid90099092 @tanshengshun
