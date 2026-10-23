@@ -131,7 +131,10 @@ def InlineScope : Pass<"inline-scope", "mlir::ModuleOp"> {
   let constructor = "mlir::scope::createInlineScopePass()";
   let options = [
     Option<"forceInline", "force-inline", "bool", /*default=*/"false",
-          "Inline scope regardless of `no_inline` attribute.">
+          "Inline scope regardless of `no_inline` attribute.">,
+    Option<"lowerAffineApplyForInlining", "lower-affine-apply-for-inlining",
+          "bool", /*default=*/"false",
+          "Lower top-level affine.apply in remaining private callees and retry inlining.">
   ];
 }
 

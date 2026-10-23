@@ -687,8 +687,18 @@ static void hivmPostBufferizationOptimizationPipeline(
     // Move VF entry DMA on argument buffers to the caller before VF cleanup.
     pm.addPass(createOutlineCopyInVFPass());
     pm.addPass(bufferization::createDropEquivalentBufferResultsPass());
-    pm.addPass(scope::createInlineScopePass());
-    pm.addPass(createInlinerPass());
+    // Late pipeline workaround for VFFusion/tree-reduce fusion helpers. This
+    // recovery is separate from InlineScope's regular scope-unwrapping role.
+    // Such helpers may survive earlier inlining because the affine inliner
+    // rejects their top-level affine.apply operations at scf.for call sites.
+    // Lower those operations and retry inlining before InferHIVMMemScope
+    // encounters the remaining helper memref-result boundaries, avoiding
+    // module-wide affine lowering.
+    // TODO: Remove this workaround once helper generation or earlier helper
+    // elimination fixes the underlying issue.
+    InlineScopeOptions inlineOptions;
+    inlineOptions.lowerAffineApplyForInlining = true;
+    pm.addPass(scope::createInlineScopePass(inlineOptions));
   }
   // Bind buffer should be done after outline alloc in vf because the source
   // allocs might be inside the VF.
