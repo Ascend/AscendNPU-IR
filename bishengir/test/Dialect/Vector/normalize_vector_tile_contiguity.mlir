@@ -142,3 +142,60 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     return
   }
 }
+
+// -----
+
+// Review finding 10-23 [P1]: a dim whose *tile* extent is 1 is never stepped
+// through, so its source stride cannot separate anything and must not take
+// part in the contiguity check.  Reading vector<1x32> out of memref<2x64>
+// touches offsets 0..31 -- contiguous -- but comparing the row stride 64
+// against the accumulated inner size 32 called it non-packed, sent it down the
+// gather path, and the dynamic padding there aborted the compile with
+// "TODO support non-constant padding value for vector.transfer_read ->
+// vector.gather transform".
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  // CHECK-LABEL: func.func @unit_tile_dim_dynamic_padding
+  // CHECK-NOT: vector.gather
+  // CHECK: vector.transfer_read
+  func.func @unit_tile_dim_dynamic_padding(
+      %src: memref<2x64xf32, #hivm.address_space<ub>>,
+      %dst: memref<32xf32, #hivm.address_space<ub>>,
+      %pad: f32)
+      attributes {hivm.vector_function} {
+    %c0 = arith.constant 0 : index
+    %v = vector.transfer_read %src[%c0, %c0], %pad
+        {in_bounds = [true, true],
+         permutation_map = affine_map<(d0, d1) -> (d0, d1)>}
+        : memref<2x64xf32, #hivm.address_space<ub>>, vector<1x32xf32>
+    %flat = vector.shape_cast %v : vector<1x32xf32> to vector<32xf32>
+    vector.transfer_write %flat, %dst[%c0] {in_bounds = [true]}
+        : vector<32xf32>, memref<32xf32, #hivm.address_space<ub>>
+    return
+  }
+}
+
+// -----
+
+// The guard above must not leak into the real gap case: with a tile extent of
+// 2 the row stride is stepped through, so memref<2x64> read as vector<2x32>
+// stays non-contiguous (offsets 0..31 and 64..95).
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  // CHECK-LABEL: func.func @nonunit_tile_dim_still_gathers
+  // CHECK-NOT: vector.transfer_read
+  // CHECK: vector.gather
+  func.func @nonunit_tile_dim_still_gathers(
+      %src: memref<2x64xf32, #hivm.address_space<ub>>,
+      %dst: memref<64xf32, #hivm.address_space<ub>>)
+      attributes {hivm.vector_function} {
+    %c0 = arith.constant 0 : index
+    %zero = arith.constant 0.0 : f32
+    %v = vector.transfer_read %src[%c0, %c0], %zero
+        {in_bounds = [true, true],
+         permutation_map = affine_map<(d0, d1) -> (d0, d1)>}
+        : memref<2x64xf32, #hivm.address_space<ub>>, vector<2x32xf32>
+    %flat = vector.shape_cast %v : vector<2x32xf32> to vector<64xf32>
+    vector.transfer_write %flat, %dst[%c0] {in_bounds = [true]}
+        : vector<64xf32>, memref<64xf32, #hivm.address_space<ub>>
+    return
+  }
+}

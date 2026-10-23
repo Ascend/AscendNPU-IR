@@ -801,6 +801,55 @@ struct DropUnitDimFromMulExtendedOp : public OpRewritePattern<MulExtendedOp> {
 ///  vector<1x1x64xf32>
 /// Pattern to convert multi-dimensional create_mask operations to 1D and cast
 /// back
+/// Decide whether a mask with per-dim `bounds` over a vector of `shape` has an
+/// active region that is a prefix of the row-major lane order, and if so which
+/// dim decides the prefix length.
+///
+/// A lane at coordinate (c0, ..., cn-1) is active iff `cd < bounds[d]` for
+/// every d.  That set is a row-major prefix exactly when the bounds look like
+///
+///     [1, ..., 1, b_k, extent_k+1, ..., extent_n-1]
+///      ~~~~~~~~~   |   ~~~~~~~~~~~~~~~~~~~~~~~~~~~
+///       pinned     |        fully covered
+///                  `-- the only dim that may be partial or dynamic
+///
+/// because the active lanes are then exactly the first
+/// `b_k * extent_k+1 * ... * extent_n-1` of them.  Any other shape *moves*
+/// active lanes instead of truncating them, so no single prefix length
+/// describes it: bounds [2, 16] over <2x32> activate lanes 0..15 and 32..47.
+///
+/// `bounds[d] == std::nullopt` marks a bound that is not a compile-time
+/// constant; such a dim can only be the pivot.  A leading dim needs a constant
+/// 1 rather than merely a dynamic value, because a dynamic bound could be 0 and
+/// empty the whole mask instead of pinning the coordinate.
+///
+/// Returns the pivot index, or nullopt when the region is not a prefix.
+/// `ConvertConstantMaskTo1D` below checks the same condition directly on its
+/// constant bounds; keep the two in step.
+static std::optional<unsigned>
+maskPrefixPivotDim(ArrayRef<std::optional<int64_t>> bounds,
+                   ArrayRef<int64_t> shape) {
+  // A zero bound anywhere empties the mask, which is the empty prefix.  Report
+  // it as the pivot so the length computed from it works out to zero.
+  for (unsigned d = 0; d < bounds.size(); ++d)
+    if (bounds[d] && *bounds[d] == 0)
+      return d;
+
+  unsigned pivot = 0;
+  while (pivot < bounds.size() && bounds[pivot] && *bounds[pivot] == 1)
+    ++pivot;
+  // Every bound is 1: a single active lane, the prefix of length 1.
+  if (pivot == bounds.size())
+    return bounds.size() - 1;
+
+  // Everything inside the pivot must be covered in full, or the pivot's
+  // coordinate would not advance the lane index contiguously.
+  for (unsigned d = pivot + 1; d < bounds.size(); ++d)
+    if (!bounds[d] || *bounds[d] < shape[d])
+      return std::nullopt;
+  return pivot;
+}
+
 struct ConvertCreateMaskTo1D : public OpRewritePattern<vector::CreateMaskOp> {
   using OpRewritePattern<vector::CreateMaskOp>::OpRewritePattern;
 
@@ -814,43 +863,46 @@ struct ConvertCreateMaskTo1D : public OpRewritePattern<vector::CreateMaskOp> {
     if (op->getNumOperands() != shape.size())
       return failure();
 
-    // Multiplying the per-dim bounds only yields the right *positions* when
-    // the active region is a row-major prefix.  With dynamic bounds we cannot
-    // prove that in general, but we can prove it for the shape that actually
-    // occurs after unit-dim folding: every dim except the innermost is a unit
-    // dim, so the outer coordinates are always 0 and the innermost bound alone
-    // decides the prefix length.
+    // Flattening to a 1-D `create_mask` only keeps the active lanes in place
+    // when the active region is a row-major prefix; `maskPrefixPivotDim`
+    // decides that and names the dim whose bound sets the prefix length.
     //
-    // For a genuinely multi-dim dynamic mask (e.g. <2x32xi1> with bounds
-    // (%r, %c)) the product %r * %c would move active lanes, exactly like the
-    // constant-mask case, so bail out rather than emit a wrong mask.
-    //
-    // TODO: this rejects every non-unit outer dim, including bounds that are
-    // a valid row-major prefix at runtime (<2x32xi1> with (%rows, %c32) is one
-    // whenever %rows is in [0, 2]).  Clamp each bound to [0, shape[d]] and
-    // prove the active region is a prefix before flattening, so dynamic
-    // prefixes are supported too.  Refusing to rewrite is correct but
-    // conservative; restoring the unconditional product would not be.
-    for (unsigned i = 0; i + 1 < shape.size(); ++i) {
-      if (shape[i] != 1)
-        return rewriter.notifyMatchFailure(
-            op, "dynamic multi-dim mask active region may not be a prefix");
+    // TODO: a mask with two dynamic bounds, or a constant inner bound that
+    // does not cover its dim, stays multi-dimensional.  Proving those a prefix
+    // needs a runtime comparison rather than a static check.
+    SmallVector<std::optional<int64_t>> bounds;
+    bounds.reserve(shape.size());
+    for (Value bound : op->getOperands()) {
+      APInt constBound;
+      bounds.push_back(matchPattern(bound, m_ConstantInt(&constBound))
+                           ? std::optional<int64_t>(constBound.getSExtValue())
+                           : std::nullopt);
     }
+    std::optional<unsigned> pivot = maskPrefixPivotDim(bounds, shape);
+    if (!pivot)
+      return rewriter.notifyMatchFailure(
+          op, "multi-dim mask active region is not a row-major prefix");
 
-    // All outer dims are unit dims: their bound must be exactly 1 for the
-    // lanes to start at 0.  A bound of 0 makes the whole mask empty, which the
-    // product below would also express, but a non-constant bound could be
-    // either, so require a constant 1.
-    for (unsigned i = 0; i + 1 < shape.size(); ++i) {
-      APInt boundVal;
-      if (!matchPattern(op->getOperand(i), m_ConstantInt(&boundVal)) ||
-          !boundVal.isOne())
-        return rewriter.notifyMatchFailure(
-            op, "unit-dim mask bound is not a constant 1");
+    // The dims inside the pivot are fully covered, so each step of the pivot's
+    // coordinate advances the lane index by their combined extent.
+    int64_t innerExtent = 1;
+    for (unsigned d = *pivot + 1; d < shape.size(); ++d)
+      innerExtent *= shape[d];
+
+    Value totalSize = op->getOperand(*pivot);
+    if (innerExtent != 1) {
+      // `create_mask` already clamps its own bound, but the multiply below
+      // happens before that, so clamp first: an out-of-range bound would
+      // otherwise be scaled into a different range (and a very large one could
+      // overflow into a negative length, turning an all-true mask empty).
+      Value zero = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+      Value extent =
+          rewriter.create<arith::ConstantIndexOp>(loc, shape[*pivot]);
+      totalSize = rewriter.create<arith::MaxSIOp>(loc, totalSize, zero);
+      totalSize = rewriter.create<arith::MinSIOp>(loc, totalSize, extent);
+      Value scale = rewriter.create<arith::ConstantIndexOp>(loc, innerExtent);
+      totalSize = rewriter.create<arith::MulIOp>(loc, totalSize, scale);
     }
-
-    // Only the innermost bound is meaningful now.
-    Value totalSize = op->getOperand(shape.size() - 1);
 
     int64_t returnTotalElements = maskType.getNumElements();
     VectorType flatMaskType =
@@ -907,6 +959,12 @@ struct ConvertConstantMaskTo1D
     // active lane *positions*: lanes 16..31 flipped to true and 32..47 to
     // false.  Bail out instead of silently changing semantics; the mask then
     // stays multi-dimensional for the consumer to handle.
+    //
+    // This is the same condition `maskPrefixPivotDim` above states for
+    // `create_mask`, phrased directly on the constant bounds; keep the two in
+    // step.  It is deliberately not routed through that helper: the helper
+    // also accepts a zero bound behind a partial one (bounds [2, 0]), which
+    // this check rejects, and widening the constant path is out of scope here.
     for (int64_t d = 0; d < static_cast<int64_t>(shape.size()); ++d) {
       if (maskBounds[d] <= 1)
         continue;
@@ -1122,11 +1180,17 @@ class TransferReadToGatheringLoadPattern
     // memref<2x64> (strides [64, 1]) touches 0..31 and 64..95 and is not.
     // Note: identity permutation alone does not imply contiguity, and
     // checking only the innermost stride is not enough either.
+    //
+    // A dim whose tile extent is 1 is never stepped through, so its source
+    // stride cannot separate anything and must not be compared: reading
+    // vector<1x32> out of memref<2x64> touches 0..31 and is contiguous even
+    // though the row stride 64 does not match. Its extent still multiplies
+    // into `expectedStride` (by one), keeping the accumulated inner size right.
     auto tileShape = destType.getShape();
     bool isPacked = true;
     int64_t expectedStride = 1;
     for (int64_t d = rank - 1; d >= 0; --d) {
-      if (strides[d] != expectedStride) {
+      if (tileShape[d] != 1 && strides[d] != expectedStride) {
         isPacked = false;
         break;
       }
