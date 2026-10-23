@@ -304,6 +304,7 @@ mapCastRoundKindToRoundMode(CastRoundKind kind) {
       {CastRoundKind::TruncWithOverflow, hivm::RoundMode::TRUNCWITHOVERFLOW},
       {CastRoundKind::RInt, hivm::RoundMode::RINT},
       {CastRoundKind::TruncEnableOverflow, hivm::RoundMode::TRUNC},
+      {CastRoundKind::Odd, hivm::RoundMode::ODD},
   };
   return lookupOrNullopt(kindToMode, kind);
 }
