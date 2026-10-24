@@ -403,6 +403,7 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
   TreeReduceV2Options treeReduceOptions;
   treeReduceOptions.enableRA = treeReduceFlags.enableRA;
   treeReduceOptions.enableAR = treeReduceFlags.enableAR;
+  treeReduceOptions.ascendStyleRA = hfusionOptions.useAscendStyleRA;
   if (enableSIMDVFFusion(hfusionOptions)) {
     bool runRegBasePasses = !hfusionOptions.enableMixedCV &&
                             hacc::utils::isRegBasedArch(hfusionOptions.target);

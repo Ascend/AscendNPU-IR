@@ -22,8 +22,10 @@
 #include "bishengir/Tools/hivmc/HIVMC.h"
 #include "bishengir/Tools/hivmc/HIVMCA5.h"
 #include "bishengir/Version/Version.h"
+#include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/IR/AsmState.h"
 #include "mlir/Support/FileUtilities.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/LogicalResult.h"
 #include "llvm/Support/Path.h"
@@ -49,6 +51,78 @@ enum class CompileFlow {
   PureSimt,
   Simd,
 };
+
+static bool isShapedElementwise(Operation *op) {
+  if (!op->hasTrait<OpTrait::Elementwise>())
+    return false;
+  auto isShaped = [](mlir::Type type) { return isa<ShapedType>(type); };
+  return llvm::any_of(op->getOperandTypes(), isShaped) ||
+         llvm::any_of(op->getResultTypes(), isShaped);
+}
+
+static bool hasPayloadProducer(mlir::Value value,
+                               llvm::DenseSet<Operation *> &visited) {
+  Operation *producer = value.getDefiningOp();
+  if (!producer || !visited.insert(producer).second)
+    return false;
+  if (isa<linalg::ReduceOp, linalg::FillOp>(producer))
+    return false;
+  if (isa<linalg::LinalgOp>(producer) || isShapedElementwise(producer))
+    return true;
+  return llvm::any_of(producer->getOperands(), [&](mlir::Value operand) {
+    return hasPayloadProducer(operand, visited);
+  });
+}
+
+static bool hasPayloadConsumer(mlir::Value value,
+                               llvm::DenseSet<Operation *> &visited) {
+  for (Operation *consumer : value.getUsers()) {
+    if (!visited.insert(consumer).second)
+      continue;
+    if (isa<linalg::ReduceOp>(consumer))
+      continue;
+    if (isa<linalg::LinalgOp>(consumer) || isShapedElementwise(consumer))
+      return true;
+    if (llvm::any_of(consumer->getResults(), [&](mlir::Value result) {
+          return hasPayloadConsumer(result, visited);
+        }))
+      return true;
+  }
+  return false;
+}
+
+/// Return true when every reduction is fed and consumed only through
+/// structural or data-movement operations. Scalar address calculation,
+/// control flow and reduction combiners are intentionally ignored.
+static bool isReduceOnlyModule(ModuleOp module) {
+  SmallVector<linalg::ReduceOp> reductions;
+  bool hasOtherLinalgOp = false;
+  module.walk([&](Operation *op) {
+    if (auto reduceOp = dyn_cast<linalg::ReduceOp>(op)) {
+      reductions.push_back(reduceOp);
+      return;
+    }
+    if (isa<linalg::LinalgOp>(op) && !isa<linalg::FillOp>(op))
+      hasOtherLinalgOp = true;
+  });
+  if (reductions.empty() || hasOtherLinalgOp)
+    return false;
+
+  for (linalg::ReduceOp reduceOp : reductions) {
+    llvm::DenseSet<Operation *> visitedProducers;
+    for (mlir::Value input : reduceOp.getInputs()) {
+      if (hasPayloadProducer(input, visitedProducers))
+        return false;
+    }
+
+    llvm::DenseSet<Operation *> visitedConsumers;
+    for (mlir::Value result : reduceOp->getResults()) {
+      if (hasPayloadConsumer(result, visitedConsumers))
+        return false;
+    }
+  }
+  return true;
+}
 
 CompileFlow getCompileFlow(const BiShengIRCompileMainConfig &config) {
   if (config.getEnableSimdSimtMixCompile())
@@ -371,6 +445,14 @@ bishengir::regbase::runRegBasePipeline(ModuleOp mod,
                                        BiShengIRCompileMainConfig config) {
   if (failed(checkInOutOptionsValidity(config))) {
     return failure();
+  }
+
+  if (isReduceOnlyModule(mod)) {
+    LDBG("Detected reduce-only data flow; forcing TreeReduceV2 mode=all with "
+         "Ascend-style RA");
+    config.setEnableTreeReduceV2(true);
+    config.setEnableTreeReduceMode(hfusion::TreeReduceMode::All);
+    config.setUseAscendStyleRA(true);
   }
 
   // Overflow tracking: UB gets a Vector-only multi-buffer fallback; L1/L0C
