@@ -2715,7 +2715,8 @@ LogicalResult CVPipelineImpl::markScopesForPreload() {
     return failure();
   }
 
-  // Off-registry kernels keep the original GM-store / CBUF-copy order.
+  // Off-registry kernels keep the original GM-store / CBUF-copy order and
+  // do not nest an inner vf-scope around an early CBUF publication.
   if (allowShapeHeuristics) {
     for (auto &item : worklist)
       if (item->core == TCoreType::VECTOR && item->scopeOp) {
