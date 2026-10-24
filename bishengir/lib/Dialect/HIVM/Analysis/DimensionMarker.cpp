@@ -997,12 +997,6 @@ bool DimensionAnalyzer::finalizeTransaction() {
   for (auto &indices : indicesAfterTransaction) {
     for (size_t i = 0; i < indices.size(); i++) {
       for (size_t j = i + 1; j < indices.size(); j++) {
-        // Only genuinely exclusive (sibling) dims within one transaction
-        // are structural conflicts that block joins. Recorded merge bans
-        // (invalidDimIdx) are consumed by the exclusive/invalid propagation
-        // below and by the candidate-group selection; feeding them back
-        // here would over-mark structural conflicts and fragment store-like
-        // dims across structural parents.
         if (exclusiveDimIdx[indices[i]].contains(indices[j])) {
           invalidMerges.insert(indices[i]);
           invalidMerges.insert(indices[j]);
@@ -1017,50 +1011,14 @@ bool DimensionAnalyzer::finalizeTransaction() {
     auto pIdx = transArgDSU.find(i);
     indicesAfterTransaction[pIdx].push_back(compArgIdx[i]);
   }
-  auto hasExclusiveInvalidOverlap = [this](int64_t invalidOwner,
-                                           int64_t exclusiveOwner) {
-    for (auto invalidDim : invalidDimIdx[invalidOwner])
-      if (exclusiveDimIdx[exclusiveOwner].contains(invalidDim))
-        return true;
-    return false;
-  };
-  // Parents invalidated only through the exclusive/invalid cross-check above
-  // are propagated separately: they still produce invalid updates for the
-  // candidate-group selection, but they do not block the structural joins of
-  // this transaction. Blocking the joins here fragments store-like dims
-  // across structural parents so that no candidate group can cover all
-  // store-like ops later, which loses the tiling dim entirely.
-  DenseSet<int> propagatedInvalidMerges;
-  for (auto &indices : indicesAfterTransaction) {
-    bool isInvalid = false;
-    for (size_t i = 0; i < indices.size(); i++) {
-      auto parIdx = structuralDsu_->find(indices[i]);
-      for (size_t j = i + 1; j < indices.size(); j++) {
-        auto otherParIdx = structuralDsu_->find(indices[j]);
-        if (hasExclusiveInvalidOverlap(otherParIdx, parIdx) ||
-            hasExclusiveInvalidOverlap(parIdx, otherParIdx)) {
-          isInvalid = true;
-          i = j = indices.size();
-        }
-      }
-    }
-    if (isInvalid) {
-      for (auto idx : indices) {
-        auto parIdx = structuralDsu_->find(idx);
-        propagatedInvalidMerges.insert(parIdx);
-      }
-    }
-  }
   for (auto res : op->getResults()) {
     if (!isa<ShapedType>(res.getType()))
       continue;
     createDummyRefIfNotExist(res);
     for (auto arg : getValueDimIndices(res)) {
       auto parIdx = structuralDsu_->find(arg);
-      if (!invalidMerges.contains(parIdx) &&
-          !propagatedInvalidMerges.contains(parIdx))
-        continue;
-      if (!llvm::binary_search(compArgIdx, arg))
+      if (!invalidMerges.contains(parIdx) ||
+          !llvm::binary_search(compArgIdx, arg))
         continue;
       parIdx = llvm::lower_bound(compArgIdx, arg) - compArgIdx.begin();
       repIdx[transArgDSU.find(parIdx)] = compArgIdx[parIdx];
@@ -1069,24 +1027,17 @@ bool DimensionAnalyzer::finalizeTransaction() {
   for (const auto &[rIdx, indices] : llvm::enumerate(indicesAfterTransaction)) {
     DimensionIndex invalidIndices;
     for (size_t i = 0; i < indices.size(); i++) {
-      auto rep = structuralDsu_->find(repIdx[rIdx]);
       auto parIdx = structuralDsu_->find(indices[i]);
-      if (repIdx[rIdx] == indices[i] ||
-          (!invalidMerges.contains(parIdx) &&
-           !propagatedInvalidMerges.contains(parIdx)))
+      if (repIdx[rIdx] == indices[i] || !invalidMerges.contains(parIdx))
         continue;
-      if (rep != parIdx) {
-        invalidDimIdx[rep].insert(parIdx);
-        invalidDimIdx[parIdx].insert(rep);
-      }
       invalidIndices.push_back(indices[i]);
     }
-    if (invalidIndices.empty())
-      continue;
-    invalidUpdates.emplace_back(repIdx[rIdx], invalidIndices);
-    LDBG("Adding invalid updates: ("
-         << structuralDsu_->find(repIdx[rIdx]) << ", "
-         << utils::debugger::to_string(invalidIndices) << ") ");
+    if (!invalidIndices.empty()) {
+      invalidUpdates.emplace_back(repIdx[rIdx], invalidIndices);
+      LDBG("Adding invalid updates: ("
+           << structuralDsu_->find(repIdx[rIdx]) << ", "
+           << utils::debugger::to_string(invalidIndices) << ") ");
+    }
   }
 
   LDBG("argIndices: " << utils::debugger::to_string(argIndices));
@@ -1614,22 +1565,6 @@ void DimensionAnalyzer::joinShape(int a, int b) {
       assert(!exclusiveDimIdx[exIdx].contains(exIdx));
     }
     exclusiveDimIdx[parA].clear();
-    for (auto invalidIdx : invalidDimIdx[parA]) {
-      // parA is joined into parB even though a merge ban between them was
-      // recorded earlier (e.g. by the exclusive/invalid propagation, which
-      // does not block structural joins). The joined parent is the ground
-      // truth, so the stale mutual ban is dropped instead of becoming a
-      // self-ban.
-      if (invalidIdx == parB)
-        continue;
-      invalidDimIdx[parB].insert(invalidIdx);
-      invalidDimIdx[invalidIdx].erase(parA);
-      invalidDimIdx[invalidIdx].insert(parB);
-      assert(!invalidDimIdx[parB].contains(parB));
-      assert(!invalidDimIdx[invalidIdx].contains(invalidIdx));
-    }
-    invalidDimIdx[parA].clear();
-    invalidDimIdx[parB].erase(parA);
   }
 }
 
@@ -1652,19 +1587,6 @@ void DimensionAnalyzer::joinCollapser(int a, int b) {
       assert(!exclusiveDimIdx[exIdx].contains(exIdx));
     }
     exclusiveDimIdx[parA].clear();
-    for (auto invalidIdx : invalidDimIdx[parA]) {
-      // See joinShape: stale mutual bans are dropped when the structural
-      // join makes them self-referential.
-      if (invalidIdx == parB)
-        continue;
-      invalidDimIdx[parB].insert(invalidIdx);
-      invalidDimIdx[invalidIdx].erase(parA);
-      invalidDimIdx[invalidIdx].insert(parB);
-      assert(!invalidDimIdx[parB].contains(parB));
-      assert(!invalidDimIdx[invalidIdx].contains(invalidIdx));
-    }
-    invalidDimIdx[parA].clear();
-    invalidDimIdx[parB].erase(parA);
   }
 }
 
