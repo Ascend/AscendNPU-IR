@@ -83,6 +83,8 @@ TEST(NPUArchitectureFeatureTest, ProfilesAreKeyedByArchitecture) {
        CubeVectorMode::kCoupled, CubeVectorDataExchange::kOnChipSupported},
       {NPUArchitectureKind::kDavC310, ExecutionModel::kRegBased,
        CubeVectorMode::kSeparated, CubeVectorDataExchange::kOnChipSupported},
+      {NPUArchitectureKind::kDav920R1, ExecutionModel::kRegBased,
+       CubeVectorMode::kSeparated, CubeVectorDataExchange::kOnChipSupported},
   };
   for (const ExpectedProfile &expected : expectedProfiles) {
     SCOPED_TRACE(stringifyNPUArchitecture(expected.architecture).str());
@@ -110,11 +112,13 @@ TEST(NPUArchitectureFeatureTest, EveryDeviceHasReviewedCubeVectorFeatures) {
     // profiles, the architecture mapping, and ExecutionModel.
     bool isM300 = spelling.starts_with("Ascend310B");
     bool isC310 = spelling.starts_with("Ascend910_95") ||
-                  spelling.starts_with("Ascend950") ||
-                  spelling.starts_with("Ascend960");
+                  spelling.starts_with("Ascend950");
     bool isC220 = spelling.starts_with("Ascend910B") ||
                   spelling.starts_with("Ascend910_93");
-    ASSERT_TRUE(isM300 || isC310 || isC220) << "unreviewed target family";
+    // Ascend960 (dav-920r1) follows the dav-c310 reg-based lineage.
+    bool is920R1 = spelling.starts_with("Ascend960");
+    ASSERT_TRUE(isM300 || isC310 || isC220 || is920R1)
+        << "unreviewed target family";
     NPUArchitectureKind architecture = getArchitecture(device);
     EXPECT_EQ(getCubeVectorMode(architecture),
               isM300 ? CubeVectorMode::kCoupled : CubeVectorMode::kSeparated);
@@ -213,18 +217,23 @@ TEST(NPUArchitectureFeatureTest, PresentUnknownTargetDoesNotUseModuleDefault) {
   EXPECT_FALSE(hacc::utils::isRegBasedArch(*module));
 }
 
-TEST(NPUArchitectureFeatureTest, Ascend960UsesC310Profile) {
-  // Ascend960 (A6) belongs to the dav-c310 lineage: RegBased execution,
-  // separated cube/vector cores, on-chip cube/vector exchange.
-  EXPECT_EQ(getArchitecture(TargetDevice::Ascend960),
-            NPUArchitectureKind::kDavC310);
+TEST(NPUArchitectureFeatureTest, Dav920R1ProfileMatchesC310Lineage) {
+  // dav-920r1 (Ascend960) follows the dav-c310 reg-based lineage: RegBased
+  // execution, separated cube/vector cores, on-chip cube/vector exchange.
   const auto *profile =
-      lookupArchitectureFeatureProfile(NPUArchitectureKind::kDavC310);
+      lookupArchitectureFeatureProfile(NPUArchitectureKind::kDav920R1);
   ASSERT_NE(profile, nullptr);
-  EXPECT_EQ(profile->architecture, NPUArchitectureKind::kDavC310);
+  EXPECT_EQ(profile->architecture, NPUArchitectureKind::kDav920R1);
   EXPECT_EQ(profile->executionModel, ExecutionModel::kRegBased);
   EXPECT_EQ(profile->cubeVectorMode, CubeVectorMode::kSeparated);
   EXPECT_EQ(profile->cubeVectorDataExchange,
+            CubeVectorDataExchange::kOnChipSupported);
+
+  EXPECT_EQ(getExecutionModel(NPUArchitectureKind::kDav920R1),
+            ExecutionModel::kRegBased);
+  EXPECT_EQ(getCubeVectorMode(NPUArchitectureKind::kDav920R1),
+            CubeVectorMode::kSeparated);
+  EXPECT_EQ(getCubeVectorDataExchange(NPUArchitectureKind::kDav920R1),
             CubeVectorDataExchange::kOnChipSupported);
 
   // The module-level reg-based/mem-based classification for the device.

@@ -371,7 +371,11 @@ bool isAscend950(llvm::StringRef targetDevice) {
 }
 
 bool isAscend960(TargetDevice targetDevice) {
-  return targetDevice == TargetDevice::Ascend960;
+  static const std::unordered_set<TargetDevice> ascend960Devices = {
+      TargetDevice::Ascend960, TargetDevice::Ascend960DT_969B5,
+      TargetDevice::Ascend960DT_968B7, TargetDevice::Ascend960DT_961BX};
+
+  return ascend960Devices.find(targetDevice) != ascend960Devices.end();
 }
 
 bool isAscend960(llvm::StringRef targetDevice) {
