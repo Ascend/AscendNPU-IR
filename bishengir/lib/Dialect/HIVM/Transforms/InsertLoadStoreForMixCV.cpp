@@ -1809,7 +1809,7 @@ void InsertLoadStoreForMixCVPass::runOnOperation() {
 
   if (enableLegacy)
     return runLegacyInsertLoadStoreForMixCV();
-  if (!hacc::utils::isDeviceEntry(funcOp))
+  if (!hacc::utils::isCompilationRoot(funcOp))
     return;
 
   PassManager pm(ctx);
