@@ -618,18 +618,6 @@ LogicalResult CopyOp::verify() {
 
   // check mem space in case of memref
   if (hasPureBufferSemantics()) {
-    // The DMA library's byte reinterpretation corrupts non-byte-expressible
-    // i1 layouts; such copies must be decomposed before lowering.
-    if (hacc::utils::isRegBasedArch(moduleOp)) {
-      auto srcMemRefType = dyn_cast<MemRefType>(srcOperType);
-      auto dstMemRefType = dyn_cast<MemRefType>(dstOperType);
-      if (srcMemRefType && dstMemRefType &&
-          (!isI1LayoutByteExpressible(srcMemRefType) ||
-           !isI1LayoutByteExpressible(dstMemRefType)))
-        return emitOpError(
-            "i1 copy layout is not byte-expressible; decompose it into "
-            "elementwise accesses before lowering to the DMA library");
-    }
     return checkCopyOpMemSpace(*this);
   }
 
